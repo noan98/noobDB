@@ -6,6 +6,8 @@ import { typedConfirmMatches } from "../typeToConfirm";
 import { semanticColorToken } from "../semanticColors";
 import { AiImpactAnalysis } from "./AiImpactAnalysis";
 import { Callout } from "./Callout";
+import { RefImpactList } from "./RefImpactList";
+import type { CascadeImpacts } from "../refImpact";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input } from "./ui";
 
@@ -52,6 +54,12 @@ interface Props {
    * 判定ロジックは変えず、止めるだけでなく安全な書き方を示すための追加。
    */
   pkSuggestion?: { template: string; onInsert: () => void } | null;
+  /**
+   * エディタの単一表 DELETE が消す行を参照している子行への影響 (CASCADE / RESTRICT / SET NULL、#1767)。
+   * 渡されたときだけ、ダイアログを開いた時点で `load` を 1 回呼んで確認欄を出す。読み取り専用の集計で、
+   * 失敗・タイムアウトしても実行は妨げず「確認できませんでした」と表示する。
+   */
+  fkImpact?: { driver: string; load: () => Promise<CascadeImpacts> } | null;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -81,10 +89,26 @@ export function DangerousQueryDialog({
   impact,
   aiContext,
   pkSuggestion,
+  fkImpact,
   onConfirm,
   onCancel,
 }: Props) {
   const t = useT();
+  const [fkState, setFkState] = useState<
+    { status: "loading" } | { status: "failed" } | { status: "ready"; result: CascadeImpacts } | null
+  >(fkImpact ? { status: "loading" } : null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ダイアログを開いた時点の 1 回だけ集計する (load は毎描画で作り直される)
+  useEffect(() => {
+    if (!fkImpact) return;
+    let alive = true;
+    fkImpact
+      .load()
+      .then((result) => alive && setFkState({ status: "ready", result }))
+      .catch(() => alive && setFkState({ status: "failed" }));
+    return () => {
+      alive = false;
+    };
+  }, []);
   // Default focus to Cancel so a stray Enter doesn't run the query — unless a
   // typed confirmation is required, in which case the user needs to type
   // into the input anyway, so focus starts there.
@@ -151,7 +175,13 @@ export function DangerousQueryDialog({
           </>
         ) : (
           <chakra.p m={0} color="app.text">
-            {t(writeApproval ? "dangerousWriteApprovalIntro" : "dangerousIntro")}
+            {t(
+              writeApproval
+                ? "dangerousWriteApprovalIntro"
+                : fkImpact
+                  ? "dangerousFkIntro"
+                  : "dangerousIntro",
+            )}
           </chakra.p>
         )}
         {impact && (impact.count !== null || impact.allRows) && (
@@ -170,6 +200,25 @@ export function DangerousQueryDialog({
               {t("dangerousImpactNote")}
             </chakra.span>
           </Callout>
+        )}
+        {fkImpact && fkState?.status === "loading" && (
+          <Callout tone="info" role="status" data-testid="dangerous-fk-loading">
+            {t("statusCheckingRefs")}
+          </Callout>
+        )}
+        {fkImpact && fkState?.status === "failed" && (
+          <Callout tone="warning" role="status" data-testid="dangerous-fk-failed">
+            {t("refImpactCheckFailed")}
+          </Callout>
+        )}
+        {fkImpact && fkState?.status === "ready" && (
+          <RefImpactList
+            impacts={fkState.result.impacts}
+            mode="rows"
+            driver={fkImpact.driver}
+            moreCascade={fkState.result.moreCascade}
+            unverified={fkState.result.unverified.length > 0 ? fkState.result.unverified : undefined}
+          />
         )}
         {pkSuggestion && (
           <Callout tone="info" data-testid="dangerous-pk-suggestion">

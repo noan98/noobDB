@@ -8,7 +8,7 @@
 import type { CellValue, QueryResult } from "./api/tauri";
 import { rowEditKey, rowValueLiteral } from "./components/cellEdit";
 import { quoteIdentFor } from "./components/sqlDialect";
-import { type IncomingFk, qualifiedTable } from "./fkNavigation";
+import { type IncomingFk, incomingFkTableName, qualifiedTable } from "./fkNavigation";
 
 /** 参照先 (削除する行側) の 1 列あたりに数える値の最大数。超えた分は数えず `partial` にする。 */
 export const REF_KEY_LIMIT = 2000;
@@ -32,6 +32,11 @@ export interface RefImpact {
   count: number;
   /** TRUNCATE の集計で上限 (`TRUNCATE_COUNT_CAP`) に達し、実際はもっと多い。 */
   capped?: boolean;
+  /**
+   * 連鎖の段数 (1 = 削除対象を直接参照する子、2 = CASCADE で消える子の子 …、#1767)。
+   * 1 のときは省略してよい。
+   */
+  depth?: number;
 }
 
 /** TRUNCATE の子行数の集計上限。これを超える分は数えず「N 件以上」と表示する。 */
@@ -230,4 +235,233 @@ export function buildOpenChildrenSql(input: {
   const vals = (keys.get(impact.referencedColumn) ?? []).slice(0, input.limit ?? 100);
   if (vals.length === 0) return `SELECT * FROM ${from} WHERE 1 = 0`;
   return `SELECT * FROM ${from} WHERE ${col} IN (${vals.map((v) => keyLiteral(driver, v, impact.referencedColumn, types)).join(", ")})`;
+}
+
+/** CASCADE を辿る最大の段数 (子 = 1 段目)。これより深い連鎖は数えず「さらに連鎖あり」にする (#1767)。 */
+export const CASCADE_MAX_DEPTH = 3;
+/** 連鎖の探索で数える FK (子テーブル × 列) の総数の上限。超えたら打ち切って「さらに連鎖あり」にする。 */
+export const CASCADE_MAX_EDGES = 24;
+
+/** `loadCascadeImpacts` の結果。 */
+export interface CascadeImpacts {
+  /** 1 行以上あった子テーブル (段数順)。 */
+  impacts: RefImpact[];
+  /** 深さ / FK 数の上限で打ち切った、または循環参照で辿るのをやめた (実際にはさらに連鎖がある)。 */
+  moreCascade: boolean;
+  /** 集計に失敗した (またはタイムアウトした) 子テーブル名。ここに入ったテーブルの影響は不明。 */
+  unverified: string[];
+}
+
+interface CascadeEdge {
+  fk: IncomingFk;
+  /** 子テーブル側の述語 (OR 結合ではなく枝ごとに数えて合算する。枝同士は重ならない)。 */
+  preds: string[];
+  /** 表示用の親テーブル名。 */
+  parentName: string;
+  depth: number;
+}
+
+function edgeKey(fk: IncomingFk): string {
+  return `${fk.schema ?? ""}\0${fk.table}\0${fk.column}\0${fk.referencedColumn}`;
+}
+
+/** 削除対象の親行を表す、最初の段 (子 = 1 段目) の述語を作る関数。述語が無い FK は数えない。 */
+export type RootPredicates = (fk: IncomingFk) => string[];
+
+/**
+ * 削除予定のキー値 (結果グリッドの行削除) から、1 段目の述語を作る。値は `rowValueLiteral` で
+ * リテラル化し (64bit 整数は文字列のまま)、`IN_CHUNK` ごとに分ける。
+ */
+export function rootPredicatesFromKeys(input: {
+  driver: string;
+  keys: ReadonlyMap<string, CellValue[]>;
+  types?: KeyTypes;
+}): RootPredicates {
+  return (fk) => {
+    const col = quoteIdentFor(input.driver, fk.column);
+    const vals = input.keys.get(fk.referencedColumn) ?? [];
+    const preds: string[] = [];
+    for (let i = 0; i < vals.length; i += IN_CHUNK) {
+      const lits = vals
+        .slice(i, i + IN_CHUNK)
+        .map((v) => keyLiteral(input.driver, v, fk.referencedColumn, input.types));
+      preds.push(`${col} IN (${lits.join(", ")})`);
+    }
+    return preds;
+  };
+}
+
+/**
+ * エディタの単一表 `DELETE FROM t [WHERE cond]` から、1 段目の述語を作る (#1767)。
+ * 親行の列を副問い合わせで引くので、キー値を先に読む必要が無い。`table` / `condition` は
+ * プリフライト (`buildPreflightPlan`) が元 SQL から切り出した原文で、実行しようとしている
+ * DELETE と同じ対象になる。`condition` が null なら全行。
+ */
+export function rootPredicatesFromDelete(input: {
+  driver: string;
+  table: string;
+  condition: string | null;
+}): RootPredicates {
+  return (fk) => {
+    const col = quoteIdentFor(input.driver, fk.column);
+    const ref = quoteIdentFor(input.driver, fk.referencedColumn);
+    const where = input.condition ? ` WHERE ${input.condition}` : "";
+    return [`${col} IN (SELECT ${ref} FROM ${input.table}${where})`];
+  };
+}
+
+/**
+ * 親行の削除が CASCADE で連鎖する先まで辿って、子行数を数える (#1767)。
+ *
+ * - 1 段目は `rootPredicates` で数える。CASCADE の子に行があれば、その子を参照する FK
+ *   (`fetchIncoming`) を次の段として副問い合わせで数える (SET NULL / RESTRICT は子行が消えない
+ *   ので辿らない)。
+ * - 深さは `CASCADE_MAX_DEPTH`、FK の総数は `CASCADE_MAX_EDGES` まで (1 段目の FK は上限なしで数え、上限は 2 段目以降に掛ける)。超える分、および循環
+ *   (同じ FK に再度到達) は数えず `moreCascade` を立てる。
+ * - 1 段目の集計が失敗したら例外を投げる (呼び出し側が「確認できなかった」にする)。2 段目以降の
+ *   失敗は、そこまでの結果を返して `unverified` に該当テーブルを入れる。
+ * - すべて `lookup` (`run_lookup_query` 経由の読み取り専用) で数える。
+ */
+export async function loadCascadeImpacts(input: {
+  driver: string;
+  database: string | null | undefined;
+  parentTable: string;
+  refs: readonly IncomingFk[];
+  rootPredicates: RootPredicates;
+  fetchIncoming: (fk: IncomingFk) => Promise<readonly IncomingFk[]>;
+  lookup: (sql: string, rowCap: number) => Promise<Pick<QueryResult, "rows">>;
+}): Promise<CascadeImpacts> {
+  const { driver, database } = input;
+  const impacts: RefImpact[] = [];
+  const unverified: string[] = [];
+  let moreCascade = false;
+  const visited = new Set<string>();
+  let budget = CASCADE_MAX_EDGES;
+
+  let level: CascadeEdge[] = [];
+  for (const fk of input.refs) {
+    const preds = input.rootPredicates(fk);
+    if (preds.length === 0) continue;
+    // 1 段目の FK は全部数える (上限は 2 段目以降の探索にだけ掛ける)。
+    budget--;
+    visited.add(edgeKey(fk));
+    level.push({ fk, preds, parentName: input.parentTable, depth: 1 });
+  }
+
+  while (level.length > 0) {
+    const branches: string[] = [];
+    level.forEach((edge, i) => {
+      const from = qualifiedTable(driver, edge.fk.schema ?? database, edge.fk.table);
+      for (const pred of edge.preds) {
+        branches.push(`SELECT ${i} AS i, COUNT(*) AS n FROM ${from} WHERE ${pred}`);
+      }
+    });
+    const totals = new Map<number, number>();
+    try {
+      for (let b = 0; b < branches.length; b += BRANCHES_PER_QUERY) {
+        const sql = branches.slice(b, b + BRANCHES_PER_QUERY).join(" UNION ALL ");
+        const res = await input.lookup(sql, BRANCHES_PER_QUERY + 1);
+        for (const [k, v] of sumRefCounts([res])) totals.set(k, (totals.get(k) ?? 0) + v);
+      }
+    } catch (e) {
+      if (level[0]?.depth === 1) throw e;
+      for (const edge of level) unverified.push(incomingFkTableName(edge.fk));
+      break;
+    }
+
+    const next: CascadeEdge[] = [];
+    for (const [i, edge] of level.entries()) {
+      const count = totals.get(i) ?? 0;
+      if (count <= 0) continue;
+      const { fk } = edge;
+      const onDelete = normalizeOnDelete(fk.onDelete);
+      impacts.push({
+        parentTable: edge.parentName,
+        ...(fk.schema ? { schema: fk.schema } : {}),
+        table: fk.table,
+        column: fk.column,
+        referencedColumn: fk.referencedColumn,
+        onDelete,
+        count,
+        ...(edge.depth > 1 ? { depth: edge.depth } : {}),
+      });
+      if (onDelete !== "CASCADE") continue;
+      // CASCADE で消える子を、さらに参照している FK があるか。
+      let grand: readonly IncomingFk[];
+      try {
+        grand = await input.fetchIncoming(fk);
+      } catch {
+        unverified.push(incomingFkTableName(fk));
+        continue;
+      }
+      if (grand.length === 0) continue;
+      if (edge.depth >= CASCADE_MAX_DEPTH) {
+        moreCascade = true;
+        continue;
+      }
+      const childFrom = qualifiedTable(driver, fk.schema ?? database, fk.table);
+      for (const g of grand) {
+        const key = edgeKey(g);
+        if (visited.has(key) || budget <= 0) {
+          moreCascade = true;
+          continue;
+        }
+        budget--;
+        visited.add(key);
+        const gcol = quoteIdentFor(driver, g.column);
+        const gref = quoteIdentFor(driver, g.referencedColumn);
+        next.push({
+          fk: g,
+          parentName: incomingFkTableName(fk),
+          depth: edge.depth + 1,
+          preds: edge.preds.map((pred) => `${gcol} IN (SELECT ${gref} FROM ${childFrom} WHERE ${pred})`),
+        });
+      }
+    }
+    level = next;
+  }
+  return { impacts, moreCascade, unverified: [...new Set(unverified)] };
+}
+
+/** エディタ DELETE の事前確認 (子行影響の集計) を待つ上限 (ミリ秒)。FK 取得も含めた全体に掛ける (#1767)。 */
+export const EDITOR_DELETE_PRECHECK_TIMEOUT_MS = 5000;
+
+/** `promise` が `ms` を過ぎても解決しなければ reject する。タイマーは必ず解除する。 */
+export async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("timeout")), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * エディタ DELETE の親テーブルを探す先 (`incoming_foreign_keys` の `database` 引数) を決める (#1767)。
+ * MySQL はデータベース、PostgreSQL はスキーマを受ける。修飾子があればそれ、無ければタブの値。
+ * タブに無いとき、SQLite は既定の `main`、PostgreSQL は `current_schema()` を `currentSchema` で引く。
+ * 決められなければ null (呼び出し側は「確認できなかった」にする)。
+ */
+export async function resolveParentDatabase(input: {
+  driver: string;
+  qualifier: string | null;
+  database: string | null;
+  currentSchema: () => Promise<string | null>;
+}): Promise<string | null> {
+  if (input.qualifier && input.driver !== "sqlite") return input.qualifier;
+  if (input.database) return input.database;
+  if (input.driver === "sqlite") return "main";
+  if (input.driver === "postgres") {
+    try {
+      return (await input.currentSchema()) || null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }

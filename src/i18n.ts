@@ -3430,6 +3430,18 @@ const en = {
   refImpactCascading: "Child rows under ON DELETE CASCADE are deleted together with them.",
   refImpactSqlite:
     "SQLite enforces foreign keys only while PRAGMA foreign_keys is ON; otherwise orphaned child rows are left behind.",
+  refImpactActCascade: "{count} rows will be cascade-deleted",
+  refImpactActBlock: "{count} rows reference it, so the delete is expected to fail",
+  refImpactActSetNull: "{count} rows will be set to NULL",
+  refImpactActSetDefault: "{count} rows will be set to their default",
+  refImpactDepth: "cascade level {depth}",
+  refImpactMoreCascade:
+    "The cascade continues beyond what could be counted here (depth or table limit reached), so more rows may be deleted.",
+  refImpactCheckFailed:
+    "Could not check which child rows this DELETE would affect (timeout or error). It may fail or cascade to child tables.",
+  dangerousFkIntro: "This DELETE affects rows in tables that reference the rows it deletes:",
+  refImpactCheckSkipped: "Could not check the impact on child tables; running the DELETE anyway.",
+  refImpactRunAborted: "The connection changed while checking, so the DELETE was not run.",
   refImpactRowCount: "{count} rows",
   refImpactOpen: "Open child rows",
   refImpactDeleteTitle: "Delete rows still referenced from child tables of {table}?",
@@ -10244,6 +10256,18 @@ const ja: Dict = {
   refImpactCascading: "ON DELETE CASCADE の子行は一緒に削除されます。",
   refImpactSqlite:
     "SQLite は PRAGMA foreign_keys が ON の間だけ外部キーを強制します。OFF だと子の行が孤立します。",
+  refImpactActCascade: "{count} 件が連鎖削除されます",
+  refImpactActBlock: "{count} 件が参照中のため、削除は失敗する見込みです",
+  refImpactActSetNull: "{count} 件が NULL に変更されます",
+  refImpactActSetDefault: "{count} 件が既定値に変更されます",
+  refImpactDepth: "連鎖 {depth} 段目",
+  refImpactMoreCascade:
+    "連鎖はここで数えられる範囲 (深さ・テーブル数の上限) を超えて続いています。さらに多くの行が削除される可能性があります。",
+  refImpactCheckFailed:
+    "この DELETE が子テーブルの行に及ぼす影響を確認できませんでした (タイムアウトまたはエラー)。失敗したり、子テーブルへ連鎖したりする可能性があります。",
+  dangerousFkIntro: "この DELETE は、削除する行を参照している子テーブルの行に影響します:",
+  refImpactCheckSkipped: "子テーブルへの影響を確認できませんでした。そのまま DELETE を実行します。",
+  refImpactRunAborted: "確認中に接続が切り替わったため、DELETE は実行していません。",
   refImpactRowCount: "{count} 行",
   refImpactOpen: "子行を開く",
   refImpactDeleteTitle: "{table} の子テーブルから参照されている行を削除しますか?",

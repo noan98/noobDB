@@ -26,6 +26,7 @@ export function RefImpactList({
   driver,
   partial: partialProp,
   unverified,
+  moreCascade,
   onOpen,
 }: {
   impacts: RefImpact[];
@@ -33,6 +34,8 @@ export function RefImpactList({
   driver: string;
   partial?: boolean;
   unverified?: string[];
+  /** 深さ / FK 数の上限で連鎖を辿りきれなかった (さらに連鎖がありうる、#1767)。 */
+  moreCascade?: boolean;
   onOpen?: (impact: RefImpact) => void;
 }) {
   const t = useT();
@@ -43,7 +46,18 @@ export function RefImpactList({
         {t("refImpactUnverified", { tables: unverified.join(", ") })}
       </Callout>
     ) : null;
-  if (impacts.length === 0) return unverifiedNote;
+  const moreCascadeNote = moreCascade ? (
+    <Callout tone="warning" role="status" data-testid="ref-impact-more-cascade">
+      {t("refImpactMoreCascade")}
+    </Callout>
+  ) : null;
+  if (impacts.length === 0)
+    return (
+      <>
+        {moreCascadeNote}
+        {unverifiedNote}
+      </>
+    );
   const partial = partialProp || impacts.some((i) => i.capped);
   const total = impacts.reduce((sum, i) => sum + i.count, 0);
   const shown = impacts.slice(0, MAX_LINES);
@@ -83,11 +97,14 @@ export function RefImpactList({
               <Box flex="1" minW="0" fontFamily="mono" fontSize="sm" wordBreak="break-all">
                 {`${incomingFkTableName(imp)}.${imp.column} ← ${imp.parentTable ? `${imp.parentTable}.` : ""}${imp.referencedColumn}`}
                 <chakra.span display="block" fontFamily="body" color="app.textMuted">
-                  {t(imp.capped ? "refImpactRowCountCapped" : "refImpactRowCount", { count: imp.count })} · ON
-                  DELETE {imp.onDelete}
+                  {mode === "rows"
+                    ? t(actionKey(imp.onDelete), { count: imp.count })
+                    : t(imp.capped ? "refImpactRowCountCapped" : "refImpactRowCount", { count: imp.count })}
+                  {(imp.depth ?? 1) > 1 && ` · ${t("refImpactDepth", { depth: imp.depth ?? 1 })}`} · ON DELETE{" "}
+                  {imp.onDelete}
                 </chakra.span>
               </Box>
-              {onOpen && (
+              {onOpen && (imp.depth ?? 1) === 1 && (
                 <Button type="button" variant="secondary" size="sm" onClick={() => onOpen(imp)}>
                   {t("refImpactOpen")}
                 </Button>
@@ -99,7 +116,22 @@ export function RefImpactList({
           )}
         </Box>
       </Callout>
+      {moreCascadeNote}
       {unverifiedNote}
     </>
   );
+}
+
+/** 行削除での ON DELETE ごとの結果文言 (連鎖削除 / 失敗する見込み / 変更、#1767)。 */
+function actionKey(rule: RefImpact["onDelete"]) {
+  switch (rule) {
+    case "CASCADE":
+      return "refImpactActCascade";
+    case "SET NULL":
+      return "refImpactActSetNull";
+    case "SET DEFAULT":
+      return "refImpactActSetDefault";
+    default:
+      return "refImpactActBlock";
+  }
 }
