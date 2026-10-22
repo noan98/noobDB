@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 /// DB-agnostic value type returned to the frontend as JSON.
 ///
-/// `Serialize` は手書き ([`impl Serialize for Value`])。`Deserialize` は untagged の derive。
+/// `Serialize` は手書き ([`impl Serialize for Value`])。
 ///
 /// `Deserialize` は `ValueDe` 経由で、JS の安全整数の外にある整数 (フロントの `number` 由来で、
 /// もともと f64 だったもの。DOUBLE 列の 1e16 など) を `Float` に寄せる (#1780)。
@@ -1240,9 +1240,9 @@ mod js_safe_tests {
         );
     }
 
-    /// `Value::Int(` / `Value::UInt(` を直接組み立てる行 (本体コード) を探す。
-    /// `#[cfg(test)]` 以降は対象外。`=>` を含む行 (match のパターン) と `matches!` /
-    /// `if let` は「読む側」なので対象外。
+    /// `Value::Int(` / `Value::UInt(` を直接組み立てる式 (本体コード) を探す。
+    /// `#[cfg(test)] mod` 以降は対象外、それ以外の `#[cfg(test)]` 項目は波括弧の深さで飛ばす。
+    /// match のパターン・`if let` の左辺・`matches!` の第 2 引数以降は「読む側」なので対象外。
     fn raw_int_constructions(name: &str, src: &str) -> Vec<String> {
         // 「構築しうる式」の部分だけを返す。match アームは `=>` の右辺、`if let` は `=` の右辺、
         // `matches!` は第 1 引数 (式) だけ。パターン側の `Value::Int(n)` は読む側なので対象外。
