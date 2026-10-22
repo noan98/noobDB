@@ -42,16 +42,21 @@ function extractKinds(src: string): string[] {
   }
   const body = cleaned.slice(open, end);
   const kinds: string[] = [];
-  for (const m of body.matchAll(/=>\s*"(\w+)"/g)) kinds.push(m[1]);
+  // `=> { "x" }` のブロック形式の腕も拾う。
+  for (const m of body.matchAll(/=>\s*\{?\s*"(\w+)"/g)) kinds.push(m[1]);
+  // 取りこぼし検出: 腕 (`=>`) の数と抽出した kind の数が一致すること。
+  const arms = body.match(/=>/g)?.length ?? 0;
+  expect(kinds.length, "kind() の腕から kind 文字列を抽出しきれていない").toBe(arms);
   return kinds;
 }
 
-/** 関数 / オブジェクトリテラル `name` の本体にある `case "x":` を返す。 */
+/** 関数 `anchor` の本体にある `case "x":` を返す。 */
 function extractCaseLabels(src: string, anchor: string): string[] {
   const start = src.indexOf(anchor);
   expect(start, `errorHints.ts に ${anchor} が見つからない`).toBeGreaterThanOrEqual(0);
   const rest = src.slice(start);
   const next = rest.indexOf("\n}\n");
+  expect(next, `${anchor} の本体の終端が見つからない`).toBeGreaterThanOrEqual(0);
   const block = rest.slice(0, next);
   return [...block.matchAll(/case\s+"(\w+)":/g)].map((m) => m[1]);
 }
