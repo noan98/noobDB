@@ -11678,6 +11678,13 @@ export default function App() {
     },
     openErDiagramFromEmpty: () => openFullView("erDiagram"),
     openCommandPaletteFromEmpty: () => setShowCommandPalette(true),
+    runOrFocusEditorFromEmpty: (paneId: string) => {
+      const editor = editorRefs.current.get(paneId);
+      if (!editor) return;
+      // 本文が空だと runAll は何もしないので、書き始められるようフォーカスを渡す。
+      if (editor.getText().trim()) editor.runAll();
+      else editor.focus();
+    },
   });
   const broadcastAvailable =
     !!sessionId &&
