@@ -225,11 +225,14 @@ pub mod __test_api {
     };
     pub use crate::commands::plan_watch::{PlanWatchRefresh, PlanWatchRefreshError};
     pub use crate::commands::profile_backup::{EncryptedExportResult, EncryptedImportResult};
-    pub use crate::commands::schema::{AlterTableContext, SchemaCacheTime};
+    pub use crate::commands::schema::{
+        column_dependencies_core, AlterTableContext, ColumnDependencyReport, SchemaCacheTime,
+    };
     pub use crate::commands::schema_drift::{RevertSql, SchemaDriftCapture};
     pub use crate::commands::ssh::ResolvedSshAlias;
     pub use crate::commands::timelapse::{CaptureOutcome, WatchOutcome};
     pub use crate::db::assertions::AssertionSql;
+    pub use crate::db::column_deps::ColumnDependency;
     pub use crate::db::diff::TableColumns;
     pub use crate::db::sandbox::SandboxConflict;
     pub use crate::db::schema_insight::{IncomingForeignKey, TableStatPrevious, TableStatistic};
@@ -1658,6 +1661,7 @@ pub fn run() {
             commands::search::data_search_stream,
             commands::schema::alter_table_context,
             commands::schema::incoming_foreign_keys,
+            commands::schema::column_dependencies,
             commands::server::server_info,
             commands::server::server_metrics,
             commands::server::sqlite_maintenance,

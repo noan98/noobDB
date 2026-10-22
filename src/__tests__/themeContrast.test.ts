@@ -4,6 +4,7 @@ import { describe, it, expect } from "vitest";
 import css from "../App.css?raw";
 // theme.ts の dark 判定条件 (`conditions.dark`) の実ソースを比較するため。
 import themeTsSource from "../theme.ts?raw";
+import gridSource from "../components/ResultGrid.tsx?raw";
 // コントラスト比の計算はアクセント色ロジック (accent.ts) と共有する (#559)。
 // 二重実装を避け、accent.test.ts と同じ式で全テーマ/プリセットを検証する。
 import { contrastRatio } from "../accent";
@@ -666,6 +667,39 @@ describe("AI 受信中キャレット / ラベル色 --stream-caret (#1756)", ()
     for (const bg of ["bg", "bg-elevated"]) {
       expect(contrastRatio(c, vars[bg]), `caret ${c} on --${bg}`).toBeGreaterThanOrEqual(AA_UI);
       expect(contrastRatio(c, vars[bg]), `label ${c} on --${bg}`).toBeGreaterThanOrEqual(AA_TEXT);
+    }
+  });
+});
+
+describe("結果グリッドのクロスハイライト地 (accent N% on bg-header) の上でも文字が AA を保つ (#1755)", () => {
+  // 割合は ResultGrid の CSS から抽出して固定する (CSS だけ濃くして AA を割るのを防ぐ)。
+  const m = gridSource.match(
+    /td\.row-index\.is-active-row": \{\s*background: "color-mix\(in srgb, var\(--accent\) ([\d.]+)%, var\(--bg-header\)\)"/,
+  );
+  const pct = Number(m?.[1]);
+  const mix = (a: string, b: string, p: number): string => {
+    const ch = (i: number) =>
+      Math.round(
+        (parseInt(a.slice(1).slice(i, i + 2), 16) * p +
+          parseInt(b.slice(1).slice(i, i + 2), 16) * (100 - p)) /
+          100,
+      );
+    return `#${[0, 2, 4].map((i) => ch(i).toString(16).padStart(2, "0")).join("")}`;
+  };
+  const themes: [string, Record<string, string>][] = [
+    ["light", light],
+    ["dark", { ...light, ...dark }],
+    ...presets.map((p) => [p.name, { ...light, ...p.vars }] as [string, Record<string, string>]),
+  ];
+  it("割合を CSS から抽出できる (上限 20%)", () => {
+    expect(m, "is-active-row の地色が抽出できる").toBeTruthy();
+    expect(pct).toBeLessThanOrEqual(20);
+  });
+  it.each(themes)("%s: 行番号の文字 (--text) と列ヘッダの補助文字 (--text-muted) が AA", (_n, vars) => {
+    const bg = mix(vars.accent, vars["bg-header"], pct);
+    for (const fg of ["text", "text-muted"]) {
+      const r = contrastRatio(vars[fg], bg);
+      expect(r, `--${fg} on accent ${pct}% / bg-header = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(AA_TEXT);
     }
   });
 });
