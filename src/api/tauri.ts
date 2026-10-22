@@ -2821,6 +2821,9 @@ export interface ScriptFileStamp {
  * SQL ファイルの文字コード識別子 (#1535)。Rust `TextEncoding` の serde 名と一致する。
  * `utf-8-bom` / `utf-16*` は保存時に BOM を付ける。
  */
+/** About 面から開けるプロジェクトのリンク (Rust の `ProjectLink`, #1770)。 */
+export type ProjectLink = "repository" | "docs";
+
 export type TextEncodingId = "utf-8" | "utf-8-bom" | "utf-16le" | "utf-16be" | "shift_jis" | "euc-jp";
 
 /** `read_sql_file` の戻り値: 本文と実際に使った文字コード (保存時に同じ文字コードへ戻す)。 */

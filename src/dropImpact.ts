@@ -21,7 +21,7 @@ export function collectDropImpacts(
   const gone = new Set(dropping);
   const impacts: DropImpact[] = [];
   for (const table of dropping) {
-    const refs = (fksByTable[table] ?? []).filter((fk) => !gone.has(fk.table));
+    const refs = (fksByTable[table] ?? []).filter((fk) => fk.schema || !gone.has(fk.table));
     if (refs.length > 0) impacts.push({ table, refs });
   }
   return impacts;
