@@ -2806,6 +2806,40 @@ td.is-find-current::after {
   animation: streaming-pulse 1.2s ease-in-out infinite;
 }
 
+/* お気に入り追加直後の★の淡いスパーク (#1782)。`illust-spark` と同じく transform / opacity だけ
+   (合成のみ)・色は --favorite のみ。一度きりで、reduced-motion / hc-* では出さない。 */
+.fav-pop-spark {
+  position: absolute;
+  inset: -20%;
+  aspect-ratio: 1;
+  margin: auto;
+  border-radius: 50%;
+  pointer-events: none;
+  /* 中心を抜いたリングにして★の裏に隠れないようにする。 */
+  background: radial-gradient(
+    circle,
+    transparent 35%,
+    color-mix(in srgb, var(--favorite) 70%, transparent) 45%,
+    transparent 70%
+  );
+  animation: fav-pop-spark calc(var(--dur-shimmer) * 0.5) var(--ease) 1 both;
+}
+
+@keyframes fav-pop-spark {
+  0% { opacity: 1; transform: scale(0.8); }
+  100% { opacity: 0; transform: scale(1.4); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .fav-pop-spark { display: none; }
+}
+
+:root[data-motion="reduced"] .fav-pop-spark,
+:root[data-theme="hc-light"] .fav-pop-spark,
+:root[data-theme="hc-dark"] .fav-pop-spark {
+  display: none;
+}
+
 /* AI 応答の受信中表示 (#1756): 本文末尾のティールのキャレットと、受信中ラベルのブランド色。
    点滅は CSS アニメのみ (React は再描画しない)。周期は --dur-shimmer に揃える。
    reduced-motion は上の全体ブロックが 1 回再生に縮め点灯のまま静止、hc-* は明示的に静止。 */
