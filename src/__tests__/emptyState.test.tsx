@@ -33,6 +33,20 @@ describe("EmptyState onboarding (#450)", () => {
   });
 });
 
+describe("buildResultEmptyActions (#1784)", () => {
+  it("並び順とショートカット有無が固定されている", async () => {
+    const { buildResultEmptyActions } = await import("../components/resultEmptyActions");
+    const noop = () => {};
+    const items = buildResultEmptyActions(
+      (k) => `L:${k}`,
+      { run: noop, snippets: noop, commandPalette: noop },
+      { run: "Ctrl+Enter", commandPalette: "Ctrl+K" },
+    );
+    expect(items.map((i) => i.id)).toEqual(["run", "snippets", "commandPalette"]);
+    expect(items.filter((i) => i.shortcut).map((i) => i.id)).toEqual(["run", "commandPalette"]);
+  });
+});
+
 describe("EmptyState secondaryActions (#1271)", () => {
   it("renders secondary buttons with shortcut hints and fires handlers", async () => {
     const { buildTabsEmptyActions, TABS_EMPTY_ACTIONS } = await import("../components/tabsEmptyActions");

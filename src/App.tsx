@@ -11678,6 +11678,12 @@ export default function App() {
     },
     openErDiagramFromEmpty: () => openFullView("erDiagram"),
     openCommandPaletteFromEmpty: () => setShowCommandPalette(true),
+    runOrFocusEditorFromEmpty: (paneId: string) => {
+      const editor = editorRefs.current.get(paneId);
+      if (!editor) return;
+      editor.focus();
+      editor.runAll();
+    },
   });
   const broadcastAvailable =
     !!sessionId &&
