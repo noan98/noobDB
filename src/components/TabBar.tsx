@@ -9,6 +9,7 @@ import { moveTabBy } from "../tabReorder";
 import { Tooltip } from "./Tooltip";
 import { Input } from "./ui";
 import { labelWithShortcut } from "../shortcutLabel";
+import { useTabCloseGlide } from "./useTabCloseGlide";
 import { DropInsertionMarker } from "./DropInsertionMarker";
 import { FlightIcon } from "./FlightIcon";
 import { isImeComposing } from "./modalKeys";
@@ -319,6 +320,9 @@ export const TabBar = memo(function TabBar({
 
   // --- Overflow handling: scroll arrows + "all tabs" dropdown ---
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // タブを閉じて DOM から外れる 1 回だけ、右側のタブの詰め直しを滑らせる (#1765)。
+  // 常時 `layout` は付けず、ドラッグ並べ替え (Reorder) には触れない。
+  const { onExitComplete: glideAfterClose } = useTabCloseGlide(scrollRef, tabRefs);
   const [overflow, setOverflow] = useState({ left: false, right: false });
   const [listOpen, setListOpen] = useState(false);
   const [listFilter, setListFilter] = useState("");
@@ -477,7 +481,7 @@ export const TabBar = memo(function TabBar({
           padding: 0,
         }}
       >
-        <AnimatePresence initial={false}>
+        <AnimatePresence initial={false} onExitComplete={glideAfterClose}>
           {tabs.map((tab) => {
             const isActive = tab.id === activeTabId;
             const title =
@@ -522,7 +526,7 @@ export const TabBar = memo(function TabBar({
                 title={renamingTabId === tab.id ? undefined : title}
                 aria-busy={tab.running ? true : undefined}
                 // 追加・削除は opacity + scaleX だけで表す (#1322)。width を 0 ↔ auto に
-                // 補間すると隣のタブが毎フレーム再配置されるため。隣は即時に詰まる。
+                // 補間すると隣のタブが毎フレーム再配置されるため。隣は退場完了で詰まり、その 1 回だけ `useTabCloseGlide` が滑らせる (#1765)。
                 initial={variants.fadeScaleX.initial}
                 animate={variants.fadeScaleX.animate}
                 exit={variants.fadeScaleX.exit}
