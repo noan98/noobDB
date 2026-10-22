@@ -2588,6 +2588,43 @@ td.is-find-current::after {
   animation: none;
 }
 
+/* ---------- 接続経路図 (#1754) ----------
+   `ConnectionPathDiagram`: 線 (トンネル) の充填とノードの脈動。ティールの線は
+   ホップ間を左から順に伸びて点灯し、進行中のノードだけ `pulse` する。線の外枠
+   (--border-strong) がトンネルの壁で、ライトテーマでもティールの充填が読める。
+   reduced-motion は下のブロックが 0.01ms 化し、hc-* は装飾より AAA を優先して
+   静止 (最終状態) にする。直結 (plain) はティールを使わず中立色にする。 */
+.conn-path-fill {
+  transform-origin: left center;
+  transform: scaleX(0);
+  background: var(--brand-teal);
+  transition: transform var(--dur-med) var(--ease-out);
+}
+.conn-path-fill[data-kind="plain"] { background: var(--text-muted); }
+.conn-path-fill[data-lit="true"] { transform: scaleX(1); }
+.conn-path-node[data-state="pending"] { opacity: 0.55; }
+/* 未到達は破線の枠でも区別する (hc-* は opacity を使わず形だけで示す)。 */
+.conn-path-node[data-state="pending"] .conn-path-tile { border-style: dashed; }
+/* 点灯済みトンネルの外枠はティール寄りの濃い色にして、ライトテーマでも充填が読める。 */
+.conn-path-edge:has(> .conn-path-fill[data-kind="tunnel"][data-lit="true"]) {
+  border-color: color-mix(in srgb, var(--brand-teal) 45%, var(--text));
+}
+:root[data-theme="hc-light"] .conn-path-node[data-state="pending"],
+:root[data-theme="hc-dark"] .conn-path-node[data-state="pending"] {
+  opacity: 1;
+}
+.conn-path-node[data-state="active"] {
+  animation: pulse var(--dur-progress-loop) var(--ease) infinite;
+}
+:root[data-theme="hc-light"] .conn-path-fill,
+:root[data-theme="hc-dark"] .conn-path-fill {
+  transition: none;
+}
+:root[data-theme="hc-light"] .conn-path-node[data-state="active"],
+:root[data-theme="hc-dark"] .conn-path-node[data-state="active"] {
+  animation: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   :root:not([data-motion="full"]) *,
   :root:not([data-motion="full"]) *::before,

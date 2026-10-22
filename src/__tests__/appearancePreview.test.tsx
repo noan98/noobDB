@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { MotionConfig } from "motion/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppearancePreview } from "../components/AppearancePreview";
-import { renderWithProviders, screen } from "./testUtils";
+import { renderWithProviders, screen, waitFor } from "./testUtils";
 import { accentVars } from "../accent";
 import { DEFAULT_SYNTAX_COLORS } from "../settings";
 import { system } from "../theme";
@@ -104,5 +105,120 @@ describe("AppearancePreview (#1581)", () => {
     renderWithProviders(<AppearancePreview previewVars={{ "--accent": "#123456" }} />);
     const el = screen.getByTestId("appearance-preview");
     expect(el.style.getPropertyValue("--accent")).toBe("#123456");
+  });
+});
+
+describe("AppearancePreview のライブデモ (#1781)", () => {
+  const bar = () => screen.getByTestId("appearance-preview").querySelector<HTMLElement>("[data-demo='bar']");
+
+  it("通常は 1 行上 (-100%) から始まり、選択下地・実行ボタン・光る枠を持つ", () => {
+    renderWithProviders(
+      <MotionConfig reducedMotion="never">
+        <AppearancePreview />
+      </MotionConfig>,
+    );
+    expect(bar()?.style.transform).toBe("translateY(-100%)");
+    expect(screen.getByTestId("appearance-preview").querySelector("[data-demo='run']")).not.toBeNull();
+    expect(screen.getByTestId("appearance-preview").querySelector("[data-demo='flash']")).not.toBeNull();
+  });
+
+  it("reduced-motion (アプリ内設定) では最初から終了状態で、transform を持たない", () => {
+    renderWithProviders(
+      <MotionConfig reducedMotion="always">
+        <AppearancePreview />
+      </MotionConfig>,
+    );
+    expect(bar()?.style.transform ?? "").toBe("");
+  });
+
+  it("ハイコントラストテーマでは最初から終了状態", () => {
+    document.documentElement.setAttribute("data-theme", "hc-dark");
+    try {
+      renderWithProviders(
+        <MotionConfig reducedMotion="never">
+          <AppearancePreview />
+        </MotionConfig>,
+      );
+      expect(bar()?.style.transform ?? "").toBe("");
+    } finally {
+      document.documentElement.removeAttribute("data-theme");
+    }
+  });
+
+  // 250ms の待ちと motion の実尺を実時間で待つので、負荷時に既定 5 秒を超えないよう余裕を持たせる。
+  describe("再生のタイミング", { timeout: 10_000 }, () => {
+    type IoCb = (entries: { isIntersecting: boolean }[]) => void;
+    let ioCb: IoCb | null = null;
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      ioCb = null;
+    });
+    const stubIo = (autoVisible: boolean) => {
+      vi.stubGlobal(
+        "IntersectionObserver",
+        class {
+          constructor(cb: IoCb) {
+            ioCb = cb;
+          }
+          observe() {
+            if (autoVisible) ioCb?.([{ isIntersecting: true }]);
+          }
+          disconnect() {}
+        },
+      );
+    };
+    const ui = (mode: "never" | "always", key = "a") => (
+      <MotionConfig reducedMotion={mode}>
+        <AppearancePreview replayKey={key} />
+      </MotionConfig>
+    );
+    const START = "translateY(-100%)";
+
+    it("画面に見えるまで再生しない", async () => {
+      stubIo(false);
+      renderWithProviders(ui("never"));
+      await new Promise((r) => setTimeout(r, 450));
+      expect(bar()?.style.transform).toBe(START);
+      ioCb?.([{ isIntersecting: true }]);
+      await waitFor(() => expect(bar()?.style.transform).toBe(""), { timeout: 3000 });
+    });
+
+    it("再生中に reduced-motion へ切り替えると終了状態へ止まる", async () => {
+      stubIo(true);
+      const r = renderWithProviders(ui("never"));
+      await new Promise((res) => setTimeout(res, 400));
+      r.rerender(ui("always"));
+      expect(bar()?.style.transform ?? "").toBe("");
+    });
+
+    it("確定した設定値 (replayKey) が変わると 1 回だけ再生し直す", async () => {
+      stubIo(true);
+      const r = renderWithProviders(ui("never", "a"));
+      await waitFor(() => expect(bar()?.style.transform).toBe(""), { timeout: 3000 });
+      r.rerender(ui("never", "b"));
+      // 開始位置へ移るのは再生の直前 (押下の後ではなく play() 先頭)。待ち中は動かさない。
+      expect(bar()?.style.transform).toBe("");
+      await waitFor(() => expect(bar()?.style.transform).toBe(START), { timeout: 3000 });
+      await waitFor(() => expect(bar()?.style.transform).toBe(""), { timeout: 3000 });
+    });
+
+    it("設定変更と同時に hc-* へ切り替わったら、開始位置へ一度も跳ばない", async () => {
+      stubIo(true);
+      const r = renderWithProviders(ui("never", "a"));
+      await waitFor(() => expect(bar()?.style.transform).toBe(""), { timeout: 3000 });
+      const seen: string[] = [];
+      const mo = new MutationObserver(() => seen.push(bar()?.style.transform ?? ""));
+      mo.observe(bar() as HTMLElement, { attributes: true, attributeFilter: ["style"] });
+      r.rerender(ui("never", "b"));
+      document.documentElement.setAttribute("data-theme", "hc-dark");
+      try {
+        await new Promise((res) => setTimeout(res, 500));
+        expect(seen).not.toContain(START);
+        expect(bar()?.style.transform ?? "").toBe("");
+      } finally {
+        mo.disconnect();
+        document.documentElement.removeAttribute("data-theme");
+      }
+    });
   });
 });

@@ -34,6 +34,8 @@ import {
   type DbAuthMethod,
 } from "./awsIam";
 import { ComboSelect } from "./ComboSelect";
+import { ConnectionPathDiagram } from "./ConnectionPathDiagram";
+import { buildConnectionPath } from "./connectionPath";
 import { buildConnectionUrl, parseConnectionUrl } from "./connectionUrl";
 import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
 import {
@@ -547,6 +549,21 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const awsIamConfig = () =>
     isFileBacked ? null : buildAwsIamConfig(authMethod, driver, awsRegion, awsProfile);
   const inferredRegion = inferRdsRegion(host);
+
+  // 経路図 (#1754): 入力中の非秘密フィールドから導出し、入力に即追従する。
+  const routePath = buildConnectionPath({
+    route,
+    host,
+    port,
+    ssh: useSsh
+      ? {
+          host: sshHost,
+          port: sshPort,
+          jump: useSshJump ? { host: sshJumpHost, port: sshJumpPort } : null,
+        }
+      : null,
+    ssm: useSsm ? { target: ssmTarget } : null,
+  });
 
   const routeOptions: SegmentedOption<ConnectionRoute>[] = [
     { value: "direct", label: t("formRouteDirect") },
@@ -1418,6 +1435,17 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
           <Legend>{t("formRoute")}</Legend>
           <Box mb="2">
             <Segmented value={route} options={routeOptions} onChange={setRoute} ariaLabel={t("formRoute")} />
+          </Box>
+          <Box
+            mb="3"
+            p="3"
+            borderRadius="md"
+            border="1px solid"
+            borderColor="app.border"
+            bg="app.surfaceMuted"
+            data-testid="connection-form-path"
+          >
+            <ConnectionPathDiagram path={routePath} driver={driver} accentColor={color} />
           </Box>
           {useSsm && (
             <>

@@ -1244,6 +1244,14 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                 </SettingsSectionHeader>
                 <AppearancePreviewDock>
                   <AppearancePreview
+                    replayKey={JSON.stringify([
+                      settings.themePreset,
+                      settings.accentColor,
+                      settings.density,
+                      settings.fontSizePx,
+                      settings.syntaxColors,
+                      toggleTheme,
+                    ])}
                     previewVars={appearancePreviewVars({
                       previewPreset,
                       previewAccent,

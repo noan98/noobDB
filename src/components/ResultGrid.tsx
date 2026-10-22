@@ -103,6 +103,7 @@ import { moveColumnId, reorderColumnIds } from "./columnReorderFlip";
 import { rowSelectRange, selectAllRange } from "./gridSelection";
 import { useColumnReorderFlip } from "./useColumnReorderFlip";
 import { rowCrossfadeKeys, type RowCrossfadeKeys } from "./rowCrossfade";
+import { usePageTurn } from "./usePageTurn";
 import { useRowCrossfade } from "./useRowCrossfade";
 import { useFirstBatchReveal } from "./useFirstBatchReveal";
 import { useGlideFrame } from "./useGlideFrame";
@@ -1477,6 +1478,13 @@ interface Props {
   initialScrollTop?: number;
   /** スクロール位置が変わるたびに現在の scrollTop を通知する (#678。タブ永続化用)。 */
   onScroll?: (scrollTop: number) => void;
+  /**
+   * 現在のページ番号 (table タブのサーバ側ページング、#1752)。変わったコミットで
+   * `<tbody>` をスライド / クロスフェードし、スクロールを先頭へ戻す。省略時は無効。
+   */
+  pageTurnPage?: number;
+  /** `pageTurnPage` の比較範囲 (タブ ID 等)。変わったときは別の結果とみなして再生しない。 */
+  pageTurnScope?: string;
   /**
    * グリッド系ショートカット (コピー/コピー+ヘッダ/行インスペクタ/Undo/Redo) の
    * 解決済みバインド (#681)。省略時は今日の既定キー (`DEFAULT_SHORTCUT_COMBOS`)
@@ -4074,6 +4082,8 @@ export const DataGrid = memo(function DataGrid({
   emptyMessage,
   skeleton = false,
   scrollContainerRef,
+  pageTurnPage,
+  pageTurnScope,
   rowSqlDriver,
   rowSqlDatabase,
   rowSqlTable,
@@ -4204,6 +4214,9 @@ export const DataGrid = memo(function DataGrid({
    * snapshots) to render every row as before.
    */
   scrollContainerRef?: RefObject<HTMLDivElement | null>;
+  /** ページ送り演出 (#1752)。`ResultGrid` の同名 prop を中継する。 */
+  pageTurnPage?: number;
+  pageTurnScope?: string;
   /**
    * When `rowSqlTable` is set, the right-click menu can generate executable
    * INSERT / UPDATE / DELETE statements for the clicked row. `rowSqlDriver`
@@ -5351,6 +5364,8 @@ export const DataGrid = memo(function DataGrid({
   const gridTbodyRef = useRef<HTMLTableSectionElement>(null);
   // ハンドル経由 (非同期ソート) の間は、順序が届いたコミットで再生するよう適用済みの順序のキーを使う。
   useRowCrossfade(gridTbodyRef, handleManual && handleOrder ? handleOrder.fade : fadeKeys, gridViewKey ?? "");
+  // ページ送りの方向付きスライド + スクロール先頭リセット (#1752)。
+  usePageTurn(gridTbodyRef, scrollContainerRef, pageTurnPage, pageTurnScope ?? "");
   // 初回バッチ着弾 (スケルトン → 実データ) の 1 回限りの stagger リビール (#1579)。
   useFirstBatchReveal(gridTbodyRef, scrollContainerRef, skeleton, rows.length);
 
@@ -8057,7 +8072,11 @@ export const DataGrid = memo(function DataGrid({
           }
           onPin={
             enableColumnControls
-              ? (side) => table.getColumn(String(filterMenu.colIdx))?.pin(tablePinPosition(side))
+              ? (side) => {
+                  // 確定の 1 回だけヘッダ位置を記録し、コミット後に列を固定端へ滑らせる (#1753)。
+                  columnFlip.capture();
+                  table.getColumn(String(filterMenu.colIdx))?.pin(tablePinPosition(side));
+                }
               : undefined
           }
           onShowStats={
@@ -8576,6 +8595,8 @@ export const ResultGrid = memo(
       serverFilter,
       onSetServerSort,
       onSetServerFilter,
+      pageTurnPage,
+      pageTurnScope,
     }: Props,
     ref,
   ) {
@@ -9006,6 +9027,22 @@ export const ResultGrid = memo(
     const keepAliveActiveRef = useRef(keepAliveActive);
     keepAliveActiveRef.current = keepAliveActive;
     const lastScrollTopRef = useRef(0);
+    // ページ送り (同一タブ内の page 変更) は先頭リセット (usePageTurn) に合わせて記録済みの
+    // スクロール位置も捨てる。keep-alive で隠れている間は DOM の scrollTop を戻せず、
+    // 再表示時に古い位置へ復元されてしまうため。
+    const pageTurnPrevRef = useRef({ page: pageTurnPage, scope: pageTurnScope });
+    useLayoutEffect(() => {
+      const prev = pageTurnPrevRef.current;
+      pageTurnPrevRef.current = { page: pageTurnPage, scope: pageTurnScope };
+      if (
+        prev.scope === pageTurnScope &&
+        prev.page !== undefined &&
+        pageTurnPage !== undefined &&
+        prev.page !== pageTurnPage
+      ) {
+        lastScrollTopRef.current = 0;
+      }
+    });
     const wasKeepAliveActiveRef = useRef(keepAliveActive);
     useLayoutEffect(() => {
       const was = wasKeepAliveActiveRef.current;
@@ -10401,6 +10438,8 @@ export const ResultGrid = memo(
             rows={result.rows}
             onMaskConfigChange={setMaskConfig}
             scrollContainerRef={containerRef}
+            pageTurnPage={pageTurnPage}
+            pageTurnScope={pageTurnScope}
             globalFilter={deferredSearch}
             editable={editableActive}
             editableColumns={editableCols}

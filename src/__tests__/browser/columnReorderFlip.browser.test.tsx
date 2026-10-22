@@ -83,6 +83,7 @@ describe("列ドラッグ並べ替えの FLIP (#1021, 実ブラウザ)", () => {
 
     // 終了後は inline transform を残さず定位置に収まる。
     anim.finish();
+    expect(headerCell("0").style.translate).toBe("");
     expect(headerCell("0").style.transform).toBe("");
     expect(headerCell("0").getBoundingClientRect().left).toBeGreaterThan(startLeft);
   });

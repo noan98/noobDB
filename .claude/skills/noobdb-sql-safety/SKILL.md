@@ -46,6 +46,11 @@ description: noobDB の SQL 安全網を変更するとき — 読み取り専�
 | `confirm_writes` / `is_production` | **UI レベルの誤操作防止のみ**。IPC 直叩きで素通り |
 | フライトレコーダー (#735) | ベストエフォートのローカル保険。捕捉に失敗しても書き込みは通る |
 
+新しい `#[tauri::command]` は `src/__tests__/readOnlyGuardParity.test.ts` で
+`WRITE_CAPABLE` (本体に `ensure_allowed_for_session` / `session.read_only` などのガード参照を
+要求) か `READ_ONLY_SAFE` (理由つき) に必ず分類する (#1778)。書き込み得るコマンドのガード忘れは
+ここで落ちる。書き込みプレビュー (dry-run) は `READ_ONLY_SAFE` の `DRY_RUN` 理由で許可している。
+
 確実に書き込みを禁止したい場合は `read_only` か DB 側の権限設定を併用します。
 
 詳細 (許可リスト、キーワード許可リストでは見えない書き込み経路、テーブル

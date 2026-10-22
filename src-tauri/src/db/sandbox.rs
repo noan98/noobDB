@@ -273,7 +273,7 @@ fn is_decimal_type(data_type: &str) -> bool {
 /// 整数値の `f64` (2^53 未満) を `Value::Int` にそろえる。小数や範囲外は `None`。
 fn integral_float(f: f64) -> Option<Value> {
     (f.is_finite() && f.fract() == 0.0 && f.abs() < 9_007_199_254_740_992.0)
-        .then_some(Value::Int(f as i64))
+        .then(|| Value::from_i64_lossless(f as i64))
 }
 
 /// DECIMAL 文字列を比較用の正準形にする。小数部が無い (またはすべて 0 の) 整数は
@@ -292,9 +292,9 @@ fn canonical_decimal(s: &str) -> Option<Value> {
             .parse::<i128>()
         {
             return Some(if let Ok(i) = i64::try_from(n) {
-                Value::Int(i)
+                Value::from_i64_lossless(i)
             } else if let Ok(u) = u64::try_from(n) {
-                Value::UInt(u)
+                Value::from_u64_lossless(u)
             } else {
                 Value::String(n.to_string())
             });
@@ -710,6 +710,34 @@ mod tests {
     }
 
     #[test]
+    fn detect_conflicts_distinguishes_decimal_values_beyond_2_pow_53() {
+        // DECIMAL(20,0) の列で 2^53 を超える値は、隣り合う値 (...992 / ...993) を区別できる (#1780)。
+        let diff_with = |v: &str| {
+            let mut d = data_diff(vec![RowDiff {
+                status: RowStatus::Different,
+                key: vec![Value::Int(1)],
+                source: Some(vec![Value::Int(1), Value::String(v.into())]),
+                target: Some(vec![Value::Int(1), Value::String("0".into())]),
+                changed_columns: vec!["v".to_string()],
+                key_unreliable: false,
+            }]);
+            d.column_types = vec!["BIGINT".to_string(), "DECIMAL(20,0)".to_string()];
+            d
+        };
+        let conflicts = detect_conflicts(
+            &diff_with("9007199254740993"),
+            &diff_with("9007199254740992"),
+        );
+        assert_eq!(conflicts.len(), 1, "隣り合う値は衝突として検出される");
+        // 同じ値は表記が違っても (小数部 .00 / 先頭 +) 収束し、衝突にならない。
+        assert!(detect_conflicts(
+            &diff_with("9007199254740993"),
+            &diff_with("+9007199254740993.00")
+        )
+        .is_empty());
+    }
+
+    #[test]
     fn detect_conflicts_skips_rows_both_sides_changed_to_the_same_value() {
         let desired = data_diff(vec![
             // 両側が同じ値 (99) に更新 → 収束。
@@ -1037,7 +1065,7 @@ mod tests {
             vec![Value::String("9007199254740993".into())],
             vec![Value::String("9007199254740992".into())],
             vec![Value::String("9007199254740993.00".into())],
-            vec![Value::Int(9_007_199_254_740_993)],
+            vec![Value::String("+9007199254740993".into())],
             vec![Value::Float(10.0)],
             vec![Value::String("10.00".into())],
         ];
