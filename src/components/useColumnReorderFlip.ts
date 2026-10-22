@@ -10,7 +10,7 @@ import { prefersStaticMotion } from "./revealOrigin";
  *
  * 並べ替え前にヘッダの位置を記録 (`capture`) し、新しい列順がコミットされた直後
  * (`useLayoutEffect`、ペイント前) に位置を測り直して、動いた列のセルを元の位置から
- * 新しい位置へ `transform: translateX` だけでスライドさせる。
+ * 新しい位置へ 個別プロパティの `translate` だけでスライドさせる。
  *
  * ## Motion の `layout` を使わない理由
  *

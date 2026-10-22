@@ -63,6 +63,7 @@ describe("列ピン留めのグライド (#1753, 実ブラウザ)", () => {
     expect(Math.round(headerCell("3").getBoundingClientRect().left)).toBe(Math.round(startLeft));
 
     for (const id of ["0", "1", "2", "3"]) for (const a of headerCell(id).getAnimations()) a.finish();
+    expect(headerCell("3").style.translate).toBe("");
     expect(headerCell("3").style.transform).toBe("");
     const grid = headerCell("3").closest("table") as HTMLElement;
     expect(headerCell("3").getBoundingClientRect().left).toBeLessThan(startLeft);
