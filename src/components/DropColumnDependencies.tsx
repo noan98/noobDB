@@ -72,7 +72,7 @@ export function DropColumnDependencies({ state }: { state: ColumnDependencyState
           <chakra.p m={0}>{t("dropColumnDepsBody")}</chakra.p>
           <Box as="ul" m={0} mt="1" pl="5" fontSize="sm">
             {shown.map((d) => (
-              <DependencyLine key={`${d.column}\0${d.kind}\0${d.name}`} dep={d} />
+              <DependencyLine key={`${d.column}\0${d.kind}\0${d.name}\0${d.detail}`} dep={d} />
             ))}
             {dependencies.length > shown.length && (
               <Box as="li" listStyleType="none" ml="-5">
