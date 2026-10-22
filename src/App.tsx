@@ -477,6 +477,7 @@ import {
   type CascadeImpacts,
   collectDeletedKeyValues,
   loadCascadeImpacts,
+  blocksDelete,
   loadRefImpacts,
   type RefImpact,
   rootPredicatesFromDelete,
@@ -2351,7 +2352,22 @@ export default function App() {
     impact?: PreflightImpact | null;
     /** 単一表 DELETE の対象 (プリフライトの切り出し)。子テーブルへの影響の集計に使う (#1767)。 */
     deleteTarget?: { table: string; condition: string | null } | null;
+    /** 実行前に集計済みの子行影響 (WHERE 付きの通常 DELETE の事前確認から開いたとき、#1767)。 */
+    fkResult?: CascadeImpacts | null;
   } | null>(null);
+  // WHERE 付きの通常 DELETE を実行する前の子行影響の事前確認 (#1767)。定義は loadEditorDeleteImpacts の後ろ。
+  const precheckDeleteRef = useRef<
+    | ((input: {
+        tabId: string;
+        sql: string;
+        autoLimit: number | null;
+        target: { table: string; condition: string | null };
+        database: string | null;
+        count: number;
+        proceed: () => void;
+      }) => Promise<void>)
+    | null
+  >(null);
 
   // Pending {{variable}} parameter prompt. When the editor's SQL contains
   // placeholders, the run/preview/explain action is held here while the input
@@ -6400,19 +6416,41 @@ export default function App() {
         void runBatchInTab(target.id, sql, true, openedInNewTab ? target : undefined);
         return;
       }
-      // 明示トランザクション中は同一接続で実行する経路に振り分ける。
-      if (txActiveRef.current && target.kind === "query") {
-        void runTxInTab(target.id, sql);
+      const runPlain = () => {
+        // 明示トランザクション中は同一接続で実行する経路に振り分ける。
+        if (txActiveRef.current && target.kind === "query") {
+          void runTxInTab(target.id, sql);
+          return;
+        }
+        void runQueryInTab(
+          target.id,
+          sql,
+          null,
+          autoLimit,
+          false,
+          openedInNewTab ? { tab: target } : undefined,
+        );
+      };
+      // WHERE 付きの通常 DELETE: プリフライトで 1 行以上と確定していれば、実行前に子行への影響
+      // (CASCADE / RESTRICT) を数え、ある場合だけ確認を挟む (#1767)。0 件なら集計を省く。
+      const pfDel = preflightRef.current.get(tab.id);
+      const delTarget =
+        pfDel && pfDel.sql === sql && pfDel.status === "ready" && (pfDel.count ?? 0) > 0
+          ? preflightDeleteTarget(pfDel.plan)
+          : null;
+      if (delTarget && target.kind === "query" && precheckDeleteRef.current) {
+        void precheckDeleteRef.current({
+          tabId: target.id,
+          sql,
+          autoLimit,
+          target: delTarget,
+          database: target.database ?? selectedProfile?.database ?? null,
+          count: pfDel?.count ?? 0,
+          proceed: runPlain,
+        });
         return;
       }
-      void runQueryInTab(
-        target.id,
-        sql,
-        null,
-        autoLimit,
-        false,
-        openedInNewTab ? { tab: target } : undefined,
-      );
+      runPlain();
     },
     [
       runQueryInTab,
@@ -6423,6 +6461,7 @@ export default function App() {
       selectedProfile?.is_production,
       selectedProfile?.confirm_writes,
       selectedProfile?.read_only,
+      selectedProfile?.database,
       settings.confirmDangerousQueries,
       settings.autoLimitEnabled,
       settings.autoLimitCount,
@@ -8254,8 +8293,9 @@ export default function App() {
       if (!sessionId) throw new Error("no session");
       const driver = selectedProfile?.driver ?? "mysql";
       const ref = parseTableRef(target.table);
-      // PostgreSQL / SQLite のスキーマ修飾は `database` 引数と対応が一意でないので、読めた場合だけ扱う。
-      if (!ref || (ref.qualifier && driver !== "mysql") || !(ref.qualifier ?? database)) {
+      // `incoming_foreign_keys` の `database` は MySQL ではデータベース、PostgreSQL ではスキーマを受ける
+      // ので、修飾子はそのまま渡せる。SQLite は修飾を扱わない。
+      if (!ref || (ref.qualifier && driver === "sqlite") || !(ref.qualifier ?? database)) {
         throw new Error("unresolved table");
       }
       const db = ref.qualifier ?? database ?? "";
@@ -8273,6 +8313,41 @@ export default function App() {
     },
     [sessionId, selectedProfile?.driver, refImpactLookup],
   );
+
+  precheckDeleteRef.current = async ({ tabId, sql, autoLimit, target, database, count, proceed }) => {
+    setStatus({ kind: "key", key: "statusCheckingRefs" });
+    let res: CascadeImpacts | null = null;
+    try {
+      res = await loadEditorDeleteImpacts(target, database);
+    } catch {
+      // 集計できなくても実行は妨げない。確認は出さず、見えなかった旨だけ伝える。
+      res = null;
+    }
+    setStatus((cur) => (cur.kind === "key" && cur.key === "statusCheckingRefs" ? { kind: "idle" } : cur));
+    if (!res) {
+      toast.info(translate("refImpactCheckSkipped"));
+      proceed();
+      return;
+    }
+    const needsConfirm =
+      res.moreCascade || res.impacts.some((i) => i.onDelete === "CASCADE" || blocksDelete(i.onDelete));
+    if (!needsConfirm) {
+      proceed();
+      return;
+    }
+    setPendingDangerous({
+      tabId,
+      sql,
+      findings: [],
+      isProduction: selectedProfile?.is_production ?? false,
+      writeApproval: false,
+      autoLimit,
+      batch: false,
+      typedConfirmTarget: null,
+      impact: { verb: "delete", count, allRows: false },
+      fkResult: res,
+    });
+  };
 
   // TRUNCATE の前に、対象テーブルを参照している子行数を数える (#1506)。`excludeChildren` に含まれる
   // 子 (同じ操作で一緒に消える) と自己参照は影響として数えない。数えられなかった親テーブルは
@@ -14186,18 +14261,23 @@ export default function App() {
                     : null
                 }
                 fkImpact={
-                  pendingDangerous.deleteTarget && selectedProfile
+                  pendingDangerous.fkResult && selectedProfile
                     ? {
                         driver: selectedProfile.driver,
-                        load: () =>
-                          loadEditorDeleteImpacts(
-                            pendingDangerous.deleteTarget as { table: string; condition: string | null },
-                            tabsRef.current.find((tb) => tb.id === pendingDangerous.tabId)?.database ??
-                              selectedProfile.database ??
-                              null,
-                          ),
+                        load: async () => pendingDangerous.fkResult as CascadeImpacts,
                       }
-                    : null
+                    : pendingDangerous.deleteTarget && selectedProfile
+                      ? {
+                          driver: selectedProfile.driver,
+                          load: () =>
+                            loadEditorDeleteImpacts(
+                              pendingDangerous.deleteTarget as { table: string; condition: string | null },
+                              tabsRef.current.find((tb) => tb.id === pendingDangerous.tabId)?.database ??
+                                selectedProfile.database ??
+                                null,
+                            ),
+                        }
+                      : null
                 }
                 pkSuggestion={
                   pkSuggestTemplate

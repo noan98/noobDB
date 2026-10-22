@@ -175,7 +175,13 @@ export function DangerousQueryDialog({
           </>
         ) : (
           <chakra.p m={0} color="app.text">
-            {t(writeApproval ? "dangerousWriteApprovalIntro" : "dangerousIntro")}
+            {t(
+              writeApproval
+                ? "dangerousWriteApprovalIntro"
+                : fkImpact
+                  ? "dangerousFkIntro"
+                  : "dangerousIntro",
+            )}
           </chakra.p>
         )}
         {impact && (impact.count !== null || impact.allRows) && (

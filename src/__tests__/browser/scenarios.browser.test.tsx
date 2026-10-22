@@ -1664,3 +1664,75 @@ describe("シナリオ: DDL 後のスキーマドリフト自動取得と SSH �
     expect(invocationsOf("disconnect").length).toBe(0);
   });
 });
+
+describe("シナリオ: WHERE 付き DELETE の子行影響の確認 (#1767)", () => {
+  const SQL = "DELETE FROM fruits WHERE id = 1";
+  const countResult = (rows: CellValue[][]) => ({
+    columns: [
+      { name: "i", type_name: "INT" },
+      { name: "n", type_name: "INT" },
+    ],
+    rows,
+    rows_affected: 0,
+    elapsed_ms: 1,
+  });
+  async function openDeleteTab(lookupRows: CellValue[][] | "fail") {
+    registerAutoStream();
+    // プリフライトの COUNT (run_query) は 1 行と答える。
+    onCommand("run_query", () => countResult([[1]]));
+    onCommand("incoming_foreign_keys", (args) =>
+      args.table === "fruits"
+        ? [{ table: "orders", column: "fruit_id", referencedColumn: "id", onDelete: "CASCADE" }]
+        : [],
+    );
+    onCommand("run_lookup_query", () => {
+      if (lookupRows === "fail") throw new Error("timeout");
+      return countResult(lookupRows);
+    });
+    localStorage.setItem(
+      `noobdb.tabs.${ALPHA.id}`,
+      JSON.stringify({
+        panes: [{ tabs: [{ kind: "query", title: "Del", sql: SQL }], activeIndex: 0 }],
+        activePane: 0,
+      }),
+    );
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    // プリフライト (デバウンス後の COUNT) が済んでから実行する。
+    await vi.waitFor(() => expect(invocationsOf("run_query").length).toBeGreaterThan(0), { timeout: 5000 });
+    await vi.waitFor(
+      async () => {
+        const el = document.querySelector<HTMLElement>(".cm-content");
+        if (!el) throw new Error("editor not mounted");
+        await page.elementLocator(el).click({ button: "right" });
+        await screen
+          .getByRole("menuitem", { name: new RegExp(`^${t("editorMenuRunAll")}`) })
+          .click({ timeout: 2000 });
+      },
+      { timeout: 20000, interval: 300 },
+    );
+    return screen;
+  }
+  const streams = () => invocationsOf("run_query_stream").filter((a) => String(a.sql).startsWith("DELETE"));
+
+  it("CASCADE の子行があるときは確認を出し、実行するまで DELETE を流さない", async () => {
+    const screen = await openDeleteTab([[0, 5]]);
+    await expect.element(screen.getByTestId("ref-impact-list")).toBeVisible();
+    await expect.element(screen.getByText(t("refImpactActCascade", { count: 5 }))).toBeVisible();
+    expect(streams()).toHaveLength(0);
+    await screen.getByRole("button", { name: t("dangerousConfirm") }).click();
+    await vi.waitFor(() => expect(streams()).toHaveLength(1), { timeout: 5000 });
+  });
+
+  it("子行が 0 件なら確認なしですぐ実行する", async () => {
+    await openDeleteTab([[0, 0]]);
+    await vi.waitFor(() => expect(streams()).toHaveLength(1), { timeout: 5000 });
+    expect(document.querySelector('[data-testid="ref-impact-list"]')).toBeNull();
+  });
+
+  it("集計に失敗しても確認は出さず、DELETE を実行する", async () => {
+    await openDeleteTab("fail");
+    await vi.waitFor(() => expect(streams()).toHaveLength(1), { timeout: 5000 });
+    expect(document.querySelector('[data-testid="ref-impact-list"]')).toBeNull();
+  });
+});
