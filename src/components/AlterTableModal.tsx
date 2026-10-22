@@ -366,10 +366,7 @@ export function AlterTableModal({
   );
   const precheckCounts = useCountPreviews(runCount, prechecks, !loading && !loadError);
   // DROP COLUMN の対象列を参照するビュー・生成列・インデックス・FK・トリガー (#1758)。
-  const droppedColumns = useMemo(
-    () => existing.filter((e) => e.drop).map((e) => e.original),
-    [existing],
-  );
+  const droppedColumns = useMemo(() => existing.filter((e) => e.drop).map((e) => e.original), [existing]);
   const columnDeps = useColumnDependencies(
     sessionId,
     database,

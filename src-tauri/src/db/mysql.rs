@@ -2126,7 +2126,11 @@ impl MySqlConn {
     }
 
     /// 生成列の式 (#1758)。`GENERATION_EXPRESSION` は MySQL 5.7+ / MariaDB 10.2+ にある。
-    pub async fn generated_column_exprs(&self, db: &str, table: &str) -> Result<Vec<(String, String)>> {
+    pub async fn generated_column_exprs(
+        &self,
+        db: &str,
+        table: &str,
+    ) -> Result<Vec<(String, String)>> {
         let rows: Vec<MySqlRow> = sqlx::query(
             "SELECT COLUMN_NAME, GENERATION_EXPRESSION FROM information_schema.COLUMNS \
              WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \

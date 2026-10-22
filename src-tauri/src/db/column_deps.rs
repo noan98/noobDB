@@ -207,7 +207,10 @@ pub fn sqlite_generated_exprs(create_sql: &str) -> Vec<(String, String)> {
         let upper = def.to_uppercase();
         if ["CONSTRAINT", "PRIMARY", "UNIQUE", "CHECK", "FOREIGN"]
             .iter()
-            .any(|k| upper.starts_with(k) && !upper[k.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '_'))
+            .any(|k| {
+                upper.starts_with(k)
+                    && !upper[k.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '_')
+            })
         {
             continue;
         }
@@ -247,9 +250,7 @@ fn split_leading_ident(def: &str) -> Option<(String, &str)> {
         }
         None
     } else {
-        let end = def
-            .find(|c: char| c.is_whitespace())
-            .unwrap_or(def.len());
+        let end = def.find(|c: char| c.is_whitespace()).unwrap_or(def.len());
         Some((def[..end].to_string(), &def[end..]))
     }
 }
@@ -321,11 +322,7 @@ mod tests {
         IndexInfo {
             name: name.into(),
             columns: cols.iter().map(|c| c.to_string()).collect(),
-            unique: false,
-            primary: false,
-            method: None,
-            predicate: None,
-            first_expression_at: None,
+            ..Default::default()
         }
     }
 
@@ -413,7 +410,10 @@ mod tests {
             got,
             vec![
                 ("total".to_string(), "price * qty".to_string()),
-                ("label".to_string(), "substr(price || ',x', 1, 3)".to_string()),
+                (
+                    "label".to_string(),
+                    "substr(price || ',x', 1, 3)".to_string()
+                ),
             ]
         );
         assert!(sqlite_generated_exprs("CREATE TABLE t (a INT, b TEXT)").is_empty());

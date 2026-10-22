@@ -1452,7 +1452,11 @@ impl Connection {
     /// テーブルの生成列 (`(列名, 式)`) を返す (#1758)。DROP COLUMN が壊す生成列を事前に
     /// 洗い出すために使う。MySQL / MariaDB は `information_schema.COLUMNS.GENERATION_EXPRESSION`、
     /// PostgreSQL は `pg_attrdef` の `pg_get_expr`、SQLite は `sqlite_master.sql` の解析。
-    pub async fn generated_column_exprs(&self, db: &str, table: &str) -> Result<Vec<(String, String)>> {
+    pub async fn generated_column_exprs(
+        &self,
+        db: &str,
+        table: &str,
+    ) -> Result<Vec<(String, String)>> {
         match self {
             Connection::MySql(c) => c.generated_column_exprs(db, table).await,
             Connection::Postgres(c) => c.generated_column_exprs(db, table).await,

@@ -22,15 +22,11 @@ export function useColumnDependencies(
   columns: readonly string[],
   enabled = true,
 ): ColumnDependencyState {
-  const key = useMemo(() => JSON.stringify([sessionId, database, table, columns]), [
-    sessionId,
-    database,
-    table,
-    columns,
-  ]);
-  const [settled, setSettled] = useState<{ key: string; state: ColumnDependencyState } | null>(
-    null,
+  const key = useMemo(
+    () => JSON.stringify([sessionId, database, table, columns]),
+    [sessionId, database, table, columns],
   );
+  const [settled, setSettled] = useState<{ key: string; state: ColumnDependencyState } | null>(null);
   const active = enabled && columns.length > 0;
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: columns は key が同一なら同じ内容なので key だけを依存にする
@@ -38,8 +34,8 @@ export function useColumnDependencies(
     if (!active) return;
     let cancelled = false;
     const timer = setTimeout(() => {
-      api
-        .columnDependencies(sessionId, database, table, [...columns])
+      Promise.resolve()
+        .then(() => api.columnDependencies(sessionId, database, table, [...columns]))
         .then((report) => {
           if (!cancelled) setSettled({ key, state: { status: "ok", report } });
         })

@@ -1694,7 +1694,11 @@ impl PostgresConn {
     }
 
     /// 生成列の式 (#1758)。`attgenerated` が空でない列の `pg_attrdef` を `pg_get_expr` で読む。
-    pub async fn generated_column_exprs(&self, schema: &str, table: &str) -> Result<Vec<(String, String)>> {
+    pub async fn generated_column_exprs(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<(String, String)>> {
         let rows: Vec<PgRow> = sqlx::query(
             r#"SELECT a.attname::text, pg_catalog.pg_get_expr(d.adbin, d.adrelid)
                FROM pg_catalog.pg_attribute a

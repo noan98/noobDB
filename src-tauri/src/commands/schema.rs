@@ -9,7 +9,6 @@ use crate::db::column_deps::{
     foreign_key_dependencies, generated_column_dependencies, index_dependencies, ColumnDependency,
 };
 use crate::db::diff::TableColumns;
-use crate::db::where_used::WhereUsedTarget;
 use crate::db::schema_insight::{
     build_table_statistics, incoming_foreign_keys as filter_incoming_foreign_keys,
     IncomingForeignKey, TableStatistic,
@@ -18,6 +17,7 @@ use crate::db::types::{
     ForeignKey, IndexInfo, RoutineSignature, SchemaObject, TableColumnInfo, TableComment,
     TableIndexes, TableRowEstimate, TableSchema,
 };
+use crate::db::where_used::WhereUsedTarget;
 use crate::db::DriverKind;
 use crate::error::{AppError, Result};
 use crate::state::{AppState, Session};

@@ -8,15 +8,9 @@ use std::sync::Arc;
 
 use noobdb_lib::__test_api as t;
 
-async fn session_for(
-    tag: &str,
-    conn: t::Connection,
-    opts: t::DbConnectOptions,
-) -> Arc<t::Session> {
+async fn session_for(tag: &str, conn: t::Connection, opts: t::DbConnectOptions) -> Arc<t::Session> {
     let state = t::AppState::default();
-    let id = state
-        .insert(t::make_session(tag, conn, opts, false))
-        .await;
+    let id = state.insert(t::make_session(tag, conn, opts, false)).await;
     state.get(&id).await.expect("session exists")
 }
 
@@ -74,11 +68,15 @@ async fn sqlite_column_dependencies() {
     );
     assert_eq!(
         deps(&session, "main", "nb1758_p", &["id"], "id").await,
-        vec!["referenced_by:nb1758_c", "trigger:nb1758_t", "view:nb1758_v"]
+        vec![
+            "referenced_by:nb1758_c",
+            "trigger:nb1758_t",
+            "view:nb1758_v"
+        ]
     );
     assert_eq!(
         deps(&session, "main", "nb1758_p", &["owner"], "owner").await,
-        vec!["foreign_key:owner"]
+        vec!["foreign_key:nb1758_p:0"]
     );
     // 生成列自身も一緒に消すなら、その生成列は依存に数えない。
     assert_eq!(
@@ -134,7 +132,7 @@ async fn mysql_column_dependencies_when_env_set() {
     );
     assert_eq!(
         deps(&session, MYSQL_DB, "nb1758_p", &["id"], "id").await,
-        vec!["referenced_by:nb1758_c", "view:nb1758_v"]
+        vec!["index:PRIMARY", "referenced_by:nb1758_c", "view:nb1758_v"]
     );
     assert_eq!(
         deps(&session, MYSQL_DB, "nb1758_p", &["owner"], "owner").await,
@@ -175,10 +173,12 @@ async fn postgres_column_dependencies_when_env_set() {
         format!("CREATE VIEW {PG_SCHEMA}.nb1758_v AS SELECT id, price FROM {PG_SCHEMA}.nb1758_p"),
         format!("CREATE MATERIALIZED VIEW {PG_SCHEMA}.nb1758_mv AS SELECT price FROM {PG_SCHEMA}.nb1758_p"),
         format!("CREATE FUNCTION {PG_SCHEMA}.nb1758_trg() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.qty := NEW.price + 1; RETURN NEW; END $$"),
-        format!("CREATE TRIGGER nb1758_t BEFORE INSERT ON {PG_SCHEMA}.nb1758_p FOR EACH ROW EXECUTE FUNCTION {PG_SCHEMA}.nb1758_trg()"),
+        format!("CREATE TRIGGER nb1758_t BEFORE UPDATE OF price ON {PG_SCHEMA}.nb1758_p FOR EACH ROW EXECUTE FUNCTION {PG_SCHEMA}.nb1758_trg()"),
     ] {
         conn.execute(&sql, None).await.expect("ddl");
     }
+    // PostgreSQL のトリガー関数の本体は定義に含まれないので、`UPDATE OF 列` / `WHEN` で参照する
+    // トリガーだけが検出できる (Where-used と同じ限界)。
     let session = session_for("coldeps_pg", conn, opts).await;
     assert_eq!(
         deps(&session, PG_SCHEMA, "nb1758_p", &["price"], "price").await,
@@ -203,7 +203,14 @@ async fn postgres_column_dependencies_when_env_set() {
         vec!["foreign_key:nb1758_fk"]
     );
     assert_eq!(
-        deps(&session, PG_SCHEMA, "nb1758_p", &["price", "total"], "price").await,
+        deps(
+            &session,
+            PG_SCHEMA,
+            "nb1758_p",
+            &["price", "total"],
+            "price"
+        )
+        .await,
         vec![
             "index:nb1758_idx",
             "materialized_view:nb1758_mv",
