@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { MotionConfig } from "motion/react";
 import { describe, expect, it } from "vitest";
 import { AppearancePreview } from "../components/AppearancePreview";
 import { renderWithProviders, screen } from "./testUtils";
@@ -104,5 +105,43 @@ describe("AppearancePreview (#1581)", () => {
     renderWithProviders(<AppearancePreview previewVars={{ "--accent": "#123456" }} />);
     const el = screen.getByTestId("appearance-preview");
     expect(el.style.getPropertyValue("--accent")).toBe("#123456");
+  });
+});
+
+describe("AppearancePreview のライブデモ (#1781)", () => {
+  const bar = () => screen.getByTestId("appearance-preview").querySelector<HTMLElement>("[data-demo='bar']");
+
+  it("通常は 1 行上 (-100%) から始まり、選択下地・実行ボタン・光る枠を持つ", () => {
+    renderWithProviders(
+      <MotionConfig reducedMotion="never">
+        <AppearancePreview />
+      </MotionConfig>,
+    );
+    expect(bar()?.style.transform).toBe("translateY(-100%)");
+    expect(screen.getByTestId("appearance-preview").querySelector("[data-demo='run']")).not.toBeNull();
+    expect(screen.getByTestId("appearance-preview").querySelector("[data-demo='flash']")).not.toBeNull();
+  });
+
+  it("reduced-motion (アプリ内設定) では最初から終了状態で、transform を持たない", () => {
+    renderWithProviders(
+      <MotionConfig reducedMotion="always">
+        <AppearancePreview />
+      </MotionConfig>,
+    );
+    expect(bar()?.style.transform ?? "").toBe("");
+  });
+
+  it("ハイコントラストテーマでは最初から終了状態", () => {
+    document.documentElement.setAttribute("data-theme", "hc-dark");
+    try {
+      renderWithProviders(
+        <MotionConfig reducedMotion="never">
+          <AppearancePreview />
+        </MotionConfig>,
+      );
+      expect(bar()?.style.transform ?? "").toBe("");
+    } finally {
+      document.documentElement.removeAttribute("data-theme");
+    }
   });
 });
