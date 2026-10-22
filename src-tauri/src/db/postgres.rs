@@ -19,6 +19,7 @@ use super::types::{
     TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use super::upsert::{conflict_clause, ImportConflict, KeyKind};
+use super::GuardedTxOutcome;
 use super::{columns_of, init_sql_of, DbConnectOptions, DriverKind, SslMode};
 use crate::error::{AppError, Result};
 
@@ -844,8 +845,24 @@ impl PostgresConn {
         statements: &[String],
         database: Option<&str>,
     ) -> Result<u64> {
+        match self
+            .execute_transaction_guarded(statements, database, None)
+            .await?
+        {
+            GuardedTxOutcome::Committed(n) | GuardedTxOutcome::Exceeded { affected: n } => Ok(n),
+        }
+    }
+
+    /// [`Self::execute_transaction`] に実影響行数の検算 (#1777) を足したもの。合計が
+    /// `max_affected` を超えたらコミットせずロールバックして `Exceeded` を返す。
+    pub async fn execute_transaction_guarded(
+        &self,
+        statements: &[String],
+        database: Option<&str>,
+        max_affected: Option<u64>,
+    ) -> Result<GuardedTxOutcome> {
         if statements.is_empty() {
-            return Ok(0);
+            return Ok(GuardedTxOutcome::Committed(0));
         }
         let mut conn = self.pool.acquire().await?;
         apply_search_path(&mut conn, database, &self.search_path).await?;
@@ -857,8 +874,12 @@ impl PostgresConn {
                 .await?;
             affected += result.rows_affected();
         }
+        if super::exceeds_limit(affected, max_affected) {
+            tx.rollback().await?;
+            return Ok(GuardedTxOutcome::Exceeded { affected });
+        }
         tx.commit().await?;
-        Ok(affected)
+        Ok(GuardedTxOutcome::Committed(affected))
     }
 
     /// In the tree UI, the "database" level surfaces PostgreSQL schemas

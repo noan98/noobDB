@@ -206,6 +206,9 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["columnDependencyReport", schemas.columnDependencyReport],
   ["tableStatistic", schemas.tableStatistic],
   ["insertRowsResult", schemas.insertRowsResult],
+  // #1777: `status` タグ付き enum は shape が違うので、バリアントごとに 1 キーずつ検証する。
+  ["bulkWriteOutcomeApplied", schemas.bulkWriteOutcomeApplied],
+  ["bulkWriteOutcomeRowCountExceeded", schemas.bulkWriteOutcomeRowCountExceeded],
   ["openTableResult", schemas.openTableResult],
   ["openTableEntryVariants", schemas.openTableEntry],
   ["databaseTables", schemas.databaseTables],

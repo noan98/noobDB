@@ -102,6 +102,14 @@ fn _exhaustive_data_search_entry(e: &DataSearchEntry) {
     }
 }
 
+/// #1777: `bulk_update_cells` の結果 enum のバリアント追加をコンパイル時に検出する。
+#[allow(dead_code)]
+fn _exhaustive_bulk_write_outcome(o: &t::BulkWriteOutcome) {
+    match o {
+        t::BulkWriteOutcome::Applied { .. } | t::BulkWriteOutcome::RowCountExceeded { .. } => {}
+    }
+}
+
 #[allow(dead_code)]
 fn _exhaustive_where_used_message(m: &WhereUsedMessage) {
     match m {
@@ -1815,6 +1823,14 @@ fn build_fixtures() -> serde_json::Value {
         inserted: 100,
         elapsed_ms: 8,
     };
+    // `status` タグ付き enum は shape がバリアントごとに違うので、1 バリアント 1 キーで持つ。
+    let bulk_write_outcome_applied = t::BulkWriteOutcome::Applied {
+        result: query_result.clone(),
+    };
+    let bulk_write_outcome_row_count_exceeded = t::BulkWriteOutcome::RowCountExceeded {
+        expected_rows: 1,
+        actual_rows: 2,
+    };
     let open_table_result = t::OpenTableResult {
         base: "`appdb`.`users`".into(),
         sql: "SELECT * FROM `appdb`.`users`".into(),
@@ -2463,6 +2479,8 @@ fn build_fixtures() -> serde_json::Value {
         "columnDependencyReport": column_dependency_report,
         "tableStatistic": table_statistic,
         "insertRowsResult": insert_rows_result,
+        "bulkWriteOutcomeApplied": bulk_write_outcome_applied,
+        "bulkWriteOutcomeRowCountExceeded": bulk_write_outcome_row_count_exceeded,
         "openTableResult": open_table_result,
         "openTableEntryVariants": open_table_entry_variants,
         "databaseTables": database_tables,

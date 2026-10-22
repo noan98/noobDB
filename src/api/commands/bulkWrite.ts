@@ -3,7 +3,7 @@ import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
 import type { UpdateGroup } from "../../components/cellEdit";
-import type { CellValue, QueryResult, InsertRowsResult } from "../tauri";
+import type { BulkWriteOptions, BulkWriteOutcome, CellValue, InsertRowsResult } from "../tauri";
 
 export const bulkWriteCommands = {
   /**
@@ -12,6 +12,10 @@ export const bulkWriteCommands = {
    * `extraStatements` (削除予定行 / 新規行の DELETE / INSERT) と合わせて 1 トランザクション
    * (all-or-nothing) で実行する。read_only ガード・履歴・キャッシュは `runQueryTransaction`
    * と同じ経路。
+   *
+   * 合計の実影響行数が想定 (`groups` の行数 + `extraStatements` の数) を超えたらバックエンドが
+   * ロールバックして `status: "row_count_exceeded"` を返す (#1777)。承認後の再実行は
+   * `options.allowRowOvershoot` を付ける。
    */
   bulkUpdateCells: (params: {
     sessionId: string;
@@ -25,8 +29,9 @@ export const bulkWriteCommands = {
      * 値を Rust がバイナリリテラルにする (all_columns 同定で BLOB 列を含むとき)。
      */
     pkBinary?: boolean[];
+    options?: BulkWriteOptions;
   }) =>
-    invoke<QueryResult>("bulk_update_cells", {
+    invoke<BulkWriteOutcome>("bulk_update_cells", {
       sessionId: params.sessionId,
       database: params.database ?? null,
       table: params.table,
@@ -34,7 +39,10 @@ export const bulkWriteCommands = {
       groups: params.groups,
       extraStatements: params.extraStatements ?? [],
       pkBinary: params.pkBinary ?? null,
-    }).then((r) => parseResponse(schemas.queryResultLite, r, "bulk_update_cells")),
+      options: params.options
+        ? { allow_row_overshoot: params.options.allowRowOvershoot ?? false }
+        : undefined,
+    }).then((r) => parseResponse(schemas.bulkWriteOutcome, r, "bulk_update_cells")),
   /**
    * テストデータ生成 (#602) の生成行を 1 トランザクションで投入する (#1259)。セルは
    * null / 真偽 / 数値 / 文字列で、ドライバが列型へ強制変換する。

@@ -13,6 +13,7 @@ use crate::db::tx_options::{TxIsolation, TxOptions};
 use crate::db::types::{Column, QueryResult, ServerMessage, StreamBatch, Value};
 use crate::db::{
     apply_auto_limit_for, decide_auto_limit_for, is_read_only_sql_for, AutoLimitSkip, DriverKind,
+    GuardedTxOutcome,
 };
 use crate::error::{AppError, Result};
 use crate::history::store as history_store;
@@ -397,6 +398,34 @@ pub(crate) async fn run_query_transaction_inner(
     statements: Vec<String>,
     database: Option<String>,
 ) -> Result<QueryResult> {
+    match run_query_transaction_guarded_inner(state, session_id, statements, database, None).await?
+    {
+        TransactionRun::Committed(result) => Ok(result),
+        // 上限なし (`None`) では超過判定が働かないので到達しない。
+        TransactionRun::Exceeded { affected } => Ok(QueryResult::empty(affected, 0)),
+    }
+}
+
+/// [`run_query_transaction_guarded_inner`] の結果 (#1777)。
+#[derive(Debug)]
+pub(crate) enum TransactionRun {
+    /// コミットした。
+    Committed(QueryResult),
+    /// 合計 `rows_affected` が上限を超えたためロールバックした (DB は未変更・履歴にも残さない)。
+    Exceeded { affected: u64 },
+}
+
+/// [`run_query_transaction_inner`] に実影響行数の検算を足したもの (#1777)。合計
+/// `rows_affected` が `max_affected` を超えたらコミットせずロールバックし、`Exceeded` で
+/// 実際の件数を返す。read_only ガード・履歴・キャッシュ invalidate は従来と同じ経路
+/// (ロールバックしたときは何も書き換わっていないので、履歴・キャッシュには触れない)。
+pub(crate) async fn run_query_transaction_guarded_inner(
+    state: &AppState,
+    session_id: String,
+    statements: Vec<String>,
+    database: Option<String>,
+    max_affected: Option<u64>,
+) -> Result<TransactionRun> {
     let session = state
         .get(&session_id)
         .await
@@ -413,9 +442,23 @@ pub(crate) async fn run_query_transaction_inner(
     let started = std::time::Instant::now();
     let result = session
         .conn
-        .execute_transaction(&statements, database.as_deref())
+        .execute_transaction_guarded(&statements, database.as_deref(), max_affected)
         .await;
     let elapsed_ms = started.elapsed().as_millis() as u64;
+    if let Ok(GuardedTxOutcome::Exceeded { affected }) = &result {
+        tracing::warn!(
+            session_id = %session.id,
+            rows_affected = *affected,
+            max_affected = ?max_affected,
+            "transaction rolled back: affected rows exceeded the expected count"
+        );
+        return Ok(TransactionRun::Exceeded {
+            affected: *affected,
+        });
+    }
+    let result = result.map(|outcome| match outcome {
+        GuardedTxOutcome::Committed(n) | GuardedTxOutcome::Exceeded { affected: n } => n,
+    });
     match &result {
         Ok(affected) => tracing::debug!(
             session_id = %session.id,
@@ -478,7 +521,9 @@ pub(crate) async fn run_query_transaction_inner(
         }
     }
     let affected = result?;
-    Ok(QueryResult::empty(affected, elapsed_ms))
+    Ok(TransactionRun::Committed(QueryResult::empty(
+        affected, elapsed_ms,
+    )))
 }
 
 // ── 明示トランザクションモード ──

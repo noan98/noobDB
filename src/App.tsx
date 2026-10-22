@@ -7361,8 +7361,9 @@ export default function App() {
       // table is never left in a half-applied state.
       let totalAffected = 0;
       let failure: string | null = null;
+      let declinedOvershoot: { expected: number; actual: number } | null = null;
       try {
-        const res = await api.bulkUpdateCells({
+        const bulkParams = {
           sessionId,
           database,
           table,
@@ -7370,12 +7371,46 @@ export default function App() {
           groups: updateGroups,
           extraStatements,
           pkBinary: pkIndices.map((i) => isBinaryColumnType(result.columns[i].type_name)),
-        });
-        totalAffected = Number(res.rows_affected ?? 0);
+        };
+        let res = await api.bulkUpdateCells(bulkParams);
+        // 実影響行数が想定を超えた (画面外の重複行などに当たった) ときバックエンドはコミットせず
+        // ロールバックして件数を返す (#1777)。利用者が明示的に承認したときだけ、超過を許可して
+        // 再実行する。キャンセルなら何も変わらない (保留中の編集もそのまま残す)。
+        if (res.status === "row_count_exceeded") {
+          const ok = await confirm({
+            title: translate("editRowOvershootConfirmTitle"),
+            message: translate("editRowOvershootConfirmBody", {
+              expected: res.expected_rows,
+              actual: res.actual_rows,
+            }),
+            confirmLabel: translate("editRowOvershootConfirmButton"),
+            tone: "warning",
+          });
+          if (ok) {
+            res = await api.bulkUpdateCells({ ...bulkParams, options: { allowRowOvershoot: true } });
+          } else {
+            declinedOvershoot = { expected: res.expected_rows, actual: res.actual_rows };
+          }
+        }
+        if (res.status === "applied") {
+          totalAffected = Number(res.result.rows_affected ?? 0);
+        } else if (!declinedOvershoot) {
+          // 承認して再実行したのにまた超過した (確認の間に別の変更が入った等)。適用はされていない。
+          declinedOvershoot = { expected: res.expected_rows, actual: res.actual_rows };
+        }
       } catch (e) {
         failure = String(e);
       }
       patchTab(tabId, (tt) => ({ ...tt, applyingEdits: false }));
+      if (declinedOvershoot) {
+        // ロールバック済みで DB は未変更。保留中の編集と行操作はそのまま残す。
+        setStatus({
+          kind: "key",
+          key: "statusApplyEditsOvershootCancelled",
+          vars: declinedOvershoot,
+        });
+        return false;
+      }
       if (failure) {
         // トランザクションはロールバックされ DB は未変更。保留中の編集と行操作は
         // そのまま残し、ユーザが原因を直して再適用できるようにする (以前はここで

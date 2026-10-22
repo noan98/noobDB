@@ -13,6 +13,7 @@ use super::types::{
     TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use super::upsert::{conflict_clause, ImportConflict};
+use super::GuardedTxOutcome;
 use super::{build_insert_sql, columns_of, init_sql_of, DbConnectOptions, DriverKind};
 use crate::error::{AppError, Result};
 
@@ -721,6 +722,34 @@ impl SqliteConn {
         }
         let mut conn = self.pool.acquire().await?;
         run_batch(&mut conn, statements).await
+    }
+
+    /// [`Self::execute_transaction`] に実影響行数の検算 (#1777) を足したもの。合計が
+    /// `max_affected` を超えたらコミットせずロールバックして `Exceeded` を返す。
+    pub async fn execute_transaction_guarded(
+        &self,
+        statements: &[String],
+        _database: Option<&str>,
+        max_affected: Option<u64>,
+    ) -> Result<GuardedTxOutcome> {
+        if statements.is_empty() {
+            return Ok(GuardedTxOutcome::Committed(0));
+        }
+        let mut conn = self.pool.acquire().await?;
+        let mut tx = sqlx::Connection::begin(&mut *conn).await?;
+        let mut affected: u64 = 0;
+        for sql in statements {
+            let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+                .execute(&mut *tx)
+                .await?;
+            affected += result.rows_affected();
+        }
+        if super::exceeds_limit(affected, max_affected) {
+            tx.rollback().await?;
+            return Ok(GuardedTxOutcome::Exceeded { affected });
+        }
+        tx.commit().await?;
+        Ok(GuardedTxOutcome::Committed(affected))
     }
 
     /// スキーマ同期の適用用 ([`Self::execute_transaction`] との違いはテーブル再作成の扱いだけ)。

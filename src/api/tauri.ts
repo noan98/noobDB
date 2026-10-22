@@ -981,6 +981,21 @@ export interface InsertRowsResult {
   elapsed_ms: number;
 }
 
+/**
+ * `bulk_update_cells` の結果 (#1777)。実影響行数が想定 (編集対象として指定した行数) を超えると、
+ * バックエンドはコミットせずロールバックして `row_count_exceeded` を返す (エラーではない)。
+ * 利用者が確認して承認したときだけ `allowRowOvershoot` を付けて再実行する。
+ */
+export type BulkWriteOutcome =
+  | { status: "applied"; result: QueryResult }
+  | { status: "row_count_exceeded"; expected_rows: number; actual_rows: number };
+
+/** `bulk_update_cells` の追加オプション (#1777)。後続の検査 (楽観ロックなど) もここへ足す。 */
+export interface BulkWriteOptions {
+  /** 実影響行数が想定を超えても適用する (確認ダイアログで承認済みのとき)。 */
+  allowRowOvershoot?: boolean;
+}
+
 export interface KillProcessesResult {
   killed: number;
   failed: number;

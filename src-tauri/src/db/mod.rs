@@ -419,6 +419,21 @@ pub enum Connection {
     Sqlite(sqlite::SqliteConn),
 }
 
+/// [`Connection::execute_transaction_guarded`] の結果 (#1777)。想定行数の超過はエラーではなく
+/// 判別できる値で返す (呼び出し側が確認を取って再実行できるように)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GuardedTxOutcome {
+    /// コミットした。合計 `rows_affected`。
+    Committed(u64),
+    /// 合計 `rows_affected` が上限を超えたのでロールバックした (DB は未変更)。
+    Exceeded { affected: u64 },
+}
+
+/// 全文を流した後の合計と上限を突き合わせる (3 ドライバ共通)。超過なら true。
+pub(crate) fn exceeds_limit(affected: u64, max_affected: Option<u64>) -> bool {
+    max_affected.is_some_and(|max| affected > max)
+}
+
 /// A single row skipped by a resilient (skip-mode) import: its 0-based index
 /// among the parsed data records and the driver's rejection reason (#687). The
 /// command layer maps `index` to a 1-based record number and, for CSV/NDJSON, a
@@ -1089,6 +1104,34 @@ impl Connection {
             Connection::MySql(c) => c.execute_transaction(statements, database).await,
             Connection::Postgres(c) => c.execute_transaction(statements, database).await,
             Connection::Sqlite(c) => c.execute_transaction(statements, database).await,
+        }
+    }
+
+    /// [`Self::execute_transaction`] に、コミット前の実影響行数の検算 (#1777) を足したもの。
+    /// 全文を流した時点の合計 `rows_affected` が `max_affected` を**超えて**いたら、コミットせず
+    /// ロールバックして [`GuardedTxOutcome::Exceeded`] を返す (エラーではない)。`None` なら
+    /// 検算なしで常にコミットする。「より多い」だけを見るので、少ない側 (別クライアントによる
+    /// 削除など) は止めない。3 ドライバとも `rows_affected` は「一致した行数」(MySQL は sqlx が
+    /// 常に CLIENT_FOUND_ROWS を立てる) なので、値が変わらない UPDATE も 1 行と数える。
+    pub async fn execute_transaction_guarded(
+        &self,
+        statements: &[String],
+        database: Option<&str>,
+        max_affected: Option<u64>,
+    ) -> Result<GuardedTxOutcome> {
+        match self {
+            Connection::MySql(c) => {
+                c.execute_transaction_guarded(statements, database, max_affected)
+                    .await
+            }
+            Connection::Postgres(c) => {
+                c.execute_transaction_guarded(statements, database, max_affected)
+                    .await
+            }
+            Connection::Sqlite(c) => {
+                c.execute_transaction_guarded(statements, database, max_affected)
+                    .await
+            }
         }
     }
 

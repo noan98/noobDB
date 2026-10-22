@@ -97,7 +97,7 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
 - `bulk_update_cells`
 - `insert_generated_rows`
 
-- `bulk_update_cells(sessionId, database, table, pkColumns, groups, extraStatements, pkBinary?)` は結果グリッドの
+- `bulk_update_cells(sessionId, database, table, pkColumns, groups, extraStatements, pkBinary?, options?)` は結果グリッドの
   セル編集 Apply。フロント (`cellEdit.buildUpdateGroups`) が同じ (列, 値) ごとにまとめた
   構造化入力を送り、Rust が `UPDATE t SET c = v WHERE pk IN (…)` (単一 PK・500 件ずつ) /
   行条件の `OR` 連結 (複合 PK・NULL を含む PK・100 行ずつ) を組み立てる。`extraStatements` は
@@ -106,6 +106,12 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
   (フライトレコーダーに記録しない点も従来どおり。記録対象は `run_query_stream({ capture: true })`
   の単文のみ)。リテラルは `db::data_diff::sql_literal` (バインドにしないのは PostgreSQL が
   text 型パラメータを整数列へ暗黙変換しないため)。64bit PK は文字列のまま引用リテラルで比較。`pkBinary` (任意、`pkColumns` と同順の bool) が真の列は 16 進文字列の key を `Value::Bytes` に戻してバイナリリテラルで比較する (BLOB 列を含む all_columns 同定用)。
+  **戻り値は判別付き enum `BulkWriteOutcome`** (#1777、`status` タグ): `applied` (`result` = `QueryResult`) /
+  `row_count_exceeded` (`expected_rows` = 編集対象として指定した行数 [各グループの keys + extraStatements の数]、
+  `actual_rows` = 実際の合計 `rows_affected`)。合計 `rows_affected` が想定より**多い**とコミットせず
+  ロールバックし (DB 未変更・履歴/キャッシュに触れない)、エラーではなくこの値で返す (少ない側は止めない)。
+  3 ドライバとも `rows_affected` は一致行数 (MySQL は sqlx が CLIENT_FOUND_ROWS を常に立てる)。利用者が確認で
+  承認したときだけ `options: { allow_row_overshoot: true }` で再実行する (`BulkWriteOptions`、後続の検査用フラグもここへ足す)。
 - `insert_generated_rows` はテストデータ生成の投入。生成行を `Connection::import_rows`
   (1 トランザクション) へ直接渡す。履歴には 1 行の要約を残す。
 

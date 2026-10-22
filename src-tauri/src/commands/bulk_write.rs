@@ -22,7 +22,8 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::commands::query::{
-    ensure_allowed_for_session, record_write_history, run_query_transaction_inner,
+    ensure_allowed_for_session, record_write_history, run_query_transaction_guarded_inner,
+    TransactionRun,
 };
 use crate::db::data_diff::{is_numeric_literal, sql_literal};
 use crate::db::sync::quote_ident;
@@ -69,6 +70,42 @@ pub struct BulkSetColumn {
 pub struct BulkUpdateGroup {
     pub set: Vec<BulkSetColumn>,
     pub keys: Vec<Vec<Value>>,
+}
+
+/// `bulk_update_cells` の追加オプション (#1777)。後続の検査 (楽観ロック #1766 など) も
+/// ここへフラグを足す。`#[serde(default)]` なので、指定の無いフラグは安全側 (= 検査する) になる。
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(default)]
+pub struct BulkWriteOptions {
+    /// 実影響行数が想定行数を超えても適用する。確認ダイアログで利用者が「それでも適用」を
+    /// 選んだときだけ true にして再実行する。
+    pub allow_row_overshoot: bool,
+}
+
+/// `bulk_update_cells` の結果 (#1777)。想定外はエラーではなく判別できる値で返し、フロントが
+/// 確認を取ってフラグ付きで再実行できるようにする。新しい種類の結果 (楽観ロックの競合など)
+/// はバリアントを足して拡張する。
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum BulkWriteOutcome {
+    /// コミットした。
+    Applied { result: QueryResult },
+    /// 実影響行数が想定 (編集対象として指定した行数) を超えたのでロールバックした。DB は未変更。
+    RowCountExceeded {
+        expected_rows: u64,
+        actual_rows: u64,
+    },
+}
+
+/// 想定する合計影響行数: UPDATE の対象行 (各グループの `keys`) + 追加文 (1 文 = 1 行の
+/// `DELETE` / `INSERT`)。`SET` または `keys` が空で無視されるグループは数えない。
+pub(crate) fn expected_rows(groups: &[BulkUpdateGroup], extra_statements: usize) -> u64 {
+    let updates: usize = groups
+        .iter()
+        .filter(|g| !g.set.is_empty() && !g.keys.is_empty())
+        .map(|g| g.keys.len())
+        .sum();
+    (updates + extra_statements) as u64
 }
 
 fn qualified_ref(driver: DriverKind, database: &str, table: &str) -> String {
@@ -222,7 +259,9 @@ pub(crate) fn build_bulk_update_statements(
 /// 同じ `SET` (列, 値) の行をまとめたもの、`extra_statements` は同じトランザクションに
 /// 載せる削除予定行 / 新規行の `DELETE` / `INSERT` 文 (従来どおりフロントが生成)。
 /// 全体が all-or-nothing で、read_only ガード・履歴・キャッシュ invalidate は
-/// `run_query_transaction` と同一。
+/// `run_query_transaction` と同一。さらに合計 `rows_affected` を想定行数と検算し、超えたら
+/// コミットせずロールバックして [`BulkWriteOutcome::RowCountExceeded`] を返す (#1777、画面外の
+/// 重複行への多重更新の最終防波堤)。`options.allow_row_overshoot` で利用者が承認済みなら通す。
 // IPC コマンドの引数は 1 引数 1 フィールドのフラット形が契約 (State 含め 8 個) のため許可する。
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
@@ -234,8 +273,9 @@ pub async fn bulk_update_cells(
     groups: Vec<BulkUpdateGroup>,
     extra_statements: Vec<String>,
     pk_binary: Option<Vec<bool>>,
+    options: Option<BulkWriteOptions>,
     state: State<'_, AppState>,
-) -> Result<QueryResult> {
+) -> Result<BulkWriteOutcome> {
     let groups = apply_pk_binary(groups, pk_binary.as_deref())?;
     bulk_update_cells_inner(
         state.inner(),
@@ -245,11 +285,14 @@ pub async fn bulk_update_cells(
         pk_columns,
         groups,
         extra_statements,
+        options.unwrap_or_default(),
     )
     .await
 }
 
 /// Core of [`bulk_update_cells`] without Tauri's `State` wrapper (#881)。
+// コマンドと同じフラットな引数 (State を除く 8 個) をそのまま受けるため許可する。
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn bulk_update_cells_inner(
     state: &AppState,
     session_id: String,
@@ -258,7 +301,8 @@ pub(crate) async fn bulk_update_cells_inner(
     pk_columns: Vec<String>,
     groups: Vec<BulkUpdateGroup>,
     extra_statements: Vec<String>,
-) -> Result<QueryResult> {
+    options: BulkWriteOptions,
+) -> Result<BulkWriteOutcome> {
     let session = state
         .get(&session_id)
         .await
@@ -275,11 +319,32 @@ pub(crate) async fn bulk_update_cells_inner(
             &groups,
         )?
     };
+    let expected = expected_rows(&groups, extra_statements.len());
     statements.extend(extra_statements);
     if statements.is_empty() {
-        return Ok(QueryResult::empty(0, 0));
+        return Ok(BulkWriteOutcome::Applied {
+            result: QueryResult::empty(0, 0),
+        });
     }
-    run_query_transaction_inner(state, session_id, statements, database).await
+    // 「より多い」だけを止める。少ない側 (別クライアントによる削除など) は従来どおり通す。
+    let max_affected = (!options.allow_row_overshoot).then_some(expected);
+    Ok(
+        match run_query_transaction_guarded_inner(
+            state,
+            session_id,
+            statements,
+            database,
+            max_affected,
+        )
+        .await?
+        {
+            TransactionRun::Committed(result) => BulkWriteOutcome::Applied { result },
+            TransactionRun::Exceeded { affected } => BulkWriteOutcome::RowCountExceeded {
+                expected_rows: expected,
+                actual_rows: affected,
+            },
+        },
+    )
 }
 
 /// `insert_generated_rows` の結果。
@@ -430,6 +495,32 @@ mod tests {
 
     fn group(set: Vec<BulkSetColumn>, keys: Vec<Vec<Value>>) -> BulkUpdateGroup {
         BulkUpdateGroup { set, keys }
+    }
+
+    #[test]
+    fn expected_rows_counts_update_keys_and_extra_statements() {
+        let groups = vec![
+            group(vec![set_text("a", "x")], keys1(&[1, 2, 3])),
+            group(vec![set_text("a", "y")], keys1(&[4])),
+            // 無視されるグループ (空の SET / 空の keys) は数えない。
+            group(vec![], keys1(&[5])),
+            group(vec![set_text("a", "z")], vec![]),
+        ];
+        assert_eq!(expected_rows(&groups, 2), 6);
+        assert_eq!(expected_rows(&[], 0), 0);
+    }
+
+    #[test]
+    fn outcome_serializes_with_status_tag() {
+        let v = serde_json::to_value(BulkWriteOutcome::RowCountExceeded {
+            expected_rows: 1,
+            actual_rows: 2,
+        })
+        .unwrap_or_default();
+        assert_eq!(
+            v,
+            serde_json::json!({"status": "row_count_exceeded", "expected_rows": 1, "actual_rows": 2})
+        );
     }
 
     #[test]

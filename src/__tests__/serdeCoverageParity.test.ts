@@ -39,6 +39,7 @@ const COVERED: Record<string, string> = {
   SnippetImportResult: "snippetImportResult",
   CancelStreamResult: "cancelStreamResponse",
   CaptureOutcome: "timelapseCaptureOutcome",
+  BulkWriteOutcome: "bulkWriteOutcomeApplied",
   BlobFolderSaveResult: "blobFolderSaveResult",
   CellBlobProbe: "cellBlobProbe",
   ColumnProfile: "columnProfile",

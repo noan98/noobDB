@@ -2050,6 +2050,10 @@ const en = {
     "This table has no primary key, so {count} statement(s) match every column's value instead. If a matched row isn't actually unique, every identical row will be affected. Continue?",
   editAllColumnsConfirmBodyAmbiguous:
     "This table has no primary key, and some of the loaded rows have identical values in every column. {count} statement(s) will run, and a statement targeting a duplicated row will affect all of its duplicates at once. Continue?",
+  editRowOvershootConfirmTitle: "More rows match than expected",
+  editRowOvershootConfirmBody:
+    "You specified {expected} row(s), but {actual} row(s) match. The write was rolled back, so nothing has been changed yet. Rows with identical values (including ones not loaded in this grid) are probably being matched as well. Applying anyway will change all {actual} rows.",
+  editRowOvershootConfirmButton: "Apply anyway",
   editApplyDisabledInvalid: "Fix the highlighted invalid edits before applying.",
   editInvalidNumber: "Enter a number (or NULL).",
   editInvalidInteger: "Enter a whole number (or NULL). This column is an integer type.",
@@ -2074,6 +2078,8 @@ const en = {
   statusAppliedEdits: "Applied {count} update(s); {rows} rows affected.",
   statusAppliedEditsShortfall:
     "Applied, but only {rows} of {count} row(s) were affected. Some rows were not found (they may have been changed or deleted elsewhere) and were not written. Reload the data to check the current state.",
+  statusApplyEditsOvershootCancelled:
+    "Not applied: {actual} row(s) matched the {expected} you specified. Nothing was changed; your pending edits are kept.",
   statusApplyEditsError: "Apply failed: {error}",
   statusApplyEditsPartial: "Apply failed; all {total} update(s) rolled back, nothing was applied: {error}",
 
@@ -8816,6 +8822,10 @@ const ja: Dict = {
     "このテーブルには主キーが無いため、{count} 件の文は全列の値で行を照合します。照合先の行が実際には一意でない場合、同一の値を持つすべての行が変更されます。続行しますか？",
   editAllColumnsConfirmBodyAmbiguous:
     "このテーブルには主キーが無く、表示中の行の一部は全列が同一の値を持っています。{count} 件の文を実行しますが、重複行を対象とした文はその重複すべてに影響します。続行しますか？",
+  editRowOvershootConfirmTitle: "想定より多くの行が一致します",
+  editRowOvershootConfirmBody:
+    "指定した {expected} 行に対し、{actual} 行が一致します。書き込みはロールバックしたので、まだ何も変更されていません。全列が同じ値の行 (このグリッドに読み込んでいない行を含む) も一緒に一致している可能性があります。それでも適用すると、一致した {actual} 行すべてが変更されます。",
+  editRowOvershootConfirmButton: "それでも適用",
   editApplyDisabledInvalid: "不正な入力を修正してから適用してください。",
   editInvalidNumber: "数値を入力してください（または NULL）。",
   editInvalidInteger: "整数を入力してください（または NULL）。この列は整数型です。",
@@ -8839,6 +8849,8 @@ const ja: Dict = {
   statusAppliedEdits: "{count} 件の UPDATE を適用しました ({rows} 行に影響)。",
   statusAppliedEditsShortfall:
     "適用しましたが、{count} 行のうち {rows} 行にしか反映されていません。一部の行が見つからず (他で変更・削除された可能性があります)、書き込まれていません。再読込して現在の状態を確認してください。",
+  statusApplyEditsOvershootCancelled:
+    "適用しませんでした: 指定した {expected} 行に対し {actual} 行が一致しました。変更はありません (保留中の編集は残っています)。",
   statusApplyEditsError: "適用に失敗しました: {error}",
   statusApplyEditsPartial:
     "適用に失敗したため、{total} 件の UPDATE をすべてロールバックしました（変更は適用されていません）: {error}",
