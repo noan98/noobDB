@@ -256,6 +256,10 @@
   --brand-navy-raised: #1d4a7a;
   --brand-teal: #2dd4bf;
   --brand-gradient: linear-gradient(135deg, var(--brand-navy-raised), var(--brand-teal));
+  /* AI 受信中のキャレット / 「受信中」ラベル色 (#1756)。brand-teal 単体は白地で 3:1 に
+     届かないため、本文色へ寄せてテーマごとに地へのコントラストを確保する
+     (themeContrast.test.ts が全テーマで 3:1 以上を検証)。 */
+  --stream-caret: color-mix(in srgb, var(--brand-teal) 30%, var(--text));
   /* ロゴのタイル色。ダーク系プリセットでは下の `:root[data-theme$="dark"]` で
      navy-raised に切り替え、暗い面に沈まないようにする。 */
   --brand-mark-tile: var(--brand-navy);
@@ -2339,6 +2343,7 @@ html, body, #root {
    - `spinner-rotate`: 共通 Spinner コンポーネントのリング回転
    - `query-progress-slide`: クエリ実行中バーのスライド
    - `skeleton-shimmer`: ResultGrid スケルトンローダーのシマー
+   - `stream-caret-blink`: AI 応答受信中テキスト末尾のキャレット点滅 (#1756)
    - `apply-flash`: ResultGrid のインライン編集適用成功時のフラッシュ。
      コピー操作 (#1159、`runCopy` → `is-copy-flash`) も同じキーフレームを
      再利用し、コピー対象のセル/行/矩形選択を一瞬フラッシュさせる
@@ -2355,6 +2360,13 @@ html, body, #root {
 @keyframes streaming-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
+}
+
+/* キャレットは 55% で点灯 / 45% で消灯する。最終キーフレームを付けず、reduced-motion の
+   1 回再生 (0.01ms) 後は要素本来のスタイル (点灯) の静止表示になる。 */
+@keyframes stream-caret-blink {
+  0%, 55% { opacity: 1; }
+  56%, 100% { opacity: 0; }
 }
 
 @keyframes spinner-rotate {
@@ -2768,4 +2780,26 @@ td.is-find-current::after {
   vertical-align: middle;
   pointer-events: none;
   animation: streaming-pulse 1.2s ease-in-out infinite;
+}
+
+/* AI 応答の受信中表示 (#1756): 本文末尾のティールのキャレットと、受信中ラベルのブランド色。
+   点滅は CSS アニメのみ (React は再描画しない)。周期は --dur-shimmer に揃える。
+   reduced-motion は上の全体ブロックが 1 回再生に縮め点灯のまま静止、hc-* は明示的に静止。 */
+.ai-stream-caret {
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-inline-start: 0.1em;
+  vertical-align: text-bottom;
+  background: var(--stream-caret);
+  pointer-events: none;
+  user-select: none;
+  animation: stream-caret-blink var(--dur-shimmer) step-end infinite;
+}
+.ai-stream-label-live {
+  color: var(--stream-caret);
+}
+:root[data-theme="hc-light"] .ai-stream-caret,
+:root[data-theme="hc-dark"] .ai-stream-caret {
+  animation: none;
 }
