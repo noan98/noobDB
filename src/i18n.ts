@@ -2014,6 +2014,9 @@ const en = {
   editPendingTitle: "{original} → {next} (pending — Preview or Apply to commit)",
   editNoPkHint: "No primary key — editing disabled",
   editNoPkHintTitle: "Inline cell editing needs a primary key to build a safe UPDATE WHERE clause.",
+  editUniqueKeyHint: "No primary key — using unique key",
+  editUniqueKeyHintTitle:
+    "This table has no primary key. Its UNIQUE NOT NULL key identifies each row instead, so an edit or delete affects exactly one row.",
   editRowidHint: "No primary key — using rowid",
   editRowidHintTitle:
     "This table has no primary key. SQLite's implicit rowid identifies each row instead, so editing still works.",
@@ -8737,6 +8740,9 @@ const ja: Dict = {
   editPendingTitle: "{original} → {next} (未保存 — Preview か Apply で反映)",
   editNoPkHint: "主キーが無いため編集できません",
   editNoPkHintTitle: "インラインのセル編集は、対象行を特定する WHERE 句を組み立てるために主キーが必要です。",
+  editUniqueKeyHint: "主キーなし — ユニークキーで識別",
+  editUniqueKeyHintTitle:
+    "このテーブルには主キーがありません。代わりに UNIQUE NOT NULL のキーで各行を識別するため、編集・削除は対象の 1 行だけに作用します。",
   editRowidHint: "主キーなし — rowid で識別",
   editRowidHintTitle:
     "このテーブルには主キーがありません。代わりに SQLite の暗黙の rowid で各行を識別するため、編集は引き続き可能です。",

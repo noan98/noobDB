@@ -1612,8 +1612,11 @@
         ],
         "row_estimate": 1234,
         "row_identity": {
-          "hidden_column": "rowid",
-          "strategy": "rowid"
+          "hidden_column": null,
+          "key_columns": [
+            "code"
+          ],
+          "strategy": "unique_key"
         },
         "sql": "SELECT * FROM `appdb`.`users`"
       },
@@ -1643,8 +1646,11 @@
     ],
     "row_estimate": 1234,
     "row_identity": {
-      "hidden_column": "rowid",
-      "strategy": "rowid"
+      "hidden_column": null,
+      "key_columns": [
+        "code"
+      ],
+      "strategy": "unique_key"
     },
     "sql": "SELECT * FROM `appdb`.`users`"
   },
@@ -5437,8 +5443,11 @@
     "name": "users"
   },
   "tableRowIdentity": {
-    "hidden_column": "rowid",
-    "strategy": "rowid"
+    "hidden_column": null,
+    "key_columns": [
+      "code"
+    ],
+    "strategy": "unique_key"
   },
   "tableSchema": {
     "columns": [

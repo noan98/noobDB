@@ -745,6 +745,12 @@ impl KillProcessesResult {
 ///   (Postgres itself writes a new tuple with a new ctid on UPDATE) — safe
 ///   within one grid session's Preview/Apply round trip, not as a durable
 ///   key across sessions.
+/// - `"unique_key"` — no PK, but the table has a UNIQUE index whose columns are
+///   all NOT NULL (#1776). `key_columns` lists the index columns (a single-column
+///   UNIQUE wins over a composite one); the frontend builds the WHERE clause from
+///   them exactly like a primary key. Preferred over `rowid` / `ctid` /
+///   `all_columns` so all three drivers pick the same, durable identity.
+///   `hidden_column` is `None`.
 /// - `"all_columns"` — no PK and no cheap physical row id (MySQL, SQLite
 ///   `WITHOUT ROWID` tables, views). The frontend falls back to matching
 ///   every column in the WHERE clause. This cannot guarantee uniqueness
@@ -757,6 +763,10 @@ impl KillProcessesResult {
 pub struct TableRowIdentity {
     pub strategy: String,
     pub hidden_column: Option<String>,
+    /// `"unique_key"` のときだけ入る、行識別に使う UNIQUE NOT NULL インデックスの列名
+    /// (インデックスの列順)。それ以外の戦略では空 (#1776)。
+    #[serde(default)]
+    pub key_columns: Vec<String>,
 }
 
 /// One database user / role for the users & privileges panel (#732). MySQL

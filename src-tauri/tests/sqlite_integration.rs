@@ -545,6 +545,51 @@ async fn sqlite_row_identity_covers_pk_rowid_and_without_rowid() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// #1776: PK が無くても UNIQUE NOT NULL キーがあれば rowid より先に `unique_key` を採る。
+/// NULL 可の UNIQUE・部分 UNIQUE は対象外 (rowid のまま)。
+#[tokio::test]
+async fn sqlite_row_identity_prefers_unique_not_null_key() {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "noobdb_sqlite_rowident_uq_{}.db",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    for ddl in [
+        "CREATE TABLE uq_single (code TEXT NOT NULL UNIQUE, note TEXT)",
+        "CREATE TABLE uq_composite (a TEXT NOT NULL, b TEXT NOT NULL, note TEXT, UNIQUE (a, b))",
+        "CREATE TABLE uq_prefers_single (a TEXT NOT NULL, b TEXT NOT NULL, UNIQUE (a, b), UNIQUE (b))",
+        "CREATE TABLE uq_nullable (code TEXT UNIQUE, note TEXT)",
+        "CREATE TABLE uq_partial (code TEXT NOT NULL, note TEXT)",
+        "CREATE UNIQUE INDEX uq_partial_idx ON uq_partial (code) WHERE note IS NOT NULL",
+    ] {
+        conn.execute(ddl, None).await.expect(ddl);
+    }
+
+    let id = |name: &'static str| {
+        let conn = &conn;
+        async move { conn.row_identity("main", name).await.expect(name) }
+    };
+    let single = id("uq_single").await;
+    assert_eq!(single.strategy, "unique_key");
+    assert_eq!(single.hidden_column, None);
+    assert_eq!(single.key_columns, ["code"]);
+    let composite = id("uq_composite").await;
+    assert_eq!(composite.strategy, "unique_key");
+    assert_eq!(composite.key_columns, ["a", "b"]);
+    assert_eq!(id("uq_prefers_single").await.key_columns, ["b"]);
+    assert_eq!(id("uq_nullable").await.strategy, "rowid");
+    assert_eq!(id("uq_partial").await.strategy, "rowid");
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
 /// A `WITHOUT ROWID` table with no primary key isn't valid SQLite (WITHOUT
 /// ROWID requires a PK), so the only way to exercise the "no PK, no rowid"
 /// branch is a **view** — SQLite reports it as `type = 'view'` in

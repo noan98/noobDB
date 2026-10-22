@@ -613,7 +613,7 @@ export interface TableSchema {
 
 /**
  * Row identity strategy for inline editing when a table has no usable
- * primary key (#849). `strategy` is one of `"primary_key"` / `"rowid"` /
+ * primary key (#849). `strategy` is one of `"primary_key"` / `"unique_key"` / `"rowid"` /
  * `"ctid"` / `"all_columns"` / `"none"` — see the backend's
  * `db::types::TableRowIdentity` doc for what each means and when the
  * driver reports it. `hidden_column` is the pseudo-column name
@@ -623,6 +623,8 @@ export interface TableSchema {
 export interface TableRowIdentity {
   strategy: string;
   hidden_column: string | null;
+  /** `"unique_key"` のときの UNIQUE NOT NULL キー列 (#1776)。他の戦略では空配列。 */
+  key_columns?: string[];
 }
 
 /** テーブル 1 つのインデックス情報。 */

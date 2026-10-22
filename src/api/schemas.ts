@@ -89,10 +89,12 @@ export const tableSchema = z.object({
   columns: z.array(z.string()),
 });
 
-/** 編集用の行識別戦略 (#849)。primary_key / rowid / ctid / all_columns / none。 */
+/** 編集用の行識別戦略 (#849)。primary_key / unique_key / rowid / ctid / all_columns / none。 */
 export const tableRowIdentity = z.object({
   strategy: z.string(),
   hidden_column: z.string().nullable(),
+  /** `unique_key` のときの UNIQUE NOT NULL キー列 (#1776)。他の戦略では空。 */
+  key_columns: z.array(z.string()).default([]),
 });
 
 export const foreignKey = z.object({

@@ -272,6 +272,7 @@ mod tests {
         Some(TableRowIdentity {
             strategy: strategy.to_string(),
             hidden_column: hidden.map(str::to_string),
+            key_columns: Vec::new(),
         })
     }
 

@@ -1468,6 +1468,11 @@ impl SqliteConn {
         if let Some(identity) = super::row_identity_pk_or_none(&cols) {
             return Ok(identity);
         }
+        // PK は無いが UNIQUE NOT NULL キーがあれば、rowid より先にそれを採る (#1776)。
+        let indexes = self.list_indexes(db, table).await?;
+        if let Some(key) = super::pick_unique_row_key(&cols, &indexes) {
+            return Ok(super::unique_key_identity(key));
+        }
         let row: Option<SqliteRow> =
             sqlx::query("SELECT type, sql FROM sqlite_master WHERE name = ?1")
                 .bind(table)
@@ -1488,12 +1493,14 @@ impl SqliteConn {
                 return Ok(TableRowIdentity {
                     strategy: "rowid".into(),
                     hidden_column: Some("rowid".into()),
+                    key_columns: Vec::new(),
                 });
             }
         }
         Ok(TableRowIdentity {
             strategy: "all_columns".into(),
             hidden_column: None,
+            key_columns: Vec::new(),
         })
     }
 

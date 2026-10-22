@@ -8426,6 +8426,8 @@ function StreamingBanner({
  */
 function identityHintKeys(strategy: RowIdentityKind, ambiguous: boolean): { label: I18nKey; title: I18nKey } {
   switch (strategy) {
+    case "unique_key":
+      return { label: "editUniqueKeyHint", title: "editUniqueKeyHintTitle" };
     case "rowid":
       return { label: "editRowidHint", title: "editRowidHintTitle" };
     case "ctid":

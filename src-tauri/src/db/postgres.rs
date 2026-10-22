@@ -1746,30 +1746,45 @@ impl PostgresConn {
             return Ok(TableRowIdentity {
                 strategy: "none".into(),
                 hidden_column: None,
+                key_columns: Vec::new(),
             });
         };
         if r.try_get::<bool, _>("has_pk").unwrap_or(false) {
             return Ok(TableRowIdentity {
                 strategy: "primary_key".into(),
                 hidden_column: None,
+                key_columns: Vec::new(),
             });
         }
         if !r.try_get::<bool, _>("has_columns").unwrap_or(false) {
             return Ok(TableRowIdentity {
                 strategy: "none".into(),
                 hidden_column: None,
+                key_columns: Vec::new(),
             });
         }
         let relkind = r.try_get::<String, _>("relkind").unwrap_or_default();
+        // PK は無いが UNIQUE NOT NULL キーがあれば、ctid より先にそれを採る (#1776)。
+        // ビュー / 外部テーブルには UNIQUE インデックスが無いので通常テーブル
+        // (パーティション親を含む) だけ調べる。
+        if relkind == "r" || relkind == "p" {
+            let cols = self.columns(schema, table).await?;
+            let indexes = self.list_indexes(schema, table).await?;
+            if let Some(key) = super::pick_unique_row_key(&cols, &indexes) {
+                return Ok(super::unique_key_identity(key));
+            }
+        }
         if relkind == "r" {
             return Ok(TableRowIdentity {
                 strategy: "ctid".into(),
                 hidden_column: Some("ctid".into()),
+                key_columns: Vec::new(),
             });
         }
         Ok(TableRowIdentity {
             strategy: "all_columns".into(),
             hidden_column: None,
+            key_columns: Vec::new(),
         })
     }
 
