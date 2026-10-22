@@ -117,6 +117,18 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["broadcastEnvMessage", schemas.broadcastEnvMessage],
   ["broadcastCancelledMessage", schemas.broadcastCancelledMessage],
   ["broadcastDoneMessage", schemas.broadcastDoneMessage],
+  // #1773: Where-used / 値検索 (`find_where_used` / `data_search_stream`) の Channel メッセージ。
+  ["whereUsedProgressMessage", schemas.whereUsedProgressMessage],
+  ["whereUsedDoneMessage", schemas.whereUsedDoneMessage],
+  ["whereUsedErrorMessage", schemas.whereUsedErrorMessage],
+  ["whereUsedCancelledMessage", schemas.whereUsedCancelledMessage],
+  ["dataSearchProgressMessage", schemas.dataSearchProgressMessage],
+  // table メッセージは `entry.status` の全バリアント (hit / no-hit / skipped) を配列で検証。
+  ["dataSearchTableMessageVariants", schemas.dataSearchTableMessage],
+  ["dataSearchDoneMessage", schemas.dataSearchDoneMessage],
+  ["dataSearchErrorMessage", schemas.dataSearchErrorMessage],
+  // cancelled は他の Channel と共有の `channelCancelledMessage` (`deliveredRows`)。
+  ["dataSearchCancelledMessage", schemas.channelCancelledMessage],
   ["queryStreamErrorMessage", schemas.queryStreamErrorMessage],
   ["channelCancelledMessage", schemas.channelCancelledMessage],
   ["channelCancelledMessageZero", schemas.channelCancelledMessage],
@@ -191,6 +203,7 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["writeCaptureSummaryVariants", schemas.writeCaptureSummary],
   ["healthProbeItemVariants", schemas.healthProbeItem],
   ["incomingForeignKey", schemas.incomingForeignKey],
+  ["columnDependencyReport", schemas.columnDependencyReport],
   ["tableStatistic", schemas.tableStatistic],
   ["insertRowsResult", schemas.insertRowsResult],
   ["openTableResult", schemas.openTableResult],

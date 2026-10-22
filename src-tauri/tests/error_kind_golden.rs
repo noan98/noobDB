@@ -87,6 +87,23 @@ fn build_native(variant: &str, arg: Option<&str>) -> AppError {
         "FlightDriverMismatch" => AppError::FlightDriverMismatch,
         "FlightProfileMismatch" => AppError::FlightProfileMismatch,
         "TransactionActive" => AppError::TransactionActive,
+        "SessionNotFound" => {
+            AppError::SessionNotFound(arg.expect("SessionNotFound requires arg").to_string())
+        }
+        "ProfileNotFound" => {
+            AppError::ProfileNotFound(arg.expect("ProfileNotFound requires arg").to_string())
+        }
+        "Io" => AppError::Io(std::io::Error::other(
+            arg.expect("Io requires arg").to_string(),
+        )),
+        // 壊れた JSON (`arg`) をパースして得た `serde_json::Error` を運ぶ。
+        "Serde" => AppError::Serde(
+            serde_json::from_str::<serde_json::Value>(arg.expect("Serde requires arg"))
+                .expect_err("Serde arg must be invalid JSON"),
+        ),
+        "Keyring" => AppError::Keyring(arg.expect("Keyring requires arg").to_string()),
+        "ConfigDir" => AppError::ConfigDir,
+        "Other" => AppError::Other(arg.expect("Other requires arg").to_string()),
         other => panic!(
             "error_kind_golden.rs の build_native が未対応の variant: {other} (フィクスチャと \
              このテストファイルの対応表を両方更新してください)"

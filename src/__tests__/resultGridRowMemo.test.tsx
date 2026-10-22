@@ -113,15 +113,18 @@ describe("結果グリッドの行単位の memo (#1341)", () => {
     expect(cells[10][1].classList.contains("is-selected-cell")).toBe(false);
   });
 
-  it("アクティブセルを動かしても、列ヘッダは描き直されない", () => {
+  it("アクティブセルを動かしても、列ヘッダは強調が変わる列 (移動前後の 2 列) しか描き直されない (#1755)", () => {
     const { container } = renderWithProviders(<ResultGrid result={result} />);
     const cells = dataCells(container);
     expect(renders.headerGrips).toBeGreaterThanOrEqual(columns.length);
     fireEvent.focus(cells[1][1]);
     renders.headerGrips = 0;
+    // 行だけ動く移動では、列が変わらないのでヘッダは 1 つも描き直されない。
     fireEvent.keyDown(cells[1][1], { key: "ArrowDown" });
-    fireEvent.keyDown(cells[2][1], { key: "ArrowRight" });
     expect(renders.headerGrips).toBe(0);
+    // 列が変わる移動でも、強調が外れる列と付く列の 2 つだけ。
+    fireEvent.keyDown(cells[2][1], { key: "ArrowRight" });
+    expect(renders.headerGrips).toBe(2);
   });
 
   describe("セル編集", () => {

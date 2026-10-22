@@ -2843,6 +2843,63 @@ async fn postgres_foreign_keys_pair_composite_columns_and_ignore_same_named_fk()
     conn.close().await;
 }
 
+/// #1786: 別スキーマの子テーブルからの単一列 FK だけが逆参照の補完に含まれる。
+/// 同一スキーマの FK・複合 FK は含まれず、`foreign_keys` (ER 図用) も変わらない。
+#[tokio::test]
+async fn postgres_cross_schema_incoming_foreign_keys_are_listed() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    for sql in [
+        "DROP SCHEMA IF EXISTS fk1786_sales CASCADE",
+        "DROP TABLE IF EXISTS public.fk1786_parent CASCADE",
+        "CREATE TABLE public.fk1786_parent (id INT, sku INT, PRIMARY KEY (id), UNIQUE (id, sku))",
+        "CREATE TABLE public.fk1786_same (pid INT REFERENCES public.fk1786_parent (id))",
+        "CREATE SCHEMA fk1786_sales",
+        "CREATE TABLE fk1786_sales.child (pid INT, \
+           CONSTRAINT fk_cross FOREIGN KEY (pid) REFERENCES public.fk1786_parent (id) ON DELETE CASCADE)",
+        "CREATE TABLE fk1786_sales.child_comp (pid INT, psku INT, \
+           CONSTRAINT fk_comp FOREIGN KEY (pid, psku) REFERENCES public.fk1786_parent (id, sku))",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+
+    let got = conn
+        .cross_schema_incoming_foreign_keys("public", "fk1786_parent")
+        .await
+        .expect("cross_schema_incoming_foreign_keys");
+    assert_eq!(got.len(), 1, "別スキーマの単一列 FK だけ: {got:?}");
+    assert_eq!(got[0].schema.as_deref(), Some("fk1786_sales"));
+    assert_eq!(got[0].table, "child");
+    assert_eq!(got[0].column, "pid");
+    assert_eq!(got[0].referenced_column, "id");
+    assert_eq!(got[0].on_delete.as_deref(), Some("CASCADE"));
+
+    // 既存の foreign_keys (ER 図 / DDL 用) は同一スキーマ限定のまま。
+    let fks = conn.foreign_keys("public").await.expect("foreign_keys");
+    assert!(fks.iter().all(|f| f.table != "child"), "{fks:?}");
+    assert!(fks.iter().any(|f| f.table == "fk1786_same"));
+    // MySQL / SQLite 相当: 参照されていないテーブルは空。
+    assert!(conn
+        .cross_schema_incoming_foreign_keys("public", "fk1786_same")
+        .await
+        .expect("empty")
+        .is_empty());
+
+    for sql in [
+        "DROP SCHEMA IF EXISTS fk1786_sales CASCADE",
+        "DROP TABLE IF EXISTS public.fk1786_same",
+        "DROP TABLE IF EXISTS public.fk1786_parent CASCADE",
+    ] {
+        conn.execute(sql, None).await.expect("cleanup");
+    }
+    conn.close().await;
+}
+
 /// 生成列 (`GENERATED ALWAYS AS (...) STORED`) の `columns()` は `extra` に
 /// `STORED GENERATED` を返す。通常列は空 (#1521)。
 #[tokio::test]

@@ -1597,6 +1597,20 @@ impl SqliteConn {
         super::upsert::check_conflict_target_unique(DriverKind::Sqlite, &uniques, key_columns)
     }
 
+    /// 生成列の式 (#1758)。`PRAGMA table_info` は生成列を返さないので、`sqlite_master.sql` を解析する。
+    pub async fn generated_column_exprs(&self, table: &str) -> Result<Vec<(String, String)>> {
+        let sql: Option<String> = sqlx::query_scalar(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ? COLLATE NOCASE",
+        )
+        .bind(table)
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten();
+        Ok(sql
+            .map(|s| super::column_deps::sqlite_generated_exprs(&s))
+            .unwrap_or_default())
+    }
+
     pub async fn list_indexes(&self, _db: &str, table: &str) -> Result<Vec<IndexInfo>> {
         // PRAGMA can't bind parameters — double any `"` and reject NUL, then build
         // the statement literally.

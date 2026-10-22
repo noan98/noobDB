@@ -3,6 +3,8 @@ pub mod assertions;
 pub mod aws_iam;
 /// 環境横断ブロードキャストの結果比較 (#1257)。
 pub mod broadcast_diff;
+/// DROP COLUMN の依存オブジェクト検出 (#1758)。
+pub mod column_deps;
 /// ファイルから新規テーブルを作るときの方言別 CREATE TABLE 生成 (#985)。
 pub mod create_table;
 pub mod data_diff;
@@ -1255,6 +1257,20 @@ impl Connection {
         }
     }
 
+    /// 別スキーマの子テーブルから `db.table` を参照する外部キー (#1786)。PostgreSQL 専用で、
+    /// MySQL の DB をまたぐ FK は対象外 (#1786 は PostgreSQL のみ)、SQLite は DB をまたげないため、
+    /// どちらも `foreign_keys` だけで賄い常に空 (挙動は変えない)。
+    pub async fn cross_schema_incoming_foreign_keys(
+        &self,
+        db: &str,
+        table: &str,
+    ) -> Result<Vec<crate::db::schema_insight::IncomingForeignKey>> {
+        match self {
+            Connection::Postgres(c) => c.cross_schema_incoming_foreign_keys(db, table).await,
+            Connection::MySql(_) | Connection::Sqlite(_) => Ok(Vec::new()),
+        }
+    }
+
     /// 1 表分の外部キー (#1609)。PostgreSQL は `conrelid` で絞った専用クエリ、
     /// MySQL / SQLite は DB 全体の取得から表で絞る (どちらも 1 回の取得で足りる)。
     pub async fn foreign_keys_for_table(&self, db: &str, table: &str) -> Result<Vec<ForeignKey>> {
@@ -1444,6 +1460,21 @@ impl Connection {
             Connection::MySql(c) => c.table_comments(db).await,
             Connection::Postgres(c) => c.table_comments(db).await,
             Connection::Sqlite(_) => Ok(Vec::new()),
+        }
+    }
+
+    /// テーブルの生成列 (`(列名, 式)`) を返す (#1758)。DROP COLUMN が壊す生成列を事前に
+    /// 洗い出すために使う。MySQL / MariaDB は `information_schema.COLUMNS.GENERATION_EXPRESSION`、
+    /// PostgreSQL は `pg_attrdef` の `pg_get_expr`、SQLite は `sqlite_master.sql` の解析。
+    pub async fn generated_column_exprs(
+        &self,
+        db: &str,
+        table: &str,
+    ) -> Result<Vec<(String, String)>> {
+        match self {
+            Connection::MySql(c) => c.generated_column_exprs(db, table).await,
+            Connection::Postgres(c) => c.generated_column_exprs(db, table).await,
+            Connection::Sqlite(c) => c.generated_column_exprs(table).await,
         }
     }
 

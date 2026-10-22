@@ -256,6 +256,10 @@
   --brand-navy-raised: #1d4a7a;
   --brand-teal: #2dd4bf;
   --brand-gradient: linear-gradient(135deg, var(--brand-navy-raised), var(--brand-teal));
+  /* AI 受信中のキャレット / 「受信中」ラベル色 (#1756)。brand-teal 単体は白地で 3:1 に
+     届かないため、本文色へ寄せてテーマごとに地へのコントラストを確保する
+     (themeContrast.test.ts が全テーマで 3:1 以上を検証)。 */
+  --stream-caret: color-mix(in srgb, var(--brand-teal) 30%, var(--text));
   /* ロゴのタイル色。ダーク系プリセットでは下の `:root[data-theme$="dark"]` で
      navy-raised に切り替え、暗い面に沈まないようにする。 */
   --brand-mark-tile: var(--brand-navy);
@@ -383,6 +387,50 @@
   --sandbox-solid: var(--sandbox-violet);
   --sandbox-subtle: color-mix(in srgb, var(--sandbox-violet) 16%, transparent);
   --sandbox-border: color-mix(in srgb, var(--sandbox-violet) 50%, transparent);
+
+  /* ── Ambient env wash (#1768) ─────────────────────────────────────────
+     本番接続中 / サンドボックス接続中に、ワークスペース (セッションヘッダ・タブ・エディタ・結果の
+     領域) の上端だけへごく薄く重ねる環境色のグラデーション。App.tsx が `pointer-events: none` の
+     overlay 要素の background-image として前景ごと重ねる (不透明な子要素に隠れないため)。
+     文字の透かしは出さない。色は意味色 / サンドボックス色トークンを color-mix で薄めた単一ソース。
+     不透明度は「前景・背景の両方に合成しても全テーマで AA 4.5:1 を保つ」最大値で、上端中央が
+     本番 3.5% / サンドボックス 4%、左右の隅はその半分 (themeContrast.test.ts が検証)。縦は約
+     140px で透明へ消え、--font-scale に追従する。静止背景で reduced-motion の影響は無い。
+     hc-light/hc-dark は AAA 優先のため下のプリセットで none に上書きする。 */
+  /* wash overlay の高さ (最大のグラデーション半径に一致。App.tsx が参照)。 */
+  --ambient-wash-height: calc(180px * var(--font-scale, 1));
+  --prod-wash:
+    radial-gradient(
+      ellipse 100% calc(var(--ambient-wash-height) * 140 / 180) at 50% 0%,
+      color-mix(in srgb, var(--error-solid) 3.5%, transparent) 0%,
+      transparent 100%
+    ),
+    radial-gradient(
+      ellipse 28% var(--ambient-wash-height) at 0% 0%,
+      color-mix(in srgb, var(--error-solid) 1.75%, transparent) 0%,
+      transparent 100%
+    ),
+    radial-gradient(
+      ellipse 28% var(--ambient-wash-height) at 100% 0%,
+      color-mix(in srgb, var(--error-solid) 1.75%, transparent) 0%,
+      transparent 100%
+    );
+  --sandbox-wash:
+    radial-gradient(
+      ellipse 100% calc(var(--ambient-wash-height) * 140 / 180) at 50% 0%,
+      color-mix(in srgb, var(--sandbox-violet) 4%, transparent) 0%,
+      transparent 100%
+    ),
+    radial-gradient(
+      ellipse 28% var(--ambient-wash-height) at 0% 0%,
+      color-mix(in srgb, var(--sandbox-violet) 2%, transparent) 0%,
+      transparent 100%
+    ),
+    radial-gradient(
+      ellipse 28% var(--ambient-wash-height) at 100% 0%,
+      color-mix(in srgb, var(--sandbox-violet) 2%, transparent) 0%,
+      transparent 100%
+    );
 
   /* ── Semantic color families (#476) ───────────────────────────────────
      状態色 (info/success/warning/error) を役割別に展開する。色だけに依存
@@ -735,6 +783,8 @@
   /* #1163: 高コントラストプリセットは装飾より AAA を優先し、ヒーロー画面の
      ブランドウォッシュは敷かない。 */
   --hero-wash: none;
+  --prod-wash: none; /* #1768 */
+  --sandbox-wash: none;
   --hero-halo: none;
   --hero-rule: none;
   --hero-rule-display: none;
@@ -838,6 +888,8 @@
   /* #1163: 高コントラストプリセットは装飾より AAA を優先し、ヒーロー画面の
      ブランドウォッシュは敷かない。 */
   --hero-wash: none;
+  --prod-wash: none; /* #1768 */
+  --sandbox-wash: none;
   --hero-halo: none;
   --hero-rule: none;
   --hero-rule-display: none;
@@ -2076,6 +2128,10 @@ html, body, #root {
   padding: var(--space-2) 0;
   caret-color: var(--accent);
 }
+/* 空エディタのゴースト・プレースホルダ (#1785)。CodeMirror 既定の固定灰色をテーマ追従の淡色に差し替える。 */
+.cm-editor .cm-placeholder {
+  color: var(--text-muted);
+}
 .cm-editor .cm-line { padding: 0 var(--space-3) 0 var(--space-2); }
 .cm-editor .cm-gutters {
   background: var(--bg-muted);
@@ -2287,6 +2343,7 @@ html, body, #root {
    - `spinner-rotate`: 共通 Spinner コンポーネントのリング回転
    - `query-progress-slide`: クエリ実行中バーのスライド
    - `skeleton-shimmer`: ResultGrid スケルトンローダーのシマー
+   - `stream-caret-blink`: AI 応答受信中テキスト末尾のキャレット点滅 (#1756)
    - `apply-flash`: ResultGrid のインライン編集適用成功時のフラッシュ。
      コピー操作 (#1159、`runCopy` → `is-copy-flash`) も同じキーフレームを
      再利用し、コピー対象のセル/行/矩形選択を一瞬フラッシュさせる
@@ -2303,6 +2360,13 @@ html, body, #root {
 @keyframes streaming-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
+}
+
+/* キャレットは 55% で点灯 / 45% で消灯する。animation-fill-mode を指定しないため、
+   reduced-motion の 1 回再生 (0.01ms) の後は要素本来のスタイル (点灯) の静止表示に戻る。 */
+@keyframes stream-caret-blink {
+  0%, 55% { opacity: 1; }
+  56%, 100% { opacity: 0; }
 }
 
 @keyframes spinner-rotate {
@@ -2371,6 +2435,30 @@ td.is-find-current::after {
   box-shadow: inset 0 0 0 5px var(--status-warning);
   opacity: 0;
   animation: find-current-pulse 0.45s var(--ease-out);
+}
+
+/* F6 の領域フォーカス巡回 (#681) で着地した領域の外枠パルス (#1764)。
+   `components/focusLandingPulse.ts` が `[data-focus-landing-region]` (サイドバー aside /
+   QueryEditor ルート / 結果グリッド外枠) に `is-focus-landing` を付け、animationend で外す。
+   レイアウトは動かさない (pointer-events: none の疑似要素の内側リングのみ)。
+   outline / inset box-shadow は position: relative の子孫 (CodeMirror・sticky 行 / ヘッダ) の
+   下に隠れるため疑似要素にし、スクロールで流れないよう領域はスクロールコンテナの外側に置く。
+   z-index: 6 は結果グリッドの sticky 行・ヘッダ (最大 5) とアンビエントウォッシュ (1, #1768) の上。
+   reduced-motion / hc-* / forced-colors は JS 側で付与しない。 */
+@keyframes focus-landing-pulse {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
+}
+:where(.is-focus-landing) { position: relative; }
+.is-focus-landing::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 calc(var(--focus-ring-width) * 2) var(--accent);
+  opacity: 0;
+  animation: focus-landing-pulse 0.6s var(--ease-out);
 }
 
 /* 結果グリッド全体 (スクロールコンテナ) の適用成功フラッシュ。疑似要素だと
@@ -2716,4 +2804,60 @@ td.is-find-current::after {
   vertical-align: middle;
   pointer-events: none;
   animation: streaming-pulse 1.2s ease-in-out infinite;
+}
+
+/* お気に入り追加直後の★の淡いスパーク (#1782)。`illust-spark` と同じく transform / opacity だけ
+   (合成のみ)・色は --favorite のみ。一度きりで、reduced-motion / hc-* では出さない。 */
+.fav-pop-spark {
+  position: absolute;
+  inset: -20%;
+  aspect-ratio: 1;
+  margin: auto;
+  border-radius: 50%;
+  pointer-events: none;
+  /* 中心を抜いたリングにして★の裏に隠れないようにする。 */
+  background: radial-gradient(
+    circle,
+    transparent 35%,
+    color-mix(in srgb, var(--favorite) 70%, transparent) 45%,
+    transparent 70%
+  );
+  animation: fav-pop-spark calc(var(--dur-shimmer) * 0.5) var(--ease) 1 both;
+}
+
+@keyframes fav-pop-spark {
+  0% { opacity: 1; transform: scale(0.8); }
+  100% { opacity: 0; transform: scale(1.4); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .fav-pop-spark { display: none; }
+}
+
+:root[data-motion="reduced"] .fav-pop-spark,
+:root[data-theme="hc-light"] .fav-pop-spark,
+:root[data-theme="hc-dark"] .fav-pop-spark {
+  display: none;
+}
+
+/* AI 応答の受信中表示 (#1756): 本文末尾のティールのキャレットと、受信中ラベルのブランド色。
+   点滅は CSS アニメのみ (React は再描画しない)。周期は --dur-shimmer に揃える。
+   reduced-motion は上の全体ブロックが 1 回再生に縮め点灯のまま静止、hc-* は明示的に静止。 */
+.ai-stream-caret {
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-inline-start: 0.1em;
+  vertical-align: text-bottom;
+  background: var(--stream-caret);
+  pointer-events: none;
+  user-select: none;
+  animation: stream-caret-blink var(--dur-shimmer) step-end infinite;
+}
+.ai-stream-label-live {
+  color: var(--stream-caret);
+}
+:root[data-theme="hc-light"] .ai-stream-caret,
+:root[data-theme="hc-dark"] .ai-stream-caret {
+  animation: none;
 }

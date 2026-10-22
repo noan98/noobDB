@@ -1,6 +1,6 @@
 // #825 でフィクスチャ数が増え、`serde_json::json!` マクロの再帰的展開が既定の
 // 再帰制限 (128) を超えるようになったため引き上げる。
-#![recursion_limit = "512"]
+#![recursion_limit = "1024"]
 
 //! zod ⇔ serde フィールド整合の共有ゴールデン (Rust 側、#625)。
 //!
@@ -60,6 +60,12 @@ use t::{
     SyncStatement, TableColumnInfo, TableComment, TableDiff, TableFixPlan, TableRowEstimate,
     TableRowIdentity, TableSchema, TableSizeInfo, TaskRunProgressEvent, TemplateColumn, Value,
 };
+// #1773: 検索系 (Where-used / 値検索) の Channel メッセージ。
+use t::{
+    ColumnHit, DataSearchEntry, DataSearchMessage, DefinitionAnalysis, ReferenceConfidence,
+    ReferenceLine, ScanColumn, WhereUsedEmptyDefinition, WhereUsedFailure, WhereUsedMatch,
+    WhereUsedMessage, WhereUsedReport,
+};
 // #1243: 全バリアント列挙 (`variants!`) に使う enum。
 use t::{
     ExportFormat, HealthProbeStatus, PlanPayloadKind, RowCountOp, TableChangeStatus, WriteKind,
@@ -84,11 +90,47 @@ macro_rules! variants {
     }};
 }
 
+/// #1773: 検索系 Channel メッセージ enum のバリアント追加をコンパイル時に検出する。
+/// 新バリアントを足したら、ここの `match` と `build_fixtures` の代表インスタンス配列の
+/// 両方を更新すること (更新しないとビルドが落ちる)。
+#[allow(dead_code)]
+fn _exhaustive_data_search_entry(e: &DataSearchEntry) {
+    match e {
+        DataSearchEntry::Hit { .. }
+        | DataSearchEntry::NoHit { .. }
+        | DataSearchEntry::Skipped { .. } => {}
+    }
+}
+
+#[allow(dead_code)]
+fn _exhaustive_where_used_message(m: &WhereUsedMessage) {
+    match m {
+        WhereUsedMessage::Progress { .. }
+        | WhereUsedMessage::Done { .. }
+        | WhereUsedMessage::Error { .. }
+        | WhereUsedMessage::Cancelled { .. } => {}
+    }
+}
+
+#[allow(dead_code)]
+fn _exhaustive_data_search_message(m: &DataSearchMessage) {
+    match m {
+        DataSearchMessage::Progress { .. }
+        | DataSearchMessage::Table { .. }
+        | DataSearchMessage::Done { .. }
+        | DataSearchMessage::Error { .. }
+        | DataSearchMessage::Cancelled { .. } => {}
+    }
+}
+
 /// 主要レスポンス型の代表インスタンスを serde で JSON 化し、
 /// `{ 型名: JSON }` のマップにまとめて返す。フロントのフィクスチャと同一内容。
 ///
 /// Option フィールドは基本的に `Some` を入れてキー + 型を露出させる (serde は None も
 /// `null` として出すのでキー自体は常に present)。zod の `.nullable()` は両方受ける。
+/// 例外: `skip_serializing_if` の付いた Option (例: `DataSearchEntry` の `detail`) は
+/// `None` のときキー自体が出ない。zod 側は `.optional()` で受けるので、`Some` / `None`
+/// の両方を代表インスタンスに入れる。
 fn build_fixtures() -> serde_json::Value {
     let column = Column {
         name: "id".into(),
@@ -840,6 +882,113 @@ fn build_fixtures() -> serde_json::Value {
         session_id: "sess0002".into(),
     };
     let broadcast_done_message = BroadcastMessage::Done {};
+    // #1773: Where-used / 値検索の Channel メッセージ。
+    let where_used_report = WhereUsedReport {
+        matches: vec![
+            WhereUsedMatch {
+                analysis: DefinitionAnalysis {
+                    confidence: ReferenceConfidence::Direct,
+                    hit_count: 1,
+                    lines: vec![ReferenceLine {
+                        line: 3,
+                        text: "SELECT * FROM users".into(),
+                        ranges: vec![(14, 19)],
+                        clipped_start: false,
+                        clipped_end: true,
+                    }],
+                },
+                source: "object",
+                kind: "view".into(),
+                name: "v_users".into(),
+                id: Some("view:v_users".into()),
+                snippet_id: None,
+            },
+            WhereUsedMatch {
+                analysis: DefinitionAnalysis {
+                    confidence: ReferenceConfidence::Possible,
+                    hit_count: 2,
+                    lines: vec![],
+                },
+                source: "snippet",
+                kind: "snippet".into(),
+                name: "ユーザ一覧".into(),
+                id: None,
+                snippet_id: Some("snip-1".into()),
+            },
+        ],
+        scanned_objects: 12,
+        scanned_snippets: 3,
+        failed: vec![WhereUsedFailure {
+            kind: "procedure".into(),
+            name: "p_secret".into(),
+            error: "permission denied".into(),
+        }],
+        empty_definitions: vec![WhereUsedEmptyDefinition {
+            kind: "function".into(),
+            name: "f_empty".into(),
+        }],
+        cancelled: false,
+    };
+    let where_used_progress_message = WhereUsedMessage::Progress { done: 4, total: 12 };
+    let where_used_done_message = WhereUsedMessage::Done {
+        report: where_used_report.clone(),
+    };
+    let where_used_error_message = WhereUsedMessage::Error {
+        error: "connection reset".into(),
+        connection_lost: true,
+    };
+    let where_used_cancelled_message = WhereUsedMessage::Cancelled {
+        report: WhereUsedReport {
+            cancelled: true,
+            ..where_used_report
+        },
+    };
+    let data_search_progress_message = DataSearchMessage::Progress {
+        index: 1,
+        total: 5,
+        table: "orders".into(),
+    };
+    // `dataSearchEntry` の status 全バリアント (hit / no-hit / skipped の 3 reason + detail 有無)。
+    let data_search_table_message_variants: Vec<DataSearchMessage> = vec![
+        DataSearchEntry::Hit {
+            table: "users".into(),
+            columns: vec![ScanColumn {
+                name: "email".into(),
+                data_type: "varchar".into(),
+            }],
+            hits: vec![ColumnHit {
+                column: "email".into(),
+                count: 3.0,
+            }],
+        },
+        DataSearchEntry::NoHit {
+            table: "orders".into(),
+        },
+        DataSearchEntry::Skipped {
+            table: "logs".into(),
+            reason: "row-threshold",
+            detail: None,
+        },
+        DataSearchEntry::Skipped {
+            table: "blobs".into(),
+            reason: "no-searchable-columns",
+            detail: None,
+        },
+        DataSearchEntry::Skipped {
+            table: "broken".into(),
+            reason: "error",
+            detail: Some("permission denied".into()),
+        },
+    ]
+    .into_iter()
+    .map(|entry| DataSearchMessage::Table { entry })
+    .collect();
+    let data_search_done_message = DataSearchMessage::Done {};
+    let data_search_error_message = DataSearchMessage::Error {
+        error: "connection reset".into(),
+        connection_lost: false,
+    };
+    let data_search_cancelled_message = DataSearchMessage::Cancelled { delivered_rows: 2 };
     let query_stream_patch_message = QueryStreamMessage::Patch {
         total_rows: 3,
         unchanged: false,
@@ -1618,10 +1767,30 @@ fn build_fixtures() -> serde_json::Value {
             })
             .collect();
     let incoming_foreign_key = t::IncomingForeignKey {
+        schema: Some("sales".into()),
         table: "orders".into(),
         column: "user_id".into(),
         referenced_column: "id".into(),
         on_delete: Some("CASCADE".into()),
+    };
+    let column_dependency_report = t::ColumnDependencyReport {
+        dependencies: vec![
+            t::ColumnDependency {
+                column: "price".into(),
+                kind: "view".into(),
+                name: "v_orders".into(),
+                detail: None,
+                confidence: t::ReferenceConfidence::Possible,
+            },
+            t::ColumnDependency {
+                column: "price".into(),
+                kind: "index".into(),
+                name: "idx_price".into(),
+                detail: Some("price, qty".into()),
+                confidence: t::ReferenceConfidence::Direct,
+            },
+        ],
+        warnings: vec!["definitions".into()],
     };
     let table_statistic = t::TableStatistic {
         name: "users".into(),
@@ -2214,6 +2383,15 @@ fn build_fixtures() -> serde_json::Value {
         "broadcastEnvMessage": broadcast_env_message,
         "broadcastCancelledMessage": broadcast_cancelled_message,
         "broadcastDoneMessage": broadcast_done_message,
+        "whereUsedProgressMessage": where_used_progress_message,
+        "whereUsedDoneMessage": where_used_done_message,
+        "whereUsedErrorMessage": where_used_error_message,
+        "whereUsedCancelledMessage": where_used_cancelled_message,
+        "dataSearchProgressMessage": data_search_progress_message,
+        "dataSearchTableMessageVariants": data_search_table_message_variants,
+        "dataSearchDoneMessage": data_search_done_message,
+        "dataSearchErrorMessage": data_search_error_message,
+        "dataSearchCancelledMessage": data_search_cancelled_message,
         "queryStreamErrorMessage": query_stream_error_message,
         "channelCancelledMessage": channel_cancelled_message,
         "channelCancelledMessageZero": channel_cancelled_message_zero,
@@ -2282,6 +2460,7 @@ fn build_fixtures() -> serde_json::Value {
         "writeCaptureSummaryVariants": write_capture_summary_variants,
         "healthProbeItemVariants": health_probe_item_variants,
         "incomingForeignKey": incoming_foreign_key,
+        "columnDependencyReport": column_dependency_report,
         "tableStatistic": table_statistic,
         "insertRowsResult": insert_rows_result,
         "openTableResult": open_table_result,

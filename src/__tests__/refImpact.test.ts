@@ -253,3 +253,34 @@ describe("buildOpenChildrenSql: BLOB 宣言でも 16 進でない値はリテラ
     );
   });
 });
+
+describe("別スキーマの子テーブル (#1786)", () => {
+  const cross: IncomingFk[] = [{ schema: "sales", table: "child", column: "pid", referencedColumn: "id" }];
+  const keys = new Map<string, CellValue[]>([["id", [1, 2]]]);
+
+  it("参照行数の SQL は子を自身のスキーマで修飾する", () => {
+    const [sql] = buildRefCountSqls({ driver: "postgres", database: "public", refs: cross, keys });
+    expect(sql).toContain('FROM "sales"."child" WHERE "pid" IN (1, 2)');
+    const [trunc] = buildRefCountSqls({ driver: "postgres", database: "public", refs: cross, keys: null });
+    expect(trunc).toContain('FROM "sales"."child" WHERE "pid" IS NOT NULL');
+  });
+
+  it("schema 未指定の子は従来どおり database で修飾する", () => {
+    const [sql] = buildRefCountSqls({ driver: "postgres", database: "public", refs: [refs[0]], keys });
+    expect(sql).toContain('FROM "public"."orders"');
+  });
+
+  it("子行を開く SQL も子のスキーマで修飾し、影響に schema を持たせる", async () => {
+    const impacts = await loadRefImpacts({
+      driver: "postgres",
+      database: "public",
+      refs: cross,
+      keys,
+      lookup: async () => ({ rows: [[0, 3]] }),
+    });
+    expect(impacts[0]?.schema).toBe("sales");
+    expect(buildOpenChildrenSql({ driver: "postgres", database: "public", impact: impacts[0], keys })).toBe(
+      'SELECT * FROM "sales"."child" WHERE "pid" IN (1, 2)',
+    );
+  });
+});

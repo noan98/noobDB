@@ -880,6 +880,33 @@ export interface AlterTableContext {
   warnings: string[];
 }
 
+/** DROP COLUMN の依存 1 件の種別 (`column_dependencies`、#1758)。 */
+export type ColumnDependencyKind =
+  | "view"
+  | "materialized_view"
+  | "trigger"
+  | "generated_column"
+  | "index"
+  | "foreign_key"
+  | "referenced_by";
+
+/** DROP COLUMN で影響を受ける依存 1 件 (`column_dependencies`、#1758)。 */
+export interface ColumnDependency {
+  /** 削除対象の列名。 */
+  column: string;
+  kind: ColumnDependencyKind;
+  name: string;
+  detail: string | null;
+  confidence: ReferenceConfidence;
+}
+
+/** `column_dependencies` の結果 (#1758)。 */
+export interface ColumnDependencyReport {
+  dependencies: ColumnDependency[];
+  /** 取得できず調べられなかった依存の種別 (`definitions` / `indexes` / `foreign_keys` / `generated_columns`)。 */
+  warnings: string[];
+}
+
 /** テーブルを開いた結果 (`open_table` / `open_tables`、#1263)。 */
 export interface OpenTableResult {
   /** ページネーションの土台 (`SELECT *[, rowid|ctid] FROM ...`、LIMIT なし)。 */
@@ -2823,6 +2850,9 @@ export interface ScriptFileStamp {
  * SQL ファイルの文字コード識別子 (#1535)。Rust `TextEncoding` の serde 名と一致する。
  * `utf-8-bom` / `utf-16*` は保存時に BOM を付ける。
  */
+/** About 面から開けるプロジェクトのリンク (Rust の `ProjectLink`, #1770)。 */
+export type ProjectLink = "repository" | "docs";
+
 export type TextEncodingId = "utf-8" | "utf-8-bom" | "utf-16le" | "utf-16be" | "shift_jis" | "euc-jp";
 
 /** `read_sql_file` の戻り値: 本文と実際に使った文字コード (保存時に同じ文字コードへ戻す)。 */
