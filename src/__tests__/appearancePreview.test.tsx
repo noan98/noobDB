@@ -145,7 +145,8 @@ describe("AppearancePreview のライブデモ (#1781)", () => {
     }
   });
 
-  describe("再生のタイミング", () => {
+  // 250ms の待ちと motion の実尺を実時間で待つので、負荷時に既定 5 秒を超えないよう余裕を持たせる。
+  describe("再生のタイミング", { timeout: 10_000 }, () => {
     type IoCb = (entries: { isIntersecting: boolean }[]) => void;
     let ioCb: IoCb | null = null;
     afterEach(() => {
