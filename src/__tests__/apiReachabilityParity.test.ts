@@ -52,7 +52,11 @@ const reachable = reachableModules([ENTRY], allSources);
  * テンプレートの `${api.x}` 式の中身は実コードなので残す。
  */
 function stripCommentsAndStrings(path: string, source: string): string {
-  const { program, comments } = parseSync(path, source);
+  const { program, comments, errors } = parseSync(path, source);
+  // パース失敗時は program.body が空になり、文字列が残ったまま走査されて黙って「到達可能」側へ倒れる。
+  if (errors.length > 0) {
+    throw new Error(`${path} をパースできません (コメント/文字列の除去に失敗): ${errors[0].message}`);
+  }
   const ranges: [number, number][] = comments.map((c) => [c.start, c.end]);
   const visit = (node: unknown): void => {
     if (node === null || typeof node !== "object") return;
@@ -134,14 +138,29 @@ describe("API 到達性パリティ (tauri.ts の api メンバ ↔ UI からの
       "const b = `api.inTemplate ${api.realCall}`;",
       "const c = <div title='api.inAttr'>api.inJsxText {api.jsxCall()}</div>;",
       "const d = /'/; api\n  .chained();",
+      "// 日本語のコメント api.afterJa",
+      "api.afterJapanese();",
     ].join("\n");
     const stripped = stripCommentsAndStrings("x.tsx", src);
     const found = (name: string) => new RegExp(`\\bapi\\s*\\.\\s*${name}\\b`).test(stripped);
     for (const name of ["inComment", "inBlock", "inString", "inTemplate", "inAttr", "inJsxText"]) {
       expect(found(name), name).toBe(false);
     }
-    for (const name of ["realCall", "jsxCall", "chained"]) expect(found(name), name).toBe(true);
+    for (const name of ["realCall", "jsxCall", "chained", "afterJapanese"])
+      expect(found(name), name).toBe(true);
+    expect(found("afterJa")).toBe(false);
     expect(stripped.length).toBe(src.length);
+  });
+
+  it("パースできないソースは黙って通さず例外にする (#1774)", () => {
+    expect(() => stripCommentsAndStrings("bad.ts", 'const x = "api.a" +;')).toThrow();
+  });
+
+  it("本番の走査対象にコメント中の api.xxx が残っていない (除去が効いている保険, #1774)", () => {
+    const leaked = consumerSources
+      .filter(([, src]) => /^\s*\/\/.*\bapi\s*\./m.test(src))
+      .map(([path]) => path);
+    expect(leaked).toEqual([]);
   });
 
   it("走査対象のソースを十分な数だけ読み込めている", () => {
