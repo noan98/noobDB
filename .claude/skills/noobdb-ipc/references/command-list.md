@@ -417,7 +417,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `write_text_file`
 - `write_binary_file`
 - `reveal_in_file_manager`
-- `open_external_url`
+- `open_project_link`
 - `set_window_title`
 - `fetch_cell_bytes`
 - `probe_cell_blob`
@@ -479,9 +479,9 @@ NUL の比率パターン。自動判定で本文に NUL があればエラー)�
 `reveal_in_file_manager` (`commands/file.rs`, #1631) は書き出し・ダンプの保存先を OS のファイルマネージャ
 (Windows: `explorer` / macOS: `open` / Linux: `xdg-open`) で開く。`path` がファイルなら親ディレクトリを開き、
 **ファイルそのものは開かない** (実行可能ファイルを起動しないため)。存在しない・空のパスは `InvalidInput`。
-`open_external_url` (`commands/file.rs`, #1770) は About 面のリポジトリ / ドキュメントリンクを既定のブラウザ
-(Windows: `explorer` / macOS: `open` / Linux: `xdg-open`) で開く。許可リストは `https://github.com/noan98/noobDB` 配下のみで、
-空白・制御文字を含む URL や他ホスト / 他スキームは `InvalidInput`。
+`open_project_link` (`commands/file.rs`, #1770) は About 面のリポジトリ / ドキュメントリンクを既定のブラウザ
+(Windows: `explorer` / macOS: `open` / Linux: `xdg-open`) で開く。引数は `target` (`repository` / `docs`、Rust の `ProjectLink`) だけで、URL は
+バックエンドで決め打ち (任意 URL は受け取らない)。起動した子プロセスは `wait` で回収する。
 `set_window_title` (`commands/window.rs`, #1631) はウィンドウタイトルを設定する (接続名と本番 / サンドボックスの
 区別を OS のタスクバー・Alt+Tab に出すため)。window の capability を増やさずに済むよう Rust 経由で行い、制御文字は
 空白にして 200 文字に切り詰める。

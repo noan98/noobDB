@@ -1803,7 +1803,7 @@ pub fn run() {
             commands::file::write_binary_file,
             commands::file::write_text_file,
             commands::file::reveal_in_file_manager,
-            commands::file::open_external_url,
+            commands::file::open_project_link,
             commands::window::set_window_title,
             commands::import::get_import_skipped_text,
             commands::import::save_import_skipped_rows,

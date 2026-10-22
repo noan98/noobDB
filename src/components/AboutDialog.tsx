@@ -1,6 +1,7 @@
 import { chakra, Flex } from "@chakra-ui/react";
 import { useEffect, useState } from "react";
-import { api } from "../api/tauri";
+import { api, type ProjectLink } from "../api/tauri";
+import { useReducedMotionConfig } from "motion/react";
 import { BrandLockup } from "../brand";
 import { useT } from "../i18n";
 import { getCurrentAppVersion } from "../updater";
@@ -8,10 +9,6 @@ import { Icon } from "./Icon";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { useToast } from "./Toast";
 import { Button } from "./ui";
-
-/** リポジトリ / ドキュメントの URL (バックエンドの許可リスト配下)。 */
-export const ABOUT_REPOSITORY_URL = "https://github.com/noan98/noobDB";
-export const ABOUT_DOCS_URL = "https://github.com/noan98/noobDB#readme";
 
 interface Props {
   onClose: () => void;
@@ -40,8 +37,13 @@ export function AboutDialog({ onClose }: Props) {
     };
   }, []);
 
-  const openLink = (url: string) => {
-    api.openExternalUrl(url).catch((e) => toast.error(`${t("aboutOpenFailed")}: ${String(e)}`));
+  // アニメが再生されない環境 (OS の動きを減らす設定 / hc-* テーマ) では再生ボタンを出さない。
+  const reducedMotion = useReducedMotionConfig();
+  const highContrast = document.documentElement.getAttribute("data-theme")?.startsWith("hc-") ?? false;
+  const canReplay = !reducedMotion && !highContrast;
+
+  const openLink = (target: ProjectLink) => {
+    api.openProjectLink(target).catch((e) => toast.error(`${t("aboutOpenFailed")}: ${String(e)}`));
   };
 
   return (
@@ -67,21 +69,23 @@ export function AboutDialog({ onClose }: Props) {
           {version === undefined ? " " : version ? t("aboutVersion", { version }) : t("aboutVersionUnknown")}
         </chakra.span>
         <Flex gap="2" wrap="wrap" justify="center">
-          <Button type="button" onClick={() => openLink(ABOUT_REPOSITORY_URL)}>
+          <Button type="button" onClick={() => openLink("repository")}>
             <Icon name="link" />
             {t("aboutRepository")}
           </Button>
-          <Button type="button" onClick={() => openLink(ABOUT_DOCS_URL)}>
+          <Button type="button" onClick={() => openLink("docs")}>
             <Icon name="help" />
             {t("aboutDocs")}
           </Button>
         </Flex>
       </ModalBody>
       <ModalFooter>
-        <Button type="button" onClick={() => setPlayKey((k) => k + 1)}>
-          <Icon name="play" />
-          {t("aboutReplay")}
-        </Button>
+        {canReplay && (
+          <Button type="button" onClick={() => setPlayKey((k) => k + 1)}>
+            <Icon name="play" />
+            {t("aboutReplay")}
+          </Button>
+        )}
         <div style={{ flex: 1 }} />
         <Button type="button" variant="primary" autoFocus onClick={onClose}>
           {t("aboutClose")}

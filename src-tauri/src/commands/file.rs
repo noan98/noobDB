@@ -1,6 +1,6 @@
 use tokio::io::AsyncReadExt;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, Result};
 use crate::text_encoding::{self, TextEncoding};
@@ -183,28 +183,28 @@ pub async fn reveal_in_file_manager(path: String) -> Result<()> {
         .map_err(|e| AppError::Other(format!("reveal task failed: {e}")))?
 }
 
-/// 「About」面から開いてよい外部リンクの許可プレフィックス (#1770)。
-const ALLOWED_EXTERNAL_URL_BASE: &str = "https://github.com/noan98/noobDB";
+/// About 面から開けるプロジェクトのリンク (#1770)。フロントは種類だけを渡し、URL は
+/// バックエンドで決め打ちにする (任意の URL / パスを OS の既定動作へ渡さない多層防御)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectLink {
+    Repository,
+    Docs,
+}
 
-/// 外部ブラウザで開く URL を検証する (#1770)。プロジェクトのリポジトリ配下
-/// (`https://github.com/noan98/noobDB` と、その `/…` `#…` `?…`) だけを許可し、
-/// 空白・制御文字を含むものは拒否する。任意 URL / ローカルパス / 他スキームを OS の既定動作へ
-/// 渡さないための許可リスト。
-pub(crate) fn validate_external_url(url: &str) -> Result<&str> {
-    let u = url;
-    if u.is_empty() || u.chars().any(|c| c.is_whitespace() || c.is_control()) {
-        return Err(AppError::InvalidInput(
-            "url is empty or contains whitespace".into(),
-        ));
-    }
-    match u.strip_prefix(ALLOWED_EXTERNAL_URL_BASE) {
-        Some(rest) if rest.is_empty() || rest.starts_with(['/', '#', '?']) => Ok(u),
-        _ => Err(AppError::InvalidInput("url is not allowed".into())),
+impl ProjectLink {
+    fn url(self) -> &'static str {
+        match self {
+            ProjectLink::Repository => "https://github.com/noan98/noobDB",
+            ProjectLink::Docs => "https://github.com/noan98/noobDB#readme",
+        }
     }
 }
 
-/// 既定のブラウザで URL を開く (待たずに起動だけする)。
-fn spawn_browser(url: &str) -> Result<()> {
+/// 既定のブラウザで URL を開く。起動したプロセスは呼び出し元 (`spawn_blocking`) で
+/// `wait` して回収し、ゾンビを残さない。`xdg-open` / `open` / `explorer` は起動を
+/// 仲介するだけですぐ終了する。
+fn open_in_browser(url: &str) -> Result<()> {
     #[cfg(target_os = "windows")]
     let mut cmd = std::process::Command::new("explorer");
     #[cfg(target_os = "macos")]
@@ -215,20 +215,22 @@ fn spawn_browser(url: &str) -> Result<()> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    cmd.spawn()
-        .map(|_| ())
-        .map_err(|e| AppError::Other(format!("failed to open the browser: {e}")))
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| AppError::Other(format!("failed to open the browser: {e}")))?;
+    // 終了コードは見ない (explorer は成功でも非 0 を返すことがある)。回収だけ行う。
+    let _ = child.wait();
+    Ok(())
 }
 
 /// About 面のリポジトリ / ドキュメントリンクを既定のブラウザで開く (#1770)。フロントが
 /// シェルプラグインを直に叩かずバックエンド経由で起動する (capabilities を増やさない)。
-/// 開けるのは [`validate_external_url`] の許可リストに合う URL だけ。
+/// URL は [`ProjectLink`] から Rust 側で決まり、フロントからは受け取らない。
 #[tauri::command]
-pub async fn open_external_url(url: String) -> Result<()> {
-    let u = validate_external_url(&url)?.to_string();
-    tokio::task::spawn_blocking(move || spawn_browser(&u))
+pub async fn open_project_link(target: ProjectLink) -> Result<()> {
+    tokio::task::spawn_blocking(move || open_in_browser(target.url()))
         .await
-        .map_err(|e| AppError::Other(format!("open url task failed: {e}")))?
+        .map_err(|e| AppError::Other(format!("open link task failed: {e}")))?
 }
 
 /// ドロップされた `.sql` / `.txt` の内容を読んでエディタへ流し込むための読み取り
@@ -384,32 +386,20 @@ mod tests {
     }
 
     #[test]
-    fn validate_external_url_allows_only_repository_urls() {
-        for ok in [
-            "https://github.com/noan98/noobDB",
-            "https://github.com/noan98/noobDB/",
-            "https://github.com/noan98/noobDB#readme",
-            "https://github.com/noan98/noobDB/issues?q=1",
-        ] {
-            assert!(validate_external_url(ok).is_ok(), "{ok}");
-        }
-        for ng in [
-            "",
-            "  ",
-            "https://github.com/noan98/noobDB-evil",
-            "https://github.com/noan98/noobDBx/y",
-            "http://github.com/noan98/noobDB",
-            "https://evil.example/https://github.com/noan98/noobDB",
-            "file:///etc/passwd",
-            "https://github.com/noan98/noobDB --help",
-            "https://github.com/noan98/noobDB\n",
-            "-h",
-        ] {
-            assert!(
-                matches!(validate_external_url(ng), Err(AppError::InvalidInput(_))),
-                "{ng}"
-            );
-        }
+    fn project_link_urls_are_fixed_repository_urls() {
+        assert_eq!(
+            ProjectLink::Repository.url(),
+            "https://github.com/noan98/noobDB"
+        );
+        assert_eq!(
+            ProjectLink::Docs.url(),
+            "https://github.com/noan98/noobDB#readme"
+        );
+        assert_eq!(
+            serde_json::from_str::<ProjectLink>("\"docs\"").unwrap(),
+            ProjectLink::Docs
+        );
+        assert!(serde_json::from_str::<ProjectLink>("\"https://evil.example\"").is_err());
     }
 
     #[tokio::test]

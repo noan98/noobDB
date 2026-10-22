@@ -2,7 +2,7 @@
 import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
-import type { SqlEncodingPreview, SqlFileContent, TextEncodingId } from "../tauri";
+import type { ProjectLink, SqlEncodingPreview, SqlFileContent, TextEncodingId } from "../tauri";
 
 export const fileCommands = {
   /**
@@ -67,8 +67,8 @@ export const fileCommands = {
   revealInFileManager: (path: string) => invoke<void>("reveal_in_file_manager", { path }),
 
   /**
-   * About 面のリポジトリ / ドキュメントリンクを既定のブラウザで開く (#1770)。許可されるのは
-   * プロジェクトのリポジトリ配下の URL だけで、それ以外は reject (バックエンドの許可リスト)。
+   * About 面のリポジトリ / ドキュメントを既定のブラウザで開く (#1770)。URL はバックエンドで
+   * 種類から決め打ちにし、フロントからは渡さない (capabilities を増やさない)。
    */
-  openExternalUrl: (url: string) => invoke<void>("open_external_url", { url }),
+  openProjectLink: (target: ProjectLink) => invoke<void>("open_project_link", { target }),
 };
