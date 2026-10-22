@@ -57,6 +57,8 @@ export function buildFkJumpSql(p: FkJumpParams): string {
 
 /** 現在のテーブルを参照している子テーブル側の FK 1 件 (逆参照)。抽出はバックエンドの `incoming_foreign_keys` (#1255)。 */
 export interface IncomingFk {
+  /** 子テーブルのスキーマ。参照先と同じなら省略 / null。PostgreSQL のスキーマをまたぐ FK だけ入る (#1786)。 */
+  schema?: string | null;
   /** FK を持つ子テーブル。 */
   table: string;
   /** 現在のテーブルを参照している子テーブルのカラム。 */
@@ -67,9 +69,16 @@ export interface IncomingFk {
   onDelete?: string | null;
 }
 
+/** 子テーブルの表示名。スキーマをまたぐ FK (#1786) だけ `schema.table` にする。 */
+export function incomingFkTableName(fk: { schema?: string | null; table: string }): string {
+  return fk.schema ? `${fk.schema}.${fk.table}` : fk.table;
+}
+
 export interface ReverseRefParams {
   driver: string;
   database?: string | null;
+  /** 子テーブルのスキーマ (`IncomingFk.schema`)。指定時は `database` より優先して修飾する (#1786)。 */
+  childSchema?: string | null;
   /** FK を持つ子テーブル。 */
   childTable: string;
   /** この行を参照している子テーブルのカラム。 */
@@ -85,7 +94,7 @@ export interface ReverseRefParams {
  * 生成する。例: `users.id = 42` の行 → `SELECT * FROM orders WHERE user_id = 42`。
  */
 export function buildReverseRefSql(p: ReverseRefParams): string {
-  return `SELECT * FROM ${qualifiedTable(p.driver, p.database, p.childTable)} WHERE ${matchPredicate(
+  return `SELECT * FROM ${qualifiedTable(p.driver, p.childSchema ?? p.database, p.childTable)} WHERE ${matchPredicate(
     p.driver,
     p.childColumn,
     p.value,

@@ -2,7 +2,7 @@
 import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
-import type { SqlEncodingPreview, SqlFileContent, TextEncodingId } from "../tauri";
+import type { ProjectLink, SqlEncodingPreview, SqlFileContent, TextEncodingId } from "../tauri";
 
 export const fileCommands = {
   /**
@@ -65,4 +65,10 @@ export const fileCommands = {
    * 直に叩かずバックエンド経由で起動する (capabilities を増やさない)。
    */
   revealInFileManager: (path: string) => invoke<void>("reveal_in_file_manager", { path }),
+
+  /**
+   * About 面のリポジトリ / ドキュメントを既定のブラウザで開く (#1770)。URL はバックエンドで
+   * 種類から決め打ちにし、フロントからは渡さない (capabilities を増やさない)。
+   */
+  openProjectLink: (target: ProjectLink) => invoke<void>("open_project_link", { target }),
 };

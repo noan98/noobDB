@@ -1258,10 +1258,32 @@ export const schemaTree = z.object({
 /** 逆方向 FK 1 件 (`incoming_foreign_keys`、#1255)。このレスポンスだけ camelCase
  *  (Rust 側が `serde(rename_all = "camelCase")`、フロントの `IncomingFk` と同形)。 */
 export const incomingForeignKey = z.object({
+  schema: z.string().nullish(),
   table: z.string(),
   column: z.string(),
   referencedColumn: z.string(),
   onDelete: z.string().nullish(),
+});
+
+/** DROP COLUMN の依存 1 件 (`column_dependencies`、#1758)。 */
+export const columnDependency = z.object({
+  column: z.string(),
+  kind: z.enum([
+    "view",
+    "materialized_view",
+    "trigger",
+    "generated_column",
+    "index",
+    "foreign_key",
+    "referenced_by",
+  ]),
+  name: z.string(),
+  detail: z.string().nullable(),
+  confidence: z.enum(["direct", "possible"]),
+});
+export const columnDependencyReport = z.object({
+  dependencies: z.array(columnDependency),
+  warnings: z.array(z.string()),
 });
 
 /** 配列を返すコマンド用のラッパースキーマ。 */

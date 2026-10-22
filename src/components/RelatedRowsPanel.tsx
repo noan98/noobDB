@@ -3,6 +3,7 @@ import { Box, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 import type { CellValue, QueryResult } from "../api/tauri";
+import { incomingFkTableName } from "../fkNavigation";
 import { useT } from "../i18n";
 import { transitions, variants } from "../motion";
 import {
@@ -91,7 +92,9 @@ function useRelatedCounts(
   const sig = JSON.stringify([
     driver,
     database,
-    entries.filter((e) => e.blocked === null).map((e) => [e.key, e.fk.table, e.fk.column, e.value]),
+    entries
+      .filter((e) => e.blocked === null)
+      .map((e) => [e.key, e.fk.schema, e.fk.table, e.fk.column, e.value]),
   ]);
   const [done, setDone] = useState<{ sig: string; counts: Record<string, CountState> }>({
     sig: "",
@@ -110,6 +113,7 @@ function useRelatedCounts(
             driver,
             database,
             childTable: entry.fk.table,
+            childSchema: entry.fk.schema,
             childColumn: entry.fk.column,
             value: entry.value,
             valueType: entry.valueType,
@@ -245,7 +249,7 @@ function RelatedSection({
           textOverflow="ellipsis"
           whiteSpace="nowrap"
         >
-          {entry.fk.table}.{entry.fk.column}
+          {incomingFkTableName(entry.fk)}.{entry.fk.column}
         </chakra.span>
         {count && count !== "error" && (
           <chakra.span flexShrink={0} textStyle="caption" fontFamily="mono" data-testid="related-count">
@@ -327,6 +331,7 @@ function RelatedRowsBody({
     driver,
     database,
     childTable: entry.fk.table,
+    childSchema: entry.fk.schema,
     childColumn: entry.fk.column,
     value,
     valueType: entry.valueType,
@@ -409,7 +414,7 @@ function RelatedRowsBody({
             fontSize="xs"
             fontFamily="mono"
             borderCollapse="collapse"
-            aria-label={t("relatedRowsTableAria", { table: entry.fk.table })}
+            aria-label={t("relatedRowsTableAria", { table: incomingFkTableName(entry.fk) })}
           >
             <thead>
               <tr>

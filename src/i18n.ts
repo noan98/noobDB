@@ -109,6 +109,16 @@ const en = {
   shortcutModalSubmitDesc: "In a dialog or form: run the primary action (Esc closes without running).",
 
   splashTagline: "Lightweight SQL client",
+  aboutTitle: "About noobDB",
+  aboutClose: "Close",
+  aboutVersion: "Version {version}",
+  aboutVersionUnknown: "Version unknown",
+  aboutReplay: "Replay logo animation",
+  aboutRepository: "Repository",
+  aboutDocs: "Documentation",
+  aboutOpenFailed: "Could not open the link",
+  cmdkActionAbout: "About noobDB",
+  appAbout: "About noobDB",
 
   sidebarTabConnections: "Connections",
   sidebarTabSnippets: "Snippets",
@@ -3316,6 +3326,28 @@ const en = {
   dropReferencedBySqlite:
     "These tables still reference the table(s) being dropped. SQLite may let the DROP through depending on PRAGMA foreign_keys and leave orphaned child rows. Parent.column ← child.column:",
   dropReferencedByMore: "and {count} more",
+  // DROP COLUMN の依存オブジェクト警告 (#1758)。
+  dropColumnDepsLoading: "Checking objects that depend on the dropped columns…",
+  dropColumnDepsError: "Could not check dependent objects: {error}",
+  dropColumnDepsTitle: "Objects depend on the columns being dropped ({count})",
+  dropColumnDepsIncompleteTitle: "Dependent-object check is incomplete",
+  dropColumnDepsBody:
+    "Dropping these columns can fail or silently break the objects below (views and triggers stop working, indexes shrink or disappear, foreign keys and generated columns block the DROP). Column ← dependent object:",
+  dropColumnDepsIncomplete:
+    "Some dependencies could not be checked ({kinds}), so the list above may be incomplete.",
+  dropColumnDepView: "view",
+  dropColumnDepMatView: "materialized view",
+  dropColumnDepTrigger: "trigger",
+  dropColumnDepGenerated: "generated column",
+  dropColumnDepIndex: "index",
+  dropColumnDepForeignKey: "foreign key",
+  dropColumnDepReferencedBy: "referenced by table",
+  dropColumnDepPossible: "possible",
+  dropColumnWarnDefinitions: "views / triggers",
+  dropColumnWarnIndexes: "indexes",
+  dropColumnWarnForeignKeys: "foreign keys",
+  dropColumnWarnGenerated: "generated columns",
+  dropColumnWarnOther: "other",
   // 行削除 / TRUNCATE の前に出す子テーブルの参照行数 (#1506)。
   refImpactTitle: "{count} child rows in {tables} table(s) reference the data being deleted",
   refImpactTitlePartial: "At least {count} child rows in {tables} table(s) reference the data being deleted",
@@ -6852,6 +6884,16 @@ const ja: Dict = {
   shortcutModalSubmitDesc: "ダイアログ / フォームで主アクションを実行します (Esc は実行せずに閉じます)。",
 
   splashTagline: "軽量 SQL クライアント",
+  aboutTitle: "noobDB について",
+  aboutClose: "閉じる",
+  aboutVersion: "バージョン {version}",
+  aboutVersionUnknown: "バージョン不明",
+  aboutReplay: "ロゴのアニメーションを再生",
+  aboutRepository: "リポジトリ",
+  aboutDocs: "ドキュメント",
+  aboutOpenFailed: "リンクを開けませんでした",
+  cmdkActionAbout: "noobDB について",
+  appAbout: "noobDB について",
 
   sidebarTabConnections: "接続",
   sidebarTabSnippets: "スニペット",
@@ -10040,6 +10082,28 @@ const ja: Dict = {
   dropReferencedBySqlite:
     "次のテーブルがここで削除するテーブルを参照しています。SQLite は PRAGMA foreign_keys の設定次第で DROP が通り、子の行が孤立することがあります。親.列 ← 子.列:",
   dropReferencedByMore: "ほか {count} 件",
+  // DROP COLUMN の依存オブジェクト警告 (#1758)。
+  dropColumnDepsLoading: "削除する列に依存するオブジェクトを調べています…",
+  dropColumnDepsError: "依存オブジェクトを調べられませんでした: {error}",
+  dropColumnDepsTitle: "削除する列に依存するオブジェクトがあります ({count} 件)",
+  dropColumnDepsIncompleteTitle: "依存オブジェクトの検査が不完全です",
+  dropColumnDepsBody:
+    "これらの列を DROP すると、次のオブジェクトでエラーになるか、黙って壊れる可能性があります (ビュー・トリガーは動かなくなり、インデックスは縮小または消え、外部キー・生成列は DROP を妨げます)。列 ← 依存オブジェクト:",
+  dropColumnDepsIncomplete:
+    "一部の依存を調べられなかったため ({kinds})、上の一覧は不完全な可能性があります。",
+  dropColumnDepView: "ビュー",
+  dropColumnDepMatView: "マテリアライズドビュー",
+  dropColumnDepTrigger: "トリガー",
+  dropColumnDepGenerated: "生成列",
+  dropColumnDepIndex: "インデックス",
+  dropColumnDepForeignKey: "外部キー",
+  dropColumnDepReferencedBy: "参照元テーブル",
+  dropColumnDepPossible: "候補",
+  dropColumnWarnDefinitions: "ビュー・トリガー",
+  dropColumnWarnIndexes: "インデックス",
+  dropColumnWarnForeignKeys: "外部キー",
+  dropColumnWarnGenerated: "生成列",
+  dropColumnWarnOther: "その他",
   // 行削除 / TRUNCATE の前に出す子テーブルの参照行数 (#1506)。
   refImpactTitle: "削除対象を {tables} テーブルの子行 {count} 件が参照しています",
   refImpactTitlePartial: "削除対象を {tables} テーブルの子行 {count} 件以上が参照しています",

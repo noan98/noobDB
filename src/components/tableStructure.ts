@@ -87,6 +87,8 @@ export function structureTargetLabel(driver: string, target: StructureTarget): s
 
 /** 被参照 (逆方向) の外部キー 1 件を表の行にしたもの (#1628)。 */
 export interface StructureIncomingRow {
+  /** 参照元のスキーマ。PostgreSQL のスキーマをまたぐ FK だけ入る (#1786)。 */
+  schema?: string | null;
   /** 外部キーを持つ参照元 (子) テーブル。 */
   table: string;
   /** 参照元の列。 */
@@ -104,13 +106,19 @@ export function structureIncomingRows(incoming: readonly StructureIncomingRow[])
   const seen = new Set<string>();
   const out: StructureIncomingRow[] = [];
   for (const fk of incoming) {
-    const key = JSON.stringify([fk.table, fk.column, fk.referencedColumn]);
+    const key = JSON.stringify([fk.schema ?? null, fk.table, fk.column, fk.referencedColumn]);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ table: fk.table, column: fk.column, referencedColumn: fk.referencedColumn });
+    out.push({
+      ...(fk.schema ? { schema: fk.schema } : {}),
+      table: fk.table,
+      column: fk.column,
+      referencedColumn: fk.referencedColumn,
+    });
   }
   return out.sort(
     (a, b) =>
+      (a.schema ?? "").localeCompare(b.schema ?? "") ||
       a.table.localeCompare(b.table) ||
       a.column.localeCompare(b.column) ||
       a.referencedColumn.localeCompare(b.referencedColumn),

@@ -108,6 +108,8 @@
   `readOnlyGuardParity.test.ts` (#1778。同じく `#[tauri::command]` を抽出し、すべてが
   `WRITE_CAPABLE` (本体にガード参照を要求) か `READ_ONLY_SAFE` (理由つき) に分類
   されていることを強制する。新コマンドを足したら必ずどちらかへ追記する) /
+  `channelMessageParity.test.ts` (#1772。`src-tauri/src/**/*.rs` を読み、`Channel<T>` の
+  内部タグ enum の kind ⇔ `tauri.ts` の `switch` ⇔ Zod スキーマを両方向で照合する) /
   `sqlQuotingGolden.test.ts` (#880) /
   `exportFormatGolden.test.ts` (#879) (Rust の統合テストと
   共有するフィクスチャ `src/__tests__/fixtures/*.json` を検証する)、および
