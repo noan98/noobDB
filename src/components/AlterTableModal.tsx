@@ -29,6 +29,9 @@ import { TableConstraintEditor, type CheckRow, type FkRow } from "./TableConstra
 import { isCompleteCheck, isCompleteForeignKey } from "./tableConstraints";
 import { buildAlterPrechecks, buildConstraintPrechecks } from "./alterPrecheck";
 import { AlterPrecheckNotice } from "./AlterPrecheckNotice";
+import { AlterCostNotice } from "./AlterCostNotice";
+import { classifyAlterCost, hasMysqlCopyRisk, shouldWarnForRows, withMysqlOnlineClause } from "./alterCost";
+import { useTableRowEstimate } from "../useTableRowEstimate";
 import { DropColumnDependencies } from "./DropColumnDependencies";
 import { useColumnDependencies } from "../useColumnDependencies";
 import { COUNT_PREVIEW_TIMEOUT_SECS, useCountPreviews } from "../useCountPreviews";
@@ -305,7 +308,36 @@ export function AlterTableModal({
       droppedChecks,
     ],
   );
-  const statements = plan.statements;
+  // 書き換え / 全件走査 / 長いロックを伴う操作 (#1771)。テーブルが小さければ警告しない。
+  const costRisks = useMemo(
+    () =>
+      classifyAlterCost(driver, {
+        baseline,
+        existing,
+        added,
+        indexes: effectiveIndexes.filter((r) => indexRowProblems(r) === null),
+        addedForeignKeys: addedFks.filter(isCompleteForeignKey),
+        addedChecks: addedChecks.filter(isCompleteCheck),
+      }),
+    [driver, baseline, existing, added, effectiveIndexes, addedFks, addedChecks],
+  );
+  const rowEstimate = useTableRowEstimate(
+    sessionId,
+    database,
+    table,
+    !loading && !loadError && costRisks.length > 0,
+  );
+  const costRows = rowEstimate.status === "ok" ? rowEstimate.rows : null;
+  const showCost = costRisks.length > 0 && (rowEstimate.status === "loading" || shouldWarnForRows(costRows));
+  // MySQL: ALGORITHM=INPLACE, LOCK=NONE を付ける切り替え (#1771)。COPY が要る変更は実行時エラーで止まる。
+  // 切り替えが見えない (該当する変更が無い) ときは付けない。
+  const [onlineClause, setOnlineClause] = useState(false);
+  const showOnlineToggle = showCost && driver === "mysql" && hasMysqlCopyRisk(costRisks);
+  const applyOnline = onlineClause && showOnlineToggle;
+  const statements = useMemo(
+    () => (applyOnline ? withMysqlOnlineClause(driver, plan.statements) : plan.statements),
+    [driver, applyOnline, plan.statements],
+  );
   const unsupported = plan.unsupported;
   // 名前が空 / 列未選択のインデックス行は文にならない。黙って捨てて実行できてしまうと
   // 「作ったつもり」になるので、行ごとにエラーを出して不備が残る間は実行を止める (#1532)。
@@ -849,6 +881,17 @@ export function AlterTableModal({
                 counts={precheckCounts}
                 onOpenRows={onSendToEditor}
               />
+              {showCost && (
+                <AlterCostNotice
+                  driver={driver}
+                  risks={costRisks}
+                  rows={costRows}
+                  rowsLoading={rowEstimate.status === "loading"}
+                  showOnlineToggle={showOnlineToggle}
+                  onlineEnabled={onlineClause}
+                  onOnlineChange={setOnlineClause}
+                />
+              )}
               <DropColumnDependencies state={columnDeps} />
               {hasIncompleteIndex && (
                 <Callout tone="warning">{t("alterTableIndexIncompleteBlocked")}</Callout>

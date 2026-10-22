@@ -2,9 +2,14 @@ use serde::{Deserialize, Serialize};
 
 /// DB-agnostic value type returned to the frontend as JSON.
 ///
-/// `Serialize` は手書き ([`impl Serialize for Value`])。`Deserialize` は untagged の derive。
+/// `Serialize` は手書き ([`impl Serialize for Value`])。
+///
+/// `Deserialize` は `ValueDe` 経由で、JS の安全整数の外にある整数 (フロントの `number` 由来で、
+/// もともと f64 だったもの。DOUBLE 列の 1e16 など) を `Float` に寄せる (#1780)。
+/// そのまま `Int` / `UInt` にすると、受け取った値を返すコマンドで Serialize 境界の
+/// 不変条件に触れる。
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(untagged)]
+#[serde(from = "ValueDe")]
 pub enum Value {
     Null,
     Bool(bool),
@@ -14,6 +19,35 @@ pub enum Value {
     String(String),
     /// Hex-encoded for arbitrary BLOBs to keep JSON safe.
     Bytes(String),
+}
+
+/// [`Value`] の `Deserialize` 用の素直な untagged 表現。
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ValueDe {
+    Null,
+    Bool(bool),
+    Int(i64),
+    UInt(u64),
+    Float(f64),
+    String(String),
+    Bytes(String),
+}
+
+impl From<ValueDe> for Value {
+    fn from(v: ValueDe) -> Self {
+        match v {
+            ValueDe::Null => Value::Null,
+            ValueDe::Bool(b) => Value::Bool(b),
+            ValueDe::Int(i) if Value::Int(i).is_js_safe() => Value::Int(i),
+            ValueDe::Int(i) => Value::Float(i as f64),
+            ValueDe::UInt(u) if Value::UInt(u).is_js_safe() => Value::UInt(u),
+            ValueDe::UInt(u) => Value::Float(u as f64),
+            ValueDe::Float(f) => Value::Float(f),
+            ValueDe::String(s) => Value::String(s),
+            ValueDe::Bytes(s) => Value::Bytes(s),
+        }
+    }
 }
 
 /// 浮動小数の文字列表現。有限値は Rust の `to_string()`、非有限値は JS の `String(v)` と
@@ -37,13 +71,31 @@ impl Serialize for Value {
         match self {
             Value::Null => serializer.serialize_unit(),
             Value::Bool(b) => serializer.serialize_bool(*b),
-            Value::Int(i) => serializer.serialize_i64(*i),
-            Value::UInt(u) => serializer.serialize_u64(*u),
+            Value::Int(i) => {
+                debug_assert_serialize_js_safe(self);
+                serializer.serialize_i64(*i)
+            }
+            Value::UInt(u) => {
+                debug_assert_serialize_js_safe(self);
+                serializer.serialize_u64(*u)
+            }
             Value::Float(f) if f.is_finite() => serializer.serialize_f64(*f),
             Value::Float(f) => serializer.serialize_str(&float_text(*f)),
             Value::String(s) | Value::Bytes(s) => serializer.serialize_str(s),
         }
     }
+}
+
+/// Serialize 境界の不変条件チェック (#1780)。
+fn debug_assert_serialize_js_safe(v: &Value) {
+    // IPC 越えの全 Value シリアライズ境界での不変条件チェック。どのモジュールが組み立てた
+    // Value でも、安全整数 (2^53 - 1) を超える整数が素の JSON 数値として出る前に debug
+    // ビルド (テスト) で検出する。release は無コスト (debug_assert)。出力形式は変えない。
+    debug_assert!(
+        v.is_js_safe(),
+        "安全整数 (2^53 - 1) を超える整数を Value::Int/UInt のまま IPC へ出力しようとしました: {v:?}。\
+         Value::from_i64_lossless / from_u64_lossless を経由してください (#1780)"
+    );
 }
 
 /// JS の `Number.MAX_SAFE_INTEGER` (2^53 - 1)。
@@ -1182,41 +1234,194 @@ mod js_safe_tests {
         let _ = Value::UInt(u64::MAX).debug_assert_js_safe();
     }
 
-    /// 3 ドライバのデコーダ本体 (テストモジュールより前) に、`Value::Int(` /
-    /// `Value::UInt(` を直接組み立てる行が無いことを固定する (#1422)。
-    ///
-    /// PostgreSQL の INT2 / INT4 / OID のように元の型が 2^53 に収まる場合でも、
-    /// 直接構築の前例があると BIGINT 相当の新しい分岐がそれをコピーして静かに
-    /// 丸めを再発させる。整数は必ず `from_*_lossless` を経由させる。
-    /// `=>` を含む行 (match のパターン) と `matches!` / `if let` は「読む側」なので対象外。
     #[test]
-    fn driver_decoders_never_construct_raw_int_values() {
-        let sources = [
-            ("mysql.rs", include_str!("mysql.rs")),
-            ("postgres.rs", include_str!("postgres.rs")),
-            ("sqlite.rs", include_str!("sqlite.rs")),
-        ];
+    #[should_panic(expected = "#1780")]
+    fn serialize_panics_on_out_of_range_int_in_debug_builds() {
+        let _ = serde_json::to_string(&Value::Int(SAFE + 1));
+    }
+
+    #[test]
+    #[should_panic(expected = "#1780")]
+    fn serialize_panics_on_out_of_range_uint_in_debug_builds() {
+        let _ = serde_json::to_string(&vec![Value::UInt(u64::MAX)]);
+    }
+
+    #[test]
+    fn serialize_keeps_json_shape_for_safe_values() {
+        assert_eq!(
+            serde_json::to_string(&Value::Int(-SAFE)).unwrap(),
+            "-9007199254740991"
+        );
+        assert_eq!(
+            serde_json::to_string(&Value::UInt(SAFE as u64)).unwrap(),
+            "9007199254740991"
+        );
+        assert_eq!(
+            serde_json::to_string(&Value::from_u64_lossless(u64::MAX)).unwrap(),
+            "\"18446744073709551615\""
+        );
+    }
+
+    /// `Value::Int(` / `Value::UInt(` を直接組み立てる式 (本体コード) を探す。
+    /// `#[cfg(test)] mod` 以降は対象外、それ以外の `#[cfg(test)]` 項目は波括弧の深さで飛ばす。
+    /// match のパターン・`if let` の左辺・`matches!` の第 2 引数以降は「読む側」なので対象外。
+    fn raw_int_constructions(name: &str, src: &str) -> Vec<String> {
+        // 「構築しうる式」の部分だけを返す。match アームは `=>` の右辺、`if let` は `=` の右辺、
+        // `matches!` は第 1 引数 (式) だけ。パターン側の `Value::Int(n)` は読む側なので対象外。
+        fn expr_zone(code: &str) -> &str {
+            if let Some(i) = code.find("=>") {
+                &code[i + 2..]
+            } else if let Some(i) = code.find("if let") {
+                code[i..].split_once(" = ").map_or("", |(_, rhs)| rhs)
+            } else if let Some(i) = code.find("matches!(") {
+                let rest = &code[i + "matches!(".len()..];
+                rest.split(',').next().unwrap_or("")
+            } else {
+                code
+            }
+        }
         let mut offenders = Vec::new();
-        for (name, src) in sources {
-            for (no, line) in src.lines().enumerate() {
-                let code = line.split("//").next().unwrap_or("");
-                if code.trim_start().starts_with("#[cfg(test)]") {
+        // `#[cfg(test)]` の次の空でない行が `mod` ならテストモジュールなので打ち切る。
+        // それ以外 (テスト専用の fn など) はその項目だけを飛ばして走査を続ける。
+        let mut pending_cfg_test = false;
+        let mut skip_depth: Option<i32> = None;
+        for (no, line) in src.lines().enumerate() {
+            let code = line.split("//").next().unwrap_or("");
+            let trimmed = code.trim_start();
+            if let Some(depth) = skip_depth.as_mut() {
+                *depth += code.matches('{').count() as i32 - code.matches('}').count() as i32;
+                if *depth <= 0 {
+                    skip_depth = None;
+                }
+                continue;
+            }
+            if trimmed.starts_with("#[cfg(test)]") {
+                pending_cfg_test = true;
+                continue;
+            }
+            if pending_cfg_test {
+                if trimmed.is_empty() || trimmed.starts_with("#[") {
+                    continue;
+                }
+                pending_cfg_test = false;
+                if trimmed.starts_with("mod ") || trimmed.starts_with("pub mod ") {
                     break;
                 }
-                let constructs = code.contains("Value::Int(") || code.contains("Value::UInt(");
-                let is_pattern =
-                    code.contains("=>") || code.contains("matches!") || code.contains("if let");
-                if constructs && !is_pattern {
-                    offenders.push(format!("{name}:{}: {}", no + 1, line.trim()));
+                let depth = code.matches('{').count() as i32 - code.matches('}').count() as i32;
+                if depth > 0 {
+                    skip_depth = Some(depth);
                 }
+                continue;
             }
+            let zone = expr_zone(code);
+            if zone.contains("Value::Int(") || zone.contains("Value::UInt(") {
+                offenders.push(format!("{name}:{}: {}", no + 1, line.trim()));
+            }
+        }
+        offenders
+    }
+
+    fn collect_rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_rs_files(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    /// `db/**/*.rs` の本体コードに、`Value::Int(` / `Value::UInt(` を直接組み立てる行が
+    /// 無いことを固定する (#1422 / #1780)。
+    ///
+    /// 元の型が 2^53 に収まる場合でも、直接構築の前例があると BIGINT 相当の新しい分岐が
+    /// それをコピーして静かに丸めを再発させる。整数は必ず `from_*_lossless` を経由させる。
+    /// 唯一の許可は `from_*_lossless` 自身を定義する `types.rs`。ファイル列挙は glob 走査で、
+    /// ドライバやモジュールの追加に自動で追従する。
+    #[test]
+    fn db_modules_never_construct_raw_int_values() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/db");
+        let mut files = Vec::new();
+        collect_rs_files(&root, &mut files);
+        // 走査が空振りして素通りしないよう下限を固定する (db/ には 40 超のモジュールがある)。
+        assert!(
+            files.len() >= 30,
+            "db/**/*.rs の走査結果が少なすぎます: {}",
+            files.len()
+        );
+        let mut offenders = Vec::new();
+        for path in &files {
+            let rel = path
+                .strip_prefix(&root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            if rel == "types.rs" {
+                continue;
+            }
+            let Ok(src) = std::fs::read_to_string(path) else {
+                panic!("読み込めません: {rel}");
+            };
+            offenders.extend(raw_int_constructions(&rel, &src));
         }
         assert!(
             offenders.is_empty(),
-            "デコーダが Value::Int/UInt を直接組み立てています。\
-             Value::from_i64_lossless / from_u64_lossless を経由してください (#1422):\n{}",
+            "db/ のモジュールが Value::Int/UInt を直接組み立てています。\
+             Value::from_i64_lossless / from_u64_lossless を経由してください (#1422, #1780):\n{}",
             offenders.join("\n")
         );
+    }
+
+    #[test]
+    fn raw_int_lint_detects_synthetic_violations_and_ignores_tests() {
+        let src = "fn f() -> Value { Value::Int(n) }\nlet _ = Value::UInt(1);\n\
+                   match v { Value::Int(i) => i }\nlet s = Value::Int(1); // コメント Value::UInt(\n\
+                   #[cfg(test)]\nmod t { fn g() { Value::Int(1); } }\n";
+        let hits = raw_int_constructions("x.rs", src);
+        assert_eq!(hits.len(), 3, "{hits:?}");
+        assert!(hits[0].starts_with("x.rs:1:"));
+        assert!(raw_int_constructions("x.rs", "fn f() { Value::from_i64_lossless(1) }").is_empty());
+    }
+
+    #[test]
+    fn raw_int_lint_checks_match_arm_rhs_and_scans_past_cfg_test_fn() {
+        // match アーム右辺での直接構築を検出する (左辺のパターンだけの行は対象外)。
+        let hits = raw_int_constructions("x.rs", "Ok(v) => Value::Int(v),\nValue::Int(v) => v,\n");
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert!(hits[0].starts_with("x.rs:1:"));
+        // if let / matches! は式部分だけを見る。
+        assert!(raw_int_constructions("x.rs", "if let Value::Int(n) = v {\n").is_empty());
+        assert!(raw_int_constructions("x.rs", "matches!(v, Value::Int(_))\n").is_empty());
+        assert_eq!(
+            raw_int_constructions("x.rs", "if let Some(n) = Value::Int(1) {\n").len(),
+            1
+        );
+        // 途中の #[cfg(test)] fn の後ろの本体違反を検出し、cfg(test) fn 自身の中身は無視する。
+        let src = "#[cfg(test)]\npub fn t() {\n    Value::Int(1);\n}\n\nfn body() {\n    Value::Int(2);\n}\n\
+                   #[cfg(test)]\nmod tests {\n    fn x() { Value::Int(3); }\n}\n";
+        let hits = raw_int_constructions("x.rs", src);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert!(hits[0].starts_with("x.rs:7:"), "{hits:?}");
+    }
+
+    #[test]
+    fn deserialize_moves_out_of_range_integers_to_float() {
+        let v: Vec<Value> = serde_json::from_str(
+            "[10000000000000000, 9007199254740991, -9007199254740991, 18446744073709551615, -9223372036854775808, 1, 1.5, \"s\", null, true]",
+        )
+        .unwrap();
+        assert_eq!(v[0], Value::Float(1e16));
+        assert_eq!(v[1], Value::Int(SAFE));
+        assert_eq!(v[2], Value::Int(-SAFE));
+        assert_eq!(v[3], Value::Float(u64::MAX as f64));
+        assert_eq!(v[4], Value::Float(i64::MIN as f64));
+        assert_eq!(v[5], Value::Int(1));
+        // 往復しても Serialize の debug_assert に触れない。
+        assert!(serde_json::to_string(&v).is_ok());
     }
 }
 

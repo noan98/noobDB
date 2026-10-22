@@ -17,6 +17,8 @@ import {
 import { connectRequestFromProfile } from "./connectRequest";
 import { beginBatchRun, endBatchRun, isCurrentBatchRun } from "./batchRunGuard";
 import { Box, Flex, Grid, chakra, visuallyHiddenStyle } from "@chakra-ui/react";
+import { ConnectionPathDiagram } from "./components/ConnectionPathDiagram";
+import { buildConnectionPath, CONNECTED_PHASE, pathInputFromProfile } from "./components/connectionPath";
 import { AnimatePresence, motion } from "motion/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { QUERY_HISTORY_LIMIT, dedupeAdjacentHistory, pushHistoryEntry } from "./components/queryHistoryNav";
@@ -3852,6 +3854,8 @@ export default function App() {
               attemptId,
               settings.connectTimeoutSecs,
             );
+        // 確立後は経路図を「全点灯・静止」にする (タブ復元の確認を待つ間も脈動させない, #1754)。
+        setConnectAttempt((prev) => (prev?.id === attemptId ? { ...prev, phase: CONNECTED_PHASE } : prev));
         setSessionId(res.session_id);
         setSelectedProfile(profile);
         // 新しいセッションを同時接続レジストリへ登録する (#複数同時接続)。
@@ -11588,6 +11592,17 @@ export default function App() {
     [sessionId, errorProfileId, profiles],
   );
 
+  // 接続確立中のフッターに出す経路図 (#1754)。経路はプロファイルの ssh / ssm 設定から
+  // 導出するだけで、新規 IPC は不要。SQLite (ファイル) は経路が無いので出さない。
+  const connectingProfile = useMemo(
+    () => (connectingId ? (profiles.find((p) => p.id === connectingId) ?? null) : null),
+    [connectingId, profiles],
+  );
+  const connectingPath = useMemo(() => {
+    const input = connectingProfile ? pathInputFromProfile(connectingProfile) : null;
+    return input ? buildConnectionPath(input) : null;
+  }, [connectingProfile]);
+
   // Any new status (new query, connect/disconnect, connection switch) re-enables
   // the status bar so it is never permanently suppressed by a prior dismissal.
   // biome-ignore lint/correctness/useExhaustiveDependencies: status は「ステータスが更新された」トリガー。本体では status を読まないが、変化のたびに閉じた状態を戻す
@@ -13303,6 +13318,17 @@ export default function App() {
                   )}
                   {connectAttempt && (
                     <>
+                      {connectingPath && connectingProfile && (
+                        <Box flexShrink="0" w={connectingPath.nodes.length > 3 ? "44" : "32"}>
+                          <ConnectionPathDiagram
+                            compact
+                            path={connectingPath}
+                            driver={connectingProfile.driver}
+                            accentColor={connectingProfile.color}
+                            phase={connectAttempt.phase}
+                          />
+                        </Box>
+                      )}
                       <chakra.span
                         flexShrink="0"
                         fontSize="xs"
