@@ -359,7 +359,7 @@ pub(crate) fn build_bulk_update_statements_expected(
         }
         let set_sql = assignments.join(", ");
         // 旧値を付けて送ってきたグループは楽観ロック有効 (`min = 対象行数`)。主キー列だけの編集や
-        // 全列一致の行識別 (#849、主キー無し) でも旧値の述語は付かないが、行が見つからない (他者が変更・
+        // BLOB / JSON だけの編集でも旧値の述語は付かないが、行が見つからない (他者が変更・
         // 削除した) ことは 0 件一致で検出してロールバックできる。
         let locked = !group.olds.is_empty();
         let has_predicate = group.olds.iter().flatten().any(Option::is_some);

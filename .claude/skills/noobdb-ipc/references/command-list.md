@@ -120,10 +120,10 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
   **楽観ロック (#1766)**: `groups[].olds` (任意。`keys` と同じ行数 × `set` と同順の `BulkOldValue | null`、
   `kind` = `null` / `number` / `bool` / `text` / `float4`) があると、その行の条件に `col = 旧値` / `col IS NULL` / 単精度 float の
   許容誤差述語 (フロント `singleFloatWhere` と同じ相対 1e-6) を AND し、旧値のある行を含むチャンクは `OR` 連結で組む。
-  `olds` を送ったグループは述語が 1 つも無くても (BLOB / JSON だけの編集・全列一致の行識別) 同じ `min` 検査を受ける (述語が無ければ `IN` 形のまま)。bool 旧値は MySQL / SQLite では `col <> 0` / `col = 0`。その文は `RowExpectation { min = max = 対象行数 }` で、他者が値を変えた (または行を消した) 行は 0 件一致 → 全体ロールバックして
+  `olds` を送ったグループは述語が 1 つも無くても (BLOB / JSON だけの編集) 同じ `min` 検査を受ける (述語が無ければ `IN` 形のまま)。bool 旧値は MySQL / SQLite では `col <> 0` / `col = 0`。その文は `RowExpectation { min = max = 対象行数 }` で、他者が値を変えた (または行を消した) 行は 0 件一致 → 全体ロールバックして
   `optimistic_conflict { conflict_rows, statement_counts }` (`conflict_rows` = `min` を下回った不足行数の合計) を返す。多い側の違反と
   同居しても競合を優先し (1 文の中で多い/少ないが相殺される場合は見逃す既知の限界)、承認での上書き経路は無い (UI は再読込を案内)。旧値を付けるか (BLOB / JSON などは除外) と設定
-  `optimisticCellEditLock` (既定オン) はフロント (`cellEdit.oldValueForLock` / `buildUpdateGroups`) が決める。オフなら `olds` を送らず従来どおり。
+  `optimisticCellEditLock` (既定オン) はフロント (`cellEdit.oldValueForLock` / `buildUpdateGroups`) が決める。オフなら `olds` を送らず従来どおり。**行識別が PK / UNIQUE / rowid の表のみ**で、全列一致 (`all_columns`) と `ctid` は誤競合するため `olds` を送らない (不足は適用後の shortfall 警告)。
 - `insert_generated_rows` はテストデータ生成の投入。生成行を `Connection::import_rows`
   (1 トランザクション) へ直接渡す。履歴には 1 行の要約を残す。
 

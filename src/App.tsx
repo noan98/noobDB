@@ -77,6 +77,7 @@ import {
   buildInsertStatements,
   buildBlobUpdateStatement,
   buildUpdateGroups,
+  isLockableIdentity,
   buildUpdateStatements,
   hasAmbiguousIdentity,
   isBinaryColumnType,
@@ -7287,7 +7288,12 @@ export default function App() {
         pkIndices,
         edits: pendingEdits,
         // 編集した列の読込時点の旧値も WHERE に足し、読込後に他者が変えた行の無言上書きを防ぐ (#1766)。
-        optimisticLock: settings.optimisticCellEditLock,
+        // 全列一致 (all_columns) と ctid の行識別は対象外: 全列キーは float4 やゼロ日付 (NULL で届く)
+        // で等値に往復せず 0 件一致 (誤競合) になり、ctid は自分の UPDATE で変わる。従来どおり
+        // 不足は適用後の shortfall 警告で知らせる。
+        // 既知の限界: Apply 後は画面の行が入力文字列のままで、DB が丸めた値 (NUMERIC(10,2) に 1.234 など) と
+        // 差が出る。再読込せず同じセルを再編集すると誤競合になりうる (その場合は再読込で解消する)。
+        optimisticLock: settings.optimisticCellEditLock && isLockableIdentity(identityStrategy),
       });
       const deletes = buildDeleteStatements({
         driver,

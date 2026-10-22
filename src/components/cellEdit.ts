@@ -745,6 +745,15 @@ const LOCK_TEMPORAL_RE: Record<string, RegExp | undefined> = {
 };
 
 /**
+ * 楽観ロック (#1766) を使ってよい行識別か。主キー / UNIQUE NOT NULL キー / rowid だけ。
+ * 全列一致 (`all_columns`) は float4・ゼロ日付など等値で往復しない列を含んで誤競合し、`ctid` は
+ * 自分の UPDATE で変わるため対象外 (従来どおり適用後の不足警告で知らせる)。
+ */
+export function isLockableIdentity(strategy: string): boolean {
+  return strategy === "primary_key" || strategy === "unique_key" || strategy === "rowid";
+}
+
+/**
  * 楽観ロック (#1766) で、読込時点のセル値 `v` から `WHERE` に足す旧値の述語を決める。検査しない
  * (等値比較が不安定) 列は null。方針は保守的 (検査しないと見逃すだけだが、誤って検査すると
  * 他者が何も変えていないのに衝突扱いになる):

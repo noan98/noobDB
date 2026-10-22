@@ -26,6 +26,7 @@ import {
   previewSavedValue,
   literalFromCellValue,
   oldValueForLock,
+  isLockableIdentity,
   literalFromInput,
   resolvePkIndices,
   setValueFromInput,
@@ -2108,5 +2109,27 @@ describe("buildUpdateGroups の楽観ロック (#1766)", () => {
   it("主キー列の編集には旧値を付けない (WHERE に元の値が入っている)", () => {
     const { groups } = buildUpdateGroups(base({ [k(1)]: { 0: "9" } }, true));
     expect(groups[0].olds).toEqual([[null]]);
+  });
+});
+
+describe("isLockableIdentity (#1766)", () => {
+  it("PK / UNIQUE / rowid だけロックし、all_columns / ctid / none は対象外", () => {
+    for (const s of ["primary_key", "unique_key", "rowid"]) expect(isLockableIdentity(s)).toBe(true);
+    for (const s of ["all_columns", "ctid", "none", ""]) expect(isLockableIdentity(s)).toBe(false);
+  });
+
+  it("対象外の識別では optimisticLock を false で渡せば olds が付かない", () => {
+    const columns = [col("a", "INT"), col("f", "FLOAT4")];
+    const { groups } = buildUpdateGroups({
+      driver: "postgres",
+      database: "db",
+      table: "t",
+      columns,
+      rows: [[1, 0.1]],
+      pkIndices: [0, 1],
+      edits: { [rowEditKey([1, 0.1], [0, 1], 0)]: { 1: "5" } },
+      optimisticLock: isLockableIdentity("all_columns"),
+    });
+    expect(groups[0].olds).toBeUndefined();
   });
 });

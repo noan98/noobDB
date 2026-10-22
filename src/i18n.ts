@@ -2102,7 +2102,7 @@ const en = {
     "{rows} row(s) were changed (or deleted) by someone else after you loaded them, so nothing was applied. Reload to see the current values and edit again, or keep your edits for now.",
   editConflictReload: "Reload (discard all edits)",
   statusEditConflictReloadSkipped:
-    "Not reloaded: the last statement of this tab is not a read-only query. Re-run the query yourself to see the current values.",
+    "Not reloaded: the last statement of this tab is not a read-only query. Your edits are kept. Re-run the query yourself to see the current values.",
   editConflictKeep: "Keep my edits",
   statusApplyEditsError: "Apply failed: {error}",
   statusApplyEditsPartial: "Apply failed; all {total} update(s) rolled back, nothing was applied: {error}",
@@ -8925,7 +8925,7 @@ const ja: Dict = {
     "{rows} 行は読込後に他の人が変更 (または削除) したため適用しませんでした。再読込して現在の値を確認し、編集し直してください。いったん編集を残すこともできます。",
   editConflictReload: "再読込 (すべての編集を破棄)",
   statusEditConflictReloadSkipped:
-    "再読込しませんでした: このタブの直近の文は読み取り専用のクエリではありません。現在の値を見るには、クエリを自分で実行し直してください。",
+    "再読込しませんでした: このタブの直近の文は読み取り専用のクエリではありません。現在の値を見るには、編集はそのまま残っています。クエリを自分で実行し直してください。",
   editConflictKeep: "編集を残す",
   statusApplyEditsError: "適用に失敗しました: {error}",
   statusApplyEditsPartial:
