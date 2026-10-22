@@ -1027,6 +1027,19 @@ describe("キーボードセルナビゲーション (#406)", () => {
     expect(activeRows()[0]).toBe(cells[1][0].closest("tr")?.querySelector("td.row-index"));
   });
 
+  it("フィルタ中の列がアクティブになると is-filtered-col と is-active-col が両方付く (#1755)", () => {
+    const { container } = renderWithProviders(
+      <ResultGrid
+        result={FRUIT_RESULT}
+        serverFilter={{ column: FRUIT_RESULT.columns[0].name, op: "eq", value: "1" } as never}
+      />,
+    );
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    const th = container.querySelector("thead th.is-active-col") as HTMLElement;
+    expect(th.classList.contains("is-filtered-col")).toBe(true);
+  });
+
   it("ArrowUp でひとつ上の行に移動する", () => {
     const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
     const cells = dataCells(container);

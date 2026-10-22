@@ -449,7 +449,6 @@ export const GRID_CSS: SystemStyleObject = {
     background: "var(--bg-header)",
     fontSize: "var(--text-xs)",
     minWidth: "36px",
-    transition: "background var(--dur-fast) var(--ease)",
     zIndex: 1,
     borderRight: "1px solid var(--border-strong)",
   },
@@ -948,9 +947,39 @@ export const GRID_CSS: SystemStyleObject = {
   // 追従リング (useGlideFrame) と重ならないよう地色だけの弱い強調にとどめる。保留編集行の
   // 左端バー・変更列の下線 (box-shadow) とは干渉しない。
   "& thead th.is-active-col, & tbody tr td.row-index.is-active-row": {
-    background: "color-mix(in srgb, var(--accent) 16%, var(--bg-header))",
+    background: "color-mix(in srgb, var(--accent) 6%, var(--bg-header))",
   },
-  "& thead th.is-active-col .th-name": { color: "var(--text)" },
+  // 行番号の文字は地 (accent 16%) の上でも AA を保つよう --text にする
+  // (保留編集行の preview 色の文字は外れるが、左端バーで保留は示される)。
+  // 戻り (外れる) 側の transition は付けず、hover の背景切替が遅れないようにする。
+  "& tbody tr td.row-index.is-active-row": {
+    color: "var(--text)",
+    transition: "background var(--dur-fast) var(--ease)",
+  },
+  // 列ヘッダは地色だけだとフィルタ中 (accent 14%) と見分けにくいので、上辺に inset バーを足す。
+  // 固定列の境界影・変更列の下線 (box-shadow) と合成されないので、組み合わせはここで重ねる。
+  "& thead th.is-active-col": {
+    boxShadow: "inset 0 var(--space-0-5) 0 var(--accent)",
+  },
+  "& thead th.is-active-col.is-changed-col": {
+    boxShadow: "inset 0 var(--space-0-5) 0 var(--accent), inset 0 -2px 0 var(--preview-highlight)",
+  },
+  "& thead th.is-active-col.is-pinned-left": {
+    boxShadow:
+      "inset 0 var(--space-0-5) 0 var(--accent), 2px 0 4px -2px color-mix(in srgb, var(--text) 30%, transparent)",
+  },
+  "& thead th.is-active-col.is-pinned-right": {
+    boxShadow:
+      "inset 0 var(--space-0-5) 0 var(--accent), -2px 0 4px -2px color-mix(in srgb, var(--text) 30%, transparent)",
+  },
+  "& thead th.is-active-col.is-changed-col.is-pinned-left": {
+    boxShadow:
+      "inset 0 var(--space-0-5) 0 var(--accent), inset 0 -2px 0 var(--preview-highlight), 2px 0 4px -2px color-mix(in srgb, var(--text) 30%, transparent)",
+  },
+  "& thead th.is-active-col.is-changed-col.is-pinned-right": {
+    boxShadow:
+      "inset 0 var(--space-0-5) 0 var(--accent), inset 0 -2px 0 var(--preview-highlight), -2px 0 4px -2px color-mix(in srgb, var(--text) 30%, transparent)",
+  },
   // 再実行差分の追加行 (#597, ResultGrid のみ)。変更セルは上の is-changed (黄) を
   // 流用し、追加行は緑で示す (削除行は今回結果に無いためツールバーの件数で示す)。
   // 緑は色覚に配慮しつつ「追加=増加」の直感に沿う。reduced-motion 時も色は残る。
@@ -3948,7 +3977,7 @@ const GridRow = memo(function GridRow({
   return (
     <tr role="row" className={rowClass || undefined} ref={measureRef} data-index={measureIndex}>
       <td
-        className={activeColIdx !== null && !editing ? "row-index is-active-row" : "row-index"}
+        className={activeColIdx !== null ? "row-index is-active-row" : "row-index"}
         // Shift+クリックでブラウザ既定のテキスト選択が走らないようにする。
         onMouseDown={(e) => {
           if (e.shiftKey) e.preventDefault();
@@ -7043,7 +7072,7 @@ export const DataGrid = memo(function DataGrid({
                     sortDir={sortDir}
                     sortRank={sortDir && multiSort ? h.column.getSortIndex() + 1 : 0}
                     isChangedCol={changedColumns?.[colIdx] ?? false}
-                    isActiveCol={!editing && activeCell?.colIdx === colIdx}
+                    isActiveCol={activeCell?.colIdx === colIdx}
                     colFilterActive={
                       isColumnFilterActive(h.column.getFilterValue() as ColumnFilter | undefined) ||
                       // サーバ側フィルタ (#792) 中の列もヘッダで有効表示する (#1610)。
