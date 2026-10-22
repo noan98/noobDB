@@ -2,13 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from 
 import { useReducedMotionConfig } from "motion/react";
 import { easings, transitions } from "../motion";
 import { shouldGlide, unionBoxes, type BoxRect } from "./selectionGlide";
-
-/** ハイコントラスト (テーマ hc-* / forced-colors) か。装飾的な動きは出さない。 */
-function prefersStaticMotion(): boolean {
-  if (typeof document === "undefined") return false;
-  if (document.documentElement.getAttribute("data-theme")?.startsWith("hc-")) return true;
-  return typeof window.matchMedia === "function" && window.matchMedia("(forced-colors: active)").matches;
-}
+import { prefersStaticMotion } from "./revealOrigin";
 
 /**
  * `el` のスクロールコンテンツ座標の矩形。`getBoundingClientRect` は祖先の transform

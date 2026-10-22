@@ -84,8 +84,9 @@ import type { Transition, Variants } from "motion/react";
  *   スクロール中は計測せず、固定列・描画窓の外では枠を出さず元のセル単位のリングに任せる。
  *   reduced-motion・ハイコントラストは即座に置く。
  * - 設定「表示」のライブ・アピアランス・プレビューのデモ (`AppearancePreview` — `useAnimate`、#1781)。
- *   マウント後 1 回だけ、RunButton の押下 → 選択下地が 1 行下へ滑る → 枠が一瞬光る。画面内・タブ可視に
- *   なってから始め、WAAPI で動かすので再描画しない。尺・イージングは `durations` / `easings` を再利用。
+ *   マウント後と、確定した設定値 (`replayKey`) が変わるたびに 1 回ずつ
+ *   (連打は 250ms でまとめる)、RunButton の押下 → 選択下地が 1 行下へ滑る → 枠が一瞬光る。画面内・タブ可視に
+ *   なってから始め、`useAnimate` で DOM を直接動かす (React の再描画なし)。尺・イージングは `durations` / `easings` を再利用。
  *   reduced-motion (`useReducedMotionConfig`)・ハイコントラストは最初から終了状態、再生中に reduced へ
  *   変わったら止めて終了状態にする。
  * - 結果パネルの種類切替 (`App` — exit 無しの `AnimatePresence` + `variants.fade` で入場だけ、#1311)。

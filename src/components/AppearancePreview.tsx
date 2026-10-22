@@ -3,6 +3,7 @@ import { useAnimate, useReducedMotionConfig } from "motion/react";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { t } from "../i18n";
 import { durations, easings } from "../motion";
+import { prefersStaticMotion } from "./revealOrigin";
 
 /**
  * 設定「表示」セクションのライブ・アピアランス・プレビュー (#1581)。
@@ -15,9 +16,9 @@ import { durations, easings } from "../motion";
  * 見た目を出す (`appearancePreviewVars`)。色の切替は短い transition でクロスフェードする
  * (reduced-motion では App.css のグローバル規則が無効化する)。
  *
- * #1781: マウント後に 1 回だけ、RunButton の押下 → 結果行の選択ハイライトが 1 行下へ滑る →
+ * #1781: マウント後と、確定した設定値 (`replayKey`) が変わるたびに 1 回ずつ、RunButton の押下 → 結果行の選択ハイライトが 1 行下へ滑る →
  * ハイライト枠が一瞬光る、という控えめなデモを再生する。ループしない。画面内・タブ可視に
- * なるまで待ち、`Element.animate` (WAAPI) で動かすので React の再描画は伴わない。
+ * なるまで待ち、`useAnimate` で DOM を直接動かす (React の再描画なし)。
  * 終了状態は従来の静止表示 (2 行目が選択) と同じで、reduced-motion (OS / アプリ内設定) と
  * ハイコントラストは最初からその終了状態を出す。再生中に reduced へ切り替わったら直ちに
  * 終了状態へ止める。
@@ -162,6 +163,7 @@ const GridRow = chakra("div", {
 const Cell = chakra("span", {
   base: {
     position: "relative",
+    zIndex: 1,
     flex: 1,
     minWidth: 0,
     whiteSpace: "nowrap",
@@ -176,40 +178,61 @@ const rowPad: CSSProperties = {
   paddingInline: "var(--density-cell-px)",
 };
 
-/** ハイコントラスト (hc-* / forced-colors) は装飾的な動きを出さない (useGlideFrame と同方針)。 */
-function prefersStaticMotion(): boolean {
-  if (typeof document === "undefined") return true;
-  if (document.documentElement.getAttribute("data-theme")?.startsWith("hc-")) return true;
-  return typeof window.matchMedia === "function" && window.matchMedia("(forced-colors: active)").matches;
-}
+/** 見えてから開始までの待ち / 設定変更連打のデバウンス (ms)。 */
+const START_DELAY_MS = 250;
+/** デモを始める可視割合。 */
+const VISIBLE_RATIO = 0.6;
+const START_TRANSFORM = "translateY(-100%)";
 
-export function AppearancePreview({ previewVars }: { previewVars?: Record<string, string> }) {
+/**
+ * `replayKey` は「確定した設定値」の識別子 (ホバー中の previewVars は含めない)。変わるたびに
+ * 1 回だけデモを再生し直す (連打は START_DELAY_MS でまとめる)。
+ */
+export function AppearancePreview({
+  previewVars,
+  replayKey = "",
+}: {
+  previewVars?: Record<string, string>;
+  replayKey?: string;
+}) {
   const reduced = useReducedMotionConfig() ?? false;
   const [scope, animate] = useAnimate<HTMLDivElement>();
-  // 初回描画時に決める。静止なら最初から終了状態、デモなら 1 行上から始める。
+  // 初回描画だけに使う。静止なら最初から終了状態、デモなら 1 行上から始める。
   const [armed] = useState(() => !reduced && !prefersStaticMotion());
-  const played = useRef(false);
+  // 再生を始めた replayKey。同じキーでは reduced の切替などで再生し直さない。
+  const playedKey = useRef<string | null>(null);
 
   useEffect(() => {
     const root = scope.current;
-    // 再生中に reduced-motion へ切り替わったら cleanup がデモを止めて終了状態にする。
-    if (!armed || reduced || played.current || !root) return;
+    if (!root) return;
     const bar = root.querySelector<HTMLElement>("[data-demo='bar']");
     const run = root.querySelector<HTMLElement>("[data-demo='run']");
     const flash = root.querySelector<HTMLElement>("[data-demo='flash']");
     if (!bar || !run || !flash) return;
-    let started = false;
-    let stopped = false;
-    const controls: { stop: () => void }[] = [];
     const settle = () => {
       bar.style.transform = "";
       run.style.transform = "";
       flash.style.opacity = "";
     };
+    // 静止 (reduced / hc) と再生済みのキーは終了状態のまま。再生中に reduced へ変わった場合は
+    // 前回の cleanup が止めて settle 済み。
+    if (reduced || prefersStaticMotion() || playedKey.current === replayKey) {
+      settle();
+      return;
+    }
+    // 未再生: 開始位置 (1 行上) へ戻す。StrictMode の二重 effect でも cleanup の settle を打ち消す。
+    bar.style.transform = START_TRANSFORM;
+    let started = false;
+    let stopped = false;
+    const controls: { stop: () => void }[] = [];
     const play = async () => {
       if (started || stopped) return;
+      if (prefersStaticMotion()) {
+        settle();
+        return;
+      }
       started = true;
-      played.current = true;
+      playedKey.current = replayKey;
       const press = animate(run, { scale: [1, 0.92, 1] }, { duration: durations.base, ease: easings.out });
       controls.push(press);
       await press;
@@ -223,35 +246,40 @@ export function AppearancePreview({ previewVars }: { previewVars?: Record<string
       await blink;
       if (!stopped) settle();
     };
-    // 画面外・非表示タブでは始めない (見える状態になってから 1 回だけ)。
+    // 画面内・タブ可視になってから START_DELAY_MS 待って 1 回だけ始める。
+    let timer: number | undefined;
     let io: IntersectionObserver | null = null;
-    const tryStart = () => {
-      if (started || stopped || document.visibilityState !== "visible") return;
+    const schedule = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => void play(), START_DELAY_MS);
+    };
+    const observe = () => {
+      if (io || started || stopped || document.visibilityState !== "visible") return;
       if (typeof IntersectionObserver === "undefined") {
-        void play();
+        schedule();
         return;
       }
-      io = new IntersectionObserver((entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          io?.disconnect();
-          void play();
-        }
-      });
+      io = new IntersectionObserver(
+        (entries) => {
+          const visible = entries.some((e) => e.isIntersecting);
+          if (visible) schedule();
+          else window.clearTimeout(timer);
+        },
+        { threshold: VISIBLE_RATIO },
+      );
       io.observe(root);
     };
-    const onVisible = () => {
-      if (!io) tryStart();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    tryStart();
+    document.addEventListener("visibilitychange", observe);
+    observe();
     return () => {
       stopped = true;
-      document.removeEventListener("visibilitychange", onVisible);
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", observe);
       io?.disconnect();
       for (const c of controls) c.stop();
       settle();
     };
-  }, [armed, reduced, animate, scope]);
+  }, [reduced, replayKey, animate, scope]);
 
   return (
     <Frame
@@ -295,7 +323,7 @@ export function AppearancePreview({ previewVars }: { previewVars?: Record<string
             <Cell>120</Cell>
           </GridRow>
           <GridRow kind="selected" style={rowPad}>
-            <SelBar data-demo="bar" style={armed ? { transform: "translateY(-100%)" } : undefined}>
+            <SelBar data-demo="bar" style={armed ? { transform: START_TRANSFORM } : undefined}>
               <SelFlash data-demo="flash" />
             </SelBar>
             <Cell>2</Cell>

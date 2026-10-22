@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { MotionConfig } from "motion/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppearancePreview } from "../components/AppearancePreview";
-import { renderWithProviders, screen } from "./testUtils";
+import { renderWithProviders, screen, waitFor } from "./testUtils";
 import { accentVars } from "../accent";
 import { DEFAULT_SYNTAX_COLORS } from "../settings";
 import { system } from "../theme";
@@ -143,5 +143,60 @@ describe("AppearancePreview のライブデモ (#1781)", () => {
     } finally {
       document.documentElement.removeAttribute("data-theme");
     }
+  });
+
+  describe("再生のタイミング", () => {
+    type IoCb = (entries: { isIntersecting: boolean }[]) => void;
+    let ioCb: IoCb | null = null;
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      ioCb = null;
+    });
+    const stubIo = (autoVisible: boolean) => {
+      vi.stubGlobal(
+        "IntersectionObserver",
+        class {
+          constructor(cb: IoCb) {
+            ioCb = cb;
+          }
+          observe() {
+            if (autoVisible) ioCb?.([{ isIntersecting: true }]);
+          }
+          disconnect() {}
+        },
+      );
+    };
+    const ui = (mode: "never" | "always", key = "a") => (
+      <MotionConfig reducedMotion={mode}>
+        <AppearancePreview replayKey={key} />
+      </MotionConfig>
+    );
+    const START = "translateY(-100%)";
+
+    it("画面に見えるまで再生しない", async () => {
+      stubIo(false);
+      renderWithProviders(ui("never"));
+      await new Promise((r) => setTimeout(r, 450));
+      expect(bar()?.style.transform).toBe(START);
+      ioCb?.([{ isIntersecting: true }]);
+      await waitFor(() => expect(bar()?.style.transform).toBe(""), { timeout: 3000 });
+    });
+
+    it("再生中に reduced-motion へ切り替えると終了状態へ止まる", async () => {
+      stubIo(true);
+      const r = renderWithProviders(ui("never"));
+      await new Promise((res) => setTimeout(res, 400));
+      r.rerender(ui("always"));
+      expect(bar()?.style.transform ?? "").toBe("");
+    });
+
+    it("確定した設定値 (replayKey) が変わると 1 回だけ再生し直す", async () => {
+      stubIo(true);
+      const r = renderWithProviders(ui("never", "a"));
+      await waitFor(() => expect(bar()?.style.transform).toBe(""), { timeout: 3000 });
+      r.rerender(ui("never", "b"));
+      expect(bar()?.style.transform).toBe(START);
+      await waitFor(() => expect(bar()?.style.transform).toBe(""), { timeout: 3000 });
+    });
   });
 });
