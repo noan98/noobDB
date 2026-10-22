@@ -352,6 +352,8 @@ pub struct IndexInfo {
     pub invalid: bool,
     /// キー列のどれかで、インデックスの照合順序が列自身の照合順序と違うか (#1776)。
     /// 違うと「インデックス上は別値、列の比較では同値」になり WHERE が複数行に当たる。
+    /// `list_indexes` 経路でのみ正確 (一括取得経路の `IndexRow` から作る `IndexInfo` では
+    /// 常に false)。行識別の判定は `list_indexes` の結果にだけ使うこと。
     /// IPC には出さない内部用。
     #[serde(skip)]
     pub collation_differs: bool,

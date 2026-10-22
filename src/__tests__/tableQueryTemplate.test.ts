@@ -385,6 +385,16 @@ describe("applyTableOpenTemplate の unique_key (#1776)", () => {
     expect(r.openTemplate?.editable).toBe(true);
   });
 
+  it("unique_key で ORDER BY <キー> のとき keyset=false になり base に ORDER BY が残る", () => {
+    const r = applyTableOpenTemplate({
+      ...args({ strategy: "unique_key", hidden_column: null, key_columns: ["code"] }),
+      resolved: { template: "SELECT * FROM {table} ORDER BY code LIMIT {limit}", source: "global" as const },
+    });
+    expect(r.openTemplate?.editable).toBe(true);
+    expect(r.openTemplate?.keyset).toBe(false);
+    expect(r.base).toMatch(/order by code/i);
+  });
+
   it("識別子が無い (all_columns) と編集可能にならない", () => {
     const r = applyTableOpenTemplate(args({ strategy: "all_columns", hidden_column: null }));
     expect(r.openTemplate?.editable).toBe(false);

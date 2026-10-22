@@ -1610,13 +1610,16 @@ impl SqliteConn {
             .fetch_all(&self.pool)
             .await?;
         // #1776: 照合順序の食い違いを疑うため、インデックス / テーブルの DDL を引いておく。
-        let ddl_rows: Vec<SqliteRow> = sqlx::query(
-            "SELECT type, name, sql FROM sqlite_master WHERE tbl_name = ?1 AND type IN ('index', 'table')",
+        // 取れなければ全インデックスを照合順序不一致の疑いありとして扱う (安全側)。
+        let ddl_rows: Option<Vec<SqliteRow>> = sqlx::query(
+            "SELECT type, name, sql FROM sqlite_master WHERE tbl_name = ?1 COLLATE NOCASE AND type IN ('index', 'table')",
         )
         .bind(table)
         .fetch_all(&self.pool)
         .await
-        .unwrap_or_default();
+        .ok();
+        let ddl_ok = ddl_rows.is_some();
+        let ddl_rows = ddl_rows.unwrap_or_default();
         let mut table_ddl = String::new();
         let mut index_ddl: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
@@ -1639,10 +1642,14 @@ impl SqliteConn {
             if name.is_empty() || name.contains('\0') {
                 continue;
             }
-            let collation_differs = match index_ddl.get(&name) {
-                Some(sql) if !sql.is_empty() => sqlite_sql_has_collate(sql),
-                _ => sqlite_table_unique_has_collate(&table_ddl),
-            };
+            let collation_differs = !ddl_ok
+                || match index_ddl.get(&name) {
+                    Some(sql) if !sql.is_empty() => sqlite_sql_has_collate(sql),
+                    // 自動インデックス (sql が NULL) はテーブル DDL から疑う。
+                    Some(_) => sqlite_table_unique_has_collate(&table_ddl),
+                    // sqlite_master に見つからないインデックスは判定できないので除外側に倒す。
+                    None => true,
+                };
             let unique = r.try_get::<i64, _>("unique").unwrap_or(0) != 0;
             let primary = r
                 .try_get::<String, _>("origin")

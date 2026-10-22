@@ -1669,8 +1669,8 @@ impl PostgresConn {
                     r.try_get::<i32, _>("col_option").unwrap_or(0),
                 )),
                 nulls_not_distinct: r.try_get::<bool, _>("nulls_not_distinct").unwrap_or(false),
-                invalid: r.try_get::<bool, _>("is_invalid").unwrap_or(false),
-                collation_differs: r.try_get::<bool, _>("coll_differs").unwrap_or(false),
+                invalid: r.try_get::<bool, _>("is_invalid").unwrap_or(true),
+                collation_differs: r.try_get::<bool, _>("coll_differs").unwrap_or(true),
             })
             .collect();
         Ok(super::group_index_rows(index_rows))
@@ -2329,11 +2329,11 @@ impl PostgresConn {
                     first_expression_at: None,
                     key_column_count: key_count,
                     nulls_not_distinct,
-                    invalid: r.try_get::<bool, _>("is_invalid").unwrap_or(false),
+                    invalid: r.try_get::<bool, _>("is_invalid").unwrap_or(true),
                     ..Default::default()
                 }
             });
-            if r.try_get::<bool, _>("coll_differs").unwrap_or(false) {
+            if r.try_get::<bool, _>("coll_differs").unwrap_or(true) {
                 entry.collation_differs = true;
             }
             // attnum 0 (an expression index column) resolves to NULL. 列名は積めないので
