@@ -23,6 +23,11 @@
  * ====================================================================== */
 
 :root {
+  /* DB エンジン識別色 (#1769)。`profileIdentity.driverColor` が var() で参照する。
+     ライト面 (--bg-elevated) 上で 3:1 以上。ダーク系・一部ライト系は下で上書きする。 */
+  --driver-mysql: #00758f;
+  --driver-postgres: #3b82c4;
+  --driver-sqlite: #0f9bdc;
   /* Typography */
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans",
     "Noto Sans CJK JP", sans-serif;
@@ -525,6 +530,11 @@
 }
 
 :root[data-theme$="dark"] {
+  /* エンジン識別色のダーク用の明るい変種。全ダーク系の --bg-elevated 上で 3:1 以上
+     (themeContrast.test.ts で固定)。 */
+  --driver-mysql: #4db6cc;
+  --driver-postgres: #6aa9e6;
+  --driver-sqlite: #0f9bdc;
   /* ダーク系プリセット共通 (名前が "dark" で終わる)。ロゴのタイルを一段明るい紺に、
      ワードマークを本文色にする。 */
   --brand-mark-tile: var(--brand-navy-raised);
@@ -1696,6 +1706,7 @@
    red / green / cyan など) は、ダークでは明色側へ・ライトでは暗色側へ調整している
    (themeContrast.test.ts が自動検証)。 */
 :root[data-theme="tokyo-night-light"] {
+  --driver-sqlite: #0a7fb8; /* --bg-elevated #ebecf2 上で 3:1 以上にするための濃い変種 */
   --bg: #e1e2e7;
   --bg-elevated: #ebecf2;
   --bg-muted: #d6d9e6;

@@ -402,6 +402,29 @@ describe("WCAG AA contrast for theme presets (#465, #558)", () => {
   });
 });
 
+describe("DB エンジン識別色は全テーマで --bg-elevated 上 3:1 以上 (#1769)", () => {
+  const darkSuffix = parseVars(/:root\[data-theme\$="dark"\]\s*\{([\s\S]*?)\n\}/);
+  const themes: { name: string; vars: Record<string, string>; elevated: string }[] = [
+    { name: "light", vars: light, elevated: light["bg-elevated"] },
+    { name: "dark", vars: { ...darkSuffix, ...dark }, elevated: dark["bg-elevated"] },
+    ...presets.map((p) => ({
+      name: p.name,
+      // 実行時のカスケード: :root → (名前が dark で終わるなら) ダーク共通 → テーマ固有。
+      vars: { ...light, ...(p.name.endsWith("dark") ? darkSuffix : {}), ...p.vars },
+      elevated: p.vars["bg-elevated"],
+    })),
+  ];
+  for (const t of themes) {
+    for (const engine of ["mysql", "postgres", "sqlite"]) {
+      it(`${t.name}: --driver-${engine}`, () => {
+        const fg = t.vars[`driver-${engine}`];
+        expect(fg, "--driver-* が解決できる").toBeTruthy();
+        expect(contrastRatio(fg, t.elevated)).toBeGreaterThanOrEqual(3);
+      });
+    }
+  }
+});
+
 describe("data-viz palettes stay dark-theme aware (#1187)", () => {
   // `isDarkDataTheme` は `theme.ts` の Chakra `conditions.dark`
   // (`"[data-theme$=dark] &"`、CSS の属性値末尾一致セレクタ) と同じ「値が
