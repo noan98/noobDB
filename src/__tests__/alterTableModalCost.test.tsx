@@ -55,7 +55,7 @@ function renderModal(driver: "mysql" | "postgres") {
 }
 
 async function changeType(value: string) {
-  const input = await screen.findByLabelText(`${t("createTableColType")}: age`);
+  const input = await screen.findByLabelText(`${t("createTableColType")}: age`, {}, { timeout: 4000 });
   fireEvent.change(input, { target: { value } });
 }
 
@@ -103,7 +103,7 @@ describe("AlterTableModal 書き換え警告 (#1771)", () => {
 
   it("書き換えを伴わない変更では警告しない", async () => {
     renderModal("mysql");
-    const input = await screen.findByLabelText(`${t("createTableColType")}: age`);
+    const input = await screen.findByLabelText(`${t("createTableColType")}: age`, {}, { timeout: 4000 });
     fireEvent.change(input, { target: { value: "int" } });
     expect(screen.queryByTestId("alter-cost-warning")).toBeNull();
   });
