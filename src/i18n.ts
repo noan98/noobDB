@@ -1740,6 +1740,9 @@ const en = {
   editorMoreActionsTitle: "Explain, snippets, files, broadcast and the query builder.",
   editorHintDisabled: "Connect a session to run queries.",
   editorHintEmpty: "Type a SQL statement first.",
+  // 空エディタのゴースト・プレースホルダ (#1785)。{shortcut} は実行ショートカット。
+  editorPlaceholderHint: "-- Press {shortcut} to run",
+  editorPlaceholderGenericTable: "your_table",
   // Emergency query mode on read-only sessions.
   editorEmergencyMode: "Emergency mode",
   editorEmergencyModeTitle:
@@ -8467,6 +8470,8 @@ const ja: Dict = {
   editorMoreActionsTitle: "Explain・スニペット・ファイル・一括実行・Query Builder。",
   editorHintDisabled: "クエリを実行するにはセッションに接続してください。",
   editorHintEmpty: "先に SQL を入力してください。",
+  editorPlaceholderHint: "-- {shortcut} で実行",
+  editorPlaceholderGenericTable: "テーブル名",
   // 読み取り専用セッションの緊急クエリ実行モード。
   editorEmergencyMode: "緊急モード",
   editorEmergencyModeTitle:
