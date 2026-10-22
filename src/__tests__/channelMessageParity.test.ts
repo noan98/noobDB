@@ -50,7 +50,15 @@ const LISTENERS: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 function stripRustComments(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  // 文字列リテラル内の `//` を誤ってコメント扱いしないよう、先にリテラルの中身を空にする。
+  // (`rename = "x"` のような属性値は後段で読むので、ここでは壊さず退避する。)
+  const strings: string[] = [];
+  const masked = src.replace(/"(?:[^"\\\n]|\\.)*"/g, (lit) => {
+    strings.push(lit);
+    return `"\u0000${strings.length - 1}\u0000"`;
+  });
+  const stripped = masked.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  return stripped.replace(/"\u0000(\d+)\u0000"/g, (_, i) => strings[Number(i)]);
 }
 
 /** serde の `rename_all` 規則を PascalCase のバリアント名へ適用する。 */
@@ -77,40 +85,67 @@ function applyRename(variant: string, rule: string | undefined): string {
 }
 
 interface ChannelEnum {
-  tag: string;
+  tag?: string;
   kinds: string[];
   /** ペイロードを持たないバリアントの kind (`Done {}` / 単位バリアント)。検証すべき中身が無い。 */
   emptyKinds: string[];
 }
 
-/** `#[tauri::command]` の引数で `Channel<T>` に使われている型名を集める。 */
-function extractChannelTypeNames(sources: string[]): Set<string> {
+/** `Channel<` 直後から `<>` の釣り合う範囲を型引数として取り出す。 */
+function channelTypeArgs(params: string): string[] {
+  const out: string[] = [];
+  for (const m of params.matchAll(/\bChannel\s*</g)) {
+    let depth = 1;
+    let i = (m.index ?? 0) + m[0].length;
+    const start = i;
+    for (; i < params.length && depth > 0; i++) {
+      if (params[i] === "<") depth++;
+      else if (params[i] === ">") depth--;
+    }
+    out.push(params.slice(start, i - 1).trim());
+  }
+  return out;
+}
+
+/**
+ * `#[tauri::command]` の引数で `Channel<T>` に使われている型名を集める。パス付き
+ * (`super::x::Msg`) は先頭のパスを落として解決し、それでも単純な識別子にならない型
+ * (ジェネリクスなど) は `unresolved` に積む (黙って捨てない)。
+ */
+function extractChannelTypeNames(sources: string[]): { names: Set<string>; unresolved: string[] } {
   const re =
-    /#\[tauri::command\](?:\s*#\[[^\]]*\])*\s*(?:pub\s+)?(?:async\s+)?fn\s+\w+\s*(?:<[^>]*>)?\s*(\([\s\S]*?\))\s*(?:->[\s\S]*?)?\s*(?:where[^{]*)?\{/g;
+    /#\[tauri::command(?:\([^)]*\))?\](?:\s*#\[[^\]]*\])*\s*(?:pub\s+)?(?:async\s+)?fn\s+\w+\s*(?:<[^>]*>)?\s*(\([\s\S]*?\))\s*(?:->[\s\S]*?)?\s*(?:where[^{]*)?\{/g;
   const names = new Set<string>();
+  const unresolved: string[] = [];
   for (const src of sources) {
     const cleaned = stripRustComments(src);
     re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(cleaned)) !== null) {
-      for (const c of m[1].matchAll(/\bChannel\s*<\s*(\w+)\s*>/g)) names.add(c[1]);
+      for (const arg of channelTypeArgs(m[1])) {
+        const bare = arg.replace(/^(?:\w+::)*/, "");
+        if (/^\w+$/.test(bare)) names.add(bare);
+        else unresolved.push(`Channel<${arg}>`);
+      }
     }
   }
-  return names;
+  return { names, unresolved };
 }
 
-/** 内部タグ enum を全ソースから抽出し、名前 → {tag, 線形化した kind 値} を返す。 */
-function extractTaggedEnums(sources: string[]): Map<string, ChannelEnum> {
+/** 全 enum を抽出する。タグ無し (外部タグ / untagged) の enum は `tag` が undefined。 */
+function extractEnums(sources: string[]): { enums: Map<string, ChannelEnum>; duplicates: string[] } {
   const enums = new Map<string, ChannelEnum>();
-  const re = /((?:#\[[^\]]*\]\s*)+)(?:pub(?:\([^)]*\))?\s+)?enum\s+(\w+)\s*\{/g;
+  const duplicates: string[] = [];
+  const re = /((?:#\[[^\]]*\]\s*)*)(?:pub(?:\([^)]*\))?\s+)?enum\s+(\w+)\s*(?:<[^{]*>)?\s*(?:where[^{]*)?\{/g;
   for (const src of sources) {
     const cleaned = stripRustComments(src);
     re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(cleaned)) !== null) {
       const attrs = m[1];
+      const generic = /enum\s+\w+\s*</.test(m[0]);
       const tag = /\btag\s*=\s*"(\w+)"/.exec(attrs)?.[1];
-      if (!tag) continue; // 内部タグ enum のみが対象
+      const untagged = /\buntagged\b/.test(attrs);
       const rule = /\brename_all\s*=\s*"([\w-]+)"/.exec(attrs)?.[1];
       // 本体 (波括弧の釣り合う範囲)。
       let depth = 1;
@@ -129,12 +164,15 @@ function extractTaggedEnums(sources: string[]): Map<string, ChannelEnum> {
         const t = seg.trim();
         seg = "";
         if (!t) return;
-        const renamed = /#\[\s*serde\s*\([^\]]*\brename\s*=\s*"([^"]+)"/.exec(t)?.[1];
-        const name = /^(?:#\[[^\]]*\]\s*)*([A-Z]\w*)/.exec(t)?.[1];
+        const name = /^((?:#\[[^\]]*\]\s*)*)([A-Z]\w*)/.exec(t);
         if (!name) throw new Error(`enum ${m?.[2]} のバリアントを解釈できません: ${t.slice(0, 40)}`);
-        const kind = renamed ?? applyRename(name, rule);
+        const variantAttrs = name[1];
+        // 出力されないバリアントは kind を持たない。
+        if (/#\[\s*serde\s*\([^\]]*\bskip(?:_serializing)?\b(?!_)/.test(variantAttrs)) return;
+        const renamed = /#\[\s*serde\s*\([^\]]*\brename\s*=\s*"([^"]+)"/.exec(variantAttrs)?.[1];
+        const kind = renamed ?? applyRename(name[2], rule);
         kinds.push(kind);
-        const after = t.replace(/^(?:#\[[^\]]*\]\s*)*[A-Z]\w*/, "").replace(/\s+/g, "");
+        const after = t.slice(name[0].length).replace(/\s+/g, "");
         if (after === "" || after === "{}" || after === "()") emptyKinds.push(kind);
       };
       for (const ch of body) {
@@ -144,22 +182,36 @@ function extractTaggedEnums(sources: string[]): Map<string, ChannelEnum> {
         else seg += ch;
       }
       flush();
-      enums.set(m[2], { tag, kinds, emptyKinds });
+      if (enums.has(m[2])) duplicates.push(m[2]);
+      enums.set(m[2], {
+        tag: tag && !untagged && !generic ? tag : undefined,
+        kinds,
+        emptyKinds,
+      });
     }
   }
-  return enums;
+  return { enums, duplicates };
 }
 
-/** `Channel<T>` に使われる内部タグ enum (名前 → 定義)。 */
-function extractChannelEnums(sources: string[]): Map<string, ChannelEnum> {
-  const used = extractChannelTypeNames(sources);
-  const all = extractTaggedEnums(sources);
-  const out = new Map<string, ChannelEnum>();
-  for (const name of used) {
+/**
+ * `Channel<T>` に使われる内部タグ enum (名前 → 定義)。enum 定義は `commands/` 外にも
+ * ありうるので、定義側は渡された全ソースから探す。解決できないものは `unresolved`。
+ */
+function extractChannelEnums(
+  commandSources: string[],
+  allSources: string[] = commandSources,
+): { enums: Map<string, ChannelEnum & { tag: string }>; unresolved: string[]; duplicates: string[] } {
+  const { names, unresolved } = extractChannelTypeNames(commandSources);
+  const { enums: all, duplicates } = extractEnums(allSources);
+  const out = new Map<string, ChannelEnum & { tag: string }>();
+  const problems = [...unresolved];
+  for (const name of names) {
     const def = all.get(name);
-    if (def) out.set(name, def);
+    if (!def) problems.push(`${name} (enum 定義が見つからない)`);
+    else if (!def.tag) problems.push(`${name} (内部タグ enum ではない / ジェネリック)`);
+    else out.set(name, { ...def, tag: def.tag });
   }
-  return out;
+  return { enums: out, unresolved: problems, duplicates: duplicates.filter((d) => names.has(d)) };
 }
 
 interface SwitchCase {
@@ -181,7 +233,15 @@ function extractSwitchCases(source: string, fnName: string): SwitchCase[] | null
   for (const part of parts) {
     const m = /^case "([^"]+)":([\s\S]*)$/.exec(part);
     if (!m) continue;
-    cases.push({ kind: m[1], schemas: [...m[2].matchAll(/\bschemas\.(\w+)/g)].map((s) => s[1]) });
+    cases.push({
+      kind: m[1],
+      schemas: [
+        ...m[2]
+          .replace(/\/\*[\s\S]*?\*\//g, "")
+          .replace(/\/\/.*$/gm, "")
+          .matchAll(/\bschemas\.(\w+)/g),
+      ].map((s) => s[1]),
+    });
   }
   return cases;
 }
@@ -243,7 +303,14 @@ function diffChannelEnum(
 
 // ---------------------------------------------------------------------------
 
-const channelEnums = extractChannelEnums(Object.values(commandModules));
+const allRustModules = import.meta.glob("../../src-tauri/src/**/*.rs", {
+  eager: true,
+  query: "?raw",
+  import: "default",
+}) as Record<string, string>;
+
+const extracted = extractChannelEnums(Object.values(commandModules), Object.values(allRustModules));
+const channelEnums = extracted.enums;
 
 describe("Tauri Channel メッセージ enum のバリアント完全性 (Rust enum ⇔ switch ⇔ Zod スキーマ)", () => {
   it("Channel<T> に使われる内部タグ enum を十分な数だけ抽出できている (抽出ロジックの保険)", () => {
@@ -261,6 +328,15 @@ describe("Tauri Channel メッセージ enum のバリアント完全性 (Rust e
     for (const [name, def] of channelEnums) {
       expect(def.kinds.length, `${name} のバリアントを抽出できていない`).toBeGreaterThan(0);
     }
+  });
+
+  it("Channel<T> の型がすべて内部タグ enum として解決できている (黙って捨てない)", () => {
+    expect(
+      extracted.unresolved,
+      "解決できない Channel 型があります (パス付き / ジェネリクス / タグ無し enum / 定義なし)。" +
+        "kind タグ付きの単純な enum にするか、このテストの抽出を拡張してください",
+    ).toEqual([]);
+    expect(extracted.duplicates, "同名の enum が複数あり、どれが Channel の型か判別できません").toEqual([]);
   });
 
   it("すべての Channel enum が `kind` タグで、購読関数 (LISTENERS) に登録されている", () => {
@@ -310,10 +386,56 @@ describe("抽出ロジックの自己検証 (合成入力)", () => {
   `;
 
   it("Rust の内部タグ enum を抽出して serde 規則で線形化する", () => {
-    const e = extractChannelEnums([rustSrc]);
+    const e = extractChannelEnums([rustSrc]).enums;
     expect([...e.keys()]).toEqual(["DemoMessage"]);
     expect(e.get("DemoMessage")?.kinds).toEqual(["started", "beforeRows", "custom-name", "done"]);
     expect(e.get("DemoMessage")?.emptyKinds).toEqual(["custom-name", "done"]);
+  });
+
+  it("パス付きの Channel 型は解決し、skip されたバリアントと文字列中の // を扱える", () => {
+    const src = `
+      #[serde(tag = "kind")]
+      enum PathMsg {
+          #[serde(rename = "a//b")]
+          First,
+          #[serde(skip)]
+          Hidden,
+          Last { url: String },
+      }
+      #[tauri::command(rename_all = "snake_case")]
+      fn f(c: tauri::ipc::Channel<super::x::PathMsg>) {}
+    `;
+    const r = extractChannelEnums([src]);
+    expect(r.unresolved).toEqual([]);
+    expect(r.enums.get("PathMsg")?.kinds).toEqual(["a//b", "Last"]);
+  });
+
+  it("ジェネリクス / タグ無し enum / 定義なし / ジェネリック enum の Channel 型を未解決として返す", () => {
+    const src = `
+      #[serde(tag = "kind")]
+      enum Tagged<T> { A(T) }
+      enum Plain { A, B }
+      #[serde(untagged)]
+      enum Untagged { A { x: u8 } }
+      #[tauri::command]
+      fn g(c: Channel<Wrapper<Foo>>) {}
+      #[tauri::command]
+      fn h(c: Channel<Plain>, d: Channel<Untagged>, e: Channel<Tagged>, f: Channel<Missing>) {}
+    `;
+    const r = extractChannelEnums([src]);
+    expect(r.enums.size).toBe(0);
+    expect(r.unresolved).toHaveLength(5);
+    expect(r.unresolved[0]).toContain("Wrapper<Foo>");
+  });
+
+  it("同名 enum の重複を検出する", () => {
+    const src = `
+      #[serde(tag = "kind")] enum Dup { A }
+      #[serde(tag = "kind")] enum Dup { B }
+      #[tauri::command]
+      fn g(c: Channel<Dup>) {}
+    `;
+    expect(extractChannelEnums([src]).duplicates).toEqual(["Dup"]);
   });
 
   it("バリアント追加 (Rust 側だけ増えた) を switch / スキーマ双方の欠落として検出する", () => {

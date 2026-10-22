@@ -27,11 +27,10 @@ const rustSources = Object.values(rustModules);
 // バックエンドのイベント名は emit している各 `.rs` ファイルに文字列リテラルとして
 // 散在し、フロントも `src/api/tauri.ts` の `listen("query-stream:columns", …)` 等で
 // 別途ハードコードしている。両者はコンパイラが対応関係を検証してくれないため、名前の
-// タイポや片側だけの追加・削除漏れは実行時まで気付けない。(`Channel<T>` 経由の `kind` タグ付き
-// メッセージは対象外で、`channelMessageParity.test.ts` (#1772) が Rust enum ⇔ switch ⇔ Zod を検証する。)
-// ここでは両ソースから
-// イベント名の集合を機械的に抽出して突き合わせ、片側にしか存在しない名前があれば
-// テストを落とす。
+// タイポや片側だけの追加・削除漏れは実行時まで気付けない。ここでは両ソースからイベント名の
+// 集合を機械的に抽出して突き合わせ、片側にしか存在しない名前があればテストを落とす。
+// (`Channel<T>` 経由の `kind` タグ付きメッセージは対象外。`channelMessageParity.test.ts`
+// (#1772) が Rust enum ⇔ switch ⇔ Zod スキーマを検証する。)
 
 // `.rs` ファイルの `const EV_XXX: &str = "event-name";` からイベント名リテラルを
 // 抽出する。ストリーミングイベントは「意味の分かる定数名 → リテラル」という書き方に
@@ -98,9 +97,7 @@ describe("ストリーミングイベント名パリティ (Rust emit ↔ tauri.
   // したため、このテストが数える emit/listen イベント名の総数は 27 → 16 に減った
   // (csv-import 5 + export-stream 4 + dump-stream 4 + connect-progress 1 +
   // task-run 2)。閾値もそれに合わせて下げる — Channel 経由のメッセージ名
-  // パリティは `ipcArgParity.test.ts` の `onEvent` 引数チェックと
-  // `commands/query.rs` 内のコンパイル時の enum バリアント網羅性 (match の
-  // 網羅チェック) が別途担保する。
+  // パリティは `channelMessageParity.test.ts` (#1772) が担保する。
   it("両ソースから十分な数のイベント名を抽出できている (抽出ロジックの保険)", () => {
     expect(emitted.size).toBeGreaterThanOrEqual(15);
     expect(listened.size).toBeGreaterThanOrEqual(15);
