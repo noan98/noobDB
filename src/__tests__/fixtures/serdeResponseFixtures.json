@@ -540,6 +540,27 @@
     "name": "id",
     "type_name": "INTEGER"
   },
+  "columnDependencyReport": {
+    "dependencies": [
+      {
+        "column": "price",
+        "confidence": "possible",
+        "detail": null,
+        "kind": "view",
+        "name": "v_orders"
+      },
+      {
+        "column": "price",
+        "confidence": "direct",
+        "detail": "price, qty",
+        "kind": "index",
+        "name": "idx_price"
+      }
+    ],
+    "warnings": [
+      "definitions"
+    ]
+  },
   "columnProfile": {
     "column": "age",
     "data_type": "bigint",

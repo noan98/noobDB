@@ -29,6 +29,8 @@ import { TableConstraintEditor, type CheckRow, type FkRow } from "./TableConstra
 import { isCompleteCheck, isCompleteForeignKey } from "./tableConstraints";
 import { buildAlterPrechecks, buildConstraintPrechecks } from "./alterPrecheck";
 import { AlterPrecheckNotice } from "./AlterPrecheckNotice";
+import { DropColumnDependencies } from "./DropColumnDependencies";
+import { useColumnDependencies } from "../useColumnDependencies";
 import { COUNT_PREVIEW_TIMEOUT_SECS, useCountPreviews } from "../useCountPreviews";
 
 /**
@@ -363,6 +365,15 @@ export function AlterTableModal({
     [sessionId, database],
   );
   const precheckCounts = useCountPreviews(runCount, prechecks, !loading && !loadError);
+  // DROP COLUMN の対象列を参照するビュー・生成列・インデックス・FK・トリガー (#1758)。
+  const droppedColumns = useMemo(() => existing.filter((e) => e.drop).map((e) => e.original), [existing]);
+  const columnDeps = useColumnDependencies(
+    sessionId,
+    database,
+    table,
+    droppedColumns,
+    !loading && !loadError,
+  );
   // 破壊的な文 (DROP COLUMN / DROP FOREIGN KEY / DROP CHECK) を含むか (#1529)。
   // 含むときは確認ダイアログと同じ破壊的パターン (実行は dangerOutline で左、
   // キャンセルを primary で右) に切り替え、Cmd/Ctrl+Enter での実行も止める。
@@ -838,6 +849,7 @@ export function AlterTableModal({
                 counts={precheckCounts}
                 onOpenRows={onSendToEditor}
               />
+              <DropColumnDependencies state={columnDeps} />
               {hasIncompleteIndex && (
                 <Callout tone="warning">{t("alterTableIndexIncompleteBlocked")}</Callout>
               )}

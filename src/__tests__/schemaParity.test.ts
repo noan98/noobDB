@@ -191,6 +191,7 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["writeCaptureSummaryVariants", schemas.writeCaptureSummary],
   ["healthProbeItemVariants", schemas.healthProbeItem],
   ["incomingForeignKey", schemas.incomingForeignKey],
+  ["columnDependencyReport", schemas.columnDependencyReport],
   ["tableStatistic", schemas.tableStatistic],
   ["insertRowsResult", schemas.insertRowsResult],
   ["openTableResult", schemas.openTableResult],
