@@ -274,6 +274,8 @@ export const rowCrossfadeFrom = 0.35;
 export const slideOffsets = {
   /** Row Inspector の行送り。ドロワー開閉 (28) より小さく、本体だけ動かす。 */
   row: 16,
+  /** 結果グリッドのページ送り (#1752)。`<tbody>` 全体が動くので行送りよりやや大きく。 */
+  page: 24,
 } as const;
 
 /**
