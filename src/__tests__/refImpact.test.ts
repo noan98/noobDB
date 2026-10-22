@@ -1,14 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { CellValue } from "../api/tauri";
 import type { IncomingFk } from "../fkNavigation";
 import {
   blocksDelete,
   buildOpenChildrenSql,
   buildRefCountSqls,
+  CASCADE_MAX_DEPTH,
   collectDeletedKeyValues,
+  loadCascadeImpacts,
   loadRefImpacts,
   normalizeOnDelete,
   REF_KEY_LIMIT,
+  rootPredicatesFromDelete,
+  rootPredicatesFromKeys,
   sumRefCounts,
 } from "../refImpact";
 
@@ -282,5 +286,158 @@ describe("別スキーマの子テーブル (#1786)", () => {
     expect(buildOpenChildrenSql({ driver: "postgres", database: "public", impact: impacts[0], keys })).toBe(
       'SELECT * FROM "sales"."child" WHERE "pid" IN (1, 2)',
     );
+  });
+});
+
+describe("loadCascadeImpacts (#1767)", () => {
+  const keys = new Map<string, CellValue[]>([["id", [1, "9007199254740993"]]]);
+  const lookupWith =
+    (counts: Record<string, number>, seen: string[] = []) =>
+    async (sql: string) => {
+      seen.push(sql);
+      const rows: CellValue[][] = [];
+      for (const m of sql.matchAll(/SELECT (\d+) AS i, COUNT\(\*\) AS n FROM (\S+)/g)) {
+        rows.push([Number(m[1]), counts[m[2]] ?? 0]);
+      }
+      return { rows };
+    };
+  const root = (driver = "mysql") => rootPredicatesFromKeys({ driver, keys });
+
+  it("参照動作ごとの子行数を 1 段目で集計し、64bit 整数は文字列のままリテラル化する", async () => {
+    const seen: string[] = [];
+    const res = await loadCascadeImpacts({
+      driver: "mysql",
+      database: "app",
+      parentTable: "users",
+      refs: [
+        { table: "orders", column: "user_id", referencedColumn: "id", onDelete: "CASCADE" },
+        { table: "logs", column: "user_id", referencedColumn: "id", onDelete: "RESTRICT" },
+        { table: "prefs", column: "user_id", referencedColumn: "id", onDelete: "SET NULL" },
+      ],
+      rootPredicates: root(),
+      fetchIncoming: async () => [],
+      lookup: lookupWith({ "`app`.`orders`": 3, "`app`.`logs`": 2, "`app`.`prefs`": 1 }, seen),
+    });
+    expect(res.impacts.map((i) => [i.table, i.onDelete, i.count])).toEqual([
+      ["orders", "CASCADE", 3],
+      ["logs", "RESTRICT", 2],
+      ["prefs", "SET NULL", 1],
+    ]);
+    expect(res.moreCascade).toBe(false);
+    expect(seen[0]).toContain("`user_id` IN (1, '9007199254740993')");
+  });
+
+  it("CASCADE の子の子を副問い合わせで数え、SET NULL の子は辿らない", async () => {
+    const seen: string[] = [];
+    const fetchIncoming = vi.fn(async (fk: IncomingFk) =>
+      fk.table === "orders"
+        ? [{ table: "items", column: "order_id", referencedColumn: "id", onDelete: "CASCADE" }]
+        : [],
+    );
+    const res = await loadCascadeImpacts({
+      driver: "postgres",
+      database: "public",
+      parentTable: "users",
+      refs: [
+        { table: "orders", column: "user_id", referencedColumn: "id", onDelete: "CASCADE" },
+        { table: "prefs", column: "user_id", referencedColumn: "id", onDelete: "SET NULL" },
+      ],
+      rootPredicates: root("postgres"),
+      fetchIncoming,
+      lookup: lookupWith({ '"public"."orders"': 2, '"public"."prefs"': 4, '"public"."items"': 7 }, seen),
+    });
+    expect(res.impacts.map((i) => [i.table, i.depth ?? 1, i.parentTable])).toEqual([
+      ["orders", 1, "users"],
+      ["prefs", 1, "users"],
+      ["items", 2, "orders"],
+    ]);
+    expect(fetchIncoming).toHaveBeenCalledTimes(2);
+    expect(seen[1]).toContain(
+      `"order_id" IN (SELECT "id" FROM "public"."orders" WHERE "user_id" IN (1, '9007199254740993'))`,
+    );
+  });
+
+  it("深さの上限を超える連鎖は数えず moreCascade にする", async () => {
+    const chain: IncomingFk = { table: "t", column: "p", referencedColumn: "id", onDelete: "CASCADE" };
+    let n = 0;
+    const res = await loadCascadeImpacts({
+      driver: "mysql",
+      database: "app",
+      parentTable: "root",
+      refs: [{ ...chain, table: "t0" }],
+      rootPredicates: root(),
+      fetchIncoming: async () => [{ ...chain, table: `t${++n}` }],
+      lookup: async (sql) => ({
+        rows: [...sql.matchAll(/SELECT (\d+) AS i/g)].map((m) => [Number(m[1]), 1] as CellValue[]),
+      }),
+    });
+    expect(res.impacts).toHaveLength(CASCADE_MAX_DEPTH);
+    expect(res.moreCascade).toBe(true);
+  });
+
+  it("自己参照の連鎖は 2 段目を辿らず moreCascade にする", async () => {
+    const self: IncomingFk = {
+      table: "cat",
+      column: "parent_id",
+      referencedColumn: "id",
+      onDelete: "CASCADE",
+    };
+    const res = await loadCascadeImpacts({
+      driver: "sqlite",
+      database: null,
+      parentTable: "cat",
+      refs: [self],
+      rootPredicates: root(),
+      fetchIncoming: async () => [self],
+      lookup: lookupWith({ '"cat"': 2 }),
+    });
+    expect(res.impacts).toHaveLength(1);
+    expect(res.moreCascade).toBe(true);
+  });
+
+  it("1 段目の失敗は投げ、2 段目の失敗は unverified に入れて結果を残す", async () => {
+    const refs1: IncomingFk[] = [
+      { table: "orders", column: "user_id", referencedColumn: "id", onDelete: "CASCADE" },
+    ];
+    await expect(
+      loadCascadeImpacts({
+        driver: "mysql",
+        database: "app",
+        parentTable: "users",
+        refs: refs1,
+        rootPredicates: root(),
+        fetchIncoming: async () => [],
+        lookup: async () => {
+          throw new Error("timeout");
+        },
+      }),
+    ).rejects.toThrow("timeout");
+    let calls = 0;
+    const res = await loadCascadeImpacts({
+      driver: "mysql",
+      database: "app",
+      parentTable: "users",
+      refs: refs1,
+      rootPredicates: root(),
+      fetchIncoming: async () => [
+        { table: "items", column: "order_id", referencedColumn: "id", onDelete: "CASCADE" },
+      ],
+      lookup: async () => {
+        if (++calls > 1) throw new Error("timeout");
+        return { rows: [[0, 5]] };
+      },
+    });
+    expect(res.impacts).toHaveLength(1);
+    expect(res.unverified).toEqual(["items"]);
+  });
+
+  it("エディタの DELETE は副問い合わせで親行を引く (WHERE なしは全行)", () => {
+    const fk: IncomingFk = { table: "orders", column: "user_id", referencedColumn: "id" };
+    expect(rootPredicatesFromDelete({ driver: "mysql", table: "`users`", condition: "id < 10" })(fk)).toEqual(
+      ["`user_id` IN (SELECT `id` FROM `users` WHERE id < 10)"],
+    );
+    expect(rootPredicatesFromDelete({ driver: "sqlite", table: '"users"', condition: null })(fk)).toEqual([
+      '"user_id" IN (SELECT "id" FROM "users")',
+    ]);
   });
 });

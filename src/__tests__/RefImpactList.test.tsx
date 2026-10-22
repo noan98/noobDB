@@ -38,7 +38,7 @@ describe("RefImpactList (#1506)", () => {
     expect(screen.getByTestId("ref-impact-list")).toHaveTextContent("5 child rows in 2 table(s)");
     const rows = screen.getAllByTestId("ref-impact-row");
     expect(rows[0]).toHaveTextContent("orders.user_id ← users.id");
-    expect(rows[0]).toHaveTextContent("3 rows");
+    expect(rows[0]).toHaveTextContent("3 rows will be cascade-deleted");
     expect(rows[0]).toHaveTextContent("ON DELETE CASCADE");
     expect(rows[1]).toHaveTextContent("ON DELETE RESTRICT");
   });

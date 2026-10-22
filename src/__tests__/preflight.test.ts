@@ -6,6 +6,8 @@ import {
   preflightTone,
   PREFLIGHT_LARGE_THRESHOLD,
   PREFLIGHT_MAX_CHARS,
+  parseTableRef,
+  preflightDeleteTarget,
 } from "../components/preflight";
 
 describe("buildPreflightPlan — 対象外は null (バッジを出さない)", () => {
@@ -467,5 +469,29 @@ describe("変異テスト補強 (#1663)", () => {
   it("WHERE より前に RETURNING が来る不正な並びでも条件を空に切り落とさない", () => {
     const plan = buildPreflightPlan("DELETE FROM t RETURNING id WHERE a = 1", "postgres");
     expect(plan?.countSql).toBe("SELECT COUNT(*) FROM t WHERE a = 1");
+  });
+});
+
+describe("preflightDeleteTarget / parseTableRef (#1767)", () => {
+  it("DELETE の対象テーブルと WHERE 条件の原文を取り出す", () => {
+    const plan = buildPreflightPlan("DELETE FROM `app`.`users` WHERE id < 10 AND name = 'x'", "mysql");
+    expect(plan && preflightDeleteTarget(plan)).toEqual({
+      table: "`app`.`users`",
+      condition: "id < 10 AND name = 'x'",
+    });
+  });
+  it("WHERE なしは condition が null、UPDATE と推定不可は null", () => {
+    const all = buildPreflightPlan("DELETE FROM users", "mysql");
+    expect(all && preflightDeleteTarget(all)).toEqual({ table: "users", condition: null });
+    const upd = buildPreflightPlan("UPDATE users SET a = 1", "mysql");
+    expect(upd && preflightDeleteTarget(upd)).toBeNull();
+    const join = buildPreflightPlan("DELETE FROM users ORDER BY id LIMIT 1", "mysql");
+    expect(join && preflightDeleteTarget(join)).toBeNull();
+  });
+  it("テーブル参照を修飾子と名前に分ける", () => {
+    expect(parseTableRef("users")).toEqual({ qualifier: null, name: "users" });
+    expect(parseTableRef("`db`.`we``ird`")).toEqual({ qualifier: "db", name: "we`ird" });
+    expect(parseTableRef('"s" . "t""x"')).toEqual({ qualifier: "s", name: 't"x' });
+    expect(parseTableRef("a.b.c")).toBeNull();
   });
 });

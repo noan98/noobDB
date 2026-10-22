@@ -212,6 +212,7 @@ import { LocalTablesPanel } from "./components/LocalTablesPanel";
 import { planLocalRefetch } from "./components/localRefetch";
 import type { QueryEditorHandle, SchemaTable } from "./components/QueryEditor";
 import type { SchemaJumpTarget } from "./components/identifierJump";
+import { parseTableRef, preflightDeleteTarget } from "./components/preflight";
 import type { PreflightResult } from "./components/usePreflight";
 import type { PreflightImpact } from "./components/DangerousQueryDialog";
 import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
@@ -471,7 +472,16 @@ import {
 } from "./queryNotify";
 import { type IncomingFk, incomingFkTableName } from "./fkNavigation";
 import { collectDropImpacts, type DropImpact } from "./dropImpact";
-import { buildOpenChildrenSql, collectDeletedKeyValues, loadRefImpacts, type RefImpact } from "./refImpact";
+import {
+  buildOpenChildrenSql,
+  type CascadeImpacts,
+  collectDeletedKeyValues,
+  loadCascadeImpacts,
+  loadRefImpacts,
+  type RefImpact,
+  rootPredicatesFromDelete,
+  rootPredicatesFromKeys,
+} from "./refImpact";
 import { RefImpactList } from "./components/RefImpactList";
 import { DropReferencedBy } from "./components/DropReferencedBy";
 import type { ValueLookup } from "./components/useValuePicker";
@@ -2339,6 +2349,8 @@ export default function App() {
     typedConfirmTarget: string | null;
     /** 影響行数プリフライト (#737) から引き継いだ件数 (該当時のみ)。 */
     impact?: PreflightImpact | null;
+    /** 単一表 DELETE の対象 (プリフライトの切り出し)。子テーブルへの影響の集計に使う (#1767)。 */
+    deleteTarget?: { table: string; condition: string | null } | null;
   } | null>(null);
 
   // Pending {{variable}} parameter prompt. When the editor's SQL contains
@@ -6379,6 +6391,7 @@ export default function App() {
           batch,
           typedConfirmTarget,
           impact,
+          deleteTarget: pf && pf.sql === sql && pf.status === "ready" ? preflightDeleteTarget(pf.plan) : null,
         });
         return;
       }
@@ -8166,16 +8179,22 @@ export default function App() {
       const { keys, types, partial } = collected;
       let impacts: RefImpact[] = [];
       let failed = false;
+      let moreCascade = false;
+      let deeperUnverified: string[] = [];
       try {
-        impacts = await loadRefImpacts({
+        // CASCADE の先 (子の子) も上限付きで辿って数える (#1767)。
+        const cascade = await loadCascadeImpacts({
           driver,
           database: input.database,
-          refs,
-          keys,
-          types,
           parentTable: input.table,
+          refs,
+          rootPredicates: rootPredicatesFromKeys({ driver, keys, types }),
+          fetchIncoming: (fk) => api.incomingForeignKeys(sessionId, fk.schema ?? input.database, fk.table),
           lookup: refImpactLookup(input.database),
         });
+        impacts = cascade.impacts;
+        moreCascade = cascade.moreCascade;
+        deeperUnverified = cascade.unverified;
       } catch {
         failed = true;
       }
@@ -8194,8 +8213,9 @@ export default function App() {
       if (impacts.length === 0 && partial && unverifiedTables.length === 0) {
         unverifiedTables.push(...new Set(refs.map((r) => incomingFkTableName(r))));
       }
+      unverifiedTables.push(...deeperUnverified.filter((x) => !unverifiedTables.includes(x)));
       const unverified = unverifiedTables.length > 0;
-      if (impacts.length === 0 && !unverified) return true;
+      if (impacts.length === 0 && !unverified && !moreCascade) return true;
       return confirm({
         title: translate("refImpactDeleteTitle", { table: input.table }),
         message: (controls) => (
@@ -8204,6 +8224,7 @@ export default function App() {
             mode="rows"
             driver={driver}
             partial={partial}
+            moreCascade={moreCascade}
             unverified={unverified ? unverifiedTables : undefined}
             onOpen={(imp) => {
               controls.cancel();
@@ -8221,6 +8242,37 @@ export default function App() {
     [sessionId, selectedProfile?.driver, refImpactLookup, confirm, openAndRunQuery],
   );
   confirmRowDeleteImpactsRef.current = confirmRowDeleteImpacts;
+
+  // エディタの単一表 DELETE が消す行を参照している子行への影響 (#1767)。危険クエリの確認ダイアログが
+  // 開いたときに 1 回呼ばれる。親行は副問い合わせで引くので、キー値の取得は要らない。
+  // 失敗は呼び出し側 (ダイアログ) が「確認できませんでした」にして、実行は妨げない。
+  const loadEditorDeleteImpacts = useCallback(
+    async (
+      target: { table: string; condition: string | null },
+      database: string | null,
+    ): Promise<CascadeImpacts> => {
+      if (!sessionId) throw new Error("no session");
+      const driver = selectedProfile?.driver ?? "mysql";
+      const ref = parseTableRef(target.table);
+      // PostgreSQL / SQLite のスキーマ修飾は `database` 引数と対応が一意でないので、読めた場合だけ扱う。
+      if (!ref || (ref.qualifier && driver !== "mysql") || !(ref.qualifier ?? database)) {
+        throw new Error("unresolved table");
+      }
+      const db = ref.qualifier ?? database ?? "";
+      const refs = await api.incomingForeignKeys(sessionId, db, ref.name);
+      if (refs.length === 0) return { impacts: [], moreCascade: false, unverified: [] };
+      return loadCascadeImpacts({
+        driver,
+        database: db,
+        parentTable: ref.name,
+        refs,
+        rootPredicates: rootPredicatesFromDelete({ driver, ...target }),
+        fetchIncoming: (fk) => api.incomingForeignKeys(sessionId, fk.schema ?? db, fk.table),
+        lookup: refImpactLookup(db),
+      });
+    },
+    [sessionId, selectedProfile?.driver, refImpactLookup],
+  );
 
   // TRUNCATE の前に、対象テーブルを参照している子行数を数える (#1506)。`excludeChildren` に含まれる
   // 子 (同じ操作で一緒に消える) と自己参照は影響として数えない。数えられなかった親テーブルは
@@ -14130,6 +14182,20 @@ export default function App() {
                           selectedProfile.database ??
                           null,
                         sql: pendingDangerous.sql,
+                      }
+                    : null
+                }
+                fkImpact={
+                  pendingDangerous.deleteTarget && selectedProfile
+                    ? {
+                        driver: selectedProfile.driver,
+                        load: () =>
+                          loadEditorDeleteImpacts(
+                            pendingDangerous.deleteTarget as { table: string; condition: string | null },
+                            tabsRef.current.find((tb) => tb.id === pendingDangerous.tabId)?.database ??
+                              selectedProfile.database ??
+                              null,
+                          ),
                       }
                     : null
                 }

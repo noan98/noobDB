@@ -304,6 +304,41 @@ function finishPlan(
   };
 }
 
+/**
+ * 単一表 DELETE のプリフライト計画から、対象テーブルの原文と WHERE 条件の原文を取り出す (#1767)。
+ * 被参照 FK の子行数を「副問い合わせで親行を引く」COUNT にするための材料で、`countSql` と同じ
+ * 切り出し結果なので実行しようとしている DELETE と対象が一致する。WHERE なしは `condition: null`。
+ * DELETE 以外・推定不可の計画では null。
+ */
+export function preflightDeleteTarget(
+  plan: Pick<PreflightPlan, "verb" | "table" | "allRows" | "countSql">,
+): { table: string; condition: string | null } | null {
+  if (plan.verb !== "delete" || !plan.table || !plan.countSql) return null;
+  if (plan.allRows) return { table: plan.table, condition: null };
+  const prefix = `${COUNT_PREFIX}${plan.table} WHERE `;
+  if (!plan.countSql.startsWith(prefix)) return null;
+  const condition = plan.countSql.slice(prefix.length);
+  return condition.trim() ? { table: plan.table, condition } : null;
+}
+
+/**
+ * プリフライトが元 SQL から切り出したテーブル参照 (`` `db`.`t` `` / `"s"."t"` / `t`) を、修飾子と
+ * テーブル名に分ける (#1767)。クオートは外し、二重化されたクオートは戻す。3 パート以上や読めない
+ * 形は null。
+ */
+export function parseTableRef(raw: string): { qualifier: string | null; name: string } | null {
+  const part = String.raw`(\x60(?:[^\x60]|\x60\x60)+\x60|"(?:[^"]|"")+"|[^.\s"\x60]+)`;
+  const m = new RegExp(`^\\s*(?:${part}\\s*\\.\\s*)?${part}\\s*$`).exec(raw);
+  if (!m) return null;
+  const strip = (p: string) =>
+    p.startsWith("`")
+      ? p.slice(1, -1).replace(/``/g, "`")
+      : p.startsWith('"')
+        ? p.slice(1, -1).replace(/""/g, '"')
+        : p;
+  return { qualifier: m[1] ? strip(m[1]) : null, name: strip(m[2]) };
+}
+
 /** 影響行のサンプルとして先頭に見せる行数 (#1626)。 */
 export const PREFLIGHT_SAMPLE_ROWS = 20;
 
