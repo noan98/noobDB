@@ -458,7 +458,13 @@ pub async fn incoming_foreign_keys(
         .schema_cache
         .foreign_keys_shared(&database, || conn.foreign_keys(&database))
         .await?;
-    Ok(filter_incoming_foreign_keys(&all, &table))
+    let mut incoming = filter_incoming_foreign_keys(&all, &table);
+    // PostgreSQL はスキーマをまたぐ FK が `foreign_keys` に含まれないので別クエリで補う (#1786)。
+    incoming.extend(
+        conn.cross_schema_incoming_foreign_keys(&database, &table)
+            .await?,
+    );
+    Ok(incoming)
 }
 
 /// このセッションのスキーマキャッシュ (#1097) を明示的に無効化する。

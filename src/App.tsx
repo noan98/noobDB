@@ -458,7 +458,7 @@ import {
   shouldNotifyQueryCompletion,
   type QueryNotificationKind,
 } from "./queryNotify";
-import type { IncomingFk } from "./fkNavigation";
+import { type IncomingFk, incomingFkTableName } from "./fkNavigation";
 import { collectDropImpacts, type DropImpact } from "./dropImpact";
 import { buildOpenChildrenSql, collectDeletedKeyValues, loadRefImpacts, type RefImpact } from "./refImpact";
 import { RefImpactList } from "./components/RefImpactList";
@@ -8160,7 +8160,8 @@ export default function App() {
           let refs: IncomingFk[];
           try {
             const all = await api.incomingForeignKeys(sessionId, database, tbl);
-            refs = all.filter((fk) => fk.table !== tbl && !excludeChildren.includes(fk.table));
+            // 別スキーマの同名テーブル (#1786) は親自身でも除外対象でもないので残す。
+            refs = all.filter((fk) => fk.schema || (fk.table !== tbl && !excludeChildren.includes(fk.table)));
           } catch {
             return { impacts: [], unverified: [] };
           }
@@ -8176,7 +8177,7 @@ export default function App() {
             });
             return { impacts, unverified: [] };
           } catch {
-            return { impacts: [], unverified: [...new Set(refs.map((r) => r.table))] };
+            return { impacts: [], unverified: [...new Set(refs.map((r) => incomingFkTableName(r)))] };
           }
         }),
       );

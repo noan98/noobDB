@@ -21,6 +21,8 @@ const BRANCHES_PER_QUERY = 100;
 export interface RefImpact {
   /** 参照先 (親) テーブル。複数テーブルの一括 TRUNCATE で区別するために持つ。 */
   parentTable?: string;
+  /** 子テーブルのスキーマ (PostgreSQL のスキーマをまたぐ FK のみ、#1786)。 */
+  schema?: string | null;
   table: string;
   column: string;
   referencedColumn: string;
@@ -130,7 +132,7 @@ export function buildRefCountSqls(input: {
   const branches: string[] = [];
   refs.forEach((fk, fkIndex) => {
     const col = quoteIdentFor(driver, fk.column);
-    const from = qualifiedTable(driver, database, fk.table);
+    const from = qualifiedTable(driver, fk.schema ?? database, fk.table);
     const wheres: string[] = [];
     if (keys === null) {
       // TRUNCATE: 全件を数えると重いので 1 件余分に拾う上限付きサブクエリにする (3 方言共通)。
@@ -197,6 +199,7 @@ export async function loadRefImpacts(input: {
     if (count <= 0) return;
     impacts.push({
       parentTable: input.parentTable,
+      ...(fk.schema ? { schema: fk.schema } : {}),
       table: fk.table,
       column: fk.column,
       referencedColumn: fk.referencedColumn,
@@ -215,14 +218,14 @@ export async function loadRefImpacts(input: {
 export function buildOpenChildrenSql(input: {
   driver: string;
   database: string | null | undefined;
-  impact: Pick<RefImpact, "table" | "column" | "referencedColumn">;
+  impact: Pick<RefImpact, "schema" | "table" | "column" | "referencedColumn">;
   keys: ReadonlyMap<string, CellValue[]> | null;
   types?: KeyTypes;
   limit?: number;
 }): string {
   const { driver, database, impact, keys, types } = input;
   const col = quoteIdentFor(driver, impact.column);
-  const from = qualifiedTable(driver, database, impact.table);
+  const from = qualifiedTable(driver, impact.schema ?? database, impact.table);
   if (keys === null) return `SELECT * FROM ${from} WHERE ${col} IS NOT NULL`;
   const vals = (keys.get(impact.referencedColumn) ?? []).slice(0, input.limit ?? 100);
   if (vals.length === 0) return `SELECT * FROM ${from} WHERE 1 = 0`;
