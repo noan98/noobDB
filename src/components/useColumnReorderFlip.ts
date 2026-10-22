@@ -2,9 +2,11 @@ import { useCallback, useLayoutEffect, useRef, type RefObject } from "react";
 import { useReducedMotionConfig } from "motion/react";
 import { durations, easings } from "../motion";
 import { columnIdFromCellKey, computeFlipOffsets } from "./columnReorderFlip";
+import { prefersStaticMotion } from "./revealOrigin";
 
 /**
  * 結果グリッドの列ドラッグ並べ替え確定時の FLIP アニメーション (#1021)。
+ * 列のピン留め / 解除の確定 (#1753) も同じ機構で滑らせる (呼び出し側が確定直前に `capture`)。
  *
  * 並べ替え前にヘッダの位置を記録 (`capture`) し、新しい列順がコミットされた直後
  * (`useLayoutEffect`、ペイント前) に位置を測り直して、動いた列のセルを元の位置から
@@ -25,9 +27,13 @@ import { columnIdFromCellKey, computeFlipOffsets } from "./columnReorderFlip";
  *   (セル単位の計測はしない)。本体セルは既存の `cellRefs` (`"行:列"` キー) から引く。
  * - 列仮想化で並べ替え後に新しくマウントされたセルもヘッダ由来の差分で一緒に滑る。
  *   ピン留め列は `getBoundingClientRect` が sticky のずれを含むので、そのまま正しい。
+ * - 動きは個別プロパティ `translate` (transform ではない) で、sticky の `left` / `right`
+ *   オフセットやドラッグ中の transform と干渉しない。ピン留めで固定端へ移る列も、計測は
+ *   確定後の実位置 (sticky 込み) なので終点は常に正しい。
  * - 値は `motion.ts` の `durations.base` / `easings.out` (CSS の `--ease-out` と同じ)。
  * - `prefers-reduced-motion` / アプリ内 `motionPreference="reduced"` (#787) では
  *   `useReducedMotionConfig` (ルートの `MotionConfig` に追従) により計測もしない。
+ *   ハイコントラスト (hc-* テーマ / forced-colors) も `prefersStaticMotion` で再生しない。
  * - Web Animations API (`fill` なし) なので終了後に inline style を残さない。
  *   `Element.animate` が無い環境 (jsdom) では何もしない。
  */
@@ -41,7 +47,7 @@ export function useColumnReorderFlip(
 
   const capture = useCallback(() => {
     const table = tableRef.current;
-    if (reduced || !table) {
+    if (reduced || !table || prefersStaticMotion()) {
       pendingRef.current = null;
       return;
     }
@@ -71,9 +77,7 @@ export function useColumnReorderFlip(
     };
     const play = (el: Element, dx: number) => {
       if (typeof (el as HTMLElement).animate !== "function") return;
-      running.push(
-        el.animate([{ transform: `translateX(${dx}px)` }, { transform: "translateX(0)" }], timing),
-      );
+      running.push(el.animate([{ translate: `${dx}px 0` }, { translate: "0 0" }], timing));
     };
     // ヘッダと集計フッター (どちらも 1 行)。
     for (const el of Array.from(table.querySelectorAll<HTMLElement>("[data-col-id]"))) {

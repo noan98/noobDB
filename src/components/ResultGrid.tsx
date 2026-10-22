@@ -8072,7 +8072,11 @@ export const DataGrid = memo(function DataGrid({
           }
           onPin={
             enableColumnControls
-              ? (side) => table.getColumn(String(filterMenu.colIdx))?.pin(tablePinPosition(side))
+              ? (side) => {
+                  // 確定の 1 回だけヘッダ位置を記録し、コミット後に列を固定端へ滑らせる (#1753)。
+                  columnFlip.capture();
+                  table.getColumn(String(filterMenu.colIdx))?.pin(tablePinPosition(side));
+                }
               : undefined
           }
           onShowStats={
