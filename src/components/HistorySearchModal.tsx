@@ -6,6 +6,7 @@ import { singleLine } from "./commandPaletteSearch";
 import { Modal } from "./Modal";
 import { isImeComposing } from "./modalKeys";
 import { filterHistory } from "./queryHistoryNav";
+import { scrollFollowIntoView } from "./scrollFollow";
 
 /** 一度に並べる候補の最大数。履歴は最大 100 件なので実質すべて出せる。 */
 const MAX_ROWS = 50;
@@ -36,7 +37,7 @@ export function HistorySearchModal({ history, onPick, onClose }: Props) {
   // アクティブ行を可視範囲へ追従させる (ObjectSearchModal と同じ block:"nearest")。
   // biome-ignore lint/correctness/useExhaustiveDependencies: activeIndex / rows が変わったら再実行するためのトリガー
   useEffect(() => {
-    listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+    scrollFollowIntoView(listRef.current?.querySelector('[aria-selected="true"]'));
   }, [activeIndex, rows]);
 
   const pick = (sql: string | undefined) => {

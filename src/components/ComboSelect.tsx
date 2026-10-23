@@ -36,6 +36,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { rankComboOptions } from "./comboRank";
 import { MENU_MARGIN } from "./menuPosition";
 import { isImeComposing } from "./modalKeys";
+import { scrollFollowIntoView } from "./scrollFollow";
 
 export interface ComboSelectOption {
   value: string;
@@ -319,7 +320,7 @@ export function ComboSelect({
   // ハイライト移動時に、はみ出していればスクロールして見えるようにする。
   useEffect(() => {
     if (highlighted === null) return;
-    optionRefs.current.get(highlighted)?.scrollIntoView({ block: "nearest" });
+    scrollFollowIntoView(optionRefs.current.get(highlighted));
   }, [highlighted]);
 
   const commitText = (text: string) => {

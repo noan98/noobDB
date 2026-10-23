@@ -22,6 +22,16 @@ function resolveRegion(focused: Element): HTMLElement | null {
 /** 現在パルス中の要素。連続して F6 が押されたとき、前の領域のクラスを確実に外す。 */
 let current: HTMLElement | null = null;
 
+/** reduced-motion (OS / アプリ設定 #787) が有効か。`data-motion` が OS 設定より優先する。 */
+export function reducedMotionActive(): boolean {
+  const motion = document.documentElement.getAttribute("data-motion");
+  if (motion === "reduced") return true;
+  if (motion === "full") return false;
+  return (
+    typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
 /** reduced-motion (OS / アプリ設定 #787)・hc-* テーマ・forced-colors では演出を出さない。 */
 export function focusLandingPulseEnabled(): boolean {
   const root = document.documentElement;
@@ -29,12 +39,7 @@ export function focusLandingPulseEnabled(): boolean {
   if (typeof window.matchMedia === "function" && window.matchMedia("(forced-colors: active)").matches) {
     return false;
   }
-  const motion = root.getAttribute("data-motion");
-  if (motion === "reduced") return false;
-  if (motion === "full") return true;
-  return !(
-    typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
+  return !reducedMotionActive();
 }
 
 function onLandingEnd(e: Event): void {

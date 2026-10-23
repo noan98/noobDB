@@ -46,6 +46,7 @@ import {
   isTypeaheadKey,
   type TypeaheadState,
 } from "./listboxNav";
+import { scrollFollowIntoView } from "./scrollFollow";
 
 export interface ListboxSelectOption {
   value: string;
@@ -189,7 +190,7 @@ export function ListboxSelect({
   // ハイライト移動時に、はみ出していればスクロールして見えるようにする。
   useEffect(() => {
     if (highlighted === null) return;
-    optionRefs.current.get(highlighted)?.scrollIntoView({ block: "nearest" });
+    scrollFollowIntoView(optionRefs.current.get(highlighted));
   }, [highlighted]);
 
   const handleTriggerKeyDown: React.KeyboardEventHandler<HTMLButtonElement> = (e) => {

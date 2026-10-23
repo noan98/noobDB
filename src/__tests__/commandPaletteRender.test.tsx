@@ -25,7 +25,7 @@ describe("CommandPalette 大規模候補 (#1320)", () => {
     renderWithProviders(<CommandPalette items={tables(30)} onClose={() => {}} />);
     scrollIntoView.mockClear();
     fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
-    expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
   });
 
   it("空クエリでは多数のテーブルを一部だけ描画し、「さらに表示」で展開する", async () => {

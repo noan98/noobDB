@@ -14,6 +14,7 @@ import { DropInsertionMarker } from "./DropInsertionMarker";
 import { FlightIcon } from "./FlightIcon";
 import { isImeComposing } from "./modalKeys";
 import { tabOpenFlightId, useTabOpenFlight } from "../sharedElement";
+import { scrollFollowIntoView } from "./scrollFollow";
 
 // キーボードフォーカスリング。単一ソースの `--focus-ring` (App.css) をそのまま使う。
 const focusRing = "var(--focus-ring)";
@@ -373,7 +374,7 @@ export const TabBar = memo(function TabBar({
   useEffect(() => {
     if (!activeTabId) return;
     const el = tabRefs.current.get(activeTabId);
-    el?.scrollIntoView({ inline: "nearest", block: "nearest" });
+    scrollFollowIntoView(el, { inline: "nearest", block: "nearest" });
   }, [activeTabId, tabs.length]);
 
   const scrollBy = useCallback((dir: -1 | 1) => {
