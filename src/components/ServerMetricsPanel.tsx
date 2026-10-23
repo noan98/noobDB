@@ -25,6 +25,8 @@ import {
   type MetricSample,
   type MetricSeriesKey,
 } from "./serverMetrics";
+import { StatTile, type StatDeltaGood } from "./StatTile";
+import { LATENCY_HISTORY_MAX } from "./connectionHealth";
 import { Button, Checkbox, Heading, Select } from "./ui";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Tooltip } from "./Tooltip";
@@ -108,6 +110,41 @@ const CHARTS: ChartDef[] = [
     ],
   },
 ];
+
+/** 先頭に並べる要約タイル (#1833)。各系列の最新値・前回比・直近の推移を一目で見せる。 */
+const SUMMARY_TILES: readonly { key: MetricSeriesKey; labelKey: I18nKey; goodWhen: StatDeltaGood }[] = [
+  { key: "connections", labelKey: "metricsSeriesConnections", goodWhen: "neutral" },
+  { key: "lockWaiting", labelKey: "metricsSeriesLockWaiting", goodWhen: "down" },
+  { key: "queryRate", labelKey: "metricsSeriesThroughput", goodWhen: "neutral" },
+  { key: "slowQueryRate", labelKey: "metricsSeriesSlowQueryRate", goodWhen: "down" },
+];
+
+function MetricSummaryTiles({ points }: { points: MetricPoint[] }) {
+  const t = useT();
+  const tiles = SUMMARY_TILES.flatMap((def) => {
+    const values = extractSeries(points, def.key).map((p) => p.value);
+    if (values.length === 0) return [];
+    const latest = values[values.length - 1];
+    const isRate = def.key.endsWith("Rate");
+    return [
+      <StatTile
+        key={def.key}
+        label={t(def.labelKey)}
+        value={latest}
+        formatter={isRate ? formatRate : formatCount}
+        delta={values.length >= 2 ? latest - values[values.length - 2] : null}
+        goodWhen={def.goodWhen}
+        trend={values.slice(-LATENCY_HISTORY_MAX)}
+      />,
+    ];
+  });
+  if (tiles.length === 0) return null;
+  return (
+    <Flex gap="2" flexWrap="wrap" data-testid="metrics-summary-tiles">
+      {tiles}
+    </Flex>
+  );
+}
 
 function timeLabel(atMs: number): string {
   return new Date(atMs).toLocaleTimeString();
@@ -505,6 +542,8 @@ export function ServerMetricsPanel({ sessionId, driver }: { sessionId: string; d
           )}
         </Callout>
       )}
+
+      {updatedAt && <MetricSummaryTiles points={points} />}
 
       {error && (
         // ポーリング失敗: チャート自体は直前サンプルのまま表示を続けるため、全体を

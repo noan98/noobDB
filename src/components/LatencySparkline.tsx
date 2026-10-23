@@ -22,14 +22,21 @@ function sparkStroke(level: SparklineGeometry["segments"][number]["level"]): str
  * 直近のレイテンシ推移 (#1630)。閾値 (遅い) を超えた区間は意味色で塗り、計測できなかった回は
  * 下端の印で示す。2 サンプル未満は線が引けないので何も出さない (空セル)。
  */
-export function LatencySparkline({ samples }: { samples: readonly LatencySample[] | undefined }) {
+export function LatencySparkline({
+  samples,
+  neutral = false,
+}: {
+  samples: readonly LatencySample[] | undefined;
+  /** true: ms 以外の汎用推移 (件数・レートなど, #1833)。閾値線と段階色を出さず、最小〜最大に張る。 */
+  neutral?: boolean;
+}) {
   const t = useT();
   if (!samples || samples.filter((s) => s !== null).length < 2) {
     return <chakra.span color="app.textMuted">–</chakra.span>;
   }
-  const g = sparklineGeometry(samples, SPARK_W, SPARK_H, LATENCY_HISTORY_MAX);
+  const g = sparklineGeometry(samples, SPARK_W, SPARK_H, LATENCY_HISTORY_MAX, neutral);
   const values = samples.filter((s): s is number => s !== null);
-  const label = t("healthTrendAria", {
+  const label = t(neutral ? "sparklineTrendAria" : "healthTrendAria", {
     count: samples.length,
     min: Math.min(...values),
     max: Math.max(...values),
@@ -38,23 +45,25 @@ export function LatencySparkline({ samples }: { samples: readonly LatencySample[
     <chakra.svg
       role="img"
       aria-label={label}
-      data-testid="health-sparkline"
+      data-testid={neutral ? "neutral-sparkline" : "health-sparkline"}
       viewBox={`0 0 ${SPARK_W} ${SPARK_H}`}
       w="20"
       h="5"
       overflow="visible"
     >
       <title>{label}</title>
-      <line
-        x1={0}
-        x2={SPARK_W}
-        y1={g.thresholdY}
-        y2={g.thresholdY}
-        stroke="var(--border)"
-        strokeDasharray="2 2"
-        strokeWidth={1}
-        vectorEffect="non-scaling-stroke"
-      />
+      {!neutral && (
+        <line
+          x1={0}
+          x2={SPARK_W}
+          y1={g.thresholdY}
+          y2={g.thresholdY}
+          stroke="var(--border)"
+          strokeDasharray="2 2"
+          strokeWidth={1}
+          vectorEffect="non-scaling-stroke"
+        />
+      )}
       {g.segments.map((s) => (
         <line
           key={`${s.x1}:${s.x2}`}

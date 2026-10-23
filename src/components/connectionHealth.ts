@@ -396,12 +396,22 @@ export function sparklineGeometry(
   width: number,
   height: number,
   maxSamples: number = LATENCY_HISTORY_MAX,
+  neutral = false,
 ): SparklineGeometry {
   const values = samples.filter((s): s is number => s !== null);
-  const maxMs = Math.max(LATENCY_SLOW_MS, ...values);
+  // neutral (レイテンシ以外の汎用推移, #1833): 閾値も段階色も持たず、縦軸は最小〜最大に張る
+  // (全点が同値なら中央の水平線)。
+  const lo = neutral ? Math.min(...values) : 0;
+  const maxMs = neutral ? Math.max(...values) : Math.max(LATENCY_SLOW_MS, ...values);
   const step = maxSamples > 1 ? width / (maxSamples - 1) : 0;
   const xAt = (i: number) => round1(width - (samples.length - 1 - i) * step);
-  const yAt = (ms: number) => round1(height - (Math.min(ms, maxMs) / maxMs) * height);
+  const yAt = (ms: number) =>
+    neutral
+      ? maxMs === lo
+        ? round1(height / 2)
+        : round1(height - ((ms - lo) / (maxMs - lo)) * height)
+      : round1(height - (Math.min(ms, maxMs) / maxMs) * height);
+  const levelOf = (ms: number): LatencyLevel => (neutral ? "good" : latencyLevel(ms));
   const segments: SparklineSegment[] = [];
   const points: SparklineGeometry["points"] = [];
   const gaps: SparklineGap[] = [];
@@ -418,17 +428,17 @@ export function sparklineGeometry(
         y1: yAt(prev),
         x2: xAt(i),
         y2: yAt(s),
-        level: worseLevel(latencyLevel(prev), latencyLevel(s)),
+        level: worseLevel(levelOf(prev), levelOf(s)),
       });
     } else if (next === null || next === undefined) {
-      points.push({ x: xAt(i), y: yAt(s), level: latencyLevel(s) });
+      points.push({ x: xAt(i), y: yAt(s), level: levelOf(s) });
     }
   });
   return {
     segments,
     points,
     gaps,
-    thresholdY: yAt(LATENCY_SLOW_MS),
+    thresholdY: neutral ? -1 : yAt(LATENCY_SLOW_MS),
     maxMs,
   };
 }

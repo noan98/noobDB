@@ -1421,6 +1421,14 @@ const en = {
   profileCardsNoMatches: "No connections match.",
   profileCardsMatchCount: "{shown} of {total} connections",
   contextMenuConnect: "Connect",
+  // StatTile delta / trend (#1833).
+  sparklineTrendAria: "Last {count} samples: {min} to {max}.",
+  statDeltaUp: "up {amount}",
+  statDeltaDown: "down {amount}",
+  statDeltaFlat: "no change",
+  statDeltaGood: "improved",
+  statDeltaBad: "worsened",
+  statDeltaVsPrev: "vs previous sample",
   // Connection health latency trend (#1630).
   healthColTrend: "Trend",
   healthTrendAria:
@@ -8257,6 +8265,14 @@ const ja: Dict = {
   profileCardsNoMatches: "一致する接続がありません。",
   profileCardsMatchCount: "{total} 件中 {shown} 件",
   contextMenuConnect: "接続",
+  // StatTile のデルタ / 推移 (#1833)。
+  sparklineTrendAria: "直近 {count} サンプル: {min}〜{max}。",
+  statDeltaUp: "{amount} 増加",
+  statDeltaDown: "{amount} 減少",
+  statDeltaFlat: "変化なし",
+  statDeltaGood: "好転",
+  statDeltaBad: "悪化",
+  statDeltaVsPrev: "前回比",
   // 接続ヘルスのレイテンシ推移 (#1630)。
   healthColTrend: "推移",
   healthTrendAria:
