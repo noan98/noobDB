@@ -521,7 +521,9 @@ describe("AiQueryModal (#691)", () => {
       await waitFor(() => expect(screen.queryByTestId("ai-query-log-agent")).toBeNull());
       // 手動選択 (misc_5) も消え、依頼文からの自動提案に戻る。
       await waitFor(() => expect((screen.getByLabelText("misc_5") as HTMLInputElement).checked).toBe(false));
-      expect((screen.getByLabelText("orders") as HTMLInputElement).checked).toBe(true);
+      // 自動提案はデバウンス後に反映されるので (#1608)、misc_5 が外れた直後は
+      // まだ orders に付いていないことがある。反映を待ってから確かめる。
+      await waitFor(() => expect((screen.getByLabelText("orders") as HTMLInputElement).checked).toBe(true));
     });
 
     it("関連テーブルの自動提案は入力が止まってから更新し、送信直前には最新の依頼文で取り直す (#1608)", async () => {
