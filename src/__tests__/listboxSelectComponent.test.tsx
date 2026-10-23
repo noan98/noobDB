@@ -64,7 +64,7 @@ function renderSelect(
 
 describe("ListboxSelect の追従スクロール (#1832)", () => {
   it("開いた直後は即時、開いた後の矢印移動は smooth", async () => {
-    let t = 0;
+    let t = 1e9;
     const clock = vi.spyOn(performance, "now").mockImplementation(() => (t += 1000));
     const scroll = vi.fn();
     const original = Element.prototype.scrollIntoView;

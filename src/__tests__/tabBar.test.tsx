@@ -51,7 +51,7 @@ describe("TabBar render smoke (#604)", () => {
 
 describe("TabBar 追従スクロール (#1832)", () => {
   it("マウント直後は即時、アクティブタブ切替は inline: nearest 込みの smooth", () => {
-    let t = 0;
+    let t = 1e9;
     const clock = vi.spyOn(performance, "now").mockImplementation(() => (t += 1000));
     const scroll = vi.fn();
     const original = Element.prototype.scrollIntoView;
