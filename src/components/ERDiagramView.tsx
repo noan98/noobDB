@@ -59,7 +59,7 @@ import { cellKindIcon } from "./cellTypeMeta";
 import { errorIllustration } from "./illustrations";
 import { Tooltip, TooltipBubble, useDelegatedTooltip } from "./Tooltip";
 import { Button, Heading, Select } from "./ui";
-import { Spinner } from "./Spinner";
+import { ErGraphSkeleton } from "./Skeleton";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { copyToClipboard } from "./clipboard";
 import { clearErLayout, readErLayout, writeErLayout } from "./erPositions";
@@ -883,17 +883,21 @@ function ERDiagramInner({
 
       <Box ref={flowWrapRef} flex="1" position="relative" minHeight={0} mt="3" mx="0" mb="0">
         {loading ? (
-          <Box
-            position="absolute"
-            inset={0}
-            display="flex"
-            alignItems="center"
-            justifyContent="center"
-            gap="3"
-            color="app.textMuted"
-          >
-            <Spinner size={18} />
-            {t("erDiagramLoading")}
+          // 取得中はノードグラフ風のシマー骨格 (#1834)。文言は支援技術向けの
+          // role="status" として残し、骨格は aria-hidden の視覚プレースホルダ。
+          <Box position="absolute" inset={0} aria-busy="true">
+            <ErGraphSkeleton />
+            <Box
+              position="absolute"
+              insetX={0}
+              top="50%"
+              textAlign="center"
+              role="status"
+              fontSize="sm"
+              color="app.textMuted"
+            >
+              {t("erDiagramLoading")}
+            </Box>
           </Box>
         ) : error ? (
           // 取得失敗 (データベース一覧 or グラフ本体): errorHints の分類結果から

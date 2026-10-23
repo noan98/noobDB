@@ -191,3 +191,113 @@ export function SkeletonSearchRows({ rows = 5 }: { rows?: number }) {
     </>
   );
 }
+
+/** ER 図ローディング用のノードグラフ風スケルトン (#1834)。テーブルカード (ヘッダ +
+ *  列バー) を 2 行に並べ、カード間をシマーする細い線で結んで「ここにテーブルと
+ *  リレーションが描かれる」予兆を示す。親は `position: relative` の領域で、
+ *  絶対配置で全面を覆う。`aria-hidden` の純粋な視覚プレースホルダで、待機の通知は
+ *  呼び出し側の `role="status"` 文言が担う。
+ *
+ * @public
+ */
+export const ER_GRAPH_SKELETON_NODES: readonly { left: number; top: number; cols: readonly number[] }[] = [
+  { left: 8, top: 10, cols: [70, 55, 62] },
+  { left: 42, top: 6, cols: [60, 75, 48, 66] },
+  { left: 74, top: 14, cols: [66, 52] },
+  { left: 20, top: 52, cols: [58, 72, 50] },
+  { left: 58, top: 50, cols: [64, 46, 70] },
+];
+
+/** ノード間の接続線 (横線 / 縦線) の位置。`left`/`top`/`size` は親に対する % */
+const ER_GRAPH_SKELETON_LINKS: readonly { left: number; top: number; w?: number; h?: number }[] = [
+  { left: 24, top: 20, w: 18 },
+  { left: 58, top: 20, w: 16 },
+  { left: 14, top: 36, h: 16 },
+  { left: 52, top: 40, h: 10 },
+  { left: 36, top: 62, w: 22 },
+];
+
+export function ErGraphSkeleton() {
+  return (
+    <div
+      aria-hidden
+      data-testid="er-graph-skeleton"
+      style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}
+    >
+      {ER_GRAPH_SKELETON_LINKS.map((l, i) => (
+        <Skeleton
+          key={`l${i}`}
+          style={{
+            position: "absolute",
+            left: `${l.left}%`,
+            top: `${l.top}%`,
+            width: l.w != null ? `${l.w}%` : "var(--space-0-5)",
+            height: l.h != null ? `${l.h}%` : "var(--space-0-5)",
+            animationDelay: `${i * 0.05}s`,
+          }}
+        />
+      ))}
+      {ER_GRAPH_SKELETON_NODES.map((n, i) => (
+        <div
+          key={`n${i}`}
+          style={{
+            position: "absolute",
+            left: `${n.left}%`,
+            top: `${n.top}%`,
+            width: "18%",
+            minWidth: "calc(var(--space-12) * 3)",
+            display: "flex",
+            flexDirection: "column",
+            gap: "var(--space-1-5)",
+            padding: "var(--space-2)",
+            border: "1px solid var(--border-subtle)",
+            borderRadius: "var(--radius-md)",
+            opacity: 1 - i * 0.08,
+          }}
+        >
+          <Skeleton style={{ height: "var(--space-3-5)", width: "70%", animationDelay: `${i * 0.05}s` }} />
+          {n.cols.map((w, ci) => (
+            <Skeleton
+              key={ci}
+              style={{ height: "var(--space-2-5)", width: `${w}%`, animationDelay: `${(i + ci) * 0.04}s` }}
+            />
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** チャートの集計待ち用スケルトン (#1834)。左に Y 軸の目盛り線、下に X 軸、棒が
+ *  立ち上がる形のバーを並べて「ここにチャートが描かれる」予兆を示す。棒の高さは
+ *  `CHART_SKELETON_BARS` (%) で周期させ、`aria-hidden` の視覚プレースホルダとする。
+ *
+ * @public
+ */
+export const CHART_SKELETON_BARS: readonly number[] = [42, 68, 55, 82, 38, 74, 60, 90, 48, 66];
+
+export function ChartSkeleton() {
+  return (
+    <div
+      aria-hidden
+      data-testid="chart-skeleton"
+      style={{
+        height: "100%",
+        minHeight: "calc(var(--space-12) * 3)",
+        display: "flex",
+        gap: "var(--space-2)",
+        padding: "var(--space-2)",
+      }}
+    >
+      <Skeleton style={{ width: "var(--space-0-5)", flexShrink: 0 }} />
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "var(--space-2)", minWidth: 0 }}>
+        <div style={{ flex: 1, display: "flex", alignItems: "flex-end", gap: "var(--space-2)" }}>
+          {CHART_SKELETON_BARS.map((h, i) => (
+            <Skeleton key={i} style={{ flex: 1, height: `${h}%`, animationDelay: `${i * 0.05}s` }} />
+          ))}
+        </div>
+        <Skeleton style={{ height: "var(--space-0-5)" }} />
+      </div>
+    </div>
+  );
+}

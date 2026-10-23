@@ -265,3 +265,24 @@ describe("ERDiagramView 配置の保存とノードの右クリックメニュ�
     expect(onInsert).toHaveBeenCalledWith("SELECT * FROM `appdb`.`beta`");
   });
 });
+
+describe("ERDiagramView loading skeleton (#1834)", () => {
+  it("shows the node-graph skeleton with a status message while loading, then removes it", async () => {
+    let resolve: (v: never) => void = () => {};
+    vi.mocked(api.describeDatabase).mockReturnValueOnce(new Promise((r) => (resolve = r as never)));
+    const { container } = renderWithProviders(
+      <ERDiagramView
+        sessionId="s1"
+        driver="mysql"
+        initialDatabase="appdb"
+        onOpenTable={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    expect(await screen.findByTestId("er-graph-skeleton")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("status")).toHaveTextContent(t("erDiagramLoading"));
+    expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+    resolve([] as never);
+    await waitFor(() => expect(screen.queryByTestId("er-graph-skeleton")).toBeNull());
+  });
+});

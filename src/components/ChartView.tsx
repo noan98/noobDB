@@ -13,6 +13,7 @@ import { ListboxSelect } from "./ListboxSelect";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { elementToPngBlob, elementToSvgBytes } from "./imageExport";
 import { EmptyState } from "./EmptyState";
+import { ChartSkeleton } from "./Skeleton";
 import {
   CHART_PALETTES,
   DEFAULT_CHART_PALETTE,
@@ -464,7 +465,13 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
       </Flex>
 
       {dbAggStatus !== "off" && (
-        <chakra.div px="3" py="1" textStyle="caption" flex="none">
+        <chakra.div
+          px="3"
+          py="1"
+          textStyle="caption"
+          flex="none"
+          role={dbAggStatus === "pending" ? "status" : undefined}
+        >
           {dbAggStatus === "pending"
             ? t("chartAggInDbPending")
             : dbAggStatus === "ok"
@@ -531,8 +538,19 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
         </Flex>
       )}
 
-      <chakra.div ref={chartRef} flex="1" minH={0} overflow="auto" p="3">
-        {model.labels.length === 0 ? (
+      <chakra.div
+        ref={chartRef}
+        flex="1"
+        minH={0}
+        overflow="auto"
+        p="3"
+        aria-busy={dbAggStatus === "pending" ? true : undefined}
+      >
+        {dbAggStatus === "pending" ? (
+          // DB 側の全件集計待ち。手元の行だけで描いた旧チャートは全件の値と食い違う
+          // ため、軸 + 棒の骨格に置き換える (#1834)。失敗時は従来どおり手元の結果で描く。
+          <ChartSkeleton />
+        ) : model.labels.length === 0 ? (
           <EmptyState compact icon="table" title={t("chartNoData")} />
         ) : config.yCols.length === 0 ? (
           <EmptyState compact icon="filter" title={t("chartPickY")} />
