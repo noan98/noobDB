@@ -2472,6 +2472,22 @@ td.is-find-current::after {
   animation: focus-landing-pulse 0.6s var(--ease-out);
 }
 
+/* 無効な主アクションへの Cmd/Ctrl+Enter (Modal の submitDisabled) を「拒否」で返す共有
+   キーフレーム (#1831)。`components/submitRejectFeedback.ts` が `data-submit-rejected` を
+   付け、animationend で外す。motion/react が `transform` をインラインで持つため、衝突しない
+   個別プロパティ `translate` を揺らす。移動量は余白トークン (--space-1 = フォント拡大に追従)。
+   reduced-motion / hc-* / forced-colors は JS 側で付与しない。 */
+@keyframes submit-reject-shake {
+  0%, 100% { translate: 0 0; }
+  20%      { translate: calc(var(--space-1) * -1) 0; }
+  40%      { translate: var(--space-1) 0; }
+  60%      { translate: calc(var(--space-0-5) * -1) 0; }
+  80%      { translate: var(--space-0-5) 0; }
+}
+[data-submit-rejected] {
+  animation: submit-reject-shake calc(var(--dur-med) * 2) var(--ease-out);
+}
+
 /* 結果グリッド全体 (スクロールコンテナ) の適用成功フラッシュ。疑似要素だと
    スクロールで流れてしまうため、1 要素・1 回きりのここだけ box-shadow を使う。 */
 @keyframes apply-flash-box {

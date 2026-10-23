@@ -53,10 +53,20 @@ describe("isModalSubmitKey", () => {
   });
 });
 
-function renderModal(props: { onSubmit?: () => void; submitDisabled?: boolean; onClose?: () => void }) {
+function renderModal(props: {
+  onSubmit?: () => void;
+  submitDisabled?: boolean;
+  submitBusy?: boolean;
+  onClose?: () => void;
+}) {
   const onClose = props.onClose ?? vi.fn();
   renderWithProviders(
-    <Modal onClose={onClose} onSubmit={props.onSubmit} submitDisabled={props.submitDisabled}>
+    <Modal
+      onClose={onClose}
+      onSubmit={props.onSubmit}
+      submitDisabled={props.submitDisabled}
+      submitBusy={props.submitBusy}
+    >
       <ModalHeader onClose={onClose} closeLabel="close">
         title
       </ModalHeader>
@@ -66,7 +76,10 @@ function renderModal(props: { onSubmit?: () => void; submitDisabled?: boolean; o
       </ModalBody>
       <ModalFooter>
         <div style={{ flex: 1 }} />
-        <button type="button">ok</button>
+        <button type="button">cancel</button>
+        <button type="button" disabled={props.submitDisabled}>
+          ok
+        </button>
       </ModalFooter>
     </Modal>,
   );
@@ -93,6 +106,104 @@ describe("Modal の Cmd/Ctrl+Enter", () => {
     renderModal({ onSubmit, submitDisabled: true });
     fireEvent.keyDown(screen.getByLabelText("name"), { key: "Enter", ctrlKey: true });
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("無効時の Cmd/Ctrl+Enter は拒否の印 (data-submit-rejected) を一度だけ付け、animationend で外す (#1831)", () => {
+    const onSubmit = vi.fn();
+    renderModal({ onSubmit, submitDisabled: true });
+    const content = screen.getByRole("dialog");
+    expect(content).not.toHaveAttribute("data-submit-rejected");
+    fireEvent.keyDown(screen.getByLabelText("name"), { key: "Enter", ctrlKey: true });
+    expect(content).toHaveAttribute("data-submit-rejected");
+    fireEvent.animationEnd(content);
+    expect(content).not.toHaveAttribute("data-submit-rejected");
+  });
+
+  it("無効時の Cmd/Ctrl+Enter は defaultPrevented になる", () => {
+    renderModal({ onSubmit: vi.fn(), submitDisabled: true });
+    const notPrevented = fireEvent.keyDown(screen.getByLabelText("name"), { key: "Enter", ctrlKey: true });
+    expect(notPrevented).toBe(false);
+  });
+
+  it("処理中 (submitBusy) は揺らさない", () => {
+    renderModal({ onSubmit: vi.fn(), submitDisabled: true, submitBusy: true });
+    const content = screen.getByRole("dialog");
+    const notPrevented = fireEvent.keyDown(screen.getByLabelText("name"), { key: "Enter", ctrlKey: true });
+    expect(notPrevented).toBe(false);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "ok" }));
+    expect(content).not.toHaveAttribute("data-submit-rejected");
+  });
+
+  it("無効な主ボタン (フッター最後) の pointerdown で揺れ、キャンセルでは揺れない", () => {
+    renderModal({ onSubmit: vi.fn(), submitDisabled: true });
+    const content = screen.getByRole("dialog");
+    fireEvent.pointerDown(screen.getByRole("button", { name: "cancel" }));
+    expect(content).not.toHaveAttribute("data-submit-rejected");
+    fireEvent.pointerDown(screen.getByRole("button", { name: "ok" }));
+    expect(content).toHaveAttribute("data-submit-rejected");
+  });
+
+  it("ラッパー (span) 入りでも主ボタンだけが揺れ、補助の無効ボタンは揺れない", () => {
+    const onClose = vi.fn();
+    renderWithProviders(
+      <Modal onClose={onClose} onSubmit={vi.fn()} submitDisabled>
+        <ModalBody>body</ModalBody>
+        <ModalFooter>
+          <span>
+            <button type="button" disabled>
+              aux
+            </button>
+          </span>
+          <span>
+            <button type="button" disabled>
+              ok
+            </button>
+          </span>
+        </ModalFooter>
+      </Modal>,
+    );
+    const content = screen.getByRole("dialog");
+    fireEvent.pointerDown(screen.getByRole("button", { name: "aux" }));
+    expect(content).not.toHaveAttribute("data-submit-rejected");
+    fireEvent.pointerDown(screen.getByRole("button", { name: "ok" }));
+    expect(content).toHaveAttribute("data-submit-rejected");
+  });
+
+  it("破壊的な並び (無効な実行 → 有効なキャンセル) では実行ボタンで揺れない", () => {
+    const onClose = vi.fn();
+    renderWithProviders(
+      <Modal onClose={onClose} onSubmit={vi.fn()} submitDisabled>
+        <ModalBody>body</ModalBody>
+        <ModalFooter>
+          <button type="button" disabled>
+            danger
+          </button>
+          <div style={{ flex: 1 }} />
+          <button type="button">cancel</button>
+        </ModalFooter>
+      </Modal>,
+    );
+    fireEvent.pointerDown(screen.getByRole("button", { name: "danger" }));
+    expect(screen.getByRole("dialog")).not.toHaveAttribute("data-submit-rejected");
+  });
+
+  it("有効時・素の Enter では拒否の印を付けない", () => {
+    renderModal({ onSubmit: vi.fn() });
+    const content = screen.getByRole("dialog");
+    fireEvent.keyDown(screen.getByLabelText("name"), { key: "Enter", ctrlKey: true });
+    fireEvent.keyDown(screen.getByLabelText("name"), { key: "Enter" });
+    expect(content).not.toHaveAttribute("data-submit-rejected");
+  });
+
+  it("reduced-motion (data-motion=reduced) では拒否の印を付けない (#1831)", () => {
+    document.documentElement.setAttribute("data-motion", "reduced");
+    try {
+      renderModal({ onSubmit: vi.fn(), submitDisabled: true });
+      fireEvent.keyDown(screen.getByLabelText("name"), { key: "Enter", ctrlKey: true });
+      expect(screen.getByRole("dialog")).not.toHaveAttribute("data-submit-rejected");
+    } finally {
+      document.documentElement.removeAttribute("data-motion");
+    }
   });
 
   it("onSubmit を渡さないモーダル (破壊的な確認など) は何もしない", () => {
