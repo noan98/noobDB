@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
 import { ChartView } from "../components/ChartView";
 import { chartConfigKeyFrom } from "../components/chartData";
 import { setLocale, t } from "../i18n";
@@ -96,9 +96,63 @@ describe("ChartView の DB 側集計待ち: 失敗・取消・エクスポート
     mount(() => new Promise<QueryResult>(() => {}));
     await screen.findByTestId("chart-skeleton");
     expect(screen.getByRole("button", { name: t("chartDataExport") })).toBeDisabled();
-    const imageBtn = screen
-      .getAllByRole("button")
-      .find((b) => /image|png|svg/i.test(b.getAttribute("aria-label") ?? ""));
-    expect(imageBtn).toBeDisabled();
+    expect(screen.getByRole("button", { name: t("imageExportButton") })).toBeDisabled();
+  });
+});
+
+describe("ChartView の骨格表示の遅延 (#1834)", () => {
+  const sourceSql = "select month, sales from t";
+  beforeEach(() => {
+    setLocale("en");
+    localStorage.clear();
+    const key = chartConfigKeyFrom(sourceSql);
+    if (key) {
+      localStorage.setItem(key, JSON.stringify({ type: "bar", xCol: 0, yCols: [1], aggregation: "sum" }));
+    }
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function mount() {
+    let resolve: (r: QueryResult) => void = () => {};
+    renderWithProviders(
+      <ChartView
+        result={result}
+        sourceSql={sourceSql}
+        onChangeView={() => {}}
+        driver="sqlite"
+        onRunQuery={() => new Promise<QueryResult>((r) => (resolve = r))}
+      />,
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: t("chartAggInDb") }));
+    return () => resolve(result);
+  }
+
+  it("179ms では骨格が出ず、181ms で出る", () => {
+    mount();
+    act(() => {
+      vi.advanceTimersByTime(179);
+    });
+    expect(screen.queryByTestId("chart-skeleton")).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(2);
+    });
+    expect(screen.queryByTestId("chart-skeleton")).not.toBeNull();
+  });
+
+  it("猶予の途中で結果が届けば骨格は出ない", async () => {
+    const resolve = mount();
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    await act(async () => {
+      resolve();
+    });
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(screen.queryByTestId("chart-skeleton")).toBeNull();
   });
 });

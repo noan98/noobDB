@@ -885,7 +885,7 @@ function ERDiagramInner({
         {loading ? (
           // 取得中はノードグラフ風のシマー骨格 (#1834)。文言は支援技術向けの
           // role="status" として残し、骨格は aria-hidden の視覚プレースホルダ。
-          <Box position="absolute" inset={0}>
+          <Box position="absolute" inset={0} aria-busy="true">
             <ErGraphSkeleton />
             <Box
               position="absolute"
@@ -893,8 +893,6 @@ function ERDiagramInner({
               left="50%"
               transform="translate(-50%, -50%)"
               role="status"
-              aria-label={t("erDiagramLoading")}
-              aria-busy="true"
               px="4"
               py="2"
               bg="app.surface"

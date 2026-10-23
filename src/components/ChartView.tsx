@@ -218,6 +218,8 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
     const id = window.setTimeout(() => setShowSkeleton(true), CHART_SKELETON_DELAY_MS);
     return () => window.clearTimeout(id);
   }, [dbAggStatus]);
+  // 骨格の表示条件。注記を隠す条件も同じ値にそろえる (状態遷移直後の 1 描画の遅れも防ぐ)。
+  const skeletonShown = showSkeleton && dbAggStatus === "pending";
   // 退化データの注記は「実際にチャートを描く」ときだけ意味を持つ (Y 未選択/
   // データ 0 件のときは注記より前段の空状態メッセージが優先される)。
   const notices = useMemo<ChartNotice[]>(
@@ -500,7 +502,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
               : null}
       </chakra.div>
 
-      {dbAggStatus !== "pending" && model.sampledFrom != null && (
+      {!skeletonShown && model.sampledFrom != null && (
         <chakra.div px="3" py="1" textStyle="caption" flex="none">
           {t("chartSampled", { shown: model.labels.length, total: model.sampledFrom })}
         </chakra.div>
@@ -509,7 +511,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
       {/* 退化データの注記 (#646): 破綻はしていないが「なぜこう見えるか」を
           一言添えないと不安になりうるケース (点 1 つ・全値同一・非数値の 0 読み替え)。
           サンプリング注記と同じ控えめなトーン (app.textMuted) で揃える。 */}
-      {dbAggStatus !== "pending" && notices.length > 0 && (
+      {!skeletonShown && notices.length > 0 && (
         <chakra.div px="3" py="1" textStyle="caption" flex="none">
           {notices.map((n) => noticeText(n, model, t)).join("  ")}
         </chakra.div>
@@ -566,7 +568,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
         p="3"
         aria-busy={dbAggStatus === "pending" ? true : undefined}
       >
-        {showSkeleton ? (
+        {skeletonShown ? (
           // DB 側の全件集計待ち。手元の行だけで描いた旧チャートは全件の値と食い違う
           // ため、軸 + 棒の骨格に置き換える (#1834)。失敗時は従来どおり手元の結果で描く。
           <ChartSkeleton />
