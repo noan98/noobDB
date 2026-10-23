@@ -7059,13 +7059,16 @@ export default function App() {
 
   // ランチャーの「もっと見る」: 対応する既存の一覧 (スニペット / 履歴 / スキーマツリー)
   // をサイドバーに出す。
-  const handleLauncherShowMore = useCallback((section: QuickLauncherSectionId) => {
-    setSidebarTab(
-      section === "favoriteSnippets" ? "snippets" : section === "recentQueries" ? "history" : "connections",
-    );
-    if (window.innerWidth < NARROW_BREAKPOINT) setNarrowSidebarOpen(true);
-    else setSidebarUserCollapsed(false);
-  }, []);
+  const handleLauncherShowMore = useCallback(
+    (section: QuickLauncherSectionId) => {
+      setSidebarTab(
+        section === "favoriteSnippets" ? "snippets" : section === "recentQueries" ? "history" : "connections",
+      );
+      if (window.innerWidth < NARROW_BREAKPOINT) setNarrowSidebarOpen(true);
+      else setSidebarUserCollapsed(false);
+    },
+    [setSidebarTab],
+  );
 
   // エディタの補完候補に出すスニペット (#1489)。一覧と同じく現在の接続に合うスコープだけ。
   const completionSnippets = useMemo(
@@ -11408,18 +11411,21 @@ export default function App() {
     else setSidebarUserCollapsed(false);
     setSidebarTab("connections");
     requestAnimationFrame(() => requestAnimationFrame(() => connectionListRef.current?.focusFilter()));
-  }, []);
+  }, [setSidebarTab]);
   focusExplorerRef.current = focusExplorer;
 
   // エディタの識別子を Ctrl/Cmd+クリックしたとき、サイドバーのスキーマツリーで対象の
   // テーブル / 列を選ぶ (#1629)。折りたたみ中はサイドバーを開いて接続タブへ切り替える。
   // ツリー側が DB・テーブルを展開し、行が描画されたらフォーカスする。
-  const handleRevealSchemaObject = useCallback((target: SchemaJumpTarget) => {
-    if (window.innerWidth < NARROW_BREAKPOINT) setNarrowSidebarOpen(true);
-    else setSidebarUserCollapsed(false);
-    setSidebarTab("connections");
-    requestAnimationFrame(() => connectionListRef.current?.revealInTree(target));
-  }, []);
+  const handleRevealSchemaObject = useCallback(
+    (target: SchemaJumpTarget) => {
+      if (window.innerWidth < NARROW_BREAKPOINT) setNarrowSidebarOpen(true);
+      else setSidebarUserCollapsed(false);
+      setSidebarTab("connections");
+      requestAnimationFrame(() => connectionListRef.current?.revealInTree(target));
+    },
+    [setSidebarTab],
+  );
 
   // コマンドパレットの項目はパレットを開いている間だけ組み立てる (#1257)。
   // 依存の `activeTab` はストリーミングの行バッチごとに作り直されるため、常時
