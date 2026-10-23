@@ -89,10 +89,12 @@ export const tableSchema = z.object({
   columns: z.array(z.string()),
 });
 
-/** 編集用の行識別戦略 (#849)。primary_key / rowid / ctid / all_columns / none。 */
+/** 編集用の行識別戦略 (#849)。primary_key / unique_key / rowid / ctid / all_columns / none。 */
 export const tableRowIdentity = z.object({
   strategy: z.string(),
   hidden_column: z.string().nullable(),
+  /** `unique_key` のときの UNIQUE NOT NULL キー列 (#1776)。他の戦略では空。 */
+  key_columns: z.array(z.string()).default([]),
 });
 
 export const foreignKey = z.object({
@@ -188,6 +190,38 @@ export const insertRowsResult = z.object({
   inserted: z.number(),
   elapsed_ms: z.number(),
 });
+
+/**
+ * `bulk_update_cells` の結果 (#1777)。想定行数の超過はエラーではなく `row_count_exceeded` で届く
+ * (ロールバック済み・DB は未変更)。新しい種類の結果はバリアントを足して拡張する。
+ */
+export const bulkWriteOutcomeApplied = z.object({
+  status: z.literal("applied"),
+  result: queryResultLite,
+});
+export const bulkWriteOutcomeRowCountExceeded = z.object({
+  status: z.literal("row_count_exceeded"),
+  expected_rows: z.number(),
+  actual_rows: z.number(),
+  batch_total_rows: z.number(),
+  statement_counts: z.array(z.number()),
+});
+export const bulkWriteOutcomeOptimisticConflict = z.object({
+  status: z.literal("optimistic_conflict"),
+  conflict_rows: z.number(),
+  statement_counts: z.array(z.number()),
+});
+export const bulkWriteOutcomeRollbackIncomplete = z.object({
+  status: z.literal("rollback_incomplete"),
+  expected_rows: z.number(),
+  actual_rows: z.number(),
+});
+export const bulkWriteOutcome = z.discriminatedUnion("status", [
+  bulkWriteOutcomeApplied,
+  bulkWriteOutcomeRowCountExceeded,
+  bulkWriteOutcomeOptimisticConflict,
+  bulkWriteOutcomeRollbackIncomplete,
+]);
 
 /** `kill_processes` の結果 (#1259)。 */
 export const killProcessesResult = z.object({
@@ -609,6 +643,48 @@ export const acceptedValuesCandidates = z.object({
 export const importAssertionsResult = z.object({
   imported: z.array(assertion),
   skipped_duplicates: z.number(),
+  rejected: z.array(
+    z.object({
+      index: z.number(),
+      name: z.string().nullable(),
+      error: z.string(),
+    }),
+  ),
+});
+
+/** `preview_import_snippets` の結果 (#1490)。 */
+export const snippetImportPreview = z.object({
+  total: z.number(),
+  new_count: z.number(),
+  conflict_count: z.number(),
+  scope_reset_by_strategy: z.object({
+    rename: z.number(),
+    skip: z.number(),
+    overwrite: z.number(),
+  }),
+  duplicate_in_file_count: z.number(),
+  conflicts: z.array(
+    z.object({
+      id: z.string(),
+      existing_name: z.string(),
+      incoming_name: z.string(),
+    }),
+  ),
+  rejected: z.array(
+    z.object({
+      index: z.number(),
+      name: z.string().nullable(),
+      error: z.string(),
+    }),
+  ),
+});
+
+/** `import_snippets` の結果 (#1490)。 */
+export const snippetImportResult = z.object({
+  imported: z.number(),
+  skipped: z.number(),
+  overwritten: z.number(),
+  scope_reset: z.number(),
   rejected: z.array(
     z.object({
       index: z.number(),
@@ -1216,9 +1292,32 @@ export const schemaTree = z.object({
 /** 逆方向 FK 1 件 (`incoming_foreign_keys`、#1255)。このレスポンスだけ camelCase
  *  (Rust 側が `serde(rename_all = "camelCase")`、フロントの `IncomingFk` と同形)。 */
 export const incomingForeignKey = z.object({
+  schema: z.string().nullish(),
   table: z.string(),
   column: z.string(),
   referencedColumn: z.string(),
+  onDelete: z.string().nullish(),
+});
+
+/** DROP COLUMN の依存 1 件 (`column_dependencies`、#1758)。 */
+export const columnDependency = z.object({
+  column: z.string(),
+  kind: z.enum([
+    "view",
+    "materialized_view",
+    "trigger",
+    "generated_column",
+    "index",
+    "foreign_key",
+    "referenced_by",
+  ]),
+  name: z.string(),
+  detail: z.string().nullable(),
+  confidence: z.enum(["direct", "possible"]),
+});
+export const columnDependencyReport = z.object({
+  dependencies: z.array(columnDependency),
+  warnings: z.array(z.string()),
 });
 
 /** 配列を返すコマンド用のラッパースキーマ。 */

@@ -258,3 +258,23 @@ export function mergeLogEntries(
   // 新しい順、トーストが先) をそのまま保つ。
   return out.sort((x, y) => y.at - x.at);
 }
+
+/**
+ * ベルボタン以外 (コマンドパレットの「アクティビティを開閉」#1113、トーストの「他 N 件」#1501) から
+ * アクティビティ一覧を開閉するための購読口。開閉状態はベル (`ActivityCenter`) 自身が持ち続け、
+ * ここは「トグルして」という要求を届けるだけ。UI 部品に依存しないようここに置く。
+ */
+const toggleRequestListeners = new Set<() => void>();
+
+/** アクティビティ一覧の開閉を要求する (マウント中のベルが処理する)。 */
+export function requestActivityCenterToggle(): void {
+  for (const listener of toggleRequestListeners) listener();
+}
+
+/** 開閉要求を購読する。戻り値で解除する。 */
+export function onActivityCenterToggleRequest(listener: () => void): () => void {
+  toggleRequestListeners.add(listener);
+  return () => {
+    toggleRequestListeners.delete(listener);
+  };
+}

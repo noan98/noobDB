@@ -68,7 +68,11 @@ const RUST_ONLY: Record<string, string> = {
   // フィンガープリント正規化は #1259 で JS から Rust へ移管済みでフロント実装が無い。
   "sqlFingerprintVectors.json": "正規化は Rust へ移管済み (#1259)",
 };
-const TS_ONLY: Record<string, string> = {};
+const TS_ONLY: Record<string, string> = {
+  // 結果グリッド選択範囲のコピー書式はフロントの純関数 (gridCopyFormats.ts) だけが持ち、
+  // Rust 側に対応する実装が無い (#1585)。リテラル規則の二側性は sqlQuotingVectors.json が担う。
+  "gridCopyVectors.json": "グリッド選択コピーはフロントのみ (#1585)",
+};
 
 describe("共有ゴールデンフィクスチャの二側性 (#1177)", () => {
   it("fixture を 1 つ以上列挙できている (glob の取りこぼし検出)", () => {

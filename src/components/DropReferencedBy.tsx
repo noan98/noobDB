@@ -1,6 +1,7 @@
 import { Box, chakra } from "@chakra-ui/react";
 import { Callout } from "./Callout";
 import type { DropImpact } from "../dropImpact";
+import { incomingFkTableName } from "../fkNavigation";
 import { useT } from "../i18n";
 
 /** 一覧に出す FK の最大行数。超えた分は「ほか N 件」に畳む。 */
@@ -16,8 +17,8 @@ export function DropReferencedBy({ impacts, sqlite }: { impacts: DropImpact[]; s
   if (impacts.length === 0) return null;
   const lines = impacts.flatMap((imp) =>
     imp.refs.map((fk) => ({
-      key: `${imp.table}\0${fk.table}\0${fk.column}`,
-      text: `${imp.table}.${fk.referencedColumn} ← ${fk.table}.${fk.column}`,
+      key: `${imp.table}\0${incomingFkTableName(fk)}\0${fk.column}`,
+      text: `${imp.table}.${fk.referencedColumn} ← ${incomingFkTableName(fk)}.${fk.column}`,
     })),
   );
   const shown = lines.slice(0, MAX_LINES);

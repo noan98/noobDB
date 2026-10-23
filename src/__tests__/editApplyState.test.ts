@@ -1,7 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Column } from "../api/tauri";
 import { rowEditKey, type PendingEdits } from "../components/cellEdit";
-import { appliedRowShortfall, tabStateAfterApply, type ApplyTabState } from "../components/editApplyState";
+import type { BulkWriteOptions, BulkWriteOutcome } from "../api/tauri";
+import {
+  appliedRowShortfall,
+  applyWithRowCountGuard,
+  MAX_OVERSHOOT_CONFIRMATIONS,
+  tabStateAfterApply,
+  type ApplyTabState,
+} from "../components/editApplyState";
 
 // 一括適用成功後のタブ状態遷移 (#1394 で行スコープを追加)。全体適用の従来挙動が変わらないこと
 // と、行スコープ適用で他の保留 (他行の編集・削除予定・新規行・履歴) が残ることを固定する。
@@ -173,5 +180,99 @@ describe("appliedRowShortfall", () => {
   it("一致または多い場合は 0", () => {
     expect(appliedRowShortfall(3, 3)).toBe(0);
     expect(appliedRowShortfall(3, 5)).toBe(0);
+  });
+});
+
+// 想定行数の超過 (#1777): 承認した件数を上限にして再実行し、また超えたら確認し直す。
+describe("applyWithRowCountGuard", () => {
+  const applied = (n: number): BulkWriteOutcome => ({
+    status: "applied",
+    result: { columns: [], rows: [], rows_affected: n, elapsed_ms: 1 },
+  });
+  const exceeded = (expected: number, actual: number, counts: number[] = [actual]): BulkWriteOutcome => ({
+    status: "row_count_exceeded",
+    expected_rows: expected,
+    actual_rows: actual,
+    batch_total_rows: counts.reduce((a, b) => a + b, 0),
+    statement_counts: counts,
+  });
+
+  it("楽観ロックの競合は確認も再実行もせず、そのまま返す (承認で上書きさせない)", async () => {
+    const confirmExceeded = vi.fn(async () => true);
+    const run = vi.fn(
+      async (): Promise<BulkWriteOutcome> => ({
+        status: "optimistic_conflict",
+        conflict_rows: 2,
+        statement_counts: [1, 0],
+      }),
+    );
+    const res = await applyWithRowCountGuard({ run, confirmExceeded });
+    expect(res).toEqual({ kind: "conflict", conflictRows: 2 });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(confirmExceeded).not.toHaveBeenCalled();
+  });
+
+  it("超過が無ければ確認せずそのまま適用する", async () => {
+    const confirmExceeded = vi.fn(async () => true);
+    const res = await applyWithRowCountGuard({ run: async () => applied(3), confirmExceeded });
+    expect(res).toEqual({ kind: "applied", totalAffected: 3 });
+    expect(confirmExceeded).not.toHaveBeenCalled();
+  });
+
+  it("承認すると、文ごとの件数を承認件数として再実行する", async () => {
+    const seen: (BulkWriteOptions | undefined)[] = [];
+    const events: string[] = [];
+    const res = await applyWithRowCountGuard({
+      run: async (o) => {
+        seen.push(o);
+        return o ? applied(5) : exceeded(1, 2, [2, 3]);
+      },
+      confirmExceeded: async (c) => {
+        events.push(`confirm ${c.expected}/${c.actual}/${c.total}`);
+        return true;
+      },
+      onAwaitingConfirm: () => events.push("awaiting"),
+      onResume: () => events.push("resume"),
+    });
+    expect(res).toEqual({ kind: "applied", totalAffected: 5 });
+    expect(seen).toEqual([undefined, { approvedCounts: [2, 3] }]);
+    expect(events).toEqual(["awaiting", "confirm 1/2/5", "resume"]);
+  });
+
+  it("キャンセルなら再実行せず、件数を返す", async () => {
+    const run = vi.fn(async () => exceeded(1, 2));
+    const res = await applyWithRowCountGuard({ run, confirmExceeded: async () => false });
+    expect(res).toEqual({ kind: "not_applied", expected: 1, actual: 2, total: 2 });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("承認後にまた超過したら新しい件数で確認し直し、上限回数で適用せず止める", async () => {
+    let n = 1;
+    const asked: number[] = [];
+    const res = await applyWithRowCountGuard({
+      run: async () => exceeded(n, ++n),
+      confirmExceeded: async (c) => {
+        asked.push(c.actual);
+        return true;
+      },
+    });
+    expect(asked).toHaveLength(MAX_OVERSHOOT_CONFIRMATIONS);
+    expect(asked).toEqual([2, 3, 4]);
+    expect(res.kind).toBe("not_applied");
+  });
+
+  it("ロールバックが不完全なら確認も再実行もしない", async () => {
+    const run = vi.fn(
+      async (): Promise<BulkWriteOutcome> => ({
+        status: "rollback_incomplete",
+        expected_rows: 1,
+        actual_rows: 2,
+      }),
+    );
+    const confirmExceeded = vi.fn(async () => true);
+    const res = await applyWithRowCountGuard({ run, confirmExceeded });
+    expect(res).toEqual({ kind: "rollback_incomplete", expected: 1, actual: 2 });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(confirmExceeded).not.toHaveBeenCalled();
   });
 });

@@ -20,6 +20,11 @@ const MotionDiv = chakra(motion.div, {}, { forwardProps: ["transition"] });
  * の配下にあるため、OS が「動きを減らす」設定のときは出現/退場アニメが自動で即時化
  * される (個別の分岐は不要)。下端の不定プログレスは CSS アニメーションだが、
  * `App.css` 末尾の `@media (prefers-reduced-motion: reduce)` が同様に無効化する。
+ *
+ * マークは `animate` で「n が描かれ、ティールの横線が貫いて収まる」シグネチャ・
+ * アニメーションを 1 回再生する (#1505、約 0.6 秒)。再生時間のために表示を引き延ばさない:
+ * スプラッシュは従来どおりブート完了で取り外され、再生が終わる前ならそこで退場フェード
+ * に移る。reduced-motion / hc-* では再生せず静止ロゴ。
  */
 export function SplashScreen() {
   const t = useT();
@@ -64,7 +69,7 @@ export function SplashScreen() {
           pointerEvents="none"
           css={{ backgroundImage: "var(--hero-halo)", backgroundRepeat: "no-repeat" }}
         />
-        <BrandMark size={96} style={{ position: "relative" }} />
+        <BrandMark size={96} animate style={{ position: "relative" }} />
       </MotionDiv>
 
       <MotionDiv

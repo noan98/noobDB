@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildAlterPrechecks, parseTypeSpec, precheckRowsSql } from "../components/alterPrecheck";
+import {
+  buildAlterPrechecks,
+  buildConstraintPrechecks,
+  isConstraintPrecheck,
+  parseTypeSpec,
+  precheckRowsSql,
+} from "../components/alterPrecheck";
 import type { ExistingColumnBaseline, ExistingColumnEdit } from "../components/alterTable";
 
 function base(name: string, type: string, notNull = false): ExistingColumnBaseline {
@@ -193,5 +199,140 @@ describe("precheckRowsSql (#1626)", () => {
 
   it("件数 SQL の形でなければ null", () => {
     expect(precheckRowsSql("SELECT 1")).toBeNull();
+  });
+});
+
+describe("buildConstraintPrechecks (#1757)", () => {
+  const fk = (columns: string[], refTable: string, refColumns: string[], name = "") => ({
+    name,
+    columns,
+    refTable,
+    refColumns,
+    onDelete: "" as const,
+    onUpdate: "" as const,
+  });
+
+  it("MySQL: 複合 FK は全列が非 NULL の行だけ孤立判定する (NULL を含む行は対象外)", () => {
+    const got = buildConstraintPrechecks("mysql", "app", "items", {
+      addedForeignKeys: [fk(["o_id", "o_rev"], "orders", ["id", "rev"], "fk_o")],
+    });
+    expect(got).toHaveLength(1);
+    expect(got[0].kind).toBe("orphanFk");
+    expect(got[0].column).toBe("fk_o");
+    expect(got[0].sql).toBe(
+      "SELECT COUNT(*) FROM `app`.`items` AS a_src WHERE a_src.`o_id` IS NOT NULL AND a_src.`o_rev` IS NOT NULL " +
+        "AND NOT EXISTS (SELECT 1 FROM `app`.`orders` AS a_ref WHERE a_ref.`id` = a_src.`o_id` AND a_ref.`rev` = a_src.`o_rev`)",
+    );
+  });
+
+  it("PostgreSQL: 単一列 FK は二重引用符で修飾する", () => {
+    const got = buildConstraintPrechecks("postgres", "public", "t", {
+      addedForeignKeys: [fk(["pid"], "p", ["id"])],
+    });
+    expect(got[0].sql).toBe(
+      'SELECT COUNT(*) FROM "public"."t" AS a_src WHERE a_src."pid" IS NOT NULL ' +
+        'AND NOT EXISTS (SELECT 1 FROM "public"."p" AS a_ref WHERE a_ref."id" = a_src."pid")',
+    );
+  });
+
+  it("SQLite: FK / CHECK は検査しない (ALTER で追加できない)", () => {
+    expect(
+      buildConstraintPrechecks("sqlite", null, "t", {
+        addedForeignKeys: [fk(["pid"], "p", ["id"])],
+        addedChecks: [{ name: "", expression: "a > 0" }],
+      }),
+    ).toEqual([]);
+  });
+
+  it("UNIQUE: 3 ドライバとも NULL を除いた重複グループの行を数える (複合キーは行値 IN)", () => {
+    const idx = [{ name: "u", columns: ["a", "b"], unique: true }];
+    const my = buildConstraintPrechecks("mysql", "app", "t", { indexes: idx });
+    expect(my[0].kind).toBe("duplicateUnique");
+    expect(my[0].sql).toBe(
+      "SELECT COUNT(*) FROM `app`.`t` WHERE `a` IS NOT NULL AND `b` IS NOT NULL AND (`a`, `b`) IN " +
+        "(SELECT `a`, `b` FROM `app`.`t` WHERE `a` IS NOT NULL AND `b` IS NOT NULL GROUP BY `a`, `b` HAVING COUNT(*) > 1)",
+    );
+    const pg = buildConstraintPrechecks("postgres", "public", "t", { indexes: idx });
+    expect(pg[0].sql).toContain('("a", "b") IN (SELECT "a", "b" FROM "public"."t"');
+    const lite = buildConstraintPrechecks("sqlite", null, "t", {
+      indexes: [{ name: "u", columns: ["a"], unique: true }],
+    });
+    expect(lite[0].sql).toBe(
+      'SELECT COUNT(*) FROM "t" WHERE "a" IS NOT NULL AND "a" IN (SELECT "a" FROM "t" WHERE "a" IS NOT NULL GROUP BY "a" HAVING COUNT(*) > 1)',
+    );
+  });
+
+  it("UNIQUE でないインデックスは検査しない", () => {
+    expect(
+      buildConstraintPrechecks("mysql", null, "t", {
+        indexes: [{ name: "i", columns: ["a"], unique: false }],
+      }),
+    ).toEqual([]);
+  });
+
+  it("CHECK は NOT (式) の行を数える (式が NULL の行は含まない)", () => {
+    const got = buildConstraintPrechecks("postgres", "public", "t", {
+      addedChecks: [
+        { name: "ck_price", expression: " price > 0 " },
+        { name: "", expression: "  " },
+      ],
+    });
+    expect(got).toHaveLength(1);
+    expect(got[0].kind).toBe("checkViolation");
+    expect(got[0].column).toBe("ck_price");
+    expect(got[0].sql).toBe('SELECT COUNT(*) FROM "public"."t" WHERE NOT (price > 0\n)');
+  });
+
+  it("同じ ALTER で追加・リネームする列 (knownColumns に無い列) は検査しない", () => {
+    const got = buildConstraintPrechecks("mysql", null, "t", {
+      knownColumns: new Set(["a"]),
+      indexes: [
+        { name: "u1", columns: ["a"], unique: true },
+        { name: "u2", columns: ["a", "new_col"], unique: true },
+      ],
+      addedForeignKeys: [fk(["new_col"], "p", ["id"])],
+    });
+    expect(got.map((c) => c.id)).toEqual(["duplicateUnique:0"]);
+  });
+
+  it("不完全な行は無視し、該当行 SELECT に変換できる", () => {
+    const got = buildConstraintPrechecks("mysql", "app", "t", {
+      addedForeignKeys: [fk(["a"], "", ["id"]), fk(["a"], "p", ["id"])],
+      addedChecks: [{ name: "", expression: "a > 0" }],
+      indexes: [{ name: "u", columns: ["a"], unique: true }],
+    });
+    expect(got.map((c) => c.kind).sort()).toEqual(["checkViolation", "duplicateUnique", "orphanFk"]);
+    for (const c of got) {
+      expect(isConstraintPrecheck(c.kind)).toBe(true);
+      expect(precheckRowsSql(c.sql)).toMatch(/^SELECT \* FROM [\s\S]* WHERE [\s\S]* LIMIT 1000;$/);
+    }
+  });
+
+  it("MySQL の CHECK は NOT (式) を DB 修飾つきで数える", () => {
+    const got = buildConstraintPrechecks("mysql", "app", "t", {
+      addedChecks: [{ name: "", expression: "qty >= 0" }],
+    });
+    expect(got[0].sql).toBe("SELECT COUNT(*) FROM `app`.`t` WHERE NOT (qty >= 0\n)");
+  });
+
+  it("SQLite は DB 修飾を付けない", () => {
+    const got = buildConstraintPrechecks("sqlite", "main", "t", {
+      indexes: [{ name: "u", columns: ["a"], unique: true }],
+    });
+    expect(got[0].sql).toContain('FROM "t" WHERE');
+    expect(got[0].sql).not.toContain('"main"');
+  });
+
+  it("CHECK の式が追加・リネームする列を単語単位で含むなら検査しない", () => {
+    const input = {
+      pendingColumns: new Set(["new_col"]),
+      addedChecks: [
+        { name: "", expression: "new_col > 0" },
+        { name: "", expression: "new_columns > 0" },
+      ],
+    };
+    const got = buildConstraintPrechecks("mysql", null, "t", input);
+    expect(got).toHaveLength(1);
+    expect(got[0].to).toBe("CHECK (new_columns > 0)");
   });
 });

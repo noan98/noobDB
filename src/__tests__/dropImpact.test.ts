@@ -26,6 +26,11 @@ describe("collectDropImpacts", () => {
     expect(got).toEqual([{ table: "orders", refs: [fk("items", "order_id")] }]);
   });
 
+  it("別スキーマの同名テーブルは DROP 対象と同名でも残る子として扱う (#1786)", () => {
+    const cross = { schema: "sales", ...fk("users", "uid") };
+    expect(collectDropImpacts({ users: [cross] }, ["users"])).toEqual([{ table: "users", refs: [cross] }]);
+  });
+
   it("全ての子が対象内なら空", () => {
     expect(collectDropImpacts({ a: [fk("b", "a_id")], b: [fk("a", "b_id")] }, ["a", "b"])).toEqual([]);
   });

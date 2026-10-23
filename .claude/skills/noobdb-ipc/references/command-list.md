@@ -97,7 +97,7 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
 - `bulk_update_cells`
 - `insert_generated_rows`
 
-- `bulk_update_cells(sessionId, database, table, pkColumns, groups, extraStatements, pkBinary?)` は結果グリッドの
+- `bulk_update_cells(sessionId, database, table, pkColumns, groups, extraStatements, pkBinary?, options?)` は結果グリッドの
   セル編集 Apply。フロント (`cellEdit.buildUpdateGroups`) が同じ (列, 値) ごとにまとめた
   構造化入力を送り、Rust が `UPDATE t SET c = v WHERE pk IN (…)` (単一 PK・500 件ずつ) /
   行条件の `OR` 連結 (複合 PK・NULL を含む PK・100 行ずつ) を組み立てる。`extraStatements` は
@@ -106,6 +106,24 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
   (フライトレコーダーに記録しない点も従来どおり。記録対象は `run_query_stream({ capture: true })`
   の単文のみ)。リテラルは `db::data_diff::sql_literal` (バインドにしないのは PostgreSQL が
   text 型パラメータを整数列へ暗黙変換しないため)。64bit PK は文字列のまま引用リテラルで比較。`pkBinary` (任意、`pkColumns` と同順の bool) が真の列は 16 進文字列の key を `Value::Bytes` に戻してバイナリリテラルで比較する (BLOB 列を含む all_columns 同定用)。
+  **戻り値は判別付き enum `BulkWriteOutcome`** (#1777、`status` タグ): `applied` (`result` = `QueryResult`) /
+  `row_count_exceeded` / `optimistic_conflict` / `rollback_incomplete`。検算は**文ごと** (UPDATE チャンク = 対象行数、追加文 = 1 行)。
+  文の `rows_affected` が想定より**多い**とコミットせずロールバックし (DB 未変更・結果キャッシュに触れない・
+  履歴にはエラー `rolled back: matched M rows, expected N` として残す)、エラーではなく
+  `row_count_exceeded { expected_rows, actual_rows, batch_total_rows, statement_counts }` で返す (`expected_rows` / `actual_rows` は
+  超過した文の合計、`batch_total_rows` は全文の合計 [表示用]、`statement_counts` は文ごとの実件数。少ない側は今は止めない)。MySQL でロールバック後に警告 1196
+  か、対象表の事前判定 (`write_target_is_non_transactional`、`max_error_count=0` 対策) で非トランザクション表 (MyISAM など) と分かれば、書き込みが**戻っていない**ので `rollback_incomplete` を返し、履歴 (件数つき)・
+  キャッシュ invalidate は成功時と同じに行う。UI は送信済みの保留編集を破棄して再読込を促し、承認して再実行させない。
+  3 ドライバとも `rows_affected` は一致行数 (MySQL は sqlx が CLIENT_FOUND_ROWS を常に立てる)。利用者が確認で
+  承認したときだけ `options: { approved_counts: <statement_counts> }` で再実行する (各文の上限を max(期待, 承認件数) に引き上げ、`min` は外さない。
+  文ごとなので他の変更で相殺されない。承認後にさらに増えれば再び `row_count_exceeded`。`BulkWriteOptions`、後続の検査用の項目もここへ足す)。
+  **楽観ロック (#1766)**: `groups[].olds` (任意。`keys` と同じ行数 × `set` と同順の `BulkOldValue | null`、
+  `kind` = `null` / `number` / `bool` / `text` / `float4`) があると、その行の条件に `col = 旧値` / `col IS NULL` / 単精度 float の
+  許容誤差述語 (フロント `singleFloatWhere` と同じ相対 1e-6) を AND し、旧値のある行を含むチャンクは `OR` 連結で組む。
+  `olds` を送ったグループは述語が 1 つも無くても (BLOB / JSON だけの編集) 同じ `min` 検査を受ける (述語が無ければ `IN` 形のまま)。bool 旧値は MySQL / SQLite では `col <> 0` / `col = 0`。その文は `RowExpectation { min = max = 対象行数 }` で、他者が値を変えた (または行を消した) 行は 0 件一致 → 全体ロールバックして
+  `optimistic_conflict { conflict_rows, statement_counts }` (`conflict_rows` = `min` を下回った不足行数の合計) を返す。多い側の違反と
+  同居しても競合を優先し (1 文の中で多い/少ないが相殺される場合は見逃す既知の限界)、承認での上書き経路は無い (UI は再読込を案内)。旧値を付けるか (BLOB / JSON などは除外) と設定
+  `optimisticCellEditLock` (既定オン) はフロント (`cellEdit.oldValueForLock` / `buildUpdateGroups`) が決める。オフなら `olds` を送らず従来どおり。**行識別が PK / UNIQUE / rowid の表のみ**で、全列一致 (`all_columns`) と `ctid` は誤競合するため `olds` を送らない (不足は適用後の shortfall 警告)。
 - `insert_generated_rows` はテストデータ生成の投入。生成行を `Connection::import_rows`
   (1 トランザクション) へ直接渡す。履歴には 1 行の要約を残す。
 
@@ -145,6 +163,7 @@ DB に触れず実行もしない (UI のプレビュー専用)。両環境の�
 - `describe_database`
 - `alter_table_context`
 - `incoming_foreign_keys` (#1255)
+- `column_dependencies` (DROP COLUMN 前の依存列挙 — ビュー / トリガー / 生成列 / インデックス / FK、#1758)
 
 #1255 の 148 コマンドは N+1 の IPC を 1 回に畳む一括取得。いずれも読み取り専用。
 `table_statistics` はサイズ・行数に列数・インデックス数・PK 有無・FK 数を合成して返す
@@ -152,6 +171,7 @@ DB に触れず実行もしない (UI のプレビュー専用)。両環境の�
 (スキーマエクスポート / ER 図)。`alter_table_context` は列編集ダイアログの初期ロード一式
 (列・テーブルコメント・このテーブルの FK・テーブル名一覧)。`incoming_foreign_keys` は
 `foreign_keys` のキャッシュから対象テーブルを参照する FK だけを返す(逆方向 FK ジャンプ)。
+PostgreSQL は別スキーマの子テーブルからの単一列 FK も専用クエリで補い、`schema` に子のスキーマを入れる (#1786)。
 `table_statistics` / `describe_database` は取得結果でテーブル単位の `columns` / `list_indexes`
 キャッシュも埋める。
 
@@ -379,6 +399,9 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `list_snippets`
 - `save_snippet`
 - `delete_snippet`
+- `export_snippets` (#1490。スニペットを JSON 文字列で返す。ファイル保存はフロントが `write_text_file`)
+- `preview_import_snippets` (#1490。取り込み前の件数・ID 衝突件数・スコープ付け替え件数。書き込まない)
+- `import_snippets` (#1490。ID 衝突は `rename` / `skip` / `overwrite`。未知のプロファイルを指すスコープは全接続へ戻す)
 - `list_history`
 - `get_history_sql`
 - `get_history_sqls` (#1608。複数 id の全文をまとめて取得。入力と同じ順・長さで、無い行は null。履歴 AI 検索の候補取得用)
@@ -414,6 +437,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `write_text_file`
 - `write_binary_file`
 - `reveal_in_file_manager`
+- `open_project_link`
 - `set_window_title`
 - `fetch_cell_bytes`
 - `probe_cell_blob`
@@ -475,6 +499,9 @@ NUL の比率パターン。自動判定で本文に NUL があればエラー)�
 `reveal_in_file_manager` (`commands/file.rs`, #1631) は書き出し・ダンプの保存先を OS のファイルマネージャ
 (Windows: `explorer` / macOS: `open` / Linux: `xdg-open`) で開く。`path` がファイルなら親ディレクトリを開き、
 **ファイルそのものは開かない** (実行可能ファイルを起動しないため)。存在しない・空のパスは `InvalidInput`。
+`open_project_link` (`commands/file.rs`, #1770) は About 面のリポジトリ / ドキュメントリンクを既定のブラウザ
+(Windows: `explorer` / macOS: `open` / Linux: `xdg-open`) で開く。引数は `target` (`repository` / `docs`、Rust の `ProjectLink`) だけで、URL は
+バックエンドで決め打ち (任意 URL は受け取らない)。起動した子プロセスは `wait` で回収する。
 `set_window_title` (`commands/window.rs`, #1631) はウィンドウタイトルを設定する (接続名と本番 / サンドボックスの
 区別を OS のタスクバー・Alt+Tab に出すため)。window の capability を増やさずに済むよう Rust 経由で行い、制御文字は
 空白にして 200 文字に切り詰める。

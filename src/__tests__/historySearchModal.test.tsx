@@ -1,7 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { HistorySearchModal } from "../components/HistorySearchModal";
 import { t } from "../i18n";
 import { fireEvent, renderWithProviders, screen } from "./testUtils";
+
+// jsdom には scrollIntoView が無い (アクティブ行の追従で呼ばれる)。
+beforeEach(() => {
+  Element.prototype.scrollIntoView = vi.fn();
+});
 
 const HISTORY = ["SELECT * FROM users", "SELECT id FROM orders", "DELETE FROM users"];
 
@@ -27,6 +32,19 @@ describe("HistorySearchModal (#1627)", () => {
     fireEvent.keyDown(input, { key: "ArrowDown" });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onPick).toHaveBeenCalledWith("SELECT id FROM orders");
+  });
+
+  it("アクティブ行 (aria-selected) の中にだけハイライトがあり、↓ で次の行へ移る (#1502)", () => {
+    renderWithProviders(<HistorySearchModal history={HISTORY} onPick={vi.fn()} onClose={vi.fn()} />);
+    const expectHighlightIn = (index: number) => {
+      const options = screen.getAllByRole("option");
+      expect(screen.getAllByTestId("active-row-highlight")).toHaveLength(1);
+      expect(options[index]?.getAttribute("aria-selected")).toBe("true");
+      expect(options[index]?.querySelector('[data-testid="active-row-highlight"]')).not.toBeNull();
+    };
+    expectHighlightIn(0);
+    fireEvent.keyDown(screen.getByLabelText(t("queryHistorySearchPlaceholder")), { key: "ArrowDown" });
+    expectHighlightIn(1);
   });
 
   it("履歴が空・一致なしのときは空状態を出す", () => {

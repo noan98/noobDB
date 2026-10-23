@@ -24,7 +24,14 @@
  * (App.css 側の値を変更したらこのマップも追随させる)。
  */
 
-import { themePresetDataTheme, type Theme, type ThemePreset } from "./settings";
+import { accentVars } from "./accent";
+import {
+  effectiveTheme,
+  themePresetDataTheme,
+  type SyntaxColors,
+  type Theme,
+  type ThemePreset,
+} from "./settings";
 
 /** プレビューに使う代表トークンの組。 */
 export interface ThemePreviewColors {
@@ -138,4 +145,111 @@ export function themePreviewGradient(colors: ThemePreviewColors): string {
     return `${colors[chip]} ${from}% ${to}%`;
   });
   return `linear-gradient(90deg, ${stops.join(", ")})`;
+}
+
+/**
+ * プレビューが上書きする CSS 変数 → Chakra の `app.*` トークン名 (#1581)。
+ * 変数名とトークン名の対応はここ 1 か所だけに置く。Chakra のトークンは `:root` で
+ * `--chakra-colors-<token>` へ解決済みの値が継承されるため、`--x` だけを
+ * 上書きしても効かない — 対応する `--chakra-colors-*` も同時に上書きする
+ * (`previewChakraVar`)。`appearancePreview.test.tsx`が、この表の全エントリが実在する
+ * トークンを指すことを固定する。
+ */
+export const PREVIEW_VAR_TOKENS = {
+  "--bg": "app.bg",
+  "--bg-toolbar": "app.toolbar",
+  "--bg-header": "app.header",
+  "--bg-elevated": "app.surface",
+  "--bg-active": "app.active",
+  "--bg-active-strong": "app.activeStrong",
+  "--text": "app.text",
+  "--text-secondary": "app.textSecondary",
+  "--text-muted": "app.textMuted",
+  "--border": "app.border",
+  "--border-strong": "app.borderStrong",
+  "--accent": "app.accent",
+  "--accent-hover": "app.accentHover",
+  "--accent-text": "app.accentText",
+  "--accent-highlight": "app.accentHighlight",
+  "--syntax-keyword": "app.syntax.keyword",
+  "--syntax-string": "app.syntax.string",
+  "--syntax-number": "app.syntax.number",
+  "--syntax-comment": "app.syntax.comment",
+  "--syntax-function": "app.syntax.function",
+  "--syntax-operator": "app.syntax.operator",
+} as const;
+
+type PreviewVarName = keyof typeof PREVIEW_VAR_TOKENS;
+
+/** トークン名 (`app.textMuted`) → Chakra が出力する CSS 変数名 (`--chakra-colors-app-text-muted`)。 */
+export function previewChakraVar(token: string): string {
+  return `--chakra-colors-${token.replace(/\./g, "-").replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`;
+}
+
+export interface AppearancePreviewInput {
+  /** ホバー / フォーカス中のテーマプリセット (無ければ null)。 */
+  previewPreset: ThemePreset | null;
+  /** ホバー / フォーカス中のアクセント。`{ hex: null }` は「テーマ既定」、null はホバー無し。 */
+  previewAccent: { hex: string | null } | null;
+  /** いま選択中のプリセット。 */
+  currentPreset: ThemePreset;
+  /** ライト / ダークのトグル値。 */
+  toggleTheme: Theme;
+  /** 保存済みのアクセント (null ならテーマ既定)。 */
+  accentColor: string | null;
+  /** テーマ別シンタックス色 (`settings.syntaxColors`)。 */
+  syntaxColors: Record<Theme, SyntaxColors>;
+}
+
+/**
+ * ライブ・アピアランス・プレビュー (#1581) の「選択前に見る」用の上書き変数。
+ * モックのルート要素へインラインで当てる CSS カスタムプロパティを返す。何もホバーして
+ * いなければ空で、このとき現在の設定がトークン経由でそのまま映る。
+ *
+ * 選んだ後の実際の見た目 (`App.tsx` の反映処理) に合わせる:
+ * - シンタックス色は常に `settings.syntaxColors[実効テーマ]` (プリセットの代表色ではない。
+ *   ダーク専用プリセットでは実効テーマがダークになる)。
+ * - 保存済みアクセントがあればプリセットのアクセントで上書きしない。
+ * - アクセント系 (hover / 前景 / 選択面) は `accentVars` で実際と同じ式で導く。
+ * 5 色は静的マップ (App.css と同期テスト済み)、枠線・淡色テキストはそこから `color-mix` で導く。
+ */
+export function appearancePreviewVars(input: AppearancePreviewInput): Record<string, string> {
+  const { previewPreset, previewAccent, currentPreset, toggleTheme, accentColor, syntaxColors } = input;
+  const vars: Record<string, string> = {};
+  if (!previewPreset && !previewAccent) return vars;
+  const set = (name: PreviewVarName, value: string) => {
+    vars[name] = value;
+    vars[previewChakraVar(PREVIEW_VAR_TOKENS[name])] = value;
+  };
+  const mix = (fg: string, pct: number, bg: string) => `color-mix(in srgb, ${fg} ${pct}%, ${bg})`;
+  const preset = previewPreset ?? currentPreset;
+  const eff = effectiveTheme(preset, toggleTheme);
+  const c = themePreviewColors(preset, toggleTheme);
+  if (previewPreset) {
+    set("--bg", c.bg);
+    set("--bg-toolbar", c.surface);
+    set("--bg-header", c.surface);
+    set("--bg-elevated", c.surface);
+    set("--text", c.text);
+    set("--text-secondary", mix(c.text, 75, c.bg));
+    set("--text-muted", mix(c.text, 55, c.bg));
+    set("--border", mix(c.text, 18, c.bg));
+    set("--border-strong", mix(c.text, 28, c.bg));
+    for (const [key, val] of Object.entries(syntaxColors[eff])) {
+      const name = `--syntax-${key}` as PreviewVarName;
+      if (name in PREVIEW_VAR_TOKENS) set(name, val);
+    }
+  }
+  // アクセント: ホバー中のスウォッチ > 保存済みのアクセント > プリセット既定。
+  const hex = previewAccent ? (previewAccent.hex ?? c.accent) : (accentColor ?? c.accent);
+  const v = accentVars(hex, eff, { bg: c.bg, text: c.text });
+  set("--accent", v.accent);
+  set("--accent-hover", v.accentHover);
+  set("--accent-text", v.accentText);
+  set("--accent-highlight", mix(v.accent, 35, "transparent"));
+  if (previewAccent || accentColor) {
+    set("--bg-active", v.accentSubtle);
+    set("--bg-active-strong", v.accentSelection);
+  }
+  return vars;
 }

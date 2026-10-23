@@ -14,6 +14,11 @@ export interface TitleBarConnection {
   color: string | null;
   isProduction: boolean;
   /**
+   * DB エンジン (`mysql` / `postgres` / `sqlite`、#1769)。プロファイルの `driver` をそのまま渡す。
+   * 省略または未知のドライバならエンジングリフは出さない。
+   */
+  driver?: string;
+  /**
    * サンドボックス (壊せる砂場、#747) のセッションかどうか。true の間は帯・
    * バッジを専用色 (`SANDBOX_BAND_COLOR`) にして「接続先へは何の影響も無い
    * ローカルコピーである」ことを常時明示する。
@@ -39,6 +44,18 @@ export function connectionBandColor(connection: TitleBarConnection | null | unde
   if (connection?.isSandbox) return SANDBOX_BAND_COLOR;
   if (connection) return connection.color ?? "var(--ws-accent)";
   return "transparent";
+}
+
+/**
+ * ワークスペース (<main>) 上端のアンビエントウォッシュ (#1768) に使う `background-image` を返す。
+ * 本番=`--prod-wash` (危険色)、サンドボックス=`--sandbox-wash` (violet)、それ以外は `undefined`
+ * (通常接続・未接続・再接続中の警告は帯側が担うため敷かない)。本番がサンドボックスより優先
+ * (`connectionBandColor` と同順)。hc-* では変数側が `none`。
+ */
+export function ambientWashImage(connection: TitleBarConnection | null | undefined): string | undefined {
+  if (connection?.isProduction) return "var(--prod-wash)";
+  if (connection?.isSandbox) return "var(--sandbox-wash)";
+  return undefined;
 }
 
 /** アプリ名 (未接続時のウィンドウタイトル、接続中の末尾)。 */

@@ -1,6 +1,6 @@
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
@@ -35,8 +35,8 @@ struct TaskFile {
 /// ままなので安全。
 static STORE_LOCK: Mutex<()> = Mutex::new(());
 
-fn lock_store() -> std::sync::MutexGuard<'static, ()> {
-    STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+fn lock_store() -> Result<crate::store_lock::StoreGuard<'static>> {
+    crate::store_lock::acquire(&STORE_LOCK, &tasks_path()?)
 }
 
 pub fn data_dir() -> Option<PathBuf> {
@@ -229,7 +229,7 @@ fn write_atomic(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
 }
 
 pub fn load_all() -> Result<Vec<TaskDefinition>> {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     Ok(load_file_locked()?.tasks)
 }
 
@@ -248,14 +248,14 @@ where
 {
     // `settings` を保ったまま `tasks` だけ差し替える read-modify-write なので、
     // 読み→書きの全体をロックで保護する。
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     let mut file = load_file_locked()?;
     f(&mut file.tasks)?;
     save_file_locked(&file)
 }
 
 pub fn delete(id: &str) -> Result<()> {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     let mut file = load_file_locked()?;
     file.tasks.retain(|t| t.id != id);
     save_file_locked(&file)
@@ -264,19 +264,19 @@ pub fn delete(id: &str) -> Result<()> {
 /// 設定とタスクを 1 回の読み込みで返す (tick が 20 秒ごとに `load_settings` と
 /// `load_all` で tasks.json を 2 回読んで parse するのを避ける)。
 pub fn load_settings_and_tasks() -> Result<(SchedulerSettings, Vec<TaskDefinition>)> {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     let file = load_file_locked()?;
     Ok((file.settings, file.tasks))
 }
 
 pub fn load_settings() -> Result<SchedulerSettings> {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     Ok(load_file_locked()?.settings)
 }
 
 pub fn save_settings(settings: SchedulerSettings) -> Result<()> {
     // `tasks` を保ったまま `settings` だけ差し替える read-modify-write。
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     let mut file = load_file_locked()?;
     file.settings = settings;
     save_file_locked(&file)

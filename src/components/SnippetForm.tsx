@@ -250,8 +250,12 @@ export function SnippetForm({
           spellCheck={false}
           rows={10}
           aria-invalid={fieldErrors.sql ? true : undefined}
+          aria-describedby={`${fid}-sql-help`}
         />
         {fieldErrors.sql && <FieldError>{fieldErrors.sql}</FieldError>}
+        <chakra.p id={`${fid}-sql-help`} textStyle="caption" color="app.textMuted" mt="1" mx="0" mb="0">
+          {t("snippetSqlHelp")}
+        </chakra.p>
       </Box>
 
       {/* 保存を止める持続的なエラーは ErrorNote (#1114)。 */}

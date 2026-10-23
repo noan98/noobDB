@@ -40,7 +40,16 @@ function iconTemplate(name: CompletionIconName): Element | null {
  * 全種別のテンプレートを先に描いておく。モジュール読み込み時は React の描画の外なので
  * `flushSync` が確実に効く。
  */
-for (const name of ["table", "database", "columns", "link", "routine", "braces", "hash"] as const) {
+for (const name of [
+  "table",
+  "database",
+  "columns",
+  "link",
+  "routine",
+  "braces",
+  "hash",
+  "snippet",
+] as const) {
   iconTemplate(name);
 }
 

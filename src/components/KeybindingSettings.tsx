@@ -16,7 +16,11 @@ import {
   replaceShortcutBindings,
   resetShortcutBindings,
   sanitizeShortcutOverrides,
+  MAX_SHORTCUT_HINT_DELAY_MS,
+  MIN_SHORTCUT_HINT_DELAY_MS,
   setShortcutBinding,
+  setShortcutHintDelayMs,
+  setShortcutHintEnabled,
   useSettings,
 } from "../settings";
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
@@ -26,12 +30,16 @@ import { useToast } from "./Toast";
 import {
   SettingsInfo,
   SettingsLabelWithInfo,
+  SettingsNumberRow,
   SettingsSection,
   SettingsSectionHeader,
+  SettingsToggleLabel,
+  SettingsToggleRow,
 } from "./settingsLayout";
+import { DraftNumberInput } from "./DraftNumberInput";
 import { Kbd } from "./Kbd";
 import { Tooltip } from "./Tooltip";
-import { Button } from "./ui";
+import { Button, Switch } from "./ui";
 
 const Row = chakra("div", {
   base: {
@@ -186,6 +194,32 @@ export function KeybindingSettings() {
           {t("settingsShortcutsResetAll")}
         </Button>
       </SettingsSectionHeader>
+
+      {/* 修飾キー長押しのヒント表示 (#1487)。 */}
+      <SettingsToggleRow>
+        <SettingsLabelWithInfo>
+          <SettingsToggleLabel htmlFor="settings-shortcut-hint-enabled">
+            {t("shortcutHintEnabled")}
+          </SettingsToggleLabel>
+          <SettingsInfo>{t("shortcutHintEnabledHelp")}</SettingsInfo>
+        </SettingsLabelWithInfo>
+        <Switch
+          id="settings-shortcut-hint-enabled"
+          checked={settings.shortcutHintEnabled}
+          onChange={setShortcutHintEnabled}
+        />
+      </SettingsToggleRow>
+      <SettingsNumberRow>
+        <chakra.label htmlFor="settings-shortcut-hint-delay">{t("shortcutHintDelay")}</chakra.label>
+        <DraftNumberInput
+          id="settings-shortcut-hint-delay"
+          min={MIN_SHORTCUT_HINT_DELAY_MS}
+          max={MAX_SHORTCUT_HINT_DELAY_MS}
+          value={settings.shortcutHintDelayMs}
+          disabled={!settings.shortcutHintEnabled}
+          onCommit={setShortcutHintDelayMs}
+        />
+      </SettingsNumberRow>
 
       {SHORTCUT_CATEGORY_ORDER.map((category) => {
         const items = REBINDABLE_SHORTCUTS.filter((s) => s.category === category);

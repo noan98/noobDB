@@ -31,7 +31,9 @@
 # ファイルは「関数を持つファイル」に絞る。cargo-mutants は構造体フィールド削除
 # ("delete field ...") の変異に --re / --exclude-re を適用しないため、無関係な
 # ファイル (plan_watch / format / ssh など) が混入しないよう examine_globs でも
-# 絞る必要がある (--list で確認済み)。
+# 絞る必要がある (--list で確認済み)。それでも対象ファイル内の非安全網関数の
+# "delete field" 変異は残る (--re / --exclude-re が効かない。cargo-mutants 27.1 で確認)ため、
+# mutants.yml の集計で genre == StructField を除外している (#1657)。
 examine_globs = [
   "src/db/mod.rs",
   "src/db/mysql.rs",

@@ -109,6 +109,16 @@ const en = {
   shortcutModalSubmitDesc: "In a dialog or form: run the primary action (Esc closes without running).",
 
   splashTagline: "Lightweight SQL client",
+  aboutTitle: "About noobDB",
+  aboutClose: "Close",
+  aboutVersion: "Version {version}",
+  aboutVersionUnknown: "Version unknown",
+  aboutReplay: "Replay logo animation",
+  aboutRepository: "Repository",
+  aboutDocs: "Documentation",
+  aboutOpenFailed: "Could not open the link",
+  cmdkActionAbout: "About noobDB",
+  appAbout: "About noobDB",
 
   sidebarTabConnections: "Connections",
   sidebarTabSnippets: "Snippets",
@@ -382,6 +392,7 @@ const en = {
   editorCompletionCte: "CTE",
   editorCompletionDerived: "Derived table",
   editorCompletionAlias: "Alias",
+  editorCompletionSnippet: "Snippet",
   editorColInfoType: "Type",
   editorColInfoNullable: "Nullable",
   editorColInfoNullAllowed: "NULL allowed",
@@ -401,6 +412,34 @@ const en = {
   snippetMenuEdit: "Edit snippet",
   snippetMenuDuplicate: "Duplicate snippet",
   snippetCopySuffix: " (copy)",
+  snippetTransferMenu: "Export / import",
+  snippetExport: "Export snippets…",
+  snippetExportEmpty: "There are no snippets to export.",
+  snippetExportSaved: "Exported {count} snippet(s) to {path}",
+  snippetExportError: "Could not export the snippets: {error}",
+  snippetImport: "Import snippets…",
+  snippetImportError: "Could not import the snippets: {error}",
+  snippetImportTitle: "Import snippets",
+  snippetImportSummary: "{total} snippet(s) found: {fresh} new, {conflicts} with an id that already exists.",
+  snippetImportDuplicates: "{count} duplicate id(s) inside the file.",
+  snippetImportNoConflicts: "No ids collide with existing snippets; all of them will be added.",
+  snippetImportConflictHeading: "When an id already exists",
+  snippetImportRename: "Add as new",
+  snippetImportRenameDesc: "Keep existing snippets; give colliding ids a fresh id.",
+  snippetImportSkip: "Skip",
+  snippetImportSkipDesc: "Keep the existing snippet and ignore the one in the file.",
+  snippetImportOverwrite: "Overwrite",
+  snippetImportOverwriteDesc: "Replace the existing snippet with the one in the file.",
+  snippetImportScopeReset:
+    "{count} snippet(s) are limited to a connection that does not exist here; they will be imported for all connections.",
+  snippetImportRejected: "{count} item(s) cannot be imported: {detail}",
+  snippetImportNothing: "The file has no snippets that can be imported.",
+  snippetImportConfirm: "Import",
+  snippetImportOverwriteConfirm: "Overwrite and import",
+  snippetImportOverwriteList: "Snippets that will be replaced (existing → file)",
+  snippetImportOverwriteMore: "…and {count} more",
+  snippetImportDone:
+    "Imported {imported}, overwrote {overwritten}, skipped {skipped}, rejected {rejected} snippet(s)",
   snippetMenuFavorite: "Add to favorites",
   snippetMenuUnfavorite: "Remove from favorites",
   snippetFavoriteBadge: "Favorite snippet",
@@ -512,6 +551,8 @@ const en = {
   snippetScopeHelp: "Controls which connections show this snippet in the sidebar.",
   snippetSql: "SQL",
   snippetSqlPlaceholder: "SELECT * FROM ...",
+  snippetSqlHelp:
+    "Tab stops: ${1:default} jumps between fields with Tab / Shift+Tab when inserted; ${1} repeated mirrors the field, ${name} uses its name as the default, ${0} is where the cursor ends. A bare $1 (PostgreSQL parameter) and {{name}} (run-time parameter) are left as they are. Write \\${ for a literal ${ (the escape only works in a body that has at least one tab stop; one line per default value).",
   snippetErrorNameRequired: "Name is required.",
   snippetErrorSqlRequired: "SQL is required.",
   snippetErrorScopeProfile: "Pick a connection for this scope.",
@@ -563,6 +604,39 @@ const en = {
   settingsShortcutRecord: "Change",
   settingsShortcutRecording: "Press keys… (Esc to cancel)",
   settingsShortcutConflict: "Conflict",
+  shortcutHintEnabled: "Show shortcut hints while holding Cmd/Ctrl",
+  shortcutHintEnabledHelp:
+    "Holding Cmd/Ctrl for a moment shows the shortcuts available in the current context at the bottom of the window. Release the key or press Esc to dismiss. It never intercepts key presses.",
+  shortcutHintDelay: "Hold time before the hint appears (ms)",
+  shortcutHintMore: "+{count} more (press ? for the full list)",
+  shortcutHintCommandPalette: "Command palette",
+  shortcutHintSidebarFilter: "Sidebar filter",
+  shortcutHintQuickLauncher: "Floating launcher",
+  shortcutHintObjectSearch: "Search objects",
+  shortcutHintOpenSettings: "Settings",
+  shortcutHintToggleTheme: "Toggle theme",
+  shortcutHintToggleSidebar: "Toggle sidebar",
+  shortcutHintRunNewTab: "Run in new tab",
+  shortcutHintRun: "Run",
+  shortcutHintRunStatement: "Run statement",
+  shortcutHintPreview: "Dry run",
+  shortcutHintFormat: "Format SQL",
+  shortcutHintExplain: "Explain",
+  shortcutHintFocusEditor: "Focus editor",
+  shortcutHintResultSearch: "Search results",
+  shortcutHintGridCopy: "Copy",
+  shortcutHintGridCopyHeaders: "Copy with headers",
+  shortcutHintGridUndo: "Undo edit",
+  shortcutHintGridRedo: "Redo edit",
+  shortcutHintMaximizeResult: "Maximize results",
+  shortcutHintNewTab: "New tab",
+  shortcutHintCloseTab: "Close tab",
+  shortcutHintReopenClosedTab: "Reopen tab",
+  shortcutHintHistorySearch: "History search",
+  shortcutHintEditorFind: "Find in editor",
+  shortcutHintGridSelectAll: "Select all",
+  shortcutHintCycleTab: "Next / previous tab",
+  shortcutHintNthTab: "Go to tab 1–9",
   settingsShortcutSwapped: 'Swapped keys with "{other}", which was using that shortcut.',
   settingsShortcutsExport: "Export JSON",
   settingsShortcutsImport: "Import JSON",
@@ -601,6 +675,13 @@ const en = {
   settingsPreflightImpactEnabled: "Show impact-row badge",
   settingsPreflightImpactEnabledHelp:
     'Counts the affected rows in the background (read-only, never recorded in query history) and shows the estimate near the Run button. Complex queries (joins, subqueries, ORDER BY/LIMIT) show "can\'t estimate", and the count may drift by the time you run. Turn off to avoid background counts on heavy tables.',
+
+  settingsScanPreflight: "Scan preflight (SELECT)",
+  settingsScanPreflightHelp:
+    "For a plain SELECT in the editor, show a badge with the estimated scan rows and a full-table-scan warning before you run, taken from EXPLAIN.",
+  settingsScanPreflightEnabled: "Show scan-rows / full-scan badge",
+  settingsScanPreflightEnabledHelp:
+    'Runs EXPLAIN in the background (read-only, never recorded in query history) and shows the estimate near the Run button. Off by default. Multi-statement scripts and non-SELECT statements show nothing; unions and subqueries show "can\'t estimate" and statements starting with WITH show nothing. Row counts are planner estimates and mean slightly different things per driver (MySQL: rows examined; PostgreSQL: rows the scan node is expected to return; SQLite: no row estimate, full-scan detection only).',
 
   settingsPlanWatch: "Execution plan watch",
   settingsPlanWatchHelp:
@@ -728,6 +809,9 @@ const en = {
   settingsConfirmDangerousQueries: "Confirm before dangerous write queries",
   settingsConfirmDangerousQueriesHelp:
     "Show a confirmation dialog before running WHERE-less UPDATE/DELETE, DROP or TRUNCATE. Production profiles always confirm.",
+  settingsOptimisticCellEditLock: "Detect concurrent changes when applying cell edits",
+  settingsOptimisticCellEditLockHelp:
+    "When applying inline cell edits, also match the edited columns' values as they were when the rows were loaded. If someone else changed a row in the meantime, nothing is applied and the whole batch is rolled back, so their change is never silently overwritten. Binary, JSON and other types that cannot be compared reliably are not checked. Turn off to match by primary key only.",
   settingsResultsInNewTab: "Keep results in new tabs",
   settingsResultsInNewTabHelp:
     "Run each editor query in a new tab so previous results stay open for comparison. Use Cmd/Ctrl+Shift+Enter for a one-off new-tab run.",
@@ -770,6 +854,9 @@ const en = {
   settingsTabRestoreModeAsk: "Ask each time",
   settingsTabRestoreModeNever: "Never restore",
   settingsAppearance: "Appearance",
+  settingsAppearancePreviewLabel: "Appearance preview (a mock of the toolbar, sidebar, result grid and SQL)",
+  settingsAppearancePreviewRun: "Run",
+  settingsAppearancePreviewConn: "Alpha DB",
   settingsFontSize: "Font size (px)",
   settingsFontSizeHelp:
     "Base font size in pixels. Scales the entire interface, including the SQL editor and result grid. Allowed range: {min}–{max} px (default {default}).",
@@ -1203,6 +1290,7 @@ const en = {
   spinnerLoadingAria: "Loading",
   toastRegionAria: "Notifications",
   toastDismissAria: "Dismiss notification",
+  toastOverflow: "+{count} more — see Activity for all",
   statusSeverityCritical: "Critical",
   statusQueryTimeout:
     "Query timed out after {secs}s and was cancelled. The connection is still open — raise or disable the timeout in Settings.",
@@ -1500,6 +1588,8 @@ const en = {
   formDriverMysql: "MySQL",
   formDriverPostgres: "PostgreSQL",
   formDriverSqlite: "SQLite",
+  formDriverHintPort: "Default port {port}",
+  formDriverHintFile: "Local file",
   formMysqlLegend: "MySQL",
   formPostgresLegend: "PostgreSQL",
   formSqliteLegend: "SQLite",
@@ -1520,6 +1610,13 @@ const en = {
   formPasswordRevealMissing: "No saved password found in the OS keyring.",
   formPasswordRevealFailed: "Could not read the saved password",
   formRoute: "Connection route",
+  pathLocal: "This computer",
+  pathJump: "Jump host",
+  pathBastion: "SSH host",
+  pathSsm: "SSM host",
+  pathTarget: "Database",
+  pathUnset: "not set",
+  pathAria: "Connection route: {path}",
   formRouteDirect: "Direct",
   formRouteSsh: "SSH tunnel",
   formRouteSsm: "SSM (Session Manager)",
@@ -1663,6 +1760,9 @@ const en = {
   editorMoreActionsTitle: "Explain, snippets, files, broadcast and the query builder.",
   editorHintDisabled: "Connect a session to run queries.",
   editorHintEmpty: "Type a SQL statement first.",
+  // 空エディタのゴースト・プレースホルダ (#1785)。{shortcut} は実行ショートカット。
+  editorPlaceholderHint: "-- Press {shortcut} to run",
+  editorPlaceholderGenericTable: "your_table",
   // Emergency query mode on read-only sessions.
   editorEmergencyMode: "Emergency mode",
   editorEmergencyModeTitle:
@@ -1699,6 +1799,21 @@ const en = {
     "No WHERE clause: this write affects every row in the table. Count is a snapshot and may drift by run time.",
   editorPreflightUnestimableTooltip:
     "The statement shape (join, subquery FROM, ORDER BY/LIMIT, …) can't be safely converted to a row count, so no number is shown.",
+
+  // Scan preflight badge for SELECT (#1508).
+  editorScanEstimating: "Estimating scan…",
+  editorScanFullScanRows: "Possible full scan (~{count} rows)",
+  editorScanFullScan: "Possible full table scan",
+  editorScanRows: "Scan: ~{count} rows",
+  editorScanIndexed: "Scan: uses an index",
+  editorScanUnestimable: "Scan: can't estimate",
+  editorScanTooltip:
+    "Estimate from a background EXPLAIN (nothing is executed). Row counts are the planner's estimate and drift from reality; their exact meaning differs per driver.",
+  editorScanFullScanTooltip:
+    "EXPLAIN shows a table read without an index ({tables}). On a large table this can be slow. Consider a WHERE condition on an indexed column or a LIMIT.",
+  editorScanUnestimableTooltip: "Unions and subqueries are not analysed, so no estimate is shown.",
+  editorScanLimitedNote:
+    "This SELECT has a LIMIT and no sort or aggregation, so it may stop reading early and the real cost can be much lower.",
 
   explainEmpty: "No plan yet. Use the Explain button to analyze a query.",
   explainLoading: "Analyzing query plan...",
@@ -1890,6 +2005,9 @@ const en = {
   qbInsertToEditorTitle: "Insert the generated SQL into the editor without running it.",
 
   resultEmpty: "No results yet. Run a query above.",
+  resultEmptyTitle: "Ready to run",
+  resultEmptySnippets: "Snippets",
+  resultEmptyCommandPalette: "Command palette",
   resultExecuted: "Statement executed. {rows} rows affected ({ms} ms).",
   resultNull: "NULL",
   resultEmptyString: "Empty string",
@@ -1922,6 +2040,9 @@ const en = {
   editPendingTitle: "{original} → {next} (pending — Preview or Apply to commit)",
   editNoPkHint: "No primary key — editing disabled",
   editNoPkHintTitle: "Inline cell editing needs a primary key to build a safe UPDATE WHERE clause.",
+  editUniqueKeyHint: "No primary key — using unique key",
+  editUniqueKeyHintTitle:
+    "This table has no primary key. Its UNIQUE NOT NULL key identifies each row instead, so an edit or delete affects exactly one row.",
   editRowidHint: "No primary key — using rowid",
   editRowidHintTitle:
     "This table has no primary key. SQLite's implicit rowid identifies each row instead, so editing still works.",
@@ -1939,6 +2060,12 @@ const en = {
     "This table has no primary key, so {count} statement(s) match every column's value instead. If a matched row isn't actually unique, every identical row will be affected. Continue?",
   editAllColumnsConfirmBodyAmbiguous:
     "This table has no primary key, and some of the loaded rows have identical values in every column. {count} statement(s) will run, and a statement targeting a duplicated row will affect all of its duplicates at once. Continue?",
+  editRowOvershootConfirmTitle: "More rows match than expected",
+  editRowOvershootConfirmBody:
+    "You specified {expected} row(s), but {actual} row(s) match. The write was rolled back, so nothing has been changed yet. Rows you did not select (for example, other rows sharing the same key values, including ones not loaded in this grid) are probably being matched as well. Applying anyway will change up to {total} rows (all statements combined).",
+  editRowOvershootConfirmBodyAllColumns:
+    "You specified {expected} row(s), but {actual} row(s) match. The write was rolled back, so nothing has been changed yet. This table is matched on every column's value, so rows with identical values (including ones not loaded in this grid) are probably being matched as well. Applying anyway will change up to {total} rows (all statements combined).",
+  editRowOvershootConfirmButton: "Apply anyway",
   editApplyDisabledInvalid: "Fix the highlighted invalid edits before applying.",
   editInvalidNumber: "Enter a number (or NULL).",
   editInvalidInteger: "Enter a whole number (or NULL). This column is an integer type.",
@@ -1963,6 +2090,20 @@ const en = {
   statusAppliedEdits: "Applied {count} update(s); {rows} rows affected.",
   statusAppliedEditsShortfall:
     "Applied, but only {rows} of {count} row(s) were affected. Some rows were not found (they may have been changed or deleted elsewhere) and were not written. Reload the data to check the current state.",
+  statusAwaitingRowCountConfirm: "Waiting for your confirmation...",
+  statusApplyEditsRollbackIncomplete:
+    "Rollback was incomplete: {actual} row(s) matched the {expected} you specified, and this table cannot be rolled back (a non-transactional engine such as MyISAM), so some changes were already written. Do not apply again; reload the data to check the current state.",
+  statusApplyEditsOvershootCancelled:
+    "Not applied: {actual} row(s) matched the {expected} you specified. Nothing was changed; your pending edits are kept.",
+  statusApplyEditsConflict:
+    "Not applied: {rows} row(s) were changed by someone else after you loaded them. Nothing was changed; your pending edits are kept. Reload the data to see the current values.",
+  editConflictTitle: "Rows were changed by someone else",
+  editConflictBody:
+    "{rows} row(s) were changed (or deleted) by someone else after you loaded them, so nothing was applied. Reload to see the current values and edit again, or keep your edits for now.",
+  editConflictReload: "Reload (discard all edits)",
+  statusEditConflictReloadSkipped:
+    "Not reloaded: the last statement of this tab is not a read-only query. Your edits are kept. Re-run the query yourself to see the current values.",
+  editConflictKeep: "Keep my edits",
   statusApplyEditsError: "Apply failed: {error}",
   statusApplyEditsPartial: "Apply failed; all {total} update(s) rolled back, nothing was applied: {error}",
 
@@ -2152,6 +2293,12 @@ const en = {
   // 矩形選択範囲のエクスポート (#917)。
   exportScopeSelection: "Selected cells only",
   exportScopeSelectionHint: "Export the {rows} rows × {cols} columns currently selected in the grid.",
+  // 現在のビュー (フィルタ・ソート・列の表示/順序を反映) のエクスポート (#1507)。
+  exportScopeView: "Current view",
+  exportScopeViewHint:
+    "Export the {rows} rows × {cols} columns as shown now: filters, sort order, hidden columns and column order applied.",
+  exportScopeViewHintPartial:
+    "Of the rows loaded so far, export the {rows} rows × {cols} columns as shown now: filters, sort order, hidden columns and column order applied.",
   exportScopeFull: "Full result (re-run query)",
   exportScopeFullHint: "Re-run the query and stream every row to the file (no auto LIMIT).",
   exportFullProgress: "Exported {rows} rows...",
@@ -3129,18 +3276,49 @@ const en = {
   alterTableDropCheckRemove: "Remove entry",
   alterTableUnsupportedConstraintSqlite:
     "{column}: SQLite cannot add or drop this constraint on an existing table.",
-  alterPrecheckFailTitle: "{count} column(s) hold data that will not fit",
+  // 書き換え / 長いロックを伴う ALTER の警告 (#1771)。
+  alterCostTitle: "{count} change(s) may rewrite the table or hold long locks",
+  alterCostBodyMysql:
+    "These changes use the COPY algorithm or rebuild the whole table. COPY blocks writes to the table until it finishes, so on a large production table this can mean long downtime.",
+  alterCostBodyPostgres:
+    "These changes rewrite the whole table or scan every row while holding a strong lock (ACCESS EXCLUSIVE or one that blocks writes). On a large production table, reads and writes queue up until it finishes.",
+  alterCostRows: "Estimated rows: about {rows}",
+  alterCostRowsUnknown: "Estimated rows: unknown (the table may be large)",
+  alterCostRowsLoading: "Checking the table size…",
+  alterCostRebuildOnly:
+    "These rebuild the table in place, so reads and writes continue, but it takes time and disk space.",
+  alterCostMysqlCopyType: "a type change needs the COPY algorithm (full table copy, writes blocked)",
+  alterCostMysqlCopyForeignKey: "adding a foreign key uses COPY while foreign_key_checks=1 (writes blocked)",
+  alterCostMysqlCopyCheck: "adding a CHECK validates every row and can fall back to COPY (writes blocked)",
+  alterCostMysqlRebuildNullability: "changing NULL / NOT NULL rebuilds the table in place",
+  alterCostPgRewriteType: "the type change rewrites the whole table and its indexes under ACCESS EXCLUSIVE",
+  alterCostMysqlCopyAddColumn:
+    "an AUTO_INCREMENT or STORED generated column needs COPY when added (writes blocked)",
+  alterCostPgRewriteAddColumn:
+    "a serial / IDENTITY / generated (STORED) column rewrites every row when added",
+  alterCostPgRewriteVolatileDefault: "a volatile DEFAULT rewrites every row when the column is added",
+  alterCostPgScanSetNotNull: "SET NOT NULL scans every row under ACCESS EXCLUSIVE",
+  alterCostPgScanForeignKey: "adding a foreign key validates every row while locking both tables",
+  alterCostPgScanCheck: "adding a CHECK validates every row under ACCESS EXCLUSIVE",
+  alterCostPgIndexBuildLock: "CREATE INDEX (not CONCURRENTLY) blocks writes while the index is built",
+  alterCostOnlineToggle: "Add {clause}",
+  alterCostOnlineHint:
+    "Changes that cannot run in place without locking fail with an error instead of silently copying the table. If it stops with an error, statements that already ran stay applied (MySQL DDL commits implicitly).",
+  alterPrecheckFailTitle: "{count} change(s) conflict with existing data",
   alterPrecheckFailBody:
-    "Existing rows would not fit the new definition, so this ALTER is expected to fail (or truncate data). The counts are a snapshot taken just now.",
+    "Existing rows would not satisfy the new definition or constraint, so this ALTER is expected to fail (or truncate data). The counts are a snapshot taken just now.",
   alterPrecheckLength: "{count} row(s) are longer than the new length",
   alterPrecheckRange: "{count} row(s) are outside the new numeric range",
   alterPrecheckDecimal: "{count} row(s) have too many integer digits for the new precision",
   alterPrecheckScale: "{count} row(s) would be silently rounded by the smaller number of decimal places",
   alterPrecheckNotNull: "{count} row(s) are NULL",
-  alterPrecheckRunning: "Checking whether existing data fits…",
+  alterPrecheckOrphanFk: "{count} row(s) have no matching row in the referenced table",
+  alterPrecheckDuplicateUnique: "{count} row(s) share a duplicate key value",
+  alterPrecheckCheckViolation: "{count} row(s) violate the condition",
+  alterPrecheckRunning: "Checking existing data against the new definition and constraints…",
   alterPrecheckError: "Could not check existing data: {error}",
   alterPrecheckOpenRows: "Show these rows",
-  alterPrecheckOk: "All existing rows fit the new definition.",
+  alterPrecheckOk: "All existing rows satisfy the new definition and constraints.",
   alterTablePreview: "SQL preview",
   alterTablePreviewEmpty: "No changes yet.",
   alterTableRun: "Apply",
@@ -3209,6 +3387,66 @@ const en = {
   dropReferencedBySqlite:
     "These tables still reference the table(s) being dropped. SQLite may let the DROP through depending on PRAGMA foreign_keys and leave orphaned child rows. Parent.column ← child.column:",
   dropReferencedByMore: "and {count} more",
+  // DROP COLUMN の依存オブジェクト警告 (#1758)。
+  dropColumnDepsLoading: "Checking objects that depend on the dropped columns…",
+  dropColumnDepsError: "Could not check dependent objects: {error}",
+  dropColumnDepsTitle: "Objects depend on the columns being dropped ({count})",
+  dropColumnDepsIncompleteTitle: "Dependent-object check is incomplete",
+  dropColumnDepsBody:
+    "Dropping these columns can fail or silently break the objects below (views and triggers stop working, indexes shrink or disappear, foreign keys and generated columns block the DROP). Column ← dependent object:",
+  dropColumnDepsIncomplete:
+    "Some dependencies could not be checked ({kinds}), so the list above may be incomplete.",
+  dropColumnDepView: "view",
+  dropColumnDepMatView: "materialized view",
+  dropColumnDepTrigger: "trigger",
+  dropColumnDepGenerated: "generated column",
+  dropColumnDepIndex: "index",
+  dropColumnDepForeignKey: "foreign key",
+  dropColumnDepReferencedBy: "referenced by table",
+  dropColumnDepPossible: "possible",
+  dropColumnWarnDefinitions: "views / triggers",
+  dropColumnWarnIndexes: "indexes",
+  dropColumnWarnForeignKeys: "foreign keys",
+  dropColumnWarnGenerated: "generated columns",
+  dropColumnWarnOther: "other",
+  // 行削除 / TRUNCATE の前に出す子テーブルの参照行数 (#1506)。
+  refImpactTitle: "{count} child rows in {tables} table(s) reference the data being deleted",
+  refImpactTitlePartial: "At least {count} child rows in {tables} table(s) reference the data being deleted",
+  refImpactIntroRows:
+    "These child tables have rows pointing at the rows you are about to delete (child.column ← parent.column).",
+  refImpactIntroTruncate:
+    "These child tables have rows pointing at this table (child.column ← parent.column).",
+  refImpactBlockedRows: "Rules without CASCADE / SET NULL make the DELETE fail with a foreign key error.",
+  refImpactBlockedTruncate:
+    "Rules without CASCADE / SET NULL make the TRUNCATE (a DELETE FROM in SQLite) fail with a foreign key error.",
+  refImpactTruncateRefusesMysql:
+    "MySQL refuses to TRUNCATE a table that is referenced by a foreign key, whatever ON DELETE says, so this TRUNCATE will fail.",
+  refImpactTruncateRefusesPg:
+    "PostgreSQL refuses to TRUNCATE a table that is referenced by a foreign key, whatever ON DELETE says, unless CASCADE is given (which also empties the child tables), so this TRUNCATE will fail.",
+  refImpactUnverified:
+    "Could not check how many rows reference this data (timeout or error). Child tables referencing it: {tables}. Deleting may be blocked or cascade to them.",
+  refImpactRowCountCapped: "{count}+ rows",
+  statusCheckingRefs: "Checking rows that reference the deletion...",
+  refImpactCascading: "Child rows under ON DELETE CASCADE are deleted together with them.",
+  refImpactSqlite:
+    "SQLite enforces foreign keys only while PRAGMA foreign_keys is ON; otherwise orphaned child rows are left behind.",
+  refImpactActCascade: "{count} rows will be cascade-deleted",
+  refImpactActBlock: "{count} rows reference it, so the delete is expected to fail",
+  refImpactActSetNull: "{count} rows will be set to NULL",
+  refImpactActSetDefault: "{count} rows will be set to their default",
+  refImpactDepth: "cascade level {depth}",
+  refImpactMoreCascade:
+    "The cascade continues beyond what could be counted here (depth or table limit reached), so more rows may be deleted.",
+  refImpactCheckFailed:
+    "Could not check which child rows this DELETE would affect (timeout or error). It may fail or cascade to child tables.",
+  dangerousFkIntro: "This DELETE affects rows in tables that reference the rows it deletes:",
+  refImpactCheckSkipped: "Could not check the impact on child tables; running the DELETE anyway.",
+  refImpactRunAborted: "The connection changed while checking, so the DELETE was not run.",
+  refImpactRowCount: "{count} rows",
+  refImpactOpen: "Open child rows",
+  refImpactDeleteTitle: "Delete rows still referenced from child tables of {table}?",
+  refImpactDeleteOk: "Delete anyway",
+  refImpactMore: "and {count} more",
   dropConfirmOk: "Drop table",
   // インデックス削除 (#850)。ツリーのインデックスノード右クリックから。
   dropIndexConfirmTitle: "Drop index {index}?",
@@ -3375,6 +3613,9 @@ const en = {
   tabNew: "New query tab",
   tabClose: "Close tab",
   tabDuplicate: "Duplicate tab",
+  tabPin: "Pin tab",
+  tabUnpin: "Unpin tab",
+  tabPinned: "Pinned",
   tabCloseOthers: "Close other tabs",
   tabCloseRight: "Close tabs to the right",
   tabCloseLeft: "Close tabs to the left",
@@ -3497,6 +3738,7 @@ const en = {
   gridDragColumn: "Drag to reorder column",
   gridMoveColumnLeft: "Move left",
   gridMoveColumnRight: "Move right",
+  gridResizeWidthBadge: "{width} px wide",
   gridResizeColumnAria: "Resize column {column} (left/right arrow keys; Shift for larger steps)",
   gridColumnsLabel: "Columns",
   gridHideColumn: "Hide this column",
@@ -3607,6 +3849,11 @@ const en = {
   gridCopyAsInsertRowsCombined: "Copy {count} rows as INSERT (combined)",
   gridCopyAsInsertRowsCombinedTitle:
     "A single INSERT INTO ... VALUES (...), (...); statement covering all selected rows",
+  gridCopyAsInsertPartial: "Copy 1 row × {cols} columns as INSERT",
+  gridCopyAsInsertRowsPartial: "Copy {count} rows × {cols} columns as INSERT (one statement per row)",
+  gridCopyAsInsertRowsCombinedPartial: "Copy {count} rows × {cols} columns as INSERT (combined)",
+  gridCopyAsInsertPartialTitle:
+    "Only the selected columns are included. Columns left out fall back to their defaults or violate NOT NULL",
   gridCopyAsInsertAmbiguousTable:
     "Couldn't resolve a single source table for this result — copied with a placeholder table name; edit it before running",
   gridCopyAsUpdate: "Copy as UPDATE",
@@ -6710,6 +6957,16 @@ const ja: Dict = {
   shortcutModalSubmitDesc: "ダイアログ / フォームで主アクションを実行します (Esc は実行せずに閉じます)。",
 
   splashTagline: "軽量 SQL クライアント",
+  aboutTitle: "noobDB について",
+  aboutClose: "閉じる",
+  aboutVersion: "バージョン {version}",
+  aboutVersionUnknown: "バージョン不明",
+  aboutReplay: "ロゴのアニメーションを再生",
+  aboutRepository: "リポジトリ",
+  aboutDocs: "ドキュメント",
+  aboutOpenFailed: "リンクを開けませんでした",
+  cmdkActionAbout: "noobDB について",
+  appAbout: "noobDB について",
 
   sidebarTabConnections: "接続",
   sidebarTabSnippets: "スニペット",
@@ -6978,6 +7235,7 @@ const ja: Dict = {
   editorCompletionCte: "CTE",
   editorCompletionDerived: "派生表",
   editorCompletionAlias: "別名",
+  editorCompletionSnippet: "スニペット",
   editorColInfoType: "データ型",
   editorColInfoNullable: "NULL 可否",
   editorColInfoNullAllowed: "NULL 可",
@@ -6997,6 +7255,35 @@ const ja: Dict = {
   snippetMenuEdit: "スニペットを編集",
   snippetMenuDuplicate: "スニペットを複製",
   snippetCopySuffix: " (コピー)",
+  snippetTransferMenu: "エクスポート / インポート",
+  snippetExport: "スニペットをエクスポート…",
+  snippetExportEmpty: "エクスポートするスニペットがありません。",
+  snippetExportSaved: "スニペット {count} 件を {path} へ書き出しました",
+  snippetExportError: "スニペットをエクスポートできませんでした: {error}",
+  snippetImport: "スニペットをインポート…",
+  snippetImportError: "スニペットをインポートできませんでした: {error}",
+  snippetImportTitle: "スニペットをインポート",
+  snippetImportSummary:
+    "スニペットが {total} 件見つかりました (新規 {fresh} 件、ID が既存と衝突 {conflicts} 件)。",
+  snippetImportDuplicates: "ファイル内の ID 重複 {count} 件。",
+  snippetImportNoConflicts: "既存のスニペットと ID が衝突するものはありません。すべて追加されます。",
+  snippetImportConflictHeading: "ID が既存と衝突したとき",
+  snippetImportRename: "新規として追加",
+  snippetImportRenameDesc: "既存のスニペットは残し、ID が衝突するものには新しい ID を採番します。",
+  snippetImportSkip: "スキップ",
+  snippetImportSkipDesc: "既存のスニペットを残し、ファイル側は取り込みません。",
+  snippetImportOverwrite: "上書き",
+  snippetImportOverwriteDesc: "既存のスニペットをファイルの内容で置き換えます。",
+  snippetImportScopeReset:
+    "{count} 件は、この環境に存在しない接続に限定されています。すべての接続向けとして取り込みます。",
+  snippetImportRejected: "{count} 件は取り込めません: {detail}",
+  snippetImportNothing: "取り込めるスニペットがファイルにありません。",
+  snippetImportConfirm: "インポート",
+  snippetImportOverwriteConfirm: "上書きしてインポート",
+  snippetImportOverwriteList: "置き換わるスニペット (既存 → ファイル)",
+  snippetImportOverwriteMore: "ほか {count} 件",
+  snippetImportDone:
+    "スニペットを取り込みました (追加 {imported} 件、上書き {overwritten} 件、スキップ {skipped} 件、取り込めず {rejected} 件)",
   snippetMenuFavorite: "お気に入りに追加",
   snippetMenuUnfavorite: "お気に入りから削除",
   snippetFavoriteBadge: "お気に入りのスニペット",
@@ -7106,6 +7393,8 @@ const ja: Dict = {
   snippetScopeHelp: "このスニペットをサイドバーに表示する接続を制御します。",
   snippetSql: "SQL",
   snippetSqlPlaceholder: "SELECT * FROM ...",
+  snippetSqlHelp:
+    "タブストップ: ${1:既定値} と書くと、挿入後に Tab / Shift+Tab でフィールド間を移動できます。同じ番号 ${1} は連動し、${name} は名前が既定値、${0} は最後のカーソル位置です。素の $1 (PostgreSQL のパラメータ) や {{name}} (実行時パラメータ) はそのまま残ります。文字どおりの ${ は \\${ と書きます (エスケープは記法を含む本文でのみ有効。既定値は 1 行で書く)。",
   snippetErrorNameRequired: "名前を入力してください。",
   snippetErrorSqlRequired: "SQL を入力してください。",
   snippetErrorScopeProfile: "このスコープの接続を選択してください。",
@@ -7157,6 +7446,39 @@ const ja: Dict = {
   settingsShortcutRecord: "変更",
   settingsShortcutRecording: "キーを押す… (Esc で取消)",
   settingsShortcutConflict: "衝突",
+  shortcutHintEnabled: "Cmd/Ctrl の押しっぱなしでショートカットをヒント表示する",
+  shortcutHintEnabledHelp:
+    "Cmd/Ctrl を少し押し続けると、今の文脈で押せるショートカットを画面下部に表示します。キーを離すか Esc で閉じます。キー入力は横取りしません。",
+  shortcutHintDelay: "ヒントが出るまでの押しっぱなし時間 (ミリ秒)",
+  shortcutHintMore: "ほか {count} 件 (? で一覧)",
+  shortcutHintCommandPalette: "コマンドパレット",
+  shortcutHintSidebarFilter: "サイドバー検索",
+  shortcutHintQuickLauncher: "ランチャー",
+  shortcutHintObjectSearch: "オブジェクト検索",
+  shortcutHintOpenSettings: "設定",
+  shortcutHintToggleTheme: "テーマ切替",
+  shortcutHintToggleSidebar: "サイドバー開閉",
+  shortcutHintRunNewTab: "新しいタブで実行",
+  shortcutHintRun: "実行",
+  shortcutHintRunStatement: "カーソル位置の文を実行",
+  shortcutHintPreview: "Dry Run",
+  shortcutHintFormat: "SQL を整形",
+  shortcutHintExplain: "実行計画",
+  shortcutHintFocusEditor: "エディタに集中",
+  shortcutHintResultSearch: "結果内検索",
+  shortcutHintGridCopy: "コピー",
+  shortcutHintGridCopyHeaders: "ヘッダ付きコピー",
+  shortcutHintGridUndo: "編集を元に戻す",
+  shortcutHintGridRedo: "編集をやり直す",
+  shortcutHintMaximizeResult: "結果を最大化",
+  shortcutHintNewTab: "新しいタブ",
+  shortcutHintCloseTab: "タブを閉じる",
+  shortcutHintReopenClosedTab: "閉じたタブを開く",
+  shortcutHintHistorySearch: "履歴を検索",
+  shortcutHintEditorFind: "エディタ内検索",
+  shortcutHintGridSelectAll: "すべて選択",
+  shortcutHintCycleTab: "タブ切替",
+  shortcutHintNthTab: "n 番目のタブ",
   settingsShortcutSwapped: "そのキーを使っていた「{other}」と割り当てを入れ替えました。",
   settingsShortcutsExport: "JSON で書き出す",
   settingsShortcutsImport: "JSON を読み込む",
@@ -7194,6 +7516,13 @@ const ja: Dict = {
   settingsPreflightImpactEnabled: "影響行数バッジを表示",
   settingsPreflightImpactEnabledHelp:
     "対象行数をバックグラウンドで集計し (読み取り専用・履歴には残りません)、実行ボタンの近くに推定件数を表示します。JOIN やサブクエリなど複雑なクエリは「推定不可」になり、件数も実行時点とはずれることがあります。重いテーブルでの集計を避けたい場合はオフにしてください。",
+
+  settingsScanPreflight: "スキャンプリフライト (SELECT)",
+  settingsScanPreflightHelp:
+    "エディタの単純な SELECT に対し、実行前に EXPLAIN から得た推定スキャン行数と全表スキャンの警告をバッジで表示します。",
+  settingsScanPreflightEnabled: "スキャン行数 / フルスキャンのバッジを表示",
+  settingsScanPreflightEnabledHelp:
+    "EXPLAIN をバックグラウンドで実行し (読み取り専用・履歴には残りません)、実行ボタンの近くに推定を表示します。既定はオフです。複数文のスクリプトや SELECT 以外は何も表示せず、UNION・サブクエリは「推定不可」、WITH で始まる文は何も表示しません。行数はオプティマイザの推定で、ドライバごとに意味が少し異なります (MySQL: 走査行数 / PostgreSQL: スキャンノードが返す見込み行数 / SQLite: 行数推定なし、フルスキャン判定のみ)。",
 
   settingsPlanWatch: "実行計画ウォッチ",
   settingsPlanWatchHelp:
@@ -7319,6 +7648,9 @@ const ja: Dict = {
   settingsConfirmDangerousQueries: "危険な書き込みクエリの実行前に確認",
   settingsConfirmDangerousQueriesHelp:
     "WHERE 句のない UPDATE/DELETE、DROP、TRUNCATE を実行する前に確認ダイアログを表示します。本番環境では設定に関わらず必ず確認します。",
+  settingsOptimisticCellEditLock: "セル編集の適用時に他者の変更を検出",
+  settingsOptimisticCellEditLockHelp:
+    "セル編集を適用するとき、編集した列が読み込み時点の値のままであることも条件にします。読み込み後に他の人が同じ行を変更していた場合は、何も適用せずバッチ全体をロールバックし、他の人の変更を無言で上書きしません。バイナリ・JSON など確実に比較できない型は検査しません。オフにすると主キーだけで行を特定します。",
   settingsResultsInNewTab: "結果を新しいタブで保持",
   settingsResultsInNewTabHelp:
     "エディタのクエリを毎回新しいタブで実行し、前の結果を残して見比べられるようにします。一回限りの新タブ実行は Cmd/Ctrl+Shift+Enter。",
@@ -7360,6 +7692,9 @@ const ja: Dict = {
   settingsTabRestoreModeAsk: "都度確認する",
   settingsTabRestoreModeNever: "復元しない",
   settingsAppearance: "表示",
+  settingsAppearancePreviewLabel: "外観プレビュー (ツールバー・サイドバー・結果グリッド・SQL のモック)",
+  settingsAppearancePreviewRun: "実行",
+  settingsAppearancePreviewConn: "Alpha DB",
   settingsFontSize: "フォントサイズ (px)",
   settingsFontSizeHelp:
     "基準フォントサイズ (ピクセル単位)。SQL エディタや結果グリッドを含む UI 全体を拡大・縮小します。指定可能範囲: {min}〜{max} px (既定 {default})。",
@@ -7790,6 +8125,7 @@ const ja: Dict = {
   spinnerLoadingAria: "読み込み中",
   toastRegionAria: "通知",
   toastDismissAria: "通知を閉じる",
+  toastOverflow: "他 {count} 件 — すべてアクティビティで確認できます",
   statusSeverityCritical: "重大",
   statusQueryTimeout:
     "クエリが {secs} 秒でタイムアウトし、中断されました。接続は維持されています。設定でタイムアウトを延長または無効化できます。",
@@ -8088,6 +8424,8 @@ const ja: Dict = {
   formDriverMysql: "MySQL",
   formDriverPostgres: "PostgreSQL",
   formDriverSqlite: "SQLite",
+  formDriverHintPort: "既定ポート {port}",
+  formDriverHintFile: "ローカルファイル",
   formMysqlLegend: "MySQL",
   formPostgresLegend: "PostgreSQL",
   formSqliteLegend: "SQLite",
@@ -8109,6 +8447,13 @@ const ja: Dict = {
   formPasswordRevealMissing: "OS キーリングに保存済みパスワードが見つかりません。",
   formPasswordRevealFailed: "保存済みパスワードを読み取れませんでした",
   formRoute: "接続経路",
+  pathLocal: "このコンピュータ",
+  pathJump: "踏み台 (jump)",
+  pathBastion: "SSH ホスト",
+  pathSsm: "SSM ホスト",
+  pathTarget: "データベース",
+  pathUnset: "未入力",
+  pathAria: "接続経路: {path}",
   formRouteDirect: "直接",
   formRouteSsh: "SSHトンネル",
   formRouteSsm: "SSM (Session Manager)",
@@ -8250,6 +8595,8 @@ const ja: Dict = {
   editorMoreActionsTitle: "Explain・スニペット・ファイル・一括実行・Query Builder。",
   editorHintDisabled: "クエリを実行するにはセッションに接続してください。",
   editorHintEmpty: "先に SQL を入力してください。",
+  editorPlaceholderHint: "-- {shortcut} で実行",
+  editorPlaceholderGenericTable: "テーブル名",
   // 読み取り専用セッションの緊急クエリ実行モード。
   editorEmergencyMode: "緊急モード",
   editorEmergencyModeTitle:
@@ -8286,6 +8633,21 @@ const ja: Dict = {
     "WHERE 句がありません: テーブルの全行が対象です。件数は実行時点とズレうるスナップショットです。",
   editorPreflightUnestimableTooltip:
     "この文の形状 (JOIN・サブクエリ FROM・ORDER BY / LIMIT など) は安全に行数へ変換できないため、数字は表示しません。",
+
+  // SELECT のスキャンプリフライトのバッジ (#1508)。
+  editorScanEstimating: "スキャンを見積り中…",
+  editorScanFullScanRows: "全表スキャンの可能性 (約 {count} 行)",
+  editorScanFullScan: "全表スキャンの可能性",
+  editorScanRows: "スキャン: 約 {count} 行",
+  editorScanIndexed: "スキャン: インデックス利用",
+  editorScanUnestimable: "スキャン: 推定不可",
+  editorScanTooltip:
+    "裏で実行した EXPLAIN からの推定です (クエリ自体は実行しません)。行数はオプティマイザの推定で実際とズレ、意味もドライバごとに少し異なります。",
+  editorScanFullScanTooltip:
+    "EXPLAIN 上、インデックスを使わずテーブルを読む箇所があります ({tables})。大きなテーブルでは遅くなりえます。インデックス列への WHERE 条件や LIMIT を検討してください。",
+  editorScanUnestimableTooltip: "UNION・サブクエリは解析対象外のため、推定は表示しません。",
+  editorScanLimitedNote:
+    "この SELECT は LIMIT があり並べ替え・集計も無いため、途中で読み取りを止められ、実際の負荷はもっと軽い場合があります。",
 
   explainEmpty: "まだ実行計画はありません。Explain ボタンでクエリを解析してください。",
   explainLoading: "実行計画を解析中...",
@@ -8478,6 +8840,9 @@ const ja: Dict = {
   qbInsertToEditorTitle: "生成した SQL を実行せずにエディタへ挿入します。",
 
   resultEmpty: "まだ結果はありません。上のエディタでクエリを実行してください。",
+  resultEmptyTitle: "クエリを実行しましょう",
+  resultEmptySnippets: "スニペット",
+  resultEmptyCommandPalette: "コマンドパレット",
   resultExecuted: "ステートメントを実行しました。影響行数 {rows} 件 ({ms} ms)。",
   resultNull: "NULL",
   resultEmptyString: "空文字列",
@@ -8511,6 +8876,9 @@ const ja: Dict = {
   editPendingTitle: "{original} → {next} (未保存 — Preview か Apply で反映)",
   editNoPkHint: "主キーが無いため編集できません",
   editNoPkHintTitle: "インラインのセル編集は、対象行を特定する WHERE 句を組み立てるために主キーが必要です。",
+  editUniqueKeyHint: "主キーなし — ユニークキーで識別",
+  editUniqueKeyHintTitle:
+    "このテーブルには主キーがありません。代わりに UNIQUE NOT NULL のキーで各行を識別するため、編集・削除は対象の 1 行だけに作用します。",
   editRowidHint: "主キーなし — rowid で識別",
   editRowidHintTitle:
     "このテーブルには主キーがありません。代わりに SQLite の暗黙の rowid で各行を識別するため、編集は引き続き可能です。",
@@ -8528,6 +8896,12 @@ const ja: Dict = {
     "このテーブルには主キーが無いため、{count} 件の文は全列の値で行を照合します。照合先の行が実際には一意でない場合、同一の値を持つすべての行が変更されます。続行しますか？",
   editAllColumnsConfirmBodyAmbiguous:
     "このテーブルには主キーが無く、表示中の行の一部は全列が同一の値を持っています。{count} 件の文を実行しますが、重複行を対象とした文はその重複すべてに影響します。続行しますか？",
+  editRowOvershootConfirmTitle: "想定より多くの行が一致します",
+  editRowOvershootConfirmBody:
+    "指定した {expected} 行に対し、{actual} 行が一致します。書き込みはロールバックしたので、まだ何も変更されていません。選んでいない行 (同じキーの値を持つ行や、このグリッドに読み込んでいない行) も一緒に一致している可能性があります。それでも適用すると、全体で最大 {total} 行が変更されます。",
+  editRowOvershootConfirmBodyAllColumns:
+    "指定した {expected} 行に対し、{actual} 行が一致します。書き込みはロールバックしたので、まだ何も変更されていません。このテーブルは全列の値で行を照合するため、全列が同じ値の行 (このグリッドに読み込んでいない行を含む) も一緒に一致している可能性があります。それでも適用すると、全体で最大 {total} 行が変更されます。",
+  editRowOvershootConfirmButton: "それでも適用",
   editApplyDisabledInvalid: "不正な入力を修正してから適用してください。",
   editInvalidNumber: "数値を入力してください（または NULL）。",
   editInvalidInteger: "整数を入力してください（または NULL）。この列は整数型です。",
@@ -8551,6 +8925,20 @@ const ja: Dict = {
   statusAppliedEdits: "{count} 件の UPDATE を適用しました ({rows} 行に影響)。",
   statusAppliedEditsShortfall:
     "適用しましたが、{count} 行のうち {rows} 行にしか反映されていません。一部の行が見つからず (他で変更・削除された可能性があります)、書き込まれていません。再読込して現在の状態を確認してください。",
+  statusAwaitingRowCountConfirm: "確認待ち...",
+  statusApplyEditsRollbackIncomplete:
+    "ロールバックが不完全です: 指定した {expected} 行に対し {actual} 行が一致し、このテーブルは元に戻せない (MyISAM などトランザクション非対応のエンジン) ため、変更の一部がすでに書き込まれています。再度適用せず、再読込して現在の状態を確認してください。",
+  statusApplyEditsOvershootCancelled:
+    "適用しませんでした: 指定した {expected} 行に対し {actual} 行が一致しました。変更はありません (保留中の編集は残っています)。",
+  statusApplyEditsConflict:
+    "適用しませんでした: 読み込み後に他の人が変更した行が {rows} 行あります。変更はありません (保留中の編集は残っています)。再読込して現在の値を確認してください。",
+  editConflictTitle: "他の人が変更した行があります",
+  editConflictBody:
+    "{rows} 行は読込後に他の人が変更 (または削除) したため適用しませんでした。再読込して現在の値を確認し、編集し直してください。いったん編集を残すこともできます。",
+  editConflictReload: "再読込 (すべての編集を破棄)",
+  statusEditConflictReloadSkipped:
+    "再読込しませんでした: このタブの直近の文は読み取り専用のクエリではありません。現在の値を見るには、編集はそのまま残っています。クエリを自分で実行し直してください。",
+  editConflictKeep: "編集を残す",
   statusApplyEditsError: "適用に失敗しました: {error}",
   statusApplyEditsPartial:
     "適用に失敗したため、{total} 件の UPDATE をすべてロールバックしました（変更は適用されていません）: {error}",
@@ -8741,6 +9129,12 @@ const ja: Dict = {
   // 矩形選択範囲のエクスポート (#917)。
   exportScopeSelection: "選択範囲のみ",
   exportScopeSelectionHint: "グリッドで選択中の {rows} 行 × {cols} 列を書き出します。",
+  // 現在のビュー (フィルタ・ソート・列の表示/順序を反映) のエクスポート (#1507)。
+  exportScopeView: "現在のビュー",
+  exportScopeViewHint:
+    "フィルタ・並べ替え・列の表示/非表示・列順を反映した、いま見えている {rows} 行 × {cols} 列を書き出します。",
+  exportScopeViewHintPartial:
+    "読み込み済みの行のうち、フィルタ・並べ替え・列の表示/非表示・列順を反映した、いま見えている {rows} 行 × {cols} 列を書き出します。",
   exportScopeFull: "全件 (クエリを再実行)",
   exportScopeFullHint: "クエリを再実行し、全行をストリーミングでファイルへ書き出します (自動 LIMIT なし)。",
   exportFullProgress: "{rows} 行をエクスポート中...",
@@ -9715,18 +10109,47 @@ const ja: Dict = {
   alterTableDropCheckRemove: "この項目を取り消す",
   alterTableUnsupportedConstraintSqlite:
     "{column}: SQLite は既存テーブルへのこの制約の追加・削除ができません。",
-  alterPrecheckFailTitle: "{count} 列で既存データが収まらない見込みです",
+  // 書き換え / 長いロックを伴う ALTER の警告 (#1771)。
+  alterCostTitle: "{count} 件の変更でテーブルの書き換え・長いロックが発生する可能性があります",
+  alterCostBodyMysql:
+    "COPY アルゴリズムやテーブル全体の再構築になる変更があります。COPY は完了するまでテーブルへの書き込みを止めるため、大きな本番テーブルでは長時間のダウンタイムになりえます。",
+  alterCostBodyPostgres:
+    "強いロック (ACCESS EXCLUSIVE や書き込みを止めるロック) を持ったまま、テーブル全体の書き換えや全行の走査を行う変更があります。大きな本番テーブルでは、完了するまで読み書きが待たされます。",
+  alterCostRows: "概算行数: 約 {rows} 行",
+  alterCostRowsUnknown: "概算行数: 不明 (大きなテーブルかもしれません)",
+  alterCostRowsLoading: "テーブルの大きさを確認しています…",
+  alterCostRebuildOnly:
+    "テーブルをその場で再構築するため読み書きは続けられますが、時間とディスク容量がかかります。",
+  alterCostMysqlCopyType: "型の変更は COPY アルゴリズム (テーブル全体のコピー、書き込み停止) になります",
+  alterCostMysqlCopyForeignKey: "外部キーの追加は foreign_key_checks=1 だと COPY (書き込み停止) になります",
+  alterCostMysqlCopyCheck: "CHECK の追加は全行を検証し、COPY (書き込み停止) になる場合があります",
+  alterCostMysqlRebuildNullability: "NULL / NOT NULL の変更はテーブルをその場で再構築します",
+  alterCostPgRewriteType: "型の変更は ACCESS EXCLUSIVE のままテーブルとインデックス全体を書き換えます",
+  alterCostMysqlCopyAddColumn: "AUTO_INCREMENT や STORED 生成列の追加は COPY (書き込み停止) になります",
+  alterCostPgRewriteAddColumn: "serial / IDENTITY / 生成列 (STORED) の追加は全行を書き換えます",
+  alterCostPgRewriteVolatileDefault: "揮発的な DEFAULT 付きの列追加は全行を書き換えます",
+  alterCostPgScanSetNotNull: "SET NOT NULL は ACCESS EXCLUSIVE のまま全行を走査します",
+  alterCostPgScanForeignKey: "外部キーの追加は両テーブルをロックして全行を検証します",
+  alterCostPgScanCheck: "CHECK の追加は ACCESS EXCLUSIVE のまま全行を検証します",
+  alterCostPgIndexBuildLock: "CREATE INDEX (CONCURRENTLY なし) は構築中ずっと書き込みを止めます",
+  alterCostOnlineToggle: "{clause} を付ける",
+  alterCostOnlineHint:
+    "ロックなしでインプレース実行できない変更は、黙ってテーブルをコピーせずエラーで止まります。エラーで止まった場合、先に実行された文は適用済みのまま残ります (MySQL の DDL は暗黙コミット)。",
+  alterPrecheckFailTitle: "{count} 件の変更が既存データと衝突する見込みです",
   alterPrecheckFailBody:
-    "既存の行が新しい定義に収まらないため、この ALTER は失敗する (またはデータが切り詰められる) 見込みです。件数はいま取得した時点の値です。",
+    "既存の行が新しい定義・制約を満たさないため、この ALTER は失敗する (またはデータが切り詰められる) 見込みです。件数はいま取得した時点の値です。",
   alterPrecheckLength: "{count} 行が新しい長さを超えています",
   alterPrecheckRange: "{count} 行が新しい数値範囲に収まりません",
   alterPrecheckDecimal: "{count} 行が新しい精度の整数部の桁数を超えています",
   alterPrecheckScale: "{count} 行が小数桁の縮小で丸められます (値が変わります)",
   alterPrecheckNotNull: "{count} 行が NULL です",
-  alterPrecheckRunning: "既存データが収まるか検査しています…",
+  alterPrecheckOrphanFk: "{count} 行が参照先テーブルに対応する行を持ちません",
+  alterPrecheckDuplicateUnique: "{count} 行が重複したキー値を持っています",
+  alterPrecheckCheckViolation: "{count} 行が条件を満たしません",
+  alterPrecheckRunning: "既存データが新しい定義・制約を満たすか検査しています…",
   alterPrecheckError: "既存データの検査に失敗しました: {error}",
   alterPrecheckOpenRows: "該当行を表示",
-  alterPrecheckOk: "既存の行はすべて新しい定義に収まります。",
+  alterPrecheckOk: "既存の行はすべて新しい定義・制約を満たします。",
   alterTablePreview: "SQL プレビュー",
   alterTablePreviewEmpty: "まだ変更はありません。",
   alterTableRun: "適用",
@@ -9791,6 +10214,65 @@ const ja: Dict = {
   dropReferencedBySqlite:
     "次のテーブルがここで削除するテーブルを参照しています。SQLite は PRAGMA foreign_keys の設定次第で DROP が通り、子の行が孤立することがあります。親.列 ← 子.列:",
   dropReferencedByMore: "ほか {count} 件",
+  // DROP COLUMN の依存オブジェクト警告 (#1758)。
+  dropColumnDepsLoading: "削除する列に依存するオブジェクトを調べています…",
+  dropColumnDepsError: "依存オブジェクトを調べられませんでした: {error}",
+  dropColumnDepsTitle: "削除する列に依存するオブジェクトがあります ({count} 件)",
+  dropColumnDepsIncompleteTitle: "依存オブジェクトの検査が不完全です",
+  dropColumnDepsBody:
+    "これらの列を DROP すると、次のオブジェクトでエラーになるか、黙って壊れる可能性があります (ビュー・トリガーは動かなくなり、インデックスは縮小または消え、外部キー・生成列は DROP を妨げます)。列 ← 依存オブジェクト:",
+  dropColumnDepsIncomplete:
+    "一部の依存を調べられなかったため ({kinds})、上の一覧は不完全な可能性があります。",
+  dropColumnDepView: "ビュー",
+  dropColumnDepMatView: "マテリアライズドビュー",
+  dropColumnDepTrigger: "トリガー",
+  dropColumnDepGenerated: "生成列",
+  dropColumnDepIndex: "インデックス",
+  dropColumnDepForeignKey: "外部キー",
+  dropColumnDepReferencedBy: "参照元テーブル",
+  dropColumnDepPossible: "候補",
+  dropColumnWarnDefinitions: "ビュー・トリガー",
+  dropColumnWarnIndexes: "インデックス",
+  dropColumnWarnForeignKeys: "外部キー",
+  dropColumnWarnGenerated: "生成列",
+  dropColumnWarnOther: "その他",
+  // 行削除 / TRUNCATE の前に出す子テーブルの参照行数 (#1506)。
+  refImpactTitle: "削除対象を {tables} テーブルの子行 {count} 件が参照しています",
+  refImpactTitlePartial: "削除対象を {tables} テーブルの子行 {count} 件以上が参照しています",
+  refImpactIntroRows: "次の子テーブルに、削除しようとしている行を指す行があります (子.列 ← 親.列)。",
+  refImpactIntroTruncate: "次の子テーブルに、このテーブルを指す行があります (子.列 ← 親.列)。",
+  refImpactBlockedRows:
+    "ON DELETE が CASCADE / SET NULL 以外のものは、外部キーエラーで DELETE が失敗します。",
+  refImpactBlockedTruncate:
+    "ON DELETE が CASCADE / SET NULL 以外のものは、外部キーエラーで TRUNCATE (SQLite では DELETE FROM) が失敗します。",
+  refImpactTruncateRefusesMysql:
+    "MySQL は外部キーで参照されているテーブルを、ON DELETE に関係なく TRUNCATE できません。この TRUNCATE は失敗します。",
+  refImpactTruncateRefusesPg:
+    "PostgreSQL は外部キーで参照されているテーブルを、ON DELETE に関係なく CASCADE 指定なしでは TRUNCATE できません (CASCADE を付けると子テーブルも空になります)。この TRUNCATE は失敗します。",
+  refImpactUnverified:
+    "参照行数を確認できませんでした (タイムアウトまたはエラー)。参照している子テーブル: {tables}。削除がブロックされたり、子の行へ連鎖したりする可能性があります。",
+  refImpactRowCountCapped: "{count} 行以上",
+  statusCheckingRefs: "削除対象を参照する行を確認中...",
+  refImpactCascading: "ON DELETE CASCADE の子行は一緒に削除されます。",
+  refImpactSqlite:
+    "SQLite は PRAGMA foreign_keys が ON の間だけ外部キーを強制します。OFF だと子の行が孤立します。",
+  refImpactActCascade: "{count} 件が連鎖削除されます",
+  refImpactActBlock: "{count} 件が参照中のため、削除は失敗する見込みです",
+  refImpactActSetNull: "{count} 件が NULL に変更されます",
+  refImpactActSetDefault: "{count} 件が既定値に変更されます",
+  refImpactDepth: "連鎖 {depth} 段目",
+  refImpactMoreCascade:
+    "連鎖はここで数えられる範囲 (深さ・テーブル数の上限) を超えて続いています。さらに多くの行が削除される可能性があります。",
+  refImpactCheckFailed:
+    "この DELETE が子テーブルの行に及ぼす影響を確認できませんでした (タイムアウトまたはエラー)。失敗したり、子テーブルへ連鎖したりする可能性があります。",
+  dangerousFkIntro: "この DELETE は、削除する行を参照している子テーブルの行に影響します:",
+  refImpactCheckSkipped: "子テーブルへの影響を確認できませんでした。そのまま DELETE を実行します。",
+  refImpactRunAborted: "確認中に接続が切り替わったため、DELETE は実行していません。",
+  refImpactRowCount: "{count} 行",
+  refImpactOpen: "子行を開く",
+  refImpactDeleteTitle: "{table} の子テーブルから参照されている行を削除しますか?",
+  refImpactDeleteOk: "削除する",
+  refImpactMore: "ほか {count} 件",
   dropConfirmOk: "DROP TABLE",
   // インデックス削除 (#850)。ツリーのインデックスノード右クリックから。
   dropIndexConfirmTitle: "インデックス {index} を DROP しますか?",
@@ -9957,6 +10439,9 @@ const ja: Dict = {
   tabNew: "新しいクエリタブ",
   tabClose: "タブを閉じる",
   tabDuplicate: "このタブを複製",
+  tabPin: "タブをピン留め",
+  tabUnpin: "ピン留めを解除",
+  tabPinned: "ピン留め中",
   tabCloseOthers: "他のタブを閉じる",
   tabCloseRight: "右側のタブを閉じる",
   tabCloseLeft: "左側のタブを閉じる",
@@ -10080,6 +10565,7 @@ const ja: Dict = {
   gridDragColumn: "ドラッグで列を並び替え",
   gridMoveColumnLeft: "左へ移動",
   gridMoveColumnRight: "右へ移動",
+  gridResizeWidthBadge: "幅 {width} px",
   gridResizeColumnAria: "列 {column} の幅を変更 (左右キー、Shift で大きく変更)",
   gridColumnsLabel: "列",
   gridHideColumn: "この列を隠す",
@@ -10187,6 +10673,11 @@ const ja: Dict = {
   gridCopyAsInsertRowsCombined: "{count} 行を INSERT としてコピー (まとめて1文)",
   gridCopyAsInsertRowsCombinedTitle:
     "選択したすべての行を 1 つの INSERT INTO ... VALUES (...), (...); 文にまとめます",
+  gridCopyAsInsertPartial: "1 行 × {cols} 列を INSERT としてコピー",
+  gridCopyAsInsertRowsPartial: "{count} 行 × {cols} 列を INSERT としてコピー (1行1文)",
+  gridCopyAsInsertRowsCombinedPartial: "{count} 行 × {cols} 列を INSERT としてコピー (まとめて1文)",
+  gridCopyAsInsertPartialTitle:
+    "選択した列だけを出します。含まれない列は既定値になるか NOT NULL 違反になります",
   gridCopyAsInsertAmbiguousTable:
     "この結果の元テーブルを一意に特定できなかったため、仮のテーブル名でコピーしました。実行前に書き換えてください",
   gridCopyAsUpdate: "UPDATE としてコピー",

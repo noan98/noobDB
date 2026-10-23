@@ -197,16 +197,19 @@ export const COLOR_INPUT_FALLBACK = "#888888";
  *  どのドライバのブランド色とも被らないニュートラルなスレートを使う。 */
 export const LOCAL_PROFILE_CHIP_COLOR = "#64748b";
 
-/** ドライバごとのブランドアクセント色。ライト/ダーク両テーマで視認できる中間色を
- *  選んでいる (暗い純正色だとダークテーマで沈むため)。 */
+/** ドライバごとのブランドアクセント色。App.css のテーマ別 CSS 変数
+ *  (`--driver-mysql` / `--driver-postgres` / `--driver-sqlite`) を `var()` で返すため、
+ *  ダーク系・ライト系の各テーマで --bg-elevated 上 3:1 以上の変種に切り替わる
+ *  (themeContrast.test.ts で全テーマを検証)。CSS 値専用で、`<input type="color">` や
+ *  色計算には渡せない。 */
 export function driverColor(driver: string): string {
   switch (driverIconName(driver)) {
     case "mysql":
-      return "#00758f";
+      return "var(--driver-mysql)";
     case "postgres":
-      return "#3b82c4";
+      return "var(--driver-postgres)";
     case "sqlite":
-      return "#0f9bdc";
+      return "var(--driver-sqlite)";
     default:
       return "var(--accent)";
   }

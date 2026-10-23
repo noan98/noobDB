@@ -8,6 +8,7 @@ import {
   computeLauncherPopoverPosition,
   exceedsDragThreshold,
   launcherPointToPosition,
+  launcherPopoverOrigin,
   launcherPositionToPoint,
   nudgeLauncherPoint,
   parseLauncherPosition,
@@ -238,5 +239,14 @@ describe("singleLineSql", () => {
   it("改行を畳み、長ければ省略する", () => {
     expect(singleLineSql("SELECT\n  1")).toBe("SELECT 1");
     expect(singleLineSql("x".repeat(100), 10)).toBe(`${"x".repeat(9)}…`);
+  });
+});
+
+describe("launcherPopoverOrigin", () => {
+  it("ボタンに近い隅を transform-origin にする", () => {
+    expect(launcherPopoverOrigin({ above: true, alignEnd: true })).toBe("right bottom");
+    expect(launcherPopoverOrigin({ above: false, alignEnd: false })).toBe("left top");
+    expect(launcherPopoverOrigin({ above: true, alignEnd: false })).toBe("left bottom");
+    expect(launcherPopoverOrigin({ above: false, alignEnd: true })).toBe("right top");
   });
 });

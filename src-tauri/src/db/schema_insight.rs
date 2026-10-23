@@ -179,12 +179,19 @@ pub fn build_table_statistics(
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IncomingForeignKey {
+    /// 子テーブルのスキーマ。参照先テーブルと同じスキーマ (MySQL / SQLite を含む通常の
+    /// ケース) は `None`。PostgreSQL でスキーマをまたぐ FK のときだけ入る (#1786)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
     /// FK を持つ子テーブル。
     pub table: String,
     /// 現在のテーブルを参照している子テーブルのカラム。
     pub column: String,
     /// 子テーブルが指す、現在 (参照先) テーブル側のカラム。
     pub referenced_column: String,
+    /// `ON DELETE` の参照動作 (`CASCADE` / `SET NULL` / `SET DEFAULT` / `RESTRICT`)。既定の
+    /// `NO ACTION` と、取得できないときは `None` (削除前の参照行数の提示で使う、#1506)。
+    pub on_delete: Option<String>,
 }
 
 /// `table` を参照している外部キー (逆参照) を抽出する。参照先カラムが不明な
@@ -212,9 +219,11 @@ pub fn incoming_foreign_keys(all: &[ForeignKey], table: &str) -> Vec<IncomingFor
                 return None;
             }
             Some(IncomingForeignKey {
+                schema: None,
                 table: fk.table.clone(),
                 column: fk.column.clone(),
                 referenced_column: referenced_column.clone(),
+                on_delete: fk.on_delete.clone(),
             })
         })
         .collect()
@@ -367,14 +376,18 @@ mod tests {
             got,
             vec![
                 IncomingForeignKey {
+                    schema: None,
                     table: "orders".into(),
                     column: "user_id".into(),
                     referenced_column: "id".into(),
+                    on_delete: None,
                 },
                 IncomingForeignKey {
+                    schema: None,
                     table: "posts".into(),
                     column: "author_id".into(),
                     referenced_column: "id".into(),
+                    on_delete: None,
                 },
             ]
         );
@@ -405,12 +418,24 @@ mod tests {
     #[test]
     fn incoming_fk_serializes_referenced_column_in_camel_case() {
         let v = serde_json::to_value(IncomingForeignKey {
+            schema: Some("sales".into()),
             table: "o".into(),
             column: "u".into(),
             referenced_column: "id".into(),
+            on_delete: Some("CASCADE".into()),
         })
         .unwrap_or_default();
         assert_eq!(v["referencedColumn"], "id");
+        assert_eq!(v["onDelete"], "CASCADE");
+        assert_eq!(v["schema"], "sales");
+    }
+
+    #[test]
+    fn incoming_fk_carries_on_delete_rule() {
+        let mut f = fk("orders", "user_id", "users", Some("id"), None);
+        f.on_delete = Some("CASCADE".into());
+        let got = incoming_foreign_keys(&[f], "users");
+        assert_eq!(got[0].on_delete.as_deref(), Some("CASCADE"));
     }
 
     #[test]

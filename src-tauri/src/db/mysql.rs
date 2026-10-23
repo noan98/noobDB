@@ -21,6 +21,7 @@ use super::{
     build_insert_sql, columns_of, decode_string_or_bytes, init_sql_of, DbConnectOptions,
     DriverKind, SslMode,
 };
+use super::{GuardedStatement, GuardedTxOutcome};
 use crate::error::{AppError, Result};
 
 pub struct MySqlConn {
@@ -1067,6 +1068,35 @@ impl MySqlConn {
         }
     }
 
+    /// 文列の対象表に非トランザクショナル (MyISAM 等) があるか。警告 1196 の検出
+    /// (`rollback_was_incomplete`) は `max_error_count=0` のセッションでは警告が出ないため
+    /// 取りこぼす。そこで、対象表のエンジンを `write_target_is_non_transactional` で事前に
+    /// 判定した結果も併用する (#1777)。同じ対象表は 1 回だけ調べる。調べられないとき
+    /// (照会失敗) は安全側で true。
+    async fn touches_non_transactional_table(
+        &self,
+        database: Option<&str>,
+        statements: &[GuardedStatement<'_>],
+    ) -> bool {
+        let mut seen = std::collections::HashSet::new();
+        for st in statements {
+            let Some((target, _)) = extract_target_table_with_alias(st.sql) else {
+                continue;
+            };
+            if !seen.insert(target) {
+                continue;
+            }
+            if self
+                .write_target_is_non_transactional(database, st.sql)
+                .await
+                .unwrap_or(true)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Row-by-row probe inside a rolled-back transaction to find the first
     /// rejected row. See [`Connection::probe_failing_row`] (#687).
     pub(crate) async fn probe_failing_row(
@@ -1193,21 +1223,48 @@ impl MySqlConn {
         statements: &[String],
         database: Option<&str>,
     ) -> Result<u64> {
+        let stmts = super::unchecked_statements(statements);
+        Ok(self
+            .execute_transaction_guarded(&stmts, database)
+            .await?
+            .total_affected())
+    }
+
+    /// [`Self::execute_transaction`] に実影響行数の検算 (#1777) を足したもの。文ごとの期待
+    /// を外れたらコミットせずロールバックして内訳を返す。
+    pub async fn execute_transaction_guarded(
+        &self,
+        statements: &[GuardedStatement<'_>],
+        database: Option<&str>,
+    ) -> Result<GuardedTxOutcome> {
         if statements.is_empty() {
-            return Ok(0);
+            return Ok(GuardedTxOutcome::Committed(0));
         }
         let mut conn = self.pool.acquire().await?;
         apply_use_database(&mut conn, database).await?;
         let mut tx = conn.begin().await?;
-        let mut affected: u64 = 0;
-        for sql in statements {
-            let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+        let mut counts: Vec<u64> = Vec::with_capacity(statements.len());
+        for st in statements {
+            let result = sqlx::query(sqlx::AssertSqlSafe(st.sql))
                 .execute(&mut *tx)
                 .await?;
-            affected += result.rows_affected();
+            counts.push(result.rows_affected());
+        }
+        if let Some(violation) = super::evaluate_guard(statements, &counts) {
+            tx.rollback().await?;
+            // MyISAM など非トランザクション表を触っていると ROLLBACK は警告 1196 を出し、
+            // 書き込みの一部が戻らない。直後の SHOW WARNINGS (同じ接続) で見分ける。
+            if rollback_was_incomplete(&mut conn).await
+                || self
+                    .touches_non_transactional_table(database, statements)
+                    .await
+            {
+                return Ok(GuardedTxOutcome::RollbackIncomplete(violation));
+            }
+            return Ok(GuardedTxOutcome::RolledBack(violation));
         }
         tx.commit().await?;
-        Ok(affected)
+        Ok(GuardedTxOutcome::Committed(counts.iter().sum()))
     }
 
     pub async fn databases(&self) -> Result<Vec<String>> {
@@ -2125,18 +2182,57 @@ impl MySqlConn {
             .collect())
     }
 
+    /// 生成列の式 (#1758)。`GENERATION_EXPRESSION` は MySQL 5.7+ / MariaDB 10.2+ にある。
+    pub async fn generated_column_exprs(
+        &self,
+        db: &str,
+        table: &str,
+    ) -> Result<Vec<(String, String)>> {
+        let rows: Vec<MySqlRow> = sqlx::query(
+            "SELECT COLUMN_NAME, GENERATION_EXPRESSION FROM information_schema.COLUMNS \
+             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
+               AND GENERATION_EXPRESSION IS NOT NULL AND GENERATION_EXPRESSION <> '' \
+             ORDER BY ORDINAL_POSITION",
+        )
+        .bind(db)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let text = |i: usize| {
+                    r.try_get::<String, _>(i)
+                        .ok()
+                        .or_else(|| decode_text_col(r, i).ok())
+                };
+                Some((
+                    text(0)?,
+                    super::column_deps::unescape_mysql_generation_expression(&text(1)?),
+                ))
+            })
+            .collect())
+    }
+
     /// Row identity strategy for inline editing (#849). MySQL has no cheap
     /// physical row identifier exposed to SQL (unlike SQLite's `rowid` or
-    /// PostgreSQL's `ctid`), so the only fallback once a table has no PK is
-    /// matching every column in the WHERE clause.
+    /// PostgreSQL's `ctid`), so once a table has no PK the identity is a UNIQUE NOT NULL
+    /// key (#1776) if there is one, else matching every column in the WHERE clause.
     pub async fn row_identity(&self, db: &str, table: &str) -> Result<TableRowIdentity> {
         let cols = self.columns(db, table).await?;
         if let Some(identity) = super::row_identity_pk_or_none(&cols) {
             return Ok(identity);
         }
+        // PK は無いが UNIQUE NOT NULL キーがあれば、それで 1 行に定める (#1776)。
+        // 取得に失敗しても編集不可にはせず、従来の all_columns 判定へ進める。
+        let indexes = self.list_indexes(db, table).await.unwrap_or_default();
+        if let Some(key) = super::pick_unique_row_key(&cols, &indexes) {
+            return Ok(super::unique_key_identity(key));
+        }
         Ok(TableRowIdentity {
             strategy: "all_columns".into(),
             hidden_column: None,
+            key_columns: Vec::new(),
         })
     }
 
@@ -3138,6 +3234,19 @@ async fn run_sql_on(conn: &mut sqlx::MySqlConnection, sql: &str) -> Result<Query
             QueryResult::empty(result.rows_affected(), started.elapsed().as_millis() as u64)
                 .with_server_messages(messages),
         )
+    }
+}
+
+/// 直前の `ROLLBACK` が「一部の非トランザクション表を戻せなかった」(警告 1196
+/// `ER_WARNING_NOT_COMPLETE_ROLLBACK`) を出したか (#1777)。`SHOW WARNINGS` は読み取り専用文で、
+/// 診断領域を消すような文を挟まないよう ROLLBACK の直後に呼ぶ。取得に失敗したときは
+/// 「戻った」とは言い切れないので、安全側で未完了 (true) とする。
+async fn rollback_was_incomplete(conn: &mut sqlx::MySqlConnection) -> bool {
+    match sqlx::raw_sql("SHOW WARNINGS").fetch_all(&mut *conn).await {
+        Ok(rows) => rows
+            .iter()
+            .any(|r| r.try_get::<u32, _>(1).ok() == Some(1196)),
+        Err(_) => true,
     }
 }
 

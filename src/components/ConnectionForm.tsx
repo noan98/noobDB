@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Box, chakra, Flex, Text } from "@chakra-ui/react";
-import { AnimatePresence } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { staggerContainer, variants } from "../motion";
 import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir, join, dirname } from "@tauri-apps/api/path";
 import {
@@ -20,7 +21,7 @@ import { keyringReasonKey, useKeyringStatus } from "../keyringStatus";
 import { Segmented, type SegmentedOption } from "./Segmented";
 import { SettingsInfo, SettingsLabelWithInfo } from "./settingsLayout";
 import { Icon, ICON_SIZES } from "./Icon";
-import { Button, Heading, Input, Select, Switch, Textarea } from "./ui";
+import { Button, Heading, Input, Select, SelectableCard, Switch, Textarea } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { Tooltip } from "./Tooltip";
 import { FieldError, FieldLabel, FormSection } from "./modalForm";
@@ -33,9 +34,17 @@ import {
   type DbAuthMethod,
 } from "./awsIam";
 import { ComboSelect } from "./ComboSelect";
+import { ConnectionPathDiagram } from "./ConnectionPathDiagram";
+import { buildConnectionPath } from "./connectionPath";
 import { buildConnectionUrl, parseConnectionUrl } from "./connectionUrl";
 import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
-import { COLOR_INPUT_FALLBACK, DEFAULT_PRODUCTION_COLOR, PROFILE_COLOR_PRESETS } from "../profileIdentity";
+import {
+  COLOR_INPUT_FALLBACK,
+  DEFAULT_PRODUCTION_COLOR,
+  PROFILE_COLOR_PRESETS,
+  driverColor,
+  driverIconName,
+} from "../profileIdentity";
 
 // Bullet glyphs shown (read-only) to stand in for a secret that is already
 // saved in the OS keyring. The real value is not part of the profile payload,
@@ -274,6 +283,73 @@ function defaultUserFor(driver: DriverKind): string {
   }
 }
 
+const DRIVER_CHOICES: readonly DriverKind[] = ["mysql", "postgres", "sqlite"];
+
+// ドライバカードの横並び行 (stagger 入場の親)。入場だけを `motion.div` に任せ、
+// 見た目・ホバー/押下は `SelectableCard` に任せる (`ProfileCardGrid.tsx` と同じ分離。
+// `SelectableCard` 自身を motion 化するとホバーリフトが効かなくなる)。
+const MotionDriverRow = chakra(
+  motion.div,
+  { base: { display: "flex", flexWrap: "wrap", gap: "2" } },
+  { forwardProps: ["variants", "initial", "animate"] },
+);
+const MotionDriverCardWrap = chakra(
+  motion.div,
+  { base: { display: "flex", flex: "1 1 120px" } },
+  { forwardProps: ["variants"] },
+);
+
+/**
+ * ドライバ選択カード。ブランドグリフ (`driverIconName`) とブランド色 (`driverColor`) は
+ * プロファイルカード・ツリー行と同じ単一ソース。選択状態は `aria-pressed`。
+ */
+function DriverCard({
+  driver,
+  selected,
+  onSelect,
+}: {
+  driver: DriverKind;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const t = useT();
+  const icon = driverIconName(driver);
+  const name =
+    driver === "mysql"
+      ? t("formDriverMysql")
+      : driver === "postgres"
+        ? t("formDriverPostgres")
+        : t("formDriverSqlite");
+  const hint =
+    driver === "sqlite" ? t("formDriverHintFile") : t("formDriverHintPort", { port: defaultPortFor(driver) });
+  return (
+    <MotionDriverCardWrap variants={variants.staggerItem}>
+      <SelectableCard
+        type="button"
+        size="compact"
+        aria-pressed={selected}
+        data-testid={`connection-form-driver-${driver}`}
+        onClick={onSelect}
+        flex="1"
+      >
+        <Flex align="center" gap="2">
+          {icon && (
+            <Box as="span" display="flex" flexShrink={0} aria-hidden style={{ color: driverColor(driver) }}>
+              <Icon name={icon} size={ICON_SIZES.lg} />
+            </Box>
+          )}
+          <Text m="0" fontWeight="600" fontSize="sm" color="app.text">
+            {name}
+          </Text>
+        </Flex>
+        <Text m="0" textStyle="caption">
+          {hint}
+        </Text>
+      </SelectableCard>
+    </MotionDriverCardWrap>
+  );
+}
+
 function normalizeDriver(driver: string | undefined): DriverKind {
   if (driver === "postgres" || driver === "sqlite" || driver === "mysql") {
     return driver;
@@ -359,6 +435,7 @@ function CheckboxRow({
 
 export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) {
   const t = useT();
+  const reducedMotion = useReducedMotion();
   // 可視ラベル (<label>) と入力コントロールを `htmlFor`/`id` で関連付けるための
   // 一意な ID プレフィックス (a11y: axe の label / select-name ルール対応)。
   const fid = useId();
@@ -472,6 +549,21 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const awsIamConfig = () =>
     isFileBacked ? null : buildAwsIamConfig(authMethod, driver, awsRegion, awsProfile);
   const inferredRegion = inferRdsRegion(host);
+
+  // 経路図 (#1754): 入力中の非秘密フィールドから導出し、入力に即追従する。
+  const routePath = buildConnectionPath({
+    route,
+    host,
+    port,
+    ssh: useSsh
+      ? {
+          host: sshHost,
+          port: sshPort,
+          jump: useSshJump ? { host: sshJumpHost, port: sshJumpPort } : null,
+        }
+      : null,
+    ssm: useSsm ? { target: ssmTarget } : null,
+  });
 
   const routeOptions: SegmentedOption<ConnectionRoute>[] = [
     { value: "direct", label: t("formRouteDirect") },
@@ -995,17 +1087,22 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       </Box>
 
       <Box gridColumn="span 2">
-        <FieldLabel htmlFor={`${fid}-driver`}>{t("formDriver")}</FieldLabel>
-        <Select
-          id={`${fid}-driver`}
+        <FieldLabel as="div" id={`${fid}-driver-label`}>
+          {t("formDriver")}
+        </FieldLabel>
+        <MotionDriverRow
+          role="group"
+          aria-labelledby={`${fid}-driver-label`}
           data-testid="connection-form-driver"
-          value={driver}
-          onChange={(e) => handleDriverChange(e.target.value as DriverKind)}
+          data-value={driver}
+          variants={staggerContainer(reducedMotion ?? false)}
+          initial="initial"
+          animate="animate"
         >
-          <option value="mysql">{t("formDriverMysql")}</option>
-          <option value="postgres">{t("formDriverPostgres")}</option>
-          <option value="sqlite">{t("formDriverSqlite")}</option>
-        </Select>
+          {DRIVER_CHOICES.map((d) => (
+            <DriverCard key={d} driver={d} selected={driver === d} onSelect={() => handleDriverChange(d)} />
+          ))}
+        </MotionDriverRow>
       </Box>
 
       {isFileBacked ? (
@@ -1338,6 +1435,17 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
           <Legend>{t("formRoute")}</Legend>
           <Box mb="2">
             <Segmented value={route} options={routeOptions} onChange={setRoute} ariaLabel={t("formRoute")} />
+          </Box>
+          <Box
+            mb="3"
+            p="3"
+            borderRadius="md"
+            border="1px solid"
+            borderColor="app.border"
+            bg="app.surfaceMuted"
+            data-testid="connection-form-path"
+          >
+            <ConnectionPathDiagram path={routePath} driver={driver} accentColor={color} />
           </Box>
           {useSsm && (
             <>

@@ -28,6 +28,10 @@ import {
   keymap,
   lineNumbers,
   highlightActiveLine,
+  drawSelection,
+  rectangularSelection,
+  crosshairCursor,
+  placeholder,
   type DecorationSet,
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, selectAll, toggleComment } from "@codemirror/commands";
@@ -41,6 +45,7 @@ import {
   closeBracketsKeymap,
   completionKeymap,
   completionStatus,
+  snippet,
   type CompletionContext,
   type CompletionResult,
 } from "@codemirror/autocomplete";
@@ -52,7 +57,7 @@ import {
   syntaxTree,
 } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
-import { api, type ForeignKey, type TableColumnInfo, type TableSchema } from "../api/tauri";
+import { api, type ForeignKey, type Snippet, type TableColumnInfo, type TableSchema } from "../api/tauri";
 import { joinCompletions } from "./sqlJoinCompletion";
 import { fkJoinSnippets } from "./fkJoin";
 import { derivedCompletions } from "./sqlDerivedCompletion";
@@ -65,6 +70,8 @@ import {
 } from "./sqlSchemaCompletion";
 import { renderColumnInfo } from "./completionInfoPanel";
 import { renderCompletionIcon } from "./completionIcons";
+import { snippetCompletionSource } from "./sqlSnippetCompletion";
+import { snippetHasFields, snippetToCodeMirrorTemplate } from "../snippetTemplate";
 import { t, useT } from "../i18n";
 import { useSettings } from "../settings";
 import { springs } from "../motion";
@@ -72,8 +79,11 @@ import { statementAtOffset, statementsFromOffset } from "../sqlScript";
 import { diagnosticsFromTree, type SqlLintMessages } from "./sqlLint";
 import { usePreflightImpact, type PreflightResult } from "./usePreflight";
 import { PreflightBadge } from "./PreflightBadge";
+import { ScanPreflightBadge } from "./ScanPreflightBadge";
+import { useScanPreflight } from "./useScanPreflight";
 import { PreflightSampleModal } from "./PreflightSampleModal";
 import { buildPreflightSampleSql, PREFLIGHT_MAX_CHARS } from "./preflight";
+import { buildEditorPlaceholder, pickExampleTable } from "./editorPlaceholder";
 import { EditorStateCache, sqlConfigChanged, type AppliedEditorConfig } from "./editorStateCache";
 import { comboToCodeMirror } from "../shortcutKeys";
 import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
@@ -346,6 +356,11 @@ interface Props {
    */
   queryHistory?: string[];
   /**
+   * 補完候補に出す保存済みスニペット (#1489)。呼び出し側が現在の接続のスコープで絞り込んで
+   * 渡す。補完ソースは ref 越しに最新を読むので、変わってもエディタは作り直さない。
+   */
+  snippets?: Snippet[];
+  /**
    * エディタ系ショートカット (Run / Run statement / Preview / Format) の解決済み
    * コンボ (#557)。未指定の項目は既定にフォールバックする。バインドが変わると
    * CodeMirror のキーマップを Compartment 経由で再構成する。
@@ -362,6 +377,8 @@ interface Props {
    * 保持し、危険クエリ確認ダイアログへ件数を引き継ぐのに使う。
    */
   onPreflightImpact?: (result: PreflightResult | null) => void;
+  /** 手動トランザクション中は true。スキャンプリフライトの EXPLAIN を休止する (#1508)。 */
+  scanPreflightPaused?: boolean;
   /**
    * 「この SQL を解説」「最適化案を提案」(#695) の起動先。選択範囲 (無ければ全文) を渡す。
    * 結果はボトムパネルに出る。AI が使えないときは渡されても項目を出さない。
@@ -377,6 +394,11 @@ interface Props {
 export interface QueryEditorHandle {
   /** Inserts text at the current cursor (replacing any selection). */
   insertText: (text: string) => void;
+  /**
+   * スニペット本文を挿入する (#1489)。タブストップ記法 (`${1:...}`) を含めば Tab / Shift+Tab で
+   * 巡回できる形で展開し、含まなければ `insertText` と同じ。
+   */
+  insertSnippet: (text: string) => void;
   /** Replaces the entire editor contents (used to restore a history entry). */
   setText: (text: string) => void;
   /** エディタ本文の全文 (#692。失敗した SQL の範囲探索用)。 */
@@ -666,10 +688,12 @@ export const QueryEditor = memo(
       emergencyMode,
       onToggleEmergencyMode,
       queryHistory,
+      snippets,
       editorBindings,
       focusMode,
       onToggleFocus,
       onPreflightImpact,
+      scanPreflightPaused,
       onAiSqlAction,
       onRevealSchemaObject,
     }: Props,
@@ -682,6 +706,7 @@ export const QueryEditor = memo(
     const sqlCompartment = useMemo(() => new Compartment(), []);
     const actionKeymapCompartment = useMemo(() => new Compartment(), []);
     const lintCompartment = useMemo(() => new Compartment(), []);
+    const placeholderCompartment = useMemo(() => new Compartment(), []);
 
     // リアルタイム構文チェック (#704)。設定でオン/オフでき、診断メッセージは i18n
     // 経由で日英対応。linter は `syntaxTree(state)` の (lang-sql が既に構築した)
@@ -756,7 +781,17 @@ export const QueryEditor = memo(
     const schemaKey = `${
       schemaTable ? `${schemaTable.database}.${schemaTable.name}|${schemaTable.columns.join(",")}` : ""
     }|fk:${fkRev}`;
+    // 空エディタのゴースト文面 (#1785)。選択中のテーブル名 > スキーマ先頭のテーブル名を例示に
+    // 使い、実行ショートカットは割り当て変更に追従する。文面が変わったときだけ Compartment を
+    // 再構成するので、テーブル切替のたびにエディタは作り直さない。
+    const placeholderText = buildEditorPlaceholder({
+      driver,
+      table: pickExampleTable(activeTable, schemaTable, databaseSchema),
+      genericTable: t("editorPlaceholderGenericTable"),
+      hint: t("editorPlaceholderHint", { shortcut: formatComboLabel(runCombo) }),
+    });
     const desiredConfig: AppliedEditorConfig = {
+      placeholder: placeholderText,
       driver,
       schemaKey,
       databaseSchema: databaseSchema ?? null,
@@ -943,6 +978,9 @@ export const QueryEditor = memo(
     driverRef.current = driver;
     // 履歴ナビゲーション用。エディタは初回だけ生成されキーマップ内のクロージャ
     // から ref を読むため、props の履歴はレンダのたびに ref へ流し込む。
+    // スニペット補完 (#1489) の候補。毎レンダーで最新を差し、補完ソースが ref 越しに読む。
+    const snippetsRef = useRef<Snippet[]>(snippets ?? []);
+    snippetsRef.current = snippets ?? [];
     const historyRef = useRef<string[]>(queryHistory ?? []);
     historyRef.current = queryHistory ?? [];
     const navStateRef = useRef<HistoryNavState>(initialHistoryNav);
@@ -1083,6 +1121,10 @@ export const QueryEditor = memo(
       // タブごとの state を作る (#1308)。初回マウントと、保存済み state の無いタブへの
       // 切替の両方で使う。拡張はすべて ref / compartment 越しに props を読むので、
       // どのタブの state にも同じものを載せてよい。
+      const snippetSource = snippetCompletionSource(
+        () => snippetsRef.current,
+        () => t("editorCompletionSnippet"),
+      );
       const makeState = (doc: string, selection: { anchor: number; head: number } | null): EditorState =>
         EditorState.create({
           doc,
@@ -1090,6 +1132,14 @@ export const QueryEditor = memo(
           extensions: [
             lineNumbers(),
             highlightActiveLine(),
+            // 矩形選択 / マルチカーソル (#1488)。複数選択の描画には drawSelection が必須。
+            // Alt+ドラッグ (macOS は Option+ドラッグ) で矩形選択、Ctrl/Cmd+クリックでカーソル追加、
+            // Mod-d で次の一致を選択に追加、Mod-Alt-↑/↓ で上下にカーソル追加 (defaultKeymap)。
+            // 実行系 (選択範囲を実行・整形・プリフライト) は主選択 (`selection.main`) だけを対象にする。
+            EditorState.allowMultipleSelections.of(true),
+            drawSelection(),
+            rectangularSelection(),
+            crosshairCursor(),
             history(),
             indentOnInput(),
             bracketMatching(),
@@ -1101,6 +1151,11 @@ export const QueryEditor = memo(
               icons: false,
               addToOptions: [{ render: (c) => renderCompletionIcon(c.type), position: 20 }],
             }),
+            // 保存済みスニペットの補完 (#1489)。名前 / タグで候補に出て、確定でタブストップ展開する。
+            // スキーマ補完とは別の補完ソースとして languageData に載せ、併存させる。
+            // 補完ソースは関数の同一性でキー付けされる (毎回作り直すと結果が捨てられる) ので、
+            // ここで 1 度だけ作って返す。
+            EditorState.languageData.of(() => [{ autocomplete: snippetSource }]),
             // エディタ内検索・置換。検索パネルはエディタ上部に出し、選択語の
             // 同一語ハイライトも有効化する。キーバインドは下の keymap に searchKeymap
             // を含める (Mod-f はエディタにフォーカスがあるときだけ起動し、結果横断検索
@@ -1136,6 +1191,8 @@ export const QueryEditor = memo(
             // 構文チェック (#704) は Compartment 越しにして、設定トグルや言語切替で
             // 再構成できるようにする。作成時点の設定値で初期化する。
             lintCompartment.of(buildLintExtension(sqlLintEnabledRef.current)),
+            // 空時のみ出る淡色ゴースト (#1785)。文面は Compartment 越しに差し替える。
+            placeholderCompartment.of(placeholder(desiredConfigRef.current.placeholder)),
             sqlCompartment.of(
               buildSqlExtension(
                 sqlArgsRef.current.driver,
@@ -1161,6 +1218,8 @@ export const QueryEditor = memo(
                 key: "ArrowUp",
                 run: (v) => {
                   if (completionStatus(v.state) === "active") return false;
+                  // 複数カーソル中は履歴ナビで本文を置き換えない (#1488)。
+                  if (v.state.selection.ranges.length !== 1) return false;
                   const sel = v.state.selection.main;
                   if (!sel.empty) return false;
                   if (v.state.doc.lineAt(sel.head).number !== 1) return false;
@@ -1174,13 +1233,17 @@ export const QueryEditor = memo(
                 key: "ArrowDown",
                 run: (v) => {
                   if (completionStatus(v.state) === "active") return false;
+                  // 複数カーソル中は履歴ナビで本文を置き換えない (#1488)。
+                  if (v.state.selection.ranges.length !== 1) return false;
                   const sel = v.state.selection.main;
                   if (!sel.empty) return false;
                   if (v.state.doc.lineAt(sel.head).number !== v.state.doc.lines) return false;
                   return applyHistoryNav(v, navigateNewer(historyRef.current, navStateRef.current));
                 },
               },
-              ...searchKeymap,
+              // Mod-Shift-l (一致をすべて選択) はアプリ共通のテーマ切替 (toggleTheme) と衝突する
+              // ので外す (#1488)。次の一致の追加は Mod-d が担う。
+              ...searchKeymap.filter((b) => b.key !== "Mod-Shift-l"),
               ...defaultKeymap,
               ...historyKeymap,
               ...completionKeymap,
@@ -1373,7 +1436,8 @@ export const QueryEditor = memo(
       const sqlChanged = sqlConfigChanged(applied, want);
       const lintChanged = applied.lint !== want.lint;
       const keymapChanged = applied.keymap !== want.keymap;
-      if (!sqlChanged && !lintChanged && !keymapChanged) return;
+      const placeholderChanged = applied.placeholder !== want.placeholder;
+      if (!sqlChanged && !lintChanged && !keymapChanged && !placeholderChanged) return;
       const effects: StateEffect<unknown>[] = [];
       if (sqlChanged) {
         effects.push(
@@ -1393,6 +1457,7 @@ export const QueryEditor = memo(
       if (keymapChanged) {
         effects.push(actionKeymapCompartment.reconfigure(keymap.of(buildActionKeymap(bindingsRef.current))));
       }
+      if (placeholderChanged) effects.push(placeholderCompartment.reconfigure(placeholder(want.placeholder)));
       appliedConfigRef.current = want;
       view.dispatch({ effects });
       // 方言 (driver) が変わっても `@codemirror/lint` は doc 変更が無い限り再実行
@@ -1410,6 +1475,7 @@ export const QueryEditor = memo(
       desiredConfig.defaultDatabase,
       desiredConfig.lint,
       desiredConfig.keymap,
+      desiredConfig.placeholder,
     ]);
 
     // 影響行数プリフライト (#737)。現在文が単純な UPDATE / DELETE のとき、対象と
@@ -1421,6 +1487,16 @@ export const QueryEditor = memo(
       sessionId: sessionId ?? null,
       database: defaultDatabase ?? null,
       enabled: settings.preflightImpactEnabled && !disabled,
+      driver,
+    });
+    // SELECT のスキャンプリフライト (#1508、既定オフ)。現在文が単純な SELECT のとき、
+    // 裏で EXPLAIN を実行して推定スキャン行数 / 全表スキャンを出す。影響行数バッジとは
+    // 対象文が排他 (SELECT か UPDATE/DELETE か) なので同じ入力テキストを共有する。
+    const scanPreflight = useScanPreflight({
+      sql: preflightSql || null,
+      sessionId: sessionId ?? null,
+      database: defaultDatabase ?? null,
+      enabled: settings.scanPreflightEnabled && !disabled && !scanPreflightPaused,
       driver,
     });
     // バッジから開く影響行サンプル (#1626)。開いている間はその時点の SQL に固定する。
@@ -1455,6 +1531,21 @@ export const QueryEditor = memo(
       view.focus();
     };
 
+    // スニペット本文を挿入する (#1489)。`${1:...}` などのタブストップ記法を含めば
+    // CodeMirror の snippet として展開し (Tab / Shift+Tab でフィールド移動)、含まなければ
+    // `insertAtCursor` と同じ平文挿入 (従来どおりカーソルは末尾)。
+    const insertSnippetText = (text: string) => {
+      const view = viewRef.current;
+      if (!view) return;
+      if (!snippetHasFields(text)) {
+        insertAtCursor(text);
+        return;
+      }
+      const sel = view.state.selection.main;
+      snippet(snippetToCodeMirrorTemplate(text))(view, null, sel.from, sel.to);
+      view.focus();
+    };
+
     // 選択範囲 (無ければ全文) の SQL を AI の解説 / 最適化案へ渡す (#695)。ref だけを読むので、
     // 初回だけ構築するハンドルから呼んでも古いクロージャにならない。
     const requestAiSql = (kind: SqlAssistKind) => {
@@ -1474,6 +1565,7 @@ export const QueryEditor = memo(
       ref,
       () => ({
         insertText: insertAtCursor,
+        insertSnippet: insertSnippetText,
         setText: (text: string) => {
           const view = viewRef.current;
           if (!view) return;
@@ -1861,7 +1953,14 @@ export const QueryEditor = memo(
     }
 
     return (
-      <Box display="flex" flexDirection="column" flex="1 1 auto" minHeight={0} minWidth={0}>
+      <Box
+        display="flex"
+        flexDirection="column"
+        flex="1 1 auto"
+        minHeight={0}
+        minWidth={0}
+        data-focus-landing-region=""
+      >
         <Box
           display="flex"
           gap="2"
@@ -1902,6 +2001,8 @@ export const QueryEditor = memo(
           )}
           {/* 影響行数プリフライトのバッジ (#737)。実行ボタン付近に常時表示する。 */}
           <PreflightBadge result={preflight} onOpenSample={sessionId ? openPreflightSample : undefined} />
+          {/* SELECT のスキャン行数 / フルスキャン警告バッジ (#1508、opt-in)。 */}
+          <ScanPreflightBadge result={scanPreflight} />
           <ToolbarButton
             onClick={formatSelectionOrAll}
             disabled={disabled || !hasContent}

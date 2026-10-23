@@ -1,6 +1,6 @@
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 
 use directories::ProjectDirs;
 
@@ -22,8 +22,8 @@ const APP: &str = "noobDB";
 /// ままなので、ロックの中身自体は壊れていない。
 static STORE_LOCK: Mutex<()> = Mutex::new(());
 
-fn lock_store() -> std::sync::MutexGuard<'static, ()> {
-    STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+fn lock_store() -> Result<crate::store_lock::StoreGuard<'static>> {
+    crate::store_lock::acquire(&STORE_LOCK, &profiles_path()?)
 }
 
 pub fn data_dir() -> Option<PathBuf> {
@@ -147,7 +147,7 @@ fn skipped_entries(values: &[serde_json::Value]) -> Vec<SkippedEntry> {
 /// 読み飛ばされた要素の一覧。ファイルが無い / 空 / 配列として壊れているときは空
 /// (後者は `load_all` が別途エラーにする)。
 pub fn list_skipped() -> Result<Vec<SkippedEntry>> {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     let path = profiles_path()?;
     let Ok(content) = std::fs::read_to_string(&path) else {
         return Ok(Vec::new());
@@ -163,7 +163,7 @@ pub fn list_skipped() -> Result<Vec<SkippedEntry>> {
 /// いた場合に別の要素を消さないよう、`id` (一覧で見えていたもの) が一致しなければ
 /// 拒否する。
 pub fn delete_skipped(index: usize, id: Option<&str>) -> Result<()> {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     let path = profiles_path()?;
     let content = std::fs::read_to_string(&path)?;
     let mut values: Vec<serde_json::Value> = serde_json::from_str(&content)?;
@@ -211,7 +211,7 @@ fn save_all_locked(profiles: &[ConnectionProfile]) -> Result<()> {
 }
 
 pub fn load_all() -> Result<Vec<ConnectionProfile>> {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     load_all_locked()
 }
 
@@ -229,7 +229,7 @@ pub fn update_all<F>(f: F) -> Result<()>
 where
     F: FnOnce(Vec<ConnectionProfile>) -> Result<Vec<ConnectionProfile>>,
 {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     let current = load_all_locked()?;
     let next = f(current)?;
     save_all_locked(&next)
@@ -291,7 +291,7 @@ pub fn upsert(profile: ConnectionProfile) -> Result<()> {
     // 読み→書きの全体でロックを保持する (`load_all`/`save_all` を素朴に呼ぶと
     // その間にロックが解放され、他の呼び出しの変更を踏む余地が生まれるため、
     // ロックを取らない内部版を直接使う)。
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     let mut all = load_all_locked()?;
     if let Some(existing) = all.iter_mut().find(|p| p.id == profile.id) {
         *existing = profile;
@@ -302,7 +302,7 @@ pub fn upsert(profile: ConnectionProfile) -> Result<()> {
 }
 
 pub fn delete(id: &str) -> Result<()> {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     let mut all = load_all_locked()?;
     all.retain(|p| p.id != id);
     save_all_locked(&all)
