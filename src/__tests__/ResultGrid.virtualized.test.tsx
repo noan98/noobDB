@@ -26,6 +26,7 @@ const ROW_H = 28;
 const protoOffsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
 const protoOffsetWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth");
 const protoClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+const protoClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
 const protoScrollWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollWidth");
 // ロケールと ResizeObserver も書き換えるため、元の値を控えて afterAll で確実に戻す
 // (Vitest はファイル単位で環境を隔離するが、後始末を漏らさないようにする)。
@@ -67,6 +68,14 @@ beforeAll(() => {
       return 800;
     },
   });
+  // virtual-core 3.19 以降はスクロール枠 (ビューポート) の寸法を offsetHeight ではなく
+  // `clientHeight` から取る。jsdom は 0 を返すため、窓が 0 行になり全行を描画してしまう。
+  Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.tagName === "TR" ? ROW_H : VIEWPORT_H;
+    },
+  });
   Object.defineProperty(HTMLElement.prototype, "scrollWidth", {
     configurable: true,
     get() {
@@ -104,6 +113,7 @@ afterAll(() => {
   if (protoOffsetHeight) Object.defineProperty(HTMLElement.prototype, "offsetHeight", protoOffsetHeight);
   if (protoOffsetWidth) Object.defineProperty(HTMLElement.prototype, "offsetWidth", protoOffsetWidth);
   if (protoClientWidth) Object.defineProperty(HTMLElement.prototype, "clientWidth", protoClientWidth);
+  if (protoClientHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", protoClientHeight);
   if (protoScrollWidth) Object.defineProperty(HTMLElement.prototype, "scrollWidth", protoScrollWidth);
   Element.prototype.scrollTo = originalScrollTo;
 });

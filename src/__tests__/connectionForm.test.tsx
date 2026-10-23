@@ -414,7 +414,7 @@ describe("ConnectionForm AWS IAM authentication (#734)", () => {
     renderWithProviders(
       <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
     );
-    fireEvent.change(screen.getByLabelText(t("formDriver")), { target: { value: "sqlite" } });
+    fireEvent.click(screen.getByTestId("connection-form-driver-sqlite"));
     expect(screen.queryByLabelText(t("formAuthMethod"))).toBeNull();
   });
 });
@@ -448,7 +448,7 @@ describe("ConnectionForm connection URL import (#1540)", () => {
     expect((screen.getByLabelText(t("formUser")) as HTMLInputElement).value).toBe("app");
     expect((screen.getByLabelText(t("formDatabase")) as HTMLInputElement).value).toBe("shop");
     expect((screen.getByLabelText(t("formTlsMode")) as HTMLSelectElement).value).toBe("verify_full");
-    expect((screen.getByTestId("connection-form-driver") as HTMLSelectElement).value).toBe("postgres");
+    expect(screen.getByTestId("connection-form-driver-postgres")).toHaveAttribute("aria-pressed", "true");
     // 入力欄は消え、未対応パラメータの名前だけが案内される。
     expect((screen.getByTestId("connection-form-url") as HTMLInputElement).value).toBe("");
     expect(screen.getByRole("status")).toHaveTextContent("application_name");
@@ -490,7 +490,7 @@ describe("ConnectionForm connection URL import (#1540)", () => {
       <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
     );
     importUrl("sqlite:///var/data/app.db");
-    expect((screen.getByTestId("connection-form-driver") as HTMLSelectElement).value).toBe("sqlite");
+    expect(screen.getByTestId("connection-form-driver-sqlite")).toHaveAttribute("aria-pressed", "true");
     expect((screen.getByTestId("connection-form-sqlite-path") as HTMLInputElement).value).toBe(
       "/var/data/app.db",
     );
@@ -587,6 +587,16 @@ describe("ConnectionForm connection route (#1684)", () => {
     const req = testConnection.mock.calls[0][0];
     expect(req.ssm).toBeNull();
     expect(req.ssh?.host).toBe("bastion.example.com");
+  });
+
+  it("shows a jump node in the route diagram once a jump host is entered", () => {
+    renderForm(null);
+    pick(t("formRouteSsh"));
+    expect(screen.queryByTestId("conn-path-node-jump")).toBeNull();
+    fireEvent.click(screen.getByRole("switch", { name: t("formUseSshJump") }));
+    fireEvent.change(screen.getByLabelText(t("formSshJumpHost")), { target: { value: "gw.example.com" } });
+    expect(screen.getByTestId("conn-path-node-jump")).toBeTruthy();
+    expect(screen.getByText("gw.example.com:22")).toBeTruthy();
   });
 
   it("rejects a malformed instance ID with an inline error and does not save", async () => {
@@ -838,5 +848,24 @@ describe("ConnectionForm URL copy and fixed tunnel port (#1630)", () => {
     fireEvent.click(screen.getByRole("button", { name: t("formSave") }));
     expect(await screen.findByText(t("formInvalidSshLocalPort"))).toBeInTheDocument();
     expect(saveProfile).not.toHaveBeenCalled();
+  });
+});
+
+describe("ConnectionForm ドライバ選択カード (#1503)", () => {
+  it("既定は MySQL が選択され、カードのクリックでドライバとポート既定値が切り替わる", () => {
+    renderWithProviders(
+      <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
+    );
+    expect(screen.getByTestId("connection-form-driver-mysql")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("connection-form-driver-postgres")).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(screen.getByTestId("connection-form-driver-postgres"));
+    expect(screen.getByTestId("connection-form-driver-postgres")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("connection-form-driver-mysql")).toHaveAttribute("aria-pressed", "false");
+    expect((screen.getByLabelText(t("formPort")) as HTMLInputElement).value).toBe("5432");
+
+    fireEvent.click(screen.getByTestId("connection-form-driver-sqlite"));
+    expect(screen.getByTestId("connection-form-driver-sqlite")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("connection-form-sqlite-path")).toBeInTheDocument();
   });
 });

@@ -1,6 +1,6 @@
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 
 use directories::ProjectDirs;
 
@@ -20,8 +20,8 @@ const APP: &str = "noobDB";
 /// ままなので安全。
 static STORE_LOCK: Mutex<()> = Mutex::new(());
 
-fn lock_store() -> std::sync::MutexGuard<'static, ()> {
-    STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+fn lock_store() -> Result<crate::store_lock::StoreGuard<'static>> {
+    crate::store_lock::acquire(&STORE_LOCK, &snippets_path()?)
 }
 
 pub fn data_dir() -> Option<PathBuf> {
@@ -70,7 +70,7 @@ fn save_all_at(path: &std::path::Path, snippets: &[Snippet]) -> Result<()> {
 }
 
 pub fn load_all() -> Result<Vec<Snippet>> {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     load_all_locked()
 }
 
@@ -127,7 +127,7 @@ fn write_atomic(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
 
 pub fn upsert(snippet: Snippet) -> Result<()> {
     // 読み→書きの全体でロックを保持するため、ロックを取らない内部版を直接使う。
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     let mut all = load_all_locked()?;
     if let Some(existing) = all.iter_mut().find(|s| s.id == snippet.id) {
         *existing = snippet;
@@ -141,7 +141,7 @@ pub fn upsert(snippet: Snippet) -> Result<()> {
 /// 同じ ID で再作成したプロファイルに紐づいたまま残るか、どの接続からも使われなく
 /// なる (孤立)。戻した件数を返す。
 pub fn release_profile_scope(profile_id: &str) -> Result<usize> {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     let mut all = load_all_locked()?;
     let n = reset_profile_scope(&mut all, profile_id);
     if n > 0 {
@@ -162,10 +162,32 @@ fn reset_profile_scope(snippets: &mut [Snippet], profile_id: &str) -> usize {
 }
 
 pub fn delete(id: &str) -> Result<()> {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     let mut all = load_all_locked()?;
     all.retain(|s| s.id != id);
     save_all_locked(&all)
+}
+
+/// 取り込み (#1490): 読み → 統合 → 書きをロックを握ったまま一息で行う。統合の規則は
+/// 純ロジック `transfer::plan_import`。件数だけを返す。変更が無ければ書かない。
+/// 既存プロファイル ID は**ロック取得後に**読む: 先に読むと、その間に `delete_profile` が
+/// プロファイル削除 → `release_profile_scope` まで終え、消えたプロファイル限定のスニペットが
+/// 残ってしまう。ロック後に読めば、削除が先なら付け替え、後なら `release_profile_scope` が
+/// このロック解放を待ってから外す。
+pub fn import(
+    incoming: Vec<Snippet>,
+    strategy: crate::commands::profiles::ImportStrategy,
+    known_profile_ids: impl FnOnce() -> Result<std::collections::HashSet<String>>,
+    new_id: impl FnMut() -> String,
+) -> Result<super::transfer::ImportCounts> {
+    let _guard = lock_store()?;
+    let known = known_profile_ids()?;
+    let all = load_all_locked()?;
+    let (merged, counts) = super::transfer::plan_import(all, incoming, strategy, &known, new_id);
+    if counts.imported > 0 || counts.overwritten > 0 {
+        save_all_locked(&merged)?;
+    }
+    Ok(counts)
 }
 
 pub fn new_snippet_id() -> String {

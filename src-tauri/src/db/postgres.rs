@@ -7,6 +7,7 @@ use sqlx::postgres::{
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
+use super::schema_insight::IncomingForeignKey;
 use super::server_messages::capture;
 use super::tx_options::TxOptions;
 use super::types::{non_empty_comment, TableComment};
@@ -19,6 +20,7 @@ use super::types::{
 };
 use super::upsert::{conflict_clause, ImportConflict, KeyKind};
 use super::{columns_of, init_sql_of, DbConnectOptions, DriverKind, SslMode};
+use super::{GuardedStatement, GuardedTxOutcome};
 use crate::error::{AppError, Result};
 
 /// pg_stat_activity の `application_name` に載せる接続の表示名。
@@ -843,21 +845,39 @@ impl PostgresConn {
         statements: &[String],
         database: Option<&str>,
     ) -> Result<u64> {
+        let stmts = super::unchecked_statements(statements);
+        Ok(self
+            .execute_transaction_guarded(&stmts, database)
+            .await?
+            .total_affected())
+    }
+
+    /// [`Self::execute_transaction`] に実影響行数の検算 (#1777) を足したもの。文ごとの期待
+    /// を外れたらコミットせずロールバックして内訳を返す。
+    pub async fn execute_transaction_guarded(
+        &self,
+        statements: &[GuardedStatement<'_>],
+        database: Option<&str>,
+    ) -> Result<GuardedTxOutcome> {
         if statements.is_empty() {
-            return Ok(0);
+            return Ok(GuardedTxOutcome::Committed(0));
         }
         let mut conn = self.pool.acquire().await?;
         apply_search_path(&mut conn, database, &self.search_path).await?;
         let mut tx = conn.begin().await?;
-        let mut affected: u64 = 0;
-        for sql in statements {
-            let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+        let mut counts: Vec<u64> = Vec::with_capacity(statements.len());
+        for st in statements {
+            let result = sqlx::query(sqlx::AssertSqlSafe(st.sql))
                 .execute(&mut *tx)
                 .await?;
-            affected += result.rows_affected();
+            counts.push(result.rows_affected());
+        }
+        if let Some(violation) = super::evaluate_guard(statements, &counts) {
+            tx.rollback().await?;
+            return Ok(GuardedTxOutcome::RolledBack(violation));
         }
         tx.commit().await?;
-        Ok(affected)
+        Ok(GuardedTxOutcome::Committed(counts.iter().sum()))
     }
 
     /// In the tree UI, the "database" level surfaces PostgreSQL schemas
@@ -1631,7 +1651,13 @@ impl PostgresConn {
                  -- 以下 3 列は list_indexes と同じ (INCLUDE / DESC / NULLS NOT DISTINCT)。
                  COALESCE((to_jsonb(ix) ->> 'indnkeyatts')::int, ix.indnatts::int) AS key_count,
                  COALESCE(ix.indoption[(k.ord - 1)::int], 0)::int AS col_option,
-                 COALESCE((to_jsonb(ix) ->> 'indnullsnotdistinct')::bool, false) AS nulls_not_distinct
+                 COALESCE((to_jsonb(ix) ->> 'indnullsnotdistinct')::bool, false) AS nulls_not_distinct,
+                 -- #1776: INVALID (CONCURRENTLY の失敗残骸・未 ATTACH) は一意性を保証しない。
+                 NOT (ix.indisvalid AND ix.indisready) AS is_invalid,
+                 -- #1776: キー列でインデックスの照合順序が列と違えば、WHERE が複数行に当たりうる。
+                 (k.ord <= COALESCE((to_jsonb(ix) ->> 'indnkeyatts')::int, ix.indnatts::int)
+                  AND a.attnum IS NOT NULL
+                  AND ix.indcollation[(k.ord - 1)::int] IS DISTINCT FROM a.attcollation) AS coll_differs
                FROM pg_class t
                JOIN pg_namespace n ON n.oid = t.relnamespace
                JOIN pg_index ix    ON ix.indrelid = t.oid
@@ -1663,6 +1689,8 @@ impl PostgresConn {
                     r.try_get::<i32, _>("col_option").unwrap_or(0),
                 )),
                 nulls_not_distinct: r.try_get::<bool, _>("nulls_not_distinct").unwrap_or(false),
+                invalid: r.try_get::<bool, _>("is_invalid").unwrap_or(true),
+                collation_differs: r.try_get::<bool, _>("coll_differs").unwrap_or(true),
             })
             .collect();
         Ok(super::group_index_rows(index_rows))
@@ -1689,6 +1717,37 @@ impl PostgresConn {
                 let name = r.try_get::<String, _>(0).ok()?;
                 let comment = non_empty_comment(r.try_get::<Option<String>, _>(1).ok().flatten())?;
                 Some(TableComment { name, comment })
+            })
+            .collect())
+    }
+
+    /// 生成列の式 (#1758)。`attgenerated` が空でない列の `pg_attrdef` を `pg_get_expr` で読む。
+    pub async fn generated_column_exprs(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<(String, String)>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"SELECT a.attname::text, pg_catalog.pg_get_expr(d.adbin, d.adrelid)
+               FROM pg_catalog.pg_attribute a
+               JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+               JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+               JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+               WHERE n.nspname = $1 AND c.relname = $2
+                 AND a.attgenerated <> '' AND NOT a.attisdropped
+               ORDER BY a.attnum"#,
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                Some((
+                    r.try_get::<String, _>(0).ok()?,
+                    r.try_get::<String, _>(1).ok()?,
+                ))
             })
             .collect())
     }
@@ -1746,30 +1805,49 @@ impl PostgresConn {
             return Ok(TableRowIdentity {
                 strategy: "none".into(),
                 hidden_column: None,
+                key_columns: Vec::new(),
             });
         };
         if r.try_get::<bool, _>("has_pk").unwrap_or(false) {
             return Ok(TableRowIdentity {
                 strategy: "primary_key".into(),
                 hidden_column: None,
+                key_columns: Vec::new(),
             });
         }
         if !r.try_get::<bool, _>("has_columns").unwrap_or(false) {
             return Ok(TableRowIdentity {
                 strategy: "none".into(),
                 hidden_column: None,
+                key_columns: Vec::new(),
             });
         }
         let relkind = r.try_get::<String, _>("relkind").unwrap_or_default();
+        // PK は無いが UNIQUE NOT NULL キーがあれば、ctid より先にそれを採る (#1776)。
+        // ビュー / 外部テーブルには UNIQUE インデックスが無いので通常テーブル
+        // (パーティション親を含む) だけ調べる。
+        if relkind == "r" || relkind == "p" {
+            // 取得に失敗しても編集不可にはせず、従来の ctid 判定へ進める。
+            if let (Ok(cols), Ok(indexes)) = (
+                self.columns(schema, table).await,
+                self.list_indexes(schema, table).await,
+            ) {
+                if let Some(key) = super::pick_unique_row_key(&cols, &indexes) {
+                    return Ok(super::unique_key_identity(key));
+                }
+            }
+        }
         if relkind == "r" {
             return Ok(TableRowIdentity {
                 strategy: "ctid".into(),
                 hidden_column: Some("ctid".into()),
+                key_columns: Vec::new(),
             });
         }
         Ok(TableRowIdentity {
             strategy: "all_columns".into(),
             hidden_column: None,
+            key_columns: Vec::new(),
         })
     }
 
@@ -1841,6 +1919,60 @@ impl PostgresConn {
                 ),
                 on_update: pg_fk_action(
                     r.try_get::<Option<String>, _>(6).ok().flatten().as_deref(),
+                ),
+            })
+            .collect())
+    }
+
+    /// 別スキーマの子テーブルから `schema.table` を参照する単一列の外部キー (#1786)。
+    /// `foreign_keys` は ER 図・DDL・アドバイザが「同一スキーマ内」を前提にしているため
+    /// 条件を緩めず、逆参照 (参照行数の確認・参照元の表示) だけがこの専用クエリで補う。
+    /// `schema` 欄に子テーブルのスキーマ名を入れて返す。複合 FK は単一列の条件で
+    /// 子行を絞れないので除く (同一スキーマ側の `incoming_foreign_keys` と同じ方針)。
+    pub async fn cross_schema_incoming_foreign_keys(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<IncomingForeignKey>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"SELECT
+                 n.nspname::text    AS child_schema,
+                 cl.relname::text   AS table_name,
+                 a.attname::text    AS column_name,
+                 fa.attname::text   AS ref_column,
+                 con.confdeltype::text
+               FROM pg_catalog.pg_constraint con
+               JOIN pg_catalog.pg_class cl ON cl.oid = con.conrelid
+               JOIN pg_catalog.pg_namespace n ON n.oid = cl.relnamespace
+               JOIN pg_catalog.pg_class fcl ON fcl.oid = con.confrelid
+               JOIN pg_catalog.pg_namespace fn ON fn.oid = fcl.relnamespace
+               JOIN pg_catalog.pg_attribute a
+                 ON a.attrelid = con.conrelid AND a.attnum = con.conkey[1]
+               JOIN pg_catalog.pg_attribute fa
+                 ON fa.attrelid = con.confrelid AND fa.attnum = con.confkey[1]
+               WHERE con.contype = 'f'
+                 AND array_length(con.conkey, 1) = 1
+                 AND NOT EXISTS (
+                       SELECT 1 FROM pg_catalog.pg_constraint p
+                        WHERE p.oid = con.conparentid AND p.conrelid = con.conrelid)
+                 AND fcl.relnamespace <> cl.relnamespace
+                 AND fn.nspname = $1
+                 AND fcl.relname::text = $2::text
+               ORDER BY n.nspname, cl.relname, con.conname"#,
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| IncomingForeignKey {
+                schema: r.try_get::<Option<String>, _>(0).ok().flatten(),
+                table: r.try_get::<String, _>(1).unwrap_or_default(),
+                column: r.try_get::<String, _>(2).unwrap_or_default(),
+                referenced_column: r.try_get::<String, _>(3).unwrap_or_default(),
+                on_delete: pg_fk_action(
+                    r.try_get::<Option<String>, _>(4).ok().flatten().as_deref(),
                 ),
             })
             .collect())
@@ -2249,7 +2381,13 @@ impl PostgresConn {
                  COALESCE((to_jsonb(ix) ->> 'indnkeyatts')::int, ix.indnatts::int) AS key_count,
                  -- indoption: bit0 = DESC, bit1 = NULLS FIRST。
                  COALESCE(ix.indoption[(k.ord - 1)::int], 0)::int AS col_option,
-                 COALESCE((to_jsonb(ix) ->> 'indnullsnotdistinct')::bool, false) AS nulls_not_distinct
+                 COALESCE((to_jsonb(ix) ->> 'indnullsnotdistinct')::bool, false) AS nulls_not_distinct,
+                 -- #1776: INVALID (CONCURRENTLY の失敗残骸・未 ATTACH) は一意性を保証しない。
+                 NOT (ix.indisvalid AND ix.indisready) AS is_invalid,
+                 -- #1776: キー列でインデックスの照合順序が列と違えば、WHERE が複数行に当たりうる。
+                 (k.ord <= COALESCE((to_jsonb(ix) ->> 'indnkeyatts')::int, ix.indnatts::int)
+                  AND a.attnum IS NOT NULL
+                  AND ix.indcollation[(k.ord - 1)::int] IS DISTINCT FROM a.attcollation) AS coll_differs
                FROM pg_class t
                JOIN pg_namespace n ON n.oid = t.relnamespace
                JOIN pg_index ix    ON ix.indrelid = t.oid
@@ -2296,9 +2434,13 @@ impl PostgresConn {
                     first_expression_at: None,
                     key_column_count: key_count,
                     nulls_not_distinct,
+                    invalid: r.try_get::<bool, _>("is_invalid").unwrap_or(true),
                     ..Default::default()
                 }
             });
+            if r.try_get::<bool, _>("coll_differs").unwrap_or(true) {
+                entry.collation_differs = true;
+            }
             // attnum 0 (an expression index column) resolves to NULL. 列名は積めないので
             // 式インデックスの印だけ残す (列だけで同一視・再構成させないため)。
             match column {

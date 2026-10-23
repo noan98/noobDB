@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { quoteIdentFor } from "../components/sqlDialect";
 import { quoteSqlIdent, sqlLiteral } from "../components/exportPreview";
+import { literalFromCellValue, quoteString } from "../components/cellEdit";
 import type { CellValue } from "../api/tauri";
 import vectors from "./fixtures/sqlQuotingVectors.json";
 
@@ -29,8 +30,10 @@ interface LiteralCase {
   value?: string | number | boolean;
   note: string;
   expected: ByDriver;
-  /** フロント側の期待値。省略時は `expected` と同じ。 */
+  /** フロント側 (`exportPreview.sqlLiteral`) の期待値。省略時は `expected` と同じ。 */
   frontend?: ByDriver;
+  /** `cellEdit.literalFromCellValue` の期待値。省略時は `frontend ?? expected` (#1510)。 */
+  cellEdit?: ByDriver;
 }
 
 const drivers = vectors.drivers as Driver[];
@@ -74,6 +77,31 @@ describe("SQL 引用/エスケープ ゴールデン (フロント実装)", () =
         });
       }
     }
+  });
+
+  describe("実働リテラルエスケーパ cellEdit.ts (#1510)", () => {
+    // インライン編集の DELETE / INSERT / WHERE・検索・クエリパラメータなど、実際に DB へ発行される
+    // SQL を作る `literalFromCellValue` / `quoteString` を、エクスポートプレビューの `sqlLiteral` と
+    // Rust の `sql_literal` と同じベクタに通す。真偽値だけは全方言 TRUE/FALSE (cellEdit 上書き)。
+    for (const c of literals) {
+      const expected = c.cellEdit ?? c.frontend ?? c.expected;
+      for (const driver of drivers) {
+        it(`${driver}: literalFromCellValue — ${c.note} — ${c.kind} ${JSON.stringify(c.value ?? null)}`, () => {
+          expect(literalFromCellValue(driver, toCellValue(c))).toBe(expected[driver]);
+        });
+        if (c.kind === "string") {
+          it(`${driver}: quoteString — ${c.note} — ${JSON.stringify(c.value)}`, () => {
+            expect(quoteString(driver, c.value as string)).toBe(c.expected[driver]);
+            // 文字列に関しては 3 実装 (Rust sql_literal / sqlLiteral / quoteString) が完全一致する。
+            expect(quoteString(driver, c.value as string)).toBe(sqlLiteral(driver, c.value as string));
+          });
+        }
+      }
+    }
+
+    it("cellEdit の上書きが 1 件以上ある (真偽値の既知の差分が明記されている)", () => {
+      expect(literals.some((c) => c.cellEdit !== undefined)).toBe(true);
+    });
   });
 
   it("フロント/バックの既知の食い違い (BLOB) がベクタに明記されている", () => {

@@ -31,6 +31,12 @@ Tauri の `#[tauri::command] async fn` は同一プロセス内で**並行実行
 2. `load_all` → 変更 → `save_all` の read-modify-write 全体をストア単位の `Mutex` で
    直列化する (無いと後勝ちで lost update)。
 
+3. 複数インスタンス同時起動に備え、`store_lock::acquire` でストア隣の `<ファイル名>.lock` に
+   OS の排他ファイルロック (`File::lock`) も取る (#1546)。各ストアの `lock_store()` が
+   `Mutex` とファイルロックを両方持つ `StoreGuard` を返す (取得失敗は `AppError::Io`)。
+   ロックはデータ本体ではなく別ファイルにかけ (本体は rename で差し替わる)、ロックファイルは消さない。
+   新しいストアは `lock_store()` を同じ形で作る (`json_store::JsonStore` は対応済み)。
+
 **新しい read-modify-write を足すときは内部の `*_locked` 版を呼んでください** —
 公開関数を呼ぶと同一 Mutex の再取得でデッドロックします。
 

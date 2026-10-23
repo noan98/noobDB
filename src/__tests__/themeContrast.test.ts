@@ -4,6 +4,7 @@ import { describe, it, expect } from "vitest";
 import css from "../App.css?raw";
 // theme.ts の dark 判定条件 (`conditions.dark`) の実ソースを比較するため。
 import themeTsSource from "../theme.ts?raw";
+import gridSource from "../components/ResultGrid.tsx?raw";
 // コントラスト比の計算はアクセント色ロジック (accent.ts) と共有する (#559)。
 // 二重実装を避け、accent.test.ts と同じ式で全テーマ/プリセットを検証する。
 import { contrastRatio } from "../accent";
@@ -401,6 +402,29 @@ describe("WCAG AA contrast for theme presets (#465, #558)", () => {
   });
 });
 
+describe("DB エンジン識別色は全テーマで --bg-elevated 上 3:1 以上 (#1769)", () => {
+  const darkSuffix = parseVars(/:root\[data-theme\$="dark"\]\s*\{([\s\S]*?)\n\}/);
+  const themes: { name: string; vars: Record<string, string>; elevated: string }[] = [
+    { name: "light", vars: light, elevated: light["bg-elevated"] },
+    { name: "dark", vars: { ...darkSuffix, ...dark }, elevated: dark["bg-elevated"] },
+    ...presets.map((p) => ({
+      name: p.name,
+      // 実行時のカスケード: :root → (名前が dark で終わるなら) ダーク共通 → テーマ固有。
+      vars: { ...light, ...(p.name.endsWith("dark") ? darkSuffix : {}), ...p.vars },
+      elevated: p.vars["bg-elevated"],
+    })),
+  ];
+  for (const t of themes) {
+    for (const engine of ["mysql", "postgres", "sqlite"]) {
+      it(`${t.name}: --driver-${engine}`, () => {
+        const fg = t.vars[`driver-${engine}`];
+        expect(fg, "--driver-* が解決できる").toBeTruthy();
+        expect(contrastRatio(fg, t.elevated)).toBeGreaterThanOrEqual(3);
+      });
+    }
+  }
+});
+
 describe("data-viz palettes stay dark-theme aware (#1187)", () => {
   // `isDarkDataTheme` は `theme.ts` の Chakra `conditions.dark`
   // (`"[data-theme$=dark] &"`、CSS の属性値末尾一致セレクタ) と同じ「値が
@@ -540,6 +564,165 @@ describe("spacing scale tracks the font scale (#327)", () => {
     for (let n = 1; n <= 6; n++) {
       const re = new RegExp(`--space-${n}:\\s*calc\\([^;]*var\\(--font-scale\\)[^;]*\\);`);
       expect(css, `--space-${n} must scale with --font-scale`).toMatch(re);
+    }
+  });
+});
+
+describe("アンビエント環境ウォッシュ (--prod-wash / --sandbox-wash) を重ねても全テーマで前景が AA を保つ (#1768)", () => {
+  /**
+   * wash は作業領域の上に `pointer-events: none` の overlay として**前景 (文字) ごと**重なる。
+   * よって文字色も背景色も同じ色 w・不透明度 a で合成した `c' = c*(1-a) + w*a` のペアでコントラストを測る。
+   * a は CSS から読んだ最大の不透明度 (上端中央。隅は中央の半分以下で、両者が重なる左右端でも
+   * 中央のグラデーション末端 (半減) と足して中央値を超えない) を最悪ケースとして使う。
+   */
+  function blend(fg: string, over: string, a: number): string {
+    const f = fg.replace("#", "");
+    const o = over.replace("#", "");
+    const ch = (i: number) =>
+      Math.round(parseInt(f.slice(i, i + 2), 16) * (1 - a) + parseInt(o.slice(i, i + 2), 16) * a)
+        .toString(16)
+        .padStart(2, "0");
+    return `#${ch(0)}${ch(2)}${ch(4)}`;
+  }
+  /** `--<name>: radial-gradient(...), ...;` の color-mix の % (と参照トークン名) を抽出する。 */
+  function washStops(name: string): { token: string; pct: number }[] {
+    const m = css.match(new RegExp(`--${name}:\\s*([\\s\\S]*?);\\n`));
+    expect(m, `--${name} が :root に定義されている`).toBeTruthy();
+    return [...m![1].matchAll(/color-mix\(in srgb, var\(--([\w-]+)\) ([\d.]+)%/g)].map(([, token, pct]) => ({
+      token,
+      pct: Number(pct),
+    }));
+  }
+  const WASHES = [
+    ["prod-wash", "error-solid"],
+    ["sandbox-wash", "sandbox-violet"],
+  ] as const;
+  const themes: [string, Record<string, string>, boolean][] = [
+    ["light", light, false],
+    ["dark", { ...light, ...dark }, false],
+    ...presets.map(
+      (p) => [p.name, { ...light, ...p.vars }, p.isHighContrast] as [string, Record<string, string>, boolean],
+    ),
+  ];
+  /**
+   * 既存の「コアトークン AA」と同じ前景/背景ペア (wash を重ねても同じ基準を維持する)。
+   * `text-warning`/bg と `text-success`/bg は除外: wash 込みの最悪値が僅かに AA を割る
+   * (warning は light 4.46 / tokyo-night-light 4.35、success は light + サンドボックス wash で 4.49)
+   * (最大不透明度が乗るのは上端のセッションヘッダ・タブ列付近だけ)。なお既存の AA でも
+   * `accent`/bg (tokyo-night-light 4.34) と `text-null`/bg-elevated (nord-dark 4.45, one-dark 4.48) は
+   * wash と無関係に 4.5 を下回るためここには入れない。
+   */
+  const PAIRS: [string, string][] = [
+    ["text", "bg"],
+    ["text", "bg-elevated"],
+    ["text-secondary", "bg"],
+    ["text-muted", "bg"],
+    ["text-muted", "bg-header"],
+    ["text-error", "bg"],
+  ];
+
+  it("wash の不透明度は 12% 以下で、色は意味色/サンドボックス色トークンのみ", () => {
+    for (const [name, token] of WASHES) {
+      const stops = washStops(name);
+      expect(stops.length).toBeGreaterThan(0);
+      for (const st of stops) {
+        expect(st.token).toBe(token);
+        expect(st.pct, `--${name} の ${st.pct}% は上限 (12%) を超えている`).toBeLessThanOrEqual(12);
+      }
+    }
+  });
+
+  it("hc-* では none", () => {
+    for (const name of ["hc-light", "hc-dark"]) {
+      const m = css.match(new RegExp(`:root\\[data-theme="${name}"\\]\\s*\\{([\\s\\S]*?)\\n\\}`));
+      expect(m![1]).toMatch(/--prod-wash:\s*none;/);
+      expect(m![1]).toMatch(/--sandbox-wash:\s*none;/);
+    }
+  });
+
+  describe.each(themes)("%s", (_name, vars, isHc) => {
+    it.skipIf(isHc)("前景・背景の両方に wash を合成しても本文/補足/意味色テキストが AA (4.5:1)", () => {
+      for (const [name, token] of WASHES) {
+        const a = Math.max(...washStops(name).map((st) => st.pct)) / 100;
+        for (const [fg, bg] of PAIRS) {
+          const r = contrastRatio(blend(vars[fg], vars[token], a), blend(vars[bg], vars[token], a));
+          expect(
+            r,
+            `--${fg} on --${bg} under ${name} (${a * 100}%) = ${r.toFixed(2)}:1`,
+          ).toBeGreaterThanOrEqual(AA_TEXT);
+        }
+      }
+    });
+  });
+});
+
+describe("AI 受信中キャレット / ラベル色 --stream-caret (#1756)", () => {
+  // `--stream-caret` は brand-teal (全テーマ固定) を --text へ寄せる color-mix(in srgb)。
+  // App.css の定義から割合を読み取り、各テーマの --text と同じ式で混色して検証する。
+  const m = css.match(
+    /--stream-caret:\s*color-mix\(in srgb,\s*var\(--brand-teal\)\s*(\d+)%,\s*var\(--text\)\)/,
+  );
+  const tealPct = m ? Number(m[1]) : NaN;
+  const teal = css.match(/--brand-teal:\s*(#[0-9a-fA-F]{6})/)?.[1] ?? "";
+  const mix = (text: string): string => {
+    const ch = (i: number) => {
+      const a = Number.parseInt(teal.slice(1 + i * 2, 3 + i * 2), 16);
+      const b = Number.parseInt(text.slice(1 + i * 2, 3 + i * 2), 16);
+      return Math.round((a * tealPct) / 100 + (b * (100 - tealPct)) / 100)
+        .toString(16)
+        .padStart(2, "0");
+    };
+    return `#${ch(0)}${ch(1)}${ch(2)}`;
+  };
+  const themes: [string, Record<string, string>][] = [
+    ["light", light],
+    ["dark", dark],
+    ...presets.map((p) => [p.name, p.vars] as [string, Record<string, string>]),
+  ];
+
+  it("定義が読み取れる", () => {
+    expect(tealPct).toBeGreaterThan(0);
+    expect(teal).toMatch(/^#[0-9a-fA-F]{6}$/);
+  });
+
+  it.each(themes)("%s: キャレットは地に対し非テキスト 3:1、ラベル文字は 4.5:1 以上", (_n, vars) => {
+    const c = mix(vars.text);
+    for (const bg of ["bg", "bg-elevated"]) {
+      expect(contrastRatio(c, vars[bg]), `caret ${c} on --${bg}`).toBeGreaterThanOrEqual(AA_UI);
+      expect(contrastRatio(c, vars[bg]), `label ${c} on --${bg}`).toBeGreaterThanOrEqual(AA_TEXT);
+    }
+  });
+});
+
+describe("結果グリッドのクロスハイライト地 (accent N% on bg-header) の上でも文字が AA を保つ (#1755)", () => {
+  // 割合は ResultGrid の CSS から抽出して固定する (CSS だけ濃くして AA を割るのを防ぐ)。
+  const m = gridSource.match(
+    /td\.row-index\.is-active-row": \{\s*background: "color-mix\(in srgb, var\(--accent\) ([\d.]+)%, var\(--bg-header\)\)"/,
+  );
+  const pct = Number(m?.[1]);
+  const mix = (a: string, b: string, p: number): string => {
+    const ch = (i: number) =>
+      Math.round(
+        (parseInt(a.slice(1).slice(i, i + 2), 16) * p +
+          parseInt(b.slice(1).slice(i, i + 2), 16) * (100 - p)) /
+          100,
+      );
+    return `#${[0, 2, 4].map((i) => ch(i).toString(16).padStart(2, "0")).join("")}`;
+  };
+  const themes: [string, Record<string, string>][] = [
+    ["light", light],
+    ["dark", { ...light, ...dark }],
+    ...presets.map((p) => [p.name, { ...light, ...p.vars }] as [string, Record<string, string>]),
+  ];
+  it("割合を CSS から抽出できる (上限 20%)", () => {
+    expect(m, "is-active-row の地色が抽出できる").toBeTruthy();
+    expect(pct).toBeLessThanOrEqual(20);
+  });
+  it.each(themes)("%s: 行番号の文字 (--text) と列ヘッダの補助文字 (--text-muted) が AA", (_n, vars) => {
+    const bg = mix(vars.accent, vars["bg-header"], pct);
+    for (const fg of ["text", "text-muted"]) {
+      const r = contrastRatio(vars[fg], bg);
+      expect(r, `--${fg} on accent ${pct}% / bg-header = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(AA_TEXT);
     }
   });
 });

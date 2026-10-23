@@ -78,6 +78,11 @@ export interface Settings {
    */
   confirmDangerousQueries: boolean;
   /**
+   * セル編集の Apply で、編集した列の読込時点の旧値を UPDATE の WHERE に足し、読込後に他者が
+   * 変えた行の無言上書き (lost update) を検出してロールバックする (楽観ロック、#1766)。既定オン。
+   */
+  optimisticCellEditLock: boolean;
+  /**
    * 複数結果タブ: true のとき、エディタでのクエリ実行は現在の結果を
    * 置き換えず、SQL を複製した**新しいタブ**で実行して前の結果を残す。複数クエリの
    * 結果を別タブとして保持・比較できるようにする。
@@ -214,6 +219,13 @@ export interface Settings {
    */
   shortcutOverrides: Record<string, string>;
   /**
+   * 修飾キー (Cmd/Ctrl) を押し続けている間、その文脈で押せるショートカットを画面下部に
+   * ヒント表示する (which-key 風, #1487)。表示のみで、キー処理は横取りしない。
+   */
+  shortcutHintEnabled: boolean;
+  /** ヒントを出すまでの押しっぱなし時間 (ミリ秒)。短い押下や通常のショートカット入力では出さない。 */
+  shortcutHintDelayMs: number;
+  /**
    * 長時間クエリ完了時に OS デスクトップ通知を出す (#707)。ウィンドウが
    * 非フォーカスかつ実行時間が `queryNotificationThresholdSecs` 以上のときのみ
    * 発火する (判定は `queryNotify.ts`)。
@@ -252,6 +264,12 @@ export interface Settings {
    * テーブルへの裏 COUNT を避けたい場合にオフにできる。
    */
   preflightImpactEnabled: boolean;
+  /**
+   * SELECT 実行前のスキャン行数 / フルスキャン警告プリフライト (#1508、既定オフ): 現在文が単純な
+   * SELECT のとき、裏で EXPLAIN を実行し「全表スキャンの可能性 (約 N 行)」バッジを表示する。
+   * EXPLAIN は読み取りだが重いテーブルでは計画取得にも負荷がかかりうるため opt-in。
+   */
+  scanPreflightEnabled: boolean;
   /**
    * 実行計画ウォッチ (#743): 接続確立時にウォッチ登録済みスニペットの EXPLAIN を
    * 自動取得して世代記録・変化検知を行う。既定オン。EXPLAIN は読み取り操作のみで
@@ -659,6 +677,7 @@ const MAX_BATCH = 100_000;
 export const DEFAULT_CONFIRM_PRODUCTION_CONNECT = true;
 
 export const DEFAULT_CONFIRM_DANGEROUS_QUERIES = true;
+export const DEFAULT_OPTIMISTIC_CELL_EDIT_LOCK = true;
 
 export const DEFAULT_TAB_RESTORE_MODE: TabRestoreMode = "ask";
 
@@ -702,6 +721,11 @@ const MAX_INSPECTOR_N_PLUS_ONE_WINDOW_MS = 60_000;
 
 export const DEFAULT_AUTO_RECONNECT_ENABLED = true;
 export const DEFAULT_AUTO_RECONNECT_MAX_RETRIES = 5;
+
+/** ショートカットヒント (#1487) の既定の遅延と許容範囲 (ミリ秒)。 */
+export const DEFAULT_SHORTCUT_HINT_DELAY_MS = 600;
+export const MIN_SHORTCUT_HINT_DELAY_MS = 300;
+export const MAX_SHORTCUT_HINT_DELAY_MS = 3000;
 export const MIN_AUTO_RECONNECT_RETRIES = 1;
 export const MAX_AUTO_RECONNECT_RETRIES = 20;
 
@@ -722,6 +746,9 @@ export const DEFAULT_SQL_LINT_ENABLED = true;
 
 /** 実行前の影響行数プリフライト (#737) は既定オン。 */
 export const DEFAULT_PREFLIGHT_IMPACT_ENABLED = true;
+
+/** SELECT 実行前のスキャン行数 / フルスキャン警告プリフライト (#1508) は既定オフ (opt-in)。 */
+export const DEFAULT_SCAN_PREFLIGHT_ENABLED = false;
 
 /** 実行計画ウォッチ (#743) の接続時自動チェックは既定オン。 */
 export const DEFAULT_PLAN_WATCH_ON_CONNECT = true;
@@ -765,6 +792,7 @@ export const DEFAULT_SETTINGS: Settings = {
   suppressedConfirms: [],
   batchWrapInTransaction: false,
   confirmDangerousQueries: DEFAULT_CONFIRM_DANGEROUS_QUERIES,
+  optimisticCellEditLock: DEFAULT_OPTIMISTIC_CELL_EDIT_LOCK,
   resultsInNewTab: false,
   tabRestoreMode: DEFAULT_TAB_RESTORE_MODE,
   queryTimeoutSecs: DEFAULT_QUERY_TIMEOUT_SECS,
@@ -791,12 +819,15 @@ export const DEFAULT_SETTINGS: Settings = {
   autoReconnectEnabled: DEFAULT_AUTO_RECONNECT_ENABLED,
   autoReconnectMaxRetries: DEFAULT_AUTO_RECONNECT_MAX_RETRIES,
   shortcutOverrides: {},
+  shortcutHintEnabled: true,
+  shortcutHintDelayMs: DEFAULT_SHORTCUT_HINT_DELAY_MS,
   queryNotificationsEnabled: DEFAULT_QUERY_NOTIFICATIONS_ENABLED,
   queryNotificationThresholdSecs: DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS,
   autoUpdateCheckEnabled: DEFAULT_AUTO_UPDATE_CHECK_ENABLED,
   perfMeasureEnabled: DEFAULT_PERF_MEASURE_ENABLED,
   sqlLintEnabled: DEFAULT_SQL_LINT_ENABLED,
   preflightImpactEnabled: DEFAULT_PREFLIGHT_IMPACT_ENABLED,
+  scanPreflightEnabled: DEFAULT_SCAN_PREFLIGHT_ENABLED,
   planWatchOnConnect: DEFAULT_PLAN_WATCH_ON_CONNECT,
   schemaDriftOnConnect: DEFAULT_SCHEMA_DRIFT_ON_CONNECT,
   schemaDriftOnDdl: DEFAULT_SCHEMA_DRIFT_ON_DDL,
@@ -822,6 +853,15 @@ export function sanitizeAutoReconnectRetries(input: unknown, fallback: number): 
   const n = Math.floor(input);
   if (n < MIN_AUTO_RECONNECT_RETRIES) return MIN_AUTO_RECONNECT_RETRIES;
   if (n > MAX_AUTO_RECONNECT_RETRIES) return MAX_AUTO_RECONNECT_RETRIES;
+  return n;
+}
+
+/** ショートカットヒントの遅延 (ミリ秒) を許容範囲へ丸める (#1487)。 */
+export function sanitizeShortcutHintDelayMs(input: unknown, fallback: number): number {
+  if (typeof input !== "number" || !Number.isFinite(input)) return fallback;
+  const n = Math.round(input);
+  if (n < MIN_SHORTCUT_HINT_DELAY_MS) return MIN_SHORTCUT_HINT_DELAY_MS;
+  if (n > MAX_SHORTCUT_HINT_DELAY_MS) return MAX_SHORTCUT_HINT_DELAY_MS;
   return n;
 }
 
@@ -998,6 +1038,7 @@ export function normalizeSettings(input: unknown): Settings {
     suppressedConfirms?: unknown;
     batchWrapInTransaction?: unknown;
     confirmDangerousQueries?: unknown;
+    optimisticCellEditLock?: unknown;
     resultsInNewTab?: unknown;
     tabRestoreMode?: unknown;
     queryTimeoutSecs?: unknown;
@@ -1024,12 +1065,15 @@ export function normalizeSettings(input: unknown): Settings {
     autoReconnectEnabled?: unknown;
     autoReconnectMaxRetries?: unknown;
     shortcutOverrides?: unknown;
+    shortcutHintEnabled?: unknown;
+    shortcutHintDelayMs?: unknown;
     queryNotificationsEnabled?: unknown;
     queryNotificationThresholdSecs?: unknown;
     autoUpdateCheckEnabled?: unknown;
     perfMeasureEnabled?: unknown;
     sqlLintEnabled?: unknown;
     preflightImpactEnabled?: unknown;
+    scanPreflightEnabled?: unknown;
     planWatchOnConnect?: unknown;
     schemaDriftOnConnect?: unknown;
     schemaDriftOnDdl?: unknown;
@@ -1072,6 +1116,10 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.confirmDangerousQueries === "boolean"
         ? parsed.confirmDangerousQueries
         : DEFAULT_CONFIRM_DANGEROUS_QUERIES,
+    optimisticCellEditLock:
+      typeof parsed.optimisticCellEditLock === "boolean"
+        ? parsed.optimisticCellEditLock
+        : DEFAULT_OPTIMISTIC_CELL_EDIT_LOCK,
     resultsInNewTab: typeof parsed.resultsInNewTab === "boolean" ? parsed.resultsInNewTab : false,
     tabRestoreMode: sanitizeTabRestoreMode(parsed.tabRestoreMode, DEFAULT_TAB_RESTORE_MODE),
     queryTimeoutSecs: sanitizeTimeout(parsed.queryTimeoutSecs, DEFAULT_QUERY_TIMEOUT_SECS),
@@ -1128,6 +1176,11 @@ export function normalizeSettings(input: unknown): Settings {
       DEFAULT_AUTO_RECONNECT_MAX_RETRIES,
     ),
     shortcutOverrides: sanitizeShortcutOverrides(parsed.shortcutOverrides),
+    shortcutHintEnabled: typeof parsed.shortcutHintEnabled === "boolean" ? parsed.shortcutHintEnabled : true,
+    shortcutHintDelayMs: sanitizeShortcutHintDelayMs(
+      parsed.shortcutHintDelayMs,
+      DEFAULT_SHORTCUT_HINT_DELAY_MS,
+    ),
     queryNotificationsEnabled:
       typeof parsed.queryNotificationsEnabled === "boolean"
         ? parsed.queryNotificationsEnabled
@@ -1150,6 +1203,10 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.preflightImpactEnabled === "boolean"
         ? parsed.preflightImpactEnabled
         : DEFAULT_PREFLIGHT_IMPACT_ENABLED,
+    scanPreflightEnabled:
+      typeof parsed.scanPreflightEnabled === "boolean"
+        ? parsed.scanPreflightEnabled
+        : DEFAULT_SCAN_PREFLIGHT_ENABLED,
     planWatchOnConnect:
       typeof parsed.planWatchOnConnect === "boolean"
         ? parsed.planWatchOnConnect
@@ -1442,6 +1499,13 @@ export function setBatchWrapInTransaction(value: boolean): void {
   listeners.forEach((cb) => cb());
 }
 
+export function setOptimisticCellEditLock(value: boolean): void {
+  if (current.optimisticCellEditLock === value) return;
+  current = { ...current, optimisticCellEditLock: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
 export function setConfirmDangerousQueries(value: boolean): void {
   if (current.confirmDangerousQueries === value) return;
   current = { ...current, confirmDangerousQueries: value };
@@ -1716,6 +1780,13 @@ export function setPreflightImpactEnabled(value: boolean): void {
   listeners.forEach((cb) => cb());
 }
 
+export function setScanPreflightEnabled(value: boolean): void {
+  if (current.scanPreflightEnabled === value) return;
+  current = { ...current, scanPreflightEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
 export function setPlanWatchOnConnect(value: boolean): void {
   if (current.planWatchOnConnect === value) return;
   current = { ...current, planWatchOnConnect: value };
@@ -1822,6 +1893,21 @@ export function setTableOpenQueryOverride(entry: TableOpenQueryOverride): boolea
 /** テーブル別の上書きを削除する。 */
 export function removeTableOpenQueryOverride(profileId: string, database: string, table: string): void {
   setTableOpenQueryOverride({ profileId, profileName: "", database, table, template: "" });
+}
+
+export function setShortcutHintEnabled(value: boolean): void {
+  if (current.shortcutHintEnabled === value) return;
+  current = { ...current, shortcutHintEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setShortcutHintDelayMs(value: number): void {
+  const next = sanitizeShortcutHintDelayMs(value, current.shortcutHintDelayMs);
+  if (current.shortcutHintDelayMs === next) return;
+  current = { ...current, shortcutHintDelayMs: next };
+  persist();
+  listeners.forEach((cb) => cb());
 }
 
 export function setQuickLauncherEnabled(value: boolean): void {

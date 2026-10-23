@@ -3,7 +3,7 @@ import { page, userEvent } from "vitest/browser";
 import { renderInBrowser } from "./render";
 import App from "../../App";
 import { t } from "../../i18n";
-import { setQueryTimeoutSecs, setTabRestoreMode } from "../../settings";
+import { setOptimisticCellEditLock, setQueryTimeoutSecs, setTabRestoreMode } from "../../settings";
 import {
   emitChannelMessage,
   installTauriMock,
@@ -425,7 +425,7 @@ describe("シナリオ: インラインセル編集 → pending → Apply (実�
       applied.push(args);
       // サーバ側データを更新し、Apply 後の自動リフレッシュで新値が返るようにする。
       fruitsRows = fruitsRows.map((r) => (r[0] === 2 ? [2, "banana", 42] : r));
-      return { columns: [], rows: [], rows_affected: 1, elapsed_ms: 2 };
+      return { status: "applied", result: { columns: [], rows: [], rows_affected: 1, elapsed_ms: 2 } };
     });
 
     const screen = await renderInBrowser(<App />);
@@ -472,7 +472,14 @@ describe("シナリオ: インラインセル編集 → pending → Apply (実�
             table: "fruits",
             pkColumns: ["id"],
             pkBinary: [false],
-            groups: [{ set: [{ column: "qty", value: { kind: "number", text: "42" } }], keys: [[2]] }],
+            groups: [
+              {
+                set: [{ column: "qty", value: { kind: "number", text: "42" } }],
+                keys: [[2]],
+                // 楽観ロック (#1766、既定オン): 編集した列の読込時点の旧値が付く。
+                olds: [[{ kind: "number", text: "3" }]],
+              },
+            ],
             extraStatements: [],
           },
         ]);
@@ -487,6 +494,297 @@ describe("シナリオ: インラインセル編集 → pending → Apply (実�
     await expect
       .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
       .not.toBeInTheDocument();
+  });
+});
+
+describe("シナリオ: 想定行数を超える書き込みの確認 (#1777)", () => {
+  /** banana の qty を 42 に編集して Apply を押す (保留編集 → Apply)。 */
+  async function editQtyAndApply(screen: Awaited<ReturnType<typeof renderInBrowser>>) {
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await openFruitsTable(screen);
+    await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
+    await vi.waitFor(
+      () => {
+        const cell = screen.getByRole("gridcell", { name: "3", exact: true }).query();
+        if (!cell?.classList.contains("is-editable-cell")) throw new Error("qty cell is not editable yet");
+      },
+      { timeout: 5000 },
+    );
+    await screen.getByRole("gridcell", { name: "3", exact: true }).dblClick();
+    const input = await vi.waitFor(
+      () => {
+        const el = document.querySelector<HTMLInputElement>("input.cell-edit-input");
+        if (!el) throw new Error("cell edit input not open");
+        return el;
+      },
+      { timeout: 5000 },
+    );
+    await page.elementLocator(input).fill("42");
+    await userEvent.keyboard("{Enter}");
+    await screen.getByRole("button", { name: t("editApplyButton") }).click();
+  }
+
+  it("超過 (ロールバック) を確認で承認すると、許可フラグ付きで再実行される", async () => {
+    registerAutoStream();
+    const calls: Record<string, unknown>[] = [];
+    onCommand("bulk_update_cells", (args) => {
+      calls.push(args);
+      const options = args.options as { approved_counts?: number[] } | undefined;
+      if (!options?.approved_counts) {
+        return {
+          status: "row_count_exceeded",
+          expected_rows: 1,
+          actual_rows: 2,
+          batch_total_rows: 2,
+          statement_counts: [2],
+        };
+      }
+      fruitsRows = fruitsRows.map((r) => (r[0] === 2 ? [2, "banana", 42] : r));
+      return { status: "applied", result: { columns: [], rows: [], rows_affected: 2, elapsed_ms: 2 } };
+    });
+    const screen = await renderInBrowser(<App />);
+    await editQtyAndApply(screen);
+
+    await expect.element(screen.getByText(t("editRowOvershootConfirmTitle"))).toBeVisible();
+    await screen.getByRole("button", { name: t("editRowOvershootConfirmButton") }).click();
+
+    await vi.waitFor(() => expect(calls.length).toBe(2), { timeout: 5000 });
+    expect(calls[0]?.options).toBeUndefined();
+    expect(calls[1]?.options).toEqual({ approved_counts: [2] });
+    await expect.element(screen.getByRole("gridcell", { name: "42", exact: true })).toBeVisible();
+  });
+
+  it("超過の確認をキャンセルすると再実行せず、保留中の編集が残る", async () => {
+    registerAutoStream();
+    let calls = 0;
+    onCommand("bulk_update_cells", () => {
+      calls += 1;
+      return {
+        status: "row_count_exceeded",
+        expected_rows: 1,
+        actual_rows: 2,
+        batch_total_rows: 2,
+        statement_counts: [2],
+      };
+    });
+    const screen = await renderInBrowser(<App />);
+    await editQtyAndApply(screen);
+
+    await expect.element(screen.getByText(t("editRowOvershootConfirmTitle"))).toBeVisible();
+    await screen
+      .getByRole("button", { name: t("confirmDefaultCancel"), exact: true })
+      .first()
+      .click();
+
+    await expect.element(screen.getByText(t("editRowOvershootConfirmTitle"))).not.toBeInTheDocument();
+    expect(calls).toBe(1);
+    await expect.element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 }))).toBeVisible();
+  });
+
+  it("承認したあとにまた超過したら、新しい件数で確認し直す (承認した件数を上限にして再実行)", async () => {
+    registerAutoStream();
+    const calls: Record<string, unknown>[] = [];
+    onCommand("bulk_update_cells", (args) => {
+      calls.push(args);
+      const approved = (args.options as { approved_counts?: number[] } | undefined)?.approved_counts;
+      // 1 回目は 2 行 (承認 2)、承認後の再実行では 3 行に増えていて再び超過する。
+      return approved === undefined
+        ? {
+            status: "row_count_exceeded",
+            expected_rows: 1,
+            actual_rows: 2,
+            batch_total_rows: 2,
+            statement_counts: [2],
+          }
+        : {
+            status: "row_count_exceeded",
+            expected_rows: 2,
+            actual_rows: 3,
+            batch_total_rows: 3,
+            statement_counts: [3],
+          };
+    });
+    const screen = await renderInBrowser(<App />);
+    await editQtyAndApply(screen);
+
+    await screen.getByRole("button", { name: t("editRowOvershootConfirmButton") }).click();
+    await vi.waitFor(() => expect(calls.length).toBe(2), { timeout: 5000 });
+    expect(calls[1]?.options).toEqual({ approved_counts: [2] });
+    // 2 回目の確認 (新しい件数 3) が出る。キャンセルすると適用されず、保留中の編集が残る。
+    await expect
+      .element(screen.getByText(t("editRowOvershootConfirmBody", { expected: 2, actual: 3, total: 3 })))
+      .toBeVisible();
+    await screen
+      .getByRole("button", { name: t("confirmDefaultCancel"), exact: true })
+      .first()
+      .click();
+    expect(calls.length).toBe(2);
+    await expect.element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 }))).toBeVisible();
+  });
+
+  it("ロールバックが不完全なときは再実行の選択肢を出さず、再読込を促す", async () => {
+    registerAutoStream();
+    let calls = 0;
+    onCommand("bulk_update_cells", () => {
+      calls += 1;
+      return { status: "rollback_incomplete", expected_rows: 1, actual_rows: 2 };
+    });
+    const screen = await renderInBrowser(<App />);
+    await editQtyAndApply(screen);
+
+    await expect
+      .element(screen.getByText(t("statusApplyEditsRollbackIncomplete", { expected: 1, actual: 2 })).first())
+      .toBeVisible();
+    await expect.element(screen.getByText(t("editRowOvershootConfirmTitle"))).not.toBeInTheDocument();
+    expect(calls).toBe(1);
+    // 送信した保留編集は破棄され、Apply を押し直して二重に書くことはできない。
+    await expect
+      .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
+      .not.toBeInTheDocument();
+  });
+  it("楽観ロック: 既定で旧値つきで送り、他者の変更による競合は全件ロールバックして再読込を案内する (#1766)", async () => {
+    registerAutoStream();
+    const calls: Record<string, unknown>[] = [];
+    onCommand("bulk_update_cells", (args) => {
+      calls.push(args);
+      return { status: "optimistic_conflict", conflict_rows: 1, statement_counts: [0] };
+    });
+    const screen = await renderInBrowser(<App />);
+    await editQtyAndApply(screen);
+
+    // 編集した列 (qty) の読込時点の旧値 (3) が行ごとに付く。
+    await vi.waitFor(() => expect(calls.length).toBe(1), { timeout: 5000 });
+    const groups = calls[0]?.groups as { olds?: unknown[][] }[];
+    expect(groups[0]?.olds).toEqual([[{ kind: "number", text: "3" }]]);
+
+    await expect.element(screen.getByText(t("editConflictTitle"))).toBeVisible();
+    await expect.element(screen.getByText(t("editConflictBody", { rows: 1 }))).toBeVisible();
+    // 承認して上書きする選択肢は無い (再読込 / 編集を残す の 2 択)。再実行もしない。
+    await screen
+      .getByRole("button", { name: t("editConflictKeep"), exact: true })
+      .first()
+      .click();
+    await expect.element(screen.getByText(t("editConflictTitle"))).not.toBeInTheDocument();
+    expect(calls.length).toBe(1);
+    await expect.element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 }))).toBeVisible();
+  });
+
+  it("楽観ロックの競合で「再読込」を選ぶと、送った編集を破棄して取り直す (#1766)", async () => {
+    registerAutoStream();
+    onCommand("bulk_update_cells", () => ({
+      status: "optimistic_conflict",
+      conflict_rows: 1,
+      statement_counts: [0],
+    }));
+    const screen = await renderInBrowser(<App />);
+    await editQtyAndApply(screen);
+
+    await expect.element(screen.getByText(t("editConflictTitle"))).toBeVisible();
+    await screen
+      .getByRole("button", { name: t("editConflictReload"), exact: true })
+      .first()
+      .click();
+    await expect
+      .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
+      .not.toBeInTheDocument();
+  });
+
+  it("楽観ロックをオフにすると旧値を送らない (#1766)", async () => {
+    registerAutoStream();
+    setOptimisticCellEditLock(false);
+    try {
+      const calls: Record<string, unknown>[] = [];
+      onCommand("bulk_update_cells", (args) => {
+        calls.push(args);
+        fruitsRows = fruitsRows.map((r) => (r[0] === 2 ? [2, "banana", 42] : r));
+        return { status: "applied", result: { columns: [], rows: [], rows_affected: 1, elapsed_ms: 2 } };
+      });
+      const screen = await renderInBrowser(<App />);
+      await editQtyAndApply(screen);
+      await vi.waitFor(() => expect(calls.length).toBe(1), { timeout: 5000 });
+      const groups = calls[0]?.groups as { olds?: unknown[][] }[];
+      expect(groups[0]?.olds).toBeUndefined();
+    } finally {
+      setOptimisticCellEditLock(true);
+    }
+  });
+});
+
+describe("シナリオ: 削除前の参照行数の確認 (#1506)", () => {
+  it("参照の確認中に Apply が再入しても bulk_update_cells は 1 回だけ走る (INSERT の重複を防ぐ)", async () => {
+    registerAutoStream();
+    let applyCalls = 0;
+    const applied: Record<string, unknown>[] = [];
+    onCommand("bulk_update_cells", (args) => {
+      applyCalls += 1;
+      applied.push(args);
+      return { status: "applied", result: { columns: [], rows: [], rows_affected: 2, elapsed_ms: 2 } };
+    });
+    onCommand("incoming_foreign_keys", () => [
+      { table: "orders", column: "fruit_id", referencedColumn: "id", onDelete: "CASCADE" },
+    ]);
+    // 子行は 0 件 (確認ダイアログは出ない経路)。集計をわざと遅らせて確認中の時間帯を作る。
+    onCommand("run_lookup_query", async () => {
+      await new Promise((r) => setTimeout(r, 600));
+      return {
+        columns: [
+          { name: "i", type_name: "INT" },
+          { name: "n", type_name: "INT" },
+        ],
+        rows: [[0, 0]],
+        rows_affected: 0,
+        elapsed_ms: 1,
+      };
+    });
+
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await openFruitsTable(screen);
+    await vi.waitFor(
+      () => {
+        const cell = screen.getByRole("gridcell", { name: "3", exact: true }).query();
+        if (!cell?.classList.contains("is-editable-cell")) throw new Error("not editable yet");
+      },
+      { timeout: 5000 },
+    );
+    // 行削除を保留にし、新規行 (INSERT) も保留に混ぜる。
+    await screen.getByRole("gridcell", { name: "banana", exact: true }).click({ button: "right" });
+    await screen.getByRole("menuitem", { name: t("gridMarkDelete") }).click();
+    await screen.getByRole("gridcell", { name: "apple", exact: true }).click({ button: "right" });
+    await screen.getByRole("menuitem", { name: t("gridAddRow") }).click();
+    // 全列が既定値だと INSERT が組まれないので、name 欄に値を入れる。
+    const insertFields = await vi.waitFor(
+      () => {
+        const els = document.querySelectorAll<HTMLInputElement>("[data-insert-fields] input");
+        if (els.length === 0) throw new Error("insert modal not open");
+        return els;
+      },
+      { timeout: 5000 },
+    );
+    await page.elementLocator(insertFields[1] ?? insertFields[0]).fill("cherry");
+    await screen.getByRole("button", { name: t("rowOpsInsertAdd") }).click();
+
+    // Apply ボタンの React onClick (= PaneView が組む onApplyEdits) を直接 2 回起動する。
+    // ボタンは確認中 disabled になるので、ボタン越しでは 2 回目が空振りしてガードを検証できない。
+    const btn = await vi.waitFor(
+      () => {
+        const el = screen.getByRole("button", { name: t("editApplyButton") }).query();
+        if (!el) throw new Error("apply button missing");
+        return el as HTMLElement;
+      },
+      { timeout: 5000 },
+    );
+    const propsKey = Object.keys(btn).find((k) => k.startsWith("__reactProps$"));
+    const onClick = (btn as unknown as Record<string, { onClick?: () => void }>)[propsKey ?? ""]?.onClick;
+    if (!onClick) throw new Error("onClick not found");
+    onClick();
+    await new Promise((r) => setTimeout(r, 100));
+    onClick();
+
+    await vi.waitFor(() => expect(applyCalls).toBeGreaterThanOrEqual(1), { timeout: 5000 });
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(applyCalls).toBe(1);
+    expect(applied[0]).toMatchObject({ extraStatements: [expect.any(String), expect.any(String)] });
   });
 });
 
@@ -1437,5 +1735,119 @@ describe("シナリオ: DDL 後のスキーマドリフト自動取得と SSH �
       .element(screen.getByText(t("toastSshTunnelLost", { name: SSH_ALPHA.name })))
       .not.toBeInTheDocument();
     expect(invocationsOf("disconnect").length).toBe(0);
+  });
+});
+
+describe("シナリオ: WHERE 付き DELETE の子行影響の確認 (#1767)", () => {
+  const SQL = "DELETE FROM fruits WHERE id = 1";
+  const countResult = (rows: CellValue[][]) => ({
+    columns: [
+      { name: "i", type_name: "INT" },
+      { name: "n", type_name: "INT" },
+    ],
+    rows,
+    rows_affected: 0,
+    elapsed_ms: 1,
+  });
+  async function openDeleteTab(lookupRows: CellValue[][] | "fail", sql = SQL) {
+    registerAutoStream();
+    // プリフライトの COUNT (run_query) は 1 行と答える。
+    onCommand("run_query", () => countResult([[1]]));
+    onCommand("incoming_foreign_keys", (args) =>
+      args.table === "fruits"
+        ? [{ table: "orders", column: "fruit_id", referencedColumn: "id", onDelete: "CASCADE" }]
+        : [],
+    );
+    onCommand("run_lookup_query", () => {
+      if (lookupRows === "fail") throw new Error("timeout");
+      return countResult(lookupRows);
+    });
+    localStorage.setItem(
+      `noobdb.tabs.${ALPHA.id}`,
+      JSON.stringify({
+        panes: [{ tabs: [{ kind: "query", title: "Del", sql }], activeIndex: 0 }],
+        activePane: 0,
+      }),
+    );
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    // プリフライト (デバウンス後の COUNT) が済んでから実行する。
+    await expect
+      .element(
+        screen.getByText(t(sql === SQL ? "editorPreflightImpact" : "editorPreflightAllRows", { count: 1 })),
+      )
+      .toBeVisible();
+    await vi.waitFor(
+      async () => {
+        const el = document.querySelector<HTMLElement>(".cm-content");
+        if (!el) throw new Error("editor not mounted");
+        await page.elementLocator(el).click({ button: "right" });
+        await screen
+          .getByRole("menuitem", { name: new RegExp(`^${t("editorMenuRunAll")}`) })
+          .click({ timeout: 2000 });
+      },
+      { timeout: 20000, interval: 300 },
+    );
+    return screen;
+  }
+  const streams = () => invocationsOf("run_query_stream").filter((a) => String(a.sql).startsWith("DELETE"));
+
+  it("CASCADE の子行があるときは確認を出し、実行するまで DELETE を流さない", async () => {
+    const screen = await openDeleteTab([[0, 5]]);
+    await expect.element(screen.getByTestId("ref-impact-list")).toBeVisible();
+    await expect.element(screen.getByText(t("refImpactActCascade", { count: 5 }))).toBeVisible();
+    expect(streams()).toHaveLength(0);
+    await screen.getByRole("button", { name: t("dangerousConfirm") }).click();
+    await vi.waitFor(() => expect(streams()).toHaveLength(1), { timeout: 5000 });
+  });
+
+  it("子行が 0 件なら確認なしですぐ実行する", async () => {
+    await openDeleteTab([[0, 0]]);
+    await vi.waitFor(() => expect(streams()).toHaveLength(1), { timeout: 5000 });
+    expect(document.querySelector('[data-testid="ref-impact-list"]')).toBeNull();
+  });
+
+  it("集計に失敗しても確認は出さず、DELETE を実行する", async () => {
+    await openDeleteTab("fail");
+    await vi.waitFor(() => expect(streams()).toHaveLength(1), { timeout: 5000 });
+    expect(document.querySelector('[data-testid="ref-impact-list"]')).toBeNull();
+  });
+
+  it("WHERE なしの DELETE でも、危険クエリの確認に子行影響が載る (deleteTarget 経路)", async () => {
+    const screen = await openDeleteTab([[0, 7]], "DELETE FROM fruits");
+    await expect.element(screen.getByTestId("ref-impact-list")).toBeVisible();
+    await expect.element(screen.getByText(t("refImpactActCascade", { count: 7 }))).toBeVisible();
+    expect(streams()).toHaveLength(0);
+  });
+
+  it("FK の取得が返らなくても、全体の待ち上限 (5 秒) の後に DELETE を実行する", async () => {
+    registerAutoStream();
+    onCommand("run_query", () => countResult([[1]]));
+    onCommand("incoming_foreign_keys", () => new Promise(() => {}));
+    onCommand("run_lookup_query", () => countResult([[0, 0]]));
+    localStorage.setItem(
+      `noobdb.tabs.${ALPHA.id}`,
+      JSON.stringify({
+        panes: [{ tabs: [{ kind: "query", title: "Del", sql: SQL }], activeIndex: 0 }],
+        activePane: 0,
+      }),
+    );
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await expect.element(screen.getByText(t("editorPreflightImpact", { count: 1 }))).toBeVisible();
+    await vi.waitFor(
+      async () => {
+        const el = document.querySelector<HTMLElement>(".cm-content");
+        if (!el) throw new Error("editor not mounted");
+        await page.elementLocator(el).click({ button: "right" });
+        await screen
+          .getByRole("menuitem", { name: new RegExp(`^${t("editorMenuRunAll")}`) })
+          .click({ timeout: 2000 });
+      },
+      { timeout: 20000, interval: 300 },
+    );
+    expect(streams()).toHaveLength(0);
+    await vi.waitFor(() => expect(streams()).toHaveLength(1), { timeout: 12000 });
+    expect(document.querySelector('[data-testid="ref-impact-list"]')).toBeNull();
   });
 });

@@ -210,6 +210,22 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-vite-deps-
 
+      # tsc のインクリメンタル型チェック用 `.tsbuildinfo` (#1589)。`tsconfig.json` の
+      # `incremental` + `tsBuildInfoFile` で `node_modules/.cache/tsc/` に書かれ、300 本超の
+      # テストを含む `src` の再型検査を差分だけにする。pnpm store / Vite プリバンドルと同じく
+      # ブランチ跨ぎ (main push による温め含む) で効かせるため、キーは実行ごとに変わる
+      # `github.sha` 付きにして毎回保存し、restore-keys で直近のものを復元する。
+      # TypeScript のバージョン / tsconfig が変わっても tsc 自身が buildinfo を無効化する
+      # ので、キャッシュが古くても型検査結果は変わらない (遅くなるだけ)。
+      - name: Cache tsc incremental build info
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules/.cache/tsc
+          key: ${{ runner.os }}-tsc-${{ hashFiles('pnpm-lock.yaml', 'tsconfig.json') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-tsc-${{ hashFiles('pnpm-lock.yaml', 'tsconfig.json') }}-
+            ${{ runner.os }}-tsc-
+
       - name: Type-check and build
         run: pnpm run build
 
@@ -543,10 +559,10 @@ jobs:
   # だけをピンポイントで実行する。
   #
   # 起動条件 (#1029 で `frontend==true || rust==true || workflow==true` から
-  # 変更): このジョブが実行する 10 本の Vitest ファイルは、`frontend-unit` の
+  # 変更): このジョブが実行する横断 Vitest ファイル (命名規約 + 個別指定の全件)は、`frontend-unit` の
   # shard 群 (Vitest 全スイートの 4 分割実行) にも既に含まれている。したがって
   # `frontend==true` の PR (`src/__tests__/fixtures/**` ⊂ `src/**` なのでフィクスチャ
-  # のみの PR も該当) では、`frontend` ジョブが直前に実行した 10 本を、このジョブが
+  # のみの PR も該当) では、`frontend` ジョブが直前に実行した同じ横断テスト群を、このジョブが
   # 独自の checkout + setup-node + `pnpm install --frozen-lockfile` を挟んで
   # 別ランナーでそのまま再実行するだけの**純粋な重複**になっていた。このジョブの
   # 存在意義は「`frontend` ジョブが走らない rust 専用 PR のカバレッジ穴埋め」
@@ -554,13 +570,13 @@ jobs:
   # なので、`rust==true && frontend!=true` (= rust 専用差分) と `workflow==true`
   # (このワークフロー自身の変更は常に自ジョブも検証) の場合のみに限定する。
   # `frontend==true && rust==true` (両方に触れる PR) では `frontend` ジョブが
-  # 既に 10 本を実走するため、このジョブを skip してもカバレッジは変わらない。
+  # 既に 横断テストを実走するため、このジョブを skip してもカバレッジは変わらない。
   #
   # カバレッジが保たれることの確認 (4 経路):
   #   - `src/**` のみ変更 (frontend==true, rust==false):
-  #     `frontend-unit` の shard 群 が 10 本すべてを実走 (このジョブは skip)。
+  #     `frontend-unit` の shard 群 が横断テストすべてを実走 (このジョブは skip)。
   #   - `src-tauri/**` のみ変更 (rust==true, frontend==false):
-  #     `frontend` ジョブは skip されるため、このジョブが 10 本を実走 (下記 if: の前半)。
+  #     `frontend` ジョブは skip されるため、このジョブが横断テストを実走 (下記 if: の前半)。
   #   - `src/__tests__/fixtures/**` のみ変更:
   #     フィクスチャは `src/**` の部分集合なので必ず frontend==true になり、
   #     上記「`src/**` のみ変更」と同じく `frontend` ジョブがカバーする
@@ -618,7 +634,9 @@ jobs:
       # 手書き列挙は新規ゴールデンの追記漏れで「Rust 専用 PR で一度も走らない」
       # テストを生むため、`src/__tests__/` の `*Golden.test.ts` / `*Parity.test.ts`
       # は自動で拾われる。Rust ソースやフィクスチャを読むパリティテストを足すときは
-      # この命名規約に従うこと。規約に合わない例外 (awsIam.test.ts) だけ個別に足す。
+      # この命名規約に従うこと。規約に合わない例外 (awsIam.test.ts / apiModuleLayout.test.ts)
+      # だけ個別に足す。src-tauri を import するテストが本フィルタに一致することは
+      # `crosslangGatingParity.test.ts` (自身も *Parity.test.ts) がメタテストで固定する (#1760)。
       # (Vitest の位置引数は「パスの部分一致」フィルタなので glob 相当になる。)
       - name: Cross-language parity/golden tests (Vitest)
         run: >-
@@ -626,6 +644,7 @@ jobs:
           Golden.test.ts
           Parity.test.ts
           src/__tests__/awsIam.test.ts
+          src/__tests__/apiModuleLayout.test.ts
 
   # automerge の変更依頼ゲート (#1108) の判定ロジックと、定期ジョブの通知スクリプト
   # (upsert-tracking-issue.sh, #1633) のユニットテスト。
@@ -1554,6 +1573,37 @@ jobs:
         with:
           tool: cargo-nextest
 
+      # crates.io インデックス更新 (`Updating crates.io index`) を省く (#1680)。
+      # 実測 (main の push, 2026-10-18 JST) で `cargo nextest run` の冒頭にこれが約 26 秒かかる。
+      # rust-cache は ~/.cargo/registry を保存対象にしているが、sparse index (registry/index)
+      # は復元されず、`cargo fetch --offline` が `no matching package named aes-gcm found`
+      # で失敗することを PR #1721 の run で確認した (rust-cache が index キャッシュを掃除
+      # するため)。そこで index だけを自前の actions/cache で持つ。ダウンロード済みクレート
+      # (registry/cache) は rust-cache が復元する。保存は他の Windows キャッシュと同じく
+      # main の push だけ (index は数 MB 程度で、保存コストは短縮分を食わない)。
+      - name: Cache cargo registry index
+        id: cargo-index-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/registry/index
+          key: cargo-index-${{ runner.os }}-windows-test-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-index-${{ runner.os }}-windows-test-
+
+      # index とクレートが全部そろっていれば `--offline` で足りる。足りないもの (Cargo.lock を
+      # 変えた PR など) があると probe が失敗するので、オンラインのまま走る。失敗は握りつぶして
+      # よい (オンラインへフォールバックするだけ)。probe は Windows ターゲットの依存だけを見る。
+      - name: Use offline registry when fully cached (#1680)
+        shell: bash
+        working-directory: src-tauri
+        run: |
+          if cargo fetch --locked --offline --target x86_64-pc-windows-msvc; then
+            echo "CARGO_NET_OFFLINE=true" >> "$GITHUB_ENV"
+            echo "registry fully cached: running cargo offline"
+          else
+            echo "registry not fully cached: running cargo online"
+          fi
+
       # SQLite 統合テスト (tests/sqlite_integration.rs) は外部サービス不要で常時
       # 実行される (integration グループ)。
       # external グループ (MySQL/PostgreSQL/SSH/TLS) は NOOBDB_TEST_* の env ゲート
@@ -1565,6 +1615,14 @@ jobs:
       - name: cargo nextest run
         working-directory: src-tauri
         run: cargo nextest run --locked --lib --test golden --test integration --test serde_schema_parity
+
+      # cargo の index は main の push で、完全一致のキーが無かったときだけ保存する (#1680)。
+      - name: Save cargo registry index (main only)
+        if: success() && github.ref == 'refs/heads/main' && steps.cargo-index-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/registry/index
+          key: cargo-index-${{ runner.os }}-windows-test-${{ hashFiles('src-tauri/Cargo.lock') }}
 
       # main の push のときだけ sccache を保存する。復元時に完全一致した場合は
       # 内容が変わらないので保存しない (従来の actions/cache と同じ挙動)。

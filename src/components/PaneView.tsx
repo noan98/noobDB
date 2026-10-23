@@ -5,6 +5,7 @@ import {
   Suspense,
   useCallback,
   useMemo,
+  useRef,
   useSyncExternalStore,
   type ComponentProps,
   type MutableRefObject,
@@ -12,7 +13,7 @@ import {
 } from "react";
 import { Box, Flex, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
-import { api, ConnectionProfile, QueryResult, TableSchema } from "../api/tauri";
+import { api, ConnectionProfile, QueryResult, Snippet, TableSchema } from "../api/tauri";
 import { countEditedCells, countEditedRows, type PendingEdits, type PendingInsertRow } from "./cellEdit";
 import { type BulkEditTarget } from "./bulkEdit";
 import { TabDirtyWatcher } from "../tabSqlStore";
@@ -31,11 +32,12 @@ import type { ResultGridHandle } from "./ResultGrid";
 import { ResultExplainContext, type ResultViewKind } from "./ResultViewSwitch";
 import { bundleExplainPrefix, bundlePlanSupported } from "./investigationBundle";
 import { explainAnalyzeSupported } from "./explainAnalyze";
-import { TabBar } from "./TabBar";
+import { TabBar, sameTabInfo, type TabInfo } from "./TabBar";
 import { Splitter } from "./Splitter";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Button } from "./ui";
 import { buildTabsEmptyActions } from "./tabsEmptyActions";
+import { buildResultEmptyActions } from "./resultEmptyActions";
 import { LoadingButton } from "./LoadingButton";
 import { readOnlyWithHint } from "../dangerousSql";
 import { useT } from "../i18n";
@@ -213,6 +215,8 @@ export interface PaneActions {
   openSnippetsFromEmpty: () => void;
   openErDiagramFromEmpty: () => void;
   openCommandPaletteFromEmpty: () => void;
+  /** 結果ペインの実行前状態 (#1784): Cmd/Ctrl+Enter と同じく選択→無ければ全文を実行。エディタへフォーカスも移す。 */
+  runOrFocusEditorFromEmpty: (paneId: string) => void;
 }
 
 export interface PaneEnv {
@@ -221,12 +225,16 @@ export interface PaneEnv {
   actions: PaneActions;
   t: ReturnType<typeof useT>;
   sessionId: string | null;
+  /** 手動トランザクション中か (#1508: スキャンプリフライトの EXPLAIN を休止する)。 */
+  txActive: boolean;
   selectedProfile: ConnectionProfile | null;
   layoutMode: LayoutMode;
   readOnly: boolean;
   emergencyMode: boolean;
   broadcastAvailable: boolean;
   queryHistory: string[];
+  /** エディタの補完候補に出すスニペット (現在の接続のスコープで絞り込み済み、#1489)。 */
+  completionSnippets: Snippet[];
   editorBindings: ComponentProps<typeof QueryEditor>["editorBindings"];
   gridBindings: ComponentProps<typeof ResultGrid>["gridBindings"];
   shortcutBindings: ReturnType<typeof resolveShortcutBindings>;
@@ -276,12 +284,14 @@ export const PaneView = memo(
       actions,
       t,
       sessionId,
+      txActive,
       selectedProfile,
       layoutMode,
       readOnly,
       emergencyMode,
       broadcastAvailable,
       queryHistory,
+      completionSnippets,
       editorBindings,
       gridBindings,
       shortcutBindings,
@@ -321,6 +331,21 @@ export const PaneView = memo(
           emptyCombo,
         ),
       [t, actions, emptyCombo],
+    );
+    // 結果ペインの「クエリ実行前」状態 (#1784) の補助導線。
+    const runCombo = formatCombo(shortcutBindings.run);
+    const resultEmptyActions = useMemo(
+      () =>
+        buildResultEmptyActions(
+          t,
+          {
+            run: () => actions.runOrFocusEditorFromEmpty(paneId),
+            snippets: actions.openSnippetsFromEmpty,
+            commandPalette: actions.openCommandPaletteFromEmpty,
+          },
+          { run: runCombo, commandPalette: emptyCombo },
+        ),
+      [t, actions, paneId, runCombo, emptyCombo],
     );
     const pane = useSyncExternalStore(store.subscribe, () => store.getPane(paneId));
     const paneTabs = useStoreSelector(
@@ -368,25 +393,35 @@ export const PaneView = memo(
       () => actions.setLayoutMode((m) => toggleLayoutMode(m, "result")),
       [actions],
     );
+    const tabBarItemsRef = useRef<TabInfo[]>([]);
     // TabBar へ渡すタブの一覧。dirty (SQL が最後の実行と違う) は `dirtyTick` が変わったとき
     // (TabDirtyWatcher が切り替わりを検知したとき) と、タブ自体が変わったときだけ再計算する。
     // biome-ignore lint/correctness/useExhaustiveDependencies: dirtyTick は TabDirtyWatcher の切り替わりで dirty を再計算するための再計算トリガー (本体では参照しない)
-    const tabBarItems = useMemo(
-      () =>
-        paneTabs.map((tt) => ({
-          id: tt.id,
-          kind: tt.kind,
-          title: tt.title,
-          database: tt.database,
-          table: tt.table,
-          dirty: (() => {
-            const d = isTabDirty(tt, getTabSql(tt));
-            dirtyWatcher.recordShown(tt.id, d);
-            return d;
-          })(),
-        })),
-      [paneTabs, dirtyTick, getTabSql, dirtyWatcher],
-    );
+    const tabBarItems = useMemo(() => {
+      const next: TabInfo[] = paneTabs.map((tt) => ({
+        id: tt.id,
+        kind: tt.kind,
+        title: tt.title,
+        database: tt.database,
+        table: tt.table,
+        dirty: (() => {
+          const d = isTabDirty(tt, getTabSql(tt));
+          dirtyWatcher.recordShown(tt.id, d);
+          return d;
+        })(),
+        // 実行中 (ストリーミング / バッチ) インジケータ (#1500)。
+        running: tt.streaming || tt.batchRunning === true,
+        pinned: tt.pinned === true,
+      }));
+      // ストリーミング中は行の到着ごとに paneTabs が更新されるが、TabBar が見る項目 (タイトル・
+      // dirty・running など) は変わらない。前回と全項目が一致するなら前回の配列を返し、
+      // memo 化した TabBar の無駄な再レンダーを避ける。
+      const prev = tabBarItemsRef.current;
+      const same = prev.length === next.length && next.every((n, i) => sameTabInfo(prev[i], n));
+      if (same) return prev;
+      tabBarItemsRef.current = next;
+      return next;
+    }, [paneTabs, dirtyTick, getTabSql, dirtyWatcher]);
     if (!pane) return null;
     const tab = paneTabs.find((tt) => tt.id === pane.activeTabId) ?? null;
     const paneDatabase = tab?.database ?? selectedProfile?.database ?? null;
@@ -594,6 +629,7 @@ export const PaneView = memo(
                         onSaveFile={onSaveSqlFile}
                         onFormatError={onFormatError}
                         disabled={!sessionId}
+                        scanPreflightPaused={txActive}
                         schemaTable={tab.schemaTable}
                         databaseSchema={paneSchema}
                         activeTable={gridStable.memo(
@@ -621,6 +657,7 @@ export const PaneView = memo(
                         emergencyMode={emergencyMode}
                         onToggleEmergencyMode={onToggleEmergencyMode}
                         queryHistory={queryHistory}
+                        snippets={completionSnippets}
                         editorBindings={editorBindings}
                         focusMode={editorFocused}
                         onToggleFocus={sessionId ? onToggleEditorFocus : undefined}
@@ -900,6 +937,7 @@ export const PaneView = memo(
                                 <ResultGrid
                                   ref={gridRef}
                                   gridBindings={gridBindings}
+                                  emptyActions={tab.kind === "query" ? resultEmptyActions : undefined}
                                   result={tab.result}
                                   initialScrollTop={
                                     tab.kind === "table"
@@ -909,6 +947,10 @@ export const PaneView = memo(
                                   onScroll={gridStable.fn(`${tab.id}:scroll`, (top: number) =>
                                     gridScrollRef.current.set(tab.id, top),
                                   )}
+                                  pageTurnPage={
+                                    tab.kind === "table" && tab.paginatable ? (tab.page ?? 1) : undefined
+                                  }
+                                  pageTurnScope={tab.id}
                                   streaming={tab.streaming}
                                   onStopStreaming={gridStable.fn(`${tab.id}:stop`, () =>
                                     actions.stopTab(tab),

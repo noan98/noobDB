@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createRef } from "react";
 import userEvent from "@testing-library/user-event";
 import { act, fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
@@ -21,9 +21,14 @@ import type { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tau
 import { attachStreamStats } from "../components/streamStats";
 import { setLocale, t } from "../i18n";
 import {
+  setColumnMaskCopyPlaceholder,
   setColumnMaskEnabled,
   setColumnMaskPatterns,
   setColumnNullBars,
+  DEFAULT_RESULT_GRID_MODE,
+  DEFAULT_RESULT_GRID_PAGE_SIZE,
+  setResultGridMode,
+  setResultGridPageSize,
   setRichCellRendering,
 } from "../settings";
 import { formatJsonCompact } from "../components/cellFormat";
@@ -107,6 +112,28 @@ describe("ResultGrid", () => {
   it("空の結果セットでは資格に応じたプレースホルダを表示する", () => {
     renderWithProviders(<ResultGrid result={null} />);
     expect(screen.getByText(t("resultEmpty"))).toBeInTheDocument();
+  });
+
+  it("実行前の空状態は EmptyState として実行ショートカット付きの補助アクションを出す (#1784)", async () => {
+    const { buildResultEmptyActions } = await import("../components/resultEmptyActions");
+    const user = userEvent.setup();
+    const calls: string[] = [];
+    const emptyActions = buildResultEmptyActions(
+      t,
+      {
+        run: () => calls.push("run"),
+        snippets: () => calls.push("snip"),
+        commandPalette: () => calls.push("pal"),
+      },
+      { run: "Ctrl+Enter", commandPalette: "Ctrl+K" },
+    );
+    renderWithProviders(<ResultGrid result={null} emptyActions={emptyActions} />);
+    expect(screen.getByText(t("resultEmptyTitle"))).toBeInTheDocument();
+    const run = screen.getByRole("button", { name: new RegExp(t("shortcutHintRun")) });
+    expect(run).toHaveTextContent("Ctrl+Enter");
+    await user.click(run);
+    await user.click(screen.getByRole("button", { name: new RegExp(t("resultEmptySnippets")) }));
+    expect(calls).toEqual(["run", "snip"]);
   });
 
   it("全文フィルタで一致行だけに絞り込み、件数サマリを表示する", async () => {
@@ -982,6 +1009,37 @@ describe("キーボードセルナビゲーション (#406)", () => {
     expect(cells[0][0].classList.contains("is-active-cell")).toBe(false);
   });
 
+  it("アクティブセルの列ヘッダと行番号に強調が付き、移動に追従する (#1755)", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    const activeCols = () => Array.from(container.querySelectorAll("thead th.is-active-col"));
+    const activeRows = () => Array.from(container.querySelectorAll("tbody td.row-index.is-active-row"));
+    expect(activeCols()).toHaveLength(0);
+    expect(activeRows()).toHaveLength(0);
+    fireEvent.focus(cells[0][0]);
+    expect(activeCols().map((e) => e.getAttribute("data-col-id"))).toEqual(["0"]);
+    expect(activeRows()).toHaveLength(1);
+    expect(activeRows()[0]).toBe(cells[0][0].closest("tr")?.querySelector("td.row-index"));
+    fireEvent.keyDown(cells[0][0], { key: "ArrowDown" });
+    fireEvent.keyDown(cells[1][0], { key: "ArrowRight" });
+    expect(activeCols().map((e) => e.getAttribute("data-col-id"))).toEqual(["1"]);
+    expect(activeRows()).toHaveLength(1);
+    expect(activeRows()[0]).toBe(cells[1][0].closest("tr")?.querySelector("td.row-index"));
+  });
+
+  it("フィルタ中の列がアクティブになると is-filtered-col と is-active-col が両方付く (#1755)", () => {
+    const { container } = renderWithProviders(
+      <ResultGrid
+        result={FRUIT_RESULT}
+        serverFilter={{ column: FRUIT_RESULT.columns[0].name, op: "eq", value: "1" } as never}
+      />,
+    );
+    const cells = dataCells(container);
+    fireEvent.focus(cells[0][0]);
+    const th = container.querySelector("thead th.is-active-col") as HTMLElement;
+    expect(th.classList.contains("is-filtered-col")).toBe(true);
+  });
+
   it("ArrowUp でひとつ上の行に移動する", () => {
     const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
     const cells = dataCells(container);
@@ -1187,6 +1245,80 @@ describe("キーボードセルナビゲーション (#406)", () => {
     });
     await user.click(await screen.findByRole("menuitem", { name: t("gridCopyAsCsvRows", { count: 2 }) }));
     await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("name\r\nbanana\r\napple\r\n"));
+  });
+
+  describe("矩形選択からの INSERT コピー (#1585)", () => {
+    const COLS: Column[] = [
+      { name: "id", type_name: "INT" },
+      { name: "user_id", type_name: "INT" },
+    ];
+    const RESULT = makeResult(COLS, [
+      [1, 10],
+      [2, 20],
+    ]);
+
+    afterEach(() => {
+      setColumnMaskEnabled(false);
+      setColumnMaskPatterns([]);
+      setColumnMaskCopyPlaceholder(true);
+    });
+
+    /** 先頭列を 2 行ぶん矩形選択し、2 行目のセルで右クリックして「コピー」サブメニューを開く。 */
+    async function openCopyMenuWithColumn(colIdx: number) {
+      const { container } = renderWithProviders(<ResultGrid result={RESULT} database="db" table="t" />);
+      const cells = dataCells(container);
+      fireEvent.focus(cells[0][colIdx]);
+      fireEvent.keyDown(cells[0][colIdx], { key: "ArrowDown", shiftKey: true });
+      fireEvent.contextMenu(cells[1][colIdx]);
+      fireEvent.keyDown(await screen.findByRole("menuitem", { name: t("gridCopyGroup") }), {
+        key: "ArrowRight",
+      });
+    }
+
+    it("選択列だけを出し、ラベルに列数を出す", async () => {
+      const user = userEvent.setup();
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, "clipboard", {
+        value: { writeText },
+        writable: true,
+        configurable: true,
+      });
+      await openCopyMenuWithColumn(0);
+      const item = await screen.findByRole("menuitem", {
+        name: t("gridCopyAsInsertRowsPartial", { count: 2, cols: 1 }),
+      });
+      await user.hover(item);
+      expect(await screen.findByText(t("gridCopyAsInsertPartialTitle"))).toBeInTheDocument();
+      // 全列のときの文言は出ない。
+      expect(screen.queryByRole("menuitem", { name: t("gridCopyAsInsertRows", { count: 2 }) })).toBeNull();
+      await user.click(item);
+      await waitFor(() => expect(writeText).toHaveBeenCalled());
+      const sql = writeText.mock.calls[0][0] as string;
+      expect(sql).toContain("(`id`)");
+      expect(sql).not.toContain("user_id");
+    });
+
+    it("マスク中のセルが選択列にあれば無効、選択外なら有効", async () => {
+      setColumnMaskEnabled(true);
+      setColumnMaskPatterns(["user_id"]);
+      setColumnMaskCopyPlaceholder(true);
+      const name = t("gridCopyAsInsertRowsPartial", { count: 2, cols: 1 });
+      // マスク列 (user_id) だけを選択 → 無効。
+      await openCopyMenuWithColumn(1);
+      expect(await screen.findByRole("menuitem", { name })).toBeDisabled();
+    });
+
+    it("マスク列が選択外なら有効", async () => {
+      setColumnMaskEnabled(true);
+      setColumnMaskPatterns(["user_id"]);
+      setColumnMaskCopyPlaceholder(true);
+      await openCopyMenuWithColumn(0);
+      expect(
+        await screen.findByRole("menuitem", {
+          name: t("gridCopyAsInsertRowsPartial", { count: 2, cols: 1 }),
+        }),
+      ).not.toBeDisabled();
+    });
   });
 
   it("Ctrl/Cmd+A で表示中の全セルを選択し、ページ全体の選択にさせない (#1529)", () => {
@@ -1949,6 +2081,107 @@ describe("選択範囲のエクスポート (#917)", () => {
   });
 });
 
+// 現在のビューのエクスポート (#1507)。ツールバーの Export を開いた時点の表示
+// (フィルタ・ソート) が「現在のビュー」スコープとして渡る。
+describe("現在のビューのエクスポート (#1507)", () => {
+  beforeEach(() => setLocale("en"));
+
+  it("何も絞っていなければスコープを出さない", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    await user.click(screen.getByRole("button", { name: t("exportButton") }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.queryByText(t("exportScopeView"))).toBeNull();
+  });
+
+  it("全体フィルタで絞ると、絞った行だけが既定のスコープで出力対象になる", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    await user.type(screen.getByLabelText(t("gridSearchAria")), "an");
+    await user.click(screen.getByRole("button", { name: t("exportButton") }));
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: new RegExp(t("exportScopeView")) })).toBeChecked();
+    const preview = screen.getByLabelText(t("exportPreview")).textContent ?? "";
+    expect(preview).toContain("banana");
+    expect(preview).not.toContain("apple");
+    expect(preview).not.toContain("cherry");
+  });
+
+  it("列を隠すと、CSV のヘッダと値にその列が出ない", async () => {
+    const user = userEvent.setup();
+    const key = resultShapeSizingKey(FRUIT_COLUMNS, null, null);
+    writeStoredColumnState(colStateKeyFrom(key), { visibility: { "1": false } });
+    onTestFinished(() => localStorage.removeItem(colStateKeyFrom(key) ?? ""));
+    renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    await user.click(screen.getByRole("button", { name: t("exportButton") }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: new RegExp(t("exportScopeView")) })).toBeChecked();
+    const preview = screen.getByLabelText(t("exportPreview")).textContent ?? "";
+    expect(preview).toContain("name");
+    expect(preview).not.toContain("qty");
+    expect(preview).toContain("banana");
+    expect(preview).not.toContain("banana,2");
+  });
+
+  it("選択範囲とビューが両方あるときは選択範囲が既定", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    await user.type(screen.getByLabelText(t("gridSearchAria")), "a");
+    const cells = Array.from(container.querySelectorAll("tbody tr")).map(
+      (tr) => Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
+    );
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "ArrowRight", shiftKey: true });
+    fireEvent.contextMenu(cells[0][0]);
+    await user.click(await screen.findByRole("menuitem", { name: t("gridExportSelection", { count: 2 }) }));
+    expect(screen.getByRole("radio", { name: new RegExp(t("exportScopeSelection")) })).toBeChecked();
+    expect(screen.getByRole("radio", { name: new RegExp(t("exportScopeView")) })).not.toBeChecked();
+  });
+
+  describe("ページング表示", () => {
+    const PAGED = makeResult(FRUIT_COLUMNS, [
+      ["banana", 1],
+      ["apple", 2],
+      ["cherry", 3],
+      ["mango", 4],
+      ["banjo", 5],
+    ]);
+    beforeEach(() => {
+      setResultGridMode("paginate");
+      setResultGridPageSize(2);
+    });
+    afterEach(() => {
+      setResultGridMode(DEFAULT_RESULT_GRID_MODE);
+      setResultGridPageSize(DEFAULT_RESULT_GRID_PAGE_SIZE);
+    });
+
+    it("何も絞らなければ (ページ分割だけでは) スコープを出さない", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ResultGrid result={PAGED} />);
+      await user.click(screen.getByRole("button", { name: t("exportButton") }));
+      expect(await screen.findByRole("dialog")).toBeInTheDocument();
+      expect(screen.queryByText(t("exportScopeView"))).toBeNull();
+      expect(screen.getByText(t("exportRowCount", { rows: 5 }))).toBeInTheDocument();
+    });
+
+    it("フィルタすると、全ページ分の該当行がビューに出る", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ResultGrid result={PAGED} />);
+      await user.type(screen.getByLabelText(t("gridSearchAria")), "an");
+      await user.click(screen.getByRole("button", { name: t("exportButton") }));
+      expect(await screen.findByRole("dialog")).toBeInTheDocument();
+      // banana (1 ページ目) / mango (2) / banjo (3) が複数ページにまたがって出る。
+      expect(screen.getByText(t("exportRowCount", { rows: 3 }))).toBeInTheDocument();
+      const preview = screen.getByLabelText(t("exportPreview")).textContent ?? "";
+      expect(preview).toContain("banana");
+      expect(preview).toContain("mango");
+      expect(preview).toContain("banjo");
+      expect(preview).not.toContain("apple");
+    });
+  });
+});
+
 // セル右クリックのクイックフィルタ (#914)。既存のフィルタモデル
 // (`onSetServerFilter` / TanStack の ColumnFilter) へセル値を流し込むだけなので、
 // ここでは「どちらの経路に載るか」と「NULL / BLOB の扱い」を固定する。値 → 条件の
@@ -2386,6 +2619,42 @@ describe("FK セルのリンク・アフォーダンス (#1393)", () => {
     fireEvent.contextMenu(nullFkCell);
     expect(await screen.findByRole("menu")).toBeTruthy();
     expect(screen.queryByRole("menuitem", { name: t("gridFkJump", { table: "users" }) })).toBeNull();
+  });
+
+  it("PK セルの右クリックに、子テーブルの行を開く「Referencing rows」が出て、子の FK 列で絞る SQL を渡す", async () => {
+    const onFkJump = vi.fn();
+    const { container } = renderFk(
+      { incomingFks: [{ table: "orders", column: "user_id", referencedColumn: "id" }] },
+      onFkJump,
+    );
+    // 1 行目の id セル (PK)。
+    fireEvent.contextMenu(container.querySelectorAll("td.col-number")[0] as HTMLElement);
+    fireEvent.click(
+      await screen.findByRole("menuitem", {
+        name: t("gridFkReverse", { table: "orders", column: "user_id" }),
+      }),
+    );
+    expect(onFkJump).toHaveBeenCalledTimes(1);
+    expect(onFkJump.mock.calls[0][0]).toBe("SELECT * FROM `orders` WHERE `user_id` = 1");
+  });
+
+  it("BLOB キーを参照する子行は、16 進リテラルで絞る SQL を渡す", async () => {
+    const onFkJump = vi.fn();
+    const blobCols: Column[] = [{ name: "id", type_name: "BLOB" }];
+    const { container } = renderWithProviders(
+      <ResultGrid
+        result={makeResult(blobCols, [["deadbeef"]])}
+        tableColumns={[meta("id", "id")[0]]}
+        onFkJump={onFkJump}
+        driver="mysql"
+        incomingFks={[{ table: "child", column: "pid", referencedColumn: "id" }]}
+      />,
+    );
+    fireEvent.contextMenu(container.querySelector("td[role='gridcell']") as HTMLElement);
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: t("gridFkReverse", { table: "child", column: "pid" }) }),
+    );
+    expect(onFkJump.mock.calls[0][0]).toBe("SELECT * FROM `child` WHERE `pid` = 0xdeadbeef");
   });
 
   it("参照先が解決できない / onFkJump が無いときは出さない", () => {

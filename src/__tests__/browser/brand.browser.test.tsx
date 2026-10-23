@@ -44,4 +44,52 @@ describe("ブランドビジュアル (実ブラウザ)", () => {
       await expect.poll(rootBg).toBe("none");
     });
   });
+
+  describe("シグネチャ・アニメーション (#1505)", () => {
+    afterEach(() => document.documentElement.removeAttribute("data-theme"));
+    const animName = (sel: string) => {
+      const el = document.querySelector(sel);
+      return el ? getComputedStyle(el).animationName : null;
+    };
+
+    it("animate で n と横線に keyframe が付く", async () => {
+      await renderInBrowser(<BrandMark size={96} animate />);
+      await expect.poll(() => animName(".brand-mark-n")).toBe("brand-mark-n-draw");
+      await expect.poll(() => animName(".brand-mark-bar")).toBe("brand-mark-bar-slide");
+    });
+
+    it("animate 無しは従来の静的ロゴ (アニメ用クラスが付かない)", async () => {
+      await renderInBrowser(<BrandMark size={96} />);
+      await expect.poll(() => document.querySelector("svg")).toBeTruthy();
+      expect(document.querySelector(".brand-mark-anim, .brand-mark-n, .brand-mark-bar")).toBeNull();
+    });
+
+    it("mono トーンでは animate を無視する", async () => {
+      await renderInBrowser(<BrandMark size={48} tone="mono" animate />);
+      await expect.poll(() => document.querySelector("svg")).toBeTruthy();
+      expect(document.querySelector(".brand-mark-anim")).toBeNull();
+    });
+
+    it("hc-* では静止する", async () => {
+      document.documentElement.setAttribute("data-theme", "hc-dark");
+      await renderInBrowser(<BrandMark size={96} animate />);
+      await expect.poll(() => animName(".brand-mark-n")).toBe("none");
+      await expect.poll(() => animName(".brand-mark-bar")).toBe("none");
+    });
+
+    it("アプリ内モーション量が reduced なら即時化される", async () => {
+      document.documentElement.setAttribute("data-motion", "reduced");
+      try {
+        await renderInBrowser(<BrandMark size={96} animate />);
+        await expect
+          .poll(() => {
+            const el = document.querySelector(".brand-mark-n");
+            return el ? parseFloat(getComputedStyle(el).animationDuration) : null;
+          })
+          .toBeLessThan(0.001);
+      } finally {
+        document.documentElement.removeAttribute("data-motion");
+      }
+    });
+  });
 });

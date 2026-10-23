@@ -17,6 +17,9 @@ import {
 import { connectRequestFromProfile } from "./connectRequest";
 import { beginBatchRun, endBatchRun, isCurrentBatchRun } from "./batchRunGuard";
 import { Box, Flex, Grid, chakra, visuallyHiddenStyle } from "@chakra-ui/react";
+import { Callout } from "./components/Callout";
+import { ConnectionPathDiagram } from "./components/ConnectionPathDiagram";
+import { buildConnectionPath, CONNECTED_PHASE, pathInputFromProfile } from "./components/connectionPath";
 import { AnimatePresence, motion } from "motion/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { QUERY_HISTORY_LIMIT, dedupeAdjacentHistory, pushHistoryEntry } from "./components/queryHistoryNav";
@@ -74,6 +77,7 @@ import {
   buildInsertStatements,
   buildBlobUpdateStatement,
   buildUpdateGroups,
+  isLockableIdentity,
   buildUpdateStatements,
   hasAmbiguousIdentity,
   isBinaryColumnType,
@@ -81,7 +85,13 @@ import {
   type PendingEdits,
   type PendingInsertRow,
 } from "./components/cellEdit";
-import { appliedRowShortfall, remainingAfterSent, tabStateAfterApply } from "./components/editApplyState";
+import {
+  applyWithRowCountGuard,
+  appliedRowShortfall,
+  pendingEditsAfterApply,
+  remainingAfterSent,
+  tabStateAfterApply,
+} from "./components/editApplyState";
 import { attachStreamStats } from "./components/streamStats";
 import { attachResultHandle, isResultGoneError, resultHandleFor } from "./components/resultHandle";
 import {
@@ -196,13 +206,15 @@ import { RESULT_SUMMARY_STATS_MAX_ROWS } from "./ai/resultSummary";
 import type { AiResultSummaryRequest } from "./components/AiResultSummaryPanel";
 import { StatusAnnouncer, StatusBarIcon, StatusBarText } from "./components/StatusBarMessage";
 import { useToast } from "./components/Toast";
-import { SnippetList } from "./components/SnippetList";
+import { snippetPlainText } from "./snippetTemplate";
+import { SnippetList, scopeMatches } from "./components/SnippetList";
 import type { WhereUsedRequest } from "./components/WhereUsedPanel";
 import { HistoryList } from "./components/HistoryList";
 import { LocalTablesPanel } from "./components/LocalTablesPanel";
 import { planLocalRefetch } from "./components/localRefetch";
 import type { QueryEditorHandle, SchemaTable } from "./components/QueryEditor";
 import type { SchemaJumpTarget } from "./components/identifierJump";
+import { parseTableRef, preflightDeleteTarget } from "./components/preflight";
 import type { PreflightResult } from "./components/usePreflight";
 import type { PreflightImpact } from "./components/DangerousQueryDialog";
 import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
@@ -211,6 +223,8 @@ import { type ResultViewKind } from "./components/ResultViewSwitch";
 import { bundleExplainPrefix } from "./components/investigationBundle";
 import { buildExplainAnalyzeSql } from "./components/explainAnalyze";
 import { TitleBar, type TitleBarConnection } from "./components/TitleBar";
+import { ambientWashImage } from "./components/titleBarContext";
+import { pulseFocusLanding } from "./components/focusLandingPulse";
 import { ProductionBadge, ProfileColorChip } from "./components/ProfileBadge";
 import { SplashScreen } from "./components/SplashScreen";
 import { Splitter } from "./components/Splitter";
@@ -228,7 +242,7 @@ import {
   TX_ISOLATION_DEFAULT,
   type TxIsolation,
 } from "./txOptions";
-import { useConfirm } from "./components/ConfirmDialog";
+import { useConfirm, type ConfirmControls } from "./components/ConfirmDialog";
 import { CodePreview } from "./components/modalForm";
 import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
 import { SavepointControl } from "./components/SavepointControl";
@@ -270,6 +284,7 @@ const PlanWatchPanel = lazy(() =>
 const SchemaDriftPanel = lazy(() =>
   import("./components/SchemaDriftPanel").then((m) => ({ default: m.SchemaDriftPanel })),
 );
+const AboutDialog = lazy(() => import("./components/AboutDialog").then((m) => ({ default: m.AboutDialog })));
 const SavedTabsModal = lazy(() =>
   import("./components/SavedTabsModal").then((m) => ({ default: m.SavedTabsModal })),
 );
@@ -457,8 +472,23 @@ import {
   shouldNotifyQueryCompletion,
   type QueryNotificationKind,
 } from "./queryNotify";
-import type { IncomingFk } from "./fkNavigation";
+import { type IncomingFk, incomingFkTableName } from "./fkNavigation";
 import { collectDropImpacts, type DropImpact } from "./dropImpact";
+import {
+  buildOpenChildrenSql,
+  type CascadeImpacts,
+  collectDeletedKeyValues,
+  EDITOR_DELETE_PRECHECK_TIMEOUT_MS,
+  loadCascadeImpacts,
+  resolveParentDatabase,
+  withTimeout,
+  blocksDelete,
+  loadRefImpacts,
+  type RefImpact,
+  rootPredicatesFromDelete,
+  rootPredicatesFromKeys,
+} from "./refImpact";
+import { RefImpactList } from "./components/RefImpactList";
 import { DropReferencedBy } from "./components/DropReferencedBy";
 import type { ValueLookup } from "./components/useValuePicker";
 import { addPinnedWithEvicted, MAX_PINNED, pinToastPlan, type PinnedResult } from "./pinnedCompare";
@@ -534,7 +564,7 @@ import {
   type PersistedTab,
   type PersistedWorkspace,
 } from "./tabPersistence";
-import { reorderIfPermutation } from "./tabReorder";
+import { orderAfterPinChange, pinnedFirst, reorderIfPermutation } from "./tabReorder";
 import { applyRename, autoTitleOnRun, deriveResultTabTitle as deriveTitleFromSql } from "./tabTitle";
 import { applySubsequenceOrder } from "./connectionOrder";
 import { BACKGROUND_PING_INTERVAL_MS, nextStaleProfileIds } from "./backgroundHealth";
@@ -580,6 +610,7 @@ import {
 } from "./snippetQuickAccess";
 import { TableOpenQueryModal } from "./components/TableOpenQueryModal";
 import { QuickLauncher } from "./components/QuickLauncher";
+import { ShortcutHintOverlay } from "./components/ShortcutHintOverlay";
 import type { QuickLauncherSectionId } from "./quickLauncher";
 import {
   applyTableOpenTemplate,
@@ -830,6 +861,8 @@ export interface Tab {
   title: string;
   /** 手動リネーム済み / 名前付きで開いたタブ。true なら実行時の自動命名で上書きしない (#1390)。 */
   titleManual?: boolean;
+  /** ピン留め済み (#1486)。ペインの左端に固定され、一括クローズの対象から外れる。永続化する。 */
+  pinned?: boolean;
   /**
    * ファイルから開いたタブの文字コード (#1535)。「名前を付けて保存」は同じ文字コードで
    * 書き戻す。未設定は UTF-8。永続化しない。
@@ -1229,6 +1262,11 @@ function dragFeedbackFor(paths: string[], connected: boolean): DragFeedback {
   return { accept: true, kind: hasSql ? "sql" : "csv" };
 }
 
+/** ピン留め中のタブ id の集合 (#1486)。 */
+function pinnedIdSet(tabs: readonly Tab[]): Set<string> {
+  return new Set(tabs.filter((tt) => tt.pinned).map((tt) => tt.id));
+}
+
 function toPersistedTab(
   tab: Tab,
   liveSelection?: { anchor: number; head: number },
@@ -1236,6 +1274,7 @@ function toPersistedTab(
 ): PersistedTab {
   const out: PersistedTab = { kind: tab.kind, title: tab.title, sql: tab.sql };
   if (tab.titleManual) out.titleManual = true;
+  if (tab.pinned) out.pinned = true;
   if (tab.database) out.database = tab.database;
   if (tab.table) out.table = tab.table;
   // Carry the Query Builder snapshot through so the inputs come back on
@@ -1433,6 +1472,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showTasks, setShowTasks] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
   // 初回起動オンボーディングツアー (#599)。ウェルカム画面の「はじめかたを見る」
   // からの手動起動、および新規ユーザ (プロファイル 0 件・未表示) への自動起動の
   // 両方でこのフラグを立てる。表示済みフラグの永続化は閉じるときに行う。
@@ -2315,7 +2355,27 @@ export default function App() {
     typedConfirmTarget: string | null;
     /** 影響行数プリフライト (#737) から引き継いだ件数 (該当時のみ)。 */
     impact?: PreflightImpact | null;
+    /** 単一表 DELETE の対象 (プリフライトの切り出し)。子テーブルへの影響の集計に使う (#1767)。 */
+    deleteTarget?: { table: string; condition: string | null } | null;
+    /** 実行前に集計済みの子行影響 (WHERE 付きの通常 DELETE の事前確認から開いたとき、#1767)。 */
+    fkResult?: CascadeImpacts | null;
   } | null>(null);
+  // WHERE 付きの通常 DELETE を実行する前の子行影響の事前確認 (#1767)。定義は loadEditorDeleteImpacts の後ろ。
+  const precheckingTabsRef = useRef<Set<string>>(new Set());
+  const gateRunSeqRef = useRef<Map<string, number>>(new Map());
+  const precheckDeleteRef = useRef<
+    | ((input: {
+        tabId: string;
+        sql: string;
+        autoLimit: number | null;
+        target: { table: string; condition: string | null };
+        database: string | null;
+        count: number;
+        allRows: boolean;
+        proceed: () => void;
+      }) => Promise<void>)
+    | null
+  >(null);
 
   // Pending {{variable}} parameter prompt. When the editor's SQL contains
   // placeholders, the run/preview/explain action is held here while the input
@@ -2809,12 +2869,51 @@ export default function App() {
           // Accept only a true permutation of this pane's ids so a stale callback
           // can't smuggle in foreign tabs or drop one (see tabReorder.ts).
           const validated = reorderIfPermutation(p.tabIds, orderedIds);
-          return validated ? { ...p, tabIds: validated } : p;
+          if (!validated) return p;
+          // ピン留めタブ (#1486) は左端固定。ピンの境界を跨ぐ移動は境界で止める。
+          const pinned = pinnedIdSet(tabsRef.current);
+          const fixed = pinnedFirst(validated, (id) => pinned.has(id));
+          // 並びが変わらない (ピンの境界を跨ごうとした) ときは参照を保ち、ドラッグ中の無駄な再描画を避ける。
+          return fixed.every((id, i) => id === p.tabIds[i]) ? p : { ...p, tabIds: fixed };
         }),
       );
     },
-    [setPanes],
+    [setPanes, tabsRef],
   );
+
+  // タブのピン留め / 解除 (#1486)。ピン留めしたタブはペイン左端のピン群の末尾へ、解除したタブは
+  // 未ピン群の先頭へ移す。
+  const togglePinTab = useCallback(
+    (tabId: string) => {
+      const pinnedBefore = pinnedIdSet(tabsRef.current);
+      const nextPinned = !pinnedBefore.has(tabId);
+      setTabs((prev) => prev.map((tt) => (tt.id === tabId ? { ...tt, pinned: nextPinned } : tt)));
+      setPanes((prev) =>
+        prev.map((p) =>
+          p.tabIds.includes(tabId)
+            ? { ...p, tabIds: orderAfterPinChange(p.tabIds, tabId, (id) => pinnedBefore.has(id)) }
+            : p,
+        ),
+      );
+    },
+    [setPanes, setTabs, tabsRef],
+  );
+
+  // どの経路 (別ペインへの移動・ペイン統合・復元など) でタブが並んでも、ピン留めタブが各ペインの
+  // 左端に揃うよう正規化する安全網 (#1486)。すでに揃っていれば setPanes しない (ループしない)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: tabs はピン状態の変化を拾うための再計算トリガー (本体は tabsRef 経由で読む)
+  useEffect(() => {
+    const pinned = pinnedIdSet(tabsRef.current);
+    if (pinned.size === 0) return;
+    const needsFix = panesRef.current.some((p) => pinnedFirst(p.tabIds, (id) => pinned.has(id)) !== p.tabIds);
+    if (!needsFix) return;
+    setPanes((prev) =>
+      prev.map((p) => {
+        const fixed = pinnedFirst(p.tabIds, (id) => pinned.has(id));
+        return fixed === p.tabIds ? p : { ...p, tabIds: fixed };
+      }),
+    );
+  }, [panes, tabs, setPanes, panesRef, tabsRef]);
 
   const openTabMenu = useCallback((tabId: string, x: number, y: number) => {
     setTabMenu({ tabId, x, y });
@@ -3797,6 +3896,8 @@ export default function App() {
               attemptId,
               settings.connectTimeoutSecs,
             );
+        // 確立後は経路図を「全点灯・静止」にする (タブ復元の確認を待つ間も脈動させない, #1754)。
+        setConnectAttempt((prev) => (prev?.id === attemptId ? { ...prev, phase: CONNECTED_PHASE } : prev));
         setSessionId(res.session_id);
         setSelectedProfile(profile);
         // 新しいセッションを同時接続レジストリへ登録する (#複数同時接続)。
@@ -4402,7 +4503,7 @@ export default function App() {
   // table tab so the result grid can offer reverse FK navigation (rows
   // referencing the current row). Cached per table and reused across tabs. The
   // backend keeps one database-wide FK list, so this costs no extra DB queries
-  // per table. #621 / #1255
+  // per table (PostgreSQL はスキーマをまたぐ FK の分だけ 1 クエリ追加, #1786). #621 / #1255
   useEffect(() => {
     if (!sessionId) return;
     for (const tt of paneActiveTabs) {
@@ -5270,6 +5371,7 @@ export default function App() {
               openTemplate,
               previewRowLimit: limit,
               paginatable: base,
+              pinned: s.pinned === true,
               builderSnapshot: restoredSnapshot,
               selection: s.selection,
               gridScrollTop: s.gridScrollTop,
@@ -5298,6 +5400,7 @@ export default function App() {
             ...tab,
             title: s.title || tab.title,
             titleManual: s.titleManual === true,
+            pinned: s.pinned === true,
             previewRowLimit: limit,
             builderSnapshot: restoredSnapshot,
             selection: s.selection,
@@ -5306,6 +5409,7 @@ export default function App() {
         return {
           ...makeTab("query", s.kind === "query" ? s.title : translate("tabUntitledQuery"), s.sql),
           titleManual: s.kind === "query" && s.titleManual === true,
+          pinned: s.pinned === true,
           previewRowLimit: limit,
           builderSnapshot: restoredSnapshot,
           selection: s.selection,
@@ -6234,6 +6338,9 @@ export default function App() {
 
   const runInTabWithGate = useCallback(
     (tab: Tab, sql: string, opts?: { newTab?: boolean; fresh?: boolean }) => {
+      // 子行影響の事前確認中 (ステータスに「確認中」) の再実行は無視する (#1767)。
+      if (precheckingTabsRef.current.has(tab.id)) return;
+      gateRunSeqRef.current.set(tab.id, (gateRunSeqRef.current.get(tab.id) ?? 0) + 1);
       // On an explain tab the primary action re-runs EXPLAIN so the viewer keeps
       // getting plan JSON instead of a raw result set. EXPLAIN is read-only, so
       // it never trips the destructive-query gate or auto LIMIT.
@@ -6311,6 +6418,7 @@ export default function App() {
           batch,
           typedConfirmTarget,
           impact,
+          deleteTarget: pf && pf.sql === sql && pf.status === "ready" ? preflightDeleteTarget(pf.plan) : null,
         });
         return;
       }
@@ -6319,19 +6427,49 @@ export default function App() {
         void runBatchInTab(target.id, sql, true, openedInNewTab ? target : undefined);
         return;
       }
-      // 明示トランザクション中は同一接続で実行する経路に振り分ける。
-      if (txActiveRef.current && target.kind === "query") {
-        void runTxInTab(target.id, sql);
+      const runPlain = () => {
+        // 明示トランザクション中は同一接続で実行する経路に振り分ける。
+        if (txActiveRef.current && target.kind === "query") {
+          void runTxInTab(target.id, sql);
+          return;
+        }
+        void runQueryInTab(
+          target.id,
+          sql,
+          null,
+          autoLimit,
+          false,
+          openedInNewTab ? { tab: target } : undefined,
+        );
+      };
+      // WHERE 付きの通常 DELETE: プリフライトで 1 行以上と確定していれば、実行前に子行への影響
+      // (CASCADE / RESTRICT) を数え、ある場合だけ確認を挟む (#1767)。0 件なら集計を省く。
+      const pfDel = preflightRef.current.get(tab.id);
+      const delTarget =
+        pfDel &&
+        pfDel.sql === sql &&
+        pfDel.status === "ready" &&
+        (pfDel.count ?? 0) > 0 &&
+        !selectedProfile?.read_only
+          ? preflightDeleteTarget(pfDel.plan)
+          : null;
+      if (delTarget && target.kind === "query" && precheckDeleteRef.current) {
+        void precheckDeleteRef.current({
+          tabId: target.id,
+          sql,
+          autoLimit,
+          target: delTarget,
+          // PostgreSQL の `database` 引数はスキーマ。プロファイルの database (= DB 名) へは寄せない。
+          database:
+            target.database ??
+            (selectedProfile?.driver === "postgres" ? null : (selectedProfile?.database ?? null)),
+          count: pfDel?.count ?? 0,
+          allRows: pfDel?.plan.allRows ?? false,
+          proceed: runPlain,
+        });
         return;
       }
-      void runQueryInTab(
-        target.id,
-        sql,
-        null,
-        autoLimit,
-        false,
-        openedInNewTab ? { tab: target } : undefined,
-      );
+      runPlain();
     },
     [
       runQueryInTab,
@@ -6342,6 +6480,7 @@ export default function App() {
       selectedProfile?.is_production,
       selectedProfile?.confirm_writes,
       selectedProfile?.read_only,
+      selectedProfile?.database,
       settings.confirmDangerousQueries,
       settings.autoLimitEnabled,
       settings.autoLimitCount,
@@ -6591,9 +6730,12 @@ export default function App() {
   const handleInsertSnippet = useCallback(
     (snippet: Snippet) => {
       if (activeTab) {
-        activeEditor()?.insertText(snippet.sql);
+        // `${1:...}` 記法を含むときはタブストップ付きで展開する (#1489)。含まなければ従来どおり。
+        activeEditor()?.insertSnippet(snippet.sql);
       } else if (sessionId) {
-        addTab({ ...makeQueryTab(), sql: snippet.sql, lastExecutedSql: snippet.sql });
+        // エディタが無いのでタブストップは使えない。既定値に置き換えた平文を新規タブへ入れる。
+        const plain = snippetPlainText(snippet.sql);
+        addTab({ ...makeQueryTab(), sql: plain, lastExecutedSql: plain });
       }
     },
     [activeTab, sessionId, activeEditor, addTab],
@@ -6609,15 +6751,17 @@ export default function App() {
   const handleRunSnippet = useCallback(
     (snippet: Snippet) => {
       if (!sessionId) return;
+      // タブストップ記法 (#1489) は既定値に置き換えた平文で実行する。
+      const plain = snippetPlainText(snippet.sql);
       const tab: Tab = {
         ...makeQueryTab(),
-        sql: snippet.sql,
-        lastExecutedSql: snippet.sql,
+        sql: plain,
+        lastExecutedSql: plain,
         title: snippet.name,
         titleManual: true,
       };
       addTab(tab);
-      runInTabWithGate(tab, snippet.sql, { newTab: false });
+      runInTabWithGate(tab, plain, { newTab: false });
       recordSnippetRunUsage(snippet.id);
     },
     [sessionId, addTab, runInTabWithGate, recordSnippetRunUsage],
@@ -6910,6 +7054,12 @@ export default function App() {
     else setSidebarUserCollapsed(false);
   }, []);
 
+  // エディタの補完候補に出すスニペット (#1489)。一覧と同じく現在の接続に合うスコープだけ。
+  const completionSnippets = useMemo(
+    () => snippets.filter((s) => scopeMatches(s, selectedProfile)),
+    [snippets, selectedProfile],
+  );
+
   const quickLauncherSources = useMemo(
     () => ({
       snippets,
@@ -7155,6 +7305,21 @@ export default function App() {
     [sessionId, previewQueryInTab, selectedProfile?.driver],
   );
 
+  // 削除予定の行を子テーブルが参照していないか確認する (#1506)。`openAndRunQuery` など後段の
+  // フックに依存するため、定義は後ろ (handleTruncateTable の近く) に置き、ここは ref 越しに呼ぶ。
+  const applyGuardRef = useRef<Set<string>>(new Set());
+  const confirmRowDeleteImpactsRef = useRef<
+    | ((input: {
+        database: string;
+        table: string;
+        columns: { name: string; type_name?: string }[];
+        rows: CellValue[][];
+        pkIndices: number[];
+        deleteKeys: ReadonlySet<string>;
+      }) => Promise<boolean>)
+    | null
+  >(null);
+
   /**
    * 保留中の編集を一括適用する。`rowScope` (rowEditKey → 列 → 生の入力値) を渡すと、
    * その行のセル編集だけを送り、ほかの保留編集・削除予定・新規行は保留のまま残す
@@ -7164,6 +7329,8 @@ export default function App() {
   const applyEditsForTab = useCallback(
     async (tab: Tab, rowScope?: PendingEdits): Promise<boolean> => {
       if (!sessionId) return false;
+      // 参照の確認 (#1506) 中の二重 Apply を防ぐ (bulkUpdateCells が 2 回走ると INSERT が重複しうる)。
+      if (applyGuardRef.current.has(tab.id)) return false;
       const { result, tableColumns, database, table, paginatable, rowIdentity } = tab;
       if (!result || !tableColumns || !database || !table) return false;
       const scoped = rowScope !== undefined;
@@ -7189,6 +7356,13 @@ export default function App() {
         rows: result.rows,
         pkIndices,
         edits: pendingEdits,
+        // 編集した列の読込時点の旧値も WHERE に足し、読込後に他者が変えた行の無言上書きを防ぐ (#1766)。
+        // 全列一致 (all_columns) と ctid の行識別は対象外: 全列キーは float4 やゼロ日付 (NULL で届く)
+        // で等値に往復せず 0 件一致 (誤競合) になり、ctid は自分の UPDATE で変わる。従来どおり
+        // 不足は適用後の shortfall 警告で知らせる。
+        // 既知の限界: Apply 後は画面の行が入力文字列のままで、DB が丸めた値 (NUMERIC(10,2) に 1.234 など) と
+        // 差が出る。再読込せず同じセルを再編集すると誤競合になりうる (その場合は再読込で解消する)。
+        optimisticLock: settings.optimisticCellEditLock && isLockableIdentity(identityStrategy),
       });
       const deletes = buildDeleteStatements({
         driver,
@@ -7240,6 +7414,33 @@ export default function App() {
         });
         if (!ok) return false;
       }
+      // 削除予定の行を子テーブルが参照しているなら、行数と ON DELETE を見せて確認する (#1506)。
+      if (deletes.length > 0) {
+        // 確認中も Apply ボタンを無効 (loading) にし、状態バーに出す。中止・失敗で必ず戻す。
+        applyGuardRef.current.add(tab.id);
+        patchTab(tab.id, (tt) => ({ ...tt, applyingEdits: true }));
+        setStatus({ kind: "key", key: "statusCheckingRefs" });
+        let proceed = true;
+        try {
+          proceed =
+            (await confirmRowDeleteImpactsRef.current?.({
+              database,
+              table,
+              columns: result.columns,
+              rows: result.rows,
+              pkIndices,
+              deleteKeys: new Set(pendingDeletes),
+            })) ?? true;
+        } finally {
+          applyGuardRef.current.delete(tab.id);
+          patchTab(tab.id, (tt) => ({ ...tt, applyingEdits: false }));
+          // 「確認中...」を残さない (キャンセル・「子行を開く」でも)。続行時は直後に適用中表示へ置き換わる。
+          setStatus((cur) =>
+            cur.kind === "key" && cur.key === "statusCheckingRefs" ? { kind: "idle" } : cur,
+          );
+        }
+        if (!proceed) return false;
+      }
       const tabId = tab.id;
       patchTab(tabId, (tt) => ({ ...tt, applyingEdits: true }));
       setStatus({ kind: "key", key: "statusApplyingEdits", vars: { count: opCount } });
@@ -7248,8 +7449,11 @@ export default function App() {
       // table is never left in a half-applied state.
       let totalAffected = 0;
       let failure: string | null = null;
+      let notApplied: { expected: number; actual: number } | null = null;
+      let conflictRows: number | null = null;
+      let incomplete: { expected: number; actual: number } | null = null;
       try {
-        const res = await api.bulkUpdateCells({
+        const bulkParams = {
           sessionId,
           database,
           table,
@@ -7257,12 +7461,113 @@ export default function App() {
           groups: updateGroups,
           extraStatements,
           pkBinary: pkIndices.map((i) => isBinaryColumnType(result.columns[i].type_name)),
+        };
+        // 実影響行数が想定を超えた (画面外の重複行などに当たった) ときバックエンドはコミットせず
+        // ロールバックして件数を返す (#1777)。利用者が明示的に承認した件数までに限って再実行する。
+        // キャンセルなら何も変わらない (保留中の編集もそのまま残す)。
+        const guarded = await applyWithRowCountGuard({
+          run: (options) => api.bulkUpdateCells({ ...bulkParams, options }),
+          confirmExceeded: ({ expected, actual, total }) =>
+            confirm({
+              title: translate("editRowOvershootConfirmTitle"),
+              message: translate(
+                identityStrategy === "all_columns"
+                  ? "editRowOvershootConfirmBodyAllColumns"
+                  : "editRowOvershootConfirmBody",
+                { expected, actual, total },
+              ),
+              confirmLabel: translate("editRowOvershootConfirmButton"),
+              tone: "warning",
+            }),
+          // 確認中は「適用中…」を出さず、二重 Apply も防ぐ (確認のあとは適用中表示へ戻す)。
+          onAwaitingConfirm: () => {
+            applyGuardRef.current.add(tabId);
+            setStatus({ kind: "key", key: "statusAwaitingRowCountConfirm" });
+          },
+          onResume: () => {
+            applyGuardRef.current.delete(tabId);
+            setStatus({ kind: "key", key: "statusApplyingEdits", vars: { count: opCount } });
+          },
         });
-        totalAffected = Number(res.rows_affected ?? 0);
+        if (guarded.kind === "applied") totalAffected = guarded.totalAffected;
+        else if (guarded.kind === "not_applied") notApplied = guarded;
+        else if (guarded.kind === "conflict") conflictRows = guarded.conflictRows;
+        else incomplete = guarded;
       } catch (e) {
         failure = String(e);
       }
       patchTab(tabId, (tt) => ({ ...tt, applyingEdits: false }));
+      if (incomplete) {
+        // トランザクション非対応の表 (MyISAM など) はロールバックしても戻らない。書き込みの一部が
+        // 残っているので、承認して再実行させず、再読込して現状を確認してもらう。送信した保留編集・
+        // 削除予定・新規行は破棄する (残すと Apply の再実行で INSERT / UPDATE が二重に書かれる)。
+        // Apply 中に追加された未送信の分は残す。グリッドの表示は古いままなので再読込を促す。
+        patchTab(tabId, (tt) => ({
+          ...tt,
+          pendingEdits: pendingEditsAfterApply(tt.pendingEdits, pendingEdits),
+          ...(scoped
+            ? {}
+            : {
+                pendingDeletes: remainingAfterSent(tt.pendingDeletes ?? [], pendingDeletes),
+                pendingInserts: remainingAfterSent(tt.pendingInserts ?? [], pendingInserts),
+                editUndoStack: [],
+                editRedoStack: [],
+              }),
+        }));
+        setStatus({
+          kind: "key",
+          key: "statusApplyEditsRollbackIncomplete",
+          vars: incomplete,
+          error: true,
+        });
+        return false;
+      }
+      if (conflictRows !== null) {
+        // 楽観ロックの競合 (#1766): 読込後に他の人が変えた行があり、全体をロールバックした (DB は未変更)。
+        // 承認して上書きする選択肢は設けない。再読込して現在の値を見てから編集し直してもらう。
+        // 「編集を残す」なら保留編集はそのまま。「再読込」なら送った編集を破棄して取り直す
+        // (残すと現在の値を旧値として再送され、他の人の変更を知らないまま上書きしてしまう)。
+        setStatus({
+          kind: "key",
+          key: "statusApplyEditsConflict",
+          vars: { rows: conflictRows },
+          error: true,
+        });
+        const reload = await confirm({
+          title: translate("editConflictTitle"),
+          message: <Callout tone="warning">{translate("editConflictBody", { rows: conflictRows })}</Callout>,
+          confirmLabel: translate("editConflictReload"),
+          cancelLabel: translate("editConflictKeep"),
+          tone: "warning",
+        });
+        if (reload) {
+          // 再実行 (runQueryInTab) は保留編集と Undo/Redo をすべて消す。ボタンの文言も
+          // 「すべての編集を破棄」にして挙動と揃えている。
+          const latest = tabsRef.current.find((tt) => tt.id === tabId) ?? tab;
+          if (latest.paginatable) {
+            const limit = Math.max(1, latest.previewRowLimit || settings.defaultDisplayCount);
+            // 生の base SQL の 1 ページ目に戻すので、サーバ側ソート/フィルタの表示 (#792) も解除する。
+            patchTab(tabId, (tt) => ({ ...tt, serverSort: null, serverFilter: null }));
+            void runQueryInTab(tabId, `${latest.paginatable} LIMIT ${limit}`, latest.paginatable);
+          } else if (latest.lastExecutedSql && isReadOnlySql(latest.lastExecutedSql, driver)) {
+            // エディタの現在の SQL ではなく、直近に実行した読み取り専用 SQL だけを取り直す
+            // (自動リフレッシュと同じ防御)。
+            void runQueryInTab(tabId, latest.lastExecutedSql, null, null);
+          } else {
+            setStatus({ kind: "key", key: "statusEditConflictReloadSkipped", error: true });
+          }
+        }
+        return false;
+      }
+      if (notApplied) {
+        // ロールバック済みで DB は未変更。保留中の編集と行操作はそのまま残す。
+        setStatus({
+          kind: "key",
+          key: "statusApplyEditsOvershootCancelled",
+          vars: notApplied,
+        });
+        return false;
+      }
       if (failure) {
         // トランザクションはロールバックされ DB は未変更。保留中の編集と行操作は
         // そのまま残し、ユーザが原因を直して再適用できるようにする (以前はここで
@@ -7341,6 +7646,8 @@ export default function App() {
       patchTab,
       runQueryInTab,
       settings.defaultDisplayCount,
+      settings.optimisticCellEditLock,
+      tabsRef,
       selectedProfile?.driver,
       selectedProfile?.is_production,
       selectedProfile?.confirm_writes,
@@ -7415,9 +7722,9 @@ export default function App() {
       const row = result.rows[rowIdx];
       if (!row) return false;
       const { indices: pkIndices, strategy } = resolveRowIdentity(result.columns, tableColumns, rowIdentity);
-      // 実の主キーで行を特定できるときだけ (rowid / ctid / 全列一致では誤った行を
-      // 書き換えうる)。
-      if (strategy !== "primary_key") return false;
+      // 実の主キー、または UNIQUE NOT NULL キー (unique_key, #1776) で行を特定できるときだけ
+      // (rowid / ctid / 全列一致では誤った行を書き換えうる)。
+      if (strategy !== "primary_key" && strategy !== "unique_key") return false;
       const driver = selectedProfile?.driver ?? "mysql";
       const stmt = buildBlobUpdateStatement({
         driver,
@@ -7936,13 +8243,300 @@ export default function App() {
     [selectedProfile?.is_production],
   );
 
+  // 行削除 / TRUNCATE の確認に添える「子テーブルの参照行数」(#1506)。逆方向 FK
+  // (`incoming_foreign_keys`、DB 単位でキャッシュ済み) の子テーブルごとに COUNT を 1 往復で数える。
+  // 読み取り専用クエリ (`run_lookup_query`) なので read_only でも動き、書き込み経路は増えない。
+  // 取得に失敗しても確認自体は妨げない (警告を出さないだけ)。
+  const refImpactLookup = useCallback(
+    (database: string) => (sql: string, rowCap: number) => {
+      if (!sessionId) return Promise.resolve({ rows: [] as CellValue[][] });
+      // 重いテーブルで確認を待たせ続けないよう 5 秒で打ち切る (失敗時は警告なしで確認を続行)。
+      return api.runLookupQuery({ sessionId, sql, database, rowCap, queryTimeoutSecs: 5 });
+    },
+    [sessionId],
+  );
+
+  const confirmRowDeleteImpacts = useCallback(
+    async (input: {
+      database: string;
+      table: string;
+      columns: { name: string; type_name?: string }[];
+      rows: CellValue[][];
+      pkIndices: number[];
+      deleteKeys: ReadonlySet<string>;
+    }): Promise<boolean> => {
+      if (!sessionId) return true;
+      const driver = selectedProfile?.driver ?? "mysql";
+      let refs: IncomingFk[];
+      try {
+        refs = await api.incomingForeignKeys(sessionId, input.database, input.table);
+      } catch {
+        // 子テーブルの有無そのものが分からないときは確認を足さない (従来どおり)。
+        return true;
+      }
+      if (refs.length === 0) return true;
+      const collected = collectDeletedKeyValues({
+        columns: input.columns,
+        rows: input.rows,
+        pkIndices: input.pkIndices,
+        deleteKeys: input.deleteKeys,
+        referencedColumns: refs.map((r) => r.referencedColumn),
+      });
+      const { keys, types, partial } = collected;
+      let impacts: RefImpact[] = [];
+      let failed = false;
+      let moreCascade = false;
+      let deeperUnverified: string[] = [];
+      try {
+        // CASCADE の先 (子の子) も上限付きで辿って数える (#1767)。
+        const cascade = await loadCascadeImpacts({
+          driver,
+          database: input.database,
+          parentTable: input.table,
+          refs,
+          rootPredicates: rootPredicatesFromKeys({ driver, keys, types }),
+          fetchIncoming: (fk) => api.incomingForeignKeys(sessionId, fk.schema ?? input.database, fk.table),
+          lookup: refImpactLookup(input.database),
+        });
+        impacts = cascade.impacts;
+        moreCascade = cascade.moreCascade;
+        deeperUnverified = cascade.unverified;
+      } catch {
+        failed = true;
+      }
+      // 集計できなかった (タイムアウト等)、または参照先の列が結果に無く数えられない場合は、
+      // 黙って進めず「確認できなかった」旨を添えて確認を挟む。
+      // 注記には数えられなかった子テーブルだけを挙げる (集計失敗は全部、列不明は該当の子のみ)。
+      const unverifiedTables = [
+        ...new Set(
+          (failed ? refs : refs.filter((r) => collected.unresolved.includes(r.referencedColumn))).map((r) =>
+            incomingFkTableName(r),
+          ),
+        ),
+      ];
+      // 値の上限で打ち切って一件も見つからなかったときは、数えていない値に子行がありうるので
+      // 黙って進めず「確認できなかった」として全子テーブルを挙げる。
+      if (impacts.length === 0 && partial && unverifiedTables.length === 0) {
+        unverifiedTables.push(...new Set(refs.map((r) => incomingFkTableName(r))));
+      }
+      unverifiedTables.push(...deeperUnverified.filter((x) => !unverifiedTables.includes(x)));
+      const unverified = unverifiedTables.length > 0;
+      if (impacts.length === 0 && !unverified && !moreCascade) return true;
+      return confirm({
+        title: translate("refImpactDeleteTitle", { table: input.table }),
+        message: (controls) => (
+          <RefImpactList
+            impacts={impacts}
+            mode="rows"
+            driver={driver}
+            partial={partial}
+            moreCascade={moreCascade}
+            unverified={unverified ? unverifiedTables : undefined}
+            onOpen={(imp) => {
+              controls.cancel();
+              openAndRunQuery(
+                buildOpenChildrenSql({ driver, database: input.database, impact: imp, keys, types }),
+                incomingFkTableName(imp),
+              );
+            }}
+          />
+        ),
+        confirmLabel: translate("refImpactDeleteOk"),
+        tone: "warning",
+      });
+    },
+    [sessionId, selectedProfile?.driver, refImpactLookup, confirm, openAndRunQuery],
+  );
+  confirmRowDeleteImpactsRef.current = confirmRowDeleteImpacts;
+
+  // エディタの単一表 DELETE が消す行を参照している子行への影響 (#1767)。危険クエリの確認ダイアログが
+  // 開いたときに 1 回呼ばれる。親行は副問い合わせで引くので、キー値の取得は要らない。
+  // 失敗は呼び出し側 (ダイアログ) が「確認できませんでした」にして、実行は妨げない。
+  const loadEditorDeleteImpacts = useCallback(
+    async (
+      target: { table: string; condition: string | null },
+      database: string | null,
+    ): Promise<CascadeImpacts> => {
+      if (!sessionId) throw new Error("no session");
+      const driver = selectedProfile?.driver ?? "mysql";
+      const ref = parseTableRef(target.table);
+      // `incoming_foreign_keys` の `database` は MySQL ではデータベース、PostgreSQL ではスキーマを受ける
+      // ので、修飾子はそのまま渡せる。SQLite は修飾を扱わない。
+      if (!ref || (ref.qualifier && driver === "sqlite")) throw new Error("unresolved table");
+      const db = await resolveParentDatabase({
+        driver,
+        qualifier: ref.qualifier,
+        database,
+        // タブにスキーマが無い PostgreSQL は、接続の現在のスキーマを引く (search_path 次第なので固定しない)。
+        // database を空にすると search_path を切り替えず接続既定のまま問い合わせるので、実際の DELETE と
+        // 同じ名前解決になる (プロファイルの database は DB 名でありスキーマではない)。
+        currentSchema: async () => {
+          const res = await refImpactLookup("")("SELECT current_schema()", 1);
+          const v = res.rows[0]?.[0];
+          return typeof v === "string" ? v : null;
+        },
+      });
+      if (!db) throw new Error("unresolved table");
+      const refs = await api.incomingForeignKeys(sessionId, db, ref.name);
+      if (refs.length === 0) return { impacts: [], moreCascade: false, unverified: [] };
+      return loadCascadeImpacts({
+        driver,
+        database: db,
+        parentTable: ref.name,
+        refs,
+        rootPredicates: rootPredicatesFromDelete({ driver, ...target }),
+        fetchIncoming: (fk) => api.incomingForeignKeys(sessionId, fk.schema ?? db, fk.table),
+        // COUNT は DELETE と同じ名前解決 (タブの database) で流す。修飾子は FK 取得と子表の修飾にだけ使う。
+        lookup: refImpactLookup(database ?? db),
+      });
+    },
+    [sessionId, selectedProfile?.driver, refImpactLookup],
+  );
+
+  precheckDeleteRef.current = async ({
+    tabId,
+    sql,
+    autoLimit,
+    target,
+    database,
+    count,
+    allRows,
+    proceed,
+  }) => {
+    const startedSession = sessionIdRef.current;
+    const startedSeq = gateRunSeqRef.current.get(tabId) ?? 0;
+    precheckingTabsRef.current.add(tabId);
+    setStatus({ kind: "key", key: "statusCheckingRefs" });
+    let res: CascadeImpacts | null = null;
+    try {
+      // 1 本ごとの 5 秒に加え、FK 取得を含む全体も打ち切る (待たせ続けない)。
+      res = await withTimeout(loadEditorDeleteImpacts(target, database), EDITOR_DELETE_PRECHECK_TIMEOUT_MS);
+    } catch {
+      // 集計できなくても実行は妨げない。確認は出さず、見えなかった旨だけ伝える。
+      res = null;
+    } finally {
+      precheckingTabsRef.current.delete(tabId);
+    }
+    setStatus((cur) => (cur.kind === "key" && cur.key === "statusCheckingRefs" ? { kind: "idle" } : cur));
+    // 確認中に接続が切り替わった / 切れたら、元の接続向けの DELETE は流さない。
+    if (sessionIdRef.current !== startedSession) {
+      toast.info(translate("refImpactRunAborted"));
+      return;
+    }
+    // 確認中に同じタブで別の実行が始まっていたら、古い DELETE は流さない。
+    if ((gateRunSeqRef.current.get(tabId) ?? 0) !== startedSeq) return;
+    if (!res) {
+      toast.info(translate("refImpactCheckSkipped"));
+      proceed();
+      return;
+    }
+    const needsConfirm =
+      res.moreCascade || res.impacts.some((i) => i.onDelete === "CASCADE" || blocksDelete(i.onDelete));
+    if (!needsConfirm) {
+      proceed();
+      return;
+    }
+    setPendingDangerous({
+      tabId,
+      sql,
+      findings: [],
+      isProduction: selectedProfile?.is_production ?? false,
+      writeApproval: false,
+      autoLimit,
+      batch: false,
+      typedConfirmTarget: null,
+      impact: { verb: "delete", count, allRows },
+      fkResult: res,
+    });
+  };
+
+  // TRUNCATE の前に、対象テーブルを参照している子行数を数える (#1506)。`excludeChildren` に含まれる
+  // 子 (同じ操作で一緒に消える) と自己参照は影響として数えない。数えられなかった親テーブルは
+  // `unverified` に入れ、確認に「確認できなかった」旨を添える。
+  const loadTruncateImpacts = useCallback(
+    async (
+      database: string,
+      tables: readonly string[],
+      excludeChildren: readonly string[],
+    ): Promise<{ impacts: RefImpact[]; unverified: string[] }> => {
+      if (!sessionId) return { impacts: [], unverified: [] };
+      const driver = selectedProfile?.driver ?? "mysql";
+      const lookup = refImpactLookup(database);
+      const perTable = await Promise.all(
+        tables.map(async (tbl): Promise<{ impacts: RefImpact[]; unverified: string[] }> => {
+          let refs: IncomingFk[];
+          try {
+            const all = await api.incomingForeignKeys(sessionId, database, tbl);
+            // 別スキーマの同名テーブル (#1786) は親自身でも除外対象でもないので残す。
+            refs = all.filter((fk) => fk.schema || (fk.table !== tbl && !excludeChildren.includes(fk.table)));
+          } catch {
+            return { impacts: [], unverified: [] };
+          }
+          if (refs.length === 0) return { impacts: [], unverified: [] };
+          try {
+            const impacts = await loadRefImpacts({
+              driver,
+              database,
+              refs,
+              keys: null,
+              parentTable: tbl,
+              lookup,
+            });
+            return { impacts, unverified: [] };
+          } catch {
+            return { impacts: [], unverified: [...new Set(refs.map((r) => incomingFkTableName(r)))] };
+          }
+        }),
+      );
+      return {
+        impacts: perTable.flatMap((r) => r.impacts),
+        unverified: [...new Set(perTable.flatMap((r) => r.unverified))],
+      };
+    },
+    [sessionId, selectedProfile?.driver, refImpactLookup],
+  );
+
+  const refImpactTruncateBody = useCallback(
+    (base: ReactNode, found: { impacts: RefImpact[]; unverified: string[] }, database: string) =>
+      (controls: ConfirmControls) => {
+        const driver = selectedProfile?.driver ?? "mysql";
+        return (
+          <>
+            {base}
+            <RefImpactList
+              impacts={found.impacts}
+              mode="truncate"
+              driver={driver}
+              unverified={found.unverified}
+              onOpen={(imp) => {
+                controls.cancel();
+                openAndRunQuery(
+                  buildOpenChildrenSql({ driver, database, impact: imp, keys: null }),
+                  incomingFkTableName(imp),
+                );
+              }}
+            />
+          </>
+        );
+      },
+    [selectedProfile?.driver, openAndRunQuery],
+  );
+
   const handleTruncateTable = useCallback(
     async (database: string, table: string) => {
       // 不可逆 (TRUNCATE) × 本番接続では、対象テーブル名のタイプ入力を要求する
       // 強確認ゲートを追加する (#675)。非本番はこれまで通り 1 クリック確認。
+      const found = await loadTruncateImpacts(database, [table], []);
       const ok = await confirm({
         title: translate("truncateConfirmTitle", { table }),
-        message: maintenanceMessage(translate("truncateConfirmBody", { table })),
+        message:
+          found.impacts.length > 0 || found.unverified.length > 0
+            ? refImpactTruncateBody(
+                maintenanceMessage(translate("truncateConfirmBody", { table })),
+                found,
+                database,
+              )
+            : maintenanceMessage(translate("truncateConfirmBody", { table })),
         confirmLabel: translate("truncateConfirmOk"),
         tone: "danger",
         typedConfirmation: selectedProfile?.is_production ? table : undefined,
@@ -7951,12 +8545,20 @@ export default function App() {
       const driver = selectedProfile?.driver ?? "mysql";
       await runMaintenanceDdl(buildTruncateSql(driver, database, table), database);
     },
-    [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl],
+    [
+      confirm,
+      maintenanceMessage,
+      loadTruncateImpacts,
+      refImpactTruncateBody,
+      selectedProfile?.driver,
+      selectedProfile?.is_production,
+      runMaintenanceDdl,
+    ],
   );
 
   // DROP 確認ダイアログ用に、対象テーブルを参照している (DROP されずに残る) 子テーブルの FK を
   // 取る (#1536)。バックエンドは DB 全体の FK 一覧を持っているので 1 テーブルあたり追加の
-  // DB 問い合わせは増えない。取得に失敗しても確認自体は妨げず、警告を出さないだけにする。
+  // DB 問い合わせは増えない (PostgreSQL はスキーマをまたぐ FK の分だけ 1 クエリ追加, #1786)。取得に失敗しても確認自体は妨げず、警告を出さないだけにする。
   const loadDropImpacts = useCallback(
     async (database: string, tables: string[]): Promise<DropImpact[]> => {
       if (!sessionId) return [];
@@ -9025,9 +9627,18 @@ export default function App() {
         ) : (
           body
         );
+      // PostgreSQL / SQLite は同じ操作で子も空にするので、含まれる子は影響として数えない。
+      const found = await loadTruncateImpacts(
+        database,
+        tables,
+        selectedProfile?.driver === "mysql" ? [] : tables,
+      );
       const ok = await confirm({
         title: translate("batchTruncateConfirmTitle", { count: tables.length }),
-        message: maintenanceMessage(bodyWithNote),
+        message:
+          found.impacts.length > 0 || found.unverified.length > 0
+            ? refImpactTruncateBody(maintenanceMessage(bodyWithNote), found, database)
+            : maintenanceMessage(bodyWithNote),
         confirmLabel: translate("batchTruncateConfirmOk", { count: tables.length }),
         tone: "danger",
         typedConfirmation: production ? database : undefined,
@@ -9074,6 +9685,8 @@ export default function App() {
     [
       confirm,
       maintenanceMessage,
+      loadTruncateImpacts,
+      refImpactTruncateBody,
       selectedProfile?.driver,
       selectedProfile?.is_production,
       sessionId,
@@ -9967,9 +10580,10 @@ export default function App() {
     (tabId: string, mode: BulkCloseMode) => {
       const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
       if (!owner) return;
-      void requestCloseTabs(tabsToClose(owner.tabIds, tabId, mode));
+      // ピン留めタブ (#1486) は一括クローズの対象から除く。
+      void requestCloseTabs(tabsToClose(owner.tabIds, tabId, mode, pinnedIdSet(tabsRef.current)));
     },
-    [panesRef, requestCloseTabs],
+    [panesRef, tabsRef, requestCloseTabs],
   );
 
   // タブの複製 (#1354)。基点と同じペインの末尾に追加してアクティブにする。
@@ -10179,6 +10793,8 @@ export default function App() {
           const idx = (paneFocusCursorRef.current + i) % focusTargets.length;
           if (focusTargets[idx]()) {
             paneFocusCursorRef.current = (idx + 1) % focusTargets.length;
+            // 着地した領域の外枠を一瞬パルスさせ、現在地を示す (#1764)。
+            pulseFocusLanding();
             break;
           }
         }
@@ -10956,6 +11572,14 @@ export default function App() {
         run: () => openFullView("help"),
       },
       {
+        id: "nav:about",
+        group: "navigation",
+        label: t("cmdkActionAbout"),
+        icon: "info",
+        keywords: "about version license noobDB バージョン 情報 について",
+        run: () => setShowAbout(true),
+      },
+      {
         id: "nav:compare",
         group: "navigation",
         label: t("cmdkActionCompare"),
@@ -11267,6 +11891,17 @@ export default function App() {
     [sessionId, errorProfileId, profiles],
   );
 
+  // 接続確立中のフッターに出す経路図 (#1754)。経路はプロファイルの ssh / ssm 設定から
+  // 導出するだけで、新規 IPC は不要。SQLite (ファイル) は経路が無いので出さない。
+  const connectingProfile = useMemo(
+    () => (connectingId ? (profiles.find((p) => p.id === connectingId) ?? null) : null),
+    [connectingId, profiles],
+  );
+  const connectingPath = useMemo(() => {
+    const input = connectingProfile ? pathInputFromProfile(connectingProfile) : null;
+    return input ? buildConnectionPath(input) : null;
+  }, [connectingProfile]);
+
   // Any new status (new query, connect/disconnect, connection switch) re-enables
   // the status bar so it is never permanently suppressed by a prior dismissal.
   // biome-ignore lint/correctness/useExhaustiveDependencies: status は「ステータスが更新された」トリガー。本体では status を読まないが、変化のたびに閉じた状態を戻す
@@ -11372,6 +12007,12 @@ export default function App() {
     },
     openErDiagramFromEmpty: () => openFullView("erDiagram"),
     openCommandPaletteFromEmpty: () => setShowCommandPalette(true),
+    runOrFocusEditorFromEmpty: (paneId: string) => {
+      const editor = editorRefs.current.get(paneId);
+      if (!editor) return;
+      editor.focus();
+      editor.runAll();
+    },
   });
   const broadcastAvailable =
     !!sessionId &&
@@ -11383,11 +12024,13 @@ export default function App() {
         !isSandboxProfileId(c.profile.id),
     );
   const paneEnv: PaneEnv = {
+    completionSnippets,
     renamingTabId,
     store: tabPaneStore,
     actions: paneActions,
     t,
     sessionId,
+    txActive,
     selectedProfile,
     layoutMode,
     readOnly,
@@ -11433,10 +12076,14 @@ export default function App() {
           name: selectedProfile.name,
           color: selectedProfile.color ?? null,
           isProduction: selectedProfile.is_production,
+          driver: selectedProfile.driver,
           isSandbox: isSandboxProfileId(selectedProfile.id),
           status: connectionStatus,
         }
       : null;
+
+  // ワークスペース上端のアンビエントウォッシュ (#1768)。本番 / サンドボックス以外は undefined。
+  const ambientWash = ambientWashImage(titleBarConnection);
 
   // メイン領域が「今どの全画面サーフェスを表示しているか」の判別子 (#1020)。
   // 下の `<main>` 直下の三項チェーンと**同順・同条件**で判定する純関数
@@ -11642,6 +12289,7 @@ export default function App() {
       >
         <Flex
           as="aside"
+          data-focus-landing-region=""
           gridColumn="1"
           direction="column"
           overflow="hidden"
@@ -11825,6 +12473,7 @@ export default function App() {
             ref={sidebarTablistRef}
             role="tablist"
             aria-label={t("sidebarTablistAria")}
+            data-tour="sidebar-tabs"
           >
             {/* アクティブ下線のスプリングが端のタブで行き過ぎる (オーバーシュート) と、その数 px が
               スクロール可能な範囲に数えられ、タブ切替のたびに一瞬スクロールバーが出ていた。
@@ -11938,6 +12587,7 @@ export default function App() {
                   favoriteIds={snippetQuickAccess.favorites}
                   onToggleFavorite={handleToggleSnippetFavorite}
                   onRun={sessionId ? handleRunSnippet : undefined}
+                  onChanged={() => void refreshSnippets()}
                 />
               ) : sidebarTab === "history" ? (
                 <HistoryList
@@ -12295,6 +12945,26 @@ export default function App() {
               flexDirection="column"
               overflow="hidden"
             >
+              {/* 本番 / サンドボックス接続中のアンビエントウォッシュ (#1768)。セッションヘッダ・
+                タブ列・エディタは不透明な背景を持つため `<main>` の背景では隠れる。そこで作業領域の
+                上端に操作を一切奪わない overlay を重ねる (pointer-events: none / aria-hidden、
+                z-index はモーダル・ポップオーバー・ツールチップより下)。値は App.css の
+                `--prod-wash` / `--sandbox-wash` (hc-* では none)。 */}
+              {ambientWash && (
+                <div
+                  aria-hidden
+                  data-ambient-wash={titleBarConnection?.isProduction ? "prod" : "sandbox"}
+                  style={{
+                    position: "absolute",
+                    inset: "0 0 auto 0",
+                    height: "var(--ambient-wash-height)",
+                    pointerEvents: "none",
+                    zIndex: 1, // 作業領域内のローカルな重ね順 (モーダル・ポップオーバーより下)
+                    backgroundImage: ambientWash,
+                    backgroundRepeat: "no-repeat",
+                  }}
+                />
+              )}
               <div
                 inert={workspaceView !== "workspace" || undefined}
                 aria-hidden={workspaceView !== "workspace" || undefined}
@@ -12948,6 +13618,17 @@ export default function App() {
                   )}
                   {connectAttempt && (
                     <>
+                      {connectingPath && connectingProfile && (
+                        <Box flexShrink="0" w={connectingPath.nodes.length > 3 ? "44" : "32"}>
+                          <ConnectionPathDiagram
+                            compact
+                            path={connectingPath}
+                            driver={connectingProfile.driver}
+                            accentColor={connectingProfile.color}
+                            phase={connectAttempt.phase}
+                          />
+                        </Box>
+                      )}
                       <chakra.span
                         flexShrink="0"
                         fontSize="xs"
@@ -13213,6 +13894,14 @@ export default function App() {
                   profileId={selectedProfile?.id}
                   onClose={() => setExportTablesTarget(null)}
                 />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {showAbout && (
+              <Suspense fallback={null}>
+                <AboutDialog onClose={() => setShowAbout(false)} />
               </Suspense>
             )}
           </AnimatePresence>
@@ -13672,6 +14361,26 @@ export default function App() {
                       }
                     : null
                 }
+                fkImpact={
+                  pendingDangerous.fkResult && selectedProfile
+                    ? {
+                        driver: selectedProfile.driver,
+                        load: async () => pendingDangerous.fkResult as CascadeImpacts,
+                      }
+                    : pendingDangerous.deleteTarget && selectedProfile
+                      ? {
+                          driver: selectedProfile.driver,
+                          load: () =>
+                            loadEditorDeleteImpacts(
+                              pendingDangerous.deleteTarget as { table: string; condition: string | null },
+                              tabsRef.current.find((tb) => tb.id === pendingDangerous.tabId)?.database ??
+                                (selectedProfile.driver === "postgres"
+                                  ? null
+                                  : (selectedProfile.database ?? null)),
+                            ),
+                        }
+                      : null
+                }
                 pkSuggestion={
                   pkSuggestTemplate
                     ? {
@@ -13701,9 +14410,12 @@ export default function App() {
             const owner = panes.find((p) => p.tabIds.includes(tabMenu.tabId));
             // Moving is only possible when it won't leave a single pane empty.
             const canMove = !!owner && (panes.length > 1 || owner.tabIds.length > 1);
-            const hasOthers = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "others").length > 0;
-            const hasLeft = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "left").length > 0;
-            const hasRight = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "right").length > 0;
+            // ピン留めタブ (#1486) は一括クローズの対象外なので、項目の有効判定も除いて数える。
+            const pinnedIds = pinnedIdSet(tabsRef.current);
+            const isTabPinned = pinnedIds.has(tabMenu.tabId);
+            const hasOthers = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "others", pinnedIds).length > 0;
+            const hasLeft = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "left", pinnedIds).length > 0;
+            const hasRight = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "right", pinnedIds).length > 0;
             const items: ContextMenuEntry[] = [
               // 名前を持つのは query タブだけ (table / explain は内容から決まる)。
               ...(tabsRef.current.find((tt) => tt.id === tabMenu.tabId)?.kind === "query"
@@ -13714,6 +14426,11 @@ export default function App() {
                 onSelect: () => moveTabToOtherPane(tabMenu.tabId),
                 disabled: !canMove,
                 title: canMove ? undefined : t("tabMoveOtherPaneDisabled"),
+              },
+              {
+                label: isTabPinned ? t("tabUnpin") : t("tabPin"),
+                icon: "pin",
+                onSelect: () => togglePinTab(tabMenu.tabId),
               },
               {
                 label: t("tabDuplicate"),
@@ -13747,6 +14464,7 @@ export default function App() {
                 // 分割表示中は基点タブのペインだけが対象 (tabBulkClose)。ラベルもそれに合わせる。
                 label: panes.length > 1 ? t("tabCloseAllInPane") : t("tabCloseAll"),
                 onSelect: () => closeTabsBulk(tabMenu.tabId, "all"),
+                disabled: tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "all", pinnedIds).length === 0,
                 danger: true,
               },
             ];
@@ -13930,11 +14648,17 @@ export default function App() {
                 disabled: pinnedResults.length === 0,
                 title: pinnedResults.length === 0 ? t("pinCompareEmptyHint") : undefined,
               },
+              { separator: true },
+              { label: t("appAbout"), icon: "info", onSelect: () => setShowAbout(true) },
             ]}
             onClose={() => setToolsMenu(null)}
           />
         )}
       </Grid>
+      <ShortcutHintOverlay
+        surface={workspaceView !== "workspace" || !sessionId}
+        isBlocked={() => overlayOpenRef.current}
+      />
       {quickLauncherVisible && (
         <QuickLauncher
           open={quickLauncherOpen}

@@ -143,6 +143,18 @@ impl ScriptSplitter {
                         return;
                     }
                     if c == b'-' && next == Some(b'-') {
+                        // MySQL は `--` の直後が空白・制御文字・文末のときだけコメント (#1735)。
+                        // 直後の 1 バイトが要るので、チャンク境界なら次を待つ。
+                        if self.mysql {
+                            match bytes.get(self.pos + 2) {
+                                None if !eof => return,
+                                Some(&d) if !(d.is_ascii_whitespace() || d.is_ascii_control()) => {
+                                    self.pos += 1;
+                                    continue;
+                                }
+                                _ => {}
+                            }
+                        }
                         self.state = ScanState::LineComment;
                         self.pos += 2;
                         continue;
@@ -727,12 +739,21 @@ mod tests {
             "SELECT '\\'; DROP TABLE t; --'; SELECT 3",
             "/*!40014 SET FOREIGN_KEY_CHECKS=0 */;\nCREATE TABLE a(x int);",
             "SELECT a$b$ FROM t; SELECT $1; SELECT 1 # c;\n; SELECT 2",
+            "SELECT 1--1; SELECT 2; SELECT 3-- x; SELECT 4\n; SELECT 5--",
         ];
         for sql in cases {
             for driver in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
                 assert_chunk_invariant(driver, sql);
             }
         }
+    }
+
+    #[test]
+    fn mysql_dash_comment_needs_trailing_space_1735() {
+        let texts = |driver| sqls(split_script(driver, "SELECT 1--1; DROP TABLE t"));
+        assert_eq!(texts(DriverKind::Mysql), ["SELECT 1--1", "DROP TABLE t"]);
+        assert_eq!(texts(DriverKind::Postgres).len(), 1);
+        assert_eq!(texts(DriverKind::Sqlite).len(), 1);
     }
 
     #[test]

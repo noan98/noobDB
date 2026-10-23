@@ -264,10 +264,11 @@ async fn every_write_path_invalidates_the_caches() {
 // ---------------------------------------------------------------------------
 
 /// SQL 実行の入口 (ドライバの execute 系) を呼ぶトークン。
-const EXEC_TOKENS: [&str; 5] = [
+const EXEC_TOKENS: [&str; 6] = [
     ".execute(",
     ".execute_stream(",
     ".execute_transaction(",
+    ".execute_transaction_guarded(",
     ".execute_in_transaction(",
     ".execute_batch(",
 ];
@@ -382,7 +383,12 @@ fn streaming_and_run_query_share_the_invalidate_helper() {
         );
     }
     // 明示トランザクション系は文ごとに判定する経路で、両キャッシュを直接 invalidate する。
-    for f in ["run_query_transaction_inner", "run_in_transaction_inner"] {
+    // `run_query_transaction_inner` は想定行数の検算つきの `run_query_transaction_guarded_inner`
+    // (#1777) へ委譲するので、実体のほうを検査する。
+    for f in [
+        "run_query_transaction_guarded_inner",
+        "run_in_transaction_inner",
+    ] {
         let body = fn_body(&src, f);
         assert!(
             // スキーマ側は、対象が 1 テーブルと分かる DDL だけ表単位で捨てる

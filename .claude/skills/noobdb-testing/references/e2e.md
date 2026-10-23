@@ -78,8 +78,11 @@ Phase 2 がレイアウト/ビジュアルの退行検出に強く、Phase 3 が
   GTK 初期化順序に依存し、タイムアウトによる flaky が起きやすい。セレクタは #1245 で
   `data-testid` ベースに置き換え済み (UI 文言の変更では壊れない)。
 - **メンテコスト**: tauri-driver は Tauri のバージョンに追従が必要。WebDriverIO
-  のバージョン (`@wdio/tauri-service@1.0.0` は WebDriverIO v9 が必要) の固定管理も
-  必要。
+  のバージョンの固定管理も必要。WebDriverIO は v10 で動かしているが、
+  `@wdio/tauri-service@1.5` は peer が v9 で v10 に未対応 (v10 では `browser.executeAsync`
+  が削除され、サービスの `before()` が `stage="addTauriApi:single"` の TypeError をログに
+  出す。ラン自体は続く既知の非互換)。`browser.tauri.*` / モックは使えない。
+  tauri-service の v10 対応版が出たら上げる。
 - **macOS 非対応**: WKWebView に WebDriver 実装がなく、tauri-driver は macOS を
   サポートしない (Linux / Windows のみ)。
 

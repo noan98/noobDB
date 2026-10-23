@@ -535,7 +535,7 @@ pub struct ImportResult {
 
 /// 取り込めるドライバか。`DriverKind::parse` に委ねるので、ドライバを足すと
 /// インポートも自動で追従する。
-fn is_known_driver(driver: &str) -> bool {
+pub(crate) fn is_known_driver(driver: &str) -> bool {
     crate::db::DriverKind::parse(driver).is_some()
 }
 

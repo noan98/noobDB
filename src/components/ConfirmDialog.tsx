@@ -28,9 +28,15 @@ import { Button, Checkbox, Input, PressableButton } from "./ui";
 
 export type ConfirmTone = "primary" | "warning" | "danger";
 
+/** `message` を関数で渡したときに受け取る操作。確認を「キャンセル」で閉じる (#1506: 子行を開くため)。 */
+export interface ConfirmControls {
+  cancel: () => void;
+}
+
 export interface ConfirmOptions {
   title: string;
-  message: ReactNode;
+  /** 本文。関数で渡すと、本文内のボタンからダイアログを閉じられる (`cancel`)。 */
+  message: ReactNode | ((controls: ConfirmControls) => ReactNode);
   confirmLabel?: string;
   cancelLabel?: string;
   tone?: ConfirmTone;
@@ -154,7 +160,7 @@ export function useConfirm(): {
 
 interface ConfirmDialogProps {
   title: string;
-  message: ReactNode;
+  message: ReactNode | ((controls: ConfirmControls) => ReactNode);
   confirmLabel: string;
   cancelLabel: string;
   tone: ConfirmTone;
@@ -211,7 +217,7 @@ function ConfirmDialog({
         {title}
       </ModalHeader>
       <ModalBody display="flex" flexDirection="column" gap="3">
-        {message}
+        {typeof message === "function" ? message({ cancel: onCancel }) : message}
         {rememberKey && (
           <chakra.label display="flex" alignItems="center" gap="2" fontSize="sm" color="app.textMuted">
             <Checkbox checked={remember} onChange={() => setRemember((v) => !v)} />

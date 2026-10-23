@@ -684,7 +684,9 @@ pub(crate) fn sql_literal(driver: DriverKind, value: &Value) -> String {
                     DriverKind::Postgres => {
                         if f.is_nan() {
                             "'NaN'".to_string()
-                        } else if *f > 0.0 {
+                        // NaN は上で処理済みなので残りは ±Infinity のみ。`> 0.0` だと `>=` への変異が
+                        // 同値になり cargo-mutants で生き残るため、等値比較で表す (#1657)。
+                        } else if *f == f64::INFINITY {
                             "'Infinity'".to_string()
                         } else {
                             "'-Infinity'".to_string()

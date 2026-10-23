@@ -173,9 +173,9 @@ describe("driverIconName / driverColor (#874)", () => {
   });
 
   it("maps known drivers to brand colors and unknown ones to the accent", () => {
-    expect(driverColor("mysql")).toBe("#00758f");
-    expect(driverColor("postgres")).toBe("#3b82c4");
-    expect(driverColor("sqlite")).toBe("#0f9bdc");
+    expect(driverColor("mysql")).toBe("var(--driver-mysql)");
+    expect(driverColor("postgres")).toBe("var(--driver-postgres)");
+    expect(driverColor("sqlite")).toBe("var(--driver-sqlite)");
     expect(driverColor("oracle")).toBe("var(--accent)");
   });
 });

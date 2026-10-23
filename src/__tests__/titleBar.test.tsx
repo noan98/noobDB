@@ -2,6 +2,13 @@ import { describe, it, expect, vi } from "vitest";
 import { renderWithProviders, screen } from "./testUtils";
 import type { TitleBarConnection } from "../components/titleBarContext";
 import { t } from "../i18n";
+import { driverColor } from "../profileIdentity";
+
+const driverLabelKey = {
+  mysql: "formDriverMysql",
+  postgres: "formDriverPostgres",
+  sqlite: "formDriverSqlite",
+} as const;
 
 /**
  * カスタムウィンドウクローム (#604)。`@tauri-apps/api/window` を**モジュール読み込み時**
@@ -53,5 +60,27 @@ describe("TitleBar render smoke (#604)", () => {
     };
     renderWithProviders(<TitleBar connection={connection} />);
     expect(screen.getByText("Alpha DB")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["mysql", "mysql"],
+    ["postgres", "postgres"],
+    ["sqlite", "sqlite"],
+  ] as const)("shows the engine glyph for %s (#1769)", (driver, icon) => {
+    const connection: TitleBarConnection = { name: "Alpha DB", color: null, isProduction: false, driver };
+    renderWithProviders(<TitleBar connection={connection} />);
+    const glyph = screen.getByTestId("titlebar-engine-glyph");
+    expect(glyph).toBeInTheDocument();
+    expect(glyph.getAttribute("style")).toContain(driverColor(driver));
+    expect(screen.getByText(t(driverLabelKey[icon]))).toBeInTheDocument();
+  });
+
+  it("omits the engine glyph for an unknown or missing driver (#1769)", () => {
+    const base: TitleBarConnection = { name: "Alpha DB", color: null, isProduction: false };
+    const { unmount } = renderWithProviders(<TitleBar connection={base} />);
+    expect(screen.queryByTestId("titlebar-engine-glyph")).toBeNull();
+    unmount();
+    renderWithProviders(<TitleBar connection={{ ...base, driver: "oracle" }} />);
+    expect(screen.queryByTestId("titlebar-engine-glyph")).toBeNull();
   });
 });

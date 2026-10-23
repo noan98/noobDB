@@ -14,8 +14,19 @@ import {
   FALLBACK_INSERT_TABLE,
   hasAmbiguousIdentity,
   isEditableColumnType,
+  isBinaryColumnType,
+  isIntegerColumnType,
+  classifyEditType,
+  isInsertEmptyStringValue,
+  isInsertFunctionValue,
+  isEmptyInsertValue,
+  editIsNoop,
+  buildBlobUpdateStatement,
+  buildRowWhere,
   previewSavedValue,
   literalFromCellValue,
+  oldValueForLock,
+  isLockableIdentity,
   literalFromInput,
   resolvePkIndices,
   setValueFromInput,
@@ -108,6 +119,24 @@ describe("resolveRowIdentity", () => {
     expect(
       resolveRowIdentity(columns, [tcol("id", "PRI"), tcol("name", "")], rowIdentity("all_columns")),
     ).toEqual({ indices: [0], strategy: "primary_key" });
+  });
+
+  it("resolves a unique_key identity from key_columns, in key order (#1776)", () => {
+    const cols = [col("id", "INT"), col("a", "VARCHAR"), col("b", "VARCHAR")];
+    const tcols = [tcol("id", ""), tcol("a", ""), tcol("b", "")];
+    expect(
+      resolveRowIdentity(cols, tcols, { ...rowIdentity("unique_key"), key_columns: ["b", "a"] }),
+    ).toEqual({ indices: [2, 1], strategy: "unique_key" });
+  });
+
+  it("returns none for unique_key when a key column is missing from the result or key_columns is empty", () => {
+    const cols = [col("id", "INT"), col("a", "VARCHAR")];
+    const tcols = [tcol("id", ""), tcol("a", ""), tcol("b", "")];
+    const none = { indices: [], strategy: "none" };
+    expect(
+      resolveRowIdentity(cols, tcols, { ...rowIdentity("unique_key"), key_columns: ["a", "b"] }),
+    ).toEqual(none);
+    expect(resolveRowIdentity(cols, tcols, rowIdentity("unique_key"))).toEqual(none);
   });
 
   it("returns none when there is no PK and no rowIdentity", () => {
@@ -1186,6 +1215,24 @@ describe("数値判定の境界 (インジェクション隣接のリテラル�
       expect(ok).toContain("'a', 42)");
     });
 
+    it("BLOB 宣言の列に 16 進でない値が届いたら (SQLite 非 STRICT)、エスケープ済みの文字列 / 数値に戻る", () => {
+      const cols = [col("k", "BLOB")];
+      const b = { driver: "sqlite", database: "d", table: "t", columns: cols, pkIndices: [0] };
+      const [ins] = buildRowSql({ ...b, rows: [["a' OR 1=1 --"]] }, "insert");
+      expect(ins).toContain("'a'' OR 1=1 --'");
+      expect(ins).not.toContain("X'");
+      const [five] = buildRowSql({ ...b, rows: [[5]] }, "insert");
+      expect(five).toContain("(5)");
+      const [del] = buildDeleteStatements({
+        ...b,
+        rows: [["a'b"]],
+        deleteKeys: new Set([rowEditKey(["a'b"], [0], 0)]),
+      });
+      expect(del).toContain("\"k\" = 'a''b'");
+      const [hex] = buildRowSql({ ...b, rows: [["deadbeef"]] }, "insert");
+      expect(hex).toContain("X'deadbeef'");
+    });
+
     it("buildDeleteStatements: 文字列 PK の先頭ゼロを保つ", () => {
       const cols = [col("code", "VARCHAR")];
       const rows: CellValue[][] = [["00123"]];
@@ -1489,5 +1536,600 @@ describe("previewSavedValue (#1628)", () => {
   it("文字列の前後空白は注記、通常の文字列は注記なし", () => {
     expect(previewSavedValue(" a", c("TEXT"))).toEqual({ kind: "edgeSpace" });
     expect(previewSavedValue("abc", c("TEXT"))).toBeNull();
+  });
+});
+
+// --- #1663: Stryker 生存変異の補強 -------------------------------------------------
+
+describe("型名の分類 (#1663)", () => {
+  it("BLOB / BINARY 系の型名はすべてバイナリで編集不可", () => {
+    for (const t of ["BLOB", "TINYBLOB", "MEDIUMBLOB", "LONGBLOB", "BINARY", "VARBINARY", "BYTEA", "bytea"]) {
+      expect(isBinaryColumnType(t), t).toBe(true);
+      expect(isEditableColumnType(t), t).toBe(false);
+    }
+    expect(isBinaryColumnType("TEXT")).toBe(false);
+  });
+
+  it("整数型の各綴りを整数列と判定する (修飾・空白・小文字を無視)", () => {
+    for (const t of [
+      "TINYINT",
+      "SMALLINT",
+      "MEDIUMINT",
+      "INT",
+      "INTEGER",
+      "BIGINT",
+      "YEAR",
+      "SERIAL",
+      "BIGSERIAL",
+      "SMALLSERIAL",
+      "INT2",
+      "INT4",
+      "INT8",
+      "bigint unsigned",
+      "INT UNSIGNED ZEROFILL",
+      "INT(11)",
+      "INT (11)",
+      "  int  ",
+    ]) {
+      expect(isIntegerColumnType(t), t).toBe(true);
+    }
+    for (const t of ["DECIMAL", "FLOAT", "POINT", "VARCHAR(10)", "INTERVAL"]) {
+      expect(isIntegerColumnType(t), t).toBe(false);
+    }
+  });
+
+  it("classifyEditType: 修飾・空白の除去と、INT で終わるだけの型名は数値にしない", () => {
+    expect(classifyEditType("INT (11)")).toBe("number");
+    expect(classifyEditType("  int  ")).toBe("number");
+    expect(classifyEditType("INT ZEROFILL")).toBe("number");
+    expect(classifyEditType("FLOAT UNSIGNED")).toBe("number");
+    expect(classifyEditType("SMALLINT UNSIGNED ZEROFILL")).toBe("number");
+    for (const t of ["SERIAL", "BIGSERIAL", "SMALLSERIAL", "FLOAT4", "FLOAT8", "INT2", "INT4", "INT8"]) {
+      expect(classifyEditType(t), t).toBe("number");
+    }
+    // 末尾が INT / SERIAL なだけの型は数値ではない (前方一致のアンカー)。
+    for (const t of ["POINT", "MULTIPOINT", "XSERIAL", "TINYINTX"]) {
+      expect(classifyEditType(t), t).toBe("other");
+    }
+    expect(classifyEditType("date")).toBe("date");
+    expect(classifyEditType(" time ")).toBe("time");
+    expect(classifyEditType("timestamp with time zone")).toBe("datetime");
+    expect(classifyEditType("bool")).toBe("boolean");
+  });
+});
+
+describe("validateCellInput の正規表現の境界 (#1663)", () => {
+  const v = validateCellInput;
+
+  it("数値: 小数・指数の書式と、前後に余計な文字がある入力", () => {
+    for (const ok of ["1.25", "-3", "1e10", "1E10", "1e+5", "1e-5", "12.5e+10", " 7 "]) {
+      expect(v(ok, "DECIMAL", true), ok).toBeNull();
+    }
+    for (const bad of ["x1", "1x", "1.", ".5", "1e", "1e+", "1.2.3", "abc"]) {
+      expect(v(bad, "DECIMAL", true), bad).toBe("editInvalidNumber");
+    }
+    // 整数列は小数を別のエラーにする。
+    expect(v("1.5", "INT", true)).toBe("editInvalidInteger");
+    expect(v("x1", "INT", true)).toBe("editInvalidNumber");
+    expect(v("5x", "INT", true)).toBe("editInvalidNumber");
+  });
+
+  it("日付: 前後に余計な文字がある入力は不正", () => {
+    expect(v("2020-01-01", "DATE", true)).toBeNull();
+    expect(v("2020-1-1", "DATE", true)).toBeNull();
+    expect(v("x2020-01-01", "DATE", true)).toBe("editInvalidDate");
+    expect(v("2020-01-01x", "DATE", true)).toBe("editInvalidDate");
+  });
+
+  it("日時: 秒は省略可、前後に余計な文字がある入力は不正", () => {
+    expect(v("2020-01-01 10:00", "DATETIME", true)).toBeNull();
+    expect(v("2020-01-01T10:00:30.5", "DATETIME", true)).toBeNull();
+    expect(v("2020-01-01 10:00:30", "TIMESTAMP", true)).toBeNull();
+    expect(v("x2020-01-01 10:00", "DATETIME", true)).toBe("editInvalidDateTime");
+    expect(v("2020-01-01 10:00x", "DATETIME", true)).toBe("editInvalidDateTime");
+  });
+
+  it("時刻: 秒・小数秒は省略可、前後に余計な文字がある入力は不正", () => {
+    for (const ok of ["10:00", "10:00:30", "10:00:30.25", "-838:59:59", "10:00:30.5"]) {
+      expect(v(ok, "TIME", true), ok).toBeNull();
+    }
+    for (const bad of ["x10:00", "10:00x", "10:0", "10:00:3", "10:00:30.", "10:00:30.x"]) {
+      expect(v(bad, "TIME", true), bad).toBe("editInvalidTime");
+    }
+  });
+
+  it("boolean の可否、NULL キーワードのアンカー、空欄の扱い", () => {
+    expect(v("yes", "BOOLEAN", true)).toBeNull();
+    expect(v("maybe", "BOOLEAN", true)).toBe("editInvalidBoolean");
+    // NULL は完全一致のみ。語の一部に null を含むだけでは NULL 扱いにしない。
+    expect(v("NULL", "INT", false)).toBe("editInvalidNotNull");
+    expect(v(" null ", "INT", true)).toBeNull();
+    expect(v("xnull", "INT", false)).toBe("editInvalidNumber");
+    expect(v("nullx", "INT", false)).toBe("editInvalidNumber");
+    // 前後の空白は無視して検証する。
+    expect(v("  5  ", "INT", false)).toBeNull();
+    // NULL 許容の空欄は型ごとのエラー、NOT NULL なら NOT NULL エラー、文字列系は常に可。
+    expect(v("", "INT", true)).toBe("editInvalidNumber");
+    expect(v("", "DATE", true)).toBe("editInvalidDate");
+    expect(v("", "DATETIME", true)).toBe("editInvalidDateTime");
+    expect(v("", "TIME", true)).toBe("editInvalidTime");
+    expect(v("", "BOOLEAN", true)).toBe("editInvalidBoolean");
+    expect(v("", "DATE", false)).toBe("editInvalidNotNull");
+    expect(v("", "VARCHAR(10)", false)).toBeNull();
+  });
+
+  it("parseBooleanInput は前後の空白と大文字小文字を無視する", () => {
+    expect(parseBooleanInput("  TRUE ")).toBe(true);
+    expect(parseBooleanInput("\tOff\n")).toBe(false);
+    expect(parseBooleanInput(" maybe ")).toBeNull();
+  });
+});
+
+describe("行同定 (resolveRowIdentity / rowEditKey / hasAmbiguousIdentity) の境界 (#1663)", () => {
+  const cols = [col("a", "INT"), col("b", "INT")];
+
+  it("rowid / ctid: 隠し列名が無い・空のときは none、先頭列 (index 0) でも解決する", () => {
+    expect(resolveRowIdentity(cols, null, { strategy: "rowid", hidden_column: null })).toEqual({
+      indices: [],
+      strategy: "none",
+    });
+    // 空文字の列名が結果にあっても、隠し列名が空なら一致させない。
+    expect(resolveRowIdentity([col("", "INT")], null, { strategy: "rowid", hidden_column: "" })).toEqual({
+      indices: [],
+      strategy: "none",
+    });
+    expect(
+      resolveRowIdentity([col("ctid", "TID"), col("a", "INT")], null, {
+        strategy: "ctid",
+        hidden_column: "ctid",
+      }),
+    ).toEqual({
+      indices: [0],
+      strategy: "ctid",
+    });
+    expect(resolveRowIdentity(cols, null, { strategy: "rowid", hidden_column: "zzz" })).toEqual({
+      indices: [],
+      strategy: "none",
+    });
+  });
+
+  it("rowEditKey: 値の型ごとのタグと長さ接頭辞で衝突しない", () => {
+    expect(rowEditKey([null], [0], 0)).toBe("k1:x");
+    expect(rowEditKey([undefined as unknown as CellValue], [0], 0)).toBe("k1:x");
+    expect(rowEditKey([true], [0], 0)).toBe("k2:b1");
+    expect(rowEditKey([false], [0], 0)).toBe("k2:b0");
+    expect(rowEditKey([5], [0], 0)).toBe("k2:n5");
+    expect(rowEditKey(["a"], [0], 0)).toBe("k2:sa");
+    expect(rowEditKey([1, "a"], [0, 1], 0)).toBe("k2:n12:sa");
+    expect(rowEditKey([1], [], 7)).toBe("i7");
+    // 数値 1 と文字列 "1" と真偽値 true は別の鍵。
+    const keys = new Set([rowEditKey([1], [0], 0), rowEditKey(["1"], [0], 0), rowEditKey([true], [0], 0)]);
+    expect(keys.size).toBe(3);
+  });
+
+  it("hasAmbiguousIdentity: 空の行 (欠損) は読み飛ばし、重複行だけを検出する", () => {
+    const sparse = [undefined, [1], [2]] as unknown as CellValue[][];
+    expect(hasAmbiguousIdentity(sparse, [0])).toBe(false);
+    expect(hasAmbiguousIdentity([[1], undefined, [1]] as unknown as CellValue[][], [0])).toBe(true);
+    expect(hasAmbiguousIdentity([[1], [1]], [])).toBe(false);
+  });
+});
+
+describe("WHERE 項・リテラル生成の境界 (#1663)", () => {
+  const pkCols = [col("id", "INT"), col("price", "FLOAT")];
+
+  it("NULL / 未定義セルは IS NULL (= NULL にしない)", () => {
+    const base = { driver: "mysql", database: "d", table: "t", columns: pkCols, pkIndices: [0] };
+    const del = buildDeleteStatements({
+      ...base,
+      rows: [[undefined as unknown as CellValue, 1]],
+      deleteKeys: new Set([rowEditKey([undefined as unknown as CellValue], [0], 0)]),
+    });
+    expect(del).toEqual(["DELETE FROM `d`.`t` WHERE `id` IS NULL;"]);
+    expect(buildRowWhere("mysql", pkCols, [undefined as unknown as CellValue, 1], [0])).toBe("`id` IS NULL");
+    expect(buildRowWhere("mysql", pkCols, [null, 1], [0])).toBe("`id` IS NULL");
+  });
+
+  it("単精度 float (FLOAT / REAL / FLOAT4) の WHERE は許容差比較、文字列値や SQLite は等価比較", () => {
+    const f = (type: string, v: CellValue, driver = "postgres") =>
+      buildDeleteStatements({
+        driver,
+        database: "d",
+        table: "t",
+        columns: [col("x", type)],
+        rows: [[v]],
+        pkIndices: [0],
+        deleteKeys: new Set([rowEditKey([v], [0], 0)]),
+      })[0];
+    for (const t of ["FLOAT", "REAL", "FLOAT4", "real"]) {
+      expect(f(t, 0.1), t).toContain('ABS("x" - (0.1)) <= ABS((0.1)) * 0.000001');
+    }
+    expect(f("FLOAT", "0.1")).toBe(`DELETE FROM "d"."t" WHERE "x" = '0.1';`);
+    expect(f("FLOAT", Number.POSITIVE_INFINITY)).toBe(`DELETE FROM "d"."t" WHERE "x" = NULL;`);
+    expect(f("REAL", 0.1, "sqlite")).toBe(`DELETE FROM "t" WHERE "x" = 0.1;`);
+    expect(f("DOUBLE", 0.1)).toBe(`DELETE FROM "d"."t" WHERE "x" = 0.1;`);
+  });
+
+  it("複合主キーの WHERE は AND で連結する (UPDATE / DELETE / BLOB 更新 / buildRowWhere)", () => {
+    const columns = [col("a", "INT"), col("b", "INT"), col("c", "TEXT"), col("img", "BLOB")];
+    const rows: CellValue[][] = [[1, 2, "x", "00"]];
+    const key = rowEditKey(rows[0], [0, 1], 0);
+    expect(
+      buildUpdateStatements({
+        driver: "mysql",
+        database: "d",
+        table: "t",
+        columns,
+        rows,
+        pkIndices: [0, 1],
+        edits: { [key]: { 2: "y" } },
+      }),
+    ).toEqual(["UPDATE `d`.`t` SET `c` = 'y' WHERE `a` = 1 AND `b` = 2;"]);
+    expect(
+      buildDeleteStatements({
+        driver: "mysql",
+        database: "d",
+        table: "t",
+        columns,
+        rows,
+        pkIndices: [0, 1],
+        deleteKeys: new Set([key]),
+      }),
+    ).toEqual(["DELETE FROM `d`.`t` WHERE `a` = 1 AND `b` = 2;"]);
+    expect(
+      buildBlobUpdateStatement({
+        driver: "mysql",
+        database: "d",
+        table: "t",
+        columns,
+        row: rows[0],
+        pkIndices: [0, 1],
+        colIdx: 3,
+        hex: "DEADBEEF",
+      }),
+    ).toBe("UPDATE `d`.`t` SET `img` = 0xdeadbeef WHERE `a` = 1 AND `b` = 2;");
+    expect(buildRowWhere("mysql", columns, rows[0], [0, 1])).toBe("`a` = 1 AND `b` = 2");
+    expect(buildRowWhere("mysql", columns, rows[0], [])).toBeNull();
+  });
+
+  it("buildRowSql: UPDATE / DELETE の複合キー連結、欠損行の読み飛ばし、型ごとのリテラル", () => {
+    const columns = [col("a", "INT"), col("b", "INT"), col("c", "TEXT")];
+    const input: BuildRowSqlInput = {
+      driver: "mysql",
+      database: "d",
+      table: "t",
+      columns,
+      rows: [[1, 2, "x"]],
+      pkIndices: [0, 1],
+    };
+    expect(buildRowSql(input, "update")).toEqual(["UPDATE `d`.`t` SET `c` = 'x' WHERE `a` = 1 AND `b` = 2;"]);
+    // SET の列が複数のときはカンマで連結する。
+    expect(
+      buildRowSql({ ...input, columns: [...columns, col("e", "INT")], rows: [[1, 2, "x", 9]] }, "update"),
+    ).toEqual(["UPDATE `d`.`t` SET `c` = 'x', `e` = 9 WHERE `a` = 1 AND `b` = 2;"]);
+    expect(buildRowSql(input, "delete")).toEqual(["DELETE FROM `d`.`t` WHERE `a` = 1 AND `b` = 2;"]);
+    for (const kind of ["insert", "update", "delete"] as const) {
+      expect(buildRowSql({ ...input, rows: [undefined as unknown as CellValue[]] }, kind)).toEqual([]);
+    }
+    // 行が列より短い (未定義セル) と NULL、真偽値は TRUE/FALSE、非有限数は NULL、数値は裸の数字。
+    const lits: BuildRowSqlInput = {
+      driver: "postgres",
+      database: "d",
+      table: "t",
+      columns: [col("p", "BOOLEAN"), col("q", "TEXT"), col("r", "TEXT"), col("s", "TEXT")],
+      rows: [[true, 5, Number.NaN, undefined as unknown as CellValue]],
+      pkIndices: [],
+    };
+    expect(buildRowSql(lits, "insert")).toEqual([
+      `INSERT INTO "d"."t" ("p", "q", "r", "s") VALUES (TRUE, 5, NULL, NULL);`,
+    ]);
+    expect(buildRowSql({ ...lits, rows: [[false, "a", "b", "c"]] }, "insert")).toEqual([
+      `INSERT INTO "d"."t" ("p", "q", "r", "s") VALUES (FALSE, 'a', 'b', 'c');`,
+    ]);
+  });
+
+  it("buildBlobUpdateStatement: 16 進は小文字に正規化する", () => {
+    const columns = [col("id", "INT"), col("img", "BLOB")];
+    expect(
+      buildBlobUpdateStatement({
+        driver: "sqlite",
+        database: "main",
+        table: "t",
+        columns,
+        row: [1, "00"],
+        pkIndices: [0],
+        colIdx: 1,
+        hex: "AbCd",
+      }),
+    ).toBe(`UPDATE "t" SET "img" = X'abcd' WHERE "id" = 1;`);
+  });
+});
+
+describe("編集バッファから文を作るときの不正入力の読み飛ばし (#1663)", () => {
+  const columns = [col("id", "INT"), col("name", "TEXT")];
+  const rows: CellValue[][] = [[1, "a"]];
+  const key = rowEditKey(rows[0], [0], 0);
+  const base = { driver: "mysql", database: "d", table: "t", columns, rows, pkIndices: [0] };
+
+  it("範囲外の列だけの編集は文もグループも作らない / applyEditsToRows は無視する", () => {
+    const edits: PendingEdits = { [key]: { 99: "x" } };
+    expect(buildUpdateStatements({ ...base, edits })).toEqual([]);
+    expect(buildUpdateGroups({ ...base, edits })).toEqual({ groups: [], rowCount: 0 });
+    expect(applyEditsToRows({ columns, rows, pkIndices: [0], edits })).toEqual([[1, "a"]]);
+    // 範囲外の列が混じっても有効な列は反映する。
+    expect(buildUpdateStatements({ ...base, edits: { [key]: { 99: "x", 1: "b" } } })).toEqual([
+      "UPDATE `d`.`t` SET `name` = 'b' WHERE `id` = 1;",
+    ]);
+    expect(
+      applyEditsToRows({ columns, rows, pkIndices: [0], edits: { [key]: { 99: "x", 1: "b" } } }),
+    ).toEqual([[1, "b"]]);
+  });
+
+  it("主キーが解決できないときは (フォールバック鍵に編集があっても) 何も作らない", () => {
+    const edits: PendingEdits = { i0: { 1: "b" } };
+    expect(buildUpdateStatements({ ...base, pkIndices: [], edits })).toEqual([]);
+    expect(buildUpdateGroups({ ...base, pkIndices: [], edits })).toEqual({ groups: [], rowCount: 0 });
+  });
+
+  it("欠損行 (undefined) は読み飛ばす", () => {
+    const sparse = [undefined, ...rows] as unknown as CellValue[][];
+    const k1 = rowEditKey(rows[0], [0], 1);
+    const edits: PendingEdits = { [k1]: { 1: "b" } };
+    expect(buildUpdateStatements({ ...base, rows: sparse, edits })).toHaveLength(1);
+    expect(buildUpdateGroups({ ...base, rows: sparse, edits }).rowCount).toBe(1);
+    expect(applyEditsToRows({ columns, rows: sparse, pkIndices: [0], edits })).toEqual([[1, "b"]]);
+    expect(buildDeleteStatements({ ...base, rows: sparse, deleteKeys: new Set([k1]) })).toEqual([
+      "DELETE FROM `d`.`t` WHERE `id` = 1;",
+    ]);
+  });
+
+  it("同じ主キーが再掲されても DELETE は 1 回だけ出す", () => {
+    const dup: CellValue[][] = [
+      [1, "a"],
+      [1, "a"],
+    ];
+    expect(buildDeleteStatements({ ...base, rows: dup, deleteKeys: new Set([key]) })).toEqual([
+      "DELETE FROM `d`.`t` WHERE `id` = 1;",
+    ]);
+  });
+});
+
+describe("行追加バッファ (#1663)", () => {
+  const columns = [col("id", "INT"), col("name", "TEXT"), col("at", "DATETIME")];
+
+  it("関数値・空文字値の型ガードと、空欄の判定", () => {
+    expect(isInsertFunctionValue({ fn: "now" })).toBe(true);
+    expect(isInsertFunctionValue({ empty: true })).toBe(false);
+    expect(isInsertFunctionValue("now" as never)).toBe(false);
+    expect(isInsertFunctionValue(undefined)).toBe(false);
+    expect(isInsertFunctionValue(null as never)).toBe(false);
+    expect(isInsertEmptyStringValue({ empty: true })).toBe(true);
+    expect(isInsertEmptyStringValue({ fn: "now" })).toBe(false);
+    expect(isInsertEmptyStringValue("empty" as never)).toBe(false);
+    expect(isInsertEmptyStringValue(undefined)).toBe(false);
+    expect(isInsertEmptyStringValue(null as never)).toBe(false);
+    expect(isEmptyInsertValue(undefined)).toBe(true);
+    expect(isEmptyInsertValue("")).toBe(true);
+    expect(isEmptyInsertValue("x")).toBe(false);
+    expect(isEmptyInsertValue({ empty: true })).toBe(false);
+  });
+
+  it("範囲外の列は読み飛ばし、ドライバに無い関数を含む行は丸ごと出さない", () => {
+    const base = { driver: "mysql", database: "d", table: "t", columns };
+    expect(buildInsertStatements({ ...base, inserts: [{ 99: "x" }] })).toEqual([]);
+    expect(buildInsertStatements({ ...base, inserts: [{ 99: "x", 1: "n" }] })).toEqual([
+      "INSERT INTO `d`.`t` (`name`) VALUES ('n');",
+    ]);
+    // SQLite に NOW() は無い: 先に有効な列があっても行ごと除外する。
+    expect(
+      buildInsertStatements({
+        driver: "sqlite",
+        database: "main",
+        table: "t",
+        columns,
+        inserts: [{ 1: "n", 2: { fn: "now" } }],
+      }),
+    ).toEqual([]);
+    expect(
+      buildInsertStatements({
+        driver: "mysql",
+        database: "d",
+        table: "t",
+        columns,
+        inserts: [{ 1: "n", 2: { fn: "now" } }],
+      }),
+    ).toEqual(["INSERT INTO `d`.`t` (`name`, `at`) VALUES ('n', NOW());"]);
+  });
+
+  it("buildInsertClipboard: 表名は trim し、フォールバック名は exported_table", () => {
+    const input = {
+      driver: "mysql",
+      database: "d",
+      table: "  t  ",
+      columns: [col("a", "INT")],
+      rows: [[1]] as CellValue[][],
+    };
+    expect(buildInsertClipboard(input, true)).toEqual({
+      sql: "INSERT INTO `d`.`t` (`a`) VALUES (1);",
+      tableResolved: true,
+    });
+    expect(FALLBACK_INSERT_TABLE).toBe("exported_table");
+  });
+});
+
+describe("editIsNoop / previewSavedValue の境界 (#1663)", () => {
+  const text = col("name", "VARCHAR(10)");
+
+  it("editIsNoop: NULL と非 NULL は常に変更あり、未定義の現在値も NULL 扱い", () => {
+    expect(editIsNoop("NULL", text, null)).toBe(true);
+    expect(editIsNoop("NULL", text, undefined as unknown as CellValue)).toBe(true);
+    expect(editIsNoop("NULL", text, "null")).toBe(false);
+    expect(editIsNoop("NULL", text, 5)).toBe(false);
+    expect(editIsNoop("5", text, null)).toBe(false);
+    // 現在値が未定義 (NULL) のとき、文字列 "undefined" への編集は変更あり。
+    expect(editIsNoop("undefined", text, undefined as unknown as CellValue)).toBe(false);
+    expect(editIsNoop("abc", text, "abc")).toBe(true);
+  });
+
+  it("previewSavedValue: 前後空白の注記は文字列系の列だけ", () => {
+    expect(previewSavedValue(" x ", text)).toEqual({ kind: "edgeSpace" });
+    expect(previewSavedValue(" 2020-01-01 ", col("d", "DATE"))).toBeNull();
+    expect(previewSavedValue(" abc ", col("n", "INT"))).toBeNull();
+  });
+});
+
+describe("oldValueForLock / 楽観ロックの旧値 (#1766)", () => {
+  it("NULL は型を問わず IS NULL", () => {
+    expect(oldValueForLock("mysql", col("a", "JSON"), null)).toEqual({ kind: "null" });
+    expect(oldValueForLock("postgres", col("a", "BYTEA"), null)).toEqual({ kind: "null" });
+  });
+
+  it("数値・文字列・真偽値は等値で検査する。64bit 整数は文字列のまま渡す", () => {
+    expect(oldValueForLock("mysql", col("a", "INT"), 5)).toEqual({ kind: "number", text: "5" });
+    expect(oldValueForLock("mysql", col("a", "BIGINT UNSIGNED"), "18446744073709551615")).toEqual({
+      kind: "number",
+      text: "18446744073709551615",
+    });
+    expect(oldValueForLock("postgres", col("a", "INT8"), "9007199254740993")).toEqual({
+      kind: "number",
+      text: "9007199254740993",
+    });
+    expect(oldValueForLock("postgres", col("a", "NUMERIC"), "1.50")).toEqual({
+      kind: "number",
+      text: "1.50",
+    });
+    expect(oldValueForLock("sqlite", col("a", "TEXT"), "x")).toEqual({ kind: "text", text: "x" });
+    expect(oldValueForLock("mysql", col("a", "VARCHAR(20)"), "x")).toEqual({ kind: "text", text: "x" });
+    expect(oldValueForLock("postgres", col("a", "BOOL"), true)).toEqual({ kind: "bool", value: true });
+    expect(oldValueForLock("mysql", col("a", "DATETIME"), "2020-01-02 03:04:05")).toEqual({
+      kind: "text",
+      text: "2020-01-02 03:04:05",
+    });
+  });
+
+  it("単精度 float は許容誤差の述語 (float4)、SQLite の REAL と倍精度は厳密比較", () => {
+    expect(oldValueForLock("postgres", col("a", "FLOAT4"), 0.1)).toEqual({ kind: "float4", text: "0.1" });
+    expect(oldValueForLock("mysql", col("a", "FLOAT"), 0.1)).toEqual({ kind: "float4", text: "0.1" });
+    expect(oldValueForLock("sqlite", col("a", "REAL"), 0.1)).toEqual({ kind: "number", text: "0.1" });
+    expect(oldValueForLock("mysql", col("a", "DOUBLE"), 0.1)).toEqual({ kind: "number", text: "0.1" });
+    expect(oldValueForLock("postgres", col("a", "FLOAT8"), 0.1)).toEqual({ kind: "number", text: "0.1" });
+  });
+
+  it("MySQL でデコードできず NULL になる日時 (ゼロ日付など) は IS NULL を足さない", () => {
+    for (const t of ["DATE", "DATETIME", "TIMESTAMP", "TIME"]) {
+      expect(oldValueForLock("mysql", col("a", t), null)).toBeNull();
+    }
+    // PG / SQLite の NULL や、日時でない MySQL 列の NULL は従来どおり。
+    expect(oldValueForLock("postgres", col("a", "DATE"), null)).toEqual({ kind: "null" });
+    expect(oldValueForLock("sqlite", col("a", "DATETIME"), null)).toEqual({ kind: "null" });
+    expect(oldValueForLock("mysql", col("a", "VARCHAR"), null)).toEqual({ kind: "null" });
+  });
+
+  it("リテラルで往復できない日時 (infinity・紀元前) は検査しない", () => {
+    expect(oldValueForLock("postgres", col("a", "DATE"), "2020-01-02")).toEqual({
+      kind: "text",
+      text: "2020-01-02",
+    });
+    expect(oldValueForLock("postgres", col("a", "TIME"), "12:30:00")).toEqual({
+      kind: "text",
+      text: "12:30:00",
+    });
+    for (const [t, v] of [
+      ["DATE", "infinity"],
+      ["DATE", "0044-03-15 BC"],
+      ["TIMESTAMP", "-infinity"],
+      ["TIMESTAMP", "0044-03-15 12:00:00 BC"],
+      ["TIME", "24:00:00 junk"],
+    ]) {
+      expect(oldValueForLock("postgres", col("a", t), v)).toBeNull();
+    }
+  });
+
+  it("等値比較が不安定な型・値は検査しない", () => {
+    for (const t of [
+      "BLOB",
+      "BYTEA",
+      "JSON",
+      "JSONB",
+      "TIMESTAMPTZ",
+      "INTERVAL",
+      "BIT",
+      "_INT4",
+      "GEOMETRY",
+      "",
+    ]) {
+      expect(
+        oldValueForLock("postgres", col("a", t), t === "BLOB" || t === "BYTEA" ? "00ff" : "v"),
+      ).toBeNull();
+    }
+    // 非有限の数・数値でない文字列。
+    expect(oldValueForLock("mysql", col("a", "DOUBLE"), Number.NaN)).toBeNull();
+    expect(oldValueForLock("mysql", col("a", "INT"), "abc")).toBeNull();
+    // 丸め済みかもしれない桁数の多い DECIMAL (JS の数値で持っているもの)。
+    expect(oldValueForLock("mysql", col("a", "DECIMAL"), 123456789.12345679)).toBeNull();
+  });
+});
+
+describe("buildUpdateGroups の楽観ロック (#1766)", () => {
+  const columns = [col("id", "INT"), col("name", "VARCHAR"), col("score", "FLOAT4"), col("data", "JSON")];
+  const rows: CellValue[][] = [
+    [1, "a", 0.1, '{"k":1}'],
+    [2, null, 0.2, null],
+  ];
+  const base = (edits: PendingEdits, optimisticLock?: boolean) => ({
+    driver: "postgres",
+    database: "db",
+    table: "t",
+    columns,
+    rows,
+    pkIndices: [0],
+    edits,
+    optimisticLock,
+  });
+  const k = (id: number) => rowEditKey([id, "", 0, null], [0], 0);
+
+  it("オフ (既定) のときは olds を付けない", () => {
+    const { groups } = buildUpdateGroups(base({ [k(1)]: { 1: "x" } }));
+    expect(groups[0].olds).toBeUndefined();
+    expect(buildUpdateGroups(base({ [k(1)]: { 1: "x" } }, false)).groups[0].olds).toBeUndefined();
+  });
+
+  it("オンのときは編集した列の旧値を行ごとに keys と同順で付ける (同じ SET でも旧値は行ごと)", () => {
+    const { groups } = buildUpdateGroups(
+      base({ [k(1)]: { 1: "x", 2: "5", 3: "{}" }, [k(2)]: { 1: "x", 2: "5", 3: "{}" } }, true),
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0].keys).toEqual([[1], [2]]);
+    expect(groups[0].olds).toEqual([
+      [{ kind: "text", text: "a" }, { kind: "float4", text: "0.1" }, null],
+      [{ kind: "null" }, { kind: "float4", text: "0.2" }, { kind: "null" }],
+    ]);
+  });
+
+  it("主キー列の編集には旧値を付けない (WHERE に元の値が入っている)", () => {
+    const { groups } = buildUpdateGroups(base({ [k(1)]: { 0: "9" } }, true));
+    expect(groups[0].olds).toEqual([[null]]);
+  });
+});
+
+describe("isLockableIdentity (#1766)", () => {
+  it("PK / UNIQUE / rowid だけロックし、all_columns / ctid / none は対象外", () => {
+    for (const s of ["primary_key", "unique_key", "rowid"]) expect(isLockableIdentity(s)).toBe(true);
+    for (const s of ["all_columns", "ctid", "none", ""]) expect(isLockableIdentity(s)).toBe(false);
+  });
+
+  it("対象外の識別では optimisticLock を false で渡せば olds が付かない", () => {
+    const columns = [col("a", "INT"), col("f", "FLOAT4")];
+    const { groups } = buildUpdateGroups({
+      driver: "postgres",
+      database: "db",
+      table: "t",
+      columns,
+      rows: [[1, 0.1]],
+      pkIndices: [0, 1],
+      edits: { [rowEditKey([1, 0.1], [0, 1], 0)]: { 1: "5" } },
+      optimisticLock: isLockableIdentity("all_columns"),
+    });
+    expect(groups[0].olds).toBeUndefined();
   });
 });

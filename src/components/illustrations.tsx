@@ -10,7 +10,8 @@ import { illustrationForError } from "../errorHints";
  * (`var(--ws-accent)` / `var(--accent)`) を使うため、ライト/ダーク・アクセント色に
  * 自動追従する。本体は淡いアクセント地 (`--illust-body-fill`)、強調部はアクセント地 +
  * 縁取りの 2 トーン (duotone)、足元に接地影 (`--illust-ground`) を敷いて奥行きを出す (#1216)。
- * 装飾なので `aria-hidden`。Motion はラッパー (EmptyState) 側で付く。
+ * 装飾なので `aria-hidden`。出現の Motion はラッパー (EmptyState) 側で付く。強調部だけは
+ * `illust-*` クラスで控えめなループ微動を持つ (#1583、定義と静止ガードは `App.css`)。
  */
 
 const ChakraSvg = chakra("svg");
@@ -51,7 +52,7 @@ export function WelcomeIllustration({ size = 96 }: IllustrationProps) {
       <circle cx="42" cy="30" r="2.5" fill="currentColor" stroke="none" opacity="0.6" />
       <circle cx="42" cy="56" r="2.5" fill="currentColor" stroke="none" opacity="0.8" />
       {/* アクセントの「+」スパーク (新規作成の合図) */}
-      <g stroke="var(--ws-accent, var(--accent))" strokeWidth={2.5}>
+      <g className="illust-spark" stroke="var(--ws-accent, var(--accent))" strokeWidth={2.5}>
         <circle cx="98" cy="22" r="11" fill="var(--illust-tint)" />
         <path d="M98 17v10M93 22h10" />
       </g>
@@ -85,7 +86,38 @@ export function DisconnectedIllustration({ size = 96 }: IllustrationProps) {
       <path d="M90 48h18" opacity="0.6" />
       <path d="M82 30v6M82 60v6" />
       {/* 切断のスパーク */}
-      <path d="M60 40l8 8-8 8" stroke="var(--ws-accent, var(--accent))" strokeWidth={2.5} opacity="0.9" />
+      <g className="illust-spark">
+        <path d="M60 40l8 8-8 8" stroke="var(--ws-accent, var(--accent))" strokeWidth={2.5} opacity="0.9" />
+      </g>
+    </Svg>
+  );
+}
+
+/** クエリ実行前: エディタ窓 (SQL 行) + アクセントの実行 (再生) ボタン。 */
+export function RunQueryIllustration({ size = 96 }: IllustrationProps) {
+  return (
+    <Svg
+      width={`${size}px`}
+      height={`${(size * 3) / 4}px`}
+      viewBox="0 0 128 96"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      color="app.textSecondary"
+      aria-hidden="true"
+      role="img"
+    >
+      <ellipse cx="64" cy="91" rx="38" ry="3" fill="var(--illust-ground)" stroke="none" />
+      <rect x="22" y="18" width="72" height="56" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.6" />
+      <path d="M22 30h72" opacity="0.45" />
+      <path d="M32 42h30M32 52h42M32 62h22" opacity="0.5" />
+      {/* 実行ボタン (アクセント) */}
+      <g className="illust-float" stroke="var(--ws-accent, var(--accent))" strokeWidth={2.5}>
+        <circle cx="88" cy="66" r="14" fill="var(--illust-tint)" />
+        <path d="M84 59l11 7-11 7z" />
+      </g>
     </Svg>
   );
 }
@@ -111,7 +143,7 @@ export function NoResultsIllustration({ size = 84 }: IllustrationProps) {
       <path d="M24 34h64M46 20v52M46 34" opacity="0.45" />
       <path d="M24 48h64M24 60h64" opacity="0.3" />
       {/* 虫眼鏡 (アクセント) */}
-      <g stroke="var(--ws-accent, var(--accent))" strokeWidth={2.5}>
+      <g className="illust-float" stroke="var(--ws-accent, var(--accent))" strokeWidth={2.5}>
         <circle cx="84" cy="64" r="14" fill="var(--illust-tint)" />
         <path d="M94 74l10 10" />
       </g>
@@ -179,11 +211,19 @@ export function TimeoutIllustration({ size = 96 }: IllustrationProps) {
       {/* 下の砂 (溜まっている) */}
       <path d="M50 72h28L72 58H56z" fill="currentColor" stroke="none" opacity="0.5" />
       {/* くびれ部分の砂粒 */}
-      <circle cx="64" cy="48" r="2" fill="currentColor" stroke="none" opacity="0.7" />
+      <circle
+        className="illust-grain"
+        cx="64"
+        cy="48"
+        r="2"
+        fill="currentColor"
+        stroke="none"
+        opacity="0.7"
+      />
       {/* アクセントの時計アイコン */}
       <g stroke="var(--ws-accent, var(--accent))" strokeWidth={2.5}>
         <circle cx="100" cy="22" r="14" fill="var(--illust-tint)" />
-        <path d="M100 14v8l5 4" />
+        <path className="illust-hand" d="M100 14v8l5 4" />
       </g>
     </Svg>
   );

@@ -437,6 +437,36 @@ export interface AssertionImportRejection {
   error: string;
 }
 
+/** `SnippetImportPreview.conflicts` の 1 件 (#1490)。既存と ID が衝突する要素。 */
+export interface SnippetConflict {
+  id: string;
+  existing_name: string;
+  incoming_name: string;
+}
+
+/** `preview_import_snippets` の結果 (#1490)。書き込まずに適用前の確認へ使う。 */
+export interface SnippetImportPreview {
+  total: number;
+  new_count: number;
+  conflict_count: number;
+  /** 全接続スコープへ付け替える件数 (戦略別。衝突する要素の扱いで変わる)。 */
+  scope_reset_by_strategy: { rename: number; skip: number; overwrite: number };
+  /** ファイル内で ID が重複している件数 (既存との衝突とは別)。 */
+  duplicate_in_file_count: number;
+  /** 衝突する要素の先頭数件 (「上書き」で置き換わる先の表示用)。 */
+  conflicts: SnippetConflict[];
+  rejected: AssertionImportRejection[];
+}
+
+/** `import_snippets` の結果 (#1490)。 */
+export interface SnippetImportResult {
+  imported: number;
+  skipped: number;
+  overwritten: number;
+  scope_reset: number;
+  rejected: AssertionImportRejection[];
+}
+
 /** `import_assertions` の結果 (#1621)。 */
 export interface ImportAssertionsResult {
   imported: Assertion[];
@@ -583,7 +613,7 @@ export interface TableSchema {
 
 /**
  * Row identity strategy for inline editing when a table has no usable
- * primary key (#849). `strategy` is one of `"primary_key"` / `"rowid"` /
+ * primary key (#849). `strategy` is one of `"primary_key"` / `"unique_key"` / `"rowid"` /
  * `"ctid"` / `"all_columns"` / `"none"` — see the backend's
  * `db::types::TableRowIdentity` doc for what each means and when the
  * driver reports it. `hidden_column` is the pseudo-column name
@@ -593,6 +623,8 @@ export interface TableSchema {
 export interface TableRowIdentity {
   strategy: string;
   hidden_column: string | null;
+  /** `"unique_key"` のときの UNIQUE NOT NULL キー列 (#1776)。他の戦略では空配列。 */
+  key_columns?: string[];
 }
 
 /** テーブル 1 つのインデックス情報。 */
@@ -848,6 +880,33 @@ export interface AlterTableContext {
   warnings: string[];
 }
 
+/** DROP COLUMN の依存 1 件の種別 (`column_dependencies`、#1758)。 */
+export type ColumnDependencyKind =
+  | "view"
+  | "materialized_view"
+  | "trigger"
+  | "generated_column"
+  | "index"
+  | "foreign_key"
+  | "referenced_by";
+
+/** DROP COLUMN で影響を受ける依存 1 件 (`column_dependencies`、#1758)。 */
+export interface ColumnDependency {
+  /** 削除対象の列名。 */
+  column: string;
+  kind: ColumnDependencyKind;
+  name: string;
+  detail: string | null;
+  confidence: ReferenceConfidence;
+}
+
+/** `column_dependencies` の結果 (#1758)。 */
+export interface ColumnDependencyReport {
+  dependencies: ColumnDependency[];
+  /** 取得できず調べられなかった依存の種別 (`definitions` / `indexes` / `foreign_keys` / `generated_columns`)。 */
+  warnings: string[];
+}
+
 /** テーブルを開いた結果 (`open_table` / `open_tables`、#1263)。 */
 export interface OpenTableResult {
   /** ページネーションの土台 (`SELECT *[, rowid|ctid] FROM ...`、LIMIT なし)。 */
@@ -920,6 +979,34 @@ export interface ServerInfo {
 export interface InsertRowsResult {
   inserted: number;
   elapsed_ms: number;
+}
+
+/**
+ * `bulk_update_cells` の結果 (#1777)。実影響行数が想定 (編集対象として指定した行数) を超えると、
+ * バックエンドはコミットせずロールバックして `row_count_exceeded` を返す (エラーではない)。
+ * `expected_rows` / `actual_rows` は想定を外れた文の合計 (表示用)、`batch_total_rows` は全文の合計
+ * (「最大で N 行が変わる」の表示用)、`statement_counts` は文ごとの実際の影響行数。
+ * 利用者が確認して承認したときだけ、`statement_counts` を `approvedCounts` に付けて再実行する
+ * (各文の上限を max(期待, 承認件数) に引き上げる。合計での承認と違い、他の変更で相殺されない)。
+ * `rollback_incomplete` は、トランザクション非対応の表 (MyISAM など) のため書き込みの一部が
+ * 戻らなかったことを表す。承認して再実行してはいけない (再読込して現状を確認させる)。
+ */
+export type BulkWriteOutcome =
+  | { status: "applied"; result: QueryResult }
+  | {
+      status: "row_count_exceeded";
+      expected_rows: number;
+      actual_rows: number;
+      batch_total_rows: number;
+      statement_counts: number[];
+    }
+  | { status: "optimistic_conflict"; conflict_rows: number; statement_counts: number[] }
+  | { status: "rollback_incomplete"; expected_rows: number; actual_rows: number };
+
+/** `bulk_update_cells` の追加オプション (#1777)。後続の検査 (楽観ロックなど) もここへ足す。 */
+export interface BulkWriteOptions {
+  /** 確認ダイアログで承認した文ごとの影響行数 (`row_count_exceeded.statement_counts`)。各文の上限にして再実行する。 */
+  approvedCounts?: number[];
 }
 
 export interface KillProcessesResult {
@@ -2791,6 +2878,9 @@ export interface ScriptFileStamp {
  * SQL ファイルの文字コード識別子 (#1535)。Rust `TextEncoding` の serde 名と一致する。
  * `utf-8-bom` / `utf-16*` は保存時に BOM を付ける。
  */
+/** About 面から開けるプロジェクトのリンク (Rust の `ProjectLink`, #1770)。 */
+export type ProjectLink = "repository" | "docs";
+
 export type TextEncodingId = "utf-8" | "utf-8-bom" | "utf-16le" | "utf-16be" | "shift_jis" | "euc-jp";
 
 /** `read_sql_file` の戻り値: 本文と実際に使った文字コード (保存時に同じ文字コードへ戻す)。 */

@@ -3,6 +3,8 @@ pub mod assertions;
 pub mod aws_iam;
 /// 環境横断ブロードキャストの結果比較 (#1257)。
 pub mod broadcast_diff;
+/// DROP COLUMN の依存オブジェクト検出 (#1758)。
+pub mod column_deps;
 /// ファイルから新規テーブルを作るときの方言別 CREATE TABLE 生成 (#985)。
 pub mod create_table;
 pub mod data_diff;
@@ -415,6 +417,132 @@ pub enum Connection {
     MySql(mysql::MySqlConn),
     Postgres(postgres::PostgresConn),
     Sqlite(sqlite::SqliteConn),
+}
+
+/// 1 文に期待する影響行数の範囲 (#1777)。`max` を超えたら「想定より多い」、`min` を下回ったら
+/// 「想定より少ない」で、どちらも文のコミット前に検出してロールバックの根拠にできる。`None` は
+/// その側を検査しない。`max` は画面外の重複行への多重更新 (#1777)、`min` は楽観ロックの競合 (他者が変えた行は 0 件一致、#1766) を止める。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RowExpectation {
+    pub min: Option<u64>,
+    pub max: Option<u64>,
+}
+
+impl RowExpectation {
+    /// 検査しない。
+    pub const NONE: Self = Self {
+        min: None,
+        max: None,
+    };
+
+    /// 多い側だけを検査する (`affected > n` で違反)。
+    pub const fn at_most(n: u64) -> Self {
+        Self {
+            min: None,
+            max: Some(n),
+        }
+    }
+
+    fn violated_by(&self, affected: u64) -> bool {
+        self.max.is_some_and(|m| affected > m) || self.min.is_some_and(|m| affected < m)
+    }
+
+    /// 違反の表示に使う「想定件数」(上限があれば上限、無ければ下限)。
+    fn expected_hint(&self) -> u64 {
+        self.max.or(self.min).unwrap_or(0)
+    }
+}
+
+/// 実行する 1 文と、その影響行数の期待 ([`Connection::execute_transaction_guarded`] の入力)。
+#[derive(Debug, Clone, Copy)]
+pub struct GuardedStatement<'a> {
+    pub sql: &'a str,
+    pub expect: RowExpectation,
+}
+
+impl<'a> GuardedStatement<'a> {
+    /// 影響行数を検査しない文。
+    pub fn unchecked(sql: &'a str) -> Self {
+        Self {
+            sql,
+            expect: RowExpectation::NONE,
+        }
+    }
+}
+
+/// 期待を外れて巻き戻した内訳。`expected` / `actual` は**違反した文だけ**の合計 (表示用)、
+/// `total` は全文の合計、`counts` は全文の実際の影響行数 (文の並び順)。利用者が承認するときは
+/// `counts` を文ごとの上限に使う (合計での承認は、確認の間に他のクライアントが変えた件数が
+/// 相殺されて通ってしまうため)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuardViolation {
+    pub expected: u64,
+    pub actual: u64,
+    pub total: u64,
+    pub counts: Vec<u64>,
+    /// `min` を下回った文の不足行数の合計 (`min - 実際` の和)。0 でなければ「想定より少ない」違反を
+    /// 含む。楽観ロック (#1766) では、他者が値を変えた (または行を消した) 行の数になる。
+    pub under: u64,
+}
+
+/// [`Connection::execute_transaction_guarded`] の結果 (#1777)。期待外れはエラーではなく判別できる
+/// 値で返す (呼び出し側が確認を取って再実行できるように)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GuardedTxOutcome {
+    /// コミットした。合計 `rows_affected`。
+    Committed(u64),
+    /// 期待を外れたのでロールバックした (DB は未変更)。
+    RolledBack(GuardViolation),
+    /// 期待を外れてロールバックしたが、**一部が戻らなかった**。トランザクション非対応のエンジン
+    /// (MySQL の MyISAM など。警告 1196) の表を含むとき。書き込みの一部はコミット済みと同じ。
+    RollbackIncomplete(GuardViolation),
+}
+
+/// 検算なしの文列へ変換する (`execute_transaction` が `execute_transaction_guarded` へ委譲する用)。
+pub(crate) fn unchecked_statements(statements: &[String]) -> Vec<GuardedStatement<'_>> {
+    statements
+        .iter()
+        .map(|s| GuardedStatement::unchecked(s))
+        .collect()
+}
+
+impl GuardedTxOutcome {
+    /// 検算なしで流したときの合計 `rows_affected` (違反は起きないが、型の上では畳んでおく)。
+    pub(crate) fn total_affected(self) -> u64 {
+        match self {
+            Self::Committed(n) => n,
+            Self::RolledBack(v) | Self::RollbackIncomplete(v) => v.total,
+        }
+    }
+}
+
+/// 全文を流した後の各文の影響行数 `counts` を、文ごとの期待と突き合わせる (3 ドライバ共通)。
+/// 違反した文の合計を内訳に載せる。
+pub(crate) fn evaluate_guard(
+    statements: &[GuardedStatement<'_>],
+    counts: &[u64],
+) -> Option<GuardViolation> {
+    let mut expected = 0;
+    let mut actual = 0;
+    let mut under = 0;
+    let mut violated = false;
+    for (st, &n) in statements.iter().zip(counts) {
+        if let Some(min) = st.expect.min {
+            under += min.saturating_sub(n);
+        }
+        if st.expect.violated_by(n) {
+            violated = true;
+            expected += st.expect.expected_hint();
+            actual += n;
+        }
+    }
+    violated.then(|| GuardViolation {
+        expected,
+        actual,
+        total: counts.iter().sum(),
+        counts: counts.to_vec(),
+        under,
+    })
 }
 
 /// A single row skipped by a resilient (skip-mode) import: its 0-based index
@@ -1090,6 +1218,24 @@ impl Connection {
         }
     }
 
+    /// [`Self::execute_transaction`] に、コミット前の実影響行数の検算 (#1777) を足したもの。
+    /// 全文を流した後、文ごとの期待 ([`RowExpectation`]) を外れていたらコミットせずロールバックし、エラーではなく
+    /// [`GuardedTxOutcome`] で内訳を返す。3 ドライバとも `rows_affected` は「一致した行数」
+    /// (MySQL は sqlx が常に CLIENT_FOUND_ROWS を立てる) なので、値が変わらない UPDATE も
+    /// 1 行と数える。MySQL はロールバック後に警告 1196 を調べ、戻らなかったときは
+    /// [`GuardedTxOutcome::RollbackIncomplete`] を返す。
+    pub async fn execute_transaction_guarded(
+        &self,
+        statements: &[GuardedStatement<'_>],
+        database: Option<&str>,
+    ) -> Result<GuardedTxOutcome> {
+        match self {
+            Connection::MySql(c) => c.execute_transaction_guarded(statements, database).await,
+            Connection::Postgres(c) => c.execute_transaction_guarded(statements, database).await,
+            Connection::Sqlite(c) => c.execute_transaction_guarded(statements, database).await,
+        }
+    }
+
     /// スキーマ同期の適用用。SQLite だけ、テーブル再作成の `PRAGMA foreign_keys` 切り替えと
     /// 外部キー検査を行う (`SqliteConn::execute_sync_transaction`)。他のドライバは
     /// [`Self::execute_transaction`] と同じ。
@@ -1252,6 +1398,20 @@ impl Connection {
             Connection::MySql(c) => c.foreign_keys(db).await,
             Connection::Postgres(c) => c.foreign_keys(db).await,
             Connection::Sqlite(c) => c.foreign_keys(db).await,
+        }
+    }
+
+    /// 別スキーマの子テーブルから `db.table` を参照する外部キー (#1786)。PostgreSQL 専用で、
+    /// MySQL の DB をまたぐ FK は対象外 (#1786 は PostgreSQL のみ)、SQLite は DB をまたげないため、
+    /// どちらも `foreign_keys` だけで賄い常に空 (挙動は変えない)。
+    pub async fn cross_schema_incoming_foreign_keys(
+        &self,
+        db: &str,
+        table: &str,
+    ) -> Result<Vec<crate::db::schema_insight::IncomingForeignKey>> {
+        match self {
+            Connection::Postgres(c) => c.cross_schema_incoming_foreign_keys(db, table).await,
+            Connection::MySql(_) | Connection::Sqlite(_) => Ok(Vec::new()),
         }
     }
 
@@ -1444,6 +1604,21 @@ impl Connection {
             Connection::MySql(c) => c.table_comments(db).await,
             Connection::Postgres(c) => c.table_comments(db).await,
             Connection::Sqlite(_) => Ok(Vec::new()),
+        }
+    }
+
+    /// テーブルの生成列 (`(列名, 式)`) を返す (#1758)。DROP COLUMN が壊す生成列を事前に
+    /// 洗い出すために使う。MySQL / MariaDB は `information_schema.COLUMNS.GENERATION_EXPRESSION`、
+    /// PostgreSQL は `pg_attrdef` の `pg_get_expr`、SQLite は `sqlite_master.sql` の解析。
+    pub async fn generated_column_exprs(
+        &self,
+        db: &str,
+        table: &str,
+    ) -> Result<Vec<(String, String)>> {
+        match self {
+            Connection::MySql(c) => c.generated_column_exprs(db, table).await,
+            Connection::Postgres(c) => c.generated_column_exprs(db, table).await,
+            Connection::Sqlite(c) => c.generated_column_exprs(table).await,
         }
     }
 
@@ -2360,15 +2535,64 @@ pub(crate) fn row_identity_pk_or_none(cols: &[TableColumnInfo]) -> Option<TableR
         return Some(TableRowIdentity {
             strategy: "primary_key".into(),
             hidden_column: None,
+            key_columns: Vec::new(),
         });
     }
     if cols.is_empty() {
         return Some(TableRowIdentity {
             strategy: "none".into(),
             hidden_column: None,
+            key_columns: Vec::new(),
         });
     }
     None
+}
+
+/// PK が無い表の行識別に使える UNIQUE NOT NULL キーを選ぶ (#1776)。
+///
+/// 採用条件: UNIQUE で PRIMARY KEY でなく、部分インデックス (述語あり) でも式インデックス
+/// でもなく、有効 (INVALID でない) で、インデックスと列の照合順序が一致し、キー列 (PostgreSQL の `INCLUDE` 列は除く) がすべて実在し NOT NULL なもの。
+/// NULL を許す UNIQUE 列は NULL 同士が重複できる (= 1 行に定まらない) ので使わない。
+/// 候補が複数あるときは列数が少ないもの (単一列の UNIQUE が最優先)、同数ならインデックスの
+/// 並び順で最初のものを選ぶ。
+pub(crate) fn pick_unique_row_key(
+    cols: &[TableColumnInfo],
+    indexes: &[IndexInfo],
+) -> Option<Vec<String>> {
+    indexes
+        .iter()
+        .filter(|i| {
+            i.unique
+                && !i.primary
+                && i.predicate.is_none()
+                && i.first_expression_at.is_none()
+                && !i.invalid
+                && !i.collation_differs
+        })
+        .filter_map(|i| {
+            let n = i
+                .key_column_count
+                .unwrap_or(i.columns.len())
+                .min(i.columns.len());
+            let key = i.columns.get(..n)?;
+            let usable = !key.is_empty()
+                && key
+                    .iter()
+                    .all(|name| cols.iter().any(|c| &c.name == name && !c.nullable));
+            usable.then(|| key.to_vec())
+        })
+        .enumerate()
+        .min_by_key(|(pos, key)| (key.len(), *pos))
+        .map(|(_, key)| key)
+}
+
+/// `pick_unique_row_key` で選んだキーから `unique_key` の行識別を作る (#1776)。
+pub(crate) fn unique_key_identity(key_columns: Vec<String>) -> TableRowIdentity {
+    TableRowIdentity {
+        strategy: "unique_key".into(),
+        hidden_column: None,
+        key_columns,
+    }
 }
 
 /// Builds the driver-agnostic column metadata (`Column`) from the first row of
@@ -2556,6 +2780,10 @@ pub(crate) struct IndexRow {
     pub column_option: Option<String>,
     /// PostgreSQL 15+ の `NULLS NOT DISTINCT`。
     pub nulls_not_distinct: bool,
+    /// PostgreSQL: INVALID なインデックス (#1776)。
+    pub invalid: bool,
+    /// この列でインデックスと列の照合順序が違う (#1776)。
+    pub collation_differs: bool,
 }
 
 /// `IndexRow` をテーブル → インデックスの順にまとめる。単一テーブル版
@@ -2601,12 +2829,14 @@ pub(crate) fn group_index_rows(rows: Vec<IndexRow>) -> Vec<TableIndexes> {
                     first_expression_at: None,
                     key_column_count: r.key_column_count,
                     nulls_not_distinct: r.nulls_not_distinct,
+                    invalid: r.invalid,
                     ..Default::default()
                 });
                 i
             }
         };
         if let Some(index) = entry.indexes.get_mut(ii) {
+            index.collation_differs |= r.collation_differs;
             match r.column {
                 Some(col) => {
                     index.columns.push(col);
@@ -2762,6 +2992,12 @@ pub fn is_read_only_sql(sql: &str) -> bool {
     is_read_only_sql_masked(
         &mask_for_analysis_conservative(&orig),
         &mask_keeping_identifiers(None, &orig),
+    ) && is_read_only_sql_masked(
+        // ドライバ不明のときは MySQL の `--` 規則 (直後が空白でなければコメントではない)
+        // でも判定する。`SELECT 1--1; DROP TABLE t` は PG / SQLite ではコメントだが
+        // MySQL では実行される (#1735)。
+        &mask_for_analysis_impl(&orig, false, true, KeepIdents::None, MaskExtras::MYSQL_DASH),
+        &mask_for_analysis_impl(&orig, false, true, KeepIdents::All, MaskExtras::MYSQL_DASH),
     )
 }
 
@@ -3568,19 +3804,35 @@ fn driver_hash_comment(driver: DriverKind) -> bool {
 struct MaskExtras {
     e_strings: bool,
     bracket_idents: bool,
+    /// MySQL: `--` は直後が空白・制御文字・文末のときだけ行コメント (`1--1` は
+    /// `1 - (-1)`)。PostgreSQL / SQLite は空白不要でコメント。
+    mysql_dash: bool,
 }
 
 impl MaskExtras {
     const NONE: Self = Self {
         e_strings: false,
         bracket_idents: false,
+        mysql_dash: false,
     };
+
+    /// ドライバ不明の入口が MySQL の `--` 規則でも判定するための変種。
+    const MYSQL_DASH: Self = Self {
+        mysql_dash: true,
+        ..Self::NONE
+    };
+}
+
+/// MySQL の `--` コメント開始の判定。`next` は `--` の直後の文字 (無ければ文末)。
+fn dash_starts_comment(next: Option<char>) -> bool {
+    next.map_or(true, |c| c.is_ascii_whitespace() || c.is_ascii_control())
 }
 
 fn driver_mask_extras(driver: DriverKind) -> MaskExtras {
     MaskExtras {
         e_strings: driver == DriverKind::Postgres,
         bracket_idents: driver == DriverKind::Sqlite,
+        mysql_dash: driver == DriverKind::Mysql,
     }
 }
 
@@ -3840,7 +4092,12 @@ fn mask_for_analysis_impl(
         let c = src[i];
         // Line comment: `-- …` or (MySQL / driver-less only) `# …`, terminated
         // by newline.
-        if (c == '-' && i + 1 < n && src[i + 1] == '-') || (c == '#' && hash_comment) {
+        if (c == '-'
+            && i + 1 < n
+            && src[i + 1] == '-'
+            && (!extras.mysql_dash || dash_starts_comment(src.get(i + 2).copied())))
+            || (c == '#' && hash_comment)
+        {
             while i < n && src[i] != '\n' {
                 out.push(' ');
                 i += 1;
@@ -4401,6 +4658,96 @@ mod tests {
         }
     }
 
+    fn nn_col(name: &str, nullable: bool) -> super::types::TableColumnInfo {
+        let mut c = test_col(name);
+        c.nullable = nullable;
+        c
+    }
+
+    fn uq_index(name: &str, cols: &[&str]) -> super::types::IndexInfo {
+        super::types::IndexInfo {
+            name: name.into(),
+            columns: cols.iter().map(|c| c.to_string()).collect(),
+            unique: true,
+            primary: false,
+            method: None,
+            predicate: None,
+            first_expression_at: None,
+            key_column_count: None,
+            column_options: Vec::new(),
+            nulls_not_distinct: false,
+            invalid: false,
+            collation_differs: false,
+        }
+    }
+
+    #[test]
+    fn pick_unique_row_key_skips_invalid_and_collation_mismatch() {
+        let cols = [nn_col("a", false)];
+        let mut invalid = uq_index("invalid", &["a"]);
+        invalid.invalid = true;
+        let mut coll = uq_index("coll", &["a"]);
+        coll.collation_differs = true;
+        assert_eq!(super::pick_unique_row_key(&cols, &[invalid, coll]), None);
+    }
+
+    #[test]
+    fn pick_unique_row_key_prefers_single_column_and_requires_not_null() {
+        let cols = [nn_col("a", false), nn_col("b", false), nn_col("n", true)];
+        // 複合が先に並んでいても単一列を優先する。
+        let idx = [uq_index("ab", &["a", "b"]), uq_index("b", &["b"])];
+        assert_eq!(
+            super::pick_unique_row_key(&cols, &idx),
+            Some(vec!["b".to_string()])
+        );
+        // 同じ列数なら先に並んだものを採る。
+        let idx = [uq_index("b", &["b"]), uq_index("a", &["a"])];
+        assert_eq!(
+            super::pick_unique_row_key(&cols, &idx),
+            Some(vec!["b".to_string()])
+        );
+        // NULL 可の列を含む UNIQUE は使えない (NULL は重複できる)。
+        let idx = [uq_index("n", &["n"]), uq_index("an", &["a", "n"])];
+        assert_eq!(super::pick_unique_row_key(&cols, &idx), None);
+        // 複合でも全列 NOT NULL なら採用。
+        let idx = [uq_index("ab", &["a", "b"])];
+        assert_eq!(
+            super::pick_unique_row_key(&cols, &idx),
+            Some(vec!["a".to_string(), "b".to_string()])
+        );
+    }
+
+    #[test]
+    fn pick_unique_row_key_skips_primary_partial_expression_and_non_unique() {
+        let cols = [nn_col("a", false), nn_col("b", false)];
+        let mut primary = uq_index("PRIMARY", &["a"]);
+        primary.primary = true;
+        let mut partial = uq_index("partial", &["a"]);
+        partial.predicate = Some("(b > 0)".into());
+        let mut expr = uq_index("expr", &["a"]);
+        expr.first_expression_at = Some(1);
+        let mut plain = uq_index("plain", &["a"]);
+        plain.unique = false;
+        let missing = uq_index("missing", &["zzz"]);
+        let empty = uq_index("empty", &[]);
+        assert_eq!(
+            super::pick_unique_row_key(&cols, &[primary, partial, expr, plain, missing, empty]),
+            None
+        );
+    }
+
+    #[test]
+    fn pick_unique_row_key_ignores_include_columns() {
+        let cols = [nn_col("a", false), nn_col("inc", true)];
+        // PostgreSQL の INCLUDE 列 (NULL 可) はキーに含めない。
+        let mut idx = uq_index("a_inc", &["a", "inc"]);
+        idx.key_column_count = Some(1);
+        assert_eq!(
+            super::pick_unique_row_key(&cols, &[idx]),
+            Some(vec!["a".to_string()])
+        );
+    }
+
     #[test]
     fn group_columns_by_table_merges_non_adjacent_case_variants() {
         // 大小無視照合で `Users` / `users` の行が交互に並んでも、表ごとに 1 件にまとまる。
@@ -4702,6 +5049,38 @@ mod tests {
         assert!(!is_read_only_sql_for(lite, "SELECT [a ; DELETE FROM t;"));
         // 括弧内の本文は隠れる。
         assert!(is_read_only_sql_for(lite, "SELECT [delete me] FROM t"));
+    }
+
+    #[test]
+    fn mysql_dash_comment_needs_trailing_space_1735() {
+        let sql = "SELECT 1--1; DROP TABLE t";
+        // MySQL: `--1` はコメントではない (1 - -1) ので DROP が見える。
+        assert!(!is_read_only_sql_for(DriverKind::Mysql, sql));
+        // ドライバ不明は MySQL 解釈でも判定する (fail-closed)。
+        assert!(!is_read_only_sql(sql));
+        // PostgreSQL / SQLite は空白不要でコメント。
+        assert!(is_read_only_sql_for(DriverKind::Postgres, sql));
+        assert!(is_read_only_sql_for(DriverKind::Sqlite, sql));
+        // 空白・タブ・制御文字・文末ならどのドライバでもコメント。
+        for ok in [
+            "SELECT 1-- ; DROP TABLE t",
+            "SELECT 1--\t; DROP TABLE t",
+            "SELECT 1--",
+        ] {
+            assert!(is_read_only_sql_for(DriverKind::Mysql, ok), "{ok:?}");
+            assert!(is_read_only_sql(ok), "{ok:?}");
+        }
+    }
+
+    #[test]
+    fn sqlite_bracketed_denied_function_is_rejected_1735() {
+        let lite = DriverKind::Sqlite;
+        assert!(!is_read_only_sql_for(lite, "SELECT [load_extension]('x')"));
+        assert!(!is_read_only_sql_for(lite, "SELECT [nextval]('s')"));
+        assert!(is_read_only_sql_for(
+            lite,
+            "SELECT [name] FROM [load_extension_log]"
+        ));
     }
 
     #[test]
@@ -5744,6 +6123,63 @@ mod tests {
 /// 先頭文は必ず拒否される / コメント・文字列リテラルに隠したキーワードは判定を
 /// 変えない / 既存 LIMIT への二重付与は起きない 等) を検証する。反例が見つかれば
 /// proptest が最小化して報告するため、安全網の穴を継続的に検出できる。
+#[cfg(test)]
+mod guard_tests {
+    use super::{evaluate_guard, GuardViolation, GuardedStatement, RowExpectation};
+
+    fn st(expect: RowExpectation) -> GuardedStatement<'static> {
+        GuardedStatement { sql: "", expect }
+    }
+
+    #[test]
+    fn per_statement_max_only_flags_the_over_side() {
+        let sts = [
+            st(RowExpectation::at_most(1)),
+            st(RowExpectation::at_most(2)),
+            st(RowExpectation::at_most(3)),
+        ];
+        // 少ない側 (0 行) と上限ちょうどは違反ではない。
+        assert_eq!(evaluate_guard(&sts, &[1, 2, 0]), None);
+        // 1 文が超えたら、その文だけの内訳・全体合計・文ごとの件数を返す (他文の不足で相殺されない)。
+        assert_eq!(
+            evaluate_guard(&sts, &[2, 0, 0]),
+            Some(GuardViolation {
+                expected: 1,
+                actual: 2,
+                total: 2,
+                counts: vec![2, 0, 0],
+                under: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn min_flags_the_under_side_and_none_is_unchecked() {
+        let sts = [
+            st(RowExpectation {
+                min: Some(1),
+                max: Some(1),
+            }),
+            st(RowExpectation::NONE),
+        ];
+        assert_eq!(evaluate_guard(&sts, &[1, 99]), None);
+        assert_eq!(
+            evaluate_guard(&sts, &[0, 5]).map(|v| (v.expected, v.actual, v.total)),
+            Some((1, 0, 5))
+        );
+        // 不足行数 (楽観ロックの競合行数) は min を下回った文だけ数える。
+        let two = [
+            st(RowExpectation {
+                min: Some(3),
+                max: Some(3),
+            }),
+            st(RowExpectation::at_most(1)),
+        ];
+        assert_eq!(evaluate_guard(&two, &[1, 2]).map(|v| v.under), Some(2));
+        assert_eq!(evaluate_guard(&two, &[3, 2]).map(|v| v.under), Some(0));
+    }
+}
+
 #[cfg(test)]
 mod proptests {
     use super::{apply_auto_limit, is_read_only_sql};
