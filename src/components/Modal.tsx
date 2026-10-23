@@ -6,6 +6,7 @@ import { transitions, variants } from "../motion";
 import { Button } from "./ui";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Tooltip } from "./Tooltip";
+import { rejectSubmit } from "./submitRejectFeedback";
 import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
 
 /**
@@ -101,12 +102,16 @@ export function Modal({
 }: ModalProps) {
   const onContentKeyDown = onSubmit
     ? (e: KeyboardEvent<HTMLDivElement>) => {
-        if (submitDisabled) return;
         // ポータルで描画した子 (確認ダイアログなど) のキーは React ツリー上で親へ伝わるが、
         // DOM 上はこのモーダルの外。外側フォームの送信を再発火させない (#1604)。
         if (!e.currentTarget.contains(e.target as Node)) return;
         if (!isModalSubmitKey(pickModalKeys(e))) return;
         e.preventDefault();
+        // 主アクションが無効なときは実行せず、拒否を一度だけ視覚で返す (#1831)。
+        if (submitDisabled) {
+          rejectSubmit(e.currentTarget);
+          return;
+        }
         onSubmit();
       }
     : undefined;

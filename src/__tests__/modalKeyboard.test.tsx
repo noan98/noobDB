@@ -95,6 +95,36 @@ describe("Modal の Cmd/Ctrl+Enter", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("無効時の Cmd/Ctrl+Enter は拒否の印 (data-submit-rejected) を一度だけ付け、animationend で外す (#1831)", () => {
+    const onSubmit = vi.fn();
+    renderModal({ onSubmit, submitDisabled: true });
+    const content = screen.getByRole("dialog");
+    expect(content).not.toHaveAttribute("data-submit-rejected");
+    fireEvent.keyDown(screen.getByLabelText("name"), { key: "Enter", ctrlKey: true });
+    expect(content).toHaveAttribute("data-submit-rejected");
+    fireEvent.animationEnd(content);
+    expect(content).not.toHaveAttribute("data-submit-rejected");
+  });
+
+  it("有効時・素の Enter では拒否の印を付けない", () => {
+    renderModal({ onSubmit: vi.fn() });
+    const content = screen.getByRole("dialog");
+    fireEvent.keyDown(screen.getByLabelText("name"), { key: "Enter", ctrlKey: true });
+    fireEvent.keyDown(screen.getByLabelText("name"), { key: "Enter" });
+    expect(content).not.toHaveAttribute("data-submit-rejected");
+  });
+
+  it("reduced-motion (data-motion=reduced) では拒否の印を付けない (#1831)", () => {
+    document.documentElement.setAttribute("data-motion", "reduced");
+    try {
+      renderModal({ onSubmit: vi.fn(), submitDisabled: true });
+      fireEvent.keyDown(screen.getByLabelText("name"), { key: "Enter", ctrlKey: true });
+      expect(screen.getByRole("dialog")).not.toHaveAttribute("data-submit-rejected");
+    } finally {
+      document.documentElement.removeAttribute("data-motion");
+    }
+  });
+
   it("onSubmit を渡さないモーダル (破壊的な確認など) は何もしない", () => {
     renderModal({});
     // 例外なく素通りする (キーハンドラ自体が付かない)。
