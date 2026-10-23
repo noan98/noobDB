@@ -8269,11 +8269,11 @@ const ja: Dict = {
   // StatTile のデルタ / 推移 (#1833)。
   sparklineTrendAria: "直近 {count} サンプル: {min}〜{max}。",
   statDeltaUp: "前回比 {amount} 増加",
-  statDeltaUpGood: "前回比 {amount} 増加（好転）",
-  statDeltaUpBad: "前回比 {amount} 増加（悪化）",
+  statDeltaUpGood: "前回比 {amount} 増加 (好転)",
+  statDeltaUpBad: "前回比 {amount} 増加 (悪化)",
   statDeltaDown: "前回比 {amount} 減少",
-  statDeltaDownGood: "前回比 {amount} 減少（好転）",
-  statDeltaDownBad: "前回比 {amount} 減少（悪化）",
+  statDeltaDownGood: "前回比 {amount} 減少 (好転)",
+  statDeltaDownBad: "前回比 {amount} 減少 (悪化)",
   statDeltaFlat: "前回比 変化なし",
   // 接続ヘルスのレイテンシ推移 (#1630)。
   healthColTrend: "推移",

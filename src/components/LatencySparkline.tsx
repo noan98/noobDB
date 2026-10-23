@@ -34,11 +34,13 @@ export function LatencySparkline({
   format?: (n: number) => string;
 }) {
   const t = useT();
-  if (!samples || samples.filter((s) => s !== null).length < 2) {
+  // neutral では NaN / Infinity も欠測として数える (sparklineGeometry と同じ扱い)。
+  const usable = (s: LatencySample): s is number => s !== null && (!neutral || Number.isFinite(s));
+  if (!samples || samples.filter(usable).length < 2) {
     return <chakra.span color="app.textMuted">–</chakra.span>;
   }
   const g = sparklineGeometry(samples, SPARK_W, SPARK_H, LATENCY_HISTORY_MAX, neutral);
-  const values = samples.filter((s): s is number => s !== null);
+  const values = samples.filter(usable);
   const label = t(neutral ? "sparklineTrendAria" : "healthTrendAria", {
     count: samples.length,
     min: neutral && format ? format(Math.min(...values)) : Math.min(...values),

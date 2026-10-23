@@ -77,18 +77,4 @@ describe("StatTile delta / trend (#1833)", () => {
     renderWithProviders(<StatTile label="T" value="1" trend={[1, Number.NaN]} />);
     expect(screen.queryByTestId("neutral-sparkline")).not.toBeInTheDocument();
   });
-
-  it("整形後に 0 と同じになる揺らぎは変化なし (色なし)", () => {
-    renderWithProviders(
-      <StatTile label="R" value="1" delta={0.0000001} goodWhen="down" formatter={(n) => n.toFixed(2)} />,
-    );
-    const el = screen.getByTestId("stat-delta");
-    expect(el).toHaveAttribute("data-direction", "flat");
-    expect(el).toHaveAttribute("data-verdict", "none");
-  });
-
-  it("NaN を含む trend は有効点が 2 未満なら出さない", () => {
-    renderWithProviders(<StatTile label="T" value="1" trend={[1, Number.NaN]} />);
-    expect(screen.queryByTestId("neutral-sparkline")).not.toBeInTheDocument();
-  });
 });

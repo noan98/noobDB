@@ -401,9 +401,4 @@ describe("sparklineGeometry neutral (#1833)", () => {
     expect(g.maxMs).toBe(3);
     expect(g.segments.every((s) => Number.isFinite(s.y1) && Number.isFinite(s.y2))).toBe(true);
   });
-  it("NaN は欠測扱いで縦軸を壊さない", () => {
-    const g = sparklineGeometry([1, Number.NaN, 3], 10, 20, 3, true);
-    expect(g.maxMs).toBe(3);
-    expect(g.segments.every((s) => Number.isFinite(s.y1) && Number.isFinite(s.y2))).toBe(true);
-  });
 });

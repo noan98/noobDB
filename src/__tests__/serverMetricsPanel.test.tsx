@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor, act } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, act, within } from "./testUtils";
 import { t } from "../i18n";
 import type { ServerMetrics } from "../api/tauri";
 
@@ -222,7 +222,7 @@ describe("ServerMetricsPanel 要約タイル (#1833)", () => {
     expect(screen.getAllByTestId("neutral-sparkline").length).toBe(2);
   });
 
-  it("カウンタのリセットでレートが null を挟むと、離れた点との差を出さずタイルも出さない", async () => {
+  it("リセットでレートが null を挟んだ直後はタイルを出さず、次の回復では前回比を出さない", async () => {
     const m = (questions: number): ServerMetrics => ({
       connections: 5,
       active: null,
@@ -232,23 +232,41 @@ describe("ServerMetricsPanel 要約タイル (#1833)", () => {
       slow_queries: null,
       lock_waits: null,
     });
-    // 100 → 200 → 50 (リセット: 最新レートは null)
+    // 同一ミリ秒だと dtMs=0 でレートが出ないので、時刻を 1 秒ずつ進めて固定する。
+    let now = 1_700_000_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    // 100 → 200 (レート 100/s) → 50 (リセット: レート null) → 150 (レート 100/s、直前は null)
     vi.mocked(api.serverMetrics)
       .mockResolvedValueOnce(m(100))
       .mockResolvedValueOnce(m(200))
-      .mockResolvedValue(m(50));
+      .mockResolvedValueOnce(m(50))
+      .mockResolvedValue(m(150));
     renderWithProviders(<ServerMetricsPanel sessionId="s1" driver="postgres" />);
     await waitFor(() => expect(screen.getByTestId("metrics-summary-tiles")).toBeInTheDocument());
-    const refresh = () => fireEvent.click(screen.getByRole("button", { name: t("metricsRefresh") }));
-    refresh();
-    await waitFor(() => expect(api.serverMetrics).toHaveBeenCalledTimes(2));
-    refresh();
-    await waitFor(() => expect(api.serverMetrics).toHaveBeenCalledTimes(3));
-    // スループットのタイルは消え (最新が null)、接続数のタイルだけが残る。
+    const tiles = () => screen.getByTestId("metrics-summary-tiles");
+    const refresh = async (calls: number) => {
+      now += 1000;
+      fireEvent.click(screen.getByRole("button", { name: t("metricsRefresh") }));
+      await waitFor(() => expect(api.serverMetrics).toHaveBeenCalledTimes(calls));
+    };
+
+    await refresh(2);
+    // レートが算出できた時点ではスループットのタイルが出ている (空振り防止)。
+    await waitFor(() => expect(tiles().textContent).toContain(t("metricsSeriesThroughput")));
+
+    await refresh(3);
+    // リセット直後は最新レートが null なのでタイルごと消え、接続数のタイルだけが残る。
     await waitFor(() => {
-      const tiles = screen.getByTestId("metrics-summary-tiles");
-      expect(tiles.textContent).not.toContain(t("metricsSeriesThroughput"));
-      expect(tiles.textContent).toContain(t("metricsSeriesConnections"));
+      expect(tiles().textContent).not.toContain(t("metricsSeriesThroughput"));
+      expect(tiles().textContent).toContain(t("metricsSeriesConnections"));
     });
+
+    await refresh(4);
+    // 最新は有限・直前は null: タイルは出るが、離れた点との差(デルタ)は出さない。
+    await waitFor(() => expect(tiles().textContent).toContain(t("metricsSeriesThroughput")));
+    const throughputTile = within(tiles()).getByText(t("metricsSeriesThroughput"))
+      .parentElement as HTMLElement;
+    expect(within(throughputTile).queryByTestId("stat-delta")).not.toBeInTheDocument();
+    vi.restoreAllMocks();
   });
 });
