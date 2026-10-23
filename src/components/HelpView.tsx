@@ -2,10 +2,10 @@ import { useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { semanticColorVar } from "../semanticColors";
-import { resolveShortcutBindings, SHORTCUTS, type ShortcutId } from "../shortcuts";
+import { resolveShortcutBindings, SHORTCUTS, type ShortcutCategory, type ShortcutId } from "../shortcuts";
 import { formatCombo } from "../shortcutKeys";
 import { useSettings } from "../settings";
-import { Icon, type IconName } from "./Icon";
+import { ICON_SIZES, Icon, type IconName } from "./Icon";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
 import {
   SettingsHelp,
@@ -52,13 +52,13 @@ const HelpGlyph = chakra("span", {
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
-    width: "calc(28px * var(--font-scale))",
-    height: "calc(28px * var(--font-scale))",
+    width: ICON_SIZES.xl,
+    height: ICON_SIZES.xl,
     borderRadius: "md",
     color: "app.accent",
     background: "color-mix(in srgb, var(--accent) 14%, transparent)",
     border: "1px solid",
-    borderColor: "color-mix(in srgb, var(--accent) 30%, transparent)",
+    borderColor: "var(--accent-highlight)",
   },
 });
 
@@ -139,6 +139,14 @@ interface Section {
   features: Feature[];
 }
 
+/** ショートカット節のカードは category ごとにグリフを変える (#1835)。 */
+const SHORTCUT_CATEGORY_ICON: Record<ShortcutCategory, IconName> = {
+  global: "settings",
+  editor: "query",
+  grid: "table",
+  tabs: "columns",
+};
+
 const SECTIONS: Section[] = [
   {
     headerKey: "helpSectionSafe",
@@ -147,7 +155,6 @@ const SECTIONS: Section[] = [
     features: [
       {
         titleKey: "helpDryRunTitle",
-        icon: "play",
         tryTarget: { kind: "newQuery" },
         descKey: "helpDryRunDesc",
         impact: "no",
@@ -187,14 +194,14 @@ const SECTIONS: Section[] = [
       { titleKey: "helpExportTitle", icon: "download", descKey: "helpExportDesc", impact: "no" },
       {
         titleKey: "helpProfileBackupTitle",
-        icon: "upload",
+        icon: "transfer",
         tryTarget: { kind: "settings", section: "settings-sec-backup" },
         descKey: "helpProfileBackupDesc",
         impact: "no",
         stepKeys: ["helpProfileBackupStep1", "helpProfileBackupStep2", "helpProfileBackupStep3"],
         noteKey: "helpProfileBackupNote",
       },
-      { titleKey: "helpCellEditTitle", icon: "pencil", descKey: "helpCellEditDesc", impact: "no" },
+      { titleKey: "helpCellEditTitle", icon: "table", descKey: "helpCellEditDesc", impact: "no" },
       { titleKey: "helpDiscardTitle", icon: "undo", descKey: "helpDiscardDesc", impact: "no" },
       {
         titleKey: "helpHistoryTitle",
@@ -308,7 +315,7 @@ const SECTIONS: Section[] = [
       },
       {
         titleKey: "helpAiPricingTitle",
-        icon: "hash",
+        icon: "chart",
         descKey: "helpAiPricingDesc",
         stepKeys: ["helpAiPriceOpus", "helpAiPriceSonnet", "helpAiPriceHaiku", "helpAiPriceFable"],
       },
@@ -322,6 +329,7 @@ const SECTIONS: Section[] = [
     // チートシート (`ShortcutCheatSheet`) と定義を共有する。
     features: SHORTCUTS.map((s) => ({
       titleKey: s.keysKey,
+      icon: SHORTCUT_CATEGORY_ICON[s.category],
       descKey: s.descKey,
       ...(s.id ? { shortcutId: s.id } : {}),
     })),
@@ -479,8 +487,13 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
               <SettingsSection key={section.headerKey} id={sectionDomId(section)} scrollMarginTop="8px">
                 <SettingsSectionHeader>
                   <chakra.h3 display="flex" alignItems="center" gap="2">
-                    <HelpGlyph data-testid="help-section-glyph" aria-hidden="true">
-                      <Icon name={section.icon} />
+                    <HelpGlyph
+                      data-testid="help-section-glyph"
+                      aria-hidden="true"
+                      border="none"
+                      background="transparent"
+                    >
+                      <Icon name={section.icon} size="md" />
                     </HelpGlyph>
                     {section.header}
                   </chakra.h3>
@@ -493,7 +506,7 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
                       <HelpFeatureHead>
                         <HelpFeatureTitle>
                           <HelpGlyph data-testid="help-feature-glyph" aria-hidden="true">
-                            <Icon name={f.icon ?? section.icon} />
+                            <Icon name={f.icon ?? section.icon} size="md" />
                           </HelpGlyph>
                           <chakra.h4>{featureTitle(f)}</chakra.h4>
                         </HelpFeatureTitle>

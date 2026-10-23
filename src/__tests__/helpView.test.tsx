@@ -95,3 +95,11 @@ describe("HelpView 視覚アンカー (#1835)", () => {
     }
   });
 });
+
+describe("HelpView ショートカット節のグリフ (#1835)", () => {
+  it("category ごとに異なるグリフになる (全カード同一ではない)", () => {
+    renderWithProviders(<HelpView onClose={() => {}} />);
+    const glyphs = screen.getAllByTestId("help-feature-glyph").map((g) => g.innerHTML);
+    expect(new Set(glyphs).size).toBeGreaterThan(5);
+  });
+});
