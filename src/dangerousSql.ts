@@ -395,9 +395,14 @@ function extractTarget(rawStatement: string, lead: RegExp): string | null {
 
 /**
  * `ALTER TABLE` の中の `DROP COLUMN` / `DROP CONSTRAINT` (MySQL の `DROP FOREIGN KEY` /
- * `DROP PRIMARY KEY` / `DROP CHECK` を含む) を拾う (#1626)。コメント・リテラルをマスクした小文字の
- * 文を ASCII の単語 (`[a-z0-9_]+`) に分けて隣り合う 2 語を見るので、列名が `drop` でも
- * `DROP INDEX` / `DROP PARTITION` は拾わない。`DROP <列>` (COLUMN 省略形, #1839) も列の削除。先に現れた方を返す。バックの `alter_drop_kind`
+ * `DROP PRIMARY KEY` / `DROP CHECK` を含む) と、COLUMN 省略形の `DROP <列>` を拾う (#1626, #1839)。
+ * コメント・リテラルをマスクした小文字の文を、ASCII の単語 (`[a-z0-9_]+`) と引用識別子の開き記号に
+ * 分けて、`DROP` とその次のトークン (`IF EXISTS` は読み飛ばす) を見る。次が `column` なら列、
+ * `constraint` / `foreign` / `primary` / `check` なら制約、`index` / `key` / `partition` など列以外の
+ * DROP 句の語なら対象外、それ以外 (任意の識別子・引用符) は省略形の列削除とする。先に現れた方を返す。
+ * 限界: 未引用の列名が除外語と同じ (PostgreSQL の非予約語 `identity` / `key` など) だと見逃す。
+ * 非 ASCII だけの未引用列名 (`DROP 顧客`) も語にならず見逃す。逆に `RENAME COLUMN drop TO d` の
+ * ような `drop` 語の後ろの識別子は列削除と誤検出する (安全側)。バックの `alter_drop_kind`
  * (`db/script_analysis.rs`) と同じ規則で、共有ゴールデンで固定している。
  */
 function alterDropKind(bodyLower: string): "dropColumn" | "dropConstraint" | null {
@@ -420,20 +425,17 @@ function alterDropKind(bodyLower: string): "dropColumn" | "dropConstraint" | nul
   return null;
 }
 
-/** `ALTER TABLE` の `DROP` に続いて列以外を落とす (または列の属性を外す) 語。Rust の `ALTER_DROP_NON_COLUMN` と同じ。 */
+/** `ALTER TABLE` の `DROP` に続いて列以外を落とす (または列の属性を外す) 語。Rust `alter_drop_kind` の除外アームと同じ。 */
 const ALTER_DROP_NON_COLUMN = new Set([
   "index",
   "key",
   "partition",
-  "subpartition",
   "default",
   "not",
   "expression",
   "identity",
-  "generated",
   "system",
   "period",
-  "statistics",
   "if",
 ]);
 
