@@ -216,6 +216,7 @@ export function MigrationExportModal({
     <Modal
       onSubmit={handleSave}
       submitDisabled={isSaving || !downReady}
+      submitBusy={isSaving}
       width="560px"
       onClose={onClose}
       closeOnInteractOutside={!isSaving}

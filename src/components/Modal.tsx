@@ -1,7 +1,7 @@
 import { chakra, Dialog, Portal } from "@chakra-ui/react";
 import { motion, useIsPresent } from "motion/react";
 import { useState } from "react";
-import type { ComponentProps, KeyboardEvent, ReactNode } from "react";
+import type { ComponentProps, KeyboardEvent, PointerEvent, ReactNode } from "react";
 import { transitions, variants } from "../motion";
 import { Button } from "./ui";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -84,8 +84,17 @@ interface ModalProps {
    * 破壊的な確認ダイアログには渡さない (`designTokens.test.ts` が免除リストで管理)。
    */
   onSubmit?: () => void;
-  /** 主アクションのボタンが無効なときは true (キーボードからも実行しない)。 */
+  /**
+   * 主アクションのボタンが無効なときは true。キーボードからも実行せず、Cmd/Ctrl+Enter と
+   * 無効な主ボタン (フッター最後のボタン) の pointerdown には共有の「拒否」演出
+   * (`data-submit-rejected` + `submit-reject-shake`、#1831) を一度だけ返す。
+   */
   submitDisabled?: boolean;
+  /**
+   * 処理中 (保存中・実行中など) で無効なときは true。拒否は「入力が足りない」ことを伝える
+   * 演出なので、処理中は揺らさずスクロールもしない (キー操作は握り潰すだけ)。
+   */
+  submitBusy?: boolean;
   children: ReactNode;
 }
 
@@ -98,6 +107,7 @@ export function Modal({
   initialFocusEl,
   onSubmit,
   submitDisabled = false,
+  submitBusy = false,
   children,
 }: ModalProps) {
   const onContentKeyDown = onSubmit
@@ -109,12 +119,24 @@ export function Modal({
         e.preventDefault();
         // 主アクションが無効なときは実行せず、拒否を一度だけ視覚で返す (#1831)。
         if (submitDisabled) {
-          rejectSubmit(e.currentTarget);
+          if (!submitBusy) rejectSubmit(e.currentTarget);
           return;
         }
         onSubmit();
       }
     : undefined;
+  // disabled な主ボタンはクリックが来ないが、pointer 系イベントは祖先へ届く環境がある。
+  // 届かない環境では何も起きないだけ。主ボタンはフッター最後のボタン (補助 → キャンセル →
+  // 主アクション、破壊的でも「実行 (左)」は対象外) として構造から識別する。
+  const onContentPointerDown =
+    onSubmit && submitDisabled && !submitBusy
+      ? (e: PointerEvent<HTMLDivElement>) => {
+          const btn = (e.target as Element).closest?.("button:disabled");
+          const footer = btn?.closest("[data-modal-footer]");
+          if (!btn || !footer || footer.querySelector("button:last-of-type") !== btn) return;
+          rejectSubmit(e.currentTarget);
+        }
+      : undefined;
   return (
     <Dialog.Root
       open={open}
@@ -149,6 +171,7 @@ export function Modal({
               {...variants.dialog}
               transition={transitions.enter}
               onKeyDown={onContentKeyDown}
+              onPointerDown={onContentPointerDown}
               css={{
                 display: "flex",
                 flexDirection: "column",
@@ -261,6 +284,7 @@ type ModalFooterProps = ComponentProps<typeof Dialog.Footer>;
 export function ModalFooter({ children, ...rest }: ModalFooterProps) {
   return (
     <Dialog.Footer
+      data-modal-footer=""
       css={{
         display: "flex",
         alignItems: "center",

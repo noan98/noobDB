@@ -928,6 +928,7 @@ export function ExportModal({
     <Modal
       onSubmit={handleExport}
       submitDisabled={isSaving || !path.trim() || conflictProblem !== null}
+      submitBusy={isSaving}
       width="560px"
       onClose={onClose}
       closeOnInteractOutside={!isSaving}
