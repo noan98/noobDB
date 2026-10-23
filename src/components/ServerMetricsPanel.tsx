@@ -25,6 +25,8 @@ import {
   type MetricSample,
   type MetricSeriesKey,
 } from "./serverMetrics";
+import { StatTile, type StatDeltaGood } from "./StatTile";
+import { LATENCY_HISTORY_MAX } from "./connectionHealth";
 import { Button, Checkbox, Heading, Select } from "./ui";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Tooltip } from "./Tooltip";
@@ -108,6 +110,46 @@ const CHARTS: ChartDef[] = [
     ],
   },
 ];
+
+/** 先頭に並べる要約タイル (#1833)。各系列の最新値・前回比・直近の推移を一目で見せる。 */
+const SUMMARY_TILES: readonly { key: MetricSeriesKey; labelKey: I18nKey; goodWhen: StatDeltaGood }[] = [
+  { key: "connections", labelKey: "metricsSeriesConnections", goodWhen: "neutral" },
+  { key: "lockWaiting", labelKey: "metricsSeriesLockWaiting", goodWhen: "down" },
+  { key: "queryRate", labelKey: "metricsSeriesThroughput", goodWhen: "neutral" },
+  { key: "slowQueryRate", labelKey: "metricsSeriesSlowQueryRate", goodWhen: "down" },
+];
+
+function MetricSummaryTiles({ points }: { points: MetricPoint[] }) {
+  const t = useT();
+  const finite = (v: number | null | undefined): v is number => v != null && Number.isFinite(v);
+  const tiles = SUMMARY_TILES.flatMap((def) => {
+    const latest = points[points.length - 1]?.[def.key];
+    // 最新点が欠測 (未対応 / リセット直後のレート) ならタイルを出さない。
+    if (!finite(latest)) return [];
+    // 前回比は「直前の点」とだけ比べる。欠測をまたいで離れた点との差を出さない。
+    const prev = points[points.length - 2]?.[def.key];
+    const isRate = def.key.endsWith("Rate");
+    return [
+      <StatTile
+        key={def.key}
+        label={t(def.labelKey)}
+        value={latest}
+        formatter={isRate ? formatRate : formatCount}
+        delta={finite(prev) ? latest - prev : null}
+        goodWhen={def.goodWhen}
+        // 推移は常に直近 LATENCY_HISTORY_MAX サンプルで、チャートの表示期間 (windowSecs) とは一致しない。
+        // 欠測は null のまま渡し、欠測の間を線で繋がない。
+        trend={points.slice(-LATENCY_HISTORY_MAX).map((p) => p[def.key] ?? null)}
+      />,
+    ];
+  });
+  if (tiles.length === 0) return null;
+  return (
+    <Flex gap="2" flexWrap="wrap" data-testid="metrics-summary-tiles">
+      {tiles}
+    </Flex>
+  );
+}
 
 function timeLabel(atMs: number): string {
   return new Date(atMs).toLocaleTimeString();
@@ -505,6 +547,8 @@ export function ServerMetricsPanel({ sessionId, driver }: { sessionId: string; d
           )}
         </Callout>
       )}
+
+      {updatedAt && !error && <MetricSummaryTiles points={points} />}
 
       {error && (
         // ポーリング失敗: チャート自体は直前サンプルのまま表示を続けるため、全体を
