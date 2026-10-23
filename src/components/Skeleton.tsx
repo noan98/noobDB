@@ -192,15 +192,8 @@ export function SkeletonSearchRows({ rows = 5 }: { rows?: number }) {
   );
 }
 
-/** ER 図ローディング用のノードグラフ風スケルトン (#1834)。テーブルカード (ヘッダ +
- *  列バー) を 2 行に並べ、カード間をシマーする細い線で結んで「ここにテーブルと
- *  リレーションが描かれる」予兆を示す。親は `position: relative` の領域で、
- *  絶対配置で全面を覆う。`aria-hidden` の純粋な視覚プレースホルダで、待機の通知は
- *  呼び出し側の `role="status"` 文言が担う。
- *
- * @public
- */
-export const ER_GRAPH_SKELETON_NODES: readonly { left: number; top: number; cols: readonly number[] }[] = [
+/** ER 図ローディング骨格のノード定義 (位置は親に対する %、`cols` は列バーの幅 %)。 */
+const ER_GRAPH_SKELETON_NODES: readonly { left: number; top: number; cols: readonly number[] }[] = [
   { left: 8, top: 10, cols: [70, 55, 62] },
   { left: 42, top: 6, cols: [60, 75, 48, 66] },
   { left: 74, top: 14, cols: [66, 52] },
@@ -208,15 +201,32 @@ export const ER_GRAPH_SKELETON_NODES: readonly { left: number; top: number; cols
   { left: 58, top: 50, cols: [64, 46, 70] },
 ];
 
-/** ノード間の接続線 (横線 / 縦線) の位置。`left`/`top`/`size` は親に対する % */
-const ER_GRAPH_SKELETON_LINKS: readonly { left: number; top: number; w?: number; h?: number }[] = [
-  { left: 24, top: 20, w: 18 },
-  { left: 58, top: 20, w: 16 },
-  { left: 14, top: 36, h: 16 },
-  { left: 52, top: 40, h: 10 },
-  { left: 36, top: 62, w: 22 },
+/** 接続するノードの組 (`ER_GRAPH_SKELETON_NODES` の添字)。 */
+const ER_GRAPH_SKELETON_EDGES: readonly (readonly [number, number])[] = [
+  [0, 1],
+  [1, 2],
+  [0, 3],
+  [1, 4],
+  [3, 4],
 ];
 
+/** カード幅 (親に対する %)。線の端点計算とカードの幅指定で共有する。 */
+const ER_GRAPH_SKELETON_NODE_WIDTH = 18;
+
+/** ノード中心の概算座標 (%)。カードは不透明で線の手前に描くので、端点が少しずれても
+ *  カードの下に隠れ、線は必ずノード同士をつなぐ。 */
+function erNodeCenter(n: { left: number; top: number; cols: readonly number[] }) {
+  return { x: n.left + ER_GRAPH_SKELETON_NODE_WIDTH / 2, y: n.top + (4 + n.cols.length * 3) / 2 };
+}
+
+/** ER 図ローディング用のノードグラフ風スケルトン (#1834)。テーブルカード (ヘッダ +
+ *  列バー) を 2 行に並べ、カード間をノード座標から引いた線で結んで「ここにテーブルと
+ *  リレーションが描かれる」予兆を示す。親は `position: relative` の領域で、
+ *  絶対配置で全面を覆う。`aria-hidden` の純粋な視覚プレースホルダで、待機の通知は
+ *  呼び出し側の `role="status"` 文言が担う。
+ *
+ * @public
+ */
 export function ErGraphSkeleton() {
   return (
     <div
@@ -224,19 +234,30 @@ export function ErGraphSkeleton() {
       data-testid="er-graph-skeleton"
       style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}
     >
-      {ER_GRAPH_SKELETON_LINKS.map((l, i) => (
-        <Skeleton
-          key={`l${i}`}
-          style={{
-            position: "absolute",
-            left: `${l.left}%`,
-            top: `${l.top}%`,
-            width: l.w != null ? `${l.w}%` : "var(--space-0-5)",
-            height: l.h != null ? `${l.h}%` : "var(--space-0-5)",
-            animationDelay: `${i * 0.05}s`,
-          }}
-        />
-      ))}
+      <svg
+        width="100%"
+        height="100%"
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+        style={{ position: "absolute", inset: 0 }}
+      >
+        {ER_GRAPH_SKELETON_EDGES.map(([a, b], i) => {
+          const p = erNodeCenter(ER_GRAPH_SKELETON_NODES[a]);
+          const q = erNodeCenter(ER_GRAPH_SKELETON_NODES[b]);
+          return (
+            <line
+              key={i}
+              x1={p.x}
+              y1={p.y}
+              x2={q.x}
+              y2={q.y}
+              stroke="var(--border-subtle)"
+              strokeWidth={2}
+              vectorEffect="non-scaling-stroke"
+            />
+          );
+        })}
+      </svg>
       {ER_GRAPH_SKELETON_NODES.map((n, i) => (
         <div
           key={`n${i}`}
@@ -244,15 +265,15 @@ export function ErGraphSkeleton() {
             position: "absolute",
             left: `${n.left}%`,
             top: `${n.top}%`,
-            width: "18%",
+            width: `${ER_GRAPH_SKELETON_NODE_WIDTH}%`,
             minWidth: "calc(var(--space-12) * 3)",
             display: "flex",
             flexDirection: "column",
             gap: "var(--space-1-5)",
             padding: "var(--space-2)",
+            background: "var(--bg-elevated)",
             border: "1px solid var(--border-subtle)",
             borderRadius: "var(--radius-md)",
-            opacity: 1 - i * 0.08,
           }}
         >
           <Skeleton style={{ height: "var(--space-3-5)", width: "70%", animationDelay: `${i * 0.05}s` }} />
@@ -268,14 +289,15 @@ export function ErGraphSkeleton() {
   );
 }
 
-/** チャートの集計待ち用スケルトン (#1834)。左に Y 軸の目盛り線、下に X 軸、棒が
- *  立ち上がる形のバーを並べて「ここにチャートが描かれる」予兆を示す。棒の高さは
- *  `CHART_SKELETON_BARS` (%) で周期させ、`aria-hidden` の視覚プレースホルダとする。
+/** チャート集計待ち骨格の棒の高さ (%)。列位置で周期させず固定列を並べる。 */
+const CHART_SKELETON_BARS: readonly number[] = [42, 68, 55, 82, 38, 74, 60, 90, 48, 66];
+
+/** チャートの集計待ち用スケルトン (#1834)。左に Y 軸、下に X 軸、棒が立ち上がる形の
+ *  バーを並べて「ここにチャートが描かれる」予兆を示す。`aria-hidden` の視覚
+ *  プレースホルダとする。
  *
  * @public
  */
-export const CHART_SKELETON_BARS: readonly number[] = [42, 68, 55, 82, 38, 74, 60, 90, 48, 66];
-
 export function ChartSkeleton() {
   return (
     <div

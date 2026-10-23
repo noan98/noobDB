@@ -109,6 +109,9 @@ interface Props {
 // 同時にアニメートすることになり描画コストが嵩むため、静的描画に切り替える。
 const ANIM_MAX_ELEMENTS = 200;
 
+/** DB 側集計待ちの骨格を出し始めるまでの猶予 (ms)。 */
+const CHART_SKELETON_DELAY_MS = 180;
+
 export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery }: Props) {
   const t = useT();
   // ダークテーマでは系列色 (`categorical`) をコントラスト確保版へ、連続/発散
@@ -204,6 +207,17 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
       : remoteForSql.model
         ? "ok"
         : "failed";
+  // 速い DB でのちらつきを避けるため、骨格は待ちが一定時間続いてから出す (それまでは
+  // 直前の表示を維持)。
+  const [showSkeleton, setShowSkeleton] = useState(false);
+  useEffect(() => {
+    if (dbAggStatus !== "pending") {
+      setShowSkeleton(false);
+      return;
+    }
+    const id = window.setTimeout(() => setShowSkeleton(true), CHART_SKELETON_DELAY_MS);
+    return () => window.clearTimeout(id);
+  }, [dbAggStatus]);
   // 退化データの注記は「実際にチャートを描く」ときだけ意味を持つ (Y 未選択/
   // データ 0 件のときは注記より前段の空状態メッセージが優先される)。
   const notices = useMemo<ChartNotice[]>(
@@ -305,7 +319,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
         <ResultViewSwitch value="chart" onChange={onChangeView} />
         <ImageExportButton
           filenameBase="chart"
-          disabled={model.labels.length === 0 || config.yCols.length === 0}
+          disabled={dbAggStatus === "pending" || model.labels.length === 0 || config.yCols.length === 0}
           makePng={(opts) => {
             const svg = getSvgForExport();
             return elementToPngBlob(svg as unknown as HTMLElement, { ...svgExportSize(svg), ...opts });
@@ -318,7 +332,12 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
         {/* 描画に使ったラベルと系列の値を、画像ではなくデータとして CSV / Markdown に出す (#1624)。 */}
         <TextExportButton
           filenameBase="chart"
-          disabled={model.labels.length === 0 || config.yCols.length === 0 || shownModel.series.length === 0}
+          disabled={
+            dbAggStatus === "pending" ||
+            model.labels.length === 0 ||
+            config.yCols.length === 0 ||
+            shownModel.series.length === 0
+          }
           label={t("chartDataExport")}
           formats={[
             {
@@ -464,23 +483,24 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
         </Field>
       </Flex>
 
-      {dbAggStatus !== "off" && (
-        <chakra.div
-          px="3"
-          py="1"
-          textStyle="caption"
-          flex="none"
-          role={dbAggStatus === "pending" ? "status" : undefined}
-        >
-          {dbAggStatus === "pending"
-            ? t("chartAggInDbPending")
-            : dbAggStatus === "ok"
-              ? t("chartAggInDbNote")
-              : t("chartAggInDbFailed", { error: remoteForSql?.error ?? "" })}
-        </chakra.div>
-      )}
+      {/* 常時描画の live region。中身だけ切り替えるので、完了・失敗も読み上げられる。 */}
+      <chakra.div
+        role="status"
+        px={dbAggStatus === "off" ? 0 : "3"}
+        py={dbAggStatus === "off" ? 0 : "1"}
+        textStyle="caption"
+        flex="none"
+      >
+        {dbAggStatus === "pending"
+          ? t("chartAggInDbPending")
+          : dbAggStatus === "ok"
+            ? t("chartAggInDbNote")
+            : dbAggStatus === "failed"
+              ? t("chartAggInDbFailed", { error: remoteForSql?.error ?? "" })
+              : null}
+      </chakra.div>
 
-      {model.sampledFrom != null && (
+      {dbAggStatus !== "pending" && model.sampledFrom != null && (
         <chakra.div px="3" py="1" textStyle="caption" flex="none">
           {t("chartSampled", { shown: model.labels.length, total: model.sampledFrom })}
         </chakra.div>
@@ -489,7 +509,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
       {/* 退化データの注記 (#646): 破綻はしていないが「なぜこう見えるか」を
           一言添えないと不安になりうるケース (点 1 つ・全値同一・非数値の 0 読み替え)。
           サンプリング注記と同じ控えめなトーン (app.textMuted) で揃える。 */}
-      {notices.length > 0 && (
+      {dbAggStatus !== "pending" && notices.length > 0 && (
         <chakra.div px="3" py="1" textStyle="caption" flex="none">
           {notices.map((n) => noticeText(n, model, t)).join("  ")}
         </chakra.div>
@@ -546,7 +566,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
         p="3"
         aria-busy={dbAggStatus === "pending" ? true : undefined}
       >
-        {dbAggStatus === "pending" ? (
+        {showSkeleton ? (
           // DB 側の全件集計待ち。手元の行だけで描いた旧チャートは全件の値と食い違う
           // ため、軸 + 棒の骨格に置き換える (#1834)。失敗時は従来どおり手元の結果で描く。
           <ChartSkeleton />
