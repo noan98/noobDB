@@ -294,3 +294,24 @@ tauri-driver は `taiki-e/install-action` の対応ツールではないため�
 `e2e/screenshots/` と `e2e/logs/` をアーティファクト保存する。
 「3 回連続グリーン」と「15 分以内」は確認済み (2026-10-03 JST、run 18〜20、約 11〜12 分)。
 詳細・testid 一覧は `noobdb-testing` スキルの `references/e2e.md`。
+
+## `mutants-diff.yml` (PR 差分の `cargo mutants --in-diff` / #1841)
+
+`ci.yml` とは別の独立ワークフロー。nightly / 手動の `mutants.yml` (全件 4 シャード、変更しない)
+の補完として、安全網ファイル (`src-tauri/.cargo/mutants.toml` の `examine_globs` と同じ
+`db/mod.rs` / `mysql.rs` / `postgres.rs` / `sqlite.rs` / `sync.rs` / `data_diff.rs` / `lib.rs`、
+および `mutants.toml` 自体と本ワークフロー) を変更した PR だけで起動し、新しく入った未カバー分岐
+(生存変異) を PR 時点で報告する。**必須チェックにしない** (可視化専用で fail させない)。
+
+- 起動条件はワークフロー単位の `on.pull_request.paths`。必須チェックではないので、`ci.yml` の
+  ような paths-filter + ジョブ単位 `if:` にしなくてよい (スキップで「待機中」固まりが起きない)。
+  `examine_globs` を足す・外すときは `paths:` も揃える。
+- 対象関数・タイムアウト倍率は `mutants.toml` が単一ソース (`mutants.yml` と共有)。
+- 差分は `git diff --relative=src-tauri origin/<base>...HEAD -- src-tauri > src-tauri/diff`。
+  cargo-mutants は `src-tauri` を木のルートとするため `src-tauri/` 接頭辞を落とす。
+- まず `cargo mutants --in-diff diff --list` で差分内の変異候補を数え (ビルド不要で軽い)、
+  0 件なら apt / ビルド系のステップを丸ごと飛ばす (`lib.rs` だけ触る PR など)。
+- 本体は `--in-place --no-shuffle --in-diff diff` (`--in-place` の理由は `mutants.yml` 参照)。
+  生存変異は `outcomes.json` から `$GITHUB_STEP_SUMMARY` に列挙し (`StructField` は nightly と同様に除外)、
+  `::warning` も出す。タイムアウトは 40 分、同一 PR の古い run は取り消す。
+- `rust-cache` のキーは `mutants.yml` と共有、actions は同じ SHA ピン。
