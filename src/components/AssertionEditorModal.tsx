@@ -198,6 +198,7 @@ export function AssertionEditorModal({
       initialFocusEl={() => nameRef.current}
       onSubmit={() => void submit()}
       submitDisabled={saving}
+      submitBusy={saving}
     >
       <ModalHeader onClose={onClose} closeLabel={t("assertCancel")}>
         {draft.id ? t("assertEditTitle") : t("assertAddTitle")}

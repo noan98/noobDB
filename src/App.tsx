@@ -492,7 +492,7 @@ import { RefImpactList } from "./components/RefImpactList";
 import { DropReferencedBy } from "./components/DropReferencedBy";
 import type { ValueLookup } from "./components/useValuePicker";
 import { addPinnedWithEvicted, MAX_PINNED, pinToastPlan, type PinnedResult } from "./pinnedCompare";
-import { springs, transitions, variants } from "./motion";
+import { directionalSlide, directionalSlideKeyframes, springs, transitions, variants } from "./motion";
 import { endTabOpenFlight, tabOpenFlightId } from "./sharedElement";
 import { LOCAL_PROFILE_CHIP_COLOR, workspaceSpineColor } from "./profileIdentity";
 import { semanticColorToken, semanticColorVar } from "./semanticColors";
@@ -509,6 +509,7 @@ import { hasOpenNestedLayer, isEditableElement, resolveWorkspaceEscape } from ".
 import { WorkspaceSurface } from "./components/WorkspaceSurface";
 import { BottomPanel, BottomPanelStrip, WorkspaceSplit } from "./components/BottomPanel";
 import { KeepAlive } from "./components/KeepAlive";
+import { sidebarSlideDirection, type SlideDirection } from "./components/sidebarTabNav";
 import { SidebarResizeHandle } from "./components/SidebarResizeHandle";
 import { parseSidebarWidth } from "./components/sidebarLayout";
 import type { StructureTarget } from "./components/tableStructure";
@@ -1806,7 +1807,19 @@ export default function App() {
   const [editing, setEditing] = useState<ConnectionProfile | null>(null);
   const [showForm, setShowForm] = useState(false);
 
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("connections");
+  // サイドバーのタブと、切替の中身スライドの向き (#1830)。向きは滑るインジケータと同じく
+  // 並び順から決め、タブと同じ state に持つ (描画中の setState で本体を二重に走らせない)。
+  const [sidebarNav, setSidebarNav] = useState<{ tab: SidebarTab; dir: SlideDirection }>({
+    tab: "connections",
+    dir: 0,
+  });
+  const sidebarTab = sidebarNav.tab;
+  const sidebarSlideDir = sidebarNav.dir;
+  const setSidebarTab = useCallback((next: SidebarTab) => {
+    setSidebarNav((prev) =>
+      prev.tab === next ? prev : { tab: next, dir: sidebarSlideDirection(SIDEBAR_TAB_ORDER, prev.tab, next) },
+    );
+  }, []);
   const sidebarTablistRef = useRef<HTMLDivElement>(null);
   const sidebarTabsCompact = useSidebarTabsCompact(
     sidebarTablistRef,
@@ -1844,7 +1857,7 @@ export default function App() {
         requestAnimationFrame(() => sidebarTabRefs.current[target]?.focus());
       }
     },
-    [],
+    [setSidebarTab],
   );
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   // お気に入り / 最近使ったテーブル。アクティブ接続プロファイル単位で
@@ -7046,13 +7059,16 @@ export default function App() {
 
   // ランチャーの「もっと見る」: 対応する既存の一覧 (スニペット / 履歴 / スキーマツリー)
   // をサイドバーに出す。
-  const handleLauncherShowMore = useCallback((section: QuickLauncherSectionId) => {
-    setSidebarTab(
-      section === "favoriteSnippets" ? "snippets" : section === "recentQueries" ? "history" : "connections",
-    );
-    if (window.innerWidth < NARROW_BREAKPOINT) setNarrowSidebarOpen(true);
-    else setSidebarUserCollapsed(false);
-  }, []);
+  const handleLauncherShowMore = useCallback(
+    (section: QuickLauncherSectionId) => {
+      setSidebarTab(
+        section === "favoriteSnippets" ? "snippets" : section === "recentQueries" ? "history" : "connections",
+      );
+      if (window.innerWidth < NARROW_BREAKPOINT) setNarrowSidebarOpen(true);
+      else setSidebarUserCollapsed(false);
+    },
+    [setSidebarTab],
+  );
 
   // エディタの補完候補に出すスニペット (#1489)。一覧と同じく現在の接続に合うスコープだけ。
   const completionSnippets = useMemo(
@@ -11395,18 +11411,21 @@ export default function App() {
     else setSidebarUserCollapsed(false);
     setSidebarTab("connections");
     requestAnimationFrame(() => requestAnimationFrame(() => connectionListRef.current?.focusFilter()));
-  }, []);
+  }, [setSidebarTab]);
   focusExplorerRef.current = focusExplorer;
 
   // エディタの識別子を Ctrl/Cmd+クリックしたとき、サイドバーのスキーマツリーで対象の
   // テーブル / 列を選ぶ (#1629)。折りたたみ中はサイドバーを開いて接続タブへ切り替える。
   // ツリー側が DB・テーブルを展開し、行が描画されたらフォーカスする。
-  const handleRevealSchemaObject = useCallback((target: SchemaJumpTarget) => {
-    if (window.innerWidth < NARROW_BREAKPOINT) setNarrowSidebarOpen(true);
-    else setSidebarUserCollapsed(false);
-    setSidebarTab("connections");
-    requestAnimationFrame(() => connectionListRef.current?.revealInTree(target));
-  }, []);
+  const handleRevealSchemaObject = useCallback(
+    (target: SchemaJumpTarget) => {
+      if (window.innerWidth < NARROW_BREAKPOINT) setNarrowSidebarOpen(true);
+      else setSidebarUserCollapsed(false);
+      setSidebarTab("connections");
+      requestAnimationFrame(() => connectionListRef.current?.revealInTree(target));
+    },
+    [setSidebarTab],
+  );
 
   // コマンドパレットの項目はパレットを開いている間だけ組み立てる (#1257)。
   // 依存の `activeTab` はストリーミングの行バッチごとに作り直されるため、常時
@@ -12541,9 +12560,16 @@ export default function App() {
               - ほかの 3 タブは `KeepAlive` で遅延マウント + 保持。タブは 4 つで有限なので
                 保持数の上限はその数 (= 全タブを保持できる)。
               非表示は hidden + inert (フォーカス・読み上げから外す)。 */}
-            <div
+            <motion.div
               hidden={sidebarTab !== "connections"}
               inert={sidebarTab !== "connections" || undefined}
+              initial={false}
+              animate={
+                sidebarTab === "connections"
+                  ? directionalSlideKeyframes(sidebarSlideDir)
+                  : directionalSlide.initial(sidebarSlideDir)
+              }
+              transition={transitions.enter}
               style={{
                 ...SIDEBAR_TABPANEL_FILL_STYLE,
                 display: sidebarTab === "connections" ? "flex" : "none",
@@ -12567,10 +12593,11 @@ export default function App() {
                 recent={quickAccess.recent}
                 sandboxes={sandboxes}
               />
-            </div>
+            </motion.div>
             <KeepAlive
               activeKey={sidebarTab === "connections" ? null : sidebarTab}
               limit={SIDEBAR_TABS_KEEP_ALIVE_LIMIT}
+              slideDirection={sidebarSlideDir}
             >
               {sidebarTab === "snippets" ? (
                 <SnippetList

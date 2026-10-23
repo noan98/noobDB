@@ -174,6 +174,7 @@ export function RoutineEditorModal({
       <Modal
         onSubmit={() => void apply()}
         submitDisabled={!canApply}
+        submitBusy={busy || loading}
         width="760px"
         onClose={onClose}
         initialFocusEl={() => areaRef.current}

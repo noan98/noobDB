@@ -191,3 +191,135 @@ export function SkeletonSearchRows({ rows = 5 }: { rows?: number }) {
     </>
   );
 }
+
+/** ER 図ローディング骨格のノード定義 (位置は親に対する %、`cols` は列バーの幅 %)。 */
+const ER_GRAPH_SKELETON_NODES: readonly { left: number; top: number; cols: readonly number[] }[] = [
+  { left: 8, top: 10, cols: [70, 55, 62] },
+  { left: 42, top: 6, cols: [60, 75, 48, 66] },
+  { left: 74, top: 14, cols: [66, 52] },
+  { left: 20, top: 52, cols: [58, 72, 50] },
+  { left: 58, top: 50, cols: [64, 46, 70] },
+];
+
+/** 接続するノードの組 (`ER_GRAPH_SKELETON_NODES` の添字)。 */
+const ER_GRAPH_SKELETON_EDGES: readonly (readonly [number, number])[] = [
+  [0, 1],
+  [1, 2],
+  [0, 3],
+  [1, 4],
+  [3, 4],
+];
+
+/** カード幅 (親に対する %)。線の端点計算とカードの幅指定で共有する。 */
+const ER_GRAPH_SKELETON_NODE_WIDTH = 18;
+
+/** ノード中心の概算座標 (%)。カードは不透明で線の手前に描くので、端点が少しずれても
+ *  カードの下に隠れ、線は必ずノード同士をつなぐ。 */
+function erNodeCenter(n: { left: number; top: number; cols: readonly number[] }) {
+  return { x: n.left + ER_GRAPH_SKELETON_NODE_WIDTH / 2, y: n.top + (4 + n.cols.length * 3) / 2 };
+}
+
+/** ER 図ローディング用のノードグラフ風スケルトン (#1834)。テーブルカード (ヘッダ +
+ *  列バー) を 2 行に並べ、カード間をノード座標から引いた線で結んで「ここにテーブルと
+ *  リレーションが描かれる」予兆を示す。親は `position: relative` の領域で、
+ *  絶対配置で全面を覆う。`aria-hidden` の純粋な視覚プレースホルダで、待機の通知は
+ *  呼び出し側の `role="status"` 文言が担う。
+ *
+ * @public
+ */
+export function ErGraphSkeleton() {
+  return (
+    <div
+      aria-hidden
+      data-testid="er-graph-skeleton"
+      style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}
+    >
+      <svg
+        width="100%"
+        height="100%"
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+        style={{ position: "absolute", inset: 0 }}
+      >
+        {ER_GRAPH_SKELETON_EDGES.map(([a, b], i) => {
+          const p = erNodeCenter(ER_GRAPH_SKELETON_NODES[a]);
+          const q = erNodeCenter(ER_GRAPH_SKELETON_NODES[b]);
+          return (
+            <line
+              key={i}
+              x1={p.x}
+              y1={p.y}
+              x2={q.x}
+              y2={q.y}
+              stroke="var(--border-subtle)"
+              strokeWidth={2}
+              vectorEffect="non-scaling-stroke"
+            />
+          );
+        })}
+      </svg>
+      {ER_GRAPH_SKELETON_NODES.map((n, i) => (
+        <div
+          key={`n${i}`}
+          style={{
+            position: "absolute",
+            left: `${n.left}%`,
+            top: `${n.top}%`,
+            width: `${ER_GRAPH_SKELETON_NODE_WIDTH}%`,
+            minWidth: "calc(var(--space-12) * 3)",
+            display: "flex",
+            flexDirection: "column",
+            gap: "var(--space-1-5)",
+            padding: "var(--space-2)",
+            background: "var(--bg-elevated)",
+            border: "1px solid var(--border-subtle)",
+            borderRadius: "var(--radius-md)",
+          }}
+        >
+          <Skeleton style={{ height: "var(--space-3-5)", width: "70%", animationDelay: `${i * 0.05}s` }} />
+          {n.cols.map((w, ci) => (
+            <Skeleton
+              key={ci}
+              style={{ height: "var(--space-2-5)", width: `${w}%`, animationDelay: `${(i + ci) * 0.04}s` }}
+            />
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** チャート集計待ち骨格の棒の高さ (%)。列位置で周期させず固定列を並べる。 */
+const CHART_SKELETON_BARS: readonly number[] = [42, 68, 55, 82, 38, 74, 60, 90, 48, 66];
+
+/** チャートの集計待ち用スケルトン (#1834)。左に Y 軸、下に X 軸、棒が立ち上がる形の
+ *  バーを並べて「ここにチャートが描かれる」予兆を示す。`aria-hidden` の視覚
+ *  プレースホルダとする。
+ *
+ * @public
+ */
+export function ChartSkeleton() {
+  return (
+    <div
+      aria-hidden
+      data-testid="chart-skeleton"
+      style={{
+        height: "100%",
+        minHeight: "calc(var(--space-12) * 3)",
+        display: "flex",
+        gap: "var(--space-2)",
+        padding: "var(--space-2)",
+      }}
+    >
+      <Skeleton style={{ width: "var(--space-0-5)", flexShrink: 0 }} />
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "var(--space-2)", minWidth: 0 }}>
+        <div style={{ flex: 1, display: "flex", alignItems: "flex-end", gap: "var(--space-2)" }}>
+          {CHART_SKELETON_BARS.map((h, i) => (
+            <Skeleton key={i} style={{ flex: 1, height: `${h}%`, animationDelay: `${i * 0.05}s` }} />
+          ))}
+        </div>
+        <Skeleton style={{ height: "var(--space-0-5)" }} />
+      </div>
+    </div>
+  );
+}

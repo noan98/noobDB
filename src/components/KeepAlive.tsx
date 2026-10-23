@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { motion } from "motion/react";
-import { transitions, variants } from "../motion";
+import { directionalSlide, directionalSlideKeyframes, transitions, variants } from "../motion";
 import { touchKeepAlive } from "./keepAliveSet";
 
 /**
@@ -44,7 +44,10 @@ import { touchKeepAlive } from "./keepAliveSet";
  * ## モーション
  *
  * 退場アニメーションは持たない (`mode="wait"` の待ち時間をなくすため)。再表示のとき
- * だけ `variants.fade` で入場する。reduced-motion はルートの `MotionConfig` が抑制する。
+ * だけ `variants.fade` で入場する。`slideDirection` を渡すと (サイドバーのタブ切替、#1830)
+ * 入場が `directionalSlide` の方向付きスライド + フェードになる。どちらも再マウントせず、
+ * 表示に切り替わるアイテムだけに掛かる。reduced-motion はルートの `MotionConfig` が
+ * 抑制するが、止まるのは x 移動だけで、opacity の短いフェードは残る。
  */
 
 const ActiveContext = createContext(true);
@@ -98,6 +101,11 @@ export interface KeepAliveProps {
   rootStyle?: CSSProperties;
   /** 各アイテムの追加スタイル。 */
   itemStyle?: CSSProperties;
+  /**
+   * 指定すると、入場を `variants.fade` ではなくこの向きの方向付きスライドにする (#1830)。
+   * 正で右から、負で左から入る。再マウントはせず、表示に切り替わるアイテムだけに掛かる。
+   */
+  slideDirection?: -1 | 0 | 1;
 }
 
 export function KeepAlive({
@@ -108,6 +116,7 @@ export function KeepAlive({
   liveKeys,
   rootStyle,
   itemStyle,
+  slideDirection,
 }: KeepAliveProps) {
   const [state, setState] = useState<{
     reset: string | null;
@@ -158,6 +167,7 @@ export function KeepAlive({
           active={k === activeKey}
           animateIn={mounted.current}
           style={itemStyle}
+          slideDirection={slideDirection}
         >
           {cache.current.get(k)}
         </KeepAliveItem>
@@ -170,23 +180,28 @@ function KeepAliveItem({
   active,
   animateIn,
   style,
+  slideDirection,
   children,
 }: {
+  slideDirection?: -1 | 0 | 1;
   active: boolean;
   /** 器のマウント後に増えたアイテムだけ入場のフェードを付ける (初回表示は即時)。 */
   animateIn: boolean;
   style?: CSSProperties;
   children: ReactNode;
 }) {
+  const slide = slideDirection !== undefined;
+  const hiddenLook = slide ? directionalSlide.initial(slideDirection) : variants.fade.initial;
+  const activeLook = slide ? directionalSlideKeyframes(slideDirection) : variants.fade.animate;
   return (
     <ActiveContext.Provider value={active}>
       <motion.div
         hidden={!active}
         inert={!active || undefined}
         data-keep-alive-active={active}
-        initial={animateIn ? variants.fade.initial : false}
-        animate={active ? variants.fade.animate : variants.fade.initial}
-        transition={transitions.crossfade}
+        initial={animateIn ? hiddenLook : false}
+        animate={active ? activeLook : hiddenLook}
+        transition={slide ? transitions.enter : transitions.crossfade}
         style={{ ...ITEM_BASE, ...style, display: active ? "flex" : "none" }}
       >
         {children}

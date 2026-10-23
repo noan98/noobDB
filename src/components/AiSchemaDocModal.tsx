@@ -537,6 +537,7 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
           void run();
         }}
         submitDisabled={!canGenerate}
+        submitBusy={busy}
       >
         <ModalHeader onClose={props.onClose} closeLabel={t("aiSchemaDocClose")}>
           {t("aiSchemaDocTitle", { database })}

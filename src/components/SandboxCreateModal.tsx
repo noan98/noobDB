@@ -122,6 +122,7 @@ export function SandboxCreateModal({ sessionId, database, defaultName, onClose, 
     <Modal
       onSubmit={submit}
       submitDisabled={creating || selected.size === 0}
+      submitBusy={creating}
       width="560px"
       onClose={onClose}
       closeOnInteractOutside={!creating}

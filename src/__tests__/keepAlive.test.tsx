@@ -39,6 +39,32 @@ function Host({
   );
 }
 
+describe("KeepAlive slideDirection (#1830)", () => {
+  function SlideHost({ tab, onMount }: { tab: string; onMount: (n: string) => void }) {
+    return (
+      <KeepAlive activeKey={tab} limit={4} slideDirection={1}>
+        <Probe name={tab} onMount={onMount} />
+      </KeepAlive>
+    );
+  }
+
+  it("A→B→A でも再マウントせず、非アクティブ側は hidden + inert", () => {
+    const onMount = vi.fn();
+    const view = renderWithProviders(<SlideHost tab="a" onMount={onMount} />);
+    view.rerender(<SlideHost tab="b" onMount={onMount} />);
+    const wrapA = screen.getByTestId("probe-a").parentElement as HTMLElement;
+    expect(wrapA).toHaveAttribute("hidden");
+    expect(wrapA).toHaveAttribute("inert");
+    view.rerender(<SlideHost tab="a" onMount={onMount} />);
+    expect(onMount.mock.calls.map((c) => c[0])).toEqual(["a", "b"]);
+    expect(wrapA).not.toHaveAttribute("hidden");
+    expect(wrapA).not.toHaveAttribute("inert");
+    const wrapB = screen.getByTestId("probe-b").parentElement as HTMLElement;
+    expect(wrapB).toHaveAttribute("hidden");
+    expect(wrapB).toHaveAttribute("inert");
+  });
+});
+
 describe("KeepAlive (#1311)", () => {
   it("タブを往復しても中身を再マウントしない (state が残る)", () => {
     const onMount = vi.fn();

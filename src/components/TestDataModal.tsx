@@ -415,6 +415,7 @@ export function TestDataModal({
     <Modal
       onSubmit={handleRun}
       submitDisabled={insertDisabled}
+      submitBusy={running || aiRunning}
       width="760px"
       onClose={onClose}
       closeOnInteractOutside={!running}

@@ -305,6 +305,7 @@ export function TablesExportModal({ sessionId, driver, database, tables, profile
     <Modal
       onSubmit={handleExport}
       submitDisabled={isRunning || !dir.trim()}
+      submitBusy={isRunning}
       width="560px"
       onClose={onClose}
       closeOnInteractOutside={!isRunning}

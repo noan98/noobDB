@@ -22,39 +22,53 @@ function sparkStroke(level: SparklineGeometry["segments"][number]["level"]): str
  * 直近のレイテンシ推移 (#1630)。閾値 (遅い) を超えた区間は意味色で塗り、計測できなかった回は
  * 下端の印で示す。2 サンプル未満は線が引けないので何も出さない (空セル)。
  */
-export function LatencySparkline({ samples }: { samples: readonly LatencySample[] | undefined }) {
+export function LatencySparkline({
+  samples,
+  neutral = false,
+  format,
+}: {
+  samples: readonly LatencySample[] | undefined;
+  /** true: ms 以外の汎用推移 (件数・レートなど, #1833)。閾値線と段階色を出さず、最小〜最大に張る。 */
+  neutral?: boolean;
+  /** neutral の読み上げ文言で最小・最大に通す整形関数 (生の浮動小数を読ませない)。 */
+  format?: (n: number) => string;
+}) {
   const t = useT();
-  if (!samples || samples.filter((s) => s !== null).length < 2) {
+  // neutral では NaN / Infinity も欠測として数える (sparklineGeometry と同じ扱い)。
+  const usable = (s: LatencySample): s is number => s !== null && (!neutral || Number.isFinite(s));
+  if (!samples || samples.filter(usable).length < 2) {
     return <chakra.span color="app.textMuted">–</chakra.span>;
   }
-  const g = sparklineGeometry(samples, SPARK_W, SPARK_H, LATENCY_HISTORY_MAX);
-  const values = samples.filter((s): s is number => s !== null);
-  const label = t("healthTrendAria", {
+  const g = sparklineGeometry(samples, SPARK_W, SPARK_H, LATENCY_HISTORY_MAX, neutral);
+  const values = samples.filter(usable);
+  const label = t(neutral ? "sparklineTrendAria" : "healthTrendAria", {
     count: samples.length,
-    min: Math.min(...values),
-    max: Math.max(...values),
+    min: neutral && format ? format(Math.min(...values)) : Math.min(...values),
+    max: neutral && format ? format(Math.max(...values)) : Math.max(...values),
   });
   return (
     <chakra.svg
       role="img"
       aria-label={label}
-      data-testid="health-sparkline"
+      data-testid={neutral ? "neutral-sparkline" : "health-sparkline"}
       viewBox={`0 0 ${SPARK_W} ${SPARK_H}`}
       w="20"
       h="5"
       overflow="visible"
     >
       <title>{label}</title>
-      <line
-        x1={0}
-        x2={SPARK_W}
-        y1={g.thresholdY}
-        y2={g.thresholdY}
-        stroke="var(--border)"
-        strokeDasharray="2 2"
-        strokeWidth={1}
-        vectorEffect="non-scaling-stroke"
-      />
+      {!neutral && (
+        <line
+          x1={0}
+          x2={SPARK_W}
+          y1={g.thresholdY}
+          y2={g.thresholdY}
+          stroke="var(--border)"
+          strokeDasharray="2 2"
+          strokeWidth={1}
+          vectorEffect="non-scaling-stroke"
+        />
+      )}
       {g.segments.map((s) => (
         <line
           key={`${s.x1}:${s.x2}`}
@@ -72,9 +86,10 @@ export function LatencySparkline({ samples }: { samples: readonly LatencySample[
       {g.points.map((p) => (
         <circle key={`p${p.x}`} cx={p.x} cy={p.y} r={1.5} fill={sparkStroke(p.level)} />
       ))}
-      {g.gaps.map((p) => (
-        <circle key={`g${p.x}`} cx={p.x} cy={p.y} r={1.5} fill={semanticColorVar("danger", "solid")} />
-      ))}
+      {!neutral &&
+        g.gaps.map((p) => (
+          <circle key={`g${p.x}`} cx={p.x} cy={p.y} r={1.5} fill={semanticColorVar("danger", "solid")} />
+        ))}
     </chakra.svg>
   );
 }
