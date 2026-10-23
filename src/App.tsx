@@ -509,6 +509,12 @@ import { hasOpenNestedLayer, isEditableElement, resolveWorkspaceEscape } from ".
 import { WorkspaceSurface } from "./components/WorkspaceSurface";
 import { BottomPanel, BottomPanelStrip, WorkspaceSplit } from "./components/BottomPanel";
 import { KeepAlive } from "./components/KeepAlive";
+import {
+  sidebarSlideAnimate,
+  sidebarSlideDirection,
+  sidebarSlideHidden,
+  type SlideDirection,
+} from "./components/sidebarTabNav";
 import { SidebarResizeHandle } from "./components/SidebarResizeHandle";
 import { parseSidebarWidth } from "./components/sidebarLayout";
 import type { StructureTarget } from "./components/tableStructure";
@@ -1807,6 +1813,19 @@ export default function App() {
   const [showForm, setShowForm] = useState(false);
 
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("connections");
+  // タブ切替の中身スライドの向き (#1830)。滑るインジケータと同じ向きに、並び順から決める。
+  // 描画中に前回のタブと比べて更新する (切替の同じレンダーで新しい向きが効く)。
+  const [sidebarSlide, setSidebarSlide] = useState<{ tab: SidebarTab; dir: SlideDirection }>({
+    tab: "connections",
+    dir: 0,
+  });
+  if (sidebarSlide.tab !== sidebarTab) {
+    setSidebarSlide({
+      tab: sidebarTab,
+      dir: sidebarSlideDirection(SIDEBAR_TAB_ORDER, sidebarSlide.tab, sidebarTab),
+    });
+  }
+  const sidebarSlideDir = sidebarSlide.dir;
   const sidebarTablistRef = useRef<HTMLDivElement>(null);
   const sidebarTabsCompact = useSidebarTabsCompact(
     sidebarTablistRef,
@@ -12541,9 +12560,16 @@ export default function App() {
               - ほかの 3 タブは `KeepAlive` で遅延マウント + 保持。タブは 4 つで有限なので
                 保持数の上限はその数 (= 全タブを保持できる)。
               非表示は hidden + inert (フォーカス・読み上げから外す)。 */}
-            <div
+            <motion.div
               hidden={sidebarTab !== "connections"}
               inert={sidebarTab !== "connections" || undefined}
+              initial={false}
+              animate={
+                sidebarTab === "connections"
+                  ? sidebarSlideAnimate(sidebarSlideDir)
+                  : sidebarSlideHidden(sidebarSlideDir)
+              }
+              transition={transitions.enter}
               style={{
                 ...SIDEBAR_TABPANEL_FILL_STYLE,
                 display: sidebarTab === "connections" ? "flex" : "none",
@@ -12567,10 +12593,11 @@ export default function App() {
                 recent={quickAccess.recent}
                 sandboxes={sandboxes}
               />
-            </div>
+            </motion.div>
             <KeepAlive
               activeKey={sidebarTab === "connections" ? null : sidebarTab}
               limit={SIDEBAR_TABS_KEEP_ALIVE_LIMIT}
+              slideDirection={sidebarSlideDir}
             >
               {sidebarTab === "snippets" ? (
                 <SnippetList
