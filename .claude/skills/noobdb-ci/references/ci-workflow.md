@@ -306,9 +306,19 @@ tauri-driver は `taiki-e/install-action` の対応ツールではないため�
 - 起動条件はワークフロー単位の `on.pull_request.paths`。必須チェックではないので、`ci.yml` の
   ような paths-filter + ジョブ単位 `if:` にしなくてよい (スキップで「待機中」固まりが起きない)。
   `examine_globs` を足す・外すときは `paths:` も揃える。
-- 対象関数・タイムアウト倍率は `mutants.toml` が単一ソース (`mutants.yml` と共有)。
+- 対象関数・タイムアウト倍率は `mutants.toml` が単一ソース (`mutants.yml` と共有)。そのうえで
+  nightly のスコープは変えず、本ジョブだけ CLI で `script_analysis.rs` (危険文の検出) と
+  `masking.rs` (マスク処理) を足す (`paths:` にも両ファイルを追加)。ワークフローの
+  `EXTRA_FILES` を `-f`、`EXTRA_RE` を `-F` で渡す。cargo-mutants 27.1 では CLI の `--file` /
+  `--re` は config の `examine_globs` / `examine_re` と**併用 (和集合)** で、置き換えではない
+  (`options.rs`。NEWS の「置き換え」は旧仕様)。ファイルだけ足しても config の `examine_re` が
+  関数名で全件落として 0 件になるため、足したファイルの関数名は `EXTRA_RE` にも要る
+  (名前マッチはファイルを問わないので同名関数に効く)。ローカル確認は
+  `cargo mutants --in-diff diff -f <file> -F <re> --list`。関数を足す・外すときは `EXTRA_RE` を直す。
 - 差分は `git diff --relative=src-tauri origin/<base>...HEAD -- src-tauri > src-tauri/diff`。
-  cargo-mutants は `src-tauri` を木のルートとするため `src-tauri/` 接頭辞を落とす。
+  cargo-mutants は `src-tauri` を木のルートとするため `src-tauri/` 接頭辞を落とす
+  (cargo-mutants 27.1 で `db/mod.rs` / `masking.rs` / `script_analysis.rs` の一時的な差分を使い、
+  変異候補が出ることをローカルで確認済み)。
 - まず `cargo mutants --in-diff diff --list` で差分内の変異候補を数え (ビルド不要で軽い)、
   0 件なら apt / ビルド系のステップを丸ごと飛ばす (`lib.rs` だけ触る PR など)。
 - 本体は `--in-place --no-shuffle --in-diff diff` (`--in-place` の理由は `mutants.yml` 参照)。

@@ -10,8 +10,10 @@ name: mutants-diff
 # - 対象関数・タイムアウト倍率の単一ソースは mutants.yml と同じ
 #   src-tauri/.cargo/mutants.toml (examine_globs + examine_re)。本ワークフローは
 #   それを読むだけで、関数名を重複して書かない。
-# - 起動条件は mutants.toml の examine_globs と同じファイル (+ mutants.toml 自体と
-#   本ワークフロー)。examine_globs を足す・外すときは下の `paths:` も揃える。
+# - 起動条件は mutants.toml の examine_globs と同じファイル + 危険文検出 (script_analysis.rs) と
+#   マスク処理 (masking.rs) (+ mutants.toml 自体と本ワークフロー)。examine_globs や
+#   EXTRA_FILES を足す・外すときは下の `paths:` も揃える。後者 2 ファイルは nightly の
+#   スコープ (mutants.toml) には入れず、本ジョブの CLI 引数 (EXTRA_FILES / EXTRA_RE) で足す。
 #   ワークフロー単位の `paths:` を使うのは、このワークフローを**必須チェックにしない**
 #   前提だから (必須だとスキップ時に「待機中」で固まる。ci.yml が paths-filter +
 #   ジョブ単位 if: を使うのはそのため)。無関係な PR のクリティカルパスは増えない。
@@ -27,6 +29,9 @@ on:
       - "src-tauri/src/db/sync.rs"
       - "src-tauri/src/db/data_diff.rs"
       - "src-tauri/src/lib.rs"
+      # 危険文の検出とマスク処理 (下の EXTRA_FILES / EXTRA_RE で対象に足す)。
+      - "src-tauri/src/db/script_analysis.rs"
+      - "src-tauri/src/db/masking.rs"
       - "src-tauri/.cargo/mutants.toml"
       - ".github/workflows/mutants-diff.yml"
 
@@ -40,6 +45,15 @@ concurrency:
 
 env:
   CARGO_INCREMENTAL: "0"
+  # mutants.toml (nightly と共有) の対象に、PR 差分ジョブだけ足すファイルと関数。
+  # cargo-mutants 27.1 では CLI の --file / --re は config の examine_globs / examine_re と
+  # 「併用 (和集合)」になる (options.rs: args.file.chain(config.examine_globs))。NEWS の
+  # 「CLI が config を置き換える」は旧仕様。ファイルを足すだけでは config の examine_re が
+  # 関数名で全件落とすため、--re も足す。名前は `--list` の変異名 (replace <fn> -> ... /
+  # ... in <fn>) に対するマッチなので、ファイルを問わず同名の関数に効く点に注意。
+  # 関数を足す・外すときは `cargo mutants --list -f <file> -F <re>` で確認する。
+  EXTRA_FILES: "src/db/script_analysis.rs src/db/masking.rs"
+  EXTRA_RE: '(replace | in )([A-Za-z_0-9]+::)*(classify_dangerous|alter_drop_kind|keyword_prefix|has_top_level_where|ScriptAnalyzer::classify|ScriptAnalyzer::push|mask_value|mask_rows|mask_columns|MaskPlan::apply_row|MaskPlan::apply_rows|email_mask|partial_mask|date_mask)( -> |$)'
 
 jobs:
   mutants-diff:
@@ -81,7 +95,7 @@ jobs:
         working-directory: src-tauri
         shell: bash
         run: |
-          cargo mutants --in-diff diff --list > mutants-list.txt 2>mutants-list.err || true
+          cargo mutants --in-diff diff $(for f in $EXTRA_FILES; do echo -f $f; done) -F "$EXTRA_RE" --list > mutants-list.txt 2>mutants-list.err || true
           count=$(grep -c . mutants-list.txt || true)
           echo "count=${count:-0}" >> "$GITHUB_OUTPUT"
           {
@@ -133,6 +147,8 @@ jobs:
             --in-place \
             --no-shuffle \
             --in-diff diff \
+            $(for f in $EXTRA_FILES; do echo -f $f; done) \
+            -F "$EXTRA_RE" \
             2>&1 | tee mutants-output.txt
           code=${PIPESTATUS[0]}
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
@@ -172,10 +188,9 @@ jobs:
               s = o.get("summary")
               counts.update([s])
               if s == "MissedMutant":
-                  fn = (m.get("function") or {}).get("function_name", "")
-                  line = (m.get("span") or {}).get("start", {}).get("line", "?")
-                  name = m.get("name") or f"{m.get('replacement', '')} in {fn}"
-                  missed.append(f"{m.get('file', '?')}:{line}: {name}")
+                  # Mutant のキー (cargo-mutants 27.1 の mutant.rs): name / file / span.start.line。
+                  line = m.get("span", {}).get("start", {}).get("line", "?")
+                  missed.append(f"{m['file']}:{line}: {m['name']}")
           n = len(missed)
           if n:
               print(f"> :warning: **生存変異 (MISSED): {n} 件** — この PR の差分に、テストが捕捉できていない変異があります。`db::tests` / 共有ゴールデンに境界ケースを追記してください。")
