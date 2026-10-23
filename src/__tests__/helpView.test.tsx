@@ -79,3 +79,27 @@ describe("HelpView 節ナビ・検索・導線 (#1273 / #1274)", () => {
     expect(onOpenFeature).toHaveBeenLastCalledWith({ kind: "view", view: "compare" });
   });
 });
+
+describe("HelpView 視覚アンカー (#1835)", () => {
+  it("各節の見出しと全フィーチャーカードに装飾グリフが付き、支援技術から隠れる", () => {
+    renderWithProviders(<HelpView onClose={() => {}} />);
+    const cards = screen.getAllByRole("article");
+    const featureGlyphs = screen.getAllByTestId("help-feature-glyph");
+    expect(featureGlyphs).toHaveLength(cards.length);
+    for (const c of cards) expect(within(c).getAllByTestId("help-feature-glyph")).toHaveLength(1);
+    const sectionGlyphs = screen.getAllByTestId("help-section-glyph");
+    expect(sectionGlyphs.length).toBeGreaterThan(0);
+    for (const g of [...featureGlyphs, ...sectionGlyphs]) {
+      expect(g).toHaveAttribute("aria-hidden", "true");
+      expect(g.querySelector("svg")).not.toBeNull();
+    }
+  });
+});
+
+describe("HelpView ショートカット節のグリフ (#1835)", () => {
+  it("category ごとに異なるグリフになる (全カード同一ではない)", () => {
+    renderWithProviders(<HelpView onClose={() => {}} />);
+    const glyphs = screen.getAllByTestId("help-feature-glyph").map((g) => g.innerHTML);
+    expect(new Set(glyphs).size).toBeGreaterThan(5);
+  });
+});

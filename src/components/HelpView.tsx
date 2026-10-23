@@ -2,10 +2,10 @@ import { useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { semanticColorVar } from "../semanticColors";
-import { resolveShortcutBindings, SHORTCUTS, type ShortcutId } from "../shortcuts";
+import { resolveShortcutBindings, SHORTCUTS, type ShortcutCategory, type ShortcutId } from "../shortcuts";
 import { formatCombo } from "../shortcutKeys";
 import { useSettings } from "../settings";
-import { Icon } from "./Icon";
+import { ICON_SIZES, Icon, type IconName } from "./Icon";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
 import {
   SettingsHelp,
@@ -43,6 +43,27 @@ const HelpFeature = chakra("article", {
     px: "3",
     py: "2.5",
   },
+});
+
+/** 見出し左の視覚アンカー (#1835)。accent の淡い面にグリフを載せる装飾で、支援技術からは隠す。 */
+const HelpGlyph = chakra("span", {
+  base: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+    width: ICON_SIZES.xl,
+    height: ICON_SIZES.xl,
+    borderRadius: "md",
+    color: "app.accent",
+    background: "color-mix(in srgb, var(--accent) 14%, transparent)",
+    border: "1px solid",
+    borderColor: "var(--accent-highlight)",
+  },
+});
+
+const HelpFeatureTitle = chakra("div", {
+  base: { display: "flex", alignItems: "center", gap: "2", minWidth: 0 },
 });
 
 const HelpFeatureHead = chakra("div", {
@@ -106,17 +127,30 @@ interface Feature {
   shortcutId?: ShortcutId;
   /** 『試す』ボタンで開く画面 (#1631)。 */
   tryTarget?: HelpTryTarget;
+  /** カード固有のグリフ。未指定なら節の `icon` (#1835)。 */
+  icon?: IconName;
 }
 
 interface Section {
   headerKey: Key;
   descKey: Key;
+  /** 節の既定グリフ。各カードは `Feature.icon` で上書きできる (#1835)。 */
+  icon: IconName;
   features: Feature[];
 }
+
+/** ショートカット節のカードは category ごとにグリフを変える (#1835)。 */
+const SHORTCUT_CATEGORY_ICON: Record<ShortcutCategory, IconName> = {
+  global: "settings",
+  editor: "query",
+  grid: "table",
+  tabs: "columns",
+};
 
 const SECTIONS: Section[] = [
   {
     headerKey: "helpSectionSafe",
+    icon: "eye",
     descKey: "helpSectionSafeDesc",
     features: [
       {
@@ -129,18 +163,21 @@ const SECTIONS: Section[] = [
       },
       {
         titleKey: "helpExplainTitle",
+        icon: "explain",
         descKey: "helpExplainDesc",
         impact: "no",
         tryTarget: { kind: "newQuery" },
       },
       {
         titleKey: "helpFormatTitle",
+        icon: "format",
         descKey: "helpFormatDesc",
         impact: "no",
         tryTarget: { kind: "newQuery" },
       },
       {
         titleKey: "helpSqlLintTitle",
+        icon: "warning",
         tryTarget: { kind: "settings", section: "settings-sec-sql-lint" },
         descKey: "helpSqlLintDesc",
         impact: "no",
@@ -148,31 +185,35 @@ const SECTIONS: Section[] = [
       },
       {
         titleKey: "helpQueryBuilderTitle",
+        icon: "columns",
         descKey: "helpQueryBuilderDesc",
         impact: "no",
         tryTarget: { kind: "newQuery" },
       },
-      { titleKey: "helpSnippetTitle", descKey: "helpSnippetDesc", impact: "no" },
-      { titleKey: "helpExportTitle", descKey: "helpExportDesc", impact: "no" },
+      { titleKey: "helpSnippetTitle", icon: "snippet", descKey: "helpSnippetDesc", impact: "no" },
+      { titleKey: "helpExportTitle", icon: "download", descKey: "helpExportDesc", impact: "no" },
       {
         titleKey: "helpProfileBackupTitle",
+        icon: "transfer",
         tryTarget: { kind: "settings", section: "settings-sec-backup" },
         descKey: "helpProfileBackupDesc",
         impact: "no",
         stepKeys: ["helpProfileBackupStep1", "helpProfileBackupStep2", "helpProfileBackupStep3"],
         noteKey: "helpProfileBackupNote",
       },
-      { titleKey: "helpCellEditTitle", descKey: "helpCellEditDesc", impact: "no" },
-      { titleKey: "helpDiscardTitle", descKey: "helpDiscardDesc", impact: "no" },
+      { titleKey: "helpCellEditTitle", icon: "table", descKey: "helpCellEditDesc", impact: "no" },
+      { titleKey: "helpDiscardTitle", icon: "undo", descKey: "helpDiscardDesc", impact: "no" },
       {
         titleKey: "helpHistoryTitle",
+        icon: "clock",
         descKey: "helpHistoryDesc",
         impact: "no",
         tryTarget: { kind: "settings", section: "settings-sec-history" },
       },
-      { titleKey: "helpPaginationTitle", descKey: "helpPaginationDesc", impact: "no" },
+      { titleKey: "helpPaginationTitle", icon: "list", descKey: "helpPaginationDesc", impact: "no" },
       {
         titleKey: "helpSchemaCompareTitle",
+        icon: "diff",
         tryTarget: { kind: "view", view: "compare" },
         descKey: "helpSchemaCompareDesc",
         impact: "no",
@@ -180,12 +221,14 @@ const SECTIONS: Section[] = [
       },
       {
         titleKey: "helpSandboxTitle",
+        icon: "flask",
         descKey: "helpSandboxDesc",
         impact: "no",
         noteKey: "helpSandboxNote",
       },
       {
         titleKey: "helpTaskSchedulerTitle",
+        icon: "calendar",
         tryTarget: { kind: "view", view: "tasks" },
         descKey: "helpTaskSchedulerDesc",
         impact: "no",
@@ -193,6 +236,7 @@ const SECTIONS: Section[] = [
       },
       {
         titleKey: "helpFlightRecorderTitle",
+        icon: "broadcast",
         tryTarget: { kind: "settings", section: "settings-sec-flight-recorder" },
         descKey: "helpFlightRecorderDesc",
         impact: "no",
@@ -203,36 +247,47 @@ const SECTIONS: Section[] = [
   },
   {
     headerKey: "helpSectionWrite",
+    icon: "pencil",
     descKey: "helpSectionWriteDesc",
     features: [
-      { titleKey: "helpRunTitle", descKey: "helpRunDesc", impact: "yes", tryTarget: { kind: "newQuery" } },
+      {
+        titleKey: "helpRunTitle",
+        icon: "play",
+        descKey: "helpRunDesc",
+        impact: "yes",
+        tryTarget: { kind: "newQuery" },
+      },
       {
         titleKey: "helpApplyTitle",
+        icon: "check",
         descKey: "helpApplyDesc",
         impact: "yes",
         noteKey: "helpApplyNote",
       },
-      { titleKey: "helpImportTitle", descKey: "helpImportDesc", impact: "yes" },
+      { titleKey: "helpImportTitle", icon: "upload", descKey: "helpImportDesc", impact: "yes" },
     ],
   },
   {
     headerKey: "helpSectionGuards",
+    icon: "lock",
     descKey: "helpSectionGuardsDesc",
     features: [
       { titleKey: "helpReadOnlyTitle", descKey: "helpReadOnlyDesc" },
-      { titleKey: "helpProductionTitle", descKey: "helpProductionDesc" },
+      { titleKey: "helpProductionTitle", icon: "production", descKey: "helpProductionDesc" },
       { titleKey: "helpConfirmWritesTitle", descKey: "helpConfirmWritesDesc" },
       { titleKey: "helpTypeToConfirmTitle", descKey: "helpTypeToConfirmDesc" },
-      { titleKey: "helpEmergencyModeTitle", descKey: "helpEmergencyModeDesc" },
+      { titleKey: "helpEmergencyModeTitle", icon: "alert-circle", descKey: "helpEmergencyModeDesc" },
     ],
   },
   {
     headerKey: "helpSectionConnection",
+    icon: "server",
     descKey: "helpSectionConnectionDesc",
     features: [
       {
         // AWS IAM 認証 (#734)。トークン失効 (15 分) 後の再接続挙動をここに明記する。
         titleKey: "helpAwsIamTitle",
+        icon: "key",
         tryTarget: { kind: "view", view: "newConnection" },
         descKey: "helpAwsIamDesc",
         stepKeys: ["helpAwsIamStep1", "helpAwsIamStep2", "helpAwsIamStep3"],
@@ -243,6 +298,7 @@ const SECTIONS: Section[] = [
   {
     // AI 基盤 (#690)。何を送る / 送らないか、モデルの保持要件、価格の目安を明記する。
     headerKey: "helpSectionAi",
+    icon: "sparkles",
     descKey: "helpSectionAiDesc",
     features: [
       {
@@ -259,6 +315,7 @@ const SECTIONS: Section[] = [
       },
       {
         titleKey: "helpAiPricingTitle",
+        icon: "chart",
         descKey: "helpAiPricingDesc",
         stepKeys: ["helpAiPriceOpus", "helpAiPriceSonnet", "helpAiPriceHaiku", "helpAiPriceFable"],
       },
@@ -266,11 +323,13 @@ const SECTIONS: Section[] = [
   },
   {
     headerKey: "helpSectionShortcuts",
+    icon: "query",
     descKey: "helpSectionShortcutsDesc",
     // ショートカット一覧は `shortcuts.ts` の単一ソースから生成し、`?` で開く
     // チートシート (`ShortcutCheatSheet`) と定義を共有する。
     features: SHORTCUTS.map((s) => ({
       titleKey: s.keysKey,
+      icon: SHORTCUT_CATEGORY_ICON[s.category],
       descKey: s.descKey,
       ...(s.id ? { shortcutId: s.id } : {}),
     })),
@@ -427,7 +486,17 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
             {visibleSections.map((section) => (
               <SettingsSection key={section.headerKey} id={sectionDomId(section)} scrollMarginTop="8px">
                 <SettingsSectionHeader>
-                  <chakra.h3>{section.header}</chakra.h3>
+                  <chakra.h3 display="flex" alignItems="center" gap="2">
+                    <HelpGlyph
+                      data-testid="help-section-glyph"
+                      aria-hidden="true"
+                      border="none"
+                      background="transparent"
+                    >
+                      <Icon name={section.icon} size="md" />
+                    </HelpGlyph>
+                    {section.header}
+                  </chakra.h3>
                 </SettingsSectionHeader>
                 <SettingsHelp>{section.desc}</SettingsHelp>
 
@@ -435,7 +504,12 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
                   {section.features.map((f) => (
                     <HelpFeature key={f.titleKey}>
                       <HelpFeatureHead>
-                        <chakra.h4>{featureTitle(f)}</chakra.h4>
+                        <HelpFeatureTitle>
+                          <HelpGlyph data-testid="help-feature-glyph" aria-hidden="true">
+                            <Icon name={f.icon ?? section.icon} size="md" />
+                          </HelpGlyph>
+                          <chakra.h4>{featureTitle(f)}</chakra.h4>
+                        </HelpFeatureTitle>
                         {f.impact && <DbImpactBadge impact={f.impact} />}
                       </HelpFeatureHead>
                       <HelpFeatureDesc>{t(f.descKey)}</HelpFeatureDesc>
