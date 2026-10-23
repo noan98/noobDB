@@ -124,7 +124,7 @@ jobs:
         run: mkdir -p dist && echo "" > dist/index.html
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           languages: ${{ matrix.language }}
           # Rust は build-mode: none のみサポート (Autobuild ステップも飛ばす)。
@@ -149,9 +149,9 @@ jobs:
       # `github/codeql-action*` の更新を 1 本の PR にまとめている。
       - name: Autobuild
         if: matrix.language == 'javascript-typescript'
-        uses: github/codeql-action/autobuild@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/autobuild@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           category: "/language:${{ matrix.language }}"
