@@ -56,15 +56,22 @@ const baseProps = {
 describe("スキーマ行リストの位置計測 (#1342)", () => {
   const protoH = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
   const protoW = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth");
+  const protoCH = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+  const protoCW = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
   beforeEach(() => {
     localStorage.clear();
-    // react-virtual は窓の寸法を offsetHeight から取る。jsdom は 0 を返すので実寸を与える。
+    // react-virtual は行の寸法を offsetHeight から、窓 (スクロール枠) の寸法を
+    // clientHeight から取る (virtual-core 3.19 以降)。jsdom は 0 を返すので実寸を与える。
     Object.defineProperty(HTMLElement.prototype, "offsetHeight", { configurable: true, get: () => 400 });
     Object.defineProperty(HTMLElement.prototype, "offsetWidth", { configurable: true, get: () => 300 });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 400 });
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 300 });
   });
   afterEach(() => {
     if (protoH) Object.defineProperty(HTMLElement.prototype, "offsetHeight", protoH);
     if (protoW) Object.defineProperty(HTMLElement.prototype, "offsetWidth", protoW);
+    if (protoCH) Object.defineProperty(HTMLElement.prototype, "clientHeight", protoCH);
+    if (protoCW) Object.defineProperty(HTMLElement.prototype, "clientWidth", protoCW);
   });
 
   it("仮想化中に ConnectionList が再レンダーされても getBoundingClientRect / offsetTop を読まない", async () => {
