@@ -1,6 +1,7 @@
 name: codeql
 
 on:
+  workflow_dispatch:
   pull_request:
     branches: [main]
   schedule:
@@ -17,13 +18,15 @@ permissions:
 
 jobs:
   # 変更されたパスを見て解析ジョブを出し分ける (ci.yml と同じ方式)。CodeQL は
-  # JS/TS のみを解析するため、Rust やドキュメントだけの PR で走らせても結果は
-  # 変わらない。ワークフロー単位の paths: で丸ごとスキップすると必須チェック設定時に
-  # 「待機中」で固まるため、ジョブ単位の if: でゲートする (スキップは必須チェックを
-  # 満たす)。週次の schedule 実行は常にフル解析する。
+  # JS/TS と Rust を解析するため、どちらにも関係しないドキュメントだけの PR などで
+  # 走らせても結果は変わらない。言語ごとに変更領域を判定し、該当言語の解析だけを回す。
+  # ワークフロー単位の paths: で丸ごとスキップすると必須チェック設定時に「待機中」で
+  # 固まるため、ジョブ単位の if: でゲートする (スキップは必須チェックを満たす)。
+  # ジョブレベルの if: は matrix 展開前に評価され matrix コンテキストを参照できないので、
+  # このジョブが解析対象の言語を JSON (outputs.matrix) にして analyze の matrix に渡す。
+  # 週次の schedule と手動実行 (workflow_dispatch) は常にフル解析する。
   changes:
     name: detect changed areas
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     # ハング時にデフォルト 6 時間ランナーを占有し続けるのを防ぐ (正常時は影響なし)。
     timeout-minutes: 5
@@ -31,10 +34,11 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      js: ${{ steps.filter.outputs.js }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
+        if: github.event_name == 'pull_request'
         with:
           # CodeQL の JS 抽出器はリポジトリ全体の .js/.mjs/.ts/.tsx を対象にする
           # ため、src/ だけでなく scripts/ (bundle-size.mjs 等) も監視する。
@@ -50,41 +54,87 @@ jobs:
               - 'vite.config.ts'
               - 'vitest.browser.config.ts'
               - '.github/workflows/codeql.yml'
+            # Rust は build-mode: none でソースと Cargo マニフェストから抽出する。
+            # フロントのみの PR では解析を回さない (Rust 解析は JS/TS より重いため)。
+            rust:
+              - 'src-tauri/**'
+              - '.github/workflows/codeql.yml'
+
+      # schedule (週次) は全言語。PR は paths-filter の結果が true の言語だけを matrix に入れる。
+      # build-mode: JS/TS は未指定 (空。従来どおり Autobuild)、Rust は none のみサポート。
+      - name: Build analysis matrix
+        id: matrix
+        env:
+          EVENT: ${{ github.event_name }}
+          JS: ${{ steps.filter.outputs.js }}
+          RUST: ${{ steps.filter.outputs.rust }}
+        run: |
+          items=()
+          if [ "$EVENT" != "pull_request" ] || [ "$JS" = "true" ]; then
+            items+=('{"language":"javascript-typescript","build-mode":""}')
+          fi
+          if [ "$EVENT" != "pull_request" ] || [ "$RUST" = "true" ]; then
+            items+=('{"language":"rust","build-mode":"none"}')
+          fi
+          matrix="[$(IFS=,; echo "${items[*]}")]"
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+          echo "matrix: ${matrix}"
 
   analyze:
     name: CodeQL (${{ matrix.language }})
     needs: changes
-    # schedule (週次) は常に実行。PR では JS/TS 関連パスに変更があるときだけ実行する。
-    # changes ジョブは schedule ではスキップされるため、!cancelled() で「依存ジョブが
-    # スキップでも評価する」ようにしている。
-    if: >-
-      !cancelled() && (
-        github.event_name == 'schedule' ||
-        needs.changes.outputs.js == 'true'
-      )
+    # 解析対象の言語が 1 つも無い PR (ドキュメントのみ等) ではスキップする。
+    # changes が失敗したときは matrix が空文字になり fromJSON で分かりにくく落ちるので、成功時だけ走らせる。
+    if: ${{ needs.changes.result == 'success' && needs.changes.outputs.matrix != '[]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
+        # include は changes ジョブが出す JSON (language と build-mode)。
         # javascript-typescript は JS/TS ソースを対象にするビルトイン言語名。
-        # Rust は CodeQL の実験的サポートであり、成熟度が低くノイズが多いため
-        # 当面は JS/TS のみでシグナルを安定させる。
-        language: ["javascript-typescript"]
+        # rust は build-mode: none で解析する。結果は Security タブに出るだけで、
+        # 解析ジョブは必須チェックに含めない (可視化から入る運用。#1588)。
+        include: ${{ fromJSON(needs.changes.outputs.matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      # Rust の build-mode: none でも、rust-analyzer が build.rs / proc-macro を実行して
+      # 解決するため、ci.yml の rust ジョブと同じ前提が要る: src-tauri/.cargo/config.toml の
+      # リンカ指定 (clang + mold)、tauri::generate_context! が参照する ../dist、
+      # gtk / webkit の -sys クレートのシステムライブラリ。パッケージ一式は ci.yml の
+      # `System deps (Tauri 2 prerequisites)` と同じ (変えるときは両方そろえる)。
+      - name: Use canonical apt archive + refresh indexes (Rust)
+        if: matrix.language == 'rust'
+        run: |
+          printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
+          sudo apt-get update
+
+      - name: System deps (Tauri 2 prerequisites, Rust)
+        if: matrix.language == 'rust'
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+        with:
+          packages: libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libxdo-dev libayatana-appindicator3-dev build-essential curl wget file libssl-dev clang mold
+          version: tauri-5
+
+      - name: Stub frontend dist (Rust, for tauri::generate_context!)
+        if: matrix.language == 'rust'
+        run: mkdir -p dist && echo "" > dist/index.html
+
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           languages: ${{ matrix.language }}
+          # Rust は build-mode: none のみサポート (Autobuild ステップも飛ばす)。
+          # JS/TS は空 = 従来どおり未指定 (Autobuild) のまま。
+          build-mode: ${{ matrix.build-mode }}
           # ノイズの多いルールを抑制してシグナル重視のベースラインから運用開始する。
           # 追加のカスタムクエリは queries: フィールドで指定できる。
           queries: security-extended
 
-      # JS/TS は autobuild で対応できる (ビルド成果物に依存しないため)。
+      # JS/TS は autobuild で対応できる (ビルド成果物に依存しないため。Rust は build-mode: none なので対象外)。
       # init / autobuild / analyze は同一バージョンに揃える必要がある (init が書いた
       # 設定を後続ステップが読むため)。一部のステップだけバージョンが上がると
       # 「Loaded a configuration file for version 'X', but running version 'Y'」の
@@ -98,9 +148,10 @@ jobs:
       # 防ぐため、`.github/dependabot.yml` の `codeql-action` グループで
       # `github/codeql-action*` の更新を 1 本の PR にまとめている。
       - name: Autobuild
-        uses: github/codeql-action/autobuild@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        if: matrix.language == 'javascript-typescript'
+        uses: github/codeql-action/autobuild@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           category: "/language:${{ matrix.language }}"

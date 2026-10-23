@@ -5,6 +5,8 @@
 //! (`include_str!` の相対パスやドキュメント上の参照先を変えないため)。新しいテストを足すときは
 //! ファイルを作ってここに `mod` を 1 行足す (足し忘れるとそのテストは走らない)。
 
+#[path = "../column_deps_integration.rs"]
+mod column_deps_integration;
 #[path = "../local_query_integration.rs"]
 mod local_query_integration;
 #[path = "../query_result_cache_integration.rs"]

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { connectionBandColor, windowTitleFor } from "../components/titleBarContext";
+import { ambientWashImage, connectionBandColor, windowTitleFor } from "../components/titleBarContext";
 import { semanticColorVar } from "../semanticColors";
 
 /**
@@ -90,5 +90,18 @@ describe("windowTitleFor (#1631)", () => {
     expect(windowTitleFor({ ...base, isProduction: true, status: "reconnecting" }, labels)).toBe(
       "[本番] [再接続中] main-db — noobDB",
     );
+  });
+});
+
+describe("ambientWashImage (#1768)", () => {
+  const base = { name: "x", color: null, isProduction: false };
+  it("本番は --prod-wash、サンドボックスは --sandbox-wash、本番が優先", () => {
+    expect(ambientWashImage({ ...base, isProduction: true })).toBe("var(--prod-wash)");
+    expect(ambientWashImage({ ...base, isSandbox: true })).toBe("var(--sandbox-wash)");
+    expect(ambientWashImage({ ...base, isProduction: true, isSandbox: true })).toBe("var(--prod-wash)");
+  });
+  it("通常接続・未接続は敷かない", () => {
+    expect(ambientWashImage(base)).toBeUndefined();
+    expect(ambientWashImage(null)).toBeUndefined();
   });
 });

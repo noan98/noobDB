@@ -613,30 +613,44 @@ export function applyTableOpenTemplate(args: {
   table: string;
   limit: number;
   columns: readonly { name: string; key: string }[];
-  rowIdentity: { strategy: string; hidden_column: string | null } | null;
+  rowIdentity: { strategy: string; hidden_column: string | null; key_columns?: string[] } | null;
   legacyBase: string;
   legacySql: string;
 }): { base: string; sql: string; openTemplate: TableOpenTemplateState | null } {
   const legacy = { base: args.legacyBase, sql: args.legacySql, openTemplate: null };
   if (!args.resolved) return legacy;
-  const pkColumns = args.columns.filter((c) => c.key.toUpperCase() === "PRI").map((c) => c.name);
   const id = args.rowIdentity;
+  const declaredPk = args.columns.filter((c) => c.key.toUpperCase() === "PRI").map((c) => c.name);
+  // PK が無くても UNIQUE NOT NULL キー (unique_key, #1776) があれば PK 相当として渡す。
+  // 渡さないと、テンプレート使用時に PK 無し表だけ編集不可へ後退する。
+  const pkColumns =
+    declaredPk.length === 0 && id?.strategy === "unique_key" ? (id.key_columns ?? []) : declaredPk;
   const hiddenColumn = id && (id.strategy === "rowid" || id.strategy === "ctid") ? id.hidden_column : null;
-  const plan = planTableOpenQuery(args.resolved.template, {
+  const ctx = {
     driver: args.driver,
     database: args.database,
     table: args.table,
     limit: args.limit,
     pkColumns,
     hiddenColumn,
-  });
+  };
+  const editPlan = planTableOpenQuery(args.resolved.template, ctx);
+  if (editPlan.kind === "legacy") return legacy;
+  // キーセットのページ送り (resolveKeysetPlan) は宣言 PK (key=PRI) しか見ない。宣言 PK が無いのに
+  // unique_key で keyset=true にすると base から ORDER BY が外れ、2 ページ目以降が ORDER BY 無しの
+  // LIMIT/OFFSET になって行が重複・欠落する。編集可否だけ unique_key で判定し、土台と keyset は
+  // 宣言 PK だけで組み直す。
+  const plan =
+    declaredPk.length === 0 && editPlan.keyset
+      ? planTableOpenQuery(args.resolved.template, { ...ctx, pkColumns: [] })
+      : editPlan;
   if (plan.kind === "legacy") return legacy;
   return {
     base: plan.base,
     sql: plan.sql,
     openTemplate: {
       source: args.resolved.source,
-      editable: plan.editable,
+      editable: editPlan.editable,
       keyset: plan.keyset,
       wrapBrowse: plan.wrapBrowse,
     },

@@ -18,6 +18,8 @@ import {
   filterActivity,
   searchActivity,
   markActivityRead,
+  onActivityCenterToggleRequest,
+  requestActivityCenterToggle,
   useActivityLog,
   type ActivitySeverity,
 } from "../activityLog";
@@ -308,16 +310,9 @@ function ActivityPanel({
   );
 }
 
-/**
- * ベルボタン以外 (コマンドパレットの「アクティビティを開閉」、#1113) から
- * アクティビティ一覧を開閉するための購読口。開閉状態はベル (`ActivityCenter`)
- * 自身が持ち続け、ここは「トグルして」という要求を届けるだけ。
- */
-const toggleRequestListeners = new Set<() => void>();
-
 /** アクティビティ一覧の開閉を要求する (マウント中のベルが処理する)。 */
 export function toggleActivityCenter(): void {
-  for (const listener of toggleRequestListeners) listener();
+  requestActivityCenterToggle();
 }
 
 /**
@@ -347,11 +342,7 @@ export function ActivityCenter({ onOpenInPanel }: { onOpenInPanel?: () => void }
   toggleRef.current = toggle;
 
   useEffect(() => {
-    const listener = () => toggleRef.current(buttonRef.current);
-    toggleRequestListeners.add(listener);
-    return () => {
-      toggleRequestListeners.delete(listener);
-    };
+    return onActivityCenterToggleRequest(() => toggleRef.current(buttonRef.current));
   }, []);
 
   return (

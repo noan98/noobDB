@@ -346,3 +346,38 @@ describe("statementsFromOffset (#1627)", () => {
     expect(statementsFromOffset("", 0)).toBeNull();
   });
 });
+
+// --- #1663: Stryker 生存変異の補強 (境界・フォールバック・欠損フィールド) ---------------
+
+describe("カーソル位置の境界 (#1663)", () => {
+  const sql = "SELECT 1; SELECT 2";
+
+  it("offset が文の末尾 (to) ちょうどなら、その文に帰属する (<= の境界)", () => {
+    // 1 文目 "SELECT 1" は [0, 8)。8 は ';' の直前 = まだ 1 文目。
+    expect(statementAtOffset(sql, 8)?.text).toBe("SELECT 1");
+    expect(statementAtOffset(sql, 9)?.text).toBe("SELECT 2");
+    const batch = statementsFromOffset(sql, 8);
+    expect(batch?.text).toBe("SELECT 1; SELECT 2");
+    expect(batch?.from).toBe(0);
+  });
+
+  it("どの文にも満たない末尾 (空白/コメント上) では最後の文へフォールバックする", () => {
+    const tail = "SELECT 1; SELECT 2; -- tail";
+    expect(statementAtOffset(tail, 1000)?.text).toBe("SELECT 2");
+    const batch = statementsFromOffset(tail, 1000);
+    expect(batch?.text).toBe("SELECT 2");
+    expect(batch?.from).toBe(10);
+    expect(batch?.to).toBe(18);
+  });
+
+  it("終端の ; の直後に文が無い入力でも範囲を壊さない", () => {
+    expect(splitSqlStatementRanges("SELECT 1;")).toEqual([{ from: 0, to: 8, text: "SELECT 1" }]);
+  });
+});
+
+describe("toBatchOutputInput: rows が無い結果セットは 0 行 (#1663)", () => {
+  it("columns があって rows が欠けていても 0 件として出力ログに載せる", () => {
+    const wire = { sql: "SELECT 1", status: "ok" as const, columns: [{ name: "a", type_name: "INT" }] };
+    expect(toBatchOutputInput(wire)).toMatchObject({ outcome: "rows", rows: 0 });
+  });
+});

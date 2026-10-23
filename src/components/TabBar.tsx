@@ -3,11 +3,13 @@ import { Box, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion, Reorder, useReducedMotion } from "motion/react";
 import { useT } from "../i18n";
 import { Icon, ICON_SIZES } from "./Icon";
+import { Spinner } from "./Spinner";
 import { transitions, variants } from "../motion";
 import { moveTabBy } from "../tabReorder";
 import { Tooltip } from "./Tooltip";
 import { Input } from "./ui";
 import { labelWithShortcut } from "../shortcutLabel";
+import { useTabCloseGlide } from "./useTabCloseGlide";
 import { DropInsertionMarker } from "./DropInsertionMarker";
 import { FlightIcon } from "./FlightIcon";
 import { isImeComposing } from "./modalKeys";
@@ -34,6 +36,7 @@ const ReorderItemDiv = forwardRef<HTMLDivElement, React.ComponentProps<typeof Re
     return <Reorder.Item as="div" ref={ref} {...props} />;
   },
 );
+const MotionTabIcon = chakra(motion.span, {}, { forwardProps: ["transition", "initial", "animate", "exit"] });
 const MotionTab = chakra(ReorderItemDiv, {}, { forwardProps: ["transition"] });
 
 export interface TabInfo {
@@ -43,6 +46,25 @@ export interface TabInfo {
   database?: string;
   table?: string;
   dirty?: boolean;
+  /** クエリ実行中 (ストリーミング / バッチ)。種別アイコンがスピナーに切り替わる (#1500)。 */
+  running?: boolean;
+  /** ピン留め済み (#1486)。ペイン左端に固定され、省スペース表示 (ピンアイコン、閉じるボタン無し) になる。 */
+  pinned?: boolean;
+}
+
+/** TabBar が描画に使う項目が全て一致するか (PaneView が配列参照を安定させるのに使う, #1500)。 */
+export function sameTabInfo(a: TabInfo | undefined, b: TabInfo): boolean {
+  return (
+    a !== undefined &&
+    a.id === b.id &&
+    a.kind === b.kind &&
+    a.title === b.title &&
+    a.database === b.database &&
+    a.table === b.table &&
+    a.dirty === b.dirty &&
+    a.running === b.running &&
+    a.pinned === b.pinned
+  );
 }
 
 interface Props {
@@ -260,6 +282,9 @@ export const TabBar = memo(function TabBar({
         (e.key === "ArrowLeft" || e.key === "ArrowRight")
       ) {
         const dir = e.key === "ArrowRight" ? 1 : -1;
+        // ピン留めの境界 (#1486) は跨げない: 移動先のタブとピン状態が違うときは何もしない。
+        const neighbor = tabs[idx + dir];
+        if (neighbor && !!neighbor.pinned !== !!tabs[idx].pinned) return;
         const order = tabs.map((tt) => tt.id);
         const moved = moveTabBy(order, currentId, dir);
         // moveTabBy returns the same array reference (no-op) at the edges —
@@ -295,6 +320,9 @@ export const TabBar = memo(function TabBar({
 
   // --- Overflow handling: scroll arrows + "all tabs" dropdown ---
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // タブを閉じて DOM から外れる 1 回だけ、右側のタブの詰め直しを滑らせる (#1765)。
+  // 常時 `layout` は付けず、ドラッグ並べ替え (Reorder) には触れない。
+  const { onExitComplete: glideAfterClose } = useTabCloseGlide(scrollRef, tabRefs);
   const [overflow, setOverflow] = useState({ left: false, right: false });
   const [listOpen, setListOpen] = useState(false);
   const [listFilter, setListFilter] = useState("");
@@ -453,7 +481,7 @@ export const TabBar = memo(function TabBar({
           padding: 0,
         }}
       >
-        <AnimatePresence initial={false}>
+        <AnimatePresence initial={false} onExitComplete={glideAfterClose}>
           {tabs.map((tab) => {
             const isActive = tab.id === activeTabId;
             const title =
@@ -496,8 +524,9 @@ export const TabBar = memo(function TabBar({
                 // 装飾的な補足情報のため、実害の小さいこの 1 箇所のみ native
                 // title を残す判断とする。
                 title={renamingTabId === tab.id ? undefined : title}
+                aria-busy={tab.running ? true : undefined}
                 // 追加・削除は opacity + scaleX だけで表す (#1322)。width を 0 ↔ auto に
-                // 補間すると隣のタブが毎フレーム再配置されるため。隣は即時に詰まる。
+                // 補間すると隣のタブが毎フレーム再配置されるため。隣は退場完了で詰まり、その 1 回だけ `useTabCloseGlide` が滑らせる (#1765)。
                 initial={variants.fadeScaleX.initial}
                 animate={variants.fadeScaleX.animate}
                 exit={variants.fadeScaleX.exit}
@@ -519,7 +548,7 @@ export const TabBar = memo(function TabBar({
                 userSelect="none"
                 fontSize="sm"
                 whiteSpace="nowrap"
-                maxW="240px"
+                maxW={tab.pinned ? "140px" : "240px"}
                 flexShrink={0}
                 transitionProperty="background, color, border-color, box-shadow"
                 transitionDuration="var(--dur-fast)"
@@ -574,9 +603,31 @@ export const TabBar = memo(function TabBar({
                         : null
                     }
                   >
-                    <Icon
-                      name={tab.kind === "table" ? "table" : tab.kind === "explain" ? "explain" : "query"}
-                    />
+                    {/* 実行中は種別アイコンをスピナーへクロスフェードする (#1500)。reduced-motion は
+                        ルートの MotionConfig と App.css が抑制する (スピナーは静止リングになる)。 */}
+                    <AnimatePresence mode="wait" initial={false}>
+                      <MotionTabIcon
+                        key={tab.running ? "running" : "kind"}
+                        initial={variants.fadeScale.initial}
+                        animate={variants.fadeScale.animate}
+                        exit={variants.fadeScale.exit}
+                        transition={transitions.crossfade}
+                        display="inline-flex"
+                        alignItems="center"
+                        justifyContent="center"
+                        data-running={tab.running ? "true" : undefined}
+                      >
+                        {tab.running ? (
+                          <Spinner size={12} decorative />
+                        ) : (
+                          <Icon
+                            name={
+                              tab.kind === "table" ? "table" : tab.kind === "explain" ? "explain" : "query"
+                            }
+                          />
+                        )}
+                      </MotionTabIcon>
+                    </AnimatePresence>
                   </FlightIcon>
                 </chakra.span>
                 {renamingTabId === tab.id && tab.kind === "query" ? (
@@ -587,7 +638,12 @@ export const TabBar = memo(function TabBar({
                     onDone={(name, reason) => endRename(tab.id, name, reason)}
                   />
                 ) : (
-                  <chakra.span overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap" maxW="180px">
+                  <chakra.span
+                    overflow="hidden"
+                    textOverflow="ellipsis"
+                    whiteSpace="nowrap"
+                    maxW={tab.pinned ? "80px" : "180px"}
+                  >
                     {tab.title}
                   </chakra.span>
                 )}
@@ -608,35 +664,54 @@ export const TabBar = memo(function TabBar({
                     </chakra.span>
                   </Tooltip>
                 )}
-                <Tooltip label={t("tabClose")}>
-                  <chakra.button
+                {tab.pinned ? (
+                  // ピン留めタブは閉じるボタンの代わりにピンアイコンを出して省スペース化する (#1486)。
+                  // 閉じる操作は中クリック / Delete / Cmd+W / メニューから行える。
+                  <chakra.span
                     display="inline-flex"
                     alignItems="center"
                     justifyContent="center"
                     w="18px"
                     h="18px"
-                    p="0"
-                    border="none"
-                    bg="transparent"
                     color="app.textMuted"
-                    borderRadius="sm"
-                    fontSize="xs"
-                    lineHeight="1"
-                    cursor="pointer"
                     flexShrink={0}
-                    transitionProperty="background, color, border-color, box-shadow"
-                    transitionDuration="var(--dur-fast)"
-                    transitionTimingFunction="var(--ease)"
-                    _hover={{ bg: isActive ? "app.active" : "app.hover", color: "app.text" }}
-                    aria-label={t("tabClose")}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onClose(tab.id);
-                    }}
+                    role="img"
+                    aria-label={`(${t("tabPinned")})`}
+                    data-pinned="true"
                   >
-                    <Icon name="close" size={ICON_SIZES.sm} />
-                  </chakra.button>
-                </Tooltip>
+                    <Icon name="pin" size={ICON_SIZES.sm} />
+                  </chakra.span>
+                ) : (
+                  <Tooltip label={t("tabClose")}>
+                    <chakra.button
+                      display="inline-flex"
+                      alignItems="center"
+                      justifyContent="center"
+                      w="18px"
+                      h="18px"
+                      p="0"
+                      border="none"
+                      bg="transparent"
+                      color="app.textMuted"
+                      borderRadius="sm"
+                      fontSize="xs"
+                      lineHeight="1"
+                      cursor="pointer"
+                      flexShrink={0}
+                      transitionProperty="background, color, border-color, box-shadow"
+                      transitionDuration="var(--dur-fast)"
+                      transitionTimingFunction="var(--ease)"
+                      _hover={{ bg: isActive ? "app.active" : "app.hover", color: "app.text" }}
+                      aria-label={t("tabClose")}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onClose(tab.id);
+                      }}
+                    >
+                      <Icon name="close" size={ICON_SIZES.sm} />
+                    </chakra.button>
+                  </Tooltip>
+                )}
                 {isActive && (
                   <MotionIndicator
                     layoutId={indicatorId}

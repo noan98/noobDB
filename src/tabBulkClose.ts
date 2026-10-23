@@ -12,20 +12,33 @@ export type BulkCloseMode = "others" | "left" | "right" | "all";
 /**
  * `paneTabIds` (ペイン内の並び順) から、`targetId` を基点に閉じるべきタブ id を返す。
  * `targetId` がペインに無いときは安全側で空配列を返す。入力は破壊しない。
+ * `pinnedIds` のタブ (ピン留め, #1486) は一括クローズの対象から除く (基点自身がピン留め
+ * でも「すべて」では閉じない)。単体クローズは別経路なので影響しない。
  */
-export function tabsToClose(paneTabIds: readonly string[], targetId: string, mode: BulkCloseMode): string[] {
+export function tabsToClose(
+  paneTabIds: readonly string[],
+  targetId: string,
+  mode: BulkCloseMode,
+  pinnedIds?: ReadonlySet<string>,
+): string[] {
   const idx = paneTabIds.indexOf(targetId);
   if (idx < 0) return [];
+  let ids: string[];
   switch (mode) {
     case "others":
-      return paneTabIds.filter((id) => id !== targetId);
+      ids = paneTabIds.filter((id) => id !== targetId);
+      break;
     case "left":
-      return paneTabIds.slice(0, idx);
+      ids = paneTabIds.slice(0, idx);
+      break;
     case "right":
-      return paneTabIds.slice(idx + 1);
+      ids = paneTabIds.slice(idx + 1);
+      break;
     case "all":
-      return paneTabIds.slice();
+      ids = paneTabIds.slice();
+      break;
   }
+  return pinnedIds && pinnedIds.size > 0 ? ids.filter((id) => !pinnedIds.has(id)) : ids;
 }
 
 /** 複製元タブのうち、複製の組み立てに必要な最小限のフィールド。 */

@@ -17,7 +17,7 @@
 //   読めてしまうため)。
 
 import type { CellValue } from "./api/tauri";
-import { buildReverseRefSql, type IncomingFk } from "./fkNavigation";
+import { buildReverseRefSql, type IncomingFk, incomingFkTableName } from "./fkNavigation";
 import type { CellKind } from "./components/cellTypeMeta";
 import { takeGraphemes } from "./truncateText";
 
@@ -50,9 +50,13 @@ export interface RelatedRowsSqlParams {
   driver: string;
   database?: string | null;
   childTable: string;
+  /** 子テーブルのスキーマ (PostgreSQL のスキーマをまたぐ FK、#1786)。 */
+  childSchema?: string | null;
   childColumn: string;
   /** 親行が持つ、参照されているキー値。 */
   value: CellValue;
+  /** キー値の列型 (`Column.type_name`)。省略時は値の実行時型だけでリテラル化する。 */
+  valueType?: string;
   /** 表示する件数の上限 (実際には「続きあり」判定のため +1 件取る)。 */
   limit: number;
 }
@@ -67,8 +71,10 @@ export function buildRelatedRowsSql(p: RelatedRowsSqlParams): string | null {
     driver: p.driver,
     database: p.database,
     childTable: p.childTable,
+    childSchema: p.childSchema,
     childColumn: p.childColumn,
     value: p.value,
+    valueType: p.valueType,
   });
   return withRowLimit(base, clampRelatedLimit(p.limit) + 1);
 }
@@ -123,6 +129,8 @@ export interface RelatedEntry {
   refColIdx: number;
   /** 参照されているキー値 (たどれないときは null)。 */
   value: CellValue;
+  /** `refColIdx` 列の型 (`Column.type_name`)。列が結果に無い / 型不明なら undefined。 */
+  valueType?: string;
   blocked: RelatedBlockReason | null;
 }
 
@@ -133,17 +141,19 @@ export interface RelatedEntry {
  * @param columnNames 親結果の列名 (元の列順)
  * @param row 親行の値 (元の列順)
  * @param isMasked 親行のその列がマスク中 (#1069) か
+ * @param columnTypes 親結果の列型 (`Column.type_name`、列名と同じ並び)。キー値の型付きリテラル化に使う
  */
 export function resolveRelatedEntries(
   incoming: readonly IncomingFk[],
   columnNames: readonly string[],
   row: readonly CellValue[],
   isMasked: (colIdx: number) => boolean,
+  columnTypes?: readonly string[],
 ): RelatedEntry[] {
   const out: RelatedEntry[] = [];
   const seen = new Set<string>();
   for (const fk of incoming) {
-    const key = `${fk.table}.${fk.column}`;
+    const key = `${incomingFkTableName(fk)}.${fk.column}`;
     if (seen.has(key)) continue;
     seen.add(key);
     const refColIdx = columnNames.indexOf(fk.referencedColumn);
@@ -156,7 +166,14 @@ export function resolveRelatedEntries(
       continue;
     }
     const v = row[refColIdx] ?? null;
-    out.push({ key, fk, refColIdx, value: v, blocked: v === null ? "nullKey" : null });
+    out.push({
+      key,
+      fk,
+      refColIdx,
+      value: v,
+      valueType: columnTypes?.[refColIdx],
+      blocked: v === null ? "nullKey" : null,
+    });
   }
   return out;
 }

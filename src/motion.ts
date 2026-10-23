@@ -72,6 +72,23 @@ import type { Transition, Variants } from "motion/react";
  *   opacity だけを Web Animations API で 1 回再生する (`transitions.crossfade` 相当の
  *   `durations.quick`)。key で再マウントしないのでスクロール・選択・編集状態は保たれ、
  *   reduced-motion は `useReducedMotionConfig` で見る。
+ * - 結果グリッドの初回バッチ着弾リビール (`ResultGrid` — `useFirstBatchReveal`、#1579)。
+ *   ストリーミング中のスケルトンの次に最初の行が届いたコミットで、画面内の行 (遅延は 12 段で頭打ち) の
+ *   `<tr>` だけを Web Animations API で 1 回 stagger フェード / slide-up する。per-row FLIP
+ *   ではなく「入場 1 回・可視行限定・計測は上端座標の読み取りのみ」で、追加バッチ / スクロール /
+ *   ソートでは再生しない。遅延は `staggerTiming.each` を再利用。reduced-motion・ハイコントラストは即時。
+ * - 結果グリッドの滑って追従する選択枠 (`ResultGrid` — `useGlideFrame`、#1578)。アクティブセル /
+ *   範囲選択 / 現在の検索ヒットごとに絶対配置の枠 1 枚を置き、対象が変わった確定コミットの 1 回だけ
+ *   セルを計測して前の位置から left/top/width/height を Web Animations API で滑らせる
+ *   (`transitions.emphasized` 相当の `durations.med` + `easings.out`)。per-row の `layout` は使わない。
+ *   スクロール中は計測せず、固定列・描画窓の外では枠を出さず元のセル単位のリングに任せる。
+ *   reduced-motion・ハイコントラストは即座に置く。
+ * - 設定「表示」のライブ・アピアランス・プレビューのデモ (`AppearancePreview` — `useAnimate`、#1781)。
+ *   マウント後と、確定した設定値 (`replayKey`) が変わるたびに 1 回ずつ
+ *   (連打は 250ms でまとめる)、RunButton の押下 → 選択下地が 1 行下へ滑る → 枠が一瞬光る。画面内・タブ可視に
+ *   なってから始め、`useAnimate` で DOM を直接動かす (React の再描画なし)。尺・イージングは `durations` / `easings` を再利用。
+ *   reduced-motion (`useReducedMotionConfig`)・ハイコントラストは最初から終了状態、再生中に reduced へ
+ *   変わったら止めて終了状態にする。
  * - 結果パネルの種類切替 (`App` — exit 無しの `AnimatePresence` + `variants.fade` で入場だけ、#1311)。
  *   グリッド ⇔ EXPLAIN / チャート / ピボット / プレビュー / バッチのように「軽量
  *   パネルの種類が変わる」ときだけ控えめにクロスフェードする。key を表示内容の
@@ -247,6 +264,12 @@ export const variants = {
   },
 } satisfies Record<string, Variants>;
 
+/**
+ * 結果グリッドの初回バッチ着弾リビール (#1579, `useFirstBatchReveal`) の slide-up 量 (px)。
+ * `variants.staggerItem` の y と揃えた控えめな値。
+ */
+export const firstBatchReveal = { offsetY: 4 } as const;
+
 /** 結果グリッドの行クロスフェード (#1416) の開始 opacity。控えめに暗転するだけの値。 */
 export const rowCrossfadeFrom = 0.35;
 
@@ -257,6 +280,8 @@ export const rowCrossfadeFrom = 0.35;
 export const slideOffsets = {
   /** Row Inspector の行送り。ドロワー開閉 (28) より小さく、本体だけ動かす。 */
   row: 16,
+  /** 結果グリッドのページ送り (#1752)。`<tbody>` 全体が動くので行送りよりやや大きく。 */
+  page: 24,
 } as const;
 
 /**

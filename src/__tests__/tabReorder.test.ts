@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { moveTabBy, moveTabToIndex, reorderIfPermutation } from "../tabReorder";
+import {
+  moveTabBy,
+  moveTabToIndex,
+  orderAfterPinChange,
+  pinnedFirst,
+  reorderIfPermutation,
+} from "../tabReorder";
 
 describe("reorderIfPermutation", () => {
   it("accepts a valid permutation and returns the proposed order", () => {
@@ -87,5 +93,40 @@ describe("moveTabBy", () => {
   it("returns the input unchanged for an unknown id", () => {
     const order = ["a", "b", "c"];
     expect(moveTabBy(order, "z", 1)).toBe(order);
+  });
+});
+
+describe("pinnedFirst (#1486)", () => {
+  const pin =
+    (...ids: string[]) =>
+    (id: string) =>
+      ids.includes(id);
+
+  it("ピン済みを左端に集め、双方の相対順を保つ", () => {
+    expect(pinnedFirst(["a", "b", "c", "d"], pin("c", "a"))).toEqual(["a", "c", "b", "d"]);
+    expect(pinnedFirst(["a", "b", "c", "d"], pin("d", "c"))).toEqual(["c", "d", "a", "b"]);
+  });
+
+  it("すでに揃っている・ピンなし・全ピンなら同じ参照を返す", () => {
+    const order = ["a", "b", "c"];
+    expect(pinnedFirst(order, pin("a"))).toBe(order);
+    expect(pinnedFirst(order, pin())).toBe(order);
+    expect(pinnedFirst(order, pin("a", "b", "c"))).toBe(order);
+  });
+});
+
+describe("orderAfterPinChange (#1486)", () => {
+  it("ピン留めするとピン群の末尾へ移る", () => {
+    expect(orderAfterPinChange(["a", "b", "c", "d"], "c", (id) => id === "a")).toEqual(["a", "c", "b", "d"]);
+  });
+
+  it("解除すると未ピン群の先頭へ移る", () => {
+    const pinned = (id: string) => id === "a" || id === "b";
+    expect(orderAfterPinChange(["a", "b", "c"], "a", pinned)).toEqual(["b", "a", "c"]);
+  });
+
+  it("id が無ければ入力をそのまま返す", () => {
+    const order = ["a", "b"];
+    expect(orderAfterPinChange(order, "x", () => false)).toBe(order);
   });
 });

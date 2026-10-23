@@ -27,7 +27,7 @@ import { transitions, variants } from "../motion";
 // 開発用パフォーマンス計測 (#1094)。既定 OFF — フックの差し込みのみ。
 import { markGridCommit } from "../perf";
 import { measureElement as defaultMeasureElement, useVirtualizer } from "@tanstack/react-virtual";
-import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
+import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import {
   COLLAPSIBLE_TOOLBAR_ACTIONS,
   nextCollapsedCount,
@@ -103,8 +103,22 @@ import { moveColumnId, reorderColumnIds } from "./columnReorderFlip";
 import { rowSelectRange, selectAllRange } from "./gridSelection";
 import { useColumnReorderFlip } from "./useColumnReorderFlip";
 import { rowCrossfadeKeys, type RowCrossfadeKeys } from "./rowCrossfade";
+import { usePageTurn } from "./usePageTurn";
 import { useRowCrossfade } from "./useRowCrossfade";
-import { NoResultsIllustration, errorIllustration } from "./illustrations";
+import { useFirstBatchReveal } from "./useFirstBatchReveal";
+import { useGlideFrame } from "./useGlideFrame";
+import {
+  activeFrameKey,
+  autoScrollDelta,
+  canStartMarquee,
+  exceedsDragThreshold,
+  marqueeSelection,
+  parseCellKey,
+  selectionFrameKey,
+  selectionMountedRows,
+} from "./selectionGlide";
+import { NoResultsIllustration, RunQueryIllustration, errorIllustration } from "./illustrations";
+import type { ResultEmptyActionItem } from "./resultEmptyActions";
 import { Callout } from "./Callout";
 import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "./Icon";
 import { useAiAvailable } from "../ai/useAiAvailable";
@@ -147,7 +161,7 @@ import { CountUp } from "./CountUp";
 import { COUNT_UP_TOKEN, formatCountUpPlainInt, splitAroundCountUpToken } from "../useCountUp";
 import { ExportModal, type FullExportContext } from "./ExportModal";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
-import { buildGridCopyText, type GridCopyFormat } from "./gridCopyFormats";
+import { buildGridCopyInsert, buildGridCopyText, type GridCopyFormat } from "./gridCopyFormats";
 import { buildCopyFlashRange, collectCopyFlashKeys } from "./gridCopyFlash";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { DuplicateKeysModal } from "./DuplicateKeysModal";
@@ -164,7 +178,6 @@ import { LoadingButton } from "./LoadingButton";
 import { Tooltip, TooltipBubble, useDelegatedTooltip } from "./Tooltip";
 import { columnCommentsFor, withComment } from "./schemaComment";
 import {
-  buildInsertClipboard,
   buildRowSql,
   buildRowWhere,
   qualifiedTableRef,
@@ -204,7 +217,7 @@ import {
 import { changedRowIndexSet, diffResultRows, removedPrevRows, rowDiffFor } from "../resultDiff";
 import { RefreshTrend } from "./RefreshTrend";
 import type { RefreshSample } from "../refreshPatch";
-import { buildFkJumpSql, buildReverseRefSql, type IncomingFk } from "../fkNavigation";
+import { buildFkJumpSql, buildReverseRefSql, type IncomingFk, incomingFkTableName } from "../fkNavigation";
 import {
   type SelectionSummary,
   type ColumnStats,
@@ -312,6 +325,9 @@ const DISCARD_CANCEL_ID = "result-grid-discard-cancel";
  */
 
 export const GRID_CSS: SystemStyleObject = {
+  // 滑って追従する選択枠 (`.grid-glide-frame`, #1578) の座標系。枠はコンテンツ座標で
+  // 絶対配置するので、スクロールコンテナ自身を基準にする。
+  position: "relative",
   // 密度変更の遷移演出 (#1023)。この Box 自身 (スクロール枠) へ、密度が実際に
   // 変わった瞬間だけ App.css 側の density-settle-grow/shrink keyframes を 1 回
   // 重ねる。scale/opacity のみの compositor アニメーションで実レイアウトには
@@ -353,6 +369,7 @@ export const GRID_CSS: SystemStyleObject = {
   },
   "& th": {
     background: "var(--bg-header)",
+    transition: "background var(--dur-fast) var(--ease)",
     position: "sticky",
     top: 0,
     zIndex: 2,
@@ -927,6 +944,50 @@ export const GRID_CSS: SystemStyleObject = {
     boxShadow: "inset 0 -2px 0 var(--preview-highlight)",
   },
   "& th.is-changed-col .th-name": { color: "var(--preview-highlight)" },
+  // アクティブセルの列ヘッダ / 行番号ガターを地色で薄く差すクロスハイライト (#1755)。
+  // 追従リング (useGlideFrame) と重ならないよう地色だけの弱い強調にとどめる。保留編集行の
+  // 左端バー・変更列の下線 (box-shadow) とは干渉しない。
+  // フィルタ中 / 変更列はそれぞれの地色を残し、上辺バーだけで示す。
+  "& thead th.is-active-col:not(.is-filtered-col):not(.is-changed-col)": {
+    background: "color-mix(in srgb, var(--accent) 6%, var(--bg-header))",
+  },
+  // 行番号の文字は地 (accent 6%) の上でも AA を保つよう --text にする
+  // (保留編集行の preview 色の文字は外れるが、左端バーで保留は示される)。
+  // 戻り (外れる) 側の transition は付けず、hover の背景切替が遅れないようにする。
+  "& tbody tr td.row-index.is-active-row": {
+    background: "color-mix(in srgb, var(--accent) 6%, var(--bg-header))",
+    color: "var(--text)",
+    transition: "background var(--dur-fast) var(--ease)",
+  },
+  // 列ヘッダは地色だけだとフィルタ中 (accent 14%) と見分けにくいので、上辺に inset バーを足す。
+  // 固定列の境界影・変更列の下線 (box-shadow) と合成されないので、組み合わせはここで重ねる。
+  "& thead th.is-active-col": {
+    boxShadow: "inset 0 var(--space-0-5) 0 var(--accent)",
+  },
+  "& thead th.is-active-col.is-changed-col": {
+    boxShadow: "inset 0 var(--space-0-5) 0 var(--accent), inset 0 -2px 0 var(--preview-highlight)",
+  },
+  "& thead th.is-active-col.is-pinned-left": {
+    boxShadow:
+      "inset 0 var(--space-0-5) 0 var(--accent), 2px 0 4px -2px color-mix(in srgb, var(--text) 30%, transparent)",
+  },
+  "& thead th.is-active-col.is-pinned-right": {
+    boxShadow:
+      "inset 0 var(--space-0-5) 0 var(--accent), -2px 0 4px -2px color-mix(in srgb, var(--text) 30%, transparent)",
+  },
+  "& thead th.is-active-col.is-changed-col.is-pinned-left": {
+    boxShadow:
+      "inset 0 var(--space-0-5) 0 var(--accent), inset 0 -2px 0 var(--preview-highlight), 2px 0 4px -2px color-mix(in srgb, var(--text) 30%, transparent)",
+  },
+  "& thead th.is-active-col.is-changed-col.is-pinned-right": {
+    boxShadow:
+      "inset 0 var(--space-0-5) 0 var(--accent), inset 0 -2px 0 var(--preview-highlight), -2px 0 4px -2px color-mix(in srgb, var(--text) 30%, transparent)",
+  },
+  // 列ドラッグ中はドロップ先の目印 (左端線 + 12% の地) を優先し、上辺バーと重ねる。
+  "& thead th.is-active-col.is-drag-over": {
+    boxShadow: "inset 2px 0 0 0 var(--accent), inset 0 var(--space-0-5) 0 var(--accent)",
+    background: "color-mix(in srgb, var(--accent) 12%, var(--bg-header))",
+  },
   // 再実行差分の追加行 (#597, ResultGrid のみ)。変更セルは上の is-changed (黄) を
   // 流用し、追加行は緑で示す (削除行は今回結果に無いためツールバーの件数で示す)。
   // 緑は色覚に配慮しつつ「追加=増加」の直感に沿う。reduced-motion 時も色は残る。
@@ -991,6 +1052,38 @@ export const GRID_CSS: SystemStyleObject = {
     outline: "none",
     boxShadow: "var(--focus-ring-inset)",
   },
+  // 滑って追従する枠 (#1578)。アクティブセル / 範囲選択 / 現在の検索ヒットごとに 1 枚。
+  // 絶対配置・ポインタ透過で、セルより手前 (固定列・ヘッダ・行番号よりは奥) に描く。位置と
+  // 大きさは `useGlideFrame` が確定時に書く。枠が出ている間はコンテナに data-glide-* が立ち、
+  // 下の規則で元のセル単位のリングを消す (枠が出せない固定列・描画窓の外では元のリングのまま)。
+  "& .grid-glide-frame": {
+    position: "absolute",
+    zIndex: 0,
+    boxSizing: "border-box",
+    pointerEvents: "none",
+    borderRadius: "var(--radius-sm)",
+    willChange: "left, top, width, height",
+  },
+  "& .grid-glide-frame[hidden]": { display: "none" },
+  "& .grid-glide-active": { boxShadow: "var(--focus-ring-inset)" },
+  "& .grid-glide-selection": {
+    boxShadow: "inset 0 0 0 var(--focus-ring-width, 2px) color-mix(in srgb, var(--accent) 70%, transparent)",
+  },
+  "& .grid-glide-find": { boxShadow: `inset 0 0 0 2px ${semanticColorVar("warning", "solid")}` },
+  // 未適用 / 不正な編集のセルには枠を出さない (resolve が [] を返す) ので、ここでは対象外。
+  "&[data-glide-active='on'] td.is-active-cell:not(.is-pending-edit):not(.is-invalid-edit):not(:focus-within)":
+    { boxShadow: "none" },
+  // 編集可能セルは矢印移動で td 自身にフォーカスが移り `:focus-within` のリングが出るので、
+  // 入力欄が開いていない間はそれも枠に任せて消す (二重表示の防止)。
+  "&[data-glide-active='on'] td.is-editable-cell.is-active-cell:focus-within:not(:has(.cell-edit-input)):not(.is-pending-edit):not(.is-invalid-edit)":
+    { boxShadow: "none" },
+  "&[data-glide-selection='on'] tbody td.is-selected-cell:not(.is-active-cell):not(.is-pinned)": {
+    boxShadow: "none",
+  },
+  "&[data-glide-find='on'] tbody td.is-find-current, &[data-glide-find='on'] tbody tr.grid-row-stripe td.is-find-current, &[data-glide-find='on'] tbody tr:hover td.is-find-current":
+    { boxShadow: "none" },
+  // マーキー選択中はセル内テキストの選択を止める (#1578)。
+  "&[data-marquee='on']": { userSelect: "none", cursor: "default" },
   // pending edit のセルがアクティブ/フォーカス中のとき: 上記リングが is-pending-edit の
   // 左端バーを上書きしてしまうため、専用セレクタでバー + リングを明示的に重ねる。
   "& td.is-pending-edit.is-editable-cell:focus-within": {
@@ -1386,11 +1479,23 @@ interface Props {
   /** スクロール位置が変わるたびに現在の scrollTop を通知する (#678。タブ永続化用)。 */
   onScroll?: (scrollTop: number) => void;
   /**
+   * 現在のページ番号 (table タブのサーバ側ページング、#1752)。変わったコミットで
+   * `<tbody>` をスライド / クロスフェードし、スクロールを先頭へ戻す。省略時は無効。
+   */
+  pageTurnPage?: number;
+  /** `pageTurnPage` の比較範囲 (タブ ID 等)。変わったときは別の結果とみなして再生しない。 */
+  pageTurnScope?: string;
+  /**
    * グリッド系ショートカット (コピー/コピー+ヘッダ/行インスペクタ/Undo/Redo) の
    * 解決済みバインド (#681)。省略時は今日の既定キー (`DEFAULT_SHORTCUT_COMBOS`)
    * のまま動く。
    */
   gridBindings?: GridBindings;
+  /**
+   * クエリ実行前 (result が null) の空状態に出す補助アクション (#1784)。
+   * `buildResultEmptyActions` で組み立てたものを渡す。省略時はボタン無しの説明のみ。
+   */
+  emptyActions?: ResultEmptyActionItem[];
   /**
    * サーバ側ソート/フィルタ (#792): table タブでヘッダーメニューから適用した
    * 全件対象の並び替え/絞り込み。SQL 組み立て・再フェッチは App が担う。
@@ -3271,6 +3376,8 @@ interface GridHeaderCellProps {
   sortDir: false | "asc" | "desc";
   sortRank: number;
   isChangedCol: boolean;
+  /** アクティブセルがこの列にある (列ヘッダのクロスハイライト, #1755)。 */
+  isActiveCol: boolean;
   colFilterActive: boolean;
   pinSide: ReturnType<typeof pinSideFromTable>;
   /** ピン留め列の sticky オフセット (左なら left、右なら right)。 */
@@ -3310,6 +3417,7 @@ const GridHeaderCell = memo(function GridHeaderCell({
   sortDir,
   sortRank,
   isChangedCol,
+  isActiveCol,
   colFilterActive,
   pinSide,
   pinOffset,
@@ -3340,7 +3448,7 @@ const GridHeaderCell = memo(function GridHeaderCell({
     <th
       data-col-id={h.column.id}
       style={pinStyle}
-      className={`col-${kind} ${canSort ? "is-sortable" : ""} ${sortDir ? `is-sorted-${sortDir}` : ""} ${isResizing ? "is-resizing" : ""} ${isChangedCol ? "is-changed-col" : ""} ${colFilterActive ? "is-filtered-col" : ""} ${isDragOver ? "is-drag-over" : ""} ${isDragSource ? "is-dragging-col" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
+      className={`col-${kind} ${canSort ? "is-sortable" : ""} ${sortDir ? `is-sorted-${sortDir}` : ""} ${isResizing ? "is-resizing" : ""} ${isChangedCol ? "is-changed-col" : ""} ${isActiveCol ? "is-active-col" : ""} ${colFilterActive ? "is-filtered-col" : ""} ${isDragOver ? "is-drag-over" : ""} ${isDragSource ? "is-dragging-col" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
       aria-sort={sortDir === "asc" ? "ascending" : sortDir === "desc" ? "descending" : "none"}
       onDragOver={dragActive ? (e) => handlers.onDragOver(e, h.column.id) : undefined}
       onDrop={dragActive ? (e) => handlers.onDrop(e, h.column.id) : undefined}
@@ -3699,6 +3807,8 @@ const GridRow = memo(function GridRow({
         key={cell.id}
         role="gridcell"
         tabIndex={isActiveCell ? 0 : -1}
+        data-r={row.index}
+        data-c={colIdx}
         style={pinStyle}
         ref={(el) => {
           const key = `${row.index}:${colIdx}`;
@@ -3882,7 +3992,7 @@ const GridRow = memo(function GridRow({
   return (
     <tr role="row" className={rowClass || undefined} ref={measureRef} data-index={measureIndex}>
       <td
-        className="row-index"
+        className={activeColIdx !== null ? "row-index is-active-row" : "row-index"}
         // Shift+クリックでブラウザ既定のテキスト選択が走らないようにする。
         onMouseDown={(e) => {
           if (e.shiftKey) e.preventDefault();
@@ -3972,6 +4082,8 @@ export const DataGrid = memo(function DataGrid({
   emptyMessage,
   skeleton = false,
   scrollContainerRef,
+  pageTurnPage,
+  pageTurnScope,
   rowSqlDriver,
   rowSqlDatabase,
   rowSqlTable,
@@ -3988,6 +4100,7 @@ export const DataGrid = memo(function DataGrid({
   canRedo,
   onSelectionSummary,
   onExportSelection,
+  exportViewRef,
   onRunStatsQuery,
   valuePicker,
   onExploreColumn,
@@ -4101,6 +4214,9 @@ export const DataGrid = memo(function DataGrid({
    * snapshots) to render every row as before.
    */
   scrollContainerRef?: RefObject<HTMLDivElement | null>;
+  /** ページ送り演出 (#1752)。`ResultGrid` の同名 prop を中継する。 */
+  pageTurnPage?: number;
+  pageTurnScope?: string;
   /**
    * When `rowSqlTable` is set, the right-click menu can generate executable
    * INSERT / UPDATE / DELETE statements for the clicked row. `rowSqlDriver`
@@ -4165,6 +4281,14 @@ export const DataGrid = memo(function DataGrid({
    * `selection` prop へそのまま渡し、モーダル側で「選択範囲」スコープを提示する。
    */
   onExportSelection?: (data: { columns: Column[]; rows: CellValue[][] }) => void;
+  /**
+   * 「現在のビュー」エクスポート (#1507) 用の取得口。`DataGrid` が毎レンダーで
+   * 「いまの表示 (フィルタ・ソート・列の表示/順序を適用した列/行) を切り出す関数」を
+   * ここへ置く。親 (`ResultGrid`) はツールバーの Export を押した瞬間だけ呼ぶ —
+   * 行を継続的に親へ push しない (`onExportSelection` と同じ理由)。表示が生の全件と
+   * 同一なら null を返す。
+   */
+  exportViewRef?: RefObject<(() => { columns: Column[]; rows: CellValue[][] } | null) | null>;
   /**
    * Runs an ad-hoc SELECT for the column quick-stats popover's "aggregate all
    * rows" action (#524). Provided by App bound to the active session; omit to
@@ -4427,7 +4551,9 @@ export const DataGrid = memo(function DataGrid({
     setReveal((r) => {
       if (!r || r.kind !== "cell") return r;
       const pks = pkIndices ?? [];
-      if (rowIdentityStrategy !== "primary_key" || pks.length === 0) return null;
+      // unique_key (UNIQUE NOT NULL, #1776) は値が行に固有で動かないので PK と同様に追従してよい。
+      if ((rowIdentityStrategy !== "primary_key" && rowIdentityStrategy !== "unique_key") || pks.length === 0)
+        return null;
       const prev = prevRows[r.rowIdx];
       if (!prev) return null;
       const key = rowEditKey(prev, pks, r.rowIdx);
@@ -4490,6 +4616,7 @@ export const DataGrid = memo(function DataGrid({
       col: tableEl?.querySelector<HTMLElement>(`col[data-col-id="${column.id}"]`) ?? null,
       table: tableEl,
       header: (e.currentTarget as HTMLElement).closest("th"),
+      guideLabel: (width) => t("gridResizeWidthBadge", { width }),
       onCommit: (size) => handleColumnSizingChange((prev) => ({ ...prev, [column.id]: size })),
     });
   };
@@ -5237,6 +5364,10 @@ export const DataGrid = memo(function DataGrid({
   const gridTbodyRef = useRef<HTMLTableSectionElement>(null);
   // ハンドル経由 (非同期ソート) の間は、順序が届いたコミットで再生するよう適用済みの順序のキーを使う。
   useRowCrossfade(gridTbodyRef, handleManual && handleOrder ? handleOrder.fade : fadeKeys, gridViewKey ?? "");
+  // ページ送りの方向付きスライド + スクロール先頭リセット (#1752)。
+  usePageTurn(gridTbodyRef, scrollContainerRef, pageTurnPage, pageTurnScope ?? "");
+  // 初回バッチ着弾 (スケルトン → 実データ) の 1 回限りの stagger リビール (#1579)。
+  useFirstBatchReveal(gridTbodyRef, scrollContainerRef, skeleton, rows.length);
 
   // Right-click "copy" menu. `rowIdx` is the ORIGINAL row index (so copied
   // values match `rows` regardless of sort/filter) and `colIdx` the display
@@ -5371,9 +5502,8 @@ export const DataGrid = memo(function DataGrid({
     });
   // 「SQL としてコピー」は伏せ字を埋めると壊れた SQL になるため、コピーを伏せ字に
   // する設定の間は、マスク中のセルを含む行を対象にできない (#1069)。
-  const rowSqlBlockedByMask = (rowIndices: number[]) =>
-    columnMaskCopyPlaceholder &&
-    rowIndices.some((ri) => rowHasMaskedCell(maskedCols, reveal, ri, columns.length));
+  const rowSqlBlockedByMask = (rowIndices: number[], colIndices: number[] = columns.map((_, i) => i)) =>
+    columnMaskCopyPlaceholder && rowIndices.some((ri) => colIndices.some((ci) => cellMaskedNow(ri, ci)));
 
   // Whether the right-click menu can offer "copy as SQL": we need a concrete
   // target table (set only for table tabs, not free-form query results).
@@ -5405,24 +5535,27 @@ export const DataGrid = memo(function DataGrid({
   // resolvable primary key, and even without a resolvable target table (a
   // JOIN / free-form query result falls back to a placeholder table name and
   // warns via toast — `buildInsertClipboard`'s `tableResolved` flag).
-  const copyRowsAsInsert = (rowIndices: number[], combineValues: boolean) => {
-    const selectedRows = rowIndices.map((i) => rows[i]).filter((r): r is CellValue[] => !!r);
-    if (selectedRows.length === 0 || columns.length === 0) return;
-    const result = buildInsertClipboard(
-      {
-        driver: rowSqlDriver ?? "mysql",
-        database: rowSqlDatabase ?? "",
-        table: rowSqlTable,
-        columns,
-        rows: selectedRows,
-      },
+  const copyRowsAsInsert = (
+    target: { rowIndices: number[]; colIndices: number[] },
+    combineValues: boolean,
+  ) => {
+    if (target.rowIndices.length === 0 || target.colIndices.length === 0) return;
+    const result = buildGridCopyInsert({
+      columns,
+      rows,
+      rowIndices: target.rowIndices,
+      colIndices: target.colIndices,
+      isMasked: cellMaskedNow,
+      driver: rowSqlDriver ?? "mysql",
+      database: rowSqlDatabase ?? "",
+      table: rowSqlTable,
       combineValues,
-    );
+    });
     if (!result.sql) return;
     if (!result.tableResolved) {
       toast.info(t("gridCopyAsInsertAmbiguousTable"));
     }
-    void runCopy(result.sql, { rowIndices, colIndices: visibleColIds });
+    void runCopy(result.sql, { rowIndices: target.rowIndices, colIndices: target.colIndices });
   };
 
   const commitEdit = (rowIdx: number, colIdx: number, value: string, originalDisplay: string) => {
@@ -5534,6 +5667,30 @@ export const DataGrid = memo(function DataGrid({
     visibleColIdsRef.current = visibleColIdsRaw;
   }
   const visibleColIds = visibleColIdsRef.current;
+  // 依存配列なしの layout effect で毎コミット最新の閉包を置く (描画中の ref 代入だと、
+  // deferredSearch で中断・破棄された描画の閉包が残りうる)。呼ばれるのは Export を開く瞬間だけ。
+  useLayoutEffect(() => {
+    if (!exportViewRef) return;
+    // 書式生成は ExportModal 側の既存経路 (buildExportContent) に任せ、ここは表示順の
+    // 切り出しだけ。大結果 (ハンドル) の表示順は visibleRows が既に反映している (#1507)。
+    exportViewRef.current = () => {
+      // ページング表示では visibleRows が今のページだけなので、ページ分割前の行モデル
+      // (フィルタ・ソート後の全ページ分) から切り出す。
+      const viewRows = paginationState
+        ? rowAllowSet
+          ? table.getPrePaginatedRowModel().rows.filter((r) => rowAllowSet.has(r.index))
+          : table.getPrePaginatedRowModel().rows
+        : visibleRows;
+      const identityCols =
+        visibleColIds.length === columns.length && visibleColIds.every((ci, i) => ci === i);
+      const identityRows = viewRows.length === rows.length && viewRows.every((r, i) => r.index === i);
+      if (identityCols && identityRows) return null;
+      return {
+        columns: visibleColIds.map((ci) => columns[ci]).filter((c): c is Column => !!c),
+        rows: viewRows.map((r) => visibleColIds.map((ci) => rows[r.index]?.[ci] ?? null)),
+      };
+    };
+  });
   const totalRows = rows.length;
   const hasColumnFilter = columnFilters.length > 0;
   const hasGlobalFilter = (globalFilter ?? "").trim().length > 0;
@@ -6155,9 +6312,100 @@ export const DataGrid = memo(function DataGrid({
         refTable: fkMeta.referenced_table,
         refColumn: fkMeta.referenced_column,
         value: rows[rowIdx]?.[colIdx] ?? null,
+        valueType: columns[colIdx]?.type_name,
       }),
     };
   };
+  // クリック&ドラッグのマーキー選択 (#1578)。mousedown で追跡を始め、ポインタが
+  // しきい値を超えて「別のセル」に入った時点で初めてマーキーになる (同じセル内の
+  // ドラッグはブラウザ既定のセル内テキスト選択のまま)。選択の基点は mousedown の
+  // セルで、アクティブセルも動かさない。ビューポート端ではスクロールを rAF で自動送りする。
+  const marqueeStopRef = useRef<(() => void) | null>(null);
+  const beginMarquee = (x0: number, y0: number, anchor: { rowIdx: number; colIdx: number }) => {
+    marqueeStopRef.current?.();
+    const scroller = scrollContainerRef?.current;
+    if (!scroller) return;
+    let started = false;
+    let x = x0;
+    let y = y0;
+    let hoverKey = "";
+    let raf = 0;
+    const hoverAt = (target: EventTarget | null): { rowIdx: number; colIdx: number } | null => {
+      let td = (target as Element | null)?.closest?.("td[data-r]") as HTMLElement | null | undefined;
+      // 隣のグリッドなど、このスクロールコンテナの外のセルは拾わない。
+      if (td && !scroller.contains(td)) td = null;
+      if (!td && typeof document.elementFromPoint === "function") {
+        // 表の外 (ヘッダ・行番号・余白・コンテナの外) にいるときは、本体領域へ丸めた位置のセルを使う。
+        const r = scroller.getBoundingClientRect();
+        const head = scroller.querySelector("thead")?.getBoundingClientRect().height ?? 0;
+        const px = Math.min(Math.max(x, r.left + leftDeadZone + 1), r.right - rightDeadZone - 2);
+        const py = Math.min(Math.max(y, r.top + head + 1), r.bottom - 2);
+        td = document.elementFromPoint(px, py)?.closest?.("td[data-r]") as HTMLElement | null | undefined;
+        if (td && !scroller.contains(td)) td = null;
+      }
+      if (!td) return null;
+      const rowIdx = Number(td.dataset.r);
+      const colIdx = Number(td.dataset.c);
+      return Number.isInteger(rowIdx) && Number.isInteger(colIdx) ? { rowIdx, colIdx } : null;
+    };
+    const apply = (hover: { rowIdx: number; colIdx: number } | null) => {
+      if (!hover) return;
+      const key = `${hover.rowIdx}:${hover.colIdx}`;
+      if (key === hoverKey) return;
+      hoverKey = key;
+      setSelection(marqueeSelection(anchor, hover));
+    };
+    const tick = () => {
+      raf = 0;
+      const r = scroller.getBoundingClientRect();
+      const head = scroller.querySelector("thead")?.getBoundingClientRect().height ?? 0;
+      const dx = autoScrollDelta(x, r.left + leftDeadZone, r.right - rightDeadZone);
+      const dy = autoScrollDelta(y, r.top + head, r.bottom);
+      if (dx !== 0 || dy !== 0) {
+        scroller.scrollLeft += dx;
+        scroller.scrollTop += dy;
+        apply(hoverAt(null));
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    const onMove = (e: MouseEvent) => {
+      // ボタンを離したイベントを取りこぼした (ウィンドウ外で離したなど)。
+      if (e.buttons === 0) return stop();
+      x = e.clientX;
+      y = e.clientY;
+      const hover = hoverAt(e.target);
+      if (!started) {
+        if (!exceedsDragThreshold(x - x0, y - y0)) return;
+        if (!hover || (hover.rowIdx === anchor.rowIdx && hover.colIdx === anchor.colIdx)) return;
+        started = true;
+        scroller.setAttribute("data-marquee", "on");
+        window.getSelection()?.removeAllRanges();
+        if (typeof requestAnimationFrame === "function") raf = requestAnimationFrame(tick);
+      }
+      apply(hover);
+    };
+    function stop() {
+      document.removeEventListener("mousemove", onMove, true);
+      document.removeEventListener("mouseup", stop, true);
+      document.removeEventListener("dragstart", stop, true);
+      document.removeEventListener("contextmenu", stop, true);
+      document.removeEventListener("visibilitychange", stop);
+      window.removeEventListener("blur", stop);
+      if (raf) cancelAnimationFrame(raf);
+      scroller?.removeAttribute("data-marquee");
+      if (marqueeStopRef.current === stop) marqueeStopRef.current = null;
+    }
+    document.addEventListener("mousemove", onMove, true);
+    document.addEventListener("mouseup", stop, true);
+    // ドラッグ開始 (列の並べ替えなど) / コンテキストメニュー / タブの非表示でも追跡を止める。
+    document.addEventListener("dragstart", stop, true);
+    document.addEventListener("contextmenu", stop, true);
+    document.addEventListener("visibilitychange", stop);
+    window.addEventListener("blur", stop);
+    marqueeStopRef.current = stop;
+  };
+  // アンマウント時にドラッグ追跡を止める。
+  useEffect(() => () => marqueeStopRef.current?.(), []);
   // `GridRow` に渡すハンドラ。最新の state を読む関数を参照固定で渡す (#1341)。
   const rowHandlers = useStableCallbacks({
     onCellMouseDown: (e: ReactMouseEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => {
@@ -6171,6 +6419,24 @@ export const DataGrid = memo(function DataGrid({
         extendSelectionTo(rowIdx, colIdx);
       } else if (selection) {
         setSelection(null);
+      }
+      // 素の左ボタンのドラッグでマーキー選択 (#1578)。Shift+クリック・編集中・入力欄/
+      // ボタン (FK ジャンプなど) 上は既存の挙動に任せる。
+      if (
+        scrollContainerRef &&
+        canStartMarquee({
+          button: e.button,
+          shiftKey: e.shiftKey,
+          ctrlKey: e.ctrlKey,
+          metaKey: e.metaKey,
+          altKey: e.altKey,
+          editing: editing !== null,
+          onInteractive: !!(e.target as Element).closest?.(
+            "button, a, input, textarea, select, [contenteditable='true']",
+          ),
+        })
+      ) {
+        beginMarquee(e.clientX, e.clientY, { rowIdx, colIdx });
       }
     },
     onCellFocus: (e: ReactFocusEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => {
@@ -6639,6 +6905,91 @@ export const DataGrid = memo(function DataGrid({
   const bodyPaddingTop = hiddenWindow ? hiddenWindow.top : virtualPaddingTop;
   const bodyPaddingBottom = hiddenWindow ? hiddenWindow.bottom : virtualPaddingBottom;
 
+  // 滑って追従する枠 (#1578)。アクティブセル / 範囲選択 / 現在の検索ヒットに 1 枚ずつ。
+  // 対象が変わった確定コミットでだけセルを計測して滑らせる (`useGlideFrame`)。
+  const glideLayoutKey = `${columnLayoutKey}#${visibleRows.length}:${visibleRows[0]?.index ?? ""}:${
+    visibleRows[visibleRows.length - 1]?.index ?? ""
+  }#${bodyIndices[0] ?? ""}:${bodyIndices[bodyIndices.length - 1] ?? ""}#${colWinFirst}:${colWinLast}#${bodyPaddingTop}`;
+  // 未適用の編集が変わったら、アクティブセルの枠を出す/隠すの判定をやり直す。
+  const pendingVerRef = useRef({ obj: pendingEdits, n: 0 });
+  if (pendingVerRef.current.obj !== pendingEdits) {
+    pendingVerRef.current = { obj: pendingEdits, n: pendingVerRef.current.n + 1 };
+  }
+  const activeFrameRef = useRef<HTMLDivElement>(null);
+  const selectionFrameRef = useRef<HTMLDivElement>(null);
+  const findFrameRef = useRef<HTMLDivElement>(null);
+  const cellEl = (rowIdx: number, colIdx: number) => cellRefs.current.get(`${rowIdx}:${colIdx}`);
+  useGlideFrame({
+    frameRef: activeFrameRef,
+    scrollRef: scrollContainerRef,
+    observeRef: gridTableRef,
+    // 編集中は入力欄自身の枠が「どこを編集中か」を示すので出さない。
+    targetKey: editing ? null : activeFrameKey(activeCell),
+    layoutKey: `${glideLayoutKey}#p${pendingVerRef.current.n}`,
+    resolve: () => {
+      const el = activeCell ? cellEl(activeCell.rowIdx, activeCell.colIdx) : undefined;
+      // 未適用の編集バー / 不正な編集のリングはセル自身が描く。枠で覆わずセル単位の表示に戻す。
+      if (!el || el.classList.contains("is-pending-edit") || el.classList.contains("is-invalid-edit"))
+        return [];
+      return [el];
+    },
+    attr: "data-glide-active",
+  });
+  useGlideFrame({
+    frameRef: selectionFrameRef,
+    scrollRef: scrollContainerRef,
+    observeRef: gridTableRef,
+    targetKey: selectionRect ? selectionFrameKey(selection) : null,
+    layoutKey: glideLayoutKey,
+    // 選択範囲の中でマウント済みのセルの外接矩形 (描画窓の外は含まれないので、窓の端で切れる)。
+    resolve: () => {
+      if (!selectionRect) return [];
+      // 端の行・列 (マウント済みのうち左上と右下) だけを測る。全選択でも O(窓) で済む。
+      // 選択の行範囲とマウント済みの行範囲の交わりの両端だけを使う (選択の大きさに比例させない)。
+      const mounted =
+        virtualize && bodyIndices.length > 0
+          ? { first: bodyIndices[0], last: bodyIndices[bodyIndices.length - 1] }
+          : virtualize
+            ? { first: 1, last: 0 }
+            : null;
+      const span = selectionMountedRows(selectionRect.r0, selectionRect.r1, mounted);
+      const top = span ? visibleRows[span.top]?.index : undefined;
+      const bottom = span ? visibleRows[span.bottom]?.index : undefined;
+      if (top === undefined || bottom === undefined) return [];
+      const colsIn = visibleColIds.slice(selectionRect.c0, selectionRect.c1 + 1);
+      const firstCol = colsIn.find((c) => cellEl(top, c));
+      const lastCol = [...colsIn].reverse().find((c) => cellEl(bottom, c));
+      const lastColTop = [...colsIn].reverse().find((c) => cellEl(top, c));
+      const firstColBottom = colsIn.find((c) => cellEl(bottom, c));
+      const corners: Array<[number, number | undefined]> = [
+        [top, firstCol],
+        [top, lastColTop],
+        [bottom, firstColBottom],
+        [bottom, lastCol],
+      ];
+      const out: HTMLElement[] = [];
+      for (const [r, c] of corners) {
+        const el = c === undefined ? undefined : cellEl(r, c);
+        if (el) out.push(el);
+      }
+      return out;
+    },
+    attr: "data-glide-selection",
+  });
+  useGlideFrame({
+    frameRef: findFrameRef,
+    scrollRef: scrollContainerRef,
+    observeRef: gridTableRef,
+    targetKey: findCurrentKey ? `f:${findCurrentKey}` : null,
+    layoutKey: glideLayoutKey,
+    resolve: () => {
+      const k = findCurrentKey ? parseCellKey(findCurrentKey) : null;
+      const el = k ? cellEl(k.rowIdx, k.colIdx) : undefined;
+      return el ? [el] : [];
+    },
+    attr: "data-glide-find",
+  });
+
   return (
     <>
       {/* スクロール端影 (#1073)。スクロールコンテナ直下の先頭に置く高さ 0 の
@@ -6745,6 +7096,7 @@ export const DataGrid = memo(function DataGrid({
                     sortDir={sortDir}
                     sortRank={sortDir && multiSort ? h.column.getSortIndex() + 1 : 0}
                     isChangedCol={changedColumns?.[colIdx] ?? false}
+                    isActiveCol={activeCell?.colIdx === colIdx}
                     colFilterActive={
                       isColumnFilterActive(h.column.getFilterValue() as ColumnFilter | undefined) ||
                       // サーバ側フィルタ (#792) 中の列もヘッダで有効表示する (#1610)。
@@ -6930,6 +7282,15 @@ export const DataGrid = memo(function DataGrid({
           </tfoot>
         )}
       </table>
+      {/* 滑って追従する枠 (#1578)。プレビュー用の小さなグリッド (スクロールコンテナ無し) では
+          出さず、元のセル単位のリングのまま。 */}
+      {scrollContainerRef && (
+        <>
+          <div ref={findFrameRef} className="grid-glide-frame grid-glide-find" aria-hidden hidden />
+          <div ref={selectionFrameRef} className="grid-glide-frame grid-glide-selection" aria-hidden hidden />
+          <div ref={activeFrameRef} className="grid-glide-frame grid-glide-active" aria-hidden hidden />
+        </>
+      )}
       {copyMenu && (
         <ContextMenu
           x={copyMenu.x}
@@ -6947,19 +7308,20 @@ export const DataGrid = memo(function DataGrid({
             ...submenuOrFlat(
               t("gridCopyGroup"),
               (() => {
-                // "Copy as INSERT" (#601): operates on every row covered by an
-                // active multi-row range selection, or just the clicked row
-                // when there is none/it's a single row. Unlike UPDATE/DELETE
-                // it stays available even without a resolved target table —
-                // `copyRowsAsInsert` falls back to a placeholder name and warns
-                // instead.
-                const insertRowIndices =
-                  selectionRect && selectionRect.rowIndexSet.size > 1
-                    ? Array.from(selectionRect.rowIndexSet)
-                    : [copyMenu.rowIdx];
+                // "Copy as INSERT" (#601, #1585): CSV / JSON / Markdown と同じ対象範囲
+                // (`copyTargetFor`)。矩形選択があればその行・列だけ、無ければ右クリック
+                // した 1 行の表示中の全列。UPDATE/DELETE と違い、対象テーブルが解決できない
+                // ときもプレースホルダ名で出して警告する (`copyRowsAsInsert`)。
+                const insertTarget = copyTargetFor(copyMenu.rowIdx, copyMenu.colIdx);
+                const insertRowIndices = insertTarget.rowIndices;
                 const multiRow = insertRowIndices.length > 1;
-                // マスク中のセルを含む行は SQL としてコピーできない (#1069)。
-                const insertMasked = rowSqlBlockedByMask(insertRowIndices);
+                // 矩形選択が表示中の全列より少ないとき、INSERT は選択列だけを出す。
+                // 含まれない列は既定値 / NOT NULL 違反になるので、ラベルで気づけるようにする。
+                const insertPartialCols = insertTarget.colIndices.length < visibleColIds.length;
+                const insertColCount = insertTarget.colIndices.length;
+                const partialTitle = t("gridCopyAsInsertPartialTitle");
+                // マスク中のセルを含む範囲は SQL としてコピーできない (#1069)。
+                const insertMasked = rowSqlBlockedByMask(insertRowIndices, insertTarget.colIndices);
                 const rowMasked = rowSqlBlockedByMask([copyMenu.rowIdx]);
                 const maskTitle = t("gridMaskedSqlCopyBlocked");
                 return [
@@ -6992,26 +7354,44 @@ export const DataGrid = memo(function DataGrid({
                   { separator: true as const },
                   multiRow
                     ? {
-                        label: t("gridCopyAsInsertRows", { count: insertRowIndices.length }),
-                        title: insertMasked ? maskTitle : t("gridCopyAsInsertRowsTitle"),
+                        label: insertPartialCols
+                          ? t("gridCopyAsInsertRowsPartial", {
+                              count: insertRowIndices.length,
+                              cols: insertColCount,
+                            })
+                          : t("gridCopyAsInsertRows", { count: insertRowIndices.length }),
+                        title: insertMasked
+                          ? maskTitle
+                          : insertPartialCols
+                            ? partialTitle
+                            : t("gridCopyAsInsertRowsTitle"),
                         disabled: insertMasked,
-                        onSelect: () => copyRowsAsInsert(insertRowIndices, false),
+                        onSelect: () => copyRowsAsInsert(insertTarget, false),
                       }
                     : {
-                        label: t("gridCopyAsInsert"),
-                        title: insertMasked ? maskTitle : undefined,
+                        label: insertPartialCols
+                          ? t("gridCopyAsInsertPartial", { cols: insertColCount })
+                          : t("gridCopyAsInsert"),
+                        title: insertMasked ? maskTitle : insertPartialCols ? partialTitle : undefined,
                         disabled: insertMasked,
-                        onSelect: () => copyRowsAsInsert(insertRowIndices, false),
+                        onSelect: () => copyRowsAsInsert(insertTarget, false),
                       },
                   ...(multiRow
                     ? [
                         {
-                          label: t("gridCopyAsInsertRowsCombined", {
-                            count: insertRowIndices.length,
-                          }),
-                          title: insertMasked ? maskTitle : t("gridCopyAsInsertRowsCombinedTitle"),
+                          label: insertPartialCols
+                            ? t("gridCopyAsInsertRowsCombinedPartial", {
+                                count: insertRowIndices.length,
+                                cols: insertColCount,
+                              })
+                            : t("gridCopyAsInsertRowsCombined", { count: insertRowIndices.length }),
+                          title: insertMasked
+                            ? maskTitle
+                            : insertPartialCols
+                              ? partialTitle
+                              : t("gridCopyAsInsertRowsCombinedTitle"),
                           disabled: insertMasked,
-                          onSelect: () => copyRowsAsInsert(insertRowIndices, true),
+                          onSelect: () => copyRowsAsInsert(insertTarget, true),
                         },
                       ]
                     : []),
@@ -7361,13 +7741,15 @@ export const DataGrid = memo(function DataGrid({
                   driver,
                   database: rowSqlDatabase,
                   childTable: inc.table,
+                  childSchema: inc.schema,
                   childColumn: inc.column,
                   value,
+                  valueType: columns[refColIdx]?.type_name,
                 });
                 reverse.push({
                   label: grouped
-                    ? t("gridFkReverseChild", { table: inc.table, column: inc.column })
-                    : t("gridFkReverse", { table: inc.table, column: inc.column }),
+                    ? t("gridFkReverseChild", { table: incomingFkTableName(inc), column: inc.column })
+                    : t("gridFkReverse", { table: incomingFkTableName(inc), column: inc.column }),
                   title: t("gridFkReverseTitle"),
                   onSelect: () => {
                     setCopyMenu(null);
@@ -7690,7 +8072,11 @@ export const DataGrid = memo(function DataGrid({
           }
           onPin={
             enableColumnControls
-              ? (side) => table.getColumn(String(filterMenu.colIdx))?.pin(tablePinPosition(side))
+              ? (side) => {
+                  // 確定の 1 回だけヘッダ位置を記録し、コミット後に列を固定端へ滑らせる (#1753)。
+                  columnFlip.capture();
+                  table.getColumn(String(filterMenu.colIdx))?.pin(tablePinPosition(side));
+                }
               : undefined
           }
           onShowStats={
@@ -7936,6 +8322,7 @@ export const DataGrid = memo(function DataGrid({
                         columns.map((c) => c.name),
                         rows[activeCell.rowIdx],
                         (ci) => cellMaskedNow(activeCell.rowIdx, ci),
+                        columns.map((c) => c.type_name),
                       ),
                       driver: rowSqlDriver ?? "mysql",
                       database: rowSqlDatabase ?? null,
@@ -8116,6 +8503,8 @@ function StreamingBanner({
  */
 function identityHintKeys(strategy: RowIdentityKind, ambiguous: boolean): { label: I18nKey; title: I18nKey } {
   switch (strategy) {
+    case "unique_key":
+      return { label: "editUniqueKeyHint", title: "editUniqueKeyHintTitle" };
     case "rowid":
       return { label: "editRowidHint", title: "editRowidHintTitle" };
     case "ctid":
@@ -8201,10 +8590,13 @@ export const ResultGrid = memo(
       initialScrollTop,
       onScroll,
       gridBindings,
+      emptyActions,
       serverSort,
       serverFilter,
       onSetServerSort,
       onSetServerFilter,
+      pageTurnPage,
+      pageTurnScope,
     }: Props,
     ref,
   ) {
@@ -8270,8 +8662,16 @@ export const ResultGrid = memo(
     // 新しい無名関数を渡すと props の shallow 比較が常に不一致になり memo が
     // 無意味になる。setState はどれも同一性の保証されたセッターなので依存配列は
     // 空でよい。
+    // 「現在のビュー」(#1507): DataGrid が置く切り出し関数。Export を開く瞬間にだけ呼ぶ。
+    const exportViewRef = useRef<(() => { columns: Column[]; rows: CellValue[][] } | null) | null>(null);
+    const [viewExport, setViewExport] = useState<{ columns: Column[]; rows: CellValue[][] } | null>(null);
+    const openExport = () => {
+      setViewExport(exportViewRef.current?.() ?? null);
+      setShowExport(true);
+    };
     const handleExportSelection = useCallback((data: { columns: Column[]; rows: CellValue[][] }) => {
       setSelectionExport(data);
+      setViewExport(exportViewRef.current?.() ?? null);
       setShowExport(true);
     }, []);
     const [search, setSearch] = useState("");
@@ -8627,6 +9027,22 @@ export const ResultGrid = memo(
     const keepAliveActiveRef = useRef(keepAliveActive);
     keepAliveActiveRef.current = keepAliveActive;
     const lastScrollTopRef = useRef(0);
+    // ページ送り (同一タブ内の page 変更) は先頭リセット (usePageTurn) に合わせて記録済みの
+    // スクロール位置も捨てる。keep-alive で隠れている間は DOM の scrollTop を戻せず、
+    // 再表示時に古い位置へ復元されてしまうため。
+    const pageTurnPrevRef = useRef({ page: pageTurnPage, scope: pageTurnScope });
+    useLayoutEffect(() => {
+      const prev = pageTurnPrevRef.current;
+      pageTurnPrevRef.current = { page: pageTurnPage, scope: pageTurnScope };
+      if (
+        prev.scope === pageTurnScope &&
+        prev.page !== undefined &&
+        pageTurnPage !== undefined &&
+        prev.page !== pageTurnPage
+      ) {
+        lastScrollTopRef.current = 0;
+      }
+    });
     const wasKeepAliveActiveRef = useRef(keepAliveActive);
     useLayoutEffect(() => {
       const was = wasKeepAliveActiveRef.current;
@@ -8932,9 +9348,18 @@ export const ResultGrid = memo(
 
     if (!result) {
       return (
-        <Box flex="1 1 auto" minHeight={0} minWidth={0} overflow="auto" bg="app.surface">
-          {t("resultEmpty")}
-        </Box>
+        <Flex flex="1 1 auto" minHeight={0} minWidth={0} overflow="auto" bg="app.surface">
+          {/* m="auto": 収まれば中央、溢れたら上端からスクロールできる (center だと上が切れる) */}
+          <Box m="auto">
+            <EmptyState
+              illustration={<RunQueryIllustration />}
+              icon="play"
+              title={t("resultEmptyTitle")}
+              description={t("resultEmpty")}
+              secondaryActions={emptyActions}
+            />
+          </Box>
+        </Flex>
       );
     }
     if (result.columns.length === 0) {
@@ -9131,6 +9556,7 @@ export const ResultGrid = memo(
         minWidth={0}
         overflow="hidden"
         bg="app.surface"
+        data-focus-landing-region=""
         position={streaming ? "relative" : undefined}
         // カラム確定でスケルトン → 実データへ切り替わる瞬間だけ一度フェードイン
         // させ、滑らかに差し替える (#657)。reduced-motion では静止 (App.css)。
@@ -9217,7 +9643,7 @@ export const ResultGrid = memo(
               size="sm"
               px="1.5"
               aria-label={t("exportButton")}
-              onClick={() => setShowExport(true)}
+              onClick={openExport}
               disabled={!canExport}
             >
               <Icon name="download" size={ICON_SIZES.md} />
@@ -10012,6 +10438,8 @@ export const ResultGrid = memo(
             rows={result.rows}
             onMaskConfigChange={setMaskConfig}
             scrollContainerRef={containerRef}
+            pageTurnPage={pageTurnPage}
+            pageTurnScope={pageTurnScope}
             globalFilter={deferredSearch}
             editable={editableActive}
             editableColumns={editableCols}
@@ -10042,7 +10470,9 @@ export const ResultGrid = memo(
             rowSqlDriver={driver}
             rowSqlDatabase={database}
             rowSqlTable={table}
-            blobIo={identityStrategy === "primary_key" ? blobIo : undefined}
+            blobIo={
+              identityStrategy === "primary_key" || identityStrategy === "unique_key" ? blobIo : undefined
+            }
             columnMeta={tableColumns ?? undefined}
             incomingFks={incomingFks}
             onRunRelatedQuery={onRunRelatedQuery}
@@ -10051,6 +10481,7 @@ export const ResultGrid = memo(
             skeleton={!!streaming}
             onSelectionSummary={setSelSummary}
             onExportSelection={handleExportSelection}
+            exportViewRef={exportViewRef}
             onRunStatsQuery={onRunStatsQuery}
             valuePicker={editableActive ? valuePicker : undefined}
             onExploreColumn={onExploreColumn}
@@ -10233,9 +10664,11 @@ export const ResultGrid = memo(
                 maskConfig ?? { enabled: settings.columnMaskEnabled, patterns: settings.columnMaskPatterns }
               }
               selection={selectionExport}
+              view={viewExport}
               onClose={() => {
                 setShowExport(false);
                 setSelectionExport(null);
+                setViewExport(null);
               }}
             />
           )}

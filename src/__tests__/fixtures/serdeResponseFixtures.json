@@ -514,6 +514,62 @@
       "totalRows": 0
     }
   ],
+  "bulkWriteOutcomeApplied": {
+    "result": {
+      "columns": [
+        {
+          "name": "id",
+          "type_name": "INTEGER"
+        },
+        {
+          "name": "label",
+          "type_name": "TEXT"
+        }
+      ],
+      "elapsed_ms": 12,
+      "rows": [
+        [
+          1,
+          "a"
+        ],
+        [
+          null,
+          "deadbeef"
+        ]
+      ],
+      "rows_affected": 0,
+      "server_messages": [
+        {
+          "severity": "notice",
+          "text": "table \"t\" does not exist, skipping"
+        }
+      ]
+    },
+    "status": "applied"
+  },
+  "bulkWriteOutcomeOptimisticConflict": {
+    "conflict_rows": 2,
+    "statement_counts": [
+      0,
+      1
+    ],
+    "status": "optimistic_conflict"
+  },
+  "bulkWriteOutcomeRollbackIncomplete": {
+    "actual_rows": 2,
+    "expected_rows": 1,
+    "status": "rollback_incomplete"
+  },
+  "bulkWriteOutcomeRowCountExceeded": {
+    "actual_rows": 2,
+    "batch_total_rows": 3,
+    "expected_rows": 1,
+    "statement_counts": [
+      2,
+      1
+    ],
+    "status": "row_count_exceeded"
+  },
   "cancelStreamResponse": {
     "cancelled": true,
     "deliveredRows": 42
@@ -539,6 +595,27 @@
   "column": {
     "name": "id",
     "type_name": "INTEGER"
+  },
+  "columnDependencyReport": {
+    "dependencies": [
+      {
+        "column": "price",
+        "confidence": "possible",
+        "detail": null,
+        "kind": "view",
+        "name": "v_orders"
+      },
+      {
+        "column": "price",
+        "confidence": "direct",
+        "detail": "price, qty",
+        "kind": "index",
+        "name": "idx_price"
+      }
+    ],
+    "warnings": [
+      "definitions"
+    ]
   },
   "columnProfile": {
     "column": "age",
@@ -1131,6 +1208,77 @@
       "truncated": false
     }
   ],
+  "dataSearchCancelledMessage": {
+    "deliveredRows": 2,
+    "kind": "cancelled"
+  },
+  "dataSearchDoneMessage": {
+    "kind": "done"
+  },
+  "dataSearchErrorMessage": {
+    "connectionLost": false,
+    "error": "connection reset",
+    "kind": "error"
+  },
+  "dataSearchProgressMessage": {
+    "index": 1,
+    "kind": "progress",
+    "table": "orders",
+    "total": 5
+  },
+  "dataSearchTableMessageVariants": [
+    {
+      "entry": {
+        "columns": [
+          {
+            "dataType": "varchar",
+            "name": "email"
+          }
+        ],
+        "hits": [
+          {
+            "column": "email",
+            "count": 3.0
+          }
+        ],
+        "status": "hit",
+        "table": "users"
+      },
+      "kind": "table"
+    },
+    {
+      "entry": {
+        "status": "no-hit",
+        "table": "orders"
+      },
+      "kind": "table"
+    },
+    {
+      "entry": {
+        "reason": "row-threshold",
+        "status": "skipped",
+        "table": "logs"
+      },
+      "kind": "table"
+    },
+    {
+      "entry": {
+        "reason": "no-searchable-columns",
+        "status": "skipped",
+        "table": "blobs"
+      },
+      "kind": "table"
+    },
+    {
+      "entry": {
+        "detail": "permission denied",
+        "reason": "error",
+        "status": "skipped",
+        "table": "broken"
+      },
+      "kind": "table"
+    }
+  ],
   "databaseTables": {
     "database": "appdb",
     "tables": [
@@ -1495,7 +1643,9 @@
   },
   "incomingForeignKey": {
     "column": "user_id",
+    "onDelete": "CASCADE",
     "referencedColumn": "id",
+    "schema": "sales",
     "table": "orders"
   },
   "indexInfo": {
@@ -1611,8 +1761,11 @@
         ],
         "row_estimate": 1234,
         "row_identity": {
-          "hidden_column": "rowid",
-          "strategy": "rowid"
+          "hidden_column": null,
+          "key_columns": [
+            "code"
+          ],
+          "strategy": "unique_key"
         },
         "sql": "SELECT * FROM `appdb`.`users`"
       },
@@ -1642,8 +1795,11 @@
     ],
     "row_estimate": 1234,
     "row_identity": {
-      "hidden_column": "rowid",
-      "strategy": "rowid"
+      "hidden_column": null,
+      "key_columns": [
+        "code"
+      ],
+      "strategy": "unique_key"
     },
     "sql": "SELECT * FROM `appdb`.`users`"
   },
@@ -5152,6 +5308,44 @@
       "active"
     ]
   },
+  "snippetImportPreview": {
+    "conflict_count": 1,
+    "conflicts": [
+      {
+        "existing_name": "old",
+        "id": "aaaaaaaa",
+        "incoming_name": "new"
+      }
+    ],
+    "duplicate_in_file_count": 0,
+    "new_count": 2,
+    "rejected": [
+      {
+        "error": "name is required",
+        "index": 4,
+        "name": "bad"
+      }
+    ],
+    "scope_reset_by_strategy": {
+      "overwrite": 1,
+      "rename": 1,
+      "skip": 0
+    },
+    "total": 3
+  },
+  "snippetImportResult": {
+    "imported": 2,
+    "overwritten": 0,
+    "rejected": [
+      {
+        "error": "name is required",
+        "index": 4,
+        "name": null
+      }
+    ],
+    "scope_reset": 1,
+    "skipped": 1
+  },
   "snippetVariants": [
     {
       "driver": null,
@@ -5398,8 +5592,11 @@
     "name": "users"
   },
   "tableRowIdentity": {
-    "hidden_column": "rowid",
-    "strategy": "rowid"
+    "hidden_column": null,
+    "key_columns": [
+      "code"
+    ],
+    "strategy": "unique_key"
   },
   "tableSchema": {
     "columns": [
@@ -6028,6 +6225,128 @@
         "update": false
       }
     ]
+  },
+  "whereUsedCancelledMessage": {
+    "kind": "cancelled",
+    "report": {
+      "cancelled": true,
+      "emptyDefinitions": [
+        {
+          "kind": "function",
+          "name": "f_empty"
+        }
+      ],
+      "failed": [
+        {
+          "error": "permission denied",
+          "kind": "procedure",
+          "name": "p_secret"
+        }
+      ],
+      "matches": [
+        {
+          "confidence": "direct",
+          "hitCount": 1,
+          "id": "view:v_users",
+          "kind": "view",
+          "lines": [
+            {
+              "clippedEnd": true,
+              "clippedStart": false,
+              "line": 3,
+              "ranges": [
+                [
+                  14,
+                  19
+                ]
+              ],
+              "text": "SELECT * FROM users"
+            }
+          ],
+          "name": "v_users",
+          "snippetId": null,
+          "source": "object"
+        },
+        {
+          "confidence": "possible",
+          "hitCount": 2,
+          "id": null,
+          "kind": "snippet",
+          "lines": [],
+          "name": "ユーザ一覧",
+          "snippetId": "snip-1",
+          "source": "snippet"
+        }
+      ],
+      "scannedObjects": 12,
+      "scannedSnippets": 3
+    }
+  },
+  "whereUsedDoneMessage": {
+    "kind": "done",
+    "report": {
+      "cancelled": false,
+      "emptyDefinitions": [
+        {
+          "kind": "function",
+          "name": "f_empty"
+        }
+      ],
+      "failed": [
+        {
+          "error": "permission denied",
+          "kind": "procedure",
+          "name": "p_secret"
+        }
+      ],
+      "matches": [
+        {
+          "confidence": "direct",
+          "hitCount": 1,
+          "id": "view:v_users",
+          "kind": "view",
+          "lines": [
+            {
+              "clippedEnd": true,
+              "clippedStart": false,
+              "line": 3,
+              "ranges": [
+                [
+                  14,
+                  19
+                ]
+              ],
+              "text": "SELECT * FROM users"
+            }
+          ],
+          "name": "v_users",
+          "snippetId": null,
+          "source": "object"
+        },
+        {
+          "confidence": "possible",
+          "hitCount": 2,
+          "id": null,
+          "kind": "snippet",
+          "lines": [],
+          "name": "ユーザ一覧",
+          "snippetId": "snip-1",
+          "source": "snippet"
+        }
+      ],
+      "scannedObjects": 12,
+      "scannedSnippets": 3
+    }
+  },
+  "whereUsedErrorMessage": {
+    "connectionLost": true,
+    "error": "connection reset",
+    "kind": "error"
+  },
+  "whereUsedProgressMessage": {
+    "done": 4,
+    "kind": "progress",
+    "total": 12
   },
   "writeCaptureSummaryVariants": [
     {

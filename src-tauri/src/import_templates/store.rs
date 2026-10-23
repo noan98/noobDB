@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 
 use directories::ProjectDirs;
 
@@ -17,8 +17,8 @@ const MAX_FIELD_CHARS: usize = 512;
 /// 同じ理由・同じ設計)。poisoning は `into_inner` で回復する。
 static STORE_LOCK: Mutex<()> = Mutex::new(());
 
-fn lock_store() -> std::sync::MutexGuard<'static, ()> {
-    STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+fn lock_store() -> Result<crate::store_lock::StoreGuard<'static>> {
+    crate::store_lock::acquire(&STORE_LOCK, &store_path()?)
 }
 
 fn store_path() -> Result<PathBuf> {
@@ -123,7 +123,7 @@ pub fn list(
     database: Option<&str>,
     table: Option<&str>,
 ) -> Result<Vec<ImportTemplate>> {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     Ok(filter(
         load_at(&store_path()?)?,
         profile_id,
@@ -134,7 +134,7 @@ pub fn list(
 
 pub fn save(t: ImportTemplate, now_ms: i64) -> Result<ImportTemplate> {
     let t = sanitize(t, now_ms)?;
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     let path = store_path()?;
     let mut all = load_at(&path)?;
     upsert_into(&mut all, t.clone());
@@ -143,7 +143,7 @@ pub fn save(t: ImportTemplate, now_ms: i64) -> Result<ImportTemplate> {
 }
 
 pub fn delete(id: &str) -> Result<()> {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     let path = store_path()?;
     let mut all = load_at(&path)?;
     let before = all.len();

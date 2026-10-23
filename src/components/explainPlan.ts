@@ -614,8 +614,8 @@ export interface PlanHint {
 // `rows_examined_per_scan` above these thresholds is flagged so juniors notice
 // scans that won't scale. Tuned conservatively to avoid false alarms on the
 // small tables that dominate development databases.
-const ROWS_CAUTION_THRESHOLD = 100_000;
-const ROWS_WARNING_THRESHOLD = 1_000_000;
+export const ROWS_CAUTION_THRESHOLD = 100_000;
+export const ROWS_WARNING_THRESHOLD = 1_000_000;
 
 export const SEVERITY_RANK: Record<HintSeverity, number> = { info: 0, caution: 1, warning: 2 };
 

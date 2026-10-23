@@ -154,6 +154,60 @@ async fn mysql_row_identity_pk_and_all_columns_fallback() {
     conn.close().await;
 }
 
+/// #1776: PK が無くても UNIQUE NOT NULL キーがあれば `all_columns` ではなく `unique_key`。
+#[tokio::test]
+async fn mysql_row_identity_prefers_unique_not_null_key() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts
+        .database
+        .clone()
+        .expect("test url must include a database");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    let tables = [
+        ("ri_uq_single", "CREATE TABLE ri_uq_single (code VARCHAR(32) NOT NULL, note VARCHAR(32), UNIQUE KEY uq_code (code))"),
+        ("ri_uq_composite", "CREATE TABLE ri_uq_composite (a VARCHAR(32) NOT NULL, b VARCHAR(32) NOT NULL, UNIQUE KEY uq_ab (a, b))"),
+        ("ri_uq_nullable", "CREATE TABLE ri_uq_nullable (code VARCHAR(32) NULL, note VARCHAR(32), UNIQUE KEY uq_code (code))"),
+    ];
+    for (name, ddl) in tables {
+        conn.execute(&format!("DROP TABLE IF EXISTS {name}"), Some(&db))
+            .await
+            .expect("drop");
+        conn.execute(ddl, Some(&db)).await.expect(ddl);
+    }
+
+    // MySQL は PK が無い表の「最初の UNIQUE NOT NULL インデックス」を COLUMN_KEY='PRI' と
+    // して報告する (サーバ側の昇格)。そのため通常は primary_key になり、いずれにせよ
+    // all_columns には落ちない (#1776)。昇格が効かない場合の unique_key は
+    // `pick_unique_row_key` の単体テストで担保する。
+    for name in ["ri_uq_single", "ri_uq_composite"] {
+        let id = conn.row_identity(&db, name).await.expect(name);
+        assert!(
+            id.strategy == "primary_key" || id.strategy == "unique_key",
+            "{name}: {}",
+            id.strategy
+        );
+        assert_eq!(id.hidden_column, None);
+    }
+    // NULL 可の UNIQUE は一意に定まらないので従来どおり all_columns。
+    let nullable = conn
+        .row_identity(&db, "ri_uq_nullable")
+        .await
+        .expect("nullable");
+    assert_eq!(nullable.strategy, "all_columns");
+
+    for (name, _) in tables {
+        conn.execute(&format!("DROP TABLE {name}"), Some(&db))
+            .await
+            .expect("cleanup");
+    }
+    conn.close().await;
+}
+
 /// `table_sizes` must report a real base table with byte figures from
 /// information_schema.TABLES (DATA_LENGTH / INDEX_LENGTH). InnoDB's lengths are
 /// approximate, so we only assert the table appears with a non-negative total
@@ -1966,10 +2020,12 @@ async fn mysql_bulk_write_and_health_probe_commands() {
             t::BulkUpdateGroup {
                 set: vec![text("name", "it's a \\ test"), num("n", "-7")],
                 keys: keys[..1099].to_vec(),
+                olds: vec![],
             },
             t::BulkUpdateGroup {
                 set: vec![text("name", "last")],
                 keys: keys[1099..].to_vec(),
+                olds: vec![],
             },
         ],
         vec![],
@@ -2017,6 +2073,7 @@ async fn mysql_bulk_write_and_health_probe_commands() {
                 vec![t::Value::Int(1), t::Value::String("y".into())],
                 vec![t::Value::Int(2), t::Value::String("z".into())],
             ],
+            olds: vec![],
         }],
         vec![],
     )
@@ -2763,6 +2820,7 @@ async fn mysql_bigint_pk_roundtrips_losslessly_into_cell_edit_where() {
                 value: t::BulkSetValue::Text { text: "x".into() },
             }],
             keys: vec![vec![ids[0].clone()], vec![ids[3].clone()]],
+            olds: vec![],
         }],
         vec![],
     )
@@ -3727,4 +3785,634 @@ async fn mysql_role_membership_is_listed_and_revocable() {
         .execute("DROP ROLE IF EXISTS 'noobdb_t1622_r'@'%'", None)
         .await;
     conn.close().await;
+}
+
+/// #1777: PK / UNIQUE の無い (純 all_columns) 表で、off-page の重複行があると 1 行の編集が 2 行に
+/// 当たる。`bulk_update_cells` は合計 `rows_affected` を検算し、想定を超えたらコミットせず
+/// ロールバックして件数を返す。承認 (`allow_row_overshoot`) 付きでだけ適用でき、少ない側 (一致
+/// なし) や値が変わらない UPDATE は止めない。
+#[tokio::test]
+async fn mysql_bulk_write_row_count_overshoot_rolls_back() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let db = opts.database.clone().expect("database in url");
+    let tbl = format!("noobdb_overshoot1777_{}", std::process::id());
+    let _ = conn
+        .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
+        .await;
+    conn.execute(
+        &format!("CREATE TABLE {tbl} (a INT NOT NULL, b VARCHAR(10) NOT NULL, n INT NOT NULL)"),
+        Some(&db),
+    )
+    .await
+    .expect("ddl");
+    conn.execute(
+        &format!("INSERT INTO {tbl} VALUES (1, 'x', 0), (1, 'x', 0), (2, 'y', 0)"),
+        Some(&db),
+    )
+    .await
+    .expect("seed");
+    let session = t::make_session(
+        "bulk_overshoot",
+        conn,
+        opts.clone(),
+        /* read_only */ false,
+    );
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+    let cols: Vec<String> = vec!["a".into(), "b".into(), "n".into()];
+    let set_n = |v: &str| t::BulkUpdateGroup {
+        set: vec![t::BulkSetColumn {
+            column: "n".into(),
+            value: t::BulkSetValue::Number { text: v.into() },
+        }],
+        keys: vec![vec![
+            t::Value::Int(1),
+            t::Value::String("x".into()),
+            t::Value::Int(0),
+        ]],
+        olds: vec![],
+    };
+    let read_ns = || async {
+        let s = state.get(&sid).await.expect("session");
+        let r = s
+            .conn
+            .execute(&format!("SELECT n FROM {tbl} ORDER BY a, b, n"), Some(&db))
+            .await
+            .expect("verify");
+        r.rows
+            .iter()
+            .map(|row| format!("{:?}", row[0]))
+            .collect::<Vec<_>>()
+    };
+    let before = read_ns().await;
+
+    // 1 行 (1,'x',0) を指定したのに 2 行が一致 → ロールバックして件数を返す。DB は未変更。
+    let out = t::bulk_update_cells_outcome_via_command(
+        &state,
+        &sid,
+        Some(&db),
+        &tbl,
+        cols.clone(),
+        vec![set_n("5")],
+        vec![],
+        t::BulkWriteOptions::default(),
+    )
+    .await
+    .expect("outcome");
+    assert!(
+        matches!(
+            out,
+            t::BulkWriteOutcome::RowCountExceeded {
+                expected_rows: 1,
+                actual_rows: 2,
+                batch_total_rows: 2,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
+    assert_eq!(read_ns().await, before, "ロールバックされ未変更のはず");
+
+    // 削除予定行 (extra_statements の DELETE) も同じ検算を受ける。
+    let out = t::bulk_update_cells_outcome_via_command(
+        &state,
+        &sid,
+        Some(&db),
+        &tbl,
+        cols.clone(),
+        vec![],
+        vec![format!(
+            "DELETE FROM {tbl} WHERE a = 1 AND b = 'x' AND n = 0;"
+        )],
+        t::BulkWriteOptions::default(),
+    )
+    .await
+    .expect("outcome");
+    assert!(
+        matches!(
+            out,
+            t::BulkWriteOutcome::RowCountExceeded {
+                expected_rows: 1,
+                actual_rows: 2,
+                batch_total_rows: 2,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
+    assert_eq!(read_ns().await, before, "DELETE もロールバックされる");
+
+    // 一意に当たる行 (2,'y',0) への更新は通る。値が変わらない UPDATE (n = 0 のまま) でも
+    // 一致行数 1 と数える (MySQL は CLIENT_FOUND_ROWS)。
+    let out = t::bulk_update_cells_outcome_via_command(
+        &state,
+        &sid,
+        Some(&db),
+        &tbl,
+        cols.clone(),
+        vec![t::BulkUpdateGroup {
+            set: vec![t::BulkSetColumn {
+                column: "n".into(),
+                value: t::BulkSetValue::Number { text: "0".into() },
+            }],
+            keys: vec![vec![
+                t::Value::Int(2),
+                t::Value::String("y".into()),
+                t::Value::Int(0),
+            ]],
+            olds: vec![],
+        }],
+        vec![],
+        t::BulkWriteOptions::default(),
+    )
+    .await
+    .expect("outcome");
+    match out {
+        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 1),
+        other => panic!("unique row must apply: {other:?}"),
+    }
+
+    // 少ない側 (一致する行が無い) はブロックしない。
+    let out = t::bulk_update_cells_outcome_via_command(
+        &state,
+        &sid,
+        Some(&db),
+        &tbl,
+        cols.clone(),
+        vec![t::BulkUpdateGroup {
+            set: vec![t::BulkSetColumn {
+                column: "n".into(),
+                value: t::BulkSetValue::Number { text: "9".into() },
+            }],
+            keys: vec![vec![
+                t::Value::Int(99),
+                t::Value::String("none".into()),
+                t::Value::Int(0),
+            ]],
+            olds: vec![],
+        }],
+        vec![],
+        t::BulkWriteOptions::default(),
+    )
+    .await
+    .expect("outcome");
+    match out {
+        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 0),
+        other => panic!("fewer rows must not be blocked: {other:?}"),
+    }
+
+    // 承認付きなら超過を許して適用する (2 行とも書き換わる)。承認した件数が足りなければ
+    // 再実行でもロールバックする。
+    let before_approved = read_ns().await;
+    let out = t::bulk_update_cells_outcome_via_command(
+        &state,
+        &sid,
+        Some(&db),
+        &tbl,
+        cols.clone(),
+        vec![set_n("5")],
+        vec![],
+        t::BulkWriteOptions {
+            approved_counts: Some(vec![1]),
+        },
+    )
+    .await
+    .expect("outcome");
+    // 承認した件数 (1) より多く当たるなら、承認後の再実行でもロールバックする。
+    assert!(
+        matches!(
+            out,
+            t::BulkWriteOutcome::RowCountExceeded {
+                expected_rows: 1,
+                actual_rows: 2,
+                batch_total_rows: 2,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
+    assert_eq!(
+        read_ns().await,
+        before_approved,
+        "未承認の件数ではロールバック"
+    );
+    let out = t::bulk_update_cells_outcome_via_command(
+        &state,
+        &sid,
+        Some(&db),
+        &tbl,
+        cols,
+        vec![set_n("5")],
+        vec![],
+        t::BulkWriteOptions {
+            approved_counts: Some(vec![2]),
+        },
+    )
+    .await
+    .expect("outcome");
+    match out {
+        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 2),
+        other => panic!("approved overshoot must apply: {other:?}"),
+    }
+    assert_eq!(
+        read_ns().await.iter().filter(|v| v.contains('5')).count(),
+        2
+    );
+    let s = state.get(&sid).await.expect("session");
+    let _ = s
+        .conn
+        .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
+        .await;
+}
+
+/// #1777: トランザクション非対応エンジン (MyISAM) の表では、想定超過でロールバックしても書き込みが
+/// 戻らない (警告 1196)。`bulk_update_cells` はそれを `RollbackIncomplete` として返し (「まだ何も
+/// 変更されていない」とは言わない)、承認して再実行させない。InnoDB では通常どおり `RowCountExceeded`。
+#[tokio::test]
+async fn mysql_bulk_write_rollback_incomplete_on_myisam() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let db = opts.database.clone().expect("database in url");
+    let tbl = format!("noobdb_myisam1777_{}", std::process::id());
+    let _ = conn
+        .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
+        .await;
+    if conn
+        .execute(
+            &format!(
+                "CREATE TABLE {tbl} (a INT NOT NULL, b VARCHAR(10) NOT NULL, n INT NOT NULL) ENGINE=MyISAM"
+            ),
+            Some(&db),
+        )
+        .await
+        .is_err()
+    {
+        eprintln!("skip: MyISAM is not available");
+        return;
+    }
+    conn.execute(
+        &format!("INSERT INTO {tbl} VALUES (1, 'x', 0), (1, 'x', 0), (2, 'y', 0)"),
+        Some(&db),
+    )
+    .await
+    .expect("seed");
+    let session = t::make_session(
+        "myisam_overshoot",
+        conn,
+        opts.clone(),
+        /* read_only */ false,
+    );
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+
+    let out = t::bulk_update_cells_outcome_via_command(
+        &state,
+        &sid,
+        Some(&db),
+        &tbl,
+        vec!["a".into(), "b".into(), "n".into()],
+        vec![t::BulkUpdateGroup {
+            set: vec![t::BulkSetColumn {
+                column: "n".into(),
+                value: t::BulkSetValue::Number { text: "5".into() },
+            }],
+            keys: vec![vec![
+                t::Value::Int(1),
+                t::Value::String("x".into()),
+                t::Value::Int(0),
+            ]],
+            olds: vec![],
+        }],
+        vec![],
+        t::BulkWriteOptions::default(),
+    )
+    .await
+    .expect("outcome");
+    assert!(
+        matches!(
+            out,
+            t::BulkWriteOutcome::RollbackIncomplete {
+                expected_rows: 1,
+                actual_rows: 2
+            }
+        ),
+        "{out:?}"
+    );
+    // 実際に書き込みが残っている (MyISAM は戻せない)。
+    let s = state.get(&sid).await.expect("session");
+    let r = s
+        .conn
+        .execute(
+            &format!("SELECT COUNT(*) FROM {tbl} WHERE n = 5"),
+            Some(&db),
+        )
+        .await
+        .expect("verify");
+    assert_eq!(format!("{:?}", r.rows[0][0]), "Int(2)");
+    let _ = s
+        .conn
+        .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
+        .await;
+}
+
+/// #1766: 楽観ロック (mysql)。読込後に別の接続が値を変えた行があると全体をロールバックして
+/// `OptimisticConflict` を返す。NULL / 64bit 整数 / 単精度 float 述語、旧値なし (= 設定オフ) の従来動作、
+/// 承認で上書きできないこと、read_only の拒否を固定する。
+#[tokio::test]
+async fn mysql_bulk_write_optimistic_lock_detects_lost_update() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let db = opts.database.clone().expect("database in url");
+    let tbl = format!("noobdb_optlock1766_{}", std::process::id());
+    let _ = conn
+        .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
+        .await;
+    conn.execute(
+        &format!("CREATE TABLE {tbl} (id INT PRIMARY KEY, name VARCHAR(40), note VARCHAR(40) NULL, score FLOAT, big BIGINT)"),
+        Some(&db),
+    )
+    .await
+    .expect("ddl");
+    conn.execute(
+        &format!("INSERT INTO {tbl} VALUES (1,'a',NULL,0.1,9007199254740993),(2,'b',NULL,0.2,2),(3,'c','x',0.3,3)"),
+        Some(&db),
+    )
+    .await
+    .expect("seed");
+    let session = t::make_session("optlock", conn, opts.clone(), /* read_only */ false);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+    // 「他の人」= 別の接続。
+    let other = t::connect(&opts).await.expect("other connect");
+
+    let text = |s: &str| t::BulkSetValue::Text { text: s.into() };
+    let num = |s: &str| t::BulkSetValue::Number { text: s.into() };
+    let col = |c: &str, v: t::BulkSetValue| t::BulkSetColumn {
+        column: c.into(),
+        value: v,
+    };
+    let pk = |i: i64| vec![t::Value::Int(i)];
+    let old_text = |s: &str| Some(t::BulkOldValue::Text { text: s.into() });
+    let apply = |groups: Vec<t::BulkUpdateGroup>, approved: Option<Vec<u64>>| {
+        let state = &state;
+        let sid = &sid;
+        let db = &db;
+        let tbl = &tbl;
+        async move {
+            t::bulk_update_cells_outcome_via_command(
+                state,
+                sid,
+                Some(db.as_str()),
+                tbl,
+                vec!["id".into()],
+                groups,
+                vec![],
+                t::BulkWriteOptions {
+                    approved_counts: approved,
+                },
+            )
+            .await
+            .expect("outcome")
+        }
+    };
+    let read = |sql: String| {
+        let state = &state;
+        let sid = &sid;
+        let db = &db;
+        async move {
+            let s = state.get(sid).await.expect("session");
+            let r = s.conn.execute(&sql, Some(db)).await.expect("read");
+            r.rows
+                .iter()
+                .map(|row| format!("{:?}", row[0]))
+                .collect::<Vec<_>>()
+        }
+    };
+
+    // (1) 他者が id=2 の name を変えた → 3 行の UPDATE は 1 行不足でロールバック。DB は未変更。
+    other
+        .execute(
+            &format!("UPDATE {tbl} SET name = 'b-by-other' WHERE id = 2"),
+            Some(&db),
+        )
+        .await
+        .expect("other update");
+    let locked = |olds: Vec<Vec<Option<t::BulkOldValue>>>| t::BulkUpdateGroup {
+        set: vec![col("name", text("mine"))],
+        keys: vec![pk(1), pk(2), pk(3)],
+        olds,
+    };
+    let stale = vec![
+        vec![old_text("a")],
+        vec![old_text("b")],
+        vec![old_text("c")],
+    ];
+    let before = read(format!("SELECT name FROM {tbl} ORDER BY id")).await;
+    let out = apply(vec![locked(stale.clone())], None).await;
+    match &out {
+        t::BulkWriteOutcome::OptimisticConflict {
+            conflict_rows,
+            statement_counts,
+        } => {
+            assert_eq!(*conflict_rows, 1);
+            assert_eq!(statement_counts, &vec![2]);
+        }
+        other => panic!("conflict expected: {other:?}"),
+    }
+    assert_eq!(
+        read(format!("SELECT name FROM {tbl} ORDER BY id")).await,
+        before,
+        "全件ロールバック (半端に適用しない)"
+    );
+
+    // (2) 承認 (approved_counts) でも min は外れない = 上書きできない。
+    let out = apply(vec![locked(stale.clone())], Some(vec![3])).await;
+    assert!(
+        matches!(out, t::BulkWriteOutcome::OptimisticConflict { .. }),
+        "{out:?}"
+    );
+    assert_eq!(
+        read(format!("SELECT name FROM {tbl} ORDER BY id")).await,
+        before
+    );
+
+    // (3) 旧値を付けない (設定オフ) と従来どおり主キーだけで当たり、他者の変更を上書きする。
+    let out = apply(vec![locked(vec![])], None).await;
+    match out {
+        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 3),
+        other => panic!("lock off must apply: {other:?}"),
+    }
+
+    // (4) 現在の値を旧値にすれば通る。
+    let out = apply(
+        vec![t::BulkUpdateGroup {
+            set: vec![col("name", text("next"))],
+            keys: vec![pk(1), pk(2)],
+            olds: vec![vec![old_text("mine")], vec![old_text("mine")]],
+        }],
+        None,
+    )
+    .await;
+    match out {
+        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 2),
+        other => panic!("fresh old values must apply: {other:?}"),
+    }
+
+    // (5) NULL: 読込時 NULL の列を他者が埋めたら競合。変わっていなければ IS NULL で通る。
+    other
+        .execute(
+            &format!("UPDATE {tbl} SET note = 'filled' WHERE id = 2"),
+            Some(&db),
+        )
+        .await
+        .expect("other note");
+    let null_group = |ids: Vec<i64>| t::BulkUpdateGroup {
+        set: vec![col("note", text("mine"))],
+        olds: ids
+            .iter()
+            .map(|_| vec![Some(t::BulkOldValue::Null)])
+            .collect(),
+        keys: ids.into_iter().map(pk).collect(),
+    };
+    let out = apply(vec![null_group(vec![1, 2])], None).await;
+    assert!(
+        matches!(
+            out,
+            t::BulkWriteOutcome::OptimisticConflict {
+                conflict_rows: 1,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
+    assert_eq!(
+        read(format!("SELECT note FROM {tbl} WHERE id = 1")).await,
+        vec!["Null".to_string()]
+    );
+    let out = apply(vec![null_group(vec![1])], None).await;
+    assert!(
+        matches!(out, t::BulkWriteOutcome::Applied { .. }),
+        "{out:?}"
+    );
+
+    // (6) 64bit 整数は文字列のまま比較する (丸めない)。隣の値 …994 への変更を検出する。
+    let big_group = |old: &str| t::BulkUpdateGroup {
+        set: vec![col("big", num("5"))],
+        keys: vec![pk(1)],
+        olds: vec![vec![Some(t::BulkOldValue::Number { text: old.into() })]],
+    };
+    other
+        .execute(
+            &format!("UPDATE {tbl} SET big = 9007199254740994 WHERE id = 1"),
+            Some(&db),
+        )
+        .await
+        .expect("other big");
+    let out = apply(vec![big_group("9007199254740993")], None).await;
+    assert!(
+        matches!(out, t::BulkWriteOutcome::OptimisticConflict { .. }),
+        "{out:?}"
+    );
+    let out = apply(vec![big_group("9007199254740994")], None).await;
+    assert!(
+        matches!(out, t::BulkWriteOutcome::Applied { .. }),
+        "{out:?}"
+    );
+
+    // (7) 単精度 float の許容誤差述語: 0.1 の近傍は一致し、別の値は競合。
+    let float_group = |old: &str| t::BulkUpdateGroup {
+        set: vec![col("score", num("9.5"))],
+        keys: vec![pk(3)],
+        olds: vec![vec![Some(t::BulkOldValue::Float4 { text: old.into() })]],
+    };
+    let out = apply(vec![float_group("0.3000001")], None).await;
+    assert!(
+        matches!(out, t::BulkWriteOutcome::Applied { .. }),
+        "{out:?}"
+    );
+    let out = apply(vec![float_group("0.3")], None).await;
+    assert!(
+        matches!(out, t::BulkWriteOutcome::OptimisticConflict { .. }),
+        "9.5 に更新済みなので 0.3 は競合: {out:?}"
+    );
+
+    // (8) 旧値が検査対象外 (None) の列だけの編集は主キーだけで当たる (BLOB / JSON など)。
+    let out = apply(
+        vec![t::BulkUpdateGroup {
+            set: vec![col("name", text("skip"))],
+            keys: vec![pk(3)],
+            olds: vec![vec![None]],
+        }],
+        None,
+    )
+    .await;
+    assert!(
+        matches!(out, t::BulkWriteOutcome::Applied { .. }),
+        "{out:?}"
+    );
+
+    // (9) 旧値の行数・列数が合わなければ拒否する。
+    let bad = t::bulk_update_cells_outcome_via_command(
+        &state,
+        &sid,
+        Some(db.as_str()),
+        &tbl,
+        vec!["id".into()],
+        vec![t::BulkUpdateGroup {
+            set: vec![col("name", text("x"))],
+            keys: vec![pk(1), pk(2)],
+            olds: vec![vec![old_text("a")]],
+        }],
+        vec![],
+        t::BulkWriteOptions::default(),
+    )
+    .await;
+    assert!(bad.is_err());
+
+    // (10) read_only では旧値つきでもバックエンドが拒否する。
+    let ro_conn = t::connect(&opts).await.expect("ro connect");
+    let ro = t::make_session(
+        "optlock_ro",
+        ro_conn,
+        opts.clone(),
+        /* read_only */ true,
+    );
+    let ro_sid = state.insert(ro).await;
+    let denied = t::bulk_update_cells_outcome_via_command(
+        &state,
+        &ro_sid,
+        Some(db.as_str()),
+        &tbl,
+        vec!["id".into()],
+        vec![t::BulkUpdateGroup {
+            set: vec![col("name", text("x"))],
+            keys: vec![pk(1)],
+            olds: vec![vec![old_text("a")]],
+        }],
+        vec![],
+        t::BulkWriteOptions::default(),
+    )
+    .await;
+    assert!(denied.is_err(), "read_only は拒否: {denied:?}");
+
+    let _ = state
+        .get(&sid)
+        .await
+        .expect("session")
+        .conn
+        .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
+        .await;
 }

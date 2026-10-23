@@ -5,7 +5,7 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
@@ -48,8 +48,8 @@ struct AssertionFile {
 /// 一時ファイル側にしか無く、本ファイルは直前の一貫した状態のままなので安全。
 static STORE_LOCK: Mutex<()> = Mutex::new(());
 
-fn lock_store() -> std::sync::MutexGuard<'static, ()> {
-    STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+fn lock_store() -> Result<crate::store_lock::StoreGuard<'static>> {
+    crate::store_lock::acquire(&STORE_LOCK, &assertions_path()?)
 }
 
 fn data_dir() -> Option<PathBuf> {
@@ -159,7 +159,7 @@ fn append_at(path: &Path, items: &[Assertion]) -> Result<()> {
 }
 
 pub fn load_all() -> Result<Vec<Assertion>> {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     load_from(&assertions_path()?)
 }
 
@@ -173,13 +173,13 @@ pub fn get(id: &str) -> Result<Assertion> {
 
 pub fn upsert(assertion: Assertion) -> Result<()> {
     // 読み→書きの全体でロックを保持する (内部版はロックを取らない)。
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     upsert_at(&assertions_path()?, assertion)
 }
 
 /// 一覧から外してごみ箱へ移す (取り消し可能、[`restore`])。
 pub fn delete(id: &str) -> Result<()> {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     delete_at(
         &assertions_path()?,
         id,
@@ -189,7 +189,7 @@ pub fn delete(id: &str) -> Result<()> {
 
 /// 削除したアサーションを一覧へ戻す (#1621)。
 pub fn restore(id: &str) -> Result<Assertion> {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     restore_at(&assertions_path()?, id)
 }
 
@@ -199,7 +199,7 @@ pub fn import(
     incoming: Vec<Assertion>,
     mut new_id: impl FnMut() -> String,
 ) -> Result<ImportOutcome> {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     let path = assertions_path()?;
     let existing = load_from(&path)?;
     let outcome = plan_import(&existing, incoming, &mut new_id);
