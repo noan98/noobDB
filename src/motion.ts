@@ -52,6 +52,9 @@ import type { Transition, Variants } from "motion/react";
  *
  * ### 具体的に Motion 化したもの
  *
+ * - サイドバーのタブ切替の中身 (`KeepAlive` の `slideDirection` / `App` の接続タブ — `directionalSlide`、
+ *   #1830)。滑るインジケータと同じ向きに、表示へ切り替わる側だけスライド + フェードで入る
+ *   (再マウントしない)。reduced-motion では x 移動が止まり、opacity の短いフェードは残る。
  * - モーダル/ダイアログの開閉 (`Modal` — `variants.dialog` / `fade`)。
  * - タブの追加/削除とアクティブインジケータ (`TabBar` — `layout` / `layoutId`)。
  * - トースト通知の出入り (`Toast` — `transitions.emphasized`)。
@@ -295,3 +298,13 @@ export const directionalSlide = {
   animate: { opacity: 1, x: 0 },
   exit: (dir: number) => ({ opacity: 0, x: dir * -slideOffsets.row }),
 } satisfies Variants;
+
+/**
+ * `directionalSlide` の入場を、開始値を明示したキーフレームで返す (#1830)。keep-alive の
+ * ように要素を残したまま表示を切り替える場合は `initial` が使えず、非表示中の値 (前回の
+ * 向き) から始まってしまうため、毎回今回の向きから入らせる。
+ */
+export function directionalSlideKeyframes(dir: number) {
+  const from = directionalSlide.initial(dir);
+  return { opacity: [from.opacity, 1], x: [from.x, 0] };
+}

@@ -492,7 +492,7 @@ import { RefImpactList } from "./components/RefImpactList";
 import { DropReferencedBy } from "./components/DropReferencedBy";
 import type { ValueLookup } from "./components/useValuePicker";
 import { addPinnedWithEvicted, MAX_PINNED, pinToastPlan, type PinnedResult } from "./pinnedCompare";
-import { springs, transitions, variants } from "./motion";
+import { directionalSlide, directionalSlideKeyframes, springs, transitions, variants } from "./motion";
 import { endTabOpenFlight, tabOpenFlightId } from "./sharedElement";
 import { LOCAL_PROFILE_CHIP_COLOR, workspaceSpineColor } from "./profileIdentity";
 import { semanticColorToken, semanticColorVar } from "./semanticColors";
@@ -509,12 +509,7 @@ import { hasOpenNestedLayer, isEditableElement, resolveWorkspaceEscape } from ".
 import { WorkspaceSurface } from "./components/WorkspaceSurface";
 import { BottomPanel, BottomPanelStrip, WorkspaceSplit } from "./components/BottomPanel";
 import { KeepAlive } from "./components/KeepAlive";
-import {
-  sidebarSlideAnimate,
-  sidebarSlideDirection,
-  sidebarSlideHidden,
-  type SlideDirection,
-} from "./components/sidebarTabNav";
+import { sidebarSlideDirection, type SlideDirection } from "./components/sidebarTabNav";
 import { SidebarResizeHandle } from "./components/SidebarResizeHandle";
 import { parseSidebarWidth } from "./components/sidebarLayout";
 import type { StructureTarget } from "./components/tableStructure";
@@ -1812,20 +1807,19 @@ export default function App() {
   const [editing, setEditing] = useState<ConnectionProfile | null>(null);
   const [showForm, setShowForm] = useState(false);
 
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("connections");
-  // タブ切替の中身スライドの向き (#1830)。滑るインジケータと同じ向きに、並び順から決める。
-  // 描画中に前回のタブと比べて更新する (切替の同じレンダーで新しい向きが効く)。
-  const [sidebarSlide, setSidebarSlide] = useState<{ tab: SidebarTab; dir: SlideDirection }>({
+  // サイドバーのタブと、切替の中身スライドの向き (#1830)。向きは滑るインジケータと同じく
+  // 並び順から決め、タブと同じ state に持つ (描画中の setState で本体を二重に走らせない)。
+  const [sidebarNav, setSidebarNav] = useState<{ tab: SidebarTab; dir: SlideDirection }>({
     tab: "connections",
     dir: 0,
   });
-  if (sidebarSlide.tab !== sidebarTab) {
-    setSidebarSlide({
-      tab: sidebarTab,
-      dir: sidebarSlideDirection(SIDEBAR_TAB_ORDER, sidebarSlide.tab, sidebarTab),
-    });
-  }
-  const sidebarSlideDir = sidebarSlide.dir;
+  const sidebarTab = sidebarNav.tab;
+  const sidebarSlideDir = sidebarNav.dir;
+  const setSidebarTab = useCallback((next: SidebarTab) => {
+    setSidebarNav((prev) =>
+      prev.tab === next ? prev : { tab: next, dir: sidebarSlideDirection(SIDEBAR_TAB_ORDER, prev.tab, next) },
+    );
+  }, []);
   const sidebarTablistRef = useRef<HTMLDivElement>(null);
   const sidebarTabsCompact = useSidebarTabsCompact(
     sidebarTablistRef,
@@ -1863,7 +1857,7 @@ export default function App() {
         requestAnimationFrame(() => sidebarTabRefs.current[target]?.focus());
       }
     },
-    [],
+    [setSidebarTab],
   );
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   // お気に入り / 最近使ったテーブル。アクティブ接続プロファイル単位で
@@ -12566,8 +12560,8 @@ export default function App() {
               initial={false}
               animate={
                 sidebarTab === "connections"
-                  ? sidebarSlideAnimate(sidebarSlideDir)
-                  : sidebarSlideHidden(sidebarSlideDir)
+                  ? directionalSlideKeyframes(sidebarSlideDir)
+                  : directionalSlide.initial(sidebarSlideDir)
               }
               transition={transitions.enter}
               style={{

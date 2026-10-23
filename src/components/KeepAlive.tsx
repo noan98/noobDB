@@ -8,9 +8,8 @@ import {
   type ReactNode,
 } from "react";
 import { motion } from "motion/react";
-import { transitions, variants } from "../motion";
+import { directionalSlide, directionalSlideKeyframes, transitions, variants } from "../motion";
 import { touchKeepAlive } from "./keepAliveSet";
-import { sidebarSlideAnimate, sidebarSlideHidden, type SlideDirection } from "./sidebarTabNav";
 
 /**
  * 一度開いた中身を、非アクティブの間も破棄せず `hidden` で保持する器 (#1311)。
@@ -45,7 +44,10 @@ import { sidebarSlideAnimate, sidebarSlideHidden, type SlideDirection } from "./
  * ## モーション
  *
  * 退場アニメーションは持たない (`mode="wait"` の待ち時間をなくすため)。再表示のとき
- * だけ `variants.fade` で入場する。reduced-motion はルートの `MotionConfig` が抑制する。
+ * だけ `variants.fade` で入場する。`slideDirection` を渡すと (サイドバーのタブ切替、#1830)
+ * 入場が `directionalSlide` の方向付きスライド + フェードになる。どちらも再マウントせず、
+ * 表示に切り替わるアイテムだけに掛かる。reduced-motion はルートの `MotionConfig` が
+ * 抑制するが、止まるのは x 移動だけで、opacity の短いフェードは残る。
  */
 
 const ActiveContext = createContext(true);
@@ -103,7 +105,7 @@ export interface KeepAliveProps {
    * 指定すると、入場を `variants.fade` ではなくこの向きの方向付きスライドにする (#1830)。
    * 正で右から、負で左から入る。再マウントはせず、表示に切り替わるアイテムだけに掛かる。
    */
-  slideDirection?: SlideDirection;
+  slideDirection?: -1 | 0 | 1;
 }
 
 export function KeepAlive({
@@ -181,7 +183,7 @@ function KeepAliveItem({
   slideDirection,
   children,
 }: {
-  slideDirection?: SlideDirection;
+  slideDirection?: -1 | 0 | 1;
   active: boolean;
   /** 器のマウント後に増えたアイテムだけ入場のフェードを付ける (初回表示は即時)。 */
   animateIn: boolean;
@@ -189,8 +191,8 @@ function KeepAliveItem({
   children: ReactNode;
 }) {
   const slide = slideDirection !== undefined;
-  const hiddenLook = slide ? sidebarSlideHidden(slideDirection) : variants.fade.initial;
-  const activeLook = slide ? sidebarSlideAnimate(slideDirection) : variants.fade.animate;
+  const hiddenLook = slide ? directionalSlide.initial(slideDirection) : variants.fade.initial;
+  const activeLook = slide ? directionalSlideKeyframes(slideDirection) : variants.fade.animate;
   return (
     <ActiveContext.Provider value={active}>
       <motion.div
