@@ -15,6 +15,7 @@ import { staggerContainer, variants } from "../motion";
 import { ErrorNote } from "./modalForm";
 import { isImeComposing } from "./modalKeys";
 import { formatRowEstimate } from "./rowEstimate";
+import { scrollFollowIntoView } from "./scrollFollow";
 
 /**
  * スキーマ横断のグローバルオブジェクト検索。テーブル・ビュー・ルーチン・トリガー名とカラム名を
@@ -136,7 +137,7 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onO
     if (hovered !== null && hovered === activeIndex) return;
     const active = results[activeIndex];
     if (!active) return;
-    itemRefs.current.get(entryKey(active))?.scrollIntoView({ block: "nearest" });
+    scrollFollowIntoView(itemRefs.current.get(entryKey(active)));
   }, [activeIndex, results]);
 
   const openAt = (i: number, newTab = false) => {

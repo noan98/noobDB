@@ -22,10 +22,14 @@ describe("CommandPalette 大規模候補 (#1320)", () => {
   });
 
   it("↓ でアクティブ行へ scrollIntoView で追従する", () => {
+    // 連続入力判定 (200ms) に掛からないよう、呼ぶたびに 1 秒進む時計にする。
+    let t = 0;
+    const spy = vi.spyOn(performance, "now").mockImplementation(() => (t += 1000));
     renderWithProviders(<CommandPalette items={tables(30)} onClose={() => {}} />);
     scrollIntoView.mockClear();
     fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
-    expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
+    spy.mockRestore();
   });
 
   it("空クエリでは多数のテーブルを一部だけ描画し、「さらに表示」で展開する", async () => {
