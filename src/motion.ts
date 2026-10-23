@@ -295,3 +295,13 @@ export const directionalSlide = {
   animate: { opacity: 1, x: 0 },
   exit: (dir: number) => ({ opacity: 0, x: dir * -slideOffsets.row }),
 } satisfies Variants;
+
+/** reduced-motion (OS / アプリ設定 #787) が有効か。`data-motion` が OS 設定より優先する。 */
+export function reducedMotionActive(): boolean {
+  const motion = document.documentElement.getAttribute("data-motion");
+  if (motion === "reduced") return true;
+  if (motion === "full") return false;
+  return (
+    typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}

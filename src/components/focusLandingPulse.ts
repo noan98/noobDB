@@ -3,6 +3,7 @@
 // 利用者が現在地を見失いやすい。着地領域へ `is-focus-landing` クラスを付け、App.css の
 // `focus-landing-pulse` キーフレームで外枠を一瞬光らせて消す (レイアウトは動かさない)。
 
+import { reducedMotionActive } from "../motion";
 import { isHighContrastDataTheme } from "./revealOrigin";
 
 const LANDING_CLASS = "is-focus-landing";
@@ -21,16 +22,6 @@ function resolveRegion(focused: Element): HTMLElement | null {
 
 /** 現在パルス中の要素。連続して F6 が押されたとき、前の領域のクラスを確実に外す。 */
 let current: HTMLElement | null = null;
-
-/** reduced-motion (OS / アプリ設定 #787) が有効か。`data-motion` が OS 設定より優先する。 */
-export function reducedMotionActive(): boolean {
-  const motion = document.documentElement.getAttribute("data-motion");
-  if (motion === "reduced") return true;
-  if (motion === "full") return false;
-  return (
-    typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
-}
 
 /** reduced-motion (OS / アプリ設定 #787)・hc-* テーマ・forced-colors では演出を出さない。 */
 export function focusLandingPulseEnabled(): boolean {

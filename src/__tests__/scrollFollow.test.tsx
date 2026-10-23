@@ -1,11 +1,19 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { followScrollBehavior, scrollFollowIntoView } from "../components/scrollFollow";
 
 function mockReducedMedia(matches: boolean) {
   window.matchMedia = vi.fn().mockReturnValue({ matches }) as unknown as typeof window.matchMedia;
 }
 
+// テストごとに十分離れた時刻から始め、前テストの呼び出しを連続入力と誤認しない。
+let clock = 0;
+let nowSpy: ReturnType<typeof vi.spyOn>;
+beforeEach(() => {
+  clock += 10_000;
+  nowSpy = vi.spyOn(performance, "now").mockImplementation(() => clock);
+});
 afterEach(() => {
+  nowSpy.mockRestore();
   document.documentElement.removeAttribute("data-motion");
 });
 
@@ -52,5 +60,26 @@ describe("scrollFollowIntoView", () => {
     const el = document.createElement("div");
     (el as { scrollIntoView?: unknown }).scrollIntoView = undefined;
     expect(() => scrollFollowIntoView(el)).not.toThrow();
+  });
+});
+
+describe("連続入力と instant", () => {
+  it("200ms 以内の再呼び出しは auto (最初の 1 回だけ smooth)", () => {
+    mockReducedMedia(false);
+    expect(followScrollBehavior()).toBe("smooth");
+    clock += 33;
+    expect(followScrollBehavior()).toBe("auto");
+    clock += 33;
+    expect(followScrollBehavior()).toBe("auto");
+    clock += 500;
+    expect(followScrollBehavior()).toBe("smooth");
+  });
+  it("instant 指定は auto", () => {
+    mockReducedMedia(false);
+    const el = document.createElement("div");
+    const fn = vi.fn();
+    el.scrollIntoView = fn;
+    scrollFollowIntoView(el, { block: "nearest", instant: true });
+    expect(fn).toHaveBeenCalledWith({ block: "nearest", behavior: "auto" });
   });
 });
