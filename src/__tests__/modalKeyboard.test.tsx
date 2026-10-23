@@ -143,6 +143,50 @@ describe("Modal の Cmd/Ctrl+Enter", () => {
     expect(content).toHaveAttribute("data-submit-rejected");
   });
 
+  it("ラッパー (span) 入りでも主ボタンだけが揺れ、補助の無効ボタンは揺れない", () => {
+    const onClose = vi.fn();
+    renderWithProviders(
+      <Modal onClose={onClose} onSubmit={vi.fn()} submitDisabled>
+        <ModalBody>body</ModalBody>
+        <ModalFooter>
+          <span>
+            <button type="button" disabled>
+              aux
+            </button>
+          </span>
+          <span>
+            <button type="button" disabled>
+              ok
+            </button>
+          </span>
+        </ModalFooter>
+      </Modal>,
+    );
+    const content = screen.getByRole("dialog");
+    fireEvent.pointerDown(screen.getByRole("button", { name: "aux" }));
+    expect(content).not.toHaveAttribute("data-submit-rejected");
+    fireEvent.pointerDown(screen.getByRole("button", { name: "ok" }));
+    expect(content).toHaveAttribute("data-submit-rejected");
+  });
+
+  it("破壊的な並び (無効な実行 → 有効なキャンセル) では実行ボタンで揺れない", () => {
+    const onClose = vi.fn();
+    renderWithProviders(
+      <Modal onClose={onClose} onSubmit={vi.fn()} submitDisabled>
+        <ModalBody>body</ModalBody>
+        <ModalFooter>
+          <button type="button" disabled>
+            danger
+          </button>
+          <div style={{ flex: 1 }} />
+          <button type="button">cancel</button>
+        </ModalFooter>
+      </Modal>,
+    );
+    fireEvent.pointerDown(screen.getByRole("button", { name: "danger" }));
+    expect(screen.getByRole("dialog")).not.toHaveAttribute("data-submit-rejected");
+  });
+
   it("有効時・素の Enter では拒否の印を付けない", () => {
     renderModal({ onSubmit: vi.fn() });
     const content = screen.getByRole("dialog");

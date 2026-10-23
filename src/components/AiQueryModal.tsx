@@ -542,6 +542,7 @@ export function AiQueryModal(props: AiQueryModalProps) {
         onClose={props.onClose}
         onSubmit={send}
         submitDisabled={!canSend}
+        submitBusy={running}
         initialFocusEl={() => inputRef.current}
       >
         <ModalHeader onClose={props.onClose} closeLabel={t("aiQueryClose")}>

@@ -529,7 +529,7 @@ export function DataSearchModal({
     <Modal
       onSubmit={handleStart}
       submitDisabled={scanning || finished || !canStart}
-      submitBusy={scanning}
+      submitBusy={scanning || finished}
       width="680px"
       onClose={onClose}
       closeOnInteractOutside={!scanning}

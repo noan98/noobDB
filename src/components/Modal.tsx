@@ -131,9 +131,15 @@ export function Modal({
   const onContentPointerDown =
     onSubmit && submitDisabled && !submitBusy
       ? (e: PointerEvent<HTMLDivElement>) => {
+          // ポータルの子モーダルからの伝播は除外する。
+          if (!e.currentTarget.contains(e.target as Node)) return;
           const btn = (e.target as Element).closest?.("button:disabled");
           const footer = btn?.closest("[data-modal-footer]");
-          if (!btn || !footer || footer.querySelector("button:last-of-type") !== btn) return;
+          if (!btn || !footer) return;
+          // 主ボタンはフッター内の文書順で最後のボタン。ラッパー (Tooltip の span など) に
+          // 入っていても、兄弟内の最後 (`:last-of-type`) ではなく文書順で比べる。
+          const buttons = footer.querySelectorAll("button");
+          if (buttons[buttons.length - 1] !== btn) return;
           rejectSubmit(e.currentTarget);
         }
       : undefined;
