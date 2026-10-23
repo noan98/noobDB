@@ -775,6 +775,8 @@ describe("共通コンポーネントの迂回", () => {
   const HANDWRITTEN_SVG_ALLOWLIST = new Set([
     // Icon.tsx 自身: セマンティック・レキシコンの実装そのもの (ブランドロゴの
     // <svg fill="currentColor"> 描画) であり、迂回ではなく単一ソース側。
+    // ER 図ローディング骨格のノード間接続線: アイコンではなく図を描く SVG (#1834)。
+    "../components/Skeleton.tsx",
     "../components/Icon.tsx",
     // ウィンドウ操作 (最小化/最大化/閉じる) は OS のタイトルバー的なガラス面で、
     // アプリの意味アイコンのセマンティック・レキシコンとは別物。10x10 の極小
