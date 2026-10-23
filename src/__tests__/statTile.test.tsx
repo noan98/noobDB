@@ -18,8 +18,7 @@ describe("StatTile delta / trend (#1833)", () => {
     expect(el).toHaveAttribute("data-verdict", "good");
     expect(el.textContent).toContain("▲");
     expect(el).toHaveStyle({ color: "var(--chakra-colors-app-text-success)" });
-    expect(el.textContent).toContain(t("statDeltaUp", { amount: "3" }));
-    expect(el.textContent).toContain(t("statDeltaGood"));
+    expect(el.textContent).toContain(t("statDeltaUpGood", { amount: "3" }));
   });
 
   it("増加が悪い指標で増えたら textError、減ったら textSuccess + ▼", () => {
@@ -30,7 +29,7 @@ describe("StatTile delta / trend (#1833)", () => {
     const el = screen.getByTestId("stat-delta");
     expect(el).toHaveAttribute("data-verdict", "good");
     expect(el.textContent).toContain("▼");
-    expect(el.textContent).toContain(t("statDeltaDown", { amount: "2" }));
+    expect(el.textContent).toContain(t("statDeltaDownGood", { amount: "2" }));
   });
 
   it("neutral と 0 は良悪を付けず無彩色", () => {
@@ -62,6 +61,34 @@ describe("StatTile delta / trend (#1833)", () => {
     rerender(<StatTile label="T" value="1" trend={[1]} />);
     expect(screen.queryByTestId("neutral-sparkline")).not.toBeInTheDocument();
     rerender(<StatTile label="T" value="1" trend={[1, null]} />);
+    expect(screen.queryByTestId("neutral-sparkline")).not.toBeInTheDocument();
+  });
+
+  it("整形後に 0 と同じになる揺らぎは変化なし (色なし)", () => {
+    renderWithProviders(
+      <StatTile label="R" value="1" delta={0.0000001} goodWhen="down" formatter={(n) => n.toFixed(2)} />,
+    );
+    const el = screen.getByTestId("stat-delta");
+    expect(el).toHaveAttribute("data-direction", "flat");
+    expect(el).toHaveAttribute("data-verdict", "none");
+  });
+
+  it("NaN を含む trend は有効点が 2 未満なら出さない", () => {
+    renderWithProviders(<StatTile label="T" value="1" trend={[1, Number.NaN]} />);
+    expect(screen.queryByTestId("neutral-sparkline")).not.toBeInTheDocument();
+  });
+
+  it("整形後に 0 と同じになる揺らぎは変化なし (色なし)", () => {
+    renderWithProviders(
+      <StatTile label="R" value="1" delta={0.0000001} goodWhen="down" formatter={(n) => n.toFixed(2)} />,
+    );
+    const el = screen.getByTestId("stat-delta");
+    expect(el).toHaveAttribute("data-direction", "flat");
+    expect(el).toHaveAttribute("data-verdict", "none");
+  });
+
+  it("NaN を含む trend は有効点が 2 未満なら出さない", () => {
+    renderWithProviders(<StatTile label="T" value="1" trend={[1, Number.NaN]} />);
     expect(screen.queryByTestId("neutral-sparkline")).not.toBeInTheDocument();
   });
 });

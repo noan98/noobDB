@@ -398,6 +398,8 @@ export function sparklineGeometry(
   maxSamples: number = LATENCY_HISTORY_MAX,
   neutral = false,
 ): SparklineGeometry {
+  // neutral では NaN / Infinity も欠測として扱う (縦軸が壊れないように)。
+  if (neutral) samples = samples.map((s) => (s !== null && Number.isFinite(s) ? s : null));
   const values = samples.filter((s): s is number => s !== null);
   // neutral (レイテンシ以外の汎用推移, #1833): 閾値も段階色も持たず、縦軸は最小〜最大に張る
   // (全点が同値なら中央の水平線)。

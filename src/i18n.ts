@@ -1423,12 +1423,13 @@ const en = {
   contextMenuConnect: "Connect",
   // StatTile delta / trend (#1833).
   sparklineTrendAria: "Last {count} samples: {min} to {max}.",
-  statDeltaUp: "up {amount}",
-  statDeltaDown: "down {amount}",
-  statDeltaFlat: "no change",
-  statDeltaGood: "improved",
-  statDeltaBad: "worsened",
-  statDeltaVsPrev: "vs previous sample",
+  statDeltaUp: "{amount} up vs previous sample",
+  statDeltaUpGood: "{amount} up vs previous sample (improved)",
+  statDeltaUpBad: "{amount} up vs previous sample (worsened)",
+  statDeltaDown: "{amount} down vs previous sample",
+  statDeltaDownGood: "{amount} down vs previous sample (improved)",
+  statDeltaDownBad: "{amount} down vs previous sample (worsened)",
+  statDeltaFlat: "No change vs previous sample",
   // Connection health latency trend (#1630).
   healthColTrend: "Trend",
   healthTrendAria:
@@ -8267,12 +8268,13 @@ const ja: Dict = {
   contextMenuConnect: "接続",
   // StatTile のデルタ / 推移 (#1833)。
   sparklineTrendAria: "直近 {count} サンプル: {min}〜{max}。",
-  statDeltaUp: "{amount} 増加",
-  statDeltaDown: "{amount} 減少",
-  statDeltaFlat: "変化なし",
-  statDeltaGood: "好転",
-  statDeltaBad: "悪化",
-  statDeltaVsPrev: "前回比",
+  statDeltaUp: "前回比 {amount} 増加",
+  statDeltaUpGood: "前回比 {amount} 増加（好転）",
+  statDeltaUpBad: "前回比 {amount} 増加（悪化）",
+  statDeltaDown: "前回比 {amount} 減少",
+  statDeltaDownGood: "前回比 {amount} 減少（好転）",
+  statDeltaDownBad: "前回比 {amount} 減少（悪化）",
+  statDeltaFlat: "前回比 変化なし",
   // 接続ヘルスのレイテンシ推移 (#1630)。
   healthColTrend: "推移",
   healthTrendAria:

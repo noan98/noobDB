@@ -1,7 +1,7 @@
 import { Box, chakra, Flex, VisuallyHidden } from "@chakra-ui/react";
 import type { ReactNode } from "react";
 
-import { useT } from "../i18n";
+import { useT, type I18nKey } from "../i18n";
 import { CountUp } from "./CountUp";
 import type { LatencySample } from "./connectionHealth";
 import { LatencySparkline } from "./LatencySparkline";
@@ -20,23 +20,18 @@ function StatDelta({
   formatter: (n: number) => string;
 }) {
   const t = useT();
-  const dir = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
+  const amount = formatter(Math.abs(delta));
+  // 整形後に 0 と区別できない差分 (レートの浮動小数の揺らぎなど) は変化なし扱い。
+  const dir = delta === 0 || amount === formatter(0) ? "flat" : delta > 0 ? "up" : "down";
   const verdict = dir === "flat" || good === "neutral" ? null : dir === good ? "good" : "bad";
   const color =
     verdict === "good" ? "app.textSuccess" : verdict === "bad" ? "app.textError" : "app.textMuted";
   const glyph = dir === "up" ? "▲" : dir === "down" ? "▼" : "–";
-  const amount = formatter(Math.abs(delta));
-  const spoken = [
-    dir === "up"
-      ? t("statDeltaUp", { amount })
-      : dir === "down"
-        ? t("statDeltaDown", { amount })
-        : t("statDeltaFlat"),
-    verdict === "good" ? t("statDeltaGood") : verdict === "bad" ? t("statDeltaBad") : null,
-    t("statDeltaVsPrev"),
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const suffix = verdict === "good" ? "Good" : verdict === "bad" ? "Bad" : "";
+  const spoken =
+    dir === "flat"
+      ? t("statDeltaFlat")
+      : t(`statDelta${dir === "up" ? "Up" : "Down"}${suffix}` as I18nKey, { amount });
   return (
     <chakra.div
       textStyle="caption"
@@ -94,7 +89,7 @@ export function StatTile({
   trend?: readonly LatencySample[];
 }) {
   const showDelta = delta != null && Number.isFinite(delta);
-  const showTrend = trend != null && trend.filter((v) => v !== null).length >= 2;
+  const showTrend = trend != null && trend.filter((v) => v != null && Number.isFinite(v)).length >= 2;
   return (
     <Box
       minW="120px"
@@ -130,7 +125,7 @@ export function StatTile({
       )}
       {showTrend && (
         <Flex mt="1">
-          <LatencySparkline samples={trend} neutral />
+          <LatencySparkline samples={trend} neutral format={deltaFormatter ?? formatter} />
         </Flex>
       )}
       {sub != null && sub !== false && (
