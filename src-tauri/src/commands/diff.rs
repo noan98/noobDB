@@ -14,7 +14,7 @@ use crate::db::data_diff::{
 use crate::db::diff::{compute_schema_diff, SchemaDiff, TableColumns};
 use crate::db::sync::quote_ident;
 use crate::db::types::{generated_column_names, TableColumnInfo, Value};
-use crate::db::{key_is_unique_in, Connection, DriverKind, RowKeyKind};
+use crate::db::{column_names_match, key_is_unique_in, Connection, DriverKind, RowKeyKind};
 use crate::error::{AppError, Result};
 use crate::state::{AppState, Session, StreamHandle, StreamKind};
 
@@ -1122,20 +1122,26 @@ pub async fn compare_table_data(
     if key_kind == RowKeyKind::UniqueKey {
         if let Ok(target_cols) = target_cols.as_ref() {
             if !target_cols.is_empty() {
-                if let Some(missing) = primary_key
-                    .iter()
-                    .find(|k| !target_cols.iter().any(|c| &c.name == *k))
-                {
+                if let Some(missing) = primary_key.iter().find(|k| {
+                    !target_cols
+                        .iter()
+                        .any(|c| column_names_match(driver, &c.name, k))
+                }) {
                     return Err(AppError::InvalidInput(format!(
                         "table '{table}': key column '{missing}' does not exist on the target"
                     )));
                 }
+                // 取得に失敗したときは一意性を確かめられないので、空扱いにせずエラーで返す。
                 let target_indexes = target
                     .conn
                     .list_indexes(&target_database, &table)
                     .await
-                    .unwrap_or_default();
-                if !key_is_unique_in(&primary_key, target_cols, &target_indexes) {
+                    .map_err(|e| {
+                        AppError::InvalidInput(format!(
+                            "table '{table}': could not read the target's indexes to verify the UNIQUE key: {e}"
+                        ))
+                    })?;
+                if !key_is_unique_in(driver, &primary_key, target_cols, &target_indexes) {
                     return Err(AppError::InvalidInput(format!(
                         "table '{table}' pairs rows by UNIQUE key ({}), but the target does not guarantee that key is unique",
                         primary_key.join(", ")

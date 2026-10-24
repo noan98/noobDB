@@ -13,6 +13,7 @@
 import type {
   CellValue,
   DataDiff,
+  RowKeyKind,
   TableWatch,
   TimelapseCaptureOutcome,
   TimelapseGenerationMeta,
@@ -282,6 +283,13 @@ export interface TimelapseDmlOptions {
   header?: string;
   /** マスク列を含むため出せなかった文のコメント文言。`{key}` は主キー表記。 */
   skippedComment?: (key: string) => string;
+  /** 行識別子の種類。`rowid` は振り直されて別の行を指しうるので、DML は一切作らない (#1838)。 */
+  keyKind?: RowKeyKind;
+}
+
+/** 行識別子が rowid の差分からは、別の行を壊しうるので DML を作らない (#1838)。 */
+export function isTimelapseDmlBlocked(keyKind: RowKeyKind | undefined): boolean {
+  return keyKind === "rowid";
 }
 
 export interface TimelapseDmlResult {
@@ -307,6 +315,7 @@ export function buildTimelapseDml(
   rows: readonly TimelapseExportRow[],
   o: TimelapseDmlOptions,
 ): TimelapseDmlResult {
+  if (isTimelapseDmlBlocked(o.keyKind)) return { sql: "", statements: 0, skipped: rows.length };
   const q = (n: string) => quoteIdentFor(o.driver, n);
   const target = qualifiedTableName(o.driver, o.database, o.table);
   const masked = o.maskedColumns ?? new Set<string>();

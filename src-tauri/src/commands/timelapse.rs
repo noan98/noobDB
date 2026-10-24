@@ -16,8 +16,8 @@ use crate::db::{DriverKind, RowKeyKind, ROWID_COLUMN};
 use crate::error::{AppError, Result};
 use crate::state::{AppState, Session};
 use crate::timelapse::{
-    clamp_max_generations, diff_snapshots, store, GenerationDiff, RowHistory, RowHistoryBuilder,
-    Snapshot, TableWatch,
+    clamp_max_generations, diff_snapshots, key_changed, store, GenerationDiff, RowHistory,
+    RowHistoryBuilder, Snapshot, TableWatch,
 };
 
 /// `timelapse_watch_table` の結果。
@@ -229,6 +229,7 @@ pub async fn timelapse_diff_generations(from_id: i64, to_id: i64) -> Result<Gene
         diff_snapshots(driver, &newer.table, &older.snapshot, &newer.snapshot);
     Ok(GenerationDiff {
         partial: diff.truncated,
+        key_changed: key_changed(&older.snapshot, &newer.snapshot),
         diff,
         columns_added,
         columns_removed,

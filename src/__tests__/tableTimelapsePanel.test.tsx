@@ -62,6 +62,7 @@ function genDiff(): TimelapseGenerationDiff {
       source_count: 2,
       target_count: 2,
     },
+    key_changed: false,
     columns_added: [],
     columns_removed: [],
     partial: false,
@@ -114,6 +115,28 @@ describe("TableTimelapsePanel (#739)", () => {
     expect(preview.textContent).toContain("DELETE FROM `app`.`fees` WHERE `id` = 3;");
     fireEvent.change(screen.getByLabelText(t("timelapseDmlDirection")), { target: { value: "forward" } });
     expect(preview.textContent).toContain("INSERT INTO `app`.`fees` (`id`, `price`) VALUES (3, 300);");
+  });
+
+  it("rowid 追跡の差分では DML ボタンを無効にして理由を出し、rowid の注記を出す (#1838)", async () => {
+    vi.mocked(api.timelapseListWatches).mockResolvedValue([watch()]);
+    const d = genDiff();
+    d.diff.key_kind = "rowid";
+    d.diff.primary_key = ["rowid"];
+    vi.mocked(api.timelapseDiffGenerations).mockResolvedValue(d);
+    renderPanel();
+    const button = await screen.findByRole("button", { name: t("timelapseDmlButton") });
+    expect(button).toBeDisabled();
+    expect(screen.getAllByText(t("timelapseDmlRowidBlocked")).length).toBeGreaterThan(0);
+    expect(screen.getByText(t("rowKeyRowid", { columns: "rowid" }))).toBeInTheDocument();
+  });
+
+  it("2 世代でキーが違う (key_changed) と注記を出す (#1838)", async () => {
+    vi.mocked(api.timelapseListWatches).mockResolvedValue([watch()]);
+    const d = genDiff();
+    d.key_changed = true;
+    vi.mocked(api.timelapseDiffGenerations).mockResolvedValue(d);
+    renderPanel();
+    expect(await screen.findByText(t("timelapseKeyChanged"))).toBeInTheDocument();
   });
 
   it("差分行の履歴ボタンで、その行の世代横断の推移を表示する (#1621)", async () => {

@@ -1470,6 +1470,28 @@ impl SqliteConn {
         Ok(super::group_index_rows(index_rows))
     }
 
+    /// 暗黙の `rowid` を持つ通常表か (WITHOUT ROWID・ビュー・仮想表は false)。
+    /// `row_identity` と、データ比較・タイムラプスの行識別子解決 (#1838) で共有する。
+    pub(crate) async fn is_rowid_table(&self, table: &str) -> Result<bool> {
+        let row: Option<SqliteRow> =
+            sqlx::query("SELECT type, sql FROM sqlite_master WHERE name = ?1")
+                .bind(table)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.is_some_and(|r| {
+            let kind = r.try_get::<String, _>("type").unwrap_or_default();
+            let ddl = r
+                .try_get::<Option<String>, _>("sql")
+                .ok()
+                .flatten()
+                .unwrap_or_default()
+                .to_uppercase();
+            kind == "table"
+                && !ddl.contains("WITHOUT ROWID")
+                && !ddl.starts_with("CREATE VIRTUAL TABLE")
+        }))
+    }
+
     /// Row identity strategy for inline editing (#849). Once a table has no
     /// resolvable primary key, SQLite tables still carry an implicit `rowid`
     /// **unless** the table was declared `WITHOUT ROWID` or is a view/virtual
@@ -1489,29 +1511,12 @@ impl SqliteConn {
         if let Some(key) = super::pick_unique_row_key(&cols, &indexes) {
             return Ok(super::unique_key_identity(key));
         }
-        let row: Option<SqliteRow> =
-            sqlx::query("SELECT type, sql FROM sqlite_master WHERE name = ?1")
-                .bind(table)
-                .fetch_optional(&self.pool)
-                .await?;
-        if let Some(r) = row {
-            let kind = r.try_get::<String, _>("type").unwrap_or_default();
-            let ddl = r
-                .try_get::<Option<String>, _>("sql")
-                .ok()
-                .flatten()
-                .unwrap_or_default()
-                .to_uppercase();
-            let is_rowid_table = kind == "table"
-                && !ddl.contains("WITHOUT ROWID")
-                && !ddl.starts_with("CREATE VIRTUAL TABLE");
-            if is_rowid_table {
-                return Ok(TableRowIdentity {
-                    strategy: "rowid".into(),
-                    hidden_column: Some("rowid".into()),
-                    key_columns: Vec::new(),
-                });
-            }
+        if self.is_rowid_table(table).await? {
+            return Ok(TableRowIdentity {
+                strategy: "rowid".into(),
+                hidden_column: Some("rowid".into()),
+                key_columns: Vec::new(),
+            });
         }
         Ok(TableRowIdentity {
             strategy: "all_columns".into(),

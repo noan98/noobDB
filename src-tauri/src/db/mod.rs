@@ -1550,7 +1550,7 @@ impl Connection {
     /// データ比較・タイムラプスの行識別子を解決する (#1838)。PK → UNIQUE NOT NULL →
     /// (`allow_rowid` かつ SQLite の rowid 表のとき) rowid。何も取れなければ `None`。
     /// `cols` は呼び出し側が取得済みの `columns()` の結果。PK があれば索引は引かない。
-    pub(crate) async fn resolve_row_key(
+    pub async fn resolve_row_key(
         &self,
         db: &str,
         table: &str,
@@ -1567,8 +1567,10 @@ impl Connection {
         // rowid は SQLite の rowid 表 (WITHOUT ROWID・ビュー・仮想表を除く) だけ。
         // PostgreSQL の ctid は VACUUM や更新で変わるので経時の識別子にならず採らない。
         let rowid_available = allow_rowid
-            && matches!(self, Connection::Sqlite(_))
-            && self.row_identity(db, table).await?.strategy == "rowid";
+            && match self {
+                Connection::Sqlite(c) => c.is_rowid_table(table).await?,
+                Connection::MySql(_) | Connection::Postgres(_) => false,
+            };
         Ok(resolve_row_key(cols, &indexes, rowid_available))
     }
 
@@ -2652,7 +2654,7 @@ impl RowKeyKind {
 
 /// 解決した行識別子。`Rowid` のときだけ `columns` は表の実列ではない隠し列 (`rowid`)。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ResolvedRowKey {
+pub struct ResolvedRowKey {
     pub kind: RowKeyKind,
     pub columns: Vec<String>,
 }
@@ -2694,15 +2696,29 @@ pub(crate) fn resolve_row_key(
     })
 }
 
+/// 列名の照合。MySQL / SQLite は列名が大文字小文字を区別しない。PostgreSQL は引用識別子で区別する。
+pub(crate) fn column_names_match(driver: DriverKind, a: &str, b: &str) -> bool {
+    match driver {
+        DriverKind::Mysql | DriverKind::Sqlite => a.eq_ignore_ascii_case(b),
+        DriverKind::Postgres => a == b,
+    }
+}
+
 /// `key` の列で照合したとき、`cols` / `indexes` の表では必ず高々 1 行に当たるか (#1838)。
 /// 比較の相手側表が、ソース側で選んだ UNIQUE キーの一意性を保証するかの確認に使う。
 /// PK か UNIQUE NOT NULL キーの列集合が `key` に含まれていれば一意 (部分集合が一意なら上位集合も一意)。
-pub(crate) fn key_is_unique_in(
+pub fn key_is_unique_in(
+    driver: DriverKind,
     key: &[String],
     cols: &[TableColumnInfo],
     indexes: &[IndexInfo],
 ) -> bool {
-    let within = |cand: &[String]| !cand.is_empty() && cand.iter().all(|c| key.contains(c));
+    let within = |cand: &[String]| {
+        !cand.is_empty()
+            && cand
+                .iter()
+                .all(|c| key.iter().any(|k| column_names_match(driver, k, c)))
+    };
     let pk: Vec<String> = cols
         .iter()
         .filter(|c| c.key.eq_ignore_ascii_case("PRI"))
@@ -4917,25 +4933,58 @@ mod tests {
     #[test]
     fn key_is_unique_in_accepts_pk_or_unique_subset_only() {
         use super::key_is_unique_in;
+        use super::DriverKind;
         let s = |v: &[&str]| v.iter().map(|c| c.to_string()).collect::<Vec<_>>();
         // PK (id) は鍵 [id, x] の部分集合なので一意。
         let cols = [pri_col("id"), nn_col("x", false)];
-        assert!(key_is_unique_in(&s(&["id", "x"]), &cols, &[]));
+        assert!(key_is_unique_in(
+            DriverKind::Postgres,
+            &s(&["id", "x"]),
+            &cols,
+            &[]
+        ));
         // 鍵 [x] だけでは PK 列を含まず一意と言えない。
-        assert!(!key_is_unique_in(&s(&["x"]), &cols, &[]));
+        assert!(!key_is_unique_in(
+            DriverKind::Postgres,
+            &s(&["x"]),
+            &cols,
+            &[]
+        ));
         // PK が無くても UNIQUE NOT NULL があれば一意。NULL 可の UNIQUE は保証にならない。
         let cols = [nn_col("e", false), nn_col("n", true)];
         assert!(key_is_unique_in(
+            DriverKind::Postgres,
             &s(&["e"]),
             &cols,
             &[uq_index("e", &["e"])]
         ));
         assert!(!key_is_unique_in(
+            DriverKind::Postgres,
             &s(&["n"]),
             &cols,
             &[uq_index("n", &["n"])]
         ));
-        assert!(!key_is_unique_in(&s(&["e"]), &cols, &[]));
+        assert!(!key_is_unique_in(
+            DriverKind::Postgres,
+            &s(&["e"]),
+            &cols,
+            &[]
+        ));
+        // 列名の大小文字は MySQL / SQLite では区別せず、PostgreSQL では区別する。
+        let cols = [pri_col("id")];
+        assert!(key_is_unique_in(DriverKind::Mysql, &s(&["ID"]), &cols, &[]));
+        assert!(key_is_unique_in(
+            DriverKind::Sqlite,
+            &s(&["ID"]),
+            &cols,
+            &[]
+        ));
+        assert!(!key_is_unique_in(
+            DriverKind::Postgres,
+            &s(&["ID"]),
+            &cols,
+            &[]
+        ));
     }
 
     #[test]

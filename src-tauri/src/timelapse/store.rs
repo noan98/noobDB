@@ -669,4 +669,69 @@ mod tests {
         assert_eq!(gen.snapshot, snap(7));
         assert!(load_generation_in(&pool, 9999).await.is_err());
     }
+
+    #[tokio::test]
+    async fn key_kind_round_trips_for_every_kind() {
+        use crate::db::RowKeyKind;
+        let pool = temp_pool().await;
+        for (n, kind) in [
+            RowKeyKind::PrimaryKey,
+            RowKeyKind::UniqueKey,
+            RowKeyKind::Rowid,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let w = upsert_watch_in(&pool, "p", "sqlite", "main", &format!("t{n}"), false)
+                .await
+                .unwrap();
+            let mut s = snap(1);
+            s.key_kind = kind;
+            record(&pool, w, &s, 10).await;
+            let watches = list_watches_in(&pool, "p").await.unwrap();
+            let watch = watches.iter().find(|x| x.id == w).unwrap();
+            let loaded = load_generation_in(&pool, watch.generations[0].id)
+                .await
+                .unwrap();
+            assert_eq!(loaded.snapshot.key_kind, kind);
+        }
+    }
+
+    #[tokio::test]
+    async fn init_schema_migrates_old_schema_and_is_idempotent() {
+        let pool = SqlitePoolOptions::new()
+            .min_connections(1)
+            .max_connections(1)
+            .connect_with(SqliteConnectOptions::new().filename(":memory:"))
+            .await
+            .unwrap();
+        // key_kind 列が無い旧スキーマ。
+        sqlx::query(
+            "CREATE TABLE watch (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, profile_id TEXT NOT NULL,
+                driver TEXT NOT NULL, \"database\" TEXT NOT NULL, table_name TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1, partial INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL, UNIQUE (profile_id, \"database\", table_name))",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE generation (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                watch_id INTEGER NOT NULL REFERENCES watch(id) ON DELETE CASCADE,
+                captured_at TEXT NOT NULL, fingerprint TEXT NOT NULL, columns TEXT NOT NULL,
+                column_types TEXT NOT NULL, primary_key TEXT NOT NULL, rows_json TEXT NOT NULL,
+                row_count INTEGER NOT NULL, truncated INTEGER NOT NULL, bytes INTEGER NOT NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        init_schema(&pool).await.unwrap();
+        init_schema(&pool).await.unwrap();
+        let w = upsert_watch_in(&pool, "p", "sqlite", "main", "t", false)
+            .await
+            .unwrap();
+        assert!(record(&pool, w, &snap(1), 10).await);
+    }
 }

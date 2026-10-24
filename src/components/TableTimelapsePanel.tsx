@@ -16,6 +16,7 @@ import {
   buildTimelapseExportRows,
   buildTimelapseRows,
   countTimelapseDiff,
+  isTimelapseDmlBlocked,
   timelapseRowsToJson,
   timelapseRowsToTable,
   resolveGenerationPair,
@@ -369,6 +370,7 @@ export function TableTimelapsePanel({
   );
   const rows = useMemo(() => (diff ? buildTimelapseRows(diff.diff, masked) : []), [diff, masked]);
   const counts = diff ? countTimelapseDiff(diff.diff) : null;
+  const dmlBlocked = diff ? isTimelapseDmlBlocked(diff.diff.key_kind) : false;
   const keyNote = diff ? rowKeyNote(diff.diff.key_kind, diff.diff.primary_key) : null;
 
   // 差分の書き出し (#1539)。行モデルは画面と同じマスク判定を通し、マスク列は伏せ字のまま出す。
@@ -429,6 +431,7 @@ export function TableTimelapsePanel({
           driver={selected.driver}
           database={selected.database}
           table={diff.diff.table}
+          keyKind={diff.diff.key_kind}
           onClose={() => setDmlOpen(false)}
         />
       )}
@@ -649,7 +652,8 @@ export function TableTimelapsePanel({
                       type="button"
                       size="sm"
                       onClick={() => setDmlOpen(true)}
-                      disabled={rows.length === 0}
+                      disabled={rows.length === 0 || dmlBlocked}
+                      title={dmlBlocked ? t("timelapseDmlRowidBlocked") : undefined}
                     >
                       {t("timelapseDmlButton")}
                     </Button>
@@ -665,6 +669,16 @@ export function TableTimelapsePanel({
                   {keyNote && (
                     <chakra.p margin={0} textStyle="caption" color="app.textMuted">
                       {t(keyNote.key, keyNote.vars)}
+                    </chakra.p>
+                  )}
+                  {dmlBlocked && (
+                    <chakra.p margin={0} textStyle="caption" color="app.textMuted">
+                      {t("timelapseDmlRowidBlocked")}
+                    </chakra.p>
+                  )}
+                  {diff.key_changed && (
+                    <chakra.p margin={0} textStyle="caption" color="app.textWarning">
+                      {t("timelapseKeyChanged")}
                     </chakra.p>
                   )}
                   {diff.partial && (

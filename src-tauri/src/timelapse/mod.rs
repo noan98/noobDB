@@ -113,6 +113,10 @@ pub struct GenerationDiff {
     /// どちらかの世代が部分取得 (行数上限で打ち切り) なら true。範囲外の行は
     /// 追加/削除として誤って現れうる。
     pub partial: bool,
+    /// 2 世代で行識別子の種類または列が違う (#1838)。キーが変わると行の対応付けが成り立たず、
+    /// 変更・追加・削除が実態と違って見えるので、UI が注記する。
+    #[serde(default)]
+    pub key_changed: bool,
     pub from_captured_at: String,
     pub to_captured_at: String,
 }
@@ -155,6 +159,11 @@ pub fn align_rows(from: &[String], to: &[String], rows: &[Vec<Value>]) -> Vec<Ve
                 .collect()
         })
         .collect()
+}
+
+/// 2 世代で行識別子 (種類または列) が違うか (#1838)。
+pub fn key_changed(older: &Snapshot, newer: &Snapshot) -> bool {
+    older.key_kind != newer.key_kind || older.primary_key != newer.primary_key
 }
 
 /// 2 世代 (`older` → `newer`) の行差分を計算する。PK ペアリングと変更列の判定は
@@ -538,6 +547,21 @@ mod tests {
         );
         // 表示は新しい世代の列に揃える。
         assert_eq!(diff.columns, vec![s("id"), s("v"), s("note")]);
+    }
+
+    #[test]
+    fn key_changed_detects_kind_or_column_differences() {
+        use crate::db::RowKeyKind;
+        let a = snap(&["id", "v"], vec![]);
+        assert!(!key_changed(&a, &a.clone()));
+        // 種類だけが変わった (PK → UNIQUE)。
+        let mut b = a.clone();
+        b.key_kind = RowKeyKind::UniqueKey;
+        assert!(key_changed(&a, &b));
+        // 種類は同じでもキー列が変わった。
+        let mut c = a.clone();
+        c.primary_key = vec![s("v")];
+        assert!(key_changed(&a, &c));
     }
 
     #[test]

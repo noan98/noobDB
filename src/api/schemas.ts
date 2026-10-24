@@ -967,6 +967,7 @@ export const timelapseCaptureOutcome = z.object({
 export const timelapseCaptureOutcomeArray = z.array(timelapseCaptureOutcome);
 
 export const timelapseGenerationDiff = z.object({
+  key_changed: z.boolean(),
   diff: dataDiff,
   columns_added: z.array(z.string()),
   columns_removed: z.array(z.string()),

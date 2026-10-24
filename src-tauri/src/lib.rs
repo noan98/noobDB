@@ -104,6 +104,7 @@ pub mod __test_api {
         is_session_init_sql_for, sql_may_change_schema, AutoLimitSkip, Connection,
         DbConnectOptions, DriverKind, SslMode, WriteCapture, WriteKind,
     };
+    pub use crate::db::{key_is_unique_in, ResolvedRowKey, RowKeyKind};
     pub use crate::error::AppError;
     pub use crate::flight_recorder::undo::{
         build_redo_plan, build_undo_plan, UndoConflict, UndoPlan,

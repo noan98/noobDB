@@ -4,6 +4,7 @@ import { MASK_PLACEHOLDER } from "../components/columnMask";
 import { tableToCsv } from "../components/tabularText";
 import {
   buildTimelapseDml,
+  isTimelapseDmlBlocked,
   buildTimelapseExportRows,
   buildTimelapseRows,
   countTimelapseDiff,
@@ -257,6 +258,15 @@ describe("buildTimelapseDml (#1624)", () => {
       "DELETE FROM `shop`.`fees` WHERE `id` = 4;",
       "INSERT INTO `shop`.`fees` (`id`, `email`, `price`) VALUES (3, 'c@x', NULL);",
     ]);
+  });
+
+  it("rowid で追跡した差分からは DML を作らない (rowid は振り直されて別の行を指しうる) (#1838)", () => {
+    const r = buildTimelapseDml(rows(), { ...base, direction: "forward", keyKind: "rowid" });
+    expect(r.sql).toBe("");
+    expect(r.statements).toBe(0);
+    expect(isTimelapseDmlBlocked("rowid")).toBe(true);
+    expect(isTimelapseDmlBlocked("unique_key")).toBe(false);
+    expect(isTimelapseDmlBlocked(undefined)).toBe(false);
   });
 
   it("PostgreSQL / SQLite は二重引用符で識別子を囲み、SQLite は DB 修飾を付けない", () => {

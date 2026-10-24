@@ -1794,6 +1794,8 @@ export interface TimelapseCaptureOutcome {
  * `source_only` = 追加行、`target_only` = 削除行、`different` = 変更行。
  */
 export interface TimelapseGenerationDiff {
+  /** 2 世代で行識別子 (種類または列) が違う (#1838)。行の対応付けが不正確になりうる。 */
+  key_changed: boolean;
   diff: DataDiff;
   columns_added: string[];
   columns_removed: string[];
