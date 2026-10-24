@@ -39,7 +39,7 @@ import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import { LoadingButton } from "./LoadingButton";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
-import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
+import { ErrorNote, FieldError, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
 import { Spinner } from "./Spinner";
 import { Button, Checkbox, Input, Select, Switch, Textarea } from "./ui";
@@ -719,6 +719,10 @@ function AssertionTrendList({ taskId, refreshKey }: { taskId: string; refreshKey
 
 type ActionKind = TaskAction["kind"];
 
+function overridesHaveRule(overrides: ExportMaskOverrides, column: string): boolean {
+  return !!overrides[column] && sanitizeMaskRule(overrides[column]) !== null;
+}
+
 /** 画面の列一覧 + 上書きから、保存するマスクルール (ルールが空の列は除く) を作る (#1836)。 */
 function collectMasks(columns: readonly string[], overrides: ExportMaskOverrides): ExportColumnMask[] {
   const out: ExportColumnMask[] = [];
@@ -781,6 +785,15 @@ function TaskForm({
     Object.fromEntries(initialMasks.map((m) => [m.column, m.rule])),
   );
   const [maskColumnInput, setMaskColumnInput] = useState("");
+  const [maskError, setMaskError] = useState<string | null>(null);
+  const removeMaskColumn = (column: string) => {
+    setMaskColumns((cur) => cur.filter((c) => c !== column));
+    setMaskOverrides((cur) => {
+      const next = { ...cur };
+      delete next[column];
+      return next;
+    });
+  };
   const addMaskColumn = () => {
     const name = maskColumnInput.trim();
     if (name === "") return;
@@ -890,6 +903,13 @@ function TaskForm({
         setFormError(t("taskFormSqlNotReadOnly"));
         return;
       }
+      // ルールが「なし」のままの列は黙って捨てず、保存を止める (#1836)。
+      const unruled = maskEnabled ? maskColumns.filter((c) => !overridesHaveRule(maskOverrides, c)) : [];
+      if (unruled.length > 0) {
+        setMaskError(t("taskFormMaskNoRule", { columns: unruled.join(", ") }));
+        return;
+      }
+      setMaskError(null);
       action = {
         kind: "export_query",
         sql,
@@ -1068,27 +1088,29 @@ function TaskForm({
             overrides={maskOverrides}
             onOverridesChange={setMaskOverrides}
             hint={t("taskFormMaskHint")}
+            onRemoveColumn={removeMaskColumn}
+            footer={
+              <Flex gap="2" alignItems="center">
+                <Input
+                  value={maskColumnInput}
+                  aria-label={t("taskFormMaskAddColumn")}
+                  placeholder={t("taskFormMaskAddColumn")}
+                  onChange={(e) => setMaskColumnInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      addMaskColumn();
+                    }
+                  }}
+                />
+                <Button type="button" variant="secondary" size="sm" onClick={addMaskColumn}>
+                  {t("taskFormMaskAdd")}
+                </Button>
+              </Flex>
+            }
           />
-          {maskEnabled && (
-            <Flex gap="2" alignItems="center">
-              <Input
-                value={maskColumnInput}
-                aria-label={t("taskFormMaskAddColumn")}
-                placeholder={t("taskFormMaskAddColumn")}
-                onChange={(e) => setMaskColumnInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    addMaskColumn();
-                  }
-                }}
-              />
-              <Button type="button" variant="secondary" size="sm" onClick={addMaskColumn}>
-                {t("taskFormMaskAdd")}
-              </Button>
-            </Flex>
-          )}
+          {maskError && <FieldError>{maskError}</FieldError>}
           {format === "sql" && (
             <Flex gap="3" flexWrap="wrap">
               <FormSection flex="1" minW="160px">

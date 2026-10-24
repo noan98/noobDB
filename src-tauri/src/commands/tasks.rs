@@ -46,8 +46,29 @@ fn default_task_enabled() -> bool {
 fn validate_action(action: &TaskAction) -> Result<()> {
     match action {
         TaskAction::ExportQuery {
-            sql, output_path, ..
+            sql,
+            output_path,
+            masks,
+            ..
         } => {
+            if masks.len() > crate::db::masking::MAX_COLUMN_MASKS {
+                return Err(AppError::InvalidInput(format!(
+                    "too many masked columns (max {})",
+                    crate::db::masking::MAX_COLUMN_MASKS
+                )));
+            }
+            let mut seen = std::collections::HashSet::new();
+            for m in masks {
+                if m.column.trim().is_empty() {
+                    return Err(AppError::InvalidInput("mask column name is empty".into()));
+                }
+                if !seen.insert(m.column.as_str()) {
+                    return Err(AppError::InvalidInput(format!(
+                        "duplicate mask column `{}`",
+                        m.column
+                    )));
+                }
+            }
             if sql.trim().is_empty() {
                 return Err(AppError::InvalidInput("task SQL is empty".into()));
             }
@@ -516,5 +537,42 @@ mod apply_save_tests {
         .unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(edited.last_status.as_deref(), Some("ok"));
+    }
+}
+
+#[cfg(test)]
+mod mask_validation_tests {
+    use super::*;
+
+    fn action(masks: &str) -> TaskAction {
+        serde_json::from_str(&format!(
+            r#"{{"kind":"export_query","sql":"SELECT 1","format":"csv","output_path":"/tmp/o.csv","masks":{masks}}}"#
+        ))
+        .unwrap()
+    }
+
+    /// 重複・空白だけ・上限超えのマスク列は保存時に InvalidInput (#1836)。
+    #[test]
+    fn rejects_bad_mask_columns() {
+        let n = r#"{"kind":"null"}"#;
+        assert!(validate_action(&action("[]")).is_ok());
+        assert!(validate_action(&action(&format!(r#"[{{"column":"a","rule":{n}}}]"#))).is_ok());
+        for bad in [
+            format!(r#"[{{"column":"a","rule":{n}}},{{"column":"a","rule":{n}}}]"#),
+            format!(r#"[{{"column":"  ","rule":{n}}}]"#),
+        ] {
+            assert!(matches!(
+                validate_action(&action(&bad)),
+                Err(AppError::InvalidInput(_))
+            ));
+        }
+        let many = (0..=crate::db::masking::MAX_COLUMN_MASKS)
+            .map(|i| format!(r#"{{"column":"c{i}","rule":{n}}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        assert!(matches!(
+            validate_action(&action(&format!("[{many}]"))),
+            Err(AppError::InvalidInput(_))
+        ));
     }
 }

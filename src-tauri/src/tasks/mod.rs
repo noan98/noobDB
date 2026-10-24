@@ -437,7 +437,7 @@ mod tests {
         ))
         .unwrap();
         let TaskAction::ExportQuery { masks, .. } = a else {
-            return;
+            panic!("ExportQuery にデコードされなかった");
         };
         let col = |n: &str| Column {
             name: n.into(),
@@ -452,6 +452,24 @@ mod tests {
         let out = mask_rows(Some(&plan), &rows);
         assert_eq!(out[0][0], Value::from_i64_lossless(1));
         assert_eq!(out[0][1], Value::Null);
+    }
+
+    /// hash ルール (ソルト不要の設定値のみ。ソルト自体は keyring) も往復で保たれる。
+    #[test]
+    fn export_query_hash_mask_round_trips() {
+        let a: TaskAction = serde_json::from_str(&export_query_json(
+            r#","masks":[{"column":"id","rule":{"kind":"hash","length":16}}]"#,
+        ))
+        .unwrap();
+        let v = serde_json::to_value(&a).unwrap();
+        assert_eq!(v["masks"][0]["rule"]["kind"], "hash");
+        assert_eq!(v["masks"][0]["rule"]["length"], 16);
+        let back: TaskAction = serde_json::from_value(v).unwrap();
+        assert!(matches!(
+            back,
+            TaskAction::ExportQuery { masks, .. }
+                if masks[0].rule == crate::db::masking::MaskRule::Hash { length: 16 }
+        ));
     }
 
     #[test]

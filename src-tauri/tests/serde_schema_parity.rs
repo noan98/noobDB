@@ -2035,10 +2035,36 @@ fn build_fixtures() -> serde_json::Value {
                 output_path: "/tmp/out.sql".into(),
                 sql_table: Some("users".into()),
                 sql_batch_size: Some(100),
-                masks: vec![t::ColumnMask {
-                    column: "email".into(),
-                    rule: t::MaskRule::Email { keep_start: 1 },
-                }],
+                masks: vec![
+                    ("email", t::MaskRule::Email { keep_start: 1 }),
+                    ("h", t::MaskRule::Hash { length: 16 }),
+                    (
+                        "f",
+                        t::MaskRule::Fixed {
+                            value: "***".into(),
+                        },
+                    ),
+                    (
+                        "p",
+                        t::MaskRule::Partial {
+                            keep_start: 1,
+                            keep_end: 2,
+                        },
+                    ),
+                    ("n", t::MaskRule::Null),
+                    (
+                        "d",
+                        t::MaskRule::Date {
+                            precision: t::DatePrecision::Month,
+                        },
+                    ),
+                ]
+                .into_iter()
+                .map(|(column, rule)| t::ColumnMask {
+                    column: column.into(),
+                    rule,
+                })
+                .collect(),
             },
             t::TaskSchedule::Interval { minutes: 30 },
         ),

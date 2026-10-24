@@ -5666,6 +5666,41 @@
               "keepStart": 1,
               "kind": "email"
             }
+          },
+          {
+            "column": "h",
+            "rule": {
+              "kind": "hash",
+              "length": 16
+            }
+          },
+          {
+            "column": "f",
+            "rule": {
+              "kind": "fixed",
+              "value": "***"
+            }
+          },
+          {
+            "column": "p",
+            "rule": {
+              "keepEnd": 2,
+              "keepStart": 1,
+              "kind": "partial"
+            }
+          },
+          {
+            "column": "n",
+            "rule": {
+              "kind": "null"
+            }
+          },
+          {
+            "column": "d",
+            "rule": {
+              "kind": "date",
+              "precision": "month"
+            }
           }
         ],
         "output_path": "/tmp/out.sql",

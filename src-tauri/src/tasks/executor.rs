@@ -439,7 +439,8 @@ async fn run_action(
             // タスク定義のマスクルール (#1836) を ExportModal と同じ `load_mask_spec` →
             // `mask_rows` 経路へ通す。空ならマスクしない。仮名化のソルトは keyring から取る。
             let mask_spec = match export::load_mask_spec(Some(masks.clone())).await {
-                Ok(spec) => spec,
+                // 手入力の列名が結果列に当たらないと PII が素通りするので厳格モード (#1836)。
+                Ok(spec) => spec.map(|s| s.strict()),
                 Err(e) => return TaskOutcome::err(e.to_string()),
             };
             let result = export::run_export_to_file(

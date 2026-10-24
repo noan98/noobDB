@@ -15,6 +15,7 @@ import {
   connectionProfile,
   historyEntry,
   parseResponse,
+  taskDefinition,
 } from "../api/schemas";
 
 const mockInvoke = vi.mocked(invoke);
@@ -159,5 +160,35 @@ describe("Zod スキーマ単体 (#391)", () => {
       expect(m).not.toMatch(/received|Invalid input|Required/);
       expect(m.split("\n")).toHaveLength(1);
     }
+  });
+
+  it("タスクの masks は hash ルールを含む全ルールを受け付け、不正な形は弾く (#1836)", () => {
+    const task = (rule: unknown) => ({
+      id: "t1",
+      name: "n",
+      profile_id: "p",
+      action: {
+        kind: "export_query",
+        sql: "SELECT 1",
+        database: null,
+        format: "csv",
+        output_path: "/tmp/o.csv",
+        masks: [{ column: "id", rule }],
+      },
+      schedule: { kind: "interval", minutes: 5 },
+      enabled: true,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+      next_run_at: null,
+      last_run_at: null,
+      last_status: null,
+      connect_retry: { max_retries: 0, interval_secs: 30 },
+      pause_after_failures: 0,
+      consecutive_failures: 0,
+      auto_paused_at: null,
+    });
+    expect(taskDefinition.safeParse(task({ kind: "hash", length: 16 })).success).toBe(true);
+    expect(taskDefinition.safeParse(task({ kind: "hash" })).success).toBe(false);
+    expect(taskDefinition.safeParse(task({ kind: "unknown" })).success).toBe(false);
   });
 });
