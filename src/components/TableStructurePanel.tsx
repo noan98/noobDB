@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, chakra, Flex, VisuallyHidden, type SystemStyleObject } from "@chakra-ui/react";
 
-import { api, type IndexInfo, type TableColumnInfo } from "../api/tauri";
+import { api, type IndexInfo, type TableColumnInfo, type TableExtrasInfo } from "../api/tauri";
 import { useT } from "../i18n";
 import { type IncomingFk, incomingFkTableName } from "../fkNavigation";
 import { foreignKeysOf, foreignKeyTargetLabel, type ExplorerForeignKey } from "./explorerTree";
@@ -154,6 +154,8 @@ export function TableStructurePanel({
   const t = useT();
   const [columns, setColumns] = useState<TableColumnInfo[] | null>(null);
   const [indexes, setIndexes] = useState<IndexInfo[] | null>(null);
+  // CHECK 制約と生成列の式 (#1837)。ベストエフォート: 取れなければ節ごと出さない。
+  const [extras, setExtras] = useState<TableExtrasInfo | null>(null);
   // このテーブルを参照している他テーブルの外部キー (逆方向, #1628)。ベストエフォート。
   const [incoming, setIncoming] = useState<IncomingFk[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -173,6 +175,7 @@ export function TableStructurePanel({
     let cancelled = false;
     setColumns(null);
     setIndexes(null);
+    setExtras(null);
     setIncoming(null);
     setError(null);
     ddlSeq.current += 1;
@@ -193,6 +196,15 @@ export function TableStructurePanel({
       })
       .catch(() => {
         if (!cancelled) setIndexes([]);
+      });
+    // CHECK 制約・生成式もベストエフォート (古い MySQL など取れない環境では節ごと出さない)。
+    Promise.resolve()
+      .then(() => api.describeTableExtras(sessionId, database, table))
+      .then((e) => {
+        if (!cancelled) setExtras(e);
+      })
+      .catch(() => {
+        if (!cancelled) setExtras(null);
       });
     // 逆方向の外部キーもベストエフォート: 取れなくても構造は出す。
     api
@@ -445,6 +457,58 @@ export function TableStructurePanel({
                   </>
                 )}
               </chakra.table>
+
+              {extras && extras.checks.length > 0 && (
+                <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
+                  <SectionCaption label={t("structureChecks")} count={extras.checks.length} />
+                  <chakra.thead>
+                    <chakra.tr>
+                      <chakra.th css={thCss}>{t("structureCheckName")}</chakra.th>
+                      <chakra.th css={thCss}>{t("structureCheckDefinition")}</chakra.th>
+                    </chakra.tr>
+                  </chakra.thead>
+                  <chakra.tbody>
+                    {extras.checks.map((c, i) => (
+                      <chakra.tr key={`${c.name}:${i}`}>
+                        <chakra.td css={tdCss} fontFamily="var(--font-mono)">
+                          {c.name === "" ? "—" : c.name}
+                        </chakra.td>
+                        <chakra.td css={tdCss} fontFamily="var(--font-mono)" color="app.textSecondary">
+                          {c.definition}
+                        </chakra.td>
+                      </chakra.tr>
+                    ))}
+                  </chakra.tbody>
+                </chakra.table>
+              )}
+
+              {extras && extras.generated.length > 0 && (
+                <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
+                  <SectionCaption label={t("structureGeneratedColumns")} count={extras.generated.length} />
+                  <chakra.thead>
+                    <chakra.tr>
+                      <chakra.th css={thCss}>{t("structureColName")}</chakra.th>
+                      <chakra.th css={thCss}>{t("structureGeneratedExpression")}</chakra.th>
+                      <chakra.th css={thCss}>{t("structureGeneratedStorage")}</chakra.th>
+                    </chakra.tr>
+                  </chakra.thead>
+                  <chakra.tbody>
+                    {extras.generated.map((g) => (
+                      <chakra.tr key={g.column}>
+                        <chakra.td css={tdCss} fontFamily="var(--font-mono)">
+                          {g.column}
+                        </chakra.td>
+                        <chakra.td css={tdCss} fontFamily="var(--font-mono)" color="app.textSecondary">
+                          {g.expression}
+                        </chakra.td>
+                        <chakra.td css={tdCss} fontFamily="var(--font-mono)" color="app.textMuted">
+                          {g.is_virtual ? "VIRTUAL" : "STORED"}
+                        </chakra.td>
+                      </chakra.tr>
+                    ))}
+                  </chakra.tbody>
+                </chakra.table>
+              )}
 
               <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
                 <SectionCaption label={t("structureIncomingForeignKeys")} count={incomingRows?.length ?? 0} />

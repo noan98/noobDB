@@ -14,7 +14,11 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::types::{ForeignKey, IndexInfo, TableColumnInfo, TableIndexes};
+use super::ddl_extras::{normalize_check, normalize_expr};
+use super::types::{
+    CheckConstraintInfo, ForeignKey, GeneratedColumnInfo, IndexInfo, TableColumnInfo,
+    TableDdlExtras, TableIndexes,
+};
 use super::DriverKind;
 
 /// Where a table or column sits relative to the two schemas being compared.
@@ -92,6 +96,37 @@ pub struct TableDiff {
     /// [`attach_sqlite_rebuild_context`] が `Different` テーブルにだけ載せる。
     #[serde(default)]
     pub target_snapshot: Option<TargetTableSnapshot>,
+    /// CHECK 制約の差分 (#1837)。[`attach_extras_diffs`] を呼んだ経路でのみ埋まる。
+    /// `SourceOnly` テーブルは source の CHECK を全て `SourceOnly` で持つ (`CREATE TABLE` に
+    /// 含める)。既存テーブルは差のあるものだけ。
+    #[serde(default)]
+    pub check_changes: Vec<CheckDiff>,
+    /// 生成列の式の差分 (#1837)。[`attach_extras_diffs`] を呼んだ経路でのみ埋まる。
+    /// 列自体の差分 (`columns`) とは別に、式・STORED/VIRTUAL の違いを持つ。
+    #[serde(default)]
+    pub generated_changes: Vec<GeneratedDiff>,
+}
+
+/// CHECK 制約 1 本の差分 (#1837)。`name` は制約名 (無名の SQLite 制約は空)。
+/// 名前ではなく式の正規化形で対応づける (名前だけの違いは差分にしない)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckDiff {
+    pub name: String,
+    pub status: DiffStatus,
+    pub source: Option<CheckConstraintInfo>,
+    pub target: Option<CheckConstraintInfo>,
+}
+
+/// 生成列の式の差分 (#1837)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeneratedDiff {
+    pub column: String,
+    pub status: DiffStatus,
+    pub source: Option<GeneratedColumnInfo>,
+    pub target: Option<GeneratedColumnInfo>,
+    /// `Different` のとき `expression` / `storage` (STORED と VIRTUAL の違い)。
+    #[serde(default)]
+    pub changed_fields: Vec<String>,
 }
 
 /// インデックス 1 本の定義。`IndexInfo` は内部用の項目を IPC に出さない (`serde(skip)`)
@@ -194,6 +229,17 @@ pub struct TargetTableSnapshot {
     /// この表を外部キーで参照する他の表 (`表名 (ON DELETE ...)`)。再作成の警告に使う。
     #[serde(default)]
     pub referenced_by: Vec<String>,
+    /// target の CHECK 制約 (テーブル再作成で失わないよう `CONSTRAINT ... CHECK` で出す, #1837)。
+    /// `extras_known` が true のときだけ信頼できる。
+    #[serde(default)]
+    pub checks: Vec<CheckConstraintInfo>,
+    /// target の生成列 (SQLite の `table_info` は生成列を隠すので別に持つ, #1837)。
+    #[serde(default)]
+    pub generated: Vec<GeneratedColumnInfo>,
+    /// `checks` / `generated` を取得できたか。false なら再作成 SQL の警告に
+    /// 「CHECK / 生成列は含まれない」を残す。
+    #[serde(default)]
+    pub extras_known: bool,
 }
 
 /// 外部キー 1 制約 (複合キーの列を束ねたもの)。`referenced_columns` が空なら参照先
@@ -647,6 +693,206 @@ pub fn attach_foreign_key_diffs(
     }
 }
 
+fn check_info(name: &str, def: &str) -> CheckConstraintInfo {
+    CheckConstraintInfo {
+        name: name.to_string(),
+        definition: def.to_string(),
+    }
+}
+
+/// 1 テーブルぶんの CHECK 制約を突き合わせる。式の正規化形が同じものは名前が違っても同一、
+/// 同名で式が違えば `Different`、残りは片側のみ。
+fn diff_checks(source: &[(String, String)], target: &[(String, String)]) -> Vec<CheckDiff> {
+    let mut out = Vec::new();
+    let mut t_used = vec![false; target.len()];
+    let mut s_left: Vec<&(String, String)> = Vec::new();
+    for s in source {
+        let norm = normalize_check(&s.1);
+        match target
+            .iter()
+            .enumerate()
+            .find(|(i, t)| !t_used[*i] && normalize_check(&t.1) == norm)
+        {
+            Some((i, _)) => t_used[i] = true,
+            None => s_left.push(s),
+        }
+    }
+    let mut t_left: Vec<&(String, String)> = target
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !t_used[*i])
+        .map(|(_, t)| t)
+        .collect();
+    for s in s_left {
+        // 同名 (無名は除く) で式だけ違うものは Different に。
+        let pos = (!s.0.is_empty())
+            .then(|| t_left.iter().position(|t| t.0 == s.0))
+            .flatten();
+        match pos {
+            Some(p) => {
+                let t = t_left.remove(p);
+                out.push(CheckDiff {
+                    name: s.0.clone(),
+                    status: DiffStatus::Different,
+                    source: Some(check_info(&s.0, &s.1)),
+                    target: Some(check_info(&t.0, &t.1)),
+                });
+            }
+            None => out.push(CheckDiff {
+                name: s.0.clone(),
+                status: DiffStatus::SourceOnly,
+                source: Some(check_info(&s.0, &s.1)),
+                target: None,
+            }),
+        }
+    }
+    for t in t_left {
+        out.push(CheckDiff {
+            name: t.0.clone(),
+            status: DiffStatus::TargetOnly,
+            source: None,
+            target: Some(check_info(&t.0, &t.1)),
+        });
+    }
+    out
+}
+
+fn diff_generated(
+    source: &[GeneratedColumnInfo],
+    target: &[GeneratedColumnInfo],
+) -> Vec<GeneratedDiff> {
+    let names = sorted_union(
+        source.iter().map(|g| g.column.as_str()),
+        target.iter().map(|g| g.column.as_str()),
+    );
+    let mut out = Vec::new();
+    for column in names {
+        let s = source.iter().find(|g| g.column == column);
+        let t = target.iter().find(|g| g.column == column);
+        match (s, t) {
+            (Some(s), None) => out.push(GeneratedDiff {
+                column,
+                status: DiffStatus::SourceOnly,
+                source: Some(s.clone()),
+                target: None,
+                changed_fields: Vec::new(),
+            }),
+            (None, Some(t)) => out.push(GeneratedDiff {
+                column,
+                status: DiffStatus::TargetOnly,
+                source: None,
+                target: Some(t.clone()),
+                changed_fields: Vec::new(),
+            }),
+            (Some(s), Some(t)) => {
+                let mut changed = Vec::new();
+                if normalize_expr(&s.expression) != normalize_expr(&t.expression) {
+                    changed.push("expression".to_string());
+                }
+                if s.is_virtual != t.is_virtual {
+                    changed.push("storage".to_string());
+                }
+                // 型・NOT NULL は列情報に出ない生成列 (SQLite) だけ持つ。両側にあるときだけ比べる。
+                if let (Some(st), Some(tt)) = (&s.data_type, &t.data_type) {
+                    if !st.eq_ignore_ascii_case(tt) {
+                        changed.push("data_type".to_string());
+                    }
+                    if s.not_null != t.not_null {
+                        changed.push("nullable".to_string());
+                    }
+                }
+                if !changed.is_empty() {
+                    out.push(GeneratedDiff {
+                        column,
+                        status: DiffStatus::Different,
+                        source: Some(s.clone()),
+                        target: Some(t.clone()),
+                        changed_fields: changed,
+                    });
+                }
+            }
+            (None, None) => {}
+        }
+    }
+    out
+}
+
+/// 両側の CHECK 制約・生成列の式を比べて各テーブルの `check_changes` / `generated_changes` に
+/// 載せる (#1837)。`SourceOnly` テーブルは source の全てを `SourceOnly` で載せ (`CREATE TABLE` に
+/// 含める)、`TargetOnly` は `DROP TABLE` で消えるので載せない。`Same` / `Different` は差のある
+/// ものだけを載せ、差があれば `Same` を `Different` に格上げする。これが無いと CHECK・生成式だけが
+/// 違うスキーマが偽の「一致」になる。
+#[cfg(test)]
+pub fn attach_extras_diffs(
+    diff: &mut SchemaDiff,
+    source: &[(String, TableDdlExtras)],
+    target: &[(String, TableDdlExtras)],
+) {
+    attach_extras_diffs_with(diff, source, target, true);
+}
+
+/// [`attach_extras_diffs`] の本体。`checks_reliable` が false (片側で CHECK を取得できなかった)
+/// のときは CHECK の差分を一切載せない。取得できなかった側が「CHECK なし」に見えて偽の
+/// `TargetOnly` (= `DROP CHECK`) や `SourceOnly` を作るのを防ぐ。CHECK だけを理由に `Different` へ
+/// 上げることもしない。生成列の式は通常どおり比べる。
+pub fn attach_extras_diffs_with(
+    diff: &mut SchemaDiff,
+    source: &[(String, TableDdlExtras)],
+    target: &[(String, TableDdlExtras)],
+    checks_reliable: bool,
+) {
+    let empty = TableDdlExtras::default();
+    let src: HashMap<&str, &TableDdlExtras> = source.iter().map(|(n, e)| (n.as_str(), e)).collect();
+    let tgt: HashMap<&str, &TableDdlExtras> = target.iter().map(|(n, e)| (n.as_str(), e)).collect();
+    for table in diff.tables.iter_mut() {
+        let s = src.get(table.name.as_str()).copied().unwrap_or(&empty);
+        let t = tgt.get(table.name.as_str()).copied().unwrap_or(&empty);
+        match table.status {
+            DiffStatus::SourceOnly => {
+                table.check_changes = if checks_reliable {
+                    diff_checks(&s.checks, &[])
+                } else {
+                    Vec::new()
+                };
+                table.generated_changes = diff_generated(&s.generated, &[]);
+            }
+            DiffStatus::TargetOnly => {}
+            DiffStatus::Same | DiffStatus::Different => {
+                table.check_changes = if checks_reliable {
+                    diff_checks(&s.checks, &t.checks)
+                } else {
+                    Vec::new()
+                };
+                table.generated_changes = diff_generated(&s.generated, &t.generated);
+                if table.status == DiffStatus::Same
+                    && (!table.check_changes.is_empty() || !table.generated_changes.is_empty())
+                {
+                    table.status = DiffStatus::Different;
+                }
+            }
+        }
+    }
+}
+
+/// SQLite の再作成が失わないよう、target の CHECK 制約と生成列を `target_snapshot` に載せる。
+/// [`attach_sqlite_rebuild_context`] の後に呼ぶ (#1837)。
+pub fn attach_target_extras_to_snapshots(
+    diff: &mut SchemaDiff,
+    target: &[(String, TableDdlExtras)],
+) {
+    let tgt: HashMap<&str, &TableDdlExtras> = target.iter().map(|(n, e)| (n.as_str(), e)).collect();
+    let empty = TableDdlExtras::default();
+    for table in diff.tables.iter_mut() {
+        let Some(snap) = table.target_snapshot.as_mut() else {
+            continue;
+        };
+        let e = tgt.get(table.name.as_str()).copied().unwrap_or(&empty);
+        snap.checks = e.checks.iter().map(|(n, d)| check_info(n, d)).collect();
+        snap.generated = e.generated.clone();
+        snap.extras_known = true;
+    }
+}
+
 /// `sqlite_master` の 1 行 (索引・トリガー・表の元の `CREATE` 文)。
 #[derive(Debug, Clone)]
 pub struct SqliteMasterEntry {
@@ -672,7 +918,9 @@ pub fn attach_sqlite_rebuild_context(
     for table in diff.tables.iter_mut().filter(|t| {
         t.status == DiffStatus::Different
             && (t.columns.iter().any(|c| c.status == DiffStatus::Different)
-                || !t.fk_changes.is_empty())
+                || !t.fk_changes.is_empty()
+                || !t.check_changes.is_empty()
+                || !t.generated_changes.is_empty())
     }) {
         let Some(tt) = target_tables.iter().find(|t| t.name == table.name) else {
             continue;
@@ -727,6 +975,9 @@ pub fn attach_sqlite_rebuild_context(
                 .find(|m| m.kind == "table" && m.name == table.name)
                 .map(|m| m.sql.clone()),
             referenced_by,
+            checks: Vec::new(),
+            generated: Vec::new(),
+            extras_known: false,
         });
     }
 }
@@ -1205,5 +1456,186 @@ mod tests {
         let mut added = diff(&tables, &tables);
         attach_foreign_key_diffs(&mut added, &[fk("a", None)], &[]);
         assert_eq!(added.tables[0].fk_changes[0].status, DiffStatus::SourceOnly);
+    }
+
+    fn extras(checks: &[(&str, &str)], generated: &[(&str, &str, bool)]) -> TableDdlExtras {
+        TableDdlExtras {
+            checks: checks
+                .iter()
+                .map(|(n, d)| (n.to_string(), d.to_string()))
+                .collect(),
+            generated: generated
+                .iter()
+                .map(|(c, e, v)| GeneratedColumnInfo::new(*c, *e, *v))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn check_only_difference_is_no_longer_a_false_same() {
+        let s = vec![table("t", vec![col("a", "int")])];
+        let mut d = diff(&s, &s);
+        assert_eq!(d.tables[0].status, DiffStatus::Same);
+        attach_extras_diffs(
+            &mut d,
+            &[("t".into(), extras(&[("a_pos", "CHECK (a > 0)")], &[]))],
+            &[("t".into(), extras(&[], &[]))],
+        );
+        assert_eq!(d.tables[0].status, DiffStatus::Different);
+        assert_eq!(d.tables[0].check_changes.len(), 1);
+        assert_eq!(d.tables[0].check_changes[0].status, DiffStatus::SourceOnly);
+    }
+
+    #[test]
+    fn equivalent_checks_with_different_names_or_spacing_are_same() {
+        let s = vec![table("t", vec![col("a", "int")])];
+        let mut d = diff(&s, &s);
+        attach_extras_diffs(
+            &mut d,
+            &[("t".into(), extras(&[("a_pos", "CHECK ((a > 0))")], &[]))],
+            &[("t".into(), extras(&[("t_chk_1", "check (a>0)")], &[]))],
+        );
+        assert_eq!(d.tables[0].status, DiffStatus::Same);
+        assert!(d.tables[0].check_changes.is_empty());
+    }
+
+    #[test]
+    fn same_named_check_with_changed_expression_is_different() {
+        let s = vec![table("t", vec![col("a", "int")])];
+        let mut d = diff(&s, &s);
+        attach_extras_diffs(
+            &mut d,
+            &[("t".into(), extras(&[("c", "CHECK (a > 0)")], &[]))],
+            &[("t".into(), extras(&[("c", "CHECK (a > 5)")], &[]))],
+        );
+        let ch = &d.tables[0].check_changes;
+        assert_eq!(ch.len(), 1);
+        assert_eq!(ch[0].status, DiffStatus::Different);
+    }
+
+    #[test]
+    fn target_only_check_is_reported() {
+        let s = vec![table("t", vec![col("a", "int")])];
+        let mut d = diff(&s, &s);
+        attach_extras_diffs(
+            &mut d,
+            &[],
+            &[("t".into(), extras(&[("c", "CHECK (a > 0)")], &[]))],
+        );
+        assert_eq!(d.tables[0].check_changes[0].status, DiffStatus::TargetOnly);
+        assert_eq!(d.tables[0].status, DiffStatus::Different);
+    }
+
+    #[test]
+    fn generated_expression_and_storage_changes_are_detected() {
+        let s = vec![table("t", vec![col("a", "int"), col("g", "int")])];
+        let mut d = diff(&s, &s);
+        attach_extras_diffs(
+            &mut d,
+            &[("t".into(), extras(&[], &[("g", "a + 1", false)]))],
+            &[("t".into(), extras(&[], &[("g", "(a+2)", true)]))],
+        );
+        let g = &d.tables[0].generated_changes;
+        assert_eq!(g.len(), 1);
+        assert_eq!(g[0].status, DiffStatus::Different);
+        assert_eq!(g[0].changed_fields, vec!["expression", "storage"]);
+        assert_eq!(d.tables[0].status, DiffStatus::Different);
+    }
+
+    #[test]
+    fn equivalent_generated_expressions_are_same() {
+        let s = vec![table("t", vec![col("a", "int"), col("g", "int")])];
+        let mut d = diff(&s, &s);
+        attach_extras_diffs(
+            &mut d,
+            &[("t".into(), extras(&[], &[("g", "`a` + 1", false)]))],
+            &[("t".into(), extras(&[], &[("g", "(`a`+1)", false)]))],
+        );
+        assert_eq!(d.tables[0].status, DiffStatus::Same);
+    }
+
+    #[test]
+    fn source_only_table_carries_all_source_extras() {
+        let s = vec![table("t", vec![col("a", "int")])];
+        let mut d = diff(&s, &[]);
+        attach_extras_diffs(
+            &mut d,
+            &[(
+                "t".into(),
+                extras(&[("c", "CHECK (a > 0)")], &[("g", "a", true)]),
+            )],
+            &[],
+        );
+        assert_eq!(d.tables[0].status, DiffStatus::SourceOnly);
+        assert_eq!(d.tables[0].check_changes.len(), 1);
+        assert_eq!(d.tables[0].generated_changes.len(), 1);
+    }
+
+    #[test]
+    fn hidden_generated_column_type_difference_is_detected() {
+        let s = vec![table("t", vec![col("a", "int")])];
+        let mut d = diff(&s, &s);
+        let mut src = GeneratedColumnInfo::new("g", "a + 1", false);
+        src.data_type = Some("INTEGER".to_string());
+        let mut tgt = src.clone();
+        tgt.data_type = Some("TEXT".to_string());
+        tgt.not_null = true;
+        attach_extras_diffs(
+            &mut d,
+            &[(
+                "t".into(),
+                TableDdlExtras {
+                    generated: vec![src],
+                    ..Default::default()
+                },
+            )],
+            &[(
+                "t".into(),
+                TableDdlExtras {
+                    generated: vec![tgt],
+                    ..Default::default()
+                },
+            )],
+        );
+        assert_eq!(
+            d.tables[0].generated_changes[0].changed_fields,
+            vec!["data_type", "nullable"]
+        );
+    }
+
+    #[test]
+    fn unreliable_checks_are_not_compared_and_do_not_raise_status() {
+        let s = vec![
+            table("t", vec![col("a", "int")]),
+            table("u", vec![col("a", "int")]),
+        ];
+        let mut d = diff(&s, &s[..1]);
+        // 片側で CHECK を取得できなかった: t は target に CHECK が見えないだけ。
+        attach_extras_diffs_with(
+            &mut d,
+            &[
+                (
+                    "t".into(),
+                    extras(&[("c", "CHECK (a > 0)")], &[("g", "a", false)]),
+                ),
+                ("u".into(), extras(&[("c", "CHECK (a > 0)")], &[])),
+            ],
+            &[("t".into(), extras(&[], &[("g", "a", false)]))],
+            false,
+        );
+        for t in &d.tables {
+            assert!(t.check_changes.is_empty(), "{t:?}");
+        }
+        assert_eq!(d.tables[0].status, DiffStatus::Same);
+        // 生成式は比べ続ける。
+        let mut d2 = diff(&s[..1], &s[..1]);
+        attach_extras_diffs_with(
+            &mut d2,
+            &[("t".into(), extras(&[], &[("g", "a + 1", false)]))],
+            &[("t".into(), extras(&[], &[("g", "a + 2", false)]))],
+            false,
+        );
+        assert_eq!(d2.tables[0].status, DiffStatus::Different);
+        assert_eq!(d2.tables[0].generated_changes.len(), 1);
     }
 }

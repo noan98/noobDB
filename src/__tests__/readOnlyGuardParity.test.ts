@@ -530,6 +530,7 @@ safe(
   "alter_table_context",
   "describe_database",
   "describe_table",
+  "describe_table_extras",
   "foreign_keys",
   "get_object_definition",
   "get_routine_signature",

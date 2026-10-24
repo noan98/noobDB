@@ -10,6 +10,7 @@ pub mod create_table;
 pub mod data_diff;
 /// DB 全体からの値検索の走査 SQL 生成 (#748 / #1261)。
 pub mod data_search;
+pub mod ddl_extras;
 pub mod diff;
 pub mod format;
 /// ライブクエリ・インスペクタ (#746) のフィンガープリント正規化と digest 差分集計 (#1259)。
@@ -1481,6 +1482,31 @@ impl Connection {
         }
     }
 
+    /// 1 テーブルの CHECK 制約と生成列の式 (#1837)。3 ドライバとも同じ [`types::TableDdlExtras`]。
+    pub async fn table_ddl_extras(&self, db: &str, table: &str) -> Result<types::TableDdlExtras> {
+        match self {
+            Connection::Postgres(c) => c.table_ddl_extras(db, table).await,
+            Connection::MySql(_) | Connection::Sqlite(_) => Ok(self
+                .ddl_extras_for_database(db)
+                .await?
+                .tables
+                .into_iter()
+                .find(|(name, _)| name == table)
+                .map(|(_, e)| e)
+                .unwrap_or_default()),
+        }
+    }
+
+    /// `db` の全テーブルの CHECK 制約と生成列の式 (#1837)。何も無い表は含まれないことがある。
+    /// スキーマ比較が両側の差分を取るのに使う。
+    pub async fn ddl_extras_for_database(&self, db: &str) -> Result<types::DatabaseDdlExtras> {
+        match self {
+            Connection::MySql(c) => c.ddl_extras_for_database(db).await,
+            Connection::Postgres(c) => c.ddl_extras_for_database(db).await,
+            Connection::Sqlite(c) => c.ddl_extras_for_database().await,
+        }
+    }
+
     /// PostgreSQL 向けに、列・インデックス・外部キーの introspection を
     /// 束ねて `CREATE TABLE` を再構成する (#1001)。方言は接続自身のドライバ。
     async fn synthesized_table_ddl(&self, db: &str, table: &str) -> Result<String> {
@@ -1494,10 +1520,7 @@ impl Connection {
         let fks = self.foreign_keys_for_table(db, table).await?;
         let driver = self.driver_kind();
         // CHECK 制約と生成列の式 (#1625)。取れなくても DDL 自体は返す (その分は省かれる)。
-        let extras = match self {
-            Connection::Postgres(c) => c.table_ddl_extras(db, table).await.unwrap_or_default(),
-            Connection::MySql(_) | Connection::Sqlite(_) => types::TableDdlExtras::default(),
-        };
+        let extras = self.table_ddl_extras(db, table).await.unwrap_or_default();
         Ok(table_ddl::synthesize_create_table(
             driver,
             Some(db),

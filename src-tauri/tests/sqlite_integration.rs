@@ -6326,6 +6326,153 @@ async fn sqlite_bulk_write_optimistic_lock_detects_lost_update() {
     assert!(denied.is_err(), "read_only は拒否: {denied:?}");
 }
 
+#[tokio::test]
+async fn sqlite_check_and_generated_expressions_are_introspected_compared_and_synced() {
+    // #1837: CHECK 制約と生成列の式だけが違う表は偽の「一致」にならず、テーブル再作成の
+    // 同期 SQL で target が source に収束する。
+    let mk = |tag: &str| {
+        let mut p = std::env::temp_dir();
+        p.push(format!(
+            "noobdb_sqlite_extras_{tag}_{}.db",
+            std::process::id()
+        ));
+        p
+    };
+    let src_path = mk("src");
+    let tgt_path = mk("tgt");
+    for p in [&src_path, &tgt_path] {
+        let _ = std::fs::remove_file(p);
+        std::fs::File::create(p).expect("create temp sqlite file");
+    }
+    let src = t::connect(&t::sqlite_options(src_path.to_str().unwrap()))
+        .await
+        .expect("connect source");
+    let tgt = t::connect(&t::sqlite_options(tgt_path.to_str().unwrap()))
+        .await
+        .expect("connect target");
+
+    src.execute(
+        "CREATE TABLE items (id INTEGER PRIMARY KEY, price REAL CHECK (price > 0), qty INTEGER, \
+         total REAL NOT NULL GENERATED ALWAYS AS (price * qty) STORED, note TEXT, \
+         CONSTRAINT qty_nonneg CHECK (qty >= 0))",
+        None,
+    )
+    .await
+    .expect("create source");
+    tgt.execute(
+        "CREATE TABLE items (id INTEGER PRIMARY KEY, price REAL, qty INTEGER, \
+         total REAL NOT NULL GENERATED ALWAYS AS (price + qty) VIRTUAL, note TEXT)",
+        None,
+    )
+    .await
+    .expect("create target");
+
+    // 取得: 列レベル・テーブルレベルの CHECK と生成式。
+    let extras = src.table_ddl_extras("main", "items").await.expect("extras");
+    assert_eq!(extras.checks.len(), 2, "{extras:?}");
+    assert!(extras
+        .checks
+        .iter()
+        .any(|(n, d)| n == "qty_nonneg" && d == "CHECK (qty >= 0)"));
+    assert_eq!(extras.generated.len(), 1, "{extras:?}");
+    let g = &extras.generated[0];
+    assert_eq!(
+        (g.column.as_str(), g.expression.as_str(), g.is_virtual),
+        ("total", "price * qty", false)
+    );
+    // 隠れた生成列は型・NOT NULL・元の列位置を持つ (table_info には出ないため)。
+    assert_eq!(g.data_type.as_deref(), Some("REAL"));
+    assert_eq!(g.position, Some(3));
+    assert!(g.not_null);
+
+    let diff = t::compare_schema_via_core(&src, "main", &tgt, "main")
+        .await
+        .expect("compare");
+    let items = diff
+        .tables
+        .iter()
+        .find(|x| x.name == "items")
+        .expect("items");
+    assert_eq!(items.status, t::DiffStatus::Different, "{items:?}");
+    assert_eq!(items.check_changes.len(), 2);
+    assert_eq!(items.generated_changes.len(), 1);
+
+    // 非破壊では再作成を出さず警告に落ちる。
+    let safe = t::generate_sync_sql(&diff, false);
+    assert!(safe
+        .statements
+        .iter()
+        .all(|s| s.kind != t::SyncKind::RebuildTable));
+    assert!(!safe.warnings.is_empty());
+
+    let plan = t::generate_sync_sql(&diff, true);
+    let rebuild = plan
+        .statements
+        .iter()
+        .find(|s| s.kind == t::SyncKind::RebuildTable)
+        .expect("rebuild statement");
+    assert!(rebuild.sql.contains("CHECK (price > 0)"), "{}", rebuild.sql);
+    assert!(rebuild.sql.contains("price * qty"), "{}", rebuild.sql);
+    // 型・NOT NULL・元の列位置 (note より前) が保たれる。
+    assert!(
+        rebuild
+            .sql
+            .contains("\"total\" REAL GENERATED ALWAYS AS (price * qty) STORED NOT NULL"),
+        "{}",
+        rebuild.sql
+    );
+    let total_at = rebuild.sql.find("\"total\" REAL").expect("total");
+    let note_at = rebuild.sql.find("\"note\" TEXT").expect("note");
+    assert!(total_at < note_at, "{}", rebuild.sql);
+    let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
+    tgt.execute_sync_transaction(&sqls, None)
+        .await
+        .expect("apply sync plan");
+
+    let after = t::compare_schema_via_core(&src, "main", &tgt, "main")
+        .await
+        .expect("re-compare");
+    let items = after
+        .tables
+        .iter()
+        .find(|x| x.name == "items")
+        .expect("items");
+    assert_eq!(items.status, t::DiffStatus::Same, "{items:?}");
+
+    // source のみの表は CHECK・生成列ごと CREATE される。
+    src.execute(
+        "CREATE TABLE fresh (a INTEGER CHECK (a > 0), g INTEGER AS (a * 2) VIRTUAL)",
+        None,
+    )
+    .await
+    .expect("create fresh");
+    let diff = t::compare_schema_via_core(&src, "main", &tgt, "main")
+        .await
+        .expect("compare fresh");
+    let plan = t::generate_sync_sql(&diff, false);
+    let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
+    tgt.execute_sync_transaction(&sqls, None)
+        .await
+        .expect("apply create");
+    let after = t::compare_schema_via_core(&src, "main", &tgt, "main")
+        .await
+        .expect("re-compare fresh");
+    assert!(
+        after.tables.iter().all(|x| x.status == t::DiffStatus::Same),
+        "{:?}",
+        after
+            .tables
+            .iter()
+            .map(|x| (&x.name, x.status))
+            .collect::<Vec<_>>()
+    );
+
+    src.close().await;
+    tgt.close().await;
+    let _ = std::fs::remove_file(&src_path);
+    let _ = std::fs::remove_file(&tgt_path);
+}
+
 // ---- #1838: データ比較・タイムラプスの行識別子 ----
 
 async fn row_key_conn(tag: &str) -> (PathBuf, t::Connection) {

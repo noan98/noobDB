@@ -1572,13 +1572,97 @@ pub struct SqliteMaintenanceResult {
 /// メンテナンス結果に載せる行数の上限。
 pub const SQLITE_MAINTENANCE_MAX_ROWS: usize = 1000;
 
-/// PostgreSQL の `CREATE TABLE` 再構成に足す、列情報だけでは分からない定義 (#1625)。
+/// `CREATE TABLE` の再構成・スキーマ比較・構造表示に足す、列情報だけでは分からない定義
+/// (#1625 / #1837)。3 ドライバ共通: PostgreSQL は `pg_get_constraintdef` / `pg_get_expr`、
+/// MySQL は `information_schema.CHECK_CONSTRAINTS` / `COLUMNS.GENERATION_EXPRESSION`、
+/// SQLite は `sqlite_master.sql` のパースで埋める。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TableDdlExtras {
-    /// CHECK 制約 (制約名, `pg_get_constraintdef` の出力 = `CHECK (...)` 句全体)。
+    /// CHECK 制約 (制約名, `CHECK (...)` 句全体)。名前が無い (SQLite の無名制約) ときは空文字。
     pub checks: Vec<(String, String)>,
-    /// 生成列 (列名, `pg_get_expr(adbin)` の生成式, VIRTUAL か。false は STORED)。
-    pub generated: Vec<(String, String, bool)>,
+    /// 生成列 (列名, 生成式, VIRTUAL か。false は STORED)。
+    pub generated: Vec<GeneratedColumnInfo>,
+}
+
+/// `ddl_extras_for_database` の結果。CHECK を取得できなかったことを呼び出し元に伝える
+/// (黙って「CHECK なし」と見なすと比較が偽の一致を出す, #1837)。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DatabaseDdlExtras {
+    pub tables: Vec<(String, TableDdlExtras)>,
+    /// CHECK 制約の取得に失敗した (サーバが対応していない・権限不足など)。
+    pub checks_unavailable: bool,
+}
+
+impl TableDdlExtras {
+    pub fn is_empty(&self) -> bool {
+        self.checks.is_empty() && self.generated.is_empty()
+    }
+}
+
+/// CHECK 制約 1 本 (IPC / スキーマ差分に載せる形, #1837)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CheckConstraintInfo {
+    /// 制約名。無名 (SQLite) のときは空文字。
+    pub name: String,
+    /// `CHECK (...)` 句全体。
+    pub definition: String,
+}
+
+/// 生成列 1 本の式 (IPC / スキーマ差分に載せる形, #1837)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GeneratedColumnInfo {
+    pub column: String,
+    /// 生成式 (外側の括弧を除いたもの)。
+    pub expression: String,
+    /// VIRTUAL なら true、STORED なら false。
+    pub is_virtual: bool,
+    /// 列の型。列情報 (`describe_table`) に出ない生成列 (SQLite の隠れた生成列) のときだけ
+    /// 持つ。再作成・CREATE で型を保つのと、型の違いを比較するのに使う。
+    #[serde(default)]
+    pub data_type: Option<String>,
+    /// `data_type` と同じく隠れた生成列のときだけ意味を持つ NOT NULL。
+    #[serde(default)]
+    pub not_null: bool,
+    /// 全列 (隠れた列を含む) の中での 0 始まりの位置。隠れた生成列を元の位置に戻すのに使う。
+    #[serde(default)]
+    pub position: Option<usize>,
+}
+
+impl GeneratedColumnInfo {
+    /// 型・位置を持たない生成列 (MySQL / PostgreSQL は列情報から分かる)。
+    pub fn new(column: impl Into<String>, expression: impl Into<String>, is_virtual: bool) -> Self {
+        Self {
+            column: column.into(),
+            expression: expression.into(),
+            is_virtual,
+            data_type: None,
+            not_null: false,
+            position: None,
+        }
+    }
+}
+
+/// `describe_table_extras` の応答 (テーブル構造パネルの CHECK 制約・生成式の表示用, #1837)。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TableExtrasInfo {
+    pub checks: Vec<CheckConstraintInfo>,
+    pub generated: Vec<GeneratedColumnInfo>,
+}
+
+impl From<&TableDdlExtras> for TableExtrasInfo {
+    fn from(e: &TableDdlExtras) -> Self {
+        Self {
+            checks: e
+                .checks
+                .iter()
+                .map(|(name, definition)| CheckConstraintInfo {
+                    name: name.clone(),
+                    definition: definition.clone(),
+                })
+                .collect(),
+            generated: e.generated.clone(),
+        }
+    }
 }
 
 /// `SchemaObject.kind` の Rust ⇔ TS 集合一致を固定するテスト (#1840)。

@@ -56,8 +56,8 @@ pub mod __test_api {
         compute_data_diff, generate_data_sync_sql, DataDiff, RowDiff, RowStatus,
     };
     pub use crate::db::diff::{
-        compute_schema_diff, ColumnDiff, DiffForeignKey, DiffIndex, DiffStatus, ForeignKeyDiff,
-        IndexDiff, SchemaDiff, TableDiff, TargetTableSnapshot,
+        compute_schema_diff, CheckDiff, ColumnDiff, DiffForeignKey, DiffIndex, DiffStatus,
+        ForeignKeyDiff, GeneratedDiff, IndexDiff, SchemaDiff, TableDiff, TargetTableSnapshot,
     };
     pub use crate::db::inspector::{normalize_sql_fingerprint, NPlusOneOptions, StatementDeltaRow};
     pub use crate::db::js_compat::{collation_key, js_number_to_string, js_to_number};
@@ -90,13 +90,14 @@ pub mod __test_api {
     pub use crate::db::stream_batch::{StreamBatcher, StreamStats, StreamStatsSnapshot};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
-        Column, DbUserInfo, ForeignKey, IndexInfo, KillOutcomeStatus, KillProcessOutcome,
-        KillProcessesResult, LiveQuery, LocalTableMeta, PreviewResult, ProcessInfo,
-        ProcessListItem, ProcessProgress, QueryResult, QueryStatsSupport, RoutineParameter,
-        RoutineSignature, SchemaObject, ServerInfo, ServerMessage, ServerMessageSeverity,
-        ServerMetrics, ServerVariable, SqliteFkViolation, SqliteMaintenanceAction,
-        SqliteMaintenanceResult, StreamBatch, TableColumnInfo, TableComment, TablePrivilegeRow,
-        TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
+        CheckConstraintInfo, Column, DbUserInfo, ForeignKey, GeneratedColumnInfo, IndexInfo,
+        KillOutcomeStatus, KillProcessOutcome, KillProcessesResult, LiveQuery, LocalTableMeta,
+        PreviewResult, ProcessInfo, ProcessListItem, ProcessProgress, QueryResult,
+        QueryStatsSupport, RoutineParameter, RoutineSignature, SchemaObject, ServerInfo,
+        ServerMessage, ServerMessageSeverity, ServerMetrics, ServerVariable, SqliteFkViolation,
+        SqliteMaintenanceAction, SqliteMaintenanceResult, StreamBatch, TableColumnInfo,
+        TableComment, TableExtrasInfo, TablePrivilegeRow, TableRowEstimate, TableRowIdentity,
+        TableSchema, TableSizeInfo, UserPrivileges, Value,
     };
     pub use crate::db::upsert::{ConflictMode, ImportConflict};
     pub use crate::db::{
@@ -1679,6 +1680,7 @@ pub fn run() {
             commands::schema::list_databases,
             commands::schema::list_tables,
             commands::schema::describe_table,
+            commands::schema::describe_table_extras,
             commands::schema::schema_overview,
             commands::schema::foreign_keys,
             commands::schema::list_indexes,

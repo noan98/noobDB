@@ -191,6 +191,44 @@ pub(crate) async fn compare_schema_core(
             );
         }
     }
+    // CHECK 制約・生成列の式の差分 (#1837)。取得できなければ比較済みの印を立てず、注意を残す
+    // (CHECK だけが違う表が偽の「一致」に見えたまま気づかれないのを避ける)。
+    let mut target_extras = None;
+    match (
+        source.ddl_extras_for_database(source_database).await,
+        target.ddl_extras_for_database(target_database).await,
+    ) {
+        (Ok(se), Ok(te)) => {
+            // 取得できなかった側は「CHECK なし」に見えて偽の差分 (DROP CHECK など) を作るので、
+            // その場合は CHECK の差分を載せず警告だけ残す。
+            let checks_unavailable = se.checks_unavailable || te.checks_unavailable;
+            crate::db::diff::attach_extras_diffs_with(
+                &mut diff,
+                &se.tables,
+                &te.tables,
+                !checks_unavailable,
+            );
+            if checks_unavailable {
+                diff.warnings.push(
+                    "CHECK 制約を取得できなかったため (サーバが information_schema の CHECK 制約に対応していない、または権限不足)、CHECK 制約の差分は比較していません。生成列の式は比較しています。"
+                        .to_string(),
+                );
+            }
+            target_extras = Some(te.tables);
+        }
+        (s, t) => {
+            for e in [s.err(), t.err()].into_iter().flatten() {
+                tracing::warn!(
+                    kind = e.kind(),
+                    "schema compare: could not load CHECK constraints / generated columns"
+                );
+            }
+            diff.warnings.push(
+                "CHECK 制約・生成列の式を取得できなかったため、それらの差分は比較していません。"
+                    .to_string(),
+            );
+        }
+    }
     // SQLite の列・外部キー変更はテーブル再作成で反映するので、target の完全な定義を載せる。
     if target_driver == crate::db::DriverKind::Sqlite
         && diff
@@ -211,6 +249,9 @@ pub(crate) async fn compare_schema_core(
                     kind = e.kind(),
                     "schema compare: could not read sqlite_master of the target"
                 ),
+            }
+            if let Some(te) = &target_extras {
+                crate::db::diff::attach_target_extras_to_snapshots(&mut diff, te);
             }
         }
     }

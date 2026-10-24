@@ -637,6 +637,34 @@ export interface IndexInfo {
   method: string | null;
 }
 
+/** CHECK 制約 1 本 (#1837)。`name` は無名 (SQLite) のとき空文字。 */
+export interface CheckConstraintInfo {
+  name: string;
+  /** `CHECK (...)` 句全体。 */
+  definition: string;
+}
+
+/** 生成列 1 本の式 (#1837)。 */
+export interface GeneratedColumnInfo {
+  column: string;
+  /** 生成式 (外側の括弧を除いたもの)。 */
+  expression: string;
+  /** VIRTUAL なら true、STORED なら false。 */
+  is_virtual: boolean;
+  /** 列情報に出ない生成列 (SQLite の隠れた生成列) の型。それ以外は null。 */
+  data_type?: string | null;
+  /** 隠れた生成列の NOT NULL。 */
+  not_null?: boolean;
+  /** 隠れた生成列の元の列位置 (0 始まり)。 */
+  position?: number | null;
+}
+
+/** `describe_table_extras` の戻り値: テーブルの CHECK 制約と生成列の式 (#1837)。 */
+export interface TableExtrasInfo {
+  checks: CheckConstraintInfo[];
+  generated: GeneratedColumnInfo[];
+}
+
 /** 非テーブルのスキーマオブジェクト種別。 */
 export type SchemaObjectKind = "view" | "materialized_view" | "procedure" | "function" | "trigger";
 
@@ -1365,6 +1393,27 @@ export interface TableDiff {
   fk_changes?: ForeignKeyDiff[];
   /** SQLite のテーブル再作成に使う target の完全な定義 (#1625)。 */
   target_snapshot?: TargetTableSnapshot | null;
+  /** CHECK 制約の差分 (#1837)。 */
+  check_changes?: CheckDiff[];
+  /** 生成列の式の差分 (#1837)。 */
+  generated_changes?: GeneratedDiff[];
+}
+
+/** CHECK 制約 1 本の差分 (#1837)。式の正規化形で対応づけるので名前だけの違いは出ない。 */
+export interface CheckDiff {
+  name: string;
+  status: DiffStatus;
+  source: CheckConstraintInfo | null;
+  target: CheckConstraintInfo | null;
+}
+
+/** 生成列の式の差分 (#1837)。`changed_fields` は expression / storage。 */
+export interface GeneratedDiff {
+  column: string;
+  status: DiffStatus;
+  source: GeneratedColumnInfo | null;
+  target: GeneratedColumnInfo | null;
+  changed_fields?: string[];
 }
 
 /** インデックス 1 本の定義 (差分用)。 */
@@ -1406,6 +1455,9 @@ export interface TargetTableSnapshot {
   drop_views?: string[];
   original_sql?: string | null;
   referenced_by?: string[];
+  checks?: CheckConstraintInfo[];
+  generated?: GeneratedColumnInfo[];
+  extras_known?: boolean;
 }
 
 /** 外部キー 1 制約 (複合キーの列を束ねたもの)。`referenced_columns` が空なら参照先列は未解決。 */
@@ -1692,6 +1744,8 @@ export type SyncKind =
   | "add_index"
   | "drop_index"
   | "drop_foreign_key"
+  | "add_check"
+  | "drop_check"
   | "rebuild_table"
   | "insert_row"
   | "update_row"

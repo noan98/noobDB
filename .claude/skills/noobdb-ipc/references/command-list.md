@@ -151,6 +151,7 @@ DB に触れず実行もしない (UI のプレビュー専用)。両環境の�
 - `list_databases`
 - `list_tables`
 - `describe_table`
+- `describe_table_extras` (CHECK 制約と生成列の式、#1837)
 - `schema_overview`
 - `foreign_keys`
 - `list_schema_objects`

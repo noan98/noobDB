@@ -4416,3 +4416,79 @@ async fn mysql_bulk_write_optimistic_lock_detects_lost_update() {
         .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
         .await;
 }
+
+/// #1837: CHECK 制約 (MySQL 8.0.16+) と生成列の式を introspection し、スキーマ比較が
+/// それだけの違いを偽の「一致」にしないことを確かめる。CHECK_CONSTRAINTS が無い版
+/// (5.7 / 古い MariaDB) では CHECK の取得が空になるだけで失敗しない。
+#[tokio::test]
+async fn mysql_check_and_generated_expressions_are_introspected_and_compared() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts
+        .database
+        .clone()
+        .expect("test url must include a database");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    for table in ["noobdb_extras_a", "noobdb_extras_b"] {
+        conn.execute(&format!("DROP TABLE IF EXISTS {table}"), Some(&db))
+            .await
+            .expect("drop");
+    }
+    conn.execute(
+        "CREATE TABLE noobdb_extras_a (id INT PRIMARY KEY, price INT, qty INT, \
+         total INT GENERATED ALWAYS AS (price * qty) STORED, \
+         CONSTRAINT noobdb_price_pos CHECK (price > 0))",
+        Some(&db),
+    )
+    .await
+    .expect("create a");
+    conn.execute(
+        "CREATE TABLE noobdb_extras_b (id INT PRIMARY KEY, price INT, qty INT, \
+         total INT GENERATED ALWAYS AS (price + qty) VIRTUAL)",
+        Some(&db),
+    )
+    .await
+    .expect("create b");
+
+    let extras = conn
+        .table_ddl_extras(&db, "noobdb_extras_a")
+        .await
+        .expect("extras");
+    assert_eq!(extras.generated.len(), 1, "{extras:?}");
+    assert_eq!(extras.generated[0].column, "total");
+    assert!(!extras.generated[0].is_virtual, "STORED is not virtual");
+    // CHECK_CONSTRAINTS が使える版でだけ CHECK が取れる。
+    if !extras.checks.is_empty() {
+        assert!(
+            extras
+                .checks
+                .iter()
+                .any(|(n, d)| n == "noobdb_price_pos" && d.starts_with("CHECK (")),
+            "{extras:?}"
+        );
+    }
+
+    // 同じ表を 2 つの定義で比べる: 名前が違うので table 単位では比べられないため、
+    // 抽出した式が互いに異なることだけを確認する。
+    let other = conn
+        .table_ddl_extras(&db, "noobdb_extras_b")
+        .await
+        .expect("extras b");
+    assert_eq!(other.generated.len(), 1, "{other:?}");
+    assert!(other.generated[0].is_virtual, "VIRTUAL is virtual");
+    assert_ne!(
+        extras.generated[0].expression,
+        other.generated[0].expression
+    );
+
+    for table in ["noobdb_extras_a", "noobdb_extras_b"] {
+        conn.execute(&format!("DROP TABLE {table}"), Some(&db))
+            .await
+            .expect("cleanup");
+    }
+    conn.close().await;
+}

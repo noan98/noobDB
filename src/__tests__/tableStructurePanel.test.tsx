@@ -14,6 +14,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
     api: {
       ...actual.api,
       describeTable: vi.fn(),
+      describeTableExtras: vi.fn(),
       listIndexes: vi.fn(),
       getObjectDefinition: vi.fn(),
       incomingForeignKeys: vi.fn(),
@@ -84,6 +85,30 @@ describe("TableStructurePanel (#1112)", () => {
     expect(refs).toHaveLength(2);
     fireEvent.click(refs[1]);
     expect(onSelectTable).toHaveBeenCalledWith({ database: "app", table: "users" });
+  });
+
+  it("CHECK 制約と生成列の式を節として出し、取得できなければ節ごと出さない (#1837)", async () => {
+    vi.mocked(api.describeTable).mockResolvedValue([col("id"), col("total")]);
+    vi.mocked(api.listIndexes).mockResolvedValue([]);
+    vi.mocked(api.describeTableExtras).mockResolvedValueOnce({
+      checks: [{ name: "price_pos", definition: "CHECK (price > 0)" }],
+      generated: [{ column: "total", expression: "price * qty", is_virtual: true }],
+    });
+    renderPanel();
+    expect(await screen.findByText("CHECK (price > 0)")).toBeInTheDocument();
+    expect(screen.getByText("price_pos")).toBeInTheDocument();
+    expect(screen.getByText("price * qty")).toBeInTheDocument();
+    expect(screen.getByText("VIRTUAL")).toBeInTheDocument();
+  });
+
+  it("CHECK 制約が取れない (古い MySQL など) 環境でも構造は出て、節は出ない (#1837)", async () => {
+    vi.mocked(api.describeTable).mockResolvedValue([col("id")]);
+    vi.mocked(api.listIndexes).mockResolvedValue([]);
+    vi.mocked(api.describeTableExtras).mockRejectedValueOnce(new Error("unsupported"));
+    renderPanel();
+    expect(await screen.findByText("app.orders")).toBeInTheDocument();
+    await waitFor(() => expect(api.describeTableExtras).toHaveBeenCalled());
+    expect(screen.queryByText(t("structureChecks"))).not.toBeInTheDocument();
   });
 
   it("DDL は「DDL を表示」を押すまで取得せず、押すと CREATE TABLE を読み取り専用で表示する (#1540)", async () => {

@@ -2284,6 +2284,20 @@
       "source_driver": "mysql",
       "tables": [
         {
+          "check_changes": [
+            {
+              "name": "price_pos",
+              "source": {
+                "definition": "CHECK (price > 0)",
+                "name": "price_pos"
+              },
+              "status": "different",
+              "target": {
+                "definition": "CHECK (price >= 0)",
+                "name": "price_pos"
+              }
+            }
+          ],
           "columns": [
             {
               "changed_fields": [],
@@ -2349,6 +2363,32 @@
               "referenced_table": "orgs"
             }
           ],
+          "generated_changes": [
+            {
+              "changed_fields": [
+                "expression",
+                "storage"
+              ],
+              "column": "total",
+              "source": {
+                "column": "total",
+                "data_type": null,
+                "expression": "price * qty",
+                "is_virtual": false,
+                "not_null": false,
+                "position": null
+              },
+              "status": "different",
+              "target": {
+                "column": "total",
+                "data_type": "REAL",
+                "expression": "price * qty",
+                "is_virtual": true,
+                "not_null": true,
+                "position": 3
+              }
+            }
+          ],
           "indexes": [
             {
               "changed_fields": [
@@ -2391,6 +2431,12 @@
           "name": "users",
           "status": "different",
           "target_snapshot": {
+            "checks": [
+              {
+                "definition": "CHECK (price > 0)",
+                "name": "price_pos"
+              }
+            ],
             "columns": [
               {
                 "comment": "primary key",
@@ -2407,6 +2453,7 @@
             "drop_views": [
               "v_users"
             ],
+            "extras_known": true,
             "foreign_keys": [
               {
                 "columns": [
@@ -2419,6 +2466,16 @@
                   "id"
                 ],
                 "referenced_table": "orgs"
+              }
+            ],
+            "generated": [
+              {
+                "column": "total",
+                "data_type": null,
+                "expression": "price * qty",
+                "is_virtual": false,
+                "not_null": false,
+                "position": null
               }
             ],
             "original_sql": "CREATE TABLE users (email text)",
@@ -2533,6 +2590,20 @@
     "source_driver": "mysql",
     "tables": [
       {
+        "check_changes": [
+          {
+            "name": "price_pos",
+            "source": {
+              "definition": "CHECK (price > 0)",
+              "name": "price_pos"
+            },
+            "status": "different",
+            "target": {
+              "definition": "CHECK (price >= 0)",
+              "name": "price_pos"
+            }
+          }
+        ],
         "columns": [
           {
             "changed_fields": [],
@@ -2598,6 +2669,32 @@
             "referenced_table": "orgs"
           }
         ],
+        "generated_changes": [
+          {
+            "changed_fields": [
+              "expression",
+              "storage"
+            ],
+            "column": "total",
+            "source": {
+              "column": "total",
+              "data_type": null,
+              "expression": "price * qty",
+              "is_virtual": false,
+              "not_null": false,
+              "position": null
+            },
+            "status": "different",
+            "target": {
+              "column": "total",
+              "data_type": "REAL",
+              "expression": "price * qty",
+              "is_virtual": true,
+              "not_null": true,
+              "position": 3
+            }
+          }
+        ],
         "indexes": [
           {
             "changed_fields": [
@@ -2640,6 +2737,12 @@
         "name": "users",
         "status": "different",
         "target_snapshot": {
+          "checks": [
+            {
+              "definition": "CHECK (price > 0)",
+              "name": "price_pos"
+            }
+          ],
           "columns": [
             {
               "comment": "primary key",
@@ -2656,6 +2759,7 @@
           "drop_views": [
             "v_users"
           ],
+          "extras_known": true,
           "foreign_keys": [
             {
               "columns": [
@@ -2668,6 +2772,16 @@
                 "id"
               ],
               "referenced_table": "orgs"
+            }
+          ],
+          "generated": [
+            {
+              "column": "total",
+              "data_type": null,
+              "expression": "price * qty",
+              "is_virtual": false,
+              "not_null": false,
+              "position": null
             }
           ],
           "original_sql": "CREATE TABLE users (email text)",
@@ -2694,6 +2808,7 @@
       "source_driver": "mysql",
       "tables": [
         {
+          "check_changes": [],
           "columns": [
             {
               "changed_fields": [
@@ -2814,12 +2929,14 @@
           ],
           "fk_changes": [],
           "foreign_keys": [],
+          "generated_changes": [],
           "indexes": [],
           "name": "users",
           "status": "source_only",
           "target_snapshot": null
         },
         {
+          "check_changes": [],
           "columns": [
             {
               "changed_fields": [
@@ -2940,12 +3057,14 @@
           ],
           "fk_changes": [],
           "foreign_keys": [],
+          "generated_changes": [],
           "indexes": [],
           "name": "users",
           "status": "target_only",
           "target_snapshot": null
         },
         {
+          "check_changes": [],
           "columns": [
             {
               "changed_fields": [
@@ -3066,12 +3185,14 @@
           ],
           "fk_changes": [],
           "foreign_keys": [],
+          "generated_changes": [],
           "indexes": [],
           "name": "users",
           "status": "different",
           "target_snapshot": null
         },
         {
+          "check_changes": [],
           "columns": [
             {
               "changed_fields": [
@@ -3192,6 +3313,7 @@
           ],
           "fk_changes": [],
           "foreign_keys": [],
+          "generated_changes": [],
           "indexes": [],
           "name": "users",
           "status": "same",
@@ -3208,6 +3330,7 @@
       "source_driver": "postgres",
       "tables": [
         {
+          "check_changes": [],
           "columns": [
             {
               "changed_fields": [
@@ -3328,12 +3451,14 @@
           ],
           "fk_changes": [],
           "foreign_keys": [],
+          "generated_changes": [],
           "indexes": [],
           "name": "users",
           "status": "source_only",
           "target_snapshot": null
         },
         {
+          "check_changes": [],
           "columns": [
             {
               "changed_fields": [
@@ -3454,12 +3579,14 @@
           ],
           "fk_changes": [],
           "foreign_keys": [],
+          "generated_changes": [],
           "indexes": [],
           "name": "users",
           "status": "target_only",
           "target_snapshot": null
         },
         {
+          "check_changes": [],
           "columns": [
             {
               "changed_fields": [
@@ -3580,12 +3707,14 @@
           ],
           "fk_changes": [],
           "foreign_keys": [],
+          "generated_changes": [],
           "indexes": [],
           "name": "users",
           "status": "different",
           "target_snapshot": null
         },
         {
+          "check_changes": [],
           "columns": [
             {
               "changed_fields": [
@@ -3706,6 +3835,7 @@
           ],
           "fk_changes": [],
           "foreign_keys": [],
+          "generated_changes": [],
           "indexes": [],
           "name": "users",
           "status": "same",
@@ -3720,6 +3850,7 @@
       "source_driver": "sqlite",
       "tables": [
         {
+          "check_changes": [],
           "columns": [
             {
               "changed_fields": [
@@ -3840,12 +3971,14 @@
           ],
           "fk_changes": [],
           "foreign_keys": [],
+          "generated_changes": [],
           "indexes": [],
           "name": "users",
           "status": "source_only",
           "target_snapshot": null
         },
         {
+          "check_changes": [],
           "columns": [
             {
               "changed_fields": [
@@ -3966,12 +4099,14 @@
           ],
           "fk_changes": [],
           "foreign_keys": [],
+          "generated_changes": [],
           "indexes": [],
           "name": "users",
           "status": "target_only",
           "target_snapshot": null
         },
         {
+          "check_changes": [],
           "columns": [
             {
               "changed_fields": [
@@ -4092,12 +4227,14 @@
           ],
           "fk_changes": [],
           "foreign_keys": [],
+          "generated_changes": [],
           "indexes": [],
           "name": "users",
           "status": "different",
           "target_snapshot": null
         },
         {
+          "check_changes": [],
           "columns": [
             {
               "changed_fields": [
@@ -4218,6 +4355,7 @@
           ],
           "fk_changes": [],
           "foreign_keys": [],
+          "generated_changes": [],
           "indexes": [],
           "name": "users",
           "status": "same",
@@ -5518,6 +5656,18 @@
           "table": "users"
         },
         {
+          "destructive": false,
+          "kind": "add_check",
+          "sql": "SELECT 1;",
+          "table": "users"
+        },
+        {
+          "destructive": true,
+          "kind": "drop_check",
+          "sql": "SELECT 1;",
+          "table": "users"
+        },
+        {
           "destructive": true,
           "kind": "rebuild_table",
           "sql": "SELECT 1;",
@@ -5559,6 +5709,24 @@
   "tableComment": {
     "comment": "registered users",
     "name": "users"
+  },
+  "tableExtrasInfo": {
+    "checks": [
+      {
+        "definition": "CHECK (price > 0)",
+        "name": "price_pos"
+      }
+    ],
+    "generated": [
+      {
+        "column": "total",
+        "data_type": null,
+        "expression": "price * qty",
+        "is_virtual": false,
+        "not_null": false,
+        "position": null
+      }
+    ]
   },
   "tableProfileOverview": {
     "columns": [

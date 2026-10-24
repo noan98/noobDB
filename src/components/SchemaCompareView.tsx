@@ -9,7 +9,10 @@ import {
   type ColumnDiff,
   type DiffForeignKey,
   type DiffIndex,
+  type CheckDiff,
   type ForeignKeyDiff,
+  type GeneratedColumnInfo,
+  type GeneratedDiff,
   type IndexDiff,
   type ConnectionProfile,
   type DataDiff,
@@ -313,6 +316,7 @@ function kindColors(kind: SyncKind): { color: string; borderColor: string } {
     case "create_table":
     case "add_column":
     case "add_foreign_key":
+    case "add_check":
     case "add_index":
     case "insert_row": {
       const c = semanticColorVar("success", "text");
@@ -328,6 +332,7 @@ function kindColors(kind: SyncKind): { color: string; borderColor: string } {
     case "drop_table":
     case "drop_index":
     case "drop_foreign_key":
+    case "drop_check":
     case "delete_row": {
       const c = semanticColorVar("danger", "text");
       return { color: c, borderColor: c };
@@ -1385,6 +1390,10 @@ function syncKindLabel(kind: SyncKind, t: ReturnType<typeof useT>): string {
       return t("schemaCompareKindDropIndex");
     case "drop_foreign_key":
       return t("schemaCompareKindDropForeignKey");
+    case "add_check":
+      return t("schemaCompareKindAddCheck");
+    case "drop_check":
+      return t("schemaCompareKindDropCheck");
     case "rebuild_table":
       return t("schemaCompareKindRebuildTable");
     case "insert_row":
@@ -1539,7 +1548,9 @@ export const TableDiffRow = memo(function TableDiffRow({
   useLocale();
   const indexes = table.indexes ?? [];
   const fkChanges = table.fk_changes ?? [];
-  const constraintCount = indexes.length + fkChanges.length;
+  const checkChanges = table.check_changes ?? [];
+  const generatedChanges = table.generated_changes ?? [];
+  const constraintCount = indexes.length + fkChanges.length + checkChanges.length + generatedChanges.length;
   const expandable = table.columns.length > 0 || constraintCount > 0;
   const [open, setOpen] = useState(table.status === "different");
   const reduced = useReducedMotion() ?? false;
@@ -1610,6 +1621,12 @@ export const TableDiffRow = memo(function TableDiffRow({
               ))}
               {fkChanges.map((fk, i) => (
                 <ForeignKeyDiffRow key={`fk:${i}`} change={fk} t={t} />
+              ))}
+              {checkChanges.map((ck, i) => (
+                <CheckDiffRow key={`ck:${i}`} change={ck} t={t} />
+              ))}
+              {generatedChanges.map((g) => (
+                <GeneratedDiffRow key={`gen:${g.column}`} change={g} t={t} />
               ))}
             </MotionColumnList>
           </MotionCollapseBox>
@@ -1792,6 +1809,76 @@ function ForeignKeyDiffRow({ change, t }: { change: ForeignKeyDiff; t: ReturnTyp
         </chakra.span>
       ) : (
         <chakra.span css={coltypeCss}>{fkText(def ?? null, t)}</chakra.span>
+      )}
+    </MotionColumnItem>
+  );
+}
+
+/** CHECK 制約の差分 1 行 (#1837)。 */
+function CheckDiffRow({ change, t }: { change: CheckDiff; t: ReturnType<typeof useT> }) {
+  const def = change.source ?? change.target;
+  return (
+    <MotionColumnItem
+      variants={motionVariants.staggerItem}
+      css={{ ...columnCss, borderLeftColor: statusColors(change.status).color }}
+    >
+      <chakra.span css={badgeCss(change.status)}>{statusLabel(change.status, t)}</chakra.span>
+      <chakra.span css={columnNameCss}>
+        {t("schemaCompareCheckLabel")} {change.name}
+      </chakra.span>
+      {change.status === "different" ? (
+        <chakra.span css={changesCss}>
+          <chakra.span css={changeCss}>
+            {change.source?.definition ?? "—"} → {change.target?.definition ?? "—"}
+          </chakra.span>
+        </chakra.span>
+      ) : (
+        <chakra.span css={coltypeCss}>{def?.definition ?? ""}</chakra.span>
+      )}
+    </MotionColumnItem>
+  );
+}
+
+/** 生成列の差分 1 項目 (`changed_fields` の 1 つ) を「項目: source → target」にする。 */
+function generatedFieldText(field: string, change: GeneratedDiff, t: ReturnType<typeof useT>): string {
+  const s = change.source;
+  const g = change.target;
+  const storage = (x: GeneratedColumnInfo | null) => (x ? (x.is_virtual ? "VIRTUAL" : "STORED") : "—");
+  switch (field) {
+    case "storage":
+      return `${t("schemaCompareGenFieldStorage")}: ${storage(s)} → ${storage(g)}`;
+    case "data_type":
+      return `${t("schemaCompareFieldDataType")}: ${s?.data_type ?? "—"} → ${g?.data_type ?? "—"}`;
+    case "nullable":
+      return `${t("schemaCompareFieldNullable")}: ${s?.not_null ? t("schemaCompareNo") : t("schemaCompareYes")} → ${g?.not_null ? t("schemaCompareNo") : t("schemaCompareYes")}`;
+    default:
+      return `${t("schemaCompareGenFieldExpression")}: ${s?.expression ?? "—"} → ${g?.expression ?? "—"}`;
+  }
+}
+
+/** 生成列の式の差分 1 行 (#1837)。 */
+function GeneratedDiffRow({ change, t }: { change: GeneratedDiff; t: ReturnType<typeof useT> }) {
+  const def = change.source ?? change.target;
+  const storage = (g: GeneratedColumnInfo | null) => (g ? (g.is_virtual ? "VIRTUAL" : "STORED") : "—");
+  return (
+    <MotionColumnItem
+      variants={motionVariants.staggerItem}
+      css={{ ...columnCss, borderLeftColor: statusColors(change.status).color }}
+    >
+      <chakra.span css={badgeCss(change.status)}>{statusLabel(change.status, t)}</chakra.span>
+      <chakra.span css={columnNameCss}>
+        {t("schemaCompareGeneratedLabel")} {change.column}
+      </chakra.span>
+      {change.status === "different" ? (
+        <chakra.span css={changesCss}>
+          {(change.changed_fields ?? []).map((field) => (
+            <chakra.span key={field} css={changeCss}>
+              {generatedFieldText(field, change, t)}
+            </chakra.span>
+          ))}
+        </chakra.span>
+      ) : (
+        <chakra.span css={coltypeCss}>{def ? `${def.expression} (${storage(def)})` : ""}</chakra.span>
       )}
     </MotionColumnItem>
   );
