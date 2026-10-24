@@ -1596,7 +1596,13 @@ mod schema_object_kind_tests {
             panic!("`{fn_head}` がソースに見つからない (関数名の変更? 抽出ロジックを直す)");
         };
         let rest = &src[start..];
-        let Some(end) = rest.find("\n    }\n") else {
+        // Windows の checkout は autocrlf で CRLF になるため、LF / CRLF の両方を終端とみなす。
+        let Some(end) = rest
+            .find("\n    }\n")
+            .into_iter()
+            .chain(rest.find("\r\n    }\r\n"))
+            .min()
+        else {
             panic!("`{fn_head}` の終端 (4 スペースの `    }}`) が見つからない (整形の変更? 抽出ロジックを直す)");
         };
         &rest[..end]
