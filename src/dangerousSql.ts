@@ -395,24 +395,49 @@ function extractTarget(rawStatement: string, lead: RegExp): string | null {
 
 /**
  * `ALTER TABLE` の中の `DROP COLUMN` / `DROP CONSTRAINT` (MySQL の `DROP FOREIGN KEY` /
- * `DROP PRIMARY KEY` / `DROP CHECK` を含む) を拾う (#1626)。コメント・リテラルをマスクした小文字の
- * 文を ASCII の単語 (`[a-z0-9_]+`) に分けて隣り合う 2 語を見るので、列名が `drop` でも
- * `DROP INDEX` / `DROP PARTITION` は拾わない。先に現れた方を返す。バックの `alter_drop_kind`
+ * `DROP PRIMARY KEY` / `DROP CHECK` を含む) と、COLUMN 省略形の `DROP <列>` を拾う (#1626, #1839)。
+ * コメント・リテラルをマスクした小文字の文を、ASCII の単語 (`[a-z0-9_]+`) と引用識別子の開き記号に
+ * 分けて、`DROP` とその次のトークン (`IF EXISTS` は読み飛ばす) を見る。次が `column` なら列、
+ * `constraint` / `foreign` / `primary` / `check` なら制約、`index` / `key` / `partition` など列以外の
+ * DROP 句の語なら対象外、それ以外 (任意の識別子・引用符) は省略形の列削除とする。先に現れた方を返す。
+ * 限界: 未引用の列名が除外語と同じ (PostgreSQL の非予約語 `identity` / `key` など) だと見逃す。
+ * 非 ASCII だけの未引用列名 (`DROP 顧客`) も語にならず見逃す。逆に `RENAME COLUMN drop TO d` の
+ * ような `drop` 語の後ろの識別子は列削除と誤検出する (安全側)。バックの `alter_drop_kind`
  * (`db/script_analysis.rs`) と同じ規則で、共有ゴールデンで固定している。
  */
 function alterDropKind(bodyLower: string): "dropColumn" | "dropConstraint" | null {
-  const words = bodyLower.split(/[^a-z0-9_]+/).filter((w) => w.length > 0);
+  // 語 (`[a-z0-9_]+`) と引用識別子の開き記号 (中身はマスク済みで空白) を 1 トークンずつ取る。
+  const words = bodyLower.match(/[a-z0-9_]+|[`"[]/g) ?? [];
   if (words[0] !== "alter" || words[1] !== "table") return null;
   for (let i = 2; i + 1 < words.length; i++) {
     if (words[i] !== "drop") continue;
-    const next = words[i + 1];
+    let j = i + 1;
+    // `DROP IF EXISTS <列>` (MariaDB) の IF EXISTS を読み飛ばす。
+    if (words[j] === "if" && words[j + 1] === "exists" && j + 2 < words.length) j += 2;
+    const next = words[j];
     if (next === "column") return "dropColumn";
     if (next === "constraint" || next === "foreign" || next === "primary" || next === "check") {
       return "dropConstraint";
     }
+    // COLUMN 省略形 (`DROP c` / ``DROP `c` `` / `DROP "c"`): 非列の DROP 句を除いた識別子は列の削除 (#1839)。
+    if (!ALTER_DROP_NON_COLUMN.has(next)) return "dropColumn";
   }
   return null;
 }
+
+/** `ALTER TABLE` の `DROP` に続いて列以外を落とす (または列の属性を外す) 語。Rust `alter_drop_kind` の除外アームと同じ。 */
+const ALTER_DROP_NON_COLUMN = new Set([
+  "index",
+  "key",
+  "partition",
+  "default",
+  "not",
+  "expression",
+  "identity",
+  "system",
+  "period",
+  "if",
+]);
 
 function classifyStatement(masked: string, raw: string): DangerFinding | null {
   const maskedLower = masked.toLowerCase();

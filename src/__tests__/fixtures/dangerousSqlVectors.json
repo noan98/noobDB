@@ -290,6 +290,131 @@
       "note": "ALTER TABLE (#1626): コメント内の drop column は無視"
     },
     {
+      "sql": "ALTER TABLE orders DROP customer_id",
+      "kind": "dropColumn",
+      "note": "ALTER TABLE (#1839): COLUMN 省略形の列削除"
+    },
+    {
+      "sql": "ALTER TABLE `orders` DROP `customer_id`",
+      "kind": "dropColumn",
+      "note": "ALTER TABLE (#1839): MySQL: バッククォート付きの省略形"
+    },
+    {
+      "sql": "ALTER TABLE \"orders\" DROP \"customer_id\"",
+      "kind": "dropColumn",
+      "note": "ALTER TABLE (#1839): PostgreSQL: ダブルクォート付きの省略形"
+    },
+    {
+      "sql": "ALTER TABLE t DROP IF EXISTS c",
+      "kind": "dropColumn",
+      "note": "ALTER TABLE (#1839): IF EXISTS 付きの省略形 (MariaDB)"
+    },
+    {
+      "sql": "ALTER TABLE t DROP COLUMN IF EXISTS c",
+      "kind": "dropColumn",
+      "note": "ALTER TABLE (#1839): COLUMN IF EXISTS は従来どおり"
+    },
+    {
+      "sql": "ALTER TABLE t ADD COLUMN x INT, DROP c",
+      "kind": "dropColumn",
+      "note": "ALTER TABLE (#1839): ADD と同じ文の中の省略形"
+    },
+    {
+      "sql": "ALTER TABLE t DROP a, DROP b",
+      "kind": "dropColumn",
+      "note": "ALTER TABLE (#1839): 複数 DROP の省略形"
+    },
+    {
+      "sql": "ALTER TABLE t DROP INDEX i, DROP c",
+      "kind": "dropColumn",
+      "note": "ALTER TABLE (#1839): 非列 DROP の後ろの省略形も拾う"
+    },
+    {
+      "sql": "ALTER TABLE t DROP KEY k",
+      "kind": null,
+      "note": "ALTER TABLE (#1839): DROP KEY はインデックス削除で対象外"
+    },
+    {
+      "sql": "ALTER TABLE t DROP PARTITION p0",
+      "kind": null,
+      "note": "ALTER TABLE (#1839): DROP PARTITION は対象外"
+    },
+    {
+      "sql": "ALTER TABLE t DROP INDEX i, DROP PARTITION p0",
+      "kind": null,
+      "note": "ALTER TABLE (#1839): 非列 DROP の複数指定は対象外"
+    },
+    {
+      "sql": "ALTER TABLE t ALTER COLUMN c DROP DEFAULT",
+      "kind": null,
+      "note": "ALTER TABLE (#1839): 列属性の DROP DEFAULT は列削除ではない"
+    },
+    {
+      "sql": "ALTER TABLE t ALTER COLUMN c DROP NOT NULL",
+      "kind": null,
+      "note": "ALTER TABLE (#1839): PostgreSQL: DROP NOT NULL は対象外"
+    },
+    {
+      "sql": "ALTER TABLE t ALTER COLUMN c DROP IDENTITY IF EXISTS",
+      "kind": null,
+      "note": "ALTER TABLE (#1839): PostgreSQL: DROP IDENTITY は対象外"
+    },
+    {
+      "sql": "ALTER TABLE t ALTER COLUMN c DROP EXPRESSION",
+      "kind": null,
+      "note": "ALTER TABLE (#1839): PostgreSQL: DROP EXPRESSION は対象外"
+    },
+    {
+      "sql": "ALTER TABLE t DROP",
+      "kind": null,
+      "note": "ALTER TABLE (#1839): DROP の後ろが無い文末は対象外"
+    },
+    {
+      "sql": "ALTER TABLE t DROP [c]",
+      "kind": "dropColumn",
+      "note": "ALTER TABLE (#1839): SQLite: 角括弧付きの省略形"
+    },
+    {
+      "sql": "ALTER TABLE t DROP IF EXISTS `c`",
+      "kind": "dropColumn",
+      "note": "ALTER TABLE (#1839): IF EXISTS と引用付き識別子の省略形"
+    },
+    {
+      "sql": "ALTER TABLE t DROP /* x */ c",
+      "kind": "dropColumn",
+      "note": "ALTER TABLE (#1839): DROP と列名の間のコメントは無視"
+    },
+    {
+      "sql": "ALTER TABLE t DROP IF EXISTS",
+      "kind": null,
+      "note": "ALTER TABLE (#1839): 文が DROP IF EXISTS で終わる"
+    },
+    {
+      "sql": "ALTER TABLE t DROP 顧客",
+      "kind": null,
+      "note": "ALTER TABLE (#1839): 既知の見逃し: 非 ASCII だけの未引用列名は語にならない"
+    },
+    {
+      "sql": "ALTER TABLE t DROP 顧客_id",
+      "kind": "dropColumn",
+      "note": "ALTER TABLE (#1839): 非 ASCII を含んでも ASCII の語 (_id) が残れば省略形の列削除"
+    },
+    {
+      "sql": "ALTER TABLE t RENAME COLUMN drop TO d",
+      "kind": "dropColumn",
+      "note": "ALTER TABLE (#1839): 安全側の誤検出として許容: drop 語の後ろの識別子"
+    },
+    {
+      "sql": "ALTER TABLE t DROP identity",
+      "kind": null,
+      "note": "ALTER TABLE (#1839): 既知の見逃し: PostgreSQL の非予約語 identity の列名"
+    },
+    {
+      "sql": "ALTER TABLE t DROP key",
+      "kind": null,
+      "note": "ALTER TABLE (#1839): 既知の見逃し: PostgreSQL の非予約語 key の列名"
+    },
+    {
       "sql": "ALTER INDEX i RENAME TO j",
       "kind": null,
       "note": "ALTER TABLE (#1626): ALTER TABLE 以外は対象外"

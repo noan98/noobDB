@@ -537,15 +537,34 @@ pub fn classify_dangerous(driver: DriverKind, sql: &str) -> Option<DangerKind> {
 }
 
 /// `ALTER TABLE` の中の `DROP COLUMN` / `DROP CONSTRAINT` (MySQL の `DROP FOREIGN KEY` /
-/// `DROP PRIMARY KEY` / `DROP CHECK` を含む) を拾う (#1626)。`lower` はコメント・リテラルが
-/// マスク済みの小文字文字列。ASCII の単語 (`[a-z0-9_]+`) に分けて隣り合う 2 語を見るので、列名が
-/// `drop` でも `DROP INDEX` / `DROP PARTITION` は拾わない。先に現れた方を返す。フロントの
-/// `alterDropKind` (`src/dangerousSql.ts`) と同じ規則で、共有ゴールデンで固定している。
+/// `DROP PRIMARY KEY` / `DROP CHECK` を含む) と、COLUMN 省略形の `DROP <列>` を拾う (#1626, #1839)。
+/// `lower` はコメント・リテラルがマスク済みの小文字文字列。ASCII の単語 (`[a-z0-9_]+`) と引用
+/// 識別子の開き記号に分けて、`DROP` とその次のトークン (`IF EXISTS` は読み飛ばす) を見る。次が
+/// `column` なら列、`constraint` / `foreign` / `primary` / `check` なら制約、`index` / `key` /
+/// `partition` など列以外の DROP 句の語なら対象外、それ以外 (任意の識別子・引用符) は省略形の
+/// 列削除とする。先に現れた方を返す。限界: 未引用の列名が除外語と同じ (PostgreSQL の非予約語
+/// `identity` / `key` など) だと見逃す。非 ASCII だけの未引用列名 (`DROP 顧客`) も語にならず見逃す。
+/// 逆に `RENAME COLUMN drop TO d` のような `drop` 語の後ろの識別子は列削除と誤検出する (安全側)。
+/// フロントの `alterDropKind` (`src/dangerousSql.ts`) と同じ規則で、共有ゴールデンで固定している。
 fn alter_drop_kind(lower: &str) -> Option<DangerKind> {
-    let words: Vec<&str> = lower
-        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-        .filter(|w| !w.is_empty())
-        .collect();
+    // 語 (`[a-z0-9_]+`) と引用識別子の開き記号 (中身はマスク済みで空白) を 1 トークンずつ取る。
+    let b = lower.as_bytes();
+    let mut words: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i].is_ascii_alphanumeric() || b[i] == b'_' {
+            let start = i;
+            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
+                i += 1;
+            }
+            words.push(&lower[start..i]);
+        } else {
+            if matches!(b[i], b'`' | b'"' | b'[') {
+                words.push(&lower[i..=i]);
+            }
+            i += 1;
+        }
+    }
     if words.first() != Some(&"alter") || words.get(1) != Some(&"table") {
         return None;
     }
@@ -553,12 +572,22 @@ fn alter_drop_kind(lower: &str) -> Option<DangerKind> {
         if words[i] != "drop" {
             continue;
         }
-        match words[i + 1] {
+        let mut j = i + 1;
+        // `DROP IF EXISTS <列>` (MariaDB) の IF EXISTS を読み飛ばす。
+        if words.get(j) == Some(&"if") && words.get(j + 1) == Some(&"exists") && j + 2 < words.len()
+        {
+            j += 2;
+        }
+        match words[j] {
             "column" => return Some(DangerKind::DropColumn),
             "constraint" | "foreign" | "primary" | "check" => {
                 return Some(DangerKind::DropConstraint)
             }
-            _ => {}
+            // 列以外の DROP 句 / 列属性の解除。フロントの `ALTER_DROP_NON_COLUMN` と同じ。
+            "index" | "key" | "partition" | "default" | "not" | "expression" | "identity"
+            | "system" | "period" | "if" => {}
+            // COLUMN 省略形 (`DROP c` / ``DROP `c` `` / `DROP "c"`) は列の削除 (#1839)。
+            _ => return Some(DangerKind::DropColumn),
         }
     }
     None
