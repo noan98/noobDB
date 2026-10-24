@@ -495,6 +495,7 @@ pub fn build_sync_diff(
 
     Ok((
         DataDiff {
+            key_kind: Default::default(),
             target_driver: driver,
             table: table.to_string(),
             columns,

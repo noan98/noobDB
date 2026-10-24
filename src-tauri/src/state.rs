@@ -659,6 +659,7 @@ mod tests {
         use crate::db::data_diff::{RowDiff, RowStatus};
         use crate::db::types::Value;
         DataDiff {
+            key_kind: Default::default(),
             target_driver: crate::db::DriverKind::Sqlite,
             table: "t".into(),
             columns: vec!["id".into()],

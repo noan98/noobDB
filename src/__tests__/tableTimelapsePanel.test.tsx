@@ -53,6 +53,7 @@ function genDiff(): TimelapseGenerationDiff {
       columns: ["id", "price"],
       column_types: ["int", "int"],
       primary_key: ["id"],
+      key_kind: "primary_key",
       rows: [
         { status: "different", key: [1], source: [1, 150], target: [1, 100], changed_columns: ["price"] },
         { status: "source_only", key: [3], source: [3, 300], target: null, changed_columns: [] },
@@ -61,6 +62,7 @@ function genDiff(): TimelapseGenerationDiff {
       source_count: 2,
       target_count: 2,
     },
+    key_changed: false,
     columns_added: [],
     columns_removed: [],
     partial: false,
@@ -115,12 +117,35 @@ describe("TableTimelapsePanel (#739)", () => {
     expect(preview.textContent).toContain("INSERT INTO `app`.`fees` (`id`, `price`) VALUES (3, 300);");
   });
 
+  it("rowid 追跡の差分では DML ボタンを無効にして理由を出し、rowid の注記を出す (#1838)", async () => {
+    vi.mocked(api.timelapseListWatches).mockResolvedValue([watch()]);
+    const d = genDiff();
+    d.diff.key_kind = "rowid";
+    d.diff.primary_key = ["rowid"];
+    vi.mocked(api.timelapseDiffGenerations).mockResolvedValue(d);
+    renderPanel();
+    const button = await screen.findByRole("button", { name: t("timelapseDmlButton") });
+    expect(button).toBeDisabled();
+    expect(screen.getAllByText(t("timelapseDmlRowidBlocked")).length).toBeGreaterThan(0);
+    expect(screen.getByText(t("rowKeyRowid", { columns: "rowid" }))).toBeInTheDocument();
+  });
+
+  it("2 世代でキーが違う (key_changed) と注記を出す (#1838)", async () => {
+    vi.mocked(api.timelapseListWatches).mockResolvedValue([watch()]);
+    const d = genDiff();
+    d.key_changed = true;
+    vi.mocked(api.timelapseDiffGenerations).mockResolvedValue(d);
+    renderPanel();
+    expect(await screen.findByText(t("timelapseKeyChanged"))).toBeInTheDocument();
+  });
+
   it("差分行の履歴ボタンで、その行の世代横断の推移を表示する (#1621)", async () => {
     vi.mocked(api.timelapseListWatches).mockResolvedValue([watch()]);
     vi.mocked(api.timelapseDiffGenerations).mockResolvedValue(genDiff());
     vi.mocked(api.timelapseRowHistory).mockResolvedValue({
       columns: ["id", "price"],
       primary_key: ["id"],
+      key_kind: "primary_key",
       entries: [
         {
           generation_id: 10,

@@ -14,7 +14,7 @@ use crate::db::data_diff::{
 use crate::db::diff::{compute_schema_diff, SchemaDiff, TableColumns};
 use crate::db::sync::quote_ident;
 use crate::db::types::{generated_column_names, TableColumnInfo, Value};
-use crate::db::{Connection, DriverKind};
+use crate::db::{column_names_match, key_is_unique_in, Connection, DriverKind, RowKeyKind};
 use crate::error::{AppError, Result};
 use crate::state::{AppState, Session, StreamHandle, StreamKind};
 
@@ -1097,22 +1097,58 @@ pub async fn compare_table_data(
     // ターゲット側だけが生成列のこともあるので、両側の和集合を除外する。ターゲットの
     // 列定義を取れなければ (テーブル未作成など) ソース側だけで判定する。
     let mut generated_columns = generated_column_names(&col_info);
-    if let Ok(target_cols) = target_cols {
-        for name in generated_column_names(&target_cols) {
+    if let Ok(target_cols) = target_cols.as_ref() {
+        for name in generated_column_names(target_cols) {
             if !generated_columns.contains(&name) {
                 generated_columns.push(name);
             }
         }
     }
-    let primary_key: Vec<String> = col_info
-        .iter()
-        .filter(|c| c.key.eq_ignore_ascii_case("PRI"))
-        .map(|c| c.name.clone())
-        .collect();
-    if primary_key.is_empty() {
+    // 行の対応付けは PK、無ければ UNIQUE NOT NULL キー (#1838)。rowid は 2 表 (別 DB / 別接続)
+    // 間で値が一致する保証が無く対応付けに使えないので、比較では採らない。
+    let Some(row_key) = source
+        .conn
+        .resolve_row_key(&source_database, &table, &col_info, false)
+        .await?
+    else {
         return Err(AppError::InvalidInput(format!(
-            "table '{table}' has no primary key; data sync needs one to pair rows"
+            "table '{table}' has no primary key or UNIQUE NOT NULL key; data comparison needs one to pair rows"
         )));
+    };
+    let key_kind = row_key.kind;
+    let primary_key = row_key.columns;
+    // UNIQUE キーで対応付けるときは、ターゲット側もそのキーで 1 行に定まらないと同期 SQL の
+    // WHERE が複数行に当たりうるので、一意性を保証できなければ拒否する (安全側)。
+    if key_kind == RowKeyKind::UniqueKey {
+        if let Ok(target_cols) = target_cols.as_ref() {
+            if !target_cols.is_empty() {
+                if let Some(missing) = primary_key.iter().find(|k| {
+                    !target_cols
+                        .iter()
+                        .any(|c| column_names_match(driver, &c.name, k))
+                }) {
+                    return Err(AppError::InvalidInput(format!(
+                        "table '{table}': key column '{missing}' does not exist on the target"
+                    )));
+                }
+                // 取得に失敗したときは一意性を確かめられないので、空扱いにせずエラーで返す。
+                let target_indexes = target
+                    .conn
+                    .list_indexes(&target_database, &table)
+                    .await
+                    .map_err(|e| {
+                        AppError::InvalidInput(format!(
+                            "table '{table}': could not read the target's indexes to verify the UNIQUE key: {e}"
+                        ))
+                    })?;
+                if !key_is_unique_in(driver, &primary_key, target_cols, &target_indexes) {
+                    return Err(AppError::InvalidInput(format!(
+                        "table '{table}' pairs rows by UNIQUE key ({}), but the target does not guarantee that key is unique",
+                        primary_key.join(", ")
+                    )));
+                }
+            }
+        }
     }
     let pk_idx: Vec<usize> = primary_key
         .iter()
@@ -1164,6 +1200,7 @@ pub async fn compare_table_data(
             columns,
             column_types,
             primary_key,
+            key_kind,
             rows: outcome.rows,
             truncated: outcome.truncated,
             source_count: outcome.source_count,
@@ -1199,6 +1236,7 @@ pub async fn compare_table_data(
         columns,
         column_types,
         primary_key,
+        key_kind,
         rows: outcome.rows,
         truncated: outcome.truncated,
         source_count: outcome.source_count,

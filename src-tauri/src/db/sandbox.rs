@@ -673,6 +673,7 @@ mod tests {
 
     fn data_diff(rows: Vec<RowDiff>) -> DataDiff {
         DataDiff {
+            key_kind: Default::default(),
             target_driver: DriverKind::Mysql,
             table: "t".to_string(),
             columns: vec!["id".to_string(), "v".to_string()],

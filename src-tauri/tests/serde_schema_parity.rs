@@ -39,6 +39,7 @@ use std::path::PathBuf;
 
 use noobdb_lib::__test_api as t;
 use serde_json::json;
+use t::RowKeyKind;
 use t::{
     AdvisorDiff, AiConnectionStatus, AiConnectionTestResult, AiStreamMessage, AiUsage,
     AiUsageRecord, BatchStatementResult, BatchStatus, BatchStreamMessage, BroadcastDiff,
@@ -755,6 +756,7 @@ fn build_fixtures() -> serde_json::Value {
         key_unreliable: false,
     };
     let data_diff = DataDiff {
+        key_kind: Default::default(),
         target_driver: DriverKind::Postgres,
         table: "users".into(),
         columns: vec!["id".into(), "name".into()],
@@ -1526,7 +1528,9 @@ fn build_fixtures() -> serde_json::Value {
     // データ差分: RowStatus 3 種を 1 つの結果に載せ、ドライバも巡回。
     let data_diff_variants: Vec<DataDiff> = all_drivers
         .iter()
-        .map(|driver| DataDiff {
+        .zip(variants!(RowKeyKind [PrimaryKey, UniqueKey, Rowid]))
+        .map(|(driver, key_kind)| DataDiff {
+            key_kind,
             target_driver: *driver,
             table: "users".into(),
             columns: vec!["id".into()],
@@ -2218,6 +2222,7 @@ fn build_fixtures() -> serde_json::Value {
         columns_added: vec!["email".into()],
         columns_removed: vec![],
         partial: false,
+        key_changed: true,
         from_captured_at: "2026-01-01T00:00:00Z".into(),
         to_captured_at: "2026-01-02T00:00:00Z".into(),
     };
@@ -2228,6 +2233,7 @@ fn build_fixtures() -> serde_json::Value {
         preamble: Some("USE `appdb`".into()),
     };
     let timelapse_row_history = t::RowHistory {
+        key_kind: Default::default(),
         columns: vec!["id".into(), "price".into()],
         primary_key: vec!["id".into()],
         entries: vec![

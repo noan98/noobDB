@@ -3529,7 +3529,15 @@ const en = {
   timelapseWatchConfirmTitle: "Watch “{table}”?",
   timelapseWatchScope:
     "Snapshots are taken on connect and on “Capture now”, and a new generation is kept only when the content changed. Meant for small master/config tables (up to {limit} rows); history of large tables is out of scope.",
-  timelapseWatchPk: "The table must have a primary key (used to track rows between generations).",
+  timelapseWatchPk:
+    "The table needs a primary key, a UNIQUE NOT NULL key, or (SQLite) an implicit rowid, used to track rows between generations.",
+  rowKeyUnique: "This table has no primary key, so rows are paired by its UNIQUE NOT NULL key ({columns}).",
+  rowKeyRowid:
+    "This table has no primary key or UNIQUE NOT NULL key, so rows are tracked by SQLite's implicit rowid. If a rowid is renumbered (VACUUM, or a row deleted and re-inserted), different rows get paired and changes, additions and removals may be shown incorrectly.",
+  timelapseDmlRowidBlocked:
+    "DML cannot be generated for a table tracked by rowid: a rowid may now point to a different row than when it was captured, so a statement could change the wrong row.",
+  timelapseKeyChanged:
+    "The row key differs between these two generations, so rows may not be paired correctly and changes, additions and removals may be shown inaccurately.",
   timelapseWatchPrivacy:
     "Snapshots are a local copy of real data and may contain sensitive values. They are stored only on this device, in the app data directory (table_timelapse.sqlite), and are never sent anywhere. You can delete them when unwatching or from Settings.",
   timelapseWatchMask:
@@ -10370,7 +10378,15 @@ const ja: Dict = {
   timelapseWatchConfirmTitle: "「{table}」をウォッチしますか?",
   timelapseWatchScope:
     "接続時と「今すぐ取得」でスナップショットを取り、内容が変わったときだけ新しい世代として保存します。対象はマスターデータ・設定値などの小さなテーブル (最大 {limit} 行) で、大きなテーブルの履歴管理は対象外です。",
-  timelapseWatchPk: "主キーのあるテーブルに限ります (世代間で行を追跡するために使います)。",
+  timelapseWatchPk:
+    "主キー・UNIQUE NOT NULL キー・(SQLite の) 暗黙 rowid のいずれかを持つテーブルに限ります (世代間で行を追跡するために使います)。",
+  rowKeyUnique: "このテーブルには主キーが無いため、UNIQUE NOT NULL キー ({columns}) で行を対応付けています。",
+  rowKeyRowid:
+    "このテーブルには主キーも UNIQUE NOT NULL キーも無いため、SQLite の暗黙 rowid で行を追跡しています。rowid が振り直される (VACUUM、または行の削除と再挿入) と、別の行どうしが対応付けられ、変更・追加・削除が誤って表示されることがあります。",
+  timelapseDmlRowidBlocked:
+    "rowid で追跡しているテーブルでは DML を作れません。rowid は撮影時とは別の行を指すことがあり、文が別の行を書き換えるおそれがあるためです。",
+  timelapseKeyChanged:
+    "この 2 世代では行の識別子 (キー) が異なるため、行を正しく対応付けられず、変更・追加・削除が実態と違って表示されることがあります。",
   timelapseWatchPrivacy:
     "スナップショットは実データのローカルコピーで、機微なデータを含む可能性があります。保存先はこの端末のアプリデータディレクトリ (table_timelapse.sqlite) のみで、外部へは一切送信しません。ウォッチ解除時や設定画面から削除できます。",
   timelapseWatchMask:

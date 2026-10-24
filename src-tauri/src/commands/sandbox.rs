@@ -621,6 +621,7 @@ pub(crate) async fn sandbox_table_diff_inner(
 
     let desired_rows = compute_data_diff(&columns, &pk_idx, &live_rows, &base_rows);
     let desired = DataDiff {
+        key_kind: Default::default(),
         target_driver: record.source_driver,
         table: table.clone(),
         columns: columns.clone(),
@@ -677,6 +678,7 @@ pub(crate) async fn sandbox_table_diff_inner(
                 let base_cmp = normalize_decimal_cells(&column_types, &base_rows);
                 let external_rows = compute_data_diff(&columns, &pk_idx, &current_cmp, &base_cmp);
                 let external = DataDiff {
+                    key_kind: Default::default(),
                     target_driver: record.source_driver,
                     table: table.clone(),
                     columns,
