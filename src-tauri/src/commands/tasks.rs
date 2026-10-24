@@ -59,8 +59,10 @@ fn validate_action(action: &TaskAction) -> Result<()> {
             }
             let mut seen = std::collections::HashSet::new();
             for m in masks {
-                if m.column.trim().is_empty() {
-                    return Err(AppError::InvalidInput("mask column name is empty".into()));
+                if m.column.trim().is_empty() || m.column != m.column.trim() {
+                    return Err(AppError::InvalidInput(
+                        "mask column name is empty or has surrounding whitespace".into(),
+                    ));
                 }
                 if !seen.insert(m.column.as_str()) {
                     return Err(AppError::InvalidInput(format!(
@@ -560,6 +562,8 @@ mod mask_validation_tests {
         for bad in [
             format!(r#"[{{"column":"a","rule":{n}}},{{"column":"a","rule":{n}}}]"#),
             format!(r#"[{{"column":"  ","rule":{n}}}]"#),
+            format!(r#"[{{"column":" a","rule":{n}}}]"#),
+            format!(r#"[{{"column":"a ","rule":{n}}}]"#),
         ] {
             assert!(matches!(
                 validate_action(&action(&bad)),

@@ -786,6 +786,9 @@ function TaskForm({
   );
   const [maskColumnInput, setMaskColumnInput] = useState("");
   const [maskError, setMaskError] = useState<string | null>(null);
+  // ルール選択・列の削除/追加・アクション種別の切り替えで古いエラーを消す。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 依存の変化を合図にエラーを消すだけ
+  useEffect(() => setMaskError(null), [maskOverrides, maskColumns, actionKind]);
   const removeMaskColumn = (column: string) => {
     setMaskColumns((cur) => cur.filter((c) => c !== column));
     setMaskOverrides((cur) => {

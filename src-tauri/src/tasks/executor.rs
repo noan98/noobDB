@@ -405,6 +405,16 @@ impl Drop for DisconnectOnDrop {
     }
 }
 
+/// タスク定義のマスクから MaskSpec を作る。手入力の列名が結果列に当たらないと PII が
+/// 素通りするので、必ず厳格モードにする (#1836)。空なら `None` (マスクしない)。
+async fn task_mask_spec(
+    masks: &[crate::db::masking::ColumnMask],
+) -> crate::error::Result<Option<crate::db::masking::MaskSpec>> {
+    Ok(export::load_mask_spec(Some(masks.to_vec()))
+        .await?
+        .map(|s| s.strict()))
+}
+
 async fn run_action(
     app: &AppHandle,
     session_id: &str,
@@ -438,9 +448,8 @@ async fn run_action(
             let path = resolve_output_path(output_path, now);
             // タスク定義のマスクルール (#1836) を ExportModal と同じ `load_mask_spec` →
             // `mask_rows` 経路へ通す。空ならマスクしない。仮名化のソルトは keyring から取る。
-            let mask_spec = match export::load_mask_spec(Some(masks.clone())).await {
-                // 手入力の列名が結果列に当たらないと PII が素通りするので厳格モード (#1836)。
-                Ok(spec) => spec.map(|s| s.strict()),
+            let mask_spec = match task_mask_spec(masks).await {
+                Ok(spec) => spec,
                 Err(e) => return TaskOutcome::err(e.to_string()),
             };
             let result = export::run_export_to_file(
@@ -753,6 +762,25 @@ mod tests {
 
     fn dt() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 3, 4, 5, 6, 7).unwrap()
+    }
+
+    /// タスクのマスク仕様は厳格で、存在しない列名は `check_columns` でエラーになる (#1836)。
+    #[tokio::test]
+    async fn task_mask_spec_is_strict() {
+        use crate::db::masking::{ColumnMask, MaskRule};
+        use crate::db::types::Column;
+        let masks = vec![ColumnMask {
+            column: "email".into(),
+            rule: MaskRule::Null,
+        }];
+        let spec = task_mask_spec(&masks).await.unwrap().unwrap();
+        let col = |n: &str| Column {
+            name: n.into(),
+            type_name: String::new(),
+        };
+        assert!(spec.check_columns(&[col("id"), col("email")]).is_ok());
+        assert!(spec.check_columns(&[col("id"), col("EMAIL")]).is_err());
+        assert!(task_mask_spec(&[]).await.unwrap().is_none());
     }
 
     #[test]

@@ -6259,7 +6259,7 @@ const en = {
   taskFormOutputPathPreview: "preview: {path}",
   taskFormOutputPathRequired: "Enter an output path.",
   taskFormMaskHint:
-    "Mask these columns in every scheduled output so PII does not leak to unattended destinations. Columns are matched by exact name in the query result.",
+    "Mask these columns in every scheduled output so PII does not leak to unattended destinations. Columns are matched by exact name in the query result; if a column is missing from the result, that run fails and writes nothing.",
   taskFormMaskAddColumn: "Column name to mask",
   taskFormMaskAdd: "Add column",
   taskFormMaskRemove: "Remove {column} from masking",
@@ -13071,7 +13071,7 @@ const ja: Dict = {
   taskFormOutputPathPreview: "プレビュー: {path}",
   taskFormOutputPathRequired: "出力先パスを入力してください。",
   taskFormMaskHint:
-    "スケジュール実行のたびに、これらの列をマスクして書き出します (無人の出力先への PII 流出を防ぎます)。列はクエリ結果の列名と完全一致で対応付けます。",
+    "スケジュール実行のたびに、これらの列をマスクして書き出します (無人の出力先への PII 流出を防ぎます)。列はクエリ結果の列名と完全一致で対応付けます。結果に無い列名があると、その実行は失敗し何も書き出しません。",
   taskFormMaskAddColumn: "マスクする列名",
   taskFormMaskAdd: "列を追加",
   taskFormMaskRemove: "{column} をマスク対象から外す",
