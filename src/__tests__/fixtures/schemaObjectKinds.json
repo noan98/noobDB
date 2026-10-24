@@ -1,0 +1,9 @@
+{
+  "description": "SchemaObject.kind (#1840) の取りうる値の集合を Rust / TS で固定する共有ゴールデン。Rust の src-tauri/src/db/types.rs (schema_object_kind_tests) は SCHEMA_OBJECT_KINDS と、3 ドライバの schema_objects が吐く kind をこの JSON と照合する。TS の src/__tests__/schemaObjectKind.test.ts は SchemaObjectKind union の全値をこの JSON と照合する。kind を足すときは Rust 定数・TS union・この JSON を揃える。",
+  "kinds": ["view", "materialized_view", "procedure", "function", "trigger"],
+  "drivers": {
+    "mysql": ["view", "procedure", "function", "trigger"],
+    "postgres": ["view", "materialized_view", "procedure", "function", "trigger"],
+    "sqlite": ["view", "trigger"]
+  }
+}

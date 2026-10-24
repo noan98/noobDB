@@ -308,7 +308,7 @@ const EXCLUDED: Record<string, string> = {
   RoutineParamMode:
     "Rust 側は enum ではなく文字列で返し (未知値は `in` に倒す)、TS は `RoutineParamMode | string` で受けるため完全一致の対象外。",
   SchemaObjectKind:
-    "Rust の `SchemaObject.kind` は `String` (DB のカタログ値をそのまま運ぶ) で enum が無い。値の集合は `where_used.rs` / `object_search.rs` の文字列比較側で守られる。",
+    "Rust の `SchemaObject.kind` は `String` (DB のカタログ値をそのまま運ぶ) で enum が無い。値の集合は共有ゴールデン `fixtures/schemaObjectKinds.json` を Rust (`db/types.rs` の `SCHEMA_OBJECT_KINDS` と 3 ドライバの `schema_objects`) と `schemaObjectKind.test.ts` が照合して固定する (#1840)。",
   ColumnDependencyKind:
     "Rust の `ColumnDependency.kind` は `String` (Where-used の `kind` とカタログ由来の固定語を同じ欄で運ぶ) で enum が無い。値の集合は zod の `columnDependency.kind` が検証する (#1758)。",
   DumpToolName:
