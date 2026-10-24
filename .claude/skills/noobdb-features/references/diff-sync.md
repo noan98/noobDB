@@ -82,3 +82,22 @@
   `compare_schema` が **TargetOnly テーブルにも** target 側の FK を載せ、
   `generate_sync_sql` が `drop_table_order` で依存順にする。循環があれば名前順で
   末尾に回し、warnings に出す。
+
+## CHECK 制約・生成列の式 (#1837)
+
+- `db::types::TableDdlExtras` (CHECK = `CHECK (...)` 句全体 / 生成列 = 列名・式・VIRTUAL か) を
+  3 ドライバで埋める: PostgreSQL は `pg_get_constraintdef` / `pg_get_expr`、MySQL は
+  `information_schema.CHECK_CONSTRAINTS` (8.0.16+、無い版は CHECK だけ空) と
+  `COLUMNS.GENERATION_EXPRESSION`、SQLite は `sqlite_master.sql` を
+  `db::ddl_extras::parse_sqlite_extras` で読む (SQLite の `table_info` は生成列を隠す)。
+  `Connection::table_ddl_extras` / `ddl_extras_for_database` が入口。
+- `compare_schema` は `attach_extras_diffs` で `TableDiff.check_changes` / `generated_changes`
+  を載せる。式の正規化 (`ddl_extras::normalize_check` / `normalize_expr`) で空白・大小・冗長な
+  括弧・制約名だけの違いは差分にしない。差があれば `Same` を `Different` に格上げする
+  (CHECK だけが違う表が偽の「一致」にならない)。
+- 同期: CREATE TABLE は CHECK と生成列を含める。既存表は `SyncKind::AddCheck` /
+  `DropCheck` (DROP は破壊的)。SQLite は `RebuildTable` が CHECK・生成列を反映する
+  (`TargetTableSnapshot.checks/generated`、`attach_target_extras_to_snapshots`)。
+  生成式の変更は ALTER で安全に差し替えられないので警告にとどめる。
+- 構造パネルは `describe_table_extras` (読み取りのみ) で CHECK・生成式を節として出す。
+

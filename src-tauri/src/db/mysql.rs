@@ -2054,6 +2054,112 @@ impl MySqlConn {
         Ok(rows.iter().map(|r| column_info_from_row(r, 0)).collect())
     }
 
+    /// `db` の全テーブルの CHECK 制約と生成列の式 (#1837)。CHECK は MySQL 8.0.16+ の
+    /// `information_schema.CHECK_CONSTRAINTS` (`TABLE_CONSTRAINTS` と結合して表名と
+    /// `ENFORCED` を得る)。MariaDB には `ENFORCED` が無いので、失敗したら
+    /// `CHECK_CONSTRAINTS` 自身の `TABLE_NAME` で引き直す。それも失敗したら
+    /// `checks_unavailable` を立てて返す (呼び出し元が警告する)。生成列
+    /// (`GENERATION_EXPRESSION`) の取得は続ける。文字列列は `text_or_bytes` で読む
+    /// (`information_schema` が varbinary で返す版があるため)。
+    pub async fn ddl_extras_for_database(
+        &self,
+        db: &str,
+    ) -> Result<super::types::DatabaseDdlExtras> {
+        use std::collections::BTreeMap;
+        let mut by_table: BTreeMap<String, super::types::TableDdlExtras> = BTreeMap::new();
+        let mut checks_unavailable = false;
+        // 列: 表名, 制約名, 式, ENFORCED (MariaDB 向けには NULL)。
+        let with_enforced: std::result::Result<Vec<MySqlRow>, sqlx::Error> = sqlx::query(
+            r#"SELECT tc.TABLE_NAME, cc.CONSTRAINT_NAME, cc.CHECK_CLAUSE, tc.ENFORCED
+                 FROM information_schema.CHECK_CONSTRAINTS cc
+                 JOIN information_schema.TABLE_CONSTRAINTS tc
+                   ON tc.CONSTRAINT_SCHEMA = cc.CONSTRAINT_SCHEMA
+                  AND tc.TABLE_SCHEMA = cc.CONSTRAINT_SCHEMA
+                  AND tc.CONSTRAINT_NAME = cc.CONSTRAINT_NAME
+                  AND tc.CONSTRAINT_TYPE = 'CHECK'
+                WHERE cc.CONSTRAINT_SCHEMA = ?
+                ORDER BY tc.TABLE_NAME, cc.CONSTRAINT_NAME"#,
+        )
+        .bind(db)
+        .fetch_all(&self.pool)
+        .await;
+        let check_rows = match with_enforced {
+            Ok(rows) => Some(rows),
+            Err(first) => {
+                tracing::debug!(error = %first, "CHECK_CONSTRAINTS with ENFORCED is unavailable; retrying without it");
+                let fallback: std::result::Result<Vec<MySqlRow>, sqlx::Error> = sqlx::query(
+                    r#"SELECT cc.TABLE_NAME, cc.CONSTRAINT_NAME, cc.CHECK_CLAUSE, NULL
+                         FROM information_schema.CHECK_CONSTRAINTS cc
+                        WHERE cc.CONSTRAINT_SCHEMA = ?
+                        ORDER BY cc.TABLE_NAME, cc.CONSTRAINT_NAME"#,
+                )
+                .bind(db)
+                .fetch_all(&self.pool)
+                .await;
+                match fallback {
+                    Ok(rows) => Some(rows),
+                    Err(e) => {
+                        tracing::debug!(error = %e, "CHECK_CONSTRAINTS is unavailable");
+                        None
+                    }
+                }
+            }
+        };
+        match check_rows {
+            Some(rows) => {
+                for r in &rows {
+                    let (Ok(table), Ok(name), Ok(clause)) = (
+                        text_or_bytes(r, 0),
+                        text_or_bytes(r, 1),
+                        text_or_bytes(r, 2),
+                    ) else {
+                        continue;
+                    };
+                    let enforced = !matches!(
+                        text_or_bytes(r, 3),
+                        Ok(e) if e.eq_ignore_ascii_case("NO")
+                    );
+                    by_table.entry(table).or_default().checks.push((
+                        name,
+                        super::ddl_extras::mysql_check_definition(&clause, enforced),
+                    ));
+                }
+            }
+            None => checks_unavailable = true,
+        }
+        let generated: Vec<MySqlRow> = sqlx::query(
+            r#"SELECT TABLE_NAME, COLUMN_NAME, GENERATION_EXPRESSION, EXTRA
+                 FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = ?
+                  AND GENERATION_EXPRESSION IS NOT NULL AND GENERATION_EXPRESSION <> ''
+                ORDER BY TABLE_NAME, ORDINAL_POSITION"#,
+        )
+        .bind(db)
+        .fetch_all(&self.pool)
+        .await?;
+        for r in &generated {
+            let (Ok(table), Ok(column), Ok(expr)) = (
+                text_or_bytes(r, 0),
+                text_or_bytes(r, 1),
+                text_or_bytes(r, 2),
+            ) else {
+                continue;
+            };
+            let extra = text_or_bytes(r, 3).unwrap_or_default();
+            by_table.entry(table).or_default().generated.push(
+                super::types::GeneratedColumnInfo::new(
+                    column,
+                    super::ddl_extras::mysql_generation_expression(&expr),
+                    super::ddl_extras::mysql_extra_is_virtual(&extra),
+                ),
+            );
+        }
+        Ok(super::types::DatabaseDdlExtras {
+            tables: by_table.into_iter().collect(),
+            checks_unavailable,
+        })
+    }
+
     /// 生成列 (STORED / VIRTUAL / PERSISTENT GENERATED) の列名 (#1600)。
     /// `TableColumnInfo::is_generated` と同じ判定を `EXTRA` で行う。
     pub async fn generated_columns(

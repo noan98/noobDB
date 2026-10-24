@@ -692,6 +692,22 @@ fn build_fixtures() -> serde_json::Value {
         on_delete: Some("CASCADE".into()),
         on_update: None,
     };
+    let check_info = t::CheckConstraintInfo {
+        name: "price_pos".into(),
+        definition: "CHECK (price > 0)".into(),
+    };
+    let generated_info = t::GeneratedColumnInfo {
+        column: "total".into(),
+        expression: "price * qty".into(),
+        is_virtual: false,
+        data_type: None,
+        not_null: false,
+        position: None,
+    };
+    let table_extras_info = t::TableExtrasInfo {
+        checks: vec![check_info.clone()],
+        generated: vec![generated_info.clone()],
+    };
     let table_diff = TableDiff {
         name: "users".into(),
         status: DiffStatus::Different,
@@ -701,6 +717,29 @@ fn build_fixtures() -> serde_json::Value {
             source: Some(diff_index.clone()),
             target: Some(diff_index),
             changed_fields: vec!["unique".into()],
+        }],
+        check_changes: vec![t::CheckDiff {
+            name: "price_pos".into(),
+            status: DiffStatus::Different,
+            source: Some(check_info.clone()),
+            target: Some(t::CheckConstraintInfo {
+                name: "price_pos".into(),
+                definition: "CHECK (price >= 0)".into(),
+            }),
+        }],
+        generated_changes: vec![t::GeneratedDiff {
+            column: "total".into(),
+            status: DiffStatus::Different,
+            source: Some(generated_info.clone()),
+            target: Some(t::GeneratedColumnInfo {
+                column: "total".into(),
+                expression: "price * qty".into(),
+                is_virtual: true,
+                data_type: Some("REAL".into()),
+                not_null: true,
+                position: Some(3),
+            }),
+            changed_fields: vec!["expression".into(), "storage".into()],
         }],
         fk_changes: vec![t::ForeignKeyDiff {
             status: DiffStatus::Different,
@@ -716,6 +755,9 @@ fn build_fixtures() -> serde_json::Value {
             drop_views: vec!["v_users".into()],
             original_sql: Some("CREATE TABLE users (email text)".into()),
             referenced_by: vec!["orders (ON DELETE CASCADE)".into()],
+            checks: vec![check_info.clone()],
+            generated: vec![generated_info.clone()],
+            extras_known: true,
         }),
         foreign_keys: vec![t::DiffForeignKey {
             name: Some("fk_users_org".into()),
@@ -1499,11 +1541,11 @@ fn build_fixtures() -> serde_json::Value {
         })
         .collect();
 
-    // 同期プラン: SyncKind 13 種すべて (destructive は DROP 系のみ true)。
+    // 同期プラン: SyncKind 15 種すべて (destructive は DROP 系のみ true)。
     let sync_plan_variants = vec![SyncPlan {
         statements: variants!(SyncKind [
             CreateTable, AddColumn, AlterColumn, AddForeignKey, DropColumn, DropTable,
-            AddIndex, DropIndex, DropForeignKey, RebuildTable, InsertRow, UpdateRow, DeleteRow
+            AddIndex, DropIndex, DropForeignKey, AddCheck, DropCheck, RebuildTable, InsertRow, UpdateRow, DeleteRow
         ])
         .into_iter()
         .map(|kind| SyncStatement {
@@ -1516,6 +1558,7 @@ fn build_fixtures() -> serde_json::Value {
                     | SyncKind::DropTable
                     | SyncKind::DropIndex
                     | SyncKind::DropForeignKey
+                    | SyncKind::DropCheck
                     | SyncKind::RebuildTable
             ),
         })
@@ -2352,6 +2395,7 @@ fn build_fixtures() -> serde_json::Value {
         "tableSchema": table_schema,
         "foreignKey": foreign_key,
         "indexInfo": index_info,
+        "tableExtrasInfo": table_extras_info,
         "schemaObject": schema_object,
         "routineSignature": routine_signature,
         "tableRowEstimate": table_row_estimate,

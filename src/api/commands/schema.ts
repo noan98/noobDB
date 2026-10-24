@@ -7,6 +7,7 @@ import type {
   TableColumnInfo,
   TableSchema,
   IndexInfo,
+  TableExtrasInfo,
   SchemaObject,
   RoutineSignature,
   ForeignKey,
@@ -105,6 +106,11 @@ export const schemaCommands = {
   listIndexes: (sessionId: string, database: string, table: string) =>
     invoke<IndexInfo[]>("list_indexes", { sessionId, database, table }).then((r) =>
       parseResponse(schemas.indexInfoArray, r, "list_indexes"),
+    ),
+  /** テーブルの CHECK 制約と生成列の式を取得する (#1837)。読み取りのみ。 */
+  describeTableExtras: (sessionId: string, database: string, table: string) =>
+    invoke<TableExtrasInfo>("describe_table_extras", { sessionId, database, table }).then((r) =>
+      parseResponse(schemas.tableExtrasInfo, r, "describe_table_extras"),
     ),
   /** 非テーブルのスキーマオブジェクト (ビュー/ルーチン/トリガー) を取得する。 */
   listSchemaObjects: (sessionId: string, database: string) =>

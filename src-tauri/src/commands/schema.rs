@@ -15,7 +15,7 @@ use crate::db::schema_insight::{
 };
 use crate::db::types::{
     ForeignKey, IndexInfo, RoutineSignature, SchemaObject, TableColumnInfo, TableComment,
-    TableIndexes, TableRowEstimate, TableSchema,
+    TableExtrasInfo, TableIndexes, TableRowEstimate, TableSchema,
 };
 use crate::db::where_used::WhereUsedTarget;
 use crate::db::DriverKind;
@@ -188,6 +188,24 @@ pub async fn list_indexes(
         .schema_cache
         .list_indexes(&database, &table, || conn.list_indexes(&database, &table))
         .await
+}
+
+/// テーブルの CHECK 制約と生成列の式を返す (#1837)。MySQL は `information_schema`、
+/// PostgreSQL は `pg_get_constraintdef` / `pg_get_expr`、SQLite は `sqlite_master.sql` の
+/// パース。読み取りのみ。キャッシュ対象外 (構造パネルを開いたときだけ呼ぶため)。
+#[tauri::command]
+pub async fn describe_table_extras(
+    session_id: String,
+    database: String,
+    table: String,
+    state: State<'_, AppState>,
+) -> Result<TableExtrasInfo> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    let extras = session.conn.table_ddl_extras(&database, &table).await?;
+    Ok(TableExtrasInfo::from(&extras))
 }
 
 #[tauri::command]

@@ -2311,56 +2311,91 @@ impl PostgresConn {
         schema: &str,
         table: &str,
     ) -> Result<super::types::TableDdlExtras> {
+        Ok(self
+            .ddl_extras_rows(schema, Some(table))
+            .await?
+            .into_iter()
+            .next()
+            .map(|(_, e)| e)
+            .unwrap_or_default())
+    }
+
+    /// `schema` の全テーブルの CHECK 制約と生成列の式 (#1837、スキーマ比較用)。
+    pub async fn ddl_extras_for_database(
+        &self,
+        schema: &str,
+    ) -> Result<super::types::DatabaseDdlExtras> {
+        Ok(super::types::DatabaseDdlExtras {
+            tables: self.ddl_extras_rows(schema, None).await?,
+            checks_unavailable: false,
+        })
+    }
+
+    /// `table` が `Some` ならその 1 表、`None` なら `schema` の全テーブル (通常表・パーティション表)。
+    async fn ddl_extras_rows(
+        &self,
+        schema: &str,
+        table: Option<&str>,
+    ) -> Result<Vec<(String, super::types::TableDdlExtras)>> {
+        use std::collections::BTreeMap;
         let checks: Vec<PgRow> = sqlx::query(
-            r#"SELECT con.conname::text, pg_catalog.pg_get_constraintdef(con.oid, true)
+            r#"SELECT cl.relname::text, con.conname::text,
+                      pg_catalog.pg_get_constraintdef(con.oid, true)
                  FROM pg_catalog.pg_constraint con
                  JOIN pg_catalog.pg_class cl ON cl.oid = con.conrelid
                  JOIN pg_catalog.pg_namespace ns ON ns.oid = cl.relnamespace
-                WHERE ns.nspname = $1 AND cl.relname = $2 AND con.contype = 'c'
-                ORDER BY con.conname"#,
+                WHERE ns.nspname = $1 AND ($2::text IS NULL OR cl.relname = $2)
+                  AND cl.relkind IN ('r', 'p') AND con.contype = 'c'
+                ORDER BY cl.relname, con.conname"#,
         )
         .bind(schema)
         .bind(table)
         .fetch_all(&self.pool)
         .await?;
         let generated: Vec<PgRow> = sqlx::query(
-            r#"SELECT a.attname::text,
+            r#"SELECT cl.relname::text, a.attname::text,
                       pg_catalog.pg_get_expr(d.adbin, d.adrelid),
                       to_jsonb(a)->>'attgenerated'
                  FROM pg_catalog.pg_attribute a
                  JOIN pg_catalog.pg_class cl ON cl.oid = a.attrelid
                  JOIN pg_catalog.pg_namespace ns ON ns.oid = cl.relnamespace
                  JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
-                WHERE ns.nspname = $1 AND cl.relname = $2
+                WHERE ns.nspname = $1 AND ($2::text IS NULL OR cl.relname = $2)
+                  AND cl.relkind IN ('r', 'p')
                   AND a.attnum > 0 AND NOT a.attisdropped
                   AND COALESCE(to_jsonb(a)->>'attgenerated', '') <> ''
-                ORDER BY a.attnum"#,
+                ORDER BY cl.relname, a.attnum"#,
         )
         .bind(schema)
         .bind(table)
         .fetch_all(&self.pool)
         .await?;
-        Ok(super::types::TableDdlExtras {
-            checks: checks
-                .iter()
-                .filter_map(|r| {
-                    Some((
-                        r.try_get::<String, _>(0).ok()?,
-                        r.try_get::<String, _>(1).ok()?,
-                    ))
-                })
-                .collect(),
-            generated: generated
-                .iter()
-                .filter_map(|r| {
-                    Some((
-                        r.try_get::<String, _>(0).ok()?,
-                        r.try_get::<String, _>(1).ok()?,
-                        r.try_get::<Option<String>, _>(2).ok().flatten().as_deref() == Some("v"),
-                    ))
-                })
-                .collect(),
-        })
+        let mut by_table: BTreeMap<String, super::types::TableDdlExtras> = BTreeMap::new();
+        for r in &checks {
+            if let (Ok(t), Ok(n), Ok(d)) = (
+                r.try_get::<String, _>(0),
+                r.try_get::<String, _>(1),
+                r.try_get::<String, _>(2),
+            ) {
+                by_table.entry(t).or_default().checks.push((n, d));
+            }
+        }
+        for r in &generated {
+            if let (Ok(t), Ok(c), Ok(e)) = (
+                r.try_get::<String, _>(0),
+                r.try_get::<String, _>(1),
+                r.try_get::<String, _>(2),
+            ) {
+                let is_virtual =
+                    r.try_get::<Option<String>, _>(3).ok().flatten().as_deref() == Some("v");
+                by_table
+                    .entry(t)
+                    .or_default()
+                    .generated
+                    .push(super::types::GeneratedColumnInfo::new(c, e, is_virtual));
+            }
+        }
+        Ok(by_table.into_iter().collect())
     }
 
     pub async fn list_indexes(&self, schema: &str, table: &str) -> Result<Vec<IndexInfo>> {

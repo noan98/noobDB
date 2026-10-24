@@ -4019,3 +4019,60 @@ async fn postgres_bulk_write_optimistic_lock_detects_lost_update() {
         .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
         .await;
 }
+
+/// #1837: `ddl_extras_for_database` が CHECK 制約と生成列の式を全テーブル分まとめて返し、
+/// 1 表版 (`table_ddl_extras`) と一致する。
+#[tokio::test]
+async fn postgres_ddl_extras_for_database_matches_per_table_when_env_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS public.noobdb_extras_t", None)
+        .await;
+    conn.execute(
+        "CREATE TABLE public.noobdb_extras_t (id INT PRIMARY KEY, price INT, qty INT, \
+         CONSTRAINT noobdb_price_pos CHECK (price > 0))",
+        None,
+    )
+    .await
+    .expect("create");
+    // 生成列は PG12+。古い版では CHECK だけ確かめる。
+    let _ = conn
+        .execute(
+            "ALTER TABLE public.noobdb_extras_t ADD COLUMN total INT GENERATED ALWAYS AS (price * qty) STORED",
+            None,
+        )
+        .await;
+
+    let all = conn
+        .ddl_extras_for_database("public")
+        .await
+        .expect("extras for database");
+    let from_all = all
+        .tables
+        .iter()
+        .find(|(n, _)| n == "noobdb_extras_t")
+        .map(|(_, e)| e.clone())
+        .expect("table present in database-wide extras");
+    let single = conn
+        .table_ddl_extras("public", "noobdb_extras_t")
+        .await
+        .expect("single extras");
+    assert_eq!(from_all, single);
+    assert!(
+        single
+            .checks
+            .iter()
+            .any(|(n, d)| n == "noobdb_price_pos" && d.contains("price > 0")),
+        "{single:?}"
+    );
+
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS public.noobdb_extras_t", None)
+        .await;
+    conn.close().await;
+}

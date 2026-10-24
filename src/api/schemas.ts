@@ -161,6 +161,26 @@ export const indexInfo = z.object({
   method: z.string().nullable(),
 });
 
+const checkConstraintInfo = z.object({
+  name: z.string(),
+  definition: z.string(),
+});
+
+const generatedColumnInfo = z.object({
+  column: z.string(),
+  expression: z.string(),
+  is_virtual: z.boolean(),
+  data_type: z.string().nullable().default(null),
+  not_null: z.boolean().default(false),
+  position: z.number().nullable().default(null),
+});
+
+/** `describe_table_extras` の戻り値 (#1837)。 */
+export const tableExtrasInfo = z.object({
+  checks: z.array(checkConstraintInfo),
+  generated: z.array(generatedColumnInfo),
+});
+
 /** サーバ側プロセス/接続 (プロセス監視パネル)。 */
 export const processInfo = z.object({
   id: z.number(),
@@ -844,6 +864,24 @@ const targetTableSnapshot = z.object({
   drop_views: z.array(z.string()).default([]),
   original_sql: z.string().nullable().default(null),
   referenced_by: z.array(z.string()).default([]),
+  checks: z.array(checkConstraintInfo).default([]),
+  generated: z.array(generatedColumnInfo).default([]),
+  extras_known: z.boolean().default(false),
+});
+
+const checkDiff = z.object({
+  name: z.string(),
+  status: diffStatus,
+  source: checkConstraintInfo.nullable(),
+  target: checkConstraintInfo.nullable(),
+});
+
+const generatedDiff = z.object({
+  column: z.string(),
+  status: diffStatus,
+  source: generatedColumnInfo.nullable(),
+  target: generatedColumnInfo.nullable(),
+  changed_fields: z.array(z.string()).default([]),
 });
 
 const tableDiff = z.object({
@@ -854,6 +892,8 @@ const tableDiff = z.object({
   indexes: z.array(indexDiff).default([]),
   fk_changes: z.array(foreignKeyDiff).default([]),
   target_snapshot: targetTableSnapshot.nullable().default(null),
+  check_changes: z.array(checkDiff).default([]),
+  generated_changes: z.array(generatedDiff).default([]),
 });
 
 const driverKind = z.enum(["mysql", "postgres", "sqlite"]);
@@ -879,6 +919,8 @@ const syncStatement = z.object({
     "add_index",
     "drop_index",
     "drop_foreign_key",
+    "add_check",
+    "drop_check",
     "rebuild_table",
     "insert_row",
     "update_row",

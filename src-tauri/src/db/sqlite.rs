@@ -1321,6 +1321,67 @@ impl SqliteConn {
             .collect())
     }
 
+    /// 全テーブルの CHECK 制約と生成列の式 (#1837)。SQLite は式を返す PRAGMA を持たない
+    /// ので、`sqlite_master.sql` の `CREATE TABLE` を
+    /// [`super::ddl_extras::parse_sqlite_extras`] で読む。`table_info` は生成列を隠すため、
+    /// 型・NOT NULL・元の列位置は `pragma_table_xinfo` (hidden = 2 VIRTUAL / 3 STORED) で補う。
+    /// 何も無い表は含めない。
+    pub async fn ddl_extras_for_database(&self) -> Result<super::types::DatabaseDdlExtras> {
+        let rows: Vec<SqliteRow> = sqlx::query(
+            "SELECT name, sql FROM sqlite_master \
+             WHERE type = 'table' AND sql IS NOT NULL \
+               AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' \
+             ORDER BY name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut tables: Vec<(String, super::types::TableDdlExtras)> = rows
+            .iter()
+            .filter_map(|r| {
+                let name = r.try_get::<String, _>(0).ok()?;
+                let sql = r.try_get::<String, _>(1).ok()?;
+                let extras = super::ddl_extras::parse_sqlite_extras(&sql);
+                (!extras.is_empty()).then_some((name, extras))
+            })
+            .collect();
+        if tables.iter().any(|(_, e)| !e.generated.is_empty()) {
+            // 3.26 未満など `table_xinfo` が無い場合は型を補えないだけで、式は返す。
+            let hidden: Vec<SqliteRow> = sqlx::query(
+                "SELECT m.name, x.cid, x.name, x.type, x.\"notnull\", x.hidden
+                 FROM sqlite_master m
+                 JOIN pragma_table_xinfo(m.name) x
+                 WHERE m.type = 'table' AND x.hidden IN (2, 3)",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default();
+            for r in &hidden {
+                let (Ok(table), Ok(column)) =
+                    (r.try_get::<String, _>(0), r.try_get::<String, _>(2))
+                else {
+                    continue;
+                };
+                let Some((_, extras)) = tables.iter_mut().find(|(n, _)| *n == table) else {
+                    continue;
+                };
+                let Some(g) = extras.generated.iter_mut().find(|g| g.column == column) else {
+                    continue;
+                };
+                g.position = r
+                    .try_get::<i64, _>(1)
+                    .ok()
+                    .and_then(|c| usize::try_from(c).ok());
+                g.data_type = r.try_get::<String, _>(3).ok();
+                g.not_null = r.try_get::<i64, _>(4).unwrap_or(0) != 0;
+                g.is_virtual = r.try_get::<i64, _>(5).unwrap_or(2) == 2;
+            }
+        }
+        Ok(super::types::DatabaseDdlExtras {
+            tables,
+            checks_unavailable: false,
+        })
+    }
+
     /// 全テーブル (とビュー) の列を取得する (#1255)。`sqlite_master` と
     /// テーブル値 PRAGMA 関数 (`pragma_table_info` / `pragma_foreign_key_list`) を
     /// 結合して 2 本の問い合わせで済ませる。列ごとの値は [`SqliteConn::columns`] と

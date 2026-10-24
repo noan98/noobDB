@@ -26,9 +26,10 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+use super::ddl_extras::normalize_check;
 use super::diff::{DiffForeignKey, DiffStatus, SchemaDiff, TableDiff};
-use super::table_ddl::{render_foreign_key, FkGroup};
-use super::types::TableColumnInfo;
+use super::table_ddl::{render_check, render_foreign_key, render_generated_column, FkGroup};
+use super::types::{CheckConstraintInfo, GeneratedColumnInfo, TableColumnInfo};
 use super::DriverKind;
 
 /// What a generated statement does, so the UI can group / badge it and gate the
@@ -50,6 +51,10 @@ pub enum SyncKind {
     DropIndex,
     /// 既存テーブルの外部キー制約の削除 (#1625)。
     DropForeignKey,
+    /// 既存テーブルへの CHECK 制約の追加 (`ALTER TABLE ... ADD CONSTRAINT ... CHECK`, #1837)。
+    AddCheck,
+    /// 既存テーブルの CHECK 制約の削除 (#1837)。
+    DropCheck,
     /// SQLite の列変更・外部キー変更のためのテーブル再作成 (新表 → コピー → DROP →
     /// RENAME → インデックス / トリガーの作り直し)。1 つの `SyncStatement` に複数文を持つ
     /// (#1625)。
@@ -72,10 +77,10 @@ impl SyncKind {
             // 同名の索引・外部キーを作り直すときは DROP を先に、列の DROP より前に出す。
             // MySQL は外部キーを支えるインデックスを先に消すと ERROR 1553 になるので、
             // 外部キーの DROP をインデックスの DROP より前に出す。
-            SyncKind::DropForeignKey => 3,
+            SyncKind::DropForeignKey | SyncKind::DropCheck => 3,
             SyncKind::DropIndex => 4,
             SyncKind::AddIndex => 5,
-            SyncKind::AddForeignKey => 6,
+            SyncKind::AddForeignKey | SyncKind::AddCheck => 6,
             SyncKind::DropColumn => 7,
             SyncKind::DropTable => 8,
             SyncKind::InsertRow => 9,
@@ -193,6 +198,14 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
                     &mut warnings,
                 );
                 foreign_key_statements(
+                    driver,
+                    table,
+                    rebuilt,
+                    allow_destructive,
+                    &mut statements,
+                    &mut warnings,
+                );
+                check_statements(
                     driver,
                     table,
                     rebuilt,
@@ -340,7 +353,7 @@ fn drop_table_order(diff: &SchemaDiff, warnings: &mut Vec<String>) -> HashMap<St
 fn can_create_table(driver: DriverKind, table: &TableDiff) -> bool {
     let mut any_column = false;
     for c in table.columns.iter().filter_map(|c| c.source.as_ref()) {
-        if is_generated_column(driver, c) {
+        if is_generated_column(driver, c) && source_generated(table, &c.name).is_none() {
             if c.key.eq_ignore_ascii_case("PRI") {
                 return false;
             }
@@ -349,6 +362,65 @@ fn can_create_table(driver: DriverKind, table: &TableDiff) -> bool {
         }
     }
     any_column
+}
+
+/// source 側の生成列の式 (取得できていれば)。`SourceOnly` / `Different` の差分から引く。
+fn source_generated<'a>(table: &'a TableDiff, column: &str) -> Option<&'a GeneratedColumnInfo> {
+    table
+        .generated_changes
+        .iter()
+        .filter_map(|g| g.source.as_ref())
+        .find(|g| g.column == column)
+}
+
+/// 隠れた生成列 (SQLite の `table_info` に出ない) の定義。型・NOT NULL を持っていれば保つ。
+fn render_hidden_generated(driver: DriverKind, g: &GeneratedColumnInfo) -> String {
+    let mut def = quote_ident(driver, &g.column);
+    if let Some(ty) = g.data_type.as_deref().filter(|t| !t.is_empty()) {
+        def.push(' ');
+        def.push_str(ty);
+    }
+    def.push_str(&format!(
+        " GENERATED ALWAYS AS ({}) {}",
+        g.expression,
+        if g.is_virtual { "VIRTUAL" } else { "STORED" }
+    ));
+    if g.not_null {
+        def.push_str(" NOT NULL");
+    }
+    def
+}
+
+/// 通常列の定義の並びに、隠れた生成列を元の列位置 (`position`, 全列での 0 始まり) へ差し込む。
+/// 位置の無いものは末尾に足す。
+fn interleave_hidden_generated(
+    driver: DriverKind,
+    visible: Vec<String>,
+    hidden: &[&GeneratedColumnInfo],
+) -> Vec<String> {
+    let mut hidden: Vec<&GeneratedColumnInfo> = hidden.to_vec();
+    hidden.sort_by_key(|g| g.position.unwrap_or(usize::MAX));
+    let mut hidden = hidden.into_iter().peekable();
+    let mut visible = visible.into_iter();
+    let mut out = Vec::new();
+    loop {
+        let slot = out.len();
+        if hidden
+            .peek()
+            .is_some_and(|g| g.position.is_some_and(|p| p <= slot))
+        {
+            if let Some(g) = hidden.next() {
+                out.push(render_hidden_generated(driver, g));
+            }
+        } else if let Some(v) = visible.next() {
+            out.push(v);
+        } else if let Some(g) = hidden.next() {
+            out.push(render_hidden_generated(driver, g));
+        } else {
+            break;
+        }
+    }
+    out
 }
 
 fn create_table_stmt(
@@ -362,7 +434,8 @@ fn create_table_stmt(
     let mut cols: Vec<&TableColumnInfo> = Vec::new();
     let mut pk_generated = false;
     for c in table.columns.iter().filter_map(|c| c.source.as_ref()) {
-        if is_generated_column(driver, c) {
+        // 生成式を取得できた生成列は通常列と同じく CREATE に含める (#1837)。
+        if is_generated_column(driver, c) && source_generated(table, &c.name).is_none() {
             warnings.push(generated_column_warning(&table.name, &c.name));
             if c.key.eq_ignore_ascii_case("PRI") {
                 pk_generated = true;
@@ -382,7 +455,21 @@ fn create_table_stmt(
         return None;
     }
 
-    let mut lines: Vec<String> = cols.iter().map(|c| column_def(driver, c)).collect();
+    let lines: Vec<String> = cols
+        .iter()
+        .map(|c| match source_generated(table, &c.name) {
+            Some(g) => render_generated_column(driver, c, &g.expression, g.is_virtual),
+            None => column_def(driver, c),
+        })
+        .collect();
+    // 列情報に出ない生成列 (SQLite の `table_info` は生成列を隠す) は元の位置へ差し込む。
+    let hidden: Vec<&GeneratedColumnInfo> = table
+        .generated_changes
+        .iter()
+        .filter_map(|g| g.source.as_ref())
+        .filter(|g| !table.columns.iter().any(|c| c.name == g.column))
+        .collect();
+    let mut lines = interleave_hidden_generated(driver, lines, &hidden);
 
     let pk: Vec<String> = cols
         .iter()
@@ -391,6 +478,11 @@ fn create_table_stmt(
         .collect();
     if !pk.is_empty() {
         lines.push(format!("PRIMARY KEY ({})", pk.join(", ")));
+    }
+
+    // CHECK 制約 (#1837)。式が列を参照するので、列の後・外部キーの前に並べる。
+    for c in table.check_changes.iter().filter_map(|c| c.source.as_ref()) {
+        lines.push(render_check(driver, &c.name, &c.definition));
     }
 
     // 外部キー (制約単位。複合キー・ON DELETE / ON UPDATE を保つ)。SQLite は
@@ -543,7 +635,7 @@ fn alter_table(
                 // 再作成は破壊的なので出さない。警告を足し、非破壊な ADD COLUMN などは
                 // 従来どおり列ごとの処理で出す (後退させない)。
                 warnings.push(format!(
-                    "{}: SQLite は列・外部キーの変更を ALTER で行えません。テーブルの再作成 SQL (旧表を DROP して作り直す) は「破壊的な操作を許可」を有効にすると出力します。",
+                    "{}: SQLite は列・外部キー・CHECK 制約・生成列の変更を ALTER で行えません。テーブルの再作成 SQL (旧表を DROP して作り直す) は「破壊的な操作を許可」を有効にすると出力します。",
                     table.name
                 ));
             } else {
@@ -569,16 +661,19 @@ fn alter_table(
         match col.status {
             DiffStatus::SourceOnly => {
                 if let Some(src) = &col.source {
-                    if is_generated_column(driver, src) {
-                        warnings.push(generated_column_warning(&table.name, &src.name));
-                        continue;
-                    }
+                    // 生成式を取得できた生成列は ADD COLUMN で足せる (#1837)。
+                    let def = match source_generated(table, &src.name) {
+                        Some(g) => {
+                            render_generated_column(driver, src, &g.expression, g.is_virtual)
+                        }
+                        None if is_generated_column(driver, src) => {
+                            warnings.push(generated_column_warning(&table.name, &src.name));
+                            continue;
+                        }
+                        None => column_def(driver, src),
+                    };
                     statements.push(SyncStatement {
-                        sql: format!(
-                            "ALTER TABLE {} ADD COLUMN {}",
-                            tident,
-                            column_def(driver, src)
-                        ),
+                        sql: format!("ALTER TABLE {} ADD COLUMN {}", tident, def),
                         table: table.name.clone(),
                         kind: SyncKind::AddColumn,
                         destructive: false,
@@ -624,7 +719,129 @@ fn alter_table(
             DiffStatus::Same => {}
         }
     }
+    generated_expression_warnings(driver, table, warnings);
     false
+}
+
+/// 列の差分に現れない生成式の違い (式だけが違う、既存列が生成列になる / でなくなる) を警告する
+/// (#1837)。生成式は ALTER で安全に差し替えられない (PostgreSQL は版による、MySQL は列の
+/// 再定義が要る) ので自動同期の対象外にし、差があること自体は隠さない。
+fn generated_expression_warnings(
+    driver: DriverKind,
+    table: &TableDiff,
+    warnings: &mut Vec<String>,
+) {
+    if driver == DriverKind::Sqlite {
+        return;
+    }
+    for g in &table.generated_changes {
+        let covered = table
+            .columns
+            .iter()
+            .any(|c| c.name == g.column && c.status != DiffStatus::Same);
+        if covered {
+            continue;
+        }
+        let expr = |x: &Option<GeneratedColumnInfo>| {
+            x.as_ref()
+                .map(|x| x.expression.clone())
+                .unwrap_or_else(|| "(なし)".to_string())
+        };
+        warnings.push(format!(
+            "{}.{}: 生成式が違います (source: {} / target: {})。生成式は自動同期の対象外です。必要に応じて手動で変更してください。",
+            table.name,
+            g.column,
+            expr(&g.source),
+            expr(&g.target)
+        ));
+    }
+}
+
+/// 既存テーブルの CHECK 制約の差分を `ALTER TABLE` にする (#1837)。SQLite は ALTER で制約を
+/// 変えられない: テーブル再作成 (`rebuilt`) が引き受けるか、無ければ警告に落とす。
+fn check_statements(
+    driver: DriverKind,
+    table: &TableDiff,
+    rebuilt: bool,
+    allow_destructive: bool,
+    statements: &mut Vec<SyncStatement>,
+    warnings: &mut Vec<String>,
+) {
+    // SourceOnly テーブルの CHECK は CREATE TABLE に含めるのでここでは扱わない。
+    if table.status != DiffStatus::Different || table.check_changes.is_empty() || rebuilt {
+        return;
+    }
+    if driver == DriverKind::Sqlite {
+        // 再作成コンテキストがある表は `alter_table` が (再作成 SQL か、非破壊のときの警告で)
+        // 扱うので、ここで重ねて警告しない。
+        if table.target_snapshot.is_some() {
+            return;
+        }
+        warnings.push(format!(
+            "{}: SQLite は CHECK 制約の追加・削除・変更を ALTER で行えません。テーブルの再作成が必要です (CHECK の差分: {} 件)。",
+            table.name,
+            table.check_changes.len()
+        ));
+        return;
+    }
+    let tident = quote_ident(driver, &table.name);
+    let drop = |c: &CheckConstraintInfo,
+                statements: &mut Vec<SyncStatement>,
+                warnings: &mut Vec<String>| {
+        if c.name.is_empty() {
+            warnings.push(format!(
+                "{}: CHECK 制約 ({}) は制約名を取得できず DROP できません。手動で削除してください。",
+                table.name, c.definition
+            ));
+            return false;
+        }
+        let name = quote_ident(driver, &c.name);
+        let sql = match driver {
+            DriverKind::Mysql => format!("ALTER TABLE {tident} DROP CHECK {name}"),
+            _ => format!("ALTER TABLE {tident} DROP CONSTRAINT {name}"),
+        };
+        statements.push(SyncStatement {
+            sql,
+            table: table.name.clone(),
+            kind: SyncKind::DropCheck,
+            destructive: true,
+        });
+        true
+    };
+    let add = |c: &CheckConstraintInfo, statements: &mut Vec<SyncStatement>| {
+        statements.push(SyncStatement {
+            sql: format!(
+                "ALTER TABLE {tident} ADD {}",
+                render_check(driver, &c.name, &c.definition)
+            ),
+            table: table.name.clone(),
+            kind: SyncKind::AddCheck,
+            destructive: false,
+        });
+    };
+    for ch in &table.check_changes {
+        match (ch.status, &ch.source, &ch.target) {
+            (DiffStatus::SourceOnly, Some(s), _) => add(s, statements),
+            (DiffStatus::TargetOnly, _, Some(t)) => {
+                if allow_destructive {
+                    drop(t, statements, warnings);
+                }
+            }
+            (DiffStatus::Different, Some(s), Some(t)) => {
+                if allow_destructive {
+                    if drop(t, statements, warnings) {
+                        add(s, statements);
+                    }
+                } else {
+                    warnings.push(format!(
+                        "{}: CHECK 制約 {} の式が違います。DROP → ADD が必要なため、破壊的な操作を許可すると出力します。",
+                        table.name, ch.name
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Emits the statement(s) that align an existing column with its source-side
@@ -760,12 +977,54 @@ pub(crate) const SQLITE_FK_ON: &str = "PRAGMA foreign_keys=ON";
 
 /// SQLite で列の変更 (型・NOT NULL・DEFAULT など) か外部キーの変更があり、テーブルの
 /// 再作成が要る表か。生成列は対象外 (SQLite 宛ては生成列を外さないので該当しない)。
+/// SQLite の再作成後に持たせる CHECK 制約と生成列。target の定義へ `check_changes` /
+/// `generated_changes` (source への揃え) を反映する。target を取得できていない
+/// (`extras_known` が false) ときは何も足さない (元の定義は警告で知らせる)。
+fn rebuilt_extras(
+    table: &TableDiff,
+    snap: &super::diff::TargetTableSnapshot,
+) -> (Vec<CheckConstraintInfo>, Vec<GeneratedColumnInfo>) {
+    if !snap.extras_known {
+        return (Vec::new(), Vec::new());
+    }
+    let mut checks = snap.checks.clone();
+    for ch in &table.check_changes {
+        let same = |c: &CheckConstraintInfo, o: &CheckConstraintInfo| {
+            normalize_check(&c.definition) == normalize_check(&o.definition)
+        };
+        match (ch.status, &ch.source, &ch.target) {
+            (DiffStatus::TargetOnly, _, Some(t)) => checks.retain(|c| !same(c, t)),
+            (DiffStatus::Different, Some(s), Some(t)) => {
+                checks.retain(|c| !same(c, t));
+                checks.push(s.clone());
+            }
+            (DiffStatus::SourceOnly, Some(s), _) => checks.push(s.clone()),
+            _ => {}
+        }
+    }
+    let mut generated = snap.generated.clone();
+    for ch in &table.generated_changes {
+        match (ch.status, &ch.source) {
+            (DiffStatus::TargetOnly, _) => generated.retain(|g| g.column != ch.column),
+            (DiffStatus::Different, Some(s)) => {
+                generated.retain(|g| g.column != ch.column);
+                generated.push(s.clone());
+            }
+            (DiffStatus::SourceOnly, Some(s)) => generated.push(s.clone()),
+            _ => {}
+        }
+    }
+    (checks, generated)
+}
+
 fn sqlite_needs_rebuild(table: &TableDiff) -> bool {
     table
         .columns
         .iter()
         .any(|c| c.status == DiffStatus::Different)
         || !table.fk_changes.is_empty()
+        || !table.check_changes.is_empty()
+        || !table.generated_changes.is_empty()
 }
 
 /// SQLite の「12 ステップ」のテーブル再作成 SQL を 1 つの文字列 (複数文) にして返す。
@@ -826,7 +1085,7 @@ fn sqlite_rebuild_sql(
         && pk
             .first()
             .is_some_and(|c| c.data_type.eq_ignore_ascii_case("INTEGER"));
-    let mut lines: Vec<String> = finals
+    let lines: Vec<String> = finals
         .iter()
         .map(|c| {
             if autoincrement && c.key.eq_ignore_ascii_case("PRI") {
@@ -839,6 +1098,10 @@ fn sqlite_rebuild_sql(
             }
         })
         .collect();
+    // 生成列 (#1837): 列定義は表制約 (PRIMARY KEY など) より前に並べる必要がある。
+    let (checks, generated) = rebuilt_extras(table, snap);
+    let hidden: Vec<&GeneratedColumnInfo> = generated.iter().collect();
+    let mut lines = interleave_hidden_generated(driver, lines, &hidden);
     if !autoincrement && !pk.is_empty() {
         let cols: Vec<String> = pk.iter().map(|c| quote_ident(driver, &c.name)).collect();
         lines.push(format!("PRIMARY KEY ({})", cols.join(", ")));
@@ -898,6 +1161,25 @@ fn sqlite_rebuild_sql(
             continue;
         }
         lines.push(render_foreign_key(driver, &fk_group(fk)));
+    }
+
+    // CHECK 制約 (#1837): target の定義に差分 (source への揃え) を反映する。
+    for c in &checks {
+        // 削除する列を参照する CHECK は作り直しに失敗するので外して警告する。
+        let haystack = mask_string_literals(&c.definition);
+        if let Some(col) = snap
+            .columns
+            .iter()
+            .filter(|tc| !names.contains(tc.name.as_str()))
+            .find(|tc| references_identifier(&haystack, &tc.name))
+        {
+            warnings.push(format!(
+                "{}: CHECK 制約 {} は削除する列 {} を参照するため、再作成後の表には含めません。",
+                table.name, c.definition, col.name
+            ));
+            continue;
+        }
+        lines.push(render_check(driver, &c.name, &c.definition));
     }
 
     let tmp = format!("__noobdb_rebuild_{}", table.name);
@@ -982,6 +1264,10 @@ fn sqlite_rebuild_sql(
         ("STRICT", "STRICT"),
         ("ON CONFLICT", "ON CONFLICT 句"),
     ] {
+        // CHECK 制約・生成列は取得できていれば再作成 SQL に含める (#1837)。
+        if snap.extras_known && matches!(kw, "CHECK" | "GENERATED") {
+            continue;
+        }
         if original_upper.contains(kw) {
             lost.push(label);
         }
@@ -3017,5 +3303,337 @@ mod tests {
             .warnings
             .iter()
             .any(|w| w.contains("u_tag") && w.contains("一意制約")));
+    }
+
+    fn ck(name: &str, def: &str) -> CheckConstraintInfo {
+        CheckConstraintInfo {
+            name: name.to_string(),
+            definition: def.to_string(),
+        }
+    }
+
+    fn gen(column: &str, expr: &str, is_virtual: bool) -> GeneratedColumnInfo {
+        GeneratedColumnInfo::new(column, expr, is_virtual)
+    }
+
+    fn check_diff(
+        status: DiffStatus,
+        source: Option<CheckConstraintInfo>,
+        target: Option<CheckConstraintInfo>,
+    ) -> crate::db::diff::CheckDiff {
+        crate::db::diff::CheckDiff {
+            name: source
+                .as_ref()
+                .or(target.as_ref())
+                .map(|c| c.name.clone())
+                .unwrap_or_default(),
+            status,
+            source,
+            target,
+        }
+    }
+
+    fn check_table(changes: Vec<crate::db::diff::CheckDiff>) -> TableDiff {
+        TableDiff {
+            name: "t".to_string(),
+            status: DiffStatus::Different,
+            check_changes: changes,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn mysql_and_postgres_add_check_with_alter_table() {
+        let changes = vec![check_diff(
+            DiffStatus::SourceOnly,
+            Some(ck("a_pos", "CHECK (a > 0)")),
+            None,
+        )];
+        for (driver, expect) in [
+            (
+                DriverKind::Mysql,
+                "ALTER TABLE `t` ADD CONSTRAINT `a_pos` CHECK (a > 0)",
+            ),
+            (
+                DriverKind::Postgres,
+                "ALTER TABLE \"t\" ADD CONSTRAINT \"a_pos\" CHECK (a > 0)",
+            ),
+        ] {
+            let plan = generate_sync_sql(&diff(driver, vec![check_table(changes.clone())]), false);
+            assert_eq!(plan.statements.len(), 1, "{plan:?}");
+            assert_eq!(plan.statements[0].sql, expect);
+            assert_eq!(plan.statements[0].kind, SyncKind::AddCheck);
+            assert!(!plan.statements[0].destructive);
+        }
+    }
+
+    #[test]
+    fn drop_and_change_check_are_destructive_and_use_driver_syntax() {
+        let drop_change = vec![check_diff(
+            DiffStatus::TargetOnly,
+            None,
+            Some(ck("a_pos", "CHECK (a > 0)")),
+        )];
+        let alter = vec![check_diff(
+            DiffStatus::Different,
+            Some(ck("a_pos", "CHECK (a > 1)")),
+            Some(ck("a_pos", "CHECK (a > 0)")),
+        )];
+        let no = generate_sync_sql(
+            &diff(DriverKind::Mysql, vec![check_table(drop_change.clone())]),
+            false,
+        );
+        assert!(no.statements.is_empty());
+        let my = generate_sync_sql(
+            &diff(DriverKind::Mysql, vec![check_table(drop_change.clone())]),
+            true,
+        );
+        assert_eq!(my.statements[0].sql, "ALTER TABLE `t` DROP CHECK `a_pos`");
+        assert!(my.statements[0].destructive);
+        let pg = generate_sync_sql(
+            &diff(DriverKind::Postgres, vec![check_table(drop_change)]),
+            true,
+        );
+        assert_eq!(
+            pg.statements[0].sql,
+            "ALTER TABLE \"t\" DROP CONSTRAINT \"a_pos\""
+        );
+        // 式の変更は DROP → ADD。DROP が先に並ぶ。
+        let both = generate_sync_sql(
+            &diff(DriverKind::Mysql, vec![check_table(alter.clone())]),
+            true,
+        );
+        assert_eq!(both.statements.len(), 2);
+        assert_eq!(both.statements[0].kind, SyncKind::DropCheck);
+        assert_eq!(both.statements[1].kind, SyncKind::AddCheck);
+        let warn = generate_sync_sql(&diff(DriverKind::Mysql, vec![check_table(alter)]), false);
+        assert!(warn.statements.is_empty());
+        assert!(
+            warn.warnings.iter().any(|w| w.contains("a_pos")),
+            "{warn:?}"
+        );
+    }
+
+    #[test]
+    fn sqlite_check_change_without_rebuild_context_warns() {
+        let changes = vec![check_diff(
+            DiffStatus::SourceOnly,
+            Some(ck("", "CHECK (a > 0)")),
+            None,
+        )];
+        let plan = generate_sync_sql(&diff(DriverKind::Sqlite, vec![check_table(changes)]), true);
+        assert!(plan.statements.is_empty(), "{plan:?}");
+        assert!(
+            plan.warnings.iter().any(|w| w.contains("CHECK")),
+            "{plan:?}"
+        );
+    }
+
+    #[test]
+    fn create_table_includes_checks_and_known_generated_columns() {
+        let mut a = col("a", "int");
+        a.nullable = false;
+        let mut g = col("g", "int");
+        g.extra = "VIRTUAL GENERATED".to_string();
+        let table = TableDiff {
+            name: "t".to_string(),
+            status: DiffStatus::SourceOnly,
+            columns: vec![
+                cdiff("a", DiffStatus::SourceOnly, Some(a), &[]),
+                cdiff("g", DiffStatus::SourceOnly, Some(g), &[]),
+            ],
+            check_changes: vec![check_diff(
+                DiffStatus::SourceOnly,
+                Some(ck("a_pos", "CHECK (`a` > 0)")),
+                None,
+            )],
+            generated_changes: vec![crate::db::diff::GeneratedDiff {
+                column: "g".to_string(),
+                status: DiffStatus::SourceOnly,
+                source: Some(gen("g", "`a` + 1", true)),
+                target: None,
+                changed_fields: vec![],
+            }],
+            ..Default::default()
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), false);
+        let sql = &plan.statements[0].sql;
+        assert!(
+            sql.contains("`g` int GENERATED ALWAYS AS (`a` + 1) VIRTUAL"),
+            "{sql}"
+        );
+        assert!(sql.contains("CONSTRAINT `a_pos` CHECK (`a` > 0)"), "{sql}");
+        // 式が取れているので「生成列は自動同期の対象外」の警告は出ない。
+        assert!(
+            plan.warnings
+                .iter()
+                .all(|w| !w.contains("生成列は自動同期")),
+            "{plan:?}"
+        );
+    }
+
+    #[test]
+    fn sqlite_create_table_adds_hidden_generated_columns_from_expressions() {
+        let table = TableDiff {
+            name: "t".to_string(),
+            status: DiffStatus::SourceOnly,
+            columns: vec![cdiff(
+                "a",
+                DiffStatus::SourceOnly,
+                Some(col("a", "INT")),
+                &[],
+            )],
+            check_changes: vec![check_diff(
+                DiffStatus::SourceOnly,
+                Some(ck("", "CHECK (a > 0)")),
+                None,
+            )],
+            generated_changes: vec![crate::db::diff::GeneratedDiff {
+                column: "g".to_string(),
+                status: DiffStatus::SourceOnly,
+                source: Some(gen("g", "a * 2", false)),
+                target: None,
+                changed_fields: vec![],
+            }],
+            ..Default::default()
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Sqlite, vec![table]), false);
+        let sql = &plan.statements[0].sql;
+        assert!(
+            sql.contains("\"g\" GENERATED ALWAYS AS (a * 2) STORED"),
+            "{sql}"
+        );
+        assert!(sql.contains("\n  CHECK (a > 0)"), "{sql}");
+    }
+
+    #[test]
+    fn mysql_add_generated_column_uses_expression_and_expression_only_change_warns() {
+        let mut g = col("g", "int");
+        g.extra = "STORED GENERATED".to_string();
+        let add = TableDiff {
+            name: "t".to_string(),
+            status: DiffStatus::Different,
+            columns: vec![cdiff("g", DiffStatus::SourceOnly, Some(g), &[])],
+            generated_changes: vec![crate::db::diff::GeneratedDiff {
+                column: "g".to_string(),
+                status: DiffStatus::SourceOnly,
+                source: Some(gen("g", "`a` + 1", false)),
+                target: None,
+                changed_fields: vec![],
+            }],
+            ..Default::default()
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![add]), false);
+        assert_eq!(
+            plan.statements[0].sql,
+            "ALTER TABLE `t` ADD COLUMN `g` int GENERATED ALWAYS AS (`a` + 1) STORED"
+        );
+        let only_expr = TableDiff {
+            name: "t".to_string(),
+            status: DiffStatus::Different,
+            generated_changes: vec![crate::db::diff::GeneratedDiff {
+                column: "g".to_string(),
+                status: DiffStatus::Different,
+                source: Some(gen("g", "a + 1", false)),
+                target: Some(gen("g", "a + 2", false)),
+                changed_fields: vec!["expression".to_string()],
+            }],
+            ..Default::default()
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![only_expr]), false);
+        assert!(plan.statements.is_empty());
+        assert!(
+            plan.warnings
+                .iter()
+                .any(|w| w.contains("a + 1") && w.contains("a + 2")),
+            "{plan:?}"
+        );
+    }
+
+    #[test]
+    fn sqlite_rebuild_carries_checks_and_generated_with_changes_applied() {
+        use crate::db::diff::TargetTableSnapshot;
+        let mut a = col("a", "INTEGER");
+        a.key = "PRI".to_string();
+        let table = TableDiff {
+            name: "t".to_string(),
+            status: DiffStatus::Different,
+            check_changes: vec![
+                check_diff(DiffStatus::TargetOnly, None, Some(ck("", "CHECK (a < 0)"))),
+                check_diff(
+                    DiffStatus::SourceOnly,
+                    Some(ck("a_pos", "CHECK (a > 0)")),
+                    None,
+                ),
+            ],
+            generated_changes: vec![crate::db::diff::GeneratedDiff {
+                column: "g".to_string(),
+                status: DiffStatus::Different,
+                source: Some(gen("g", "a * 3", false)),
+                target: Some(gen("g", "a * 2", false)),
+                changed_fields: vec!["expression".to_string()],
+            }],
+            target_snapshot: Some(TargetTableSnapshot {
+                columns: vec![a],
+                original_sql: Some(
+                    "CREATE TABLE t (a INTEGER PRIMARY KEY CHECK (a < 0), g AS (a * 2) STORED)"
+                        .into(),
+                ),
+                checks: vec![ck("", "CHECK (a < 0)"), ck("keep", "CHECK (a <> 5)")],
+                generated: vec![gen("g", "a * 2", false)],
+                extras_known: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Sqlite, vec![table]), true);
+        let sql = &plan.statements[0].sql;
+        assert_eq!(plan.statements[0].kind, SyncKind::RebuildTable);
+        assert!(sql.contains("CONSTRAINT \"a_pos\" CHECK (a > 0)"), "{sql}");
+        assert!(sql.contains("CONSTRAINT \"keep\" CHECK (a <> 5)"), "{sql}");
+        assert!(!sql.contains("CHECK (a < 0)"), "{sql}");
+        assert!(
+            sql.contains("\"g\" GENERATED ALWAYS AS (a * 3) STORED"),
+            "{sql}"
+        );
+        assert!(!sql.contains("a * 2"), "{sql}");
+        // 列定義は表制約 (PRIMARY KEY / CHECK) より前。
+        let gpos = sql.find("GENERATED ALWAYS").expect("generated");
+        assert!(gpos < sql.find("PRIMARY KEY (").expect("pk"), "{sql}");
+        assert!(gpos < sql.find("CHECK (a > 0)").expect("check"), "{sql}");
+        // 再現できたので「CHECK / 生成列が含まれない」警告は出ない。
+        assert!(
+            plan.warnings
+                .iter()
+                .all(|w| !w.contains("CHECK 制約 /") && !w.contains("生成列 /")),
+            "{plan:?}"
+        );
+    }
+
+    #[test]
+    fn hidden_generated_columns_keep_type_not_null_and_position() {
+        let mut g = gen("total", "price * qty", false);
+        g.data_type = Some("REAL".to_string());
+        g.not_null = true;
+        g.position = Some(1);
+        let lines = interleave_hidden_generated(
+            DriverKind::Sqlite,
+            vec!["\"id\" INTEGER".to_string(), "\"note\" TEXT".to_string()],
+            &[&g],
+        );
+        assert_eq!(
+            lines,
+            vec![
+                "\"id\" INTEGER",
+                "\"total\" REAL GENERATED ALWAYS AS (price * qty) STORED NOT NULL",
+                "\"note\" TEXT",
+            ]
+        );
+        // 位置が無ければ末尾。
+        g.position = None;
+        let lines =
+            interleave_hidden_generated(DriverKind::Sqlite, vec!["\"id\" INTEGER".into()], &[&g]);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[1].starts_with("\"total\" REAL"));
     }
 }

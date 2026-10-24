@@ -9,8 +9,9 @@
 //! **同じ列定義レンダラ** (`column_def` / `quote_ident` / `render_create_table`)
 //! で接続自身の方言の DDL にする。純関数なので DB 無しでテストできる。
 //!
-//! CHECK 制約と生成列の式は PostgreSQL の `pg_get_constraintdef` / `pg_get_expr` で取れるので
-//! [`TableDdlExtras`] として受け取って含める (#1625)。
+//! CHECK 制約と生成列の式は [`TableDdlExtras`] として受け取って含める (#1625 / #1837)。
+//! 取得は PostgreSQL が `pg_get_constraintdef` / `pg_get_expr`、MySQL が
+//! `information_schema`、SQLite が `sqlite_master.sql` のパース (`db::ddl_extras`)。
 //!
 //! あくまでベストエフォート: パーティション・
 //! ストレージオプション・式インデックスは introspection が持たないため出力されない (式インデックスは誤った形で出さず、
@@ -29,20 +30,10 @@ pub const SYNTHESIZED_DDL_HEADER: &str = "\
 -- Review before running.
 ";
 
-/// MySQL / SQLite は CHECK 制約・生成列の式を introspection で取っていない (PostgreSQL だけ
-/// [`TableDdlExtras`] で含める, #1625) ので、その旨を足した注意書き。
-pub const SYNTHESIZED_DDL_HEADER_NO_EXTRAS: &str = "\
--- Reconstructed by noobDB from catalog metadata (best-effort).
--- Partitioning, storage options, expression indexes, generated-column expressions, and CHECK constraints are not included.
--- Review before running.
-";
-
-/// ドライバ別の注意書き。
-pub fn synthesized_ddl_header(driver: DriverKind) -> &'static str {
-    match driver {
-        DriverKind::Postgres => SYNTHESIZED_DDL_HEADER,
-        _ => SYNTHESIZED_DDL_HEADER_NO_EXTRAS,
-    }
+/// ドライバ別の注意書き。CHECK 制約と生成列の式は 3 ドライバとも [`TableDdlExtras`] で
+/// 含めるので (#1625 / #1837)、注意書きもドライバによらず同じ。
+pub fn synthesized_ddl_header(_driver: DriverKind) -> &'static str {
+    SYNTHESIZED_DDL_HEADER
 }
 
 /// `schema` (PostgreSQL のスキーマ) で修飾したテーブル名。
@@ -59,20 +50,39 @@ fn qualified_name(driver: DriverKind, schema: Option<&str>, table: &str) -> Stri
 /// `GENERATED ALWAYS AS (式) STORED|VIRTUAL` で出す (`column_default` は生成式なので
 /// `DEFAULT` として出すと別物になる)。
 fn render_column(driver: DriverKind, col: &TableColumnInfo, extras: &TableDdlExtras) -> String {
-    if let Some((_, expr, virtual_col)) = extras.generated.iter().find(|(n, _, _)| n == &col.name) {
-        let mut def = format!(
-            "{} {} GENERATED ALWAYS AS ({}) {}",
-            quote_ident(driver, &col.name),
-            col.data_type,
-            expr,
-            if *virtual_col { "VIRTUAL" } else { "STORED" }
-        );
-        if !col.nullable {
-            def.push_str(" NOT NULL");
-        }
-        return def;
+    if let Some(g) = extras.generated.iter().find(|g| g.column == col.name) {
+        return render_generated_column(driver, col, &g.expression, g.is_virtual);
     }
     column_def(driver, col)
+}
+
+/// CHECK 制約 1 本を `CONSTRAINT 名 CHECK (...)` にする。名前が空なら句だけ。
+pub(crate) fn render_check(driver: DriverKind, name: &str, definition: &str) -> String {
+    if name.is_empty() {
+        definition.to_string()
+    } else {
+        format!("CONSTRAINT {} {}", quote_ident(driver, name), definition)
+    }
+}
+
+/// 生成列 1 本を `列 型 GENERATED ALWAYS AS (式) STORED|VIRTUAL [NOT NULL]` にする。
+pub(crate) fn render_generated_column(
+    driver: DriverKind,
+    col: &TableColumnInfo,
+    expr: &str,
+    is_virtual: bool,
+) -> String {
+    let mut def = format!(
+        "{} {} GENERATED ALWAYS AS ({}) {}",
+        quote_ident(driver, &col.name),
+        col.data_type,
+        expr,
+        if is_virtual { "VIRTUAL" } else { "STORED" }
+    );
+    if !col.nullable {
+        def.push_str(" NOT NULL");
+    }
+    def
 }
 
 /// 主キー列を宣言順で返す。PK インデックスがあればその列順 (複合 PK の順序を
@@ -260,9 +270,9 @@ pub fn synthesize_create_table(
     for g in group_foreign_keys(table, foreign_keys) {
         lines.push(render_foreign_key(driver, &g));
     }
-    // CHECK 制約 (`pg_get_constraintdef` が `CHECK (...)` 句ごと返す)。
+    // CHECK 制約 (`CHECK (...)` 句ごと持つ)。無名 (SQLite) は `CONSTRAINT` を付けない。
     for (name, def) in &extras.checks {
-        lines.push(format!("CONSTRAINT {} {}", quote_ident(driver, name), def));
+        lines.push(render_check(driver, name, def));
     }
 
     let mut statements = vec![render_create_table(&qualified, &lines)];
@@ -564,7 +574,11 @@ mod tests {
         let cols = vec![col("price", "integer", false, ""), total];
         let extras = TableDdlExtras {
             checks: vec![("price_pos".into(), "CHECK (price > 0)".into())],
-            generated: vec![("total".into(), "price * qty".into(), false)],
+            generated: vec![super::super::types::GeneratedColumnInfo::new(
+                "total",
+                "price * qty",
+                false,
+            )],
         };
         let ddl =
             synthesize_create_table(DriverKind::Postgres, None, "t", &cols, &[], &[], &extras);
@@ -581,11 +595,48 @@ mod tests {
     }
 
     #[test]
-    fn header_mentions_missing_check_and_generated_expressions_except_on_postgres() {
-        assert!(!synthesized_ddl_header(DriverKind::Postgres).contains("CHECK"));
-        for d in [DriverKind::Mysql, DriverKind::Sqlite] {
+    fn header_is_the_same_for_every_driver_because_extras_are_included() {
+        for d in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
             let h = synthesized_ddl_header(d);
-            assert!(h.contains("CHECK") && h.contains("generated-column"), "{h}");
+            assert!(
+                !h.contains("CHECK") && !h.contains("generated-column"),
+                "{h}"
+            );
+        }
+    }
+
+    #[test]
+    fn checks_and_generated_columns_render_on_every_driver() {
+        let cols = vec![
+            col("a", "int", false, "PRI"),
+            col("b", "int", true, ""),
+            col("c", "int", true, ""),
+        ];
+        let extras = TableDdlExtras {
+            checks: vec![
+                ("b_pos".to_string(), "CHECK (`b` > 0)".to_string()),
+                (String::new(), "CHECK (c < 10)".to_string()),
+            ],
+            generated: vec![super::super::types::GeneratedColumnInfo::new(
+                "c", "a + b", true,
+            )],
+        };
+        for d in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
+            let ddl = synthesize_create_table(d, None, "t", &cols, &[], &[], &extras);
+            let q = |n: &str| quote_ident(d, n);
+            assert!(
+                ddl.contains(&format!("CONSTRAINT {} CHECK (`b` > 0)", q("b_pos"))),
+                "{ddl}"
+            );
+            // 無名の CHECK は CONSTRAINT 句を付けない。
+            assert!(ddl.contains("\n  CHECK (c < 10)"), "{ddl}");
+            assert!(
+                ddl.contains(&format!(
+                    "{} int GENERATED ALWAYS AS (a + b) VIRTUAL",
+                    q("c")
+                )),
+                "{ddl}"
+            );
         }
     }
 }
