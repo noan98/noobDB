@@ -755,6 +755,7 @@ fn build_fixtures() -> serde_json::Value {
         key_unreliable: false,
     };
     let data_diff = DataDiff {
+        key_kind: Default::default(),
         target_driver: DriverKind::Postgres,
         table: "users".into(),
         columns: vec!["id".into(), "name".into()],
@@ -1527,6 +1528,7 @@ fn build_fixtures() -> serde_json::Value {
     let data_diff_variants: Vec<DataDiff> = all_drivers
         .iter()
         .map(|driver| DataDiff {
+            key_kind: Default::default(),
             target_driver: *driver,
             table: "users".into(),
             columns: vec!["id".into()],
@@ -2197,6 +2199,7 @@ fn build_fixtures() -> serde_json::Value {
         preamble: Some("USE `appdb`".into()),
     };
     let timelapse_row_history = t::RowHistory {
+        key_kind: Default::default(),
         columns: vec!["id".into(), "price".into()],
         primary_key: vec!["id".into()],
         entries: vec![

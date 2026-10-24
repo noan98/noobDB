@@ -355,6 +355,7 @@ async fn data_sync_apply(allow_delete: bool) -> (bool, std::path::PathBuf) {
     ];
     let rows = t::compute_data_diff(&columns, &pk_idx, &source, &target);
     let diff = DataDiff {
+        key_kind: Default::default(),
         target_driver: DriverKind::Sqlite,
         table: "t".to_string(),
         column_types: vec!["TEXT".to_string(); columns.len()],

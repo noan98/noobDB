@@ -60,7 +60,11 @@ pub struct Snapshot {
     /// `columns` と同じ並びの型名。
     pub column_types: Vec<String>,
     pub primary_key: Vec<String>,
-    /// PK 順の行 (各行は `columns` の並び)。
+    /// `primary_key` の種類 (#1838)。PK が無い表は UNIQUE NOT NULL キー、SQLite なら rowid
+    /// (隠し列として `columns` の先頭に足す)。旧世代 (未保存) は PK 扱い。
+    #[serde(default)]
+    pub key_kind: crate::db::RowKeyKind,
+    /// 識別子順の行 (各行は `columns` の並び)。
     pub rows: Vec<Vec<Value>>,
     /// 行数上限に達し、先頭 N 行だけを取得したとき true。
     pub truncated: bool,
@@ -198,6 +202,7 @@ pub fn diff_snapshots(
         columns,
         column_types: newer.column_types.clone(),
         primary_key: newer.primary_key.clone(),
+        key_kind: newer.key_kind,
         rows,
         truncated: older.truncated || newer.truncated,
         source_count: newer.rows.len(),
@@ -238,6 +243,8 @@ pub struct RowHistory {
     /// 全世代の列の和 (最新世代の並びを先頭に、既に消えた列を後ろへ)。
     pub columns: Vec<String>,
     pub primary_key: Vec<String>,
+    #[serde(default)]
+    pub key_kind: crate::db::RowKeyKind,
     pub entries: Vec<RowHistoryEntry>,
     /// 走査した世代数。
     pub generations_scanned: usize,
@@ -250,6 +257,7 @@ pub struct RowHistory {
 pub struct RowHistoryBuilder {
     key: Vec<String>,
     primary_key: Vec<String>,
+    key_kind: crate::db::RowKeyKind,
     columns: Vec<String>,
     prev: Option<(Vec<String>, Vec<Value>)>,
     entries: Vec<(RowHistoryEntry, Vec<String>)>,
@@ -262,6 +270,7 @@ impl RowHistoryBuilder {
         Self {
             key: key.iter().map(key_text).collect(),
             primary_key: Vec::new(),
+            key_kind: crate::db::RowKeyKind::default(),
             columns: Vec::new(),
             prev: None,
             entries: Vec::new(),
@@ -274,6 +283,7 @@ impl RowHistoryBuilder {
         self.scanned += 1;
         self.partial |= snap.truncated;
         self.primary_key = snap.primary_key.clone();
+        self.key_kind = snap.key_kind;
         // 最新世代の並びを先頭に、過去にだけある列を後ろへ足していく。
         let mut union = snap.columns.clone();
         for c in &self.columns {
@@ -364,6 +374,7 @@ impl RowHistoryBuilder {
         RowHistory {
             columns,
             primary_key: self.primary_key,
+            key_kind: self.key_kind,
             entries,
             generations_scanned: self.scanned,
             partial: self.partial,
@@ -385,6 +396,7 @@ mod tests {
             columns: columns.iter().map(|c| s(c)).collect(),
             column_types: columns.iter().map(|_| s("TEXT")).collect(),
             primary_key: vec![s("id")],
+            key_kind: Default::default(),
             rows,
             truncated: false,
         }

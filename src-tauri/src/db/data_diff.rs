@@ -71,6 +71,10 @@ pub struct DataDiff {
     pub columns: Vec<String>,
     /// Primary-key column names (a subset of `columns`).
     pub primary_key: Vec<String>,
+    /// `primary_key` に使った行識別子の種類 (#1838)。PK が無い表では UNIQUE NOT NULL キー
+    /// (タイムラプスでは SQLite の rowid) で行を対応付ける。
+    #[serde(default)]
+    pub key_kind: crate::db::RowKeyKind,
     /// Column type names, in the same order as `columns` (same length). Used
     /// to restore `Value::Bytes` for BLOB columns after an IPC round trip
     /// re-serializes them as `Value::String` (see [`is_binary_type`]).
@@ -822,6 +826,7 @@ mod tests {
         );
         // 生成される UPDATE の SET 句にも無視列は出ない。
         let diff = DataDiff {
+            key_kind: Default::default(),
             target_driver: DriverKind::Mysql,
             table: "t".into(),
             columns: columns.clone(),
@@ -872,6 +877,7 @@ mod tests {
         let target = vec![row(1, "a", 99), row(4, "d", 40)];
         let diffs = compute_data_diff(&columns, &pk, &source, &target);
         let diff = DataDiff {
+            key_kind: Default::default(),
             target_driver: DriverKind::Mysql,
             table: "scores".to_string(),
             column_types: vec!["BIGINT".to_string(); columns.len()],
@@ -926,6 +932,7 @@ mod tests {
         assert_eq!(changed.changed_columns, vec!["name", "score"]);
         for driver in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
             let diff = DataDiff {
+                key_kind: Default::default(),
                 target_driver: driver,
                 table: "scores".to_string(),
                 column_types: vec!["BIGINT".to_string(); columns.len()],
@@ -963,6 +970,7 @@ mod tests {
         let columns = cols();
         let diffs = compute_data_diff(&columns, &[0], &[row(1, "a", 10)], &[row(1, "a", 99)]);
         let diff = DataDiff {
+            key_kind: Default::default(),
             target_driver: DriverKind::Mysql,
             table: "scores".to_string(),
             column_types: vec!["BIGINT".to_string(); columns.len()],
@@ -1098,6 +1106,7 @@ mod tests {
         let target = vec![row(1, "a", 10), row(4, "d", 40)];
         let diffs = compute_data_diff(&columns, &pk, &source, &target);
         let diff = DataDiff {
+            key_kind: Default::default(),
             target_driver: DriverKind::Mysql,
             table: "scores".to_string(),
             column_types: vec!["BIGINT".to_string(); columns.len()],
@@ -1135,6 +1144,7 @@ mod tests {
         let target = vec![row(1, "a", 10), row(4, "d", 40)];
         let diffs = compute_data_diff(&columns, &pk, &source, &target);
         let diff = DataDiff {
+            key_kind: Default::default(),
             target_driver: DriverKind::Mysql,
             table: "scores".to_string(),
             column_types: vec!["BIGINT".to_string(); columns.len()],
@@ -1193,6 +1203,7 @@ mod tests {
         let column_types = vec!["BIGINT".to_string(), "BLOB".to_string()];
         let source_row = vec![Value::Int(1), Value::String("a1b2".to_string())];
         let diff = DataDiff {
+            key_kind: Default::default(),
             target_driver: DriverKind::Mysql,
             table: "files".to_string(),
             columns: columns.clone(),
@@ -1250,6 +1261,7 @@ mod tests {
         );
 
         let diff = DataDiff {
+            key_kind: Default::default(),
             target_driver: DriverKind::Sqlite,
             table: "t".to_string(),
             column_types: vec!["TEXT".to_string(); columns.len()],
@@ -1298,6 +1310,7 @@ mod tests {
         );
 
         let diff = DataDiff {
+            key_kind: Default::default(),
             target_driver: DriverKind::Postgres,
             table: "t".to_string(),
             column_types: vec!["TEXT".to_string(); columns.len()],
@@ -1395,6 +1408,7 @@ mod tests {
         );
 
         let diff = DataDiff {
+            key_kind: Default::default(),
             target_driver: DriverKind::Sqlite,
             table: "t".to_string(),
             column_types: vec!["INTEGER".to_string(); columns.len()],
@@ -1465,6 +1479,7 @@ mod tests {
         assert_eq!(diffs.len(), 2);
 
         let diff = DataDiff {
+            key_kind: Default::default(),
             target_driver: DriverKind::Mysql,
             table: "t".to_string(),
             column_types: vec!["VARCHAR".to_string(); columns.len()],
@@ -1493,6 +1508,7 @@ mod tests {
         let target = vec![vec![Value::String("abc".to_string()), Value::Int(1)]];
         let diffs = compute_data_diff(&columns, &pk, &source, &target);
         let diff = DataDiff {
+            key_kind: Default::default(),
             target_driver: DriverKind::Mysql,
             table: "t".to_string(),
             column_types: vec!["VARCHAR".to_string(); columns.len()],

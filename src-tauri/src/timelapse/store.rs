@@ -95,6 +95,7 @@ async fn init_schema(pool: &SqlitePool) -> Result<()> {
             columns      TEXT NOT NULL,
             column_types TEXT NOT NULL,
             primary_key  TEXT NOT NULL,
+            key_kind     TEXT NOT NULL DEFAULT 'primary_key',
             rows_json    TEXT NOT NULL,
             row_count    INTEGER NOT NULL,
             truncated    INTEGER NOT NULL,
@@ -103,6 +104,19 @@ async fn init_schema(pool: &SqlitePool) -> Result<()> {
     )
     .execute(pool)
     .await?;
+    // #1838: 既存の DB には行識別子の種類の列が無いので足す (既存世代は PK 扱い)。
+    let has_key_kind: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pragma_table_info('generation') WHERE name = 'key_kind')",
+    )
+    .fetch_one(pool)
+    .await?;
+    if !has_key_kind {
+        sqlx::query(
+            "ALTER TABLE generation ADD COLUMN key_kind TEXT NOT NULL DEFAULT 'primary_key'",
+        )
+        .execute(pool)
+        .await?;
+    }
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_generation_watch ON generation(watch_id, id DESC)")
         .execute(pool)
         .await?;
@@ -320,8 +334,8 @@ async fn record_generation_in(
     sqlx::query(
         "INSERT INTO generation
             (watch_id, captured_at, fingerprint, columns, column_types, primary_key,
-             rows_json, row_count, truncated, bytes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             key_kind, rows_json, row_count, truncated, bytes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(watch_id)
     .bind(captured_at)
@@ -329,6 +343,7 @@ async fn record_generation_in(
     .bind(columns)
     .bind(column_types)
     .bind(primary_key)
+    .bind(snapshot.key_kind.as_str())
     .bind(rows_json)
     .bind(snapshot.rows.len() as i64)
     .bind(snapshot.truncated)
@@ -399,7 +414,7 @@ async fn vacuum(pool: &SqlitePool) {
 
 async fn load_generation_in(pool: &SqlitePool, id: i64) -> Result<StoredGeneration> {
     let r = sqlx::query(
-        "SELECT g.watch_id, g.captured_at, g.columns, g.column_types, g.primary_key,
+        "SELECT g.watch_id, g.captured_at, g.columns, g.column_types, g.primary_key, g.key_kind,
                 g.rows_json, g.truncated, w.driver, w.table_name
            FROM generation g JOIN watch w ON w.id = g.watch_id
           WHERE g.id = ?",
@@ -421,6 +436,7 @@ async fn load_generation_in(pool: &SqlitePool, id: i64) -> Result<StoredGenerati
             columns,
             column_types,
             primary_key,
+            key_kind: crate::db::RowKeyKind::from_wire(&r.try_get::<String, _>("key_kind")?),
             rows,
             truncated: r.try_get("truncated")?,
         },
@@ -498,6 +514,7 @@ mod tests {
             columns: vec!["id".into(), "price".into()],
             column_types: vec!["INTEGER".into(), "INTEGER".into()],
             primary_key: vec!["id".into()],
+            key_kind: Default::default(),
             rows: vec![vec![Value::Int(1), Value::Int(price)]],
             truncated: false,
         }

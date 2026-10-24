@@ -53,6 +53,7 @@ function genDiff(): TimelapseGenerationDiff {
       columns: ["id", "price"],
       column_types: ["int", "int"],
       primary_key: ["id"],
+      key_kind: "primary_key",
       rows: [
         { status: "different", key: [1], source: [1, 150], target: [1, 100], changed_columns: ["price"] },
         { status: "source_only", key: [3], source: [3, 300], target: null, changed_columns: [] },
@@ -121,6 +122,7 @@ describe("TableTimelapsePanel (#739)", () => {
     vi.mocked(api.timelapseRowHistory).mockResolvedValue({
       columns: ["id", "price"],
       primary_key: ["id"],
+      key_kind: "primary_key",
       entries: [
         {
           generation_id: 10,

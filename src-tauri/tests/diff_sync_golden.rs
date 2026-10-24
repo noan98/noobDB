@@ -29,6 +29,7 @@ fn data_sync_sqls(
     let columns: Vec<String> = columns.iter().map(|c| c.to_string()).collect();
     let rows = t::compute_data_diff(&columns, pk_idx, source, target);
     let diff = t::DataDiff {
+        key_kind: Default::default(),
         target_driver: DriverKind::Sqlite,
         table: table.to_string(),
         // このゴールデンは非バイナリ列のみを扱うため、型は TEXT 固定で十分
@@ -274,6 +275,7 @@ async fn sqlite_composite_pk_with_nulls_converges_end_to_end() {
     assert_eq!(row_diffs.len(), 3, "got: {row_diffs:?}");
 
     let diff = t::DataDiff {
+        key_kind: Default::default(),
         target_driver: DriverKind::Sqlite,
         table: "catalog".to_string(),
         // 非バイナリ列のみのゴールデン。型は TEXT 固定で十分。

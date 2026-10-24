@@ -956,6 +956,7 @@
       "id",
       "name"
     ],
+    "key_kind": "primary_key",
     "primary_key": [
       "id"
     ],
@@ -995,6 +996,7 @@
         "id",
         "name"
       ],
+      "key_kind": "primary_key",
       "primary_key": [
         "id"
       ],
@@ -1034,6 +1036,7 @@
       "columns": [
         "id"
       ],
+      "key_kind": "primary_key",
       "primary_key": [
         "id"
       ],
@@ -1094,6 +1097,7 @@
       "columns": [
         "id"
       ],
+      "key_kind": "primary_key",
       "primary_key": [
         "id"
       ],
@@ -1154,6 +1158,7 @@
       "columns": [
         "id"
       ],
+      "key_kind": "primary_key",
       "primary_key": [
         "id"
       ],
@@ -2482,6 +2487,7 @@
         "id",
         "name"
       ],
+      "key_kind": "primary_key",
       "primary_key": [
         "id"
       ],
@@ -6054,6 +6060,7 @@
         "id",
         "name"
       ],
+      "key_kind": "primary_key",
       "primary_key": [
         "id"
       ],
@@ -6112,6 +6119,7 @@
       }
     ],
     "generations_scanned": 2,
+    "key_kind": "primary_key",
     "partial": false,
     "primary_key": [
       "id"

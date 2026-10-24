@@ -1547,6 +1547,31 @@ impl Connection {
         }
     }
 
+    /// データ比較・タイムラプスの行識別子を解決する (#1838)。PK → UNIQUE NOT NULL →
+    /// (`allow_rowid` かつ SQLite の rowid 表のとき) rowid。何も取れなければ `None`。
+    /// `cols` は呼び出し側が取得済みの `columns()` の結果。PK があれば索引は引かない。
+    pub(crate) async fn resolve_row_key(
+        &self,
+        db: &str,
+        table: &str,
+        cols: &[TableColumnInfo],
+        allow_rowid: bool,
+    ) -> Result<Option<ResolvedRowKey>> {
+        if cols.iter().any(|c| c.key.eq_ignore_ascii_case("PRI")) {
+            return Ok(resolve_row_key(cols, &[], false));
+        }
+        let indexes = self.list_indexes(db, table).await?;
+        if let Some(found) = resolve_row_key(cols, &indexes, false) {
+            return Ok(Some(found));
+        }
+        // rowid は SQLite の rowid 表 (WITHOUT ROWID・ビュー・仮想表を除く) だけ。
+        // PostgreSQL の ctid は VACUUM や更新で変わるので経時の識別子にならず採らない。
+        let rowid_available = allow_rowid
+            && matches!(self, Connection::Sqlite(_))
+            && self.row_identity(db, table).await?.strategy == "rowid";
+        Ok(resolve_row_key(cols, &indexes, rowid_available))
+    }
+
     /// Approximate row counts for every base table in `db`, read from the
     /// engine's statistics catalogs rather than a `COUNT(*)` scan, so it stays
     /// cheap on large schemas. Values are approximate and may be stale or
@@ -2559,6 +2584,15 @@ pub(crate) fn pick_unique_row_key(
     cols: &[TableColumnInfo],
     indexes: &[IndexInfo],
 ) -> Option<Vec<String>> {
+    usable_unique_keys(cols, indexes)
+        .into_iter()
+        .enumerate()
+        .min_by_key(|(pos, key)| (key.len(), *pos))
+        .map(|(_, key)| key)
+}
+
+/// `pick_unique_row_key` の採用条件を満たす UNIQUE NOT NULL キーをインデックスの並び順で全部返す。
+fn usable_unique_keys(cols: &[TableColumnInfo], indexes: &[IndexInfo]) -> Vec<Vec<String>> {
     indexes
         .iter()
         .filter(|i| {
@@ -2581,9 +2615,100 @@ pub(crate) fn pick_unique_row_key(
                     .all(|name| cols.iter().any(|c| &c.name == name && !c.nullable));
             usable.then(|| key.to_vec())
         })
-        .enumerate()
-        .min_by_key(|(pos, key)| (key.len(), *pos))
-        .map(|(_, key)| key)
+        .collect()
+}
+
+/// 行を 1 件に定める鍵の種類 (#1838)。データ比較・テーブルタイムラプスが、どの識別子で
+/// 行を対応付けたかを UI に伝えるために使う。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RowKeyKind {
+    /// PRIMARY KEY。
+    #[default]
+    PrimaryKey,
+    /// PK が無い表の UNIQUE NOT NULL キー。
+    UniqueKey,
+    /// SQLite の暗黙 `rowid` (タイムラプス専用。同一表の経時比較でしか使わない)。
+    Rowid,
+}
+
+impl RowKeyKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RowKeyKind::PrimaryKey => "primary_key",
+            RowKeyKind::UniqueKey => "unique_key",
+            RowKeyKind::Rowid => "rowid",
+        }
+    }
+
+    pub fn from_wire(s: &str) -> Self {
+        match s {
+            "unique_key" => RowKeyKind::UniqueKey,
+            "rowid" => RowKeyKind::Rowid,
+            _ => RowKeyKind::PrimaryKey,
+        }
+    }
+}
+
+/// 解決した行識別子。`Rowid` のときだけ `columns` は表の実列ではない隠し列 (`rowid`)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResolvedRowKey {
+    pub kind: RowKeyKind,
+    pub columns: Vec<String>,
+}
+
+/// SQLite の暗黙 rowid を指す隠し列名。
+pub(crate) const ROWID_COLUMN: &str = "rowid";
+
+/// 行識別子の解決順 PK → UNIQUE NOT NULL → (許されれば) rowid の純粋部 (#1838)。
+/// `rowid_available` は呼び出し側が「この表に使える rowid がある」と確認済みのときだけ true。
+/// ただし同名の実列があると `rowid` が隠し列を指さなくなるので、その場合は採らない。
+pub(crate) fn resolve_row_key(
+    cols: &[TableColumnInfo],
+    indexes: &[IndexInfo],
+    rowid_available: bool,
+) -> Option<ResolvedRowKey> {
+    let pk: Vec<String> = cols
+        .iter()
+        .filter(|c| c.key.eq_ignore_ascii_case("PRI"))
+        .map(|c| c.name.clone())
+        .collect();
+    if !pk.is_empty() {
+        return Some(ResolvedRowKey {
+            kind: RowKeyKind::PrimaryKey,
+            columns: pk,
+        });
+    }
+    if let Some(key) = pick_unique_row_key(cols, indexes) {
+        return Some(ResolvedRowKey {
+            kind: RowKeyKind::UniqueKey,
+            columns: key,
+        });
+    }
+    let shadowed = cols
+        .iter()
+        .any(|c| c.name.eq_ignore_ascii_case(ROWID_COLUMN));
+    (rowid_available && !shadowed).then(|| ResolvedRowKey {
+        kind: RowKeyKind::Rowid,
+        columns: vec![ROWID_COLUMN.to_string()],
+    })
+}
+
+/// `key` の列で照合したとき、`cols` / `indexes` の表では必ず高々 1 行に当たるか (#1838)。
+/// 比較の相手側表が、ソース側で選んだ UNIQUE キーの一意性を保証するかの確認に使う。
+/// PK か UNIQUE NOT NULL キーの列集合が `key` に含まれていれば一意 (部分集合が一意なら上位集合も一意)。
+pub(crate) fn key_is_unique_in(
+    key: &[String],
+    cols: &[TableColumnInfo],
+    indexes: &[IndexInfo],
+) -> bool {
+    let within = |cand: &[String]| !cand.is_empty() && cand.iter().all(|c| key.contains(c));
+    let pk: Vec<String> = cols
+        .iter()
+        .filter(|c| c.key.eq_ignore_ascii_case("PRI"))
+        .map(|c| c.name.clone())
+        .collect();
+    within(&pk) || usable_unique_keys(cols, indexes).iter().any(|k| within(k))
 }
 
 /// `pick_unique_row_key` で選んだキーから `unique_key` の行識別を作る (#1776)。
@@ -4746,6 +4871,71 @@ mod tests {
             super::pick_unique_row_key(&cols, &[idx]),
             Some(vec!["a".to_string()])
         );
+    }
+
+    fn pri_col(name: &str) -> super::types::TableColumnInfo {
+        let mut c = nn_col(name, false);
+        c.key = "PRI".into();
+        c
+    }
+
+    #[test]
+    fn resolve_row_key_prefers_pk_then_unique_then_rowid() {
+        use super::{resolve_row_key, ResolvedRowKey, RowKeyKind};
+        let key = |kind, cols: &[&str]| {
+            Some(ResolvedRowKey {
+                kind,
+                columns: cols.iter().map(|c| c.to_string()).collect(),
+            })
+        };
+        // PK が最優先 (UNIQUE や rowid があっても)。複合 PK は列順のまま。
+        let cols = [pri_col("a"), pri_col("b"), nn_col("u", false)];
+        assert_eq!(
+            resolve_row_key(&cols, &[uq_index("u", &["u"])], true),
+            key(RowKeyKind::PrimaryKey, &["a", "b"])
+        );
+        // PK 無し: UNIQUE NOT NULL を rowid より先に採る。
+        let cols = [nn_col("a", true), nn_col("u", false), nn_col("v", false)];
+        let idx = [uq_index("uv", &["u", "v"]), uq_index("u", &["u"])];
+        assert_eq!(
+            resolve_row_key(&cols, &idx, true),
+            key(RowKeyKind::UniqueKey, &["u"])
+        );
+        // NULL 可の UNIQUE だけなら UNIQUE は使えず、rowid が使えれば rowid。
+        let idx = [uq_index("a", &["a"])];
+        assert_eq!(
+            resolve_row_key(&cols, &idx, true),
+            key(RowKeyKind::Rowid, &["rowid"])
+        );
+        // rowid が使えない (比較・非 SQLite・WITHOUT ROWID) なら None。
+        assert_eq!(resolve_row_key(&cols, &idx, false), None);
+        // `rowid` という実列があると隠し列を指せないので rowid は採らない。
+        let shadow = [nn_col("RowID", true)];
+        assert_eq!(resolve_row_key(&shadow, &[], true), None);
+    }
+
+    #[test]
+    fn key_is_unique_in_accepts_pk_or_unique_subset_only() {
+        use super::key_is_unique_in;
+        let s = |v: &[&str]| v.iter().map(|c| c.to_string()).collect::<Vec<_>>();
+        // PK (id) は鍵 [id, x] の部分集合なので一意。
+        let cols = [pri_col("id"), nn_col("x", false)];
+        assert!(key_is_unique_in(&s(&["id", "x"]), &cols, &[]));
+        // 鍵 [x] だけでは PK 列を含まず一意と言えない。
+        assert!(!key_is_unique_in(&s(&["x"]), &cols, &[]));
+        // PK が無くても UNIQUE NOT NULL があれば一意。NULL 可の UNIQUE は保証にならない。
+        let cols = [nn_col("e", false), nn_col("n", true)];
+        assert!(key_is_unique_in(
+            &s(&["e"]),
+            &cols,
+            &[uq_index("e", &["e"])]
+        ));
+        assert!(!key_is_unique_in(
+            &s(&["n"]),
+            &cols,
+            &[uq_index("n", &["n"])]
+        ));
+        assert!(!key_is_unique_in(&s(&["e"]), &cols, &[]));
     }
 
     #[test]

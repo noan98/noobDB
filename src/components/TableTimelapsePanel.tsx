@@ -32,6 +32,7 @@ import { statusColors } from "./diffStatusColors";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { ErrorNote } from "./modalForm";
+import { rowKeyNote } from "../rowKey";
 import { SkeletonRow, SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { formatBytes } from "./tableSize";
@@ -368,6 +369,7 @@ export function TableTimelapsePanel({
   );
   const rows = useMemo(() => (diff ? buildTimelapseRows(diff.diff, masked) : []), [diff, masked]);
   const counts = diff ? countTimelapseDiff(diff.diff) : null;
+  const keyNote = diff ? rowKeyNote(diff.diff.key_kind, diff.diff.primary_key) : null;
 
   // 差分の書き出し (#1539)。行モデルは画面と同じマスク判定を通し、マスク列は伏せ字のまま出す。
   const buildExport = (kind: "csv" | "json"): string => {
@@ -660,6 +662,11 @@ export function TableTimelapsePanel({
                       ]}
                     />
                   </Flex>
+                  {keyNote && (
+                    <chakra.p margin={0} textStyle="caption" color="app.textMuted">
+                      {t(keyNote.key, keyNote.vars)}
+                    </chakra.p>
+                  )}
                   {diff.partial && (
                     <chakra.p fontSize="xs" color="app.textWarning">
                       {t("timelapsePartialNote", { limit: 5000 })}

@@ -26,6 +26,7 @@ function diff(): DataDiff {
     columns: ["id", "email", "price"],
     column_types: ["int", "varchar", "int"],
     primary_key: ["id"],
+    key_kind: "primary_key",
     rows: [
       {
         status: "different",
@@ -153,6 +154,7 @@ describe("差分の書き出し (#1539)", () => {
     columns: ["id", "name", "email"],
     column_types: ["int", "text", "text"],
     primary_key: ["id"],
+    key_kind: "primary_key",
     rows: [
       { status: "source_only", key: [1], source: [1, "a,b", "a@x"], target: null, changed_columns: [] },
       { status: "target_only", key: [2], source: null, target: [2, "bob", null], changed_columns: [] },

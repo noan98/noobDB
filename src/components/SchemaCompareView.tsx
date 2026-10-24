@@ -26,6 +26,7 @@ import {
 import { countDmlStatements, type SyncRiskItem } from "../ai/syncRisk";
 import { useLocale, useT } from "../i18n";
 import { staggerContainer, transitions, variants as motionVariants } from "../motion";
+import { rowKeyNote } from "../rowKey";
 import { semanticColorVar } from "../semanticColors";
 import { useSettings } from "../settings";
 import { useConfirm } from "./ConfirmDialog";
@@ -838,6 +839,7 @@ export function SchemaCompareView({
     if (dataDiff) for (const r of dataDiff.rows) c[r.status] += 1;
     return c;
   }, [dataDiff]);
+  const dataKeyNote = dataDiff ? rowKeyNote(dataDiff.key_kind, dataDiff.primary_key) : null;
 
   const toggleStatement = useCallback((index: number) => {
     setSelected((prev) => {
@@ -1216,6 +1218,11 @@ export function SchemaCompareView({
                       <chakra.p margin={0} textStyle="caption" color="app.textMuted">
                         {t("schemaCompareDataKindsHint")}
                       </chakra.p>
+                      {dataKeyNote && (
+                        <chakra.p margin={0} textStyle="caption" color="app.textMuted">
+                          {t(dataKeyNote.key, dataKeyNote.vars)}
+                        </chakra.p>
+                      )}
                       {dataDiff.truncated && (
                         <chakra.p css={backupCss}>
                           {dataComparedWith.allRows

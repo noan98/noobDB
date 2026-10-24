@@ -1147,6 +1147,7 @@ async fn sqlite_data_sync_plan_applied_makes_rows_converge() {
     assert_eq!(row_diffs.len(), 3);
 
     let diff = t::DataDiff {
+        key_kind: Default::default(),
         target_driver: t::DriverKind::Sqlite,
         table: "scores".to_string(),
         // 非バイナリ列のみのテスト。型は TEXT 固定で十分 (バイナリ補正は走らない)。
@@ -1215,6 +1216,7 @@ async fn sqlite_generated_columns_are_not_listed_so_data_sync_never_writes_them(
     // 列一覧どおりの INSERT / UPDATE を流しても生成列に触れない。
     let columns = vec!["id".to_string(), "a".to_string()];
     let diff = t::DataDiff {
+        key_kind: Default::default(),
         target_driver: t::DriverKind::Sqlite,
         table: "g".to_string(),
         column_types: vec!["INTEGER".to_string(); 2],
