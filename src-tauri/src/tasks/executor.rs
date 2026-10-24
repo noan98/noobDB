@@ -426,6 +426,7 @@ async fn run_action(
             output_path,
             sql_table,
             sql_batch_size,
+            masks,
         } => {
             // 接続前の検証 (ドライバ不明) に加えて、解決したドライバで再検証する
             // (PostgreSQL の `#` 演算子など、ドライバ別マスクで結果が変わる入力のため)。
@@ -435,6 +436,12 @@ async fn run_action(
                 );
             }
             let path = resolve_output_path(output_path, now);
+            // タスク定義のマスクルール (#1836) を ExportModal と同じ `load_mask_spec` →
+            // `mask_rows` 経路へ通す。空ならマスクしない。仮名化のソルトは keyring から取る。
+            let mask_spec = match export::load_mask_spec(Some(masks.clone())).await {
+                Ok(spec) => spec,
+                Err(e) => return TaskOutcome::err(e.to_string()),
+            };
             let result = export::run_export_to_file(
                 &session,
                 sql,
@@ -446,9 +453,7 @@ async fn run_action(
                 EXPORT_INITIAL_BATCH,
                 EXPORT_CHUNK_SIZE,
                 None,
-                // スケジュール実行のエクスポートはマスキング (#733) 非対応 (タスク定義に
-                // ルールを持たない)。マスクが必要な出力は ExportModal から行う。
-                None,
+                mask_spec,
                 // スケジュール実行は表定義 (CREATE TABLE) を付けない (#1539。ExportModal から行う)。
                 false,
                 // 衝突時の書き方 (UPSERT) と CSV の文字コードは ExportModal / 一括書き出しの機能 (#1624)。

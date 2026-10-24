@@ -6258,6 +6258,10 @@ const en = {
   taskFormOutputPathHint: "{date} expands to YYYY-MM-DD and {datetime} to YYYYMMDD-HHMMSS (UTC) at run time.",
   taskFormOutputPathPreview: "preview: {path}",
   taskFormOutputPathRequired: "Enter an output path.",
+  taskFormMaskHint:
+    "Mask these columns in every scheduled output so PII does not leak to unattended destinations. Columns are matched by exact name in the query result.",
+  taskFormMaskAddColumn: "Column name to mask",
+  taskFormMaskAdd: "Add column",
   taskFormSchedule: "Schedule",
   taskScheduleInterval: "Every N minutes",
   taskScheduleDaily: "Daily at",
@@ -13064,6 +13068,10 @@ const ja: Dict = {
     "実行時に {date} は YYYY-MM-DD、{datetime} は YYYYMMDD-HHMMSS (UTC) に展開されます。",
   taskFormOutputPathPreview: "プレビュー: {path}",
   taskFormOutputPathRequired: "出力先パスを入力してください。",
+  taskFormMaskHint:
+    "スケジュール実行のたびに、これらの列をマスクして書き出します (無人の出力先への PII 流出を防ぎます)。列はクエリ結果の列名と完全一致で対応付けます。",
+  taskFormMaskAddColumn: "マスクする列名",
+  taskFormMaskAdd: "列を追加",
   taskFormSchedule: "スケジュール",
   taskScheduleInterval: "N 分ごと",
   taskScheduleDaily: "毎日",

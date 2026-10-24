@@ -2035,6 +2035,10 @@ fn build_fixtures() -> serde_json::Value {
                 output_path: "/tmp/out.sql".into(),
                 sql_table: Some("users".into()),
                 sql_batch_size: Some(100),
+                masks: vec![t::ColumnMask {
+                    column: "email".into(),
+                    rule: t::MaskRule::Email { keep_start: 1 },
+                }],
             },
             t::TaskSchedule::Interval { minutes: 30 },
         ),
@@ -2118,6 +2122,7 @@ fn build_fixtures() -> serde_json::Value {
             output_path: "/tmp/out".into(),
             sql_table: None,
             sql_batch_size: None,
+            masks: vec![],
         },
         schedule: t::TaskSchedule::Interval { minutes: 60 },
         enabled: false,

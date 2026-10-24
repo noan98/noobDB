@@ -1,5 +1,6 @@
 import { Channel } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { ExportColumnMask } from "../components/exportMasking";
 import * as schemas from "./schemas";
 import { parseResponse } from "./schemas";
 import {
@@ -2015,6 +2016,8 @@ export type TaskAction =
       sql_table?: string | null;
       /** SQL INSERT 形式のときの 1 文あたり行数。他形式では無視。 */
       sql_batch_size?: number | null;
+      /** 列単位のマスキングルール (#1836)。ExportModal (#733) と同形。省略 / 空ならマスクしない。 */
+      masks?: ExportColumnMask[];
     }
   | {
       kind: "dump";

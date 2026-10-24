@@ -45,6 +45,8 @@ import { Spinner } from "./Spinner";
 import { Button, Checkbox, Input, Select, Switch, Textarea } from "./ui";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
+import { ExportMaskingSection } from "./ExportMaskingSection";
+import { sanitizeMaskRule, type ExportColumnMask, type ExportMaskOverrides } from "./exportMasking";
 
 /** 連続失敗で自動停止する回数の既定 (新規タスク) と上限。バックエンドの `MAX_PAUSE_AFTER_FAILURES` と揃える。 */
 const DEFAULT_PAUSE_AFTER_FAILURES = 5;
@@ -717,6 +719,16 @@ function AssertionTrendList({ taskId, refreshKey }: { taskId: string; refreshKey
 
 type ActionKind = TaskAction["kind"];
 
+/** 画面の列一覧 + 上書きから、保存するマスクルール (ルールが空の列は除く) を作る (#1836)。 */
+function collectMasks(columns: readonly string[], overrides: ExportMaskOverrides): ExportColumnMask[] {
+  const out: ExportColumnMask[] = [];
+  for (const column of columns) {
+    const rule = overrides[column] ? sanitizeMaskRule(overrides[column]) : null;
+    if (rule) out.push({ column, rule });
+  }
+  return out;
+}
+
 function TaskForm({
   profiles,
   task,
@@ -761,6 +773,20 @@ function TaskForm({
       ? String(task.action.sql_batch_size)
       : "",
   );
+  // 列マスク (#1836)。列は SQL の結果列が実行時まで分からないので、名前を手入力で足す。
+  const initialMasks = task?.action.kind === "export_query" ? (task.action.masks ?? []) : [];
+  const [maskEnabled, setMaskEnabled] = useState(initialMasks.length > 0);
+  const [maskColumns, setMaskColumns] = useState<string[]>(() => initialMasks.map((m) => m.column));
+  const [maskOverrides, setMaskOverrides] = useState<ExportMaskOverrides>(() =>
+    Object.fromEntries(initialMasks.map((m) => [m.column, m.rule])),
+  );
+  const [maskColumnInput, setMaskColumnInput] = useState("");
+  const addMaskColumn = () => {
+    const name = maskColumnInput.trim();
+    if (name === "") return;
+    setMaskColumns((cur) => (cur.includes(name) ? cur : [...cur, name]));
+    setMaskColumnInput("");
+  };
   const [outputPath, setOutputPath] = useState(
     task && (task.action.kind === "export_query" || task.action.kind === "dump")
       ? task.action.output_path
@@ -872,6 +898,7 @@ function TaskForm({
         output_path: outputPath,
         sql_table: format === "sql" && sqlTable.trim() !== "" ? sqlTable.trim() : null,
         sql_batch_size: format === "sql" && sqlBatchSize.trim() !== "" ? Number(sqlBatchSize) : null,
+        masks: maskEnabled ? collectMasks(maskColumns, maskOverrides) : [],
       };
     } else if (actionKind === "run_assertions") {
       if (pickAssertions && assertionIds.length === 0) {
@@ -1033,6 +1060,35 @@ function TaskForm({
               ))}
             </Select>
           </FormSection>
+          <ExportMaskingSection
+            columnNames={maskColumns}
+            enabled={maskEnabled}
+            onEnabledChange={setMaskEnabled}
+            presets={[]}
+            overrides={maskOverrides}
+            onOverridesChange={setMaskOverrides}
+            hint={t("taskFormMaskHint")}
+          />
+          {maskEnabled && (
+            <Flex gap="2" alignItems="center">
+              <Input
+                value={maskColumnInput}
+                aria-label={t("taskFormMaskAddColumn")}
+                placeholder={t("taskFormMaskAddColumn")}
+                onChange={(e) => setMaskColumnInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    addMaskColumn();
+                  }
+                }}
+              />
+              <Button type="button" variant="secondary" size="sm" onClick={addMaskColumn}>
+                {t("taskFormMaskAdd")}
+              </Button>
+            </Flex>
+          )}
           {format === "sql" && (
             <Flex gap="3" flexWrap="wrap">
               <FormSection flex="1" minW="160px">

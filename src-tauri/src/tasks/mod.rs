@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::commands::dump::DumpOptions;
 use crate::commands::export::ExportFormat;
+use crate::db::masking::ColumnMask;
 
 /// タスクが実行するアクション。読み取り専用に限定される (#730 の受け入れ条件) —
 /// `ExportQuery.sql` は保存時 (`commands::tasks::save_task`) と実行時
@@ -46,6 +47,11 @@ pub enum TaskAction {
         /// SQL INSERT 形式のときの 1 文あたり行数。他形式では無視。
         #[serde(default)]
         sql_batch_size: Option<usize>,
+        /// 列単位のマスキングルール (#1836)。対話版 `ExportModal` (#733) と同じ
+        /// `ColumnMask` を `mask_rows` フックへ通す。無監視の出力先へ PII が流れるのを
+        /// 防ぐ。空なら何もマスクしない。旧タスク定義 (フィールド無し) は空として読む。
+        #[serde(default)]
+        masks: Vec<ColumnMask>,
     },
     /// データベース全体をダンプする (`dump_database` と同じ実行基盤を共有)。
     Dump {
@@ -386,6 +392,66 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    fn export_query_json(extra: &str) -> String {
+        format!(
+            r#"{{"kind":"export_query","sql":"SELECT 1","format":"csv","output_path":"/tmp/o.csv"{extra}}}"#
+        )
+    }
+
+    /// #1836 より前に保存された ExportQuery (masks 無し) は空のマスクとして読める。
+    #[test]
+    fn export_query_without_masks_loads_as_empty() {
+        let a: TaskAction = serde_json::from_str(&export_query_json("")).unwrap();
+        assert!(matches!(a, TaskAction::ExportQuery { masks, .. } if masks.is_empty()));
+    }
+
+    /// マスクルールがシリアライズ往復で保たれる (#1836)。
+    #[test]
+    fn export_query_masks_round_trip() {
+        let a: TaskAction = serde_json::from_str(&export_query_json(
+            r#","masks":[{"column":"email","rule":{"kind":"email","keepStart":1}},{"column":"name","rule":{"kind":"null"}}]"#,
+        ))
+        .unwrap();
+        let v = serde_json::to_value(&a).unwrap();
+        let back: TaskAction = serde_json::from_value(v.clone()).unwrap();
+        assert_eq!(v["masks"].as_array().map(Vec::len), Some(2));
+        match back {
+            TaskAction::ExportQuery { masks, .. } => {
+                assert_eq!(masks.len(), 2);
+                assert_eq!(masks[0].column, "email");
+                assert_eq!(masks[1].rule, crate::db::masking::MaskRule::Null);
+            }
+            _ => panic!("ExportQuery 以外にデコードされた"),
+        }
+    }
+
+    /// タスク定義のマスクが、エクスポートと同じ `mask_rows` 経路で適用される (#1836)。
+    #[test]
+    fn export_query_masks_are_applied_via_mask_rows() {
+        use crate::db::masking::{mask_rows, MaskSpec};
+        use crate::db::types::{Column, Value};
+        let a: TaskAction = serde_json::from_str(&export_query_json(
+            r#","masks":[{"column":"name","rule":{"kind":"null"}}]"#,
+        ))
+        .unwrap();
+        let TaskAction::ExportQuery { masks, .. } = a else {
+            return;
+        };
+        let col = |n: &str| Column {
+            name: n.into(),
+            type_name: String::new(),
+        };
+        let columns = vec![col("id"), col("name")];
+        let rows = vec![vec![
+            Value::from_i64_lossless(1),
+            Value::String("alice".into()),
+        ]];
+        let plan = MaskSpec::new(masks, None).unwrap().plan(&columns);
+        let out = mask_rows(Some(&plan), &rows);
+        assert_eq!(out[0][0], Value::from_i64_lossless(1));
+        assert_eq!(out[0][1], Value::Null);
     }
 
     #[test]
