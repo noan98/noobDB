@@ -1344,36 +1344,34 @@ impl SqliteConn {
                 (!extras.is_empty()).then_some((name, extras))
             })
             .collect();
-        if tables.iter().any(|(_, e)| !e.generated.is_empty()) {
-            // 3.26 未満など `table_xinfo` が無い場合は型を補えないだけで、式は返す。
-            let hidden: Vec<SqliteRow> = sqlx::query(
-                "SELECT m.name, x.cid, x.name, x.type, x.\"notnull\", x.hidden
-                 FROM sqlite_master m
-                 JOIN pragma_table_xinfo(m.name) x
-                 WHERE m.type = 'table' AND x.hidden IN (2, 3)",
+        // 生成列のある表だけ、表ごとに `pragma_table_xinfo` を引く。3.26 未満や 1 表の失敗は
+        // その表の型を補えないだけで、式は返し、ほかの表にも影響しない。
+        for (table, extras) in tables.iter_mut().filter(|(_, e)| !e.generated.is_empty()) {
+            let Ok(hidden) = sqlx::query(
+                "SELECT x.cid, x.name, x.type, x.\"notnull\", x.hidden
+                 FROM pragma_table_xinfo(?) x
+                 WHERE x.hidden IN (2, 3)",
             )
+            .bind(table.as_str())
             .fetch_all(&self.pool)
             .await
-            .unwrap_or_default();
+            else {
+                continue;
+            };
             for r in &hidden {
-                let (Ok(table), Ok(column)) =
-                    (r.try_get::<String, _>(0), r.try_get::<String, _>(2))
-                else {
-                    continue;
-                };
-                let Some((_, extras)) = tables.iter_mut().find(|(n, _)| *n == table) else {
+                let Ok(column) = r.try_get::<String, _>(1) else {
                     continue;
                 };
                 let Some(g) = extras.generated.iter_mut().find(|g| g.column == column) else {
                     continue;
                 };
                 g.position = r
-                    .try_get::<i64, _>(1)
+                    .try_get::<i64, _>(0)
                     .ok()
                     .and_then(|c| usize::try_from(c).ok());
-                g.data_type = r.try_get::<String, _>(3).ok();
-                g.not_null = r.try_get::<i64, _>(4).unwrap_or(0) != 0;
-                g.is_virtual = r.try_get::<i64, _>(5).unwrap_or(2) == 2;
+                g.data_type = r.try_get::<String, _>(2).ok();
+                g.not_null = r.try_get::<i64, _>(3).unwrap_or(0) != 0;
+                g.is_virtual = r.try_get::<i64, _>(4).unwrap_or(2) == 2;
             }
         }
         Ok(super::types::DatabaseDdlExtras {

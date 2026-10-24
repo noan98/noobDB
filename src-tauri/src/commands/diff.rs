@@ -199,11 +199,18 @@ pub(crate) async fn compare_schema_core(
         target.ddl_extras_for_database(target_database).await,
     ) {
         (Ok(se), Ok(te)) => {
-            crate::db::diff::attach_extras_diffs(&mut diff, &se.tables, &te.tables);
-            if se.checks_unavailable || te.checks_unavailable {
-                // 取得できなかった側は「CHECK なし」に見えるので、差分が偽になりうることを伝える。
+            // 取得できなかった側は「CHECK なし」に見えて偽の差分 (DROP CHECK など) を作るので、
+            // その場合は CHECK の差分を載せず警告だけ残す。
+            let checks_unavailable = se.checks_unavailable || te.checks_unavailable;
+            crate::db::diff::attach_extras_diffs_with(
+                &mut diff,
+                &se.tables,
+                &te.tables,
+                !checks_unavailable,
+            );
+            if checks_unavailable {
                 diff.warnings.push(
-                    "CHECK 制約を取得できなかったため (サーバが information_schema の CHECK 制約に対応していない、または権限不足)、CHECK 制約の差分は信頼できません。生成列の式は比較しています。"
+                    "CHECK 制約を取得できなかったため (サーバが information_schema の CHECK 制約に対応していない、または権限不足)、CHECK 制約の差分は比較していません。生成列の式は比較しています。"
                         .to_string(),
                 );
             }

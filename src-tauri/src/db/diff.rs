@@ -822,10 +822,24 @@ fn diff_generated(
 /// 含める)、`TargetOnly` は `DROP TABLE` で消えるので載せない。`Same` / `Different` は差のある
 /// ものだけを載せ、差があれば `Same` を `Different` に格上げする。これが無いと CHECK・生成式だけが
 /// 違うスキーマが偽の「一致」になる。
+#[cfg(test)]
 pub fn attach_extras_diffs(
     diff: &mut SchemaDiff,
     source: &[(String, TableDdlExtras)],
     target: &[(String, TableDdlExtras)],
+) {
+    attach_extras_diffs_with(diff, source, target, true);
+}
+
+/// [`attach_extras_diffs`] の本体。`checks_reliable` が false (片側で CHECK を取得できなかった)
+/// のときは CHECK の差分を一切載せない。取得できなかった側が「CHECK なし」に見えて偽の
+/// `TargetOnly` (= `DROP CHECK`) や `SourceOnly` を作るのを防ぐ。CHECK だけを理由に `Different` へ
+/// 上げることもしない。生成列の式は通常どおり比べる。
+pub fn attach_extras_diffs_with(
+    diff: &mut SchemaDiff,
+    source: &[(String, TableDdlExtras)],
+    target: &[(String, TableDdlExtras)],
+    checks_reliable: bool,
 ) {
     let empty = TableDdlExtras::default();
     let src: HashMap<&str, &TableDdlExtras> = source.iter().map(|(n, e)| (n.as_str(), e)).collect();
@@ -835,12 +849,20 @@ pub fn attach_extras_diffs(
         let t = tgt.get(table.name.as_str()).copied().unwrap_or(&empty);
         match table.status {
             DiffStatus::SourceOnly => {
-                table.check_changes = diff_checks(&s.checks, &[]);
+                table.check_changes = if checks_reliable {
+                    diff_checks(&s.checks, &[])
+                } else {
+                    Vec::new()
+                };
                 table.generated_changes = diff_generated(&s.generated, &[]);
             }
             DiffStatus::TargetOnly => {}
             DiffStatus::Same | DiffStatus::Different => {
-                table.check_changes = diff_checks(&s.checks, &t.checks);
+                table.check_changes = if checks_reliable {
+                    diff_checks(&s.checks, &t.checks)
+                } else {
+                    Vec::new()
+                };
                 table.generated_changes = diff_generated(&s.generated, &t.generated);
                 if table.status == DiffStatus::Same
                     && (!table.check_changes.is_empty() || !table.generated_changes.is_empty())
@@ -1579,5 +1601,41 @@ mod tests {
             d.tables[0].generated_changes[0].changed_fields,
             vec!["data_type", "nullable"]
         );
+    }
+
+    #[test]
+    fn unreliable_checks_are_not_compared_and_do_not_raise_status() {
+        let s = vec![
+            table("t", vec![col("a", "int")]),
+            table("u", vec![col("a", "int")]),
+        ];
+        let mut d = diff(&s, &s[..1]);
+        // 片側で CHECK を取得できなかった: t は target に CHECK が見えないだけ。
+        attach_extras_diffs_with(
+            &mut d,
+            &[
+                (
+                    "t".into(),
+                    extras(&[("c", "CHECK (a > 0)")], &[("g", "a", false)]),
+                ),
+                ("u".into(), extras(&[("c", "CHECK (a > 0)")], &[])),
+            ],
+            &[("t".into(), extras(&[], &[("g", "a", false)]))],
+            false,
+        );
+        for t in &d.tables {
+            assert!(t.check_changes.is_empty(), "{t:?}");
+        }
+        assert_eq!(d.tables[0].status, DiffStatus::Same);
+        // 生成式は比べ続ける。
+        let mut d2 = diff(&s[..1], &s[..1]);
+        attach_extras_diffs_with(
+            &mut d2,
+            &[("t".into(), extras(&[], &[("g", "a + 1", false)]))],
+            &[("t".into(), extras(&[], &[("g", "a + 2", false)]))],
+            false,
+        );
+        assert_eq!(d2.tables[0].status, DiffStatus::Different);
+        assert_eq!(d2.tables[0].generated_changes.len(), 1);
     }
 }

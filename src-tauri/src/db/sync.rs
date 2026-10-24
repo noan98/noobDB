@@ -1099,6 +1099,9 @@ fn sqlite_rebuild_sql(
         })
         .collect();
     // 生成列 (#1837): 列定義は表制約 (PRIMARY KEY など) より前に並べる必要がある。
+    // 差し込み位置は target の `table_xinfo` の cid (隠れた列を含む全列での位置) を基準にした
+    // 概算。再作成で列を足す・消す・順序を変えると元の位置とはずれうる (生成列は他の列を
+    // 参照するだけで位置に意味は無いので、値や制約の正しさには影響しない)。
     let (checks, generated) = rebuilt_extras(table, snap);
     let hidden: Vec<&GeneratedColumnInfo> = generated.iter().collect();
     let mut lines = interleave_hidden_generated(driver, lines, &hidden);
