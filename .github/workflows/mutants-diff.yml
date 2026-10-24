@@ -1,0 +1,287 @@
+name: mutants-diff
+
+# PR 差分スコープのミューテーションテスト (#1841)
+#
+# 手動 (workflow_dispatch) の mutants.yml (全件 4 シャード、1 シャード約 30 分。定期実行ではない) とは別に、
+# 安全網ファイルを変更した PR だけで `cargo mutants --in-diff` を走らせ、
+# 「その PR で新しく入った未カバー分岐」(= 生存変異) を PR 時点で報告する。
+# mutants.yml は変更しない (全件の回帰ネットとしてそのまま維持)。
+#
+# - 対象関数・タイムアウト倍率の単一ソースは mutants.yml と同じ
+#   src-tauri/.cargo/mutants.toml (examine_globs + examine_re)。本ワークフローは
+#   それを読むだけで、関数名を重複して書かない。
+# - 起動条件は mutants.toml の examine_globs と同じファイル + 危険文検出 (script_analysis.rs) と
+#   マスク処理 (masking.rs) (+ mutants.toml 自体と本ワークフロー)。examine_globs や
+#   EXTRA_FILES を足す・外すときは下の `paths:` も揃える。後者 2 ファイルは mutants.yml の
+#   スコープ (mutants.toml) には入れず、本ジョブの CLI 引数 (EXTRA_FILES / EXTRA_RE) で足す。
+#   ワークフロー単位の `paths:` を使うのは、このワークフローを**必須チェックにしない**
+#   前提だから (必須だとスキップ時に「待機中」で固まる。ci.yml が paths-filter +
+#   ジョブ単位 if: を使うのはそのため)。無関係な PR のクリティカルパスは増えない。
+# - 可視化専用: 生存変異があっても fail させず、Job Summary と warning で報告する。
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src-tauri/src/db/mod.rs"
+      - "src-tauri/src/db/mysql.rs"
+      - "src-tauri/src/db/postgres.rs"
+      - "src-tauri/src/db/sqlite.rs"
+      - "src-tauri/src/db/sync.rs"
+      - "src-tauri/src/db/data_diff.rs"
+      - "src-tauri/src/lib.rs"
+      # 危険文の検出とマスク処理 (下の EXTRA_FILES / EXTRA_RE で対象に足す)。
+      - "src-tauri/src/db/script_analysis.rs"
+      - "src-tauri/src/db/masking.rs"
+      - "src-tauri/.cargo/mutants.toml"
+      - ".github/workflows/mutants-diff.yml"
+
+permissions:
+  contents: read
+
+# 同じ PR の古い run は取り消す。
+concurrency:
+  group: mutants-diff-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: "0"
+  # mutants.toml (mutants.yml と共有) の対象に、PR 差分ジョブだけ足すファイルと関数。
+  # cargo-mutants 27.1 では CLI の --file / --re は config の examine_globs / examine_re と
+  # 「併用 (和集合)」になる (options.rs: args.file.chain(config.examine_globs))。NEWS の
+  # 「CLI が config を置き換える」は旧仕様。ファイルを足すだけでは config の examine_re が
+  # 関数名で全件落とすため、--re も足す。名前は `--list` の変異名 (replace <fn> -> ... /
+  # ... in <fn>) に対するマッチなので、ファイルを問わず同名の関数に効く点に注意。
+  # 関数を足す・外すときは `cargo mutants --list -f <file> -F <re>` で確認する。
+  EXTRA_FILES: "src/db/script_analysis.rs src/db/masking.rs"
+  EXTRA_RE: '(replace | in )([A-Za-z_0-9]+::)*(classify_dangerous|alter_drop_kind|keyword_prefix|has_top_level_where|ScriptAnalyzer::classify|ScriptAnalyzer::push|mask_value|mask_rows|mask_columns|MaskPlan::apply_row|MaskPlan::apply_rows|email_mask|partial_mask|date_mask|MaskSpec::plan|MaskSpec::new|needs_salt|MaskRule::normalized|pseudonymize|pseudonymize_with|keyed_mac|ScriptAnalyzer::new|ScriptAnalyzer::finish)( -> |$)'
+
+jobs:
+  # ジョブ ID を mutants.yml と同じ `mutants` にする (rust-cache のキーにジョブ ID が入るため)。
+  mutants:
+    name: cargo-mutants (PR 差分)
+    runs-on: ubuntu-latest
+    # 差分が小さければ数分、lib.rs のように対象関数が多いファイルでも 1 変異 ≒ 1.5 分
+    # (mutants.yml の実測: ビルド 53 秒 + テスト 19 秒) として 20 変異程度が上限。
+    # 超えたら打ち切る (可視化専用なので CI は塞がない)。
+    timeout-minutes: 40
+    steps:
+      # base との merge-base 差分を取るため全履歴を取得する。
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Install cargo-mutants
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-mutants
+
+      # PR の差分 (merge-base...HEAD) を src-tauri からの相対パスで作る。cargo-mutants は
+      # src-tauri (cargo ワークスペース) を木のルートとして差分のパスと突き合わせるため、
+      # `--relative=src-tauri` で `src-tauri/` 接頭辞を落とす (落とさないと 1 件も一致しない)。
+      - name: Make PR diff
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git diff --relative=src-tauri "origin/${BASE_REF}...HEAD" -- src-tauri > src-tauri/diff
+          wc -l src-tauri/diff
+
+      # 差分に含まれる変異候補を数える (ビルドしない軽い処理)。lib.rs のように対象関数が
+      # 差分に触れていない PR では 0 件になり、重い後続ステップ (apt / ビルド) を丸ごと飛ばす。
+      # 構造体フィールド削除 (genre == StructField) は --re / --exclude-re が効かず CLI でも
+      # 除外できない (#1657) ため、--json で出して数えるときに除く (除いた件数は Summary に別掲)。
+      # 本体の実行ではこれらも走るので実行時間には含まれる (集計からは除外する)。
+      # --list 自体の失敗 (設定エラー・正規表現エラー等) は「0 件」と区別して警告する。
+      - name: List mutants in diff
+        id: list
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          set +e
+          args=()
+          for f in $EXTRA_FILES; do args+=(-f "$f"); done
+          cargo mutants --in-diff diff "${args[@]}" -F "$EXTRA_RE" --list --json > mutants-list.json 2> mutants-list.err
+          rc=$?
+          set -e
+          echo '### Mutation test (PR 差分, 安全網関数)' >> "$GITHUB_STEP_SUMMARY"
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" != 0 ]; then
+            {
+              echo "> :x: 変異候補の列挙 (\`cargo mutants --list\`) に失敗しました (終了コード: \`$rc\`)。変異テストは実行されていません。"
+              echo ''
+              echo '```'
+              tail -50 mutants-list.err
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=変異候補の列挙に失敗::cargo mutants --list が終了コード $rc で失敗しました (Job Summary 参照)"
+            echo "count=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # 差分が src-tauri に及ばない (ワークフローだけの変更など) と diff が空で、cargo-mutants は
+          # 終了コード 0 / 標準出力が空になる。空は 0 件として扱う。
+          read -r count sf < <(python3 -c 'import json; t = open("mutants-list.json").read().strip(); l = json.loads(t) if t else []; n = sum(1 for m in l if m.get("genre") == "StructField"); print(len(l) - n, n)')
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "差分に含まれる変異候補: **${count} 件** (別に構造体フィールド削除 ${sf} 件。CLI で除外できず実行時間には含まれるが、集計からは除外する)" >> "$GITHUB_STEP_SUMMARY"
+
+      # 以降は mutants.yml の mutants ジョブと同じセットアップ (理由はそちらのコメント参照)。
+      - name: Use canonical apt archive + refresh indexes (stale runner lists cause 404)
+        if: steps.list.outputs.count != '0'
+        run: |
+          printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
+          sudo apt-get update
+
+      - name: System deps (Tauri 2 prerequisites)
+        if: steps.list.outputs.count != '0'
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+        with:
+          packages: libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libxdo-dev libayatana-appindicator3-dev build-essential curl wget file libssl-dev clang mold
+          version: tauri-2-mutants
+
+      - name: Stub frontend dist (for tauri::generate_context!)
+        if: steps.list.outputs.count != '0'
+        shell: bash
+        run: mkdir -p dist && echo "" > dist/index.html
+
+      # main で mutants.yml を手動実行したキャッシュは、PR の初回 run でも復元される
+      # (ジョブ ID と key を揃えてある)。ただし定期実行がないので、通常は初回が cold で、
+      # 同じ PR の 2 回目以降の push から効く。
+      - name: Cache cargo
+        if: steps.list.outputs.count != '0'
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: mutants
+
+      # --in-place の理由は mutants.yml の Run cargo-mutants ステップのコメントを参照
+      # (../dist と共有ゴールデンベクタの相対パスを保つ。ランナーは使い捨て)。
+      # 生存変異があっても exit 0 で終え、結果は後段で Job Summary に出す。
+      # 32 分で打ち切り (ジョブの 40 分より前に Report / artifact ステップを走らせる)。
+      # 打ち切られても continue-on-error で後段へ進み、部分結果を報告する。
+      - name: Run cargo-mutants (--in-diff)
+        id: run
+        if: steps.list.outputs.count != '0'
+        timeout-minutes: 32
+        continue-on-error: true
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          args=()
+          for f in $EXTRA_FILES; do args+=(-f "$f"); done
+          cargo mutants \
+            --in-place \
+            --no-shuffle \
+            --in-diff diff \
+            "${args[@]}" \
+            -F "$EXTRA_RE" \
+            2>&1 | tee mutants-output.txt
+          code=${PIPESTATUS[0]}
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      # 生存変異 (MissedMutant) を Job Summary に列挙する。構造体フィールド削除
+      # (genre == StructField) は examine_re が効かず安全網関数の評価ではないので、
+      # mutants.yml の集計と同じく除外する (#1657)。
+      # cargo-mutants の終了コード 0 / 2 / 3 以外 (baseline 失敗 = 4 など) と、検査件数
+      # (caught + missed + unviable + timeout) が 0 件の場合は「成功」ではなく実行失敗として
+      # 表示する (mutants.yml の summary が母数 0 を n/a にするのと同じ考え方)。
+      - name: Report surviving mutants
+        if: always() && steps.list.outcome == 'success' && steps.list.outputs.count != '0'
+        working-directory: src-tauri
+        env:
+          EXIT_CODE: ${{ steps.run.outputs.exit_code }}
+          RUN_OUTCOME: ${{ steps.run.outcome }}
+        run: |
+          python3 - << 'PYEOF' >> "$GITHUB_STEP_SUMMARY"
+          import json, os, pathlib, collections
+          code = os.environ.get("EXIT_CODE", "")
+          # exit_code が空 = Run ステップが打ち切られた (timeout-minutes / キャンセル)。
+          run_outcome = os.environ.get("RUN_OUTCOME", "")
+          # skipped = Run より前のセットアップ (apt / ビルド依存) が失敗して実行されなかった。
+          # exit_code が空で failure / cancelled = Run ステップが打ち切られた (timeout-minutes 等)。
+          not_run = run_outcome == "skipped"
+          truncated = code == "" and not not_run
+          warn = pathlib.Path("report-warning.txt")
+
+          def tail():
+              o = pathlib.Path("mutants-output.txt")
+              print("")
+              print("```")
+              if o.exists():
+                  print("\n".join(o.read_text().splitlines()[-50:]))
+              print("```")
+
+          counts = collections.Counter()
+          missed = []
+          p = pathlib.Path("mutants.out/outcomes.json")
+          if p.exists():
+              # Mutant のキー (cargo-mutants 27.1 の mutant.rs): name / file / span.start.line。
+              for o in json.loads(p.read_text()).get("outcomes", []):
+                  sc = o.get("scenario")
+                  if not isinstance(sc, dict):
+                      continue  # baseline
+                  m = sc.get("Mutant", {})
+                  if m.get("genre") == "StructField":
+                      continue
+                  s = o.get("summary")
+                  counts.update([s])
+                  if s == "MissedMutant":
+                      line = m.get("span", {}).get("start", {}).get("line", "?")
+                      missed.append(f"{m['file']}:{line}: {m['name']}")
+          n = len(missed)
+          tested = sum(counts.get(k, 0) for k in ("CaughtMutant", "MissedMutant", "Unviable", "Timeout"))
+
+          if not_run:
+              msg = "前段のステップが失敗したため、変異テストは実行されていません。"
+              print(f"> :x: **{msg}**")
+              warn.write_text(msg)
+          elif truncated:
+              msg = "変異テストが打ち切られました (時間切れ等)。以下は部分結果です。"
+              print(f"> :x: **{msg}**")
+              warn.write_text(msg)
+              tail()
+          elif code not in ("0", "2", "3"):
+              msg = f"変異テストの実行に失敗しました (cargo-mutants 終了コード: {code}。4 は baseline 失敗)。生存変異の有無は判定できていません。"
+              print(f"> :x: **{msg}**")
+              warn.write_text(msg)
+              tail()
+          elif tested == 0:
+              msg = "検査された変異が 0 件でした (母数 0)。生存変異 0 件とは判定できません。"
+              print(f"> :x: **{msg}**")
+              warn.write_text(msg)
+              tail()
+          if n:
+              print(f"> :warning: **生存変異 (MISSED): {n} 件** — この PR の差分に、テストが捕捉できていない変異があります。`db::tests` / 共有ゴールデンに境界ケースを追記してください。")
+              print("")
+              print("```")
+              print("\n".join(missed))
+              print("```")
+              if not warn.exists():
+                  warn.write_text(f"生存変異 {n} 件")
+          elif not warn.exists():
+              print("> :white_check_mark: **生存変異 (MISSED): 0 件**")
+          print("")
+          print(f"caught: {counts.get('CaughtMutant', 0)} / missed: {n} / unviable: {counts.get('Unviable', 0)} / timeout: {counts.get('Timeout', 0)}")
+          PYEOF
+          # ワークフローコマンドは Summary 行ではなくここで出す (fail はさせない)。
+          if [ -f report-warning.txt ]; then
+            echo "::warning title=変異テスト (PR 差分)::$(cat report-warning.txt) (Job Summary 参照)"
+          fi
+
+      - name: Upload mutants.out artifact
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mutants-diff-out
+          path: |
+            src-tauri/mutants.out/
+            src-tauri/diff
+            src-tauri/mutants-list.json
+            src-tauri/mutants-list.err
+            src-tauri/mutants-output.txt
+          if-no-files-found: ignore
+          retention-days: 14

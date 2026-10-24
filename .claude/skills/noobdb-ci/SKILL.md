@@ -26,7 +26,7 @@ description: noobDB の CI が落ちたとき、GitHub Actions ワークフロ�
 
 | ファイル | 内容 |
 |---|---|
-| `references/ci-workflow.md` | `ci.yml` — paths-filter によるジョブ出し分け、frontend / crosslang parity / rust 系 7 ジョブ、カバレッジ閾値 |
+| `references/ci-workflow.md` | `ci.yml` — paths-filter によるジョブ出し分け、frontend / crosslang parity / rust 系 7 ジョブ、カバレッジ閾値。`mutants-diff.yml` (PR 差分の `cargo mutants --in-diff`, #1841)・`e2e.yml` の節も含む |
 | `references/release-workflow.md` | `release.yml` — タグビルド、キャッシュ温めの paths ゲート、`releaseDraft: false` の理由 |
 | `references/dependencies.md` | Dependabot / cargo-deny / pnpm audit の役割分担 |
 | `references/scheduled-notify.md` | 定期 / 手動の可視化専用ワークフロー (audit / e2e nightly / mutants / js-mutants) の検出結果をトラッキング Issue へ通知する仕組み (#1395) |
