@@ -23,7 +23,7 @@ import type {
 } from "../api/tauri";
 import { tableToMarkdown } from "./tabularText";
 
-const ALL_KINDS: readonly SchemaObjectKind[] = [
+export const ALL_KINDS: readonly SchemaObjectKind[] = [
   "view",
   "materialized_view",
   "procedure",
@@ -39,7 +39,7 @@ const ALL_KINDS: readonly SchemaObjectKind[] = [
  * - PostgreSQL: 上記 + マテリアライズドビュー
  * - SQLite: ビュー / トリガーのみ (ストアドルーチンが存在しない)
  */
-const WHERE_USED_KIND_SUPPORT: Readonly<Record<string, readonly SchemaObjectKind[]>> = {
+export const WHERE_USED_KIND_SUPPORT: Readonly<Record<string, readonly SchemaObjectKind[]>> = {
   mysql: ["view", "procedure", "function", "trigger"],
   postgres: ALL_KINDS,
   sqlite: ["view", "trigger"],

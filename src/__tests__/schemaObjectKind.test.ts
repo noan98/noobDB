@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SchemaObjectKind } from "../api/tauri";
+import { ALL_KINDS, WHERE_USED_KIND_SUPPORT } from "../components/whereUsed";
 import golden from "./fixtures/schemaObjectKinds.json";
 
 // SchemaObject.kind (#1840) の Rust (String カタログ値) ⇔ TS union の集合一致を固定する。
@@ -33,5 +34,13 @@ describe("SchemaObjectKind 共有ゴールデン", () => {
       }
     }
     expect([...union].sort()).toEqual([...all].sort());
+  });
+
+  it("whereUsed.ts の ALL_KINDS / WHERE_USED_KIND_SUPPORT がゴールデンと一致する", () => {
+    expect([...ALL_KINDS].sort()).toEqual([...golden.kinds].sort());
+    expect(Object.keys(WHERE_USED_KIND_SUPPORT).sort()).toEqual(Object.keys(golden.drivers).sort());
+    for (const [driver, kinds] of Object.entries(golden.drivers)) {
+      expect([...(WHERE_USED_KIND_SUPPORT[driver] ?? [])].sort()).toEqual([...kinds].sort());
+    }
   });
 });
