@@ -39,12 +39,14 @@ import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import { LoadingButton } from "./LoadingButton";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
-import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
+import { ErrorNote, FieldError, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
 import { Spinner } from "./Spinner";
 import { Button, Checkbox, Input, Select, Switch, Textarea } from "./ui";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
+import { ExportMaskingSection } from "./ExportMaskingSection";
+import { sanitizeMaskRule, type ExportColumnMask, type ExportMaskOverrides } from "./exportMasking";
 
 /** 連続失敗で自動停止する回数の既定 (新規タスク) と上限。バックエンドの `MAX_PAUSE_AFTER_FAILURES` と揃える。 */
 const DEFAULT_PAUSE_AFTER_FAILURES = 5;
@@ -717,6 +719,20 @@ function AssertionTrendList({ taskId, refreshKey }: { taskId: string; refreshKey
 
 type ActionKind = TaskAction["kind"];
 
+function overridesHaveRule(overrides: ExportMaskOverrides, column: string): boolean {
+  return !!overrides[column] && sanitizeMaskRule(overrides[column]) !== null;
+}
+
+/** 画面の列一覧 + 上書きから、保存するマスクルール (ルールが空の列は除く) を作る (#1836)。 */
+function collectMasks(columns: readonly string[], overrides: ExportMaskOverrides): ExportColumnMask[] {
+  const out: ExportColumnMask[] = [];
+  for (const column of columns) {
+    const rule = overrides[column] ? sanitizeMaskRule(overrides[column]) : null;
+    if (rule) out.push({ column, rule });
+  }
+  return out;
+}
+
 function TaskForm({
   profiles,
   task,
@@ -761,6 +777,32 @@ function TaskForm({
       ? String(task.action.sql_batch_size)
       : "",
   );
+  // 列マスク (#1836)。列は SQL の結果列が実行時まで分からないので、名前を手入力で足す。
+  const initialMasks = task?.action.kind === "export_query" ? (task.action.masks ?? []) : [];
+  const [maskEnabled, setMaskEnabled] = useState(initialMasks.length > 0);
+  const [maskColumns, setMaskColumns] = useState<string[]>(() => initialMasks.map((m) => m.column));
+  const [maskOverrides, setMaskOverrides] = useState<ExportMaskOverrides>(() =>
+    Object.fromEntries(initialMasks.map((m) => [m.column, m.rule])),
+  );
+  const [maskColumnInput, setMaskColumnInput] = useState("");
+  const [maskError, setMaskError] = useState<string | null>(null);
+  // ルール選択・列の削除/追加・アクション種別の切り替えで古いエラーを消す。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 依存の変化を合図にエラーを消すだけ
+  useEffect(() => setMaskError(null), [maskOverrides, maskColumns, actionKind]);
+  const removeMaskColumn = (column: string) => {
+    setMaskColumns((cur) => cur.filter((c) => c !== column));
+    setMaskOverrides((cur) => {
+      const next = { ...cur };
+      delete next[column];
+      return next;
+    });
+  };
+  const addMaskColumn = () => {
+    const name = maskColumnInput.trim();
+    if (name === "") return;
+    setMaskColumns((cur) => (cur.includes(name) ? cur : [...cur, name]));
+    setMaskColumnInput("");
+  };
   const [outputPath, setOutputPath] = useState(
     task && (task.action.kind === "export_query" || task.action.kind === "dump")
       ? task.action.output_path
@@ -864,6 +906,13 @@ function TaskForm({
         setFormError(t("taskFormSqlNotReadOnly"));
         return;
       }
+      // ルールが「なし」のままの列は黙って捨てず、保存を止める (#1836)。
+      const unruled = maskEnabled ? maskColumns.filter((c) => !overridesHaveRule(maskOverrides, c)) : [];
+      if (unruled.length > 0) {
+        setMaskError(t("taskFormMaskNoRule", { columns: unruled.join(", ") }));
+        return;
+      }
+      setMaskError(null);
       action = {
         kind: "export_query",
         sql,
@@ -872,6 +921,7 @@ function TaskForm({
         output_path: outputPath,
         sql_table: format === "sql" && sqlTable.trim() !== "" ? sqlTable.trim() : null,
         sql_batch_size: format === "sql" && sqlBatchSize.trim() !== "" ? Number(sqlBatchSize) : null,
+        masks: maskEnabled ? collectMasks(maskColumns, maskOverrides) : [],
       };
     } else if (actionKind === "run_assertions") {
       if (pickAssertions && assertionIds.length === 0) {
@@ -1033,6 +1083,37 @@ function TaskForm({
               ))}
             </Select>
           </FormSection>
+          <ExportMaskingSection
+            columnNames={maskColumns}
+            enabled={maskEnabled}
+            onEnabledChange={setMaskEnabled}
+            presets={[]}
+            overrides={maskOverrides}
+            onOverridesChange={setMaskOverrides}
+            hint={t("taskFormMaskHint")}
+            onRemoveColumn={removeMaskColumn}
+            footer={
+              <Flex gap="2" alignItems="center">
+                <Input
+                  value={maskColumnInput}
+                  aria-label={t("taskFormMaskAddColumn")}
+                  placeholder={t("taskFormMaskAddColumn")}
+                  onChange={(e) => setMaskColumnInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      addMaskColumn();
+                    }
+                  }}
+                />
+                <Button type="button" variant="secondary" size="sm" onClick={addMaskColumn}>
+                  {t("taskFormMaskAdd")}
+                </Button>
+              </Flex>
+            }
+          />
+          {maskError && <FieldError>{maskError}</FieldError>}
           {format === "sql" && (
             <Flex gap="3" flexWrap="wrap">
               <FormSection flex="1" minW="160px">

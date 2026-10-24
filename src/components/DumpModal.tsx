@@ -517,6 +517,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
     <Modal
       onSubmit={handleDump}
       submitDisabled={isRunning || installing || !path.trim()}
+      submitBusy={isRunning || installing}
       width="620px"
       onClose={onClose}
       closeOnInteractOutside={!isRunning}

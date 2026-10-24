@@ -68,6 +68,7 @@ const COVERED: Record<string, string> = {
   ColumnDependencyReport: "columnDependencyReport",
   IncomingForeignKey: "incomingForeignKey",
   IndexInfo: "indexInfo",
+  TableExtrasInfo: "tableExtrasInfo",
   InsertRowsResult: "insertRowsResult",
   KillProcessesResult: "killProcessesResult",
   KnownHost: "knownHost",

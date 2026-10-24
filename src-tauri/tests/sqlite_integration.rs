@@ -1147,6 +1147,7 @@ async fn sqlite_data_sync_plan_applied_makes_rows_converge() {
     assert_eq!(row_diffs.len(), 3);
 
     let diff = t::DataDiff {
+        key_kind: Default::default(),
         target_driver: t::DriverKind::Sqlite,
         table: "scores".to_string(),
         // 非バイナリ列のみのテスト。型は TEXT 固定で十分 (バイナリ補正は走らない)。
@@ -1215,6 +1216,7 @@ async fn sqlite_generated_columns_are_not_listed_so_data_sync_never_writes_them(
     // 列一覧どおりの INSERT / UPDATE を流しても生成列に触れない。
     let columns = vec!["id".to_string(), "a".to_string()];
     let diff = t::DataDiff {
+        key_kind: Default::default(),
         target_driver: t::DriverKind::Sqlite,
         table: "g".to_string(),
         column_types: vec!["INTEGER".to_string(); 2],
@@ -6469,4 +6471,176 @@ async fn sqlite_check_and_generated_expressions_are_introspected_compared_and_sy
     tgt.close().await;
     let _ = std::fs::remove_file(&src_path);
     let _ = std::fs::remove_file(&tgt_path);
+}
+
+// ---- #1838: データ比較・タイムラプスの行識別子 ----
+
+async fn row_key_conn(tag: &str) -> (PathBuf, t::Connection) {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "noobdb_sqlite_rowkey_{tag}_{}.db",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(path.to_str().unwrap()))
+        .await
+        .expect("connect");
+    (path, conn)
+}
+
+async fn resolve(
+    conn: &t::Connection,
+    table: &str,
+    allow_rowid: bool,
+) -> Option<t::ResolvedRowKey> {
+    let cols = conn.columns("main", table).await.expect("columns");
+    conn.resolve_row_key("main", table, &cols, allow_rowid)
+        .await
+        .expect("resolve")
+}
+
+#[tokio::test]
+async fn row_key_resolves_unique_then_rowid_and_rejects_the_rest() {
+    let (path, conn) = row_key_conn("resolve").await;
+    for ddl in [
+        "CREATE TABLE pk_t (id INTEGER PRIMARY KEY, v TEXT)",
+        "CREATE TABLE uq_t (email TEXT NOT NULL UNIQUE, v TEXT)",
+        "CREATE TABLE nullable_uq (email TEXT UNIQUE, v TEXT)",
+        "CREATE TABLE bare (v TEXT)",
+        "CREATE TABLE shadow (rowid TEXT, v TEXT)",
+        "CREATE TABLE wr (k TEXT PRIMARY KEY, v TEXT) WITHOUT ROWID",
+        "CREATE VIEW vw AS SELECT v FROM bare",
+    ] {
+        conn.execute(ddl, None).await.expect(ddl);
+    }
+    let kind = |k: Option<t::ResolvedRowKey>| k.map(|k| (k.kind, k.columns));
+    assert_eq!(
+        kind(resolve(&conn, "pk_t", true).await),
+        Some((t::RowKeyKind::PrimaryKey, vec!["id".to_string()]))
+    );
+    // UNIQUE NOT NULL のみの表は比較 (rowid 不可) でも UNIQUE キーで解決できる。
+    assert_eq!(
+        kind(resolve(&conn, "uq_t", false).await),
+        Some((t::RowKeyKind::UniqueKey, vec!["email".to_string()]))
+    );
+    // NULL を許す UNIQUE は使えない: 比較では拒否、タイムラプスでは rowid。
+    assert_eq!(resolve(&conn, "nullable_uq", false).await, None);
+    assert_eq!(
+        kind(resolve(&conn, "nullable_uq", true).await),
+        Some((t::RowKeyKind::Rowid, vec!["rowid".to_string()]))
+    );
+    assert_eq!(resolve(&conn, "bare", false).await, None);
+    assert_eq!(
+        kind(resolve(&conn, "bare", true).await).map(|k| k.0),
+        Some(t::RowKeyKind::Rowid)
+    );
+    // `rowid` という実列がある表は隠し列を指せないので拒否。
+    assert_eq!(resolve(&conn, "shadow", true).await, None);
+    // WITHOUT ROWID は必ず PK を持ち、rowid ではなく PK で解決される。
+    assert_eq!(
+        kind(resolve(&conn, "wr", true).await).map(|k| k.0),
+        Some(t::RowKeyKind::PrimaryKey)
+    );
+    // ビューには PK も rowid も無い。
+    assert_eq!(resolve(&conn, "vw", true).await, None);
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn unique_key_pairing_requires_the_target_to_guarantee_uniqueness() {
+    let (path, conn) = row_key_conn("target").await;
+    conn.execute(
+        "CREATE TABLE src (email TEXT NOT NULL UNIQUE, v TEXT)",
+        None,
+    )
+    .await
+    .expect("src");
+    conn.execute(
+        "CREATE TABLE tgt_ok (Email TEXT NOT NULL UNIQUE, v TEXT)",
+        None,
+    )
+    .await
+    .expect("tgt_ok");
+    conn.execute("CREATE TABLE tgt_ng (email TEXT NOT NULL, v TEXT)", None)
+        .await
+        .expect("tgt_ng");
+    let key = resolve(&conn, "src", false).await.expect("key").columns;
+    for (table, expected) in [("tgt_ok", true), ("tgt_ng", false)] {
+        let cols = conn.columns("main", table).await.expect("columns");
+        let idx = conn.list_indexes("main", table).await.expect("indexes");
+        assert_eq!(
+            t::key_is_unique_in(t::DriverKind::Sqlite, &key, &cols, &idx),
+            expected,
+            "{table}"
+        );
+    }
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn unique_only_table_compares_and_syncs_to_convergence() {
+    let (p1, src) = row_key_conn("e2e_src").await;
+    let (p2, tgt) = row_key_conn("e2e_tgt").await;
+    let ddl = "CREATE TABLE accounts (email TEXT NOT NULL UNIQUE, plan TEXT)";
+    src.execute(ddl, None).await.expect("src ddl");
+    tgt.execute(ddl, None).await.expect("tgt ddl");
+    src.execute(
+        "INSERT INTO accounts VALUES ('a@x', 'pro'), ('b@x', 'free'), ('c@x', 'pro')",
+        None,
+    )
+    .await
+    .expect("seed src");
+    tgt.execute(
+        "INSERT INTO accounts VALUES ('a@x', 'free'), ('b@x', 'free'), ('z@x', 'free')",
+        None,
+    )
+    .await
+    .expect("seed tgt");
+
+    let cols = src.columns("main", "accounts").await.expect("columns");
+    let key = src
+        .resolve_row_key("main", "accounts", &cols, false)
+        .await
+        .expect("resolve")
+        .expect("unique key");
+    assert_eq!(key.kind, t::RowKeyKind::UniqueKey);
+    let columns: Vec<String> = cols.iter().map(|c| c.name.clone()).collect();
+    let pk_idx: Vec<usize> = key
+        .columns
+        .iter()
+        .filter_map(|k| columns.iter().position(|c| c == k))
+        .collect();
+    let select = "SELECT email, plan FROM accounts ORDER BY email";
+    let src_rows = src.execute(select, None).await.expect("src rows").rows;
+    let tgt_rows = tgt.execute(select, None).await.expect("tgt rows").rows;
+    let row_diffs = t::compute_data_diff(&columns, &pk_idx, &src_rows, &tgt_rows);
+    // update a@x, insert c@x, delete z@x。
+    assert_eq!(row_diffs.len(), 3, "got: {row_diffs:?}");
+    let diff = t::DataDiff {
+        key_kind: key.kind,
+        target_driver: t::DriverKind::Sqlite,
+        table: "accounts".to_string(),
+        column_types: vec!["TEXT".to_string(); columns.len()],
+        columns: columns.clone(),
+        primary_key: key.columns,
+        rows: row_diffs,
+        truncated: false,
+        source_count: src_rows.len(),
+        target_count: tgt_rows.len(),
+        generated_columns: Vec::new(),
+    };
+    let plan = t::generate_data_sync_sql(&diff, true);
+    let sqls: Vec<String> = plan.statements.iter().map(|st| st.sql.clone()).collect();
+    tgt.execute_sync_transaction(&sqls, None)
+        .await
+        .expect("apply plan");
+    let tgt_after = tgt.execute(select, None).await.expect("re-read").rows;
+    assert!(t::compute_data_diff(&columns, &pk_idx, &src_rows, &tgt_after).is_empty());
+    src.close().await;
+    tgt.close().await;
+    let _ = std::fs::remove_file(&p1);
+    let _ = std::fs::remove_file(&p2);
 }

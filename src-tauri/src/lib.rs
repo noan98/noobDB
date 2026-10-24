@@ -61,6 +61,7 @@ pub mod __test_api {
     };
     pub use crate::db::inspector::{normalize_sql_fingerprint, NPlusOneOptions, StatementDeltaRow};
     pub use crate::db::js_compat::{collation_key, js_number_to_string, js_to_number};
+    pub use crate::db::masking::{ColumnMask, DatePrecision, MaskRule};
     pub use crate::db::privileges::{
         generate_alter_password_sql, generate_create_user_sql, generate_drop_user_sql,
         generate_grant_sql, generate_revoke_sql, generate_role_grant_sql, generate_role_revoke_sql,
@@ -105,6 +106,7 @@ pub mod __test_api {
         is_session_init_sql_for, sql_may_change_schema, AutoLimitSkip, Connection,
         DbConnectOptions, DriverKind, SslMode, WriteCapture, WriteKind,
     };
+    pub use crate::db::{key_is_unique_in, ResolvedRowKey, RowKeyKind};
     pub use crate::error::AppError;
     pub use crate::flight_recorder::undo::{
         build_redo_plan, build_undo_plan, UndoConflict, UndoPlan,

@@ -384,3 +384,21 @@ describe("レイテンシ履歴とスパークライン (#1630)", () => {
     expect(g.thresholdY).toBe(0);
   });
 });
+
+describe("sparklineGeometry neutral (#1833)", () => {
+  it("閾値を超える値でも段階色を付けず、縦軸は最小〜最大に張る", () => {
+    const g = sparklineGeometry([100, 5000], 10, 20, 2, true);
+    expect(g.segments[0].level).toBe("good");
+    expect(g.segments[0].y1).toBe(20);
+    expect(g.segments[0].y2).toBe(0);
+  });
+  it("全点が同値なら中央の水平線", () => {
+    const g = sparklineGeometry([7, 7, 7], 10, 20, 3, true);
+    expect(g.segments.every((s) => s.y1 === 10 && s.y2 === 10)).toBe(true);
+  });
+  it("NaN は欠測扱いで縦軸を壊さない", () => {
+    const g = sparklineGeometry([1, Number.NaN, 3], 10, 20, 3, true);
+    expect(g.maxMs).toBe(3);
+    expect(g.segments.every((s) => Number.isFinite(s.y1) && Number.isFinite(s.y2))).toBe(true);
+  });
+});

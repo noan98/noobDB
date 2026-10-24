@@ -349,6 +349,7 @@ pub fn build_undo_plan_with_generated(
 
     let row_count = rows.len();
     let diff = DataDiff {
+        key_kind: Default::default(),
         target_driver: driver,
         table: record.table.clone(),
         columns: record.columns.clone(),

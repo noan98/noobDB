@@ -95,6 +95,7 @@ async fn init_schema(pool: &SqlitePool) -> Result<()> {
             columns      TEXT NOT NULL,
             column_types TEXT NOT NULL,
             primary_key  TEXT NOT NULL,
+            key_kind     TEXT NOT NULL DEFAULT 'primary_key',
             rows_json    TEXT NOT NULL,
             row_count    INTEGER NOT NULL,
             truncated    INTEGER NOT NULL,
@@ -103,6 +104,19 @@ async fn init_schema(pool: &SqlitePool) -> Result<()> {
     )
     .execute(pool)
     .await?;
+    // #1838: 既存の DB には行識別子の種類の列が無いので足す (既存世代は PK 扱い)。
+    let has_key_kind: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pragma_table_info('generation') WHERE name = 'key_kind')",
+    )
+    .fetch_one(pool)
+    .await?;
+    if !has_key_kind {
+        sqlx::query(
+            "ALTER TABLE generation ADD COLUMN key_kind TEXT NOT NULL DEFAULT 'primary_key'",
+        )
+        .execute(pool)
+        .await?;
+    }
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_generation_watch ON generation(watch_id, id DESC)")
         .execute(pool)
         .await?;
@@ -320,8 +334,8 @@ async fn record_generation_in(
     sqlx::query(
         "INSERT INTO generation
             (watch_id, captured_at, fingerprint, columns, column_types, primary_key,
-             rows_json, row_count, truncated, bytes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             key_kind, rows_json, row_count, truncated, bytes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(watch_id)
     .bind(captured_at)
@@ -329,6 +343,7 @@ async fn record_generation_in(
     .bind(columns)
     .bind(column_types)
     .bind(primary_key)
+    .bind(snapshot.key_kind.as_str())
     .bind(rows_json)
     .bind(snapshot.rows.len() as i64)
     .bind(snapshot.truncated)
@@ -399,7 +414,7 @@ async fn vacuum(pool: &SqlitePool) {
 
 async fn load_generation_in(pool: &SqlitePool, id: i64) -> Result<StoredGeneration> {
     let r = sqlx::query(
-        "SELECT g.watch_id, g.captured_at, g.columns, g.column_types, g.primary_key,
+        "SELECT g.watch_id, g.captured_at, g.columns, g.column_types, g.primary_key, g.key_kind,
                 g.rows_json, g.truncated, w.driver, w.table_name
            FROM generation g JOIN watch w ON w.id = g.watch_id
           WHERE g.id = ?",
@@ -421,6 +436,7 @@ async fn load_generation_in(pool: &SqlitePool, id: i64) -> Result<StoredGenerati
             columns,
             column_types,
             primary_key,
+            key_kind: crate::db::RowKeyKind::from_wire(&r.try_get::<String, _>("key_kind")?),
             rows,
             truncated: r.try_get("truncated")?,
         },
@@ -498,6 +514,7 @@ mod tests {
             columns: vec!["id".into(), "price".into()],
             column_types: vec!["INTEGER".into(), "INTEGER".into()],
             primary_key: vec!["id".into()],
+            key_kind: Default::default(),
             rows: vec![vec![Value::Int(1), Value::Int(price)]],
             truncated: false,
         }
@@ -651,5 +668,70 @@ mod tests {
         assert_eq!(gen.table, "t");
         assert_eq!(gen.snapshot, snap(7));
         assert!(load_generation_in(&pool, 9999).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn key_kind_round_trips_for_every_kind() {
+        use crate::db::RowKeyKind;
+        let pool = temp_pool().await;
+        for (n, kind) in [
+            RowKeyKind::PrimaryKey,
+            RowKeyKind::UniqueKey,
+            RowKeyKind::Rowid,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let w = upsert_watch_in(&pool, "p", "sqlite", "main", &format!("t{n}"), false)
+                .await
+                .unwrap();
+            let mut s = snap(1);
+            s.key_kind = kind;
+            record(&pool, w, &s, 10).await;
+            let watches = list_watches_in(&pool, "p").await.unwrap();
+            let watch = watches.iter().find(|x| x.id == w).unwrap();
+            let loaded = load_generation_in(&pool, watch.generations[0].id)
+                .await
+                .unwrap();
+            assert_eq!(loaded.snapshot.key_kind, kind);
+        }
+    }
+
+    #[tokio::test]
+    async fn init_schema_migrates_old_schema_and_is_idempotent() {
+        let pool = SqlitePoolOptions::new()
+            .min_connections(1)
+            .max_connections(1)
+            .connect_with(SqliteConnectOptions::new().filename(":memory:"))
+            .await
+            .unwrap();
+        // key_kind 列が無い旧スキーマ。
+        sqlx::query(
+            "CREATE TABLE watch (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, profile_id TEXT NOT NULL,
+                driver TEXT NOT NULL, \"database\" TEXT NOT NULL, table_name TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1, partial INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL, UNIQUE (profile_id, \"database\", table_name))",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE generation (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                watch_id INTEGER NOT NULL REFERENCES watch(id) ON DELETE CASCADE,
+                captured_at TEXT NOT NULL, fingerprint TEXT NOT NULL, columns TEXT NOT NULL,
+                column_types TEXT NOT NULL, primary_key TEXT NOT NULL, rows_json TEXT NOT NULL,
+                row_count INTEGER NOT NULL, truncated INTEGER NOT NULL, bytes INTEGER NOT NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        init_schema(&pool).await.unwrap();
+        init_schema(&pool).await.unwrap();
+        let w = upsert_watch_in(&pool, "p", "sqlite", "main", "t", false)
+            .await
+            .unwrap();
+        assert!(record(&pool, w, &snap(1), 10).await);
     }
 }

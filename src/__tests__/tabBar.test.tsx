@@ -49,6 +49,26 @@ describe("TabBar render smoke (#604)", () => {
   });
 });
 
+describe("TabBar 追従スクロール (#1832)", () => {
+  it("マウント直後は即時、アクティブタブ切替は inline: nearest 込みの smooth", () => {
+    let t = 1e9;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => (t += 1000));
+    const scroll = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      const props = { tabs: TABS, onSelect: () => {}, onClose: () => {}, onNew: () => {} };
+      const { rerender } = renderWithProviders(<TabBar {...props} activeTabId="t1" />);
+      expect(scroll).toHaveBeenLastCalledWith({ inline: "nearest", block: "nearest", behavior: "auto" });
+      rerender(<TabBar {...props} activeTabId="t2" />);
+      expect(scroll).toHaveBeenLastCalledWith({ inline: "nearest", block: "nearest", behavior: "smooth" });
+    } finally {
+      Element.prototype.scrollIntoView = original;
+      clock.mockRestore();
+    }
+  });
+});
+
 describe("TabBar rename (#1390)", () => {
   function setup(renamingTabId: string | null = "t1") {
     const fns = {

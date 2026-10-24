@@ -268,6 +268,7 @@ export function ImportSheetsModal({
     <Modal
       onSubmit={handleImport}
       submitDisabled={!canImport}
+      submitBusy={importing}
       width="680px"
       onClose={onClose}
       closeOnInteractOutside={!importing}

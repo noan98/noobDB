@@ -439,6 +439,20 @@ pub struct RoutineSignature {
     pub return_type: Option<String>,
 }
 
+/// `SchemaObject.kind` が取りうる値の全集合 (#1840)。`kind` は DB のカタログ値を運ぶ
+/// `String` で enum が無いため、ここを唯一の定義とし、3 ドライバの `schema_objects` が
+/// 吐く値がこの集合に収まること・フロント `SchemaObjectKind` と一致することを
+/// テスト (共有ゴールデン `schemaObjectKinds.json`) で固定する。値を足すときは
+/// TS union・ゴールデン・本定数を揃える。
+#[cfg(test)]
+pub const SCHEMA_OBJECT_KINDS: &[&str] = &[
+    "view",
+    "materialized_view",
+    "procedure",
+    "function",
+    "trigger",
+];
+
 /// A non-table schema object: a view, materialized view, stored
 /// procedure, function, or trigger. `kind` is one of `view` /
 /// `materialized_view` / `procedure` / `function` / `trigger` so the UI can
@@ -1647,6 +1661,180 @@ impl From<&TableDdlExtras> for TableExtrasInfo {
                 })
                 .collect(),
             generated: e.generated.clone(),
+        }
+    }
+}
+
+/// `SchemaObject.kind` の Rust ⇔ TS 集合一致を固定するテスト (#1840)。
+#[cfg(test)]
+mod schema_object_kind_tests {
+    use super::SCHEMA_OBJECT_KINDS;
+    use crate::db::where_used::supports_kind;
+    use crate::db::DriverKind;
+    use std::collections::BTreeSet;
+
+    /// `fn_head` で始まるメソッドの本体 (4 スペースインデントの `    }` まで) を返す。
+    /// 見つからない / 終端が無いときは原因を示して落とす (黙って末尾まで読まない)。
+    fn method_body<'a>(src: &'a str, fn_head: &str) -> &'a str {
+        let Some(start) = src.find(fn_head) else {
+            panic!("`{fn_head}` がソースに見つからない (関数名の変更? 抽出ロジックを直す)");
+        };
+        let rest = &src[start..];
+        // Windows の checkout は autocrlf で CRLF になるため、LF / CRLF の両方を終端とみなす。
+        let Some(end) = rest
+            .find("\n    }\n")
+            .into_iter()
+            .chain(rest.find("\r\n    }\r\n"))
+            .min()
+        else {
+            panic!("`{fn_head}` の終端 (4 スペースの `    }}`) が見つからない (整形の変更? 抽出ロジックを直す)");
+        };
+        &rest[..end]
+    }
+
+    /// PostgreSQL: SQL 中の `SELECT '<kind>'` / `THEN '<kind>'` / `ELSE '<kind>'`。
+    ///
+    /// 本体の空白を正規化してから照合し、キーワードに続く空でないリテラルは文字種に
+    /// 関わらずすべて kind とみなす (`'sequence'` のような新種別や、想定外の文字を含む値も
+    /// 集合に入り、定数との不一致で落ちる)。UNION ALL の数 + 1 と SELECT 分岐の数が合う
+    /// ことも検査し、分岐の書き方が変わって抽出が漏れる事態を検出する。
+    fn postgres_kinds() -> BTreeSet<String> {
+        let body = method_body(include_str!("postgres.rs"), "pub async fn schema_objects(");
+        let norm = body.split_whitespace().collect::<Vec<_>>().join(" ");
+        let selects = norm.matches("SELECT ").count();
+        let unions = norm.matches("UNION ALL").count();
+        assert_eq!(
+            selects,
+            unions + 1,
+            "SELECT 分岐数と UNION ALL 数 + 1 が不一致 (抽出ロジックが分岐を見逃している)"
+        );
+        let mut out = BTreeSet::new();
+        for kw in ["SELECT '", "THEN '", "ELSE '"] {
+            for chunk in norm.split(kw).skip(1) {
+                let lit = chunk.split('\'').next().unwrap_or_default();
+                if !lit.is_empty() {
+                    out.insert(lit.to_string());
+                }
+            }
+        }
+        out
+    }
+
+    /// MySQL: Rust 側が書く kind リテラル。次の 3 つの形だけを拾う。
+    /// `"<kind>".into()` / `String::from("<kind>")` / `if .. { "<kind>" } else { "<kind>" }`
+    /// (後者はルーチン種別の振り分け。波括弧で直接囲まれたリテラルのみ)。
+    ///
+    /// 限界: `to_lowercase()` など動的に組み立てた kind は検出できない。そのため
+    /// kind は必ず**小文字のリテラル**で書くこと。別の書き方に変えると抽出が不足し、
+    /// 定数・ゴールデンとの不一致で落ちる (見逃して通ることはない)。
+    fn mysql_kinds() -> BTreeSet<String> {
+        let body = method_body(include_str!("mysql.rs"), "pub async fn schema_objects(");
+        let norm = body.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut out = BTreeSet::new();
+        // `"lit".into()` / `"lit".to_string()`: 直前が閉じ引用符のものだけ。
+        for suffix in [".into()", ".to_string()"] {
+            for chunk in norm.split(suffix) {
+                if let Some(rest) = chunk.strip_suffix('"') {
+                    if let Some(lit) = rest.rsplit('"').next() {
+                        out.insert(lit.to_string());
+                    }
+                }
+            }
+        }
+        for (open, close) in [("String::from(\"", "\")"), ("{ \"", "\" }")] {
+            for chunk in norm.split(open).skip(1) {
+                if let Some(lit) = chunk.split(close).next() {
+                    // 閉じ側が同じ直後に無いもの (別の式の途中) は引用符を含むので除く。
+                    if !lit.contains('"') {
+                        out.insert(lit.to_string());
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// SQLite: `sqlite_master.type IN (...)` に列挙した値がそのまま kind になる。
+    fn sqlite_kinds() -> BTreeSet<String> {
+        let body = method_body(include_str!("sqlite.rs"), "pub async fn schema_objects(");
+        let Some(after) = body.split("type IN (").nth(1) else {
+            panic!("sqlite の schema_objects に `type IN (...)` が見つからない");
+        };
+        let list = after.split(')').next().unwrap_or_default();
+        list.split(',')
+            .map(|t| t.trim().trim_matches('\'').to_string())
+            .filter(|t| !t.is_empty())
+            .collect()
+    }
+
+    fn set(items: &[&str]) -> BTreeSet<String> {
+        items.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    fn golden() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../../../src/__tests__/fixtures/schemaObjectKinds.json"
+        ))
+        .expect("schemaObjectKinds.json をパースできない")
+    }
+
+    fn json_set(v: &serde_json::Value) -> BTreeSet<String> {
+        let a = v.as_array().expect("配列であること");
+        a.iter()
+            .map(|x| x.as_str().expect("文字列であること").to_string())
+            .collect()
+    }
+
+    #[test]
+    fn drivers_emit_only_known_kinds_and_cover_all() {
+        let all = set(SCHEMA_OBJECT_KINDS);
+        assert_eq!(all.len(), SCHEMA_OBJECT_KINDS.len(), "重複がある");
+        let (pg, my, lite) = (postgres_kinds(), mysql_kinds(), sqlite_kinds());
+        for (name, kinds) in [("postgres", &pg), ("mysql", &my), ("sqlite", &lite)] {
+            assert!(!kinds.is_empty(), "{name}: kind を抽出できなかった");
+            let unknown: Vec<_> = kinds.difference(&all).collect();
+            assert!(
+                unknown.is_empty(),
+                "{name} が SCHEMA_OBJECT_KINDS に無い kind を吐く: {unknown:?}"
+            );
+        }
+        // 定数だけ増やして誰も吐かない kind も許さない (集合が実態と乖離するため)。
+        let emitted: BTreeSet<String> = pg.iter().chain(&my).chain(&lite).cloned().collect();
+        assert_eq!(emitted, all, "ドライバが吐く kind の和集合と定数が不一致");
+    }
+
+    #[test]
+    fn kinds_match_the_shared_golden() {
+        let g = golden();
+        assert_eq!(
+            json_set(&g["kinds"]),
+            set(SCHEMA_OBJECT_KINDS),
+            "schemaObjectKinds.json の kinds と SCHEMA_OBJECT_KINDS が不一致"
+        );
+        assert_eq!(json_set(&g["drivers"]["postgres"]), postgres_kinds());
+        assert_eq!(json_set(&g["drivers"]["mysql"]), mysql_kinds());
+        assert_eq!(json_set(&g["drivers"]["sqlite"]), sqlite_kinds());
+    }
+
+    /// 定義取得の対応表 (`where_used::supports_kind`) をゴールデンの drivers に結び付ける。
+    #[test]
+    fn where_used_support_matches_the_golden_drivers() {
+        let g = golden();
+        for (key, driver) in [
+            ("mysql", DriverKind::Mysql),
+            ("postgres", DriverKind::Postgres),
+            ("sqlite", DriverKind::Sqlite),
+        ] {
+            let supported: BTreeSet<String> = SCHEMA_OBJECT_KINDS
+                .iter()
+                .filter(|k| supports_kind(driver, k))
+                .map(|k| (*k).to_string())
+                .collect();
+            assert_eq!(
+                supported,
+                json_set(&g["drivers"][key]),
+                "{key}: supports_kind で絞った kind とゴールデンの drivers が不一致"
+            );
         }
     }
 }

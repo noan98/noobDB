@@ -36,6 +36,7 @@ const { SCHEMA_DIFF, TABLE_DIFF } = vi.hoisted(() => ({
       columns: ["id"],
       column_types: ["INTEGER"],
       primary_key: ["id"],
+      key_kind: "primary_key",
       rows: [],
       truncated: false,
       source_count: 0,

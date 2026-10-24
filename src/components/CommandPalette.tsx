@@ -27,6 +27,7 @@ import {
   type CommandItem,
   type ScoredItem,
 } from "./commandPaletteSearch";
+import { scrollFollowIntoView } from "./scrollFollow";
 
 // motion 用 props は Chakra のスタイルプロップ名 (`transition`) と衝突したり、
 // スタイルプロップ以外は既定で無視されたりするため、必要なものだけ明示的に転送する
@@ -115,7 +116,7 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
   useEffect(() => {
     const active = flat[activeIndex];
     if (!active) return;
-    itemRefs.current.get(active.item.id)?.scrollIntoView({ block: "nearest" });
+    scrollFollowIntoView(itemRefs.current.get(active.item.id));
   }, [activeIndex, flat]);
 
   // 行は memo されているので、ハンドラは参照が変わらないよう最新値を ref 経由で読む。

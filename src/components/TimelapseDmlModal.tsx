@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { chakra } from "@chakra-ui/react";
+import type { RowKeyKind } from "../api/tauri";
 import { useT } from "../i18n";
 import { buildTimelapseDml, type TimelapseDmlDirection, type TimelapseExportRow } from "../tableTimelapse";
 import { Callout } from "./Callout";
@@ -16,6 +17,7 @@ interface Props {
   driver: string;
   database: string;
   table: string;
+  keyKind?: RowKeyKind;
   onClose: () => void;
 }
 
@@ -27,7 +29,7 @@ const PREVIEW_LINES = 300;
  * モーダル (#1624)。**実行はしない** (実行する IPC を呼ばない)。置き場は Modal: 差分を見たあと
  * 生成結果を確認してコピーするだけの一時的な操作のため。
  */
-export function TimelapseDmlModal({ rows, maskedColumns, driver, database, table, onClose }: Props) {
+export function TimelapseDmlModal({ rows, maskedColumns, driver, database, table, keyKind, onClose }: Props) {
   const t = useT();
   const { copied, copy } = useCopyFeedback();
   const [direction, setDirection] = useState<TimelapseDmlDirection>("revert");
@@ -40,10 +42,11 @@ export function TimelapseDmlModal({ rows, maskedColumns, driver, database, table
         table,
         direction,
         maskedColumns,
+        keyKind,
         header: t("timelapseDmlHeader"),
         skippedComment: (key) => t("timelapseDmlSkipped", { key }),
       }),
-    [rows, driver, database, table, direction, maskedColumns, t],
+    [rows, driver, database, table, direction, maskedColumns, keyKind, t],
   );
   const lines = result.sql.split("\n");
   const preview =

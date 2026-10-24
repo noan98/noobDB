@@ -394,6 +394,7 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
     <Modal
       onSubmit={() => handleRun()}
       submitDisabled={busy || !path.trim()}
+      submitBusy={busy}
       width="640px"
       onClose={onClose}
       closeOnInteractOutside={!busy}

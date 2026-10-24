@@ -14,6 +14,7 @@ import { DropInsertionMarker } from "./DropInsertionMarker";
 import { FlightIcon } from "./FlightIcon";
 import { isImeComposing } from "./modalKeys";
 import { tabOpenFlightId, useTabOpenFlight } from "../sharedElement";
+import { scrollFollowIntoView } from "./scrollFollow";
 
 // キーボードフォーカスリング。単一ソースの `--focus-ring` (App.css) をそのまま使う。
 const focusRing = "var(--focus-ring)";
@@ -367,13 +368,16 @@ export const TabBar = memo(function TabBar({
     };
   }, [recomputeOverflow, tabs.length]);
 
+  const mountedRef = useRef(false);
   // Keep the active tab visible — when selection moves to an off-screen tab
   // (e.g. via keyboard or programmatic open), scroll it into view horizontally.
   // biome-ignore lint/correctness/useExhaustiveDependencies: tabs.length はタブ追加/削除時にアクティブタブを再度表示域へ入れるためのトリガーとして意図的に依存へ含めている
   useEffect(() => {
     if (!activeTabId) return;
     const el = tabRefs.current.get(activeTabId);
-    el?.scrollIntoView({ inline: "nearest", block: "nearest" });
+    // マウント直後の 1 回 (セッション復元時など) は即時、以降のタブ切替・追加は smooth。
+    scrollFollowIntoView(el, { inline: "nearest", block: "nearest", instant: !mountedRef.current });
+    mountedRef.current = true;
   }, [activeTabId, tabs.length]);
 
   const scrollBy = useCallback((dir: -1 | 1) => {

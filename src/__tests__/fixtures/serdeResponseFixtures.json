@@ -956,6 +956,7 @@
       "id",
       "name"
     ],
+    "key_kind": "primary_key",
     "primary_key": [
       "id"
     ],
@@ -995,6 +996,7 @@
         "id",
         "name"
       ],
+      "key_kind": "primary_key",
       "primary_key": [
         "id"
       ],
@@ -1034,6 +1036,7 @@
       "columns": [
         "id"
       ],
+      "key_kind": "primary_key",
       "primary_key": [
         "id"
       ],
@@ -1094,6 +1097,7 @@
       "columns": [
         "id"
       ],
+      "key_kind": "unique_key",
       "primary_key": [
         "id"
       ],
@@ -1154,6 +1158,7 @@
       "columns": [
         "id"
       ],
+      "key_kind": "rowid",
       "primary_key": [
         "id"
       ],
@@ -2539,6 +2544,7 @@
         "id",
         "name"
       ],
+      "key_kind": "primary_key",
       "primary_key": [
         "id"
       ],
@@ -5827,6 +5833,50 @@
         "database": "appdb",
         "format": "sql",
         "kind": "export_query",
+        "masks": [
+          {
+            "column": "email",
+            "rule": {
+              "keepStart": 1,
+              "kind": "email"
+            }
+          },
+          {
+            "column": "h",
+            "rule": {
+              "kind": "hash",
+              "length": 16
+            }
+          },
+          {
+            "column": "f",
+            "rule": {
+              "kind": "fixed",
+              "value": "***"
+            }
+          },
+          {
+            "column": "p",
+            "rule": {
+              "keepEnd": 2,
+              "keepStart": 1,
+              "kind": "partial"
+            }
+          },
+          {
+            "column": "n",
+            "rule": {
+              "kind": "null"
+            }
+          },
+          {
+            "column": "d",
+            "rule": {
+              "kind": "date",
+              "precision": "month"
+            }
+          }
+        ],
         "output_path": "/tmp/out.sql",
         "sql": "SELECT 1",
         "sql_batch_size": 100,
@@ -5998,6 +6048,7 @@
         "database": null,
         "format": "csv",
         "kind": "export_query",
+        "masks": [],
         "output_path": "/tmp/out",
         "sql": "SELECT 1",
         "sql_batch_size": null,
@@ -6029,6 +6080,7 @@
         "database": null,
         "format": "json",
         "kind": "export_query",
+        "masks": [],
         "output_path": "/tmp/out",
         "sql": "SELECT 1",
         "sql_batch_size": null,
@@ -6060,6 +6112,7 @@
         "database": null,
         "format": "ndjson",
         "kind": "export_query",
+        "masks": [],
         "output_path": "/tmp/out",
         "sql": "SELECT 1",
         "sql_batch_size": null,
@@ -6091,6 +6144,7 @@
         "database": null,
         "format": "markdown",
         "kind": "export_query",
+        "masks": [],
         "output_path": "/tmp/out",
         "sql": "SELECT 1",
         "sql_batch_size": null,
@@ -6122,6 +6176,7 @@
         "database": null,
         "format": "sql",
         "kind": "export_query",
+        "masks": [],
         "output_path": "/tmp/out",
         "sql": "SELECT 1",
         "sql_batch_size": null,
@@ -6153,6 +6208,7 @@
         "database": null,
         "format": "xlsx",
         "kind": "export_query",
+        "masks": [],
         "output_path": "/tmp/out",
         "sql": "SELECT 1",
         "sql_batch_size": null,
@@ -6222,6 +6278,7 @@
         "id",
         "name"
       ],
+      "key_kind": "primary_key",
       "primary_key": [
         "id"
       ],
@@ -6252,6 +6309,7 @@
       "truncated": false
     },
     "from_captured_at": "2026-01-01T00:00:00Z",
+    "key_changed": true,
     "partial": false,
     "to_captured_at": "2026-01-02T00:00:00Z"
   },
@@ -6280,6 +6338,7 @@
       }
     ],
     "generations_scanned": 2,
+    "key_kind": "primary_key",
     "partial": false,
     "primary_key": [
       "id"

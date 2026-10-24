@@ -299,6 +299,16 @@ export const directionalSlide = {
   exit: (dir: number) => ({ opacity: 0, x: dir * -slideOffsets.row }),
 } satisfies Variants;
 
+/** reduced-motion (OS / アプリ設定 #787) が有効か。`data-motion` が OS 設定より優先する。 */
+export function reducedMotionActive(): boolean {
+  const motion = document.documentElement.getAttribute("data-motion");
+  if (motion === "reduced") return true;
+  if (motion === "full") return false;
+  return (
+    typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
 /**
  * `directionalSlide` の入場を、開始値を明示したキーフレームで返す (#1830)。keep-alive の
  * ように要素を残したまま表示を切り替える場合は `initial` が使えず、非表示中の値 (前回の

@@ -942,6 +942,8 @@ const rowDiff = z.object({
   changed_columns: z.array(z.string()),
 });
 
+export const rowKeyKind = z.enum(["primary_key", "unique_key", "rowid"]);
+
 export const dataDiff = z.object({
   target_driver: driverKind,
   table: z.string(),
@@ -949,6 +951,7 @@ export const dataDiff = z.object({
   /** `columns` と同じ並びの型名。BLOB 列を復元して sql_literal の補正に使う (修正3)。 */
   column_types: z.array(z.string()),
   primary_key: z.array(z.string()),
+  key_kind: rowKeyKind,
   rows: z.array(rowDiff),
   truncated: z.boolean(),
   source_count: z.number(),
@@ -1006,6 +1009,7 @@ export const timelapseCaptureOutcome = z.object({
 export const timelapseCaptureOutcomeArray = z.array(timelapseCaptureOutcome);
 
 export const timelapseGenerationDiff = z.object({
+  key_changed: z.boolean(),
   diff: dataDiff,
   columns_added: z.array(z.string()),
   columns_removed: z.array(z.string()),
@@ -1017,6 +1021,7 @@ export const timelapseGenerationDiff = z.object({
 export const timelapseRowHistory = z.object({
   columns: z.array(z.string()),
   primary_key: z.array(z.string()),
+  key_kind: rowKeyKind,
   entries: z.array(
     z.object({
       generation_id: z.number(),
@@ -2070,6 +2075,16 @@ const dumpOptions = z.object({
 // 定期タスクが `list_tasks` の zod 検証で落ちる (#1195 の全バリアントゴールデンが検出)。
 const exportFormat = z.enum(["csv", "json", "ndjson", "markdown", "sql", "xlsx"]);
 
+// `db::masking::MaskRule` / `ColumnMask` と同形 (タスクのマスク設定, #1836)。
+const maskRule = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("fixed"), value: z.string() }),
+  z.object({ kind: z.literal("partial"), keepStart: z.number(), keepEnd: z.number() }),
+  z.object({ kind: z.literal("hash"), length: z.number() }),
+  z.object({ kind: z.literal("null") }),
+  z.object({ kind: z.literal("email"), keepStart: z.number() }),
+  z.object({ kind: z.literal("date"), precision: z.enum(["year", "month"]) }),
+]);
+
 const taskAction = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("export_query"),
@@ -2079,6 +2094,7 @@ const taskAction = z.discriminatedUnion("kind", [
     output_path: z.string(),
     sql_table: z.string().nullable().optional(),
     sql_batch_size: z.number().nullable().optional(),
+    masks: z.array(z.object({ column: z.string(), rule: maskRule })).optional(),
   }),
   z.object({
     kind: z.literal("dump"),

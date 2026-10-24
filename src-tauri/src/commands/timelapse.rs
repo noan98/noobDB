@@ -12,12 +12,12 @@ use tauri::State;
 
 use super::diff::{select_rows_sql, MAX_DATA_ROWS};
 use super::query::ensure_allowed_for_session;
-use crate::db::DriverKind;
+use crate::db::{DriverKind, RowKeyKind, ROWID_COLUMN};
 use crate::error::{AppError, Result};
 use crate::state::{AppState, Session};
 use crate::timelapse::{
-    clamp_max_generations, diff_snapshots, store, GenerationDiff, RowHistory, RowHistoryBuilder,
-    Snapshot, TableWatch,
+    clamp_max_generations, diff_snapshots, key_changed, store, GenerationDiff, RowHistory,
+    RowHistoryBuilder, Snapshot, TableWatch,
 };
 
 /// `timelapse_watch_table` の結果。
@@ -60,8 +60,8 @@ fn profile_of(session: &Session) -> Result<String> {
     })
 }
 
-/// テーブルのスナップショットを 1 回取得する。PK が無ければ拒否 (行の同一性を
-/// 追えないため。`compare_table_data` と同じ制約)。上限 + 1 行を読んで打ち切りを
+/// テーブルのスナップショットを 1 回取得する。行の識別子が取れなければ拒否 (行の同一性を
+/// 追えないため)。上限 + 1 行を読んで打ち切りを
 /// 検出し、`truncated` を立てる。
 async fn fetch_snapshot(session: &Session, database: &str, table: &str) -> Result<Snapshot> {
     let driver = session.conn.driver_kind();
@@ -71,18 +71,27 @@ async fn fetch_snapshot(session: &Session, database: &str, table: &str) -> Resul
             "table '{table}' has no columns (does it exist?)"
         )));
     }
-    let columns: Vec<String> = col_info.iter().map(|c| c.name.clone()).collect();
-    let column_types: Vec<String> = col_info.iter().map(|c| c.data_type.clone()).collect();
-    let primary_key: Vec<String> = col_info
-        .iter()
-        .filter(|c| c.key.eq_ignore_ascii_case("PRI"))
-        .map(|c| c.name.clone())
-        .collect();
-    if primary_key.is_empty() {
+    // 行の同一性は PK → UNIQUE NOT NULL → SQLite の rowid の順 (#1838)。同一表の経時比較なので
+    // rowid も使える (2 表間の比較と違い、同じ表の中で世代をまたいで追えればよい)。ただし
+    // VACUUM で振り直される場合があり (INTEGER PRIMARY KEY の別名でない rowid)、PostgreSQL の
+    // ctid は更新や VACUUM で変わるため採らない。
+    let Some(row_key) = session
+        .conn
+        .resolve_row_key(database, table, &col_info, true)
+        .await?
+    else {
         return Err(AppError::InvalidInput(format!(
-            "table '{table}' has no primary key; table timelapse needs one to track rows"
+            "table '{table}' has no primary key, UNIQUE NOT NULL key or usable rowid; table timelapse needs one to track rows"
         )));
+    };
+    let mut columns: Vec<String> = col_info.iter().map(|c| c.name.clone()).collect();
+    let mut column_types: Vec<String> = col_info.iter().map(|c| c.data_type.clone()).collect();
+    if row_key.kind == RowKeyKind::Rowid {
+        // rowid は表の実列ではないので、隠し列として先頭に足して取得・保存する。
+        columns.insert(0, ROWID_COLUMN.to_string());
+        column_types.insert(0, "INTEGER".to_string());
     }
+    let primary_key = row_key.columns;
     let sql = select_rows_sql(driver, table, &columns, &primary_key, MAX_DATA_ROWS + 1);
     ensure_allowed_for_session(session, &sql)?;
     let res = session.conn.execute(&sql, Some(database)).await?;
@@ -92,6 +101,7 @@ async fn fetch_snapshot(session: &Session, database: &str, table: &str) -> Resul
         columns,
         column_types,
         primary_key,
+        key_kind: row_key.kind,
         rows,
         truncated,
     })
@@ -219,6 +229,7 @@ pub async fn timelapse_diff_generations(from_id: i64, to_id: i64) -> Result<Gene
         diff_snapshots(driver, &newer.table, &older.snapshot, &newer.snapshot);
     Ok(GenerationDiff {
         partial: diff.truncated,
+        key_changed: key_changed(&older.snapshot, &newer.snapshot),
         diff,
         columns_added,
         columns_removed,

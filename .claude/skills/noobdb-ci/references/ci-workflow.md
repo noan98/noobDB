@@ -294,3 +294,47 @@ tauri-driver は `taiki-e/install-action` の対応ツールではないため�
 `e2e/screenshots/` と `e2e/logs/` をアーティファクト保存する。
 「3 回連続グリーン」と「15 分以内」は確認済み (2026-10-03 JST、run 18〜20、約 11〜12 分)。
 詳細・testid 一覧は `noobdb-testing` スキルの `references/e2e.md`。
+
+## `mutants-diff.yml` (PR 差分の `cargo mutants --in-diff` / #1841)
+
+`ci.yml` とは別の独立ワークフロー。手動 (`workflow_dispatch`) の `mutants.yml` (全件 4 シャード、
+定期実行ではない。変更しない) の補完として、安全網ファイル (`src-tauri/.cargo/mutants.toml` の
+`examine_globs` と同じ `db/mod.rs` / `mysql.rs` / `postgres.rs` / `sqlite.rs` / `sync.rs` /
+`data_diff.rs` / `lib.rs`、加えて `script_analysis.rs` と `masking.rs`、`mutants.toml` 自体と本
+ワークフロー) を変更した PR だけで起動し、新しく入った未カバー分岐 (生存変異) を PR 時点で報告する。
+**必須チェックにしない** (可視化専用で fail させない)。
+
+- 起動条件はワークフロー単位の `on.pull_request.paths`。必須チェックではないので、`ci.yml` の
+  ような paths-filter + ジョブ単位 `if:` にしなくてよい (スキップで「待機中」固まりが起きない)。
+  `examine_globs` や `EXTRA_FILES` を足す・外すときは `paths:` も揃える。
+- 対象関数・タイムアウト倍率は `mutants.toml` が単一ソース (`mutants.yml` と共有)。そのうえで
+  `mutants.yml` のスコープは変えず、本ジョブだけ CLI で `script_analysis.rs` (危険文の検出) と
+  `masking.rs` (マスク処理) を足す。ワークフローの `EXTRA_FILES` を `-f`、`EXTRA_RE` を `-F` で
+  渡す (実際のコマンドは `cargo mutants --in-diff diff -f src/db/script_analysis.rs
+  -f src/db/masking.rs -F "$EXTRA_RE" ...`。`-f` は配列で組み立てる)。cargo-mutants 27.1 では CLI の
+  `--file` / `--re` は config の `examine_globs` / `examine_re` と**併用 (和集合)** で、置き換えでは
+  ない (`options.rs`。NEWS の「置き換え」は旧仕様)。ファイルだけ足しても config の `examine_re` が
+  関数名で全件落として 0 件になるため、足したファイルの関数名は `EXTRA_RE` にも要る。名前マッチは
+  ファイルを問わないので、同名関数に効く (`is_word_byte` は `db/mod.rs` にもあるため入れない。
+  型 / モジュールで修飾できるものは修飾する)。関数を足す・外すときは `EXTRA_RE` を直し、
+  `cargo mutants --in-diff diff -f <file> -F <re> --list` で確認する。
+- 差分は `git diff --relative=src-tauri origin/<base>...HEAD -- src-tauri > src-tauri/diff`。
+  cargo-mutants は `src-tauri` を木のルートとするため `src-tauri/` 接頭辞を落とす
+  (cargo-mutants 27.1 で `db/mod.rs` / `masking.rs` / `script_analysis.rs` の一時的な差分を使い、
+  変異候補が出ることをローカルで確認済み)。
+- まず `cargo mutants --in-diff diff ... --list --json` で差分内の変異候補を数え (ビルド不要で軽い)、
+  0 件なら apt / ビルド系のステップを丸ごと飛ばす (`lib.rs` だけ触る PR など)。構造体フィールド
+  削除 (`genre == StructField`) は CLI で除外できないので数えるときに除き、除いた件数は Summary に
+  別掲する (本体の実行では走るので実行時間には含まれる。集計からは除外する)。`--list` 自体の失敗 (設定 / 正規表現エラー) は 0 件と区別して Summary と
+  `::warning` に出す。差分が `src-tauri` に及ばず空のときは終了コード 0 / 出力が空になり 0 件扱い。
+- 本体は `--in-place --no-shuffle --in-diff diff` (`--in-place` の理由は `mutants.yml` 参照)。
+  Run ステップは `timeout-minutes: 32` + `continue-on-error: true` で、打ち切られても後段へ進む。
+  生存変異は `outcomes.json` から `$GITHUB_STEP_SUMMARY` に列挙し (`StructField` は除外)、`::warning`
+  も出す。終了コードが 0 / 2 / 3 以外 (baseline 失敗など)、打ち切り、検査件数 0 は「生存 0 件」では
+  なく実行失敗 / 部分結果として表示する。Report は `list` が成功したときだけ走り、Run が
+  `skipped` (前段のセットアップ失敗) なら「実行されていません」、exit_code が空で
+  `failure` / `cancelled` なら「打ち切り」と出し分ける。`mutants.out/` ・diff・list 結果は artifact
+  `mutants-diff-out` (14 日) に保存。ジョブは 40 分で打ち切り、同一 PR の古い run は取り消す。
+- ジョブ ID と `rust-cache` の `key` は `mutants.yml` と同じ `mutants`。main で `mutants.yml` を手動
+  実行したキャッシュは PR の初回 run でも復元されるが、定期実行がないので通常は初回が cold で、
+  同じ PR の 2 回目以降の push から効く。actions は同じ SHA ピン。

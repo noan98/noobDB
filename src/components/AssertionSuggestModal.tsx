@@ -344,6 +344,7 @@ export function AssertionSuggestModal(props: AssertionSuggestModalProps) {
           void (items.length > 0 ? register() : generate());
         }}
         submitDisabled={items.length > 0 ? !canRegister : !canGenerate}
+        submitBusy={running || registering}
       >
         <ModalHeader onClose={props.onClose} closeLabel={t("assertAiClose")}>
           {t("assertAiTitle")}

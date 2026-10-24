@@ -188,6 +188,9 @@ pub struct ColumnMask {
 pub struct MaskSpec {
     masks: Vec<ColumnMask>,
     salt: Vec<u8>,
+    /// true のとき、結果列のどれにも当たらないマスク列名があれば失敗させる
+    /// ([`MaskSpec::check_columns`]。スケジュール実行向け, #1836)。
+    strict: bool,
 }
 
 impl MaskSpec {
@@ -213,7 +216,37 @@ impl MaskSpec {
                 "hash masking requires a salt from the OS keyring".into(),
             ));
         }
-        Ok(Self { masks, salt })
+        Ok(Self {
+            masks,
+            salt,
+            strict: false,
+        })
+    }
+
+    /// 厳格モードにする。手入力の列名が結果列に一致しないと PII が平文で出てしまう
+    /// 無人実行 (スケジューラ) 用 — 対話エクスポートは従来どおり黙って無視する。
+    pub fn strict(mut self) -> Self {
+        self.strict = true;
+        self
+    }
+
+    /// 厳格モードのとき、どの結果列にも完全一致しないマスク列名があればエラー
+    /// (fail closed)。列名は完全一致 (大文字小文字も区別) で、`plan` と同じ規則。
+    pub fn check_columns(&self, columns: &[Column]) -> Result<()> {
+        if !self.strict {
+            return Ok(());
+        }
+        match self
+            .masks
+            .iter()
+            .find(|m| !columns.iter().any(|c| c.name == m.column))
+        {
+            Some(m) => Err(AppError::InvalidInput(format!(
+                "mask target column `{}` does not exist in the result (names must match exactly)",
+                m.column
+            ))),
+            None => Ok(()),
+        }
     }
 
     /// 列一覧に対してルールを解決した適用計画を作る。

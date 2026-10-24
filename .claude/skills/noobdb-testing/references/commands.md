@@ -66,8 +66,9 @@ cargo mutants --in-place
 直し、`cargo mutants --list` で確認する。cargo-mutants は構造体フィールド削除
 (`delete field ...`) の変異に `--re` を適用しないため、`examine_globs` でもファイルを
 絞っている。CI トリガは
-`.github/workflows/mutants.yml` の `workflow_dispatch` (手動) のみで、PR では
-走らせない。**fail させない** (可視化のみ) — バンドルサイズ (#443) ・カバレッジ
+`.github/workflows/mutants.yml` の `workflow_dispatch` (手動) のみ。ただし安全網ファイルを
+触った PR には差分スコープの `.github/workflows/mutants-diff.yml` (`--in-diff`, #1841。
+`script_analysis.rs` / `masking.rs` も対象に足す。詳細は `noobdb-ci` の ci-workflow.md) が走る。**fail させない** (可視化のみ) — バンドルサイズ (#443) ・カバレッジ
 (#482) と同じ漸進方針。生き残り変異 (MISSED) が出たら `db::tests` に境界ケースを
 追記して潰す。生成物 `mutants.out/` は `.gitignore` 済み。
 

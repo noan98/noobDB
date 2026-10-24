@@ -3,6 +3,7 @@
 // 利用者が現在地を見失いやすい。着地領域へ `is-focus-landing` クラスを付け、App.css の
 // `focus-landing-pulse` キーフレームで外枠を一瞬光らせて消す (レイアウトは動かさない)。
 
+import { reducedMotionActive } from "../motion";
 import { isHighContrastDataTheme } from "./revealOrigin";
 
 const LANDING_CLASS = "is-focus-landing";
@@ -29,12 +30,7 @@ export function focusLandingPulseEnabled(): boolean {
   if (typeof window.matchMedia === "function" && window.matchMedia("(forced-colors: active)").matches) {
     return false;
   }
-  const motion = root.getAttribute("data-motion");
-  if (motion === "reduced") return false;
-  if (motion === "full") return true;
-  return !(
-    typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
+  return !reducedMotionActive();
 }
 
 function onLandingEnd(e: Event): void {

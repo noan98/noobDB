@@ -62,6 +62,28 @@ function renderSelect(
   return { onChangeSpy };
 }
 
+describe("ListboxSelect の追従スクロール (#1832)", () => {
+  it("開いた直後は即時、開いた後の矢印移動は smooth", async () => {
+    let t = 1e9;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => (t += 1000));
+    const scroll = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      const user = userEvent.setup();
+      renderSelect();
+      await user.click(screen.getByRole("combobox"));
+      expect(scroll).toHaveBeenCalledWith({ block: "nearest", behavior: "auto" });
+      scroll.mockClear();
+      await user.keyboard("{ArrowDown}");
+      expect(scroll).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
+    } finally {
+      Element.prototype.scrollIntoView = original;
+      clock.mockRestore();
+    }
+  });
+});
+
 describe("ListboxSelect の開閉", () => {
   it("クリックで開き、全候補がリストボックスに表示される", async () => {
     const user = userEvent.setup();

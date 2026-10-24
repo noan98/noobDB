@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { Button, Checkbox, Input, Select } from "./ui";
@@ -31,7 +32,14 @@ interface Props {
   presets: readonly ExportMaskPreset[];
   overrides: ExportMaskOverrides;
   onOverridesChange: (next: ExportMaskOverrides) => void;
-  onSavePreset: (column: string, rule: ExportMaskRule) => void;
+  /** 省略すると列ごとの「プリセットに保存」ボタンを出さない (スケジュールタスクの編集, #1836)。 */
+  onSavePreset?: (column: string, rule: ExportMaskRule) => void;
+  /** 説明文の差し替え。省略時は ExportModal 向けの文言。 */
+  hint?: string;
+  /** 列一覧の直下に出す追加 UI (スケジュールタスクの列追加入力, #1836)。 */
+  footer?: ReactNode;
+  /** 指定すると列ごとに「この列を外す」ボタンを出す。 */
+  onRemoveColumn?: (column: string) => void;
   /** プリセットの JSON 書き出し / 読み込み (#1623)。省略するとボタンを出さない。 */
   onExportPresets?: () => void;
   onImportPresets?: () => void;
@@ -67,6 +75,9 @@ export function ExportMaskingSection({
   overrides,
   onOverridesChange,
   onSavePreset,
+  hint,
+  footer,
+  onRemoveColumn,
   onExportPresets,
   onImportPresets,
   disabled,
@@ -101,7 +112,7 @@ export function ExportMaskingSection({
       {enabled && (
         <>
           <chakra.div fontSize="xs" color="app.textMuted">
-            {t("exportMaskingHint")}
+            {hint ?? t("exportMaskingHint")}
           </chakra.div>
           <chakra.div
             display="flex"
@@ -253,33 +264,61 @@ export function ExportMaskingSection({
                       />
                     </chakra.span>
                   )}
-                  <Tooltip label={t("exportMaskingSavePreset")} focusableWrapper={!rule || fromPreset}>
-                    <chakra.button
-                      type="button"
-                      aria-label={t("exportMaskingSavePreset")}
-                      disabled={disabled || !rule || fromPreset}
-                      onClick={() => rule && onSavePreset(column, rule)}
-                      display="inline-flex"
-                      alignItems="center"
-                      justifyContent="center"
-                      w="28px"
-                      h="28px"
-                      color="app.textMuted"
-                      bg="app.bgInput"
-                      border="1px solid"
-                      borderColor="app.border"
-                      borderRadius="md"
-                      cursor="pointer"
-                      _hover={{ color: "app.text", bg: "app.hover" }}
-                      _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
-                    >
-                      <Icon name="snippet" size={ICON_SIZES.md} />
-                    </chakra.button>
-                  </Tooltip>
+                  {onRemoveColumn && (
+                    <Tooltip label={t("taskFormMaskRemove", { column })}>
+                      <chakra.button
+                        type="button"
+                        aria-label={t("taskFormMaskRemove", { column })}
+                        disabled={disabled}
+                        onClick={() => onRemoveColumn(column)}
+                        display="inline-flex"
+                        alignItems="center"
+                        justifyContent="center"
+                        w="28px"
+                        h="28px"
+                        color="app.textMuted"
+                        bg="app.bgInput"
+                        border="1px solid"
+                        borderColor="app.border"
+                        borderRadius="md"
+                        cursor="pointer"
+                        _hover={{ color: "app.text", bg: "app.hover" }}
+                        _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
+                      >
+                        <Icon name="trash" size={ICON_SIZES.md} />
+                      </chakra.button>
+                    </Tooltip>
+                  )}
+                  {onSavePreset && (
+                    <Tooltip label={t("exportMaskingSavePreset")} focusableWrapper={!rule || fromPreset}>
+                      <chakra.button
+                        type="button"
+                        aria-label={t("exportMaskingSavePreset")}
+                        disabled={disabled || !rule || fromPreset}
+                        onClick={() => rule && onSavePreset(column, rule)}
+                        display="inline-flex"
+                        alignItems="center"
+                        justifyContent="center"
+                        w="28px"
+                        h="28px"
+                        color="app.textMuted"
+                        bg="app.bgInput"
+                        border="1px solid"
+                        borderColor="app.border"
+                        borderRadius="md"
+                        cursor="pointer"
+                        _hover={{ color: "app.text", bg: "app.hover" }}
+                        _disabled={{ opacity: 0.35, cursor: "not-allowed" }}
+                      >
+                        <Icon name="snippet" size={ICON_SIZES.md} />
+                      </chakra.button>
+                    </Tooltip>
+                  )}
                 </chakra.div>
               );
             })}
           </chakra.div>
+          {footer}
           <chakra.div fontSize="xs" color="app.textMuted">
             {t("exportMaskingHashNote")}
           </chakra.div>

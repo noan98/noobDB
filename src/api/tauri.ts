@@ -1,5 +1,6 @@
 import { Channel } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { ExportColumnMask } from "../components/exportMasking";
 import * as schemas from "./schemas";
 import { parseResponse } from "./schemas";
 import {
@@ -1779,6 +1780,9 @@ export interface RowDiff {
   changed_columns: string[];
 }
 
+/** データ比較・タイムラプスが行の対応付けに使った識別子の種類 (#1838)。 */
+export type RowKeyKind = "primary_key" | "unique_key" | "rowid";
+
 /** Result of comparing one table's rows across two connections. */
 export interface DataDiff {
   target_driver: DriverKind;
@@ -1787,6 +1791,8 @@ export interface DataDiff {
   /** `columns` と同じ並びの型名。BLOB 列を復元して sql_literal の補正に使う (修正3)。 */
   column_types: string[];
   primary_key: string[];
+  /** `primary_key` に使った行識別子の種類 (#1838)。PK が無い表は UNIQUE NOT NULL キー (タイムラプスは SQLite の rowid も)。 */
+  key_kind: RowKeyKind;
   rows: RowDiff[];
   /** True if either side hit the row cap, so the diff is partial. */
   truncated: boolean;
@@ -1843,6 +1849,8 @@ export interface TimelapseCaptureOutcome {
  * `source_only` = 追加行、`target_only` = 削除行、`different` = 変更行。
  */
 export interface TimelapseGenerationDiff {
+  /** 2 世代で行識別子 (種類または列) が違う (#1838)。行の対応付けが不正確になりうる。 */
+  key_changed: boolean;
   diff: DataDiff;
   columns_added: string[];
   columns_removed: string[];
@@ -1866,6 +1874,7 @@ export interface TimelapseRowHistoryEntry {
 export interface TimelapseRowHistory {
   columns: string[];
   primary_key: string[];
+  key_kind: RowKeyKind;
   entries: TimelapseRowHistoryEntry[];
   generations_scanned: number;
   /** 部分取得の世代を含む (範囲外の行が「消えた」ように見えうる)。 */
@@ -2069,6 +2078,8 @@ export type TaskAction =
       sql_table?: string | null;
       /** SQL INSERT 形式のときの 1 文あたり行数。他形式では無視。 */
       sql_batch_size?: number | null;
+      /** 列単位のマスキングルール (#1836)。ExportModal (#733) と同形。省略 / 空ならマスクしない。 */
+      masks?: ExportColumnMask[];
     }
   | {
       kind: "dump";

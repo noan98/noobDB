@@ -1421,6 +1421,15 @@ const en = {
   profileCardsNoMatches: "No connections match.",
   profileCardsMatchCount: "{shown} of {total} connections",
   contextMenuConnect: "Connect",
+  // StatTile delta / trend (#1833).
+  sparklineTrendAria: "Last {count} samples: {min} to {max}.",
+  statDeltaUp: "{amount} up vs previous sample",
+  statDeltaUpGood: "{amount} up vs previous sample (improved)",
+  statDeltaUpBad: "{amount} up vs previous sample (worsened)",
+  statDeltaDown: "{amount} down vs previous sample",
+  statDeltaDownGood: "{amount} down vs previous sample (improved)",
+  statDeltaDownBad: "{amount} down vs previous sample (worsened)",
+  statDeltaFlat: "No change vs previous sample",
   // Connection health latency trend (#1630).
   healthColTrend: "Trend",
   healthTrendAria:
@@ -3520,7 +3529,15 @@ const en = {
   timelapseWatchConfirmTitle: "Watch “{table}”?",
   timelapseWatchScope:
     "Snapshots are taken on connect and on “Capture now”, and a new generation is kept only when the content changed. Meant for small master/config tables (up to {limit} rows); history of large tables is out of scope.",
-  timelapseWatchPk: "The table must have a primary key (used to track rows between generations).",
+  timelapseWatchPk:
+    "The table needs a primary key, a UNIQUE NOT NULL key, or (SQLite) an implicit rowid, used to track rows between generations.",
+  rowKeyUnique: "This table has no primary key, so rows are paired by its UNIQUE NOT NULL key ({columns}).",
+  rowKeyRowid:
+    "This table has no primary key or UNIQUE NOT NULL key, so rows are tracked by SQLite's implicit rowid. If a rowid is renumbered (VACUUM, or a row deleted and re-inserted), different rows get paired and changes, additions and removals may be shown incorrectly.",
+  timelapseDmlRowidBlocked:
+    "DML cannot be generated for a table tracked by rowid: a rowid may now point to a different row than when it was captured, so a statement could change the wrong row.",
+  timelapseKeyChanged:
+    "The row key differs between these two generations, so rows may not be paired correctly and changes, additions and removals may be shown inaccurately.",
   timelapseWatchPrivacy:
     "Snapshots are a local copy of real data and may contain sensitive values. They are stored only on this device, in the app data directory (table_timelapse.sqlite), and are never sent anywhere. You can delete them when unwatching or from Settings.",
   timelapseWatchMask:
@@ -6270,6 +6287,12 @@ const en = {
   taskFormOutputPathHint: "{date} expands to YYYY-MM-DD and {datetime} to YYYYMMDD-HHMMSS (UTC) at run time.",
   taskFormOutputPathPreview: "preview: {path}",
   taskFormOutputPathRequired: "Enter an output path.",
+  taskFormMaskHint:
+    "Mask these columns in every scheduled output so PII does not leak to unattended destinations. Columns are matched by exact name in the query result; if a column is missing from the result, that run fails and writes nothing.",
+  taskFormMaskAddColumn: "Column name to mask",
+  taskFormMaskAdd: "Add column",
+  taskFormMaskRemove: "Remove {column} from masking",
+  taskFormMaskNoRule: "Choose a masking rule (or remove the column): {columns}",
   taskFormSchedule: "Schedule",
   taskScheduleInterval: "Every N minutes",
   taskScheduleDaily: "Daily at",
@@ -8269,6 +8292,15 @@ const ja: Dict = {
   profileCardsNoMatches: "一致する接続がありません。",
   profileCardsMatchCount: "{total} 件中 {shown} 件",
   contextMenuConnect: "接続",
+  // StatTile のデルタ / 推移 (#1833)。
+  sparklineTrendAria: "直近 {count} サンプル: {min}〜{max}。",
+  statDeltaUp: "前回比 {amount} 増加",
+  statDeltaUpGood: "前回比 {amount} 増加 (好転)",
+  statDeltaUpBad: "前回比 {amount} 増加 (悪化)",
+  statDeltaDown: "前回比 {amount} 減少",
+  statDeltaDownGood: "前回比 {amount} 減少 (好転)",
+  statDeltaDownBad: "前回比 {amount} 減少 (悪化)",
+  statDeltaFlat: "前回比 変化なし",
   // 接続ヘルスのレイテンシ推移 (#1630)。
   healthColTrend: "推移",
   healthTrendAria:
@@ -10358,7 +10390,15 @@ const ja: Dict = {
   timelapseWatchConfirmTitle: "「{table}」をウォッチしますか?",
   timelapseWatchScope:
     "接続時と「今すぐ取得」でスナップショットを取り、内容が変わったときだけ新しい世代として保存します。対象はマスターデータ・設定値などの小さなテーブル (最大 {limit} 行) で、大きなテーブルの履歴管理は対象外です。",
-  timelapseWatchPk: "主キーのあるテーブルに限ります (世代間で行を追跡するために使います)。",
+  timelapseWatchPk:
+    "主キー・UNIQUE NOT NULL キー・(SQLite の) 暗黙 rowid のいずれかを持つテーブルに限ります (世代間で行を追跡するために使います)。",
+  rowKeyUnique: "このテーブルには主キーが無いため、UNIQUE NOT NULL キー ({columns}) で行を対応付けています。",
+  rowKeyRowid:
+    "このテーブルには主キーも UNIQUE NOT NULL キーも無いため、SQLite の暗黙 rowid で行を追跡しています。rowid が振り直される (VACUUM、または行の削除と再挿入) と、別の行どうしが対応付けられ、変更・追加・削除が誤って表示されることがあります。",
+  timelapseDmlRowidBlocked:
+    "rowid で追跡しているテーブルでは DML を作れません。rowid は撮影時とは別の行を指すことがあり、文が別の行を書き換えるおそれがあるためです。",
+  timelapseKeyChanged:
+    "この 2 世代では行の識別子 (キー) が異なるため、行を正しく対応付けられず、変更・追加・削除が実態と違って表示されることがあります。",
   timelapseWatchPrivacy:
     "スナップショットは実データのローカルコピーで、機微なデータを含む可能性があります。保存先はこの端末のアプリデータディレクトリ (table_timelapse.sqlite) のみで、外部へは一切送信しません。ウォッチ解除時や設定画面から削除できます。",
   timelapseWatchMask:
@@ -13088,6 +13128,12 @@ const ja: Dict = {
     "実行時に {date} は YYYY-MM-DD、{datetime} は YYYYMMDD-HHMMSS (UTC) に展開されます。",
   taskFormOutputPathPreview: "プレビュー: {path}",
   taskFormOutputPathRequired: "出力先パスを入力してください。",
+  taskFormMaskHint:
+    "スケジュール実行のたびに、これらの列をマスクして書き出します (無人の出力先への PII 流出を防ぎます)。列はクエリ結果の列名と完全一致で対応付けます。結果に無い列名があると、その実行は失敗し何も書き出しません。",
+  taskFormMaskAddColumn: "マスクする列名",
+  taskFormMaskAdd: "列を追加",
+  taskFormMaskRemove: "{column} をマスク対象から外す",
+  taskFormMaskNoRule: "マスクルールを選ぶか、列を外してください: {columns}",
   taskFormSchedule: "スケジュール",
   taskScheduleInterval: "N 分ごと",
   taskScheduleDaily: "毎日",

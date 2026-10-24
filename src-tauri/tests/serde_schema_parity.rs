@@ -39,6 +39,7 @@ use std::path::PathBuf;
 
 use noobdb_lib::__test_api as t;
 use serde_json::json;
+use t::RowKeyKind;
 use t::{
     AdvisorDiff, AiConnectionStatus, AiConnectionTestResult, AiStreamMessage, AiUsage,
     AiUsageRecord, BatchStatementResult, BatchStatus, BatchStreamMessage, BroadcastDiff,
@@ -797,6 +798,7 @@ fn build_fixtures() -> serde_json::Value {
         key_unreliable: false,
     };
     let data_diff = DataDiff {
+        key_kind: Default::default(),
         target_driver: DriverKind::Postgres,
         table: "users".into(),
         columns: vec!["id".into(), "name".into()],
@@ -1569,7 +1571,9 @@ fn build_fixtures() -> serde_json::Value {
     // データ差分: RowStatus 3 種を 1 つの結果に載せ、ドライバも巡回。
     let data_diff_variants: Vec<DataDiff> = all_drivers
         .iter()
-        .map(|driver| DataDiff {
+        .zip(variants!(RowKeyKind [PrimaryKey, UniqueKey, Rowid]))
+        .map(|(driver, key_kind)| DataDiff {
+            key_kind,
             target_driver: *driver,
             table: "users".into(),
             columns: vec!["id".into()],
@@ -2078,6 +2082,36 @@ fn build_fixtures() -> serde_json::Value {
                 output_path: "/tmp/out.sql".into(),
                 sql_table: Some("users".into()),
                 sql_batch_size: Some(100),
+                masks: vec![
+                    ("email", t::MaskRule::Email { keep_start: 1 }),
+                    ("h", t::MaskRule::Hash { length: 16 }),
+                    (
+                        "f",
+                        t::MaskRule::Fixed {
+                            value: "***".into(),
+                        },
+                    ),
+                    (
+                        "p",
+                        t::MaskRule::Partial {
+                            keep_start: 1,
+                            keep_end: 2,
+                        },
+                    ),
+                    ("n", t::MaskRule::Null),
+                    (
+                        "d",
+                        t::MaskRule::Date {
+                            precision: t::DatePrecision::Month,
+                        },
+                    ),
+                ]
+                .into_iter()
+                .map(|(column, rule)| t::ColumnMask {
+                    column: column.into(),
+                    rule,
+                })
+                .collect(),
             },
             t::TaskSchedule::Interval { minutes: 30 },
         ),
@@ -2161,6 +2195,7 @@ fn build_fixtures() -> serde_json::Value {
             output_path: "/tmp/out".into(),
             sql_table: None,
             sql_batch_size: None,
+            masks: vec![],
         },
         schedule: t::TaskSchedule::Interval { minutes: 60 },
         enabled: false,
@@ -2230,6 +2265,7 @@ fn build_fixtures() -> serde_json::Value {
         columns_added: vec!["email".into()],
         columns_removed: vec![],
         partial: false,
+        key_changed: true,
         from_captured_at: "2026-01-01T00:00:00Z".into(),
         to_captured_at: "2026-01-02T00:00:00Z".into(),
     };
@@ -2240,6 +2276,7 @@ fn build_fixtures() -> serde_json::Value {
         preamble: Some("USE `appdb`".into()),
     };
     let timelapse_row_history = t::RowHistory {
+        key_kind: Default::default(),
         columns: vec!["id".into(), "price".into()],
         primary_key: vec!["id".into()],
         entries: vec![

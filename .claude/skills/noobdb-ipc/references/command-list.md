@@ -308,7 +308,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `timelapse_unwatch`
 - `timelapse_clear_all`
 
-#739。ウォッチ登録したテーブルの世代スナップショットを `<data_dir>/table_timelapse.sqlite` に保存し、任意の 2 世代を `compute_data_diff` で比較。取得は PK 順の単一 SELECT (最大 `MAX_DATA_ROWS`) で履歴に記録せず、read_only セッションでも可。PK 必須
+#739。ウォッチ登録したテーブルの世代スナップショットを `<data_dir>/table_timelapse.sqlite` に保存し、任意の 2 世代を `compute_data_diff` で比較。取得は 識別子順の単一 SELECT (最大 `MAX_DATA_ROWS`) で履歴に記録せず、read_only セッションでも可。行の同一性は PK → UNIQUE NOT NULL → SQLite の rowid (#1838。`compare_table_data` は rowid を使わず PK → UNIQUE NOT NULL のみ)
 
 ## スキーマドリフト (`commands/schema_drift.rs`)
 
