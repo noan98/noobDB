@@ -92,8 +92,8 @@ jobs:
       # 差分に含まれる変異候補を数える (ビルドしない軽い処理)。lib.rs のように対象関数が
       # 差分に触れていない PR では 0 件になり、重い後続ステップ (apt / ビルド) を丸ごと飛ばす。
       # 構造体フィールド削除 (genre == StructField) は --re / --exclude-re が効かず CLI でも
-      # 除外できない (#1657) ため、--json で出して数えるときに除く。本体の実行ではこれらも
-      # 変異として走る (コストは小さく、結果の集計側で除外する)。
+      # 除外できない (#1657) ため、--json で出して数えるときに除く (除いた件数は Summary に別掲)。
+      # 本体の実行ではこれらも走るので実行時間には含まれる (集計からは除外する)。
       # --list 自体の失敗 (設定エラー・正規表現エラー等) は「0 件」と区別して警告する。
       - name: List mutants in diff
         id: list
@@ -122,9 +122,9 @@ jobs:
           fi
           # 差分が src-tauri に及ばない (ワークフローだけの変更など) と diff が空で、cargo-mutants は
           # 終了コード 0 / 標準出力が空になる。空は 0 件として扱う。
-          count=$(python3 -c 'import json; t = open("mutants-list.json").read().strip(); print(sum(1 for m in (json.loads(t) if t else []) if m.get("genre") != "StructField"))')
+          read -r count sf < <(python3 -c 'import json; t = open("mutants-list.json").read().strip(); l = json.loads(t) if t else []; n = sum(1 for m in l if m.get("genre") == "StructField"); print(len(l) - n, n)')
           echo "count=$count" >> "$GITHUB_OUTPUT"
-          echo "差分に含まれる変異候補 (構造体フィールド削除を除く): **${count} 件**" >> "$GITHUB_STEP_SUMMARY"
+          echo "差分に含まれる変異候補: **${count} 件** (別に構造体フィールド削除 ${sf} 件。CLI で除外できず実行時間には含まれるが、集計からは除外する)" >> "$GITHUB_STEP_SUMMARY"
 
       # 以降は mutants.yml の mutants ジョブと同じセットアップ (理由はそちらのコメント参照)。
       - name: Use canonical apt archive + refresh indexes (stale runner lists cause 404)
@@ -145,9 +145,9 @@ jobs:
         shell: bash
         run: mkdir -p dist && echo "" > dist/index.html
 
-      # ジョブ ID と key を mutants.yml と揃えているが、キャッシュ自体は共有されない
-      # (PR のキャッシュはマージ ref スコープで、手動実行の mutants.yml のものとは別)。
-      # 効くのは同じ PR の 2 回目以降の push から。初回は cold ビルドになる。
+      # main で mutants.yml を手動実行したキャッシュは、PR の初回 run でも復元される
+      # (ジョブ ID と key を揃えてある)。ただし定期実行がないので、通常は初回が cold で、
+      # 同じ PR の 2 回目以降の push から効く。
       - name: Cache cargo
         if: steps.list.outputs.count != '0'
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -190,7 +190,7 @@ jobs:
       # (caught + missed + unviable + timeout) が 0 件の場合は「成功」ではなく実行失敗として
       # 表示する (mutants.yml の summary が母数 0 を n/a にするのと同じ考え方)。
       - name: Report surviving mutants
-        if: always() && steps.list.outputs.count != '0'
+        if: always() && steps.list.outcome == 'success' && steps.list.outputs.count != '0'
         working-directory: src-tauri
         env:
           EXIT_CODE: ${{ steps.run.outputs.exit_code }}
@@ -200,7 +200,11 @@ jobs:
           import json, os, pathlib, collections
           code = os.environ.get("EXIT_CODE", "")
           # exit_code が空 = Run ステップが打ち切られた (timeout-minutes / キャンセル)。
-          truncated = code == ""
+          run_outcome = os.environ.get("RUN_OUTCOME", "")
+          # skipped = Run より前のセットアップ (apt / ビルド依存) が失敗して実行されなかった。
+          # exit_code が空で failure / cancelled = Run ステップが打ち切られた (timeout-minutes 等)。
+          not_run = run_outcome == "skipped"
+          truncated = code == "" and not not_run
           warn = pathlib.Path("report-warning.txt")
 
           def tail():
@@ -231,7 +235,11 @@ jobs:
           n = len(missed)
           tested = sum(counts.get(k, 0) for k in ("CaughtMutant", "MissedMutant", "Unviable", "Timeout"))
 
-          if truncated:
+          if not_run:
+              msg = "前段のステップが失敗したため、変異テストは実行されていません。"
+              print(f"> :x: **{msg}**")
+              warn.write_text(msg)
+          elif truncated:
               msg = "変異テストが打ち切られました (時間切れ等)。以下は部分結果です。"
               print(f"> :x: **{msg}**")
               warn.write_text(msg)

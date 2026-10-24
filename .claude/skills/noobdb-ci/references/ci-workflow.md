@@ -324,15 +324,17 @@ tauri-driver は `taiki-e/install-action` の対応ツールではないため�
   変異候補が出ることをローカルで確認済み)。
 - まず `cargo mutants --in-diff diff ... --list --json` で差分内の変異候補を数え (ビルド不要で軽い)、
   0 件なら apt / ビルド系のステップを丸ごと飛ばす (`lib.rs` だけ触る PR など)。構造体フィールド
-  削除 (`genre == StructField`) は CLI で除外できないので数えるときに除く (本体の実行では走る。
-  集計側で除外)。`--list` 自体の失敗 (設定 / 正規表現エラー) は 0 件と区別して Summary と
+  削除 (`genre == StructField`) は CLI で除外できないので数えるときに除き、除いた件数は Summary に
+  別掲する (本体の実行では走るので実行時間には含まれる。集計からは除外する)。`--list` 自体の失敗 (設定 / 正規表現エラー) は 0 件と区別して Summary と
   `::warning` に出す。差分が `src-tauri` に及ばず空のときは終了コード 0 / 出力が空になり 0 件扱い。
 - 本体は `--in-place --no-shuffle --in-diff diff` (`--in-place` の理由は `mutants.yml` 参照)。
   Run ステップは `timeout-minutes: 32` + `continue-on-error: true` で、打ち切られても後段へ進む。
   生存変異は `outcomes.json` から `$GITHUB_STEP_SUMMARY` に列挙し (`StructField` は除外)、`::warning`
   も出す。終了コードが 0 / 2 / 3 以外 (baseline 失敗など)、打ち切り、検査件数 0 は「生存 0 件」では
-  なく実行失敗 / 部分結果として表示する。`mutants.out/` ・diff・list 結果は artifact
+  なく実行失敗 / 部分結果として表示する。Report は `list` が成功したときだけ走り、Run が
+  `skipped` (前段のセットアップ失敗) なら「実行されていません」、exit_code が空で
+  `failure` / `cancelled` なら「打ち切り」と出し分ける。`mutants.out/` ・diff・list 結果は artifact
   `mutants-diff-out` (14 日) に保存。ジョブは 40 分で打ち切り、同一 PR の古い run は取り消す。
-- ジョブ ID と `rust-cache` の `key` は `mutants.yml` と同じ `mutants` だが、キャッシュ自体は共有
-  されない (PR はマージ ref スコープ)。効くのは同じ PR の 2 回目以降の push から。actions は
-  同じ SHA ピン。
+- ジョブ ID と `rust-cache` の `key` は `mutants.yml` と同じ `mutants`。main で `mutants.yml` を手動
+  実行したキャッシュは PR の初回 run でも復元されるが、定期実行がないので通常は初回が cold で、
+  同じ PR の 2 回目以降の push から効く。actions は同じ SHA ピン。
