@@ -5659,6 +5659,50 @@
         "database": "appdb",
         "format": "sql",
         "kind": "export_query",
+        "masks": [
+          {
+            "column": "email",
+            "rule": {
+              "keepStart": 1,
+              "kind": "email"
+            }
+          },
+          {
+            "column": "h",
+            "rule": {
+              "kind": "hash",
+              "length": 16
+            }
+          },
+          {
+            "column": "f",
+            "rule": {
+              "kind": "fixed",
+              "value": "***"
+            }
+          },
+          {
+            "column": "p",
+            "rule": {
+              "keepEnd": 2,
+              "keepStart": 1,
+              "kind": "partial"
+            }
+          },
+          {
+            "column": "n",
+            "rule": {
+              "kind": "null"
+            }
+          },
+          {
+            "column": "d",
+            "rule": {
+              "kind": "date",
+              "precision": "month"
+            }
+          }
+        ],
         "output_path": "/tmp/out.sql",
         "sql": "SELECT 1",
         "sql_batch_size": 100,
@@ -5830,6 +5874,7 @@
         "database": null,
         "format": "csv",
         "kind": "export_query",
+        "masks": [],
         "output_path": "/tmp/out",
         "sql": "SELECT 1",
         "sql_batch_size": null,
@@ -5861,6 +5906,7 @@
         "database": null,
         "format": "json",
         "kind": "export_query",
+        "masks": [],
         "output_path": "/tmp/out",
         "sql": "SELECT 1",
         "sql_batch_size": null,
@@ -5892,6 +5938,7 @@
         "database": null,
         "format": "ndjson",
         "kind": "export_query",
+        "masks": [],
         "output_path": "/tmp/out",
         "sql": "SELECT 1",
         "sql_batch_size": null,
@@ -5923,6 +5970,7 @@
         "database": null,
         "format": "markdown",
         "kind": "export_query",
+        "masks": [],
         "output_path": "/tmp/out",
         "sql": "SELECT 1",
         "sql_batch_size": null,
@@ -5954,6 +6002,7 @@
         "database": null,
         "format": "sql",
         "kind": "export_query",
+        "masks": [],
         "output_path": "/tmp/out",
         "sql": "SELECT 1",
         "sql_batch_size": null,
@@ -5985,6 +6034,7 @@
         "database": null,
         "format": "xlsx",
         "kind": "export_query",
+        "masks": [],
         "output_path": "/tmp/out",
         "sql": "SELECT 1",
         "sql_batch_size": null,

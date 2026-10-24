@@ -2028,6 +2028,16 @@ const dumpOptions = z.object({
 // 定期タスクが `list_tasks` の zod 検証で落ちる (#1195 の全バリアントゴールデンが検出)。
 const exportFormat = z.enum(["csv", "json", "ndjson", "markdown", "sql", "xlsx"]);
 
+// `db::masking::MaskRule` / `ColumnMask` と同形 (タスクのマスク設定, #1836)。
+const maskRule = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("fixed"), value: z.string() }),
+  z.object({ kind: z.literal("partial"), keepStart: z.number(), keepEnd: z.number() }),
+  z.object({ kind: z.literal("hash"), length: z.number() }),
+  z.object({ kind: z.literal("null") }),
+  z.object({ kind: z.literal("email"), keepStart: z.number() }),
+  z.object({ kind: z.literal("date"), precision: z.enum(["year", "month"]) }),
+]);
+
 const taskAction = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("export_query"),
@@ -2037,6 +2047,7 @@ const taskAction = z.discriminatedUnion("kind", [
     output_path: z.string(),
     sql_table: z.string().nullable().optional(),
     sql_batch_size: z.number().nullable().optional(),
+    masks: z.array(z.object({ column: z.string(), rule: maskRule })).optional(),
   }),
   z.object({
     kind: z.literal("dump"),

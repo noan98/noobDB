@@ -1015,6 +1015,10 @@ impl StreamExportSink {
     }
 
     fn on_columns(&mut self, columns: Vec<Column>) -> Result<()> {
+        // 厳格モードでは、一致しないマスク列があればここで失敗させる (何も書く前)。
+        if let Some(spec) = &self.mask_spec {
+            spec.check_columns(&columns)?;
+        }
         self.mask_plan = self.mask_spec.as_ref().map(|s| s.plan(&columns));
         self.json_keys = JsonKeySet::new(&columns);
         if matches!(self.format, ExportFormat::Xlsx) {
@@ -3087,6 +3091,71 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// 厳格モード (スケジュール実行, #1836) では、結果列に当たらないマスク列名は
+    /// 失敗になる。大文字小文字だけの違いも素通りさせない。非厳格 (対話) は従来どおり。
+    #[test]
+    fn strict_mask_spec_fails_on_unmatched_column() {
+        let (columns, _) = masking_fixture();
+        for bad in ["nope", "EMAIL", "u.email"] {
+            let spec = MaskSpec::new(
+                vec![ColumnMask {
+                    column: bad.into(),
+                    rule: crate::db::masking::MaskRule::Null,
+                }],
+                None,
+            )
+            .unwrap();
+            // 非厳格は従来どおり黙って通る。
+            let path = std::env::temp_dir().join(format!(
+                "noobdb_strict_mask_{}_{}.out",
+                std::process::id(),
+                bad.replace('.', "_")
+            ));
+            let mut lax = StreamExportSink::with_query(
+                path.to_str().unwrap(),
+                ExportFormat::Csv,
+                None,
+                test_sql_opts(),
+                Some(spec.clone()),
+            )
+            .unwrap();
+            assert!(lax.on_columns(columns.clone()).is_ok(), "{bad}");
+            let mut strict = StreamExportSink::with_query(
+                path.to_str().unwrap(),
+                ExportFormat::Csv,
+                None,
+                test_sql_opts(),
+                Some(spec.strict()),
+            )
+            .unwrap();
+            let err = strict.on_columns(columns.clone()).unwrap_err();
+            assert!(matches!(err, AppError::InvalidInput(_)), "{bad}");
+            assert!(err.to_string().contains(bad), "{bad}");
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+
+    #[test]
+    fn strict_mask_spec_passes_when_all_columns_match_and_masks_output() {
+        let (columns, rows) = masking_fixture();
+        let path =
+            std::env::temp_dir().join(format!("noobdb_strict_ok_{}.out", std::process::id()));
+        let mut sink = StreamExportSink::with_query(
+            path.to_str().unwrap(),
+            ExportFormat::Csv,
+            None,
+            test_sql_opts(),
+            Some(mask_spec().strict()),
+        )
+        .unwrap();
+        sink.on_columns(columns).unwrap();
+        sink.on_rows(&rows).unwrap();
+        sink.finish().unwrap();
+        let out = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(!out.contains("taro@example.com"), "{out}");
     }
 
     #[tokio::test]

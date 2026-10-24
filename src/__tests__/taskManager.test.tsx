@@ -378,7 +378,61 @@ describe("TaskForm 日次スケジュールの保存 (#1621)", () => {
     const req = saveTask.mock.calls[0][0];
     expect(req.id).toBeNull();
     expect(req.name).toBe(t("taskDuplicateName", { name: TASK.name }));
-    expect(req.action).toEqual({ ...TASK.action, sql_table: null, sql_batch_size: null });
+    expect(req.action).toEqual({ ...TASK.action, sql_table: null, sql_batch_size: null, masks: [] });
+  });
+
+  it("エクスポートタスクの列マスクを編集して保存できる (#1836)", async () => {
+    previewTaskSchedule.mockResolvedValue([]);
+    const saveTask = vi.mocked(api.saveTask);
+    saveTask.mockClear();
+    saveTask.mockResolvedValue(TASK);
+    listTasks.mockResolvedValue([
+      { ...TASK, action: { ...TASK.action, masks: [{ column: "email", rule: { kind: "null" } }] } },
+    ]);
+    const user = userEvent.setup();
+    renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText(TASK.name)).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: t("taskEdit") }));
+    // 既存のマスクが列行として復元される。
+    expect(await screen.findByLabelText(t("exportMaskingRuleFor", { column: "email" }))).toHaveValue("null");
+    // 列を足して固定値ルールを選ぶ。
+    fireEvent.change(screen.getByLabelText(t("taskFormMaskAddColumn")), { target: { value: "phone" } });
+    await user.click(screen.getByRole("button", { name: t("taskFormMaskAdd") }));
+    await user.selectOptions(screen.getByLabelText(t("exportMaskingRuleFor", { column: "phone" })), "fixed");
+    await user.click(screen.getByRole("button", { name: t("taskFormSave") }));
+    await waitFor(() => expect(saveTask).toHaveBeenCalled());
+    expect(saveTask.mock.calls[0][0].action).toMatchObject({
+      masks: [
+        { column: "email", rule: { kind: "null" } },
+        { column: "phone", rule: { kind: "fixed", value: "***" } },
+      ],
+    });
+  });
+
+  it("ルール未選択の列があると保存を止め、列を外せば保存できる (#1836)", async () => {
+    previewTaskSchedule.mockResolvedValue([]);
+    const saveTask = vi.mocked(api.saveTask);
+    saveTask.mockClear();
+    saveTask.mockResolvedValue(TASK);
+    listTasks.mockResolvedValue([
+      { ...TASK, action: { ...TASK.action, masks: [{ column: "email", rule: { kind: "null" } }] } },
+    ]);
+    const user = userEvent.setup();
+    renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText(TASK.name)).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: t("taskEdit") }));
+    await screen.findByLabelText(t("exportMaskingRuleFor", { column: "email" }));
+    fireEvent.change(screen.getByLabelText(t("taskFormMaskAddColumn")), { target: { value: "phone" } });
+    await user.click(screen.getByRole("button", { name: t("taskFormMaskAdd") }));
+    await user.click(screen.getByRole("button", { name: t("taskFormSave") }));
+    expect(await screen.findByText(t("taskFormMaskNoRule", { columns: "phone" }))).toBeInTheDocument();
+    expect(saveTask).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: t("taskFormMaskRemove", { column: "phone" }) }));
+    await user.click(screen.getByRole("button", { name: t("taskFormSave") }));
+    await waitFor(() => expect(saveTask).toHaveBeenCalled());
+    expect(saveTask.mock.calls[0][0].action).toMatchObject({
+      masks: [{ column: "email", rule: { kind: "null" } }],
+    });
   });
 
   it("連続失敗で自動停止したタスクには、その旨を行に表示する", async () => {
