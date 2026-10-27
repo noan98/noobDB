@@ -13,6 +13,7 @@ import { quoteIdentFor } from "./sqlDialect";
 export type MaintenanceKind =
   | "analyze"
   | "optimize"
+  | "rebuild"
   | "check"
   | "repair"
   | "vacuum"
@@ -25,6 +26,7 @@ export type MaintenanceKind =
 export const MAINTENANCE_LABEL_KEYS: Record<MaintenanceKind, I18nKey> = {
   analyze: "maintenanceAnalyze",
   optimize: "maintenanceOptimize",
+  rebuild: "maintenanceRebuild",
   check: "maintenanceCheck",
   repair: "maintenanceRepair",
   vacuum: "maintenanceVacuum",
@@ -82,6 +84,34 @@ export function tableMaintenanceCommands(
     { kind: "optimize", sql: `OPTIMIZE TABLE ${name};` },
     { kind: "check", sql: `CHECK TABLE ${name};` },
     { kind: "repair", sql: `REPAIR TABLE ${name};` },
+  ];
+}
+
+/**
+ * パーティション単位の保守コマンド (#1868)。
+ *
+ * - PostgreSQL: 子パーティションは通常のテーブルなので `VACUUM (ANALYZE)` / `ANALYZE` / `VACUUM` /
+ *   `REINDEX TABLE` を子の完全修飾名に対して流す (サブパーティションの親にも同じ)。
+ * - MySQL: `ALTER TABLE <t> ANALYZE | REBUILD | CHECK PARTITION <p>`。InnoDB では `OPTIMIZE PARTITION` が
+ *   表全体の再構築になり、`REPAIR PARTITION` は効かないので、前者は `REBUILD PARTITION` に置き換え後者は出さない。
+ * - SQLite: パーティション非対応なので空。
+ */
+export function partitionMaintenanceCommands(
+  driver: string,
+  database: string | null,
+  table: string,
+  partition: { name: string; schema?: string | null },
+): MaintenanceCommand[] {
+  if (driver === "sqlite") return [];
+  if (driver === "postgres") {
+    return tableMaintenanceCommands(driver, partition.schema ?? database, partition.name);
+  }
+  const t = qualified(driver, database, table);
+  const p = quoteIdentFor(driver, partition.name);
+  return [
+    { kind: "analyze", sql: `ALTER TABLE ${t} ANALYZE PARTITION ${p};` },
+    { kind: "rebuild", sql: `ALTER TABLE ${t} REBUILD PARTITION ${p};` },
+    { kind: "check", sql: `ALTER TABLE ${t} CHECK PARTITION ${p};` },
   ];
 }
 

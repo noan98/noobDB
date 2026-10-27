@@ -153,6 +153,7 @@ DB に触れず実行もしない (UI のプレビュー専用)。両環境の�
 - `describe_table`
 - `describe_table_extras` (CHECK 制約と生成列の式、#1837)
 - `list_table_triggers` (テーブルで発火するトリガー一覧、#1867)
+- `list_table_partitions` (パーティション表の子パーティション・境界・サイズ、SQLite は非対応、#1868)
 - `schema_overview`
 - `foreign_keys`
 - `list_schema_objects`

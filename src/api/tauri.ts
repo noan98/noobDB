@@ -665,6 +665,36 @@ export interface TableExtrasInfo {
   generated: GeneratedColumnInfo[];
 }
 
+/** `list_table_partitions` の子パーティション 1 件 (#1868)。 */
+export interface TablePartition {
+  name: string;
+  /** 子のスキーマ (PostgreSQL のみ)。 */
+  schema: string | null;
+  /** 一つ上のパーティション / 表の名前 (サブパーティションのみ)。 */
+  parent: string | null;
+  /** `parent` のスキーマ (PostgreSQL のサブパーティションのみ)。 */
+  parent_schema: string | null;
+  /** 0 = 親表の直下、1 以上 = サブパーティション。 */
+  depth: number;
+  /** 境界の表示文字列 (PostgreSQL は `FOR VALUES ...` / `DEFAULT`、MySQL は `LESS THAN (...)` / `IN (...)`)。 */
+  bound: string;
+  size_bytes: number | null;
+  row_estimate: number | null;
+  is_default: boolean;
+  is_partitioned: boolean;
+  /** 自身がパーティション表のときの方式とキー (PostgreSQL の `RANGE (region)` など)。 */
+  sub_partition_key: string | null;
+}
+
+/** `list_table_partitions` の戻り値: パーティション表の方式・キーと子の一覧 (#1868)。 */
+export interface TablePartitions {
+  method: string;
+  key: string;
+  sub_method: string | null;
+  sub_key: string | null;
+  partitions: TablePartition[];
+}
+
 /** `list_table_triggers` の 1 件: テーブルで発火するトリガー (#1867)。 */
 export interface TableTrigger {
   name: string;

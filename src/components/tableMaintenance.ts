@@ -42,6 +42,66 @@ export function buildDropTablesSql(
   return [`DROP TABLE ${tables.map((t) => qualified(driver, database, t)).join(", ")};`];
 }
 
+/** パーティション操作の対象 (子パーティション)。PostgreSQL の子は別スキーマにも置ける。 */
+export interface PartitionRef {
+  name: string;
+  schema?: string | null;
+  /** サブパーティションのとき、直上のパーティションの名前とスキーマ (DETACH の対象表)。 */
+  parent?: string | null;
+  parentSchema?: string | null;
+}
+
+/** PostgreSQL の子パーティションの完全修飾名 (親と別スキーマなら子のスキーマを優先する)。 */
+function qualifiedPartition(driver: string, database: string | null, p: PartitionRef): string {
+  return qualified(driver, p.schema ?? database, p.name);
+}
+
+/**
+ * パーティション単位の TRUNCATE (#1868)。PostgreSQL は子パーティションを単独のテーブルとして
+ * `TRUNCATE TABLE <child>`、MySQL は `ALTER TABLE <t> TRUNCATE PARTITION <p>`。SQLite は
+ * パーティション非対応なので空文字を返す。
+ */
+export function buildPartitionTruncateSql(
+  driver: string,
+  database: string | null,
+  table: string,
+  p: PartitionRef,
+): string {
+  if (driver === "sqlite") return "";
+  if (driver === "postgres") return `TRUNCATE TABLE ${qualifiedPartition(driver, database, p)};`;
+  return `ALTER TABLE ${qualified(driver, database, table)} TRUNCATE PARTITION ${quoteIdentFor(driver, p.name)};`;
+}
+
+/**
+ * パーティションの削除 (#1868)。PostgreSQL は子テーブルごと `DROP TABLE` (サブパーティションも道連れ)、
+ * MySQL は `ALTER TABLE <t> DROP PARTITION <p>` (RANGE / LIST のみ。HASH / KEY は呼び出し側が出さない)。
+ */
+export function buildPartitionDropSql(
+  driver: string,
+  database: string | null,
+  table: string,
+  p: PartitionRef,
+): string {
+  if (driver === "sqlite") return "";
+  if (driver === "postgres") return `DROP TABLE ${qualifiedPartition(driver, database, p)};`;
+  return `ALTER TABLE ${qualified(driver, database, table)} DROP PARTITION ${quoteIdentFor(driver, p.name)};`;
+}
+
+/** PostgreSQL の `ALTER TABLE <parent> DETACH PARTITION <child>` (#1868)。他ドライバは空文字。 */
+export function buildDetachPartitionSql(
+  driver: string,
+  database: string | null,
+  table: string,
+  p: PartitionRef,
+): string {
+  if (driver !== "postgres") return "";
+  // サブパーティションは直上のパーティション (中間表) から外す。直下の子は開いている親表から。
+  const parent = p.parent
+    ? qualified(driver, p.parentSchema ?? database, p.parent)
+    : qualified(driver, database, table);
+  return `ALTER TABLE ${parent} DETACH PARTITION ${qualifiedPartition(driver, database, p)};`;
+}
+
 /** 複数テーブルの TRUNCATE の実行方式 (#1629)。 */
 export type TruncateBatchMode = "single" | "transaction" | "sequential";
 
