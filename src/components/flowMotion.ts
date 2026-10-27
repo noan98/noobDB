@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { durations, staggerTiming } from "../motion";
+import { staggerTiming } from "../motion";
 
 /**
  * React Flow サーフェス (ER 図 / EXPLAIN 図, #1861) のノード入場スタッガーと再レイアウト・
@@ -40,11 +40,11 @@ export function rankIndices(centers: readonly number[]): number[] {
 /** 最も深いノードの入場が終わるまでの時間 (ms)。fit のタイミングを後ろへずらすのに使う。 */
 export function flowEntranceMs(maxIndex: number): number {
   const idx = Math.min(Math.max(maxIndex, 0), FLOW_STAGGER_MAX_INDEX);
-  return Math.round((staggerTiming.delay + idx * staggerTiming.each + durations.med) * 1000);
+  return Math.round((staggerTiming.delay + idx * staggerTiming.each) * 1000 + FLOW_MORPH_MS);
 }
 
-/** 位置モーフにかかる時間 (ms)。CSS の `--dur-med` と同じ。ビューポートの fit もこれに揃える。 */
-export const FLOW_MORPH_MS = Math.round(durations.med * 1000);
+/** 位置モーフ・入場 1 ノードの長さ (ms)。App.css の `--dur-med` と同値 (テストで固定)。fit もこれに揃える。 */
+export const FLOW_MORPH_MS = 200;
 
 /** React Flow のノード / エッジの `style` に渡す、スタッガー用のカスタムプロパティ。 */
 export function staggerStyle(index: number): Record<string, number> {

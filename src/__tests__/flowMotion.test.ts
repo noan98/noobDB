@@ -1,7 +1,14 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { FLOW_STAGGER_MAX_INDEX, flowEntranceMs, rankIndices, staggerStyle } from "../components/flowMotion";
+import { staggerTiming } from "../motion";
+import {
+  FLOW_MORPH_MS,
+  FLOW_STAGGER_MAX_INDEX,
+  flowEntranceMs,
+  rankIndices,
+  staggerStyle,
+} from "../components/flowMotion";
 
 describe("rankIndices", () => {
   it("同じ中心は同じ深さ、昇順に 0 始まりで振る (入力順は保つ)", () => {
@@ -37,5 +44,11 @@ describe("App.css の React Flow モーション (#1861)", () => {
   });
   it("reduced-motion では入場の遅延も 0 にする", () => {
     expect(css).toMatch(/:root\[data-motion="reduced"\] \.flow-node-enter[^{]*\{\s*animation-delay: 0s/);
+  });
+  it("CSS トークンが motion.ts の staggerTiming / FLOW_MORPH_MS と一致する", () => {
+    const ms = (name: string) => Number(new RegExp(`--${name}: (\\d+)ms`).exec(css)?.[1]);
+    expect(ms("stagger-each")).toBe(staggerTiming.each * 1000);
+    expect(ms("stagger-delay")).toBe(staggerTiming.delay * 1000);
+    expect(ms("dur-med")).toBe(FLOW_MORPH_MS);
   });
 });

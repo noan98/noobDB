@@ -73,6 +73,7 @@ import {
   staggerStyle,
   useFlowMorphing,
 } from "./flowMotion";
+import { prefersStaticMotion } from "./revealOrigin";
 import { ImageExportButton } from "./ImageExportButton";
 import { useToast } from "./Toast";
 import { elementToPngBlob, elementToSvgBytes, erExportGeometry } from "./imageExport";
@@ -576,7 +577,7 @@ function ERDiagramInner({
     // Animate the fit only on relayout, not the initial render (the `fitView`
     // prop already frames the first layout). Defer so React Flow has the new
     // nodes before fitting.
-    const animate = didLayoutOnce.current && !reduceMotion;
+    const animate = didLayoutOnce.current && !reduceMotion && !prefersStaticMotion();
     didLayoutOnce.current = true;
     if (animate && willMove) beginMorph();
     // ビューポートはノードの位置モーフ (CSS の --dur-med) と同じ長さで同時に動かす。

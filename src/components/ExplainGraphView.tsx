@@ -41,12 +41,14 @@ import {
 } from "./explainPlan";
 import {
   FLOW_EDGE_ENTER_CLASS,
+  FLOW_MORPH_MS,
   FLOW_NODE_ENTER_CLASS,
   flowEntranceMs,
   rankIndices,
   staggerStyle,
   useFlowMorphing,
 } from "./flowMotion";
+import { prefersStaticMotion } from "./revealOrigin";
 import { ImageExportButton } from "./ImageExportButton";
 import { elementToPngBlob, elementToSvgBytes, erExportGeometry } from "./imageExport";
 import { Tooltip } from "./Tooltip";
@@ -245,6 +247,7 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect, matchIds }: Ex
   }, [positioned]);
   const { morphing, begin: beginMorph } = useFlowMorphing();
   const didLayoutOnce = useRef(false);
+  const prevPositions = useRef(new Map<string, { x: number; y: number }>());
 
   useEffect(() => {
     setNodes(
@@ -281,15 +284,30 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect, matchIds }: Ex
     );
   }, [positioned, ranks, maxCost, selectedId, onSelect, matchIds, setNodes, setEdges]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: グラフ配置 (positioned) が変わるたび全体表示へ合わせ直すトリガ依存
   useEffect(() => {
     // 初回は `fitView` prop が枠取り済み。以降の再配置は、ノードの入場 / 位置モーフが終わってから
     // ビューポートを合わせる (先に動かすと、入場前のノードを追いかけて画面がぶれる, #1861)。
     const relayout = didLayoutOnce.current;
     didLayoutOnce.current = true;
-    const animate = relayout && !reduceMotion;
-    if (animate) beginMorph();
-    const wait = animate ? flowEntranceMs(Math.max(0, ...ranks.values())) : 0;
+    const animate = relayout && !reduceMotion && !prefersStaticMotion();
+    // 既存ノードが実際に動くときだけモーフ、新しい ID のノードがあるときだけ入場完了まで fit を待つ。
+    const prev = prevPositions.current;
+    let willMove = false;
+    let hasNew = false;
+    for (const n of positioned.nodes) {
+      const p = prev.get(n.id);
+      if (!p) hasNew = true;
+      else if (Math.abs(p.x - n.x) > 0.5 || Math.abs(p.y - n.y) > 0.5) willMove = true;
+    }
+    prevPositions.current = new Map(positioned.nodes.map((n) => [n.id, { x: n.x, y: n.y }] as const));
+    if (animate && willMove) beginMorph();
+    const wait = !animate
+      ? 0
+      : hasNew
+        ? flowEntranceMs(Math.max(0, ...ranks.values()))
+        : willMove
+          ? FLOW_MORPH_MS
+          : 0;
     const id = window.setTimeout(() => fitView({ duration: reduceMotion ? 0 : 300 }), wait);
     return () => window.clearTimeout(id);
   }, [positioned, ranks, fitView, reduceMotion, beginMorph]);
