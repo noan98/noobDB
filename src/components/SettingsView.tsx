@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { api } from "../api/tauri";
@@ -10,7 +10,7 @@ import {
 } from "../themePresetPreview";
 import { AppearancePreview } from "./AppearancePreview";
 import { useT, type I18nKey } from "../i18n";
-import { Icon, ICON_SIZES } from "./Icon";
+import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
 import { Segmented } from "./Segmented";
@@ -20,7 +20,7 @@ import {
   SettingsInfo,
   SettingsLabelWithInfo,
   SettingsNavAside,
-  SettingsNavButton,
+  SettingsNavItem,
   SettingsNavEmpty,
   SettingsNavList,
   SettingsSection,
@@ -637,36 +637,38 @@ const ACCENT_LABEL_KEYS: Record<string, Parameters<ReturnType<typeof useT>>[0]> 
  */
 interface SettingsSectionMeta {
   id: string;
+  /** 左ナビの先頭グリフ (#1876)。 */
+  icon: IconName;
   titleKey: I18nKey;
 }
 
 const SECTIONS: SettingsSectionMeta[] = [
-  { id: "settings-sec-language", titleKey: "settingsLanguage" },
-  { id: "settings-sec-appearance", titleKey: "settingsAppearance" },
-  { id: "settings-sec-streaming", titleKey: "settingsStreaming" },
-  { id: "settings-sec-table-open-query", titleKey: "tableOpenQuerySettingsTitle" },
-  { id: "settings-sec-auto-limit", titleKey: "settingsAutoLimit" },
-  { id: "settings-sec-sql-lint", titleKey: "settingsSqlLint" },
-  { id: "settings-sec-preflight-impact", titleKey: "settingsPreflightImpact" },
-  { id: "settings-sec-scan-preflight", titleKey: "settingsScanPreflight" },
-  { id: "settings-sec-plan-watch", titleKey: "settingsPlanWatch" },
-  { id: "settings-sec-schema-drift", titleKey: "settingsSchemaDrift" },
-  { id: "settings-sec-timelapse", titleKey: "settingsTimelapse" },
-  { id: "settings-sec-flight-recorder", titleKey: "settingsFlightRecorder" },
-  { id: "settings-sec-history", titleKey: "settingsHistory" },
-  { id: "settings-sec-result-grid", titleKey: "settingsResultGridMode" },
-  { id: "settings-sec-quick-launcher", titleKey: "quickLauncherSettingsTitle" },
-  { id: "settings-sec-ai", titleKey: "aiSettingsTitle" },
-  { id: "settings-sec-safety", titleKey: "settingsSafety" },
-  { id: "settings-sec-notifications", titleKey: "settingsNotifications" },
-  { id: "settings-sec-tab-persistence", titleKey: "settingsTabPersistence" },
-  { id: "settings-sec-syntax-highlighting", titleKey: "settingsSyntaxHighlighting" },
-  { id: "settings-sec-preview-highlight", titleKey: "settingsPreviewHighlight" },
-  { id: "settings-sec-keybindings", titleKey: "settingsShortcuts" },
-  { id: "settings-sec-logs", titleKey: "settingsLogs" },
-  { id: "settings-sec-knownhosts", titleKey: "knownHostsTitle" },
-  { id: "settings-sec-updates", titleKey: "settingsUpdates" },
-  { id: "settings-sec-backup", titleKey: "settingsBackup" },
+  { id: "settings-sec-language", icon: "text", titleKey: "settingsLanguage" },
+  { id: "settings-sec-appearance", icon: "sun", titleKey: "settingsAppearance" },
+  { id: "settings-sec-streaming", icon: "download", titleKey: "settingsStreaming" },
+  { id: "settings-sec-table-open-query", icon: "table", titleKey: "tableOpenQuerySettingsTitle" },
+  { id: "settings-sec-auto-limit", icon: "cut", titleKey: "settingsAutoLimit" },
+  { id: "settings-sec-sql-lint", icon: "warning", titleKey: "settingsSqlLint" },
+  { id: "settings-sec-preflight-impact", icon: "eye", titleKey: "settingsPreflightImpact" },
+  { id: "settings-sec-scan-preflight", icon: "search", titleKey: "settingsScanPreflight" },
+  { id: "settings-sec-plan-watch", icon: "explain", titleKey: "settingsPlanWatch" },
+  { id: "settings-sec-schema-drift", icon: "diff", titleKey: "settingsSchemaDrift" },
+  { id: "settings-sec-timelapse", icon: "play", titleKey: "settingsTimelapse" },
+  { id: "settings-sec-flight-recorder", icon: "broadcast", titleKey: "settingsFlightRecorder" },
+  { id: "settings-sec-history", icon: "clock", titleKey: "settingsHistory" },
+  { id: "settings-sec-result-grid", icon: "columns", titleKey: "settingsResultGridMode" },
+  { id: "settings-sec-quick-launcher", icon: "star", titleKey: "quickLauncherSettingsTitle" },
+  { id: "settings-sec-ai", icon: "sparkles", titleKey: "aiSettingsTitle" },
+  { id: "settings-sec-safety", icon: "lock", titleKey: "settingsSafety" },
+  { id: "settings-sec-notifications", icon: "bell", titleKey: "settingsNotifications" },
+  { id: "settings-sec-tab-persistence", icon: "database", titleKey: "settingsTabPersistence" },
+  { id: "settings-sec-syntax-highlighting", icon: "braces", titleKey: "settingsSyntaxHighlighting" },
+  { id: "settings-sec-preview-highlight", icon: "select-all", titleKey: "settingsPreviewHighlight" },
+  { id: "settings-sec-keybindings", icon: "hash", titleKey: "settingsShortcuts" },
+  { id: "settings-sec-logs", icon: "list", titleKey: "settingsLogs" },
+  { id: "settings-sec-knownhosts", icon: "key", titleKey: "knownHostsTitle" },
+  { id: "settings-sec-updates", icon: "refresh", titleKey: "settingsUpdates" },
+  { id: "settings-sec-backup", icon: "transfer", titleKey: "settingsBackup" },
 ];
 
 const SETTINGS_IMPORT_DIFF_PREVIEW = 15;
@@ -706,12 +708,13 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
   // (IntersectionObserver は jsdom 環境に存在せずテスト環境で扱いにくいため、
   // スクロールイベントで「コンテナ上端に最も近いセクション」を判定する簡易実装)。
   const [navQuery, setNavQuery] = useState("");
-  const [activeSection, setActiveSection] = useState<string>(SECTIONS[0].id);
+  const [activeSection, setActiveSection] = useState<string>(initialSection ?? SECTIONS[0].id);
   const filteredSections = filterSectionsByTitle(SECTIONS, navQuery, (sec) => t(sec.titleKey));
   // ナビクリック直後は smooth スクロールの中間イベントでスクロールスパイが
   // ハイライトを巻き戻してしまう (#680 レビュー対応)。クリックから 600ms は
   // handleModalBodyScroll を早期リターンさせて抑制する。
   const suppressSpyUntilRef = useRef(0);
+  const navHighlightId = `settings-nav-highlight-${useId()}`;
   const handleNavClick = (id: string) => {
     setActiveSection(id);
     suppressSpyUntilRef.current = Date.now() + 600;
@@ -1212,14 +1215,15 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
               ) : (
                 <SettingsNavList role="navigation" aria-label={t("settingsTitle")}>
                   {filteredSections.map((sec) => (
-                    <SettingsNavButton
+                    <SettingsNavItem
                       key={sec.id}
-                      type="button"
-                      aria-current={activeSection === sec.id}
+                      active={activeSection === sec.id}
+                      icon={sec.icon}
+                      layoutId={navHighlightId}
                       onClick={() => handleNavClick(sec.id)}
                     >
                       {t(sec.titleKey)}
-                    </SettingsNavButton>
+                    </SettingsNavItem>
                   ))}
                 </SettingsNavList>
               )}
