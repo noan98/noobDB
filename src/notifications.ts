@@ -87,11 +87,13 @@ export function registerNotificationClickFocus(
 ): void {
   if (!clickFocusRegistered) {
     clickFocusRegistered = true;
-    onAction((notification) => {
+    onAction((event) => {
       const win = getCurrentWindow();
       void win.unminimize().catch(() => {});
       void win.setFocus().catch(() => {});
-      const tabId = tabIdFromNotificationExtra(notification?.extra);
+      // plugin-notification 2.7 からイベントは `{ actionId, notification }` の形になり、
+      // `extra` は `notification` の中に入る (環境によっては notification が null)。
+      const tabId = tabIdFromNotificationExtra(event?.notification?.extra);
       if (tabId) {
         // クリックで移動したので、フォーカス復帰の案内は出さない。
         lastNotified = null;
