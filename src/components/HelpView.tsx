@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { semanticColorVar } from "../semanticColors";
@@ -10,7 +10,7 @@ import { Modal, ModalBody, ModalHeader } from "./Modal";
 import {
   SettingsHelp,
   SettingsNavAside,
-  SettingsNavButton,
+  SettingsNavItem,
   SettingsNavEmpty,
   SettingsNavList,
   SettingsSection,
@@ -390,6 +390,7 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
   const [query, setQuery] = useState("");
   const [activeSection, setActiveSection] = useState<string>(sectionDomId(SECTIONS[0]));
   const suppressSpyUntilRef = useRef(0);
+  const navHighlightId = `help-nav-highlight-${useId()}`;
 
   const featureTitle = (f: Feature) => (f.shortcutId ? formatCombo(resolved[f.shortcutId]) : t(f.titleKey));
   const visibleSections = filterHelpSections(
@@ -451,14 +452,15 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
             ) : (
               <SettingsNavList role="navigation" aria-label={t("helpTitle")}>
                 {visibleSections.map((sec) => (
-                  <SettingsNavButton
+                  <SettingsNavItem
                     key={sec.headerKey}
-                    type="button"
-                    aria-current={activeSection === sectionDomId(sec)}
+                    active={activeSection === sectionDomId(sec)}
+                    icon={sec.icon}
+                    layoutId={navHighlightId}
                     onClick={() => handleNavClick(sectionDomId(sec))}
                   >
                     {sec.header}
-                  </SettingsNavButton>
+                  </SettingsNavItem>
                 ))}
               </SettingsNavList>
             )}

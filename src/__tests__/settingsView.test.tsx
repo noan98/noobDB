@@ -64,6 +64,15 @@ describe("SettingsView render smoke (#604)", () => {
     );
   });
 
+  it("左ナビのアクティブ項目だけに滑るハイライトが載り、各項目に先頭グリフがある (#1876)", async () => {
+    renderWithProviders(<SettingsView theme="light" onClose={() => {}} initialSection="settings-sec-ai" />);
+    const nav = await screen.findByRole("navigation", { name: t("settingsTitle") });
+    await waitFor(() => expect(within(nav).getAllByTestId("active-row-highlight")).toHaveLength(1));
+    const active = within(nav).getByText(t("aiSettingsTitle")).closest("button");
+    expect(active?.querySelector("[data-testid=active-row-highlight]")).not.toBeNull();
+    for (const b of within(nav).getAllByRole("button")) expect(b.querySelector("svg")).not.toBeNull();
+  });
+
   it("invokes onClose when the close control is activated", async () => {
     const onClose = vi.fn();
     renderWithProviders(<SettingsView theme="dark" onClose={onClose} />);
