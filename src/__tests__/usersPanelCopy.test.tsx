@@ -370,3 +370,25 @@ describe("UsersPanel: 適用後の面内フラッシュ (#1890)", () => {
     expect(document.querySelector("[data-role-flash]")).toHaveTextContent("reader");
   });
 });
+
+describe("UsersPanel: 全権限を外した行の退場 (#1890)", () => {
+  it("全剥奪した行は再取得後に退場アニメーションを経て消える", async () => {
+    vi.mocked(api.listDbUsers).mockResolvedValue([user("app")]);
+    vi.mocked(api.listUserPrivileges)
+      .mockResolvedValueOnce({ global: null, tables: [priv("t1", true), priv("t2", true)] })
+      .mockResolvedValue({ global: null, tables: [priv("t1", true)] });
+    vi.mocked(api.generatePrivilegeDiffSql).mockResolvedValue(["REVOKE ALL ON public.t2 FROM app"]);
+    vi.mocked(api.applyPrivilegeSql).mockResolvedValue(1);
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver="postgres" database="public" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
+    await screen.findByText("t2");
+    fireEvent.click(screen.getByLabelText("t2 select"));
+    fireEvent.click(screen.getByRole("button", { name: t("usersApplyChanges") }));
+    fireEvent.click(await screen.findByRole("button", { name: t("usersApplyConfirmOk") }));
+    await waitFor(() => expect(api.listUserPrivileges).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText("t2")).not.toBeInTheDocument());
+    expect(screen.getByText("t1")).toBeInTheDocument();
+  });
+});

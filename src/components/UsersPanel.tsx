@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
-import { motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 import {
   api,
@@ -10,7 +10,7 @@ import {
   type TablePrivilegeRow,
 } from "../api/tauri";
 import { useT } from "../i18n";
-import { staggerContainer, variants } from "../motion";
+import { reducedMotionActive, staggerContainer, transitions, variants } from "../motion";
 import { semanticColorVar } from "../semanticColors";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
@@ -33,6 +33,7 @@ import {
   PRIVILEGE_TEMPLATE_IDS,
   type PrivilegeTemplateId,
 } from "./privilegeTemplates";
+import { prefersStaticMotion } from "./revealOrigin";
 import {
   addedRoles,
   changedPrivilegeCells,
@@ -160,7 +161,20 @@ const tdCss: SystemStyleObject = {
 
 // 入場 stagger の motion 要素 (#1890)。variants は親コンテナから伝播する。
 const MotionTbody = chakra(motion.tbody, {}, { forwardProps: ["variants", "initial", "animate"] });
-const MotionTr = chakra(motion.tr, {}, { forwardProps: ["variants"] });
+const MotionTr = chakra(motion.tr, {}, { forwardProps: ["variants", "exit"] });
+const MotionCell = chakra(motion.div, {}, { forwardProps: ["variants"] });
+
+/**
+ * 全権限を外して再取得で消える行の退場 (#1890)。`tr` の高さは補間できないので、行は opacity、
+ * 各セルの中身のラッパーを `variants.collapse` の退場 (高さ 0) で縮める。td の縦パディングは
+ * ラッパー側へ持たせ、縮み切ると行の高さが 0 になる。
+ */
+const rowExitVariants = {
+  exit: { opacity: 0, transition: transitions.fade },
+} as const;
+const cellExitVariants = {
+  exit: { ...variants.collapse.exit, transition: transitions.fade },
+} as const;
 const MotionUl = chakra(motion.ul, {}, { forwardProps: ["variants", "initial", "animate"] });
 const MotionLi = chakra(motion.li, {}, { forwardProps: ["variants"] });
 
@@ -172,6 +186,10 @@ type PrivilegeFlash = { gen: number; cells: ChangedPrivilegeCells };
 
 /** 光らせるセルに足す。疑似要素 (App.css の `.flash-ring::after`) の基準位置になる。 */
 const flashCellCss: SystemStyleObject = { position: "relative" };
+
+/** 退場で縮めるため、td のパディングを中身のラッパーへ移す (#1890)。 */
+const cellShellCss: SystemStyleObject = { padding: 0 };
+const cellInnerCss: SystemStyleObject = { padding: tdCss.padding };
 
 const PRIVILEGE_FLAGS = ["select", "insert", "update", "delete", "ddl"] as const;
 
@@ -186,6 +204,7 @@ export const PrivilegeRow = memo(function PrivilegeRow({
   readOnly,
   onToggle,
   animated = false,
+  exitAnimated = false,
   flashCols,
   flashGen = 0,
 }: {
@@ -196,6 +215,8 @@ export const PrivilegeRow = memo(function PrivilegeRow({
   onToggle: (table: string, flag: keyof Flags) => void;
   /** 入場 stagger に載せるか (#1890)。親の `MotionTbody` の variant が伝播する。 */
   animated?: boolean;
+  /** 行が消えるとき、高さを縮める退場を再生するか (#1890)。 */
+  exitAnimated?: boolean;
   /** 直前の適用で変わった権限列。該当セルへ `apply-flash` を 1 回再生する (#1890)。 */
   flashCols?: ReadonlySet<string>;
   /** 適用ごとに増える世代。セルの key に混ぜて再生し直す。 */
@@ -204,14 +225,31 @@ export const PrivilegeRow = memo(function PrivilegeRow({
   const rowDirty = !flagsEqual(originalFlags, flags);
   return (
     // 常に motion 要素にして、12/13 件目の境界で要素の型が変わり再マウントされるのを避ける。
-    <MotionTr variants={animated ? variants.staggerItem : undefined}>
-      <chakra.td css={tdCss} fontFamily="var(--font-mono)" color={rowDirty ? "var(--accent)" : undefined}>
-        {table}
+    <MotionTr
+      variants={
+        exitAnimated
+          ? animated
+            ? { ...variants.staggerItem, ...rowExitVariants }
+            : rowExitVariants
+          : animated
+            ? variants.staggerItem
+            : undefined
+      }
+      exit={exitAnimated ? "exit" : undefined}
+    >
+      <chakra.td
+        css={{ ...tdCss, ...cellShellCss }}
+        fontFamily="var(--font-mono)"
+        color={rowDirty ? "var(--accent)" : undefined}
+      >
+        <MotionCell css={cellInnerCss} variants={exitAnimated ? cellExitVariants : undefined}>
+          {table}
+        </MotionCell>
       </chakra.td>
       {PRIVILEGE_FLAGS.map((flag) => {
         const flashed = flashCols?.has(flag) === true;
         return (
-          <chakra.td css={{ ...tdCss, ...flashCellCss }} key={flag}>
+          <chakra.td css={{ ...tdCss, ...flashCellCss, ...cellShellCss }} key={flag}>
             {flashed && (
               // td と Checkbox は作り直さず、オーバーレイだけを世代 key で作り直して再生する。
               <chakra.span
@@ -224,12 +262,14 @@ export const PrivilegeRow = memo(function PrivilegeRow({
                 pointerEvents="none"
               />
             )}
-            <Checkbox
-              checked={flags[flag]}
-              disabled={readOnly}
-              aria-label={`${table} ${flag}`}
-              onChange={() => onToggle(table, flag)}
-            />
+            <MotionCell css={cellInnerCss} variants={exitAnimated ? cellExitVariants : undefined}>
+              <Checkbox
+                checked={flags[flag]}
+                disabled={readOnly}
+                aria-label={`${table} ${flag}`}
+                onChange={() => onToggle(table, flag)}
+              />
+            </MotionCell>
           </chakra.td>
         );
       })}
@@ -254,6 +294,8 @@ export function UsersPanel({
   const toast = useToast();
   const { confirm, dialog } = useConfirm();
   const reduced = useReducedMotion() ?? false;
+  // 行の退場は reduced-motion / ハイコントラスト / forced-colors では即時に消す (#1890)。
+  const exitMotion = !reduced && !reducedMotionActive() && !prefersStaticMotion();
 
   const [users, setUsers] = useState<DbUserInfo[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -1385,27 +1427,35 @@ export function UsersPanel({
                       >
                         {loadingPrivs ? (
                           <SkeletonTableRows columns={6} />
-                        ) : rowKeys.length === 0 ? (
-                          <tr>
-                            {/* tdCss は nowrap なので、長い案内文だけ折り返す。 */}
-                            <chakra.td css={{ ...tdCss, whiteSpace: "normal" }} colSpan={6}>
-                              {t("usersPrivilegesEmpty")}
-                            </chakra.td>
-                          </tr>
                         ) : (
-                          rowKeys.map((table, i) => (
-                            <PrivilegeRow
-                              key={table}
-                              animated={isStaggerAnimated(i)}
-                              flashCols={privFlash?.cells.get(table)}
-                              flashGen={privFlash?.cells.has(table) ? privFlash.gen : undefined}
-                              table={table}
-                              flags={edited[table] ?? EMPTY_FLAGS}
-                              originalFlags={original[table] ?? EMPTY_FLAGS}
-                              readOnly={readOnly || busy}
-                              onToggle={toggleFlag}
-                            />
-                          ))
+                          <>
+                            {/* 全権限を外した行は再取得で消える。縮んで去らせる (ユーザ切替は tbody の key
+                                ごと作り直すので退場しない)。 */}
+                            <AnimatePresence>
+                              {rowKeys.map((table, i) => (
+                                <PrivilegeRow
+                                  key={table}
+                                  animated={isStaggerAnimated(i)}
+                                  exitAnimated={exitMotion}
+                                  flashCols={privFlash?.cells.get(table)}
+                                  flashGen={privFlash?.cells.has(table) ? privFlash.gen : undefined}
+                                  table={table}
+                                  flags={edited[table] ?? EMPTY_FLAGS}
+                                  originalFlags={original[table] ?? EMPTY_FLAGS}
+                                  readOnly={readOnly || busy}
+                                  onToggle={toggleFlag}
+                                />
+                              ))}
+                            </AnimatePresence>
+                            {rowKeys.length === 0 && (
+                              <tr>
+                                {/* tdCss は nowrap なので、長い案内文だけ折り返す。 */}
+                                <chakra.td css={{ ...tdCss, whiteSpace: "normal" }} colSpan={6}>
+                                  {t("usersPrivilegesEmpty")}
+                                </chakra.td>
+                              </tr>
+                            )}
+                          </>
                         )}
                       </MotionTbody>
                     </chakra.table>
