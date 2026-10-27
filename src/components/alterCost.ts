@@ -34,6 +34,8 @@ export type AlterCostReason =
   | "pgRewriteType"
   /** MySQL: AUTO_INCREMENT / STORED 生成列付きの ADD COLUMN は COPY。 */
   | "mysqlCopyAddColumn"
+  /** MySQL: STORED 生成列の式の変更は COPY (全行の再計算)。 */
+  | "mysqlCopyGeneratedExpr"
   /** PostgreSQL: 揮発的な DEFAULT 付き ADD COLUMN は全行を書き換える。 */
   | "pgRewriteVolatileDefault"
   /** PostgreSQL: serial / IDENTITY / STORED 生成列付きの ADD COLUMN は全行を書き換える。 */
@@ -128,7 +130,7 @@ const MYSQL_ADD_COPY = /\bauto_increment\b|\bstored\b/i;
 export interface AlterCostInput {
   baseline: readonly ExistingColumnBaseline[];
   existing: readonly ExistingColumnEdit[];
-  added: readonly Pick<NewColumn, "name" | "defaultValue" | "type">[];
+  added: readonly Pick<NewColumn, "name" | "defaultValue" | "type" | "generated">[];
   /** 作成するインデックス (不備のない行だけ渡す)。 */
   indexes?: readonly IndexDef[];
   addedForeignKeys?: readonly ForeignKeyDef[];
@@ -161,6 +163,21 @@ export function classifyAlterCost(driver: string, input: AlterCostInput): AlterC
         });
       }
     }
+    // MySQL: STORED 生成列の式の変更は全行を再計算する COPY (#1893)。VIRTUAL はメタデータのみ。
+    if (
+      mysql &&
+      base.generated &&
+      !base.generated.virtual &&
+      edit.generated &&
+      edit.generated.expression.trim() !== base.generated.expression.trim()
+    ) {
+      out.push({
+        id: `generatedExpr:${edit.original}`,
+        severity: "rewrite",
+        reason: "mysqlCopyGeneratedExpr",
+        subject: edit.original,
+      });
+    }
     if (edit.notNull !== base.notNull) {
       if (mysql) {
         out.push({
@@ -185,8 +202,10 @@ export function classifyAlterCost(driver: string, input: AlterCostInput): AlterC
   for (const col of input.added) {
     const name = col.name.trim();
     if (!name) continue;
+    // UI の生成句は `generated` に入り型欄に出ない。STORED (PostgreSQL は常に STORED) は全行を計算する。
+    const gen = col.generated && col.generated.expression.trim() !== "" ? col.generated : undefined;
     if (mysql) {
-      if (MYSQL_ADD_COPY.test(col.type)) {
+      if (MYSQL_ADD_COPY.test(col.type) || (gen && !gen.virtual)) {
         out.push({
           id: `addColumn:${name}`,
           severity: "rewrite",
@@ -194,7 +213,7 @@ export function classifyAlterCost(driver: string, input: AlterCostInput): AlterC
           subject: name,
         });
       }
-    } else if (PG_ADD_REWRITE.test(col.type)) {
+    } else if (PG_ADD_REWRITE.test(col.type) || gen) {
       out.push({ id: `addColumn:${name}`, severity: "rewrite", reason: "pgRewriteAddColumn", subject: name });
     } else if (PG_VOLATILE_FN.test(col.defaultValue)) {
       out.push({

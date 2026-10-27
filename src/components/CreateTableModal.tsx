@@ -189,7 +189,13 @@ export function CreateTableModal({
         };
       }),
     );
-  const removeCol = (i: number) => setColumns((cols) => cols.filter((_, idx) => idx !== i));
+  const removeCol = (i: number) => {
+    setColumns((cols) => cols.filter((_, idx) => idx !== i));
+    setGenTouched((cur) => cur.filter((n) => n !== i).map((n) => (n > i ? n - 1 : n)));
+  };
+  // 生成式の欄を触った行。空の式のエラーは触った後に出す (スイッチを入れた直後は伏せる)。
+  const [genTouched, setGenTouched] = useState<number[]>([]);
+  const touchGen = (i: number) => setGenTouched((cur) => (cur.includes(i) ? cur : [...cur, i]));
 
   // 途中まで入力した FK 行は SQL 生成で黙って捨てられるので、直すまで実行を止める (#1602)。
   const hasPartialForeignKey = foreignKeys.some(isPartialForeignKey);
@@ -390,6 +396,7 @@ export function CreateTableModal({
                 <Flex gap="1.5" align="center" pl="2">
                   <Input
                     value={c.generated.expression}
+                    onBlur={() => touchGen(i)}
                     onChange={(e) =>
                       setCol(i, {
                         generated: { ...(c.generated ?? { virtual: false }), expression: e.target.value },
@@ -450,15 +457,17 @@ export function CreateTableModal({
           <FieldLabel as="div">{t("createTablePreview")}</FieldLabel>
           <CodePreview minH="60px">{sql || t("createTablePreviewEmpty")}</CodePreview>
         </FormSection>
-        {generatedErrors.map((g) => (
-          <FieldError key={`${g.index}:${g.problem}`}>
-            {g.problem === "invalidExpression"
-              ? t("createTableGeneratedInvalid", { column: g.name })
-              : g.problem === "virtualUnsupported"
-                ? t("createTableGeneratedPgNoVirtual")
-                : t("createTableGeneratedEmpty", { column: g.name })}
-          </FieldError>
-        ))}
+        {generatedErrors
+          .filter((g) => g.problem !== "emptyExpression" || genTouched.includes(g.index))
+          .map((g) => (
+            <FieldError key={`${g.index}:${g.problem}`}>
+              {g.problem === "invalidExpression"
+                ? t("createTableGeneratedInvalid", { column: g.name })
+                : g.problem === "virtualUnsupported"
+                  ? t("createTableGeneratedPgNoVirtual")
+                  : t("createTableGeneratedEmpty", { column: g.name })}
+            </FieldError>
+          ))}
         {hasPartialForeignKey && <FieldError>{t("createTableForeignKeyIncomplete")}</FieldError>}
         {readOnly && <FieldError>{t("createTableReadOnly")}</FieldError>}
       </ModalBody>

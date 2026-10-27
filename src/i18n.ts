@@ -3304,6 +3304,8 @@ const en = {
   alterCostMysqlCopyCheck: "adding a CHECK validates every row and can fall back to COPY (writes blocked)",
   alterCostMysqlRebuildNullability: "changing NULL / NOT NULL rebuilds the table in place",
   alterCostPgRewriteType: "the type change rewrites the whole table and its indexes under ACCESS EXCLUSIVE",
+  alterCostMysqlCopyGeneratedExpr:
+    "changing the expression of a STORED generated column recomputes every row with COPY (writes blocked)",
   alterCostMysqlCopyAddColumn:
     "an AUTO_INCREMENT or STORED generated column needs COPY when added (writes blocked)",
   alterCostPgRewriteAddColumn:
@@ -3399,6 +3401,7 @@ const en = {
   alterTableCtxItemGenerated: "generated column expressions",
   alterTableGeneratedExprAria: "Generated expression: {column}",
   alterTableGeneratedExisting: "Generated ({kind}). STORED / VIRTUAL cannot be switched.",
+  alterTableGeneratedExprReadOnly: "The expression cannot be changed.",
   alterTableGeneratedNewAria: "Generated column ({n})",
   alterTableWarningTitle: "Some edits are not applied",
   alterTableWarnGeneratedExpressionUnsupported:
@@ -10316,6 +10319,7 @@ const ja: Dict = {
   alterCostMysqlCopyCheck: "CHECK の追加は全行を検証し、COPY (書き込み停止) になる場合があります",
   alterCostMysqlRebuildNullability: "NULL / NOT NULL の変更はテーブルをその場で再構築します",
   alterCostPgRewriteType: "型の変更は ACCESS EXCLUSIVE のままテーブルとインデックス全体を書き換えます",
+  alterCostMysqlCopyGeneratedExpr: "STORED 生成列の式の変更は全行を再計算する COPY (書き込み停止) になります",
   alterCostMysqlCopyAddColumn: "AUTO_INCREMENT や STORED 生成列の追加は COPY (書き込み停止) になります",
   alterCostPgRewriteAddColumn: "serial / IDENTITY / 生成列 (STORED) の追加は全行を書き換えます",
   alterCostPgRewriteVolatileDefault: "揮発的な DEFAULT 付きの列追加は全行を書き換えます",
@@ -10406,6 +10410,7 @@ const ja: Dict = {
   alterTableCtxItemGenerated: "生成列の式",
   alterTableGeneratedExprAria: "生成式: {column}",
   alterTableGeneratedExisting: "生成列 ({kind})。STORED / VIRTUAL は切り替えられません。",
+  alterTableGeneratedExprReadOnly: "式は変更できません。",
   alterTableGeneratedNewAria: "生成列 ({n})",
   alterTableWarningTitle: "反映されない編集があります",
   alterTableWarnGeneratedExpressionUnsupported:

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { classifyAlterCost } from "../components/alterCost";
 import {
   buildCreateTableSql,
   generatedColumnProblems,
@@ -291,5 +292,49 @@ describe("ALTER TABLE: generated columns (#1893)", () => {
     expect(p.statements.map((s) => s.sql)).toEqual([
       'ALTER TABLE "shop"."t" ALTER COLUMN "total" SET NOT NULL;',
     ]);
+  });
+});
+
+describe("alter cost: generated columns (#1893)", () => {
+  const gen = (virtual: boolean) => ({ expression: "a * 2", virtual });
+  const added = (virtual: boolean) => [{ name: "g", type: "INT", defaultValue: "", generated: gen(virtual) }];
+
+  it("MySQL: adding a STORED generated column is a COPY, VIRTUAL is not", () => {
+    expect(
+      classifyAlterCost("mysql", { baseline: [], existing: [], added: added(false) }).map((r) => r.reason),
+    ).toEqual(["mysqlCopyAddColumn"]);
+    expect(classifyAlterCost("mysql", { baseline: [], existing: [], added: added(true) })).toEqual([]);
+  });
+
+  it("PostgreSQL: any generated column added rewrites the table", () => {
+    expect(
+      classifyAlterCost("postgres", { baseline: [], existing: [], added: added(false) }).map((r) => r.reason),
+    ).toEqual(["pgRewriteAddColumn"]);
+  });
+
+  it("MySQL: changing the expression of a STORED generated column is a COPY", () => {
+    const base = (virtual: boolean) => ({
+      name: "total",
+      type: "int",
+      notNull: false,
+      defaultValue: "",
+      extra: "",
+      generated: { expression: "a + 1", virtual },
+    });
+    const edit = {
+      original: "total",
+      drop: false,
+      name: "total",
+      type: "int",
+      notNull: false,
+      defaultValue: "",
+      generated: { expression: "a + 2", virtual: false },
+    };
+    expect(
+      classifyAlterCost("mysql", { baseline: [base(false)], existing: [edit], added: [] }).map(
+        (r) => r.reason,
+      ),
+    ).toEqual(["mysqlCopyGeneratedExpr"]);
+    expect(classifyAlterCost("mysql", { baseline: [base(true)], existing: [edit], added: [] })).toEqual([]);
   });
 });

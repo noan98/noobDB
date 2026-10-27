@@ -18,8 +18,10 @@
 // `CHANGE COLUMN` 実行時に baseline の値を逐語で付け足して保持する。列コメント
 // (`COMMENT`) も #1002 で `describeTable` が取得するようになったので、`CHANGE
 // COLUMN` で列を再定義するときは baseline (または編集後) のコメントを付け足して
-// 保持する。それ以外の付随属性 (文字セット/照合順序・生成列式など。`describeTable`
-// がそもそも取得しない) は保持できない — フル対応ではなく最小対応であることに注意。
+// 保持する。生成列の式 (#1893) は `describeTable` が返さないので、呼び出し側が
+// `alterTableContext.generated` から `ExistingColumnBaseline.generated` に載せ、MySQL の再定義で
+// 付け直す (下記)。文字セット/照合順序などそれ以外の付随属性は保持できない —
+// フル対応ではなく最小対応であることに注意。
 //
 // テーブル / 列コメントの編集 (#1002) もここで方言別に組み立てる:
 // MySQL は `ALTER TABLE ... COMMENT = '...'` と列の再定義 (`CHANGE COLUMN ...

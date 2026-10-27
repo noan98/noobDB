@@ -12,6 +12,7 @@ const REASON_KEY = {
   mysqlRebuildNullability: "alterCostMysqlRebuildNullability",
   pgRewriteType: "alterCostPgRewriteType",
   mysqlCopyAddColumn: "alterCostMysqlCopyAddColumn",
+  mysqlCopyGeneratedExpr: "alterCostMysqlCopyGeneratedExpr",
   pgRewriteAddColumn: "alterCostPgRewriteAddColumn",
   pgRewriteVolatileDefault: "alterCostPgRewriteVolatileDefault",
   pgScanSetNotNull: "alterCostPgScanSetNotNull",

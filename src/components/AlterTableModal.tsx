@@ -481,7 +481,8 @@ export function AlterTableModal({
         out.push({ column, kind: "virtual" });
     });
     for (const e of existing) {
-      if (e.drop || !e.generated) continue;
+      // PostgreSQL の既存生成列の式は変更できない (読み取り専用) ので検査しない。
+      if (e.drop || !e.generated || driver === "postgres") continue;
       const p = generatedExpressionProblem(e.generated.expression);
       if (p) out.push({ column: e.original, kind: p });
     }
@@ -759,21 +760,42 @@ export function AlterTableModal({
                             kind: row.generated.virtual ? "VIRTUAL" : "STORED",
                           })}
                         </chakra.span>
-                        <Input
-                          value={row.generated.expression}
-                          onChange={(e) =>
-                            setExistingAt(i, {
-                              generated: {
-                                virtual: row.generated?.virtual ?? false,
-                                expression: e.target.value,
-                              },
-                            })
-                          }
-                          disabled={row.drop}
-                          fontFamily="mono"
-                          flex="1"
-                          aria-label={t("alterTableGeneratedExprAria", { column: row.original })}
-                        />
+                        {driver === "postgres" ? (
+                          <Tooltip label={t("alterTableGeneratedExprReadOnly")} focusableWrapper>
+                            <Input
+                              value={row.generated.expression}
+                              onChange={(e) =>
+                                setExistingAt(i, {
+                                  generated: {
+                                    virtual: row.generated?.virtual ?? false,
+                                    expression: e.target.value,
+                                  },
+                                })
+                              }
+                              disabled={row.drop}
+                              readOnly={driver === "postgres"}
+                              fontFamily="mono"
+                              flex="1"
+                              aria-label={t("alterTableGeneratedExprAria", { column: row.original })}
+                            />
+                          </Tooltip>
+                        ) : (
+                          <Input
+                            value={row.generated.expression}
+                            onChange={(e) =>
+                              setExistingAt(i, {
+                                generated: {
+                                  virtual: row.generated?.virtual ?? false,
+                                  expression: e.target.value,
+                                },
+                              })
+                            }
+                            disabled={row.drop}
+                            fontFamily="mono"
+                            flex="1"
+                            aria-label={t("alterTableGeneratedExprAria", { column: row.original })}
+                          />
+                        )}
                       </Flex>
                     )}
                   </chakra.div>
