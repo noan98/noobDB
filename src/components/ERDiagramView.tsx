@@ -65,6 +65,14 @@ import { copyToClipboard } from "./clipboard";
 import { clearErLayout, readErLayout, writeErLayout } from "./erPositions";
 import { qualifiedTableSql } from "./sqlDialect";
 import { TABLE_DDL_KIND } from "./tableDdl";
+import {
+  FLOW_EDGE_ENTER_CLASS,
+  FLOW_MORPH_MS,
+  FLOW_NODE_ENTER_CLASS,
+  rankIndices,
+  staggerStyle,
+  useFlowMorphing,
+} from "./flowMotion";
 import { ImageExportButton } from "./ImageExportButton";
 import { useToast } from "./Toast";
 import { elementToPngBlob, elementToSvgBytes, erExportGeometry } from "./imageExport";
@@ -238,6 +246,8 @@ const ErTableNode = memo(function ErTableNode({ data }: NodeProps<ErFlowNode>) {
 interface ErRelationData {
   cardinality: ErCardinality;
   optional: boolean;
+  /** 入場スタッガーの段数 (参照先ノードの深さ, #1861)。 */
+  stagger?: number;
   [key: string]: unknown;
 }
 
@@ -256,6 +266,7 @@ const ErRelationEdge = memo(function ErRelationEdge({
   targetPosition,
   data,
 }: EdgeProps<Edge<ErRelationData, "erRelation">>) {
+  const stagger = staggerStyle(data?.stagger ?? 0);
   const [path] = getSmoothStepPath({
     sourceX,
     sourceY,
@@ -273,9 +284,9 @@ const ErRelationEdge = memo(function ErRelationEdge({
   const dst = endGlyph(targetEndKind(data?.optional ?? false), targetPosition as ErEndSide, targetX, targetY);
   return (
     <>
-      <BaseEdge id={id} path={path} />
+      <BaseEdge id={id} path={path} pathLength={1} style={stagger} />
       {[src, dst].map((g, i) => (
-        <g key={i === 0 ? "source" : "target"} className="er-rel-glyph">
+        <g key={i === 0 ? "source" : "target"} className="er-rel-glyph" style={stagger}>
           {g.paths.map((d) => (
             <path key={d} d={d} />
           ))}
@@ -285,6 +296,14 @@ const ErRelationEdge = memo(function ErRelationEdge({
     </>
   );
 });
+
+/**
+ * ハイライト用クラス (`er-hl` / `er-dim`) に入場クラスを足す。入場クラスを外すと再生中の
+ * アニメが途切れるので、ハイライトの付け外しでも常に残す (#1861)。
+ */
+function withEnter(enter: string, highlight: string | undefined): string {
+  return highlight ? `${enter} ${highlight}` : enter;
+}
 
 // Stable reference so React Flow doesn't warn about a new nodeTypes each render.
 const nodeTypes = { erTable: ErTableNode };
@@ -374,6 +393,10 @@ function ERDiagramInner({
   // Skip the fit-view animation on the first layout (initial mount already
   // fits via the `fitView` prop); animate only subsequent relayouts.
   const didLayoutOnce = useRef(false);
+  // 再レイアウト中はエッジを隠す (ノードが滑る間、線だけ最終位置にあるとずれるため, #1861)。
+  const { morphing, begin: beginMorph } = useFlowMorphing();
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
   // ReactFlow のラッパ参照 — 画像エクスポート (#643) でビューポート要素を取得する。
   const flowWrapRef = useRef<HTMLDivElement>(null);
 
@@ -510,10 +533,24 @@ function ERDiagramInner({
     // 再レイアウトでノードを作り直すのでホバー状態も捨てる (className が落ちるため)。
     // 直後のハイライト effect が hoverId=null を反映して整合を取る。
     setHoverId(null);
+    // 入場スタッガーの深さ (#1861)。dagre は同じランクを、LR なら同じ x 中心・TB なら同じ y 中心に置く。
+    const rankIdx = rankIndices(
+      positioned.nodes.map((n) => (direction === "LR" ? n.x + n.width / 2 : n.y + n.height / 2)),
+    );
+    // 既存ノードが実際に別の位置へ動くときだけモーフ扱いにする (同じ配置での再実行ではエッジを隠さない)。
+    const prevPos = new Map(nodesRef.current.map((n) => [n.id, n.position] as const));
+    const willMove = positioned.nodes.some((n) => {
+      const cur = saved?.[n.data.table] ?? { x: n.x, y: n.y };
+      const prev = prevPos.get(n.id);
+      return prev !== undefined && (Math.abs(prev.x - cur.x) > 0.5 || Math.abs(prev.y - cur.y) > 0.5);
+    });
+    const rankOf = new Map(positioned.nodes.map((n, i) => [n.id, rankIdx[i] ?? 0] as const));
     setNodes(
       positioned.nodes.map((n) => ({
         id: n.id,
         type: "erTable" as const,
+        className: FLOW_NODE_ENTER_CLASS,
+        style: staggerStyle(rankOf.get(n.id) ?? 0),
         position: saved?.[n.data.table] ?? { x: n.x, y: n.y },
         width: n.width,
         data: {
@@ -532,7 +569,8 @@ function ERDiagramInner({
         id: e.id,
         source: e.source,
         target: e.target,
-        data: { cardinality: e.cardinality, optional: e.optional },
+        className: FLOW_EDGE_ENTER_CLASS,
+        data: { cardinality: e.cardinality, optional: e.optional, stagger: rankOf.get(e.target) ?? 0 },
       })),
     );
     // Animate the fit only on relayout, not the initial render (the `fitView`
@@ -540,8 +578,10 @@ function ERDiagramInner({
     // nodes before fitting.
     const animate = didLayoutOnce.current && !reduceMotion;
     didLayoutOnce.current = true;
+    if (animate && willMove) beginMorph();
+    // ビューポートはノードの位置モーフ (CSS の --dur-med) と同じ長さで同時に動かす。
     const id = window.setTimeout(() => {
-      void fitView({ duration: animate ? 400 : 0 });
+      void fitView({ duration: animate ? FLOW_MORPH_MS : 0 });
     }, 0);
     return () => window.clearTimeout(id);
     // layoutResetTick: 「配置をリセット」で自動レイアウトを再計算させるトリガ依存。
@@ -555,6 +595,7 @@ function ERDiagramInner({
     t,
     reduceMotion,
     fitView,
+    beginMorph,
     setNodes,
     setEdges,
     connectionKey,
@@ -562,8 +603,6 @@ function ERDiagramInner({
   ]);
 
   // ドラッグ終了時に全ノードの位置を保存する (#1628)。ドラッグ中のノードは引数の最新位置を使う。
-  const nodesRef = useRef(nodes);
-  nodesRef.current = nodes;
   const onNodeDragStop = useCallback(
     (_: unknown, __: unknown, dragged: Node[]) => {
       if (!connectionKey || !database) return;
@@ -668,13 +707,13 @@ function ERDiagramInner({
       hl === null ? undefined : related ? "er-hl" : "er-dim";
     setNodes((ns) =>
       ns.map((n) => {
-        const c = cls(hl?.nodeIds.has(n.id) ?? false);
+        const c = withEnter(FLOW_NODE_ENTER_CLASS, cls(hl?.nodeIds.has(n.id) ?? false));
         return n.className === c ? n : { ...n, className: c };
       }),
     );
     setEdges((es) =>
       es.map((e) => {
-        const c = cls(hl?.edgeIds.has(e.id) ?? false);
+        const c = withEnter(FLOW_EDGE_ENTER_CLASS, cls(hl?.edgeIds.has(e.id) ?? false));
         return e.className === c ? e : { ...e, className: c };
       }),
     );
@@ -936,7 +975,7 @@ function ERDiagramInner({
             onEdgesChange={onEdgesChange}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
-            className="er-flow"
+            className={morphing ? "er-flow flow-morphing" : "er-flow"}
             onNodeDragStop={onNodeDragStop}
             onNodeContextMenu={onNodeContextMenu}
             onNodeMouseEnter={onNodeMouseEnter}

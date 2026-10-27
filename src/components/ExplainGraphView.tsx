@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import {
   Background,
   BackgroundVariant,
+  BaseEdge,
   Controls,
   Handle,
   MiniMap,
@@ -11,10 +12,12 @@ import {
   ReactFlow,
   ReactFlowProvider,
   getNodesBounds,
+  getSmoothStepPath,
   useEdgesState,
   useNodesState,
   useReactFlow,
   type Edge,
+  type EdgeProps,
   type Node,
   type NodeProps,
 } from "@xyflow/react";
@@ -36,6 +39,14 @@ import {
   worstSeverity,
   type PlanNode,
 } from "./explainPlan";
+import {
+  FLOW_EDGE_ENTER_CLASS,
+  FLOW_NODE_ENTER_CLASS,
+  flowEntranceMs,
+  rankIndices,
+  staggerStyle,
+  useFlowMorphing,
+} from "./flowMotion";
 import { ImageExportButton } from "./ImageExportButton";
 import { elementToPngBlob, elementToSvgBytes, erExportGeometry } from "./imageExport";
 import { Tooltip } from "./Tooltip";
@@ -178,8 +189,27 @@ function PlanFlowNodeView({ data }: NodeProps<PlanFlowNode>) {
   );
 }
 
+/**
+ * 親子をつなぐ線。smoothstep と同じ経路を `pathLength=1` で引き、入場時に
+ * `stroke-dashoffset` で描画する (#1861, App.css の `.flow-edge-enter`)。遅延は子ノードの深さ。
+ */
+const PlanFlowEdge = memo(function PlanFlowEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  data,
+}: EdgeProps<Edge<{ stagger: number }>>) {
+  const [path] = getSmoothStepPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
+  return <BaseEdge id={id} path={path} pathLength={1} style={staggerStyle(data?.stagger ?? 0)} />;
+});
+
 const nodeTypes = { planNode: PlanFlowNodeView };
-const defaultEdgeOptions = { type: "smoothstep" } as const;
+const edgeTypes = { planEdge: PlanFlowEdge };
+const defaultEdgeOptions = { type: "planEdge" } as const;
 
 function rowsOf(node: PlanNode): number | null {
   const find = (key: string): unknown => node.attrs.find(([k]) => k === key)?.[1];
@@ -207,6 +237,14 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect, matchIds }: Ex
 
   // レイアウトは root が変わったときだけ計算する (選択変更では作り直さない)。
   const positioned = useMemo(() => layoutPlanGraph(buildPlanGraph(root)), [root]);
+  // 実行木の深さ (ルート=0)。dagre は TB で同じ深さのノードを同じ y 中心に置くので、それを段数に
+  // 読み替える。入場スタッガーの遅延 (#1861)。レイアウトの純ロジックは触らない。
+  const ranks = useMemo(() => {
+    const idx = rankIndices(positioned.nodes.map((n) => n.y + n.height / 2));
+    return new Map(positioned.nodes.map((n, i) => [n.id, idx[i] ?? 0] as const));
+  }, [positioned]);
+  const { morphing, begin: beginMorph } = useFlowMorphing();
+  const didLayoutOnce = useRef(false);
 
   useEffect(() => {
     setNodes(
@@ -216,6 +254,8 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect, matchIds }: Ex
         position: { x: n.x, y: n.y },
         width: n.width,
         height: n.height,
+        className: FLOW_NODE_ENTER_CLASS,
+        style: staggerStyle(ranks.get(n.id) ?? 0),
         data: {
           label: n.node.label,
           cost: n.node.cost,
@@ -230,14 +270,29 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect, matchIds }: Ex
         },
       })),
     );
-    setEdges(positioned.edges.map((e) => ({ id: e.id, source: e.source, target: e.target })));
-  }, [positioned, maxCost, selectedId, onSelect, matchIds, setNodes, setEdges]);
+    setEdges(
+      positioned.edges.map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        className: FLOW_EDGE_ENTER_CLASS,
+        data: { stagger: ranks.get(e.target) ?? 0 },
+      })),
+    );
+  }, [positioned, ranks, maxCost, selectedId, onSelect, matchIds, setNodes, setEdges]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: グラフ配置 (positioned) が変わるたび全体表示へ合わせ直すトリガ依存
   useEffect(() => {
-    const id = window.setTimeout(() => fitView({ duration: reduceMotion ? 0 : 300 }), 0);
+    // 初回は `fitView` prop が枠取り済み。以降の再配置は、ノードの入場 / 位置モーフが終わってから
+    // ビューポートを合わせる (先に動かすと、入場前のノードを追いかけて画面がぶれる, #1861)。
+    const relayout = didLayoutOnce.current;
+    didLayoutOnce.current = true;
+    const animate = relayout && !reduceMotion;
+    if (animate) beginMorph();
+    const wait = animate ? flowEntranceMs(Math.max(0, ...ranks.values())) : 0;
+    const id = window.setTimeout(() => fitView({ duration: reduceMotion ? 0 : 300 }), wait);
     return () => window.clearTimeout(id);
-  }, [positioned, fitView, reduceMotion]);
+  }, [positioned, ranks, fitView, reduceMotion, beginMorph]);
 
   // ミニマップのノードはカードと同じコストヒート色で塗る (コスト無しは中立色。関数は string を返す必要がある)。
   const miniMapNodeColor = useCallback(
@@ -271,6 +326,8 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect, matchIds }: Ex
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        className={morphing ? "flow-morphing" : undefined}
         defaultEdgeOptions={defaultEdgeOptions}
         nodesConnectable={false}
         nodesFocusable={false}
