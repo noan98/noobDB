@@ -301,8 +301,6 @@ struct SideObjects {
     /// 定義を読めなかった (種別, 名前)。片側だけ読めないと偽の「追加 / 削除」になるので、
     /// 両側の比較から外す。
     unreadable: Vec<(String, String)>,
-    /// テーブル一覧に並ぶビュー / マテビューの名前 (表の差分から外す)。
-    view_names: std::collections::HashSet<String>,
 }
 
 /// 両側のオブジェクトを集めて比較する。テーブル一覧からビュー名を外す副作用がある。
@@ -316,12 +314,29 @@ async fn collect_object_comparison(
 ) -> Result<FoundObjects> {
     use crate::db::object_diff::{compute_object_diff, unsupported_object_kinds, ObjectComparison};
     let driver = source.driver_kind();
+    // 一覧が取れた時点でテーブル一覧からビュー名を外す。後続の定義の取得に失敗しても
+    // ビューに CREATE TABLE が出る不具合に戻らないよう、取得の成否とは切り分ける。
+    let source_objects = source.schema_objects(source_db).await?;
+    let target_objects = target.schema_objects(target_db).await?;
+    let is_view = |o: &crate::db::types::SchemaObject| {
+        matches!(o.kind.as_str(), "view" | "materialized_view")
+    };
+    let sv: std::collections::HashSet<&str> = source_objects
+        .iter()
+        .filter(|o| is_view(o))
+        .map(|o| o.name.as_str())
+        .collect();
+    let tv: std::collections::HashSet<&str> = target_objects
+        .iter()
+        .filter(|o| is_view(o))
+        .map(|o| o.name.as_str())
+        .collect();
+    source_tables.retain(|x| !sv.contains(x.name.as_str()));
+    target_tables.retain(|x| !tv.contains(x.name.as_str()));
     let (s, t) = (
-        collect_side_objects(source, source_db).await?,
-        collect_side_objects(target, target_db).await?,
+        collect_side_objects(source, source_db, &source_objects).await?,
+        collect_side_objects(target, target_db, &target_objects).await?,
     );
-    source_tables.retain(|x| !s.view_names.contains(&x.name));
-    target_tables.retain(|x| !t.view_names.contains(&x.name));
 
     let mut skip: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
     skip.extend(s.unreadable.iter().cloned());
@@ -353,15 +368,13 @@ async fn collect_object_comparison(
 
 /// 1 つの接続のオブジェクト一覧と定義本文を集める。定義は可能なら 1 問い合わせでまとめて、
 /// 取れないもの (MySQL など) は 1 件ずつ取る。
-async fn collect_side_objects(conn: &Connection, db: &str) -> Result<SideObjects> {
+async fn collect_side_objects(
+    conn: &Connection,
+    db: &str,
+    objects: &[crate::db::types::SchemaObject],
+) -> Result<SideObjects> {
     use crate::db::object_diff::{supports_object_kind, ObjectDefinition};
     let driver = conn.driver_kind();
-    let objects = conn.schema_objects(db).await?;
-    let view_names = objects
-        .iter()
-        .filter(|o| matches!(o.kind.as_str(), "view" | "materialized_view"))
-        .map(|o| o.name.clone())
-        .collect();
     let bulk = match conn.object_definitions_bulk(db).await {
         Ok(b) => b,
         Err(e) => {
@@ -375,6 +388,11 @@ async fn collect_side_objects(conn: &Connection, db: &str) -> Result<SideObjects
         .routine_identity_arguments(db)
         .await
         .unwrap_or_default();
+
+    // PostgreSQL のトリガーの対象表 (oid -> 表名) とビューのオプション / マテビューの索引。
+    // 取れなければ空 (対象表は定義から読み、オプションと索引は比較に含まれない)。
+    let trigger_tables = conn.trigger_tables(db).await.unwrap_or_default();
+    let view_extras = conn.view_extras(db).await.unwrap_or_default();
 
     let mut defs = Vec::new();
     let mut unreadable = Vec::new();
@@ -405,7 +423,24 @@ async fn collect_side_objects(conn: &Connection, db: &str) -> Result<SideObjects
                 .and_then(|id| signatures.get(id))
                 .filter(|_| matches!(o.kind.as_str(), "function" | "procedure"))
                 .cloned(),
-            definition: complete_definition(driver, &o.kind, &o.name, &body),
+            table: o
+                .id
+                .as_deref()
+                .filter(|_| o.kind == "trigger")
+                .and_then(|id| trigger_tables.get(id))
+                .cloned(),
+            definition: complete_definition(
+                driver,
+                &o.kind,
+                &o.name,
+                &body,
+                view_extras.options.get(&o.name).map(Vec::as_slice),
+                view_extras
+                    .indexes
+                    .get(&o.name)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default(),
+            ),
         });
     }
     if supports_object_kind(driver, "sequence") {
@@ -414,20 +449,26 @@ async fn collect_side_objects(conn: &Connection, db: &str) -> Result<SideObjects
                 kind: "sequence".into(),
                 name,
                 signature: None,
+                table: None,
                 definition: ddl,
             });
         }
     }
-    Ok(SideObjects {
-        defs,
-        unreadable,
-        view_names,
-    })
+    Ok(SideObjects { defs, unreadable })
 }
 
-/// PostgreSQL のビュー / マテビューの定義は `SELECT` 本体だけなので、作成文に包む。他は
-/// ドライバが完全な `CREATE` 文を返す。
-fn complete_definition(driver: DriverKind, kind: &str, name: &str, body: &str) -> String {
+/// PostgreSQL のビュー / マテビューの定義は `SELECT` 本体だけなので、`WITH (...)` オプション
+/// (security_barrier / security_invoker / check_option ...) 付きの作成文に包む。マテビューは
+/// 続けて索引の `CREATE INDEX` を [`STMT_SPLIT`] 区切りで連ねる (置換で DROP すると索引も
+/// 消えるため、定義に含めて比較と再作成の対象にする)。他はドライバが完全な `CREATE` 文を返す。
+fn complete_definition(
+    driver: DriverKind,
+    kind: &str,
+    name: &str,
+    body: &str,
+    options: Option<&[String]>,
+    indexes: &[String],
+) -> String {
     match (driver, kind) {
         (DriverKind::Postgres, "view" | "materialized_view") => {
             let kw = if kind == "view" {
@@ -435,11 +476,19 @@ fn complete_definition(driver: DriverKind, kind: &str, name: &str, body: &str) -
             } else {
                 "MATERIALIZED VIEW"
             };
-            format!(
-                "CREATE {kw} {} AS\n{}",
+            let with = match options {
+                Some(o) if !o.is_empty() => format!(" WITH ({})", o.join(", ")),
+                _ => String::new(),
+            };
+            let mut out = format!(
+                "CREATE {kw} {}{with} AS\n{}",
                 quote_ident(driver, name),
                 body.trim().trim_end_matches(';').trim_end()
-            )
+            );
+            for ix in indexes {
+                out.push_str(&format!("\n{}\n{ix}", crate::db::object_diff::STMT_SPLIT));
+            }
+            out
         }
         _ => body.to_string(),
     }

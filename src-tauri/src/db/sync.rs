@@ -261,7 +261,8 @@ fn object_statements(
     warnings: &mut Vec<String>,
 ) {
     use super::object_diff::{
-        create_object_sql, drop_object_sql, order_for_create, replace_object_sql,
+        create_object_sql, drop_object_sql, order_for_create, replace_is_destructive,
+        replace_object_sql,
     };
     let driver = diff.target_driver;
     let items = &diff.objects.items;
@@ -283,7 +284,12 @@ fn object_statements(
         let Some(def) = o.source_definition.as_deref() else {
             continue;
         };
-        let stmt = mk(o, create_object_sql(def), SyncKind::CreateObject, false);
+        let stmt = mk(
+            o,
+            create_object_sql(driver, def),
+            SyncKind::CreateObject,
+            false,
+        );
         if o.kind == "sequence" {
             early.push(stmt);
         } else {
@@ -294,14 +300,19 @@ fn object_statements(
         let Some(def) = o.source_definition.as_deref() else {
             continue;
         };
-        // MySQL のルーチン / トリガーは DROP + CREATE で、DDL が暗黙コミットされるため CREATE が
-        // 失敗すると元の定義が戻らない。破壊的として扱い、許可がなければ出さずに警告する。
-        let non_atomic = driver == DriverKind::Mysql
-            && matches!(o.kind.as_str(), "procedure" | "function" | "trigger");
+        // MySQL のルーチン / トリガーは DROP + CREATE で DDL が暗黙コミットされ、CREATE に失敗すると
+        // 元の定義が戻らない。マテビューの置換は DROP + CREATE でデータを再計算する。どちらも
+        // 破壊的として扱い、許可がなければ出さずに警告する。
+        let non_atomic = replace_is_destructive(driver, &o.kind);
         if non_atomic && !allow_destructive {
+            let why = if o.kind == "materialized_view" {
+                "マテリアライズドビューの置換は DROP + CREATE でデータを再計算します"
+            } else {
+                "MySQL はルーチン・トリガーを DROP + CREATE で置き換えます (DDL は暗黙コミットされ、CREATE に失敗すると元の定義が失われます)"
+            };
             warnings.push(format!(
-                "{} {}: MySQL はルーチン・トリガーを DROP + CREATE で置き換えます (DDL は暗黙コミットされ、CREATE に失敗すると元の定義が失われます)。「破壊的な操作を許可」を有効にすると出力します",
-                o.kind, o.name
+                "{} {}: {}。「破壊的な操作を許可」を有効にすると出力します",
+                o.kind, o.name, why
             ));
             continue;
         }
@@ -3834,7 +3845,7 @@ mod object_sync_tests {
         assert!(on.statements[0].destructive);
         assert_eq!(
             on.statements[0].sql,
-            "DROP PROCEDURE `p`;\nCREATE PROCEDURE `p`() SELECT 1"
+            "DROP PROCEDURE `p`;\n-- noobdb:split\nCREATE PROCEDURE `p`() SELECT 1"
         );
     }
 
@@ -3973,5 +3984,29 @@ mod object_sync_tests {
             vec![obj("view", "v", DiffStatus::Same, None)],
         );
         assert!(generate_sync_sql(&d, true).statements.is_empty());
+    }
+
+    #[test]
+    fn postgres_matview_replace_is_destructive_and_gated() {
+        let d = diff(
+            DriverKind::Postgres,
+            vec![],
+            vec![obj(
+                "materialized_view",
+                "mv",
+                DiffStatus::Different,
+                Some("CREATE MATERIALIZED VIEW \"mv\" AS\nSELECT 1"),
+            )],
+        );
+        let off = generate_sync_sql(&d, false);
+        assert!(off.statements.is_empty());
+        assert!(
+            off.warnings.iter().any(|w| w.contains("mv")),
+            "{:?}",
+            off.warnings
+        );
+        let on = generate_sync_sql(&d, true);
+        assert_eq!(on.statements.len(), 1);
+        assert!(on.statements[0].destructive);
     }
 }

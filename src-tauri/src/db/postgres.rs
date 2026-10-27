@@ -2103,6 +2103,74 @@ impl PostgresConn {
             .collect())
     }
 
+    /// `schema` のトリガーの対象表 (`pg_trigger.tgrelid`)。oid (文字列) をキーに返す。定義の
+    /// 文字列から読むと空白入りの引用名で壊れるのでカタログから取る (#1879)。
+    pub async fn trigger_tables(
+        &self,
+        schema: &str,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            "SELECT t.oid::text, c.relname::text
+               FROM pg_trigger t
+               JOIN pg_class c ON c.oid = t.tgrelid
+               JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = $1 AND NOT t.tgisinternal",
+        )
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                Some((
+                    r.try_get::<String, _>(0).ok()?,
+                    r.try_get::<String, _>(1).ok()?,
+                ))
+            })
+            .collect())
+    }
+
+    /// ビュー / マテビューの `WITH (...)` オプション (`pg_class.reloptions`: security_barrier /
+    /// security_invoker / check_option など) と、マテビューの索引定義 (`pg_indexes.indexdef`) を
+    /// 名前をキーに返す (スキーマ比較, #1879)。
+    pub async fn view_extras(&self, schema: &str) -> Result<PgViewExtras> {
+        let opt_rows: Vec<PgRow> = sqlx::query(
+            "SELECT c.relname::text, c.reloptions
+               FROM pg_class c
+               JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = $1 AND c.relkind IN ('v', 'm') AND c.reloptions IS NOT NULL",
+        )
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut options = std::collections::HashMap::new();
+        for r in &opt_rows {
+            if let (Ok(name), Ok(opts)) =
+                (r.try_get::<String, _>(0), r.try_get::<Vec<String>, _>(1))
+            {
+                options.insert(name, opts);
+            }
+        }
+        let idx_rows: Vec<PgRow> = sqlx::query(
+            "SELECT i.tablename::text, i.indexdef
+               FROM pg_indexes i
+              WHERE i.schemaname = $1
+                AND i.tablename IN (SELECT matviewname FROM pg_matviews WHERE schemaname = $1)
+              ORDER BY i.tablename, i.indexname",
+        )
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut indexes: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for r in &idx_rows {
+            if let (Ok(table), Ok(def)) = (r.try_get::<String, _>(0), r.try_get::<String, _>(1)) {
+                indexes.entry(table).or_default().push(def);
+            }
+        }
+        Ok(PgViewExtras { options, indexes })
+    }
+
     /// ルーチンのシグネチャ (#1003)。`id` (oid) があればそれで 1 件を特定し
     /// (オーバーロード関数の取り違え防止)、無ければスキーマ + 名前の最初の 1 件。
     /// パラメータは `proallargtypes` (OUT を含む全引数、無ければ入力のみの
@@ -4853,4 +4921,13 @@ mod tests {
         // bytea 以外の列では従来どおり NULL。
         assert_eq!(pk_literal(&Value::Bytes("00ff".to_string()), false), "NULL");
     }
+}
+
+/// [`PostgresConn::view_extras`] の結果 (スキーマ比較, #1879)。
+#[derive(Debug, Default, Clone)]
+pub struct PgViewExtras {
+    /// ビュー / マテビュー名 -> `WITH (...)` の項目 (`security_barrier=true` など)。
+    pub options: std::collections::HashMap<String, Vec<String>>,
+    /// マテビュー名 -> 索引の `CREATE INDEX` 文。
+    pub indexes: std::collections::HashMap<String, Vec<String>>,
 }

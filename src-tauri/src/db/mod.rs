@@ -1472,6 +1472,25 @@ impl Connection {
         }
     }
 
+    /// トリガーの対象表 (oid をキー)。PostgreSQL だけ (`pg_trigger.tgrelid`)。他は定義から読む (#1879)。
+    pub async fn trigger_tables(
+        &self,
+        db: &str,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        match self {
+            Connection::Postgres(c) => c.trigger_tables(db).await,
+            Connection::MySql(_) | Connection::Sqlite(_) => Ok(std::collections::HashMap::new()),
+        }
+    }
+
+    /// PostgreSQL のビュー / マテビューのオプションとマテビューの索引 (#1879)。他は空。
+    pub async fn view_extras(&self, db: &str) -> Result<postgres::PgViewExtras> {
+        match self {
+            Connection::Postgres(c) => c.view_extras(db).await,
+            Connection::MySql(_) | Connection::Sqlite(_) => Ok(postgres::PgViewExtras::default()),
+        }
+    }
+
     /// The DDL/definition of a schema object. `kind`/`name` are from
     /// [`schema_objects`]; `id` is the optional unique identifier (PostgreSQL
     /// oid) used to disambiguate overloaded functions / same-name triggers.

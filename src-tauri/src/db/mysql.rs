@@ -1245,6 +1245,22 @@ impl MySqlConn {
         let mut tx = conn.begin().await?;
         let mut counts: Vec<u64> = Vec::with_capacity(statements.len());
         for st in statements {
+            // ルーチン・トリガーの CREATE / DROP と、区切り行で連ねた複数文 (スキーマ同期の
+            // オブジェクト置換, #1879) は prepared protocol だとエラー 1295 / 構文エラーに
+            // なるので、1 文ずつテキストプロトコル (`raw_sql`) で流す。
+            if super::object_diff::needs_text_protocol(st.sql) {
+                let mut affected = 0u64;
+                for part in super::object_diff::split_statements(st.sql) {
+                    let r = sqlx::Executor::execute(
+                        &mut *tx,
+                        sqlx::raw_sql(sqlx::AssertSqlSafe(part.to_string())),
+                    )
+                    .await?;
+                    affected += r.rows_affected();
+                }
+                counts.push(affected);
+                continue;
+            }
             let result = sqlx::query(sqlx::AssertSqlSafe(st.sql))
                 .execute(&mut *tx)
                 .await?;

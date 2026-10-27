@@ -4869,7 +4869,7 @@ const en = {
     "Generate the DDL that would make the target match the source, review it, then apply the statements you select to the target. Applying opens a separate writable session to the target; a read-only target is rejected. This is best-effort SQL — review it before applying.",
   schemaCompareAllowDestructive: "Allow destructive changes (DROP TABLE / DROP COLUMN)",
   schemaCompareAllowDestructiveObjects:
-    "Allow destructive changes (DROP TABLE / DROP COLUMN / DROP of views, routines, triggers and sequences)",
+    "Allow destructive changes (DROP TABLE / DROP COLUMN / DROP of views, routines, triggers and sequences; also required to replace MySQL routines and triggers and PostgreSQL materialized views)",
   schemaCompareGenerate: "Generate sync SQL",
   schemaCompareGenerating: "Generating...",
   schemaCompareStatementsShown: "Showing {shown} of {total} statements",
@@ -11744,7 +11744,7 @@ const ja: Dict = {
     "ターゲットをソースに合わせる DDL を生成し、内容を確認してから、選択した文をターゲットへ適用します。適用時はターゲットへ書き込み可能なセッションを別途開きます (読み取り専用ターゲットは拒否されます)。生成結果はベストエフォートのため、適用前に必ず確認してください。",
   schemaCompareAllowDestructive: "破壊的変更を許可する (DROP TABLE / DROP COLUMN)",
   schemaCompareAllowDestructiveObjects:
-    "破壊的変更を許可する (DROP TABLE / DROP COLUMN / ビュー・ルーチン・トリガー・シーケンスの DROP)",
+    "破壊的変更を許可する (DROP TABLE / DROP COLUMN / ビュー・ルーチン・トリガー・シーケンスの DROP。MySQL のルーチン・トリガーと PostgreSQL のマテリアライズドビューの置換にも必要)",
   schemaCompareGenerate: "反映 SQL を生成",
   schemaCompareGenerating: "生成中...",
   schemaCompareStatementsShown: "{total} 件中 {shown} 件を表示中",
