@@ -66,4 +66,30 @@ describe("revealViewportBottom (#1886)", () => {
     expect(revealViewportBottom(inner, (el) => (el === outer ? "auto" : "visible"), 800)).toBe(240);
     expect(revealViewportBottom(inner, () => "visible", 800)).toBe(800);
   });
+
+  it("内側が auto で高さ無制限でも、外側のスクロール領域の下端で止まる", () => {
+    const outer = document.createElement("div");
+    const mid = document.createElement("div");
+    const inner = document.createElement("div");
+    outer.appendChild(mid);
+    mid.appendChild(inner);
+    outer.getBoundingClientRect = () => ({ bottom: 300 }) as DOMRect;
+    mid.getBoundingClientRect = () => ({ bottom: 5000 }) as DOMRect;
+    expect(revealViewportBottom(inner, () => "auto", 800)).toBe(300);
+    expect(revealViewportBottom(inner, (el) => (el === mid ? "auto" : "visible"), 800)).toBe(800);
+  });
+});
+
+describe("RevealTbody の行数上限 (#1886)", () => {
+  it("下端が無制限でも FIRST_BATCH_REVEAL_FALLBACK_ROWS 行までしか再生しない", () => {
+    const animate = vi.fn(() => ({ cancel: vi.fn() }));
+    Object.defineProperty(HTMLElement.prototype, "animate", { configurable: true, value: animate });
+    try {
+      reducedRef.value = false;
+      render(table(500));
+      expect(animate).toHaveBeenCalledTimes(50);
+    } finally {
+      Reflect.deleteProperty(HTMLElement.prototype, "animate");
+    }
+  });
 });
