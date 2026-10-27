@@ -297,6 +297,19 @@
         "kind": "any"
       },
       "table": "users"
+    },
+    {
+      "id": "asrt0001",
+      "name": "check",
+      "rule": {
+        "kind": "custom_sql",
+        "sql": "SELECT * FROM users WHERE id < 0"
+      },
+      "schema": "public",
+      "scope": {
+        "kind": "any"
+      },
+      "table": "users"
     }
   ],
   "batchStreamCancelledMessage": {
@@ -928,6 +941,56 @@
       "ssl_mode": "verify_full",
       "ssl_root_cert": "/etc/ssl/ca.pem",
       "ssm": null,
+      "user": "app"
+    },
+    {
+      "aws_iam": {
+        "profile": "work",
+        "region": "ap-northeast-1"
+      },
+      "color": "#dc2626",
+      "confirm_writes": true,
+      "database": "appdb",
+      "driver": "mysql",
+      "file_path": null,
+      "group": "production",
+      "has_db_password": true,
+      "has_ssh_jump_passphrase": false,
+      "has_ssh_jump_password": true,
+      "has_ssh_passphrase": false,
+      "has_ssh_password": false,
+      "host": "db.example.com",
+      "id": "abc12345",
+      "init_sql": "SET time_zone = '+00:00';",
+      "is_production": true,
+      "name": "Prod MySQL",
+      "port": 3306,
+      "read_only": false,
+      "skip_history": false,
+      "ssh": {
+        "auth_method": "key",
+        "host": "jump.example.com",
+        "jump": {
+          "auth_method": "password",
+          "host": "bastion.example.com",
+          "port": 2222,
+          "private_key_path": "",
+          "user": "ops"
+        },
+        "local_port": 15432,
+        "port": 22,
+        "private_key_path": "/home/deploy/.ssh/id_ed25519",
+        "user": "deploy"
+      },
+      "ssl_client_cert": "/etc/ssl/client.pem",
+      "ssl_client_key": "/etc/ssl/client.key",
+      "ssl_mode": "verify_full",
+      "ssl_root_cert": "/etc/ssl/ca.pem",
+      "ssm": {
+        "profile": "dev",
+        "region": "ap-northeast-1",
+        "target": "i-0123456789abcdef0"
+      },
       "user": "app"
     }
   ],

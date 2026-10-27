@@ -2069,6 +2069,12 @@ const dumpOptions = z.object({
   formatSql: z.boolean().optional(),
   gzip: z.boolean().optional(),
   tables: z.array(z.string()).nullable().optional(),
+  // #1624: Rust の `DumpOptions` にあるのに zod が知らず、定期タスク (`taskAction.dump`) の
+  // 往復で黙って捨てられていた (#1871 のネスト降下パリティが検出)。
+  noTablespaces: z.boolean().optional(),
+  setGtidPurgedOff: z.boolean().optional(),
+  writeChecksum: z.boolean().optional(),
+  sqliteSnapshot: z.boolean().optional(),
 });
 
 // `ExportFormat` (tauri.ts / Rust) と同じ全種。xlsx (#711) が抜けていると xlsx の

@@ -17,6 +17,11 @@ import * as schemas from "../api/schemas";
 //      捨てるため、parse だけではバック側のフィールド追加に気付けない — キー集合の
 //      突き合わせで塞ぐ)。
 //
+//   3. (#1871) ネスト構造体 (配列要素・判別ユニオンのバリアント含む) も再帰的に同じ
+//      キー集合比較をする。`column` / `tableDiff` / `columnDiff` / `syncStatement` /
+//      `rowDiff` / `sshProfile` / `skippedRowInfo` などは個別 case を持たなくても、
+//      上位型のフィクスチャから降下して検査される。
+//
 // Rust 側でフィールドを足すとバックの対テストがまず落ち、フィクスチャを再生成すると
 // 今度はこのキー集合比較が落ちて zod 側の追随漏れに気付ける、という二段構え。
 
@@ -29,6 +34,9 @@ type AnyObjectSchema = z.ZodObject<z.ZodRawShape>;
 // (schemaDiff 内)・`syncStatement` (syncPlan 内)・`rowDiff` (dataDiff 内。
 // `key_unreliable` は往復時に zod が意図的に落とすフィールドなのでスキーマに
 // 含めない、#824) も上位型経由の間接カバーで、個別 case は持たない。
+//
+// #1871 以降はネスト降下 (`collectKeyMismatches`) で、上記の「上位型経由の間接カバー」
+// 対象も含むネスト構造体のキー集合まで検査する (個別 case の追加は不要)。
 //
 // #825: ストリーミングイベントの emit ペイロードも追加。`skippedRowInfo`
 // (importDoneEvent 内) も上記と同じ間接カバーで個別 case を持たない。
@@ -261,6 +269,133 @@ function instancesOf(name: string, fixture: unknown): unknown[] {
   return fixture as unknown[];
 }
 
+// ---- ネスト構造体への降下 (#1871) ----
+//
+// トップレベルのキー集合比較だけでは、ネスト構造体 (`ColumnDiff` / `TableDiff` など) に
+// Rust 側でフィールドを足しても、親の zod parse が未知キーを黙って捨てるため何も落ちない。
+// zod スキーマとフィクスチャ値を並行して降下し、各階層のオブジェクトでキー集合を突き合わせる。
+
+/** zod 4 の内部定義 (`_zod.def`) の必要最小限の形。 */
+type ZodDef = {
+  type: string;
+  shape?: Record<string, z.ZodType>;
+  element?: z.ZodType;
+  innerType?: z.ZodType;
+  in?: z.ZodType;
+  options?: z.ZodType[];
+  valueType?: z.ZodType;
+  items?: z.ZodType[];
+  getter?: () => z.ZodType;
+};
+
+function defOf(schema: z.ZodType): ZodDef {
+  return (schema as unknown as { _zod: { def: ZodDef } })._zod.def;
+}
+
+/**
+ * 意図的に zod 側へ持たないネストフィールド (フィクスチャ名 → パス → 許容する余剰キー)。
+ * パスは配列を `[]` で表した `.` 区切り。ここへ足すときは理由を必ずコメントで残すこと。
+ */
+const usedNestedExtras = new Set<string>();
+
+const KNOWN_NESTED_EXTRA_KEYS: Record<string, Record<string, string[]>> = {
+  // #824: `rowDiff.key_unreliable` は往復時に zod が意図的に落とす (スキーマに含めない)。
+  dataDiff: { "rows[]": ["key_unreliable"] },
+  dataDiffVariants: { "rows[]": ["key_unreliable"] },
+  timelapseGenerationDiff: { "diff.rows[]": ["key_unreliable"] },
+};
+
+function isOmittable(schema: z.ZodType | undefined): boolean {
+  if (!schema) return false;
+  const t = defOf(schema).type;
+  return t === "optional" || t === "default" || t === "prefault";
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/**
+ * `schema` をたどりながら `value` の各ネストオブジェクトのキー集合を zod の shape と比較し、
+ * 食い違いを `パス: 余剰/不足` の文字列で集める。ルート (path = "") も含む。
+ */
+function collectKeyMismatches(
+  schema: z.ZodType,
+  value: unknown,
+  path: string,
+  out: string[],
+  allowed: Record<string, string[]> = {},
+  used: Set<string> = new Set(),
+): void {
+  const def = defOf(schema);
+  switch (def.type) {
+    case "optional":
+    case "nullable":
+    case "default":
+    case "prefault":
+    case "nonoptional":
+    case "readonly":
+    case "catch":
+      if (def.innerType) collectKeyMismatches(def.innerType, value, path, out, allowed, used);
+      return;
+    case "pipe":
+      // `.transform()` は in 側 (入力 = Rust が吐いた JSON の形) を比較する。
+      if (def.in) collectKeyMismatches(def.in, value, path, out, allowed, used);
+      return;
+    case "lazy":
+      if (def.getter) collectKeyMismatches(def.getter(), value, path, out, allowed, used);
+      return;
+    case "array":
+      if (Array.isArray(value) && def.element) {
+        for (const item of value) collectKeyMismatches(def.element, item, `${path}[]`, out, allowed, used);
+      }
+      return;
+    case "tuple":
+      if (Array.isArray(value) && def.items) {
+        def.items.forEach((item, i) => {
+          collectKeyMismatches(item, value[i], `${path}[${i}]`, out, allowed, used);
+        });
+      }
+      return;
+    case "record":
+      if (isPlainObject(value) && def.valueType) {
+        for (const v of Object.values(value)) {
+          collectKeyMismatches(def.valueType, v, `${path}{}`, out, allowed, used);
+        }
+      }
+      return;
+    case "union": {
+      // 値を通すバリアント (判別ユニオンなら判別子が一致するもの) へ降下する。
+      const match = def.options?.find((o) => o.safeParse(value).success);
+      if (match) collectKeyMismatches(match, value, path, out, allowed, used);
+      return;
+    }
+    case "object": {
+      if (!isPlainObject(value) || !def.shape) return;
+      const schemaKeys = Object.keys(def.shape);
+      const valueKeys = Object.keys(value);
+      const extra = valueKeys.filter((k) => !schemaKeys.includes(k) && !allowed[path]?.includes(k));
+      // zod 側が optional / default のフィールドは、Rust が `skip_serializing_if` で省く
+      // ことがあるのでフィクスチャに無くてもよい (必須フィールドの欠落だけを不足と見なす)。
+      for (const k of valueKeys) {
+        if (!schemaKeys.includes(k) && allowed[path]?.includes(k)) used.add(`${path}:${k}`);
+      }
+      const missing = schemaKeys.filter((k) => !valueKeys.includes(k) && !isOmittable(def.shape?.[k]));
+      if (extra.length > 0) out.push(`${path || "(root)"}: zod に無い (Rust のみ) ${extra.join(", ")}`);
+      if (missing.length > 0) {
+        out.push(`${path || "(root)"}: フィクスチャに無い (zod のみ) ${missing.join(", ")}`);
+      }
+      for (const [key, child] of Object.entries(def.shape)) {
+        if (key in value)
+          collectKeyMismatches(child, value[key], path ? `${path}.${key}` : key, out, allowed, used);
+      }
+      return;
+    }
+    default:
+      return;
+  }
+}
+
 describe("zod ⇔ serde フィールドパリティ (主要レスポンス型)", () => {
   for (const [name, schema] of cases) {
     describe(name, () => {
@@ -286,8 +421,32 @@ describe("zod ⇔ serde フィールドパリティ (主要レスポンス型)",
           expect(fixtureKeys).toEqual(schemaKeys);
         }
       });
+
+      // #1871: ネスト構造体 (配列要素・判別ユニオンのバリアント含む) のキー集合も同様に比較する。
+      it("ネスト構造体のキー集合も zod スキーマの shape と一致する", () => {
+        const mismatches: string[] = [];
+        const used = new Set<string>();
+        for (const instance of instancesOf(name, fixture)) {
+          collectKeyMismatches(schema, instance, "", mismatches, KNOWN_NESTED_EXTRA_KEYS[name] ?? {}, used);
+        }
+        for (const u of used) usedNestedExtras.add(`${name}|${u}`);
+        expect([...new Set(mismatches)]).toEqual([]);
+      });
     });
   }
+
+  it("KNOWN_NESTED_EXTRA_KEYS の各エントリが実際に使われている (陳腐化防止)", () => {
+    // フィクスチャ側から該当キーが消えたのに許可リストだけ残る、を検出する。
+    const unused: string[] = [];
+    for (const [name, byPath] of Object.entries(KNOWN_NESTED_EXTRA_KEYS)) {
+      for (const [path, keys] of Object.entries(byPath)) {
+        for (const key of keys) {
+          if (!usedNestedExtras.has(`${name}|${path}:${key}`)) unused.push(`${name} ${path}:${key}`);
+        }
+      }
+    }
+    expect(unused).toEqual([]);
+  });
 
   it("全フィクスチャ型がテスト対象に含まれる (取りこぼし防止)", () => {
     // フィクスチャに型を足したのにここへ追加し忘れると素通りするのを防ぐ。
