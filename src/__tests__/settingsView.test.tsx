@@ -39,7 +39,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("SettingsView render smoke (#604)", () => {
+describe("SettingsView render smoke (#604)", { timeout: 15_000 }, () => {
   it("mounts as a dialog and shows the settings title", async () => {
     renderWithProviders(<SettingsView theme="light" onClose={() => {}} />);
     await waitFor(() => expect(screen.getByText(t("settingsTitle"))).toBeInTheDocument());

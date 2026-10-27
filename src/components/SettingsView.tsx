@@ -653,22 +653,22 @@ const SECTIONS: SettingsSectionMeta[] = [
   { id: "settings-sec-scan-preflight", icon: "search", titleKey: "settingsScanPreflight" },
   { id: "settings-sec-plan-watch", icon: "explain", titleKey: "settingsPlanWatch" },
   { id: "settings-sec-schema-drift", icon: "diff", titleKey: "settingsSchemaDrift" },
-  { id: "settings-sec-timelapse", icon: "calendar", titleKey: "settingsTimelapse" },
-  { id: "settings-sec-flight-recorder", icon: "redo", titleKey: "settingsFlightRecorder" },
+  { id: "settings-sec-timelapse", icon: "play", titleKey: "settingsTimelapse" },
+  { id: "settings-sec-flight-recorder", icon: "broadcast", titleKey: "settingsFlightRecorder" },
   { id: "settings-sec-history", icon: "clock", titleKey: "settingsHistory" },
   { id: "settings-sec-result-grid", icon: "columns", titleKey: "settingsResultGridMode" },
-  { id: "settings-sec-quick-launcher", icon: "sparkles", titleKey: "quickLauncherSettingsTitle" },
-  { id: "settings-sec-ai", icon: "flask", titleKey: "aiSettingsTitle" },
+  { id: "settings-sec-quick-launcher", icon: "star", titleKey: "quickLauncherSettingsTitle" },
+  { id: "settings-sec-ai", icon: "sparkles", titleKey: "aiSettingsTitle" },
   { id: "settings-sec-safety", icon: "lock", titleKey: "settingsSafety" },
   { id: "settings-sec-notifications", icon: "bell", titleKey: "settingsNotifications" },
-  { id: "settings-sec-tab-persistence", icon: "pin", titleKey: "settingsTabPersistence" },
+  { id: "settings-sec-tab-persistence", icon: "database", titleKey: "settingsTabPersistence" },
   { id: "settings-sec-syntax-highlighting", icon: "braces", titleKey: "settingsSyntaxHighlighting" },
-  { id: "settings-sec-preview-highlight", icon: "view", titleKey: "settingsPreviewHighlight" },
+  { id: "settings-sec-preview-highlight", icon: "select-all", titleKey: "settingsPreviewHighlight" },
   { id: "settings-sec-keybindings", icon: "hash", titleKey: "settingsShortcuts" },
   { id: "settings-sec-logs", icon: "list", titleKey: "settingsLogs" },
   { id: "settings-sec-knownhosts", icon: "key", titleKey: "knownHostsTitle" },
   { id: "settings-sec-updates", icon: "refresh", titleKey: "settingsUpdates" },
-  { id: "settings-sec-backup", icon: "upload", titleKey: "settingsBackup" },
+  { id: "settings-sec-backup", icon: "transfer", titleKey: "settingsBackup" },
 ];
 
 const SETTINGS_IMPORT_DIFF_PREVIEW = 15;
@@ -708,7 +708,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
   // (IntersectionObserver は jsdom 環境に存在せずテスト環境で扱いにくいため、
   // スクロールイベントで「コンテナ上端に最も近いセクション」を判定する簡易実装)。
   const [navQuery, setNavQuery] = useState("");
-  const [activeSection, setActiveSection] = useState<string>(SECTIONS[0].id);
+  const [activeSection, setActiveSection] = useState<string>(initialSection ?? SECTIONS[0].id);
   const filteredSections = filterSectionsByTitle(SECTIONS, navQuery, (sec) => t(sec.titleKey));
   // ナビクリック直後は smooth スクロールの中間イベントでスクロールスパイが
   // ハイライトを巻き戻してしまう (#680 レビュー対応)。クリックから 600ms は
