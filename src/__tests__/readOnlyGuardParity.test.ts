@@ -538,6 +538,7 @@ safe(
   "invalidate_table_cache",
   "list_databases",
   "list_indexes",
+  "list_table_triggers",
   "list_schema_objects",
   "list_table_comments",
   "list_tables",

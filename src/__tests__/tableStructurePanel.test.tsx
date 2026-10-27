@@ -16,6 +16,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       describeTable: vi.fn(),
       describeTableExtras: vi.fn(),
       listIndexes: vi.fn(),
+      listTableTriggers: vi.fn(),
       getObjectDefinition: vi.fn(),
       incomingForeignKeys: vi.fn(),
     },
@@ -99,6 +100,34 @@ describe("TableStructurePanel (#1112)", () => {
     expect(screen.getByText("price_pos")).toBeInTheDocument();
     expect(screen.getByText("price * qty")).toBeInTheDocument();
     expect(screen.getByText("VIRTUAL")).toBeInTheDocument();
+  });
+
+  it("トリガー一覧を節として出し、取得できなければ節ごと出さない (#1867)", async () => {
+    vi.mocked(api.describeTable).mockResolvedValue([col("id")]);
+    vi.mocked(api.listIndexes).mockResolvedValue([]);
+    vi.mocked(api.listTableTriggers).mockResolvedValueOnce([
+      {
+        name: "trg_audit",
+        timing: "AFTER",
+        event: "UPDATE",
+        definition: "CREATE TRIGGER trg_audit AFTER UPDATE ON orders ...",
+      },
+    ]);
+    renderPanel();
+    expect(await screen.findByText("trg_audit")).toBeInTheDocument();
+    expect(screen.getByText("AFTER")).toBeInTheDocument();
+    expect(screen.getByText("UPDATE")).toBeInTheDocument();
+    expect(screen.getByText(t("structureTriggerNote"))).toBeInTheDocument();
+  });
+
+  it("トリガーが取れない・無いときは節を出さず構造は出る (#1867)", async () => {
+    vi.mocked(api.describeTable).mockResolvedValue([col("id")]);
+    vi.mocked(api.listIndexes).mockResolvedValue([]);
+    vi.mocked(api.listTableTriggers).mockRejectedValueOnce(new Error("denied"));
+    renderPanel();
+    expect(await screen.findByText("app.orders")).toBeInTheDocument();
+    await waitFor(() => expect(api.listTableTriggers).toHaveBeenCalled());
+    expect(screen.queryByText(t("structureTriggers"))).not.toBeInTheDocument();
   });
 
   it("CHECK 制約が取れない (古い MySQL など) 環境でも構造は出て、節は出ない (#1837)", async () => {

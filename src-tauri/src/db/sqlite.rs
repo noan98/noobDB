@@ -1816,6 +1816,34 @@ impl SqliteConn {
             .collect())
     }
 
+    /// `table` のトリガー一覧 (#1867)。`sqlite_master` の `tbl_name` で絞り、タイミングと
+    /// イベントは `CREATE TRIGGER` 文から読む (専用の PRAGMA が無いため)。
+    pub async fn list_table_triggers(
+        &self,
+        table: &str,
+    ) -> Result<Vec<super::types::TableTrigger>> {
+        let rows: Vec<SqliteRow> = sqlx::query(
+            "SELECT name, sql FROM sqlite_master \
+             WHERE type = 'trigger' AND tbl_name = ?1 COLLATE NOCASE ORDER BY name",
+        )
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let name: String = r.try_get("name")?;
+            let sql = r.try_get::<Option<String>, _>("sql")?.unwrap_or_default();
+            let (timing, event) = super::table_triggers::parse_sqlite_trigger(&sql);
+            out.push(super::types::TableTrigger {
+                name,
+                timing,
+                event,
+                definition: sql,
+            });
+        }
+        Ok(out)
+    }
+
     /// 全ビュー / トリガーの定義本文 (`sqlite_master.sql`) を 1 回の問い合わせで返す
     /// (#1261 Where-used)。キーは `"<kind>:<name>"`。`object_definition` が引く
     /// 列と同じなので本文は一致する。

@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, chakra, Flex, VisuallyHidden, type SystemStyleObject } from "@chakra-ui/react";
 
-import { api, type IndexInfo, type TableColumnInfo, type TableExtrasInfo } from "../api/tauri";
+import {
+  api,
+  type IndexInfo,
+  type TableColumnInfo,
+  type TableExtrasInfo,
+  type TableTrigger,
+} from "../api/tauri";
 import { useT } from "../i18n";
 import { type IncomingFk, incomingFkTableName } from "../fkNavigation";
 import { foreignKeysOf, foreignKeyTargetLabel, type ExplorerForeignKey } from "./explorerTree";
@@ -157,6 +163,8 @@ export function TableStructurePanel({
   const [indexes, setIndexes] = useState<IndexInfo[] | null>(null);
   // CHECK 制約と生成列の式 (#1837)。ベストエフォート: 取れなければ節ごと出さない。
   const [extras, setExtras] = useState<TableExtrasInfo | null>(null);
+  // このテーブルで発火するトリガー (#1867)。ベストエフォート: 取れなければ節ごと出さない。
+  const [triggers, setTriggers] = useState<TableTrigger[] | null>(null);
   // このテーブルを参照している他テーブルの外部キー (逆方向, #1628)。ベストエフォート。
   const [incoming, setIncoming] = useState<IncomingFk[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -177,6 +185,7 @@ export function TableStructurePanel({
     setColumns(null);
     setIndexes(null);
     setExtras(null);
+    setTriggers(null);
     setIncoming(null);
     setError(null);
     ddlSeq.current += 1;
@@ -206,6 +215,15 @@ export function TableStructurePanel({
       })
       .catch(() => {
         if (!cancelled) setExtras(null);
+      });
+    // トリガーもベストエフォート: 副作用の把握用なので、取れなければ節を出さない。
+    Promise.resolve()
+      .then(() => api.listTableTriggers(sessionId, database, table))
+      .then((list) => {
+        if (!cancelled) setTriggers(list);
+      })
+      .catch(() => {
+        if (!cancelled) setTriggers(null);
       });
     // 逆方向の外部キーもベストエフォート: 取れなくても構造は出す。
     api
@@ -511,6 +529,50 @@ export function TableStructurePanel({
                       </chakra.tr>
                     ))}
                   </RevealTbody>
+                </chakra.table>
+              )}
+
+              {triggers && triggers.length > 0 && (
+                <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
+                  <SectionCaption label={t("structureTriggers")} count={triggers.length} />
+                  <chakra.thead>
+                    <chakra.tr>
+                      <chakra.th css={thCss}>{t("structureTriggerName")}</chakra.th>
+                      <chakra.th css={thCss}>{t("structureTriggerTiming")}</chakra.th>
+                      <chakra.th css={thCss}>{t("structureTriggerEvent")}</chakra.th>
+                      <chakra.th css={thCss}>{t("structureTriggerDefinition")}</chakra.th>
+                    </chakra.tr>
+                  </chakra.thead>
+                  <chakra.tbody>
+                    {triggers.map((tr) => (
+                      <chakra.tr key={tr.name}>
+                        <chakra.td css={tdCss} fontFamily="var(--font-mono)">
+                          {tr.name}
+                        </chakra.td>
+                        <chakra.td css={tdCss} fontFamily="var(--font-mono)">
+                          {tr.timing}
+                        </chakra.td>
+                        <chakra.td css={tdCss} fontFamily="var(--font-mono)">
+                          {tr.event}
+                        </chakra.td>
+                        <chakra.td css={tdCss} fontFamily="var(--font-mono)" color="app.textSecondary">
+                          <details>
+                            <summary style={{ cursor: "pointer" }}>{t("structureTriggerDefinition")}</summary>
+                            <CodePreview maxH="160px" aria-label={tr.name}>
+                              {tr.definition}
+                            </CodePreview>
+                          </details>
+                        </chakra.td>
+                      </chakra.tr>
+                    ))}
+                  </chakra.tbody>
+                  <chakra.tfoot>
+                    <chakra.tr>
+                      <chakra.td css={tdCss} colSpan={4} color="app.textMuted">
+                        {t("structureTriggerNote")}
+                      </chakra.td>
+                    </chakra.tr>
+                  </chakra.tfoot>
                 </chakra.table>
               )}
 

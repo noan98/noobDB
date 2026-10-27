@@ -181,6 +181,15 @@ export const tableExtrasInfo = z.object({
   generated: z.array(generatedColumnInfo),
 });
 
+/** `list_table_triggers` の 1 件 (#1867)。 */
+export const tableTrigger = z.object({
+  name: z.string(),
+  timing: z.string(),
+  event: z.string(),
+  definition: z.string(),
+});
+export const tableTriggerArray = z.array(tableTrigger);
+
 /** サーバ側プロセス/接続 (プロセス監視パネル)。 */
 export const processInfo = z.object({
   id: z.number(),

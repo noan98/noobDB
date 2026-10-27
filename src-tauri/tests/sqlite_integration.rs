@@ -6644,3 +6644,43 @@ async fn unique_only_table_compares_and_syncs_to_convergence() {
     let _ = std::fs::remove_file(&p1);
     let _ = std::fs::remove_file(&p2);
 }
+
+/// #1867: `list_table_triggers` が対象テーブルのトリガーだけをタイミング・イベント付きで返す。
+#[tokio::test]
+async fn sqlite_list_table_triggers() {
+    let mut p = std::env::temp_dir();
+    p.push(format!("noobdb_sqlite_triggers_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&p);
+    std::fs::File::create(&p).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(p.to_str().unwrap()))
+        .await
+        .expect("connect");
+    for ddl in [
+        "CREATE TABLE a (id INTEGER PRIMARY KEY, v INTEGER)",
+        "CREATE TABLE b (id INTEGER PRIMARY KEY)",
+        "CREATE TRIGGER a_ins AFTER INSERT ON a BEGIN SELECT 1; END",
+        "CREATE TRIGGER a_upd BEFORE UPDATE OF v ON a BEGIN SELECT 1; END",
+        "CREATE TRIGGER b_del AFTER DELETE ON b BEGIN SELECT 1; END",
+    ] {
+        conn.execute(ddl, None).await.expect("ddl");
+    }
+    let got = conn
+        .list_table_triggers("main", "a")
+        .await
+        .expect("triggers");
+    let view: Vec<(&str, &str, &str)> = got
+        .iter()
+        .map(|g| (g.name.as_str(), g.timing.as_str(), g.event.as_str()))
+        .collect();
+    assert_eq!(
+        view,
+        vec![("a_ins", "AFTER", "INSERT"), ("a_upd", "BEFORE", "UPDATE")]
+    );
+    assert!(got[0].definition.starts_with("CREATE TRIGGER a_ins"));
+    assert!(conn
+        .list_table_triggers("main", "nope")
+        .await
+        .expect("none")
+        .is_empty());
+    let _ = std::fs::remove_file(&p);
+}
