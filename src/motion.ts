@@ -111,6 +111,9 @@ import type { Transition, Variants } from "motion/react";
  *   `sharedElement.ts` — コンポーネント境界を跨ぐ `layoutId`, #1415)。頻度の低い
  *   「タブ生成」1 箇所に限定し、IPC の間から morph が終わるまでの飛行中だけ起点に
  *   ID を付ける。`transitions.emphasized` を再利用し、reduced-motion は MotionConfig に従う。
+ * - バッチ実行結果の文カード入場 (`BatchResultsView` — `AnimatePresence initial={false}` + `variants.collapse`、増えた分だけ
+ *   `staggerTiming.each` でずらす)・件数サマリの `CountUpText`・成否ドットの `variants.fadeScale` + `springs.gentle` pop (#1873)。
+ *   静止 (reduced-motion / `prefersStaticMotion`) では transition を 0 秒にする。
  * - ライブ監視パネルの行の出入りと値変化フラッシュ (`ProcessListPanel` /
  *   `PlanWatchPanel` — `LiveRows.tsx` の `LiveRowsPresence` + `variants.collapse`、
  *   フラッシュは既存の `@keyframes apply-flash`、数値は `CountUp`) (#1022)。
