@@ -489,23 +489,34 @@ jobs:
             exit 1
           fi
 
+      # ここから下の重い再処理 (install / blob 回収 / 統合) は main への push 限定
+      # (#1883)。PR では上の result チェックだけで合否が決まる (shard が落ちれば
+      # job fail → result != success)。blob の統合は PR では追加の合否信号も
+      # カバレッジ信号も生まない (カバレッジの計装・閾値は push 限定のため) ので、
+      # 必須チェックのマージゲートから無信号の約 1 分を外す。
+      # step が skip されても job の結論は success で、必須チェックは満たされる。
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'push'
         with:
           persist-credentials: false
 
       - name: Setup Node
+        if: github.event_name == 'push'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
 
       - name: Enable pnpm (corepack)
+        if: github.event_name == 'push'
         run: corepack enable
 
       - name: Get pnpm store directory
+        if: github.event_name == 'push'
         shell: bash
         run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
 
       - name: Cache pnpm store
+        if: github.event_name == 'push'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PNPM_STORE_PATH }}
@@ -514,10 +525,12 @@ jobs:
             ${{ runner.os }}-pnpm-store-
 
       - name: Install frontend deps
+        if: github.event_name == 'push'
         run: pnpm install --frozen-lockfile
 
       # 各 shard の blob (`vitest-blob-N` artifact) を 1 ディレクトリへ集める。
       - name: Download Vitest blobs
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -528,9 +541,10 @@ jobs:
 
       # blob を統合する。main への push のときだけ `--coverage` を付けて、
       # `vite.config.ts` の閾値 (lines) を超えているか判定する (shard 側の計装も
-      # push 限定。PR では blob の統合と合否判定のみで、カバレッジ閾値は見えない)。
-      # このジョブ自体は PR でも必ず走って合否を返す (必須チェック)。
+      # push 限定)。この step 自体も push 限定で、PR では走らない (#1883)。
+      # このジョブ自体は PR でも走り、冒頭の result チェックで合否を返す (必須チェック)。
       - name: Merge reports + coverage threshold
+        if: github.event_name == 'push'
         run: |
           ARGS=(--merge-reports=vitest-reports)
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then
