@@ -2380,6 +2380,28 @@ html, body, #root {
   50% { opacity: 0.45; }
 }
 
+/* 接続確立の「トンネル開通」(#1866)。`ConnectionStatusDot` が connecting → connected の
+   遷移で 1 回だけ `is-tunnel-open` を付け、animationend で外す。connected ドットの外周
+   リングがブランドティール (--brand-teal) へ広がって通常の connected リングへ戻る。
+   reduced-motion / hc-* / forced-colors は JS 側で付与しない (下は念のための静止化)。 */
+@keyframes tunnel-open-bloom {
+  0%   { box-shadow: 0 0 0 var(--space-0-5) color-mix(in srgb, var(--brand-teal) 70%, transparent); }
+  45%  { box-shadow: 0 0 0 var(--space-1-5) color-mix(in srgb, var(--brand-teal) 35%, transparent); }
+  100% { box-shadow: 0 0 0 var(--space-0-5) color-mix(in srgb, var(--status-connected) 25%, transparent); }
+}
+.is-tunnel-open {
+  animation: tunnel-open-bloom calc(var(--dur-med) * 3.5) var(--ease-out);
+}
+:root[data-motion="reduced"] .is-tunnel-open,
+:root[data-theme="hc-light"] .is-tunnel-open,
+:root[data-theme="hc-dark"] .is-tunnel-open { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .is-tunnel-open { animation: none; }
+}
+@media (forced-colors: active) {
+  .is-tunnel-open { animation: none; }
+}
+
 @keyframes streaming-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
