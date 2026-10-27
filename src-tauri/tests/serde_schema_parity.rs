@@ -803,6 +803,7 @@ fn build_fixtures() -> serde_json::Value {
                 ),
             }],
             unsupported_kinds: vec!["sequence".into(), "materialized_view".into()],
+            warnings: vec!["fn_total: source のスキーマ名が本文に残っています".into()],
         },
     };
 
@@ -1596,6 +1597,7 @@ fn build_fixtures() -> serde_json::Value {
                     })
                     .collect(),
                 unsupported_kinds: Vec::new(),
+                warnings: Vec::new(),
             },
         })
         .collect();

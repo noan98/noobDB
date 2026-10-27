@@ -93,6 +93,10 @@ pub struct ObjectComparison {
     /// このドライバに存在しない種別 (SQLite のルーチンなど)。UI が「対象外」と表示する。
     #[serde(default)]
     pub unsupported_kinds: Vec<String>,
+    /// 比較・同期への注意 (例: PG の関数本文に source のスキーマ名が残っている)。同期計画の
+    /// 警告に常に載る。
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 struct Prepared {
@@ -592,16 +596,42 @@ pub fn needs_text_protocol(sql: &str) -> bool {
     if sql.lines().any(|l| l.trim() == STMT_SPLIT) {
         return true;
     }
-    let head: String = sql
-        .trim_start()
-        .chars()
-        .take(160)
-        .collect::<String>()
-        .to_ascii_uppercase();
-    (head.starts_with("CREATE") || head.starts_with("DROP"))
-        && [" PROCEDURE ", " FUNCTION ", " TRIGGER "]
-            .iter()
-            .any(|k| head.contains(k))
+    let head: String = sql.trim_start().chars().take(400).collect();
+    let mut words = head
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|w| !w.is_empty())
+        .map(str::to_ascii_uppercase);
+    if !matches!(words.next().as_deref(), Some("CREATE" | "DROP")) {
+        return false;
+    }
+    // 先頭の数語 (OR REPLACE / DEFINER=... のあと) に現れる種別で決める。TABLE などが先に
+    // 来る文は対象外。
+    for w in words.take(16) {
+        match w.as_str() {
+            "PROCEDURE" | "FUNCTION" | "TRIGGER" => return true,
+            "TABLE" | "VIEW" | "INDEX" | "DATABASE" | "SCHEMA" | "USER" | "ROLE" | "EVENT"
+            | "SEQUENCE" | "ALGORITHM" => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// 定義の `$tag$ ... $tag$` (関数本文) の中に自スキーマ名の修飾 (`db.` / `"db".`) が残っているか。
+/// 本文は書き換えないので、別名のスキーマへ適用すると参照先が変わらない (PostgreSQL のみ)。
+pub fn body_mentions_schema(driver: DriverKind, db: &str, definition: &str) -> bool {
+    if driver != DriverKind::Postgres || db.is_empty() {
+        return false;
+    }
+    segments(driver, definition).iter().any(|seg| {
+        matches!(seg, Seg::Literal(t) if t.starts_with('$')
+            && (t.contains(&format!("\"{db}\".")) || rewrite_bare(driver, db, "", t, None).0 != *t))
+    })
+}
+
+/// 定義の本文に区切り行 ([`STMT_SPLIT`]) が含まれるか (含むと実行側が分割を誤る)。
+pub fn contains_split_marker(definition: &str) -> bool {
+    definition.lines().any(|l| l.trim() == STMT_SPLIT)
 }
 
 /// `CREATE ...` 文。`definition` は [`ObjectDiff::source_definition`]。複数文の定義
@@ -1132,6 +1162,12 @@ mod tests {
         ));
         assert!(needs_text_protocol("a;\n-- noobdb:split\nb"));
         assert!(!needs_text_protocol("DROP TABLE `trigger_log`"));
+        assert!(!needs_text_protocol("DROP TABLE `function`"));
+        assert!(needs_text_protocol("CREATE\nPROCEDURE `p`() SELECT 1"));
+        assert!(needs_text_protocol("DROP PROCEDURE`p`"));
+        assert!(needs_text_protocol(
+            "CREATE DEFINER=`root`@`%` FUNCTION `f`() RETURNS INT RETURN 1"
+        ));
         assert!(!needs_text_protocol(
             "CREATE OR REPLACE VIEW `v` AS select 1"
         ));
@@ -1188,6 +1224,33 @@ mod tests {
         assert!(!replace_is_destructive(DriverKind::Postgres, "view"));
         assert!(replace_is_destructive(DriverKind::Mysql, "trigger"));
         assert!(!replace_is_destructive(DriverKind::Sqlite, "trigger"));
+    }
+
+    #[test]
+    fn body_schema_mentions_and_split_marker_are_detected() {
+        let def = "CREATE FUNCTION stg.f() RETURNS int AS $$ SELECT * FROM stg.t $$ LANGUAGE sql";
+        assert!(body_mentions_schema(DriverKind::Postgres, "stg", def));
+        assert!(!body_mentions_schema(DriverKind::Postgres, "prod", def));
+        assert!(!body_mentions_schema(DriverKind::Mysql, "stg", def));
+        assert!(contains_split_marker("a\n  -- noobdb:split \nb"));
+        assert!(!contains_split_marker("SELECT '-- noobdb:split'"));
+    }
+
+    #[test]
+    fn generic_transaction_path_never_splits_on_the_marker() {
+        // 汎用の `execute_transaction_guarded` (ユーザー SQL の実行口) は区切り行を解釈しない。
+        // テキストプロトコルの分岐は同期専用 (`execute_sync_transaction`) だけが有効にする。
+        let src = include_str!("mysql.rs").replace("\r\n", "\n");
+        assert!(
+            src.contains("self.run_transaction_guarded(statements, database, false)"),
+            "execute_transaction_guarded は text protocol を無効で呼ぶ"
+        );
+        assert_eq!(
+            src.matches("run_transaction_guarded(&stmts, database, true)")
+                .count(),
+            1
+        );
+        assert!(src.contains("if allow_text_protocol && super::object_diff::needs_text_protocol"));
     }
 
     #[test]

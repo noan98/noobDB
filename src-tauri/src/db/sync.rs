@@ -239,6 +239,7 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
         })
     });
 
+    warnings.extend(diff.objects.warnings.iter().cloned());
     object_statements(diff, allow_destructive, &mut statements, &mut warnings);
 
     SyncPlan {
@@ -3780,6 +3781,7 @@ mod object_sync_tests {
                 compared: true,
                 items,
                 unsupported_kinds: Vec::new(),
+                warnings: Vec::new(),
             },
         }
     }

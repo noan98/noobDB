@@ -298,6 +298,8 @@ struct FoundObjects {
 /// 片側のオブジェクト一覧と定義本文。
 struct SideObjects {
     defs: Vec<crate::db::object_diff::ObjectDefinition>,
+    /// 取得時の注意 (補助情報の取得失敗など)。
+    warnings: Vec<String>,
     /// 定義を読めなかった (種別, 名前)。片側だけ読めないと偽の「追加 / 削除」になるので、
     /// 両側の比較から外す。
     unreadable: Vec<(String, String)>,
@@ -347,20 +349,47 @@ async fn collect_object_comparison(
     let src: Vec<_> = s.defs.into_iter().filter(|d| keep(d)).collect();
     let tgt: Vec<_> = t.defs.into_iter().filter(|d| keep(d)).collect();
 
-    let mut warnings = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    warnings.extend(s.warnings.iter().cloned());
+    warnings.extend(t.warnings.iter().cloned());
     if !skip.is_empty() {
         let mut names: Vec<String> = skip.iter().map(|(k, n)| format!("{k} {n}")).collect();
         names.sort();
         warnings.push(format!(
-            "定義を取得できなかったオブジェクトは比較から外しました (権限不足など): {}",
+            "定義を取得できなかったオブジェクトは比較から外しました (権限不足、区切り行を含む定義など): {}",
             names.join(", ")
         ));
+    }
+    let items = compute_object_diff(driver, source_db, target_db, &src, &tgt);
+    // 関数本文 ($$...$$) は書き換えないので、別名のスキーマへ適用すると source のスキーマ名の
+    // まま残る。同期に載る (追加・変更の) ものだけ警告する。
+    let mut object_warnings = Vec::new();
+    if source_db != target_db {
+        for it in items.iter().filter(|i| {
+            matches!(
+                i.status,
+                crate::db::diff::DiffStatus::SourceOnly | crate::db::diff::DiffStatus::Different
+            )
+        }) {
+            let raw = src
+                .iter()
+                .find(|d| d.kind == it.kind && d.name == it.name && d.signature == it.signature);
+            if raw.is_some_and(|d| {
+                crate::db::object_diff::body_mentions_schema(driver, source_db, &d.definition)
+            }) {
+                object_warnings.push(format!(
+                    "{} {}: 本文に source のスキーマ名 ({}) が残っています。target ({}) へ適用しても本文中の参照は書き換わらないので、適用前に確認してください",
+                    it.kind, it.name, source_db, target_db
+                ));
+            }
+        }
     }
     Ok(FoundObjects {
         comparison: ObjectComparison {
             compared: true,
-            items: compute_object_diff(driver, source_db, target_db, &src, &tgt),
+            items,
             unsupported_kinds: unsupported_object_kinds(driver),
+            warnings: object_warnings,
         },
         warnings,
     })
@@ -391,8 +420,26 @@ async fn collect_side_objects(
 
     // PostgreSQL のトリガーの対象表 (oid -> 表名) とビューのオプション / マテビューの索引。
     // 取れなければ空 (対象表は定義から読み、オプションと索引は比較に含まれない)。
-    let trigger_tables = conn.trigger_tables(db).await.unwrap_or_default();
-    let view_extras = conn.view_extras(db).await.unwrap_or_default();
+    let mut warnings: Vec<String> = Vec::new();
+    let trigger_tables = conn.trigger_tables(db).await.unwrap_or_else(|e| {
+        tracing::warn!(
+            kind = e.kind(),
+            "schema compare: could not load trigger tables"
+        );
+        warnings.push(
+            "トリガーの対象表をカタログから取得できなかったため、定義の文字列から読んでいます。"
+                .to_string(),
+        );
+        Default::default()
+    });
+    let view_extras = conn.view_extras(db).await.unwrap_or_else(|e| {
+        tracing::warn!(kind = e.kind(), "schema compare: could not load view options");
+        warnings.push(
+            "ビューのオプションとマテリアライズドビューの索引を取得できなかったため、それらは比較に含まれません。"
+                .to_string(),
+        );
+        Default::default()
+    });
 
     let mut defs = Vec::new();
     let mut unreadable = Vec::new();
@@ -408,6 +455,11 @@ async fn collect_side_objects(
             }
         };
         let body = match body {
+            // 区切り行を含む定義は、同期の実行側が分割を誤るので扱わない。
+            Ok(b) if crate::db::object_diff::contains_split_marker(&b) => {
+                unreadable.push((o.kind.clone(), o.name.clone()));
+                continue;
+            }
             Ok(b) if !b.trim().is_empty() => b,
             Ok(_) | Err(_) => {
                 unreadable.push((o.kind.clone(), o.name.clone()));
@@ -454,7 +506,11 @@ async fn collect_side_objects(
             });
         }
     }
-    Ok(SideObjects { defs, unreadable })
+    Ok(SideObjects {
+        defs,
+        warnings,
+        unreadable,
+    })
 }
 
 /// PostgreSQL のビュー / マテビューの定義は `SELECT` 本体だけなので、`WITH (...)` オプション

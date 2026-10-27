@@ -1250,6 +1250,7 @@ impl Connection {
     ) -> Result<u64> {
         match self {
             Connection::Sqlite(c) => c.execute_sync_transaction(statements, database).await,
+            Connection::MySql(c) => c.execute_sync_transaction(statements, database).await,
             _ => self.execute_transaction(statements, database).await,
         }
     }

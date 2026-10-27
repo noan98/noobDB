@@ -2360,6 +2360,9 @@
         "unsupported_kinds": [
           "sequence",
           "materialized_view"
+        ],
+        "warnings": [
+          "fn_total: source のスキーマ名が本文に残っています"
         ]
       },
       "source_driver": "mysql",
@@ -2684,6 +2687,9 @@
       "unsupported_kinds": [
         "sequence",
         "materialized_view"
+      ],
+      "warnings": [
+        "fn_total: source のスキーマ名が本文に残っています"
       ]
     },
     "source_driver": "mysql",
@@ -2944,7 +2950,8 @@
             "target_definition": null
           }
         ],
-        "unsupported_kinds": []
+        "unsupported_kinds": [],
+        "warnings": []
       },
       "source_driver": "mysql",
       "tables": [
@@ -3508,7 +3515,8 @@
             "target_definition": null
           }
         ],
-        "unsupported_kinds": []
+        "unsupported_kinds": [],
+        "warnings": []
       },
       "source_driver": "postgres",
       "tables": [
@@ -4070,7 +4078,8 @@
             "target_definition": null
           }
         ],
-        "unsupported_kinds": []
+        "unsupported_kinds": [],
+        "warnings": []
       },
       "source_driver": "sqlite",
       "tables": [

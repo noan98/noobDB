@@ -922,6 +922,7 @@ const objectComparison = z.object({
   compared: z.boolean().default(false),
   items: z.array(objectDiff).default([]),
   unsupported_kinds: z.array(z.string()).default([]),
+  warnings: z.array(z.string()).default([]),
 });
 
 export const schemaDiff = z.object({
@@ -930,7 +931,7 @@ export const schemaDiff = z.object({
   tables: z.array(tableDiff),
   warnings: z.array(z.string()).default([]),
   indexes_compared: z.boolean().default(false),
-  objects: objectComparison.default({ compared: false, items: [], unsupported_kinds: [] }),
+  objects: objectComparison.default({ compared: false, items: [], unsupported_kinds: [], warnings: [] }),
 });
 
 const syncStatement = z.object({

@@ -1535,6 +1535,8 @@ export interface ObjectComparison {
   items: ObjectDiff[];
   /** このドライバに存在しない種別 (SQLite のルーチンなど)。「対象外」と表示する。 */
   unsupported_kinds: string[];
+  /** 比較・同期への注意 (同期計画の警告にも載る)。 */
+  warnings?: string[];
 }
 
 /** 1 つの非テーブルオブジェクトの差分 (#1879)。 */
