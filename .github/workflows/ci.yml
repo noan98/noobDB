@@ -1362,132 +1362,21 @@ jobs:
   # MySQL/PostgreSQL は接続 URL 環境変数を渡さないので統合テストはスキップされ、
   # SQLite 統合テスト (外部サービス不要) は常時実行される。
   #
-  # Linux と同じ理由 (rust-clippy / rust-test の分割コメント参照) で clippy と
-  # nextest を別ジョブに分けて並列実行する。同一ジョブで直列に走らせると
-  # check モードと codegen+link の成果物が共有されず実質二重コンパイルが直列に
-  # 積み上がり、Windows ジョブがワークフロー全体のクリティカルパスになっていた
-  # (実測 clippy 約 4 分 + nextest 約 4.5 分)。分割で壁時計時間を max() に縮める。
-  rust-windows-clippy:
-    name: rust (windows clippy)
-    needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
-    runs-on: windows-latest
-    timeout-minutes: 45
-    env:
-      CARGO_INCREMENTAL: "0"
-      # Linux ジョブと同じく sccache でコンパイルキャッシュを効かせる (#417)。
-      # キャッシュキーは runner.os (Windows) を含むので Linux とは自動的に分離される。
-      RUSTC_WRAPPER: sccache
-      SCCACHE_DIR: ${{ github.workspace }}/.sccache
-    steps:
-      # ジョブ全体の所要時間可視化 (#565) の起点。checkout より前に置き、
-      # セットアップ込みの壁時計時間を測る。閾値 fail は設けない (可視化のみ)。
-      # windows-latest の既定シェルは pwsh なので、他の GITHUB_ENV 書き込み
-      # ステップと同様に明示的に bash を指定する。
-      - name: Record job start time (#565)
-        shell: bash
-        run: echo "NOOBDB_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
-
-      # Defender のリアルタイム保護は cargo / rustc の大量のファイル書き込みを
-      # スキャンして遅くする。ランナーは使い捨てなので止めてよい。
-      - name: Disable Defender real-time protection
-        shell: pwsh
-        run: Set-MpPreference -DisableRealtimeMonitoring $true
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップより
-      # 前に sccache 本体を導入する。
-      - name: Install sccache
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
-        with:
-          tool: sccache
-
-      # Rust の単体 / 統合テストは __test_api 経由で db::Connection を駆動するだけで
-      # webview も run() も起動せず、実フロント資産を必要としない。tauri::generate_context!
-      # が参照する frontendDist (../dist) を満たすには dist/index.html が存在すれば足りる
-      # ため、pnpm install + build の代わりに最小スタブを 1 枚生成する (#796)。実フロント
-      # ビルドの検証は専用の frontend ジョブに一本化しており、Rust ジョブで再ビルドしても
-      # カバレッジ上の意味はない。これにより 4 Rust ジョブ×(pnpm install + build) 分の時間・
-      # キャッシュ I/O と pnpm 関連ステップ (setup-node / corepack / store キャッシュ) を
-      # 削減する。
-      - name: Stub frontend dist (for tauri::generate_context!)
-        shell: bash
-        run: mkdir -p dist && echo "" > dist/index.html
-
-      # Windows では config.toml が MSVC リンカに lld-link を指定している。
-      # windows-latest には LLVM がプリインストール済みで lld-link が PATH 上にある。
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-        with:
-          components: clippy
-
-      - name: Cache cargo
-        id: rust-cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
-        with:
-          workspaces: "./src-tauri -> target"
-          key: windows-clippy
-          # Windows は保存 (post step の target 圧縮 + アップロード) が約 1 分かかる。
-          # PR 実行で保存したキャッシュは他の PR から参照できないため、保存は main
-          # の push だけに絞る (PR は main スコープのキャッシュを復元するだけ)。
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      # sccache は復元だけをここで行い、保存は下の「Save sccache (main only)」で
-      # main の push に限る (rust-cache の save-if と同じ理由)。
-      - name: Cache sccache
-        id: sccache-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ github.workspace }}/.sccache
-          key: sccache-${{ runner.os }}-windows-clippy-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: |
-            sccache-${{ runner.os }}-windows-clippy-
-
-      - name: cargo clippy
-        working-directory: src-tauri
-        run: cargo clippy --all-targets --locked -- -D warnings
-
-      # main の push のときだけ sccache を保存する。復元時に完全一致した場合は
-      # 内容が変わらないので保存しない (従来の actions/cache と同じ挙動)。
-      - name: Save sccache (main only)
-        if: always() && github.ref == 'refs/heads/main' && steps.sccache-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ github.workspace }}/.sccache
-          key: sccache-${{ runner.os }}-windows-clippy-${{ hashFiles('src-tauri/Cargo.lock') }}
-
-      # ジョブ所要時間・rust-cache ヒット・sccache ヒット率を Job Summary へ
-      # 出力する (#565)。#417 の sccache stats (ログ出力) を Job Summary 可視化へ
-      # 拡張し、バンドルサイズ (#443) / カバレッジ (#482) と同じく可視化のみで
-      # fail はさせない。
-      - name: Job timing & cache summary (#565)
-        if: always()
-        shell: bash
-        run: |
-          ELAPSED=$(( $(date +%s) - NOOBDB_JOB_START ))
-          {
-            echo "### rust (windows clippy) 所要時間・キャッシュ"
-            echo ""
-            echo "| 項目 | 値 |"
-            echo "| --- | --- |"
-            echo "| 所要時間 | ${ELAPSED} 秒 |"
-            echo "| rust-cache (target) ヒット | ${{ steps.rust-cache.outputs.cache-hit }} |"
-            echo ""
-            echo '<details><summary>sccache --show-stats</summary>'
-            echo ''
-            echo '```'
-            sccache --show-stats
-            echo '```'
-            echo ''
-            echo '</details>'
-            echo ""
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  rust-windows-test:
-    name: rust (windows test)
+  # clippy と nextest は単一ジョブで直列に実行する (#1872)。以前は Linux と同じ理由
+  # (rust-clippy / rust-test の分割コメント参照) で 2 ジョブに分けていたが、
+  # windows-latest は課金が Linux の 2 倍でコンパイルも最遅なうえ、2 ジョブは
+  # rust-cache / sccache の鍵が別 (windows-clippy / windows-test) で成果物を共有せず、
+  # 依存ツリーを 2 ランナーで二重にビルドしていた。1 ジョブにまとめると、ランナーの
+  # 起動・セットアップ (Setup Rust / rust-cache / sccache 復元 / ツール導入、
+  # 約 75 秒) とキャッシュの保存・復元が 1 回分になり、課金される計算量が減る。
+  # 壁時計時間は max(clippy, test) から clippy + test に伸びる。なお cargo は
+  # check (clippy) と codegen+link (nextest) の成果物を共有しないので、2 本目のコマンドで
+  # 再コンパイルがなくなるわけではない (sccache が rustc 呼び出し単位で効く範囲を除く)。
+  # clippy を先に走らせるのは、lint 違反なら重いテストビルドを待たずに早く落とすため。
+  # 必須チェック名は `rust (windows)` に変わる (旧 `rust (windows clippy)` /
+  # `rust (windows test)` は消える)。branch protection の必須設定を更新すること。
+  rust-windows:
+    name: rust (windows)
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: windows-latest
@@ -1545,13 +1434,15 @@ jobs:
       # windows-latest には LLVM がプリインストール済みで lld-link が PATH 上にある。
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          components: clippy
 
       - name: Cache cargo
         id: rust-cache
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: "./src-tauri -> target"
-          key: windows-test
+          key: windows
           # Windows は保存 (post step の target 圧縮 + アップロード) が約 1 分かかる。
           # PR 実行で保存したキャッシュは他の PR から参照できないため、保存は main
           # の push だけに絞る (PR は main スコープのキャッシュを復元するだけ)。
@@ -1564,9 +1455,9 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.sccache
-          key: sccache-${{ runner.os }}-windows-test-${{ hashFiles('src-tauri/Cargo.lock') }}
+          key: sccache-${{ runner.os }}-windows-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: |
-            sccache-${{ runner.os }}-windows-test-
+            sccache-${{ runner.os }}-windows-
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
@@ -1586,9 +1477,9 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/registry/index
-          key: cargo-index-${{ runner.os }}-windows-test-${{ hashFiles('src-tauri/Cargo.lock') }}
+          key: cargo-index-${{ runner.os }}-windows-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: |
-            cargo-index-${{ runner.os }}-windows-test-
+            cargo-index-${{ runner.os }}-windows-
 
       # index とクレートが全部そろっていれば `--offline` で足りる。足りないもの (Cargo.lock を
       # 変えた PR など) があると probe が失敗するので、オンラインのまま走る。失敗は握りつぶして
@@ -1603,6 +1494,10 @@ jobs:
           else
             echo "registry not fully cached: running cargo online"
           fi
+
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --locked -- -D warnings
 
       # SQLite 統合テスト (tests/sqlite_integration.rs) は外部サービス不要で常時
       # 実行される (integration グループ)。
@@ -1622,7 +1517,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/registry/index
-          key: cargo-index-${{ runner.os }}-windows-test-${{ hashFiles('src-tauri/Cargo.lock') }}
+          key: cargo-index-${{ runner.os }}-windows-${{ hashFiles('src-tauri/Cargo.lock') }}
 
       # main の push のときだけ sccache を保存する。復元時に完全一致した場合は
       # 内容が変わらないので保存しない (従来の actions/cache と同じ挙動)。
@@ -1631,7 +1526,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.sccache
-          key: sccache-${{ runner.os }}-windows-test-${{ hashFiles('src-tauri/Cargo.lock') }}
+          key: sccache-${{ runner.os }}-windows-${{ hashFiles('src-tauri/Cargo.lock') }}
 
       # ジョブ所要時間・rust-cache ヒット・sccache ヒット率を Job Summary へ
       # 出力する (#565)。#417 の sccache stats (ログ出力) を Job Summary 可視化へ
@@ -1643,7 +1538,7 @@ jobs:
         run: |
           ELAPSED=$(( $(date +%s) - NOOBDB_JOB_START ))
           {
-            echo "### rust (windows test) 所要時間・キャッシュ"
+            echo "### rust (windows) 所要時間・キャッシュ"
             echo ""
             echo "| 項目 | 値 |"
             echo "| --- | --- |"

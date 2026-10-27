@@ -45,7 +45,6 @@
   挙動を変えたくないため config はコメントアウトのままにしています。
 - CI (`ci.yml` の rust ジョブ) では上記 config に合わせて `clang` と `mold` を
   apt で導入済みで、`cargo nextest` のテストバイナリ群のリンクが mold で高速化
-  されます。加えて `rust (clippy)` / `rust (test)` / `rust (coverage)` / `rust (windows clippy)` /
-  `rust (windows test)` では
+  されます。加えて `rust (clippy)` / `rust (test)` / `rust (coverage)` / `rust (windows)` では
   **sccache** を `RUSTC_WRAPPER` で有効化し、コンパイル単位のキャッシュをブランチ
   跨ぎで再利用します (詳細は上の CI セクションを参照)。

@@ -20,7 +20,7 @@ description: noobDB の CI が落ちたとき、GitHub Actions ワークフロ�
 | `rust (clippy)` / `rust (test)` | 旧 `rust (check + clippy + test)` から分割。`rust (test)` は計装なしの高速 nextest (#1153) |
 | `rust (coverage)` | **必須に含めない** (非ブロッキング)。カバレッジ計装 + 閾値 (#1153)。main push 限定で PR では走らない (#1420) |
 | `rust (deny)` | 依存ライセンス + RustSec 脆弱性チェック |
-| `rust (windows clippy)` / `rust (windows test)` | 旧 `rust (windows)` から分割 |
+| `rust (windows)` | Windows の clippy + nextest を 1 ジョブで直列実行 (#1872)。旧 `rust (windows clippy)` / `rust (windows test)` を統合 (それ以前は `rust (windows)` を分割していた) |
 
 ## 参照
 

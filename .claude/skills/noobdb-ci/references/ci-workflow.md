@@ -83,7 +83,7 @@
   なお shard の割当は Vitest の `BaseSequencer.shard` が**ファイルパスの sha1 順**で
   決めるため、Vitest のキャッシュ (実行時間) では割当は変わらず、実行時間ベースの分割には
   カスタム sequencer + 実行時間データの保守が要ります。フロント単体の連鎖 (約 200 秒) は
-  `rust (windows test)` (約 260〜360 秒) より短くクリティカルパスではないため見送っています。
+  `rust (windows)` (統合前の `rust (windows test)` 実測で約 260〜360 秒) より短くクリティカルパスではないため見送っています。
   ブラウザテスト (約 120 秒) の shard 分割も同じ理由で見送りです。いずれも Windows 側が
   縮んでフロントがクリティカルパスになったら再検討してください (必須チェック名
   `frontend (build + browser tests)` は変えないこと)。
@@ -167,7 +167,7 @@
   300 秒で強制終了して失敗扱いにします (#1635。SSH / TLS 待ちのハングがジョブの
   `timeout-minutes: 45` まで居座るのを防ぐ。観測した最長テストは約 40 秒)。正当に長いテストが
   増えたら `[[profile.default.overrides]]` で個別に延長します。CI 用の別プロファイルは無く、
-  `rust (test)` / `rust (coverage)` / `rust (windows test)` はすべて default を使います。
+  `rust (test)` / `rust (coverage)` / `rust (windows)` はすべて default を使います。
   カバレッジ計装は別ジョブ `rust (coverage)` に分離しています
   (#1153。下記)。起動条件は通常の
   `rust==true` に加え、上述の `crosslang` フィルタ (`src/__tests__/fixtures/**`)
@@ -220,40 +220,42 @@
   ます。これを別ジョブで**並列**に走らせて壁時計時間を縮めています (rust-cache の
   `key` を `clippy` / `test` に分けてキャッシュを分離)。両 Rust ジョブとも CI では
   無益な incremental コンパイルを `CARGO_INCREMENTAL=0` で無効化しています。
-  残る 2 つの `rust (windows clippy)` / `rust (windows test)` は `windows-latest`
-  上でそれぞれ `cargo clippy` と `cargo nextest run` を実行し、Windows 固有
+  残る `rust (windows)` は `windows-latest` 上で `cargo clippy` →
+  `cargo nextest run` を 1 ジョブで直列実行し、Windows 固有
   (keyring・ファイルパス・改行コード・MSVC リンカ `lld-link`) のリグレッションを
-  PR 段階で検出します (#392)。Linux と同じ理由 (check と codegen+link の成果物
-  非共有) で clippy と nextest を並列ジョブに分割しており、単一ジョブで直列実行
-  していた頃は Windows がワークフロー全体のクリティカルパスでした。MySQL/
+  PR 段階で検出します (#392)。以前は clippy と nextest を別ジョブに分割していたが、
+  課金が 2 倍で最遅の windows-latest で rust-cache / sccache の鍵が別 (成果物を共有しない)
+  まま依存ツリーを 2 ランナーで二重にビルドしていたため、#1872 で単一ジョブに統合した
+  (セットアップとキャッシュ保存・復元が 1 回分になり計算量が減る代わりに、壁時計時間は
+  clippy + test の合計に伸びる。check と codegen+link の成果物は共有されないので 2 本目の
+  コマンドで再コンパイルが無くなるわけではない)。チェック名は `rust (windows)` に変わった。MySQL/
   PostgreSQL の URL 環境変数を渡さないため統合テストはスキップされ、外部サービス
   不要の SQLite 統合テストのみ実走します。Tauri の全スタックビルド (WebView2 等) は
-  不要で MSVC toolchain だけで足り、rust-cache の `key` は `windows-clippy` /
-  `windows-test` で Linux と分離しています。
+  不要で MSVC toolchain だけで足り、rust-cache の `key` は `windows` で Linux と分離しています。
   `rust (test)` は sshd / TLS DB のセットアップ (約 1 分) を待たずに
   `cargo nextest archive` でテストバイナリのビルドを先に始め、wait の後にアーカイブから実行します
   (NOOBDB_TEST_* は実行時にしか読まないためコンパイルと重ねられる。アーカイブ経由なので
   環境変数の違いによる再コンパイルも起きない)。
   Rust の統合テストは `src-tauri/Cargo.toml` の `[[test]]` で 4 本の実行ファイルに束ねてあり
   (golden / integration / external と単独の serde_schema_parity。`autotests = false`。詳細は
-  `noobdb-testing` の commands.md)、リンク回数を減らしています。`rust (windows test)` は
+  `noobdb-testing` の commands.md)、リンク回数を減らしています。`rust (windows)` は
   env ゲートで 0 件実行になる external を対象から外し、`--test golden --test integration
-  --test serde_schema_parity` を明示しています (#1511。`[[test]]` を足したらここにも追加)。Windows の 2 ジョブは
+  --test serde_schema_parity` を明示しています (#1511。`[[test]]` を足したらここにも追加)。Windows ジョブは
   `CARGO_PROFILE_DEV_DEBUG=0` (PDB を出さない) と Defender のリアルタイム保護 OFF を使います。
   フロントの単体テストは `--shard` の 4 分割 (上記) です (`--project` で dom / node に分ける案は、blob を統合したカバレッジが大きく低く出るため不可)。
-  `rust (windows test)` は `cargo nextest run` の前に、registry の index だけを自前の
+  `rust (windows)` は `cargo nextest run` の前に、registry の index だけを自前の
   `actions/cache` (`cargo-index-…`、保存は main の push のみ) で復元する (rust-cache は sparse index を
   復元しないため。PR #1721 で `cargo fetch --offline` が `no matching package` で失敗して判明)。そのうえで
   `cargo fetch --locked --offline --target x86_64-pc-windows-msvc` で全部そろっているか確かめ、成功なら
   `CARGO_NET_OFFLINE=true` にして `Updating crates.io index` (実測 約 26 秒) を省く (#1680。
   失敗時はオンラインのまま)。同ジョブの実測内訳 (2026-10-18 JST の main push, 計 約 255 秒):
   セットアップ 約 75 秒 (Setup Rust 23 / rust-cache 24 / sccache 復元 9)、index 更新 26、
-  `noobdb` 本体コンパイル 97、テスト実行 46 (1864 件)。Windows を 2 ランナーに分ける案は優先度が低いので今回は見送り。
-  Windows の 2 ジョブは rust-cache (`save-if`) と sccache (`actions/cache/restore` +
+  `noobdb` 本体コンパイル 97、テスト実行 46 (1864 件)。(統合前の内訳。#1872 で clippy と同一ジョブに統合した。)
+  Windows ジョブは rust-cache (`save-if`) と sccache (`actions/cache/restore` +
   `actions/cache/save`) の**保存を main の push だけ**にしています (保存が約 1 分かかり、
   PR のキャッシュは他 PR から参照できないため。PR は main スコープを復元するだけ)。
   さらに `rust (clippy)` / `rust (test)` / `rust (coverage)` /
-  `rust (windows clippy)` / `rust (windows test)` の各コンパイルジョブは
+  `rust (windows)` の各コンパイルジョブは
   **sccache** を `RUSTC_WRAPPER` として有効化し (`taiki-e/install-action` で導入)、
   `SCCACHE_DIR` を `actions/cache` で永続化してブランチ跨ぎでコンパイル単位を再利用
   します (#417)。rust-cache が `target` ディレクトリをキャッシュするのに対し sccache
@@ -265,7 +267,7 @@
   ジョブと依存クレートのコンパイルに現れます。
   **必須チェックを設定する場合は `rust (check + clippy + test)` や旧
   `rust (windows)` ではなく `rust (clippy)` と `rust (test)` (必要なら
-  `rust (deny)` / `rust (windows clippy)` / `rust (windows test)`) を
+  `rust (deny)` / `rust (windows)`) を
   指定してください** (ジョブ分割でチェック名が変わったため)。`rust (test)` の名前は
   #1153 の分割後も不変なので、既存の必須設定の変更は不要です。`rust (coverage)` は
   必須に**含めないでください**。

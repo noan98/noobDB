@@ -1,4 +1,4 @@
-# cargo-nextest の設定 (CI の `rust (test)` / `rust (coverage)` / `rust (windows test)` が使う)。
+# cargo-nextest の設定 (CI の `rust (test)` / `rust (coverage)` / `rust (windows)` が使う)。
 #
 # nextest は**テストごとにプロセスを分けて**並列実行する。これは各テストを
 # 隔離できる利点がある一方、「プロセス内の Mutex による直列化」がまったく効か

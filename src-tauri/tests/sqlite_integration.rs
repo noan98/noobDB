@@ -3163,7 +3163,7 @@ async fn undo_rejects_unknown_capture_id() {
 //
 // `commands/inspector.rs` / `commands/server.rs` / `commands/process.rs` は
 // これまで env ゲートの MySQL / PostgreSQL 統合テストからしか実行されておらず、
-// `rust (windows test)` ジョブや env 変数を設定しないローカルの `cargo test`
+// `rust (windows)` ジョブや env 変数を設定しないローカルの `cargo test`
 // (= SQLite のみ) では**コマンド境界が 1 度も走らなかった**。ドライバ本体の
 // SQLite 短絡は既存テストが押さえているが、その手前の「セッション検索 →
 // ドライバ委譲」というコマンド層の回帰は誰も検出できない状態だった。
