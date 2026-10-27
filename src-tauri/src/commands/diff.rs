@@ -1145,7 +1145,7 @@ async fn validate_target_table(
     })?;
     if !key_is_unique_in(driver, primary_key, &target_cols, &target_indexes) {
         return Err(AppError::InvalidInput(format!(
-            "target table '{tgt}' has no primary key or UNIQUE NOT NULL key matching ({}); data comparison needs the target to guarantee that key is unique",
+            "target table '{tgt}' has no primary key or UNIQUE NOT NULL key matching ({}); data comparison needs the target to guarantee that key is unique, otherwise the sync SQL cannot be generated safely (views and tables without a unique key are not supported)",
             primary_key.join(", ")
         )));
     }
