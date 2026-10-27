@@ -1204,10 +1204,9 @@ impl SqliteConn {
         if table.contains('"') || table.contains('\0') {
             return Err(AppError::InvalidInput("invalid table name".into()));
         }
+        let mut conn = fresh_schema_conn(&self.pool).await?;
         let sql = format!("PRAGMA table_xinfo(\"{}\")", table);
-        let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
-            .fetch_all(&self.pool)
-            .await?;
+        let rows: Vec<SqliteRow> = fresh_pragma(sql).fetch_all(&mut *conn).await?;
         Ok(rows
             .iter()
             .filter(|r| matches!(r.try_get::<i64, _>("hidden"), Ok(2 | 3)))
@@ -1228,9 +1227,9 @@ impl SqliteConn {
             "PRAGMA foreign_key_list(\"{}\")",
             table.replace('"', "\"\"")
         );
-        let fk_rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(fk_sql))
-            .fetch_all(&self.pool)
-            .await?;
+        // DDL 直後でも別接続の古いスキーマで読まないよう、1 本の接続に揃える。
+        let mut conn = fresh_schema_conn(&self.pool).await?;
+        let fk_rows: Vec<SqliteRow> = fresh_pragma(fk_sql).fetch_all(&mut *conn).await?;
         let mut fks: std::collections::HashMap<String, (String, Option<String>)> =
             std::collections::HashMap::new();
         for r in &fk_rows {
@@ -1259,8 +1258,8 @@ impl SqliteConn {
                 continue;
             }
             let pk_sql = format!("PRAGMA table_info(\"{}\")", ref_table.replace('"', "\"\""));
-            let pk_rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(pk_sql))
-                .fetch_all(&self.pool)
+            let pk_rows: Vec<SqliteRow> = fresh_pragma(pk_sql)
+                .fetch_all(&mut *conn)
                 .await
                 .unwrap_or_default();
             let mut pk_cols: Vec<(i64, String)> = pk_rows
@@ -1289,9 +1288,7 @@ impl SqliteConn {
         }
 
         let sql = format!("PRAGMA table_info(\"{}\")", table.replace('"', "\"\""));
-        let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
-            .fetch_all(&self.pool)
-            .await?;
+        let rows: Vec<SqliteRow> = fresh_pragma(sql).fetch_all(&mut *conn).await?;
         Ok(rows
             .into_iter()
             .map(|r| {
@@ -1699,16 +1696,17 @@ impl SqliteConn {
         // index_list columns: seq, name, unique, origin, partial.
         // origin = 'pk' for the implicit/auto PRIMARY KEY index.
         let list_sql = format!("PRAGMA index_list(\"{}\")", table.replace('"', "\"\""));
-        let list_rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(list_sql))
-            .fetch_all(&self.pool)
-            .await?;
+        // index_list と index_info を別々の接続で読むと、片方だけ古いスキーマのまま
+        // 空になる (CI で複合インデックスの列が `[]`)。1 本の接続に揃える。
+        let mut conn = fresh_schema_conn(&self.pool).await?;
+        let list_rows: Vec<SqliteRow> = fresh_pragma(list_sql).fetch_all(&mut *conn).await?;
         // #1776: 照合順序の食い違いを疑うため、インデックス / テーブルの DDL を引いておく。
         // 取れなければ全インデックスを照合順序不一致の疑いありとして扱う (安全側)。
         let ddl_rows: Option<Vec<SqliteRow>> = sqlx::query(
             "SELECT type, name, sql FROM sqlite_master WHERE tbl_name = ?1 COLLATE NOCASE AND type IN ('index', 'table')",
         )
         .bind(table)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *conn)
         .await
         .ok();
         let ddl_ok = ddl_rows.is_some();
@@ -1751,9 +1749,7 @@ impl SqliteConn {
             // index_info columns: seqno, cid, name. NULL name = an expression
             // index column; skip those (no plain column name to show).
             let info_sql = format!("PRAGMA index_info(\"{}\")", name.replace('"', "\"\""));
-            let info_rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(info_sql))
-                .fetch_all(&self.pool)
-                .await?;
+            let info_rows: Vec<SqliteRow> = fresh_pragma(info_sql).fetch_all(&mut *conn).await?;
             let names: Vec<Option<String>> = info_rows
                 .iter()
                 .map(|c| c.try_get::<Option<String>, _>("name").ok().flatten())
@@ -1766,7 +1762,7 @@ impl SqliteConn {
                     "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
                 )
                 .bind(&name)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut *conn)
                 .await?
                 .flatten();
                 // 述語を取り出せなくても「部分インデックスである」印は残す。
@@ -2362,15 +2358,45 @@ fn strip_sql_comments(sql: &str) -> String {
     super::strip_sql_comments(sql, super::SqlFlavor::Sqlite)
 }
 
+/// メタデータ用 PRAGMA を流す接続を 1 本取り、その接続のスキーマを最新にしてから返す。
+///
+/// SQLite の `PRAGMA index_list` / `index_info` / `index_xinfo` / `foreign_key_list` は
+/// 結果を**準備 (prepare) 時**に組み立て、その接続がメモリに持つスキーマを使う
+/// (`table_info` / `table_xinfo` は検証が入るが、一貫性のため同じ接続で読む)。対象のテーブル / インデックスが (古いスキーマ上で) 見つからないと
+/// スキーマクッキーの検証命令すら出さないため、プールの別接続で直前に流した
+/// `CREATE INDEX` / `CREATE TABLE` が見えないまま空結果を返し、SQLITE_SCHEMA による
+/// 再準備も起きない (CI で `list_indexes` の列が `[]`、`columns` の FK が None になった)。
+/// `sqlite_master` を 1 回読むと実行時にクッキーが検証され、古ければスキーマが
+/// 読み直される。呼び出し側はこの接続 1 本で PRAGMA を流し、PRAGMA 文は
+/// [`fresh_pragma`] で準備済みステートメントキャッシュに載せない (古いスキーマで
+/// 組み立てた結果が文ごと再利用されるのを防ぐ)。キャッシュに残った空結果の PRAGMA 文は
+/// クッキー検証を持たないので、スキーマを読み直しても空のまま再利用され続ける。
+/// `persistent(false)` を外さないこと。
+async fn fresh_schema_conn(pool: &SqlitePool) -> Result<sqlx::pool::PoolConnection<sqlx::Sqlite>> {
+    let mut conn = pool.acquire().await?;
+    sqlx::query("SELECT 1 FROM sqlite_master LIMIT 1")
+        .fetch_optional(&mut *conn)
+        .await?;
+    Ok(conn)
+}
+
+/// 識別子を埋め込んだ PRAGMA 文を、準備済みステートメントキャッシュに載せずに組み立てる
+/// ([`fresh_schema_conn`] 参照)。PRAGMA は引数をバインドできないので、呼び出し側で
+/// 識別子をクォート済みであること。
+fn fresh_pragma(
+    sql: String,
+) -> sqlx::query::Query<'static, sqlx::Sqlite, sqlx::sqlite::SqliteArguments> {
+    sqlx::query(sqlx::AssertSqlSafe(sql)).persistent(false)
+}
+
 async fn fetch_primary_key(pool: &SqlitePool, target: &str) -> Result<Vec<String>> {
     let table = strip_identifier_quotes(target);
     if table.contains('\0') {
         return Ok(Vec::new());
     }
+    let mut conn = fresh_schema_conn(pool).await?;
     let sql = format!("PRAGMA table_info(\"{}\")", table.replace('"', "\"\""));
-    let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .fetch_all(pool)
-        .await?;
+    let rows: Vec<SqliteRow> = fresh_pragma(sql).fetch_all(&mut *conn).await?;
     let mut entries: Vec<(i64, String)> = rows
         .iter()
         .filter_map(|r| {
