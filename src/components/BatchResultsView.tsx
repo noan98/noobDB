@@ -6,6 +6,7 @@ import { useT } from "../i18n";
 import { semanticColorVar } from "../semanticColors";
 import type { BatchStatementResult } from "../sqlScript";
 import { springs, staggerTiming, transitions, variants } from "../motion";
+import { FIRST_BATCH_REVEAL_MAX_STEPS } from "./firstBatchReveal";
 import { Button, Switch } from "./ui";
 import { CountUpText } from "./CountUp";
 import { prefersStaticMotion } from "./revealOrigin";
@@ -43,9 +44,9 @@ const MotionSpan = chakra(
 /** 即時化した transition (静止モード)。 */
 const INSTANT = { duration: 0 } as const;
 
-/** 同じ描画で増えたカードの入場遅延 (秒)。前回の枚数より後ろのカードだけ、順番にずらす。 */
+/** 同じ描画で増えたカードの入場遅延 (秒)。前回の枚数より後ろのカードだけ順にずらし、`FIRST_BATCH_REVEAL_MAX_STEPS` 段で頭打ちにする。 */
 export function batchEnterDelay(index: number, prevCount: number): number {
-  return Math.max(0, index - prevCount) * staggerTiming.each;
+  return Math.min(Math.max(0, index - prevCount), FIRST_BATCH_REVEAL_MAX_STEPS - 1) * staggerTiming.each;
 }
 
 interface Props {
@@ -126,7 +127,13 @@ export function BatchResultsView({ results, running, onRerun, onClose, onStop }:
               transition={still ? INSTANT : { ...transitions.enter, delay: batchEnterDelay(i, seenCount) }}
               flex="none"
             >
-              <StatementCard index={i + 1} result={r} t={t} still={still} />
+              <StatementCard
+                index={i + 1}
+                result={r}
+                t={t}
+                still={still}
+                delay={batchEnterDelay(i, seenCount)}
+              />
             </MotionDiv>
           ))}
         </AnimatePresence>
@@ -140,11 +147,14 @@ function StatementCard({
   result,
   t,
   still,
+  delay,
 }: {
   index: number;
   result: BatchStatementResult;
   t: ReturnType<typeof useT>;
   still: boolean;
+  /** カードの入場遅延 (秒)。ドットの pop もそれに揃える。 */
+  delay: number;
 }) {
   const tone =
     result.status === "ok"
@@ -177,7 +187,7 @@ function StatementCard({
           variants={variants.fadeScale}
           initial="initial"
           animate="animate"
-          transition={still ? INSTANT : springs.gentle}
+          transition={still ? INSTANT : { ...springs.gentle, delay }}
           data-testid="batch-status-dot"
         />
         <Tooltip label={result.sql}>

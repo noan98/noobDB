@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen } from "./testUtils";
 import userEvent from "@testing-library/user-event";
 import { t } from "../i18n";
-import { BatchResultsView } from "../components/BatchResultsView";
+import { BatchResultsView, batchEnterDelay } from "../components/BatchResultsView";
+import { staggerTiming } from "../motion";
+import { FIRST_BATCH_REVEAL_MAX_STEPS } from "../components/firstBatchReveal";
 import type { BatchStatementResult } from "../sqlScript";
 
 const columns = [{ name: "id", type_name: "INT" }];
@@ -73,13 +75,27 @@ describe("BatchResultsView の行数上限 (#1616)", () => {
 });
 
 describe("BatchResultsView の Motion (#1873)", () => {
-  it("batchEnterDelay は今回増えたカードだけを順にずらす", async () => {
-    const { batchEnterDelay } = await import("../components/BatchResultsView");
-    const { staggerTiming } = await import("../motion");
+  it("batchEnterDelay は今回増えたカードだけを順にずらす", () => {
     expect(batchEnterDelay(0, 3)).toBe(0);
     expect(batchEnterDelay(2, 3)).toBe(0);
     expect(batchEnterDelay(3, 3)).toBe(0);
     expect(batchEnterDelay(5, 3)).toBeCloseTo(2 * staggerTiming.each);
+  });
+
+  it("大量に増えたときは段数の上限で遅延が頭打ちになる", () => {
+    const cap = (FIRST_BATCH_REVEAL_MAX_STEPS - 1) * staggerTiming.each;
+    expect(batchEnterDelay(FIRST_BATCH_REVEAL_MAX_STEPS - 1, 0)).toBeCloseTo(cap);
+    expect(batchEnterDelay(FIRST_BATCH_REVEAL_MAX_STEPS + 50, 0)).toBeCloseTo(cap);
+  });
+
+  it("件数が増えて再描画しても既存カードは消えず二重にもならない", () => {
+    const mk = (n: number): BatchStatementResult[] =>
+      Array.from({ length: n }, (_, i) => ({ sql: `SELECT ${i}`, status: "ok" as const, rowsAffected: 0 }));
+    const { rerender } = renderWithProviders(
+      <BatchResultsView results={mk(2)} running onRerun={() => {}} onClose={() => {}} />,
+    );
+    rerender(<BatchResultsView results={mk(4)} running onRerun={() => {}} onClose={() => {}} />);
+    for (let i = 0; i < 4; i++) expect(screen.getAllByText(`SELECT ${i}`)).toHaveLength(1);
   });
 
   it("成否ドットが文の数だけ描かれる", () => {
