@@ -1198,7 +1198,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
         onClose={onClose}
         width="1120px"
       >
-        <ModalHeader onClose={onClose} closeLabel={t("settingsClose")}>
+        <ModalHeader onClose={onClose} closeLabel={t("settingsClose")} brandRule>
           {t("settingsTitle")}
         </ModalHeader>
         <ModalBody onScroll={handleModalBodyScroll}>

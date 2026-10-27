@@ -435,7 +435,7 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
       onClose={onClose}
       width="1120px"
     >
-      <ModalHeader onClose={onClose} closeLabel={t("helpClose")}>
+      <ModalHeader onClose={onClose} closeLabel={t("helpClose")} brandRule>
         {t("helpTitle")}
       </ModalHeader>
       <ModalBody onScroll={handleScroll}>
