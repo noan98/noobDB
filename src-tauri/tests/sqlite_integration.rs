@@ -6882,3 +6882,27 @@ async fn sqlite_metadata_sees_ddl_from_other_pool_connections() {
     conn.close().await;
     let _ = std::fs::remove_file(&path);
 }
+
+/// #1868: SQLite はパーティション非対応なので `list_table_partitions` は `InvalidInput` で明示する。
+#[tokio::test]
+async fn sqlite_list_table_partitions_is_unsupported() {
+    let mut p = std::env::temp_dir();
+    p.push(format!(
+        "noobdb_sqlite_partitions_{}.db",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&p);
+    std::fs::File::create(&p).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(p.to_str().unwrap()))
+        .await
+        .expect("connect");
+    conn.execute("CREATE TABLE a (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("ddl");
+    let err = conn
+        .list_table_partitions("main", "a")
+        .await
+        .expect_err("unsupported");
+    assert!(matches!(err, t::AppError::InvalidInput(_)), "{err:?}");
+    let _ = std::fs::remove_file(&p);
+}

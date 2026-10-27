@@ -181,6 +181,29 @@ export const tableExtrasInfo = z.object({
   generated: z.array(generatedColumnInfo),
 });
 
+/** `list_table_partitions` の子パーティション 1 件 (#1868)。 */
+export const tablePartition = z.object({
+  name: z.string(),
+  schema: z.string().nullable(),
+  parent: z.string().nullable(),
+  depth: z.number(),
+  bound: z.string(),
+  size_bytes: z.number().nullable(),
+  row_estimate: z.number().nullable(),
+  is_default: z.boolean(),
+  is_partitioned: z.boolean(),
+  sub_partition_key: z.string().nullable(),
+});
+/** `list_table_partitions` の戻り値 (#1868)。パーティション表でなければ null。 */
+export const tablePartitions = z.object({
+  method: z.string(),
+  key: z.string(),
+  sub_method: z.string().nullable(),
+  sub_key: z.string().nullable(),
+  partitions: z.array(tablePartition),
+});
+export const tablePartitionsOrNull = tablePartitions.nullable();
+
 /** `list_table_triggers` の 1 件 (#1867)。 */
 export const tableTrigger = z.object({
   name: z.string(),

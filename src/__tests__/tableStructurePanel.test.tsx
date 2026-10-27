@@ -17,6 +17,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       describeTableExtras: vi.fn(),
       listIndexes: vi.fn(),
       listTableTriggers: vi.fn(),
+      listTablePartitions: vi.fn(),
       getObjectDefinition: vi.fn(),
       incomingForeignKeys: vi.fn(),
     },
@@ -38,25 +39,44 @@ const col = (name: string, over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-function renderPanel() {
+function renderPanel(
+  extra: Partial<React.ComponentProps<typeof TableStructurePanel>> = {},
+  driver = "mysql",
+) {
   const onOpenData = vi.fn();
   const onSelectTable = vi.fn();
   renderWithProviders(
     <TableStructurePanel
       sessionId="s1"
-      driver="mysql"
+      driver={driver}
       target={{ database: "app", table: "orders" }}
       onOpenData={onOpenData}
       onSelectTable={onSelectTable}
+      {...extra}
     />,
   );
   return { onOpenData, onSelectTable };
 }
 
+const part = (name: string, over: Record<string, unknown> = {}) => ({
+  name,
+  schema: null,
+  parent: null,
+  depth: 0,
+  bound: "",
+  size_bytes: null,
+  row_estimate: null,
+  is_default: false,
+  is_partitioned: false,
+  sub_partition_key: null,
+  ...over,
+});
+
 describe("TableStructurePanel (#1112)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(api.incomingForeignKeys).mockResolvedValue([]);
+    vi.mocked(api.listTablePartitions).mockResolvedValue(null);
   });
 
   it("列・インデックス・外部キーを並べ、データへも参照先の構造へも移れる", async () => {
@@ -304,5 +324,79 @@ describe("TableStructurePanel 被参照の外部キー (#1628)", () => {
     vi.mocked(api.incomingForeignKeys).mockRejectedValueOnce(new Error("denied"));
     renderPanel();
     expect(await screen.findByText(t("structureNoIncomingForeignKeys"))).toBeInTheDocument();
+  });
+  it("パーティション表なら子パーティションを節に出し、メニューから保守 SQL を渡す (#1868)", async () => {
+    vi.mocked(api.describeTable).mockResolvedValue([col("id")]);
+    vi.mocked(api.listIndexes).mockResolvedValue([]);
+    vi.mocked(api.listTablePartitions).mockResolvedValueOnce({
+      method: "RANGE",
+      key: "y",
+      sub_method: null,
+      sub_key: null,
+      partitions: [
+        part("p2025", { bound: "LESS THAN (2026)", size_bytes: 2048, row_estimate: 10 }),
+        part("pmax", { bound: "LESS THAN MAXVALUE" }),
+      ],
+    });
+    const onRunPartitionMaintenance = vi.fn().mockResolvedValue(false);
+    const onPartitionOp = vi.fn().mockResolvedValue(false);
+    renderPanel({ onRunPartitionMaintenance, onPartitionOp });
+    expect(await screen.findByText("p2025")).toBeInTheDocument();
+    expect(screen.getByText("LESS THAN (2026)")).toBeInTheDocument();
+    expect(screen.getByText("2.0 KB")).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: t("structurePartitionActionsFor", { partition: "p2025" }) }),
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("maintenanceAnalyze") }));
+    expect(onRunPartitionMaintenance).toHaveBeenCalledWith(
+      "app",
+      "orders",
+      expect.objectContaining({ name: "p2025" }),
+      expect.objectContaining({ sql: "ALTER TABLE `app`.`orders` ANALYZE PARTITION `p2025`;" }),
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: t("structurePartitionActionsFor", { partition: "p2025" }) }),
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("partitionOpDrop") }));
+    expect(onPartitionOp).toHaveBeenCalledWith(
+      "app",
+      "orders",
+      expect.objectContaining({ name: "p2025" }),
+      "drop",
+      "ALTER TABLE `app`.`orders` DROP PARTITION `p2025`;",
+    );
+  });
+
+  it("パーティション表でなければ節を出さず、SQLite では取得自体を呼ばない (#1868)", async () => {
+    vi.mocked(api.describeTable).mockResolvedValue([col("id")]);
+    vi.mocked(api.listIndexes).mockResolvedValue([]);
+    renderPanel();
+    expect(await screen.findByText("app.orders")).toBeInTheDocument();
+    await waitFor(() => expect(api.listTablePartitions).toHaveBeenCalled());
+    expect(screen.queryByText(t("structurePartitions"))).not.toBeInTheDocument();
+
+    vi.mocked(api.listTablePartitions).mockClear();
+    renderPanel({}, "sqlite");
+    await waitFor(() => expect(api.describeTable).toHaveBeenCalledTimes(2));
+    expect(api.listTablePartitions).not.toHaveBeenCalled();
+  });
+
+  it("read_only 接続ではパーティションの操作ボタンが無効 (#1868)", async () => {
+    vi.mocked(api.describeTable).mockResolvedValue([col("id")]);
+    vi.mocked(api.listIndexes).mockResolvedValue([]);
+    vi.mocked(api.listTablePartitions).mockResolvedValueOnce({
+      method: "RANGE",
+      key: "y",
+      sub_method: null,
+      sub_key: null,
+      partitions: [part("p2025")],
+    });
+    renderPanel({ readOnly: true, onPartitionOp: vi.fn(), onRunPartitionMaintenance: vi.fn() });
+    const btn = await screen.findByRole("button", {
+      name: t("structurePartitionActionsFor", { partition: "p2025" }),
+    });
+    expect(btn).toBeDisabled();
   });
 });

@@ -70,6 +70,7 @@ const COVERED: Record<string, string> = {
   IndexInfo: "indexInfo",
   TableExtrasInfo: "tableExtrasInfo",
   TableTrigger: "tableTrigger",
+  TablePartitions: "tablePartitions",
   InsertRowsResult: "insertRowsResult",
   KillProcessesResult: "killProcessesResult",
   KnownHost: "knownHost",

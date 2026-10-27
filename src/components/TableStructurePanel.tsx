@@ -6,9 +6,11 @@ import {
   type IndexInfo,
   type TableColumnInfo,
   type TableExtrasInfo,
+  type TablePartition,
+  type TablePartitions,
   type TableTrigger,
 } from "../api/tauri";
-import { useT } from "../i18n";
+import { type I18nKey, useT } from "../i18n";
 import { type IncomingFk, incomingFkTableName } from "../fkNavigation";
 import { foreignKeysOf, foreignKeyTargetLabel, type ExplorerForeignKey } from "./explorerTree";
 import { EmptyState } from "./EmptyState";
@@ -21,6 +23,19 @@ import { Button } from "./ui";
 import { CopyButton } from "./CopyButton";
 import { CodePreview, FieldError } from "./modalForm";
 import { useCopyFeedback } from "./useCopyFeedback";
+import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
+import {
+  MAINTENANCE_LABEL_KEYS,
+  partitionMaintenanceCommands,
+  type MaintenanceCommand,
+} from "./maintenanceCommands";
+import { formatBytes, formatRowCount } from "./tableSize";
+import {
+  buildPartitionOpSql,
+  formatPartitionBound,
+  partitionDestructiveOps,
+  type PartitionDestructiveOp,
+} from "./tablePartitions";
 import { isSynthesizedTableDdl, TABLE_DDL_KIND } from "./tableDdl";
 import {
   indexKind,
@@ -143,12 +158,59 @@ type DdlState =
   | { kind: "ready"; ddl: string }
   | { kind: "error"; message: string };
 
+/** パーティション行の操作ボタン (保守 / 破壊的操作のメニューを開く, #1868)。 */
+function PartitionActions({
+  label,
+  items,
+  disabledTitle,
+}: {
+  label: string;
+  items: ContextMenuEntry[];
+  /** 無効のときの理由 (read_only)。 */
+  disabledTitle?: string;
+}) {
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const open = () => {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) setMenu({ x: r.left, y: r.bottom + 2 });
+  };
+  return (
+    <>
+      <Tooltip label={disabledTitle ?? label} focusableWrapper={!!disabledTitle}>
+        <Button
+          ref={btnRef}
+          type="button"
+          variant="secondary"
+          size="sm"
+          aria-label={label}
+          aria-haspopup="menu"
+          disabled={!!disabledTitle}
+          onClick={open}
+        >
+          <Icon name="more" size={ICON_SIZES.md} />
+        </Button>
+      </Tooltip>
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={items} onClose={() => setMenu(null)} />}
+    </>
+  );
+}
+
+const PARTITION_OP_LABEL_KEYS = {
+  truncate: "partitionOpTruncate",
+  detach: "partitionOpDetach",
+  drop: "partitionOpDrop",
+} as const satisfies Record<PartitionDestructiveOp, I18nKey>;
+
 export function TableStructurePanel({
   sessionId,
   driver,
   target,
+  readOnly = false,
   onOpenData,
   onSelectTable,
+  onRunPartitionMaintenance,
+  onPartitionOp,
 }: {
   sessionId: string;
   driver: string;
@@ -157,6 +219,26 @@ export function TableStructurePanel({
   onOpenData: (database: string, table: string) => void;
   /** 構造パネルの対象を切り替える (外部キーの参照先へ移るとき)。 */
   onSelectTable: (target: StructureTarget) => void;
+  /** 読み取り専用接続では、パーティションの保守 / 削除メニューを無効にする。 */
+  readOnly?: boolean;
+  /**
+   * パーティションの保守コマンド (ANALYZE 等) を確認のうえ実行する (App の既存保守経路)。
+   * 実行できたら true — パネルは一覧を取り直す。
+   */
+  onRunPartitionMaintenance?: (
+    database: string,
+    table: string,
+    partition: TablePartition,
+    command: MaintenanceCommand,
+  ) => Promise<boolean>;
+  /** TRUNCATE / DETACH / DROP を強確認 (本番では型入力) のうえ実行する。実行できたら true。 */
+  onPartitionOp?: (
+    database: string,
+    table: string,
+    partition: TablePartition,
+    op: PartitionDestructiveOp,
+    sql: string,
+  ) => Promise<boolean>;
 }) {
   const t = useT();
   const [columns, setColumns] = useState<TableColumnInfo[] | null>(null);
@@ -166,6 +248,9 @@ export function TableStructurePanel({
   // このテーブルで発火するトリガー (#1867)。ベストエフォート: 取れなければ節ごと出さない。
   const [triggers, setTriggers] = useState<TableTrigger[] | null>(null);
   const [triggersFailed, setTriggersFailed] = useState(false);
+  // パーティション表の子パーティション (#1868)。ベストエフォート。SQLite は非対応なので呼ばず節も出さない。
+  const [partitions, setPartitions] = useState<TablePartitions | null>(null);
+  const [partitionsFailed, setPartitionsFailed] = useState(false);
   // このテーブルを参照している他テーブルの外部キー (逆方向, #1628)。ベストエフォート。
   const [incoming, setIncoming] = useState<IncomingFk[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -188,6 +273,8 @@ export function TableStructurePanel({
     setExtras(null);
     setTriggers(null);
     setTriggersFailed(false);
+    setPartitions(null);
+    setPartitionsFailed(false);
     setIncoming(null);
     setError(null);
     ddlSeq.current += 1;
@@ -227,6 +314,17 @@ export function TableStructurePanel({
       .catch(() => {
         if (!cancelled) setTriggersFailed(true);
       });
+    // パーティション表なら子の一覧 (#1868)。SQLite はパーティション非対応なので問い合わせない。
+    if (driver !== "sqlite") {
+      Promise.resolve()
+        .then(() => api.listTablePartitions(sessionId, database, table))
+        .then((list) => {
+          if (!cancelled) setPartitions(list);
+        })
+        .catch(() => {
+          if (!cancelled) setPartitionsFailed(true);
+        });
+    }
     // 逆方向の外部キーもベストエフォート: 取れなくても構造は出す。
     api
       .incomingForeignKeys(sessionId, database, table)
@@ -239,7 +337,7 @@ export function TableStructurePanel({
     return () => {
       cancelled = true;
     };
-  }, [sessionId, database, table, reloadKey]);
+  }, [sessionId, driver, database, table, reloadKey]);
 
   const showDdl = useCallback(() => {
     const seq = ++ddlSeq.current;
@@ -270,6 +368,53 @@ export function TableStructurePanel({
   const sortedIndexes = indexes ? sortIndexes(indexes) : null;
   const fkHint = t("structureOpenReferencedHint");
   const incomingRows = incoming ? structureIncomingRows(incoming) : null;
+
+  // パーティション表の見出し行 (例: `RANGE (created_at)` / MySQL のサブパーティション付きは `... / HASH (id)`)。
+  const partitionSummary = (info: TablePartitions) =>
+    t("structurePartitionedBy", {
+      method: info.method,
+      key: info.key,
+    }) + (info.sub_method ? ` / ${info.sub_method} (${info.sub_key ?? ""})` : "");
+
+  // 行ごとの操作メニュー: 保守 (確認 → 実行) と破壊的操作 (強確認 → 実行)。成功したら一覧を取り直す。
+  const partitionMenuItems = (p: TablePartition): ContextMenuEntry[] => {
+    if (!partitions) return [];
+    const items: ContextMenuEntry[] = [];
+    if (onRunPartitionMaintenance) {
+      for (const command of partitionMaintenanceCommands(driver, database, table, p)) {
+        items.push({
+          label: t(MAINTENANCE_LABEL_KEYS[command.kind]),
+          onSelect: () => {
+            void onRunPartitionMaintenance(database, table, p, command).then((ok) => {
+              if (ok) reload();
+            });
+          },
+        });
+      }
+    }
+    const ops = onPartitionOp ? partitionDestructiveOps(driver, partitions, p) : [];
+    if (ops.length > 0) {
+      if (items.length > 0) items.push({ separator: true });
+      for (const op of ops) {
+        items.push({
+          label: t(PARTITION_OP_LABEL_KEYS[op]),
+          danger: true,
+          onSelect: () => {
+            void onPartitionOp?.(
+              database,
+              table,
+              p,
+              op,
+              buildPartitionOpSql(op, driver, database, table, p),
+            ).then((ok) => {
+              if (ok) reload();
+            });
+          },
+        });
+      }
+    }
+    return items;
+  };
 
   return (
     <Box flex="1" overflowY="auto" py="3" px="4" display="flex" flexDirection="column" gap="3">
@@ -588,6 +733,75 @@ export function TableStructurePanel({
               {triggersFailed && (
                 <chakra.div textStyle="caption" color="app.textMuted">
                   {t("structureTriggers")}: {t("structureTriggersFailed")}
+                </chakra.div>
+              )}
+
+              {partitions && partitions.partitions.length > 0 && (
+                <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
+                  <SectionCaption label={t("structurePartitions")} count={partitions.partitions.length} />
+                  <chakra.thead>
+                    <chakra.tr>
+                      <chakra.th css={thCss}>{t("structurePartitionName")}</chakra.th>
+                      <chakra.th css={thCss}>{t("structurePartitionBound")}</chakra.th>
+                      <chakra.th css={thCss} textAlign="right">
+                        {t("structurePartitionSize")}
+                      </chakra.th>
+                      <chakra.th css={thCss} textAlign="right">
+                        {t("structurePartitionRows")}
+                      </chakra.th>
+                      <chakra.th css={thCss}>
+                        <VisuallyHidden>{t("structurePartitionActions")}</VisuallyHidden>
+                      </chakra.th>
+                    </chakra.tr>
+                  </chakra.thead>
+                  <chakra.tbody>
+                    <chakra.tr>
+                      <chakra.td css={tdCss} colSpan={5} color="app.textMuted" fontFamily="var(--font-mono)">
+                        {partitionSummary(partitions)}
+                      </chakra.td>
+                    </chakra.tr>
+                    {partitions.partitions.map((p) => (
+                      <chakra.tr key={`${p.schema ?? ""}.${p.parent ?? ""}.${p.name}`}>
+                        <chakra.td
+                          css={tdCss}
+                          fontFamily="var(--font-mono)"
+                          paddingLeft={`calc(var(--space-2) + ${p.depth} * var(--space-4))`}
+                        >
+                          {p.name}
+                          {p.is_default && (
+                            <chakra.span color="app.textMuted"> {t("structurePartitionDefault")}</chakra.span>
+                          )}
+                          {p.sub_partition_key && (
+                            <chakra.span color="app.textMuted"> [{p.sub_partition_key}]</chakra.span>
+                          )}
+                        </chakra.td>
+                        <chakra.td css={tdCss} fontFamily="var(--font-mono)" color="app.textSecondary">
+                          {formatPartitionBound(p.bound)}
+                        </chakra.td>
+                        <chakra.td css={tdCss} textStyle="numeric" textAlign="right">
+                          {formatBytes(p.size_bytes)}
+                        </chakra.td>
+                        <chakra.td css={tdCss} textStyle="numeric" textAlign="right">
+                          {formatRowCount(p.row_estimate)}
+                        </chakra.td>
+                        <chakra.td css={tdCss} textAlign="right">
+                          {(onRunPartitionMaintenance || onPartitionOp) && (
+                            <PartitionActions
+                              label={t("structurePartitionActionsFor", { partition: p.name })}
+                              items={partitionMenuItems(p)}
+                              disabledTitle={readOnly ? t("listReadOnlyTitle") : undefined}
+                            />
+                          )}
+                        </chakra.td>
+                      </chakra.tr>
+                    ))}
+                  </chakra.tbody>
+                </chakra.table>
+              )}
+
+              {partitionsFailed && (
+                <chakra.div textStyle="caption" color="app.textMuted">
+                  {t("structurePartitions")}: {t("structurePartitionsFailed")}
                 </chakra.div>
               )}
 

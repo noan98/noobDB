@@ -43,6 +43,7 @@ import {
   Snippet,
   OpenTableResult,
   TableColumnInfo,
+  type TablePartition,
   TableRowIdentity,
   TableSchema,
   type TextEncodingId,
@@ -137,6 +138,7 @@ import { copyToClipboard } from "./components/clipboard";
 import { joinTableNames, type TableNameSeparator } from "./components/explorerTree";
 import { TABLE_DDL_KIND } from "./components/tableDdl";
 import { joinTableDdls, summarizeTableNames } from "./components/batchTables";
+import type { PartitionDestructiveOp } from "./components/tablePartitions";
 import {
   buildDropIndexSql,
   buildDropTableSql,
@@ -9313,6 +9315,92 @@ export default function App() {
     [confirm, maintenanceMessage, runMaintenanceDdl, toast],
   );
 
+  // パーティション単位の保守 (#1868)。確認ダイアログで生成 SQL を見せ、既存の保守経路で流す。
+  const handleRunPartitionMaintenance = useCallback(
+    async (
+      database: string,
+      table: string,
+      partition: TablePartition,
+      command: MaintenanceCommand,
+    ): Promise<boolean> => {
+      const label = `${table} (${partition.name})`;
+      const ok = await confirm({
+        title: translate("maintenanceConfirmTitle", { table: label }),
+        message: maintenanceMessage(
+          <>
+            {translate("maintenanceConfirmBody", { target: label })}
+            <br />
+            <br />
+            <CodePreview wrap maxH="40vh">
+              {command.sql}
+            </CodePreview>
+          </>,
+        ),
+        confirmLabel: translate("maintenanceConfirmOk"),
+      });
+      if (!ok) return false;
+      const success = await runMaintenanceDdl(command.sql, database);
+      if (success) toast.success(translate("maintenanceDone", { target: label }));
+      return success;
+    },
+    [confirm, maintenanceMessage, runMaintenanceDdl, toast],
+  );
+
+  // パーティションの TRUNCATE / DETACH / DROP (#1868)。取り消せないので、テーブルの DROP / TRUNCATE と
+  // 同じ強確認 (danger トーン、本番接続ではパーティション名の型入力) を挟む。
+  const handlePartitionOp = useCallback(
+    async (
+      database: string,
+      table: string,
+      partition: TablePartition,
+      op: PartitionDestructiveOp,
+      sql: string,
+    ): Promise<boolean> => {
+      const vars = { partition: partition.name, table };
+      const ok = await confirm({
+        title: translate(
+          op === "truncate"
+            ? "partitionTruncateConfirmTitle"
+            : op === "detach"
+              ? "partitionDetachConfirmTitle"
+              : "partitionDropConfirmTitle",
+          vars,
+        ),
+        message: maintenanceMessage(
+          <>
+            {translate(
+              op === "truncate"
+                ? "partitionTruncateConfirmBody"
+                : op === "detach"
+                  ? "partitionDetachConfirmBody"
+                  : "partitionDropConfirmBody",
+              vars,
+            )}
+            <br />
+            <br />
+            <CodePreview wrap maxH="40vh">
+              {sql}
+            </CodePreview>
+          </>,
+        ),
+        confirmLabel: translate(
+          op === "truncate"
+            ? "partitionOpTruncate"
+            : op === "detach"
+              ? "partitionOpDetach"
+              : "partitionOpDrop",
+        ),
+        tone: "danger",
+        typedConfirmation: selectedProfile?.is_production ? partition.name : undefined,
+      });
+      if (!ok) return false;
+      const success = await runMaintenanceDdl(sql, database);
+      if (success) toast.success(translate("partitionOpDone", { partition: partition.name }));
+      return success;
+    },
+    [confirm, maintenanceMessage, runMaintenanceDdl, selectedProfile?.is_production, toast],
+  );
+
   // 採番列の現在値を実データに同期 (#1240)。列メタから対象を判定し、生成 SQL を確認
   // ダイアログで提示して既存の保守実行経路 (`runMaintenanceDdl`) に流す。MySQL は
   // AUTO_INCREMENT にサブクエリを書けないので、MAX を読み取り専用の lookup で先に取る。
@@ -12912,8 +13000,11 @@ export default function App() {
                           sessionId={sessionId}
                           driver={selectedProfile?.driver ?? "mysql"}
                           target={structureTarget}
+                          readOnly={selectedProfile?.read_only ?? false}
                           onOpenData={handleOpenTable}
                           onSelectTable={setStructureTarget}
+                          onRunPartitionMaintenance={handleRunPartitionMaintenance}
+                          onPartitionOp={handlePartitionOp}
                         />
                       ) : null
                     ) : activeBottomPanelTab === "timelapse" ? (

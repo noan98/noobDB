@@ -47,6 +47,7 @@ pub mod stream_batch;
 pub mod sync;
 /// 既存テーブルの CREATE TABLE DDL をカタログ情報から再構成する純ロジック (#1001)。
 pub mod table_ddl;
+pub mod table_partitions;
 pub mod table_triggers;
 pub mod transfer;
 /// 明示トランザクション開始オプション (分離レベル / READ ONLY, #1166)。
@@ -1508,6 +1509,22 @@ impl Connection {
             Connection::MySql(c) => c.list_table_triggers(db, table).await,
             Connection::Postgres(c) => c.list_table_triggers(db, table).await,
             Connection::Sqlite(c) => c.list_table_triggers(table).await,
+        }
+    }
+
+    /// `table` がパーティション表なら子パーティションの一覧 (#1868)。そうでなければ `None`。
+    /// 読み取りのみ。SQLite はパーティション非対応なので `InvalidInput`。
+    pub async fn list_table_partitions(
+        &self,
+        db: &str,
+        table: &str,
+    ) -> Result<Option<types::TablePartitions>> {
+        match self {
+            Connection::MySql(c) => c.list_table_partitions(db, table).await,
+            Connection::Postgres(c) => c.list_table_partitions(db, table).await,
+            Connection::Sqlite(_) => Err(AppError::InvalidInput(
+                "SQLite does not support table partitioning".into(),
+            )),
         }
     }
 

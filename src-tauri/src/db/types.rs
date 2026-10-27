@@ -1665,6 +1665,47 @@ impl From<&TableDdlExtras> for TableExtrasInfo {
     }
 }
 
+/// パーティション表の構成 (`list_table_partitions`、#1868)。親表がパーティション表でなければ
+/// コマンドは `None` を返す。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TablePartitions {
+    /// `RANGE` / `LIST` / `HASH` (PostgreSQL)。MySQL は `RANGE COLUMNS` / `LINEAR HASH` / `KEY` なども。
+    pub method: String,
+    /// パーティションキーの式 (`created_at` など)。
+    pub key: String,
+    /// サブパーティションの方式 (MySQL のみ。無ければ `None`)。
+    pub sub_method: Option<String>,
+    /// サブパーティションのキー式 (MySQL のみ)。
+    pub sub_key: Option<String>,
+    /// 親から深さ優先で並べた子パーティション (サブパーティションは親の直後)。
+    pub partitions: Vec<TablePartition>,
+}
+
+/// 子パーティション 1 件。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TablePartition {
+    pub name: String,
+    /// 子のスキーマ (PostgreSQL のみ。親と別スキーマにも置ける)。MySQL は `None`。
+    pub schema: Option<String>,
+    /// 一つ上のパーティション / 表の名前 (サブパーティションのみ。直下の子は `None`)。
+    pub parent: Option<String>,
+    /// 0 = 親表の直下、1 以上 = サブパーティション。
+    pub depth: u32,
+    /// 境界の表示文字列。PostgreSQL は `pg_get_expr(relpartbound)`
+    /// (`FOR VALUES FROM ('a') TO ('b')` / `DEFAULT`)、MySQL は `LESS THAN (...)` / `IN (...)`。HASH / KEY は空。
+    pub bound: String,
+    /// 容量の概算 (PostgreSQL は `pg_total_relation_size`、MySQL は `DATA_LENGTH + INDEX_LENGTH`)。
+    pub size_bytes: Option<i64>,
+    /// 行数の推定 (統計由来。未取得は `None`)。
+    pub row_estimate: Option<i64>,
+    /// PostgreSQL の DEFAULT パーティション。
+    pub is_default: bool,
+    /// 自身がさらにサブパーティションを持つ。
+    pub is_partitioned: bool,
+    /// 自身がパーティション表のときの分割方式とキー (PostgreSQL の `RANGE (region)` など)。
+    pub sub_partition_key: Option<String>,
+}
+
 /// テーブルで発火するトリガー 1 件 (`list_table_triggers`、#1867)。
 /// フライトレコーダーはトリガー起因のサーバ側副作用を記録しないので、書き込み前に
 /// 構造パネルで存在を把握できるようにする。

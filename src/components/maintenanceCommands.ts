@@ -86,6 +86,34 @@ export function tableMaintenanceCommands(
 }
 
 /**
+ * パーティション単位の保守コマンド (#1868)。
+ *
+ * - PostgreSQL: 子パーティションは通常のテーブルなので `VACUUM (ANALYZE)` / `ANALYZE` / `VACUUM` /
+ *   `REINDEX TABLE` を子の完全修飾名に対して流す (サブパーティションの親にも同じ)。
+ * - MySQL: `ALTER TABLE <t> ANALYZE | OPTIMIZE | CHECK | REPAIR PARTITION <p>`。
+ * - SQLite: パーティション非対応なので空。
+ */
+export function partitionMaintenanceCommands(
+  driver: string,
+  database: string | null,
+  table: string,
+  partition: { name: string; schema?: string | null },
+): MaintenanceCommand[] {
+  if (driver === "sqlite") return [];
+  if (driver === "postgres") {
+    return tableMaintenanceCommands(driver, partition.schema ?? database, partition.name);
+  }
+  const t = qualified(driver, database, table);
+  const p = quoteIdentFor(driver, partition.name);
+  return [
+    { kind: "analyze", sql: `ALTER TABLE ${t} ANALYZE PARTITION ${p};` },
+    { kind: "optimize", sql: `ALTER TABLE ${t} OPTIMIZE PARTITION ${p};` },
+    { kind: "check", sql: `ALTER TABLE ${t} CHECK PARTITION ${p};` },
+    { kind: "repair", sql: `ALTER TABLE ${t} REPAIR PARTITION ${p};` },
+  ];
+}
+
+/**
  * 複数テーブルへ一括で流せる保守種別 (#1629)。単一テーブルの保守と同じ種別を同じ順序で返す。
  */
 export function batchMaintenanceKinds(driver: string): MaintenanceKind[] {

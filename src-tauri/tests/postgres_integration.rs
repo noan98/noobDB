@@ -4110,3 +4110,90 @@ async fn postgres_list_table_triggers_when_env_set() {
         .execute("DROP TABLE IF EXISTS public.noobdb_trg_t CASCADE", None)
         .await;
 }
+
+/// #1868: `list_table_partitions` が RANGE パーティション表の子 (境界・DEFAULT・サブパーティション) を返し、
+/// 非分割表は `None`。DETACH / DROP の SQL は既存の `execute` 経路でそのまま流れる。
+#[tokio::test]
+async fn postgres_list_table_partitions_when_env_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS public.noobdb_part_t CASCADE", None)
+        .await;
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS public.noobdb_part_plain", None)
+        .await;
+    for ddl in [
+        "CREATE TABLE public.noobdb_part_t (id INT, ts DATE NOT NULL) PARTITION BY RANGE (ts)",
+        "CREATE TABLE public.noobdb_part_t_a PARTITION OF public.noobdb_part_t FOR VALUES FROM ('2026-01-01') TO ('2026-02-01')",
+        "CREATE TABLE public.noobdb_part_t_b PARTITION OF public.noobdb_part_t FOR VALUES FROM ('2026-02-01') TO ('2026-03-01') PARTITION BY LIST (id)",
+        "CREATE TABLE public.noobdb_part_t_b1 PARTITION OF public.noobdb_part_t_b FOR VALUES IN (1)",
+        "CREATE TABLE public.noobdb_part_t_z PARTITION OF public.noobdb_part_t DEFAULT",
+        "INSERT INTO public.noobdb_part_t VALUES (1, '2026-01-15'), (2, '2026-01-20')",
+        "CREATE TABLE public.noobdb_part_plain (id INT)",
+    ] {
+        conn.execute(ddl, None).await.expect("ddl");
+    }
+    let got = conn
+        .list_table_partitions("public", "noobdb_part_t")
+        .await
+        .expect("partitions")
+        .expect("is partitioned");
+    assert_eq!((got.method.as_str(), got.key.as_str()), ("RANGE", "ts"));
+    let view: Vec<(&str, u32)> = got
+        .partitions
+        .iter()
+        .map(|p| (p.name.as_str(), p.depth))
+        .collect();
+    assert_eq!(
+        view,
+        vec![
+            ("noobdb_part_t_a", 0),
+            ("noobdb_part_t_b", 0),
+            ("noobdb_part_t_b1", 1),
+            ("noobdb_part_t_z", 0),
+        ]
+    );
+    assert!(got.partitions[0].bound.contains("FROM ('2026-01-01')"));
+    assert!(got.partitions[1].is_partitioned);
+    assert_eq!(
+        got.partitions[1].sub_partition_key.as_deref(),
+        Some("LIST (id)")
+    );
+    assert_eq!(got.partitions[2].parent.as_deref(), Some("noobdb_part_t_b"));
+    assert!(got.partitions[3].is_default);
+    assert!(got.partitions[0].size_bytes.unwrap_or(0) > 0);
+    // 非分割表は None。
+    assert!(conn
+        .list_table_partitions("public", "noobdb_part_plain")
+        .await
+        .expect("plain")
+        .is_none());
+    // UI が組み立てる DETACH / DROP は既存の execute 経路で通る。
+    conn.execute(
+        "ALTER TABLE \"public\".\"noobdb_part_t\" DETACH PARTITION \"public\".\"noobdb_part_t_a\";",
+        None,
+    )
+    .await
+    .expect("detach");
+    conn.execute("DROP TABLE \"public\".\"noobdb_part_t_z\";", None)
+        .await
+        .expect("drop child");
+    let after = conn
+        .list_table_partitions("public", "noobdb_part_t")
+        .await
+        .expect("after")
+        .expect("still partitioned");
+    let names: Vec<&str> = after.partitions.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, vec!["noobdb_part_t_b", "noobdb_part_t_b1"]);
+    for tbl in ["noobdb_part_t", "noobdb_part_t_a", "noobdb_part_plain"] {
+        let _ = conn
+            .execute(&format!("DROP TABLE IF EXISTS public.{tbl} CASCADE"), None)
+            .await;
+    }
+    conn.close().await;
+}
