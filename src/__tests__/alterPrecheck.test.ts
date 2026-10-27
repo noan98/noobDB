@@ -161,10 +161,13 @@ describe("buildAlterPrechecks", () => {
     expect(got[0].sql).toBe('SELECT COUNT(*) FROM "public"."t" WHERE "a" IS NULL');
   });
 
-  it("SQLite は対象外", () => {
+  it("SQLite は型の縮小を検査せず、NOT NULL 化の NULL 行だけ数える (#1888)", () => {
     expect(
       buildAlterPrechecks("sqlite", null, "t", [base("a", "varchar(255)")], [edit("a", "varchar(5)")]),
     ).toEqual([]);
+    const got = buildAlterPrechecks("sqlite", null, "t", [base("a", "TEXT")], [edit("a", "INTEGER", true)]);
+    expect(got.map((p) => p.kind)).toEqual(["notNull"]);
+    expect(got[0].sql).toBe('SELECT COUNT(*) FROM "t" WHERE "a" IS NULL');
   });
 
   it("リネームしても元の列名で数える", () => {
@@ -235,13 +238,16 @@ describe("buildConstraintPrechecks (#1757)", () => {
     );
   });
 
-  it("SQLite: FK / CHECK は検査しない (ALTER で追加できない)", () => {
-    expect(
-      buildConstraintPrechecks("sqlite", null, "t", {
-        addedForeignKeys: [fk(["pid"], "p", ["id"])],
-        addedChecks: [{ name: "", expression: "a > 0" }],
-      }),
-    ).toEqual([]);
+  it("SQLite: FK / CHECK も検査する (テーブル再作成で追加するので、違反する既存行があると失敗する, #1888)", () => {
+    const got = buildConstraintPrechecks("sqlite", null, "t", {
+      addedForeignKeys: [fk(["pid"], "p", ["id"])],
+      addedChecks: [{ name: "", expression: "a > 0" }],
+    });
+    expect(got.map((p) => p.kind)).toEqual(["orphanFk", "checkViolation"]);
+    expect(got[0].sql).toBe(
+      'SELECT COUNT(*) FROM "t" AS a_src WHERE a_src."pid" IS NOT NULL ' +
+        'AND NOT EXISTS (SELECT 1 FROM "p" AS a_ref WHERE a_ref."id" = a_src."pid")',
+    );
   });
 
   it("UNIQUE: 3 ドライバとも NULL を除いた重複グループの行を数える (複合キーは行値 IN)", () => {

@@ -1742,8 +1742,27 @@ fn build_fixtures() -> serde_json::Value {
         columns: vec![table_column_info.clone()],
         table_comment: "registered users".into(),
         foreign_keys: vec![foreign_key.clone()],
+        checks: vec![check_info.clone()],
         table_names: vec!["users".into(), "orders".into()],
         warnings: vec!["foreign_keys".into()],
+    };
+    let sqlite_rebuild_plan = t::SqliteRebuildPlan {
+        sql: "PRAGMA foreign_keys=OFF;\nCREATE TABLE \"__noobdb_rebuild_users\" (id INTEGER);\nPRAGMA foreign_keys=ON;".into(),
+        warnings: vec!["users: 次の表から外部キーで参照されています: orders (ON DELETE CASCADE)。".into()],
+        risks: vec![
+            t::SqliteRebuildRisk {
+                kind: t::SqliteRebuildRiskKind::TypeAffinity,
+                target: "qty".into(),
+            },
+            t::SqliteRebuildRisk {
+                kind: t::SqliteRebuildRiskKind::DropColumn,
+                target: "note".into(),
+            },
+            t::SqliteRebuildRisk {
+                kind: t::SqliteRebuildRiskKind::LostSyntax,
+                target: "STRICT".into(),
+            },
+        ],
     };
     let assertion_sql = t::AssertionSql {
         check_sql: "SELECT COUNT(*) FROM `users` WHERE `id` IS NULL".into(),
@@ -2643,6 +2662,7 @@ fn build_fixtures() -> serde_json::Value {
 
         // --- #1243: `#[tauri::command]` の戻り値型の載せ漏れ分 ---
         "alterTableContext": alter_table_context,
+        "sqliteRebuildPlan": sqlite_rebuild_plan,
         "assertionSql": assertion_sql,
         "assertionOutcome": assertion_outcome,
         "acceptedValuesCandidates": accepted_values_candidates,

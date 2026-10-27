@@ -1342,8 +1342,29 @@ export const alterTableContext = z.object({
   columns: z.array(tableColumnInfo),
   table_comment: z.string(),
   foreign_keys: z.array(foreignKey),
+  checks: z.array(checkConstraintInfo),
   table_names: z.array(z.string()),
   warnings: z.array(z.string()),
+});
+
+/** SQLite 構造エディタのテーブル再作成計画 (`plan_sqlite_table_rebuild`、#1888)。 */
+export const sqliteRebuildPlan = z.object({
+  sql: z.string(),
+  warnings: z.array(z.string()),
+  risks: z.array(
+    z.object({
+      kind: z.enum([
+        "drop_column",
+        "type_affinity",
+        "not_null",
+        "add_not_null_column",
+        "add_check",
+        "add_foreign_key",
+        "lost_syntax",
+      ]),
+      target: z.string(),
+    }),
+  ),
 });
 
 /** テーブルを開いた結果 (`open_table` / `open_tables`、#1263)。Rust の

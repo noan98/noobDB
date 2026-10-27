@@ -346,6 +346,7 @@ const WRITE_CAPABLE: Record<string, WriteCapable> = {
   // --- SQL 文字列を経由しない書き込み経路: session.read_only を手書きで拒否 ---
   insert_generated_rows: wc("ensure_allowed_for_session (INSERT 相当で検査)", ESA_SESSION),
   apply_sync_sql: wc("session.read_only を拒否 (SQL 判定を通らない)", RO_IF_SESSION),
+  apply_sqlite_table_rebuild: wc("apply_sync_sql_inner 経由で session.read_only を拒否", RO_IF_SESSION),
   apply_privilege_sql: wc("session.read_only を拒否 (SQL 判定を通らない)", RO_IF_SESSION),
   import_csv: wc(
     "ensure_import_writable が session.read_only を拒否",
@@ -548,6 +549,7 @@ safe(
   "list_schema_objects",
   "list_table_comments",
   "list_tables",
+  "plan_sqlite_table_rebuild",
   "refresh_schema_cache",
   "schema_cache_times",
   "schema_overview",

@@ -2,9 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { useT } from "../i18n";
-import { api, type DriverKind, type ForeignKey } from "../api/tauri";
+import {
+  api,
+  type CheckConstraintInfo,
+  type DriverKind,
+  type ForeignKey,
+  type SqliteRebuildRiskKind,
+} from "../api/tauri";
 import {
   buildAlterPlan,
+  constraintAlterNeedsRebuild,
   supportsColumnPosition,
   supportsComments,
   supportsConstraintAlter,
@@ -16,7 +23,6 @@ import {
   renameCollisions,
   indexRowProblems,
   type NewColumn,
-  type UnsupportedChange,
 } from "./alterTable";
 import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
@@ -32,6 +38,7 @@ import { AlterPrecheckNotice } from "./AlterPrecheckNotice";
 import { AlterCostNotice } from "./AlterCostNotice";
 import { classifyAlterCost, hasMysqlCopyRisk, shouldWarnForRows, withMysqlOnlineClause } from "./alterCost";
 import { useTableRowEstimate } from "../useTableRowEstimate";
+import { useSqliteRebuildPlan } from "../useSqliteRebuildPlan";
 import { DropColumnDependencies } from "./DropColumnDependencies";
 import { useColumnDependencies } from "../useColumnDependencies";
 import { COUNT_PREVIEW_TIMEOUT_SECS, useCountPreviews } from "../useCountPreviews";
@@ -120,6 +127,51 @@ function parsePositionValue(v: string): NewColumn["position"] {
   return { mode: "end" };
 }
 
+/** 再作成のリスク種別 → i18n キー。 */
+function rebuildRiskKey(kind: SqliteRebuildRiskKind) {
+  switch (kind) {
+    case "drop_column":
+      return "alterTableRebuildRiskDropColumn";
+    case "type_affinity":
+      return "alterTableRebuildRiskTypeAffinity";
+    case "not_null":
+      return "alterTableRebuildRiskNotNull";
+    case "add_not_null_column":
+      return "alterTableRebuildRiskAddNotNullColumn";
+    case "add_check":
+      return "alterTableRebuildRiskAddCheck";
+    case "add_foreign_key":
+      return "alterTableRebuildRiskAddForeignKey";
+    case "lost_syntax":
+      return "alterTableRebuildRiskLostSyntax";
+  }
+}
+
+/** バックエンドの再作成計画のエラー (`rebuild_error:<コード>:<引数>`) → 翻訳済みの文言。未知なら原文。 */
+const REBUILD_ERROR_KEYS = {
+  unknown_column: "alterTableRebuildErrUnknownColumn",
+  empty_name: "alterTableRebuildErrEmptyName",
+  duplicate_column: "alterTableRebuildErrDuplicateColumn",
+  rename_clash: "alterTableRebuildErrRenameClash",
+  add_old_name: "alterTableRebuildErrAddOldName",
+  drop_add_same_name: "alterTableRebuildErrDropAddSameName",
+  no_columns: "alterTableRebuildErrNoColumns",
+  unknown_fk: "alterTableRebuildErrUnknownFk",
+  incomplete_fk: "alterTableRebuildErrIncompleteFk",
+  fk_column_missing: "alterTableRebuildErrFkColumnMissing",
+  checks_unreadable: "alterTableRebuildErrChecksUnreadable",
+  unknown_check: "alterTableRebuildErrUnknownCheck",
+  empty_check: "alterTableRebuildErrEmptyCheck",
+  unchanged: "alterTableRebuildErrUnchanged",
+  other_table_trigger: "alterTableRebuildErrOtherTableTrigger",
+} as const;
+
+function rebuildErrorText(translate: ReturnType<typeof useT>, error: string): string {
+  const m = /rebuild_error:([a-z_]+):([^\n]*)/.exec(error);
+  const key = m ? REBUILD_ERROR_KEYS[m[1] as keyof typeof REBUILD_ERROR_KEYS] : undefined;
+  return m && key ? translate(key, { arg: m[2] }) : error;
+}
+
 function emptyIndex(): IndexDef {
   return { name: "", columns: [], unique: false };
 }
@@ -153,6 +205,9 @@ export function AlterTableModal({
   const [addedFks, setAddedFks] = useState<FkRow[]>([]);
   const [addedChecks, setAddedChecks] = useState<CheckRow[]>([]);
   const [droppedChecks, setDroppedChecks] = useState<{ id: string; name: string }[]>([]);
+  // SQLite (#1888): 既存の CHECK 制約 (名前が無いものもあるので定義で指す) と、削除対象の定義。
+  const [existingChecks, setExistingChecks] = useState<CheckConstraintInfo[]>([]);
+  const [droppedCheckDefs, setDroppedCheckDefs] = useState<string[]>([]);
   const [tableNames, setTableNames] = useState<string[]>([]);
   // 付随情報 (コメント / FK / テーブル一覧) の取得に失敗して空で続行した種別 (#1614)。
   const [ctxWarnings, setCtxWarnings] = useState<string[]>([]);
@@ -176,6 +231,8 @@ export function AlterTableModal({
         const cols = ctx.columns;
         setExistingFks(groupExistingFks(ctx.foreign_keys, table));
         setDroppedFks([]);
+        setExistingChecks(ctx.checks);
+        setDroppedCheckDefs([]);
         setTableNames(ctx.table_names);
         setCtxWarnings(ctx.warnings);
         setTableComment({ before: ctx.table_comment, after: ctx.table_comment });
@@ -292,6 +349,12 @@ export function AlterTableModal({
         addedChecks: addedChecks.filter(isCompleteCheck).map(({ id: _id, ...ck }) => ck),
         droppedForeignKeys: droppedFks,
         droppedChecks: droppedChecks.map((c) => c.name),
+        existingForeignKeys: existingFks.map((f) => ({
+          name: f.name,
+          columns: f.columns,
+          refTable: f.refTable,
+        })),
+        droppedCheckDefinitions: droppedCheckDefs,
       }),
     [
       driver,
@@ -306,6 +369,8 @@ export function AlterTableModal({
       addedChecks,
       droppedFks,
       droppedChecks,
+      existingFks,
+      droppedCheckDefs,
     ],
   );
   // 書き換え / 全件走査 / 長いロックを伴う操作 (#1771)。テーブルが小さければ警告しない。
@@ -334,11 +399,26 @@ export function AlterTableModal({
   const [onlineClause, setOnlineClause] = useState(false);
   const showOnlineToggle = showCost && driver === "mysql" && hasMysqlCopyRisk(costRisks);
   const applyOnline = onlineClause && showOnlineToggle;
-  const statements = useMemo(
-    () => (applyOnline ? withMysqlOnlineClause(driver, plan.statements) : plan.statements),
-    [driver, applyOnline, plan.statements],
-  );
-  const unsupported = plan.unsupported;
+  // SQLite の型 / NOT NULL / DEFAULT 変更・FK / CHECK の変更は、バックエンドがスキーマ同期と同じ
+  // テーブル再作成 SQL を組み立てる (#1888)。生成中・失敗中は実行できない。
+  const rebuildState = useSqliteRebuildPlan(sessionId, database, table, plan.rebuild, !loading && !loadError);
+  const rebuildPending = plan.rebuild !== null && rebuildState.status !== "ok";
+  const statements = useMemo(() => {
+    const base = applyOnline ? withMysqlOnlineClause(driver, plan.statements) : plan.statements;
+    if (plan.rebuild === null || rebuildState.status !== "ok") return base;
+    const rebuildStatement: AlterStatement = {
+      sql: rebuildState.plan.sql,
+      kind: "rebuildTable",
+      destructive: true,
+    };
+    return [rebuildStatement, ...base];
+  }, [driver, applyOnline, plan.statements, plan.rebuild, rebuildState]);
+  const hasRebuild = plan.rebuild !== null;
+  // 再作成では再現できず、適用すると失われる構文 (STRICT / COLLATE など)。
+  const lostSyntax =
+    rebuildState.status === "ok"
+      ? rebuildState.plan.risks.filter((r) => r.kind === "lost_syntax").map((r) => r.target)
+      : [];
   // 名前が空 / 列未選択のインデックス行は文にならない。黙って捨てて実行できてしまうと
   // 「作ったつもり」になるので、行ごとにエラーを出して不備が残る間は実行を止める (#1532)。
   const hasIncompleteIndex = effectiveIndexes.some((r) => indexRowProblems(r) !== null);
@@ -354,7 +434,8 @@ export function AlterTableModal({
     () => renameCollisions(driver, { baseline, existing }),
     [driver, baseline, existing],
   );
-  const valid = statements.length > 0 && duplicateNames.length === 0 && collisionNames.length === 0;
+  const valid =
+    statements.length > 0 && duplicateNames.length === 0 && collisionNames.length === 0 && !rebuildPending;
   // 不完全な行があるときは実行せず、理由を出す (空の新規行のエラーは触る/実行を試すまで伏せる)。
   const tryRun = () => {
     if (hasIncompleteIndex) {
@@ -369,21 +450,55 @@ export function AlterTableModal({
   // デバウンスして発行するので、read_only 接続でも動く。
   // FK / UNIQUE / CHECK の追加で既存データが違反しないかも同じ枠で検査する (#1757)。
   // 同じ ALTER で追加・リネームする列は現状のテーブルに無く COUNT が失敗するので、DB に既にある列だけを対象にする。
+  // SQLite は再作成を旧い列名で行ってから改名するので (#1888)、FK / CHECK の追加前の検査も、
+  // 今の DB に存在する旧い列名へ戻して作る。
+  const renamedToOld = useMemo(
+    () =>
+      driver === "sqlite"
+        ? new Map(
+            existing
+              .filter((e) => !e.drop && e.name.trim() !== "" && e.name.trim() !== e.original)
+              .map((e) => [e.name.trim(), e.original] as const),
+          )
+        : new Map<string, string>(),
+    [driver, existing],
+  );
   const prechecks = useMemo(
     () => [
       ...buildAlterPrechecks(driver, database, table, baseline, existing),
       ...buildConstraintPrechecks(driver, database, table, {
-        addedForeignKeys: addedFks.filter(isCompleteForeignKey),
-        addedChecks: addedChecks.filter(isCompleteCheck),
+        addedForeignKeys: addedFks
+          .filter(isCompleteForeignKey)
+          .map((fk) => ({ ...fk, columns: fk.columns.map((c) => renamedToOld.get(c.trim()) ?? c) })),
+        addedChecks: addedChecks.filter(isCompleteCheck).map((ck) => ({
+          ...ck,
+          expression:
+            renamedToOld.size === 0
+              ? ck.expression
+              : ck.expression.replace(/[\p{L}\p{N}_$]+/gu, (w) => renamedToOld.get(w) ?? w),
+        })),
         indexes: effectiveIndexes.filter((r) => indexRowProblems(r) === null),
         knownColumns: new Set(baseline.map((b) => b.name)),
         pendingColumns: new Set([
           ...added.map((c) => c.name.trim()).filter((n) => n),
-          ...existing.filter((e) => !e.drop && e.name.trim() !== e.original).map((e) => e.name.trim()),
+          ...existing
+            .filter((e) => !e.drop && e.name.trim() !== e.original && !renamedToOld.has(e.name.trim()))
+            .map((e) => e.name.trim()),
         ]),
       }),
     ],
-    [driver, database, table, baseline, existing, added, addedFks, addedChecks, effectiveIndexes],
+    [
+      driver,
+      database,
+      table,
+      baseline,
+      existing,
+      added,
+      addedFks,
+      addedChecks,
+      effectiveIndexes,
+      renamedToOld,
+    ],
   );
   const runCount = useCallback(
     (sql: string) =>
@@ -409,8 +524,9 @@ export function AlterTableModal({
   // 破壊的な文 (DROP COLUMN / DROP FOREIGN KEY / DROP CHECK) を含むか (#1529)。
   // 含むときは確認ダイアログと同じ破壊的パターン (実行は dangerOutline で左、
   // キャンセルを primary で右) に切り替え、Cmd/Ctrl+Enter での実行も止める。
-  const destructiveStatements = statements.filter((s) => s.destructive);
-  const hasDestructive = destructiveStatements.length > 0;
+  // 再作成の文は専用の注意枠 (リスク一覧つき) で見せるので、一覧の対象から外す。
+  const destructiveStatements = statements.filter((s) => s.destructive && s.kind !== "rebuildTable");
+  const hasDestructive = destructiveStatements.length > 0 || hasRebuild;
 
   return (
     <Modal
@@ -470,7 +586,9 @@ export function AlterTableModal({
                           ? t("alterTableCtxItemComments")
                           : w === "foreign_keys"
                             ? t("alterTableCtxItemForeignKeys")
-                            : t("alterTableCtxItemTables"),
+                            : w === "checks"
+                              ? t("alterTableCtxItemChecks")
+                              : t("alterTableCtxItemTables"),
                       )
                       .join(" / "),
                   })}
@@ -741,7 +859,7 @@ export function AlterTableModal({
                           opacity={dropped ? 0.5 : 1}
                         >
                           <chakra.span fontSize="sm" fontFamily="mono" color="app.text" flex="1">
-                            {fk.name ? `${fk.name}: ` : ""}
+                            {fk.name && !constraintAlterNeedsRebuild(driver) ? `${fk.name}: ` : ""}
                             {t("alterTableFkTarget", {
                               columns: fk.columns.join(", "),
                               table: fk.refTable,
@@ -781,76 +899,138 @@ export function AlterTableModal({
                   tableNames={tableNames}
                   nextId={nextRowId}
                   disabled={!constraintsSupported}
-                  disabledNote={t("alterTableConstraintSqliteNote")}
                 />
-                <chakra.div display="flex" flexDirection="column" gap="1.5">
-                  <chakra.span fontSize="xs" color="app.textMuted">
-                    {t("alterTableDropCheckSection")}
-                  </chakra.span>
-                  {droppedChecks.map((c, i) => (
-                    <Flex key={c.id} gap="1.5" align="center">
-                      <Input
-                        value={c.name}
-                        onChange={(e) =>
-                          setDroppedChecks((rows) =>
-                            rows.map((r, idx) => (idx === i ? { ...r, name: e.target.value } : r)),
-                          )
-                        }
-                        placeholder={t("alterTableDropCheckPlaceholder")}
-                        aria-label={t("alterTableDropCheckPlaceholder")}
-                        flex="1"
-                      />
-                      <chakra.button
+                {constraintAlterNeedsRebuild(driver) && (
+                  <chakra.span textStyle="caption">{t("alterTableConstraintSqliteNote")}</chakra.span>
+                )}
+                {constraintAlterNeedsRebuild(driver) && existingChecks.length > 0 && (
+                  <chakra.div display="flex" flexDirection="column" gap="1">
+                    <chakra.span textStyle="caption">{t("alterTableExistingChecks")}</chakra.span>
+                    {existingChecks.map((ck) => {
+                      const dropped = droppedCheckDefs.includes(ck.definition);
+                      return (
+                        <Flex
+                          key={`${ck.name}:${ck.definition}`}
+                          gap="1.5"
+                          align="center"
+                          opacity={dropped ? 0.5 : 1}
+                        >
+                          <chakra.span
+                            fontSize="sm"
+                            fontFamily="mono"
+                            color="app.text"
+                            flex="1"
+                            wordBreak="break-all"
+                          >
+                            {ck.name ? `${ck.name}: ` : ""}
+                            {ck.definition}
+                          </chakra.span>
+                          <Switch
+                            checked={dropped}
+                            onChange={() =>
+                              setDroppedCheckDefs((cur) =>
+                                cur.includes(ck.definition)
+                                  ? cur.filter((d) => d !== ck.definition)
+                                  : [...cur, ck.definition],
+                              )
+                            }
+                            aria-label={t("alterTableDropCheck", { name: ck.name || ck.definition })}
+                          />
+                        </Flex>
+                      );
+                    })}
+                  </chakra.div>
+                )}
+                {!constraintAlterNeedsRebuild(driver) && (
+                  <chakra.div display="flex" flexDirection="column" gap="1.5">
+                    <chakra.span fontSize="xs" color="app.textMuted">
+                      {t("alterTableDropCheckSection")}
+                    </chakra.span>
+                    {droppedChecks.map((c, i) => (
+                      <Flex key={c.id} gap="1.5" align="center">
+                        <Input
+                          value={c.name}
+                          onChange={(e) =>
+                            setDroppedChecks((rows) =>
+                              rows.map((r, idx) => (idx === i ? { ...r, name: e.target.value } : r)),
+                            )
+                          }
+                          placeholder={t("alterTableDropCheckPlaceholder")}
+                          aria-label={t("alterTableDropCheckPlaceholder")}
+                          flex="1"
+                        />
+                        <chakra.button
+                          type="button"
+                          onClick={() => setDroppedChecks((rows) => rows.filter((_, idx) => idx !== i))}
+                          aria-label={t("alterTableDropCheckRemove")}
+                          color="app.textMuted"
+                          _hover={{ color: "app.textError" }}
+                          px="1"
+                        >
+                          <Icon name="close" />
+                        </chakra.button>
+                      </Flex>
+                    ))}
+                    <Flex>
+                      <Button
                         type="button"
-                        onClick={() => setDroppedChecks((rows) => rows.filter((_, idx) => idx !== i))}
-                        aria-label={t("alterTableDropCheckRemove")}
-                        color="app.textMuted"
-                        _hover={{ color: "app.textError" }}
-                        px="1"
+                        variant="secondary"
+                        size="sm"
+                        disabled={!constraintsSupported}
+                        onClick={() => setDroppedChecks((rows) => [...rows, { id: nextRowId(), name: "" }])}
                       >
-                        <Icon name="close" />
-                      </chakra.button>
+                        <Icon name="plus" /> {t("alterTableDropCheckAdd")}
+                      </Button>
                     </Flex>
-                  ))}
-                  <Flex>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      disabled={!constraintsSupported}
-                      onClick={() => setDroppedChecks((rows) => [...rows, { id: nextRowId(), name: "" }])}
-                    >
-                      <Icon name="plus" /> {t("alterTableDropCheckAdd")}
-                    </Button>
-                  </Flex>
-                </chakra.div>
+                  </chakra.div>
+                )}
               </chakra.div>
 
-              {unsupported.length > 0 && (
-                <chakra.div
-                  display="flex"
-                  flexDirection="column"
-                  gap="1"
-                  p="2"
-                  borderWidth="1px"
-                  borderColor="app.border"
-                  borderRadius="lg"
+              {rebuildState.status === "ok" && lostSyntax.length > 0 && (
+                <Callout
+                  tone="danger"
+                  title={t("alterTableRebuildLostTitle")}
+                  data-testid="alter-rebuild-lost"
                 >
-                  <Flex align="center" gap="1.5" color="app.textSecondary" fontSize="sm" fontWeight="600">
-                    <Icon name="warning" />
-                    {t("alterTableUnsupportedTitle")}
-                  </Flex>
-                  {unsupported.map((u: UnsupportedChange, i) => (
-                    <chakra.span key={`${u.reason}-${u.column}-${i}`} fontSize="xs" color="app.textMuted">
-                      {u.reason === "sqliteConstraintAlter"
-                        ? t("alterTableUnsupportedConstraintSqlite", { column: u.column })
-                        : t("alterTableUnsupportedSqlite", { column: u.column })}
-                    </chakra.span>
-                  ))}
-                </chakra.div>
+                  <chakra.div display="flex" flexDirection="column" gap="1">
+                    <span>{t("alterTableRebuildLostBody", { names: lostSyntax.join(", ") })}</span>
+                  </chakra.div>
+                </Callout>
+              )}
+              {hasRebuild && (
+                <Callout
+                  tone="warning"
+                  role="status"
+                  title={t("alterTableRebuildTitle")}
+                  data-testid="alter-rebuild-notice"
+                >
+                  <chakra.div display="flex" flexDirection="column" gap="1">
+                    <span>{t("alterTableRebuildBody")}</span>
+                    {rebuildState.status === "loading" && <span>{t("alterTableRebuildPlanning")}</span>}
+                    {rebuildState.status === "ok" &&
+                      rebuildState.plan.risks
+                        .filter((r) => r.kind !== "lost_syntax")
+                        .map((r) => (
+                          <span key={`${r.kind}:${r.target}`}>
+                            {t(rebuildRiskKey(r.kind), { target: r.target })}
+                          </span>
+                        ))}
+                    {rebuildState.status === "ok" &&
+                      rebuildState.plan.warnings.map((w) => (
+                        <chakra.span key={w} fontSize="xs">
+                          {w}
+                        </chakra.span>
+                      ))}
+                  </chakra.div>
+                </Callout>
+              )}
+              {rebuildState.status === "error" && (
+                <ErrorNote>
+                  {t("alterTableRebuildPlanError", { error: rebuildErrorText(t, rebuildState.error) })}
+                </ErrorNote>
               )}
 
-              {hasDestructive && (
+              {destructiveStatements.length > 0 && (
                 <Callout
                   tone="warning"
                   role="status"
@@ -917,7 +1097,7 @@ export function AlterTableModal({
             <Button
               type="button"
               variant="secondary"
-              disabled={!valid}
+              disabled={!valid || hasRebuild}
               onClick={() => onSendToEditor(sqlPreview)}
             >
               {t("createTableToEditor")}
@@ -935,7 +1115,7 @@ export function AlterTableModal({
             <Button
               type="button"
               variant="secondary"
-              disabled={!valid}
+              disabled={!valid || hasRebuild}
               onClick={() => onSendToEditor(sqlPreview)}
             >
               {t("createTableToEditor")}

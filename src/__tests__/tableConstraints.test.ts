@@ -97,20 +97,51 @@ describe("ALTER TABLE: drop foreign key / CHECK (#1191)", () => {
   });
 });
 
-describe("SQLite: ALTER constraints are unsupported (#1191)", () => {
-  it("emits no statements and reports unsupported", () => {
+describe("SQLite: constraint changes go through the table rebuild (#1888)", () => {
+  it("emits no ALTER and folds adds / drops into the rebuild input", () => {
     const p = buildAlterPlan(
       "sqlite",
       form({
+        database: null,
+        baseline: [{ name: "user_id", type: "INTEGER", notNull: false, defaultValue: "", extra: "" }],
+        existing: [
+          {
+            original: "user_id",
+            drop: false,
+            name: "user_id",
+            type: "INTEGER",
+            notNull: false,
+            defaultValue: "",
+          },
+        ],
         addedForeignKeys: [fk],
-        addedChecks: [{ name: "", expression: "qty > 0" }],
-        droppedForeignKeys: ["fk1"],
-        droppedChecks: ["ck1"],
+        addedChecks: [{ name: "", expression: " qty > 0 " }],
+        droppedForeignKeys: ["orders:0"],
+        existingForeignKeys: [{ name: "orders:0", columns: ["user_id"], refTable: "accounts" }],
+        droppedCheckDefinitions: ["CHECK (old > 0)"],
       }),
     );
     expect(p.statements).toEqual([]);
-    expect(p.unsupported).toHaveLength(4);
-    expect(p.unsupported.every((u) => u.reason === "sqliteConstraintAlter")).toBe(true);
+    expect(p.rebuild).toMatchObject({
+      added_foreign_keys: [
+        {
+          name: "fk_orders_user",
+          columns: ["user_id"],
+          ref_table: "users",
+          ref_columns: ["id"],
+          on_delete: "CASCADE",
+          on_update: "SET NULL",
+        },
+      ],
+      dropped_foreign_keys: [{ columns: ["user_id"], ref_table: "accounts" }],
+      added_checks: [{ name: null, expression: "qty > 0" }],
+      dropped_checks: ["CHECK (old > 0)"],
+    });
+  });
+
+  it("does not rebuild when there are no constraint or facet changes", () => {
+    const p = buildAlterPlan("sqlite", form({ database: null }));
+    expect(p.rebuild).toBeNull();
   });
 });
 

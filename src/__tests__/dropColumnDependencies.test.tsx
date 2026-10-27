@@ -22,6 +22,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
     columns: [col("id", "PRI"), col("price")],
     table_comment: "",
     foreign_keys: [],
+    checks: [],
     table_names: ["t"],
     warnings: [],
   };

@@ -88,6 +88,11 @@ pub mod __test_api {
         create_sql as savepoint_create_sql, release_sql as savepoint_release_sql,
         rollback_to_sql as savepoint_rollback_to_sql,
     };
+    pub use crate::db::sqlite_rebuild::{
+        plan_table_rebuild, RebuildCheck, RebuildColumnEdit, RebuildForeignKey,
+        RebuildForeignKeyRef, RebuildNewColumn, SqliteRebuildEdit, SqliteRebuildPlan,
+        SqliteRebuildRisk, SqliteRebuildRiskKind,
+    };
     pub use crate::db::stream_batch::{StreamBatcher, StreamStats, StreamStatsSnapshot};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
@@ -1260,6 +1265,29 @@ pub mod __test_api {
         .await
     }
 
+    /// `apply_sqlite_table_rebuild` の中核を Tauri ランタイム無しで駆動する (#1888)。
+    pub async fn apply_sqlite_table_rebuild_via_command(
+        state: &AppState,
+        session_id: &str,
+        database: Option<&str>,
+        statements: Vec<String>,
+    ) -> crate::error::Result<u64> {
+        crate::commands::sync::apply_sqlite_table_rebuild_inner(
+            state,
+            session_id.to_string(),
+            database.map(str::to_string),
+            statements,
+        )
+        .await
+    }
+
+    /// 履歴ストアを SQL 文字列で検索する (#1888 の履歴記録テスト用)。
+    pub async fn search_history_via_store(search: &str) -> Vec<HistoryEntry> {
+        crate::history::store::list(None, 50, Some(search), None, None, None)
+            .await
+            .unwrap_or_default()
+    }
+
     /// Drives the `apply_privilege_sql` IPC command's core path (session
     /// lookup + read-only guard + empty-statement guard + transactional
     /// apply) without a Tauri runtime, mirroring
@@ -1719,6 +1747,7 @@ pub fn run() {
             commands::search::find_where_used,
             commands::search::data_search_stream,
             commands::schema::alter_table_context,
+            commands::schema::plan_sqlite_table_rebuild,
             commands::schema::incoming_foreign_keys,
             commands::schema::column_dependencies,
             commands::server::server_info,
@@ -1752,6 +1781,7 @@ pub fn run() {
             commands::sync::generate_data_sync_sql,
             commands::sync::release_data_diffs,
             commands::sync::apply_sync_sql,
+            commands::sync::apply_sqlite_table_rebuild,
             commands::sandbox::create_sandbox,
             commands::sandbox::list_sandboxes,
             commands::sandbox::discard_sandbox,

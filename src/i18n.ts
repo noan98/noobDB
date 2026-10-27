@@ -3266,9 +3266,6 @@ const en = {
     "An index row is incomplete (name or columns missing), so the changes cannot be run. Complete or remove the row.",
   alterTableAddIndex: "Add index",
   alterTableRemoveIndex: "Remove index",
-  alterTableUnsupportedTitle: "Not supported on this driver",
-  alterTableUnsupportedSqlite:
-    "{column}: SQLite cannot change a column's type, NOT NULL or DEFAULT in place. Recreate the table to migrate the data.",
   constraintFkSection: "Foreign keys",
   constraintNamePlaceholder: "Constraint name (optional)",
   constraintFkRefTable: "Referenced table",
@@ -3282,7 +3279,7 @@ const en = {
   constraintCheckAdd: "Add CHECK constraint",
   alterTableConstraintsSection: "Constraints",
   alterTableConstraintSqliteNote:
-    "SQLite cannot add or drop foreign keys / CHECK constraints on an existing table (the table would have to be recreated), so these inputs are disabled. They can be set when creating a new table.",
+    "SQLite cannot add or drop foreign keys / CHECK constraints with ALTER TABLE, so the table is recreated (new table -> copy rows -> drop the old one) in a single transaction.",
   alterTableExistingFks: "Existing foreign keys",
   alterTableFkTarget: "{columns} -> {table} ({refColumns})",
   alterTableFkUnnamed: "(unnamed constraint; cannot be dropped here)",
@@ -3291,8 +3288,6 @@ const en = {
   alterTableDropCheckPlaceholder: "CHECK constraint name to drop",
   alterTableDropCheckAdd: "Add CHECK to drop",
   alterTableDropCheckRemove: "Remove entry",
-  alterTableUnsupportedConstraintSqlite:
-    "{column}: SQLite cannot add or drop this constraint on an existing table.",
   // 書き換え / 長いロックを伴う ALTER の警告 (#1771)。
   alterCostTitle: "{count} change(s) may rewrite the table or hold long locks",
   alterCostBodyMysql:
@@ -3349,6 +3344,52 @@ const en = {
     "These statements permanently remove columns or constraints, and the data in them cannot be restored. Check the SQL below before applying.",
   alterTableConfirmTitle: "Apply these changes to {table}?",
   alterTableConfirmBody: "The following statements will run:",
+  alterTableCtxItemChecks: "CHECK constraints",
+  alterTableExistingChecks: "Existing CHECK constraints",
+  alterTableDropCheck: "Drop CHECK constraint {name}",
+  alterTableRebuildTitle: "This change recreates the table",
+  alterTableRebuildBody:
+    "SQLite cannot change a column's type, NOT NULL or DEFAULT, or add / drop constraints, with ALTER TABLE. The table is rebuilt with the new definition: create a new table, copy the rows, DROP the old table, rename, then recreate indexes / triggers / views. It runs in one transaction, so a failure leaves the original table untouched.",
+  alterTableRebuildPlanning: "Generating the rebuild SQL...",
+  alterTableRebuildPlanError: "Could not generate the rebuild SQL: {error}",
+  alterTableRebuildRiskDropColumn: "{target}: the column is dropped and its data is lost.",
+  alterTableRebuildRiskTypeAffinity:
+    "{target}: the type affinity changes, so stored values may be converted (for example TEXT '007' becomes INTEGER 7).",
+  alterTableRebuildRiskNotNull:
+    "{target}: becomes NOT NULL. If any row has NULL, copying fails and everything is rolled back.",
+  alterTableRebuildRiskAddNotNullColumn:
+    "{target}: a NOT NULL column without a DEFAULT cannot be filled for existing rows, so the copy fails if the table has rows.",
+  alterTableRebuildRiskAddCheck:
+    "{target}: a CHECK constraint is added. If an existing row violates it, copying fails and everything is rolled back.",
+  alterTableRebuildRiskAddForeignKey:
+    "{target}: a foreign key is added. If an existing row violates it, the change is rolled back before commit.",
+  alterTableRebuildRiskLostSyntax:
+    "{target}: this syntax in the original CREATE TABLE cannot be reproduced and is lost.",
+  alterTableRebuildLostTitle: "Some table definition will be lost",
+  alterTableRebuildLostBody:
+    "The original CREATE TABLE uses syntax the rebuild cannot reproduce: {names}. It will be missing from the rebuilt table, and this editor cannot send the SQL elsewhere to fix it by hand. Cancel unless you accept the loss.",
+  alterTableRebuildErrUnknownColumn: 'Column "{arg}" no longer exists. Reopen the dialog.',
+  alterTableRebuildErrEmptyName: "A column name is empty.",
+  alterTableRebuildErrDuplicateColumn: 'Column name "{arg}" is duplicated.',
+  alterTableRebuildErrRenameClash:
+    "Cannot rename ({arg}): another remaining column has that name. Apply swaps and chains in separate steps.",
+  alterTableRebuildErrAddOldName:
+    'Cannot add a column named "{arg}": a column with that name is being renamed in the same change. Apply them separately.',
+  alterTableRebuildErrDropAddSameName:
+    'Cannot drop a column and add one named "{arg}" in the same change. Apply them separately.',
+  alterTableRebuildErrNoColumns: "The table would have no columns.",
+  alterTableRebuildErrUnknownFk: "Foreign key {arg} no longer exists. Reopen the dialog.",
+  alterTableRebuildErrIncompleteFk: "A foreign key row is incomplete.",
+  alterTableRebuildErrFkColumnMissing: 'Foreign key column "{arg}" is not a column of the table.',
+  alterTableRebuildErrChecksUnreadable:
+    "The CHECK constraints of this table could not be read, so they cannot be edited.",
+  alterTableRebuildErrUnknownCheck: "CHECK constraint {arg} no longer exists. Reopen the dialog.",
+  alterTableRebuildErrEmptyCheck: "A CHECK expression is empty.",
+  alterTableRebuildErrUnchanged: "There is no change that needs a table rebuild.",
+  alterTableRebuildErrOtherTableTrigger:
+    'Trigger "{arg}" on another table refers to this table, so SQLite cannot rename the rebuilt table. Drop that trigger first and recreate it afterwards.',
+  alterTableConfirmBodyRebuild:
+    "The table is recreated in one transaction (copy the rows, DROP the old table, rename). The following script will run:",
   alterTableConfirmOk: "Apply",
   alterTableSuccess: "Updated the columns of {table}.",
   // インデックス作成の軽量モーダル (#850)。
@@ -10234,9 +10275,6 @@ const ja: Dict = {
     "未完成のインデックス行 (名前または列が未入力) があるため実行できません。入力を完成させるか、行を削除してください。",
   alterTableAddIndex: "インデックスを追加",
   alterTableRemoveIndex: "インデックスを削除",
-  alterTableUnsupportedTitle: "このドライバでは非対応",
-  alterTableUnsupportedSqlite:
-    "{column}: SQLite は列の型・NOT NULL・DEFAULT をその場で変更できません。データを移送してテーブルを再作成してください。",
   constraintFkSection: "外部キー",
   constraintNamePlaceholder: "制約名 (省略可)",
   constraintFkRefTable: "参照先テーブル",
@@ -10250,7 +10288,7 @@ const ja: Dict = {
   constraintCheckAdd: "CHECK 制約を追加",
   alterTableConstraintsSection: "制約",
   alterTableConstraintSqliteNote:
-    "SQLite は既存テーブルへの外部キー / CHECK 制約の追加・削除ができません (テーブルの再作成が必要なため)。この入力は無効化しています。新規テーブル作成時には指定できます。",
+    "SQLite は ALTER TABLE で外部キー / CHECK 制約を追加・削除できないため、テーブルを作り直して反映します (新表を作成 → 行をコピー → 旧表を削除、を 1 トランザクションで実行)。",
   alterTableExistingFks: "既存の外部キー",
   alterTableFkTarget: "{columns} -> {table} ({refColumns})",
   alterTableFkUnnamed: "(無名の制約のため、ここでは削除できません)",
@@ -10259,8 +10297,6 @@ const ja: Dict = {
   alterTableDropCheckPlaceholder: "削除する CHECK 制約の名前",
   alterTableDropCheckAdd: "削除する CHECK を追加",
   alterTableDropCheckRemove: "この項目を取り消す",
-  alterTableUnsupportedConstraintSqlite:
-    "{column}: SQLite は既存テーブルへのこの制約の追加・削除ができません。",
   // 書き換え / 長いロックを伴う ALTER の警告 (#1771)。
   alterCostTitle: "{count} 件の変更でテーブルの書き換え・長いロックが発生する可能性があります",
   alterCostBodyMysql:
@@ -10314,6 +10350,50 @@ const ja: Dict = {
     "列や制約を削除する文が含まれています。削除した列のデータは元に戻せません。適用前に下の SQL を確認してください。",
   alterTableConfirmTitle: "{table} にこの変更を適用しますか?",
   alterTableConfirmBody: "以下の文が実行されます:",
+  alterTableCtxItemChecks: "CHECK 制約",
+  alterTableExistingChecks: "既存の CHECK 制約",
+  alterTableDropCheck: "CHECK 制約 {name} を削除",
+  alterTableRebuildTitle: "この変更はテーブルを再作成して反映します",
+  alterTableRebuildBody:
+    "SQLite は ALTER TABLE で列の型・NOT NULL・DEFAULT の変更や制約の追加・削除ができないため、新しい定義でテーブルを作り直します (新表を作成 → 行をコピー → 旧表を DROP → 名前を戻す → インデックス / トリガー / ビューを再作成)。1 トランザクションで実行し、失敗したときは元のテーブルのまま戻ります。",
+  alterTableRebuildPlanning: "再作成の SQL を生成しています…",
+  alterTableRebuildPlanError: "再作成の SQL を生成できません: {error}",
+  alterTableRebuildRiskDropColumn: "{target}: 列を削除します。この列のデータは失われます。",
+  alterTableRebuildRiskTypeAffinity:
+    "{target}: 型の親和性が変わるため、保存済みの値が変換されることがあります (例: TEXT の '007' が INTEGER の 7 になる)。",
+  alterTableRebuildRiskNotNull:
+    "{target}: NOT NULL にします。NULL の行があるとコピーに失敗し、全体がロールバックされます。",
+  alterTableRebuildRiskAddNotNullColumn:
+    "{target}: DEFAULT の無い NOT NULL 列は既存の行を埋められないため、行があるテーブルではコピーに失敗します。",
+  alterTableRebuildRiskAddCheck:
+    "{target}: CHECK 制約を追加します。違反する既存の行があるとコピーに失敗し、全体がロールバックされます。",
+  alterTableRebuildRiskAddForeignKey:
+    "{target}: 外部キーを追加します。違反する既存の行があるとコミット前に検出され、ロールバックされます。",
+  alterTableRebuildRiskLostSyntax: "{target}: 元の CREATE TABLE にあるこの構文は再現できず、失われます。",
+  alterTableRebuildLostTitle: "テーブル定義の一部が失われます",
+  alterTableRebuildLostBody:
+    "元の CREATE TABLE に、再作成では再現できない構文があります: {names}。再作成後のテーブルからは消えます。この画面からは SQL を別の場所へ送って手で補うこともできません。失われてよい場合以外は中止してください。",
+  alterTableRebuildErrUnknownColumn: "列「{arg}」が存在しません。ダイアログを開き直してください。",
+  alterTableRebuildErrEmptyName: "列名が空です。",
+  alterTableRebuildErrDuplicateColumn: "列名「{arg}」が重複しています。",
+  alterTableRebuildErrRenameClash:
+    "リネーム ({arg}) の先に、残る別の列が同名で存在します。入れ替え・連鎖のリネームは分けて適用してください。",
+  alterTableRebuildErrAddOldName:
+    "「{arg}」という列は追加できません。同じ変更でその名前の列をリネームしています。分けて適用してください。",
+  alterTableRebuildErrDropAddSameName:
+    "列を削除して同名の列「{arg}」を追加することはできません。分けて適用してください。",
+  alterTableRebuildErrNoColumns: "再作成後のテーブルに列がありません。",
+  alterTableRebuildErrUnknownFk: "外部キー {arg} が存在しません。ダイアログを開き直してください。",
+  alterTableRebuildErrIncompleteFk: "外部キーの行が未完成です。",
+  alterTableRebuildErrFkColumnMissing: "外部キーの列「{arg}」はこのテーブルの列ではありません。",
+  alterTableRebuildErrChecksUnreadable: "このテーブルの CHECK 制約を取得できなかったため、編集できません。",
+  alterTableRebuildErrUnknownCheck: "CHECK 制約 {arg} が存在しません。ダイアログを開き直してください。",
+  alterTableRebuildErrEmptyCheck: "CHECK の式が空です。",
+  alterTableRebuildErrUnchanged: "テーブルの再作成が必要な変更がありません。",
+  alterTableRebuildErrOtherTableTrigger:
+    "他のテーブルのトリガー「{arg}」がこのテーブルを参照しているため、SQLite は再作成後のテーブルの名前を戻せません。先にそのトリガーを削除し、適用後に作り直してください。",
+  alterTableConfirmBodyRebuild:
+    "テーブルを 1 トランザクションで作り直します (行をコピー → 旧表を DROP → 名前を戻す)。以下のスクリプトが実行されます:",
   alterTableConfirmOk: "適用",
   alterTableSuccess: "{table} の列を更新しました。",
   // インデックス作成の軽量モーダル (#850)。

@@ -51,6 +51,12 @@
     "task": "nl2sql"
   },
   "alterTableContext": {
+    "checks": [
+      {
+        "definition": "CHECK (price > 0)",
+        "name": "price_pos"
+      }
+    ],
     "columns": [
       {
         "comment": "primary key",
@@ -5803,6 +5809,26 @@
     "ok": false,
     "page_count": 100,
     "truncated": false
+  },
+  "sqliteRebuildPlan": {
+    "risks": [
+      {
+        "kind": "type_affinity",
+        "target": "qty"
+      },
+      {
+        "kind": "drop_column",
+        "target": "note"
+      },
+      {
+        "kind": "lost_syntax",
+        "target": "STRICT"
+      }
+    ],
+    "sql": "PRAGMA foreign_keys=OFF;\nCREATE TABLE \"__noobdb_rebuild_users\" (id INTEGER);\nPRAGMA foreign_keys=ON;",
+    "warnings": [
+      "users: 次の表から外部キーで参照されています: orders (ON DELETE CASCADE)。"
+    ]
   },
   "statementDeltaRow": {
     "calls": 1200,
