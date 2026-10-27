@@ -4,6 +4,8 @@ import {
   addedRoles,
   changedPrivilegeCells,
   isStaggerAnimated,
+  PRIVILEGE_COLLAPSE_EXIT_MAX_ROWS,
+  privilegeExitMode,
   USERS_PANEL_STAGGER_MAX_STEPS,
 } from "../components/usersPanelMotion";
 
@@ -46,5 +48,14 @@ describe("isStaggerAnimated (#1890)", () => {
     expect(isStaggerAnimated(FIRST_BATCH_REVEAL_MAX_STEPS - 1)).toBe(true);
     expect(isStaggerAnimated(FIRST_BATCH_REVEAL_MAX_STEPS)).toBe(false);
     expect(isStaggerAnimated(-1)).toBe(false);
+  });
+});
+
+describe("privilegeExitMode (#1890)", () => {
+  it("無効なら即時、100 行以内は縮む退場、超えたら opacity のみ", () => {
+    expect(privilegeExitMode(false, 3)).toBe("none");
+    expect(privilegeExitMode(true, 1)).toBe("collapse");
+    expect(privilegeExitMode(true, PRIVILEGE_COLLAPSE_EXIT_MAX_ROWS)).toBe("collapse");
+    expect(privilegeExitMode(true, PRIVILEGE_COLLAPSE_EXIT_MAX_ROWS + 1)).toBe("fade");
   });
 });

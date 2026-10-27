@@ -168,7 +168,8 @@ describe("UsersPanel role grant race (#1890)", () => {
     await waitFor(() => expect(api.applyPrivilegeSql).toHaveBeenCalled());
     // 適用待ちの間に bob へ切り替える。再取得したユーザ一覧では alice が reader を持つ。
     vi.mocked(api.listDbUsers).mockResolvedValue([{ ...user("alice"), member_of: ["reader"] }, user("bob")]);
-    fireEvent.click(screen.getByRole("button", { name: /bob/ }));
+    // 確認ダイアログが閉じ切るまで背面が aria-hidden のことがあるので待つ。
+    fireEvent.click(await screen.findByRole("button", { name: /bob/ }));
     await act(async () => {
       finishApply(1);
     });

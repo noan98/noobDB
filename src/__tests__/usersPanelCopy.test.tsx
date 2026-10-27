@@ -391,4 +391,28 @@ describe("UsersPanel: 全権限を外した行の退場 (#1890)", () => {
     await waitFor(() => expect(screen.queryByText("t2")).not.toBeInTheDocument());
     expect(screen.getByText("t1")).toBeInTheDocument();
   });
+
+  it("reduced-motion では退場を待たず即時に消え、案内行もすぐ出る", async () => {
+    document.documentElement.setAttribute("data-motion", "reduced");
+    try {
+      vi.mocked(api.listDbUsers).mockResolvedValue([user("app")]);
+      vi.mocked(api.listUserPrivileges)
+        .mockResolvedValueOnce({ global: null, tables: [priv("t2", true)] })
+        .mockResolvedValue({ global: null, tables: [] });
+      vi.mocked(api.generatePrivilegeDiffSql).mockResolvedValue(["REVOKE ALL ON public.t2 FROM app"]);
+      vi.mocked(api.applyPrivilegeSql).mockResolvedValue(1);
+      renderWithProviders(
+        <UsersPanel sessionId="s1" driver="postgres" database="public" readOnly={false} onClose={() => {}} />,
+      );
+      fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
+      await screen.findByText("t2");
+      fireEvent.click(screen.getByLabelText("t2 select"));
+      fireEvent.click(screen.getByRole("button", { name: t("usersApplyChanges") }));
+      fireEvent.click(await screen.findByRole("button", { name: t("usersApplyConfirmOk") }));
+      expect(await screen.findByText(t("usersPrivilegesEmpty"))).toBeInTheDocument();
+      expect(screen.queryByText("t2")).not.toBeInTheDocument();
+    } finally {
+      document.documentElement.removeAttribute("data-motion");
+    }
+  });
 });

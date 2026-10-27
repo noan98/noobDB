@@ -38,6 +38,8 @@ import {
   addedRoles,
   changedPrivilegeCells,
   isStaggerAnimated,
+  privilegeExitMode,
+  type PrivilegeExitMode,
   shouldPlayPrivilegeFlash,
   type ChangedPrivilegeCells,
 } from "./usersPanelMotion";
@@ -163,14 +165,18 @@ const tdCss: SystemStyleObject = {
 const MotionTbody = chakra(motion.tbody, {}, { forwardProps: ["variants", "initial", "animate"] });
 const MotionTr = chakra(motion.tr, {}, { forwardProps: ["variants", "exit"] });
 const MotionCell = chakra(motion.div, {}, { forwardProps: ["variants"] });
+const PlainCell = chakra.div;
 
 /**
  * 全権限を外して再取得で消える行の退場 (#1890)。`tr` の高さは補間できないので、行は opacity、
  * 各セルの中身のラッパーを `variants.collapse` の退場 (高さ 0) で縮める。td の縦パディングは
- * ラッパー側へ持たせ、縮み切ると行の高さが 0 になる。
+ * ラッパー側へ持たせ、縮み切ると行の高さが 0 になる。`LiveRows.tsx` の `LiveCell` と同じ手法
+ * (td のパディングを 0 にして中身を `variants.collapse` で伸縮) だが、`LiveCollapse` は入場でも
+ * 高さ 0 から広げる (stagger と二重になる) ので使わず、退場だけを持つ。
+ * 退場中の行は `pointerEvents: none` で操作できない。
  */
 const rowExitVariants = {
-  exit: { opacity: 0, transition: transitions.fade },
+  exit: { opacity: 0, pointerEvents: "none", transition: transitions.fade },
 } as const;
 const cellExitVariants = {
   exit: { ...variants.collapse.exit, transition: transitions.fade },
@@ -204,7 +210,7 @@ export const PrivilegeRow = memo(function PrivilegeRow({
   readOnly,
   onToggle,
   animated = false,
-  exitAnimated = false,
+  exitMode = "none",
   flashCols,
   flashGen = 0,
 }: {
@@ -215,19 +221,23 @@ export const PrivilegeRow = memo(function PrivilegeRow({
   onToggle: (table: string, flag: keyof Flags) => void;
   /** 入場 stagger に載せるか (#1890)。親の `MotionTbody` の variant が伝播する。 */
   animated?: boolean;
-  /** 行が消えるとき、高さを縮める退場を再生するか (#1890)。 */
-  exitAnimated?: boolean;
+  /** 行が消えるときの退場 (#1890)。`collapse` は高さを縮め、`fade` は opacity のみ、`none` は即時。 */
+  exitMode?: PrivilegeExitMode;
   /** 直前の適用で変わった権限列。該当セルへ `apply-flash` を 1 回再生する (#1890)。 */
   flashCols?: ReadonlySet<string>;
   /** 適用ごとに増える世代。セルの key に混ぜて再生し直す。 */
   flashGen?: number;
 }) {
   const rowDirty = !flagsEqual(originalFlags, flags);
+  const exits = exitMode !== "none";
+  // 縮める退場のときだけセルの中身を motion 要素にする。それ以外は素の div (行ごとの motion 要素を増やさない)。
+  const Cell = exitMode === "collapse" ? MotionCell : PlainCell;
+  const cellProps = exitMode === "collapse" ? { variants: cellExitVariants } : {};
   return (
     // 常に motion 要素にして、12/13 件目の境界で要素の型が変わり再マウントされるのを避ける。
     <MotionTr
       variants={
-        exitAnimated
+        exits
           ? animated
             ? { ...variants.staggerItem, ...rowExitVariants }
             : rowExitVariants
@@ -235,16 +245,16 @@ export const PrivilegeRow = memo(function PrivilegeRow({
             ? variants.staggerItem
             : undefined
       }
-      exit={exitAnimated ? "exit" : undefined}
+      exit={exits ? "exit" : undefined}
     >
       <chakra.td
         css={{ ...tdCss, ...cellShellCss }}
         fontFamily="var(--font-mono)"
         color={rowDirty ? "var(--accent)" : undefined}
       >
-        <MotionCell css={cellInnerCss} variants={exitAnimated ? cellExitVariants : undefined}>
+        <Cell css={cellInnerCss} {...cellProps}>
           {table}
-        </MotionCell>
+        </Cell>
       </chakra.td>
       {PRIVILEGE_FLAGS.map((flag) => {
         const flashed = flashCols?.has(flag) === true;
@@ -262,14 +272,14 @@ export const PrivilegeRow = memo(function PrivilegeRow({
                 pointerEvents="none"
               />
             )}
-            <MotionCell css={cellInnerCss} variants={exitAnimated ? cellExitVariants : undefined}>
+            <Cell css={cellInnerCss} {...cellProps}>
               <Checkbox
                 checked={flags[flag]}
                 disabled={readOnly}
                 aria-label={`${table} ${flag}`}
                 onChange={() => onToggle(table, flag)}
               />
-            </MotionCell>
+            </Cell>
           </chakra.td>
         );
       })}
@@ -295,7 +305,7 @@ export function UsersPanel({
   const { confirm, dialog } = useConfirm();
   const reduced = useReducedMotion() ?? false;
   // 行の退場は reduced-motion / ハイコントラスト / forced-colors では即時に消す (#1890)。
-  const exitMotion = !reduced && !reducedMotionActive() && !prefersStaticMotion();
+  const exitEnabled = !reduced && !reducedMotionActive() && !prefersStaticMotion();
 
   const [users, setUsers] = useState<DbUserInfo[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -343,6 +353,8 @@ export function UsersPanel({
   const [privFlash, setPrivFlash] = useState<PrivilegeFlash | null>(null);
   const [roleFlash, setRoleFlash] = useState<{ gen: number; roles: ReadonlySet<string> } | null>(null);
   const flashGen = useRef(0);
+  // 最後の 1 行が退場し終わるまで「権限がありません」の案内行を出さない (#1890)。
+  const [exitPending, setExitPending] = useState(false);
   // loadPrivileges が適用前の権限を参照するための最新値 (依存配列に original を入れて再生成しない)。
   const originalRef = useRef(original);
   originalRef.current = original;
@@ -451,6 +463,15 @@ export function UsersPanel({
     () => Array.from(new Set([...Object.keys(original), ...Object.keys(edited)])).sort(),
     [original, edited],
   );
+
+  // 行がある間は「全部消えたら退場を待つ」状態を用意する。ユーザ切替・再読み込みでは待たない。
+  const hasRows = rowKeys.length > 0;
+  useEffect(() => {
+    if (hasRows) setExitPending(exitEnabled);
+  }, [hasRows, exitEnabled]);
+  useEffect(() => {
+    if (loadingPrivs) setExitPending(false);
+  }, [loadingPrivs]);
 
   const dirty = useMemo(
     () => rowKeys.some((k) => !flagsEqual(original[k] ?? EMPTY_FLAGS, edited[k] ?? EMPTY_FLAGS)),
@@ -1431,12 +1452,14 @@ export function UsersPanel({
                           <>
                             {/* 全権限を外した行は再取得で消える。縮んで去らせる (ユーザ切替は tbody の key
                                 ごと作り直すので退場しない)。 */}
-                            <AnimatePresence>
+                            {/* initial は既定 (true) のまま: false にすると初回表示の入場 stagger まで
+                                止まる。ユーザ切替は tbody の key で作り直すので退場は走らない。 */}
+                            <AnimatePresence onExitComplete={() => setExitPending(false)}>
                               {rowKeys.map((table, i) => (
                                 <PrivilegeRow
                                   key={table}
                                   animated={isStaggerAnimated(i)}
-                                  exitAnimated={exitMotion}
+                                  exitMode={privilegeExitMode(exitEnabled, rowKeys.length)}
                                   flashCols={privFlash?.cells.get(table)}
                                   flashGen={privFlash?.cells.has(table) ? privFlash.gen : undefined}
                                   table={table}
@@ -1447,7 +1470,7 @@ export function UsersPanel({
                                 />
                               ))}
                             </AnimatePresence>
-                            {rowKeys.length === 0 && (
+                            {rowKeys.length === 0 && !exitPending && (
                               <tr>
                                 {/* tdCss は nowrap なので、長い案内文だけ折り返す。 */}
                                 <chakra.td css={{ ...tdCss, whiteSpace: "normal" }} colSpan={6}>

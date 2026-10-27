@@ -63,3 +63,15 @@ export function isStaggerAnimated(index: number): boolean {
 export function shouldPlayPrivilegeFlash(): boolean {
   return !reducedMotionActive() && !prefersStaticMotion();
 }
+
+/** 行の退場の種類。`collapse` は高さを縮める、`fade` は行の opacity だけ、`none` は即時。 */
+export type PrivilegeExitMode = "none" | "fade" | "collapse";
+
+/** 権限行がこの件数を超えたら縮む退場をやめ、行の opacity だけで退場する (行ごとの motion 要素を抑える)。 */
+export const PRIVILEGE_COLLAPSE_EXIT_MAX_ROWS = 100;
+
+/** 退場の種類を決める。`enabled` が false (reduced-motion / ハイコントラスト等) なら即時。 */
+export function privilegeExitMode(enabled: boolean, rowCount: number): PrivilegeExitMode {
+  if (!enabled) return "none";
+  return rowCount > PRIVILEGE_COLLAPSE_EXIT_MAX_ROWS ? "fade" : "collapse";
+}
