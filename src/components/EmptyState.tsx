@@ -33,6 +33,13 @@ interface Props {
   secondaryActions?: { label: string; onClick: () => void; icon?: IconName; shortcut?: string }[];
   /** Tighter layout for inline use (e.g. inside the result grid body). */
   compact?: boolean;
+  /**
+   * イラストの背後へブランドの光彩 (`--hero-halo`、Welcome / Splash と同一ソース) を
+   * 敷く opt-in (#1887)。`illustration` があり `compact` でないときだけ効く。
+   * 大キャンバスの主要空状態 (結果グリッド / 未接続ペイン) 専用で、小パネルには付けない。
+   * 静止装飾で、hc-* では `--hero-halo` 自体が `none` になる。
+   */
+  brandHalo?: boolean;
 }
 
 /**
@@ -72,6 +79,7 @@ export function EmptyState({
   action,
   secondaryActions,
   compact = false,
+  brandHalo = false,
 }: Props) {
   return (
     // 一時表示 (空/オンボーディング) の控えめな fade-in。マウント時のみ動かす
@@ -93,7 +101,20 @@ export function EmptyState({
         // リッチなイラスト (オンボーディング/主要空状態)。軽い scale-in を添える。
         <motion.div
           aria-hidden
-          style={{ marginBottom: "var(--space-1)" }}
+          style={{
+            marginBottom: "var(--space-1)",
+            ...(brandHalo
+              ? {
+                  // 光彩がイラスト外へ滲む余白 (WelcomeView と同じ比率)。縦は負マージンで
+                  // 相殺し、空状態全体の高さを増やさない (狭い結果ペインで文言を押し出さない)。
+                  padding: "var(--space-6) var(--space-10)",
+                  margin: "calc(-1 * var(--space-6)) 0",
+                  marginBottom: "calc(var(--space-1) - var(--space-6))",
+                  backgroundImage: "var(--hero-halo)",
+                  backgroundRepeat: "no-repeat",
+                }
+              : null),
+          }}
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={transitions.emphasized}

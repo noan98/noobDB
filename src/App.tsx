@@ -13280,6 +13280,7 @@ export default function App() {
                         <PaneEmpty>
                           <EmptyState
                             illustration={<DisconnectedIllustration />}
+                            brandHalo
                             icon="database"
                             title={t("notConnectedTitle")}
                             description={t("editorHintDisabled")}

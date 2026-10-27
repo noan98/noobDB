@@ -33,6 +33,28 @@ describe("EmptyState onboarding (#450)", () => {
   });
 });
 
+describe("EmptyState brandHalo (#1887)", () => {
+  const haloOf = (c: HTMLElement) =>
+    Array.from(c.querySelectorAll<HTMLElement>("[aria-hidden]")).find((e) =>
+      e.style.backgroundImage.includes("--hero-halo"),
+    );
+
+  it("brandHalo 指定時だけイラストの背後に --hero-halo を敷く", () => {
+    const on = renderWithProviders(<EmptyState brandHalo illustration={<WelcomeIllustration />} title="t" />);
+    expect(haloOf(on.container)).toBeTruthy();
+    on.unmount();
+    const off = renderWithProviders(<EmptyState illustration={<WelcomeIllustration />} title="t" />);
+    expect(haloOf(off.container)).toBeUndefined();
+  });
+
+  it("compact では brandHalo を指定しても光彩を出さない", () => {
+    const { container } = renderWithProviders(
+      <EmptyState compact brandHalo illustration={<WelcomeIllustration />} icon="table" title="t" />,
+    );
+    expect(haloOf(container)).toBeUndefined();
+  });
+});
+
 describe("buildResultEmptyActions (#1784)", () => {
   it("並び順とショートカット有無が固定されている", async () => {
     const { buildResultEmptyActions } = await import("../components/resultEmptyActions");
