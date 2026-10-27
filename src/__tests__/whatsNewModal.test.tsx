@@ -47,7 +47,7 @@ describe("確認ダイアログ → 更新内容を見る → Esc (#1864)", () =
                 {
                   t: ((k: string) => t(k as never)) as never,
                   toast: { info: vi.fn(), error: vi.fn(), dismiss: vi.fn(), update: vi.fn() } as never,
-                  confirm: (o) => confirm(o).then((v) => (resolved(v), v)),
+                  confirm: (o) => confirm({ ...o }).then((v) => (resolved(v), v)),
                 },
               )
             }
