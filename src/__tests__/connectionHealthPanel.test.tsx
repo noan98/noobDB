@@ -98,7 +98,8 @@ describe("ConnectionHealthPanel (#1068)", () => {
     await waitFor(() => expect(screen.getAllByText(t("healthStatusUp"))).toHaveLength(2));
     const mysqlRow = screen.getByTestId("health-row-m");
     expect(within(mysqlRow).getByText("8.0.36")).toBeInTheDocument();
-    expect(within(mysqlRow).getByText("7")).toBeInTheDocument();
+    // CountUp は見える桁と読み上げ用の確定値の 2 要素で描く (#1874)。
+    expect(within(mysqlRow).getAllByText("7").length).toBeGreaterThan(0);
     expect(within(screen.getByTestId("health-row-l")).getByText(t("healthNa"))).toBeInTheDocument();
     // 全セッションを 1 回の IPC でまとめて確認する (2N 回ではない)。
     expect(api.healthProbeAll).toHaveBeenCalledTimes(1);

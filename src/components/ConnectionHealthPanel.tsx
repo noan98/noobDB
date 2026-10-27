@@ -22,6 +22,7 @@ import {
   type HealthRow,
   type HealthStatus,
 } from "./connectionHealth";
+import { CountUp } from "./CountUp";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { LatencySparkline } from "./LatencySparkline";
@@ -433,8 +434,12 @@ export function ConnectionHealthPanel({
                           <Tooltip label={t("healthNaHint")} focusableWrapper>
                             <chakra.span color="app.textMuted">{t("healthNa")}</chakra.span>
                           </Tooltip>
+                        ) : // 接続数の増減もカウントアップで連続させる (#1874)。
+                        // 未取得 (null) は "–" の静的表示。
+                        row.connections == null ? (
+                          "–"
                         ) : (
-                          (row.connections ?? "–")
+                          <CountUp value={row.connections} />
                         )}
                       </chakra.td>
                       <chakra.td css={tdCss}>
@@ -519,7 +524,12 @@ function LatencyCell({ ms, label }: { ms: number | null; label: (ms: number) => 
       : level === "slow"
         ? semanticColorToken("warning", "text")
         : "app.text";
-  return <chakra.span color={color}>{label(ms)}</chakra.span>;
+  // 定期ポーリングごとの数値ジャンプをカウントアップで連続させる (#1874)。
+  return (
+    <chakra.span color={color}>
+      <CountUp value={ms} formatter={(n) => label(Math.round(n))} />
+    </chakra.span>
+  );
 }
 
 function Badge({ children, tone }: { children: string; tone?: "danger" }) {

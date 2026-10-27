@@ -1,5 +1,8 @@
 import { chakra } from "@chakra-ui/react";
+import { motion, useReducedMotion } from "motion/react";
+import { useRef } from "react";
 import { useT } from "../i18n";
+import { durations, easings } from "../motion";
 import { semanticColorVar } from "../semanticColors";
 import {
   LATENCY_HISTORY_MAX,
@@ -7,6 +10,7 @@ import {
   type LatencySample,
   type SparklineGeometry,
 } from "./connectionHealth";
+import { prefersStaticMotion } from "./revealOrigin";
 
 // スパークラインの描画領域 (viewBox の座標系)。実寸は CSS 側の幅・高さで決まる。
 const SPARK_W = 90;
@@ -34,6 +38,12 @@ export function LatencySparkline({
   format?: (n: number) => string;
 }) {
   const t = useT();
+  const reduced = useReducedMotion();
+  // サンプルが更新された世代。最新セグメントの key に混ぜ、更新のたびに描き入れを再生する (#1874)。
+  // 初回表示 (世代 0) は描き入れない。
+  const gen = useRef({ samples, n: 0 });
+  if (gen.current.samples !== samples) gen.current = { samples, n: gen.current.n + 1 };
+  const animateLast = gen.current.n > 0 && !reduced && !prefersStaticMotion();
   // neutral では NaN / Infinity も欠測として数える (sparklineGeometry と同じ扱い)。
   const usable = (s: LatencySample): s is number => s !== null && (!neutral || Number.isFinite(s));
   if (!samples || samples.filter(usable).length < 2) {
@@ -69,20 +79,33 @@ export function LatencySparkline({
           vectorEffect="non-scaling-stroke"
         />
       )}
-      {g.segments.map((s) => (
-        <line
-          key={`${s.x1}:${s.x2}`}
-          x1={s.x1}
-          y1={s.y1}
-          x2={s.x2}
-          y2={s.y2}
-          stroke={sparkStroke(s.level)}
-          strokeWidth={1.5}
-          strokeLinecap="round"
-          vectorEffect="non-scaling-stroke"
-          data-level={s.level}
-        />
-      ))}
+      {g.segments.map((s, i) => {
+        const common = {
+          x1: s.x1,
+          y1: s.y1,
+          x2: s.x2,
+          y2: s.y2,
+          stroke: sparkStroke(s.level),
+          strokeWidth: 1.5,
+          strokeLinecap: "round" as const,
+          vectorEffect: "non-scaling-stroke" as const,
+          "data-level": s.level,
+        };
+        // 最新の区間だけ左から右へ描き入れる (ChartView の折線と同じ pathLength 0→1)。
+        if (animateLast && i === g.segments.length - 1 && s.x2 === SPARK_W) {
+          return (
+            <motion.line
+              key={`last${gen.current.n}`}
+              {...common}
+              data-testid="sparkline-latest"
+              initial={{ pathLength: 0, opacity: 0 }}
+              animate={{ pathLength: 1, opacity: 1 }}
+              transition={{ duration: durations.slow, ease: easings.out }}
+            />
+          );
+        }
+        return <line key={`${s.x1}:${s.x2}`} {...common} />;
+      })}
       {g.points.map((p) => (
         <circle key={`p${p.x}`} cx={p.x} cy={p.y} r={1.5} fill={sparkStroke(p.level)} />
       ))}
