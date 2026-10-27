@@ -38,7 +38,14 @@
 
 import type { SqliteRebuildEdit } from "../api/tauri";
 import { quoteIdentFor } from "./sqlDialect";
-import { CURRENT_TIME_FN_RE, formatDefault, matchParen } from "./createTable";
+import {
+  activeGenerated,
+  CURRENT_TIME_FN_RE,
+  formatDefault,
+  generatedClause,
+  matchParen,
+  type GeneratedSpec,
+} from "./createTable";
 import { quoteString } from "./cellEdit";
 import {
   checkClause,
@@ -72,6 +79,19 @@ export interface ExistingColumnBaseline {
   extra: string;
   /** 列コメント (#1002)。無ければ空文字 / 未指定。SQLite は常に空。 */
   comment?: string;
+  /**
+   * 生成列の式と STORED / VIRTUAL (#1893)。生成列でなければ未指定。SQLite の生成列は
+   * `describeTable` の列に出ない隠れた列なので、呼び出し側が合成した行にこれを載せる。
+   */
+  generated?: GeneratedSpec;
+}
+
+/** MySQL / MariaDB の EXTRA に出る生成列の印 (`STORED GENERATED` など)。`DEFAULT_GENERATED` は含まない。 */
+const GENERATED_EXTRA_RE = /\b(STORED|VIRTUAL|PERSISTENT)\s+GENERATED\b/gi;
+
+/** EXTRA が生成列を示しているか。 */
+export function extraMarksGenerated(extra: string): boolean {
+  return new RegExp(GENERATED_EXTRA_RE.source, "i").test(extra);
 }
 
 /**
@@ -91,6 +111,8 @@ export interface ExistingColumnEdit {
   defaultValue: string;
   /** 編集後の列コメント (#1002)。未指定なら baseline のまま (変更なし)。 */
   comment?: string;
+  /** 編集後の生成列の式 (#1893)。未指定なら baseline のまま。baseline が生成列でなければ無視する。 */
+  generated?: GeneratedSpec;
 }
 
 /**
@@ -104,6 +126,11 @@ export interface NewColumn {
   type: string;
   notNull: boolean;
   defaultValue: string;
+  /**
+   * 生成列 (#1893)。式が入っていれば `<型> <生成句> [NOT NULL]` の生成列として追加し、DEFAULT は付けない。
+   * PostgreSQL は STORED のみ。SQLite の STORED はテーブル再作成で追加する。
+   */
+  generated?: GeneratedSpec;
   /**
    * 列の位置 (#1625)。MySQL だけが `FIRST` / `AFTER <列>` を持つ。未指定 (`end`) は末尾。
    * PostgreSQL / SQLite は列の位置を指定できないので、指定があっても無視する
@@ -186,8 +213,25 @@ export interface AlterStatement {
   destructive: boolean;
 }
 
+/** 文にできなかった編集の理由コード (#1893)。文言は呼び出し側 (i18n) が組み立てる。 */
+export type AlterWarningCode =
+  /** 生成列の式の変更に対応しないドライバ (PostgreSQL)。 */
+  | "generatedExpressionUnsupported"
+  /** 既存の生成列の STORED / VIRTUAL の切り替え (MySQL / PostgreSQL は不可)。 */
+  | "generatedStorageUnsupported"
+  /** 生成列の式を取得できておらず、再定義すると式を失うので文にしなかった (MySQL)。 */
+  | "generatedExpressionUnknown";
+
+export interface AlterWarning {
+  code: AlterWarningCode;
+  /** 対象の列名 (編集前)。 */
+  column: string;
+}
+
 export interface AlterPlan {
   statements: AlterStatement[];
+  /** 文にできなかった編集 (#1893)。呼び出し側は画面に出し、該当の編集が反映されないことを伝える。 */
+  warnings: AlterWarning[];
   /**
    * SQLite でテーブル再作成が要る編集 (#1888)。非 null のとき、列の変更 (リネーム・追加・削除を含む)
    * と FK / CHECK の変更は `statements` に含まれず、これを `plan_sqlite_table_rebuild` へ渡して得た
@@ -261,8 +305,11 @@ function qualifiedName(driver: string, database: string | null | undefined, tabl
 function newColumnLine(driver: string, col: NewColumn): string {
   const type = col.type.trim() || "TEXT";
   const parts = [quoteIdentFor(driver, col.name.trim()), type];
+  // 生成列は生成句を NOT NULL より前に置く (MySQL の文法)。DEFAULT は付けられない。
+  const generated = activeGenerated(col);
+  if (generated) parts.push(generatedClause(driver, generated));
   if (col.notNull) parts.push("NOT NULL");
-  const def = formatDefault(driver, col.defaultValue, type);
+  const def = generated ? null : formatDefault(driver, col.defaultValue, type);
   if (def !== null) parts.push(`DEFAULT ${def}`);
   const pos = col.position;
   if (supportsColumnPosition(driver) && pos) {
@@ -316,6 +363,7 @@ function planExistingColumn(
   baseline: ExistingColumnBaseline,
   edit: ExistingColumnEdit,
   statements: AlterStatement[],
+  warnings: AlterWarning[],
 ): void {
   if (edit.drop) {
     statements.push({
@@ -334,20 +382,44 @@ function planExistingColumn(
   const newType = edit.type.trim() || baseline.type.trim();
   const typeChanged = newType !== baseline.type.trim();
   const nullChanged = edit.notNull !== baseline.notNull;
-  const defaultChanged = edit.defaultValue.trim() !== baseline.defaultValue.trim();
-  const facetsChanged = typeChanged || nullChanged || defaultChanged;
+  // 生成列は DEFAULT を持てない (#1893) ので、DEFAULT の編集は無視する。
+  const baseGenerated = baseline.generated;
+  const hiddenGenerated = driver === "sqlite" && baseGenerated !== undefined;
+  const defaultChanged =
+    baseGenerated === undefined && edit.defaultValue.trim() !== baseline.defaultValue.trim();
+  const facetsChanged = !hiddenGenerated && (typeChanged || nullChanged || defaultChanged);
+  const editGenerated = baseGenerated ? (edit.generated ?? baseGenerated) : undefined;
+  const exprChanged =
+    baseGenerated !== undefined &&
+    editGenerated !== undefined &&
+    editGenerated.expression.trim() !== baseGenerated.expression.trim();
+  const storageChanged =
+    baseGenerated !== undefined &&
+    editGenerated !== undefined &&
+    editGenerated.virtual !== baseGenerated.virtual;
+  // 式を取得できていない生成列 (MySQL の EXTRA に印だけある)。再定義すると式を失う。
+  const generatedUnknown = baseGenerated === undefined && extraMarksGenerated(baseline.extra);
   // コメント (#1002)。SQLite は非対応なので常に「変更なし」扱い。
   const beforeComment = baseline.comment ?? "";
   const afterComment = supportsComments(driver) ? (edit.comment ?? beforeComment) : beforeComment;
   const commentChanged = afterComment !== beforeComment;
 
-  if (!renamed && !facetsChanged && !commentChanged) return;
+  // 式・STORED/VIRTUAL の変更に対応しないドライバ (#1893)。SQLite は再作成で行うのでここへは来ない。
+  if (driver === "postgres" && exprChanged) {
+    warnings.push({ code: "generatedExpressionUnsupported", column: baseline.name });
+  }
+  if (driver !== "sqlite" && storageChanged) {
+    warnings.push({ code: "generatedStorageUnsupported", column: baseline.name });
+  }
+  const mysqlExprChange = driver === "mysql" && exprChanged && !storageChanged;
+
+  if (!renamed && !facetsChanged && !commentChanged && !mysqlExprChange) return;
 
   const oldIdent = quoteIdentFor(driver, baseline.name);
   const newIdent = quoteIdentFor(driver, newName);
 
   if (driver === "mysql") {
-    if (renamed && !facetsChanged && !commentChanged) {
+    if (renamed && !facetsChanged && !commentChanged && !mysqlExprChange) {
       statements.push({
         sql: `ALTER TABLE ${tIdent} RENAME COLUMN ${oldIdent} TO ${newIdent};`,
         kind: "renameColumn",
@@ -358,9 +430,21 @@ function planExistingColumn(
     // CHANGE COLUMN は rename + 再定義を 1 文でまかなえる。未変更フィールドも
     // baseline (= edit の初期値) 由来のまま含まれるので、MySQL の
     // 「MODIFY/CHANGE は常にフル定義が必要」という制約を自然に満たす。
+    // 式を取得できていない生成列は、再定義すると式を失う。止めて理由を知らせる (#1893)。
+    if (generatedUnknown) {
+      warnings.push({ code: "generatedExpressionUnknown", column: baseline.name });
+      return;
+    }
     const parts = [newIdent, newType];
+    // 生成列は `AS (式) STORED|VIRTUAL` を付け直して式を保つ。NOT NULL より前、DEFAULT は付けない。
+    // STORED/VIRTUAL の切り替えは MySQL では行えないので baseline の方を保つ。
+    if (baseGenerated && editGenerated) {
+      parts.push(
+        generatedClause(driver, { expression: editGenerated.expression, virtual: baseGenerated.virtual }),
+      );
+    }
     if (edit.notNull) parts.push("NOT NULL");
-    const def = mysqlDefaultForChange(baseline, edit, newType);
+    const def = baseGenerated ? null : mysqlDefaultForChange(baseline, edit, newType);
     if (def !== null) parts.push(`DEFAULT ${def}`);
     // `extra` (auto_increment・on update CURRENT_TIMESTAMP 等) は
     // フォーム編集の対象外なので baseline の値を逐語で保持する — 付けないと
@@ -370,6 +454,8 @@ function planExistingColumn(
     // 構文ではない (そのまま付けると構文エラー) ので取り除く。
     const extra = baseline.extra
       .replace(/\bDEFAULT_GENERATED\b/gi, "")
+      // 生成列の印は DDL の構文ではない。式は上で `AS (...)` として付け直した (#1893)。
+      .replace(GENERATED_EXTRA_RE, "")
       .replace(/\s+/g, " ")
       .trim();
     if (extra) parts.push(extra);
@@ -381,7 +467,7 @@ function planExistingColumn(
     }
     statements.push({
       sql: `ALTER TABLE ${tIdent} CHANGE COLUMN ${oldIdent} ${parts.join(" ")};`,
-      kind: renamed ? "renameColumn" : facetsChanged ? "modifyColumn" : "comment",
+      kind: renamed ? "renameColumn" : facetsChanged || mysqlExprChange ? "modifyColumn" : "comment",
       destructive: false,
     });
     return;
@@ -585,9 +671,11 @@ function indexStatements(driver: string, tIdent: string, indexes: IndexDef[]): A
  */
 export function buildSqliteRebuildEdit(form: AlterTableForm): SqliteRebuildEdit | null {
   const baselineByName = new Map(form.baseline.map((b) => [b.name, b] as const));
+  // SQLite の生成列は `table_info` に出ない隠れた列 (#1893)。`columns` ではなく専用のリストで渡す。
+  const isHidden = (b: ExistingColumnBaseline) => b.generated !== undefined;
   const facetsChanged = form.existing.some((e) => {
     const b = baselineByName.get(e.original);
-    if (!b || e.drop) return false;
+    if (!b || e.drop || isHidden(b)) return false;
     return (
       (e.type.trim() || b.type.trim()) !== b.type.trim() ||
       e.notNull !== b.notNull ||
@@ -599,8 +687,27 @@ export function buildSqliteRebuildEdit(form: AlterTableForm): SqliteRebuildEdit 
   const dropFkNames = new Set((form.droppedForeignKeys ?? []).map((n) => n.trim()).filter((n) => n));
   const dropFks = (form.existingForeignKeys ?? []).filter((f) => f.name !== null && dropFkNames.has(f.name));
   const dropChecks = (form.droppedCheckDefinitions ?? []).filter((d) => d.trim());
+  const edits = new Map(form.existing.map((e) => [e.original, e] as const));
+  const newGenerated = form.added.flatMap((c) => {
+    const g = activeGenerated(c);
+    return g && c.name.trim() ? [{ col: c, spec: g }] : [];
+  });
+  const changedGenerated = form.baseline.flatMap((b) => {
+    const e = edits.get(b.name);
+    const g = e?.generated;
+    if (!b.generated || !e || e.drop || !g) return [];
+    const changed =
+      g.expression.trim() !== b.generated.expression.trim() || g.virtual !== b.generated.virtual;
+    return changed ? [{ column: b.name, spec: g }] : [];
+  });
+  const droppedGenerated = form.baseline
+    .filter((b) => isHidden(b) && edits.get(b.name)?.drop)
+    .map((b) => b.name);
+  // SQLite は STORED 列を `ADD COLUMN` で足せず、式の変更も列の定義を書き換える。
+  const generatedNeedsRebuild = newGenerated.some((g) => !g.spec.virtual) || changedGenerated.length > 0;
   if (
     !facetsChanged &&
+    !generatedNeedsRebuild &&
     addFks.length === 0 &&
     addChecks.length === 0 &&
     dropFks.length === 0 &&
@@ -608,34 +715,35 @@ export function buildSqliteRebuildEdit(form: AlterTableForm): SqliteRebuildEdit 
   ) {
     return null;
   }
-  const edits = new Map(form.existing.map((e) => [e.original, e] as const));
   const orNull = (v: string) => (v.trim() === "" ? null : v.trim());
   const trimmedList = (cols: string[]) => cols.map((c) => c.trim()).filter((c) => c);
   return {
-    columns: form.baseline.map((b) => {
-      const e = edits.get(b.name);
-      if (!e) {
+    columns: form.baseline
+      .filter((b) => !isHidden(b))
+      .map((b) => {
+        const e = edits.get(b.name);
+        if (!e) {
+          return {
+            original: b.name,
+            name: b.name,
+            data_type: b.type,
+            not_null: b.notNull,
+            default: orNull(b.defaultValue),
+            drop: false,
+          };
+        }
         return {
           original: b.name,
-          name: b.name,
-          data_type: b.type,
-          not_null: b.notNull,
-          default: orNull(b.defaultValue),
-          drop: false,
+          name: e.name.trim() || b.name,
+          data_type: e.type.trim() || b.type.trim(),
+          not_null: e.notNull,
+          // 既存列の DEFAULT は式そのものを逐語で使う (`describeTable` の表記を壊さない)。
+          default: formatDefaultForEdit("sqlite", e.defaultValue, e.type.trim() || b.type.trim()),
+          drop: e.drop,
         };
-      }
-      return {
-        original: b.name,
-        name: e.name.trim() || b.name,
-        data_type: e.type.trim() || b.type.trim(),
-        not_null: e.notNull,
-        // 既存列の DEFAULT は式そのものを逐語で使う (`describeTable` の表記を壊さない)。
-        default: formatDefaultForEdit("sqlite", e.defaultValue, e.type.trim() || b.type.trim()),
-        drop: e.drop,
-      };
-    }),
+      }),
     added_columns: form.added
-      .filter((c) => c.name.trim())
+      .filter((c) => c.name.trim() && !activeGenerated(c))
       .map((c) => {
         const type = c.type.trim() || "TEXT";
         return {
@@ -656,6 +764,19 @@ export function buildSqliteRebuildEdit(form: AlterTableForm): SqliteRebuildEdit 
     dropped_foreign_keys: dropFks.map((f) => ({ columns: f.columns, ref_table: f.refTable })),
     added_checks: addChecks.map((ck) => ({ name: orNull(ck.name), expression: ck.expression.trim() })),
     dropped_checks: dropChecks,
+    added_generated: newGenerated.map(({ col, spec }) => ({
+      name: col.name.trim(),
+      data_type: col.type.trim(),
+      not_null: col.notNull,
+      expression: spec.expression.trim(),
+      is_virtual: spec.virtual,
+    })),
+    changed_generated: changedGenerated.map(({ column, spec }) => ({
+      column,
+      expression: spec.expression.trim(),
+      is_virtual: spec.virtual,
+    })),
+    dropped_generated: droppedGenerated,
   };
 }
 
@@ -670,12 +791,13 @@ export function buildSqliteRebuildEdit(form: AlterTableForm): SqliteRebuildEdit 
 export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan {
   const tIdent = qualifiedName(driver, form.database, form.table);
   const statements: AlterStatement[] = [];
+  const warnings: AlterWarning[] = [];
   // SQLite の型 / NOT NULL / DEFAULT 変更・FK / CHECK の変更はテーブル再作成で行う (#1888)。
   // リネーム・列の追加・削除もその再作成に含まれるので、ここでは ALTER を出さない。
   if (driver === "sqlite") {
     const rebuild = buildSqliteRebuildEdit(form);
     if (rebuild) {
-      return { statements: indexStatements(driver, tIdent, form.indexes), rebuild };
+      return { statements: indexStatements(driver, tIdent, form.indexes), warnings, rebuild };
     }
   }
   // 同じ ALTER の中で DROP / リネームして空けた列名を、新規列が再利用するときは、
@@ -697,7 +819,7 @@ export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan 
     const baseline = baselineByName.get(edit.original);
     if (!baseline) continue;
     const before = statements.length;
-    planExistingColumn(driver, tIdent, baseline, edit, statements);
+    planExistingColumn(driver, tIdent, baseline, edit, statements, warnings);
     if (edit.drop) continue;
     const target = edit.name.trim() || baseline.name;
     if (target === baseline.name) continue;
@@ -745,5 +867,5 @@ export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan 
 
   statements.push(...indexStatements(driver, tIdent, form.indexes));
 
-  return { statements, rebuild: null };
+  return { statements, warnings, rebuild: null };
 }

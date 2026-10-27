@@ -33,6 +33,7 @@ import { Icon } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { TableConstraintEditor, type CheckRow, type FkRow } from "./TableConstraintEditor";
 import { isCompleteCheck, isCompleteForeignKey } from "./tableConstraints";
+import { generatedExpressionProblem, supportsVirtualGenerated } from "./createTable";
 import { buildAlterPrechecks, buildConstraintPrechecks } from "./alterPrecheck";
 import { AlterPrecheckNotice } from "./AlterPrecheckNotice";
 import { AlterCostNotice } from "./AlterCostNotice";
@@ -164,6 +165,10 @@ const REBUILD_ERROR_KEYS = {
   empty_check: "alterTableRebuildErrEmptyCheck",
   unchanged: "alterTableRebuildErrUnchanged",
   other_table_trigger: "alterTableRebuildErrOtherTableTrigger",
+  unknown_generated: "alterTableRebuildErrUnknownGenerated",
+  empty_generated_expression: "alterTableRebuildErrEmptyGeneratedExpression",
+  generated_refs_dropped: "alterTableRebuildErrGeneratedRefsDropped",
+  generated_unreadable: "alterTableRebuildErrGeneratedUnreadable",
 } as const;
 
 function rebuildErrorText(translate: ReturnType<typeof useT>, error: string): string {
@@ -171,6 +176,13 @@ function rebuildErrorText(translate: ReturnType<typeof useT>, error: string): st
   const key = m ? REBUILD_ERROR_KEYS[m[1] as keyof typeof REBUILD_ERROR_KEYS] : undefined;
   return m && key ? translate(key, { arg: m[2] }) : error;
 }
+
+/** 生成列の再定義などで文にできなかった編集の理由 → i18n キー (#1893)。 */
+const ALTER_WARNING_KEYS = {
+  generatedExpressionUnsupported: "alterTableWarnGeneratedExpressionUnsupported",
+  generatedStorageUnsupported: "alterTableWarnGeneratedStorageUnsupported",
+  generatedExpressionUnknown: "alterTableWarnGeneratedExpressionUnknown",
+} as const;
 
 function emptyIndex(): IndexDef {
   return { name: "", columns: [], unique: false };
@@ -215,7 +227,6 @@ export function AlterTableModal({
   const rowIdCounter = useRef(0);
   const nextRowId = () => `row${++rowIdCounter.current}`;
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: driver の変化で再取得するためのトリガ依存 (effect 内では参照しない)
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -236,14 +247,36 @@ export function AlterTableModal({
         setTableNames(ctx.table_names);
         setCtxWarnings(ctx.warnings);
         setTableComment({ before: ctx.table_comment, after: ctx.table_comment });
-        const base: ExistingColumnBaseline[] = cols.map((c) => ({
-          name: c.name,
-          type: c.data_type,
-          notNull: !c.nullable,
-          defaultValue: c.default ?? "",
-          extra: c.extra,
-          comment: c.comment ?? "",
-        }));
+        // 生成列の式 (#1893)。MySQL / PostgreSQL は列に載せ、SQLite は `columns` に出ない隠れた
+        // 生成列なので別の行として足す。
+        const generatedByName = new Map(ctx.generated.map((g) => [g.column, g] as const));
+        const base: ExistingColumnBaseline[] = cols.map((c) => {
+          const g = generatedByName.get(c.name);
+          return {
+            name: c.name,
+            type: c.data_type,
+            notNull: !c.nullable,
+            defaultValue: c.default ?? "",
+            extra: c.extra,
+            comment: c.comment ?? "",
+            ...(g ? { generated: { expression: g.expression, virtual: g.is_virtual } } : {}),
+          };
+        });
+        if (driver === "sqlite") {
+          const known = new Set(cols.map((c) => c.name));
+          for (const g of ctx.generated) {
+            if (known.has(g.column)) continue;
+            base.push({
+              name: g.column,
+              type: g.data_type ?? "",
+              notNull: g.not_null ?? false,
+              defaultValue: "",
+              extra: "",
+              comment: "",
+              generated: { expression: g.expression, virtual: g.is_virtual },
+            });
+          }
+        }
         setBaseline(base);
         setExisting(
           base.map((b) => ({
@@ -254,6 +287,7 @@ export function AlterTableModal({
             notNull: b.notNull,
             defaultValue: b.defaultValue,
             comment: b.comment ?? "",
+            ...(b.generated ? { generated: b.generated } : {}),
           })),
         );
         setLoading(false);
@@ -340,6 +374,7 @@ export function AlterTableModal({
           type: r.type,
           notNull: r.notNull,
           defaultValue: r.defaultValue,
+          generated: r.generated,
           position: r.position,
         })),
         indexes: effectiveIndexes.map((r) => ({ name: r.name, columns: r.columns, unique: r.unique })),
@@ -434,8 +469,30 @@ export function AlterTableModal({
     () => renameCollisions(driver, { baseline, existing }),
     [driver, baseline, existing],
   );
+  // 生成列の式の不備 (空・括弧の不一致)、PostgreSQL の VIRTUAL は実行を止める (#1893)。
+  const generatedErrors = useMemo(() => {
+    const out: { column: string; kind: "empty" | "invalid" | "virtual" }[] = [];
+    added.forEach((c, i) => {
+      if (!c.generated) return;
+      const column = c.name.trim() || `#${i + 1}`;
+      const p = generatedExpressionProblem(c.generated.expression);
+      if (p) out.push({ column, kind: p });
+      else if (c.generated.virtual && !supportsVirtualGenerated(driver))
+        out.push({ column, kind: "virtual" });
+    });
+    for (const e of existing) {
+      if (e.drop || !e.generated) continue;
+      const p = generatedExpressionProblem(e.generated.expression);
+      if (p) out.push({ column: e.original, kind: p });
+    }
+    return out;
+  }, [driver, added, existing]);
   const valid =
-    statements.length > 0 && duplicateNames.length === 0 && collisionNames.length === 0 && !rebuildPending;
+    statements.length > 0 &&
+    duplicateNames.length === 0 &&
+    collisionNames.length === 0 &&
+    !rebuildPending &&
+    generatedErrors.length === 0;
   // 不完全な行があるときは実行せず、理由を出す (空の新規行のエラーは触る/実行を試すまで伏せる)。
   const tryRun = () => {
     if (hasIncompleteIndex) {
@@ -588,7 +645,9 @@ export function AlterTableModal({
                             ? t("alterTableCtxItemForeignKeys")
                             : w === "checks"
                               ? t("alterTableCtxItemChecks")
-                              : t("alterTableCtxItemTables"),
+                              : w === "generated"
+                                ? t("alterTableCtxItemGenerated")
+                                : t("alterTableCtxItemTables"),
                       )
                       .join(" / "),
                   })}
@@ -634,64 +693,89 @@ export function AlterTableModal({
                   <span />
                 </chakra.div>
                 {existing.map((row, i) => (
-                  <chakra.div
-                    key={row.original}
-                    display="grid"
-                    gridTemplateColumns="1.1fr 1.1fr 1.3fr auto auto 1.2fr 1.2fr auto"
-                    gap="1.5"
-                    alignItems="center"
-                    opacity={row.drop ? 0.5 : 1}
-                  >
-                    <Tooltip label={row.original}>
-                      <chakra.span fontSize="sm" fontFamily="mono" color="app.text" minW="0" truncate>
-                        {row.original}
-                      </chakra.span>
-                    </Tooltip>
-                    <Input
-                      value={row.name}
-                      onChange={(e) => setExistingAt(i, { name: e.target.value })}
-                      disabled={row.drop}
-                      aria-label={`${t("alterTableNewName")}: ${row.original}`}
-                    />
-                    <Input
-                      value={row.type}
-                      onChange={(e) => setExistingAt(i, { type: e.target.value })}
-                      disabled={row.drop}
-                      aria-label={`${t("createTableColType")}: ${row.original}`}
-                    />
-                    <Switch
-                      checked={row.notNull}
-                      onChange={() => setExistingAt(i, { notNull: !row.notNull })}
-                      disabled={row.drop}
-                      aria-label={t("alterTableNotNullAria", { column: row.original })}
-                    />
-                    <span />
-                    <Input
-                      value={row.defaultValue}
-                      onChange={(e) => setExistingAt(i, { defaultValue: e.target.value })}
-                      placeholder={t("createTableColDefault")}
-                      disabled={row.drop}
-                      aria-label={`${t("createTableColDefault")}: ${row.original}`}
-                    />
-                    <Input
-                      value={row.comment ?? ""}
-                      onChange={(e) => setExistingAt(i, { comment: e.target.value })}
-                      placeholder={commentsSupported ? t("alterTableColComment") : undefined}
-                      disabled={row.drop || !commentsSupported}
-                      aria-label={t("alterTableColCommentAria", { column: row.original })}
-                    />
-                    <Tooltip label={row.drop ? t("alterTableKeep") : t("alterTableDrop")}>
-                      <chakra.button
-                        type="button"
-                        onClick={() => toggleDrop(i)}
-                        aria-label={row.drop ? t("alterTableKeep") : t("alterTableDrop")}
-                        color={row.drop ? "app.textError" : "app.textMuted"}
-                        _hover={{ color: "app.textError" }}
-                        px="1"
-                      >
-                        <Icon name={row.drop ? "undo" : "close"} />
-                      </chakra.button>
-                    </Tooltip>
+                  <chakra.div key={row.original} display="flex" flexDirection="column" gap="1">
+                    <chakra.div
+                      display="grid"
+                      gridTemplateColumns="1.1fr 1.1fr 1.3fr auto auto 1.2fr 1.2fr auto"
+                      gap="1.5"
+                      alignItems="center"
+                      opacity={row.drop ? 0.5 : 1}
+                    >
+                      <Tooltip label={row.original}>
+                        <chakra.span fontSize="sm" fontFamily="mono" color="app.text" minW="0" truncate>
+                          {row.original}
+                        </chakra.span>
+                      </Tooltip>
+                      <Input
+                        value={row.name}
+                        onChange={(e) => setExistingAt(i, { name: e.target.value })}
+                        disabled={row.drop || (driver === "sqlite" && !!row.generated)}
+                        aria-label={`${t("alterTableNewName")}: ${row.original}`}
+                      />
+                      <Input
+                        value={row.type}
+                        onChange={(e) => setExistingAt(i, { type: e.target.value })}
+                        disabled={row.drop || (driver === "sqlite" && !!row.generated)}
+                        aria-label={`${t("createTableColType")}: ${row.original}`}
+                      />
+                      <Switch
+                        checked={row.notNull}
+                        onChange={() => setExistingAt(i, { notNull: !row.notNull })}
+                        disabled={row.drop || (driver === "sqlite" && !!row.generated)}
+                        aria-label={t("alterTableNotNullAria", { column: row.original })}
+                      />
+                      <span />
+                      <Input
+                        value={row.defaultValue}
+                        onChange={(e) => setExistingAt(i, { defaultValue: e.target.value })}
+                        placeholder={t("createTableColDefault")}
+                        disabled={row.drop || !!row.generated}
+                        aria-label={`${t("createTableColDefault")}: ${row.original}`}
+                      />
+                      <Input
+                        value={row.comment ?? ""}
+                        onChange={(e) => setExistingAt(i, { comment: e.target.value })}
+                        placeholder={commentsSupported ? t("alterTableColComment") : undefined}
+                        disabled={row.drop || !commentsSupported}
+                        aria-label={t("alterTableColCommentAria", { column: row.original })}
+                      />
+                      <Tooltip label={row.drop ? t("alterTableKeep") : t("alterTableDrop")}>
+                        <chakra.button
+                          type="button"
+                          onClick={() => toggleDrop(i)}
+                          aria-label={row.drop ? t("alterTableKeep") : t("alterTableDrop")}
+                          color={row.drop ? "app.textError" : "app.textMuted"}
+                          _hover={{ color: "app.textError" }}
+                          px="1"
+                        >
+                          <Icon name={row.drop ? "undo" : "close"} />
+                        </chakra.button>
+                      </Tooltip>
+                    </chakra.div>
+                    {row.generated && (
+                      <Flex gap="1.5" align="center" pl="2" opacity={row.drop ? 0.5 : 1}>
+                        <chakra.span textStyle="caption" flexShrink={0}>
+                          {t("alterTableGeneratedExisting", {
+                            kind: row.generated.virtual ? "VIRTUAL" : "STORED",
+                          })}
+                        </chakra.span>
+                        <Input
+                          value={row.generated.expression}
+                          onChange={(e) =>
+                            setExistingAt(i, {
+                              generated: {
+                                virtual: row.generated?.virtual ?? false,
+                                expression: e.target.value,
+                              },
+                            })
+                          }
+                          disabled={row.drop}
+                          fontFamily="mono"
+                          flex="1"
+                          aria-label={t("alterTableGeneratedExprAria", { column: row.original })}
+                        />
+                      </Flex>
+                    )}
                   </chakra.div>
                 ))}
               </chakra.div>
@@ -699,64 +783,120 @@ export function AlterTableModal({
               <chakra.div display="flex" flexDirection="column" gap="1.5">
                 <FieldLabel as="div">{t("alterTableAddedSection")}</FieldLabel>
                 {added.map((c, i) => (
-                  <chakra.div
-                    key={c.id}
-                    display="grid"
-                    gridTemplateColumns="1.3fr 1.3fr auto 1.2fr 1.2fr auto"
-                    gap="1.5"
-                    alignItems="center"
-                  >
-                    <Input
-                      value={c.name}
-                      onChange={(e) => setAddedAt(i, { name: e.target.value })}
-                      placeholder={t("createTableColNamePlaceholder")}
-                      aria-label={`${t("createTableColName")} (${i + 1})`}
-                    />
-                    <Input
-                      value={c.type}
-                      onChange={(e) => setAddedAt(i, { type: e.target.value })}
-                      aria-label={`${t("createTableColType")} (${i + 1})`}
-                    />
-                    <Switch
-                      checked={c.notNull}
-                      onChange={() => setAddedAt(i, { notNull: !c.notNull })}
-                      aria-label={t("alterTableNotNullNewAria", { n: i + 1 })}
-                    />
-                    <Input
-                      value={c.defaultValue}
-                      onChange={(e) => setAddedAt(i, { defaultValue: e.target.value })}
-                      placeholder={t("createTableColDefault")}
-                      aria-label={`${t("createTableColDefault")} (${i + 1})`}
-                    />
-                    <Tooltip
-                      label={positionSupported ? undefined : t("alterTablePositionUnsupported")}
-                      focusableWrapper={!positionSupported}
+                  <chakra.div key={c.id} display="flex" flexDirection="column" gap="1">
+                    <chakra.div
+                      display="grid"
+                      gridTemplateColumns="1.3fr 1.3fr auto auto 1.2fr 1.2fr auto"
+                      gap="1.5"
+                      alignItems="center"
                     >
-                      <Select
-                        value={positionValue(c.position)}
-                        onChange={(e) => setAddedAt(i, { position: parsePositionValue(e.target.value) })}
-                        disabled={!positionSupported}
-                        aria-label={t("alterTablePositionAria", { n: i + 1 })}
+                      <Input
+                        value={c.name}
+                        onChange={(e) => setAddedAt(i, { name: e.target.value })}
+                        placeholder={t("createTableColNamePlaceholder")}
+                        aria-label={`${t("createTableColName")} (${i + 1})`}
+                      />
+                      <Input
+                        value={c.type}
+                        onChange={(e) => setAddedAt(i, { type: e.target.value })}
+                        aria-label={`${t("createTableColType")} (${i + 1})`}
+                      />
+                      <Switch
+                        checked={c.notNull}
+                        onChange={() => setAddedAt(i, { notNull: !c.notNull })}
+                        aria-label={t("alterTableNotNullNewAria", { n: i + 1 })}
+                      />
+                      <Tooltip label={t("createTableColGenerated")}>
+                        <Switch
+                          checked={!!c.generated}
+                          onChange={() =>
+                            setAddedAt(
+                              i,
+                              c.generated
+                                ? { generated: undefined }
+                                : {
+                                    defaultValue: "",
+                                    generated: { expression: "", virtual: supportsVirtualGenerated(driver) },
+                                  },
+                            )
+                          }
+                          aria-label={t("alterTableGeneratedNewAria", { n: i + 1 })}
+                        />
+                      </Tooltip>
+                      <Input
+                        value={c.defaultValue}
+                        disabled={!!c.generated}
+                        onChange={(e) => setAddedAt(i, { defaultValue: e.target.value })}
+                        placeholder={t("createTableColDefault")}
+                        aria-label={`${t("createTableColDefault")} (${i + 1})`}
+                      />
+                      <Tooltip
+                        label={positionSupported ? undefined : t("alterTablePositionUnsupported")}
+                        focusableWrapper={!positionSupported}
                       >
-                        <option value="end">{t("alterTablePositionEnd")}</option>
-                        <option value="first">{t("alterTablePositionFirst")}</option>
-                        {positionAnchors(i).map((name) => (
-                          <option key={name} value={`after:${name}`}>
-                            {t("alterTablePositionAfter", { column: name })}
+                        <Select
+                          value={positionValue(c.position)}
+                          onChange={(e) => setAddedAt(i, { position: parsePositionValue(e.target.value) })}
+                          disabled={!positionSupported}
+                          aria-label={t("alterTablePositionAria", { n: i + 1 })}
+                        >
+                          <option value="end">{t("alterTablePositionEnd")}</option>
+                          <option value="first">{t("alterTablePositionFirst")}</option>
+                          {positionAnchors(i).map((name) => (
+                            <option key={name} value={`after:${name}`}>
+                              {t("alterTablePositionAfter", { column: name })}
+                            </option>
+                          ))}
+                        </Select>
+                      </Tooltip>
+                      <chakra.button
+                        type="button"
+                        onClick={() => removeNewColumn(i)}
+                        aria-label={t("createTableRemoveCol")}
+                        color="app.textMuted"
+                        _hover={{ color: "app.textError" }}
+                        px="1"
+                      >
+                        <Icon name="close" />
+                      </chakra.button>
+                    </chakra.div>
+                    {c.generated && (
+                      <Flex gap="1.5" align="center" pl="2">
+                        <Input
+                          value={c.generated.expression}
+                          onChange={(e) =>
+                            setAddedAt(i, {
+                              generated: {
+                                virtual: c.generated?.virtual ?? false,
+                                expression: e.target.value,
+                              },
+                            })
+                          }
+                          placeholder={t("createTableGeneratedExprPlaceholder")}
+                          aria-label={`${t("createTableGeneratedExpr")} (${i + 1})`}
+                          fontFamily="mono"
+                          flex="1"
+                        />
+                        <Select
+                          value={c.generated.virtual ? "virtual" : "stored"}
+                          onChange={(e) =>
+                            setAddedAt(i, {
+                              generated: {
+                                expression: c.generated?.expression ?? "",
+                                virtual: e.target.value === "virtual",
+                              },
+                            })
+                          }
+                          aria-label={`${t("createTableGeneratedStorage")} (${i + 1})`}
+                          w="auto"
+                        >
+                          <option value="stored">{t("createTableGeneratedStored")}</option>
+                          <option value="virtual" disabled={!supportsVirtualGenerated(driver)}>
+                            {t("createTableGeneratedVirtual")}
                           </option>
-                        ))}
-                      </Select>
-                    </Tooltip>
-                    <chakra.button
-                      type="button"
-                      onClick={() => removeNewColumn(i)}
-                      aria-label={t("createTableRemoveCol")}
-                      color="app.textMuted"
-                      _hover={{ color: "app.textError" }}
-                      px="1"
-                    >
-                      <Icon name="close" />
-                    </chakra.button>
+                        </Select>
+                      </Flex>
+                    )}
                   </chakra.div>
                 ))}
                 <Flex>
@@ -1024,6 +1164,31 @@ export function AlterTableModal({
                   </chakra.div>
                 </Callout>
               )}
+              {plan.warnings.length > 0 && (
+                <Callout
+                  tone="warning"
+                  role="status"
+                  title={t("alterTableWarningTitle")}
+                  data-testid="alter-plan-warnings"
+                >
+                  <chakra.div display="flex" flexDirection="column" gap="0.5">
+                    {plan.warnings.map((w) => (
+                      <span key={`${w.code}:${w.column}`}>
+                        {t(ALTER_WARNING_KEYS[w.code], { column: w.column })}
+                      </span>
+                    ))}
+                  </chakra.div>
+                </Callout>
+              )}
+              {generatedErrors.map((g) => (
+                <FieldError key={`${g.column}:${g.kind}`}>
+                  {g.kind === "invalid"
+                    ? t("createTableGeneratedInvalid", { column: g.column })
+                    : g.kind === "virtual"
+                      ? t("createTableGeneratedPgNoVirtual")
+                      : t("createTableGeneratedEmpty", { column: g.column })}
+                </FieldError>
+              ))}
               {rebuildState.status === "error" && (
                 <ErrorNote>
                   {t("alterTableRebuildPlanError", { error: rebuildErrorText(t, rebuildState.error) })}

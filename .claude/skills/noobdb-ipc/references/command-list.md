@@ -163,7 +163,7 @@ DB に触れず実行もしない (UI のプレビュー専用)。両環境の�
 - `get_routine_signature` (ストアドプロシージャ / 関数のパラメータ取得、#1003 — SQLite は未対応エラー)
 - `table_statistics`
 - `describe_database`
-- `alter_table_context`
+- `alter_table_context` (生成列の式 `generated` も返す、#1893)
 - `plan_sqlite_table_rebuild` (SQLite 構造エディタのテーブル再作成 SQL を生成、読み取りのみ。適用は `apply_sync_sql`、#1888)
 - `incoming_foreign_keys` (#1255)
 - `column_dependencies` (DROP COLUMN 前の依存列挙 — ビュー / トリガー / 生成列 / インデックス / FK、#1758)

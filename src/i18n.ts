@@ -3386,6 +3386,33 @@ const en = {
   alterTableRebuildErrUnknownCheck: "CHECK constraint {arg} no longer exists. Reopen the dialog.",
   alterTableRebuildErrEmptyCheck: "A CHECK expression is empty.",
   alterTableRebuildErrUnchanged: "There is no change that needs a table rebuild.",
+  createTableColGenerated: "Generated",
+  createTableGeneratedExpr: "Generated expression",
+  createTableGeneratedExprPlaceholder: "e.g. price * quantity",
+  createTableGeneratedStorage: "Storage",
+  createTableGeneratedStored: "STORED (saved on write)",
+  createTableGeneratedVirtual: "VIRTUAL (computed on read)",
+  createTableGeneratedPgNoVirtual: "PostgreSQL generated columns are STORED only.",
+  createTableGeneratedExclusive: "A generated column cannot have a DEFAULT, auto-increment or primary key.",
+  createTableGeneratedEmpty: "Enter the expression of the generated column {column}.",
+  createTableGeneratedInvalid: "The expression of {column} has unbalanced parentheses or a semicolon.",
+  alterTableCtxItemGenerated: "generated column expressions",
+  alterTableGeneratedExprAria: "Generated expression: {column}",
+  alterTableGeneratedExisting: "Generated ({kind}). STORED / VIRTUAL cannot be switched.",
+  alterTableGeneratedNewAria: "Generated column ({n})",
+  alterTableWarningTitle: "Some edits are not applied",
+  alterTableWarnGeneratedExpressionUnsupported:
+    "{column}: PostgreSQL cannot change the expression of a generated column in place, so this edit is not applied. Drop the column and add it again instead.",
+  alterTableWarnGeneratedStorageUnsupported:
+    "{column}: STORED and VIRTUAL cannot be switched on an existing generated column, so this edit is not applied.",
+  alterTableWarnGeneratedExpressionUnknown:
+    "{column}: the generated expression could not be read, so redefining the column would lose it. The edit is not applied.",
+  alterTableRebuildErrUnknownGenerated: "Generated column {arg} no longer exists. Reopen the dialog.",
+  alterTableRebuildErrEmptyGeneratedExpression: "The expression of generated column {arg} is empty.",
+  alterTableRebuildErrGeneratedRefsDropped:
+    "A generated column still refers to a column being dropped ({arg}). Drop or change the generated column too.",
+  alterTableRebuildErrGeneratedUnreadable:
+    "The generated columns of this table could not be read, so they cannot be edited.",
   alterTableRebuildErrOtherTableTrigger:
     'Trigger "{arg}" on another table refers to this table, so SQLite cannot rename the rebuilt table. Drop that trigger first and recreate it afterwards.',
   alterTableConfirmBodyRebuild:
@@ -10366,6 +10393,32 @@ const ja: Dict = {
   alterTableRebuildErrUnknownCheck: "CHECK 制約 {arg} が存在しません。ダイアログを開き直してください。",
   alterTableRebuildErrEmptyCheck: "CHECK の式が空です。",
   alterTableRebuildErrUnchanged: "テーブルの再作成が必要な変更がありません。",
+  createTableColGenerated: "生成列",
+  createTableGeneratedExpr: "生成式",
+  createTableGeneratedExprPlaceholder: "例: price * quantity",
+  createTableGeneratedStorage: "保存方式",
+  createTableGeneratedStored: "STORED (書き込み時に計算して保存)",
+  createTableGeneratedVirtual: "VIRTUAL (読み出し時に計算)",
+  createTableGeneratedPgNoVirtual: "PostgreSQL の生成列は STORED のみです。",
+  createTableGeneratedExclusive: "生成列には DEFAULT・自動採番・主キーを指定できません。",
+  createTableGeneratedEmpty: "生成列 {column} の式を入力してください。",
+  createTableGeneratedInvalid: "{column} の式の括弧が対応していないか、セミコロンを含んでいます。",
+  alterTableCtxItemGenerated: "生成列の式",
+  alterTableGeneratedExprAria: "生成式: {column}",
+  alterTableGeneratedExisting: "生成列 ({kind})。STORED / VIRTUAL は切り替えられません。",
+  alterTableGeneratedNewAria: "生成列 ({n})",
+  alterTableWarningTitle: "反映されない編集があります",
+  alterTableWarnGeneratedExpressionUnsupported:
+    "{column}: PostgreSQL は生成列の式をその場で変更できないため、この編集は反映されません。列を削除して追加し直してください。",
+  alterTableWarnGeneratedStorageUnsupported:
+    "{column}: 既存の生成列の STORED / VIRTUAL は切り替えられないため、この編集は反映されません。",
+  alterTableWarnGeneratedExpressionUnknown:
+    "{column}: 生成式を取得できておらず、列を再定義すると式が失われるため、この編集は反映されません。",
+  alterTableRebuildErrUnknownGenerated: "生成列 {arg} が存在しません。ダイアログを開き直してください。",
+  alterTableRebuildErrEmptyGeneratedExpression: "生成列 {arg} の式が空です。",
+  alterTableRebuildErrGeneratedRefsDropped:
+    "削除する列を参照する生成列が残っています ({arg})。その生成列も削除するか、式を変更してください。",
+  alterTableRebuildErrGeneratedUnreadable: "このテーブルの生成列を読み取れなかったため、編集できません。",
   alterTableRebuildErrOtherTableTrigger:
     "他のテーブルのトリガー「{arg}」がこのテーブルを参照しているため、SQLite は再作成後のテーブルの名前を戻せません。先にそのトリガーを削除し、適用後に作り直してください。",
   alterTableConfirmBodyRebuild:

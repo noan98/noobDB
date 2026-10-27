@@ -89,9 +89,9 @@ pub mod __test_api {
         rollback_to_sql as savepoint_rollback_to_sql,
     };
     pub use crate::db::sqlite_rebuild::{
-        plan_table_rebuild, RebuildCheck, RebuildColumnEdit, RebuildForeignKey,
-        RebuildForeignKeyRef, RebuildNewColumn, SqliteRebuildEdit, SqliteRebuildPlan,
-        SqliteRebuildRisk, SqliteRebuildRiskKind,
+        plan_table_rebuild, RebuildChangedGenerated, RebuildCheck, RebuildColumnEdit,
+        RebuildForeignKey, RebuildForeignKeyRef, RebuildNewColumn, RebuildNewGenerated,
+        SqliteRebuildEdit, SqliteRebuildPlan, SqliteRebuildRisk, SqliteRebuildRiskKind,
     };
     pub use crate::db::stream_batch::{StreamBatcher, StreamStats, StreamStatsSnapshot};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};

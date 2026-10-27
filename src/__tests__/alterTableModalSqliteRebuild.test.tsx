@@ -50,6 +50,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       },
     ],
     checks: [{ name: "", definition: "CHECK (id > 0)" }],
+    generated: [],
     table_names: ["t", "parent"],
     warnings: [],
   };

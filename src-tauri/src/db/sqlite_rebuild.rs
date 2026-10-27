@@ -16,9 +16,11 @@
 //! CHECK・子表の外部キーの参照を書き換えるので、文の機械的な書き換えは要らない。そのため再作成の入力
 //! (編集で追加する FK / CHECK を含む) は旧い列名で組み立てる。
 //!
-//! 拡張点 (#1893 生成列など): [`SqliteRebuildEdit`] に項目を足し、[`build_table_diff`] で
-//! `generated_changes` を埋める。ただし生成列の式も旧い列名で渡す必要があり、列を追加する編集は
-//! 列の位置 (`position`) の扱いも決めなければならない。再作成側 (`sync.rs`) は生成列の変更に対応済み。
+//! 生成列 (#1893): SQLite は生成列を `PRAGMA table_info` に出さない (隠れた列) ので、スナップショットの
+//! `columns` には入らず `generated` に入る。そのため生成列の追加・式の変更・削除は `columns` /
+//! `added_columns` とは別の入力 (`added_generated` / `changed_generated` / `dropped_generated`) で受け、
+//! [`build_table_diff`] が `TableDiff::generated_changes` へ変換する (再作成側の `sync.rs` が反映する)。
+//! 生成列の式も旧い列名で組み立てる (CHECK と同じ)。追加する生成列は末尾に置く。
 
 use std::collections::HashSet;
 
@@ -27,13 +29,13 @@ use serde::{Deserialize, Serialize};
 use super::ddl_extras::normalize_check;
 use super::diff::{
     attach_sqlite_rebuild_context, attach_target_extras_to_snapshots, CheckDiff, ColumnDiff,
-    DiffForeignKey, DiffStatus, ForeignKeyDiff, SchemaDiff, SqliteMasterEntry, TableColumns,
-    TableDiff, TargetTableSnapshot,
+    DiffForeignKey, DiffStatus, ForeignKeyDiff, GeneratedDiff, SchemaDiff, SqliteMasterEntry,
+    TableColumns, TableDiff, TargetTableSnapshot,
 };
 use super::sync::{
     mask_string_literals, quote_ident, references_identifier, sqlite_rebuild_sql, SQLITE_FK_ON,
 };
-use super::types::{CheckConstraintInfo, TableColumnInfo};
+use super::types::{CheckConstraintInfo, GeneratedColumnInfo, TableColumnInfo};
 use super::{Connection, DriverKind};
 use crate::error::{AppError, Result};
 
@@ -60,6 +62,28 @@ pub struct RebuildNewColumn {
     pub not_null: bool,
     #[serde(default)]
     pub default: Option<String>,
+}
+
+/// 追加する生成列 (#1893)。`expression` は括弧の中身 (`price * qty`)。式は編集後の (新しい) 列名で書く。
+#[derive(Debug, Clone, Deserialize)]
+pub struct RebuildNewGenerated {
+    pub name: String,
+    /// 型名。空なら型を付けない (SQLite は型なしの列を許す)。
+    #[serde(default)]
+    pub data_type: String,
+    #[serde(default)]
+    pub not_null: bool,
+    pub expression: String,
+    /// true なら VIRTUAL、false なら STORED。
+    pub is_virtual: bool,
+}
+
+/// 既存の生成列の式の変更 (#1893)。型・NOT NULL・位置は今のものを保つ。
+#[derive(Debug, Clone, Deserialize)]
+pub struct RebuildChangedGenerated {
+    pub column: String,
+    pub expression: String,
+    pub is_virtual: bool,
 }
 
 /// 追加する外部キー。
@@ -106,6 +130,15 @@ pub struct SqliteRebuildEdit {
     /// 削除する CHECK 制約の定義 (`describe` が返す `CHECK (...)` 句。式の正規化形で照合する)。
     #[serde(default)]
     pub dropped_checks: Vec<String>,
+    /// 追加する生成列 (#1893)。SQLite は生成列を `columns` に出さないので別の入力にする。
+    #[serde(default)]
+    pub added_generated: Vec<RebuildNewGenerated>,
+    /// 式 (または STORED / VIRTUAL) を変える既存の生成列 (#1893)。
+    #[serde(default)]
+    pub changed_generated: Vec<RebuildChangedGenerated>,
+    /// 削除する既存の生成列の列名 (#1893)。
+    #[serde(default)]
+    pub dropped_generated: Vec<String>,
 }
 
 /// 実行前に利用者へ見せるべきリスクの種類。文言はフロントが i18n で組み立てる。
@@ -335,6 +368,54 @@ fn collect_renames(
         // 削除する列と同名の列の追加は、再作成が「元の列を残してコピー」と取り違えやすいので受け付けない。
         if dropped.iter().any(|d| d.eq_ignore_ascii_case(name)) {
             return Err(coded("drop_add_same_name", name));
+        }
+    }
+    for g in &edit.added_generated {
+        let name = g.name.trim();
+        if name.is_empty() {
+            return Err(coded("empty_name", ""));
+        }
+        // 残る隠れた生成列 (削除しないもの) と同名の追加も重複。
+        let kept_hidden = snap.generated.iter().any(|h| {
+            h.column.eq_ignore_ascii_case(name)
+                && !edit
+                    .dropped_generated
+                    .iter()
+                    .any(|d| d.eq_ignore_ascii_case(name))
+        });
+        if kept_hidden || !final_names.insert(name.to_ascii_lowercase()) {
+            return Err(coded("duplicate_column", name));
+        }
+        if renames
+            .iter()
+            .any(|(old, _)| old.eq_ignore_ascii_case(name))
+        {
+            return Err(coded("add_old_name", name));
+        }
+        if dropped.iter().any(|d| d.eq_ignore_ascii_case(name)) {
+            return Err(coded("drop_add_same_name", name));
+        }
+    }
+    // 通常列の改名先が、残る隠れた生成列の名前とぶつかる場合。
+    for (_, new) in &renames {
+        let kept_hidden = snap.generated.iter().any(|h| {
+            h.column.eq_ignore_ascii_case(new)
+                && !edit
+                    .dropped_generated
+                    .iter()
+                    .any(|d| d.eq_ignore_ascii_case(new))
+        });
+        if kept_hidden {
+            return Err(coded("duplicate_column", new));
+        }
+    }
+    for name in edit
+        .dropped_generated
+        .iter()
+        .chain(edit.changed_generated.iter().map(|c| &c.column))
+    {
+        if !snap.generated.iter().any(|h| &h.column == name) {
+            return Err(coded("unknown_generated", name));
         }
     }
     if final_names.is_empty() {
@@ -576,12 +657,122 @@ fn build_table_diff(
         });
     }
 
+    // 生成列 (#1893)。式の列名は新しい名前なので旧い名前へ戻す (識別子単位、文字列リテラルの中は触らない)。
+    let to_old = |expr: &str| {
+        renames
+            .iter()
+            .fold(expr.trim().to_string(), |e, (old, new)| {
+                rename_identifier(&e, new, old)
+            })
+    };
+    let mut generated_changes: Vec<GeneratedDiff> = Vec::new();
+    let has_generated_edit = !edit.added_generated.is_empty()
+        || !edit.changed_generated.is_empty()
+        || !edit.dropped_generated.is_empty();
+    if has_generated_edit && !snap.extras_known {
+        return Err(coded("generated_unreadable", ""));
+    }
+    for name in &edit.dropped_generated {
+        let Some(found) = snap.generated.iter().find(|g| &g.column == name) else {
+            return Err(coded("unknown_generated", name));
+        };
+        risks.push(SqliteRebuildRisk {
+            kind: SqliteRebuildRiskKind::DropColumn,
+            target: name.clone(),
+        });
+        generated_changes.push(GeneratedDiff {
+            column: name.clone(),
+            status: DiffStatus::TargetOnly,
+            source: None,
+            target: Some(found.clone()),
+            changed_fields: Vec::new(),
+        });
+    }
+    // 再作成後の生成列の式 (旧い列名)。削除する列を参照していないか調べる。
+    let mut final_exprs: Vec<(String, String)> = snap
+        .generated
+        .iter()
+        .filter(|g| {
+            !edit.dropped_generated.contains(&g.column)
+                && !edit.changed_generated.iter().any(|c| c.column == g.column)
+        })
+        .map(|g| (g.column.clone(), g.expression.clone()))
+        .collect();
+    for ch in &edit.changed_generated {
+        let Some(found) = snap.generated.iter().find(|g| g.column == ch.column) else {
+            return Err(coded("unknown_generated", &ch.column));
+        };
+        if edit.dropped_generated.contains(&ch.column) {
+            return Err(coded("unknown_generated", &ch.column));
+        }
+        if ch.expression.trim().is_empty() {
+            return Err(coded("empty_generated_expression", &ch.column));
+        }
+        let expression = to_old(&ch.expression);
+        let mut changed_fields = Vec::new();
+        if expression != found.expression.trim() {
+            changed_fields.push("expression".to_string());
+        }
+        if ch.is_virtual != found.is_virtual {
+            changed_fields.push("storage".to_string());
+        }
+        final_exprs.push((ch.column.clone(), expression.clone()));
+        if changed_fields.is_empty() {
+            continue;
+        }
+        generated_changes.push(GeneratedDiff {
+            column: ch.column.clone(),
+            status: DiffStatus::Different,
+            source: Some(GeneratedColumnInfo {
+                expression,
+                is_virtual: ch.is_virtual,
+                ..found.clone()
+            }),
+            target: Some(found.clone()),
+            changed_fields,
+        });
+    }
+    for g in &edit.added_generated {
+        let name = g.name.trim().to_string();
+        if g.expression.trim().is_empty() {
+            return Err(coded("empty_generated_expression", &name));
+        }
+        let expression = to_old(&g.expression);
+        final_exprs.push((name.clone(), expression.clone()));
+        generated_changes.push(GeneratedDiff {
+            column: name.clone(),
+            status: DiffStatus::SourceOnly,
+            source: Some(GeneratedColumnInfo {
+                column: name,
+                expression,
+                is_virtual: g.is_virtual,
+                data_type: non_blank(&Some(g.data_type.clone())),
+                not_null: g.not_null,
+                position: None,
+            }),
+            target: None,
+            changed_fields: Vec::new(),
+        });
+    }
+    // 削除する列を参照する生成列が残ると、再作成後の表を作れない。
+    for e in edit.columns.iter().filter(|e| e.drop) {
+        for (gen, expr) in &final_exprs {
+            if references_identifier(&mask_string_literals(expr), &e.original) {
+                return Err(coded(
+                    "generated_refs_dropped",
+                    format!("{gen} -> {}", e.original),
+                ));
+            }
+        }
+    }
+
     let diff = TableDiff {
         name: table.to_string(),
         status: DiffStatus::Different,
         columns,
         fk_changes,
         check_changes,
+        generated_changes,
         ..Default::default()
     };
     Ok((diff, risks))
@@ -692,6 +883,7 @@ pub fn plan_rebuild(
     if diff.columns.is_empty()
         && diff.fk_changes.is_empty()
         && diff.check_changes.is_empty()
+        && diff.generated_changes.is_empty()
         && renames.is_empty()
     {
         return Err(coded("unchanged", ""));
@@ -1249,5 +1441,167 @@ mod tests {
             ..Default::default()
         };
         assert!(plan_rebuild("t", &edit, base_snapshot()).is_err());
+    }
+
+    fn keep_all() -> Vec<RebuildColumnEdit> {
+        vec![
+            keep("id", "INTEGER", true, None),
+            keep("name", "TEXT", false, None),
+            keep("qty", "TEXT", false, Some("'0'")),
+        ]
+    }
+
+    fn snapshot_with_generated() -> TargetTableSnapshot {
+        let mut snap = base_snapshot();
+        let mut g = GeneratedColumnInfo::new("name_len", "length(name)", true);
+        g.data_type = Some("INTEGER".into());
+        g.position = Some(3);
+        snap.generated = vec![g];
+        snap
+    }
+
+    #[test]
+    fn adding_a_stored_generated_column_goes_through_the_rebuild_with_old_names() {
+        let edit = SqliteRebuildEdit {
+            columns: vec![
+                keep("id", "INTEGER", true, None),
+                RebuildColumnEdit {
+                    name: "title".into(),
+                    ..keep("name", "TEXT", false, None)
+                },
+                keep("qty", "TEXT", false, Some("'0'")),
+            ],
+            added_generated: vec![RebuildNewGenerated {
+                name: "title_upper".into(),
+                data_type: "TEXT".into(),
+                not_null: false,
+                expression: "upper(title) || 'title'".into(),
+                is_virtual: false,
+            }],
+            ..Default::default()
+        };
+        let plan = plan_rebuild("t", &edit, base_snapshot()).unwrap();
+        // 式は旧い列名 (name) で書かれ、文字列リテラルの中は触らない。
+        assert!(
+            plan.sql.contains(
+                "\"title_upper\" TEXT GENERATED ALWAYS AS (upper(\"name\") || 'title') STORED"
+            ),
+            "{}",
+            plan.sql
+        );
+        assert!(plan.sql.contains("RENAME COLUMN \"name\" TO \"title\""));
+        // 生成列は INSERT ... SELECT の列に含めない。
+        assert!(!plan.sql.contains(
+            "INSERT INTO \"__noobdb_rebuild_t\" (\"id\", \"name\", \"qty\", \"title_upper\""
+        ));
+    }
+
+    #[test]
+    fn changing_and_dropping_hidden_generated_columns() {
+        let edit = SqliteRebuildEdit {
+            columns: keep_all(),
+            changed_generated: vec![RebuildChangedGenerated {
+                column: "name_len".into(),
+                expression: "length(name) + 1".into(),
+                is_virtual: false,
+            }],
+            ..Default::default()
+        };
+        let plan = plan_rebuild("t", &edit, snapshot_with_generated()).unwrap();
+        assert!(
+            plan.sql
+                .contains("\"name_len\" INTEGER GENERATED ALWAYS AS (length(name) + 1) STORED"),
+            "{}",
+            plan.sql
+        );
+        assert!(!plan.sql.contains("VIRTUAL"), "{}", plan.sql);
+
+        let drop = SqliteRebuildEdit {
+            columns: keep_all(),
+            dropped_generated: vec!["name_len".into()],
+            ..Default::default()
+        };
+        let plan = plan_rebuild("t", &drop, snapshot_with_generated()).unwrap();
+        assert!(!plan.sql.contains("name_len"), "{}", plan.sql);
+        assert!(plan
+            .risks
+            .iter()
+            .any(|r| r.kind == SqliteRebuildRiskKind::DropColumn && r.target == "name_len"));
+    }
+
+    #[test]
+    fn untouched_generated_column_is_kept_and_same_expression_is_unchanged() {
+        let edit = SqliteRebuildEdit {
+            columns: vec![
+                keep("id", "INTEGER", true, None),
+                keep("name", "TEXT", true, None),
+                keep("qty", "TEXT", false, Some("'0'")),
+            ],
+            ..Default::default()
+        };
+        let plan = plan_rebuild("t", &edit, snapshot_with_generated()).unwrap();
+        assert!(
+            plan.sql
+                .contains("\"name_len\" INTEGER GENERATED ALWAYS AS (length(name)) VIRTUAL"),
+            "{}",
+            plan.sql
+        );
+        let same = SqliteRebuildEdit {
+            columns: keep_all(),
+            changed_generated: vec![RebuildChangedGenerated {
+                column: "name_len".into(),
+                expression: " length(name) ".into(),
+                is_virtual: true,
+            }],
+            ..Default::default()
+        };
+        assert!(plan_rebuild("t", &same, snapshot_with_generated()).is_err());
+    }
+
+    #[test]
+    fn generated_edit_errors() {
+        let mut unknown = SqliteRebuildEdit {
+            columns: keep_all(),
+            dropped_generated: vec!["nope".into()],
+            ..Default::default()
+        };
+        assert!(plan_rebuild("t", &unknown, snapshot_with_generated()).is_err());
+        // 名前の重複 (残る生成列と同名)。
+        unknown.dropped_generated.clear();
+        unknown.added_generated = vec![RebuildNewGenerated {
+            name: "NAME_LEN".into(),
+            data_type: String::new(),
+            not_null: false,
+            expression: "1".into(),
+            is_virtual: true,
+        }];
+        assert!(plan_rebuild("t", &unknown, snapshot_with_generated()).is_err());
+        // 空の式。
+        unknown.added_generated[0].name = "x".into();
+        unknown.added_generated[0].expression = "  ".into();
+        assert!(plan_rebuild("t", &unknown, snapshot_with_generated()).is_err());
+        // 削除する列を参照する生成列が残る。
+        let dropped_ref = SqliteRebuildEdit {
+            columns: vec![
+                keep("id", "INTEGER", true, None),
+                RebuildColumnEdit {
+                    drop: true,
+                    ..keep("name", "TEXT", false, None)
+                },
+                keep("qty", "TEXT", false, Some("'0'")),
+            ],
+            ..Default::default()
+        };
+        let err = plan_rebuild("t", &dropped_ref, snapshot_with_generated()).unwrap_err();
+        assert!(err.to_string().contains("generated_refs_dropped"), "{err}");
+        // 生成列の定義を読めていないときは編集しない。
+        let mut unreadable = snapshot_with_generated();
+        unreadable.extras_known = false;
+        let drop = SqliteRebuildEdit {
+            columns: keep_all(),
+            dropped_generated: vec!["name_len".into()],
+            ..Default::default()
+        };
+        assert!(plan_rebuild("t", &drop, unreadable).is_err());
     }
 }

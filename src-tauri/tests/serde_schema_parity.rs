@@ -1724,6 +1724,7 @@ fn build_fixtures() -> serde_json::Value {
         table_comment: "registered users".into(),
         foreign_keys: vec![foreign_key.clone()],
         checks: vec![check_info.clone()],
+        generated: vec![generated_info.clone()],
         table_names: vec!["users".into(), "orders".into()],
         warnings: vec!["foreign_keys".into()],
     };

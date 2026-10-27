@@ -15,8 +15,9 @@ use crate::db::schema_insight::{
 };
 use crate::db::sqlite_rebuild::{plan_table_rebuild, SqliteRebuildEdit, SqliteRebuildPlan};
 use crate::db::types::{
-    CheckConstraintInfo, ForeignKey, IndexInfo, RoutineSignature, SchemaObject, TableColumnInfo,
-    TableComment, TableExtrasInfo, TableIndexes, TableRowEstimate, TableSchema, TableTrigger,
+    CheckConstraintInfo, ForeignKey, GeneratedColumnInfo, IndexInfo, RoutineSignature,
+    SchemaObject, TableColumnInfo, TableComment, TableExtrasInfo, TableIndexes, TableRowEstimate,
+    TableSchema, TableTrigger,
 };
 use crate::db::where_used::WhereUsedTarget;
 use crate::db::DriverKind;
@@ -389,10 +390,14 @@ pub struct AlterTableContext {
     /// このテーブルの CHECK 制約 (#1888)。SQLite の構造エディタが、削除する制約を
     /// 選べるように返す。MySQL / PostgreSQL は制約名の入力で削除するので空。
     pub checks: Vec<CheckConstraintInfo>,
+    /// このテーブルの生成列の式 (#1893)。MySQL / PostgreSQL は `columns` の生成列
+    /// (`extra` に `GENERATED`) の式を、SQLite は `columns` に出ない隠れた生成列を返す。
+    /// 取得に失敗すると空になり、`warnings` に `"generated"` が載る。
+    pub generated: Vec<GeneratedColumnInfo>,
     /// DB 内のテーブル名一覧 (FK の参照先候補)。
     pub table_names: Vec<String>,
     /// 取得に失敗して空で続行した付随情報の種別 (`"comments"` / `"foreign_keys"` /
-    /// `"table_names"`)。文言はフロントが i18n で組み立てる (#1614)。
+    /// `"table_names"` / `"checks"` / `"generated"`)。文言はフロントが i18n で組み立てる (#1614)。
     pub warnings: Vec<String>,
 }
 
@@ -419,7 +424,7 @@ pub async fn alter_table_context(
     // SQLite もテーブル再作成で FK / CHECK を編集できる (#1888)。
     let supports_constraints = supports_comments || driver == DriverKind::Sqlite;
 
-    let (columns, comments, foreign_keys, table_names, checks) = tokio::join!(
+    let (columns, comments, foreign_keys, table_names, extras) = tokio::join!(
         session
             .schema_cache
             .columns(&database, &table, || conn.columns(&database, &table)),
@@ -455,21 +460,22 @@ pub async fn alter_table_context(
                 })
         },
         async {
-            if driver == DriverKind::Sqlite {
-                conn.table_ddl_extras(&database, &table)
-                    .await
-                    .map(|e| TableExtrasInfo::from(&e).checks)
-                    .map_err(|e| {
-                        tracing::warn!(error = %e, "CHECK 制約の取得に失敗");
-                    })
-            } else {
-                Ok(Vec::new())
-            }
+            // CHECK は SQLite だけ (他ドライバは制約名の入力で削除する)。生成列の式は全ドライバで
+            // 読む (#1893。`describe_table` は式を返さないため、列の再定義で式を失わないのに要る)。
+            conn.table_ddl_extras(&database, &table)
+                .await
+                .map(|e| TableExtrasInfo::from(&e))
+                .map_err(|e| {
+                    tracing::warn!(error = %e, "CHECK 制約・生成列の取得に失敗");
+                })
         },
     );
     let mut warnings = Vec::new();
-    if checks.is_err() {
-        warnings.push("checks".to_string());
+    if extras.is_err() {
+        if driver == DriverKind::Sqlite {
+            warnings.push("checks".to_string());
+        }
+        warnings.push("generated".to_string());
     }
     if comments.is_err() {
         warnings.push("comments".to_string());
@@ -483,7 +489,13 @@ pub async fn alter_table_context(
     let comments = comments.unwrap_or_default();
     let foreign_keys = foreign_keys.unwrap_or_default();
     let table_names = table_names.unwrap_or_default();
-    let checks = checks.unwrap_or_default();
+    let extras = extras.unwrap_or_default();
+    let checks = if driver == DriverKind::Sqlite {
+        extras.checks
+    } else {
+        Vec::new()
+    };
+    let generated = extras.generated;
     let table_comment = comments
         .into_iter()
         .find(|c| c.name == table)
@@ -497,6 +509,7 @@ pub async fn alter_table_context(
             .filter(|f| f.table == table)
             .collect(),
         checks,
+        generated,
         table_names,
         warnings,
     })
