@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import type { QueryResult } from "../api/tauri";
@@ -8,7 +8,9 @@ import { semanticColorToken } from "../semanticColors";
 import { Button, Checkbox } from "./ui";
 import { Icon, ICON_SIZES } from "./Icon";
 import { ListboxSelect } from "./ListboxSelect";
+import { CountUpText } from "./CountUp";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
+import { useRowCrossfade } from "./useRowCrossfade";
 import {
   buildPivotModel,
   buildPivotSql,
@@ -61,6 +63,10 @@ function formatValue(n: number | null): string {
   return numFmt.format(n);
 }
 
+// 集計セルをカウントアップ補間する上限セル数。セルごとに補間用の state を持つため、
+// 上限 (200 行 x 100 列) いっぱいの大きな表では静的表示に留めて描画負荷を抑える。
+const COUNT_UP_MAX_CELLS = 600;
+
 const cellCss: SystemStyleObject = {
   border: "1px solid var(--border-subtle, var(--border))",
   padding: "var(--space-1) var(--space-2-5)",
@@ -69,6 +75,8 @@ const cellCss: SystemStyleObject = {
   color: "var(--text)",
   whiteSpace: "nowrap",
   textAlign: "right",
+  // ヒートマップの背景色は再集計 / トグルで色補間する (reduced-motion は App.css が一括で即時化)。
+  transition: "background-color var(--dur-med) var(--ease)",
 };
 const headCss: SystemStyleObject = {
   ...cellCss,
@@ -119,6 +127,16 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
     () => (config ? buildPivotModel(result.columns, result.rows, config) : null),
     [config, result.columns, result.rows],
   );
+
+  // 設定 (行/列/値/集計/ヒートマップ) の確定で再集計されたコミットの 1 回だけ、<tbody> を
+  // クロスフェードする (#1862)。結果グリッドのソート (#1416) と同じ「要素単位で 1 回・再マウント
+  // なし」の方針なのでスクロール位置は保たれる。設定は離散操作なので sort 側 (即時再生) に載せる。
+  const tbodyRef = useRef<HTMLTableSectionElement>(null);
+  const fadeKeys = useMemo(
+    () => ({ sort: JSON.stringify([config, heatmap]), filter: "" }),
+    [config, heatmap],
+  );
+  useRowCrossfade(tbodyRef, fadeKeys, persistKey ?? "");
 
   // ヒートマップの正規化レンジ (非 NULL セルの最小/最大)。行/列の小計・総計は含めない
   // (桁が大きく色が偏るため、セル本体だけを基準にする)。
@@ -211,6 +229,14 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
   };
 
   const effectiveColKeys = model.colFieldName == null ? [model.valueLabel] : model.colKeys;
+  const countUpEnabled = model.rowKeys.length * (effectiveColKeys.length + 1) <= COUNT_UP_MAX_CELLS;
+  // 数値セルは前値→新値を補間する。NULL / 非有限は空表示、上限超過は静的表示。
+  const renderValue = (v: number | null) =>
+    countUpEnabled && v != null && Number.isFinite(v) ? (
+      <CountUpText values={[v]} render={([n]) => n} formatter={(n) => numFmt.format(n)} />
+    ) : (
+      formatValue(v)
+    );
 
   return (
     <Flex direction="column" h="100%" minH={0} minW={0}>
@@ -312,17 +338,17 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
               </chakra.th>
             </tr>
           </thead>
-          <tbody>
+          <tbody ref={tbodyRef}>
             {model.rowKeys.map((rk, ri) => (
               <tr key={ri}>
                 <chakra.td css={rowHeadCss}>{rk}</chakra.td>
                 {model.cells[ri].map((v, ci) => (
                   <chakra.td key={ci} css={cellCss} style={{ background: cellBg(v) }}>
-                    {formatValue(v)}
+                    {renderValue(v)}
                   </chakra.td>
                 ))}
                 <chakra.td css={{ ...cellCss, fontWeight: 600, borderLeft: "2px solid var(--border)" }}>
-                  {formatValue(model.rowTotals[ri])}
+                  {renderValue(model.rowTotals[ri])}
                 </chakra.td>
               </tr>
             ))}
@@ -332,11 +358,11 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
               <chakra.td css={{ ...totalCss, textAlign: "left" }}>{t("pivotTotal")}</chakra.td>
               {model.colTotals.map((v, ci) => (
                 <chakra.td key={ci} css={totalCss}>
-                  {formatValue(v)}
+                  {renderValue(v)}
                 </chakra.td>
               ))}
               <chakra.td css={{ ...totalCss, borderLeft: "2px solid var(--border)" }}>
-                {formatValue(model.grandTotal)}
+                {renderValue(model.grandTotal)}
               </chakra.td>
             </tr>
           </tfoot>
