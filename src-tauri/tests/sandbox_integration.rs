@@ -1073,6 +1073,15 @@ async fn read_only_source_session_can_sandbox_but_source_is_never_written() {
         state.get(&source_session_id).await.is_some(),
         "無関係な session_id の破棄で元セッションが閉じてはならない"
     );
+    // 誤用の破棄ではサンドボックス自身のセッションも閉じない (レコードとファイルだけが消える)。
+    // 開いたままだと Windows ではファイルが残るので、ここで明示的に外して閉じる。
+    assert!(
+        state.get(&create.session_id).await.is_some(),
+        "無関係な session_id の破棄ではサンドボックスのセッションも残る"
+    );
+    if let Some(sess) = state.remove(&create.session_id).await {
+        sess.conn.close().await;
+    }
     guard.discard().await;
 
     // 元 DB は最初のまま (行もスキーマも)。
