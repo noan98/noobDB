@@ -12,6 +12,7 @@ import { splitComboKeys } from "../shortcutKeys";
  *
  * - `tone="secondary"` (既定): 枠線 + 背景ありのチップ表示。`ShortcutCheatSheet` /
  *   `CommandPalette` の行末ヒントが使う見た目。
+ * - `secondary` は `--shadow-kbd` でキーキャップの立体感を足す (#1865)。
  * - `tone="muted"`: 枠線・背景・パディングなしの控えめな表示。`ContextMenu` の
  *   行内ショートカットヒントが使う見た目 (元々チップ化されていなかったため、
  *   `secondary` とは異なりパディング等を持たせない)。
@@ -45,6 +46,8 @@ const TONE_STYLE: Record<KbdTone, ComponentProps<typeof chakra.kbd>> = {
     borderColor: "app.border",
     bg: "app.surface",
     color: "app.textSecondary",
+    // 物理キーらしい下端の立体感 (#1865)。hc-* テーマでは none になる。
+    boxShadow: "kbd",
   },
   muted: {
     color: "app.textMuted",

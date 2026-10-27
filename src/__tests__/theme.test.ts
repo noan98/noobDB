@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import appCss from "../App.css?raw";
 import { system, buttonRecipe, inputRecipe, selectRecipe, textareaRecipe, checkboxRecipe } from "../theme";
 
 /**
@@ -31,6 +32,14 @@ describe("token bridge resolves to App.css CSS variables", () => {
   it("bridges shadows by overriding Chakra's default semantic shadows", () => {
     // Chakra の既定 shadow は semanticToken なので tokens 側では上書きできない。
     expect(JSON.stringify(system.tokens.getByName("shadows.md")?.value)).toContain("var(--shadow-md)");
+  });
+
+  it("bridges the keycap shadow (#1865) and disables it in both hc-* presets", () => {
+    expect(JSON.stringify(system.tokens.getByName("shadows.kbd")?.value)).toContain("var(--shadow-kbd)");
+    for (const preset of ["hc-light", "hc-dark"]) {
+      const block = appCss.split(`:root[data-theme="${preset}"] {`)[1]?.split("}")[0] ?? "";
+      expect(block, preset).toMatch(/--shadow-kbd:\s*none;/);
+    }
   });
 });
 

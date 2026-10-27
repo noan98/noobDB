@@ -283,6 +283,8 @@ const config = defineConfig({
         md: { value: "var(--shadow-md)" },
         lg: { value: "var(--shadow-lg)" },
         xl: { value: "var(--shadow-xl)" },
+        // キーキャップ (Kbd) の立体感 (#1865)。
+        kbd: { value: "var(--shadow-kbd)" },
         // レイヤ別エレベーション。`shadow="elevationModal"` のように参照する。
         elevationRaised: { value: "var(--elevation-raised)" },
         elevationPopover: { value: "var(--elevation-popover)" },
