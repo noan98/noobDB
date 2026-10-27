@@ -491,7 +491,7 @@ fn build_table_diff(
                 let c = c.trim();
                 renames
                     .iter()
-                    .find(|(_, new)| new == c)
+                    .find(|(_, new)| new.eq_ignore_ascii_case(c))
                     .map_or_else(|| c.to_string(), |(old, _)| old.clone())
             })
             .collect();
@@ -769,6 +769,7 @@ pub async fn load_snapshot(
         }],
         warnings: Vec::new(),
         indexes_compared: false,
+        objects: Default::default(),
     };
     attach_sqlite_rebuild_context(
         &mut diff,
@@ -957,6 +958,33 @@ mod tests {
         );
         assert!(
             plan.sql.contains("SELECT \"id\", \"name\", \"qty\" FROM"),
+            "{}",
+            plan.sql
+        );
+    }
+
+    #[test]
+    fn added_foreign_key_columns_are_translated_back_ignoring_case() {
+        let mut edit = SqliteRebuildEdit {
+            columns: vec![
+                keep("id", "INTEGER", true, None),
+                keep("name", "TEXT", false, None),
+                keep("qty", "TEXT", false, Some("'0'")),
+            ],
+            added_foreign_keys: vec![RebuildForeignKey {
+                name: None,
+                columns: vec!["TITLE".into()],
+                ref_table: "owners".into(),
+                ref_columns: vec!["name".into()],
+                on_delete: None,
+                on_update: None,
+            }],
+            ..Default::default()
+        };
+        edit.columns[1].name = "title".into();
+        let plan = plan_rebuild("t", &edit, base_snapshot()).unwrap();
+        assert!(
+            plan.sql.contains("FOREIGN KEY (\"name\") REFERENCES"),
             "{}",
             plan.sql
         );

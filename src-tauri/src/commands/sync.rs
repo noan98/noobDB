@@ -140,14 +140,24 @@ pub(crate) async fn apply_sqlite_table_rebuild_inner(
         .get(&session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    // このコマンドは SQLite 専用。他ドライバへは流さない (再作成 SQL は SQLite 方言)。
+    if session.conn.driver_kind() != crate::db::DriverKind::Sqlite {
+        return Err(AppError::InvalidInput(
+            "table rebuild is only available for SQLite".into(),
+        ));
+    }
+    // 空の文の拒否は履歴の対象外にするため、ここで先に判定する。
+    if statements.is_empty() {
+        return Err(AppError::InvalidInput(
+            "no statements selected to apply".into(),
+        ));
+    }
     let sql_text = statements.join("\n");
     let started = std::time::Instant::now();
     let result = apply_sync_sql_inner(state, session_id, database.clone(), statements).await;
-    // 実行に入る前に拒否されたもの (read_only・空) は書き込みではないので履歴に残さない。
-    if !matches!(
-        result,
-        Err(AppError::ReadOnly(_)) | Err(AppError::InvalidInput(_))
-    ) {
+    // read_only で実行前に拒否されたものだけ履歴に残さない。コミット前の外部キー検査などの
+    // 失敗 (ロールバック) は実行を試みた書き込みなので、成功と同じく残す。
+    if !matches!(result, Err(AppError::ReadOnly(_))) {
         crate::commands::query::record_write_history(
             &session,
             sql_text,

@@ -1264,6 +1264,29 @@ pub mod __test_api {
         .await
     }
 
+    /// `apply_sqlite_table_rebuild` の中核を Tauri ランタイム無しで駆動する (#1888)。
+    pub async fn apply_sqlite_table_rebuild_via_command(
+        state: &AppState,
+        session_id: &str,
+        database: Option<&str>,
+        statements: Vec<String>,
+    ) -> crate::error::Result<u64> {
+        crate::commands::sync::apply_sqlite_table_rebuild_inner(
+            state,
+            session_id.to_string(),
+            database.map(str::to_string),
+            statements,
+        )
+        .await
+    }
+
+    /// 履歴ストアを SQL 文字列で検索する (#1888 の履歴記録テスト用)。
+    pub async fn search_history_via_store(search: &str) -> Vec<HistoryEntry> {
+        crate::history::store::list(None, 50, Some(search), None, None, None)
+            .await
+            .unwrap_or_default()
+    }
+
     /// Drives the `apply_privilege_sql` IPC command's core path (session
     /// lookup + read-only guard + empty-statement guard + transactional
     /// apply) without a Tauri runtime, mirroring

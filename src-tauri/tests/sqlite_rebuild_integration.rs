@@ -673,3 +673,117 @@ async fn a_trigger_on_another_table_that_uses_the_table_is_reported_before_runni
     );
     let _ = std::fs::remove_file(&path);
 }
+
+/// 履歴に残る SQL を一意にするため、再作成 SQL の先頭に付けるコメント。
+fn marked(tag: &str, sql: &str) -> String {
+    format!("-- {tag}-{}\n{sql}", std::process::id())
+}
+
+async fn recorded_state(tag: &str, setup_sql: &[&str]) -> (AppState, String, std::path::PathBuf) {
+    let (conn, path) = temp_conn(tag).await;
+    for s in setup_sql {
+        exec(&conn, s).await;
+    }
+    let opts = t::sqlite_options(path.to_str().unwrap());
+    let state = AppState::default();
+    let sid = state
+        .insert(t::make_recording_session(tag, conn, opts))
+        .await;
+    (state, sid, path)
+}
+
+#[tokio::test]
+async fn the_rebuild_command_records_history_on_success() {
+    let tag = "histok";
+    let (state, sid, path) =
+        recorded_state(tag, &["CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)"]).await;
+    let edit = SqliteRebuildEdit {
+        columns: vec![
+            col("id", "INTEGER", false, None),
+            col("v", "TEXT", true, None),
+        ],
+        ..Default::default()
+    };
+    let session = state.get(&sid).await.unwrap();
+    let plan = t::plan_table_rebuild(&session.conn, "main", "t", &edit)
+        .await
+        .unwrap();
+    let sql = marked(tag, &plan.sql);
+    t::apply_sqlite_table_rebuild_via_command(&state, &sid, Some("main"), vec![sql])
+        .await
+        .expect("apply");
+    let hits = t::search_history_via_store(&format!("{tag}-{}", std::process::id())).await;
+    assert!(hits.iter().any(|h| h.status == "ok"), "{hits:?}");
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn the_rebuild_command_records_history_when_the_fk_check_rolls_back() {
+    let tag = "histfk";
+    let (state, sid, path) = recorded_state(
+        tag,
+        &[
+            "CREATE TABLE owners (id INTEGER PRIMARY KEY)",
+            "CREATE TABLE pets (id INTEGER PRIMARY KEY, owner INTEGER)",
+            "INSERT INTO pets VALUES (1, 99)",
+        ],
+    )
+    .await;
+    let edit = SqliteRebuildEdit {
+        columns: vec![
+            col("id", "INTEGER", false, None),
+            col("owner", "INTEGER", false, None),
+        ],
+        added_foreign_keys: vec![RebuildForeignKey {
+            name: None,
+            columns: vec!["owner".into()],
+            ref_table: "owners".into(),
+            ref_columns: vec!["id".into()],
+            on_delete: None,
+            on_update: None,
+        }],
+        ..Default::default()
+    };
+    let session = state.get(&sid).await.unwrap();
+    let plan = t::plan_table_rebuild(&session.conn, "main", "pets", &edit)
+        .await
+        .unwrap();
+    let sql = marked(tag, &plan.sql);
+    let res =
+        t::apply_sqlite_table_rebuild_via_command(&state, &sid, Some("main"), vec![sql]).await;
+    assert!(res.is_err(), "{res:?}");
+    assert_eq!(
+        scalar(
+            &session.conn,
+            "SELECT count(*) FROM pragma_foreign_key_list('pets')"
+        )
+        .await,
+        "0"
+    );
+    let hits = t::search_history_via_store(&format!("{tag}-{}", std::process::id())).await;
+    assert!(hits.iter().any(|h| h.status == "error"), "{hits:?}");
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn the_rebuild_command_rejects_read_only_and_empty_without_history() {
+    let tag = "histro";
+    let (conn, path) = temp_conn(tag).await;
+    exec(&conn, "CREATE TABLE t (id INTEGER PRIMARY KEY)").await;
+    let opts = t::sqlite_options(path.to_str().unwrap());
+    let mut session = t::make_recording_session(tag, conn, opts);
+    session.read_only = true;
+    let state = AppState::default();
+    let sid = state.insert(session).await;
+    let sql = marked(tag, "DROP TABLE t");
+    let res = t::apply_sqlite_table_rebuild_via_command(&state, &sid, None, vec![sql]).await;
+    assert!(matches!(res, Err(AppError::ReadOnly(_))), "{res:?}");
+    let hits = t::search_history_via_store(&format!("{tag}-{}", std::process::id())).await;
+    assert!(hits.is_empty(), "{hits:?}");
+    let _ = std::fs::remove_file(&path);
+
+    let (state, sid, path) = recorded_state("histempty", &[]).await;
+    let res = t::apply_sqlite_table_rebuild_via_command(&state, &sid, None, vec![]).await;
+    assert!(matches!(res, Err(AppError::InvalidInput(_))), "{res:?}");
+    let _ = std::fs::remove_file(&path);
+}
