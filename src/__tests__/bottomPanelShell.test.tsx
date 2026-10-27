@@ -64,6 +64,36 @@ describe("BottomPanel シェル (#1112)", () => {
     expect(tabs[1]).toHaveAttribute("aria-selected", "false");
   });
 
+  it("滑るインジケータは選択中のタブの中に 1 つだけ載り、選択が移ると移動先へ載る (#1877)", () => {
+    const { rerender } = renderWithProviders(
+      <BottomPanel
+        tab="advisor"
+        tabs={["advisor", "inspector"]}
+        label={label}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      >
+        <div />
+      </BottomPanel>,
+    );
+    const indicators = () => screen.getAllByTestId("bottom-panel-tab-indicator");
+    expect(indicators()).toHaveLength(1);
+    expect(screen.getAllByRole("tab")[0]).toContainElement(indicators()[0]);
+    rerender(
+      <BottomPanel
+        tab="inspector"
+        tabs={["advisor", "inspector"]}
+        label={label}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      >
+        <div />
+      </BottomPanel>,
+    );
+    expect(indicators()).toHaveLength(1);
+    expect(screen.getAllByRole("tab")[1]).toContainElement(indicators()[0]);
+  });
+
   it("選択中のタブだけがタブ順に乗る (ローピング tabindex)", () => {
     renderShell({ tab: "inspector" });
     const tabs = screen.getAllByRole("tab");
