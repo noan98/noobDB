@@ -4623,3 +4623,82 @@ async fn mysql_list_table_triggers_when_env_set() {
         .execute("DROP TABLE IF EXISTS noobdb_trg_t", Some(&db))
         .await;
 }
+
+/// #1868: `list_table_partitions` が RANGE パーティション表の子 (境界・MAXVALUE) を返し、非分割表は `None`。
+/// パーティション単位の保守 / TRUNCATE / DROP の SQL がアプリの実行経路 (`execute`) でそのまま通る。
+#[tokio::test]
+async fn mysql_list_table_partitions_when_env_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let Some(db) = opts.database.clone() else {
+        eprintln!("skip: URL has no database");
+        return;
+    };
+    let conn = t::connect(&opts).await.expect("connect");
+    for tbl in ["noobdb_part_t", "noobdb_part_plain"] {
+        let _ = conn
+            .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
+            .await;
+    }
+    t::mysql_exec_text(
+        &opts,
+        "CREATE TABLE noobdb_part_t (id INT NOT NULL, y INT NOT NULL) \
+         PARTITION BY RANGE (y) (PARTITION p2025 VALUES LESS THAN (2026), \
+         PARTITION p2026 VALUES LESS THAN (2027), PARTITION pmax VALUES LESS THAN MAXVALUE)",
+    )
+    .await
+    .expect("create partitioned");
+    conn.execute("CREATE TABLE noobdb_part_plain (id INT)", Some(&db))
+        .await
+        .expect("create plain");
+    let got = conn
+        .list_table_partitions(&db, "noobdb_part_t")
+        .await
+        .expect("partitions")
+        .expect("is partitioned");
+    assert_eq!(got.method, "RANGE");
+    let view: Vec<(&str, &str)> = got
+        .partitions
+        .iter()
+        .map(|p| (p.name.as_str(), p.bound.as_str()))
+        .collect();
+    assert_eq!(
+        view,
+        vec![
+            ("p2025", "LESS THAN (2026)"),
+            ("p2026", "LESS THAN (2027)"),
+            ("pmax", "LESS THAN MAXVALUE"),
+        ]
+    );
+    assert!(conn
+        .list_table_partitions(&db, "noobdb_part_plain")
+        .await
+        .expect("plain")
+        .is_none());
+    // アプリと同じ run_query 経路 (`Connection::execute`) で流す。保守 3 種 + TRUNCATE / DROP。
+    for sql in [
+        "ALTER TABLE `noobdb_part_t` ANALYZE PARTITION `p2025`;",
+        "ALTER TABLE `noobdb_part_t` REBUILD PARTITION `p2025`;",
+        "ALTER TABLE `noobdb_part_t` CHECK PARTITION `p2025`;",
+        "ALTER TABLE `noobdb_part_t` TRUNCATE PARTITION `p2026`;",
+        "ALTER TABLE `noobdb_part_t` DROP PARTITION `p2025`;",
+    ] {
+        conn.execute(sql, Some(&db)).await.expect(sql);
+    }
+    let after = conn
+        .list_table_partitions(&db, "noobdb_part_t")
+        .await
+        .expect("after")
+        .expect("still partitioned");
+    let names: Vec<&str> = after.partitions.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, vec!["p2026", "pmax"]);
+    for tbl in ["noobdb_part_t", "noobdb_part_plain"] {
+        let _ = conn
+            .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
+            .await;
+    }
+    conn.close().await;
+}

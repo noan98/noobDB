@@ -6025,6 +6025,27 @@
       }
     ]
   },
+  "tablePartitions": {
+    "key": "created_at",
+    "method": "RANGE",
+    "partitions": [
+      {
+        "bound": "FOR VALUES FROM ('2026-01-01') TO ('2026-02-01')",
+        "depth": 0,
+        "is_default": false,
+        "is_partitioned": false,
+        "name": "events_2026_01",
+        "parent": null,
+        "parent_schema": null,
+        "row_estimate": 120,
+        "schema": "public",
+        "size_bytes": 8192,
+        "sub_partition_key": null
+      }
+    ],
+    "sub_key": null,
+    "sub_method": null
+  },
   "tableProfileOverview": {
     "columns": [
       {

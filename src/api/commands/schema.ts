@@ -8,6 +8,7 @@ import type {
   TableSchema,
   IndexInfo,
   TableExtrasInfo,
+  TablePartitions,
   TableTrigger,
   SchemaObject,
   RoutineSignature,
@@ -122,6 +123,11 @@ export const schemaCommands = {
   describeTableExtras: (sessionId: string, database: string, table: string) =>
     invoke<TableExtrasInfo>("describe_table_extras", { sessionId, database, table }).then((r) =>
       parseResponse(schemas.tableExtrasInfo, r, "describe_table_extras"),
+    ),
+  /** パーティション表なら子パーティション一覧 (境界・サイズ・行推定) とキーを取得する (#1868)。表が非分割なら null。SQLite は非対応 (エラー)。読み取りのみ。 */
+  listTablePartitions: (sessionId: string, database: string, table: string) =>
+    invoke<TablePartitions | null>("list_table_partitions", { sessionId, database, table }).then((r) =>
+      parseResponse(schemas.tablePartitionsOrNull, r, "list_table_partitions"),
     ),
   /** テーブルで発火するトリガーの一覧 (名前・タイミング・イベント・定義) を取得する (#1867)。読み取りのみ。 */
   listTableTriggers: (sessionId: string, database: string, table: string) =>

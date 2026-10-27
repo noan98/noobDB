@@ -718,6 +718,25 @@ fn build_fixtures() -> serde_json::Value {
             .into(),
         enabled: true,
     };
+    let table_partitions = t::TablePartitions {
+        method: "RANGE".into(),
+        key: "created_at".into(),
+        sub_method: None,
+        sub_key: None,
+        partitions: vec![t::TablePartition {
+            name: "events_2026_01".into(),
+            schema: Some("public".into()),
+            parent: None,
+            parent_schema: None,
+            depth: 0,
+            bound: "FOR VALUES FROM ('2026-01-01') TO ('2026-02-01')".into(),
+            size_bytes: Some(8192),
+            row_estimate: Some(120),
+            is_default: false,
+            is_partitioned: false,
+            sub_partition_key: None,
+        }],
+    };
     let table_diff = TableDiff {
         name: "users".into(),
         status: DiffStatus::Different,
@@ -2527,6 +2546,7 @@ fn build_fixtures() -> serde_json::Value {
         "indexInfo": index_info,
         "tableExtrasInfo": table_extras_info,
         "tableTrigger": table_trigger,
+        "tablePartitions": table_partitions,
         "schemaObject": schema_object,
         "routineSignature": routine_signature,
         "tableRowEstimate": table_row_estimate,

@@ -16,8 +16,8 @@ use crate::db::schema_insight::{
 use crate::db::sqlite_rebuild::{plan_table_rebuild, SqliteRebuildEdit, SqliteRebuildPlan};
 use crate::db::types::{
     CheckConstraintInfo, ForeignKey, GeneratedColumnInfo, IndexInfo, RoutineSignature,
-    SchemaObject, TableColumnInfo, TableComment, TableExtrasInfo, TableIndexes, TableRowEstimate,
-    TableSchema, TableTrigger,
+    SchemaObject, TableColumnInfo, TableComment, TableExtrasInfo, TableIndexes, TablePartitions,
+    TableRowEstimate, TableSchema, TableTrigger,
 };
 use crate::db::where_used::WhereUsedTarget;
 use crate::db::DriverKind;
@@ -225,6 +225,23 @@ pub async fn list_table_triggers(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     session.conn.list_table_triggers(&database, &table).await
+}
+
+/// パーティション表の子パーティション (境界・サイズ・行推定) とパーティションキーを返す (#1868)。
+/// パーティション表でなければ `None`。SQLite は非対応 (`InvalidInput`)。読み取り専用 introspection
+/// なので read_only セッションでも許可する。保守 / 削除の SQL は UI が組み立てて既存の `run_query` 経路で流す。
+#[tauri::command]
+pub async fn list_table_partitions(
+    session_id: String,
+    database: String,
+    table: String,
+    state: State<'_, AppState>,
+) -> Result<Option<TablePartitions>> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session.conn.list_table_partitions(&database, &table).await
 }
 
 #[tauri::command]

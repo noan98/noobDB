@@ -2507,6 +2507,107 @@ impl PostgresConn {
         Ok(out)
     }
 
+    /// `table` がパーティション表なら子パーティション一覧 (#1868)。`pg_partitioned_table` で親か
+    /// どうかを判定し (`pg_get_partkeydef` が方式とキー)、`pg_inherits` を再帰でたどってサブパーティション
+    /// まで深さ優先で返す。境界は `pg_get_expr(relpartbound)`、容量は `pg_total_relation_size`、行推定は
+    /// `reltuples` (未 ANALYZE は `n_live_tup` で補う)。
+    pub async fn list_table_partitions(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Option<super::types::TablePartitions>> {
+        // パーティション表は PostgreSQL 10 から。それ未満には `pg_get_partkeydef` が無いので問い合わせない。
+        let version_num: i32 = sqlx::query_scalar::<_, String>("SHOW server_version_num")
+            .fetch_one(&self.pool)
+            .await?
+            .trim()
+            .parse()
+            .unwrap_or(0);
+        if version_num < 100_000 {
+            return Ok(None);
+        }
+        let key_row: Option<PgRow> = sqlx::query(
+            r#"SELECT pg_get_partkeydef(c.oid)
+                 FROM pg_class c
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = 'p'"#,
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(key_row) = key_row else {
+            return Ok(None);
+        };
+        let keydef: String = key_row.try_get::<Option<String>, _>(0)?.unwrap_or_default();
+        let (method, key) = super::table_partitions::split_pg_partkeydef(&keydef);
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"WITH RECURSIVE tree AS (
+                 SELECT i.inhrelid AS oid, 0 AS depth, ARRAY[(CASE WHEN pg_get_expr(cc.relpartbound, cc.oid) = 'DEFAULT' THEN '1' ELSE '0' END) || cc.relname::text] AS path
+                   FROM pg_inherits i
+                   JOIN pg_class cc ON cc.oid = i.inhrelid
+                  WHERE i.inhparent = (SELECT c.oid FROM pg_class c
+                                         JOIN pg_namespace n ON n.oid = c.relnamespace
+                                        WHERE n.nspname = $1 AND c.relname = $2)
+                 UNION ALL
+                 SELECT i.inhrelid, t.depth + 1, t.path || ((CASE WHEN pg_get_expr(cc.relpartbound, cc.oid) = 'DEFAULT' THEN '1' ELSE '0' END) || cc.relname::text)
+                   FROM tree t
+                   JOIN pg_inherits i ON i.inhparent = t.oid
+                   JOIN pg_class cc ON cc.oid = i.inhrelid
+               )
+               SELECT c.relname::text,
+                      n.nspname::text,
+                      pp.relname::text,
+                      ppn.nspname::text,
+                      t.depth,
+                      pg_get_expr(c.relpartbound, c.oid),
+                      c.relkind::text,
+                      pg_total_relation_size(c.oid)::bigint,
+                      CASE WHEN c.reltuples > 0 THEN c.reltuples::bigint
+                           ELSE COALESCE(st.n_live_tup, CASE WHEN c.reltuples = 0 THEN 0 END) END::bigint,
+                      CASE WHEN c.relkind = 'p' THEN pg_get_partkeydef(c.oid) END
+                 FROM tree t
+                 JOIN pg_class c ON c.oid = t.oid
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                 JOIN pg_inherits ih ON ih.inhrelid = c.oid
+                 JOIN pg_class pp ON pp.oid = ih.inhparent
+                 JOIN pg_namespace ppn ON ppn.oid = pp.relnamespace
+                 LEFT JOIN pg_stat_user_tables st ON st.relid = c.oid
+                ORDER BY t.path"#,
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut partitions = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let depth: i32 = r.try_get(4)?;
+            let bound: String = r.try_get::<Option<String>, _>(5)?.unwrap_or_default();
+            let kind: String = r.try_get(6)?;
+            partitions.push(super::types::TablePartition {
+                name: r.try_get(0)?,
+                schema: Some(r.try_get(1)?),
+                parent: (depth > 0).then(|| r.try_get::<String, _>(2)).transpose()?,
+                parent_schema: (depth > 0).then(|| r.try_get::<String, _>(3)).transpose()?,
+                depth: u32::try_from(depth).unwrap_or(0),
+                is_default: bound.trim() == "DEFAULT",
+                bound,
+                size_bytes: r.try_get::<Option<i64>, _>(7)?,
+                row_estimate: r.try_get::<Option<i64>, _>(8)?.filter(|n| *n >= 0),
+                is_partitioned: kind == "p",
+                sub_partition_key: r.try_get::<Option<String>, _>(9)?,
+            });
+        }
+        super::table_partitions::roll_up_partition_totals(&mut partitions);
+        Ok(Some(super::types::TablePartitions {
+            method,
+            key,
+            sub_method: None,
+            sub_key: None,
+            partitions,
+        }))
+    }
+
     /// `schema` の全テーブルの CHECK 制約と生成列の式 (#1837、スキーマ比較用)。
     pub async fn ddl_extras_for_database(
         &self,

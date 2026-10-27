@@ -2632,6 +2632,58 @@ impl MySqlConn {
         Ok(out)
     }
 
+    /// `table` がパーティション表なら子パーティション一覧 (#1868)。`information_schema.PARTITIONS` を
+    /// 読み、サブパーティションの入れ子への畳み込みは純層 (`table_partitions`) が行う。非分割表は
+    /// `PARTITION_NAME` が NULL の 1 行だけなので除いて `None`。
+    pub async fn list_table_partitions(
+        &self,
+        db: &str,
+        table: &str,
+    ) -> Result<Option<super::types::TablePartitions>> {
+        // 文字列列は CAST して照合順序・バイナリ扱いの差を吸収する。BIGINT UNSIGNED は符号付きへ。
+        let rows: Vec<MySqlRow> = sqlx::query(
+            "SELECT CAST(PARTITION_NAME AS CHAR), CAST(SUBPARTITION_NAME AS CHAR), \
+                    CAST(PARTITION_METHOD AS CHAR), CAST(SUBPARTITION_METHOD AS CHAR), \
+                    CAST(PARTITION_EXPRESSION AS CHAR), CAST(SUBPARTITION_EXPRESSION AS CHAR), \
+                    CAST(PARTITION_DESCRIPTION AS CHAR), \
+                    CAST(TABLE_ROWS AS SIGNED), CAST(DATA_LENGTH AS SIGNED), CAST(INDEX_LENGTH AS SIGNED) \
+               FROM information_schema.PARTITIONS \
+              WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND PARTITION_NAME IS NOT NULL \
+              ORDER BY PARTITION_ORDINAL_POSITION, SUBPARTITION_ORDINAL_POSITION",
+        )
+        .bind(db)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        let opt_text = |r: &MySqlRow, i: usize| -> Option<String> {
+            r.try_get::<Option<String>, _>(i)
+                .ok()
+                .flatten()
+                .or_else(|| {
+                    r.try_get::<Option<Vec<u8>>, _>(i)
+                        .ok()
+                        .flatten()
+                        .and_then(|b| String::from_utf8(b).ok())
+                })
+        };
+        let parsed: Vec<super::table_partitions::MysqlPartitionRow> = rows
+            .iter()
+            .map(|r| super::table_partitions::MysqlPartitionRow {
+                partition_name: opt_text(r, 0).unwrap_or_default(),
+                subpartition_name: opt_text(r, 1),
+                method: opt_text(r, 2).unwrap_or_default(),
+                sub_method: opt_text(r, 3),
+                expression: opt_text(r, 4),
+                sub_expression: opt_text(r, 5),
+                description: opt_text(r, 6),
+                rows: r.try_get::<Option<i64>, _>(7).ok().flatten(),
+                data_bytes: r.try_get::<Option<i64>, _>(8).ok().flatten(),
+                index_bytes: r.try_get::<Option<i64>, _>(9).ok().flatten(),
+            })
+            .collect();
+        Ok(super::table_partitions::fold_mysql_partitions(&parsed))
+    }
+
     pub async fn list_indexes(&self, db: &str, table: &str) -> Result<Vec<IndexInfo>> {
         // information_schema.STATISTICS has one row per (index, column). Order by
         // SEQ_IN_INDEX so composite indexes keep declaration order. NON_UNIQUE=0
