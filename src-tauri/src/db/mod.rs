@@ -19,6 +19,8 @@ pub mod inspector;
 pub mod js_compat;
 pub mod masking;
 pub mod mysql;
+/// 非テーブルオブジェクト (ビュー / ルーチン / トリガー / シーケンス) のスキーマ比較 (#1879)。
+pub mod object_diff;
 /// グローバルオブジェクト検索の索引とスコアリング (#1261)。
 pub mod object_search;
 pub mod postgres;
@@ -1445,6 +1447,28 @@ impl Connection {
             Connection::MySql(c) => c.schema_objects(db).await,
             Connection::Postgres(c) => c.schema_objects(db).await,
             Connection::Sqlite(c) => c.schema_objects(db).await,
+        }
+    }
+
+    /// 独立したシーケンスの (名前, `CREATE SEQUENCE` 文) (スキーマ比較, #1879)。シーケンスを
+    /// 独立したオブジェクトとして持つのは PostgreSQL だけ。MySQL (`AUTO_INCREMENT`) と
+    /// SQLite (`AUTOINCREMENT`) は列の属性なので空を返す。
+    pub async fn sequence_definitions(&self, db: &str) -> Result<Vec<(String, String)>> {
+        match self {
+            Connection::Postgres(c) => c.sequence_definitions(db).await,
+            Connection::MySql(_) | Connection::Sqlite(_) => Ok(Vec::new()),
+        }
+    }
+
+    /// 関数 / プロシージャの引数並び (oid をキー)。オーバーロードの区別用で PostgreSQL だけ
+    /// (MySQL / SQLite は名前で一意か、そもそもルーチンが無い) (#1879)。
+    pub async fn routine_identity_arguments(
+        &self,
+        db: &str,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        match self {
+            Connection::Postgres(c) => c.routine_identity_arguments(db).await,
+            Connection::MySql(_) | Connection::Sqlite(_) => Ok(std::collections::HashMap::new()),
         }
     }
 

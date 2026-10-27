@@ -1511,6 +1511,33 @@ export interface SchemaDiff {
   warnings: string[];
   /** インデックスの差分を比較済みか (#1625)。 */
   indexes_compared?: boolean;
+  /** ビュー / ルーチン / トリガー / シーケンス / マテビューの差分 (#1879)。 */
+  objects?: ObjectComparison;
+}
+
+/** 非テーブルオブジェクトの比較結果 (#1879)。 */
+export interface ObjectComparison {
+  /** 比較したか。取得に失敗したときは false (差分なしに見せない)。 */
+  compared: boolean;
+  items: ObjectDiff[];
+  /** このドライバに存在しない種別 (SQLite のルーチンなど)。「対象外」と表示する。 */
+  unsupported_kinds: string[];
+}
+
+/** 1 つの非テーブルオブジェクトの差分 (#1879)。 */
+export interface ObjectDiff {
+  /** `view` / `materialized_view` / `function` / `procedure` / `trigger` / `sequence`。 */
+  kind: string;
+  name: string;
+  /** PostgreSQL の関数 / プロシージャの引数並び (オーバーロードの識別)。 */
+  signature: string | null;
+  /** トリガーの対象テーブル。 */
+  table: string | null;
+  status: DiffStatus;
+  /** source 側の定義 (source_only / different のとき)。 */
+  source_definition: string | null;
+  /** target 側の定義 (target_only / different のとき)。 */
+  target_definition: string | null;
 }
 
 /**
@@ -1746,6 +1773,9 @@ export type SyncKind =
   | "drop_foreign_key"
   | "add_check"
   | "drop_check"
+  | "create_object"
+  | "replace_object"
+  | "drop_object"
   | "rebuild_table"
   | "insert_row"
   | "update_row"

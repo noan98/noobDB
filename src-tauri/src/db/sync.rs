@@ -55,6 +55,13 @@ pub enum SyncKind {
     AddCheck,
     /// 既存テーブルの CHECK 制約の削除 (#1837)。
     DropCheck,
+    /// ビュー / マテビュー / ルーチン / トリガー / シーケンスの作成 (#1879)。
+    CreateObject,
+    /// 定義が変わった非テーブルオブジェクトの置き換え (#1879)。ビュー等は DROP + CREATE、
+    /// PostgreSQL の関数は `CREATE OR REPLACE`、シーケンスは `ALTER SEQUENCE`。
+    ReplaceObject,
+    /// target にだけある非テーブルオブジェクトの削除 (#1879)。
+    DropObject,
     /// SQLite の列変更・外部キー変更のためのテーブル再作成 (新表 → コピー → DROP →
     /// RENAME → インデックス / トリガーの作り直し)。1 つの `SyncStatement` に複数文を持つ
     /// (#1625)。
@@ -81,6 +88,9 @@ impl SyncKind {
             SyncKind::DropIndex => 4,
             SyncKind::AddIndex => 5,
             SyncKind::AddForeignKey | SyncKind::AddCheck => 6,
+            // 非テーブルオブジェクトの文は `generate_sync_sql` が並べ方を決めて差し込む
+            // (表の作成後・列 / 表の削除前)。この値では並べ替えない。
+            SyncKind::CreateObject | SyncKind::ReplaceObject | SyncKind::DropObject => 6,
             SyncKind::DropColumn => 7,
             SyncKind::DropTable => 8,
             SyncKind::InsertRow => 9,
@@ -229,10 +239,95 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
         })
     });
 
+    object_statements(diff, allow_destructive, &mut statements, &mut warnings);
+
     SyncPlan {
         statements,
         warnings,
     }
+}
+
+/// 非テーブルオブジェクトの差分を同期文にして `statements` へ差し込む (#1879)。
+///
+/// 差し込み位置は、表の作成・列の追加と変更・索引・外部キーの後ろで、列と表の DROP の前
+/// (新しい列を使うビューは作成後に、消す列を使うビュー / トリガーは先に置き換える・消す)。
+/// シーケンスの作成だけは表の既定値から参照されるので先頭に置く。作成・置換は
+/// 関数 → プロシージャ → ビュー → マテビュー → トリガーの順 (ビュー同士は参照順)、削除は
+/// 逆順で、`allow_destructive` が無いと削除は出さない。
+fn object_statements(
+    diff: &SchemaDiff,
+    allow_destructive: bool,
+    statements: &mut Vec<SyncStatement>,
+    warnings: &mut Vec<String>,
+) {
+    use super::object_diff::{
+        create_object_sql, drop_object_sql, order_for_create, replace_object_sql,
+    };
+    let driver = diff.target_driver;
+    let items = &diff.objects.items;
+    let pick = |status: DiffStatus| -> Vec<&super::object_diff::ObjectDiff> {
+        items.iter().filter(|o| o.status == status).collect()
+    };
+    let mk = |o: &super::object_diff::ObjectDiff, sql: String, kind: SyncKind, destructive| {
+        SyncStatement {
+            sql,
+            table: o.name.clone(),
+            kind,
+            destructive,
+        }
+    };
+
+    let mut early: Vec<SyncStatement> = Vec::new();
+    let mut late: Vec<SyncStatement> = Vec::new();
+    for o in order_for_create(&pick(DiffStatus::SourceOnly)) {
+        let Some(def) = o.source_definition.as_deref() else {
+            continue;
+        };
+        let stmt = mk(o, create_object_sql(def), SyncKind::CreateObject, false);
+        if o.kind == "sequence" {
+            early.push(stmt);
+        } else {
+            late.push(stmt);
+        }
+    }
+    for o in order_for_create(&pick(DiffStatus::Different)) {
+        let Some(def) = o.source_definition.as_deref() else {
+            continue;
+        };
+        // MySQL のルーチン / トリガーは DROP + CREATE で、DDL が暗黙コミットされるため CREATE が
+        // 失敗すると元の定義が戻らない。破壊的として扱い、許可がなければ出さずに警告する。
+        let non_atomic = driver == DriverKind::Mysql
+            && matches!(o.kind.as_str(), "procedure" | "function" | "trigger");
+        if non_atomic && !allow_destructive {
+            warnings.push(format!(
+                "{} {}: MySQL はルーチン・トリガーを DROP + CREATE で置き換えます (DDL は暗黙コミットされ、CREATE に失敗すると元の定義が失われます)。「破壊的な操作を許可」を有効にすると出力します",
+                o.kind, o.name
+            ));
+            continue;
+        }
+        let sql = replace_object_sql(driver, o, def);
+        late.push(mk(o, sql, SyncKind::ReplaceObject, non_atomic));
+    }
+    if allow_destructive {
+        let mut drops = order_for_create(&pick(DiffStatus::TargetOnly));
+        drops.reverse();
+        for o in drops {
+            late.push(mk(
+                o,
+                drop_object_sql(driver, o),
+                SyncKind::DropObject,
+                true,
+            ));
+        }
+    }
+
+    // 前: シーケンスの作成。後: それ以外 (DropColumn より前に差し込む)。
+    let at = statements
+        .iter()
+        .position(|s| s.kind.order() >= SyncKind::DropColumn.order())
+        .unwrap_or(statements.len());
+    statements.splice(at..at, late);
+    statements.splice(0..0, early);
 }
 
 /// SQLite で target のみの表を `DROP TABLE` すると、残る表の ON DELETE CASCADE / SET NULL /
@@ -1848,6 +1943,7 @@ mod tests {
             tables,
             warnings: Vec::new(),
             indexes_compared: false,
+            objects: Default::default(),
         }
     }
 
@@ -2581,6 +2677,7 @@ mod tests {
                 tables: vec![table],
                 warnings: Vec::new(),
                 indexes_compared: false,
+                objects: Default::default(),
             };
             let plan = generate_sync_sql(&d, false);
             assert_eq!(plan.statements.len(), 1, "{src_driver:?}");
@@ -3638,5 +3735,243 @@ mod tests {
             interleave_hidden_generated(DriverKind::Sqlite, vec!["\"id\" INTEGER".into()], &[&g]);
         assert_eq!(lines.len(), 2);
         assert!(lines[1].starts_with("\"total\" REAL"));
+    }
+}
+
+#[cfg(test)]
+mod object_sync_tests {
+    use super::*;
+    use crate::db::diff::TableDiff;
+    use crate::db::object_diff::{ObjectComparison, ObjectDiff};
+
+    fn obj(kind: &str, name: &str, status: DiffStatus, src: Option<&str>) -> ObjectDiff {
+        ObjectDiff {
+            kind: kind.into(),
+            name: name.into(),
+            signature: None,
+            table: None,
+            status,
+            source_definition: src.map(str::to_string),
+            target_definition: (status == DiffStatus::TargetOnly
+                || status == DiffStatus::Different)
+                .then(|| "CREATE ... (target)".to_string()),
+        }
+    }
+
+    fn diff(driver: DriverKind, tables: Vec<TableDiff>, items: Vec<ObjectDiff>) -> SchemaDiff {
+        SchemaDiff {
+            source_driver: driver,
+            target_driver: driver,
+            tables,
+            warnings: Vec::new(),
+            indexes_compared: true,
+            objects: ObjectComparison {
+                compared: true,
+                items,
+                unsupported_kinds: Vec::new(),
+            },
+        }
+    }
+
+    fn kinds(plan: &SyncPlan) -> Vec<SyncKind> {
+        plan.statements.iter().map(|s| s.kind).collect()
+    }
+
+    #[test]
+    fn mysql_creates_views_and_replaces_views_atomically() {
+        let d = diff(
+            DriverKind::Mysql,
+            vec![],
+            vec![
+                obj(
+                    "view",
+                    "v_new",
+                    DiffStatus::SourceOnly,
+                    Some("CREATE VIEW `v_new` AS select 1"),
+                ),
+                obj(
+                    "view",
+                    "v_chg",
+                    DiffStatus::Different,
+                    Some("CREATE VIEW `v_chg` AS select 2"),
+                ),
+            ],
+        );
+        let plan = generate_sync_sql(&d, false);
+        assert_eq!(
+            kinds(&plan),
+            vec![SyncKind::CreateObject, SyncKind::ReplaceObject]
+        );
+        assert_eq!(plan.statements[0].sql, "CREATE VIEW `v_new` AS select 1");
+        assert_eq!(
+            plan.statements[1].sql,
+            "CREATE OR REPLACE VIEW `v_chg` AS select 2"
+        );
+        assert!(plan.statements.iter().all(|s| !s.destructive));
+    }
+
+    #[test]
+    fn mysql_routine_replace_needs_destructive_and_warns_otherwise() {
+        let d = diff(
+            DriverKind::Mysql,
+            vec![],
+            vec![obj(
+                "procedure",
+                "p",
+                DiffStatus::Different,
+                Some("CREATE PROCEDURE `p`() SELECT 1"),
+            )],
+        );
+        let off = generate_sync_sql(&d, false);
+        assert!(off.statements.is_empty());
+        assert!(
+            off.warnings.iter().any(|w| w.contains("procedure p")),
+            "{:?}",
+            off.warnings
+        );
+        let on = generate_sync_sql(&d, true);
+        assert_eq!(on.statements.len(), 1);
+        assert!(on.statements[0].destructive);
+        assert_eq!(
+            on.statements[0].sql,
+            "DROP PROCEDURE `p`;\nCREATE PROCEDURE `p`() SELECT 1"
+        );
+    }
+
+    #[test]
+    fn target_only_objects_are_dropped_only_when_destructive_is_allowed() {
+        let d = diff(
+            DriverKind::Sqlite,
+            vec![],
+            vec![
+                obj("trigger", "t_old", DiffStatus::TargetOnly, None),
+                obj("view", "v_old", DiffStatus::TargetOnly, None),
+            ],
+        );
+        assert!(generate_sync_sql(&d, false).statements.is_empty());
+        let plan = generate_sync_sql(&d, true);
+        // 依存の逆順: トリガー → ビュー。
+        let sqls: Vec<&str> = plan.statements.iter().map(|s| s.sql.as_str()).collect();
+        assert_eq!(sqls, vec!["DROP TRIGGER \"t_old\"", "DROP VIEW \"v_old\""]);
+        assert!(plan
+            .statements
+            .iter()
+            .all(|s| s.destructive && s.kind == SyncKind::DropObject));
+    }
+
+    #[test]
+    fn objects_are_placed_after_table_creation_and_before_table_drops() {
+        let tables = vec![
+            TableDiff {
+                name: "new_t".into(),
+                status: DiffStatus::SourceOnly,
+                columns: vec![crate::db::diff::ColumnDiff {
+                    name: "id".into(),
+                    status: DiffStatus::SourceOnly,
+                    source: Some(TableColumnInfo {
+                        name: "id".into(),
+                        data_type: "int".into(),
+                        nullable: false,
+                        key: String::new(),
+                        default: None,
+                        extra: String::new(),
+                        referenced_table: None,
+                        referenced_column: None,
+                        comment: None,
+                    }),
+                    target: None,
+                    changed_fields: vec![],
+                }],
+                ..Default::default()
+            },
+            TableDiff {
+                name: "old_t".into(),
+                status: DiffStatus::TargetOnly,
+                ..Default::default()
+            },
+        ];
+        let d = diff(
+            DriverKind::Postgres,
+            tables,
+            vec![
+                obj(
+                    "view",
+                    "v",
+                    DiffStatus::SourceOnly,
+                    Some("CREATE VIEW \"v\" AS\nSELECT id FROM new_t"),
+                ),
+                obj("trigger", "trg", DiffStatus::TargetOnly, None),
+                obj(
+                    "sequence",
+                    "seq",
+                    DiffStatus::SourceOnly,
+                    Some("CREATE SEQUENCE \"seq\" AS bigint"),
+                ),
+            ],
+        );
+        let plan = generate_sync_sql(&d, true);
+        assert_eq!(
+            kinds(&plan),
+            vec![
+                SyncKind::CreateObject, // sequence は表より先
+                SyncKind::CreateTable,
+                SyncKind::CreateObject, // view
+                SyncKind::DropObject,   // trigger
+                SyncKind::DropTable,
+            ]
+        );
+        assert!(plan.statements[0].sql.starts_with("CREATE SEQUENCE"));
+    }
+
+    #[test]
+    fn postgres_replace_uses_single_statement_forms() {
+        let mut f = obj(
+            "function",
+            "f",
+            DiffStatus::Different,
+            Some("CREATE OR REPLACE FUNCTION f() RETURNS int AS $$ SELECT 1 $$ LANGUAGE sql"),
+        );
+        f.signature = Some(String::new());
+        let d = diff(
+            DriverKind::Postgres,
+            vec![],
+            vec![
+                f,
+                obj(
+                    "sequence",
+                    "s",
+                    DiffStatus::Different,
+                    Some("CREATE SEQUENCE \"s\" AS bigint INCREMENT BY 5"),
+                ),
+                obj(
+                    "view",
+                    "v",
+                    DiffStatus::Different,
+                    Some("CREATE VIEW \"v\" AS\nSELECT 2"),
+                ),
+            ],
+        );
+        let plan = generate_sync_sql(&d, false);
+        assert_eq!(plan.statements.len(), 3);
+        for s in &plan.statements {
+            assert_eq!(s.kind, SyncKind::ReplaceObject);
+            assert!(!s.destructive, "{}", s.sql);
+        }
+        let sqls: Vec<&str> = plan.statements.iter().map(|s| s.sql.as_str()).collect();
+        assert!(sqls
+            .iter()
+            .any(|s| s.starts_with("CREATE OR REPLACE FUNCTION f()")));
+        assert!(sqls.contains(&"ALTER SEQUENCE \"s\" AS bigint INCREMENT BY 5"));
+        assert!(sqls.iter().any(|s| s.starts_with("DO $noobdb$")));
+    }
+
+    #[test]
+    fn same_objects_produce_no_statements() {
+        let d = diff(
+            DriverKind::Sqlite,
+            vec![],
+            vec![obj("view", "v", DiffStatus::Same, None)],
+        );
+        assert!(generate_sync_sql(&d, true).statements.is_empty());
     }
 }

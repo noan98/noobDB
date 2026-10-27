@@ -16,6 +16,11 @@ const labels: SchemaCompareReportLabels = {
   statusCol: "s",
   detailCol: "d",
   identical: "identical",
+  objectsHeading: "Objects",
+  objectCol: "o",
+  objectKind: (k) => `K:${k}`,
+  objectsNotCompared: "not compared",
+  objectsIdentical: "objects identical",
   planHeading: "Plan",
   planNote: "note",
   noStatements: "none",
@@ -97,5 +102,58 @@ describe("schemaCompareReportMarkdown (#1624)", () => {
       labels,
     });
     expect(md).toContain("````sql");
+  });
+
+  it("非テーブルオブジェクトの節を出す (#1879)", () => {
+    const md = schemaCompareReportMarkdown({
+      source: "a",
+      target: "b",
+      diff: {
+        ...diff,
+        objects: {
+          compared: true,
+          unsupported_kinds: [],
+          items: [
+            {
+              kind: "function",
+              name: "f",
+              signature: "a integer",
+              table: null,
+              status: "different",
+              source_definition: "CREATE FUNCTION f",
+              target_definition: "CREATE FUNCTION f ",
+            },
+            {
+              kind: "trigger",
+              name: "t",
+              signature: null,
+              table: "orders",
+              status: "same",
+              source_definition: null,
+              target_definition: null,
+            },
+          ],
+        },
+      },
+      plan: null,
+      hideSame: true,
+      labels,
+    });
+    expect(md).toContain("## Objects");
+    expect(md).toContain("| K:function f(a integer) | diff |  |");
+    expect(md).not.toContain("K:trigger");
+  });
+
+  it("オブジェクトを取得できなかったときは「差分なし」にせず未比較を出す (#1879)", () => {
+    const md = schemaCompareReportMarkdown({
+      source: "a",
+      target: "b",
+      diff: { ...diff, objects: { compared: false, items: [], unsupported_kinds: [] } },
+      plan: null,
+      hideSame: false,
+      labels,
+    });
+    expect(md).toContain("not compared");
+    expect(md).not.toContain("objects identical");
   });
 });

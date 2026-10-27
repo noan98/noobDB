@@ -107,11 +107,42 @@ pub(crate) async fn compare_schema_core(
         ));
     }
 
-    let source_tables = collect_table_columns(source, source_database).await?;
-    let target_tables = collect_table_columns(target, target_database).await?;
+    let mut source_tables = collect_table_columns(source, source_database).await?;
+    let mut target_tables = collect_table_columns(target, target_database).await?;
+
+    // ビュー / マテビュー等の非テーブルオブジェクト (#1879)。テーブル一覧にはビューも並ぶので、
+    // 定義で比べるオブジェクト側へ寄せて、表の差分と二重に出さない (ビューに CREATE TABLE を
+    // 出さないため)。取得に失敗したときは従来どおり表の一覧のまま、比較済みの印を立てない。
+    let objects = collect_object_comparison(
+        source,
+        source_database,
+        target,
+        target_database,
+        &mut source_tables,
+        &mut target_tables,
+    )
+    .await;
 
     let mut diff =
         compute_schema_diff(source_driver, target_driver, &source_tables, &target_tables);
+    match objects {
+        Ok(found) => {
+            diff.objects = found.comparison;
+            diff.warnings.extend(found.warnings);
+        }
+        Err(e) => {
+            tracing::warn!(
+                kind = e.kind(),
+                "schema compare: could not load schema objects"
+            );
+            diff.objects.unsupported_kinds =
+                crate::db::object_diff::unsupported_object_kinds(source_driver);
+            diff.warnings.push(
+                "ビュー・ルーチン・トリガー・シーケンスを取得できなかったため、それらの差分は比較していません。"
+                    .to_string(),
+            );
+        }
+    }
     // 外部キーは CREATE TABLE 同期 (source 側)・DROP TABLE の順序 (target 側)・既存表の
     // 外部キー差分 (#1625) に使うので、両側を 1 度ずつ取る。取得に失敗しても比較自体は
     // 妨げない (その分の情報が無い計画になる)。
@@ -256,6 +287,162 @@ pub(crate) async fn compare_schema_core(
         }
     }
     Ok(diff)
+}
+
+/// 非テーブルオブジェクトの比較結果と、取得時の注意 (#1879)。
+struct FoundObjects {
+    comparison: crate::db::object_diff::ObjectComparison,
+    warnings: Vec<String>,
+}
+
+/// 片側のオブジェクト一覧と定義本文。
+struct SideObjects {
+    defs: Vec<crate::db::object_diff::ObjectDefinition>,
+    /// 定義を読めなかった (種別, 名前)。片側だけ読めないと偽の「追加 / 削除」になるので、
+    /// 両側の比較から外す。
+    unreadable: Vec<(String, String)>,
+    /// テーブル一覧に並ぶビュー / マテビューの名前 (表の差分から外す)。
+    view_names: std::collections::HashSet<String>,
+}
+
+/// 両側のオブジェクトを集めて比較する。テーブル一覧からビュー名を外す副作用がある。
+async fn collect_object_comparison(
+    source: &Connection,
+    source_db: &str,
+    target: &Connection,
+    target_db: &str,
+    source_tables: &mut Vec<TableColumns>,
+    target_tables: &mut Vec<TableColumns>,
+) -> Result<FoundObjects> {
+    use crate::db::object_diff::{compute_object_diff, unsupported_object_kinds, ObjectComparison};
+    let driver = source.driver_kind();
+    let (s, t) = (
+        collect_side_objects(source, source_db).await?,
+        collect_side_objects(target, target_db).await?,
+    );
+    source_tables.retain(|x| !s.view_names.contains(&x.name));
+    target_tables.retain(|x| !t.view_names.contains(&x.name));
+
+    let mut skip: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    skip.extend(s.unreadable.iter().cloned());
+    skip.extend(t.unreadable.iter().cloned());
+    let keep = |d: &crate::db::object_diff::ObjectDefinition| {
+        !skip.contains(&(d.kind.clone(), d.name.clone()))
+    };
+    let src: Vec<_> = s.defs.into_iter().filter(|d| keep(d)).collect();
+    let tgt: Vec<_> = t.defs.into_iter().filter(|d| keep(d)).collect();
+
+    let mut warnings = Vec::new();
+    if !skip.is_empty() {
+        let mut names: Vec<String> = skip.iter().map(|(k, n)| format!("{k} {n}")).collect();
+        names.sort();
+        warnings.push(format!(
+            "定義を取得できなかったオブジェクトは比較から外しました (権限不足など): {}",
+            names.join(", ")
+        ));
+    }
+    Ok(FoundObjects {
+        comparison: ObjectComparison {
+            compared: true,
+            items: compute_object_diff(driver, source_db, target_db, &src, &tgt),
+            unsupported_kinds: unsupported_object_kinds(driver),
+        },
+        warnings,
+    })
+}
+
+/// 1 つの接続のオブジェクト一覧と定義本文を集める。定義は可能なら 1 問い合わせでまとめて、
+/// 取れないもの (MySQL など) は 1 件ずつ取る。
+async fn collect_side_objects(conn: &Connection, db: &str) -> Result<SideObjects> {
+    use crate::db::object_diff::{supports_object_kind, ObjectDefinition};
+    let driver = conn.driver_kind();
+    let objects = conn.schema_objects(db).await?;
+    let view_names = objects
+        .iter()
+        .filter(|o| matches!(o.kind.as_str(), "view" | "materialized_view"))
+        .map(|o| o.name.clone())
+        .collect();
+    let bulk = match conn.object_definitions_bulk(db).await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(error = %e, "schema compare: bulk definition fetch failed; fetching per object");
+            None
+        }
+    };
+    // PostgreSQL のオーバーロード関数の区別に使う引数並び (oid -> 引数)。取れなければ空で、
+    // 同名の関数は定義の差として比べる。
+    let signatures = conn
+        .routine_identity_arguments(db)
+        .await
+        .unwrap_or_default();
+
+    let mut defs = Vec::new();
+    let mut unreadable = Vec::new();
+    for o in objects
+        .iter()
+        .filter(|o| supports_object_kind(driver, &o.kind))
+    {
+        let body = match bulk.as_ref().and_then(|b| b.get(o)) {
+            Some(d) => Ok(d.to_string()),
+            None => {
+                conn.object_definition(db, &o.kind, &o.name, o.id.as_deref())
+                    .await
+            }
+        };
+        let body = match body {
+            Ok(b) if !b.trim().is_empty() => b,
+            Ok(_) | Err(_) => {
+                unreadable.push((o.kind.clone(), o.name.clone()));
+                continue;
+            }
+        };
+        defs.push(ObjectDefinition {
+            kind: o.kind.clone(),
+            name: o.name.clone(),
+            signature: o
+                .id
+                .as_deref()
+                .and_then(|id| signatures.get(id))
+                .filter(|_| matches!(o.kind.as_str(), "function" | "procedure"))
+                .cloned(),
+            definition: complete_definition(driver, &o.kind, &o.name, &body),
+        });
+    }
+    if supports_object_kind(driver, "sequence") {
+        for (name, ddl) in conn.sequence_definitions(db).await? {
+            defs.push(ObjectDefinition {
+                kind: "sequence".into(),
+                name,
+                signature: None,
+                definition: ddl,
+            });
+        }
+    }
+    Ok(SideObjects {
+        defs,
+        unreadable,
+        view_names,
+    })
+}
+
+/// PostgreSQL のビュー / マテビューの定義は `SELECT` 本体だけなので、作成文に包む。他は
+/// ドライバが完全な `CREATE` 文を返す。
+fn complete_definition(driver: DriverKind, kind: &str, name: &str, body: &str) -> String {
+    match (driver, kind) {
+        (DriverKind::Postgres, "view" | "materialized_view") => {
+            let kw = if kind == "view" {
+                "VIEW"
+            } else {
+                "MATERIALIZED VIEW"
+            };
+            format!(
+                "CREATE {kw} {} AS\n{}",
+                quote_ident(driver, name),
+                body.trim().trim_end_matches(';').trim_end()
+            )
+        }
+        _ => body.to_string(),
+    }
 }
 
 /// SQLite の `sqlite_master` から、テーブル再作成で作り直す対象 (索引・トリガー) と元の
