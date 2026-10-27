@@ -4969,6 +4969,10 @@ const en = {
   schemaCompareDataDesc:
     "Pick a source table and a target table (the same name by default; a differently named table, or two tables on one connection, also works) and compare their rows (paired by primary key), then generate INSERT / UPDATE / DELETE to make the target match the source. Aimed at master / config tables — large tables are capped by the row limit.",
   schemaCompareDataSelectTable: "Select a table...",
+  schemaCompareDataSameTable:
+    "The source and target are the same table. Choose a different target table (or a different connection / database).",
+  schemaCompareDataNoSameName:
+    "The target has no table with the same name. Choose the target table explicitly.",
   schemaCompareDataSourceTable: "Source table",
   schemaCompareDataTargetTable: "Target table",
   schemaCompareDataTargetSameName: "Same name as source",
@@ -11820,6 +11824,10 @@ const ja: Dict = {
   schemaCompareDataDesc:
     "ソースとターゲットのテーブルを選び (既定は同名。異名の表や同一接続内の 2 表も可)、行を主キーでペアリングして比較し、ターゲットをソースに合わせる INSERT / UPDATE / DELETE を生成します。マスタ / 設定データ向けで、大きなテーブルは件数上限で制限されます。",
   schemaCompareDataSelectTable: "テーブルを選択...",
+  schemaCompareDataSameTable:
+    "ソースとターゲットが同じテーブルです。別のターゲットテーブル (または別の接続 / データベース) を選んでください。",
+  schemaCompareDataNoSameName:
+    "ターゲットに同名のテーブルがありません。ターゲットのテーブルを明示的に選んでください。",
   schemaCompareDataSourceTable: "ソースのテーブル",
   schemaCompareDataTargetTable: "ターゲットのテーブル",
   schemaCompareDataTargetSameName: "ソースと同名",

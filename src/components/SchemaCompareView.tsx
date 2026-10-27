@@ -218,10 +218,11 @@ const syncControlsCss: SystemStyleObject = {
 const tablePairCss: SystemStyleObject = {
   display: "grid",
   gridTemplateColumns: "1fr auto 1fr",
-  alignItems: "center",
+  alignItems: "end",
   gap: "3",
   width: "100%",
 };
+const tableColCss: SystemStyleObject = { display: "flex", flexDirection: "column", gap: "1" };
 // 非破壊の表示オプション (全行比較など) のラベル。危険色 (`destructiveCss`) にしない。
 const optionLabelCss: SystemStyleObject = {
   display: "inline-flex",
@@ -767,8 +768,24 @@ export function SchemaCompareView({
     [diff],
   );
   // ターゲット未指定 (同名) のときは、同名の表が両側に無いと比較できない。
-  const dataTablesValid =
-    dataTable !== "" && (dataTargetTable !== "" || comparableTables.includes(dataTable));
+  // 比較できない組み合わせの理由 (ボタンを無効にして案内文を出す)。
+  const effectiveTargetTable = dataTargetTable || dataTable;
+  const dataTablesBlockReason: "same" | "noSameName" | null = (() => {
+    if (!dataTable) return null;
+    if (
+      source.sessionId === target.sessionId &&
+      source.database === target.database &&
+      // MySQL / SQLite は表名の大小を区別しない環境があるので、バックエンドと同じく無視して比べる。
+      (sourceDriver === "postgres"
+        ? effectiveTargetTable === dataTable
+        : effectiveTargetTable.toLowerCase() === dataTable.toLowerCase())
+    ) {
+      return "same";
+    }
+    if (dataTargetTable === "" && !comparableTables.includes(dataTable)) return "noSameName";
+    return null;
+  })();
+  const dataTablesValid = dataTable !== "" && dataTablesBlockReason === null;
 
   const resetDataDiffForTableChange = () => {
     setDataDiff(null);
@@ -1188,43 +1205,49 @@ export function SchemaCompareView({
                   </chakra.p>
                   <Box css={syncControlsCss}>
                     <Box css={tablePairCss}>
-                      <Select
-                        aria-label={t("schemaCompareDataSourceTable")}
-                        value={dataTable}
-                        disabled={dataComparing || generating}
-                        onChange={(e) => {
-                          // 対象テーブルを変えたら前回のデータ差分・計画は別テーブルのものに
-                          // なるので破棄する (残すと前のテーブルの変更が流れる)。
-                          setDataTable(e.target.value);
-                          resetDataDiffForTableChange();
-                        }}
-                      >
-                        <option value="">{t("schemaCompareDataSelectTable")}</option>
-                        {sourceTableNames.map((name) => (
-                          <option key={name} value={name}>
-                            {name}
-                          </option>
-                        ))}
-                      </Select>
+                      <Box css={tableColCss}>
+                        <chakra.span css={sideLabelCss}>{t("schemaCompareDataSourceTable")}</chakra.span>
+                        <Select
+                          aria-label={t("schemaCompareDataSourceTable")}
+                          value={dataTable}
+                          disabled={dataComparing || generating}
+                          onChange={(e) => {
+                            // 対象テーブルを変えたら前回のデータ差分・計画は別テーブルのものに
+                            // なるので破棄する (残すと前のテーブルの変更が流れる)。
+                            setDataTable(e.target.value);
+                            resetDataDiffForTableChange();
+                          }}
+                        >
+                          <option value="">{t("schemaCompareDataSelectTable")}</option>
+                          {sourceTableNames.map((name) => (
+                            <option key={name} value={name}>
+                              {name}
+                            </option>
+                          ))}
+                        </Select>
+                      </Box>
                       <chakra.span textStyle="caption" aria-hidden="true">
                         →
                       </chakra.span>
-                      <Select
-                        aria-label={t("schemaCompareDataTargetTable")}
-                        value={dataTargetTable}
-                        disabled={dataComparing || generating}
-                        onChange={(e) => {
-                          setDataTargetTable(e.target.value);
-                          resetDataDiffForTableChange();
-                        }}
-                      >
-                        <option value="">{t("schemaCompareDataTargetSameName")}</option>
-                        {targetTableNames.map((name) => (
-                          <option key={name} value={name}>
-                            {name}
-                          </option>
-                        ))}
-                      </Select>
+                      <Box css={tableColCss}>
+                        <chakra.span css={sideLabelCss}>{t("schemaCompareDataTargetTable")}</chakra.span>
+                        <Select
+                          aria-label={t("schemaCompareDataTargetTable")}
+                          value={dataTargetTable}
+                          disabled={dataComparing || generating}
+                          onChange={(e) => {
+                            setDataTargetTable(e.target.value);
+                            resetDataDiffForTableChange();
+                          }}
+                        >
+                          <option value="">{t("schemaCompareDataTargetSameName")}</option>
+                          {targetTableNames.map((name) => (
+                            <option key={name} value={name}>
+                              {name}
+                            </option>
+                          ))}
+                        </Select>
+                      </Box>
                     </Box>
                     <chakra.label css={optionLabelCss}>
                       <Checkbox
@@ -1263,6 +1286,16 @@ export function SchemaCompareView({
                       </>
                     )}
                   </Box>
+
+                  {dataTablesBlockReason && (
+                    <chakra.p margin={0} fontSize="sm" color="app.textWarning" role="status">
+                      {t(
+                        dataTablesBlockReason === "same"
+                          ? "schemaCompareDataSameTable"
+                          : "schemaCompareDataNoSameName",
+                      )}
+                    </chakra.p>
+                  )}
 
                   {dataDiff && (
                     <>

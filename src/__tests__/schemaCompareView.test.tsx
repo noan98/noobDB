@@ -168,4 +168,32 @@ describe("SchemaCompareView の異名テーブル比較 (#1880)", () => {
       ),
     ).toBeInTheDocument();
   });
+
+  it("同じ接続・同じ DB で同じ表を指すと比較を無効にして案内を出す", async () => {
+    vi.mocked(api.connect).mockResolvedValue({ session_id: "s1" } as never);
+    const tbl = (name: string, status: string) => ({ name, status, columns: [], foreign_keys: [] });
+    vi.mocked(api.compareSchema).mockResolvedValue({
+      source_driver: "mysql",
+      target_driver: "mysql",
+      tables: [tbl("orders", "same"), tbl("orders_archive", "same")],
+    } as never);
+    renderWithProviders(<SchemaCompareView profiles={PROFILES} onClose={() => {}} />);
+    const boxes = () => screen.getAllByRole("combobox") as HTMLSelectElement[];
+    fireEvent.change(boxes()[0], { target: { value: "p-a" } });
+    await waitFor(() => expect(boxes()[1]).not.toBeDisabled());
+    fireEvent.change(boxes()[2], { target: { value: "p-b" } });
+    await waitFor(() => expect(boxes()[3]).not.toBeDisabled());
+    await waitFor(() => expect(boxes()[3].value).toBe("db1"));
+    fireEvent.click(screen.getByText(t("schemaCompareCompare")));
+    const sourceTable = (await screen.findByLabelText(
+      t("schemaCompareDataSourceTable"),
+    )) as HTMLSelectElement;
+    const targetTable = screen.getByLabelText(t("schemaCompareDataTargetTable")) as HTMLSelectElement;
+    fireEvent.change(sourceTable, { target: { value: "orders" } });
+    expect(await screen.findByText(t("schemaCompareDataSameTable"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("schemaCompareDataCompare") })).toBeDisabled();
+    fireEvent.change(targetTable, { target: { value: "orders_archive" } });
+    await waitFor(() => expect(screen.queryByText(t("schemaCompareDataSameTable"))).toBeNull());
+    expect(screen.getByRole("button", { name: t("schemaCompareDataCompare") })).not.toBeDisabled();
+  });
 });
