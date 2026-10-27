@@ -1305,20 +1305,14 @@ jobs:
 
       # 計装ビルド (-C instrument-coverage、sccache 対象外で遅い) だけを先に行い、sshd / TLS DB
       # のセットアップと重ねる (#1884。`rust (test)` の archive-before-wait パターンの転用)。
-      # `cargo llvm-cov nextest --no-run` ではなく show-env + nextest archive にしている理由:
-      # `rust (test)` で実測済みのとおり、wait 後に cargo を再度呼ぶと NOOBDB_TEST_* 環境変数
-      # の違いで noobdb クレートが再コンパイルされ重ねた分が相殺される。archive から実行すれば
-      # cargo を呼ばないので再コンパイルは起きない。show-env は llvm-cov と同じ RUSTFLAGS /
-      # target dir (target/llvm-cov-target) / LLVM_PROFILE_FILE を export するので、計装済み
-      # バイナリと生データは従来の `cargo llvm-cov nextest` と同じ場所に出て、後段の
-      # `cargo llvm-cov report` がそのまま読める。
+      # `cargo llvm-cov nextest-archive` (cargo-llvm-cov 0.6.7+) は計装ビルドを nextest archive に
+      # 固める公式サブコマンドで、出力先は従来どおり target/llvm-cov-target。wait 後は
+      # `cargo llvm-cov nextest --archive-file` が archive から実行するだけでビルドしないため、
+      # NOOBDB_TEST_* の違いによる noobdb クレートの再コンパイルは起きず、重ねた分が相殺されない。
+      # 後段の `cargo llvm-cov report` は従来どおりそのまま動く。
       - name: Build instrumented tests (overlaps sshd / TLS DB setup)
         working-directory: src-tauri
-        shell: bash
-        run: |
-          cargo llvm-cov clean --workspace
-          source <(cargo llvm-cov show-env --export-prefix)
-          cargo nextest archive --locked --lib --test '*' --archive-file "$RUNNER_TEMP/nextest-cov-archive.tar.zst"
+        run: cargo llvm-cov nextest-archive --locked --lib --test '*' --archive-file "$RUNNER_TEMP/nextest-cov-archive.tar.zst"
 
       # 残る background (sshd = SSH 接続情報 / tlsdb = TLS DB 接続情報。いずれも
       # $GITHUB_ENV 経由) の完了を nextest の直前で待ち合わせる。両者の env は
@@ -1330,7 +1324,7 @@ jobs:
         wait: [sshd, tlsdb, plaindb]
 
       # 計装済み archive を nextest で実行し、カバレッジ生データのみ収集する
-      # (show-env の LLVM_PROFILE_FILE へ出力。レポートは下の cargo llvm-cov report)。MySQL/PostgreSQL の両サービスコンテナを指す URL を渡し、
+      # (--no-report。レポートは下の cargo llvm-cov report)。MySQL/PostgreSQL の両サービスコンテナを指す URL を渡し、
       # 両ドライバの統合テストを CI で実走させる。SQLite は環境変数不要で常に走る。
       # NOOBDB_TEST_SSH_URL / NOOBDB_TEST_SSH_KEY と
       # NOOBDB_TEST_MYSQL_TLS_URL / NOOBDB_TEST_POSTGRES_TLS_URL / NOOBDB_TEST_TLS_CA
@@ -1342,10 +1336,7 @@ jobs:
         env:
           NOOBDB_TEST_MYSQL_URL: mysql://root:rootpw@127.0.0.1:3306/testdb
           NOOBDB_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/testdb
-        shell: bash
-        run: |
-          source <(cargo llvm-cov show-env --export-prefix)
-          cargo nextest run --archive-file "$RUNNER_TEMP/nextest-cov-archive.tar.zst"
+        run: cargo llvm-cov nextest --no-report --archive-file "$RUNNER_TEMP/nextest-cov-archive.tar.zst"
 
       # 収集済みデータから lcov レポートを生成し、サマリ表を Job Summary に出して
       # main の push ごとのカバレッジを可視化する (#1420 で PR からは外した)。

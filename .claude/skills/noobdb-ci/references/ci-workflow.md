@@ -193,7 +193,7 @@
   渡しており、両ドライバの統合テストが CI で実走します (SQLite は環境変数不要で
   常に走る)。`rust (coverage)` ジョブは `rust (test)` と同じ準備 (平文 DB・sshd・
   TLS DB・dist スタブ。複製しており composite action 化はしていない) の上で
-  計装 archive を `cargo nextest run` で実行し (生データは show-env の `LLVM_PROFILE_FILE`)、`cargo llvm-cov report` で lcov を生成しつつ、サマリ表を
+  計装 archive を `cargo llvm-cov nextest --archive-file ... --no-report` で実行し、`cargo llvm-cov report` で lcov を生成しつつ、サマリ表を
   Job Summary に出力して PR ごとに可視化し、加えて `--fail-under-lines` で行
   カバレッジの**下限を強制**します。閾値は**ラチェット式 (下げない)** で運用し
   (#482)、テスト整備で実測が上がったら実測をわずかに下回る値へ段階的に引き上げます
@@ -220,9 +220,9 @@
   rust-cache / sccache (キー `test`) を保存して PR のフォールバック復元元になるため)、
   sshd / TLS DB / 平文 DB のセットアップと `cargo nextest` は `github.event_name != 'push'`
   でスキップします (PR は従来どおり)。push の統合テスト失敗は `llvm-cov nextest` が赤く
-  します。また coverage の計装ビルドは `cargo llvm-cov show-env` + `cargo nextest archive`
+  します。また coverage の計装ビルドは `cargo llvm-cov nextest-archive`
   で DB セットアップの `wait` 前に済ませて重ね、`wait` 後は archive から
-  `cargo nextest run` するだけにしています (cargo を再度呼ぶと NOOBDB_TEST_* の違いで
+  `cargo llvm-cov nextest --archive-file ... --no-report` するだけにしています (cargo を再度呼ぶと NOOBDB_TEST_* の違いで
   再コンパイルされ、重ねた分が相殺されるため。`rust (test)` と同じ理由)。
   clippy (cargo check 相当) と nextest (実バイナリ生成) は cargo が成果物を共有
   しないため、同一ジョブで直列にすると依存ツリーが二重コンパイルされて積み上がり
