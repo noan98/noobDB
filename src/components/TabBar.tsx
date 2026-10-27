@@ -12,6 +12,7 @@ import { labelWithShortcut } from "../shortcutLabel";
 import { useTabCloseGlide } from "./useTabCloseGlide";
 import { DropInsertionMarker } from "./DropInsertionMarker";
 import { FlightIcon } from "./FlightIcon";
+import { prefersStaticMotion } from "./revealOrigin";
 import { isImeComposing } from "./modalKeys";
 import { tabOpenFlightId, useTabOpenFlight } from "../sharedElement";
 import { scrollFollowIntoView } from "./scrollFollow";
@@ -719,7 +720,8 @@ export const TabBar = memo(function TabBar({
                 {isActive && (
                   <MotionIndicator
                     layoutId={indicatorId}
-                    transition={transitions.emphasized}
+                    // ハイコントラスト / forced-colors では即時に移す (#1877、ボトムパネルと揃える)
+                    transition={prefersStaticMotion() ? { duration: 0 } : transitions.emphasized}
                     position="absolute"
                     left="0"
                     right="0"
