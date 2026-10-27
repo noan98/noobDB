@@ -1,10 +1,14 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { CellValue } from "../api/tauri";
 import { useT } from "../i18n";
 import { semanticColorVar } from "../semanticColors";
 import type { BatchStatementResult } from "../sqlScript";
+import { springs, staggerTiming, transitions, variants } from "../motion";
 import { Button, Switch } from "./ui";
+import { CountUpText } from "./CountUp";
+import { prefersStaticMotion } from "./revealOrigin";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
@@ -13,7 +17,37 @@ import { Tooltip } from "./Tooltip";
  * SQL スクリプトのバッチ実行の結果ビュー。文ごとに「SQL / 成否 / 影響行数 or
  * 結果プレビュー / エラー」をカードで一覧する。ヘッダーで「エラーで停止 / 続行」を
  * 切り替えて再実行でき、エディタの結果表示へ戻れる。
+ *
+ * ## Motion (#1873)
+ *
+ * - 実行中に文が完了して増えるカードは `AnimatePresence initial={false}` +
+ *   `variants.collapse` で下へ積み上がる。同じ描画で複数枚増えたときは
+ *   `staggerTiming.each` ずつずらす (`batchEnterDelay`)。表示した時点で既にあるカードは動かさない。
+ * - ヘッダの文数 / 成功 / エラー件数は `CountUpText` で連続更新する。
+ * - 成否ドットは `variants.fadeScale` + `springs.gentle` で pop する。
+ * - reduced-motion (OS / アプリ設定) とハイコントラスト (`prefersStaticMotion`) では
+ *   transition を 0 秒にして静止する。height / opacity は `MotionConfig` では止まらないため。
  */
+
+const MotionDiv = chakra(
+  motion.div,
+  {},
+  { forwardProps: ["variants", "initial", "animate", "exit", "transition", "custom"] },
+);
+const MotionSpan = chakra(
+  motion.span,
+  {},
+  { forwardProps: ["variants", "initial", "animate", "exit", "transition"] },
+);
+
+/** 即時化した transition (静止モード)。 */
+const INSTANT = { duration: 0 } as const;
+
+/** 同じ描画で増えたカードの入場遅延 (秒)。前回の枚数より後ろのカードだけ、順番にずらす。 */
+export function batchEnterDelay(index: number, prevCount: number): number {
+  return Math.max(0, index - prevCount) * staggerTiming.each;
+}
+
 interface Props {
   results: BatchStatementResult[];
   running: boolean;
@@ -28,6 +62,14 @@ export function BatchResultsView({ results, running, onRerun, onClose, onStop }:
   const [stopOnError, setStopOnError] = useState(true);
   const okCount = results.filter((r) => r.status === "ok").length;
   const errCount = results.filter((r) => r.status === "error").length;
+  const reduced = useReducedMotion() ?? false;
+  const still = reduced || prefersStaticMotion();
+  // 直前の描画までに表示済みの枚数。今回増えた分だけを順にずらすために使う。
+  const prevCount = useRef(results.length);
+  const seenCount = prevCount.current;
+  useEffect(() => {
+    prevCount.current = results.length;
+  }, [results.length]);
 
   return (
     <Flex direction="column" h="100%" minH={0} minW={0}>
@@ -46,7 +88,10 @@ export function BatchResultsView({ results, running, onRerun, onClose, onStop }:
           <Icon name="query" size={ICON_SIZES.md} /> {t("batchBackToResult")}
         </Button>
         <chakra.span color="app.text">
-          {t("batchSummary", { total: results.length, ok: okCount, errors: errCount })}
+          <CountUpText
+            values={[results.length, okCount, errCount]}
+            render={([total, ok, errors]) => t("batchSummary", { total, ok, errors })}
+          />
         </chakra.span>
         {running && <Spinner size={13} />}
         {running && onStop && (
@@ -70,9 +115,21 @@ export function BatchResultsView({ results, running, onRerun, onClose, onStop }:
       </Flex>
 
       <chakra.div flex="1" minH={0} overflow="auto" p="2.5" display="flex" flexDirection="column" gap="2.5">
-        {results.map((r, i) => (
-          <StatementCard key={i} index={i + 1} result={r} t={t} />
-        ))}
+        <AnimatePresence initial={false}>
+          {results.map((r, i) => (
+            <MotionDiv
+              key={i}
+              variants={variants.collapse}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={still ? INSTANT : { ...transitions.enter, delay: batchEnterDelay(i, seenCount) }}
+              flex="none"
+            >
+              <StatementCard index={i + 1} result={r} t={t} still={still} />
+            </MotionDiv>
+          ))}
+        </AnimatePresence>
       </chakra.div>
     </Flex>
   );
@@ -82,10 +139,12 @@ function StatementCard({
   index,
   result,
   t,
+  still,
 }: {
   index: number;
   result: BatchStatementResult;
   t: ReturnType<typeof useT>;
+  still: boolean;
 }) {
   const tone =
     result.status === "ok"
@@ -107,7 +166,20 @@ function StatementCard({
         <chakra.span fontSize="xs" color="app.textMuted" fontFamily="mono">
           #{index}
         </chakra.span>
-        <chakra.span w="9px" h="9px" borderRadius="full" bg={tone} flexShrink={0} />
+        <MotionSpan
+          key={result.status}
+          display="inline-block"
+          w="9px"
+          h="9px"
+          borderRadius="full"
+          bg={tone}
+          flexShrink={0}
+          variants={variants.fadeScale}
+          initial="initial"
+          animate="animate"
+          transition={still ? INSTANT : springs.gentle}
+          data-testid="batch-status-dot"
+        />
         <Tooltip label={result.sql}>
           <chakra.code
             fontSize="xs"

@@ -71,3 +71,29 @@ describe("BatchResultsView の行数上限 (#1616)", () => {
     expect(screen.queryByRole("button", { name: /さらに|more rows/ })).toBeNull();
   });
 });
+
+describe("BatchResultsView の Motion (#1873)", () => {
+  it("batchEnterDelay は今回増えたカードだけを順にずらす", async () => {
+    const { batchEnterDelay } = await import("../components/BatchResultsView");
+    const { staggerTiming } = await import("../motion");
+    expect(batchEnterDelay(0, 3)).toBe(0);
+    expect(batchEnterDelay(2, 3)).toBe(0);
+    expect(batchEnterDelay(3, 3)).toBe(0);
+    expect(batchEnterDelay(5, 3)).toBeCloseTo(2 * staggerTiming.each);
+  });
+
+  it("成否ドットが文の数だけ描かれる", () => {
+    renderWithProviders(
+      <BatchResultsView
+        results={[
+          { sql: "SELECT 1", status: "ok", rowsAffected: 0 },
+          { sql: "BAD", status: "error", error: "x" },
+        ]}
+        running={false}
+        onRerun={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getAllByTestId("batch-status-dot")).toHaveLength(2);
+  });
+});
