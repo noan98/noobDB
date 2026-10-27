@@ -366,3 +366,101 @@ describe("FlightRecorderPanel ピン留め / バッチ / 書き出し (#1626)", 
     );
   });
 });
+
+describe("FlightRecorderPanel モーション (#1875)", () => {
+  const PREVIEW = { statements: ["UPDATE users SET name = 'a' WHERE id = 1"], conflicts: [] };
+  const OUTCOME = { applied: true, rowsAffected: 1, conflicts: [] };
+
+  async function clickAndConfirm(user: ReturnType<typeof userEvent.setup>, buttonName: string) {
+    await user.click((await screen.findAllByRole("button", { name: buttonName }))[0]);
+    const dialogs = await screen.findAllByRole("dialog");
+    await user.click(
+      within(dialogs[dialogs.length - 1]).getByRole("button", { name: t("flightRecorderApply") }),
+    );
+  }
+
+  it("Undo 成功後、適用した行だけ apply-flash (flash-ring) が付き、一定時間後に外れる", async () => {
+    const user = userEvent.setup();
+    document.documentElement.setAttribute("data-motion", "full");
+    try {
+      listFlightRecords.mockResolvedValueOnce([ENTRY, { ...ENTRY, id: 2 }]);
+      listFlightRecords.mockResolvedValue([
+        { ...ENTRY, undone: true },
+        { ...ENTRY, id: 2 },
+      ]);
+      previewUndo.mockResolvedValue(PREVIEW);
+      undoFlightRecord.mockResolvedValue(OUTCOME);
+      const { container } = renderWithProviders(
+        <FlightRecorderPanel profileId="p-test" sessionId="s1" onClose={() => {}} />,
+      );
+      expect(container.ownerDocument.querySelector(".flash-ring")).toBeNull();
+      await clickAndConfirm(user, t("flightRecorderUndoAction"));
+      await waitFor(() => expect(undoFlightRecord).toHaveBeenCalled());
+      await waitFor(() => expect(document.querySelectorAll("[data-flash]")).toHaveLength(1));
+      await waitFor(() => expect(document.querySelector(".flash-ring")).toBeNull(), { timeout: 2000 });
+    } finally {
+      document.documentElement.removeAttribute("data-motion");
+    }
+  });
+
+  it("reduced-motion ではフラッシュしない", async () => {
+    const user = userEvent.setup();
+    document.documentElement.setAttribute("data-motion", "reduced");
+    try {
+      listFlightRecords.mockResolvedValue([ENTRY]);
+      previewUndo.mockResolvedValue(PREVIEW);
+      undoFlightRecord.mockResolvedValue(OUTCOME);
+      renderWithProviders(<FlightRecorderPanel profileId="p-test" sessionId="s1" onClose={() => {}} />);
+      await clickAndConfirm(user, t("flightRecorderUndoAction"));
+      await waitFor(() => expect(undoFlightRecord).toHaveBeenCalled());
+      await waitFor(() => expect(listFlightRecords).toHaveBeenCalledTimes(2));
+      expect(document.querySelector("[data-flash]")).toBeNull();
+    } finally {
+      document.documentElement.removeAttribute("data-motion");
+    }
+  });
+
+  it("ハイコントラスト (hc-*) ではフラッシュしない", async () => {
+    const user = userEvent.setup();
+    document.documentElement.setAttribute("data-motion", "full");
+    document.documentElement.setAttribute("data-theme", "hc-dark");
+    try {
+      listFlightRecords.mockResolvedValue([ENTRY]);
+      previewUndo.mockResolvedValue(PREVIEW);
+      undoFlightRecord.mockResolvedValue(OUTCOME);
+      renderWithProviders(<FlightRecorderPanel profileId="p-test" sessionId="s1" onClose={() => {}} />);
+      await clickAndConfirm(user, t("flightRecorderUndoAction"));
+      await waitFor(() => expect(listFlightRecords).toHaveBeenCalledTimes(2));
+      expect(document.querySelector("[data-flash]")).toBeNull();
+    } finally {
+      document.documentElement.removeAttribute("data-motion");
+      document.documentElement.removeAttribute("data-theme");
+    }
+  });
+
+  it("バッチ適用では recordIds の行だけフラッシュし、再読込で「読み込み中」を出さない", async () => {
+    const user = userEvent.setup();
+    document.documentElement.setAttribute("data-motion", "full");
+    try {
+      const rows = [
+        { ...ENTRY, id: 3, batch_id: "b1" },
+        { ...ENTRY, id: 2, batch_id: "b1" },
+        { ...ENTRY, id: 1, batch_id: "b1" },
+      ];
+      listFlightRecords.mockResolvedValue(rows);
+      previewFlightBatch.mockResolvedValue({
+        statements: ["DELETE FROM users WHERE id = 3"],
+        conflicts: [],
+        warnings: [],
+        recordIds: [3, 2],
+      });
+      applyFlightBatch.mockResolvedValue({ applied: true, rowsAffected: 2, conflicts: [], warnings: [] });
+      renderWithProviders(<FlightRecorderPanel profileId="p-test" sessionId="s1" onClose={() => {}} />);
+      await clickAndConfirm(user, t("flightRecorderBatchUndoAction"));
+      await waitFor(() => expect(document.querySelectorAll("[data-flash]")).toHaveLength(2));
+      expect(screen.queryByText(t("flightRecorderLoading"))).not.toBeInTheDocument();
+    } finally {
+      document.documentElement.removeAttribute("data-motion");
+    }
+  });
+});
