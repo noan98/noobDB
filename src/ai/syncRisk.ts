@@ -82,7 +82,13 @@ export function parseSyncRiskResponse(text: string): ParsedSyncRisk {
 /** 破壊的な文か (DROP / DELETE / TRUNCATE)。バックエンドの `destructive` に加え種別と SQL 先頭でも判定する。 */
 export function isDestructiveStatement(s: Pick<SyncStatement, "sql" | "kind" | "destructive">): boolean {
   if (s.destructive) return true;
-  if (s.kind === "drop_column" || s.kind === "drop_table" || s.kind === "delete_row") return true;
+  if (
+    s.kind === "drop_column" ||
+    s.kind === "drop_table" ||
+    s.kind === "drop_object" ||
+    s.kind === "delete_row"
+  )
+    return true;
   return /^\s*(?:DROP|DELETE|TRUNCATE)\b/i.test(s.sql);
 }
 

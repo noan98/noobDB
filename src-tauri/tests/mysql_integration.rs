@@ -1271,6 +1271,90 @@ async fn mysql_ddl_dml_mixed_batch_is_not_atomic() {
     conn.close().await;
 }
 
+/// #1879: スキーマ同期が出すルーチン・トリガーの CREATE / DROP / 置換 (`DROP; 区切り行; CREATE`)
+/// は prepared protocol だとエラー 1295 になるので、実行側がテキストプロトコルで 1 文ずつ流す。
+#[tokio::test]
+async fn mysql_sync_replaces_routines_and_triggers_via_text_protocol() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts
+        .database
+        .clone()
+        .expect("test url must include a database");
+    let conn = t::connect(&opts).await.expect("connect");
+    for sql in [
+        "DROP TRIGGER IF EXISTS sync_obj_trg",
+        "DROP PROCEDURE IF EXISTS sync_obj_proc",
+        "DROP TABLE IF EXISTS sync_obj_t",
+    ] {
+        t::mysql_exec_text(&opts, sql).await.expect("pre-clean");
+    }
+    conn.execute("CREATE TABLE sync_obj_t (id INT)", Some(&db))
+        .await
+        .expect("create table");
+
+    // 1) 作成 (source のみ)。
+    let create_proc = "CREATE PROCEDURE `sync_obj_proc`() SELECT 1";
+    let create_trg =
+        "CREATE TRIGGER `sync_obj_trg` BEFORE INSERT ON `sync_obj_t` FOR EACH ROW SET NEW.id = 1";
+    conn.execute_sync_transaction(&[create_proc.into(), create_trg.into()], Some(&db))
+        .await
+        .expect("create routine and trigger");
+
+    // 2) 置換 (DROP + CREATE を 1 つの同期文として流す)。
+    let diff = |kind: &str, name: &str| t::ObjectDiff {
+        kind: kind.into(),
+        name: name.into(),
+        signature: None,
+        table: None,
+        status: t::DiffStatus::Different,
+        source_definition: None,
+        target_definition: None,
+    };
+    let replace_proc = t::replace_object_sql(
+        t::DriverKind::Mysql,
+        &diff("procedure", "sync_obj_proc"),
+        "CREATE PROCEDURE `sync_obj_proc`() SELECT 2",
+    );
+    let replace_trg = t::replace_object_sql(
+        t::DriverKind::Mysql,
+        &diff("trigger", "sync_obj_trg"),
+        "CREATE TRIGGER `sync_obj_trg` BEFORE INSERT ON `sync_obj_t` FOR EACH ROW SET NEW.id = 2",
+    );
+    conn.execute_sync_transaction(&[replace_proc, replace_trg], Some(&db))
+        .await
+        .expect("replace routine and trigger");
+
+    let body = conn
+        .object_definition(&db, "procedure", "sync_obj_proc", None)
+        .await
+        .expect("definition");
+    assert!(body.contains("SELECT 2"), "{body}");
+    let trg = conn
+        .object_definition(&db, "trigger", "sync_obj_trg", None)
+        .await
+        .expect("definition");
+    assert!(trg.contains("NEW.id = 2"), "{trg}");
+
+    // 3) 削除。
+    conn.execute_sync_transaction(
+        &[
+            "DROP TRIGGER `sync_obj_trg`".into(),
+            "DROP PROCEDURE `sync_obj_proc`".into(),
+        ],
+        Some(&db),
+    )
+    .await
+    .expect("drop trigger and procedure");
+    conn.execute("DROP TABLE IF EXISTS sync_obj_t", Some(&db))
+        .await
+        .expect("cleanup");
+    conn.close().await;
+}
+
 /// ライブクエリ・インスペクタ (#746): CI の MySQL 8 は performance_schema が
 /// 既定 ON・events_statements_current/_history と statements_digest の consumer も
 /// 既定有効なので、前提プローブは両機能とも可を返すはず。別プール (= 別接続) で
@@ -4491,4 +4575,51 @@ async fn mysql_check_and_generated_expressions_are_introspected_and_compared() {
             .expect("cleanup");
     }
     conn.close().await;
+}
+
+/// #1867: `list_table_triggers` が対象テーブルのトリガーをタイミング・イベント付きで返す。
+#[tokio::test]
+async fn mysql_list_table_triggers_when_env_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let Some(db) = opts.database.clone() else {
+        eprintln!("skip: URL has no database");
+        return;
+    };
+    let conn = t::connect(&opts).await.expect("connect");
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS noobdb_trg_t", Some(&db))
+        .await;
+    conn.execute(
+        "CREATE TABLE noobdb_trg_t (id INT PRIMARY KEY, v INT)",
+        Some(&db),
+    )
+    .await
+    .expect("create");
+    // CREATE TRIGGER は prepared statement プロトコルで 1295 になるため text プロトコルで作る。
+    t::mysql_exec_text(
+        &opts,
+        "CREATE TRIGGER noobdb_trg_a BEFORE UPDATE ON noobdb_trg_t FOR EACH ROW SET NEW.v = 1",
+    )
+    .await
+    .expect("trigger");
+    let got = conn
+        .list_table_triggers(&db, "noobdb_trg_t")
+        .await
+        .expect("triggers");
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(
+        (
+            got[0].name.as_str(),
+            got[0].timing.as_str(),
+            got[0].event.as_str()
+        ),
+        ("noobdb_trg_a", "BEFORE", "UPDATE")
+    );
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS noobdb_trg_t", Some(&db))
+        .await;
 }

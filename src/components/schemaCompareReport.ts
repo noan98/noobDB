@@ -12,6 +12,13 @@ export interface SchemaCompareReportLabels {
   statusCol: string;
   detailCol: string;
   identical: string;
+  /** 非テーブルオブジェクト (ビュー / ルーチン / トリガー / シーケンス) の節 (#1879)。 */
+  objectsHeading: string;
+  objectCol: string;
+  /** オブジェクトの種別ラベル (ビュー など)。 */
+  objectKind: (kind: string) => string;
+  objectsNotCompared: string;
+  objectsIdentical: string;
   planHeading: string;
   planNote: string;
   noStatements: string;
@@ -83,6 +90,29 @@ export function schemaCompareReportMarkdown(input: SchemaCompareReportInput): st
       lines.push(`| ${cell(tbl.name)} | ${labels.statusLabels[tbl.status]} | ${cell(detail)} |`);
     }
     lines.push("");
+  }
+
+  const objects = diff.objects;
+  if (objects) {
+    lines.push(`## ${labels.objectsHeading}`, "");
+    if (!objects.compared) {
+      lines.push(labels.objectsNotCompared, "");
+    } else {
+      const shownObjects = objects.items.filter((o) => !(input.hideSame && o.status === "same"));
+      if (shownObjects.length === 0) {
+        lines.push(labels.objectsIdentical, "");
+      } else {
+        lines.push(
+          `| ${labels.objectCol} | ${labels.statusCol} | ${labels.detailCol} |`,
+          "| --- | --- | --- |",
+        );
+        for (const o of shownObjects) {
+          const name = `${labels.objectKind(o.kind)} ${o.name}${o.signature !== null ? `(${o.signature})` : ""}`;
+          lines.push(`| ${cell(name)} | ${labels.statusLabels[o.status]} | ${cell(o.table ?? "")} |`);
+        }
+        lines.push("");
+      }
+    }
   }
 
   if (plan) {

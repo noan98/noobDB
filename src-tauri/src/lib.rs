@@ -63,6 +63,7 @@ pub mod __test_api {
     pub use crate::db::inspector::{normalize_sql_fingerprint, NPlusOneOptions, StatementDeltaRow};
     pub use crate::db::js_compat::{collation_key, js_number_to_string, js_to_number};
     pub use crate::db::masking::{ColumnMask, DatePrecision, MaskRule};
+    pub use crate::db::object_diff::{replace_object_sql, ObjectComparison, ObjectDiff};
     pub use crate::db::privileges::{
         generate_alter_password_sql, generate_create_user_sql, generate_drop_user_sql,
         generate_grant_sql, generate_revoke_sql, generate_role_grant_sql, generate_role_revoke_sql,
@@ -98,7 +99,7 @@ pub mod __test_api {
         ServerMessage, ServerMessageSeverity, ServerMetrics, ServerVariable, SqliteFkViolation,
         SqliteMaintenanceAction, SqliteMaintenanceResult, StreamBatch, TableColumnInfo,
         TableComment, TableExtrasInfo, TablePrivilegeRow, TableRowEstimate, TableRowIdentity,
-        TableSchema, TableSizeInfo, UserPrivileges, Value,
+        TableSchema, TableSizeInfo, TableTrigger, UserPrivileges, Value,
     };
     pub use crate::db::upsert::{ConflictMode, ImportConflict};
     pub use crate::db::{
@@ -1724,6 +1725,7 @@ pub fn run() {
             commands::schema::list_tables,
             commands::schema::describe_table,
             commands::schema::describe_table_extras,
+            commands::schema::list_table_triggers,
             commands::schema::schema_overview,
             commands::schema::foreign_keys,
             commands::schema::list_indexes,

@@ -934,6 +934,7 @@ mod tests {
             tables,
             warnings: Vec::new(),
             indexes_compared: false,
+            objects: Default::default(),
         }
     }
 

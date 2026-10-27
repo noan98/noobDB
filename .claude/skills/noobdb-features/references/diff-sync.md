@@ -10,6 +10,25 @@
   `SchemaDiff` (各テーブル・カラムを `DiffStatus`: `SourceOnly` / `TargetOnly` /
   `Different` / `Same` で分類) を計算する純粋関数。`data_type` / `key` / `extra` は
   大小無視、`default` は厳密比較など、フィールドごとに比較基準を変えています。
+- `db/object_diff.rs` (#1879): ビュー / マテビュー / 関数 / プロシージャ / トリガー / シーケンスの
+  **定義 DDL の本文**を比べる純粋層。`compute_object_diff` が (種別, 名前, 識別子) で対応づけ
+  (PostgreSQL の関数は引数並び、トリガーは対象表を識別子に含める)、MySQL の `DEFINER=` と
+  自スキーマの修飾 (`` `db`. `` / `schema.`) を外し、空白を畳んで比べる。結果は
+  `SchemaDiff.objects` (`ObjectComparison`: `compared` / `items` / `unsupported_kinds`)。
+  種別の対応は `where_used::supports_kind` + シーケンス (PostgreSQL のみ)。SQLite の
+  ルーチン / シーケンス / マテビュー等は `unsupported_kinds` として UI が「対象外」と表示する。
+  `commands/diff.rs::collect_side_objects` が `schema_objects` + 一括定義取得
+  (`object_definitions_bulk`) / `object_definition` で集め、**読めなかったオブジェクトは両側から外して
+  警告** (片側だけ読めないと偽の追加 / 削除になる)。テーブル一覧に並ぶビュー / マテビューは表の
+  差分から外してオブジェクト側へ寄せる (ビューに `CREATE TABLE` を出さない)。同期は
+  `SyncKind::{CreateObject, ReplaceObject, DropObject}` で、`generate_sync_sql` が
+  `object_statements` で差し込む (シーケンスの作成は表より前、それ以外は表の作成・列の追加の後で
+  列 / 表の DROP の前)。DROP は `allow_destructive` が要る。置換は MySQL のビューが
+  `CREATE OR REPLACE VIEW`、MySQL のルーチン / トリガーが `DROP; CREATE` (DDL の暗黙コミットで
+  CREATE 失敗時に戻せないので destructive 扱い)、PostgreSQL のビュー / マテビュー / トリガーが
+  DO ブロック (拡張プロトコルは複数文を受けない)、関数 / プロシージャが `CREATE OR REPLACE`、
+  シーケンスが `ALTER SEQUENCE` (採番の現在値を保つ)。適用は既存の `apply_sync_sql` 経路
+  (read_only 拒否・トランザクション) に乗る。
 - `db/data_diff.rs`: `compute_data_diff` がプライマリキーで行をペアリングして
   `RowDiff` を計算し、`generate_data_sync_sql` がそこから INSERT / UPDATE / DELETE を
   生成します。リテラルはドライバ別にエスケープ (MySQL はバックスラッシュも二重化)。

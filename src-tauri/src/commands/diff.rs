@@ -109,11 +109,42 @@ pub(crate) async fn compare_schema_core(
         ));
     }
 
-    let source_tables = collect_table_columns(source, source_database).await?;
-    let target_tables = collect_table_columns(target, target_database).await?;
+    let mut source_tables = collect_table_columns(source, source_database).await?;
+    let mut target_tables = collect_table_columns(target, target_database).await?;
+
+    // ビュー / マテビュー等の非テーブルオブジェクト (#1879)。テーブル一覧にはビューも並ぶので、
+    // 定義で比べるオブジェクト側へ寄せて、表の差分と二重に出さない (ビューに CREATE TABLE を
+    // 出さないため)。取得に失敗したときは従来どおり表の一覧のまま、比較済みの印を立てない。
+    let objects = collect_object_comparison(
+        source,
+        source_database,
+        target,
+        target_database,
+        &mut source_tables,
+        &mut target_tables,
+    )
+    .await;
 
     let mut diff =
         compute_schema_diff(source_driver, target_driver, &source_tables, &target_tables);
+    match objects {
+        Ok(found) => {
+            diff.objects = found.comparison;
+            diff.warnings.extend(found.warnings);
+        }
+        Err(e) => {
+            tracing::warn!(
+                kind = e.kind(),
+                "schema compare: could not load schema objects"
+            );
+            diff.objects.unsupported_kinds =
+                crate::db::object_diff::unsupported_object_kinds(source_driver);
+            diff.warnings.push(
+                "ビュー・ルーチン・トリガー・シーケンスを取得できなかったため、それらの差分は比較していません。"
+                    .to_string(),
+            );
+        }
+    }
     // 外部キーは CREATE TABLE 同期 (source 側)・DROP TABLE の順序 (target 側)・既存表の
     // 外部キー差分 (#1625) に使うので、両側を 1 度ずつ取る。取得に失敗しても比較自体は
     // 妨げない (その分の情報が無い計画になる)。
@@ -258,6 +289,267 @@ pub(crate) async fn compare_schema_core(
         }
     }
     Ok(diff)
+}
+
+/// 非テーブルオブジェクトの比較結果と、取得時の注意 (#1879)。
+struct FoundObjects {
+    comparison: crate::db::object_diff::ObjectComparison,
+    warnings: Vec<String>,
+}
+
+/// 片側のオブジェクト一覧と定義本文。
+struct SideObjects {
+    defs: Vec<crate::db::object_diff::ObjectDefinition>,
+    /// 取得時の注意 (補助情報の取得失敗など)。
+    warnings: Vec<String>,
+    /// 定義を読めなかった (種別, 名前)。片側だけ読めないと偽の「追加 / 削除」になるので、
+    /// 両側の比較から外す。
+    unreadable: Vec<(String, String)>,
+}
+
+/// 両側のオブジェクトを集めて比較する。テーブル一覧からビュー名を外す副作用がある。
+async fn collect_object_comparison(
+    source: &Connection,
+    source_db: &str,
+    target: &Connection,
+    target_db: &str,
+    source_tables: &mut Vec<TableColumns>,
+    target_tables: &mut Vec<TableColumns>,
+) -> Result<FoundObjects> {
+    use crate::db::object_diff::{compute_object_diff, unsupported_object_kinds, ObjectComparison};
+    let driver = source.driver_kind();
+    // 一覧が取れた時点でテーブル一覧からビュー名を外す。後続の定義の取得に失敗しても
+    // ビューに CREATE TABLE が出る不具合に戻らないよう、取得の成否とは切り分ける。
+    let source_objects = source.schema_objects(source_db).await?;
+    let target_objects = target.schema_objects(target_db).await?;
+    let is_view = |o: &crate::db::types::SchemaObject| {
+        matches!(o.kind.as_str(), "view" | "materialized_view")
+    };
+    let sv: std::collections::HashSet<&str> = source_objects
+        .iter()
+        .filter(|o| is_view(o))
+        .map(|o| o.name.as_str())
+        .collect();
+    let tv: std::collections::HashSet<&str> = target_objects
+        .iter()
+        .filter(|o| is_view(o))
+        .map(|o| o.name.as_str())
+        .collect();
+    source_tables.retain(|x| !sv.contains(x.name.as_str()));
+    target_tables.retain(|x| !tv.contains(x.name.as_str()));
+    let (s, t) = (
+        collect_side_objects(source, source_db, &source_objects).await?,
+        collect_side_objects(target, target_db, &target_objects).await?,
+    );
+
+    let mut skip: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    skip.extend(s.unreadable.iter().cloned());
+    skip.extend(t.unreadable.iter().cloned());
+    let keep = |d: &crate::db::object_diff::ObjectDefinition| {
+        !skip.contains(&(d.kind.clone(), d.name.clone()))
+    };
+    let src: Vec<_> = s.defs.into_iter().filter(|d| keep(d)).collect();
+    let tgt: Vec<_> = t.defs.into_iter().filter(|d| keep(d)).collect();
+
+    let mut warnings: Vec<String> = Vec::new();
+    warnings.extend(s.warnings.iter().cloned());
+    warnings.extend(t.warnings.iter().cloned());
+    if !skip.is_empty() {
+        let mut names: Vec<String> = skip.iter().map(|(k, n)| format!("{k} {n}")).collect();
+        names.sort();
+        warnings.push(format!(
+            "定義を取得できなかったオブジェクトは比較から外しました (権限不足、区切り行を含む定義など): {}",
+            names.join(", ")
+        ));
+    }
+    let items = compute_object_diff(driver, source_db, target_db, &src, &tgt);
+    // 関数本文 ($$...$$) は書き換えないので、別名のスキーマへ適用すると source のスキーマ名の
+    // まま残る。同期に載る (追加・変更の) ものだけ警告する。
+    let mut object_warnings = Vec::new();
+    if source_db != target_db {
+        for it in items.iter().filter(|i| {
+            matches!(
+                i.status,
+                crate::db::diff::DiffStatus::SourceOnly | crate::db::diff::DiffStatus::Different
+            )
+        }) {
+            let raw = src
+                .iter()
+                .find(|d| d.kind == it.kind && d.name == it.name && d.signature == it.signature);
+            if raw.is_some_and(|d| {
+                crate::db::object_diff::body_mentions_schema(driver, source_db, &d.definition)
+            }) {
+                object_warnings.push(format!(
+                    "{} {}: 本文に source のスキーマ名 ({}) が残っています。target ({}) へ適用しても本文中の参照は書き換わらないので、適用前に確認してください",
+                    it.kind, it.name, source_db, target_db
+                ));
+            }
+        }
+    }
+    Ok(FoundObjects {
+        comparison: ObjectComparison {
+            compared: true,
+            items,
+            unsupported_kinds: unsupported_object_kinds(driver),
+            warnings: object_warnings,
+        },
+        warnings,
+    })
+}
+
+/// 1 つの接続のオブジェクト一覧と定義本文を集める。定義は可能なら 1 問い合わせでまとめて、
+/// 取れないもの (MySQL など) は 1 件ずつ取る。
+async fn collect_side_objects(
+    conn: &Connection,
+    db: &str,
+    objects: &[crate::db::types::SchemaObject],
+) -> Result<SideObjects> {
+    use crate::db::object_diff::{supports_object_kind, ObjectDefinition};
+    let driver = conn.driver_kind();
+    let bulk = match conn.object_definitions_bulk(db).await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(error = %e, "schema compare: bulk definition fetch failed; fetching per object");
+            None
+        }
+    };
+    // PostgreSQL のオーバーロード関数の区別に使う引数並び (oid -> 引数)。取れなければ空で、
+    // 同名の関数は定義の差として比べる。
+    let signatures = conn
+        .routine_identity_arguments(db)
+        .await
+        .unwrap_or_default();
+
+    // PostgreSQL のトリガーの対象表 (oid -> 表名) とビューのオプション / マテビューの索引。
+    // 取れなければ空 (対象表は定義から読み、オプションと索引は比較に含まれない)。
+    let mut warnings: Vec<String> = Vec::new();
+    let trigger_tables = conn.trigger_tables(db).await.unwrap_or_else(|e| {
+        tracing::warn!(
+            kind = e.kind(),
+            "schema compare: could not load trigger tables"
+        );
+        warnings.push(
+            "トリガーの対象表をカタログから取得できなかったため、定義の文字列から読んでいます。"
+                .to_string(),
+        );
+        Default::default()
+    });
+    let view_extras = conn.view_extras(db).await.unwrap_or_else(|e| {
+        tracing::warn!(kind = e.kind(), "schema compare: could not load view options");
+        warnings.push(
+            "ビューのオプションとマテリアライズドビューの索引を取得できなかったため、それらは比較に含まれません。"
+                .to_string(),
+        );
+        Default::default()
+    });
+
+    let mut defs = Vec::new();
+    let mut unreadable = Vec::new();
+    for o in objects
+        .iter()
+        .filter(|o| supports_object_kind(driver, &o.kind))
+    {
+        let body = match bulk.as_ref().and_then(|b| b.get(o)) {
+            Some(d) => Ok(d.to_string()),
+            None => {
+                conn.object_definition(db, &o.kind, &o.name, o.id.as_deref())
+                    .await
+            }
+        };
+        let body = match body {
+            // 区切り行を含む定義は、同期の実行側が分割を誤るので扱わない。
+            Ok(b) if crate::db::object_diff::contains_split_marker(&b) => {
+                unreadable.push((o.kind.clone(), o.name.clone()));
+                continue;
+            }
+            Ok(b) if !b.trim().is_empty() => b,
+            Ok(_) | Err(_) => {
+                unreadable.push((o.kind.clone(), o.name.clone()));
+                continue;
+            }
+        };
+        defs.push(ObjectDefinition {
+            kind: o.kind.clone(),
+            name: o.name.clone(),
+            signature: o
+                .id
+                .as_deref()
+                .and_then(|id| signatures.get(id))
+                .filter(|_| matches!(o.kind.as_str(), "function" | "procedure"))
+                .cloned(),
+            table: o
+                .id
+                .as_deref()
+                .filter(|_| o.kind == "trigger")
+                .and_then(|id| trigger_tables.get(id))
+                .cloned(),
+            definition: complete_definition(
+                driver,
+                &o.kind,
+                &o.name,
+                &body,
+                view_extras.options.get(&o.name).map(Vec::as_slice),
+                view_extras
+                    .indexes
+                    .get(&o.name)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default(),
+            ),
+        });
+    }
+    if supports_object_kind(driver, "sequence") {
+        for (name, ddl) in conn.sequence_definitions(db).await? {
+            defs.push(ObjectDefinition {
+                kind: "sequence".into(),
+                name,
+                signature: None,
+                table: None,
+                definition: ddl,
+            });
+        }
+    }
+    Ok(SideObjects {
+        defs,
+        warnings,
+        unreadable,
+    })
+}
+
+/// PostgreSQL のビュー / マテビューの定義は `SELECT` 本体だけなので、`WITH (...)` オプション
+/// (security_barrier / security_invoker / check_option ...) 付きの作成文に包む。マテビューは
+/// 続けて索引の `CREATE INDEX` を [`STMT_SPLIT`] 区切りで連ねる (置換で DROP すると索引も
+/// 消えるため、定義に含めて比較と再作成の対象にする)。他はドライバが完全な `CREATE` 文を返す。
+fn complete_definition(
+    driver: DriverKind,
+    kind: &str,
+    name: &str,
+    body: &str,
+    options: Option<&[String]>,
+    indexes: &[String],
+) -> String {
+    match (driver, kind) {
+        (DriverKind::Postgres, "view" | "materialized_view") => {
+            let kw = if kind == "view" {
+                "VIEW"
+            } else {
+                "MATERIALIZED VIEW"
+            };
+            let with = match options {
+                Some(o) if !o.is_empty() => format!(" WITH ({})", o.join(", ")),
+                _ => String::new(),
+            };
+            let mut out = format!(
+                "CREATE {kw} {}{with} AS\n{}",
+                quote_ident(driver, name),
+                body.trim().trim_end_matches(';').trim_end()
+            );
+            for ix in indexes {
+                out.push_str(&format!("\n{}\n{ix}", crate::db::object_diff::STMT_SPLIT));
+            }
+            out
+        }
+        _ => body.to_string(),
+    }
 }
 
 /// SQLite の `sqlite_master` から、テーブル再作成で作り直す対象 (索引・トリガー) と元の

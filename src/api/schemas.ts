@@ -181,6 +181,16 @@ export const tableExtrasInfo = z.object({
   generated: z.array(generatedColumnInfo),
 });
 
+/** `list_table_triggers` の 1 件 (#1867)。 */
+export const tableTrigger = z.object({
+  name: z.string(),
+  timing: z.string(),
+  event: z.string(),
+  definition: z.string(),
+  enabled: z.boolean(),
+});
+export const tableTriggerArray = z.array(tableTrigger);
+
 /** サーバ側プロセス/接続 (プロセス監視パネル)。 */
 export const processInfo = z.object({
   id: z.number(),
@@ -898,12 +908,30 @@ const tableDiff = z.object({
 
 const driverKind = z.enum(["mysql", "postgres", "sqlite"]);
 
+const objectDiff = z.object({
+  kind: z.string(),
+  name: z.string(),
+  signature: z.string().nullable().default(null),
+  table: z.string().nullable().default(null),
+  status: diffStatus,
+  source_definition: z.string().nullable().default(null),
+  target_definition: z.string().nullable().default(null),
+});
+
+const objectComparison = z.object({
+  compared: z.boolean().default(false),
+  items: z.array(objectDiff).default([]),
+  unsupported_kinds: z.array(z.string()).default([]),
+  warnings: z.array(z.string()).default([]),
+});
+
 export const schemaDiff = z.object({
   source_driver: driverKind,
   target_driver: driverKind,
   tables: z.array(tableDiff),
   warnings: z.array(z.string()).default([]),
   indexes_compared: z.boolean().default(false),
+  objects: objectComparison.default({ compared: false, items: [], unsupported_kinds: [], warnings: [] }),
 });
 
 const syncStatement = z.object({
@@ -921,6 +949,9 @@ const syncStatement = z.object({
     "drop_foreign_key",
     "add_check",
     "drop_check",
+    "create_object",
+    "replace_object",
+    "drop_object",
     "rebuild_table",
     "insert_row",
     "update_row",

@@ -49,17 +49,18 @@ use t::{
     ExportDoneEvent, ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding,
     HistoryEntry, ImportDoneEvent, ImportDryRunResult, ImportErrorEvent, ImportProgressEvent,
     ImportResult, ImportStartedEvent, ImportTemplate, IndexInfo, IndexOverlap, IndexOverlapKind,
-    KeyringStatus, KnownHost, LiveQuery, LocalTableMeta, LogView, PatchRun, PerfSample, PerfStatus,
-    PreviewStreamMessage, ProcessListItem, ProfileHistogramBucket, ProfileValueCount,
-    ProfileWithSecretFlags, QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter,
-    RoutineSignature, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject,
-    ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo,
-    ServerMessage, ServerMessageSeverity, ServerMetrics, ServerVariable, Severity,
-    SheetImportResult, SkippedRowInfo, SkippedRule, Snippet, SnippetScope, SqliteFkViolation,
-    SqliteMaintenanceAction, SqliteMaintenanceResult, SshAuthMethod, SshJumpProfile, SshProfile,
-    SslMode, StatementDeltaRow, StreamCancelledEvent, StreamStatsSnapshot, SyncKind, SyncPlan,
-    SyncStatement, TableColumnInfo, TableComment, TableDiff, TableFixPlan, TableRowEstimate,
-    TableRowIdentity, TableSchema, TableSizeInfo, TaskRunProgressEvent, TemplateColumn, Value,
+    KeyringStatus, KnownHost, LiveQuery, LocalTableMeta, LogView, ObjectComparison, ObjectDiff,
+    PatchRun, PerfSample, PerfStatus, PreviewStreamMessage, ProcessListItem,
+    ProfileHistogramBucket, ProfileValueCount, ProfileWithSecretFlags, QueryResult,
+    QueryStatsSupport, QueryStreamMessage, RoutineParameter, RoutineSignature, RowDiff, RowStatus,
+    RuleId, SchemaDiff, SchemaHealthReport, SchemaObject, ScriptDoneEvent, ScriptErrorEvent,
+    ScriptFailure, ScriptProgressEvent, ServerInfo, ServerMessage, ServerMessageSeverity,
+    ServerMetrics, ServerVariable, Severity, SheetImportResult, SkippedRowInfo, SkippedRule,
+    Snippet, SnippetScope, SqliteFkViolation, SqliteMaintenanceAction, SqliteMaintenanceResult,
+    SshAuthMethod, SshJumpProfile, SshProfile, SslMode, StatementDeltaRow, StreamCancelledEvent,
+    StreamStatsSnapshot, SyncKind, SyncPlan, SyncStatement, TableColumnInfo, TableComment,
+    TableDiff, TableFixPlan, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+    TaskRunProgressEvent, TemplateColumn, Value,
 };
 // #1773: 検索系 (Where-used / 値検索) の Channel メッセージ。
 use t::{
@@ -709,6 +710,14 @@ fn build_fixtures() -> serde_json::Value {
         checks: vec![check_info.clone()],
         generated: vec![generated_info.clone()],
     };
+    let table_trigger = t::TableTrigger {
+        name: "trg_users_audit".into(),
+        timing: "AFTER".into(),
+        event: "UPDATE".into(),
+        definition: "CREATE TRIGGER trg_users_audit AFTER UPDATE ON users BEGIN SELECT 1; END"
+            .into(),
+        enabled: true,
+    };
     let table_diff = TableDiff {
         name: "users".into(),
         status: DiffStatus::Different,
@@ -776,6 +785,26 @@ fn build_fixtures() -> serde_json::Value {
         tables: vec![table_diff],
         warnings: Vec::new(),
         indexes_compared: true,
+        objects: ObjectComparison {
+            compared: true,
+            items: vec![ObjectDiff {
+                kind: "trigger".into(),
+                name: "audit_users".into(),
+                signature: None,
+                table: Some("users".into()),
+                status: DiffStatus::Different,
+                source_definition: Some(
+                    "CREATE TRIGGER audit_users AFTER INSERT ON users FOR EACH ROW SET @a = 1"
+                        .into(),
+                ),
+                target_definition: Some(
+                    "CREATE TRIGGER audit_users AFTER UPDATE ON users FOR EACH ROW SET @a = 1"
+                        .into(),
+                ),
+            }],
+            unsupported_kinds: vec!["sequence".into(), "materialized_view".into()],
+            warnings: vec!["fn_total: source のスキーマ名が本文に残っています".into()],
+        },
     };
 
     let sync_statement = SyncStatement {
@@ -1550,14 +1579,36 @@ fn build_fixtures() -> serde_json::Value {
                 Vec::new()
             },
             indexes_compared: i == 0,
+            objects: ObjectComparison {
+                compared: i == 0,
+                items: all_diff_statuses
+                    .iter()
+                    .map(|status| ObjectDiff {
+                        kind: "function".into(),
+                        name: "fn_total".into(),
+                        signature: if i == 0 {
+                            Some("a integer".into())
+                        } else {
+                            None
+                        },
+                        table: None,
+                        status: *status,
+                        source_definition: Some("CREATE FUNCTION fn_total()".into()),
+                        target_definition: None,
+                    })
+                    .collect(),
+                unsupported_kinds: Vec::new(),
+                warnings: Vec::new(),
+            },
         })
         .collect();
 
-    // 同期プラン: SyncKind 15 種すべて (destructive は DROP 系のみ true)。
+    // 同期プラン: SyncKind 18 種すべて (destructive は DROP 系のみ true)。
     let sync_plan_variants = vec![SyncPlan {
         statements: variants!(SyncKind [
             CreateTable, AddColumn, AlterColumn, AddForeignKey, DropColumn, DropTable,
-            AddIndex, DropIndex, DropForeignKey, AddCheck, DropCheck, RebuildTable, InsertRow, UpdateRow, DeleteRow
+            AddIndex, DropIndex, DropForeignKey, AddCheck, DropCheck, CreateObject, ReplaceObject, DropObject,
+            RebuildTable, InsertRow, UpdateRow, DeleteRow
         ])
         .into_iter()
         .map(|kind| SyncStatement {
@@ -1571,6 +1622,7 @@ fn build_fixtures() -> serde_json::Value {
                     | SyncKind::DropIndex
                     | SyncKind::DropForeignKey
                     | SyncKind::DropCheck
+                    | SyncKind::DropObject
                     | SyncKind::RebuildTable
             ),
         })
@@ -2454,6 +2506,7 @@ fn build_fixtures() -> serde_json::Value {
         "foreignKey": foreign_key,
         "indexInfo": index_info,
         "tableExtrasInfo": table_extras_info,
+        "tableTrigger": table_trigger,
         "schemaObject": schema_object,
         "routineSignature": routine_signature,
         "tableRowEstimate": table_row_estimate,
