@@ -344,8 +344,8 @@ describe("UsersPanel: 適用後の面内フラッシュ (#1890)", () => {
     fireEvent.click(screen.getByRole("button", { name: t("usersApplyChanges") }));
     fireEvent.click(await screen.findByRole("button", { name: t("usersApplyConfirmOk") }));
     await waitFor(() => expect(document.querySelectorAll("[data-privilege-flash]")).toHaveLength(1));
-    const cell = document.querySelector("[data-privilege-flash]");
-    expect(cell).toHaveClass("flash-ring");
+    const cell = document.querySelector("[data-privilege-flash]")?.parentElement;
+    expect(document.querySelector("[data-privilege-flash]")).toHaveClass("flash-ring");
     expect(within(cell as HTMLElement).getByLabelText("t1 insert")).toBeChecked();
   });
 

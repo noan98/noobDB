@@ -202,21 +202,28 @@ export const PrivilegeRow = memo(function PrivilegeRow({
   flashGen?: number;
 }) {
   const rowDirty = !flagsEqual(originalFlags, flags);
-  const Row = animated ? MotionTr : "tr";
   return (
-    <Row {...(animated ? { variants: variants.staggerItem } : {})}>
+    // 常に motion 要素にして、12/13 件目の境界で要素の型が変わり再マウントされるのを避ける。
+    <MotionTr variants={animated ? variants.staggerItem : undefined}>
       <chakra.td css={tdCss} fontFamily="var(--font-mono)" color={rowDirty ? "var(--accent)" : undefined}>
         {table}
       </chakra.td>
       {PRIVILEGE_FLAGS.map((flag) => {
         const flashed = flashCols?.has(flag) === true;
         return (
-          <chakra.td
-            css={flashed ? { ...tdCss, ...flashCellCss } : tdCss}
-            className={flashed ? "flash-ring" : undefined}
-            data-privilege-flash={flashed ? "" : undefined}
-            key={flashed ? `${flag}:flash-${flashGen}` : flag}
-          >
+          <chakra.td css={{ ...tdCss, ...flashCellCss }} key={flag}>
+            {flashed && (
+              // td と Checkbox は作り直さず、オーバーレイだけを世代 key で作り直して再生する。
+              <chakra.span
+                key={flashGen}
+                className="flash-ring"
+                data-privilege-flash=""
+                aria-hidden
+                position="absolute"
+                inset="0"
+                pointerEvents="none"
+              />
+            )}
             <Checkbox
               checked={flags[flag]}
               disabled={readOnly}
@@ -226,7 +233,7 @@ export const PrivilegeRow = memo(function PrivilegeRow({
           </chakra.td>
         );
       })}
-    </Row>
+    </MotionTr>
   );
 });
 
@@ -553,12 +560,15 @@ export function UsersPanel({
         const list = await loadUsers();
         // 選択中ユーザの表示 (所属ロールなど) を最新の一覧へ差し替える。
         const fresh = list?.find((u) => userKey(u) === userKey(selected)) ?? selected;
-        if (fresh !== selected) setSelected(fresh);
-        if (shouldPlayPrivilegeFlash()) {
-          const roles = addedRoles(selected.member_of, fresh.member_of);
-          if (roles.size > 0) setRoleFlash({ gen: ++flashGen.current, roles });
+        // 待っている間に別ユーザへ切り替わっていたら、旧ユーザの結果を反映しない。
+        if (privSeq.current === seqBefore) {
+          if (fresh !== selected) setSelected(fresh);
+          if (shouldPlayPrivilegeFlash()) {
+            const roles = addedRoles(selected.member_of, fresh.member_of);
+            if (roles.size > 0) setRoleFlash({ gen: ++flashGen.current, roles });
+          }
+          await loadPrivileges(fresh, { flashChanges: true });
         }
-        if (privSeq.current === seqBefore) await loadPrivileges(fresh, { flashChanges: true });
         return true;
       } catch (e) {
         toast.error(t("usersApplyFailed", { error: String(e) }));
@@ -901,6 +911,10 @@ export function UsersPanel({
             />
           ) : users.length === 0 && !loadingUsers ? (
             <EmptyState compact illustration={<NoResultsIllustration />} icon="key" title={t("usersEmpty")} />
+          ) : users.length === 0 ? (
+            // 初回読み込み中。ユーザが揃ってから MotionUl をマウントし、全行が stagger の遅延つきで入る
+            // ようにする (空のコンテナが先にマウントされると後から来た li は遅延 0 で同時に出る)。
+            <Spinner size={16} />
           ) : (
             <MotionUl
               // 入場は staggerContainer + staggerItem (ServerInfoPanel / ActivityCenter と同じ, #1890)。
@@ -915,55 +929,50 @@ export function UsersPanel({
               flexDirection="column"
               gap="1"
             >
-              {loadingUsers && users.length === 0 ? (
-                <Spinner size={16} />
-              ) : (
-                users.map((u, i) => {
-                  const isSelected = selected?.name === u.name && selected?.host === u.host;
-                  const Item = isStaggerAnimated(i) ? MotionLi : chakra.li;
-                  return (
-                    <Item
-                      key={`${u.name}@@${u.host ?? ""}`}
-                      {...(isStaggerAnimated(i) ? { variants: variants.staggerItem } : {})}
+              {users.map((u, i) => {
+                const isSelected = selected?.name === u.name && selected?.host === u.host;
+                return (
+                  <MotionLi
+                    key={`${u.name}@@${u.host ?? ""}`}
+                    variants={isStaggerAnimated(i) ? variants.staggerItem : undefined}
+                  >
+                    <chakra.button
+                      type="button"
+                      onClick={() => selectUser(u)}
+                      width="100%"
+                      textAlign="left"
+                      py="1.5"
+                      px="2"
+                      borderRadius="var(--radius-sm)"
+                      background={isSelected ? "var(--bg-selected, var(--bg-muted))" : "transparent"}
+                      border="1px solid"
+                      borderColor={isSelected ? "var(--accent)" : "transparent"}
+                      cursor="pointer"
                     >
-                      <chakra.button
-                        type="button"
-                        onClick={() => selectUser(u)}
-                        width="100%"
-                        textAlign="left"
-                        py="1.5"
-                        px="2"
-                        borderRadius="var(--radius-sm)"
-                        background={isSelected ? "var(--bg-selected, var(--bg-muted))" : "transparent"}
-                        border="1px solid"
-                        borderColor={isSelected ? "var(--accent)" : "transparent"}
-                        cursor="pointer"
-                      >
-                        <chakra.div fontSize="sm" fontWeight={600} color="app.text">
-                          {u.name}
-                          {u.is_superuser && (
-                            <chakra.span
-                              marginLeft="1.5"
-                              px="1.5"
-                              fontSize="var(--text-xs)"
-                              color={semanticColorVar("danger", "text")}
-                              border={`1px solid ${semanticColorVar("danger", "text")}`}
-                              borderRadius="var(--radius-sm)"
-                            >
-                              {t("usersSuperuserBadge")}
-                            </chakra.span>
-                          )}
-                        </chakra.div>
-                        {u.host && (
-                          <chakra.div fontSize="xs" color="app.textMuted" fontFamily="var(--font-mono)">
-                            @{u.host}
-                          </chakra.div>
+                      <chakra.div fontSize="sm" fontWeight={600} color="app.text">
+                        {u.name}
+                        {u.is_superuser && (
+                          <chakra.span
+                            marginLeft="1.5"
+                            px="1.5"
+                            fontSize="var(--text-xs)"
+                            color={semanticColorVar("danger", "text")}
+                            border={`1px solid ${semanticColorVar("danger", "text")}`}
+                            borderRadius="var(--radius-sm)"
+                          >
+                            {t("usersSuperuserBadge")}
+                          </chakra.span>
                         )}
-                      </chakra.button>
-                    </Item>
-                  );
-                })
-              )}
+                      </chakra.div>
+                      {u.host && (
+                        <chakra.div fontSize="xs" color="app.textMuted" fontFamily="var(--font-mono)">
+                          @{u.host}
+                        </chakra.div>
+                      )}
+                    </chakra.button>
+                  </MotionLi>
+                );
+              })}
             </MotionUl>
           )}
         </Box>
@@ -1389,11 +1398,11 @@ export function UsersPanel({
                               key={table}
                               animated={isStaggerAnimated(i)}
                               flashCols={privFlash?.cells.get(table)}
-                              flashGen={privFlash?.gen}
+                              flashGen={privFlash?.cells.has(table) ? privFlash.gen : undefined}
                               table={table}
                               flags={edited[table] ?? EMPTY_FLAGS}
                               originalFlags={original[table] ?? EMPTY_FLAGS}
-                              readOnly={readOnly}
+                              readOnly={readOnly || busy}
                               onToggle={toggleFlag}
                             />
                           ))

@@ -12,6 +12,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       listDbUsers: vi.fn(),
       listUserPrivileges: vi.fn(),
       generatePrivilegeDiffSql: vi.fn(),
+      generateRoleMembershipSql: vi.fn(),
       applyPrivilegeSql: vi.fn(),
     },
   };
@@ -143,5 +144,36 @@ describe("UsersPanel privilege load race", () => {
     expect(screen.queryByText("alice_table")).not.toBeInTheDocument();
     // 適用後に alice を読み直していない (初回の 1 回だけ)。
     expect(vi.mocked(api.listUserPrivileges).mock.calls.filter((c) => c[1] === "alice")).toHaveLength(1);
+  });
+});
+
+/** ロール付与の適用待ち中に別ユーザへ切り替えたら、旧ユーザの結果 (選択・フラッシュ) を反映しない (#1890)。 */
+describe("UsersPanel role grant race (#1890)", () => {
+  it("does not flash or reselect the old user when another user was selected meanwhile", async () => {
+    vi.mocked(api.listDbUsers).mockResolvedValueOnce([user("alice"), user("bob")]);
+    vi.mocked(api.listUserPrivileges).mockImplementation(async () => privs("t1"));
+    vi.mocked(api.generateRoleMembershipSql).mockResolvedValue('GRANT "reader" TO "alice"');
+    let finishApply: (n: number) => void = () => {};
+    vi.mocked(api.applyPrivilegeSql).mockImplementation(() => new Promise<number>((r) => (finishApply = r)));
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver="postgres" database="public" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /alice/ }));
+    await screen.findByText("t1");
+    fireEvent.change(document.getElementById("users-role-input") as HTMLInputElement, {
+      target: { value: "reader" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: t("usersRoleGrant") }));
+    fireEvent.click(await screen.findByRole("button", { name: t("usersRoleGrantOk") }));
+    await waitFor(() => expect(api.applyPrivilegeSql).toHaveBeenCalled());
+    // 適用待ちの間に bob へ切り替える。再取得したユーザ一覧では alice が reader を持つ。
+    vi.mocked(api.listDbUsers).mockResolvedValue([{ ...user("alice"), member_of: ["reader"] }, user("bob")]);
+    fireEvent.click(screen.getByRole("button", { name: /bob/ }));
+    await act(async () => {
+      finishApply(1);
+    });
+    await waitFor(() => expect(api.listDbUsers).toHaveBeenCalledTimes(2));
+    expect(document.querySelector("[data-role-flash]")).toBeNull();
+    expect(screen.getByRole("heading", { name: "bob" })).toBeInTheDocument();
   });
 });
