@@ -949,7 +949,7 @@ export function AlterTableModal({
                 <ErrorNote>{t("alterTableRebuildPlanError", { error: rebuildState.error })}</ErrorNote>
               )}
 
-              {hasDestructive && (
+              {destructiveStatements.length > 0 && (
                 <Callout
                   tone="warning"
                   role="status"
