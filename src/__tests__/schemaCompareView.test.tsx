@@ -19,6 +19,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       applySyncSql: vi.fn().mockResolvedValue(1),
       releaseDataDiffs: vi.fn().mockResolvedValue(undefined),
       compareTableData: vi.fn(),
+      listTables: vi.fn(),
     },
   };
 });
@@ -195,5 +196,120 @@ describe("SchemaCompareView の異名テーブル比較 (#1880)", () => {
     fireEvent.change(targetTable, { target: { value: "orders_archive" } });
     await waitFor(() => expect(screen.queryByText(t("schemaCompareDataSameTable"))).toBeNull());
     expect(screen.getByRole("button", { name: t("schemaCompareDataCompare") })).not.toBeDisabled();
+  });
+});
+
+/** ドライバをまたぐデータ検証 (検証専用, #1869)。 */
+describe("SchemaCompareView のクロスドライバ検証 (#1869)", () => {
+  const MIXED = [
+    makeProfile({ id: "p-my", name: "MySQL", driver: "mysql" }),
+    makeProfile({ id: "p-pg", name: "Postgres", driver: "postgres" }),
+  ];
+
+  it("スキーマ比較は止めたままデータ比較を出し、検証専用の案内と同一視した列を示す", async () => {
+    vi.mocked(api.connect)
+      .mockResolvedValueOnce({ session_id: "s-my" } as never)
+      .mockResolvedValueOnce({ session_id: "s-pg" } as never);
+    vi.mocked(api.listTables).mockResolvedValue(["orders"]);
+    vi.mocked(api.compareTableData).mockResolvedValue({
+      diff_id: "d1",
+      cross_driver: true,
+      normalized_columns: [
+        { column: "flag", kind: "boolean", source_type: "tinyint(1)", target_type: "boolean" },
+      ],
+      diff: {
+        target_driver: "postgres",
+        table: "orders",
+        columns: ["id", "flag"],
+        column_types: ["bigint", "tinyint(1)"],
+        primary_key: ["id"],
+        key_kind: "primary_key",
+        rows: [],
+        truncated: false,
+        source_count: 3,
+        target_count: 3,
+      },
+    } as never);
+    renderWithProviders(<SchemaCompareView profiles={MIXED} onClose={() => {}} />);
+    const boxes = () => screen.getAllByRole("combobox") as HTMLSelectElement[];
+    fireEvent.change(boxes()[0], { target: { value: "p-my" } });
+    await waitFor(() => expect(boxes()[1]).not.toBeDisabled());
+    fireEvent.change(boxes()[2], { target: { value: "p-pg" } });
+    await waitFor(() => expect(boxes()[3]).not.toBeDisabled());
+    await waitFor(() => expect(boxes()[3].value).toBe("db1"));
+
+    // スキーマ比較は同一ドライバ必須のまま。
+    expect(screen.getByRole("button", { name: t("schemaCompareCompare") })).toBeDisabled();
+    expect(screen.getByText(t("schemaCompareDriverMismatch"))).toBeInTheDocument();
+    // 検証専用の案内が出る。
+    expect(await screen.findByText(t("schemaCompareCrossTitle"))).toBeInTheDocument();
+
+    const sourceTable = (await screen.findByLabelText(
+      t("schemaCompareDataSourceTable"),
+    )) as HTMLSelectElement;
+    fireEvent.change(sourceTable, { target: { value: "orders" } });
+    fireEvent.click(screen.getByLabelText(t("schemaCompareDataAllRows")));
+    fireEvent.click(screen.getByText(t("schemaCompareDataCompare")));
+    await waitFor(() => expect(api.compareTableData).toHaveBeenCalled());
+
+    // 一致の通知と、同一視した列の Callout。
+    expect(await screen.findByText(t("schemaCompareCrossMatchTitle"))).toBeInTheDocument();
+    expect(screen.getByText(t("schemaCompareCrossNormalizedTitle"))).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        t("schemaCompareCrossNormBoolean", { column: "flag", source: "tinyint(1)", target: "boolean" }),
+      ),
+    ).toBeInTheDocument();
+    // 同期操作は出さない。
+    expect(screen.queryByText(t("schemaCompareDataGenerate"))).toBeNull();
+    expect(screen.queryByText(t("schemaCompareAllowDelete"))).toBeNull();
+  });
+
+  it("差分があれば行を一覧し、それでも同期 SQL の操作は出さない", async () => {
+    vi.mocked(api.connect)
+      .mockResolvedValueOnce({ session_id: "s-my" } as never)
+      .mockResolvedValueOnce({ session_id: "s-pg" } as never);
+    vi.mocked(api.listTables).mockResolvedValue(["orders"]);
+    vi.mocked(api.compareTableData).mockResolvedValue({
+      diff_id: "d1",
+      cross_driver: true,
+      normalized_columns: [],
+      diff: {
+        target_driver: "postgres",
+        table: "orders",
+        columns: ["id", "price"],
+        column_types: ["bigint", "decimal(10,2)"],
+        primary_key: ["id"],
+        key_kind: "primary_key",
+        rows: [
+          {
+            status: "different",
+            key: [2],
+            source: [2, "2.50"],
+            target: [2, "2.51"],
+            changed_columns: ["price"],
+          },
+          { status: "source_only", key: [4], source: [4, "4.00"], target: null, changed_columns: [] },
+        ],
+        truncated: false,
+        source_count: 3,
+        target_count: 3,
+      },
+    } as never);
+    renderWithProviders(<SchemaCompareView profiles={MIXED} onClose={() => {}} />);
+    const boxes = () => screen.getAllByRole("combobox") as HTMLSelectElement[];
+    fireEvent.change(boxes()[0], { target: { value: "p-my" } });
+    await waitFor(() => expect(boxes()[1]).not.toBeDisabled());
+    fireEvent.change(boxes()[2], { target: { value: "p-pg" } });
+    await waitFor(() => expect(boxes()[3].value).toBe("db1"));
+    const sourceTable = (await screen.findByLabelText(
+      t("schemaCompareDataSourceTable"),
+    )) as HTMLSelectElement;
+    fireEvent.change(sourceTable, { target: { value: "orders" } });
+    fireEvent.click(screen.getByLabelText(t("schemaCompareDataAllRows")));
+    fireEvent.click(screen.getByText(t("schemaCompareDataCompare")));
+    expect(await screen.findByText(t("schemaCompareCrossDiffTitle"))).toBeInTheDocument();
+    expect(screen.getByText(/price: "2\.50" → "2\.51"/)).toBeInTheDocument();
+    expect(screen.queryByText(t("schemaCompareDataGenerate"))).toBeNull();
   });
 });

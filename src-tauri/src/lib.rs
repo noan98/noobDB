@@ -52,6 +52,7 @@ pub mod __test_api {
     };
     pub use crate::db::aws_iam::AwsIamConfig;
     pub use crate::db::broadcast_diff::{BroadcastDiff, ChangedRow, DiffMode};
+    pub use crate::db::cross_compare::{NormalizeKind, NormalizedColumn};
     pub use crate::db::data_diff::{
         compute_data_diff, generate_data_sync_sql, DataDiff, RowDiff, RowStatus,
     };
@@ -575,6 +576,33 @@ pub mod __test_api {
     ) -> crate::error::Result<SchemaDiff> {
         crate::commands::diff::compare_schema_core(source, source_database, target, target_database)
             .await
+    }
+
+    /// データ比較の本体 (ドライバをまたぐ比較の正規化込み, #1869)。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn compare_table_data_via_core(
+        source: &Connection,
+        source_database: &str,
+        target: &Connection,
+        target_database: &str,
+        source_table: &str,
+        target_table: &str,
+        limit: Option<usize>,
+        all_rows: bool,
+        ignore_columns: Option<Vec<String>>,
+    ) -> crate::error::Result<(DataDiff, Vec<crate::db::cross_compare::NormalizedColumn>)> {
+        crate::commands::diff::compare_table_data_core(
+            source,
+            source_database,
+            target,
+            target_database,
+            source_table,
+            target_table,
+            limit,
+            all_rows,
+            ignore_columns,
+        )
+        .await
     }
 
     pub async fn connect(opts: &DbConnectOptions) -> crate::error::Result<Connection> {

@@ -809,6 +809,7 @@ fn build_fixtures() -> serde_json::Value {
         source_count: 10,
         target_count: 10,
         generated_columns: Vec::new(),
+        verify_only: false,
     };
 
     // --- #1096: Query/Preview ストリーミングメッセージ (Tauri Channel) --------
@@ -1603,6 +1604,7 @@ fn build_fixtures() -> serde_json::Value {
             source_count: 1,
             target_count: 1,
             generated_columns: Vec::new(),
+            verify_only: false,
         })
         .collect();
 
@@ -2053,6 +2055,13 @@ fn build_fixtures() -> serde_json::Value {
     };
     let data_diff_handle = t::DataDiffHandle {
         diff_id: "diff0002".into(),
+        cross_driver: true,
+        normalized_columns: vec![t::NormalizedColumn {
+            column: "name".into(),
+            kind: t::NormalizeKind::Json,
+            source_type: "json".into(),
+            target_type: "jsonb".into(),
+        }],
         diff: std::sync::Arc::new(data_diff.clone()),
     };
 

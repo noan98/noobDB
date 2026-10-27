@@ -16,6 +16,7 @@ import {
   type IndexDiff,
   type ConnectionProfile,
   type DataDiff,
+  type NormalizedColumn,
   type DiffStatus,
   type DriverKind,
   type SchemaDiff,
@@ -32,6 +33,7 @@ import { staggerContainer, transitions, variants as motionVariants } from "../mo
 import { rowKeyNote } from "../rowKey";
 import { semanticColorVar } from "../semanticColors";
 import { useSettings } from "../settings";
+import { CrossDriverNotice, CrossDriverResult } from "./CrossDriverVerify";
 import { useConfirm } from "./ConfirmDialog";
 import { statusColors } from "./diffStatusColors";
 import { AiSyncRisk, RiskBadge, type RiskByIndex } from "./AiSyncRisk";
@@ -499,6 +501,13 @@ export function SchemaCompareView({
   // 比較から外す列 (カンマ区切り, #1539)。updated_at のように環境ごとに違う列を差分にしない。
   const [dataIgnore, setDataIgnore] = useState("");
   const [dataDiff, setDataDiff] = useState<DataDiff | null>(null);
+  // ドライバをまたぐ検証専用の比較か・正規化して一致とみなした列 (#1869)。
+  const [dataCross, setDataCross] = useState(false);
+  const [dataNormalized, setDataNormalized] = useState<NormalizedColumn[]>([]);
+  // ドライバが違う 2 つの接続では、スキーマ比較の結果が無いので表の一覧を直接取る (#1869)。
+  const [crossTables, setCrossTables] = useState<{ source: string[]; target: string[] } | null>(null);
+  const [crossTablesError, setCrossTablesError] = useState<string | null>(null);
+  const wasCrossRef = useRef(false);
   // `dataDiff` をバックエンドが保持している ID (#1259)。SQL 生成にはこの ID だけを送る。
   const [dataDiffId, setDataDiffId] = useState<string | null>(null);
   const heldDiffIdRef = useRef<string | null>(null);
@@ -640,6 +649,42 @@ export function SchemaCompareView({
   );
   const driverMismatch = sourceDriver !== null && targetDriver !== null && sourceDriver !== targetDriver;
 
+  // ドライバをまたぐ組み合わせでは、データ比較だけを許す (検証専用, #1869)。接続・DB が変わるたびに
+  // 前回の結果を捨て、両側の表の一覧を取り直す。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 接続・DB の変化だけを契機にする。
+  useEffect(() => {
+    if (!driverMismatch && !wasCrossRef.current) return;
+    wasCrossRef.current = driverMismatch;
+    setCrossTables(null);
+    setCrossTablesError(null);
+    setDataTable("");
+    setDataTargetTable("");
+    setDataComparedTables(null);
+    setDataDiff(null);
+    setDataDiffId(null);
+    setDataCross(false);
+    setDataNormalized([]);
+    setSyncError(null);
+    releaseHeldDiff();
+    if (!driverMismatch || !source.sessionId || !source.database || !target.sessionId || !target.database) {
+      return;
+    }
+    let cancelled = false;
+    Promise.all([
+      api.listTables(source.sessionId, source.database),
+      api.listTables(target.sessionId, target.database),
+    ])
+      .then(([s, tg]) => {
+        if (!cancelled) setCrossTables({ source: s, target: tg });
+      })
+      .catch((e) => {
+        if (!cancelled) setCrossTablesError(String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [driverMismatch, source.sessionId, source.database, target.sessionId, target.database]);
+
   const canCompare =
     !!source.sessionId &&
     !!source.database &&
@@ -754,18 +799,26 @@ export function SchemaCompareView({
         ? diff.tables
             .filter((tbl) => tbl.status === "same" || tbl.status === "different")
             .map((tbl) => tbl.name)
-        : [],
-    [diff],
+        : crossTables
+          ? crossTables.source.filter((name) => crossTables.target.includes(name))
+          : [],
+    [diff, crossTables],
   );
 
   // ソース側に存在する表 / ターゲット側に存在する表 (#1880)。異名の表は片側にしか無い表も選べる。
   const sourceTableNames = useMemo(
-    () => (diff ? diff.tables.filter((tbl) => tbl.status !== "target_only").map((tbl) => tbl.name) : []),
-    [diff],
+    () =>
+      diff
+        ? diff.tables.filter((tbl) => tbl.status !== "target_only").map((tbl) => tbl.name)
+        : (crossTables?.source ?? []),
+    [diff, crossTables],
   );
   const targetTableNames = useMemo(
-    () => (diff ? diff.tables.filter((tbl) => tbl.status !== "source_only").map((tbl) => tbl.name) : []),
-    [diff],
+    () =>
+      diff
+        ? diff.tables.filter((tbl) => tbl.status !== "source_only").map((tbl) => tbl.name)
+        : (crossTables?.target ?? []),
+    [diff, crossTables],
   );
   // ターゲット未指定 (同名) のときは、同名の表が両側に無いと比較できない。
   // 比較できない組み合わせの理由 (ボタンを無効にして案内文を出す)。
@@ -842,12 +895,16 @@ export function SchemaCompareView({
       setDataComparedTables({ source: dataTable, target: dataTargetTable || dataTable });
       setDataDiff(result.diff);
       setDataDiffId(result.diff_id);
+      setDataCross(result.cross_driver);
+      setDataNormalized(result.normalized_columns);
     } catch (e) {
       // 利用者が中止したときはエラー表示にしない。
       setSyncError(dataCancelledRef.current ? t("schemaCompareDataCancelled") : String(e));
       releaseHeldDiff();
       setDataDiff(null);
       setDataDiffId(null);
+      setDataCross(false);
+      setDataNormalized([]);
     } finally {
       unlisten?.();
       dataStreamIdRef.current = null;
@@ -1048,6 +1105,176 @@ export function SchemaCompareView({
 
   const selectedCount = selected.size;
 
+  const dataSection = sourceTableNames.length > 0 && targetTableNames.length > 0 && (
+    <Box css={syncCss}>
+      <chakra.h3 css={syncTitleCss}>
+        {driverMismatch ? t("schemaCompareCrossHeading") : t("schemaCompareDataTitle")}
+      </chakra.h3>
+      {driverMismatch ? (
+        <CrossDriverNotice />
+      ) : (
+        <chakra.p margin={0} fontSize="sm" color="app.textMuted">
+          {t("schemaCompareDataDesc")}
+        </chakra.p>
+      )}
+      <Box css={syncControlsCss}>
+        <Box css={tablePairCss}>
+          <Box css={tableColCss}>
+            <chakra.span css={sideLabelCss}>{t("schemaCompareDataSourceTable")}</chakra.span>
+            <Select
+              aria-label={t("schemaCompareDataSourceTable")}
+              value={dataTable}
+              disabled={dataComparing || generating}
+              onChange={(e) => {
+                // 対象テーブルを変えたら前回のデータ差分・計画は別テーブルのものに
+                // なるので破棄する (残すと前のテーブルの変更が流れる)。
+                setDataTable(e.target.value);
+                resetDataDiffForTableChange();
+              }}
+            >
+              <option value="">{t("schemaCompareDataSelectTable")}</option>
+              {sourceTableNames.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </Select>
+          </Box>
+          <chakra.span textStyle="caption" aria-hidden="true">
+            →
+          </chakra.span>
+          <Box css={tableColCss}>
+            <chakra.span css={sideLabelCss}>{t("schemaCompareDataTargetTable")}</chakra.span>
+            <Select
+              aria-label={t("schemaCompareDataTargetTable")}
+              value={dataTargetTable}
+              disabled={dataComparing || generating}
+              onChange={(e) => {
+                setDataTargetTable(e.target.value);
+                resetDataDiffForTableChange();
+              }}
+            >
+              <option value="">{t("schemaCompareDataTargetSameName")}</option>
+              {targetTableNames.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </Select>
+          </Box>
+        </Box>
+        <chakra.label css={optionLabelCss}>
+          <Checkbox
+            checked={dataAllRows}
+            onChange={(e) => setDataAllRows(e.target.checked)}
+            disabled={dataComparing}
+          />
+          {t("schemaCompareDataAllRows")}
+        </chakra.label>
+        {!dataAllRows && (
+          <chakra.label css={limitCss}>
+            {t("schemaCompareDataLimit")}
+            <DraftNumberInput min={1} max={5000} value={dataLimit} onCommit={setDataLimit} />
+          </chakra.label>
+        )}
+        <chakra.label css={ignoreCss}>
+          {t("schemaCompareDataIgnore")}
+          <Input
+            value={dataIgnore}
+            onChange={(e) => setDataIgnore(e.target.value)}
+            placeholder={t("schemaCompareDataIgnorePlaceholder")}
+            disabled={dataComparing}
+          />
+        </chakra.label>
+        <Button onClick={compareData} disabled={!dataTablesValid || dataComparing}>
+          {dataComparing ? t("schemaCompareComparing") : t("schemaCompareDataCompare")}
+        </Button>
+        {dataComparing && dataCancellable && (
+          <>
+            <chakra.span textStyle="caption">
+              {t("schemaCompareDataProgress", { rows: (dataProgressRows ?? 0).toLocaleString() })}
+            </chakra.span>
+            <Button type="button" variant="secondary" size="sm" onClick={cancelDataCompare}>
+              {t("schemaCompareDataCancel")}
+            </Button>
+          </>
+        )}
+      </Box>
+
+      {dataTablesBlockReason && (
+        <chakra.p margin={0} fontSize="sm" color="app.textWarning" role="status">
+          {t(dataTablesBlockReason === "same" ? "schemaCompareDataSameTable" : "schemaCompareDataNoSameName")}
+        </chakra.p>
+      )}
+
+      {dataDiff && (
+        <>
+          <chakra.p margin={0} fontSize="sm" color="app.textMuted">
+            {dataComparedTables && dataComparedTables.source !== dataComparedTables.target
+              ? t("schemaCompareDataComparedPair", dataComparedTables)
+              : t("schemaCompareDataComparedTable", { table: dataDiff.table })}
+          </chakra.p>
+          {dataCross ? (
+            <>
+              <CrossDriverResult diff={dataDiff} normalized={dataNormalized} />
+              {dataDiff.truncated && (
+                <chakra.p css={backupCss}>
+                  {dataComparedWith.allRows
+                    ? t("schemaCompareDataTruncatedAll")
+                    : t("schemaCompareDataTruncated", { limit: dataComparedWith.limit })}
+                </chakra.p>
+              )}
+            </>
+          ) : (
+            <>
+              <Box css={summaryCss} role="group" aria-label={t("schemaCompareDataKinds")}>
+                {(
+                  [
+                    ["source_only", "schemaCompareDataInserts"],
+                    ["different", "schemaCompareDataUpdates"],
+                    ["target_only", "schemaCompareDataDeletes"],
+                  ] as const
+                ).map(([kind, key]) => (
+                  <chakra.label key={kind} css={chipCss(kind)}>
+                    <Checkbox
+                      checked={dataKinds[kind]}
+                      onChange={(e) => setDataKinds((prev) => ({ ...prev, [kind]: e.target.checked }))}
+                    />{" "}
+                    {t(key)}: {dataCounts[kind]}
+                  </chakra.label>
+                ))}
+              </Box>
+              <chakra.p margin={0} textStyle="caption" color="app.textMuted">
+                {t("schemaCompareDataKindsHint")}
+              </chakra.p>
+              {dataKeyNote && (
+                <chakra.p margin={0} textStyle="caption" color="app.textMuted">
+                  {t(dataKeyNote.key, dataKeyNote.vars)}
+                </chakra.p>
+              )}
+              {dataDiff.truncated && (
+                <chakra.p css={backupCss}>
+                  {dataComparedWith.allRows
+                    ? t("schemaCompareDataTruncatedAll")
+                    : t("schemaCompareDataTruncated", { limit: dataComparedWith.limit })}
+                </chakra.p>
+              )}
+              <Box css={syncControlsCss}>
+                <chakra.label css={destructiveCss}>
+                  <Checkbox checked={allowDelete} onChange={(e) => setAllowDelete(e.target.checked)} />
+                  {t("schemaCompareAllowDelete")}
+                </chakra.label>
+                <Button onClick={generateDataPlan} disabled={generating}>
+                  {generating ? t("schemaCompareGenerating") : t("schemaCompareDataGenerate")}
+                </Button>
+              </Box>
+            </>
+          )}
+        </>
+      )}
+    </Box>
+  );
+
   return (
     <Box flex="1" overflowY="auto" py="5" px="6" display="flex" flexDirection="column" gap="4.5">
       <chakra.header
@@ -1120,6 +1347,12 @@ export function SchemaCompareView({
           </Box>
 
           {driverMismatch && <chakra.p css={warningCss}>{t("schemaCompareDriverMismatch")}</chakra.p>}
+          {driverMismatch && crossTablesError && (
+            <chakra.p css={warningCss}>
+              {t("schemaCompareCrossNoTables", { error: crossTablesError })}
+            </chakra.p>
+          )}
+          {driverMismatch && !diff && dataSection}
 
           <Box css={actionsCss}>
             <PressableButton variant="primary" onClick={runCompare} disabled={!canCompare}>
@@ -1197,163 +1430,7 @@ export function SchemaCompareView({
                 </Box>
               )}
 
-              {sourceTableNames.length > 0 && targetTableNames.length > 0 && (
-                <Box css={syncCss}>
-                  <chakra.h3 css={syncTitleCss}>{t("schemaCompareDataTitle")}</chakra.h3>
-                  <chakra.p margin={0} fontSize="sm" color="app.textMuted">
-                    {t("schemaCompareDataDesc")}
-                  </chakra.p>
-                  <Box css={syncControlsCss}>
-                    <Box css={tablePairCss}>
-                      <Box css={tableColCss}>
-                        <chakra.span css={sideLabelCss}>{t("schemaCompareDataSourceTable")}</chakra.span>
-                        <Select
-                          aria-label={t("schemaCompareDataSourceTable")}
-                          value={dataTable}
-                          disabled={dataComparing || generating}
-                          onChange={(e) => {
-                            // 対象テーブルを変えたら前回のデータ差分・計画は別テーブルのものに
-                            // なるので破棄する (残すと前のテーブルの変更が流れる)。
-                            setDataTable(e.target.value);
-                            resetDataDiffForTableChange();
-                          }}
-                        >
-                          <option value="">{t("schemaCompareDataSelectTable")}</option>
-                          {sourceTableNames.map((name) => (
-                            <option key={name} value={name}>
-                              {name}
-                            </option>
-                          ))}
-                        </Select>
-                      </Box>
-                      <chakra.span textStyle="caption" aria-hidden="true">
-                        →
-                      </chakra.span>
-                      <Box css={tableColCss}>
-                        <chakra.span css={sideLabelCss}>{t("schemaCompareDataTargetTable")}</chakra.span>
-                        <Select
-                          aria-label={t("schemaCompareDataTargetTable")}
-                          value={dataTargetTable}
-                          disabled={dataComparing || generating}
-                          onChange={(e) => {
-                            setDataTargetTable(e.target.value);
-                            resetDataDiffForTableChange();
-                          }}
-                        >
-                          <option value="">{t("schemaCompareDataTargetSameName")}</option>
-                          {targetTableNames.map((name) => (
-                            <option key={name} value={name}>
-                              {name}
-                            </option>
-                          ))}
-                        </Select>
-                      </Box>
-                    </Box>
-                    <chakra.label css={optionLabelCss}>
-                      <Checkbox
-                        checked={dataAllRows}
-                        onChange={(e) => setDataAllRows(e.target.checked)}
-                        disabled={dataComparing}
-                      />
-                      {t("schemaCompareDataAllRows")}
-                    </chakra.label>
-                    {!dataAllRows && (
-                      <chakra.label css={limitCss}>
-                        {t("schemaCompareDataLimit")}
-                        <DraftNumberInput min={1} max={5000} value={dataLimit} onCommit={setDataLimit} />
-                      </chakra.label>
-                    )}
-                    <chakra.label css={ignoreCss}>
-                      {t("schemaCompareDataIgnore")}
-                      <Input
-                        value={dataIgnore}
-                        onChange={(e) => setDataIgnore(e.target.value)}
-                        placeholder={t("schemaCompareDataIgnorePlaceholder")}
-                        disabled={dataComparing}
-                      />
-                    </chakra.label>
-                    <Button onClick={compareData} disabled={!dataTablesValid || dataComparing}>
-                      {dataComparing ? t("schemaCompareComparing") : t("schemaCompareDataCompare")}
-                    </Button>
-                    {dataComparing && dataCancellable && (
-                      <>
-                        <chakra.span textStyle="caption">
-                          {t("schemaCompareDataProgress", { rows: (dataProgressRows ?? 0).toLocaleString() })}
-                        </chakra.span>
-                        <Button type="button" variant="secondary" size="sm" onClick={cancelDataCompare}>
-                          {t("schemaCompareDataCancel")}
-                        </Button>
-                      </>
-                    )}
-                  </Box>
-
-                  {dataTablesBlockReason && (
-                    <chakra.p margin={0} fontSize="sm" color="app.textWarning" role="status">
-                      {t(
-                        dataTablesBlockReason === "same"
-                          ? "schemaCompareDataSameTable"
-                          : "schemaCompareDataNoSameName",
-                      )}
-                    </chakra.p>
-                  )}
-
-                  {dataDiff && (
-                    <>
-                      <chakra.p margin={0} fontSize="sm" color="app.textMuted">
-                        {dataComparedTables && dataComparedTables.source !== dataComparedTables.target
-                          ? t("schemaCompareDataComparedPair", dataComparedTables)
-                          : t("schemaCompareDataComparedTable", { table: dataDiff.table })}
-                      </chakra.p>
-                      <Box css={summaryCss} role="group" aria-label={t("schemaCompareDataKinds")}>
-                        {(
-                          [
-                            ["source_only", "schemaCompareDataInserts"],
-                            ["different", "schemaCompareDataUpdates"],
-                            ["target_only", "schemaCompareDataDeletes"],
-                          ] as const
-                        ).map(([kind, key]) => (
-                          <chakra.label key={kind} css={chipCss(kind)}>
-                            <Checkbox
-                              checked={dataKinds[kind]}
-                              onChange={(e) =>
-                                setDataKinds((prev) => ({ ...prev, [kind]: e.target.checked }))
-                              }
-                            />{" "}
-                            {t(key)}: {dataCounts[kind]}
-                          </chakra.label>
-                        ))}
-                      </Box>
-                      <chakra.p margin={0} textStyle="caption" color="app.textMuted">
-                        {t("schemaCompareDataKindsHint")}
-                      </chakra.p>
-                      {dataKeyNote && (
-                        <chakra.p margin={0} textStyle="caption" color="app.textMuted">
-                          {t(dataKeyNote.key, dataKeyNote.vars)}
-                        </chakra.p>
-                      )}
-                      {dataDiff.truncated && (
-                        <chakra.p css={backupCss}>
-                          {dataComparedWith.allRows
-                            ? t("schemaCompareDataTruncatedAll")
-                            : t("schemaCompareDataTruncated", { limit: dataComparedWith.limit })}
-                        </chakra.p>
-                      )}
-                      <Box css={syncControlsCss}>
-                        <chakra.label css={destructiveCss}>
-                          <Checkbox
-                            checked={allowDelete}
-                            onChange={(e) => setAllowDelete(e.target.checked)}
-                          />
-                          {t("schemaCompareAllowDelete")}
-                        </chakra.label>
-                        <Button onClick={generateDataPlan} disabled={generating}>
-                          {generating ? t("schemaCompareGenerating") : t("schemaCompareDataGenerate")}
-                        </Button>
-                      </Box>
-                    </>
-                  )}
-                </Box>
-              )}
+              {dataSection}
 
               {syncError && <chakra.p css={warningCss}>{syncError}</chakra.p>}
               {applyResult && <chakra.p css={successCss}>{applyResult}</chakra.p>}

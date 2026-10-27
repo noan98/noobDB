@@ -4872,8 +4872,36 @@ const en = {
   schemaCompareConnecting: "Connecting...",
   schemaCompareCompare: "Compare",
   schemaCompareComparing: "Comparing...",
-  schemaCompareDriverMismatch:
-    "Source and target must use the same driver. Cross-driver comparison is not supported yet.",
+  schemaCompareCrossHeading: "Verify row data (verification only)",
+  schemaCompareCrossTitle: "Cross-driver data check (verification only)",
+  schemaCompareCrossBody:
+    "The source and target use different drivers. Only table data can be compared, and no sync SQL is generated: values are normalized (booleans, decimals, dates, JSON) before comparing. Schema comparison needs the same driver. Primary keys must be integers.",
+  schemaCompareCrossNoTables: "Could not list tables for the data check: {error}",
+  schemaCompareCrossMatchTitle: "All compared rows match",
+  schemaCompareCrossMatchBody:
+    "{count} source rows and {target} target rows were compared with no differences.",
+  schemaCompareCrossDiffTitle: "Differences found",
+  schemaCompareCrossSummary: "Source only: {sourceOnly} / Target only: {targetOnly} / Different: {different}",
+  schemaCompareCrossRowSourceOnly: "Source only",
+  schemaCompareCrossRowTargetOnly: "Target only",
+  schemaCompareCrossRowDifferent: "Different",
+  schemaCompareCrossRowsMore: "…and {count} more rows (showing the first {shown}).",
+  schemaCompareCrossNormalizedTitle: "Columns treated as equal despite different representations",
+  schemaCompareCrossNormBoolean:
+    "{column} ({source} / {target}): 0/1 and true/false are treated as the same value.",
+  schemaCompareCrossNormDecimalScale:
+    "{column} ({source} / {target}): decimals are compared by value, ignoring trailing zeros (1.10 = 1.1).",
+  schemaCompareCrossNormDecimalFloat:
+    "{column} ({source} / {target}): SQLite stores numbers as floating point, so values are compared to 15 significant digits.",
+  schemaCompareCrossNormDecimalClamped:
+    "{column} ({source} / {target}): exceeds a side's decimal limits, so values may be rounded there.",
+  schemaCompareCrossNormTimestampTz:
+    "{column} ({source} / {target}): one side has no timezone-aware type; values without an offset are treated as UTC.",
+  schemaCompareCrossNormTimestampFormat:
+    "{column} ({source} / {target}): date-time format and fractional-second digits are ignored (2024-01-02T03:04:05.000 = 2024-01-02 03:04:05).",
+  schemaCompareCrossNormJson:
+    "{column} ({source} / {target}): JSON is compared by content, ignoring whitespace and key order.",
+  schemaCompareDriverMismatch: "Schema comparison needs the source and target to use the same driver.",
   schemaCompareHideSame: "Hide identical tables",
   schemaCompareIdentical: "The two schemas are identical.",
   schemaCompareAllHidden: "Only identical tables — all hidden.",
@@ -11755,8 +11783,35 @@ const ja: Dict = {
   schemaCompareConnecting: "接続中...",
   schemaCompareCompare: "比較",
   schemaCompareComparing: "比較中...",
-  schemaCompareDriverMismatch:
-    "ソースとターゲットは同じドライバである必要があります。ドライバを跨ぐ比較は未対応です。",
+  schemaCompareCrossHeading: "行データを検証 (検証専用)",
+  schemaCompareCrossTitle: "ドライバをまたぐデータ検証 (検証専用)",
+  schemaCompareCrossBody:
+    "比較元と比較先のドライバが違います。比較できるのは表のデータだけで、同期 SQL は生成しません。真偽値・decimal・日時・JSON は表現の違いをそろえてから突き合わせます。スキーマ比較は同じドライバどうしのみです。主キーは整数に限ります。",
+  schemaCompareCrossNoTables: "データ検証用の表一覧を取得できませんでした: {error}",
+  schemaCompareCrossMatchTitle: "比較した行はすべて一致しました",
+  schemaCompareCrossMatchBody: "比較元 {count} 行・比較先 {target} 行を比べ、差分はありませんでした。",
+  schemaCompareCrossDiffTitle: "差分があります",
+  schemaCompareCrossSummary: "比較元のみ: {sourceOnly} / 比較先のみ: {targetOnly} / 値が違う: {different}",
+  schemaCompareCrossRowSourceOnly: "比較元のみ",
+  schemaCompareCrossRowTargetOnly: "比較先のみ",
+  schemaCompareCrossRowDifferent: "値が違う",
+  schemaCompareCrossRowsMore: "ほか {count} 行 (先頭 {shown} 行を表示)。",
+  schemaCompareCrossNormalizedTitle: "表現が違っても同じ値とみなした列があります",
+  schemaCompareCrossNormBoolean:
+    "{column} ({source} / {target}): 0/1 と true/false を同じ値として扱いました。",
+  schemaCompareCrossNormDecimalScale:
+    "{column} ({source} / {target}): decimal は末尾の 0 を無視して値で比べました (1.10 = 1.1)。",
+  schemaCompareCrossNormDecimalFloat:
+    "{column} ({source} / {target}): SQLite は数値を浮動小数で保存するため、有効桁 15 桁までで比べました。",
+  schemaCompareCrossNormDecimalClamped:
+    "{column} ({source} / {target}): 片側の decimal の上限を超えるため、その側では値が丸められている可能性があります。",
+  schemaCompareCrossNormTimestampTz:
+    "{column} ({source} / {target}): 片側にタイムゾーン付きの型がないため、オフセットのない値は UTC とみなして比べました。",
+  schemaCompareCrossNormTimestampFormat:
+    "{column} ({source} / {target}): 日時の書式と小数秒の桁の違いを無視しました (2024-01-02T03:04:05.000 = 2024-01-02 03:04:05)。",
+  schemaCompareCrossNormJson:
+    "{column} ({source} / {target}): JSON は空白とキー順を無視して内容で比べました。",
+  schemaCompareDriverMismatch: "スキーマ比較は、比較元と比較先が同じドライバのときだけ使えます。",
   schemaCompareHideSame: "同一のテーブルを隠す",
   schemaCompareIdentical: "2 つのスキーマは同一です。",
   schemaCompareAllHidden: "同一のテーブルのみです（すべて非表示）。",

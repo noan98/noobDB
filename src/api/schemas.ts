@@ -964,8 +964,29 @@ export const dataDiffLite = dataDiff.extend({
 });
 
 /** `compare_table_data` の戻り値: 表示用の差分 + バックエンド保持の差分 ID (#1259)。 */
+export const normalizeKind = z.enum([
+  "boolean",
+  "decimal_scale",
+  "decimal_float",
+  "decimal_clamped",
+  "timestamp_tz_degraded",
+  "timestamp_format",
+  "json",
+]);
+
+/** 正規化して一致とみなした列 (ドライバをまたぐ比較, #1869)。 */
+export const normalizedColumn = z.object({
+  column: z.string(),
+  kind: normalizeKind,
+  source_type: z.string(),
+  target_type: z.string(),
+});
+
 export const dataDiffHandle = z.object({
   diff_id: z.string(),
+  /** ドライバをまたぐ検証専用の比較か。true のとき同期 SQL は生成できない。 */
+  cross_driver: z.boolean(),
+  normalized_columns: z.array(normalizedColumn),
   diff: dataDiffLite,
 });
 
