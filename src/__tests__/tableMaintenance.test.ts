@@ -104,15 +104,37 @@ describe("buildCreateIndexSql options (#1892)", () => {
   });
 
   it("wraps expressions in parentheses on all three drivers", () => {
-    expect(buildCreateIndexSql("mysql", "d", "t", [], { expressions: ["LOWER(email)"] })).toBe(
-      "CREATE INDEX `idx_t_expr` ON `d`.`t` ((LOWER(email)));",
+    expect(buildCreateIndexSql("mysql", "d", "t", [], { expressions: ["LOWER(email)"] })).toMatch(
+      /^CREATE INDEX `idx_t_LOWER_email_[0-9a-f]+` ON `d`\.`t` \(\(LOWER\(email\)\)\);$/,
     );
-    expect(buildCreateIndexSql("postgres", "public", "t", ["a"], { expressions: ["(data->>'k')"] })).toBe(
-      'CREATE INDEX "idx_t_a_expr" ON "public"."t" ("a", ((data->>\'k\')));',
+    expect(
+      buildCreateIndexSql("postgres", "public", "t", ["a"], { name: "n", expressions: ["(data->>'k')"] }),
+    ).toBe('CREATE INDEX "n" ON "public"."t" ("a", ((data->>\'k\')));');
+    expect(buildCreateIndexSql("sqlite", null, "t", [], { expressions: ["lower(email);"] })).toMatch(
+      /^CREATE INDEX "idx_t_lower_email_[0-9a-f]+" ON "t" \(\(lower\(email\)\)\);$/,
     );
-    expect(buildCreateIndexSql("sqlite", null, "t", [], { expressions: ["lower(email);"] })).toBe(
-      'CREATE INDEX "idx_t_expr" ON "t" ((lower(email)));',
+  });
+
+  it("gives different auto names to different expressions", () => {
+    const n = (e: string) => buildCreateIndexSql("postgres", null, "t", [], { expressions: [e] });
+    expect(n("LOWER(email)")).not.toBe(n("UPPER(email)"));
+    expect(n("a+b")).not.toBe(n("a-b"));
+  });
+
+  it("excludes key columns from INCLUDE", () => {
+    expect(buildCreateIndexSql("postgres", "public", "t", ["a", "b"], { include: ["b", "c"] })).toBe(
+      'CREATE INDEX "idx_t_a_b" ON "public"."t" ("a", "b") INCLUDE ("c");',
     );
+    expect(buildCreateIndexSql("postgres", "public", "t", ["b"], { include: ["b"] })).not.toContain(
+      "INCLUDE",
+    );
+  });
+
+  it("flags single-column methods", () => {
+    expect(indexOptionSupport("postgres", "hash").singleColumn).toBe(true);
+    expect(indexOptionSupport("mysql", "spatial").singleColumn).toBe(true);
+    expect(indexOptionSupport("mysql", "hash").singleColumn).toBe(false);
+    expect(indexOptionSupport("postgres", "gin").singleColumn).toBe(false);
   });
 
   it("drops expressions for MySQL FULLTEXT", () => {

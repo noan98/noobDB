@@ -113,7 +113,8 @@ export type IndexOptionReason =
   | "includePgOnly"
   | "includeMethod"
   | "uniqueMethod"
-  | "exprFulltext";
+  | "exprFulltext"
+  | "singleColumn";
 
 export interface IndexOptionSupport {
   methods: IndexMethod[];
@@ -121,8 +122,12 @@ export interface IndexOptionSupport {
   include: boolean;
   unique: boolean;
   expression: boolean;
+  /** キーが 1 つ (列または式) しか持てないメソッド (PostgreSQL hash / MySQL SPATIAL)。 */
+  singleColumn: boolean;
   /** 無効なオプション → 理由。UI が短い説明として表示する。 */
-  reasons: Partial<Record<"method" | "where" | "include" | "unique" | "expression", IndexOptionReason>>;
+  reasons: Partial<
+    Record<"method" | "where" | "include" | "unique" | "expression" | "columns", IndexOptionReason>
+  >;
 }
 
 /** 現在のメソッドを前提に、ドライバごとに使えるオプションを返す (SQL 生成と UI で共有)。 */
@@ -149,7 +154,9 @@ export function indexOptionSupport(driver: string, method?: IndexMethod): IndexO
     expression = false;
     reasons.expression = "exprFulltext";
   }
-  return { methods, where, include, unique, expression, reasons };
+  const singleColumn = (driver === "postgres" && m === "hash") || (driver === "mysql" && m === "spatial");
+  if (singleColumn) reasons.columns = "singleColumn";
+  return { methods, where, include, unique, expression, singleColumn, reasons };
 }
 
 /**
@@ -163,6 +170,17 @@ export function normalizeIndexFragment(raw: string | undefined): { sql: string |
     .trim();
   if (sql.length === 0) return { sql: null, error: false };
   return { sql, error: sql.includes(";") };
+}
+
+/** 式キーの自動名用サフィックス: 英数字化して切り詰め + 短いハッシュ (式違いで名前が衝突しない)。 */
+function exprNamePart(expr: string): string {
+  let h = 0;
+  for (const ch of expr) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const slug = expr
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 12);
+  return `${slug ? `${slug}_` : ""}${h.toString(16).slice(0, 4)}`;
 }
 
 export interface CreateIndexOptions {
@@ -199,7 +217,7 @@ export function buildCreateIndexSql(
         .map((e) => normalizeIndexFragment(e).sql)
         .filter((e): e is string => e !== null)
     : [];
-  const rawName = opts.name?.trim() || `idx_${table}_${[...cols, ...exprs.map(() => "expr")].join("_")}`;
+  const rawName = opts.name?.trim() || `idx_${table}_${[...cols, ...exprs.map(exprNamePart)].join("_")}`;
   const idxName = sanitizeIndexName(rawName);
   const keyList = [...cols.map((c) => quoteIdentFor(driver, c)), ...exprs.map((e) => `(${e})`)].join(", ");
   const method = opts.method && support.methods.includes(opts.method) ? opts.method : undefined;
@@ -214,7 +232,9 @@ export function buildCreateIndexSql(
   sql += ` (${keyList})`;
   if (driver === "mysql" && (method === "btree" || method === "hash"))
     sql += ` USING ${method.toUpperCase()}`;
-  const inc = support.include ? (opts.include ?? []).map((c) => c.trim()).filter((c) => c.length > 0) : [];
+  const inc = support.include
+    ? (opts.include ?? []).map((c) => c.trim()).filter((c) => c.length > 0 && !cols.includes(c))
+    : [];
   if (inc.length > 0) sql += ` INCLUDE (${inc.map((c) => quoteIdentFor(driver, c)).join(", ")})`;
   const where = support.where ? normalizeIndexFragment(opts.where).sql : null;
   if (where) sql += ` WHERE ${where}`;

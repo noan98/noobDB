@@ -106,7 +106,12 @@ export function CreateIndexModal({
 
   const support = indexOptionSupport(driver, method || undefined);
   const effUnique = unique && support.unique;
-  const plainIndex = expressions.every((e) => e.trim() === "") && where.trim() === "" && method === "";
+  const hasExpr = support.expression && expressions.some((e) => e.trim() !== "");
+  const hasWhere = support.where && where.trim() !== "";
+  // 重複チェックは列構成だけで判定するので、メソッド・式・WHERE があると誤警告になる。
+  // UNIQUE の事前 COUNT は式・WHERE のときだけ外す (メソッドは重複キーの有無に影響しない)。
+  const plainIndex = !hasExpr && !hasWhere && method === "";
+  const uniqueCheckable = !hasExpr && !hasWhere;
 
   useEffect(() => {
     // 式キー / 部分インデックス / メソッド指定があると列構成だけでは重複判定できないため確認しない。
@@ -132,7 +137,9 @@ export function CreateIndexModal({
   const exprCount = support.expression ? expressions.filter((e) => e.trim() !== "").length : 0;
   const whereBad = support.where && normalizeIndexFragment(where).error;
   const exprBad = support.expression && expressions.some((e) => normalizeIndexFragment(e).error);
-  const valid = (selected.length > 0 || exprCount > 0) && !whereBad && !exprBad;
+  const keyCount = selected.length + exprCount;
+  const tooManyKeys = support.singleColumn && keyCount > 1;
+  const valid = keyCount > 0 && !whereBad && !exprBad && !tooManyKeys;
   const sql = useMemo(
     () =>
       valid
@@ -152,12 +159,12 @@ export function CreateIndexModal({
   // UNIQUE のときだけ、既存データに重複キーが無いかを読み取り専用 COUNT で事前検査する (#1757)。
   const prechecks = useMemo(
     () =>
-      valid && effUnique && plainIndex
+      valid && effUnique && uniqueCheckable
         ? buildConstraintPrechecks(driver, database, table, {
             indexes: [{ name, columns: selected, unique: effUnique }],
           })
         : [],
-    [valid, effUnique, plainIndex, driver, database, table, name, selected],
+    [valid, effUnique, uniqueCheckable, driver, database, table, name, selected],
   );
   const runCount = useCallback(
     (countSql: string) =>
@@ -219,7 +226,11 @@ export function CreateIndexModal({
                 )}
                 {columns.map((col) => (
                   <chakra.label key={col} display="flex" alignItems="center" gap="1" fontSize="sm">
-                    <Checkbox checked={selected.includes(col)} onChange={() => toggleColumn(col)} />
+                    <Checkbox
+                      checked={selected.includes(col)}
+                      disabled={support.singleColumn && !selected.includes(col) && keyCount >= 1}
+                      onChange={() => toggleColumn(col)}
+                    />
                     {col}
                     {selected.includes(col) && (
                       <chakra.span
@@ -233,6 +244,11 @@ export function CreateIndexModal({
                   </chakra.label>
                 ))}
               </Flex>
+              {reasonText(support.reasons.columns) && (
+                <chakra.span textStyle="caption" data-testid="create-index-reason-columns">
+                  {reasonText(support.reasons.columns)}
+                </chakra.span>
+              )}
               {selected.length > 1 && (
                 <Flex gap="2" wrap="wrap" align="center" data-testid="create-index-order">
                   {selected.map((col, i) => (
@@ -276,7 +292,11 @@ export function CreateIndexModal({
                         onChange={(ev) =>
                           setExpressions((xs) => xs.map((x, j) => (j === i ? ev.target.value : x)))
                         }
-                        placeholder={t("createIndexExpressionPlaceholder")}
+                        placeholder={t(
+                          driver === "mysql"
+                            ? "createIndexExpressionPlaceholderMysql"
+                            : "createIndexExpressionPlaceholder",
+                        )}
                         flex="1"
                       />
                       <Button
@@ -326,6 +346,11 @@ export function CreateIndexModal({
                   ))}
                 </Select>
               </Flex>
+              {driver === "mysql" && method === "hash" && (
+                <chakra.span textStyle="caption" data-testid="create-index-note-hash">
+                  {t("createIndexMysqlHashNote")}
+                </chakra.span>
+              )}
               {reasonText(support.reasons.method) && (
                 <chakra.span textStyle="caption" data-testid="create-index-reason-method">
                   {reasonText(support.reasons.method)}
@@ -382,7 +407,9 @@ export function CreateIndexModal({
             </FormSection>
             <FormSection>
               <FieldLabel as="div">{t("createTablePreview")}</FieldLabel>
-              <CodePreview minH="48px">{sql || t("createIndexPreviewEmpty")}</CodePreview>
+              <CodePreview minH="48px" wrap>
+                {sql || t("createIndexPreviewEmpty")}
+              </CodePreview>
               {overlaps.map((o) => (
                 <Callout key={o.name} tone="warning" data-testid="create-index-overlap">
                   {o.kind === "duplicate"
@@ -397,7 +424,7 @@ export function CreateIndexModal({
                 counts={precheckCounts}
                 onOpenRows={onSendToEditor}
               />
-              {valid && selected.length > 0 && (
+              {valid && selected.length > 0 && (method === "" || method === "btree") && (
                 <chakra.span textStyle="caption" data-testid="create-index-leading">
                   {t("createIndexLeadingColumn", { column: selected[0] })}
                 </chakra.span>

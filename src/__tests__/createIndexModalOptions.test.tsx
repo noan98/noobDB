@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { t } from "../i18n";
 import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
 
 /** CreateIndexModal の詳細オプション (#1892)。方言ごとの有効/無効とプレビュー SQL を確認する。 */
@@ -25,7 +26,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
 });
 
 import { CreateIndexModal } from "../components/CreateIndexModal";
-import type { DriverKind } from "../api/tauri";
+import { api, type DriverKind } from "../api/tauri";
 
 function open(driver: DriverKind) {
   renderWithProviders(
@@ -66,5 +67,49 @@ describe("CreateIndexModal 詳細オプション (#1892)", () => {
     await screen.findByLabelText("a");
     expect(screen.getByLabelText(/WHERE/)).toBeDisabled();
     expect(screen.getByTestId("create-index-reason-where")).toBeInTheDocument();
+  });
+
+  it("メソッド・式・WHERE 指定時は重複チェックを呼ばない", async () => {
+    vi.mocked(api.checkDuplicateIndex).mockClear();
+    open("postgres");
+    fireEvent.click(await screen.findByLabelText("a"));
+    await waitFor(() => expect(api.checkDuplicateIndex).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByLabelText(/WHERE/), { target: { value: "a > 0" } });
+    fireEvent.click(screen.getByLabelText("b"));
+    await new Promise((r) => setTimeout(r, 30));
+    // WHERE 指定後に b を選んでも再チェックしない
+    expect(api.checkDuplicateIndex).toHaveBeenCalledTimes(1);
+  });
+
+  it("途中の ; で FieldError が出て実行が無効になる", async () => {
+    open("postgres");
+    fireEvent.click(await screen.findByLabelText("a"));
+    fireEvent.change(screen.getByLabelText(/WHERE/), { target: { value: "a > 0; DROP TABLE t" } });
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: t("createIndexRun") })).toBeDisabled();
+  });
+
+  it("INCLUDE に選んだ列をキーにすると SQL から INCLUDE が消える", async () => {
+    open("postgres");
+    fireEvent.click(await screen.findByLabelText("a"));
+    fireEvent.click(screen.getByLabelText(/Include b|b を INCLUDE/));
+    await waitFor(() => expect(document.body.textContent).toContain('INCLUDE ("b")'));
+    fireEvent.click(screen.getByLabelText("b"));
+    await waitFor(() => expect(document.body.textContent).not.toContain('INCLUDE ("b")'));
+  });
+
+  it("PG hash は 1 列のみ: 2 列目を無効化して理由を出す。MySQL HASH は注記", async () => {
+    open("postgres");
+    fireEvent.click(await screen.findByLabelText("a"));
+    fireEvent.change(screen.getByLabelText(/メソッド|Method/), { target: { value: "hash" } });
+    await waitFor(() => expect(screen.getByLabelText("b")).toBeDisabled());
+    expect(screen.getByTestId("create-index-reason-columns")).toBeInTheDocument();
+  });
+
+  it("MySQL で HASH を選ぶと InnoDB の注記が出る", async () => {
+    open("mysql");
+    await screen.findByLabelText("a");
+    fireEvent.change(screen.getByLabelText(/メソッド|Method/), { target: { value: "hash" } });
+    await waitFor(() => expect(screen.getByTestId("create-index-note-hash")).toBeInTheDocument());
   });
 });
