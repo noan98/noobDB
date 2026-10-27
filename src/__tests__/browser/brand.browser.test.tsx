@@ -3,6 +3,7 @@ import { renderInBrowser } from "./render";
 import { t } from "../../i18n";
 import { BrandMark, BrandLockup } from "../../brand";
 import { SplashScreen } from "../../components/SplashScreen";
+import { HelpView } from "../../components/HelpView";
 
 // ブランドビジュアル (#619) の実ブラウザスモーク。ロゴマーク・ワードマーク・
 // スプラッシュが例外なく描画されることを確認する (両テーマ破綻の自動検出は
@@ -90,6 +91,24 @@ describe("ブランドビジュアル (実ブラウザ)", () => {
       } finally {
         document.documentElement.removeAttribute("data-motion");
       }
+    });
+  });
+
+  describe("設定・ヘルプのヘッダ罫線 (#1878)", () => {
+    afterEach(() => document.documentElement.removeAttribute("data-theme"));
+    const rule = () => document.querySelector('[data-testid="modal-header-brand-rule"]');
+
+    it("通常テーマではブランドグラデーションの罫線が表示される", async () => {
+      document.documentElement.setAttribute("data-theme", "dark");
+      await renderInBrowser(<HelpView onClose={() => {}} />);
+      await expect.poll(() => (rule() ? getComputedStyle(rule() as Element).display : null)).toBe("block");
+      expect(getComputedStyle(rule() as Element).backgroundImage).toContain("linear-gradient");
+    });
+
+    it("hc-dark では罫線が消える", async () => {
+      document.documentElement.setAttribute("data-theme", "hc-dark");
+      await renderInBrowser(<HelpView onClose={() => {}} />);
+      await expect.poll(() => (rule() ? getComputedStyle(rule() as Element).display : null)).toBe("none");
     });
   });
 });
