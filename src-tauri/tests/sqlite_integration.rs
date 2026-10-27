@@ -1601,8 +1601,10 @@ async fn read_only_session_rejects_csv_import() {
 /// が「各書き込みコマンドの本体にガード参照があること」をソース上で機械検出するのに対し、
 /// ここでは read-only セッションに対して代表的な書き込みコマンドの `_inner` コアを実際に
 /// 呼び、すべて `AppError::ReadOnly` で**ドライバに届く前に**拒否され、データが無変化で
-/// あることを確認する (`run_query` / `run_query_transaction` / `import_csv` /
-/// `apply_privilege_sql` は上の個別テストが担当)。
+/// あることを確認する (`run_query` / `run_query_transaction` は上の個別テストが担当)。
+/// #1882 で `kill_processes` / `apply_privilege_sql` / インポート / `transfer_data` も加えた。
+/// SCRATCH 分類 (サンドボックス等) の「元 DB を書かない」側は
+/// `sandbox_integration.rs::read_only_source_session_can_sandbox_but_source_is_never_written`。
 #[tokio::test]
 async fn read_only_session_rejects_every_representative_write_command() {
     let path = seed_ro_fixture("matrix").await;
@@ -1653,6 +1655,67 @@ async fn read_only_session_rejects_every_representative_write_command() {
         .expect_err("sqlite_maintenance(Analyze) must reject on a read-only session");
     assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
 
+    // プロセス強制終了 (MySQL の KILL / PostgreSQL の pg_cancel_backend)。SQLite ではドライバが
+    // 「非対応」を返すので、ReadOnly で返るならガードがドライバより前に効いている (#1882)。
+    let err = t::kill_processes_via_command(&state, &sid, &[1], false)
+        .await
+        .expect_err("kill_processes must reject on a read-only session");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+
+    // ユーザ / 権限変更の適用。
+    let err =
+        t::apply_privilege_sql_via_command(&state, &sid, None, vec!["DROP USER x".to_string()])
+            .await
+            .expect_err("apply_privilege_sql must reject on a read-only session");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+
+    // CSV / XLSX インポートの共通ガード。
+    let err = t::ensure_import_writable(&state.get(&sid).await.expect("session"))
+        .expect_err("import must reject on a read-only session");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+
+    // 接続間データ転送: read-only は**転送先**になれない。転送元は読むだけなので read-only でも可。
+    // 書き込み可能な転送元から read-only の転送先へ流そうとしても、表は作られない。
+    let src_path = seed_ro_fixture("matrix_transfer_src").await;
+    let src_opts = t::sqlite_options(src_path.to_str().unwrap());
+    let src_conn = t::connect(&src_opts).await.expect("connect (transfer src)");
+    let src_id = state
+        .insert(t::make_session("xfer_src", src_conn, src_opts, false))
+        .await;
+    let err = t::transfer_data_inner(
+        &state,
+        t::TransferRequest {
+            source_session_id: src_id.clone(),
+            target_session_id: sid.clone(),
+            source_database: None,
+            source_table: Some("ro_t".into()),
+            source_sql: None,
+            target_database: None,
+            target_table: "ro_t_copy".into(),
+            mode: t::TransferMode::Create,
+            batch_size: Some(1000),
+            conflict_mode: None,
+            key_columns: None,
+            columns: Vec::new(),
+            where_clause: None,
+            limit_rows: None,
+            verify_counts: None,
+        },
+        std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        |_| {},
+    )
+    .await
+    .expect_err("transfer_data must reject a read-only target");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+    state
+        .get(&src_id)
+        .await
+        .expect("transfer source session")
+        .conn
+        .close()
+        .await;
+    let _ = std::fs::remove_file(&src_path);
+
     // どれもドライバに届いていないので、データは最初のまま。
     let verify = t::connect(&t::sqlite_options(path.to_str().unwrap()))
         .await
@@ -1672,7 +1735,52 @@ async fn read_only_session_rejects_every_representative_write_command() {
         "label が変わっていない: {:?}",
         rows.rows[0][1]
     );
+    // 転送先に表が作られていない (ガードは転送先の作成より前)。
+    let tables = verify
+        .execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+            None,
+        )
+        .await
+        .expect("list tables");
+    assert_eq!(tables.rows.len(), 1, "ro_t のみ: {:?}", tables.rows);
     verify.close().await;
+    state.get(&sid).await.expect("session").conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+/// 緊急書き込みモード (`set_emergency_mode`) は SQL 実行経路 (`run_query` など) だけを緩める。
+/// SQL 文字列を経由しない書き込み経路 (同期適用・権限適用・プロセス終了・インポート・メンテナンス)
+/// は有効化後も拒否されたままであることを固定する (#1882)。LIFECYCLE に分類された
+/// フラグ切替が、他の経路の read_only を静かに外していないことの実挙動側の保証。
+#[tokio::test]
+async fn emergency_mode_keeps_non_sql_write_paths_rejected() {
+    let path = seed_ro_fixture("emergency_keep").await;
+    let (state, sid) = ro_state(&path).await;
+    t::set_emergency_mode_via_command(&state, &sid, true)
+        .await
+        .expect("enable emergency mode on a read-only session");
+
+    let err = t::apply_sync_sql_via_command(&state, &sid, None, vec!["DROP TABLE ro_t".into()])
+        .await
+        .expect_err("apply_sync_sql must stay rejected");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+    let err = t::apply_privilege_sql_via_command(&state, &sid, None, vec!["DROP USER x".into()])
+        .await
+        .expect_err("apply_privilege_sql must stay rejected");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+    let err = t::kill_processes_via_command(&state, &sid, &[1], false)
+        .await
+        .expect_err("kill_processes must stay rejected");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+    let err = t::ensure_import_writable(&state.get(&sid).await.expect("session"))
+        .expect_err("import must stay rejected");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+    let err = t::sqlite_maintenance_inner(&state, &sid, t::SqliteMaintenanceAction::Analyze)
+        .await
+        .expect_err("sqlite_maintenance must stay rejected");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+
     state.get(&sid).await.expect("session").conn.close().await;
     let _ = std::fs::remove_file(&path);
 }
@@ -6747,4 +6855,134 @@ async fn unique_only_table_compares_and_syncs_to_convergence() {
     tgt.close().await;
     let _ = std::fs::remove_file(&p1);
     let _ = std::fs::remove_file(&p2);
+}
+
+/// #1867: `list_table_triggers` が対象テーブルのトリガーだけをタイミング・イベント付きで返す。
+#[tokio::test]
+async fn sqlite_list_table_triggers() {
+    let mut p = std::env::temp_dir();
+    p.push(format!("noobdb_sqlite_triggers_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&p);
+    std::fs::File::create(&p).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(p.to_str().unwrap()))
+        .await
+        .expect("connect");
+    for ddl in [
+        "CREATE TABLE a (id INTEGER PRIMARY KEY, v INTEGER)",
+        "CREATE TABLE b (id INTEGER PRIMARY KEY)",
+        "CREATE TRIGGER a_ins AFTER INSERT ON a BEGIN SELECT 1; END",
+        "CREATE TRIGGER a_upd BEFORE UPDATE OF v ON a BEGIN SELECT 1; END",
+        "CREATE TRIGGER b_del AFTER DELETE ON b BEGIN SELECT 1; END",
+    ] {
+        conn.execute(ddl, None).await.expect("ddl");
+    }
+    let got = conn
+        .list_table_triggers("main", "a")
+        .await
+        .expect("triggers");
+    let view: Vec<(&str, &str, &str)> = got
+        .iter()
+        .map(|g| (g.name.as_str(), g.timing.as_str(), g.event.as_str()))
+        .collect();
+    assert_eq!(
+        view,
+        vec![("a_ins", "AFTER", "INSERT"), ("a_upd", "BEFORE", "UPDATE")]
+    );
+    assert!(got[0].definition.starts_with("CREATE TRIGGER a_ins"));
+    assert!(conn
+        .list_table_triggers("main", "nope")
+        .await
+        .expect("none")
+        .is_empty());
+    let _ = std::fs::remove_file(&p);
+}
+
+/// プールの別接続が古いスキーマを持ったまま PRAGMA を読むと、DDL 直後の
+/// メタデータが空になる不具合の回帰テスト。SQLite の `PRAGMA index_info` /
+/// `foreign_key_list` などは結果を**準備 (prepare) 時**に組み立て、対象が見つからない
+/// ときはスキーマクッキーの検証命令を出さない。そのため、DDL を流した接続とは別の
+/// (DDL 前にスキーマを読み込んだ) 接続で準備すると、古いスキーマのまま空結果を返し、
+/// SQLITE_SCHEMA による再準備も起きない。
+///
+/// 再現を確実にするため、まず並列にメタデータを読んでプールの接続を複数開き、
+/// それぞれにスキーマを読み込ませてから DDL を流し、以降の読み取りを繰り返し検証する。
+#[tokio::test]
+async fn sqlite_metadata_sees_ddl_from_other_pool_connections() {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "noobdb_sqlite_stale_schema_{}.db",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(path.to_str().expect("utf8 path")))
+        .await
+        .expect("connect");
+
+    conn.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create parent");
+    conn.execute(
+        "CREATE TABLE items (id INTEGER PRIMARY KEY, a TEXT, b TEXT)",
+        None,
+    )
+    .await
+    .expect("create items");
+
+    for round in 0..20 {
+        // プールの全接続 (最大 4) を同時に使わせ、各接続にスキーマを読み込ませる。
+        let warm = || async {
+            conn.list_indexes("main", "items")
+                .await
+                .expect("warm indexes");
+            conn.columns("main", "items").await.expect("warm columns");
+        };
+        tokio::join!(warm(), warm(), warm(), warm(), warm(), warm());
+
+        let idx = format!("idx_items_ab_{round}");
+        let child = format!("child_{round}");
+        conn.execute(&format!("CREATE INDEX {idx} ON items(a, b)"), None)
+            .await
+            .expect("create index");
+        conn.execute(
+            &format!(
+                "CREATE TABLE {child} (id INTEGER PRIMARY KEY, parent_id INTEGER, \
+                 FOREIGN KEY (parent_id) REFERENCES parent(id))"
+            ),
+            None,
+        )
+        .await
+        .expect("create child");
+
+        for _ in 0..4 {
+            let (indexes, cols) = tokio::join!(
+                conn.list_indexes("main", "items"),
+                conn.columns("main", &child)
+            );
+            let indexes = indexes.expect("list_indexes");
+            let found = indexes
+                .iter()
+                .find(|i| i.name == idx)
+                .unwrap_or_else(|| panic!("round {round}: {idx} missing: {indexes:?}"));
+            assert_eq!(
+                found.columns,
+                vec!["a".to_string(), "b".to_string()],
+                "round {round}: index columns must reflect the fresh DDL"
+            );
+            let cols = cols.expect("columns");
+            let fk = cols
+                .iter()
+                .find(|c| c.name == "parent_id")
+                .unwrap_or_else(|| panic!("round {round}: parent_id missing: {cols:?}"));
+            assert_eq!(
+                fk.referenced_table.as_deref(),
+                Some("parent"),
+                "round {round}: FK must be resolved right after CREATE TABLE"
+            );
+            assert_eq!(fk.referenced_column.as_deref(), Some("id"));
+        }
+    }
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
 }

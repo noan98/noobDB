@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { quoteIdentFor } from "../components/sqlDialect";
 import { quoteSqlIdent, sqlLiteral } from "../components/exportPreview";
-import { literalFromCellValue, quoteString } from "../components/cellEdit";
-import type { CellValue } from "../api/tauri";
+import { buildRowWhere, literalFromCellValue, quoteString, whereEqualsClause } from "../components/cellEdit";
+import type { CellValue, Column } from "../api/tauri";
 import vectors from "./fixtures/sqlQuotingVectors.json";
 
 // SQL 識別子引用 / リテラルエスケープの実装横断ゴールデンテスト — フロント側 (#880)。
@@ -36,9 +36,23 @@ interface LiteralCase {
   cellEdit?: ByDriver;
 }
 
+interface WherePredicateCase {
+  kind: "null" | "bool" | "int" | "float" | "float4" | "string" | "bytes";
+  value?: string | number | boolean;
+  column?: string;
+  typeName: string;
+  note: string;
+  /** 検査するドライバ。省略時は全ドライバ。 */
+  drivers?: Driver[];
+  expected: Partial<ByDriver>;
+  /** フロント側の期待値。省略時は `expected` と同じ。 */
+  frontend?: Partial<ByDriver>;
+}
+
 const drivers = vectors.drivers as Driver[];
 const identifiers = vectors.identifiers as IdentifierCase[];
 const literals = vectors.literals as LiteralCase[];
+const wherePredicates = vectors.wherePredicates as WherePredicateCase[];
 
 /**
  * ベクタの 1 ケースをフロントの `CellValue` へ変換する。フロントは JSON 化された
@@ -108,5 +122,40 @@ describe("SQL 引用/エスケープ ゴールデン (フロント実装)", () =
     // `frontend` の上書きが 1 件も無くなったら、BLOB がフロントで文字列リテラルに
     // なるという既知の差分が暗黙化している (= 明記の意図が失われている)。
     expect(literals.some((c) => c.frontend !== undefined)).toBe(true);
+  });
+
+  describe("行同定 WHERE の述語形 (#1870)", () => {
+    // リテラル表記ではなく述語の形 (`IS NULL` / `<> 0` / 許容差) を、Rust の `old_predicate` /
+    // `row_condition` と同じベクタで固定する。コピー as SQL・生成スクリプト経路の
+    // `whereEqualsClause` / `buildRowWhere` が、バックエンドと違う述語を吐かないようにする。
+    for (const c of wherePredicates) {
+      const column = c.column ?? "c";
+      const col: Column = { name: column, type_name: c.typeName };
+      const value = (c.kind === "null" ? null : c.value) as CellValue;
+      const expected = c.frontend ?? c.expected;
+      for (const driver of c.drivers ?? drivers) {
+        it(`${driver}: whereEqualsClause — ${c.note}`, () => {
+          expect(whereEqualsClause(driver, col, value)).toBe(expected[driver]);
+        });
+        it(`${driver}: buildRowWhere — ${c.note}`, () => {
+          expect(buildRowWhere(driver, [col], [value], [0])).toBe(expected[driver]);
+        });
+      }
+    }
+
+    it("真偽値 (MySQL/SQLite は 0 比較・PostgreSQL は TRUE/FALSE)・NULL・float4・BLOB の境界が含まれる", () => {
+      const bools = wherePredicates.filter((c) => c.kind === "bool");
+      expect(bools.length).toBeGreaterThanOrEqual(2);
+      // bool の述語はフロントとバックで同一でなければならない (frontend 上書きで逃げない)。
+      expect(bools.every((c) => c.frontend === undefined)).toBe(true);
+      for (const c of bools) {
+        expect(c.expected.mysql).toMatch(/ (<>|=) 0$/);
+        expect(c.expected.sqlite).toMatch(/ (<>|=) 0$/);
+        expect(c.expected.postgres).toMatch(/ = (TRUE|FALSE)$/);
+      }
+      expect(wherePredicates.some((c) => c.kind === "null")).toBe(true);
+      expect(wherePredicates.some((c) => c.kind === "float4")).toBe(true);
+      expect(wherePredicates.some((c) => c.kind === "bytes")).toBe(true);
+    });
   });
 });

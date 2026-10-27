@@ -33,6 +33,34 @@ describe("EmptyState onboarding (#450)", () => {
   });
 });
 
+describe("EmptyState brandHalo (#1887)", () => {
+  const haloOf = (c: HTMLElement) =>
+    Array.from(c.querySelectorAll<HTMLElement>("[aria-hidden]")).find((e) =>
+      e.style.backgroundImage.includes("--hero-halo"),
+    );
+
+  it("brandHalo 指定時だけイラストの背後に --hero-halo を敷く", () => {
+    const on = renderWithProviders(<EmptyState brandHalo illustration={<WelcomeIllustration />} title="t" />);
+    const halo = haloOf(on.container);
+    expect(halo).toBeTruthy();
+    // 余白 (padding) は縦横とも負マージンで相殺され、下だけ space-1 分の間隔が残る。
+    expect(halo?.style.padding).toBe("var(--space-6) var(--space-10)");
+    expect(halo?.style.margin).toBe(
+      "calc(-1 * var(--space-6)) calc(-1 * var(--space-10)) calc(var(--space-1) - var(--space-6))",
+    );
+    on.unmount();
+    const off = renderWithProviders(<EmptyState illustration={<WelcomeIllustration />} title="t" />);
+    expect(haloOf(off.container)).toBeUndefined();
+  });
+
+  it("compact では brandHalo を指定しても光彩を出さない", () => {
+    const { container } = renderWithProviders(
+      <EmptyState compact brandHalo illustration={<WelcomeIllustration />} icon="table" title="t" />,
+    );
+    expect(haloOf(container)).toBeUndefined();
+  });
+});
+
 describe("buildResultEmptyActions (#1784)", () => {
   it("並び順とショートカット有無が固定されている", async () => {
     const { buildResultEmptyActions } = await import("../components/resultEmptyActions");

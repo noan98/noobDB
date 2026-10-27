@@ -47,3 +47,11 @@
 > 可、秘密鍵は絶対にコミットしない)。公開鍵と Secrets の秘密鍵が対でないと、
 > 署名検証が通らず更新が適用されません。ターゲットは Windows (NSIS) が最初で、
 > macOS / Linux バンドル対応が入ったら同じマニフェストに載ります。
+
+## リリースノートの書き方 (新機能ハイライト、#1864)
+
+更新の `body` は `WhatsNewModal` が簡易 Markdown として整形する (`parseReleaseNotes`)。
+`## 見出し` / `- 箇条書き` / 段落 / ``` コード / `> 引用` (連続行は 1 つの要点の帯。先頭に
+`> [!NOTE]` `[!TIP]` `[!WARNING]` `[!CAUTION]` を置くと帯の色が変わる) が使え、画像・水平線は無視される。
+承認直後に版とノートを `noobdb.pendingWhatsNew` へ保存し、次の起動で版が一致したときだけ一度表示して
+`noobdb.lastWhatsNew` へ移す (About の「更新内容を見る」で再表示)。判定は `whatsNewStore.ts`。

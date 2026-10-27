@@ -8,6 +8,7 @@ import type {
   TableSchema,
   IndexInfo,
   TableExtrasInfo,
+  TableTrigger,
   SchemaObject,
   RoutineSignature,
   ForeignKey,
@@ -111,6 +112,11 @@ export const schemaCommands = {
   describeTableExtras: (sessionId: string, database: string, table: string) =>
     invoke<TableExtrasInfo>("describe_table_extras", { sessionId, database, table }).then((r) =>
       parseResponse(schemas.tableExtrasInfo, r, "describe_table_extras"),
+    ),
+  /** テーブルで発火するトリガーの一覧 (名前・タイミング・イベント・定義) を取得する (#1867)。読み取りのみ。 */
+  listTableTriggers: (sessionId: string, database: string, table: string) =>
+    invoke<TableTrigger[]>("list_table_triggers", { sessionId, database, table }).then((r) =>
+      parseResponse(schemas.tableTriggerArray, r, "list_table_triggers"),
     ),
   /** 非テーブルのスキーマオブジェクト (ビュー/ルーチン/トリガー) を取得する。 */
   listSchemaObjects: (sessionId: string, database: string) =>

@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 import {
   api,
@@ -9,6 +10,7 @@ import {
   type TablePrivilegeRow,
 } from "../api/tauri";
 import { useT } from "../i18n";
+import { reducedMotionActive, staggerContainer, transitions, variants } from "../motion";
 import { semanticColorVar } from "../semanticColors";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
@@ -31,6 +33,16 @@ import {
   PRIVILEGE_TEMPLATE_IDS,
   type PrivilegeTemplateId,
 } from "./privilegeTemplates";
+import { prefersStaticMotion } from "./revealOrigin";
+import {
+  addedRoles,
+  changedPrivilegeCells,
+  isStaggerAnimated,
+  privilegeExitMode,
+  type PrivilegeExitMode,
+  shouldPlayPrivilegeFlash,
+  type ChangedPrivilegeCells,
+} from "./usersPanelMotion";
 
 /**
  * ユーザ / 権限管理パネル (#732)。MySQL ユーザ (`mysql.user`) / PostgreSQL
@@ -149,6 +161,42 @@ const tdCss: SystemStyleObject = {
   verticalAlign: "top",
 };
 
+// 入場 stagger の motion 要素 (#1890)。variants は親コンテナから伝播する。
+const MotionTbody = chakra(motion.tbody, {}, { forwardProps: ["variants", "initial", "animate"] });
+const MotionTr = chakra(motion.tr, {}, { forwardProps: ["variants", "exit"] });
+const MotionCell = chakra(motion.div, {}, { forwardProps: ["variants"] });
+const PlainCell = chakra.div;
+
+/**
+ * 全権限を外して再取得で消える行の退場 (#1890)。`tr` の高さは補間できないので、行は opacity、
+ * 各セルの中身のラッパーを `variants.collapse` の退場 (高さ 0) で縮める。td の縦パディングは
+ * ラッパー側へ持たせ、縮み切ると行の高さが 0 になる。`LiveRows.tsx` の `LiveCell` と同じ手法
+ * (td のパディングを 0 にして中身を `variants.collapse` で伸縮) だが、`LiveCollapse` は入場でも
+ * 高さ 0 から広げる (stagger と二重になる) ので使わず、退場だけを持つ。
+ * 退場中の行は `pointerEvents: none` で操作できない。
+ */
+const rowExitVariants = {
+  exit: { opacity: 0, pointerEvents: "none", transition: transitions.fade },
+} as const;
+const cellExitVariants = {
+  exit: { ...variants.collapse.exit, transition: transitions.fade },
+} as const;
+const MotionUl = chakra(motion.ul, {}, { forwardProps: ["variants", "initial", "animate"] });
+const MotionLi = chakra(motion.li, {}, { forwardProps: ["variants"] });
+
+/**
+ * 適用直後に光らせるセル。`gen` は適用ごとに増やし、セルの key に混ぜて
+ * `apply-flash` を再生し直す。
+ */
+type PrivilegeFlash = { gen: number; cells: ChangedPrivilegeCells };
+
+/** 光らせるセルに足す。疑似要素 (App.css の `.flash-ring::after`) の基準位置になる。 */
+const flashCellCss: SystemStyleObject = { position: "relative" };
+
+/** 退場で縮めるため、td のパディングを中身のラッパーへ移す (#1890)。 */
+const cellShellCss: SystemStyleObject = { padding: 0 };
+const cellInnerCss: SystemStyleObject = { padding: tdCss.padding };
+
 const PRIVILEGE_FLAGS = ["select", "insert", "update", "delete", "ddl"] as const;
 
 /**
@@ -161,30 +209,81 @@ export const PrivilegeRow = memo(function PrivilegeRow({
   originalFlags,
   readOnly,
   onToggle,
+  animated = false,
+  exitMode = "none",
+  flashCols,
+  flashGen = 0,
 }: {
   table: string;
   flags: Flags;
   originalFlags: Flags;
   readOnly: boolean;
   onToggle: (table: string, flag: keyof Flags) => void;
+  /** 入場 stagger に載せるか (#1890)。親の `MotionTbody` の variant が伝播する。 */
+  animated?: boolean;
+  /** 行が消えるときの退場 (#1890)。`collapse` は高さを縮め、`fade` は opacity のみ、`none` は即時。 */
+  exitMode?: PrivilegeExitMode;
+  /** 直前の適用で変わった権限列。該当セルへ `apply-flash` を 1 回再生する (#1890)。 */
+  flashCols?: ReadonlySet<string>;
+  /** 適用ごとに増える世代。セルの key に混ぜて再生し直す。 */
+  flashGen?: number;
 }) {
   const rowDirty = !flagsEqual(originalFlags, flags);
+  const exits = exitMode !== "none";
+  // 縮める退場のときだけセルの中身を motion 要素にする。それ以外は素の div (行ごとの motion 要素を増やさない)。
+  const Cell = exitMode === "collapse" ? MotionCell : PlainCell;
+  const cellProps = exitMode === "collapse" ? { variants: cellExitVariants } : {};
   return (
-    <tr>
-      <chakra.td css={tdCss} fontFamily="var(--font-mono)" color={rowDirty ? "var(--accent)" : undefined}>
-        {table}
+    // 常に motion 要素にして、12/13 件目の境界で要素の型が変わり再マウントされるのを避ける。
+    <MotionTr
+      variants={
+        exits
+          ? animated
+            ? { ...variants.staggerItem, ...rowExitVariants }
+            : rowExitVariants
+          : animated
+            ? variants.staggerItem
+            : undefined
+      }
+      exit={exits ? "exit" : undefined}
+    >
+      <chakra.td
+        css={{ ...tdCss, ...cellShellCss }}
+        fontFamily="var(--font-mono)"
+        color={rowDirty ? "var(--accent)" : undefined}
+      >
+        <Cell css={cellInnerCss} {...cellProps}>
+          {table}
+        </Cell>
       </chakra.td>
-      {PRIVILEGE_FLAGS.map((flag) => (
-        <chakra.td css={tdCss} key={flag}>
-          <Checkbox
-            checked={flags[flag]}
-            disabled={readOnly}
-            aria-label={`${table} ${flag}`}
-            onChange={() => onToggle(table, flag)}
-          />
-        </chakra.td>
-      ))}
-    </tr>
+      {PRIVILEGE_FLAGS.map((flag) => {
+        const flashed = flashCols?.has(flag) === true;
+        return (
+          <chakra.td css={{ ...tdCss, ...flashCellCss, ...cellShellCss }} key={flag}>
+            {flashed && (
+              // td と Checkbox は作り直さず、オーバーレイだけを世代 key で作り直して再生する。
+              <chakra.span
+                key={flashGen}
+                className="flash-ring"
+                data-privilege-flash=""
+                aria-hidden
+                position="absolute"
+                inset="0"
+                pointerEvents="none"
+              />
+            )}
+            <Cell css={cellInnerCss} {...cellProps}>
+              <Checkbox
+                checked={flags[flag]}
+                disabled={readOnly}
+                aria-label={`${table} ${flag}`}
+                onChange={() => onToggle(table, flag)}
+              />
+            </Cell>
+          </chakra.td>
+        );
+      })}
+    </MotionTr>
   );
 });
 
@@ -204,6 +303,9 @@ export function UsersPanel({
   const t = useT();
   const toast = useToast();
   const { confirm, dialog } = useConfirm();
+  const reduced = useReducedMotion() ?? false;
+  // 行の退場は reduced-motion / ハイコントラスト / forced-colors では即時に消す (#1890)。
+  const exitEnabled = !reduced && !reducedMotionActive() && !prefersStaticMotion();
 
   const [users, setUsers] = useState<DbUserInfo[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -246,6 +348,17 @@ export function UsersPanel({
 
   const [busy, setBusy] = useState(false);
 
+  // 適用直後の面内フィードバック (#1890)。権限セルは再取得結果との差分、ロールは新規に加わった
+  // ものだけを `apply-flash` で 1 回光らせる。ユーザ切替で消す。
+  const [privFlash, setPrivFlash] = useState<PrivilegeFlash | null>(null);
+  const [roleFlash, setRoleFlash] = useState<{ gen: number; roles: ReadonlySet<string> } | null>(null);
+  const flashGen = useRef(0);
+  // 最後の 1 行が退場し終わるまで「権限がありません」の案内行を出さない (#1890)。
+  const [exitPending, setExitPending] = useState(false);
+  // loadPrivileges が適用前の権限を参照するための最新値 (依存配列に original を入れて再生成しない)。
+  const originalRef = useRef(original);
+  originalRef.current = original;
+
   const loadUsers = useCallback(async () => {
     setLoadingUsers(true);
     try {
@@ -269,9 +382,12 @@ export function UsersPanel({
   const privSeq = useRef(0);
 
   const loadPrivileges = useCallback(
-    async (u: DbUserInfo) => {
+    async (u: DbUserInfo, opts?: { flashChanges?: boolean }) => {
       const seq = ++privSeq.current;
-      setLoadingPrivs(true);
+      // 適用後の再取得は表を置き換えずその場で更新する (スケルトンを挟むと光らせるセルが
+      // 一度消え、入場 stagger とフラッシュが重なる)。
+      const inPlace = opts?.flashChanges === true;
+      if (!inPlace) setLoadingPrivs(true);
       setPrivsError(null);
       try {
         const p = await api.listUserPrivileges(sessionId, u.name, u.host, database);
@@ -283,6 +399,10 @@ export function UsersPanel({
           // DB での絞り込みはサーバ側 (WHERE) で済んでいる。プレフィックスは表示名用。
           if (!prefix || !row.table.startsWith(prefix)) continue;
           rows[row.table.slice(prefix.length)] = flagsFromRow(row);
+        }
+        if (inPlace && shouldPlayPrivilegeFlash()) {
+          const cells = changedPrivilegeCells(originalRef.current, rows);
+          setPrivFlash(cells.size > 0 ? { gen: ++flashGen.current, cells } : null);
         }
         setOriginal(rows);
         setEdited(flagsMap(rows));
@@ -303,6 +423,8 @@ export function UsersPanel({
   const selectUser = useCallback(
     (u: DbUserInfo) => {
       setSelected(u);
+      setPrivFlash(null);
+      setRoleFlash(null);
       setNewTable("");
       // 前ユーザの未適用の編集を持ち越さない (読み込み中に別ユーザ宛の GRANT/REVOKE が出るのを防ぐ)。
       setOriginal(flagsMap());
@@ -341,6 +463,15 @@ export function UsersPanel({
     () => Array.from(new Set([...Object.keys(original), ...Object.keys(edited)])).sort(),
     [original, edited],
   );
+
+  // 行がある間は「全部消えたら退場を待つ」状態を用意する。ユーザ切替・再読み込みでは待たない。
+  const hasRows = rowKeys.length > 0;
+  useEffect(() => {
+    if (hasRows) setExitPending(exitEnabled);
+  }, [hasRows, exitEnabled]);
+  useEffect(() => {
+    if (loadingPrivs) setExitPending(false);
+  }, [loadingPrivs]);
 
   const dirty = useMemo(
     () => rowKeys.some((k) => !flagsEqual(original[k] ?? EMPTY_FLAGS, edited[k] ?? EMPTY_FLAGS)),
@@ -409,13 +540,13 @@ export function UsersPanel({
     try {
       await api.applyPrivilegeSql({ sessionId, database, statements });
       toast.success(t("usersApplyDone"));
-      if (privSeq.current === seqBefore) await loadPrivileges(selected);
+      if (privSeq.current === seqBefore) await loadPrivileges(selected, { flashChanges: true });
     } catch (e) {
       toast.error(t("usersApplyFailed", { error: String(e) }));
       // MySQL の GRANT / REVOKE は暗黙コミットされ、途中失敗でも先行文が残りうる。
       // 画面を適用前の古い状態のままにせず、サーバの実際の権限を再取得する。
       if (driver === "mysql" && privSeq.current === seqBefore) {
-        await loadPrivileges(selected);
+        await loadPrivileges(selected, { flashChanges: true });
       }
     } finally {
       setBusy(false);
@@ -492,12 +623,21 @@ export function UsersPanel({
         const list = await loadUsers();
         // 選択中ユーザの表示 (所属ロールなど) を最新の一覧へ差し替える。
         const fresh = list?.find((u) => userKey(u) === userKey(selected)) ?? selected;
-        if (fresh !== selected) setSelected(fresh);
-        if (privSeq.current === seqBefore) await loadPrivileges(fresh);
+        // 待っている間に別ユーザへ切り替わっていたら、旧ユーザの結果を反映しない。
+        if (privSeq.current === seqBefore) {
+          if (fresh !== selected) setSelected(fresh);
+          if (shouldPlayPrivilegeFlash()) {
+            const roles = addedRoles(selected.member_of, fresh.member_of);
+            if (roles.size > 0) setRoleFlash({ gen: ++flashGen.current, roles });
+          }
+          await loadPrivileges(fresh, { flashChanges: true });
+        }
         return true;
       } catch (e) {
         toast.error(t("usersApplyFailed", { error: String(e) }));
-        if (driver === "mysql" && privSeq.current === seqBefore) await loadPrivileges(selected);
+        if (driver === "mysql" && privSeq.current === seqBefore) {
+          await loadPrivileges(selected, { flashChanges: true });
+        }
         return false;
       } finally {
         setBusy(false);
@@ -834,8 +974,17 @@ export function UsersPanel({
             />
           ) : users.length === 0 && !loadingUsers ? (
             <EmptyState compact illustration={<NoResultsIllustration />} icon="key" title={t("usersEmpty")} />
+          ) : users.length === 0 ? (
+            // 初回読み込み中。ユーザが揃ってから MotionUl をマウントし、全行が stagger の遅延つきで入る
+            // ようにする (空のコンテナが先にマウントされると後から来た li は遅延 0 で同時に出る)。
+            <Spinner size={16} />
           ) : (
-            <chakra.ul
+            <MotionUl
+              // 入場は staggerContainer + staggerItem (ServerInfoPanel / ActivityCenter と同じ, #1890)。
+              // 先頭 12 件だけ載せ、リフレッシュで一覧が差し替わっても key が同じ項目は再生しない。
+              variants={staggerContainer(reduced)}
+              initial="initial"
+              animate="animate"
               listStyleType="none"
               margin={0}
               padding={0}
@@ -843,52 +992,51 @@ export function UsersPanel({
               flexDirection="column"
               gap="1"
             >
-              {loadingUsers && users.length === 0 ? (
-                <Spinner size={16} />
-              ) : (
-                users.map((u) => {
-                  const isSelected = selected?.name === u.name && selected?.host === u.host;
-                  return (
-                    <chakra.li key={`${u.name}@@${u.host ?? ""}`}>
-                      <chakra.button
-                        type="button"
-                        onClick={() => selectUser(u)}
-                        width="100%"
-                        textAlign="left"
-                        py="1.5"
-                        px="2"
-                        borderRadius="var(--radius-sm)"
-                        background={isSelected ? "var(--bg-selected, var(--bg-muted))" : "transparent"}
-                        border="1px solid"
-                        borderColor={isSelected ? "var(--accent)" : "transparent"}
-                        cursor="pointer"
-                      >
-                        <chakra.div fontSize="sm" fontWeight={600} color="app.text">
-                          {u.name}
-                          {u.is_superuser && (
-                            <chakra.span
-                              marginLeft="1.5"
-                              px="1.5"
-                              fontSize="var(--text-xs)"
-                              color={semanticColorVar("danger", "text")}
-                              border={`1px solid ${semanticColorVar("danger", "text")}`}
-                              borderRadius="var(--radius-sm)"
-                            >
-                              {t("usersSuperuserBadge")}
-                            </chakra.span>
-                          )}
-                        </chakra.div>
-                        {u.host && (
-                          <chakra.div fontSize="xs" color="app.textMuted" fontFamily="var(--font-mono)">
-                            @{u.host}
-                          </chakra.div>
+              {users.map((u, i) => {
+                const isSelected = selected?.name === u.name && selected?.host === u.host;
+                return (
+                  <MotionLi
+                    key={`${u.name}@@${u.host ?? ""}`}
+                    variants={isStaggerAnimated(i) ? variants.staggerItem : undefined}
+                  >
+                    <chakra.button
+                      type="button"
+                      onClick={() => selectUser(u)}
+                      width="100%"
+                      textAlign="left"
+                      py="1.5"
+                      px="2"
+                      borderRadius="var(--radius-sm)"
+                      background={isSelected ? "var(--bg-selected, var(--bg-muted))" : "transparent"}
+                      border="1px solid"
+                      borderColor={isSelected ? "var(--accent)" : "transparent"}
+                      cursor="pointer"
+                    >
+                      <chakra.div fontSize="sm" fontWeight={600} color="app.text">
+                        {u.name}
+                        {u.is_superuser && (
+                          <chakra.span
+                            marginLeft="1.5"
+                            px="1.5"
+                            fontSize="var(--text-xs)"
+                            color={semanticColorVar("danger", "text")}
+                            border={`1px solid ${semanticColorVar("danger", "text")}`}
+                            borderRadius="var(--radius-sm)"
+                          >
+                            {t("usersSuperuserBadge")}
+                          </chakra.span>
                         )}
-                      </chakra.button>
-                    </chakra.li>
-                  );
-                })
-              )}
-            </chakra.ul>
+                      </chakra.div>
+                      {u.host && (
+                        <chakra.div fontSize="xs" color="app.textMuted" fontFamily="var(--font-mono)">
+                          @{u.host}
+                        </chakra.div>
+                      )}
+                    </chakra.button>
+                  </MotionLi>
+                );
+              })}
+            </MotionUl>
           )}
         </Box>
 
@@ -1044,7 +1192,14 @@ export function UsersPanel({
                 {selected.member_of.length > 0 ? (
                   <Flex gap="2" flexWrap="wrap">
                     {selected.member_of.map((role) => (
-                      <Flex key={role} align="center" gap="1">
+                      <Flex
+                        key={roleFlash?.roles.has(role) ? `${role}:flash-${roleFlash.gen}` : role}
+                        align="center"
+                        gap="1"
+                        className={roleFlash?.roles.has(role) ? "flash-ring" : undefined}
+                        data-role-flash={roleFlash?.roles.has(role) ? "" : undefined}
+                        css={roleFlash?.roles.has(role) ? flashCellCss : undefined}
+                      >
                         <chakra.span fontFamily="var(--font-mono)" textStyle="caption">
                           {role}
                         </chakra.span>
@@ -1284,29 +1439,48 @@ export function UsersPanel({
                           </chakra.th>
                         </tr>
                       </thead>
-                      <tbody>
+                      <MotionTbody
+                        // ユーザ切替・読み込み完了で作り直して入場 stagger を再生する (#1890)。
+                        key={loadingPrivs ? "loading" : userKey(selected)}
+                        variants={staggerContainer(reduced)}
+                        initial="initial"
+                        animate="animate"
+                      >
                         {loadingPrivs ? (
                           <SkeletonTableRows columns={6} />
-                        ) : rowKeys.length === 0 ? (
-                          <tr>
-                            {/* tdCss は nowrap なので、長い案内文だけ折り返す。 */}
-                            <chakra.td css={{ ...tdCss, whiteSpace: "normal" }} colSpan={6}>
-                              {t("usersPrivilegesEmpty")}
-                            </chakra.td>
-                          </tr>
                         ) : (
-                          rowKeys.map((table) => (
-                            <PrivilegeRow
-                              key={table}
-                              table={table}
-                              flags={edited[table] ?? EMPTY_FLAGS}
-                              originalFlags={original[table] ?? EMPTY_FLAGS}
-                              readOnly={readOnly}
-                              onToggle={toggleFlag}
-                            />
-                          ))
+                          <>
+                            {/* 全権限を外した行は再取得で消える。縮んで去らせる (ユーザ切替は tbody の key
+                                ごと作り直すので退場しない)。 */}
+                            {/* initial は既定 (true) のまま: false にすると初回表示の入場 stagger まで
+                                止まる。ユーザ切替は tbody の key で作り直すので退場は走らない。 */}
+                            <AnimatePresence onExitComplete={() => setExitPending(false)}>
+                              {rowKeys.map((table, i) => (
+                                <PrivilegeRow
+                                  key={table}
+                                  animated={isStaggerAnimated(i)}
+                                  exitMode={privilegeExitMode(exitEnabled, rowKeys.length)}
+                                  flashCols={privFlash?.cells.get(table)}
+                                  flashGen={privFlash?.cells.has(table) ? privFlash.gen : undefined}
+                                  table={table}
+                                  flags={edited[table] ?? EMPTY_FLAGS}
+                                  originalFlags={original[table] ?? EMPTY_FLAGS}
+                                  readOnly={readOnly || busy}
+                                  onToggle={toggleFlag}
+                                />
+                              ))}
+                            </AnimatePresence>
+                            {rowKeys.length === 0 && !exitPending && (
+                              <tr>
+                                {/* tdCss は nowrap なので、長い案内文だけ折り返す。 */}
+                                <chakra.td css={{ ...tdCss, whiteSpace: "normal" }} colSpan={6}>
+                                  {t("usersPrivilegesEmpty")}
+                                </chakra.td>
+                              </tr>
+                            )}
+                          </>
                         )}
-                      </tbody>
+                      </MotionTbody>
                     </chakra.table>
                   </Box>
 

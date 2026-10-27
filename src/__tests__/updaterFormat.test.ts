@@ -3,6 +3,7 @@ import {
   displayVersion,
   downloadProgressPercent,
   formatDownloadProgress,
+  parseReleaseNotes,
   truncateReleaseNotes,
 } from "../updaterFormat";
 
@@ -93,5 +94,41 @@ describe("formatDownloadProgress (#1617)", () => {
     expect(
       formatDownloadProgress({ percent: null, downloadedBytes: 10, totalBytes: undefined }, t),
     ).toBeNull();
+  });
+});
+
+describe("parseReleaseNotes (#1864)", () => {
+  it("見出し・引用・箇条書き・段落に分解し、行内記法を落とす", () => {
+    const body =
+      "## 新機能\r\n> **要点** です\r\n- `Kbd` を [改善](http://x)\r\n1. 番号付き\r\n\r\n本文1\r\n本文2";
+    expect(parseReleaseNotes(body)).toEqual([
+      { kind: "heading", text: "新機能" },
+      { kind: "highlight", text: "要点 です", tone: "info" },
+      { kind: "bullet", text: "Kbd を 改善" },
+      { kind: "bullet", text: "番号付き" },
+      { kind: "paragraph", text: "本文1\n本文2" },
+    ]);
+  });
+  it("連続する引用は 1 つにまとめ、alert 記法は tone に反映して行を捨てる", () => {
+    expect(parseReleaseNotes("> [!WARNING]\n> 注意\n> 続き\n\n> 別")).toEqual([
+      { kind: "highlight", text: "注意\n続き", tone: "warning" },
+      { kind: "highlight", text: "別", tone: "info" },
+    ]);
+  });
+  it("コードフェンスは code、水平線と画像は捨てる", () => {
+    expect(parseReleaseNotes("---\n![x](a.png)\n```sh\npnpm i\n  x\n```\nあと")).toEqual([
+      { kind: "code", text: "pnpm i\n  x" },
+      { kind: "paragraph", text: "あと" },
+    ]);
+  });
+  it("空・空白・記号だけの行は空配列 / 無視", () => {
+    expect(parseReleaseNotes(undefined)).toEqual([]);
+    expect(parseReleaseNotes("  \n ")).toEqual([]);
+    expect(parseReleaseNotes("## \n- ")).toEqual([]);
+  });
+  it("長すぎる本文は maxLen で切り詰める", () => {
+    const blocks = parseReleaseNotes("あ".repeat(50), 10);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]?.text.endsWith("…")).toBe(true);
   });
 });

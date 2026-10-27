@@ -219,20 +219,40 @@ fn set_literal(driver: DriverKind, v: &BulkSetValue) -> Result<String> {
 
 /// 1 行ぶんの `WHERE` 条件 (`a = 1 AND b IS NULL`)。NULL は `IS NULL` にする
 /// (`= NULL` は常に偽)。全列一致の行識別 (#849) では NULL 列が普通に現れる。
-fn row_condition(driver: DriverKind, pk_columns: &[String], key: &[Value]) -> String {
+pub(crate) fn row_condition(driver: DriverKind, pk_columns: &[String], key: &[Value]) -> String {
     pk_columns
         .iter()
         .zip(key)
         .map(|(c, v)| match v {
             Value::Null => format!("{} IS NULL", quote_ident(driver, c)),
+            Value::Bool(b) => bool_predicate(driver, &quote_ident(driver, c), *b),
             _ => format!("{} = {}", quote_ident(driver, c), sql_literal(driver, v)),
         })
         .collect::<Vec<_>>()
         .join(" AND ")
 }
 
+/// 真偽値列の一致述語。MySQL (TINYINT(1)) / SQLite は真偽値が 0 / 1 以外 (2 など) の整数にも
+/// なりうるので、`= TRUE` (= 1) ではなく「0 でない / 0」で比べる。PostgreSQL は本物の boolean。
+/// フロント `cellEdit.ts::boolWhere` と共有ゴールデン (`sqlQuotingVectors.json` の
+/// `wherePredicates`、#1870) で固定している。`col` は引用済みの識別子。
+fn bool_predicate(driver: DriverKind, col: &str, value: bool) -> String {
+    match driver {
+        DriverKind::Postgres => {
+            format!("{col} = {}", sql_literal(driver, &Value::Bool(value)))
+        }
+        DriverKind::Mysql | DriverKind::Sqlite => {
+            format!("{col} {} 0", if value { "<>" } else { "=" })
+        }
+    }
+}
+
 /// 旧値 1 つぶんの述語 (`col = 旧値` / `col IS NULL` / 単精度 float の許容誤差)。
-fn old_predicate(driver: DriverKind, column: &str, old: &BulkOldValue) -> Result<String> {
+pub(crate) fn old_predicate(
+    driver: DriverKind,
+    column: &str,
+    old: &BulkOldValue,
+) -> Result<String> {
     let col = quote_ident(driver, column);
     Ok(match old {
         BulkOldValue::Null => format!("{col} IS NULL"),
@@ -244,16 +264,7 @@ fn old_predicate(driver: DriverKind, column: &str, old: &BulkOldValue) -> Result
             }
             format!("{col} = {text}")
         }
-        // MySQL (TINYINT(1)) / SQLite は真偽値が 0 / 1 以外 (2 など) の整数にもなりうるので、
-        // `= TRUE` (= 1) ではなく「0 でない / 0」で比べる。PostgreSQL は本物の boolean。
-        BulkOldValue::Bool { value } => match driver {
-            DriverKind::Postgres => {
-                format!("{col} = {}", sql_literal(driver, &Value::Bool(*value)))
-            }
-            DriverKind::Mysql | DriverKind::Sqlite => {
-                format!("{col} {} 0", if *value { "<>" } else { "=" })
-            }
-        },
+        BulkOldValue::Bool { value } => bool_predicate(driver, &col, *value),
         BulkOldValue::Text { text } => {
             format!(
                 "{col} = {}",
@@ -413,8 +424,13 @@ pub(crate) fn build_bulk_update_statements_expected(
             }
             continue;
         }
-        let single_non_null =
-            pk_columns.len() == 1 && group.keys.iter().all(|k| !matches!(k[0], Value::Null));
+        // bool キーは `IN (1)` ではなく `row_condition` (`<> 0` / `= 0`) の述語で比べる
+        // (TINYINT(1) / SQLite が 2 などを持つ行に当てるため、#1870)。
+        let single_non_null = pk_columns.len() == 1
+            && group
+                .keys
+                .iter()
+                .all(|k| !matches!(k[0], Value::Null | Value::Bool(_)));
         if single_non_null {
             let col = quote_ident(driver, &pk_columns[0]);
             for chunk in group.keys.chunks(IN_CHUNK) {
@@ -941,6 +957,24 @@ mod tests {
         let same = apply_pk_binary(g(), None).unwrap();
         assert!(matches!(same[0].keys[0][0], Value::String(_)));
         assert!(apply_pk_binary(g(), Some(&[true])).is_err());
+    }
+
+    #[test]
+    fn bool_pk_groups_use_predicate_not_in_list() {
+        let groups = vec![group(
+            vec![set_text("name", "a")],
+            vec![vec![Value::Bool(true)]],
+        )];
+        let build = |d| {
+            build_bulk_update_statements(d, "shop", "t", &["flag".to_string()], &groups)
+                .unwrap_or_default()
+        };
+        assert_eq!(
+            build(DriverKind::Mysql),
+            vec!["UPDATE `shop`.`t` SET `name` = 'a' WHERE `flag` <> 0;".to_string()]
+        );
+        assert!(build(DriverKind::Sqlite)[0].ends_with("WHERE \"flag\" <> 0;"));
+        assert!(build(DriverKind::Postgres)[0].ends_with("WHERE \"flag\" = TRUE;"));
     }
 
     #[test]

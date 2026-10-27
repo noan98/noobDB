@@ -37,6 +37,14 @@ describe("ProfileCardGrid (#874)", () => {
     expect(screen.getByText("app@db.example.com:3306/appdb")).toBeInTheDocument();
   });
 
+  it("places the decorative hero rule right under the display heading (#1891)", () => {
+    renderWithProviders(
+      <ProfileCardGrid profiles={profiles} connectingId={null} onConnect={() => {}} onCreate={() => {}} />,
+    );
+    const rule = screen.getByRole("heading", { name: t("profileCardsTitle") }).nextElementSibling;
+    expect(rule).toHaveAttribute("aria-hidden", "true");
+  });
+
   it("shows production / read-only badges and the group name", () => {
     renderWithProviders(
       <ProfileCardGrid profiles={profiles} connectingId={null} onConnect={() => {}} onCreate={() => {}} />,

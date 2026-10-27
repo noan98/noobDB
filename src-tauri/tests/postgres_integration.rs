@@ -4076,3 +4076,37 @@ async fn postgres_ddl_extras_for_database_matches_per_table_when_env_set() {
         .await;
     conn.close().await;
 }
+
+/// #1867: `list_table_triggers` が対象テーブルのトリガーをタイミング・イベント付きで返す。
+#[tokio::test]
+async fn postgres_list_table_triggers_when_env_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS public.noobdb_trg_t CASCADE", None)
+        .await;
+    for ddl in [
+        "CREATE TABLE public.noobdb_trg_t (id INT PRIMARY KEY, v INT)",
+        "CREATE OR REPLACE FUNCTION public.noobdb_trg_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$",
+        "CREATE TRIGGER noobdb_trg_a BEFORE INSERT OR UPDATE ON public.noobdb_trg_t FOR EACH ROW EXECUTE FUNCTION public.noobdb_trg_fn()",
+    ] {
+        conn.execute(ddl, None).await.expect("ddl");
+    }
+    let got = conn
+        .list_table_triggers("public", "noobdb_trg_t")
+        .await
+        .expect("triggers");
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(
+        (got[0].timing.as_str(), got[0].event.as_str()),
+        ("BEFORE", "INSERT OR UPDATE")
+    );
+    assert!(got[0].definition.contains("CREATE TRIGGER noobdb_trg_a"));
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS public.noobdb_trg_t CASCADE", None)
+        .await;
+}
