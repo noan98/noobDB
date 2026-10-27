@@ -497,3 +497,179 @@ async fn read_only_sessions_cannot_apply_the_rebuild_but_can_plan_it() {
     );
     let _ = std::fs::remove_file(&path);
 }
+
+#[tokio::test]
+async fn rename_with_rebuild_keeps_triggers_and_views_and_rewrites_them() {
+    let (conn, path) = temp_conn("renametrg").await;
+    exec(
+        &conn,
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, qty TEXT)",
+    )
+    .await;
+    exec(&conn, "CREATE TABLE log (msg TEXT, name TEXT)").await;
+    exec(&conn, "CREATE INDEX idx_t_name ON t (name)").await;
+    exec(
+        &conn,
+        "CREATE TRIGGER trg_t AFTER INSERT ON t BEGIN INSERT INTO log (msg, name) VALUES ('added', NEW.name); END",
+    )
+    .await;
+    exec(&conn, "CREATE VIEW v_t AS SELECT id, name FROM t").await;
+    // 別の表の同名列だけを参照するビューは影響を受けない。
+    exec(
+        &conn,
+        "CREATE VIEW v_log AS SELECT log.name FROM log, t WHERE 1 = 0",
+    )
+    .await;
+    exec(&conn, "INSERT INTO t VALUES (1, 'a', '5')").await;
+    let state = AppState::default();
+    let sid = register(&state, "renametrg", conn, false).await;
+    let mut name = col("name", "TEXT", true, None);
+    name.name = "title".into();
+    let edit = SqliteRebuildEdit {
+        columns: vec![
+            col("id", "INTEGER", false, None),
+            name,
+            col("qty", "INTEGER", false, None),
+        ],
+        ..Default::default()
+    };
+    rebuild(&state, &sid, "t", &edit, vec![])
+        .await
+        .expect("rebuild");
+    let conn = &state.get(&sid).await.unwrap().conn;
+    assert_eq!(scalar(conn, "SELECT title FROM t").await, "a");
+    // トリガー・ビュー・索引が残り、新しい列名を指している。
+    exec(conn, "INSERT INTO t (id, title, qty) VALUES (2, 'b', 1)").await;
+    assert_eq!(
+        scalar(conn, "SELECT count(*) FROM log WHERE name = 'b'").await,
+        "1"
+    );
+    assert_eq!(
+        scalar(conn, "SELECT title FROM v_t WHERE id = 2").await,
+        "b"
+    );
+    assert_eq!(
+        scalar(
+            conn,
+            "SELECT count(*) FROM sqlite_master WHERE name IN ('trg_t', 'v_t', 'v_log', 'idx_t_name')"
+        )
+        .await,
+        "4"
+    );
+    assert!(scalar(
+        conn,
+        "SELECT sql FROM sqlite_master WHERE name = 'idx_t_name'"
+    )
+    .await
+    .contains("title"));
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn rename_and_drop_existing_constraints_in_one_rebuild() {
+    let (conn, path) = temp_conn("renamedrop").await;
+    exec(&conn, "CREATE TABLE owners (id INTEGER PRIMARY KEY)").await;
+    exec(&conn, "INSERT INTO owners VALUES (1)").await;
+    exec(
+        &conn,
+        "CREATE TABLE pets (id INTEGER PRIMARY KEY, owner_id INTEGER REFERENCES owners(id), name TEXT CHECK (length(name) > 0))",
+    )
+    .await;
+    exec(&conn, "INSERT INTO pets VALUES (1, 1, 'x')").await;
+    let state = AppState::default();
+    let sid = register(&state, "renamedrop", conn, false).await;
+    let checks = state
+        .get(&sid)
+        .await
+        .unwrap()
+        .conn
+        .table_ddl_extras("main", "pets")
+        .await
+        .unwrap()
+        .checks;
+    let mut owner = col("owner_id", "INTEGER", false, None);
+    owner.name = "owner".into();
+    let mut name = col("name", "TEXT", false, None);
+    name.name = "label".into();
+    let edit = SqliteRebuildEdit {
+        columns: vec![col("id", "INTEGER", false, None), owner, name],
+        dropped_foreign_keys: vec![RebuildForeignKeyRef {
+            columns: vec!["owner_id".into()],
+            ref_table: "owners".into(),
+        }],
+        dropped_checks: vec![checks[0].1.clone()],
+        ..Default::default()
+    };
+    rebuild(&state, &sid, "pets", &edit, vec![])
+        .await
+        .expect("rebuild");
+    let conn = &state.get(&sid).await.unwrap().conn;
+    assert_eq!(scalar(conn, "SELECT label FROM pets").await, "x");
+    assert_eq!(
+        scalar(conn, "SELECT count(*) FROM pragma_foreign_key_list('pets')").await,
+        "0"
+    );
+    exec(
+        conn,
+        "INSERT INTO pets (id, owner, label) VALUES (2, 9, '')",
+    )
+    .await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn rowid_of_tables_without_an_integer_primary_key_is_preserved() {
+    let (conn, path) = temp_conn("rowid").await;
+    exec(&conn, "CREATE TABLE t (code TEXT PRIMARY KEY, v TEXT)").await;
+    exec(
+        &conn,
+        "INSERT INTO t (rowid, code, v) VALUES (10, 'a', '1'), (20, 'b', '2')",
+    )
+    .await;
+    let state = AppState::default();
+    let sid = register(&state, "rowid", conn, false).await;
+    let edit = SqliteRebuildEdit {
+        columns: vec![
+            col("code", "TEXT", true, None),
+            col("v", "INTEGER", false, None),
+        ],
+        ..Default::default()
+    };
+    rebuild(&state, &sid, "t", &edit, vec![])
+        .await
+        .expect("rebuild");
+    let conn = &state.get(&sid).await.unwrap().conn;
+    assert_eq!(
+        scalar(conn, "SELECT rowid FROM t WHERE code = 'b'").await,
+        "20"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn a_trigger_on_another_table_that_uses_the_table_is_reported_before_running() {
+    let (conn, path) = temp_conn("othertrg").await;
+    exec(&conn, "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)").await;
+    exec(&conn, "CREATE TABLE other (x INTEGER)").await;
+    exec(
+        &conn,
+        "CREATE TRIGGER trg_other AFTER INSERT ON other BEGIN UPDATE t SET v = 'x'; END",
+    )
+    .await;
+    let state = AppState::default();
+    let sid = register(&state, "othertrg", conn, false).await;
+    let edit = SqliteRebuildEdit {
+        columns: vec![
+            col("id", "INTEGER", false, None),
+            col("v", "INTEGER", false, None),
+        ],
+        ..Default::default()
+    };
+    let err = rebuild(&state, &sid, "t", &edit, vec![]).await.unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("rebuild_error:other_table_trigger:trg_other"),
+        "{err}"
+    );
+    let _ = std::fs::remove_file(&path);
+}

@@ -44,4 +44,14 @@ export const syncCommands = {
       database: params.database ?? null,
       statements: params.statements,
     }).then((r) => parseResponse(schemas.numberResponse, r, "apply_sync_sql")),
+  /**
+   * SQLite の構造エディタのテーブル再作成 (#1888) を適用する。`applySyncSql` と同じ経路で、
+   * 実行した SQL をクエリ履歴へ残す。
+   */
+  applySqliteTableRebuild: (params: { sessionId: string; database?: string | null; statements: string[] }) =>
+    invoke<number>("apply_sqlite_table_rebuild", {
+      sessionId: params.sessionId,
+      database: params.database ?? null,
+      statements: params.statements,
+    }).then((r) => parseResponse(schemas.numberResponse, r, "apply_sqlite_table_rebuild")),
 };

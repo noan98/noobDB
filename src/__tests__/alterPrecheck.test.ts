@@ -161,10 +161,13 @@ describe("buildAlterPrechecks", () => {
     expect(got[0].sql).toBe('SELECT COUNT(*) FROM "public"."t" WHERE "a" IS NULL');
   });
 
-  it("SQLite は対象外", () => {
+  it("SQLite は型の縮小を検査せず、NOT NULL 化の NULL 行だけ数える (#1888)", () => {
     expect(
       buildAlterPrechecks("sqlite", null, "t", [base("a", "varchar(255)")], [edit("a", "varchar(5)")]),
     ).toEqual([]);
+    const got = buildAlterPrechecks("sqlite", null, "t", [base("a", "TEXT")], [edit("a", "INTEGER", true)]);
+    expect(got.map((p) => p.kind)).toEqual(["notNull"]);
+    expect(got[0].sql).toBe('SELECT COUNT(*) FROM "t" WHERE "a" IS NULL');
   });
 
   it("リネームしても元の列名で数える", () => {

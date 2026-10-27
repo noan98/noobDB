@@ -1315,6 +1315,7 @@ export const sqliteRebuildPlan = z.object({
         "add_not_null_column",
         "add_check",
         "add_foreign_key",
+        "lost_syntax",
       ]),
       target: z.string(),
     }),

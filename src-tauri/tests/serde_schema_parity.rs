@@ -1695,6 +1695,10 @@ fn build_fixtures() -> serde_json::Value {
                 kind: t::SqliteRebuildRiskKind::DropColumn,
                 target: "note".into(),
             },
+            t::SqliteRebuildRisk {
+                kind: t::SqliteRebuildRiskKind::LostSyntax,
+                target: "STRICT".into(),
+            },
         ],
     };
     let assertion_sql = t::AssertionSql {

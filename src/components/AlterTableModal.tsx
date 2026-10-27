@@ -142,7 +142,34 @@ function rebuildRiskKey(kind: SqliteRebuildRiskKind) {
       return "alterTableRebuildRiskAddCheck";
     case "add_foreign_key":
       return "alterTableRebuildRiskAddForeignKey";
+    case "lost_syntax":
+      return "alterTableRebuildRiskLostSyntax";
   }
+}
+
+/** バックエンドの再作成計画のエラー (`rebuild_error:<コード>:<引数>`) → 翻訳済みの文言。未知なら原文。 */
+const REBUILD_ERROR_KEYS = {
+  unknown_column: "alterTableRebuildErrUnknownColumn",
+  empty_name: "alterTableRebuildErrEmptyName",
+  duplicate_column: "alterTableRebuildErrDuplicateColumn",
+  rename_clash: "alterTableRebuildErrRenameClash",
+  add_old_name: "alterTableRebuildErrAddOldName",
+  drop_add_same_name: "alterTableRebuildErrDropAddSameName",
+  no_columns: "alterTableRebuildErrNoColumns",
+  unknown_fk: "alterTableRebuildErrUnknownFk",
+  incomplete_fk: "alterTableRebuildErrIncompleteFk",
+  fk_column_missing: "alterTableRebuildErrFkColumnMissing",
+  checks_unreadable: "alterTableRebuildErrChecksUnreadable",
+  unknown_check: "alterTableRebuildErrUnknownCheck",
+  empty_check: "alterTableRebuildErrEmptyCheck",
+  unchanged: "alterTableRebuildErrUnchanged",
+  other_table_trigger: "alterTableRebuildErrOtherTableTrigger",
+} as const;
+
+function rebuildErrorText(translate: ReturnType<typeof useT>, error: string): string {
+  const m = /rebuild_error:([a-z_]+):([^\n]*)/.exec(error);
+  const key = m ? REBUILD_ERROR_KEYS[m[1] as keyof typeof REBUILD_ERROR_KEYS] : undefined;
+  return m && key ? translate(key, { arg: m[2] }) : error;
 }
 
 function emptyIndex(): IndexDef {
@@ -387,6 +414,11 @@ export function AlterTableModal({
     return [rebuildStatement, ...base];
   }, [driver, applyOnline, plan.statements, plan.rebuild, rebuildState]);
   const hasRebuild = plan.rebuild !== null;
+  // 再作成では再現できず、適用すると失われる構文 (STRICT / COLLATE など)。
+  const lostSyntax =
+    rebuildState.status === "ok"
+      ? rebuildState.plan.risks.filter((r) => r.kind === "lost_syntax").map((r) => r.target)
+      : [];
   // 名前が空 / 列未選択のインデックス行は文にならない。黙って捨てて実行できてしまうと
   // 「作ったつもり」になるので、行ごとにエラーを出して不備が残る間は実行を止める (#1532)。
   const hasIncompleteIndex = effectiveIndexes.some((r) => indexRowProblems(r) !== null);
@@ -418,21 +450,55 @@ export function AlterTableModal({
   // デバウンスして発行するので、read_only 接続でも動く。
   // FK / UNIQUE / CHECK の追加で既存データが違反しないかも同じ枠で検査する (#1757)。
   // 同じ ALTER で追加・リネームする列は現状のテーブルに無く COUNT が失敗するので、DB に既にある列だけを対象にする。
+  // SQLite は再作成を旧い列名で行ってから改名するので (#1888)、FK / CHECK の追加前の検査も、
+  // 今の DB に存在する旧い列名へ戻して作る。
+  const renamedToOld = useMemo(
+    () =>
+      driver === "sqlite"
+        ? new Map(
+            existing
+              .filter((e) => !e.drop && e.name.trim() !== "" && e.name.trim() !== e.original)
+              .map((e) => [e.name.trim(), e.original] as const),
+          )
+        : new Map<string, string>(),
+    [driver, existing],
+  );
   const prechecks = useMemo(
     () => [
       ...buildAlterPrechecks(driver, database, table, baseline, existing),
       ...buildConstraintPrechecks(driver, database, table, {
-        addedForeignKeys: addedFks.filter(isCompleteForeignKey),
-        addedChecks: addedChecks.filter(isCompleteCheck),
+        addedForeignKeys: addedFks
+          .filter(isCompleteForeignKey)
+          .map((fk) => ({ ...fk, columns: fk.columns.map((c) => renamedToOld.get(c.trim()) ?? c) })),
+        addedChecks: addedChecks.filter(isCompleteCheck).map((ck) => ({
+          ...ck,
+          expression:
+            renamedToOld.size === 0
+              ? ck.expression
+              : ck.expression.replace(/[\p{L}\p{N}_$]+/gu, (w) => renamedToOld.get(w) ?? w),
+        })),
         indexes: effectiveIndexes.filter((r) => indexRowProblems(r) === null),
         knownColumns: new Set(baseline.map((b) => b.name)),
         pendingColumns: new Set([
           ...added.map((c) => c.name.trim()).filter((n) => n),
-          ...existing.filter((e) => !e.drop && e.name.trim() !== e.original).map((e) => e.name.trim()),
+          ...existing
+            .filter((e) => !e.drop && e.name.trim() !== e.original && !renamedToOld.has(e.name.trim()))
+            .map((e) => e.name.trim()),
         ]),
       }),
     ],
-    [driver, database, table, baseline, existing, added, addedFks, addedChecks, effectiveIndexes],
+    [
+      driver,
+      database,
+      table,
+      baseline,
+      existing,
+      added,
+      addedFks,
+      addedChecks,
+      effectiveIndexes,
+      renamedToOld,
+    ],
   );
   const runCount = useCallback(
     (sql: string) =>
@@ -920,6 +986,17 @@ export function AlterTableModal({
                 )}
               </chakra.div>
 
+              {rebuildState.status === "ok" && lostSyntax.length > 0 && (
+                <Callout
+                  tone="danger"
+                  title={t("alterTableRebuildLostTitle")}
+                  data-testid="alter-rebuild-lost"
+                >
+                  <chakra.div display="flex" flexDirection="column" gap="1">
+                    <span>{t("alterTableRebuildLostBody", { names: lostSyntax.join(", ") })}</span>
+                  </chakra.div>
+                </Callout>
+              )}
               {hasRebuild && (
                 <Callout
                   tone="warning"
@@ -931,11 +1008,13 @@ export function AlterTableModal({
                     <span>{t("alterTableRebuildBody")}</span>
                     {rebuildState.status === "loading" && <span>{t("alterTableRebuildPlanning")}</span>}
                     {rebuildState.status === "ok" &&
-                      rebuildState.plan.risks.map((r) => (
-                        <span key={`${r.kind}:${r.target}`}>
-                          {t(rebuildRiskKey(r.kind), { target: r.target })}
-                        </span>
-                      ))}
+                      rebuildState.plan.risks
+                        .filter((r) => r.kind !== "lost_syntax")
+                        .map((r) => (
+                          <span key={`${r.kind}:${r.target}`}>
+                            {t(rebuildRiskKey(r.kind), { target: r.target })}
+                          </span>
+                        ))}
                     {rebuildState.status === "ok" &&
                       rebuildState.plan.warnings.map((w) => (
                         <chakra.span key={w} fontSize="xs">
@@ -946,7 +1025,9 @@ export function AlterTableModal({
                 </Callout>
               )}
               {rebuildState.status === "error" && (
-                <ErrorNote>{t("alterTableRebuildPlanError", { error: rebuildState.error })}</ErrorNote>
+                <ErrorNote>
+                  {t("alterTableRebuildPlanError", { error: rebuildErrorText(t, rebuildState.error) })}
+                </ErrorNote>
               )}
 
               {destructiveStatements.length > 0 && (

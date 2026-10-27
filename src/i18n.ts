@@ -3360,6 +3360,31 @@ const en = {
     "{target}: a CHECK constraint is added. If an existing row violates it, copying fails and everything is rolled back.",
   alterTableRebuildRiskAddForeignKey:
     "{target}: a foreign key is added. If an existing row violates it, the change is rolled back before commit.",
+  alterTableRebuildRiskLostSyntax:
+    "{target}: this syntax in the original CREATE TABLE cannot be reproduced and is lost.",
+  alterTableRebuildLostTitle: "Some table definition will be lost",
+  alterTableRebuildLostBody:
+    "The original CREATE TABLE uses syntax the rebuild cannot reproduce: {names}. It will be missing from the rebuilt table, and this editor cannot send the SQL elsewhere to fix it by hand. Cancel unless you accept the loss.",
+  alterTableRebuildErrUnknownColumn: 'Column "{arg}" no longer exists. Reopen the dialog.',
+  alterTableRebuildErrEmptyName: "A column name is empty.",
+  alterTableRebuildErrDuplicateColumn: 'Column name "{arg}" is duplicated.',
+  alterTableRebuildErrRenameClash:
+    "Cannot rename ({arg}): another remaining column has that name. Apply swaps and chains in separate steps.",
+  alterTableRebuildErrAddOldName:
+    'Cannot add a column named "{arg}": a column with that name is being renamed in the same change. Apply them separately.',
+  alterTableRebuildErrDropAddSameName:
+    'Cannot drop a column and add one named "{arg}" in the same change. Apply them separately.',
+  alterTableRebuildErrNoColumns: "The table would have no columns.",
+  alterTableRebuildErrUnknownFk: "Foreign key {arg} no longer exists. Reopen the dialog.",
+  alterTableRebuildErrIncompleteFk: "A foreign key row is incomplete.",
+  alterTableRebuildErrFkColumnMissing: 'Foreign key column "{arg}" is not a column of the table.',
+  alterTableRebuildErrChecksUnreadable:
+    "The CHECK constraints of this table could not be read, so they cannot be edited.",
+  alterTableRebuildErrUnknownCheck: "CHECK constraint {arg} no longer exists. Reopen the dialog.",
+  alterTableRebuildErrEmptyCheck: "A CHECK expression is empty.",
+  alterTableRebuildErrUnchanged: "There is no change that needs a table rebuild.",
+  alterTableRebuildErrOtherTableTrigger:
+    'Trigger "{arg}" on another table refers to this table, so SQLite cannot rename the rebuilt table. Drop that trigger first and recreate it afterwards.',
   alterTableConfirmBodyRebuild:
     "The table is recreated in one transaction (copy the rows, DROP the old table, rename). The following script will run:",
   alterTableConfirmOk: "Apply",
@@ -10287,6 +10312,29 @@ const ja: Dict = {
     "{target}: CHECK 制約を追加します。違反する既存の行があるとコピーに失敗し、全体がロールバックされます。",
   alterTableRebuildRiskAddForeignKey:
     "{target}: 外部キーを追加します。違反する既存の行があるとコミット前に検出され、ロールバックされます。",
+  alterTableRebuildRiskLostSyntax: "{target}: 元の CREATE TABLE にあるこの構文は再現できず、失われます。",
+  alterTableRebuildLostTitle: "テーブル定義の一部が失われます",
+  alterTableRebuildLostBody:
+    "元の CREATE TABLE に、再作成では再現できない構文があります: {names}。再作成後のテーブルからは消えます。この画面からは SQL を別の場所へ送って手で補うこともできません。失われてよい場合以外は中止してください。",
+  alterTableRebuildErrUnknownColumn: "列「{arg}」が存在しません。ダイアログを開き直してください。",
+  alterTableRebuildErrEmptyName: "列名が空です。",
+  alterTableRebuildErrDuplicateColumn: "列名「{arg}」が重複しています。",
+  alterTableRebuildErrRenameClash:
+    "リネーム ({arg}) の先に、残る別の列が同名で存在します。入れ替え・連鎖のリネームは分けて適用してください。",
+  alterTableRebuildErrAddOldName:
+    "「{arg}」という列は追加できません。同じ変更でその名前の列をリネームしています。分けて適用してください。",
+  alterTableRebuildErrDropAddSameName:
+    "列を削除して同名の列「{arg}」を追加することはできません。分けて適用してください。",
+  alterTableRebuildErrNoColumns: "再作成後のテーブルに列がありません。",
+  alterTableRebuildErrUnknownFk: "外部キー {arg} が存在しません。ダイアログを開き直してください。",
+  alterTableRebuildErrIncompleteFk: "外部キーの行が未完成です。",
+  alterTableRebuildErrFkColumnMissing: "外部キーの列「{arg}」はこのテーブルの列ではありません。",
+  alterTableRebuildErrChecksUnreadable: "このテーブルの CHECK 制約を取得できなかったため、編集できません。",
+  alterTableRebuildErrUnknownCheck: "CHECK 制約 {arg} が存在しません。ダイアログを開き直してください。",
+  alterTableRebuildErrEmptyCheck: "CHECK の式が空です。",
+  alterTableRebuildErrUnchanged: "テーブルの再作成が必要な変更がありません。",
+  alterTableRebuildErrOtherTableTrigger:
+    "他のテーブルのトリガー「{arg}」がこのテーブルを参照しているため、SQLite は再作成後のテーブルの名前を戻せません。先にそのトリガーを削除し、適用後に作り直してください。",
   alterTableConfirmBodyRebuild:
     "テーブルを 1 トランザクションで作り直します (行をコピー → 旧表を DROP → 名前を戻す)。以下のスクリプトが実行されます:",
   alterTableConfirmOk: "適用",

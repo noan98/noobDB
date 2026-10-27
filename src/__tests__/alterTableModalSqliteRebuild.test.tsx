@@ -121,6 +121,30 @@ describe("AlterTableModal SQLite のテーブル再作成 (#1888)", () => {
     expect(onRun.mock.calls[0][0]).toEqual([{ sql: plan.sql, kind: "rebuildTable", destructive: true }]);
   });
 
+  it("再現できない構文が失われるときは danger の帯で構文名を出す", async () => {
+    vi.mocked(api.planSqliteTableRebuild).mockResolvedValue({
+      ...plan,
+      risks: [...plan.risks, { kind: "lost_syntax", target: "COLLATE" }],
+    });
+    renderModal();
+    const typeInput = (await screen.findAllByLabelText(new RegExp(`${t("createTableColType")}: memo`)))[0];
+    fireEvent.change(typeInput, { target: { value: "INTEGER" } });
+    const notice = await screen.findByTestId("alter-rebuild-lost");
+    expect(notice).toHaveTextContent("COLLATE");
+    expect(notice).toHaveTextContent(t("alterTableRebuildLostTitle"));
+  });
+
+  it("バックエンドのエラーコードを翻訳して出す", async () => {
+    vi.mocked(api.planSqliteTableRebuild).mockRejectedValue(
+      new Error("invalid input: rebuild_error:other_table_trigger:trg_x"),
+    );
+    renderModal();
+    const typeInput = (await screen.findAllByLabelText(new RegExp(`${t("createTableColType")}: memo`)))[0];
+    fireEvent.change(typeInput, { target: { value: "INTEGER" } });
+    expect(await screen.findByText(new RegExp("trg_x"))).toBeInTheDocument();
+    expect(screen.queryByText(/rebuild_error/)).toBeNull();
+  });
+
   it("生成中は実行できない", async () => {
     vi.mocked(api.planSqliteTableRebuild).mockReturnValue(new Promise(() => {}));
     renderModal();

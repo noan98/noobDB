@@ -242,6 +242,7 @@ PostgreSQL は別スキーマの子テーブルからの単一列 FK も専用�
 - `generate_data_sync_sql`
 - `release_data_diffs`
 - `apply_sync_sql`
+- `apply_sqlite_table_rebuild` (SQLite 構造エディタの再作成を `apply_sync_sql` と同じ経路で適用し、クエリ履歴に残す、#1888)
 
 `compare_table_data` は表示用 `diff` と保持差分の `diff_id` を返し、`generate_data_sync_sql(diffId, allowDelete, skipKeys, kinds, onlyKeys)` は
 ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を破棄する (#1259)。

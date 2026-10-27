@@ -977,7 +977,8 @@ export type SqliteRebuildRiskKind =
   | "not_null"
   | "add_not_null_column"
   | "add_check"
-  | "add_foreign_key";
+  | "add_foreign_key"
+  | "lost_syntax";
 
 /** `plan_sqlite_table_rebuild` の戻り値 (#1888)。 */
 export interface SqliteRebuildPlan {

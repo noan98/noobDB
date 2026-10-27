@@ -11,8 +11,14 @@
 //! `foreign_key_check` (違反が増えたらロールバック) を担う。このモジュールは SQL を作る
 //! だけで、DB は変更しない (スナップショットの読み取りのみ)。
 //!
-//! 拡張点 (#1893 生成列など): 編集の入力は [`SqliteRebuildEdit`] に項目を足し、
-//! [`build_table_diff`] で `generated_changes` を埋めるだけでよい (再作成側は対応済み)。
+//! 列名の変更は、再作成を旧い列名のまま行い (索引・トリガー・ビューは元の `CREATE` 文で作り直す)、
+//! コミット前に `ALTER TABLE ... RENAME COLUMN` を流して反映する。SQLite 自身が索引・トリガー・ビュー・
+//! CHECK・子表の外部キーの参照を書き換えるので、文の機械的な書き換えは要らない。そのため再作成の入力
+//! (編集で追加する FK / CHECK を含む) は旧い列名で組み立てる。
+//!
+//! 拡張点 (#1893 生成列など): [`SqliteRebuildEdit`] に項目を足し、[`build_table_diff`] で
+//! `generated_changes` を埋める。ただし生成列の式も旧い列名で渡す必要があり、列を追加する編集は
+//! 列の位置 (`position`) の扱いも決めなければならない。再作成側 (`sync.rs`) は生成列の変更に対応済み。
 
 use std::collections::HashSet;
 
@@ -21,12 +27,11 @@ use serde::{Deserialize, Serialize};
 use super::ddl_extras::normalize_check;
 use super::diff::{
     attach_sqlite_rebuild_context, attach_target_extras_to_snapshots, CheckDiff, ColumnDiff,
-    DiffForeignKey, DiffStatus, ForeignKeyDiff, SchemaDiff, TableColumns, TableDiff,
-    TargetTableSnapshot,
+    DiffForeignKey, DiffStatus, ForeignKeyDiff, SchemaDiff, SqliteMasterEntry, TableColumns,
+    TableDiff, TargetTableSnapshot,
 };
 use super::sync::{
-    created_index_name, index_tail, mask_string_literals, quote_ident, references_identifier,
-    sqlite_rebuild_sql, SQLITE_FK_OFF,
+    mask_string_literals, quote_ident, references_identifier, sqlite_rebuild_sql, SQLITE_FK_ON,
 };
 use super::types::{CheckConstraintInfo, TableColumnInfo};
 use super::{Connection, DriverKind};
@@ -119,6 +124,8 @@ pub enum SqliteRebuildRiskKind {
     AddCheck,
     /// 外部キーを足す (既存行が違反するとコミット前の検査で失敗する)。
     AddForeignKey,
+    /// 再作成では再現できない構文が元の `CREATE TABLE` にある (`target` は構文名)。再作成後は失われる。
+    LostSyntax,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -156,6 +163,11 @@ fn affinity(data_type: &str) -> &'static str {
 
 fn invalid(msg: impl Into<String>) -> AppError {
     AppError::InvalidInput(msg.into())
+}
+
+/// 利用者向けに文言をフロントで組み立てるエラー。`rebuild_error:<コード>:<引数>` の形で返す。
+fn coded(code: &str, arg: impl std::fmt::Display) -> AppError {
+    invalid(format!("rebuild_error:{code}:{arg}"))
 }
 
 fn non_blank(s: &Option<String>) -> Option<String> {
@@ -258,75 +270,6 @@ fn rename_identifier(sql: &str, old: &str, new: &str) -> String {
     out
 }
 
-/// インデックスの `CREATE INDEX` 文のうち、列リストと `WHERE` の部分だけで `old` を `new` にする
-/// (索引名・表名と同名の列に反応しない)。
-fn rename_in_index_sql(sql: &str, old: &str, new: &str) -> String {
-    let tail = index_tail(sql);
-    if tail.is_empty() {
-        return sql.to_string();
-    }
-    let total = sql.chars().count();
-    let tail_len = tail.chars().count();
-    let head: String = sql.chars().take(total - tail_len).collect();
-    let rest: String = sql.chars().skip(total - tail_len).collect();
-    format!("{head}{}", rename_identifier(&rest, old, new))
-}
-
-/// スナップショットの列名の変更 (`renames` は (旧, 新))。構造化された定義 (列・FK・UNIQUE・CHECK・
-/// 生成列) と、このテーブルのインデックスの `CREATE` 文を新しい名前へ揃える。トリガー / ビューは
-/// 文の中の参照を機械的に直すと別表の同名の列まで巻き込みうるので、作り直さず警告に出す。
-/// 実際の列名の変更は `ALTER TABLE ... RENAME COLUMN` を再作成スクリプトの先頭で行う
-/// (SQLite 自身が子表の外部キーや他表のトリガーの参照を直す)。
-fn apply_renames(
-    table: &str,
-    snap: &mut TargetTableSnapshot,
-    renames: &[(String, String)],
-    warnings: &mut Vec<String>,
-) {
-    for (old, new) in renames {
-        for c in snap.columns.iter_mut().filter(|c| &c.name == old) {
-            c.name = new.clone();
-        }
-        let swap = |name: &mut String| {
-            if name == old {
-                *name = new.clone();
-            }
-        };
-        for fk in snap.foreign_keys.iter_mut() {
-            fk.columns.iter_mut().for_each(swap);
-            if fk.referenced_table.eq_ignore_ascii_case(table) {
-                fk.referenced_columns.iter_mut().for_each(swap);
-            }
-        }
-        for uq in snap.unique_constraints.iter_mut() {
-            uq.iter_mut().for_each(swap);
-        }
-        for ck in snap.checks.iter_mut() {
-            ck.definition = rename_identifier(&ck.definition, old, new);
-        }
-        for g in snap.generated.iter_mut() {
-            if &g.column == old {
-                g.column = new.clone();
-            }
-            g.expression = rename_identifier(&g.expression, old, new);
-        }
-        let mut kept: Vec<String> = Vec::with_capacity(snap.recreate_sql.len());
-        for sql in std::mem::take(&mut snap.recreate_sql) {
-            if created_index_name(&sql).is_some() {
-                kept.push(rename_in_index_sql(&sql, old, new));
-            } else if references_identifier(&mask_string_literals(&sql), old) {
-                warnings.push(format!(
-                    "{table}: 名前を変える列 {old} を参照するため、次の定義は再作成後に作り直しません。新しい列名 {new} で手動で作り直してください: {}",
-                    sql.split_whitespace().collect::<Vec<_>>().join(" ")
-                ));
-            } else {
-                kept.push(sql);
-            }
-        }
-        snap.recreate_sql = kept;
-    }
-}
-
 fn fk_sig(columns: &[String], ref_table: &str) -> String {
     format!(
         "{}->{}",
@@ -344,36 +287,32 @@ fn collect_renames(
     edit: &SqliteRebuildEdit,
     snap: &TargetTableSnapshot,
 ) -> Result<Vec<(String, String)>> {
-    let mut renames = Vec::new();
+    let mut renames: Vec<(String, String)> = Vec::new();
     let mut final_names: HashSet<String> = HashSet::new();
+    let mut dropped: Vec<&str> = Vec::new();
     for e in &edit.columns {
         if !snap.columns.iter().any(|c| c.name == e.original) {
-            return Err(invalid(format!("column '{}' does not exist", e.original)));
+            return Err(coded("unknown_column", &e.original));
         }
         if e.drop {
+            dropped.push(&e.original);
             continue;
         }
         let name = e.name.trim();
         if name.is_empty() {
-            return Err(invalid(format!(
-                "column '{}' has an empty name",
-                e.original
-            )));
+            return Err(coded("empty_name", &e.original));
         }
         if !final_names.insert(name.to_ascii_lowercase()) {
-            return Err(invalid(format!("duplicate column name '{name}'")));
+            return Err(coded("duplicate_column", name));
         }
         if name != e.original {
-            // 他の列 (削除する列も含む) の現在の名前への改名は安全な順序を作れない。
-            let clash = snap
-                .columns
-                .iter()
-                .any(|c| c.name != e.original && c.name.eq_ignore_ascii_case(name));
+            // 削除する列の名前は再作成で空くので、そこへの改名は許す。生き残る別の列の現在の名前への
+            // 改名 (入れ替え・連鎖) は安全な順序を作れない。
+            let clash = edit.columns.iter().any(|o| {
+                !o.drop && o.original != e.original && o.original.eq_ignore_ascii_case(name)
+            });
             if clash {
-                return Err(invalid(format!(
-                    "cannot rename '{}' to '{name}': another column currently has that name (apply the drop/rename in separate steps)",
-                    e.original
-                )));
+                return Err(coded("rename_clash", format!("{} -> {name}", e.original)));
             }
             renames.push((e.original.clone(), name.to_string()));
         }
@@ -381,23 +320,36 @@ fn collect_renames(
     for c in &edit.added_columns {
         let name = c.name.trim();
         if name.is_empty() {
-            return Err(invalid("added column has an empty name"));
+            return Err(coded("empty_name", ""));
         }
         if !final_names.insert(name.to_ascii_lowercase()) {
-            return Err(invalid(format!("duplicate column name '{name}'")));
+            return Err(coded("duplicate_column", name));
+        }
+        // 旧い名前で列を足すと、再作成後の表に旧い列と同名の列が並んでしまう (改名は再作成の後に行う)。
+        if renames
+            .iter()
+            .any(|(old, _)| old.eq_ignore_ascii_case(name))
+        {
+            return Err(coded("add_old_name", name));
+        }
+        // 削除する列と同名の列の追加は、再作成が「元の列を残してコピー」と取り違えやすいので受け付けない。
+        if dropped.iter().any(|d| d.eq_ignore_ascii_case(name)) {
+            return Err(coded("drop_add_same_name", name));
         }
     }
     if final_names.is_empty() {
-        return Err(invalid("a table needs at least one column"));
+        return Err(coded("no_columns", ""));
     }
     Ok(renames)
 }
 
-/// 編集内容から [`TableDiff`] (再作成の入力) とリスクを作る。`snap` は列名の変更を反映済みのもの。
+/// 編集内容から [`TableDiff`] (再作成の入力) とリスクを作る。列名はすべて旧い名前 (`renames` は
+/// 編集側の新しい名前を旧い名前へ戻すのに使う)。
 fn build_table_diff(
     table: &str,
     edit: &SqliteRebuildEdit,
     snap: &TargetTableSnapshot,
+    renames: &[(String, String)],
 ) -> Result<(TableDiff, Vec<SqliteRebuildRisk>)> {
     let mut risks: Vec<SqliteRebuildRisk> = Vec::new();
     let mut columns: Vec<ColumnDiff> = Vec::new();
@@ -408,7 +360,7 @@ fn build_table_diff(
         if e.drop {
             // 削除する列は元の名前のまま (改名の対象にならない)。TargetOnly を SourceOnly より先に並べる。
             let Some(tc) = snap.columns.iter().find(|c| c.name == e.original) else {
-                return Err(invalid(format!("column '{}' does not exist", e.original)));
+                return Err(coded("unknown_column", &e.original));
             };
             risks.push(SqliteRebuildRisk {
                 kind: SqliteRebuildRiskKind::DropColumn,
@@ -424,10 +376,10 @@ fn build_table_diff(
             continue;
         }
         let new_name = e.name.trim().to_string();
-        let Some(tc) = snap.columns.iter().find(|c| c.name == new_name) else {
-            return Err(invalid(format!("column '{}' does not exist", e.original)));
+        let Some(tc) = snap.columns.iter().find(|c| c.name == e.original) else {
+            return Err(coded("unknown_column", &e.original));
         };
-        final_names.push(new_name.clone());
+        final_names.push(tc.name.clone());
         let data_type = match e.data_type.trim() {
             "" => tc.data_type.clone(),
             t => t.to_string(),
@@ -471,7 +423,7 @@ fn build_table_diff(
         source.nullable = !e.not_null;
         source.default = default;
         columns.push(ColumnDiff {
-            name: new_name,
+            name: tc.name.clone(),
             status: DiffStatus::Different,
             source: Some(source),
             target: Some(tc.clone()),
@@ -518,11 +470,10 @@ fn build_table_diff(
             .iter()
             .find(|f| fk_sig(&f.columns, &f.referenced_table) == sig)
         else {
-            return Err(invalid(format!(
-                "foreign key ({}) -> {} does not exist",
-                d.columns.join(", "),
-                d.ref_table
-            )));
+            return Err(coded(
+                "unknown_fk",
+                format!("({}) -> {}", d.columns.join(", "), d.ref_table),
+            ));
         };
         fk_changes.push(ForeignKeyDiff {
             status: DiffStatus::TargetOnly,
@@ -532,18 +483,27 @@ fn build_table_diff(
         });
     }
     for f in &edit.added_foreign_keys {
-        let cols: Vec<String> = f.columns.iter().map(|c| c.trim().to_string()).collect();
+        // 編集側の列名は新しい名前。再作成は旧い名前で行うので戻す。
+        let cols: Vec<String> = f
+            .columns
+            .iter()
+            .map(|c| {
+                let c = c.trim();
+                renames
+                    .iter()
+                    .find(|(_, new)| new == c)
+                    .map_or_else(|| c.to_string(), |(old, _)| old.clone())
+            })
+            .collect();
         let refs: Vec<String> = f.ref_columns.iter().map(|c| c.trim().to_string()).collect();
         if f.ref_table.trim().is_empty() || cols.is_empty() || cols.len() != refs.len() {
-            return Err(invalid("incomplete foreign key"));
+            return Err(coded("incomplete_fk", ""));
         }
         if let Some(missing) = cols
             .iter()
             .find(|c| !final_names.iter().any(|n| n.eq_ignore_ascii_case(c)))
         {
-            return Err(invalid(format!(
-                "foreign key column '{missing}' is not a column of the rebuilt table"
-            )));
+            return Err(coded("fk_column_missing", missing));
         }
         let target = cols.join(", ");
         risks.push(SqliteRebuildRisk {
@@ -568,9 +528,7 @@ fn build_table_diff(
     // CHECK 制約。
     let mut check_changes: Vec<CheckDiff> = Vec::new();
     if (!edit.dropped_checks.is_empty() || !edit.added_checks.is_empty()) && !snap.extras_known {
-        return Err(invalid(
-            "CHECK constraints of this table could not be read; cannot edit them",
-        ));
+        return Err(coded("checks_unreadable", ""));
     }
     for def in &edit.dropped_checks {
         let want = normalize_check(def);
@@ -579,7 +537,7 @@ fn build_table_diff(
             .iter()
             .find(|c| normalize_check(&c.definition) == want)
         else {
-            return Err(invalid(format!("check constraint {def} does not exist")));
+            return Err(coded("unknown_check", def));
         };
         check_changes.push(CheckDiff {
             name: found.name.clone(),
@@ -591,8 +549,13 @@ fn build_table_diff(
     for c in &edit.added_checks {
         let expr = c.expression.trim();
         if expr.is_empty() {
-            return Err(invalid("empty check expression"));
+            return Err(coded("empty_check", ""));
         }
+        // 式の列名は新しい名前。旧い名前へ戻す (識別子単位で、文字列リテラルの中は触らない)。
+        let expr = renames.iter().fold(expr.to_string(), |e, (old, new)| {
+            rename_identifier(&e, new, old)
+        });
+        let expr = expr.as_str();
         let name = non_blank(&c.name).unwrap_or_default();
         risks.push(SqliteRebuildRisk {
             kind: SqliteRebuildRiskKind::AddCheck,
@@ -624,7 +587,9 @@ fn build_table_diff(
     Ok((diff, risks))
 }
 
-/// 再作成スクリプトの `PRAGMA foreign_keys=OFF` の直後へ列名変更の文を差し込む。
+/// 再作成スクリプトの末尾の `PRAGMA foreign_keys=ON` の直前 (= コミット前) へ、列名変更の文を差し込む。
+/// 再作成が終わった後に行うので、SQLite が作り直した索引・トリガー・ビュー・CHECK・子表の外部キーの
+/// 参照を新しい名前へ書き換える。
 fn insert_renames(table: &str, script: String, renames: &[(String, String)]) -> String {
     if renames.is_empty() {
         return script;
@@ -640,37 +605,100 @@ fn insert_renames(table: &str, script: String, renames: &[(String, String)]) -> 
             )
         })
         .collect();
-    let head = format!("{SQLITE_FK_OFF};\n");
-    match script.strip_prefix(&head) {
-        Some(rest) => format!("{head}{stmts}{rest}"),
-        None => format!("{stmts}{script}"),
+    let tail = format!("{SQLITE_FK_ON};");
+    match script.strip_suffix(&tail) {
+        Some(head) => format!("{head}{stmts}{tail}"),
+        None => format!("{script}\n{stmts}"),
     }
+}
+
+/// 元の `CREATE TABLE` にあるが、再作成では再現できない構文 (名前の一覧)。
+fn lost_syntax(original_sql: &str) -> Vec<&'static str> {
+    let masked = mask_string_literals(original_sql).to_ascii_uppercase();
+    let mut out = Vec::new();
+    // `) STRICT` / `) WITHOUT ROWID, STRICT` は最後の閉じ括弧より後ろにある。
+    if masked
+        .rsplit_once(')')
+        .is_some_and(|(_, tail)| references_identifier(tail, "STRICT"))
+    {
+        out.push("STRICT");
+    }
+    if references_identifier(&masked, "COLLATE") {
+        out.push("COLLATE");
+    }
+    if masked.contains("ON CONFLICT") {
+        out.push("ON CONFLICT");
+    }
+    // `NOT DEFERRABLE` (既定) は失われても同じなので数えない。
+    if masked.matches("DEFERRABLE").count() > masked.matches("NOT DEFERRABLE").count() {
+        out.push("DEFERRABLE");
+    }
+    out
+}
+
+/// rowid を別名する `INTEGER PRIMARY KEY` を持たない rowid テーブルか。再作成は rowid ごとコピーする。
+fn needs_rowid_copy(snap: &TargetTableSnapshot) -> bool {
+    let upper = snap
+        .original_sql
+        .as_deref()
+        .unwrap_or("")
+        .to_ascii_uppercase();
+    if upper.contains("WITHOUT ROWID") {
+        return false;
+    }
+    let pk: Vec<_> = snap
+        .columns
+        .iter()
+        .filter(|c| c.key.eq_ignore_ascii_case("PRI"))
+        .collect();
+    let has_alias = pk.len() == 1 && pk[0].data_type.eq_ignore_ascii_case("INTEGER");
+    let shadowed = snap.columns.iter().any(|c| {
+        ["rowid", "oid", "_rowid_"]
+            .iter()
+            .any(|r| c.name.eq_ignore_ascii_case(r))
+    });
+    !has_alias && !shadowed
+}
+
+/// `INSERT INTO tmp (cols) SELECT cols FROM t` を rowid ごとコピーする形へ書き換える。
+fn copy_rowid(table: &str, script: String) -> String {
+    let tmp = quote_ident(DriverKind::Sqlite, &format!("__noobdb_rebuild_{table}"));
+    let head = format!("INSERT INTO {tmp} (");
+    let Some(start) = script.find(&head) else {
+        return script;
+    };
+    let after = start + head.len();
+    let Some(sel) = script[after..].find(") SELECT ") else {
+        return script;
+    };
+    let sel_at = after + sel + ") SELECT ".len();
+    format!(
+        "{}rowid, {}rowid, {}",
+        &script[..after],
+        &script[after..sel_at],
+        &script[sel_at..]
+    )
 }
 
 /// 編集内容と現状のスナップショットから再作成 SQL を作る (純関数、DB に触れない)。
 pub fn plan_rebuild(
     table: &str,
     edit: &SqliteRebuildEdit,
-    mut snap: TargetTableSnapshot,
+    snap: TargetTableSnapshot,
 ) -> Result<SqliteRebuildPlan> {
     let renames = collect_renames(edit, &snap)?;
     let mut warnings: Vec<String> = Vec::new();
-    apply_renames(table, &mut snap, &renames, &mut warnings);
-    let (diff, risks) = build_table_diff(table, edit, &snap)?;
+    let (diff, mut risks) = build_table_diff(table, edit, &snap, &renames)?;
     if diff.columns.is_empty()
         && diff.fk_changes.is_empty()
         && diff.check_changes.is_empty()
         && renames.is_empty()
     {
-        return Err(invalid("no change requires a table rebuild"));
+        return Err(coded("unchanged", ""));
     }
     // AUTOINCREMENT の主キーを INTEGER 以外へ変えると、再作成後の表では AUTOINCREMENT が外れる。
-    let original_upper = snap
-        .original_sql
-        .as_deref()
-        .unwrap_or("")
-        .to_ascii_uppercase();
-    if original_upper.contains("AUTOINCREMENT")
+    let original_sql = snap.original_sql.clone().unwrap_or_default();
+    if original_sql.to_ascii_uppercase().contains("AUTOINCREMENT")
         && diff.columns.iter().any(|c| {
             c.status == DiffStatus::Different
                 && c.target
@@ -683,10 +711,19 @@ pub fn plan_rebuild(
             "{table}: 主キーの型を変えると AUTOINCREMENT が外れます (INTEGER PRIMARY KEY AUTOINCREMENT でなくなります)。"
         ));
     }
+    for name in lost_syntax(&original_sql) {
+        risks.push(SqliteRebuildRisk {
+            kind: SqliteRebuildRiskKind::LostSyntax,
+            target: name.to_string(),
+        });
+    }
     let Some(script) = sqlite_rebuild_sql(&diff, &snap, &mut warnings) else {
-        return Err(invalid(format!(
-            "{table}: could not generate the table rebuild SQL (no columns left)"
-        )));
+        return Err(coded("no_columns", ""));
+    };
+    let script = if needs_rowid_copy(&snap) {
+        copy_rowid(table, script)
+    } else {
+        script
     };
     Ok(SqliteRebuildPlan {
         sql: insert_renames(table, script, &renames),
@@ -702,7 +739,7 @@ pub async fn load_snapshot(
     conn: &Connection,
     database: &str,
     table: &str,
-) -> Result<TargetTableSnapshot> {
+) -> Result<(TargetTableSnapshot, Vec<SqliteMasterEntry>)> {
     if conn.driver_kind() != DriverKind::Sqlite {
         return Err(invalid("table rebuild planning is SQLite only"));
     }
@@ -744,11 +781,13 @@ pub async fn load_snapshot(
         &master,
     );
     attach_target_extras_to_snapshots(&mut diff, &[(table.to_string(), extras)]);
-    diff.tables
+    let snap = diff
+        .tables
         .into_iter()
         .next()
         .and_then(|t| t.target_snapshot)
-        .ok_or_else(|| invalid(format!("table '{table}' does not exist")))
+        .ok_or_else(|| invalid(format!("table '{table}' does not exist")))?;
+    Ok((snap, master))
 }
 
 /// スナップショットを読んで再作成 SQL を作る。
@@ -758,7 +797,16 @@ pub async fn plan_table_rebuild(
     table: &str,
     edit: &SqliteRebuildEdit,
 ) -> Result<SqliteRebuildPlan> {
-    let snap = load_snapshot(conn, database, table).await?;
+    let (snap, master) = load_snapshot(conn, database, table).await?;
+    // 他の表のトリガーがこの表を参照していると、旧表を DROP して名前を戻す `RENAME TO` のスキーマ検査で
+    // 失敗する (SQLite はその時点で他表のトリガーの参照先を検証する)。実行前に分かりやすく止める。
+    if let Some(t) = master.iter().find(|m| {
+        m.kind == "trigger"
+            && !m.table.eq_ignore_ascii_case(table)
+            && references_identifier(&mask_string_literals(&m.sql), table)
+    }) {
+        return Err(coded("other_table_trigger", &t.name));
+    }
     plan_rebuild(table, edit, snap)
 }
 
@@ -830,18 +878,6 @@ mod tests {
     }
 
     #[test]
-    fn rename_in_index_sql_leaves_the_index_and_table_names_alone() {
-        assert_eq!(
-            rename_in_index_sql(
-                "CREATE INDEX qty ON qty (qty, name) WHERE qty > 1",
-                "qty",
-                "amount"
-            ),
-            "CREATE INDEX qty ON qty (\"amount\", name) WHERE \"amount\" > 1"
-        );
-    }
-
-    #[test]
     fn type_nullability_and_default_changes_produce_a_rebuild() {
         let edit = SqliteRebuildEdit {
             columns: vec![
@@ -900,7 +936,7 @@ mod tests {
     }
 
     #[test]
-    fn renames_run_first_and_rewrite_indexes() {
+    fn renames_run_after_the_rebuild_and_leave_the_old_names_in_the_rebuild() {
         let mut edit = SqliteRebuildEdit {
             columns: vec![
                 keep("id", "INTEGER", true, None),
@@ -911,27 +947,173 @@ mod tests {
         };
         edit.columns[1].name = "title".into();
         let plan = plan_rebuild("t", &edit, base_snapshot()).unwrap();
-        let rename = "ALTER TABLE \"t\" RENAME COLUMN \"name\" TO \"title\";\n";
-        let off = "PRAGMA foreign_keys=OFF;\n";
+        let rename =
+            "ALTER TABLE \"t\" RENAME COLUMN \"name\" TO \"title\";\nPRAGMA foreign_keys=ON;";
+        assert!(plan.sql.ends_with(rename), "{}", plan.sql);
         assert!(
-            plan.sql.starts_with(&format!("{off}{rename}")),
+            plan.sql.contains("CREATE INDEX idx_name ON t (name)"),
             "{}",
             plan.sql
         );
         assert!(
-            plan.sql.contains("CREATE INDEX idx_name ON t (\"title\")"),
-            "{}",
-            plan.sql
-        );
-        assert!(
-            plan.sql.contains("SELECT \"id\", \"title\", \"qty\" FROM"),
+            plan.sql.contains("SELECT \"id\", \"name\", \"qty\" FROM"),
             "{}",
             plan.sql
         );
     }
 
     #[test]
-    fn rename_onto_a_dropped_column_name_is_rejected() {
+    fn added_constraints_are_translated_back_to_the_old_names() {
+        let mut edit = SqliteRebuildEdit {
+            columns: vec![
+                keep("id", "INTEGER", true, None),
+                keep("name", "TEXT", false, None),
+                keep("qty", "TEXT", false, Some("'0'")),
+            ],
+            added_checks: vec![RebuildCheck {
+                name: None,
+                expression: "length(title) > 0".into(),
+            }],
+            added_foreign_keys: vec![RebuildForeignKey {
+                name: None,
+                columns: vec!["title".into()],
+                ref_table: "owners".into(),
+                ref_columns: vec!["name".into()],
+                on_delete: None,
+                on_update: None,
+            }],
+            ..Default::default()
+        };
+        edit.columns[1].name = "title".into();
+        let plan = plan_rebuild("t", &edit, base_snapshot()).unwrap();
+        assert!(
+            plan.sql.contains("CHECK (length(\"name\") > 0)"),
+            "{}",
+            plan.sql
+        );
+        assert!(
+            plan.sql.contains("FOREIGN KEY (\"name\") REFERENCES"),
+            "{}",
+            plan.sql
+        );
+    }
+
+    #[test]
+    fn dropping_an_existing_constraint_while_renaming_matches_the_old_snapshot() {
+        let mut snap = base_snapshot();
+        snap.checks = vec![CheckConstraintInfo {
+            name: String::new(),
+            definition: "CHECK (name <> '')".into(),
+        }];
+        let mut edit = SqliteRebuildEdit {
+            columns: vec![
+                keep("id", "INTEGER", true, None),
+                keep("name", "TEXT", false, None),
+                keep("qty", "TEXT", false, Some("'0'")),
+            ],
+            dropped_checks: vec!["CHECK (name <> '')".into()],
+            ..Default::default()
+        };
+        edit.columns[1].name = "title".into();
+        let plan = plan_rebuild("t", &edit, snap).unwrap();
+        assert!(!plan.sql.contains("<>"), "{}", plan.sql);
+    }
+
+    #[test]
+    fn adding_a_column_named_like_a_renamed_or_dropped_column_is_rejected() {
+        let new_col = |n: &str| RebuildNewColumn {
+            name: n.into(),
+            data_type: "TEXT".into(),
+            not_null: false,
+            default: None,
+        };
+        let cols = || {
+            vec![
+                keep("id", "INTEGER", true, None),
+                keep("name", "TEXT", false, None),
+                keep("qty", "TEXT", false, Some("'0'")),
+            ]
+        };
+        let mut renamed = SqliteRebuildEdit {
+            columns: cols(),
+            added_columns: vec![new_col("name")],
+            ..Default::default()
+        };
+        renamed.columns[1].name = "title".into();
+        let e = plan_rebuild("t", &renamed, base_snapshot()).unwrap_err();
+        assert!(e.to_string().contains("rebuild_error:add_old_name"), "{e}");
+        let mut dropped = SqliteRebuildEdit {
+            columns: cols(),
+            added_columns: vec![new_col("qty")],
+            ..Default::default()
+        };
+        dropped.columns[2].drop = true;
+        let e = plan_rebuild("t", &dropped, base_snapshot()).unwrap_err();
+        assert!(
+            e.to_string().contains("rebuild_error:drop_add_same_name"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn lost_syntax_is_reported_as_a_risk() {
+        let mut snap = base_snapshot();
+        snap.original_sql = Some(
+            "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT COLLATE NOCASE, qty TEXT, \
+             FOREIGN KEY (qty) REFERENCES p(id) DEFERRABLE INITIALLY DEFERRED) STRICT"
+                .into(),
+        );
+        let edit = SqliteRebuildEdit {
+            columns: vec![
+                keep("id", "INTEGER", true, None),
+                keep("name", "TEXT", true, None),
+                keep("qty", "TEXT", false, Some("'0'")),
+            ],
+            ..Default::default()
+        };
+        let plan = plan_rebuild("t", &edit, snap).unwrap();
+        let lost: Vec<_> = plan
+            .risks
+            .iter()
+            .filter(|r| r.kind == SqliteRebuildRiskKind::LostSyntax)
+            .map(|r| r.target.as_str())
+            .collect();
+        assert_eq!(lost, vec!["STRICT", "COLLATE", "DEFERRABLE"]);
+        // NOT DEFERRABLE (既定) だけなら失われるものは無い。
+        assert!(lost_syntax("CREATE TABLE t (a REFERENCES p NOT DEFERRABLE)").is_empty());
+    }
+
+    #[test]
+    fn rowid_tables_without_an_integer_primary_key_copy_the_rowid() {
+        let mut snap = base_snapshot();
+        snap.columns[0] = snap_col("code", "TEXT", true, "PRI", None);
+        snap.original_sql =
+            Some("CREATE TABLE t (code TEXT PRIMARY KEY, name TEXT, qty TEXT)".into());
+        snap.columns[1].name = "name".into();
+        let edit = SqliteRebuildEdit {
+            columns: vec![
+                keep("code", "TEXT", true, None),
+                keep("name", "TEXT", true, None),
+                keep("qty", "TEXT", false, Some("'0'")),
+            ],
+            ..Default::default()
+        };
+        let plan = plan_rebuild("t", &edit, snap.clone()).unwrap();
+        assert!(
+            plan.sql
+                .contains("(rowid, \"code\", \"name\", \"qty\") SELECT rowid, \"code\""),
+            "{}",
+            plan.sql
+        );
+        // WITHOUT ROWID は対象外。
+        snap.original_sql =
+            Some("CREATE TABLE t (code TEXT PRIMARY KEY, name, qty) WITHOUT ROWID".into());
+        let plan = plan_rebuild("t", &edit, snap).unwrap();
+        assert!(!plan.sql.contains("rowid,"), "{}", plan.sql);
+    }
+
+    #[test]
+    fn rename_onto_a_dropped_column_name_is_allowed_but_a_swap_is_not() {
         let mut edit = SqliteRebuildEdit {
             columns: vec![
                 keep("id", "INTEGER", true, None),
@@ -942,6 +1124,14 @@ mod tests {
         };
         edit.columns[2].drop = true;
         edit.columns[1].name = "qty".into();
+        let plan = plan_rebuild("t", &edit, base_snapshot()).unwrap();
+        assert!(
+            plan.sql.contains("RENAME COLUMN \"name\" TO \"qty\""),
+            "{}",
+            plan.sql
+        );
+        edit.columns[2].drop = false;
+        edit.columns[2].name = "name".into();
         assert!(plan_rebuild("t", &edit, base_snapshot()).is_err());
     }
 

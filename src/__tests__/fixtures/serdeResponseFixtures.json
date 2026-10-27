@@ -5648,6 +5648,10 @@
       {
         "kind": "drop_column",
         "target": "note"
+      },
+      {
+        "kind": "lost_syntax",
+        "target": "STRICT"
       }
     ],
     "sql": "PRAGMA foreign_keys=OFF;\nCREATE TABLE \"__noobdb_rebuild_users\" (id INTEGER);\nPRAGMA foreign_keys=ON;",

@@ -8811,7 +8811,7 @@ export default function App() {
       if (!target || !sessionId || statements.length === 0) return;
       const destructive = statements.some((s) => s.destructive);
       // SQLite のテーブル再作成 (#1888): PRAGMA foreign_keys の退避とコミット前の外部キー検査を持つ
-      // `apply_sync_sql` の経路で流す (通常の `run_query_transaction` はトランザクション内の PRAGMA を
+      // `apply_sqlite_table_rebuild` (`apply_sync_sql` と同じ経路 + 履歴記録) で流す (通常の `run_query_transaction` はトランザクション内の PRAGMA を
       // 効かせられず、旧表の DROP で子表の行が連鎖削除される)。read_only はバックエンドが拒否する。
       const rebuild = statements.some((s) => s.kind === "rebuildTable");
       const sqls = statements.map((s) => s.sql);
@@ -8836,7 +8836,7 @@ export default function App() {
       if (!ok) return;
       try {
         if (rebuild) {
-          await api.applySyncSql({ sessionId, database: target.database, statements: sqls });
+          await api.applySqliteTableRebuild({ sessionId, database: target.database, statements: sqls });
         } else {
           await api.runQueryTransaction(sessionId, sqls, target.database);
         }

@@ -1755,6 +1755,7 @@ pub fn run() {
             commands::sync::generate_data_sync_sql,
             commands::sync::release_data_diffs,
             commands::sync::apply_sync_sql,
+            commands::sync::apply_sqlite_table_rebuild,
             commands::sandbox::create_sandbox,
             commands::sandbox::list_sandboxes,
             commands::sandbox::discard_sandbox,
