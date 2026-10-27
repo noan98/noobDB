@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, type RefObject } from "react";
+import { useCallback, useLayoutEffect, useRef, type DependencyList, type RefObject } from "react";
 import { useReducedMotionConfig } from "motion/react";
 import { FIRST_BATCH_REVEAL_FALLBACK_ROWS } from "./firstBatchReveal";
 import { jsonTreeRevealAnimation, visibleRevealTargets } from "./jsonTreeReveal";
@@ -16,7 +16,7 @@ import { prefersStaticMotion } from "./revealOrigin";
  * - reduced-motion / ハイコントラスト (`prefersStaticMotion`) と `Element.animate` が無い環境
  *   (jsdom) では何もしない。畳む操作は新規行が無いので再生しない。
  */
-export function useJsonTreeReveal(treeRef: RefObject<HTMLElement | null>) {
+export function useJsonTreeReveal(treeRef: RefObject<HTMLElement | null>, deps: DependencyList) {
   const reduced = useReducedMotionConfig();
   const reducedRef = useRef(reduced);
   reducedRef.current = reduced;
@@ -24,6 +24,11 @@ export function useJsonTreeReveal(treeRef: RefObject<HTMLElement | null>) {
   const runningRef = useRef<Animation[]>([]);
 
   const mark = useCallback(() => {
+    // 静止モードでは記録しない (全行の走査を避け、flush も何もしない)。
+    if (reducedRef.current || prefersStaticMotion()) {
+      beforeRef.current = null;
+      return;
+    }
     const tree = treeRef.current;
     beforeRef.current = tree ? new Set(tree.querySelectorAll("[role='treeitem']")) : null;
   }, [treeRef]);
@@ -60,5 +65,12 @@ export function useJsonTreeReveal(treeRef: RefObject<HTMLElement | null>) {
     [],
   );
 
-  return { mark, flush, pending: beforeRef };
+  // `deps` (展開状態) の反映後に再生する。行は `useSyncExternalStore` で購読しており、親の
+  // layout effect でストアを更新すると同期レーン (SyncLane) で再レンダーが同じタスク内に
+  // 完了するため、マイクロタスクの時点で新規行が DOM に載っている (描画前) ことに依存する。
+  useLayoutEffect(() => {
+    if (beforeRef.current) queueMicrotask(flush);
+  }, [...deps, flush]);
+
+  return { mark };
 }

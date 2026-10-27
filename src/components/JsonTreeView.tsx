@@ -202,12 +202,7 @@ export function JsonTreeView({ root, columnName, driver, update }: Props) {
   // 展開で露出した行のリビール (#1863)。状態変更の直前に行を記録し、反映後 (行の購読が
   // 再レンダーし終えた直後のマイクロタスク) に新規行だけ再生する。
   const treeRef = useRef<HTMLDivElement>(null);
-  const reveal = useJsonTreeReveal(treeRef);
-  const { mark: markReveal, flush: flushReveal, pending: revealPending } = reveal;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: expanded / searchCollapsed の変化を契機に再生する (effect 内では参照しない)
-  useLayoutEffect(() => {
-    if (revealPending.current) queueMicrotask(flushReveal);
-  }, [expanded, searchCollapsed, flushReveal, revealPending]);
+  const { mark: markReveal } = useJsonTreeReveal(treeRef, [expanded, searchCollapsed]);
 
   const toggle = useCallback(
     (key: string) => {
