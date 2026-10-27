@@ -376,3 +376,103 @@ export function preflightTone(allRows: boolean, count: number | null): Preflight
   if (count !== null && count >= PREFLIGHT_LARGE_THRESHOLD) return "warning";
   return "neutral";
 }
+
+/** クオート済みの識別子 1 パート (`` `a` `` / `"a"` / `a`) から、クオートを外した名前を返す。 */
+function unquoteIdentPart(p: string): string {
+  const s = p.trim();
+  if (s.startsWith("`") && s.endsWith("`") && s.length >= 2) return s.slice(1, -1).replace(/``/g, "`");
+  if (s.startsWith('"') && s.endsWith('"') && s.length >= 2) return s.slice(1, -1).replace(/""/g, '"');
+  return s;
+}
+
+/**
+ * 代入先の列参照から列名を取る。MySQL / SQLite は修飾付き (`t.col` / `` `db`.`t`.`col` ``) の最後のパートが列。
+ * PostgreSQL の SET 左辺は修飾できず、`col.field` (複合型のフィールド) や `arr[1]` (配列の添字) は
+ * 列そのものを書き換えるので、先頭パートを取り添字を落とす。
+ */
+function setTargetColumn(raw: string, driver?: string): string | null {
+  const parts = raw.match(/`(?:[^`]|``)+`|"(?:[^"]|"")+"|[^.\s"`]+/g);
+  if (!parts || parts.length === 0) return null;
+  const pg = driver === "postgres";
+  const part = pg ? parts[0] : parts[parts.length - 1];
+  const name = unquoteIdentPart(pg ? part.replace(/\[.*$/, "") : part);
+  return name.length > 0 ? name : null;
+}
+
+/**
+ * 単一表 UPDATE の `SET` 句が書き換える列名を、書かれた順に重複なしで返す (#1881)。確認ダイアログの影響行
+ * グリッドで「どの列が変わるか」を強調するための材料。`SET a = 1, b = f(x, y)` のトップレベルの代入だけを
+ * 見る (括弧内・文字列内のカンマや `=` はマスクで無視)。PostgreSQL の `(a, b) = (1, 2)` は各列を拾う。
+ * UPDATE でない・SET が読めない形は空配列 (= 強調なし。誤った列を強調するより出さない)。
+ */
+export function extractUpdateSetColumns(sql: string, driver?: string): string[] {
+  if (sql.length > PREFLIGHT_MAX_CHARS) return [];
+  const masked = maskLiterals(sql, driver);
+  const trimmed = trimTrailingSeparators(masked);
+  if (trimmed.length === 0 || trimmed.includes(";")) return [];
+  const stmtEnd = trimmed.length;
+  const words = maskedTopLevelWords(masked, 0, stmtEnd);
+  if (words.length < 3 || words[0].text !== "update") return [];
+  const table = readTableRef(masked, sql, words[0].to);
+  if (!table) return [];
+  const after = maskedTopLevelWords(masked, table.end, stmtEnd);
+  if (after.length === 0 || after[0].text !== "set") return [];
+  const setEnd = after.find((w) => w.text === "where" || w.text === "returning")?.from ?? stmtEnd;
+  const out: string[] = [];
+  const push = (raw: string) => {
+    const name = setTargetColumn(raw, driver);
+    if (name && !out.some((o) => o.toLowerCase() === name.toLowerCase())) out.push(name);
+  };
+  // マスク済みテキスト上の範囲 [from, to) を空白で詰め、元 SQL の同じ範囲を返す (コメントは空白化済み)。
+  const slice = (from: number, to: number): string => {
+    let f = from;
+    let t = to;
+    while (f < t && /\s/.test(masked[f])) f++;
+    while (t > f && /\s/.test(masked[t - 1])) t--;
+    return sql.slice(f, t);
+  };
+  let depth = 0;
+  let segStart = after[0].to;
+  const flush = (end: number) => {
+    // トップレベルの最初の `=` を探す (括弧・文字列・コメントはマスクで無視される)。
+    let d = 0;
+    let eq = -1;
+    for (let i = segStart; i < end; i++) {
+      const c = masked[i];
+      if (c === "(") d++;
+      else if (c === ")") d = Math.max(0, d - 1);
+      else if (c === "=" && d === 0) {
+        eq = i;
+        break;
+      }
+    }
+    if (eq < 0) return;
+    const lhsMasked = masked.slice(segStart, eq).trim();
+    if (lhsMasked.startsWith("(") && lhsMasked.endsWith(")")) {
+      // タプル左辺 `(a, "b,c") = ...`: 区切りのカンマはマスク上で探す (引用符内のカンマは空白化済み)。
+      const open = masked.indexOf("(", segStart);
+      let close = eq - 1;
+      while (close > open && masked[close] !== ")") close--;
+      let from = open + 1;
+      for (let i = open + 1; i <= close; i++) {
+        if (i === close || masked[i] === ",") {
+          push(slice(from, i));
+          from = i + 1;
+        }
+      }
+    } else {
+      push(slice(segStart, eq));
+    }
+  };
+  for (let i = after[0].to; i < setEnd; i++) {
+    const c = masked[i];
+    if (c === "(") depth++;
+    else if (c === ")") depth = Math.max(0, depth - 1);
+    else if (c === "," && depth === 0) {
+      flush(i);
+      segStart = i + 1;
+    }
+  }
+  flush(setEnd);
+  return out;
+}

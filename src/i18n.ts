@@ -1082,6 +1082,9 @@ const en = {
   dangerousImpactUpdate: "About {count} rows will be updated.",
   dangerousImpactAllRows: "This affects every row in the table.",
   dangerousImpactNote: "Estimate as of preflight — may drift by run time.",
+  dangerousRowPreviewDelete: "Rows to be deleted (up to {shown} of {total})",
+  dangerousRowPreviewUpdate: "Rows to be updated (up to {shown} of {total})",
+  dangerousRowPreviewSetCols: "Highlighted columns are changed by SET: {columns}",
   dangerousCancel: "Cancel",
   dangerousConfirm: "Run anyway",
   // AI impact analysis inside the dangerous-query dialog (#694).
@@ -7999,6 +8002,9 @@ const ja: Dict = {
   dangerousImpactUpdate: "約 {count} 行が更新されます。",
   dangerousImpactAllRows: "テーブルの全行が対象です。",
   dangerousImpactNote: "プリフライト時点の推定値です (実行時点とズレる可能性があります)。",
+  dangerousRowPreviewDelete: "削除される行 (全 {total} 行中、最大 {shown} 行)",
+  dangerousRowPreviewUpdate: "更新される行 (全 {total} 行中、最大 {shown} 行)",
+  dangerousRowPreviewSetCols: "強調した列が SET で書き換わります: {columns}",
   dangerousCancel: "キャンセル",
   dangerousConfirm: "実行する",
   // 危険クエリ確認ダイアログ内の AI 影響分析 (#694)。
