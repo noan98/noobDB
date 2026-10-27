@@ -2369,6 +2369,7 @@ html, body, #root {
    - `apply-flash`: ResultGrid のインライン編集適用成功時のフラッシュ。
      コピー操作 (#1159、`runCopy` → `is-copy-flash`) も同じキーフレームを
      再利用し、コピー対象のセル/行/矩形選択を一瞬フラッシュさせる
+     UsersPanel (#1890) の権限 grant/revoke 後も、変わったセル / 新規ロールに `.flash-ring` で再生する
    - `find-current-pulse`: ResultGrid の結果内検索 (#644) で現在ヒットへ
      ジャンプしたときの着地パルス
    - `pane-overlay-in`: 結果最大化 / エディタ集中の全画面オーバーレイの出現
@@ -2377,6 +2378,28 @@ html, body, #root {
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.45; }
+}
+
+/* 接続確立の「トンネル開通」(#1866)。`ConnectionStatusDot` が connecting → connected の
+   遷移で 1 回だけ `is-tunnel-open` を付け、animationend で外す。connected ドットの外周
+   リングがブランドティール (--brand-teal) へ広がって通常の connected リングへ戻る。
+   reduced-motion / hc-* / forced-colors は JS 側で付与しない (下は念のための静止化)。 */
+@keyframes tunnel-open-bloom {
+  0%   { box-shadow: 0 0 0 var(--space-0-5) color-mix(in srgb, var(--brand-teal) 70%, transparent); }
+  45%  { box-shadow: 0 0 0 var(--space-1-5) color-mix(in srgb, var(--brand-teal) 35%, transparent); }
+  100% { box-shadow: 0 0 0 var(--space-0-5) color-mix(in srgb, var(--status-connected) 25%, transparent); }
+}
+.is-tunnel-open {
+  animation: tunnel-open-bloom calc(var(--dur-med) * 3.5) var(--ease-out);
+}
+:root[data-motion="reduced"] .is-tunnel-open,
+:root[data-theme="hc-light"] .is-tunnel-open,
+:root[data-theme="hc-dark"] .is-tunnel-open { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .is-tunnel-open { animation: none; }
+}
+@media (forced-colors: active) {
+  .is-tunnel-open { animation: none; }
 }
 
 @keyframes streaming-pulse {

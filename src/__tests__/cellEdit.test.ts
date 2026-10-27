@@ -906,6 +906,24 @@ describe("buildDeleteStatements", () => {
   ];
   const pkIndices = [0];
 
+  it("bool 主キーの DELETE はバックエンドと同じ述語になる (MySQL/SQLite は <> 0・PostgreSQL は TRUE、#1870)", () => {
+    const boolRows: CellValue[][] = [[true, "x"]];
+    const cols = [col("flag", "TINYINT(1)"), col("name", "VARCHAR")];
+    const run = (driver: string) =>
+      buildDeleteStatements({
+        driver,
+        database: "shop",
+        table: "t",
+        columns: cols,
+        rows: boolRows,
+        pkIndices,
+        deleteKeys: new Set([rowEditKey(boolRows[0], pkIndices, 0)]),
+      });
+    expect(run("mysql")).toEqual(["DELETE FROM `shop`.`t` WHERE `flag` <> 0;"]);
+    expect(run("sqlite")[0]).toContain('"flag" <> 0');
+    expect(run("postgres")[0]).toContain('"flag" = TRUE');
+  });
+
   it("emits a DELETE per marked row, keyed by PK identity", () => {
     const keys = new Set([rowEditKey(rows[0], pkIndices, 0), rowEditKey(rows[2], pkIndices, 2)]);
     const stmts = buildDeleteStatements({

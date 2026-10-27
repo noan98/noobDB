@@ -462,11 +462,13 @@ import {
 import { t as translate, useT, useLocale } from "./i18n";
 import { isPartialCloneFailure } from "./tableClone";
 import { isAppWindowFocused, registerNotificationClickFocus, sendQueryNotification } from "./notifications";
-import { checkForAppUpdate, dismissUpdate } from "./updater";
+import { checkForAppUpdate, dismissUpdate, getCurrentAppVersion } from "./updater";
 import { applyCustomThemeVars } from "./customTheme";
 import { usePrefersMoreContrast } from "./prefersContrast";
 import { loadSkippedUpdateVersion, shouldSkipStartupNotice } from "./updateSkip";
 import { confirmAndInstallUpdate } from "./components/updatePrompt";
+import { WhatsNewModal } from "./components/WhatsNewModal";
+import { consumePendingWhatsNew, type WhatsNewEntry } from "./whatsNewStore";
 import {
   firstLineForNotification,
   shouldNotifyQueryCompletion,
@@ -1761,9 +1763,13 @@ export default function App() {
   // ベストエフォート — オフライン/マニフェスト取得失敗は静かに無視して起動を
   // ブロックしない。更新があればユーザ承認制の確認ダイアログを出し、承認された
   // ときだけダウンロード・適用・再起動する (勝手には再起動しない)。
+  const [startupUpdateDone, setStartupUpdateDone] = useState(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: 起動時に一度だけ実行する。t/toast/confirm は初回の値で足りるので依存に含めない (再実行すると更新確認が重複する)
   useEffect(() => {
-    if (!getSettings().autoUpdateCheckEnabled) return;
+    if (!getSettings().autoUpdateCheckEnabled) {
+      setStartupUpdateDone(true);
+      return;
+    }
     let cancelled = false;
     void (async () => {
       try {
@@ -1777,6 +1783,9 @@ export default function App() {
         await confirmAndInstallUpdate(update, { t, toast, confirm, choose, rememberSkip: true });
       } catch {
         // ベストエフォート: 起動時チェックの失敗は静かに無視する。
+      } finally {
+        // 確認ダイアログが閉じる (または更新なし・失敗) まで、新機能ハイライトは待たせる (#1864)。
+        setStartupUpdateDone(true);
       }
     })();
     return () => {
@@ -1803,6 +1812,40 @@ export default function App() {
   const pendingProfileDeleteTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   // 起動スプラッシュ (#619)。初回プロファイル読み込みが終わるまで true のまま。
   const [booted, setBooted] = useState(false);
+
+  // 更新適用後の「新機能ハイライト」(#1864)。スプラッシュ・初回ツアー・他のモーダルが閉じてから一度だけ出す。
+  const [whatsNew, setWhatsNew] = useState<WhatsNewEntry | null>(null);
+  const whatsNewChecked = useRef(false);
+  useEffect(() => {
+    if (!booted || !startupUpdateDone || showTour || whatsNewChecked.current) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const attempt = async () => {
+      if (cancelled) return;
+      // 開いているダイアログ (確認・設定の各モーダル等) があるあいだは待つ。
+      const modalOpen = () => document.querySelector('[role="dialog"][aria-modal="true"]') !== null;
+      if (modalOpen()) {
+        timer = window.setTimeout(() => void attempt(), 1000);
+        return;
+      }
+      whatsNewChecked.current = true;
+      const entry = consumePendingWhatsNew(await getCurrentAppVersion());
+      // pending は消費済みなので、途中でエフェクトが再実行されても表示は捨てない。
+      // 版の取得を待つ間にモーダルが開いたら、閉じるのを待ってから出す。
+      if (!entry) return;
+      const show = () => {
+        if (modalOpen()) window.setTimeout(show, 1000);
+        else setWhatsNew(entry);
+      };
+      show();
+    };
+    void attempt();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [booted, startupUpdateDone, showTour]);
+
   const [selectedProfile, setSelectedProfile] = useState<ConnectionProfile | null>(null);
   const [editing, setEditing] = useState<ConnectionProfile | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -13280,6 +13323,7 @@ export default function App() {
                         <PaneEmpty>
                           <EmptyState
                             illustration={<DisconnectedIllustration />}
+                            brandHalo
                             icon="database"
                             title={t("notConnectedTitle")}
                             description={t("editorHintDisabled")}
@@ -13922,6 +13966,17 @@ export default function App() {
                   onClose={() => setExportTablesTarget(null)}
                 />
               </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {whatsNew && (
+              <WhatsNewModal
+                version={whatsNew.version}
+                currentVersion={whatsNew.currentVersion}
+                notes={whatsNew.body}
+                onClose={() => setWhatsNew(null)}
+              />
             )}
           </AnimatePresence>
 

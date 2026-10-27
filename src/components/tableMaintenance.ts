@@ -97,24 +97,148 @@ function sanitizeIndexName(name: string): string {
   return name.replace(/[^a-zA-Z0-9]/g, "_");
 }
 
+export type IndexMethod = "btree" | "hash" | "gist" | "spgist" | "gin" | "brin" | "fulltext" | "spatial";
+
+/** ドライバごとに選べるインデックスメソッド (空配列なら USING 指定不可 = SQLite)。 */
+export function indexMethodsFor(driver: string): IndexMethod[] {
+  if (driver === "postgres") return ["btree", "hash", "gist", "spgist", "gin", "brin"];
+  if (driver === "mysql") return ["btree", "hash", "fulltext", "spatial"];
+  return [];
+}
+
+/** 無効化されたオプションごとの理由キー (i18n の `createIndexReason*` に対応)。 */
+export type IndexOptionReason =
+  | "noMethod"
+  | "noWhereMysql"
+  | "includePgOnly"
+  | "includeMethod"
+  | "uniqueMethod"
+  | "exprFulltext"
+  | "singleColumn";
+
+export interface IndexOptionSupport {
+  methods: IndexMethod[];
+  where: boolean;
+  include: boolean;
+  unique: boolean;
+  expression: boolean;
+  /** キーが 1 つ (列または式) しか持てないメソッド (PostgreSQL hash / MySQL SPATIAL)。 */
+  singleColumn: boolean;
+  /** 無効なオプション → 理由。UI が短い説明として表示する。 */
+  reasons: Partial<
+    Record<"method" | "where" | "include" | "unique" | "expression" | "columns", IndexOptionReason>
+  >;
+}
+
+/** 現在のメソッドを前提に、ドライバごとに使えるオプションを返す (SQL 生成と UI で共有)。 */
+export function indexOptionSupport(driver: string, method?: IndexMethod): IndexOptionSupport {
+  const methods = indexMethodsFor(driver);
+  const m = method && methods.includes(method) ? method : undefined;
+  const reasons: IndexOptionSupport["reasons"] = {};
+  if (methods.length === 0) reasons.method = "noMethod";
+  const where = driver !== "mysql";
+  if (!where) reasons.where = "noWhereMysql";
+  let include = driver === "postgres";
+  if (driver !== "postgres") reasons.include = "includePgOnly";
+  else if (m && !["btree", "gist", "spgist"].includes(m)) {
+    include = false;
+    reasons.include = "includeMethod";
+  }
+  let unique = true;
+  if (m === "fulltext" || m === "spatial" || (driver === "postgres" && m && m !== "btree")) {
+    unique = false;
+    reasons.unique = "uniqueMethod";
+  }
+  let expression = true;
+  if (m === "fulltext" || m === "spatial") {
+    expression = false;
+    reasons.expression = "exprFulltext";
+  }
+  const singleColumn = (driver === "postgres" && m === "hash") || (driver === "mysql" && m === "spatial");
+  if (singleColumn) reasons.columns = "singleColumn";
+  return { methods, where, include, unique, expression, singleColumn, reasons };
+}
+
 /**
- * `CREATE [UNIQUE] INDEX` 文を生成する (#850)。方言差は `db/advisor.rs::create_index_ddl`
- * の移植。インデックス名を指定しなければ `idx_<table>_<col1>_<col2>...` を自動生成する。
- * 空の列名は無視する。
+ * WHERE / 式のようなユーザ入力の SQL 断片の検査。末尾の `;` は取り除き、途中の `;`
+ * (文の連結) は拒否する。空なら null。戻り値は整形済み断片、`error` は不正なとき true。
+ */
+export function normalizeIndexFragment(raw: string | undefined): { sql: string | null; error: boolean } {
+  const sql = (raw ?? "")
+    .trim()
+    .replace(/;+\s*$/, "")
+    .trim();
+  if (sql.length === 0) return { sql: null, error: false };
+  return { sql, error: sql.includes(";") };
+}
+
+/** 式キーの自動名用サフィックス: 英数字化して切り詰め + 短いハッシュ (式違いで名前が衝突しない)。 */
+function exprNamePart(expr: string): string {
+  let h = 0;
+  for (const ch of expr) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const slug = expr
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 12);
+  return `${slug ? `${slug}_` : ""}${h.toString(16).slice(0, 4)}`;
+}
+
+export interface CreateIndexOptions {
+  name?: string;
+  unique?: boolean;
+  /** 列の後ろに並べる式 / 関数キー (例 `LOWER(email)`)。各項目は `(...)` で包んで出力する。 */
+  expressions?: string[];
+  method?: IndexMethod;
+  /** 部分インデックスの条件 (PostgreSQL / SQLite)。 */
+  where?: string;
+  /** カバリング列 (PostgreSQL のみ)。 */
+  include?: string[];
+}
+
+/**
+ * `CREATE [UNIQUE|FULLTEXT|SPATIAL] INDEX` 文を生成する (#850, #1892)。方言差は
+ * `db/advisor.rs::create_index_ddl` の移植 + 拡張。インデックス名を指定しなければ
+ * `idx_<table>_<col1>_<col2>...` を自動生成する。空の列名は無視する。
+ * ドライバが対応しないオプション (SQLite の USING / INCLUDE、MySQL の WHERE など) は
+ * 不正な SQL を作らないよう無視する (UI 側は `indexOptionSupport` で無効化する)。
+ * 式キーが無い・列が空のときも式だけで作れる。
  */
 export function buildCreateIndexSql(
   driver: string,
   database: string | null,
   table: string,
   columns: string[],
-  opts: { name?: string; unique?: boolean } = {},
+  opts: CreateIndexOptions = {},
 ): string {
   const cols = columns.map((c) => c.trim()).filter((c) => c.length > 0);
-  const rawName = opts.name?.trim() || `idx_${table}_${cols.join("_")}`;
+  const support = indexOptionSupport(driver, opts.method);
+  const exprs = support.expression
+    ? (opts.expressions ?? [])
+        .map((e) => normalizeIndexFragment(e).sql)
+        .filter((e): e is string => e !== null)
+    : [];
+  const rawName = opts.name?.trim() || `idx_${table}_${[...cols, ...exprs.map(exprNamePart)].join("_")}`;
   const idxName = sanitizeIndexName(rawName);
-  const colList = cols.map((c) => quoteIdentFor(driver, c)).join(", ");
-  const keyword = opts.unique ? "CREATE UNIQUE INDEX" : "CREATE INDEX";
-  return `${keyword} ${quoteIdentFor(driver, idxName)} ON ${qualified(driver, database, table)} (${colList});`;
+  const keyList = [...cols.map((c) => quoteIdentFor(driver, c)), ...exprs.map((e) => `(${e})`)].join(", ");
+  const method = opts.method && support.methods.includes(opts.method) ? opts.method : undefined;
+  const special = driver === "mysql" && (method === "fulltext" || method === "spatial");
+  const keyword = special
+    ? `CREATE ${method === "fulltext" ? "FULLTEXT" : "SPATIAL"} INDEX`
+    : opts.unique && support.unique
+      ? "CREATE UNIQUE INDEX"
+      : "CREATE INDEX";
+  let sql = `${keyword} ${quoteIdentFor(driver, idxName)} ON ${qualified(driver, database, table)}`;
+  if (driver === "postgres" && method) sql += ` USING ${method}`;
+  sql += ` (${keyList})`;
+  if (driver === "mysql" && (method === "btree" || method === "hash"))
+    sql += ` USING ${method.toUpperCase()}`;
+  const inc = support.include
+    ? (opts.include ?? []).map((c) => c.trim()).filter((c) => c.length > 0 && !cols.includes(c))
+    : [];
+  if (inc.length > 0) sql += ` INCLUDE (${inc.map((c) => quoteIdentFor(driver, c)).join(", ")})`;
+  const where = support.where ? normalizeIndexFragment(opts.where).sql : null;
+  if (where) sql += ` WHERE ${where}`;
+  return `${sql};`;
 }
 
 /**

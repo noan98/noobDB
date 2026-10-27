@@ -5,13 +5,18 @@
  * 揃えるためのグルー層。副作用の実体 (プラグイン呼び出し) は `../updater.ts` に、
  * 純粋な整形は `../updaterFormat.ts` にある。
  */
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { AnimatePresence } from "motion/react";
 import { chakra } from "@chakra-ui/react";
 import type { useConfirm } from "./ConfirmDialog";
 import type { useToast } from "./Toast";
 import type { useT } from "../i18n";
 import { dismissUpdate, installUpdateAndRestart, type AvailableUpdate } from "../updater";
 import { saveSkippedUpdateVersion } from "../updateSkip";
+import { clearPendingWhatsNew, savePendingWhatsNew } from "../whatsNewStore";
+import { Icon } from "./Icon";
+import { WhatsNewModal } from "./WhatsNewModal";
+import { Button } from "./ui";
 import { displayVersion, formatDownloadProgress, truncateReleaseNotes } from "../updaterFormat";
 
 type Translate = ReturnType<typeof useT>;
@@ -31,6 +36,35 @@ export interface UpdatePromptDeps {
    * 見送りにしない。設定画面の手動チェックでは指定しない (毎回見せる)。
    */
   rememberSkip?: boolean;
+}
+
+/**
+ * 確認ダイアログ内の「更新内容を見る」ボタン (#1864)。以前はリリースノートを無装飾の `<pre>` で
+ * 直接載せていたが、参照性の高い情報は専用の「新機能ハイライト」Modal へ分離する。承認フロー
+ * (ダウンロード / 再起動 / 後で / 見送る) には触れず、Modal を閉じれば確認ダイアログへ戻る。
+ */
+function WhatsNewLink({ update, t }: { update: AvailableUpdate; t: Translate }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <chakra.div>
+        <Button type="button" onClick={() => setOpen(true)}>
+          <Icon name="sparkles" />
+          {t("updateViewWhatsNew")}
+        </Button>
+      </chakra.div>
+      <AnimatePresence>
+        {open && (
+          <WhatsNewModal
+            version={update.version}
+            currentVersion={update.currentVersion}
+            notes={update.body}
+            onClose={() => setOpen(false)}
+          />
+        )}
+      </AnimatePresence>
+    </>
+  );
 }
 
 /**
@@ -55,26 +89,7 @@ export async function confirmAndInstallUpdate(
         })}
       </chakra.p>
       {rememberSkip && <chakra.p color="app.textMuted">{t("updateLaterSkipNote")}</chakra.p>}
-      {notes && (
-        <chakra.div>
-          <chakra.p fontWeight="semibold" mb="1">
-            {t("updateReleaseNotesLabel")}
-          </chakra.p>
-          <chakra.pre
-            whiteSpace="pre-wrap"
-            wordBreak="break-word"
-            fontSize="sm"
-            maxHeight="12rem"
-            overflowY="auto"
-            padding="2"
-            borderRadius="sm"
-            bg="app.surfaceMuted"
-            color="app.textSecondary"
-          >
-            {notes}
-          </chakra.pre>
-        </chakra.div>
-      )}
+      {notes && <WhatsNewLink update={update} t={t} />}
     </chakra.div>
   );
 
@@ -102,6 +117,8 @@ export async function confirmAndInstallUpdate(
   // 進行中は自動消滅しない (duration 0) トーストを出す。成功時は relaunch で
   // アプリごと消えるので残らない。失敗時は id で閉じてからエラーを出し、「ダウンロード中」
   // と「失敗」が並んで残らないようにする (#1534)。
+  // 適用後の起動で「新機能ハイライト」を出すため、再起動の前に版とノートを覚えておく (#1864)。
+  savePendingWhatsNew(update);
   const progressId = toast.info(t("updateDownloadingStarted"), 0);
   try {
     let lastText = "";
@@ -113,6 +130,7 @@ export async function confirmAndInstallUpdate(
       toast.update(progressId, text);
     });
   } catch (e) {
+    clearPendingWhatsNew();
     toast.dismiss(progressId);
     toast.error(t("updateFailed", { error: e instanceof Error ? e.message : String(e) }));
   }

@@ -3,6 +3,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -23,6 +24,7 @@ import {
 } from "./bottomPanelTabs";
 import { Icon, ICON_SIZES } from "./Icon";
 import { KeepAlive } from "./KeepAlive";
+import { prefersStaticMotion } from "./revealOrigin";
 import { Splitter } from "./Splitter";
 import { Tooltip } from "./Tooltip";
 import { Button } from "./ui";
@@ -65,6 +67,10 @@ const FILL_STYLE: CSSProperties = {
   overflow: "hidden",
 };
 
+// 上部 TabBar の `MotionIndicator` と同じ作法 (motion の `transition` は Chakra の
+// スタイルプロップ名と衝突するため明示的に転送する)。滑る layoutId インジケータの語彙を揃える (#1877)。
+const MotionIndicator = chakra(motion.span, {}, { forwardProps: ["transition"] });
+
 const tabId = (key: BottomPanelTab) => `bottom-panel-tab-${key}`;
 const panelId = (key: BottomPanelTab) => `bottom-panel-${key}`;
 
@@ -81,9 +87,11 @@ const BottomPanelTabButton = forwardRef<
     active: boolean;
     onActivate: () => void;
     onKeyDown: (e: React.KeyboardEvent<HTMLButtonElement>) => void;
+    /** 滑るインジケータの layoutId。タブバーごとに一意にして他の LayoutGroup と衝突させない。 */
+    indicatorId: string;
     children: ReactNode;
   }
->(function BottomPanelTabButton({ tabKey, active, onActivate, onKeyDown, children }, ref) {
+>(function BottomPanelTabButton({ tabKey, active, onActivate, onKeyDown, indicatorId, children }, ref) {
   return (
     <chakra.button
       ref={ref}
@@ -95,8 +103,9 @@ const BottomPanelTabButton = forwardRef<
       tabIndex={active ? 0 : -1}
       bg={active ? "app.surface" : "transparent"}
       border="none"
+      position="relative"
       borderTop="2px solid"
-      borderTopColor={active ? "app.accent" : "transparent"}
+      borderTopColor="transparent"
       borderRadius="0"
       px="3"
       py="1.5"
@@ -115,6 +124,21 @@ const BottomPanelTabButton = forwardRef<
       onKeyDown={onKeyDown}
     >
       {children}
+      {active && (
+        // 上辺のアクセント線。タブ間を layoutId で滑る (reduced-motion / ハイコントラストは即時移動)。
+        <MotionIndicator
+          layoutId={indicatorId}
+          transition={prefersStaticMotion() ? { duration: 0 } : transitions.emphasized}
+          position="absolute"
+          left="0"
+          right="0"
+          top="-2px"
+          h="2px"
+          bg="app.accent"
+          aria-hidden
+          data-testid="bottom-panel-tab-indicator"
+        />
+      )}
     </chakra.button>
   );
 });
@@ -136,6 +160,7 @@ interface Props {
 
 export function BottomPanel({ tab, tabs, label, onSelect, onClose, resetKey, children }: Props) {
   const t = useT();
+  const indicatorId = `bottom-panel-tab-indicator-${useId()}`;
   const tabRefs = useRef<Partial<Record<BottomPanelTab, HTMLButtonElement | null>>>({});
   // 用途グループ (ログ / 診断 / 参照、#1114) の切れ目に区切り線を引く。
   const groupStarts = useMemo(() => bottomPanelGroupStarts(tabs), [tabs]);
@@ -207,6 +232,7 @@ export function BottomPanel({ tab, tabs, label, onSelect, onClose, resetKey, chi
                 active={key === tab}
                 onActivate={() => onSelect(key)}
                 onKeyDown={onTabKeyDown}
+                indicatorId={indicatorId}
               >
                 {label(key)}
               </BottomPanelTabButton>

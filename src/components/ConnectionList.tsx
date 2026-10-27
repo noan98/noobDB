@@ -83,6 +83,7 @@ import { isSynthesizedTableDdl } from "./tableDdl";
 import type { TableNameSeparator } from "./explorerTree";
 import { tableCommentMap, withComment } from "./schemaComment";
 import { computeTooltipPosition, type TooltipRect } from "./tooltipPosition";
+import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { Tooltip, TooltipBubble, useDelegatedHover, useDelegatedTooltip } from "./Tooltip";
 import { DropInsertionMarker } from "./DropInsertionMarker";
 import { GroupAvatar, ProfileBadges } from "./ProfileBadge";
@@ -294,28 +295,6 @@ const TreeEmpty = chakra("div", {
 const QuickAccessHeader = chakra("div", {
   base: { pt: "1.5", pb: "0.5", pl: "2", pr: "2.5", textStyle: "overline" },
 });
-
-/** 接続状態ドットの状態別 style。色は動的トークンの
- *  ため CSS 変数を直接参照する。`connecting` の脈動は App.css の @keyframes pulse。 */
-const STATUS_DOT_STYLE = {
-  idle: {
-    bg: "var(--status-idle)",
-    boxShadow: "0 0 0 2px color-mix(in srgb, var(--status-idle) 18%, transparent)",
-  },
-  connected: {
-    bg: "var(--status-connected)",
-    boxShadow: "0 0 0 2px color-mix(in srgb, var(--status-connected) 25%, transparent)",
-  },
-  connecting: {
-    bg: "var(--status-connecting)",
-    boxShadow: "0 0 0 2px color-mix(in srgb, var(--status-connecting) 25%, transparent)",
-    animation: "pulse 1.2s ease-in-out infinite",
-  },
-  error: {
-    bg: "var(--status-error)",
-    boxShadow: "0 0 0 2px color-mix(in srgb, var(--status-error) 25%, transparent)",
-  },
-} as const;
 
 interface Props {
   profiles: ConnectionProfile[];
@@ -4500,18 +4479,7 @@ export const ConnectionList = memo(
                   </Tooltip>
                 )}
                 <Tooltip label={statusLabel(status)} focusableWrapper>
-                  <chakra.span
-                    display="inline-block"
-                    width="8px"
-                    height="8px"
-                    borderRadius="50%"
-                    flexShrink={0}
-                    transitionProperty="background, box-shadow"
-                    transitionDuration="var(--dur-med)"
-                    transitionTimingFunction="var(--ease)"
-                    {...STATUS_DOT_STYLE[status]}
-                    aria-label={statusLabel(status)}
-                  />
+                  <ConnectionStatusDot status={status} label={statusLabel(status)} />
                 </Tooltip>
                 {/* 並べ替え (ドラッグ中/キーボード移動直後) の着地位置マーカー。TabBar と
               同じ共有実装 (#1007)。 */}

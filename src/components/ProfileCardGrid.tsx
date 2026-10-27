@@ -157,6 +157,14 @@ export function ProfileCardGrid({
     >
       <Flex direction="column" align="center" gap="1.5" textAlign="center">
         <Heading role="display">{t("profileCardsTitle")}</Heading>
+        {/* 見出し下のブランドグラデーションの短い罫線。WelcomeView と対称 (#1891、hc-* では none) */}
+        <chakra.div
+          aria-hidden
+          w="48px"
+          h="3px"
+          rounded="pill"
+          css={{ background: "var(--hero-rule)", display: "var(--hero-rule-display)" }}
+        />
         <Text color="app.textMuted" fontSize="sm" lineHeight="1.6" maxW="52ch">
           {t("profileCardsSubtitle")}
         </Text>

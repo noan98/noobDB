@@ -214,9 +214,19 @@ interface ModalHeaderProps {
   closeDisabled?: boolean;
   /** タイトル要素への追加 props (例: 省略表示やツールチップ)。 */
   titleProps?: ComponentProps<typeof Dialog.Title>;
+  /** ヘッダ下端にブランドグラデーションの極細罫線を敷く (#1878)。学習の目的地 (設定・ヘルプ) 用。
+   *  値は App.css の `--hero-rule` が単一ソースで、hc-* では `--hero-rule-display: none` で消える。 */
+  brandRule?: boolean;
 }
 
-export function ModalHeader({ children, onClose, closeLabel, closeDisabled, titleProps }: ModalHeaderProps) {
+export function ModalHeader({
+  children,
+  onClose,
+  closeLabel,
+  closeDisabled,
+  titleProps,
+  brandRule,
+}: ModalHeaderProps) {
   return (
     <Dialog.Header
       css={{
@@ -229,6 +239,7 @@ export function ModalHeader({ children, onClose, closeLabel, closeDisabled, titl
         borderBottom: "1px solid",
         borderColor: "app.border",
         bg: "app.toolbar",
+        ...(brandRule ? { position: "relative" } : {}),
       }}
     >
       <Dialog.Title textStyle="heading" css={{ margin: 0, minWidth: 0 }} {...titleProps}>
@@ -251,6 +262,21 @@ export function ModalHeader({ children, onClose, closeLabel, closeDisabled, titl
           <Icon name="close" size={ICON_SIZES.sm} />
         </Button>
       </Tooltip>
+      {brandRule && (
+        <chakra.div
+          aria-hidden
+          data-testid="modal-header-brand-rule"
+          css={{
+            position: "absolute",
+            insetInline: 0,
+            bottom: 0,
+            height: "2px",
+            background: "var(--hero-rule)",
+            display: "var(--hero-rule-display)",
+            pointerEvents: "none",
+          }}
+        />
+      )}
     </Dialog.Header>
   );
 }

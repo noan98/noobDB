@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
-import { Icon, ICON_SIZES } from "./Icon";
+import { ActiveRowHighlight } from "./ActiveRowHighlight";
+import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import { Tooltip } from "./Tooltip";
 
 /**
@@ -149,27 +150,75 @@ export const SettingsNavList = chakra("div", {
 
 export const SettingsNavButton = chakra("button", {
   base: {
+    position: "relative",
+    display: "flex",
+    alignItems: "center",
+    gap: "2",
     textAlign: "left",
+    // 左端のアクセントスパイン。非アクティブ時は透明で幅だけ確保し、切替でレイアウトを動かさない。
+    borderLeft: "var(--space-0-5) solid transparent",
     px: "2.5",
     py: "1.5",
     fontSize: "sm",
     fontWeight: 500,
     color: "app.textSecondary",
     background: "transparent",
-    border: "none",
+    borderTop: "none",
+    borderRight: "none",
+    borderBottom: "none",
     borderRadius: "sm",
     cursor: "pointer",
-    transitionProperty: "background, color",
+    transitionProperty: "background, color, border-color",
     transitionDuration: "var(--dur-fast)",
     transitionTimingFunction: "var(--ease)",
     _hover: { background: "app.hover", color: "app.text" },
+    // アクティブ行の背景は滑る ActiveRowHighlight が担う (背景の瞬間切替はしない)。
     "&[aria-current=true]": {
-      background: "app.hover",
       color: "app.text",
       fontWeight: 600,
+      borderLeftColor: "app.accent",
     },
   },
 });
+
+/**
+ * 設定 / ヘルプの左ナビ 1 項目。先頭グリフ + ラベルを描き、アクティブ項目の内側にだけ
+ * 共有 `ActiveRowHighlight` をマウントして、スクロールスパイで `aria-current` が移るたびに
+ * ハイライトを滑らせる (`TabBar` / `Segmented` / `CommandPalette` と同じ layoutId 手法)。
+ * `layoutId` は画面ごとに `useId()` で名前空間化して渡す。
+ */
+export function SettingsNavItem({
+  active,
+  icon,
+  layoutId,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  icon: IconName;
+  layoutId: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <SettingsNavButton type="button" aria-current={active} onClick={onClick}>
+      {active && <ActiveRowHighlight layoutId={layoutId} />}
+      <chakra.span
+        aria-hidden="true"
+        position="relative"
+        zIndex={1}
+        display="inline-flex"
+        flexShrink={0}
+        color={active ? "app.accent" : "app.textMuted"}
+      >
+        <Icon name={icon} size={ICON_SIZES.md} />
+      </chakra.span>
+      <chakra.span position="relative" zIndex={1} minW={0}>
+        {children}
+      </chakra.span>
+    </SettingsNavButton>
+  );
+}
 
 export const SettingsNavEmpty = chakra("p", {
   base: { margin: 0, px: "2.5", py: "1", fontSize: "sm", color: "app.textMuted" },
