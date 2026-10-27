@@ -1021,13 +1021,15 @@ jobs:
       # 書き込む NOOBDB_TEST_SSH_URL / NOOBDB_TEST_SSH_KEY は、この background を含む
       # 下の wait 以降で初めて nextest から参照可能になる (公式仕様)。
       - name: Setup test sshd (SSH tunnel integration)
-        if: github.event_name != 'push'
         id: sshd
         background: true
         env:
           # useradd (35 秒前後) を避けるため既存のランナーユーザを使う。
           SSH_USER: runner
-        run: bash scripts/ci-setup-sshd.sh
+        # #1884: background / wait ステップには if: を付けられない (ワークフロー検証で弾かれる) ため、push ではシェル側で即終了する。
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then exit 0; fi
+          bash scripts/ci-setup-sshd.sh
 
       # 実 TLS サーバに対する統合テスト (#520 の既知ギャップ、#795) 用に、自己署名
       # CA + サーバ証明書を生成し、TLS 必須の MySQL/PostgreSQL を別ポート
@@ -1044,20 +1046,24 @@ jobs:
       # 追加の apt ダウンロードを伴わず高速に完了する。sshd と同じく apt 完了後に
       # background 起動し、下のツール導入と重ねる。
       - name: Setup TLS test databases (TLS integration #520/#795)
-        if: github.event_name != 'push'
         id: tlsdb
         background: true
-        run: bash scripts/ci-setup-tls-db.sh
+        # #1884: background / wait ステップには if: を付けられない (ワークフロー検証で弾かれる) ため、push ではシェル側で即終了する。
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then exit 0; fi
+          bash scripts/ci-setup-tls-db.sh
 
       # 平文接続の MySQL / PostgreSQL (3306 / 5432)。以前は `services:` のコンテナ
       # (mysql:8.0 / postgres:16) だったが、イメージ pull とヘルスチェックで起動時に約 30 秒
       # かかっていたため、ランナー同梱のサーバを TLS 版と同じ方式で background 起動する。
       # 接続情報はコンテナ時代と同じ (scripts/ci-setup-plain-db.sh)。
       - name: Setup plain test databases (MySQL / PostgreSQL integration)
-        if: github.event_name != 'push'
         id: plaindb
         background: true
-        run: bash scripts/ci-setup-plain-db.sh
+        # #1884: background / wait ステップには if: を付けられない (ワークフロー検証で弾かれる) ため、push ではシェル側で即終了する。
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then exit 0; fi
+          bash scripts/ci-setup-plain-db.sh
 
       # cargo-nextest の導入は DL 律速で、上の sshd / TLS DB 起動と
       # CPU を食い合わないため重ねて走らせる。
@@ -1077,7 +1083,6 @@ jobs:
         run: cargo nextest archive --locked --lib --test '*' --archive-file "$RUNNER_TEMP/nextest-archive.tar.zst"
 
       - name: Wait for background setup (sshd, TLS / plain test DBs)
-        if: github.event_name != 'push'
         wait: [sshd, tlsdb, plaindb]
 
       # 計装なしの nextest を実行する (PR ブロッキング)。MySQL/PostgreSQL の両
