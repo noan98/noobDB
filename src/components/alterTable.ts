@@ -26,9 +26,17 @@
 // COMMENT '...'`)、PostgreSQL は `COMMENT ON TABLE|COLUMN ... IS ...`。
 // SQLite はコメント機能を持たないので生成しない (UI 側で入力欄を無効化する)。
 //
+// SQLite は列の型 / NOT NULL / DEFAULT の変更と FK / CHECK の追加・削除を `ALTER TABLE` で
+// 行えない (#1888)。そのような編集があるときは文を出さず、編集内容を `AlterPlan.rebuild`
+// (`SqliteRebuildEdit`) に畳んで返す。呼び出し側 (AlterTableModal) が IPC
+// `plan_sqlite_table_rebuild` に渡し、スキーマ同期と同じテーブル再作成 SQL を受け取って
+// `rebuildTable` 文として扱う。再作成にはリネーム・列の追加・削除もまとめて含まれるので、
+// その場合は ALTER の文を重ねて出さない (インデックスの作成だけは別文として残る)。
+//
 // 生成した文言 (未対応の変更の通知など) は理由コードのみを返し、実際の文字列化は
 // 呼び出し側 (i18n) に任せる — このモジュールは表示に依存しない。
 
+import type { SqliteRebuildEdit } from "../api/tauri";
 import { quoteIdentFor } from "./sqlDialect";
 import { CURRENT_TIME_FN_RE, formatDefault, matchParen } from "./createTable";
 import { quoteString } from "./cellEdit";
@@ -148,6 +156,13 @@ export interface AlterTableForm {
   droppedForeignKeys?: string[];
   /** 削除する CHECK 制約の制約名 (#1191)。 */
   droppedChecks?: string[];
+  /**
+   * SQLite (#1888): 現状の外部キー。SQLite の FK は実在の制約名を持たない (合成名 `表:id`) ので、
+   * `droppedForeignKeys` の名前から (列, 参照先) を引いて再作成に渡す。
+   */
+  existingForeignKeys?: { name: string | null; columns: string[]; refTable: string }[];
+  /** SQLite (#1888): 削除する CHECK 制約の定義 (`CHECK (...)` 句全体)。名前の無い制約もあるので定義で指す。 */
+  droppedCheckDefinitions?: string[];
 }
 
 export type AlterStatementKind =
@@ -160,7 +175,9 @@ export type AlterStatementKind =
   | "addForeignKey"
   | "addCheck"
   | "dropForeignKey"
-  | "dropCheck";
+  | "dropCheck"
+  /** SQLite のテーブル再作成 (#1888)。`AlterPlan.rebuild` から呼び出し側が差し込む。 */
+  | "rebuildTable";
 
 export interface AlterStatement {
   sql: string;
@@ -169,29 +186,27 @@ export interface AlterStatement {
   destructive: boolean;
 }
 
-/**
- * 方言が対応しない変更 (SQLite の型/NOT NULL/DEFAULT インプレース変更) の通知。
- * 文言はプレゼンテーション層 (i18n) に任せるため理由コードのみを返す。
- */
-export interface UnsupportedChange {
-  /** 対象の列名 (制約の場合は制約名 / 式の要約)。 */
-  column: string;
-  reason: "sqliteInPlaceModify" | "sqliteConstraintAlter";
-}
-
 export interface AlterPlan {
   statements: AlterStatement[];
-  unsupported: UnsupportedChange[];
+  /**
+   * SQLite でテーブル再作成が要る編集 (#1888)。非 null のとき、列の変更 (リネーム・追加・削除を含む)
+   * と FK / CHECK の変更は `statements` に含まれず、これを `plan_sqlite_table_rebuild` へ渡して得た
+   * 再作成 SQL が代わりを務める。MySQL / PostgreSQL と、再作成が要らない SQLite の編集では null。
+   */
+  rebuild: SqliteRebuildEdit | null;
 }
 
 /**
- * 既存テーブルへの FK / CHECK の追加・削除を ALTER で行えるドライバか (#1191)。
- * SQLite は `ALTER TABLE` で制約を足せず、テーブル再作成 (rename→create→copy→drop)
- * が要る。データ喪失リスクが高いため本機能では対象外とし、UI は入力欄を無効化して
- * 理由を表示する (新規作成時の指定は `createTable.ts` で SQLite も対応)。
+ * 既存テーブルへの FK / CHECK の追加・削除に対応するドライバか (#1191, #1888)。MySQL / PostgreSQL は
+ * `ALTER TABLE` で行い、SQLite はテーブル再作成 (`AlterPlan.rebuild`) で行う。
  */
 export function supportsConstraintAlter(driver: string): boolean {
-  return driver === "mysql" || driver === "postgres";
+  return driver === "mysql" || driver === "postgres" || driver === "sqlite";
+}
+
+/** FK / CHECK の変更を `ALTER TABLE` ではなくテーブル再作成で行うドライバか (#1888)。 */
+export function constraintAlterNeedsRebuild(driver: string): boolean {
+  return driver === "sqlite";
 }
 
 /**
@@ -301,7 +316,6 @@ function planExistingColumn(
   baseline: ExistingColumnBaseline,
   edit: ExistingColumnEdit,
   statements: AlterStatement[],
-  unsupported: UnsupportedChange[],
 ): void {
   if (edit.drop) {
     statements.push({
@@ -417,8 +431,8 @@ function planExistingColumn(
     return;
   }
 
-  // SQLite: rename/add/drop はネイティブ対応 (3.25+ / 3.35+) だが、型/NOT NULL/
-  // DEFAULT のインプレース変更はできない (テーブル再作成が必要)。
+  // SQLite: rename/add/drop はネイティブ対応 (3.25+ / 3.35+)。型 / NOT NULL / DEFAULT の変更は
+  // `buildAlterPlan` が先にテーブル再作成 (`AlterPlan.rebuild`) へ回すので、ここへは来ない。
   if (renamed) {
     statements.push({
       sql: `ALTER TABLE ${tIdent} RENAME COLUMN ${oldIdent} TO ${newIdent};`,
@@ -426,42 +440,20 @@ function planExistingColumn(
       destructive: false,
     });
   }
-  if (typeChanged || nullChanged || defaultChanged) {
-    unsupported.push({ column: baseline.name, reason: "sqliteInPlaceModify" });
-  }
   pushColumnComment();
 }
 
-/** FK / CHECK の追加・削除文を組み立てる (#1191)。SQLite は文を出さず unsupported へ。 */
+/** FK / CHECK の追加・削除文を組み立てる (#1191)。SQLite は再作成で行うのでここへは来ない。 */
 function planConstraints(
   driver: string,
   tIdent: string,
   form: AlterTableForm,
   statements: AlterStatement[],
-  unsupported: UnsupportedChange[],
 ): void {
   const dropFks = (form.droppedForeignKeys ?? []).map((n) => n.trim()).filter((n) => n);
   const dropChecks = (form.droppedChecks ?? []).map((n) => n.trim()).filter((n) => n);
   const addFks = (form.addedForeignKeys ?? []).filter(isCompleteForeignKey);
   const addChecks = (form.addedChecks ?? []).filter(isCompleteCheck);
-
-  if (!supportsConstraintAlter(driver)) {
-    for (const n of dropFks) unsupported.push({ column: n, reason: "sqliteConstraintAlter" });
-    for (const n of dropChecks) unsupported.push({ column: n, reason: "sqliteConstraintAlter" });
-    for (const fk of addFks) {
-      unsupported.push({
-        column: fk.name.trim() || fk.columns.join(", "),
-        reason: "sqliteConstraintAlter",
-      });
-    }
-    for (const ck of addChecks) {
-      unsupported.push({
-        column: ck.name.trim() || ck.expression.trim(),
-        reason: "sqliteConstraintAlter",
-      });
-    }
-    return;
-  }
 
   for (const n of dropFks) {
     statements.push({
@@ -494,6 +486,8 @@ function planConstraints(
 }
 
 const STATEMENT_ORDER: Record<AlterStatementKind, number> = {
+  // SQLite の再作成 (#1888) はモーダルが先頭に差し込む。他の文と混ざって並べ替えられることは無い。
+  rebuildTable: -1,
   addColumn: 0,
   renameColumn: 1,
   modifyColumn: 1,
@@ -564,18 +558,126 @@ export function renameCollisions(
   return out;
 }
 
+/** `CREATE INDEX` 文 (不備のある行は捨てる。UI は `indexRowProblems` で行ごとにエラーを出し、不備が残る間は
+ * 実行を止めるので、黙って作られないまま実行されることはない, #1532)。 */
+function indexStatements(driver: string, tIdent: string, indexes: IndexDef[]): AlterStatement[] {
+  const out: AlterStatement[] = [];
+  for (const idx of indexes) {
+    if (indexRowProblems(idx)) continue;
+    const name = idx.name.trim();
+    const cols = idx.columns.map((c) => c.trim()).filter((c) => c.length > 0);
+    const colList = cols.map((c) => quoteIdentFor(driver, c)).join(", ");
+    const keyword = idx.unique ? "CREATE UNIQUE INDEX" : "CREATE INDEX";
+    out.push({
+      sql: `${keyword} ${quoteIdentFor(driver, name)} ON ${tIdent} (${colList});`,
+      kind: "createIndex",
+      destructive: false,
+    });
+  }
+  return out;
+}
+
+/**
+ * SQLite でテーブル再作成が要る編集か判定し、要るならバックエンドへ渡す入力を組み立てる (#1888)。
+ * 要るのは、削除しない既存列の型 / NOT NULL / DEFAULT の変更、または FK / CHECK の追加・削除。
+ * 要らなければ (リネーム・列の追加・削除だけなど) `null` で、従来どおりネイティブの `ALTER` で行う。
+ * 再作成するときは列のリネーム・追加・削除もまとめて入力に含める。
+ */
+export function buildSqliteRebuildEdit(form: AlterTableForm): SqliteRebuildEdit | null {
+  const baselineByName = new Map(form.baseline.map((b) => [b.name, b] as const));
+  const facetsChanged = form.existing.some((e) => {
+    const b = baselineByName.get(e.original);
+    if (!b || e.drop) return false;
+    return (
+      (e.type.trim() || b.type.trim()) !== b.type.trim() ||
+      e.notNull !== b.notNull ||
+      e.defaultValue.trim() !== b.defaultValue.trim()
+    );
+  });
+  const addFks = (form.addedForeignKeys ?? []).filter(isCompleteForeignKey);
+  const addChecks = (form.addedChecks ?? []).filter(isCompleteCheck);
+  const dropFkNames = new Set((form.droppedForeignKeys ?? []).map((n) => n.trim()).filter((n) => n));
+  const dropFks = (form.existingForeignKeys ?? []).filter((f) => f.name !== null && dropFkNames.has(f.name));
+  const dropChecks = (form.droppedCheckDefinitions ?? []).filter((d) => d.trim());
+  if (
+    !facetsChanged &&
+    addFks.length === 0 &&
+    addChecks.length === 0 &&
+    dropFks.length === 0 &&
+    dropChecks.length === 0
+  ) {
+    return null;
+  }
+  const edits = new Map(form.existing.map((e) => [e.original, e] as const));
+  const orNull = (v: string) => (v.trim() === "" ? null : v.trim());
+  const trimmedList = (cols: string[]) => cols.map((c) => c.trim()).filter((c) => c);
+  return {
+    columns: form.baseline.map((b) => {
+      const e = edits.get(b.name);
+      if (!e) {
+        return {
+          original: b.name,
+          name: b.name,
+          data_type: b.type,
+          not_null: b.notNull,
+          default: orNull(b.defaultValue),
+          drop: false,
+        };
+      }
+      return {
+        original: b.name,
+        name: e.name.trim() || b.name,
+        data_type: e.type.trim() || b.type.trim(),
+        not_null: e.notNull,
+        // 既存列の DEFAULT は式そのものを逐語で使う (`describeTable` の表記を壊さない)。
+        default: formatDefaultForEdit("sqlite", e.defaultValue, e.type.trim() || b.type.trim()),
+        drop: e.drop,
+      };
+    }),
+    added_columns: form.added
+      .filter((c) => c.name.trim())
+      .map((c) => {
+        const type = c.type.trim() || "TEXT";
+        return {
+          name: c.name.trim(),
+          data_type: type,
+          not_null: c.notNull,
+          default: formatDefault("sqlite", c.defaultValue, type),
+        };
+      }),
+    added_foreign_keys: addFks.map((fk) => ({
+      name: orNull(fk.name),
+      columns: trimmedList(fk.columns),
+      ref_table: fk.refTable.trim(),
+      ref_columns: trimmedList(fk.refColumns),
+      on_delete: orNull(fk.onDelete),
+      on_update: orNull(fk.onUpdate),
+    })),
+    dropped_foreign_keys: dropFks.map((f) => ({ columns: f.columns, ref_table: f.refTable })),
+    added_checks: addChecks.map((ck) => ({ name: orNull(ck.name), expression: ck.expression.trim() })),
+    dropped_checks: dropChecks,
+  };
+}
+
 /**
  * フォーム入力から `ALTER TABLE` / `CREATE INDEX` 文の配列を組み立てる。順序は
  * ADD → RENAME/MODIFY → DROP → CREATE INDEX
  * (`db/sync.rs` の `SyncKind::order()` と同じ「作ってから壊す」安全な適用順)。
  * 列名が未入力の追加列は無視する。不備のあるインデックス行 ({@link indexRowProblems}) も
- * 文にしないが、UI 側が実行を止める。
+ * 文にしないが、UI 側が実行を止める。SQLite でテーブル再作成が要る編集は `rebuild` に畳む
+ * ({@link buildSqliteRebuildEdit})。
  */
 export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan {
   const tIdent = qualifiedName(driver, form.database, form.table);
   const statements: AlterStatement[] = [];
-  const unsupported: UnsupportedChange[] = [];
-
+  // SQLite の型 / NOT NULL / DEFAULT 変更・FK / CHECK の変更はテーブル再作成で行う (#1888)。
+  // リネーム・列の追加・削除もその再作成に含まれるので、ここでは ALTER を出さない。
+  if (driver === "sqlite") {
+    const rebuild = buildSqliteRebuildEdit(form);
+    if (rebuild) {
+      return { statements: indexStatements(driver, tIdent, form.indexes), rebuild };
+    }
+  }
   // 同じ ALTER の中で DROP / リネームして空けた列名を、新規列が再利用するときは、
   // ADD を先に出すと「列が重複」で失敗する。そのような ADD だけ、名前を空ける文の後ろへ送る。
   // 「DROP する別の列の名前へのリネーム」(a→b かつ b を DROP) も、DROP の後ろへ回す。
@@ -595,7 +697,7 @@ export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan 
     const baseline = baselineByName.get(edit.original);
     if (!baseline) continue;
     const before = statements.length;
-    planExistingColumn(driver, tIdent, baseline, edit, statements, unsupported);
+    planExistingColumn(driver, tIdent, baseline, edit, statements);
     if (edit.drop) continue;
     const target = edit.name.trim() || baseline.name;
     if (target === baseline.name) continue;
@@ -628,7 +730,7 @@ export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan 
     if (sql) statements.push({ sql, kind: "comment", destructive: false });
   }
 
-  planConstraints(driver, tIdent, form, statements, unsupported);
+  planConstraints(driver, tIdent, form, statements);
 
   const orderOf = (st: AlterStatement) => {
     const late = lateOrder.get(st);
@@ -641,20 +743,7 @@ export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan 
   };
   statements.sort((a, b) => orderOf(a) - orderOf(b));
 
-  for (const idx of form.indexes) {
-    // 不備のある行はここで捨てる。UI は `indexRowProblems` で行ごとにエラーを出し、
-    // 不備が残る間は実行を止めるので、黙って作られないまま実行されることはない (#1532)。
-    if (indexRowProblems(idx)) continue;
-    const name = idx.name.trim();
-    const cols = idx.columns.map((c) => c.trim()).filter((c) => c.length > 0);
-    const colList = cols.map((c) => quoteIdentFor(driver, c)).join(", ");
-    const keyword = idx.unique ? "CREATE UNIQUE INDEX" : "CREATE INDEX";
-    statements.push({
-      sql: `${keyword} ${quoteIdentFor(driver, name)} ON ${tIdent} (${colList});`,
-      kind: "createIndex",
-      destructive: false,
-    });
-  }
+  statements.push(...indexStatements(driver, tIdent, form.indexes));
 
-  return { statements, unsupported };
+  return { statements, rebuild: null };
 }

@@ -541,6 +541,7 @@ safe(
   "list_schema_objects",
   "list_table_comments",
   "list_tables",
+  "plan_sqlite_table_rebuild",
   "refresh_schema_cache",
   "schema_cache_times",
   "schema_overview",

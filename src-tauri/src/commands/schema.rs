@@ -13,9 +13,10 @@ use crate::db::schema_insight::{
     build_table_statistics, incoming_foreign_keys as filter_incoming_foreign_keys,
     IncomingForeignKey, TableStatistic,
 };
+use crate::db::sqlite_rebuild::{plan_table_rebuild, SqliteRebuildEdit, SqliteRebuildPlan};
 use crate::db::types::{
-    ForeignKey, IndexInfo, RoutineSignature, SchemaObject, TableColumnInfo, TableComment,
-    TableExtrasInfo, TableIndexes, TableRowEstimate, TableSchema,
+    CheckConstraintInfo, ForeignKey, IndexInfo, RoutineSignature, SchemaObject, TableColumnInfo,
+    TableComment, TableExtrasInfo, TableIndexes, TableRowEstimate, TableSchema,
 };
 use crate::db::where_used::WhereUsedTarget;
 use crate::db::DriverKind;
@@ -368,6 +369,9 @@ pub struct AlterTableContext {
     /// このテーブル自身が持つ外部キー (参照列 1 件につき 1 行)。FK の編集に
     /// 対応しないドライバ (SQLite) は空。
     pub foreign_keys: Vec<ForeignKey>,
+    /// このテーブルの CHECK 制約 (#1888)。SQLite の構造エディタが、削除する制約を
+    /// 選べるように返す。MySQL / PostgreSQL は制約名の入力で削除するので空。
+    pub checks: Vec<CheckConstraintInfo>,
     /// DB 内のテーブル名一覧 (FK の参照先候補)。
     pub table_names: Vec<String>,
     /// 取得に失敗して空で続行した付随情報の種別 (`"comments"` / `"foreign_keys"` /
@@ -395,9 +399,10 @@ pub async fn alter_table_context(
     let conn = &session.conn;
     let driver = conn.driver_kind();
     let supports_comments = matches!(driver, DriverKind::Mysql | DriverKind::Postgres);
-    let supports_constraints = supports_comments;
+    // SQLite もテーブル再作成で FK / CHECK を編集できる (#1888)。
+    let supports_constraints = supports_comments || driver == DriverKind::Sqlite;
 
-    let (columns, comments, foreign_keys, table_names) = tokio::join!(
+    let (columns, comments, foreign_keys, table_names, checks) = tokio::join!(
         session
             .schema_cache
             .columns(&database, &table, || conn.columns(&database, &table)),
@@ -432,8 +437,23 @@ pub async fn alter_table_context(
                     tracing::warn!(error = %e, "テーブル一覧の取得に失敗");
                 })
         },
+        async {
+            if driver == DriverKind::Sqlite {
+                conn.table_ddl_extras(&database, &table)
+                    .await
+                    .map(|e| TableExtrasInfo::from(&e).checks)
+                    .map_err(|e| {
+                        tracing::warn!(error = %e, "CHECK 制約の取得に失敗");
+                    })
+            } else {
+                Ok(Vec::new())
+            }
+        },
     );
     let mut warnings = Vec::new();
+    if checks.is_err() {
+        warnings.push("checks".to_string());
+    }
     if comments.is_err() {
         warnings.push("comments".to_string());
     }
@@ -446,6 +466,7 @@ pub async fn alter_table_context(
     let comments = comments.unwrap_or_default();
     let foreign_keys = foreign_keys.unwrap_or_default();
     let table_names = table_names.unwrap_or_default();
+    let checks = checks.unwrap_or_default();
     let table_comment = comments
         .into_iter()
         .find(|c| c.name == table)
@@ -458,9 +479,31 @@ pub async fn alter_table_context(
             .into_iter()
             .filter(|f| f.table == table)
             .collect(),
+        checks,
         table_names,
         warnings,
     })
+}
+
+/// SQLite の構造エディタの編集内容から、テーブル再作成 SQL を組み立てて返す (#1888)。
+/// SQLite は `ALTER TABLE` で列の型 / NOT NULL / DEFAULT や FK / CHECK を変えられないので、
+/// スキーマ同期と同じ再作成ロジック (`db::sync::sqlite_rebuild_sql`) を再利用する。
+/// **読み取りのみ** (スナップショットを読んで SQL を作るだけ。`read_only` でも呼べる)。
+/// 返した `sql` は `apply_sync_sql` で流す (1 トランザクション・`PRAGMA foreign_keys` の
+/// 退避・コミット前の外部キー検査・read_only の拒否はその経路が担う)。
+#[tauri::command]
+pub async fn plan_sqlite_table_rebuild(
+    session_id: String,
+    database: String,
+    table: String,
+    edit: SqliteRebuildEdit,
+    state: State<'_, AppState>,
+) -> Result<SqliteRebuildPlan> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    plan_table_rebuild(&session.conn, &database, &table, &edit).await
 }
 
 /// `table` を参照している外部キー (逆参照) を返す (#621 / #1255)。結果グリッドの

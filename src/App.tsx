@@ -8810,12 +8810,16 @@ export default function App() {
       const target = alterTableTarget;
       if (!target || !sessionId || statements.length === 0) return;
       const destructive = statements.some((s) => s.destructive);
+      // SQLite のテーブル再作成 (#1888): PRAGMA foreign_keys の退避とコミット前の外部キー検査を持つ
+      // `apply_sync_sql` の経路で流す (通常の `run_query_transaction` はトランザクション内の PRAGMA を
+      // 効かせられず、旧表の DROP で子表の行が連鎖削除される)。read_only はバックエンドが拒否する。
+      const rebuild = statements.some((s) => s.kind === "rebuildTable");
       const sqls = statements.map((s) => s.sql);
       const ok = await confirm({
         title: translate("alterTableConfirmTitle", { table: target.table }),
         message: maintenanceMessage(
           <>
-            {translate("alterTableConfirmBody")}
+            {translate(rebuild ? "alterTableConfirmBodyRebuild" : "alterTableConfirmBody")}
             <br />
             <br />
             <CodePreview wrap maxH="40vh">
@@ -8825,11 +8829,17 @@ export default function App() {
         ),
         confirmLabel: translate("alterTableConfirmOk"),
         tone: destructive ? "danger" : "primary",
-        typedConfirmation: destructive && selectedProfile?.is_production ? target.table : undefined,
+        // 再作成は旧表を DROP して作り直すので、本番でなくてもテーブル名の入力を求める (#1888)。
+        typedConfirmation:
+          rebuild || (destructive && selectedProfile?.is_production) ? target.table : undefined,
       });
       if (!ok) return;
       try {
-        await api.runQueryTransaction(sessionId, sqls, target.database);
+        if (rebuild) {
+          await api.applySyncSql({ sessionId, database: target.database, statements: sqls });
+        } else {
+          await api.runQueryTransaction(sessionId, sqls, target.database);
+        }
         invalidateSchemaCache(target.database);
         noteSchemaDdl(sqls.join(";\n"), target.database);
         // 対象テーブルが分かっているので、そのテーブルのバックエンドキャッシュだけを捨てて再読込する (#1539)。

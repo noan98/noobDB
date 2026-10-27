@@ -42,6 +42,7 @@ pub mod script;
 pub mod script_analysis;
 pub mod server_messages;
 pub mod sqlite;
+pub mod sqlite_rebuild;
 /// ストリーミング結果のバッチ合流と逐次統計 (#1257)。
 pub mod stream_batch;
 pub mod sync;

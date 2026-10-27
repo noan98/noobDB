@@ -903,10 +903,76 @@ export interface AlterTableContext {
   table_comment: string;
   /** このテーブル自身が持つ外部キー。FK 編集に対応しないドライバでは空。 */
   foreign_keys: ForeignKey[];
+  /** このテーブルの CHECK 制約 (#1888)。SQLite の構造エディタで削除対象を選ぶために返す。他ドライバは空。 */
+  checks: CheckConstraintInfo[];
   /** DB 内のテーブル名一覧 (FK の参照先候補)。 */
   table_names: string[];
-  /** 取得に失敗して空で続行した付随情報の種別 (`comments` / `foreign_keys` / `table_names`)。 */
+  /** 取得に失敗して空で続行した付随情報の種別 (`comments` / `foreign_keys` / `table_names` / `checks`)。 */
   warnings: string[];
+}
+
+/** SQLite のテーブル再作成 (#1888) の入力。Rust の `db::sqlite_rebuild::SqliteRebuildEdit`。 */
+export interface SqliteRebuildColumnEdit {
+  /** 現状の列名。 */
+  original: string;
+  /** 編集後の列名 (違えばリネーム)。 */
+  name: string;
+  data_type: string;
+  not_null: boolean;
+  /** 生の DEFAULT 式。無ければ null。 */
+  default: string | null;
+  drop: boolean;
+}
+
+export interface SqliteRebuildNewColumn {
+  name: string;
+  data_type: string;
+  not_null: boolean;
+  default: string | null;
+}
+
+export interface SqliteRebuildForeignKey {
+  name: string | null;
+  columns: string[];
+  ref_table: string;
+  ref_columns: string[];
+  on_delete: string | null;
+  on_update: string | null;
+}
+
+export interface SqliteRebuildCheck {
+  name: string | null;
+  /** 括弧の中身 (`price > 0`)。 */
+  expression: string;
+}
+
+export interface SqliteRebuildEdit {
+  /** 変更のない列も含めた全列。 */
+  columns: SqliteRebuildColumnEdit[];
+  added_columns: SqliteRebuildNewColumn[];
+  added_foreign_keys: SqliteRebuildForeignKey[];
+  /** SQLite の FK は実在の制約名を持たないので (列, 参照先テーブル) で指す。 */
+  dropped_foreign_keys: { columns: string[]; ref_table: string }[];
+  added_checks: SqliteRebuildCheck[];
+  /** 削除する CHECK 制約の定義 (`CHECK (...)` 句全体)。 */
+  dropped_checks: string[];
+}
+
+export type SqliteRebuildRiskKind =
+  | "drop_column"
+  | "type_affinity"
+  | "not_null"
+  | "add_not_null_column"
+  | "add_check"
+  | "add_foreign_key";
+
+/** `plan_sqlite_table_rebuild` の戻り値 (#1888)。 */
+export interface SqliteRebuildPlan {
+  /** 再作成スクリプト (複数文を 1 つの文字列にしたもの)。`apply_sync_sql` の 1 要素として流す。 */
+  sql: string;
+  /** 再作成で再現できない構文・作り直す索引・子表の参照などの注意。 */
+  warnings: string[];
+  risks: { kind: SqliteRebuildRiskKind; target: string }[];
 }
 
 /** DROP COLUMN の依存 1 件の種別 (`column_dependencies`、#1758)。 */

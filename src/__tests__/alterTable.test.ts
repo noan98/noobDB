@@ -134,7 +134,7 @@ describe("buildAlterPlan: rename / modify — MySQL", () => {
       }),
     );
     expect(plan.statements).toHaveLength(0);
-    expect(plan.unsupported).toHaveLength(0);
+    expect(plan.rebuild).toBeNull();
   });
 
   it("falls back to the baseline type when the type field is left blank", () => {
@@ -288,10 +288,10 @@ describe("buildAlterPlan: rename / modify — SQLite", () => {
     );
     expect(plan.statements).toHaveLength(1);
     expect(plan.statements[0].sql).toBe('ALTER TABLE "users" RENAME COLUMN "old" TO "new";');
-    expect(plan.unsupported).toHaveLength(0);
+    expect(plan.rebuild).toBeNull();
   });
 
-  it("reports an in-place modify as unsupported instead of emitting broken SQL", () => {
+  it("routes an in-place modify to a table rebuild instead of emitting broken SQL (#1888)", () => {
     const plan = buildAlterPlan(
       "sqlite",
       form({
@@ -301,10 +301,62 @@ describe("buildAlterPlan: rename / modify — SQLite", () => {
       }),
     );
     expect(plan.statements).toHaveLength(0);
-    expect(plan.unsupported).toEqual([{ column: "v", reason: "sqliteInPlaceModify" }]);
+    expect(plan.rebuild).toEqual({
+      columns: [
+        { original: "v", name: "v", data_type: "INTEGER", not_null: false, default: null, drop: false },
+      ],
+      added_columns: [],
+      added_foreign_keys: [],
+      dropped_foreign_keys: [],
+      added_checks: [],
+      dropped_checks: [],
+    });
   });
 
-  it("still renames even when the type also changes, and reports the type change separately", () => {
+  it("folds the rename, add and drop into the rebuild and keeps CREATE INDEX separate", () => {
+    const plan = buildAlterPlan(
+      "sqlite",
+      form({
+        database: null,
+        baseline: [
+          baseline({ name: "old", type: "TEXT" }),
+          baseline({ name: "gone", type: "TEXT" }),
+          baseline({ name: "keep", type: "TEXT", defaultValue: "'x'" }),
+        ],
+        existing: [
+          edit({ original: "old", name: "new", type: "INTEGER" }),
+          edit({ original: "gone", name: "gone", type: "TEXT", drop: true }),
+          edit({ original: "keep", name: "keep", type: "TEXT", defaultValue: "'x'" }),
+        ],
+        added: [{ name: "extra", type: "TEXT", notNull: true, defaultValue: "none" }],
+        indexes: [{ name: "idx_new", columns: ["new"], unique: false }],
+      }),
+    );
+    expect(plan.statements.map((s) => s.sql)).toEqual(['CREATE INDEX "idx_new" ON "users" ("new");']);
+    expect(plan.rebuild?.columns).toEqual([
+      { original: "old", name: "new", data_type: "INTEGER", not_null: false, default: null, drop: false },
+      { original: "gone", name: "gone", data_type: "TEXT", not_null: false, default: null, drop: true },
+      { original: "keep", name: "keep", data_type: "TEXT", not_null: false, default: "'x'", drop: false },
+    ]);
+    expect(plan.rebuild?.added_columns).toEqual([
+      { name: "extra", data_type: "TEXT", not_null: true, default: "'none'" },
+    ]);
+  });
+
+  it("does not rebuild for a rename alone", () => {
+    const plan = buildAlterPlan(
+      "sqlite",
+      form({
+        database: null,
+        baseline: [baseline({ name: "old", type: "TEXT" })],
+        existing: [edit({ original: "old", name: "new", type: "TEXT" })],
+      }),
+    );
+    expect(plan.rebuild).toBeNull();
+    expect(plan.statements).toHaveLength(1);
+  });
+
+  it("renames in the rebuild input when the type also changes", () => {
     const plan = buildAlterPlan(
       "sqlite",
       form({
@@ -313,9 +365,8 @@ describe("buildAlterPlan: rename / modify — SQLite", () => {
         existing: [edit({ original: "old", name: "new", type: "INTEGER" })],
       }),
     );
-    expect(plan.statements).toHaveLength(1);
-    expect(plan.statements[0].sql).toBe('ALTER TABLE "users" RENAME COLUMN "old" TO "new";');
-    expect(plan.unsupported).toEqual([{ column: "old", reason: "sqliteInPlaceModify" }]);
+    expect(plan.statements).toHaveLength(0);
+    expect(plan.rebuild?.columns[0]).toMatchObject({ original: "old", name: "new", data_type: "INTEGER" });
   });
 });
 

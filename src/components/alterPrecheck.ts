@@ -292,8 +292,7 @@ export interface ConstraintPrecheckInput {
  *  - FK: 参照列がすべて非 NULL で、参照先に対応行が無い行 (NULL を含む行は FK の対象外)
  *  - UNIQUE: NULL を含まないキーが重複している行 (NULL は重複扱いにならない。3 ドライバ共通)
  *  - CHECK: `NOT (式)` が真の行 (式が NULL になる行は CHECK を満たす扱い)
- * FK / CHECK の ALTER に対応するのは MySQL / PostgreSQL のみ (SQLite は表の再作成が要るため
- * `buildAlterPlan` が unsupported にする)。UNIQUE は 3 ドライバとも対象。
+ * FK / CHECK の追加と UNIQUE は 3 ドライバとも対象 (SQLite の FK / CHECK は表の再作成で行うが、既存行の検査は同じ SELECT で足りる)。
  * すべて `SELECT COUNT(*) FROM t [AS x] WHERE ...` の形なので `precheckRowsSql` で該当行の SELECT にできる。
  */
 export function buildConstraintPrechecks(

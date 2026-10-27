@@ -87,6 +87,11 @@ pub mod __test_api {
         create_sql as savepoint_create_sql, release_sql as savepoint_release_sql,
         rollback_to_sql as savepoint_rollback_to_sql,
     };
+    pub use crate::db::sqlite_rebuild::{
+        plan_table_rebuild, RebuildCheck, RebuildColumnEdit, RebuildForeignKey,
+        RebuildForeignKeyRef, RebuildNewColumn, SqliteRebuildEdit, SqliteRebuildPlan,
+        SqliteRebuildRisk, SqliteRebuildRiskKind,
+    };
     pub use crate::db::stream_batch::{StreamBatcher, StreamStats, StreamStatsSnapshot};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
@@ -1715,6 +1720,7 @@ pub fn run() {
             commands::search::find_where_used,
             commands::search::data_search_stream,
             commands::schema::alter_table_context,
+            commands::schema::plan_sqlite_table_rebuild,
             commands::schema::incoming_foreign_keys,
             commands::schema::column_dependencies,
             commands::server::server_info,

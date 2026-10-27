@@ -1032,7 +1032,7 @@ fn sqlite_needs_rebuild(table: &TableDiff) -> bool {
 /// トリガーを元の `CREATE` 文で作り直す。同じ表の列の追加・削除・外部キーの変更も一緒に
 /// 反映する (target の列を source の定義へ差し替え、source だけの列を足す。target だけの列は
 /// `DROP` の許可があるので落とす)。再現できない構文は警告に出す。
-fn sqlite_rebuild_sql(
+pub(crate) fn sqlite_rebuild_sql(
     table: &TableDiff,
     snap: &super::diff::TargetTableSnapshot,
     warnings: &mut Vec<String>,
@@ -1306,7 +1306,7 @@ fn sqlite_rebuild_sql(
 }
 
 /// `CREATE [UNIQUE] INDEX [IF NOT EXISTS] name ON ...` から索引名を取り出す。索引以外は `None`。
-fn created_index_name(sql: &str) -> Option<String> {
+pub(crate) fn created_index_name(sql: &str) -> Option<String> {
     let upper = sql.to_ascii_uppercase();
     let head = upper.trim_start();
     if !(head.starts_with("CREATE INDEX") || head.starts_with("CREATE UNIQUE INDEX")) {
@@ -1352,7 +1352,7 @@ fn created_index_name(sql: &str) -> Option<String> {
 }
 
 /// 単引用符の文字列リテラルの中身を空白に置き換える (識別子の引用符は触らない)。
-fn mask_string_literals(sql: &str) -> String {
+pub(crate) fn mask_string_literals(sql: &str) -> String {
     let mut out = String::with_capacity(sql.len());
     let mut in_lit = false;
     for c in sql.chars() {
@@ -1375,7 +1375,7 @@ fn mask_string_literals(sql: &str) -> String {
 
 /// `CREATE INDEX ... ON <表> (列, ...) WHERE ...` の最初の `(` 以降 (リテラルは除外済み)。
 /// 見つからなければ空文字列。
-fn index_tail(sql: &str) -> String {
+pub(crate) fn index_tail(sql: &str) -> String {
     let masked = mask_string_literals(sql);
     let chars: Vec<char> = masked.chars().collect();
     let is_word = |c: char| c.is_alphanumeric() || c == '_';
@@ -1417,7 +1417,7 @@ fn index_tail(sql: &str) -> String {
 }
 
 /// `sql` が識別子 `name` を (大文字小文字を区別せず) 単語として含むか。引用符つきも拾う。
-fn references_identifier(sql: &str, name: &str) -> bool {
+pub(crate) fn references_identifier(sql: &str, name: &str) -> bool {
     if name.is_empty() {
         return false;
     }

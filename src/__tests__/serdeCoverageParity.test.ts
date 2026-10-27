@@ -96,6 +96,7 @@ const COVERED: Record<string, string> = {
   SandboxSchemaDiffResult: "sandboxSchemaDiffResult",
   SandboxTableDiffResult: "sandboxTableDiffResult",
   SchedulerSettings: "schedulerSettings",
+  SqliteRebuildPlan: "sqliteRebuildPlan",
   SchemaCacheTime: "schemaCacheTime",
   SchemaDiff: "schemaDiff",
   SchemaDriftCapture: "schemaDriftCapture",

@@ -260,7 +260,7 @@ pub(crate) async fn compare_schema_core(
 
 /// SQLite の `sqlite_master` から、テーブル再作成で作り直す対象 (索引・トリガー) と元の
 /// `CREATE TABLE` 文を集める。`sql` が NULL のもの (UNIQUE 制約の自動インデックス) は除く。
-async fn sqlite_master_entries(
+pub(crate) async fn sqlite_master_entries(
     conn: &Connection,
 ) -> Result<Vec<crate::db::diff::SqliteMasterEntry>> {
     let result = conn
