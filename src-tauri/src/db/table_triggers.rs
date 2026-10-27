@@ -26,10 +26,11 @@ pub fn pg_timing_and_event(tgtype: i32) -> (String, String) {
     (timing.to_string(), events.join(" OR "))
 }
 
-/// `CREATE [TEMP] TRIGGER [IF NOT EXISTS] name [BEFORE|AFTER|INSTEAD OF] INSERT|DELETE|UPDATE ...`
-/// からタイミングとイベントを読む。タイミング省略は BEFORE (SQLite の既定)。読めなければ空文字。
+/// `CREATE [TEMP] TRIGGER [IF NOT EXISTS] [schema.]name [BEFORE|AFTER|INSTEAD OF] INSERT|DELETE|UPDATE ...`
+/// からタイミングとイベントを読む。コメントは無視し、スキーマ修飾付きの名前も読み進める。
+/// タイミング省略は BEFORE (SQLite の既定)。読めなければ空文字。
 pub fn parse_sqlite_trigger(sql: &str) -> (String, String) {
-    let tokens = tokenize(sql);
+    let tokens = tokenize(&strip_comments(sql));
     let upper = |i: usize| tokens.get(i).map(|t| t.to_ascii_uppercase());
     let Some(mut i) = (0..tokens.len()).find(|&i| upper(i).as_deref() == Some("TRIGGER")) else {
         return (String::new(), String::new());
@@ -39,6 +40,9 @@ pub fn parse_sqlite_trigger(sql: &str) -> (String, String) {
         i += 3; // IF NOT EXISTS
     }
     i += 1; // トリガー名 (引用符付きでも 1 トークン)
+    while tokens.get(i).map(String::as_str) == Some(".") {
+        i += 2; // `.` とその次の名前 (スキーマ修飾)
+    }
     let mut timing = "BEFORE";
     match upper(i).as_deref() {
         Some("BEFORE") => i += 1,
@@ -58,7 +62,60 @@ pub fn parse_sqlite_trigger(sql: &str) -> (String, String) {
     }
 }
 
-/// 空白区切りのトークン化。`"..."` / `` `...` `` / `[...]` / `'...'` は 1 トークンにまとめる。
+/// 引用符の閉じ文字 (`[` は `]`)。
+fn closing_quote(c: char) -> Option<char> {
+    match c {
+        '"' | '`' | '\'' => Some(c),
+        '[' => Some(']'),
+        _ => None,
+    }
+}
+
+/// `/* ... */` と `-- ...` を空白に置き換える。引用符の中は触らない。
+fn strip_comments(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let mut chars = sql.chars().peekable();
+    while let Some(c) = chars.next() {
+        if let Some(close) = closing_quote(c) {
+            out.push(c);
+            while let Some(n) = chars.next() {
+                out.push(n);
+                if n == close {
+                    if close != ']' && chars.peek() == Some(&close) {
+                        if let Some(d) = chars.next() {
+                            out.push(d);
+                        }
+                        continue;
+                    }
+                    break;
+                }
+            }
+        } else if c == '-' && chars.peek() == Some(&'-') {
+            for n in chars.by_ref() {
+                if n == '\n' {
+                    break;
+                }
+            }
+            out.push('\n');
+        } else if c == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            let mut prev = '\0';
+            for n in chars.by_ref() {
+                if prev == '*' && n == '/' {
+                    break;
+                }
+                prev = n;
+            }
+            out.push(' ');
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// 空白区切りのトークン化。引用符付き識別子は 1 トークン (`""` の二重化エスケープ対応)、
+/// `.` と `(` は単独のトークン。
 fn tokenize(sql: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut chars = sql.chars().peekable();
@@ -67,34 +124,31 @@ fn tokenize(sql: &str) -> Vec<String> {
             chars.next();
             continue;
         }
-        let close = match c {
-            '"' => Some('"'),
-            '`' => Some('`'),
-            '\'' => Some('\''),
-            '[' => Some(']'),
-            _ => None,
-        };
         let mut tok = String::new();
-        if let Some(close) = close {
+        if let Some(close) = closing_quote(c) {
             tok.push(c);
             chars.next();
-            for n in chars.by_ref() {
+            while let Some(n) = chars.next() {
                 tok.push(n);
                 if n == close {
+                    if close != ']' && chars.peek() == Some(&close) {
+                        if let Some(d) = chars.next() {
+                            tok.push(d);
+                        }
+                        continue;
+                    }
                     break;
                 }
             }
+        } else if matches!(c, '.' | '(') {
+            tok.push(c);
+            chars.next();
         } else {
             while let Some(&n) = chars.peek() {
-                if n.is_whitespace() || matches!(n, '"' | '`' | '\'' | '[' | '(') {
+                if n.is_whitespace() || n == '.' || n == '(' || closing_quote(n).is_some() {
                     break;
                 }
                 tok.push(n);
-                chars.next();
-            }
-            if tok.is_empty() {
-                // '(' など区切り記号は 1 文字トークン。
-                tok.push(c);
                 chars.next();
             }
         }
@@ -146,5 +200,28 @@ mod tests {
             ("BEFORE".into(), "INSERT".into())
         );
         assert_eq!(t("garbage"), (String::new(), String::new()));
+        // コメントを挟んでも読める。
+        assert_eq!(
+            t("CREATE /* x AFTER */ TRIGGER -- note INSERT\n trg /* c */ AFTER UPDATE ON t BEGIN SELECT 1; END"),
+            ("AFTER".into(), "UPDATE".into())
+        );
+        // スキーマ修飾付きの名前。
+        assert_eq!(
+            t("CREATE TRIGGER \"main\".\"trg\" AFTER DELETE ON t BEGIN SELECT 1; END"),
+            ("AFTER".into(), "DELETE".into())
+        );
+        assert_eq!(
+            t("CREATE TRIGGER main.\"trg\" INSTEAD OF UPDATE ON v BEGIN SELECT 1; END"),
+            ("INSTEAD OF".into(), "UPDATE".into())
+        );
+        assert_eq!(
+            t("CREATE TRIGGER main.trg AFTER INSERT ON t BEGIN SELECT 1; END"),
+            ("AFTER".into(), "INSERT".into())
+        );
+        // 二重化した引用符を含む名前 (名前中の AFTER は拾わない)。
+        assert_eq!(
+            t("CREATE TRIGGER \"a\"\" AFTER \" BEFORE DELETE ON t BEGIN SELECT 1; END"),
+            ("BEFORE".into(), "DELETE".into())
+        );
     }
 }

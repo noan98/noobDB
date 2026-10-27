@@ -187,6 +187,7 @@ export const tableTrigger = z.object({
   timing: z.string(),
   event: z.string(),
   definition: z.string(),
+  enabled: z.boolean(),
 });
 export const tableTriggerArray = z.array(tableTrigger);
 

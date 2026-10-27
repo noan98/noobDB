@@ -715,6 +715,7 @@ fn build_fixtures() -> serde_json::Value {
         event: "UPDATE".into(),
         definition: "CREATE TRIGGER trg_users_audit AFTER UPDATE ON users BEGIN SELECT 1; END"
             .into(),
+        enabled: true,
     };
     let table_diff = TableDiff {
         name: "users".into(),

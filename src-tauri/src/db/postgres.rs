@@ -2328,7 +2328,7 @@ impl PostgresConn {
         table: &str,
     ) -> Result<Vec<super::types::TableTrigger>> {
         let rows: Vec<PgRow> = sqlx::query(
-            r#"SELECT t.tgname::text, t.tgtype::int4, pg_get_triggerdef(t.oid)
+            r#"SELECT t.tgname::text, t.tgtype::int4, pg_get_triggerdef(t.oid), t.tgenabled::text
                  FROM pg_trigger t
                  JOIN pg_class c ON c.oid = t.tgrelid
                  JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -2348,6 +2348,8 @@ impl PostgresConn {
                 timing,
                 event,
                 definition: r.try_get::<Option<String>, _>(2)?.unwrap_or_default(),
+                // 'D' = DISABLE TRIGGER で無効化されている。
+                enabled: r.try_get::<String, _>(3)? != "D",
             });
         }
         Ok(out)

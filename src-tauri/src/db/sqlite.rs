@@ -1818,13 +1818,18 @@ impl SqliteConn {
 
     /// `table` のトリガー一覧 (#1867)。`sqlite_master` の `tbl_name` で絞り、タイミングと
     /// イベントは `CREATE TRIGGER` 文から読む (専用の PRAGMA が無いため)。
+    /// TEMP トリガー (`sqlite_temp_master`) も含める。
     pub async fn list_table_triggers(
         &self,
         table: &str,
     ) -> Result<Vec<super::types::TableTrigger>> {
         let rows: Vec<SqliteRow> = sqlx::query(
-            "SELECT name, sql FROM sqlite_master \
-             WHERE type = 'trigger' AND tbl_name = ?1 COLLATE NOCASE ORDER BY name",
+            "SELECT name, sql FROM (\
+               SELECT name, sql FROM sqlite_master \
+                WHERE type = 'trigger' AND tbl_name = ?1 COLLATE NOCASE \
+               UNION ALL \
+               SELECT name, sql FROM sqlite_temp_master \
+                WHERE type = 'trigger' AND tbl_name = ?1 COLLATE NOCASE) ORDER BY name",
         )
         .bind(table)
         .fetch_all(&self.pool)
@@ -1839,6 +1844,7 @@ impl SqliteConn {
                 timing,
                 event,
                 definition: sql,
+                enabled: true,
             });
         }
         Ok(out)

@@ -2563,7 +2563,7 @@ impl MySqlConn {
             "SELECT TRIGGER_NAME, ACTION_TIMING, EVENT_MANIPULATION \
                FROM information_schema.TRIGGERS \
               WHERE EVENT_OBJECT_SCHEMA = ? AND EVENT_OBJECT_TABLE = ? \
-              ORDER BY EVENT_MANIPULATION, ACTION_TIMING, ACTION_ORDER, TRIGGER_NAME",
+              ORDER BY EVENT_MANIPULATION, FIELD(ACTION_TIMING, 'BEFORE', 'AFTER'), ACTION_ORDER, TRIGGER_NAME",
         )
         .bind(db)
         .bind(table)
@@ -2571,9 +2571,9 @@ impl MySqlConn {
         .await?;
         let mut out = Vec::with_capacity(rows.len());
         for r in &rows {
-            let name = r.try_get::<String, _>(0).unwrap_or_default();
-            let timing = r.try_get::<String, _>(1).unwrap_or_default();
-            let event = r.try_get::<String, _>(2).unwrap_or_default();
+            let name = text_or_bytes(r, 0).unwrap_or_default();
+            let timing = text_or_bytes(r, 1).unwrap_or_default();
+            let event = text_or_bytes(r, 2).unwrap_or_default();
             // 権限不足などで定義が読めなくても一覧は出す (定義は空文字)。
             let definition = self
                 .object_definition(db, "trigger", &name)
@@ -2584,6 +2584,7 @@ impl MySqlConn {
                 timing: timing.to_ascii_uppercase(),
                 event: event.to_ascii_uppercase(),
                 definition,
+                enabled: true,
             });
         }
         Ok(out)

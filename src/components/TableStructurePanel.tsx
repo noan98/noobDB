@@ -165,6 +165,7 @@ export function TableStructurePanel({
   const [extras, setExtras] = useState<TableExtrasInfo | null>(null);
   // このテーブルで発火するトリガー (#1867)。ベストエフォート: 取れなければ節ごと出さない。
   const [triggers, setTriggers] = useState<TableTrigger[] | null>(null);
+  const [triggersFailed, setTriggersFailed] = useState(false);
   // このテーブルを参照している他テーブルの外部キー (逆方向, #1628)。ベストエフォート。
   const [incoming, setIncoming] = useState<IncomingFk[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -186,6 +187,7 @@ export function TableStructurePanel({
     setIndexes(null);
     setExtras(null);
     setTriggers(null);
+    setTriggersFailed(false);
     setIncoming(null);
     setError(null);
     ddlSeq.current += 1;
@@ -223,7 +225,7 @@ export function TableStructurePanel({
         if (!cancelled) setTriggers(list);
       })
       .catch(() => {
-        if (!cancelled) setTriggers(null);
+        if (!cancelled) setTriggersFailed(true);
       });
     // 逆方向の外部キーもベストエフォート: 取れなくても構造は出す。
     api
@@ -548,6 +550,9 @@ export function TableStructurePanel({
                       <chakra.tr key={tr.name}>
                         <chakra.td css={tdCss} fontFamily="var(--font-mono)">
                           {tr.name}
+                          {!tr.enabled && (
+                            <chakra.span color="app.textMuted"> {t("structureTriggerDisabled")}</chakra.span>
+                          )}
                         </chakra.td>
                         <chakra.td css={tdCss} fontFamily="var(--font-mono)">
                           {tr.timing}
@@ -556,12 +561,16 @@ export function TableStructurePanel({
                           {tr.event}
                         </chakra.td>
                         <chakra.td css={tdCss} fontFamily="var(--font-mono)" color="app.textSecondary">
-                          <details>
-                            <summary style={{ cursor: "pointer" }}>{t("structureTriggerDefinition")}</summary>
-                            <CodePreview maxH="160px" aria-label={tr.name}>
-                              {tr.definition}
-                            </CodePreview>
-                          </details>
+                          {tr.definition !== "" && (
+                            <details>
+                              <summary style={{ cursor: "pointer" }}>
+                                {t("structureTriggerShowDefinition")}
+                              </summary>
+                              <CodePreview maxH="160px" aria-label={tr.name}>
+                                {tr.definition}
+                              </CodePreview>
+                            </details>
+                          )}
                         </chakra.td>
                       </chakra.tr>
                     ))}
@@ -574,6 +583,12 @@ export function TableStructurePanel({
                     </chakra.tr>
                   </chakra.tfoot>
                 </chakra.table>
+              )}
+
+              {triggersFailed && (
+                <chakra.div textStyle="caption" color="app.textMuted">
+                  {t("structureTriggers")}: {t("structureTriggersFailed")}
+                </chakra.div>
               )}
 
               <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>

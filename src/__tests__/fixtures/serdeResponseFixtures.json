@@ -5873,6 +5873,7 @@
   },
   "tableTrigger": {
     "definition": "CREATE TRIGGER trg_users_audit AFTER UPDATE ON users BEGIN SELECT 1; END",
+    "enabled": true,
     "event": "UPDATE",
     "name": "trg_users_audit",
     "timing": "AFTER"

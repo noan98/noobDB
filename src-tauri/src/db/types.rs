@@ -1677,6 +1677,9 @@ pub struct TableTrigger {
     pub event: String,
     /// `CREATE TRIGGER ...` の定義本文。取得できなかったときは空文字。
     pub definition: String,
+    /// 有効なら true。PostgreSQL の `ALTER TABLE ... DISABLE TRIGGER` した無効トリガーだけ false
+    /// (MySQL / SQLite は無効化の仕組みが無いので常に true)。
+    pub enabled: bool,
 }
 
 /// `SchemaObject.kind` の Rust ⇔ TS 集合一致を固定するテスト (#1840)。

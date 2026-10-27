@@ -674,6 +674,8 @@ export interface TableTrigger {
   event: string;
   /** `CREATE TRIGGER ...` の定義本文。取得できなかったときは空文字。 */
   definition: string;
+  /** false は無効化されたトリガー (PostgreSQL のみ)。 */
+  enabled: boolean;
 }
 
 /** 非テーブルのスキーマオブジェクト種別。 */
