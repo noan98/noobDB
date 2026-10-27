@@ -17,6 +17,31 @@ pub fn split_pg_partkeydef(def: &str) -> (String, String) {
     }
 }
 
+/// PostgreSQL の中間パーティション (`is_partitioned`) は自身にデータを持たないので、サイズと行数が
+/// 0 になってしまう。深さ優先に並んだ一覧で、各中間パーティションに子孫の葉の合計を足し込む。
+/// 葉だけを数えるので、入れ子が深くても二重計上しない。子孫の値が全て `None` なら `None` のまま。
+pub fn roll_up_partition_totals(parts: &mut [TablePartition]) {
+    for i in 0..parts.len() {
+        if !parts[i].is_partitioned {
+            continue;
+        }
+        let depth = parts[i].depth;
+        let mut size: Option<i64> = None;
+        let mut rows: Option<i64> = None;
+        for d in parts[i + 1..].iter().take_while(|d| d.depth > depth) {
+            if d.is_partitioned {
+                continue;
+            }
+            size = add(size, d.size_bytes);
+            rows = add(rows, d.row_estimate);
+        }
+        parts[i].size_bytes =
+            add(size, parts[i].size_bytes.filter(|n| *n > 0)).or(parts[i].size_bytes);
+        parts[i].row_estimate =
+            add(rows, parts[i].row_estimate.filter(|n| *n > 0)).or(parts[i].row_estimate);
+    }
+}
+
 /// `information_schema.PARTITIONS` の 1 行 (パーティション名が NULL の行 = 非分割表は呼び出し側で除く)。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MysqlPartitionRow {
@@ -58,6 +83,7 @@ pub fn fold_mysql_partitions(rows: &[MysqlPartitionRow]) -> Option<TablePartitio
                 name: r.partition_name.clone(),
                 schema: None,
                 parent: None,
+                parent_schema: None,
                 depth: 0,
                 bound: mysql_bound(&r.method, r.description.as_deref()),
                 size_bytes: size,
@@ -79,6 +105,7 @@ pub fn fold_mysql_partitions(rows: &[MysqlPartitionRow]) -> Option<TablePartitio
                         name: r.partition_name.clone(),
                         schema: None,
                         parent: None,
+                        parent_schema: None,
                         depth: 0,
                         bound: mysql_bound(&r.method, r.description.as_deref()),
                         size_bytes: None,
@@ -102,6 +129,7 @@ pub fn fold_mysql_partitions(rows: &[MysqlPartitionRow]) -> Option<TablePartitio
                     name: sub.clone(),
                     schema: None,
                     parent: Some(r.partition_name.clone()),
+                    parent_schema: None,
                     depth: 1,
                     bound: String::new(),
                     size_bytes: size,
@@ -233,6 +261,51 @@ mod tests {
         h.method = "HASH".into();
         h.description = None;
         assert_eq!(fold_mysql_partitions(&[h]).unwrap().partitions[0].bound, "");
+    }
+
+    fn pg(
+        name: &str,
+        depth: u32,
+        partitioned: bool,
+        size: Option<i64>,
+        rows: Option<i64>,
+    ) -> TablePartition {
+        TablePartition {
+            name: name.into(),
+            schema: Some("public".into()),
+            parent: None,
+            parent_schema: None,
+            depth,
+            bound: String::new(),
+            size_bytes: size,
+            row_estimate: rows,
+            is_default: false,
+            is_partitioned: partitioned,
+            sub_partition_key: None,
+        }
+    }
+
+    #[test]
+    fn roll_up_sums_leaves_into_intermediate_partitions() {
+        let mut v = vec![
+            pg("a", 0, true, Some(0), None),
+            pg("a1", 1, false, Some(100), Some(5)),
+            pg("a2", 1, true, Some(0), Some(-0)),
+            pg("a2x", 2, false, Some(50), Some(2)),
+            pg("b", 0, false, Some(7), Some(1)),
+        ];
+        roll_up_partition_totals(&mut v);
+        assert_eq!((v[0].size_bytes, v[0].row_estimate), (Some(150), Some(7)));
+        assert_eq!((v[2].size_bytes, v[2].row_estimate), (Some(50), Some(2)));
+        // 葉と無関係な行は変わらない。
+        assert_eq!((v[4].size_bytes, v[4].row_estimate), (Some(7), Some(1)));
+    }
+
+    #[test]
+    fn roll_up_keeps_none_when_no_leaf_has_values() {
+        let mut v = vec![pg("a", 0, true, None, None), pg("a1", 1, false, None, None)];
+        roll_up_partition_totals(&mut v);
+        assert_eq!((v[0].size_bytes, v[0].row_estimate), (None, None));
     }
 
     #[test]

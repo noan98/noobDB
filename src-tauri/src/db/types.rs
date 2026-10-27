@@ -1689,6 +1689,8 @@ pub struct TablePartition {
     pub schema: Option<String>,
     /// 一つ上のパーティション / 表の名前 (サブパーティションのみ。直下の子は `None`)。
     pub parent: Option<String>,
+    /// `parent` のスキーマ (PostgreSQL のサブパーティションのみ。DETACH の対象指定に使う)。
+    pub parent_schema: Option<String>,
     /// 0 = 親表の直下、1 以上 = サブパーティション。
     pub depth: u32,
     /// 境界の表示文字列。PostgreSQL は `pg_get_expr(relpartbound)`

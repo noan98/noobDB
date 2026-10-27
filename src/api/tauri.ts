@@ -672,6 +672,8 @@ export interface TablePartition {
   schema: string | null;
   /** 一つ上のパーティション / 表の名前 (サブパーティションのみ)。 */
   parent: string | null;
+  /** `parent` のスキーマ (PostgreSQL のサブパーティションのみ)。 */
+  parent_schema: string | null;
   /** 0 = 親表の直下、1 以上 = サブパーティション。 */
   depth: number;
   /** 境界の表示文字列 (PostgreSQL は `FOR VALUES ...` / `DEFAULT`、MySQL は `LESS THAN (...)` / `IN (...)`)。 */

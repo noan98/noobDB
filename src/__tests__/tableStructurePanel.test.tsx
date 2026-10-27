@@ -62,6 +62,7 @@ const part = (name: string, over: Record<string, unknown> = {}) => ({
   name,
   schema: null,
   parent: null,
+  parent_schema: null,
   depth: 0,
   bound: "",
   size_bytes: null,

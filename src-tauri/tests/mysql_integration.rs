@@ -4625,8 +4625,7 @@ async fn mysql_list_table_triggers_when_env_set() {
 }
 
 /// #1868: `list_table_partitions` が RANGE パーティション表の子 (境界・MAXVALUE) を返し、非分割表は `None`。
-/// パーティション単位の ANALYZE / TRUNCATE / DROP の SQL は既存の text プロトコル経路で通る
-/// (`ALTER TABLE ... PARTITION` は prepared statement プロトコルで拒否されることがある)。
+/// パーティション単位の保守 / TRUNCATE / DROP の SQL がアプリの実行経路 (`execute`) でそのまま通る。
 #[tokio::test]
 async fn mysql_list_table_partitions_when_env_set() {
     let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
@@ -4679,12 +4678,15 @@ async fn mysql_list_table_partitions_when_env_set() {
         .await
         .expect("plain")
         .is_none());
+    // アプリと同じ run_query 経路 (`Connection::execute`) で流す。保守 3 種 + TRUNCATE / DROP。
     for sql in [
         "ALTER TABLE `noobdb_part_t` ANALYZE PARTITION `p2025`;",
+        "ALTER TABLE `noobdb_part_t` REBUILD PARTITION `p2025`;",
+        "ALTER TABLE `noobdb_part_t` CHECK PARTITION `p2025`;",
         "ALTER TABLE `noobdb_part_t` TRUNCATE PARTITION `p2026`;",
         "ALTER TABLE `noobdb_part_t` DROP PARTITION `p2025`;",
     ] {
-        t::mysql_exec_text(&opts, sql).await.expect(sql);
+        conn.execute(sql, Some(&db)).await.expect(sql);
     }
     let after = conn
         .list_table_partitions(&db, "noobdb_part_t")

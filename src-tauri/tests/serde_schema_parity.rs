@@ -727,6 +727,7 @@ fn build_fixtures() -> serde_json::Value {
             name: "events_2026_01".into(),
             schema: Some("public".into()),
             parent: None,
+            parent_schema: None,
             depth: 0,
             bound: "FOR VALUES FROM ('2026-01-01') TO ('2026-02-01')".into(),
             size_bytes: Some(8192),

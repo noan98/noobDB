@@ -5991,6 +5991,7 @@
         "is_partitioned": false,
         "name": "events_2026_01",
         "parent": null,
+        "parent_schema": null,
         "row_estimate": 120,
         "schema": "public",
         "size_bytes": 8192,

@@ -378,7 +378,8 @@ export function TableStructurePanel({
 
   // 行ごとの操作メニュー: 保守 (確認 → 実行) と破壊的操作 (強確認 → 実行)。成功したら一覧を取り直す。
   const partitionMenuItems = (p: TablePartition): ContextMenuEntry[] => {
-    if (!partitions) return [];
+    // MySQL のサブパーティションは操作を出さない (未検証)。
+    if (!partitions || (driver === "mysql" && p.depth > 0)) return [];
     const items: ContextMenuEntry[] = [];
     if (onRunPartitionMaintenance) {
       for (const command of partitionMaintenanceCommands(driver, database, table, p)) {
@@ -785,13 +786,14 @@ export function TableStructurePanel({
                           {formatRowCount(p.row_estimate)}
                         </chakra.td>
                         <chakra.td css={tdCss} textAlign="right">
-                          {(onRunPartitionMaintenance || onPartitionOp) && (
-                            <PartitionActions
-                              label={t("structurePartitionActionsFor", { partition: p.name })}
-                              items={partitionMenuItems(p)}
-                              disabledTitle={readOnly ? t("listReadOnlyTitle") : undefined}
-                            />
-                          )}
+                          {(onRunPartitionMaintenance || onPartitionOp) &&
+                            partitionMenuItems(p).length > 0 && (
+                              <PartitionActions
+                                label={t("structurePartitionActionsFor", { partition: p.name })}
+                                items={partitionMenuItems(p)}
+                                disabledTitle={readOnly ? t("listReadOnlyTitle") : undefined}
+                              />
+                            )}
                         </chakra.td>
                       </chakra.tr>
                     ))}

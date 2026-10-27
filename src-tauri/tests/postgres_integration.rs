@@ -4127,12 +4127,15 @@ async fn postgres_list_table_partitions_when_env_set() {
     let _ = conn
         .execute("DROP TABLE IF EXISTS public.noobdb_part_plain", None)
         .await;
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS public.noobdb_part_t_a", None)
+        .await;
     for ddl in [
         "CREATE TABLE public.noobdb_part_t (id INT, ts DATE NOT NULL) PARTITION BY RANGE (ts)",
         "CREATE TABLE public.noobdb_part_t_a PARTITION OF public.noobdb_part_t FOR VALUES FROM ('2026-01-01') TO ('2026-02-01')",
         "CREATE TABLE public.noobdb_part_t_b PARTITION OF public.noobdb_part_t FOR VALUES FROM ('2026-02-01') TO ('2026-03-01') PARTITION BY LIST (id)",
         "CREATE TABLE public.noobdb_part_t_b1 PARTITION OF public.noobdb_part_t_b FOR VALUES IN (1)",
-        "CREATE TABLE public.noobdb_part_t_z PARTITION OF public.noobdb_part_t DEFAULT",
+        "CREATE TABLE public.noobdb_part_t_0def PARTITION OF public.noobdb_part_t DEFAULT",
         "INSERT INTO public.noobdb_part_t VALUES (1, '2026-01-15'), (2, '2026-01-20')",
         "CREATE TABLE public.noobdb_part_plain (id INT)",
     ] {
@@ -4155,8 +4158,15 @@ async fn postgres_list_table_partitions_when_env_set() {
             ("noobdb_part_t_a", 0),
             ("noobdb_part_t_b", 0),
             ("noobdb_part_t_b1", 1),
-            ("noobdb_part_t_z", 0),
+            ("noobdb_part_t_0def", 0),
         ]
+    );
+    // サブパーティションは親のスキーマを持ち、中間パーティションのサイズは子の合計になる。
+    assert_eq!(got.partitions[2].parent_schema.as_deref(), Some("public"));
+    assert_eq!(
+        got.partitions[1].size_bytes, got.partitions[2].size_bytes,
+        "{:?}",
+        got.partitions
     );
     assert!(got.partitions[0].bound.contains("FROM ('2026-01-01')"));
     assert!(got.partitions[1].is_partitioned);
@@ -4180,7 +4190,7 @@ async fn postgres_list_table_partitions_when_env_set() {
     )
     .await
     .expect("detach");
-    conn.execute("DROP TABLE \"public\".\"noobdb_part_t_z\";", None)
+    conn.execute("DROP TABLE \"public\".\"noobdb_part_t_0def\";", None)
         .await
         .expect("drop child");
     let after = conn

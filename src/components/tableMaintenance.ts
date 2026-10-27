@@ -46,6 +46,9 @@ export function buildDropTablesSql(
 export interface PartitionRef {
   name: string;
   schema?: string | null;
+  /** サブパーティションのとき、直上のパーティションの名前とスキーマ (DETACH の対象表)。 */
+  parent?: string | null;
+  parentSchema?: string | null;
 }
 
 /** PostgreSQL の子パーティションの完全修飾名 (親と別スキーマなら子のスキーマを優先する)。 */
@@ -92,7 +95,11 @@ export function buildDetachPartitionSql(
   p: PartitionRef,
 ): string {
   if (driver !== "postgres") return "";
-  return `ALTER TABLE ${qualified(driver, database, table)} DETACH PARTITION ${qualifiedPartition(driver, database, p)};`;
+  // サブパーティションは直上のパーティション (中間表) から外す。直下の子は開いている親表から。
+  const parent = p.parent
+    ? qualified(driver, p.parentSchema ?? database, p.parent)
+    : qualified(driver, database, table);
+  return `ALTER TABLE ${parent} DETACH PARTITION ${qualifiedPartition(driver, database, p)};`;
 }
 
 /** 複数テーブルの TRUNCATE の実行方式 (#1629)。 */

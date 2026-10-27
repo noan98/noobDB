@@ -3658,7 +3658,7 @@ const en = {
     "This permanently deletes all rows in partition {partition} of {table}. This cannot be undone.",
   partitionDetachConfirmTitle: "Detach partition {partition}?",
   partitionDetachConfirmBody:
-    "Partition {partition} becomes a standalone table and no longer belongs to {table}. Rows in it stop appearing in queries on {table}.",
+    "Partition {partition} becomes a standalone table and no longer belongs to {table}. Rows in it stop appearing in queries on {table}. The parent table takes an ACCESS EXCLUSIVE lock while this runs, blocking other queries on it.",
   partitionDropConfirmTitle: "Drop partition {partition}?",
   partitionDropConfirmBody:
     "This permanently removes partition {partition} of {table} together with all its rows (and sub-partitions). This cannot be undone.",
@@ -6017,6 +6017,7 @@ const en = {
   // テーブル保守コマンド (#561)
   maintenanceMenu: "Maintenance",
   maintenanceAnalyze: "Analyze (update statistics)",
+  maintenanceRebuild: "Rebuild partition (REBUILD)",
   maintenanceOptimize: "Optimize (rebuild & defragment)",
   maintenanceCheck: "Check (integrity)",
   maintenanceRepair: "Repair",
@@ -10616,7 +10617,7 @@ const ja: Dict = {
     "{table} のパーティション {partition} の全行を完全に削除します。この操作は取り消せません。",
   partitionDetachConfirmTitle: "パーティション {partition} を DETACH しますか?",
   partitionDetachConfirmBody:
-    "パーティション {partition} は独立したテーブルになり、{table} から外れます。その行は {table} への問い合わせに現れなくなります。",
+    "パーティション {partition} は独立したテーブルになり、{table} から外れます。その行は {table} への問い合わせに現れなくなります。実行中は親表に強いロック (ACCESS EXCLUSIVE) がかかり、他の問い合わせが待たされます。",
   partitionDropConfirmTitle: "パーティション {partition} を削除しますか?",
   partitionDropConfirmBody:
     "{table} のパーティション {partition} を、その全行 (サブパーティション含む) ごと完全に削除します。この操作は取り消せません。",
@@ -12957,6 +12958,7 @@ const ja: Dict = {
   // テーブル保守コマンド (#561)
   maintenanceMenu: "保守",
   maintenanceAnalyze: "ANALYZE (統計更新)",
+  maintenanceRebuild: "REBUILD (パーティションの再構築)",
   maintenanceOptimize: "OPTIMIZE (再構築・最適化)",
   maintenanceCheck: "CHECK (整合性チェック)",
   maintenanceRepair: "REPAIR (修復)",

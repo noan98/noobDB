@@ -9423,10 +9423,27 @@ export default function App() {
       });
       if (!ok) return false;
       const success = await runMaintenanceDdl(sql, database);
-      if (success) toast.success(translate("partitionOpDone", { partition: partition.name }));
+      if (success) {
+        toast.success(translate("partitionOpDone", { partition: partition.name }));
+        // PostgreSQL の子パーティションは独立したテーブルとしてタブで開けるので、DROP したら閉じる。
+        if (op === "drop" && (selectedProfile?.driver ?? "mysql") === "postgres") {
+          const childDb = partition.schema ?? database;
+          tabsRef.current
+            .filter((tt) => tt.kind === "table" && tt.database === childDb && tt.table === partition.name)
+            .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
+        }
+      }
       return success;
     },
-    [confirm, maintenanceMessage, runMaintenanceDdl, selectedProfile?.is_production, toast],
+    [
+      confirm,
+      maintenanceMessage,
+      runMaintenanceDdl,
+      selectedProfile?.driver,
+      selectedProfile?.is_production,
+      tabsRef,
+      toast,
+    ],
   );
 
   // 採番列の現在値を実データに同期 (#1240)。列メタから対象を判定し、生成 SQL を確認

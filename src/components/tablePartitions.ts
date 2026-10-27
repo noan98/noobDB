@@ -110,10 +110,11 @@ export function partitionDestructiveOps(
   p: TablePartition,
 ): PartitionDestructiveOp[] {
   if (driver === "postgres") {
-    // DETACH は直下の子だけ (サブパーティションは親のスキーマが分からないため対象外)。
-    return p.depth === 0 ? ["truncate", "detach", "drop"] : ["truncate", "drop"];
+    return ["truncate", "detach", "drop"];
   }
   if (driver === "mysql") {
+    // MySQL のサブパーティションへの操作は未検証なので出さない。
+    if (p.depth > 0) return [];
     return mysqlCanDrop(info.method, p) ? ["truncate", "drop"] : ["truncate"];
   }
   return [];
@@ -125,8 +126,9 @@ export function buildPartitionOpSql(
   driver: string,
   database: string | null,
   table: string,
-  p: TablePartition,
+  part: TablePartition,
 ): string {
+  const p = { name: part.name, schema: part.schema, parent: part.parent, parentSchema: part.parent_schema };
   switch (op) {
     case "truncate":
       return buildPartitionTruncateSql(driver, database, table, p);

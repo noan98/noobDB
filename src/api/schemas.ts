@@ -186,6 +186,7 @@ export const tablePartition = z.object({
   name: z.string(),
   schema: z.string().nullable(),
   parent: z.string().nullable(),
+  parent_schema: z.string().nullable(),
   depth: z.number(),
   bound: z.string(),
   size_bytes: z.number().nullable(),

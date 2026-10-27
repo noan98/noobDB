@@ -16,6 +16,7 @@ const part = (over: Partial<TablePartition> = {}): TablePartition => ({
   name: "p1",
   schema: null,
   parent: null,
+  parent_schema: null,
   depth: 0,
   bound: "",
   size_bytes: null,
@@ -82,11 +83,10 @@ describe("パーティション操作 SQL (#1868)", () => {
       "ALTER TABLE `app`.`ev` DROP PARTITION `p``1`;",
     );
     expect(buildDetachPartitionSql("mysql", "app", "ev", p)).toBe("");
-    expect(partitionMaintenanceCommands("mysql", "app", "ev", p).map((c) => c.kind)).toEqual([
-      "analyze",
-      "optimize",
-      "check",
-      "repair",
+    expect(partitionMaintenanceCommands("mysql", "app", "ev", p).map((c) => c.sql)).toEqual([
+      "ALTER TABLE `app`.`ev` ANALYZE PARTITION `p``1`;",
+      "ALTER TABLE `app`.`ev` REBUILD PARTITION `p``1`;",
+      "ALTER TABLE `app`.`ev` CHECK PARTITION `p``1`;",
     ]);
   });
 
@@ -99,7 +99,20 @@ describe("パーティション操作 SQL (#1868)", () => {
 });
 
 describe("partitionDestructiveOps (#1868)", () => {
-  it("PostgreSQL: 直下の子は DETACH できるが、サブパーティションは DETACH しない", () => {
+  it("PostgreSQL: サブパーティションの DETACH は直上のパーティションから外す", () => {
+    const sub = part({
+      name: "ev_jp",
+      schema: "public",
+      parent: "ev_02",
+      parent_schema: "archive",
+      depth: 1,
+    });
+    expect(buildPartitionOpSql("detach", "postgres", "public", "ev", sub)).toBe(
+      'ALTER TABLE "archive"."ev_02" DETACH PARTITION "public"."ev_jp";',
+    );
+  });
+
+  it("PostgreSQL: 直下の子もサブパーティションも DETACH できる", () => {
     expect(partitionDestructiveOps("postgres", { method: "RANGE" }, part())).toEqual([
       "truncate",
       "detach",
@@ -107,6 +120,7 @@ describe("partitionDestructiveOps (#1868)", () => {
     ]);
     expect(partitionDestructiveOps("postgres", { method: "RANGE" }, part({ depth: 1 }))).toEqual([
       "truncate",
+      "detach",
       "drop",
     ]);
   });
@@ -119,7 +133,8 @@ describe("partitionDestructiveOps (#1868)", () => {
     expect(partitionDestructiveOps("mysql", { method: "LIST" }, part())).toEqual(["truncate", "drop"]);
     expect(partitionDestructiveOps("mysql", { method: "HASH" }, part())).toEqual(["truncate"]);
     expect(partitionDestructiveOps("mysql", { method: "KEY" }, part())).toEqual(["truncate"]);
-    expect(partitionDestructiveOps("mysql", { method: "RANGE" }, part({ depth: 1 }))).toEqual(["truncate"]);
+    // MySQL のサブパーティションには出さない。
+    expect(partitionDestructiveOps("mysql", { method: "RANGE" }, part({ depth: 1 }))).toEqual([]);
   });
 
   it("buildPartitionOpSql は操作ごとの SQL を返す", () => {
