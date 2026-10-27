@@ -138,7 +138,7 @@ jobs:
   #
   # トレードオフ (要検討事項): 旧 `frontend` / `frontend-visual` は並列実行だった
   # ため壁時計は max(typecheck+build 系, ブラウザテスト系) だったが、統合後は
-  # 直列実行の合計になる。実測ではいずれも Rust 側ジョブ (特に `rust (test)` の
+  # 直列実行の合計になる。実測ではいずれも Rust 側ジョブ (特に `rust (test)`、#1872 の統合後は `rust (windows)` も) の
   # MySQL/PostgreSQL 統合テスト。カバレッジ計装は #1153 で非ブロッキングの
   # `rust (coverage)` へ分離済み) がワークフロー全体の
   # クリティカルパスであり、フロント側を直列化しても全体の壁時計時間への影響は
@@ -1370,11 +1370,15 @@ jobs:
   # 起動・セットアップ (Setup Rust / rust-cache / sccache 復元 / ツール導入、
   # 約 75 秒) とキャッシュの保存・復元が 1 回分になり、課金される計算量が減る。
   # 壁時計時間は max(clippy, test) から clippy + test に伸びる。なお cargo は
-  # check (clippy) と codegen+link (nextest) の成果物を共有しないので、2 本目のコマンドで
-  # 再コンパイルがなくなるわけではない (sccache が rustc 呼び出し単位で効く範囲を除く)。
-  # clippy を先に走らせるのは、lint 違反なら重いテストビルドを待たずに早く落とすため。
+  # 依存ライブラリの check (rmeta) と codegen は共有されないので、2 本目のコマンドで
+  # 再コンパイルがなくなるわけではない (sccache が効く範囲を除く)。一方 build script の
+  # 実行結果と proc-macro は同じプロファイル (CARGO_PROFILE_DEV_DEBUG=0) なので共有される。
+  # clippy を先に走らせるのは lint 違反を早く知らせるためだが、nextest ステップは
+  # clippy が失敗しても実行する (テスト結果も同じ run で得る)。
+  # 統合後は壁時計時間の伸びにより rust (windows) がクリティカルパスになりうる。
   # 必須チェック名は `rust (windows)` に変わる (旧 `rust (windows clippy)` /
-  # `rust (windows test)` は消える)。branch protection の必須設定を更新すること。
+  # `rust (windows test)` は消える)。必須チェックに設定している場合は更新すること
+  # (現状 ruleset に必須チェックは無い)。
   rust-windows:
     name: rust (windows)
     needs: changes
@@ -1496,6 +1500,7 @@ jobs:
           fi
 
       - name: cargo clippy
+        id: clippy
         working-directory: src-tauri
         run: cargo clippy --all-targets --locked -- -D warnings
 
@@ -1507,7 +1512,9 @@ jobs:
       # russh) を払うだけなので対象から外す (#1511)。external は env を渡す
       # `rust (test)` で全件実走する。Cargo.toml に [[test]] を足したら
       # ここにも --test を追加すること。
+      # clippy が落ちてもテスト結果は得る (両コマンドを確実に実行する, #1872)。
       - name: cargo nextest run
+        if: success() || steps.clippy.outcome == 'failure'
         working-directory: src-tauri
         run: cargo nextest run --locked --lib --test golden --test integration --test serde_schema_parity
 

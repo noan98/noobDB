@@ -83,7 +83,7 @@
   なお shard の割当は Vitest の `BaseSequencer.shard` が**ファイルパスの sha1 順**で
   決めるため、Vitest のキャッシュ (実行時間) では割当は変わらず、実行時間ベースの分割には
   カスタム sequencer + 実行時間データの保守が要ります。フロント単体の連鎖 (約 200 秒) は
-  `rust (windows)` (統合前の `rust (windows test)` 実測で約 260〜360 秒) より短くクリティカルパスではないため見送っています。
+  `rust (windows)` (統合前の `rust (windows test)` 実測で約 260〜360 秒) より短くクリティカルパスではないため見送っています (#1872 の統合で `rust (windows)` はさらに伸び、クリティカルパスになりうる)。
   ブラウザテスト (約 120 秒) の shard 分割も同じ理由で見送りです。いずれも Windows 側が
   縮んでフロントがクリティカルパスになったら再検討してください (必須チェック名
   `frontend (build + browser tests)` は変えないこと)。
@@ -227,8 +227,10 @@
   課金が 2 倍で最遅の windows-latest で rust-cache / sccache の鍵が別 (成果物を共有しない)
   まま依存ツリーを 2 ランナーで二重にビルドしていたため、#1872 で単一ジョブに統合した
   (セットアップとキャッシュ保存・復元が 1 回分になり計算量が減る代わりに、壁時計時間は
-  clippy + test の合計に伸びる。check と codegen+link の成果物は共有されないので 2 本目の
-  コマンドで再コンパイルが無くなるわけではない)。チェック名は `rust (windows)` に変わった。MySQL/
+  clippy + test の合計に伸び、`rust (windows)` がクリティカルパスになりうる。依存ライブラリの
+  check (rmeta) と codegen は共有されないので 2 本目のコマンドで再コンパイルが無くなるわけでは
+  ないが、build script の実行結果と proc-macro は同じプロファイル (`CARGO_PROFILE_DEV_DEBUG=0`)
+  なので共有される。nextest は clippy が落ちても実行する)。チェック名は `rust (windows)` に変わった。MySQL/
   PostgreSQL の URL 環境変数を渡さないため統合テストはスキップされ、外部サービス
   不要の SQLite 統合テストのみ実走します。Tauri の全スタックビルド (WebView2 等) は
   不要で MSVC toolchain だけで足り、rust-cache の `key` は `windows` で Linux と分離しています。
