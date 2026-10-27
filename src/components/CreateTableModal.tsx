@@ -154,6 +154,8 @@ export function CreateTableModal({
         if (!ok) return;
       }
       setColumns(columnDefsFromTableInfo(info));
+      // 列を入れ替えたので、生成式の「触った行」の記録も捨てる (古い行番号が新しい列に当たらないように)。
+      setGenTouched([]);
       setTemplateCaveats(templateCaveats(driver, info));
       // 空のままなら、元の名前に _copy を付けた名前を提案する (上書きはしない)。
       setTable((cur) => (cur.trim() === "" ? `${templateTable}_copy` : cur));
