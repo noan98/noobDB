@@ -40,6 +40,64 @@ export function truncateReleaseNotes(body: string | undefined, maxLen = 600): st
   return `${head}…`;
 }
 
+/** 「新機能ハイライト」(#1864) で描くリリースノートの 1 ブロック。 */
+export type ReleaseNoteBlock =
+  | { kind: "heading"; text: string }
+  | { kind: "highlight"; text: string }
+  | { kind: "bullet"; text: string }
+  | { kind: "paragraph"; text: string };
+
+/** 行内の Markdown 記法 (太字・コード・リンク) を素のテキストへ落とす。HTML は解釈せず文字のまま出す。 */
+function stripInlineMarkdown(line: string): string {
+  return line
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__)(.+?)\1/g, "$2")
+    .replace(/`([^`]+)`/g, "$1")
+    .trim();
+}
+
+/**
+ * リリースノート (GitHub Releases 由来の簡易 Markdown) を表示用ブロックへ分解する。
+ *   - `#`〜`######` の見出し -> heading、`> ` 引用 -> highlight (要点の帯)、
+ *     `-` / `*` / `+` / `1.` の箇条書き -> bullet、それ以外の連続行 -> paragraph。
+ *   - 外部由来なので先に `truncateReleaseNotes` で切り詰める (既定 2000 文字)。
+ *   - 空/未指定、記号だけの行しか無いときは空配列。
+ */
+export function parseReleaseNotes(body: string | undefined, maxLen = 2000): ReleaseNoteBlock[] {
+  const text = truncateReleaseNotes(body, maxLen).replace(/\r\n?/g, "\n");
+  if (!text) return [];
+  const blocks: ReleaseNoteBlock[] = [];
+  let para: string[] = [];
+  const flush = () => {
+    if (para.length > 0) blocks.push({ kind: "paragraph", text: para.join(" ") });
+    para = [];
+  };
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    let m: RegExpMatchArray | null;
+    if (line === "") {
+      flush();
+    } else if ((m = line.match(/^#{1,6}(?:\s+(.*))?$/))) {
+      flush();
+      const v = stripInlineMarkdown(m[1] ?? "");
+      if (v) blocks.push({ kind: "heading", text: v });
+    } else if ((m = line.match(/^>\s?(.*)$/))) {
+      flush();
+      const v = stripInlineMarkdown(m[1] ?? "");
+      if (v) blocks.push({ kind: "highlight", text: v });
+    } else if ((m = line.match(/^(?:[-*+]|\d+\.)(?:\s+(.*))?$/))) {
+      flush();
+      const v = stripInlineMarkdown(m[1] ?? "");
+      if (v) blocks.push({ kind: "bullet", text: v });
+    } else {
+      const v = stripInlineMarkdown(line);
+      if (v) para.push(v);
+    }
+  }
+  flush();
+  return blocks;
+}
+
 /**
  * バージョン文字列を表示用に整える。updater が返す `version` には稀に先頭 `v` が
  * 付くことがあるため取り除き、前後空白も落とす。空なら `?` にフォールバックして
