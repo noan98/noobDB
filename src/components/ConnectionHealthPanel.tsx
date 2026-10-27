@@ -425,6 +425,7 @@ export function ConnectionHealthPanel({
                       </chakra.td>
                       <chakra.td css={tdCss}>
                         <LatencySparkline
+                          animateLatest
                           samples={row.sessionId ? latencyHistory.get(row.sessionId) : undefined}
                         />
                       </chakra.td>

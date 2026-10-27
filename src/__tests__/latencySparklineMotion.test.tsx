@@ -10,14 +10,16 @@ describe("LatencySparkline の描き入れ", () => {
   });
 
   it("初回表示では描き入れない", () => {
-    const { queryByTestId } = render(<LatencySparkline samples={[10, 20, 30]} />);
+    const { queryByTestId } = render(<LatencySparkline animateLatest samples={[10, 20, 30]} />);
     expect(queryByTestId("sparkline-latest")).toBeNull();
   });
 
   it("サンプル更新で最新区間だけを描き入れる", () => {
     document.documentElement.setAttribute("data-motion", "full");
-    const { container, rerender, queryByTestId } = render(<LatencySparkline samples={[10, 20, 30]} />);
-    rerender(<LatencySparkline samples={[10, 20, 30, 40]} />);
+    const { container, rerender, queryByTestId } = render(
+      <LatencySparkline animateLatest samples={[10, 20, 30]} />,
+    );
+    rerender(<LatencySparkline animateLatest samples={[10, 20, 30, 40]} />);
     expect(queryByTestId("sparkline-latest")).not.toBeNull();
     expect(container.querySelectorAll("line[data-level]").length).toBe(3);
   });
@@ -25,8 +27,29 @@ describe("LatencySparkline の描き入れ", () => {
   it("ハイコントラストでは更新しても静止する", () => {
     document.documentElement.setAttribute("data-motion", "full");
     document.documentElement.setAttribute("data-theme", "hc-dark");
+    const { rerender, queryByTestId } = render(<LatencySparkline animateLatest samples={[10, 20, 30]} />);
+    rerender(<LatencySparkline animateLatest samples={[10, 20, 30, 40]} />);
+    expect(queryByTestId("sparkline-latest")).toBeNull();
+  });
+
+  it("reduced-motion では更新しても静止する", () => {
+    document.documentElement.setAttribute("data-motion", "reduced");
+    const { rerender, queryByTestId } = render(<LatencySparkline animateLatest samples={[10, 20, 30]} />);
+    rerender(<LatencySparkline animateLatest samples={[10, 20, 30, 40]} />);
+    expect(queryByTestId("sparkline-latest")).toBeNull();
+  });
+
+  it("animateLatest が無ければ更新しても静止する", () => {
+    document.documentElement.setAttribute("data-motion", "full");
     const { rerender, queryByTestId } = render(<LatencySparkline samples={[10, 20, 30]} />);
     rerender(<LatencySparkline samples={[10, 20, 30, 40]} />);
+    expect(queryByTestId("sparkline-latest")).toBeNull();
+  });
+
+  it("同じ中身の配列を作り直しても再生しない", () => {
+    document.documentElement.setAttribute("data-motion", "full");
+    const { rerender, queryByTestId } = render(<LatencySparkline animateLatest samples={[10, 20, 30]} />);
+    rerender(<LatencySparkline animateLatest samples={[10, 20, 30]} />);
     expect(queryByTestId("sparkline-latest")).toBeNull();
   });
 });
