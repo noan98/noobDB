@@ -462,11 +462,13 @@ import {
 import { t as translate, useT, useLocale } from "./i18n";
 import { isPartialCloneFailure } from "./tableClone";
 import { isAppWindowFocused, registerNotificationClickFocus, sendQueryNotification } from "./notifications";
-import { checkForAppUpdate, dismissUpdate } from "./updater";
+import { checkForAppUpdate, dismissUpdate, getCurrentAppVersion } from "./updater";
 import { applyCustomThemeVars } from "./customTheme";
 import { usePrefersMoreContrast } from "./prefersContrast";
 import { loadSkippedUpdateVersion, shouldSkipStartupNotice } from "./updateSkip";
 import { confirmAndInstallUpdate } from "./components/updatePrompt";
+import { WhatsNewModal } from "./components/WhatsNewModal";
+import { consumePendingWhatsNew, type WhatsNewEntry } from "./whatsNewStore";
 import {
   firstLineForNotification,
   shouldNotifyQueryCompletion,
@@ -1803,6 +1805,33 @@ export default function App() {
   const pendingProfileDeleteTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   // 起動スプラッシュ (#619)。初回プロファイル読み込みが終わるまで true のまま。
   const [booted, setBooted] = useState(false);
+
+  // 更新適用後の「新機能ハイライト」(#1864)。スプラッシュ・初回ツアー・他のモーダルが閉じてから一度だけ出す。
+  const [whatsNew, setWhatsNew] = useState<WhatsNewEntry | null>(null);
+  const whatsNewChecked = useRef(false);
+  useEffect(() => {
+    if (!booted || showTour || whatsNewChecked.current) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const attempt = async () => {
+      if (cancelled) return;
+      // 開いているダイアログ (確認・設定の各モーダル等) があるあいだは待つ。
+      if (document.querySelector('[role="dialog"]')) {
+        timer = window.setTimeout(() => void attempt(), 1000);
+        return;
+      }
+      whatsNewChecked.current = true;
+      const entry = consumePendingWhatsNew(await getCurrentAppVersion());
+      // pending は消費済みなので、途中でエフェクトが再実行されても表示は捨てない。
+      if (entry) setWhatsNew(entry);
+    };
+    void attempt();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [booted, showTour]);
+
   const [selectedProfile, setSelectedProfile] = useState<ConnectionProfile | null>(null);
   const [editing, setEditing] = useState<ConnectionProfile | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -13922,6 +13951,17 @@ export default function App() {
                   onClose={() => setExportTablesTarget(null)}
                 />
               </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {whatsNew && (
+              <WhatsNewModal
+                version={whatsNew.version}
+                currentVersion={whatsNew.currentVersion}
+                notes={whatsNew.body}
+                onClose={() => setWhatsNew(null)}
+              />
             )}
           </AnimatePresence>
 

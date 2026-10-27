@@ -13,6 +13,7 @@ import type { useToast } from "./Toast";
 import type { useT } from "../i18n";
 import { dismissUpdate, installUpdateAndRestart, type AvailableUpdate } from "../updater";
 import { saveSkippedUpdateVersion } from "../updateSkip";
+import { clearPendingWhatsNew, savePendingWhatsNew } from "../whatsNewStore";
 import { Icon } from "./Icon";
 import { WhatsNewModal } from "./WhatsNewModal";
 import { Button } from "./ui";
@@ -116,6 +117,8 @@ export async function confirmAndInstallUpdate(
   // 進行中は自動消滅しない (duration 0) トーストを出す。成功時は relaunch で
   // アプリごと消えるので残らない。失敗時は id で閉じてからエラーを出し、「ダウンロード中」
   // と「失敗」が並んで残らないようにする (#1534)。
+  // 適用後の起動で「新機能ハイライト」を出すため、再起動の前に版とノートを覚えておく (#1864)。
+  savePendingWhatsNew(update);
   const progressId = toast.info(t("updateDownloadingStarted"), 0);
   try {
     let lastText = "";
@@ -127,6 +130,7 @@ export async function confirmAndInstallUpdate(
       toast.update(progressId, text);
     });
   } catch (e) {
+    clearPendingWhatsNew();
     toast.dismiss(progressId);
     toast.error(t("updateFailed", { error: e instanceof Error ? e.message : String(e) }));
   }

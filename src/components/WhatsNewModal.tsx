@@ -6,6 +6,7 @@ import { staggerContainer, variants } from "../motion";
 import { displayVersion, parseReleaseNotes, type ReleaseNoteBlock } from "../updaterFormat";
 import { Callout } from "./Callout";
 import { Icon } from "./Icon";
+import { CodePreview } from "./modalForm";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { prefersStaticMotion } from "./revealOrigin";
 import { Button } from "./ui";
@@ -70,8 +71,9 @@ export function WhatsNewModal({ version, currentVersion, notes, onClose }: Props
               borderRadius="pill"
               fontSize="sm"
               fontWeight="semibold"
+              // ベタ塗り + app.onSolid は themeContrast.test が全テーマで AA を保証する組み合わせ。
+              bg="app.info.solid"
               color="app.onSolid"
-              css={{ background: "var(--brand-gradient)" }}
             >
               <Icon name="sparkles" />v{shown}
             </chakra.span>
@@ -135,19 +137,27 @@ function NoteBlock({ block }: { block: ReleaseNoteBlock }) {
         </chakra.h3>
       );
     case "highlight":
-      return <Callout tone="info">{block.text}</Callout>;
+      return <Callout tone={block.tone}>{block.text}</Callout>;
     case "bullet":
       return (
         <Flex gap="2" align="flex-start" color="app.textSecondary" fontSize="sm" lineHeight="normal">
-          <chakra.span aria-hidden color="app.accent" flex="none">
+          <chakra.span aria-hidden color="app.textMuted" flex="none">
             ・
           </chakra.span>
           <chakra.span wordBreak="break-word">{block.text}</chakra.span>
         </Flex>
       );
+    case "code":
+      return <CodePreview>{block.text}</CodePreview>;
     default:
       return (
-        <chakra.p color="app.textSecondary" fontSize="sm" lineHeight="normal" wordBreak="break-word">
+        <chakra.p
+          color="app.textSecondary"
+          fontSize="sm"
+          lineHeight="normal"
+          wordBreak="break-word"
+          whiteSpace="pre-wrap"
+        >
           {block.text}
         </chakra.p>
       );

@@ -40,16 +40,29 @@ export function truncateReleaseNotes(body: string | undefined, maxLen = 600): st
   return `${head}…`;
 }
 
+/** 要点の帯の意味色 (GitHub の alert 記法 `[!NOTE]` 等に対応)。 */
+export type HighlightTone = "info" | "success" | "warning" | "danger";
+
 /** 「新機能ハイライト」(#1864) で描くリリースノートの 1 ブロック。 */
 export type ReleaseNoteBlock =
   | { kind: "heading"; text: string }
-  | { kind: "highlight"; text: string }
+  | { kind: "highlight"; text: string; tone: HighlightTone }
   | { kind: "bullet"; text: string }
+  | { kind: "code"; text: string }
   | { kind: "paragraph"; text: string };
 
-/** 行内の Markdown 記法 (太字・コード・リンク) を素のテキストへ落とす。HTML は解釈せず文字のまま出す。 */
+const ALERT_TONES: Record<string, HighlightTone> = {
+  NOTE: "info",
+  IMPORTANT: "info",
+  TIP: "success",
+  WARNING: "warning",
+  CAUTION: "danger",
+};
+
+/** 行内の Markdown 記法 (画像・リンク・太字・コード) を素のテキストへ落とす。HTML は解釈せず文字のまま出す。 */
 function stripInlineMarkdown(line: string): string {
   return line
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
     .replace(/(\*\*|__)(.+?)\1/g, "$2")
     .replace(/`([^`]+)`/g, "$1")
@@ -58,8 +71,10 @@ function stripInlineMarkdown(line: string): string {
 
 /**
  * リリースノート (GitHub Releases 由来の簡易 Markdown) を表示用ブロックへ分解する。
- *   - `#`〜`######` の見出し -> heading、`> ` 引用 -> highlight (要点の帯)、
- *     `-` / `*` / `+` / `1.` の箇条書き -> bullet、それ以外の連続行 -> paragraph。
+ *   - `#`〜`######` の見出し -> heading、連続する `> ` 引用 -> 1 つの highlight (先頭行が
+ *     `[!NOTE]` / `[!TIP]` / `[!WARNING]` / `[!CAUTION]` / `[!IMPORTANT]` ならその行は捨てて tone に反映)、
+ *     `-` / `*` / `+` / `1.` の箇条書き -> bullet、``` で囲んだ範囲 -> code、
+ *     それ以外の連続行 -> paragraph (改行は保つ)。水平線と画像は捨てる。
  *   - 外部由来なので先に `truncateReleaseNotes` で切り詰める (既定 2000 文字)。
  *   - 空/未指定、記号だけの行しか無いときは空配列。
  */
@@ -68,33 +83,67 @@ export function parseReleaseNotes(body: string | undefined, maxLen = 2000): Rele
   if (!text) return [];
   const blocks: ReleaseNoteBlock[] = [];
   let para: string[] = [];
-  const flush = () => {
-    if (para.length > 0) blocks.push({ kind: "paragraph", text: para.join(" ") });
+  let quote: string[] = [];
+  let fence: string[] | null = null;
+  const flushPara = () => {
+    if (para.length > 0) blocks.push({ kind: "paragraph", text: para.join("\n") });
     para = [];
+  };
+  const flushQuote = () => {
+    if (quote.length === 0) return;
+    let tone: HighlightTone = "info";
+    const alert = quote[0]?.match(/^\[!(\w+)\]$/);
+    const mapped = alert ? ALERT_TONES[(alert[1] ?? "").toUpperCase()] : undefined;
+    if (mapped) {
+      tone = mapped;
+      quote = quote.slice(1);
+    }
+    const v = quote.join(" ").trim();
+    if (v) blocks.push({ kind: "highlight", text: v, tone });
+    quote = [];
+  };
+  const flushAll = () => {
+    flushPara();
+    flushQuote();
   };
   for (const raw of text.split("\n")) {
     const line = raw.trim();
     let m: RegExpMatchArray | null;
-    if (line === "") {
-      flush();
+    if (fence) {
+      if (line.startsWith("```")) {
+        if (fence.length > 0) blocks.push({ kind: "code", text: fence.join("\n") });
+        fence = null;
+      } else {
+        fence.push(raw.replace(/\s+$/, ""));
+      }
+    } else if (line.startsWith("```")) {
+      flushAll();
+      fence = [];
+    } else if (line === "") {
+      flushAll();
+    } else if (/^([-*_])(\s*\1){2,}$/.test(line)) {
+      flushAll(); // 水平線
     } else if ((m = line.match(/^#{1,6}(?:\s+(.*))?$/))) {
-      flush();
+      flushAll();
       const v = stripInlineMarkdown(m[1] ?? "");
       if (v) blocks.push({ kind: "heading", text: v });
     } else if ((m = line.match(/^>\s?(.*)$/))) {
-      flush();
+      flushPara();
       const v = stripInlineMarkdown(m[1] ?? "");
-      if (v) blocks.push({ kind: "highlight", text: v });
+      if (v) quote.push(v);
     } else if ((m = line.match(/^(?:[-*+]|\d+\.)(?:\s+(.*))?$/))) {
-      flush();
+      flushAll();
       const v = stripInlineMarkdown(m[1] ?? "");
       if (v) blocks.push({ kind: "bullet", text: v });
     } else {
+      flushQuote();
       const v = stripInlineMarkdown(line);
       if (v) para.push(v);
     }
   }
-  flush();
+  // 閉じ忘れのフェンス (切り詰めで閉じが落ちた場合) も中身は出す。
+  if (fence && fence.length > 0) blocks.push({ kind: "code", text: fence.join("\n") });
+  flushAll();
   return blocks;
 }
 
