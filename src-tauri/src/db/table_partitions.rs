@@ -35,10 +35,10 @@ pub fn roll_up_partition_totals(parts: &mut [TablePartition]) {
             size = add(size, d.size_bytes);
             rows = add(rows, d.row_estimate);
         }
-        parts[i].size_bytes =
-            add(size, parts[i].size_bytes.filter(|n| *n > 0)).or(parts[i].size_bytes);
-        parts[i].row_estimate =
-            add(rows, parts[i].row_estimate.filter(|n| *n > 0)).or(parts[i].row_estimate);
+        // PG 14+ は中間パーティションを ANALYZE すると自身の reltuples に子孫の合計が入るので、
+        // 自身の値は足さず葉の合計だけを使う (足すと二重計上になる)。
+        parts[i].size_bytes = size.or(parts[i].size_bytes);
+        parts[i].row_estimate = rows.or(parts[i].row_estimate);
     }
 }
 
@@ -299,6 +299,18 @@ mod tests {
         assert_eq!((v[2].size_bytes, v[2].row_estimate), (Some(50), Some(2)));
         // 葉と無関係な行は変わらない。
         assert_eq!((v[4].size_bytes, v[4].row_estimate), (Some(7), Some(1)));
+    }
+
+    #[test]
+    fn roll_up_does_not_double_count_analyzed_intermediate() {
+        // PG 14+ で中間パーティションを ANALYZE すると、自身の reltuples に子孫の合計が入る。
+        let mut v = vec![
+            pg("a", 0, true, Some(0), Some(7)),
+            pg("a1", 1, false, Some(10), Some(3)),
+            pg("a2", 1, false, Some(20), Some(4)),
+        ];
+        roll_up_partition_totals(&mut v);
+        assert_eq!((v[0].size_bytes, v[0].row_estimate), (Some(30), Some(7)));
     }
 
     #[test]
