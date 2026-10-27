@@ -187,6 +187,11 @@
      できない横方向の overhang なので専用トークンにする。全テーマ共通。 */
   --shadow-drawer: -8px 0 24px -12px rgba(0, 0, 0, 0.45);
 
+  /* キーキャップ (Kbd, #1865)。下端 1px の濃い縁 + 上端の内側ハイライトで物理キーの
+     立体感を出す。ダーク系は下の :root[data-theme$="dark"] で影を強め、hc-* は装飾より
+     AAA 優先のため none に上書きする。 */
+  --shadow-kbd: 0 1px 0 rgba(15, 23, 42, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+
   /* モーダルバックドロップの暗幕。Modal.tsx が参照する。全テーマ共通。 */
   --overlay: rgba(0, 0, 0, 0.45);
 
@@ -542,6 +547,7 @@
      ワードマークを本文色にする。 */
   --brand-mark-tile: var(--brand-navy-raised);
   --brand-wordmark: var(--text);
+  --shadow-kbd: 0 1px 0 rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 
 :root[data-theme="dark"] {
@@ -788,6 +794,7 @@
    自動検出して AA、さらに hc-* には AAA を強制)。アクセント色・密度・シンタックス
    配色のユーザ設定とは直交し、それらは引き続き実行時に上書きできる。 */
 :root[data-theme="hc-light"] {
+  --shadow-kbd: none;
   --shadow-sm: 0 0 0 1px rgba(0, 0, 0, 0.6);
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.35);
@@ -893,6 +900,7 @@
 }
 
 :root[data-theme="hc-dark"] {
+  --shadow-kbd: none;
   --shadow-sm: 0 0 0 1px rgba(255, 255, 255, 0.5);
   --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.7);
   --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.75);

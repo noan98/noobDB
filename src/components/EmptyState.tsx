@@ -4,6 +4,7 @@ import { motion } from "motion/react";
 import { transitions } from "../motion";
 import { Button, PressableButton } from "./ui";
 import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "./Icon";
+import { Kbd } from "./Kbd";
 
 /** ルートを motion 化するラッパー。`transition` を motion へ転送する
  *  (`TabBar` / `Modal` と同方式)。`Flex` のショートハンド (direction/align/justify)
@@ -146,11 +147,7 @@ export function EmptyState({
             <Button key={a.label} type="button" variant="secondary" size="sm" onClick={a.onClick}>
               {a.icon && <Icon name={a.icon} size={ICON_SIZES.md} />}
               {a.label}
-              {a.shortcut && (
-                <Text as="span" color="app.textMuted" fontSize="xs">
-                  {a.shortcut}
-                </Text>
-              )}
+              {a.shortcut && <Kbd tone="secondary">{a.shortcut}</Kbd>}
             </Button>
           ))}
         </Flex>
