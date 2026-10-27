@@ -5,10 +5,14 @@ import { useReducedMotionConfig } from "motion/react";
 import { BrandLockup } from "../brand";
 import { useT } from "../i18n";
 import { getCurrentAppVersion } from "../updater";
+import { displayVersion } from "../updaterFormat";
 import { Icon } from "./Icon";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { useToast } from "./Toast";
 import { Button } from "./ui";
+import { loadLastWhatsNew } from "../whatsNewStore";
+import { WhatsNewModal } from "./WhatsNewModal";
+import { AnimatePresence } from "motion/react";
 
 interface Props {
   onClose: () => void;
@@ -26,6 +30,9 @@ export function AboutDialog({ onClose }: Props) {
   const [version, setVersion] = useState<string | null | undefined>(undefined);
   // 再生ごとに BrandMark を作り直し、マウント時アニメを最初から走らせる。
   const [playKey, setPlayKey] = useState(0);
+  // 直近に適用した更新のノート (#1864)。あるときだけ「更新内容を見る」を出す。
+  const [lastWhatsNew] = useState(loadLastWhatsNew);
+  const [showWhatsNew, setShowWhatsNew] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -77,6 +84,12 @@ export function AboutDialog({ onClose }: Props) {
             <Icon name="help" />
             {t("aboutDocs")}
           </Button>
+          {lastWhatsNew && version && displayVersion(lastWhatsNew.version) === displayVersion(version) && (
+            <Button type="button" onClick={() => setShowWhatsNew(true)}>
+              <Icon name="sparkles" />
+              {t("aboutWhatsNew")}
+            </Button>
+          )}
         </Flex>
       </ModalBody>
       <ModalFooter>
@@ -91,6 +104,16 @@ export function AboutDialog({ onClose }: Props) {
           {t("aboutClose")}
         </Button>
       </ModalFooter>
+      <AnimatePresence>
+        {showWhatsNew && lastWhatsNew && (
+          <WhatsNewModal
+            version={lastWhatsNew.version}
+            currentVersion={lastWhatsNew.currentVersion}
+            notes={lastWhatsNew.body}
+            onClose={() => setShowWhatsNew(false)}
+          />
+        )}
+      </AnimatePresence>
     </Modal>
   );
 }
