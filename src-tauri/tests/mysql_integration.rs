@@ -4492,3 +4492,50 @@ async fn mysql_check_and_generated_expressions_are_introspected_and_compared() {
     }
     conn.close().await;
 }
+
+/// #1867: `list_table_triggers` が対象テーブルのトリガーをタイミング・イベント付きで返す。
+#[tokio::test]
+async fn mysql_list_table_triggers_when_env_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let Some(db) = opts.database.clone() else {
+        eprintln!("skip: URL has no database");
+        return;
+    };
+    let conn = t::connect(&opts).await.expect("connect");
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS noobdb_trg_t", Some(&db))
+        .await;
+    conn.execute(
+        "CREATE TABLE noobdb_trg_t (id INT PRIMARY KEY, v INT)",
+        Some(&db),
+    )
+    .await
+    .expect("create");
+    // CREATE TRIGGER は prepared statement プロトコルで 1295 になるため text プロトコルで作る。
+    t::mysql_exec_text(
+        &opts,
+        "CREATE TRIGGER noobdb_trg_a BEFORE UPDATE ON noobdb_trg_t FOR EACH ROW SET NEW.v = 1",
+    )
+    .await
+    .expect("trigger");
+    let got = conn
+        .list_table_triggers(&db, "noobdb_trg_t")
+        .await
+        .expect("triggers");
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(
+        (
+            got[0].name.as_str(),
+            got[0].timing.as_str(),
+            got[0].event.as_str()
+        ),
+        ("noobdb_trg_a", "BEFORE", "UPDATE")
+    );
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS noobdb_trg_t", Some(&db))
+        .await;
+}

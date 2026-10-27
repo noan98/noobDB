@@ -59,6 +59,7 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["foreignKey", schemas.foreignKey],
   ["indexInfo", schemas.indexInfo],
   ["tableExtrasInfo", schemas.tableExtrasInfo],
+  ["tableTrigger", schemas.tableTrigger],
   ["schemaObject", schemas.schemaObject],
   ["routineSignature", schemas.routineSignature],
   ["tableRowEstimate", schemas.tableRowEstimate],

@@ -22,7 +22,10 @@ export const diffCommands = {
     sourceDatabase: string;
     targetSessionId: string;
     targetDatabase: string;
+    /** ソース側の表名。`targetTable` が無ければターゲットも同名。 */
     table: string;
+    /** ターゲット側の表名 (#1880)。省略 / 空なら `table` と同じ。同期 SQL はこの表に対して生成される。 */
+    targetTable?: string | null;
     limit?: number | null;
     /** true なら上限を使わず、主キーのキーセットページングで全行を比較する (#1539)。 */
     allRows?: boolean | null;
@@ -37,6 +40,7 @@ export const diffCommands = {
       targetSessionId: params.targetSessionId,
       targetDatabase: params.targetDatabase,
       table: params.table,
+      targetTable: params.targetTable ? params.targetTable : null,
       limit: params.limit ?? null,
       allRows: params.allRows ?? null,
       ignoreColumns: params.ignoreColumns && params.ignoreColumns.length > 0 ? params.ignoreColumns : null,

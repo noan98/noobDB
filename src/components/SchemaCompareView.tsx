@@ -214,6 +214,15 @@ const syncControlsCss: SystemStyleObject = {
   flexWrap: "wrap",
   margin: "var(--space-2-5) 0",
 };
+// ソース表 → ターゲット表の 2 つのセレクト (#1880)。
+const tablePairCss: SystemStyleObject = {
+  display: "grid",
+  gridTemplateColumns: "1fr auto 1fr",
+  alignItems: "end",
+  gap: "3",
+  width: "100%",
+};
+const tableColCss: SystemStyleObject = { display: "flex", flexDirection: "column", gap: "1" };
 // 非破壊の表示オプション (全行比較など) のラベル。危険色 (`destructiveCss`) にしない。
 const optionLabelCss: SystemStyleObject = {
   display: "inline-flex",
@@ -473,6 +482,12 @@ export function SchemaCompareView({
 
   // Data sync state.
   const [dataTable, setDataTable] = useState<string>("");
+  // ターゲット側の表名 (#1880)。空ならソースと同名。異名表・同一接続内の 2 表の照合に使う。
+  const [dataTargetTable, setDataTargetTable] = useState<string>("");
+  // 直近の比較で使った表の組 (比較後にセレクトを触っても表示は変わらない)。
+  const [dataComparedTables, setDataComparedTables] = useState<{ source: string; target: string } | null>(
+    null,
+  );
   const [dataLimit, setDataLimit] = useState(1000);
   // 全行をキーセットページングで比較する (#1539)。既定オン。オフは従来の件数上限つき比較。
   const [dataAllRows, setDataAllRows] = useState(true);
@@ -527,6 +542,8 @@ export function SchemaCompareView({
     setDataDiffId(null);
     releaseHeldDiff();
     setDataTable("");
+    setDataTargetTable("");
+    setDataComparedTables(null);
   }, [diff, releaseHeldDiff]);
 
   // Sessions this view opened, keyed by profile id so the same profile chosen
@@ -741,8 +758,49 @@ export function SchemaCompareView({
     [diff],
   );
 
+  // ソース側に存在する表 / ターゲット側に存在する表 (#1880)。異名の表は片側にしか無い表も選べる。
+  const sourceTableNames = useMemo(
+    () => (diff ? diff.tables.filter((tbl) => tbl.status !== "target_only").map((tbl) => tbl.name) : []),
+    [diff],
+  );
+  const targetTableNames = useMemo(
+    () => (diff ? diff.tables.filter((tbl) => tbl.status !== "source_only").map((tbl) => tbl.name) : []),
+    [diff],
+  );
+  // ターゲット未指定 (同名) のときは、同名の表が両側に無いと比較できない。
+  // 比較できない組み合わせの理由 (ボタンを無効にして案内文を出す)。
+  const effectiveTargetTable = dataTargetTable || dataTable;
+  const dataTablesBlockReason: "same" | "noSameName" | null = (() => {
+    if (!dataTable) return null;
+    if (
+      source.sessionId === target.sessionId &&
+      source.database === target.database &&
+      // MySQL / SQLite は表名の大小を区別しない環境があるので、バックエンドと同じく無視して比べる。
+      (sourceDriver === "postgres"
+        ? effectiveTargetTable === dataTable
+        : effectiveTargetTable.toLowerCase() === dataTable.toLowerCase())
+    ) {
+      return "same";
+    }
+    if (dataTargetTable === "" && !comparableTables.includes(dataTable)) return "noSameName";
+    return null;
+  })();
+  const dataTablesValid = dataTable !== "" && dataTablesBlockReason === null;
+
+  const resetDataDiffForTableChange = () => {
+    setDataDiff(null);
+    setDataDiffId(null);
+    releaseHeldDiff();
+    if (planKind === "data") {
+      setPlan(null);
+      setPlanKind(null);
+      setSelected(new Set());
+      setApplyResult(null);
+    }
+  };
+
   const compareData = useCallback(async () => {
-    if (!source.sessionId || !source.database || !target.sessionId || !target.database || !dataTable) {
+    if (!source.sessionId || !source.database || !target.sessionId || !target.database || !dataTablesValid) {
       return;
     }
     setDataComparing(true);
@@ -768,6 +826,7 @@ export function SchemaCompareView({
         targetSessionId: target.sessionId,
         targetDatabase: target.database,
         table: dataTable,
+        targetTable: dataTargetTable || null,
         limit: dataLimit,
         allRows: dataAllRows,
         ignoreColumns: dataIgnore
@@ -780,6 +839,7 @@ export function SchemaCompareView({
       releaseHeldDiff();
       heldDiffIdRef.current = result.diff_id;
       setDataComparedWith({ allRows: dataAllRows, limit: dataLimit });
+      setDataComparedTables({ source: dataTable, target: dataTargetTable || dataTable });
       setDataDiff(result.diff);
       setDataDiffId(result.diff_id);
     } catch (e) {
@@ -795,7 +855,18 @@ export function SchemaCompareView({
       setDataProgressRows(null);
       setDataComparing(false);
     }
-  }, [t, source, target, dataTable, dataLimit, dataAllRows, dataIgnore, releaseHeldDiff]);
+  }, [
+    t,
+    source,
+    target,
+    dataTable,
+    dataTargetTable,
+    dataTablesValid,
+    dataLimit,
+    dataAllRows,
+    dataIgnore,
+    releaseHeldDiff,
+  ]);
 
   // 画面を閉じたら、実行中の全行比較の問い合わせも止める。
   useEffect(
@@ -1126,38 +1197,58 @@ export function SchemaCompareView({
                 </Box>
               )}
 
-              {comparableTables.length > 0 && (
+              {sourceTableNames.length > 0 && targetTableNames.length > 0 && (
                 <Box css={syncCss}>
                   <chakra.h3 css={syncTitleCss}>{t("schemaCompareDataTitle")}</chakra.h3>
                   <chakra.p margin={0} fontSize="sm" color="app.textMuted">
                     {t("schemaCompareDataDesc")}
                   </chakra.p>
                   <Box css={syncControlsCss}>
-                    <Select
-                      value={dataTable}
-                      disabled={dataComparing || generating}
-                      onChange={(e) => {
-                        // 対象テーブルを変えたら前回のデータ差分・計画は別テーブルのものに
-                        // なるので破棄する (残すと前のテーブルの変更が流れる)。
-                        setDataTable(e.target.value);
-                        setDataDiff(null);
-                        setDataDiffId(null);
-                        releaseHeldDiff();
-                        if (planKind === "data") {
-                          setPlan(null);
-                          setPlanKind(null);
-                          setSelected(new Set());
-                          setApplyResult(null);
-                        }
-                      }}
-                    >
-                      <option value="">{t("schemaCompareDataSelectTable")}</option>
-                      {comparableTables.map((name) => (
-                        <option key={name} value={name}>
-                          {name}
-                        </option>
-                      ))}
-                    </Select>
+                    <Box css={tablePairCss}>
+                      <Box css={tableColCss}>
+                        <chakra.span css={sideLabelCss}>{t("schemaCompareDataSourceTable")}</chakra.span>
+                        <Select
+                          aria-label={t("schemaCompareDataSourceTable")}
+                          value={dataTable}
+                          disabled={dataComparing || generating}
+                          onChange={(e) => {
+                            // 対象テーブルを変えたら前回のデータ差分・計画は別テーブルのものに
+                            // なるので破棄する (残すと前のテーブルの変更が流れる)。
+                            setDataTable(e.target.value);
+                            resetDataDiffForTableChange();
+                          }}
+                        >
+                          <option value="">{t("schemaCompareDataSelectTable")}</option>
+                          {sourceTableNames.map((name) => (
+                            <option key={name} value={name}>
+                              {name}
+                            </option>
+                          ))}
+                        </Select>
+                      </Box>
+                      <chakra.span textStyle="caption" aria-hidden="true">
+                        →
+                      </chakra.span>
+                      <Box css={tableColCss}>
+                        <chakra.span css={sideLabelCss}>{t("schemaCompareDataTargetTable")}</chakra.span>
+                        <Select
+                          aria-label={t("schemaCompareDataTargetTable")}
+                          value={dataTargetTable}
+                          disabled={dataComparing || generating}
+                          onChange={(e) => {
+                            setDataTargetTable(e.target.value);
+                            resetDataDiffForTableChange();
+                          }}
+                        >
+                          <option value="">{t("schemaCompareDataTargetSameName")}</option>
+                          {targetTableNames.map((name) => (
+                            <option key={name} value={name}>
+                              {name}
+                            </option>
+                          ))}
+                        </Select>
+                      </Box>
+                    </Box>
                     <chakra.label css={optionLabelCss}>
                       <Checkbox
                         checked={dataAllRows}
@@ -1181,7 +1272,7 @@ export function SchemaCompareView({
                         disabled={dataComparing}
                       />
                     </chakra.label>
-                    <Button onClick={compareData} disabled={!dataTable || dataComparing}>
+                    <Button onClick={compareData} disabled={!dataTablesValid || dataComparing}>
                       {dataComparing ? t("schemaCompareComparing") : t("schemaCompareDataCompare")}
                     </Button>
                     {dataComparing && dataCancellable && (
@@ -1196,10 +1287,22 @@ export function SchemaCompareView({
                     )}
                   </Box>
 
+                  {dataTablesBlockReason && (
+                    <chakra.p margin={0} fontSize="sm" color="app.textWarning" role="status">
+                      {t(
+                        dataTablesBlockReason === "same"
+                          ? "schemaCompareDataSameTable"
+                          : "schemaCompareDataNoSameName",
+                      )}
+                    </chakra.p>
+                  )}
+
                   {dataDiff && (
                     <>
                       <chakra.p margin={0} fontSize="sm" color="app.textMuted">
-                        {t("schemaCompareDataComparedTable", { table: dataDiff.table })}
+                        {dataComparedTables && dataComparedTables.source !== dataComparedTables.target
+                          ? t("schemaCompareDataComparedPair", dataComparedTables)
+                          : t("schemaCompareDataComparedTable", { table: dataDiff.table })}
                       </chakra.p>
                       <Box css={summaryCss} role="group" aria-label={t("schemaCompareDataKinds")}>
                         {(

@@ -1665,6 +1665,23 @@ impl From<&TableDdlExtras> for TableExtrasInfo {
     }
 }
 
+/// テーブルで発火するトリガー 1 件 (`list_table_triggers`、#1867)。
+/// フライトレコーダーはトリガー起因のサーバ側副作用を記録しないので、書き込み前に
+/// 構造パネルで存在を把握できるようにする。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TableTrigger {
+    pub name: String,
+    /// `BEFORE` / `AFTER` / `INSTEAD OF`。
+    pub timing: String,
+    /// `INSERT` / `UPDATE` / `DELETE` (PostgreSQL は `INSERT OR UPDATE` のように複数、`TRUNCATE` も)。
+    pub event: String,
+    /// `CREATE TRIGGER ...` の定義本文。取得できなかったときは空文字。
+    pub definition: String,
+    /// 有効なら true。PostgreSQL の `ALTER TABLE ... DISABLE TRIGGER` した無効トリガーだけ false
+    /// (MySQL / SQLite は無効化の仕組みが無いので常に true)。
+    pub enabled: bool,
+}
+
 /// `SchemaObject.kind` の Rust ⇔ TS 集合一致を固定するテスト (#1840)。
 #[cfg(test)]
 mod schema_object_kind_tests {

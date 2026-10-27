@@ -16,7 +16,7 @@ use crate::db::schema_insight::{
 use crate::db::sqlite_rebuild::{plan_table_rebuild, SqliteRebuildEdit, SqliteRebuildPlan};
 use crate::db::types::{
     CheckConstraintInfo, ForeignKey, IndexInfo, RoutineSignature, SchemaObject, TableColumnInfo,
-    TableComment, TableExtrasInfo, TableIndexes, TableRowEstimate, TableSchema,
+    TableComment, TableExtrasInfo, TableIndexes, TableRowEstimate, TableSchema, TableTrigger,
 };
 use crate::db::where_used::WhereUsedTarget;
 use crate::db::DriverKind;
@@ -207,6 +207,23 @@ pub async fn describe_table_extras(
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     let extras = session.conn.table_ddl_extras(&database, &table).await?;
     Ok(TableExtrasInfo::from(&extras))
+}
+
+/// テーブルで発火するトリガーの一覧 (名前・タイミング・イベント・定義) を返す (#1867)。
+/// フライトレコーダーが記録しない「トリガー起因のサーバ側副作用」を書き込み前に把握するための
+/// 読み取り専用 introspection なので read_only セッションでも許可する。
+#[tauri::command]
+pub async fn list_table_triggers(
+    session_id: String,
+    database: String,
+    table: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<TableTrigger>> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session.conn.list_table_triggers(&database, &table).await
 }
 
 #[tauri::command]

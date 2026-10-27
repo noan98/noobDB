@@ -709,6 +709,14 @@ fn build_fixtures() -> serde_json::Value {
         checks: vec![check_info.clone()],
         generated: vec![generated_info.clone()],
     };
+    let table_trigger = t::TableTrigger {
+        name: "trg_users_audit".into(),
+        timing: "AFTER".into(),
+        event: "UPDATE".into(),
+        definition: "CREATE TRIGGER trg_users_audit AFTER UPDATE ON users BEGIN SELECT 1; END"
+            .into(),
+        enabled: true,
+    };
     let table_diff = TableDiff {
         name: "users".into(),
         status: DiffStatus::Different,
@@ -2460,6 +2468,7 @@ fn build_fixtures() -> serde_json::Value {
         "foreignKey": foreign_key,
         "indexInfo": index_info,
         "tableExtrasInfo": table_extras_info,
+        "tableTrigger": table_trigger,
         "schemaObject": schema_object,
         "routineSignature": routine_signature,
         "tableRowEstimate": table_row_estimate,

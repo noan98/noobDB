@@ -3643,6 +3643,16 @@ const en = {
   structureCheckDefinition: "Definition",
   structureGeneratedExpression: "Expression",
   structureGeneratedStorage: "Storage",
+  structureTriggers: "Triggers",
+  structureTriggerName: "Name",
+  structureTriggerTiming: "Timing",
+  structureTriggerEvent: "Event",
+  structureTriggerDefinition: "Definition",
+  structureTriggerNote:
+    "Trigger side effects are not recorded by the flight recorder and cannot be undone. Undoing a change can fire triggers again.",
+  structureTriggerShowDefinition: "Show definition",
+  structureTriggerDisabled: "(disabled)",
+  structureTriggersFailed: "Could not load triggers.",
   structureNoForeignKeys: "No foreign keys.",
   structureDdl: "CREATE TABLE (DDL)",
   structureDdlShow: "Show DDL",
@@ -5011,8 +5021,16 @@ const en = {
 
   schemaCompareDataTitle: "Sync row data (master / config)",
   schemaCompareDataDesc:
-    "Pick a table present on both sides and compare its rows (paired by primary key), then generate INSERT / UPDATE / DELETE to make the target match the source. Aimed at master / config tables — large tables are capped by the row limit.",
+    "Pick a source table and a target table (the same name by default; a differently named table, or two tables on one connection, also works) and compare their rows (paired by primary key), then generate INSERT / UPDATE / DELETE to make the target match the source. Aimed at master / config tables — large tables are capped by the row limit.",
   schemaCompareDataSelectTable: "Select a table...",
+  schemaCompareDataSameTable:
+    "The source and target are the same table. Choose a different target table (or a different connection / database).",
+  schemaCompareDataNoSameName:
+    "The target has no table with the same name. Choose the target table explicitly.",
+  schemaCompareDataSourceTable: "Source table",
+  schemaCompareDataTargetTable: "Target table",
+  schemaCompareDataTargetSameName: "Same name as source",
+  schemaCompareDataComparedPair: "Compared tables: {source} → {target}",
   schemaCompareDataLimit: "Row limit",
   schemaCompareDataAllRows: "Compare all rows",
   schemaCompareDataIgnore: "Ignore columns",
@@ -10546,6 +10564,16 @@ const ja: Dict = {
   structureCheckDefinition: "定義",
   structureGeneratedExpression: "生成式",
   structureGeneratedStorage: "格納方式",
+  structureTriggers: "トリガー",
+  structureTriggerName: "名前",
+  structureTriggerTiming: "タイミング",
+  structureTriggerEvent: "イベント",
+  structureTriggerDefinition: "定義",
+  structureTriggerNote:
+    "トリガーによる副作用はフライトレコーダーに記録されず、Undo でも戻せません。Undo の逆操作でトリガーが再び発火することがあります。",
+  structureTriggerShowDefinition: "定義を表示",
+  structureTriggerDisabled: "(無効)",
+  structureTriggersFailed: "トリガーを取得できませんでした。",
   structureNoForeignKeys: "外部キーはありません。",
   structureDdl: "CREATE TABLE (DDL)",
   structureDdlShow: "DDL を表示",
@@ -11901,8 +11929,16 @@ const ja: Dict = {
 
   schemaCompareDataTitle: "行データを同期 (マスタ / 設定)",
   schemaCompareDataDesc:
-    "両側に存在するテーブルを選び、行を主キーでペアリングして比較し、ターゲットをソースに合わせる INSERT / UPDATE / DELETE を生成します。マスタ / 設定データ向けで、大きなテーブルは件数上限で制限されます。",
+    "ソースとターゲットのテーブルを選び (既定は同名。異名の表や同一接続内の 2 表も可)、行を主キーでペアリングして比較し、ターゲットをソースに合わせる INSERT / UPDATE / DELETE を生成します。マスタ / 設定データ向けで、大きなテーブルは件数上限で制限されます。",
   schemaCompareDataSelectTable: "テーブルを選択...",
+  schemaCompareDataSameTable:
+    "ソースとターゲットが同じテーブルです。別のターゲットテーブル (または別の接続 / データベース) を選んでください。",
+  schemaCompareDataNoSameName:
+    "ターゲットに同名のテーブルがありません。ターゲットのテーブルを明示的に選んでください。",
+  schemaCompareDataSourceTable: "ソースのテーブル",
+  schemaCompareDataTargetTable: "ターゲットのテーブル",
+  schemaCompareDataTargetSameName: "ソースと同名",
+  schemaCompareDataComparedPair: "比較したテーブル: {source} → {target}",
   schemaCompareDataLimit: "件数上限",
   schemaCompareDataAllRows: "全行を比較する",
   schemaCompareDataIgnore: "除外列",

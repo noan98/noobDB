@@ -5893,6 +5893,13 @@
     "row_estimate": 1234,
     "total_bytes": 81920
   },
+  "tableTrigger": {
+    "definition": "CREATE TRIGGER trg_users_audit AFTER UPDATE ON users BEGIN SELECT 1; END",
+    "enabled": true,
+    "event": "UPDATE",
+    "name": "trg_users_audit",
+    "timing": "AFTER"
+  },
   "tableWatch": {
     "active": true,
     "created_at": "2026-01-01T00:00:00Z",
