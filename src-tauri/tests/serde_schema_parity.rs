@@ -1469,7 +1469,7 @@ fn build_fixtures() -> serde_json::Value {
     // 接続プロファイル: SslMode 5 種 × SshAuthMethod 3 種 (踏み台側も) を巡回。
     let all_ssl_modes = variants!(SslMode [Disable, Prefer, Require, VerifyCa, VerifyFull]);
     let all_auth_methods = variants!(SshAuthMethod [Key, Agent, Password]);
-    let connection_profile_variants: Vec<ProfileWithSecretFlags> = all_ssl_modes
+    let mut connection_profile_variants: Vec<ProfileWithSecretFlags> = all_ssl_modes
         .iter()
         .enumerate()
         .map(|(i, ssl_mode)| {
@@ -1484,6 +1484,15 @@ fn build_fixtures() -> serde_json::Value {
             profile
         })
         .collect();
+    // #1871: `ssm: Some(..)` のバリアント (ネスト構造体 `SsmConfig` のキー集合をネスト降下
+    // パリティで検査する。代表値は `ssm: None` なので、これが無いと死角になる)。
+    let mut ssm_profile = connection_profile.clone();
+    ssm_profile.profile.ssm = Some(t::SsmConfig {
+        target: "i-0123456789abcdef0".into(),
+        region: "ap-northeast-1".into(),
+        profile: Some("dev".into()),
+    });
+    connection_profile_variants.push(ssm_profile);
 
     // スニペットの scope (`kind` タグ付き enum) 3 種。
     let snippet_variants: Vec<Snippet> = vec![
@@ -1713,6 +1722,9 @@ fn build_fixtures() -> serde_json::Value {
             op: t::RowCountOp::Between,
             value: 1,
             max: Some(10),
+        },
+        t::AssertionRule::CustomSql {
+            sql: "SELECT * FROM users WHERE id < 0".into(),
         },
     ]
     .into_iter()
