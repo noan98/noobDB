@@ -9338,6 +9338,7 @@ export const ResultGrid = memo(
         ) : (
           <EmptyState
             illustration={<NoResultsIllustration />}
+            brandHalo
             icon="table"
             title={t("gridZeroRows")}
             description={t("gridZeroRowsHint", { ms: resultElapsedMs ?? 0 })}
@@ -9353,6 +9354,7 @@ export const ResultGrid = memo(
           <Box m="auto">
             <EmptyState
               illustration={<RunQueryIllustration />}
+              brandHalo
               icon="play"
               title={t("resultEmptyTitle")}
               description={t("resultEmpty")}
