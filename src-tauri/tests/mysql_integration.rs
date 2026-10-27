@@ -4515,9 +4515,10 @@ async fn mysql_list_table_triggers_when_env_set() {
     )
     .await
     .expect("create");
-    conn.execute(
+    // CREATE TRIGGER は prepared statement プロトコルで 1295 になるため text プロトコルで作る。
+    t::mysql_exec_text(
+        &opts,
         "CREATE TRIGGER noobdb_trg_a BEFORE UPDATE ON noobdb_trg_t FOR EACH ROW SET NEW.v = 1",
-        Some(&db),
     )
     .await
     .expect("trigger");
