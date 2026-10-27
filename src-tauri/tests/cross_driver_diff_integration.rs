@@ -9,6 +9,7 @@ use noobdb_lib::__test_api as t;
 use t::{RowStatus, Value};
 
 const TABLE: &str = "noobdb_xdiff_1869";
+const TABLE_PGSQLITE: &str = "noobdb_xdiff_1869_pgsqlite";
 const TEXT_KEY_TABLE: &str = "noobdb_xdiff_1869_text";
 
 async fn connect_both() -> Option<(t::Connection, String, t::Connection, String)> {
@@ -234,12 +235,17 @@ async fn postgres_vs_sqlite_data_diff_handles_floats_and_column_case() {
         .await
         .expect("connect sqlite");
 
-    run(&pg, pg_db, &format!("DROP TABLE IF EXISTS {TABLE}")).await;
+    run(
+        &pg,
+        pg_db,
+        &format!("DROP TABLE IF EXISTS {TABLE_PGSQLITE}"),
+    )
+    .await;
     run(
         &pg,
         pg_db,
         &format!(
-            "CREATE TABLE {TABLE} (id BIGINT PRIMARY KEY, flag BOOLEAN, price NUMERIC(10,2), \
+            "CREATE TABLE {TABLE_PGSQLITE} (id BIGINT PRIMARY KEY, flag BOOLEAN, price NUMERIC(10,2), \
              at TIMESTAMP(6), name VARCHAR(20))"
         ),
     )
@@ -248,7 +254,7 @@ async fn postgres_vs_sqlite_data_diff_handles_floats_and_column_case() {
         &sqlite,
         "main",
         &format!(
-            "CREATE TABLE {TABLE} (id INTEGER PRIMARY KEY, flag BOOLEAN, price NUMERIC(10,2), \
+            "CREATE TABLE {TABLE_PGSQLITE} (id INTEGER PRIMARY KEY, flag BOOLEAN, price NUMERIC(10,2), \
              at DATETIME, \"Name\" TEXT)"
         ),
     )
@@ -257,7 +263,7 @@ async fn postgres_vs_sqlite_data_diff_handles_floats_and_column_case() {
         &pg,
         pg_db,
         &format!(
-            "INSERT INTO {TABLE} VALUES (1, true, 1.10, '2024-01-02 03:04:05', 'x'), \
+            "INSERT INTO {TABLE_PGSQLITE} VALUES (1, true, 1.10, '2024-01-02 03:04:05', 'x'), \
              (2, false, 2.50, '2024-01-02 03:04:05.5', NULL)"
         ),
     )
@@ -266,7 +272,7 @@ async fn postgres_vs_sqlite_data_diff_handles_floats_and_column_case() {
         &sqlite,
         "main",
         &format!(
-            "INSERT INTO {TABLE} VALUES (1, 1, 1.10, '2024-01-02T03:04:05', 'x'), \
+            "INSERT INTO {TABLE_PGSQLITE} VALUES (1, 1, 1.10, '2024-01-02T03:04:05', 'x'), \
              (2, 0, 2.50, '2024-01-02 03:04:05.500', NULL)"
         ),
     )
@@ -275,12 +281,28 @@ async fn postgres_vs_sqlite_data_diff_handles_floats_and_column_case() {
     for swapped in [false, true] {
         let (diff, normalized) = if swapped {
             t::compare_table_data_via_core(
-                &sqlite, "main", &pg, pg_db, TABLE, TABLE, None, true, None,
+                &sqlite,
+                "main",
+                &pg,
+                pg_db,
+                TABLE_PGSQLITE,
+                TABLE_PGSQLITE,
+                None,
+                true,
+                None,
             )
             .await
         } else {
             t::compare_table_data_via_core(
-                &pg, pg_db, &sqlite, "main", TABLE, TABLE, None, true, None,
+                &pg,
+                pg_db,
+                &sqlite,
+                "main",
+                TABLE_PGSQLITE,
+                TABLE_PGSQLITE,
+                None,
+                true,
+                None,
             )
             .await
         }
@@ -297,16 +319,28 @@ async fn postgres_vs_sqlite_data_diff_handles_floats_and_column_case() {
         assert!(normalized
             .iter()
             .any(|n| n.column == "flag" && n.kind == t::NormalizeKind::Boolean));
+        // 大文字小文字だけが違う列 (name / Name) を対応付けたことを知らせる。
+        assert!(normalized
+            .iter()
+            .any(|n| n.kind == t::NormalizeKind::ColumnName));
     }
 
     run(
         &sqlite,
         "main",
-        &format!("UPDATE {TABLE} SET price = 2.51 WHERE id = 2"),
+        &format!("UPDATE {TABLE_PGSQLITE} SET price = 2.51 WHERE id = 2"),
     )
     .await;
     let (diff, _) = t::compare_table_data_via_core(
-        &pg, pg_db, &sqlite, "main", TABLE, TABLE, None, false, None,
+        &pg,
+        pg_db,
+        &sqlite,
+        "main",
+        TABLE_PGSQLITE,
+        TABLE_PGSQLITE,
+        None,
+        false,
+        None,
     )
     .await
     .expect("compare with diff");
@@ -314,7 +348,12 @@ async fn postgres_vs_sqlite_data_diff_handles_floats_and_column_case() {
     assert_eq!(diff.rows[0].status, RowStatus::Different);
     assert_eq!(diff.rows[0].changed_columns, vec!["price".to_string()]);
 
-    run(&pg, pg_db, &format!("DROP TABLE IF EXISTS {TABLE}")).await;
+    run(
+        &pg,
+        pg_db,
+        &format!("DROP TABLE IF EXISTS {TABLE_PGSQLITE}"),
+    )
+    .await;
     sqlite.close().await;
     let _ = std::fs::remove_file(&path);
 }

@@ -27,6 +27,8 @@ pub fn map_target_columns(
     source: &[String],
     target: &[String],
 ) -> std::result::Result<Vec<String>, (String, Vec<String>)> {
+    // 1 対 1 にするため、完全一致の列を先に予約する。
+    let mut used: Vec<&String> = source.iter().filter(|n| target.contains(n)).collect();
     let mut out = Vec::with_capacity(source.len());
     for name in source {
         if target.contains(name) {
@@ -39,7 +41,10 @@ pub fn map_target_columns(
             .collect();
         match candidates.as_slice() {
             [] => out.push(name.clone()),
-            [one] => out.push((*one).clone()),
+            [one] if !used.contains(one) => {
+                used.push(one);
+                out.push((*one).clone());
+            }
             many => {
                 return Err((name.clone(), many.iter().map(|c| (*c).clone()).collect()));
             }
@@ -173,6 +178,9 @@ pub enum NormalizeKind {
     Json,
     /// decimal と浮動小数の列を、浮動小数 (f64) の値で比べた (丸め誤差を無視する)。
     FloatCompare,
+    /// 列名の大文字小文字だけが違う列を対応付けた。`NormalizedColumn.column` がソースの列名、
+    /// `target_type` がターゲットの列名 (`source_type` はソースの型)。
+    ColumnName,
 }
 
 /// 正規化して一致とみなした列 1 つ。`preview_transfer` の縮退警告と同じ要領で画面に出す。
@@ -277,7 +285,8 @@ pub fn build_norms(
             }
         };
         match &ty {
-            TransferType::Boolean if sa != ta => push(NormalizeKind::Boolean),
+            // ドライバが違うので、型名が同じ Boolean でも表現 (真偽 / 0・1) は違いうる。常に知らせる。
+            TransferType::Boolean => push(NormalizeKind::Boolean),
             TransferType::Decimal { .. } => {
                 push(NormalizeKind::DecimalScale);
                 // SQLite 側に実際の浮動小数が入っていれば丸めて比べるので、精度が分からなくても必ず知らせる。
@@ -1011,6 +1020,15 @@ mod tests {
         assert_eq!(
             map_target_columns(&v(&["Id"]), &v(&["id", "ID"])),
             Err(("Id".to_string(), v(&["id", "ID"])))
+        );
+        // 1 対 1: 使用済みのターゲット列へは対応付けない。
+        assert_eq!(
+            map_target_columns(&v(&["id", "ID"]), &v(&["id"])),
+            Err(("ID".to_string(), v(&["id"])))
+        );
+        assert_eq!(
+            map_target_columns(&v(&["ID", "Id"]), &v(&["id"])),
+            Err(("Id".to_string(), v(&["id"])))
         );
         // 当たらない列はそのまま (欠落は別の検証が報告する)。
         assert_eq!(map_target_columns(&v(&["x"]), &v(&["y"])), Ok(v(&["x"])));

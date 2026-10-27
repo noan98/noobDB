@@ -4915,11 +4915,14 @@ const en = {
   schemaCompareCrossNormJson:
     "{column} ({source} / {target}): JSON is compared by content, ignoring whitespace and key order. Numbers may be compared as double-precision floats.",
   schemaCompareCrossNormFloatCompare:
-    "{column} ({source} / {target}): decimal and floating-point values were compared as floating-point numbers, ignoring rounding error.",
+    "{column} ({source} / {target}): values were converted to double-precision floating-point numbers before comparing, so rounding error is ignored.",
+  schemaCompareCrossNormColumnName:
+    "{column} on the source was matched to {target} on the target (names differ only in case).",
+  schemaCompareCrossNamesTitle: "Columns matched by name, ignoring case",
   schemaCompareCrossErrIntegerKey:
     "Cross-driver comparison supports integer primary keys only. Compare tables whose primary key is an integer column.",
   schemaCompareCrossErrAmbiguousColumn:
-    "A column on the source matches more than one column on the target (names that differ only in case). Rename the columns so that exactly one matches.",
+    "A column on the source cannot be matched to exactly one column on the target (names that differ only in case). Rename the columns so that exactly one matches.",
   schemaCompareCrossErrMissingColumns:
     "The target table is missing columns that exist on the source. Cross-driver comparison needs the same column names (case differences are tolerated).",
   schemaCompareCrossErrDetail: "Details: {detail}",
@@ -11875,11 +11878,14 @@ const ja: Dict = {
   schemaCompareCrossNormJson:
     "{column} ({source} / {target}): JSON は空白とキー順を無視して内容で比べました。数値は倍精度で比べることがあります。",
   schemaCompareCrossNormFloatCompare:
-    "{column} ({source} / {target}): decimal と浮動小数を、丸め誤差を無視して浮動小数の値で比べました。",
+    "{column} ({source} / {target}): 浮動小数 (倍精度) に変換して比べたため、丸め誤差は無視されます。",
+  schemaCompareCrossNormColumnName:
+    "比較元の {column} を、比較先の {target} に対応付けました (大文字小文字だけが違う名前)。",
+  schemaCompareCrossNamesTitle: "大文字小文字を無視して対応付けた列",
   schemaCompareCrossErrIntegerKey:
     "ドライバをまたぐ比較は、主キーが整数の表だけ比べられます。主キーが整数列の表を選んでください。",
   schemaCompareCrossErrAmbiguousColumn:
-    "比較元の列が、比較先の複数の列 (大文字小文字だけが違う名前) に当てはまります。ちょうど 1 つに決まるように列名をそろえてください。",
+    "比較元の列を、比較先のちょうど 1 つの列に対応付けられません (大文字小文字だけが違う名前)。ちょうど 1 つに決まるように列名をそろえてください。",
   schemaCompareCrossErrMissingColumns:
     "比較先の表に、比較元にある列が足りません。ドライバをまたぐ比較では同じ列名が必要です (大文字小文字の違いは許容します)。",
   schemaCompareCrossErrDetail: "詳細: {detail}",

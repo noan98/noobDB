@@ -1003,6 +1003,7 @@ export const normalizeKind = z.enum([
   "timestamp_format",
   "json",
   "float_compare",
+  "column_name",
 ]);
 
 /** 正規化して一致とみなした列 (ドライバをまたぐ比較, #1869)。 */

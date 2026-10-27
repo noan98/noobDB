@@ -1791,7 +1791,7 @@ async fn prepare_data_compare(
                 crate::db::cross_compare::map_target_columns(&columns, &names).map_err(
                     |(col, candidates)| {
                         AppError::InvalidInput(format!(
-                            "column '{col}' matches multiple columns on the target ({}); rename the columns so that exactly one matches",
+                            "column '{col}' cannot be matched to exactly one column on the target (candidates: {}); rename the columns so that exactly one matches",
                             candidates.join(", ")
                         ))
                     },
@@ -1893,6 +1893,17 @@ async fn prepare_data_compare(
             &target_types,
             &ignore_columns,
         );
+        let mut report = report;
+        for (i, name) in columns.iter().enumerate() {
+            if target_names[i] != *name && !ignore_columns.contains(name) {
+                report.push(NormalizedColumn {
+                    column: name.clone(),
+                    kind: crate::db::cross_compare::NormalizeKind::ColumnName,
+                    source_type: column_types[i].clone(),
+                    target_type: target_names[i].clone(),
+                });
+            }
+        }
         norms.target_columns = target_names.clone();
         norms.target_pk = target_primary_key.clone();
         (Some(norms), report)
@@ -2669,5 +2680,29 @@ mod keyset_tests {
         assert!(msg(check("nope").await).contains("has no columns"));
         check("users").await.unwrap();
         let _ = std::fs::remove_file(path);
+    }
+}
+
+#[cfg(test)]
+mod cross_error_text_tests {
+    /// フロント (`crossDriverErrorKey`) が判定に使うバックエンドのエラー文言。ここで固定し、
+    /// フロントのソースにも同じ文字列があることを確かめる (文言を変えたらどちらかが落ちる)。
+    const MARKS: [&str; 3] = [
+        "supports integer primary keys only",
+        "cannot be matched to exactly one column on the target",
+        "is missing column(s)",
+    ];
+
+    #[test]
+    fn frontend_error_marks_match_backend_messages() {
+        let backend = include_str!("diff.rs");
+        let frontend = include_str!("../../../src/components/CrossDriverVerify.tsx");
+        for mark in MARKS {
+            assert!(
+                backend.matches(mark).count() >= 2,
+                "backend must emit {mark:?} (besides this test)"
+            );
+            assert!(frontend.contains(mark), "frontend must match {mark:?}");
+        }
     }
 }

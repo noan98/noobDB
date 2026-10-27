@@ -1977,7 +1977,8 @@ export type NormalizeKind =
   | "timestamp_tz_degraded"
   | "timestamp_format"
   | "json"
-  | "float_compare";
+  | "float_compare"
+  | "column_name";
 
 /** ドライバをまたぐ比較で正規化して一致とみなした列 (#1869)。 */
 export interface NormalizedColumn {

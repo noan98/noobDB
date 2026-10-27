@@ -18,6 +18,7 @@ const NORMALIZE_MESSAGE_KEYS: Record<NormalizeKind, I18nKey> = {
   timestamp_format: "schemaCompareCrossNormTimestampFormat",
   json: "schemaCompareCrossNormJson",
   float_compare: "schemaCompareCrossNormFloatCompare",
+  column_name: "schemaCompareCrossNormColumnName",
 };
 
 const ROW_LABEL_KEYS = {
@@ -74,6 +75,8 @@ function RowItem({ row, diff }: { row: RowDiff; diff: DataDiff }) {
  */
 export function CrossDriverResult({ diff, normalized }: { diff: DataDiff; normalized: NormalizedColumn[] }) {
   const t = useT();
+  const names = normalized.filter((n) => n.kind === "column_name");
+  const values = normalized.filter((n) => n.kind !== "column_name");
   const counts = { source_only: 0, target_only: 0, different: 0 };
   for (const r of diff.rows) counts[r.status] += 1;
   const shown = diff.rows.slice(0, CROSS_VERIFY_ROW_LIMIT);
@@ -97,10 +100,21 @@ export function CrossDriverResult({ diff, normalized }: { diff: DataDiff; normal
           </Callout>
         )
       )}
-      {normalized.length > 0 && (
+      {names.length > 0 && (
+        <Callout tone="info" title={t("schemaCompareCrossNamesTitle")} role="status">
+          <chakra.ul listStyleType="disc" pl="4" m="0">
+            {names.map((n) => (
+              <li key={n.column}>
+                {t("schemaCompareCrossNormColumnName", { column: n.column, target: n.target_type })}
+              </li>
+            ))}
+          </chakra.ul>
+        </Callout>
+      )}
+      {values.length > 0 && (
         <Callout tone="warning" title={t("schemaCompareCrossNormalizedTitle")} role="status">
           <chakra.ul listStyleType="disc" pl="4" m="0">
-            {normalized.map((n) => (
+            {values.map((n) => (
               <li key={`${n.column}:${n.kind}`}>
                 {t(NORMALIZE_MESSAGE_KEYS[n.kind], {
                   column: n.column,
@@ -145,7 +159,7 @@ export function CrossDriverResult({ diff, normalized }: { diff: DataDiff; normal
  */
 export function crossDriverErrorKey(message: string): I18nKey | null {
   if (message.includes("supports integer primary keys only")) return "schemaCompareCrossErrIntegerKey";
-  if (message.includes("matches multiple columns on the target"))
+  if (message.includes("cannot be matched to exactly one column on the target"))
     return "schemaCompareCrossErrAmbiguousColumn";
   if (message.includes("is missing column(s)")) return "schemaCompareCrossErrMissingColumns";
   return null;

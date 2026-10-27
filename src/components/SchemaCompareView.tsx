@@ -34,6 +34,7 @@ import { rowKeyNote } from "../rowKey";
 import { semanticColorVar } from "../semanticColors";
 import { useSettings } from "../settings";
 import { CrossDriverNotice, CrossDriverResult, crossDriverErrorKey } from "./CrossDriverVerify";
+import { Callout } from "./Callout";
 import { ErrorNote } from "./modalForm";
 import { useConfirm } from "./ConfirmDialog";
 import { statusColors } from "./diffStatusColors";
@@ -1218,7 +1219,12 @@ export function SchemaCompareView({
         </chakra.p>
       )}
 
-      {driverMismatch && syncError && (
+      {driverMismatch && syncError && syncError === t("schemaCompareDataCancelled") && (
+        <Callout tone="info" role="status">
+          {syncError}
+        </Callout>
+      )}
+      {driverMismatch && syncError && syncError !== t("schemaCompareDataCancelled") && (
         <ErrorNote title={t("schemaCompareCrossErrorTitle")}>
           {(() => {
             const key = crossDriverErrorKey(syncError);
