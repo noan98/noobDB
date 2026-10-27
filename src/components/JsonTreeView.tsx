@@ -38,9 +38,10 @@ import {
   type JsonSearchResult,
 } from "./jsonTree";
 import { useToast } from "./Toast";
-import { TreeChevron, TreeCollapse, TreeRow } from "./tree";
+import { TreeChevron, TreeRow } from "./tree";
 import { Button, Input } from "./ui";
 import { Tooltip } from "./Tooltip";
+import { useJsonTreeReveal } from "./useJsonTreeReveal";
 
 /**
  * 展開したコンテナで一度に描画する子の数。これを超える配列/オブジェクトは
@@ -198,8 +199,19 @@ export function JsonTreeView({ root, columnName, driver, update }: Props) {
     });
   }, [store, search, expanded, searchCollapsed, pages, selectedKey]);
 
+  // 展開で露出した行のリビール (#1863)。状態変更の直前に行を記録し、反映後 (行の購読が
+  // 再レンダーし終えた直後のマイクロタスク) に新規行だけ再生する。
+  const treeRef = useRef<HTMLDivElement>(null);
+  const reveal = useJsonTreeReveal(treeRef);
+  const { mark: markReveal, flush: flushReveal, pending: revealPending } = reveal;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: expanded / searchCollapsed の変化を契機に再生する (effect 内では参照しない)
+  useLayoutEffect(() => {
+    if (revealPending.current) queueMicrotask(flushReveal);
+  }, [expanded, searchCollapsed, flushReveal, revealPending]);
+
   const toggle = useCallback(
     (key: string) => {
+      markReveal();
       const flip = (prev: ReadonlySet<string>) => {
         const next = new Set(prev);
         if (next.has(key)) next.delete(key);
@@ -209,7 +221,7 @@ export function JsonTreeView({ root, columnName, driver, update }: Props) {
       if (store.get().search?.ancestors.has(key)) setSearchCollapsed(flip);
       else setExpanded(flip);
     },
-    [store],
+    [store, markReveal],
   );
   const showMore = useCallback(
     (key: string) =>
@@ -225,6 +237,7 @@ export function JsonTreeView({ root, columnName, driver, update }: Props) {
   const [expandNote, setExpandNote] = useState(false);
   const expandToDepth = (depth: number) => {
     const { keys, truncated } = expandKeysToDepth(root, depth);
+    markReveal();
     if (keys.size === 0) keys.add(rootKey);
     setExpanded(keys);
     setSearchCollapsed(new Set());
@@ -232,7 +245,6 @@ export function JsonTreeView({ root, columnName, driver, update }: Props) {
   };
   const [depthInput, setDepthInput] = useState("");
 
-  const treeRef = useRef<HTMLDivElement>(null);
   const { onKeyDown } = useRovingFocus(treeRef, "[role=treeitem]", {
     orientation: "vertical",
     wrap: false,
@@ -619,11 +631,10 @@ const JsonTreeRow = memo(function JsonTreeRow({ node, pkey: key, segment, level,
           </chakra.span>
         )}
       </TreeRow>
-      {container && (
-        // 接続ツリー (ConnectionList) と同じ TreeCollapse で開閉する (#1186)。
-        // opacity のみを補間するので height 補間のコストは掛からず、深いネスト
-        // でも重くならない。非コンテナ行では TreeCollapse 自体を作らない。
-        <TreeCollapse open={open}>
+      {container &&
+        // 開閉の演出は `useJsonTreeReveal` (#1863) が新規に現れた行へ直接かける。
+        // ネストごとの Motion コンポーネント (AnimatePresence) は常駐させない。
+        open && (
           <chakra.div role="group">
             {childRows}
             {hidden > 0 && (
@@ -648,8 +659,7 @@ const JsonTreeRow = memo(function JsonTreeRow({ node, pkey: key, segment, level,
               </TreeRow>
             )}
           </chakra.div>
-        </TreeCollapse>
-      )}
+        )}
     </>
   );
 });
