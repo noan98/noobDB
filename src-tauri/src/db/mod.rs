@@ -47,6 +47,7 @@ pub mod stream_batch;
 pub mod sync;
 /// 既存テーブルの CREATE TABLE DDL をカタログ情報から再構成する純ロジック (#1001)。
 pub mod table_ddl;
+pub mod table_triggers;
 pub mod transfer;
 /// 明示トランザクション開始オプション (分離レベル / READ ONLY, #1166)。
 pub mod tx_options;
@@ -1494,6 +1495,19 @@ impl Connection {
                 .find(|(name, _)| name == table)
                 .map(|(_, e)| e)
                 .unwrap_or_default()),
+        }
+    }
+
+    /// `table` で発火するトリガーの一覧 (#1867)。読み取りのみ。3 ドライバとも同じ [`types::TableTrigger`]。
+    pub async fn list_table_triggers(
+        &self,
+        db: &str,
+        table: &str,
+    ) -> Result<Vec<types::TableTrigger>> {
+        match self {
+            Connection::MySql(c) => c.list_table_triggers(db, table).await,
+            Connection::Postgres(c) => c.list_table_triggers(db, table).await,
+            Connection::Sqlite(c) => c.list_table_triggers(table).await,
         }
     }
 

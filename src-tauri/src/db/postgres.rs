@@ -2320,6 +2320,41 @@ impl PostgresConn {
             .unwrap_or_default())
     }
 
+    /// `table` のトリガー一覧 (#1867)。`pg_trigger` を `tgtype` のビットでタイミング・イベントに
+    /// 分解し、定義は `pg_get_triggerdef`。制約トリガーなどの内部トリガー (`tgisinternal`) は除く。
+    pub async fn list_table_triggers(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<super::types::TableTrigger>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"SELECT t.tgname::text, t.tgtype::int4, pg_get_triggerdef(t.oid), t.tgenabled::text
+                 FROM pg_trigger t
+                 JOIN pg_class c ON c.oid = t.tgrelid
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = $1 AND c.relname = $2 AND NOT t.tgisinternal
+                ORDER BY t.tgname"#,
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let tgtype: i32 = r.try_get(1)?;
+            let (timing, event) = super::table_triggers::pg_timing_and_event(tgtype);
+            out.push(super::types::TableTrigger {
+                name: r.try_get(0)?,
+                timing,
+                event,
+                definition: r.try_get::<Option<String>, _>(2)?.unwrap_or_default(),
+                // 'D' = DISABLE TRIGGER で無効化されている。
+                enabled: r.try_get::<String, _>(3)? != "D",
+            });
+        }
+        Ok(out)
+    }
+
     /// `schema` の全テーブルの CHECK 制約と生成列の式 (#1837、スキーマ比較用)。
     pub async fn ddl_extras_for_database(
         &self,

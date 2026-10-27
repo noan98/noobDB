@@ -2552,6 +2552,44 @@ impl MySqlConn {
         show_create_text(&row, &[col])
     }
 
+    /// `table` のトリガー一覧 (#1867)。`information_schema.TRIGGERS` から名前・タイミング・
+    /// イベントを読み、定義は `SHOW CREATE TRIGGER` (`object_definition`) で補う。
+    pub async fn list_table_triggers(
+        &self,
+        db: &str,
+        table: &str,
+    ) -> Result<Vec<super::types::TableTrigger>> {
+        let rows: Vec<MySqlRow> = sqlx::query(
+            "SELECT TRIGGER_NAME, ACTION_TIMING, EVENT_MANIPULATION \
+               FROM information_schema.TRIGGERS \
+              WHERE EVENT_OBJECT_SCHEMA = ? AND EVENT_OBJECT_TABLE = ? \
+              ORDER BY EVENT_MANIPULATION, FIELD(ACTION_TIMING, 'BEFORE', 'AFTER'), ACTION_ORDER, TRIGGER_NAME",
+        )
+        .bind(db)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let name = text_or_bytes(r, 0).unwrap_or_default();
+            let timing = text_or_bytes(r, 1).unwrap_or_default();
+            let event = text_or_bytes(r, 2).unwrap_or_default();
+            // 権限不足などで定義が読めなくても一覧は出す (定義は空文字)。
+            let definition = self
+                .object_definition(db, "trigger", &name)
+                .await
+                .unwrap_or_default();
+            out.push(super::types::TableTrigger {
+                name,
+                timing: timing.to_ascii_uppercase(),
+                event: event.to_ascii_uppercase(),
+                definition,
+                enabled: true,
+            });
+        }
+        Ok(out)
+    }
+
     pub async fn list_indexes(&self, db: &str, table: &str) -> Result<Vec<IndexInfo>> {
         // information_schema.STATISTICS has one row per (index, column). Order by
         // SEQ_IN_INDEX so composite indexes keep declaration order. NON_UNIQUE=0

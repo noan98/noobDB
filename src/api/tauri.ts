@@ -665,6 +665,19 @@ export interface TableExtrasInfo {
   generated: GeneratedColumnInfo[];
 }
 
+/** `list_table_triggers` の 1 件: テーブルで発火するトリガー (#1867)。 */
+export interface TableTrigger {
+  name: string;
+  /** `BEFORE` / `AFTER` / `INSTEAD OF`。 */
+  timing: string;
+  /** `INSERT` / `UPDATE` / `DELETE` (PostgreSQL は `INSERT OR UPDATE` のように複数)。 */
+  event: string;
+  /** `CREATE TRIGGER ...` の定義本文。取得できなかったときは空文字。 */
+  definition: string;
+  /** false は無効化されたトリガー (PostgreSQL のみ)。 */
+  enabled: boolean;
+}
+
 /** 非テーブルのスキーマオブジェクト種別。 */
 export type SchemaObjectKind = "view" | "materialized_view" | "procedure" | "function" | "trigger";
 
