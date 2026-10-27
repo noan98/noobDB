@@ -113,6 +113,12 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
     [],
   );
 
+  // 適用に成功した行の undone を再読込より先に反転する (再読込までの間に古いボタンを押せないように)。
+  const markApplied = (ids: number[], undone: boolean) => {
+    const set = new Set(ids);
+    setEntries((rows) => rows.map((r) => (set.has(r.id) ? { ...r, undone } : r)));
+  };
+
   const flashRows = (ids: number[]) => {
     if (reducedMotionActive() || prefersStaticMotion() || ids.length === 0) return;
     if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
@@ -189,6 +195,7 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
             ? await api.redoFlightRecord(sessionId, entry.id, false)
             : await api.undoFlightRecord(sessionId, entry.id, false);
           if (settled.applied) {
+            markApplied([entry.id], !redo);
             flashRows([entry.id]);
             setReloadKey((k) => k + 1);
           }
@@ -272,6 +279,7 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
         } else {
           toast.info(t("flightRecorderAlreadyRestored"));
         }
+        markApplied([entry.id], !redo);
         flashRows([entry.id]);
         setReloadKey((k) => k + 1);
         // 逆 SQL は適用済みだが記録の状態を保存できなかった等の警告を利用者へ伝える (#1600)。
@@ -360,7 +368,9 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
         if (preview.warnings.length === 0) {
           const settled = await api.applyFlightBatch(sessionId, batchId, false, redo);
           if (settled.applied) {
-            flashRows(batchEntryIds(batchId));
+            const ids = preview.recordIds.length > 0 ? preview.recordIds : batchEntryIds(batchId);
+            markApplied(ids, !redo);
+            flashRows(ids);
             setReloadKey((k) => k + 1);
           }
           toast.info(t(settled.applied ? "flightRecorderAlreadyRestored" : "flightRecorderNothingToUndo"));
@@ -425,7 +435,9 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
         } else {
           toast.info(t("flightRecorderAlreadyRestored"));
         }
-        flashRows(batchEntryIds(batchId));
+        const ids = preview.recordIds.length > 0 ? preview.recordIds : batchEntryIds(batchId);
+        markApplied(ids, !redo);
+        flashRows(ids);
         setReloadKey((k) => k + 1);
         for (const w of outcome.warnings ?? []) toast.info(w, 8000);
       } else {
