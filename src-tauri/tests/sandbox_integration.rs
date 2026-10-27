@@ -1082,6 +1082,16 @@ async fn read_only_source_session_can_sandbox_but_source_is_never_written() {
     if let Some(sess) = state.remove(&create.session_id).await {
         sess.conn.close().await;
     }
+    // close の後で、サンドボックスの SQLite ファイルと -wal / -shm を明示的に消す
+    // (Windows では誤用の破棄時に開いたままで消せていない。存在しなくてもエラーにしない)。
+    let sandbox_file = std::path::PathBuf::from(&create.sandbox.file_path);
+    for f in [
+        sandbox_file.clone(),
+        sandbox_file.with_extension("sqlite-wal"),
+        sandbox_file.with_extension("sqlite-shm"),
+    ] {
+        let _ = std::fs::remove_file(f);
+    }
     guard.discard().await;
 
     // 元 DB は最初のまま (行もスキーマも)。

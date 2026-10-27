@@ -184,6 +184,8 @@ interface CommandInfo {
   signature: string;
   /** コマンド本体 + 本体から辿れる同ファイル関数の本体を連結したコード。 */
   reachable: string;
+  /** 到達した関数ごとの本体 (関数名 → 本体。同名は連結)。 */
+  fnBodies: Record<string, string>;
 }
 
 const COMMAND_RE =
@@ -212,10 +214,12 @@ function extractCommands(file: string, rawSource: string): CommandInfo[] {
     const seen = new Set<string>([name]);
     const queue = [name];
     let reachable = "";
+    const fnBodies: Record<string, string> = {};
     while (queue.length > 0) {
       const cur = queue.pop() as string;
       for (const f of byName.get(cur) ?? []) {
         reachable += `${f.body}\n`;
+        fnBodies[f.name] = `${fnBodies[f.name] ?? ""}${f.body}\n`;
         for (const other of byName.keys()) {
           if (!seen.has(other) && calls(f.body, other)) {
             seen.add(other);
@@ -229,6 +233,7 @@ function extractCommands(file: string, rawSource: string): CommandInfo[] {
       file,
       signature: own.map((f) => f.signature).join("\n"),
       reachable,
+      fnBodies,
     });
     m = COMMAND_RE.exec(code);
   }
@@ -805,7 +810,8 @@ function driverCalls(code: string): DriverCall[] {
   let m: RegExpExecArray | null = re.exec(code);
   while (m !== null) {
     const method = m[1];
-    const before = code.slice(0, m.index).replace(/\s+$/, "");
+    // 後方固定幅だけを見る (全体を毎回 slice すると O(n^2))。受け手の連鎖は 256 文字に収まる。
+    const before = code.slice(Math.max(0, m.index - 256), m.index).replace(/\s+$/, "");
     let receiver = "";
     let isMethod = false;
     if (before.endsWith(".")) {
@@ -915,6 +921,42 @@ const LIFECYCLE_REQUIRED: Record<string, RegExp[]> = {
   set_emergency_mode: [/\benabled\s*&&\s*!\s*session\.read_only\b/],
 };
 
+/**
+ * 接続変数 `conn` の束縛。`conn` という名前の受け手を「自前で張った一時接続」と信用する許可リスト
+ * (`conn.execute_transaction` など) は、`conn` の正体が 1 か所の束縛で固定されている前提で成り立つ。
+ * 再束縛・クロージャ引数・`for` 変数などで別の接続 (ユーザのセッション) に化けないよう、束縛はちょうど 1 か所で
+ * 指定の形であることを要求する。
+ */
+const CONN_BINDING_PATTERNS: RegExp[] = [
+  /\blet\s+(?:mut\s+)?conn\b/g,
+  /\blet\s*\([^)]*\bconn\b[^)]*\)/g,
+  /\|\s*(?:mut\s+)?conn\s*(?::[^|]*)?\|/g,
+  /\bfor\s+conn\s+in\b/g,
+  /\bconn\s*=\s*&/g,
+];
+const CONN_BINDING_REQUIRED: Record<string, { fn: string; re: RegExp }> = {
+  create_sandbox: {
+    fn: "create_sandbox_inner",
+    re: /\blet\s+conn\s*=\s*match\s+Connection::connect\s*\(\s*&opts\s*\)/,
+  },
+  test_connection: {
+    fn: "test_connection",
+    re: /\blet\s*\(\s*\w+\s*,\s*\w+\s*,\s*conn\s*\)\s*=\s*open_connection\s*\(/,
+  },
+};
+
+/**
+ * 接続の流出: フィールドの `….conn` を値のまま (`.` で続けず) 渡す形。受け取り側で別名を付けられると
+ * 受け手の許可リストをすり抜けるので失格にする。**残る穴**: `Session` ごと (`session` / `&session`) 別の関数へ
+ * 渡す形は検出できない (関数側の解析は同一ファイルの到達コードに限られる)。
+ */
+const CONN_LEAK_RE = /\b\w+(?:\s*\.\s*\w+)*\s*\.\s*conn\b(?!\s*\.)/;
+
+/** 呼び出しごとの引数の固定。`reconnect` の強制再接続は旧トランザクションを必ず rollback (false) する。 */
+const CALL_ARG_PINS: Record<string, RegExp> = {
+  "old.conn.finish_transaction": /^\s*false\s*$/,
+};
+
 /** SCRATCH / LIFECYCLE 共通: 許可リスト・必須の足場・クライアント SQL 引数の有無を検査する。 */
 function checkScratchLike(
   c: CommandInfo,
@@ -934,8 +976,26 @@ function checkScratchLike(
       const kind = CONNECTION_WRITE_METHODS.has(call.method) ? "" : " (impl Connection 未分類のメソッド?)";
       return `許可されていないドライバ呼び出しに到達する: ${key}(...)${kind} (ユーザの DB へ書き込む経路になっていないか確認し、正当なら許可リストへ理由つきで追加する)`;
     }
+    const pin = CALL_ARG_PINS[key];
+    if (pin && !pin.test(call.firstArg)) {
+      return `${key}(...) の第 1 引数が固定値ではない: ${pin}`;
+    }
     if (literalOnly && SQL_ARG_METHODS.has(call.method) && !LITERAL_ONLY_ARG.test(call.firstArg)) {
       return `${key}(...) の引数が固定の文字列リテラルではない (クライアント供給の SQL を実行していないか)`;
+    }
+  }
+  const leak = CONN_LEAK_RE.exec(c.reachable);
+  if (leak) {
+    return `接続をフィールドごと値で渡している: ${leak[0]} (受け手の許可リストをすり抜ける恐れ)`;
+  }
+  const binding = CONN_BINDING_REQUIRED[c.name];
+  if (binding) {
+    const bindingRe = binding.re;
+    // 束縛は接続を張る関数の本体 (binding.fn) で数える。他の下請け関数の同名ローカルは別スコープ。
+    const scope = c.fnBodies[binding.fn] ?? c.fnBodies[c.name] ?? "";
+    const count = CONN_BINDING_PATTERNS.reduce((n, re) => n + (scope.match(re)?.length ?? 0), 0);
+    if (count !== 1 || !bindingRe.test(scope)) {
+      return `conn の束縛が指定の 1 か所ではない (束縛 ${count} 件。再束縛・クロージャ引数・for 変数は不可): ${bindingRe}`;
     }
   }
   const okPaths = allowedPaths[c.name] ?? [];
@@ -989,7 +1049,7 @@ const SAFE_CHECKS: Record<Reason, (c: CommandInfo) => string | null> = {
 // 実ソースの抽出
 // ---------------------------------------------------------------------------
 
-const dbModSources = import.meta.glob("../../src-tauri/src/db/mod.rs", {
+const allRustSources = import.meta.glob("../../src-tauri/src/**/*.rs", {
   eager: true,
   query: "?raw",
   import: "default",
@@ -1110,15 +1170,20 @@ describe("read_only 書き込みコマンド網羅パリティ (#1778)", () => {
   });
 
   it("impl Connection の pub fn は全件『読み取り / 書き込み・実行』に分類されている (#1882)", () => {
-    const src = Object.values(dbModSources)[0] ?? "";
-    const code = blankNonCode(src);
-    const start = code.indexOf("impl Connection {");
-    expect(start, "db/mod.rs に impl Connection が見つからない").toBeGreaterThan(-1);
-    const end = matchBrace(code, code.indexOf("{", start));
-    const block = code.slice(start, end + 1);
-    const methods = [...block.matchAll(/\n {4}pub(?:\(crate\))?\s+(?:async\s+)?fn\s+(\w+)/g)].map(
-      (m) => m[1],
-    );
+    // src-tauri/src 全体の `impl Connection { .. }` を集める (別ファイルの追加 impl も分類の対象)。
+    const methods: string[] = [];
+    for (const src of Object.values(allRustSources)) {
+      const code = blankNonCode(src);
+      const implRe = /^[ \t]*impl\s+(?:(?:crate::db::|super::)?Connection)\b\s*\{/gm;
+      let im: RegExpExecArray | null = implRe.exec(code);
+      while (im !== null) {
+        const open = im.index + im[0].length - 1;
+        const block = code.slice(open, matchBrace(code, open) + 1);
+        for (const m of block.matchAll(/\n {4}pub(?:\([^)]*\))?\s+(?:async\s+)?fn\s+(\w+)/g))
+          methods.push(m[1]);
+        im = implRe.exec(code);
+      }
+    }
     expect(methods.length).toBeGreaterThan(50);
     const unclassified = methods.filter(
       (m) => !CONNECTION_READ_METHODS.has(m) && !CONNECTION_WRITE_METHODS.has(m),
@@ -1363,7 +1428,7 @@ describe("read_only パリティ自体の自己検証 (合成ソース)", () => 
     expect(
       run(
         `#[tauri::command]
-         pub async fn test_connection() -> Result<()> { conn.execute("SELECT 1", None).await?; Ok(()) }`,
+         pub async fn test_connection() -> Result<()> { let (tunnel, _opts, conn) = open_connection(&req, &progress, secs).await?; conn.execute("SELECT 1", None).await?; Ok(()) }`,
         "test_connection",
       ),
     ).toBeNull();
@@ -1371,7 +1436,7 @@ describe("read_only パリティ自体の自己検証 (合成ソース)", () => 
     expect(
       run(
         `#[tauri::command]
-         pub async fn test_connection() -> Result<()> { conn.execute(&init_sql, None).await?; Ok(()) }`,
+         pub async fn test_connection() -> Result<()> { let (tunnel, _opts, conn) = open_connection(&req, &progress, secs).await?; conn.execute(&init_sql, None).await?; Ok(()) }`,
         "test_connection",
       ),
     ).toContain("固定の文字列リテラルではない");
@@ -1463,11 +1528,43 @@ describe("read_only パリティ自体の自己検証 (合成ソース)", () => 
         REASON.LIFECYCLE,
         `#[tauri::command]
          pub async fn test_connection() -> Result<()> {
+             let (tunnel, _opts, conn) = open_connection(&req, &progress, secs).await?; 
              conn.execute("SELECT 1 /* ${"x".repeat(60)} */", None).await?; conn.execute(format!("{}", sql_from_client), None).await
          }`,
         "test_connection",
       ),
     ).toContain("固定の文字列リテラルではない");
+  });
+
+  it("conn の再束縛・接続の流出・finish_transaction の引数を検出する (#1882)", () => {
+    const BIND = "let (tunnel, _opts, conn) = open_connection(&req, &progress, secs).await?;";
+    const run = (src: string, name: string, reason: Reason = REASON.LIFECYCLE) => {
+      const c = analyze(src).get(name);
+      return c ? SAFE_CHECKS[reason](c) : "抽出できない";
+    };
+    const tc = (body: string) =>
+      `#[tauri::command]
+       pub async fn test_connection() -> Result<()> { ${BIND} ${body} Ok(()) }`;
+    expect(run(tc('conn.execute("SELECT 1", None).await?;'), "test_connection")).toBeNull();
+    // 再束縛 / クロージャ引数 / for 変数 / 参照での差し替え。
+    for (const body of [
+      "let conn = session.conn;",
+      "let mut conn = other();",
+      "items.iter().for_each(|conn| { run(conn); });",
+      "for conn in all {}",
+      "conn = &session.conn;",
+    ]) {
+      expect(run(tc(body), "test_connection"), body).not.toBeNull();
+    }
+    // 接続のフィールドごとの受け渡し (流出)。
+    expect(run(tc("helper(&session.conn).await?;"), "test_connection")).toContain("フィールドごと");
+    // finish_transaction の第 1 引数は false 固定。
+    const rc = (arg: string) =>
+      `#[tauri::command]
+       pub async fn reconnect() -> Result<()> { old.conn.finish_transaction(${arg}).await }`;
+    expect(run(rc("false"), "reconnect")).toBeNull();
+    expect(run(rc("true"), "reconnect")).toContain("固定値ではない");
+    expect(run(rc("commit"), "reconnect")).toContain("固定値ではない");
   });
 
   it("CRLF 改行でも受け手の抽出と許可判定が変わらない (#1882)", () => {
