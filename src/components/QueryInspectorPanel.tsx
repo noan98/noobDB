@@ -14,6 +14,7 @@ import {
 import { copyToClipboard } from "./clipboard";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
+import { RevealTbody } from "./RevealTbody";
 import { Icon, ICON_SIZES } from "./Icon";
 import {
   detectNPlusOne,
@@ -768,7 +769,7 @@ export function QueryInspectorPanel({
                         <chakra.th css={thCss} width="32px" aria-label={t("inspectorColActions")} />
                       </tr>
                     </thead>
-                    <tbody>
+                    <RevealTbody>
                       {visibleTail.map((e) => {
                         const finding = tailFindings.get(e.fingerprint);
                         return (
@@ -783,7 +784,7 @@ export function QueryInspectorPanel({
                           />
                         );
                       })}
-                    </tbody>
+                    </RevealTbody>
                   </chakra.table>
                 </Box>
               )}
@@ -862,7 +863,7 @@ export function QueryInspectorPanel({
                         <chakra.th css={thCss} width="32px" aria-label={t("inspectorColActions")} />
                       </tr>
                     </thead>
-                    <tbody>
+                    <RevealTbody>
                       {sortedRows.map((r) => {
                         const fp = fingerprintOf(r);
                         return (
@@ -875,7 +876,7 @@ export function QueryInspectorPanel({
                           />
                         );
                       })}
-                    </tbody>
+                    </RevealTbody>
                   </chakra.table>
                 </Box>
               )}

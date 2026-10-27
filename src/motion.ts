@@ -80,6 +80,11 @@ import type { Transition, Variants } from "motion/react";
  *   `<tr>` だけを Web Animations API で 1 回 stagger フェード / slide-up する。per-row FLIP
  *   ではなく「入場 1 回・可視行限定・計測は上端座標の読み取りのみ」で、追加バッチ / スクロール /
  *   ソートでは再生しない。遅延は `staggerTiming.each` を再利用。reduced-motion・ハイコントラストは即時。
+ * - 読み取り専用メタデータパネル (構造 / 統計 / アドバイザ / サーバ情報 / インスペクタ) の初回ロード行
+ *   リビール (`RevealTbody`、#1886)。スケルトンの `<tbody>` と実データの `<tbody>` を別要素にし、実データ側が
+ *   マウントされた 1 回だけ、画面内の行を `useFirstBatchReveal` と同じ Web Animations API・同じ段数上限
+ *   (`firstBatchReveal.ts` を共有) で stagger フェード / slide-up する。再フェッチ・フィルタ・ソートは即時。
+ *   reduced-motion・ハイコントラストは何も再生しない。
  * - 結果グリッドの滑って追従する選択枠 (`ResultGrid` — `useGlideFrame`、#1578)。アクティブセル /
  *   範囲選択 / 現在の検索ヒットごとに絶対配置の枠 1 枚を置き、対象が変わった確定コミットの 1 回だけ
  *   セルを計測して前の位置から left/top/width/height を Web Animations API で滑らせる

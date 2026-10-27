@@ -7,6 +7,7 @@ import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import { ErrorNote } from "./modalForm";
+import { RevealTbody } from "./RevealTbody";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
@@ -222,13 +223,16 @@ export function ServerInfoPanel({ sessionId, onClose }: { sessionId: string; onC
                 </chakra.th>
               </tr>
             </thead>
-            <tbody>
-              {loading && variables.length === 0 ? (
-                // 初回ロード中 (まだ 1 件も取得していない): 「値」列が埋まる前の
-                // 裸のヘッダのみ表示を避け、行の構造をシマーで予兆表示する (#846)。
+            {loading && variables.length === 0 ? (
+              // 初回ロード中 (まだ 1 件も取得していない): 「値」列が埋まる前の
+              // 裸のヘッダのみ表示を避け、行の構造をシマーで予兆表示する (#846)。
+              <tbody>
                 <SkeletonTableRows columns={3} />
-              ) : (
-                filtered.map((v) => (
+              </tbody>
+            ) : (
+              // 実データはスケルトンと別要素にして、着弾の 1 回だけリビールする (#1886)。
+              <RevealTbody>
+                {filtered.map((v) => (
                   <tr key={v.name}>
                     <chakra.td css={nameTdCss}>{v.name}</chakra.td>
                     <chakra.td css={valueTdCss}>
@@ -266,9 +270,9 @@ export function ServerInfoPanel({ sessionId, onClose }: { sessionId: string; onC
                       </Tooltip>
                     </chakra.td>
                   </tr>
-                ))
-              )}
-            </tbody>
+                ))}
+              </RevealTbody>
+            )}
           </chakra.table>
         </Box>
       )}
