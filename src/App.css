@@ -2381,7 +2381,7 @@ html, body, #root {
   100% { box-shadow: 0 0 0 var(--space-0-5) color-mix(in srgb, var(--status-connected) 25%, transparent); }
 }
 .is-tunnel-open {
-  animation: tunnel-open-bloom 0.7s var(--ease-out);
+  animation: tunnel-open-bloom calc(var(--dur-med) * 3.5) var(--ease-out);
 }
 :root[data-motion="reduced"] .is-tunnel-open,
 :root[data-theme="hc-light"] .is-tunnel-open,

@@ -4,7 +4,7 @@ import { ChakraProvider } from "@chakra-ui/react";
 import { StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { act } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ConnectionStatusDot,
   shouldPlayTunnelOpen,
@@ -32,7 +32,13 @@ function render(status: ConnectionDotStatus, strict = false) {
   return host.querySelector("span") as HTMLElement;
 }
 
+// jsdom はレイアウトが無く getClientRects が常に空になるため、「表示中」として扱う。
+beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
+});
+
 afterEach(() => {
+  vi.restoreAllMocks();
   act(() => root?.unmount());
   host?.remove();
   root = null;
@@ -82,6 +88,54 @@ describe("ConnectionStatusDot", () => {
     render("connecting");
     render("connected");
     expect(el.classList.contains("is-tunnel-open")).toBe(true);
+  });
+
+  it("animationcancel でもクラスが外れ、リスナーも解除される", () => {
+    render("connecting");
+    const el = render("connected");
+    const spy = vi.spyOn(el, "removeEventListener");
+    el.getAnimations = () => [];
+    act(() => {
+      el.dispatchEvent(new Event("animationcancel"));
+    });
+    expect(el.classList.contains("is-tunnel-open")).toBe(false);
+    expect(spy).toHaveBeenCalledWith("animationend", expect.any(Function));
+    expect(spy).toHaveBeenCalledWith("animationcancel", expect.any(Function));
+  });
+
+  it("新しい再生が走っている間に届いた古い animationcancel では外さない", () => {
+    render("connecting");
+    const el = render("connected");
+    el.getAnimations = () => [{} as Animation];
+    act(() => {
+      el.dispatchEvent(new Event("animationcancel"));
+    });
+    expect(el.classList.contains("is-tunnel-open")).toBe(true);
+  });
+
+  it("子孫から届いた animationend では外さない", () => {
+    render("connecting");
+    const el = render("connected");
+    const child = document.createElement("i");
+    el.appendChild(child);
+    child.dispatchEvent(new Event("animationend", { bubbles: true }));
+    expect(el.classList.contains("is-tunnel-open")).toBe(true);
+  });
+
+  it("再生中に別状態へ変わるとクラスが残らない", () => {
+    render("connecting");
+    const el = render("connected");
+    expect(el.classList.contains("is-tunnel-open")).toBe(true);
+    render("idle");
+    expect(el.classList.contains("is-tunnel-open")).toBe(false);
+  });
+
+  it("非表示 (レイアウトなし) の間に遷移しても再生しない", () => {
+    render("connecting");
+    const el = host?.querySelector("span") as HTMLElement;
+    vi.spyOn(el, "getClientRects").mockReturnValue([] as unknown as DOMRectList);
+    render("connected");
+    expect(el.classList.contains("is-tunnel-open")).toBe(false);
   });
 
   it("StrictMode の二重 effect でも connecting → connected で 1 回だけ付く", () => {

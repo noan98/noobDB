@@ -15,6 +15,27 @@ export function shouldPlayTunnelOpen(prev: ConnectionDotStatus | null, next: Con
   return prev === "connecting" && next === "connected";
 }
 
+function onEnd(e: Event): void {
+  const el = e.currentTarget as HTMLElement;
+  // 子孫要素のアニメーション完了 (バブリング) では外さない。
+  if (e.target !== el) return;
+  clear(el);
+}
+
+// 付け直し前の古いアニメーションの cancel が遅れて届く場合は、新しい再生中なら外さない。
+function onCancel(e: Event): void {
+  const el = e.currentTarget as HTMLElement;
+  if (e.target !== el) return;
+  if (typeof el.getAnimations !== "function" || el.getAnimations().length > 0) return;
+  clear(el);
+}
+
+function clear(el: HTMLElement): void {
+  el.classList.remove(OPEN_CLASS);
+  el.removeEventListener("animationend", onEnd);
+  el.removeEventListener("animationcancel", onCancel);
+}
+
 /** reduced-motion (OS / アプリ設定)・hc-* テーマ・forced-colors では再生しない。 */
 export function tunnelOpenEnabled(): boolean {
   return !reducedMotionActive() && !prefersStaticMotion();
@@ -57,12 +78,21 @@ export function ConnectionStatusDot({ status, label }: { status: ConnectionDotSt
     prev.current = status;
     const el = ref.current;
     if (!el || !shouldPlayTunnelOpen(before, status) || !tunnelOpenEnabled()) return;
-    const clear = () => el.classList.remove(OPEN_CLASS);
-    el.classList.remove(OPEN_CLASS);
-    void el.offsetWidth;
+    // KeepAlive で非表示中 (display: none) に遷移した場合は、再表示時に遅れて再生しない。
+    if (el.getClientRects().length === 0) return;
+    clear(el);
+    void el.offsetWidth; // 再生し直す
     el.classList.add(OPEN_CLASS);
-    el.addEventListener("animationend", clear, { once: true });
-    el.addEventListener("animationcancel", clear, { once: true });
+    el.addEventListener("animationend", onEnd);
+    el.addEventListener("animationcancel", onCancel);
+  }, [status]);
+
+  useEffect(() => {
+    // 再生中に別状態へ変わった / アンマウントされたときはクラスを残さない。
+    if (status !== "connected") {
+      const el = ref.current;
+      if (el) clear(el);
+    }
   }, [status]);
 
   return (
