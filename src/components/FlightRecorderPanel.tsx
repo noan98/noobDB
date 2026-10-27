@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { Box, chakra, Flex } from "@chakra-ui/react";
 import { api, UndoConflict, WriteCaptureSummary } from "../api/tauri";
@@ -13,6 +14,23 @@ import { useToast } from "./Toast";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { batchUndoIsPartial } from "../flightRecorder";
+import { reducedMotionActive, staggerContainer, variants } from "../motion";
+import { prefersStaticMotion } from "./revealOrigin";
+
+/**
+ * 記録一覧の入場 (#1875): `staggerContainer` / `variants.staggerItem` で先頭 `STAGGER_CAP` 件だけ
+ * 順次フェードインする (件数が多い一覧を全件遅延させると体感が重いため、残りは即時表示)。
+ * Undo / Redo の適用に成功した行は `apply-flash` (`.flash-ring`) で一度だけ光らせ、「取消済み」
+ * バッジは `variants.slideUp` で出入りする。静止化は `useReducedMotion()` (stagger) と
+ * `reducedMotionActive()` / `prefersStaticMotion()` (フラッシュ。ハイコントラスト / forced-colors 含む)。
+ */
+const STAGGER_CAP = 20;
+/** `apply-flash` の再生時間 (App.css の `.flash-ring::after` の 0.7s) に合わせる。 */
+const FLASH_MS = 700;
+
+const MotionUl = chakra(motion.ul, {}, { forwardProps: ["variants", "initial", "animate"] });
+const MotionLi = chakra(motion.li, {}, { forwardProps: ["variants"] });
+const MotionBadge = chakra(motion.span, {}, { forwardProps: ["variants", "initial", "animate", "exit"] });
 
 /**
  * DML フライトレコーダ (#735) の一覧・巻き戻しパネル。`HistoryList` のツール
@@ -82,6 +100,28 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
   const [busyBatch, setBusyBatch] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const reduced = useReducedMotion() ?? false;
+  // 適用に成功した行の id。`FLASH_MS` 後に外す。
+  const [flashIds, setFlashIds] = useState<ReadonlySet<number>>(() => new Set());
+  const flashTimer = useRef<number | null>(null);
+  const loadedScope = useRef<string | null | undefined>(undefined);
+
+  useEffect(
+    () => () => {
+      if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+    },
+    [],
+  );
+
+  const flashRows = (ids: number[]) => {
+    if (reducedMotionActive() || prefersStaticMotion() || ids.length === 0) return;
+    if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+    setFlashIds(new Set(ids));
+    flashTimer.current = window.setTimeout(() => {
+      flashTimer.current = null;
+      setFlashIds(new Set());
+    }, FLASH_MS);
+  };
 
   const scopeId = showAll ? null : profileId;
 
@@ -107,11 +147,14 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: reloadKey の変化で再読み込みするトリガ依存 (effect 内では参照しない)
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    // 適用後の再読み込みでは一覧を「読み込み中」に差し替えない (行が作り直されて、フラッシュと
+    // 入場が再生し直しになるため)。範囲を切り替えたときだけ読み込み表示にする。
+    if (loadedScope.current !== scopeId) setLoading(true);
     api
       .listFlightRecords(scopeId)
       .then((rows) => {
         if (!cancelled) {
+          loadedScope.current = scopeId;
           setEntries(rows);
           setError(null);
         }
@@ -145,7 +188,10 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
           const settled = redo
             ? await api.redoFlightRecord(sessionId, entry.id, false)
             : await api.undoFlightRecord(sessionId, entry.id, false);
-          if (settled.applied) setReloadKey((k) => k + 1);
+          if (settled.applied) {
+            flashRows([entry.id]);
+            setReloadKey((k) => k + 1);
+          }
           for (const w of settled.warnings ?? []) toast.info(w, 8000);
           if (settled.applied && settled.rowsAffected > 0) {
             toast.success(
@@ -226,6 +272,7 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
         } else {
           toast.info(t("flightRecorderAlreadyRestored"));
         }
+        flashRows([entry.id]);
         setReloadKey((k) => k + 1);
         // 逆 SQL は適用済みだが記録の状態を保存できなかった等の警告を利用者へ伝える (#1600)。
         for (const w of outcome.warnings ?? []) toast.info(w, 8000);
@@ -300,6 +347,8 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
 
   // バッチ (#1626) の取り消し / やり直し。単発と同じ「プレビュー → 確認 → 適用」だが、
   // 全記録の逆 SQL を 1 つのトランザクションで適用する。
+  const batchEntryIds = (batchId: string) => entries.filter((e) => e.batch_id === batchId).map((e) => e.id);
+
   const handleApplyBatch = async (batchId: string, mode: "undo" | "redo") => {
     if (!sessionId) return;
     const redo = mode === "redo";
@@ -310,7 +359,10 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
       if (preview.statements.length === 0 && preview.conflicts.length === 0) {
         if (preview.warnings.length === 0) {
           const settled = await api.applyFlightBatch(sessionId, batchId, false, redo);
-          if (settled.applied) setReloadKey((k) => k + 1);
+          if (settled.applied) {
+            flashRows(batchEntryIds(batchId));
+            setReloadKey((k) => k + 1);
+          }
           toast.info(t(settled.applied ? "flightRecorderAlreadyRestored" : "flightRecorderNothingToUndo"));
           return;
         }
@@ -373,6 +425,7 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
         } else {
           toast.info(t("flightRecorderAlreadyRestored"));
         }
+        flashRows(batchEntryIds(batchId));
         setReloadKey((k) => k + 1);
         for (const w of outcome.warnings ?? []) toast.info(w, 8000);
       } else {
@@ -478,10 +531,23 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
               description={t("flightRecorderEmpty")}
             />
           ) : (
-            <chakra.ul m={0} p={0} listStyleType="none">
-              {entries.map((entry) => (
-                <chakra.li
+            <MotionUl
+              // 範囲 (このプロファイル / すべて) を切り替えたら作り直して入場を再生する。
+              key={scopeId ?? "__all__"}
+              variants={staggerContainer(reduced)}
+              initial="initial"
+              animate="animate"
+              m={0}
+              p={0}
+              listStyleType="none"
+            >
+              {entries.map((entry, i) => (
+                <MotionLi
                   key={entry.id}
+                  variants={i < STAGGER_CAP ? variants.staggerItem : undefined}
+                  className={flashIds.has(entry.id) ? "flash-ring" : undefined}
+                  data-flash={flashIds.has(entry.id) ? "" : undefined}
+                  position="relative"
                   display="flex"
                   alignItems="center"
                   gap="2"
@@ -506,7 +572,21 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
                     <chakra.div fontSize="2xs" color="app.textMuted">
                       {entry.table} · {formatCaptured(entry.captured_at)} ·{" "}
                       {t("flightRecorderRowsAffected", { rows: entry.rows_affected })}
-                      {entry.undone && ` · ${t("flightRecorderUndoneBadge")}`}
+                      <AnimatePresence initial={false}>
+                        {entry.undone && (
+                          <MotionBadge
+                            key="undone"
+                            display="inline-block"
+                            whiteSpace="pre"
+                            variants={variants.slideUp}
+                            initial="initial"
+                            animate="animate"
+                            exit="exit"
+                          >
+                            {` · ${t("flightRecorderUndoneBadge")}`}
+                          </MotionBadge>
+                        )}
+                      </AnimatePresence>
                       {entry.pinned && ` · ${t("flightRecorderPinnedBadge")}`}
                       {entry.batch_id &&
                         batches.has(entry.batch_id) &&
@@ -577,9 +657,9 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
                       ? t(entry.undone ? "flightRecorderRedoing" : "flightRecorderUndoing")
                       : t(entry.undone ? "flightRecorderRedoAction" : "flightRecorderUndoAction")}
                   </PressableButton>
-                </chakra.li>
+                </MotionLi>
               ))}
-            </chakra.ul>
+            </MotionUl>
           )}
         </Box>
         {!sessionId && entries.length > 0 && (
