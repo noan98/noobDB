@@ -632,6 +632,7 @@ pub(crate) async fn sandbox_table_diff_inner(
         source_count: live_count,
         target_count: base_count,
         generated_columns,
+        verify_only: false,
     };
 
     let mut conflicts = Vec::new();
@@ -689,6 +690,7 @@ pub(crate) async fn sandbox_table_diff_inner(
                     source_count: current_rows.len(),
                     target_count: base_count,
                     generated_columns: Vec::new(),
+                    verify_only: false,
                 };
                 conflicts = detect_conflicts(&desired, &external);
                 source_checked = true;

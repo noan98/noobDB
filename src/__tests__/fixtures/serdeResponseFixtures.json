@@ -1056,6 +1056,7 @@
     "truncated": false
   },
   "dataDiffHandle": {
+    "cross_driver": true,
     "diff": {
       "column_types": [
         "int",
@@ -1095,7 +1096,15 @@
       "target_driver": "postgres",
       "truncated": false
     },
-    "diff_id": "diff0002"
+    "diff_id": "diff0002",
+    "normalized_columns": [
+      {
+        "column": "name",
+        "kind": "json",
+        "source_type": "json",
+        "target_type": "jsonb"
+      }
+    ]
   },
   "dataDiffVariants": [
     {

@@ -679,6 +679,7 @@ mod tests {
             source_count: n,
             target_count: 0,
             generated_columns: Vec::new(),
+            verify_only: false,
         }
     }
 

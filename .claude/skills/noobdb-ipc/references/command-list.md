@@ -247,6 +247,7 @@ PostgreSQL は別スキーマの子テーブルからの単一列 FK も専用�
 `compare_table_data` は表示用 `diff` と保持差分の `diff_id` を返し、`generate_data_sync_sql(diffId, allowDelete, skipKeys, kinds, onlyKeys)` は
 ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を破棄する (#1259)。
 `compare_table_data` は `table` (ソース側) に加えて省略可の `targetTable` でターゲット側の表名を変えられる (異名表・同一接続内の 2 表, #1880。省略 / 空は同名。同じ接続・DB・表の自己比較は `InvalidInput`)。`DataDiff.table` と同期 SQL の対象はターゲット側の表。
+`compare_table_data` は両接続のドライバが違ってもよい (#1869。スキーマ比較 `compare_schema` は同一ドライバ必須のまま)。そのときは**検証専用**: 値を `transfer.rs` の `TransferType` へ正規化して突き合わせ (`db/cross_compare.rs`)、戻り値の `cross_driver: true` と `normalized_columns` (真偽・decimal・日時・JSON などを同一視した列。`preview_transfer` の `lossy` と同じ要領で UI の Callout に出す) を返す。保持差分は `verify_only` で、`generate_data_sync_sql` は `InvalidInput` になる。主キーは両側とも整数に限る。列名は完全一致、無ければ大文字小文字を無視して 1 つに決まる列へ対応付ける (複数候補はエラー)。float / decimal は片側が実際の浮動小数のときだけ有効 15 桁に丸める。
 `compare_table_data` に `streamId` を渡して `allRows` で呼ぶと、ページごとの進捗を `data-diff:progress` イベント
 (`streamId` / `rows`) で通知し、`cancel_stream(streamId)` で中止できる (中止時は `InvalidInput` で返る, #1612)。
 

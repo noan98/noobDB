@@ -7,12 +7,14 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::progress::ProgressThrottle;
+use crate::db::cross_compare::{build_norms, CompareNorms, NormalizedColumn};
 use crate::db::data_diff::{
-    compute_data_diff_ignoring, is_binary_type, is_hex_wire, is_numeric_literal, sql_literal,
+    compute_data_diff_normalized, is_binary_type, is_hex_wire, is_numeric_literal, sql_literal,
     DataDiff, RowDiff,
 };
 use crate::db::diff::{compute_schema_diff, SchemaDiff, TableColumns};
 use crate::db::sync::quote_ident;
+use crate::db::transfer::{classify_source_type, TransferType};
 use crate::db::types::{generated_column_names, TableColumnInfo, Value};
 use crate::db::{column_names_match, key_is_unique_in, Connection, DriverKind};
 use crate::error::{AppError, Result};
@@ -833,7 +835,7 @@ async fn verify_one_sided(
             target.0,
             target.1,
             tables.target,
-            primary_key,
+            tables.target_pk(primary_key),
             pk_types,
             &source_only,
         )
@@ -851,14 +853,33 @@ async fn verify_one_sided(
 struct TablePair<'a> {
     source: &'a str,
     target: &'a str,
+    /// ドライバをまたぐ比較 (#1869) の値正規化。`None` は同一ドライバの厳密比較。
+    norms: Option<&'a CompareNorms>,
 }
 
 impl<'a> TablePair<'a> {
+    /// ターゲットの SELECT に使う列名 (クロスドライバで大文字小文字だけ違う列を対応付けたとき, #1869)。
+    fn target_columns<'b>(&'b self, source: &'b [String]) -> &'b [String] {
+        match self.norms {
+            Some(n) if !n.target_columns.is_empty() => &n.target_columns,
+            _ => source,
+        }
+    }
+
+    /// ターゲットの ORDER BY / 主キー等価検索に使う主キー列名。
+    fn target_pk<'b>(&'b self, source: &'b [String]) -> &'b [String] {
+        match self.norms {
+            Some(n) if !n.target_pk.is_empty() => &n.target_pk,
+            _ => source,
+        }
+    }
+
     #[cfg(test)]
     fn same(table: &'a str) -> Self {
         Self {
             source: table,
             target: table,
+            norms: None,
         }
     }
 }
@@ -871,6 +892,28 @@ struct KeysetOutcome {
     target_count: usize,
     /// 行数 / 差分数の上限で途中打ち切りになった (残りは未比較)。
     truncated: bool,
+}
+
+/// クロスドライバの比較では、主キーが正規化後に整数として読めることを確かめる (#1869)。
+/// 照合順序に依らず両側で同じ順序・同じ値になるのは整数キーだけで、そうでない行を黙って
+/// 対応付けると、誤った差分・取りこぼしになる。同一ドライバの比較 (`norms` なし) では何もしない。
+fn check_integer_key(
+    norms: Option<&CompareNorms>,
+    pk_idx: &[usize],
+    primary_key: &[String],
+    key: &[Value],
+) -> Result<()> {
+    let Some(n) = norms else { return Ok(()) };
+    for (j, v) in key.iter().enumerate() {
+        let col = pk_idx.get(j).copied().unwrap_or(usize::MAX);
+        if !n.key_is_integer(col, v) {
+            return Err(AppError::InvalidInput(format!(
+                "cross-driver comparison supports integer primary keys only (column '{}' has the non-integer value {v:?})",
+                primary_key.get(j).map_or("", String::as_str)
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// 両側の表をキーセットページングで最後まで比較する (#1539)。
@@ -903,7 +946,8 @@ async fn keyset_compare(
     // 1 ページ処理するたびに、これまでに読んだ source の行数を渡す (進捗通知用, #1612)。
     mut on_page: impl FnMut(usize),
 ) -> Result<KeysetOutcome> {
-    let driver = source.driver_kind();
+    let source_driver = source.driver_kind();
+    let target_driver = target.driver_kind();
     let pk_types: Vec<String> = pk_idx
         .iter()
         .map(|&i| column_types.get(i).cloned().unwrap_or_default())
@@ -918,7 +962,7 @@ async fn keyset_compare(
                     .into(),
             ));
         }
-        Ok(())
+        check_integer_key(tables.norms, pk_idx, primary_key, key)
     };
 
     let mut out = KeysetOutcome {
@@ -931,7 +975,7 @@ async fn keyset_compare(
     let mut seen_target: std::collections::HashSet<String> = std::collections::HashSet::new();
     loop {
         let sql = keyset_select_sql(
-            driver,
+            source_driver,
             tables.source,
             columns,
             primary_key,
@@ -955,10 +999,10 @@ async fn keyset_compare(
         let mut chunk_overflow = false;
         loop {
             let sql = keyset_select_sql(
-                driver,
+                target_driver,
                 tables.target,
-                columns,
-                primary_key,
+                tables.target_columns(columns),
+                tables.target_pk(primary_key),
                 &pk_types,
                 cursor.as_deref(),
                 Some(&boundary),
@@ -992,8 +1036,14 @@ async fn keyset_compare(
         out.source_count += src_page.len();
         out.target_count += tgt_window.len();
         on_page(out.source_count);
-        let window_rows =
-            compute_data_diff_ignoring(columns, pk_idx, &src_page, &tgt_window, ignore_columns);
+        let window_rows = compute_data_diff_normalized(
+            columns,
+            pk_idx,
+            &src_page,
+            &tgt_window,
+            ignore_columns,
+            tables.norms,
+        );
         verify_one_sided(
             (source, source_db),
             (target, target_db),
@@ -1020,10 +1070,10 @@ async fn keyset_compare(
     // source を読み切った。残りの target 行は source に無い (TargetOnly)。
     loop {
         let sql = keyset_select_sql(
-            driver,
+            target_driver,
             tables.target,
-            columns,
-            primary_key,
+            tables.target_columns(columns),
+            tables.target_pk(primary_key),
             &pk_types,
             after.as_deref(),
             None,
@@ -1040,7 +1090,8 @@ async fn keyset_compare(
         }
         let last_key = key_of(&page[n - 1]);
         out.target_count += n;
-        let tail_rows = compute_data_diff_ignoring(columns, pk_idx, &[], &page, ignore_columns);
+        let tail_rows =
+            compute_data_diff_normalized(columns, pk_idx, &[], &page, ignore_columns, tables.norms);
         verify_one_sided(
             (source, source_db),
             (target, target_db),
@@ -1220,9 +1271,15 @@ async fn bounded_compare(
     ignore_columns: &[String],
     want: usize,
 ) -> Result<BoundedOutcome> {
-    let driver = source.0.driver_kind();
-    let source_sql = select_rows_sql(driver, tables.source, columns, primary_key, want + 1);
-    let target_sql = select_rows_sql(driver, tables.target, columns, primary_key, want + 1);
+    let (source_driver, target_driver) = (source.0.driver_kind(), target.0.driver_kind());
+    let source_sql = select_rows_sql(source_driver, tables.source, columns, primary_key, want + 1);
+    let target_sql = select_rows_sql(
+        target_driver,
+        tables.target,
+        tables.target_columns(columns),
+        tables.target_pk(primary_key),
+        want + 1,
+    );
     // 両側の SELECT は独立なので同時に走らせる (片側の往復待ちで反対側を待たせない)。
     let (source_res, target_res) = tokio::join!(
         source.0.execute(&source_sql, Some(source.1)),
@@ -1234,6 +1291,10 @@ async fn bounded_compare(
     let target_truncated = target_res.rows.len() > want;
     let mut source_rows: Vec<_> = source_res.rows.into_iter().take(want).collect();
     let mut target_rows: Vec<_> = target_res.rows.into_iter().take(want).collect();
+    for row in source_rows.iter().chain(target_rows.iter()) {
+        let key: Vec<Value> = pk_idx.iter().map(|&i| row[i].clone()).collect();
+        check_integer_key(tables.norms, pk_idx, primary_key, &key)?;
+    }
     // 片側だけ切り詰められたとき、もう一方の窓の外の行を「存在しない」と誤判定して
     // INSERT してしまわないよう、両側を共通の PK 窓に揃える。
     clamp_to_common_window(
@@ -1246,8 +1307,14 @@ async fn bounded_compare(
     let source_count = source_rows.len();
     let target_count = target_rows.len();
 
-    let rows =
-        compute_data_diff_ignoring(columns, pk_idx, &source_rows, &target_rows, ignore_columns);
+    let rows = compute_data_diff_normalized(
+        columns,
+        pk_idx,
+        &source_rows,
+        &target_rows,
+        ignore_columns,
+        tables.norms,
+    );
     let pk_types: Vec<String> = pk_idx
         .iter()
         .map(|&i| column_types.get(i).cloned().unwrap_or_default())
@@ -1297,6 +1364,7 @@ async fn keyset_compare_cancellable(
     primary_key: Vec<String>,
     pk_idx: Vec<usize>,
     ignore_columns: Vec<String>,
+    norms: Option<CompareNorms>,
 ) -> Result<KeysetOutcome> {
     let counter = Arc::new(AtomicU64::new(0));
     // register_stream をタスク本体より前に完了させるゲート (転送 / エクスポートと同じ, #685)。
@@ -1321,6 +1389,7 @@ async fn keyset_compare_cancellable(
             TablePair {
                 source: &tables.0,
                 target: &tables.1,
+                norms: norms.as_ref(),
             },
             &columns,
             &column_types,
@@ -1377,6 +1446,10 @@ async fn keyset_compare_cancellable(
 #[derive(Debug, serde::Serialize)]
 pub struct DataDiffHandle {
     pub diff_id: String,
+    /// ドライバをまたぐ検証専用の比較か (#1869)。true のとき同期 SQL は生成できない。
+    pub cross_driver: bool,
+    /// 正規化して一致とみなした列 (縮退の注意として UI に出す)。同一ドライバでは空。
+    pub normalized_columns: Vec<NormalizedColumn>,
     // ストアと同じ Arc を共有する (最大 5 万行の差分を保存と返却で二重に複製しない)。
     #[serde(serialize_with = "serialize_shared_diff")]
     pub diff: Arc<DataDiff>,
@@ -1466,7 +1539,8 @@ fn is_same_table(
 /// Compares the rows of one `table` between the source and target databases,
 /// pairing by primary key. Reads at most `limit` rows per side (clamped to a
 /// master-data-sized cap); a table without a primary key is rejected since
-/// there is nothing to pair on. Both connections must use the same driver.
+/// there is nothing to pair on. Different drivers are allowed (#1869): the result is then verification-only
+/// (values are normalized before comparing, and no sync SQL is generated).
 /// The target table may have a different name (`target_table`, #1880); the same
 /// session / database / table on both sides is rejected.
 // IPC の引数をそのまま受ける Tauri コマンドなので、引数の数は呼び出し側 (フロント) の
@@ -1506,11 +1580,8 @@ pub async fn compare_table_data(
         .ok_or_else(|| AppError::SessionNotFound(target_session_id.clone()))?;
 
     let driver = source.conn.driver_kind();
-    if driver != target.conn.driver_kind() {
-        return Err(AppError::InvalidInput(
-            "data comparison requires both connections to use the same driver".into(),
-        ));
-    }
+    let target_driver = target.conn.driver_kind();
+    let cross_driver = driver != target_driver;
 
     let source_table = table;
     let target_table = target_table
@@ -1531,15 +1602,163 @@ pub async fn compare_table_data(
                 .into(),
         ));
     }
+
+    let prepared = prepare_data_compare(
+        &source.conn,
+        &source_database,
+        &target.conn,
+        &target_database,
+        &source_table,
+        &target_table,
+        ignore_columns,
+    )
+    .await?;
+    let PreparedCompare {
+        columns,
+        column_types,
+        primary_key,
+        key_kind,
+        pk_idx,
+        ignore_columns,
+        generated_columns,
+        norms,
+        normalized_columns,
+    } = prepared;
     let tables = TablePair {
         source: &source_table,
         target: &target_table,
+        norms: norms.as_ref(),
+    };
+
+    let finish = |outcome: KeysetOutcome| -> Result<DataDiffHandle> {
+        let diff = DataDiff {
+            target_driver,
+            // 同期 SQL はターゲット側の表に対して生成する。
+            table: target_table.clone(),
+            columns: columns.clone(),
+            column_types: column_types.clone(),
+            primary_key: primary_key.clone(),
+            key_kind,
+            rows: outcome.rows,
+            truncated: outcome.truncated,
+            source_count: outcome.source_count,
+            target_count: outcome.target_count,
+            generated_columns: generated_columns.clone(),
+            verify_only: cross_driver,
+        };
+        let diff = Arc::new(diff);
+        let diff_id = state.store_data_diff(
+            Arc::clone(&diff),
+            vec![source_session_id.clone(), target_session_id.clone()],
+        );
+        Ok(DataDiffHandle {
+            diff_id,
+            cross_driver,
+            normalized_columns: normalized_columns.clone(),
+            diff,
+        })
+    };
+
+    if all_rows.unwrap_or(false) {
+        let outcome = match stream_id.filter(|s| !s.is_empty()) {
+            // 進捗通知と中止ができる経路 (#1612)。
+            Some(stream_id) => {
+                keyset_compare_cancellable(
+                    app,
+                    &state,
+                    stream_id,
+                    (source.clone(), source_database.clone()),
+                    (target.clone(), target_database.clone()),
+                    (source_table.clone(), target_table.clone()),
+                    columns.clone(),
+                    column_types.clone(),
+                    primary_key.clone(),
+                    pk_idx.clone(),
+                    ignore_columns.clone(),
+                    norms.clone(),
+                )
+                .await?
+            }
+            None => {
+                keyset_compare(
+                    &source.conn,
+                    &source_database,
+                    &target.conn,
+                    &target_database,
+                    tables,
+                    &columns,
+                    &column_types,
+                    &primary_key,
+                    &pk_idx,
+                    &ignore_columns,
+                    KEYSET_PAGE_ROWS,
+                    |_| {},
+                )
+                .await?
+            }
+        };
+        return finish(outcome);
+    }
+
+    // Read one extra row to detect (and flag) truncation without exceeding it.
+    let want = limit.unwrap_or(DEFAULT_DATA_ROWS).min(MAX_DATA_ROWS);
+    let outcome = bounded_compare(
+        (&source.conn, &source_database),
+        (&target.conn, &target_database),
+        tables,
+        &columns,
+        &column_types,
+        &primary_key,
+        &pk_idx,
+        &ignore_columns,
+        want,
+    )
+    .await?;
+    finish(KeysetOutcome {
+        rows: outcome.rows,
+        source_count: outcome.source_count,
+        target_count: outcome.target_count,
+        truncated: outcome.truncated,
+    })
+}
+
+/// 比較の下準備の結果 (列・キー・正規化)。
+struct PreparedCompare {
+    columns: Vec<String>,
+    column_types: Vec<String>,
+    primary_key: Vec<String>,
+    key_kind: crate::db::RowKeyKind,
+    pk_idx: Vec<usize>,
+    ignore_columns: Vec<String>,
+    generated_columns: Vec<String>,
+    /// ドライバをまたぐときだけ `Some`。
+    norms: Option<CompareNorms>,
+    normalized_columns: Vec<NormalizedColumn>,
+}
+
+/// 列・行キーの解決とターゲット表の検証、ドライバをまたぐ場合の値正規化の用意。
+async fn prepare_data_compare(
+    source: &Connection,
+    source_database: &str,
+    target: &Connection,
+    target_database: &str,
+    source_table: &str,
+    target_table: &str,
+    ignore_columns: Option<Vec<String>>,
+) -> Result<PreparedCompare> {
+    let driver = source.driver_kind();
+    let target_driver = target.driver_kind();
+    let cross_driver = driver != target_driver;
+    let tables = TablePair {
+        source: source_table,
+        target: target_table,
+        norms: None,
     };
 
     // 列情報の取得は両側とも独立なので同時に走らせる。
     let (source_cols, target_cols) = tokio::join!(
-        source.conn.columns(&source_database, &source_table),
-        target.conn.columns(&target_database, &target_table),
+        source.columns(source_database, source_table),
+        target.columns(target_database, target_table),
     );
     let col_info = source_cols?;
     if col_info.is_empty() {
@@ -1563,11 +1782,43 @@ pub async fn compare_table_data(
             }
         }
     }
+    // クロスドライバでは、完全一致が無い列だけ大文字小文字を無視して 1 つに決まる列へ対応付ける。
+    // (MySQL の `Id` と PostgreSQL の `id` など。複数の候補があれば曖昧なのでエラー。)
+    let target_names: Vec<String> = if cross_driver {
+        match target_cols.as_ref() {
+            Ok(tc) => {
+                let names: Vec<String> = tc.iter().map(|t| t.name.clone()).collect();
+                crate::db::cross_compare::map_target_columns(&columns, &names).map_err(
+                    |(col, candidates)| {
+                        AppError::InvalidInput(format!(
+                            "column '{col}' cannot be matched to exactly one column on the target (candidates: {}); rename the columns so that exactly one matches",
+                            candidates.join(", ")
+                        ))
+                    },
+                )?
+            }
+            Err(_) => columns.clone(),
+        }
+    } else {
+        columns.clone()
+    };
+    // ターゲットの列型 (`columns` と同じ並び)。ドライバをまたぐ正規化に使う。
+    let target_types: Vec<String> = match target_cols.as_ref() {
+        Ok(tc) => target_names
+            .iter()
+            .map(|name| {
+                tc.iter()
+                    .find(|t| column_names_match(target_driver, &t.name, name))
+                    .map(|t| t.data_type.clone())
+                    .unwrap_or_default()
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
     // 行の対応付けは PK、無ければ UNIQUE NOT NULL キー (#1838)。rowid は 2 表 (別 DB / 別接続)
     // 間で値が一致する保証が無く対応付けに使えないので、比較では採らない。
     let Some(row_key) = source
-        .conn
-        .resolve_row_key(&source_database, &source_table, &col_info, false)
+        .resolve_row_key(source_database, source_table, &col_info, false)
         .await?
     else {
         return Err(AppError::InvalidInput(format!(
@@ -1576,118 +1827,184 @@ pub async fn compare_table_data(
     };
     let key_kind = row_key.kind;
     let primary_key = row_key.columns;
-    // ターゲット側の列・キーを検証する (キーの種類によらず常に。#1880)。
-    validate_target_table(
-        driver,
-        &target.conn,
-        &target_database,
-        tables,
-        &col_info,
-        target_cols,
-        &primary_key,
-    )
-    .await?;
+    // ターゲット側の列・キーを検証する (キーの種類によらず常に。#1880)。列名の照合は
+    // ターゲットのドライバの規則で行う (PostgreSQL は大文字小文字を区別する)。
     let pk_idx: Vec<usize> = primary_key
         .iter()
         .filter_map(|name| columns.iter().position(|c| c == name))
         .collect();
-
-    let ignore_columns = normalize_ignore_columns(ignore_columns, &columns)?;
-
-    if all_rows.unwrap_or(false) {
-        let outcome = match stream_id.filter(|s| !s.is_empty()) {
-            // 進捗通知と中止ができる経路 (#1612)。
-            Some(stream_id) => {
-                keyset_compare_cancellable(
-                    app,
-                    &state,
-                    stream_id,
-                    (source.clone(), source_database.clone()),
-                    (target.clone(), target_database.clone()),
-                    (source_table.clone(), target_table.clone()),
-                    columns.clone(),
-                    column_types.clone(),
-                    primary_key.clone(),
-                    pk_idx.clone(),
-                    ignore_columns.clone(),
-                )
-                .await?
-            }
-            None => {
-                keyset_compare(
-                    &source.conn,
-                    &source_database,
-                    &target.conn,
-                    &target_database,
-                    tables,
-                    &columns,
-                    &column_types,
-                    &primary_key,
-                    &pk_idx,
-                    &ignore_columns,
-                    KEYSET_PAGE_ROWS,
-                    |_| {},
-                )
-                .await?
-            }
+    // 検証はターゲットでの名前で行う (対応付けた列名・主キー名)。
+    let target_primary_key: Vec<String> = pk_idx
+        .iter()
+        .filter_map(|&i| target_names.get(i).cloned())
+        .collect();
+    let (validate_cols, validate_pk) =
+        if cross_driver && target_primary_key.len() == primary_key.len() {
+            let renamed: Vec<TableColumnInfo> = col_info
+                .iter()
+                .zip(&target_names)
+                .map(|(c, n)| TableColumnInfo {
+                    name: n.clone(),
+                    ..c.clone()
+                })
+                .collect();
+            (renamed, target_primary_key.clone())
+        } else {
+            (col_info.clone(), primary_key.clone())
         };
-        let diff = DataDiff {
-            target_driver: driver,
-            // 同期 SQL はターゲット側の表に対して生成する。
-            table: target_table,
-            columns,
-            column_types,
-            primary_key,
-            key_kind,
-            rows: outcome.rows,
-            truncated: outcome.truncated,
-            source_count: outcome.source_count,
-            target_count: outcome.target_count,
-            generated_columns,
-        };
-        let diff = Arc::new(diff);
-        let diff_id = state.store_data_diff(
-            Arc::clone(&diff),
-            vec![source_session_id.clone(), target_session_id.clone()],
-        );
-        return Ok(DataDiffHandle { diff_id, diff });
-    }
-
-    // Read one extra row to detect (and flag) truncation without exceeding it.
-    let want = limit.unwrap_or(DEFAULT_DATA_ROWS).min(MAX_DATA_ROWS);
-    let outcome = bounded_compare(
-        (&source.conn, &source_database),
-        (&target.conn, &target_database),
+    validate_target_table(
+        target_driver,
+        target,
+        target_database,
         tables,
-        &columns,
-        &column_types,
-        &primary_key,
-        &pk_idx,
-        &ignore_columns,
-        want,
+        &validate_cols,
+        target_cols,
+        &validate_pk,
     )
     .await?;
 
-    let diff = DataDiff {
-        target_driver: driver,
-        // 同期 SQL はターゲット側の表に対して生成する。
-        table: target_table,
+    let ignore_columns = normalize_ignore_columns(ignore_columns, &columns)?;
+
+    let (norms, normalized_columns) = if cross_driver {
+        // 主キーの照合順序・並びはドライバごとに違う (文字列は照合順序)。整数キーだけが
+        // 両側で同じ順序になることが保証できるので、それ以外は比較しない。
+        for &i in &pk_idx {
+            let is_int = |t: &str| {
+                matches!(
+                    classify_source_type(t),
+                    Some(TransferType::Integer | TransferType::UnsignedBigInt)
+                )
+            };
+            if !(is_int(&column_types[i]) && is_int(target_types.get(i).map_or("", String::as_str)))
+            {
+                return Err(AppError::InvalidInput(format!(
+                    "cross-driver comparison supports integer primary keys only (column '{}' is {} on the source and {} on the target)",
+                    columns[i],
+                    column_types[i],
+                    target_types.get(i).map_or("", String::as_str)
+                )));
+            }
+        }
+        let (mut norms, report) = build_norms(
+            driver,
+            target_driver,
+            &columns,
+            &column_types,
+            &target_types,
+            &ignore_columns,
+        );
+        let mut report = report;
+        for (i, name) in columns.iter().enumerate() {
+            if target_names[i] != *name && !ignore_columns.contains(name) {
+                report.push(NormalizedColumn {
+                    column: name.clone(),
+                    kind: crate::db::cross_compare::NormalizeKind::ColumnName,
+                    source_type: column_types[i].clone(),
+                    target_type: target_names[i].clone(),
+                });
+            }
+        }
+        norms.target_columns = target_names.clone();
+        norms.target_pk = target_primary_key.clone();
+        (Some(norms), report)
+    } else {
+        (None, Vec::new())
+    };
+
+    Ok(PreparedCompare {
         columns,
         column_types,
         primary_key,
         key_kind,
+        pk_idx,
+        ignore_columns,
+        generated_columns,
+        norms,
+        normalized_columns,
+    })
+}
+
+/// ドライバをまたぐ比較を含む、`compare_table_data` の本体 (セッション・進捗通知を除く)。
+/// 全行比較 (キーセット) か上限つき比較かは `all_rows` で選ぶ。統合テストからも呼ぶ。
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn compare_table_data_core(
+    source: &Connection,
+    source_database: &str,
+    target: &Connection,
+    target_database: &str,
+    source_table: &str,
+    target_table: &str,
+    limit: Option<usize>,
+    all_rows: bool,
+    ignore_columns: Option<Vec<String>>,
+) -> Result<(DataDiff, Vec<NormalizedColumn>)> {
+    let prepared = prepare_data_compare(
+        source,
+        source_database,
+        target,
+        target_database,
+        source_table,
+        target_table,
+        ignore_columns,
+    )
+    .await?;
+    let tables = TablePair {
+        source: source_table,
+        target: target_table,
+        norms: prepared.norms.as_ref(),
+    };
+    let outcome = if all_rows {
+        keyset_compare(
+            source,
+            source_database,
+            target,
+            target_database,
+            tables,
+            &prepared.columns,
+            &prepared.column_types,
+            &prepared.primary_key,
+            &prepared.pk_idx,
+            &prepared.ignore_columns,
+            KEYSET_PAGE_ROWS,
+            |_| {},
+        )
+        .await?
+    } else {
+        let want = limit.unwrap_or(DEFAULT_DATA_ROWS).min(MAX_DATA_ROWS);
+        let b = bounded_compare(
+            (source, source_database),
+            (target, target_database),
+            tables,
+            &prepared.columns,
+            &prepared.column_types,
+            &prepared.primary_key,
+            &prepared.pk_idx,
+            &prepared.ignore_columns,
+            want,
+        )
+        .await?;
+        KeysetOutcome {
+            rows: b.rows,
+            source_count: b.source_count,
+            target_count: b.target_count,
+            truncated: b.truncated,
+        }
+    };
+    let diff = DataDiff {
+        target_driver: target.driver_kind(),
+        table: target_table.to_string(),
+        columns: prepared.columns,
+        column_types: prepared.column_types,
+        primary_key: prepared.primary_key,
+        key_kind: prepared.key_kind,
         rows: outcome.rows,
         truncated: outcome.truncated,
         source_count: outcome.source_count,
         target_count: outcome.target_count,
-        generated_columns,
+        generated_columns: prepared.generated_columns,
+        verify_only: source.driver_kind() != target.driver_kind(),
     };
-    let diff = Arc::new(diff);
-    let diff_id = state.store_data_diff(
-        Arc::clone(&diff),
-        vec![source_session_id.clone(), target_session_id.clone()],
-    );
-    Ok(DataDiffHandle { diff_id, diff })
+    Ok((diff, prepared.normalized_columns))
 }
 
 #[cfg(test)]
@@ -2041,6 +2358,7 @@ mod keyset_tests {
             TablePair {
                 source: "orders",
                 target: "orders_archive",
+                norms: None,
             },
             &columns,
             &types,
@@ -2277,6 +2595,7 @@ mod keyset_tests {
             TablePair {
                 source: "orders",
                 target: "orders_archive",
+                norms: None,
             },
             &columns,
             &types,
@@ -2303,6 +2622,7 @@ mod keyset_tests {
             source_count: o.source_count,
             target_count: o.target_count,
             generated_columns: vec![],
+            verify_only: false,
         };
         let plan = crate::db::data_diff::generate_data_sync_sql(&diff, false);
         assert_eq!(plan.statements.len(), 1);
@@ -2342,6 +2662,7 @@ mod keyset_tests {
                     TablePair {
                         source: "users",
                         target,
+                        norms: None,
                     },
                     src_cols,
                     cols,
@@ -2359,5 +2680,29 @@ mod keyset_tests {
         assert!(msg(check("nope").await).contains("has no columns"));
         check("users").await.unwrap();
         let _ = std::fs::remove_file(path);
+    }
+}
+
+#[cfg(test)]
+mod cross_error_text_tests {
+    /// フロント (`crossDriverErrorKey`) が判定に使うバックエンドのエラー文言。ここで固定し、
+    /// フロントのソースにも同じ文字列があることを確かめる (文言を変えたらどちらかが落ちる)。
+    const MARKS: [&str; 3] = [
+        "supports integer primary keys only",
+        "cannot be matched to exactly one column on the target",
+        "is missing column(s)",
+    ];
+
+    #[test]
+    fn frontend_error_marks_match_backend_messages() {
+        let backend = include_str!("diff.rs");
+        let frontend = include_str!("../../../src/components/CrossDriverVerify.tsx");
+        for mark in MARKS {
+            assert!(
+                backend.matches(mark).count() >= 2,
+                "backend must emit {mark:?} (besides this test)"
+            );
+            assert!(frontend.contains(mark), "frontend must match {mark:?}");
+        }
     }
 }

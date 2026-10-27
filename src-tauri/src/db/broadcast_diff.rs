@@ -506,6 +506,7 @@ pub fn build_sync_diff(
             source_count: base.len(),
             target_count: targ.len(),
             generated_columns: Vec::new(),
+            verify_only: false,
         },
         warnings,
     ))
