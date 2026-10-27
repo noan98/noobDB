@@ -187,10 +187,11 @@
      できない横方向の overhang なので専用トークンにする。全テーマ共通。 */
   --shadow-drawer: -8px 0 24px -12px rgba(0, 0, 0, 0.45);
 
-  /* キーキャップ (Kbd, #1865)。下端 1px の濃い縁 + 上端の内側ハイライトで物理キーの
-     立体感を出す。ダーク系は下の :root[data-theme$="dark"] で影を強め、hc-* は装飾より
-     AAA 優先のため none に上書きする。 */
-  --shadow-kbd: 0 1px 0 rgba(15, 23, 42, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  /* キーキャップ (Kbd, #1865)。下端に線色 (--border-strong) の inset を 1px 足し、
+     枠と合わせて実質 2px の「キーの厚み」を描く。inset なのでレイアウトに影響せず、
+     線色トークンなので全プリセットへ自動追従する。hc-* は装飾より AAA 優先のため
+     none に上書きする。 */
+  --shadow-kbd: inset 0 -1px 0 var(--border-strong);
 
   /* モーダルバックドロップの暗幕。Modal.tsx が参照する。全テーマ共通。 */
   --overlay: rgba(0, 0, 0, 0.45);
@@ -547,7 +548,6 @@
      ワードマークを本文色にする。 */
   --brand-mark-tile: var(--brand-navy-raised);
   --brand-wordmark: var(--text);
-  --shadow-kbd: 0 1px 0 rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 
 :root[data-theme="dark"] {
