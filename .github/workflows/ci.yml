@@ -904,6 +904,14 @@ jobs:
     # 1 本もスキップされてしまう。
     # #1359: ci-scripts==true (scripts/ci-setup-*.sh の変更) でも起動する。
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true' || needs.changes.outputs.crosslang == 'true' || needs.changes.outputs.ci-scripts == 'true'
+    #
+    # #1884: main への push では最重量の統合環境 (sshd + TLS DB + 平文 DB) と全件実行を
+    # `rust (coverage)` に一本化する。`llvm-cov nextest` は同じテストを計装下で実走し、
+    # 失敗すればジョブも赤になるので、push の健全性確認はそちらが担う。一方でこのジョブの
+    # ビルド (nextest archive) は push でも実行する: main スコープの rust-cache / sccache
+    # (キー test) を保存して PR がフォールバック復元できる唯一の供給元だから。したがって
+    # push では「ビルドのみ」、PR では従来どおり「ビルド + DB セットアップ + 実行」。
+    # PR の挙動・所要時間は変えない (下の `github.event_name != 'push'` ゲートは PR で常に真)。
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -1013,6 +1021,7 @@ jobs:
       # 書き込む NOOBDB_TEST_SSH_URL / NOOBDB_TEST_SSH_KEY は、この background を含む
       # 下の wait 以降で初めて nextest から参照可能になる (公式仕様)。
       - name: Setup test sshd (SSH tunnel integration)
+        if: github.event_name != 'push'
         id: sshd
         background: true
         env:
@@ -1035,6 +1044,7 @@ jobs:
       # 追加の apt ダウンロードを伴わず高速に完了する。sshd と同じく apt 完了後に
       # background 起動し、下のツール導入と重ねる。
       - name: Setup TLS test databases (TLS integration #520/#795)
+        if: github.event_name != 'push'
         id: tlsdb
         background: true
         run: bash scripts/ci-setup-tls-db.sh
@@ -1044,6 +1054,7 @@ jobs:
       # かかっていたため、ランナー同梱のサーバを TLS 版と同じ方式で background 起動する。
       # 接続情報はコンテナ時代と同じ (scripts/ci-setup-plain-db.sh)。
       - name: Setup plain test databases (MySQL / PostgreSQL integration)
+        if: github.event_name != 'push'
         id: plaindb
         background: true
         run: bash scripts/ci-setup-plain-db.sh
@@ -1066,6 +1077,7 @@ jobs:
         run: cargo nextest archive --locked --lib --test '*' --archive-file "$RUNNER_TEMP/nextest-archive.tar.zst"
 
       - name: Wait for background setup (sshd, TLS / plain test DBs)
+        if: github.event_name != 'push'
         wait: [sshd, tlsdb, plaindb]
 
       # 計装なしの nextest を実行する (PR ブロッキング)。MySQL/PostgreSQL の両
@@ -1077,6 +1089,7 @@ jobs:
       # $GITHUB_ENV へ書き込み、直前の wait: [sshd, tlsdb, plaindb] 以降で参照可能になるため、
       # SSH トンネル統合テスト (#331) と TLS 統合テスト (#520/#795) もここで実走する。
       - name: cargo nextest
+        if: github.event_name != 'push'
         working-directory: src-tauri
         env:
           NOOBDB_TEST_MYSQL_URL: mysql://root:rootpw@127.0.0.1:3306/testdb
@@ -1125,6 +1138,8 @@ jobs:
     # 二重に構築していたため、PR 経路から外してランナー分をおよそ半減する。60% の閾値
     # ゲート (下の Enforce coverage threshold) と Job Summary の可視化は main で維持し、
     # 閾値割れはマージ直後の main の赤で検出する (PR のマージは元々止めていない)。
+    # #1884: push ではこのジョブが唯一の統合実走 (`rust (test)` は push ではビルドのみ) になり、
+    # 計装ビルドは DB セットアップと重ねている (Build instrumented tests ステップ)。
     # 変更パス条件は `rust (test)` と同じ (#853 の crosslang OR / #1359 の ci-scripts OR
     # を含む)。push 時の changes は直前コミットとの差分で判定される。
     if: github.event_name == 'push' && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true' || needs.changes.outputs.crosslang == 'true' || needs.changes.outputs.ci-scripts == 'true')
@@ -1288,6 +1303,23 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
+      # 計装ビルド (-C instrument-coverage、sccache 対象外で遅い) だけを先に行い、sshd / TLS DB
+      # のセットアップと重ねる (#1884。`rust (test)` の archive-before-wait パターンの転用)。
+      # `cargo llvm-cov nextest --no-run` ではなく show-env + nextest archive にしている理由:
+      # `rust (test)` で実測済みのとおり、wait 後に cargo を再度呼ぶと NOOBDB_TEST_* 環境変数
+      # の違いで noobdb クレートが再コンパイルされ重ねた分が相殺される。archive から実行すれば
+      # cargo を呼ばないので再コンパイルは起きない。show-env は llvm-cov と同じ RUSTFLAGS /
+      # target dir (target/llvm-cov-target) / LLVM_PROFILE_FILE を export するので、計装済み
+      # バイナリと生データは従来の `cargo llvm-cov nextest` と同じ場所に出て、後段の
+      # `cargo llvm-cov report` がそのまま読める。
+      - name: Build instrumented tests (overlaps sshd / TLS DB setup)
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          cargo llvm-cov clean --workspace
+          source <(cargo llvm-cov show-env --export-prefix)
+          cargo nextest archive --locked --lib --test '*' --archive-file "$RUNNER_TEMP/nextest-cov-archive.tar.zst"
+
       # 残る background (sshd = SSH 接続情報 / tlsdb = TLS DB 接続情報。いずれも
       # $GITHUB_ENV 経由) の完了を nextest の直前で待ち合わせる。両者の env は
       # この wait 以降で利用可能になり、SSH トンネル統合テスト (#331) と TLS 統合
@@ -1297,8 +1329,8 @@ jobs:
       - name: Wait for background setup (sshd, TLS / plain test DBs)
         wait: [sshd, tlsdb, plaindb]
 
-      # nextest を llvm-cov 計装下で実行し、カバレッジ生データのみ収集する
-      # (--no-report)。MySQL/PostgreSQL の両サービスコンテナを指す URL を渡し、
+      # 計装済み archive を nextest で実行し、カバレッジ生データのみ収集する
+      # (show-env の LLVM_PROFILE_FILE へ出力。レポートは下の cargo llvm-cov report)。MySQL/PostgreSQL の両サービスコンテナを指す URL を渡し、
       # 両ドライバの統合テストを CI で実走させる。SQLite は環境変数不要で常に走る。
       # NOOBDB_TEST_SSH_URL / NOOBDB_TEST_SSH_KEY と
       # NOOBDB_TEST_MYSQL_TLS_URL / NOOBDB_TEST_POSTGRES_TLS_URL / NOOBDB_TEST_TLS_CA
@@ -1310,7 +1342,10 @@ jobs:
         env:
           NOOBDB_TEST_MYSQL_URL: mysql://root:rootpw@127.0.0.1:3306/testdb
           NOOBDB_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/testdb
-        run: cargo llvm-cov nextest --no-report --locked --lib --test '*'
+        shell: bash
+        run: |
+          source <(cargo llvm-cov show-env --export-prefix)
+          cargo nextest run --archive-file "$RUNNER_TEMP/nextest-cov-archive.tar.zst"
 
       # 収集済みデータから lcov レポートを生成し、サマリ表を Job Summary に出して
       # main の push ごとのカバレッジを可視化する (#1420 で PR からは外した)。
