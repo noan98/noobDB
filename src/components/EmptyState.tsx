@@ -101,20 +101,19 @@ export function EmptyState({
         // リッチなイラスト (オンボーディング/主要空状態)。軽い scale-in を添える。
         <motion.div
           aria-hidden
-          style={{
-            marginBottom: "var(--space-1)",
-            ...(brandHalo
+          style={
+            brandHalo
               ? {
-                  // 光彩がイラスト外へ滲む余白 (WelcomeView と同じ比率)。縦は負マージンで
-                  // 相殺し、空状態全体の高さを増やさない (狭い結果ペインで文言を押し出さない)。
+                  // 光彩がイラスト外へ滲む余白 (WelcomeView と同じ比率)。縦横とも負マージンで
+                  // 相殺し、空状態の高さ・最小幅を増やさない (狭い結果ペインで文言を押し出さない)。
                   padding: "var(--space-6) var(--space-10)",
-                  margin: "calc(-1 * var(--space-6)) 0",
-                  marginBottom: "calc(var(--space-1) - var(--space-6))",
+                  margin:
+                    "calc(-1 * var(--space-6)) calc(-1 * var(--space-10)) calc(var(--space-1) - var(--space-6))",
                   backgroundImage: "var(--hero-halo)",
                   backgroundRepeat: "no-repeat",
                 }
-              : null),
-          }}
+              : { marginBottom: "var(--space-1)" }
+          }
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={transitions.emphasized}
