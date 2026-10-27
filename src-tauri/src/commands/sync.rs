@@ -74,6 +74,12 @@ pub(crate) fn generate_data_sync_sql_inner(
     selection: &DataSyncSelection<'_>,
 ) -> Result<SyncPlan> {
     let stored = stored_diff(state, diff_id)?;
+    // ドライバをまたぐ比較 (#1869) は検証専用。方言の違う表へ当てる DML は作らない。
+    if stored.verify_only {
+        return Err(AppError::InvalidInput(
+            "a cross-driver comparison is verification-only; no sync SQL can be generated".into(),
+        ));
+    }
     let mut diff = stored.as_ref().clone();
     if selection.kinds.is_some() || selection.only_keys.is_some() {
         diff = select_rows(&diff, selection.kinds, selection.only_keys);

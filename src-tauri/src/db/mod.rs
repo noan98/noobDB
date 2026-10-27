@@ -7,6 +7,7 @@ pub mod broadcast_diff;
 pub mod column_deps;
 /// ファイルから新規テーブルを作るときの方言別 CREATE TABLE 生成 (#985)。
 pub mod create_table;
+pub mod cross_compare;
 pub mod data_diff;
 /// DB 全体からの値検索の走査 SQL 生成 (#748 / #1261)。
 pub mod data_search;

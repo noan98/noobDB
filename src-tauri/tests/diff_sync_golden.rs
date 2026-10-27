@@ -42,6 +42,7 @@ fn data_sync_sqls(
         source_count: source.len(),
         target_count: target.len(),
         generated_columns: Vec::new(),
+        verify_only: false,
     };
     let plan = t::generate_data_sync_sql(&diff, allow_delete);
     plan.statements.into_iter().map(|st| st.sql).collect()
@@ -287,6 +288,7 @@ async fn sqlite_composite_pk_with_nulls_converges_end_to_end() {
         source_count: src_rows.len(),
         target_count: tgt_rows.len(),
         generated_columns: Vec::new(),
+        verify_only: false,
     };
     let plan = t::generate_data_sync_sql(&diff, true);
     let sqls: Vec<String> = plan.statements.iter().map(|st| st.sql.clone()).collect();

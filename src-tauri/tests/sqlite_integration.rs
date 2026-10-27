@@ -1159,6 +1159,7 @@ async fn sqlite_data_sync_plan_applied_makes_rows_converge() {
         source_count: src_rows.len(),
         target_count: tgt_rows.len(),
         generated_columns: Vec::new(),
+        verify_only: false,
     };
 
     let plan = t::generate_data_sync_sql(&diff, true);
@@ -1232,6 +1233,7 @@ async fn sqlite_generated_columns_are_not_listed_so_data_sync_never_writes_them(
         source_count: 1,
         target_count: 0,
         generated_columns: Vec::new(),
+        verify_only: false,
     };
     let plan = t::generate_data_sync_sql(&diff, false);
     let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
@@ -6843,6 +6845,7 @@ async fn unique_only_table_compares_and_syncs_to_convergence() {
         source_count: src_rows.len(),
         target_count: tgt_rows.len(),
         generated_columns: Vec::new(),
+        verify_only: false,
     };
     let plan = t::generate_data_sync_sql(&diff, true);
     let sqls: Vec<String> = plan.statements.iter().map(|st| st.sql.clone()).collect();

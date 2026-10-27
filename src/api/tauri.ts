@@ -2059,9 +2059,33 @@ export interface SandboxConflict {
   external_row: CellValue[] | null;
 }
 
+/** 正規化して一致とみなした差の種類 (#1869)。 */
+export type NormalizeKind =
+  | "boolean"
+  | "decimal_scale"
+  | "decimal_float"
+  | "decimal_clamped"
+  | "timestamp_tz_degraded"
+  | "timestamp_format"
+  | "json"
+  | "float_compare"
+  | "column_name";
+
+/** ドライバをまたぐ比較で正規化して一致とみなした列 (#1869)。 */
+export interface NormalizedColumn {
+  column: string;
+  kind: NormalizeKind;
+  source_type: string;
+  target_type: string;
+}
+
 /** `compareTableData` の戻り値。`diff` は表示用、`diff_id` はバックエンド保持の同じ差分の ID (#1259)。 */
 export interface DataDiffHandle {
   diff_id: string;
+  /** ドライバをまたぐ検証専用の比較 (#1869)。true のとき同期 SQL は生成できない。 */
+  cross_driver: boolean;
+  /** 値の表現差を正規化して一致とみなした列。 */
+  normalized_columns: NormalizedColumn[];
   diff: DataDiff;
 }
 

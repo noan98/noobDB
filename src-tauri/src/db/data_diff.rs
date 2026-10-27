@@ -16,6 +16,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::cross_compare::CompareNorms;
 use super::sync::{quote_ident, SyncKind, SyncPlan, SyncStatement};
 use super::types::Value;
 use super::DriverKind;
@@ -92,6 +93,11 @@ pub struct DataDiff {
     /// ストア済みの diff を使う)。
     #[serde(skip)]
     pub generated_columns: Vec<String>,
+    /// 検証専用の差分 (#1869): ドライバをまたぐ比較の結果。値の表現差を正規化して
+    /// 突き合わせたもので、片方の方言の INSERT / UPDATE をもう片方へ当てると危険なので
+    /// 同期 SQL は生成しない。IPC には出さない (ストアが持つ値で足りる)。
+    #[serde(skip)]
+    pub verify_only: bool,
 }
 
 /// Pairs `source` and `target` rows by their primary-key columns and returns
@@ -131,9 +137,36 @@ pub fn compute_data_diff_ignoring(
     target: &[Vec<Value>],
     ignore_columns: &[String],
 ) -> Vec<RowDiff> {
+    compute_data_diff_normalized(columns, pk_idx, source, target, ignore_columns, None)
+}
+
+/// [`compute_data_diff_ignoring`] に値の正規化 (#1869) を足した版。`norms` があれば、
+/// 行の対応付け (主キー署名) も値の比較も、列の論理型の正準形に寄せてから行う
+/// (ドライバをまたぐ比較で、`1` と `true`、`1.10` と `1.1` を別物にしない)。
+/// `RowDiff` に載る値・キーは元のまま。`None` は従来の厳密比較。
+pub fn compute_data_diff_normalized(
+    columns: &[String],
+    pk_idx: &[usize],
+    source: &[Vec<Value>],
+    target: &[Vec<Value>],
+    ignore_columns: &[String],
+    norms: Option<&CompareNorms>,
+) -> Vec<RowDiff> {
     use std::collections::HashMap;
 
     let key_of = |row: &[Value]| -> Vec<Value> { pk_idx.iter().map(|&i| row[i].clone()).collect() };
+    // 署名用のキー。正規化が有効なら寄せた値で作る。
+    let sig_of = |row: &[Value]| -> String {
+        match norms {
+            Some(n) => key_signature(
+                &pk_idx
+                    .iter()
+                    .map(|&i| n.normalize(i, &row[i]))
+                    .collect::<Vec<_>>(),
+            ),
+            None => key_signature(&key_of(row)),
+        }
+    };
     let mut target_by_sig: HashMap<String, &Vec<Value>> = HashMap::with_capacity(target.len());
     // 同じ sig の行が 2 件以上あれば重複キー — 後勝ちで上書きされてしまうので
     // どのキーが衝突したかを別途記録しておく。これが唯一の「信頼できない」条件:
@@ -145,7 +178,7 @@ pub fn compute_data_diff_ignoring(
     let mut dup_sigs: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut target_sigs: Vec<String> = Vec::with_capacity(target.len());
     for row in target {
-        let s = key_signature(&key_of(row));
+        let s = sig_of(row);
         if target_by_sig.insert(s.clone(), row).is_some() {
             dup_sigs.insert(s.clone());
         }
@@ -157,12 +190,12 @@ pub fn compute_data_diff_ignoring(
 
     for s_row in source {
         let key = key_of(s_row);
-        let s = key_signature(&key);
+        let s = sig_of(s_row);
         let unreliable = dup_sigs.contains(&s);
         match target_by_sig.get(&s) {
             Some(t_row) => {
                 seen.insert(s);
-                let changed = changed_columns(columns, pk_idx, s_row, t_row, ignore_columns);
+                let changed = changed_columns(columns, pk_idx, s_row, t_row, ignore_columns, norms);
                 if !changed.is_empty() {
                     out.push(RowDiff {
                         status: RowStatus::Different,
@@ -209,6 +242,7 @@ fn changed_columns(
     source: &[Value],
     target: &[Value],
     ignore_columns: &[String],
+    norms: Option<&CompareNorms>,
 ) -> Vec<String> {
     let mut changed = Vec::new();
     for (i, name) in columns.iter().enumerate() {
@@ -216,7 +250,10 @@ fn changed_columns(
             continue;
         }
         let eq = match (source.get(i), target.get(i)) {
-            (Some(a), Some(b)) => values_equal(a, b),
+            (Some(a), Some(b)) => match norms {
+                Some(n) => n.values_match(i, a, b),
+                None => values_equal(a, b),
+            },
             (a, b) => a == b,
         };
         if !eq {
@@ -258,6 +295,15 @@ pub fn generate_data_sync_sql(diff: &DataDiff, allow_delete: bool) -> SyncPlan {
     let table_ident = quote_ident(driver, &diff.table);
     let mut statements: Vec<SyncStatement> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
+
+    // ドライバをまたぐ比較 (#1869) は検証専用。方言の違う表へ当てる DML は出さない。
+    if diff.verify_only {
+        warnings.push("ドライバをまたぐ比較は検証専用のため、同期 SQL は生成しません".to_string());
+        return SyncPlan {
+            statements,
+            warnings,
+        };
+    }
 
     // 行数上限で切り捨てられた比較結果は、source 側に実在する行を誤って
     // TargetOnly と分類しうる (ウィンドウのズレ)。DELETE は破壊的操作なので、
@@ -837,6 +883,7 @@ mod tests {
             source_count: 2,
             target_count: 2,
             generated_columns: vec![],
+            verify_only: false,
         };
         let plan = generate_data_sync_sql(&diff, false);
         assert_eq!(plan.statements.len(), 1);
@@ -888,6 +935,7 @@ mod tests {
             source_count: 2,
             target_count: 2,
             generated_columns: Vec::new(),
+            verify_only: false,
         };
 
         let without = generate_data_sync_sql(&diff, false);
@@ -943,6 +991,7 @@ mod tests {
                 source_count: 2,
                 target_count: 1,
                 generated_columns: vec!["score".to_string()],
+                verify_only: false,
             };
             let plan = generate_data_sync_sql(&diff, false);
             let q = |c: &str| quote_ident(driver, c);
@@ -981,6 +1030,7 @@ mod tests {
             source_count: 1,
             target_count: 1,
             generated_columns: vec!["score".to_string()],
+            verify_only: false,
         };
         assert!(generate_data_sync_sql(&diff, false).statements.is_empty());
     }
@@ -1117,6 +1167,7 @@ mod tests {
             source_count: 1,
             target_count: 2,
             generated_columns: Vec::new(),
+            verify_only: false,
         };
 
         let plan = generate_data_sync_sql(&diff, true);
@@ -1155,6 +1206,7 @@ mod tests {
             source_count: 1,
             target_count: 2,
             generated_columns: Vec::new(),
+            verify_only: false,
         };
 
         let plan = generate_data_sync_sql(&diff, true);
@@ -1221,6 +1273,7 @@ mod tests {
             source_count: 1,
             target_count: 0,
             generated_columns: Vec::new(),
+            verify_only: false,
         };
 
         let mysql_plan = generate_data_sync_sql(&diff, false);
@@ -1272,6 +1325,7 @@ mod tests {
             source_count: 0,
             target_count: 2,
             generated_columns: Vec::new(),
+            verify_only: false,
         };
 
         let plan = generate_data_sync_sql(&diff, true);
@@ -1321,6 +1375,7 @@ mod tests {
             source_count: 0,
             target_count: 1,
             generated_columns: Vec::new(),
+            verify_only: false,
         };
 
         let plan = generate_data_sync_sql(&diff, true);
@@ -1419,6 +1474,7 @@ mod tests {
             source_count: 1,
             target_count: 1,
             generated_columns: Vec::new(),
+            verify_only: false,
         };
 
         let plan = generate_data_sync_sql(&diff, true);
@@ -1490,6 +1546,7 @@ mod tests {
             source_count: 1,
             target_count: 1,
             generated_columns: Vec::new(),
+            verify_only: false,
         };
         let plan = generate_data_sync_sql(&diff, true);
         assert!(
@@ -1519,6 +1576,7 @@ mod tests {
             source_count: 1,
             target_count: 1,
             generated_columns: Vec::new(),
+            verify_only: false,
         };
         let plan = generate_data_sync_sql(&diff, true);
         assert!(!plan.warnings.iter().any(|w| w.contains("大文字小文字")));
@@ -1544,5 +1602,98 @@ mod tests {
         ] {
             assert!(!is_numeric_literal(ng), "{ng}");
         }
+    }
+
+    #[test]
+    fn normalized_compare_pairs_keys_and_ignores_representation() {
+        use crate::db::cross_compare::build_norms;
+        let columns: Vec<String> = ["id", "flag", "price"]
+            .iter()
+            .map(|c| c.to_string())
+            .collect();
+        let (norms, _) = build_norms(
+            DriverKind::Mysql,
+            DriverKind::Postgres,
+            &columns,
+            &[
+                "bigint".to_string(),
+                "tinyint(1)".to_string(),
+                "decimal(10,2)".to_string(),
+            ],
+            &[
+                "bigint".to_string(),
+                "boolean".to_string(),
+                "numeric(10,2)".to_string(),
+            ],
+            &[],
+        );
+        let big = 9_007_199_254_740_993_i64;
+        let source = vec![
+            vec![Value::Int(1), Value::Int(1), Value::String("1.10".into())],
+            vec![
+                Value::String(big.to_string()),
+                Value::Int(0),
+                Value::String("2.00".into()),
+            ],
+            vec![Value::Int(3), Value::Int(1), Value::String("3.00".into())],
+        ];
+        let target = vec![
+            vec![
+                Value::Int(1),
+                Value::Bool(true),
+                Value::String("1.1".into()),
+            ],
+            vec![
+                Value::Int(big),
+                Value::Bool(false),
+                Value::String("2".into()),
+            ],
+            vec![
+                Value::Int(3),
+                Value::Bool(false),
+                Value::String("3.00".into()),
+            ],
+        ];
+        // 厳密比較ではどの行も違って見える。
+        assert_eq!(compute_data_diff(&columns, &[0], &source, &target).len(), 4);
+        // 正規化すれば 3 行目の flag だけが差分。
+        let diff =
+            compute_data_diff_normalized(&columns, &[0], &source, &target, &[], Some(&norms));
+        assert_eq!(diff.len(), 1);
+        assert_eq!(diff[0].status, RowStatus::Different);
+        assert_eq!(diff[0].changed_columns, vec!["flag".to_string()]);
+        // 行に載る値は元のまま。
+        assert_eq!(
+            diff[0].source.as_ref().map(|r| r[1].clone()),
+            Some(Value::Int(1))
+        );
+    }
+
+    #[test]
+    fn verify_only_diff_generates_no_sync_sql() {
+        let diff = DataDiff {
+            key_kind: Default::default(),
+            target_driver: DriverKind::Postgres,
+            table: "t".into(),
+            columns: vec!["id".into()],
+            primary_key: vec!["id".into()],
+            column_types: vec!["bigint".into()],
+            rows: vec![RowDiff {
+                status: RowStatus::SourceOnly,
+                key: vec![Value::Int(1)],
+                source: Some(vec![Value::Int(1)]),
+                target: None,
+                changed_columns: vec![],
+                key_unreliable: false,
+            }],
+            truncated: false,
+            source_count: 1,
+            target_count: 0,
+            generated_columns: vec![],
+            verify_only: true,
+        };
+        let plan = generate_data_sync_sql(&diff, true);
+        assert!(plan.statements.is_empty());
+        assert_eq!(plan.warnings.len(), 1);
     }
 }
