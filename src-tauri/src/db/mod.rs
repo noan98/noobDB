@@ -2747,7 +2747,24 @@ pub fn key_is_unique_in(
         .filter(|c| c.key.eq_ignore_ascii_case("PRI"))
         .map(|c| c.name.clone())
         .collect();
-    within(&pk) || usable_unique_keys(cols, indexes).iter().any(|k| within(k))
+    // PostgreSQL は SELECT 権限だけのユーザには `information_schema.table_constraints` が見えず、
+    // `columns()` に `PRI` が付かない。主キーのインデックス (`primary`) は列が NOT NULL なので、
+    // それも一意キーとして扱う (`usable_unique_keys` は `!primary` で除くため別に見る)。
+    let pk_index_ok = indexes.iter().any(|i| {
+        i.primary
+            && !i.invalid
+            && !i.collation_differs
+            && i.predicate.is_none()
+            && i.first_expression_at.is_none()
+            && {
+                let n = i
+                    .key_column_count
+                    .unwrap_or(i.columns.len())
+                    .min(i.columns.len());
+                within(&i.columns[..n])
+            }
+    });
+    within(&pk) || pk_index_ok || usable_unique_keys(cols, indexes).iter().any(|k| within(k))
 }
 
 /// `pick_unique_row_key` で選んだキーから `unique_key` の行識別を作る (#1776)。
@@ -5007,6 +5024,38 @@ mod tests {
             &s(&["ID"]),
             &cols,
             &[]
+        ));
+    }
+
+    #[test]
+    fn key_is_unique_in_uses_primary_index_when_columns_lack_pri() {
+        use super::key_is_unique_in;
+        use super::DriverKind;
+        let s = |v: &[&str]| v.iter().map(|c| c.to_string()).collect::<Vec<_>>();
+        // SELECT 権限だけの PG ユーザ: columns に PRI が付かないが、PK インデックスは見える。
+        let cols = [nn_col("id", false), nn_col("v", true)];
+        let mut pk = uq_index("t_pkey", &["id"]);
+        pk.primary = true;
+        assert!(key_is_unique_in(
+            DriverKind::Postgres,
+            &s(&["id"]),
+            &cols,
+            &[pk.clone()]
+        ));
+        // PK インデックスも PRI も無ければ (CTAS の表など) 拒否する。
+        assert!(!key_is_unique_in(
+            DriverKind::Postgres,
+            &s(&["id"]),
+            &cols,
+            &[]
+        ));
+        // 無効なインデックスは保証にならない。
+        pk.invalid = true;
+        assert!(!key_is_unique_in(
+            DriverKind::Postgres,
+            &s(&["id"]),
+            &cols,
+            &[pk]
         ));
     }
 

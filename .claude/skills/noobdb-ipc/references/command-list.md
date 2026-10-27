@@ -243,6 +243,7 @@ PostgreSQL は別スキーマの子テーブルからの単一列 FK も専用�
 
 `compare_table_data` は表示用 `diff` と保持差分の `diff_id` を返し、`generate_data_sync_sql(diffId, allowDelete, skipKeys, kinds, onlyKeys)` は
 ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を破棄する (#1259)。
+`compare_table_data` は `table` (ソース側) に加えて省略可の `targetTable` でターゲット側の表名を変えられる (異名表・同一接続内の 2 表, #1880。省略 / 空は同名。同じ接続・DB・表の自己比較は `InvalidInput`)。`DataDiff.table` と同期 SQL の対象はターゲット側の表。
 `compare_table_data` に `streamId` を渡して `allRows` で呼ぶと、ページごとの進捗を `data-diff:progress` イベント
 (`streamId` / `rows`) で通知し、`cancel_stream(streamId)` で中止できる (中止時は `InvalidInput` で返る, #1612)。
 
