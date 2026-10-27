@@ -18,6 +18,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       generateSyncSql: vi.fn(),
       applySyncSql: vi.fn().mockResolvedValue(1),
       releaseDataDiffs: vi.fn().mockResolvedValue(undefined),
+      compareTableData: vi.fn(),
     },
   };
 });
@@ -111,5 +112,60 @@ describe("SchemaCompareView の非同期整合 (#1599)", () => {
     // 一瞬映るだけでなく、再比較が落ち着いた後も残る。
     await new Promise((r) => setTimeout(r, 100));
     expect(screen.getByText(t("schemaCompareApplyDone", { count: 1 }))).toBeInTheDocument();
+  });
+});
+
+/** 異名の 2 表のデータ比較 (#1880)。 */
+describe("SchemaCompareView の異名テーブル比較 (#1880)", () => {
+  it("ターゲットの表を選ぶと targetTable を付けて比較し、既定は同名 (null)", async () => {
+    vi.mocked(api.connect).mockResolvedValue({ session_id: "s1" } as never);
+    const tbl = (name: string, status: string) => ({ name, status, columns: [], foreign_keys: [] });
+    vi.mocked(api.compareSchema).mockResolvedValue({
+      source_driver: "mysql",
+      target_driver: "mysql",
+      tables: [tbl("orders", "same"), tbl("orders_archive", "target_only")],
+    } as never);
+    vi.mocked(api.compareTableData).mockResolvedValue({
+      diff_id: "d1",
+      diff: {
+        target_driver: "mysql",
+        table: "orders_archive",
+        columns: ["id"],
+        column_types: ["int"],
+        primary_key: ["id"],
+        key_kind: "primary_key",
+        rows: [],
+        truncated: false,
+        source_count: 0,
+        target_count: 0,
+      },
+    } as never);
+    renderWithProviders(<SchemaCompareView profiles={PROFILES} onClose={() => {}} />);
+    const boxes = () => screen.getAllByRole("combobox") as HTMLSelectElement[];
+    fireEvent.change(boxes()[0], { target: { value: "p-a" } });
+    await waitFor(() => expect(boxes()[1]).not.toBeDisabled());
+    fireEvent.change(boxes()[2], { target: { value: "p-b" } });
+    await waitFor(() => expect(boxes()[3]).not.toBeDisabled());
+    await waitFor(() => expect(boxes()[3].value).toBe("db1"));
+    fireEvent.click(screen.getByText(t("schemaCompareCompare")));
+    const sourceTable = (await screen.findByLabelText(
+      t("schemaCompareDataSourceTable"),
+    )) as HTMLSelectElement;
+    const targetTable = screen.getByLabelText(t("schemaCompareDataTargetTable")) as HTMLSelectElement;
+    fireEvent.change(sourceTable, { target: { value: "orders" } });
+    fireEvent.change(targetTable, { target: { value: "orders_archive" } });
+    // 全行比較は進捗イベントの購読を伴うので、テストでは上限つき比較にする。
+    fireEvent.click(screen.getByLabelText(t("schemaCompareDataAllRows")));
+    fireEvent.click(screen.getByText(t("schemaCompareDataCompare")));
+    await waitFor(() => expect(api.compareTableData).toHaveBeenCalled());
+    expect(vi.mocked(api.compareTableData).mock.calls[0][0]).toMatchObject({
+      table: "orders",
+      targetTable: "orders_archive",
+    });
+    expect(
+      await screen.findByText(
+        t("schemaCompareDataComparedPair", { source: "orders", target: "orders_archive" }),
+      ),
+    ).toBeInTheDocument();
   });
 });

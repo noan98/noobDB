@@ -494,7 +494,7 @@ fn collation_mismatch_error(example: &[Value]) -> AppError {
 async fn verify_one_sided(
     source: (&Connection, &str),
     target: (&Connection, &str),
-    table: &str,
+    tables: TablePair<'_>,
     primary_key: &[String],
     pk_types: &[String],
     rows: &[RowDiff],
@@ -526,7 +526,7 @@ async fn verify_one_sided(
         if let Some(found) = any_key_exists(
             source.0,
             source.1,
-            table,
+            tables.source,
             primary_key,
             pk_types,
             &target_only,
@@ -540,7 +540,7 @@ async fn verify_one_sided(
         if let Some(found) = any_key_exists(
             target.0,
             target.1,
-            table,
+            tables.target,
             primary_key,
             pk_types,
             &source_only,
@@ -551,6 +551,24 @@ async fn verify_one_sided(
         }
     }
     Ok(())
+}
+
+/// 比較する 2 表の名前 (#1880)。ソース側とターゲット側で表名が違ってもよい
+/// (`orders` と `orders_archive`、同一接続内の 2 表など)。列集合は同じ前提。
+#[derive(Debug, Clone, Copy)]
+struct TablePair<'a> {
+    source: &'a str,
+    target: &'a str,
+}
+
+impl<'a> TablePair<'a> {
+    #[cfg(test)]
+    fn same(table: &'a str) -> Self {
+        Self {
+            source: table,
+            target: table,
+        }
+    }
 }
 
 /// 全行比較の結果。
@@ -583,7 +601,7 @@ async fn keyset_compare(
     source_db: &str,
     target: &Connection,
     target_db: &str,
-    table: &str,
+    tables: TablePair<'_>,
     columns: &[String],
     column_types: &[String],
     primary_key: &[String],
@@ -622,7 +640,7 @@ async fn keyset_compare(
     loop {
         let sql = keyset_select_sql(
             driver,
-            table,
+            tables.source,
             columns,
             primary_key,
             &pk_types,
@@ -646,7 +664,7 @@ async fn keyset_compare(
         loop {
             let sql = keyset_select_sql(
                 driver,
-                table,
+                tables.target,
                 columns,
                 primary_key,
                 &pk_types,
@@ -687,7 +705,7 @@ async fn keyset_compare(
         verify_one_sided(
             (source, source_db),
             (target, target_db),
-            table,
+            tables,
             primary_key,
             &pk_types,
             &window_rows,
@@ -711,7 +729,7 @@ async fn keyset_compare(
     loop {
         let sql = keyset_select_sql(
             driver,
-            table,
+            tables.target,
             columns,
             primary_key,
             &pk_types,
@@ -734,7 +752,7 @@ async fn keyset_compare(
         verify_one_sided(
             (source, source_db),
             (target, target_db),
-            table,
+            tables,
             primary_key,
             &pk_types,
             &tail_rows,
@@ -902,7 +920,7 @@ struct BoundedOutcome {
 async fn bounded_compare(
     source: (&Connection, &str),
     target: (&Connection, &str),
-    table: &str,
+    tables: TablePair<'_>,
     columns: &[String],
     column_types: &[String],
     primary_key: &[String],
@@ -911,11 +929,12 @@ async fn bounded_compare(
     want: usize,
 ) -> Result<BoundedOutcome> {
     let driver = source.0.driver_kind();
-    let sql = select_rows_sql(driver, table, columns, primary_key, want + 1);
+    let source_sql = select_rows_sql(driver, tables.source, columns, primary_key, want + 1);
+    let target_sql = select_rows_sql(driver, tables.target, columns, primary_key, want + 1);
     // 両側の SELECT は独立なので同時に走らせる (片側の往復待ちで反対側を待たせない)。
     let (source_res, target_res) = tokio::join!(
-        source.0.execute(&sql, Some(source.1)),
-        target.0.execute(&sql, Some(target.1)),
+        source.0.execute(&source_sql, Some(source.1)),
+        target.0.execute(&target_sql, Some(target.1)),
     );
     let (source_res, target_res) = (source_res?, target_res?);
 
@@ -944,7 +963,7 @@ async fn bounded_compare(
     verify_one_sided(
         source,
         target,
-        table,
+        tables,
         primary_key,
         &pk_types,
         &rows,
@@ -980,7 +999,7 @@ async fn keyset_compare_cancellable(
     stream_id: String,
     source: (Arc<Session>, String),
     target: (Arc<Session>, String),
-    table: String,
+    tables: (String, String),
     columns: Vec<String>,
     column_types: Vec<String>,
     primary_key: Vec<String>,
@@ -1007,7 +1026,10 @@ async fn keyset_compare_cancellable(
             &source.1,
             &target.0.conn,
             &target.1,
-            &table,
+            TablePair {
+                source: &tables.0,
+                target: &tables.1,
+            },
             &columns,
             &column_types,
             &primary_key,
@@ -1075,10 +1097,29 @@ fn serialize_shared_diff<S: serde::Serializer>(
     serde::Serialize::serialize(&**diff, serializer)
 }
 
+/// 比較元と比較先が同じ接続・同じ DB・同じ表を指すか (#1880)。表名は MySQL / SQLite では
+/// 大文字小文字を区別しない環境があるため、その 2 ドライバでは無視して比べる。
+fn is_same_table(
+    driver: DriverKind,
+    source: (&str, &str, &str),
+    target: (&str, &str, &str),
+) -> bool {
+    let name_eq = |a: &str, b: &str| {
+        if driver == DriverKind::Postgres {
+            a == b
+        } else {
+            a.eq_ignore_ascii_case(b)
+        }
+    };
+    source.0 == target.0 && source.1 == target.1 && name_eq(source.2, target.2)
+}
+
 /// Compares the rows of one `table` between the source and target databases,
 /// pairing by primary key. Reads at most `limit` rows per side (clamped to a
 /// master-data-sized cap); a table without a primary key is rejected since
 /// there is nothing to pair on. Both connections must use the same driver.
+/// The target table may have a different name (`target_table`, #1880); the same
+/// session / database / table on both sides is rejected.
 // IPC の引数をそのまま受ける Tauri コマンドなので、引数の数は呼び出し側 (フロント) の
 // 形に合わせて固定されている。
 #[allow(clippy::too_many_arguments)]
@@ -1088,7 +1129,11 @@ pub async fn compare_table_data(
     source_database: String,
     target_session_id: String,
     target_database: String,
+    // ソース側の表名。`target_table` が無ければ両側ともこの名前 (従来動作)。
     table: String,
+    // ターゲット側の表名 (#1880)。省略 / 空文字なら `table` と同じ。異名表や、同一接続・
+    // 同一 DB 内の 2 表の比較に使う。同期 SQL はこの表に対して生成される。
+    target_table: Option<String>,
     limit: Option<usize>,
     // true なら上限 (`limit` / `MAX_DATA_ROWS`) を使わず、主キーのキーセットページングで
     // 全行を比較する (#1539)。省略 / false は従来の上限つき比較。
@@ -1118,15 +1163,39 @@ pub async fn compare_table_data(
         ));
     }
 
+    let source_table = table;
+    let target_table = target_table
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| source_table.clone());
+    if source_table.is_empty() {
+        return Err(AppError::InvalidInput("table name is empty".into()));
+    }
+    // 同じ接続の同じ DB の同じ表を自分自身と比べても差分は出ず、同期 SQL が自己書き換えに
+    // なりうるので弾く。MySQL / SQLite は表名の大文字小文字を区別しない環境があるため無視して比べる。
+    if is_same_table(
+        driver,
+        (&source_session_id, &source_database, &source_table),
+        (&target_session_id, &target_database, &target_table),
+    ) {
+        return Err(AppError::InvalidInput(
+            "the source and target are the same table; choose a different table or connection"
+                .into(),
+        ));
+    }
+    let tables = TablePair {
+        source: &source_table,
+        target: &target_table,
+    };
+
     // 列情報の取得は両側とも独立なので同時に走らせる。
     let (source_cols, target_cols) = tokio::join!(
-        source.conn.columns(&source_database, &table),
-        target.conn.columns(&target_database, &table),
+        source.conn.columns(&source_database, &source_table),
+        target.conn.columns(&target_database, &target_table),
     );
     let col_info = source_cols?;
     if col_info.is_empty() {
         return Err(AppError::InvalidInput(format!(
-            "table '{table}' has no columns (does it exist on the source?)"
+            "table '{source_table}' has no columns (does it exist on the source?)"
         )));
     }
     let columns: Vec<String> = col_info.iter().map(|c| c.name.clone()).collect();
@@ -1149,11 +1218,11 @@ pub async fn compare_table_data(
     // 間で値が一致する保証が無く対応付けに使えないので、比較では採らない。
     let Some(row_key) = source
         .conn
-        .resolve_row_key(&source_database, &table, &col_info, false)
+        .resolve_row_key(&source_database, &source_table, &col_info, false)
         .await?
     else {
         return Err(AppError::InvalidInput(format!(
-            "table '{table}' has no primary key or UNIQUE NOT NULL key; data comparison needs one to pair rows"
+            "table '{source_table}' has no primary key or UNIQUE NOT NULL key; data comparison needs one to pair rows"
         )));
     };
     let key_kind = row_key.kind;
@@ -1169,22 +1238,22 @@ pub async fn compare_table_data(
                         .any(|c| column_names_match(driver, &c.name, k))
                 }) {
                     return Err(AppError::InvalidInput(format!(
-                        "table '{table}': key column '{missing}' does not exist on the target"
+                        "table '{target_table}': key column '{missing}' does not exist on the target"
                     )));
                 }
                 // 取得に失敗したときは一意性を確かめられないので、空扱いにせずエラーで返す。
                 let target_indexes = target
                     .conn
-                    .list_indexes(&target_database, &table)
+                    .list_indexes(&target_database, &target_table)
                     .await
                     .map_err(|e| {
                         AppError::InvalidInput(format!(
-                            "table '{table}': could not read the target's indexes to verify the UNIQUE key: {e}"
+                            "table '{target_table}': could not read the target's indexes to verify the UNIQUE key: {e}"
                         ))
                     })?;
                 if !key_is_unique_in(driver, &primary_key, target_cols, &target_indexes) {
                     return Err(AppError::InvalidInput(format!(
-                        "table '{table}' pairs rows by UNIQUE key ({}), but the target does not guarantee that key is unique",
+                        "table '{target_table}' pairs rows by UNIQUE key ({}), but the target does not guarantee that key is unique",
                         primary_key.join(", ")
                     )));
                 }
@@ -1208,7 +1277,7 @@ pub async fn compare_table_data(
                     stream_id,
                     (source.clone(), source_database.clone()),
                     (target.clone(), target_database.clone()),
-                    table.clone(),
+                    (source_table.clone(), target_table.clone()),
                     columns.clone(),
                     column_types.clone(),
                     primary_key.clone(),
@@ -1223,7 +1292,7 @@ pub async fn compare_table_data(
                     &source_database,
                     &target.conn,
                     &target_database,
-                    &table,
+                    tables,
                     &columns,
                     &column_types,
                     &primary_key,
@@ -1237,7 +1306,8 @@ pub async fn compare_table_data(
         };
         let diff = DataDiff {
             target_driver: driver,
-            table,
+            // 同期 SQL はターゲット側の表に対して生成する。
+            table: target_table,
             columns,
             column_types,
             primary_key,
@@ -1261,7 +1331,7 @@ pub async fn compare_table_data(
     let outcome = bounded_compare(
         (&source.conn, &source_database),
         (&target.conn, &target_database),
-        &table,
+        tables,
         &columns,
         &column_types,
         &primary_key,
@@ -1273,7 +1343,8 @@ pub async fn compare_table_data(
 
     let diff = DataDiff {
         target_driver: driver,
-        table,
+        // 同期 SQL はターゲット側の表に対して生成する。
+        table: target_table,
         columns,
         column_types,
         primary_key,
@@ -1290,6 +1361,41 @@ pub async fn compare_table_data(
         vec![source_session_id.clone(), target_session_id.clone()],
     );
     Ok(DataDiffHandle { diff_id, diff })
+}
+
+#[cfg(test)]
+mod same_table_tests {
+    use super::*;
+
+    #[test]
+    fn same_session_db_table_is_same() {
+        assert!(is_same_table(
+            DriverKind::Mysql,
+            ("s1", "db", "Orders"),
+            ("s1", "db", "orders")
+        ));
+        assert!(!is_same_table(
+            DriverKind::Postgres,
+            ("s1", "db", "Orders"),
+            ("s1", "db", "orders")
+        ));
+    }
+
+    #[test]
+    fn different_name_session_or_db_is_not_same() {
+        let a = ("s1", "db", "orders");
+        assert!(!is_same_table(
+            DriverKind::Mysql,
+            a,
+            ("s1", "db", "orders_archive")
+        ));
+        assert!(!is_same_table(DriverKind::Mysql, a, ("s2", "db", "orders")));
+        assert!(!is_same_table(
+            DriverKind::Mysql,
+            a,
+            ("s1", "db2", "orders")
+        ));
+    }
 }
 
 #[cfg(test)]
@@ -1522,7 +1628,7 @@ mod keyset_tests {
                     "main",
                     tgt,
                     "main",
-                    "t",
+                    TablePair::same("t"),
                     columns,
                     types,
                     pk,
@@ -1554,7 +1660,7 @@ mod keyset_tests {
             "main",
             &tgt,
             "main",
-            "t",
+            TablePair::same("t"),
             &columns,
             &types,
             &pk,
@@ -1574,6 +1680,57 @@ mod keyset_tests {
 
         let _ = std::fs::remove_file(src_path);
         let _ = std::fs::remove_file(tgt_path);
+    }
+
+    /// 異名の 2 表 (同一接続内の 2 表を含む) を、それぞれの表名で読んで突き合わせる (#1880)。
+    #[tokio::test]
+    async fn keyset_compare_pairs_differently_named_tables_on_one_connection() {
+        let (conn, path) = sqlite_conn("two_tables").await;
+        for t in ["orders", "orders_archive"] {
+            conn.execute(
+                &format!("CREATE TABLE {t} (id INTEGER PRIMARY KEY, v TEXT)"),
+                None,
+            )
+            .await
+            .unwrap();
+        }
+        conn.execute("INSERT INTO orders VALUES (1,'a'),(2,'b'),(3,'c')", None)
+            .await
+            .unwrap();
+        conn.execute(
+            "INSERT INTO orders_archive VALUES (1,'a'),(2,'X'),(9,'z')",
+            None,
+        )
+        .await
+        .unwrap();
+        let columns = s(&["id", "v"]);
+        let types = s(&["INTEGER", "TEXT"]);
+        let pk = s(&["id"]);
+        let o = keyset_compare(
+            &conn,
+            "main",
+            &conn,
+            "main",
+            TablePair {
+                source: "orders",
+                target: "orders_archive",
+            },
+            &columns,
+            &types,
+            &pk,
+            &[0],
+            &[],
+            2,
+            |_| {},
+        )
+        .await
+        .unwrap();
+        let count = |st: RowStatus| o.rows.iter().filter(|r| r.status == st).count();
+        assert_eq!(count(RowStatus::SourceOnly), 1); // id=3
+        assert_eq!(count(RowStatus::Different), 1); // id=2
+        assert_eq!(count(RowStatus::TargetOnly), 1); // id=9
+        assert_eq!((o.source_count, o.target_count), (3, 3));
+        let _ = std::fs::remove_file(path);
     }
 
     /// source が空でも target の残りは全部 TargetOnly になり、NULL の主キーはエラーになる。
@@ -1597,7 +1754,7 @@ mod keyset_tests {
             "main",
             &tgt,
             "main",
-            "t",
+            TablePair::same("t"),
             &columns,
             &types,
             &pk,
@@ -1620,7 +1777,7 @@ mod keyset_tests {
             "main",
             &tgt,
             "main",
-            "t",
+            TablePair::same("t"),
             &columns,
             &types,
             &pk,
@@ -1668,7 +1825,7 @@ mod keyset_tests {
                     "main",
                     b,
                     "main",
-                    "t",
+                    TablePair::same("t"),
                     &columns,
                     &types,
                     &pk,
@@ -1713,7 +1870,7 @@ mod keyset_tests {
             let err = bounded_compare(
                 (a, "main"),
                 (b, "main"),
-                "t",
+                TablePair::same("t"),
                 &columns,
                 &types,
                 &pk,
@@ -1735,7 +1892,7 @@ mod keyset_tests {
         let ok = bounded_compare(
             (&src, "main"),
             (&tgt, "main"),
-            "t",
+            TablePair::same("t"),
             &columns,
             &types,
             &pk,

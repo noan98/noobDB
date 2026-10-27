@@ -28,6 +28,10 @@
   メタデータ・行を取得して上記純粋関数に渡す IPC ラッパー。両セッションが同一ドライバで
   あること、データ比較対象テーブルにプライマリキーがあることを要求し、データ比較は
   `MAX_DATA_ROWS=5000` / `DEFAULT_DATA_ROWS=1000` で上限を設けます (マスターデータ向け)。
+- **異名の 2 表の比較 (#1880)**: `compare_table_data` は `table` (ソース側) と省略可の `targetTable`
+  (ターゲット側。省略 / 空は同名) を取る。同一セッションを両側に渡して同一 DB 内の 2 表を照合でき、
+  同じ接続・DB・表の自己比較は拒否する。`DataDiff.table` と生成される同期 SQL の対象はターゲット側の表。
+  列集合は両表で同じ前提 (ソースの列名でターゲットも SELECT する)。
 - **データ差分は Rust が ID で保持する (#1259)**: `compare_table_data` は表示用の `diff` と
   `diff_id` を返し、差分本体 (最大 5,000 行) は `AppState::data_diffs` (`state.rs` の
   `DiffStore`) に残す。フロントはこれまで差分全体を `generate_data_sync_sql` /
