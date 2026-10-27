@@ -666,6 +666,114 @@ const SESSION_READ_EXECUTES_SELECT = new Set([
   "sandbox_table_diff",
 ]);
 
+/**
+ * SCRATCH / LIFECYCLE 用のドライバ呼び出し検出 (#1882)。`WRITE_DRIVER_CALL_RE` / `EXECUTE_CALL_RE` は
+ * 「その種の呼び出しが在るか」しか見ないので、サンドボックスの自前接続 (`conn.import_rows`) のように
+ * **正当なスクラッチ書き込み**まで丸ごと弾いてしまう。そこで受け手 (receiver) まで取り、
+ * 「どのコマンドが、どの受け手に、どのドライバ呼び出しをしてよいか」を明示許可リストで固定する。
+ * 許可リストに無い呼び出し (たとえば `source.conn.execute_transaction` や `session.conn.execute`) に
+ * 到達したら、ユーザの DB へ書き込む経路を得た疑いとして落ちる。
+ */
+const DRIVER_CALL_RE =
+  /(?:([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)\s*\.\s*)?(?<![A-Za-z0-9_])(execute(?:_[a-z_]+)?|import_rows|drop_local_table|sqlite_maintenance|kill_process\w*|execute_sync_transaction)\s*\(/g;
+
+interface DriverCall {
+  /** 空白を除いた受け手 (`source.conn` など)。自由関数呼び出しは空文字。 */
+  receiver: string;
+  method: string;
+  /** 開き括弧の直後 (文字列リテラルの中身は空白に潰れている)。 */
+  args: string;
+}
+
+function driverCalls(code: string): DriverCall[] {
+  const out: DriverCall[] = [];
+  const re = new RegExp(DRIVER_CALL_RE.source, "g");
+  let m: RegExpExecArray | null = re.exec(code);
+  while (m !== null) {
+    out.push({
+      receiver: (m[1] ?? "").replace(/\s+/g, ""),
+      method: m[2],
+      args: code.slice(m.index + m[0].length, m.index + m[0].length + 40),
+    });
+    m = re.exec(code);
+  }
+  return out;
+}
+
+const callKey = (c: DriverCall) => (c.receiver === "" ? c.method : `${c.receiver}.${c.method}`);
+/** 引数が文字列リテラルだけ (= クライアント供給の SQL ではない固定文)。 */
+const LITERAL_ONLY_ARGS = /^\s*"\s*"\s*(?:,|\))/;
+/** コマンドがクライアント供給の SQL / 文を引数に取っているか。 */
+const CLIENT_SQL_PARAM_RE = /\b(?:sql|statements?|queries|query)\s*:/;
+
+/**
+ * SCRATCH の許可ドライバ呼び出し。キーに無いコマンドは**ドライバ呼び出しに一切到達してはならない**。
+ *   - create_sandbox: 元 DB へは `source.conn.execute` (内部で組み立てた SELECT) だけ。書き込みは
+ *     自前で張った SQLite ファイルの接続 `conn` に対してのみ。
+ */
+const SCRATCH_ALLOWED_CALLS: Record<string, string[]> = {
+  create_sandbox: ["source.conn.execute", "conn.execute_transaction", "conn.import_rows"],
+  // drop_local_table はローカルセッションの SQLite (`get_local_session` で検証済み) の表を落とすだけ。
+  drop_local_table: ["session.conn.drop_local_table"],
+};
+
+/**
+ * SCRATCH が「ユーザの DB ではないこと」を担保する必須の足場。セッションを受け取るコマンドは
+ * ローカルセッション / サンドボックスのセッションであることを検証してから使う
+ * (`state.get(session_id)` に差し替わるとユーザの DB に触れてしまう)。
+ */
+const SCRATCH_REQUIRED: Record<string, RegExp[]> = {
+  create_sandbox: [
+    // クライアント供給の抽出条件は read-only の条件だけに絞って元 DB の SELECT へ入れる。
+    /\bchecked_row_filter\s*\(/,
+    // 書き込み先は新規に作った SQLite ファイル (ユーザの接続ではない)。
+    /\bDriverKind::Sqlite\b/,
+  ],
+  discard_sandbox: [/\bget_sandbox_session\s*\(/],
+  drop_local_table: [/\bget_local_session\s*\(/],
+  register_local_table: [/\bget_local_session\s*\(/],
+  save_local_database: [/\bget_local_session\s*\(/],
+};
+
+/** LIFECYCLE の許可ドライバ呼び出し (いずれも固定文 `SELECT 1` の疎通確認のみ。引数がリテラルであることも検査する)。 */
+const LIFECYCLE_ALLOWED_CALLS: Record<string, string[]> = {
+  // 接続テストは自前で張った一時接続 `conn` で疎通するだけ。
+  test_connection: ["conn.execute"],
+  // 再接続前に、トランザクションを掴んだ旧接続の生死を見る。
+  reconnect: ["old.conn.execute_in_transaction"],
+};
+
+/** LIFECYCLE の必須の足場。 */
+const LIFECYCLE_REQUIRED: Record<string, RegExp[]> = {
+  // 緊急書き込みモードは read_only セッションにだけ有効化できる (書き込み可能セッションでは拒否)。
+  set_emergency_mode: [/\benabled\s*&&\s*!\s*session\.read_only\b/],
+};
+
+/** SCRATCH / LIFECYCLE 共通: 許可リスト・必須の足場・クライアント SQL 引数の有無を検査する。 */
+function checkScratchLike(
+  c: CommandInfo,
+  allowed: Record<string, string[]>,
+  required: Record<string, RegExp[]>,
+  literalOnly: boolean,
+): string | null {
+  if (CLIENT_SQL_PARAM_RE.test(c.signature)) {
+    return "クライアント供給の SQL / 文を引数に取る (WRITE_CAPABLE へ移しガードを入れる)";
+  }
+  const permitted = allowed[c.name] ?? [];
+  for (const call of driverCalls(c.reachable)) {
+    const key = callKey(call);
+    if (!permitted.includes(key)) {
+      return `許可されていないドライバ呼び出しに到達する: ${key}(...) (ユーザの DB へ書き込む経路になっていないか確認し、正当なら許可リストへ理由つきで追加する)`;
+    }
+    if (literalOnly && !LITERAL_ONLY_ARGS.test(call.args)) {
+      return `${key}(...) の引数が固定の文字列リテラルではない (クライアント供給の SQL を実行していないか)`;
+    }
+  }
+  const lacking = (required[c.name] ?? []).filter((r) => !r.test(c.reachable));
+  if (lacking.length > 0) return `必須の足場が到達コードに無い: ${lacking.join(", ")}`;
+  return null;
+}
+
 const SAFE_CHECKS: Record<Reason, (c: CommandInfo) => string | null> = {
   [REASON.LOCAL_ONLY]: (c) =>
     /session/i.test(c.signature)
@@ -697,8 +805,8 @@ const SAFE_CHECKS: Record<Reason, (c: CommandInfo) => string | null> = {
     /\b(?:begin_transaction\w*|finish_transaction|execute_tx_control|savepoint_inner)\b/.test(c.reachable)
       ? null
       : "トランザクション制御の呼び出しが見当たらない",
-  [REASON.SCRATCH]: () => null,
-  [REASON.LIFECYCLE]: () => null,
+  [REASON.SCRATCH]: (c) => checkScratchLike(c, SCRATCH_ALLOWED_CALLS, SCRATCH_REQUIRED, false),
+  [REASON.LIFECYCLE]: (c) => checkScratchLike(c, LIFECYCLE_ALLOWED_CALLS, LIFECYCLE_REQUIRED, true),
 };
 
 // ---------------------------------------------------------------------------
@@ -786,6 +894,30 @@ describe("read_only 書き込みコマンド網羅パリティ (#1778)", () => {
         `${delegate} が ${helper} へ委ねていない (委譲経由のガードが空洞化している)`,
       ).toBe(true);
     }
+  });
+
+  it("SCRATCH / LIFECYCLE の許可リストは実在する分類済みコマンドだけを指し、取り残しが無い (#1882)", () => {
+    const stale: string[] = [];
+    const tables: [string, Record<string, unknown>, Reason][] = [
+      ["SCRATCH_ALLOWED_CALLS", SCRATCH_ALLOWED_CALLS, REASON.SCRATCH],
+      ["SCRATCH_REQUIRED", SCRATCH_REQUIRED, REASON.SCRATCH],
+      ["LIFECYCLE_ALLOWED_CALLS", LIFECYCLE_ALLOWED_CALLS, REASON.LIFECYCLE],
+      ["LIFECYCLE_REQUIRED", LIFECYCLE_REQUIRED, REASON.LIFECYCLE],
+    ];
+    for (const [label, table, reason] of tables) {
+      for (const name of Object.keys(table)) {
+        if (SAFE[name] !== reason) stale.push(`${label}: ${name} は ${reason} に分類されていない`);
+      }
+    }
+    // 許可した呼び出しが実際に到達コードに現れる (消えた呼び出しの許可が残らない)。
+    const allowed: [Record<string, string[]>][] = [[SCRATCH_ALLOWED_CALLS], [LIFECYCLE_ALLOWED_CALLS]];
+    for (const [table] of allowed) {
+      for (const [name, keys] of Object.entries(table)) {
+        const seen = new Set(driverCalls(byName.get(name)?.reachable ?? "").map(callKey));
+        for (const k of keys) if (!seen.has(k)) stale.push(`${name}: 許可した ${k} が到達コードに無い`);
+      }
+    }
+    expect(stale).toEqual([]);
   });
 
   it("READ_ONLY_SAFE の理由と実装が食い違うコマンドは無い", () => {
@@ -924,6 +1056,139 @@ describe("read_only パリティ自体の自己検証 (合成ソース)", () => 
       #[tauri::command]
       async fn three() {}`);
     expect([...m.keys()].sort()).toEqual(["one", "three", "two"]);
+  });
+
+  it("SCRATCH: 許可外の受け手へのドライバ呼び出しに到達すると落ちる (#1882)", () => {
+    const run = (src: string, name: string) => {
+      const c = analyze(src).get(name);
+      return c ? SAFE_CHECKS[REASON.SCRATCH](c) : "抽出できない";
+    };
+    // 許可済みの呼び出しだけなら通る。
+    expect(
+      run(
+        `#[tauri::command]
+         pub async fn create_sandbox(name: String) -> Result<()> {
+             checked_row_filter(d, t, f)?;
+             let _ = DriverKind::Sqlite;
+             source.conn.execute(&sql, None).await?;
+             conn
+                 .import_rows(None, t, c, r)
+                 .await?;
+             Ok(())
+         }`,
+        "create_sandbox",
+      ),
+    ).toBeNull();
+    // 元 DB (source) への書き込み系呼び出しは許可外。
+    expect(
+      run(
+        `#[tauri::command]
+         pub async fn create_sandbox(name: String) -> Result<()> {
+             checked_row_filter(d, t, f)?;
+             let _ = DriverKind::Sqlite;
+             source.conn.execute_transaction(&ddl, None).await?;
+             Ok(())
+         }`,
+        "create_sandbox",
+      ),
+    ).toContain("source.conn.execute_transaction");
+    // 許可リストに無いコマンドは、ユーザセッションへ execute を持った時点で落ちる。
+    expect(
+      run(
+        `#[tauri::command]
+         pub async fn discard_sandbox(id: String) -> Result<()> {
+             get_sandbox_session(s, r, i).await?;
+             let session = state.get(&id).await;
+             session.conn.execute("DELETE FROM t", None).await?;
+             Ok(())
+         }`,
+        "discard_sandbox",
+      ),
+    ).toContain("session.conn.execute");
+    // 自由関数形の書き込み呼び出しも検出する。
+    expect(
+      run(
+        `#[tauri::command]
+         pub async fn register_local_table() -> Result<()> {
+             get_local_session(s, i).await?;
+             sqlite_maintenance(x).await
+         }`,
+        "register_local_table",
+      ),
+    ).toContain("sqlite_maintenance");
+    // 必須の足場 (ローカルセッション検証) が無いと落ちる。
+    expect(
+      run(
+        `#[tauri::command]
+         pub async fn drop_local_table(t: String) -> Result<()> {
+             let session = state.get(&t).await;
+             session.conn.drop_local_table(&t).await
+         }`,
+        "drop_local_table",
+      ),
+    ).toContain("必須の足場");
+    // クライアント供給の SQL を引数に取るなら WRITE_CAPABLE へ。
+    expect(
+      run(
+        `#[tauri::command]
+         pub async fn save_local_database(sql: String) -> Result<()> { get_local_session(s, i).await?; Ok(()) }`,
+        "save_local_database",
+      ),
+    ).toContain("クライアント供給");
+  });
+
+  it("LIFECYCLE: 固定文以外の実行・許可外の呼び出しに到達すると落ちる (#1882)", () => {
+    const run = (src: string, name: string) => {
+      const c = analyze(src).get(name);
+      return c ? SAFE_CHECKS[REASON.LIFECYCLE](c) : "抽出できない";
+    };
+    expect(
+      run(
+        `#[tauri::command]
+         pub async fn test_connection() -> Result<()> { conn.execute("SELECT 1", None).await?; Ok(()) }`,
+        "test_connection",
+      ),
+    ).toBeNull();
+    // リテラルではなく変数の SQL を流すと落ちる。
+    expect(
+      run(
+        `#[tauri::command]
+         pub async fn test_connection() -> Result<()> { conn.execute(&init_sql, None).await?; Ok(()) }`,
+        "test_connection",
+      ),
+    ).toContain("固定の文字列リテラルではない");
+    // 接続系コマンドがユーザセッションへ書き込むと落ちる。
+    expect(
+      run(
+        `#[tauri::command]
+         pub async fn connect() -> Result<()> { session.conn.execute_transaction(&v, None).await }`,
+        "connect",
+      ),
+    ).toContain("session.conn.execute_transaction");
+    // 緊急書き込みモードの「読み書き可能セッションでは有効化を拒否」が消えると落ちる。
+    expect(
+      run(
+        `#[tauri::command]
+         pub async fn set_emergency_mode(enabled: bool) -> Result<()> { session.set_emergency_write(enabled); Ok(()) }`,
+        "set_emergency_mode",
+      ),
+    ).toContain("必須の足場");
+  });
+
+  it("CRLF 改行でも受け手の抽出と許可判定が変わらない (#1882)", () => {
+    const src = `#[tauri::command]
+pub async fn create_sandbox(name: String) -> Result<()> {
+    checked_row_filter(d, t, f)?;
+    let _ = DriverKind::Sqlite;
+    conn
+        .import_rows(None, t, c, r)
+        .await?;
+    Ok(())
+}`.replace(/\n/g, "\r\n");
+    const c = analyze(src).get("create_sandbox");
+    expect(c).toBeDefined();
+    expect(driverCalls(c?.reachable ?? "").map(callKey)).toEqual(["conn.import_rows"]);
+    expect(c ? SAFE_CHECKS[REASON.SCRATCH](c) : "x").toBeNull();
   });
 
   it("実ソースの分類で、ガード参照を剥がした書き込みコマンドは落ちる", () => {

@@ -1601,8 +1601,10 @@ async fn read_only_session_rejects_csv_import() {
 /// が「各書き込みコマンドの本体にガード参照があること」をソース上で機械検出するのに対し、
 /// ここでは read-only セッションに対して代表的な書き込みコマンドの `_inner` コアを実際に
 /// 呼び、すべて `AppError::ReadOnly` で**ドライバに届く前に**拒否され、データが無変化で
-/// あることを確認する (`run_query` / `run_query_transaction` / `import_csv` /
-/// `apply_privilege_sql` は上の個別テストが担当)。
+/// あることを確認する (`run_query` / `run_query_transaction` は上の個別テストが担当)。
+/// #1882 で `kill_processes` / `apply_privilege_sql` / インポート / `transfer_data` も加えた。
+/// SCRATCH 分類 (サンドボックス等) の「元 DB を書かない」側は
+/// `sandbox_integration.rs::read_only_source_session_can_sandbox_but_source_is_never_written`。
 #[tokio::test]
 async fn read_only_session_rejects_every_representative_write_command() {
     let path = seed_ro_fixture("matrix").await;
@@ -1653,6 +1655,67 @@ async fn read_only_session_rejects_every_representative_write_command() {
         .expect_err("sqlite_maintenance(Analyze) must reject on a read-only session");
     assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
 
+    // プロセス強制終了 (MySQL の KILL / PostgreSQL の pg_cancel_backend)。SQLite ではドライバが
+    // 「非対応」を返すので、ReadOnly で返るならガードがドライバより前に効いている (#1882)。
+    let err = t::kill_processes_via_command(&state, &sid, &[1], false)
+        .await
+        .expect_err("kill_processes must reject on a read-only session");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+
+    // ユーザ / 権限変更の適用。
+    let err =
+        t::apply_privilege_sql_via_command(&state, &sid, None, vec!["DROP USER x".to_string()])
+            .await
+            .expect_err("apply_privilege_sql must reject on a read-only session");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+
+    // CSV / XLSX インポートの共通ガード。
+    let err = t::ensure_import_writable(&state.get(&sid).await.expect("session"))
+        .expect_err("import must reject on a read-only session");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+
+    // 接続間データ転送: read-only は**転送先**になれない。転送元は読むだけなので read-only でも可。
+    // 書き込み可能な転送元から read-only の転送先へ流そうとしても、表は作られない。
+    let src_path = seed_ro_fixture("matrix_transfer_src").await;
+    let src_opts = t::sqlite_options(src_path.to_str().unwrap());
+    let src_conn = t::connect(&src_opts).await.expect("connect (transfer src)");
+    let src_id = state
+        .insert(t::make_session("xfer_src", src_conn, src_opts, false))
+        .await;
+    let err = t::transfer_data_inner(
+        &state,
+        t::TransferRequest {
+            source_session_id: src_id.clone(),
+            target_session_id: sid.clone(),
+            source_database: None,
+            source_table: Some("ro_t".into()),
+            source_sql: None,
+            target_database: None,
+            target_table: "ro_t_copy".into(),
+            mode: t::TransferMode::Create,
+            batch_size: Some(1000),
+            conflict_mode: None,
+            key_columns: None,
+            columns: Vec::new(),
+            where_clause: None,
+            limit_rows: None,
+            verify_counts: None,
+        },
+        std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        |_| {},
+    )
+    .await
+    .expect_err("transfer_data must reject a read-only target");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+    state
+        .get(&src_id)
+        .await
+        .expect("transfer source session")
+        .conn
+        .close()
+        .await;
+    let _ = std::fs::remove_file(&src_path);
+
     // どれもドライバに届いていないので、データは最初のまま。
     let verify = t::connect(&t::sqlite_options(path.to_str().unwrap()))
         .await
@@ -1672,7 +1735,52 @@ async fn read_only_session_rejects_every_representative_write_command() {
         "label が変わっていない: {:?}",
         rows.rows[0][1]
     );
+    // 転送先に表が作られていない (ガードは転送先の作成より前)。
+    let tables = verify
+        .execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+            None,
+        )
+        .await
+        .expect("list tables");
+    assert_eq!(tables.rows.len(), 1, "ro_t のみ: {:?}", tables.rows);
     verify.close().await;
+    state.get(&sid).await.expect("session").conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+/// 緊急書き込みモード (`set_emergency_mode`) は SQL 実行経路 (`run_query` など) だけを緩める。
+/// SQL 文字列を経由しない書き込み経路 (同期適用・権限適用・プロセス終了・インポート・メンテナンス)
+/// は有効化後も拒否されたままであることを固定する (#1882)。LIFECYCLE に分類された
+/// フラグ切替が、他の経路の read_only を静かに外していないことの実挙動側の保証。
+#[tokio::test]
+async fn emergency_mode_keeps_non_sql_write_paths_rejected() {
+    let path = seed_ro_fixture("emergency_keep").await;
+    let (state, sid) = ro_state(&path).await;
+    t::set_emergency_mode_via_command(&state, &sid, true)
+        .await
+        .expect("enable emergency mode on a read-only session");
+
+    let err = t::apply_sync_sql_via_command(&state, &sid, None, vec!["DROP TABLE ro_t".into()])
+        .await
+        .expect_err("apply_sync_sql must stay rejected");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+    let err = t::apply_privilege_sql_via_command(&state, &sid, None, vec!["DROP USER x".into()])
+        .await
+        .expect_err("apply_privilege_sql must stay rejected");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+    let err = t::kill_processes_via_command(&state, &sid, &[1], false)
+        .await
+        .expect_err("kill_processes must stay rejected");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+    let err = t::ensure_import_writable(&state.get(&sid).await.expect("session"))
+        .expect_err("import must stay rejected");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+    let err = t::sqlite_maintenance_inner(&state, &sid, t::SqliteMaintenanceAction::Analyze)
+        .await
+        .expect_err("sqlite_maintenance must stay rejected");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+
     state.get(&sid).await.expect("session").conn.close().await;
     let _ = std::fs::remove_file(&path);
 }

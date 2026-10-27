@@ -977,3 +977,138 @@ async fn create_sandbox_copies_only_rows_matching_the_row_filter() {
     guard.discard().await;
     let _ = std::fs::remove_file(&source_path);
 }
+
+/// SCRATCH 分類 (`readOnlyGuardParity.test.ts`) の実挙動側 (#1882)。read_only の**元セッション**から
+/// `create_sandbox` / `discard_sandbox` を行っても、
+///   - サンドボックス (スクラッチ領域) の作成・破棄は許可される (元は読むだけ)
+///   - 元 DB のデータ・スキーマは一切変わらない
+///   - 抽出条件に書き込み文を忍ばせても元 DB へ届かない (`checked_row_filter` が拒否)
+/// ことを固定する。SCRATCH のコマンドが将来ユーザセッションへ書き込む経路を得たら、
+/// 元の行が変わるのでここが落ちる。
+#[tokio::test]
+async fn read_only_source_session_can_sandbox_but_source_is_never_written() {
+    let (source_path, source_conn) = fresh_sqlite("scratch_ro_source").await;
+    source_conn
+        .execute(
+            "CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT NOT NULL)",
+            None,
+        )
+        .await
+        .expect("create source table");
+    source_conn
+        .execute(
+            "INSERT INTO items (id, label) VALUES (1, 'a'), (2, 'b')",
+            None,
+        )
+        .await
+        .expect("seed source rows");
+
+    let state = std::sync::Arc::new(t::AppState::default());
+    let source_session = t::make_session(
+        "sbx_scratch_ro_source",
+        source_conn,
+        t::sqlite_options(source_path.to_str().expect("utf8 path")),
+        /* read_only */ true,
+    );
+    let source_session_id = state.insert(source_session).await;
+
+    // 書き込み文を忍ばせた抽出条件は拒否され、元 DB には何も届かない。
+    let err = t::create_sandbox_with_filters_via_command(
+        &state,
+        &source_session_id,
+        None,
+        "evil filter",
+        vec![t::SandboxTableSpec {
+            name: "items".to_string(),
+            filter: Some("1 = 1; DELETE FROM items".to_string()),
+        }],
+        false,
+        Some(100),
+    )
+    .await
+    .expect_err("a filter smuggling a write must be rejected");
+    assert!(matches!(err, t::AppError::InvalidInput(_)), "{err:?}");
+
+    // 通常の作成は read_only の元からでも通る (スクラッチ領域への書き込みだけ)。
+    let create = t::create_sandbox_via_command(
+        &state,
+        &source_session_id,
+        None,
+        "scratch from read-only",
+        vec!["items".to_string()],
+        false,
+        Some(100),
+    )
+    .await
+    .expect("create_sandbox from a read-only source");
+    let guard = DiscardGuard {
+        state: state.clone(),
+        sandbox_id: Some(create.sandbox.id.clone()),
+        session_id: Some(create.session_id.clone()),
+    };
+    let sandbox_session = state
+        .get(&create.session_id)
+        .await
+        .expect("sandbox session registered");
+    assert!(
+        !sandbox_session.read_only,
+        "サンドボックスはスクラッチなので書き込み可能"
+    );
+    assert_ne!(
+        sandbox_session.id, source_session_id,
+        "サンドボックスは元とは別セッション"
+    );
+    let copied = sandbox_session
+        .conn
+        .execute("SELECT id FROM items ORDER BY id", None)
+        .await
+        .expect("select from sandbox copy");
+    assert_eq!(copied.rows.len(), 2);
+
+    // サンドボックスの破棄 (元セッション ID を渡す誤用を含む) は元セッションを閉じない。
+    t::discard_sandbox_via_command(&state, &create.sandbox.id, Some(&source_session_id))
+        .await
+        .expect("discard with an unrelated session id");
+    assert!(
+        state.get(&source_session_id).await.is_some(),
+        "無関係な session_id の破棄で元セッションが閉じてはならない"
+    );
+    guard.discard().await;
+
+    // 元 DB は最初のまま (行もスキーマも)。
+    let after = state
+        .get(&source_session_id)
+        .await
+        .expect("source session")
+        .conn
+        .execute("SELECT id, label FROM items ORDER BY id", None)
+        .await
+        .expect("select source");
+    assert_eq!(after.rows.len(), 2, "元の行数が変わらない");
+    let tables = state
+        .get(&source_session_id)
+        .await
+        .expect("source session")
+        .conn
+        .execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+            None,
+        )
+        .await
+        .expect("list source tables");
+    assert_eq!(
+        tables.rows.len(),
+        1,
+        "元に表が増えていない: {:?}",
+        tables.rows
+    );
+
+    state
+        .get(&source_session_id)
+        .await
+        .expect("source session")
+        .conn
+        .close()
+        .await;
+    let _ = std::fs::remove_file(&source_path);
+}
