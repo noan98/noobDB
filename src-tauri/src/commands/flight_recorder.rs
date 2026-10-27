@@ -763,7 +763,7 @@ fn flight_export_table(
             .unwrap_or("other")
             .to_string();
         rows.push(vec![
-            Value::Int(r.id),
+            Value::from_i64_lossless(r.id),
             Value::String(r.captured_at.clone()),
             opt(&r.profile_id),
             Value::String(r.driver.clone()),
@@ -771,9 +771,9 @@ fn flight_export_table(
             Value::String(r.table.clone()),
             Value::String(kind),
             Value::String(r.sql.clone()),
-            Value::Int(r.rows_affected),
-            Value::Int(i64::from(r.undone)),
-            Value::Int(i64::from(r.pinned)),
+            Value::from_i64_lossless(r.rows_affected),
+            Value::from_i64_lossless(i64::from(r.undone)),
+            Value::from_i64_lossless(i64::from(r.pinned)),
             opt(&r.batch_id),
             Value::String(serde_json::to_string(&r.primary_key)?),
             Value::String(serde_json::to_string(&r.columns)?),
