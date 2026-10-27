@@ -948,9 +948,11 @@ export interface AlterTableContext {
   foreign_keys: ForeignKey[];
   /** このテーブルの CHECK 制約 (#1888)。SQLite の構造エディタで削除対象を選ぶために返す。他ドライバは空。 */
   checks: CheckConstraintInfo[];
+  /** このテーブルの生成列の式 (#1893)。SQLite は `columns` に出ない隠れた生成列。取得失敗時は空で `warnings` に `generated`。 */
+  generated: GeneratedColumnInfo[];
   /** DB 内のテーブル名一覧 (FK の参照先候補)。 */
   table_names: string[];
-  /** 取得に失敗して空で続行した付随情報の種別 (`comments` / `foreign_keys` / `table_names` / `checks`)。 */
+  /** 取得に失敗して空で続行した付随情報の種別 (`comments` / `foreign_keys` / `table_names` / `checks` / `generated`)。 */
   warnings: string[];
 }
 
@@ -989,6 +991,22 @@ export interface SqliteRebuildCheck {
   expression: string;
 }
 
+/** 追加する生成列 (#1893)。式は編集後の列名で書く。 */
+export interface SqliteRebuildNewGenerated {
+  name: string;
+  data_type: string;
+  not_null: boolean;
+  expression: string;
+  is_virtual: boolean;
+}
+
+/** 式 (または STORED / VIRTUAL) を変える既存の生成列 (#1893)。 */
+export interface SqliteRebuildChangedGenerated {
+  column: string;
+  expression: string;
+  is_virtual: boolean;
+}
+
 export interface SqliteRebuildEdit {
   /** 変更のない列も含めた全列。 */
   columns: SqliteRebuildColumnEdit[];
@@ -999,6 +1017,12 @@ export interface SqliteRebuildEdit {
   added_checks: SqliteRebuildCheck[];
   /** 削除する CHECK 制約の定義 (`CHECK (...)` 句全体)。 */
   dropped_checks: string[];
+  /** 追加する生成列 (#1893)。SQLite は生成列を `columns` に出さないので別リストで渡す。 */
+  added_generated: SqliteRebuildNewGenerated[];
+  /** 式を変える既存の生成列 (#1893)。 */
+  changed_generated: SqliteRebuildChangedGenerated[];
+  /** 削除する既存の生成列の列名 (#1893)。 */
+  dropped_generated: string[];
 }
 
 export type SqliteRebuildRiskKind =

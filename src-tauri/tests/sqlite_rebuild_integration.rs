@@ -7,8 +7,9 @@
 
 use noobdb_lib::__test_api as t;
 use t::{
-    AppError, AppState, RebuildCheck, RebuildColumnEdit, RebuildForeignKey, RebuildForeignKeyRef,
-    RebuildNewColumn, SqliteRebuildEdit, Value,
+    AppError, AppState, RebuildChangedGenerated, RebuildCheck, RebuildColumnEdit,
+    RebuildForeignKey, RebuildForeignKeyRef, RebuildNewColumn, RebuildNewGenerated,
+    SqliteRebuildEdit, Value,
 };
 
 async fn temp_conn(tag: &str) -> (t::Connection, std::path::PathBuf) {
@@ -785,5 +786,132 @@ async fn the_rebuild_command_rejects_read_only_and_empty_without_history() {
     let (state, sid, path) = recorded_state("histempty", &[]).await;
     let res = t::apply_sqlite_table_rebuild_via_command(&state, &sid, None, vec![]).await;
     assert!(matches!(res, Err(AppError::InvalidInput(_))), "{res:?}");
+    let _ = std::fs::remove_file(&path);
+}
+
+/// 生成列 (#1893): 追加 (VIRTUAL は ALTER、STORED は再作成)・式の変更・削除を実 SQLite で流す。
+#[tokio::test]
+async fn generated_columns_can_be_added_changed_and_dropped() {
+    let (conn, path) = temp_conn("generated").await;
+    exec(
+        &conn,
+        "CREATE TABLE g (id INTEGER PRIMARY KEY, name TEXT, qty INTEGER, \
+         name_len INTEGER GENERATED ALWAYS AS (length(name)) VIRTUAL)",
+    )
+    .await;
+    exec(
+        &conn,
+        "INSERT INTO g (name, qty) VALUES ('apple', 5), ('fig', 7)",
+    )
+    .await;
+    let state = AppState::default();
+    let sid = register(&state, "generated", conn, false).await;
+
+    // フロントが VIRTUAL の追加で出す ALTER (NOT NULL 付き) がそのまま通る。
+    t::apply_sync_sql_via_command(
+        &state,
+        &sid,
+        Some("main"),
+        vec![
+            "ALTER TABLE \"g\" ADD COLUMN \"double_qty\" INTEGER GENERATED ALWAYS AS (qty * 2) VIRTUAL NOT NULL;"
+                .to_string(),
+        ],
+    )
+    .await
+    .expect("add virtual generated column by ALTER");
+    {
+        let conn = &state.get(&sid).await.unwrap().conn;
+        assert_eq!(scalar(conn, "SELECT sum(double_qty) FROM g").await, "24");
+    }
+
+    // STORED の追加 + 既存生成列の式変更 + 通常列の改名を 1 回の再作成で行う。式は新しい列名 (title) で書く。
+    let edit = SqliteRebuildEdit {
+        columns: vec![
+            col("id", "INTEGER", false, None),
+            RebuildColumnEdit {
+                name: "title".to_string(),
+                ..col("name", "TEXT", false, None)
+            },
+            col("qty", "INTEGER", false, None),
+        ],
+        added_generated: vec![RebuildNewGenerated {
+            name: "title_upper".to_string(),
+            data_type: "TEXT".to_string(),
+            not_null: false,
+            expression: "upper(title)".to_string(),
+            is_virtual: false,
+        }],
+        changed_generated: vec![RebuildChangedGenerated {
+            column: "name_len".to_string(),
+            expression: "length(title) + 1".to_string(),
+            is_virtual: false,
+        }],
+        ..Default::default()
+    };
+    rebuild(&state, &sid, "g", &edit, vec![])
+        .await
+        .expect("rebuild with generated columns");
+    {
+        let conn = &state.get(&sid).await.unwrap().conn;
+        assert_eq!(scalar(conn, "SELECT count(*) FROM g").await, "2");
+        assert_eq!(
+            scalar(conn, "SELECT title_upper FROM g WHERE id = 1").await,
+            "APPLE"
+        );
+        assert_eq!(
+            scalar(conn, "SELECT name_len FROM g WHERE id = 1").await,
+            "6"
+        );
+        // 触っていない生成列 (double_qty) も残っている。
+        assert_eq!(scalar(conn, "SELECT sum(double_qty) FROM g").await, "24");
+        let sql = scalar(conn, "SELECT sql FROM sqlite_master WHERE name = 'g'").await;
+        assert!(sql.contains("STORED"), "{sql}");
+        // 生成列は INSERT で値を渡せないが、元になる列を入れれば計算される。
+        exec(conn, "INSERT INTO g (title, qty) VALUES ('kiwi', 1)").await;
+        assert_eq!(
+            scalar(conn, "SELECT title_upper FROM g WHERE id = 3").await,
+            "KIWI"
+        );
+    }
+
+    // 生成列の削除 (再作成)。
+    let drop = SqliteRebuildEdit {
+        columns: vec![
+            col("id", "INTEGER", false, None),
+            col("title", "TEXT", false, None),
+            col("qty", "INTEGER", false, None),
+        ],
+        dropped_generated: vec!["name_len".to_string(), "double_qty".to_string()],
+        ..Default::default()
+    };
+    rebuild(&state, &sid, "g", &drop, vec![])
+        .await
+        .expect("drop generated columns");
+    let conn = &state.get(&sid).await.unwrap().conn;
+    let sql = scalar(conn, "SELECT sql FROM sqlite_master WHERE name = 'g'").await;
+    assert!(
+        !sql.contains("name_len") && !sql.contains("double_qty"),
+        "{sql}"
+    );
+    assert!(sql.contains("title_upper"), "{sql}");
+    assert_eq!(scalar(conn, "SELECT count(*) FROM g").await, "3");
+
+    // 削除する列を参照する生成列が残る編集は計画の段階で止まる。
+    let bad = SqliteRebuildEdit {
+        columns: vec![
+            col("id", "INTEGER", false, None),
+            RebuildColumnEdit {
+                drop: true,
+                ..col("title", "TEXT", false, None)
+            },
+            col("qty", "INTEGER", false, None),
+        ],
+        ..Default::default()
+    };
+    let session = state.get(&sid).await.unwrap();
+    let err = t::plan_table_rebuild(&session.conn, "main", "g", &bad)
+        .await
+        .expect_err("generated column references the dropped column");
+    assert!(err.to_string().contains("generated_refs_dropped"), "{err}");
     let _ = std::fs::remove_file(&path);
 }

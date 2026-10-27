@@ -1366,6 +1366,7 @@ export const alterTableContext = z.object({
   table_comment: z.string(),
   foreign_keys: z.array(foreignKey),
   checks: z.array(checkConstraintInfo),
+  generated: z.array(generatedColumnInfo),
   table_names: z.array(z.string()),
   warnings: z.array(z.string()),
 });

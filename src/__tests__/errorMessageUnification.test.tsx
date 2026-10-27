@@ -50,6 +50,7 @@ const baseCtx: AlterTableContext = {
   table_comment: "",
   foreign_keys: [],
   checks: [],
+  generated: [],
   table_names: ["t"],
   warnings: [],
 };

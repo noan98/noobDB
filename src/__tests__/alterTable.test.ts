@@ -310,6 +310,9 @@ describe("buildAlterPlan: rename / modify — SQLite", () => {
       dropped_foreign_keys: [],
       added_checks: [],
       dropped_checks: [],
+      added_generated: [],
+      changed_generated: [],
+      dropped_generated: [],
     });
   });
 

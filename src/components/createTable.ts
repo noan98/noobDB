@@ -27,6 +27,90 @@ export interface ColumnDef {
   autoIncrement: boolean;
   /** DEFAULT 値。空なら付与しない。数値/キーワードは素通し、それ以外は文字列リテラル化。 */
   defaultValue: string;
+  /**
+   * 生成列 (#1893)。指定があると `<型> AS (式) STORED|VIRTUAL` 形式の生成列になる。生成列は
+   * DEFAULT・自動採番・主キーと併用できないので、SQL 生成ではそれらを無視する
+   * ({@link generatedColumnProblems} が UI に理由を返す)。式が空のときは通常の列として扱う。
+   */
+  generated?: GeneratedSpec;
+}
+
+/** 生成列の指定 (#1893)。`expression` は括弧の中身 (`price * qty`)。 */
+export interface GeneratedSpec {
+  expression: string;
+  /** true は VIRTUAL (読み出し時に計算)、false は STORED (書き込み時に計算して保存)。 */
+  virtual: boolean;
+}
+
+/** 生成列を VIRTUAL にできるドライバか。PostgreSQL は STORED のみ (VIRTUAL は 18 以降で、版を問わず使えるよう外す)。 */
+export function supportsVirtualGenerated(driver: string): boolean {
+  return driver !== "postgres";
+}
+
+/** 生成列の式の不備。`empty` は空、`invalid` は括弧の対応が取れない・文を区切る `;` を含む。 */
+export type GeneratedExpressionProblem = "empty" | "invalid";
+
+/** 生成式の形を調べる (文字列リテラル・引用識別子の中は無視)。不備が無ければ null。 */
+export function generatedExpressionProblem(expression: string): GeneratedExpressionProblem | null {
+  const e = expression.trim();
+  if (!e) return "empty";
+  let depth = 0;
+  for (let i = 0; i < e.length; i++) {
+    const c = e[i];
+    if (c === "'" || c === '"' || c === "`") {
+      // 同じ引用符の連続 (`''`) は中身の引用符。閉じるまで読み飛ばす。
+      i++;
+      while (i < e.length && !(e[i] === c && e[i + 1] !== c)) i += e[i] === c ? 2 : 1;
+      if (i >= e.length) return "invalid";
+      continue;
+    }
+    if (c === "(") depth++;
+    else if (c === ")" && --depth < 0) return "invalid";
+    else if (c === ";") return "invalid";
+  }
+  return depth === 0 ? null : "invalid";
+}
+
+/** 生成列を付けられない指定の組み合わせ・不備 (UI の検証と無効化に使う)。 */
+export type GeneratedProblem =
+  | "emptyExpression"
+  | "invalidExpression"
+  | "virtualUnsupported"
+  | "primaryKey"
+  | "autoIncrement"
+  | "defaultValue";
+
+/**
+ * 生成列の指定の不備を返す (生成列でない列は空)。生成列は DEFAULT・自動採番 (AUTO_INCREMENT /
+ * IDENTITY)・主キーと併用できず、PostgreSQL は VIRTUAL を選べない。
+ */
+export function generatedColumnProblems(driver: string, col: ColumnDef): GeneratedProblem[] {
+  const g = col.generated;
+  if (!g) return [];
+  const out: GeneratedProblem[] = [];
+  const expr = generatedExpressionProblem(g.expression);
+  if (expr === "empty") out.push("emptyExpression");
+  else if (expr === "invalid") out.push("invalidExpression");
+  if (g.virtual && !supportsVirtualGenerated(driver)) out.push("virtualUnsupported");
+  if (col.primaryKey) out.push("primaryKey");
+  if (col.autoIncrement) out.push("autoIncrement");
+  if (col.defaultValue.trim() !== "") out.push("defaultValue");
+  return out;
+}
+
+/**
+ * 列定義に続ける生成列の句 (#1893)。MySQL は `AS (式) STORED|VIRTUAL`、PostgreSQL / SQLite は
+ * `GENERATED ALWAYS AS (式) STORED|VIRTUAL`。PostgreSQL は VIRTUAL を選べないので常に STORED。
+ */
+export function generatedClause(driver: string, g: GeneratedSpec): string {
+  const kind = g.virtual && supportsVirtualGenerated(driver) ? "VIRTUAL" : "STORED";
+  const as = `AS (${g.expression.trim()}) ${kind}`;
+  return driver === "mysql" ? as : `GENERATED ALWAYS ${as}`;
+}
+
+/** 式が入っている生成列の指定だけを返す (式が空なら通常の列として扱うため)。 */
+export function activeGenerated(col: Pick<ColumnDef, "generated">): GeneratedSpec | undefined {
+  return col.generated && col.generated.expression.trim() !== "" ? col.generated : undefined;
 }
 
 export interface CreateTableForm {
@@ -139,7 +223,8 @@ function qualifiedName(driver: string, database: string | null | undefined, tabl
  */
 export function buildCreateTableSql(driver: string, form: CreateTableForm): string {
   const cols = form.columns;
-  const pkCols = cols.filter((c) => c.primaryKey);
+  // 生成列は主キー・自動採番にできない (#1893)。指定されていても無視する。
+  const pkCols = cols.filter((c) => c.primaryKey && !activeGenerated(c));
 
   // SQLite の AUTOINCREMENT は単一 INTEGER PRIMARY KEY のときだけ有効。その場合は
   // インライン宣言にし、テーブルレベルの PRIMARY KEY 制約は付けない。
@@ -147,7 +232,7 @@ export function buildCreateTableSql(driver: string, form: CreateTableForm): stri
     driver === "sqlite" &&
     pkCols.length === 1 &&
     pkCols[0].autoIncrement &&
-    cols.filter((c) => c.autoIncrement).length === 1;
+    cols.filter((c) => c.autoIncrement && !activeGenerated(c)).length === 1;
 
   const lines: string[] = cols.map((c) => columnLine(driver, c, { sqliteAutoPk }));
 
@@ -172,6 +257,16 @@ export function buildCreateTableSql(driver: string, form: CreateTableForm): stri
 function columnLine(driver: string, col: ColumnDef, opts: { sqliteAutoPk: boolean }): string {
   const name = quoteIdentFor(driver, col.name);
   const parts: string[] = [name];
+
+  // 生成列 (#1893): `<型> <生成句> [NOT NULL] [UNIQUE]`。DEFAULT・自動採番・主キーは付けない。
+  // MySQL は生成句が NOT NULL / UNIQUE より前に来る文法。
+  const generated = activeGenerated(col);
+  if (generated) {
+    parts.push(col.type.trim() || "TEXT", generatedClause(driver, generated));
+    if (col.notNull) parts.push("NOT NULL");
+    if (col.unique) parts.push("UNIQUE");
+    return parts.join(" ");
+  }
 
   // SQLite 自動採番 PK の特殊形: `INTEGER PRIMARY KEY AUTOINCREMENT`。
   if (opts.sqliteAutoPk && col.primaryKey && col.autoIncrement) {
@@ -204,7 +299,8 @@ function columnLine(driver: string, col: ColumnDef, opts: { sqliteAutoPk: boolea
  * 使える。主キー (`PRI`)・単一列 UNIQUE (`UNI`)・NOT NULL・既定値を引き継ぐ。
  * - 自動採番 (MySQL `auto_increment` / PostgreSQL の `nextval(...)` 既定値 / `IDENTITY`) は
  *   `autoIncrement` に写し、既定値は空にする (`nextval` は元テーブルのシーケンスを指すため)。
- * - 生成列 (`GENERATED`、`DEFAULT_GENERATED` を除く) は式が取れないので既定値なしの通常列として写す。
+ * - 生成列 (`GENERATED`、`DEFAULT_GENERATED` を除く) は式が取れないので既定値なしの通常列として写す
+ *   (式は `describeTableExtras` にあるが、雛形の読み込みは列定義だけを使う)。
  * - 外部キー・CHECK・インデックスは引き継がない (必要なら制約エディタで足す)。
  */
 export function columnDefsFromTableInfo(columns: readonly TableColumnInfo[]): ColumnDef[] {

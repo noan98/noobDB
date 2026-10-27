@@ -79,6 +79,16 @@
         "table": "orders"
       }
     ],
+    "generated": [
+      {
+        "column": "total",
+        "data_type": null,
+        "expression": "price * qty",
+        "is_virtual": false,
+        "not_null": false,
+        "position": null
+      }
+    ],
     "table_comment": "registered users",
     "table_names": [
       "users",
