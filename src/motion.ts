@@ -75,6 +75,9 @@ import type { Transition, Variants } from "motion/react";
  *   opacity だけを Web Animations API で 1 回再生する (`transitions.crossfade` 相当の
  *   `durations.quick`)。key で再マウントしないのでスクロール・選択・編集状態は保たれ、
  *   reduced-motion は `useReducedMotionConfig` で見る。
+ * - ピボットの再集計 (`PivotView` — `useRowCrossfade` を再利用、#1862)。行/列/値/集計/ヒートマップの
+ *   確定で `<tbody>` を 1 回クロスフェードし、集計セルは `CountUpText` で前値→新値を補間、ヒートの
+ *   背景色は CSS transition で色補間する。key で再マウントしないのでスクロールは保たれる。
  * - 結果グリッドの初回バッチ着弾リビール (`ResultGrid` — `useFirstBatchReveal`、#1579)。
  *   ストリーミング中のスケルトンの次に最初の行が届いたコミットで、画面内の行 (遅延は 12 段で頭打ち) の
  *   `<tr>` だけを Web Animations API で 1 回 stagger フェード / slide-up する。per-row FLIP

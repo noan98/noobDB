@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import type { QueryResult } from "../api/tauri";
@@ -9,6 +9,8 @@ import { Button, Checkbox } from "./ui";
 import { Icon, ICON_SIZES } from "./Icon";
 import { ListboxSelect } from "./ListboxSelect";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
+import { useRowCrossfade } from "./useRowCrossfade";
+import { integerCountUpTarget, useCountUp } from "../useCountUp";
 import {
   buildPivotModel,
   buildPivotSql,
@@ -61,6 +63,10 @@ function formatValue(n: number | null): string {
   return numFmt.format(n);
 }
 
+// 集計セルをカウントアップ補間する上限セル数。セルごとに補間用の state を持つため、
+// 上限 (200 行 x 100 列) いっぱいの大きな表では静的表示に留めて描画負荷を抑える。
+const COUNT_UP_MAX_CELLS = 600;
+
 const cellCss: SystemStyleObject = {
   border: "1px solid var(--border-subtle, var(--border))",
   padding: "var(--space-1) var(--space-2-5)",
@@ -69,6 +75,11 @@ const cellCss: SystemStyleObject = {
   color: "var(--text)",
   whiteSpace: "nowrap",
   textAlign: "right",
+};
+// ヒートが載る本体セルだけ背景色を補間する (見出し・合計には付けない)。reduced-motion は App.css が一括で即時化。
+const heatCellCss: SystemStyleObject = {
+  ...cellCss,
+  transition: "background-color var(--dur-med) var(--ease)",
 };
 const headCss: SystemStyleObject = {
   ...cellCss,
@@ -119,6 +130,16 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
     () => (config ? buildPivotModel(result.columns, result.rows, config) : null),
     [config, result.columns, result.rows],
   );
+
+  // 設定 (行/列/値/集計/ヒートマップ) の確定で再集計されたコミットの 1 回だけ、<tbody> を
+  // クロスフェードする (#1862)。結果グリッドのソート (#1416) と同じ「要素単位で 1 回・再マウント
+  // なし」の方針なのでスクロール位置は保たれる。設定は離散操作なので sort 側 (即時再生) に載せる。
+  const tbodyRef = useRef<HTMLTableSectionElement>(null);
+  const fadeKeys = useMemo(
+    () => ({ sort: JSON.stringify([config, heatmap]), filter: "" }),
+    [config, heatmap],
+  );
+  useRowCrossfade(tbodyRef, fadeKeys, persistKey ?? "");
 
   // ヒートマップの正規化レンジ (非 NULL セルの最小/最大)。行/列の小計・総計は含めない
   // (桁が大きく色が偏るため、セル本体だけを基準にする)。
@@ -211,6 +232,16 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
   };
 
   const effectiveColKeys = model.colFieldName == null ? [model.valueLabel] : model.colKeys;
+  const countUpEnabled = model.rowKeys.length * (effectiveColKeys.length + 1) <= COUNT_UP_MAX_CELLS;
+  // 整数の数値セルは前値→新値を補間する (`slot` は意味のキー: 軸が変わったら別セルとして
+  // 作り直され、別グループ同士の値は補間せずジャンプする)。小数 (平均など)・NULL・
+  // 上限超過は静的表示。
+  const renderValue = (v: number | null, slot: string) =>
+    countUpEnabled && integerCountUpTarget(v) != null ? (
+      <PivotNumber key={slot} value={v as number} />
+    ) : (
+      formatValue(v)
+    );
 
   return (
     <Flex direction="column" h="100%" minH={0} minW={0}>
@@ -312,17 +343,17 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
               </chakra.th>
             </tr>
           </thead>
-          <tbody>
+          <tbody ref={tbodyRef}>
             {model.rowKeys.map((rk, ri) => (
               <tr key={ri}>
                 <chakra.td css={rowHeadCss}>{rk}</chakra.td>
                 {model.cells[ri].map((v, ci) => (
-                  <chakra.td key={ci} css={cellCss} style={{ background: cellBg(v) }}>
-                    {formatValue(v)}
+                  <chakra.td key={ci} css={heatCellCss} style={{ background: cellBg(v) }}>
+                    {renderValue(v, `${rk}\u0000${effectiveColKeys[ci]}`)}
                   </chakra.td>
                 ))}
                 <chakra.td css={{ ...cellCss, fontWeight: 600, borderLeft: "2px solid var(--border)" }}>
-                  {formatValue(model.rowTotals[ri])}
+                  {renderValue(model.rowTotals[ri], `${rk}\u0000total`)}
                 </chakra.td>
               </tr>
             ))}
@@ -332,11 +363,11 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
               <chakra.td css={{ ...totalCss, textAlign: "left" }}>{t("pivotTotal")}</chakra.td>
               {model.colTotals.map((v, ci) => (
                 <chakra.td key={ci} css={totalCss}>
-                  {formatValue(v)}
+                  {renderValue(v, `total\u0000${effectiveColKeys[ci]}`)}
                 </chakra.td>
               ))}
               <chakra.td css={{ ...totalCss, borderLeft: "2px solid var(--border)" }}>
-                {formatValue(model.grandTotal)}
+                {renderValue(model.grandTotal, "total")}
               </chakra.td>
             </tr>
           </tfoot>
@@ -355,4 +386,14 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       {children}
     </Flex>
   );
+}
+
+/**
+ * 整数セルのカウントアップ表示。見える桁 1 つだけを描く (`CountUp` は読み上げ用の
+ * VisuallyHidden も描くため、表のドラッグ選択コピーで値が二重になる)。`td` は aria-live
+ * ではないので、補間中の途中値が連続で読み上げられることはない。
+ */
+function PivotNumber({ value }: { value: number }) {
+  const { display } = useCountUp(value);
+  return <chakra.span textStyle="numeric">{numFmt.format(display)}</chakra.span>;
 }
