@@ -56,7 +56,7 @@ describe("ピボットの再集計クロスフェード (#1862, 実ブラウザ)
     await expect.element(screen.getByText("east", { exact: true })).toBeVisible();
     const tbody = document.querySelector("tbody") as HTMLElement;
     toggleHeatmap();
-    await new Promise((r) => setTimeout(r, 100));
+    // 再生されるならクリック直後 (同期) のコミットで始まる。待たずに確認する。
     expect(tbody.getAnimations().length).toBe(0);
   });
 });

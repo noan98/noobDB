@@ -8,9 +8,9 @@ import { semanticColorToken } from "../semanticColors";
 import { Button, Checkbox } from "./ui";
 import { Icon, ICON_SIZES } from "./Icon";
 import { ListboxSelect } from "./ListboxSelect";
-import { CountUpText } from "./CountUp";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { useRowCrossfade } from "./useRowCrossfade";
+import { integerCountUpTarget, useCountUp } from "../useCountUp";
 import {
   buildPivotModel,
   buildPivotSql,
@@ -75,7 +75,10 @@ const cellCss: SystemStyleObject = {
   color: "var(--text)",
   whiteSpace: "nowrap",
   textAlign: "right",
-  // ヒートマップの背景色は再集計 / トグルで色補間する (reduced-motion は App.css が一括で即時化)。
+};
+// ヒートが載る本体セルだけ背景色を補間する (見出し・合計には付けない)。reduced-motion は App.css が一括で即時化。
+const heatCellCss: SystemStyleObject = {
+  ...cellCss,
   transition: "background-color var(--dur-med) var(--ease)",
 };
 const headCss: SystemStyleObject = {
@@ -230,10 +233,12 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
 
   const effectiveColKeys = model.colFieldName == null ? [model.valueLabel] : model.colKeys;
   const countUpEnabled = model.rowKeys.length * (effectiveColKeys.length + 1) <= COUNT_UP_MAX_CELLS;
-  // 数値セルは前値→新値を補間する。NULL / 非有限は空表示、上限超過は静的表示。
-  const renderValue = (v: number | null) =>
-    countUpEnabled && v != null && Number.isFinite(v) ? (
-      <CountUpText values={[v]} render={([n]) => n} formatter={(n) => numFmt.format(n)} />
+  // 整数の数値セルは前値→新値を補間する (`slot` は意味のキー: 軸が変わったら別セルとして
+  // 作り直され、別グループ同士の値は補間せずジャンプする)。小数 (平均など)・NULL・
+  // 上限超過は静的表示。
+  const renderValue = (v: number | null, slot: string) =>
+    countUpEnabled && integerCountUpTarget(v) != null ? (
+      <PivotNumber key={slot} value={v as number} />
     ) : (
       formatValue(v)
     );
@@ -343,12 +348,12 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
               <tr key={ri}>
                 <chakra.td css={rowHeadCss}>{rk}</chakra.td>
                 {model.cells[ri].map((v, ci) => (
-                  <chakra.td key={ci} css={cellCss} style={{ background: cellBg(v) }}>
-                    {renderValue(v)}
+                  <chakra.td key={ci} css={heatCellCss} style={{ background: cellBg(v) }}>
+                    {renderValue(v, `${rk}\u0000${effectiveColKeys[ci]}`)}
                   </chakra.td>
                 ))}
                 <chakra.td css={{ ...cellCss, fontWeight: 600, borderLeft: "2px solid var(--border)" }}>
-                  {renderValue(model.rowTotals[ri])}
+                  {renderValue(model.rowTotals[ri], `${rk}\u0000total`)}
                 </chakra.td>
               </tr>
             ))}
@@ -358,11 +363,11 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
               <chakra.td css={{ ...totalCss, textAlign: "left" }}>{t("pivotTotal")}</chakra.td>
               {model.colTotals.map((v, ci) => (
                 <chakra.td key={ci} css={totalCss}>
-                  {renderValue(v)}
+                  {renderValue(v, `total\u0000${effectiveColKeys[ci]}`)}
                 </chakra.td>
               ))}
               <chakra.td css={{ ...totalCss, borderLeft: "2px solid var(--border)" }}>
-                {renderValue(model.grandTotal)}
+                {renderValue(model.grandTotal, "total")}
               </chakra.td>
             </tr>
           </tfoot>
@@ -381,4 +386,14 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       {children}
     </Flex>
   );
+}
+
+/**
+ * 整数セルのカウントアップ表示。見える桁 1 つだけを描く (`CountUp` は読み上げ用の
+ * VisuallyHidden も描くため、表のドラッグ選択コピーで値が二重になる)。`td` は aria-live
+ * ではないので、補間中の途中値が連続で読み上げられることはない。
+ */
+function PivotNumber({ value }: { value: number }) {
+  const { display } = useCountUp(value);
+  return <chakra.span textStyle="numeric">{numFmt.format(display)}</chakra.span>;
 }
