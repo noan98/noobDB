@@ -2394,16 +2394,18 @@ fn strip_sql_comments(sql: &str) -> String {
 
 /// メタデータ用 PRAGMA を流す接続を 1 本取り、その接続のスキーマを最新にしてから返す。
 ///
-/// SQLite の `PRAGMA table_info` / `index_list` / `index_info` / `foreign_key_list` /
-/// `table_xinfo` は結果を**準備 (prepare) 時**に組み立て、その接続がメモリに持つ
-/// スキーマを使う。対象のテーブル / インデックスが (古いスキーマ上で) 見つからないと
+/// SQLite の `PRAGMA index_list` / `index_info` / `index_xinfo` / `foreign_key_list` は
+/// 結果を**準備 (prepare) 時**に組み立て、その接続がメモリに持つスキーマを使う
+/// (`table_info` / `table_xinfo` は検証が入るが、一貫性のため同じ接続で読む)。対象のテーブル / インデックスが (古いスキーマ上で) 見つからないと
 /// スキーマクッキーの検証命令すら出さないため、プールの別接続で直前に流した
 /// `CREATE INDEX` / `CREATE TABLE` が見えないまま空結果を返し、SQLITE_SCHEMA による
 /// 再準備も起きない (CI で `list_indexes` の列が `[]`、`columns` の FK が None になった)。
 /// `sqlite_master` を 1 回読むと実行時にクッキーが検証され、古ければスキーマが
 /// 読み直される。呼び出し側はこの接続 1 本で PRAGMA を流し、PRAGMA 文は
 /// [`fresh_pragma`] で準備済みステートメントキャッシュに載せない (古いスキーマで
-/// 組み立てた結果が文ごと再利用されるのを防ぐ)。
+/// 組み立てた結果が文ごと再利用されるのを防ぐ)。キャッシュに残った空結果の PRAGMA 文は
+/// クッキー検証を持たないので、スキーマを読み直しても空のまま再利用され続ける。
+/// `persistent(false)` を外さないこと。
 async fn fresh_schema_conn(pool: &SqlitePool) -> Result<sqlx::pool::PoolConnection<sqlx::Sqlite>> {
     let mut conn = pool.acquire().await?;
     sqlx::query("SELECT 1 FROM sqlite_master LIMIT 1")
