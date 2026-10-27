@@ -6644,3 +6644,93 @@ async fn unique_only_table_compares_and_syncs_to_convergence() {
     let _ = std::fs::remove_file(&p1);
     let _ = std::fs::remove_file(&p2);
 }
+
+/// プールの別接続が古いスキーマを持ったまま PRAGMA を読むと、DDL 直後の
+/// メタデータが空になる不具合の回帰テスト。SQLite の `PRAGMA index_info` /
+/// `foreign_key_list` などは結果を**準備 (prepare) 時**に組み立て、対象が見つからない
+/// ときはスキーマクッキーの検証命令を出さない。そのため、DDL を流した接続とは別の
+/// (DDL 前にスキーマを読み込んだ) 接続で準備すると、古いスキーマのまま空結果を返し、
+/// SQLITE_SCHEMA による再準備も起きない。
+///
+/// 再現を確実にするため、まず並列にメタデータを読んでプールの接続を複数開き、
+/// それぞれにスキーマを読み込ませてから DDL を流し、以降の読み取りを繰り返し検証する。
+#[tokio::test]
+async fn sqlite_metadata_sees_ddl_from_other_pool_connections() {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "noobdb_sqlite_stale_schema_{}.db",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(path.to_str().expect("utf8 path")))
+        .await
+        .expect("connect");
+
+    conn.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create parent");
+    conn.execute(
+        "CREATE TABLE items (id INTEGER PRIMARY KEY, a TEXT, b TEXT)",
+        None,
+    )
+    .await
+    .expect("create items");
+
+    for round in 0..20 {
+        // プールの全接続 (最大 4) を同時に使わせ、各接続にスキーマを読み込ませる。
+        let warm = || async {
+            conn.list_indexes("main", "items")
+                .await
+                .expect("warm indexes");
+            conn.columns("main", "items").await.expect("warm columns");
+        };
+        tokio::join!(warm(), warm(), warm(), warm(), warm(), warm());
+
+        let idx = format!("idx_items_ab_{round}");
+        let child = format!("child_{round}");
+        conn.execute(&format!("CREATE INDEX {idx} ON items(a, b)"), None)
+            .await
+            .expect("create index");
+        conn.execute(
+            &format!(
+                "CREATE TABLE {child} (id INTEGER PRIMARY KEY, parent_id INTEGER, \
+                 FOREIGN KEY (parent_id) REFERENCES parent(id))"
+            ),
+            None,
+        )
+        .await
+        .expect("create child");
+
+        for _ in 0..4 {
+            let (indexes, cols) = tokio::join!(
+                conn.list_indexes("main", "items"),
+                conn.columns("main", &child)
+            );
+            let indexes = indexes.expect("list_indexes");
+            let found = indexes
+                .iter()
+                .find(|i| i.name == idx)
+                .unwrap_or_else(|| panic!("round {round}: {idx} missing: {indexes:?}"));
+            assert_eq!(
+                found.columns,
+                vec!["a".to_string(), "b".to_string()],
+                "round {round}: index columns must reflect the fresh DDL"
+            );
+            let cols = cols.expect("columns");
+            let fk = cols
+                .iter()
+                .find(|c| c.name == "parent_id")
+                .unwrap_or_else(|| panic!("round {round}: parent_id missing: {cols:?}"));
+            assert_eq!(
+                fk.referenced_table.as_deref(),
+                Some("parent"),
+                "round {round}: FK must be resolved right after CREATE TABLE"
+            );
+            assert_eq!(fk.referenced_column.as_deref(), Some("id"));
+        }
+    }
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
