@@ -23,6 +23,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
     ],
     table_comment: "",
     foreign_keys: [],
+    checks: [],
     table_names: ["t"],
     warnings: [],
   };

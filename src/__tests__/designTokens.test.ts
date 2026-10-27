@@ -250,7 +250,7 @@ describe("design tokens: 本文 / 補足の textStyle (#1392)", () => {
     ["../components/AiSchemaDocModal.tsx", 2],
     ["../components/AiSqlPanel.tsx", 1],
     ["../components/AiSyncRisk.tsx", 2],
-    ["../components/AlterTableModal.tsx", 7],
+    ["../components/AlterTableModal.tsx", 6],
     ["../components/AssertionsPanel.tsx", 1],
     ["../components/BatchResultsView.tsx", 2],
     ["../components/BroadcastModal.tsx", 2],

@@ -19,6 +19,8 @@ import type {
   AlterTableContext,
   ColumnDependencyReport,
   SchemaSnapshotTable,
+  SqliteRebuildEdit,
+  SqliteRebuildPlan,
 } from "../tauri";
 
 export const schemaCommands = {
@@ -83,6 +85,14 @@ export const schemaCommands = {
   alterTableContext: (sessionId: string, database: string, table: string) =>
     invoke<AlterTableContext>("alter_table_context", { sessionId, database, table }).then((r) =>
       parseResponse(schemas.alterTableContext, r, "alter_table_context"),
+    ),
+  /**
+   * SQLite の構造エディタの編集内容から、テーブル再作成 SQL を組み立てて返す (#1888)。
+   * 読み取りのみ。返った `sql` は `applySyncSql` で流す。
+   */
+  planSqliteTableRebuild: (sessionId: string, database: string, table: string, edit: SqliteRebuildEdit) =>
+    invoke<SqliteRebuildPlan>("plan_sqlite_table_rebuild", { sessionId, database, table, edit }).then((r) =>
+      parseResponse(schemas.sqliteRebuildPlan, r, "plan_sqlite_table_rebuild"),
     ),
   /**
    * `table` を参照している外部キー (逆参照) を取得する (#621 / #1255)。結果グリッドの

@@ -201,6 +201,7 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   // #1243: `#[tauri::command]` の戻り値型で、これまでフィクスチャに無かった型
   // (`serdeCoverageParity.test.ts` が載せ漏れを検出する)。
   ["alterTableContext", schemas.alterTableContext],
+  ["sqliteRebuildPlan", schemas.sqliteRebuildPlan],
   ["assertionSql", schemas.assertionSql],
   ["assertionOutcome", schemas.assertionOutcome],
   ["acceptedValuesCandidates", schemas.acceptedValuesCandidates],

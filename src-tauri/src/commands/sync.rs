@@ -116,6 +116,61 @@ pub async fn apply_sync_sql(
     apply_sync_sql_inner(state.inner(), session_id, database, statements).await
 }
 
+/// SQLite の構造エディタのテーブル再作成 (#1888) を適用する。`apply_sync_sql` と同じ経路
+/// (1 トランザクション・`PRAGMA foreign_keys` の退避・コミット前の外部キー検査・read_only 拒否) に、
+/// 実行した SQL をクエリ履歴へ残す処理を足したもの。`apply_sync_sql` はスキーマ同期の適用で履歴を
+/// 残さないので、構造エディタ側だけ専用に履歴を持たせる。
+#[tauri::command]
+pub async fn apply_sqlite_table_rebuild(
+    session_id: String,
+    database: Option<String>,
+    statements: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<u64> {
+    apply_sqlite_table_rebuild_inner(state.inner(), session_id, database, statements).await
+}
+
+pub(crate) async fn apply_sqlite_table_rebuild_inner(
+    state: &AppState,
+    session_id: String,
+    database: Option<String>,
+    statements: Vec<String>,
+) -> Result<u64> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    // このコマンドは SQLite 専用。他ドライバへは流さない (再作成 SQL は SQLite 方言)。
+    if session.conn.driver_kind() != crate::db::DriverKind::Sqlite {
+        return Err(AppError::InvalidInput(
+            "table rebuild is only available for SQLite".into(),
+        ));
+    }
+    // 空の文の拒否は履歴の対象外にするため、ここで先に判定する。
+    if statements.is_empty() {
+        return Err(AppError::InvalidInput(
+            "no statements selected to apply".into(),
+        ));
+    }
+    let sql_text = statements.join("\n");
+    let started = std::time::Instant::now();
+    let result = apply_sync_sql_inner(state, session_id, database.clone(), statements).await;
+    // read_only で実行前に拒否されたものだけ履歴に残さない。コミット前の外部キー検査などの
+    // 失敗 (ロールバック) は実行を試みた書き込みなので、成功と同じく残す。
+    if !matches!(result, Err(AppError::ReadOnly(_))) {
+        crate::commands::query::record_write_history(
+            &session,
+            sql_text,
+            database.as_deref(),
+            result.as_ref().ok().map(|n| *n as i64),
+            Some(started.elapsed().as_millis() as i64),
+            result.as_ref().err().map(|e| e.to_string()),
+        )
+        .await;
+    }
+    result
+}
+
 /// Core of [`apply_sync_sql`] decoupled from Tauri's `State` wrapper so
 /// integration tests can drive the exact command path (session lookup +
 /// read-only guard + empty-statement guard + transactional apply) without

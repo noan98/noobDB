@@ -164,6 +164,7 @@ DB に触れず実行もしない (UI のプレビュー専用)。両環境の�
 - `table_statistics`
 - `describe_database`
 - `alter_table_context`
+- `plan_sqlite_table_rebuild` (SQLite 構造エディタのテーブル再作成 SQL を生成、読み取りのみ。適用は `apply_sync_sql`、#1888)
 - `incoming_foreign_keys` (#1255)
 - `column_dependencies` (DROP COLUMN 前の依存列挙 — ビュー / トリガー / 生成列 / インデックス / FK、#1758)
 
@@ -241,6 +242,7 @@ PostgreSQL は別スキーマの子テーブルからの単一列 FK も専用�
 - `generate_data_sync_sql`
 - `release_data_diffs`
 - `apply_sync_sql`
+- `apply_sqlite_table_rebuild` (SQLite 構造エディタの再作成を `apply_sync_sql` と同じ経路で適用し、クエリ履歴に残す、#1888)
 
 `compare_table_data` は表示用 `diff` と保持差分の `diff_id` を返し、`generate_data_sync_sql(diffId, allowDelete, skipKeys, kinds, onlyKeys)` は
 ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を破棄する (#1259)。

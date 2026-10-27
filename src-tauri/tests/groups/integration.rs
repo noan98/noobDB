@@ -23,6 +23,8 @@ mod script_runner_integration;
 mod search_integration;
 #[path = "../sqlite_integration.rs"]
 mod sqlite_integration;
+#[path = "../sqlite_rebuild_integration.rs"]
+mod sqlite_rebuild_integration;
 #[path = "../stream_batching_sqlite.rs"]
 mod stream_batching_sqlite;
 #[path = "../sync_apply_integration.rs"]
