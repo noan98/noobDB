@@ -326,9 +326,14 @@ describe("DangerousQueryDialog", () => {
         onCancel={() => {}}
       />,
     );
-    await screen.findByRole("columnheader", { name: "Name" });
+    await screen.findByRole("columnheader", { name: "Name" }, { timeout: 3000 });
     expect(runLookupQuery).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionId: "s1", sql: "SELECT * FROM t WHERE x = 1 LIMIT 20", rowCap: 20 }),
+      expect.objectContaining({
+        sessionId: "s1",
+        sql: "SELECT * FROM t WHERE x = 1 LIMIT 20",
+        rowCap: 20,
+        queryTimeoutSecs: 5,
+      }),
     );
     expect(screen.getByRole("columnheader", { name: "Name" })).toHaveAttribute("data-highlight", "true");
     expect(screen.getByRole("columnheader", { name: "id" })).not.toHaveAttribute("data-highlight");
@@ -346,5 +351,27 @@ describe("DangerousQueryDialog", () => {
     );
     expect(screen.queryByTestId("dangerous-row-preview")).not.toBeInTheDocument();
     expect(runLookupQuery).not.toHaveBeenCalled();
+  });
+
+  it("プレビュー取得が失敗してもエラーを表示し、実行ボタンは有効のまま (#1881)", async () => {
+    runLookupQuery.mockRejectedValue(new Error("boom"));
+    renderWithProviders(
+      <DangerousQueryDialog
+        findings={findings}
+        isProduction={false}
+        rowPreview={{
+          sessionId: "s1",
+          database: null,
+          sampleSql: "SELECT * FROM t LIMIT 20",
+          verb: "delete",
+          total: 3,
+          setColumns: [],
+        }}
+        onConfirm={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(await screen.findByText(/boom/, undefined, { timeout: 3000 })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("dangerousConfirm") })).toBeEnabled();
   });
 });

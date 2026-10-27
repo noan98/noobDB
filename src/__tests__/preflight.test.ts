@@ -521,6 +521,20 @@ describe("extractUpdateSetColumns (#1881)", () => {
   it("WHERE 内の = を代入と誤認しない・重複を除く", () => {
     expect(extractUpdateSetColumns("UPDATE t SET a = 1, A = 2 WHERE b = 3")).toEqual(["a"]);
   });
+  it("タプル左辺の引用符内カンマとコメントをマスク上で扱う", () => {
+    expect(extractUpdateSetColumns('UPDATE t SET (a, "b,c") = (1, 2)', "postgres")).toEqual(["a", "b,c"]);
+    expect(extractUpdateSetColumns("UPDATE t SET a/*x*/ = 1")).toEqual(["a"]);
+    expect(extractUpdateSetColumns("UPDATE t SET /* c, d */ (a /* , */, b) = (1, 2)", "postgres")).toEqual([
+      "a",
+      "b",
+    ]);
+  });
+  it("PostgreSQL の col.field と arr[1] は列そのものを返す", () => {
+    expect(
+      extractUpdateSetColumns("UPDATE t SET addr.city = 'x', arr[1] = 2, tags[2:3] = '{}'", "postgres"),
+    ).toEqual(["addr", "arr", "tags"]);
+    expect(extractUpdateSetColumns("UPDATE t SET t.c = 1", "mysql")).toEqual(["c"]);
+  });
   it("UPDATE 以外・複数文・読めない形は空", () => {
     expect(extractUpdateSetColumns("DELETE FROM t WHERE a = 1")).toEqual([]);
     expect(extractUpdateSetColumns("UPDATE t SET a = 1; UPDATE t SET b = 2")).toEqual([]);

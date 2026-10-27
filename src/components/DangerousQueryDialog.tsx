@@ -114,12 +114,20 @@ export function DangerousQueryDialog({
   onCancel,
 }: Props) {
   const t = useT();
+  // 注意: 別接続で実行する読み取りなので、明示トランザクション中の未コミットの変更は見えない。
+  // 重いテーブルで確認を待たせないよう 5 秒で打ち切る (失敗はエラー表示になるだけで、実行ボタンは有効のまま)。
   const previewSession = rowPreview?.sessionId ?? null;
   const previewDb = rowPreview?.database ?? null;
   const previewRun = useCallback(
     (sql: string, rowCap: number) =>
       previewSession
-        ? api.runLookupQuery({ sessionId: previewSession, sql, database: previewDb, rowCap })
+        ? api.runLookupQuery({
+            sessionId: previewSession,
+            sql,
+            database: previewDb,
+            rowCap,
+            queryTimeoutSecs: 5,
+          })
         : Promise.reject(new Error("no preview")),
     [previewSession, previewDb],
   );
@@ -250,7 +258,13 @@ export function DangerousQueryDialog({
             </chakra.span>
             <RowSampleTable
               state={previewState}
-              label={t("dangerousTitle")}
+              label={t(
+                rowPreview.verb === "delete" ? "dangerousRowPreviewDelete" : "dangerousRowPreviewUpdate",
+                {
+                  shown: PREFLIGHT_SAMPLE_ROWS.toLocaleString(),
+                  total: rowPreview.total !== null ? rowPreview.total.toLocaleString() : "?",
+                },
+              )}
               testId="dangerous-row-preview-table"
               highlightColumns={rowPreview.verb === "update" ? rowPreview.setColumns : undefined}
             />
