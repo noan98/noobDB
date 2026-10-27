@@ -8,6 +8,7 @@ import {
   PREFLIGHT_MAX_CHARS,
   parseTableRef,
   preflightDeleteTarget,
+  extractUpdateSetColumns,
 } from "../components/preflight";
 
 describe("buildPreflightPlan — 対象外は null (バッジを出さない)", () => {
@@ -493,5 +494,36 @@ describe("preflightDeleteTarget / parseTableRef (#1767)", () => {
     expect(parseTableRef("`db`.`we``ird`")).toEqual({ qualifier: "db", name: "we`ird" });
     expect(parseTableRef('"s" . "t""x"')).toEqual({ qualifier: "s", name: 't"x' });
     expect(parseTableRef("a.b.c")).toBeNull();
+  });
+});
+
+describe("extractUpdateSetColumns (#1881)", () => {
+  it("SET の代入先列を書かれた順に返す", () => {
+    expect(extractUpdateSetColumns("UPDATE users SET name = 'x', age = age + 1 WHERE id = 1")).toEqual([
+      "name",
+      "age",
+    ]);
+  });
+  it("クオート・修飾・値側のカンマや括弧に惑わされない", () => {
+    expect(
+      extractUpdateSetColumns(
+        "UPDATE `t` SET `a,b` = 'x, y=z', t.c = COALESCE(d, 1), \"E\" = 2 WHERE 1=1",
+        "mysql",
+      ),
+    ).toEqual(["a,b", "c", "E"]);
+  });
+  it("PostgreSQL の行代入と RETURNING を扱う", () => {
+    expect(extractUpdateSetColumns("UPDATE t SET (a, b) = (1, 2) RETURNING *", "postgres")).toEqual([
+      "a",
+      "b",
+    ]);
+  });
+  it("WHERE 内の = を代入と誤認しない・重複を除く", () => {
+    expect(extractUpdateSetColumns("UPDATE t SET a = 1, A = 2 WHERE b = 3")).toEqual(["a"]);
+  });
+  it("UPDATE 以外・複数文・読めない形は空", () => {
+    expect(extractUpdateSetColumns("DELETE FROM t WHERE a = 1")).toEqual([]);
+    expect(extractUpdateSetColumns("UPDATE t SET a = 1; UPDATE t SET b = 2")).toEqual([]);
+    expect(extractUpdateSetColumns("UPDATE a JOIN b ON 1 SET x = 1")).toEqual([]);
   });
 });

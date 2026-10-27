@@ -11,6 +11,12 @@ import { setLocale, t } from "../i18n";
 //
 // 文言はロケールで変わるため、ハードコードせず i18n の `t()` から期待値を引く。
 // これによりキー → ラベルの結線が正しいことを検証しつつ、文言変更に強くなる。
+const runLookupQuery = vi.fn();
+vi.mock("../api/tauri", async (orig) => {
+  const mod = await orig<typeof import("../api/tauri")>();
+  return { ...mod, api: { ...mod.api, runLookupQuery: (...a: unknown[]) => runLookupQuery(...a) } };
+});
+
 describe("DangerousQueryDialog", () => {
   beforeEach(() => {
     // ロケールを固定して描画される文言を決定的にする (jsdom 既定は en だが明示)。
@@ -294,5 +300,51 @@ describe("DangerousQueryDialog", () => {
       await user.click(screen.getByRole("button", { name: t("dangerousConfirm") }));
       expect(onConfirm).toHaveBeenCalled();
     });
+  });
+
+  it("影響行のプレビューを表に出し、UPDATE の SET 対象列を強調する (#1881)", async () => {
+    runLookupQuery.mockResolvedValue({
+      columns: [{ name: "id" }, { name: "Name" }],
+      rows: [
+        [1, "a"],
+        [2, "b"],
+      ],
+    });
+    renderWithProviders(
+      <DangerousQueryDialog
+        findings={findings}
+        isProduction={false}
+        rowPreview={{
+          sessionId: "s1",
+          database: null,
+          sampleSql: "SELECT * FROM t WHERE x = 1 LIMIT 20",
+          verb: "update",
+          total: 2,
+          setColumns: ["name"],
+        }}
+        onConfirm={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    await screen.findByRole("columnheader", { name: "Name" });
+    expect(runLookupQuery).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "s1", sql: "SELECT * FROM t WHERE x = 1 LIMIT 20", rowCap: 20 }),
+    );
+    expect(screen.getByRole("columnheader", { name: "Name" })).toHaveAttribute("data-highlight", "true");
+    expect(screen.getByRole("columnheader", { name: "id" })).not.toHaveAttribute("data-highlight");
+  });
+
+  it("rowPreview が無いときはプレビューを出さず問い合わせもしない (#1881)", () => {
+    runLookupQuery.mockClear();
+    renderWithProviders(
+      <DangerousQueryDialog
+        findings={findings}
+        isProduction={false}
+        onConfirm={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.queryByTestId("dangerous-row-preview")).not.toBeInTheDocument();
+    expect(runLookupQuery).not.toHaveBeenCalled();
   });
 });

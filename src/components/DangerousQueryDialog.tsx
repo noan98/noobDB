@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import type { DangerFinding, DangerKind } from "../dangerousSql";
@@ -10,6 +10,10 @@ import { RefImpactList } from "./RefImpactList";
 import type { CascadeImpacts } from "../refImpact";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input } from "./ui";
+import { api } from "../api/tauri";
+import { useRowSample } from "../useRowSample";
+import { RowSampleTable } from "./RowSampleTable";
+import { PREFLIGHT_SAMPLE_ROWS } from "./preflight";
 
 interface Props {
   findings: DangerFinding[];
@@ -60,6 +64,21 @@ interface Props {
    * 失敗・タイムアウトしても実行は妨げず「確認できませんでした」と表示する。
    */
   fkImpact?: { driver: string; load: () => Promise<CascadeImpacts> } | null;
+  /**
+   * 影響行のプレビュー (#1881)。件数だけでなく実際にどの行が変わる/消えるかを、確認ダイアログ内の小さな表で
+   * 見せる。`sampleSql` はプリフライトの `buildPreflightSampleSql` と同じ対象・WHERE の読み取り専用 SELECT で、
+   * `run_lookup_query` (read_only でも動き、履歴を汚さない) で取得する。`setColumns` は UPDATE の SET 対象列。
+   * UX ガードであり、バックエンド強制ではない。
+   */
+  rowPreview?: {
+    sessionId: string;
+    database: string | null;
+    sampleSql: string;
+    verb: "update" | "delete";
+    /** プリフライトで確定した影響行数 (表示の「全 N 行中」に使う)。 */
+    total: number | null;
+    setColumns: readonly string[];
+  } | null;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -90,10 +109,26 @@ export function DangerousQueryDialog({
   aiContext,
   pkSuggestion,
   fkImpact,
+  rowPreview,
   onConfirm,
   onCancel,
 }: Props) {
   const t = useT();
+  const previewSession = rowPreview?.sessionId ?? null;
+  const previewDb = rowPreview?.database ?? null;
+  const previewRun = useCallback(
+    (sql: string, rowCap: number) =>
+      previewSession
+        ? api.runLookupQuery({ sessionId: previewSession, sql, database: previewDb, rowCap })
+        : Promise.reject(new Error("no preview")),
+    [previewSession, previewDb],
+  );
+  const previewState = useRowSample(
+    previewRun,
+    rowPreview?.sampleSql ?? null,
+    PREFLIGHT_SAMPLE_ROWS,
+    !!rowPreview,
+  );
   const [fkState, setFkState] = useState<
     { status: "loading" } | { status: "failed" } | { status: "ready"; result: CascadeImpacts } | null
   >(fkImpact ? { status: "loading" } : null);
@@ -127,7 +162,7 @@ export function DangerousQueryDialog({
   return (
     <Modal
       // no-submit: 危険クエリの確認。実行は明示的なクリック / フォーカス移動に限る
-      width="520px"
+      width="640px"
       onClose={onCancel}
       initialFocusEl={() => (requiresTyped ? typedInputRef.current : cancelRef.current)}
     >
@@ -200,6 +235,31 @@ export function DangerousQueryDialog({
               {t("dangerousImpactNote")}
             </chakra.span>
           </Callout>
+        )}
+        {rowPreview && (
+          // 影響行のプレビュー (#1881)。取得に失敗しても実行は妨げない (エラー文だけ出る)。
+          <chakra.div display="flex" flexDirection="column" gap="1.5" data-testid="dangerous-row-preview">
+            <chakra.span textStyle="subheading">
+              {t(rowPreview.verb === "delete" ? "dangerousRowPreviewDelete" : "dangerousRowPreviewUpdate", {
+                shown:
+                  rowPreview.total !== null
+                    ? Math.min(rowPreview.total, PREFLIGHT_SAMPLE_ROWS).toLocaleString()
+                    : PREFLIGHT_SAMPLE_ROWS.toLocaleString(),
+                total: rowPreview.total !== null ? rowPreview.total.toLocaleString() : "?",
+              })}
+            </chakra.span>
+            <RowSampleTable
+              state={previewState}
+              label={t("dangerousTitle")}
+              testId="dangerous-row-preview-table"
+              highlightColumns={rowPreview.verb === "update" ? rowPreview.setColumns : undefined}
+            />
+            {rowPreview.verb === "update" && rowPreview.setColumns.length > 0 && (
+              <chakra.span color="app.textMuted" textStyle="caption">
+                {t("dangerousRowPreviewSetCols", { columns: rowPreview.setColumns.join(", ") })}
+              </chakra.span>
+            )}
+          </chakra.div>
         )}
         {fkImpact && fkState?.status === "loading" && (
           <Callout tone="info" role="status" data-testid="dangerous-fk-loading">

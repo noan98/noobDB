@@ -214,7 +214,14 @@ import { LocalTablesPanel } from "./components/LocalTablesPanel";
 import { planLocalRefetch } from "./components/localRefetch";
 import type { QueryEditorHandle, SchemaTable } from "./components/QueryEditor";
 import type { SchemaJumpTarget } from "./components/identifierJump";
-import { parseTableRef, preflightDeleteTarget } from "./components/preflight";
+import {
+  buildPreflightPlan,
+  buildPreflightSampleSql,
+  extractUpdateSetColumns,
+  parseTableRef,
+  type PreflightPlan,
+  preflightDeleteTarget,
+} from "./components/preflight";
 import type { PreflightResult } from "./components/usePreflight";
 import type { PreflightImpact } from "./components/DangerousQueryDialog";
 import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
@@ -416,6 +423,17 @@ const AiResultSummaryPanel = lazy(() =>
 const AssertionsPanel = lazy(() =>
   import("./components/AssertionsPanel").then((m) => ({ default: m.AssertionsPanel })),
 );
+/** 確認ダイアログの影響行プレビュー (#1881) の材料。推定不可の計画では null (出さない)。 */
+function rowPreviewFor(
+  plan: PreflightPlan | null,
+  sql: string,
+  driver: string | undefined,
+): { sampleSql: string; setColumns: string[] } | null {
+  const sampleSql = plan ? buildPreflightSampleSql(plan) : null;
+  if (!plan || !sampleSql) return null;
+  return { sampleSql, setColumns: plan.verb === "update" ? extractUpdateSetColumns(sql, driver) : [] };
+}
+
 const DangerousQueryDialog = lazy(() =>
   import("./components/DangerousQueryDialog").then((m) => ({ default: m.DangerousQueryDialog })),
 );
@@ -2415,6 +2433,8 @@ export default function App() {
     deleteTarget?: { table: string; condition: string | null } | null;
     /** 実行前に集計済みの子行影響 (WHERE 付きの通常 DELETE の事前確認から開いたとき、#1767)。 */
     fkResult?: CascadeImpacts | null;
+    /** 影響行プレビュー (#1881) の材料。プリフライトが確定していて推定可能なときだけ入る。 */
+    rowPreview?: { sampleSql: string; setColumns: string[] } | null;
   } | null>(null);
   // WHERE 付きの通常 DELETE を実行する前の子行影響の事前確認 (#1767)。定義は loadEditorDeleteImpacts の後ろ。
   const precheckingTabsRef = useRef<Set<string>>(new Set());
@@ -6475,6 +6495,10 @@ export default function App() {
           typedConfirmTarget,
           impact,
           deleteTarget: pf && pf.sql === sql && pf.status === "ready" ? preflightDeleteTarget(pf.plan) : null,
+          rowPreview:
+            pf && pf.sql === sql && pf.status === "ready" && pf.count !== 0
+              ? rowPreviewFor(pf.plan, sql, selectedProfile?.driver)
+              : null,
         });
         return;
       }
@@ -8506,6 +8530,10 @@ export default function App() {
       typedConfirmTarget: null,
       impact: { verb: "delete", count, allRows },
       fkResult: res,
+      rowPreview:
+        count !== 0
+          ? rowPreviewFor(buildPreflightPlan(sql, selectedProfile?.driver), sql, selectedProfile?.driver)
+          : null,
     });
   };
 
@@ -14429,6 +14457,22 @@ export default function App() {
                 writeApproval={pendingDangerous.writeApproval}
                 typedConfirmTarget={pendingDangerous.typedConfirmTarget}
                 impact={pendingDangerous.impact}
+                rowPreview={
+                  pendingDangerous.rowPreview && pendingDangerous.impact && sessionId
+                    ? {
+                        sessionId,
+                        database:
+                          tabsRef.current.find((tb) => tb.id === pendingDangerous.tabId)?.database ??
+                          (selectedProfile?.driver === "postgres"
+                            ? null
+                            : (selectedProfile?.database ?? null)),
+                        sampleSql: pendingDangerous.rowPreview.sampleSql,
+                        verb: pendingDangerous.impact.verb,
+                        total: pendingDangerous.impact.count,
+                        setColumns: pendingDangerous.rowPreview.setColumns,
+                      }
+                    : null
+                }
                 aiContext={
                   sessionId && selectedProfile
                     ? {

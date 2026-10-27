@@ -376,3 +376,80 @@ export function preflightTone(allRows: boolean, count: number | null): Preflight
   if (count !== null && count >= PREFLIGHT_LARGE_THRESHOLD) return "warning";
   return "neutral";
 }
+
+/** クオート済みの識別子 1 パート (`` `a` `` / `"a"` / `a`) から、クオートを外した名前を返す。 */
+function unquoteIdentPart(p: string): string {
+  const s = p.trim();
+  if (s.startsWith("`") && s.endsWith("`") && s.length >= 2) return s.slice(1, -1).replace(/``/g, "`");
+  if (s.startsWith('"') && s.endsWith('"') && s.length >= 2) return s.slice(1, -1).replace(/""/g, '"');
+  return s;
+}
+
+/** `t.col` / `` `db`.`t`.`col` `` のような修飾付き列参照の最後のパート (列名) だけを返す。 */
+function lastIdentPart(raw: string): string | null {
+  const parts = raw.match(/`(?:[^`]|``)+`|"(?:[^"]|"")+"|[^.\s"`]+/g);
+  if (!parts || parts.length === 0) return null;
+  const name = unquoteIdentPart(parts[parts.length - 1]);
+  return name.length > 0 ? name : null;
+}
+
+/**
+ * 単一表 UPDATE の `SET` 句が書き換える列名を、書かれた順に重複なしで返す (#1881)。確認ダイアログの影響行
+ * グリッドで「どの列が変わるか」を強調するための材料。`SET a = 1, b = f(x, y)` のトップレベルの代入だけを
+ * 見る (括弧内・文字列内のカンマや `=` はマスクで無視)。PostgreSQL の `(a, b) = (1, 2)` は各列を拾う。
+ * UPDATE でない・SET が読めない形は空配列 (= 強調なし。誤った列を強調するより出さない)。
+ */
+export function extractUpdateSetColumns(sql: string, driver?: string): string[] {
+  if (sql.length > PREFLIGHT_MAX_CHARS) return [];
+  const masked = maskLiterals(sql, driver);
+  const trimmed = trimTrailingSeparators(masked);
+  if (trimmed.length === 0 || trimmed.includes(";")) return [];
+  const stmtEnd = trimmed.length;
+  const words = maskedTopLevelWords(masked, 0, stmtEnd);
+  if (words.length < 3 || words[0].text !== "update") return [];
+  const table = readTableRef(masked, sql, words[0].to);
+  if (!table) return [];
+  const after = maskedTopLevelWords(masked, table.end, stmtEnd);
+  if (after.length === 0 || after[0].text !== "set") return [];
+  const setEnd = after.find((w) => w.text === "where" || w.text === "returning")?.from ?? stmtEnd;
+  const out: string[] = [];
+  const push = (raw: string) => {
+    const name = lastIdentPart(raw);
+    if (name && !out.some((o) => o.toLowerCase() === name.toLowerCase())) out.push(name);
+  };
+  // トップレベルのカンマで代入を分け、各代入の左辺 (最初のトップレベル `=` より前) を読む。
+  let depth = 0;
+  let segStart = after[0].to;
+  const flush = (end: number) => {
+    const seg = masked.slice(segStart, end);
+    let d = 0;
+    let eq = -1;
+    for (let i = 0; i < seg.length; i++) {
+      const c = seg[i];
+      if (c === "(") d++;
+      else if (c === ")") d = Math.max(0, d - 1);
+      else if (c === "=" && d === 0) {
+        eq = i;
+        break;
+      }
+    }
+    if (eq < 0) return;
+    const lhs = sql.slice(segStart, segStart + eq).trim();
+    if (lhs.startsWith("(") && lhs.endsWith(")")) {
+      for (const p of lhs.slice(1, -1).split(",")) push(p);
+    } else {
+      push(lhs);
+    }
+  };
+  for (let i = after[0].to; i < setEnd; i++) {
+    const c = masked[i];
+    if (c === "(") depth++;
+    else if (c === ")") depth = Math.max(0, depth - 1);
+    else if (c === "," && depth === 0) {
+      flush(i);
+      segStart = i + 1;
+    }
+  }
+  flush(setEnd);
+  return out;
+}
