@@ -71,7 +71,7 @@ function stripInlineMarkdown(line: string): string {
 
 /**
  * リリースノート (GitHub Releases 由来の簡易 Markdown) を表示用ブロックへ分解する。
- *   - `#`〜`######` の見出し -> heading、連続する `> ` 引用 -> 1 つの highlight (先頭行が
+ *   - `#`〜`######` の見出し -> heading、連続する `> ` 引用 -> 1 つの highlight (改行は保つ) (先頭行が
  *     `[!NOTE]` / `[!TIP]` / `[!WARNING]` / `[!CAUTION]` / `[!IMPORTANT]` ならその行は捨てて tone に反映)、
  *     `-` / `*` / `+` / `1.` の箇条書き -> bullet、``` で囲んだ範囲 -> code、
  *     それ以外の連続行 -> paragraph (改行は保つ)。水平線と画像は捨てる。
@@ -98,7 +98,7 @@ export function parseReleaseNotes(body: string | undefined, maxLen = 2000): Rele
       tone = mapped;
       quote = quote.slice(1);
     }
-    const v = quote.join(" ").trim();
+    const v = quote.join("\n").trim();
     if (v) blocks.push({ kind: "highlight", text: v, tone });
     quote = [];
   };

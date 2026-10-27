@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup } from "@testing-library/react";
 import { fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
 import { t } from "../i18n";
 
@@ -65,5 +66,30 @@ describe("AboutDialog (#1770)", () => {
     renderWithProviders(<AboutDialog onClose={onClose} />);
     fireEvent.click(screen.getAllByRole("button", { name: t("aboutClose") }).at(-1) as HTMLElement);
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("lastWhatsNew があり版が一致するときだけ「更新内容を見る」を出す (#1864)", async () => {
+    const save = (version: string) =>
+      localStorage.setItem(
+        "noobdb.lastWhatsNew",
+        JSON.stringify({ version, currentVersion: "1.0.0", body: "- x" }),
+      );
+    localStorage.clear();
+    renderWithProviders(<AboutDialog onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId("about-version").textContent).toContain("1.2.3"));
+    expect(screen.queryByRole("button", { name: t("aboutWhatsNew") })).toBeNull();
+    cleanup();
+
+    save("v9.9.9");
+    renderWithProviders(<AboutDialog onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId("about-version").textContent).toContain("1.2.3"));
+    expect(screen.queryByRole("button", { name: t("aboutWhatsNew") })).toBeNull();
+    cleanup();
+
+    save("v1.2.3");
+    renderWithProviders(<AboutDialog onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: t("aboutWhatsNew") }));
+    expect(await screen.findByTestId("whats-new-version")).toBeTruthy();
+    localStorage.clear();
   });
 });

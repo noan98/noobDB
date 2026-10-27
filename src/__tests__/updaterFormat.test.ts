@@ -111,7 +111,7 @@ describe("parseReleaseNotes (#1864)", () => {
   });
   it("連続する引用は 1 つにまとめ、alert 記法は tone に反映して行を捨てる", () => {
     expect(parseReleaseNotes("> [!WARNING]\n> 注意\n> 続き\n\n> 別")).toEqual([
-      { kind: "highlight", text: "注意 続き", tone: "warning" },
+      { kind: "highlight", text: "注意\n続き", tone: "warning" },
       { kind: "highlight", text: "別", tone: "info" },
     ]);
   });

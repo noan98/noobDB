@@ -5,6 +5,7 @@ import { useReducedMotionConfig } from "motion/react";
 import { BrandLockup } from "../brand";
 import { useT } from "../i18n";
 import { getCurrentAppVersion } from "../updater";
+import { displayVersion } from "../updaterFormat";
 import { Icon } from "./Icon";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { useToast } from "./Toast";
@@ -83,7 +84,7 @@ export function AboutDialog({ onClose }: Props) {
             <Icon name="help" />
             {t("aboutDocs")}
           </Button>
-          {lastWhatsNew && (
+          {lastWhatsNew && version && displayVersion(lastWhatsNew.version) === displayVersion(version) && (
             <Button type="button" onClick={() => setShowWhatsNew(true)}>
               <Icon name="sparkles" />
               {t("aboutWhatsNew")}

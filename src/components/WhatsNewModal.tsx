@@ -137,7 +137,11 @@ function NoteBlock({ block }: { block: ReleaseNoteBlock }) {
         </chakra.h3>
       );
     case "highlight":
-      return <Callout tone={block.tone}>{block.text}</Callout>;
+      return (
+        <Callout tone={block.tone} whiteSpace="pre-wrap">
+          {block.text}
+        </Callout>
+      );
     case "bullet":
       return (
         <Flex gap="2" align="flex-start" color="app.textSecondary" fontSize="sm" lineHeight="normal">
