@@ -17,6 +17,7 @@ const NORMALIZE_MESSAGE_KEYS: Record<NormalizeKind, I18nKey> = {
   timestamp_tz_degraded: "schemaCompareCrossNormTimestampTz",
   timestamp_format: "schemaCompareCrossNormTimestampFormat",
   json: "schemaCompareCrossNormJson",
+  float_compare: "schemaCompareCrossNormFloatCompare",
 };
 
 const ROW_LABEL_KEYS = {
@@ -136,4 +137,16 @@ export function CrossDriverResult({ diff, normalized }: { diff: DataDiff; normal
       )}
     </Box>
   );
+}
+
+/**
+ * ドライバをまたぐ比較で返るバックエンドの主なエラーを、画面の言語の案内にする (#1869)。
+ * 該当しないエラーは元の文言のまま返す。
+ */
+export function crossDriverErrorKey(message: string): I18nKey | null {
+  if (message.includes("supports integer primary keys only")) return "schemaCompareCrossErrIntegerKey";
+  if (message.includes("matches multiple columns on the target"))
+    return "schemaCompareCrossErrAmbiguousColumn";
+  if (message.includes("is missing column(s)")) return "schemaCompareCrossErrMissingColumns";
+  return null;
 }

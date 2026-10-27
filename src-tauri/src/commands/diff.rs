@@ -835,7 +835,7 @@ async fn verify_one_sided(
             target.0,
             target.1,
             tables.target,
-            primary_key,
+            tables.target_pk(primary_key),
             pk_types,
             &source_only,
         )
@@ -858,6 +858,22 @@ struct TablePair<'a> {
 }
 
 impl<'a> TablePair<'a> {
+    /// ターゲットの SELECT に使う列名 (クロスドライバで大文字小文字だけ違う列を対応付けたとき, #1869)。
+    fn target_columns<'b>(&'b self, source: &'b [String]) -> &'b [String] {
+        match self.norms {
+            Some(n) if !n.target_columns.is_empty() => &n.target_columns,
+            _ => source,
+        }
+    }
+
+    /// ターゲットの ORDER BY / 主キー等価検索に使う主キー列名。
+    fn target_pk<'b>(&'b self, source: &'b [String]) -> &'b [String] {
+        match self.norms {
+            Some(n) if !n.target_pk.is_empty() => &n.target_pk,
+            _ => source,
+        }
+    }
+
     #[cfg(test)]
     fn same(table: &'a str) -> Self {
         Self {
@@ -876,6 +892,28 @@ struct KeysetOutcome {
     target_count: usize,
     /// 行数 / 差分数の上限で途中打ち切りになった (残りは未比較)。
     truncated: bool,
+}
+
+/// クロスドライバの比較では、主キーが正規化後に整数として読めることを確かめる (#1869)。
+/// 照合順序に依らず両側で同じ順序・同じ値になるのは整数キーだけで、そうでない行を黙って
+/// 対応付けると、誤った差分・取りこぼしになる。同一ドライバの比較 (`norms` なし) では何もしない。
+fn check_integer_key(
+    norms: Option<&CompareNorms>,
+    pk_idx: &[usize],
+    primary_key: &[String],
+    key: &[Value],
+) -> Result<()> {
+    let Some(n) = norms else { return Ok(()) };
+    for (j, v) in key.iter().enumerate() {
+        let col = pk_idx.get(j).copied().unwrap_or(usize::MAX);
+        if !n.key_is_integer(col, v) {
+            return Err(AppError::InvalidInput(format!(
+                "cross-driver comparison supports integer primary keys only (column '{}' has the non-integer value {v:?})",
+                primary_key.get(j).map_or("", String::as_str)
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// 両側の表をキーセットページングで最後まで比較する (#1539)。
@@ -924,7 +962,7 @@ async fn keyset_compare(
                     .into(),
             ));
         }
-        Ok(())
+        check_integer_key(tables.norms, pk_idx, primary_key, key)
     };
 
     let mut out = KeysetOutcome {
@@ -963,8 +1001,8 @@ async fn keyset_compare(
             let sql = keyset_select_sql(
                 target_driver,
                 tables.target,
-                columns,
-                primary_key,
+                tables.target_columns(columns),
+                tables.target_pk(primary_key),
                 &pk_types,
                 cursor.as_deref(),
                 Some(&boundary),
@@ -1034,8 +1072,8 @@ async fn keyset_compare(
         let sql = keyset_select_sql(
             target_driver,
             tables.target,
-            columns,
-            primary_key,
+            tables.target_columns(columns),
+            tables.target_pk(primary_key),
             &pk_types,
             after.as_deref(),
             None,
@@ -1235,7 +1273,13 @@ async fn bounded_compare(
 ) -> Result<BoundedOutcome> {
     let (source_driver, target_driver) = (source.0.driver_kind(), target.0.driver_kind());
     let source_sql = select_rows_sql(source_driver, tables.source, columns, primary_key, want + 1);
-    let target_sql = select_rows_sql(target_driver, tables.target, columns, primary_key, want + 1);
+    let target_sql = select_rows_sql(
+        target_driver,
+        tables.target,
+        tables.target_columns(columns),
+        tables.target_pk(primary_key),
+        want + 1,
+    );
     // 両側の SELECT は独立なので同時に走らせる (片側の往復待ちで反対側を待たせない)。
     let (source_res, target_res) = tokio::join!(
         source.0.execute(&source_sql, Some(source.1)),
@@ -1247,6 +1291,10 @@ async fn bounded_compare(
     let target_truncated = target_res.rows.len() > want;
     let mut source_rows: Vec<_> = source_res.rows.into_iter().take(want).collect();
     let mut target_rows: Vec<_> = target_res.rows.into_iter().take(want).collect();
+    for row in source_rows.iter().chain(target_rows.iter()) {
+        let key: Vec<Value> = pk_idx.iter().map(|&i| row[i].clone()).collect();
+        check_integer_key(tables.norms, pk_idx, primary_key, &key)?;
+    }
     // 片側だけ切り詰められたとき、もう一方の窓の外の行を「存在しない」と誤判定して
     // INSERT してしまわないよう、両側を共通の PK 窓に揃える。
     clamp_to_common_window(
@@ -1734,9 +1782,29 @@ async fn prepare_data_compare(
             }
         }
     }
+    // クロスドライバでは、完全一致が無い列だけ大文字小文字を無視して 1 つに決まる列へ対応付ける。
+    // (MySQL の `Id` と PostgreSQL の `id` など。複数の候補があれば曖昧なのでエラー。)
+    let target_names: Vec<String> = if cross_driver {
+        match target_cols.as_ref() {
+            Ok(tc) => {
+                let names: Vec<String> = tc.iter().map(|t| t.name.clone()).collect();
+                crate::db::cross_compare::map_target_columns(&columns, &names).map_err(
+                    |(col, candidates)| {
+                        AppError::InvalidInput(format!(
+                            "column '{col}' matches multiple columns on the target ({}); rename the columns so that exactly one matches",
+                            candidates.join(", ")
+                        ))
+                    },
+                )?
+            }
+            Err(_) => columns.clone(),
+        }
+    } else {
+        columns.clone()
+    };
     // ターゲットの列型 (`columns` と同じ並び)。ドライバをまたぐ正規化に使う。
     let target_types: Vec<String> = match target_cols.as_ref() {
-        Ok(tc) => columns
+        Ok(tc) => target_names
             .iter()
             .map(|name| {
                 tc.iter()
@@ -1761,20 +1829,39 @@ async fn prepare_data_compare(
     let primary_key = row_key.columns;
     // ターゲット側の列・キーを検証する (キーの種類によらず常に。#1880)。列名の照合は
     // ターゲットのドライバの規則で行う (PostgreSQL は大文字小文字を区別する)。
+    let pk_idx: Vec<usize> = primary_key
+        .iter()
+        .filter_map(|name| columns.iter().position(|c| c == name))
+        .collect();
+    // 検証はターゲットでの名前で行う (対応付けた列名・主キー名)。
+    let target_primary_key: Vec<String> = pk_idx
+        .iter()
+        .filter_map(|&i| target_names.get(i).cloned())
+        .collect();
+    let (validate_cols, validate_pk) =
+        if cross_driver && target_primary_key.len() == primary_key.len() {
+            let renamed: Vec<TableColumnInfo> = col_info
+                .iter()
+                .zip(&target_names)
+                .map(|(c, n)| TableColumnInfo {
+                    name: n.clone(),
+                    ..c.clone()
+                })
+                .collect();
+            (renamed, target_primary_key.clone())
+        } else {
+            (col_info.clone(), primary_key.clone())
+        };
     validate_target_table(
         target_driver,
         target,
         target_database,
         tables,
-        &col_info,
+        &validate_cols,
         target_cols,
-        &primary_key,
+        &validate_pk,
     )
     .await?;
-    let pk_idx: Vec<usize> = primary_key
-        .iter()
-        .filter_map(|name| columns.iter().position(|c| c == name))
-        .collect();
 
     let ignore_columns = normalize_ignore_columns(ignore_columns, &columns)?;
 
@@ -1798,7 +1885,7 @@ async fn prepare_data_compare(
                 )));
             }
         }
-        let (norms, report) = build_norms(
+        let (mut norms, report) = build_norms(
             driver,
             target_driver,
             &columns,
@@ -1806,6 +1893,8 @@ async fn prepare_data_compare(
             &target_types,
             &ignore_columns,
         );
+        norms.target_columns = target_names.clone();
+        norms.target_pk = target_primary_key.clone();
         (Some(norms), report)
     } else {
         (None, Vec::new())

@@ -4913,7 +4913,17 @@ const en = {
   schemaCompareCrossNormTimestampFormat:
     "{column} ({source} / {target}): date-time format and fractional-second digits are ignored (2024-01-02T03:04:05.000 = 2024-01-02 03:04:05).",
   schemaCompareCrossNormJson:
-    "{column} ({source} / {target}): JSON is compared by content, ignoring whitespace and key order.",
+    "{column} ({source} / {target}): JSON is compared by content, ignoring whitespace and key order. Numbers may be compared as double-precision floats.",
+  schemaCompareCrossNormFloatCompare:
+    "{column} ({source} / {target}): decimal and floating-point values were compared as floating-point numbers, ignoring rounding error.",
+  schemaCompareCrossErrIntegerKey:
+    "Cross-driver comparison supports integer primary keys only. Compare tables whose primary key is an integer column.",
+  schemaCompareCrossErrAmbiguousColumn:
+    "A column on the source matches more than one column on the target (names that differ only in case). Rename the columns so that exactly one matches.",
+  schemaCompareCrossErrMissingColumns:
+    "The target table is missing columns that exist on the source. Cross-driver comparison needs the same column names (case differences are tolerated).",
+  schemaCompareCrossErrDetail: "Details: {detail}",
+  schemaCompareCrossErrorTitle: "The data check could not run",
   schemaCompareDriverMismatch: "Schema comparison needs the source and target to use the same driver.",
   schemaCompareHideSame: "Hide identical tables",
   schemaCompareIdentical: "The two schemas are identical.",
@@ -11863,7 +11873,17 @@ const ja: Dict = {
   schemaCompareCrossNormTimestampFormat:
     "{column} ({source} / {target}): 日時の書式と小数秒の桁の違いを無視しました (2024-01-02T03:04:05.000 = 2024-01-02 03:04:05)。",
   schemaCompareCrossNormJson:
-    "{column} ({source} / {target}): JSON は空白とキー順を無視して内容で比べました。",
+    "{column} ({source} / {target}): JSON は空白とキー順を無視して内容で比べました。数値は倍精度で比べることがあります。",
+  schemaCompareCrossNormFloatCompare:
+    "{column} ({source} / {target}): decimal と浮動小数を、丸め誤差を無視して浮動小数の値で比べました。",
+  schemaCompareCrossErrIntegerKey:
+    "ドライバをまたぐ比較は、主キーが整数の表だけ比べられます。主キーが整数列の表を選んでください。",
+  schemaCompareCrossErrAmbiguousColumn:
+    "比較元の列が、比較先の複数の列 (大文字小文字だけが違う名前) に当てはまります。ちょうど 1 つに決まるように列名をそろえてください。",
+  schemaCompareCrossErrMissingColumns:
+    "比較先の表に、比較元にある列が足りません。ドライバをまたぐ比較では同じ列名が必要です (大文字小文字の違いは許容します)。",
+  schemaCompareCrossErrDetail: "詳細: {detail}",
+  schemaCompareCrossErrorTitle: "データ検証を実行できませんでした",
   schemaCompareDriverMismatch: "スキーマ比較は、比較元と比較先が同じドライバのときだけ使えます。",
   schemaCompareHideSame: "同一のテーブルを隠す",
   schemaCompareIdentical: "2 つのスキーマは同一です。",

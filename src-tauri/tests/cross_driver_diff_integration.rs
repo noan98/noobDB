@@ -213,3 +213,108 @@ async fn mysql_vs_postgres_data_diff_normalizes_and_stays_verify_only() {
 
     cleanup(&mysql, &mysql_db, &pg, &pg_db).await;
 }
+
+/// PostgreSQL ⇔ SQLite (ゲートは PostgreSQL の URL のみ。SQLite は一時ファイルで作る)。
+/// SQLite 側の列名は大文字小文字が違う (`Name`) が、1 つに決まるので対応付けられる。
+#[tokio::test]
+async fn postgres_vs_sqlite_data_diff_handles_floats_and_column_case() {
+    let Ok(pg_url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let pg = t::connect(&t::parse_postgres_url(&pg_url).expect("valid postgres url"))
+        .await
+        .expect("connect postgres");
+    let pg_db = "public";
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_xdiff_1869_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let sqlite = t::connect(&t::sqlite_options(path.to_str().expect("utf8 path")))
+        .await
+        .expect("connect sqlite");
+
+    run(&pg, pg_db, &format!("DROP TABLE IF EXISTS {TABLE}")).await;
+    run(
+        &pg,
+        pg_db,
+        &format!(
+            "CREATE TABLE {TABLE} (id BIGINT PRIMARY KEY, flag BOOLEAN, price NUMERIC(10,2), \
+             at TIMESTAMP(6), name VARCHAR(20))"
+        ),
+    )
+    .await;
+    run(
+        &sqlite,
+        "main",
+        &format!(
+            "CREATE TABLE {TABLE} (id INTEGER PRIMARY KEY, flag BOOLEAN, price NUMERIC(10,2), \
+             at DATETIME, \"Name\" TEXT)"
+        ),
+    )
+    .await;
+    run(
+        &pg,
+        pg_db,
+        &format!(
+            "INSERT INTO {TABLE} VALUES (1, true, 1.10, '2024-01-02 03:04:05', 'x'), \
+             (2, false, 2.50, '2024-01-02 03:04:05.5', NULL)"
+        ),
+    )
+    .await;
+    run(
+        &sqlite,
+        "main",
+        &format!(
+            "INSERT INTO {TABLE} VALUES (1, 1, 1.10, '2024-01-02T03:04:05', 'x'), \
+             (2, 0, 2.50, '2024-01-02 03:04:05.500', NULL)"
+        ),
+    )
+    .await;
+
+    for swapped in [false, true] {
+        let (diff, normalized) = if swapped {
+            t::compare_table_data_via_core(
+                &sqlite, "main", &pg, pg_db, TABLE, TABLE, None, true, None,
+            )
+            .await
+        } else {
+            t::compare_table_data_via_core(
+                &pg, pg_db, &sqlite, "main", TABLE, TABLE, None, true, None,
+            )
+            .await
+        }
+        .expect("compare");
+        assert!(
+            diff.rows.is_empty(),
+            "representation-only differences must not be reported (swapped={swapped}): {:?}",
+            diff.rows
+        );
+        // SQLite が絡む decimal は丸めて比べうるので、必ず知らせる。
+        assert!(normalized
+            .iter()
+            .any(|n| n.column == "price" && n.kind == t::NormalizeKind::DecimalFloat));
+        assert!(normalized
+            .iter()
+            .any(|n| n.column == "flag" && n.kind == t::NormalizeKind::Boolean));
+    }
+
+    run(
+        &sqlite,
+        "main",
+        &format!("UPDATE {TABLE} SET price = 2.51 WHERE id = 2"),
+    )
+    .await;
+    let (diff, _) = t::compare_table_data_via_core(
+        &pg, pg_db, &sqlite, "main", TABLE, TABLE, None, false, None,
+    )
+    .await
+    .expect("compare with diff");
+    assert_eq!(diff.rows.len(), 1);
+    assert_eq!(diff.rows[0].status, RowStatus::Different);
+    assert_eq!(diff.rows[0].changed_columns, vec!["price".to_string()]);
+
+    run(&pg, pg_db, &format!("DROP TABLE IF EXISTS {TABLE}")).await;
+    sqlite.close().await;
+    let _ = std::fs::remove_file(&path);
+}

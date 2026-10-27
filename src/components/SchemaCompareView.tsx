@@ -33,7 +33,8 @@ import { staggerContainer, transitions, variants as motionVariants } from "../mo
 import { rowKeyNote } from "../rowKey";
 import { semanticColorVar } from "../semanticColors";
 import { useSettings } from "../settings";
-import { CrossDriverNotice, CrossDriverResult } from "./CrossDriverVerify";
+import { CrossDriverNotice, CrossDriverResult, crossDriverErrorKey } from "./CrossDriverVerify";
+import { ErrorNote } from "./modalForm";
 import { useConfirm } from "./ConfirmDialog";
 import { statusColors } from "./diffStatusColors";
 import { AiSyncRisk, RiskBadge, type RiskByIndex } from "./AiSyncRisk";
@@ -1217,6 +1218,23 @@ export function SchemaCompareView({
         </chakra.p>
       )}
 
+      {driverMismatch && syncError && (
+        <ErrorNote title={t("schemaCompareCrossErrorTitle")}>
+          {(() => {
+            const key = crossDriverErrorKey(syncError);
+            return key ? (
+              <>
+                {t(key)}
+                <chakra.div textStyle="caption" wordBreak="break-all">
+                  {t("schemaCompareCrossErrDetail", { detail: syncError })}
+                </chakra.div>
+              </>
+            ) : (
+              syncError
+            );
+          })()}
+        </ErrorNote>
+      )}
       {dataDiff && (
         <>
           <chakra.p margin={0} fontSize="sm" color="app.textMuted">

@@ -20,12 +20,43 @@ use super::transfer::{
 use super::types::Value;
 use super::DriverKind;
 
-/// 列ごとの比較用の論理型。`types` は比較する列 (`columns`) と同じ並び。
+/// ソースの列名をターゲットの列名へ対応付ける (クロスドライバ用, #1869)。完全一致を優先し、
+/// 無いときだけ大文字小文字を無視して 1 つに決まる列へ。複数の候補があれば `Err((ソース列, 候補))`。
+/// どれにも当たらない列はソースの名前のまま返す (欠落は呼び出し側の検証が報告する)。
+pub fn map_target_columns(
+    source: &[String],
+    target: &[String],
+) -> std::result::Result<Vec<String>, (String, Vec<String>)> {
+    let mut out = Vec::with_capacity(source.len());
+    for name in source {
+        if target.contains(name) {
+            out.push(name.clone());
+            continue;
+        }
+        let candidates: Vec<&String> = target
+            .iter()
+            .filter(|t| t.eq_ignore_ascii_case(name))
+            .collect();
+        match candidates.as_slice() {
+            [] => out.push(name.clone()),
+            [one] => out.push((*one).clone()),
+            many => {
+                return Err((name.clone(), many.iter().map(|c| (*c).clone()).collect()));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// 列ごとの比較用の論理型と、ターゲット側の列名の対応。`types` は比較する列 (`columns`) と同じ並び。
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompareNorms {
     pub types: Vec<TransferType>,
-    /// SQLite が絡む decimal は float 化されるので、有効 15 桁に丸めて比べる。
-    pub approx_decimal: Vec<bool>,
+    /// ターゲット側の列名 (`columns` と同じ並び)。空ならソースと同じ名前。
+    /// クロスドライバで大文字小文字だけが違う列を対応付けたときに使う。
+    pub target_columns: Vec<String>,
+    /// ターゲット側の主キー列名。空ならソースと同じ名前。
+    pub target_pk: Vec<String>,
 }
 
 impl CompareNorms {
@@ -34,20 +65,91 @@ impl CompareNorms {
     pub fn identity(n: usize) -> Self {
         Self {
             types: vec![TransferType::Text; n],
-            approx_decimal: vec![false; n],
+            target_columns: Vec::new(),
+            target_pk: Vec::new(),
         }
     }
 
-    /// `col` 番目の列の値を正準形へ寄せる。
+    /// `col` 番目の列の値を正準形へ寄せる (主キーの署名用。整数キー以外は元の値のまま)。
     pub fn normalize(&self, col: usize, v: &Value) -> Value {
         match self.types.get(col) {
-            Some(ty) => normalize_value(
-                ty,
-                self.approx_decimal.get(col).copied().unwrap_or(false),
-                v,
-            ),
+            Some(ty) => normalize_value(ty, v),
             None => v.clone(),
         }
+    }
+
+    /// 対応付けた 2 つの値を、列の論理型に従って「同じ値」とみなせるか。迷うときは `false`
+    /// (差分に倒す)。float / decimal は値の対ごとに判定する (片側が実際に浮動小数のときだけ丸める)。
+    pub fn values_match(&self, col: usize, a: &Value, b: &Value) -> bool {
+        if matches!(a, Value::Null) || matches!(b, Value::Null) {
+            return matches!(a, Value::Null) && matches!(b, Value::Null);
+        }
+        match self.types.get(col) {
+            Some(TransferType::Float) => float_match(a, b),
+            Some(TransferType::Decimal { .. }) => decimal_match(a, b),
+            Some(ty) => values_equal(&normalize_value(ty, a), &normalize_value(ty, b)),
+            None => values_equal(a, b),
+        }
+    }
+
+    /// 主キーの値が正規化後に整数として読めるか (クロスドライバの主キーは整数に限る)。
+    pub fn key_is_integer(&self, col: usize, v: &Value) -> bool {
+        matches!(self.normalize(col, v), Value::Int(_) | Value::UInt(_))
+            || matches!(self.normalize(col, v), Value::String(s) if s.parse::<i128>().is_ok())
+    }
+}
+
+fn values_equal(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Float(x), Value::Float(y)) if x.is_nan() && y.is_nan() => true,
+        _ => a == b,
+    }
+}
+
+/// 整数として厳密に読める値か (小数部のある Float や 2^53 以上の Float は読めない)。
+fn exact_int(v: &Value) -> Option<Value> {
+    norm_int(v)
+}
+
+/// float 列の比較。整数との対は整数として厳密に、浮動小数どうし (や小数文字列) は f64 で比べる。
+fn float_match(a: &Value, b: &Value) -> bool {
+    let is_float = |v: &Value| matches!(v, Value::Float(_));
+    if is_float(a) || is_float(b) {
+        // 片側が整数 (Int / UInt / 数字文字列) のときは整数として比べる。
+        let int_like = |v: &Value| match v {
+            Value::Int(_) | Value::UInt(_) => true,
+            Value::String(s) => s.trim().parse::<i128>().is_ok(),
+            _ => false,
+        };
+        if int_like(a) || int_like(b) {
+            return match (exact_int(a), exact_int(b)) {
+                (Some(x), Some(y)) => x == y,
+                _ => false,
+            };
+        }
+    } else if let (Some(x), Some(y)) = (exact_int(a), exact_int(b)) {
+        if !matches!((a, b), (Value::Bool(_), _) | (_, Value::Bool(_))) {
+            return x == y;
+        }
+    }
+    match (norm_float(a), norm_float(b)) {
+        (Some(Value::Float(x)), Some(Value::Float(y))) => x == y || (x.is_nan() && y.is_nan()),
+        _ => false,
+    }
+}
+
+/// decimal 列の比較。実際に `Value::Float` が絡む対だけ有効 15 桁に丸めて比べ (SQLite の float 化)、
+/// それ以外は桁・末尾ゼロだけを無視した厳密比較にする。
+fn decimal_match(a: &Value, b: &Value) -> bool {
+    if matches!(a, Value::Float(_)) || matches!(b, Value::Float(_)) {
+        return match (decimal_text(a, true), decimal_text(b, true)) {
+            (Some(x), Some(y)) => x == y,
+            _ => false,
+        };
+    }
+    match (decimal_text(a, false), decimal_text(b, false)) {
+        (Some(x), Some(y)) => x == y,
+        _ => values_equal(a, b),
     }
 }
 
@@ -67,8 +169,10 @@ pub enum NormalizeKind {
     TimestampTzDegraded,
     /// 日時の書式・小数秒の桁の差を同一視した。
     TimestampFormat,
-    /// JSON の空白・キー順を同一視した。
+    /// JSON の空白・キー順を同一視した (数値は倍精度で比べることがある)。
     Json,
+    /// decimal と浮動小数の列を、浮動小数 (f64) の値で比べた (丸め誤差を無視する)。
+    FloatCompare,
 }
 
 /// 正規化して一致とみなした列 1 つ。`preview_transfer` の縮退警告と同じ要領で画面に出す。
@@ -151,7 +255,6 @@ pub fn build_norms(
     let sqlite_involved =
         source_driver == DriverKind::Sqlite || target_driver == DriverKind::Sqlite;
     let mut types = Vec::with_capacity(columns.len());
-    let mut approx = Vec::with_capacity(columns.len());
     let mut report: Vec<NormalizedColumn> = Vec::new();
     for (i, name) in columns.iter().enumerate() {
         let st = source_types.get(i).map(String::as_str).unwrap_or("");
@@ -159,9 +262,7 @@ pub fn build_norms(
         let sa = classify_source_type(st);
         let ta = classify_source_type(tt);
         let ty = reconcile(sa.as_ref(), ta.as_ref());
-        let is_decimalish = matches!(ty, TransferType::Decimal { .. });
         types.push(ty.clone());
-        approx.push(sqlite_involved && is_decimalish);
         if ignore_columns.contains(name) {
             continue;
         }
@@ -177,8 +278,28 @@ pub fn build_norms(
         };
         match &ty {
             TransferType::Boolean if sa != ta => push(NormalizeKind::Boolean),
-            TransferType::Decimal { .. } => push(NormalizeKind::DecimalScale),
+            TransferType::Decimal { .. } => {
+                push(NormalizeKind::DecimalScale);
+                // SQLite 側に実際の浮動小数が入っていれば丸めて比べるので、精度が分からなくても必ず知らせる。
+                if sqlite_involved {
+                    push(NormalizeKind::DecimalFloat);
+                }
+            }
             TransferType::Json => push(NormalizeKind::Json),
+            TransferType::Float
+                if matches!(
+                    (&sa, &ta),
+                    (
+                        Some(TransferType::Decimal { .. }),
+                        Some(TransferType::Float)
+                    ) | (
+                        Some(TransferType::Float),
+                        Some(TransferType::Decimal { .. })
+                    )
+                ) =>
+            {
+                push(NormalizeKind::FloatCompare)
+            }
             _ => {}
         }
         // 縮退は転送と同じ判定 (各側の型をもう一方のドライバへ移した場合) を両方向で見る。
@@ -213,14 +334,15 @@ pub fn build_norms(
     (
         CompareNorms {
             types,
-            approx_decimal: approx,
+            target_columns: Vec::new(),
+            target_pk: Vec::new(),
         },
         report,
     )
 }
 
 /// 値 1 つを論理型の正準形へ寄せる。寄せられない値 (未知の書式など) は元のまま返す。
-pub fn normalize_value(ty: &TransferType, approx_decimal: bool, v: &Value) -> Value {
+pub fn normalize_value(ty: &TransferType, v: &Value) -> Value {
     if matches!(v, Value::Null) {
         return Value::Null;
     }
@@ -228,7 +350,7 @@ pub fn normalize_value(ty: &TransferType, approx_decimal: bool, v: &Value) -> Va
         TransferType::Boolean => norm_bool(v),
         TransferType::Integer | TransferType::UnsignedBigInt => norm_int(v),
         TransferType::Float => norm_float(v),
-        TransferType::Decimal { .. } => norm_decimal(v, approx_decimal),
+        TransferType::Decimal { .. } => decimal_text(v, false).map(Value::String),
         TransferType::Date => text_of(v).and_then(|s| norm_date(&s)).map(Value::String),
         TransferType::Time => text_of(v).and_then(|s| norm_time(&s)).map(Value::String),
         TransferType::Timestamp => text_of(v)
@@ -314,7 +436,8 @@ fn norm_float(v: &Value) -> Option<Value> {
     }
 }
 
-fn norm_decimal(v: &Value, approx: bool) -> Option<Value> {
+/// decimal を正準な文字列へ。`round15` なら有効 15 桁に丸めた f64 を経由する (浮動小数との比較用)。
+fn decimal_text(v: &Value, round15: bool) -> Option<String> {
     let text = match v {
         Value::Int(i) => i.to_string(),
         Value::UInt(u) => u.to_string(),
@@ -322,8 +445,7 @@ fn norm_decimal(v: &Value, approx: bool) -> Option<Value> {
         Value::String(s) => s.trim().to_string(),
         _ => return None,
     };
-    let text = if approx {
-        // 有効 15 桁に丸めた f64 を経由する (SQLite は decimal を REAL / INTEGER に寄せる)。
+    let text = if round15 {
         let f: f64 = text.parse().ok()?;
         if !f.is_finite() {
             return None;
@@ -332,7 +454,7 @@ fn norm_decimal(v: &Value, approx: bool) -> Option<Value> {
     } else {
         text
     };
-    canonical_decimal(&text).map(Value::String)
+    canonical_decimal(&text)
 }
 
 /// `-001.2300` → `-1.23`、`0.00` / `-0` → `0`。指数表記・非数値は `None`。
@@ -476,7 +598,12 @@ mod tests {
     }
 
     fn eq(ty: &TransferType, a: &Value, b: &Value) -> bool {
-        normalize_value(ty, false, a) == normalize_value(ty, false, b)
+        CompareNorms {
+            types: vec![ty.clone()],
+            target_columns: Vec::new(),
+            target_pk: Vec::new(),
+        }
+        .values_match(0, a, b)
     }
 
     #[test]
@@ -517,8 +644,8 @@ mod tests {
         assert!(!eq(&b, &Value::Int(0), &Value::Bool(true)));
         // 0/1 以外を true に丸めない。
         assert!(!eq(&b, &Value::Int(2), &Value::Bool(true)));
-        assert_eq!(normalize_value(&b, false, &Value::Int(2)), Value::Int(2));
-        assert_eq!(normalize_value(&b, false, &Value::Null), Value::Null);
+        assert_eq!(normalize_value(&b, &Value::Int(2)), Value::Int(2));
+        assert_eq!(normalize_value(&b, &Value::Null), Value::Null);
     }
 
     #[test]
@@ -554,22 +681,81 @@ mod tests {
         assert!(eq(&d, &Value::Float(2.5), &s("2.50")));
         assert!(eq(&d, &s("0.00"), &s("-0.00")));
         assert!(!eq(&d, &s("1.10"), &s("1.11")));
-        // SQLite が絡むときだけ有効 15 桁に丸める。
+        // 実際に Float が絡む対だけ有効 15 桁に丸める。
         let a = s("123456789012345.678");
         let b = Value::Float(123456789012345.68);
-        assert!(!eq(&d, &a, &b));
-        assert_eq!(normalize_value(&d, true, &a), normalize_value(&d, true, &b));
+        assert!(eq(&d, &a, &b));
         // 15 桁より上の違いは丸めても残る。
-        assert_ne!(
-            normalize_value(&d, true, &s("1.5")),
-            normalize_value(&d, true, &s("1.6"))
-        );
+        assert!(!eq(&d, &s("1.5"), &Value::Float(1.6)));
+    }
+
+    #[test]
+    fn decimal_without_float_is_exact() {
+        // numeric(18,0): SQLite の INTEGER (2^53 超は String) どうしは丸めずに差分になる。
+        let d = TransferType::Decimal {
+            precision: Some(18),
+            scale: Some(0),
+        };
+        assert!(!eq(&d, &s("123456789012345678"), &s("123456789012345679")));
+        assert!(!eq(&d, &Value::Int(1), &s("2")));
+        // TEXT で正確に保持された数値は、桁・末尾ゼロだけ無視して一致する。
+        assert!(eq(
+            &d,
+            &s("123456789012345678"),
+            &s("123456789012345678.000")
+        ));
+        assert!(eq(
+            &d,
+            &s("12345678901234567.89"),
+            &s("12345678901234567.890")
+        ));
+        assert!(!eq(
+            &d,
+            &s("12345678901234567.89"),
+            &s("12345678901234567.88")
+        ));
+        // 片側が Float なら丸め (有効 15 桁) で比べる。
+        assert!(eq(
+            &d,
+            &Value::Float(123456789012345680.0),
+            &s("123456789012345678")
+        ));
+    }
+
+    #[test]
+    fn float_vs_integer_is_exact() {
+        let f = TransferType::Float;
+        // 2^53 + 1 の整数と 2^53 の Float は別の値 (f64 に丸めて一致にしない)。
+        assert!(!eq(
+            &f,
+            &Value::Int(9_007_199_254_740_993),
+            &Value::Float(9_007_199_254_740_992.0)
+        ));
+        assert!(!eq(
+            &f,
+            &s("9007199254740993"),
+            &Value::Float(9_007_199_254_740_992.0)
+        ));
+        assert!(!eq(
+            &f,
+            &s("9007199254740992"),
+            &Value::Float(9_007_199_254_740_992.0)
+        ));
+        // 小数部のある値と整数は別。
+        assert!(!eq(&f, &Value::Int(5), &Value::Float(5.5)));
+        // 安全整数の範囲で値が等しければ一致。
+        assert!(eq(&f, &Value::Int(5), &Value::Float(5.0)));
+        assert!(eq(&f, &s("5"), &Value::Float(5.0)));
+        assert!(!eq(&f, &Value::Int(5), &Value::Int(6)));
+        assert!(!eq(&f, &Value::Int(5), &Value::Null));
+        assert!(eq(&f, &Value::Null, &Value::Null));
     }
 
     #[test]
     fn float_golden() {
         let f = TransferType::Float;
         assert!(eq(&f, &Value::Float(1.0), &Value::Int(1)));
+        assert!(eq(&f, &Value::Float(f64::NAN), &Value::Float(f64::NAN)));
         assert!(eq(&f, &s("0.5"), &Value::Float(0.5)));
         assert!(!eq(&f, &Value::Float(0.1), &Value::Float(0.2)));
     }
@@ -747,7 +933,6 @@ mod tests {
         assert_eq!(norms.types[3], TransferType::Timestamp);
         assert_eq!(norms.types[4], TransferType::Json);
         assert_eq!(norms.types[5], TransferType::Text);
-        assert_eq!(norms.approx_decimal, vec![false; 6]);
         let kinds: Vec<(&str, NormalizeKind)> =
             report.iter().map(|r| (r.column.as_str(), r.kind)).collect();
         assert_eq!(
@@ -774,7 +959,7 @@ mod tests {
             &sqlite,
             &[],
         );
-        assert_eq!(norms.approx_decimal, vec![false, true, true]);
+        let _ = &norms;
         let has = |c: &str, k: NormalizeKind| report.iter().any(|r| r.column == c && r.kind == k);
         assert!(has("at", NormalizeKind::TimestampTzDegraded));
         assert!(!has("at", NormalizeKind::TimestampFormat));
@@ -807,6 +992,42 @@ mod tests {
             &cols(&["flag"]),
         );
         assert!(report.is_empty());
+    }
+
+    #[test]
+    fn map_target_columns_golden() {
+        let v = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        // 完全一致を優先。
+        assert_eq!(
+            map_target_columns(&v(&["Id", "name"]), &v(&["id", "Id", "name"])),
+            Ok(v(&["Id", "name"]))
+        );
+        // 完全一致が無く、大文字小文字を無視して 1 つに決まれば対応付ける。
+        assert_eq!(
+            map_target_columns(&v(&["Id", "NAME"]), &v(&["id", "name"])),
+            Ok(v(&["id", "name"]))
+        );
+        // 候補が複数ならエラー。
+        assert_eq!(
+            map_target_columns(&v(&["Id"]), &v(&["id", "ID"])),
+            Err(("Id".to_string(), v(&["id", "ID"])))
+        );
+        // 当たらない列はそのまま (欠落は別の検証が報告する)。
+        assert_eq!(map_target_columns(&v(&["x"]), &v(&["y"])), Ok(v(&["x"])));
+    }
+
+    #[test]
+    fn key_is_integer_golden() {
+        let n = CompareNorms {
+            types: vec![TransferType::Integer],
+            target_columns: Vec::new(),
+            target_pk: Vec::new(),
+        };
+        assert!(n.key_is_integer(0, &Value::Int(1)));
+        assert!(n.key_is_integer(0, &s("9007199254740993")));
+        assert!(n.key_is_integer(0, &Value::Float(3.0)));
+        assert!(!n.key_is_integer(0, &Value::Float(3.5)));
+        assert!(!n.key_is_integer(0, &s("abc")));
     }
 
     #[test]

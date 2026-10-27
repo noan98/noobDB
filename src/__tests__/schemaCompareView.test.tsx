@@ -312,4 +312,28 @@ describe("SchemaCompareView のクロスドライバ検証 (#1869)", () => {
     expect(screen.getByText(/price: "2\.50" → "2\.51"/)).toBeInTheDocument();
     expect(screen.queryByText(t("schemaCompareDataGenerate"))).toBeNull();
   });
+
+  it("整数でない主キーを拒否されたとき、案内の文言を画面に出す", async () => {
+    vi.mocked(api.connect)
+      .mockResolvedValueOnce({ session_id: "s-my" } as never)
+      .mockResolvedValueOnce({ session_id: "s-pg" } as never);
+    vi.mocked(api.listTables).mockResolvedValue(["orders"]);
+    vi.mocked(api.compareTableData).mockRejectedValue(
+      "Invalid input: cross-driver comparison supports integer primary keys only (column 'code' is varchar(10) on the source and character varying(10) on the target)",
+    );
+    renderWithProviders(<SchemaCompareView profiles={MIXED} onClose={() => {}} />);
+    const boxes = () => screen.getAllByRole("combobox") as HTMLSelectElement[];
+    fireEvent.change(boxes()[0], { target: { value: "p-my" } });
+    await waitFor(() => expect(boxes()[1]).not.toBeDisabled());
+    fireEvent.change(boxes()[2], { target: { value: "p-pg" } });
+    await waitFor(() => expect(boxes()[3].value).toBe("db1"));
+    const sourceTable = (await screen.findByLabelText(
+      t("schemaCompareDataSourceTable"),
+    )) as HTMLSelectElement;
+    fireEvent.change(sourceTable, { target: { value: "orders" } });
+    fireEvent.click(screen.getByLabelText(t("schemaCompareDataAllRows")));
+    fireEvent.click(screen.getByText(t("schemaCompareDataCompare")));
+    expect(await screen.findByText(t("schemaCompareCrossErrorTitle"))).toBeInTheDocument();
+    expect(screen.getByText(t("schemaCompareCrossErrIntegerKey"))).toBeInTheDocument();
+  });
 });

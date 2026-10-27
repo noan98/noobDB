@@ -251,7 +251,7 @@ fn changed_columns(
         }
         let eq = match (source.get(i), target.get(i)) {
             (Some(a), Some(b)) => match norms {
-                Some(n) => values_equal(&n.normalize(i, a), &n.normalize(i, b)),
+                Some(n) => n.values_match(i, a, b),
                 None => values_equal(a, b),
             },
             (a, b) => a == b,
