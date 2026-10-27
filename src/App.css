@@ -2369,6 +2369,7 @@ html, body, #root {
    - `apply-flash`: ResultGrid のインライン編集適用成功時のフラッシュ。
      コピー操作 (#1159、`runCopy` → `is-copy-flash`) も同じキーフレームを
      再利用し、コピー対象のセル/行/矩形選択を一瞬フラッシュさせる
+     UsersPanel (#1890) の権限 grant/revoke 後も、変わったセル / 新規ロールに `.flash-ring` で再生する
    - `find-current-pulse`: ResultGrid の結果内検索 (#644) で現在ヒットへ
      ジャンプしたときの着地パルス
    - `pane-overlay-in`: 結果最大化 / エディタ集中の全画面オーバーレイの出現
