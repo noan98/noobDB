@@ -2019,6 +2019,158 @@ impl PostgresConn {
             .collect())
     }
 
+    /// `schema` の独立したシーケンス (テーブルの serial / identity 列が所有するものを除く) と、
+    /// それを作る `CREATE SEQUENCE` 文 (スキーマ比較, #1879)。採番の現在値 (`last_value`) は
+    /// 含めない (環境ごとに違って当然なので差分にしない)。
+    pub async fn sequence_definitions(&self, schema: &str) -> Result<Vec<(String, String)>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"
+            SELECT s.sequencename::text, s.data_type::text, s.start_value, s.min_value,
+                   s.max_value, s.increment_by, s.cycle, s.cache_size
+              FROM pg_sequences s
+             WHERE s.schemaname = $1
+               AND NOT EXISTS (
+                   SELECT 1
+                     FROM pg_class c
+                     JOIN pg_namespace n ON n.oid = c.relnamespace
+                     JOIN pg_depend d ON d.objid = c.oid
+                                     AND d.classid = 'pg_class'::regclass
+                                     AND d.refclassid = 'pg_class'::regclass
+                                     AND d.deptype IN ('a', 'i')
+                    WHERE c.relkind = 'S'
+                      AND c.relname = s.sequencename
+                      AND n.nspname = s.schemaname)
+             ORDER BY s.sequencename
+            "#,
+        )
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await?;
+        let quote = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
+        Ok(rows
+            .iter()
+            .map(|r| {
+                let name: String = r.try_get(0).unwrap_or_default();
+                let data_type: String = r.try_get(1).unwrap_or_default();
+                let opt = |i: usize, kw: &str| {
+                    r.try_get::<Option<i64>, _>(i)
+                        .ok()
+                        .flatten()
+                        .map(|v| format!(" {kw} {v}"))
+                        .unwrap_or_default()
+                };
+                let cycle: bool = r.try_get(6).unwrap_or(false);
+                let ddl = format!(
+                    "CREATE SEQUENCE {} AS {}{}{}{}{}{} {}",
+                    quote(&name),
+                    data_type,
+                    opt(5, "INCREMENT BY"),
+                    opt(3, "MINVALUE"),
+                    opt(4, "MAXVALUE"),
+                    opt(2, "START WITH"),
+                    opt(7, "CACHE"),
+                    if cycle { "CYCLE" } else { "NO CYCLE" },
+                );
+                (name, ddl)
+            })
+            .collect())
+    }
+
+    /// `schema` の関数 / プロシージャの引数並び (`pg_get_function_identity_arguments`) を
+    /// oid (文字列) をキーに返す。スキーマ比較でオーバーロードを区別し、`DROP FUNCTION` の
+    /// シグネチャに使う (#1879)。集約関数も含まれるが、引数並びの取得は例外を投げない。
+    pub async fn routine_identity_arguments(
+        &self,
+        schema: &str,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            "SELECT p.oid::text, pg_get_function_identity_arguments(p.oid)
+               FROM pg_proc p
+               JOIN pg_namespace n ON n.oid = p.pronamespace
+              WHERE n.nspname = $1",
+        )
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                Some((
+                    r.try_get::<String, _>(0).ok()?,
+                    r.try_get::<String, _>(1).ok()?,
+                ))
+            })
+            .collect())
+    }
+
+    /// `schema` のトリガーの対象表 (`pg_trigger.tgrelid`)。oid (文字列) をキーに返す。定義の
+    /// 文字列から読むと空白入りの引用名で壊れるのでカタログから取る (#1879)。
+    pub async fn trigger_tables(
+        &self,
+        schema: &str,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            "SELECT t.oid::text, c.relname::text
+               FROM pg_trigger t
+               JOIN pg_class c ON c.oid = t.tgrelid
+               JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = $1 AND NOT t.tgisinternal",
+        )
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                Some((
+                    r.try_get::<String, _>(0).ok()?,
+                    r.try_get::<String, _>(1).ok()?,
+                ))
+            })
+            .collect())
+    }
+
+    /// ビュー / マテビューの `WITH (...)` オプション (`pg_class.reloptions`: security_barrier /
+    /// security_invoker / check_option など) と、マテビューの索引定義 (`pg_indexes.indexdef`) を
+    /// 名前をキーに返す (スキーマ比較, #1879)。
+    pub async fn view_extras(&self, schema: &str) -> Result<PgViewExtras> {
+        let opt_rows: Vec<PgRow> = sqlx::query(
+            "SELECT c.relname::text, c.reloptions
+               FROM pg_class c
+               JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = $1 AND c.relkind IN ('v', 'm') AND c.reloptions IS NOT NULL",
+        )
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut options = std::collections::HashMap::new();
+        for r in &opt_rows {
+            if let (Ok(name), Ok(opts)) =
+                (r.try_get::<String, _>(0), r.try_get::<Vec<String>, _>(1))
+            {
+                options.insert(name, opts);
+            }
+        }
+        let idx_rows: Vec<PgRow> = sqlx::query(
+            "SELECT i.tablename::text, i.indexdef
+               FROM pg_indexes i
+              WHERE i.schemaname = $1
+                AND i.tablename IN (SELECT matviewname FROM pg_matviews WHERE schemaname = $1)
+              ORDER BY i.tablename, i.indexname",
+        )
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut indexes: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for r in &idx_rows {
+            if let (Ok(table), Ok(def)) = (r.try_get::<String, _>(0), r.try_get::<String, _>(1)) {
+                indexes.entry(table).or_default().push(def);
+            }
+        }
+        Ok(PgViewExtras { options, indexes })
+    }
+
     /// ルーチンのシグネチャ (#1003)。`id` (oid) があればそれで 1 件を特定し
     /// (オーバーロード関数の取り違え防止)、無ければスキーマ + 名前の最初の 1 件。
     /// パラメータは `proallargtypes` (OUT を含む全引数、無ければ入力のみの
@@ -4804,4 +4956,13 @@ mod tests {
         // bytea 以外の列では従来どおり NULL。
         assert_eq!(pk_literal(&Value::Bytes("00ff".to_string()), false), "NULL");
     }
+}
+
+/// [`PostgresConn::view_extras`] の結果 (スキーマ比較, #1879)。
+#[derive(Debug, Default, Clone)]
+pub struct PgViewExtras {
+    /// ビュー / マテビュー名 -> `WITH (...)` の項目 (`security_barrier=true` など)。
+    pub options: std::collections::HashMap<String, Vec<String>>,
+    /// マテビュー名 -> 索引の `CREATE INDEX` 文。
+    pub indexes: std::collections::HashMap<String, Vec<String>>,
 }
