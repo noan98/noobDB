@@ -32,6 +32,7 @@ import { CountUp } from "./CountUp";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { errorIllustration, NoResultsIllustration } from "./illustrations";
+import { RevealTbody } from "./RevealTbody";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Button, Checkbox, Heading } from "./ui";
@@ -498,22 +499,25 @@ export function TableStatisticsPanel({
                 </chakra.th>
               </tr>
             </thead>
-            <tbody>
-              {loading && rows.length === 0 ? (
-                // 初回ロード中 (まだ 1 件も取得していない): 裸のヘッダのみ表示を
-                // 避け、9 列の構造をシマーで予兆表示する (#846)。
+            {loading && rows.length === 0 ? (
+              // 初回ロード中 (まだ 1 件も取得していない): 裸のヘッダのみ表示を
+              // 避け、9 列の構造をシマーで予兆表示する (#846)。
+              <tbody>
                 <SkeletonTableRows columns={9} />
-              ) : (
-                sorted.map((r) => (
+              </tbody>
+            ) : (
+              // 実データはスケルトンと別要素にして、着弾の 1 回だけリビールする (#1886)。
+              <RevealTbody>
+                {sorted.map((r) => (
                   <TableStatRowView
                     key={r.name}
                     row={r}
                     maxTotal={maxTotal}
                     onOpenTable={onOpenTable ? openTable : undefined}
                   />
-                ))
-              )}
-            </tbody>
+                ))}
+              </RevealTbody>
+            )}
             {!(loading && rows.length === 0) && (
               <tfoot>
                 <tr>

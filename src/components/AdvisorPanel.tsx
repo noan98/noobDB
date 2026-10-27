@@ -32,6 +32,7 @@ import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Spinner } from "./Spinner";
+import { RevealTbody } from "./RevealTbody";
 import { SkeletonTableRows } from "./Skeleton";
 import { Tooltip } from "./Tooltip";
 import { Button } from "./ui";
@@ -487,7 +488,7 @@ export function AdvisorPanel({
                   {sortableTh("size", t("advisorColSize"))}
                 </chakra.tr>
               </chakra.thead>
-              <chakra.tbody>
+              <RevealTbody>
                 {findings.map((f, i) => {
                   const desc = findingDescription(f);
                   return (
@@ -579,7 +580,7 @@ export function AdvisorPanel({
                     </chakra.tr>
                   );
                 })}
-              </chakra.tbody>
+              </RevealTbody>
             </chakra.table>
           </MotionReveal>
         )}

@@ -8,6 +8,7 @@ import { foreignKeysOf, foreignKeyTargetLabel, type ExplorerForeignKey } from ".
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
+import { RevealTbody } from "./RevealTbody";
 import { SkeletonTableRows } from "./Skeleton";
 import { Tooltip } from "./Tooltip";
 import { Button } from "./ui";
@@ -313,13 +314,16 @@ export function TableStructurePanel({
                 <chakra.th css={thCss}>{t("structureColKeys")}</chakra.th>
               </chakra.tr>
             </chakra.thead>
-            <chakra.tbody>
-              {!rows ? (
-                // 初回ロード中 (まだ 1 件も取得していない): 裸のヘッダのみ表示を
-                // 避け、6 列の構造をシマーで予兆表示する (#846 の横展開、#1174)。
+            {!rows ? (
+              // 初回ロード中 (まだ 1 件も取得していない): 裸のヘッダのみ表示を
+              // 避け、6 列の構造をシマーで予兆表示する (#846 の横展開、#1174)。
+              <chakra.tbody>
                 <SkeletonTableRows columns={6} />
-              ) : (
-                rows.map((r) => (
+              </chakra.tbody>
+            ) : (
+              // 実データの行はスケルトンと別要素にして、着弾の 1 回だけリビールする (#1886)。
+              <RevealTbody>
+                {rows.map((r) => (
                   <chakra.tr key={r.name}>
                     <chakra.td css={tdCss} textAlign="right" textStyle="numeric" color="app.textMuted">
                       {r.position}
@@ -361,9 +365,9 @@ export function TableStructurePanel({
                       </Flex>
                     </chakra.td>
                   </chakra.tr>
-                ))
-              )}
-            </chakra.tbody>
+                ))}
+              </RevealTbody>
+            )}
           </chakra.table>
 
           {rows && (
@@ -387,7 +391,7 @@ export function TableStructurePanel({
                         <chakra.th css={thCss}>{t("structureIndexKind")}</chakra.th>
                       </chakra.tr>
                     </chakra.thead>
-                    <chakra.tbody>
+                    <RevealTbody>
                       {sortedIndexes.map((idx) => {
                         const kind = indexKind(idx);
                         return (
@@ -419,7 +423,7 @@ export function TableStructurePanel({
                           </chakra.tr>
                         );
                       })}
-                    </chakra.tbody>
+                    </RevealTbody>
                   </>
                 )}
               </chakra.table>
@@ -442,7 +446,7 @@ export function TableStructurePanel({
                         <chakra.th css={thCss}>{t("structureFkReferences")}</chakra.th>
                       </chakra.tr>
                     </chakra.thead>
-                    <chakra.tbody>
+                    <RevealTbody>
                       {fks.map((fk) => (
                         <chakra.tr key={fk.column}>
                           <chakra.td css={tdCss} fontFamily="var(--font-mono)">
@@ -453,7 +457,7 @@ export function TableStructurePanel({
                           </chakra.td>
                         </chakra.tr>
                       ))}
-                    </chakra.tbody>
+                    </RevealTbody>
                   </>
                 )}
               </chakra.table>
@@ -467,7 +471,7 @@ export function TableStructurePanel({
                       <chakra.th css={thCss}>{t("structureCheckDefinition")}</chakra.th>
                     </chakra.tr>
                   </chakra.thead>
-                  <chakra.tbody>
+                  <RevealTbody>
                     {extras.checks.map((c, i) => (
                       <chakra.tr key={`${c.name}:${i}`}>
                         <chakra.td css={tdCss} fontFamily="var(--font-mono)">
@@ -478,7 +482,7 @@ export function TableStructurePanel({
                         </chakra.td>
                       </chakra.tr>
                     ))}
-                  </chakra.tbody>
+                  </RevealTbody>
                 </chakra.table>
               )}
 
@@ -492,7 +496,7 @@ export function TableStructurePanel({
                       <chakra.th css={thCss}>{t("structureGeneratedStorage")}</chakra.th>
                     </chakra.tr>
                   </chakra.thead>
-                  <chakra.tbody>
+                  <RevealTbody>
                     {extras.generated.map((g) => (
                       <chakra.tr key={g.column}>
                         <chakra.td css={tdCss} fontFamily="var(--font-mono)">
@@ -506,7 +510,7 @@ export function TableStructurePanel({
                         </chakra.td>
                       </chakra.tr>
                     ))}
-                  </chakra.tbody>
+                  </RevealTbody>
                 </chakra.table>
               )}
 
@@ -528,7 +532,7 @@ export function TableStructurePanel({
                         <chakra.th css={thCss}>{t("structureFkReferences")}</chakra.th>
                       </chakra.tr>
                     </chakra.thead>
-                    <chakra.tbody>
+                    <RevealTbody>
                       {incomingRows.map((fk) => (
                         <chakra.tr key={`${fk.schema ?? ""}.${fk.table}.${fk.column}.${fk.referencedColumn}`}>
                           <chakra.td css={tdCss}>
@@ -550,7 +554,7 @@ export function TableStructurePanel({
                           </chakra.td>
                         </chakra.tr>
                       ))}
-                    </chakra.tbody>
+                    </RevealTbody>
                   </>
                 )}
               </chakra.table>
