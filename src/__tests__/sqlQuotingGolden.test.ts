@@ -146,6 +146,8 @@ describe("SQL 引用/エスケープ ゴールデン (フロント実装)", () =
     it("真偽値 (MySQL/SQLite は 0 比較・PostgreSQL は TRUE/FALSE)・NULL・float4・BLOB の境界が含まれる", () => {
       const bools = wherePredicates.filter((c) => c.kind === "bool");
       expect(bools.length).toBeGreaterThanOrEqual(2);
+      // bool の述語はフロントとバックで同一でなければならない (frontend 上書きで逃げない)。
+      expect(bools.every((c) => c.frontend === undefined)).toBe(true);
       for (const c of bools) {
         expect(c.expected.mysql).toMatch(/ (<>|=) 0$/);
         expect(c.expected.sqlite).toMatch(/ (<>|=) 0$/);

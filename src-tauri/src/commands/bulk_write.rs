@@ -424,8 +424,13 @@ pub(crate) fn build_bulk_update_statements_expected(
             }
             continue;
         }
-        let single_non_null =
-            pk_columns.len() == 1 && group.keys.iter().all(|k| !matches!(k[0], Value::Null));
+        // bool キーは `IN (1)` ではなく `row_condition` (`<> 0` / `= 0`) の述語で比べる
+        // (TINYINT(1) / SQLite が 2 などを持つ行に当てるため、#1870)。
+        let single_non_null = pk_columns.len() == 1
+            && group
+                .keys
+                .iter()
+                .all(|k| !matches!(k[0], Value::Null | Value::Bool(_)));
         if single_non_null {
             let col = quote_ident(driver, &pk_columns[0]);
             for chunk in group.keys.chunks(IN_CHUNK) {
@@ -952,6 +957,24 @@ mod tests {
         let same = apply_pk_binary(g(), None).unwrap();
         assert!(matches!(same[0].keys[0][0], Value::String(_)));
         assert!(apply_pk_binary(g(), Some(&[true])).is_err());
+    }
+
+    #[test]
+    fn bool_pk_groups_use_predicate_not_in_list() {
+        let groups = vec![group(
+            vec![set_text("name", "a")],
+            vec![vec![Value::Bool(true)]],
+        )];
+        let build = |d| {
+            build_bulk_update_statements(d, "shop", "t", &["flag".to_string()], &groups)
+                .unwrap_or_default()
+        };
+        assert_eq!(
+            build(DriverKind::Mysql),
+            vec!["UPDATE `shop`.`t` SET `name` = 'a' WHERE `flag` <> 0;".to_string()]
+        );
+        assert!(build(DriverKind::Sqlite)[0].ends_with("WHERE \"flag\" <> 0;"));
+        assert!(build(DriverKind::Postgres)[0].ends_with("WHERE \"flag\" = TRUE;"));
     }
 
     #[test]
