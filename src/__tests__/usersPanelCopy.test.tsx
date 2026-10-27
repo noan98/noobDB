@@ -325,3 +325,48 @@ describe("UsersPanel: ロール・列単位・テンプレート・パスワー�
     expect(input.type).toBe("text");
   });
 });
+
+describe("UsersPanel: 適用後の面内フラッシュ (#1890)", () => {
+  it("適用後の再取得で権限が変わったセルだけ apply-flash を付ける", async () => {
+    vi.mocked(api.listDbUsers).mockResolvedValue([user("app")]);
+    vi.mocked(api.listUserPrivileges)
+      .mockResolvedValueOnce({ global: null, tables: [priv("t1", true), priv("t2", true)] })
+      .mockResolvedValue({ global: null, tables: [priv("t1", true, true), priv("t2", true)] });
+    vi.mocked(api.generatePrivilegeDiffSql).mockResolvedValue(["GRANT INSERT ON public.t1 TO app"]);
+    vi.mocked(api.applyPrivilegeSql).mockResolvedValue(1);
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver="postgres" database="public" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
+    await screen.findByText("t1");
+    expect(document.querySelector("[data-privilege-flash]")).toBeNull();
+    fireEvent.click(screen.getByLabelText("t1 insert"));
+    fireEvent.click(screen.getByRole("button", { name: t("usersApplyChanges") }));
+    fireEvent.click(await screen.findByRole("button", { name: t("usersApplyConfirmOk") }));
+    await waitFor(() => expect(document.querySelectorAll("[data-privilege-flash]")).toHaveLength(1));
+    const cell = document.querySelector("[data-privilege-flash]");
+    expect(cell).toHaveClass("flash-ring");
+    expect(within(cell as HTMLElement).getByLabelText("t1 insert")).toBeChecked();
+  });
+
+  it("ロールを付与すると新しく加わったロールのチップだけが光る", async () => {
+    vi.mocked(api.listDbUsers)
+      .mockResolvedValueOnce([{ ...user("app"), member_of: ["old"] }])
+      .mockResolvedValue([{ ...user("app"), member_of: ["old", "reader"] }]);
+    vi.mocked(api.listUserPrivileges).mockResolvedValue({ global: null, tables: [priv("t1", true)] });
+    vi.mocked(api.generateRoleMembershipSql).mockResolvedValue('GRANT "reader" TO "app"');
+    vi.mocked(api.applyPrivilegeSql).mockResolvedValue(1);
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver="postgres" database="public" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
+    await screen.findByText("old");
+    fireEvent.change(document.getElementById("users-role-input") as HTMLInputElement, {
+      target: { value: "reader" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: t("usersRoleGrant") }));
+    fireEvent.click(await screen.findByRole("button", { name: t("usersRoleGrantOk") }));
+    await waitFor(() => expect(document.querySelectorAll("[data-role-flash]")).toHaveLength(1));
+    expect(document.querySelector("[data-role-flash]")).toHaveTextContent("reader");
+  });
+});

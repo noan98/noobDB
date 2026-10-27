@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
+import { motion, useReducedMotion } from "motion/react";
 
 import {
   api,
@@ -9,6 +10,7 @@ import {
   type TablePrivilegeRow,
 } from "../api/tauri";
 import { useT } from "../i18n";
+import { staggerContainer, variants } from "../motion";
 import { semanticColorVar } from "../semanticColors";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
@@ -31,6 +33,13 @@ import {
   PRIVILEGE_TEMPLATE_IDS,
   type PrivilegeTemplateId,
 } from "./privilegeTemplates";
+import {
+  addedRoles,
+  changedPrivilegeCells,
+  isStaggerAnimated,
+  shouldPlayPrivilegeFlash,
+  type ChangedPrivilegeCells,
+} from "./usersPanelMotion";
 
 /**
  * ユーザ / 権限管理パネル (#732)。MySQL ユーザ (`mysql.user`) / PostgreSQL
@@ -149,6 +158,21 @@ const tdCss: SystemStyleObject = {
   verticalAlign: "top",
 };
 
+// 入場 stagger の motion 要素 (#1890)。variants は親コンテナから伝播する。
+const MotionTbody = chakra(motion.tbody, {}, { forwardProps: ["variants", "initial", "animate"] });
+const MotionTr = chakra(motion.tr, {}, { forwardProps: ["variants"] });
+const MotionUl = chakra(motion.ul, {}, { forwardProps: ["variants", "initial", "animate"] });
+const MotionLi = chakra(motion.li, {}, { forwardProps: ["variants"] });
+
+/**
+ * 適用直後に光らせるセル。`gen` は適用ごとに増やし、セルの key に混ぜて
+ * `apply-flash` を再生し直す。
+ */
+type PrivilegeFlash = { gen: number; cells: ChangedPrivilegeCells };
+
+/** 光らせるセルに足す。疑似要素 (App.css の `.flash-ring::after`) の基準位置になる。 */
+const flashCellCss: SystemStyleObject = { position: "relative" };
+
 const PRIVILEGE_FLAGS = ["select", "insert", "update", "delete", "ddl"] as const;
 
 /**
@@ -161,30 +185,48 @@ export const PrivilegeRow = memo(function PrivilegeRow({
   originalFlags,
   readOnly,
   onToggle,
+  animated = false,
+  flashCols,
+  flashGen = 0,
 }: {
   table: string;
   flags: Flags;
   originalFlags: Flags;
   readOnly: boolean;
   onToggle: (table: string, flag: keyof Flags) => void;
+  /** 入場 stagger に載せるか (#1890)。親の `MotionTbody` の variant が伝播する。 */
+  animated?: boolean;
+  /** 直前の適用で変わった権限列。該当セルへ `apply-flash` を 1 回再生する (#1890)。 */
+  flashCols?: ReadonlySet<string>;
+  /** 適用ごとに増える世代。セルの key に混ぜて再生し直す。 */
+  flashGen?: number;
 }) {
   const rowDirty = !flagsEqual(originalFlags, flags);
+  const Row = animated ? MotionTr : "tr";
   return (
-    <tr>
+    <Row {...(animated ? { variants: variants.staggerItem } : {})}>
       <chakra.td css={tdCss} fontFamily="var(--font-mono)" color={rowDirty ? "var(--accent)" : undefined}>
         {table}
       </chakra.td>
-      {PRIVILEGE_FLAGS.map((flag) => (
-        <chakra.td css={tdCss} key={flag}>
-          <Checkbox
-            checked={flags[flag]}
-            disabled={readOnly}
-            aria-label={`${table} ${flag}`}
-            onChange={() => onToggle(table, flag)}
-          />
-        </chakra.td>
-      ))}
-    </tr>
+      {PRIVILEGE_FLAGS.map((flag) => {
+        const flashed = flashCols?.has(flag) === true;
+        return (
+          <chakra.td
+            css={flashed ? { ...tdCss, ...flashCellCss } : tdCss}
+            className={flashed ? "flash-ring" : undefined}
+            data-privilege-flash={flashed ? "" : undefined}
+            key={flashed ? `${flag}:flash-${flashGen}` : flag}
+          >
+            <Checkbox
+              checked={flags[flag]}
+              disabled={readOnly}
+              aria-label={`${table} ${flag}`}
+              onChange={() => onToggle(table, flag)}
+            />
+          </chakra.td>
+        );
+      })}
+    </Row>
   );
 });
 
@@ -204,6 +246,7 @@ export function UsersPanel({
   const t = useT();
   const toast = useToast();
   const { confirm, dialog } = useConfirm();
+  const reduced = useReducedMotion() ?? false;
 
   const [users, setUsers] = useState<DbUserInfo[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -246,6 +289,15 @@ export function UsersPanel({
 
   const [busy, setBusy] = useState(false);
 
+  // 適用直後の面内フィードバック (#1890)。権限セルは再取得結果との差分、ロールは新規に加わった
+  // ものだけを `apply-flash` で 1 回光らせる。ユーザ切替で消す。
+  const [privFlash, setPrivFlash] = useState<PrivilegeFlash | null>(null);
+  const [roleFlash, setRoleFlash] = useState<{ gen: number; roles: ReadonlySet<string> } | null>(null);
+  const flashGen = useRef(0);
+  // loadPrivileges が適用前の権限を参照するための最新値 (依存配列に original を入れて再生成しない)。
+  const originalRef = useRef(original);
+  originalRef.current = original;
+
   const loadUsers = useCallback(async () => {
     setLoadingUsers(true);
     try {
@@ -269,9 +321,12 @@ export function UsersPanel({
   const privSeq = useRef(0);
 
   const loadPrivileges = useCallback(
-    async (u: DbUserInfo) => {
+    async (u: DbUserInfo, opts?: { flashChanges?: boolean }) => {
       const seq = ++privSeq.current;
-      setLoadingPrivs(true);
+      // 適用後の再取得は表を置き換えずその場で更新する (スケルトンを挟むと光らせるセルが
+      // 一度消え、入場 stagger とフラッシュが重なる)。
+      const inPlace = opts?.flashChanges === true;
+      if (!inPlace) setLoadingPrivs(true);
       setPrivsError(null);
       try {
         const p = await api.listUserPrivileges(sessionId, u.name, u.host, database);
@@ -283,6 +338,10 @@ export function UsersPanel({
           // DB での絞り込みはサーバ側 (WHERE) で済んでいる。プレフィックスは表示名用。
           if (!prefix || !row.table.startsWith(prefix)) continue;
           rows[row.table.slice(prefix.length)] = flagsFromRow(row);
+        }
+        if (inPlace && shouldPlayPrivilegeFlash()) {
+          const cells = changedPrivilegeCells(originalRef.current, rows);
+          setPrivFlash(cells.size > 0 ? { gen: ++flashGen.current, cells } : null);
         }
         setOriginal(rows);
         setEdited(flagsMap(rows));
@@ -303,6 +362,8 @@ export function UsersPanel({
   const selectUser = useCallback(
     (u: DbUserInfo) => {
       setSelected(u);
+      setPrivFlash(null);
+      setRoleFlash(null);
       setNewTable("");
       // 前ユーザの未適用の編集を持ち越さない (読み込み中に別ユーザ宛の GRANT/REVOKE が出るのを防ぐ)。
       setOriginal(flagsMap());
@@ -409,13 +470,13 @@ export function UsersPanel({
     try {
       await api.applyPrivilegeSql({ sessionId, database, statements });
       toast.success(t("usersApplyDone"));
-      if (privSeq.current === seqBefore) await loadPrivileges(selected);
+      if (privSeq.current === seqBefore) await loadPrivileges(selected, { flashChanges: true });
     } catch (e) {
       toast.error(t("usersApplyFailed", { error: String(e) }));
       // MySQL の GRANT / REVOKE は暗黙コミットされ、途中失敗でも先行文が残りうる。
       // 画面を適用前の古い状態のままにせず、サーバの実際の権限を再取得する。
       if (driver === "mysql" && privSeq.current === seqBefore) {
-        await loadPrivileges(selected);
+        await loadPrivileges(selected, { flashChanges: true });
       }
     } finally {
       setBusy(false);
@@ -493,11 +554,17 @@ export function UsersPanel({
         // 選択中ユーザの表示 (所属ロールなど) を最新の一覧へ差し替える。
         const fresh = list?.find((u) => userKey(u) === userKey(selected)) ?? selected;
         if (fresh !== selected) setSelected(fresh);
-        if (privSeq.current === seqBefore) await loadPrivileges(fresh);
+        if (shouldPlayPrivilegeFlash()) {
+          const roles = addedRoles(selected.member_of, fresh.member_of);
+          if (roles.size > 0) setRoleFlash({ gen: ++flashGen.current, roles });
+        }
+        if (privSeq.current === seqBefore) await loadPrivileges(fresh, { flashChanges: true });
         return true;
       } catch (e) {
         toast.error(t("usersApplyFailed", { error: String(e) }));
-        if (driver === "mysql" && privSeq.current === seqBefore) await loadPrivileges(selected);
+        if (driver === "mysql" && privSeq.current === seqBefore) {
+          await loadPrivileges(selected, { flashChanges: true });
+        }
         return false;
       } finally {
         setBusy(false);
@@ -835,7 +902,12 @@ export function UsersPanel({
           ) : users.length === 0 && !loadingUsers ? (
             <EmptyState compact illustration={<NoResultsIllustration />} icon="key" title={t("usersEmpty")} />
           ) : (
-            <chakra.ul
+            <MotionUl
+              // 入場は staggerContainer + staggerItem (ServerInfoPanel / ActivityCenter と同じ, #1890)。
+              // 先頭 12 件だけ載せ、リフレッシュで一覧が差し替わっても key が同じ項目は再生しない。
+              variants={staggerContainer(reduced)}
+              initial="initial"
+              animate="animate"
               listStyleType="none"
               margin={0}
               padding={0}
@@ -846,10 +918,14 @@ export function UsersPanel({
               {loadingUsers && users.length === 0 ? (
                 <Spinner size={16} />
               ) : (
-                users.map((u) => {
+                users.map((u, i) => {
                   const isSelected = selected?.name === u.name && selected?.host === u.host;
+                  const Item = isStaggerAnimated(i) ? MotionLi : chakra.li;
                   return (
-                    <chakra.li key={`${u.name}@@${u.host ?? ""}`}>
+                    <Item
+                      key={`${u.name}@@${u.host ?? ""}`}
+                      {...(isStaggerAnimated(i) ? { variants: variants.staggerItem } : {})}
+                    >
                       <chakra.button
                         type="button"
                         onClick={() => selectUser(u)}
@@ -884,11 +960,11 @@ export function UsersPanel({
                           </chakra.div>
                         )}
                       </chakra.button>
-                    </chakra.li>
+                    </Item>
                   );
                 })
               )}
-            </chakra.ul>
+            </MotionUl>
           )}
         </Box>
 
@@ -1044,7 +1120,14 @@ export function UsersPanel({
                 {selected.member_of.length > 0 ? (
                   <Flex gap="2" flexWrap="wrap">
                     {selected.member_of.map((role) => (
-                      <Flex key={role} align="center" gap="1">
+                      <Flex
+                        key={roleFlash?.roles.has(role) ? `${role}:flash-${roleFlash.gen}` : role}
+                        align="center"
+                        gap="1"
+                        className={roleFlash?.roles.has(role) ? "flash-ring" : undefined}
+                        data-role-flash={roleFlash?.roles.has(role) ? "" : undefined}
+                        css={roleFlash?.roles.has(role) ? flashCellCss : undefined}
+                      >
                         <chakra.span fontFamily="var(--font-mono)" textStyle="caption">
                           {role}
                         </chakra.span>
@@ -1284,7 +1367,13 @@ export function UsersPanel({
                           </chakra.th>
                         </tr>
                       </thead>
-                      <tbody>
+                      <MotionTbody
+                        // ユーザ切替・読み込み完了で作り直して入場 stagger を再生する (#1890)。
+                        key={loadingPrivs ? "loading" : userKey(selected)}
+                        variants={staggerContainer(reduced)}
+                        initial="initial"
+                        animate="animate"
+                      >
                         {loadingPrivs ? (
                           <SkeletonTableRows columns={6} />
                         ) : rowKeys.length === 0 ? (
@@ -1295,9 +1384,12 @@ export function UsersPanel({
                             </chakra.td>
                           </tr>
                         ) : (
-                          rowKeys.map((table) => (
+                          rowKeys.map((table, i) => (
                             <PrivilegeRow
                               key={table}
+                              animated={isStaggerAnimated(i)}
+                              flashCols={privFlash?.cells.get(table)}
+                              flashGen={privFlash?.gen}
                               table={table}
                               flags={edited[table] ?? EMPTY_FLAGS}
                               originalFlags={original[table] ?? EMPTY_FLAGS}
@@ -1306,7 +1398,7 @@ export function UsersPanel({
                             />
                           ))
                         )}
-                      </tbody>
+                      </MotionTbody>
                     </chakra.table>
                   </Box>
 
