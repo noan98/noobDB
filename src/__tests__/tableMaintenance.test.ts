@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCreateIndexSql,
+  indexOptionSupport,
+  normalizeIndexFragment,
   buildDropIndexSql,
   buildDropTableSql,
   buildDropTablesSql,
@@ -72,6 +74,107 @@ describe("buildCreateIndexSql (#850)", () => {
     expect(buildCreateIndexSql("mysql", "shop", "users", [" email ", ""])).toBe(
       "CREATE INDEX `idx_users_email` ON `shop`.`users` (`email`);",
     );
+  });
+});
+
+describe("buildCreateIndexSql options (#1892)", () => {
+  it("emits USING before the column list on PostgreSQL", () => {
+    expect(buildCreateIndexSql("postgres", "public", "t", ["data"], { method: "gin" })).toBe(
+      'CREATE INDEX "idx_t_data" ON "public"."t" USING gin ("data");',
+    );
+    expect(buildCreateIndexSql("postgres", "public", "t", ["a"], { method: "brin" })).toContain("USING brin");
+  });
+
+  it("emits USING after the column list on MySQL, and FULLTEXT / SPATIAL as the index kind", () => {
+    expect(buildCreateIndexSql("mysql", "d", "t", ["a"], { method: "hash" })).toBe(
+      "CREATE INDEX `idx_t_a` ON `d`.`t` (`a`) USING HASH;",
+    );
+    expect(buildCreateIndexSql("mysql", "d", "t", ["body"], { method: "fulltext" })).toBe(
+      "CREATE FULLTEXT INDEX `idx_t_body` ON `d`.`t` (`body`);",
+    );
+    expect(buildCreateIndexSql("mysql", "d", "t", ["geo"], { method: "spatial", unique: true })).toBe(
+      "CREATE SPATIAL INDEX `idx_t_geo` ON `d`.`t` (`geo`);",
+    );
+  });
+
+  it("ignores USING and INCLUDE on SQLite", () => {
+    expect(buildCreateIndexSql("sqlite", null, "t", ["a"], { method: "gin", include: ["b"] })).toBe(
+      'CREATE INDEX "idx_t_a" ON "t" ("a");',
+    );
+  });
+
+  it("wraps expressions in parentheses on all three drivers", () => {
+    expect(buildCreateIndexSql("mysql", "d", "t", [], { expressions: ["LOWER(email)"] })).toBe(
+      "CREATE INDEX `idx_t_expr` ON `d`.`t` ((LOWER(email)));",
+    );
+    expect(buildCreateIndexSql("postgres", "public", "t", ["a"], { expressions: ["(data->>'k')"] })).toBe(
+      'CREATE INDEX "idx_t_a_expr" ON "public"."t" ("a", ((data->>\'k\')));',
+    );
+    expect(buildCreateIndexSql("sqlite", null, "t", [], { expressions: ["lower(email);"] })).toBe(
+      'CREATE INDEX "idx_t_expr" ON "t" ((lower(email)));',
+    );
+  });
+
+  it("drops expressions for MySQL FULLTEXT", () => {
+    expect(buildCreateIndexSql("mysql", "d", "t", ["a"], { method: "fulltext", expressions: ["x"] })).toBe(
+      "CREATE FULLTEXT INDEX `idx_t_a` ON `d`.`t` (`a`);",
+    );
+  });
+
+  it("appends WHERE for PostgreSQL and SQLite only", () => {
+    expect(buildCreateIndexSql("postgres", "public", "t", ["a"], { where: "deleted_at IS NULL;" })).toBe(
+      'CREATE INDEX "idx_t_a" ON "public"."t" ("a") WHERE deleted_at IS NULL;',
+    );
+    expect(buildCreateIndexSql("sqlite", null, "t", ["a"], { unique: true, where: "a > 0" })).toBe(
+      'CREATE UNIQUE INDEX "idx_t_a" ON "t" ("a") WHERE a > 0;',
+    );
+    expect(buildCreateIndexSql("mysql", "d", "t", ["a"], { where: "a > 0" })).toBe(
+      "CREATE INDEX `idx_t_a` ON `d`.`t` (`a`);",
+    );
+  });
+
+  it("appends INCLUDE for PostgreSQL btree/gist/spgist only, after USING and before WHERE", () => {
+    expect(
+      buildCreateIndexSql("postgres", "public", "t", ["a"], { include: ["b", "c"], where: "a > 0" }),
+    ).toBe('CREATE INDEX "idx_t_a" ON "public"."t" ("a") INCLUDE ("b", "c") WHERE a > 0;');
+    expect(buildCreateIndexSql("postgres", "public", "t", ["a"], { method: "gin", include: ["b"] })).toBe(
+      'CREATE INDEX "idx_t_a" ON "public"."t" USING gin ("a");',
+    );
+    expect(buildCreateIndexSql("mysql", "d", "t", ["a"], { include: ["b"] })).not.toContain("INCLUDE");
+  });
+
+  it("drops UNIQUE for non-btree PostgreSQL methods", () => {
+    expect(buildCreateIndexSql("postgres", "public", "t", ["a"], { method: "gin", unique: true })).toContain(
+      "CREATE INDEX",
+    );
+    expect(
+      buildCreateIndexSql("postgres", "public", "t", ["a"], { method: "btree", unique: true }),
+    ).toContain("CREATE UNIQUE INDEX");
+  });
+});
+
+describe("indexOptionSupport / normalizeIndexFragment (#1892)", () => {
+  it("matrix per driver", () => {
+    const sq = indexOptionSupport("sqlite");
+    expect(sq).toMatchObject({ methods: [], where: true, include: false });
+    expect(sq.reasons.method).toBe("noMethod");
+    expect(sq.reasons.include).toBe("includePgOnly");
+    const my = indexOptionSupport("mysql");
+    expect(my).toMatchObject({ where: false, include: false });
+    expect(my.reasons.where).toBe("noWhereMysql");
+    expect(indexOptionSupport("mysql", "fulltext")).toMatchObject({ unique: false, expression: false });
+    const pg = indexOptionSupport("postgres");
+    expect(pg).toMatchObject({ where: true, include: true, unique: true });
+    expect(indexOptionSupport("postgres", "gin").reasons).toMatchObject({
+      include: "includeMethod",
+      unique: "uniqueMethod",
+    });
+  });
+
+  it("strips trailing semicolons and rejects statement chaining", () => {
+    expect(normalizeIndexFragment("  a > 0 ; ")).toEqual({ sql: "a > 0", error: false });
+    expect(normalizeIndexFragment("")).toEqual({ sql: null, error: false });
+    expect(normalizeIndexFragment("a; DROP TABLE t").error).toBe(true);
   });
 });
 
