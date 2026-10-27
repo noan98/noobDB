@@ -400,9 +400,10 @@ export function literalFromCellValue(driver: string, v: CellValue): string {
  * columns in the WHERE clause, so every identity-WHERE builder below goes
  * through this helper rather than inlining `literalFromCellValue`.
  */
-function whereEqualsClause(driver: string, col: Column, v: CellValue): string {
+export function whereEqualsClause(driver: string, col: Column, v: CellValue): string {
   const quoted = quoteIdentFor(driver, col.name);
   if (v === null || v === undefined) return `${quoted} IS NULL`;
+  if (typeof v === "boolean") return boolWhere(driver, quoted, v);
   // BLOB 列の値は 16 進文字列で届く。通常の文字列として引用すると 0 行にしか
   // 当たらない (all_columns 同定で BLOB を含む表の更新・削除) ため、バイナリ
   // リテラルにする。
@@ -415,6 +416,18 @@ function whereEqualsClause(driver: string, col: Column, v: CellValue): string {
   const approx = singleFloatWhere(driver, col, v);
   if (approx) return approx;
   return `${quoted} = ${literalFromCellValue(driver, v)}`;
+}
+
+/**
+ * 真偽値列の WHERE 項。MySQL (TINYINT(1)) / SQLite は真偽値が 2 など 0/1 以外の整数にもなりうる
+ * ので、`= TRUE` (= 1) では当たらない行がある。バックエンドの `bulk_write.rs::bool_predicate`
+ * (楽観ロック #1766) と同じく「0 でない / 0」で比べる。PostgreSQL は本物の boolean。共有
+ * ゴールデン (`sqlQuotingVectors.json` の `wherePredicates`、#1870) で固定している。
+ * `quoted` は引用済みの識別子。
+ */
+function boolWhere(driver: string, quoted: string, v: boolean): string {
+  if (driver === "postgres") return `${quoted} = ${v ? "TRUE" : "FALSE"}`;
+  return `${quoted} ${v ? "<>" : "="} 0`;
 }
 
 /** 単精度 float 列の WHERE 項 (`ABS(col - x) <= ...`)。対象外の列・値は null。 */
@@ -1077,6 +1090,7 @@ function rowWhereParts(driver: string, columns: Column[], row: CellValue[], pkIn
     // `whereEqualsClause`'s doc for why this matters once identity can
     // include nullable columns (#849's all_columns fallback).
     if (v === null || v === undefined) return `${quoted} IS NULL`;
+    if (typeof v === "boolean") return boolWhere(driver, quoted, v);
     const approx = singleFloatWhere(driver, columns[i], v);
     if (approx) return approx;
     return `${quoted} = ${rowValueLiteral(driver, v, columns[i])}`;

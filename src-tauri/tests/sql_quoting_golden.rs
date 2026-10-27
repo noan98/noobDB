@@ -24,6 +24,26 @@ struct Vectors {
     drivers: Vec<String>,
     identifiers: Vec<IdentifierCase>,
     literals: Vec<LiteralCase>,
+    #[serde(rename = "wherePredicates")]
+    where_predicates: Vec<WherePredicateCase>,
+}
+
+/// 行同定 WHERE の述語形ゴールデン (#1870)。`frontend` はフロント専用の期待値で、ここでは見ない。
+#[derive(Deserialize)]
+struct WherePredicateCase {
+    kind: String,
+    #[serde(default)]
+    value: serde_json::Value,
+    #[serde(default = "default_column")]
+    column: String,
+    note: String,
+    #[serde(default)]
+    drivers: Option<Vec<String>>,
+    expected: BTreeMap<String, String>,
+}
+
+fn default_column() -> String {
+    "c".to_string()
 }
 
 #[derive(Deserialize)]
@@ -138,6 +158,94 @@ fn sql_literal_matches_shared_vectors() {
     assert!(
         failures.is_empty(),
         "sql_literal diverged from the shared golden vectors (フロント sqlLiteral とズレています):\n{}",
+        failures.join("\n")
+    );
+}
+
+/// 行同定 WHERE の述語形 (#1870)。楽観ロックの `old_predicate` と行同定の `row_condition` を、
+/// フロント `cellEdit.ts::whereEqualsClause` / `buildRowWhere` と同じベクタに通す。
+/// `bytes` は `old_predicate` の対象外 (フロントが除外する型)、`float4` は `row_condition`
+/// の対象外 (許容差の述語は楽観ロック専用)。
+#[test]
+fn where_predicate_matches_shared_vectors() {
+    let vectors = load();
+    assert!(
+        vectors.where_predicates.len() >= 8,
+        "expected at least 8 where-predicate vectors, got {}",
+        vectors.where_predicates.len()
+    );
+
+    let mut failures = Vec::new();
+    for case in &vectors.where_predicates {
+        let v = &case.value;
+        let text = || match v {
+            serde_json::Value::Number(n) => n.to_string(),
+            other => panic!("number-like case needs a number value: {other:?}"),
+        };
+        let old: Option<t::BulkOldValue> = match case.kind.as_str() {
+            "null" => Some(t::BulkOldValue::Null),
+            "bool" => Some(t::BulkOldValue::Bool {
+                value: v.as_bool().expect("bool case needs a bool value"),
+            }),
+            "int" | "float" => Some(t::BulkOldValue::Number { text: text() }),
+            "float4" => Some(t::BulkOldValue::Float4 { text: text() }),
+            "string" => Some(t::BulkOldValue::Text {
+                text: v.as_str().expect("string case needs a string").to_string(),
+            }),
+            "bytes" => None,
+            other => panic!("unknown where-predicate kind in vectors: {other}"),
+        };
+        let key: Option<t::Value> = match case.kind.as_str() {
+            "null" => Some(t::Value::Null),
+            "bool" => Some(t::Value::Bool(v.as_bool().expect("bool"))),
+            "int" => Some(t::Value::Int(v.as_i64().expect("int"))),
+            "float" => Some(t::Value::Float(v.as_f64().expect("float"))),
+            "string" => Some(t::Value::String(v.as_str().expect("string").to_string())),
+            "bytes" => Some(t::Value::Bytes(v.as_str().expect("hex").to_string())),
+            _ => None,
+        };
+        let names: Vec<&String> = case
+            .drivers
+            .as_ref()
+            .map(|d| d.iter().collect())
+            .unwrap_or_else(|| vectors.drivers.iter().collect());
+        for driver_name in names {
+            let expected = case.expected.get(driver_name).unwrap_or_else(|| {
+                panic!(
+                    "where vector {:?} is missing an expectation for {driver_name}",
+                    case.note
+                )
+            });
+            let driver = driver_of(driver_name);
+            if let Some(old) = &old {
+                let actual = t::bulk_old_predicate(driver, &case.column, old)
+                    .unwrap_or_else(|e| panic!("old_predicate failed for {:?}: {e}", case.note));
+                if &actual != expected {
+                    failures.push(format!(
+                        "  - old_predicate {} (note: {}) [{driver_name}]: expected {expected:?}, got {actual:?}",
+                        case.kind, case.note
+                    ));
+                }
+            }
+            if let Some(key) = &key {
+                let actual = t::bulk_row_condition(
+                    driver,
+                    std::slice::from_ref(&case.column),
+                    std::slice::from_ref(key),
+                );
+                if &actual != expected {
+                    failures.push(format!(
+                        "  - row_condition {} (note: {}) [{driver_name}]: expected {expected:?}, got {actual:?}",
+                        case.kind, case.note
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "WHERE predicate diverged from the shared golden vectors (フロント whereEqualsClause / buildRowWhere とズレています):\n{}",
         failures.join("\n")
     );
 }

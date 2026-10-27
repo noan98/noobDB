@@ -210,5 +210,82 @@
       "expected": { "mysql": "X'ab12'", "postgres": "'\\xab12'", "sqlite": "X'ab12'" },
       "frontend": { "mysql": "'ab12'", "postgres": "'ab12'", "sqlite": "'ab12'" }
     }
+  ],
+
+  "whereNotes": "行同定 WHERE の述語形 (#1870)。リテラル表記ではなく『col = 値 / IS NULL / <> 0 / 許容差』という述語の形を固定する。Rust の commands::bulk_write::old_predicate (楽観ロック) と row_condition (行同定)、フロントの cellEdit.ts::whereEqualsClause / buildRowWhere (コピー as SQL・生成スクリプト) を同じベクタに通す。kind=bytes 以外は old_predicate、kind=float4 以外は row_condition が expected と一致する。`drivers` があればそのドライバだけ検査する。`frontend` はフロントの期待値 (省略時は expected)。value を持たない null は kind のみ。",
+  "wherePredicates": [
+    {
+      "kind": "null",
+      "typeName": "INT",
+      "note": "NULL は = NULL (常に偽) ではなく IS NULL",
+      "expected": {"mysql": "`c` IS NULL", "postgres": "\"c\" IS NULL", "sqlite": "\"c\" IS NULL"}
+    },
+    {
+      "kind": "bool",
+      "value": true,
+      "typeName": "TINYINT(1)",
+      "note": "真偽値 true: MySQL(TINYINT(1)) / SQLite は 2 など 0/1 以外の整数も真なので `<> 0`。PostgreSQL は本物の boolean なので `= TRUE` (#1870)",
+      "column": "flag",
+      "expected": {"mysql": "`flag` <> 0", "postgres": "\"flag\" = TRUE", "sqlite": "\"flag\" <> 0"}
+    },
+    {
+      "kind": "bool",
+      "value": false,
+      "typeName": "TINYINT(1)",
+      "note": "真偽値 false: MySQL / SQLite は `= 0`、PostgreSQL は `= FALSE` (#1870)",
+      "column": "flag",
+      "expected": {"mysql": "`flag` = 0", "postgres": "\"flag\" = FALSE", "sqlite": "\"flag\" = 0"}
+    },
+    {
+      "kind": "int",
+      "value": 5,
+      "typeName": "INT",
+      "note": "整数は素の数値リテラルの等値",
+      "expected": {"mysql": "`c` = 5", "postgres": "\"c\" = 5", "sqlite": "\"c\" = 5"}
+    },
+    {
+      "kind": "int",
+      "value": -12,
+      "typeName": "BIGINT",
+      "note": "負の整数",
+      "expected": {"mysql": "`c` = -12", "postgres": "\"c\" = -12", "sqlite": "\"c\" = -12"}
+    },
+    {
+      "kind": "float",
+      "value": 0.1,
+      "typeName": "DOUBLE",
+      "note": "倍精度 float は許容差なしの等値 (最短表記で往復できる)",
+      "expected": {"mysql": "`c` = 0.1", "postgres": "\"c\" = 0.1", "sqlite": "\"c\" = 0.1"}
+    },
+    {
+      "kind": "float4",
+      "value": 0.1,
+      "typeName": "FLOAT",
+      "note": "単精度 float (MySQL FLOAT / PostgreSQL FLOAT4) は f32 の丸めを吸収する相対許容差 (#1534)。SQLite の REAL は常に f64 なので対象外",
+      "drivers": ["mysql", "postgres"],
+      "expected": {"mysql": "ABS(`c` - (0.1)) <= ABS((0.1)) * 0.000001", "postgres": "ABS(\"c\" - (0.1)) <= ABS((0.1)) * 0.000001"}
+    },
+    {
+      "kind": "string",
+      "value": "o'brien",
+      "typeName": "VARCHAR(20)",
+      "note": "文字列は引用して ' を二重化",
+      "expected": {"mysql": "`c` = 'o''brien'", "postgres": "\"c\" = 'o''brien'", "sqlite": "\"c\" = 'o''brien'"}
+    },
+    {
+      "kind": "string",
+      "value": "a\\b",
+      "typeName": "VARCHAR(20)",
+      "note": "バックスラッシュは MySQL だけ二重化",
+      "expected": {"mysql": "`c` = 'a\\\\b'", "postgres": "\"c\" = 'a\\b'", "sqlite": "\"c\" = 'a\\b'"}
+    },
+    {
+      "kind": "bytes",
+      "value": "ab12",
+      "typeName": "BLOB",
+      "note": "BLOB 列の 16 進値はバイナリリテラル。MySQL はバック X'..' / フロント 0x.. (同値の別表記)",
+      "expected": {"mysql": "`c` = X'ab12'", "postgres": "\"c\" = '\\xab12'", "sqlite": "\"c\" = X'ab12'"},
+      "frontend": {"mysql": "`c` = 0xab12", "postgres": "\"c\" = '\\xab12'", "sqlite": "\"c\" = X'ab12'"}
+    }
   ]
 }
