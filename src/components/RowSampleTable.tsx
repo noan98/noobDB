@@ -1,6 +1,7 @@
 import { chakra } from "@chakra-ui/react";
 import type { CellValue } from "../api/tauri";
 import { useT } from "../i18n";
+import { semanticColorToken } from "../semanticColors";
 import type { RowSampleState } from "../useRowSample";
 
 function cellText(v: CellValue): string {
@@ -17,10 +18,13 @@ export function RowSampleTable({
   state,
   label,
   testId,
+  highlightColumns,
 }: {
   state: RowSampleState | null;
   label: string;
   testId?: string;
+  /** 強調する列名 (大小無視)。UPDATE の SET 対象列を見せるのに使う (#1881)。 */
+  highlightColumns?: readonly string[];
 }) {
   const t = useT();
   if (!state) return null;
@@ -45,6 +49,8 @@ export function RowSampleTable({
       </chakra.div>
     );
   }
+  const hl = new Set((highlightColumns ?? []).map((c) => c.toLowerCase()));
+  const isHl = (ci: number) => hl.has((state.columns[ci] ?? "").toLowerCase());
   return (
     <chakra.div overflowX="auto" maxH="200px" overflowY="auto" data-testid={testId}>
       <chakra.table
@@ -57,7 +63,16 @@ export function RowSampleTable({
         <thead>
           <tr>
             {state.columns.map((c, i) => (
-              <chakra.th key={i} textAlign="left" px="2" py="1" color="app.textMuted" fontWeight={600}>
+              <chakra.th
+                key={i}
+                textAlign="left"
+                px="2"
+                py="1"
+                color={isHl(i) ? semanticColorToken("warning", "text") : "app.textMuted"}
+                bg={isHl(i) ? semanticColorToken("warning", "subtle") : undefined}
+                fontWeight={600}
+                data-highlight={isHl(i) ? "true" : undefined}
+              >
                 {c}
               </chakra.th>
             ))}
@@ -74,6 +89,8 @@ export function RowSampleTable({
                   borderTopWidth="1px"
                   borderColor="app.border"
                   color={v === null ? "app.textMuted" : "app.text"}
+                  bg={isHl(ci) ? semanticColorToken("warning", "subtle") : undefined}
+                  data-highlight={isHl(ci) ? "true" : undefined}
                   wordBreak="break-all"
                 >
                   {cellText(v)}

@@ -39,6 +39,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { MigrationExportModal } from "./MigrationExportModal";
 import { TextExportButton } from "./TextExportButton";
 import { schemaCompareReportMarkdown } from "./schemaCompareReport";
+import { countObjectDifferences, objectKindLabel, SchemaObjectDiff } from "./SchemaObjectDiff";
 import { Tooltip } from "./Tooltip";
 import { TreeChevron } from "./tree";
 import { Button, Checkbox, Heading, Input, PressableButton, Select } from "./ui";
@@ -327,12 +328,14 @@ function kindColors(kind: SyncKind): { color: string; borderColor: string } {
     case "add_foreign_key":
     case "add_check":
     case "add_index":
+    case "create_object":
     case "insert_row": {
       const c = semanticColorVar("success", "text");
       return { color: c, borderColor: c };
     }
     case "alter_column":
     case "rebuild_table":
+    case "replace_object":
     case "update_row": {
       const c = semanticColorVar("warning", "text");
       return { color: c, borderColor: c };
@@ -342,6 +345,7 @@ function kindColors(kind: SyncKind): { color: string; borderColor: string } {
     case "drop_index":
     case "drop_foreign_key":
     case "drop_check":
+    case "drop_object":
     case "delete_row": {
       const c = semanticColorVar("danger", "text");
       return { color: c, borderColor: c };
@@ -715,6 +719,11 @@ export function SchemaCompareView({
         statusCol: t("schemaCompareReportColStatus"),
         detailCol: t("schemaCompareReportColDetail"),
         identical: t("schemaCompareIdentical"),
+        objectsHeading: t("schemaCompareObjectsTitle"),
+        objectCol: t("schemaCompareReportColObject"),
+        objectKind: (kind) => objectKindLabel(kind, t),
+        objectsNotCompared: t("schemaCompareObjectsNotCompared"),
+        objectsIdentical: t("schemaCompareObjectsIdentical"),
         planHeading: t("schemaCompareReportPlan"),
         planNote: t("schemaCompareReportPlanNote"),
         noStatements: t("schemaCompareNoStatements"),
@@ -724,7 +733,8 @@ export function SchemaCompareView({
     });
   };
 
-  const hasDifferences = counts.different + counts.source_only + counts.target_only > 0;
+  const objectDifferences = countObjectDifferences(diff?.objects);
+  const hasDifferences = counts.different + counts.source_only + counts.target_only + objectDifferences > 0;
 
   const generatePlan = useCallback(async () => {
     if (!diff) return;
@@ -1150,7 +1160,7 @@ export function SchemaCompareView({
               {visibleTables.length === 0 ? (
                 <chakra.p css={emptyCss}>
                   {counts.different + counts.source_only + counts.target_only === 0
-                    ? t("schemaCompareIdentical")
+                    ? t(objectDifferences > 0 ? "schemaCompareTablesIdentical" : "schemaCompareIdentical")
                     : t("schemaCompareAllHidden")}
                 </chakra.p>
               ) : (
@@ -1176,6 +1186,10 @@ export function SchemaCompareView({
                 </Box>
               )}
 
+              {diff.objects && (
+                <SchemaObjectDiff objects={diff.objects} driver={diff.target_driver} hideSame={hideSame} />
+              )}
+
               {hasDifferences && (
                 <Box css={syncCss}>
                   <chakra.h3 css={syncTitleCss}>{t("schemaCompareSyncTitle")}</chakra.h3>
@@ -1188,7 +1202,7 @@ export function SchemaCompareView({
                         checked={allowDestructive}
                         onChange={(e) => setAllowDestructive(e.target.checked)}
                       />
-                      {t("schemaCompareAllowDestructive")}
+                      {t("schemaCompareAllowDestructiveObjects")}
                     </chakra.label>
                     <Button onClick={generatePlan} disabled={generating}>
                       {generating ? t("schemaCompareGenerating") : t("schemaCompareGenerate")}
@@ -1497,6 +1511,12 @@ function syncKindLabel(kind: SyncKind, t: ReturnType<typeof useT>): string {
       return t("schemaCompareKindAddCheck");
     case "drop_check":
       return t("schemaCompareKindDropCheck");
+    case "create_object":
+      return t("schemaCompareKindCreateObject");
+    case "replace_object":
+      return t("schemaCompareKindReplaceObject");
+    case "drop_object":
+      return t("schemaCompareKindDropObject");
     case "rebuild_table":
       return t("schemaCompareKindRebuildTable");
     case "insert_row":

@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use super::ddl_extras::{normalize_check, normalize_expr};
+use super::object_diff::ObjectComparison;
 use super::types::{
     CheckConstraintInfo, ForeignKey, GeneratedColumnInfo, IndexInfo, TableColumnInfo,
     TableDdlExtras, TableIndexes,
@@ -351,6 +352,9 @@ pub struct SchemaDiff {
     /// `CREATE TABLE` 同期は「索引が含まれません」の警告を出さず `CREATE INDEX` を出す。
     #[serde(default)]
     pub indexes_compared: bool,
+    /// ビュー / ルーチン / トリガー / シーケンス / マテビューの差分 (#1879)。
+    #[serde(default)]
+    pub objects: ObjectComparison,
 }
 
 /// Compares `source` against `target`, classifying every table and (for tables
@@ -422,6 +426,7 @@ pub fn compute_schema_diff(
         tables,
         warnings: Vec::new(),
         indexes_compared: false,
+        objects: ObjectComparison::default(),
     }
 }
 
