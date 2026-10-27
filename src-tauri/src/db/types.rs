@@ -1349,22 +1349,22 @@ mod js_safe_tests {
         }
     }
 
-    /// `db/**/*.rs` の本体コードに、`Value::Int(` / `Value::UInt(` を直接組み立てる行が
+    /// `src/**/*.rs` (db/ に加えて commands/ など) の本体コードに、`Value::Int(` / `Value::UInt(` を直接組み立てる行が
     /// 無いことを固定する (#1422 / #1780)。
     ///
     /// 元の型が 2^53 に収まる場合でも、直接構築の前例があると BIGINT 相当の新しい分岐が
     /// それをコピーして静かに丸めを再発させる。整数は必ず `from_*_lossless` を経由させる。
-    /// 唯一の許可は `from_*_lossless` 自身を定義する `types.rs`。ファイル列挙は glob 走査で、
+    /// 唯一の許可は `from_*_lossless` 自身を定義する `db/types.rs`。ファイル列挙は glob 走査で、
     /// ドライバやモジュールの追加に自動で追従する。
     #[test]
     fn db_modules_never_construct_raw_int_values() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/db");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut files = Vec::new();
         collect_rs_files(&root, &mut files);
-        // 走査が空振りして素通りしないよう下限を固定する (db/ には 40 超のモジュールがある)。
+        // 走査が空振りして素通りしないよう下限を固定する (src/ には 100 超のモジュールがある)。
         assert!(
-            files.len() >= 30,
-            "db/**/*.rs の走査結果が少なすぎます: {}",
+            files.len() >= 100,
+            "src/**/*.rs の走査結果が少なすぎます: {}",
             files.len()
         );
         let mut offenders = Vec::new();
@@ -1374,7 +1374,7 @@ mod js_safe_tests {
                 .unwrap_or(path)
                 .to_string_lossy()
                 .replace('\\', "/");
-            if rel == "types.rs" {
+            if rel == "db/types.rs" {
                 continue;
             }
             let Ok(src) = std::fs::read_to_string(path) else {
@@ -1384,7 +1384,7 @@ mod js_safe_tests {
         }
         assert!(
             offenders.is_empty(),
-            "db/ のモジュールが Value::Int/UInt を直接組み立てています。\
+            "src/ のモジュールが Value::Int/UInt を直接組み立てています。\
              Value::from_i64_lossless / from_u64_lossless を経由してください (#1422, #1780):\n{}",
             offenders.join("\n")
         );
