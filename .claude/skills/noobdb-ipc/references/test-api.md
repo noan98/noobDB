@@ -12,7 +12,7 @@
 
 **コマンド層の常時実行カバレッジ (#881)。** `commands/inspector.rs` /
 `commands/server.rs` / `commands/process.rs` は env ゲートの MySQL/PostgreSQL
-統合テストからしか実行されておらず、`rust (windows test)` ジョブや env 変数を
+統合テストからしか実行されておらず、`rust (windows)` ジョブや env 変数を
 設定しないローカルの `cargo test` (= SQLite のみ) では**コマンド境界が 1 度も
 走りません**でした。各コマンドの State なしコア
 (`query_stats_support_inner` / `sample_live_queries_inner` /
