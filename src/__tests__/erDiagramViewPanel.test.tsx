@@ -115,6 +115,16 @@ describe("ERDiagramView フォーカス (#1540)", () => {
       await screen.findByText(t("erDiagramSummary", { tables: 4, relationships: 3 })),
     ).toBeInTheDocument();
 
+    // 入場スタッガー (#1861): ノードに入場クラスと深さ (--stagger-index) が付く。
+    await waitFor(() =>
+      expect(document.querySelectorAll(".react-flow__node.flow-node-enter").length).toBe(4),
+    );
+    const indices = [...document.querySelectorAll<HTMLElement>(".react-flow__node")].map((el) =>
+      el.style.getPropertyValue("--stagger-index"),
+    );
+    expect(indices.every((v) => v !== "")).toBe(true);
+    expect(new Set(indices).size).toBeGreaterThan(1);
+
     fireEvent.change(screen.getByLabelText(t("erDiagramFocus")), { target: { value: "a" } });
     // 1 ホップ: a と b だけ。
     expect(

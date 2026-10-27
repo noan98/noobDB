@@ -215,6 +215,9 @@
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --dur-fast: 120ms;
   --dur-med: 200ms;
+  /* stagger (深さ順の順次出現)。src/motion.ts の staggerTiming と同じ値 (#1861)。 */
+  --stagger-each: 35ms;
+  --stagger-delay: 40ms;
   /* ループアニメーション (無限再生) の周期。複数箇所から参照される値だけを
      トークン化し、スピナー/シマー/不確定プログレスの速度が画面間でドリフト
      しないようにする (単一箇所でしか使わない周期は利用側に直書きのまま)。 */
@@ -2652,6 +2655,20 @@ td.is-find-current::after {
   animation: none;
 }
 
+/* reduced-motion では入場の遅延も外す (duration だけ潰すと遅延ぶん非表示のまま待つ, #1861) */
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .flow-node-enter,
+  :root:not([data-motion="full"]) .flow-edge-enter .react-flow__edge-path,
+  :root:not([data-motion="full"]) .flow-edge-enter .er-rel-glyph {
+    animation-delay: 0s;
+  }
+}
+:root[data-motion="reduced"] .flow-node-enter,
+:root[data-motion="reduced"] .flow-edge-enter .react-flow__edge-path,
+:root[data-motion="reduced"] .flow-edge-enter .er-rel-glyph {
+  animation-delay: 0s;
+}
+
 @media (prefers-reduced-motion: reduce) {
   :root:not([data-motion="full"]) *,
   :root:not([data-motion="full"]) *::before,
@@ -2746,6 +2763,71 @@ td.is-find-current::after {
 .er-flow .react-flow__node.er-dim,
 .er-flow .react-flow__edge.er-dim {
   opacity: var(--er-dim-opacity);
+}
+
+/* ---------- React Flow: ノードの深さ順入場と再レイアウト・モーフ (#1861) ----------
+   ノード / エッジには ERDiagramView・ExplainGraphView が `flow-node-enter` /
+   `flow-edge-enter` と `--stagger-index` (ルート=0 からの深さ) を付ける。入場は個別の
+   `scale` / `opacity` だけを動かし、React Flow が `transform` に直書きする位置とは干渉しない。
+   位置が変わったときは `transform` の transition でモーフ。ドラッグ中は外す (追従が遅れるため)。
+   reduced-motion は末尾の全体規則が、高コントラスト系は下で即時にする。 */
+@keyframes flow-node-in {
+  from {
+    opacity: 0;
+    scale: 0.94;
+  }
+}
+@keyframes flow-edge-draw {
+  from {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes flow-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+.react-flow__node.flow-node-enter {
+  animation: flow-node-in var(--dur-med) var(--ease-out) backwards;
+  animation-delay: calc(var(--stagger-delay) + var(--stagger-index, 0) * var(--stagger-each));
+  /* opacity は ER 図の減光 (`.er-flow .react-flow__node`) の遷移を引き継ぐ */
+  transition: transform var(--dur-med) var(--ease-out), opacity var(--dur-fast) var(--ease);
+}
+.react-flow__node.flow-node-enter.dragging {
+  transition: opacity var(--dur-fast) var(--ease);
+}
+/* 線は子ノードの出現に合わせて引く (pathLength=1 なので dasharray / offset は 1 が全長) */
+.react-flow__edge.flow-edge-enter .react-flow__edge-path {
+  animation: flow-edge-draw var(--dur-med) var(--ease-out) backwards;
+  animation-delay: calc(var(--stagger-delay) + var(--stagger-index, 0) * var(--stagger-each));
+}
+.react-flow__edge.flow-edge-enter .er-rel-glyph {
+  animation: flow-fade-in var(--dur-fast) var(--ease-out) backwards;
+  animation-delay: calc(var(--stagger-delay) + var(--stagger-index, 0) * var(--stagger-each));
+}
+/* モーフ中は線を隠し (ノードは滑るが線は最終位置を指すため)、終わったらフェードインさせる */
+.react-flow .react-flow__edges {
+  transition: opacity var(--dur-med) var(--ease-out);
+}
+.react-flow.flow-morphing .react-flow__edges {
+  opacity: 0;
+  transition: none;
+}
+:root[data-theme="hc-light"] .react-flow__node.flow-node-enter,
+:root[data-theme="hc-dark"] .react-flow__node.flow-node-enter,
+:root[data-theme="hc-light"] .react-flow__edge.flow-edge-enter .react-flow__edge-path,
+:root[data-theme="hc-dark"] .react-flow__edge.flow-edge-enter .react-flow__edge-path,
+:root[data-theme="hc-light"] .react-flow__edge.flow-edge-enter .er-rel-glyph,
+:root[data-theme="hc-dark"] .react-flow__edge.flow-edge-enter .er-rel-glyph,
+:root[data-theme="hc-light"] .react-flow .react-flow__edges,
+:root[data-theme="hc-dark"] .react-flow .react-flow__edges {
+  animation: none;
+  transition: none;
 }
 
 /* 高コントラスト系はミニマップのビューポート枠を太くして判別しやすくする */
