@@ -530,6 +530,21 @@ pub mod __test_api {
     pub fn sql_literal(driver: DriverKind, value: &Value) -> String {
         crate::db::data_diff::sql_literal(driver, value)
     }
+
+    /// 楽観ロックの旧値述語 (`commands::bulk_write::old_predicate`)。行同定 WHERE の
+    /// 実装横断ゴールデン (`tests/sql_quoting_golden.rs`、#1870) が使う薄いラッパー。
+    pub fn bulk_old_predicate(
+        driver: DriverKind,
+        column: &str,
+        old: &BulkOldValue,
+    ) -> Result<String, String> {
+        crate::commands::bulk_write::old_predicate(driver, column, old).map_err(|e| e.to_string())
+    }
+
+    /// 行同定の WHERE 条件 (`commands::bulk_write::row_condition`)。上と同じ用途 (#1870)。
+    pub fn bulk_row_condition(driver: DriverKind, pk_columns: &[String], key: &[Value]) -> String {
+        crate::commands::bulk_write::row_condition(driver, pk_columns, key)
+    }
     // サーバ機能系コマンドの State なしコア (#881)。`inspector` / `server` /
     // `process` は env ゲートの MySQL/PostgreSQL 統合テストでしか実行されず、
     // Windows ジョブや env 無しのローカル `cargo test` (SQLite のみ) では
