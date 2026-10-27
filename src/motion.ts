@@ -122,6 +122,10 @@ import type { Transition, Variants } from "motion/react";
  * - バッチ実行結果の文カード入場 (`BatchResultsView` — `AnimatePresence initial={false}` + `variants.collapse`、増えた分だけ
  *   `staggerTiming.each` でずらす)・件数サマリの `CountUpText`・成否ドットの `variants.fadeScale` + `springs.gentle` pop (#1873)。
  *   静止 (reduced-motion / `prefersStaticMotion`) では transition を 0 秒にする。
+ * - JSON ツリーの展開 / 一括展開 (`JsonTreeView` — `useJsonTreeReveal`、#1863)。状態変更の直前に行を記録し、
+ *   反映後に新しく現れた行のうち可視範囲のものだけを Web Animations API で 1 回 opacity + slide-up
+ *   (`firstBatchReveal.offsetY`、`durations.quick`、遅延は 12 段で頭打ち) する。per-node の height
+ *   補間や常駐 Motion コンポーネントは使わない。reduced-motion・ハイコントラストは即時。
  * - ライブ監視パネルの行の出入りと値変化フラッシュ (`ProcessListPanel` /
  *   `PlanWatchPanel` — `LiveRows.tsx` の `LiveRowsPresence` + `variants.collapse`、
  *   フラッシュは既存の `@keyframes apply-flash`、数値は `CountUp`) (#1022)。
