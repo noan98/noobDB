@@ -6581,6 +6581,110 @@ async fn sqlite_check_and_generated_expressions_are_introspected_compared_and_sy
     let _ = std::fs::remove_file(&tgt_path);
 }
 
+#[tokio::test]
+async fn sqlite_views_and_triggers_are_compared_and_synced() {
+    // #1879: ビュー / トリガーの差分 (追加・定義変更・削除) を比較し、同期 SQL で収束する。
+    // SQLite にはシーケンス・ルーチン・マテビューが無いので「対象外」として載る。
+    let mk = |tag: &str| {
+        let mut p = std::env::temp_dir();
+        p.push(format!(
+            "noobdb_sqlite_objs_{tag}_{}.db",
+            std::process::id()
+        ));
+        p
+    };
+    let src_path = mk("src");
+    let tgt_path = mk("tgt");
+    for p in [&src_path, &tgt_path] {
+        let _ = std::fs::remove_file(p);
+        std::fs::File::create(p).expect("create temp sqlite file");
+    }
+    let src = t::connect(&t::sqlite_options(src_path.to_str().unwrap()))
+        .await
+        .expect("connect source");
+    let tgt = t::connect(&t::sqlite_options(tgt_path.to_str().unwrap()))
+        .await
+        .expect("connect target");
+
+    let base = "CREATE TABLE orders (id INTEGER PRIMARY KEY, total INTEGER); \
+                CREATE TABLE audit (n INTEGER);";
+    for c in [&src, &tgt] {
+        c.execute(base, None).await.expect("create tables");
+    }
+    src.execute(
+        "CREATE VIEW v_big AS SELECT id FROM orders WHERE total > 100; \
+         CREATE VIEW v_new AS SELECT id FROM orders; \
+         CREATE TRIGGER trg_audit AFTER INSERT ON orders BEGIN INSERT INTO audit VALUES (1); END",
+        None,
+    )
+    .await
+    .expect("source objects");
+    tgt.execute(
+        "CREATE VIEW v_big AS SELECT id FROM orders WHERE total > 5; \
+         CREATE VIEW v_old AS SELECT total FROM orders",
+        None,
+    )
+    .await
+    .expect("target objects");
+
+    let diff = t::compare_schema_via_core(&src, "main", &tgt, "main")
+        .await
+        .expect("compare");
+    // ビューは表の差分には出ない (オブジェクト側に寄せる)。
+    assert!(
+        diff.tables.iter().all(|x| !x.name.starts_with("v_")),
+        "{:?}",
+        diff.tables
+    );
+    assert!(diff.objects.compared);
+    assert_eq!(
+        diff.objects.unsupported_kinds,
+        vec!["sequence", "function", "procedure", "materialized_view"]
+    );
+    let status = |name: &str| {
+        diff.objects
+            .items
+            .iter()
+            .find(|o| o.name == name)
+            .map(|o| o.status)
+    };
+    assert_eq!(status("v_big"), Some(t::DiffStatus::Different));
+    assert_eq!(status("v_new"), Some(t::DiffStatus::SourceOnly));
+    assert_eq!(status("trg_audit"), Some(t::DiffStatus::SourceOnly));
+    assert_eq!(status("v_old"), Some(t::DiffStatus::TargetOnly));
+
+    // 非破壊では DROP を出さない。
+    let safe = t::generate_sync_sql(&diff, false);
+    assert!(safe
+        .statements
+        .iter()
+        .all(|s| s.kind != t::SyncKind::DropObject));
+
+    let plan = t::generate_sync_sql(&diff, true);
+    let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
+    tgt.execute_sync_transaction(&sqls, None)
+        .await
+        .expect("apply object sync");
+
+    let after = t::compare_schema_via_core(&src, "main", &tgt, "main")
+        .await
+        .expect("re-compare");
+    assert!(
+        after
+            .objects
+            .items
+            .iter()
+            .all(|o| o.status == t::DiffStatus::Same),
+        "{:?}",
+        after.objects.items
+    );
+
+    src.close().await;
+    tgt.close().await;
+    let _ = std::fs::remove_file(&src_path);
+    let _ = std::fs::remove_file(&tgt_path);
+}
+
 // ---- #1838: データ比較・タイムラプスの行識別子 ----
 
 async fn row_key_conn(tag: &str) -> (PathBuf, t::Connection) {

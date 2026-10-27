@@ -1237,6 +1237,32 @@ impl MySqlConn {
         statements: &[GuardedStatement<'_>],
         database: Option<&str>,
     ) -> Result<GuardedTxOutcome> {
+        self.run_transaction_guarded(statements, database, false)
+            .await
+    }
+
+    /// スキーマ同期の適用 (`apply_sync_sql`) 専用 (#1879)。`generate_sync_sql` 由来の文だけが
+    /// 来る経路なので、ルーチン・トリガーの DDL と区切り行つきの複数文をテキストプロトコルで
+    /// 1 文ずつ流す。ユーザー SQL の実行口 ([`Self::execute_transaction_guarded`]) では
+    /// 区切り行を解釈しない (read_only の判定を迂回されないため)。
+    pub async fn execute_sync_transaction(
+        &self,
+        statements: &[String],
+        database: Option<&str>,
+    ) -> Result<u64> {
+        let stmts = super::unchecked_statements(statements);
+        Ok(self
+            .run_transaction_guarded(&stmts, database, true)
+            .await?
+            .total_affected())
+    }
+
+    async fn run_transaction_guarded(
+        &self,
+        statements: &[GuardedStatement<'_>],
+        database: Option<&str>,
+        allow_text_protocol: bool,
+    ) -> Result<GuardedTxOutcome> {
         if statements.is_empty() {
             return Ok(GuardedTxOutcome::Committed(0));
         }
@@ -1245,6 +1271,22 @@ impl MySqlConn {
         let mut tx = conn.begin().await?;
         let mut counts: Vec<u64> = Vec::with_capacity(statements.len());
         for st in statements {
+            // ルーチン・トリガーの CREATE / DROP と、区切り行で連ねた複数文 (スキーマ同期の
+            // オブジェクト置換, #1879) は prepared protocol だとエラー 1295 / 構文エラーに
+            // なるので、1 文ずつテキストプロトコル (`raw_sql`) で流す。
+            if allow_text_protocol && super::object_diff::needs_text_protocol(st.sql) {
+                let mut affected = 0u64;
+                for part in super::object_diff::split_statements(st.sql) {
+                    let r = sqlx::Executor::execute(
+                        &mut *tx,
+                        sqlx::raw_sql(sqlx::AssertSqlSafe(part.to_string())),
+                    )
+                    .await?;
+                    affected += r.rows_affected();
+                }
+                counts.push(affected);
+                continue;
+            }
             let result = sqlx::query(sqlx::AssertSqlSafe(st.sql))
                 .execute(&mut *tx)
                 .await?;

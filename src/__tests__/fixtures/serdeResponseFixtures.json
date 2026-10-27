@@ -2344,6 +2344,27 @@
   "sandboxSchemaDiffResult": {
     "desired": {
       "indexes_compared": true,
+      "objects": {
+        "compared": true,
+        "items": [
+          {
+            "kind": "trigger",
+            "name": "audit_users",
+            "signature": null,
+            "source_definition": "CREATE TRIGGER audit_users AFTER INSERT ON users FOR EACH ROW SET @a = 1",
+            "status": "different",
+            "table": "users",
+            "target_definition": "CREATE TRIGGER audit_users AFTER UPDATE ON users FOR EACH ROW SET @a = 1"
+          }
+        ],
+        "unsupported_kinds": [
+          "sequence",
+          "materialized_view"
+        ],
+        "warnings": [
+          "fn_total: source のスキーマ名が本文に残っています"
+        ]
+      },
       "source_driver": "mysql",
       "tables": [
         {
@@ -2650,6 +2671,27 @@
   },
   "schemaDiff": {
     "indexes_compared": true,
+    "objects": {
+      "compared": true,
+      "items": [
+        {
+          "kind": "trigger",
+          "name": "audit_users",
+          "signature": null,
+          "source_definition": "CREATE TRIGGER audit_users AFTER INSERT ON users FOR EACH ROW SET @a = 1",
+          "status": "different",
+          "table": "users",
+          "target_definition": "CREATE TRIGGER audit_users AFTER UPDATE ON users FOR EACH ROW SET @a = 1"
+        }
+      ],
+      "unsupported_kinds": [
+        "sequence",
+        "materialized_view"
+      ],
+      "warnings": [
+        "fn_total: source のスキーマ名が本文に残っています"
+      ]
+    },
     "source_driver": "mysql",
     "tables": [
       {
@@ -2868,6 +2910,49 @@
   "schemaDiffVariants": [
     {
       "indexes_compared": true,
+      "objects": {
+        "compared": true,
+        "items": [
+          {
+            "kind": "function",
+            "name": "fn_total",
+            "signature": "a integer",
+            "source_definition": "CREATE FUNCTION fn_total()",
+            "status": "source_only",
+            "table": null,
+            "target_definition": null
+          },
+          {
+            "kind": "function",
+            "name": "fn_total",
+            "signature": "a integer",
+            "source_definition": "CREATE FUNCTION fn_total()",
+            "status": "target_only",
+            "table": null,
+            "target_definition": null
+          },
+          {
+            "kind": "function",
+            "name": "fn_total",
+            "signature": "a integer",
+            "source_definition": "CREATE FUNCTION fn_total()",
+            "status": "different",
+            "table": null,
+            "target_definition": null
+          },
+          {
+            "kind": "function",
+            "name": "fn_total",
+            "signature": "a integer",
+            "source_definition": "CREATE FUNCTION fn_total()",
+            "status": "same",
+            "table": null,
+            "target_definition": null
+          }
+        ],
+        "unsupported_kinds": [],
+        "warnings": []
+      },
       "source_driver": "mysql",
       "tables": [
         {
@@ -3390,6 +3475,49 @@
     },
     {
       "indexes_compared": false,
+      "objects": {
+        "compared": false,
+        "items": [
+          {
+            "kind": "function",
+            "name": "fn_total",
+            "signature": null,
+            "source_definition": "CREATE FUNCTION fn_total()",
+            "status": "source_only",
+            "table": null,
+            "target_definition": null
+          },
+          {
+            "kind": "function",
+            "name": "fn_total",
+            "signature": null,
+            "source_definition": "CREATE FUNCTION fn_total()",
+            "status": "target_only",
+            "table": null,
+            "target_definition": null
+          },
+          {
+            "kind": "function",
+            "name": "fn_total",
+            "signature": null,
+            "source_definition": "CREATE FUNCTION fn_total()",
+            "status": "different",
+            "table": null,
+            "target_definition": null
+          },
+          {
+            "kind": "function",
+            "name": "fn_total",
+            "signature": null,
+            "source_definition": "CREATE FUNCTION fn_total()",
+            "status": "same",
+            "table": null,
+            "target_definition": null
+          }
+        ],
+        "unsupported_kinds": [],
+        "warnings": []
+      },
       "source_driver": "postgres",
       "tables": [
         {
@@ -3910,6 +4038,49 @@
     },
     {
       "indexes_compared": false,
+      "objects": {
+        "compared": false,
+        "items": [
+          {
+            "kind": "function",
+            "name": "fn_total",
+            "signature": null,
+            "source_definition": "CREATE FUNCTION fn_total()",
+            "status": "source_only",
+            "table": null,
+            "target_definition": null
+          },
+          {
+            "kind": "function",
+            "name": "fn_total",
+            "signature": null,
+            "source_definition": "CREATE FUNCTION fn_total()",
+            "status": "target_only",
+            "table": null,
+            "target_definition": null
+          },
+          {
+            "kind": "function",
+            "name": "fn_total",
+            "signature": null,
+            "source_definition": "CREATE FUNCTION fn_total()",
+            "status": "different",
+            "table": null,
+            "target_definition": null
+          },
+          {
+            "kind": "function",
+            "name": "fn_total",
+            "signature": null,
+            "source_definition": "CREATE FUNCTION fn_total()",
+            "status": "same",
+            "table": null,
+            "target_definition": null
+          }
+        ],
+        "unsupported_kinds": [],
+        "warnings": []
+      },
       "source_driver": "sqlite",
       "tables": [
         {
@@ -5727,6 +5898,24 @@
         {
           "destructive": true,
           "kind": "drop_check",
+          "sql": "SELECT 1;",
+          "table": "users"
+        },
+        {
+          "destructive": false,
+          "kind": "create_object",
+          "sql": "SELECT 1;",
+          "table": "users"
+        },
+        {
+          "destructive": false,
+          "kind": "replace_object",
+          "sql": "SELECT 1;",
+          "table": "users"
+        },
+        {
+          "destructive": true,
+          "kind": "drop_object",
           "sql": "SELECT 1;",
           "table": "users"
         },
