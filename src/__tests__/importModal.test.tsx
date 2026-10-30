@@ -378,7 +378,7 @@ describe("ImportModal create a new table (#985)", () => {
       />,
     );
     await screen.findByText(t("importMappingTitle"));
-    fireEvent.click(screen.getByRole("switch", { name: t("importCreateNewTable") }));
+    fireEvent.click(screen.getByRole("radio", { name: new RegExp(t("importCreateNewTable")) }));
     expect(await screen.findByText(t("importNewTableColumns"))).toBeInTheDocument();
     expect(screen.queryByText(t("importMappingTitle"))).not.toBeInTheDocument();
     expect(screen.queryByLabelText(t("importConflictMode"))).not.toBeInTheDocument();

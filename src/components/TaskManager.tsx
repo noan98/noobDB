@@ -303,7 +303,12 @@ export function TaskManager({ profiles, onClose }: { profiles: ConnectionProfile
         width="880px"
       >
         <ModalHeader onClose={onClose} closeLabel={t("taskManagerClose")}>
-          {t("taskManagerTitle")}
+          {/* フォーム表示中は何をしている画面かを題名で示す (一覧の題名のままだと迷う)。 */}
+          {showForm
+            ? editing && !duplicating
+              ? t("taskFormTitleEdit", { name: editing.name })
+              : t("taskFormTitleNew")
+            : t("taskManagerTitle")}
         </ModalHeader>
         <ModalBody>
           {showForm ? (
@@ -536,6 +541,7 @@ function TaskRow({
               aria-label={t("taskRunNow")}
             >
               {running ? <Spinner size={14} decorative /> : <Icon name="query" size={ICON_SIZES.sm} />}
+              {t("taskRunNow")}
             </Button>
           </Tooltip>
           {running && (
@@ -545,32 +551,28 @@ function TaskRow({
               </Button>
             </Tooltip>
           )}
-          <Tooltip label={t("taskHistory")}>
-            <Button
-              type="button"
-              onClick={onToggleHistory}
-              aria-label={t("taskHistory")}
-              aria-expanded={expanded}
-              aria-controls={expanded ? `task-history-${task.id}` : undefined}
-            >
-              <Icon name="clock" size={ICON_SIZES.sm} />
-            </Button>
-          </Tooltip>
-          <Tooltip label={t("taskEdit")}>
-            <Button type="button" onClick={onEdit} aria-label={t("taskEdit")}>
-              <Icon name="tools" size={ICON_SIZES.sm} />
-            </Button>
-          </Tooltip>
-          <Tooltip label={t("taskDuplicate")}>
-            <Button type="button" onClick={onDuplicate} aria-label={t("taskDuplicate")}>
-              <Icon name="copy" size={ICON_SIZES.sm} />
-            </Button>
-          </Tooltip>
-          <Tooltip label={t("taskDelete")}>
-            <Button type="button" variant="dangerOutline" onClick={onDelete} aria-label={t("taskDelete")}>
-              <Icon name="trash" size={ICON_SIZES.sm} />
-            </Button>
-          </Tooltip>
+          {/* アイコンだけだと何のボタンか分からないので、文字も並べる。 */}
+          <Button
+            type="button"
+            onClick={onToggleHistory}
+            aria-expanded={expanded}
+            aria-controls={expanded ? `task-history-${task.id}` : undefined}
+          >
+            <Icon name="clock" size={ICON_SIZES.sm} />
+            {t("taskHistory")}
+          </Button>
+          <Button type="button" onClick={onEdit}>
+            <Icon name="tools" size={ICON_SIZES.sm} />
+            {t("taskEdit")}
+          </Button>
+          <Button type="button" onClick={onDuplicate}>
+            <Icon name="copy" size={ICON_SIZES.sm} />
+            {t("taskDuplicate")}
+          </Button>
+          <Button type="button" variant="dangerOutline" onClick={onDelete}>
+            <Icon name="trash" size={ICON_SIZES.sm} />
+            {t("taskDelete")}
+          </Button>
         </Flex>
       </Flex>
       {expanded && (
@@ -1067,7 +1069,16 @@ function TaskForm({
           </FormSection>
           <FormSection>
             <FieldLabel htmlFor="task-database">{t("taskFormDatabaseOptional")}</FieldLabel>
-            <Input id="task-database" value={database} onChange={(e) => setDatabase(e.target.value)} />
+            <Input
+              id="task-database"
+              value={database}
+              placeholder={
+                selectedProfile?.database
+                  ? t("taskFormDatabaseDefault", { database: selectedProfile.database })
+                  : undefined
+              }
+              onChange={(e) => setDatabase(e.target.value)}
+            />
           </FormSection>
           <FormSection>
             <FieldLabel htmlFor="task-format">{t("exportFormat")}</FieldLabel>
@@ -1163,7 +1174,16 @@ function TaskForm({
           </chakra.p>
           <FormSection>
             <FieldLabel htmlFor="task-database-assert">{t("taskFormDatabaseOptional")}</FieldLabel>
-            <Input id="task-database-assert" value={database} onChange={(e) => setDatabase(e.target.value)} />
+            <Input
+              id="task-database-assert"
+              value={database}
+              placeholder={
+                selectedProfile?.database
+                  ? t("taskFormDatabaseDefault", { database: selectedProfile.database })
+                  : undefined
+              }
+              onChange={(e) => setDatabase(e.target.value)}
+            />
           </FormSection>
           <FormSection>
             <FieldLabel as="div">{t("taskFormActionAssertions")}</FieldLabel>

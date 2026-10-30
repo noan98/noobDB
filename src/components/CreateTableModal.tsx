@@ -68,6 +68,9 @@ function emptyColumn(driver: DriverKind): ColumnDef {
   };
 }
 
+/** 列の並び (名前 / 型 / トグル 5 つ / 既定値 / 削除)。見出しと各行で同じ幅にして列をそろえる。 */
+const COLUMN_GRID = "minmax(0, 1.3fr) minmax(0, 1.3fr) repeat(5, 4.5em) minmax(0, 1.2fr) 2em";
+
 /** 開いた直後の初期列 (id 1 本) のまま変更されていないか。 */
 function isInitialColumn(c: ColumnDef, driver: DriverKind): boolean {
   return (
@@ -311,10 +314,13 @@ export function CreateTableModal({
         <chakra.div display="flex" flexDirection="column" gap="1.5">
           <chakra.div
             display="grid"
-            gridTemplateColumns="1.3fr 1.3fr repeat(5, auto) 1.2fr auto"
+            gridTemplateColumns={COLUMN_GRID}
             gap="1.5"
             textStyle="overline"
             px="0.5"
+            alignItems="end"
+            // トグル列の見出しはトグルの真上に来るよう中央にそろえる。
+            css={{ "& > span:nth-of-type(n+3):nth-of-type(-n+7)": { textAlign: "center" } }}
           >
             <span>{t("createTableColName")}</span>
             <span>{t("createTableColType")}</span>
@@ -330,9 +336,11 @@ export function CreateTableModal({
             <chakra.div key={i} display="flex" flexDirection="column" gap="1">
               <chakra.div
                 display="grid"
-                gridTemplateColumns="1.3fr 1.3fr repeat(5, auto) 1.2fr auto"
+                gridTemplateColumns={COLUMN_GRID}
                 gap="1.5"
                 alignItems="center"
+                justifyItems="stretch"
+                css={{ "& > :nth-child(n+3):nth-child(-n+7)": { justifySelf: "center" } }}
               >
                 <Input
                   value={c.name}
@@ -354,7 +362,10 @@ export function CreateTableModal({
                 <Switch
                   checked={c.primaryKey}
                   disabled={!!c.generated}
-                  onChange={() => setCol(i, { primaryKey: !c.primaryKey })}
+                  // 主キーは NULL を持てないので、オンにしたら NOT NULL も一緒にオンにする。
+                  onChange={() =>
+                    setCol(i, c.primaryKey ? { primaryKey: false } : { primaryKey: true, notNull: true })
+                  }
                   aria-label={`${t("createTableColPk")} (${i + 1})`}
                 />
                 <Switch

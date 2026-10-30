@@ -1559,6 +1559,7 @@ const en = {
   formTlsProductionHint:
     "This is a production connection — consider Verify CA or Verify full so the server identity is validated.",
   formTlsRootCert: "CA certificate (root)",
+  formTlsShowCerts: "Specify certificate files…",
   formTlsRootCertPlaceholder: "/path/to/ca.pem",
   formTlsRootCertHelp:
     "PEM file used to verify the server certificate. Required for Verify CA / Verify full against a private CA (e.g. Amazon RDS / Cloud SQL bundles).",
@@ -4370,7 +4371,7 @@ const en = {
   importCancelledPartial: "Import cancelled; {count} already-committed row(s) were kept.",
   // Row-error handling (#687).
   importErrorMode: "On bad row",
-  importErrorModeAbort: "Abort (all-or-nothing)",
+  importErrorModeAbort: "Undo everything if any row fails",
   importErrorModeSkip: "Skip bad rows",
   importErrorModeSkipHint:
     "Rows the database rejects are skipped and reported at the end. Not all-or-nothing — good rows are committed.",
@@ -4445,7 +4446,11 @@ const en = {
   importConflictNoMapped: "Map at least one column first.",
   // Create a new table from the file (#985).
   importNewTableTitle: "Import file into a new table",
-  importCreateNewTable: "Create a new table",
+  importCreateNewTable: "Create a new table and import into it",
+  importTargetLabel: "Import into",
+  importTargetExisting: "Existing table {table} (append rows)",
+  importTargetExistingHint: "Maps the file's columns to the existing table's columns and adds the rows.",
+  importTargetNewHint: "Infers column types from the file, creates a new table, then imports into it.",
   importNewTableName: "New table name",
   importNewTableColumns: "Columns (name / type)",
   importNewTableHint:
@@ -5484,6 +5489,8 @@ const en = {
   usersPasswordDone: "Password changed",
   usersPasswordFailed: "Failed to change password: {error}",
   usersDropUser: "Delete user",
+  usersDangerZone: "Danger zone",
+  usersDropUserHint: "Drops this user (or role) and all of its privileges. This cannot be undone.",
   usersDropConfirmTitle: "Delete user",
   usersDropConfirmMessage: "Permanently delete {name}? This cannot be undone.",
   usersDropConfirmOk: "Delete",
@@ -6550,6 +6557,9 @@ const en = {
   taskFormOutputPath: "Output path",
   taskFormOutputPathPlaceholder: "e.g. sales-{date}.csv",
   taskFormOutputPathHint: "{date} expands to YYYY-MM-DD and {datetime} to YYYYMMDD-HHMMSS (UTC) at run time.",
+  taskFormTitleNew: "New task",
+  taskFormTitleEdit: "Edit task — {name}",
+  taskFormDatabaseDefault: "Blank = connection default ({database})",
   taskFormOutputPathPreview: "preview: {path}",
   taskFormOutputPathRequired: "Enter an output path.",
   taskFormMaskHint:
@@ -8695,6 +8705,7 @@ const ja: Dict = {
   formTlsProductionHint:
     "本番接続です。サーバの正当性を検証するため「CA 検証」または「完全検証」の利用を検討してください。",
   formTlsRootCert: "CA 証明書 (ルート)",
+  formTlsShowCerts: "証明書ファイルを指定する…",
   formTlsRootCertPlaceholder: "/path/to/ca.pem",
   formTlsRootCertHelp:
     "サーバ証明書の検証に使う PEM ファイルです。プライベート CA に対して「CA 検証」「完全検証」を行う場合に必要です (Amazon RDS / Cloud SQL のバンドル等)。",
@@ -11484,7 +11495,7 @@ const ja: Dict = {
   importCancelledPartial: "インポートを中止しました。コミット済みの {count} 行は保持されています。",
   // 行エラーの扱い (#687)。
   importErrorMode: "不良行の扱い",
-  importErrorModeAbort: "中断 (all-or-nothing)",
+  importErrorModeAbort: "1 行でも失敗したら全体を取り消す",
   importErrorModeSkip: "不良行をスキップ",
   importErrorModeSkipHint:
     "データベースが拒否した行はスキップし、最後に一覧報告します。all-or-nothing ではなく、正常な行はコミットされます。",
@@ -11548,9 +11559,9 @@ const ja: Dict = {
     "スキップ行 {total} 件のうち先頭 {shown} 件を表示しています。全件はコピーまたは保存で取得できます。",
   // 既存キーの扱い / UPSERT (#972)。
   importConflictMode: "既存キーの扱い",
-  importConflictModeInsert: "INSERT のみ (重複はエラー)",
+  importConflictModeInsert: "追加のみ (同じキーがあればエラー)",
   importConflictModeSkip: "既存行はスキップ",
-  importConflictModeUpdate: "既存行を更新 (UPSERT)",
+  importConflictModeUpdate: "既存行を上書き (UPSERT)",
   importConflictKeys: "キー列",
   importConflictKeysHint:
     "これらの列で既存行と照合します。テーブル側に主キーまたは UNIQUE 制約が必要です (MySQL はテーブルの全一意キーで照合します)。",
@@ -11559,7 +11570,11 @@ const ja: Dict = {
   importConflictNoMapped: "先に列を 1 つ以上マッピングしてください。",
   // ファイルから新規テーブルを作成 (#985)。
   importNewTableTitle: "ファイルを新規テーブルとしてインポート",
-  importCreateNewTable: "新規テーブルを作成",
+  importCreateNewTable: "新しいテーブルを作って取り込む",
+  importTargetLabel: "取り込み先",
+  importTargetExisting: "既存のテーブル {table} に追加",
+  importTargetExistingHint: "ファイルの列を既存テーブルの列に対応づけて行を追加します。",
+  importTargetNewHint: "ファイルの列から型を推定して、新しいテーブルを作成してから取り込みます。",
   importNewTableName: "新しいテーブル名",
   importNewTableColumns: "列 (名前 / 型)",
   importNewTableHint:
@@ -12589,6 +12604,8 @@ const ja: Dict = {
   usersPasswordDone: "パスワードを変更しました",
   usersPasswordFailed: "パスワードの変更に失敗しました: {error}",
   usersDropUser: "ユーザを削除",
+  usersDangerZone: "危険な操作",
+  usersDropUserHint: "このユーザ (ロール) と付与済みの権限をすべて削除します。元に戻せません。",
   usersDropConfirmTitle: "ユーザを削除",
   usersDropConfirmMessage: "{name} を完全に削除します。この操作は取り消せません。",
   usersDropConfirmOk: "削除",
@@ -13649,6 +13666,9 @@ const ja: Dict = {
   taskFormOutputPathPlaceholder: "例: sales-{date}.csv",
   taskFormOutputPathHint:
     "実行時に {date} は YYYY-MM-DD、{datetime} は YYYYMMDD-HHMMSS (UTC) に展開されます。",
+  taskFormTitleNew: "新規タスク",
+  taskFormTitleEdit: "タスクを編集 — {name}",
+  taskFormDatabaseDefault: "空欄なら接続の既定 ({database})",
   taskFormOutputPathPreview: "プレビュー: {path}",
   taskFormOutputPathRequired: "出力先パスを入力してください。",
   taskFormMaskHint:

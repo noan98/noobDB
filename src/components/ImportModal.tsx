@@ -23,7 +23,7 @@ import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Checkbox, Input, PressableButton, Select, Switch } from "./ui";
+import { Button, Checkbox, Input, PressableButton, Radio, Select, Switch } from "./ui";
 import { Spinner } from "./Spinner";
 import { LoadingButton } from "./LoadingButton";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection, PathRow } from "./modalForm";
@@ -910,37 +910,59 @@ export function ImportModal({
       </ModalHeader>
 
       <ModalBody display="flex" flexDirection="column" gap="4">
+        {/* 取り込み先を最初に決める (題名の「{table} にインポート」と新規作成のスイッチが食い違って見えないように)。 */}
         <FormSection>
-          <FieldLabel htmlFor="import-path">{t("importFile")}</FieldLabel>
-          <PathRow>
-            <Input
-              id="import-path"
-              flex="1"
-              minW={0}
-              type="text"
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-              placeholder={t("importFilePlaceholder")}
-              disabled={importing}
-            />
-            <Button type="button" onClick={handleBrowse} disabled={importing}>
-              {t("importBrowse")}
-            </Button>
-          </PathRow>
-        </FormSection>
-
-        <FormSection flexDirection="row" flexWrap="wrap" gap="3.5" alignItems="flex-end">
-          <chakra.div display="flex" flexDirection="row" alignItems="center" gap="1.5">
-            <Switch
-              checked={createNew}
-              onChange={setCreateNew}
-              // 既存テーブルが無い (DB から開いた) ときは切り替え先が無い。
-              disabled={importing || table === null}
-              label={t("importCreateNewTable")}
-            />
+          <FieldLabel as="div">{t("importTargetLabel")}</FieldLabel>
+          <chakra.div
+            display="flex"
+            flexDirection="column"
+            gap="2"
+            role="radiogroup"
+            aria-label={t("importTargetLabel")}
+          >
+            {table !== null && (
+              <chakra.label
+                display="inline-flex"
+                alignItems="flex-start"
+                gap="2"
+                cursor="pointer"
+                userSelect="none"
+              >
+                <Radio
+                  name="import-target"
+                  checked={!createNew}
+                  onChange={() => setCreateNew(false)}
+                  disabled={importing}
+                  mt="0.75"
+                />
+                <chakra.span display="flex" flexDirection="column">
+                  <chakra.span fontSize="md">{t("importTargetExisting", { table })}</chakra.span>
+                  <chakra.span textStyle="caption">{t("importTargetExistingHint")}</chakra.span>
+                </chakra.span>
+              </chakra.label>
+            )}
+            <chakra.label
+              display="inline-flex"
+              alignItems="flex-start"
+              gap="2"
+              cursor="pointer"
+              userSelect="none"
+            >
+              <Radio
+                name="import-target"
+                checked={createNew}
+                onChange={() => setCreateNew(true)}
+                disabled={importing || table === null}
+                mt="0.75"
+              />
+              <chakra.span display="flex" flexDirection="column">
+                <chakra.span fontSize="md">{t("importCreateNewTable")}</chakra.span>
+                <chakra.span textStyle="caption">{t("importTargetNewHint")}</chakra.span>
+              </chakra.span>
+            </chakra.label>
           </chakra.div>
           {createNew && (
-            <chakra.div display="flex" flexDirection="column" gap="1.5" flex="1" minW="200px">
+            <chakra.div display="flex" flexDirection="column" gap="1.5" mt="1">
               <FieldLabel htmlFor="import-new-table-name">{t("importNewTableName")}</FieldLabel>
               <Input
                 id="import-new-table-name"
@@ -960,6 +982,25 @@ export function ImportModal({
               />
             </chakra.div>
           )}
+        </FormSection>
+
+        <FormSection>
+          <FieldLabel htmlFor="import-path">{t("importFile")}</FieldLabel>
+          <PathRow>
+            <Input
+              id="import-path"
+              flex="1"
+              minW={0}
+              type="text"
+              value={path}
+              onChange={(e) => setPath(e.target.value)}
+              placeholder={t("importFilePlaceholder")}
+              disabled={importing}
+            />
+            <Button type="button" onClick={handleBrowse} disabled={importing}>
+              {t("importBrowse")}
+            </Button>
+          </PathRow>
         </FormSection>
 
         <FormSection flexDirection="row" flexWrap="wrap" gap="3.5" alignItems="flex-end">

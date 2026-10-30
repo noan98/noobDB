@@ -542,6 +542,16 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   // パスワード欄 (保存先 = OS keyring) を描画するときだけ keyring の疎通を確認する (#1622)。
   const keyringStatus = useKeyringStatus(!isFileBacked && !iamActive);
   const effectiveSslMode: SslMode = iamActive ? effectiveSslModeForIam(sslMode) : sslMode;
+  // 証明書の欄は、検証するモードを選んだか、既に値があるか、「証明書を指定する」を押したときだけ出す
+  // (既定の「優先 (検証なし)」でも 3 つのパス欄が並んでフォームが長くなっていた)。
+  const [showCerts, setShowCerts] = useState(false);
+  const certsVisible =
+    showCerts ||
+    effectiveSslMode === "verify_ca" ||
+    effectiveSslMode === "verify_full" ||
+    !!sslRootCert.trim() ||
+    !!sslClientCert.trim() ||
+    !!sslClientKey.trim();
   const ssmConfig = (): SsmConfig | null =>
     useSsm
       ? { target: ssmTarget.trim(), region: ssmRegion.trim(), profile: ssmProfile.trim() || null }
@@ -1285,54 +1295,62 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                 {t("formTlsProductionHint")}
               </Text>
             )}
-          <Box mt="2">
-            <FieldLabel htmlFor={`${fid}-tls-root-cert`}>{t("formTlsRootCert")}</FieldLabel>
-            <Flex gap="2" align="end">
-              <Input
-                id={`${fid}-tls-root-cert`}
-                value={sslRootCert}
-                onChange={(e) => setSslRootCert(e.target.value)}
-                placeholder={t("formTlsRootCertPlaceholder")}
-              />
-              <Button type="button" onClick={() => pickCertFile(setSslRootCert, sslRootCert)}>
-                {t("formBrowse")}
-              </Button>
-            </Flex>
-            <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
-              {t("formTlsRootCertHelp")}
-            </Text>
-          </Box>
-          <Box mt="2">
-            <FieldLabel htmlFor={`${fid}-tls-client-cert`}>{t("formTlsClientCert")}</FieldLabel>
-            <Flex gap="2" align="end">
-              <Input
-                id={`${fid}-tls-client-cert`}
-                value={sslClientCert}
-                onChange={(e) => setSslClientCert(e.target.value)}
-                placeholder={t("formTlsClientCertPlaceholder")}
-              />
-              <Button type="button" onClick={() => pickCertFile(setSslClientCert, sslClientCert)}>
-                {t("formBrowse")}
-              </Button>
-            </Flex>
-          </Box>
-          <Box mt="2">
-            <FieldLabel htmlFor={`${fid}-tls-client-key`}>{t("formTlsClientKey")}</FieldLabel>
-            <Flex gap="2" align="end">
-              <Input
-                id={`${fid}-tls-client-key`}
-                value={sslClientKey}
-                onChange={(e) => setSslClientKey(e.target.value)}
-                placeholder={t("formTlsClientKeyPlaceholder")}
-              />
-              <Button type="button" onClick={() => pickCertFile(setSslClientKey, sslClientKey)}>
-                {t("formBrowse")}
-              </Button>
-            </Flex>
-            <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
-              {t("formTlsClientHelp")}
-            </Text>
-          </Box>
+          {certsVisible ? (
+            <>
+              <Box mt="2">
+                <FieldLabel htmlFor={`${fid}-tls-root-cert`}>{t("formTlsRootCert")}</FieldLabel>
+                <Flex gap="2" align="end">
+                  <Input
+                    id={`${fid}-tls-root-cert`}
+                    value={sslRootCert}
+                    onChange={(e) => setSslRootCert(e.target.value)}
+                    placeholder={t("formTlsRootCertPlaceholder")}
+                  />
+                  <Button type="button" onClick={() => pickCertFile(setSslRootCert, sslRootCert)}>
+                    {t("formBrowse")}
+                  </Button>
+                </Flex>
+                <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
+                  {t("formTlsRootCertHelp")}
+                </Text>
+              </Box>
+              <Box mt="2">
+                <FieldLabel htmlFor={`${fid}-tls-client-cert`}>{t("formTlsClientCert")}</FieldLabel>
+                <Flex gap="2" align="end">
+                  <Input
+                    id={`${fid}-tls-client-cert`}
+                    value={sslClientCert}
+                    onChange={(e) => setSslClientCert(e.target.value)}
+                    placeholder={t("formTlsClientCertPlaceholder")}
+                  />
+                  <Button type="button" onClick={() => pickCertFile(setSslClientCert, sslClientCert)}>
+                    {t("formBrowse")}
+                  </Button>
+                </Flex>
+              </Box>
+              <Box mt="2">
+                <FieldLabel htmlFor={`${fid}-tls-client-key`}>{t("formTlsClientKey")}</FieldLabel>
+                <Flex gap="2" align="end">
+                  <Input
+                    id={`${fid}-tls-client-key`}
+                    value={sslClientKey}
+                    onChange={(e) => setSslClientKey(e.target.value)}
+                    placeholder={t("formTlsClientKeyPlaceholder")}
+                  />
+                  <Button type="button" onClick={() => pickCertFile(setSslClientKey, sslClientKey)}>
+                    {t("formBrowse")}
+                  </Button>
+                </Flex>
+                <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
+                  {t("formTlsClientHelp")}
+                </Text>
+              </Box>
+            </>
+          ) : (
+            <Button type="button" variant="ghost" size="sm" mt="2" onClick={() => setShowCerts(true)}>
+              {t("formTlsShowCerts")}
+            </Button>
+          )}
           {(useSsh || useSsm) && (
             <Text color="app.textMuted" fontSize="xs" mt="2" mb="0">
               {t("formTlsSshHint")}
