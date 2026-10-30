@@ -804,7 +804,7 @@ jobs:
 
       - name: Cache cargo
         id: rust-cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           workspaces: "./src-tauri -> target"
           key: clippy
@@ -987,7 +987,7 @@ jobs:
 
       - name: Cache cargo
         id: rust-cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           workspaces: "./src-tauri -> target"
           key: test
@@ -1227,7 +1227,7 @@ jobs:
 
       - name: Cache cargo
         id: rust-cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           workspaces: "./src-tauri -> target"
           key: coverage
@@ -1488,7 +1488,7 @@ jobs:
 
       - name: Cache cargo
         id: rust-cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           workspaces: "./src-tauri -> target"
           key: windows
