@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { useKeepAliveActive } from "./KeepAlive";
+import { SurfaceErrorBoundary } from "./SurfaceErrorBoundary";
 import {
   hasOpenNestedLayer,
   isEditableElement,
@@ -108,7 +109,8 @@ export function WorkspaceSurface({
       bg="app.bg"
       data-workspace-surface={view}
     >
-      {children}
+      {/* 中身の描画例外でアプリ全体が消えない (真っ黒にならない) よう、サーフェス単位で受け止める。 */}
+      <SurfaceErrorBoundary onClose={onClose}>{children}</SurfaceErrorBoundary>
     </Flex>
   );
 }
