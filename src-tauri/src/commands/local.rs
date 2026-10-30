@@ -388,6 +388,7 @@ pub async fn create_local_session_inner(state: &AppState) -> Result<SessionId> {
         reconnect_ssh: None,
         reconnect_ssm: None,
         _tunnel: None,
+        _ssm_keepalive_stop: None,
         local_temp_file: Some(path),
         schema_cache: crate::cache::SchemaCache::default(),
         query_cache: crate::cache::QueryResultCache::default(),

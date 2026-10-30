@@ -417,6 +417,7 @@ pub(crate) async fn create_sandbox_inner(
         // 揮発性一時ファイルとは異なり切断時に自動削除してはいけない。
         local_temp_file: None,
         _tunnel: None,
+        _ssm_keepalive_stop: None,
         schema_cache: crate::cache::SchemaCache::default(),
         query_cache: crate::cache::QueryResultCache::default(),
         health_version: Default::default(),

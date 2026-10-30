@@ -22,6 +22,8 @@ use tokio::net::TcpListener;
 use tokio::process::{Child, Command};
 use tokio::task::JoinHandle;
 
+pub mod keepalive;
+
 use crate::db::aws_iam;
 use crate::error::{AppError, Result};
 
