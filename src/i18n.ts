@@ -4594,7 +4594,7 @@ const en = {
   helpSectionGuardsDesc: "Settings that help prevent accidental writes.",
 
   helpSectionConnection: "Connections & authentication",
-  helpSectionConnectionDesc: "How noobDB authenticates to the database.",
+  helpSectionConnectionDesc: "How noobDB reaches the database and authenticates to it.",
   helpAwsIamTitle: "AWS IAM authentication (RDS / Aurora)",
   helpAwsIamDesc:
     'Connect to Amazon RDS / Aurora MySQL or PostgreSQL with an IAM auth token instead of a stored password. Choose "AWS IAM" as the authentication method in the connection form. TLS is always required.',
@@ -4612,15 +4612,15 @@ const en = {
   helpSsmStep1:
     "Install AWS CLI v2 and the Session Manager plugin on this PC. If noobDB runs on Windows, install them on Windows (the ones inside WSL cannot be used).",
   helpSsmStep2:
-    "Prepare an AWS profile. To use aws-vault, put `credential_process = aws-vault export --format=json NAME` in ~/.aws/config. If MFA is required, add `--prompt=wincredui`.",
+    "Prepare an AWS profile. To use aws-vault, put `credential_process = aws-vault export --format=json NAME` in ~/.aws/config. If MFA is required, add `--prompt=wincredui` (on Windows).",
   helpSsmStep3:
-    'In the connection form, choose "SSM (Session Manager)" as the route, then enter the bastion Instance ID, the Region (optional) and the AWS profile (optional).',
+    'In the connection form, choose "SSM (Session Manager)" for the connection route, then enter the bastion Instance ID, the Region (optional) and the AWS profile (optional).',
   helpSsmStep4:
     "Enter the destination as seen from the bastion in Host / Port (e.g. the RDS endpoint name and 3306). Do not enter 127.0.0.1.",
   helpSsmNote:
-    "Required IAM permissions: ssm:StartSession on the target instance and on the AWS-StartPortForwardingSessionToRemoteHost document for your user / role; on the EC2 side, an instance profile such as AmazonSSMManagedInstanceCore and outbound access to SSM (NAT or VPC endpoints). To keep idle timeouts from cutting the session, noobDB sends a light query (SELECT 1) every few minutes on SSM connections. This cannot prevent disconnects from the Session Manager maximum session duration or from expiring temporary credentials such as AssumeRole; once credentials expire, reconnecting fails too. When combined with AWS IAM authentication, still enter the RDS endpoint name as Host (the token is signed for that name). Because the connection target becomes 127.0.0.1, TLS Verify full (hostname verification) fails; use Verify CA.",
+    "Required IAM permissions: ssm:StartSession on the target instance and on the AWS-StartPortForwardingSessionToRemoteHost document for your user / role; on the EC2 side, an instance profile such as AmazonSSMManagedInstanceCore and outbound access to SSM (NAT or VPC endpoints). To keep idle timeouts from cutting the session, noobDB sends a light query (SELECT 1) every few minutes on SSM connections. This cannot prevent disconnects from the Session Manager maximum session duration or from expiring temporary credentials such as AssumeRole; reconnecting fails until you refresh the credentials. When combined with AWS IAM authentication, still enter the RDS endpoint name as Host (the token is signed for that name). Because the connection target becomes 127.0.0.1, TLS Verify full (hostname verification) may fail; use Verify CA.",
   helpSsmTroubleTitle: "When SSM won't connect",
-  helpSsmTroubleDesc: "Common causes by error message.",
+  helpSsmTroubleDesc: "Common causes by error message. Check them in order from the top.",
   helpSsmTrouble1:
     "aws or the plugin is not found: not installed, or not on PATH. Watch out for mixing up Windows and WSL.",
   helpSsmTrouble2:
@@ -11729,7 +11729,7 @@ const ja: Dict = {
   helpSectionGuardsDesc: "誤った書き込みを防ぐための設定です。",
 
   helpSectionConnection: "接続と認証",
-  helpSectionConnectionDesc: "noobDB が DB へ認証する方法です。",
+  helpSectionConnectionDesc: "DB への接続経路と認証方法です。",
   helpAwsIamTitle: "AWS IAM 認証 (RDS / Aurora)",
   helpAwsIamDesc:
     "保存したパスワードの代わりに IAM 認証トークンで Amazon RDS / Aurora の MySQL・PostgreSQL へ接続します。接続フォームの認証方式で「AWS IAM」を選びます。TLS は常に必須です。",
@@ -11747,15 +11747,15 @@ const ja: Dict = {
   helpSsmStep1:
     "この PC に AWS CLI v2 と Session Manager プラグインをインストールします。noobDB が Windows で動いているなら Windows 側に入れてください (WSL 側のものは使えません)。",
   helpSsmStep2:
-    "AWS プロファイルを用意します。aws-vault を使う場合は ~/.aws/config に `credential_process = aws-vault export --format=json 名前` を書き、MFA が必要なら `--prompt=wincredui` を付けます。",
+    "AWS プロファイルを用意します。aws-vault を使う場合は ~/.aws/config に `credential_process = aws-vault export --format=json 名前` を書き、MFA が必要なら `--prompt=wincredui` (Windows の場合) を付けます。",
   helpSsmStep3:
-    "接続フォームで経路に「SSM (Session Manager)」を選び、踏み台のインスタンスID・リージョン (任意)・AWSプロファイル名 (任意) を入力します。",
+    "接続フォームで接続経路に「SSM (Session Manager)」を選び、踏み台のインスタンスID・リージョン (任意)・AWSプロファイル名 (任意) を入力します。",
   helpSsmStep4:
     "ホスト / ポートには踏み台から見た接続先 (RDS のエンドポイント名と 3306 など) を入力します。127.0.0.1 は入れないでください。",
   helpSsmNote:
-    "必要な IAM 権限: 自分のユーザー / ロールに、対象インスタンスとドキュメント AWS-StartPortForwardingSessionToRemoteHost への ssm:StartSession。EC2 側には AmazonSSMManagedInstanceCore などのインスタンスプロファイルと、SSM への外向き通信 (NAT または VPC エンドポイント) が必要です。無操作で切れないよう、noobDB は SSM 経路の接続に数分おきに軽い通信 (SELECT 1) を流します。ただし Session Manager の最大セッション時間 (Maximum session duration) や、AssumeRole などの一時的な認証情報の期限切れによる切断は防げません。期限切れだと再接続にも失敗します。AWS IAM 認証と組み合わせる場合も、ホストには RDS のエンドポイント名を入力します (トークンはこの名前で署名されます)。接続先が 127.0.0.1 になるため、TLS の Verify full (ホスト名の検証) は通りません。Verify CA を使ってください。",
+    "必要な IAM 権限: 自分のユーザー / ロールに、対象インスタンスとドキュメント AWS-StartPortForwardingSessionToRemoteHost への ssm:StartSession。EC2 側には AmazonSSMManagedInstanceCore などのインスタンスプロファイルと、SSM への外向き通信 (NAT または VPC エンドポイント) が必要です。無操作で切れないよう、noobDB は SSM 経路の接続に数分おきに軽い通信 (SELECT 1) を流します。ただし Session Manager の最大セッション時間 (Maximum session duration) や、AssumeRole などの一時的な認証情報の期限切れによる切断は防げません。資格情報を更新するまで再接続に失敗します。AWS IAM 認証と組み合わせる場合も、ホストには RDS のエンドポイント名を入力します (トークンはこの名前で署名されます)。接続先が 127.0.0.1 になるため、TLS の「完全検証」(ホスト名の検証) は失敗することがあります。「CA 検証」を使ってください。",
   helpSsmTroubleTitle: "SSM で繋がらないとき",
-  helpSsmTroubleDesc: "エラーメッセージ別のよくある原因です。",
+  helpSsmTroubleDesc: "エラーメッセージ別のよくある原因です。上から順に確認してください。",
   helpSsmTrouble1:
     "aws / プラグインが見つからない: 未インストール、または PATH が通っていません。Windows と WSL の取り違えに注意してください。",
   helpSsmTrouble2:

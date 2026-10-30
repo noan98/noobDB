@@ -87,6 +87,13 @@ describe("HelpView 節ナビ・検索・導線 (#1273 / #1274)", () => {
     fireEvent.click(screen.getByRole("button", { name: t("helpTryAria", { title: t("helpSsmTitle") }) }));
     expect(onOpenFeature).toHaveBeenCalledWith({ kind: "view", view: "newConnection" });
   });
+
+  it("SSM トラブル項目には『試す』ボタンが無い (#1977)", () => {
+    renderWithProviders(<HelpView onClose={() => {}} onOpenFeature={vi.fn()} />);
+    expect(
+      screen.queryByRole("button", { name: t("helpTryAria", { title: t("helpSsmTroubleTitle") }) }),
+    ).toBeNull();
+  });
 });
 
 describe("HelpView 視覚アンカー (#1835)", () => {
