@@ -285,15 +285,17 @@ impl XlsxSheetWriter {
     /// 定数メモリモードのシートを 1 枚持つブックを作る。
     ///
     /// `rust_xlsxwriter` の定数メモリモードはシート作成時に OS の一時ディレクトリへ
-    /// 一時ファイルを作り、失敗すると**ライブラリ内部で panic する**。そのため先に
-    /// `set_tempdir` (書き込み可能かを実際にファイルを作って検査し、失敗を `Err` で
-    /// 返す) で同じディレクトリを検証してから作成する。
+    /// 一時ファイルを作る。0.101 からシート作成自体も失敗を `Err` で返すが、先に
+    /// `set_tempdir` (書き込み可能かを実際にファイルを作って検査する) で同じ
+    /// ディレクトリを検証し、原因の分かるエラーにしてから作成する。
     pub(crate) fn new() -> Result<Self> {
         let mut workbook = Workbook::new();
         workbook
             .set_tempdir(std::env::temp_dir())
             .map_err(xlsx_err)?;
-        workbook.add_worksheet_with_constant_memory();
+        workbook
+            .add_worksheet_with_constant_memory()
+            .map_err(xlsx_err)?;
         Ok(Self {
             workbook,
             header_format: Format::new().set_bold(),
@@ -329,7 +331,10 @@ impl XlsxSheetWriter {
         if self.sheet_count > 0 {
             self.finish_current_sheet()?;
         }
-        let sheet = self.workbook.add_worksheet_with_constant_memory();
+        let sheet = self
+            .workbook
+            .add_worksheet_with_constant_memory()
+            .map_err(xlsx_err)?;
         sheet.set_name(name).map_err(xlsx_err)?;
         self.current = self.sheet_count;
         self.sheet_count += 1;
