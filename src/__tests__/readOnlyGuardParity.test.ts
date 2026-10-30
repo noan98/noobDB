@@ -919,10 +919,12 @@ const LIFECYCLE_ALLOWED_CALLS: Record<string, string[]> = {
   reconnect: ["old.conn.execute_in_transaction", "old.conn.finish_transaction"],
 };
 
+// SSM キープアライブ (#1976) は `SELECT 1` (health_check) を定期的に流すだけで、DB へ書き込まない。
+const SSM_KEEPALIVE = ["crate::ssm::keepalive::spawn_for_session"];
 const LIFECYCLE_ALLOWED_PATHS: Record<string, string[]> = {
-  connect: SESSION_CACHES,
-  reconnect: SESSION_CACHES,
-  test_connection: SESSION_CACHES,
+  connect: [...SESSION_CACHES, ...SSM_KEEPALIVE],
+  reconnect: [...SESSION_CACHES, ...SSM_KEEPALIVE],
+  test_connection: [...SESSION_CACHES, ...SSM_KEEPALIVE],
 };
 
 /** LIFECYCLE の必須の足場。 */
