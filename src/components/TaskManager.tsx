@@ -567,8 +567,8 @@ function TaskRow({
             </Button>
           </Tooltip>
           <Tooltip label={t("taskDelete")}>
-            <Button type="button" variant="danger" onClick={onDelete} aria-label={t("taskDelete")}>
-              <Icon name="close" size={ICON_SIZES.sm} />
+            <Button type="button" variant="dangerOutline" onClick={onDelete} aria-label={t("taskDelete")}>
+              <Icon name="trash" size={ICON_SIZES.sm} />
             </Button>
           </Tooltip>
         </Flex>
@@ -594,7 +594,7 @@ function TaskRow({
                 <AssertionTrendList taskId={task.id} refreshKey={runs} />
               )}
               <Flex justify="flex-end">
-                <Button type="button" variant="danger" size="sm" onClick={onClearHistory}>
+                <Button type="button" variant="dangerOutline" size="sm" onClick={onClearHistory}>
                   {t("taskHistoryClear")}
                 </Button>
               </Flex>

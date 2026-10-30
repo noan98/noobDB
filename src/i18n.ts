@@ -7509,12 +7509,12 @@ const ja: Dict = {
   aiHistorySummaryTitle: "作業サマリ",
   aiHistorySummaryCopy: "サマリをコピー",
 
-  editorSaveSnippet: "Save snippet",
+  editorSaveSnippet: "スニペットとして保存",
   editorSaveSnippetTitle: "選択範囲（またはエディタ全体）を再利用可能なスニペットとして保存します。",
 
-  editorOpenFile: "Open",
+  editorOpenFile: "開く",
   editorOpenFileTitle: ".sql/.txt ファイルを新しいタブで開きます。",
-  editorSaveFile: "Save as...",
+  editorSaveFile: "名前を付けて保存...",
   editorSaveFileTitle: "このタブの SQL を .sql ファイルとして保存します。",
   editorCompletionCte: "CTE",
   editorCompletionDerived: "派生表",
@@ -9091,7 +9091,7 @@ const ja: Dict = {
   qbPreview: "クエリプレビュー",
   qbCopy: "コピー",
   qbCopied: "コピー済み",
-  qbExecute: "Run",
+  qbExecute: "実行",
   qbExecuteReadOnlyTitle: "読み取り専用 — 書き込み系の SQL は拒否されます。Dry Run でプレビューできます。",
   qbPreviewRun: "Dry Run",
   qbRemove: "削除",
@@ -9161,7 +9161,7 @@ const ja: Dict = {
   gridBlobBytes: "BLOB · {size}",
 
   editPendingCount: "{cells} セル / {rows} 行を編集中",
-  editPreviewButton: "Preview",
+  editPreviewButton: "プレビュー",
   editApplyButton: "適用",
   editApplyButtonTitle: "UPDATE 文を実行し、結果を再取得します。",
   editApplyConfirmTitle: "本番接続に変更を適用しますか？",
@@ -9243,7 +9243,7 @@ const ja: Dict = {
   statusApplyEditsPartial:
     "適用に失敗したため、{total} 件の UPDATE をすべてロールバックしました（変更は適用されていません）: {error}",
 
-  exportButton: "Export",
+  exportButton: "エクスポート",
   exportButtonTitle: "現在の結果セットを CSV または JSON でエクスポートします",
   exportDisabledNoRows: "行が返るクエリを実行するとエクスポートできます。",
   exportDisabledStreaming: "行の読み込みが完了してからエクスポートできます。",
@@ -9353,7 +9353,7 @@ const ja: Dict = {
   exportSavePathPlaceholder: "保存するファイルのパス",
   exportBrowse: "参照...",
   exportCancel: "キャンセル",
-  exportExecute: "Export",
+  exportExecute: "エクスポート",
   exportSaving: "エクスポート中...",
   exportSuccess: "{path} に {bytes} バイトを書き出しました",
   exportError: "エクスポートに失敗しました: {error}",

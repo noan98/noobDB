@@ -1072,10 +1072,11 @@ export function UsersPanel({
                   <Tooltip label={readOnly ? t("usersReadOnlyHint") : undefined} focusableWrapper={readOnly}>
                     <Button
                       type="button"
-                      variant="danger"
+                      variant="dangerOutline"
                       disabled={readOnly}
                       onClick={() => void submitDropUser()}
                     >
+                      <Icon name="trash" size={ICON_SIZES.sm} />
                       {t("usersDropUser")}
                     </Button>
                   </Tooltip>

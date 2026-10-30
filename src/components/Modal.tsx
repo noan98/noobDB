@@ -1,6 +1,6 @@
 import { chakra, Dialog, Portal } from "@chakra-ui/react";
 import { motion, useIsPresent } from "motion/react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { ComponentProps, KeyboardEvent, PointerEvent, ReactNode } from "react";
 import { transitions, variants } from "../motion";
 import { Button } from "./ui";
@@ -76,7 +76,11 @@ interface ModalProps {
   closeOnInteractOutside?: boolean;
   /** Escape キーで閉じるか。既定 true。 */
   closeOnEscape?: boolean;
-  /** 開いたときにフォーカスする要素を返す (例: キャンセルボタン)。 */
+  /**
+   * 開いたときにフォーカスする要素を返す (例: キャンセルボタン)。省略時は本文の最初の
+   * 操作できる要素 (`firstBodyFocusable`)。ヘッダ右上の × に当てると、開いた瞬間に
+   * 「閉じる」の吹き出しが出て見出しに重なるため、既定では避ける。
+   */
   initialFocusEl?: () => HTMLElement | null;
   /**
    * 主アクション (フッター右端の primary ボタンと同じ処理)。渡すと
@@ -98,6 +102,22 @@ interface ModalProps {
   children: ReactNode;
 }
 
+/** 本文 (`ModalBody`) の中で最初にフォーカスできる要素。無ければ null (Ark の既定に任せる)。 */
+const BODY_FOCUSABLE =
+  "input:not([disabled]):not([type='hidden']), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex='-1'])";
+export function firstBodyFocusable(root: ParentNode | null): HTMLElement | null {
+  const body = root?.querySelector("[data-modal-body]");
+  const first = body?.querySelector<HTMLElement>(BODY_FOCUSABLE) ?? null;
+  // ラジオグループは選択中の項目に当てる (矢印キーでの移動の起点になる)。
+  if (first instanceof HTMLInputElement && first.type === "radio" && first.name) {
+    const checked = body?.querySelector<HTMLElement>(
+      `input[type='radio'][name="${CSS.escape(first.name)}"]:checked`,
+    );
+    if (checked) return checked;
+  }
+  return first;
+}
+
 export function Modal({
   open = true,
   onClose,
@@ -110,6 +130,10 @@ export function Modal({
   submitBusy = false,
   children,
 }: ModalProps) {
+  // 入れ子のモーダルでも自分の本文だけを探せるよう、コンテンツに一意の印を付ける。
+  const modalId = useId();
+  const defaultInitialFocus = () =>
+    firstBodyFocusable(document.querySelector(`[data-modal-id="${CSS.escape(modalId)}"]`));
   const onContentKeyDown = onSubmit
     ? (e: KeyboardEvent<HTMLDivElement>) => {
         // ポータルで描画した子 (確認ダイアログなど) のキーは React ツリー上で親へ伝わるが、
@@ -152,7 +176,7 @@ export function Modal({
       placement="center"
       closeOnInteractOutside={closeOnInteractOutside}
       closeOnEscape={closeOnEscape}
-      initialFocusEl={initialFocusEl}
+      initialFocusEl={initialFocusEl ?? defaultInitialFocus}
       // 開閉アニメは motion 側で対称に行うため、Chakra/Ark の CSS プリセットは無効化。
       motionPreset="none"
     >
@@ -174,6 +198,7 @@ export function Modal({
         >
           <Dialog.Content asChild>
             <MotionContent
+              data-modal-id={modalId}
               {...variants.dialog}
               transition={transitions.enter}
               onKeyDown={onContentKeyDown}
@@ -285,7 +310,7 @@ type ModalBodyProps = ComponentProps<typeof Dialog.Body>;
 
 export function ModalBody({ children, ...rest }: ModalBodyProps) {
   return (
-    <Dialog.Body css={{ flex: 1, overflowY: "auto", py: "3.5", px: "4" }} {...rest}>
+    <Dialog.Body data-modal-body="" css={{ flex: 1, overflowY: "auto", py: "3.5", px: "4" }} {...rest}>
       {children}
     </Dialog.Body>
   );
