@@ -314,7 +314,7 @@ pub async fn connect(
 
 /// SSM 経路のときだけキープアライブ用の停止チャネルを作る (#1976)。送信側は `Session` に、
 /// 受信側は `state` への登録後に `spawn_ssm_keepalive` へ渡す。SSM 以外は `(None, None)`。
-fn ssm_keepalive_channel(
+pub(crate) fn ssm_keepalive_channel(
     tunnel: Option<&Tunnel>,
 ) -> (
     Option<tokio::sync::oneshot::Sender<()>>,
