@@ -78,6 +78,15 @@ describe("HelpView 節ナビ・検索・導線 (#1273 / #1274)", () => {
     );
     expect(onOpenFeature).toHaveBeenLastCalledWith({ kind: "view", view: "compare" });
   });
+
+  it("SSM 経路の項目が表示され、『試す』で新規接続フォームを開く (#1977)", () => {
+    const onOpenFeature = vi.fn();
+    renderWithProviders(<HelpView onClose={() => {}} onOpenFeature={onOpenFeature} />);
+    expect(screen.getByText(t("helpSsmTitle"))).toBeInTheDocument();
+    expect(screen.getByText(t("helpSsmTroubleTitle"))).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("helpTryAria", { title: t("helpSsmTitle") }) }));
+    expect(onOpenFeature).toHaveBeenCalledWith({ kind: "view", view: "newConnection" });
+  });
 });
 
 describe("HelpView 視覚アンカー (#1835)", () => {

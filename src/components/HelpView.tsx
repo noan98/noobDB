@@ -293,6 +293,21 @@ const SECTIONS: Section[] = [
         stepKeys: ["helpAwsIamStep1", "helpAwsIamStep2", "helpAwsIamStep3"],
         noteKey: "helpAwsIamNote",
       },
+      {
+        // AWS SSM (Session Manager) 経路 (#1977)。フォームのヘルプ文 (formSsm*) と内容を揃える。
+        titleKey: "helpSsmTitle",
+        icon: "server",
+        tryTarget: { kind: "view", view: "newConnection" },
+        descKey: "helpSsmDesc",
+        stepKeys: ["helpSsmStep1", "helpSsmStep2", "helpSsmStep3", "helpSsmStep4"],
+        noteKey: "helpSsmNote",
+      },
+      {
+        titleKey: "helpSsmTroubleTitle",
+        icon: "alert-circle",
+        descKey: "helpSsmTroubleDesc",
+        stepKeys: ["helpSsmTrouble1", "helpSsmTrouble2", "helpSsmTrouble3", "helpSsmTrouble4"],
+      },
     ],
   },
   {
