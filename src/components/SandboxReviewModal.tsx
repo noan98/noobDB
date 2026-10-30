@@ -492,7 +492,9 @@ export function SandboxReviewModal({
                     key={tb.name}
                     table={tb}
                     sourceName={t("sandboxReviewSandboxSide")}
-                    targetName={targetProfile?.name ?? t("sandboxReviewOriginalSide")}
+                    targetName={t("sandboxReviewBaseSide")}
+                    // 比べている相手は元の DB の今の値ではなく、作成時 (最後の書き戻し時) のスナップショット。
+                    targetTitle={t("sandboxReviewColChange")}
                     statements={[]}
                     planReady={false}
                     showSql={false}
@@ -588,7 +590,8 @@ export function SandboxReviewModal({
               </chakra.div>
               {hasChanges && (
                 <chakra.div mt="2">
-                  <DataRowDiffTable diff={st.diff.desired} />
+                  {/* 行の差分もスナップショットとの比較。元の DB 側の今の値は「競合」として別に出す。 */}
+                  <DataRowDiffTable diff={st.diff.desired} changeTitle={t("sandboxReviewColChange")} />
                   {st.diff.desired.truncated && (
                     <chakra.p m={0} mt="1" textStyle="caption">
                       {t("sandboxReviewTruncated")}

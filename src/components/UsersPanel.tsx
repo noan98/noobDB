@@ -1069,17 +1069,6 @@ export function UsersPanel({
                       {t("usersChangePassword")}
                     </Button>
                   </Tooltip>
-                  <Tooltip label={readOnly ? t("usersReadOnlyHint") : undefined} focusableWrapper={readOnly}>
-                    <Button
-                      type="button"
-                      variant="dangerOutline"
-                      disabled={readOnly}
-                      onClick={() => void submitDropUser()}
-                    >
-                      <Icon name="trash" size={ICON_SIZES.sm} />
-                      {t("usersDropUser")}
-                    </Button>
-                  </Tooltip>
                 </Flex>
               </Flex>
 
@@ -1507,6 +1496,39 @@ export function UsersPanel({
                   </Flex>
                 </>
               )}
+
+              {/* 削除は普段の操作と並べず、一番下の「危険な操作」にまとめる (押し間違いを防ぐ)。 */}
+              <chakra.section
+                mt="4"
+                pt="3"
+                borderTop="1px solid"
+                borderColor="app.border"
+                display="flex"
+                alignItems="center"
+                gap="3"
+                flexWrap="wrap"
+                aria-label={t("usersDangerZone")}
+              >
+                <Box flex="1" minW="200px">
+                  <chakra.h4 m={0} textStyle="overline" color="app.textError">
+                    {t("usersDangerZone")}
+                  </chakra.h4>
+                  <chakra.p m={0} textStyle="caption">
+                    {t("usersDropUserHint")}
+                  </chakra.p>
+                </Box>
+                <Tooltip label={readOnly ? t("usersReadOnlyHint") : undefined} focusableWrapper={readOnly}>
+                  <Button
+                    type="button"
+                    variant="dangerOutline"
+                    disabled={readOnly}
+                    onClick={() => void submitDropUser()}
+                  >
+                    <Icon name="trash" size={ICON_SIZES.sm} />
+                    {t("usersDropUser")}
+                  </Button>
+                </Tooltip>
+              </chakra.section>
             </>
           )}
         </Box>

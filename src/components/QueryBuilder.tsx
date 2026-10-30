@@ -887,7 +887,9 @@ export function QueryBuilder({
   const [selectAll, setSelectAll] = useState(initialSnapshot?.selectAll ?? true);
   const [selectColumns, setSelectColumns] = useState<string[]>(initialSnapshot?.selectColumns ?? []);
   const [newSelectCol, setNewSelectCol] = useState("");
-  const [whereEnabled, setWhereEnabled] = useState(initialSnapshot?.whereEnabled ?? true);
+  // WHERE は既定オフ (空の条件のまま「実行」が押せない状態で始めない)。「条件を追加」でオンにする。
+  // UPDATE / DELETE に切り替えたときは全行対象を避けるためオンに戻す (下の setKind 参照)。
+  const [whereEnabled, setWhereEnabled] = useState(initialSnapshot?.whereEnabled ?? false);
   const [whereConditions, setWhereConditions] = useState<WhereCondition[]>(
     initialSnapshot?.whereConditions ?? [{ column: "", operator: "=", value: "" }],
   );
@@ -1171,8 +1173,14 @@ export function QueryBuilder({
   const updateCondition = (idx: number, patch: Partial<WhereCondition>) => {
     setWhereConditions((prev) => prev.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
   };
-  const addCondition = () =>
+  const addCondition = () => {
+    // オフのときは既存の空行を出すだけ (オンにした直後に空行が 2 つ並ばないように)。
+    if (!whereEnabled) {
+      setWhereEnabled(true);
+      return;
+    }
     setWhereConditions((prev) => [...prev, { column: "", operator: "=", value: "" }]);
+  };
   const removeCondition = (idx: number) => setWhereConditions((prev) => removeWhereCondition(prev, idx));
 
   const updateOrderBy = (idx: number, patch: Partial<OrderByItem>) => {
@@ -1270,7 +1278,15 @@ export function QueryBuilder({
             <Box css={sectionTitleCss}>{t("qbQueryType")}</Box>
             <Box css={pillListCss}>
               {(["SELECT", "INSERT", "UPDATE", "DELETE"] as QueryKind[]).map((k) => (
-                <chakra.button key={k} type="button" css={pillCss(kind === k)} onClick={() => setKind(k)}>
+                <chakra.button
+                  key={k}
+                  type="button"
+                  css={pillCss(kind === k)}
+                  onClick={() => {
+                    setKind(k);
+                    if (k === "UPDATE" || k === "DELETE") setWhereEnabled(true);
+                  }}
+                >
                   {k}
                 </chakra.button>
               ))}
@@ -1525,11 +1541,9 @@ export function QueryBuilder({
                   />
                   <chakra.span>{t("qbWhere")}</chakra.span>
                 </chakra.label>
-                {whereEnabled && (
-                  <chakra.button type="button" css={smallBtnCss} onClick={addCondition}>
-                    + {t("qbAddCondition")}
-                  </chakra.button>
-                )}
+                <chakra.button type="button" css={smallBtnCss} onClick={addCondition}>
+                  + {t("qbAddCondition")}
+                </chakra.button>
               </Box>
               {whereEnabled &&
                 whereConditions.map((c, i) => {

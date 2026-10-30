@@ -63,6 +63,10 @@ vi.mock("../api/tauri", async (importOriginal) => {
 });
 
 import { QueryBuilder } from "../components/QueryBuilder";
+
+/** WHERE は既定でオフなので、「条件を追加」を押して最初の条件行を出す。 */
+const enableWhere = () =>
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(t("qbAddCondition")) }));
 import { api } from "../api/tauri";
 
 beforeEach(() => {
@@ -73,10 +77,23 @@ beforeEach(() => {
 });
 
 describe("QueryBuilder validation (改善 2)", () => {
+  it("starts with WHERE off, so the empty condition row does not block Run", async () => {
+    renderWithProviders(
+      <QueryBuilder sessionId="s1" driver="mysql" onExecute={() => {}} onClose={() => {}} />,
+    );
+    await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
+    expect(screen.getByRole("checkbox", { name: t("qbWhereToggle") })).not.toBeChecked();
+    expect(screen.queryByPlaceholderText(t("qbColumn"))).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: t("qbExecute") })).not.toBeDisabled();
+    });
+  });
+
   it("disables Run when WHERE is enabled with no filled condition", async () => {
     renderWithProviders(
       <QueryBuilder sessionId="s1" driver="mysql" onExecute={() => {}} onClose={() => {}} />,
     );
+    enableWhere();
     await waitFor(() => {
       expect(screen.getByRole("button", { name: t("qbExecute") })).toBeDisabled();
     });
@@ -86,6 +103,8 @@ describe("QueryBuilder validation (改善 2)", () => {
     renderWithProviders(
       <QueryBuilder sessionId="s1" driver="mysql" onExecute={() => {}} onClose={() => {}} />,
     );
+    await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
+    enableWhere();
     await waitFor(() => {
       expect(screen.getByRole("button", { name: t("qbExecute") })).toBeDisabled();
     });
@@ -268,6 +287,8 @@ describe("QueryBuilder ComboSelect column picker (datalist 脱却)", () => {
       <QueryBuilder sessionId="s1" driver="mysql" onExecute={() => {}} onClose={() => {}} />,
     );
     await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
+    // WHERE は既定でオフ。「条件を追加」で最初の条件行を出す。
+    enableWhere();
     const columnInput = screen.getByPlaceholderText(t("qbColumn"));
     fireEvent.focus(columnInput);
 
@@ -284,6 +305,8 @@ describe("QueryBuilder type-aware value input (改善 1)", () => {
       <QueryBuilder sessionId="s1" driver="mysql" onExecute={() => {}} onClose={() => {}} />,
     );
     await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
+    // WHERE は既定でオフ。「条件を追加」で最初の条件行を出す。
+    enableWhere();
     fireEvent.change(screen.getByPlaceholderText(t("qbColumn")), {
       target: { value: "active" },
     });
@@ -296,6 +319,8 @@ describe("QueryBuilder type-aware value input (改善 1)", () => {
       <QueryBuilder sessionId="s1" driver="mysql" onExecute={() => {}} onClose={() => {}} />,
     );
     await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
+    // WHERE は既定でオフ。「条件を追加」で最初の条件行を出す。
+    enableWhere();
     fireEvent.change(screen.getByPlaceholderText(t("qbColumn")), {
       target: { value: "active" },
     });
@@ -364,6 +389,8 @@ describe("QueryBuilder WHERE の AND / OR とグループ (#1540)", () => {
       />,
     );
     await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
+    // WHERE は既定でオフ。「条件を追加」で最初の条件行を出す。
+    enableWhere();
     // 先頭行には結合セレクタも括弧トグルも無い。
     expect(screen.queryByLabelText(t("qbWhereConnector"))).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: new RegExp(t("qbAddCondition")) }));
@@ -402,6 +429,8 @@ describe("QueryBuilder WHERE の AND / OR とグループ (#1540)", () => {
       />,
     );
     await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
+    // WHERE は既定でオフ。「条件を追加」で最初の条件行を出す。
+    enableWhere();
     fireEvent.click(screen.getByRole("button", { name: new RegExp(t("qbAddCondition")) }));
     fireEvent.click(screen.getByRole("button", { name: new RegExp(t("qbAddCondition")) }));
     const cols = screen.getAllByPlaceholderText(t("qbColumn"));
@@ -448,6 +477,8 @@ describe("QueryBuilder の BETWEEN / OFFSET / 値の候補 (#1627)", () => {
     const onExecute = vi.fn();
     renderSelect(onExecute);
     await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
+    // WHERE は既定でオフ。「条件を追加」で最初の条件行を出す。
+    enableWhere();
     fireEvent.change(screen.getByPlaceholderText(t("qbColumn")), { target: { value: "id" } });
     // 演算子の入力欄 (既定値 "=") に BETWEEN を入れる。
     const op = screen
@@ -466,6 +497,8 @@ describe("QueryBuilder の BETWEEN / OFFSET / 値の候補 (#1627)", () => {
     const onExecute = vi.fn();
     renderSelect(onExecute);
     await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
+    // WHERE は既定でオフ。「条件を追加」で最初の条件行を出す。
+    enableWhere();
     fireEvent.change(screen.getByPlaceholderText(t("qbColumn")), { target: { value: "id" } });
     fireEvent.change(screen.getByPlaceholderText(t("qbValue")), { target: { value: "1" } });
     fireEvent.change(screen.getByLabelText(t("qbOffset")), { target: { value: "200" } });
@@ -491,6 +524,8 @@ describe("QueryBuilder の BETWEEN / OFFSET / 値の候補 (#1627)", () => {
     const onExecute = vi.fn();
     renderSelect(onExecute);
     await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
+    // WHERE は既定でオフ。「条件を追加」で最初の条件行を出す。
+    enableWhere();
     fireEvent.change(screen.getByPlaceholderText(t("qbColumn")), { target: { value: "name" } });
     const value = () => screen.getByPlaceholderText(t("qbValue"));
     expect(api.runLookupQuery).not.toHaveBeenCalled();
@@ -519,6 +554,8 @@ describe("QueryBuilder の BETWEEN / OFFSET / 値の候補 (#1627)", () => {
   it("数値列・IN 演算子では候補を取りに行かない", async () => {
     renderSelect();
     await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
+    // WHERE は既定でオフ。「条件を追加」で最初の条件行を出す。
+    enableWhere();
     fireEvent.change(screen.getByPlaceholderText(t("qbColumn")), { target: { value: "id" } });
     fireEvent.focus(screen.getByPlaceholderText(t("qbValue")));
     expect(api.runLookupQuery).not.toHaveBeenCalled();
@@ -528,6 +565,8 @@ describe("QueryBuilder の BETWEEN / OFFSET / 値の候補 (#1627)", () => {
     vi.mocked(api.runLookupQuery).mockRejectedValue(new Error("denied"));
     renderSelect();
     await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
+    // WHERE は既定でオフ。「条件を追加」で最初の条件行を出す。
+    enableWhere();
     fireEvent.change(screen.getByPlaceholderText(t("qbColumn")), { target: { value: "name" } });
     fireEvent.focus(screen.getByPlaceholderText(t("qbValue")));
     await waitFor(() => expect(api.runLookupQuery).toHaveBeenCalledTimes(1));

@@ -530,7 +530,8 @@ export function TestDataModal({
                     />
                   )}
                   {spec.strategy === "serial" && (
-                    <Tooltip label={t("testDataSerialStart")} focusableWrapper={running}>
+                    <chakra.label display="inline-flex" alignItems="center" gap="1" textStyle="caption">
+                      {t("testDataSerialStart")}
                       <DraftNumberInput
                         css={{ width: "100px" }}
                         value={spec.serialStart}
@@ -538,10 +539,11 @@ export function TestDataModal({
                         disabled={running}
                         aria-label={t("testDataSerialStart")}
                       />
-                    </Tooltip>
+                    </chakra.label>
                   )}
                   {spec.strategy === "randomString" && (
-                    <Tooltip label={t("testDataLength")} focusableWrapper={running}>
+                    <chakra.label display="inline-flex" alignItems="center" gap="1" textStyle="caption">
+                      {t("testDataLength")}
                       <DraftNumberInput
                         min={1}
                         css={{ width: "90px" }}
@@ -550,11 +552,12 @@ export function TestDataModal({
                         disabled={running}
                         aria-label={t("testDataLength")}
                       />
-                    </Tooltip>
+                    </chakra.label>
                   )}
                   {spec.strategy === "randomNumber" && (
                     <>
-                      <Tooltip label={t("testDataMin")} focusableWrapper={running}>
+                      <chakra.label display="inline-flex" alignItems="center" gap="1" textStyle="caption">
+                        {t("testDataMin")}
                         <DraftNumberInput
                           allowDecimal={spec.kind === "decimal"}
                           css={{ width: "100px" }}
@@ -563,8 +566,9 @@ export function TestDataModal({
                           disabled={running}
                           aria-label={t("testDataMin")}
                         />
-                      </Tooltip>
-                      <Tooltip label={t("testDataMax")} focusableWrapper={running}>
+                      </chakra.label>
+                      <chakra.label display="inline-flex" alignItems="center" gap="1" textStyle="caption">
+                        {t("testDataMax")}
                         <DraftNumberInput
                           allowDecimal={spec.kind === "decimal"}
                           css={{ width: "100px" }}
@@ -573,7 +577,7 @@ export function TestDataModal({
                           disabled={running}
                           aria-label={t("testDataMax")}
                         />
-                      </Tooltip>
+                      </chakra.label>
                     </>
                   )}
                   {spec.nullable && spec.strategy !== "omit" && (

@@ -82,4 +82,27 @@ describe("DataRowDiffTable", () => {
     fireEvent.click(screen.getByRole("button", { name: t("dataRowDiffMore", { count: 5 }) }));
     expect(screen.getByText(`id=${DATA_ROW_PAGE + 1}`)).toBeInTheDocument();
   });
+
+  it("先頭が同じ長いキーの行も別の行として描き、絞り込みで取り違えない", () => {
+    const long = "k".repeat(80);
+    const diff = makeDiff([
+      {
+        status: "source_only",
+        key: [`${long}1`],
+        source: [`${long}1`, "a", 1],
+        target: null,
+        changed_columns: [],
+      },
+      {
+        status: "source_only",
+        key: [`${long}2`],
+        source: [`${long}2`, "b", 2],
+        target: null,
+        changed_columns: [],
+      },
+    ]);
+    renderWithProviders(<DataRowDiffTable diff={diff} changeTitle="snapshot → sandbox" />);
+    expect(screen.getAllByText(/追加する行|New row/)).toHaveLength(2);
+    expect(screen.getByText("snapshot → sandbox")).toBeInTheDocument();
+  });
 });

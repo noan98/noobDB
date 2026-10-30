@@ -568,12 +568,14 @@ function DiffItemSection({
   rows,
   sourceName,
   targetName,
+  targetTitle,
   t,
 }: {
   title: string;
   rows: DiffItemRow[];
   sourceName: string;
   targetName: string;
+  targetTitle?: string;
   t: ReturnType<typeof useT>;
 }) {
   if (rows.length === 0) return null;
@@ -588,7 +590,7 @@ function DiffItemSection({
             <th>{t("schemaCompareColOp")}</th>
             <th>{t("schemaCompareColName")}</th>
             <th>{t("schemaCompareColSource", { name: sourceName })}</th>
-            <th>{t("schemaCompareColTarget", { name: targetName })}</th>
+            <th>{targetTitle ?? t("schemaCompareColTarget", { name: targetName })}</th>
           </tr>
         </thead>
         <tbody>
@@ -649,6 +651,7 @@ export const TableDiffDetail = memo(function TableDiffDetail({
   statements,
   planReady,
   showSql = true,
+  targetTitle,
   t,
 }: {
   table: TableDiff;
@@ -660,6 +663,9 @@ export const TableDiffDetail = memo(function TableDiffDetail({
   planReady: boolean;
   /** 「このテーブルで実行される SQL」欄を出すか。SQL を別の場所でまとめて見せる画面は false。 */
   showSql?: boolean;
+  /** 右列の見出しを差し替える (既定は「更新先の現在 → 適用後 (名前)」)。比べている相手が
+   *  更新先の今の値ではない画面 (サンドボックスはスナップショットと比べる) で使う。 */
+  targetTitle?: string;
   t: ReturnType<typeof useT>;
 }) {
   // memo で親の再レンダーを遮断しても、言語切替では描き直す (t は参照が変わらない)。
@@ -670,7 +676,7 @@ export const TableDiffDetail = memo(function TableDiffDetail({
   const checks = (table.check_changes ?? []).map((ck, i) => checkItem(ck, i, t));
   const generated = (table.generated_changes ?? []).map((g) => generatedItem(g, t));
   const destructive = statements.filter((s) => s.destructive).length;
-  const sectionProps = { sourceName, targetName, t };
+  const sectionProps = { sourceName, targetName, targetTitle, t };
 
   return (
     <Flex direction="column" gap="3.5">
