@@ -1,8 +1,7 @@
 import { connectRequestFromProfile } from "../connectRequest";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 import {
   api,
@@ -29,39 +28,35 @@ import {
 } from "../api/tauri";
 import { countDmlStatements, type SyncRiskItem } from "../ai/syncRisk";
 import { useLocale, useT } from "../i18n";
-import { staggerContainer, transitions, variants as motionVariants } from "../motion";
 import { rowKeyNote } from "../rowKey";
 import { semanticColorVar } from "../semanticColors";
 import { useSettings } from "../settings";
 import { CrossDriverNotice, CrossDriverResult, crossDriverErrorKey } from "./CrossDriverVerify";
 import { Callout } from "./Callout";
-import { ErrorNote } from "./modalForm";
+import { CodePreview, ErrorNote } from "./modalForm";
 import { useConfirm } from "./ConfirmDialog";
 import { statusColors } from "./diffStatusColors";
 import { AiSyncRisk, RiskBadge, type RiskByIndex } from "./AiSyncRisk";
 import { Icon, ICON_SIZES } from "./Icon";
 import { MigrationExportModal } from "./MigrationExportModal";
 import { TextExportButton } from "./TextExportButton";
+import {
+  countTableItems,
+  DEFAULT_DIFF_FILTERS,
+  DIFF_ACTION_GLYPH,
+  DIFF_ACTION_ORDER,
+  type DiffFilters,
+  filterTables,
+  groupTables,
+  resolveSelectedTable,
+  statementsForTable,
+  type TableGroup,
+} from "./schemaCompareModel";
 import { schemaCompareReportMarkdown } from "./schemaCompareReport";
 import { countObjectDifferences, objectKindLabel, SchemaObjectDiff } from "./SchemaObjectDiff";
 import { Tooltip } from "./Tooltip";
-import { TreeChevron } from "./tree";
 import { Button, Checkbox, Heading, Input, PressableButton, Select } from "./ui";
 import { DraftNumberInput } from "./DraftNumberInput";
-
-// motion 用 props (`variants`/`initial`/`animate`/`exit`/`transition`) は Chakra の
-// スタイルプロップに飲まれないよう forwardProps で素通しする (`ActivityCenter` /
-// `ProfileCardGrid` と同じパターン)。テーブル差分行のアコーディオン開閉
-// (`variants.collapse`) と、展開時のカラム行 stagger フェードインに使う (#1008)。
-const MotionCollapseBox = chakra(
-  motion.div,
-  {},
-  {
-    forwardProps: ["variants", "initial", "animate", "exit", "transition"],
-  },
-);
-const MotionColumnList = chakra(motion.ul, {}, { forwardProps: ["variants", "initial", "animate"] });
-const MotionColumnItem = chakra(motion.li, {}, { forwardProps: ["variants"] });
 
 /**
  * スキーマ比較ビューの本体スタイル。各要素へ直接 `css` を適用する。
@@ -113,98 +108,37 @@ const summaryCss: SystemStyleObject = {
   flexWrap: "wrap",
   margin: "var(--space-4) 0 var(--space-2-5)",
 };
-const hideSameCss: SystemStyleObject = {
-  display: "inline-flex",
-  alignItems: "center",
-  gap: "1.5",
-  fontSize: "var(--text-sm)",
-  color: "var(--text-secondary)",
-  marginLeft: "auto",
-  cursor: "pointer",
-};
-const tablesCss: SystemStyleObject = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "1",
-};
-// テーブル差分行の外枠。左端 4px は `DiffStatus` に応じたアクセントスパイン
-// (`statusColors` 経由。ConnectionList のプロファイル行と同じ手法、#1008) を
-// `TableDiffRow` 側で `borderLeftColor` として動的に与える。
-const tableCss: SystemStyleObject = {
-  border: "1px solid var(--border)",
-  borderRadius: "var(--radius-md)",
-  background: "var(--bg-elevated)",
-  overflow: "hidden",
-  borderLeftWidth: "4px",
-};
-/**
- * アコーディオンの見出し行。ネイティブ `<details>/<summary>` を `TreeChevron` +
- * `aria-expanded` を持つボタン (展開可能な行) または装飾のみの `div`
- * (カラム差分を持たない行) に置き換える (#1008)。開閉可能な行はキーボード
- * (Enter/Space) と支援技術からもネイティブ `<button>` として操作できる。
- */
-const tableSummaryCss: SystemStyleObject = {
-  display: "flex",
-  alignItems: "center",
+// 比較結果の 2 ペイン (左: テーブル一覧 / 右: 選んだテーブルの差分)。各ペインは
+// 画面の高さに収めて個別にスクロールし、テーブルが多くても下の反映操作まで遠くしない。
+const splitCss: SystemStyleObject = {
+  display: "grid",
+  gridTemplateColumns: "minmax(220px, 300px) minmax(0, 1fr)",
   gap: "2.5",
-  width: "100%",
-  py: "2",
-  px: "3",
-  userSelect: "none",
-  background: "transparent",
-  border: "none",
-  textAlign: "left",
-  font: "inherit",
-  color: "inherit",
-  _focusVisible: { outline: "none", boxShadow: "var(--focus-ring)" },
+  alignItems: "stretch",
 };
-const tableNameCss: SystemStyleObject = {
-  fontFamily: "var(--font-mono)",
-  fontSize: "var(--text-sm)",
-  color: "var(--text)",
+const paneCss: SystemStyleObject = {
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius-lg)",
+  background: "var(--bg-elevated)",
+  overflowY: "auto",
+  maxHeight: "65vh",
+  minWidth: 0,
 };
-const colcountCss: SystemStyleObject = {
-  fontSize: "var(--text-xs)",
-  color: "var(--text-muted)",
-  marginLeft: "auto",
-};
-const columnsCss: SystemStyleObject = {
-  listStyle: "none",
-  margin: 0,
-  padding: "0 var(--space-3) var(--space-2-5) var(--space-3)",
+// 反映 SQL の操作バー。スクロールしても画面下端に留まり、どこからでも生成へ進める。
+const syncBarCss: SystemStyleObject = {
+  position: "sticky",
+  bottom: 0,
+  zIndex: "var(--z-sticky)",
   display: "flex",
-  flexDirection: "column",
-  gap: "1",
-};
-// カラム行にも `DiffStatus` の左スパイン (3px、行が小さいためテーブル行の 4px より
-// 細く) を付ける。`pl` はスパインとテキストの間隔を確保するための余白。
-const columnCss: SystemStyleObject = {
-  display: "flex",
-  alignItems: "baseline",
-  gap: "2",
-  fontSize: "var(--text-sm)",
-  padding: "var(--space-0-75) 0 var(--space-0-75) var(--space-2)",
-  borderTop: "1px solid var(--border-subtle)",
-  borderLeftWidth: "3px",
-};
-const columnNameCss: SystemStyleObject = {
-  fontFamily: "var(--font-mono)",
-  color: "var(--text)",
-};
-const coltypeCss: SystemStyleObject = {
-  fontFamily: "var(--font-mono)",
-  fontSize: "var(--text-xs)",
-  color: "var(--text-muted)",
-};
-const changesCss: SystemStyleObject = {
-  display: "flex",
+  alignItems: "center",
+  gap: "3",
   flexWrap: "wrap",
-  gap: "1 3",
-};
-const changeCss: SystemStyleObject = {
-  fontFamily: "var(--font-mono)",
-  fontSize: "var(--text-xs)",
-  color: "var(--text-secondary)",
+  marginTop: "4",
+  padding: "var(--space-2-5) var(--space-3)",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius-lg)",
+  background: "var(--bg-elevated)",
+  boxShadow: "var(--shadow-md)",
 };
 const syncCss: SystemStyleObject = {
   marginTop: "6",
@@ -308,18 +242,6 @@ function chipCss(status: DiffStatus): SystemStyleObject {
     borderRadius: "var(--radius-pill)",
     border: "1px solid var(--border)",
     background: "var(--bg-muted)",
-    ...statusColors(status),
-  };
-}
-
-/** テーブル/カラム行のステータスバッジ。 */
-function badgeCss(status: DiffStatus): SystemStyleObject {
-  return {
-    textStyle: "overline",
-    padding: "var(--space-0-25) var(--space-2)",
-    borderRadius: "var(--radius-pill)",
-    whiteSpace: "nowrap",
-    border: "1px solid transparent",
     ...statusColors(status),
   };
 }
@@ -464,7 +386,13 @@ export function SchemaCompareView({
   const [comparing, setComparing] = useState(false);
   const [compareError, setCompareError] = useState<string | null>(null);
   const [diff, setDiff] = useState<SchemaDiff | null>(null);
-  const [hideSame, setHideSame] = useState(true);
+  // 一覧の絞り込み (操作の種類 + テーブル名) と、右ペインに出すテーブル。
+  const [filters, setFilters] = useState<DiffFilters>(DEFAULT_DIFF_FILTERS);
+  const [tableQuery, setTableQuery] = useState("");
+  const [selectedName, setSelectedName] = useState<string | null>(null);
+  const toggleFilter = useCallback((status: DiffStatus) => {
+    setFilters((prev) => ({ ...prev, [status]: !prev[status] }));
+  }, []);
 
   // Sync state. A single plan / selection / apply path is shared
   // by the schema (DDL) and data (DML) generators; `planKind` records which one
@@ -482,6 +410,8 @@ export function SchemaCompareView({
   const [syncError, setSyncError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<string | null>(null);
+  // 同期 SQL・エラー・適用結果をどちらの操作の近くに出すか (スキーマの反映 / データの同期)。
+  const [syncArea, setSyncArea] = useState<"schema" | "data">("schema");
   // AI リスク要約 (#697) の結果。同期文の行にバッジを付けるだけで、適用フローには影響しない。
   const [risks, setRisks] = useState<RiskByIndex | null>(null);
   // プラン生成時に使ったフラグ。生成後にチェックを切り替えてもプランは作り直されないので、
@@ -730,14 +660,26 @@ export function SchemaCompareView({
   }, [diff]);
 
   const visibleTables = useMemo(
-    () => (diff ? diff.tables.filter((tbl) => !(hideSame && tbl.status === "same")) : []),
-    [diff, hideSame],
+    () => (diff ? filterTables(diff.tables, filters, tableQuery) : []),
+    [diff, filters, tableQuery],
   );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: 差分と絞り込みの変化を契機に先頭ページへ戻す。
   useEffect(() => {
     setTableLimit(TABLE_DIFF_PAGE);
-  }, [diff, hideSame]);
+  }, [diff, filters, tableQuery]);
+
+  // 左ペインに描くぶん (#1612 のページング) と、そのうち選ばれているテーブル。
+  const shownTables = useMemo(() => visibleTables.slice(0, tableLimit), [visibleTables, tableLimit]);
+  const tableGroups = useMemo(() => groupTables(shownTables), [shownTables]);
+  const selectedTable = useMemo(() => {
+    const name = resolveSelectedTable(shownTables, selectedName);
+    return shownTables.find((tbl) => tbl.name === name) ?? null;
+  }, [shownTables, selectedName]);
+  const selectedStatements = useMemo(
+    () => (selectedTable ? statementsForTable(planKind === "schema" ? plan : null, selectedTable.name) : []),
+    [selectedTable, planKind, plan],
+  );
 
   /** 比較結果 (と生成済みのスキーマ同期 SQL) の Markdown レポート (#1624)。クリック時にだけ組む。 */
   const buildReport = (): string => {
@@ -749,17 +691,17 @@ export function SchemaCompareView({
       target: side(target, targetProfile),
       diff,
       plan: planKind === "schema" ? plan : null,
-      hideSame,
+      hideSame: !filters.same,
       labels: {
         title: t("schemaCompareReportTitle"),
         source: t("schemaCompareSource"),
         target: t("schemaCompareTarget"),
         summaryHeading: t("schemaCompareReportSummary"),
         statusLabels: {
-          source_only: t("schemaCompareStatusSourceOnly"),
-          target_only: t("schemaCompareStatusTargetOnly"),
-          different: t("schemaCompareStatusDifferent"),
-          same: t("schemaCompareStatusSame"),
+          source_only: statusLabel("source_only", t),
+          target_only: statusLabel("target_only", t),
+          different: statusLabel("different", t),
+          same: statusLabel("same", t),
         },
         tablesHeading: t("schemaCompareReportTables"),
         tableCol: t("schemaCompareReportColTable"),
@@ -783,8 +725,24 @@ export function SchemaCompareView({
   const objectDifferences = countObjectDifferences(diff?.objects);
   const hasDifferences = counts.different + counts.source_only + counts.target_only + objectDifferences > 0;
 
+  // 生成した反映 SQL の一覧 (下の操作バーから飛ぶ先)。
+  const planRef = useRef<HTMLDivElement | null>(null);
+  const scrollToPlanPendingRef = useRef(false);
+  const scrollToPlan = useCallback(() => {
+    // jsdom など scrollIntoView を持たない環境では何もしない。
+    planRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  }, []);
+  // 「反映 SQL を生成」を押したら、生成された一覧まで送る (操作バーは画面下端に固定なので)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: プランの差し替えだけを契機にする。
+  useEffect(() => {
+    if (!scrollToPlanPendingRef.current || !plan) return;
+    scrollToPlanPendingRef.current = false;
+    scrollToPlan();
+  }, [plan]);
+
   const generatePlan = useCallback(async () => {
     if (!diff) return;
+    setSyncArea("schema");
     setGenerating(true);
     setSyncError(null);
     setApplyResult(null);
@@ -796,6 +754,7 @@ export function SchemaCompareView({
       setStatementLimit(SYNC_STATEMENT_PAGE);
       setPlanKind("schema");
       setSelected(defaultSelection(result));
+      scrollToPlanPendingRef.current = true;
     } catch (e) {
       setSyncError(String(e));
     } finally {
@@ -869,6 +828,7 @@ export function SchemaCompareView({
       return;
     }
     setDataComparing(true);
+    setSyncArea("data");
     setSyncError(null);
     setApplyResult(null);
     setPlan(null);
@@ -955,6 +915,7 @@ export function SchemaCompareView({
 
   const generateDataPlan = useCallback(async () => {
     if (!dataDiffId) return;
+    setSyncArea("data");
     setGenerating(true);
     setSyncError(null);
     setApplyResult(null);
@@ -1116,6 +1077,10 @@ export function SchemaCompareView({
   ]);
 
   const selectedCount = selected.size;
+
+  // 「接続名 / DB 名」。比較の向きの一文と詳細の表の見出しに使う。
+  const sourceLabel = sourceProfile && source.database ? `${sourceProfile.name} / ${source.database}` : null;
+  const targetLabel = targetProfile && target.database ? `${targetProfile.name} / ${target.database}` : null;
 
   const dataSection = sourceTableNames.length > 0 && targetTableNames.length > 0 && (
     <Box css={syncCss}>
@@ -1309,6 +1274,92 @@ export function SchemaCompareView({
     </Box>
   );
 
+  // 同期 SQL の一覧と結果。スキーマの反映は操作バーの直下、データの同期はデータ比較の下に出す。
+  const planBlock = (
+    <>
+      {syncError && <chakra.p css={warningCss}>{syncError}</chakra.p>}
+      {applyResult && <chakra.p css={successCss}>{applyResult}</chakra.p>}
+
+      {plan && (
+        <Box ref={planRef}>
+          {plan.statements.length === 0 ? (
+            <chakra.p css={emptyCss}>{t("schemaCompareNoStatements")}</chakra.p>
+          ) : (
+            <>
+              <chakra.ul css={statementsCss}>
+                {plan.statements.slice(0, statementLimit).map((stmt, i) => (
+                  <SyncStatementRow
+                    key={`${stmt.table}-${i}`}
+                    index={i}
+                    statement={stmt}
+                    checked={selected.has(i)}
+                    onToggle={toggleStatement}
+                    risks={risks?.get(i)}
+                  />
+                ))}
+              </chakra.ul>
+              {plan.statements.length > statementLimit && (
+                <Box css={actionsCss} display="flex" gap="2" alignItems="center">
+                  <chakra.span fontSize="xs" color="app.textMuted" textStyle="numeric">
+                    {t("schemaCompareStatementsShown", {
+                      shown: statementLimit,
+                      total: plan.statements.length,
+                    })}
+                  </chakra.span>
+                  <Button type="button" onClick={() => setStatementLimit((n) => n + SYNC_STATEMENT_PAGE)}>
+                    {t("schemaCompareStatementsMore", {
+                      count: Math.min(SYNC_STATEMENT_PAGE, plan.statements.length - statementLimit),
+                    })}
+                  </Button>
+                </Box>
+              )}
+              {planKind && sourceDriver && targetDriver && (
+                <AiSyncRisk
+                  plan={plan}
+                  planKind={planKind}
+                  diff={diff}
+                  dataSummary={
+                    planKind === "data" && dataDiff
+                      ? { table: dataDiff.table, truncated: dataDiff.truncated }
+                      : null
+                  }
+                  sourceDriver={coerceDriver(sourceDriver)}
+                  targetDriver={coerceDriver(targetDriver)}
+                  allowDestructive={planFlags.allowDestructive}
+                  allowDelete={planFlags.allowDelete}
+                  kindLabel={(k) => syncKindLabel(k, t)}
+                  isProduction={!!sourceProfile?.is_production || !!targetProfile?.is_production}
+                  onRisks={setRisks}
+                />
+              )}
+              <chakra.p css={backupCss}>{t("schemaCompareBackupNote")}</chakra.p>
+              <Box css={actionsCss} display="flex" gap="2" flexWrap="wrap">
+                <PressableButton
+                  variant="primary"
+                  onClick={applyPlan}
+                  disabled={applying || selectedCount === 0}
+                >
+                  {applying ? t("schemaCompareApplying") : t("schemaCompareApply", { count: selectedCount })}
+                </PressableButton>
+                {planKind === "schema" && (
+                  <Button type="button" onClick={() => setMigrationExportOpen(true)}>
+                    {t("schemaCompareSaveMigration")}
+                  </Button>
+                )}
+              </Box>
+            </>
+          )}
+          {plan.warnings.length > 0 && (
+            <chakra.ul css={planWarningsCss}>
+              {plan.warnings.map((w, i) => (
+                <chakra.li key={i}>{w}</chakra.li>
+              ))}
+            </chakra.ul>
+          )}
+        </Box>
+      )}
+    </>
+  );
   return (
     <Box flex="1" overflowY="auto" py="5" px="6" display="flex" flexDirection="column" gap="4.5">
       <chakra.header
@@ -1347,6 +1398,8 @@ export function SchemaCompareView({
           <Box css={sidesCss}>
             <SidePicker
               label={t("schemaCompareSource")}
+              hint={t("schemaCompareSourceHint")}
+              changes={false}
               side="source"
               state={source}
               profiles={profiles}
@@ -1354,23 +1407,29 @@ export function SchemaCompareView({
               onSelectDatabase={setDatabase}
               t={t}
             />
-            <Tooltip label={t("schemaCompareSwap")}>
-              <Button
-                type="button"
-                minWidth="28px"
-                px="2"
-                py="1"
-                fontSize="base"
-                lineHeight={1}
-                marginBottom="1"
-                onClick={swap}
-                aria-label={t("schemaCompareSwap")}
-              >
-                <Icon name="refresh" size={ICON_SIZES.md} />
-              </Button>
-            </Tooltip>
+            <Flex direction="column" align="center" justify="center" gap="2" alignSelf="center" flex="none">
+              <chakra.span color="app.accent" display="inline-flex" aria-hidden>
+                <Icon name="chevron-right" size={ICON_SIZES.xl} />
+              </chakra.span>
+              <Tooltip label={t("schemaCompareSwap")}>
+                <Button
+                  type="button"
+                  minWidth="28px"
+                  px="2"
+                  py="1"
+                  fontSize="base"
+                  lineHeight={1}
+                  onClick={swap}
+                  aria-label={t("schemaCompareSwap")}
+                >
+                  <Icon name="transfer" size={ICON_SIZES.md} />
+                </Button>
+              </Tooltip>
+            </Flex>
             <SidePicker
               label={t("schemaCompareTarget")}
+              hint={t("schemaCompareTargetHint")}
+              changes
               side="target"
               state={target}
               profiles={profiles}
@@ -1388,174 +1447,149 @@ export function SchemaCompareView({
           )}
           {driverMismatch && !diff && dataSection}
 
-          <Box css={actionsCss}>
+          <Flex css={actionsCss} align="center" gap="3" flexWrap="wrap">
             <PressableButton variant="primary" onClick={runCompare} disabled={!canCompare}>
               {comparing ? t("schemaCompareComparing") : t("schemaCompareCompare")}
             </PressableButton>
-          </Box>
+            {sourceLabel && targetLabel && !driverMismatch && (
+              <chakra.p m={0} textStyle="body" color="app.textSecondary">
+                {t("schemaCompareDirection", { source: sourceLabel, target: targetLabel })}
+              </chakra.p>
+            )}
+          </Flex>
 
           {compareError && <chakra.p css={warningCss}>{compareError}</chakra.p>}
 
           {diff && (
             <Box>
-              <Box css={summaryCss}>
-                <StatusChip status="different" count={counts.different} t={t} />
-                <StatusChip status="source_only" count={counts.source_only} t={t} />
-                <StatusChip status="target_only" count={counts.target_only} t={t} />
-                <StatusChip status="same" count={counts.same} t={t} />
-                <chakra.label css={hideSameCss}>
-                  <Checkbox checked={hideSame} onChange={(e) => setHideSame(e.target.checked)} />
-                  {t("schemaCompareHideSame")}
-                </chakra.label>
-                <TextExportButton
-                  formats={[{ id: "markdown", label: "Markdown", build: buildReport }]}
-                  filenameBase="schema-compare"
-                  label={t("schemaCompareReport")}
+              <Box css={summaryCss} role="group" aria-label={t("schemaCompareFilterLabel")}>
+                {DIFF_ACTION_ORDER.map((status) => (
+                  <DiffFilterChip
+                    key={status}
+                    status={status}
+                    count={counts[status]}
+                    active={filters[status]}
+                    onToggle={toggleFilter}
+                    t={t}
+                  />
+                ))}
+                <Input
+                  type="search"
+                  flex="0 1 220px"
+                  minW="120px"
+                  value={tableQuery}
+                  placeholder={t("schemaCompareSearchTables")}
+                  aria-label={t("schemaCompareSearchTables")}
+                  onChange={(e) => setTableQuery(e.target.value)}
                 />
+                <Box marginLeft="auto">
+                  <TextExportButton
+                    formats={[{ id: "markdown", label: "Markdown", build: buildReport }]}
+                    filenameBase="schema-compare"
+                    label={t("schemaCompareReport")}
+                  />
+                </Box>
               </Box>
 
               {visibleTables.length === 0 ? (
                 <chakra.p css={emptyCss}>
                   {counts.different + counts.source_only + counts.target_only === 0
                     ? t(objectDifferences > 0 ? "schemaCompareTablesIdentical" : "schemaCompareIdentical")
-                    : t("schemaCompareAllHidden")}
+                    : t("schemaCompareNoMatch")}
                 </chakra.p>
               ) : (
-                <Box css={tablesCss}>
-                  {visibleTables.slice(0, tableLimit).map((tbl) => (
-                    <TableDiffRow key={tbl.name} table={tbl} t={t} />
-                  ))}
-                  {visibleTables.length > tableLimit && (
-                    <Box css={actionsCss} display="flex" gap="2" alignItems="center">
-                      <chakra.span textStyle="caption">
-                        {t("schemaCompareTablesShown", {
-                          shown: tableLimit,
-                          total: visibleTables.length,
-                        })}
-                      </chakra.span>
-                      <Button type="button" onClick={() => setTableLimit((n) => n + TABLE_DIFF_PAGE)}>
-                        {t("schemaCompareStatementsMore", {
-                          count: Math.min(TABLE_DIFF_PAGE, visibleTables.length - tableLimit),
-                        })}
-                      </Button>
-                    </Box>
-                  )}
+                <Box css={splitCss}>
+                  <Box css={paneCss}>
+                    <TableDiffList
+                      groups={tableGroups}
+                      selected={selectedTable?.name ?? null}
+                      onSelect={setSelectedName}
+                      t={t}
+                    />
+                    {visibleTables.length > tableLimit && (
+                      <Flex direction="column" gap="1.5" p="2.5" align="flex-start">
+                        <chakra.span textStyle="caption">
+                          {t("schemaCompareTablesShown", {
+                            shown: tableLimit,
+                            total: visibleTables.length,
+                          })}
+                        </chakra.span>
+                        <Button type="button" onClick={() => setTableLimit((n) => n + TABLE_DIFF_PAGE)}>
+                          {t("schemaCompareStatementsMore", {
+                            count: Math.min(TABLE_DIFF_PAGE, visibleTables.length - tableLimit),
+                          })}
+                        </Button>
+                      </Flex>
+                    )}
+                  </Box>
+                  <Box css={paneCss} p="3.5">
+                    {selectedTable ? (
+                      <TableDiffDetail
+                        table={selectedTable}
+                        sourceName={sourceLabel ?? ""}
+                        targetName={targetLabel ?? ""}
+                        statements={selectedStatements}
+                        planReady={planKind === "schema" && plan !== null}
+                        t={t}
+                      />
+                    ) : (
+                      <chakra.p css={emptyCss}>{t("schemaCompareSelectTablePrompt")}</chakra.p>
+                    )}
+                  </Box>
                 </Box>
               )}
 
               {diff.objects && (
-                <SchemaObjectDiff objects={diff.objects} driver={diff.target_driver} hideSame={hideSame} />
+                <SchemaObjectDiff
+                  objects={diff.objects}
+                  driver={diff.target_driver}
+                  hideSame={!filters.same}
+                />
               )}
 
               {hasDifferences && (
-                <Box css={syncCss}>
-                  <chakra.h3 css={syncTitleCss}>{t("schemaCompareSyncTitle")}</chakra.h3>
-                  <chakra.p margin={0} fontSize="sm" color="app.textMuted">
-                    {t("schemaCompareSyncDesc")}
-                  </chakra.p>
-                  <Box css={syncControlsCss}>
+                <Box css={syncBarCss}>
+                  <Flex align="center" gap="1.5" minW={0}>
+                    <chakra.span textStyle="body" fontWeight={600}>
+                      {t("schemaCompareSyncTitle")}
+                    </chakra.span>
+                    <Tooltip label={t("schemaCompareSyncDesc")}>
+                      <chakra.span
+                        display="inline-flex"
+                        color="app.textMuted"
+                        tabIndex={0}
+                        aria-label={t("schemaCompareSyncDesc")}
+                      >
+                        <Icon name="info" size={ICON_SIZES.sm} />
+                      </chakra.span>
+                    </Tooltip>
+                  </Flex>
+                  <Tooltip label={t("schemaCompareAllowDestructiveObjects")}>
                     <chakra.label css={destructiveCss}>
                       <Checkbox
                         checked={allowDestructive}
                         onChange={(e) => setAllowDestructive(e.target.checked)}
                       />
-                      {t("schemaCompareAllowDestructiveObjects")}
+                      {t("schemaCompareAllowDestructiveShort")}
                     </chakra.label>
-                    <Button onClick={generatePlan} disabled={generating}>
-                      {generating ? t("schemaCompareGenerating") : t("schemaCompareGenerate")}
+                  </Tooltip>
+                  <Box flex="1" />
+                  {planKind === "schema" && plan && plan.statements.length > 0 && (
+                    <Button type="button" onClick={scrollToPlan}>
+                      {t("schemaCompareShowPlan", { count: plan.statements.length })}
                     </Button>
-                  </Box>
+                  )}
+                  <PressableButton variant="primary" onClick={generatePlan} disabled={generating}>
+                    {generating ? t("schemaCompareGenerating") : t("schemaCompareGenerate")}
+                  </PressableButton>
                 </Box>
               )}
+
+              {syncArea === "schema" && planBlock}
 
               {dataSection}
 
-              {syncError && <chakra.p css={warningCss}>{syncError}</chakra.p>}
-              {applyResult && <chakra.p css={successCss}>{applyResult}</chakra.p>}
-
-              {plan && (
-                <Box>
-                  {plan.statements.length === 0 ? (
-                    <chakra.p css={emptyCss}>{t("schemaCompareNoStatements")}</chakra.p>
-                  ) : (
-                    <>
-                      <chakra.ul css={statementsCss}>
-                        {plan.statements.slice(0, statementLimit).map((stmt, i) => (
-                          <SyncStatementRow
-                            key={`${stmt.table}-${i}`}
-                            index={i}
-                            statement={stmt}
-                            checked={selected.has(i)}
-                            onToggle={toggleStatement}
-                            risks={risks?.get(i)}
-                          />
-                        ))}
-                      </chakra.ul>
-                      {plan.statements.length > statementLimit && (
-                        <Box css={actionsCss} display="flex" gap="2" alignItems="center">
-                          <chakra.span fontSize="xs" color="app.textMuted" textStyle="numeric">
-                            {t("schemaCompareStatementsShown", {
-                              shown: statementLimit,
-                              total: plan.statements.length,
-                            })}
-                          </chakra.span>
-                          <Button
-                            type="button"
-                            onClick={() => setStatementLimit((n) => n + SYNC_STATEMENT_PAGE)}
-                          >
-                            {t("schemaCompareStatementsMore", {
-                              count: Math.min(SYNC_STATEMENT_PAGE, plan.statements.length - statementLimit),
-                            })}
-                          </Button>
-                        </Box>
-                      )}
-                      {planKind && sourceDriver && targetDriver && (
-                        <AiSyncRisk
-                          plan={plan}
-                          planKind={planKind}
-                          diff={diff}
-                          dataSummary={
-                            planKind === "data" && dataDiff
-                              ? { table: dataDiff.table, truncated: dataDiff.truncated }
-                              : null
-                          }
-                          sourceDriver={coerceDriver(sourceDriver)}
-                          targetDriver={coerceDriver(targetDriver)}
-                          allowDestructive={planFlags.allowDestructive}
-                          allowDelete={planFlags.allowDelete}
-                          kindLabel={(k) => syncKindLabel(k, t)}
-                          isProduction={!!sourceProfile?.is_production || !!targetProfile?.is_production}
-                          onRisks={setRisks}
-                        />
-                      )}
-                      <chakra.p css={backupCss}>{t("schemaCompareBackupNote")}</chakra.p>
-                      <Box css={actionsCss} display="flex" gap="2" flexWrap="wrap">
-                        <PressableButton
-                          variant="primary"
-                          onClick={applyPlan}
-                          disabled={applying || selectedCount === 0}
-                        >
-                          {applying
-                            ? t("schemaCompareApplying")
-                            : t("schemaCompareApply", { count: selectedCount })}
-                        </PressableButton>
-                        {planKind === "schema" && (
-                          <Button type="button" onClick={() => setMigrationExportOpen(true)}>
-                            {t("schemaCompareSaveMigration")}
-                          </Button>
-                        )}
-                      </Box>
-                    </>
-                  )}
-                  {plan.warnings.length > 0 && (
-                    <chakra.ul css={planWarningsCss}>
-                      {plan.warnings.map((w, i) => (
-                        <chakra.li key={i}>{w}</chakra.li>
-                      ))}
-                    </chakra.ul>
-                  )}
-                </Box>
-              )}
+              {syncArea === "data" && planBlock}
             </Box>
           )}
         </>
@@ -1681,8 +1715,15 @@ export const SyncStatementRow = memo(function SyncStatementRow({
   );
 });
 
+/**
+ * 片側 (基準 / 更新先) の接続・DB の選択カード。見出しに役割 (「変更しない」/
+ * 「ここが変わる」) を出し、書き換わる側 (`changes`) だけ警告色の枠で囲んで、
+ * どちらが変わるのかを結果を見る前から分かるようにする。
+ */
 function SidePicker({
   label,
+  hint,
+  changes,
   side,
   state,
   profiles,
@@ -1691,6 +1732,9 @@ function SidePicker({
   t,
 }: {
   label: string;
+  hint: string;
+  /** SQL の適用で書き換わる側か (更新先)。 */
+  changes: boolean;
   side: Side;
   state: SideState;
   profiles: ConnectionProfile[];
@@ -1698,10 +1742,34 @@ function SidePicker({
   onSelectDatabase: (side: Side, database: string) => void;
   t: ReturnType<typeof useT>;
 }) {
+  const hintColor = changes ? semanticColorVar("warning", "text") : "var(--text-muted)";
   return (
-    <Box css={sideCss}>
-      <chakra.span css={sideLabelCss}>{label}</chakra.span>
-      <Select value={state.profileId ?? ""} onChange={(e) => onSelectProfile(side, e.target.value)}>
+    <Box
+      css={sideCss}
+      border="1px solid"
+      borderColor={changes ? semanticColorVar("warning", "text") : "app.border"}
+      borderRadius="lg"
+      bg="app.surface"
+      p="3"
+    >
+      <Flex align="center" gap="2">
+        <chakra.span css={sideLabelCss}>{label}</chakra.span>
+        <chakra.span
+          fontSize="2xs"
+          px="1.5"
+          py="0.25"
+          borderRadius="pill"
+          border="1px solid"
+          css={{ color: hintColor, borderColor: hintColor }}
+        >
+          {hint}
+        </chakra.span>
+      </Flex>
+      <Select
+        aria-label={label}
+        value={state.profileId ?? ""}
+        onChange={(e) => onSelectProfile(side, e.target.value)}
+      >
         <option value="">{t("schemaCompareSelectProfile")}</option>
         {profiles.map((p) => (
           <option key={p.id} value={p.id}>
@@ -1710,6 +1778,7 @@ function SidePicker({
         ))}
       </Select>
       <Select
+        aria-label={t("schemaCompareDatabaseOf", { side: label })}
         value={state.database ?? ""}
         onChange={(e) => onSelectDatabase(side, e.target.value)}
         disabled={!state.databases || state.connecting}
@@ -1727,138 +1796,6 @@ function SidePicker({
     </Box>
   );
 }
-
-function StatusChip({ status, count, t }: { status: DiffStatus; count: number; t: ReturnType<typeof useT> }) {
-  return (
-    <chakra.span css={chipCss(status)}>
-      {statusLabel(status, t)}: {count}
-    </chakra.span>
-  );
-}
-
-function statusLabel(status: DiffStatus, t: ReturnType<typeof useT>): string {
-  switch (status) {
-    case "source_only":
-      return t("schemaCompareStatusSourceOnly");
-    case "target_only":
-      return t("schemaCompareStatusTargetOnly");
-    case "different":
-      return t("schemaCompareStatusDifferent");
-    case "same":
-      return t("schemaCompareStatusSame");
-  }
-}
-
-/**
- * テーブル差分行。開閉可能なら `<button aria-expanded>` を見出しにしたアコーディオン
- * (`ConnectionList` / `SandboxSection` と同じ「見出し全体がボタン」方式) で、開閉は
- * `motion.ts` の `variants.collapse` (height ↔ auto の補間) でアニメーションする。
- * 展開時のカラム行は `staggerContainer` + `variants.staggerItem` で控えめに順次
- * フェードインし、`prefers-reduced-motion` / `motionPreference="reduced"` では
- * `useReducedMotion()` 経由で同時表示にフォールバックする (#1008)。左端の 4px は
- * `DiffStatus` に対応するアクセントスパイン (`statusColors` = semanticColors 経由)。
- *
- * `export` するのは `SchemaCompareView.test.tsx` 相当の単体テストと、将来
- * 差分ツリーを他パネルから再利用する可能性のため (`coerceDriver` と同じ理由)。
- */
-export const TableDiffRow = memo(function TableDiffRow({
-  table,
-  t,
-}: {
-  table: TableDiff;
-  t: ReturnType<typeof useT>;
-}) {
-  // memo で親の再レンダーを遮断しても、言語切替では描き直す (t は参照が変わらない)。
-  useLocale();
-  const indexes = table.indexes ?? [];
-  const fkChanges = table.fk_changes ?? [];
-  const checkChanges = table.check_changes ?? [];
-  const generatedChanges = table.generated_changes ?? [];
-  const constraintCount = indexes.length + fkChanges.length + checkChanges.length + generatedChanges.length;
-  const expandable = table.columns.length > 0 || constraintCount > 0;
-  const [open, setOpen] = useState(table.status === "different");
-  const reduced = useReducedMotion() ?? false;
-  const columnsId = `${useId()}-columns`;
-  const spine = statusColors(table.status).color;
-
-  const header = (
-    <>
-      <TreeChevron
-        aria-hidden
-        visibility={expandable ? "visible" : "hidden"}
-        transform={expandable && open ? "rotate(90deg)" : undefined}
-      >
-        ▸
-      </TreeChevron>
-      <chakra.span css={badgeCss(table.status)}>{statusLabel(table.status, t)}</chakra.span>
-      <chakra.span css={tableNameCss}>{table.name}</chakra.span>
-      {table.columns.length > 0 && (
-        <chakra.span css={colcountCss}>
-          {t("schemaCompareColumnCount", { count: table.columns.length })}
-        </chakra.span>
-      )}
-      {constraintCount > 0 && (
-        <chakra.span css={colcountCss}>
-          {t("schemaCompareConstraintCount", { count: constraintCount })}
-        </chakra.span>
-      )}
-    </>
-  );
-
-  return (
-    <Box css={{ ...tableCss, borderLeftColor: spine }}>
-      {expandable ? (
-        <chakra.button
-          type="button"
-          css={{ ...tableSummaryCss, cursor: "pointer" }}
-          onClick={() => setOpen((o) => !o)}
-          aria-expanded={open}
-          aria-controls={columnsId}
-        >
-          {header}
-        </chakra.button>
-      ) : (
-        <chakra.div css={{ ...tableSummaryCss, cursor: "default" }}>{header}</chakra.div>
-      )}
-      <AnimatePresence initial={false}>
-        {expandable && open && (
-          <MotionCollapseBox
-            id={columnsId}
-            variants={motionVariants.collapse}
-            initial="initial"
-            animate="animate"
-            exit="exit"
-            // height / opacity の補間は MotionConfig では止まらないので個別に即時化 (#1322)
-            transition={reduced ? { duration: 0 } : transitions.layout}
-          >
-            <MotionColumnList
-              variants={staggerContainer(reduced)}
-              initial="initial"
-              animate="animate"
-              css={columnsCss}
-            >
-              {table.columns.map((col) => (
-                <ColumnDiffRow key={col.name} column={col} t={t} />
-              ))}
-              {indexes.map((ix) => (
-                <IndexDiffRow key={`ix:${ix.name}`} index={ix} t={t} />
-              ))}
-              {fkChanges.map((fk, i) => (
-                <ForeignKeyDiffRow key={`fk:${i}`} change={fk} t={t} />
-              ))}
-              {checkChanges.map((ck, i) => (
-                <CheckDiffRow key={`ck:${i}`} change={ck} t={t} />
-              ))}
-              {generatedChanges.map((g) => (
-                <GeneratedDiffRow key={`gen:${g.column}`} change={g} t={t} />
-              ))}
-            </MotionColumnList>
-          </MotionCollapseBox>
-        )}
-      </AnimatePresence>
-    </Box>
-  );
-});
 
 function fieldLabel(field: string, t: ReturnType<typeof useT>): string {
   switch (field) {
@@ -1901,33 +1838,6 @@ function fieldValue(col: TableColumnInfo | null, field: string, t: ReturnType<ty
     default:
       return "—";
   }
-}
-
-/** カラム差分 1 行。`variants.staggerItem` で親の stagger コンテナに乗って
- *  順次フェードインする (#1008)。左端 3px は `DiffStatus` のアクセントスパイン。 */
-function ColumnDiffRow({ column, t }: { column: ColumnDiff; t: ReturnType<typeof useT> }) {
-  const def = column.source ?? column.target;
-  return (
-    <MotionColumnItem
-      variants={motionVariants.staggerItem}
-      css={{ ...columnCss, borderLeftColor: statusColors(column.status).color }}
-    >
-      <chakra.span css={badgeCss(column.status)}>{statusLabel(column.status, t)}</chakra.span>
-      <chakra.span css={columnNameCss}>{column.name}</chakra.span>
-      {column.status === "different" ? (
-        <chakra.span css={changesCss}>
-          {column.changed_fields.map((field) => (
-            <chakra.span key={field} css={changeCss}>
-              {fieldLabel(field, t)}: {fieldValue(column.source, field, t)} →{" "}
-              {fieldValue(column.target, field, t)}
-            </chakra.span>
-          ))}
-        </chakra.span>
-      ) : (
-        <chakra.span css={coltypeCss}>{def?.data_type ?? ""}</chakra.span>
-      )}
-    </MotionColumnItem>
-  );
 }
 
 function idxFieldLabel(field: string, t: ReturnType<typeof useT>): string {
@@ -1973,139 +1883,11 @@ function idxFieldValue(ix: DiffIndex | null, field: string, t: ReturnType<typeof
   }
 }
 
-/** インデックス差分 1 行 (#1625)。 */
-function IndexDiffRow({ index, t }: { index: IndexDiff; t: ReturnType<typeof useT> }) {
-  const def = index.source ?? index.target;
-  return (
-    <MotionColumnItem
-      variants={motionVariants.staggerItem}
-      css={{ ...columnCss, borderLeftColor: statusColors(index.status).color }}
-    >
-      <chakra.span css={badgeCss(index.status)}>{statusLabel(index.status, t)}</chakra.span>
-      <chakra.span css={columnNameCss}>
-        {t("schemaCompareIndexLabel")} {index.name}
-      </chakra.span>
-      {index.status === "different" ? (
-        <chakra.span css={changesCss}>
-          {(index.changed_fields ?? []).map((field) => (
-            <chakra.span key={field} css={changeCss}>
-              {idxFieldLabel(field, t)}: {idxFieldValue(index.source, field, t)} →{" "}
-              {idxFieldValue(index.target, field, t)}
-            </chakra.span>
-          ))}
-        </chakra.span>
-      ) : (
-        <chakra.span css={coltypeCss}>
-          {def ? `${def.unique ? "UNIQUE " : ""}(${def.columns.join(", ")})` : ""}
-        </chakra.span>
-      )}
-    </MotionColumnItem>
-  );
-}
-
 function fkText(fk: DiffForeignKey | null, t: ReturnType<typeof useT>): string {
   if (!fk) return "—";
   const od = fk.on_delete ?? t("schemaCompareActionDefault");
   const ou = fk.on_update ?? t("schemaCompareActionDefault");
   return `(${fk.columns.join(", ")}) → ${fk.referenced_table}(${fk.referenced_columns.join(", ") || "?"}) ON DELETE ${od} ON UPDATE ${ou}`;
-}
-
-/** 外部キー制約の差分 1 行 (#1625)。 */
-function ForeignKeyDiffRow({ change, t }: { change: ForeignKeyDiff; t: ReturnType<typeof useT> }) {
-  const def = change.source ?? change.target;
-  return (
-    <MotionColumnItem
-      variants={motionVariants.staggerItem}
-      css={{ ...columnCss, borderLeftColor: statusColors(change.status).color }}
-    >
-      <chakra.span css={badgeCss(change.status)}>{statusLabel(change.status, t)}</chakra.span>
-      <chakra.span css={columnNameCss}>
-        {t("schemaCompareForeignKeyLabel")} {def?.name ?? def?.columns.join(", ") ?? ""}
-      </chakra.span>
-      {change.status === "different" ? (
-        <chakra.span css={changesCss}>
-          {(change.changed_fields ?? []).map((field) => (
-            <chakra.span key={field} css={changeCss}>
-              {fkFieldLabel(field, t)}: {fkFieldValue(change.source, field, t)} →{" "}
-              {fkFieldValue(change.target, field, t)}
-            </chakra.span>
-          ))}
-        </chakra.span>
-      ) : (
-        <chakra.span css={coltypeCss}>{fkText(def ?? null, t)}</chakra.span>
-      )}
-    </MotionColumnItem>
-  );
-}
-
-/** CHECK 制約の差分 1 行 (#1837)。 */
-function CheckDiffRow({ change, t }: { change: CheckDiff; t: ReturnType<typeof useT> }) {
-  const def = change.source ?? change.target;
-  return (
-    <MotionColumnItem
-      variants={motionVariants.staggerItem}
-      css={{ ...columnCss, borderLeftColor: statusColors(change.status).color }}
-    >
-      <chakra.span css={badgeCss(change.status)}>{statusLabel(change.status, t)}</chakra.span>
-      <chakra.span css={columnNameCss}>
-        {t("schemaCompareCheckLabel")} {change.name}
-      </chakra.span>
-      {change.status === "different" ? (
-        <chakra.span css={changesCss}>
-          <chakra.span css={changeCss}>
-            {change.source?.definition ?? "—"} → {change.target?.definition ?? "—"}
-          </chakra.span>
-        </chakra.span>
-      ) : (
-        <chakra.span css={coltypeCss}>{def?.definition ?? ""}</chakra.span>
-      )}
-    </MotionColumnItem>
-  );
-}
-
-/** 生成列の差分 1 項目 (`changed_fields` の 1 つ) を「項目: source → target」にする。 */
-function generatedFieldText(field: string, change: GeneratedDiff, t: ReturnType<typeof useT>): string {
-  const s = change.source;
-  const g = change.target;
-  const storage = (x: GeneratedColumnInfo | null) => (x ? (x.is_virtual ? "VIRTUAL" : "STORED") : "—");
-  switch (field) {
-    case "storage":
-      return `${t("schemaCompareGenFieldStorage")}: ${storage(s)} → ${storage(g)}`;
-    case "data_type":
-      return `${t("schemaCompareFieldDataType")}: ${s?.data_type ?? "—"} → ${g?.data_type ?? "—"}`;
-    case "nullable":
-      return `${t("schemaCompareFieldNullable")}: ${s?.not_null ? t("schemaCompareNo") : t("schemaCompareYes")} → ${g?.not_null ? t("schemaCompareNo") : t("schemaCompareYes")}`;
-    default:
-      return `${t("schemaCompareGenFieldExpression")}: ${s?.expression ?? "—"} → ${g?.expression ?? "—"}`;
-  }
-}
-
-/** 生成列の式の差分 1 行 (#1837)。 */
-function GeneratedDiffRow({ change, t }: { change: GeneratedDiff; t: ReturnType<typeof useT> }) {
-  const def = change.source ?? change.target;
-  const storage = (g: GeneratedColumnInfo | null) => (g ? (g.is_virtual ? "VIRTUAL" : "STORED") : "—");
-  return (
-    <MotionColumnItem
-      variants={motionVariants.staggerItem}
-      css={{ ...columnCss, borderLeftColor: statusColors(change.status).color }}
-    >
-      <chakra.span css={badgeCss(change.status)}>{statusLabel(change.status, t)}</chakra.span>
-      <chakra.span css={columnNameCss}>
-        {t("schemaCompareGeneratedLabel")} {change.column}
-      </chakra.span>
-      {change.status === "different" ? (
-        <chakra.span css={changesCss}>
-          {(change.changed_fields ?? []).map((field) => (
-            <chakra.span key={field} css={changeCss}>
-              {generatedFieldText(field, change, t)}
-            </chakra.span>
-          ))}
-        </chakra.span>
-      ) : (
-        <chakra.span css={coltypeCss}>{def ? `${def.expression} (${storage(def)})` : ""}</chakra.span>
-      )}
-    </MotionColumnItem>
-  );
 }
 
 function fkFieldLabel(field: string, t: ReturnType<typeof useT>): string {
@@ -2134,3 +1916,575 @@ function fkFieldValue(fk: DiffForeignKey | null, field: string, t: ReturnType<ty
       return "—";
   }
 }
+
+/**
+ * 状態を「更新先で起きる操作」として呼ぶ短い名前 (追加 / 変更 / 削除 / 同一)。
+ * 比較は常に「更新先を基準に合わせる」向きなので、`source_only` は更新先への追加、
+ * `target_only` は更新先からの削除になる (`schemaCompareModel.ts`)。
+ */
+function statusLabel(status: DiffStatus, t: ReturnType<typeof useT>): string {
+  switch (status) {
+    case "source_only":
+      return t("schemaCompareOpAdd");
+    case "target_only":
+      return t("schemaCompareOpDrop");
+    case "different":
+      return t("schemaCompareOpChange");
+    case "same":
+      return t("schemaCompareOpSame");
+  }
+}
+
+const actionMarkCss: SystemStyleObject = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  flex: "none",
+  width: "1.4em",
+  height: "1.4em",
+  border: "1px solid",
+  borderRadius: "var(--radius-sm)",
+  fontFamily: "var(--font-mono)",
+  fontSize: "var(--text-xs)",
+  fontWeight: 700,
+  lineHeight: 1,
+};
+
+/** 操作の記号 (+ ~ − =)。色覚に頼らず記号でも区別できるよう、色と必ず併記する。 */
+function ActionMark({ status }: { status: DiffStatus }) {
+  return (
+    <chakra.span aria-hidden css={{ ...actionMarkCss, ...statusColors(status) }}>
+      {DIFF_ACTION_GLYPH[status]}
+    </chakra.span>
+  );
+}
+
+/** 一覧の絞り込みチップ。押すとその操作のテーブルを出す / 隠す。 */
+function DiffFilterChip({
+  status,
+  count,
+  active,
+  onToggle,
+  t,
+}: {
+  status: DiffStatus;
+  count: number;
+  active: boolean;
+  onToggle: (status: DiffStatus) => void;
+  t: ReturnType<typeof useT>;
+}) {
+  return (
+    <chakra.button
+      type="button"
+      onClick={() => onToggle(status)}
+      aria-pressed={active}
+      display="inline-flex"
+      alignItems="center"
+      gap="1.5"
+      px="2.5"
+      py="0.75"
+      fontSize="sm"
+      borderRadius="pill"
+      border="1px solid"
+      borderColor={active ? "app.accent" : "app.border"}
+      bg={active ? "app.hover" : "transparent"}
+      color={active ? "app.text" : "app.textMuted"}
+      cursor="pointer"
+      whiteSpace="nowrap"
+      _hover={{ bg: "app.hover", color: "app.text" }}
+      _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
+    >
+      <ActionMark status={status} />
+      {statusLabel(status, t)}
+      <chakra.span fontWeight={600} textStyle="numeric">
+        {count}
+      </chakra.span>
+    </chakra.button>
+  );
+}
+
+/** 一覧のグループ見出し (「変更するテーブル (3)」など)。 */
+function groupLabel(status: DiffStatus, count: number, t: ReturnType<typeof useT>): string {
+  switch (status) {
+    case "different":
+      return t("schemaCompareGroupChange", { count });
+    case "source_only":
+      return t("schemaCompareGroupAdd", { count });
+    case "target_only":
+      return t("schemaCompareGroupDrop", { count });
+    case "same":
+      return t("schemaCompareGroupSame", { count });
+  }
+}
+
+/** テーブル 1 つの中身の件数 (「2 カラム ・ 1 インデックス・制約」)。 */
+function tableMeta(table: TableDiff, t: ReturnType<typeof useT>): string {
+  const constraints =
+    (table.indexes?.length ?? 0) +
+    (table.fk_changes?.length ?? 0) +
+    (table.check_changes?.length ?? 0) +
+    (table.generated_changes?.length ?? 0);
+  const parts: string[] = [];
+  if (table.columns.length > 0) parts.push(t("schemaCompareColumnCount", { count: table.columns.length }));
+  if (constraints > 0) parts.push(t("schemaCompareConstraintCount", { count: constraints }));
+  return parts.join(" ・ ");
+}
+
+const listItemCss: SystemStyleObject = {
+  display: "flex",
+  alignItems: "center",
+  gap: "2",
+  width: "100%",
+  py: "1.5",
+  px: "2.5",
+  background: "transparent",
+  border: "none",
+  borderLeft: "3px solid transparent",
+  textAlign: "left",
+  font: "inherit",
+  color: "inherit",
+  cursor: "pointer",
+  _hover: { background: "var(--bg-hover)" },
+  _focusVisible: { outline: "none", boxShadow: "inset var(--focus-ring)" },
+  "&[aria-current='true']": {
+    background: "var(--bg-active)",
+    borderLeftColor: "var(--accent)",
+  },
+};
+
+/**
+ * 2 ペインの左側: 操作ごとのグループに分けたテーブル名の一覧。押したテーブルの
+ * 中身が右の `TableDiffDetail` に出る。
+ */
+export function TableDiffList({
+  groups,
+  selected,
+  onSelect,
+  t,
+}: {
+  groups: TableGroup[];
+  selected: string | null;
+  onSelect: (name: string) => void;
+  t: ReturnType<typeof useT>;
+}) {
+  return (
+    <chakra.nav aria-label={t("schemaCompareTableListLabel")}>
+      {groups.map((g) => (
+        <Box key={g.status}>
+          <chakra.div
+            textStyle="overline"
+            color="app.textMuted"
+            px="2.5"
+            py="1.5"
+            bg="app.surfaceMuted"
+            borderBottom="1px solid"
+            borderColor="app.borderSubtle"
+          >
+            {groupLabel(g.status, g.tables.length, t)}
+          </chakra.div>
+          <chakra.ul listStyle="none" m={0} p={0}>
+            {g.tables.map((tbl) => {
+              const meta = tableMeta(tbl, t);
+              return (
+                <chakra.li key={tbl.name} borderBottom="1px solid" borderColor="app.borderSubtle">
+                  <chakra.button
+                    type="button"
+                    css={listItemCss}
+                    aria-current={tbl.name === selected ? "true" : undefined}
+                    onClick={() => onSelect(tbl.name)}
+                  >
+                    <ActionMark status={tbl.status} />
+                    <chakra.span
+                      fontFamily="mono"
+                      fontSize="sm"
+                      color="app.text"
+                      overflow="hidden"
+                      textOverflow="ellipsis"
+                      whiteSpace="nowrap"
+                      minW={0}
+                      flex="1"
+                    >
+                      {tbl.name}
+                    </chakra.span>
+                    {meta && (
+                      <chakra.span textStyle="caption" whiteSpace="nowrap" flex="none">
+                        {meta}
+                      </chakra.span>
+                    )}
+                  </chakra.button>
+                </chakra.li>
+              );
+            })}
+          </chakra.ul>
+        </Box>
+      ))}
+    </chakra.nav>
+  );
+}
+
+/** 変更された項目 1 つ (「型: text → longtext」の 1 行ぶん)。`current` は更新先の今の値、`next` は適用後の値。 */
+interface ChangeLine {
+  label: string;
+  current: string;
+  next: string;
+}
+
+/** 詳細の表の 1 行 (カラム・インデックス・制約・生成列を同じ形にそろえたもの)。 */
+interface DiffItemRow {
+  key: string;
+  status: DiffStatus;
+  name: string;
+  /** 追加・削除・同一のときの定義 (追加は基準側、削除は更新先側)。 */
+  definition: string;
+  /** `different` のときの変わる項目。 */
+  changes: ChangeLine[];
+}
+
+function columnItem(col: ColumnDiff, t: ReturnType<typeof useT>): DiffItemRow {
+  const def = col.source ?? col.target;
+  return {
+    key: `col:${col.name}`,
+    status: col.status,
+    name: col.name,
+    definition: def?.data_type ?? "",
+    changes:
+      col.status === "different"
+        ? col.changed_fields.map((field) => ({
+            label: fieldLabel(field, t),
+            current: fieldValue(col.target, field, t),
+            next: fieldValue(col.source, field, t),
+          }))
+        : [],
+  };
+}
+
+function indexItem(ix: IndexDiff, t: ReturnType<typeof useT>): DiffItemRow {
+  const def = ix.source ?? ix.target;
+  return {
+    key: `ix:${ix.name}`,
+    status: ix.status,
+    name: ix.name,
+    definition: def ? `${def.unique ? "UNIQUE " : ""}(${def.columns.join(", ")})` : "",
+    changes:
+      ix.status === "different"
+        ? (ix.changed_fields ?? []).map((field) => ({
+            label: idxFieldLabel(field, t),
+            current: idxFieldValue(ix.target, field, t),
+            next: idxFieldValue(ix.source, field, t),
+          }))
+        : [],
+  };
+}
+
+function fkItem(fk: ForeignKeyDiff, i: number, t: ReturnType<typeof useT>): DiffItemRow {
+  const def = fk.source ?? fk.target;
+  return {
+    key: `fk:${i}`,
+    status: fk.status,
+    name: def?.name ?? def?.columns.join(", ") ?? "",
+    definition: fkText(def ?? null, t),
+    changes:
+      fk.status === "different"
+        ? (fk.changed_fields ?? []).map((field) => ({
+            label: fkFieldLabel(field, t),
+            current: fkFieldValue(fk.target, field, t),
+            next: fkFieldValue(fk.source, field, t),
+          }))
+        : [],
+  };
+}
+
+function checkItem(ck: CheckDiff, i: number, t: ReturnType<typeof useT>): DiffItemRow {
+  const def = ck.source ?? ck.target;
+  return {
+    key: `ck:${i}`,
+    status: ck.status,
+    name: ck.name,
+    definition: def?.definition ?? "",
+    changes:
+      ck.status === "different"
+        ? [
+            {
+              label: t("schemaCompareGenFieldExpression"),
+              current: ck.target?.definition ?? "—",
+              next: ck.source?.definition ?? "—",
+            },
+          ]
+        : [],
+  };
+}
+
+/** 生成列の差分 1 項目 (`changed_fields` の 1 つ)。 */
+function generatedChange(field: string, change: GeneratedDiff, t: ReturnType<typeof useT>): ChangeLine {
+  const s = change.source;
+  const g = change.target;
+  const storage = (x: GeneratedColumnInfo | null) => (x ? (x.is_virtual ? "VIRTUAL" : "STORED") : "—");
+  const nullable = (x: GeneratedColumnInfo | null) =>
+    x ? (x.not_null ? t("schemaCompareNo") : t("schemaCompareYes")) : "—";
+  switch (field) {
+    case "storage":
+      return { label: t("schemaCompareGenFieldStorage"), current: storage(g), next: storage(s) };
+    case "data_type":
+      return {
+        label: t("schemaCompareFieldDataType"),
+        current: g?.data_type ?? "—",
+        next: s?.data_type ?? "—",
+      };
+    case "nullable":
+      return { label: t("schemaCompareFieldNullable"), current: nullable(g), next: nullable(s) };
+    default:
+      return {
+        label: t("schemaCompareGenFieldExpression"),
+        current: g?.expression ?? "—",
+        next: s?.expression ?? "—",
+      };
+  }
+}
+
+function generatedItem(change: GeneratedDiff, t: ReturnType<typeof useT>): DiffItemRow {
+  const def = change.source ?? change.target;
+  const storage = (g: GeneratedColumnInfo) => (g.is_virtual ? "VIRTUAL" : "STORED");
+  return {
+    key: `gen:${change.column}`,
+    status: change.status,
+    name: change.column,
+    definition: def ? `${def.expression} (${storage(def)})` : "",
+    changes:
+      change.status === "different"
+        ? (change.changed_fields ?? []).map((field) => generatedChange(field, change, t))
+        : [],
+  };
+}
+
+const detailTableCss: SystemStyleObject = {
+  width: "100%",
+  borderCollapse: "collapse",
+  fontSize: "var(--text-sm)",
+  "& th": {
+    textAlign: "left",
+    fontWeight: 500,
+    color: "var(--text-muted)",
+    fontSize: "var(--text-xs)",
+    padding: "var(--space-1) var(--space-2)",
+    borderBottom: "1px solid var(--border)",
+    whiteSpace: "nowrap",
+  },
+  "& td": {
+    padding: "var(--space-1-5) var(--space-2)",
+    borderBottom: "1px solid var(--border-subtle)",
+    verticalAlign: "top",
+  },
+};
+const monoCellCss: SystemStyleObject = {
+  fontFamily: "var(--font-mono)",
+  fontSize: "var(--text-xs)",
+  color: "var(--text)",
+  wordBreak: "break-word",
+};
+const noneCss: SystemStyleObject = { color: "var(--text-muted)", fontSize: "var(--text-xs)" };
+
+/** 基準側のセル。追加・変更では適用後の値、削除では「なし」。 */
+function SourceCell({ row, t }: { row: DiffItemRow; t: ReturnType<typeof useT> }) {
+  if (row.status === "target_only") return <chakra.span css={noneCss}>{t("schemaCompareNone")}</chakra.span>;
+  if (row.status === "different") {
+    return (
+      <Flex direction="column" gap="0.5">
+        {row.changes.map((c) => (
+          <chakra.span key={c.label} css={monoCellCss}>
+            {c.label}: {c.next}
+          </chakra.span>
+        ))}
+      </Flex>
+    );
+  }
+  return <chakra.span css={monoCellCss}>{row.definition}</chakra.span>;
+}
+
+/**
+ * 更新先側のセル。変更は「今の値 (打ち消し線) → 適用後の値」、削除は消える定義に打ち消し線、
+ * 追加は「なし」。矢印は常に「今 → 適用後」の向きで読めるようにそろえる。
+ */
+function TargetCell({ row, t }: { row: DiffItemRow; t: ReturnType<typeof useT> }) {
+  if (row.status === "source_only") return <chakra.span css={noneCss}>{t("schemaCompareNone")}</chakra.span>;
+  if (row.status === "different") {
+    return (
+      <Flex direction="column" gap="0.5">
+        {row.changes.map((c) => (
+          <chakra.span key={c.label} css={monoCellCss} data-testid="schema-compare-change">
+            {c.label}:{" "}
+            <chakra.s color="app.textMuted" aria-label={t("schemaCompareCurrentValue", { value: c.current })}>
+              {c.current}
+            </chakra.s>{" "}
+            → {c.next}
+          </chakra.span>
+        ))}
+      </Flex>
+    );
+  }
+  if (row.status === "target_only") {
+    return (
+      <chakra.s css={monoCellCss} color="app.textMuted">
+        {row.definition}
+      </chakra.s>
+    );
+  }
+  return <chakra.span css={monoCellCss}>{row.definition}</chakra.span>;
+}
+
+/** 詳細の 1 セクション (カラム / インデックス / 外部キー / CHECK / 生成列)。 */
+function DiffItemSection({
+  title,
+  rows,
+  sourceName,
+  targetName,
+  t,
+}: {
+  title: string;
+  rows: DiffItemRow[];
+  sourceName: string;
+  targetName: string;
+  t: ReturnType<typeof useT>;
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <chakra.section display="flex" flexDirection="column" gap="1">
+      <chakra.h4 textStyle="overline" color="app.textSecondary" m={0}>
+        {title}
+      </chakra.h4>
+      <chakra.table css={detailTableCss}>
+        <thead>
+          <tr>
+            <th>{t("schemaCompareColOp")}</th>
+            <th>{t("schemaCompareColName")}</th>
+            <th>{t("schemaCompareColSource", { name: sourceName })}</th>
+            <th>{t("schemaCompareColTarget", { name: targetName })}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.key}>
+              <chakra.td whiteSpace="nowrap">
+                <Flex align="center" gap="1.5" css={{ color: statusColors(row.status).color }}>
+                  <ActionMark status={row.status} />
+                  {statusLabel(row.status, t)}
+                </Flex>
+              </chakra.td>
+              <chakra.td css={{ ...monoCellCss, fontSize: "var(--text-sm)" }}>{row.name}</chakra.td>
+              <td>
+                <SourceCell row={row} t={t} />
+              </td>
+              <td>
+                <TargetCell row={row} t={t} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </chakra.table>
+    </chakra.section>
+  );
+}
+
+/** テーブル単位の要約文 (詳細ペインの見出しの下)。 */
+function tableSummary(table: TableDiff, t: ReturnType<typeof useT>): string {
+  switch (table.status) {
+    case "source_only":
+      return t("schemaCompareDetailAddTable");
+    case "target_only":
+      return t("schemaCompareDetailDropTable");
+    case "same":
+      return t("schemaCompareDetailSame");
+    case "different": {
+      const c = countTableItems(table);
+      return t("schemaCompareDetailCounts", {
+        add: c.source_only,
+        change: c.different,
+        drop: c.target_only,
+      });
+    }
+  }
+}
+
+/**
+ * 2 ペインの右側: 選んだテーブルの差分。カラム・インデックス・外部キー・CHECK・
+ * 生成列を小見出しで分け、それぞれ「操作 / 名前 / 基準 / 更新先」の表で見せる。
+ * 反映 SQL を生成済みなら、このテーブルに対して実行される文も下に出す。
+ *
+ * `export` は単体テスト (`schemaCompareDiffDetail.test.tsx`) から直接描画するため。
+ */
+export const TableDiffDetail = memo(function TableDiffDetail({
+  table,
+  sourceName,
+  targetName,
+  statements,
+  planReady,
+  t,
+}: {
+  table: TableDiff;
+  sourceName: string;
+  targetName: string;
+  /** このテーブルに対する同期 SQL (生成済みのときだけ意味を持つ)。 */
+  statements: SyncStatement[];
+  /** スキーマ同期 SQL を生成済みか。 */
+  planReady: boolean;
+  t: ReturnType<typeof useT>;
+}) {
+  // memo で親の再レンダーを遮断しても、言語切替では描き直す (t は参照が変わらない)。
+  useLocale();
+  const columns = table.columns.map((c) => columnItem(c, t));
+  const indexes = (table.indexes ?? []).map((ix) => indexItem(ix, t));
+  const fks = (table.fk_changes ?? []).map((fk, i) => fkItem(fk, i, t));
+  const checks = (table.check_changes ?? []).map((ck, i) => checkItem(ck, i, t));
+  const generated = (table.generated_changes ?? []).map((g) => generatedItem(g, t));
+  const destructive = statements.filter((s) => s.destructive).length;
+  const sectionProps = { sourceName, targetName, t };
+
+  return (
+    <Flex direction="column" gap="3.5">
+      <Box>
+        <Flex align="center" gap="2">
+          <ActionMark status={table.status} />
+          <chakra.h3 m={0} fontFamily="mono" fontSize="md" color="app.text">
+            {table.name}
+          </chakra.h3>
+        </Flex>
+        <chakra.p m={0} mt="1" textStyle="body" color="app.textSecondary">
+          {tableSummary(table, t)}
+        </chakra.p>
+      </Box>
+      <DiffItemSection title={t("schemaCompareSectionColumns")} rows={columns} {...sectionProps} />
+      <DiffItemSection title={t("schemaCompareSectionIndexes")} rows={indexes} {...sectionProps} />
+      <DiffItemSection title={t("schemaCompareSectionForeignKeys")} rows={fks} {...sectionProps} />
+      <DiffItemSection title={t("schemaCompareSectionChecks")} rows={checks} {...sectionProps} />
+      <DiffItemSection title={t("schemaCompareSectionGenerated")} rows={generated} {...sectionProps} />
+      {table.status !== "same" && (
+        <chakra.section display="flex" flexDirection="column" gap="1">
+          <chakra.h4 textStyle="overline" color="app.textSecondary" m={0}>
+            {planReady
+              ? t("schemaCompareTableSql", { count: statements.length })
+              : t("schemaCompareTableSqlTitle")}
+          </chakra.h4>
+          {!planReady ? (
+            <chakra.p m={0} textStyle="caption">
+              {t("schemaCompareTableSqlHint")}
+            </chakra.p>
+          ) : statements.length === 0 ? (
+            <chakra.p m={0} textStyle="caption">
+              {t("schemaCompareTableSqlNone")}
+            </chakra.p>
+          ) : (
+            <>
+              {destructive > 0 && (
+                <chakra.p m={0} fontSize="xs" color="app.textError">
+                  {t("schemaCompareTableSqlDestructive", { count: destructive })}
+                </chakra.p>
+              )}
+              <CodePreview wrap fontSize="xs" maxH="240px">
+                {statements.map((s) => s.sql).join("\n")}
+              </CodePreview>
+            </>
+          )}
+        </chakra.section>
+      )}
+    </Flex>
+  );
+});

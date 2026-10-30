@@ -104,11 +104,12 @@ function chipCss(status: DiffStatus): SystemStyleObject {
   };
 }
 
+// 状態は「更新先で起きる操作」(追加 / 変更 / 削除 / 同一) で呼ぶ。テーブルの差分一覧と揃える。
 const STATUS_KEYS = {
-  source_only: "schemaCompareStatusSourceOnly",
-  target_only: "schemaCompareStatusTargetOnly",
-  different: "schemaCompareStatusDifferent",
-  same: "schemaCompareStatusSame",
+  source_only: "schemaCompareOpAdd",
+  target_only: "schemaCompareOpDrop",
+  different: "schemaCompareOpChange",
+  same: "schemaCompareOpSame",
 } as const;
 
 const KIND_KEYS = {
