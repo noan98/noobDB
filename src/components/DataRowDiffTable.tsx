@@ -62,7 +62,14 @@ export function countDataRows(diff: DataDiff): Record<RowDiff["status"], number>
   return c;
 }
 
-export function DataRowDiffTable({ diff }: { diff: DataDiff }) {
+export function DataRowDiffTable({
+  diff,
+  changeTitle,
+}: {
+  diff: DataDiff;
+  /** 右列の見出し。既定は「更新先の現在 → 適用後」。 */
+  changeTitle?: string;
+}) {
   const t = useT();
   const [hidden, setHidden] = useState<ReadonlySet<DiffStatus>>(new Set());
   const [limit, setLimit] = useState(DATA_ROW_PAGE);
@@ -104,14 +111,15 @@ export function DataRowDiffTable({ diff }: { diff: DataDiff }) {
               <tr>
                 <th>{t("schemaCompareColOp")}</th>
                 <th>{t("dataRowDiffColKey")}</th>
-                <th>{t("dataRowDiffColChange")}</th>
+                <th>{changeTitle ?? t("dataRowDiffColChange")}</th>
               </tr>
             </thead>
             <tbody>
               {rows.slice(0, limit).map((row) => {
                 const v = dataRowView(diff, row);
                 return (
-                  <tr key={`${row.status}:${v.key}`}>
+                  // 表示用の v.key は長い値を省略するので、行の識別には省略しない主キーを使う。
+                  <tr key={`${row.status}:${JSON.stringify(row.key)}`}>
                     <chakra.td whiteSpace="nowrap">
                       <Flex align="center" gap="1.5" css={{ color: statusColors(row.status).color }}>
                         <ActionMark status={row.status} />
