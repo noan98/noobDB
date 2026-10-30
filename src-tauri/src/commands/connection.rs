@@ -281,6 +281,7 @@ pub async fn connect(
 
     // SSM の再接続用パラメータはトンネル自身が持つ (リージョン解決済み)。
     let reconnect_ssm = tunnel.as_ref().and_then(Tunnel::ssm_spec).cloned();
+    let (keepalive_stop, keepalive_rx) = ssm_keepalive_channel(tunnel.as_ref());
     let session = Session {
         id: new_session_id(),
         profile_id,
@@ -293,6 +294,7 @@ pub async fn connect(
         reconnect_ssh,
         reconnect_ssm,
         _tunnel: tunnel,
+        _ssm_keepalive_stop: keepalive_stop,
         local_temp_file: None,
         schema_cache: crate::cache::SchemaCache::default(),
         query_cache: crate::cache::QueryResultCache::default(),
@@ -300,6 +302,7 @@ pub async fn connect(
         inspector: Default::default(),
     };
     let id = state.insert(session).await;
+    spawn_ssm_keepalive(&state, &id, keepalive_rx).await;
     tracing::info!(
         session_id = %id,
         driver = driver.as_str(),
@@ -307,6 +310,35 @@ pub async fn connect(
         "connection established"
     );
     Ok(ConnectResponse { session_id: id })
+}
+
+/// SSM 経路のときだけキープアライブ用の停止チャネルを作る (#1976)。送信側は `Session` に、
+/// 受信側は `state` への登録後に `spawn_ssm_keepalive` へ渡す。SSM 以外は `(None, None)`。
+pub(crate) fn ssm_keepalive_channel(
+    tunnel: Option<&Tunnel>,
+) -> (
+    Option<tokio::sync::oneshot::Sender<()>>,
+    Option<tokio::sync::oneshot::Receiver<()>>,
+) {
+    if matches!(tunnel, Some(Tunnel::Ssm(_))) {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
+    }
+}
+
+/// `state` に登録済みのセッションに対して SSM キープアライブタスクを起動する (#1976)。
+/// `rx` が `None` (SSM 以外) なら何もしない。
+async fn spawn_ssm_keepalive(
+    state: &AppState,
+    session_id: &str,
+    rx: Option<tokio::sync::oneshot::Receiver<()>>,
+) {
+    let Some(rx) = rx else { return };
+    if let Some(session) = state.get(session_id).await {
+        crate::ssm::keepalive::spawn_for_session(&session, rx);
+    }
 }
 
 /// Cancel an in-flight `connect` / `test_connection` attempt by its `attempt_id`.
@@ -662,6 +694,7 @@ pub async fn reconnect_inner(state: &AppState, session_id: &str, force: bool) ->
             }
         };
 
+    let (keepalive_stop, keepalive_rx) = ssm_keepalive_channel(tunnel.as_ref());
     let new_session = Session {
         id: old.id.clone(),
         profile_id: old.profile_id.clone(),
@@ -676,6 +709,7 @@ pub async fn reconnect_inner(state: &AppState, session_id: &str, force: bool) ->
         reconnect_ssh: old.reconnect_ssh.clone(),
         reconnect_ssm: old.reconnect_ssm.clone(),
         _tunnel: tunnel,
+        _ssm_keepalive_stop: keepalive_stop,
         local_temp_file: old.local_temp_file.clone(),
         // 再接続は必ず新しい (空の) キャッシュから始める — 旧セッションの
         // 値を引き継ぐと、再接続の合間に他クライアントが加えたスキーマ変更/
@@ -691,8 +725,13 @@ pub async fn reconnect_inner(state: &AppState, session_id: &str, force: bool) ->
     // old tunnel (if any) is dropped when the last Arc to the previous session
     // goes away, per the existing lifetime design.
     match state.replace(new_session).await {
-        Ok(Some(prev)) => prev.conn.close().await,
-        Ok(None) => {}
+        Ok(prev) => {
+            // 旧 Session の drop で旧キープアライブタスクは止まる。新しい方はここから起動する。
+            spawn_ssm_keepalive(state, session_id, keepalive_rx).await;
+            if let Some(prev) = prev {
+                prev.conn.close().await;
+            }
+        }
         Err(orphan) => {
             // 再接続の最中に切断されていた: セッションを復活させず、確立した接続を閉じる。
             orphan.conn.close().await;

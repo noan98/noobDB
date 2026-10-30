@@ -185,6 +185,10 @@ pub struct Session {
     /// Held to keep the tunnel alive for the lifetime of this session.
     /// Dropping the Session drops this and cleans the tunnel up.
     pub _tunnel: Option<Tunnel>,
+    /// SSM 経路のキープアライブタスク (#1976) の停止用チャネルの送信側。`Session` の drop
+    /// (切断・再接続・アプリ終了) でこの Sender も drop され、タスクが即座に終了する。
+    /// SSM 以外のセッションは `None` (タスクを作らない)。
+    pub _ssm_keepalive_stop: Option<tokio::sync::oneshot::Sender<()>>,
     /// Set only for a **local cross-connection query** session (#740): the
     /// path of its temp-file-backed SQLite database. Its presence is how
     /// commands recognize "this session is the local engine, not a driven

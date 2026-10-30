@@ -6,7 +6,7 @@
 ストリームタスク用の `RwLock<HashMap<StreamId, AbortHandle>>` を保持します。`Session`
 は `conn`・`profile_id`・`connect_options` (`mysqldump` など外部クライアント再構築用)・
 `read_only` / `skip_history` フラグ・`reconnect_ssh` (再接続用の非秘密 SSH 設定。#712)・
-`_tunnel` を持ちます。セッション ID は独自
+`_tunnel`・`_ssm_keepalive_stop` (SSM 経路のみ。キープアライブタスクの停止用 oneshot 送信側。#1976) を持ちます。セッション ID は独自
 アルファベット (`0`/`o`/`l`/`1` のような紛らわしい文字を含まない) から生成される、
 8 文字の base32 風スラッグです。これらは keyring のターゲットプレフィックスとしても
 使われるため、クロスプラットフォーム上で安全であるようアルファベットの選定が重要です。

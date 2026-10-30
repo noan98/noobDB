@@ -47,8 +47,18 @@ Windows は `CREATE_NO_WINDOW`) で起動し、`127.0.0.1:<空きポート>` を
   も止める)。Windows は Job Object (`KILL_ON_JOB_CLOSE`) に入れ、ハンドルを閉じる (Drop・アプリ終了・
   クラッシュ) とツリーごと OS が終了させる。`kill_on_drop` は保険。
 - **`session_tunnel_alive` が見るのは `aws` プロセスの生存だけ**。session-manager-plugin だけが落ちた
-  ・SSM セッションがサーバ側で切れた場合は検知できず、クエリ失敗で初めて分かる (SSH のような
-  keepalive 相当は無い)。
+  ・SSM セッションがサーバ側で切れた場合は検知できず、クエリ失敗で初めて分かる。
+- **疑似キープアライブ (#1976)**: Session Manager の Idle session timeout (既定 20 分、組織設定で
+  1〜60 分) を避けるため、SSM 経路のセッションだけ Rust 側 (`ssm/keepalive.rs`、
+  `tauri::async_runtime::spawn`) で **4 分間隔**に `SELECT 1` (`health_check`、20 秒タイムアウト) を流す。
+  複数 TCP 接続は 1 本の WebSocket に多重化されるので、プールの 1 接続で SSM セッション全体の
+  アイドルタイマーがリセットされる。フロントの背景 ping (非表示・アクティブ接続は対象外) とは独立。
+  失敗は `tracing::warn!` のみで再接続はしない (検知と自動再接続 #712 はフロントの既存の仕組みに任せる)。
+  SSH・直結・SQLite・ローカル・サンドボックスにはタスクを作らない。ping していない間は `Weak<Session>` だけを持ち、
+  `Session._ssm_keepalive_stop` (oneshot の Sender) が Session の drop で落ちると即終了する
+  (再接続では新 Session 用に作り直す)。ping 中 (最大 20 秒) は Session を保持するので、切断の完了が
+  その分遅れることがある (既存の `ping_session` と同程度)。失敗ログは連続 2 回目以降 debug に下げる。
+  **Maximum session duration や AWS 認証情報の期限切れ、Idle session timeout が 4 分以下の環境は防げない。**
 - IAM 認証のトークン署名は SSH 同様、host を 127.0.0.1 に差し替える**前**の RDS エンドポイント名で行う。
   `target` / `host` / `region` / `profile` は形式検証してから引数に渡す (インジェクション防止)。
 - 制約は SSH トンネルと同じ: 接続先が 127.0.0.1 になるため TLS `verify_full` のホスト名検証は通らない。

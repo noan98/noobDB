@@ -637,6 +637,7 @@ pub mod __test_api {
             reconnect_ssh: None,
             reconnect_ssm: None,
             _tunnel: None,
+            _ssm_keepalive_stop: None,
             local_temp_file: None,
             schema_cache: crate::cache::SchemaCache::default(),
             query_cache: crate::cache::QueryResultCache::default(),
