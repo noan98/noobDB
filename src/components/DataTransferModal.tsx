@@ -412,6 +412,18 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
 
   const sourceLabel =
     source.kind === "table" ? t("transferSourceTable", { table: source.table }) : t("transferSourceQuery");
+  // 「どこから → どこへ」を 1 行で見せる (コピー元の接続名が出ないと、どの DB から読むのか分からない)。
+  const sourceProfileName = profiles.find((p) => p.id === sourceProfileId)?.name ?? null;
+  const routeFrom = [
+    sourceProfileName,
+    source.database,
+    source.kind === "table" ? source.table : t("transferRouteQuery"),
+  ]
+    .filter(Boolean)
+    .join(" / ");
+  const routeTo = targetProfile
+    ? [targetProfile.name, database, tableName.trim() || null].filter(Boolean).join(" / ")
+    : t("transferRoutePending");
 
   const validationMessage =
     validation === "tableExists"
@@ -441,6 +453,19 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
       <ModalBody display="flex" flexDirection="column" gap="4">
         <chakra.div fontSize="sm" color="app.textMuted" lineHeight="normal">
           {t("transferNote")}
+        </chakra.div>
+        <chakra.div
+          data-testid="transfer-route"
+          fontFamily="mono"
+          fontSize="sm"
+          color="app.text"
+          bg="app.surfaceMuted"
+          borderRadius="md"
+          px="3"
+          py="2"
+          wordBreak="break-all"
+        >
+          {routeFrom} → {routeTo}
         </chakra.div>
 
         <FormSection>
@@ -501,6 +526,16 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
             disabled={isRunning}
           />
           {validationMessage && <FieldError>{validationMessage}</FieldError>}
+          {validation === "tableExists" && (
+            <Flex gap="2" flexWrap="wrap">
+              <Button type="button" size="sm" variant="secondary" onClick={() => setMode("append")}>
+                {t("transferUseAppend")}
+              </Button>
+              <Button type="button" size="sm" variant="secondary" onClick={() => setMode("replace")}>
+                {t("transferUseReplace")}
+              </Button>
+            </Flex>
+          )}
         </FormSection>
 
         <FormSection>
@@ -607,6 +642,40 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
               borderRadius="md"
               p="2"
             >
+              <chakra.div
+                display="flex"
+                alignItems="center"
+                gap="2"
+                textStyle="caption"
+                color="app.textMuted"
+                borderBottom="1px solid"
+                borderColor="app.border"
+                pb="1"
+              >
+                <Checkbox
+                  checked={sourceColumns.every((c) => (colDrafts[c.name] ?? defaultColumnDraft()).include)}
+                  onChange={(e) => {
+                    const include = e.target.checked;
+                    setColDrafts((cur) =>
+                      Object.fromEntries(
+                        sourceColumns.map((c) => [
+                          c.name,
+                          { ...(cur[c.name] ?? defaultColumnDraft()), include },
+                        ]),
+                      ),
+                    );
+                  }}
+                  disabled={isRunning}
+                  aria-label={t("transferColumnsAll")}
+                />
+                <chakra.span flex="1" minW="100px">
+                  {t("transferColumnsHeadSource")}
+                </chakra.span>
+                <chakra.span w="130px">{t("transferColumnsHeadName")}</chakra.span>
+                {!writesExistingTable(mode) && (
+                  <chakra.span w="150px">{t("transferColumnsHeadType")}</chakra.span>
+                )}
+              </chakra.div>
               {sourceColumns.map((c) => {
                 const d = colDrafts[c.name] ?? defaultColumnDraft();
                 const typeEditable = !writesExistingTable(mode);

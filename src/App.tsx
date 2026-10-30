@@ -14234,6 +14234,10 @@ export default function App() {
                     ?.sessionId ?? ""
                 }
                 openConnections={openConnections.filter((c) => !isSandboxProfileId(c.profile.id))}
+                onOpenSource={(() => {
+                  const src = profiles.find((p) => p.id === sandboxReviewTarget.source_profile_id);
+                  return src ? () => void handleConnect(src) : undefined;
+                })()}
                 onClose={() => setSandboxReviewTarget(null)}
               />
             )}
