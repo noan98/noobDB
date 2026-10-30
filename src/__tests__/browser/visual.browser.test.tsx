@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { page, userEvent } from "vitest/browser";
 import type { ReactElement } from "react";
 import { renderInBrowser } from "./render";
@@ -34,6 +34,23 @@ function applyTheme(theme: Theme) {
 
 afterEach(() => {
   document.documentElement.removeAttribute("data-theme");
+});
+
+// ベースライン PNG は Vitest 4 のブラウザモードで撮っており、そのオーケストレータは
+// ヘッドレスでもテスト用 iframe を親コンテナに収まるよう `scale(0.9)` で縮小表示していた
+// (1280×800 のビューポートに対しコンテナが 720px 高のため)。要素スクリーンショットは
+// この縮小後の寸法で撮られるので、ベースラインは 640px 幅のラッパが 576px 幅になっている。
+// Vitest 5 はヘッドレス (ui: false) では iframe を縮小しない (1.0 倍) ため、同じ撮影条件に
+// なるよう明示的に 0.9 倍へ縮小して寸法とレンダリングを合わせる。ベースラインを撮り直さずに
+// 回帰検出力を保つための措置。
+const BASELINE_FRAME_SCALE = 0.9;
+
+beforeAll(() => {
+  const fe = window.frameElement as HTMLElement | null;
+  if (fe) {
+    fe.style.transform = `scale(${BASELINE_FRAME_SCALE})`;
+    fe.style.transformOrigin = "top left";
+  }
 });
 
 /**
