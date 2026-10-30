@@ -73,6 +73,10 @@ export default defineConfig({
       // ビューポートを固定して描画寸法を決定的にする (ビジュアル回帰の安定化)。
       viewport: { width: 1280, height: 800 },
       instances: [{ browser: "chromium" }],
+      // Vitest 5 から locator の文字列照合は既定で完全一致 (`exact: true`) になった。
+      // 本リポジトリのテストは Vitest 4 までの部分一致 (大文字小文字を区別しない) を前提に
+      // `getByText` / `getByLabelText` を書いているため、既定を従来どおりに戻す。
+      locators: { exact: false },
     },
   },
 });

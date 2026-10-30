@@ -107,7 +107,7 @@ describe("主要画面のレンダリング (実ブラウザ)", () => {
       .element(screen.getByText(t("exportBundleMasked", { count: 1, names: "user_email" })))
       .toBeVisible();
     const preview = screen.getByLabelText(t("exportPreview"));
-    await expect.element(preview).toHaveTextContent("<!DOCTYPE html>");
+    await expect.element(preview).toMatchTextContent("<!DOCTYPE html>");
     expect(preview.element().textContent).not.toContain("alice@example.com");
   });
 
