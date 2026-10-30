@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { ChakraProvider } from "@chakra-ui/react";
 import { MotionConfig } from "motion/react";
 import App from "./App";
+import { SurfaceErrorBoundary } from "./components/SurfaceErrorBoundary";
 import { ToastProvider } from "./components/Toast";
 import { system } from "./theme";
 import { useSettings } from "./settings";
@@ -40,7 +41,10 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <ChakraProvider value={system}>
       <MotionRoot>
         <ToastProvider>
-          <App />
+          {/* 最後の砦: サーフェス外で描画例外が起きても、真っ黒な画面ではなくエラーと再試行を出す。 */}
+          <SurfaceErrorBoundary>
+            <App />
+          </SurfaceErrorBoundary>
         </ToastProvider>
       </MotionRoot>
     </ChakraProvider>
