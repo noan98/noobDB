@@ -4,7 +4,6 @@ import { chakra } from "@chakra-ui/react";
 import {
   api,
   type ConnectionProfile,
-  type DiffStatus,
   type SandboxRecord,
   type SandboxSchemaDiffResult,
   type SandboxTableDiffResult,
@@ -19,12 +18,13 @@ import {
   type SandboxConflictResolution,
 } from "../sandbox";
 import { useConfirm } from "./ConfirmDialog";
-import { statusColors } from "./diffStatusColors";
+import { DataRowDiffTable } from "./DataRowDiffTable";
 import { Icon, ICON_SIZES } from "./Icon";
 import { LoadingButton } from "./LoadingButton";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Callout } from "./Callout";
 import { ErrorNote, FieldLabel } from "./modalForm";
+import { TableDiffDetail } from "./SchemaDiffDetail";
 import { Tooltip } from "./Tooltip";
 import { Button, Checkbox, Radio, Select } from "./ui";
 
@@ -35,6 +35,8 @@ interface Props {
    *  先の候補として提示する — 新規にセッションを張り直さず、ユーザが既に開いて
    *  いる接続をそのまま使う。 */
   openConnections: { sessionId: string; profile: ConnectionProfile }[];
+  /** 作成元の接続を開く。作成元のプロファイルが残っているときだけ渡す。 */
+  onOpenSource?: () => void;
   onClose: () => void;
 }
 
@@ -56,7 +58,13 @@ interface TableState {
  * 進め、次回以降の差分計算が「もう一致した行」を偽の競合として出し続けないように
  * する。
  */
-export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections, onClose }: Props) {
+export function SandboxReviewModal({
+  sandbox,
+  sandboxSessionId,
+  openConnections,
+  onOpenSource,
+  onClose,
+}: Props) {
   const t = useT();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const { confirm: confirmTyped, dialog: typedConfirmDialog } = useConfirm();
@@ -70,6 +78,13 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
     return (preferred ?? candidates[0])?.sessionId ?? null;
   });
   const targetProfile = candidates.find((c) => c.sessionId === targetSessionId)?.profile ?? null;
+  // 「元の接続を開く」で接続が増えたら、その接続を書き戻し先に選ぶ。
+  useEffect(() => {
+    if (targetSessionId === null && candidates.length > 0) {
+      const preferred = candidates.find((c) => c.profile.id === sandbox.source_profile_id);
+      setTargetSessionId((preferred ?? candidates[0]).sessionId);
+    }
+  }, [candidates, targetSessionId, sandbox.source_profile_id]);
 
   const [allowDestructive, setAllowDestructive] = useState(false);
   const [allowDelete, setAllowDelete] = useState(false);
@@ -418,7 +433,7 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
   return (
     <Modal
       // no-submit: 本番への変更適用。差分の確認を飛ばしてキーで適用させない
-      width="720px"
+      width="880px"
       onClose={onClose}
       closeOnInteractOutside={!applying}
       closeOnEscape={!applying}
@@ -446,9 +461,16 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
               ))}
             </Select>
           ) : (
-            <chakra.span fontSize="sm" color="app.textMuted">
-              {t("sandboxReviewNoTarget")}
-            </chakra.span>
+            <>
+              <chakra.span fontSize="sm" color="app.textMuted">
+                {t("sandboxReviewNoTarget")}
+              </chakra.span>
+              {onOpenSource && (
+                <Button type="button" size="sm" variant="secondary" onClick={onOpenSource}>
+                  {t("sandboxReviewOpenSource")}
+                </Button>
+              )}
+            </>
           )}
         </chakra.div>
 
@@ -462,43 +484,22 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
         {schema && schema.desired.tables.some((tb) => tb.status !== "same") && (
           <chakra.div fontSize="sm">
             <chakra.strong>{t("sandboxReviewSchemaChanges")}</chakra.strong>
-            {/* `DiffStatus` の色語彙は `diffStatusColors.ts` の `statusColors`
-                (semanticColors 経由、#664) を `SchemaCompareView` と共有し、状態色を
-                二重管理しない (#1008)。左端の 3px スパインも同ビューのテーブル/
-                カラム差分行と同じ手法。 */}
-            <chakra.ul
-              mt="1"
-              mx="0"
-              mb="0"
-              paddingLeft="0"
-              listStyleType="none"
-              display="flex"
-              flexDirection="column"
-              gap="1"
-            >
+            <chakra.div mt="1.5" display="flex" flexDirection="column" gap="4">
               {schema.desired.tables
                 .filter((tb) => tb.status !== "same")
-                .map((tb) => {
-                  const { color } = statusColors(tb.status);
-                  return (
-                    <chakra.li
-                      key={tb.name}
-                      display="flex"
-                      alignItems="center"
-                      gap="2"
-                      py="0.5"
-                      pl="2"
-                      borderLeftWidth="3px"
-                      borderLeftColor={color}
-                    >
-                      <chakra.span color={color} fontWeight={600} whiteSpace="nowrap">
-                        {schemaStatusLabel(tb.status, t)}
-                      </chakra.span>
-                      <chakra.span fontFamily="mono">{tb.name}</chakra.span>
-                    </chakra.li>
-                  );
-                })}
-            </chakra.ul>
+                .map((tb) => (
+                  <TableDiffDetail
+                    key={tb.name}
+                    table={tb}
+                    sourceName={t("sandboxReviewSandboxSide")}
+                    targetName={targetProfile?.name ?? t("sandboxReviewOriginalSide")}
+                    statements={[]}
+                    planReady={false}
+                    showSql={false}
+                    t={t}
+                  />
+                ))}
+            </chakra.div>
             <chakra.label
               display="inline-flex"
               alignItems="center"
@@ -556,8 +557,6 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
               </ErrorNote>
             );
           if (!st.diff) return null;
-          const counts = { source_only: 0, target_only: 0, different: 0 };
-          for (const r of st.diff.desired.rows) counts[r.status] += 1;
           const hasChanges = st.diff.desired.rows.length > 0;
           if (!hasChanges && st.diff.conflicts.length === 0) return null;
           return (
@@ -588,10 +587,13 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
                 </Tooltip>
               </chakra.div>
               {hasChanges && (
-                <chakra.div fontSize="xs" color="app.textMuted" mt="1">
-                  {t("schemaCompareDataInserts")}: {counts.source_only} / {t("schemaCompareDataUpdates")}:{" "}
-                  {counts.different} / {t("schemaCompareDataDeletes")}: {counts.target_only}
-                  {st.diff.desired.truncated && ` (${t("sandboxReviewTruncated")})`}
+                <chakra.div mt="2">
+                  <DataRowDiffTable diff={st.diff.desired} />
+                  {st.diff.desired.truncated && (
+                    <chakra.p m={0} mt="1" textStyle="caption">
+                      {t("sandboxReviewTruncated")}
+                    </chakra.p>
+                  )}
                 </chakra.div>
               )}
               {st.diff.source_error && (
@@ -696,7 +698,7 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
               setCombined(null);
             }}
           />
-          {t("schemaCompareAllowDelete")}
+          {t("sandboxReviewAllowDelete")}
         </chakra.label>
 
         {unresolvedCount > 0 && (
@@ -756,16 +758,10 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
         )}
       </ModalBody>
       <ModalFooter>
-        <Tooltip label={t("sandboxReviewRefresh")} focusableWrapper={loading || applying}>
-          <Button
-            type="button"
-            aria-label={t("sandboxReviewRefresh")}
-            onClick={loadAll}
-            disabled={loading || applying}
-          >
-            <Icon name="refresh" size={ICON_SIZES.md} />
-          </Button>
-        </Tooltip>
+        <Button type="button" variant="secondary" onClick={loadAll} disabled={loading || applying}>
+          <Icon name="refresh" size={ICON_SIZES.sm} />
+          {t("sandboxReviewRefresh")}
+        </Button>
         <LoadingButton
           loading={generating}
           onClick={generate}
@@ -813,17 +809,4 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
       {typedConfirmDialog}
     </Modal>
   );
-}
-
-function schemaStatusLabel(status: DiffStatus, t: ReturnType<typeof useT>): string {
-  switch (status) {
-    case "source_only":
-      return t("schemaCompareStatusSourceOnly");
-    case "target_only":
-      return t("schemaCompareStatusTargetOnly");
-    case "different":
-      return t("schemaCompareStatusDifferent");
-    case "same":
-      return t("schemaCompareStatusSame");
-  }
 }

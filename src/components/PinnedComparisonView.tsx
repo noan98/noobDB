@@ -157,7 +157,14 @@ export function PinnedComparisonView({ pinned, driver, onUnpin, onClear, onClose
   }
 
   const picker = (value: string, onChange: (v: string) => void, label: string) => (
-    <chakra.label display="inline-flex" alignItems="center" gap="2" fontSize="sm" color="app.textMuted">
+    <chakra.label
+      display="inline-flex"
+      alignItems="center"
+      gap="2"
+      fontSize="sm"
+      color="app.textMuted"
+      whiteSpace="nowrap"
+    >
       {label}
       <Select value={value} onChange={(e) => onChange(e.target.value)} minWidth="200px">
         {pinned.map((p, i) => (
@@ -202,7 +209,14 @@ export function PinnedComparisonView({ pinned, driver, onUnpin, onClear, onClose
       >
         {picker(leftId, setLeftId, t("pinCompareLeft"))}
         {picker(rightId, setRightId, t("pinCompareRight"))}
-        <chakra.label display="inline-flex" alignItems="center" gap="2" fontSize="sm" color="app.textMuted">
+        <chakra.label
+          display="inline-flex"
+          alignItems="center"
+          gap="2"
+          fontSize="sm"
+          color="app.textMuted"
+          whiteSpace="nowrap"
+        >
           {t("pinCompareKeyColumn")}
           <Select
             value={effectiveKey ?? ""}
@@ -217,7 +231,14 @@ export function PinnedComparisonView({ pinned, driver, onUnpin, onClear, onClose
             ))}
           </Select>
         </chakra.label>
-        <chakra.label display="inline-flex" alignItems="center" gap="2" fontSize="sm" color="app.textMuted">
+        <chakra.label
+          display="inline-flex"
+          alignItems="center"
+          gap="2"
+          fontSize="sm"
+          color="app.textMuted"
+          whiteSpace="nowrap"
+        >
           {t("pinCompareKeyColumn2")}
           <Select
             value={keyColumn2 ?? ""}
@@ -265,6 +286,8 @@ export function PinnedComparisonView({ pinned, driver, onUnpin, onClear, onClose
           <chakra.span fontSize="sm" color="app.text" role="status">
             {analysis.hasChanges
               ? t("pinCompareSummary", {
+                  from: `#${pinned.findIndex((p) => p.id === leftId) + 1}`,
+                  to: `#${pinned.findIndex((p) => p.id === rightId) + 1}`,
                   changed: analysis.changedRows,
                   added: analysis.added,
                   removed: analysis.removed,

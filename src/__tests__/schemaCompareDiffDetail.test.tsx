@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen } from "./testUtils";
-import { TableDiffDetail, TableDiffList } from "../components/SchemaCompareView";
+import { TableDiffDetail, TableDiffList } from "../components/SchemaDiffDetail";
 import { groupTables } from "../components/schemaCompareModel";
 import { t } from "../i18n";
 import type { ColumnDiff, DiffStatus, SyncStatement, TableColumnInfo, TableDiff } from "../api/tauri";

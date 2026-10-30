@@ -52,7 +52,9 @@ describe("PinnedComparisonView の差分サマリとキー検査 (#1625)", () =>
       ),
     ]);
     expect(
-      await screen.findByText(t("pinCompareSummary", { changed: 1, added: 1, removed: 1 })),
+      await screen.findByText(
+        t("pinCompareSummary", { from: "#1", to: "#2", changed: 1, added: 1, removed: 1 }),
+      ),
     ).toBeInTheDocument();
   });
 

@@ -285,7 +285,7 @@ describe("design tokens: 本文 / 補足の textStyle (#1392)", () => {
     ["../components/RowInspector.tsx", 2],
     ["../components/RunRoutineModal.tsx", 1],
     ["../components/SandboxCreateModal.tsx", 1],
-    ["../components/SandboxReviewModal.tsx", 3],
+    ["../components/SandboxReviewModal.tsx", 2],
     ["../components/SaveAsTableModal.tsx", 1],
     ["../components/SaveAsViewModal.tsx", 1],
     ["../components/SchemaCompareView.tsx", 1],

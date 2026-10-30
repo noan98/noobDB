@@ -5,7 +5,7 @@ import type { SandboxRecord, SandboxSchemaDiffResult, SandboxTableDiffResult } f
 
 /**
  * サンドボックス書き戻しレビュー (#747) のスキーマ変更一覧 (#1008)。
- * `DiffStatus` の表示が `SchemaCompareView` と同じ `statusColors`
+ * `DiffStatus` の表示が `SchemaCompareView` と同じ部品・`statusColors`
  * (`diffStatusColors.ts`) を共有していることを、状態ラベルが可視であること
  * を通じて固定する。色そのものの検証は `diffStatusColors.test.ts` が
  * 純ロジックとして担う。
@@ -96,8 +96,11 @@ describe("SandboxReviewModal のスキーマ変更表示 (#1008)", () => {
 
     // "same" のテーブルは一覧から除外され、"different" のテーブルだけが
     // 状態ラベル付きで表示される (SchemaCompareView の statusLabel と同じ i18n キー)。
-    await waitFor(() => expect(screen.getByText("users")).toBeInTheDocument());
-    expect(screen.getByText(t("schemaCompareStatusDifferent"))).toBeInTheDocument();
+    // 差分表は SchemaCompareView と同じ部品 (TableDiffDetail) で描く。
+    await waitFor(() => expect(screen.getAllByText("users").length).toBeGreaterThan(0));
+    expect(
+      screen.getByText(t("schemaCompareDetailCounts", { add: 0, change: 0, drop: 0 })),
+    ).toBeInTheDocument();
     expect(screen.queryByText("orders")).not.toBeInTheDocument();
   });
 });
@@ -154,7 +157,7 @@ describe("SandboxReviewModal のデータ差分 ID (#1259)", () => {
     await waitFor(() => expect(generate.closest("button")).not.toBeDisabled());
     fireEvent.click(generate);
     await screen.findByText(t("schemaCompareNoStatements"));
-    fireEvent.click(screen.getByLabelText(t("schemaCompareAllowDelete")));
+    fireEvent.click(screen.getByLabelText(t("sandboxReviewAllowDelete")));
     await waitFor(() => expect(screen.queryByText(t("schemaCompareNoStatements"))).not.toBeInTheDocument());
   });
 
@@ -196,7 +199,9 @@ describe("SandboxReviewModal のデータ差分 ID (#1259)", () => {
     expect(
       await screen.findByText(t("sandboxReviewSchemaSourceError", { error: "schema boom" })),
     ).toBeInTheDocument();
-    expect(screen.getByText(t("schemaCompareStatusDifferent"))).toBeInTheDocument();
+    expect(
+      screen.getByText(t("schemaCompareDetailCounts", { add: 0, change: 0, drop: 0 })),
+    ).toBeInTheDocument();
   });
 });
 
