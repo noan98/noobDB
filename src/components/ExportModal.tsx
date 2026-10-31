@@ -7,7 +7,8 @@ import { api, CellValue, Column, ExportFormat, listenExportStream, type TextEnco
 import { useLocale, useT, type I18nKey } from "../i18n";
 import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Checkbox, Input, Radio, Select } from "./ui";
+import { Button, Checkbox, Input, Radio } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { DraftNumberInput } from "./DraftNumberInput";
 import { LoadingButton } from "./LoadingButton";
 import { Callout } from "./Callout";
@@ -1088,8 +1089,9 @@ export function ExportModal({
               <FieldLabel htmlFor="export-csv-encoding">{t("exportCsvEncoding")}</FieldLabel>
               <TextEncodingSelect
                 id="export-csv-encoding"
+                css={{ width: "100%" }}
                 value={csvEncoding}
-                onChange={(e) => setCsvEncoding(parseTextEncodingId(e.target.value) ?? "utf-8")}
+                onChange={(v) => setCsvEncoding(parseTextEncodingId(v) ?? "utf-8")}
                 disabled={isSaving}
               />
               <chakra.div textStyle="caption" mt="1">
@@ -1141,11 +1143,13 @@ export function ExportModal({
                 </chakra.div>
                 <chakra.div mt="2">
                   <FieldLabel htmlFor="export-sql-conflict">{t("exportSqlConflict")}</FieldLabel>
-                  <Select
+                  <ListboxSelect
                     id="export-sql-conflict"
+                    css={{ width: "100%" }}
                     value={sqlConflictMode}
-                    onChange={(e) => {
-                      const mode = e.target.value as SqlConflictMode;
+                    options={SQL_CONFLICT_MODES.map((m) => ({ value: m, label: t(SQL_CONFLICT_LABELS[m]) }))}
+                    onChange={(v) => {
+                      const mode = v as SqlConflictMode;
                       setSqlConflictMode(mode);
                       // キー列が未選択で主キーが分かるときは、出力列に含まれる主キーを初期選択する。
                       if (
@@ -1159,13 +1163,7 @@ export function ExportModal({
                       }
                     }}
                     disabled={isSaving}
-                  >
-                    {SQL_CONFLICT_MODES.map((m) => (
-                      <option key={m} value={m}>
-                        {t(SQL_CONFLICT_LABELS[m])}
-                      </option>
-                    ))}
-                  </Select>
+                  />
                   {(sqlConflictMode === "skip" || sqlConflictMode === "update") && (
                     <chakra.div role="group" aria-label={t("exportSqlConflictKeys")} mt="2">
                       <FieldLabel as="div">{t("exportSqlConflictKeys")}</FieldLabel>

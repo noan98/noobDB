@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { chooseListboxOption, renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
 import { SqlFileEncodingModal } from "../components/SqlFileEncodingModal";
 import { t } from "../i18n";
 
@@ -119,9 +119,9 @@ describe("SqlFileEncodingModal: 保存 (#1627)", () => {
         onClose={vi.fn()}
       />,
     );
-    const select = screen.getByLabelText(t("sqlFileLineEndingLabel")) as HTMLSelectElement;
-    expect(select.value).toBe("crlf");
-    fireEvent.change(select, { target: { value: "lf" } });
+    const select = screen.getByLabelText(t("sqlFileLineEndingLabel"));
+    expect(select).toHaveTextContent("CRLF");
+    chooseListboxOption(select, "lf");
     fireEvent.click(screen.getByRole("button", { name: t("sqlFileEncodingSave") }));
     expect(onConfirm).toHaveBeenCalledWith("shift_jis", "lf");
   });

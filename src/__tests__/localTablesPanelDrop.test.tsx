@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { chooseListboxOption, renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
 import { t } from "../i18n";
 import type { LocalTableMeta } from "../api/tauri";
 import { LocalTablesPanel } from "../components/LocalTablesPanel";
@@ -113,9 +113,9 @@ describe("LocalTablesPanel 絞り込みと並べ替え (#1627)", () => {
       "beta",
       "gamma",
     ]);
-    fireEvent.change(screen.getByLabelText(t("localPanelSortLabel")), { target: { value: "rows" } });
+    chooseListboxOption(screen.getByLabelText(t("localPanelSortLabel")), "rows");
     expect(names()[0]).toContain("beta");
-    fireEvent.change(screen.getByLabelText(t("localPanelSortLabel")), { target: { value: "fetched" } });
+    chooseListboxOption(screen.getByLabelText(t("localPanelSortLabel")), "fetched");
     expect(names()[0]).toContain("beta");
     expect(names()[1]).toContain("gamma");
     fireEvent.change(screen.getByLabelText(t("localPanelFilterPlaceholder")), { target: { value: "AM" } });

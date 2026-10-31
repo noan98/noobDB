@@ -34,7 +34,8 @@ import {
 } from "./queryInspector";
 import { Skeleton } from "./Skeleton";
 import { Spinner } from "./Spinner";
-import { Button, Checkbox, Input, Select } from "./ui";
+import { Button, Checkbox, Input } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { DraftNumberInput } from "./DraftNumberInput";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
@@ -623,18 +624,15 @@ export function QueryInspectorPanel({
               color="app.textSecondary"
             >
               {t("inspectorIntervalLabel")}
-              <Select
-                aria-label={t("inspectorIntervalAria")}
+              <ListboxSelect
+                ariaLabel={t("inspectorIntervalAria")}
                 value={String(settings.inspectorPollIntervalSecs)}
-                onChange={(e) => setInspectorPollIntervalSecs(Number(e.target.value))}
-                width="auto"
-              >
-                {INSPECTOR_INTERVAL_OPTIONS.map((s) => (
-                  <option key={s} value={s}>
-                    {t("inspectorIntervalSecs", { secs: s })}
-                  </option>
-                ))}
-              </Select>
+                options={INSPECTOR_INTERVAL_OPTIONS.map((s) => ({
+                  value: String(s),
+                  label: t("inspectorIntervalSecs", { secs: s }),
+                }))}
+                onChange={(v) => setInspectorPollIntervalSecs(Number(v))}
+              />
             </chakra.label>
             {recording && <Spinner size={14} />}
             {sampledAt && (

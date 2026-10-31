@@ -451,11 +451,17 @@ pub const SCHEMA_OBJECT_KINDS: &[&str] = &[
     "procedure",
     "function",
     "trigger",
+    "sequence",
 ];
 
+/// `SCHEMA_OBJECT_KINDS` のうち、ツリーの一覧・定義表示だけで使い、Where-used (参照元の
+/// 逆引き) では走査しない種別 (#1957)。`where_used::supports_kind` はこれを含まない。
+#[cfg(test)]
+pub const TREE_ONLY_SCHEMA_OBJECT_KINDS: &[&str] = &["sequence"];
+
 /// A non-table schema object: a view, materialized view, stored
-/// procedure, function, or trigger. `kind` is one of `view` /
-/// `materialized_view` / `procedure` / `function` / `trigger` so the UI can
+/// procedure, function, trigger, or sequence (PostgreSQL only). `kind` is one of `view` /
+/// `materialized_view` / `procedure` / `function` / `trigger` / `sequence` so the UI can
 /// group them; `name` is the object's identifier within the database/schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaObject {
@@ -1728,7 +1734,7 @@ pub struct TableTrigger {
 /// `SchemaObject.kind` の Rust ⇔ TS 集合一致を固定するテスト (#1840)。
 #[cfg(test)]
 mod schema_object_kind_tests {
-    use super::SCHEMA_OBJECT_KINDS;
+    use super::{SCHEMA_OBJECT_KINDS, TREE_ONLY_SCHEMA_OBJECT_KINDS};
     use crate::db::where_used::supports_kind;
     use crate::db::DriverKind;
     use std::collections::BTreeSet;
@@ -1871,6 +1877,11 @@ mod schema_object_kind_tests {
             set(SCHEMA_OBJECT_KINDS),
             "schemaObjectKinds.json の kinds と SCHEMA_OBJECT_KINDS が不一致"
         );
+        assert_eq!(
+            json_set(&g["treeOnlyKinds"]),
+            set(TREE_ONLY_SCHEMA_OBJECT_KINDS),
+            "schemaObjectKinds.json の treeOnlyKinds と TREE_ONLY_SCHEMA_OBJECT_KINDS が不一致"
+        );
         assert_eq!(json_set(&g["drivers"]["postgres"]), postgres_kinds());
         assert_eq!(json_set(&g["drivers"]["mysql"]), mysql_kinds());
         assert_eq!(json_set(&g["drivers"]["sqlite"]), sqlite_kinds());
@@ -1890,9 +1901,14 @@ mod schema_object_kind_tests {
                 .filter(|k| supports_kind(driver, k))
                 .map(|k| (*k).to_string())
                 .collect();
+            // ツリー専用の種別 (sequence) は Where-used が走査しないので、比較から除く。
+            let tree_only = json_set(&g["treeOnlyKinds"]);
+            let expected: BTreeSet<String> = json_set(&g["drivers"][key])
+                .difference(&tree_only)
+                .cloned()
+                .collect();
             assert_eq!(
-                supported,
-                json_set(&g["drivers"][key]),
+                supported, expected,
                 "{key}: supports_kind で絞った kind とゴールデンの drivers が不一致"
             );
         }

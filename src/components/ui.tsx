@@ -9,7 +9,6 @@ import {
   radioRecipe,
   sectionLabelRecipe,
   selectableCardRecipe,
-  selectRecipe,
   textareaRecipe,
 } from "../theme";
 import { springs } from "../motion";
@@ -23,7 +22,6 @@ import { springs } from "../motion";
 
 export const Button = chakra("button", buttonRecipe);
 export const Input = chakra("input", inputRecipe);
-export const Select = chakra("select", selectRecipe);
 export const Textarea = chakra("textarea", textareaRecipe);
 
 const CheckboxRoot = chakra("input", checkboxRecipe);

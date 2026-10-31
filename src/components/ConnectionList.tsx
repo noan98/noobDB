@@ -98,7 +98,8 @@ import {
   type MaintenanceKind,
 } from "./maintenanceCommands";
 import { Segmented } from "./Segmented";
-import { Button, Input, Select } from "./ui";
+import { Button, Input } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { useConfirm } from "./ConfirmDialog";
 import {
   anchorTableSelection,
@@ -954,6 +955,7 @@ const SCHEMA_OBJECT_ICONS: Record<string, IconName> = {
   procedure: "routine",
   function: "routine",
   trigger: "trigger",
+  sequence: "hash",
 };
 
 /** 非テーブルのスキーマオブジェクト (ルーチン / トリガー / 突き合わなかったビュー) の 1 行。
@@ -1448,6 +1450,8 @@ function useHeaderLabel(): (group: ExplorerHeaderGroup) => string {
         return t("objGroupFunctions");
       case "trigger":
         return t("objGroupTriggers");
+      case "sequence":
+        return t("objGroupSequences");
     }
   };
 }
@@ -4537,21 +4541,16 @@ export const ConnectionList = memo(
                 <Flex mt="1.5" gap="2" flexWrap="wrap" alignItems="center" data-testid="tree-view-options">
                   {/* 種別は 4 択でラベルも長く、サイドバー幅では横並びのセグメントが
                       はみ出すため、幅に追従するセレクトにする。 */}
-                  <Select
-                    aria-label={t("treeKindFilterLabel")}
-                    width="auto"
-                    minW="0"
-                    flex="1 1 auto"
-                    fontSize="sm"
+                  <ListboxSelect
+                    ariaLabel={t("treeKindFilterLabel")}
+                    css={{ minWidth: 0, flex: "1 1 auto", fontSize: "var(--text-sm)" }}
                     value={kindFilter}
-                    onChange={(e) => setKindFilter(e.target.value as ExplorerKindFilter)}
-                  >
-                    {EXPLORER_KIND_FILTERS.map((k) => (
-                      <option key={k} value={k}>
-                        {t(`treeKindFilter_${k}`)}
-                      </option>
-                    ))}
-                  </Select>
+                    options={EXPLORER_KIND_FILTERS.map((k) => ({
+                      value: k,
+                      label: t(`treeKindFilter_${k}`),
+                    }))}
+                    onChange={(v) => setKindFilter(v as ExplorerKindFilter)}
+                  />
                   <Segmented
                     ariaLabel={t("treeSortLabel")}
                     value={tableSort}

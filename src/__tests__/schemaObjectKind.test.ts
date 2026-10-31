@@ -17,6 +17,7 @@ const TS_KINDS = {
   procedure: true,
   function: true,
   trigger: true,
+  sequence: true,
 } as const satisfies Record<SchemaObjectKind, true>;
 
 describe("SchemaObjectKind 共有ゴールデン", () => {
@@ -36,11 +37,13 @@ describe("SchemaObjectKind 共有ゴールデン", () => {
     expect([...union].sort()).toEqual([...all].sort());
   });
 
-  it("whereUsed.ts の ALL_KINDS / WHERE_USED_KIND_SUPPORT がゴールデンと一致する", () => {
-    expect([...ALL_KINDS].sort()).toEqual([...golden.kinds].sort());
+  it("whereUsed.ts の ALL_KINDS / WHERE_USED_KIND_SUPPORT がゴールデン (ツリー専用の種別を除く) と一致する", () => {
+    const treeOnly = new Set<string>(golden.treeOnlyKinds);
+    const whereUsedKinds = (kinds: readonly string[]) => kinds.filter((k) => !treeOnly.has(k)).sort();
+    expect([...ALL_KINDS].sort()).toEqual(whereUsedKinds(golden.kinds));
     expect(Object.keys(WHERE_USED_KIND_SUPPORT).sort()).toEqual(Object.keys(golden.drivers).sort());
     for (const [driver, kinds] of Object.entries(golden.drivers)) {
-      expect([...(WHERE_USED_KIND_SUPPORT[driver] ?? [])].sort()).toEqual([...kinds].sort());
+      expect([...(WHERE_USED_KIND_SUPPORT[driver] ?? [])].sort()).toEqual(whereUsedKinds(kinds));
     }
   });
 });

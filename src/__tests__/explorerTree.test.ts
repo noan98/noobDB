@@ -88,6 +88,14 @@ describe("partitionDatabaseNodes", () => {
     );
     expect(g.objects.map((o) => o.name)).toEqual(["v1", "m1", "p1", "f2", "f1", "tr1"]);
   });
+
+  it("シーケンス (PostgreSQL) はトリガーの後ろに並ぶ (#1957)", () => {
+    const g = partitionDatabaseNodes(
+      [],
+      [obj("sequence", "s1"), obj("trigger", "tr1"), obj("function", "f1")],
+    );
+    expect(g.objects.map((o) => o.name)).toEqual(["f1", "tr1", "s1"]);
+  });
 });
 
 describe("showTablesHeader", () => {
@@ -284,6 +292,24 @@ describe("buildExplorerRows: 見えている行のフラット配列 (#1315)", (
     ]);
     const header = rows.find((r) => r.key === "hdr:tables:db1");
     expect(header && header.kind === "header" && header.count).toBe(1);
+  });
+
+  it("シーケンスは「シーケンス」見出しの下に定義を開く行として並ぶ (#1957)", () => {
+    const rows = buildExplorerRows(
+      base({
+        databases: ["db1"],
+        expandedDbs: { db1: true },
+        tables: { db1: ["t"] },
+        schemaObjects: { db1: [obj("sequence", "order_seq")] },
+      }),
+    );
+    expect(rows.map((r) => r.key)).toEqual([
+      "db:db1",
+      "hdr:tables:db1",
+      "tbl:db1::t",
+      "hdr:obj:db1:sequence",
+      "so:db1:sequence:order_seq:",
+    ]);
   });
 
   it("定義を開けない (showObjects=false) ときはルーチンの行を出さない", () => {

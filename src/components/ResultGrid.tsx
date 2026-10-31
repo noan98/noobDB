@@ -283,7 +283,10 @@ import {
 import { setItemWithEviction, touchColumnLayoutLru, touchLayoutLruForKey } from "./columnLayoutStorage";
 import {
   gridPresetsKeyFrom,
+  condFormatKeyFrom,
   gridViewStateKeyFrom,
+  readStoredCondFormat,
+  writeStoredCondFormat,
   type GridViewPreset,
   type GridViewPresetsHandle,
   readStoredGridView,
@@ -4400,10 +4403,62 @@ export const DataGrid = memo(function DataGrid({
   });
 
   // 数値セルの条件付き書式。列ごとの適用モードと、共有のヒートパレット。
-  const [colFormats, setColFormats] = useState<Record<number, CondFormatMode>>({});
-  const [heatPaletteKey, setHeatPaletteKey] = useState<string>(DEFAULT_HEAT_PALETTE);
   // 閾値ルール (#1628): 列ごとの「値が N を超えたら赤」。
-  const [colThresholds, setColThresholds] = useState<Record<number, ThresholdRule>>({});
+  // 結果シェイプ単位で永続化し (#1958)、タブの開き直し・再起動後も復元する。
+  const condFormatKey = useMemo(() => condFormatKeyFrom(columnSizingStorageKey), [columnSizingStorageKey]);
+  const [colFormats, setColFormatsState] = useState<Record<number, CondFormatMode>>(
+    () => readStoredCondFormat(condFormatKey).formats ?? {},
+  );
+  const [heatPaletteKey, setHeatPaletteKeyState] = useState<string>(
+    () => readStoredCondFormat(condFormatKey).palette ?? DEFAULT_HEAT_PALETTE,
+  );
+  const [colThresholds, setColThresholdsState] = useState<Record<number, ThresholdRule>>(
+    () => readStoredCondFormat(condFormatKey).thresholds ?? {},
+  );
+  const colFormatsRef = useRef(colFormats);
+  colFormatsRef.current = colFormats;
+  const heatPaletteKeyRef = useRef(heatPaletteKey);
+  heatPaletteKeyRef.current = heatPaletteKey;
+  const colThresholdsRef = useRef(colThresholds);
+  colThresholdsRef.current = colThresholds;
+  // 結果シェイプ (テーブル) が変わったら読み直す。保存はユーザ操作時だけ (下) なので競合しない。
+  useReloadOnChange(() => {
+    const s = readStoredCondFormat(condFormatKey);
+    setColFormatsState(s.formats ?? {});
+    setHeatPaletteKeyState(s.palette ?? DEFAULT_HEAT_PALETTE);
+    setColThresholdsState(s.thresholds ?? {});
+  }, [condFormatKey]);
+  const persistCondFormat = useCallback(
+    (patch: {
+      formats?: Record<number, CondFormatMode>;
+      palette?: string;
+      thresholds?: Record<number, ThresholdRule>;
+    }) => {
+      const palette = patch.palette ?? heatPaletteKeyRef.current;
+      writeStoredCondFormat(condFormatKey, {
+        formats: patch.formats ?? colFormatsRef.current,
+        thresholds: patch.thresholds ?? colThresholdsRef.current,
+        palette: palette === DEFAULT_HEAT_PALETTE ? undefined : palette,
+      });
+    },
+    [condFormatKey],
+  );
+  const changeColFormatMode = (colIdx: number, mode: CondFormatMode) => {
+    const next = { ...colFormatsRef.current };
+    if (mode === "off") delete next[colIdx];
+    else next[colIdx] = mode;
+    setColFormatsState(next);
+    persistCondFormat({ formats: next });
+  };
+  const changeHeatPalette = (key: string) => {
+    setHeatPaletteKeyState(key);
+    persistCondFormat({ palette: key });
+  };
+  const changeColThreshold = (colIdx: number, rule: ThresholdRule) => {
+    const next = { ...colThresholdsRef.current, [colIdx]: rule };
+    setColThresholdsState(next);
+    persistCondFormat({ thresholds: next });
+  };
   // ダークテーマではヒートマップを「暗→明」の向きへ切り替える (#1187)。
   const isDarkTheme = useIsDarkTheme();
   // 列内 min/max は全行から求める (バー/ヒートの基準)。数値列のうち条件付き書式
@@ -8088,18 +8143,11 @@ export const DataGrid = memo(function DataGrid({
           onClose={() => setFilterMenu(null)}
           formatSupported={isNumericKind(columnKinds[filterMenu.colIdx] ?? "string")}
           formatMode={colFormats[filterMenu.colIdx] ?? "off"}
-          onFormatModeChange={(mode) =>
-            setColFormats((prev) => {
-              const next = { ...prev };
-              if (mode === "off") delete next[filterMenu.colIdx];
-              else next[filterMenu.colIdx] = mode;
-              return next;
-            })
-          }
+          onFormatModeChange={(mode) => changeColFormatMode(filterMenu.colIdx, mode)}
           paletteKey={heatPaletteKey}
-          onPaletteChange={setHeatPaletteKey}
+          onPaletteChange={changeHeatPalette}
           thresholdRule={colThresholds[filterMenu.colIdx] ?? DEFAULT_THRESHOLD_RULE}
-          onThresholdChange={(rule) => setColThresholds((prev) => ({ ...prev, [filterMenu.colIdx]: rule }))}
+          onThresholdChange={(rule) => changeColThreshold(filterMenu.colIdx, rule)}
           legendRange={columnStats[filterMenu.colIdx] ?? null}
           onHideColumn={
             enableColumnControls

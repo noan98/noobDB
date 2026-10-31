@@ -1,9 +1,9 @@
 /**
  * `ListboxSelect` — 自由入力なしの単純選択用の共有 listbox セレクタ (#1143)。
  *
- * `src/components/ui.tsx` の `Select` (素のネイティブ `<select>`) は
- * webkit2gtk (Tauri/Linux) では GTK がポップアップを描画するため、アプリの
- * ダーク/アクセント配色・角丸・enter アニメーションに追従しない。
+ * 素のネイティブ `<select>` は webkit2gtk (Tauri/Linux) では GTK がポップアップを
+ * 描画するため、アプリのダーク/アクセント配色・角丸・enter アニメーションに
+ * 追従しない (#1950 で `ui.tsx` の `Select` を撤去し、すべてここへ移行した)。
  * `ComboSelect.tsx` (portal + `transitions.enter` の WAI-ARIA listbox
  * ポップオーバー) と同じ基盤を、自由入力を持たない「候補から 1 つを選ぶ」
  * 用途向けに提供する。
@@ -26,6 +26,7 @@
  */
 import {
   type ReactNode,
+  type Ref,
   useCallback,
   useEffect,
   useId,
@@ -70,6 +71,16 @@ export interface ListboxSelectProps {
   placeholder?: string;
   /** トリガー要素へ適用する追加 Chakra css。 */
   css?: SystemStyleObject;
+  /** トリガー (`<button>`) への ref。モーダルの初期フォーカスなど、要素を直接触りたい呼び出し側用。 */
+  triggerRef?: Ref<HTMLButtonElement>;
+  /** トリガーがフォーカスを得たとき (フォーカス中の列を追う画面用)。 */
+  onFocus?: () => void;
+  /** バリデーションエラー中のトリガーに `aria-invalid` を付ける。 */
+  ariaInvalid?: boolean;
+  /** エラーメッセージ等への `aria-describedby`。 */
+  ariaDescribedBy?: string;
+  /** トリガーに付ける `data-*` 属性 (フォーム内の欄をまとめて辿るための目印など)。 */
+  triggerData?: Record<`data-${string}`, string | boolean>;
 }
 
 const MotionListbox = chakra(motion.div, {}, { forwardProps: ["transition"] });
@@ -94,6 +105,11 @@ export function ListboxSelect({
   ariaLabel,
   placeholder,
   css,
+  triggerRef: externalTriggerRef,
+  onFocus,
+  ariaInvalid,
+  ariaDescribedBy,
+  triggerData,
 }: ListboxSelectProps) {
   const autoId = useId();
   const triggerId = id ?? autoId;
@@ -103,6 +119,16 @@ export function ListboxSelect({
   const listboxRef = useRef<HTMLDivElement | null>(null);
   const optionRefs = useRef(new Map<number, HTMLButtonElement>());
   const typeaheadRef = useRef<TypeaheadState | null>(null);
+
+  // 内部 ref と呼び出し側の ref を束ねる。再描画のたびに null→要素の再設定が走らないよう安定化する。
+  const mergedTriggerRef = useCallback(
+    (el: HTMLButtonElement | null) => {
+      triggerRef.current = el;
+      if (typeof externalTriggerRef === "function") externalTriggerRef(el);
+      else if (externalTriggerRef) externalTriggerRef.current = el;
+    },
+    [externalTriggerRef],
+  );
 
   const [open, setOpen] = useState(false);
   const [highlighted, setHighlighted] = useState<number | null>(null);
@@ -126,7 +152,9 @@ export function ListboxSelect({
   const selectOption = (index: number) => {
     const opt = options[index];
     if (!opt) return;
-    onChange(opt.value);
+    // ネイティブ select と同じく、選択中の候補を選び直しても change を起こさない
+    // (呼び出し側が入力済みの値を既定に戻したり、最新への追従を切ったりしないように)。
+    if (opt.value !== value) onChange(opt.value);
     closeListbox();
     triggerRef.current?.focus();
   };
@@ -245,7 +273,7 @@ export function ListboxSelect({
       if (match !== null) {
         if (open) {
           setHighlighted(match);
-        } else {
+        } else if (options[match].value !== value) {
           onChange(options[match].value);
         }
       }
@@ -257,7 +285,7 @@ export function ListboxSelect({
   return (
     <>
       <chakra.button
-        ref={triggerRef}
+        ref={mergedTriggerRef}
         id={triggerId}
         type="button"
         role="combobox"
@@ -266,7 +294,11 @@ export function ListboxSelect({
         aria-controls={listboxId}
         aria-activedescendant={activeDescendant}
         aria-label={ariaLabel}
+        aria-invalid={ariaInvalid ? true : undefined}
+        aria-describedby={ariaDescribedBy}
+        {...triggerData}
         disabled={disabled}
+        onFocus={onFocus}
         onClick={() => (open ? closeListbox() : openListbox())}
         onBlur={closeListbox}
         onKeyDown={handleTriggerKeyDown}

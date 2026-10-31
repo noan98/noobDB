@@ -397,6 +397,13 @@ async fn collect_object_comparison(
     })
 }
 
+/// `schema_objects` の一覧のうち、定義を取って比較に入れる種別か。シーケンスは一覧に載るが
+/// (#1957)、その定義は現在値と OWNED BY を含む表示用で比較に向かないので、従来どおり
+/// `sequence_definitions` だけで扱い、ここでは除く。
+fn is_listed_object_compared(driver: DriverKind, kind: &str) -> bool {
+    kind != "sequence" && crate::db::object_diff::supports_object_kind(driver, kind)
+}
+
 /// 1 つの接続のオブジェクト一覧と定義本文を集める。定義は可能なら 1 問い合わせでまとめて、
 /// 取れないもの (MySQL など) は 1 件ずつ取る。
 async fn collect_side_objects(
@@ -447,7 +454,7 @@ async fn collect_side_objects(
     let mut unreadable = Vec::new();
     for o in objects
         .iter()
-        .filter(|o| supports_object_kind(driver, &o.kind))
+        .filter(|o| is_listed_object_compared(driver, &o.kind))
     {
         let body = match bulk.as_ref().and_then(|b| b.get(o)) {
             Some(d) => Ok(d.to_string()),
@@ -2704,5 +2711,22 @@ mod cross_error_text_tests {
             );
             assert!(frontend.contains(mark), "frontend must match {mark:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod listed_object_tests {
+    use super::is_listed_object_compared;
+    use crate::db::DriverKind;
+
+    #[test]
+    fn sequence_in_the_tree_listing_is_not_compared_via_object_definition() {
+        assert!(!is_listed_object_compared(DriverKind::Postgres, "sequence"));
+        assert!(is_listed_object_compared(DriverKind::Postgres, "function"));
+        assert!(is_listed_object_compared(
+            DriverKind::Postgres,
+            "materialized_view"
+        ));
+        assert!(!is_listed_object_compared(DriverKind::Mysql, "sequence"));
     }
 }

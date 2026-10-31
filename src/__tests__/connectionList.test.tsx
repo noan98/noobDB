@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
-import { renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
+import { chooseListboxOption, renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 import { registerTreeDropTarget } from "../components/treeDragStore";
@@ -356,7 +356,7 @@ describe("Database Explorer の階層 (#1112)", () => {
 
   it("revealInTree は種別の絞り込みと検索語を解除してから探す (#1629)", async () => {
     const ref = await renderWithHandle();
-    fireEvent.change(await screen.findByLabelText(t("treeKindFilterLabel")), { target: { value: "views" } });
+    chooseListboxOption(await screen.findByLabelText(t("treeKindFilterLabel")), "views");
     fireEvent.change(screen.getByPlaceholderText(t("listSearchPlaceholder")), { target: { value: "zzz" } });
     act(() => ref.current?.revealInTree({ database: "db1", table: "tbl1" }));
     const row = await screen.findByRole("treeitem", { name: "tbl1" });

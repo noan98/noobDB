@@ -146,6 +146,19 @@ describe("ExportModal データマスキング (#733)", () => {
     ]);
   });
 
+  it("同じルールを選び直しても入力済みの置換文字列を既定に戻さない", () => {
+    renderModal();
+    enableMasking();
+    const rule = () => screen.getByRole("combobox", { name: t("exportMaskingRuleFor", { column: "note" }) });
+    chooseListboxOption(rule(), "fixed");
+    const value = screen.getByLabelText(t("exportMaskingFixedValueFor", { column: "note" }));
+    fireEvent.change(value, { target: { value: "[redacted]" } });
+    chooseListboxOption(rule(), "fixed");
+    expect(screen.getByLabelText(t("exportMaskingFixedValueFor", { column: "note" }))).toHaveValue(
+      "[redacted]",
+    );
+  });
+
   it("列のルールをプリセットとして保存すると設定に残り、次回から自動で適用される", async () => {
     const { unmount } = renderModal();
     enableMasking();

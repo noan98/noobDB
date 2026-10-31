@@ -427,9 +427,13 @@ describe("TableStructurePanel 被参照の外部キー (#1628)", () => {
       renderPanel({ onAttachPartition }, "postgres");
       fireEvent.click(await screen.findByRole("button", { name: t("attachPartitionOpen") }));
 
-      const select = (await screen.findByLabelText(t("attachPartitionChild"))) as HTMLSelectElement;
+      const select = await screen.findByLabelText(t("attachPartitionChild"));
       // 親自身と付いている子は候補に出ない。
-      await waitFor(() => expect(Array.from(select.options).map((o) => o.value)).toEqual(["ev_legacy"]));
+      await waitFor(() => expect(select).toHaveTextContent("ev_legacy"));
+      fireEvent.click(select);
+      const options = screen.getAllByRole("option");
+      expect(options.map((o) => o.dataset.value)).toEqual(["ev_legacy"]);
+      fireEvent.click(options[0] as HTMLElement);
       fireEvent.change(screen.getByLabelText(t("attachPartitionFrom", { column: "created_at" })), {
         target: { value: "2026-02-01" },
       });

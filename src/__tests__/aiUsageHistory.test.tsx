@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
+import { chooseListboxOption, fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
 import { t } from "../i18n";
 import { setAiMonthlyBudget } from "../settings";
 import { AiUsageNote } from "../components/AiUsageNote";
@@ -71,7 +71,7 @@ describe("AiUsageHistory (#1540)", () => {
     getAiUsageHistory.mockResolvedValue([{ ...record, day: "2000-01-15", calls: 7 }]);
     renderWithProviders(<AiUsageHistory taskLabel={(x) => x} />);
     await screen.findByText(t("aiLedgerEmpty"));
-    fireEvent.change(screen.getByLabelText(t("aiLedgerRange")), { target: { value: "all" } });
+    chooseListboxOption(screen.getByLabelText(t("aiLedgerRange")), "all");
     await screen.findAllByText(/7 /);
   });
 
@@ -85,7 +85,7 @@ describe("AiUsageHistory (#1540)", () => {
     getAiUsageHistory.mockResolvedValue(days);
     renderWithProviders(<AiUsageHistory taskLabel={(x) => x} />);
     await screen.findByText(t("aiLedgerEmpty"));
-    fireEvent.change(screen.getByLabelText(t("aiLedgerRange")), { target: { value: "all" } });
+    chooseListboxOption(screen.getByLabelText(t("aiLedgerRange")), "all");
     await screen.findByText(/2000-01-10: 1 /);
     expect(screen.queryByText(/2000-01-01: 1 /)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: t("aiLedgerDayMore", { count: 3 }) }));

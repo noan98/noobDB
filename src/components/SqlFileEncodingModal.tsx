@@ -14,7 +14,8 @@ import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { TextEncodingSelect } from "./TextEncodingSelect";
-import { Button, PressableButton, Radio, Select } from "./ui";
+import { Button, PressableButton, Radio } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 
 interface Props {
   /** `open` は読み込み (自動判定を含む)、`save` は保存。 */
@@ -106,23 +107,20 @@ export function SqlFileEncodingModal({
             id="sql-file-encoding"
             allowAuto={mode === "open"}
             value={value}
-            onChange={(e) => setValue(e.target.value)}
+            onChange={setValue}
+            css={{ width: "100%" }}
           />
         </FormSection>
         {mode === "save" && (
           <FormSection>
             <FieldLabel htmlFor="sql-file-line-ending">{t("sqlFileLineEndingLabel")}</FieldLabel>
-            <Select
+            <ListboxSelect
               id="sql-file-line-ending"
+              css={{ width: "100%" }}
               value={lineEnding}
-              onChange={(e) => setLineEnding(e.target.value)}
-            >
-              {LINE_ENDING_OPTIONS.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
+              options={LINE_ENDING_OPTIONS.map((o) => ({ value: o.id, label: o.label }))}
+              onChange={setLineEnding}
+            />
             <chakra.div textStyle="caption">{t("sqlFileLineEndingNote")}</chakra.div>
           </FormSection>
         )}

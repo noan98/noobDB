@@ -113,7 +113,7 @@ describe("TableTimelapsePanel (#739)", () => {
     const preview = await screen.findByLabelText(t("timelapseDmlPreviewAria"));
     expect(preview.textContent).toContain("UPDATE `app`.`fees` SET `price` = 100 WHERE `id` = 1;");
     expect(preview.textContent).toContain("DELETE FROM `app`.`fees` WHERE `id` = 3;");
-    fireEvent.change(screen.getByLabelText(t("timelapseDmlDirection")), { target: { value: "forward" } });
+    chooseListboxOption(screen.getByLabelText(t("timelapseDmlDirection")), "forward");
     expect(preview.textContent).toContain("INSERT INTO `app`.`fees` (`id`, `price`) VALUES (3, 300);");
   });
 
