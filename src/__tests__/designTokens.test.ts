@@ -827,6 +827,7 @@ describe("design tokens: 素の <select> の残存数 (#1950 / Epic #1946)", () 
     ["../components/AiUsageHistory.tsx", 1],
     ["../components/AlterTableModal.tsx", 2],
     ["../components/AssertionEditorModal.tsx", 3],
+    ["../components/AttachPartitionModal.tsx", 1],
     ["../components/BroadcastModal.tsx", 1],
     ["../components/ColumnProfilePanel.tsx", 2],
     ["../components/ConnectionForm.tsx", 4],

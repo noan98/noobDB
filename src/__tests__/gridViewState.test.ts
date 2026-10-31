@@ -4,6 +4,10 @@ import { touchColumnLayoutLru } from "../components/columnLayoutStorage";
 import type { FilterOp } from "../components/gridSortFilter";
 import {
   GRID_PRESET_MAX,
+  condFormatKeyFrom,
+  normalizeCondFormat,
+  readStoredCondFormat,
+  writeStoredCondFormat,
   GRID_PRESET_NAME_MAX,
   gridPresetsKeyFrom,
   normalizeGridPresets,
@@ -174,5 +178,70 @@ describe("名前付きビュープリセット (#1942)", () => {
     touchColumnLayoutLru(sk, 1);
     touchColumnLayoutLru("noobdb.colsizing.v1::db::other::[]", 1);
     expect(readStoredGridPresets(key)).toEqual([]);
+  });
+});
+
+describe("条件付き書式の永続化 (#1958)", () => {
+  const KEY = condFormatKeyFrom(resultShapeSizingKey([{ name: "a" }, { name: "b" }], "db", "t"));
+
+  beforeEach(() => localStorage.clear());
+
+  it("キーは結果シェイプキー体系に相乗りし、キー無しでは undefined", () => {
+    expect(KEY).toContain("noobdb.gridcondfmt.v1::db::t::");
+    expect(condFormatKeyFrom(undefined)).toBeUndefined();
+  });
+
+  it("書式・閾値・パレットが往復する", () => {
+    const state = {
+      formats: { 0: "bar" as const, 1: "threshold" as const },
+      thresholds: { 1: { op: ">=" as const, value: 10, tone: "warning" as const } },
+      palette: "teal",
+    };
+    writeStoredCondFormat(KEY, state);
+    expect(readStoredCondFormat(KEY)).toEqual(state);
+  });
+
+  it("実質既定ならエントリを削除する", () => {
+    writeStoredCondFormat(KEY, { formats: { 0: "heat" } });
+    expect(localStorage.getItem(KEY as string)).not.toBeNull();
+    writeStoredCondFormat(KEY, { formats: {} });
+    expect(localStorage.getItem(KEY as string)).toBeNull();
+  });
+
+  it("閾値モードでない列の閾値ルールは保存しない", () => {
+    writeStoredCondFormat(KEY, {
+      formats: { 0: "bar" },
+      thresholds: { 0: { op: ">", value: 1, tone: "danger" } },
+    });
+    expect(readStoredCondFormat(KEY)).toEqual({ formats: { 0: "bar" } });
+  });
+
+  it("壊れた JSON は空へフォールバックする", () => {
+    localStorage.setItem(KEY as string, "{broken");
+    expect(readStoredCondFormat(KEY)).toEqual({});
+  });
+
+  it("未知のモード・不正な列位置・不正な閾値・未知のパレットは捨てる", () => {
+    const out = normalizeCondFormat({
+      formats: { 0: "bar", 1: "sparkle", x: "heat", "-1": "bar", 2: 5 },
+      thresholds: {
+        0: { op: "~", value: 1, tone: "danger" },
+        1: { op: ">", value: "1", tone: "danger" },
+        2: { op: ">", value: 1, tone: "pink" },
+        3: { op: "<", value: 2.5, tone: "success" },
+      },
+      palette: "toString",
+    });
+    expect(out).toEqual({
+      formats: { 0: "bar" },
+      thresholds: { 3: { op: "<", value: 2.5, tone: "success" } },
+    });
+  });
+
+  it("配列・null・非オブジェクトは空", () => {
+    expect(normalizeCondFormat(null)).toEqual({});
+    expect(normalizeCondFormat([])).toEqual({});
+    expect(normalizeCondFormat("x")).toEqual({});
+    expect(normalizeCondFormat({ formats: [], thresholds: "x" })).toEqual({});
   });
 });
