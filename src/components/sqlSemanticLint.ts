@@ -872,7 +872,9 @@ function analyzeDml(items: Item[], outer: Scope | null, ctes: Ctes, env: Env): C
     const colList = items[i];
     if (isGroup(colList) && !isSubquery(colList)) {
       i++;
-      if (cols) {
+      // SQLite は FTS5 の特殊コマンド (INSERT INTO docs(docs) VALUES('optimize')) などで
+      // 表名や隠し列を列リストに書けるので、列の警告は出さない方針をここにも適用する。
+      if (cols && env.schema.driver !== "sqlite") {
         for (const it of colList.items) {
           if (isNameTok(it) && !cols.has(it.norm)) warn(env, it, env.msgs.unknownColumn);
         }
@@ -1026,10 +1028,9 @@ function isColumnCandidate(t: Tok, env: Env): boolean {
 
 function resolveBare(t: Tok, scope: Scope, env: Env) {
   const name = t.norm;
-  // SQLite は生成列・FTS5 の rank など pragma に出ない列があるので、列の警告は出さない。
+  // SQLite は生成列・FTS5 の rank など pragma に出ない列があり、存在しない "名前" は
+  // 文字列リテラルとして扱われるので、列の警告は出さない。
   if (env.schema.driver === "sqlite") return;
-  // SQLite は存在しない "名前" を文字列リテラルとして扱うので、二重引用符の未知名は警告しない。
-  if (env.schema.driver === "sqlite" && t.kind === "qid" && env.doc[t.from] === '"') return;
   for (let s: Scope | null = scope; s; s = s.parent) {
     if (s.opaque || s.names.has(name)) return;
     for (const src of s.sources) {
@@ -1047,7 +1048,6 @@ function resolveQualified(q: Tok, c: Tok, scope: Scope, env: Env) {
     if (!src) continue;
     if (src.columns === null || src.columns.has(c.norm)) return;
     if (env.schema.driver === "sqlite") return;
-    if (env.schema.driver === "sqlite" && c.kind === "qid") return;
     warn(env, c, env.msgs.unknownColumn);
     return;
   }
@@ -1100,12 +1100,15 @@ export function semanticDiagnostics(
     const toks = tokenize(doc, schema.driver);
     if (toks.length === 0 || toks.length > MAX_TOKENS) return [];
     // ストアド/トリガー/イベントの本体は `;` で割れ、ローカル変数や引数が列に見えるので解析しない。
+    // OR REPLACE / DEFINER=... / TEMP などを読み飛ばし、最初に来るオブジェクト種別の語だけを見る
+    // (CREATE TABLE logs (event varchar(10)) の列名 event で文書全体を黙らせないため)。
     for (let k = 0; k < toks.length; k++) {
-      if (
-        isWord(toks[k], "create") &&
-        toks.slice(k + 1, k + 9).some((x) => isWord(x, "procedure", "function", "trigger", "event"))
-      )
-        return [];
+      if (!isWord(toks[k], "create")) continue;
+      for (const x of toks.slice(k + 1, k + 9)) {
+        if (isWord(x, "procedure", "function", "trigger", "event")) return [];
+        if (isWord(x, "table", "index", "view", "schema", "database", "sequence", "type", "materialized"))
+          break;
+      }
     }
     const idents = new Set<number>();
     tree.iterate({

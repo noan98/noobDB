@@ -198,6 +198,22 @@ describe("semanticDiagnostics — ドライバ差・保守性", () => {
       "warning:table:userz@userz",
     ]);
   });
+  it("SQLite の FTS5 特殊コマンド (INSERT の列リストに表名・rank) を警告しない", () => {
+    expect(run("INSERT INTO users(users) VALUES('optimize')", { dialect: SQLite, driver: "sqlite" })).toEqual(
+      [],
+    );
+    expect(
+      run("INSERT INTO users(users, rank) VALUES('rank', 'bm25(10.0, 5.0)')", {
+        dialect: SQLite,
+        driver: "sqlite",
+      }),
+    ).toEqual([]);
+  });
+  it("CREATE TABLE の列名 event だけでは文書全体の解析を止めない", () => {
+    expect(run("CREATE TABLE logs (id int, event varchar(10)); SELECT nme FROM users")).toEqual([
+      "warning:column:nme@nme",
+    ]);
+  });
   it("MySQL の二重引用符は文字列、Postgres では識別子", () => {
     expect(run('SELECT id FROM users WHERE name = "x"')).toEqual([]);
     expect(run('SELECT "nme" FROM users', { dialect: PostgreSQL, driver: "postgres" })).toEqual([
