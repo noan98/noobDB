@@ -28,6 +28,7 @@ import {
   type TableStatRow,
   type TableStatSortKey,
 } from "./tableSize";
+import { SurfaceRule } from "./SurfaceRule";
 import { CountUp } from "./CountUp";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -341,6 +342,7 @@ export function TableStatisticsPanel({
   return (
     <Box flex="1" overflowY="auto" py="5" px="6" display="flex" flexDirection="column" gap="3.5">
       <chakra.header
+        position="relative"
         display="flex"
         alignItems="center"
         justifyContent="space-between"
@@ -365,6 +367,7 @@ export function TableStatisticsPanel({
             <Icon name="close" size={ICON_SIZES.sm} />
           </Button>
         </Tooltip>
+        <SurfaceRule />
       </chakra.header>
 
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">

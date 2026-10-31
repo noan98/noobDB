@@ -53,6 +53,7 @@ import {
   type ErLayoutDirection,
   type ErTableData,
 } from "./erDiagram";
+import { SurfaceRule } from "./SurfaceRule";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { cellKindIcon } from "./cellTypeMeta";
@@ -726,6 +727,7 @@ function ERDiagramInner({
   return (
     <Box flex="1" display="flex" flexDirection="column" minHeight={0}>
       <chakra.header
+        position="relative"
         display="flex"
         alignItems="center"
         gap="3"
@@ -901,6 +903,7 @@ function ERDiagramInner({
             <Icon name="close" size={ICON_SIZES.sm} />
           </Button>
         </Tooltip>
+        <SurfaceRule />
       </chakra.header>
 
       <chakra.p margin={0} pt="2" px="6" pb="0" fontSize="sm" color="app.textMuted">

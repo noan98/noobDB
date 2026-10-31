@@ -12,6 +12,7 @@ import {
 import { useT } from "../i18n";
 import { reducedMotionActive, staggerContainer, transitions, variants } from "../motion";
 import { semanticColorVar } from "../semanticColors";
+import { SurfaceRule } from "./SurfaceRule";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
@@ -822,6 +823,7 @@ export function UsersPanel({
   return (
     <Box flex="1" overflowY="auto" py="5" px="6" display="flex" flexDirection="column" gap="3.5">
       <chakra.header
+        position="relative"
         display="flex"
         alignItems="center"
         justifyContent="space-between"
@@ -844,6 +846,7 @@ export function UsersPanel({
             <Icon name="close" size={ICON_SIZES.sm} />
           </Button>
         </Tooltip>
+        <SurfaceRule />
       </chakra.header>
 
       <chakra.p margin={0} textStyle="body" color="app.textMuted">
