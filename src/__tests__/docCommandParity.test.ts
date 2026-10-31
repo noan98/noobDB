@@ -59,11 +59,12 @@ function extractDocumentedNames(markdown: string): Set<string> {
   return names;
 }
 
-// `- \`cmd\`` 形式の箇条書き行の先頭にあるコマンド名だけを拾う (散文中の識別子や、
-// 箇条書きの 2 個目以降の識別子 = 引数名・補足は対象外)。
+// `- \`cmd\`` / `- \`cmd(args)\`` 形式の箇条書き行の先頭にあるコマンド名だけを拾う
+// (散文中の識別子や、箇条書きの 2 個目以降の識別子 = 引数名・補足は対象外。command-list.md は
+// 「1 行 1 コマンド」の規約なので、`a` / `b` と並べた 2 個目以降の陳腐化はここでは検出しない)。
 function extractBulletedCommands(markdown: string): Set<string> {
   const names = new Set<string>();
-  const re = /^\s*- `([a-z_][a-z0-9_]*)`/gm;
+  const re = /^\s*- `([a-z_][a-z0-9_]*)(?:\([^`]*\))?`/gm;
   let match: RegExpExecArray | null;
   while ((match = re.exec(markdown)) !== null) {
     names.add(match[1]);
