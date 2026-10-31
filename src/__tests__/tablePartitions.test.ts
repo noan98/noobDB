@@ -165,16 +165,26 @@ describe("ATTACH PARTITION (#1929)", () => {
     expect(attachBoundKind("sqlite", { method: "RANGE" })).toBeNull();
   });
 
-  it("境界値のリテラル化: 数値・MINVALUE・NULL はそのまま、他は引用 (単一引用符は二重化)", () => {
-    expect(quoteBoundValue(" 10 ")).toBe("10");
-    expect(quoteBoundValue("-1.5e3")).toBe("-1.5e3");
+  it("境界値のリテラル化: MINVALUE / MAXVALUE / NULL 以外は常に引用し、文を抜け出せない", () => {
+    expect(quoteBoundValue(" 10 ")).toBe("'10'");
+    expect(quoteBoundValue("007")).toBe("'007'");
     expect(quoteBoundValue("minvalue")).toBe("MINVALUE");
     expect(quoteBoundValue("MaxValue")).toBe("MAXVALUE");
     expect(quoteBoundValue("null")).toBe("NULL");
     expect(quoteBoundValue("2026-01-01")).toBe("'2026-01-01'");
     expect(quoteBoundValue("it's")).toBe("'it''s'");
+    // 完全な 1 つの文字列リテラルはそのまま。
     expect(quoteBoundValue("'007'")).toBe("'007'");
-    expect(quoteBoundValue("1; DROP TABLE x")).toBe("'1; DROP TABLE x'");
+    expect(quoteBoundValue("'it''s'")).toBe("'it''s'");
+    // 文を抜け出す入力・複数値は全体が 1 つのリテラルになる。
+    expect(quoteBoundValue("'a'); DROP TABLE x; --'")).toBe("'''a''); DROP TABLE x; --'''");
+    expect(quoteBoundValue("'a', 'b'")).toBe("'''a'', ''b'''");
+    expect(
+      buildPartitionBoundClause({ kind: "list", values: parseListValues("'a'); DROP TABLE x; --'") }),
+    ).toBe("FOR VALUES IN ('''a''); DROP TABLE x; --''')");
+    expect(buildPartitionBoundClause({ kind: "range", from: ["'a', 'b'"], to: ["z"] })).toBe(
+      "FOR VALUES FROM ('''a'', ''b''') TO ('z')",
+    );
   });
 
   it("RANGE: キー列ごとの FROM / TO (複合キー・MINVALUE)", () => {
@@ -183,7 +193,7 @@ describe("ATTACH PARTITION (#1929)", () => {
     );
     expect(
       buildPartitionBoundClause({ kind: "range", from: ["MINVALUE", "1"], to: ["100", "MAXVALUE"] }),
-    ).toBe("FOR VALUES FROM (MINVALUE, 1) TO (100, MAXVALUE)");
+    ).toBe("FOR VALUES FROM (MINVALUE, '1') TO ('100', MAXVALUE)");
     expect(validateAttachBound({ kind: "range", from: ["1"], to: [" "] })).toBe("rangeEmpty");
     expect(buildPartitionBoundClause({ kind: "range", from: [""], to: ["1"] })).toBe("");
   });
@@ -211,7 +221,7 @@ describe("ATTACH PARTITION (#1929)", () => {
       'ALTER TABLE "public"."ev" ATTACH PARTITION "public"."ev_old" DEFAULT;',
     );
     expect(buildAttachSql("postgres", "public", "ev", 'ev"x', { kind: "list", values: ["1"] })).toBe(
-      'ALTER TABLE "public"."ev" ATTACH PARTITION "public"."ev""x" FOR VALUES IN (1);',
+      `ALTER TABLE "public"."ev" ATTACH PARTITION "public"."ev""x" FOR VALUES IN ('1');`,
     );
     expect(buildAttachPartitionSql("mysql", "app", "ev", { name: "c" }, "DEFAULT")).toBe("");
     expect(buildAttachPartitionSql("sqlite", null, "ev", { name: "c" }, "DEFAULT")).toBe("");
@@ -230,6 +240,11 @@ describe("ATTACH PARTITION (#1929)", () => {
     expect(attachCandidates(["ev", "ev_1", "ev_2", "old"], "ev", info)).toEqual(["old"]);
     expect(existingHashModulus(info)).toBe("8");
     expect(existingHashModulus({ partitions: [part({ name: "a" })] })).toBeNull();
+    expect(
+      existingHashModulus({
+        partitions: [part({ name: "s", depth: 1, bound: "FOR VALUES WITH (modulus 2, remainder 0)" })],
+      }),
+    ).toBeNull();
     expect(partitionKeyColumns("a, lower(b)")).toEqual(["a", "lower(b)"]);
   });
 });

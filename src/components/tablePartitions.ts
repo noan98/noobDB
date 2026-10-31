@@ -165,12 +165,16 @@ export function parseListValues(raw: string): string[] {
   return splitTopLevel(raw);
 }
 
-/** 利用者が入力した境界値を SQL リテラルにする。数値・MINVALUE / MAXVALUE / NULL・引用済みはそのまま、他は文字列として引用。 */
+/**
+ * 利用者が入力した境界値を SQL リテラルにする。MINVALUE / MAXVALUE / NULL (大文字小文字無視) と、
+ * 入力全体が 1 つの完全な文字列リテラルのものだけをそのまま使い、他はすべて文字列として引用する
+ * (中の単一引用符は二重化)。数値も引用してよい: PostgreSQL がキー列の型へ変換するので、文字列キーの
+ * '007' の先頭 0 も保たれる。式や複数値を紛れ込ませて文を抜け出す入力は、全体が 1 つの文字列になる。
+ */
 export function quoteBoundValue(raw: string): string {
   const v = raw.trim();
   if (/^(minvalue|maxvalue|null)$/i.test(v)) return v.toUpperCase();
-  if (/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(v)) return v;
-  if (v.length >= 2 && v.startsWith("'") && v.endsWith("'")) return v;
+  if (/^'(?:[^']|'')*'$/.test(v)) return v;
   return `'${v.replace(/'/g, "''")}'`;
 }
 
@@ -256,6 +260,7 @@ export function attachCandidates(
 /** 既存の HASH パーティションの MODULUS (新しい子の既定値に使う)。無ければ null。 */
 export function existingHashModulus(info: Pick<TablePartitions, "partitions">): string | null {
   for (const p of info.partitions) {
+    if (p.depth !== 0) continue;
     const m = /modulus\s+(\d+)/i.exec(p.bound);
     if (m) return m[1] as string;
   }

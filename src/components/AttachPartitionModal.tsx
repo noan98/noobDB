@@ -76,6 +76,7 @@ export function AttachPartitionModal({ sessionId, database, table, info, kind, o
     };
   }, [sessionId, database]);
 
+  // listTables にはビュー / マテビューが混ざり得るが、ATTACH できるのはテーブルだけ (ヘルプ文で案内する)。
   const candidates = useMemo(
     () => (tables ? attachCandidates(tables, table, info) : []),
     [tables, table, info],

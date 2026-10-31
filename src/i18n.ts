@@ -3745,11 +3745,12 @@ const en = {
   partitionOpDone: "{partition}: done",
   partitionAttachConfirmTitle: "Attach {partition} to {table}?",
   partitionAttachConfirmBody:
-    "{partition} becomes a partition of {table}. PostgreSQL takes an ACCESS EXCLUSIVE lock on {partition} while it checks that every row fits the bound (a matching CHECK constraint lets it skip the scan), so queries on it wait. If any row is outside the bound, the statement fails and nothing changes.",
+    "{partition} becomes a partition of {table}. PostgreSQL takes an ACCESS EXCLUSIVE lock on {partition} while it checks that every row fits the bound (a matching CHECK constraint lets it skip the scan), so queries on it wait. If any row is outside the bound, the statement fails and nothing changes. If a DEFAULT partition exists, it is checked too, and the statement fails if it holds rows that belong to the new bound.",
   attachPartitionOpen: "Attach existing table...",
   attachPartitionTitle: "Attach a table to {table}",
   attachPartitionChild: "Table to attach",
-  attachPartitionChildHelp: "Tables in schema {schema} that are not already partitions of this table.",
+  attachPartitionChildHelp:
+    "Tables in schema {schema} that are not already partitions of this table. Only tables can be attached (not views).",
   attachPartitionNoCandidates: "No table in schema {schema} can be attached.",
   attachPartitionListError: "Could not list tables: {error}",
   attachPartitionAsDefault: "Attach as the DEFAULT partition",
@@ -3762,13 +3763,13 @@ const en = {
   attachPartitionValues: "IN values",
   attachPartitionValuesPlaceholder: "a, b, c",
   attachPartitionValueHelp:
-    "Numbers, MINVALUE, MAXVALUE and NULL are written as is; anything else is quoted as a string. Wrap a value in single quotes to force a string (e.g. '007').",
+    "MINVALUE, MAXVALUE and NULL are written as is; every other value is quoted as a literal and PostgreSQL converts it to the key column type (e.g. 007 stays '007' for a text key).",
   attachPartitionErrRange: "Enter FROM and TO for every key column.",
   attachPartitionErrList: "Enter at least one value.",
   attachPartitionErrModulus: "MODULUS must be a positive integer.",
   attachPartitionErrRemainder: "REMAINDER must be an integer from 0 to MODULUS - 1.",
   attachPartitionWarning:
-    "Attaching takes an ACCESS EXCLUSIVE lock on the table and scans it to check the bound. If any row is outside the bound, the statement fails.",
+    "Attaching takes an ACCESS EXCLUSIVE lock on the table and scans it to check the bound. If any row is outside the bound, the statement fails. If a DEFAULT partition exists, it is checked too, and the statement fails if it holds rows that belong to the new bound.",
   attachPartitionPreview: "SQL to run",
   attachPartitionPreviewEmpty: "Choose a table and fill in the bound.",
   attachPartitionCancel: "Cancel",
@@ -10941,12 +10942,12 @@ const ja: Dict = {
   partitionOpDone: "{partition}: 完了しました",
   partitionAttachConfirmTitle: "{partition} を {table} に ATTACH しますか?",
   partitionAttachConfirmBody:
-    "{partition} が {table} のパーティションになります。実行中は {partition} に強いロック (ACCESS EXCLUSIVE) がかかり、全行が境界に収まるか検査します (同じ条件の CHECK 制約があれば検査を省けます)。その間は {partition} への問い合わせが待たされます。境界外の行が 1 行でもあると失敗し、何も変わりません。",
+    "{partition} が {table} のパーティションになります。実行中は {partition} に強いロック (ACCESS EXCLUSIVE) がかかり、全行が境界に収まるか検査します (同じ条件の CHECK 制約があれば検査を省けます)。その間は {partition} への問い合わせが待たされます。境界外の行が 1 行でもあると失敗し、何も変わりません。DEFAULT パーティションがある場合はそちらも検査され、新しい境界に該当する行があると失敗します。",
   attachPartitionOpen: "既存のテーブルを付ける...",
   attachPartitionTitle: "{table} にテーブルを付ける",
   attachPartitionChild: "付けるテーブル",
   attachPartitionChildHelp:
-    "スキーマ {schema} のテーブルのうち、この表のパーティションになっていないものです。",
+    "スキーマ {schema} のテーブルのうち、この表のパーティションになっていないものです。付けられるのはテーブルのみです (ビューは不可)。",
   attachPartitionNoCandidates: "スキーマ {schema} に付けられるテーブルがありません。",
   attachPartitionListError: "テーブル一覧を取得できませんでした: {error}",
   attachPartitionAsDefault: "DEFAULT パーティションとして付ける",
@@ -10959,13 +10960,13 @@ const ja: Dict = {
   attachPartitionValues: "IN の値",
   attachPartitionValuesPlaceholder: "a, b, c",
   attachPartitionValueHelp:
-    "数値・MINVALUE・MAXVALUE・NULL はそのまま、それ以外は文字列として引用します。文字列にしたい数字は単一引用符で囲みます (例: '007')。",
+    "MINVALUE・MAXVALUE・NULL はそのまま、それ以外の値はすべてリテラルとして引用し、PostgreSQL がキー列の型に変換します (例: 文字列キーなら 007 は '007' のまま)。",
   attachPartitionErrRange: "すべてのキー列に FROM と TO を入力してください。",
   attachPartitionErrList: "値を 1 つ以上入力してください。",
   attachPartitionErrModulus: "MODULUS は 1 以上の整数にしてください。",
   attachPartitionErrRemainder: "REMAINDER は 0 以上 MODULUS 未満の整数にしてください。",
   attachPartitionWarning:
-    "ATTACH はテーブルに強いロック (ACCESS EXCLUSIVE) をかけ、全行が境界に収まるか検査します。境界外の行があると失敗します。",
+    "ATTACH はテーブルに強いロック (ACCESS EXCLUSIVE) をかけ、全行が境界に収まるか検査します。境界外の行があると失敗します。DEFAULT パーティションがある場合はそちらも検査され、新しい境界に該当する行があると失敗します。",
   attachPartitionPreview: "実行する SQL",
   attachPartitionPreviewEmpty: "テーブルを選び、境界を入力してください。",
   attachPartitionCancel: "キャンセル",
