@@ -301,7 +301,7 @@ export function TaskManager({ profiles, onClose }: { profiles: ConnectionProfile
   };
 
   const sorted = useMemo(() => sortTasksForDisplay(tasks), [tasks]);
-  // reduced-motion (OS / アプリ設定) とハイコントラストでは出入りと stagger を即時にする。
+  // reduced-motion (OS / アプリ設定) とハイコントラストでは出入り・並べ替え・履歴展開を即時にする。
   // height / opacity の補間は MotionConfig では止まらないため、ここで明示的に見る。
   const reduced = useReducedMotionConfig() ?? false;
   const still = reduced || prefersStaticMotion();
