@@ -142,11 +142,9 @@ export function EmptyState({
           </Flex>
         )
       )}
-      <Text fontWeight="600" color="app.text" fontSize={compact ? "sm" : "md"}>
-        {title}
-      </Text>
+      <Text textStyle="subheading">{title}</Text>
       {description && (
-        <Text color="app.textMuted" fontSize="sm" lineHeight="1.5" maxW={compact ? "none" : "34ch"}>
+        <Text textStyle="body" color="app.textMuted" maxW={compact ? "none" : "34ch"}>
           {description}
         </Text>
       )}

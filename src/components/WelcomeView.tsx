@@ -85,10 +85,8 @@ function WelcomeCard({ icon, title, description, onClick, tourId }: CardProps) {
         >
           <Icon name={icon} size={ICON_SIZES.lg} strokeWidth={ICON_STROKE.thin} />
         </Flex>
-        <Text fontWeight="600" color="app.text" fontSize="sm">
-          {title}
-        </Text>
-        <Text id={descId} textStyle="caption" lineHeight="1.5">
+        <Text textStyle="subheading">{title}</Text>
+        <Text id={descId} textStyle="caption">
           {description}
         </Text>
       </SelectableCard>
@@ -180,7 +178,7 @@ export function WelcomeView({ onCreateConnection, onOpenSqlite, onStartTour }: P
           rounded="pill"
           css={{ background: "var(--hero-rule)", display: "var(--hero-rule-display)" }}
         />
-        <Text color="app.textMuted" fontSize="sm" lineHeight="1.6">
+        <Text textStyle="body" color="app.textMuted">
           {t("welcomeSubtitle")}
         </Text>
       </Flex>
