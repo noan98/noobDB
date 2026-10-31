@@ -745,15 +745,20 @@ export const QueryEditor = memo(
     semanticMessagesRef.current = semanticMessages;
     const extraTablesRef = useRef<string[]>([]);
     const [extraTablesRev, setExtraTablesRev] = useState(0);
-    const semanticSchema: SemanticSchema | null = sqlSemanticLintEnabled
-      ? buildSemanticSchema({
-          driver,
-          databaseSchema,
-          schemaTable,
-          defaultDatabase: schemaTable?.database ?? defaultDatabase ?? null,
-          extraTableNames: extraTablesRef.current,
-        })
-      : null;
+    // biome-ignore lint/correctness/useExhaustiveDependencies: extraTablesRev は ref の中身が変わった合図
+    const semanticSchema: SemanticSchema | null = useMemo(
+      () =>
+        sqlSemanticLintEnabled
+          ? buildSemanticSchema({
+              driver,
+              databaseSchema,
+              schemaTable,
+              defaultDatabase: schemaTable?.database ?? defaultDatabase ?? null,
+              extraTableNames: extraTablesRef.current,
+            })
+          : null,
+      [sqlSemanticLintEnabled, driver, databaseSchema, schemaTable, defaultDatabase, extraTablesRev],
+    );
     const semanticSchemaRef = useRef<SemanticSchema | null>(semanticSchema);
     semanticSchemaRef.current = semanticSchema;
     const sqlLintEnabledRef = useRef(sqlLintEnabled);

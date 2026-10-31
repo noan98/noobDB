@@ -62,7 +62,15 @@ export function buildSemanticSchema(input: SemanticSchemaInput): SemanticSchema 
     if (cols.length === 0 && input.schemaTable && input.schemaTable.name === t.name) {
       cols = input.schemaTable.columns;
     }
-    tables.set(t.name.toLowerCase(), cols.length > 0 ? new Set(cols.map((c) => c.toLowerCase())) : null);
+    const key = t.name.toLowerCase();
+    const set = cols.length > 0 ? new Set(cols.map((c) => c.toLowerCase())) : null;
+    if (tables.has(key)) {
+      // 大文字小文字だけ違う表名の衝突は列を和集合にする (どちらかが不明なら不明)。
+      const old = tables.get(key) ?? null;
+      tables.set(key, old && set ? new Set([...old, ...set]) : null);
+    } else {
+      tables.set(key, set);
+    }
   }
   return {
     driver: input.driver,
@@ -142,6 +150,7 @@ function tokenize(doc: string, driver: string): Tok[] {
       .toLowerCase();
   let i = 0;
   while (i < doc.length) {
+    if (toks.length > MAX_TOKENS) return toks;
     const c = doc[i];
     if (/\s/.test(c)) {
       i++;
@@ -419,6 +428,8 @@ const OPERAND_EXPECTING = new Set([
 
 /** 列として扱わない語 (方言の表に載り漏れうるもの)。 */
 const NOT_COLUMN = new Set([
+  "partition",
+  "over",
   "true",
   "false",
   "null",
@@ -486,6 +497,14 @@ const NOT_COLUMN = new Set([
   "isodow",
   "isoyear",
   "timezone",
+  "century",
+  "decade",
+  "millennium",
+  "milliseconds",
+  "microseconds",
+  "julian",
+  "timezone_hour",
+  "timezone_minute",
 ]);
 
 /** `DISTINCT` など SELECT 句の先頭に置ける修飾語。 */
@@ -591,6 +610,12 @@ function resolveTable(chain: Tok[], ctes: Ctes, env: Env): Cols {
   return null;
 }
 
+/** 列別名リストの適用。一部だけ指定の場合に備え、元の列との和集合にする (元が不明なら不明)。 */
+function withAliases(aliases: Cols, base: Cols): Cols {
+  if (aliases === null || base === null) return null;
+  return new Set([...base, ...aliases]);
+}
+
 /** `(a, b)` のような括弧内の名前列。名前以外が混ざれば null。 */
 function namesOfGroup(g: Group): Cols {
   const out = new Set<string>();
@@ -659,7 +684,7 @@ function parseSources(items: Item[], scope: Scope, ctes: Ctes, env: Env, runs: I
         alias = aliasTok.norm;
         i++;
         if (isGroup(items[i]) && !isSubquery(items[i])) {
-          columns = namesOfGroup(items[i] as Group);
+          columns = withAliases(namesOfGroup(items[i] as Group), columns);
           i++;
         }
       } else if (hasAs) {
@@ -878,8 +903,10 @@ function analyzeQuery(items: Item[], outer: Scope | null, ctes: Ctes, env: Env):
       if (!isNameTok(nameTok)) return null;
       i++;
       let explicit: Cols = null;
+      let hasList = false;
       if (isGroup(items[i])) {
         explicit = namesOfGroup(items[i] as Group);
+        hasList = true;
         i++;
       }
       if (!isWord(items[i], "as")) return null;
@@ -892,7 +919,7 @@ function analyzeQuery(items: Item[], outer: Scope | null, ctes: Ctes, env: Env):
       const inner = new Map(scoped);
       inner.set(nameTok.norm, null); // 再帰参照は列不明
       const cols = analyzeQuery(body.items, outer, inner, env);
-      scoped.set(nameTok.norm, explicit ?? cols);
+      scoped.set(nameTok.norm, hasList ? withAliases(explicit, cols) : cols);
       if (isPunct(items[i], ",")) {
         i++;
         continue;
@@ -936,7 +963,11 @@ function checkRun(items: Item[], scope: Scope, ctes: Ctes, env: Env) {
     const it = items[i];
     if (isGroup(it)) {
       if (isSubquery(it)) analyzeQuery(it.items, scope, ctes, env);
-      else checkRun(it.items, scope, ctes, env);
+      else if (isWord(items[i - 1], "extract")) {
+        // EXTRACT(<日時要素> FROM x): FROM より前は列ではない。
+        const f = it.items.findIndex((x) => isWord(x, "from"));
+        checkRun(f < 0 ? [] : it.items.slice(f), scope, ctes, env);
+      } else checkRun(it.items, scope, ctes, env);
       i++;
       continue;
     }
@@ -950,6 +981,14 @@ function checkRun(items: Item[], scope: Scope, ctes: Ctes, env: Env) {
     i = end;
     // 直前が値/名前なら暗黙の別名・型名・修飾語など (`x alias` / `1 day` / `OVER w`)。
     if (prev !== undefined && isOperandEnd(prev)) continue;
+    // CONVERT(x USING utf8mb4) / CHARACTER SET utf8mb4 の文字セット名。
+    if (isWord(prev, "using", "set")) continue;
+    // PG の名前付き引数 (`days => 1` / `days := 1`)。
+    if (
+      (isPunct(items[end], "=") && isPunct(items[end + 1], ">")) ||
+      (isPunct(items[end], ":") && isPunct(items[end + 1], "="))
+    )
+      continue;
     if (isGroup(items[end]) && chain.names.length <= 2) continue; // 関数呼び出し
     if (chain.star) continue;
     if (chain.names.length === 1) {
@@ -987,6 +1026,8 @@ function isColumnCandidate(t: Tok, env: Env): boolean {
 
 function resolveBare(t: Tok, scope: Scope, env: Env) {
   const name = t.norm;
+  // SQLite は生成列・FTS5 の rank など pragma に出ない列があるので、列の警告は出さない。
+  if (env.schema.driver === "sqlite") return;
   // SQLite は存在しない "名前" を文字列リテラルとして扱うので、二重引用符の未知名は警告しない。
   if (env.schema.driver === "sqlite" && t.kind === "qid" && env.doc[t.from] === '"') return;
   for (let s: Scope | null = scope; s; s = s.parent) {
@@ -1005,6 +1046,7 @@ function resolveQualified(q: Tok, c: Tok, scope: Scope, env: Env) {
     const src = s.sources.find((x) => x.alias === q.norm);
     if (!src) continue;
     if (src.columns === null || src.columns.has(c.norm)) return;
+    if (env.schema.driver === "sqlite") return;
     if (env.schema.driver === "sqlite" && c.kind === "qid") return;
     warn(env, c, env.msgs.unknownColumn);
     return;
@@ -1057,6 +1099,14 @@ export function semanticDiagnostics(
   try {
     const toks = tokenize(doc, schema.driver);
     if (toks.length === 0 || toks.length > MAX_TOKENS) return [];
+    // ストアド/トリガー/イベントの本体は `;` で割れ、ローカル変数や引数が列に見えるので解析しない。
+    for (let k = 0; k < toks.length; k++) {
+      if (
+        isWord(toks[k], "create") &&
+        toks.slice(k + 1, k + 9).some((x) => isWord(x, "procedure", "function", "trigger", "event"))
+      )
+        return [];
+    }
     const idents = new Set<number>();
     tree.iterate({
       enter(node) {

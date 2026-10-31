@@ -192,8 +192,10 @@ describe("semanticDiagnostics — DML", () => {
 describe("semanticDiagnostics — ドライバ差・保守性", () => {
   it("SQLite の二重引用符は未知名でも文字列扱いで警告しない", () => {
     expect(run('SELECT "abc" FROM users', { dialect: SQLite, driver: "sqlite" })).toEqual([]);
-    expect(run("SELECT abc FROM users", { dialect: SQLite, driver: "sqlite" })).toEqual([
-      "warning:column:abc@abc",
+    // SQLite は生成列・FTS5 の rank などがあるので列の警告は出さない (未知テーブルは出す)。
+    expect(run("SELECT abc FROM users", { dialect: SQLite, driver: "sqlite" })).toEqual([]);
+    expect(run("SELECT rank FROM userz", { dialect: SQLite, driver: "sqlite" })).toEqual([
+      "warning:table:userz@userz",
     ]);
   });
   it("MySQL の二重引用符は文字列、Postgres では識別子", () => {
@@ -278,5 +280,56 @@ describe("semanticDiagnostics — 正当な SQL に偽陽性を出さない", ()
     expect(pg("DELETE FROM orders o USING users u WHERE u.id = o.user_id")).toEqual([]);
     expect(pg("SELECT users FROM users")).toEqual([]);
     expect(pg("SELECT name::text, created_at::date FROM users")).toEqual([]);
+  });
+});
+
+describe("semanticDiagnostics — レビュー指摘の偽陽性", () => {
+  const pg = (sql: string) => run(sql, { dialect: PostgreSQL, driver: "postgres" });
+  it("PARTITION / OVER を列とみなさない (SQLite 方言)", () => {
+    expect(
+      run("SELECT row_number() OVER (PARTITION BY name) FROM users", { dialect: SQLite, driver: "sqlite" }),
+    ).toEqual([]);
+    expect(pg("SELECT row_number() OVER (PARTITION BY name) FROM users")).toEqual([]);
+    expect(pg("SELECT row_number() OVER (PARTITION BY nme) FROM users")).toEqual(["warning:column:nme@nme"]);
+  });
+  it("文字セット名・EXTRACT の要素・名前付き引数を列とみなさない", () => {
+    expect(run("SELECT CONVERT(name USING utf8mb4), CHAR(65 USING utf8mb4) FROM users")).toEqual([]);
+    expect(run("SELECT CAST(name AS CHAR CHARACTER SET utf8mb4) FROM users")).toEqual([]);
+    expect(
+      pg(
+        "SELECT EXTRACT(CENTURY FROM created_at), EXTRACT(julian FROM created_at), EXTRACT(decade FROM created_at) FROM users",
+      ),
+    ).toEqual([]);
+    expect(pg("SELECT EXTRACT(year FROM nme) FROM users")).toEqual(["warning:column:nme@nme"]);
+    expect(pg("SELECT make_interval(days => 1), make_interval(days := 1) FROM users")).toEqual([]);
+  });
+  it("列別名リストが一部だけでも元の列を失わない", () => {
+    expect(pg("SELECT email FROM users AS u(nm)")).toEqual([]);
+    expect(pg("SELECT x.b FROM (SELECT id, name AS b FROM users) AS x(a)")).toEqual([]);
+    expect(pg("WITH t(a) AS (SELECT id, name FROM users) SELECT t.name FROM t")).toEqual([]);
+    expect(pg("SELECT u.a FROM users AS u(a, b)")).toEqual([]);
+  });
+  it("ストアド/トリガー本体を含むスクリプトは解析しない", () => {
+    expect(run("CREATE PROCEDURE p(uid INT) BEGIN SELECT name FROM users WHERE id = uid; END")).toEqual([]);
+    expect(
+      run(
+        "CREATE TRIGGER tr AFTER INSERT ON users FOR EACH ROW BEGIN UPDATE orders SET total = v WHERE id = 1; END",
+        { dialect: SQLite, driver: "sqlite" },
+      ),
+    ).toEqual([]);
+    expect(
+      run("CREATE FUNCTION f() RETURNS INT BEGIN DECLARE v INT; RETURN v; END; SELECT * FROM nothing"),
+    ).toEqual([]);
+  });
+  it("大文字小文字だけ違う表名が衝突したら列を和集合にする", () => {
+    const schema = buildSemanticSchema({
+      driver: "mysql",
+      databaseSchema: [
+        { name: "T", columns: ["a"] },
+        { name: "t", columns: ["b"] },
+      ],
+    });
+    const sql = "SELECT a, b FROM t";
+    expect(semanticDiagnostics(parseSqlTree(sql, MySQL), sql, schema, MSG)).toEqual([]);
   });
 });
