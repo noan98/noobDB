@@ -1,6 +1,21 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom (localStorage に触れるため。DOM を使わないテストは node 環境で走る)
+import { beforeEach, describe, expect, it } from "vitest";
+import { touchColumnLayoutLru } from "../components/columnLayoutStorage";
 import type { FilterOp } from "../components/gridSortFilter";
-import { normalizeGridView, toPersistedGridView } from "../components/gridViewState";
+import {
+  GRID_PRESET_MAX,
+  GRID_PRESET_NAME_MAX,
+  gridPresetsKeyFrom,
+  normalizeGridPresets,
+  normalizeGridView,
+  normalizePresetName,
+  readStoredGridPresets,
+  removeGridPreset,
+  resultShapeSizingKey,
+  toPersistedGridView,
+  upsertGridPreset,
+  writeStoredGridPresets,
+} from "../components/gridViewState";
 
 const ALL_OPS: FilterOp[] = [
   "contains",
@@ -35,5 +50,129 @@ describe("値のチェックリスト (in) の保存と復元 (#1628)", () => {
   it("values が配列でない in は捨てる", () => {
     const broken = { op: "in", value: "", value2: "", nullMode: "any", values: "a" };
     expect(normalizeGridView({ filters: [{ id: "c", value: broken }] }).filters).toBeUndefined();
+  });
+});
+
+describe("名前付きビュープリセット (#1942)", () => {
+  const view = {
+    sorting: [{ id: "0", desc: true }],
+    filters: [
+      { id: "1", value: { op: "contains" as const, value: "x", value2: "", nullMode: "any" as const } },
+    ],
+    masks: { secret: false },
+  };
+  const layout = {
+    order: ["1", "0"],
+    visibility: { "2": false },
+    pinning: { left: ["0"], right: [] },
+    sizing: { "0": 120 },
+  };
+
+  beforeEach(() => localStorage.clear());
+
+  it("キーは結果シェイプキーから導出し、キー無しは undefined", () => {
+    const sk = resultShapeSizingKey([{ name: "a" }], "db", "t");
+    expect(gridPresetsKeyFrom(sk)).toBe('noobdb.gridpresets.v1::db::t::["a"]');
+    expect(gridPresetsKeyFrom(undefined)).toBeUndefined();
+  });
+
+  it("保存して読み戻すとビューとレイアウトが往復する", () => {
+    const key = gridPresetsKeyFrom(resultShapeSizingKey([{ name: "a" }], "db", "t"));
+    writeStoredGridPresets(key, [
+      { name: "エラー行", view, layout },
+      { name: "空", view: {} },
+    ]);
+    const back = readStoredGridPresets(key);
+    expect(back).toEqual([
+      { name: "エラー行", view, layout },
+      { name: "空", view: {} },
+    ]);
+  });
+
+  it("別シェイプ (列構成/テーブルが違う) のキーとは衝突しない", () => {
+    const k1 = gridPresetsKeyFrom(resultShapeSizingKey([{ name: "a" }], "db", "t"));
+    const k2 = gridPresetsKeyFrom(resultShapeSizingKey([{ name: "a" }, { name: "b" }], "db", "t"));
+    const k3 = gridPresetsKeyFrom(resultShapeSizingKey([{ name: "a" }], "db", "u"));
+    writeStoredGridPresets(k1, [{ name: "p", view }]);
+    expect(readStoredGridPresets(k2)).toEqual([]);
+    expect(readStoredGridPresets(k3)).toEqual([]);
+    expect(readStoredGridPresets(k1)).toHaveLength(1);
+  });
+
+  it("空配列を書くとエントリごと削除する", () => {
+    const key = "noobdb.gridpresets.v1::db::t::[]";
+    writeStoredGridPresets(key, [{ name: "p", view }]);
+    expect(localStorage.getItem(key)).not.toBeNull();
+    writeStoredGridPresets(key, []);
+    expect(localStorage.getItem(key)).toBeNull();
+  });
+
+  it("壊れた JSON・配列でない値は空配列にフォールバックする", () => {
+    const key = "noobdb.gridpresets.v1::db::t::[]";
+    localStorage.setItem(key, "{not json");
+    expect(readStoredGridPresets(key)).toEqual([]);
+    localStorage.setItem(key, JSON.stringify({ name: "x" }));
+    expect(readStoredGridPresets(key)).toEqual([]);
+  });
+
+  it("不正なエントリ (名前無し・重複・未知演算子・型不一致レイアウト) は捨てる", () => {
+    const out = normalizeGridPresets([
+      null,
+      { view },
+      { name: "  " },
+      {
+        name: "a",
+        view: { filters: [{ id: "0", value: { op: "bogus" } }] },
+        layout: { order: [1], sizing: { "0": -3 } },
+      },
+      { name: "a", view },
+      { name: "b", layout: "x" },
+    ]);
+    expect(out).toEqual([
+      { name: "a", view: {} },
+      { name: "b", view: {} },
+    ]);
+  });
+
+  it("名前は前後の空白除去・最大長で切り詰める", () => {
+    expect(normalizePresetName("  abc  ")).toBe("abc");
+    expect(normalizePresetName("x".repeat(100))).toHaveLength(GRID_PRESET_NAME_MAX);
+  });
+
+  it("読み込み時に上限で打ち切る", () => {
+    const many = Array.from({ length: GRID_PRESET_MAX + 5 }, (_, i) => ({ name: `p${i}`, view: {} }));
+    expect(normalizeGridPresets(many)).toHaveLength(GRID_PRESET_MAX);
+  });
+
+  it("upsert: 同名は位置を保って上書き、新規は末尾、上限では full", () => {
+    const a = { name: "a", view: {} };
+    const b = { name: "b", view: {} };
+    const r1 = upsertGridPreset([a, b], { name: " a ", view });
+    expect(r1.presets.map((p) => p.name)).toEqual(["a", "b"]);
+    expect(r1.presets[0]?.view).toEqual(view);
+    const r2 = upsertGridPreset([a], b);
+    expect(r2.presets.map((p) => p.name)).toEqual(["a", "b"]);
+    expect(upsertGridPreset([a], { name: "  ", view: {} }).presets).toEqual([a]);
+    const full = Array.from({ length: GRID_PRESET_MAX }, (_, i) => ({ name: `p${i}`, view: {} }));
+    expect(upsertGridPreset(full, { name: "new", view: {} })).toEqual({ presets: full, full: true });
+    expect(upsertGridPreset(full, { name: "p3", view }).full).toBe(false);
+  });
+
+  it("remove: 名前で削除する", () => {
+    const list = [
+      { name: "a", view: {} },
+      { name: "b", view: {} },
+    ];
+    expect(removeGridPreset(list, "a")).toEqual([{ name: "b", view: {} }]);
+    expect(removeGridPreset(list, "zzz")).toEqual(list);
+  });
+
+  it("LRU 退避で形状を追い出すとプリセットも一緒に消える", () => {
+    const sk = resultShapeSizingKey([{ name: "a" }], "db", "t") as string;
+    const key = gridPresetsKeyFrom(sk);
+    writeStoredGridPresets(key, [{ name: "p", view }]);
+    touchColumnLayoutLru(sk, 1);
+    touchColumnLayoutLru("noobdb.colsizing.v1::db::other::[]", 1);
+    expect(readStoredGridPresets(key)).toEqual([]);
   });
 });

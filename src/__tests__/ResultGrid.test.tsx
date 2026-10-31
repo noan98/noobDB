@@ -2754,3 +2754,33 @@ describe("rowToPendingInsert: BLOB 列は種に入れない (#1607)", () => {
     expect(seed[1]).toBeUndefined();
   });
 });
+
+describe("名前付きビュープリセット (#1942)", () => {
+  beforeEach(() => {
+    setLocale("en");
+    localStorage.clear();
+  });
+
+  it("保存したビューを別のソートの後に適用すると、ソートが丸ごと復元される", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(
+      <ResultGrid result={FRUIT_RESULT} database="db" table="fruit" />,
+    );
+
+    // name 昇順にして「昇順」という名前で保存する。
+    await user.click(screen.getByRole("button", { name: /^name/ }));
+    expect(dataRowTexts(container).map((r) => r[0])).toEqual(["apple", "banana", "cherry"]);
+    await user.click(screen.getByRole("button", { name: t("gridPresetButton") }));
+    await user.click(await screen.findByRole("menuitem", { name: t("gridPresetSaveNew") }));
+    await user.type(await screen.findByLabelText(t("gridPresetNameLabel")), "asc");
+    await user.click(screen.getByRole("button", { name: t("gridPresetSave") }));
+    await waitFor(() => expect(screen.queryByLabelText(t("gridPresetNameLabel"))).toBeNull());
+
+    // 降順に変えてから、保存ビューを適用すると昇順へ戻る。
+    await user.click(screen.getByRole("button", { name: /^name/ }));
+    expect(dataRowTexts(container).map((r) => r[0])).toEqual(["cherry", "banana", "apple"]);
+    await user.click(screen.getByRole("button", { name: t("gridPresetButton") }));
+    await user.click(await screen.findByRole("menuitem", { name: "asc" }));
+    expect(dataRowTexts(container).map((r) => r[0])).toEqual(["apple", "banana", "cherry"]);
+  });
+});
