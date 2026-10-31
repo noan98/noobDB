@@ -141,21 +141,29 @@ jobs:
           echo "MYSQL_BIN_DIR=$(cygpath -m "$MYSQL_BIN_DIR")" >> "$GITHUB_ENV"
           echo "MYSQL_DATADIR=$DATADIR" >> "$GITHUB_ENV"
 
-      # bash の `&` は Windows ではステップ終了で子プロセスごと落ちることがあるため、
-      # デタッチされる Start-Process で起動する。
+      # bash の `&` も Start-Process も、ステップ終了時に子プロセスごと止められた
+      # (ログは ready for connections まで出るのに、次のステップで 10061 になる)。
+      # PostgreSQL の pg_ctl と同じくランナーのプロセス管理から外すため、Windows サービスとして登録して起動する。
       - name: MySQL を起動
         shell: pwsh
         run: |
-          $log = Join-Path $env:DB_ROOT "mysql.log"
-          Start-Process -FilePath "$env:MYSQL_BIN_DIR\mysqld.exe" `
-            -ArgumentList "--no-defaults", "--console", "--datadir=$env:MYSQL_DATADIR", "--port=13306", "--bind-address=127.0.0.1", "--mysqlx=OFF" `
-            -RedirectStandardOutput (Join-Path $env:DB_ROOT "mysql.out.log") `
-            -RedirectStandardError $log `
-            -WindowStyle Hidden
+          $root = $env:DB_ROOT -replace '\\', '/'
+          $ini = Join-Path $env:DB_ROOT "my.ini"
+          @(
+            "[mysqld]",
+            "datadir=$env:MYSQL_DATADIR",
+            "port=13306",
+            "bind-address=127.0.0.1",
+            "mysqlx=OFF",
+            "log-error=$root/mysql.log"
+          ) | Set-Content -Encoding ascii $ini
+          & "$env:MYSQL_BIN_DIR\mysqld.exe" --install MySQLSmoke "--defaults-file=$ini"
+          if ($LASTEXITCODE -ne 0) { throw "mysqld --install が失敗しました ($LASTEXITCODE)" }
+          Start-Service MySQLSmoke
+          Get-Service MySQLSmoke
 
-      # 起動待ち。ログの "ready for connections" はポートを listen する前に出ることがあり
-      # (実測で直後の接続が 10061 で拒否された)、固定 sleep でもなく mysqladmin ping が
-      # 実際に TCP で通るまで最大 90 秒ポーリングする。落ちたら DB ログを出す。
+      # 起動待ち。サービスの起動直後はまだ listen していないことがあるので、固定 sleep ではなく
+      # mysqladmin ping が実際に TCP で通るまで最大 90 秒ポーリングする。落ちたら DB ログを出す。
       - name: MySQL の起動を待ってテスト用 DB を作成
         shell: bash
         run: |
@@ -171,7 +179,6 @@ jobs:
           if [ "$ok" != 1 ]; then
             echo "::error::MySQL が 90 秒以内に 127.0.0.1:13306 で接続を受け付けませんでした"
             cat "$(cygpath -u "$DB_ROOT")/mysql.log" || true
-            cat "$(cygpath -u "$DB_ROOT")/mysql.out.log" || true
             exit 1
           fi
           "$MYSQL_BIN_DIR/mysql.exe" --no-defaults -h 127.0.0.1 -P 13306 -u root -e \
