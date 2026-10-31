@@ -407,7 +407,9 @@ describe("ProcessListPanel filter, sort and statement-only stop (#1538)", () => 
     vi.mocked(api.listProcesses).mockResolvedValue([{ ...base, id: 1, user: "app" }]);
     fireEvent.click(screen.getByRole("button", { name: t("processRefresh") }));
     await waitFor(() => expect(api.listProcesses).toHaveBeenCalledTimes(2));
-    // 選択肢に残っていること (開いて候補を確認する) と、トリガーの表示が空欄でないこと。
+    // 再取得後の一覧は user=app のみ。反映を待ってから、選択肢に残っていること
+    // (開いて候補を確認する) と、トリガーの表示が空欄でないことを確かめる。
+    await waitFor(() => expect(screen.queryByText("2")).not.toBeInTheDocument());
     expect(screen.getByLabelText(t("processFilterUserAria"))).toHaveTextContent("batch");
     fireEvent.click(screen.getByLabelText(t("processFilterUserAria")));
     expect(screen.getAllByRole("option").some((o) => o.dataset.value === "batch")).toBe(true);
@@ -488,7 +490,7 @@ describe("ProcessListPanel per-process results / same-query select / progress (#
     vi.mocked(api.listProcesses).mockResolvedValue([base, { ...base, id: 8, query_summary: "other" }]);
     renderWithProviders(<ProcessListPanel sessionId="s1" driver="postgres" readOnly={false} />);
     await screen.findByText("8");
-    expect(screen.queryByTestId("process-select-same-query")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(t("processSelectSameQueryAria"))).not.toBeInTheDocument();
   });
 
   it("VACUUM の進捗率を状態列に出す", async () => {
