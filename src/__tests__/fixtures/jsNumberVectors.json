@@ -1,0 +1,467 @@
+{
+  "_comment": "js_compat::js_number_to_string / js_to_number と、フロントの String(x) / Number(s) を同一ベクタで突き合わせる共有ゴールデン (#1959)。numberToString は input を f64 として解釈し JS の String() 表記 expected になること、toNumber は Number(input) の結果が expected (数値リテラルの文字列。-0 / NaN / Infinity を含む) になることを検証する。期待値は Node の実測で生成している。",
+  "numberToString": [
+    {
+      "input": "0",
+      "expected": "0",
+      "note": "0 は \"0\""
+    },
+    {
+      "input": "-0",
+      "expected": "0",
+      "note": "-0 も \"0\""
+    },
+    {
+      "input": "1",
+      "expected": "1",
+      "note": "整数"
+    },
+    {
+      "input": "-1.5",
+      "expected": "-1.5",
+      "note": "負の小数"
+    },
+    {
+      "input": "100",
+      "expected": "100",
+      "note": "末尾ゼロの整数は指数にしない"
+    },
+    {
+      "input": "0.5",
+      "expected": "0.5",
+      "note": "1 未満の小数"
+    },
+    {
+      "input": "0.30000000000000004",
+      "expected": "0.30000000000000004",
+      "note": "0.1+0.2 の最短往復桁"
+    },
+    {
+      "input": "123456789012345680000",
+      "expected": "123456789012345680000",
+      "note": "1e21 未満の最大級は固定小数 (21 桁)"
+    },
+    {
+      "input": "999999999999999900000",
+      "expected": "999999999999999900000",
+      "note": "1e21 直下 (9.999999999999999e20) は固定小数"
+    },
+    {
+      "input": "1e21",
+      "expected": "1e+21",
+      "note": "1e21 ちょうどから指数表記"
+    },
+    {
+      "input": "-1e21",
+      "expected": "-1e+21",
+      "note": "負でも 1e21 で指数表記"
+    },
+    {
+      "input": "1.5e21",
+      "expected": "1.5e+21",
+      "note": "仮数に小数部がある指数表記"
+    },
+    {
+      "input": "1e22",
+      "expected": "1e+22",
+      "note": "指数が 2 桁"
+    },
+    {
+      "input": "1.2345e100",
+      "expected": "1.2345e+100",
+      "note": "指数が 3 桁"
+    },
+    {
+      "input": "0.000001",
+      "expected": "0.000001",
+      "note": "1e-6 は固定小数の下限"
+    },
+    {
+      "input": "0.0000015",
+      "expected": "0.0000015",
+      "note": "1e-6 台は固定小数"
+    },
+    {
+      "input": "0.00000099",
+      "expected": "9.9e-7",
+      "note": "1e-6 未満 (9.9e-7) は指数表記"
+    },
+    {
+      "input": "1e-7",
+      "expected": "1e-7",
+      "note": "1e-7 から指数表記"
+    },
+    {
+      "input": "-1e-7",
+      "expected": "-1e-7",
+      "note": "負の指数表記"
+    },
+    {
+      "input": "1.234e-7",
+      "expected": "1.234e-7",
+      "note": "仮数に小数部がある負の指数"
+    },
+    {
+      "input": "1.7976931348623157e308",
+      "expected": "1.7976931348623157e+308",
+      "note": "f64::MAX"
+    },
+    {
+      "input": "-1.7976931348623157e308",
+      "expected": "-1.7976931348623157e+308",
+      "note": "-f64::MAX"
+    },
+    {
+      "input": "5e-324",
+      "expected": "5e-324",
+      "note": "最小の非正規化数"
+    },
+    {
+      "input": "2.2250738585072014e-308",
+      "expected": "2.2250738585072014e-308",
+      "note": "最小の正規化数"
+    },
+    {
+      "input": "9007199254740991",
+      "expected": "9007199254740991",
+      "note": "MAX_SAFE_INTEGER"
+    },
+    {
+      "input": "9007199254740993",
+      "expected": "9007199254740992",
+      "note": "2^53+1 は偶数側に丸まる"
+    },
+    {
+      "input": "4294967296",
+      "expected": "4294967296",
+      "note": "2^32"
+    },
+    {
+      "input": "1e300",
+      "expected": "1e+300",
+      "note": "1e300"
+    },
+    {
+      "input": "0.1",
+      "expected": "0.1",
+      "note": "0.1"
+    },
+    {
+      "input": "1.7976931348623157e+308",
+      "expected": "1.7976931348623157e+308",
+      "note": "指数の + 付き入力"
+    },
+    {
+      "input": "NaN",
+      "expected": "NaN",
+      "note": "NaN"
+    },
+    {
+      "input": "Infinity",
+      "expected": "Infinity",
+      "note": "Infinity"
+    },
+    {
+      "input": "-Infinity",
+      "expected": "-Infinity",
+      "note": "-Infinity"
+    }
+  ],
+  "toNumber": [
+    {
+      "input": "",
+      "expected": "0",
+      "note": "空文字列は 0"
+    },
+    {
+      "input": "   ",
+      "expected": "0",
+      "note": "空白のみは 0"
+    },
+    {
+      "input": "  12 ",
+      "expected": "12",
+      "note": "前後の空白は除去"
+    },
+    {
+      "input": "\t\n12\r\n",
+      "expected": "12",
+      "note": "タブ/改行も JS の空白"
+    },
+    {
+      "input": "\u00a012\u00a0",
+      "expected": "12",
+      "note": "NBSP は JS の空白"
+    },
+    {
+      "input": "\ufeff12",
+      "expected": "12",
+      "note": "BOM は JS の空白"
+    },
+    {
+      "input": "\u200b12",
+      "expected": "NaN",
+      "note": "ZWSP は空白ではない"
+    },
+    {
+      "input": "12",
+      "expected": "12",
+      "note": "整数"
+    },
+    {
+      "input": "-12",
+      "expected": "-12",
+      "note": "負"
+    },
+    {
+      "input": "+12",
+      "expected": "12",
+      "note": "正符号"
+    },
+    {
+      "input": "1e3",
+      "expected": "1000",
+      "note": "指数"
+    },
+    {
+      "input": "1E3",
+      "expected": "1000",
+      "note": "大文字 E"
+    },
+    {
+      "input": "1e+3",
+      "expected": "1000",
+      "note": "指数に + 符号"
+    },
+    {
+      "input": "1e-3",
+      "expected": "0.001",
+      "note": "指数に - 符号"
+    },
+    {
+      "input": ".5",
+      "expected": "0.5",
+      "note": "整数部なし"
+    },
+    {
+      "input": "5.",
+      "expected": "5",
+      "note": "小数部なし"
+    },
+    {
+      "input": "-.5",
+      "expected": "-0.5",
+      "note": "符号 + 整数部なし"
+    },
+    {
+      "input": "0.1",
+      "expected": "0.1",
+      "note": "小数"
+    },
+    {
+      "input": "00012",
+      "expected": "12",
+      "note": "先頭ゼロは 10 進"
+    },
+    {
+      "input": "-0",
+      "expected": "-0",
+      "note": "負のゼロ"
+    },
+    {
+      "input": "+0",
+      "expected": "0",
+      "note": "正のゼロ"
+    },
+    {
+      "input": "1e",
+      "expected": "NaN",
+      "note": "指数部が空は NaN"
+    },
+    {
+      "input": "1e+",
+      "expected": "NaN",
+      "note": "指数部が符号のみは NaN"
+    },
+    {
+      "input": "e5",
+      "expected": "NaN",
+      "note": "仮数なしは NaN"
+    },
+    {
+      "input": ".",
+      "expected": "NaN",
+      "note": "小数点のみは NaN"
+    },
+    {
+      "input": "+",
+      "expected": "NaN",
+      "note": "符号のみは NaN"
+    },
+    {
+      "input": "-",
+      "expected": "NaN",
+      "note": "符号のみは NaN"
+    },
+    {
+      "input": "1 2",
+      "expected": "NaN",
+      "note": "内部の空白は NaN"
+    },
+    {
+      "input": "1_000",
+      "expected": "NaN",
+      "note": "区切り文字は NaN"
+    },
+    {
+      "input": "1,000",
+      "expected": "NaN",
+      "note": "カンマは NaN"
+    },
+    {
+      "input": "12px",
+      "expected": "NaN",
+      "note": "単位付きは NaN"
+    },
+    {
+      "input": "abc",
+      "expected": "NaN",
+      "note": "非数値"
+    },
+    {
+      "input": "0x1f",
+      "expected": "31",
+      "note": "16 進"
+    },
+    {
+      "input": "0X1F",
+      "expected": "31",
+      "note": "大文字 16 進"
+    },
+    {
+      "input": "0o17",
+      "expected": "15",
+      "note": "8 進"
+    },
+    {
+      "input": "0b101",
+      "expected": "5",
+      "note": "2 進"
+    },
+    {
+      "input": "0x",
+      "expected": "NaN",
+      "note": "接頭辞のみは NaN"
+    },
+    {
+      "input": "0xg",
+      "expected": "NaN",
+      "note": "16 進に不正文字は NaN"
+    },
+    {
+      "input": "-0x10",
+      "expected": "NaN",
+      "note": "符号付き 16 進は NaN"
+    },
+    {
+      "input": "+0x10",
+      "expected": "NaN",
+      "note": "符号付き 16 進は NaN"
+    },
+    {
+      "input": "0o8",
+      "expected": "NaN",
+      "note": "8 進に不正数字は NaN"
+    },
+    {
+      "input": "0b2",
+      "expected": "NaN",
+      "note": "2 進に不正数字は NaN"
+    },
+    {
+      "input": "0x1.8",
+      "expected": "NaN",
+      "note": "16 進に小数は NaN"
+    },
+    {
+      "input": "Infinity",
+      "expected": "Infinity",
+      "note": "Infinity"
+    },
+    {
+      "input": "+Infinity",
+      "expected": "Infinity",
+      "note": "+Infinity"
+    },
+    {
+      "input": "-Infinity",
+      "expected": "-Infinity",
+      "note": "-Infinity"
+    },
+    {
+      "input": "infinity",
+      "expected": "NaN",
+      "note": "小文字は NaN"
+    },
+    {
+      "input": "inf",
+      "expected": "NaN",
+      "note": "inf は NaN"
+    },
+    {
+      "input": "-inf",
+      "expected": "NaN",
+      "note": "-inf は NaN"
+    },
+    {
+      "input": "nan",
+      "expected": "NaN",
+      "note": "小文字 nan は NaN"
+    },
+    {
+      "input": "NaN",
+      "expected": "NaN",
+      "note": "NaN 文字列は NaN"
+    },
+    {
+      "input": "Infinity ",
+      "expected": "Infinity",
+      "note": "後続空白付き Infinity"
+    },
+    {
+      "input": "1e400",
+      "expected": "Infinity",
+      "note": "オーバーフローは Infinity"
+    },
+    {
+      "input": "-1e400",
+      "expected": "-Infinity",
+      "note": "負のオーバーフローは -Infinity"
+    },
+    {
+      "input": "1e-400",
+      "expected": "0",
+      "note": "アンダーフローは 0"
+    },
+    {
+      "input": "-1e-400",
+      "expected": "-0",
+      "note": "負のアンダーフローは -0 (符号ビットを保つ)"
+    },
+    {
+      "input": "5e-324",
+      "expected": "5e-324",
+      "note": "最小の非正規化数"
+    },
+    {
+      "input": "9007199254740993",
+      "expected": "9007199254740992",
+      "note": "2^53+1 は丸まる"
+    },
+    {
+      "input": "0.30000000000000004",
+      "expected": "0.30000000000000004",
+      "note": "0.1+0.2"
+    }
+  ]
+}
