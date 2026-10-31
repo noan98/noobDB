@@ -262,6 +262,21 @@
   失敗時はオンラインのまま)。同ジョブの実測内訳 (2026-10-18 JST の main push, 計 約 255 秒):
   セットアップ 約 75 秒 (Setup Rust 23 / rust-cache 24 / sccache 復元 9)、index 更新 26、
   `noobdb` 本体コンパイル 97、テスト実行 46 (1864 件)。(統合前の内訳。#1872 で clippy と同一ジョブに統合した。)
+  **clippy→nextest 直列の二重 codegen は計測のうえ「現状維持が最適」と結論 (#1943, 2026-10-31 JST)。**
+  直近の成功ジョブ 14 本 (main push / PR) のステップ実測は clippy 36〜195 秒 (典型 40〜65)、
+  nextest 105〜279 秒 (典型 110〜180)。clippy は合計の約 25〜35% で、支配的なのはテストの
+  codegen + リンク。検討した 3 案はいずれも効かない。(1) clippy のスコープ縮小: `src-tauri` は
+  単一パッケージ (ワークスペースメンバは `noobdb` のみ) で、依存への lint は元々走らず、
+  依存の check (rmeta) 生成は `-p` や `--no-deps` でも省けない。(2) nextest の archive 化:
+  archive は「ビルドと実行の分離」であり、clippy (check ビルド) と test (codegen ビルド) の
+  成果物は共有できない。Linux の `rust (test)` で効いたのは sshd/TLS セットアップとの
+  オーバーラップのためで、Windows にはその待ちが無い。(3) 実行順の入れ替え: どちらが先でも
+  共有されるのは build script と proc-macro のみ (既に共有済み) で、依存の rmeta/rlib は別物。
+  sccache も rustc の check/codegen 呼び出しを別キーで持つので順序で効き方は変わらない。
+  残る手段 (clippy と test を別ジョブへ並列化) は #1872 で課金 2 倍・二重セットアップを理由に
+  戻した経緯があり、壁時計と引き換えに計算量が増えるため採らない。再検討は clippy が
+  合計の半分を超える、または Windows が他ジョブより明確に遅れ続けるときに、ジョブ別の
+  `sccache --show-stats` を取ってから行う。
   Windows ジョブは rust-cache (`save-if`) と sccache (`actions/cache/restore` +
   `actions/cache/save`) の**保存を main の push だけ**にしています (保存が約 1 分かかり、
   PR のキャッシュは他 PR から参照できないため。PR は main スコープを復元するだけ)。
