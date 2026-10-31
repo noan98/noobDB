@@ -649,7 +649,7 @@ async fn postgres_new_schema_apis_and_transaction_when_env_set() {
     assert!(seq_def.contains("CREATE SEQUENCE \"noobdb_objtest_seq\""));
     assert!(seq_def.contains("INCREMENT BY 5"));
     assert!(
-        seq_def.contains("last_value: (not called yet)"),
+        seq_def.contains("last_value: (not called yet or no privilege)"),
         "{seq_def}"
     );
     conn.execute("SELECT nextval('public.noobdb_objtest_seq')", None)

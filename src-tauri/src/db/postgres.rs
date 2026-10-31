@@ -2069,6 +2069,7 @@ impl PostgresConn {
             SELECT s.sequencename::text, s.data_type::text, s.start_value, s.min_value,
                    s.max_value, s.increment_by, s.cycle, s.cache_size, s.last_value,
                    (SELECT format('%I.%I.%I', tn.nspname, t.relname, a.attname)
+                           || CASE d.deptype WHEN 'i' THEN ':identity' ELSE '' END
                       FROM pg_class c
                       JOIN pg_namespace n ON n.oid = c.relnamespace
                       JOIN pg_depend d ON d.objid = c.oid
@@ -2093,15 +2094,20 @@ impl PostgresConn {
         Ok(row.map(|r| {
             let mut out = format!("{};", create_sequence_ddl(&r));
             if let Ok(Some(owner)) = r.try_get::<Option<String>, _>(9) {
-                out.push_str(&format!(
-                    "\nALTER SEQUENCE \"{}\" OWNED BY {};",
-                    name.replace('"', "\"\""),
-                    owner
-                ));
+                // identity 列のシーケンスは OWNED BY で付け替えられない (内部依存) ので、
+                // 文ではなくコメントで所有列を示す。
+                match owner.strip_suffix(":identity") {
+                    Some(col) => out.push_str(&format!("\n-- identity column: {col}")),
+                    None => out.push_str(&format!(
+                        "\nALTER SEQUENCE \"{}\" OWNED BY {};",
+                        name.replace('"', "\"\""),
+                        owner
+                    )),
+                }
             }
             match r.try_get::<Option<i64>, _>(8) {
                 Ok(Some(v)) => out.push_str(&format!("\n-- last_value: {v}")),
-                _ => out.push_str("\n-- last_value: (not called yet)"),
+                _ => out.push_str("\n-- last_value: (not called yet or no privilege)"),
             }
             out
         }))
