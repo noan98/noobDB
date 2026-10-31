@@ -21,8 +21,6 @@ import { useId } from "react";
  *   一段明るい navy-raised (`--brand-mark-tile`)。暗い面に沈ませないため。
  * - 横線の縁取りはタイル色と同じにして、*n* の脚との間に隙間を見せる。
  * - teal はロゴの横線やブランド面の小さなアクセント専用で、文字色には使わない。
- * - `tone="mono"` は周囲の文字色 (`currentColor`) 1 色でタイルを塗り、*n* と横線を
- *   マスクで抜く。低彩度な文脈 (ローディングのインライン等) で使う。
  *
  * ## シグネチャ・アニメーション (#1505)
  *
@@ -55,41 +53,27 @@ const N_PATH = "M14 35 V22 A8 8 0 0 1 30 22 V35";
 const N_STROKE = 5.5;
 const BAR = { x: 19, y: 24.75, width: 16, height: 5, rx: 2.5, stroke: 2 } as const;
 
-/** マークの描画トーン。 */
-export type BrandTone = "brand" | "mono";
-
 export interface BrandMarkProps extends Omit<HTMLChakraProps<"svg">, "css"> {
   /** 一辺のピクセルサイズ (正方形)。既定 24。 */
   size?: number;
   /**
-   * `"brand"` (既定): 紺のタイル + 白い *n* + ティールの横線のフルカラー。
-   * `"mono"`: タイルを `currentColor` で塗り、*n* と横線を抜いた 1 色 (周囲の文字色を継承)。
-   */
-  tone?: BrandTone;
-  /**
-   * マウント時にシグネチャ・アニメーションを 1 回再生する (#1505)。`tone="brand"` のみ有効
-   * (`"mono"` は無視)。reduced-motion / `hc-*` では再生せず静止表示。既定 false。
+   * マウント時にシグネチャ・アニメーションを 1 回再生する (#1505)。
+   * reduced-motion / `hc-*` では再生せず静止表示。既定 false。
    */
   animate?: boolean;
 }
 
 /**
  * ブランドロゴマーク「n Tunnel」。アプリアイコンを平面化した正となるベクタで、
- * `size` でスケールし、`tone` でフルカラー / モノクロを切り替える。装飾用途のため
- * 既定で `aria-hidden`。
+ * `size` でスケールする。紺のタイル + 白い *n* + ティールの横線のフルカラー。
+ * 装飾用途のため既定で `aria-hidden`。
  */
-export function BrandMark({
-  size = 24,
-  tone = "brand",
-  animate = false,
-  className,
-  ...rest
-}: BrandMarkProps) {
+export function BrandMark({ size = 24, animate = false, className, ...rest }: BrandMarkProps) {
   // マスク ID はインスタンスごとに一意でないと、同一ページに複数の BrandMark が
   // ある場合に SVG の id 衝突で抜きが壊れる。React の useId で隔離する。
   const mid = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const tile = "var(--brand-mark-tile)";
-  const play = animate && tone === "brand";
+  const play = animate;
 
   return (
     <chakra.svg
@@ -103,89 +87,49 @@ export function BrandMark({
       className={play ? [className, "brand-mark-anim"].filter(Boolean).join(" ") : className}
       {...rest}
     >
-      {tone === "brand" ? (
-        <>
-          <rect x={TILE.x} y={TILE.y} width={TILE.size} height={TILE.size} rx={TILE.rx} fill={tile} />
-          {play && (
-            <defs>
-              {/* 横線がタイルの外へはみ出して見えないよう、滑走中はタイル形で切り抜く。 */}
-              <clipPath id={`${mid}-tile`}>
-                <rect x={TILE.x} y={TILE.y} width={TILE.size} height={TILE.size} rx={TILE.rx} />
-              </clipPath>
-            </defs>
-          )}
-          {/* 小文字 n。animate 時は pathLength=1 に正規化し、ストロークを描き進める。 */}
-          <path
-            d={N_PATH}
-            fill="none"
-            stroke="#ffffff"
-            strokeWidth={N_STROKE}
-            className={play ? "brand-mark-n" : undefined}
-            pathLength={play ? 1 : undefined}
-          />
-          {/* n の右脚を突き抜けるトンネル。縁取りをタイル色にして脚との隙間を見せる。 */}
-          <g clipPath={play ? `url(#${mid}-tile)` : undefined}>
-            <rect
-              x={BAR.x}
-              y={BAR.y}
-              width={BAR.width}
-              height={BAR.height}
-              rx={BAR.rx}
-              fill="var(--brand-teal)"
-              stroke={tile}
-              strokeWidth={BAR.stroke}
-              className={play ? "brand-mark-bar" : undefined}
-            />
-          </g>
-        </>
-      ) : (
-        <>
-          <defs>
-            {/* 白 = 残す、黒 = 抜く。n と横線の本体を抜き、横線の縁取りだけは白
-                (タイル色) で塗り戻して、brand と同じく脚との隙間を見せる。 */}
-            <mask id={`${mid}-cut`} maskUnits="userSpaceOnUse" x="0" y="0" width="48" height="48">
-              <rect x={TILE.x} y={TILE.y} width={TILE.size} height={TILE.size} rx={TILE.rx} fill="#ffffff" />
-              <path d={N_PATH} fill="none" stroke="#000000" strokeWidth={N_STROKE} />
-              <rect
-                x={BAR.x}
-                y={BAR.y}
-                width={BAR.width}
-                height={BAR.height}
-                rx={BAR.rx}
-                fill="#000000"
-                stroke="#ffffff"
-                strokeWidth={BAR.stroke}
-              />
-            </mask>
-          </defs>
-          <rect
-            x={TILE.x}
-            y={TILE.y}
-            width={TILE.size}
-            height={TILE.size}
-            rx={TILE.rx}
-            fill="currentColor"
-            mask={`url(#${mid}-cut)`}
-          />
-        </>
+      <rect x={TILE.x} y={TILE.y} width={TILE.size} height={TILE.size} rx={TILE.rx} fill={tile} />
+      {play && (
+        <defs>
+          {/* 横線がタイルの外へはみ出して見えないよう、滑走中はタイル形で切り抜く。 */}
+          <clipPath id={`${mid}-tile`}>
+            <rect x={TILE.x} y={TILE.y} width={TILE.size} height={TILE.size} rx={TILE.rx} />
+          </clipPath>
+        </defs>
       )}
+      {/* 小文字 n。animate 時は pathLength=1 に正規化し、ストロークを描き進める。 */}
+      <path
+        d={N_PATH}
+        fill="none"
+        stroke="#ffffff"
+        strokeWidth={N_STROKE}
+        className={play ? "brand-mark-n" : undefined}
+        pathLength={play ? 1 : undefined}
+      />
+      {/* n の右脚を突き抜けるトンネル。縁取りをタイル色にして脚との隙間を見せる。 */}
+      <g clipPath={play ? `url(#${mid}-tile)` : undefined}>
+        <rect
+          x={BAR.x}
+          y={BAR.y}
+          width={BAR.width}
+          height={BAR.height}
+          rx={BAR.rx}
+          fill="var(--brand-teal)"
+          stroke={tile}
+          strokeWidth={BAR.stroke}
+          className={play ? "brand-mark-bar" : undefined}
+        />
+      </g>
     </chakra.svg>
   );
 }
 
-export interface WordmarkProps extends Omit<HTMLChakraProps<"span">, "css"> {
-  /**
-   * 旧デザインの "noob"(控えめ) + "DB"(強調) のツートーン表現。互換のため残して
-   * いるが、新デザインの既定は単色 (false)。
-   */
-  twoTone?: boolean;
-}
+export type WordmarkProps = Omit<HTMLChakraProps<"span">, "css">;
 
 /**
  * "noobDB" ワードマーク。太さ 650・字間 -0.015em の単色で、文字色は
  * `--brand-wordmark` (明るいテーマで navy、ダーク系で本文色) に従う。
  */
-export function Wordmark({ twoTone = false, ...rest }: WordmarkProps) {
+export function Wordmark(props: WordmarkProps) {
   return (
     <chakra.span
       fontWeight="650"
@@ -194,10 +138,9 @@ export function Wordmark({ twoTone = false, ...rest }: WordmarkProps) {
       whiteSpace="nowrap"
       color="var(--brand-wordmark)"
       css={{ userSelect: "none" }}
-      {...rest}
+      {...props}
     >
-      <chakra.span color={twoTone ? "app.textSecondary" : undefined}>noob</chakra.span>
-      <chakra.span color={twoTone ? "app.text" : undefined}>DB</chakra.span>
+      noobDB
     </chakra.span>
   );
 }
@@ -207,8 +150,6 @@ export interface BrandLockupProps {
   markSize?: number;
   /** ワードマークのフォントサイズ (CSS 長さ)。既定 "var(--text-lg)"。 */
   wordSize?: string;
-  /** マークのトーン。既定 "brand"。 */
-  tone?: BrandTone;
   /** マークとワードマークの間隔 (Chakra spacing トークン)。既定 "2.5"。 */
   gap?: string;
   /** マウント時にマークのシグネチャ・アニメーションを 1 回再生する (`BrandMark` の `animate`)。既定 false。 */
@@ -222,13 +163,12 @@ export interface BrandLockupProps {
 export function BrandLockup({
   markSize = 28,
   wordSize = "var(--text-lg)",
-  tone = "brand",
   gap = "2.5",
   animate = false,
 }: BrandLockupProps) {
   return (
     <Flex align="center" gap={gap}>
-      <BrandMark size={markSize} tone={tone} animate={animate} />
+      <BrandMark size={markSize} animate={animate} />
       <Wordmark fontSize={wordSize} />
     </Flex>
   );

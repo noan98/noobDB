@@ -65,12 +65,6 @@ describe("ブランドビジュアル (実ブラウザ)", () => {
       expect(document.querySelector(".brand-mark-anim, .brand-mark-n, .brand-mark-bar")).toBeNull();
     });
 
-    it("mono トーンでは animate を無視する", async () => {
-      await renderInBrowser(<BrandMark size={48} tone="mono" animate />);
-      await expect.poll(() => document.querySelector("svg")).toBeTruthy();
-      expect(document.querySelector(".brand-mark-anim")).toBeNull();
-    });
-
     it("hc-* では静止する", async () => {
       document.documentElement.setAttribute("data-theme", "hc-dark");
       await renderInBrowser(<BrandMark size={96} animate />);
