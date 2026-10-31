@@ -35,6 +35,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { StatTile } from "./StatTile";
 import { integerCountUpTarget } from "../useCountUp";
 import { Spinner } from "./Spinner";
+import { RevealTbody } from "./RevealTbody";
 import { Skeleton, SkeletonTableRows } from "./Skeleton";
 import { Tooltip } from "./Tooltip";
 import { Button, Checkbox, Select } from "./ui";
@@ -618,7 +619,7 @@ export function ColumnProfilePanel({
                         </chakra.th>
                       </chakra.tr>
                     </chakra.thead>
-                    <chakra.tbody>
+                    <RevealTbody>
                       {profile.top_values.map((tv, i) => (
                         <chakra.tr key={i}>
                           <chakra.td
@@ -639,7 +640,7 @@ export function ColumnProfilePanel({
                           </chakra.td>
                         </chakra.tr>
                       ))}
-                    </chakra.tbody>
+                    </RevealTbody>
                   </chakra.table>
                 </Box>
               )}
