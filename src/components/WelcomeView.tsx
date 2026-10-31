@@ -8,7 +8,8 @@ import { useToast } from "./Toast";
 import { staggerContainer, transitions, variants } from "../motion";
 import { BrandMark } from "../brand";
 import { WelcomeIllustration } from "./illustrations";
-import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "./Icon";
+import type { IconName } from "./Icon";
+import { FeatureIcon } from "./FeatureIcon";
 
 // 既存 (EmptyState / SplashScreen) と同じく chakra でラップした motion 要素。
 // `transition` は Chakra のスタイルプロップに飲まれず motion へ渡すため
@@ -74,17 +75,7 @@ function WelcomeCard({ icon, title, description, onClick, tourId }: CardProps) {
         flex="1"
         alignItems="flex-start"
       >
-        <Flex
-          align="center"
-          justify="center"
-          boxSize="40px"
-          rounded="lg"
-          bg="app.surfaceMuted"
-          color="app.accent"
-          aria-hidden
-        >
-          <Icon name={icon} size={ICON_SIZES.lg} strokeWidth={ICON_STROKE.thin} />
-        </Flex>
+        <FeatureIcon icon={icon} size="md" />
         <Text textStyle="subheading">{title}</Text>
         <Text id={descId} textStyle="caption">
           {description}

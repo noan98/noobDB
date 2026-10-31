@@ -3,7 +3,8 @@ import { chakra, Flex, Text } from "@chakra-ui/react";
 import { motion } from "motion/react";
 import { transitions } from "../motion";
 import { Button, PressableButton } from "./ui";
-import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "./Icon";
+import { Icon, ICON_SIZES, type IconName } from "./Icon";
+import { FeatureIcon } from "./FeatureIcon";
 import { Kbd } from "./Kbd";
 
 /** ルートを motion 化するラッパー。`transition` を motion へ転送する
@@ -121,26 +122,7 @@ export function EmptyState({
           {illustration}
         </motion.div>
       ) : (
-        icon && (
-          <Flex
-            as="span"
-            aria-hidden
-            align="center"
-            justify="center"
-            boxSize={compact ? "34px" : "56px"}
-            rounded="lg"
-            bg="app.surfaceMuted"
-            color="app.textSecondary"
-          >
-            {/* compact は既存の `lg` (20px 相当) に寄せる。旧値 22px との差はわずか
-                (2px) で、新トークンを 1 つ増やすコストに見合わないため (#886)。 */}
-            <Icon
-              name={icon}
-              size={compact ? ICON_SIZES.lg : ICON_SIZES["2xl"]}
-              strokeWidth={ICON_STROKE.thin}
-            />
-          </Flex>
-        )
+        icon && <FeatureIcon icon={icon} size={compact ? "sm" : "lg"} />
       )}
       <Text textStyle="subheading">{title}</Text>
       {description && (
