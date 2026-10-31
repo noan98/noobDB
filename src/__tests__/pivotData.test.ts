@@ -1,6 +1,8 @@
 // @vitest-environment jsdom (localStorage / DOM に触れるため。DOM を使わないテストは node 環境で走る)
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  pivotModelTable,
+  type PivotModel,
   buildPivotModel,
   buildPivotSql,
   defaultPivotConfig,
@@ -422,5 +424,62 @@ describe("readStoredPivotConfig / writeStoredPivotConfig (#909)", () => {
     const cfg: PivotConfig = { rowField: 9, colField: null, valueField: null, agg: "count" };
     writeStoredPivotConfig(KEY, cfg);
     expect(readStoredPivotConfig(KEY, COLUMNS)).toBeNull();
+  });
+});
+
+describe("pivotModelTable (#1956)", () => {
+  const base: PivotModel = {
+    rowKeys: ["a", "b"],
+    colKeys: ["x", "y"],
+    cells: [
+      [1, null],
+      [3, 4],
+    ],
+    rowTotals: [1, 7],
+    colTotals: [4, 4],
+    grandTotal: 8,
+    rowFieldName: "r",
+    colFieldName: "c",
+    valueLabel: "SUM(v)",
+    truncated: false,
+  };
+
+  it("合計列と合計行を含む表にする", () => {
+    expect(pivotModelTable(base, "Total")).toEqual({
+      header: ["r \\ c", "x", "y", "Total"],
+      rows: [
+        ["a", 1, null, 1],
+        ["b", 3, 4, 7],
+        ["Total", 4, 4, 8],
+      ],
+    });
+  });
+
+  it("includeTotals=false なら合計を含めない", () => {
+    expect(pivotModelTable(base, "Total", false)).toEqual({
+      header: ["r \\ c", "x", "y"],
+      rows: [
+        ["a", 1, null],
+        ["b", 3, 4],
+      ],
+    });
+  });
+
+  it("列軸が無いときは値ラベルを単一列の見出しにする", () => {
+    const m: PivotModel = {
+      ...base,
+      colKeys: [],
+      colFieldName: null,
+      cells: [[1], [7]],
+      colTotals: [8],
+    };
+    expect(pivotModelTable(m, "Total")).toEqual({
+      header: ["r", "SUM(v)", "Total"],
+      rows: [
+        ["a", 1, 1],
+        ["b", 7, 7],
+        ["Total", 8, 8],
+      ],
+    });
   });
 });
