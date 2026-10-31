@@ -398,9 +398,18 @@ export function histogramBins(values: number[], bins: number): { edges: number[]
   return { edges, counts };
 }
 
-/** ビン境界の表示用整形 (有効桁 6 桁で丸め、末尾の誤差を落とす)。 */
-function formatEdge(v: number): string {
-  return String(Number(v.toPrecision(6)));
+/**
+ * ビン境界の表示用整形 (末尾の誤差を落とす)。有効桁は既定 6 桁だが、値の大きさに比べて
+ * ビン幅が細かいとき (例: 1000000〜1000001 を 10 分割) は隣り合う境界が同じ表記に潰れるので、
+ * ビン幅が読み取れる桁数まで増やす (最大 17 桁)。
+ */
+function formatEdge(v: number, binWidth: number): string {
+  let digits = 6;
+  if (binWidth > 0 && Number.isFinite(binWidth) && v !== 0) {
+    const need = Math.ceil(Math.log10(Math.abs(v) / binWidth)) + 2;
+    digits = Math.min(17, Math.max(6, need));
+  }
+  return String(Number(v.toPrecision(digits)));
 }
 
 /** ヒストグラムのモデル (#1941)。X 列 1 本の数値を `config.bins` 個のビンに分ける。 */
@@ -413,12 +422,13 @@ function buildHistogramModel(columns: Column[], rows: CellValue[][], config: Cha
     else values.push(v);
   }
   const { edges, counts } = histogramBins(values, config.bins ?? DEFAULT_HISTOGRAM_BINS);
+  const binWidth = counts.length > 0 ? (edges[edges.length - 1] - edges[0]) / counts.length : 0;
   const name = columns[config.xCol]?.name ?? `col${config.xCol}`;
   return {
     labels: counts.map((_, i) =>
       edges[i] === edges[i + 1]
-        ? formatEdge(edges[i])
-        : `${formatEdge(edges[i])} – ${formatEdge(edges[i + 1])}`,
+        ? formatEdge(edges[i], binWidth)
+        : `${formatEdge(edges[i], binWidth)} – ${formatEdge(edges[i + 1], binWidth)}`,
     ),
     series: [{ name: `COUNT(${name})`, values: counts }],
     sampledFrom: null,

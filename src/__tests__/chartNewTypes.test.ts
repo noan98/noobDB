@@ -94,6 +94,17 @@ describe("ヒストグラムのモデル (#1941)", () => {
     expect(m.series[0].values).toEqual([1, 1]);
     expect(chartNotices(m)).not.toContain("flatValues");
   });
+
+  it("値に比べてビン幅が細かくても、境界のラベルが同じ表記に潰れない", () => {
+    const m = buildChartModel(columns, [[1000000], [1000001]], cfg({ type: "histogram", yCols: [], bins: 10 }));
+    expect(new Set(m.labels).size).toBe(10);
+    expect(m.labels[0]).toBe("1000000 – 1000000.1");
+  });
+
+  it("通常の値では有効桁 6 桁のまま (末尾の誤差を出さない)", () => {
+    const m = buildChartModel(columns, [[0], [1]], cfg({ type: "histogram", yCols: [], bins: 10 }));
+    expect(m.labels[2]).toBe("0.2 – 0.3");
+  });
 });
 
 describe("散布図のモデル (#1941)", () => {
