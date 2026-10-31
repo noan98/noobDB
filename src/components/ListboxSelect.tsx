@@ -215,6 +215,8 @@ export function ListboxSelect({
       return;
     }
     if (e.key === "Enter" || e.key === " ") {
+      // Cmd/Ctrl+Enter はモーダルの送信ショートカットなので奪わない。
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) return;
       e.preventDefault();
       if (!open) {
         openListbox();

@@ -1018,6 +1018,8 @@ export function ImportModal({
                 { value: "xlsx", label: t("importFormatXlsx") },
               ]}
               onChange={(v) => {
+                // 同じ形式を選び直しただけならシート選択を保つ (ネイティブ select の change と同じ挙動)。
+                if (v === format) return;
                 setFormat(v as ImportFormat);
                 setSheet("");
               }}
