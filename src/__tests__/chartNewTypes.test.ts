@@ -96,7 +96,11 @@ describe("ヒストグラムのモデル (#1941)", () => {
   });
 
   it("値に比べてビン幅が細かくても、境界のラベルが同じ表記に潰れない", () => {
-    const m = buildChartModel(columns, [[1000000], [1000001]], cfg({ type: "histogram", yCols: [], bins: 10 }));
+    const m = buildChartModel(
+      columns,
+      [[1000000], [1000001]],
+      cfg({ type: "histogram", yCols: [], bins: 10 }),
+    );
     expect(new Set(m.labels).size).toBe(10);
     expect(m.labels[0]).toBe("1000000 – 1000000.1");
   });
