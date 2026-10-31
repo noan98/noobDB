@@ -79,9 +79,7 @@ export function SplashScreen() {
       >
         <Flex direction="column" align="center" gap="1.5">
           <Wordmark fontSize="var(--text-3xl)" />
-          <chakra.span fontSize="var(--text-sm)" color="app.textMuted">
-            {t("splashTagline")}
-          </chakra.span>
+          <chakra.span textStyle="caption">{t("splashTagline")}</chakra.span>
         </Flex>
       </MotionDiv>
 

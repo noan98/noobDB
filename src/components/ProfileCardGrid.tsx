@@ -165,7 +165,7 @@ export function ProfileCardGrid({
           rounded="pill"
           css={{ background: "var(--hero-rule)", display: "var(--hero-rule-display)" }}
         />
-        <Text color="app.textMuted" fontSize="sm" lineHeight="1.6" maxW="52ch">
+        <Text textStyle="body" color="app.textMuted" maxW="52ch">
           {t("profileCardsSubtitle")}
         </Text>
       </Flex>
@@ -258,7 +258,7 @@ export function ProfileCardGrid({
             _hover={{ bg: "app.hover", color: "app.text", borderColor: "app.accent" }}
           >
             <Icon name="plus" size={ICON_SIZES.lg} />
-            <Text fontWeight={600} fontSize="sm">
+            <Text textStyle="subheading" color="inherit">
               {t("profileCardsNew")}
             </Text>
           </SelectableCard>
@@ -353,9 +353,7 @@ function ProfileCard({
         <Flex align="center" gap="2" minW={0}>
           <ProfileColorChip color={p.color} />
           <Text
-            fontWeight={600}
-            fontSize="sm"
-            color="app.text"
+            textStyle="subheading"
             flex="1"
             minW={0}
             overflow="hidden"
