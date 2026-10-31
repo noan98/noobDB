@@ -69,8 +69,8 @@ export interface BrandMarkProps extends Omit<HTMLChakraProps<"svg">, "css"> {
  * 装飾用途のため既定で `aria-hidden`。
  */
 export function BrandMark({ size = 24, animate = false, className, ...rest }: BrandMarkProps) {
-  // マスク ID はインスタンスごとに一意でないと、同一ページに複数の BrandMark が
-  // ある場合に SVG の id 衝突で抜きが壊れる。React の useId で隔離する。
+  // clipPath の ID はインスタンスごとに一意でないと、同一ページに複数の BrandMark が
+  // ある場合に SVG の id 衝突で切り抜きが壊れる。React の useId で隔離する。
   const mid = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const tile = "var(--brand-mark-tile)";
   const play = animate;

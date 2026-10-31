@@ -17,8 +17,7 @@ describe("ブランドビジュアル (実ブラウザ)", () => {
 
   it("ロックアップがワードマークを描画する", async () => {
     const screen = await renderInBrowser(<BrandLockup />);
-    await expect.element(screen.getByText("noob")).toBeVisible();
-    await expect.element(screen.getByText("DB", { exact: true })).toBeVisible();
+    await expect.element(screen.getByText("noobDB", { exact: true })).toBeVisible();
   });
 
   it("スプラッシュがタグラインを描画する", async () => {
