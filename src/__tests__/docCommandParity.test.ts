@@ -13,10 +13,13 @@ import commandListDoc from "../../.claude/skills/noobdb-ipc/references/command-l
 // が「Rust ⇔ TS」のドリフトを塞いでいるのと同じ発想で、「Rust ⇔ ドキュメント」の
 // ドリフトをここで塞ぐ。
 //
-// 方向は **登録 ⊆ ドキュメント** の一方向だけを強制する。ドキュメントには
-// `run_captured_write_inner` のような非コマンド識別子も散文中に出てくるため、
-// 完全一致を要求すると誤検出になるが、「登録済みコマンドが 1 つでも書かれて
-// いない」ことは常に純粋な記載漏れである。
+// 方向は双方向だが、強さが違う。
+// - **登録 ⊆ ドキュメント** (全識別子が対象): 「登録済みコマンドが 1 つでも書かれて
+//   いない」ことは常に純粋な記載漏れである。
+// - **箇条書き ⊆ 登録** (#1961): `- \`cmd\`` 形式の箇条書き行の先頭コマンド名に限る。
+//   ドキュメントには `run_captured_write_inner` のような非コマンド識別子も散文中に
+//   出てくるため、全識別子で逆方向を要求すると誤検出になる。箇条書きの先頭は
+//   コマンド一覧の書式なので、削除・改名済みコマンドの残存や typo をここで検出する。
 function extractRegisteredCommands(libRsSource: string): Set<string> {
   const start = libRsSource.indexOf("generate_handler![");
   if (start === -1) {
@@ -56,7 +59,21 @@ function extractDocumentedNames(markdown: string): Set<string> {
   return names;
 }
 
+// `- \`cmd\`` / `- \`cmd(args)\`` 形式の箇条書き行の先頭にあるコマンド名だけを拾う
+// (散文中の識別子や、箇条書きの 2 個目以降の識別子 = 引数名・補足は対象外。command-list.md は
+// 「1 行 1 コマンド」の規約なので、`a` / `b` と並べた 2 個目以降の陳腐化はここでは検出しない)。
+function extractBulletedCommands(markdown: string): Set<string> {
+  const names = new Set<string>();
+  const re = /^\s*- `([a-z_][a-z0-9_]*)(?:\([^`]*\))?`/gm;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(markdown)) !== null) {
+    names.add(match[1]);
+  }
+  return names;
+}
+
 const registered = extractRegisteredCommands(libRs);
+const bulleted = extractBulletedCommands(commandListDoc);
 const documented = extractDocumentedNames(commandListDoc);
 
 describe("IPC コマンドとドキュメントのパリティ", () => {
@@ -70,6 +87,20 @@ describe("IPC コマンドとドキュメントのパリティ", () => {
       missing,
       `.claude/skills/noobdb-ipc/references/command-list.md への追記が漏れています。` +
         `コマンドを追加したら、この一覧にも \`名前\` の形で載せてください。`,
+    ).toEqual([]);
+  });
+
+  it("箇条書きの抽出が機能している (前提条件)", () => {
+    expect(bulleted.size).toBeGreaterThan(50);
+  });
+
+  it("command-list.md の箇条書きのコマンドがすべて登録済みである (陳腐化の検出)", () => {
+    const ghosts = [...bulleted].filter((name) => !registered.has(name)).sort();
+    expect(
+      ghosts,
+      `.claude/skills/noobdb-ipc/references/command-list.md の箇条書きに、generate_handler! に` +
+        `存在しないコマンドが残っています。削除・改名したコマンドは一覧からも直してください` +
+        `(コマンド名でない識別子で始まる行は、先頭を \`- \`cmd\`\` 形にしないでください)。`,
     ).toEqual([]);
   });
 
