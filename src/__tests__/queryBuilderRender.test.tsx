@@ -604,14 +604,19 @@ describe("QueryBuilder の BETWEEN / OFFSET / 値の候補 (#1627)", () => {
     ]);
   });
 
-  it("条件行を削除すると次の行の × へフォーカスが移る (#1936)", async () => {
+  it("条件行を削除すると次の行の × へ、最後の 1 行になれば「+ 条件を追加」へフォーカスが移る (#1936)", async () => {
     renderSelect();
     await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
     enableWhere();
     fireEvent.click(screen.getByRole("button", { name: new RegExp(t("qbAddCondition")) }));
     fireEvent.click(screen.getByRole("button", { name: new RegExp(t("qbAddCondition")) }));
+    // 3 行 → 1 行目を消すと、次の行 (元の 2 行目) の × にフォーカスが移る。
+    const secondRemove = screen.getAllByRole("button", { name: t("qbRemove") })[1];
     fireEvent.click(screen.getAllByRole("button", { name: t("qbRemove") })[0]);
+    await waitFor(() => expect(document.activeElement).toBe(secondRemove));
     await waitFor(() => expect(screen.getAllByPlaceholderText(t("qbValue"))).toHaveLength(2));
-    await waitFor(() => expect(document.activeElement?.getAttribute("data-qb-remove")).not.toBeNull());
+    // 退場アニメが終わって 2 行になってから、1 行目を消すと残りは最後の 1 行 (× は無効) なので「+ 条件を追加」へ。
+    fireEvent.click(screen.getAllByRole("button", { name: t("qbRemove") })[0]);
+    await waitFor(() => expect(document.activeElement?.hasAttribute("data-qb-add-condition")).toBe(true));
   });
 });

@@ -1219,23 +1219,34 @@ export function QueryBuilder({
     const key = whereKeySeq.current++;
     setWhereRows((prev) => [...prev, { key, cond: { column: "", operator: "=", value: "" } }]);
   };
-  // 退場アニメ中の行の古いハンドラから呼ばれても、現在の配列に無いキーなら何もしない。
+  // フォーカス先の算出用に、毎レンダー最新の行配列を ref へ置く。
+  const whereRowsRef = useRef(whereRows);
+  whereRowsRef.current = whereRows;
+  const whereSectionRef = useRef<HTMLElement>(null);
+  // 退場アニメ中の行の古いハンドラから呼ばれても、関数型 updater が最新の配列で
+  // キーを探し、無ければ何もしない (古いクロージャの配列で state を上書きしない)。
   const removeCondition = (key: number) => {
-    const idx = whereRows.findIndex((r) => r.key === key);
+    const rows = whereRowsRef.current;
+    const idx = rows.findIndex((r) => r.key === key);
     if (idx < 0) return;
-    setWhereRows(removeWhereRow(whereRows, idx));
-    setPendingFocus({ key: (whereRows[idx + 1] ?? whereRows[idx - 1])?.key ?? null });
+    setWhereRows((prev) => {
+      const i = prev.findIndex((r) => r.key === key);
+      return i < 0 ? prev : removeWhereRow(prev, i);
+    });
+    setPendingFocus({ key: (rows[idx + 1] ?? rows[idx - 1])?.key ?? null });
   };
   useEffect(() => {
     if (!pendingFocus) return;
     setPendingFocus(null);
     // 次の行 (なければ前の行) の × へ。最後の 1 行は × が無効なので「+ 条件を追加」へ。
+    // 別インスタンスの要素を拾わないよう WHERE セクション内だけを探す。
+    const root = whereSectionRef.current;
     const rm =
       pendingFocus.key === null
         ? null
-        : document.querySelector<HTMLButtonElement>(`[data-qb-remove="${pendingFocus.key}"]`);
+        : (root?.querySelector<HTMLButtonElement>(`[data-qb-remove="${pendingFocus.key}"]`) ?? null);
     const target =
-      rm && !rm.disabled ? rm : document.querySelector<HTMLButtonElement>("[data-qb-add-condition]");
+      rm && !rm.disabled ? rm : root?.querySelector<HTMLButtonElement>("[data-qb-add-condition]");
     target?.focus();
   }, [pendingFocus]);
 
@@ -1585,7 +1596,7 @@ export function QueryBuilder({
           )}
 
           {showWhere && (
-            <chakra.section css={sectionCss}>
+            <chakra.section css={sectionCss} ref={whereSectionRef}>
               <Box css={sectionRowCss}>
                 <chakra.label css={{ ...checkboxLabelCss, ...sectionTitleCss }}>
                   <Checkbox
