@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
 import {
   api,
@@ -19,6 +20,7 @@ import {
 import { useLocale, useT, type I18nKey } from "../i18n";
 import { isReadOnlySql } from "../dangerousSql";
 import { semanticColorToken } from "../semanticColors";
+import { staggerContainer, transitions, variants } from "../motion";
 import {
   buildAssertionTrends,
   deviceTimeZone,
@@ -45,8 +47,19 @@ import { Spinner } from "./Spinner";
 import { Button, Checkbox, Input, Select, Switch, Textarea } from "./ui";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
+import { prefersStaticMotion } from "./revealOrigin";
 import { ExportMaskingSection } from "./ExportMaskingSection";
 import { sanitizeMaskRule, type ExportColumnMask, type ExportMaskOverrides } from "./exportMasking";
+
+// motion.div に chakra の style props を渡せるようにする (variants 等は forwardProps で素通し)。
+const MotionDiv = chakra(
+  motion.div,
+  {},
+  { forwardProps: ["variants", "initial", "animate", "exit", "transition", "layout"] },
+);
+
+/** 即時化した transition (reduced-motion / ハイコントラスト時)。 */
+const INSTANT = { duration: 0 } as const;
 
 /** 連続失敗で自動停止する回数の既定 (新規タスク) と上限。バックエンドの `MAX_PAUSE_AFTER_FAILURES` と揃える。 */
 const DEFAULT_PAUSE_AFTER_FAILURES = 5;
@@ -288,6 +301,10 @@ export function TaskManager({ profiles, onClose }: { profiles: ConnectionProfile
   };
 
   const sorted = useMemo(() => sortTasksForDisplay(tasks), [tasks]);
+  // reduced-motion (OS / アプリ設定) とハイコントラストでは出入りと stagger を即時にする。
+  // height / opacity の補間は MotionConfig では止まらないため、ここで明示的に見る。
+  const reduced = useReducedMotion() ?? false;
+  const still = reduced || prefersStaticMotion();
   const openCreateForm = () => {
     setEditing(null);
     setDuplicating(false);
@@ -380,38 +397,59 @@ export function TaskManager({ profiles, onClose }: { profiles: ConnectionProfile
                   }
                 />
               ) : (
-                <chakra.div display="flex" flexDirection="column" gap="2">
-                  {sorted.map((task) => (
-                    <TaskRow
-                      key={task.id}
-                      task={task}
-                      profileName={profileName(task.profile_id)}
-                      now={now}
-                      running={runningId === task.id}
-                      runDisabled={runningId !== null}
-                      progress={runningId === task.id ? runProgress : null}
-                      onStopRun={handleStopRun}
-                      expanded={historyTaskId === task.id}
-                      runs={historyTaskId === task.id ? runs : []}
-                      runsLoading={historyTaskId === task.id && runsLoading}
-                      onToggleEnabled={() => void handleToggleEnabled(task)}
-                      onEdit={() => {
-                        setEditing(task);
-                        setDuplicating(false);
-                        setShowForm(true);
-                      }}
-                      onDuplicate={() => {
-                        setEditing(task);
-                        setDuplicating(true);
-                        setShowForm(true);
-                      }}
-                      onDelete={() => void handleDelete(task)}
-                      onRunNow={() => void handleRunNow(task)}
-                      onToggleHistory={() => toggleHistory(task.id)}
-                      onClearHistory={() => void handleClearRuns(task)}
-                    />
-                  ))}
-                </chakra.div>
+                <MotionDiv
+                  display="flex"
+                  flexDirection="column"
+                  variants={staggerContainer(still)}
+                  initial="initial"
+                  animate="animate"
+                >
+                  <AnimatePresence>
+                    {sorted.map((task) => (
+                      <MotionDiv
+                        key={task.id}
+                        layout={still ? false : "position"}
+                        variants={variants.collapse}
+                        initial="initial"
+                        animate="animate"
+                        exit="exit"
+                        transition={still ? INSTANT : transitions.enter}
+                        flex="none"
+                      >
+                        {/* 行間は gap ではなく下余白で取る (高さ補間と一緒に詰まるように) */}
+                        <chakra.div paddingBottom="2">
+                          <TaskRow
+                            task={task}
+                            profileName={profileName(task.profile_id)}
+                            now={now}
+                            running={runningId === task.id}
+                            runDisabled={runningId !== null}
+                            progress={runningId === task.id ? runProgress : null}
+                            onStopRun={handleStopRun}
+                            expanded={historyTaskId === task.id}
+                            runs={historyTaskId === task.id ? runs : []}
+                            runsLoading={historyTaskId === task.id && runsLoading}
+                            onToggleEnabled={() => void handleToggleEnabled(task)}
+                            onEdit={() => {
+                              setEditing(task);
+                              setDuplicating(false);
+                              setShowForm(true);
+                            }}
+                            onDuplicate={() => {
+                              setEditing(task);
+                              setDuplicating(true);
+                              setShowForm(true);
+                            }}
+                            onDelete={() => void handleDelete(task)}
+                            onRunNow={() => void handleRunNow(task)}
+                            onToggleHistory={() => toggleHistory(task.id)}
+                            onClearHistory={() => void handleClearRuns(task)}
+                          />
+                        </chakra.div>
+                      </MotionDiv>
+                    ))}
+                  </AnimatePresence>
+                </MotionDiv>
               )}
             </>
           )}
@@ -475,6 +513,8 @@ function TaskRow({
   const t = useT();
   const rel = relativeNextRun(task.next_run_at, now, t);
   const locale = useLocale();
+  const reduced = useReducedMotion() ?? false;
+  const still = reduced || prefersStaticMotion();
   return (
     <chakra.div border="1px solid" borderColor="app.border" borderRadius="md" overflow="hidden">
       <Flex align="center" gap="3" px="3" py="2.5" flexWrap="wrap">
@@ -575,75 +615,88 @@ function TaskRow({
           </Button>
         </Flex>
       </Flex>
-      {expanded && (
-        <chakra.div
-          id={`task-history-${task.id}`}
-          borderTop="1px solid"
-          borderColor="app.border"
-          bg="app.toolbar"
-          px="3"
-          py="2.5"
-        >
-          {runsLoading ? (
-            <Spinner size={14} />
-          ) : runs.length === 0 ? (
-            <chakra.p margin={0} fontSize="xs" color="app.textMuted">
-              {t("taskHistoryEmpty")}
-            </chakra.p>
-          ) : (
-            <chakra.div display="flex" flexDirection="column" gap="1.5">
-              {task.action.kind === "run_assertions" && (
-                <AssertionTrendList taskId={task.id} refreshKey={runs} />
-              )}
-              <Flex justify="flex-end">
-                <Button type="button" variant="dangerOutline" size="sm" onClick={onClearHistory}>
-                  {t("taskHistoryClear")}
-                </Button>
-              </Flex>
-              {runs.map((r) => (
-                <chakra.div
-                  key={r.id}
-                  display="flex"
-                  gap="2"
-                  fontSize="xs"
-                  fontFamily="var(--font-mono)"
-                  textStyle="numeric"
-                  color={
-                    r.status === "ok" || r.status === "skipped"
-                      ? "app.textMuted"
-                      : semanticColorToken("danger", "text")
-                  }
-                >
-                  <chakra.span minW="170px">{new Date(r.started_at).toLocaleString()}</chakra.span>
-                  <chakra.span minW="50px">
-                    {r.status === "skipped" ? t("taskRunStatusSkipped") : r.status}
-                  </chakra.span>
-                  {r.catch_up && <chakra.span>({t("taskRunCatchUp")})</chakra.span>}
-                  {r.attempts > 1 && <chakra.span>({t("taskRunAttempts", { n: r.attempts })})</chakra.span>}
-                  {r.output_path && (
-                    <chakra.span flex="1" wordBreak="break-all">
-                      {r.output_path}
-                    </chakra.span>
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <MotionDiv
+            key="history"
+            variants={variants.collapse}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            transition={still ? INSTANT : transitions.enter}
+          >
+            <chakra.div
+              id={`task-history-${task.id}`}
+              borderTop="1px solid"
+              borderColor="app.border"
+              bg="app.toolbar"
+              px="3"
+              py="2.5"
+            >
+              {runsLoading ? (
+                <Spinner size={14} />
+              ) : runs.length === 0 ? (
+                <chakra.p margin={0} fontSize="xs" color="app.textMuted">
+                  {t("taskHistoryEmpty")}
+                </chakra.p>
+              ) : (
+                <chakra.div display="flex" flexDirection="column" gap="1.5">
+                  {task.action.kind === "run_assertions" && (
+                    <AssertionTrendList taskId={task.id} refreshKey={runs} />
                   )}
-                  {r.rows != null && <chakra.span>{t("taskRunRows", { rows: r.rows })}</chakra.span>}
-                  {r.bytes != null && <chakra.span>{t("taskRunBytes", { bytes: r.bytes })}</chakra.span>}
-                  {r.status === "skipped" ? (
-                    <chakra.span flex="1" wordBreak="break-all">
-                      {t("taskRunSkippedReason")}
-                    </chakra.span>
-                  ) : (
-                    r.error && (
-                      <chakra.span flex="1" wordBreak="break-all">
-                        {r.error}
+                  <Flex justify="flex-end">
+                    <Button type="button" variant="dangerOutline" size="sm" onClick={onClearHistory}>
+                      {t("taskHistoryClear")}
+                    </Button>
+                  </Flex>
+                  {runs.map((r) => (
+                    <chakra.div
+                      key={r.id}
+                      display="flex"
+                      gap="2"
+                      fontSize="xs"
+                      fontFamily="var(--font-mono)"
+                      textStyle="numeric"
+                      color={
+                        r.status === "ok" || r.status === "skipped"
+                          ? "app.textMuted"
+                          : semanticColorToken("danger", "text")
+                      }
+                    >
+                      <chakra.span minW="170px">{new Date(r.started_at).toLocaleString()}</chakra.span>
+                      <chakra.span minW="50px">
+                        {r.status === "skipped" ? t("taskRunStatusSkipped") : r.status}
                       </chakra.span>
-                    )
-                  )}
+                      {r.catch_up && <chakra.span>({t("taskRunCatchUp")})</chakra.span>}
+                      {r.attempts > 1 && (
+                        <chakra.span>({t("taskRunAttempts", { n: r.attempts })})</chakra.span>
+                      )}
+                      {r.output_path && (
+                        <chakra.span flex="1" wordBreak="break-all">
+                          {r.output_path}
+                        </chakra.span>
+                      )}
+                      {r.rows != null && <chakra.span>{t("taskRunRows", { rows: r.rows })}</chakra.span>}
+                      {r.bytes != null && <chakra.span>{t("taskRunBytes", { bytes: r.bytes })}</chakra.span>}
+                      {r.status === "skipped" ? (
+                        <chakra.span flex="1" wordBreak="break-all">
+                          {t("taskRunSkippedReason")}
+                        </chakra.span>
+                      ) : (
+                        r.error && (
+                          <chakra.span flex="1" wordBreak="break-all">
+                            {r.error}
+                          </chakra.span>
+                        )
+                      )}
+                    </chakra.div>
+                  ))}
                 </chakra.div>
-              ))}
+              )}
             </chakra.div>
-          )}
-        </chakra.div>
-      )}
+          </MotionDiv>
+        )}
+      </AnimatePresence>
     </chakra.div>
   );
 }

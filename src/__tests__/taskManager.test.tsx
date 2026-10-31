@@ -189,6 +189,28 @@ describe("TaskManager 実行履歴の消去 (#910)", () => {
   });
 });
 
+describe("TaskManager 実行履歴の展開アニメ (#1934)", () => {
+  it("履歴ボタンの aria-expanded が開閉に追従し、閉じると履歴領域が外れる", async () => {
+    listTaskRuns.mockResolvedValue([]);
+    const user = userEvent.setup();
+    renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+
+    await waitFor(() => expect(screen.getByText(TASK.name)).toBeInTheDocument());
+    const button = screen.getByRole("button", { name: t("taskHistory") });
+    expect(button).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(button);
+    await waitFor(() => expect(screen.getByText(t("taskHistoryEmpty"))).toBeInTheDocument());
+    expect(button).toHaveAttribute("aria-expanded", "true");
+    expect(button).toHaveAttribute("aria-controls", `task-history-${TASK.id}`);
+
+    await user.click(button);
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    // exit アニメ完了後に DOM から外れる
+    await waitFor(() => expect(screen.queryByText(t("taskHistoryEmpty"))).not.toBeInTheDocument());
+  });
+});
+
 describe("TaskManager 実行履歴の取得競合 (#1594)", () => {
   it("履歴の応答が遅れても、後から開いた別タスクの欄に前のタスクの履歴は入らない", async () => {
     let resolveA: (r: TaskRun[]) => void = () => {};
