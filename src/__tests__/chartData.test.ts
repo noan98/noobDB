@@ -336,7 +336,7 @@ describe("sanitizeChartConfig (#909, corruption resistance)", () => {
 
   it("rejects an unknown chart type or aggregation", () => {
     expect(
-      sanitizeChartConfig({ type: "scatter", xCol: 0, yCols: [1], aggregation: "sum" }, columns),
+      sanitizeChartConfig({ type: "radar", xCol: 0, yCols: [1], aggregation: "sum" }, columns),
     ).toBeNull();
     expect(
       sanitizeChartConfig({ type: "bar", xCol: 0, yCols: [1], aggregation: "median" }, columns),

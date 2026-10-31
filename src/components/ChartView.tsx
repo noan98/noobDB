@@ -17,7 +17,14 @@ import { ChartSkeleton } from "./Skeleton";
 import {
   CHART_PALETTES,
   DEFAULT_CHART_PALETTE,
+  DEFAULT_HISTOGRAM_BINS,
+  HISTOGRAM_BIN_CHOICES,
+  applyChartType,
   buildChartModel,
+  comboLineIndex,
+  paddedExtent,
+  splitComboSeries,
+  stackLayout,
   chartModelTable,
   sortChartModel,
   buildChartSql,
@@ -49,6 +56,7 @@ import {
   type ChartType,
   type ChartConfig,
   type ChartModel,
+  type ChartSeries,
   type ChartNotice,
   type ChartPaletteKey,
 } from "./chartData";
@@ -259,7 +267,16 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
     );
   }
 
-  const setType = (type: ChartType) => setConfig({ ...config, type });
+  // 種類を変えたとき、散布図・ヒストグラム・複合は要求する列 (数値の X / 2 列の Y) に寄せる (#1941)。
+  const setType = (type: ChartType) => setConfig(applyChartType(config, type, numericCols));
+  const setBins = (bins: number) => setConfig({ ...config, bins });
+  const setComboLine = (comboLineCol: number) => setConfig({ ...config, comboLineCol });
+  // ヒストグラムは Y 列を使わない (X の 1 列を分布にする)。それ以外は Y が 1 本以上要る。
+  const needsY = config.type !== "histogram";
+  const comboLineIdx = comboLineIndex(config);
+  const comboLineName = config.type === "combo" ? model.series[comboLineIdx]?.name : undefined;
+  const rawScatterNeeds =
+    config.type === "scatter" && (!numericCols[config.xCol] || config.yCols.length === 0);
   const setX = (xCol: number) => setConfig({ ...config, xCol });
   const setAgg = (aggregation: Aggregation) => setConfig({ ...config, aggregation });
   const setPalette = (palette: ChartPaletteKey) => setConfig({ ...config, palette });
@@ -321,7 +338,9 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
         <ResultViewSwitch value="chart" onChange={onChangeView} />
         <ImageExportButton
           filenameBase="chart"
-          disabled={dbAggStatus === "pending" || model.labels.length === 0 || config.yCols.length === 0}
+          disabled={
+            dbAggStatus === "pending" || model.labels.length === 0 || (needsY && config.yCols.length === 0)
+          }
           makePng={(opts) => {
             const svg = getSvgForExport();
             return elementToPngBlob(svg as unknown as HTMLElement, { ...svgExportSize(svg), ...opts });
@@ -337,7 +356,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
           disabled={
             dbAggStatus === "pending" ||
             model.labels.length === 0 ||
-            config.yCols.length === 0 ||
+            (needsY && config.yCols.length === 0) ||
             shownModel.series.length === 0
           }
           label={t("chartDataExport")}
@@ -370,31 +389,61 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
               { value: "line", label: t("chartTypeLine") },
               { value: "area", label: t("chartTypeArea") },
               { value: "pie", label: t("chartTypePie") },
+              { value: "stackedBar", label: t("chartTypeStackedBar") },
+              { value: "combo", label: t("chartTypeCombo") },
+              { value: "scatter", label: t("chartTypeScatter") },
+              { value: "histogram", label: t("chartTypeHistogram") },
             ]}
           />
         </Field>
-        <Field label={t("chartXAxis")}>
+        <Field label={config.type === "histogram" ? t("chartHistColumn") : t("chartXAxis")}>
           <ListboxSelect
             value={String(config.xCol)}
-            ariaLabel={t("chartXAxis")}
+            ariaLabel={config.type === "histogram" ? t("chartHistColumn") : t("chartXAxis")}
             onChange={(v) => setX(Number(v))}
             options={result.columns.map((c, i) => ({ value: String(i), label: c.name }))}
           />
         </Field>
-        <Field label={t("chartAggregation")}>
-          <ListboxSelect
-            value={config.aggregation}
-            ariaLabel={t("chartAggregation")}
-            onChange={(v) => setAgg(v as Aggregation)}
-            options={[
-              { value: "none", label: t("chartAggNone") },
-              { value: "sum", label: "SUM" },
-              { value: "avg", label: "AVG" },
-              { value: "count", label: "COUNT" },
-            ]}
-          />
-        </Field>
-        {config.type === "bar" && (
+        {/* 散布図・ヒストグラムは生の値をそのまま使うので集計は選ばせない (#1941)。 */}
+        {config.type !== "scatter" && config.type !== "histogram" && (
+          <Field label={t("chartAggregation")}>
+            <ListboxSelect
+              value={config.aggregation}
+              ariaLabel={t("chartAggregation")}
+              onChange={(v) => setAgg(v as Aggregation)}
+              options={[
+                { value: "none", label: t("chartAggNone") },
+                { value: "sum", label: "SUM" },
+                { value: "avg", label: "AVG" },
+                { value: "count", label: "COUNT" },
+              ]}
+            />
+          </Field>
+        )}
+        {config.type === "histogram" && (
+          <Field label={t("chartBins")}>
+            <ListboxSelect
+              value={String(config.bins ?? DEFAULT_HISTOGRAM_BINS)}
+              ariaLabel={t("chartBins")}
+              onChange={(v) => setBins(Number(v))}
+              options={HISTOGRAM_BIN_CHOICES.map((b) => ({ value: String(b), label: String(b) }))}
+            />
+          </Field>
+        )}
+        {config.type === "combo" && config.yCols.length >= 2 && (
+          <Field label={t("chartComboLine")}>
+            <ListboxSelect
+              value={String(config.yCols[comboLineIdx])}
+              ariaLabel={t("chartComboLine")}
+              onChange={(v) => setComboLine(Number(v))}
+              options={config.yCols.map((c) => ({
+                value: String(c),
+                label: result.columns[c]?.name ?? `col${c}`,
+              }))}
+            />
+          </Field>
+        )}
+        {(config.type === "bar" || config.type === "stackedBar") && (
           <Field label={t("chartBarSort")}>
             <ListboxSelect
               value={config.barSort ?? "x"}
@@ -464,25 +513,27 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
             }))}
           />
         </Field>
-        <Field label={t("chartYAxis")}>
-          <Flex gap="2" flexWrap="wrap">
-            {result.columns.map((c, i) =>
-              numericCols[i] && i !== config.xCol ? (
-                <chakra.label
-                  key={i}
-                  display="inline-flex"
-                  alignItems="center"
-                  gap="1"
-                  fontSize="xs"
-                  cursor="pointer"
-                >
-                  <Checkbox checked={config.yCols.includes(i)} onChange={() => toggleY(i)} />
-                  {c.name}
-                </chakra.label>
-              ) : null,
-            )}
-          </Flex>
-        </Field>
+        {needsY && (
+          <Field label={t("chartYAxis")}>
+            <Flex gap="2" flexWrap="wrap">
+              {result.columns.map((c, i) =>
+                numericCols[i] && i !== config.xCol ? (
+                  <chakra.label
+                    key={i}
+                    display="inline-flex"
+                    alignItems="center"
+                    gap="1"
+                    fontSize="xs"
+                    cursor="pointer"
+                  >
+                    <Checkbox checked={config.yCols.includes(i)} onChange={() => toggleY(i)} />
+                    {c.name}
+                  </chakra.label>
+                ) : null,
+              )}
+            </Flex>
+          </Field>
+        )}
       </Flex>
 
       {/* 常時描画の live region。中身だけ切り替えるので、完了・失敗も読み上げられる。 */}
@@ -572,10 +623,29 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
           // DB 側の全件集計待ち。手元の行だけで描いた旧チャートは全件の値と食い違う
           // ため、軸 + 棒の骨格に置き換える (#1834)。失敗時は従来どおり手元の結果で描く。
           <ChartSkeleton />
+        ) : rawScatterNeeds ? (
+          // 種類が要求する列を満たさないときの案内 (#1941)。
+          <EmptyState compact icon="filter" title={t("chartNeedScatter")} />
+        ) : config.type === "histogram" && !numericCols[config.xCol] ? (
+          <EmptyState compact icon="filter" title={t("chartNeedHistogram")} />
         ) : model.labels.length === 0 ? (
           <EmptyState compact icon="table" title={t("chartNoData")} />
-        ) : config.yCols.length === 0 ? (
+        ) : config.type === "combo" && config.yCols.length < 2 ? (
+          <EmptyState compact icon="filter" title={t("chartNeedCombo")} />
+        ) : needsY && config.yCols.length === 0 ? (
           <EmptyState compact icon="filter" title={t("chartPickY")} />
+        ) : config.type === "scatter" ? (
+          <ScatterChart
+            model={shownModel}
+            xName={result.columns[config.xCol]?.name ?? ""}
+            colors={seriesColors}
+          />
+        ) : config.type === "histogram" ? (
+          <HistogramChart
+            model={model}
+            xName={result.columns[config.xCol]?.name ?? ""}
+            color={seriesColors[0]}
+          />
         ) : config.type === "pie" ? (
           <PieChart
             model={model}
@@ -590,6 +660,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
             xName={result.columns[config.xCol]?.name ?? ""}
             colors={seriesColors}
             valueColors={valueColors}
+            lineName={comboLineName}
           />
         )}
       </chakra.div>
@@ -612,6 +683,17 @@ const CHART_FOCUS_CSS = { "&:focus-visible": { outline: "none", boxShadow: "var(
 const W = 900;
 const H = 440;
 const PAD = { left: 60, right: 20, top: 16, bottom: 66 };
+// 複合チャートは右側に第 2 軸の目盛りを置くぶん右余白を広げる (#1941)。
+const COMBO_PAD_RIGHT = 56;
+
+interface StackRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** 0 基線の y。出現アニメーションの拡大の起点にする。 */
+  baseY: number;
+}
 // 棒の角丸の半径 (radius トークン `sm`) の実値 (px)。SVG のパスには CSS 変数を渡せない
 // ため、実行時に `--radius-sm` を読む。読めない環境 (jsdom など) は 4 で代用する。
 // 注意: getPropertyValue は calc() を解決しないので、`--radius-sm` が calc 化されると
@@ -627,10 +709,13 @@ export function CartesianChart({
   xName,
   colors,
   valueColors,
+  lineName,
 }: {
   model: ChartModel;
   type: ChartType;
   xName: string;
+  /** 複合 (棒 + 折れ線) で折れ線にする系列名 (#1941)。第 2 軸で描く。複合以外では未使用。 */
+  lineName?: string;
   /** 系列インデックス → 色 (系列数と同じ長さ)。 */
   colors: string[];
   /**
@@ -640,6 +725,12 @@ export function CartesianChart({
   valueColors?: string[] | null;
 }) {
   const t = useT();
+  const isCombo = type === "combo";
+  const split = useMemo(
+    () => (isCombo ? splitComboSeries(model, lineName) : null),
+    [isCombo, model, lineName],
+  );
+  const lineSeries = split?.line ?? null;
   // ホバー中のバンド (X インデックス)。値を読み取るためのガイド/ツールチップに使う。
   const [hoverRaw, setHover] = useState<number | null>(null);
   // モデル差し替えでラベル数が減ると保持中の index が範囲外になる。範囲外は無効扱いにする
@@ -657,52 +748,91 @@ export function CartesianChart({
   // (`:` は url(#…) で扱いづらいので除く)。
   const uid = useId().replace(/:/g, "");
   const barRadius = useMemo(readBarRadius, []);
-  const { min, max } = valueExtent(model, type);
+  // 複合は棒の系列だけで第 1 軸 (0 基線を含む) を、折れ線で第 2 軸 (右側) を決める (#1941)。
+  const { min, max } = isCombo
+    ? valueExtent({ ...model, series: split?.bars ?? [] }, "bar")
+    : valueExtent(model, type);
   const span = max - min || 1;
-  const plotW = W - PAD.left - PAD.right;
+  const lineExt = lineSeries ? valueExtent({ ...model, series: [lineSeries] }, "line") : null;
+  const lineMin = lineExt?.min ?? 0;
+  const lineSpan = lineExt ? lineExt.max - lineExt.min || 1 : 1;
+  const padRight = lineSeries ? COMBO_PAD_RIGHT : PAD.right;
+  const plotW = W - PAD.left - padRight;
   const plotH = H - PAD.top - PAD.bottom;
   const n = model.labels.length;
   // ラベル間隔。X 位置はバンド中央。
   const bandW = plotW / Math.max(1, n);
   const xAt = (i: number) => PAD.left + bandW * i + bandW / 2;
   const yAt = (v: number) => PAD.top + plotH - ((v - min) / span) * plotH;
+  const yAtRight = (v: number) => PAD.top + plotH - ((v - lineMin) / lineSpan) * plotH;
+  const yAtFor = (s: ChartSeries) => (s === lineSeries ? yAtRight : yAt);
+  const lineMax = lineExt?.max ?? 0;
+  const rightTicks = useMemo(
+    () => (lineSeries ? niceTicks(lineMin, lineMax, 5) : []),
+    [lineSeries, lineMin, lineMax],
+  );
   // キリの良い目盛り値でグリッド線を引き、値を読み取りやすくする。
   const ticks = useMemo(() => niceTicks(min, max, 5), [min, max]);
   // 系列のパス文字列。ホバーでは再計算せず、モデル・種別・寸法が変わったときだけ作る。
-  const seriesGeom = useMemo(
-    () =>
-      model.series.map((s, si) => {
-        const seriesCount = model.series.length;
-        const xc = (i: number) => PAD.left + bandW * i + bandW / 2;
-        const yv = (v: number) => PAD.top + plotH - ((v - min) / span) * plotH;
-        const zy = yv(0);
-        if (type === "bar") {
-          const barW = (bandW * 0.7) / seriesCount;
-          return {
-            bars: s.values.map((v, i) => {
-              const x = PAD.left + bandW * i + bandW * 0.15 + barW * si;
-              const y = Math.min(yv(v), zy);
-              const h = Math.abs(yv(v) - zy);
-              const up = v >= 0;
-              return { d: roundedBarPath(x, y, Math.max(1, barW), h, barRadius, up), up };
-            }),
-            pts: "",
-            areaPath: "",
-          };
-        }
-        const coords = s.values.map((v, i) => `${xc(i)},${yv(v)}`);
+  const seriesGeom = useMemo(() => {
+    const stack = type === "stackedBar" ? stackLayout(model) : null;
+    const barSeries = isCombo ? (split?.bars ?? []) : model.series;
+    return model.series.map((s, si) => {
+      const xc = (i: number) => PAD.left + bandW * i + bandW / 2;
+      const yv = (v: number) => PAD.top + plotH - ((v - min) / span) * plotH;
+      const zy = yv(0);
+      const empty = {
+        bars: [] as { d: string; up: boolean }[],
+        rects: [] as StackRect[],
+        pts: "",
+        areaPath: "",
+      };
+      if (stack) {
+        // 積み上げ: 全系列が同じ幅の帯を共有し、系列の値ぶんを基線から積む。
         return {
-          bars: [],
-          pts: coords.join(" "),
-          areaPath: `M ${xc(0)},${zy} L ${coords.join(" L ")} L ${xc(n - 1)},${zy} Z`,
+          ...empty,
+          rects: stack[si].map(({ from, to }, i) => {
+            const y1 = yv(from);
+            const y2 = yv(to);
+            return {
+              x: PAD.left + bandW * i + bandW * 0.15,
+              y: Math.min(y1, y2),
+              w: Math.max(1, bandW * 0.7),
+              h: Math.abs(y1 - y2),
+              baseY: zy,
+            };
+          }),
         };
-      }),
-    [model, type, bandW, plotH, min, span, n, barRadius],
-  );
+      }
+      if (type === "bar" || (isCombo && s !== lineSeries)) {
+        const seriesCount = Math.max(1, barSeries.length);
+        const bi = type === "bar" ? si : barSeries.indexOf(s);
+        const barW = (bandW * 0.7) / seriesCount;
+        return {
+          ...empty,
+          bars: s.values.map((v, i) => {
+            const x = PAD.left + bandW * i + bandW * 0.15 + barW * bi;
+            const y = Math.min(yv(v), zy);
+            const h = Math.abs(yv(v) - zy);
+            const up = v >= 0;
+            return { d: roundedBarPath(x, y, Math.max(1, barW), h, barRadius, up), up };
+          }),
+        };
+      }
+      // 折れ線 / 面 / 複合の折れ線 (複合は第 2 軸のスケール)。
+      const yl = s === lineSeries ? (v: number) => PAD.top + plotH - ((v - lineMin) / lineSpan) * plotH : yv;
+      const coords = s.values.map((v, i) => `${xc(i)},${yl(v)}`);
+      return {
+        ...empty,
+        pts: coords.join(" "),
+        areaPath: `M ${xc(0)},${zy} L ${coords.join(" L ")} L ${xc(n - 1)},${zy} Z`,
+      };
+    });
+  }, [model, type, bandW, plotH, min, span, n, barRadius, isCombo, split, lineSeries, lineMin, lineSpan]);
   // X 軸ラベルは多すぎると間引く。
   const labelStep = Math.ceil(n / 16);
   // 点が少ないときだけマーカーを描く (多いとつぶれて逆に読みにくい)。
-  const showMarkers = type !== "bar" && n <= 60;
+  const showMarkers = (type === "line" || type === "area" || isCombo) && n <= 60;
   const reducedMotion = useReducedMotion() ?? false;
   // 出現アニメーションは要素数が一定以下のときだけ行う (大量要素の同時アニメは
   // 描画コストが嵩むため静的描画にフォールバック)。棒の height / pathLength の補間は
@@ -808,6 +938,30 @@ export function CartesianChart({
         })}
         {/* Y 軸線 */}
         <line x1={PAD.left} y1={PAD.top} x2={PAD.left} y2={PAD.top + plotH} stroke="var(--border)" />
+        {/* 複合チャートの第 2 軸 (折れ線の値)。右端に軸線と目盛りを置く (#1941)。 */}
+        {lineSeries && (
+          <g data-chart-right-axis="">
+            <line
+              x1={PAD.left + plotW}
+              y1={PAD.top}
+              x2={PAD.left + plotW}
+              y2={PAD.top + plotH}
+              stroke="var(--border)"
+            />
+            {rightTicks.map((v, i) => (
+              <text
+                key={i}
+                x={PAD.left + plotW + 8}
+                y={yAtRight(v) + 3}
+                textAnchor="start"
+                style={{ fontSize: "var(--text-xs)" }}
+                fill="var(--text-muted)"
+              >
+                {formatTick(v)}
+              </text>
+            ))}
+          </g>
+        )}
 
         {/* ホバー中バンドの強調 + 縦ガイド */}
         {hover != null && (
@@ -865,7 +1019,37 @@ export function CartesianChart({
         {/* 系列 */}
         {model.series.map((s, si) => {
           const color = colors[si % colors.length];
-          if (type === "bar") {
+          if (type === "stackedBar") {
+            return (
+              <g key={si}>
+                {seriesGeom[si].rects.map((r, i) =>
+                  r.h > 0 ? (
+                    // 区画は基線から伸びるように出現させる (originY は基線の位置に合わせる)。
+                    <motion.rect
+                      key={i}
+                      x={r.x}
+                      y={r.y}
+                      width={r.w}
+                      height={r.h}
+                      fill={color}
+                      stroke="var(--bg-elevated)"
+                      strokeWidth={1}
+                      fillOpacity={hover == null || hover === i ? 1 : 0.5}
+                      style={{ originX: 0.5, originY: (r.baseY - r.y) / r.h }}
+                      initial={animate ? { scaleY: 0 } : false}
+                      animate={{ scaleY: 1 }}
+                      transition={
+                        animate
+                          ? { duration: durations.slow, ease: easings.out, delay: Math.min(i, 24) * 0.006 }
+                          : { duration: 0 }
+                      }
+                    />
+                  ) : null,
+                )}
+              </g>
+            );
+          }
+          if (type === "bar" || (isCombo && s !== lineSeries)) {
             return (
               <g key={si}>
                 {seriesGeom[si].bars.map((bar, i) => (
@@ -918,7 +1102,7 @@ export function CartesianChart({
                   <circle
                     key={i}
                     cx={xAt(i)}
-                    cy={yAt(v)}
+                    cy={yAtFor(s)(v)}
                     r={hover === i ? 4.5 : 2.5}
                     fill={color}
                     stroke="var(--bg-elevated)"
@@ -929,7 +1113,7 @@ export function CartesianChart({
               {!showMarkers && hover != null && (
                 <circle
                   cx={xAt(hover)}
-                  cy={yAt(s.values[hover])}
+                  cy={yAtFor(s)(s.values[hover])}
                   r={4}
                   fill={color}
                   stroke="var(--bg-elevated)"
@@ -1231,6 +1415,290 @@ function PieChart({
   );
 }
 
+// 散布図・ヒストグラムの描画領域 (#1941)。X 軸ラベルは回転させないので下余白を詰める。
+const XY_PAD = { left: 60, right: 20, top: 16, bottom: 48 };
+
+/** 散布図 (#1941)。X・Y とも数値軸で、点は系列色。点が多いときは出現アニメーションを省く。 */
+function ScatterChart({ model, xName, colors }: { model: ChartModel; xName: string; colors: string[] }) {
+  const t = useT();
+  const reducedMotion = useReducedMotion() ?? false;
+  const [hover, setHover] = useState<{ si: number; i: number } | null>(null);
+  const xs = model.scatterX ?? [];
+  const xe = useMemo(() => paddedExtent(xs), [xs]);
+  const ye = useMemo(() => paddedExtent(model.series.flatMap((s) => s.values)), [model.series]);
+  const plotW = W - XY_PAD.left - XY_PAD.right;
+  const plotH = H - XY_PAD.top - XY_PAD.bottom;
+  const xAt = (v: number) => XY_PAD.left + ((v - xe.min) / (xe.max - xe.min)) * plotW;
+  const yAt = (v: number) => XY_PAD.top + plotH - ((v - ye.min) / (ye.max - ye.min)) * plotH;
+  const xTicks = useMemo(() => niceTicks(xe.min, xe.max, 7), [xe]);
+  const yTicks = useMemo(() => niceTicks(ye.min, ye.max, 5), [ye]);
+  const animate = !reducedMotion && model.series.length * xs.length <= ANIM_MAX_ELEMENTS;
+  const summary = chartSummary(model, "scatter");
+  const ariaLabel = t("chartAriaSummary", {
+    series: summary.series,
+    points: summary.points,
+    max: summary.max === null ? "-" : formatValue(summary.max),
+    min: summary.min === null ? "-" : formatValue(summary.min),
+  });
+  return (
+    <chakra.svg
+      viewBox={`0 0 ${W} ${H}`}
+      width="100%"
+      style={{ maxHeight: "100%" }}
+      role="group"
+      aria-roledescription={t("chartAriaRoleDescription")}
+      aria-label={ariaLabel}
+      tabIndex={0}
+      css={CHART_FOCUS_CSS}
+      data-chart-svg=""
+      data-chart-kind="scatter"
+      onBlur={() => setHover(null)}
+    >
+      {yTicks.map((v, i) => (
+        <g key={`y${i}`}>
+          <line
+            x1={XY_PAD.left}
+            y1={yAt(v)}
+            x2={XY_PAD.left + plotW}
+            y2={yAt(v)}
+            stroke="var(--border-subtle)"
+            strokeDasharray="3 4"
+          />
+          <text
+            x={XY_PAD.left - 8}
+            y={yAt(v) + 3}
+            textAnchor="end"
+            style={{ fontSize: "var(--text-xs)" }}
+            fill="var(--text-muted)"
+          >
+            {formatTick(v)}
+          </text>
+        </g>
+      ))}
+      {xTicks.map((v, i) => (
+        <g key={`x${i}`}>
+          <line
+            x1={xAt(v)}
+            y1={XY_PAD.top}
+            x2={xAt(v)}
+            y2={XY_PAD.top + plotH}
+            stroke="var(--border-subtle)"
+            strokeDasharray="3 4"
+          />
+          <text
+            x={xAt(v)}
+            y={XY_PAD.top + plotH + 16}
+            textAnchor="middle"
+            style={{ fontSize: "var(--text-xs)" }}
+            fill="var(--text-muted)"
+          >
+            {formatTick(v)}
+          </text>
+        </g>
+      ))}
+      <line
+        x1={XY_PAD.left}
+        y1={XY_PAD.top}
+        x2={XY_PAD.left}
+        y2={XY_PAD.top + plotH}
+        stroke="var(--border)"
+      />
+      <line
+        x1={XY_PAD.left}
+        y1={XY_PAD.top + plotH}
+        x2={XY_PAD.left + plotW}
+        y2={XY_PAD.top + plotH}
+        stroke="var(--border)"
+      />
+      {xName && (
+        <text
+          x={XY_PAD.left + plotW / 2}
+          y={H - 8}
+          textAnchor="middle"
+          style={{ fontSize: "var(--text-xs)" }}
+          fontWeight={600}
+          fill="var(--text-secondary)"
+        >
+          {truncate(xName, 48)}
+        </text>
+      )}
+      {model.series.map((s, si) => {
+        const color = colors[si % colors.length];
+        return (
+          <g key={si} data-scatter-series="">
+            {s.values.map((y, i) => {
+              const active = hover?.si === si && hover.i === i;
+              const props = {
+                cx: xAt(xs[i]),
+                cy: yAt(y),
+                r: active ? 5.5 : 3.5,
+                fill: color,
+                fillOpacity: 0.7,
+                stroke: "var(--bg-elevated)",
+                strokeWidth: 1,
+                onMouseEnter: () => setHover({ si, i }),
+                onMouseLeave: () => setHover(null),
+              };
+              const title = <title>{`${xName}: ${formatValue(xs[i])}, ${s.name}: ${formatValue(y)}`}</title>;
+              return animate ? (
+                <motion.circle
+                  key={i}
+                  {...props}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: durations.med, ease: easings.out, delay: Math.min(i, 24) * 0.01 }}
+                >
+                  {title}
+                </motion.circle>
+              ) : (
+                <circle key={i} {...props}>
+                  {title}
+                </circle>
+              );
+            })}
+          </g>
+        );
+      })}
+    </chakra.svg>
+  );
+}
+
+/** ヒストグラム (#1941)。隣り合うビンは隙間なく並べ、件数を高さにする。 */
+function HistogramChart({ model, xName, color }: { model: ChartModel; xName: string; color: string }) {
+  const t = useT();
+  const reducedMotion = useReducedMotion() ?? false;
+  const barRadius = useMemo(readBarRadius, []);
+  const [hover, setHover] = useState<number | null>(null);
+  const counts = model.series[0]?.values ?? [];
+  const edges = model.histEdges ?? [];
+  const n = counts.length;
+  const maxCount = Math.max(0, ...counts);
+  const plotW = W - XY_PAD.left - XY_PAD.right;
+  const plotH = H - XY_PAD.top - XY_PAD.bottom;
+  const bandW = plotW / Math.max(1, n);
+  const yAt = (v: number) => XY_PAD.top + plotH - (v / (maxCount || 1)) * plotH;
+  const yTicks = useMemo(() => niceTicks(0, maxCount, 5), [maxCount]);
+  const animate = !reducedMotion && n <= ANIM_MAX_ELEMENTS;
+  // 境界ラベルは多すぎると間引く。値がすべて同じ (幅 0 の 1 ビン) ときは中央に 1 つだけ。
+  const degenerate = n === 1 && edges[0] === edges[1];
+  const edgeStep = Math.ceil((n + 1) / 10);
+  const summary = chartSummary(model, "histogram");
+  const ariaLabel = t("chartAriaSummary", {
+    series: summary.series,
+    points: summary.points,
+    max: summary.max === null ? "-" : formatValue(summary.max),
+    min: summary.min === null ? "-" : formatValue(summary.min),
+  });
+  return (
+    <chakra.svg
+      viewBox={`0 0 ${W} ${H}`}
+      width="100%"
+      style={{ maxHeight: "100%" }}
+      role="group"
+      aria-roledescription={t("chartAriaRoleDescription")}
+      aria-label={ariaLabel}
+      tabIndex={0}
+      css={CHART_FOCUS_CSS}
+      data-chart-svg=""
+      data-chart-kind="histogram"
+      onBlur={() => setHover(null)}
+    >
+      {yTicks.map((v, i) => {
+        const baseline = v === 0;
+        return (
+          <g key={i}>
+            <line
+              x1={XY_PAD.left}
+              y1={yAt(v)}
+              x2={XY_PAD.left + plotW}
+              y2={yAt(v)}
+              stroke={baseline ? "var(--border)" : "var(--border-subtle)"}
+              strokeDasharray={baseline ? undefined : "3 4"}
+            />
+            <text
+              x={XY_PAD.left - 8}
+              y={yAt(v) + 3}
+              textAnchor="end"
+              style={{ fontSize: "var(--text-xs)" }}
+              fill="var(--text-muted)"
+            >
+              {formatTick(v)}
+            </text>
+          </g>
+        );
+      })}
+      <line
+        x1={XY_PAD.left}
+        y1={XY_PAD.top}
+        x2={XY_PAD.left}
+        y2={XY_PAD.top + plotH}
+        stroke="var(--border)"
+      />
+      {edges
+        .map((e, i) =>
+          degenerate
+            ? i === 0
+              ? { e, x: XY_PAD.left + plotW / 2 }
+              : null
+            : i % edgeStep === 0 || i === n
+              ? { e, x: XY_PAD.left + bandW * i }
+              : null,
+        )
+        .filter((l): l is { e: number; x: number } => l !== null)
+        .map(({ e, x }, i) => (
+          <text
+            key={i}
+            x={x}
+            y={XY_PAD.top + plotH + 16}
+            textAnchor="middle"
+            style={{ fontSize: "var(--text-2xs)" }}
+            fill="var(--text-muted)"
+          >
+            {formatTick(e)}
+          </text>
+        ))}
+      {xName && (
+        <text
+          x={XY_PAD.left + plotW / 2}
+          y={H - 8}
+          textAnchor="middle"
+          style={{ fontSize: "var(--text-xs)" }}
+          fontWeight={600}
+          fill="var(--text-secondary)"
+        >
+          {truncate(xName, 48)}
+        </text>
+      )}
+      {counts.map((c, i) => (
+        <g key={i} data-histogram-bin="" onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
+          <motion.path
+            d={roundedBarPath(
+              XY_PAD.left + bandW * i + 0.5,
+              yAt(c),
+              Math.max(1, bandW - 1),
+              XY_PAD.top + plotH - yAt(c),
+              barRadius,
+              true,
+            )}
+            fill={color}
+            fillOpacity={hover == null || hover === i ? 1 : 0.6}
+            style={{ originX: 0.5, originY: 1 }}
+            initial={animate ? { scaleY: 0 } : false}
+            animate={{ scaleY: 1 }}
+            transition={
+              animate
+                ? { duration: durations.slow, ease: easings.out, delay: Math.min(i, 24) * 0.006 }
+                : { duration: 0 }
+            }
+          >
+            <title>{`${model.labels[i]}: ${formatValue(c)}`}</title>
+          </motion.path>
+        </g>
+      ))}
+    </chakra.svg>
+  );
+}
+
 /** `ChartNotice` を表示文言へ変換する (#646)。`useT` の `t` をそのまま受け取る。 */
 function noticeText(notice: ChartNotice, model: ChartModel, t: ReturnType<typeof useT>): string {
   switch (notice) {
@@ -1240,6 +1708,8 @@ function noticeText(notice: ChartNotice, model: ChartModel, t: ReturnType<typeof
       return t("chartNoticeFlatValues");
     case "nonNumericExcluded":
       return t("chartNoticeNonNumericExcluded", { count: model.excludedNonNumeric ?? 0 });
+    case "rowsDropped":
+      return t("chartNoticeRowsDropped", { count: model.droppedRows ?? 0 });
   }
 }
 
