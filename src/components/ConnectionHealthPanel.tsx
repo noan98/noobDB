@@ -32,7 +32,8 @@ import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
 import { useConfirm } from "./ConfirmDialog";
-import { Button, Checkbox, Select } from "./ui";
+import { Button, Checkbox } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { useToast } from "./Toast";
 
 /**
@@ -319,20 +320,18 @@ export function ConnectionHealthPanel({
           />
           {t("autoRefreshLabel")}
         </chakra.label>
-        <Select
-          aria-label={t("autoRefreshIntervalAria")}
+        <ListboxSelect
+          ariaLabel={t("autoRefreshIntervalAria")}
           value={String(intervalSecs)}
-          onChange={(e) => setIntervalSecs(Number(e.target.value))}
-          width="auto"
-        >
-          {AUTO_REFRESH_INTERVAL_OPTIONS.map((s) => (
-            <option key={s} value={s}>
-              {s % 60 === 0
+          options={AUTO_REFRESH_INTERVAL_OPTIONS.map((s) => ({
+            value: String(s),
+            label:
+              s % 60 === 0
                 ? t("autoRefreshIntervalMins", { mins: s / 60 })
-                : t("autoRefreshIntervalSecs", { secs: s })}
-            </option>
-          ))}
-        </Select>
+                : t("autoRefreshIntervalSecs", { secs: s }),
+          }))}
+          onChange={(v) => setIntervalSecs(Number(v))}
+        />
         <chakra.label display="inline-flex" alignItems="center" gap="1.5" fontSize="sm">
           <Checkbox
             checked={includeSaved}

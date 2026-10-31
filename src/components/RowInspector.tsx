@@ -30,7 +30,8 @@ import { buildInsertClipboard, buildRowSql } from "./cellEdit";
 import type { RelatedEntry } from "../relatedRows";
 import type { I18nKey } from "../i18n";
 import { FieldError, FieldLabel } from "./modalForm";
-import { Button, Input, PressableButton, Select, Textarea } from "./ui";
+import { Button, Input, PressableButton, Textarea } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
 import { boolSelectValue, fromNativeValue, toNativeValue } from "./typedEditor";
 import {
@@ -328,7 +329,9 @@ export function RowInspector({
   // the case where focus is still on a cell).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+      // 開いた候補リスト (ListboxSelect) が Esc を処理した (preventDefault 済み) ときは、
+      // 下書きを捨てたりインスペクタを閉じたりしない。
+      if (e.key !== "Escape" || e.defaultPrevented) return;
       if (editing) {
         if (!applying) setEditState(null);
         return;
@@ -424,13 +427,15 @@ export function RowInspector({
     let input: ReactElement;
     if (control.kind === "bool") {
       input = (
-        <Select {...a11y} value={boolSelectValue(raw, start)} onChange={(e) => setCell(i, e.target.value)}>
-          {control.options.map((o) => (
-            <option key={o} value={o}>
-              {o}
-            </option>
-          ))}
-        </Select>
+        <ListboxSelect
+          id={id}
+          css={{ width: "100%" }}
+          ariaInvalid={!!error}
+          ariaDescribedBy={error ? `${id}-err` : undefined}
+          value={boolSelectValue(raw, start)}
+          options={control.options.map((o) => ({ value: o }))}
+          onChange={(v) => setCell(i, v)}
+        />
       );
     } else if (control.kind === "native") {
       // 非制御: 一部の欄だけ消した途中状態 (badInput) を React が巻き戻さないため

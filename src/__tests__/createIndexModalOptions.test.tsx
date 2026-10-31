@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { t } from "../i18n";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { chooseListboxOption, renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
 
 /** CreateIndexModal の詳細オプション (#1892)。方言ごとの有効/無効とプレビュー SQL を確認する。 */
 vi.mock("../api/tauri", async (importOriginal) => {
@@ -50,7 +50,7 @@ describe("CreateIndexModal 詳細オプション (#1892)", () => {
     fireEvent.change(screen.getByLabelText(/WHERE/), { target: { value: "a > 0" } });
     fireEvent.click(screen.getByLabelText(/Include b|b を INCLUDE/));
     await waitFor(() => expect(document.body.textContent).toContain('INCLUDE ("b") WHERE a > 0;'));
-    fireEvent.change(screen.getByLabelText(/メソッド|Method/), { target: { value: "gin" } });
+    chooseListboxOption(screen.getByLabelText(/メソッド|Method/), "gin");
     await waitFor(() => expect(document.body.textContent).toContain('USING gin ("a") WHERE a > 0;'));
     expect(document.body.textContent).not.toContain(`INCLUDE ("b")`);
   });
@@ -101,7 +101,7 @@ describe("CreateIndexModal 詳細オプション (#1892)", () => {
   it("PG hash は 1 列のみ: 2 列目を無効化して理由を出す。MySQL HASH は注記", async () => {
     open("postgres");
     fireEvent.click(await screen.findByLabelText("a"));
-    fireEvent.change(screen.getByLabelText(/メソッド|Method/), { target: { value: "hash" } });
+    chooseListboxOption(screen.getByLabelText(/メソッド|Method/), "hash");
     await waitFor(() => expect(screen.getByLabelText("b")).toBeDisabled());
     expect(screen.getByTestId("create-index-reason-columns")).toBeInTheDocument();
   });
@@ -109,7 +109,7 @@ describe("CreateIndexModal 詳細オプション (#1892)", () => {
   it("MySQL で HASH を選ぶと InnoDB の注記が出る", async () => {
     open("mysql");
     await screen.findByLabelText("a");
-    fireEvent.change(screen.getByLabelText(/メソッド|Method/), { target: { value: "hash" } });
+    chooseListboxOption(screen.getByLabelText(/メソッド|Method/), "hash");
     await waitFor(() => expect(screen.getByTestId("create-index-note-hash")).toBeInTheDocument());
   });
 });

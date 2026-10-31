@@ -15,7 +15,8 @@ import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { isPlainEnterKey } from "./modalKeys";
-import { Button, Input, PressableButton, Select } from "./ui";
+import { Button, Input, PressableButton } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { Spinner } from "./Spinner";
 
 /**
@@ -214,21 +215,16 @@ export function SaveAsTableModal({
                     <chakra.span color="app.textMuted" aria-hidden="true">
                       →
                     </chakra.span>
-                    <Select
-                      flex="1"
-                      aria-label={t("saveAsTableAppendTargetAria", { column: rc })}
+                    <ListboxSelect
+                      css={{ flex: 1, minWidth: 0 }}
+                      ariaLabel={t("saveAsTableAppendTargetAria", { column: rc })}
                       value={mapping[i] ?? ""}
-                      onChange={(e) =>
-                        setMapping((prev) => prev.map((m, j) => (j === i ? e.target.value || null : m)))
-                      }
-                    >
-                      <option value="">{t("saveAsTableAppendSkip")}</option>
-                      {targetColumns.map((c) => (
-                        <option key={c.name} value={c.name}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </Select>
+                      options={[
+                        { value: "", label: t("saveAsTableAppendSkip") },
+                        ...targetColumns.map((c) => ({ value: c.name })),
+                      ]}
+                      onChange={(v) => setMapping((prev) => prev.map((m, j) => (j === i ? v || null : m)))}
+                    />
                   </Flex>
                 ))}
               </Flex>

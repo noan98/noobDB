@@ -16,7 +16,8 @@ import { AlterPrecheckNotice } from "./AlterPrecheckNotice";
 import { buildConstraintPrechecks } from "./alterPrecheck";
 import { COUNT_PREVIEW_TIMEOUT_SECS, useCountPreviews } from "../useCountPreviews";
 import { Icon } from "./Icon";
-import { Button, Checkbox, Input, PressableButton, Select, Switch } from "./ui";
+import { Button, Checkbox, Input, PressableButton, Switch } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 
 /**
  * インデックス作成の軽量モーダル (#850)。`describeTable` で列一覧を取得し、選択した
@@ -331,20 +332,17 @@ export function CreateIndexModal({
                 <FieldLabel htmlFor="create-index-method" minW="90px">
                   {t("createIndexMethod")}
                 </FieldLabel>
-                <Select
+                <ListboxSelect
                   id="create-index-method"
                   value={method}
                   disabled={support.methods.length === 0}
-                  onChange={(e) => setMethod(e.target.value as IndexMethod | "")}
-                  flex="1"
-                >
-                  <option value="">{t("createIndexMethodDefault")}</option>
-                  {support.methods.map((m) => (
-                    <option key={m} value={m}>
-                      {m.toUpperCase()}
-                    </option>
-                  ))}
-                </Select>
+                  options={[
+                    { value: "", label: t("createIndexMethodDefault") },
+                    ...support.methods.map((m) => ({ value: m as string, label: m.toUpperCase() })),
+                  ]}
+                  onChange={(v) => setMethod(v as IndexMethod | "")}
+                  css={{ flex: 1, minWidth: 0 }}
+                />
               </Flex>
               {driver === "mysql" && method === "hash" && (
                 <chakra.span textStyle="caption" data-testid="create-index-note-hash">

@@ -140,6 +140,15 @@ describe("ListboxSelect の選択", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
   });
 
+  it("選択中の候補を選び直しても onChange を呼ばずに閉じる (ネイティブ select と同じ)", async () => {
+    const user = userEvent.setup();
+    const { onChangeSpy } = renderSelect({ initialValue: "line" });
+    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("option", { name: "折れ線" }));
+    expect(onChangeSpy).not.toHaveBeenCalled();
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
   it("開くと現在選択中の候補がハイライトされる", async () => {
     const user = userEvent.setup();
     renderSelect({ initialValue: "area" });
@@ -292,5 +301,30 @@ describe("ListboxSelect の位置追従", () => {
       document.body.dispatchEvent(new Event("scroll", { bubbles: false }));
     });
     expect(listbox.style.top).not.toBe(before);
+  });
+
+  it("triggerRef / onFocus / ariaInvalid / ariaDescribedBy / triggerData がトリガーに反映される", () => {
+    const ref = { current: null as HTMLButtonElement | null };
+    const onFocus = vi.fn();
+    renderWithProviders(
+      <ListboxSelect
+        value="bar"
+        options={OPTIONS}
+        onChange={() => {}}
+        ariaLabel="種類"
+        triggerRef={ref}
+        onFocus={onFocus}
+        ariaInvalid
+        ariaDescribedBy="err-1"
+        triggerData={{ "data-insert-field": true }}
+      />,
+    );
+    const trigger = screen.getByRole("combobox", { name: "種類" });
+    expect(ref.current).toBe(trigger);
+    expect(trigger).toHaveAttribute("aria-invalid", "true");
+    expect(trigger).toHaveAttribute("aria-describedby", "err-1");
+    expect(trigger).toHaveAttribute("data-insert-field", "true");
+    act(() => trigger.focus());
+    expect(onFocus).toHaveBeenCalledTimes(1);
   });
 });

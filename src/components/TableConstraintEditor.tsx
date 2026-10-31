@@ -1,6 +1,7 @@
 import { chakra, Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
-import { Checkbox, Button, Input, Select } from "./ui";
+import { Checkbox, Button, Input } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { FieldLabel } from "./modalForm";
 import { Icon } from "./Icon";
 import {
@@ -233,13 +234,14 @@ function ActionSelect({
   return (
     <chakra.label display="flex" alignItems="center" gap="1.5" fontSize="sm">
       {label}
-      <Select value={value} onChange={(e) => onChange(e.target.value as ReferentialAction)}>
-        {REFERENTIAL_ACTIONS.map((a) => (
-          <option key={a} value={a}>
-            {a === "" ? t("constraintFkActionDefault") : a}
-          </option>
-        ))}
-      </Select>
+      <ListboxSelect
+        value={value}
+        options={REFERENTIAL_ACTIONS.map((a) => ({
+          value: a,
+          label: a === "" ? t("constraintFkActionDefault") : a,
+        }))}
+        onChange={(v) => onChange(v as ReferentialAction)}
+      />
     </chakra.label>
   );
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { chooseListboxOption, renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
 import { t } from "../i18n";
 
 /**
@@ -190,7 +190,7 @@ describe("SaveAsTableModal append mode (#1623)", () => {
       target: { value: "orders" },
     });
     const sel = await screen.findByLabelText(t("saveAsTableAppendTargetAria", { column: "total" }));
-    fireEvent.change(sel, { target: { value: "id" } });
+    chooseListboxOption(sel, "id");
     expect(
       await screen.findByText(t("saveAsTableAppendDuplicateTarget", { column: "id" })),
     ).toBeInTheDocument();

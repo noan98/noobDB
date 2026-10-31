@@ -43,7 +43,8 @@ import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { ScriptAnalysisPanel } from "./ScriptAnalysisPanel";
 import { StreamProgressBar } from "./StreamProgressBar";
 import { useToast } from "./Toast";
-import { Button, Input, Select, Switch } from "./ui";
+import { Button, Input, Switch } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { loadRecentScripts, pushRecentScript, saveRecentScripts } from "../inputMemory";
 
 /** 事前確認の結果と、それを取ったときの入力 (ファイル + 文字コード) のキー。 */
@@ -427,24 +428,26 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
             </Button>
           </PathRow>
           {recents.length > 0 && (
-            <Select
-              aria-label={t("scriptRecentLabel")}
+            <ListboxSelect
+              ariaLabel={t("scriptRecentLabel")}
+              css={{ width: "100%" }}
               value=""
               disabled={busy}
-              onChange={(e) => {
-                const picked = recents[Number(e.target.value)];
+              options={[
+                { value: "", label: t("scriptRecentPlaceholder") },
+                ...recents.map((r, i) => ({
+                  value: String(i),
+                  label: `${basename(r.path)} — ${r.path}`,
+                })),
+              ]}
+              onChange={(v) => {
+                // 先頭の見出し行 ("") を選び直しても何もしない (Number("") は 0 になるため)。
+                const picked = v === "" ? undefined : recents[Number(v)];
                 if (!picked) return;
                 setPath(picked.path);
                 setOptions((prev) => ({ ...prev, encoding: picked.encoding }));
               }}
-            >
-              <option value="">{t("scriptRecentPlaceholder")}</option>
-              {recents.map((r, i) => (
-                <option key={r.path} value={i} title={r.path}>
-                  {basename(r.path)} — {r.path}
-                </option>
-              ))}
-            </Select>
+            />
           )}
         </FormSection>
 
@@ -454,11 +457,9 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
             <TextEncodingSelect
               id="script-encoding"
               allowAuto
-              minW="160px"
+              css={{ minWidth: "160px" }}
               value={options.encoding ?? ""}
-              onChange={(e) =>
-                setOptions((prev) => ({ ...prev, encoding: parseTextEncodingId(e.target.value) }))
-              }
+              onChange={(v) => setOptions((prev) => ({ ...prev, encoding: parseTextEncodingId(v) }))}
               disabled={busy}
             />
           </chakra.div>

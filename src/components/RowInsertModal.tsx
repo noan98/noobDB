@@ -11,7 +11,8 @@ import {
 } from "./cellEdit";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { isPlainEnterKey } from "./modalKeys";
-import { Button, Input, PressableButton, Select } from "./ui";
+import { Button, Input, PressableButton } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { boolOptions, resolveTypedEditor } from "./typedEditor";
 import { insertDefaultHint, insertFunctionChips, stripNonInsertableSeed } from "./insertDefaults";
 import { parseInsertPaste } from "./pasteEdit";
@@ -276,24 +277,21 @@ export function RowInsertModal({
                   </chakra.label>
                 </Tooltip>
                 {typed ? (
-                  <Select
-                    ref={i === 0 ? setFirstRef : undefined}
+                  // Enter は候補を開く / 確定に使うので、他の欄のような「次の欄へ移動」(focusNextField) は付けない。
+                  <ListboxSelect
+                    triggerRef={i === 0 ? setFirstRef : undefined}
                     value={cur}
                     disabled={generated}
-                    aria-label={c.name}
+                    ariaLabel={c.name}
                     onFocus={() => setFocused(i)}
-                    onChange={(e) => setValues((prev) => ({ ...prev, [i]: e.target.value }))}
-                    data-insert-field
-                    onKeyDown={focusNextField}
-                    flex="1"
-                  >
-                    <option value="">{t("rowOpsInsertDefaultOption")}</option>
-                    {boolOptions(boolStart).map((o) => (
-                      <option key={o} value={o}>
-                        {o}
-                      </option>
-                    ))}
-                  </Select>
+                    triggerData={{ "data-insert-field": true }}
+                    css={{ flex: 1, minWidth: 0 }}
+                    options={[
+                      { value: "", label: t("rowOpsInsertDefaultOption") },
+                      ...boolOptions(boolStart).map((o) => ({ value: o })),
+                    ]}
+                    onChange={(v) => setValues((prev) => ({ ...prev, [i]: v }))}
+                  />
                 ) : (
                   <Input
                     ref={i === 0 ? setFirstRef : undefined}

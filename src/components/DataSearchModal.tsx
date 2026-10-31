@@ -14,7 +14,8 @@ import { EmptyState } from "./EmptyState";
 import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { DraftNumberInput } from "./DraftNumberInput";
-import { Button, Checkbox, Input, Radio, Select } from "./ui";
+import { Button, Checkbox, Input, Radio } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { LoadingButton } from "./LoadingButton";
 import { Icon, ICON_SIZES } from "./Icon";
 import { SkeletonSearchRows } from "./Skeleton";
@@ -572,25 +573,23 @@ export function DataSearchModal({
                   autoComplete="off"
                   spellCheck={false}
                 />
-                <Select
-                  minW="140px"
+                <ListboxSelect
+                  css={{ minWidth: "140px" }}
                   value={matchMode}
-                  onChange={(e) => setMatchMode(e.target.value as MatchMode)}
+                  options={MATCH_MODES.map((m) => ({
+                    value: m,
+                    label: t(
+                      m === "exact"
+                        ? "dataSearchMatchExact"
+                        : m === "prefix"
+                          ? "dataSearchMatchPrefix"
+                          : "dataSearchMatchContains",
+                    ),
+                  }))}
+                  onChange={(v) => setMatchMode(v as MatchMode)}
                   disabled={scanning}
-                  aria-label={t("dataSearchMatchModeLabel")}
-                >
-                  {MATCH_MODES.map((m) => (
-                    <option key={m} value={m}>
-                      {t(
-                        m === "exact"
-                          ? "dataSearchMatchExact"
-                          : m === "prefix"
-                            ? "dataSearchMatchPrefix"
-                            : "dataSearchMatchContains",
-                      )}
-                    </option>
-                  ))}
-                </Select>
+                  ariaLabel={t("dataSearchMatchModeLabel")}
+                />
               </chakra.div>
             </FormSection>
 

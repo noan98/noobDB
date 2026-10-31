@@ -26,7 +26,8 @@ import { semanticColorToken } from "../semanticColors";
 import { resolvePkIndices } from "./cellEdit";
 import type { ConfirmOptions } from "./ConfirmDialog";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Checkbox, Select } from "./ui";
+import { Button, Checkbox } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { Callout } from "./Callout";
 import { LoadingButton } from "./LoadingButton";
 import { Spinner } from "./Spinner";
@@ -537,19 +538,16 @@ export function BroadcastModal({
               color="app.textMuted"
             >
               {t("broadcastKeyColumnLabel")}
-              <Select
+              <ListboxSelect
                 value={keyColumn}
-                onChange={(e) => handleKeyColumnChange(e.target.value)}
-                minWidth="180px"
+                options={[
+                  { value: "", label: t("broadcastKeyColumnNone") },
+                  ...baseline.columns.map((c) => ({ value: c.name })),
+                ]}
+                onChange={handleKeyColumnChange}
+                css={{ minWidth: "180px" }}
                 disabled={!!tableColumns && resolvePkIndices(baseline.columns, tableColumns).length > 0}
-              >
-                <option value="">{t("broadcastKeyColumnNone")}</option>
-                {baseline.columns.map((c) => (
-                  <option key={c.name} value={c.name}>
-                    {c.name}
-                  </option>
-                ))}
-              </Select>
+              />
             </chakra.label>
           )}
         </Flex>

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { chooseListboxOption, renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
 import { t } from "../i18n";
 
 /**
@@ -125,17 +125,17 @@ describe("ERDiagramView フォーカス (#1540)", () => {
     expect(indices.every((v) => v !== "")).toBe(true);
     expect(new Set(indices).size).toBeGreaterThan(1);
 
-    fireEvent.change(screen.getByLabelText(t("erDiagramFocus")), { target: { value: "a" } });
+    chooseListboxOption(screen.getByLabelText(t("erDiagramFocus")), "a");
     // 1 ホップ: a と b だけ。
     expect(
       await screen.findByText(t("erDiagramSummary", { tables: 2, relationships: 1 })),
     ).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText(t("erDiagramFocusHops")), { target: { value: "2" } });
+    chooseListboxOption(screen.getByLabelText(t("erDiagramFocusHops")), "2");
     expect(
       await screen.findByText(t("erDiagramSummary", { tables: 3, relationships: 2 })),
     ).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText(t("erDiagramFocus")), { target: { value: "" } });
+    chooseListboxOption(screen.getByLabelText(t("erDiagramFocus")), "");
     expect(
       await screen.findByText(t("erDiagramSummary", { tables: 4, relationships: 3 })),
     ).toBeInTheDocument();

@@ -7,7 +7,8 @@ import { Callout } from "./Callout";
 import { CopyButton } from "./CopyButton";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, FieldLabel, FormSection } from "./modalForm";
-import { Button, Select } from "./ui";
+import { Button } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { useCopyFeedback } from "./useCopyFeedback";
 
 interface Props {
@@ -67,14 +68,15 @@ export function TimelapseDmlModal({ rows, maskedColumns, driver, database, table
         <Callout tone="info">{t("timelapseDmlNote")}</Callout>
         <FormSection>
           <FieldLabel htmlFor="timelapse-dml-direction">{t("timelapseDmlDirection")}</FieldLabel>
-          <Select
+          <ListboxSelect
             id="timelapse-dml-direction"
             value={direction}
-            onChange={(e) => setDirection(e.target.value as TimelapseDmlDirection)}
-          >
-            <option value="revert">{t("timelapseDmlRevert")}</option>
-            <option value="forward">{t("timelapseDmlForward")}</option>
-          </Select>
+            options={[
+              { value: "revert", label: t("timelapseDmlRevert") },
+              { value: "forward", label: t("timelapseDmlForward") },
+            ]}
+            onChange={(v) => setDirection(v as TimelapseDmlDirection)}
+          />
         </FormSection>
         <FormSection>
           <chakra.div display="flex" alignItems="center" gap="2">
