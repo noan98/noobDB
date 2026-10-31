@@ -153,21 +153,25 @@ jobs:
             -RedirectStandardError $log `
             -WindowStyle Hidden
 
-      # 起動待ち。固定 sleep ではなくログの "ready for connections" を最大 60 秒ポーリングし、落ちたら DB ログを出す。
+      # 起動待ち。ログの "ready for connections" はポートを listen する前に出ることがあり
+      # (実測で直後の接続が 10061 で拒否された)、固定 sleep でもなく mysqladmin ping が
+      # 実際に TCP で通るまで最大 90 秒ポーリングする。落ちたら DB ログを出す。
       - name: MySQL の起動を待ってテスト用 DB を作成
         shell: bash
         run: |
           set -euo pipefail
           ok=0
-          for i in $(seq 1 60); do
-            if grep -q "ready for connections" "$(cygpath -u "$DB_ROOT")/mysql.log" 2>/dev/null; then
+          for i in $(seq 1 90); do
+            if "$MYSQL_BIN_DIR/mysqladmin.exe" --no-defaults -h 127.0.0.1 -P 13306 -u root \
+                --connect-timeout=2 ping >/dev/null 2>&1; then
               ok=1; break
             fi
             sleep 1
           done
           if [ "$ok" != 1 ]; then
-            echo "::error::MySQL が 60 秒以内に起動しませんでした"
+            echo "::error::MySQL が 90 秒以内に 127.0.0.1:13306 で接続を受け付けませんでした"
             cat "$(cygpath -u "$DB_ROOT")/mysql.log" || true
+            cat "$(cygpath -u "$DB_ROOT")/mysql.out.log" || true
             exit 1
           fi
           "$MYSQL_BIN_DIR/mysql.exe" --no-defaults -h 127.0.0.1 -P 13306 -u root -e \
