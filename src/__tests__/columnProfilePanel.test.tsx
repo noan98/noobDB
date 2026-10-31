@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, waitFor, fireEvent } from "./testUtils";
+import { renderWithProviders, screen, waitFor, fireEvent, chooseListboxOption } from "./testUtils";
 import { t } from "../i18n";
 
 /**
@@ -359,7 +359,7 @@ describe("ColumnProfilePanel 標本モード (#1628)", () => {
     expect(api.profileColumn).toHaveBeenLastCalledWith("s1", "public", "orders", "id", false);
     expect(screen.queryByTestId("profile-sample-note")).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText(t("profileSampleLabel")), { target: { value: "1" } });
+    chooseListboxOption(screen.getByLabelText(t("profileSampleLabel")), "1");
     await waitFor(() => expect(api.profileColumn).toHaveBeenCalledTimes(2));
     expect(api.profileColumn).toHaveBeenLastCalledWith("s1", "public", "orders", "id", false, null, 1);
     expect(await screen.findByTestId("profile-sample-note")).toHaveTextContent("1%");

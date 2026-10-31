@@ -23,7 +23,8 @@ import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
-import { Button, Checkbox, Heading, Input, Select } from "./ui";
+import { Button, Checkbox, Heading, Input } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { isPlainEnterKey } from "./modalKeys";
 import { copyToClipboard } from "./clipboard";
 import {
@@ -1085,21 +1086,21 @@ export function UsersPanel({
                   }}
                 >
                   <FieldLabel htmlFor="users-copy-source">{t("usersCopySourceLabel")}</FieldLabel>
-                  <Select
+                  <ListboxSelect
                     id="users-copy-source"
+                    css={{ width: "100%" }}
                     value={copySourceKey}
-                    onChange={(e) => setCopySourceKey(e.target.value)}
-                  >
-                    <option value="">{t("usersCopySourcePlaceholder")}</option>
-                    {users
-                      .filter((u) => userKey(u) !== userKey(selected))
-                      .map((u) => (
-                        <option key={userKey(u)} value={userKey(u)}>
-                          {u.name}
-                          {u.host ? `@${u.host}` : ""}
-                        </option>
-                      ))}
-                  </Select>
+                    options={[
+                      { value: "", label: t("usersCopySourcePlaceholder") },
+                      ...users
+                        .filter((u) => userKey(u) !== userKey(selected))
+                        .map((u) => ({
+                          value: userKey(u),
+                          label: `${u.name}${u.host ? `@${u.host}` : ""}`,
+                        })),
+                    ]}
+                    onChange={setCopySourceKey}
+                  />
                   <chakra.p margin={0} textStyle="caption">
                     {t("usersCopyHint", { database: database ?? "" })}
                   </chakra.p>
@@ -1300,20 +1301,20 @@ export function UsersPanel({
                   </Flex>
 
                   <Flex gap="2" align="center" flexWrap="wrap">
-                    <Select
-                      aria-label={t("usersTemplateLabel")}
+                    <ListboxSelect
+                      ariaLabel={t("usersTemplateLabel")}
                       value={templateId}
-                      onChange={(e) => setTemplateId(e.target.value as PrivilegeTemplateId | "")}
+                      options={[
+                        { value: "", label: t("usersTemplatePlaceholder") },
+                        ...PRIVILEGE_TEMPLATE_IDS.map((id) => ({
+                          value: id,
+                          label: t(`usersTemplate_${id}`),
+                        })),
+                      ]}
+                      onChange={(v) => setTemplateId(v as PrivilegeTemplateId | "")}
                       disabled={readOnly}
-                      width="240px"
-                    >
-                      <option value="">{t("usersTemplatePlaceholder")}</option>
-                      {PRIVILEGE_TEMPLATE_IDS.map((id) => (
-                        <option key={id} value={id}>
-                          {t(`usersTemplate_${id}`)}
-                        </option>
-                      ))}
-                    </Select>
+                      css={{ width: "240px" }}
+                    />
                     <Button
                       type="button"
                       disabled={readOnly || !templateId || rowKeys.length === 0}

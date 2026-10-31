@@ -15,7 +15,8 @@ import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
 import { Segmented } from "./Segmented";
 import { saveDiagnosticBundle } from "./diagnosticBundle";
-import { Button, Input, Select, SelectableCard, Switch } from "./ui";
+import { Button, Input, SelectableCard, Switch } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import {
   SettingsInfo,
   SettingsLabelWithInfo,
@@ -223,12 +224,15 @@ function FontFamilyControl(props: {
       >
         {props.sample}
       </chakra.span>
-      <Select
+      <ListboxSelect
         id={props.id}
-        width="auto"
         value={selectValue}
-        onChange={(e) => {
-          const v = e.target.value;
+        options={[
+          { value: FONT_DEFAULT, label: props.defaultLabel },
+          ...presets.map((p) => ({ value: p })),
+          { value: FONT_CUSTOM, label: props.customLabel },
+        ]}
+        onChange={(v) => {
           setCustomMode(v === FONT_CUSTOM);
           if (v === FONT_DEFAULT) props.onChange(null);
           else if (v === FONT_CUSTOM) {
@@ -237,15 +241,7 @@ function FontFamilyControl(props: {
             if (text) props.onChange(text);
           } else props.onChange(v);
         }}
-      >
-        <option value={FONT_DEFAULT}>{props.defaultLabel}</option>
-        {presets.map((p) => (
-          <option key={p} value={p}>
-            {p}
-          </option>
-        ))}
-        <option value={FONT_CUSTOM}>{props.customLabel}</option>
-      </Select>
+      />
       {selectValue === FONT_CUSTOM && (
         <Input
           width="auto"
@@ -1877,15 +1873,15 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     </SettingsToggleLabel>
                     <SettingsInfo>{t("settingsResultGridModeHelp")}</SettingsInfo>
                   </SettingsLabelWithInfo>
-                  <Select
+                  <ListboxSelect
                     id="settings-result-grid-mode"
-                    width="auto"
                     value={settings.resultGridMode}
-                    onChange={(e) => setResultGridMode(e.target.value as ResultGridMode)}
-                  >
-                    <option value="scroll">{t("settingsResultGridModeScroll")}</option>
-                    <option value="paginate">{t("settingsResultGridModePaginate")}</option>
-                  </Select>
+                    options={[
+                      { value: "scroll", label: t("settingsResultGridModeScroll") },
+                      { value: "paginate", label: t("settingsResultGridModePaginate") },
+                    ]}
+                    onChange={(v) => setResultGridMode(v as ResultGridMode)}
+                  />
                 </SettingsToggleRow>
                 <SettingsNumberRow>
                   <SettingsLabelWithInfo>
@@ -1894,18 +1890,14 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     </chakra.label>
                     <SettingsInfo>{t("settingsResultGridPageSizeHelp")}</SettingsInfo>
                   </SettingsLabelWithInfo>
-                  <Select
+                  <ListboxSelect
                     id="settings-page-size"
+                    css={{ width: "100%" }}
                     value={String(settings.resultGridPageSize)}
                     disabled={settings.resultGridMode !== "paginate"}
-                    onChange={(e) => setResultGridPageSize(Number(e.target.value))}
-                  >
-                    {RESULT_GRID_PAGE_SIZE_OPTIONS.map((n) => (
-                      <option key={n} value={n}>
-                        {n}
-                      </option>
-                    ))}
-                  </Select>
+                    options={RESULT_GRID_PAGE_SIZE_OPTIONS.map((n) => ({ value: String(n) }))}
+                    onChange={(v) => setResultGridPageSize(Number(v))}
+                  />
                 </SettingsNumberRow>
                 <SettingsNumberRow>
                   <SettingsLabelWithInfo>
@@ -1914,19 +1906,19 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     </chakra.label>
                     <SettingsInfo>{t("settingsAutoRefreshDefaultHelp")}</SettingsInfo>
                   </SettingsLabelWithInfo>
-                  <Select
+                  <ListboxSelect
                     id="settings-auto-refresh-default"
+                    css={{ width: "100%" }}
                     value={String(settings.autoRefreshDefaultSecs)}
-                    onChange={(e) => setAutoRefreshDefaultSecs(Number(e.target.value))}
-                  >
-                    {AUTO_REFRESH_INTERVAL_OPTIONS.map((s) => (
-                      <option key={s} value={s}>
-                        {s % 60 === 0
+                    options={AUTO_REFRESH_INTERVAL_OPTIONS.map((s) => ({
+                      value: String(s),
+                      label:
+                        s % 60 === 0
                           ? t("autoRefreshIntervalMins", { mins: s / 60 })
-                          : t("autoRefreshIntervalSecs", { secs: s })}
-                      </option>
-                    ))}
-                  </Select>
+                          : t("autoRefreshIntervalSecs", { secs: s }),
+                    }))}
+                    onChange={(v) => setAutoRefreshDefaultSecs(Number(v))}
+                  />
                 </SettingsNumberRow>
                 <SettingsToggleRow>
                   <SettingsLabelWithInfo>
@@ -2265,16 +2257,16 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                   <chakra.label htmlFor="settings-tab-restore-mode">
                     {t("settingsTabRestoreMode")}
                   </chakra.label>
-                  <Select
+                  <ListboxSelect
                     id="settings-tab-restore-mode"
-                    width="auto"
                     value={settings.tabRestoreMode}
-                    onChange={(e) => setTabRestoreMode(e.target.value as TabRestoreMode)}
-                  >
-                    <option value="always">{t("settingsTabRestoreModeAlways")}</option>
-                    <option value="ask">{t("settingsTabRestoreModeAsk")}</option>
-                    <option value="never">{t("settingsTabRestoreModeNever")}</option>
-                  </Select>
+                    options={[
+                      { value: "always", label: t("settingsTabRestoreModeAlways") },
+                      { value: "ask", label: t("settingsTabRestoreModeAsk") },
+                      { value: "never", label: t("settingsTabRestoreModeNever") },
+                    ]}
+                    onChange={(v) => setTabRestoreMode(v as TabRestoreMode)}
+                  />
                 </SettingsToggleRow>
               </SettingsSection>
 

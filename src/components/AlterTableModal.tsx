@@ -27,7 +27,8 @@ import {
 import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
-import { Button, Checkbox, Input, PressableButton, Select, Switch } from "./ui";
+import { Button, Checkbox, Input, PressableButton, Switch } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { Callout } from "./Callout";
 import { Icon } from "./Icon";
 import { Tooltip } from "./Tooltip";
@@ -856,20 +857,21 @@ export function AlterTableModal({
                         label={positionSupported ? undefined : t("alterTablePositionUnsupported")}
                         focusableWrapper={!positionSupported}
                       >
-                        <Select
+                        <ListboxSelect
+                          css={{ width: "100%" }}
                           value={positionValue(c.position)}
-                          onChange={(e) => setAddedAt(i, { position: parsePositionValue(e.target.value) })}
+                          options={[
+                            { value: "end", label: t("alterTablePositionEnd") },
+                            { value: "first", label: t("alterTablePositionFirst") },
+                            ...positionAnchors(i).map((name) => ({
+                              value: `after:${name}`,
+                              label: t("alterTablePositionAfter", { column: name }),
+                            })),
+                          ]}
+                          onChange={(v) => setAddedAt(i, { position: parsePositionValue(v) })}
                           disabled={!positionSupported}
-                          aria-label={t("alterTablePositionAria", { n: i + 1 })}
-                        >
-                          <option value="end">{t("alterTablePositionEnd")}</option>
-                          <option value="first">{t("alterTablePositionFirst")}</option>
-                          {positionAnchors(i).map((name) => (
-                            <option key={name} value={`after:${name}`}>
-                              {t("alterTablePositionAfter", { column: name })}
-                            </option>
-                          ))}
-                        </Select>
+                          ariaLabel={t("alterTablePositionAria", { n: i + 1 })}
+                        />
                       </Tooltip>
                       <chakra.button
                         type="button"
@@ -899,24 +901,26 @@ export function AlterTableModal({
                           fontFamily="mono"
                           flex="1"
                         />
-                        <Select
+                        <ListboxSelect
                           value={c.generated.virtual ? "virtual" : "stored"}
-                          onChange={(e) =>
+                          options={[
+                            { value: "stored", label: t("createTableGeneratedStored") },
+                            // ListboxSelect には候補単位の disabled が無いので、非対応ドライバでは
+                            // VIRTUAL を並べない (既に選択済みの場合だけ表示のため残す)。
+                            ...(supportsVirtualGenerated(driver) || c.generated.virtual
+                              ? [{ value: "virtual", label: t("createTableGeneratedVirtual") }]
+                              : []),
+                          ]}
+                          onChange={(v) =>
                             setAddedAt(i, {
                               generated: {
                                 expression: c.generated?.expression ?? "",
-                                virtual: e.target.value === "virtual",
+                                virtual: v === "virtual",
                               },
                             })
                           }
-                          aria-label={`${t("createTableGeneratedStorage")} (${i + 1})`}
-                          w="auto"
-                        >
-                          <option value="stored">{t("createTableGeneratedStored")}</option>
-                          <option value="virtual" disabled={!supportsVirtualGenerated(driver)}>
-                            {t("createTableGeneratedVirtual")}
-                          </option>
-                        </Select>
+                          ariaLabel={`${t("createTableGeneratedStorage")} (${i + 1})`}
+                        />
                       </Flex>
                     )}
                   </chakra.div>

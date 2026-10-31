@@ -38,7 +38,8 @@ import { Spinner } from "./Spinner";
 import { RevealTbody } from "./RevealTbody";
 import { Skeleton, SkeletonTableRows } from "./Skeleton";
 import { Tooltip } from "./Tooltip";
-import { Button, Checkbox, Select } from "./ui";
+import { Button, Checkbox } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { TextExportButton } from "./TextExportButton";
 import { tableToCsv } from "./tabularText";
 import { ErrorNote } from "./modalForm";
@@ -247,23 +248,19 @@ export function ColumnProfilePanel({
         </chakra.span>
         <chakra.label display="inline-flex" alignItems="center" gap="1.5" fontSize="sm">
           <chakra.span color="app.textMuted">{t("profileColumnLabel")}</chakra.span>
-          <Select
+          <ListboxSelect
             value={column ?? ""}
-            onChange={(e) => {
-              if (e.target.value) onSelectColumn(e.target.value);
+            options={[
+              ...(!column ? [{ value: "", label: t("profileSelectColumn") }] : []),
+              ...(column && !columns?.some((c) => c.name === column) ? [{ value: column }] : []),
+              ...(columns ?? []).map((c) => ({ value: c.name, label: `${c.name} (${c.data_type})` })),
+            ]}
+            onChange={(v) => {
+              if (v) onSelectColumn(v);
             }}
-            width="auto"
             disabled={!columns}
-            aria-label={t("profileColumnLabel")}
-          >
-            {!column && <option value="">{t("profileSelectColumn")}</option>}
-            {column && !columns?.some((c) => c.name === column) && <option value={column}>{column}</option>}
-            {(columns ?? []).map((c) => (
-              <option key={c.name} value={c.name}>
-                {c.name} ({c.data_type})
-              </option>
-            ))}
-          </Select>
+            ariaLabel={t("profileColumnLabel")}
+          />
         </chakra.label>
         <Tooltip label={t("profileApproximateHint")}>
           <chakra.label display="inline-flex" alignItems="center" gap="1.5" fontSize="sm" cursor="pointer">
@@ -274,19 +271,18 @@ export function ColumnProfilePanel({
         <Tooltip label={driver === "postgres" ? t("profileSampleHint") : t("profileSampleHintScan")}>
           <chakra.label display="inline-flex" alignItems="center" gap="1.5" fontSize="sm">
             <chakra.span color="app.textMuted">{t("profileSampleLabel")}</chakra.span>
-            <Select
+            <ListboxSelect
               value={samplePercent === null ? "" : String(samplePercent)}
-              onChange={(e) => setSamplePercent(e.target.value === "" ? null : Number(e.target.value))}
-              width="auto"
-              aria-label={t("profileSampleLabel")}
-            >
-              <option value="">{t("profileSampleFull")}</option>
-              {PROFILE_SAMPLE_PERCENTS.map((p) => (
-                <option key={p} value={p}>
-                  {t("profileSamplePercent", { percent: p })}
-                </option>
-              ))}
-            </Select>
+              options={[
+                { value: "", label: t("profileSampleFull") },
+                ...PROFILE_SAMPLE_PERCENTS.map((p) => ({
+                  value: String(p),
+                  label: t("profileSamplePercent", { percent: p }),
+                })),
+              ]}
+              onChange={(v) => setSamplePercent(v === "" ? null : Number(v))}
+              ariaLabel={t("profileSampleLabel")}
+            />
           </chakra.label>
         </Tooltip>
         <Button type="button" variant="primary" size="sm" onClick={runNow} disabled={!column || running}>

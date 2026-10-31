@@ -39,7 +39,8 @@ import { SkeletonRow, SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { formatBytes } from "./tableSize";
 import { TimelapseRowHistoryView } from "./TimelapseRowHistory";
-import { Button, Select } from "./ui";
+import { Button } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 
 /**
  * テーブル・タイムラプス (#739) のボトムパネル。
@@ -593,31 +594,21 @@ export function TableTimelapsePanel({
                 </chakra.p>
               ) : (
                 <Flex align="center" gap="2" flexWrap="wrap">
-                  <Select
-                    maxW="320px"
-                    aria-label={t("timelapseFrom")}
+                  <ListboxSelect
+                    css={{ width: "100%", maxWidth: "320px" }}
+                    ariaLabel={t("timelapseFrom")}
                     value={String(effectivePair.fromId)}
-                    onChange={(e) => setPair({ fromId: Number(e.target.value), toId: effectivePair.toId })}
-                  >
-                    {generations.map((g, i) => (
-                      <option key={g.id} value={g.id}>
-                        {genLabel(g, i)}
-                      </option>
-                    ))}
-                  </Select>
+                    options={generations.map((g, i) => ({ value: String(g.id), label: genLabel(g, i) }))}
+                    onChange={(v) => setPair({ fromId: Number(v), toId: effectivePair.toId })}
+                  />
                   <Icon name="chevron-right" size={ICON_SIZES.sm} />
-                  <Select
-                    maxW="320px"
-                    aria-label={t("timelapseTo")}
+                  <ListboxSelect
+                    css={{ width: "100%", maxWidth: "320px" }}
+                    ariaLabel={t("timelapseTo")}
                     value={String(effectivePair.toId)}
-                    onChange={(e) => setPair({ fromId: effectivePair.fromId, toId: Number(e.target.value) })}
-                  >
-                    {generations.map((g, i) => (
-                      <option key={g.id} value={g.id}>
-                        {genLabel(g, i)}
-                      </option>
-                    ))}
-                  </Select>
+                    options={generations.map((g, i) => ({ value: String(g.id), label: genLabel(g, i) }))}
+                    onChange={(v) => setPair({ fromId: effectivePair.fromId, toId: Number(v) })}
+                  />
                   <Button type="button" variant="ghost" size="sm" onClick={() => setPair(null)}>
                     {t("timelapseLatestVsPrevious")}
                   </Button>

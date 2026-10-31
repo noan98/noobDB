@@ -7,7 +7,8 @@ import { useRovingFocus } from "../keyboardNav";
 import { canDiff } from "../schemaDrift";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Tooltip } from "./Tooltip";
-import { Button, Input, Select } from "./ui";
+import { Button, Input } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { useToast } from "./Toast";
 import { SchemaDriftRevert } from "./SchemaDriftRevert";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -270,15 +271,17 @@ export function SchemaDriftPanel({
                   gap="1.5"
                 >
                   {t("schemaDriftCompareFrom")}
-                  <Select value={genA?.id ?? ""} onChange={(e) => setPickA(e.target.value)}>
-                    {gens.map((g, i) => (
-                      <option key={g.id} value={g.id}>
-                        {i === 0
+                  <ListboxSelect
+                    value={genA?.id ?? ""}
+                    options={gens.map((g, idx) => ({
+                      value: g.id,
+                      label:
+                        idx === 0
                           ? t("schemaDriftLatestOption", { time: formatCaptured(g.capturedAt) })
-                          : formatCaptured(g.capturedAt)}
-                      </option>
-                    ))}
-                  </Select>
+                          : formatCaptured(g.capturedAt),
+                    }))}
+                    onChange={setPickA}
+                  />
                 </chakra.label>
                 <chakra.span color="app.textMuted" aria-hidden>
                   →
@@ -291,15 +294,17 @@ export function SchemaDriftPanel({
                   gap="1.5"
                 >
                   {t("schemaDriftCompareTo")}
-                  <Select value={genB?.id ?? ""} onChange={(e) => setPickB(e.target.value)}>
-                    {gens.map((g, i) => (
-                      <option key={g.id} value={g.id}>
-                        {i === 0
+                  <ListboxSelect
+                    value={genB?.id ?? ""}
+                    options={gens.map((g, idx) => ({
+                      value: g.id,
+                      label:
+                        idx === 0
                           ? t("schemaDriftLatestOption", { time: formatCaptured(g.capturedAt) })
-                          : formatCaptured(g.capturedAt)}
-                      </option>
-                    ))}
-                  </Select>
+                          : formatCaptured(g.capturedAt),
+                    }))}
+                    onChange={setPickB}
+                  />
                 </chakra.label>
               </Flex>
 

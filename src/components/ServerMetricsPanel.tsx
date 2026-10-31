@@ -27,7 +27,8 @@ import {
 } from "./serverMetrics";
 import { StatTile, type StatDeltaGood } from "./StatTile";
 import { LATENCY_HISTORY_MAX } from "./connectionHealth";
-import { Button, Checkbox, Heading, Select } from "./ui";
+import { Button, Checkbox, Heading } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { CountUp } from "./CountUp";
@@ -469,23 +470,21 @@ export function ServerMetricsPanel({ sessionId, driver }: { sessionId: string; d
           />
           {t("autoRefreshLabel")}
         </chakra.label>
-        <Select
-          aria-label={t("autoRefreshIntervalAria")}
+        <ListboxSelect
+          ariaLabel={t("autoRefreshIntervalAria")}
           value={String(intervalSecs)}
-          onChange={(e) => {
-            setIntervalSecs(Number(e.target.value));
+          options={intervalOptions.map((s) => ({
+            value: String(s),
+            label:
+              s % 60 === 0
+                ? t("autoRefreshIntervalMins", { mins: s / 60 })
+                : t("autoRefreshIntervalSecs", { secs: s }),
+          }))}
+          onChange={(v) => {
+            setIntervalSecs(Number(v));
             if (autoRefresh) void load();
           }}
-          width="auto"
-        >
-          {intervalOptions.map((s) => (
-            <option key={s} value={s}>
-              {s % 60 === 0
-                ? t("autoRefreshIntervalMins", { mins: s / 60 })
-                : t("autoRefreshIntervalSecs", { secs: s })}
-            </option>
-          ))}
-        </Select>
+        />
         {/* 自動更新のたびに loading が切り替わるので、disabled や包み要素の切替でボタンを作り直さない
             (キーボードフォーカスが落ちる)。二重実行は load() 側の busyRef が防ぐ。 */}
         <Tooltip label={t("metricsRefresh")}>
@@ -505,18 +504,15 @@ export function ServerMetricsPanel({ sessionId, driver }: { sessionId: string; d
             {t("processUpdatedAt", { time: updatedAt.toLocaleTimeString() })}
           </chakra.span>
         )}
-        <Select
-          aria-label={t("metricsWindowAria")}
+        <ListboxSelect
+          ariaLabel={t("metricsWindowAria")}
           value={String(windowSecs)}
-          onChange={(e) => setWindowSecs(Number(e.target.value))}
-          width="auto"
-        >
-          {METRICS_WINDOW_OPTIONS_SECS.map((s) => (
-            <option key={s} value={s}>
-              {t("metricsWindowOption", { mins: s / 60 })}
-            </option>
-          ))}
-        </Select>
+          options={METRICS_WINDOW_OPTIONS_SECS.map((s) => ({
+            value: String(s),
+            label: t("metricsWindowOption", { mins: s / 60 }),
+          }))}
+          onChange={(v) => setWindowSecs(Number(v))}
+        />
         <TextExportButton
           formats={[
             {

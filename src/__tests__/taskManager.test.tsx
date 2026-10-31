@@ -1,7 +1,15 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from "vitest";
 import { clearTaskFormatCache } from "../taskFormat";
 import userEvent from "@testing-library/user-event";
-import { act, fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
+import {
+  act,
+  chooseListboxOption,
+  fireEvent,
+  renderWithProviders,
+  screen,
+  waitFor,
+  within,
+} from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 import { api, type TaskDefinition, type TaskRun } from "../api/tauri";
@@ -96,6 +104,13 @@ vi.mock("../api/tauri", async (importOriginal) => {
 });
 
 import { TaskManager } from "../components/TaskManager";
+
+/** ラベルを持たない ListboxSelect を、現在の表示テキストで特定する。 */
+function comboWithText(text: string): HTMLElement {
+  const el = screen.getAllByRole("combobox").find((c) => c.textContent === text);
+  if (!el) throw new Error(`"${text}" を表示している combobox が見つかりません`);
+  return el;
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -357,11 +372,11 @@ describe("TaskForm 日次スケジュールの保存 (#1621)", () => {
     const minute = screen.getByLabelText(t("taskScheduleMinute"));
     expect(hour).toHaveValue(0);
     expect(minute).toHaveValue(5);
-    expect(screen.getByLabelText(t("taskScheduleTimezone"))).toHaveValue("UTC");
+    expect(screen.getByLabelText(t("taskScheduleTimezone"))).toHaveTextContent("UTC");
     expect(screen.getByText(t("taskScheduleLegacyUtcNote"))).toBeInTheDocument();
 
     // タイムゾーンを東京、時刻 10:30、平日のみに変える。
-    await user.selectOptions(screen.getByLabelText(t("taskScheduleTimezone")), "Asia/Tokyo");
+    chooseListboxOption(screen.getByLabelText(t("taskScheduleTimezone")), "Asia/Tokyo");
     fireEvent.change(hour, { target: { value: "10" } });
     fireEvent.change(minute, { target: { value: "30" } });
     await user.click(screen.getByRole("button", { name: t("taskScheduleWorkdaysPreset") }));
@@ -394,8 +409,8 @@ describe("TaskForm 日次スケジュールの保存 (#1621)", () => {
     fireEvent.change(screen.getByLabelText(t("taskFormSql")), { target: { value: "SELECT 1" } });
     expect(screen.getByLabelText(t("taskFormPauseAfterFailures"))).toHaveValue(5);
 
-    await user.selectOptions(screen.getByDisplayValue(t("taskScheduleInterval")), "daily");
-    expect(screen.getByLabelText(t("taskScheduleTimezone"))).toHaveValue("Asia/Tokyo");
+    chooseListboxOption(comboWithText(t("taskScheduleInterval")), "daily");
+    expect(screen.getByLabelText(t("taskScheduleTimezone"))).toHaveTextContent("Asia/Tokyo");
     // 全曜日のチェックを外すと検証エラーになり、保存は呼ばれない。
     const group = screen.getByRole("group", { name: t("taskScheduleWeekdays") });
     for (const box of within(group).getAllByRole("checkbox")) await user.click(box);
@@ -454,11 +469,13 @@ describe("TaskForm 日次スケジュールの保存 (#1621)", () => {
     await waitFor(() => expect(screen.getByText(TASK.name)).toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: t("taskEdit") }));
     // 既存のマスクが列行として復元される。
-    expect(await screen.findByLabelText(t("exportMaskingRuleFor", { column: "email" }))).toHaveValue("null");
+    expect(await screen.findByLabelText(t("exportMaskingRuleFor", { column: "email" }))).toHaveTextContent(
+      t("exportMaskRuleNull"),
+    );
     // 列を足して固定値ルールを選ぶ。
     fireEvent.change(screen.getByLabelText(t("taskFormMaskAddColumn")), { target: { value: "phone" } });
     await user.click(screen.getByRole("button", { name: t("taskFormMaskAdd") }));
-    await user.selectOptions(screen.getByLabelText(t("exportMaskingRuleFor", { column: "phone" })), "fixed");
+    chooseListboxOption(screen.getByLabelText(t("exportMaskingRuleFor", { column: "phone" })), "fixed");
     await user.click(screen.getByRole("button", { name: t("taskFormSave") }));
     await waitFor(() => expect(saveTask).toHaveBeenCalled());
     expect(saveTask.mock.calls[0][0].action).toMatchObject({
@@ -523,7 +540,7 @@ describe("TaskManager 取得系アクションと接続リトライ (#1537)", ()
     await user.click(screen.getAllByRole("button", { name: t("taskCreate") })[0]);
 
     await user.type(await screen.findByLabelText(t("taskFormName")), "Nightly timelapse");
-    await user.selectOptions(screen.getByDisplayValue(t("taskFormActionExport")), "timelapse_capture");
+    chooseListboxOption(comboWithText(t("taskFormActionExport")), "timelapse_capture");
     // 出力先は不要 (ファイルを書かないアクション)。
     expect(screen.queryByLabelText(t("taskFormOutputPath"))).not.toBeInTheDocument();
     expect(screen.getByText(t("taskFormTimelapseHint"))).toBeInTheDocument();

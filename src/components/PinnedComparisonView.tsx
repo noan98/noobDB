@@ -16,7 +16,8 @@ import { SurfaceRule } from "./SurfaceRule";
 import { Callout } from "./Callout";
 import { semanticColorToken } from "../semanticColors";
 import { Tooltip } from "./Tooltip";
-import { Button, Heading, Select } from "./ui";
+import { Button, Heading } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { Switch } from "./Switch";
 import { Splitter } from "./Splitter";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -167,13 +168,15 @@ export function PinnedComparisonView({ pinned, driver, onUnpin, onClear, onClose
       whiteSpace="nowrap"
     >
       {label}
-      <Select value={value} onChange={(e) => onChange(e.target.value)} minWidth="200px">
-        {pinned.map((p, i) => (
-          <option key={p.id} value={p.id}>
-            {`#${i + 1} · ${p.title} (${p.rows.length})`}
-          </option>
-        ))}
-      </Select>
+      <ListboxSelect
+        css={{ minWidth: "200px" }}
+        value={value}
+        options={pinned.map((p, i) => ({
+          value: p.id,
+          label: `#${i + 1} · ${p.title} (${p.rows.length})`,
+        }))}
+        onChange={onChange}
+      />
     </chakra.label>
   );
 
@@ -219,18 +222,13 @@ export function PinnedComparisonView({ pinned, driver, onUnpin, onClear, onClose
           whiteSpace="nowrap"
         >
           {t("pinCompareKeyColumn")}
-          <Select
+          <ListboxSelect
+            css={{ minWidth: "160px" }}
             value={effectiveKey ?? ""}
-            onChange={(e) => setKeyColumn(e.target.value || null)}
-            minWidth="160px"
+            options={(viewLeft?.columns ?? []).map((c) => ({ value: c.name }))}
+            onChange={(v) => setKeyColumn(v || null)}
             disabled={!comparable}
-          >
-            {(viewLeft?.columns ?? []).map((c) => (
-              <option key={c.name} value={c.name}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
+          />
         </chakra.label>
         <chakra.label
           display="inline-flex"
@@ -241,21 +239,18 @@ export function PinnedComparisonView({ pinned, driver, onUnpin, onClear, onClose
           whiteSpace="nowrap"
         >
           {t("pinCompareKeyColumn2")}
-          <Select
+          <ListboxSelect
+            css={{ minWidth: "160px" }}
             value={keyColumn2 ?? ""}
-            onChange={(e) => setKeyColumn2(e.target.value || null)}
-            minWidth="160px"
+            options={[
+              { value: "", label: t("pinCompareKeyColumn2None") },
+              ...(viewLeft?.columns ?? [])
+                .filter((c) => c.name !== effectiveKey)
+                .map((c) => ({ value: c.name })),
+            ]}
+            onChange={(v) => setKeyColumn2(v || null)}
             disabled={!comparable}
-          >
-            <option value="">{t("pinCompareKeyColumn2None")}</option>
-            {(viewLeft?.columns ?? [])
-              .filter((c) => c.name !== effectiveKey)
-              .map((c) => (
-                <option key={c.name} value={c.name}>
-                  {c.name}
-                </option>
-              ))}
-          </Select>
+          />
         </chakra.label>
         <Switch checked={diffOn} onChange={setDiffOn} disabled={!comparable} label={t("pinCompareDiff")} />
         {left && right && !comparable && (

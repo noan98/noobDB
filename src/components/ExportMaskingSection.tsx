@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
-import { Button, Checkbox, Input, Select } from "./ui";
+import { Button, Checkbox, Input } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { DraftNumberInput } from "./DraftNumberInput";
 import { FieldLabel, FormSection } from "./modalForm";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -154,23 +155,20 @@ export function ExportMaskingSection({
                       </chakra.span>
                     )}
                   </chakra.span>
-                  <Select
-                    w="200px"
+                  <ListboxSelect
+                    css={{ width: "200px" }}
                     value={choice}
-                    aria-label={t("exportMaskingRuleFor", { column })}
+                    ariaLabel={t("exportMaskingRuleFor", { column })}
                     disabled={disabled}
-                    onChange={(e) => {
-                      const v = e.target.value as Choice;
-                      setRule(column, v === "none" ? null : defaultMaskRule(v));
+                    options={[
+                      { value: "none", label: t("exportMaskRuleNone") },
+                      ...EXPORT_MASK_RULE_KINDS.map((k) => ({ value: k, label: t(ruleLabelKey(k)) })),
+                    ]}
+                    onChange={(v) => {
+                      const c = v as Choice;
+                      setRule(column, c === "none" ? null : defaultMaskRule(c));
                     }}
-                  >
-                    <option value="none">{t("exportMaskRuleNone")}</option>
-                    {EXPORT_MASK_RULE_KINDS.map((k) => (
-                      <option key={k} value={k}>
-                        {t(ruleLabelKey(k))}
-                      </option>
-                    ))}
-                  </Select>
+                  />
                   {rule?.kind === "fixed" && (
                     <Input
                       w="110px"
@@ -228,21 +226,22 @@ export function ExportMaskingSection({
                     </chakra.span>
                   )}
                   {rule?.kind === "date" && (
-                    <Select
-                      w="110px"
+                    <ListboxSelect
+                      css={{ width: "110px" }}
                       value={rule.precision}
-                      aria-label={t("exportMaskingDatePrecisionFor", { column })}
+                      ariaLabel={t("exportMaskingDatePrecisionFor", { column })}
                       disabled={disabled}
-                      onChange={(e) =>
+                      options={[
+                        { value: "year", label: t("exportMaskingDateYear") },
+                        { value: "month", label: t("exportMaskingDateMonth") },
+                      ]}
+                      onChange={(v) =>
                         setRule(column, {
                           kind: "date",
-                          precision: e.target.value === "month" ? "month" : "year",
+                          precision: v === "month" ? "month" : "year",
                         })
                       }
-                    >
-                      <option value="year">{t("exportMaskingDateYear")}</option>
-                      <option value="month">{t("exportMaskingDateMonth")}</option>
-                    </Select>
+                    />
                   )}
                   {rule?.kind === "hash" && (
                     <chakra.span

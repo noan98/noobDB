@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, within, chooseListboxOption } from "./testUtils";
 import { t } from "../i18n";
 import type { DbUserInfo, UserPrivileges } from "../api/tauri";
 
@@ -75,7 +75,7 @@ describe("UsersPanel: 権限コピー (#1536)", () => {
     await screen.findByText("old_only");
 
     fireEvent.click(screen.getByRole("button", { name: t("usersCopyPrivileges") }));
-    fireEvent.change(screen.getByLabelText(t("usersCopySourceLabel")), { target: { value: "template@@" } });
+    chooseListboxOption(screen.getByLabelText(t("usersCopySourceLabel")), "template@@");
     fireEvent.click(screen.getByRole("button", { name: t("usersCopySubmit") }));
 
     // コピー元だけが持つテーブルが現れ、変更ありの状態になる。
@@ -96,7 +96,7 @@ describe("UsersPanel: 権限コピー (#1536)", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
     await screen.findByText("t1");
     fireEvent.click(screen.getByRole("button", { name: t("usersCopyPrivileges") }));
-    fireEvent.change(screen.getByLabelText(t("usersCopySourceLabel")), { target: { value: "template@@" } });
+    chooseListboxOption(screen.getByLabelText(t("usersCopySourceLabel")), "template@@");
     fireEvent.click(screen.getByRole("button", { name: /^template/ }));
     await waitFor(() => expect(screen.queryByLabelText(t("usersCopySourceLabel"))).not.toBeInTheDocument());
   });
@@ -162,7 +162,7 @@ describe("UsersPanel: 権限コピー (#1536)", () => {
 
   it("コピー元の権限が 0 件なら、全権限が剥奪される旨の注意を出す", async () => {
     await copyFrom("postgres", []);
-    fireEvent.change(screen.getByLabelText(t("usersCopySourceLabel")), { target: { value: "template@@" } });
+    chooseListboxOption(screen.getByLabelText(t("usersCopySourceLabel")), "template@@");
     fireEvent.click(screen.getByRole("button", { name: t("usersCopySubmit") }));
     const warn = await screen.findByTestId("users-copy-warning");
     expect(warn).toHaveTextContent(t("usersCopyEmptySource", { name: "template", database: "public" }));
@@ -171,7 +171,7 @@ describe("UsersPanel: 権限コピー (#1536)", () => {
   it("適用で REVOKE が出るコピーでは件数つきの注意を出し、MySQL ではテーブル単位の注記を出す", async () => {
     await copyFrom("mysql", [priv("orders", true)]);
     expect(screen.getByText(t("usersCopyMysqlNote"))).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText(t("usersCopySourceLabel")), { target: { value: "template@@" } });
+    chooseListboxOption(screen.getByLabelText(t("usersCopySourceLabel")), "template@@");
     fireEvent.click(screen.getByRole("button", { name: t("usersCopySubmit") }));
     const warn = await screen.findByTestId("users-copy-warning");
     expect(warn).toHaveTextContent(t("usersCopyRevokes", { count: 1 }));
@@ -281,7 +281,7 @@ describe("UsersPanel: ロール・列単位・テンプレート・パスワー�
     );
     fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
     await screen.findByText("a");
-    fireEvent.change(screen.getByLabelText(t("usersTemplateLabel")), { target: { value: "readOnly" } });
+    chooseListboxOption(screen.getByLabelText(t("usersTemplateLabel")), "readOnly");
     fireEvent.click(screen.getByRole("button", { name: t("usersTemplateApply") }));
     expect(screen.getByLabelText("a select")).toBeChecked();
     expect(screen.getByLabelText("b select")).toBeChecked();

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, chooseListboxOption } from "./testUtils";
 import { t } from "../i18n";
 import type { TableWatch, TimelapseGenerationDiff } from "../api/tauri";
 
@@ -284,7 +284,7 @@ describe("TableTimelapsePanel (#739)", () => {
         resolveDiff = resolve;
       }),
     );
-    fireEvent.change(screen.getByLabelText(t("timelapseFrom")), { target: { value: "11" } });
+    chooseListboxOption(screen.getByLabelText(t("timelapseFrom")), "11");
 
     expect(await screen.findByText(t("timelapseDiffLoading"))).toBeInTheDocument();
     expect(screen.queryByText("150")).not.toBeInTheDocument();

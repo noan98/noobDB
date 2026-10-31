@@ -9,7 +9,8 @@ import { LiveCollapse, LiveFlash, LiveRowsPresence, useLiveChanges } from "./Liv
 import { type PlanChange, comparePlans, opsFromSnapshot, resultFromSnapshot } from "./planDiff";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Tooltip } from "./Tooltip";
-import { Button, Select } from "./ui";
+import { Button } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { ExplainViewer } from "./ExplainViewer";
 import { Callout } from "./Callout";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -197,15 +198,17 @@ export function PlanWatchPanel({
                       gap="1.5"
                     >
                       {t("planWatchCompareFrom")}
-                      <Select value={genA?.id ?? ""} onChange={(e) => setPickA(e.target.value)}>
-                        {gens.map((g, i) => (
-                          <option key={g.id} value={g.id}>
-                            {i === 0
+                      <ListboxSelect
+                        value={genA?.id ?? ""}
+                        options={gens.map((g, idx) => ({
+                          value: g.id,
+                          label:
+                            idx === 0
                               ? t("planWatchLatestOption", { time: formatCaptured(g.capturedAt) })
-                              : formatCaptured(g.capturedAt)}
-                          </option>
-                        ))}
-                      </Select>
+                              : formatCaptured(g.capturedAt),
+                        }))}
+                        onChange={setPickA}
+                      />
                     </chakra.label>
                     <chakra.span color="app.textMuted" aria-hidden>
                       →
@@ -218,15 +221,17 @@ export function PlanWatchPanel({
                       gap="1.5"
                     >
                       {t("planWatchCompareTo")}
-                      <Select value={genB?.id ?? ""} onChange={(e) => setPickB(e.target.value)}>
-                        {gens.map((g, i) => (
-                          <option key={g.id} value={g.id}>
-                            {i === 0
+                      <ListboxSelect
+                        value={genB?.id ?? ""}
+                        options={gens.map((g, idx) => ({
+                          value: g.id,
+                          label:
+                            idx === 0
                               ? t("planWatchLatestOption", { time: formatCaptured(g.capturedAt) })
-                              : formatCaptured(g.capturedAt)}
-                          </option>
-                        ))}
-                      </Select>
+                              : formatCaptured(g.capturedAt),
+                        }))}
+                        onChange={setPickB}
+                      />
                     </chakra.label>
                     <Box flex="1" />
                     {active && (

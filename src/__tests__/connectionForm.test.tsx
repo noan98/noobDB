@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor, act } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, act, chooseListboxOption } from "./testUtils";
 import { t } from "../i18n";
 import type { ConnectionProfile } from "../api/tauri";
 
@@ -285,8 +285,8 @@ describe("ConnectionForm AWS IAM authentication (#734)", () => {
     saveProfile.mockReset();
   });
 
-  function authSelect(): HTMLSelectElement {
-    return screen.getByLabelText(t("formAuthMethod")) as HTMLSelectElement;
+  function authSelect(): HTMLElement {
+    return screen.getByLabelText(t("formAuthMethod"));
   }
 
   it("swaps the password field for region / profile and sends a TLS-forced IAM request", async () => {
@@ -299,16 +299,26 @@ describe("ConnectionForm AWS IAM authentication (#734)", () => {
     });
     expect(screen.getByLabelText(t("formDbPassword"))).toBeInTheDocument();
 
-    fireEvent.change(authSelect(), { target: { value: "aws_iam" } });
+    chooseListboxOption(authSelect(), "aws_iam");
     expect(screen.queryByLabelText(t("formDbPassword"))).toBeNull();
     // リージョンはエンドポイント名から推定され、TLS の注記が出る。
     expect(screen.getByText(t("formAwsRegionInferred", { region: "ap-northeast-1" }))).toBeInTheDocument();
     expect(screen.getByTestId("aws-iam-tls-note")).toBeInTheDocument();
     // 平文を許すモードは選べず、既定の prefer は require に引き上げられる。
-    const tls = screen.getByLabelText(t("formTlsMode")) as HTMLSelectElement;
-    expect(tls.value).toBe("require");
-    expect((tls.querySelector('option[value="disable"]') as HTMLOptionElement).disabled).toBe(true);
-    expect((tls.querySelector('option[value="prefer"]') as HTMLOptionElement).disabled).toBe(true);
+    const tls = screen.getByLabelText(t("formTlsMode"));
+    expect(tls).toHaveTextContent(t("formTlsModeRequire"));
+    // ListboxSelect には候補単位の disabled が無いので、選べないモードは候補から外れる。
+    fireEvent.click(tls);
+    const options = Array.from(
+      document.getElementById(tls.getAttribute("aria-controls") ?? "")?.querySelectorAll('[role="option"]') ??
+        [],
+    );
+    expect(options.map((o) => (o as HTMLElement).dataset.value)).toEqual([
+      "require",
+      "verify_ca",
+      "verify_full",
+    ]);
+    fireEvent.keyDown(tls, { key: "Escape" });
 
     fireEvent.change(screen.getByLabelText(t("formAwsProfile")), { target: { value: " work " } });
     fireEvent.click(screen.getByRole("button", { name: t("formTest") }));
@@ -325,7 +335,7 @@ describe("ConnectionForm AWS IAM authentication (#734)", () => {
     renderWithProviders(
       <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
     );
-    fireEvent.change(authSelect(), { target: { value: "aws_iam" } });
+    chooseListboxOption(authSelect(), "aws_iam");
     expect(screen.getByRole("alert")).toHaveTextContent(t("formAwsRegionMissing"));
     fireEvent.change(screen.getByLabelText(t("formAwsRegion")), { target: { value: "us-east-1" } });
     expect(screen.queryByRole("alert")).toBeNull();
@@ -366,9 +376,9 @@ describe("ConnectionForm AWS IAM authentication (#734)", () => {
     renderWithProviders(
       <ConnectionForm initial={saved} profiles={[saved]} onSaved={onSaved} onCancel={() => {}} />,
     );
-    expect(authSelect().value).toBe("aws_iam");
+    expect(authSelect()).toHaveTextContent(t("formAuthMethodAwsIam"));
     expect((screen.getByLabelText(t("formAwsRegion")) as HTMLInputElement).value).toBe("us-west-2");
-    expect((screen.getByLabelText(t("formTlsMode")) as HTMLSelectElement).value).toBe("verify_full");
+    expect(screen.getByLabelText(t("formTlsMode"))).toHaveTextContent(t("formTlsModeVerifyFull"));
 
     fireEvent.click(screen.getByRole("button", { name: t("formSave") }));
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
@@ -404,7 +414,7 @@ describe("ConnectionForm AWS IAM authentication (#734)", () => {
       <ConnectionForm initial={saved} profiles={[saved]} onSaved={onSaved} onCancel={() => {}} />,
     );
     // 画面上は require に引き上げて表示される。
-    expect((screen.getByLabelText(t("formTlsMode")) as HTMLSelectElement).value).toBe("require");
+    expect(screen.getByLabelText(t("formTlsMode"))).toHaveTextContent(t("formTlsModeRequire"));
     fireEvent.click(screen.getByRole("button", { name: t("formSave") }));
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
     expect(saveProfile.mock.calls[0][0].ssl_mode).toBe("prefer");
@@ -447,7 +457,7 @@ describe("ConnectionForm connection URL import (#1540)", () => {
     expect((screen.getByLabelText(t("formPort")) as HTMLInputElement).value).toBe("6543");
     expect((screen.getByLabelText(t("formUser")) as HTMLInputElement).value).toBe("app");
     expect((screen.getByLabelText(t("formDatabase")) as HTMLInputElement).value).toBe("shop");
-    expect((screen.getByLabelText(t("formTlsMode")) as HTMLSelectElement).value).toBe("verify_full");
+    expect(screen.getByLabelText(t("formTlsMode"))).toHaveTextContent(t("formTlsModeVerifyFull"));
     expect(screen.getByTestId("connection-form-driver-postgres")).toHaveAttribute("aria-pressed", "true");
     // 入力欄は消え、未対応パラメータの名前だけが案内される。
     expect((screen.getByTestId("connection-form-url") as HTMLInputElement).value).toBe("");
@@ -665,12 +675,10 @@ describe("ConnectionForm connection route (#1684)", () => {
   const fillSsh = () => {
     pick(t("formRouteSsh"));
     fireEvent.change(screen.getByLabelText(t("formSshHost")), { target: { value: "bastion.example.com" } });
-    const sshAuth = document.querySelector('select[id$="-ssh-auth"]') as HTMLSelectElement;
-    fireEvent.change(sshAuth, { target: { value: "password" } });
+    chooseListboxOption(document.querySelector('[id$="-ssh-auth"]') as HTMLElement, "password");
     fireEvent.change(screen.getByLabelText(t("formSshPassword")), { target: { value: "ssh-pw" } });
     fireEvent.click(screen.getByRole("switch", { name: t("formUseSshJump") }));
-    const jumpAuth = document.querySelector('select[id$="-ssh-jump-auth"]') as HTMLSelectElement;
-    fireEvent.change(jumpAuth, { target: { value: "password" } });
+    chooseListboxOption(document.querySelector('[id$="-ssh-jump-auth"]') as HTMLElement, "password");
     fireEvent.change(document.querySelector('input[id$="-ssh-jump-password"]') as HTMLInputElement, {
       target: { value: "jump-pw" },
     });

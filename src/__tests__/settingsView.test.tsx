@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, within, chooseListboxOption } from "./testUtils";
 import { t } from "../i18n";
 
 /**
@@ -200,9 +200,9 @@ describe("設定画面の不整合 (#1604)", () => {
     renderWithProviders(<SettingsView theme="dark" onClose={() => {}} />);
     // ラベル検索は巨大な DOM では遅く 5 秒の既定タイムアウトに近づくため id で引く。
     await waitFor(() => expect(document.getElementById("settings-mono-font")).not.toBeNull());
-    const select = document.getElementById("settings-mono-font") as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "__custom__" } });
-    expect(select.value).toBe("__custom__");
+    const select = document.getElementById("settings-mono-font") as HTMLElement;
+    chooseListboxOption(select, "__custom__");
+    expect(select).toHaveTextContent(t("settingsFontCustom"));
     expect(
       document.querySelectorAll(`input[placeholder="${t("settingsFontCustomPlaceholder")}"]`).length,
     ).toBe(1);

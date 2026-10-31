@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  renderWithProviders,
+  screen,
+  waitFor,
+  chooseListboxOption,
+} from "./testUtils";
 import { t } from "../i18n";
 
 const setAiApiKey = vi.fn().mockResolvedValue(undefined);
@@ -82,15 +90,13 @@ describe("AiSettings (#690)", () => {
     fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     const group = screen.getByRole("group", { name: t("aiTaskModels") });
-    expect(group.querySelectorAll("select")).toHaveLength(34);
+    expect(group.querySelectorAll('[role="combobox"]')).toHaveLength(34);
     // 推奨が既定と異なるインライン補完は「既定に従う」ではなく推奨モデルを使う旨を出す。
-    const inline = screen.getByLabelText(
-      `${t("aiTaskInlineComplete")} - ${t("aiColModel")}`,
-    ) as HTMLSelectElement;
-    expect(inline.options[0].textContent).toBe(t("aiModelFollowRecommended", { model: "Claude Haiku 5.5" }));
-    const generic = screen.getByLabelText(`${t("aiTaskGeneric")} - ${t("aiColModel")}`) as HTMLSelectElement;
-    expect(generic.options[0].textContent).toBe(t("aiModelFollowDefault"));
-    fireEvent.change(generic, { target: { value: "claude-haiku-5-5" } });
+    const inline = screen.getByLabelText(`${t("aiTaskInlineComplete")} - ${t("aiColModel")}`);
+    expect(inline).toHaveTextContent(t("aiModelFollowRecommended", { model: "Claude Haiku 5.5" }));
+    const generic = screen.getByLabelText(`${t("aiTaskGeneric")} - ${t("aiColModel")}`);
+    expect(generic).toHaveTextContent(t("aiModelFollowDefault"));
+    chooseListboxOption(generic, "claude-haiku-5-5");
     rerender(<AiSettings />);
     await waitFor(() =>
       expect(screen.getByTestId("ai-task-models-summary").textContent).toBe(
@@ -116,15 +122,20 @@ describe("AiSettings (#690)", () => {
     renderWithProviders(<AiSettings />);
     fireEvent.click(screen.getByRole("button", { name: new RegExp(t("aiTaskModels")) }));
     const suffix = t("aiRecommendedSuffix");
-    const def = screen.getByLabelText(t("aiDefaultModel")) as HTMLSelectElement;
-    const opt = Array.from(def.options).find((o) => o.value === "claude-opus-5-5");
+    const def = screen.getByLabelText(t("aiDefaultModel"));
+    fireEvent.click(def);
+    const defList = document.getElementById(def.getAttribute("aria-controls") ?? "");
+    const opt = Array.from(defList?.querySelectorAll<HTMLElement>('[role="option"]') ?? []).find(
+      (o) => o.dataset.value === "claude-opus-5-5",
+    );
     expect(opt?.textContent?.endsWith(suffix)).toBe(true);
+    fireEvent.keyDown(def, { key: "Escape" });
 
-    const effort = screen.getByLabelText(`${t("aiTaskGeneric")} - ${t("aiColEffort")}`) as HTMLSelectElement;
-    expect(effort.value).toBe("medium");
-    fireEvent.change(effort, { target: { value: "max" } });
+    const effort = screen.getByLabelText(`${t("aiTaskGeneric")} - ${t("aiColEffort")}`);
+    expect(effort).toHaveTextContent(t("aiEffortMedium"));
+    chooseListboxOption(effort, "max");
     expect(getSettings().ai.taskEfforts.generic).toBe("max");
-    fireEvent.change(effort, { target: { value: "medium" } });
+    chooseListboxOption(effort, "medium");
     expect(getSettings().ai.taskEfforts.generic).toBeNull();
   });
 

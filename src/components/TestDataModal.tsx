@@ -27,7 +27,8 @@ import { useAiAvailable } from "../ai/useAiAvailable";
 import { useLocale, useT, type I18nKey } from "../i18n";
 import { useSettings } from "../settings";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Input, Select } from "./ui";
+import { Button, Input } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { DraftNumberInput } from "./DraftNumberInput";
 import { AiStreamProgress } from "./AiStreamProgress";
 import { AiUsageNote } from "./AiUsageNote";
@@ -433,16 +434,17 @@ export function TestDataModal({
         {aiAvailable && (
           <FormSection>
             <FieldLabel htmlFor="testdata-mode">{t("testDataModeLabel")}</FieldLabel>
-            <Select
+            <ListboxSelect
               id="testdata-mode"
-              maxW="260px"
+              css={{ width: "100%", maxWidth: "260px" }}
               value={mode}
-              onChange={(e) => setMode(e.target.value === "ai" ? "ai" : "rule")}
+              options={[
+                { value: "rule", label: t("testDataModeRule") },
+                { value: "ai", label: t("testDataModeAi") },
+              ]}
+              onChange={(v) => setMode(v === "ai" ? "ai" : "rule")}
               disabled={running || aiRunning}
-            >
-              <option value="rule">{t("testDataModeRule")}</option>
-              <option value="ai">{t("testDataModeAi")}</option>
-            </Select>
+            />
           </FormSection>
         )}
 
@@ -506,19 +508,17 @@ export function TestDataModal({
                       </chakra.span>
                     </chakra.span>
                   </Tooltip>
-                  <Select
-                    minW="180px"
+                  <ListboxSelect
+                    css={{ width: "100%", minWidth: "180px" }}
                     value={spec.strategy}
-                    onChange={(e) => updateSpec(i, { strategy: e.target.value as GenStrategy })}
+                    options={strategyOptions(spec).map((s) => ({
+                      value: s,
+                      label: t(STRATEGY_LABEL_KEYS[s]),
+                    }))}
+                    onChange={(v) => updateSpec(i, { strategy: v as GenStrategy })}
                     disabled={running}
-                    aria-label={t("testDataStrategyAria", { column: spec.column })}
-                  >
-                    {strategyOptions(spec).map((s) => (
-                      <option key={s} value={s}>
-                        {t(STRATEGY_LABEL_KEYS[s])}
-                      </option>
-                    ))}
-                  </Select>
+                    ariaLabel={t("testDataStrategyAria", { column: spec.column })}
+                  />
                   {spec.strategy === "fixed" && (
                     <Input
                       css={{ width: "140px" }}

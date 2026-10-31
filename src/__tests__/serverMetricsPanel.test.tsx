@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor, act, within } from "./testUtils";
+import {
+  renderWithProviders,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+  within,
+  chooseListboxOption,
+} from "./testUtils";
 import { t } from "../i18n";
 import type { ServerMetrics } from "../api/tauri";
 
@@ -172,11 +180,16 @@ describe("ServerMetricsPanel 期間切替・接続数の余裕 (#1622)", () => {
     const note = await screen.findByTestId("metrics-connection-headroom");
     expect(note).toHaveTextContent("85");
     expect(note).toHaveTextContent("100");
-    const select = screen.getByLabelText(t("metricsWindowAria")) as HTMLSelectElement;
-    expect([...select.options].map((o) => o.value)).toEqual(["300", "900", "3600"]);
+    const select = screen.getByLabelText(t("metricsWindowAria"));
+    fireEvent.click(select);
+    const listbox = document.getElementById(select.getAttribute("aria-controls") ?? "");
+    expect(
+      [...(listbox?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])].map((o) => o.dataset.value),
+    ).toEqual(["300", "900", "3600"]);
+    fireEvent.keyDown(select, { key: "Escape" });
     const callsBefore = vi.mocked(api.serverMetrics).mock.calls.length;
-    fireEvent.change(select, { target: { value: "900" } });
-    expect(select.value).toBe("900");
+    chooseListboxOption(select, "900");
+    expect(select).toHaveTextContent(t("metricsWindowOption", { mins: 15 }));
     // 期間の切替ではバッファを捨てず、取得し直しもしない (表示側で切る)。
     expect(vi.mocked(api.serverMetrics).mock.calls.length).toBe(callsBefore);
   });
