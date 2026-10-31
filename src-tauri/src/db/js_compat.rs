@@ -324,6 +324,9 @@ fn push_letter(out: &mut (Vec<u8>, Vec<u8>, Vec<u8>), base: u8, accent: u16, upp
 /// 漢字・合成済みでない結合文字など) はコードポイント順。ロケール固有の照合
 /// (スウェーデン語の `ä` が `z` の後 等)、全角/半角の同一視、`ignorePunctuation` 系、
 /// 数字以外の Unicode 10 進数字の数値化は扱わない。
+///
+/// 異なるダイアクリティカル同士 (`é` と `è`、`ạ` と `ả`) の二次順序は ICU と逆になる
+/// (共有ゴールデン `collationKeyVectors.json` の `knownDifferences`)。
 pub fn collation_key(s: &str) -> Box<[u8]> {
     let mut out = (Vec::with_capacity(s.len() * 2 + 2), Vec::new(), Vec::new());
     let chars: Vec<char> = s.chars().collect();

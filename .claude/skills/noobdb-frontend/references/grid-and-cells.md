@@ -38,7 +38,9 @@
   エクスポート / 全文コピー / ローカル登録は `resultId` 渡し。破棄済み (`null` /
   `result handle gone`) になったら JS 経路へ戻る。**既知の差**: 文字列ソートの照合順序だけ
   `Intl.Collator` の近似 (`db/js_compat.rs::collation_key`)。Rust との一致は
-  `fixtures/resultOpsVectors.json` (`resultOpsGolden.test.ts` / `tests/result_ops_golden.rs`) が固定する。
+  `fixtures/resultOpsVectors.json` (`resultOpsGolden.test.ts` / `tests/result_ops_golden.rs`) が固定する。 照合順そのものは
+  `fixtures/collationKeyVectors.json` (`collationKeyGolden.test.ts` / `tests/collation_key_golden.rs`) が
+  固定する (期待値は en-US / ICU 前提、ロケール依存ケースは `localeSensitive`)。
 - セル値のクイックセット — `quickSetValues.ts`。結果グリッドのセル右クリックに出る
   「NULL をセット」「空文字をセット」「0 をセット」「true/false をセット」「現在日時を
   セット」の**純ロジック** (どの列にどの候補を出すか + 生成する生文字列)。生成値は
