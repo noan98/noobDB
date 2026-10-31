@@ -17,7 +17,7 @@ import { quoteIdentFor } from "./sqlDialect";
 import { classifyEditType } from "./cellEdit";
 import { resultViewKey } from "./resultViewKey";
 
-export type ChartType = "bar" | "line" | "area" | "pie";
+export type ChartType = "bar" | "line" | "area" | "pie" | "scatter" | "histogram" | "stackedBar" | "combo";
 export type Aggregation = "none" | "sum" | "avg" | "count";
 /**
  * 時系列チャートの時間バケット (#1541)。DB 側集計 (`buildChartSql`) の X を日 / 週 (ISO、
@@ -32,6 +32,10 @@ export type TimeBucket = "none" | "day" | "week" | "month";
  */
 export type BarSort = "x" | "desc" | "asc";
 export const BAR_SORTS: BarSort[] = ["x", "desc", "asc"];
+
+/** ヒストグラムのビン数の選択肢 (#1941)。保存済み設定もこの値だけを受け付ける。 */
+export const HISTOGRAM_BIN_CHOICES: readonly number[] = [5, 10, 20, 30, 50];
+export const DEFAULT_HISTOGRAM_BINS = 10;
 
 export interface ChartConfig {
   type: ChartType;
@@ -59,6 +63,13 @@ export interface ChartConfig {
   timeBucket?: TimeBucket;
   /** 棒グラフの並び順 (#1628)。省略 = `x` (X 軸の順のまま)。棒グラフ以外では無視される。 */
   barSort?: BarSort;
+  /** ヒストグラムのビン数 (#1941)。`HISTOGRAM_BIN_CHOICES` のいずれか。省略 = 既定 (10)。 */
+  bins?: number;
+  /**
+   * 複合 (棒 + 折れ線) チャートで折れ線 (第 2 軸) にする Y 列のインデックス (#1941)。
+   * `yCols` に無い・省略のときは最後の Y 列。残りの Y 列が棒 (第 1 軸) になる。
+   */
+  comboLineCol?: number;
 }
 
 export interface ChartSeries {
@@ -95,6 +106,18 @@ export interface ChartModel {
    * `0` 扱い。
    */
   excludedNonNumeric?: number;
+  /**
+   * 散布図 (#1941) のときの各点の X 値 (数値、`labels` と同じ長さ)。散布図以外は未設定。
+   * `labels` / `series[].values` は点ごとに並行し、`series[].values` が Y 値になる。
+   */
+  scatterX?: number[];
+  /**
+   * ヒストグラム (#1941) のビンの境界 (`labels.length + 1` 個、昇順)。ヒストグラム以外は未設定。
+   * 値がすべて同じとき (幅 0 の 1 ビン) は 2 個とも同じ値。
+   */
+  histEdges?: number[];
+  /** 散布図・ヒストグラムで X/Y が数値でないため点に含めなかった行数 (#1941)。 */
+  droppedRows?: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -276,7 +299,16 @@ export function defaultChartConfig(columns: Column[], rows: CellValue[][]): Char
   const yCols = [firstNumeric].filter((i) => i !== xCol);
   if (yCols.length === 0) {
     const altY = numeric.findIndex((n, i) => n && i !== xCol);
-    if (altY < 0) return null;
+    if (altY < 0) {
+      // 数値列が 1 本だけの結果は、その列の分布 (ヒストグラム) を既定にする (Y は使わない)。
+      return {
+        type: "histogram",
+        xCol: firstNumeric,
+        yCols: [],
+        aggregation: "none",
+        palette: DEFAULT_CHART_PALETTE,
+      };
+    }
     yCols.push(altY);
   }
   return { type: "bar", xCol, yCols, aggregation: "none", palette: DEFAULT_CHART_PALETTE };
@@ -292,7 +324,118 @@ function cellLabel(v: CellValue): string {
  * (上限超過時はサンプリング)、sum/avg/count なら X 値でグループ化する。
  */
 export function buildChartModel(columns: Column[], rows: CellValue[][], config: ChartConfig): ChartModel {
+  // 散布図・ヒストグラムは集計を持たない別の組み立て (#1941)。
+  if (config.type === "scatter") return buildScatterModel(columns, rows, config);
+  if (config.type === "histogram") return buildHistogramModel(columns, rows, config);
   return sortChartModel(buildChartModelUnsorted(columns, rows, config), config);
+}
+
+/**
+ * 散布図のモデル (#1941)。X 列と Y 列 (複数可) がすべて数値の行だけを点にする
+ * (NULL/非数値を含む行は点にせず `droppedRows` へ数える。0 へ読み替えると偽の点ができるため)。
+ * 集計は行わず、`MAX_POINTS` を超えたら等間隔で間引く。
+ */
+function buildScatterModel(columns: Column[], rows: CellValue[][], config: ChartConfig): ChartModel {
+  const { xCol, yCols } = config;
+  const pts: { x: number; ys: number[] }[] = [];
+  let droppedRows = 0;
+  for (const r of rows) {
+    const x = toNumber(r[xCol]);
+    const ys = yCols.map((c) => toNumber(r[c]));
+    if (x === null || ys.some((y) => y === null)) {
+      droppedRows++;
+      continue;
+    }
+    pts.push({ x, ys: ys as number[] });
+  }
+  let working = pts;
+  let sampledFrom: number | null = null;
+  if (pts.length > MAX_POINTS) {
+    sampledFrom = pts.length;
+    const step = pts.length / MAX_POINTS;
+    working = [];
+    for (let i = 0; i < MAX_POINTS; i++) working.push(pts[Math.floor(i * step)]);
+  }
+  return {
+    labels: working.map((p) => String(p.x)),
+    series: yCols.map((c, si) => ({
+      name: columns[c]?.name ?? `col${c}`,
+      values: working.map((p) => p.ys[si]),
+    })),
+    sampledFrom,
+    excludedNonNumeric: 0,
+    scatterX: working.map((p) => p.x),
+    droppedRows,
+  };
+}
+
+/**
+ * 数値列を等幅のビンに分けて件数を数える (#1941)。ビンは `[from, to)` で、最後のビンだけ
+ * 最大値を含む (`[from, to]`)。値が無ければ空、全値が同じなら幅 0 の 1 ビンを返す。
+ * 境界は `edges` (ビン数 + 1 個) で、浮動小数の誤差があっても件数が境界と食い違わないよう
+ * 所属ビンを境界との比較で補正する。
+ */
+export function histogramBins(values: number[], bins: number): { edges: number[]; counts: number[] } {
+  const finite = values.filter((v) => Number.isFinite(v));
+  if (finite.length === 0) return { edges: [], counts: [] };
+  let min = Infinity;
+  let max = -Infinity;
+  for (const v of finite) {
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  if (min === max) return { edges: [min, max], counts: [finite.length] };
+  const n = Math.max(1, Math.floor(bins));
+  const edges = Array.from({ length: n + 1 }, (_, i) => (i === n ? max : min + ((max - min) * i) / n));
+  const counts = new Array<number>(n).fill(0);
+  const width = (max - min) / n;
+  for (const v of finite) {
+    let idx = Math.min(n - 1, Math.max(0, Math.floor((v - min) / width)));
+    while (idx > 0 && v < edges[idx]) idx--;
+    while (idx < n - 1 && v >= edges[idx + 1]) idx++;
+    counts[idx]++;
+  }
+  return { edges, counts };
+}
+
+/**
+ * ビン境界の表示用整形 (末尾の誤差を落とす)。有効桁は既定 6 桁だが、値の大きさに比べて
+ * ビン幅が細かいとき (例: 1000000〜1000001 を 10 分割) は隣り合う境界が同じ表記に潰れるので、
+ * ビン幅が読み取れる桁数まで増やす (最大 17 桁)。
+ */
+function formatEdge(v: number, binWidth: number): string {
+  let digits = 6;
+  if (binWidth > 0 && Number.isFinite(binWidth) && v !== 0) {
+    const need = Math.ceil(Math.log10(Math.abs(v) / binWidth)) + 2;
+    digits = Math.min(17, Math.max(6, need));
+  }
+  return String(Number(v.toPrecision(digits)));
+}
+
+/** ヒストグラムのモデル (#1941)。X 列 1 本の数値を `config.bins` 個のビンに分ける。 */
+function buildHistogramModel(columns: Column[], rows: CellValue[][], config: ChartConfig): ChartModel {
+  const values: number[] = [];
+  let droppedRows = 0;
+  for (const r of rows) {
+    const v = toNumber(r[config.xCol]);
+    if (v === null) droppedRows++;
+    else values.push(v);
+  }
+  const { edges, counts } = histogramBins(values, config.bins ?? DEFAULT_HISTOGRAM_BINS);
+  const binWidth = counts.length > 0 ? (edges[edges.length - 1] - edges[0]) / counts.length : 0;
+  const name = columns[config.xCol]?.name ?? `col${config.xCol}`;
+  return {
+    labels: counts.map((_, i) =>
+      edges[i] === edges[i + 1]
+        ? formatEdge(edges[i], binWidth)
+        : `${formatEdge(edges[i], binWidth)} – ${formatEdge(edges[i + 1], binWidth)}`,
+    ),
+    series: [{ name: `COUNT(${name})`, values: counts }],
+    sampledFrom: null,
+    excludedNonNumeric: 0,
+    histEdges: edges,
+    droppedRows,
+  };
 }
 
 /**
@@ -302,7 +445,9 @@ export function buildChartModel(columns: Column[], rows: CellValue[][], config: 
  */
 export function sortChartModel(model: ChartModel, config: Pick<ChartConfig, "type" | "barSort">): ChartModel {
   const mode = config.barSort ?? "x";
-  if (config.type !== "bar" || mode === "x" || model.labels.length < 2) return model;
+  if ((config.type !== "bar" && config.type !== "stackedBar") || mode === "x" || model.labels.length < 2) {
+    return model;
+  }
   const total = (i: number) => model.series.reduce((sum, s) => sum + (s.values[i] ?? 0), 0);
   const order = model.labels.map((_, i) => i);
   order.sort((a, b) => (mode === "desc" ? total(b) - total(a) : total(a) - total(b)) || a - b);
@@ -512,6 +657,8 @@ export function canAggregateInDb(
 ): boolean {
   if (!sourceSql || sourceSql.trim() === "") return false;
   if (config.aggregation === "none" || config.yCols.length === 0) return false;
+  // 散布図・ヒストグラムは生の値を扱うため集計しない (#1941)。
+  if (config.type === "scatter" || config.type === "histogram") return false;
   const named = (i: number) => (columns[i]?.name ?? "") !== "";
   return named(config.xCol) && config.yCols.every(named);
 }
@@ -661,6 +808,17 @@ export function niceTicks(min: number, max: number, count = 5): number[] {
 export function valueExtent(model: ChartModel, type: ChartType = "bar"): { min: number; max: number } {
   let min = Infinity;
   let max = -Infinity;
+  if (type === "stackedBar") {
+    // 積み上げは系列の和が高さになる。正の値と負の値は基線の上下にそれぞれ積む (#1941)。
+    for (const layer of stackLayout(model)) {
+      for (const { from, to } of layer) {
+        min = Math.min(min, from, to);
+        max = Math.max(max, from, to);
+      }
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return { min: 0, max: 0 };
+    return { min: Math.min(0, min), max: Math.max(0, max) };
+  }
   for (const s of model.series) {
     for (const v of s.values) {
       if (v < min) min = v;
@@ -668,8 +826,101 @@ export function valueExtent(model: ChartModel, type: ChartType = "bar"): { min: 
     }
   }
   if (!Number.isFinite(min) || !Number.isFinite(max)) return { min: 0, max: 0 };
-  if (type === "line") return { min, max };
+  if (type === "line" || type === "scatter") return { min, max };
   return { min: Math.min(0, min), max: Math.max(0, max) };
+}
+
+/**
+ * 積み上げ棒の区画 (#1941)。`[系列][ラベル]` の `{from, to}` で、値が 0 以上なら基線から上へ、
+ * 負ならそこから下へ、系列順に積む。非有限の値は 0 扱い。
+ */
+export function stackLayout(model: ChartModel): { from: number; to: number }[][] {
+  const out = model.series.map(() => [] as { from: number; to: number }[]);
+  for (let i = 0; i < model.labels.length; i++) {
+    let pos = 0;
+    let neg = 0;
+    model.series.forEach((s, si) => {
+      const raw = s.values[i];
+      const v = Number.isFinite(raw) ? raw : 0;
+      if (v >= 0) {
+        out[si].push({ from: pos, to: pos + v });
+        pos += v;
+      } else {
+        out[si].push({ from: neg, to: neg + v });
+        neg += v;
+      }
+    });
+  }
+  return out;
+}
+
+/** 複合チャートで折れ線にする Y 列の `yCols` 内の位置 (#1941)。Y が無ければ -1。 */
+export function comboLineIndex(config: Pick<ChartConfig, "yCols" | "comboLineCol">): number {
+  if (config.yCols.length === 0) return -1;
+  const i = config.comboLineCol === undefined ? -1 : config.yCols.indexOf(config.comboLineCol);
+  return i >= 0 ? i : config.yCols.length - 1;
+}
+
+/** 複合チャートの系列を棒 (第 1 軸) と折れ線 (第 2 軸) に分ける (#1941)。名前で折れ線を特定する。 */
+export function splitComboSeries(
+  model: ChartModel,
+  lineName: string | undefined,
+): { bars: ChartSeries[]; line: ChartSeries | null } {
+  const line = lineName === undefined ? null : (model.series.find((s) => s.name === lineName) ?? null);
+  return { bars: model.series.filter((s) => s !== line), line };
+}
+
+/**
+ * 散布図の軸範囲 (#1941)。端の点が軸線に張り付かないよう両側へ `ratio` ずつ余白を足し、
+ * 全点が同じ値で幅 0 のときは ±1 に広げて点を中央に置く。値が無ければ 0..1。
+ */
+export function paddedExtent(values: number[], ratio = 0.04): { min: number; max: number } {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const v of values) {
+    if (!Number.isFinite(v)) continue;
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return { min: 0, max: 1 };
+  if (min === max) return { min: min - 1, max: max + 1 };
+  const pad = (max - min) * ratio;
+  return { min: min - pad, max: max + pad };
+}
+
+/**
+ * 種類を切り替えたときに、その種類が要求する列を満たすよう設定を整える (#1941)。
+ * 散布図は数値の X と数値の Y、ヒストグラムは数値の X (対象列)、複合は Y 2 列以上が要る。
+ * 候補の数値列が足りないときは直せる範囲だけ直し、足りない部分は呼び出し側 (ChartView) の
+ * 空状態ガイドに任せる。`numeric` は `inferNumericColumns` の結果。
+ */
+export function applyChartType(config: ChartConfig, type: ChartType, numeric: boolean[]): ChartConfig {
+  const next: ChartConfig = { ...config, type };
+  if (type === "scatter" || type === "histogram") {
+    if (!numeric[next.xCol]) {
+      const x = numeric.findIndex((n) => n);
+      if (x >= 0) next.xCol = x;
+    }
+    next.yCols = next.yCols.filter((y) => y !== next.xCol);
+    if (type === "scatter") {
+      const numericYs = next.yCols.filter((y) => numeric[y]);
+      if (numericYs.length > 0) {
+        next.yCols = numericYs;
+      } else {
+        const y = numeric.findIndex((n, i) => n && i !== next.xCol);
+        if (y >= 0) next.yCols = [y];
+      }
+    }
+  } else if (type !== "pie" && next.yCols.length === 0) {
+    // ヒストグラムは Y を持たないので、他の種類へ戻すときは数値の Y を 1 本補う。
+    const y = numeric.findIndex((n, i) => n && i !== next.xCol);
+    if (y >= 0) next.yCols = [y];
+  }
+  if (type === "combo" && next.yCols.length < 2) {
+    const y = numeric.findIndex((n, i) => n && i !== next.xCol && !next.yCols.includes(i));
+    if (y >= 0) next.yCols = [...next.yCols, y];
+  }
+  return next;
 }
 
 /**
@@ -677,7 +928,7 @@ export function valueExtent(model: ChartModel, type: ChartType = "bar"): { min: 
  * 平坦/点 1 つ/値の一部を 0 として読み替えている」ことをユーザに伝えるための
  * ヒントで、いずれもチャート自体は問題なく描画できる (棒 1 本・平坦な線など)。
  */
-export type ChartNotice = "singlePoint" | "flatValues" | "nonNumericExcluded";
+export type ChartNotice = "singlePoint" | "flatValues" | "nonNumericExcluded" | "rowsDropped";
 
 /**
  * モデルから表示すべき注記を判定する。データが破綻しているわけではないが
@@ -691,12 +942,19 @@ export type ChartNotice = "singlePoint" | "flatValues" | "nonNumericExcluded";
  */
 export function chartNotices(model: ChartModel): ChartNotice[] {
   const notices: ChartNotice[] = [];
-  if (model.labels.length === 1) notices.push("singlePoint");
+  if (model.labels.length === 1 && !model.histEdges) notices.push("singlePoint");
   const allValues = model.series.flatMap((s) => s.values);
-  if (model.labels.length > 1 && allValues.length > 0 && allValues.every((v) => v === allValues[0])) {
+  // ヒストグラムは件数が揃うのが普通の分布 (一様) なので「平坦」の注記は出さない (#1941)。
+  if (
+    !model.histEdges &&
+    model.labels.length > 1 &&
+    allValues.length > 0 &&
+    allValues.every((v) => v === allValues[0])
+  ) {
     notices.push("flatValues");
   }
   if ((model.excludedNonNumeric ?? 0) > 0) notices.push("nonNumericExcluded");
+  if ((model.droppedRows ?? 0) > 0) notices.push("rowsDropped");
   return notices;
 }
 
@@ -714,7 +972,16 @@ export function chartConfigKeyFrom(sql: string | undefined): string | undefined 
   return resultViewKey(CHART_CONFIG_NAMESPACE, sql);
 }
 
-const CHART_TYPES: ChartType[] = ["bar", "line", "area", "pie"];
+const CHART_TYPES: ChartType[] = [
+  "bar",
+  "line",
+  "area",
+  "pie",
+  "scatter",
+  "histogram",
+  "stackedBar",
+  "combo",
+];
 const AGGREGATIONS: Aggregation[] = ["none", "sum", "avg", "count"];
 
 /**
@@ -778,6 +1045,19 @@ export function sanitizeChartConfig(raw: unknown, columns: Column[]): ChartConfi
       ? { barSort: o.barSort as BarSort }
       : {};
 
+  // ビン数 (#1941) は選択肢の値だけ引き継ぐ。
+  const bins = typeof o.bins === "number" && HISTOGRAM_BIN_CHOICES.includes(o.bins) ? { bins: o.bins } : {};
+
+  // 複合チャートの折れ線列 (#1941) は、今の列構成で有効な (範囲内・X 以外の) 整数だけ引き継ぐ。
+  const comboLineCol =
+    typeof o.comboLineCol === "number" &&
+    Number.isInteger(o.comboLineCol) &&
+    o.comboLineCol >= 0 &&
+    o.comboLineCol < columns.length &&
+    o.comboLineCol !== xCol
+      ? { comboLineCol: o.comboLineCol }
+      : {};
+
   return {
     type: type as ChartType,
     xCol,
@@ -787,6 +1067,8 @@ export function sanitizeChartConfig(raw: unknown, columns: Column[]): ChartConfi
     ...donut,
     ...timeBucket,
     ...barSort,
+    ...bins,
+    ...comboLineCol,
   };
 }
 

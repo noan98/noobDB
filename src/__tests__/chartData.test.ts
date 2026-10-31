@@ -79,6 +79,17 @@ describe("defaultChartConfig", () => {
     });
   });
 
+  it("defaults to a histogram when there is exactly one numeric column and nothing else", () => {
+    const rows: CellValue[][] = [[1], [2]];
+    expect(defaultChartConfig([col("price")], rows)).toEqual({
+      type: "histogram",
+      xCol: 0,
+      yCols: [],
+      aggregation: "none",
+      palette: "categorical",
+    });
+  });
+
   it("returns null without any numeric column", () => {
     const columns = [col("a"), col("b")];
     const rows: CellValue[][] = [["x", "y"]];
@@ -336,7 +347,7 @@ describe("sanitizeChartConfig (#909, corruption resistance)", () => {
 
   it("rejects an unknown chart type or aggregation", () => {
     expect(
-      sanitizeChartConfig({ type: "scatter", xCol: 0, yCols: [1], aggregation: "sum" }, columns),
+      sanitizeChartConfig({ type: "radar", xCol: 0, yCols: [1], aggregation: "sum" }, columns),
     ).toBeNull();
     expect(
       sanitizeChartConfig({ type: "bar", xCol: 0, yCols: [1], aggregation: "median" }, columns),
