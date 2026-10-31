@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders as render } from "./testUtils";
-import { RevealTbody } from "../components/RevealTbody";
+import { RevealList, RevealTbody } from "../components/RevealTbody";
 import { revealViewportBottom } from "../components/rowsMountReveal";
 
 // 読み取り専用メタデータパネルの行リビール (#1886)。jsdom には Element.animate が無いのでスタブする。
@@ -53,6 +53,39 @@ describe("RevealTbody (#1886)", () => {
   it("reduced-motion では再生しない", () => {
     reducedRef.value = true;
     render(table(3));
+    expect(animate).not.toHaveBeenCalled();
+  });
+});
+
+describe("RevealList (#1935)", () => {
+  const animate = vi.fn(() => ({ cancel: vi.fn() }));
+  beforeEach(() => {
+    reducedRef.value = false;
+    animate.mockClear();
+    Object.defineProperty(HTMLElement.prototype, "animate", { configurable: true, value: animate });
+  });
+  afterEach(() => {
+    Reflect.deleteProperty(HTMLElement.prototype, "animate");
+  });
+
+  const list = (n: number) => (
+    <RevealList>
+      {Array.from({ length: n }, (_, i) => (
+        <li key={i}>{i}</li>
+      ))}
+    </RevealList>
+  );
+
+  it("マウント時に li ごとへ 1 回だけ再生し、再レンダーでは再生しない", () => {
+    const { rerender } = render(list(3));
+    expect(animate).toHaveBeenCalledTimes(3);
+    rerender(list(5));
+    expect(animate).toHaveBeenCalledTimes(3);
+  });
+
+  it("reduced-motion では再生しない", () => {
+    reducedRef.value = true;
+    render(list(3));
     expect(animate).not.toHaveBeenCalled();
   });
 });

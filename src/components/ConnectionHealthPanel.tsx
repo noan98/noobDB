@@ -26,6 +26,7 @@ import { CountUp } from "./CountUp";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { LatencySparkline } from "./LatencySparkline";
+import { RevealTbody } from "./RevealTbody";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
@@ -381,13 +382,16 @@ export function ConnectionHealthPanel({
                 <chakra.th css={thCss}>{t("healthColActions")}</chakra.th>
               </tr>
             </thead>
-            <tbody>
-              {loading && rows.length === 0 ? (
-                // 初回ロード中 (まだ 1 件も取得していない): 裸のヘッダのみ表示を
-                // 避け、6 列の構造をシマーで予兆表示する (#846 の横展開、#1160)。
+            {loading && rows.length === 0 ? (
+              // 初回ロード中 (まだ 1 件も取得していない): 裸のヘッダのみ表示を
+              // 避け、6 列の構造をシマーで予兆表示する (#846 の横展開、#1160)。
+              <tbody>
                 <SkeletonTableRows columns={7} />
-              ) : (
-                rows.map((row) => {
+              </tbody>
+            ) : (
+              // 実データの行はスケルトンと別要素にして、着弾の 1 回だけリビールする (#1886 / #1935)。
+              <RevealTbody>
+                {rows.map((row) => {
                   const gen = row.sessionId ? (flash.get(row.sessionId) ?? 0) : 0;
                   const profile = profileById.get(row.profileId);
                   return (
@@ -480,9 +484,9 @@ export function ConnectionHealthPanel({
                       </chakra.td>
                     </chakra.tr>
                   );
-                })
-              )}
-            </tbody>
+                })}
+              </RevealTbody>
+            )}
           </chakra.table>
         </Box>
       )}

@@ -11,6 +11,7 @@ import { Button, Input, Select } from "./ui";
 import { useToast } from "./Toast";
 import { SchemaDriftRevert } from "./SchemaDriftRevert";
 import { Icon, ICON_SIZES } from "./Icon";
+import { RevealList } from "./RevealTbody";
 import { SkeletonRow } from "./Skeleton";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
@@ -376,7 +377,14 @@ export function SchemaDriftPanel({
                     {t("schemaDriftNoChanges")}
                   </chakra.p>
                 ) : summary ? (
-                  <chakra.ul m={0} p={0} listStyleType="none" display="flex" flexDirection="column" gap="1.5">
+                  <RevealList
+                    m={0}
+                    p={0}
+                    listStyleType="none"
+                    display="flex"
+                    flexDirection="column"
+                    gap="1.5"
+                  >
                     {summary.tables.map((c) => {
                       const fragments: string[] = [];
                       if (c.tableStatus === "added") {
@@ -443,7 +451,7 @@ export function SchemaDriftPanel({
                         </chakra.li>
                       );
                     })}
-                  </chakra.ul>
+                  </RevealList>
                 ) : null}
               </Box>
               {genA && genB && bothDiffable && !differentTarget && (

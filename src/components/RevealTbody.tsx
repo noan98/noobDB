@@ -1,6 +1,6 @@
 import { chakra } from "@chakra-ui/react";
 import { useReducedMotionConfig } from "motion/react";
-import { useLayoutEffect, useRef, type ComponentProps } from "react";
+import { useLayoutEffect, useRef, type ComponentProps, type RefObject } from "react";
 
 import { durations, easings, firstBatchReveal } from "../motion";
 import {
@@ -24,13 +24,28 @@ import { revealViewportBottom } from "./rowsMountReveal";
  */
 export function RevealTbody(props: ComponentProps<typeof chakra.tbody>) {
   const ref = useRef<HTMLTableSectionElement>(null);
+  useRevealChildren(ref, "tr");
+  return <chakra.tbody ref={ref} {...props} />;
+}
+
+/**
+ * `RevealTbody` の `<ul>` 版 (#1935)。表ではなくリストで差分を出す読み取り専用パネル
+ * (`SchemaDriftPanel`) 用。再生の仕組みは `RevealTbody` と同一で、対象が直下の `<li>` になるだけ。
+ */
+export function RevealList(props: ComponentProps<typeof chakra.ul>) {
+  const ref = useRef<HTMLUListElement>(null);
+  useRevealChildren(ref, "li");
+  return <chakra.ul ref={ref} {...props} />;
+}
+
+function useRevealChildren(ref: RefObject<HTMLElement | null>, childTag: "tr" | "li") {
   const reduced = useReducedMotionConfig();
   // マウント時の 1 回だけ。reduced の変化では再生し直さない。
   // biome-ignore lint/correctness/useExhaustiveDependencies: マウント 1 回の再生
   useLayoutEffect(() => {
     const tbody = ref.current;
     if (!tbody || reduced || prefersStaticMotion() || typeof tbody.animate !== "function") return;
-    const trs = Array.from(tbody.querySelectorAll<HTMLElement>(":scope > tr")).filter(
+    const trs = Array.from(tbody.querySelectorAll<HTMLElement>(`:scope > ${childTag}`)).filter(
       (tr) => tr.getAttribute("aria-hidden") !== "true",
     );
     if (trs.length === 0) return;
@@ -58,5 +73,4 @@ export function RevealTbody(props: ComponentProps<typeof chakra.tbody>) {
       for (const a of started) a.cancel();
     };
   }, []);
-  return <chakra.tbody ref={ref} {...props} />;
 }
