@@ -4695,7 +4695,70 @@ async fn mysql_list_table_partitions_when_env_set() {
         .expect("still partitioned");
     let names: Vec<&str> = after.partitions.iter().map(|p| p.name.as_str()).collect();
     assert_eq!(names, vec!["p2026", "pmax"]);
-    for tbl in ["noobdb_part_t", "noobdb_part_plain"] {
+
+    // サブパーティション (RANGE x HASH): information_schema.PARTITIONS はサブパーティションごとに
+    // 行が反復する。親の遅延合成と size / 行数の累積が実 DB 行で成り立つことを確かめる。
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS noobdb_part_sub", Some(&db))
+        .await;
+    t::mysql_exec_text(
+        &opts,
+        "CREATE TABLE noobdb_part_sub (id INT NOT NULL, y INT NOT NULL) \
+         PARTITION BY RANGE (y) SUBPARTITION BY HASH (id) SUBPARTITIONS 2 \
+         (PARTITION p2025 VALUES LESS THAN (2026), PARTITION p2026 VALUES LESS THAN (2027))",
+    )
+    .await
+    .expect("create subpartitioned");
+    t::mysql_exec_text(
+        &opts,
+        "INSERT INTO noobdb_part_sub VALUES (1, 2025), (2, 2025), (3, 2025), (4, 2026)",
+    )
+    .await
+    .expect("insert");
+    let sub = conn
+        .list_table_partitions(&db, "noobdb_part_sub")
+        .await
+        .expect("sub partitions")
+        .expect("is subpartitioned");
+    assert_eq!(sub.method, "RANGE");
+    assert_eq!(sub.sub_method.as_deref(), Some("HASH"));
+    assert!(sub.sub_key.is_some(), "{sub:?}");
+    // 親 -> 子 2 件の順 (親の行は最初のサブパーティションで 1 度だけ作られる)。
+    let view: Vec<(&str, u32, Option<&str>)> = sub
+        .partitions
+        .iter()
+        .map(|p| (p.name.as_str(), p.depth, p.parent.as_deref()))
+        .collect();
+    assert_eq!(view.len(), 6, "{view:?}");
+    for (i, parent) in ["p2025", "p2026"].into_iter().enumerate() {
+        let base = i * 3;
+        assert_eq!(view[base], (parent, 0, None), "{view:?}");
+        assert_eq!(view[base + 1].1, 1, "{view:?}");
+        assert_eq!(view[base + 1].2, Some(parent), "{view:?}");
+        assert_eq!(view[base + 2].1, 1, "{view:?}");
+        assert_eq!(view[base + 2].2, Some(parent), "{view:?}");
+        let p = &sub.partitions[base];
+        assert!(p.is_partitioned, "{p:?}");
+        assert!(p.sub_partition_key.is_some(), "{p:?}");
+        assert!(p.bound.starts_with("LESS THAN"), "{p:?}");
+        let kids = &sub.partitions[base + 1..base + 3];
+        assert!(kids.iter().all(|k| !k.is_partitioned), "{kids:?}");
+        // 親の合計 = 子の合計 (サイズ・行数とも)。
+        let fold = |vals: Vec<Option<i64>>| {
+            vals.into_iter()
+                .fold(None, |acc: Option<i64>, v| match (acc, v) {
+                    (None, None) => None,
+                    (a, b) => Some(a.unwrap_or(0) + b.unwrap_or(0)),
+                })
+        };
+        let sizes = kids.iter().map(|k| k.size_bytes).collect();
+        let rows = kids.iter().map(|k| k.row_estimate).collect();
+        assert_eq!(p.size_bytes, fold(sizes), "{:?}", sub.partitions);
+        assert_eq!(p.row_estimate, fold(rows), "{:?}", sub.partitions);
+    }
+    // InnoDB はデータ領域を確保するので、実データのある表の親サイズは 0 より大きい。
+    assert!(sub.partitions[0].size_bytes.unwrap_or(0) > 0, "{sub:?}");
+    for tbl in ["noobdb_part_sub", "noobdb_part_t", "noobdb_part_plain"] {
         let _ = conn
             .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
             .await;
