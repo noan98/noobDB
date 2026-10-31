@@ -1,0 +1,251 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Windows × MySQL/PostgreSQL ドライバ経路の nightly スモーク (#1945 / Epic #1933)
+#
+# 【位置づけ】
+# `rust (windows)` (ci.yml) は SQLite 統合しか実走しない (MySQL/PostgreSQL の統合テストは
+# `NOOBDB_TEST_*` の環境変数ゲートでスキップされ、DB サーバも立てない)。Windows はリリース
+# 対象プラットフォームなのに、Windows 固有 × サーバ型ドライバ (sqlx の mysql/postgres、
+# keyring 連携、パス / 改行) の退行が PR ゲートにも nightly にも見えない死角だった。
+# このワークフローは、windows-latest 上で MySQL と PostgreSQL を起動し、統合テストの
+# 最小スモーク (接続・基本 CRUD・型デコード・keyring 疎通) だけを毎晩実走する。
+#
+# 毎晩 (UTC 18:30 = JST 03:30) + `workflow_dispatch`。e2e.yml (UTC 18:00) と重ならないよう
+# 30 分ずらしている。CI の必須チェック (Required status checks) には含めない: 別ワークフロー
+# なので PR の待機状態にも影響しない。失敗は notify ジョブがトラッキング Issue
+# (ラベル `ci:windows-db-smoke`) に通知する (#1395 と同じ仕組み)。
+#
+# 全統合テストの移植は狙わない。対象は下の `NEXTEST_FILTER` の最小集合だけ。増やすときは
+# 所要時間 (Windows ランナーは Linux の 2 倍課金) と相談する。
+# ──────────────────────────────────────────────────────────────────────────────
+name: Windows DB smoke (MySQL / PostgreSQL / nightly)
+
+on:
+  schedule:
+    - cron: "30 18 * * *"
+  workflow_dispatch:
+
+# 手動実行と schedule の重複・連打で同時に走らせない (同一ブランチ内で後勝ち)。
+concurrency:
+  group: windows-db-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows-db-smoke:
+    name: Windows DB smoke (MySQL + PostgreSQL)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      CARGO_INCREMENTAL: "0"
+      # テストビルドだけデバッグ情報を出さない (ci.yml の rust (windows) と同じ理由: PDB の削減)。
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      # スモーク対象 (nextest filterset)。external 束ねバイナリの MySQL / PostgreSQL テストのうち、
+      #   - 接続とクエリの往復 (roundtrip)
+      #   - スキーマ取得 + トランザクション内の基本 CRUD (new_schema_apis_and_transaction)
+      #   - 型デコード (temporal_columns / exotic_types)
+      # と、lib の keyring 疎通診断 (profiles::secrets) だけを実走する。
+      NEXTEST_FILTER: >-
+        (binary(external) and test(/^(mysql_integration::(mysql_roundtrip_when_env_set|mysql_new_schema_apis_and_transaction_when_env_set|temporal_columns_decode_to_strings)|postgres_integration::(postgres_roundtrip_when_env_set|postgres_new_schema_apis_and_transaction_when_env_set|postgres_exotic_types_decode_to_values_not_null))$/))
+        or (kind(lib) and test(/^profiles::secrets::/))
+      DB_ROOT: ${{ github.workspace }}\.db-smoke
+
+    steps:
+      - name: Disable Defender real-time protection
+        shell: pwsh
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # tauri::generate_context! が参照する frontendDist を満たす最小スタブ (ci.yml と同じ #796)。
+      - name: Stub frontend dist (for tauri::generate_context!)
+        shell: bash
+        run: mkdir -p dist && echo "" > dist/index.html
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: windows-db-smoke
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-nextest
+
+      # ────────────────────────────────────────────────────────────────────
+      # PostgreSQL: ランナーイメージ同梱のバイナリで、使い捨てクラスタを自前で作る。
+      # 同梱サービス (停止状態) の資格情報には依存しない。無ければ choco で導入する。
+      # ────────────────────────────────────────────────────────────────────
+      - name: PostgreSQL を起動
+        shell: bash
+        run: |
+          set -euo pipefail
+          find_pg() {
+            local d
+            if [ -n "${PGBIN:-}" ] && [ -x "$(cygpath -u "$PGBIN")/initdb.exe" ]; then
+              cygpath -u "$PGBIN"; return 0
+            fi
+            for d in "/c/Program Files/PostgreSQL/"*/bin; do
+              [ -x "$d/initdb.exe" ] && { echo "$d"; return 0; }
+            done
+            return 1
+          }
+          if ! PG_BIN_DIR="$(find_pg)"; then
+            echo "同梱の PostgreSQL が見つからないため choco で導入します"
+            choco install postgresql --no-progress -y --params '/Password:postgres'
+            PG_BIN_DIR="$(find_pg)"
+          fi
+          echo "PostgreSQL bin: $PG_BIN_DIR"
+          mkdir -p "$(cygpath -u "$DB_ROOT")"
+          PGDATA_DIR="$(cygpath -m "$DB_ROOT")/pgdata"
+          # 認証は trust (使い捨てクラスタ・127.0.0.1 のみ listen)。URL のパスワードは無視される。
+          "$PG_BIN_DIR/initdb.exe" -D "$PGDATA_DIR" -U postgres --auth=trust -E UTF8
+          "$PG_BIN_DIR/pg_ctl.exe" start -w -t 60 -D "$PGDATA_DIR" -l "$(cygpath -m "$DB_ROOT")/postgres.log" \
+            -o "-p 5432 -c listen_addresses=127.0.0.1"
+          "$PG_BIN_DIR/createdb.exe" -h 127.0.0.1 -p 5432 -U postgres testdb
+          "$PG_BIN_DIR/psql.exe" -h 127.0.0.1 -p 5432 -U postgres -d testdb -tAc "select version()"
+
+      # ────────────────────────────────────────────────────────────────────
+      # MySQL: 同様に同梱バイナリで使い捨てデータディレクトリを初期化して起動する。
+      # ────────────────────────────────────────────────────────────────────
+      - name: MySQL を初期化
+        shell: bash
+        run: |
+          set -euo pipefail
+          find_mysql() {
+            local d
+            for d in "/c/Program Files/MySQL/"*/bin; do
+              [ -x "$d/mysqld.exe" ] && { echo "$d"; return 0; }
+            done
+            return 1
+          }
+          if ! MYSQL_BIN_DIR="$(find_mysql)"; then
+            echo "同梱の MySQL が見つからないため choco で導入します"
+            choco install mysql --no-progress -y
+            MYSQL_BIN_DIR="$(find_mysql)"
+          fi
+          echo "MySQL bin: $MYSQL_BIN_DIR"
+          DATADIR="$(cygpath -m "$DB_ROOT")/mysqldata"
+          "$MYSQL_BIN_DIR/mysqld.exe" --no-defaults --initialize-insecure --console --datadir="$DATADIR"
+          echo "MYSQL_BIN_DIR=$(cygpath -m "$MYSQL_BIN_DIR")" >> "$GITHUB_ENV"
+          echo "MYSQL_DATADIR=$DATADIR" >> "$GITHUB_ENV"
+
+      # bash の `&` は Windows ではステップ終了で子プロセスごと落ちることがあるため、
+      # デタッチされる Start-Process で起動する。
+      - name: MySQL を起動
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:DB_ROOT "mysql.log"
+          Start-Process -FilePath "$env:MYSQL_BIN_DIR\mysqld.exe" `
+            -ArgumentList "--no-defaults", "--console", "--datadir=$env:MYSQL_DATADIR", "--port=3306", "--bind-address=127.0.0.1", "--mysqlx=OFF" `
+            -RedirectStandardOutput (Join-Path $env:DB_ROOT "mysql.out.log") `
+            -RedirectStandardError $log `
+            -WindowStyle Hidden
+
+      # 起動待ち。固定 sleep ではなく ping を最大 60 秒ポーリングし、落ちたら DB ログを出す。
+      - name: MySQL の起動を待ってテスト用 DB を作成
+        shell: bash
+        run: |
+          set -euo pipefail
+          ok=0
+          for i in $(seq 1 60); do
+            if "$MYSQL_BIN_DIR/mysqladmin.exe" --no-defaults -h 127.0.0.1 -P 3306 -u root ping >/dev/null 2>&1; then
+              ok=1; break
+            fi
+            sleep 1
+          done
+          if [ "$ok" != 1 ]; then
+            echo "::error::MySQL が 60 秒以内に起動しませんでした"
+            cat "$(cygpath -u "$DB_ROOT")/mysql.log" || true
+            exit 1
+          fi
+          "$MYSQL_BIN_DIR/mysql.exe" --no-defaults -h 127.0.0.1 -P 3306 -u root -e \
+            "ALTER USER 'root'@'localhost' IDENTIFIED BY 'rootpw'; CREATE DATABASE IF NOT EXISTS testdb; SELECT VERSION();"
+
+      # ────────────────────────────────────────────────────────────────────
+      # スモーク実行。nextest の再試行は 1 回だけ (起動直後の取りこぼし吸収用)。
+      # ────────────────────────────────────────────────────────────────────
+      - name: スモークテスト実行 (MySQL / PostgreSQL / keyring)
+        shell: bash
+        working-directory: src-tauri
+        env:
+          NOOBDB_TEST_MYSQL_URL: mysql://root:rootpw@127.0.0.1:3306/testdb
+          NOOBDB_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/testdb
+        run: |
+          # 環境変数ゲートでテストが黙ってスキップされると緑のまま死角が戻るため、
+          # 対象テストが 1 件以上選ばれていることを先に確認する。
+          cargo nextest list --locked --lib --test external -E "$NEXTEST_FILTER" | tee nextest-list.txt
+          grep -q "mysql_integration::mysql_roundtrip_when_env_set" nextest-list.txt
+          grep -q "postgres_integration::postgres_roundtrip_when_env_set" nextest-list.txt
+          cargo nextest run --locked --lib --test external -E "$NEXTEST_FILTER" --retries 1 --no-fail-fast
+
+      - name: DB ログを保存 (失敗時)
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-db-smoke-logs-${{ github.run_id }}
+          path: |
+            ${{ env.DB_ROOT }}\*.log
+            ${{ env.DB_ROOT }}\pgdata\log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: DB を停止
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Process mysqld, postgres -ErrorAction SilentlyContinue | Stop-Process -Force
+
+  # nightly の結果通知 (#1395 と同じ仕組み)。`issues: write` はこのジョブにだけ付与する。
+  # schedule / workflow_dispatch かつ既定ブランチのときだけ、success / failure で通知する
+  # (試験ブランチの手動実行・キャンセルでは Issue を open / close しない)。
+  notify:
+    name: nightly 結果の通知 (トラッキング Issue)
+    needs: windows-db-smoke
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (needs.windows-db-smoke.result == 'success' || needs.windows-db-smoke.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/upsert-tracking-issue.sh
+          sparse-checkout-cone-mode: false
+
+      - name: トラッキング Issue を upsert
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SMOKE_RESULT: ${{ needs.windows-db-smoke.result }}
+          TRACK_LABEL: ci:windows-db-smoke
+          TRACK_EXTRA_LABELS: cost:Mid,benefit:3
+        run: |
+          if [ "$SMOKE_RESULT" = "success" ]; then
+            TRACK_STATE=ok bash scripts/upsert-tracking-issue.sh
+          else
+            run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            {
+              echo "nightly の Windows × MySQL/PostgreSQL スモークが失敗したため自動作成されたトラッキング Issue です。"
+              echo ""
+              echo "- ジョブ結果: \`${SMOKE_RESULT}\` (トリガ: \`${GITHUB_EVENT_NAME}\` / ブランチ: \`${GITHUB_REF_NAME}\`)"
+              echo "- DB サーバのログは [実行ページ](${run_url}) の Artifacts (\`windows-db-smoke-logs-*\`, 7 日保持) から取得できます。"
+              echo "- DB の起動失敗 (ランナーイメージ更新で同梱 MySQL / PostgreSQL のパスが変わった等) か、Windows 固有のドライバ退行かを、まず失敗したステップで切り分けてください。"
+              echo "- 調査手順は \`.claude/skills/noobdb-ci/references/ci-workflow.md\` の \`windows-db-smoke.yml\` の節を参照してください。"
+              echo ""
+              echo "成功に戻ると次回の nightly で自動クローズされます。連続失敗時はこの Issue にコメントが追記されます。"
+            } > issue-body.md
+            TRACK_STATE=problem \
+              TRACK_TITLE="[Windows DB smoke nightly] Windows の MySQL/PostgreSQL スモークが失敗しています" \
+              TRACK_BODY_FILE=issue-body.md \
+              bash scripts/upsert-tracking-issue.sh
+          fi
