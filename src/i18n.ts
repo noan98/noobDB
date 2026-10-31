@@ -669,6 +669,9 @@ const en = {
   settingsSqlLintEnabled: "Enable syntax check",
   settingsSqlLintEnabledHelp:
     "Flags misspelled keywords (SELEC, FRM, WHER), empty clauses (FROM WHERE), extra commas, GROUP / ORDER without BY, statements that end mid-clause, misordered clauses (e.g. WHERE after ORDER BY), unmatched brackets, and unterminated strings or comments, following the connected driver's dialect. Conservative by design: it prefers missing an error over a false positive.",
+  settingsSqlSemanticLintEnabled: "Warn on unknown tables and columns",
+  settingsSqlSemanticLintEnabledHelp:
+    "Underlines table and column names that don't exist in the connected schema, before you run. Aliases, CTEs, subqueries and functions are resolved, and anything it can't resolve is left alone. Works only while the syntax check is on, and needs the schema to be loaded.",
 
   settingsPreflightImpact: "Impact-row preflight",
   settingsPreflightImpactHelp:
@@ -1804,6 +1807,8 @@ const en = {
   editorLintExtraComma: "Extra comma",
   editorLintMissingBy: "GROUP / ORDER must be followed by BY",
   editorLintIncomplete: "Statement ends unexpectedly — something is missing after this",
+  editorLintUnknownTable: 'Table "{name}" was not found in the connected schema',
+  editorLintUnknownColumn: 'Column "{name}" was not found in the tables of this query',
 
   // Impact-row preflight badge (#737).
   editorPreflightImpact: "Affects ~{count} rows",
@@ -7844,6 +7849,9 @@ const ja: Dict = {
   settingsSqlLintEnabled: "構文チェックを有効化",
   settingsSqlLintEnabledHelp:
     "キーワードのタイポ (SELEC / FRM / WHER など)・中身が空の句 (FROM WHERE など)・余分なカンマ・BY の抜けた GROUP / ORDER・途中で終わった文・句の順序ミス (ORDER BY の後の WHERE など)・括弧の不整合・未終端の文字列やコメントを、接続中ドライバの方言に沿って検出します。誤検出より見逃しを優先する保守的な判定です。",
+  settingsSqlSemanticLintEnabled: "存在しないテーブル・列を警告",
+  settingsSqlSemanticLintEnabledHelp:
+    "接続中のスキーマに存在しないテーブル名・列名を、実行前に下線で警告します。エイリアス・CTE・サブクエリ・関数は解決し、解決できないものは警告しません。構文チェックがオンのときだけ働き、スキーマの取得後に有効になります。",
 
   settingsPreflightImpact: "影響行数プリフライト",
   settingsPreflightImpactHelp:
@@ -8972,6 +8980,8 @@ const ja: Dict = {
   editorLintExtraComma: "余分なカンマがあります",
   editorLintMissingBy: "GROUP / ORDER の後には BY が必要です",
   editorLintIncomplete: "文が途中で終わっています — この後に続きが必要です",
+  editorLintUnknownTable: 'テーブル "{name}" は接続中のスキーマに見つかりません',
+  editorLintUnknownColumn: '列 "{name}" はこのクエリのテーブルに見つかりません',
 
   // 影響行数プリフライトのバッジ (#737)。
   editorPreflightImpact: "影響: 約 {count} 行",

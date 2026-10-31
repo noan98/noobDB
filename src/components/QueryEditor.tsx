@@ -77,6 +77,12 @@ import { useSettings } from "../settings";
 import { springs } from "../motion";
 import { statementAtOffset, statementsFromOffset } from "../sqlScript";
 import { diagnosticsFromTree, type SqlLintMessages } from "./sqlLint";
+import {
+  buildSemanticSchema,
+  semanticDiagnostics,
+  type SemanticSchema,
+  type SqlSemanticMessages,
+} from "./sqlSemanticLint";
 import { usePreflightImpact, type PreflightResult } from "./usePreflight";
 import { PreflightBadge } from "./PreflightBadge";
 import { ScanPreflightBadge } from "./ScanPreflightBadge";
@@ -726,6 +732,30 @@ export const QueryEditor = memo(
     };
     const lintMessagesRef = useRef(lintMessages);
     lintMessagesRef.current = lintMessages;
+    // スキーマ認識のセマンティック lint (#1940)。構文チェックがオンのときだけ働く。スキーマは
+    // linter のクロージャが ref 越しに読み、スキーマ/方言が変わったら下の effect が再 lint する。
+    // Postgres のマテビューは概観 (information_schema.columns) に出ないので、スキーマオブジェクト
+    // 一覧から名前だけ補って「未知のテーブル」と誤検知しないようにする。
+    const sqlSemanticLintEnabled = settings.sqlSemanticLintEnabled && settings.sqlLintEnabled;
+    const semanticMessages: SqlSemanticMessages = {
+      unknownTable: t("editorLintUnknownTable"),
+      unknownColumn: t("editorLintUnknownColumn"),
+    };
+    const semanticMessagesRef = useRef(semanticMessages);
+    semanticMessagesRef.current = semanticMessages;
+    const extraTablesRef = useRef<string[]>([]);
+    const [extraTablesRev, setExtraTablesRev] = useState(0);
+    const semanticSchema: SemanticSchema | null = sqlSemanticLintEnabled
+      ? buildSemanticSchema({
+          driver,
+          databaseSchema,
+          schemaTable,
+          defaultDatabase: schemaTable?.database ?? defaultDatabase ?? null,
+          extraTableNames: extraTablesRef.current,
+        })
+      : null;
+    const semanticSchemaRef = useRef<SemanticSchema | null>(semanticSchema);
+    semanticSchemaRef.current = semanticSchema;
     const sqlLintEnabledRef = useRef(sqlLintEnabled);
     sqlLintEnabledRef.current = sqlLintEnabled;
 
@@ -738,13 +768,17 @@ export const QueryEditor = memo(
         ? [
             lintGutter(),
             linter(
-              (view) =>
-                diagnosticsFromTree(
-                  syntaxTree(view.state),
-                  view.state.doc.toString(),
-                  lintMessagesRef.current,
-                  { cursor: view.state.selection.main.head },
-                ),
+              (view) => {
+                const tree = syntaxTree(view.state);
+                const doc = view.state.doc.toString();
+                const cursor = view.state.selection.main.head;
+                return [
+                  ...diagnosticsFromTree(tree, doc, lintMessagesRef.current, { cursor }),
+                  ...semanticDiagnostics(tree, doc, semanticSchemaRef.current, semanticMessagesRef.current, {
+                    cursor,
+                  }),
+                ];
+              },
               { delay: SQL_LINT_DELAY_MS, needsRefresh: (u) => u.selectionSet },
             ),
           ]
@@ -798,6 +832,10 @@ export const QueryEditor = memo(
       defaultDatabase: defaultDatabase ?? null,
       lint: [
         sqlLintEnabled ? "1" : "0",
+        sqlSemanticLintEnabled ? "1" : "0",
+        `x${extraTablesRev}`,
+        semanticMessages.unknownTable,
+        semanticMessages.unknownColumn,
         lintMessages.syntaxError,
         lintMessages.unterminated,
         lintMessages.unknownStatementStart,
@@ -883,6 +921,33 @@ export const QueryEditor = memo(
         cancelled = true;
       };
     }, [sessionId, fkDatabase, databaseSchema]);
+    // セマンティック lint (#1940) 用: Postgres のマテビュー名を補う (取得失敗は無視)。
+    // biome-ignore lint/correctness/useExhaustiveDependencies: databaseSchema は DDL 後の再取得トリガー
+    useEffect(() => {
+      if (!sqlSemanticLintEnabled || driver !== "postgres" || !sessionId || !fkDatabase) {
+        if (extraTablesRef.current.length > 0) {
+          extraTablesRef.current = [];
+          setExtraTablesRev((n) => n + 1);
+        }
+        return;
+      }
+      let cancelled = false;
+      Promise.resolve()
+        .then(() => api.listSchemaObjects(sessionId, fkDatabase))
+        .then((objs) => {
+          if (cancelled) return;
+          const names = objs.filter((o) => o.kind === "materialized_view").map((o) => o.name);
+          if (names.join("\u0000") === extraTablesRef.current.join("\u0000")) return;
+          extraTablesRef.current = names;
+          setExtraTablesRev((n) => n + 1);
+        })
+        .catch(() => {
+          /* lint は best-effort */
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, [sqlSemanticLintEnabled, driver, sessionId, fkDatabase, databaseSchema]);
     // 現在アクティブな state の compartment に入っている設定。
     const appliedConfigRef = useRef<AppliedEditorConfig>(desiredConfig);
     // タブ別 state の保存先と、新規 state の作成関数 (マウント時に一度だけ組み立てる)。
