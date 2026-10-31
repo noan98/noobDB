@@ -1,0 +1,667 @@
+{
+ "_comment": "js_compat::collation_key (Rust) と compareStringCells = Intl.Collator(undefined,{numeric:true}) (TS) の共有ゴールデン (#1944)。expected は Node(ICU) の比較符号 (-1/0/1)。groups は両実装が一致する範囲で Rust/TS 双方が検証する。knownDifferences は Rust 近似が ICU と食い違う既知の差で、TS 側 (JS の正) だけが検証する (Rust は assert しない)。Rust 側を ICU に近づけたら groups へ移す。",
+ "groups": [
+  {
+   "name": "numeric",
+   "cases": [
+    {
+     "a": "a2",
+     "b": "a10",
+     "expected": -1
+    },
+    {
+     "a": "a10",
+     "b": "a2",
+     "expected": 1
+    },
+    {
+     "a": "a2",
+     "b": "a2",
+     "expected": 0
+    },
+    {
+     "a": "01",
+     "b": "1",
+     "expected": 0
+    },
+    {
+     "a": "007",
+     "b": "7",
+     "expected": 0
+    },
+    {
+     "a": "a01",
+     "b": "a1",
+     "expected": 0
+    },
+    {
+     "a": "file9",
+     "b": "file10",
+     "expected": -1
+    },
+    {
+     "a": "1",
+     "b": "2",
+     "expected": -1
+    },
+    {
+     "a": "9",
+     "b": "10",
+     "expected": -1
+    },
+    {
+     "a": "a1b2",
+     "b": "a1b10",
+     "expected": -1
+    },
+    {
+     "a": "0",
+     "b": "00",
+     "expected": 0
+    },
+    {
+     "a": "a",
+     "b": "a1",
+     "expected": -1
+    },
+    {
+     "a": "a1",
+     "b": "a1a",
+     "expected": -1
+    },
+    {
+     "a": "123456789012345678901",
+     "b": "123456789012345678902",
+     "expected": -1
+    },
+    {
+     "a": "99999999999999999999",
+     "b": "100000000000000000000",
+     "expected": -1
+    }
+   ]
+  },
+  {
+   "name": "case",
+   "cases": [
+    {
+     "a": "a",
+     "b": "A",
+     "expected": -1
+    },
+    {
+     "a": "A",
+     "b": "b",
+     "expected": -1
+    },
+    {
+     "a": "B",
+     "b": "a",
+     "expected": 1
+    },
+    {
+     "a": "abc",
+     "b": "ABC",
+     "expected": -1
+    },
+    {
+     "a": "Ab",
+     "b": "aB",
+     "expected": 1
+    },
+    {
+     "a": "a",
+     "b": "B",
+     "expected": -1
+    },
+    {
+     "a": "Z",
+     "b": "a",
+     "expected": 1
+    }
+   ]
+  },
+  {
+   "name": "ascii",
+   "cases": [
+    {
+     "a": "ab",
+     "b": "a b",
+     "expected": 1
+    },
+    {
+     "a": "_a",
+     "b": "a",
+     "expected": -1
+    },
+    {
+     "a": "1",
+     "b": "a",
+     "expected": -1
+    },
+    {
+     "a": "$",
+     "b": "1",
+     "expected": -1
+    },
+    {
+     "a": "$",
+     "b": "_",
+     "expected": 1
+    },
+    {
+     "a": "a-b",
+     "b": "ab",
+     "expected": -1
+    },
+    {
+     "a": "-",
+     "b": "_",
+     "expected": 1
+    },
+    {
+     "a": "(",
+     "b": "[",
+     "expected": -1
+    },
+    {
+     "a": ".",
+     "b": "a",
+     "expected": -1
+    },
+    {
+     "a": "~",
+     "b": "0",
+     "expected": -1
+    },
+    {
+     "a": "a",
+     "b": "a~",
+     "expected": -1
+    },
+    {
+     "a": "!",
+     "b": "\"",
+     "expected": -1
+    }
+   ]
+  },
+  {
+   "name": "empty",
+   "cases": [
+    {
+     "a": "",
+     "b": "a",
+     "expected": -1
+    },
+    {
+     "a": "",
+     "b": "1",
+     "expected": -1
+    },
+    {
+     "a": "",
+     "b": "",
+     "expected": 0
+    },
+    {
+     "a": "",
+     "b": "_",
+     "expected": -1
+    },
+    {
+     "a": "a",
+     "b": "ab",
+     "expected": -1
+    },
+    {
+     "a": "ab",
+     "b": "abc",
+     "expected": -1
+    }
+   ]
+  },
+  {
+   "name": "accent",
+   "cases": [
+    {
+     "a": "é",
+     "b": "f",
+     "expected": -1
+    },
+    {
+     "a": "é",
+     "b": "e",
+     "expected": 1
+    },
+    {
+     "a": "é",
+     "b": "ez",
+     "expected": -1
+    },
+    {
+     "a": "é",
+     "b": "É",
+     "expected": -1
+    },
+    {
+     "a": "É",
+     "b": "f",
+     "expected": -1
+    },
+    {
+     "a": "à",
+     "b": "b",
+     "expected": -1
+    },
+    {
+     "a": "ñ",
+     "b": "o",
+     "expected": -1
+    },
+    {
+     "a": "ü",
+     "b": "u",
+     "expected": 1
+    },
+    {
+     "a": "ü",
+     "b": "v",
+     "expected": -1
+    },
+    {
+     "a": "ö",
+     "b": "oz",
+     "expected": -1
+    },
+    {
+     "a": "ø",
+     "b": "p",
+     "expected": -1
+    },
+    {
+     "a": "å",
+     "b": "b",
+     "expected": -1
+    },
+    {
+     "a": "ç",
+     "b": "d",
+     "expected": -1
+    },
+    {
+     "a": "résumé",
+     "b": "resume",
+     "expected": 1
+    },
+    {
+     "a": "resume",
+     "b": "résumé",
+     "expected": -1
+    },
+    {
+     "a": "cote",
+     "b": "côte",
+     "expected": -1
+    },
+    {
+     "a": "côte",
+     "b": "côté",
+     "expected": -1
+    }
+   ]
+  },
+  {
+   "name": "ligature",
+   "cases": [
+    {
+     "a": "ß",
+     "b": "ss",
+     "expected": 1
+    },
+    {
+     "a": "ß",
+     "b": "st",
+     "expected": -1
+    },
+    {
+     "a": "ß",
+     "b": "sr",
+     "expected": 1
+    },
+    {
+     "a": "æ",
+     "b": "ae",
+     "expected": 1
+    },
+    {
+     "a": "æ",
+     "b": "af",
+     "expected": -1
+    },
+    {
+     "a": "œ",
+     "b": "oe",
+     "expected": 1
+    },
+    {
+     "a": "œ",
+     "b": "of",
+     "expected": -1
+    }
+   ]
+  },
+  {
+   "name": "latinext",
+   "cases": [
+    {
+     "a": "ā",
+     "b": "b",
+     "expected": -1
+    },
+    {
+     "a": "ā",
+     "b": "a",
+     "expected": 1
+    },
+    {
+     "a": "Ł",
+     "b": "M",
+     "expected": -1
+    },
+    {
+     "a": "ł",
+     "b": "l",
+     "expected": 1
+    },
+    {
+     "a": "ł",
+     "b": "m",
+     "expected": -1
+    },
+    {
+     "a": "Nguyễn",
+     "b": "Nguyz",
+     "expected": -1
+    },
+    {
+     "a": "Nguyễn",
+     "b": "Nguyen",
+     "expected": 1
+    },
+    {
+     "a": "ạ",
+     "b": "b",
+     "expected": -1
+    },
+    {
+     "a": "ạ",
+     "b": "a",
+     "expected": 1
+    },
+    {
+     "a": "Ștefan",
+     "b": "Sz",
+     "expected": -1
+    },
+    {
+     "a": "ț",
+     "b": "u",
+     "expected": -1
+    },
+    {
+     "a": "ș",
+     "b": "s",
+     "expected": 1
+    },
+    {
+     "a": "ễ",
+     "b": "Ễ",
+     "expected": -1
+    }
+   ]
+  },
+  {
+   "name": "kana",
+   "cases": [
+    {
+     "a": "あ",
+     "b": "ア",
+     "expected": -1
+    },
+    {
+     "a": "ア",
+     "b": "い",
+     "expected": -1
+    },
+    {
+     "a": "a",
+     "b": "あ",
+     "expected": -1
+    },
+    {
+     "a": "あ",
+     "b": "い",
+     "expected": -1
+    },
+    {
+     "a": "か",
+     "b": "き",
+     "expected": -1
+    },
+    {
+     "a": "ア",
+     "b": "イ",
+     "expected": -1
+    },
+    {
+     "a": "あ",
+     "b": "あ",
+     "expected": 0
+    },
+    {
+     "a": "が",
+     "b": "か",
+     "expected": 1
+    },
+    {
+     "a": "ぁ",
+     "b": "あ",
+     "expected": -1
+    }
+   ]
+  },
+  {
+   "name": "nonlatin",
+   "cases": [
+    {
+     "a": "а",
+     "b": "б",
+     "expected": -1
+    },
+    {
+     "a": "α",
+     "b": "β",
+     "expected": -1
+    },
+    {
+     "a": "a",
+     "b": "я",
+     "expected": -1
+    },
+    {
+     "a": "z",
+     "b": "α",
+     "expected": -1
+    },
+    {
+     "a": "日",
+     "b": "本",
+     "expected": -1
+    },
+    {
+     "a": "本",
+     "b": "日",
+     "expected": 1
+    },
+    {
+     "a": "あ",
+     "b": "日",
+     "expected": -1
+    },
+    {
+     "a": "a",
+     "b": "日",
+     "expected": -1
+    }
+   ]
+  },
+  {
+   "name": "fullwidth",
+   "cases": [
+    {
+     "a": "ａ",
+     "b": "a",
+     "expected": 1
+    },
+    {
+     "a": "Ａ",
+     "b": "a",
+     "expected": 1
+    },
+    {
+     "a": "a",
+     "b": "ａ",
+     "expected": -1
+    }
+   ]
+  },
+  {
+   "name": "combining",
+   "cases": [
+    {
+     "a": "é",
+     "b": "f",
+     "expected": -1
+    },
+    {
+     "a": "é",
+     "b": "e",
+     "expected": 1
+    },
+    {
+     "a": "ä",
+     "b": "b",
+     "expected": -1
+    }
+   ]
+  },
+  {
+   "name": "ctrl",
+   "cases": [
+    {
+     "a": "a\tb",
+     "b": "ab",
+     "expected": -1
+    },
+    {
+     "a": "a\u0000b",
+     "b": "ab",
+     "expected": 0
+    },
+    {
+     "a": "a\nb",
+     "b": "a b",
+     "expected": -1
+    }
+   ]
+  },
+  {
+   "name": "ws",
+   "cases": [
+    {
+     "a": " a",
+     "b": "a",
+     "expected": -1
+    },
+    {
+     "a": "a ",
+     "b": "a",
+     "expected": 1
+    },
+    {
+     "a": "a b",
+     "b": "ab",
+     "expected": -1
+    },
+    {
+     "a": "a  b",
+     "b": "a b",
+     "expected": -1
+    }
+   ]
+  }
+ ],
+ "knownDifferences": [
+  {
+   "group": "accent",
+   "a": "é",
+   "b": "è",
+   "expected": -1
+  },
+  {
+   "group": "latinext",
+   "a": "ạ",
+   "b": "ả",
+   "expected": 1
+  },
+  {
+   "group": "fullwidth",
+   "a": "１",
+   "b": "1",
+   "expected": 0
+  },
+  {
+   "group": "fullwidth",
+   "a": "ａ",
+   "b": "b",
+   "expected": -1
+  },
+  {
+   "group": "combining",
+   "a": "é",
+   "b": "é",
+   "expected": 0
+  },
+  {
+   "group": "symbols",
+   "a": "€",
+   "b": "a",
+   "expected": -1
+  },
+  {
+   "group": "symbols",
+   "a": "€",
+   "b": "1",
+   "expected": -1
+  },
+  {
+   "group": "symbols",
+   "a": "a",
+   "b": "€",
+   "expected": 1
+  },
+  {
+   "group": "symbols",
+   "a": "©",
+   "b": "a",
+   "expected": -1
+  },
+  {
+   "group": "symbols",
+   "a": "é",
+   "b": "€",
+   "expected": 1
+  }
+ ]
+}
