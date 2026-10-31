@@ -195,8 +195,8 @@ jobs:
           NOOBDB_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:15432/testdb
         run: |
           # 環境変数ゲートでテストが黙ってスキップされると緑のまま死角が戻るため、
-          # 対象テストが 1 件以上選ばれていることを先に確認する。
-          cargo nextest list --locked --test external -E "$NEXTEST_FILTER" | tee nextest-list.txt
+          # 対象テストが 1 件以上選ばれていることを先に確認する (色付けの ANSI で grep が外れないよう --color never)。
+          cargo nextest list --locked --color never --test external -E "$NEXTEST_FILTER" | tee nextest-list.txt
           grep -q "mysql_integration::mysql_roundtrip_when_env_set" nextest-list.txt
           grep -q "postgres_integration::postgres_roundtrip_when_env_set" nextest-list.txt
           cargo nextest run --locked --test external -E "$NEXTEST_FILTER" --retries 1 --no-fail-fast
