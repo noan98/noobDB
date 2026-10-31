@@ -52,11 +52,11 @@ import { Button } from "./ui";
  *
  * ## モーション (#1142)
  *
- * タブ切替は本体を `KeepAlive` で保持し (#1311)、再表示のときだけ `variants.fade` で
- * 入場する (退場を待たない)。切替先が隣のタブなら、滑るインジケータと同じ向きに
- * `slideDirection` で方向付きスライド + フェードにする (#1952、サイドバー #1830 と同じ流儀)。開閉は `WorkspaceSplit` がパネル全体を
- * `variants.slideUp` で出し入れする。reduced-motion 時はルートの `MotionConfig`
- * が y 移動を抑制する (フェードだけが残る)。
+ * タブ切替は本体を `KeepAlive` で保持し (#1311)、表示に切り替わる側だけ、滑る
+ * インジケータと同じ向き (タブの並びで右なら右から) に `slideDirection` で方向付き
+ * スライド + フェードで入場する (#1952、サイドバー #1830 と同じ流儀。退場は待たない)。
+ * 開閉は `WorkspaceSplit` がパネル全体を `variants.slideUp` で出し入れする。
+ * reduced-motion 時はルートの `MotionConfig` が x / y の移動を止め、フェードだけが残る。
  */
 
 /** アニメーションする本体・パネルの枠。flex 子として高さいっぱいに広がる。 */
