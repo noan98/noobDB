@@ -23,7 +23,10 @@ import type {
 } from "../api/tauri";
 import { tableToMarkdown } from "./tabularText";
 
-export const ALL_KINDS: readonly SchemaObjectKind[] = [
+/** Where-used が走査する種別。`sequence` はツリーの一覧・定義表示専用 (#1957) なので含めない。 */
+export type WhereUsedObjectKind = Exclude<SchemaObjectKind, "sequence">;
+
+export const ALL_KINDS: readonly WhereUsedObjectKind[] = [
   "view",
   "materialized_view",
   "procedure",
@@ -39,7 +42,7 @@ export const ALL_KINDS: readonly SchemaObjectKind[] = [
  * - PostgreSQL: 上記 + マテリアライズドビュー
  * - SQLite: ビュー / トリガーのみ (ストアドルーチンが存在しない)
  */
-export const WHERE_USED_KIND_SUPPORT: Readonly<Record<string, readonly SchemaObjectKind[]>> = {
+export const WHERE_USED_KIND_SUPPORT: Readonly<Record<string, readonly WhereUsedObjectKind[]>> = {
   mysql: ["view", "procedure", "function", "trigger"],
   postgres: ALL_KINDS,
   sqlite: ["view", "trigger"],
@@ -50,7 +53,7 @@ export const WHERE_USED_KIND_SUPPORT: Readonly<Record<string, readonly SchemaObj
  * マテリアライズドビューは PostgreSQL 以外に存在しない種別なので、毎回ノイズに
  * ならないよう挙げない。
  */
-export function unsupportedWhereUsedKinds(driver: string): SchemaObjectKind[] {
+export function unsupportedWhereUsedKinds(driver: string): WhereUsedObjectKind[] {
   const supported = WHERE_USED_KIND_SUPPORT[driver] ?? ALL_KINDS;
   return ALL_KINDS.filter((k) => k !== "materialized_view" && !supported.includes(k));
 }

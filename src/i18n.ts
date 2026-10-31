@@ -1508,7 +1508,7 @@ const en = {
   treeKindFilter_all: "All",
   treeKindFilter_tables: "Tables",
   treeKindFilter_views: "Views",
-  treeKindFilter_routines: "Routines / Triggers",
+  treeKindFilter_routines: "Routines / triggers / sequences",
   treeExpandSiblingsLimited:
     "Expanded the first {limit} tables only ({skipped} more were left collapsed to avoid loading too many at once)",
   treeKindFilterEmpty: "No objects of this type",
@@ -3587,6 +3587,7 @@ const en = {
   objGroupProcedures: "Procedures",
   objGroupFunctions: "Functions",
   objGroupTriggers: "Triggers",
+  objGroupSequences: "Sequences",
   objDefinitionError: "Failed to load definition: {error}",
   // テーブルのインデックス表示。
   indexesLabel: "Indexes",
@@ -8743,7 +8744,7 @@ const ja: Dict = {
   treeKindFilter_all: "すべて",
   treeKindFilter_tables: "テーブル",
   treeKindFilter_views: "ビュー",
-  treeKindFilter_routines: "ルーチン / トリガー",
+  treeKindFilter_routines: "ルーチン / トリガー / シーケンス",
   treeExpandSiblingsLimited:
     "先頭の {limit} 件だけ展開しました (残り {skipped} 件は一度に読み込みすぎないよう閉じたままです)",
   treeKindFilterEmpty: "この種別のオブジェクトはありません",
@@ -10807,6 +10808,7 @@ const ja: Dict = {
   objGroupProcedures: "プロシージャ",
   objGroupFunctions: "関数",
   objGroupTriggers: "トリガー",
+  objGroupSequences: "シーケンス",
   objDefinitionError: "定義の取得に失敗しました: {error}",
   // テーブルのインデックス表示。
   indexesLabel: "インデックス",

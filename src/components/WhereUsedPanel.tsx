@@ -5,7 +5,6 @@ import { motion, useReducedMotion } from "motion/react";
 import {
   api,
   listenWhereUsedStream,
-  type SchemaObjectKind,
   type WhereUsedMatch,
   type WhereUsedProgress,
   type WhereUsedReport,
@@ -28,6 +27,7 @@ import {
   whereUsedExportTable,
   whereUsedMarkdown,
   type WhereUsedExportLabels,
+  type WhereUsedObjectKind,
 } from "./whereUsed";
 import { TextExportButton } from "./TextExportButton";
 import { tableToCsv } from "./tabularText";
@@ -69,7 +69,7 @@ function makeWhereUsedStreamId(): string {
   return `whereused_${Date.now().toString(36)}_${whereUsedStreamSeq.toString(36)}`;
 }
 
-const KIND_LABEL: Record<SchemaObjectKind | "snippet", I18nKey> = {
+const KIND_LABEL: Record<WhereUsedObjectKind | "snippet", I18nKey> = {
   view: "objGroupViews",
   materialized_view: "objGroupMatViews",
   procedure: "objGroupProcedures",
@@ -78,7 +78,7 @@ const KIND_LABEL: Record<SchemaObjectKind | "snippet", I18nKey> = {
   snippet: "whereUsedKindSnippet",
 };
 
-const KIND_ICON: Record<SchemaObjectKind | "snippet", IconName> = {
+const KIND_ICON: Record<WhereUsedObjectKind | "snippet", IconName> = {
   view: "view",
   materialized_view: "view",
   procedure: "routine",
