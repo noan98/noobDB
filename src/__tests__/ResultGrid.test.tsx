@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { createRef } from "react";
 import userEvent from "@testing-library/user-event";
 import { act, fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
-import { readStoredGridView, writeStoredGridView } from "../components/gridViewState";
+import {
+  condFormatKeyFrom,
+  readStoredCondFormat,
+  readStoredGridView,
+  writeStoredGridView,
+} from "../components/gridViewState";
 import {
   ResultGrid,
   rowToPendingInsert,
@@ -2844,5 +2849,32 @@ describe("名前付きビュープリセット (#1942)", () => {
     await waitFor(() =>
       expect(readStoredGridView(gridViewStateKeyFrom(sizingKey)).masks).toEqual({ name: true, qty: true }),
     );
+  });
+});
+
+describe("条件付き書式の永続化 (#1958)", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("保存済みの書式 (データバー) が再マウントで復元される", () => {
+    const sizingKey = resultShapeSizingKey(FRUIT_COLUMNS, "db", "fruit");
+    const { container, unmount } = renderWithProviders(
+      <ResultGrid result={FRUIT_RESULT} database="db" table="fruit" />,
+    );
+    expect(container.querySelector(".cell-databar")).toBeNull();
+    unmount();
+    // qty (列 1) をデータバーにして保存してから開き直す。
+    localStorage.setItem(condFormatKeyFrom(sizingKey) as string, JSON.stringify({ formats: { 1: "bar" } }));
+    const again = renderWithProviders(<ResultGrid result={FRUIT_RESULT} database="db" table="fruit" />);
+    expect(again.container.querySelector(".cell-databar")).not.toBeNull();
+    expect(readStoredCondFormat(condFormatKeyFrom(sizingKey))).toEqual({ formats: { 1: "bar" } });
+  });
+
+  it("壊れた保存値は無視して書式 off で描画する", () => {
+    const sizingKey = resultShapeSizingKey(FRUIT_COLUMNS, "db", "fruit");
+    localStorage.setItem(condFormatKeyFrom(sizingKey) as string, "{broken");
+    const { container } = renderWithProviders(
+      <ResultGrid result={FRUIT_RESULT} database="db" table="fruit" />,
+    );
+    expect(container.querySelector(".cell-databar")).toBeNull();
   });
 });

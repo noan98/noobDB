@@ -1,4 +1,12 @@
 import type { ColumnFiltersState, SortingState } from "@tanstack/react-table";
+import {
+  type CondFormatMode,
+  DEFAULT_HEAT_PALETTE,
+  HEAT_PALETTES,
+  THRESHOLD_OPS,
+  THRESHOLD_TONES,
+  type ThresholdRule,
+} from "./cellConditionalFormat";
 import { setItemWithEviction, touchLayoutLruForKey } from "./columnLayoutStorage";
 import type { ColumnFilter, FilterNullMode, FilterOp } from "./ResultGrid";
 
@@ -388,4 +396,123 @@ export interface GridViewPresetsHandle {
   capture: () => Pick<GridViewPreset, "view" | "layout">;
   /** プリセットをまとめて適用する (自動永続化の最新 1 状態にも反映される)。 */
   apply: (preset: GridViewPreset) => void;
+}
+
+// ---------------------------------------------------------------------------
+// 条件付き書式 (データバー/ヒートマップ/閾値ルール) のテーブル単位永続化 (#1958)
+// ---------------------------------------------------------------------------
+// 列幅・ソート・フッター集計は結果シェイプ単位で永続化済みなのに、条件付き書式 (#1628) だけ
+// 揮発性の `useState` で、タブを開き直す/再起動するたびに off へ戻っていた。同じ結果シェイプ
+// キー体系へ相乗りした `noobdb.gridcondfmt.v1` に保存する (LRU の対象。`columnLayoutStorage` の
+// SIBLING_PREFIXES)。ソート等の `noobdb.gridview.v1` blob と分けるのは、その書き込み経路
+// (ソート/フィルタ/マスク/プリセット適用) が書式を巻き込んで消さないため。
+
+/** テーブル単位で保存する条件付き書式。全フィールド任意 (無ければ既定)。 */
+export interface PersistedCondFormat {
+  /** 列位置 → 適用モード (off は持たない)。 */
+  formats?: Record<number, CondFormatMode>;
+  /** 列位置 → 閾値ルール。 */
+  thresholds?: Record<number, ThresholdRule>;
+  /** ヒートマップのパレットキー (既定以外のときだけ持つ)。 */
+  palette?: string;
+}
+
+/** 列サイジングキーから条件付き書式の保存キーを導出する (プレビューペインでは undefined)。 */
+export function condFormatKeyFrom(sizingKey: string | undefined): string | undefined {
+  return sizingKey ? sizingKey.replace("noobdb.colsizing.v1", "noobdb.gridcondfmt.v1") : undefined;
+}
+
+const COND_MODES: readonly CondFormatMode[] = ["bar", "heat", "threshold"];
+
+function parseColIdx(k: string): number | undefined {
+  return /^\d+$/.test(k) ? Number(k) : undefined;
+}
+
+function isThresholdRule(v: unknown): v is ThresholdRule {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.op === "string" &&
+    (THRESHOLD_OPS as readonly string[]).includes(o.op) &&
+    typeof o.value === "number" &&
+    Number.isFinite(o.value) &&
+    typeof o.tone === "string" &&
+    (THRESHOLD_TONES as readonly string[]).includes(o.tone)
+  );
+}
+
+/**
+ * パース済み JSON を妥当な条件付き書式に整える。純粋 (ストレージ非依存)。未知のモード・
+ * 不正な列位置・型不一致・未知のパレットは捨てて既定へフォールバックする (#566 の作法)。
+ */
+export function normalizeCondFormat(parsed: unknown): PersistedCondFormat {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+  const o = parsed as Record<string, unknown>;
+  const out: PersistedCondFormat = {};
+  if (o.formats && typeof o.formats === "object" && !Array.isArray(o.formats)) {
+    const formats: Record<number, CondFormatMode> = {};
+    for (const [k, v] of Object.entries(o.formats as Record<string, unknown>)) {
+      const idx = parseColIdx(k);
+      if (idx !== undefined && typeof v === "string" && (COND_MODES as readonly string[]).includes(v)) {
+        formats[idx] = v as CondFormatMode;
+      }
+    }
+    if (Object.keys(formats).length > 0) out.formats = formats;
+  }
+  if (o.thresholds && typeof o.thresholds === "object" && !Array.isArray(o.thresholds)) {
+    const thresholds: Record<number, ThresholdRule> = {};
+    for (const [k, v] of Object.entries(o.thresholds as Record<string, unknown>)) {
+      const idx = parseColIdx(k);
+      if (idx !== undefined && isThresholdRule(v)) {
+        thresholds[idx] = { op: v.op, value: v.value, tone: v.tone };
+      }
+    }
+    if (Object.keys(thresholds).length > 0) out.thresholds = thresholds;
+  }
+  if (
+    typeof o.palette === "string" &&
+    o.palette !== DEFAULT_HEAT_PALETTE &&
+    Object.prototype.hasOwnProperty.call(HEAT_PALETTES, o.palette)
+  ) {
+    out.palette = o.palette;
+  }
+  return out;
+}
+
+/** 保存済みの条件付き書式を読む。壊れた JSON・キー無しは空 (= すべて off) へフォールバックする。 */
+export function readStoredCondFormat(key: string | undefined): PersistedCondFormat {
+  if (!key) return {};
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return {};
+    return normalizeCondFormat(JSON.parse(raw));
+  } catch {
+    // ignore (corrupt entry, private mode, quota)
+    return {};
+  }
+}
+
+/** 条件付き書式を保存する。実質既定 (書式なし・閾値なし・既定パレット) ならエントリごと削除する。 */
+export function writeStoredCondFormat(key: string | undefined, state: PersistedCondFormat): void {
+  if (!key) return;
+  try {
+    const clean = normalizeCondFormat(state);
+    // 閾値ルールは閾値モードの列だけが使う。モードを外した列の古い設定は残さない。
+    if (clean.thresholds) {
+      const used: Record<number, ThresholdRule> = {};
+      for (const [k, r] of Object.entries(clean.thresholds)) {
+        if (clean.formats?.[Number(k)] === "threshold") used[Number(k)] = r;
+      }
+      if (Object.keys(used).length > 0) clean.thresholds = used;
+      else delete clean.thresholds;
+    }
+    if (!clean.formats && !clean.thresholds && !clean.palette) {
+      localStorage.removeItem(key);
+      return;
+    }
+    touchLayoutLruForKey(key);
+    setItemWithEviction(key, JSON.stringify(clean));
+  } catch {
+    // ignore (private mode, quota)
+  }
 }

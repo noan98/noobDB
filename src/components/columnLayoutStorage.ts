@@ -12,6 +12,7 @@ const SIBLING_PREFIXES = [
   "noobdb.gridview.v1",
   "noobdb.gridfooter.v1",
   "noobdb.gridpresets.v1",
+  "noobdb.gridcondfmt.v1",
 ];
 
 function readLruOrder(): string[] {
