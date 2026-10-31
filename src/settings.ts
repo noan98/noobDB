@@ -257,6 +257,13 @@ export interface Settings {
    */
   sqlLintEnabled: boolean;
   /**
+   * スキーマ認識のセマンティック lint (#1940)。既定オン。構文チェック (`sqlLintEnabled`) が
+   * オンのときだけ働き、接続中スキーマに存在しないテーブル名・列名の参照を警告で示す
+   * (エイリアス・CTE・サブクエリなどを解決できないものは警告しない)。誤検知が気になる
+   * ユーザ向けに単独でオフにできる。
+   */
+  sqlSemanticLintEnabled: boolean;
+  /**
    * 実行前の影響行数プリフライト (#737)。既定オン。オンのとき、エディタの現在文が
    * 単純な UPDATE / DELETE のとき対象テーブルと WHERE から `SELECT COUNT(*)` を
    * 組み立ててデバウンス付きで裏実行し、「影響: 約 N 行」「影響: 全行」バッジを
@@ -744,6 +751,9 @@ export const DEFAULT_PERF_MEASURE_ENABLED = false;
 /** リアルタイム SQL 構文チェック (#704) は既定オン。 */
 export const DEFAULT_SQL_LINT_ENABLED = true;
 
+/** スキーマ認識のセマンティック lint (#1940) も既定オン (構文チェックがオンのときのみ有効)。 */
+export const DEFAULT_SQL_SEMANTIC_LINT_ENABLED = true;
+
 /** 実行前の影響行数プリフライト (#737) は既定オン。 */
 export const DEFAULT_PREFLIGHT_IMPACT_ENABLED = true;
 
@@ -826,6 +836,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoUpdateCheckEnabled: DEFAULT_AUTO_UPDATE_CHECK_ENABLED,
   perfMeasureEnabled: DEFAULT_PERF_MEASURE_ENABLED,
   sqlLintEnabled: DEFAULT_SQL_LINT_ENABLED,
+  sqlSemanticLintEnabled: DEFAULT_SQL_SEMANTIC_LINT_ENABLED,
   preflightImpactEnabled: DEFAULT_PREFLIGHT_IMPACT_ENABLED,
   scanPreflightEnabled: DEFAULT_SCAN_PREFLIGHT_ENABLED,
   planWatchOnConnect: DEFAULT_PLAN_WATCH_ON_CONNECT,
@@ -1072,6 +1083,7 @@ export function normalizeSettings(input: unknown): Settings {
     autoUpdateCheckEnabled?: unknown;
     perfMeasureEnabled?: unknown;
     sqlLintEnabled?: unknown;
+    sqlSemanticLintEnabled?: unknown;
     preflightImpactEnabled?: unknown;
     scanPreflightEnabled?: unknown;
     planWatchOnConnect?: unknown;
@@ -1199,6 +1211,10 @@ export function normalizeSettings(input: unknown): Settings {
         : DEFAULT_PERF_MEASURE_ENABLED,
     sqlLintEnabled:
       typeof parsed.sqlLintEnabled === "boolean" ? parsed.sqlLintEnabled : DEFAULT_SQL_LINT_ENABLED,
+    sqlSemanticLintEnabled:
+      typeof parsed.sqlSemanticLintEnabled === "boolean"
+        ? parsed.sqlSemanticLintEnabled
+        : DEFAULT_SQL_SEMANTIC_LINT_ENABLED,
     preflightImpactEnabled:
       typeof parsed.preflightImpactEnabled === "boolean"
         ? parsed.preflightImpactEnabled
@@ -1769,6 +1785,13 @@ export function setPerfMeasureEnabled(value: boolean): void {
 export function setSqlLintEnabled(value: boolean): void {
   if (current.sqlLintEnabled === value) return;
   current = { ...current, sqlLintEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setSqlSemanticLintEnabled(value: boolean): void {
+  if (current.sqlSemanticLintEnabled === value) return;
+  current = { ...current, sqlSemanticLintEnabled: value };
   persist();
   listeners.forEach((cb) => cb());
 }
