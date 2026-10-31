@@ -1979,7 +1979,7 @@ impl PostgresConn {
     }
 
     pub async fn schema_objects(&self, schema: &str) -> Result<Vec<SchemaObject>> {
-        // Views, materialized views, routines, and triggers, unioned in display
+        // Views, materialized views, routines, triggers, and sequences, unioned in display
         // order. `schema` is the namespace (the tree's "database" for PG).
         // Routines and triggers carry their `oid` (as text) so `object_definition`
         // can fetch the exact object — same-name overloaded functions and
@@ -2003,6 +2003,9 @@ impl PostgresConn {
               JOIN pg_class c ON c.oid = t.tgrelid
               JOIN pg_namespace n ON n.oid = c.relnamespace
              WHERE n.nspname = $1 AND NOT t.tgisinternal
+            UNION ALL
+            SELECT 'sequence', sequencename::text, NULL::text
+              FROM pg_sequences WHERE schemaname = $1
             ORDER BY kind, name
             "#,
         )
@@ -2046,34 +2049,62 @@ impl PostgresConn {
         .bind(schema)
         .fetch_all(&self.pool)
         .await?;
-        let quote = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
         Ok(rows
             .iter()
             .map(|r| {
                 let name: String = r.try_get(0).unwrap_or_default();
-                let data_type: String = r.try_get(1).unwrap_or_default();
-                let opt = |i: usize, kw: &str| {
-                    r.try_get::<Option<i64>, _>(i)
-                        .ok()
-                        .flatten()
-                        .map(|v| format!(" {kw} {v}"))
-                        .unwrap_or_default()
-                };
-                let cycle: bool = r.try_get(6).unwrap_or(false);
-                let ddl = format!(
-                    "CREATE SEQUENCE {} AS {}{}{}{}{}{} {}",
-                    quote(&name),
-                    data_type,
-                    opt(5, "INCREMENT BY"),
-                    opt(3, "MINVALUE"),
-                    opt(4, "MAXVALUE"),
-                    opt(2, "START WITH"),
-                    opt(7, "CACHE"),
-                    if cycle { "CYCLE" } else { "NO CYCLE" },
-                );
+                let ddl = create_sequence_ddl(r);
                 (name, ddl)
             })
             .collect())
+    }
+
+    /// 1 本のシーケンスの定義表示 (スキーマツリーから開く, #1957)。`CREATE SEQUENCE` に加えて、
+    /// 所有列 (serial / identity) があれば `OWNED BY`、採番の現在値 (`last_value`) があれば
+    /// コメントで添える。現在値は環境ごとに違って当然なので、比較用の
+    /// [`sequence_definitions`](Self::sequence_definitions) には含めない。
+    async fn sequence_definition(&self, schema: &str, name: &str) -> Result<Option<String>> {
+        let row: Option<PgRow> = sqlx::query(
+            r#"
+            SELECT s.sequencename::text, s.data_type::text, s.start_value, s.min_value,
+                   s.max_value, s.increment_by, s.cycle, s.cache_size, s.last_value,
+                   (SELECT format('%I.%I.%I', tn.nspname, t.relname, a.attname)
+                      FROM pg_class c
+                      JOIN pg_namespace n ON n.oid = c.relnamespace
+                      JOIN pg_depend d ON d.objid = c.oid
+                                      AND d.classid = 'pg_class'::regclass
+                                      AND d.refclassid = 'pg_class'::regclass
+                                      AND d.deptype IN ('a', 'i')
+                      JOIN pg_class t ON t.oid = d.refobjid
+                      JOIN pg_namespace tn ON tn.oid = t.relnamespace
+                      JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = d.refobjsubid
+                     WHERE c.relkind = 'S'
+                       AND c.relname = s.sequencename
+                       AND n.nspname = s.schemaname
+                     LIMIT 1) AS owned_by
+              FROM pg_sequences s
+             WHERE s.schemaname = $1 AND s.sequencename = $2
+            "#,
+        )
+        .bind(schema)
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| {
+            let mut out = format!("{};", create_sequence_ddl(&r));
+            if let Ok(Some(owner)) = r.try_get::<Option<String>, _>(9) {
+                out.push_str(&format!(
+                    "\nALTER SEQUENCE \"{}\" OWNED BY {};",
+                    name.replace('"', "\"\""),
+                    owner
+                ));
+            }
+            match r.try_get::<Option<i64>, _>(8) {
+                Ok(Some(v)) => out.push_str(&format!("\n-- last_value: {v}")),
+                _ => out.push_str("\n-- last_value: (not called yet)"),
+            }
+            out
+        }))
     }
 
     /// `schema` の関数 / プロシージャの引数並び (`pg_get_function_identity_arguments`) を
@@ -2317,6 +2348,7 @@ impl PostgresConn {
                     .await?
                 }
             },
+            "sequence" => self.sequence_definition(schema, name).await?,
             other => {
                 return Err(AppError::InvalidInput(format!(
                     "unsupported object kind: {other}"
@@ -4462,6 +4494,33 @@ fn statements_unreadable_reason(error_message: &str) -> &'static str {
     } else {
         "stats_unreadable"
     }
+}
+
+/// `pg_sequences` の 1 行 (列順: name, data_type, start, min, max, increment, cycle, cache) から
+/// `CREATE SEQUENCE` 文 (末尾のセミコロンなし) を組み立てる。比較 (#1879) と定義表示 (#1957) で共有する。
+fn create_sequence_ddl(r: &PgRow) -> String {
+    let quote = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
+    let name: String = r.try_get(0).unwrap_or_default();
+    let data_type: String = r.try_get(1).unwrap_or_default();
+    let opt = |i: usize, kw: &str| {
+        r.try_get::<Option<i64>, _>(i)
+            .ok()
+            .flatten()
+            .map(|v| format!(" {kw} {v}"))
+            .unwrap_or_default()
+    };
+    let cycle: bool = r.try_get(6).unwrap_or(false);
+    format!(
+        "CREATE SEQUENCE {} AS {}{}{}{}{}{} {}",
+        quote(&name),
+        data_type,
+        opt(5, "INCREMENT BY"),
+        opt(3, "MINVALUE"),
+        opt(4, "MAXVALUE"),
+        opt(2, "START WITH"),
+        opt(7, "CACHE"),
+        if cycle { "CYCLE" } else { "NO CYCLE" },
+    )
 }
 
 #[cfg(test)]

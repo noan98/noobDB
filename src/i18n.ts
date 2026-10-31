@@ -3582,6 +3582,7 @@ const en = {
   objGroupProcedures: "Procedures",
   objGroupFunctions: "Functions",
   objGroupTriggers: "Triggers",
+  objGroupSequences: "Sequences",
   objDefinitionError: "Failed to load definition: {error}",
   // テーブルのインデックス表示。
   indexesLabel: "Indexes",
@@ -10737,6 +10738,7 @@ const ja: Dict = {
   objGroupProcedures: "プロシージャ",
   objGroupFunctions: "関数",
   objGroupTriggers: "トリガー",
+  objGroupSequences: "シーケンス",
   objDefinitionError: "定義の取得に失敗しました: {error}",
   // テーブルのインデックス表示。
   indexesLabel: "インデックス",
