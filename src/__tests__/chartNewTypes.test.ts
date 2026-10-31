@@ -246,6 +246,14 @@ describe("種類の切替で設定を整える (#1941)", () => {
     expect(applyChartType(cfg({ xCol: 0, yCols: [1] }), "combo", numeric).yCols).toEqual([1, 2]);
     expect(applyChartType(cfg({ xCol: 0, yCols: [1] }), "combo", [false, true]).yCols).toEqual([1]);
   });
+  it("ヒストグラムから戻すとき Y が空なら数値の Y を 1 本補う", () => {
+    const c = applyChartType(cfg({ type: "histogram", xCol: 1, yCols: [] }), "bar", numeric);
+    expect(c.yCols).toEqual([2]);
+  });
+  it("ヒストグラムで全値が同じでも singlePoint の注記は出さない", () => {
+    const m = buildChartModel(cols("n"), [[4], [4]], cfg({ type: "histogram", yCols: [] }));
+    expect(chartNotices(m)).toEqual([]);
+  });
   it("数値列が無くても例外にならない", () => {
     const c = applyChartType(cfg({ xCol: 0, yCols: [1] }), "scatter", [false, false]);
     expect(c.type).toBe("scatter");

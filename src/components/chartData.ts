@@ -299,7 +299,16 @@ export function defaultChartConfig(columns: Column[], rows: CellValue[][]): Char
   const yCols = [firstNumeric].filter((i) => i !== xCol);
   if (yCols.length === 0) {
     const altY = numeric.findIndex((n, i) => n && i !== xCol);
-    if (altY < 0) return null;
+    if (altY < 0) {
+      // 数値列が 1 本だけの結果は、その列の分布 (ヒストグラム) を既定にする (Y は使わない)。
+      return {
+        type: "histogram",
+        xCol: firstNumeric,
+        yCols: [],
+        aggregation: "none",
+        palette: DEFAULT_CHART_PALETTE,
+      };
+    }
     yCols.push(altY);
   }
   return { type: "bar", xCol, yCols, aggregation: "none", palette: DEFAULT_CHART_PALETTE };
@@ -892,7 +901,12 @@ export function applyChartType(config: ChartConfig, type: ChartType, numeric: bo
         if (y >= 0) next.yCols = [y];
       }
     }
-  } else if (type === "combo" && next.yCols.length < 2) {
+  } else if (type !== "pie" && next.yCols.length === 0) {
+    // ヒストグラムは Y を持たないので、他の種類へ戻すときは数値の Y を 1 本補う。
+    const y = numeric.findIndex((n, i) => n && i !== next.xCol);
+    if (y >= 0) next.yCols = [y];
+  }
+  if (type === "combo" && next.yCols.length < 2) {
     const y = numeric.findIndex((n, i) => n && i !== next.xCol && !next.yCols.includes(i));
     if (y >= 0) next.yCols = [...next.yCols, y];
   }
@@ -918,7 +932,7 @@ export type ChartNotice = "singlePoint" | "flatValues" | "nonNumericExcluded" | 
  */
 export function chartNotices(model: ChartModel): ChartNotice[] {
   const notices: ChartNotice[] = [];
-  if (model.labels.length === 1) notices.push("singlePoint");
+  if (model.labels.length === 1 && !model.histEdges) notices.push("singlePoint");
   const allValues = model.series.flatMap((s) => s.values);
   // ヒストグラムは件数が揃うのが普通の分布 (一様) なので「平坦」の注記は出さない (#1941)。
   if (

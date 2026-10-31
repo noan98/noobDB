@@ -90,4 +90,48 @@ describe("ChartView の新しい種類 (#1941)", () => {
     await pickType(t("chartTypeCombo"));
     expect(screen.getByText(t("chartNeedCombo"))).toBeInTheDocument();
   });
+
+  it("ヒストグラムで NULL/非数値を含むと除外の注記が出る (#1941)", async () => {
+    const withNull = {
+      ...numeric,
+      rows: [
+        ["jan", 10, 4],
+        ["feb", null, 6],
+        ["mar", 30, 9],
+        ["apr", "x", 1],
+      ],
+    } as unknown as QueryResult;
+    renderWithProviders(<ChartView result={withNull} sourceSql="select 3" onChangeView={() => {}} />);
+    await pickType(t("chartTypeHistogram"));
+    expect(screen.getByText(t("chartNoticeRowsDropped", { count: 2 }))).toBeInTheDocument();
+  });
+
+  it("数値列 1 本だけの結果でもヒストグラムが描ける (#1941)", () => {
+    const single = {
+      columns: [{ name: "price", type_name: "INT" }],
+      rows: [[1], [2], [3], [9]],
+      rows_affected: 0,
+      elapsed_ms: 1,
+    } as unknown as QueryResult;
+    const { container } = renderWithProviders(
+      <ChartView result={single} sourceSql="select 4" onChangeView={() => {}} />,
+    );
+    expect(container.querySelector('svg[data-chart-kind="histogram"]')).not.toBeNull();
+    expect(container.querySelectorAll("[data-histogram-bin]").length).toBe(10);
+  });
+
+  it("複合: 折れ線が先頭の列でも polyline は棒より後ろ (手前) に描く (#1941)", async () => {
+    const { container } = renderWithProviders(
+      <ChartView result={numeric} sourceSql="select 5" onChangeView={() => {}} />,
+    );
+    await pickType(t("chartTypeCombo"));
+    fireEvent.click(screen.getByRole("combobox", { name: t("chartComboLine") }));
+    fireEvent.click(await screen.findByRole("option", { name: "sales" }));
+    const svg = container.querySelector("svg[data-chart-svg]") as SVGSVGElement;
+    const line = svg.querySelector("polyline") as Element;
+    const bar = Array.from(svg.querySelectorAll("path")).find((p) => p.getAttribute("fill")) as Element;
+    expect(line).not.toBeNull();
+    expect(bar).toBeDefined();
+    expect(bar.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
 });

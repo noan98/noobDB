@@ -231,7 +231,10 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
   // 退化データの注記は「実際にチャートを描く」ときだけ意味を持つ (Y 未選択/
   // データ 0 件のときは注記より前段の空状態メッセージが優先される)。
   const notices = useMemo<ChartNotice[]>(
-    () => (model && config && config.yCols.length > 0 && model.labels.length > 0 ? chartNotices(model) : []),
+    () =>
+      model && config && (config.type === "histogram" || config.yCols.length > 0) && model.labels.length > 0
+        ? chartNotices(model)
+        : [],
     [model, config],
   );
 
@@ -1017,25 +1020,55 @@ export function CartesianChart({
         )}
 
         {/* 系列 */}
-        {model.series.map((s, si) => {
-          const color = colors[si % colors.length];
-          if (type === "stackedBar") {
-            return (
-              <g key={si}>
-                {seriesGeom[si].rects.map((r, i) =>
-                  r.h > 0 ? (
-                    // 区画は基線から伸びるように出現させる (originY は基線の位置に合わせる)。
-                    <motion.rect
+        {/* 複合の折れ線は棒の上に重ねるため最後に描く (色・幾何は元の系列順のまま)。 */}
+        {model.series
+          .map((s, si) => ({ s, si }))
+          .sort((a, b) => Number(a.s === lineSeries) - Number(b.s === lineSeries))
+          .map(({ s, si }) => {
+            const color = colors[si % colors.length];
+            if (type === "stackedBar") {
+              return (
+                <g key={si}>
+                  {seriesGeom[si].rects.map((r, i) =>
+                    r.h > 0 ? (
+                      // 区画は基線から伸びるように出現させる (originY は基線の位置に合わせる)。
+                      <motion.rect
+                        key={i}
+                        x={r.x}
+                        y={r.y}
+                        width={r.w}
+                        height={r.h}
+                        fill={color}
+                        stroke="var(--bg-elevated)"
+                        strokeWidth={1}
+                        fillOpacity={hover == null || hover === i ? 1 : 0.5}
+                        style={{ originX: 0.5, originY: (r.baseY - r.y) / r.h }}
+                        initial={animate ? { scaleY: 0 } : false}
+                        animate={{ scaleY: 1 }}
+                        transition={
+                          animate
+                            ? { duration: durations.slow, ease: easings.out, delay: Math.min(i, 24) * 0.006 }
+                            : { duration: 0 }
+                        }
+                      />
+                    ) : null,
+                  )}
+                </g>
+              );
+            }
+            if (type === "bar" || (isCombo && s !== lineSeries)) {
+              return (
+                <g key={si}>
+                  {seriesGeom[si].bars.map((bar, i) => (
+                    // 棒は 0 基線から伸びるように出現させる (最終形のパスを基線起点で scaleY
+                    // 0 → 1)。上端 (負の値は下端) だけを丸めたいが rect の rx は四隅に効く
+                    // ため、値側の端だけ丸めたパスで描く (パスは seriesGeom で前計算)。
+                    <motion.path
                       key={i}
-                      x={r.x}
-                      y={r.y}
-                      width={r.w}
-                      height={r.h}
-                      fill={color}
-                      stroke="var(--bg-elevated)"
-                      strokeWidth={1}
+                      d={bar.d}
+                      fill={valueColors?.[i] ?? color}
                       fillOpacity={hover == null || hover === i ? 1 : 0.5}
-                      style={{ originX: 0.5, originY: (r.baseY - r.y) / r.h }}
+                      style={{ originX: 0.5, originY: bar.up ? 1 : 0 }}
                       initial={animate ? { scaleY: 0 } : false}
                       animate={{ scaleY: 1 }}
                       transition={
@@ -1044,85 +1077,59 @@ export function CartesianChart({
                           : { duration: 0 }
                       }
                     />
-                  ) : null,
-                )}
-              </g>
-            );
-          }
-          if (type === "bar" || (isCombo && s !== lineSeries)) {
+                  ))}
+                </g>
+              );
+            }
+            // line / area
+            const { pts, areaPath } = seriesGeom[si];
             return (
               <g key={si}>
-                {seriesGeom[si].bars.map((bar, i) => (
-                  // 棒は 0 基線から伸びるように出現させる (最終形のパスを基線起点で scaleY
-                  // 0 → 1)。上端 (負の値は下端) だけを丸めたいが rect の rx は四隅に効く
-                  // ため、値側の端だけ丸めたパスで描く (パスは seriesGeom で前計算)。
+                {type === "area" && (
                   <motion.path
-                    key={i}
-                    d={bar.d}
-                    fill={valueColors?.[i] ?? color}
-                    fillOpacity={hover == null || hover === i ? 1 : 0.5}
-                    style={{ originX: 0.5, originY: bar.up ? 1 : 0 }}
-                    initial={animate ? { scaleY: 0 } : false}
-                    animate={{ scaleY: 1 }}
-                    transition={
-                      animate
-                        ? { duration: durations.slow, ease: easings.out, delay: Math.min(i, 24) * 0.006 }
-                        : { duration: 0 }
-                    }
+                    d={areaPath}
+                    fill={`url(#${uid}-area-${si})`}
+                    initial={animate ? { opacity: 0 } : false}
+                    animate={{ opacity: 1 }}
+                    transition={animate ? { duration: durations.slow, ease: easings.out } : { duration: 0 }}
                   />
-                ))}
-              </g>
-            );
-          }
-          // line / area
-          const { pts, areaPath } = seriesGeom[si];
-          return (
-            <g key={si}>
-              {type === "area" && (
-                <motion.path
-                  d={areaPath}
-                  fill={`url(#${uid}-area-${si})`}
-                  initial={animate ? { opacity: 0 } : false}
-                  animate={{ opacity: 1 }}
+                )}
+                {/* 折れ線は左から描き進むように pathLength を 0 → 1 へ補間する。 */}
+                <motion.polyline
+                  points={pts}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth={2}
+                  initial={animate ? { pathLength: 0 } : false}
+                  animate={{ pathLength: 1 }}
                   transition={animate ? { duration: durations.slow, ease: easings.out } : { duration: 0 }}
                 />
-              )}
-              {/* 折れ線は左から描き進むように pathLength を 0 → 1 へ補間する。 */}
-              <motion.polyline
-                points={pts}
-                fill="none"
-                stroke={color}
-                strokeWidth={2}
-                initial={animate ? { pathLength: 0 } : false}
-                animate={{ pathLength: 1 }}
-                transition={animate ? { duration: durations.slow, ease: easings.out } : { duration: 0 }}
-              />
-              {showMarkers &&
-                s.values.map((v, i) => (
+                {showMarkers &&
+                  s.values.map((v, i) => (
+                    <circle
+                      key={i}
+                      cx={xAt(i)}
+                      cy={yAtFor(s)(v)}
+                      r={hover === i ? 4.5 : 2.5}
+                      fill={color}
+                      stroke="var(--bg-elevated)"
+                      strokeWidth={1}
+                    />
+                  ))}
+                {/* マーカー非表示時もホバー点だけは強調する。 */}
+                {!showMarkers && hover != null && (
                   <circle
-                    key={i}
-                    cx={xAt(i)}
-                    cy={yAtFor(s)(v)}
-                    r={hover === i ? 4.5 : 2.5}
+                    cx={xAt(hover)}
+                    cy={yAtFor(s)(s.values[hover])}
+                    r={4}
                     fill={color}
                     stroke="var(--bg-elevated)"
                     strokeWidth={1}
                   />
-                ))}
-              {/* マーカー非表示時もホバー点だけは強調する。 */}
-              {!showMarkers && hover != null && (
-                <circle
-                  cx={xAt(hover)}
-                  cy={yAtFor(s)(s.values[hover])}
-                  r={4}
-                  fill={color}
-                  stroke="var(--bg-elevated)"
-                  strokeWidth={1}
-                />
-              )}
-            </g>
-          );
-        })}
+                )}
+              </g>
+            );
+          })}
 
         {/* ツールチップ (ホバー中バンドの全系列の値) */}
         {hover != null && (
