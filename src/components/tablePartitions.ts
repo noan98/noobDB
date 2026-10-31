@@ -30,7 +30,9 @@ function splitTopLevel(s: string): string[] {
       }
       continue;
     }
-    if (c === "'" || c === '"') {
+    // 英数字の直後の引用符 (`O'Reilly` など) は値の一部として扱い、引用の開始とみなさない。
+    // 開始とみなすと閉じ引用符が無いまま後続の値まで 1 つに飲み込んでしまう。
+    if ((c === "'" || c === '"') && !/[\p{L}\p{N}_]/u.test(s[i - 1] ?? "")) {
       quote = c;
       cur += c;
     } else if (c === "(") {

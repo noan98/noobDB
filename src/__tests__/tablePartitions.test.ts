@@ -200,6 +200,11 @@ describe("ATTACH PARTITION (#1929)", () => {
 
   it("LIST: カンマ区切り (引用符内のカンマは区切らない)・空要素は捨てる", () => {
     expect(parseListValues("'a,b', c, ")).toEqual(["'a,b'", "c"]);
+    // 単語の途中のアポストロフィは引用の開始ではない (後続の値を飲み込まない)
+    expect(parseListValues("O'Reilly, Penguin")).toEqual(["O'Reilly", "Penguin"]);
+    expect(buildPartitionBoundClause({ kind: "list", values: parseListValues("O'Reilly, Penguin") })).toBe(
+      "FOR VALUES IN ('O''Reilly', 'Penguin')",
+    );
     expect(buildPartitionBoundClause({ kind: "list", values: parseListValues("jp, us, NULL") })).toBe(
       "FOR VALUES IN ('jp', 'us', NULL)",
     );
