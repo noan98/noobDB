@@ -23,6 +23,11 @@ on:
   schedule:
     - cron: "30 18 * * *"
   workflow_dispatch:
+  # このワークフロー自身を変更した PR でだけ実走させる(PR 段階の動作確認用)。必須チェックには
+  # しない。notify ジョブは既定ブランチの schedule / dispatch のときだけ動く条件のまま。
+  pull_request:
+    paths:
+      - ".github/workflows/windows-db-smoke.yml"
 
 # 手動実行と schedule の重複・連打で同時に走らせない (同一ブランチ内で後勝ち)。
 concurrency:
@@ -45,11 +50,10 @@ jobs:
       #   - 接続とクエリの往復 (roundtrip)
       #   - スキーマ取得 + トランザクション内の基本 CRUD (new_schema_apis_and_transaction)
       #   - 型デコード (temporal_columns / exotic_types)
-      # と、lib の keyring 疎通診断 (profiles::secrets) だけを実走する。
+      # だけを実走する。keyring 疎通 (#[ignore] 付き) は別ステップで実走する。
       NEXTEST_FILTER: >-
-        (binary(external) and test(/^(mysql_integration::(mysql_roundtrip_when_env_set|mysql_new_schema_apis_and_transaction_when_env_set|temporal_columns_decode_to_strings)|postgres_integration::(postgres_roundtrip_when_env_set|postgres_new_schema_apis_and_transaction_when_env_set|postgres_exotic_types_decode_to_values_not_null))$/))
-        or (kind(lib) and test(/^profiles::secrets::/))
-      DB_ROOT: ${{ github.workspace }}\.db-smoke
+        binary(external) and test(/^(mysql_integration::(mysql_roundtrip_when_env_set|mysql_new_schema_apis_and_transaction_when_env_set|temporal_columns_decode_to_strings)|postgres_integration::(postgres_roundtrip_when_env_set|postgres_new_schema_apis_and_transaction_when_env_set|postgres_exotic_types_decode_to_values_not_null))$/)
+      DB_ROOT: ${{ github.workspace }}\db-smoke
 
     steps:
       - name: Disable Defender real-time protection
@@ -108,9 +112,9 @@ jobs:
           # 認証は trust (使い捨てクラスタ・127.0.0.1 のみ listen)。URL のパスワードは無視される。
           "$PG_BIN_DIR/initdb.exe" -D "$PGDATA_DIR" -U postgres --auth=trust -E UTF8
           "$PG_BIN_DIR/pg_ctl.exe" start -w -t 60 -D "$PGDATA_DIR" -l "$(cygpath -m "$DB_ROOT")/postgres.log" \
-            -o "-p 5432 -c listen_addresses=127.0.0.1"
-          "$PG_BIN_DIR/createdb.exe" -h 127.0.0.1 -p 5432 -U postgres testdb
-          "$PG_BIN_DIR/psql.exe" -h 127.0.0.1 -p 5432 -U postgres -d testdb -tAc "select version()"
+            -o "-p 15432 -c listen_addresses=127.0.0.1"
+          "$PG_BIN_DIR/createdb.exe" -h 127.0.0.1 -p 15432 -U postgres testdb
+          "$PG_BIN_DIR/psql.exe" -h 127.0.0.1 -p 15432 -U postgres -d testdb -tAc "select version()"
 
       # ────────────────────────────────────────────────────────────────────
       # MySQL: 同様に同梱バイナリで使い捨てデータディレクトリを初期化して起動する。
@@ -121,7 +125,7 @@ jobs:
           set -euo pipefail
           find_mysql() {
             local d
-            for d in "/c/Program Files/MySQL/"*/bin; do
+            for d in "/c/Program Files/MySQL/"*/bin /c/tools/mysql/*/bin; do
               [ -x "$d/mysqld.exe" ] && { echo "$d"; return 0; }
             done
             return 1
@@ -144,19 +148,19 @@ jobs:
         run: |
           $log = Join-Path $env:DB_ROOT "mysql.log"
           Start-Process -FilePath "$env:MYSQL_BIN_DIR\mysqld.exe" `
-            -ArgumentList "--no-defaults", "--console", "--datadir=$env:MYSQL_DATADIR", "--port=3306", "--bind-address=127.0.0.1", "--mysqlx=OFF" `
+            -ArgumentList "--no-defaults", "--console", "--datadir=$env:MYSQL_DATADIR", "--port=13306", "--bind-address=127.0.0.1", "--mysqlx=OFF" `
             -RedirectStandardOutput (Join-Path $env:DB_ROOT "mysql.out.log") `
             -RedirectStandardError $log `
             -WindowStyle Hidden
 
-      # 起動待ち。固定 sleep ではなく ping を最大 60 秒ポーリングし、落ちたら DB ログを出す。
+      # 起動待ち。固定 sleep ではなくログの "ready for connections" を最大 60 秒ポーリングし、落ちたら DB ログを出す。
       - name: MySQL の起動を待ってテスト用 DB を作成
         shell: bash
         run: |
           set -euo pipefail
           ok=0
           for i in $(seq 1 60); do
-            if "$MYSQL_BIN_DIR/mysqladmin.exe" --no-defaults -h 127.0.0.1 -P 3306 -u root ping >/dev/null 2>&1; then
+            if grep -q "ready for connections" "$(cygpath -u "$DB_ROOT")/mysql.log" 2>/dev/null; then
               ok=1; break
             fi
             sleep 1
@@ -166,7 +170,7 @@ jobs:
             cat "$(cygpath -u "$DB_ROOT")/mysql.log" || true
             exit 1
           fi
-          "$MYSQL_BIN_DIR/mysql.exe" --no-defaults -h 127.0.0.1 -P 3306 -u root -e \
+          "$MYSQL_BIN_DIR/mysql.exe" --no-defaults -h 127.0.0.1 -P 13306 -u root -e \
             "ALTER USER 'root'@'localhost' IDENTIFIED BY 'rootpw'; CREATE DATABASE IF NOT EXISTS testdb; SELECT VERSION();"
 
       # ────────────────────────────────────────────────────────────────────
@@ -176,15 +180,24 @@ jobs:
         shell: bash
         working-directory: src-tauri
         env:
-          NOOBDB_TEST_MYSQL_URL: mysql://root:rootpw@127.0.0.1:3306/testdb
-          NOOBDB_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/testdb
+          NOOBDB_TEST_MYSQL_URL: mysql://root:rootpw@127.0.0.1:13306/testdb
+          NOOBDB_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:15432/testdb
         run: |
           # 環境変数ゲートでテストが黙ってスキップされると緑のまま死角が戻るため、
           # 対象テストが 1 件以上選ばれていることを先に確認する。
-          cargo nextest list --locked --lib --test external -E "$NEXTEST_FILTER" | tee nextest-list.txt
+          cargo nextest list --locked --test external -E "$NEXTEST_FILTER" | tee nextest-list.txt
           grep -q "mysql_integration::mysql_roundtrip_when_env_set" nextest-list.txt
           grep -q "postgres_integration::postgres_roundtrip_when_env_set" nextest-list.txt
-          cargo nextest run --locked --lib --test external -E "$NEXTEST_FILTER" --retries 1 --no-fail-fast
+          cargo nextest run --locked --test external -E "$NEXTEST_FILTER" --retries 1 --no-fail-fast
+
+      # keyring 疎通 (#[ignore] 付き) は本物の Windows Credential Manager に書き込む。
+      # --run-ignored は他の ignore テストも拾うため、このステップだけ単独テストに絞る。
+      - name: keyring 疎通テスト (Windows Credential Manager)
+        shell: bash
+        working-directory: src-tauri
+        run: |
+          cargo nextest run --locked --lib --run-ignored all --no-fail-fast \
+            -E 'test(=profiles::secrets::probe_tests::probe_reports_a_consistent_status)'
 
       - name: DB ログを保存 (失敗時)
         if: failure()
@@ -193,7 +206,6 @@ jobs:
           name: windows-db-smoke-logs-${{ github.run_id }}
           path: |
             ${{ env.DB_ROOT }}\*.log
-            ${{ env.DB_ROOT }}\pgdata\log
           if-no-files-found: ignore
           retention-days: 7
 
