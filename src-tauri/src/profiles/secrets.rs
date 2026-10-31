@@ -331,5 +331,15 @@ mod probe_tests {
         // 実 keyring の有無は環境依存。available と reason が矛盾しないことだけ確認する。
         let st = probe_keyring();
         assert_eq!(st.available, st.reason.is_none());
+        // CI の Windows スモーク (#1945) は本物の Credential Manager がある前提なので、
+        // NOOBDB_REQUIRE_KEYRING=1 のときは書き込みと読み戻しの成功まで要求する。
+        // 未設定なら従来どおり整合性だけを見る (keyring の無い Linux 開発機で落とさない)。
+        if std::env::var("NOOBDB_REQUIRE_KEYRING").as_deref() == Ok("1") {
+            assert!(
+                st.available,
+                "keyring に書き込み・読み戻しできませんでした: {:?}",
+                st.reason
+            );
+        }
     }
 }

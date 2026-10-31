@@ -199,6 +199,9 @@ jobs:
       - name: keyring 疎通テスト (Windows Credential Manager)
         shell: bash
         working-directory: src-tauri
+        env:
+          # 整合性チェックだけだと keyring が壊れていても緑になるので、実際の読み書き成功を要求する。
+          NOOBDB_REQUIRE_KEYRING: "1"
         run: |
           cargo nextest run --locked --lib --run-ignored all --no-fail-fast \
             -E 'test(=profiles::secrets::probe_tests::probe_reports_a_consistent_status)'
