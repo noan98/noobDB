@@ -4707,11 +4707,10 @@ export const DataGrid = memo(function DataGrid({
     if (!viewPresetsRef) return;
     viewPresetsRef.current = {
       capture: () => {
-        const view = toPersistedGridView(
-          sortingRef.current,
-          columnFiltersRef.current,
-          maskOverridesRef.current,
-        );
+        // マスク解除 (false) の上書きは保存しない。プリセットの適用で黙ってマスクが外れないよう、
+        // 追加マスク (true) だけを残す。
+        const masks = Object.fromEntries(Object.entries(maskOverridesRef.current).filter(([, v]) => v));
+        const view = toPersistedGridView(sortingRef.current, columnFiltersRef.current, masks);
         const layout: GridViewPreset["layout"] = {};
         if (columnOrderRef.current.length > 0) layout.order = [...columnOrderRef.current];
         if (Object.values(columnVisibilityRef.current).some((v) => v === false)) {

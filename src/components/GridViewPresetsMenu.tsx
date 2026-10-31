@@ -1,6 +1,7 @@
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence } from "motion/react";
 import { useT } from "../i18n";
+import { touchLayoutLruForKey } from "./columnLayoutStorage";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { GridViewPresetNameModal } from "./GridViewPresetNameModal";
 import {
@@ -38,8 +39,11 @@ export function GridViewPresetsMenu({ storageKey, handleRef }: Props) {
   const btnRef = useRef<HTMLButtonElement | null>(null);
 
   // 別の結果シェイプへ切り替わったら読み直す (書き込みは操作時のみなので古い値で競合しない)。
+  // プリセットがある形状は LRU の先頭へ移し、よく見るテーブルのプリセットが退避されないようにする。
   useEffect(() => {
-    setPresets(readStoredGridPresets(storageKey));
+    const stored = readStoredGridPresets(storageKey);
+    setPresets(stored);
+    if (stored.length > 0) touchLayoutLruForKey(storageKey);
   }, [storageKey]);
 
   const commit = useCallback(
@@ -115,12 +119,14 @@ export function GridViewPresetsMenu({ storageKey, handleRef }: Props) {
           aria-expanded={!!menu}
           onClick={() => {
             // 他タブ/他ペインで更新されている可能性があるので、開くたびに読み直す。
-            setPresets(readStoredGridPresets(storageKey));
+            const stored = readStoredGridPresets(storageKey);
+            setPresets(stored);
+            if (stored.length > 0) touchLayoutLruForKey(storageKey);
             const r = btnRef.current?.getBoundingClientRect();
             if (r) setMenu({ x: r.left, y: r.bottom + 2 });
           }}
         >
-          <Icon name="snippet" size={ICON_SIZES.md} />
+          <Icon name="eye" size={ICON_SIZES.md} />
         </Button>
       </Tooltip>
       {menu && <ContextMenu x={menu.x} y={menu.y} items={items} onClose={() => setMenu(null)} />}

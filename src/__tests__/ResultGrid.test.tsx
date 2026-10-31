@@ -15,7 +15,13 @@ import {
   readStoredColumnState,
   writeStoredColumnState,
 } from "../components/ResultGrid";
-import { resultShapeSizingKey } from "../components/gridViewState";
+import {
+  gridPresetsKeyFrom,
+  gridViewStateKeyFrom,
+  readStoredGridPresets,
+  resultShapeSizingKey,
+  writeStoredGridPresets,
+} from "../components/gridViewState";
 import { rowEditKey, type PendingInsertRow } from "../components/cellEdit";
 import type { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { attachStreamStats } from "../components/streamStats";
@@ -2782,5 +2788,46 @@ describe("名前付きビュープリセット (#1942)", () => {
     await user.click(screen.getByRole("button", { name: t("gridPresetButton") }));
     await user.click(await screen.findByRole("menuitem", { name: "asc" }));
     expect(dataRowTexts(container).map((r) => r[0])).toEqual(["apple", "banana", "cherry"]);
+  });
+
+  it("列を隠して保存したビューは適用で再び隠れ、レイアウト無しのビューは既定 (表示) に戻す", async () => {
+    const user = userEvent.setup();
+    const sizingKey = resultShapeSizingKey(FRUIT_COLUMNS, "db", "fruit");
+    writeStoredColumnState(colStateKeyFrom(sizingKey), { visibility: { "1": false } });
+    writeStoredGridPresets(gridPresetsKeyFrom(sizingKey), [{ name: "plain", view: {} }]);
+    renderWithProviders(<ResultGrid result={FRUIT_RESULT} database="db" table="fruit" />);
+    expect(screen.queryByRole("button", { name: /^qty/ })).toBeNull();
+
+    // 隠した状態を「hid」で保存する (レイアウトに visibility が入る)。
+    await user.click(screen.getByRole("button", { name: t("gridPresetButton") }));
+    await user.click(await screen.findByRole("menuitem", { name: t("gridPresetSaveNew") }));
+    await user.type(await screen.findByLabelText(t("gridPresetNameLabel")), "hid");
+    await user.click(screen.getByRole("button", { name: t("gridPresetSave") }));
+    await waitFor(() => expect(screen.queryByLabelText(t("gridPresetNameLabel"))).toBeNull());
+    const saved = readStoredGridPresets(gridPresetsKeyFrom(sizingKey)).find((p) => p.name === "hid");
+    expect(saved?.layout?.visibility).toEqual({ "1": false });
+
+    // レイアウトを持たない「plain」で既定 (表示) に戻る。
+    await user.click(screen.getByRole("button", { name: t("gridPresetButton") }));
+    await user.click(await screen.findByRole("menuitem", { name: "plain" }));
+    expect(await screen.findByRole("button", { name: /^qty/ })).toBeTruthy();
+
+    // 「hid」を適用すると再び隠れる。
+    await user.click(screen.getByRole("button", { name: t("gridPresetButton") }));
+    await user.click(await screen.findByRole("menuitem", { name: "hid" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /^qty/ })).toBeNull());
+  });
+
+  it("保存時はマスク解除 (false) の上書きを残さず、追加マスク (true) だけ残す", async () => {
+    const user = userEvent.setup();
+    const sizingKey = resultShapeSizingKey(FRUIT_COLUMNS, "db", "fruit");
+    writeStoredGridView(gridViewStateKeyFrom(sizingKey), { masks: { name: false, qty: true } });
+    renderWithProviders(<ResultGrid result={FRUIT_RESULT} database="db" table="fruit" />);
+    await user.click(screen.getByRole("button", { name: t("gridPresetButton") }));
+    await user.click(await screen.findByRole("menuitem", { name: t("gridPresetSaveNew") }));
+    await user.type(await screen.findByLabelText(t("gridPresetNameLabel")), "m");
+    await user.click(screen.getByRole("button", { name: t("gridPresetSave") }));
+    await waitFor(() => expect(readStoredGridPresets(gridPresetsKeyFrom(sizingKey))).toHaveLength(1));
+    expect(readStoredGridPresets(gridPresetsKeyFrom(sizingKey))[0]?.view.masks).toEqual({ qty: true });
   });
 });
