@@ -235,6 +235,10 @@ PostgreSQL は別スキーマの子テーブルからの単一列 FK も専用�
 (#1001)。MySQL/SQLite はネイティブ DDL、PostgreSQL は
 `db/table_ddl.rs` がカタログ情報から再構成したベストエフォート DDL。
 
+`list_schema_objects` は PostgreSQL のみ `kind = "sequence"` も返し (#1957)、
+`get_object_definition` が `CREATE SEQUENCE` + `OWNED BY` + 現在値 (`last_value`) のコメントを返す。
+シーケンスはツリーの一覧・定義表示専用で、Where-used の走査対象には入らない。
+
 ## 比較・同期 (`commands/diff.rs`, `commands/sync.rs`)
 
 - `compare_schema`

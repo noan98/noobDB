@@ -23,7 +23,8 @@ import { useT } from "../i18n";
 import { Icon } from "./Icon";
 import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Checkbox, Input, PressableButton, Radio, Select, Switch } from "./ui";
+import { Button, Checkbox, Input, PressableButton, Radio, Switch } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { Spinner } from "./Spinner";
 import { LoadingButton } from "./LoadingButton";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection, PathRow } from "./modalForm";
@@ -1006,39 +1007,37 @@ export function ImportModal({
         <FormSection flexDirection="row" flexWrap="wrap" gap="3.5" alignItems="flex-end">
           <chakra.div display="flex" flexDirection="column" gap="1.5">
             <FieldLabel htmlFor="import-format">{t("importFormat")}</FieldLabel>
-            <Select
+            <ListboxSelect
               id="import-format"
-              minW="140px"
+              css={{ minWidth: "140px" }}
               value={format}
-              onChange={(e) => {
-                setFormat(e.target.value as ImportFormat);
+              options={[
+                { value: "csv", label: t("importFormatCsv") },
+                { value: "json", label: t("importFormatJson") },
+                { value: "ndjson", label: t("importFormatNdjson") },
+                { value: "xlsx", label: t("importFormatXlsx") },
+              ]}
+              onChange={(v) => {
+                // 同じ形式を選び直しただけならシート選択を保つ (ネイティブ select の change と同じ挙動)。
+                if (v === format) return;
+                setFormat(v as ImportFormat);
                 setSheet("");
               }}
               disabled={importing}
-            >
-              <option value="csv">{t("importFormatCsv")}</option>
-              <option value="json">{t("importFormatJson")}</option>
-              <option value="ndjson">{t("importFormatNdjson")}</option>
-              <option value="xlsx">{t("importFormatXlsx")}</option>
-            </Select>
+            />
           </chakra.div>
 
           {isXlsx && preview && preview.sheets.length > 0 && (
             <chakra.div display="flex" flexDirection="column" gap="1.5">
               <FieldLabel htmlFor="import-sheet">{t("importSheet")}</FieldLabel>
-              <Select
+              <ListboxSelect
                 id="import-sheet"
-                minW="140px"
+                css={{ minWidth: "140px" }}
                 value={sheet || preview.sheets[0]}
-                onChange={(e) => setSheet(e.target.value)}
+                options={preview.sheets.map((name) => ({ value: name }))}
+                onChange={setSheet}
                 disabled={importing}
-              >
-                {preview.sheets.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </Select>
+              />
             </chakra.div>
           )}
           {isXlsx && preview && preview.sheets.length > 1 && onImportAllSheets && (
@@ -1057,36 +1056,32 @@ export function ImportModal({
           {!isXlsx && (
             <chakra.div display="flex" flexDirection="column" gap="1.5">
               <FieldLabel htmlFor="import-encoding">{t("importEncoding")}</FieldLabel>
-              <Select
+              <ListboxSelect
                 id="import-encoding"
-                minW="140px"
+                css={{ minWidth: "140px" }}
                 value={encoding}
-                onChange={(e) => setEncoding(e.target.value)}
+                options={ENCODINGS.map((enc) => ({ value: enc }))}
+                onChange={setEncoding}
                 disabled={importing}
-              >
-                {ENCODINGS.map((enc) => (
-                  <option key={enc} value={enc}>
-                    {enc}
-                  </option>
-                ))}
-              </Select>
+              />
             </chakra.div>
           )}
 
           {isCsv && (
             <chakra.div display="flex" flexDirection="column" gap="1.5">
               <FieldLabel htmlFor="import-delimiter">{t("importDelimiter")}</FieldLabel>
-              <Select
+              <ListboxSelect
                 id="import-delimiter"
-                minW="140px"
+                css={{ minWidth: "140px" }}
                 value={delimiter}
-                onChange={(e) => setDelimiter(e.target.value as DelimiterChoice)}
+                options={[
+                  { value: ",", label: t("importDelimiterComma") },
+                  { value: "\t", label: t("importDelimiterTab") },
+                  { value: ";", label: t("importDelimiterSemicolon") },
+                ]}
+                onChange={(v) => setDelimiter(v as DelimiterChoice)}
                 disabled={importing}
-              >
-                <option value=",">{t("importDelimiterComma")}</option>
-                <option value={"\t"}>{t("importDelimiterTab")}</option>
-                <option value=";">{t("importDelimiterSemicolon")}</option>
-              </Select>
+              />
             </chakra.div>
           )}
 
@@ -1108,17 +1103,18 @@ export function ImportModal({
 
           <chakra.div display="flex" flexDirection="column" gap="1.5">
             <FieldLabel htmlFor="import-null">{t("importNull")}</FieldLabel>
-            <Select
+            <ListboxSelect
               id="import-null"
-              minW="140px"
+              css={{ minWidth: "140px" }}
               value={nullMode}
-              onChange={(e) => setNullMode(e.target.value as NullMode)}
+              options={[
+                { value: "empty", label: t("importNullEmpty") },
+                { value: "custom", label: t("importNullCustom") },
+                { value: "none", label: t("importNullNone") },
+              ]}
+              onChange={(v) => setNullMode(v as NullMode)}
               disabled={importing}
-            >
-              <option value="empty">{t("importNullEmpty")}</option>
-              <option value="custom">{t("importNullCustom")}</option>
-              <option value="none">{t("importNullNone")}</option>
-            </Select>
+            />
             {nullMode === "custom" && (
               <Input
                 css={{ width: "64px" }}
@@ -1144,32 +1140,34 @@ export function ImportModal({
 
           <chakra.div display="flex" flexDirection="column" gap="1.5">
             <FieldLabel htmlFor="import-error-mode">{t("importErrorMode")}</FieldLabel>
-            <Select
+            <ListboxSelect
               id="import-error-mode"
-              minW="150px"
+              css={{ minWidth: "150px" }}
               value={errorMode}
-              onChange={(e) => setErrorMode(e.target.value as ImportErrorMode)}
+              options={[
+                { value: "abort", label: t("importErrorModeAbort") },
+                { value: "skip", label: t("importErrorModeSkip") },
+              ]}
+              onChange={(v) => setErrorMode(v as ImportErrorMode)}
               disabled={importing}
-            >
-              <option value="abort">{t("importErrorModeAbort")}</option>
-              <option value="skip">{t("importErrorModeSkip")}</option>
-            </Select>
+            />
           </chakra.div>
 
           {!createNew && (
             <chakra.div display="flex" flexDirection="column" gap="1.5">
               <FieldLabel htmlFor="import-conflict-mode">{t("importConflictMode")}</FieldLabel>
-              <Select
+              <ListboxSelect
                 id="import-conflict-mode"
-                minW="150px"
+                css={{ minWidth: "150px" }}
                 value={conflictMode}
-                onChange={(e) => setConflictMode(e.target.value as ImportConflictMode)}
+                options={[
+                  { value: "insert", label: t("importConflictModeInsert") },
+                  { value: "skip", label: t("importConflictModeSkip") },
+                  { value: "update", label: t("importConflictModeUpdate") },
+                ]}
+                onChange={(v) => setConflictMode(v as ImportConflictMode)}
                 disabled={importing}
-              >
-                <option value="insert">{t("importConflictModeInsert")}</option>
-                <option value="skip">{t("importConflictModeSkip")}</option>
-                <option value="update">{t("importConflictModeUpdate")}</option>
-              </Select>
+              />
             </chakra.div>
           )}
         </FormSection>
@@ -1225,24 +1223,22 @@ export function ImportModal({
                     disabled={importing || !d.include}
                     aria-label={t("importNewTableColumnName", { n: d.csvIndex + 1 })}
                   />
-                  <Select
-                    flex="0 0 42%"
-                    minW={0}
+                  <ListboxSelect
+                    css={{ flex: "0 0 42%", minWidth: 0 }}
                     value={d.type}
-                    onChange={(e) => updateDraft(i, { type: e.target.value as NewColumnType })}
-                    disabled={importing || !d.include}
-                    aria-label={t("importNewTableColumnType", { name: d.name })}
-                  >
-                    {newColumnTypeOptions(driver).map((ty) => (
-                      <option key={ty} value={ty}>
-                        {ty === d.inferredType
+                    options={newColumnTypeOptions(driver).map((ty) => ({
+                      value: ty,
+                      label:
+                        ty === d.inferredType
                           ? t(TYPE_LABEL_KEYS[ty])
                           : `${t(TYPE_LABEL_KEYS[ty])} (${t("importNewTableInferred", {
                               type: t(TYPE_LABEL_KEYS[d.inferredType]),
-                            })})`}
-                      </option>
-                    ))}
-                  </Select>
+                            })})`,
+                    }))}
+                    onChange={(v) => updateDraft(i, { type: v as NewColumnType })}
+                    disabled={importing || !d.include}
+                    ariaLabel={t("importNewTableColumnType", { name: d.name })}
+                  />
                   <Tooltip label={t("importNewTablePrimaryKeyHint")}>
                     <chakra.label
                       display="inline-flex"
@@ -1365,27 +1361,26 @@ export function ImportModal({
                       )}
                     </chakra.span>
                   </Tooltip>
-                  <Select
-                    flex="1"
-                    minW={0}
-                    value={mapping[col.name] ?? ""}
-                    onChange={(e) => {
+                  <ListboxSelect
+                    css={{ flex: "1", minWidth: 0 }}
+                    value={String(mapping[col.name] ?? "")}
+                    options={[
+                      { value: "", label: t("importSkipColumn") },
+                      ...preview.headers.map((_, idx) => ({
+                        value: String(idx),
+                        label: csvColumnLabel(idx),
+                      })),
+                    ]}
+                    onChange={(v) => {
                       mappingEditedRef.current = true;
                       setMapping((prev) => ({
                         ...prev,
-                        [col.name]: e.target.value === "" ? null : Number(e.target.value),
+                        [col.name]: v === "" ? null : Number(v),
                       }));
                     }}
                     disabled={importing}
-                    aria-label={t("importMappingAria", { column: col.name })}
-                  >
-                    <option value="">{t("importSkipColumn")}</option>
-                    {preview.headers.map((_, idx) => (
-                      <option key={idx} value={idx}>
-                        {csvColumnLabel(idx)}
-                      </option>
-                    ))}
-                  </Select>
+                    ariaLabel={t("importMappingAria", { column: col.name })}
+                  />
                 </chakra.div>
               ))}
             </chakra.div>
