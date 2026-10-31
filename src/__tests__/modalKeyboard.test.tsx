@@ -9,6 +9,7 @@ import {
   type ModalKeyEventLike,
 } from "../components/modalKeys";
 import { RenameTableDialog } from "../components/RenameTableDialog";
+import { ListboxSelect } from "../components/ListboxSelect";
 
 /**
  * モーダル / フォームのキーボード操作の統一 (#1114)。
@@ -293,5 +294,37 @@ describe("IME 変換確定の Enter (#1515)", () => {
     expect(onSubmit).not.toHaveBeenCalled();
     fireEvent.keyDown(screen.getByLabelText("inside"), { key: "Enter", ctrlKey: true });
     expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("モーダル内の ListboxSelect と Esc (#1950)", () => {
+  function Harness({ onClose }: { onClose: () => void }) {
+    return (
+      <Modal onClose={onClose} onSubmit={vi.fn()}>
+        <ModalBody>
+          <ListboxSelect
+            ariaLabel="形式"
+            value="a"
+            options={[{ value: "a" }, { value: "b" }]}
+            onChange={() => {}}
+          />
+        </ModalBody>
+      </Modal>
+    );
+  }
+
+  it("開いたまま Esc を押すと listbox だけ閉じ、モーダルは閉じない", async () => {
+    const onClose = vi.fn();
+    renderWithProviders(<Harness onClose={onClose} />);
+    const trigger = await screen.findByLabelText("形式");
+    trigger.focus();
+    fireEvent.click(trigger);
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    fireEvent.keyDown(trigger, { key: "Escape" });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+    // 閉じた後の Esc は従来どおりモーダルを閉じる。
+    fireEvent.keyDown(trigger, { key: "Escape" });
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 });

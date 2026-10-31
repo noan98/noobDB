@@ -37,7 +37,8 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
-import { Button, Checkbox, Input, Select } from "./ui";
+import { Button, Checkbox, Input } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
 
@@ -489,20 +490,18 @@ export function ProcessListPanel({
               />
               {t("autoRefreshLabel")}
             </chakra.label>
-            <Select
-              aria-label={t("autoRefreshIntervalAria")}
+            <ListboxSelect
+              ariaLabel={t("autoRefreshIntervalAria")}
               value={String(intervalSecs)}
-              onChange={(e) => setIntervalSecs(Number(e.target.value))}
-              width="auto"
-            >
-              {AUTO_REFRESH_INTERVAL_OPTIONS.map((s) => (
-                <option key={s} value={s}>
-                  {s % 60 === 0
+              options={AUTO_REFRESH_INTERVAL_OPTIONS.map((s) => ({
+                value: String(s),
+                label:
+                  s % 60 === 0
                     ? t("autoRefreshIntervalMins", { mins: s / 60 })
-                    : t("autoRefreshIntervalSecs", { secs: s })}
-                </option>
-              ))}
-            </Select>
+                    : t("autoRefreshIntervalSecs", { secs: s }),
+              }))}
+              onChange={(v) => setIntervalSecs(Number(v))}
+            />
             {loading && <Spinner size={14} />}
             {updatedAt && (
               <chakra.span fontSize="xs" color="app.textMuted" textStyle="numeric">
@@ -537,91 +536,75 @@ export function ProcessListPanel({
                 value={filter.text}
                 onChange={(e) => setFilter((f) => ({ ...f, text: e.target.value }))}
               />
-              <Select
-                aria-label={t("processFilterUserAria")}
+              <ListboxSelect
+                ariaLabel={t("processFilterUserAria")}
                 value={filter.user}
-                onChange={(e) => setFilter((f) => ({ ...f, user: e.target.value }))}
-                width="auto"
-              >
-                <option value="">{t("processFilterUserAny")}</option>
-                {userOptions.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </Select>
-              <Select
-                aria-label={t("processFilterDbAria")}
+                options={[
+                  { value: "", label: t("processFilterUserAny") },
+                  ...userOptions.map((v) => ({ value: v })),
+                ]}
+                onChange={(v) => setFilter((f) => ({ ...f, user: v }))}
+              />
+              <ListboxSelect
+                ariaLabel={t("processFilterDbAria")}
                 value={filter.database}
-                onChange={(e) => setFilter((f) => ({ ...f, database: e.target.value }))}
-                width="auto"
-              >
-                <option value="">{t("processFilterDbAny")}</option>
-                {databaseOptions.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </Select>
-              <Select
-                aria-label={t("processFilterStateAria")}
+                options={[
+                  { value: "", label: t("processFilterDbAny") },
+                  ...databaseOptions.map((v) => ({ value: v })),
+                ]}
+                onChange={(v) => setFilter((f) => ({ ...f, database: v }))}
+              />
+              <ListboxSelect
+                ariaLabel={t("processFilterStateAria")}
                 value={filter.command}
-                onChange={(e) => setFilter((f) => ({ ...f, command: e.target.value }))}
-                width="auto"
-              >
-                <option value="">{t("processFilterStateAny")}</option>
-                {commandOptions.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </Select>
-              <Select
-                aria-label={t("processFilterMinSecsAria")}
+                options={[
+                  { value: "", label: t("processFilterStateAny") },
+                  ...commandOptions.map((v) => ({ value: v })),
+                ]}
+                onChange={(v) => setFilter((f) => ({ ...f, command: v }))}
+              />
+              <ListboxSelect
+                ariaLabel={t("processFilterMinSecsAria")}
                 value={String(filter.minSecs)}
-                onChange={(e) => setFilter((f) => ({ ...f, minSecs: Number(e.target.value) }))}
-                width="auto"
-              >
-                {PROCESS_MIN_SECS_OPTIONS.map((s) => (
-                  <option key={s} value={s}>
-                    {s === 0
+                options={PROCESS_MIN_SECS_OPTIONS.map((s) => ({
+                  value: String(s),
+                  label:
+                    s === 0
                       ? t("processFilterMinSecsAny")
-                      : t("processFilterMinSecsOver", { time: formatProcessTime(s) })}
-                  </option>
-                ))}
-              </Select>
-              <Select
-                aria-label={t("processSortAria")}
+                      : t("processFilterMinSecsOver", { time: formatProcessTime(s) }),
+                }))}
+                onChange={(v) => setFilter((f) => ({ ...f, minSecs: Number(v) }))}
+              />
+              <ListboxSelect
+                ariaLabel={t("processSortAria")}
                 value={sortKey}
-                onChange={(e) => setSortKey(e.target.value as ProcessSortKey)}
-                width="auto"
-              >
-                <option value="default">{t("processSortDefault")}</option>
-                <option value="timeDesc">{t("processSortTimeDesc")}</option>
-                <option value="timeAsc">{t("processSortTimeAsc")}</option>
-                <option value="id">{t("processSortId")}</option>
-              </Select>
+                options={[
+                  { value: "default", label: t("processSortDefault") },
+                  { value: "timeDesc", label: t("processSortTimeDesc") },
+                  { value: "timeAsc", label: t("processSortTimeAsc") },
+                  { value: "id", label: t("processSortId") },
+                ]}
+                onChange={(v) => setSortKey(v as ProcessSortKey)}
+              />
               {queryGroups.length > 0 && (
-                <Select
-                  aria-label={t("processSelectSameQueryAria")}
+                <ListboxSelect
+                  ariaLabel={t("processSelectSameQueryAria")}
                   value=""
-                  onChange={(e) => {
-                    if (e.target.value !== "") selectQueryGroup(e.target.value);
-                  }}
-                  width="auto"
-                  maxWidth="72"
-                  data-testid="process-select-same-query"
-                >
-                  <option value="">{t("processSelectSameQuery")}</option>
-                  {queryGroups.map((g) => (
-                    <option key={g.summary} value={g.summary}>
-                      {t("processSelectSameQueryOption", {
+                  options={[
+                    { value: "", label: t("processSelectSameQuery") },
+                    ...queryGroups.map((g) => ({
+                      value: g.summary,
+                      label: t("processSelectSameQueryOption", {
                         count: g.ids.length,
                         query: g.summary.length > 60 ? `${g.summary.slice(0, 60)}…` : g.summary,
-                      })}
-                    </option>
-                  ))}
-                </Select>
+                      }),
+                    })),
+                  ]}
+                  onChange={(v) => {
+                    if (v !== "") selectQueryGroup(v);
+                  }}
+                  css={{ maxWidth: "18rem" }}
+                />
               )}
               {filterActive && (
                 <>

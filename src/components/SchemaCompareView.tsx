@@ -42,7 +42,8 @@ import {
 import { schemaCompareReportMarkdown } from "./schemaCompareReport";
 import { countObjectDifferences, objectKindLabel, SchemaObjectDiff } from "./SchemaObjectDiff";
 import { Tooltip } from "./Tooltip";
-import { Button, Checkbox, Heading, Input, PressableButton, Select } from "./ui";
+import { Button, Checkbox, Heading, Input, PressableButton } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { DraftNumberInput } from "./DraftNumberInput";
 import { DiffFilterChip, statusLabel, TableDiffDetail, TableDiffList } from "./SchemaDiffDetail";
 import { DataRowDiffTable } from "./DataRowDiffTable";
@@ -1075,46 +1076,42 @@ export function SchemaCompareView({
         <Box css={tablePairCss}>
           <Box css={tableColCss}>
             <chakra.span css={sideLabelCss}>{t("schemaCompareDataSourceTable")}</chakra.span>
-            <Select
-              aria-label={t("schemaCompareDataSourceTable")}
+            <ListboxSelect
+              ariaLabel={t("schemaCompareDataSourceTable")}
               value={dataTable}
               disabled={dataComparing || generating}
-              onChange={(e) => {
+              options={[
+                { value: "", label: t("schemaCompareDataSelectTable") },
+                ...sourceTableNames.map((name) => ({ value: name })),
+              ]}
+              onChange={(v) => {
                 // 対象テーブルを変えたら前回のデータ差分・計画は別テーブルのものに
                 // なるので破棄する (残すと前のテーブルの変更が流れる)。
-                setDataTable(e.target.value);
+                setDataTable(v);
                 resetDataDiffForTableChange();
               }}
-            >
-              <option value="">{t("schemaCompareDataSelectTable")}</option>
-              {sourceTableNames.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </Select>
+              css={{ width: "100%" }}
+            />
           </Box>
           <chakra.span textStyle="caption" aria-hidden="true">
             →
           </chakra.span>
           <Box css={tableColCss}>
             <chakra.span css={sideLabelCss}>{t("schemaCompareDataTargetTable")}</chakra.span>
-            <Select
-              aria-label={t("schemaCompareDataTargetTable")}
+            <ListboxSelect
+              ariaLabel={t("schemaCompareDataTargetTable")}
               value={dataTargetTable}
               disabled={dataComparing || generating}
-              onChange={(e) => {
-                setDataTargetTable(e.target.value);
+              options={[
+                { value: "", label: t("schemaCompareDataTargetSameName") },
+                ...targetTableNames.map((name) => ({ value: name })),
+              ]}
+              onChange={(v) => {
+                setDataTargetTable(v);
                 resetDataDiffForTableChange();
               }}
-            >
-              <option value="">{t("schemaCompareDataTargetSameName")}</option>
-              {targetTableNames.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </Select>
+              css={{ width: "100%" }}
+            />
           </Box>
         </Box>
         <chakra.label css={optionLabelCss}>
@@ -1755,33 +1752,30 @@ function SidePicker({
           {hint}
         </chakra.span>
       </Flex>
-      <Select
-        aria-label={label}
+      <ListboxSelect
+        ariaLabel={label}
         value={state.profileId ?? ""}
-        onChange={(e) => onSelectProfile(side, e.target.value)}
-      >
-        <option value="">{t("schemaCompareSelectProfile")}</option>
-        {profiles.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name}
-          </option>
-        ))}
-      </Select>
-      <Select
-        aria-label={t("schemaCompareDatabaseOf", { side: label })}
+        options={[
+          { value: "", label: t("schemaCompareSelectProfile") },
+          ...profiles.map((p) => ({ value: p.id, label: p.name })),
+        ]}
+        onChange={(v) => onSelectProfile(side, v)}
+        css={{ width: "100%" }}
+      />
+      <ListboxSelect
+        ariaLabel={t("schemaCompareDatabaseOf", { side: label })}
         value={state.database ?? ""}
-        onChange={(e) => onSelectDatabase(side, e.target.value)}
+        options={[
+          {
+            value: "",
+            label: state.connecting ? t("schemaCompareConnecting") : t("schemaCompareSelectDatabase"),
+          },
+          ...(state.databases ?? []).map((db) => ({ value: db })),
+        ]}
+        onChange={(v) => onSelectDatabase(side, v)}
         disabled={!state.databases || state.connecting}
-      >
-        <option value="">
-          {state.connecting ? t("schemaCompareConnecting") : t("schemaCompareSelectDatabase")}
-        </option>
-        {(state.databases ?? []).map((db) => (
-          <option key={db} value={db}>
-            {db}
-          </option>
-        ))}
-      </Select>
+        css={{ width: "100%" }}
+      />
       {state.error && <chakra.span css={sideErrorCss}>{state.error}</chakra.span>}
     </Box>
   );

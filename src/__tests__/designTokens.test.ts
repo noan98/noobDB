@@ -814,3 +814,81 @@ describe("共通コンポーネントの迂回", () => {
     ).toEqual([]);
   });
 });
+
+describe("design tokens: 素の <select> の残存数 (#1950 / Epic #1946)", () => {
+  // `ui.tsx` の `Select` (素のネイティブ `<select>`) は webkit2gtk (Tauri/Linux) では
+  // ポップアップを GTK が描画するため、ダーク/アクセント配色・角丸・enter アニメに追従せず、
+  // `ListboxSelect` / `ComboSelect` (portal + WAI-ARIA listbox + transitions.enter) の
+  // 滑らかなポップオーバーと同一画面に混在してしまう。新しい選択 UI は `ListboxSelect`
+  // (自由入力なし) / `ComboSelect` (入力併用) を使う。ここに残るのは未移行の箇所で、
+  // 移行したら件数を減らす (増やすのは禁止、新しいファイルはここに足さない)。
+  const NATIVE_SELECT_BASELINE = new Map<string, number>([
+    ["../components/AiSettings.tsx", 4],
+    ["../components/AiUsageHistory.tsx", 1],
+    ["../components/AlterTableModal.tsx", 2],
+    ["../components/AssertionEditorModal.tsx", 3],
+    ["../components/BroadcastModal.tsx", 1],
+    ["../components/ColumnProfilePanel.tsx", 2],
+    ["../components/ConnectionForm.tsx", 4],
+    ["../components/ConnectionHealthPanel.tsx", 1],
+    ["../components/ConnectionList.tsx", 1],
+    ["../components/CreateIndexModal.tsx", 1],
+    ["../components/CreateNamespaceModal.tsx", 1],
+    ["../components/CreateTableModal.tsx", 2],
+    ["../components/DataSearchModal.tsx", 1],
+    ["../components/ERDiagramView.tsx", 5],
+    ["../components/ExportMaskingSection.tsx", 2],
+    ["../components/ExportModal.tsx", 1],
+    ["../components/LocalTablesPanel.tsx", 1],
+    ["../components/MigrationExportModal.tsx", 1],
+    ["../components/ParameterInputModal.tsx", 1],
+    ["../components/PinnedComparisonView.tsx", 3],
+    ["../components/PlanWatchPanel.tsx", 2],
+    ["../components/QueryBuilder.tsx", 5],
+    ["../components/QueryInspectorPanel.tsx", 1],
+    ["../components/RowInsertModal.tsx", 1],
+    ["../components/RowInspector.tsx", 1],
+    ["../components/RunRoutineModal.tsx", 1],
+    ["../components/SandboxReviewModal.tsx", 1],
+    ["../components/SaveAsTableModal.tsx", 1],
+    ["../components/SchemaDriftPanel.tsx", 2],
+    ["../components/ScriptRunModal.tsx", 1],
+    ["../components/ServerMetricsPanel.tsx", 2],
+    ["../components/SettingsView.tsx", 5],
+    ["../components/SnippetForm.tsx", 3],
+    ["../components/SqlFileEncodingModal.tsx", 1],
+    ["../components/TableConstraintEditor.tsx", 1],
+    ["../components/TableTimelapsePanel.tsx", 2],
+    ["../components/TaskManager.tsx", 4],
+    ["../components/TaskScheduleEditor.tsx", 2],
+    ["../components/TestDataModal.tsx", 2],
+    ["../components/TextEncodingSelect.tsx", 1],
+    ["../components/TimelapseDmlModal.tsx", 1],
+    ["../components/UsersPanel.tsx", 2],
+  ]);
+
+  it("素の <Select> を増やさず、減ったらベースラインも下げる", () => {
+    const counts = new Map<string, number>();
+    for (const [path, content] of sources) {
+      if (!path.startsWith("../components/")) continue;
+      const n = (content.match(/<Select\b/g) ?? []).length;
+      if (n > 0) counts.set(path, n);
+    }
+    const paths = new Set([...counts.keys(), ...NATIVE_SELECT_BASELINE.keys()]);
+    const offenders: string[] = [];
+    for (const path of paths) {
+      const n = counts.get(path) ?? 0;
+      const allowed = NATIVE_SELECT_BASELINE.get(path) ?? 0;
+      if (n > allowed) offenders.push(`${toDisplayPath(path)}: ${n} 箇所 (許容 ${allowed})`);
+      else if (n < allowed)
+        offenders.push(
+          `${toDisplayPath(path)}: ${n} 箇所に減った。ベースラインを ${n} へ下げてください (許容 ${allowed})`,
+        );
+    }
+    expect(
+      offenders,
+      "選択 UI は ui.tsx の素の <Select> ではなく ListboxSelect (自由入力なし) / ComboSelect " +
+        "(入力併用) を使う。移行したらベースラインも下げる。",
+    ).toEqual([]);
+  });
+});

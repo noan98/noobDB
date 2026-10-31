@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, chooseListboxOption } from "./testUtils";
 import { t } from "../i18n";
 import type { ProcessInfo } from "../api/tauri";
 
@@ -65,7 +65,7 @@ describe("ProcessListPanel AI 停止候補との連動 (#1538)", () => {
     );
     await screen.findByText("locate-3");
     // 絞り込みで候補を隠しても、連動で解除されて見えるようになる。
-    fireEvent.change(screen.getByLabelText(t("processFilterUserAria")), { target: { value: "batch" } });
+    chooseListboxOption(screen.getByLabelText(t("processFilterUserAria")), "batch");
     await waitFor(() => expect(container.querySelector("#process-row-s1-3")).toBeNull());
 
     fireEvent.click(screen.getByText("locate-3"));

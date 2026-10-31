@@ -20,8 +20,9 @@
  * と同じ流儀 (`document.body` へ portal、`MENU_MARGIN` で余白を揃える) を
  * そのまま踏襲し、二重実装を避ける。
  *
- * 全面移行は 1 PR で強制しない (#1143) — まず `PaginationBar` など目立つ箇所
- * から段階的に置き換える。
+ * 全面移行は 1 PR で強制しない (#1143 / #1950) — 目立つ箇所から段階的に置き換える。
+ * 未移行の素の `Select` (ネイティブ select) の残存数は `designTokens.test.ts` のベースラインで
+ * 固定してあり、増やすと CI が落ちる (移行したら件数を下げる)。
  */
 import {
   type ReactNode,
@@ -214,6 +215,8 @@ export function ListboxSelect({
       return;
     }
     if (e.key === "Enter" || e.key === " ") {
+      // Cmd/Ctrl+Enter はモーダルの送信ショートカットなので奪わない。
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) return;
       e.preventDefault();
       if (!open) {
         openListbox();
@@ -345,6 +348,7 @@ export function ListboxSelect({
                   }}
                   id={optionElementId(listboxId, i)}
                   role="option"
+                  data-value={opt.value}
                   aria-selected={isSelected}
                   // フォーカスはトリガーに残し aria-activedescendant で示すので、候補は Tab 順に入れない。
                   tabIndex={-1}
