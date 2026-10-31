@@ -72,7 +72,28 @@ function TrapComponent({ onEscape }: { onEscape?: () => void }) {
   );
 }
 
+/** 開閉で条件マウントされるコンテナ (QuickLauncher 型) に enabled 引数で適用する */
+function ToggledTrap({ open }: { open: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useFocusTrap(ref, undefined, open);
+  return open ? (
+    <div ref={ref}>
+      <button>A</button>
+      <button>B</button>
+    </div>
+  ) : null;
+}
+
 describe("useFocusTrap", () => {
+  it("enabled が後から true になった (コンテナが後でマウントされた) 場合もトラップが効く (#1951)", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<ToggledTrap open={false} />);
+    rerender(<ToggledTrap open />);
+    screen.getByRole("button", { name: "B" }).focus();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "A" })).toHaveFocus();
+  });
+
   it("Tab で末尾まで進んだ後は先頭へラップする", async () => {
     const user = userEvent.setup();
     render(<TrapComponent />);
