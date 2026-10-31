@@ -14,6 +14,7 @@ import { ExplainViewer } from "./ExplainViewer";
 import { Callout } from "./Callout";
 import { Icon, ICON_SIZES } from "./Icon";
 import { EmptyState } from "./EmptyState";
+import { RunQueryIllustration } from "./illustrations";
 
 /**
  * 実行計画ウォッチ (#743) の閲覧・比較パネル。ウォッチ登録済みスニペットの
@@ -108,7 +109,13 @@ export function PlanWatchPanel({
       </ModalHeader>
       <ModalBody display="flex" flexDirection="column" gap="3" minHeight="60vh">
         {watched.length === 0 ? (
-          <EmptyState icon="explain" title={t("planWatchEmptyTitle")} description={t("planWatchEmpty")} />
+          <EmptyState
+            illustration={<RunQueryIllustration />}
+            brandHalo
+            icon="explain"
+            title={t("planWatchEmptyTitle")}
+            description={t("planWatchEmpty")}
+          />
         ) : (
           <Flex flex="1" minHeight={0} gap="3" align="stretch">
             {/* 左: ウォッチ済みスニペット一覧 */}
