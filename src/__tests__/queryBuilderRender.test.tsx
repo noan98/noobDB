@@ -269,7 +269,10 @@ describe("QueryBuilder ORDER BY (SELECT only)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: `+ ${t("qbAddOrderBy")}` }));
     expect(screen.queryByText(t("qbNoOrderBy"))).not.toBeInTheDocument();
-    expect(screen.getByText("ASC")).toBeInTheDocument();
+    const dirSelect = screen
+      .getAllByRole("combobox")
+      .find((el) => el.getAttribute("aria-controls") && el.textContent === "ASC");
+    expect(dirSelect).toHaveTextContent("ASC");
   });
 
   it("is not shown for non-SELECT query kinds", async () => {

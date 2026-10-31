@@ -293,4 +293,29 @@ describe("ListboxSelect の位置追従", () => {
     });
     expect(listbox.style.top).not.toBe(before);
   });
+
+  it("triggerRef / onFocus / ariaInvalid / ariaDescribedBy / triggerData がトリガーに反映される", () => {
+    const ref = { current: null as HTMLButtonElement | null };
+    const onFocus = vi.fn();
+    renderWithProviders(
+      <ListboxSelect
+        value="bar"
+        options={OPTIONS}
+        onChange={() => {}}
+        ariaLabel="種類"
+        triggerRef={ref}
+        onFocus={onFocus}
+        ariaInvalid
+        ariaDescribedBy="err-1"
+        triggerData={{ "data-insert-field": true }}
+      />,
+    );
+    const trigger = screen.getByRole("combobox", { name: "種類" });
+    expect(ref.current).toBe(trigger);
+    expect(trigger).toHaveAttribute("aria-invalid", "true");
+    expect(trigger).toHaveAttribute("aria-describedby", "err-1");
+    expect(trigger).toHaveAttribute("data-insert-field", "true");
+    act(() => trigger.focus());
+    expect(onFocus).toHaveBeenCalledTimes(1);
+  });
 });

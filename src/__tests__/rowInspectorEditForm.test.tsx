@@ -149,6 +149,21 @@ describe("RowInspector のフォーム編集 (#1394)", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("真偽値の候補を開いて Esc を押しても、候補だけ閉じて下書きは残る", () => {
+    const onClose = vi.fn();
+    const cols: Column[] = [{ name: "flag", type_name: "BOOLEAN" }];
+    const edit = makeEdit({ editableColumns: [true] });
+    renderWithProviders(inspector([1], edit, onClose, cols));
+    startEditing();
+    const select = screen.getByRole("combobox", { name: "flag" });
+    fireEvent.click(select);
+    expect(select).toHaveAttribute("aria-expanded", "true");
+    fireEvent.keyDown(select, { key: "Escape" });
+    expect(select).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("combobox", { name: "flag" })).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("行がブロックされていると編集ボタンは無効で理由を示す", () => {
     renderForm({ edit: { blockedReason: "rowInspectorEditBlockedPending" } });
     expect((pencil() as HTMLButtonElement).disabled).toBe(true);

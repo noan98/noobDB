@@ -329,7 +329,9 @@ export function RowInspector({
   // the case where focus is still on a cell).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+      // 開いた候補リスト (ListboxSelect) が Esc を処理した (preventDefault 済み) ときは、
+      // 下書きを捨てたりインスペクタを閉じたりしない。
+      if (e.key !== "Escape" || e.defaultPrevented) return;
       if (editing) {
         if (!applying) setEditState(null);
         return;

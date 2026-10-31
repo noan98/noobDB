@@ -120,6 +120,16 @@ export function ListboxSelect({
   const optionRefs = useRef(new Map<number, HTMLButtonElement>());
   const typeaheadRef = useRef<TypeaheadState | null>(null);
 
+  // 内部 ref と呼び出し側の ref を束ねる。再描画のたびに null→要素の再設定が走らないよう安定化する。
+  const mergedTriggerRef = useCallback(
+    (el: HTMLButtonElement | null) => {
+      triggerRef.current = el;
+      if (typeof externalTriggerRef === "function") externalTriggerRef(el);
+      else if (externalTriggerRef) externalTriggerRef.current = el;
+    },
+    [externalTriggerRef],
+  );
+
   const [open, setOpen] = useState(false);
   const [highlighted, setHighlighted] = useState<number | null>(null);
   const [pos, setPos] = useState<{ left: number; top: number; width: number } | null>(null);
@@ -273,11 +283,7 @@ export function ListboxSelect({
   return (
     <>
       <chakra.button
-        ref={(el: HTMLButtonElement | null) => {
-          triggerRef.current = el;
-          if (typeof externalTriggerRef === "function") externalTriggerRef(el);
-          else if (externalTriggerRef) externalTriggerRef.current = el;
-        }}
+        ref={mergedTriggerRef}
         id={triggerId}
         type="button"
         role="combobox"
