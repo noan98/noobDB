@@ -96,6 +96,7 @@ import { inspectorEditableColumns, inspectorRowEditBlock } from "./rowInspectorE
 import { resolveRelatedEntries } from "../relatedRows";
 import { useCopyFeedback } from "./useCopyFeedback";
 import { useConfirm } from "./ConfirmDialog";
+import { GridViewPresetsMenu } from "./GridViewPresetsMenu";
 import { ContextMenu, submenuOrFlat, SUBMENU_THRESHOLD, type ContextMenuEntry } from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
 import { ScrollEdgeShadows } from "./ScrollEdgeShadows";
@@ -281,7 +282,10 @@ import {
 } from "./gridFooter";
 import { setItemWithEviction, touchColumnLayoutLru, touchLayoutLruForKey } from "./columnLayoutStorage";
 import {
+  gridPresetsKeyFrom,
   gridViewStateKeyFrom,
+  type GridViewPreset,
+  type GridViewPresetsHandle,
   readStoredGridView,
   resultShapeSizingKey,
   toPersistedGridView,
@@ -4101,6 +4105,7 @@ export const DataGrid = memo(function DataGrid({
   onSelectionSummary,
   onExportSelection,
   exportViewRef,
+  viewPresetsRef,
   onRunStatsQuery,
   valuePicker,
   onExploreColumn,
@@ -4289,6 +4294,8 @@ export const DataGrid = memo(function DataGrid({
    * 同一なら null を返す。
    */
   exportViewRef?: RefObject<(() => { columns: Column[]; rows: CellValue[][] } | null) | null>;
+  /** 名前付きビュープリセット (#1942) の取得/適用を親ツールバーへ公開する ref。 */
+  viewPresetsRef?: RefObject<GridViewPresetsHandle | null>;
   /**
    * Runs an ad-hoc SELECT for the column quick-stats popover's "aggregate all
    * rows" action (#524). Provided by App bound to the active session; omit to
@@ -4692,6 +4699,57 @@ export const DataGrid = memo(function DataGrid({
     Object.values(columnVisibility).some((v) => v === false) ||
     columnPinning.left.length > 0 ||
     columnPinning.right.length > 0;
+
+  // --- 名前付きビュープリセット (#1942): ツールバーのメニューから呼ばれる取得/適用 ---
+  // 適用は自動永続化 (最新 1 状態) にも書き戻し、再起動後も適用した状態が残るようにする。
+  // 依存配列なしの layout effect で毎コミット最新の閉包を置く (exportViewRef と同じ流儀)。
+  useLayoutEffect(() => {
+    if (!viewPresetsRef) return;
+    viewPresetsRef.current = {
+      capture: () => {
+        // マスク解除 (false) の上書きは保存しない。プリセットの適用で黙ってマスクが外れないよう、
+        // 追加マスク (true) だけを残す。
+        const masks = Object.fromEntries(Object.entries(maskOverridesRef.current).filter(([, v]) => v));
+        const view = toPersistedGridView(sortingRef.current, columnFiltersRef.current, masks);
+        const layout: GridViewPreset["layout"] = {};
+        if (columnOrderRef.current.length > 0) layout.order = [...columnOrderRef.current];
+        if (Object.values(columnVisibilityRef.current).some((v) => v === false)) {
+          layout.visibility = { ...columnVisibilityRef.current };
+        }
+        const pin = columnPinningRef.current;
+        if (pin.left.length > 0 || pin.right.length > 0) {
+          layout.pinning = { left: [...pin.left], right: [...pin.right] };
+        }
+        if (Object.keys(columnSizingRef.current).length > 0) layout.sizing = { ...columnSizingRef.current };
+        return Object.keys(layout).length > 0 ? { view, layout } : { view };
+      },
+      apply: (preset) => {
+        const sorting = preset.view.sorting ?? [];
+        const filters = preset.view.filters ?? [];
+        // 適用でマスクが外れることはないようにする。プリセット側は追加マスク (true) だけを採り、
+        // いま手動で掛けているマスク (true) は残す (画面共有中にビュー切替で値が見えないように)。
+        const masks: Record<string, boolean> = {};
+        for (const [col, on] of Object.entries(preset.view.masks ?? {})) if (on) masks[col] = true;
+        for (const [col, on] of Object.entries(maskOverridesRef.current)) if (on) masks[col] = true;
+        setSorting(sorting);
+        setColumnFilters(filters);
+        setMaskOverrides(masks);
+        writeStoredGridView(gridViewKey, toPersistedGridView(sorting, filters, masks));
+        // レイアウトを持たないプリセットは「既定のレイアウト」として適用する。
+        const l = preset.layout ?? {};
+        const order = l.order ?? [];
+        const visibility = l.visibility ?? {};
+        const pinning = l.pinning ?? { left: [], right: [] };
+        const sizing = l.sizing ?? {};
+        setColumnOrder(order);
+        setColumnVisibility(visibility);
+        setColumnPinning(pinning);
+        writeStoredColumnState(colStateKey, { order, visibility, pinning });
+        setColumnSizing(sizing);
+        writeStoredColumnSizing(columnSizingStorageKey, sizing);
+      },
+    };
+  });
 
   // --- Aggregate footer row (#645), persisted per result shape ---
   // Footer show/hide + per-column aggregate function live in their own
@@ -8664,6 +8722,8 @@ export const ResultGrid = memo(
     // 空でよい。
     // 「現在のビュー」(#1507): DataGrid が置く切り出し関数。Export を開く瞬間にだけ呼ぶ。
     const exportViewRef = useRef<(() => { columns: Column[]; rows: CellValue[][] } | null) | null>(null);
+    // 名前付きビュープリセット (#1942): DataGrid が置く取得/適用の操作。
+    const viewPresetsRef = useRef<GridViewPresetsHandle | null>(null);
     const [viewExport, setViewExport] = useState<{ columns: Column[]; rows: CellValue[][] } | null>(null);
     const openExport = () => {
       setViewExport(exportViewRef.current?.() ?? null);
@@ -9179,6 +9239,8 @@ export const ResultGrid = memo(
       () => resultShapeSizingKey(columns, database, table),
       [columns, database, table],
     );
+    // 名前付きビュープリセット (#1942) の保存キー。同じ結果シェイプキーに相乗りする。
+    const viewPresetsKey = gridPresetsKeyFrom(columnSizingStorageKey);
 
     // Client-side type/NOT NULL validation of a pending edit, by result-column
     // index. Mirrors the literal-building rules in cellEdit so invalid input is
@@ -9651,6 +9713,7 @@ export const ResultGrid = memo(
               <Icon name="download" size={ICON_SIZES.md} />
             </Button>
           </Tooltip>
+          {viewPresetsKey && <GridViewPresetsMenu storageKey={viewPresetsKey} handleRef={viewPresetsRef} />}
           {visibleToolbarActions.map((id) => {
             if (id === "autoRefresh") return null;
             const a = toolbarButtonActions[id];
@@ -10484,6 +10547,7 @@ export const ResultGrid = memo(
             onSelectionSummary={setSelSummary}
             onExportSelection={handleExportSelection}
             exportViewRef={exportViewRef}
+            viewPresetsRef={viewPresetsRef}
             onRunStatsQuery={onRunStatsQuery}
             valuePicker={editableActive ? valuePicker : undefined}
             onExploreColumn={onExploreColumn}

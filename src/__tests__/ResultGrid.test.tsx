@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { createRef } from "react";
 import userEvent from "@testing-library/user-event";
 import { act, fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
-import { writeStoredGridView } from "../components/gridViewState";
+import { readStoredGridView, writeStoredGridView } from "../components/gridViewState";
 import {
   ResultGrid,
   rowToPendingInsert,
@@ -15,7 +15,13 @@ import {
   readStoredColumnState,
   writeStoredColumnState,
 } from "../components/ResultGrid";
-import { resultShapeSizingKey } from "../components/gridViewState";
+import {
+  gridPresetsKeyFrom,
+  gridViewStateKeyFrom,
+  readStoredGridPresets,
+  resultShapeSizingKey,
+  writeStoredGridPresets,
+} from "../components/gridViewState";
 import { rowEditKey, type PendingInsertRow } from "../components/cellEdit";
 import type { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { attachStreamStats } from "../components/streamStats";
@@ -2752,5 +2758,91 @@ describe("rowToPendingInsert: BLOB 列は種に入れない (#1607)", () => {
     const seed = rowToPendingInsert([1, "89504e47"], cols);
     expect(seed[0]).toBe("1");
     expect(seed[1]).toBeUndefined();
+  });
+});
+
+describe("名前付きビュープリセット (#1942)", () => {
+  beforeEach(() => {
+    setLocale("en");
+    localStorage.clear();
+  });
+
+  it("保存したビューを別のソートの後に適用すると、ソートが丸ごと復元される", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(
+      <ResultGrid result={FRUIT_RESULT} database="db" table="fruit" />,
+    );
+
+    // name 昇順にして「昇順」という名前で保存する。
+    await user.click(screen.getByRole("button", { name: /^name/ }));
+    expect(dataRowTexts(container).map((r) => r[0])).toEqual(["apple", "banana", "cherry"]);
+    await user.click(screen.getByRole("button", { name: t("gridPresetButton") }));
+    await user.click(await screen.findByRole("menuitem", { name: t("gridPresetSaveNew") }));
+    await user.type(await screen.findByLabelText(t("gridPresetNameLabel")), "asc");
+    await user.click(screen.getByRole("button", { name: t("gridPresetSave") }));
+    await waitFor(() => expect(screen.queryByLabelText(t("gridPresetNameLabel"))).toBeNull());
+
+    // 降順に変えてから、保存ビューを適用すると昇順へ戻る。
+    await user.click(screen.getByRole("button", { name: /^name/ }));
+    expect(dataRowTexts(container).map((r) => r[0])).toEqual(["cherry", "banana", "apple"]);
+    await user.click(screen.getByRole("button", { name: t("gridPresetButton") }));
+    await user.click(await screen.findByRole("menuitem", { name: "asc" }));
+    expect(dataRowTexts(container).map((r) => r[0])).toEqual(["apple", "banana", "cherry"]);
+  });
+
+  it("列を隠して保存したビューは適用で再び隠れ、レイアウト無しのビューは既定 (表示) に戻す", async () => {
+    const user = userEvent.setup();
+    const sizingKey = resultShapeSizingKey(FRUIT_COLUMNS, "db", "fruit");
+    writeStoredColumnState(colStateKeyFrom(sizingKey), { visibility: { "1": false } });
+    writeStoredGridPresets(gridPresetsKeyFrom(sizingKey), [{ name: "plain", view: {} }]);
+    renderWithProviders(<ResultGrid result={FRUIT_RESULT} database="db" table="fruit" />);
+    expect(screen.queryByRole("button", { name: /^qty/ })).toBeNull();
+
+    // 隠した状態を「hid」で保存する (レイアウトに visibility が入る)。
+    await user.click(screen.getByRole("button", { name: t("gridPresetButton") }));
+    await user.click(await screen.findByRole("menuitem", { name: t("gridPresetSaveNew") }));
+    await user.type(await screen.findByLabelText(t("gridPresetNameLabel")), "hid");
+    await user.click(screen.getByRole("button", { name: t("gridPresetSave") }));
+    await waitFor(() => expect(screen.queryByLabelText(t("gridPresetNameLabel"))).toBeNull());
+    const saved = readStoredGridPresets(gridPresetsKeyFrom(sizingKey)).find((p) => p.name === "hid");
+    expect(saved?.layout?.visibility).toEqual({ "1": false });
+
+    // レイアウトを持たない「plain」で既定 (表示) に戻る。
+    await user.click(screen.getByRole("button", { name: t("gridPresetButton") }));
+    await user.click(await screen.findByRole("menuitem", { name: "plain" }));
+    expect(await screen.findByRole("button", { name: /^qty/ })).toBeTruthy();
+
+    // 「hid」を適用すると再び隠れる。
+    await user.click(screen.getByRole("button", { name: t("gridPresetButton") }));
+    await user.click(await screen.findByRole("menuitem", { name: "hid" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /^qty/ })).toBeNull());
+  });
+
+  it("保存時はマスク解除 (false) の上書きを残さず、追加マスク (true) だけ残す", async () => {
+    const user = userEvent.setup();
+    const sizingKey = resultShapeSizingKey(FRUIT_COLUMNS, "db", "fruit");
+    writeStoredGridView(gridViewStateKeyFrom(sizingKey), { masks: { name: false, qty: true } });
+    renderWithProviders(<ResultGrid result={FRUIT_RESULT} database="db" table="fruit" />);
+    await user.click(screen.getByRole("button", { name: t("gridPresetButton") }));
+    await user.click(await screen.findByRole("menuitem", { name: t("gridPresetSaveNew") }));
+    await user.type(await screen.findByLabelText(t("gridPresetNameLabel")), "m");
+    await user.click(screen.getByRole("button", { name: t("gridPresetSave") }));
+    await waitFor(() => expect(readStoredGridPresets(gridPresetsKeyFrom(sizingKey))).toHaveLength(1));
+    expect(readStoredGridPresets(gridPresetsKeyFrom(sizingKey))[0]?.view.masks).toEqual({ qty: true });
+  });
+
+  it("適用しても、いま手動で掛けているマスクは外れない", async () => {
+    const user = userEvent.setup();
+    const sizingKey = resultShapeSizingKey(FRUIT_COLUMNS, "db", "fruit");
+    writeStoredGridView(gridViewStateKeyFrom(sizingKey), { masks: { qty: true } });
+    writeStoredGridPresets(gridPresetsKeyFrom(sizingKey), [
+      { name: "p", view: { masks: { name: true, qty: false } } },
+    ]);
+    renderWithProviders(<ResultGrid result={FRUIT_RESULT} database="db" table="fruit" />);
+    await user.click(screen.getByRole("button", { name: t("gridPresetButton") }));
+    await user.click(await screen.findByRole("menuitem", { name: "p" }));
+    await waitFor(() =>
+      expect(readStoredGridView(gridViewStateKeyFrom(sizingKey)).masks).toEqual({ name: true, qty: true }),
+    );
   });
 });

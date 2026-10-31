@@ -1,13 +1,18 @@
-// 結果形状ごとの表示設定 (列幅 colsizing / 列状態 colstate / ビュー gridview / フッター
+// 結果形状ごとの表示設定 (列幅 colsizing / 列状態 colstate / ビュー gridview / プリセット gridpresets / フッター
 // gridfooter) を localStorage に保存するときの共通処理。形状 (= colsizing キー) 単位の LRU で
-// 件数を抑え、古い形状は 4 種のキーをまとめて削除する。容量超過で setItem が失敗したときも
+// 件数を抑え、古い形状は 5 種のキーをまとめて削除する。容量超過で setItem が失敗したときも
 // 古い形状を退避して再試行するので、増え続けた別キーのせいで保存が永続的に止まらない。
 
 const COL_SIZING_LRU_KEY = "noobdb.colsizing.lru.v1";
 const COL_SIZING_MAX_ENTRIES = 50;
 
 const SIZING_PREFIX = "noobdb.colsizing.v1";
-const SIBLING_PREFIXES = ["noobdb.colstate.v1", "noobdb.gridview.v1", "noobdb.gridfooter.v1"];
+const SIBLING_PREFIXES = [
+  "noobdb.colstate.v1",
+  "noobdb.gridview.v1",
+  "noobdb.gridfooter.v1",
+  "noobdb.gridpresets.v1",
+];
 
 function readLruOrder(): string[] {
   try {
