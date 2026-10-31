@@ -9456,6 +9456,33 @@ export default function App() {
     ],
   );
 
+  // 既存のテーブルをパーティション表に付ける (#1929)。生成 SQL とロック / 境界外の行の注意を見せる確認を
+  // 挟んでから既存の保守経路で流す。データは消えないので danger トーンにはしない (本番は追加警告のみ)。
+  const handleAttachPartition = useCallback(
+    async (database: string, table: string, child: string, sql: string): Promise<boolean> => {
+      const vars = { partition: child, table };
+      const ok = await confirm({
+        title: translate("partitionAttachConfirmTitle", vars),
+        message: maintenanceMessage(
+          <>
+            {translate("partitionAttachConfirmBody", vars)}
+            <br />
+            <br />
+            <CodePreview wrap maxH="40vh">
+              {sql}
+            </CodePreview>
+          </>,
+        ),
+        confirmLabel: translate("attachPartitionConfirm"),
+      });
+      if (!ok) return false;
+      const success = await runMaintenanceDdl(sql, database);
+      if (success) toast.success(translate("partitionOpDone", { partition: child }));
+      return success;
+    },
+    [confirm, maintenanceMessage, runMaintenanceDdl, toast],
+  );
+
   // 採番列の現在値を実データに同期 (#1240)。列メタから対象を判定し、生成 SQL を確認
   // ダイアログで提示して既存の保守実行経路 (`runMaintenanceDdl`) に流す。MySQL は
   // AUTO_INCREMENT にサブクエリを書けないので、MAX を読み取り専用の lookup で先に取る。
@@ -13060,6 +13087,7 @@ export default function App() {
                           onSelectTable={setStructureTarget}
                           onRunPartitionMaintenance={handleRunPartitionMaintenance}
                           onPartitionOp={handlePartitionOp}
+                          onAttachPartition={handleAttachPartition}
                         />
                       ) : null
                     ) : activeBottomPanelTab === "timelapse" ? (

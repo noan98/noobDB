@@ -2,13 +2,23 @@ import { describe, expect, it } from "vitest";
 import type { TablePartition } from "../api/tauri";
 import { partitionMaintenanceCommands } from "../components/maintenanceCommands";
 import {
+  buildAttachPartitionSql,
   buildDetachPartitionSql,
   buildPartitionDropSql,
   buildPartitionTruncateSql,
 } from "../components/tableMaintenance";
 import {
+  attachBoundKind,
+  attachCandidates,
+  buildAttachSql,
+  buildPartitionBoundClause,
   buildPartitionOpSql,
+  existingHashModulus,
   formatPartitionBound,
+  parseListValues,
+  partitionKeyColumns,
+  quoteBoundValue,
+  validateAttachBound,
   partitionDestructiveOps,
 } from "../components/tablePartitions";
 
@@ -142,5 +152,84 @@ describe("partitionDestructiveOps (#1868)", () => {
     expect(buildPartitionOpSql("detach", "postgres", "public", "ev", p)).toContain("DETACH PARTITION");
     expect(buildPartitionOpSql("drop", "postgres", "public", "ev", p)).toContain("DROP TABLE");
     expect(buildPartitionOpSql("truncate", "postgres", "public", "ev", p)).toContain("TRUNCATE TABLE");
+  });
+});
+
+describe("ATTACH PARTITION (#1929)", () => {
+  it("PostgreSQL の RANGE / LIST / HASH だけが対象 (MySQL / SQLite は対象外)", () => {
+    expect(attachBoundKind("postgres", { method: "RANGE" })).toBe("range");
+    expect(attachBoundKind("postgres", { method: "list" })).toBe("list");
+    expect(attachBoundKind("postgres", { method: "HASH" })).toBe("hash");
+    expect(attachBoundKind("postgres", { method: "weird" })).toBeNull();
+    expect(attachBoundKind("mysql", { method: "RANGE" })).toBeNull();
+    expect(attachBoundKind("sqlite", { method: "RANGE" })).toBeNull();
+  });
+
+  it("境界値のリテラル化: 数値・MINVALUE・NULL はそのまま、他は引用 (単一引用符は二重化)", () => {
+    expect(quoteBoundValue(" 10 ")).toBe("10");
+    expect(quoteBoundValue("-1.5e3")).toBe("-1.5e3");
+    expect(quoteBoundValue("minvalue")).toBe("MINVALUE");
+    expect(quoteBoundValue("MaxValue")).toBe("MAXVALUE");
+    expect(quoteBoundValue("null")).toBe("NULL");
+    expect(quoteBoundValue("2026-01-01")).toBe("'2026-01-01'");
+    expect(quoteBoundValue("it's")).toBe("'it''s'");
+    expect(quoteBoundValue("'007'")).toBe("'007'");
+    expect(quoteBoundValue("1; DROP TABLE x")).toBe("'1; DROP TABLE x'");
+  });
+
+  it("RANGE: キー列ごとの FROM / TO (複合キー・MINVALUE)", () => {
+    expect(buildPartitionBoundClause({ kind: "range", from: ["2026-01-01"], to: ["2026-02-01"] })).toBe(
+      "FOR VALUES FROM ('2026-01-01') TO ('2026-02-01')",
+    );
+    expect(
+      buildPartitionBoundClause({ kind: "range", from: ["MINVALUE", "1"], to: ["100", "MAXVALUE"] }),
+    ).toBe("FOR VALUES FROM (MINVALUE, 1) TO (100, MAXVALUE)");
+    expect(validateAttachBound({ kind: "range", from: ["1"], to: [" "] })).toBe("rangeEmpty");
+    expect(buildPartitionBoundClause({ kind: "range", from: [""], to: ["1"] })).toBe("");
+  });
+
+  it("LIST: カンマ区切り (引用符内のカンマは区切らない)・空要素は捨てる", () => {
+    expect(parseListValues("'a,b', c, ")).toEqual(["'a,b'", "c"]);
+    expect(buildPartitionBoundClause({ kind: "list", values: parseListValues("jp, us, NULL") })).toBe(
+      "FOR VALUES IN ('jp', 'us', NULL)",
+    );
+    expect(validateAttachBound({ kind: "list", values: [] })).toBe("listEmpty");
+  });
+
+  it("HASH: MODULUS は 1 以上、REMAINDER は 0 以上 MODULUS 未満の整数", () => {
+    expect(buildPartitionBoundClause({ kind: "hash", modulus: "4", remainder: "3" })).toBe(
+      "FOR VALUES WITH (MODULUS 4, REMAINDER 3)",
+    );
+    expect(validateAttachBound({ kind: "hash", modulus: "0", remainder: "0" })).toBe("hashModulus");
+    expect(validateAttachBound({ kind: "hash", modulus: "x", remainder: "0" })).toBe("hashModulus");
+    expect(validateAttachBound({ kind: "hash", modulus: "4", remainder: "4" })).toBe("hashRemainder");
+    expect(validateAttachBound({ kind: "hash", modulus: "4", remainder: "-1" })).toBe("hashRemainder");
+  });
+
+  it("DEFAULT と ATTACH 文の組み立て (他ドライバ・境界不正は空文字)", () => {
+    expect(buildAttachSql("postgres", "public", "ev", "ev_old", { kind: "default" })).toBe(
+      'ALTER TABLE "public"."ev" ATTACH PARTITION "public"."ev_old" DEFAULT;',
+    );
+    expect(buildAttachSql("postgres", "public", "ev", 'ev"x', { kind: "list", values: ["1"] })).toBe(
+      'ALTER TABLE "public"."ev" ATTACH PARTITION "public"."ev""x" FOR VALUES IN (1);',
+    );
+    expect(buildAttachPartitionSql("mysql", "app", "ev", { name: "c" }, "DEFAULT")).toBe("");
+    expect(buildAttachPartitionSql("sqlite", null, "ev", { name: "c" }, "DEFAULT")).toBe("");
+    expect(
+      buildAttachSql("postgres", "public", "ev", "c", { kind: "hash", modulus: "", remainder: "" }),
+    ).toBe("");
+  });
+
+  it("候補は親自身と付いている子を除く。キー列の分割と既存 MODULUS の取得", () => {
+    const info = {
+      partitions: [
+        part({ name: "ev_1" }),
+        part({ name: "ev_2", bound: "FOR VALUES WITH (modulus 8, remainder 1)" }),
+      ],
+    };
+    expect(attachCandidates(["ev", "ev_1", "ev_2", "old"], "ev", info)).toEqual(["old"]);
+    expect(existingHashModulus(info)).toBe("8");
+    expect(existingHashModulus({ partitions: [part({ name: "a" })] })).toBeNull();
+    expect(partitionKeyColumns("a, lower(b)")).toEqual(["a", "lower(b)"]);
   });
 });
