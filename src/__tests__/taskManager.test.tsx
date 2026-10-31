@@ -61,6 +61,7 @@ const RUN: TaskRun = {
 const listTasks = vi.fn();
 const listTaskRuns = vi.fn();
 const clearTaskRuns = vi.fn();
+const deleteTask = vi.fn();
 const runTaskNow = vi.fn();
 const cancelStream = vi.fn();
 let progressHandler: ((e: import("../api/tauri").TaskRunProgressEvent) => void) | null = null;
@@ -76,6 +77,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       listTasks: (...args: unknown[]) => listTasks(...args),
       listTaskRuns: (...args: unknown[]) => listTaskRuns(...(args as [string, number])),
       clearTaskRuns: (...args: unknown[]) => clearTaskRuns(...(args as [string])),
+      deleteTask: (...args: unknown[]) => deleteTask(...args),
       saveTask: vi.fn(),
       previewTaskSchedule: (...args: unknown[]) => previewTaskSchedule(...args),
       getSchedulerSettings: (...args: unknown[]) => getSchedulerSettings(...args),
@@ -100,6 +102,7 @@ beforeEach(() => {
   listTasks.mockResolvedValue([TASK]);
   listTaskRuns.mockResolvedValue([RUN]);
   clearTaskRuns.mockResolvedValue(1);
+  deleteTask.mockResolvedValue(undefined);
   getSchedulerSettings.mockResolvedValue({ catch_up_missed: false });
   previewTaskSchedule.mockResolvedValue([]);
 });
@@ -208,6 +211,41 @@ describe("TaskManager 実行履歴の展開アニメ (#1934)", () => {
     expect(button).toHaveAttribute("aria-expanded", "false");
     // exit アニメ完了後に DOM から外れる
     await waitFor(() => expect(screen.queryByText(t("taskHistoryEmpty"))).not.toBeInTheDocument());
+  });
+});
+
+describe("TaskManager 一覧の出入りアニメ (#1934)", () => {
+  it("削除するとアニメ後に行が DOM から消える", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText(TASK.name)).toBeInTheDocument());
+
+    listTasks.mockResolvedValue([]);
+    await user.click(screen.getByRole("button", { name: t("taskDelete") }));
+    const dialogs = await screen.findAllByRole("dialog");
+    await user.click(
+      within(dialogs[dialogs.length - 1]).getByRole("button", { name: t("taskDeleteConfirmOk") }),
+    );
+
+    await waitFor(() => expect(deleteTask).toHaveBeenCalledWith(TASK.id));
+    await waitFor(() => expect(screen.queryByText(TASK.name)).not.toBeInTheDocument());
+  });
+
+  it("フォームをキャンセルして戻っても既存の行は高さ 0 から伸び直さない", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText(TASK.name)).toBeInTheDocument());
+
+    await user.click(screen.getAllByRole("button", { name: t("taskCreate") })[0]);
+    await waitFor(() => expect(screen.getByText(t("taskFormName"))).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: t("taskFormCancel") }));
+    await waitFor(() => expect(screen.getByText(TASK.name)).toBeInTheDocument());
+
+    const collapsed = Array.from(document.body.querySelectorAll<HTMLElement>("[style]")).filter(
+      (el) => el.style.height === "0px" || el.style.opacity === "0",
+    );
+    expect(collapsed).toEqual([]);
+    expect(container).toBeTruthy();
   });
 });
 

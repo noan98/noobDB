@@ -89,6 +89,9 @@ import type { Transition, Variants } from "motion/react";
  *   マウントされた 1 回だけ、画面内の行を `useFirstBatchReveal` と同じ Web Animations API・同じ段数上限
  *   (`firstBatchReveal.ts` を共有) で stagger フェード / slide-up する。再フェッチ・フィルタ・ソートは即時。
  *   reduced-motion・ハイコントラストは何も再生しない。
+ * - タスクスケジューラの一覧の出入りと実行履歴の展開 (`TaskManager` — `AnimatePresence initial={false}` + `variants.collapse`、
+ *   並べ替えは `layout="position"`、#1934)。`height` / `opacity` の補間は `MotionConfig` では止まらないため、
+ *   `useReducedMotionConfig()` / `prefersStaticMotion()` で transition を即時化する。
  * - 結果グリッドの滑って追従する選択枠 (`ResultGrid` — `useGlideFrame`、#1578)。アクティブセル /
  *   範囲選択 / 現在の検索ヒットごとに絶対配置の枠 1 枚を置き、対象が変わった確定コミットの 1 回だけ
  *   セルを計測して前の位置から left/top/width/height を Web Animations API で滑らせる

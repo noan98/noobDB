@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotionConfig } from "motion/react";
 
 import {
   api,
@@ -20,7 +20,7 @@ import {
 import { useLocale, useT, type I18nKey } from "../i18n";
 import { isReadOnlySql } from "../dangerousSql";
 import { semanticColorToken } from "../semanticColors";
-import { staggerContainer, transitions, variants } from "../motion";
+import { transitions, variants } from "../motion";
 import {
   buildAssertionTrends,
   deviceTimeZone,
@@ -303,7 +303,7 @@ export function TaskManager({ profiles, onClose }: { profiles: ConnectionProfile
   const sorted = useMemo(() => sortTasksForDisplay(tasks), [tasks]);
   // reduced-motion (OS / アプリ設定) とハイコントラストでは出入りと stagger を即時にする。
   // height / opacity の補間は MotionConfig では止まらないため、ここで明示的に見る。
-  const reduced = useReducedMotion() ?? false;
+  const reduced = useReducedMotionConfig() ?? false;
   const still = reduced || prefersStaticMotion();
   const openCreateForm = () => {
     setEditing(null);
@@ -397,14 +397,8 @@ export function TaskManager({ profiles, onClose }: { profiles: ConnectionProfile
                   }
                 />
               ) : (
-                <MotionDiv
-                  display="flex"
-                  flexDirection="column"
-                  variants={staggerContainer(still)}
-                  initial="initial"
-                  animate="animate"
-                >
-                  <AnimatePresence>
+                <chakra.div display="flex" flexDirection="column">
+                  <AnimatePresence initial={false}>
                     {sorted.map((task) => (
                       <MotionDiv
                         key={task.id}
@@ -422,6 +416,7 @@ export function TaskManager({ profiles, onClose }: { profiles: ConnectionProfile
                             task={task}
                             profileName={profileName(task.profile_id)}
                             now={now}
+                            still={still}
                             running={runningId === task.id}
                             runDisabled={runningId !== null}
                             progress={runningId === task.id ? runProgress : null}
@@ -449,7 +444,7 @@ export function TaskManager({ profiles, onClose }: { profiles: ConnectionProfile
                       </MotionDiv>
                     ))}
                   </AnimatePresence>
-                </MotionDiv>
+                </chakra.div>
               )}
             </>
           )}
@@ -475,6 +470,7 @@ function TaskRow({
   task,
   profileName,
   now,
+  still,
   running,
   runDisabled,
   progress,
@@ -493,6 +489,8 @@ function TaskRow({
   task: TaskDefinition;
   profileName: string;
   now: Date;
+  /** 動きを止めるか (reduced-motion / ハイコントラスト)。履歴展開の補間を即時にする。 */
+  still: boolean;
   running: boolean;
   /** どれかのタスクが実行中のあいだ全行の「今すぐ実行」を無効にする (実行は 1 本ずつ)。 */
   runDisabled: boolean;
@@ -513,8 +511,6 @@ function TaskRow({
   const t = useT();
   const rel = relativeNextRun(task.next_run_at, now, t);
   const locale = useLocale();
-  const reduced = useReducedMotion() ?? false;
-  const still = reduced || prefersStaticMotion();
   return (
     <chakra.div border="1px solid" borderColor="app.border" borderRadius="md" overflow="hidden">
       <Flex align="center" gap="3" px="3" py="2.5" flexWrap="wrap">
