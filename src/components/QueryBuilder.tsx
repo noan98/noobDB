@@ -18,6 +18,7 @@ import { Icon, ICON_SIZES, ICON_STROKE } from "./Icon";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Select } from "./ui";
 import { Tooltip } from "./Tooltip";
+import { LiveCollapse, LiveRowsPresence } from "./LiveRows";
 import { ErrorNote } from "./modalForm";
 import { buildLikeClause, type LikeMode } from "./serverBrowse";
 import {
@@ -895,6 +896,13 @@ export function QueryBuilder({
   );
   // ORDER BY (SELECT のみ)。WHERE と異なり必須ではないので既定は 0 行 —
   // 「+ 追加」を押すまでセクションは空のままで済む。
+  // 条件行の安定キー (#1936)。`whereConditions` と同じ並びで持ち、追加/削除の
+  // 出入りアニメ (`AnimatePresence`) が行を取り違えないようにする。条件そのもの
+  // (SQL 生成・スナップショット) には混ぜない。
+  const whereKeySeq = useRef(0);
+  const [whereKeys, setWhereKeys] = useState<number[]>(() =>
+    (initialSnapshot?.whereConditions ?? [0]).map(() => whereKeySeq.current++),
+  );
   const [orderBy, setOrderBy] = useState<OrderByItem[]>(initialSnapshot?.orderBy ?? []);
   const [limitEnabled, setLimitEnabled] = useState(initialSnapshot?.limitEnabled ?? true);
   const [limit, setLimit] = useState(initialSnapshot?.limit ?? "100");
@@ -1180,8 +1188,12 @@ export function QueryBuilder({
       return;
     }
     setWhereConditions((prev) => [...prev, { column: "", operator: "=", value: "" }]);
+    setWhereKeys((prev) => [...prev, whereKeySeq.current++]);
   };
-  const removeCondition = (idx: number) => setWhereConditions((prev) => removeWhereCondition(prev, idx));
+  const removeCondition = (idx: number) => {
+    setWhereConditions((prev) => removeWhereCondition(prev, idx));
+    setWhereKeys((prev) => prev.filter((_, i) => i !== idx));
+  };
 
   const updateOrderBy = (idx: number, patch: Partial<OrderByItem>) => {
     setOrderBy((prev) => prev.map((o, i) => (i === idx ? { ...o, ...patch } : o)));
@@ -1545,132 +1557,145 @@ export function QueryBuilder({
                   + {t("qbAddCondition")}
                 </chakra.button>
               </Box>
-              {whereEnabled &&
-                whereConditions.map((c, i) => {
-                  const info = resolveColumnInfo(tableColumns, c.column);
-                  const nullOp = isNullOperator(c.operator);
-                  // IN takes a comma-separated list, which the boolean Select /
-                  // date "now" button can't represent, so it keeps the plain
-                  // free-text box regardless of the column's type. The two
-                  // "IS [NOT] NULL" operators need no value at all.
-                  const isIn = isInOperator(c.operator);
-                  const isBetween = isBetweenOperator(c.operator);
-                  // 含む / 前方一致 / 後方一致は「検索語」なので、型対応の入力ではなく常に文字列入力。
-                  const likeMode = likeModeOf(c.operator);
-                  // 文字列列の = / != / 比較は、列の既存値を候補に出す (#1627)。
-                  const suggestable =
-                    !!info &&
-                    isSuggestableDataType(info.data_type) &&
-                    SUGGEST_OPERATORS.has(normalizeOperator(c.operator));
-                  const notNullWarning = !nullOp && isNullValueOnNotNullColumn(c.value, info);
-                  const inGroup =
-                    c.groupWithPrevious === true || whereConditions[i + 1]?.groupWithPrevious === true;
-                  return (
-                    <Box css={stackedRowCss} key={`w-${i}`}>
-                      <Box css={inGroup ? { ...rowCss, ...groupedRowCss } : rowCss}>
-                        {i === 0 ? (
-                          <chakra.span css={connectorSpacerCss}>WHERE</chakra.span>
-                        ) : (
-                          <>
-                            <Select
-                              css={connectorCss}
-                              value={c.connector === "OR" ? "OR" : "AND"}
-                              aria-label={t("qbWhereConnector")}
-                              onChange={(e) =>
-                                updateCondition(i, { connector: e.target.value as "AND" | "OR" })
-                              }
-                            >
-                              <option value="AND">AND</option>
-                              <option value="OR">OR</option>
-                            </Select>
-                            <Tooltip label={t("qbWhereGroupTip")}>
-                              <chakra.button
-                                type="button"
-                                css={groupBtnCss}
-                                aria-pressed={c.groupWithPrevious === true}
-                                aria-label={t("qbWhereGroupTip")}
-                                onClick={() =>
-                                  updateCondition(i, { groupWithPrevious: c.groupWithPrevious !== true })
-                                }
-                              >
-                                ( )
-                              </chakra.button>
-                            </Tooltip>
-                          </>
-                        )}
-                        <ComboSelect
-                          css={rowInputCss}
-                          value={c.column}
-                          options={columnComboOptions}
-                          onChange={(v) => updateCondition(i, { column: v })}
-                          placeholder={t("qbColumn")}
-                          emptyText={t("qbComboNoMatches")}
-                          showMoreText={(count) => t("qbComboShowMore", { count })}
-                        />
-                        <ComboSelect
-                          css={opCss}
-                          value={c.operator}
-                          options={operatorComboOptions}
-                          onChange={(v) => updateCondition(i, { operator: v })}
-                          emptyText={t("qbComboNoMatches")}
-                          showMoreText={(count) => t("qbComboShowMore", { count })}
-                        />
-                        {nullOp || isIn || likeMode ? (
-                          <chakra.input
-                            css={rowInputCss}
-                            value={c.value}
-                            placeholder={nullOp ? "—" : isIn ? t("qbValuesPlaceholder") : t("qbValue")}
-                            disabled={nullOp}
-                            aria-label={t("qbValue")}
-                            onChange={(e) => updateCondition(i, { value: e.target.value })}
-                          />
-                        ) : isBetween ? (
-                          <>
-                            <ValueControl
-                              value={c.value}
-                              onChange={(v) => updateCondition(i, { value: v })}
-                              columnInfo={info}
-                              placeholder={t("qbBetweenFrom")}
-                              t={t}
-                            />
-                            <chakra.span css={eqCss}>AND</chakra.span>
-                            <ValueControl
-                              value={c.value2 ?? ""}
-                              onChange={(v) => updateCondition(i, { value2: v })}
-                              columnInfo={info}
-                              placeholder={t("qbBetweenTo")}
-                              t={t}
-                            />
-                          </>
-                        ) : (
-                          <ValueControl
-                            value={c.value}
-                            onChange={(v) => updateCondition(i, { value: v })}
-                            columnInfo={info}
-                            placeholder={t("qbValue")}
-                            t={t}
-                            suggestions={suggestable ? (valueSuggestions[c.column] ?? []) : undefined}
-                            onSuggestOpen={suggestable ? () => requestValueSuggestions(c.column) : undefined}
-                          />
-                        )}
-                        <Tooltip label={t("qbRemove")} focusableWrapper={whereConditions.length <= 1}>
-                          <chakra.button
-                            type="button"
-                            css={iconBtnCss}
-                            onClick={() => removeCondition(i)}
-                            aria-label={t("qbRemove")}
-                            disabled={whereConditions.length <= 1}
-                          >
-                            <Icon name="close" size={ICON_SIZES.sm} />
-                          </chakra.button>
-                        </Tooltip>
-                      </Box>
-                      {notNullWarning && (
-                        <chakra.span css={inlineWarningCss}>{t("qbNotNullWarning")}</chakra.span>
-                      )}
-                    </Box>
-                  );
-                })}
+              {whereEnabled && (
+                // 行の追加/削除は高さ+opacity で出入りさせる (#1936)。行間の gap は
+                // 各行の内側 padding に移し、畳み終わりに隙間が残らないようにする。
+                <Box mt="-1.5">
+                  <LiveRowsPresence>
+                    {whereConditions.map((c, i) => {
+                      const info = resolveColumnInfo(tableColumns, c.column);
+                      const nullOp = isNullOperator(c.operator);
+                      // IN takes a comma-separated list, which the boolean Select /
+                      // date "now" button can't represent, so it keeps the plain
+                      // free-text box regardless of the column's type. The two
+                      // "IS [NOT] NULL" operators need no value at all.
+                      const isIn = isInOperator(c.operator);
+                      const isBetween = isBetweenOperator(c.operator);
+                      // 含む / 前方一致 / 後方一致は「検索語」なので、型対応の入力ではなく常に文字列入力。
+                      const likeMode = likeModeOf(c.operator);
+                      // 文字列列の = / != / 比較は、列の既存値を候補に出す (#1627)。
+                      const suggestable =
+                        !!info &&
+                        isSuggestableDataType(info.data_type) &&
+                        SUGGEST_OPERATORS.has(normalizeOperator(c.operator));
+                      const notNullWarning = !nullOp && isNullValueOnNotNullColumn(c.value, info);
+                      const inGroup =
+                        c.groupWithPrevious === true || whereConditions[i + 1]?.groupWithPrevious === true;
+                      return (
+                        <LiveCollapse standalone key={`w-${whereKeys[i] ?? i}`}>
+                          <Box css={stackedRowCss} pt="1.5">
+                            <Box css={inGroup ? { ...rowCss, ...groupedRowCss } : rowCss}>
+                              {i === 0 ? (
+                                <chakra.span css={connectorSpacerCss}>WHERE</chakra.span>
+                              ) : (
+                                <>
+                                  <Select
+                                    css={connectorCss}
+                                    value={c.connector === "OR" ? "OR" : "AND"}
+                                    aria-label={t("qbWhereConnector")}
+                                    onChange={(e) =>
+                                      updateCondition(i, { connector: e.target.value as "AND" | "OR" })
+                                    }
+                                  >
+                                    <option value="AND">AND</option>
+                                    <option value="OR">OR</option>
+                                  </Select>
+                                  <Tooltip label={t("qbWhereGroupTip")}>
+                                    <chakra.button
+                                      type="button"
+                                      css={groupBtnCss}
+                                      aria-pressed={c.groupWithPrevious === true}
+                                      aria-label={t("qbWhereGroupTip")}
+                                      onClick={() =>
+                                        updateCondition(i, {
+                                          groupWithPrevious: c.groupWithPrevious !== true,
+                                        })
+                                      }
+                                    >
+                                      ( )
+                                    </chakra.button>
+                                  </Tooltip>
+                                </>
+                              )}
+                              <ComboSelect
+                                css={rowInputCss}
+                                value={c.column}
+                                options={columnComboOptions}
+                                onChange={(v) => updateCondition(i, { column: v })}
+                                placeholder={t("qbColumn")}
+                                emptyText={t("qbComboNoMatches")}
+                                showMoreText={(count) => t("qbComboShowMore", { count })}
+                              />
+                              <ComboSelect
+                                css={opCss}
+                                value={c.operator}
+                                options={operatorComboOptions}
+                                onChange={(v) => updateCondition(i, { operator: v })}
+                                emptyText={t("qbComboNoMatches")}
+                                showMoreText={(count) => t("qbComboShowMore", { count })}
+                              />
+                              {nullOp || isIn || likeMode ? (
+                                <chakra.input
+                                  css={rowInputCss}
+                                  value={c.value}
+                                  placeholder={nullOp ? "—" : isIn ? t("qbValuesPlaceholder") : t("qbValue")}
+                                  disabled={nullOp}
+                                  aria-label={t("qbValue")}
+                                  onChange={(e) => updateCondition(i, { value: e.target.value })}
+                                />
+                              ) : isBetween ? (
+                                <>
+                                  <ValueControl
+                                    value={c.value}
+                                    onChange={(v) => updateCondition(i, { value: v })}
+                                    columnInfo={info}
+                                    placeholder={t("qbBetweenFrom")}
+                                    t={t}
+                                  />
+                                  <chakra.span css={eqCss}>AND</chakra.span>
+                                  <ValueControl
+                                    value={c.value2 ?? ""}
+                                    onChange={(v) => updateCondition(i, { value2: v })}
+                                    columnInfo={info}
+                                    placeholder={t("qbBetweenTo")}
+                                    t={t}
+                                  />
+                                </>
+                              ) : (
+                                <ValueControl
+                                  value={c.value}
+                                  onChange={(v) => updateCondition(i, { value: v })}
+                                  columnInfo={info}
+                                  placeholder={t("qbValue")}
+                                  t={t}
+                                  suggestions={suggestable ? (valueSuggestions[c.column] ?? []) : undefined}
+                                  onSuggestOpen={
+                                    suggestable ? () => requestValueSuggestions(c.column) : undefined
+                                  }
+                                />
+                              )}
+                              <Tooltip label={t("qbRemove")} focusableWrapper={whereConditions.length <= 1}>
+                                <chakra.button
+                                  type="button"
+                                  css={iconBtnCss}
+                                  onClick={() => removeCondition(i)}
+                                  aria-label={t("qbRemove")}
+                                  disabled={whereConditions.length <= 1}
+                                >
+                                  <Icon name="close" size={ICON_SIZES.sm} />
+                                </chakra.button>
+                              </Tooltip>
+                            </Box>
+                            {notNullWarning && (
+                              <chakra.span css={inlineWarningCss}>{t("qbNotNullWarning")}</chakra.span>
+                            )}
+                          </Box>
+                        </LiveCollapse>
+                      );
+                    })}
+                  </LiveRowsPresence>
+                </Box>
+              )}
               {whereEnabled &&
                 (kind === "UPDATE" || kind === "DELETE") &&
                 hasAmbiguousAndOr(whereConditions) && (

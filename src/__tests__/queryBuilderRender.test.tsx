@@ -573,4 +573,16 @@ describe("QueryBuilder の BETWEEN / OFFSET / 値の候補 (#1627)", () => {
     fireEvent.change(screen.getByPlaceholderText(t("qbValue")), { target: { value: "zed" } });
     await waitFor(() => expect(screen.getByRole("button", { name: t("qbExecute") })).not.toBeDisabled());
   });
+  it("条件行を削除しても残った行の入力値は取り違えない (出入りアニメ用の安定キー, #1936)", async () => {
+    renderSelect();
+    await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
+    enableWhere();
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("qbAddCondition")) }));
+    const values = screen.getAllByPlaceholderText(t("qbValue"));
+    fireEvent.change(values[0], { target: { value: "first" } });
+    fireEvent.change(values[1], { target: { value: "second" } });
+    fireEvent.click(screen.getAllByRole("button", { name: t("qbRemove") })[0]);
+    await waitFor(() => expect(screen.getAllByPlaceholderText(t("qbValue"))).toHaveLength(1));
+    expect(screen.getByPlaceholderText(t("qbValue"))).toHaveValue("second");
+  });
 });
