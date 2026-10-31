@@ -25,6 +25,7 @@ import {
 import { Icon, ICON_SIZES } from "./Icon";
 import { KeepAlive } from "./KeepAlive";
 import { prefersStaticMotion } from "./revealOrigin";
+import { sidebarSlideDirection, type SlideDirection } from "./sidebarTabNav";
 import { Splitter } from "./Splitter";
 import { Tooltip } from "./Tooltip";
 import { Button } from "./ui";
@@ -52,7 +53,8 @@ import { Button } from "./ui";
  * ## モーション (#1142)
  *
  * タブ切替は本体を `KeepAlive` で保持し (#1311)、再表示のときだけ `variants.fade` で
- * 入場する (退場を待たない)。開閉は `WorkspaceSplit` がパネル全体を
+ * 入場する (退場を待たない)。切替先が隣のタブなら、滑るインジケータと同じ向きに
+ * `slideDirection` で方向付きスライド + フェードにする (#1952、サイドバー #1830 と同じ流儀)。開閉は `WorkspaceSplit` がパネル全体を
  * `variants.slideUp` で出し入れする。reduced-motion 時はルートの `MotionConfig`
  * が y 移動を抑制する (フェードだけが残る)。
  */
@@ -162,6 +164,10 @@ export function BottomPanel({ tab, tabs, label, onSelect, onClose, resetKey, chi
   const t = useT();
   const indicatorId = `bottom-panel-tab-indicator-${useId()}`;
   const tabRefs = useRef<Partial<Record<BottomPanelTab, HTMLButtonElement | null>>>({});
+  // 切替の中身スライドの向き (#1952)。タブバーの並び (= インジケータが滑る向き) から決め、
+  // 描画中に前のタブと比べて更新する (effect を挟まず 1 回の描画で向きが揃う)。
+  const [nav, setNav] = useState<{ tab: BottomPanelTab; dir: SlideDirection }>({ tab, dir: 0 });
+  if (nav.tab !== tab) setNav({ tab, dir: sidebarSlideDirection(tabs, nav.tab, tab) });
   // 用途グループ (ログ / 診断 / 参照、#1114) の切れ目に区切り線を引く。
   const groupStarts = useMemo(() => bottomPanelGroupStarts(tabs), [tabs]);
 
@@ -268,7 +274,12 @@ export function BottomPanel({ tab, tabs, label, onSelect, onClose, resetKey, chi
             インスペクタの記録や診断結果が消え、戻るたびに IPC をやり直していた。
             タブの種類は有限 (`BOTTOM_PANEL_TABS`) なので、上限はその数 = 全タブを保持
             できる。接続が切り替わったら古いセッションの中身は捨てる (`resetKey`)。 */}
-        <KeepAlive activeKey={tab} limit={BOTTOM_PANEL_TABS.length} resetKey={resetKey}>
+        <KeepAlive
+          activeKey={tab}
+          limit={BOTTOM_PANEL_TABS.length}
+          resetKey={resetKey}
+          slideDirection={nav.dir}
+        >
           {children}
         </KeepAlive>
       </Box>
