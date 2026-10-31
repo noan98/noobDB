@@ -1,12 +1,12 @@
 import { useId } from "react";
-import { chakra, Flex, Text } from "@chakra-ui/react";
-import { Heading, SelectableCard } from "./ui";
+import { chakra, Text } from "@chakra-ui/react";
+import { SelectableCard } from "./ui";
 import { motion, useReducedMotion } from "motion/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useT } from "../i18n";
 import { useToast } from "./Toast";
 import { staggerContainer, transitions, variants } from "../motion";
-import { BrandMark } from "../brand";
+import { HeroHeader } from "./HeroHeader";
 import { WelcomeIllustration } from "./illustrations";
 import type { IconName } from "./Icon";
 import { FeatureIcon } from "./FeatureIcon";
@@ -152,27 +152,7 @@ export function WelcomeView({ onCreateConnection, onOpenSqlite, onStartTour }: P
         <WelcomeIllustration size={128} />
       </MotionDiv>
 
-      <Flex direction="column" align="center" gap="1.5" maxW="46ch" textAlign="center">
-        <Flex align="center" gap="2">
-          <BrandMark
-            size={34}
-            width="calc(34px * var(--font-scale))"
-            height="calc(34px * var(--font-scale))"
-          />
-          <Heading role="display">{t("welcomeTitle")}</Heading>
-        </Flex>
-        {/* 見出し下のブランドグラデーションの短い罫線 (#1216、hc-* では none) */}
-        <chakra.div
-          aria-hidden
-          w="48px"
-          h="3px"
-          rounded="pill"
-          css={{ background: "var(--hero-rule)", display: "var(--hero-rule-display)" }}
-        />
-        <Text textStyle="body" color="app.textMuted">
-          {t("welcomeSubtitle")}
-        </Text>
-      </Flex>
+      <HeroHeader title={t("welcomeTitle")} subtitle={t("welcomeSubtitle")} maxW="46ch" />
 
       <MotionRow
         display="flex"

@@ -19,7 +19,8 @@ import {
   type ContextMenuTriggerEvent,
 } from "./contextMenuKeyboard";
 import { useConfirm } from "./ConfirmDialog";
-import { Heading, Input, SelectableCard } from "./ui";
+import { Input, SelectableCard } from "./ui";
+import { HeroHeader } from "./HeroHeader";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import { GroupAvatar, ProfileBadges, ProfileColorChip } from "./ProfileBadge";
 import { Spinner } from "./Spinner";
@@ -155,20 +156,7 @@ export function ProfileCardGrid({
       // ルート自身の背景画像として敷く (内容は常にその手前に描かれる)。
       css={{ backgroundImage: "var(--hero-wash)", backgroundRepeat: "no-repeat" }}
     >
-      <Flex direction="column" align="center" gap="1.5" textAlign="center">
-        <Heading role="display">{t("profileCardsTitle")}</Heading>
-        {/* 見出し下のブランドグラデーションの短い罫線。WelcomeView と対称 (#1891、hc-* では none) */}
-        <chakra.div
-          aria-hidden
-          w="48px"
-          h="3px"
-          rounded="pill"
-          css={{ background: "var(--hero-rule)", display: "var(--hero-rule-display)" }}
-        />
-        <Text textStyle="body" color="app.textMuted" maxW="52ch">
-          {t("profileCardsSubtitle")}
-        </Text>
-      </Flex>
+      <HeroHeader title={t("profileCardsTitle")} subtitle={t("profileCardsSubtitle")} />
       {showFilter && (
         <Flex direction="column" align="center" gap="2" w="100%" maxW="960px">
           <Input
