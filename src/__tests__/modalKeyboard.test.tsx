@@ -300,7 +300,7 @@ describe("IME 変換確定の Enter (#1515)", () => {
 describe("モーダル内の ListboxSelect と Esc (#1950)", () => {
   function Harness({ onClose }: { onClose: () => void }) {
     return (
-      <Modal open onClose={onClose} title="設定" size="md">
+      <Modal onClose={onClose} onSubmit={vi.fn()}>
         <ModalBody>
           <ListboxSelect
             ariaLabel="形式"
