@@ -125,6 +125,33 @@ pub fn value_str(v: &Value) -> Option<Cow<'_, str>> {
     }
 }
 
+/// 2 の冪基数 (16/8/2 進) の桁列を、最後に 1 回だけ丸めて f64 にする (JS の `Number("0x…")` 相当)。
+/// 1 桁ずつ f64 で積むと 2^53 超で丸めが重なってずれる (#1983)。128 bit に収まる値は `u128` で
+/// 正確に積んでから変換し、超える値は上位 64 bit + 下位の sticky ビット (round-to-odd) で
+/// 二重丸めを避ける。
+fn pow2_digits_to_f64(digits: &[u32], bits_per_digit: u32) -> f64 {
+    let mut bits: Vec<bool> = Vec::with_capacity(digits.len() * bits_per_digit as usize);
+    for &d in digits {
+        for i in (0..bits_per_digit).rev() {
+            bits.push((d >> i) & 1 == 1);
+        }
+    }
+    let start = bits.iter().position(|&b| b).unwrap_or(bits.len());
+    let bits = &bits[start..];
+    if bits.len() <= 128 {
+        let v = bits.iter().fold(0u128, |a, &b| (a << 1) | u128::from(b));
+        return v as f64;
+    }
+    let extra = bits.len() - 64;
+    let top = bits[..64]
+        .iter()
+        .fold(0u64, |a, &b| (a << 1) | u64::from(b));
+    let sticky = bits[64..].iter().any(|&b| b);
+    let m = top | u64::from(sticky);
+    // 指数が f64 の範囲を超えるときは powi が inf になり、結果も inf になる。
+    (m as f64) * 2f64.powi(i32::try_from(extra).unwrap_or(i32::MAX))
+}
+
 /// JS の `Number(str)` 相当 (`NaN` を返しうる)。前後の空白は JS の WhiteSpace /
 /// LineTerminator 集合で除去し、空文字列は 0、16/8/2 進接頭辞・`Infinity` を受理する。
 pub fn js_to_number(s: &str) -> f64 {
@@ -146,14 +173,14 @@ pub fn js_to_number(s: &str) -> f64 {
             _ => None,
         };
         if let Some(radix) = radix {
-            let mut acc: f64 = 0.0;
+            let mut digits: Vec<u32> = Vec::with_capacity(t.len() - 2);
             for c in t[2..].chars() {
                 match c.to_digit(radix) {
-                    Some(d) => acc = acc * f64::from(radix) + f64::from(d),
+                    Some(d) => digits.push(d),
                     None => return f64::NAN,
                 }
             }
-            return acc;
+            return pow2_digits_to_f64(&digits, radix.trailing_zeros());
         }
     }
     // 10 進リテラル。Rust の f64 パーサは `inf` / `nan` / `infinity` も受理するので、

@@ -528,6 +528,7 @@ async fn postgres_new_schema_apis_and_transaction_when_env_set() {
         "DROP FUNCTION IF EXISTS public.noobdb_objtest_fn()",
         "DROP FUNCTION IF EXISTS public.noobdb_objtest_trgfn() CASCADE",
         "DROP TABLE IF EXISTS public.noobdb_objtest_idx",
+        "DROP SEQUENCE IF EXISTS public.noobdb_objtest_seq",
     ] {
         let _ = conn.execute(stmt, None).await;
     }
@@ -626,6 +627,42 @@ async fn postgres_new_schema_apis_and_transaction_when_env_set() {
         .await
         .expect("view definition");
     assert!(view_def.to_lowercase().contains("select"));
+
+    // シーケンス (#1957): 一覧に載り、定義 (CREATE SEQUENCE + 現在値) を開ける。
+    conn.execute(
+        "CREATE SEQUENCE public.noobdb_objtest_seq INCREMENT BY 5 START WITH 100",
+        None,
+    )
+    .await
+    .expect("create sequence");
+    let objects = conn.schema_objects(schema).await.expect("schema_objects");
+    assert!(
+        objects
+            .iter()
+            .any(|o| o.kind == "sequence" && o.name == "noobdb_objtest_seq"),
+        "sequence listed: {objects:?}"
+    );
+    let seq_def = conn
+        .object_definition(schema, "sequence", "noobdb_objtest_seq", None)
+        .await
+        .expect("sequence definition");
+    assert!(seq_def.contains("CREATE SEQUENCE \"public\".\"noobdb_objtest_seq\""));
+    assert!(seq_def.contains("INCREMENT BY 5"));
+    assert!(
+        seq_def.contains("last_value: (not called yet or no privilege)"),
+        "{seq_def}"
+    );
+    conn.execute("SELECT nextval('public.noobdb_objtest_seq')", None)
+        .await
+        .expect("nextval");
+    let seq_def = conn
+        .object_definition(schema, "sequence", "noobdb_objtest_seq", None)
+        .await
+        .expect("sequence definition after nextval");
+    assert!(seq_def.contains("last_value: 100"), "{seq_def}");
+    let _ = conn
+        .execute("DROP SEQUENCE IF EXISTS public.noobdb_objtest_seq", None)
+        .await;
 
     // Explicit transaction: rollback then commit.
     assert!(!conn.transaction_active().await);
