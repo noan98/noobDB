@@ -209,6 +209,20 @@ describe("semanticDiagnostics — ドライバ差・保守性", () => {
       }),
     ).toEqual([]);
   });
+  it("UNION ALL / UNION DISTINCT の後ろの SELECT も検査する", () => {
+    expect(run("SELECT id FROM users UNION ALL SELECT id FROM userz")).toEqual(["warning:table:userz@userz"]);
+    expect(run("SELECT id FROM users UNION DISTINCT SELECT nme FROM users")).toEqual([
+      "warning:column:nme@nme",
+    ]);
+  });
+  it("COLLATE の照合名を CTE の列別名と取り違えない", () => {
+    expect(
+      run('WITH t AS (SELECT name COLLATE "C" FROM users) SELECT t.name FROM t', {
+        dialect: PostgreSQL,
+        driver: "postgres",
+      }),
+    ).toEqual([]);
+  });
   it("CREATE TABLE の列名 event だけでは文書全体の解析を止めない", () => {
     expect(run("CREATE TABLE logs (id int, event varchar(10)); SELECT nme FROM users")).toEqual([
       "warning:column:nme@nme",

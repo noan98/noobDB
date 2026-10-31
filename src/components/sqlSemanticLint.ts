@@ -761,6 +761,8 @@ function analyzeSelectList(list: Item[]): { columns: Cols; aliases: Set<string> 
     if (isNameTok(last)) {
       if (p.length === 1) name = last.norm;
       else if (isPunct(prev, ".")) name = last.norm;
+      // `expr COLLATE "C"` の照合名は別名ではない (出力列名は方言任せなので不明扱い)。
+      else if (isWord(prev, "collate")) name = null;
       else if (prev && isOperandEnd(prev)) {
         name = last.norm; // `expr AS x` / `expr x` (暗黙の別名)
         isAlias = true;
@@ -932,8 +934,11 @@ function analyzeQuery(items: Item[], outer: Scope | null, ctes: Ctes, env: Env):
   const rest = items.slice(i);
   const segments: Item[][] = [[]];
   for (const it of rest) {
+    const cur = segments[segments.length - 1];
     if (it.kind === "word" && SET_OPS.has(it.norm)) segments.push([]);
-    else segments[segments.length - 1].push(it);
+    // UNION ALL / UNION DISTINCT の修飾語は読み飛ばし、続く SELECT を解析対象にする。
+    else if (segments.length > 1 && cur.length === 0 && isWord(it, "all", "distinct")) continue;
+    else cur.push(it);
   }
   const chain = segments.length > 1;
   let firstCols: Cols = null;
