@@ -2004,8 +2004,13 @@ impl PostgresConn {
               JOIN pg_namespace n ON n.oid = c.relnamespace
              WHERE n.nspname = $1 AND NOT t.tgisinternal
             UNION ALL
-            SELECT 'sequence', sequencename::text, NULL::text
-              FROM pg_sequences WHERE schemaname = $1
+            -- pg_sequences は行ごとに pg_sequence_last_value() を評価してシーケンスを
+            -- ロックするため、ALTER / DROP 中のシーケンスがあるとツリー一覧ごと待たされる。
+            -- 一覧は名前だけで足りるので pg_class から引く (#1957)。
+            SELECT 'sequence', c.relname, NULL::text
+              FROM pg_class c
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = $1 AND c.relkind = 'S'
             ORDER BY kind, name
             "#,
         )
