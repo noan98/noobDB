@@ -3,6 +3,7 @@ import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import { api, type ServerInfo, type ServerVariable } from "../api/tauri";
 import { useT } from "../i18n";
+import { SurfaceRule } from "./SurfaceRule";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -114,6 +115,7 @@ export function ServerInfoPanel({ sessionId, onClose }: { sessionId: string; onC
   return (
     <Box flex="1" overflowY="auto" py="5" px="6" display="flex" flexDirection="column" gap="3.5">
       <chakra.header
+        position="relative"
         display="flex"
         alignItems="center"
         justifyContent="space-between"
@@ -136,6 +138,7 @@ export function ServerInfoPanel({ sessionId, onClose }: { sessionId: string; onC
             <Icon name="close" size={ICON_SIZES.sm} />
           </Button>
         </Tooltip>
+        <SurfaceRule />
       </chakra.header>
 
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">

@@ -12,6 +12,7 @@ import {
   type PinnedResult,
 } from "../pinnedCompare";
 import { diffResultRows } from "../resultDiff";
+import { SurfaceRule } from "./SurfaceRule";
 import { Callout } from "./Callout";
 import { semanticColorToken } from "../semanticColors";
 import { Tooltip } from "./Tooltip";
@@ -339,6 +340,7 @@ function Header({
 }) {
   return (
     <chakra.header
+      position="relative"
       display="flex"
       alignItems="center"
       gap="3"
@@ -366,6 +368,7 @@ function Header({
           <Icon name="close" size={ICON_SIZES.sm} />
         </Button>
       </Tooltip>
+      <SurfaceRule />
     </chakra.header>
   );
 }

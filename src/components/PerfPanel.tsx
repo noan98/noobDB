@@ -4,6 +4,7 @@ import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import { api, type PerfStatus } from "../api/tauri";
 import { useT } from "../i18n";
 import { setPerfMeasureEnabled, useSettings } from "../settings";
+import { SurfaceRule } from "./SurfaceRule";
 import { Callout } from "./Callout";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -79,6 +80,7 @@ export function PerfPanel() {
   return (
     <Box flex="1" overflowY="auto" py="5" px="6" display="flex" flexDirection="column" gap="3.5">
       <chakra.header
+        position="relative"
         display="flex"
         alignItems="center"
         justifyContent="space-between"
@@ -104,6 +106,7 @@ export function PerfPanel() {
             {t("perfClear")}
           </Button>
         </Flex>
+        <SurfaceRule />
       </chakra.header>
 
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">
