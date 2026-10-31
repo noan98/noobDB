@@ -23,7 +23,7 @@ export function HeroHeader({ title, subtitle, maxW = "52ch" }: Props) {
         <BrandMark size={34} width="calc(34px * var(--font-scale))" height="calc(34px * var(--font-scale))" />
         <Heading role="display">{title}</Heading>
       </Flex>
-      {/* 見出し下のブランドグラデーションの短い罫線 (#1216、hc-* では none) */}
+      {/* 見出し下のブランドグラデーションの短い罫線 (#1216 / #1891、hc-* では none) */}
       <chakra.div
         aria-hidden
         w="48px"
