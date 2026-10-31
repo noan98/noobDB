@@ -14,7 +14,8 @@ import { useT, type I18nKey } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Callout } from "./Callout";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
-import { Button, Checkbox, Input, Select } from "./ui";
+import { Button, Checkbox, Input } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { DraftNumberInput } from "./DraftNumberInput";
 import { LoadingButton } from "./LoadingButton";
 import { Spinner } from "./Spinner";
@@ -479,20 +480,17 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
         <FormSection>
           <FieldLabel htmlFor="transfer-target-profile">{t("transferTargetProfile")}</FieldLabel>
           <Flex align="center" gap="2">
-            <Select
+            <ListboxSelect
               id="transfer-target-profile"
-              flex="1"
+              css={{ flex: "1" }}
               value={profileId}
-              onChange={(e) => void selectProfile(e.target.value)}
+              options={[
+                { value: "", label: t("transferSelectProfile") },
+                ...profiles.map((p) => ({ value: p.id, label: p.name })),
+              ]}
+              onChange={(v) => void selectProfile(v)}
               disabled={isRunning || connecting}
-            >
-              <option value="">{t("transferSelectProfile")}</option>
-              {profiles.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </Select>
+            />
             {connecting && <Spinner size={14} />}
           </Flex>
           {connectError && <FieldError>{t("transferConnectError", { error: connectError })}</FieldError>}
@@ -502,18 +500,14 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
         {databases && databases.length > 0 && (
           <FormSection>
             <FieldLabel htmlFor="transfer-target-db">{t("transferTargetDatabase")}</FieldLabel>
-            <Select
+            <ListboxSelect
               id="transfer-target-db"
               value={database ?? ""}
-              onChange={(e) => setDatabase(e.target.value || null)}
+              options={databases.map((d) => ({ value: d }))}
+              onChange={(v) => setDatabase(v || null)}
               disabled={isRunning}
-            >
-              {databases.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </Select>
+              css={{ width: "100%" }}
+            />
           </FormSection>
         )}
 
@@ -540,17 +534,19 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
 
         <FormSection>
           <FieldLabel htmlFor="transfer-mode">{t("transferModeLabel")}</FieldLabel>
-          <Select
+          <ListboxSelect
             id="transfer-mode"
             value={mode}
-            onChange={(e) => setMode(e.target.value as TransferMode)}
+            options={[
+              { value: "create", label: t("transferModeCreate") },
+              { value: "replace", label: t("transferModeReplace") },
+              { value: "append", label: t("transferModeAppend") },
+              { value: "upsert", label: t("transferModeUpsert") },
+            ]}
+            onChange={(v) => setMode(v as TransferMode)}
             disabled={isRunning}
-          >
-            <option value="create">{t("transferModeCreate")}</option>
-            <option value="replace">{t("transferModeReplace")}</option>
-            <option value="append">{t("transferModeAppend")}</option>
-            <option value="upsert">{t("transferModeUpsert")}</option>
-          </Select>
+            css={{ width: "100%" }}
+          />
           <chakra.span fontSize="xs" color="app.textMuted">
             {mode === "upsert"
               ? t("transferModeUpsertHint")
@@ -563,15 +559,17 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
         {mode === "upsert" && (
           <FormSection>
             <FieldLabel htmlFor="transfer-conflict-mode">{t("transferConflictMode")}</FieldLabel>
-            <Select
+            <ListboxSelect
               id="transfer-conflict-mode"
               value={conflictMode}
-              onChange={(e) => setConflictMode(e.target.value as "update" | "skip")}
+              options={[
+                { value: "update", label: t("transferConflictUpdate") },
+                { value: "skip", label: t("transferConflictSkip") },
+              ]}
+              onChange={(v) => setConflictMode(v as "update" | "skip")}
               disabled={isRunning}
-            >
-              <option value="update">{t("transferConflictUpdate")}</option>
-              <option value="skip">{t("transferConflictSkip")}</option>
-            </Select>
+              css={{ width: "100%" }}
+            />
             <FieldLabel htmlFor="transfer-key-columns">{t("transferKeyColumns")}</FieldLabel>
             <Input
               id="transfer-key-columns"
@@ -718,22 +716,17 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
                       disabled={isRunning || !d.include}
                     />
                     {typeEditable && (
-                      <Select
-                        w="150px"
+                      <ListboxSelect
+                        css={{ width: "150px" }}
                         value={d.type}
-                        onChange={(e) =>
-                          updateDraft(c.name, { type: e.target.value as TransferColumnDraft["type"] })
-                        }
-                        aria-label={t("transferColumnType", { column: c.name })}
+                        options={[
+                          { value: "auto", label: t("transferTypeAuto", { type: c.targetType }) },
+                          ...TRANSFER_TYPE_KINDS.map((k) => ({ value: k, label: t(TYPE_LABEL_KEYS[k]) })),
+                        ]}
+                        onChange={(v) => updateDraft(c.name, { type: v as TransferColumnDraft["type"] })}
+                        ariaLabel={t("transferColumnType", { column: c.name })}
                         disabled={isRunning || !d.include}
-                      >
-                        <option value="auto">{t("transferTypeAuto", { type: c.targetType })}</option>
-                        {TRANSFER_TYPE_KINDS.map((k) => (
-                          <option key={k} value={k}>
-                            {t(TYPE_LABEL_KEYS[k])}
-                          </option>
-                        ))}
-                      </Select>
+                      />
                     )}
                     {typeEditable && d.type === "decimal" && (
                       <chakra.span

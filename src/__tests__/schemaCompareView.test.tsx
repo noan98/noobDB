@@ -1,6 +1,6 @@
 import { configure, getConfig } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, chooseListboxOption } from "./testUtils";
 import { SchemaCompareView } from "../components/SchemaCompareView";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
@@ -78,13 +78,13 @@ describe("SchemaCompareView の非同期整合 (#1599)", () => {
       }) as never,
     );
     renderWithProviders(<SchemaCompareView profiles={PROFILES} onClose={() => {}} />);
-    const [sourceProfile] = screen.getAllByRole("combobox") as HTMLSelectElement[];
-    fireEvent.change(sourceProfile, { target: { value: "p-a" } });
+    const [sourceProfile] = screen.getAllByRole("combobox") as HTMLElement[];
+    chooseListboxOption(sourceProfile, "p-a");
     await waitFor(() => expect(api.connect).toHaveBeenCalled());
-    fireEvent.change(sourceProfile, { target: { value: "" } });
+    chooseListboxOption(sourceProfile, "");
     resolveConnect({ session_id: "s-a" });
     await new Promise((r) => setTimeout(r, 50));
-    expect(sourceProfile.value).toBe("");
+    expect(sourceProfile).toHaveTextContent(t("schemaCompareSelectProfile"));
   });
 
   it("適用成功の文言が直後の再比較で消えずに表示される", async () => {
@@ -109,13 +109,13 @@ describe("SchemaCompareView の非同期整合 (#1599)", () => {
       warnings: [],
     } as never);
     renderWithProviders(<SchemaCompareView profiles={PROFILES} onClose={() => {}} />);
-    const boxes = () => screen.getAllByRole("combobox") as HTMLSelectElement[];
-    fireEvent.change(boxes()[0], { target: { value: "p-a" } });
+    const boxes = () => screen.getAllByRole("combobox") as HTMLElement[];
+    chooseListboxOption(boxes()[0], "p-a");
     await waitFor(() => expect(boxes()[1]).not.toBeDisabled());
-    fireEvent.change(boxes()[2], { target: { value: "p-b" } });
+    chooseListboxOption(boxes()[2], "p-b");
     await waitFor(() => expect(boxes()[3]).not.toBeDisabled());
-    await waitFor(() => expect(boxes()[1].value).toBe("db1"));
-    await waitFor(() => expect(boxes()[3].value).toBe("db1"));
+    await waitFor(() => expect(boxes()[1]).toHaveTextContent("db1"));
+    await waitFor(() => expect(boxes()[3]).toHaveTextContent("db1"));
     fireEvent.click(screen.getByText(t("schemaCompareCompare")));
     fireEvent.click(await screen.findByText(t("schemaCompareGenerate")));
     fireEvent.click(await screen.findByText(t("schemaCompareApply", { count: 1 })));
@@ -154,19 +154,17 @@ describe("SchemaCompareView の異名テーブル比較 (#1880)", () => {
       },
     } as never);
     renderWithProviders(<SchemaCompareView profiles={PROFILES} onClose={() => {}} />);
-    const boxes = () => screen.getAllByRole("combobox") as HTMLSelectElement[];
-    fireEvent.change(boxes()[0], { target: { value: "p-a" } });
+    const boxes = () => screen.getAllByRole("combobox") as HTMLElement[];
+    chooseListboxOption(boxes()[0], "p-a");
     await waitFor(() => expect(boxes()[1]).not.toBeDisabled());
-    fireEvent.change(boxes()[2], { target: { value: "p-b" } });
+    chooseListboxOption(boxes()[2], "p-b");
     await waitFor(() => expect(boxes()[3]).not.toBeDisabled());
-    await waitFor(() => expect(boxes()[3].value).toBe("db1"));
+    await waitFor(() => expect(boxes()[3]).toHaveTextContent("db1"));
     fireEvent.click(screen.getByText(t("schemaCompareCompare")));
-    const sourceTable = (await screen.findByLabelText(
-      t("schemaCompareDataSourceTable"),
-    )) as HTMLSelectElement;
-    const targetTable = screen.getByLabelText(t("schemaCompareDataTargetTable")) as HTMLSelectElement;
-    fireEvent.change(sourceTable, { target: { value: "orders" } });
-    fireEvent.change(targetTable, { target: { value: "orders_archive" } });
+    const sourceTable = await screen.findByLabelText(t("schemaCompareDataSourceTable"));
+    const targetTable = screen.getByLabelText(t("schemaCompareDataTargetTable"));
+    chooseListboxOption(sourceTable, "orders");
+    chooseListboxOption(targetTable, "orders_archive");
     // 全行比較は進捗イベントの購読を伴うので、テストでは上限つき比較にする。
     fireEvent.click(screen.getByLabelText(t("schemaCompareDataAllRows")));
     fireEvent.click(screen.getByText(t("schemaCompareDataCompare")));
@@ -191,21 +189,19 @@ describe("SchemaCompareView の異名テーブル比較 (#1880)", () => {
       tables: [tbl("orders", "same"), tbl("orders_archive", "same")],
     } as never);
     renderWithProviders(<SchemaCompareView profiles={PROFILES} onClose={() => {}} />);
-    const boxes = () => screen.getAllByRole("combobox") as HTMLSelectElement[];
-    fireEvent.change(boxes()[0], { target: { value: "p-a" } });
+    const boxes = () => screen.getAllByRole("combobox") as HTMLElement[];
+    chooseListboxOption(boxes()[0], "p-a");
     await waitFor(() => expect(boxes()[1]).not.toBeDisabled());
-    fireEvent.change(boxes()[2], { target: { value: "p-b" } });
+    chooseListboxOption(boxes()[2], "p-b");
     await waitFor(() => expect(boxes()[3]).not.toBeDisabled());
-    await waitFor(() => expect(boxes()[3].value).toBe("db1"));
+    await waitFor(() => expect(boxes()[3]).toHaveTextContent("db1"));
     fireEvent.click(screen.getByText(t("schemaCompareCompare")));
-    const sourceTable = (await screen.findByLabelText(
-      t("schemaCompareDataSourceTable"),
-    )) as HTMLSelectElement;
-    const targetTable = screen.getByLabelText(t("schemaCompareDataTargetTable")) as HTMLSelectElement;
-    fireEvent.change(sourceTable, { target: { value: "orders" } });
+    const sourceTable = await screen.findByLabelText(t("schemaCompareDataSourceTable"));
+    const targetTable = screen.getByLabelText(t("schemaCompareDataTargetTable"));
+    chooseListboxOption(sourceTable, "orders");
     expect(await screen.findByText(t("schemaCompareDataSameTable"))).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("schemaCompareDataCompare") })).toBeDisabled();
-    fireEvent.change(targetTable, { target: { value: "orders_archive" } });
+    chooseListboxOption(targetTable, "orders_archive");
     await waitFor(() => expect(screen.queryByText(t("schemaCompareDataSameTable"))).toBeNull());
     expect(screen.getByRole("button", { name: t("schemaCompareDataCompare") })).not.toBeDisabled();
   });
@@ -243,12 +239,12 @@ describe("SchemaCompareView のクロスドライバ検証 (#1869)", () => {
       },
     } as never);
     renderWithProviders(<SchemaCompareView profiles={MIXED} onClose={() => {}} />);
-    const boxes = () => screen.getAllByRole("combobox") as HTMLSelectElement[];
-    fireEvent.change(boxes()[0], { target: { value: "p-my" } });
+    const boxes = () => screen.getAllByRole("combobox") as HTMLElement[];
+    chooseListboxOption(boxes()[0], "p-my");
     await waitFor(() => expect(boxes()[1]).not.toBeDisabled());
-    fireEvent.change(boxes()[2], { target: { value: "p-pg" } });
+    chooseListboxOption(boxes()[2], "p-pg");
     await waitFor(() => expect(boxes()[3]).not.toBeDisabled());
-    await waitFor(() => expect(boxes()[3].value).toBe("db1"));
+    await waitFor(() => expect(boxes()[3]).toHaveTextContent("db1"));
 
     // スキーマ比較は同一ドライバ必須のまま。
     expect(screen.getByRole("button", { name: t("schemaCompareCompare") })).toBeDisabled();
@@ -256,10 +252,8 @@ describe("SchemaCompareView のクロスドライバ検証 (#1869)", () => {
     // 検証専用の案内が出る。
     expect(await screen.findByText(t("schemaCompareCrossTitle"))).toBeInTheDocument();
 
-    const sourceTable = (await screen.findByLabelText(
-      t("schemaCompareDataSourceTable"),
-    )) as HTMLSelectElement;
-    fireEvent.change(sourceTable, { target: { value: "orders" } });
+    const sourceTable = await screen.findByLabelText(t("schemaCompareDataSourceTable"));
+    chooseListboxOption(sourceTable, "orders");
     fireEvent.click(screen.getByLabelText(t("schemaCompareDataAllRows")));
     fireEvent.click(screen.getByText(t("schemaCompareDataCompare")));
     await waitFor(() => expect(api.compareTableData).toHaveBeenCalled());
@@ -309,15 +303,13 @@ describe("SchemaCompareView のクロスドライバ検証 (#1869)", () => {
       },
     } as never);
     renderWithProviders(<SchemaCompareView profiles={MIXED} onClose={() => {}} />);
-    const boxes = () => screen.getAllByRole("combobox") as HTMLSelectElement[];
-    fireEvent.change(boxes()[0], { target: { value: "p-my" } });
+    const boxes = () => screen.getAllByRole("combobox") as HTMLElement[];
+    chooseListboxOption(boxes()[0], "p-my");
     await waitFor(() => expect(boxes()[1]).not.toBeDisabled());
-    fireEvent.change(boxes()[2], { target: { value: "p-pg" } });
-    await waitFor(() => expect(boxes()[3].value).toBe("db1"));
-    const sourceTable = (await screen.findByLabelText(
-      t("schemaCompareDataSourceTable"),
-    )) as HTMLSelectElement;
-    fireEvent.change(sourceTable, { target: { value: "orders" } });
+    chooseListboxOption(boxes()[2], "p-pg");
+    await waitFor(() => expect(boxes()[3]).toHaveTextContent("db1"));
+    const sourceTable = await screen.findByLabelText(t("schemaCompareDataSourceTable"));
+    chooseListboxOption(sourceTable, "orders");
     fireEvent.click(screen.getByLabelText(t("schemaCompareDataAllRows")));
     fireEvent.click(screen.getByText(t("schemaCompareDataCompare")));
     expect(await screen.findByText(t("schemaCompareCrossDiffTitle"))).toBeInTheDocument();
@@ -334,15 +326,13 @@ describe("SchemaCompareView のクロスドライバ検証 (#1869)", () => {
       "Invalid input: cross-driver comparison supports integer primary keys only (column 'code' is varchar(10) on the source and character varying(10) on the target)",
     );
     renderWithProviders(<SchemaCompareView profiles={MIXED} onClose={() => {}} />);
-    const boxes = () => screen.getAllByRole("combobox") as HTMLSelectElement[];
-    fireEvent.change(boxes()[0], { target: { value: "p-my" } });
+    const boxes = () => screen.getAllByRole("combobox") as HTMLElement[];
+    chooseListboxOption(boxes()[0], "p-my");
     await waitFor(() => expect(boxes()[1]).not.toBeDisabled());
-    fireEvent.change(boxes()[2], { target: { value: "p-pg" } });
-    await waitFor(() => expect(boxes()[3].value).toBe("db1"));
-    const sourceTable = (await screen.findByLabelText(
-      t("schemaCompareDataSourceTable"),
-    )) as HTMLSelectElement;
-    fireEvent.change(sourceTable, { target: { value: "orders" } });
+    chooseListboxOption(boxes()[2], "p-pg");
+    await waitFor(() => expect(boxes()[3]).toHaveTextContent("db1"));
+    const sourceTable = await screen.findByLabelText(t("schemaCompareDataSourceTable"));
+    chooseListboxOption(sourceTable, "orders");
     fireEvent.click(screen.getByLabelText(t("schemaCompareDataAllRows")));
     fireEvent.click(screen.getByText(t("schemaCompareDataCompare")));
     expect(await screen.findByText(t("schemaCompareCrossErrorTitle"))).toBeInTheDocument();

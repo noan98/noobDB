@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, chooseListboxOption } from "./testUtils";
 import { t } from "../i18n";
 import type { ProcessInfo } from "../api/tauri";
 
@@ -321,9 +321,7 @@ describe("ProcessListPanel filter, sort and statement-only stop (#1538)", () => 
     await screen.findByTestId("process-truncated", {}, { timeout: 15000 });
     expect(container.querySelector("#process-row-s1-501")).toBeNull();
 
-    fireEvent.change(screen.getByLabelText(t("processFilterUserAria")), {
-      target: { value: "needle" },
-    });
+    chooseListboxOption(screen.getByLabelText(t("processFilterUserAria")), "needle");
     await waitFor(() => expect(container.querySelector("#process-row-s1-501")).not.toBeNull(), {
       timeout: 15000,
     });
@@ -355,7 +353,7 @@ describe("ProcessListPanel filter, sort and statement-only stop (#1538)", () => 
       <ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />,
     );
     await waitFor(() => expect(container.querySelector("#process-row-s1-2")).not.toBeNull());
-    fireEvent.change(screen.getByLabelText(t("processSortAria")), { target: { value: "timeDesc" } });
+    chooseListboxOption(screen.getByLabelText(t("processSortAria")), "timeDesc");
     await waitFor(() => {
       const first = container.querySelector("tbody > tr");
       expect(first?.id).toBe("process-row-s1-2");
@@ -373,7 +371,7 @@ describe("ProcessListPanel filter, sort and statement-only stop (#1538)", () => 
     await waitFor(() => expect(container.querySelector("#process-row-s1-2")).not.toBeNull());
     fireEvent.click(screen.getByLabelText(t("processSelectAll")));
     vi.mocked(api.killProcesses).mockResolvedValue({ killed: 1, failed: 0, first_error: null, outcomes: [] });
-    fireEvent.change(screen.getByLabelText(t("processFilterUserAria")), { target: { value: "app" } });
+    chooseListboxOption(screen.getByLabelText(t("processFilterUserAria")), "app");
     fireEvent.click(await screen.findByRole("button", { name: t("processKillSelected", { count: 1 }) }));
     fireEvent.click(await screen.findByRole("button", { name: t("processKillConfirmOk") }));
     // 隠れている id 2 は含めず、見えている id 1 だけを送る。
@@ -389,13 +387,13 @@ describe("ProcessListPanel filter, sort and statement-only stop (#1538)", () => 
       <ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />,
     );
     await screen.findByLabelText(t("processFilterUserAria"));
-    fireEvent.change(screen.getByLabelText(t("processFilterUserAria")), { target: { value: "batch" } });
-    fireEvent.change(screen.getByLabelText(t("processSortAria")), { target: { value: "timeDesc" } });
+    chooseListboxOption(screen.getByLabelText(t("processFilterUserAria")), "batch");
+    chooseListboxOption(screen.getByLabelText(t("processSortAria")), "timeDesc");
     rerender(<ProcessListPanel sessionId="s2" driver="mysql" readOnly={false} />);
     await waitFor(() =>
-      expect((screen.getByLabelText(t("processFilterUserAria")) as HTMLSelectElement).value).toBe(""),
+      expect(screen.getByLabelText(t("processFilterUserAria"))).toHaveTextContent(t("processFilterUserAny")),
     );
-    expect((screen.getByLabelText(t("processSortAria")) as HTMLSelectElement).value).toBe("default");
+    expect(screen.getByLabelText(t("processSortAria"))).toHaveTextContent(t("processSortDefault"));
   });
 
   it("選択中のユーザが一覧から消えても選択肢に残り、表示が空欄にならない", async () => {
@@ -404,19 +402,17 @@ describe("ProcessListPanel filter, sort and statement-only stop (#1538)", () => 
       { ...base, id: 2, user: "batch" },
     ]);
     renderWithProviders(<ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />);
-    const sel = (await screen.findByLabelText(t("processFilterUserAria"))) as HTMLSelectElement;
-    fireEvent.change(sel, { target: { value: "batch" } });
+    const sel = await screen.findByLabelText(t("processFilterUserAria"));
+    chooseListboxOption(sel, "batch");
     vi.mocked(api.listProcesses).mockResolvedValue([{ ...base, id: 1, user: "app" }]);
     fireEvent.click(screen.getByRole("button", { name: t("processRefresh") }));
     await waitFor(() => expect(api.listProcesses).toHaveBeenCalledTimes(2));
-    await waitFor(() =>
-      expect(
-        Array.from((screen.getByLabelText(t("processFilterUserAria")) as HTMLSelectElement).options).some(
-          (o) => o.value === "batch",
-        ),
-      ).toBe(true),
-    );
-    expect((screen.getByLabelText(t("processFilterUserAria")) as HTMLSelectElement).value).toBe("batch");
+    // 再取得後の一覧は user=app のみ。反映を待ってから、選択肢に残っていること
+    // (開いて候補を確認する) と、トリガーの表示が空欄でないことを確かめる。
+    await waitFor(() => expect(screen.queryByText("2")).not.toBeInTheDocument());
+    expect(screen.getByLabelText(t("processFilterUserAria"))).toHaveTextContent("batch");
+    fireEvent.click(screen.getByLabelText(t("processFilterUserAria")));
+    expect(screen.getAllByRole("option").some((o) => o.dataset.value === "batch")).toBe(true);
   });
 
   it("「文を停止」は確認後に statementOnly=true で killProcesses を呼ぶ", async () => {
@@ -483,7 +479,7 @@ describe("ProcessListPanel per-process results / same-query select / progress (#
     ]);
     renderWithProviders(<ProcessListPanel sessionId="s1" driver="postgres" readOnly={false} />);
     await screen.findByText("9");
-    fireEvent.change(screen.getByTestId("process-select-same-query"), { target: { value: "SELECT slow()" } });
+    chooseListboxOption(screen.getByLabelText(t("processSelectSameQueryAria")), "SELECT slow()");
     expect(screen.getByLabelText(t("processSelectRow", { id: 7 }))).toBeChecked();
     expect(screen.getByLabelText(t("processSelectRow", { id: 8 }))).toBeChecked();
     expect(screen.getByLabelText(t("processSelectRow", { id: 9 }))).not.toBeChecked();
@@ -494,7 +490,7 @@ describe("ProcessListPanel per-process results / same-query select / progress (#
     vi.mocked(api.listProcesses).mockResolvedValue([base, { ...base, id: 8, query_summary: "other" }]);
     renderWithProviders(<ProcessListPanel sessionId="s1" driver="postgres" readOnly={false} />);
     await screen.findByText("8");
-    expect(screen.queryByTestId("process-select-same-query")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(t("processSelectSameQueryAria"))).not.toBeInTheDocument();
   });
 
   it("VACUUM の進捗率を状態列に出す", async () => {

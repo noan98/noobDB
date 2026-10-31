@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor, act } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, act, chooseListboxOption } from "./testUtils";
 import { SAMPLE_COLUMNS } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 
@@ -113,9 +113,7 @@ describe("ImportModal conflict mode / UPSERT (#972)", () => {
     // プレビュー取得 + 自動マッピングの完了を待つ。
     await screen.findByText(t("importMappingTitle"));
 
-    fireEvent.change(screen.getByLabelText(t("importConflictMode")), {
-      target: { value: "update" },
-    });
+    chooseListboxOption(screen.getByLabelText(t("importConflictMode")), "update");
     // モックの列に主キーが無いので既定キーは空 → エラーを出し、実行を無効にする。
     expect(await screen.findByText(t("importConflictKeysRequired"))).toBeInTheDocument();
     const execute = screen.getByRole("button", { name: t("importExecute") });
@@ -154,15 +152,15 @@ describe("ImportModal xlsx source (#1171)", () => {
     );
     await screen.findByText(t("importMappingTitle"));
     // 拡張子から形式を推定し、文字コードや区切り文字は出さない。
-    expect(screen.getByLabelText(t("importFormat"))).toHaveValue("xlsx");
+    expect(screen.getByLabelText(t("importFormat"))).toHaveTextContent(t("importFormatXlsx"));
     expect(screen.queryByLabelText(t("importEncoding"))).not.toBeInTheDocument();
     expect(screen.queryByLabelText(t("importDelimiter"))).not.toBeInTheDocument();
     // 既定は先頭シート (options.sheet は送らない)。
     expect(vi.mocked(api.parseCsvPreview).mock.calls[0][1].sheet).toBeNull();
 
     const picker = await screen.findByLabelText(t("importSheet"));
-    expect(picker).toHaveValue("First");
-    fireEvent.change(picker, { target: { value: "Second" } });
+    expect(picker).toHaveTextContent("First");
+    chooseListboxOption(picker, "Second");
     await waitFor(() => expect(vi.mocked(api.parseCsvPreview).mock.lastCall?.[1].sheet).toBe("Second"));
 
     fireEvent.click(await screen.findByRole("button", { name: t("importExecute") }));
@@ -248,12 +246,14 @@ describe("ImportModal create a new table (#985)", () => {
 
     // 推論された型 (id → 整数, name → 文字列) と、バックエンド生成の DDL プレビュー。
     const idType = screen.getByLabelText(t("importNewTableColumnType", { name: "id" }));
-    expect(idType).toHaveValue("integer");
-    expect(screen.getByLabelText(t("importNewTableColumnType", { name: "name" }))).toHaveValue("text");
+    expect(idType).toHaveTextContent(t("importTypeInteger"));
+    expect(screen.getByLabelText(t("importNewTableColumnType", { name: "name" }))).toHaveTextContent(
+      t("importTypeText"),
+    );
     expect(await screen.findByTestId("import-new-table-ddl")).toHaveTextContent('CREATE TABLE "new_users"');
 
     // 型を上書きして実行する。
-    fireEvent.change(idType, { target: { value: "bigint" } });
+    chooseListboxOption(idType, "bigint");
     const execute = screen.getByRole("button", { name: t("importExecute") });
     fireEvent.click(execute);
     await waitFor(() => expect(api.importCsv).toHaveBeenCalledOnce());
@@ -361,7 +361,12 @@ describe("ImportModal create a new table (#985)", () => {
     expect(screen.getByRole("button", { name: t("importExecute") })).toBeDisabled();
     // MySQL では真偽型を選択肢に出さない。
     const typeSelect = screen.getByLabelText(t("importNewTableColumnType", { name: "id" }));
-    const values = Array.from((typeSelect as HTMLSelectElement).options).map((o) => o.value);
+    fireEvent.click(typeSelect);
+    const listbox = document.getElementById(typeSelect.getAttribute("aria-controls") ?? "");
+    const values = Array.from(listbox?.querySelectorAll<HTMLElement>('[role="option"]') ?? []).map(
+      (o) => o.dataset.value,
+    );
+    expect(values.length).toBeGreaterThan(0);
     expect(values).not.toContain("boolean");
   });
 
@@ -412,8 +417,8 @@ describe("ImportModal preview requests (#1258)", () => {
     expect(sent.nullToken).toBeNull();
     expect(sent.errorMode).toBe("abort");
 
-    fireEvent.change(screen.getByLabelText(t("importNull")), { target: { value: "none" } });
-    fireEvent.change(screen.getByLabelText(t("importErrorMode")), { target: { value: "skip" } });
+    chooseListboxOption(screen.getByLabelText(t("importNull")), "none");
+    chooseListboxOption(screen.getByLabelText(t("importErrorMode")), "skip");
     await settle();
     expect(vi.mocked(api.parseCsvPreview).mock.calls.length).toBe(before);
 
@@ -432,10 +437,10 @@ describe("ImportModal preview requests (#1258)", () => {
     const before = vi.mocked(api.parseCsvPreview).mock.calls.length;
 
     const delimiter = screen.getByLabelText(t("importDelimiter"));
-    fireEvent.change(delimiter, { target: { value: ";" } });
-    fireEvent.change(delimiter, { target: { value: "\t" } });
-    fireEvent.change(delimiter, { target: { value: "," } });
-    fireEvent.change(delimiter, { target: { value: ";" } });
+    chooseListboxOption(delimiter, ";");
+    chooseListboxOption(delimiter, "\t");
+    chooseListboxOption(delimiter, ",");
+    chooseListboxOption(delimiter, ";");
     await settle();
     const calls = vi.mocked(api.parseCsvPreview).mock.calls;
     expect(calls.length).toBe(before + 1);
@@ -724,7 +729,7 @@ describe("ImportModal saved mapping templates (#1623)", () => {
     fireEvent.click(apply);
     const select = await screen.findByLabelText(t("importMappingAria", { column: SAMPLE_COLUMNS[0].name }));
     // 保存時の位置 (1) ではなく、見出し "name" の今の位置 (1)。さらに skip モードも戻る。
-    await waitFor(() => expect((select as HTMLSelectElement).value).toBe("1"));
+    await waitFor(() => expect(select).toHaveTextContent("2. name"));
   });
 
   it("saves the current mapping without the file path", async () => {
@@ -780,9 +785,9 @@ describe("ImportModal 前回の取り込み設定 (#1631)", () => {
       />,
     );
     await screen.findByText(t("importMappingTitle"));
-    expect((screen.getByLabelText(t("importDelimiter")) as HTMLSelectElement).value).toBe(";");
-    expect((screen.getByLabelText(t("importEncoding")) as HTMLSelectElement).value).toBe("shift_jis");
-    expect((screen.getByLabelText(t("importErrorMode")) as HTMLSelectElement).value).toBe("skip");
+    expect(screen.getByLabelText(t("importDelimiter"))).toHaveTextContent(t("importDelimiterSemicolon"));
+    expect(screen.getByLabelText(t("importEncoding"))).toHaveTextContent("shift_jis");
+    expect(screen.getByLabelText(t("importErrorMode"))).toHaveTextContent(t("importErrorModeSkip"));
     unmount();
 
     renderWithProviders(
@@ -798,6 +803,6 @@ describe("ImportModal 前回の取り込み設定 (#1631)", () => {
       />,
     );
     await screen.findByText(t("importMappingTitle"));
-    expect((screen.getByLabelText(t("importDelimiter")) as HTMLSelectElement).value).toBe(",");
+    expect(screen.getByLabelText(t("importDelimiter"))).toHaveTextContent(t("importDelimiterComma"));
   });
 });

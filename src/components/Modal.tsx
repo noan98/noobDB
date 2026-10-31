@@ -176,6 +176,16 @@ export function Modal({
       placement="center"
       closeOnInteractOutside={closeOnInteractOutside}
       closeOnEscape={closeOnEscape}
+      // ListboxSelect / ComboSelect を開いたままの Esc は、候補リストだけを閉じる。
+      // zag は document の capture で Esc を受けるため、候補側の onKeyDown の
+      // preventDefault では間に合わず、モーダルごと閉じて入力中の設定が消える。
+      // フォーカスはトリガーに残る (aria-activedescendant 方式) ので、展開中の
+      // popup トリガーにフォーカスがあるときは zag 側の閉じる処理を止める。
+      onEscapeKeyDown={(e) => {
+        if (document.activeElement?.closest('[aria-expanded="true"][aria-haspopup]')) {
+          e.preventDefault();
+        }
+      }}
       initialFocusEl={initialFocusEl ?? defaultInitialFocus}
       // 開閉アニメは motion 側で対称に行うため、Chakra/Ark の CSS プリセットは無効化。
       motionPreset="none"

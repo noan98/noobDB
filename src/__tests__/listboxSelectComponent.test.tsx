@@ -186,6 +186,20 @@ describe("ListboxSelect の選択", () => {
     expect(trigger.getAttribute("aria-activedescendant")).toBe(options[1].id);
   });
 
+  it("Cmd/Ctrl+Enter はモーダル送信に任せ、開かず既定動作も止めない", () => {
+    renderSelect();
+    const trigger = screen.getByRole("combobox");
+    trigger.focus();
+    for (const mod of [{ ctrlKey: true }, { metaKey: true }]) {
+      const ev = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...mod });
+      act(() => {
+        trigger.dispatchEvent(ev);
+      });
+      expect(ev.defaultPrevented).toBe(false);
+      expect(screen.queryByRole("listbox")).toBeNull();
+    }
+  });
+
   it("型入力ジャンプ: 閉じているときは即座に選択する", async () => {
     // 型入力ジャンプは表示ラベル (見えている文字) に前方一致させる。
     const user = userEvent.setup();

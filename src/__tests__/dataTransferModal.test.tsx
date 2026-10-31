@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor } from "./testUtils";
+import { renderWithProviders, screen, waitFor, chooseListboxOption } from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 import type { TransferDoneEvent, TransferStreamHandlers } from "../api/tauri";
@@ -73,7 +73,7 @@ async function setup() {
       onClose={() => {}}
     />,
   );
-  await user.selectOptions(screen.getByLabelText(t("transferTargetProfile")), "p2");
+  chooseListboxOption(screen.getByLabelText(t("transferTargetProfile")), "p2");
   await screen.findAllByTestId("transfer-column-row");
   return user;
 }
@@ -101,7 +101,7 @@ describe("DataTransferModal の列・範囲指定 (#1623)", () => {
       screen.getByRole("checkbox", { name: t("transferColumnInclude", { column: "secret" }) }),
     );
     await user.type(screen.getByLabelText(t("transferColumnRename", { column: "flag" })), "is_on");
-    await user.selectOptions(screen.getByLabelText(t("transferColumnType", { column: "flag" })), "integer");
+    chooseListboxOption(screen.getByLabelText(t("transferColumnType", { column: "flag" })), "integer");
     await user.type(screen.getByLabelText(t("transferWhereLabel")), "id > 10");
     await user.click(screen.getByRole("checkbox", { name: t("transferTrialLabel") }));
     await user.clear(screen.getByLabelText(t("transferTrialRows")));

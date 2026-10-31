@@ -41,8 +41,18 @@ describe("ProfileCardGrid (#874)", () => {
     renderWithProviders(
       <ProfileCardGrid profiles={profiles} connectingId={null} onConnect={() => {}} onCreate={() => {}} />,
     );
-    const rule = screen.getByRole("heading", { name: t("profileCardsTitle") }).nextElementSibling;
+    // HeroHeader (#1955) では見出し行 (BrandMark + 見出し) の直下に罫線が来る。
+    const rule = screen.getByRole("heading", { name: t("profileCardsTitle") }).parentElement
+      ?.nextElementSibling;
     expect(rule).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("shows the brand mark next to the display heading, symmetric with WelcomeView (#1955)", () => {
+    renderWithProviders(
+      <ProfileCardGrid profiles={profiles} connectingId={null} onConnect={() => {}} onCreate={() => {}} />,
+    );
+    const row = screen.getByRole("heading", { name: t("profileCardsTitle") }).parentElement;
+    expect(row?.querySelector("svg")).toBeTruthy();
   });
 
   it("shows production / read-only badges and the group name", () => {
