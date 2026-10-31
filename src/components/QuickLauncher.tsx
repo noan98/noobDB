@@ -4,7 +4,7 @@ import { chakra, Flex } from "@chakra-ui/react";
 import { motion, useReducedMotion, type Variants } from "motion/react";
 import type { Snippet } from "../api/tauri";
 import { useT } from "../i18n";
-import { useRovingFocus } from "../keyboardNav";
+import { useFocusTrap, useRovingFocus } from "../keyboardNav";
 import {
   DEFAULT_LAUNCHER_POSITION,
   buildQuickLauncherSections,
@@ -325,6 +325,9 @@ export function QuickLauncher({
   }, [open, onOpenChange]);
 
   const roving = useRovingFocus(popoverRef, ITEM_SELECTOR, { wrap: true });
+  // Tab / Shift+Tab をポップオーバー内に閉じ込める (#1951)。ActivityCenter と同じ挙動。
+  // 戻り先フォーカスは close(true) が buttonRef へ返す。
+  useFocusTrap(popoverRef, () => close(true), open);
 
   const activate = (item: QuickLauncherItem, run: boolean) => {
     close(false);

@@ -73,6 +73,9 @@ export function useReturnFocus(): void {
  *
  * @param containerRef - トラップ対象コンテナの ref
  * @param onEscape - Esc が押されたときのコールバック (省略可)
+ * @param enabled - false の間はトラップしない (既定 true)。コンテナを開閉で条件
+ *   マウントする親 (QuickLauncher / TabBar の「全タブ」) では、開いている間だけ
+ *   true にして、コンテナが DOM に載った時点でリスナを張る。
  *
  * @example
  * ```tsx
@@ -80,7 +83,11 @@ export function useReturnFocus(): void {
  * useFocusTrap(menuRef, onClose);
  * ```
  */
-export function useFocusTrap(containerRef: React.RefObject<HTMLElement | null>, onEscape?: () => void): void {
+export function useFocusTrap(
+  containerRef: React.RefObject<HTMLElement | null>,
+  onEscape?: () => void,
+  enabled = true,
+): void {
   const onEscapeRef = useRef(onEscape);
   // 最新のコールバックを ref に保持して、クロージャの古い参照を防ぐ。
   useEffect(() => {
@@ -88,6 +95,7 @@ export function useFocusTrap(containerRef: React.RefObject<HTMLElement | null>, 
   });
 
   useEffect(() => {
+    if (!enabled) return;
     const container = containerRef.current;
     if (!container) return;
 
@@ -138,7 +146,7 @@ export function useFocusTrap(containerRef: React.RefObject<HTMLElement | null>, 
     return () => {
       container.removeEventListener("keydown", onKeyDown);
     };
-  }, [containerRef]);
+  }, [containerRef, enabled]);
 }
 
 /**

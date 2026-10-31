@@ -31,6 +31,7 @@ import { tableToCsv } from "./tabularText";
 import { useConfirm } from "./ConfirmDialog";
 import { statusColors } from "./diffStatusColors";
 import { EmptyState } from "./EmptyState";
+import { NoResultsIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import { ErrorNote } from "./modalForm";
 import { rowKeyNote } from "../rowKey";
@@ -497,6 +498,8 @@ export function TableTimelapsePanel({
         </Flex>
       ) : watches.length === 0 ? (
         <EmptyState
+          illustration={<NoResultsIllustration />}
+          brandHalo
           icon="clock"
           title={t("timelapseEmptyTitle")}
           description={t("timelapseEmptyDescription", { limit: 5000 })}

@@ -262,6 +262,29 @@
   失敗時はオンラインのまま)。同ジョブの実測内訳 (2026-10-18 JST の main push, 計 約 255 秒):
   セットアップ 約 75 秒 (Setup Rust 23 / rust-cache 24 / sccache 復元 9)、index 更新 26、
   `noobdb` 本体コンパイル 97、テスト実行 46 (1864 件)。(統合前の内訳。#1872 で clippy と同一ジョブに統合した。)
+  **clippy→nextest 直列の二重 codegen は計測のうえ「現状維持が最適」と結論 (#1943, 2026-10-31 JST)。**
+  直近の成功ジョブ 14 本 (main push / PR) のステップ実測は clippy 36〜195 秒 (典型 40〜65)、
+  nextest 105〜279 秒 (典型 110〜180)。clippy は合計の約 25〜41% で、残りはテストの
+  codegen + リンクが占める。sccache のヒット率は Job Summary にしか出ないため今回は未取得。
+  **rust-cache の当たり方で状況が分かれる (ジョブログで確認)。** 完全一致する通常の PR では
+  依存はコンパイルされず、clippy でも test でも本体の `noobdb` だけがビルドされる
+  (run 40497941460: clippy 41.6 秒 / test 1 分 06 秒、`Compiling` は noobdb の 2 行のみ)。
+  依存の check と codegen が二重に走るのは、`Cargo.lock` の更新などで restore-key の部分一致に
+  落ちたときだけ (run 41137745089 の main push: clippy 3 分 12 秒 / test 2 分 21 秒、
+  `Checking` 52 + `Compiling` 54 行。dependabot の run 41054004822: 1 分 52 秒 / 2 分 19 秒)。
+  つまり依存の二重 codegen は lockfile 更新時にしか起きず、どの施策も効果はその頻度に限られる。
+  検討した 3 案もいずれも効かない。(1) clippy のスコープ縮小: `src-tauri` は
+  単一パッケージ (ワークスペースメンバは `noobdb` のみ) で、依存への lint は元々走らず、
+  依存の check (rmeta) 生成は `-p` や `--no-deps` でも省けない。(2) nextest の archive 化:
+  archive は「ビルドと実行の分離」であり、clippy (check ビルド) と test (codegen ビルド) の
+  成果物は共有できない。Linux の `rust (test)` で効いたのは sshd/TLS セットアップとの
+  オーバーラップのためで、Windows にはその待ちが無い。(3) 実行順の入れ替え: どちらが先でも
+  共有されるのは build script と proc-macro のみ (既に共有済み) で、依存の rmeta/rlib は別物。
+  sccache も rustc の check/codegen 呼び出しを別キーで持つので順序で効き方は変わらない。
+  残る手段 (clippy と test を別ジョブへ並列化) は #1872 で課金 2 倍・二重セットアップを理由に
+  単一ジョブへ統合した経緯があり、壁時計と引き換えに計算量が増えるため採らない。再検討は clippy が
+  合計の半分を超える、または Windows が他ジョブより明確に遅れ続けるときに、ジョブ別の
+  `sccache --show-stats` を取ってから行う。
   Windows ジョブは rust-cache (`save-if`) と sccache (`actions/cache/restore` +
   `actions/cache/save`) の**保存を main の push だけ**にしています (保存が約 1 分かかり、
   PR のキャッシュは他 PR から参照できないため。PR は main スコープを復元するだけ)。
@@ -307,6 +330,23 @@ tauri-driver は `taiki-e/install-action` の対応ツールではないため�
 `e2e/screenshots/` と `e2e/logs/` をアーティファクト保存する。
 「3 回連続グリーン」と「15 分以内」は確認済み (2026-10-03 JST、run 18〜20、約 11〜12 分)。
 詳細・testid 一覧は `noobdb-testing` スキルの `references/e2e.md`。
+
+## `windows-db-smoke.yml` (Windows × MySQL/PostgreSQL nightly スモーク / #1945)
+
+`rust (windows)` は SQLite 統合しか実走しない (MySQL/PostgreSQL は `NOOBDB_TEST_*` ゲートでスキップ) ため、
+Windows 固有 × サーバ型ドライバの退行が CI で見えなかった。それを塞ぐ独立ワークフローで、
+`schedule: cron` (毎晩 UTC 18:30 = JST 03:30) と `workflow_dispatch` で走る。加えて、このワークフロー自身のファイルを変えた PR でだけ
+`pull_request: paths` で実走する(PR 段階の動作確認用。notify は既定ブランチの schedule / dispatch のみ)。
+**必須チェックに含めない**。
+
+- windows-latest 同梱の PostgreSQL / MySQL バイナリで使い捨てクラスタを自前作成して起動する
+  (同梱サービスの資格情報に依存しない。見つからなければ `choco install`。choco 版は標準ポートのサービスで起動するため、自前クラスタは PG 15432 / MySQL 13306 の非標準ポートで衝突を避ける)。起動待ちはポーリングで、
+  失敗時は DB ログを出力・artifact (`windows-db-smoke-logs-*`) 保存する。
+- 実走するのは `NEXTEST_FILTER` の最小集合のみ: external バイナリの MySQL/PostgreSQL の roundtrip /
+  new_schema_apis_and_transaction / 型デコード と、別ステップで `#[ignore]` 付きの `probe_reports_a_consistent_status` (本物の Credential Manager への keyring 疎通、`--run-ignored all`)。MySQL の起動待ちはログの "ready for connections" で判定。
+  実行前に `cargo nextest list` で対象が選ばれていることを確認し、env ゲートの黙ったスキップを防ぐ。
+- 失敗は `notify` ジョブがトラッキング Issue (`ci:windows-db-smoke`) に通知する (`scheduled-notify.md`)。
+- 調査: 失敗ステップが DB 起動系ならランナーイメージ更新 (同梱パスの変更) を疑い、テスト実行なら Windows 固有のドライバ退行を疑う。
 
 ## `mutants-diff.yml` (PR 差分の `cargo mutants --in-diff` / #1841)
 

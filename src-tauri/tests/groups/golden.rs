@@ -24,6 +24,8 @@ mod error_kind_golden;
 mod export_format_golden;
 #[path = "../introspection_golden.rs"]
 mod introspection_golden;
+#[path = "../js_number_golden.rs"]
+mod js_number_golden;
 #[path = "../mask_golden.rs"]
 mod mask_golden;
 #[path = "../object_search_golden.rs"]

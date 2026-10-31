@@ -8,7 +8,8 @@ import { useToast } from "./Toast";
 import { staggerContainer, transitions, variants } from "../motion";
 import { BrandMark } from "../brand";
 import { WelcomeIllustration } from "./illustrations";
-import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "./Icon";
+import type { IconName } from "./Icon";
+import { FeatureIcon } from "./FeatureIcon";
 
 // 既存 (EmptyState / SplashScreen) と同じく chakra でラップした motion 要素。
 // `transition` は Chakra のスタイルプロップに飲まれず motion へ渡すため
@@ -74,21 +75,9 @@ function WelcomeCard({ icon, title, description, onClick, tourId }: CardProps) {
         flex="1"
         alignItems="flex-start"
       >
-        <Flex
-          align="center"
-          justify="center"
-          boxSize="40px"
-          rounded="lg"
-          bg="app.surfaceMuted"
-          color="app.accent"
-          aria-hidden
-        >
-          <Icon name={icon} size={ICON_SIZES.lg} strokeWidth={ICON_STROKE.thin} />
-        </Flex>
-        <Text fontWeight="600" color="app.text" fontSize="sm">
-          {title}
-        </Text>
-        <Text id={descId} textStyle="caption" lineHeight="1.5">
+        <FeatureIcon icon={icon} size="md" />
+        <Text textStyle="subheading">{title}</Text>
+        <Text id={descId} textStyle="caption">
           {description}
         </Text>
       </SelectableCard>
@@ -180,7 +169,7 @@ export function WelcomeView({ onCreateConnection, onOpenSqlite, onStartTour }: P
           rounded="pill"
           css={{ background: "var(--hero-rule)", display: "var(--hero-rule-display)" }}
         />
-        <Text color="app.textMuted" fontSize="sm" lineHeight="1.6">
+        <Text textStyle="body" color="app.textMuted">
           {t("welcomeSubtitle")}
         </Text>
       </Flex>

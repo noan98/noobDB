@@ -24,8 +24,10 @@ import {
 } from "./connectionHealth";
 import { CountUp } from "./CountUp";
 import { EmptyState } from "./EmptyState";
+import { DisconnectedIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import { LatencySparkline } from "./LatencySparkline";
+import { RevealTbody } from "./RevealTbody";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
@@ -366,7 +368,12 @@ export function ConnectionHealthPanel({
 
       {rows.length === 0 && !loading ? (
         // 実データ 0 件が確定した後にのみ真の空状態を出す (loading 優先、#1160)。
-        <EmptyState icon="server" title={t("healthEmpty")} />
+        <EmptyState
+          illustration={<DisconnectedIllustration />}
+          brandHalo
+          icon="server"
+          title={t("healthEmpty")}
+        />
       ) : (
         <Box overflowX="auto">
           <chakra.table width="100%" borderCollapse="collapse" aria-label={t("healthTableAria")}>
@@ -381,13 +388,16 @@ export function ConnectionHealthPanel({
                 <chakra.th css={thCss}>{t("healthColActions")}</chakra.th>
               </tr>
             </thead>
-            <tbody>
-              {loading && rows.length === 0 ? (
-                // 初回ロード中 (まだ 1 件も取得していない): 裸のヘッダのみ表示を
-                // 避け、6 列の構造をシマーで予兆表示する (#846 の横展開、#1160)。
+            {loading && rows.length === 0 ? (
+              // 初回ロード中 (まだ 1 件も取得していない): 裸のヘッダのみ表示を
+              // 避け、6 列の構造をシマーで予兆表示する (#846 の横展開、#1160)。
+              <tbody>
                 <SkeletonTableRows columns={7} />
-              ) : (
-                rows.map((row) => {
+              </tbody>
+            ) : (
+              // 実データの行はスケルトンと別要素にして、着弾の 1 回だけリビールする (#1886 / #1935)。
+              <RevealTbody>
+                {rows.map((row) => {
                   const gen = row.sessionId ? (flash.get(row.sessionId) ?? 0) : 0;
                   const profile = profileById.get(row.profileId);
                   return (
@@ -480,9 +490,9 @@ export function ConnectionHealthPanel({
                       </chakra.td>
                     </chakra.tr>
                   );
-                })
-              )}
-            </tbody>
+                })}
+              </RevealTbody>
+            )}
           </chakra.table>
         </Box>
       )}

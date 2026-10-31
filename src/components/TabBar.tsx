@@ -14,6 +14,7 @@ import { DropInsertionMarker } from "./DropInsertionMarker";
 import { FlightIcon } from "./FlightIcon";
 import { prefersStaticMotion } from "./revealOrigin";
 import { isImeComposing } from "./modalKeys";
+import { useFocusTrap } from "../keyboardNav";
 import { tabOpenFlightId, useTabOpenFlight } from "../sharedElement";
 import { scrollFollowIntoView } from "./scrollFollow";
 
@@ -413,6 +414,9 @@ export const TabBar = memo(function TabBar({
       document.removeEventListener("keydown", onKey);
     };
   }, [listOpen]);
+
+  // 「全タブ」メニュー内で Tab / Shift+Tab を循環させる (#1951)。Esc は上の document リスナが担当。
+  useFocusTrap(listWrapRef, undefined, listOpen);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: MRU 順は mruRef (ref) から読むため、ドロップダウンを開くたびに listOpen で並びを再計算する意図で依存に含めている
   const listTabs = useMemo(() => {

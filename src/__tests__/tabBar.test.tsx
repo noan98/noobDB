@@ -267,3 +267,26 @@ describe("TabBar pinned keyboard reorder (#1486)", () => {
     expect(onReorder).toHaveBeenLastCalledWith(["p1", "p2", "b", "a"]);
   });
 });
+
+describe("TabBar 「全タブ」メニューのフォーカストラップ (#1951)", () => {
+  it("末尾で Tab すると先頭へ、先頭で Shift+Tab すると末尾へ循環する", () => {
+    // jsdom は寸法 0 のため、scrollWidth を大きく見せてオーバーフロー (全タブボタン) を出す。
+    const sw = vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(1000);
+    try {
+      renderWithProviders(
+        <TabBar tabs={TABS} activeTabId="t1" onSelect={() => {}} onClose={() => {}} onNew={() => {}} />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: t("tabListAll") }));
+      const filter = screen.getByRole("textbox", { name: t("tabListFilter") });
+      const items = screen.getAllByRole("menuitem");
+      const last = items[items.length - 1];
+      last.focus();
+      fireEvent.keyDown(last, { key: "Tab" });
+      expect(filter).toHaveFocus();
+      fireEvent.keyDown(filter, { key: "Tab", shiftKey: true });
+      expect(last).toHaveFocus();
+    } finally {
+      sw.mockRestore();
+    }
+  });
+});
