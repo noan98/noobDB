@@ -105,13 +105,6 @@ vi.mock("../api/tauri", async (importOriginal) => {
 
 import { TaskManager } from "../components/TaskManager";
 
-/** ラベルを持たない ListboxSelect を、現在の表示テキストで特定する。 */
-function comboWithText(text: string): HTMLElement {
-  const el = screen.getAllByRole("combobox").find((c) => c.textContent === text);
-  if (!el) throw new Error(`"${text}" を表示している combobox が見つかりません`);
-  return el;
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
   listTasks.mockResolvedValue([TASK]);
@@ -409,7 +402,7 @@ describe("TaskForm 日次スケジュールの保存 (#1621)", () => {
     fireEvent.change(screen.getByLabelText(t("taskFormSql")), { target: { value: "SELECT 1" } });
     expect(screen.getByLabelText(t("taskFormPauseAfterFailures"))).toHaveValue(5);
 
-    chooseListboxOption(comboWithText(t("taskScheduleInterval")), "daily");
+    chooseListboxOption(screen.getByLabelText(t("taskFormSchedule")), "daily");
     expect(screen.getByLabelText(t("taskScheduleTimezone"))).toHaveTextContent("Asia/Tokyo");
     // 全曜日のチェックを外すと検証エラーになり、保存は呼ばれない。
     const group = screen.getByRole("group", { name: t("taskScheduleWeekdays") });
@@ -540,7 +533,7 @@ describe("TaskManager 取得系アクションと接続リトライ (#1537)", ()
     await user.click(screen.getAllByRole("button", { name: t("taskCreate") })[0]);
 
     await user.type(await screen.findByLabelText(t("taskFormName")), "Nightly timelapse");
-    chooseListboxOption(comboWithText(t("taskFormActionExport")), "timelapse_capture");
+    chooseListboxOption(screen.getByLabelText(t("taskFormActionKind")), "timelapse_capture");
     // 出力先は不要 (ファイルを書かないアクション)。
     expect(screen.queryByLabelText(t("taskFormOutputPath"))).not.toBeInTheDocument();
     expect(screen.getByText(t("taskFormTimelapseHint"))).toBeInTheDocument();

@@ -88,6 +88,7 @@ export function TaskScheduleEditor({
     <chakra.div display="flex" flexDirection="column" gap="2.5">
       <Flex gap="3" align="center" flexWrap="wrap">
         <ListboxSelect
+          ariaLabel={t("taskFormSchedule")}
           value={draft.kind}
           options={[
             { value: "interval", label: t("taskScheduleInterval") },

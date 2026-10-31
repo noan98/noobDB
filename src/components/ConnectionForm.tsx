@@ -1280,15 +1280,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                   { value: "verify_ca", label: t("formTlsModeVerifyCa") },
                   { value: "verify_full", label: t("formTlsModeVerifyFull") },
                 ] as const
-              ).filter(
-                (o) =>
-                  o.value === effectiveSslMode ||
-                  !(
-                    iamActive &&
-                    (o.value === "disable" || o.value === "prefer") &&
-                    !isSslModeAllowedForIam(o.value)
-                  ),
-              )}
+              ).filter((o) => !iamActive || isSslModeAllowedForIam(o.value))}
               onChange={(v) => setSslMode(v as SslMode)}
             />
             <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
