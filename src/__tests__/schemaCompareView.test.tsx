@@ -1,9 +1,21 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { configure, getConfig } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from "vitest";
 import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
 import { SchemaCompareView } from "../components/SchemaCompareView";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 import { api } from "../api/tauri";
+
+// 比較結果の描画 (2 接続 + 比較 + データ比較フォーム) は CI の混んだ shard で既定の
+// 1 秒を超えることがあり、findBy* が時々落ちていた。このファイルだけ待ちを延ばす。
+let prevAsyncTimeout = 1000;
+beforeAll(() => {
+  prevAsyncTimeout = getConfig().asyncUtilTimeout;
+  configure({ asyncUtilTimeout: 5000 });
+});
+afterAll(() => {
+  configure({ asyncUtilTimeout: prevAsyncTimeout });
+});
 
 vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();
