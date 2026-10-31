@@ -136,6 +136,7 @@ import {
   setTimelapseOnConnect,
   setTimelapseMaxGenerations,
   setSqlLintEnabled,
+  setSqlSemanticLintEnabled,
   setPreflightImpactEnabled,
   setScanPreflightEnabled,
   setBatchWrapInTransaction,
@@ -1593,6 +1594,20 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     id="settings-sql-lint"
                     checked={settings.sqlLintEnabled}
                     onChange={setSqlLintEnabled}
+                  />
+                </SettingsToggleRow>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-sql-semantic-lint">
+                      {t("settingsSqlSemanticLintEnabled")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsSqlSemanticLintEnabledHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-sql-semantic-lint"
+                    checked={settings.sqlSemanticLintEnabled}
+                    onChange={setSqlSemanticLintEnabled}
+                    disabled={!settings.sqlLintEnabled}
                   />
                 </SettingsToggleRow>
               </SettingsSection>

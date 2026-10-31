@@ -7,6 +7,10 @@ import { SEQUENTIAL_RAMPS, rampStops, sampleRamp, useIsDarkTheme } from "../colo
 import { semanticColorToken } from "../semanticColors";
 import { Button, Checkbox } from "./ui";
 import { Icon, ICON_SIZES } from "./Icon";
+import { ImageExportButton } from "./ImageExportButton";
+import { TextExportButton } from "./TextExportButton";
+import { tableToCsv, tableToMarkdown } from "./tabularText";
+import { elementToPngBlob, elementToSvgBytes } from "./imageExport";
 import { ListboxSelect } from "./ListboxSelect";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { useRowCrossfade } from "./useRowCrossfade";
@@ -16,6 +20,7 @@ import {
   buildPivotSql,
   defaultPivotConfig,
   firstNumericColumnIndex,
+  pivotModelTable,
   pivotConfigKeyFrom,
   readStoredPivotConfig,
   writeStoredPivotConfig,
@@ -135,6 +140,8 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
   // クロスフェードする (#1862)。結果グリッドのソート (#1416) と同じ「要素単位で 1 回・再マウント
   // なし」の方針なのでスクロール位置は保たれる。設定は離散操作なので sort 側 (即時再生) に載せる。
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
+  // 画像エクスポート (#1956) で捕捉する <table> への参照。
+  const tableRef = useRef<HTMLTableElement>(null);
   const fadeKeys = useMemo(
     () => ({ sort: JSON.stringify([config, heatmap]), filter: "" }),
     [config, heatmap],
@@ -216,6 +223,13 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
       valueField: needsValue && numericFieldIdx != null ? numericFieldIdx : config.valueField,
     });
   };
+
+  const getTableForExport = (): HTMLElement => {
+    if (!tableRef.current) throw new Error("pivot is not rendered");
+    return tableRef.current;
+  };
+  // スクロール領域に隠れた部分も含め、表の全体を画像にする。
+  const tableExportSize = (el: HTMLElement) => ({ width: el.scrollWidth, height: el.scrollHeight });
 
   const sendSql = () => {
     if (!canSendSql || !onSendToEditor || !sourceSql) return;
@@ -299,6 +313,36 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
             ]}
           />
         </Field>
+        <ImageExportButton
+          filenameBase="pivot"
+          makePng={(opts) =>
+            elementToPngBlob(getTableForExport(), { ...tableExportSize(getTableForExport()), ...opts })
+          }
+          makeSvg={() => elementToSvgBytes(getTableForExport(), tableExportSize(getTableForExport()))}
+        />
+        {/* 集計した表そのものを、画像ではなくデータとして CSV / Markdown に出す (#1956)。 */}
+        <TextExportButton
+          filenameBase="pivot"
+          label={t("chartDataExport")}
+          formats={[
+            {
+              id: "csv",
+              label: "CSV",
+              build: () => {
+                const { header, rows } = pivotModelTable(model, t("pivotTotal"));
+                return tableToCsv(header, rows);
+              },
+            },
+            {
+              id: "markdown",
+              label: "Markdown",
+              build: () => {
+                const { header, rows } = pivotModelTable(model, t("pivotTotal"));
+                return tableToMarkdown(header, rows);
+              },
+            },
+          ]}
+        />
         <chakra.label display="inline-flex" alignItems="center" gap="1" fontSize="xs" cursor="pointer">
           <Checkbox checked={heatmap} onChange={(e) => setHeatmap(e.target.checked)} />
           {t("pivotHeatmap")}
@@ -326,7 +370,7 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
       </chakra.p>
 
       <Box flex="1" overflow="auto" px="3" py="2">
-        <chakra.table css={{ borderCollapse: "collapse" }}>
+        <chakra.table ref={tableRef} css={{ borderCollapse: "collapse" }}>
           <thead>
             <tr>
               <chakra.th css={{ ...headCss, textAlign: "left" }}>

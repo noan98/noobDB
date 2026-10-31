@@ -331,6 +331,23 @@ tauri-driver は `taiki-e/install-action` の対応ツールではないため�
 「3 回連続グリーン」と「15 分以内」は確認済み (2026-10-03 JST、run 18〜20、約 11〜12 分)。
 詳細・testid 一覧は `noobdb-testing` スキルの `references/e2e.md`。
 
+## `windows-db-smoke.yml` (Windows × MySQL/PostgreSQL nightly スモーク / #1945)
+
+`rust (windows)` は SQLite 統合しか実走しない (MySQL/PostgreSQL は `NOOBDB_TEST_*` ゲートでスキップ) ため、
+Windows 固有 × サーバ型ドライバの退行が CI で見えなかった。それを塞ぐ独立ワークフローで、
+`schedule: cron` (毎晩 UTC 18:30 = JST 03:30) と `workflow_dispatch` で走る。加えて、このワークフロー自身のファイルを変えた PR でだけ
+`pull_request: paths` で実走する(PR 段階の動作確認用。notify は既定ブランチの schedule / dispatch のみ)。
+**必須チェックに含めない**。
+
+- windows-latest 同梱の PostgreSQL / MySQL バイナリで使い捨てクラスタを自前作成して起動する
+  (同梱サービスの資格情報に依存しない。見つからなければ `choco install`。choco 版は標準ポートのサービスで起動するため、自前クラスタは PG 15432 / MySQL 13306 の非標準ポートで衝突を避ける)。起動待ちはポーリングで、
+  失敗時は DB ログを出力・artifact (`windows-db-smoke-logs-*`) 保存する。
+- 実走するのは `NEXTEST_FILTER` の最小集合のみ: external バイナリの MySQL/PostgreSQL の roundtrip /
+  new_schema_apis_and_transaction / 型デコード と、別ステップで `#[ignore]` 付きの `probe_reports_a_consistent_status` (本物の Credential Manager への keyring 疎通、`--run-ignored all`)。MySQL の起動待ちはログの "ready for connections" で判定。
+  実行前に `cargo nextest list` で対象が選ばれていることを確認し、env ゲートの黙ったスキップを防ぐ。
+- 失敗は `notify` ジョブがトラッキング Issue (`ci:windows-db-smoke`) に通知する (`scheduled-notify.md`)。
+- 調査: 失敗ステップが DB 起動系ならランナーイメージ更新 (同梱パスの変更) を疑い、テスト実行なら Windows 固有のドライバ退行を疑う。
+
 ## `mutants-diff.yml` (PR 差分の `cargo mutants --in-diff` / #1841)
 
 `ci.yml` とは別の独立ワークフロー。手動 (`workflow_dispatch`) の `mutants.yml` (全件 4 シャード、

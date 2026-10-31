@@ -3,6 +3,7 @@ import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import { api, type SqliteMaintenanceAction, type SqliteMaintenanceResult } from "../api/tauri";
 import { useT } from "../i18n";
+import { SurfaceRule } from "./SurfaceRule";
 import { Callout } from "./Callout";
 import { EmptyState } from "./EmptyState";
 import { groupFkViolations, freelistRatio, shouldSuggestVacuum } from "./sqliteMaintenance";
@@ -79,6 +80,7 @@ export function SqliteMaintenancePanel({ sessionId, readOnly }: { sessionId: str
   return (
     <Box flex="1" overflowY="auto" py="5" px="6" display="flex" flexDirection="column" gap="3.5">
       <chakra.header
+        position="relative"
         display="flex"
         alignItems="center"
         justifyContent="space-between"
@@ -110,6 +112,7 @@ export function SqliteMaintenancePanel({ sessionId, readOnly }: { sessionId: str
             );
           })}
         </Flex>
+        <SurfaceRule />
       </chakra.header>
 
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">

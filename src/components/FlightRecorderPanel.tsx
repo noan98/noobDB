@@ -6,6 +6,7 @@ import { api, UndoConflict, WriteCaptureSummary } from "../api/tauri";
 import { localizedErrorMessage } from "../errorHints";
 import { useT } from "../i18n";
 import { EmptyState } from "./EmptyState";
+import { NoResultsIllustration } from "./illustrations";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview } from "./modalForm";
 import { Button, PressableButton } from "./ui";
@@ -538,6 +539,8 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
             </chakra.p>
           ) : entries.length === 0 ? (
             <EmptyState
+              illustration={<NoResultsIllustration />}
+              brandHalo
               icon="clock"
               title={t("flightRecorderEmptyTitle")}
               description={t("flightRecorderEmpty")}

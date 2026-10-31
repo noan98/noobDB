@@ -3,7 +3,8 @@ import { chakra, Flex, Text } from "@chakra-ui/react";
 import { motion } from "motion/react";
 import { transitions } from "../motion";
 import { Button, PressableButton } from "./ui";
-import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "./Icon";
+import { Icon, ICON_SIZES, type IconName } from "./Icon";
+import { FeatureIcon } from "./FeatureIcon";
 import { Kbd } from "./Kbd";
 
 /** ルートを motion 化するラッパー。`transition` を motion へ転送する
@@ -36,7 +37,8 @@ interface Props {
   /**
    * イラストの背後へブランドの光彩 (`--hero-halo`、Welcome / Splash と同一ソース) を
    * 敷く opt-in (#1887)。`illustration` があり `compact` でないときだけ効く。
-   * 大キャンバスの主要空状態 (結果グリッド / 未接続ペイン) 専用で、小パネルには付けない。
+   * 大キャンバスの主要空状態 (結果グリッド / 未接続ペイン) と、診断/参照系パネルの
+   * 「まだ何も記録していない」大面積の空状態 (#1937) に付ける。compact や小面積のカード内には付けない。
    * 静止装飾で、hc-* では `--hero-halo` 自体が `none` になる。
    */
   brandHalo?: boolean;
@@ -121,26 +123,7 @@ export function EmptyState({
           {illustration}
         </motion.div>
       ) : (
-        icon && (
-          <Flex
-            as="span"
-            aria-hidden
-            align="center"
-            justify="center"
-            boxSize={compact ? "34px" : "56px"}
-            rounded="lg"
-            bg="app.surfaceMuted"
-            color="app.textSecondary"
-          >
-            {/* compact は既存の `lg` (20px 相当) に寄せる。旧値 22px との差はわずか
-                (2px) で、新トークンを 1 つ増やすコストに見合わないため (#886)。 */}
-            <Icon
-              name={icon}
-              size={compact ? ICON_SIZES.lg : ICON_SIZES["2xl"]}
-              strokeWidth={ICON_STROKE.thin}
-            />
-          </Flex>
-        )
+        icon && <FeatureIcon icon={icon} size={compact ? "sm" : "lg"} />
       )}
       <Text textStyle="subheading">{title}</Text>
       {description && (
