@@ -4726,7 +4726,11 @@ export const DataGrid = memo(function DataGrid({
       apply: (preset) => {
         const sorting = preset.view.sorting ?? [];
         const filters = preset.view.filters ?? [];
-        const masks = preset.view.masks ?? {};
+        // 適用でマスクが外れることはないようにする。プリセット側は追加マスク (true) だけを採り、
+        // いま手動で掛けているマスク (true) は残す (画面共有中にビュー切替で値が見えないように)。
+        const masks: Record<string, boolean> = {};
+        for (const [col, on] of Object.entries(preset.view.masks ?? {})) if (on) masks[col] = true;
+        for (const [col, on] of Object.entries(maskOverridesRef.current)) if (on) masks[col] = true;
         setSorting(sorting);
         setColumnFilters(filters);
         setMaskOverrides(masks);

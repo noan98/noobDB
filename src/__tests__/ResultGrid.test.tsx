@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { createRef } from "react";
 import userEvent from "@testing-library/user-event";
 import { act, fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
-import { writeStoredGridView } from "../components/gridViewState";
+import { readStoredGridView, writeStoredGridView } from "../components/gridViewState";
 import {
   ResultGrid,
   rowToPendingInsert,
@@ -2829,5 +2829,20 @@ describe("名前付きビュープリセット (#1942)", () => {
     await user.click(screen.getByRole("button", { name: t("gridPresetSave") }));
     await waitFor(() => expect(readStoredGridPresets(gridPresetsKeyFrom(sizingKey))).toHaveLength(1));
     expect(readStoredGridPresets(gridPresetsKeyFrom(sizingKey))[0]?.view.masks).toEqual({ qty: true });
+  });
+
+  it("適用しても、いま手動で掛けているマスクは外れない", async () => {
+    const user = userEvent.setup();
+    const sizingKey = resultShapeSizingKey(FRUIT_COLUMNS, "db", "fruit");
+    writeStoredGridView(gridViewStateKeyFrom(sizingKey), { masks: { qty: true } });
+    writeStoredGridPresets(gridPresetsKeyFrom(sizingKey), [
+      { name: "p", view: { masks: { name: true, qty: false } } },
+    ]);
+    renderWithProviders(<ResultGrid result={FRUIT_RESULT} database="db" table="fruit" />);
+    await user.click(screen.getByRole("button", { name: t("gridPresetButton") }));
+    await user.click(await screen.findByRole("menuitem", { name: "p" }));
+    await waitFor(() =>
+      expect(readStoredGridView(gridViewStateKeyFrom(sizingKey)).masks).toEqual({ name: true, qty: true }),
+    );
   });
 });
