@@ -2096,18 +2096,26 @@ impl PostgresConn {
         .bind(name)
         .fetch_optional(&self.pool)
         .await?;
+        // 定義はスキーマを指定せずにエディタで開かれるので、表示用は schema 修飾する
+        // (比較用の `create_sequence_ddl` は修飾しないまま)。
+        let quote = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
+        let qualified = format!("{}.{}", quote(schema), quote(name));
         Ok(row.map(|r| {
-            let mut out = format!("{};", create_sequence_ddl(&r));
+            let ddl = create_sequence_ddl(&r);
+            let unqualified = format!("CREATE SEQUENCE {}", quote(name));
+            let ddl = match ddl.strip_prefix(&unqualified) {
+                Some(rest) => format!("CREATE SEQUENCE {qualified}{rest}"),
+                None => ddl,
+            };
+            let mut out = format!("{ddl};");
             if let Ok(Some(owner)) = r.try_get::<Option<String>, _>(9) {
                 // identity 列のシーケンスは OWNED BY で付け替えられない (内部依存) ので、
                 // 文ではなくコメントで所有列を示す。
                 match owner.strip_suffix(":identity") {
                     Some(col) => out.push_str(&format!("\n-- identity column: {col}")),
-                    None => out.push_str(&format!(
-                        "\nALTER SEQUENCE \"{}\" OWNED BY {};",
-                        name.replace('"', "\"\""),
-                        owner
-                    )),
+                    None => {
+                        out.push_str(&format!("\nALTER SEQUENCE {qualified} OWNED BY {owner};"))
+                    }
                 }
             }
             match r.try_get::<Option<i64>, _>(8) {
