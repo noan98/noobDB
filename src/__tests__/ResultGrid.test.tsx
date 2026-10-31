@@ -2869,6 +2869,32 @@ describe("条件付き書式の永続化 (#1958)", () => {
     expect(readStoredCondFormat(condFormatKeyFrom(sizingKey))).toEqual({ formats: { 1: "bar" } });
   });
 
+  it("列メニューでモードを bar にすると保存される", async () => {
+    const user = userEvent.setup();
+    const sizingKey = resultShapeSizingKey(FRUIT_COLUMNS, "db", "fruit");
+    renderWithProviders(<ResultGrid result={FRUIT_RESULT} database="db" table="fruit" />);
+    await user.click(screen.getByRole("button", { name: t("gridFilterAria", { column: "qty" }) }));
+    await user.selectOptions(await screen.findByDisplayValue(t("gridCondFormatOff")), "bar");
+    await waitFor(() =>
+      expect(readStoredCondFormat(condFormatKeyFrom(sizingKey))).toEqual({ formats: { 1: "bar" } }),
+    );
+  });
+
+  it("閾値モード+ルールが再マウントで復元される", () => {
+    const sizingKey = resultShapeSizingKey(FRUIT_COLUMNS, "db", "fruit");
+    localStorage.setItem(
+      condFormatKeyFrom(sizingKey) as string,
+      JSON.stringify({
+        formats: { 1: "threshold" },
+        thresholds: { 1: { op: ">", value: 4, tone: "danger" } },
+      }),
+    );
+    const { container } = renderWithProviders(
+      <ResultGrid result={FRUIT_RESULT} database="db" table="fruit" />,
+    );
+    expect(container.querySelectorAll(".cell-cf-threshold.is-danger").length).toBeGreaterThan(0);
+  });
+
   it("壊れた保存値は無視して書式 off で描画する", () => {
     const sizingKey = resultShapeSizingKey(FRUIT_COLUMNS, "db", "fruit");
     localStorage.setItem(condFormatKeyFrom(sizingKey) as string, "{broken");

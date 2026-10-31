@@ -1,6 +1,6 @@
 // 結果形状ごとの表示設定 (列幅 colsizing / 列状態 colstate / ビュー gridview / プリセット gridpresets / フッター
-// gridfooter) を localStorage に保存するときの共通処理。形状 (= colsizing キー) 単位の LRU で
-// 件数を抑え、古い形状は 5 種のキーをまとめて削除する。容量超過で setItem が失敗したときも
+// gridfooter / 条件付き書式 gridcondfmt) を localStorage に保存するときの共通処理。形状 (= colsizing キー) 単位の LRU で
+// 件数を抑え、古い形状は 6 種のキーをまとめて削除する。容量超過で setItem が失敗したときも
 // 古い形状を退避して再試行するので、増え続けた別キーのせいで保存が永続的に止まらない。
 
 const COL_SIZING_LRU_KEY = "noobdb.colsizing.lru.v1";
@@ -64,7 +64,7 @@ export function touchColumnLayoutLru(sizingKey: string, maxEntries = COL_SIZING_
   writeLruOrder(order);
 }
 
-/** colstate / gridview / gridfooter のキーから形状の colsizing キーを導いて LRU を更新する。 */
+/** 兄弟キー (colstate / gridview / gridfooter / gridpresets / gridcondfmt) のキーから形状の colsizing キーを導いて LRU を更新する。 */
 export function touchLayoutLruForKey(key: string): void {
   for (const p of SIBLING_PREFIXES) {
     if (key.includes(p)) {
