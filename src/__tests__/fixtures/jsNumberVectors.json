@@ -329,6 +329,26 @@
       "note": "非数値"
     },
     {
+      "input": "0x6514d3f68464dae",
+      "expected": "455229972068847040",
+      "note": "2^53 超の 16 進は最後に 1 回だけ丸める (#1983)"
+    },
+    {
+      "input": "0x229df08ec68e2daead",
+      "expected": "638570051747930000000",
+      "note": "2^64 超の 16 進 (#1983)"
+    },
+    {
+      "input": "0x20000000000001",
+      "expected": "9007199254740992",
+      "note": "2^53+1 は偶数丸め (#1983)"
+    },
+    {
+      "input": "0x1fffffffffffffffffffffffffffffffff",
+      "expected": "1.0889035741470031e+40",
+      "note": "128 bit 超 (sticky ビット経由、#1983)"
+    },
+    {
       "input": "0x1f",
       "expected": "31",
       "note": "16 進"
