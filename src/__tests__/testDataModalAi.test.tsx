@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  renderWithProviders,
+  screen,
+  waitFor,
+  chooseListboxOption,
+} from "./testUtils";
 import { t } from "../i18n";
 import { generateRows, inferColumnSpec } from "../components/testDataGen";
 
@@ -110,7 +118,7 @@ beforeEach(() => {
 async function selectAiMode() {
   const select = await screen.findByLabelText(t("testDataModeLabel"));
   await screen.findByLabelText(t("testDataStrategyAria", { column: "product_name" }));
-  fireEvent.change(select, { target: { value: "ai" } });
+  chooseListboxOption(select, "ai");
   return screen.findByTestId("testdata-ai-panel");
 }
 
@@ -351,7 +359,7 @@ describe("TestDataModal AI モード (#698)", () => {
     renderWithProviders(ui({ driver: "postgres" }));
     await screen.findByLabelText(t("testDataModeLabel"));
     await screen.findByLabelText(t("testDataStrategyAria", { column: "email" }));
-    fireEvent.change(screen.getByLabelText(t("testDataModeLabel")), { target: { value: "ai" } });
+    chooseListboxOption(screen.getByLabelText(t("testDataModeLabel")), "ai");
     await screen.findByText(t("testDataAiWarnComposite", { columns: "(a, b)" }));
     const btn = screen.getByRole("button", { name: t("testDataAiGenerate") });
     await waitFor(() => expect((btn as HTMLButtonElement).disabled).toBe(false));

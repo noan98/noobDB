@@ -45,7 +45,8 @@ import {
   SettingsToggleRow,
 } from "./settingsLayout";
 import { Icon, ICON_SIZES } from "./Icon";
-import { Button, Input, Select, Switch } from "./ui";
+import { Button, Input, Switch } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { useToast } from "./Toast";
 
 const TASK_LABEL: Record<AiTaskKind, I18nKey> = {
@@ -314,20 +315,14 @@ export function AiSettings() {
           <SettingsToggleLabel htmlFor="settings-ai-default-model">{t("aiDefaultModel")}</SettingsToggleLabel>
           <SettingsInfo>{t("aiDefaultModelHelp")}</SettingsInfo>
         </SettingsLabelWithInfo>
-        <Select
+        <ListboxSelect
           id="settings-ai-default-model"
-          width="auto"
           value={ai.defaultModel}
-          onChange={(e) => {
-            if (isAiModelId(e.target.value)) setAiDefaultModel(e.target.value);
+          options={modelOptions(null, suffix).map((o) => ({ value: o.value, label: o.label }))}
+          onChange={(v) => {
+            if (isAiModelId(v)) setAiDefaultModel(v);
           }}
-        >
-          {modelOptions(null, suffix).map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </Select>
+        />
       </SettingsToggleRow>
 
       <FormSection>
@@ -380,42 +375,37 @@ export function AiSettings() {
                 const effort = ai.taskEfforts[kind] ?? AI_TASK_DEFS[kind].recommendedEffort;
                 return (
                   <TaskRow key={kind} label={t(TASK_LABEL[kind])}>
-                    <Select
-                      aria-label={`${t(TASK_LABEL[kind])} - ${t("aiColModel")}`}
+                    <ListboxSelect
+                      css={{ width: "100%" }}
+                      ariaLabel={`${t(TASK_LABEL[kind])} - ${t("aiColModel")}`}
                       value={ai.taskModels[kind] ?? ""}
-                      onChange={(e) =>
-                        setAiTaskModel(kind, isAiModelId(e.target.value) ? e.target.value : null)
-                      }
-                    >
-                      <option value="">
-                        {unsetUsesRecommendedModel(kind)
-                          ? t("aiModelFollowRecommended", {
-                              model: AI_MODEL_LABELS[AI_TASK_DEFS[kind].recommendedModel],
-                            })
-                          : t("aiModelFollowDefault")}
-                      </option>
-                      {modelOptions(kind, suffix).map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </Select>
-                    <Select
-                      aria-label={`${t(TASK_LABEL[kind])} - ${t("aiColEffort")}`}
+                      options={[
+                        {
+                          value: "",
+                          label: unsetUsesRecommendedModel(kind)
+                            ? t("aiModelFollowRecommended", {
+                                model: AI_MODEL_LABELS[AI_TASK_DEFS[kind].recommendedModel],
+                              })
+                            : t("aiModelFollowDefault"),
+                        },
+                        ...modelOptions(kind, suffix).map((o) => ({ value: o.value, label: o.label })),
+                      ]}
+                      onChange={(v) => setAiTaskModel(kind, isAiModelId(v) ? v : null)}
+                    />
+                    <ListboxSelect
+                      css={{ width: "100%" }}
+                      ariaLabel={`${t(TASK_LABEL[kind])} - ${t("aiColEffort")}`}
                       value={effort}
-                      onChange={(e) => {
-                        const v = e.target.value;
+                      options={effortOptions(kind, suffix, (eff) => t(EFFORT_LABEL[eff])).map((o) => ({
+                        value: o.value,
+                        label: o.label,
+                      }))}
+                      onChange={(v) => {
                         if (!isAiEffort(v)) return;
                         // 推奨値を選んだら「推奨に従う (null)」として保存する。
                         setAiTaskEffort(kind, v === AI_TASK_DEFS[kind].recommendedEffort ? null : v);
                       }}
-                    >
-                      {effortOptions(kind, suffix, (eff) => t(EFFORT_LABEL[eff])).map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </Select>
+                    />
                   </TaskRow>
                 );
               })}
@@ -430,21 +420,14 @@ export function AiSettings() {
             <SettingsToggleLabel htmlFor="settings-ai-send-scope">{t("aiSendScope")}</SettingsToggleLabel>
             <SettingsInfo>{t("aiSendScopeHelp")}</SettingsInfo>
           </SettingsLabelWithInfo>
-          <Select
+          <ListboxSelect
             id="settings-ai-send-scope"
-            width="auto"
             value={ai.sendScope}
-            onChange={(e) => {
-              const v = e.target.value as AiSendScope;
-              if ((AI_SEND_SCOPES as readonly string[]).includes(v)) setAiSendScope(v);
+            options={AI_SEND_SCOPES.map((s) => ({ value: s, label: t(SEND_SCOPE_LABEL[s]) }))}
+            onChange={(v) => {
+              if ((AI_SEND_SCOPES as readonly string[]).includes(v)) setAiSendScope(v as AiSendScope);
             }}
-          >
-            {AI_SEND_SCOPES.map((s) => (
-              <option key={s} value={s}>
-                {t(SEND_SCOPE_LABEL[s])}
-              </option>
-            ))}
-          </Select>
+          />
         </SettingsToggleRow>
         <SettingsToggleRow>
           <SettingsLabelWithInfo>

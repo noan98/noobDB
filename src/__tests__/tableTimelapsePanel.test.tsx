@@ -284,7 +284,7 @@ describe("TableTimelapsePanel (#739)", () => {
         resolveDiff = resolve;
       }),
     );
-    fireEvent.change(screen.getByLabelText(t("timelapseFrom")), { target: { value: "11" } });
+    chooseListboxOption(screen.getByLabelText(t("timelapseFrom")), "11");
 
     expect(await screen.findByText(t("timelapseDiffLoading"))).toBeInTheDocument();
     expect(screen.queryByText("150")).not.toBeInTheDocument();

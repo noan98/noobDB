@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, chooseListboxOption } from "./testUtils";
 import { makeColumn } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 import type { CellValue } from "../api/tauri";
@@ -120,12 +120,13 @@ describe("ExportModal データマスキング (#733)", () => {
   it("列ごとにルールを変更でき、書き出しにそのまま渡る", async () => {
     renderModal();
     enableMasking();
-    fireEvent.change(screen.getByRole("combobox", { name: t("exportMaskingRuleFor", { column: "note" }) }), {
-      target: { value: "null" },
-    });
-    fireEvent.change(
+    chooseListboxOption(
+      screen.getByRole("combobox", { name: t("exportMaskingRuleFor", { column: "note" }) }),
+      "null",
+    );
+    chooseListboxOption(
       screen.getByRole("combobox", { name: t("exportMaskingRuleFor", { column: "user_email" }) }),
-      { target: { value: "hash" } },
+      "hash",
     );
     // 数値欄は入力中は確定せず、blur で確定する (#1534)。
     const hashLength = screen.getByLabelText(t("exportMaskingHashLengthFor", { column: "user_email" }));
@@ -145,12 +146,26 @@ describe("ExportModal データマスキング (#733)", () => {
     ]);
   });
 
+  it("同じルールを選び直しても入力済みの置換文字列を既定に戻さない", () => {
+    renderModal();
+    enableMasking();
+    const rule = () => screen.getByRole("combobox", { name: t("exportMaskingRuleFor", { column: "note" }) });
+    chooseListboxOption(rule(), "fixed");
+    const value = screen.getByLabelText(t("exportMaskingFixedValueFor", { column: "note" }));
+    fireEvent.change(value, { target: { value: "[redacted]" } });
+    chooseListboxOption(rule(), "fixed");
+    expect(screen.getByLabelText(t("exportMaskingFixedValueFor", { column: "note" }))).toHaveValue(
+      "[redacted]",
+    );
+  });
+
   it("列のルールをプリセットとして保存すると設定に残り、次回から自動で適用される", async () => {
     const { unmount } = renderModal();
     enableMasking();
-    fireEvent.change(screen.getByRole("combobox", { name: t("exportMaskingRuleFor", { column: "note" }) }), {
-      target: { value: "fixed" },
-    });
+    chooseListboxOption(
+      screen.getByRole("combobox", { name: t("exportMaskingRuleFor", { column: "note" }) }),
+      "fixed",
+    );
     const saveButtons = screen.getAllByRole("button", { name: t("exportMaskingSavePreset") });
     // 行の並びは列順 (id, user_email, note)。
     fireEvent.click(saveButtons[2]);

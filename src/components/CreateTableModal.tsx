@@ -15,7 +15,8 @@ import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
-import { Button, Input, PressableButton, Select, Switch } from "./ui";
+import { Button, Input, PressableButton, Switch } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { Icon } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { TableConstraintEditor, type CheckRow, type FkRow } from "./TableConstraintEditor";
@@ -263,19 +264,16 @@ export function CreateTableModal({
               <FieldLabel htmlFor="create-table-template" minW="90px">
                 {t("createTableTemplate")}
               </FieldLabel>
-              <Select
+              <ListboxSelect
                 id="create-table-template"
                 value={templateTable}
-                onChange={(e) => setTemplateTable(e.target.value)}
-                flex="1"
-              >
-                <option value="">{t("createTableTemplateNone")}</option>
-                {tableNames.map((n) => (
-                  <option key={n} value={n}>
-                    {n}
-                  </option>
-                ))}
-              </Select>
+                options={[
+                  { value: "", label: t("createTableTemplateNone") },
+                  ...tableNames.map((n) => ({ value: n })),
+                ]}
+                onChange={setTemplateTable}
+                css={{ flex: "1", width: "100%" }}
+              />
               <Button
                 type="button"
                 variant="secondary"
@@ -420,24 +418,26 @@ export function CreateTableModal({
                     fontFamily="mono"
                     flex="1"
                   />
-                  <Select
+                  <ListboxSelect
                     value={c.generated.virtual ? "virtual" : "stored"}
-                    onChange={(e) =>
+                    options={[
+                      { value: "stored", label: t("createTableGeneratedStored") },
+                      // ListboxSelect には候補単位の disabled が無いので、非対応ドライバでは
+                      // VIRTUAL を並べない (既に選択済みの場合だけ表示のため残す)。
+                      ...(supportsVirtualGenerated(driver) || c.generated.virtual
+                        ? [{ value: "virtual", label: t("createTableGeneratedVirtual") }]
+                        : []),
+                    ]}
+                    onChange={(v) =>
                       setCol(i, {
                         generated: {
                           expression: c.generated?.expression ?? "",
-                          virtual: e.target.value === "virtual",
+                          virtual: v === "virtual",
                         },
                       })
                     }
-                    aria-label={`${t("createTableGeneratedStorage")} (${i + 1})`}
-                    w="auto"
-                  >
-                    <option value="stored">{t("createTableGeneratedStored")}</option>
-                    <option value="virtual" disabled={!supportsVirtualGenerated(driver)}>
-                      {t("createTableGeneratedVirtual")}
-                    </option>
-                  </Select>
+                    ariaLabel={`${t("createTableGeneratedStorage")} (${i + 1})`}
+                  />
                 </Flex>
               )}
             </chakra.div>

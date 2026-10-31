@@ -21,7 +21,8 @@ import { keyringReasonKey, useKeyringStatus } from "../keyringStatus";
 import { Segmented, type SegmentedOption } from "./Segmented";
 import { SettingsInfo, SettingsLabelWithInfo } from "./settingsLayout";
 import { Icon, ICON_SIZES } from "./Icon";
-import { Button, Heading, Input, Select, SelectableCard, Switch, Textarea } from "./ui";
+import { Button, Heading, Input, SelectableCard, Switch, Textarea } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { LoadingButton } from "./LoadingButton";
 import { Tooltip } from "./Tooltip";
 import { FieldError, FieldLabel, FormSection } from "./modalForm";
@@ -1178,14 +1179,16 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
           {isIamCapableDriver(driver) && (
             <FormSection mt="2">
               <FieldLabel htmlFor={`${fid}-auth-method`}>{t("formAuthMethod")}</FieldLabel>
-              <Select
+              <ListboxSelect
                 id={`${fid}-auth-method`}
+                css={{ width: "100%" }}
                 value={authMethod}
-                onChange={(e) => setAuthMethod(e.target.value as DbAuthMethod)}
-              >
-                <option value="password">{t("formAuthMethodPassword")}</option>
-                <option value="aws_iam">{t("formAuthMethodAwsIam")}</option>
-              </Select>
+                options={[
+                  { value: "password", label: t("formAuthMethodPassword") },
+                  { value: "aws_iam", label: t("formAuthMethodAwsIam") },
+                ]}
+                onChange={(v) => setAuthMethod(v as DbAuthMethod)}
+              />
             </FormSection>
           )}
           {iamActive ? (
@@ -1262,22 +1265,24 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
           <Legend>{t("formTlsLegend")}</Legend>
           <Box>
             <FieldLabel htmlFor={`${fid}-tls-mode`}>{t("formTlsMode")}</FieldLabel>
-            <Select
+            <ListboxSelect
               id={`${fid}-tls-mode`}
+              css={{ width: "100%" }}
               value={effectiveSslMode}
-              onChange={(e) => setSslMode(e.target.value as SslMode)}
-            >
-              {/* IAM auth (#734) is TLS-only: plaintext-capable modes are not selectable. */}
-              <option value="disable" disabled={iamActive && !isSslModeAllowedForIam("disable")}>
-                {t("formTlsModeDisable")}
-              </option>
-              <option value="prefer" disabled={iamActive && !isSslModeAllowedForIam("prefer")}>
-                {t("formTlsModePrefer")}
-              </option>
-              <option value="require">{t("formTlsModeRequire")}</option>
-              <option value="verify_ca">{t("formTlsModeVerifyCa")}</option>
-              <option value="verify_full">{t("formTlsModeVerifyFull")}</option>
-            </Select>
+              // IAM auth (#734) is TLS-only: plaintext-capable modes are not selectable.
+              // ListboxSelect には候補単位の disabled が無いので、選べない候補は並べない
+              // (現在値だけは表示のため残す)。
+              options={(
+                [
+                  { value: "disable", label: t("formTlsModeDisable") },
+                  { value: "prefer", label: t("formTlsModePrefer") },
+                  { value: "require", label: t("formTlsModeRequire") },
+                  { value: "verify_ca", label: t("formTlsModeVerifyCa") },
+                  { value: "verify_full", label: t("formTlsModeVerifyFull") },
+                ] as const
+              ).filter((o) => !iamActive || isSslModeAllowedForIam(o.value))}
+              onChange={(v) => setSslMode(v as SslMode)}
+            />
             <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
               {t("formTlsModeHelp")}
             </Text>
@@ -1592,15 +1597,17 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               </Box>
               <Box mt="2">
                 <FieldLabel htmlFor={`${fid}-ssh-auth`}>{t("formSshAuthMethod")}</FieldLabel>
-                <Select
+                <ListboxSelect
                   id={`${fid}-ssh-auth`}
+                  css={{ width: "100%" }}
                   value={sshAuthMethod}
-                  onChange={(e) => setSshAuthMethod(e.target.value as SshAuthMethod)}
-                >
-                  <option value="key">{t("formSshAuthKey")}</option>
-                  <option value="agent">{t("formSshAuthAgent")}</option>
-                  <option value="password">{t("formSshAuthPassword")}</option>
-                </Select>
+                  options={[
+                    { value: "key", label: t("formSshAuthKey") },
+                    { value: "agent", label: t("formSshAuthAgent") },
+                    { value: "password", label: t("formSshAuthPassword") },
+                  ]}
+                  onChange={(v) => setSshAuthMethod(v as SshAuthMethod)}
+                />
               </Box>
               {sshAuthMethod === "key" && (
                 <>
@@ -1703,15 +1710,17 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                     </Box>
                     <Box mt="2">
                       <FieldLabel htmlFor={`${fid}-ssh-jump-auth`}>{t("formSshJumpAuthMethod")}</FieldLabel>
-                      <Select
+                      <ListboxSelect
                         id={`${fid}-ssh-jump-auth`}
+                        css={{ width: "100%" }}
                         value={sshJumpAuthMethod}
-                        onChange={(e) => setSshJumpAuthMethod(e.target.value as SshAuthMethod)}
-                      >
-                        <option value="key">{t("formSshAuthKey")}</option>
-                        <option value="agent">{t("formSshAuthAgent")}</option>
-                        <option value="password">{t("formSshAuthPassword")}</option>
-                      </Select>
+                        options={[
+                          { value: "key", label: t("formSshAuthKey") },
+                          { value: "agent", label: t("formSshAuthAgent") },
+                          { value: "password", label: t("formSshAuthPassword") },
+                        ]}
+                        onChange={(v) => setSshJumpAuthMethod(v as SshAuthMethod)}
+                      />
                     </Box>
                     {sshJumpAuthMethod === "key" && (
                       <>

@@ -24,7 +24,8 @@ import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { SqlCountCheck } from "./SqlCountCheck";
-import { Button, Input, PressableButton, Select, Textarea } from "./ui";
+import { Button, Input, PressableButton, Textarea } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 
 /**
  * データ品質アサーション (#742) の追加・編集モーダル。
@@ -218,15 +219,17 @@ export function AssertionEditorModal({
           </FormSection>
           <FormSection flex="1" minW="160px">
             <FieldLabel htmlFor="assert-scope">{t("assertFieldScope")}</FieldLabel>
-            <Select
+            <ListboxSelect
               id="assert-scope"
+              css={{ width: "100%" }}
               value={draft.scopeKind}
-              onChange={(e) => set("scopeKind", e.target.value as AssertionScopeKind)}
-            >
-              <option value="profile">{t("assertScopeProfile")}</option>
-              <option value="group">{t("assertScopeGroup")}</option>
-              <option value="any">{t("assertScopeAny")}</option>
-            </Select>
+              options={[
+                { value: "profile", label: t("assertScopeProfile") },
+                { value: "group", label: t("assertScopeGroup") },
+                { value: "any", label: t("assertScopeAny") },
+              ]}
+              onChange={(v) => set("scopeKind", v as AssertionScopeKind)}
+            />
             {err("scopeGroup", "assertErrScopeGroup")}
           </FormSection>
         </Flex>
@@ -254,17 +257,13 @@ export function AssertionEditorModal({
           </FormSection>
           <FormSection flex="1" minW="160px">
             <FieldLabel htmlFor="assert-kind">{t("assertFieldRule")}</FieldLabel>
-            <Select
+            <ListboxSelect
               id="assert-kind"
+              css={{ width: "100%" }}
               value={draft.kind}
-              onChange={(e) => set("kind", e.target.value as AssertionRuleKind)}
-            >
-              {ASSERTION_RULE_KINDS.map((k) => (
-                <option key={k} value={k}>
-                  {t(RULE_KIND_LABEL_KEY[k])}
-                </option>
-              ))}
-            </Select>
+              options={ASSERTION_RULE_KINDS.map((k) => ({ value: k, label: t(RULE_KIND_LABEL_KEY[k]) }))}
+              onChange={(v) => set("kind", v as AssertionRuleKind)}
+            />
           </FormSection>
         </Flex>
 
@@ -404,17 +403,16 @@ export function AssertionEditorModal({
           <Flex gap="3" flexWrap="wrap">
             <FormSection flex="1" minW="120px">
               <FieldLabel htmlFor="assert-op">{t("assertFieldOp")}</FieldLabel>
-              <Select
+              <ListboxSelect
                 id="assert-op"
+                css={{ width: "100%" }}
                 value={draft.op}
-                onChange={(e) => set("op", e.target.value as RowCountOp)}
-              >
-                {ROW_COUNT_OPS.map((op) => (
-                  <option key={op} value={op}>
-                    {op === "between" ? t("assertOpBetween") : ROW_COUNT_OP_SYMBOL[op]}
-                  </option>
-                ))}
-              </Select>
+                options={ROW_COUNT_OPS.map((op) => ({
+                  value: op,
+                  label: op === "between" ? t("assertOpBetween") : ROW_COUNT_OP_SYMBOL[op],
+                }))}
+                onChange={(v) => set("op", v as RowCountOp)}
+              />
             </FormSection>
             <FormSection flex="1" minW="120px">
               <FieldLabel htmlFor="assert-count">

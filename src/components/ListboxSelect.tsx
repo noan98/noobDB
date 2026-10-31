@@ -1,9 +1,9 @@
 /**
  * `ListboxSelect` — 自由入力なしの単純選択用の共有 listbox セレクタ (#1143)。
  *
- * `src/components/ui.tsx` の `Select` (素のネイティブ `<select>`) は
- * webkit2gtk (Tauri/Linux) では GTK がポップアップを描画するため、アプリの
- * ダーク/アクセント配色・角丸・enter アニメーションに追従しない。
+ * 素のネイティブ `<select>` は webkit2gtk (Tauri/Linux) では GTK がポップアップを
+ * 描画するため、アプリのダーク/アクセント配色・角丸・enter アニメーションに
+ * 追従しない (#1950 で `ui.tsx` の `Select` を撤去し、すべてここへ移行した)。
  * `ComboSelect.tsx` (portal + `transitions.enter` の WAI-ARIA listbox
  * ポップオーバー) と同じ基盤を、自由入力を持たない「候補から 1 つを選ぶ」
  * 用途向けに提供する。

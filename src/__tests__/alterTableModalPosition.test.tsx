@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, chooseListboxOption } from "./testUtils";
 import { t } from "../i18n";
 import type { AlterTableContext } from "../api/tauri";
 
@@ -58,9 +58,9 @@ describe("AlterTableModal 新規列の位置 (#1625)", () => {
     fireEvent.change(screen.getByLabelText(`${t("createTableColName")} (1)`), { target: { value: "age" } });
     const select = screen.getByLabelText(t("alterTablePositionAria", { n: 1 }));
     expect(select).toBeEnabled();
-    fireEvent.change(select, { target: { value: "after:id" } });
+    chooseListboxOption(select, "after:id");
     await waitFor(() => expect(screen.getByText(/ADD COLUMN `age`.*AFTER `id`/)).toBeInTheDocument());
-    fireEvent.change(select, { target: { value: "first" } });
+    chooseListboxOption(select, "first");
     await waitFor(() => expect(screen.getByText(/ADD COLUMN `age`.*FIRST/)).toBeInTheDocument());
   });
 

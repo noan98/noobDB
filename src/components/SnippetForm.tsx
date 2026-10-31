@@ -2,7 +2,8 @@ import { useId, useMemo, useState } from "react";
 import { Box, chakra } from "@chakra-ui/react";
 import { api, ConnectionProfile, Snippet, SnippetScope } from "../api/tauri";
 import { useT } from "../i18n";
-import { Button, Heading, Input, Select, Textarea } from "./ui";
+import { Button, Heading, Input, Textarea } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { ComboSelect } from "./ComboSelect";
 import { LoadingButton } from "./LoadingButton";
 import { ErrorNote, FieldError, FieldLabel } from "./modalForm";
@@ -155,12 +156,18 @@ export function SnippetForm({
 
       <Box>
         <FieldLabel htmlFor={`${fid}-driver`}>{t("snippetDriver")}</FieldLabel>
-        <Select id={`${fid}-driver`} value={driver} onChange={(e) => setDriver(e.target.value)}>
-          <option value="">{t("snippetDriverAny")}</option>
-          <option value="mysql">{t("formDriverMysql")}</option>
-          <option value="postgres">{t("formDriverPostgres")}</option>
-          <option value="sqlite">{t("formDriverSqlite")}</option>
-        </Select>
+        <ListboxSelect
+          id={`${fid}-driver`}
+          css={{ width: "100%" }}
+          value={driver}
+          options={[
+            { value: "", label: t("snippetDriverAny") },
+            { value: "mysql", label: t("formDriverMysql") },
+            { value: "postgres", label: t("formDriverPostgres") },
+            { value: "sqlite", label: t("formDriverSqlite") },
+          ]}
+          onChange={setDriver}
+        />
       </Box>
 
       <Box gridColumn="span 2">
@@ -189,34 +196,34 @@ export function SnippetForm({
         <Box display="grid" gridTemplateColumns="1fr 1fr" gap="3">
           <Box>
             <FieldLabel htmlFor={`${fid}-scope-kind`}>{t("snippetScopeKind")}</FieldLabel>
-            <Select
+            <ListboxSelect
               id={`${fid}-scope-kind`}
+              css={{ width: "100%" }}
               value={scopeKind}
-              onChange={(e) => setScopeKind(e.target.value as ScopeKind)}
-            >
-              <option value="any">{t("snippetScopeAny")}</option>
-              <option value="profile">{t("snippetScopeProfile")}</option>
-              <option value="group">{t("snippetScopeGroup")}</option>
-            </Select>
+              options={[
+                { value: "any", label: t("snippetScopeAny") },
+                { value: "profile", label: t("snippetScopeProfile") },
+                { value: "group", label: t("snippetScopeGroup") },
+              ]}
+              onChange={(v) => setScopeKind(v as ScopeKind)}
+            />
           </Box>
           {scopeKind === "profile" && (
             <Box>
               <FieldLabel htmlFor={`${fid}-scope-profile`}>{t("snippetScopeProfileLabel")}</FieldLabel>
-              <Select
+              <ListboxSelect
                 id={`${fid}-scope-profile`}
+                css={{ width: "100%" }}
                 value={scopeProfileId}
-                onChange={(e) => setScopeProfileId(e.target.value)}
-              >
-                {profiles.length === 0 && <option value="">—</option>}
-                {scopeProfileId !== "" && !profiles.some((p) => p.id === scopeProfileId) && (
-                  <option value={scopeProfileId}>{t("snippetScopeDeletedProfile")}</option>
-                )}
-                {profiles.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </Select>
+                options={[
+                  ...(profiles.length === 0 ? [{ value: "", label: "—" }] : []),
+                  ...(scopeProfileId !== "" && !profiles.some((p) => p.id === scopeProfileId)
+                    ? [{ value: scopeProfileId, label: t("snippetScopeDeletedProfile") }]
+                    : []),
+                  ...profiles.map((p) => ({ value: p.id, label: p.name })),
+                ]}
+                onChange={setScopeProfileId}
+              />
             </Box>
           )}
           {scopeKind === "group" && (

@@ -815,56 +815,24 @@ describe("共通コンポーネントの迂回", () => {
   });
 });
 
-describe("design tokens: 素の <select> の残存数 (#1950 / Epic #1946)", () => {
-  // `ui.tsx` の `Select` (素のネイティブ `<select>`) は webkit2gtk (Tauri/Linux) では
+describe("design tokens: 素の <Select> を使わない (#1950 / Epic #1946)", () => {
+  // `ui.tsx` にあった `Select` (素のネイティブ `<select>`) は webkit2gtk (Tauri/Linux) では
   // ポップアップを GTK が描画するため、ダーク/アクセント配色・角丸・enter アニメに追従せず、
   // `ListboxSelect` / `ComboSelect` (portal + WAI-ARIA listbox + transitions.enter) の
-  // 滑らかなポップオーバーと同一画面に混在してしまう。新しい選択 UI は `ListboxSelect`
-  // (自由入力なし) / `ComboSelect` (入力併用) を使う。ここに残るのは未移行の箇所で、
-  // 移行したら件数を減らす (増やすのは禁止、新しいファイルはここに足さない)。
-  const NATIVE_SELECT_BASELINE = new Map<string, number>([
-    ["../components/AiSettings.tsx", 4],
-    ["../components/AlterTableModal.tsx", 2],
-    ["../components/AssertionEditorModal.tsx", 3],
-    ["../components/ColumnProfilePanel.tsx", 2],
-    ["../components/ConnectionForm.tsx", 4],
-    ["../components/CreateTableModal.tsx", 2],
-    ["../components/ExportMaskingSection.tsx", 2],
-    ["../components/PinnedComparisonView.tsx", 3],
-    ["../components/PlanWatchPanel.tsx", 2],
-    ["../components/SchemaDriftPanel.tsx", 2],
-    ["../components/ServerMetricsPanel.tsx", 2],
-    ["../components/SettingsView.tsx", 5],
-    ["../components/SnippetForm.tsx", 3],
-    ["../components/TableTimelapsePanel.tsx", 2],
-    ["../components/TaskManager.tsx", 4],
-    ["../components/TaskScheduleEditor.tsx", 2],
-    ["../components/TestDataModal.tsx", 2],
-    ["../components/UsersPanel.tsx", 2],
-  ]);
-
-  it("素の <Select> を増やさず、減ったらベースラインも下げる", () => {
-    const counts = new Map<string, number>();
+  // 滑らかなポップオーバーと同一画面に混在していた。#1950 で全箇所を移行し終えたので、
+  // 選択 UI は `ListboxSelect` (自由入力なし) / `ComboSelect` (入力併用) だけを使う。
+  it("コンポーネントに素の <Select> が無く、ui.tsx も Select を export しない", () => {
+    const offenders: string[] = [];
     for (const [path, content] of sources) {
       if (!path.startsWith("../components/")) continue;
       const n = (content.match(/<Select\b/g) ?? []).length;
-      if (n > 0) counts.set(path, n);
-    }
-    const paths = new Set([...counts.keys(), ...NATIVE_SELECT_BASELINE.keys()]);
-    const offenders: string[] = [];
-    for (const path of paths) {
-      const n = counts.get(path) ?? 0;
-      const allowed = NATIVE_SELECT_BASELINE.get(path) ?? 0;
-      if (n > allowed) offenders.push(`${toDisplayPath(path)}: ${n} 箇所 (許容 ${allowed})`);
-      else if (n < allowed)
-        offenders.push(
-          `${toDisplayPath(path)}: ${n} 箇所に減った。ベースラインを ${n} へ下げてください (許容 ${allowed})`,
-        );
+      if (n > 0) offenders.push(`${toDisplayPath(path)}: ${n} 箇所`);
+      if (path === "../components/ui.tsx" && /export const Select\b/.test(content))
+        offenders.push(`${toDisplayPath(path)}: Select を export している`);
     }
     expect(
       offenders,
-      "選択 UI は ui.tsx の素の <Select> ではなく ListboxSelect (自由入力なし) / ComboSelect " +
-        "(入力併用) を使う。移行したらベースラインも下げる。",
+      "選択 UI は素の <Select> ではなく ListboxSelect (自由入力なし) / ComboSelect (入力併用) を使う。",
     ).toEqual([]);
   });
 });

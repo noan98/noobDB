@@ -44,7 +44,8 @@ import { Modal, ModalBody, ModalHeader } from "./Modal";
 import { ErrorNote, FieldError, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
 import { Spinner } from "./Spinner";
-import { Button, Checkbox, Input, Select, Switch, Textarea } from "./ui";
+import { Button, Checkbox, Input, Switch, Textarea } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
 import { prefersStaticMotion } from "./revealOrigin";
@@ -1077,25 +1078,33 @@ function TaskForm({
 
       <FormSection>
         <FieldLabel htmlFor="task-profile">{t("taskFormProfile")}</FieldLabel>
-        <Select id="task-profile" value={profileId} onChange={(e) => setProfileId(e.target.value)}>
-          {profiles.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-              {p.is_production ? ` (${t("taskFormProductionBadge")})` : ""}
-            </option>
-          ))}
-        </Select>
+        <ListboxSelect
+          id="task-profile"
+          css={{ width: "100%" }}
+          value={profileId}
+          options={profiles.map((p) => ({
+            value: p.id,
+            label: `${p.name}${p.is_production ? ` (${t("taskFormProductionBadge")})` : ""}`,
+          }))}
+          onChange={setProfileId}
+        />
       </FormSection>
 
       <FormSection>
         <FieldLabel as="div">{t("taskFormActionKind")}</FieldLabel>
-        <Select value={actionKind} onChange={(e) => setActionKind(e.target.value as ActionKind)}>
-          <option value="export_query">{t("taskFormActionExport")}</option>
-          <option value="dump">{t("taskFormActionDump")}</option>
-          <option value="run_assertions">{t("taskFormActionAssertions")}</option>
-          <option value="timelapse_capture">{t("taskFormActionTimelapse")}</option>
-          <option value="refresh_plan_watch">{t("taskFormActionPlanWatch")}</option>
-        </Select>
+        <ListboxSelect
+          css={{ width: "100%" }}
+          ariaLabel={t("taskFormActionKind")}
+          value={actionKind}
+          options={[
+            { value: "export_query", label: t("taskFormActionExport") },
+            { value: "dump", label: t("taskFormActionDump") },
+            { value: "run_assertions", label: t("taskFormActionAssertions") },
+            { value: "timelapse_capture", label: t("taskFormActionTimelapse") },
+            { value: "refresh_plan_watch", label: t("taskFormActionPlanWatch") },
+          ]}
+          onChange={(v) => setActionKind(v as ActionKind)}
+        />
       </FormSection>
 
       {actionKind === "export_query" ? (
@@ -1131,17 +1140,13 @@ function TaskForm({
           </FormSection>
           <FormSection>
             <FieldLabel htmlFor="task-format">{t("exportFormat")}</FieldLabel>
-            <Select
+            <ListboxSelect
               id="task-format"
+              css={{ width: "100%" }}
               value={format}
-              onChange={(e) => setFormat(e.target.value as ExportFormat)}
-            >
-              {EXPORT_FORMATS.map((f) => (
-                <option key={f} value={f}>
-                  {t(EXPORT_FORMAT_LABEL_KEYS[f])}
-                </option>
-              ))}
-            </Select>
+              options={EXPORT_FORMATS.map((f) => ({ value: f, label: t(EXPORT_FORMAT_LABEL_KEYS[f]) }))}
+              onChange={(v) => setFormat(v as ExportFormat)}
+            />
           </FormSection>
           <ExportMaskingSection
             columnNames={maskColumns}
@@ -1236,14 +1241,16 @@ function TaskForm({
           </FormSection>
           <FormSection>
             <FieldLabel as="div">{t("taskFormActionAssertions")}</FieldLabel>
-            <Select
-              aria-label={t("taskFormActionAssertions")}
+            <ListboxSelect
+              css={{ width: "100%" }}
+              ariaLabel={t("taskFormActionAssertions")}
               value={pickAssertions ? "pick" : "all"}
-              onChange={(e) => setPickAssertions(e.target.value === "pick")}
-            >
-              <option value="all">{t("taskFormAssertionsAll")}</option>
-              <option value="pick">{t("taskFormAssertionsPick")}</option>
-            </Select>
+              options={[
+                { value: "all", label: t("taskFormAssertionsAll") },
+                { value: "pick", label: t("taskFormAssertionsPick") },
+              ]}
+              onChange={(v) => setPickAssertions(v === "pick")}
+            />
             {pickAssertions &&
               (assertions.length === 0 ? (
                 <chakra.p margin={0} marginTop="1" fontSize="xs" color="app.textMuted">

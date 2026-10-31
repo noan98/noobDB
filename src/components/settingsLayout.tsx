@@ -106,7 +106,11 @@ export const SettingsNumberRow = chakra("div", {
     borderRadius: "md",
     bg: "app.surfaceMuted",
     "& > :first-child": { flex: 1, minW: 0 },
-    "& > input, & > select": { width: "calc(120px * var(--font-scale))", flexShrink: 0 },
+    // ListboxSelect (#1950) のトリガーは role="combobox" の button なので同じ固定幅を与える。
+    '& > input, & > select, & > button[role="combobox"]': {
+      width: "calc(120px * var(--font-scale))",
+      flexShrink: 0,
+    },
     "& label": { margin: 0, fontSize: "md", fontWeight: 500, color: "app.text" },
     "& input": { fontSize: "md", borderRadius: "sm" },
   },

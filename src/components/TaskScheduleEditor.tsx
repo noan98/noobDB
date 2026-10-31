@@ -16,7 +16,8 @@ import {
   type ScheduleDraft,
 } from "../taskFormat";
 import { FieldError } from "./modalForm";
-import { Button, Checkbox, Input, Select } from "./ui";
+import { Button, Checkbox, Input } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 
 /** プレビューの再計算を入力の連打から間引く (ms)。 */
 const PREVIEW_DEBOUNCE_MS = 200;
@@ -86,14 +87,15 @@ export function TaskScheduleEditor({
   return (
     <chakra.div display="flex" flexDirection="column" gap="2.5">
       <Flex gap="3" align="center" flexWrap="wrap">
-        <Select
+        <ListboxSelect
+          ariaLabel={t("taskFormSchedule")}
           value={draft.kind}
-          onChange={(e) => set({ kind: e.target.value as ScheduleDraft["kind"] })}
-          width="auto"
-        >
-          <option value="interval">{t("taskScheduleInterval")}</option>
-          <option value="daily">{t("taskScheduleDaily")}</option>
-        </Select>
+          options={[
+            { value: "interval", label: t("taskScheduleInterval") },
+            { value: "daily", label: t("taskScheduleDaily") },
+          ]}
+          onChange={(v) => set({ kind: v as ScheduleDraft["kind"] })}
+        />
         {draft.kind === "interval" ? (
           <Flex align="center" gap="1.5">
             <Input
@@ -138,19 +140,13 @@ export function TaskScheduleEditor({
             <chakra.label htmlFor="task-timezone" fontSize="sm" color="app.textSecondary">
               {t("taskScheduleTimezone")}
             </chakra.label>
-            <Select
+            <ListboxSelect
               id="task-timezone"
               value={draft.timezone}
-              onChange={(e) => set({ timezone: e.target.value })}
-              width="auto"
-              maxW="320px"
-            >
-              {zones.map((z) => (
-                <option key={z} value={z}>
-                  {z}
-                </option>
-              ))}
-            </Select>
+              options={zones.map((z) => ({ value: z }))}
+              onChange={(v) => set({ timezone: v })}
+              css={{ maxWidth: "320px" }}
+            />
           </Flex>
           <chakra.p margin={0} textStyle="caption">
             {legacyUtc ? t("taskScheduleLegacyUtcNote") : t("taskScheduleTimezoneHint")}

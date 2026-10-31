@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, chooseListboxOption } from "./testUtils";
 vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();
   return {
@@ -68,6 +68,20 @@ describe("CreateTableModal 既存テーブルからの雛形 (#1540)", () => {
     ...over,
   });
 
+  /** 雛形の選択欄を取り、テーブル名の候補 ("未選択" + 2 表) が読み込まれるまで待つ。 */
+  async function templateSelect(): Promise<HTMLElement> {
+    const select = await screen.findByLabelText(t("createTableTemplate"));
+    await waitFor(() => {
+      fireEvent.click(select);
+      const count = document
+        .getElementById(select.getAttribute("aria-controls") ?? "")
+        ?.querySelectorAll('[role="option"]').length;
+      fireEvent.keyDown(select, { key: "Escape" });
+      expect(count).toBe(3);
+    });
+    return select;
+  }
+
   function renderModal() {
     return renderWithProviders(
       <CreateTableModal
@@ -88,11 +102,10 @@ describe("CreateTableModal 既存テーブルからの雛形 (#1540)", () => {
       colInfo("nick", { data_type: "varchar(30)", default: "anon" }),
     ] as never);
     renderModal();
-    const select = (await screen.findByLabelText(t("createTableTemplate"))) as HTMLSelectElement;
-    await waitFor(() => expect(select.querySelectorAll("option").length).toBe(3));
+    const select = await templateSelect();
     const load = screen.getByRole("button", { name: t("createTableTemplateLoad") });
     expect(load).toBeDisabled();
-    fireEvent.change(select, { target: { value: "users" } });
+    chooseListboxOption(select, "users");
     fireEvent.click(load);
     await waitFor(() => expect(api.describeTable).toHaveBeenCalledWith("s1", "appdb", "users"));
     expect(await screen.findByDisplayValue("uid")).toBeInTheDocument();
@@ -105,10 +118,9 @@ describe("CreateTableModal 既存テーブルからの雛形 (#1540)", () => {
   it("入力済みの列があるときだけ置き換えを確認し、キャンセルすると列は変わらない", async () => {
     vi.mocked(api.describeTable).mockResolvedValue([colInfo("uid")] as never);
     renderModal();
-    const select = (await screen.findByLabelText(t("createTableTemplate"))) as HTMLSelectElement;
-    await waitFor(() => expect(select.querySelectorAll("option").length).toBe(3));
+    const select = await templateSelect();
     // 初期状態 (id のみ) では確認なしで置き換わる。
-    fireEvent.change(select, { target: { value: "users" } });
+    chooseListboxOption(select, "users");
     fireEvent.click(screen.getByRole("button", { name: t("createTableTemplateLoad") }));
     expect(await screen.findByDisplayValue("uid")).toBeInTheDocument();
     expect(screen.queryByText(t("createTableTemplateConfirmTitle"))).toBeNull();
@@ -125,10 +137,9 @@ describe("CreateTableModal 既存テーブルからの雛形 (#1540)", () => {
   it("初期列を変えていなくても FK が入力済みなら置き換えを確認する", async () => {
     vi.mocked(api.describeTable).mockResolvedValue([colInfo("uid")] as never);
     renderModal();
-    const select = (await screen.findByLabelText(t("createTableTemplate"))) as HTMLSelectElement;
-    await waitFor(() => expect(select.querySelectorAll("option").length).toBe(3));
+    const select = await templateSelect();
     fireEvent.click(screen.getByRole("button", { name: new RegExp(t("constraintFkAdd")) }));
-    fireEvent.change(select, { target: { value: "users" } });
+    chooseListboxOption(select, "users");
     fireEvent.click(screen.getByRole("button", { name: t("createTableTemplateLoad") }));
     expect(await screen.findByText(t("createTableTemplateConfirmTitle"))).toBeInTheDocument();
   });
@@ -136,9 +147,8 @@ describe("CreateTableModal 既存テーブルからの雛形 (#1540)", () => {
   it("読み込みに失敗したらエラーを出し、列は変えない", async () => {
     vi.mocked(api.describeTable).mockRejectedValueOnce(new Error("denied"));
     renderModal();
-    const select = (await screen.findByLabelText(t("createTableTemplate"))) as HTMLSelectElement;
-    await waitFor(() => expect(select.querySelectorAll("option").length).toBe(3));
-    fireEvent.change(select, { target: { value: "orders" } });
+    const select = await templateSelect();
+    chooseListboxOption(select, "orders");
     fireEvent.click(screen.getByRole("button", { name: t("createTableTemplateLoad") }));
     expect(await screen.findByText(/denied/)).toBeInTheDocument();
     expect(screen.getByDisplayValue("id")).toBeInTheDocument();
