@@ -1892,7 +1892,6 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                   </SettingsLabelWithInfo>
                   <ListboxSelect
                     id="settings-page-size"
-                    css={{ width: "100%" }}
                     value={String(settings.resultGridPageSize)}
                     disabled={settings.resultGridMode !== "paginate"}
                     options={RESULT_GRID_PAGE_SIZE_OPTIONS.map((n) => ({ value: String(n) }))}
@@ -1908,7 +1907,6 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                   </SettingsLabelWithInfo>
                   <ListboxSelect
                     id="settings-auto-refresh-default"
-                    css={{ width: "100%" }}
                     value={String(settings.autoRefreshDefaultSecs)}
                     options={AUTO_REFRESH_INTERVAL_OPTIONS.map((s) => ({
                       value: String(s),
