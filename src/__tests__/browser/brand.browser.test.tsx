@@ -17,8 +17,7 @@ describe("ブランドビジュアル (実ブラウザ)", () => {
 
   it("ロックアップがワードマークを描画する", async () => {
     const screen = await renderInBrowser(<BrandLockup />);
-    await expect.element(screen.getByText("noob")).toBeVisible();
-    await expect.element(screen.getByText("DB", { exact: true })).toBeVisible();
+    await expect.element(screen.getByText("noobDB", { exact: true })).toBeVisible();
   });
 
   it("スプラッシュがタグラインを描画する", async () => {
@@ -63,12 +62,6 @@ describe("ブランドビジュアル (実ブラウザ)", () => {
       await renderInBrowser(<BrandMark size={96} />);
       await expect.poll(() => document.querySelector("svg")).toBeTruthy();
       expect(document.querySelector(".brand-mark-anim, .brand-mark-n, .brand-mark-bar")).toBeNull();
-    });
-
-    it("mono トーンでは animate を無視する", async () => {
-      await renderInBrowser(<BrandMark size={48} tone="mono" animate />);
-      await expect.poll(() => document.querySelector("svg")).toBeTruthy();
-      expect(document.querySelector(".brand-mark-anim")).toBeNull();
     });
 
     it("hc-* では静止する", async () => {

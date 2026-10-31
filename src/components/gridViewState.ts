@@ -223,3 +223,169 @@ export function toPersistedGridView(
   if (masks && Object.keys(masks).length > 0) state.masks = masks;
   return state;
 }
+
+// ---------------------------------------------------------------------------
+// 名前付きビュープリセット (#1942)
+// ---------------------------------------------------------------------------
+// 自動永続化される「最新 1 状態」(`noobdb.gridview.v1` / `colstate` / `colsizing`) の上に載る
+// 任意のレイヤ。ソート・列フィルタ・マスク上書きに加えて列レイアウト (順序/表示/ピン/幅) を
+// 名前付きで複数保存し、ワンクリックで丸ごと復元する。保存先は結果シェイプキー体系に
+// 相乗りした `noobdb.gridpresets.v1` (LRU の対象。`columnLayoutStorage` の SIBLING_PREFIXES)。
+
+/** 1 結果シェイプあたりのプリセット上限。増え続けて容量を食わないための歯止め。 */
+export const GRID_PRESET_MAX = 20;
+/** プリセット名の最大文字数。 */
+export const GRID_PRESET_NAME_MAX = 40;
+
+/** プリセットに含める列レイアウト。全フィールド任意 (無ければ既定を意味する)。 */
+export interface GridPresetLayout {
+  /** 表示順 (列 ID = 元の列位置の文字列)。 */
+  order?: string[];
+  /** 列 ID → 表示フラグ。 */
+  visibility?: Record<string, boolean>;
+  /** 左右のピン留め列。 */
+  pinning?: { left: string[]; right: string[] };
+  /** 列 ID → 列幅 (px)。 */
+  sizing?: Record<string, number>;
+}
+
+/** 名前付きビュー 1 件。 */
+export interface GridViewPreset {
+  name: string;
+  view: PersistedGridView;
+  layout?: GridPresetLayout;
+}
+
+/** 列サイジングキーからプリセットの保存キーを導出する (プレビューペインでは undefined)。 */
+export function gridPresetsKeyFrom(sizingKey: string | undefined): string | undefined {
+  return sizingKey ? sizingKey.replace("noobdb.colsizing.v1", "noobdb.gridpresets.v1") : undefined;
+}
+
+/** 名前を整える (前後の空白除去・最大長で切り詰め)。空なら空文字。 */
+export function normalizePresetName(raw: string): string {
+  return raw.trim().slice(0, GRID_PRESET_NAME_MAX).trim();
+}
+
+function isStringArray(v: unknown): v is string[] {
+  return Array.isArray(v) && v.every((x) => typeof x === "string");
+}
+
+function sanitizeLayout(raw: unknown): GridPresetLayout | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const out: GridPresetLayout = {};
+  if (isStringArray(o.order) && o.order.length > 0) out.order = o.order;
+  if (o.visibility && typeof o.visibility === "object" && !Array.isArray(o.visibility)) {
+    const vis: Record<string, boolean> = {};
+    for (const [k, v] of Object.entries(o.visibility as Record<string, unknown>)) {
+      if (typeof v === "boolean") vis[k] = v;
+    }
+    if (Object.keys(vis).length > 0) out.visibility = vis;
+  }
+  if (o.pinning && typeof o.pinning === "object" && !Array.isArray(o.pinning)) {
+    const p = o.pinning as Record<string, unknown>;
+    const left = isStringArray(p.left) ? p.left : [];
+    const right = isStringArray(p.right) ? p.right : [];
+    if (left.length > 0 || right.length > 0) out.pinning = { left, right };
+  }
+  if (o.sizing && typeof o.sizing === "object" && !Array.isArray(o.sizing)) {
+    const sizing: Record<string, number> = {};
+    for (const [k, v] of Object.entries(o.sizing as Record<string, unknown>)) {
+      if (typeof v === "number" && Number.isFinite(v) && v > 0) sizing[k] = v;
+    }
+    if (Object.keys(sizing).length > 0) out.sizing = sizing;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * パース済み JSON を妥当なプリセット配列に整える。純粋 (ストレージ非依存)。配列でない・
+ * 名前が無い/重複・型不一致のエントリは捨て、上限 (`GRID_PRESET_MAX`) で打ち切る (#566 の作法)。
+ */
+export function normalizeGridPresets(parsed: unknown): GridViewPreset[] {
+  if (!Array.isArray(parsed)) return [];
+  const out: GridViewPreset[] = [];
+  const seen = new Set<string>();
+  for (const p of parsed) {
+    if (!p || typeof p !== "object") continue;
+    const o = p as Record<string, unknown>;
+    if (typeof o.name !== "string") continue;
+    const name = normalizePresetName(o.name);
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    const preset: GridViewPreset = { name, view: normalizeGridView(o.view) };
+    const layout = sanitizeLayout(o.layout);
+    if (layout) preset.layout = layout;
+    out.push(preset);
+    if (out.length >= GRID_PRESET_MAX) break;
+  }
+  return out;
+}
+
+/** 保存済みプリセットを読む。壊れた JSON・キー無しは空配列へフォールバックする。 */
+export function readStoredGridPresets(key: string | undefined): GridViewPreset[] {
+  if (!key) return [];
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return [];
+    return normalizeGridPresets(JSON.parse(raw));
+  } catch {
+    // ignore (corrupt entry, private mode, quota)
+    return [];
+  }
+}
+
+/** プリセットを保存する。空配列ならエントリごと削除する。 */
+export function writeStoredGridPresets(key: string | undefined, presets: readonly GridViewPreset[]): void {
+  if (!key) return;
+  try {
+    if (presets.length === 0) {
+      localStorage.removeItem(key);
+      return;
+    }
+    touchLayoutLruForKey(key);
+    setItemWithEviction(key, JSON.stringify(presets));
+  } catch {
+    // ignore (private mode, quota)
+  }
+}
+
+/** `upsertGridPreset` の結果。`full` は新規名で上限に達していて追加できなかったとき。 */
+export interface UpsertPresetResult {
+  presets: GridViewPreset[];
+  full: boolean;
+}
+
+/**
+ * 同名があれば上書き (位置は維持)、無ければ末尾へ追加する。名前は `normalizePresetName` で
+ * 整え、空名は何もしない。新規で上限に達しているときは変更せず `full: true`。
+ */
+export function upsertGridPreset(
+  list: readonly GridViewPreset[],
+  preset: GridViewPreset,
+): UpsertPresetResult {
+  const name = normalizePresetName(preset.name);
+  if (!name) return { presets: [...list], full: false };
+  const next: GridViewPreset = { ...preset, name };
+  const idx = list.findIndex((p) => p.name === name);
+  if (idx >= 0) {
+    const presets = [...list];
+    presets[idx] = next;
+    return { presets, full: false };
+  }
+  if (list.length >= GRID_PRESET_MAX) return { presets: [...list], full: true };
+  return { presets: [...list, next], full: false };
+}
+
+/** 名前でプリセットを取り除く。 */
+export function removeGridPreset(list: readonly GridViewPreset[], name: string): GridViewPreset[] {
+  return list.filter((p) => p.name !== name);
+}
+
+/** `DataGrid` がツールバーのメニューへ公開する操作。現在状態の取得とプリセットの適用。 */
+export interface GridViewPresetsHandle {
+  /** 現在のソート・フィルタ・マスク・列レイアウトをプリセット本体として切り出す。 */
+  capture: () => Pick<GridViewPreset, "view" | "layout">;
+  /** プリセットをまとめて適用する (自動永続化の最新 1 状態にも反映される)。 */
+  apply: (preset: GridViewPreset) => void;
+}

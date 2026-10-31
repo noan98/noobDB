@@ -21,6 +21,7 @@ import { useT } from "../i18n";
 import { rowKeyNote } from "../rowKey";
 import { semanticColorVar } from "../semanticColors";
 import { useSettings } from "../settings";
+import { SurfaceRule } from "./SurfaceRule";
 import { CrossDriverNotice, CrossDriverResult, crossDriverErrorKey } from "./CrossDriverVerify";
 import { Callout } from "./Callout";
 import { ErrorNote } from "./modalForm";
@@ -1350,6 +1351,7 @@ export function SchemaCompareView({
   return (
     <Box flex="1" overflowY="auto" py="5" px="6" display="flex" flexDirection="column" gap="4.5">
       <chakra.header
+        position="relative"
         display="flex"
         alignItems="center"
         justifyContent="space-between"
@@ -1372,6 +1374,7 @@ export function SchemaCompareView({
             <Icon name="close" size={ICON_SIZES.sm} />
           </Button>
         </Tooltip>
+        <SurfaceRule />
       </chakra.header>
 
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">

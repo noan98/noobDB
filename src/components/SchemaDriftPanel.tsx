@@ -14,7 +14,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { RevealList } from "./RevealTbody";
 import { SkeletonRow } from "./Skeleton";
 import { EmptyState } from "./EmptyState";
-import { errorIllustration } from "./illustrations";
+import { errorIllustration, NoResultsIllustration } from "./illustrations";
 
 /**
  * スキーマドリフト・タイムライン (#736) の閲覧パネル。プロファイルごとに Rust の
@@ -170,7 +170,13 @@ export function SchemaDriftPanel({
       </ModalHeader>
       <ModalBody display="flex" flexDirection="column" gap="3" minHeight="55vh">
         {gens.length === 0 ? (
-          <EmptyState icon="clock" title={t("schemaDriftEmptyTitle")} description={t("schemaDriftEmpty")} />
+          <EmptyState
+            illustration={<NoResultsIllustration />}
+            brandHalo
+            icon="clock"
+            title={t("schemaDriftEmptyTitle")}
+            description={t("schemaDriftEmpty")}
+          />
         ) : (
           <Flex flex="1" minHeight={0} gap="3" align="stretch">
             {/* 左: 世代タイムライン */}
