@@ -5,7 +5,8 @@ import { AnimatePresence, motion } from "motion/react";
 import { transitions, variants } from "../motion";
 import { useFocusTrap, useReturnFocus } from "../keyboardNav";
 import { useT } from "../i18n";
-import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "./Icon";
+import { Icon, ICON_SIZES, type IconName } from "./Icon";
+import { FeatureIcon } from "./FeatureIcon";
 import { Button } from "./ui";
 import {
   INITIAL_TOUR_STATE,
@@ -300,32 +301,7 @@ export function OnboardingTour({ onClose }: Props) {
       >
         <Flex align="flex-start" justify="space-between" gap="2">
           <Flex align="center" gap="2">
-            <Flex
-              align="center"
-              justify="center"
-              boxSize="30px"
-              rounded="md"
-              bg="app.surfaceMuted"
-              color="app.accent"
-              aria-hidden
-              overflow="hidden"
-            >
-              {/* ステップ切替時、アイコンをクロスフェードする (#819)。key をステップ
-                番号にして毎回入れ替え、initial={false} で初回マウント時のフェード
-                インは抑える。reduced-motion はルートの MotionConfig が自動吸収。 */}
-              <AnimatePresence mode="wait" initial={false}>
-                <motion.div
-                  key={state.step}
-                  initial={variants.fade.initial}
-                  animate={variants.fade.animate}
-                  exit={variants.fade.exit}
-                  transition={transitions.crossfade}
-                  style={{ display: "inline-flex" }}
-                >
-                  <Icon name={current.icon} size={ICON_SIZES.md} strokeWidth={ICON_STROKE.thin} />
-                </motion.div>
-              </AnimatePresence>
-            </Flex>
+            <FeatureIcon icon={current.icon} size="sm" transitionKey={state.step} />
             <chakra.div overflow="hidden">
               {/* タイトルの差し替えも同じくクロスフェード + わずかなスライド
                 (`variants.slideUp`) で行う。 */}
