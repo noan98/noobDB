@@ -24,7 +24,7 @@ import {
 } from "./connectionHealth";
 import { CountUp } from "./CountUp";
 import { EmptyState } from "./EmptyState";
-import { NoResultsIllustration } from "./illustrations";
+import { DisconnectedIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import { LatencySparkline } from "./LatencySparkline";
 import { RevealTbody } from "./RevealTbody";
@@ -369,7 +369,7 @@ export function ConnectionHealthPanel({
       {rows.length === 0 && !loading ? (
         // 実データ 0 件が確定した後にのみ真の空状態を出す (loading 優先、#1160)。
         <EmptyState
-          illustration={<NoResultsIllustration />}
+          illustration={<DisconnectedIllustration />}
           brandHalo
           icon="server"
           title={t("healthEmpty")}
