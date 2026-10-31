@@ -954,6 +954,7 @@ const SCHEMA_OBJECT_ICONS: Record<string, IconName> = {
   procedure: "routine",
   function: "routine",
   trigger: "trigger",
+  sequence: "hash",
 };
 
 /** 非テーブルのスキーマオブジェクト (ルーチン / トリガー / 突き合わなかったビュー) の 1 行。
@@ -1448,6 +1449,8 @@ function useHeaderLabel(): (group: ExplorerHeaderGroup) => string {
         return t("objGroupFunctions");
       case "trigger":
         return t("objGroupTriggers");
+      case "sequence":
+        return t("objGroupSequences");
     }
   };
 }

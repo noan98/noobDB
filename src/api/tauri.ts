@@ -709,7 +709,13 @@ export interface TableTrigger {
 }
 
 /** 非テーブルのスキーマオブジェクト種別。 */
-export type SchemaObjectKind = "view" | "materialized_view" | "procedure" | "function" | "trigger";
+export type SchemaObjectKind =
+  | "view"
+  | "materialized_view"
+  | "procedure"
+  | "function"
+  | "trigger"
+  | "sequence";
 
 /** 非テーブルのスキーマオブジェクト。 */
 export interface SchemaObject {
@@ -766,7 +772,7 @@ export interface WhereUsedMatch {
   lines: ReferenceLine[];
   source: "object" | "snippet";
   /** オブジェクト種別。スニペットは "snippet"。 */
-  kind: SchemaObjectKind | "snippet";
+  kind: Exclude<SchemaObjectKind, "sequence"> | "snippet";
   name: string;
   /** スキーマオブジェクトの一意識別子 (`get_object_definition` へそのまま渡す)。 */
   id: string | null;
@@ -775,7 +781,7 @@ export interface WhereUsedMatch {
 }
 
 export interface WhereUsedFailure {
-  kind: SchemaObjectKind;
+  kind: Exclude<SchemaObjectKind, "sequence">;
   name: string;
   error: string;
 }
@@ -788,7 +794,7 @@ export interface WhereUsedReport {
   /** 定義の取得に失敗したオブジェクト (権限不足など)。 */
   failed: WhereUsedFailure[];
   /** 定義本文が空で返ったオブジェクト。 */
-  emptyDefinitions: { kind: SchemaObjectKind; name: string }[];
+  emptyDefinitions: { kind: Exclude<SchemaObjectKind, "sequence">; name: string }[];
   /** キャンセルされ、途中までの結果であること。 */
   cancelled: boolean;
 }
