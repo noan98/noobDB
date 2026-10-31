@@ -152,7 +152,9 @@ export function ListboxSelect({
   const selectOption = (index: number) => {
     const opt = options[index];
     if (!opt) return;
-    onChange(opt.value);
+    // ネイティブ select と同じく、選択中の候補を選び直しても change を起こさない
+    // (呼び出し側が入力済みの値を既定に戻したり、最新への追従を切ったりしないように)。
+    if (opt.value !== value) onChange(opt.value);
     closeListbox();
     triggerRef.current?.focus();
   };
@@ -271,7 +273,7 @@ export function ListboxSelect({
       if (match !== null) {
         if (open) {
           setHighlighted(match);
-        } else {
+        } else if (options[match].value !== value) {
           onChange(options[match].value);
         }
       }

@@ -410,7 +410,9 @@ describe("UsersPanel: 全権限を外した行の退場 (#1890)", () => {
       fireEvent.click(screen.getByRole("button", { name: t("usersApplyChanges") }));
       fireEvent.click(await screen.findByRole("button", { name: t("usersApplyConfirmOk") }));
       expect(await screen.findByText(t("usersPrivilegesEmpty"))).toBeInTheDocument();
-      expect(screen.queryByText("t2")).not.toBeInTheDocument();
+      // exit アニメーションが無くても AnimatePresence は退場した子を次のフレームで外すので、
+      // 案内行の描画と同じティックではまだ残っていることがある (CI で時々落ちていた)。
+      await waitFor(() => expect(screen.queryByText("t2")).not.toBeInTheDocument());
     } finally {
       document.documentElement.removeAttribute("data-motion");
     }

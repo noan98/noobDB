@@ -140,6 +140,15 @@ describe("ListboxSelect の選択", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
   });
 
+  it("選択中の候補を選び直しても onChange を呼ばずに閉じる (ネイティブ select と同じ)", async () => {
+    const user = userEvent.setup();
+    const { onChangeSpy } = renderSelect({ initialValue: "line" });
+    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("option", { name: "折れ線" }));
+    expect(onChangeSpy).not.toHaveBeenCalled();
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
   it("開くと現在選択中の候補がハイライトされる", async () => {
     const user = userEvent.setup();
     renderSelect({ initialValue: "area" });
