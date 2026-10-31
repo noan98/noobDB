@@ -102,6 +102,22 @@ export function buildDetachPartitionSql(
   return `ALTER TABLE ${parent} DETACH PARTITION ${qualifiedPartition(driver, database, p)};`;
 }
 
+/**
+ * PostgreSQL の `ALTER TABLE <parent> ATTACH PARTITION <child> <境界句>` (#1929)。
+ * 境界句は `FOR VALUES ...` か `DEFAULT` (tablePartitions.ts の `buildPartitionBoundClause`)。他ドライバは空文字。
+ * 子は親と別スキーマでも付けられるが、構造パネルからは親と同じスキーマの表だけを選べる。
+ */
+export function buildAttachPartitionSql(
+  driver: string,
+  database: string | null,
+  table: string,
+  child: PartitionRef,
+  boundClause: string,
+): string {
+  if (driver !== "postgres" || boundClause.trim() === "") return "";
+  return `ALTER TABLE ${qualified(driver, database, table)} ATTACH PARTITION ${qualifiedPartition(driver, database, child)} ${boundClause};`;
+}
+
 /** 複数テーブルの TRUNCATE の実行方式 (#1629)。 */
 export type TruncateBatchMode = "single" | "transaction" | "sequential";
 

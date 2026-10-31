@@ -18,6 +18,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       listIndexes: vi.fn(),
       listTableTriggers: vi.fn(),
       listTablePartitions: vi.fn(),
+      listTables: vi.fn(),
       getObjectDefinition: vi.fn(),
       incomingForeignKeys: vi.fn(),
     },
@@ -399,5 +400,75 @@ describe("TableStructurePanel 被参照の外部キー (#1628)", () => {
       name: t("structurePartitionActionsFor", { partition: "p2025" }),
     });
     expect(btn).toBeDisabled();
+  });
+
+  describe("既存テーブルの ATTACH (#1929)", () => {
+    const pgRange = (
+      partitions = [
+        part("ev_2026_01", { schema: "app", bound: "FOR VALUES FROM ('2026-01-01') TO ('2026-02-01')" }),
+      ],
+    ) => ({
+      method: "RANGE",
+      key: "created_at",
+      sub_method: null,
+      sub_key: null,
+      partitions,
+    });
+
+    beforeEach(() => {
+      vi.mocked(api.describeTable).mockResolvedValue([col("id")]);
+      vi.mocked(api.listIndexes).mockResolvedValue([]);
+      vi.mocked(api.listTables).mockResolvedValue(["orders", "ev_2026_01", "ev_legacy"]);
+    });
+
+    it("PostgreSQL の RANGE で境界を入力すると SQL をプレビューして呼び出し側へ渡す", async () => {
+      vi.mocked(api.listTablePartitions).mockResolvedValueOnce(pgRange());
+      const onAttachPartition = vi.fn().mockResolvedValue(false);
+      renderPanel({ onAttachPartition }, "postgres");
+      fireEvent.click(await screen.findByRole("button", { name: t("attachPartitionOpen") }));
+
+      const select = (await screen.findByLabelText(t("attachPartitionChild"))) as HTMLSelectElement;
+      // 親自身と付いている子は候補に出ない。
+      await waitFor(() => expect(Array.from(select.options).map((o) => o.value)).toEqual(["ev_legacy"]));
+      fireEvent.change(screen.getByLabelText(t("attachPartitionFrom", { column: "created_at" })), {
+        target: { value: "2026-02-01" },
+      });
+      fireEvent.change(screen.getByLabelText(t("attachPartitionTo", { column: "created_at" })), {
+        target: { value: "2026-03-01" },
+      });
+      const sql = `ALTER TABLE "app"."orders" ATTACH PARTITION "app"."ev_legacy" FOR VALUES FROM ('2026-02-01') TO ('2026-03-01');`;
+      expect(screen.getByText(sql)).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: t("attachPartitionConfirm") }));
+      expect(onAttachPartition).toHaveBeenCalledWith("app", "orders", "ev_legacy", sql);
+    });
+
+    it("境界が未入力のあいだは確定できない。HASH は既存の MODULUS が既定値", async () => {
+      vi.mocked(api.listTablePartitions).mockResolvedValueOnce({
+        ...pgRange([part("h0", { bound: "FOR VALUES WITH (modulus 4, remainder 0)" })]),
+        method: "HASH",
+        key: "id",
+      });
+      renderPanel({ onAttachPartition: vi.fn() }, "postgres");
+      fireEvent.click(await screen.findByRole("button", { name: t("attachPartitionOpen") }));
+      expect(await screen.findByLabelText("MODULUS")).toHaveValue("4");
+      expect(screen.getByRole("button", { name: t("attachPartitionConfirm") })).toBeDisabled();
+      fireEvent.change(screen.getByLabelText("REMAINDER"), { target: { value: "1" } });
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: t("attachPartitionConfirm") })).toBeEnabled(),
+      );
+    });
+
+    it("MySQL では出さず、read_only では無効にする", async () => {
+      vi.mocked(api.listTablePartitions).mockResolvedValueOnce(pgRange());
+      renderPanel({ onAttachPartition: vi.fn() }, "mysql");
+      await screen.findByText("ev_2026_01");
+      expect(screen.queryByRole("button", { name: t("attachPartitionOpen") })).not.toBeInTheDocument();
+
+      vi.mocked(api.listTablePartitions).mockResolvedValueOnce(pgRange([]));
+      renderPanel({ onAttachPartition: vi.fn(), readOnly: true }, "postgres");
+      const btns = await screen.findAllByRole("button", { name: t("attachPartitionOpen") });
+      expect(btns[0]).toBeDisabled();
+    });
   });
 });

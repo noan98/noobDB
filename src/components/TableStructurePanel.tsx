@@ -21,6 +21,7 @@ import { SkeletonTableRows } from "./Skeleton";
 import { Tooltip } from "./Tooltip";
 import { Button } from "./ui";
 import { CopyButton } from "./CopyButton";
+import { AttachPartitionModal } from "./AttachPartitionModal";
 import { CodePreview, FieldError } from "./modalForm";
 import { useCopyFeedback } from "./useCopyFeedback";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
@@ -31,6 +32,7 @@ import {
 } from "./maintenanceCommands";
 import { formatBytes, formatRowCount } from "./tableSize";
 import {
+  attachBoundKind,
   buildPartitionOpSql,
   formatPartitionBound,
   partitionDestructiveOps,
@@ -211,6 +213,7 @@ export function TableStructurePanel({
   onSelectTable,
   onRunPartitionMaintenance,
   onPartitionOp,
+  onAttachPartition,
 }: {
   sessionId: string;
   driver: string;
@@ -239,6 +242,8 @@ export function TableStructurePanel({
     op: PartitionDestructiveOp,
     sql: string,
   ) => Promise<boolean>;
+  /** 既存のテーブルを ATTACH PARTITION する (PostgreSQL)。確認のうえ実行し、実行できたら true (#1929)。 */
+  onAttachPartition?: (database: string, table: string, child: string, sql: string) => Promise<boolean>;
 }) {
   const t = useT();
   const [columns, setColumns] = useState<TableColumnInfo[] | null>(null);
@@ -251,6 +256,7 @@ export function TableStructurePanel({
   // パーティション表の子パーティション (#1868)。ベストエフォート。SQLite は非対応なので呼ばず節も出さない。
   const [partitions, setPartitions] = useState<TablePartitions | null>(null);
   const [partitionsFailed, setPartitionsFailed] = useState(false);
+  const [attachOpen, setAttachOpen] = useState(false);
   // このテーブルを参照している他テーブルの外部キー (逆方向, #1628)。ベストエフォート。
   const [incoming, setIncoming] = useState<IncomingFk[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -370,6 +376,9 @@ export function TableStructurePanel({
   const incomingRows = incoming ? structureIncomingRows(incoming) : null;
 
   // パーティション表の見出し行 (例: `RANGE (created_at)` / MySQL のサブパーティション付きは `... / HASH (id)`)。
+  // 既存のテーブルを付け直せる分割方式か (PostgreSQL の RANGE / LIST / HASH, #1929)。
+  const attachKind = partitions && onAttachPartition ? attachBoundKind(driver, partitions) : null;
+
   const partitionSummary = (info: TablePartitions) =>
     t("structurePartitionedBy", {
       method: info.method,
@@ -737,7 +746,7 @@ export function TableStructurePanel({
                 </chakra.div>
               )}
 
-              {partitions && partitions.partitions.length > 0 && (
+              {partitions && (partitions.partitions.length > 0 || attachKind !== null) && (
                 <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
                   <SectionCaption label={t("structurePartitions")} count={partitions.partitions.length} />
                   <chakra.thead>
@@ -757,9 +766,32 @@ export function TableStructurePanel({
                   </chakra.thead>
                   <chakra.tbody>
                     <chakra.tr>
-                      <chakra.td css={tdCss} colSpan={5} color="app.textMuted" fontFamily="var(--font-mono)">
+                      <chakra.td
+                        css={tdCss}
+                        colSpan={attachKind !== null ? 4 : 5}
+                        color="app.textMuted"
+                        fontFamily="var(--font-mono)"
+                      >
                         {partitionSummary(partitions)}
                       </chakra.td>
+                      {attachKind !== null && (
+                        <chakra.td css={tdCss} textAlign="right">
+                          <Tooltip
+                            label={readOnly ? t("listReadOnlyTitle") : t("attachPartitionOpen")}
+                            focusableWrapper={readOnly}
+                          >
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              disabled={readOnly}
+                              onClick={() => setAttachOpen(true)}
+                            >
+                              {t("attachPartitionOpen")}
+                            </Button>
+                          </Tooltip>
+                        </chakra.td>
+                      )}
                     </chakra.tr>
                     {partitions.partitions.map((p) => (
                       <chakra.tr key={`${p.schema ?? ""}.${p.parent ?? ""}.${p.name}`}>
@@ -893,6 +925,22 @@ export function TableStructurePanel({
             </>
           )}
         </>
+      )}
+      {attachOpen && partitions && attachKind !== null && (
+        <AttachPartitionModal
+          sessionId={sessionId}
+          database={database}
+          table={table}
+          info={partitions}
+          kind={attachKind}
+          onClose={() => setAttachOpen(false)}
+          onConfirm={(child, sql) => {
+            setAttachOpen(false);
+            void onAttachPartition?.(database, table, child, sql).then((ok) => {
+              if (ok) reload();
+            });
+          }}
+        />
       )}
     </Box>
   );
