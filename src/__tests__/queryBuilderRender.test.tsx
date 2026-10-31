@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
+import { chooseListboxOption, renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
 import { t } from "../i18n";
 import type { TableColumnInfo } from "../api/tauri";
 
@@ -269,7 +269,7 @@ describe("QueryBuilder ORDER BY (SELECT only)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: `+ ${t("qbAddOrderBy")}` }));
     expect(screen.queryByText(t("qbNoOrderBy"))).not.toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "ASC" })).toBeInTheDocument();
+    expect(screen.getByText("ASC")).toBeInTheDocument();
   });
 
   it("is not shown for non-SELECT query kinds", async () => {
@@ -310,8 +310,10 @@ describe("QueryBuilder type-aware value input (改善 1)", () => {
     fireEvent.change(screen.getByPlaceholderText(t("qbColumn")), {
       target: { value: "active" },
     });
-    const nullOption = await screen.findByRole("option", { name: t("qbBoolNull") });
-    expect(nullOption).toBeInTheDocument();
+    // 候補は開くまで DOM に無いので、トリガーを開いて NULL の候補があることを確かめる。
+    const boolSelect = await screen.findByRole("combobox", { name: t("qbValue") });
+    fireEvent.click(boolSelect);
+    expect(await screen.findByRole("option", { name: t("qbBoolNull") })).toBeInTheDocument();
   });
 
   it("warns when NULL is picked for a NOT NULL boolean column", async () => {
@@ -324,10 +326,8 @@ describe("QueryBuilder type-aware value input (改善 1)", () => {
     fireEvent.change(screen.getByPlaceholderText(t("qbColumn")), {
       target: { value: "active" },
     });
-    const nullOption = await screen.findByRole("option", { name: t("qbBoolNull") });
-    const boolSelect = nullOption.closest("select");
-    expect(boolSelect).not.toBeNull();
-    fireEvent.change(boolSelect as HTMLSelectElement, { target: { value: "NULL" } });
+    const boolSelect = await screen.findByRole("combobox", { name: t("qbValue") });
+    chooseListboxOption(boolSelect, "NULL");
     expect(screen.getByText(t("qbNotNullWarning"))).toBeInTheDocument();
   });
 });
@@ -406,7 +406,7 @@ describe("QueryBuilder WHERE の AND / OR とグループ (#1540)", () => {
     fireEvent.change(vals[1], { target: { value: "x" } });
     const connectors = screen.getAllByLabelText(t("qbWhereConnector"));
     expect(connectors).toHaveLength(2);
-    fireEvent.change(connectors[1], { target: { value: "OR" } });
+    chooseListboxOption(connectors[1], "OR");
     const groupBtns = screen.getAllByRole("button", { name: t("qbWhereGroupTip") });
     fireEvent.click(groupBtns[0]);
     fireEvent.click(groupBtns[1]);
@@ -436,8 +436,8 @@ describe("QueryBuilder WHERE の AND / OR とグループ (#1540)", () => {
     const cols = screen.getAllByPlaceholderText(t("qbColumn"));
     ["id", "name", "active"].forEach((c, i) => fireEvent.change(cols[i], { target: { value: c } }));
     const connectors = screen.getAllByLabelText(t("qbWhereConnector"));
-    fireEvent.change(connectors[0], { target: { value: "AND" } });
-    fireEvent.change(connectors[1], { target: { value: "OR" } });
+    chooseListboxOption(connectors[0], "AND");
+    chooseListboxOption(connectors[1], "OR");
     // SELECT では出ない。
     expect(screen.queryByTestId("qb-and-or-precedence")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "DELETE" }));
@@ -455,7 +455,7 @@ describe("QueryBuilder 読み込みエラー (#1602)", () => {
       <QueryBuilder sessionId="s1" driver="mysql" onExecute={() => {}} onClose={() => {}} />,
     );
     await screen.findByText(/describe failed/);
-    fireEvent.change(screen.getByLabelText(t("qbTable")), { target: { value: "orders" } });
+    chooseListboxOption(screen.getByLabelText(t("qbTable")), "orders");
     await waitFor(() => expect(screen.queryByText(/describe failed/)).not.toBeInTheDocument());
   });
 });

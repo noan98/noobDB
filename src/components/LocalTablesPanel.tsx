@@ -6,7 +6,8 @@ import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { CodePreview } from "./modalForm";
-import { Input, PressableButton, Select } from "./ui";
+import { Input, PressableButton } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import {
   LOCAL_TABLE_SORTS,
   parseLocalTableSort,
@@ -136,18 +137,12 @@ export function LocalTablesPanel({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <Select
-            w="auto"
-            aria-label={t("localPanelSortLabel")}
+          <ListboxSelect
+            ariaLabel={t("localPanelSortLabel")}
             value={sort}
-            onChange={(e) => setSort(parseLocalTableSort(e.target.value))}
-          >
-            {LOCAL_TABLE_SORTS.map((s) => (
-              <option key={s} value={s}>
-                {t(LOCAL_SORT_LABEL_KEYS[s])}
-              </option>
-            ))}
-          </Select>
+            options={LOCAL_TABLE_SORTS.map((s) => ({ value: s, label: t(LOCAL_SORT_LABEL_KEYS[s]) }))}
+            onChange={(v) => setSort(parseLocalTableSort(v))}
+          />
         </Flex>
       )}
       <Flex direction="column" flex="1" minH={0} overflowY="auto">

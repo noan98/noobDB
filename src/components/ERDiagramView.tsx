@@ -59,7 +59,8 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { cellKindIcon } from "./cellTypeMeta";
 import { errorIllustration } from "./illustrations";
 import { Tooltip, TooltipBubble, useDelegatedTooltip } from "./Tooltip";
-import { Button, Heading, Select } from "./ui";
+import { Button, Heading } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { ErGraphSkeleton } from "./Skeleton";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { copyToClipboard } from "./clipboard";
@@ -741,42 +742,39 @@ function ERDiagramInner({
         {showDbPicker && (
           <chakra.label display="inline-flex" alignItems="center" gap="2" fontSize="sm" color="app.textMuted">
             {t("erDiagramDatabase")}
-            <Select
+            <ListboxSelect
               value={database ?? ""}
-              onChange={(e) => setDatabase(e.target.value || null)}
-              minWidth="160px"
-            >
-              {databases.map((db) => (
-                <option key={db} value={db}>
-                  {db}
-                </option>
-              ))}
-            </Select>
+              options={databases.map((db) => ({ value: db }))}
+              onChange={(v) => setDatabase(v || null)}
+              css={{ minWidth: "160px" }}
+            />
           </chakra.label>
         )}
         <chakra.label display="inline-flex" alignItems="center" gap="2" fontSize="sm" color="app.textMuted">
           {t("erDiagramLayout")}
-          <Select
+          <ListboxSelect
             value={direction}
-            onChange={(e) => setDirection(e.target.value as ErLayoutDirection)}
-            minWidth="130px"
-            aria-label={t("erDiagramLayout")}
-          >
-            <option value="LR">{t("erDiagramLayoutLR")}</option>
-            <option value="TB">{t("erDiagramLayoutTB")}</option>
-          </Select>
+            options={[
+              { value: "LR", label: t("erDiagramLayoutLR") },
+              { value: "TB", label: t("erDiagramLayoutTB") },
+            ]}
+            onChange={(v) => setDirection(v as ErLayoutDirection)}
+            css={{ minWidth: "130px" }}
+            ariaLabel={t("erDiagramLayout")}
+          />
         </chakra.label>
         <chakra.label display="inline-flex" alignItems="center" gap="2" fontSize="sm" color="app.textMuted">
           {t("erDiagramDensity")}
-          <Select
+          <ListboxSelect
             value={density}
-            onChange={(e) => setDensity(e.target.value as ErLayoutDensity)}
-            minWidth="130px"
-            aria-label={t("erDiagramDensity")}
-          >
-            <option value="comfortable">{t("erDiagramDensityComfortable")}</option>
-            <option value="compact">{t("erDiagramDensityCompact")}</option>
-          </Select>
+            options={[
+              { value: "comfortable", label: t("erDiagramDensityComfortable") },
+              { value: "compact", label: t("erDiagramDensityCompact") },
+            ]}
+            onChange={(v) => setDensity(v as ErLayoutDensity)}
+            css={{ minWidth: "130px" }}
+            ariaLabel={t("erDiagramDensity")}
+          />
         </chakra.label>
         {focusChoices.length > 0 && !loading && !error && (
           <>
@@ -788,19 +786,16 @@ function ERDiagramInner({
               color="app.textMuted"
             >
               {t("erDiagramFocus")}
-              <Select
+              <ListboxSelect
                 value={focusTable ?? ""}
-                onChange={(e) => setFocusTable(e.target.value || null)}
-                minWidth="150px"
-                aria-label={t("erDiagramFocus")}
-              >
-                <option value="">{t("erDiagramFocusOff")}</option>
-                {focusChoices.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </Select>
+                options={[
+                  { value: "", label: t("erDiagramFocusOff") },
+                  ...focusChoices.map((name) => ({ value: name })),
+                ]}
+                onChange={(v) => setFocusTable(v || null)}
+                css={{ minWidth: "150px" }}
+                ariaLabel={t("erDiagramFocus")}
+              />
             </chakra.label>
             {focusTable && (
               <chakra.label
@@ -811,15 +806,16 @@ function ERDiagramInner({
                 color="app.textMuted"
               >
                 {t("erDiagramFocusHops")}
-                <Select
+                <ListboxSelect
                   value={String(focusHops)}
-                  onChange={(e) => setFocusHops(Number(e.target.value))}
-                  minWidth="90px"
-                  aria-label={t("erDiagramFocusHops")}
-                >
-                  <option value="1">{t("erDiagramFocusHopsN", { n: 1 })}</option>
-                  <option value="2">{t("erDiagramFocusHopsN", { n: 2 })}</option>
-                </Select>
+                  options={[
+                    { value: "1", label: t("erDiagramFocusHopsN", { n: 1 }) },
+                    { value: "2", label: t("erDiagramFocusHopsN", { n: 2 }) },
+                  ]}
+                  onChange={(v) => setFocusHops(Number(v))}
+                  css={{ minWidth: "90px" }}
+                  ariaLabel={t("erDiagramFocusHops")}
+                />
               </chakra.label>
             )}
             {selectedTable.length === 1 && selectedTable[0] !== focusTable && (

@@ -26,6 +26,7 @@
  */
 import {
   type ReactNode,
+  type Ref,
   useCallback,
   useEffect,
   useId,
@@ -70,6 +71,16 @@ export interface ListboxSelectProps {
   placeholder?: string;
   /** トリガー要素へ適用する追加 Chakra css。 */
   css?: SystemStyleObject;
+  /** トリガー (`<button>`) への ref。モーダルの初期フォーカスなど、要素を直接触りたい呼び出し側用。 */
+  triggerRef?: Ref<HTMLButtonElement>;
+  /** トリガーがフォーカスを得たとき (フォーカス中の列を追う画面用)。 */
+  onFocus?: () => void;
+  /** バリデーションエラー中のトリガーに `aria-invalid` を付ける。 */
+  ariaInvalid?: boolean;
+  /** エラーメッセージ等への `aria-describedby`。 */
+  ariaDescribedBy?: string;
+  /** トリガーに付ける `data-*` 属性 (フォーム内の欄をまとめて辿るための目印など)。 */
+  triggerData?: Record<`data-${string}`, string | boolean>;
 }
 
 const MotionListbox = chakra(motion.div, {}, { forwardProps: ["transition"] });
@@ -94,6 +105,11 @@ export function ListboxSelect({
   ariaLabel,
   placeholder,
   css,
+  triggerRef: externalTriggerRef,
+  onFocus,
+  ariaInvalid,
+  ariaDescribedBy,
+  triggerData,
 }: ListboxSelectProps) {
   const autoId = useId();
   const triggerId = id ?? autoId;
@@ -257,7 +273,11 @@ export function ListboxSelect({
   return (
     <>
       <chakra.button
-        ref={triggerRef}
+        ref={(el: HTMLButtonElement | null) => {
+          triggerRef.current = el;
+          if (typeof externalTriggerRef === "function") externalTriggerRef(el);
+          else if (externalTriggerRef) externalTriggerRef.current = el;
+        }}
         id={triggerId}
         type="button"
         role="combobox"
@@ -266,7 +286,11 @@ export function ListboxSelect({
         aria-controls={listboxId}
         aria-activedescendant={activeDescendant}
         aria-label={ariaLabel}
+        aria-invalid={ariaInvalid ? true : undefined}
+        aria-describedby={ariaDescribedBy}
+        {...triggerData}
         disabled={disabled}
+        onFocus={onFocus}
         onClick={() => (open ? closeListbox() : openListbox())}
         onBlur={closeListbox}
         onKeyDown={handleTriggerKeyDown}

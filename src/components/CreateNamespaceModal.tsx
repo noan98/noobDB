@@ -11,7 +11,8 @@ import {
 } from "./databaseMaintenance";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
-import { Button, Input, PressableButton, Select } from "./ui";
+import { Button, Input, PressableButton } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 
 /**
  * データベース / スキーマの新規作成モーダル (#1190)。SQL 生成の純ロジックは
@@ -74,18 +75,16 @@ export function CreateNamespaceModal({
             <FieldLabel htmlFor="create-namespace-kind" minW="90px">
               {t("createNamespaceKind")}
             </FieldLabel>
-            <Select
+            <ListboxSelect
               id="create-namespace-kind"
               value={kind}
-              onChange={(e) => setKind(e.target.value as NamespaceKind)}
-              flex="1"
-            >
-              {kinds.map((k) => (
-                <option key={k} value={k}>
-                  {t(k === "database" ? "namespaceKindDatabase" : "namespaceKindSchema")}
-                </option>
-              ))}
-            </Select>
+              options={kinds.map((k) => ({
+                value: k,
+                label: t(k === "database" ? "namespaceKindDatabase" : "namespaceKindSchema"),
+              }))}
+              onChange={(v) => setKind(v as NamespaceKind)}
+              css={{ flex: 1, minWidth: 0 }}
+            />
           </Flex>
         )}
         <Flex align="center" gap="2">

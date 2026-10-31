@@ -12,7 +12,8 @@ import {
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Callout } from "./Callout";
 import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
-import { Button, Input, PressableButton, Select } from "./ui";
+import { Button, Input, PressableButton } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { Tooltip } from "./Tooltip";
 import { isPlainEnterKey } from "./modalKeys";
 
@@ -169,18 +170,13 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
                     textOverflow="ellipsis"
                   >{`{{${name}}}`}</chakra.code>
                 </Tooltip>
-                <Select
-                  fontSize="sm"
+                <ListboxSelect
+                  css={{ fontSize: "var(--text-sm)", width: "100%" }}
                   value={d?.type ?? "text"}
-                  aria-label={t("parameterInputTypeLabelFor", { name })}
-                  onChange={(e) => setDraft(name, { type: e.target.value as ParamType })}
-                >
-                  {TYPE_KEYS.map((o) => (
-                    <option key={o.type} value={o.type}>
-                      {t(o.key)}
-                    </option>
-                  ))}
-                </Select>
+                  ariaLabel={t("parameterInputTypeLabelFor", { name })}
+                  options={TYPE_KEYS.map((o) => ({ value: o.type, label: t(o.key) }))}
+                  onChange={(v) => setDraft(name, { type: v as ParamType })}
+                />
                 <chakra.div display="flex" flexDirection="column" gap="0.5" minWidth={0}>
                   <Input
                     ref={idx === 0 ? firstInputRef : undefined}

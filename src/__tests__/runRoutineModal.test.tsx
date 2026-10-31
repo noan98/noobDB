@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { chooseListboxOption, renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
 import { t } from "../i18n";
 
 /**
@@ -178,7 +178,7 @@ describe("RunRoutineModal の引数履歴 (#1631)", () => {
     getRoutineSignature.mockResolvedValue(signature);
     renderModal({ profileId: "p1" });
     const select = await screen.findByLabelText(t("runRoutineHistoryLabel"));
-    fireEvent.change(select, { target: { value: "0" } });
+    chooseListboxOption(select, "0");
     expect((screen.getByLabelText(/^id ·/) as HTMLInputElement).value).toBe("7");
     expect((screen.getByLabelText(/^api_token ·/) as HTMLInputElement).value).toBe("x");
   });

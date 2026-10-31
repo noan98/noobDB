@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen } from "./testUtils";
+import { chooseListboxOption, renderWithProviders, screen } from "./testUtils";
 import { ParameterInputModal } from "../components/ParameterInputModal";
 import { setLocale, t } from "../i18n";
 
@@ -28,15 +28,12 @@ describe("ParameterInputModal", () => {
     expect(idInput).toBeInTheDocument();
 
     // tbl を識別子型に、id を数値型にして値を入れる。
-    await user.selectOptions(
+    chooseListboxOption(
       screen.getByLabelText(t("parameterInputTypeLabelFor", { name: "tbl" })),
       "identifier",
     );
     await user.type(tblInput, "users");
-    await user.selectOptions(
-      screen.getByLabelText(t("parameterInputTypeLabelFor", { name: "id" })),
-      "number",
-    );
+    chooseListboxOption(screen.getByLabelText(t("parameterInputTypeLabelFor", { name: "id" })), "number");
     await user.type(idInput, "42");
 
     await user.click(screen.getByRole("button", { name: t("parameterInputRun") }));
@@ -51,10 +48,7 @@ describe("ParameterInputModal", () => {
       <ParameterInputModal sql={SQL} driver="mysql" onSubmit={onSubmit} onCancel={() => {}} />,
     );
 
-    await user.selectOptions(
-      screen.getByLabelText(t("parameterInputTypeLabelFor", { name: "id" })),
-      "number",
-    );
+    chooseListboxOption(screen.getByLabelText(t("parameterInputTypeLabelFor", { name: "id" })), "number");
     await user.type(screen.getByLabelText(t("parameterInputValueLabelFor", { name: "id" })), "abc");
 
     expect(screen.getByText(t("parameterInputErrNumber"))).toBeInTheDocument();
@@ -83,7 +77,9 @@ describe("ParameterInputModal", () => {
       <ParameterInputModal sql={SQL} driver="mysql" onSubmit={() => {}} onCancel={() => {}} />,
     );
     expect(screen.getByLabelText(t("parameterInputValueLabelFor", { name: "tbl" }))).toHaveValue("");
-    expect(screen.getByLabelText(t("parameterInputTypeLabelFor", { name: "tbl" }))).toHaveValue("identifier");
+    expect(screen.getByLabelText(t("parameterInputTypeLabelFor", { name: "tbl" }))).toHaveTextContent(
+      t("parameterInputTypeIdentifier"),
+    );
   });
 
   it("実行しても入力値を localStorage に平文で残さない", async () => {

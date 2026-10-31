@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { fireEvent, renderWithProviders, screen, within } from "./testUtils";
+import { chooseListboxOption, fireEvent, renderWithProviders, screen, within } from "./testUtils";
 import { ResultGrid } from "../components/ResultGrid";
 import { RowInsertModal } from "../components/RowInsertModal";
 import { rowEditKey } from "../components/cellEdit";
@@ -88,21 +88,20 @@ describe("型別インライン・エディタ (行追加)", () => {
       <RowInsertModal table="t" columns={columns} onConfirm={onConfirm} onCancel={() => {}} />,
     );
     const select = screen.getByRole("combobox", { name: "flag" });
-    await user.selectOptions(select, "true");
+    chooseListboxOption(select, "true");
     await user.type(screen.getAllByRole("textbox")[1], "null");
     fireEvent.keyDown(select, { key: "Enter", ctrlKey: true });
     expect(onConfirm).toHaveBeenCalledWith({ 1: "true", 2: "null" });
   });
 
-  it("真偽値を既定値へ戻すと列が省略される", async () => {
-    const user = userEvent.setup();
+  it("真偽値を既定値へ戻すと列が省略される", () => {
     const onConfirm = vi.fn();
     renderWithProviders(
       <RowInsertModal table="t" columns={columns} onConfirm={onConfirm} onCancel={() => {}} />,
     );
     const select = screen.getByRole("combobox", { name: "flag" });
-    await user.selectOptions(select, "true");
-    await user.selectOptions(select, "");
+    chooseListboxOption(select, "true");
+    chooseListboxOption(select, "");
     fireEvent.keyDown(select, { key: "Enter", ctrlKey: true });
     expect(onConfirm).toHaveBeenCalledWith({});
   });

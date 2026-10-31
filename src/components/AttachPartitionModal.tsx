@@ -6,7 +6,8 @@ import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Spinner } from "./Spinner";
-import { Button, Input, PressableButton, Select, Switch } from "./ui";
+import { Button, Input, PressableButton, Switch } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import {
   type AttachBoundError,
   type AttachBoundKind,
@@ -56,7 +57,7 @@ export function AttachPartitionModal({ sessionId, database, table, info, kind, o
   const [listRaw, setListRaw] = useState("");
   const [modulus, setModulus] = useState(() => existingHashModulus(info) ?? "");
   const [remainder, setRemainder] = useState("");
-  const selectRef = useRef<HTMLSelectElement>(null);
+  const selectRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -120,20 +121,15 @@ export function AttachPartitionModal({ sessionId, database, table, info, kind, o
         <FormSection>
           <FieldLabel htmlFor="attach-partition-child">{t("attachPartitionChild")}</FieldLabel>
           <Flex align="center" gap="2">
-            <Select
+            <ListboxSelect
               id="attach-partition-child"
-              ref={selectRef}
+              triggerRef={selectRef}
               value={selected}
               disabled={candidates.length === 0}
-              onChange={(e) => setChild(e.target.value)}
-              flex="1"
-            >
-              {candidates.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </Select>
+              options={candidates.map((n) => ({ value: n }))}
+              onChange={setChild}
+              css={{ flex: 1, minWidth: 0 }}
+            />
             {loading && <Spinner size={14} />}
           </Flex>
           {!loading && candidates.length === 0 && (

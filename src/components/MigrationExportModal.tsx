@@ -7,7 +7,8 @@ import { api, type ConnectionProfile, type SyncPlan } from "../api/tauri";
 import { useT } from "../i18n";
 import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Input, Select } from "./ui";
+import { Button, Input } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { LoadingButton } from "./LoadingButton";
 import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { useToast } from "./Toast";
@@ -233,18 +234,14 @@ export function MigrationExportModal({
 
         <FormSection>
           <FieldLabel htmlFor="migration-export-format">{t("schemaCompareMigrationFormat")}</FieldLabel>
-          <Select
+          <ListboxSelect
             id="migration-export-format"
+            css={{ width: "100%" }}
             value={format}
-            onChange={(e) => setFormat(e.target.value as MigrationFormat)}
+            options={MIGRATION_FORMATS.map((f) => ({ value: f, label: formatLabel(f, t) }))}
+            onChange={(v) => setFormat(v as MigrationFormat)}
             disabled={isSaving}
-          >
-            {MIGRATION_FORMATS.map((f) => (
-              <option key={f} value={f}>
-                {formatLabel(f, t)}
-              </option>
-            ))}
-          </Select>
+          />
         </FormSection>
 
         <FormSection>

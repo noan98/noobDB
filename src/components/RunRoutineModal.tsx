@@ -11,7 +11,8 @@ import {
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { isPlainEnterKey } from "./modalKeys";
-import { Button, Input, PressableButton, Select } from "./ui";
+import { Button, Input, PressableButton } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 import { useSettings } from "../settings";
 import {
   describeArgSet,
@@ -163,22 +164,21 @@ export function RunRoutineModal({
             {args.length > 0 && argHistory.length > 0 && (
               <FormSection>
                 <FieldLabel htmlFor="run-routine-history">{t("runRoutineHistoryLabel")}</FieldLabel>
-                <Select
+                <ListboxSelect
                   id="run-routine-history"
+                  css={{ width: "100%" }}
                   value=""
-                  onChange={(e) => {
-                    const set = argHistory[Number(e.target.value)];
+                  options={[
+                    { value: "", label: t("runRoutineHistoryPlaceholder") },
+                    // 履歴は並びが順序のみで一意な ID を持たないため、位置を値にする。
+                    ...argHistory.map((set, i) => ({ value: String(i), label: describeArgSet(set) })),
+                  ]}
+                  onChange={(v) => {
+                    // 先頭の見出し行 ("") を選び直しても何もしない (Number("") は 0 になるため)。
+                    const set = v === "" ? undefined : argHistory[Number(v)];
                     if (set) setValues(fitArgSet(set, signature.parameters.length));
                   }}
-                >
-                  <option value="">{t("runRoutineHistoryPlaceholder")}</option>
-                  {argHistory.map((set, i) => (
-                    // 履歴は並びが順序のみで一意な ID を持たないため、内容と位置をキーにする。
-                    <option key={`${i}:${set.join("\u0001")}`} value={i}>
-                      {describeArgSet(set)}
-                    </option>
-                  ))}
-                </Select>
+                />
                 <chakra.span textStyle="caption">{t("runRoutineHistoryNote")}</chakra.span>
               </FormSection>
             )}

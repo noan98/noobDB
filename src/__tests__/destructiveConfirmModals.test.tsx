@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, renderWithProviders, screen } from "./testUtils";
+import { chooseListboxOption, fireEvent, renderWithProviders, screen } from "./testUtils";
 import { RegisterLocalTableModal } from "../components/RegisterLocalTableModal";
 import { RenameTableDialog } from "../components/RenameTableDialog";
 
@@ -135,7 +135,7 @@ describe("ParameterInputModal の引用符警告 (#1615)", () => {
       />,
     );
     expect(screen.getByText(/\{\{name\}\}.*(引用符|quotes)/)).toBeTruthy();
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "number" } });
+    chooseListboxOption(screen.getByRole("combobox"), "number");
     expect(screen.queryByText(/\{\{name\}\}.*(引用符に囲まれて|wrapped in quotes)/)).toBeNull();
   });
 });

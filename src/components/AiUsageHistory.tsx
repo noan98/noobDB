@@ -21,7 +21,8 @@ import { useConfirm } from "./ConfirmDialog";
 import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { SettingsInfo } from "./settingsLayout";
 import { useToast } from "./Toast";
-import { Button, Select } from "./ui";
+import { Button } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 
 type Range = "month" | "7" | "30" | "all";
 
@@ -110,17 +111,17 @@ export function AiUsageHistory({ taskLabel, reloadKey }: Props) {
       <Flex align="center" gap="2" wrap="wrap">
         <FieldLabel as="div">{t("aiLedgerTitle")}</FieldLabel>
         <SettingsInfo>{t("aiLedgerHelp")}</SettingsInfo>
-        <Select
-          aria-label={t("aiLedgerRange")}
-          width="auto"
+        <ListboxSelect
+          ariaLabel={t("aiLedgerRange")}
           value={range}
-          onChange={(e) => setRange(e.target.value as Range)}
-        >
-          <option value="month">{t("aiLedgerRangeMonth")}</option>
-          <option value="7">{t("aiLedgerRange7")}</option>
-          <option value="30">{t("aiLedgerRange30")}</option>
-          <option value="all">{t("aiLedgerRangeAll")}</option>
-        </Select>
+          options={[
+            { value: "month", label: t("aiLedgerRangeMonth") },
+            { value: "7", label: t("aiLedgerRange7") },
+            { value: "30", label: t("aiLedgerRange30") },
+            { value: "all", label: t("aiLedgerRangeAll") },
+          ]}
+          onChange={(v) => setRange(v as Range)}
+        />
         <Button type="button" variant="secondary" size="sm" onClick={load}>
           {t("aiLedgerRefresh")}
         </Button>

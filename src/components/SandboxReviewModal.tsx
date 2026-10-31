@@ -26,7 +26,8 @@ import { Callout } from "./Callout";
 import { ErrorNote, FieldLabel } from "./modalForm";
 import { TableDiffDetail } from "./SchemaDiffDetail";
 import { Tooltip } from "./Tooltip";
-import { Button, Checkbox, Radio, Select } from "./ui";
+import { Button, Checkbox, Radio } from "./ui";
+import { ListboxSelect } from "./ListboxSelect";
 
 interface Props {
   sandbox: SandboxRecord;
@@ -449,17 +450,12 @@ export function SandboxReviewModal({
         <chakra.div display="flex" alignItems="center" gap="2.5" flexWrap="wrap">
           <FieldLabel htmlFor="sandbox-review-target">{t("sandboxReviewTarget")}</FieldLabel>
           {candidates.length > 0 ? (
-            <Select
+            <ListboxSelect
               id="sandbox-review-target"
               value={targetSessionId ?? ""}
-              onChange={(e) => setTargetSessionId(e.target.value || null)}
-            >
-              {candidates.map((c) => (
-                <option key={c.sessionId} value={c.sessionId}>
-                  {c.profile.name}
-                </option>
-              ))}
-            </Select>
+              options={candidates.map((c) => ({ value: c.sessionId, label: c.profile.name }))}
+              onChange={(v) => setTargetSessionId(v || null)}
+            />
           ) : (
             <>
               <chakra.span fontSize="sm" color="app.textMuted">
