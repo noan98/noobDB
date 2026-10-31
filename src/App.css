@@ -2264,6 +2264,21 @@ html, body, #root {
 .cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon.cm-completionIcon-braces,
 .cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon.cm-completionIcon-hash { color: var(--text-muted); }
 
+/* lint / ホバーの診断ツールチップ (#1940 のセマンティック lint など)。CM6 既定の明るい面
+   (`.cm-tooltip` の #f5f5f5) のままだと、ダーク系テーマで本文色 (--text) が明るい面に
+   載って読めなくなるので、補完ポップアップと同じ面・縁・影に揃える。 */
+.cm-tooltip.cm-tooltip-lint,
+.cm-tooltip.cm-tooltip-hover {
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  font-size: var(--text-sm);
+}
+.cm-tooltip-lint .cm-diagnostic { color: var(--text); }
+.cm-tooltip-lint .cm-diagnosticSource { color: var(--text-muted); }
+
 /* 列候補の情報パネル (#1413)。補完ポップアップ本体と同じ面・縁・影で揃える。 */
 .cm-tooltip.cm-completionInfo {
   background: var(--bg-elevated);
