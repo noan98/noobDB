@@ -81,3 +81,21 @@ main push の cache-warm ビルド (run 38585607069 ほか) の実測: `corepack
 `pnpm install` の増分は未計測のため、変更は見送り。切り分けるなら、store キャッシュ有り / 無しで
 `Install frontend deps` の時間を比べる (store が D: ドライブにある点にも注意)。
 
+
+## main の最新にタグを打つ (`tag-main.yml`)
+
+- 手動実行 (`workflow_dispatch`) 専用。既存の `vX.Y.Z` タグを semver 順に並べた最新から
+  入力 `bump` (既定 `patch`) で 1 つ上げたタグを、main の最新コミットに API で作る
+  (例: v0.9.95 → v0.9.96)。`package.json` / `Cargo.toml` / `tauri.conf.json` の
+  バージョン (0.1.0 のまま) は見ない。ビルド時に `Sync version to tag` が合わせる。
+- main の最新コミットに既に `vX.Y.Z` タグがあれば何もせず成功で終わる (冪等)。
+  毎日の PR・Issue 片付けで「マージが 1 件以上あれば `gh workflow run tag-main.yml`」と
+  呼ぶ前提。
+- **GITHUB_TOKEN で作ったタグでは `release.yml` の `push: tags` は起動しない**
+  (GitHub の仕様)。例外として `workflow_dispatch` は GITHUB_TOKEN でも起動できるので、
+  タグ作成後に `gh workflow run release.yml --ref <タグ>` で起動する。ref がタグなので
+  `github.ref` は `refs/tags/vX.Y.Z` になり、タグ push と同じ経路 (バージョン同期 →
+  公開リリースへ添付) で動く。入力 `release: false` なら起動しない。
+- 権限はジョブ側で `contents: write` (タグ作成) と `actions: write` (release.yml 起動)。
+  タグ保護のルールセットを足すと GITHUB_TOKEN のタグ作成が拒否されるので、その場合は
+  バイパス設定か PAT が必要。
