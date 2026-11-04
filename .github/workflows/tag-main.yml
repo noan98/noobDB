@@ -1,0 +1,164 @@
+name: tag-main
+
+# main の最新コミットに次のバージョンタグ (vX.Y.Z) を打ち、release.yml を起動する。
+# 手動実行 (workflow_dispatch) のみ。毎日の PR・Issue 片付けでマージが 1 件以上
+# あったときに `gh workflow run tag-main.yml` で呼ぶ想定。
+#
+# バージョンの決め方:
+#   - 既存タグのうち `vX.Y.Z` 形式のものを semver 順に並べ、最新を基準にする。
+#   - 入力 `bump` (既定 patch) で 1 つ上げる (例: v0.9.95 → v0.9.96)。
+#   - package.json / Cargo.toml / tauri.conf.json のバージョン (0.1.0 のまま) は
+#     見ない。release.yml の「Sync version to tag」がビルド時にタグへ合わせるため。
+#   - main の最新コミットに既に `vX.Y.Z` タグがあるときは何もせず成功で終わる
+#     (マージが無い日に呼ばれても二重にタグを打たない)。
+#
+# release.yml の起動について:
+#   GITHUB_TOKEN で push したタグでは `push: tags` の workflow は起動しない
+#   (GitHub の無限ループ防止の仕様)。例外として workflow_dispatch は GITHUB_TOKEN
+#   でも起動できるので、タグ作成後に release.yml を「そのタグを ref にして」
+#   手動実行する。ref がタグなので release.yml 側は github.ref = refs/tags/vX.Y.Z
+#   となり、タグ push のときと同じ経路 (バージョン同期 → リリースへ添付) で動く。
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "上げる桁 (patch / minor / major)"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+      release:
+        description: "タグ作成後に release.yml を起動する"
+        type: boolean
+        default: true
+
+# 同時に 2 本走ると同じ番号を取り合うので直列化する (後続は待つ)。
+concurrency:
+  group: tag-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    name: tag latest main
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      # タグ (refs/tags/*) の作成
+      contents: write
+      # release.yml の workflow_dispatch 起動
+      actions: write
+    steps:
+      - name: Compute next version
+        id: next
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+
+          MAIN_SHA="$(gh api "repos/${REPO}/commits/main" --jq .sha)"
+          echo "main の最新コミット: ${MAIN_SHA}"
+
+          # vX.Y.Z 形式のタグだけを対象にする (注釈付きタグは object が tag
+          # オブジェクトになるため、コミットを指すかどうかは別途解決する)。
+          gh api --paginate "repos/${REPO}/git/matching-refs/tags/v" \
+            --jq '.[] | [.ref, .object.type, .object.sha] | @tsv' > refs.tsv
+
+          LATEST=""
+          ALREADY=""
+          while IFS=$'\t' read -r ref type sha; do
+            tag="${ref#refs/tags/}"
+            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+            echo "$tag" >> versions.txt
+            if [ "$type" = "tag" ]; then
+              sha="$(gh api "repos/${REPO}/git/tags/${sha}" --jq .object.sha)"
+            fi
+            if [ "$sha" = "$MAIN_SHA" ]; then
+              ALREADY="$tag"
+            fi
+          done < refs.tsv
+
+          if [ -n "$ALREADY" ]; then
+            echo "main の最新コミットには既に ${ALREADY} が付いているので何もしない。"
+            {
+              echo "skip=true"
+              echo "tag=${ALREADY}"
+            } >> "$GITHUB_OUTPUT"
+            echo "main の最新コミットには既に \`${ALREADY}\` があるため、タグは作成していません。" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [ -s versions.txt ]; then
+            LATEST="$(sort -V versions.txt | tail -n 1)"
+          else
+            LATEST="v0.0.0"
+          fi
+          IFS=. read -r MAJOR MINOR PATCH <<< "${LATEST#v}"
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            *) PATCH=$((PATCH + 1)) ;;
+          esac
+          NEXT="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "最新タグ ${LATEST} → 次のタグ ${NEXT}"
+          {
+            echo "skip=false"
+            echo "tag=${NEXT}"
+            echo "sha=${MAIN_SHA}"
+            echo "latest=${LATEST}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create tag
+        if: steps.next.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.next.outputs.tag }}
+          SHA: ${{ steps.next.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # 軽量タグを API で作る (checkout 不要)。既に同名タグがあれば 422 で失敗する。
+          gh api -X POST "repos/${REPO}/git/refs" \
+            -f ref="refs/tags/${TAG}" \
+            -f sha="${SHA}" > /dev/null
+          echo "タグ ${TAG} を ${SHA} に作成しました。"
+
+      - name: Start release build
+        if: steps.next.outputs.skip == 'false' && inputs.release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.next.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # GITHUB_TOKEN のタグ push では release.yml の push トリガが動かないため、
+          # タグを ref にして workflow_dispatch で起動する (ファイル冒頭のコメント参照)。
+          gh workflow run release.yml --repo "${REPO}" --ref "${TAG}"
+          echo "release.yml を ${TAG} で起動しました。"
+
+      - name: Summary
+        if: steps.next.outputs.skip == 'false'
+        env:
+          TAG: ${{ steps.next.outputs.tag }}
+          SHA: ${{ steps.next.outputs.sha }}
+          LATEST: ${{ steps.next.outputs.latest }}
+          RELEASE: ${{ inputs.release }}
+        run: |
+          {
+            echo "### タグを作成しました"
+            echo ""
+            echo "- 前回: \`${LATEST}\`"
+            echo "- 今回: \`${TAG}\` (\`${SHA}\`)"
+            if [ "$RELEASE" = "true" ]; then
+              echo "- release.yml を \`${TAG}\` で起動しました"
+            else
+              echo "- release.yml は起動していません (release=false)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
