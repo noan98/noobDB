@@ -109,6 +109,7 @@ const DEFAULT_OPTIONS: DumpOptions = {
   setGtidPurgedOff: false,
   writeChecksum: false,
   sqliteSnapshot: false,
+  native: false,
 };
 
 type BoolOptionKey = {
@@ -134,12 +135,14 @@ const OPTION_ROWS: { key: BoolOptionKey; label: I18nKey; hint: I18nKey }[] = [
   { key: "setGtidPurgedOff", label: "dumpOptGtidPurgedOff", hint: "dumpOptGtidPurgedOffHint" },
   { key: "writeChecksum", label: "dumpOptChecksum", hint: "dumpOptChecksumHint" },
   { key: "sqliteSnapshot", label: "dumpOptSqliteSnapshot", hint: "dumpOptSqliteSnapshotHint" },
+  { key: "native", label: "dumpOptNative", hint: "dumpOptNativeHint" },
 ];
 
 /** Which toggle keys each driver shows. Omitted fields are sent at their default
  *  but hidden, so the wire shape stays a full `DumpOptions` for every driver. */
 const DRIVER_OPTIONS: Record<DriverKind, BoolOptionKey[]> = {
   mysql: [
+    "native",
     "singleTransaction",
     "routines",
     "events",
@@ -156,6 +159,8 @@ const DRIVER_OPTIONS: Record<DriverKind, BoolOptionKey[]> = {
     "writeChecksum",
   ],
   postgres: [
+    "native",
+    "routines",
     "addDropTable",
     "noData",
     "noCreateInfo",
@@ -167,6 +172,16 @@ const DRIVER_OPTIONS: Record<DriverKind, BoolOptionKey[]> = {
   ],
   sqlite: ["addDropTable", "noData", "noCreateInfo", "formatSql", "gzip", "writeChecksum", "sqliteSnapshot"],
 };
+
+/** ネイティブ生成 (#2033) では外部ツールの引数に相当し、効かなくなるスイッチ。 */
+const EXTERNAL_TOOL_ONLY_OPTIONS: ReadonlySet<BoolOptionKey> = new Set<BoolOptionKey>([
+  "singleTransaction",
+  "noTablespaces",
+  "setGtidPurgedOff",
+  "noOwner",
+  "noPrivileges",
+  "completeInsert",
+]);
 
 /** 外部クライアントツールを使わずに接続から直接 SQL を生成するドライバ。 */
 const NATIVE_DUMP_DRIVERS: ReadonlySet<DriverKind> = new Set<DriverKind>(["sqlite"]);
@@ -189,11 +204,14 @@ function DumpToolNotice({
   installing,
   installError,
   onInstall,
+  onUseNative,
 }: {
   status: DumpToolStatus;
   installing: boolean;
   installError: string | null;
   onInstall: () => void;
+  /** ツールを入れずにネイティブ生成へ切り替える (#2033)。 */
+  onUseNative: () => void;
 }) {
   const t = useT();
   const toast = useToast();
@@ -254,6 +272,12 @@ function DumpToolNotice({
         ) : (
           <chakra.div>{t("dumpToolNoPlan", { tool: status.tool })}</chakra.div>
         )}
+        <chakra.div display="flex" alignItems="center" gap="2" flexWrap="wrap">
+          <Button type="button" size="sm" onClick={onUseNative}>
+            {t("dumpUseNative")}
+          </Button>
+          <chakra.span textStyle="caption">{t("dumpUseNativeHint")}</chakra.span>
+        </chakra.div>
         {installError && <ErrorNote>{t("dumpToolInstallFailed", { error: installError })}</ErrorNote>}
       </chakra.div>
     </Callout>
@@ -344,7 +368,9 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
   useEffect(() => {
     void refreshToolStatus();
   }, [refreshToolStatus]);
-  const toolMissing = !!toolStatus && toolStatus.path == null;
+  // ネイティブ生成 (#2033) を選ぶと外部ツールは使わない (SQLite は元から不要)。
+  const useNative = NATIVE_DUMP_DRIVERS.has(driver) || !!options.native;
+  const toolMissing = !useNative && !!toolStatus && toolStatus.path == null;
 
   const handleInstallTool = async () => {
     if (!toolName) return;
@@ -383,18 +409,29 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
   const visibleRows = useMemo(() => {
     const allowed = new Set(DRIVER_OPTIONS[driver]);
     return OPTION_ROWS.filter(
-      (row) => allowed.has(row.key) && !(tableScope && TABLE_SCOPE_HIDDEN_OPTIONS.has(row.key)),
+      (row) =>
+        allowed.has(row.key) &&
+        !(tableScope && TABLE_SCOPE_HIDDEN_OPTIONS.has(row.key)) &&
+        // PostgreSQL のルーチン (関数) はネイティブ生成のときだけ意味がある (pg_dump は常に出す)。
+        !(driver === "postgres" && row.key === "routines" && !options.native),
     );
-  }, [driver, tableScope]);
+  }, [driver, tableScope, options.native]);
 
   /** SQLite スナップショットは SQL を生成しないので、SQL 形式向けのスイッチは効かない (#1624)。 */
   const ignoredBySnapshot = (key: BoolOptionKey): boolean =>
-    !!options.sqliteSnapshot &&
-    (key === "addDropTable" || key === "noData" || key === "noCreateInfo" || key === "formatSql");
+    (!!options.sqliteSnapshot &&
+      (key === "addDropTable" || key === "noData" || key === "noCreateInfo" || key === "formatSql")) ||
+    (!!options.native && EXTERNAL_TOOL_ONLY_OPTIONS.has(key));
 
   const toggle = (key: BoolOptionKey) => {
     if (ignoredBySnapshot(key)) return;
-    setOptions((prev) => ({ ...prev, [key]: !prev[key] }));
+    // PostgreSQL のネイティブ生成は、トリガーが参照する関数を出さないと復元できないので、
+    // オンにしたときルーチンも既定でオンにする。
+    setOptions((prev) => ({
+      ...prev,
+      [key]: !prev[key],
+      ...(key === "native" && driver === "postgres" && !prev.native ? { routines: true } : {}),
+    }));
     // gzip (#1539) / SQLite スナップショット (#1624): 保存先の拡張子を追従させる。
     if (key === "gzip" || key === "sqliteSnapshot") {
       const next = { ...options, [key]: !options[key] };
@@ -531,9 +568,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
 
       <ModalBody display="flex" flexDirection="column" gap="4">
         <chakra.div fontSize="sm" color="app.textMuted" lineHeight={1.5}>
-          {NATIVE_DUMP_DRIVERS.has(driver)
-            ? t("dumpNoteNative")
-            : t("dumpNote", { tool: toolName ?? "mysqldump" })}
+          {useNative ? t("dumpNoteNative") : t("dumpNote", { tool: toolName ?? "mysqldump" })}
         </chakra.div>
 
         {tableScope && (
@@ -555,9 +590,10 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
             installing={installing}
             installError={installError}
             onInstall={() => void handleInstallTool()}
+            onUseNative={() => toggle("native")}
           />
         )}
-        {toolStatus?.path && (
+        {!useNative && toolStatus?.path && (
           <chakra.div fontSize="xs" color="app.textMuted" wordBreak="break-all">
             {t("dumpToolFound", { tool: toolStatus.tool, path: toolStatus.path })}
           </chakra.div>

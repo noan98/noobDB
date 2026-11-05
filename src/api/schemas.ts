@@ -2199,6 +2199,16 @@ export const dumpCancelledEvent = z.object({
 
 // --- タスクスケジューラ (#730) ---------------------------------------------
 
+// `db::masking::MaskRule` / `ColumnMask` と同形 (タスクのマスク設定, #1836)。
+const maskRule = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("fixed"), value: z.string() }),
+  z.object({ kind: z.literal("partial"), keepStart: z.number(), keepEnd: z.number() }),
+  z.object({ kind: z.literal("hash"), length: z.number() }),
+  z.object({ kind: z.literal("null") }),
+  z.object({ kind: z.literal("email"), keepStart: z.number() }),
+  z.object({ kind: z.literal("date"), precision: z.enum(["year", "month"]) }),
+]);
+
 const dumpOptions = z.object({
   singleTransaction: z.boolean(),
   routines: z.boolean(),
@@ -2221,21 +2231,14 @@ const dumpOptions = z.object({
   setGtidPurgedOff: z.boolean().optional(),
   writeChecksum: z.boolean().optional(),
   sqliteSnapshot: z.boolean().optional(),
+  // #2033: MySQL / PostgreSQL のネイティブ生成と、そのときのマスキング。
+  native: z.boolean().optional(),
+  masks: z.array(z.object({ column: z.string(), rule: maskRule })).optional(),
 });
 
 // `ExportFormat` (tauri.ts / Rust) と同じ全種。xlsx (#711) が抜けていると xlsx の
 // 定期タスクが `list_tasks` の zod 検証で落ちる (#1195 の全バリアントゴールデンが検出)。
 const exportFormat = z.enum(["csv", "json", "ndjson", "markdown", "sql", "xlsx"]);
-
-// `db::masking::MaskRule` / `ColumnMask` と同形 (タスクのマスク設定, #1836)。
-const maskRule = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("fixed"), value: z.string() }),
-  z.object({ kind: z.literal("partial"), keepStart: z.number(), keepEnd: z.number() }),
-  z.object({ kind: z.literal("hash"), length: z.number() }),
-  z.object({ kind: z.literal("null") }),
-  z.object({ kind: z.literal("email"), keepStart: z.number() }),
-  z.object({ kind: z.literal("date"), precision: z.enum(["year", "month"]) }),
-]);
 
 const taskAction = z.discriminatedUnion("kind", [
   z.object({

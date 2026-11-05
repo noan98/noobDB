@@ -247,6 +247,7 @@ pub mod __test_api {
     pub use crate::commands::connection::HealthProbeItem;
     pub use crate::commands::diff::DataDiffHandle;
     pub use crate::commands::dump::DumpOptions;
+    pub use crate::commands::dump_native::dump_native_core;
     pub use crate::commands::dump_tools::{DumpToolInstallPlan, DumpToolStatus};
     pub use crate::commands::flight_recorder::{
         ExportPlanOutcome, UndoBatchPreviewResponse, UndoOutcome, UndoPreviewResponse,

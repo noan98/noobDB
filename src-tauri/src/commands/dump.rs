@@ -178,10 +178,23 @@ pub struct DumpOptions {
     /// オプションは無視する (`tables` との併用は拒否)。`gzip` は併用できる。
     #[serde(default)]
     pub sqlite_snapshot: bool,
+
+    // ── MySQL / PostgreSQL ネイティブ生成 (#2033) ──
+    /// 外部ツール (`mysqldump` / `pg_dump`) を使わず、接続経由で SQL を生成する
+    /// (`commands/dump_native.rs`)。SQLite は常にネイティブなので無視。既定オフ。
+    /// `single_transaction` は効かず (表をまたぐ一貫スナップショットにならない)、PostgreSQL は
+    /// 1 スキーマ単位 (`pg_schema`、無ければツリーのスキーマ)。
+    #[serde(default)]
+    pub native: bool,
+    /// 行データに掛けるマスキング (列名の完全一致、`db::masking`)。ネイティブ生成でのみ使え、
+    /// `native` が偽のとき (外部ツール経路・SQLite) に指定すると、マスクされずに出てしまうのを
+    /// 避けるため `InvalidInput` で拒否する (fail closed)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub masks: Option<Vec<crate::db::masking::ColumnMask>>,
 }
 
 /// `DumpOptions::tables` を検証して重複を除いた一覧にする。`None` は全体ダンプ。
-fn selected_tables(options: &DumpOptions) -> Result<Option<Vec<String>>> {
+pub(super) fn selected_tables(options: &DumpOptions) -> Result<Option<Vec<String>>> {
     let Some(tables) = options.tables.as_ref() else {
         return Ok(None);
     };
@@ -202,7 +215,7 @@ fn selected_tables(options: &DumpOptions) -> Result<Option<Vec<String>>> {
 
 /// 指定テーブルがすべて存在することを確かめる (SQLite の部分ダンプ)。無い名前があれば
 /// 黙って落とさず `InvalidInput` にする。
-fn ensure_tables_exist<'a>(
+pub(super) fn ensure_tables_exist<'a>(
     selected: &[String],
     existing: impl Iterator<Item = &'a str>,
 ) -> Result<()> {
@@ -438,6 +451,13 @@ pub(crate) async fn run_dump(
             }
         }
     }
+    let has_masks = options.masks.as_ref().is_some_and(|m| !m.is_empty());
+    let native_sql = options.native && session.connect_options.driver != DriverKind::Sqlite;
+    if has_masks && !native_sql {
+        return Err(AppError::InvalidInput(
+            "masks require the native dump of a MySQL / PostgreSQL connection".into(),
+        ));
+    }
     let (tmp, tmp_file) = create_dump_temp_file(final_path).await?;
     let tmp_str = tmp.to_string_lossy().to_string();
     let mut cleanup = PartialFileCleanup::new(tmp.clone());
@@ -445,8 +465,27 @@ pub(crate) async fn run_dump(
     // AWS IAM 認証 (#734) のセッションは `connect_options.password` が空なので、
     // 外部ダンプツールへ渡す直前に今有効なトークンを作って差し込む (トークンは
     // 一時オプションファイル / PGPASSFILE にのみ書かれ、ダンプ後に消える)。
-    let dump_opts = crate::db::aws_iam::with_fresh_password(&session.connect_options).await?;
+    // ネイティブ生成は接続プールをそのまま使うので、トークンの作り直しは不要。
+    let dump_opts = if native_sql {
+        session.connect_options.clone()
+    } else {
+        crate::db::aws_iam::with_fresh_password(&session.connect_options).await?
+    };
     let bytes = match session.connect_options.driver {
+        DriverKind::Mysql | DriverKind::Postgres if native_sql => {
+            dump_native(
+                app,
+                stream_id,
+                &session.conn,
+                database,
+                database_is_connection_db,
+                tmp_file,
+                options,
+                counter,
+                started,
+            )
+            .await?
+        }
         DriverKind::Mysql => {
             dump_mysql(
                 app, stream_id, &dump_opts, database, tmp_file, options, counter, started,
@@ -942,6 +981,37 @@ fn format_dump_file_blocking(path: &str, max_bytes: u64, cancelled: &AtomicBool)
     Ok(formatted.len() as u64)
 }
 
+/// MySQL / PostgreSQL のネイティブダンプ (#2033)。生成本体は `dump_native::dump_native_core`
+/// (統合テストからも駆動できる)。ここは進捗イベントへの橋渡しだけ。
+#[allow(clippy::too_many_arguments)]
+async fn dump_native(
+    app: &AppHandle,
+    stream_id: &str,
+    conn: &crate::db::Connection,
+    database: &str,
+    database_is_connection_db: bool,
+    file: tokio::fs::File,
+    options: &DumpOptions,
+    counter: &Arc<AtomicU64>,
+    started: Instant,
+) -> Result<u64> {
+    let app_cb = app.clone();
+    let stream_id_cb = stream_id.to_string();
+    let progress: super::dump_native::ProgressFn = Arc::new(move |bytes, tables, total| {
+        emit_table_progress(&app_cb, &stream_id_cb, bytes, tables, total, started);
+    });
+    super::dump_native::dump_native_core(
+        conn,
+        database,
+        database_is_connection_db,
+        file.into_std().await,
+        options,
+        counter,
+        progress,
+    )
+    .await
+}
+
 /// Run `mysqldump` for `database`, streaming SQL into the already-open `file`
 /// (symlink-safe, reserved by [`create_dump_temp_file`] in `run_dump`, which
 /// also owns cleaning it up on failure).
@@ -1394,14 +1464,15 @@ async fn dump_sqlite(
 }
 
 /// SQLite ダンプの行ストリームを 1 回に受け取る行数。
-const DUMP_STREAM_BATCH: usize = 500;
+pub(super) const DUMP_STREAM_BATCH: usize = 500;
 /// 1 表の行データ書き出し中に進捗を出す間隔 (バイト)。
-const DUMP_PROGRESS_BYTES: u64 = 1024 * 1024;
+pub(super) const DUMP_PROGRESS_BYTES: u64 = 1024 * 1024;
 /// 同じく時間基準の上限 (遅い表でもこの間隔で進捗が動く)。
-const DUMP_PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+pub(super) const DUMP_PROGRESS_INTERVAL: std::time::Duration =
+    std::time::Duration::from_millis(500);
 
 /// Write `s` to the dump file and add its byte length to the shared counter.
-fn write_chunk(
+pub(super) fn write_chunk(
     writer: &Arc<std::sync::Mutex<std::io::BufWriter<std::fs::File>>>,
     counter: &Arc<AtomicU64>,
     s: &str,
@@ -1419,7 +1490,7 @@ fn write_chunk(
 /// `block_in_place` でワーカーを他タスクへ明け渡してから書き、同じワーカー上の他の IPC 応答が
 /// 遅れないようにする。`block_in_place` は current_thread ランタイム (単体テストなど) では
 /// panic するので、その場合は従来どおりそのまま書く。
-fn write_chunk_off_worker(
+pub(super) fn write_chunk_off_worker(
     writer: &Arc<std::sync::Mutex<std::io::BufWriter<std::fs::File>>>,
     counter: &Arc<AtomicU64>,
     s: &str,
