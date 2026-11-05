@@ -6,6 +6,7 @@ import { typedConfirmMatches } from "../typeToConfirm";
 import { semanticColorToken } from "../semanticColors";
 import { AiImpactAnalysis } from "./AiImpactAnalysis";
 import { Callout } from "./Callout";
+import { DestructiveTitle } from "./DestructiveTitle";
 import { RefImpactList } from "./RefImpactList";
 import type { CascadeImpacts } from "../refImpact";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
@@ -175,7 +176,7 @@ export function DangerousQueryDialog({
       initialFocusEl={() => (requiresTyped ? typedInputRef.current : cancelRef.current)}
     >
       <ModalHeader onClose={onCancel} closeLabel={t("dangerousCancel")}>
-        {t("dangerousTitle")}
+        <DestructiveTitle tone="danger">{t("dangerousTitle")}</DestructiveTitle>
       </ModalHeader>
 
       <ModalBody display="flex" flexDirection="column" gap="3">
