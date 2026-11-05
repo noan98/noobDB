@@ -230,9 +230,65 @@ impl MySqlConn {
     {
         let started = Instant::now();
 
-        let mut conn = self.pool.acquire().await?;
-        apply_use_database(&mut conn, database).await?;
+        // サーバ側停止 (#2023): 文脈があるあいだ、接続は「正常に終わるまで」プールへ戻さない
+        // (future が drop されたら `close_on_drop` で閉じる)。サーバで走り続ける文や、
+        // 設定したままの `max_execution_time` を後続の利用者へ持ち越さないため。
+        let mut guard = super::server_stop::ReleaseGuard::new(self.pool.acquire().await?);
+        apply_use_database(&mut guard.conn, database).await?;
+        let restore = match super::server_stop::current() {
+            Some(ctx) => {
+                guard.arm();
+                register_server_stop(&mut guard.conn, &ctx, false).await
+            }
+            None => None,
+        };
+        // アプリ側の理由 (結果の送信失敗など) で打ち切られたときは、サーバで文が走ったままの
+        // 可能性があるので、設定の復元は省き、接続は閉じる (keep しない)。
+        let app_failed = std::sync::atomic::AtomicBool::new(false);
+        let on_batch = |b| {
+            let r = on_batch(b);
+            if r.is_err() {
+                app_failed.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            r
+        };
+        let result = stream_on(
+            &mut guard.conn,
+            sql,
+            started,
+            initial_batch,
+            chunk_size,
+            on_batch,
+        )
+        .await;
+        if app_failed.load(std::sync::atomic::Ordering::SeqCst) {
+            return result;
+        }
+        // 設定を元に戻せたときだけ接続をプールへ戻す (戻せなければ drop で閉じる)。
+        let restored = match restore {
+            Some(orig) => restore_max_execution_time(&mut guard.conn, orig).await,
+            None => true,
+        };
+        if restored {
+            guard.keep();
+        }
+        result
+    }
+}
 
+/// `execute_stream` の本体 (接続取得・サーバ側停止の準備より後)。
+async fn stream_on<F>(
+    conn: &mut sqlx::MySqlConnection,
+    sql: &str,
+    started: Instant,
+    initial_batch: usize,
+    chunk_size: usize,
+    mut on_batch: F,
+) -> Result<QueryResult>
+where
+    F: FnMut(StreamBatch) -> Result<()>,
+{
+    {
         let initial = initial_batch.max(1);
         let chunk = chunk_size.max(1);
 
@@ -306,7 +362,7 @@ impl MySqlConn {
                 .await?;
             // 書き込み文の直後に警告を取る (#1165)。同じ接続・直後でないと
             // 診断領域が次の文で上書きされる。
-            let messages = fetch_warnings(&mut conn).await;
+            let messages = fetch_warnings(&mut *conn).await;
             return Ok(QueryResult::empty(
                 result.rows_affected(),
                 started.elapsed().as_millis() as u64,
@@ -355,7 +411,9 @@ impl MySqlConn {
             server_messages: Vec::new(),
         })
     }
+}
 
+impl MySqlConn {
     /// Only INSERT / UPDATE / DELETE / REPLACE are accepted — DDL like
     /// CREATE/DROP/ALTER/TRUNCATE causes an implicit commit on MySQL and so
     /// cannot be safely previewed via rollback.
@@ -459,6 +517,9 @@ impl MySqlConn {
         // ようにする (#1536)。`USE` / PK 検索もこのトランザクションの接続で行う。
         let mut tx = self.pool.begin().await?;
         apply_use_database_on(&mut tx, database).await?;
+        if let Some(ctx) = super::server_stop::current() {
+            let _ = register_server_stop(&mut tx, &ctx, true).await;
+        }
 
         // Best-effort PK lookup — falls back to an empty Vec so a missing
         // primary key, view target, or stripped privileges just degrades to
@@ -4353,6 +4414,76 @@ fn main_statement_is_mutation(masked: &[char]) -> bool {
     // (`WITH … DELETE` のような文末が裸のキーワードで終わる形は SQL として
     // 成立しないため、挙動を変えずに据え置く)。
     false
+}
+
+/// サーバ側停止の準備 (#2023)。この接続の `CONNECTION_ID()` を控え、アプリのクエリ
+/// タイムアウトがあれば `max_execution_time` を (猶予つきで) セッションへ設定する。
+/// `max_execution_time` は読み取り専用の SELECT にしか効かず、MariaDB には変数が無い
+/// (その場合は ID だけ控える)。書き込み文はタイムアウト / キャンセル時の `KILL QUERY` が止める。
+///
+/// 設定した場合は設定前の値を返す — 呼び出し側が文の後に [`restore_max_execution_time`]
+/// で戻す。`in_tx` (ドライラン) は DML 専用で `max_execution_time` が効かず、セッション変数は
+/// ロールバックでも戻らないので、ID を控えるだけで設定しない。
+async fn register_server_stop(
+    conn: &mut sqlx::MySqlConnection,
+    ctx: &super::server_stop::ServerStopCtx,
+    in_tx: bool,
+) -> Option<u64> {
+    let ms = if in_tx { None } else { ctx.server_timeout_ms() };
+    if let Some(ms) = ms {
+        if let Ok((id, orig)) = sqlx::query_as::<_, (u64, u64)>(
+            "SELECT CONNECTION_ID(), CAST(@@SESSION.max_execution_time AS UNSIGNED)",
+        )
+        .fetch_one(&mut *conn)
+        .await
+        {
+            if let Ok(id) = i64::try_from(id) {
+                ctx.record_backend(id);
+            }
+            // ms は数値なので SQL インジェクションにならない。
+            return match sqlx::query(sqlx::AssertSqlSafe(format!(
+                "SET SESSION max_execution_time = {ms}"
+            )))
+            .execute(&mut *conn)
+            .await
+            {
+                Ok(_) => Some(orig),
+                Err(e) => {
+                    tracing::debug!(error = %e, "max_execution_time not set (mysql)");
+                    None
+                }
+            };
+        }
+        // 変数が無い (MariaDB など)。ID だけ控える。
+    }
+    match sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()")
+        .fetch_one(&mut *conn)
+        .await
+    {
+        Ok(id) => {
+            if let Ok(id) = i64::try_from(id) {
+                ctx.record_backend(id);
+            }
+        }
+        Err(e) => tracing::debug!(error = %e, "server-side stop setup skipped (mysql)"),
+    }
+    None
+}
+
+/// [`register_server_stop`] が返した元の値へ `max_execution_time` を戻す。戻せたら true。
+async fn restore_max_execution_time(conn: &mut sqlx::MySqlConnection, orig: u64) -> bool {
+    match sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SET SESSION max_execution_time = {orig}"
+    )))
+    .execute(&mut *conn)
+    .await
+    {
+        Ok(_) => true,
+        Err(e) => {
+            tracing::debug!(error = %e, "max_execution_time restore failed (mysql)");
+            false
+        }
+    }
 }
 
 #[cfg(test)]

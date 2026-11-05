@@ -44,6 +44,7 @@ pub mod schema_scope;
 pub mod script;
 pub mod script_analysis;
 pub mod server_messages;
+pub mod server_stop;
 pub mod sqlite;
 pub mod sqlite_rebuild;
 /// ストリーミング結果のバッチ合流と逐次統計 (#1257)。

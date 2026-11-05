@@ -10,6 +10,39 @@
 プールへ接続が返ります。`query_timeout_secs` が正のときは `tokio::time::timeout` で
 実行全体をレースし、超過時は `AppError::Timeout` を返します。
 
+## サーバ側タイムアウトとサーバ側停止 (#2023)
+
+クライアント側の打ち切り (future の drop) だけではサーバで文が走り続けるため、
+`db/server_stop.rs` が `run_query_stream` / `preview_query_stream` に次を足す。
+文脈 (`ServerStopCtx`) は `task_local` で渡すので `execute_stream` のシグネチャは変わらない。
+文脈の外 (メタデータ取得など) の挙動は従来どおり。
+
+- **サーバ側タイムアウト (バックストップ)**: `query_timeout_secs` + 2 秒の猶予を実行セッションへ設定。
+  PostgreSQL `statement_timeout` (`set_config`、pid 取得と 1 往復) / MySQL `max_execution_time`
+  (SELECT のみ有効・MariaDB は変数が無いので無視) / SQLite は progress handler の期限。
+  猶予があるので通常はクライアント側の `AppError::Timeout` が先に出る。
+- **サーバ側停止**: 実行接続のバックエンド ID (`CONNECTION_ID()` / `pg_backend_pid()`) を控え、
+  `StopGuard` がタイムアウト時 (`fire`) とキャンセル時 (タスク abort = drop) に別接続から
+  `Connection::kill_processes([id], statement_only = true)` (MySQL `KILL QUERY` /
+  PostgreSQL `pg_cancel_backend`) を撃つ。SQLite は停止要求を progress handler が見て中断する。
+- 正常終了・DB エラーではガードを解除する (プールに戻った接続で次に走る別の文を止めないため)。
+- **接続の扱い**: 文脈つきの実行では `ReleaseGuard` が接続を借り、`statement_timeout` /
+  `max_execution_time` を設定前の値 (設定と同じ往復で取得) へ戻してからプールへ返す。タイムアウト・
+  キャンセルで future が drop された接続、元に戻せなかった接続は `close_on_drop` で閉じ、プールへ
+  戻さない (サーバで走り続ける文・設定・KILL の誤爆を、プールを共有する別経路へ持ち越さない)。
+  ドライランはトランザクション内なので、PostgreSQL は `set_config(.., true)` (トランザクション終了で
+  戻る)、MySQL は DML に効かないため設定せず ID だけ控える。アプリのタイムアウトが 0 のときは
+  サーバ側の設定に触れない。kill には 5 秒のタイムアウトが付く。
+- ドライランは接続をトランザクションが所有するため、タイムアウトでは future を持ったまま先に KILL を
+  撃ち、文が止まってから手放す (プール返却後に別の文を止めない)。キャンセル (abort) では
+  KILL を撃たない (`StopGuard::explicit_only`。drop 時の KILL は返却より遅れて届きうるため)。
+  PostgreSQL はトランザクション内の `statement_timeout` がバックストップ、MySQL は文が終わるまで
+  走ってからロールバックされる。PostgreSQL のドライラン内の準備は
+  SAVEPOINT で囲み、失敗してもトランザクションを壊さない。
+- 注意: 文脈つきの実行の後は元の値へ戻すので、エディタで実行した `SET statement_timeout` /
+  `SET max_execution_time` は、その後の文脈つき実行で実行前の値に上書きされる。
+- SQLite の progress handler はプールの `after_release` が返却時に必ず外す。
+
 ## バッチ合流・逐次統計・差分パッチ (#1257)
 
 `spawn_query_stream` はドライバの 200 行バッチをそのまま Channel へ流さず、ドライバ非依存の

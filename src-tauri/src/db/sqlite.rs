@@ -62,6 +62,7 @@ impl SqliteConn {
                 })
             });
         }
+        pool_opts = with_interrupt_handler_cleanup(pool_opts);
         let pool = pool_opts.connect_with(connect).await.map_err(|e| {
             tracing::error!(path, error = %e, "sqlite: failed to create connection pool");
             e
@@ -190,6 +191,11 @@ impl SqliteConn {
         let is_query = is_query_shape(sql);
 
         let mut conn = self.pool.acquire().await?;
+        // サーバ側停止 (#2023): progress handler で期限・キャンセルを見て文を中断する。
+        let stop_ctx = super::server_stop::current();
+        if let Some(ctx) = &stop_ctx {
+            install_interrupt_handler(&mut conn, ctx).await;
+        }
 
         if !is_query {
             let result = sqlx::query(sqlx::AssertSqlSafe(sql))
@@ -380,6 +386,9 @@ impl SqliteConn {
         } else {
             self.pool.begin().await?
         };
+        if let Some(ctx) = super::server_stop::current() {
+            install_interrupt_handler(&mut tx, &ctx).await;
+        }
         let started = Instant::now();
 
         let before_raw: Vec<SqliteRow> = match &before_sql {
@@ -2120,6 +2129,41 @@ pub(crate) fn is_query_shape(sql: &str) -> bool {
         || trimmed.starts_with("pragma")
 }
 
+/// サーバ側停止 (#2023): プールが接続を返却するたびに progress handler を確実に外す。
+/// 外さないと、キャンセルで drop された接続に残った handler が、プールを使い回す別経路の
+/// 文を中断しうる。返却時の `lock_handle` はワーカーが実行中の文を抜けるまで待つ。
+fn with_interrupt_handler_cleanup(opts: SqlitePoolOptions) -> SqlitePoolOptions {
+    opts.after_release(|conn, _meta| {
+        Box::pin(async move {
+            match conn.lock_handle().await {
+                Ok(mut handle) => {
+                    handle.remove_progress_handler();
+                    Ok(true)
+                }
+                // handler を外せない接続は再利用しない (破棄する)。
+                Err(_) => Ok(false),
+            }
+        })
+    })
+}
+
+/// サーバ側停止 (#2023): progress handler を入れ、期限切れ・停止要求のときに実行中の
+/// 文を中断する (SQLite にはサーバが無いので、これが `statement_timeout` / `KILL QUERY`
+/// の代わり)。コールバックは「続行するなら true」を返す。handler はプールの
+/// `after_release` が必ず外す。入れられなくても実行は妨げない (ベストエフォート)。
+async fn install_interrupt_handler(
+    conn: &mut sqlx::SqliteConnection,
+    ctx: &std::sync::Arc<super::server_stop::ServerStopCtx>,
+) {
+    let ctx = ctx.clone();
+    match conn.lock_handle().await {
+        Ok(mut handle) => handle.set_progress_handler(1000, move || {
+            !ctx.sqlite_should_interrupt(std::time::Instant::now())
+        }),
+        Err(e) => tracing::debug!(error = %e, "progress handler not installed (sqlite)"),
+    }
+}
+
 /// Run one statement on a specific connection (pool-acquired or the held tx
 /// connection) and decode it into a [`QueryResult`]. Shared by `execute` and
 /// `tx_execute`.
@@ -2676,6 +2720,49 @@ async fn run_batch_checked(
 
 #[cfg(test)]
 mod tests {
+
+    /// 停止要求で中断された接続を使い回しても、残った progress handler に別の文が
+    /// 中断されない (`after_release` が外す)。プール上限 1 なので必ず同じ接続を使う。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn progress_handler_is_removed_when_connection_returns_to_pool() {
+        use crate::db::server_stop::{scope, ServerStopCtx};
+        let pool = with_interrupt_handler_cleanup(
+            SqlitePoolOptions::new()
+                .max_connections(1)
+                .acquire_timeout(std::time::Duration::from_secs(10)),
+        )
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(":memory:")
+                .create_if_missing(true),
+        )
+        .await
+        .expect("pool");
+        let conn = SqliteConn {
+            pool,
+            tx: tokio::sync::Mutex::new(None),
+        };
+        // 文脈つきで短い文を完了させ、その後に停止要求を出す。
+        let ctx = ServerStopCtx::new(None);
+        scope(ctx.clone(), async {
+            conn.execute_stream("SELECT 1", None, 10, 10, |_| Ok(()))
+                .await
+        })
+        .await
+        .expect("scoped select");
+        ctx.request_stop();
+        // 同じ(唯一の)接続で重い文を実行しても中断されない。
+        let r = conn
+            .execute_stream(
+                "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 3000000) SELECT count(*) FROM c",
+                None,
+                10,
+                10,
+                |_| Ok(()),
+            )
+            .await;
+        assert!(r.is_ok(), "{r:?}");
+    }
     #[test]
     fn collate_detection_for_row_identity() {
         use super::{sqlite_sql_has_collate, sqlite_table_unique_has_collate};
