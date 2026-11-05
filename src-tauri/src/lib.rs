@@ -643,6 +643,7 @@ pub mod __test_api {
         Session {
             id: id.to_string(),
             profile_id: None,
+            secret_profile_id: None,
             conn,
             connect_options: opts,
             read_only,
@@ -1766,6 +1767,7 @@ pub fn run() {
             commands::query::preview_query_stream,
             commands::query::cancel_stream,
             commands::schema::list_databases,
+            commands::schema::list_server_databases,
             commands::schema::list_tables,
             commands::schema::describe_table,
             commands::schema::describe_table_extras,

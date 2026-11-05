@@ -5443,6 +5443,16 @@ const en = {
   cmdkActionSchemaExport: "Export schema for AI (Markdown)",
   cmdkActionToggleTheme: "Toggle light / dark theme",
   cmdkActionDisconnect: "Disconnect",
+  cmdkActionOpenDatabase: "Open another database on this server...",
+  openDatabaseTitle: "Open another database on this server",
+  openDatabaseHint:
+    "Opens the chosen database as a new connection, reusing this connection's host, TLS, SSH tunnel and saved credentials.",
+  openDatabaseFilterLabel: "Database",
+  openDatabaseFilterPlaceholder: "Filter by name",
+  openDatabaseLoading: "Loading databases...",
+  openDatabaseEmpty: "No matching databases",
+  openDatabaseCurrent: "Connected",
+  openDatabaseCancel: "Close",
   cmdkActionRunSnippet: "Run: {name}",
 
   // プロセスモニタパネル
@@ -12678,6 +12688,16 @@ const ja: Dict = {
   cmdkActionSchemaExport: "スキーマを AI 向けに出力 (Markdown)",
   cmdkActionToggleTheme: "ライト / ダークテーマ切替",
   cmdkActionDisconnect: "切断する",
+  cmdkActionOpenDatabase: "同じサーバの別データベースを開く...",
+  openDatabaseTitle: "同じサーバの別データベースを開く",
+  openDatabaseHint:
+    "選んだデータベースを新しい接続として開きます。この接続のホスト・TLS・SSH トンネル・保存済みの認証情報をそのまま使います。",
+  openDatabaseFilterLabel: "データベース",
+  openDatabaseFilterPlaceholder: "名前で絞り込み",
+  openDatabaseLoading: "データベースを読み込み中...",
+  openDatabaseEmpty: "一致するデータベースがありません",
+  openDatabaseCurrent: "接続中",
+  openDatabaseCancel: "閉じる",
   cmdkActionRunSnippet: "実行: {name}",
 
   // プロセスモニタパネル

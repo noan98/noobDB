@@ -4244,3 +4244,43 @@ async fn postgres_list_table_partitions_when_env_set() {
     }
     conn.close().await;
 }
+
+/// #2018: `pg_database` から実データベース一覧を引け、接続中の DB が含まれること。
+/// さらに接続 URL の database だけを差し替えた接続 (別 DB を開く導線と同じ組み立て) が張れる。
+#[tokio::test]
+async fn postgres_server_databases_and_database_swap_when_env_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    let current = conn
+        .execute("SELECT current_database()", None)
+        .await
+        .expect("current_database");
+    let t::Value::String(current) = &current.rows[0][0] else {
+        panic!("current_database should be a string");
+    };
+    let dbs = conn.server_databases().await.expect("server databases");
+    assert!(dbs.contains(current), "{current} not in {dbs:?}");
+    assert!(
+        dbs.iter().all(|d| !d.starts_with("template")),
+        "template DBs must be hidden: {dbs:?}"
+    );
+
+    // 既定の `postgres` DB が別にあれば、database だけ差し替えて接続できる。
+    if let Some(other) = dbs.iter().find(|d| *d != current) {
+        let mut swapped = opts.clone();
+        swapped.database = Some(other.clone());
+        let conn2 = t::connect(&swapped).await.expect("connect to other db");
+        let r = conn2
+            .execute("SELECT current_database()", None)
+            .await
+            .expect("current_database");
+        assert!(matches!(&r.rows[0][0], t::Value::String(s) if s == other));
+        conn2.close().await;
+    }
+    conn.close().await;
+}

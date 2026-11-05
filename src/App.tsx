@@ -15,6 +15,13 @@ import {
   type ReactNode,
 } from "react";
 import { connectRequestFromProfile } from "./connectRequest";
+import {
+  baseProfileId,
+  connectionsAffectedByDelete,
+  databaseVariantProfile,
+  isVariantProfileId,
+} from "./openDatabase";
+import { OpenDatabaseModal } from "./components/OpenDatabaseModal";
 import { beginBatchRun, endBatchRun, isCurrentBatchRun } from "./batchRunGuard";
 import { Box, Flex, Grid, chakra, visuallyHiddenStyle } from "@chakra-ui/react";
 import { Callout } from "./components/Callout";
@@ -1558,6 +1565,8 @@ export default function App() {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   // スキーマ横断のグローバルオブジェクト検索の開閉。
   const [showObjectSearch, setShowObjectSearch] = useState(false);
+  // 同じサーバの別データベースを開く (#2018, PostgreSQL)。
+  const [showOpenDatabase, setShowOpenDatabase] = useState(false);
   const [showHistorySearch, setShowHistorySearch] = useState(false);
   // DB 全体からの値検索 (#748) の開閉。
   const [showDataSearch, setShowDataSearch] = useState(false);
@@ -2047,6 +2056,11 @@ export default function App() {
   }, [staleProfileIds]);
   // 保存済みタブの確認・消去モーダルの対象 (#1630)。
   const [savedTabsTarget, setSavedTabsTarget] = useState<ConnectionProfile | null>(null);
+  // 「別データベースを開く」(#2018) で開いている派生接続。保存せず、接続リストに一時的な行で出す。
+  const ephemeralProfiles = useMemo(
+    () => openConnections.map((c) => c.profile).filter((p) => isVariantProfileId(p.id)),
+    [openConnections],
+  );
   // プロファイル id の集合 (ConnectionList の接続済み表示・切替/切断 UI 用)。
   const openProfileIds = useMemo(() => new Set(openConnections.map((c) => c.profile.id)), [openConnections]);
   // レジストリへの登録/差し替え (同一プロファイルは最新セッションで上書き)。
@@ -2141,6 +2155,7 @@ export default function App() {
       showSnippetForm ||
       showCommandPalette ||
       showObjectSearch ||
+      showOpenDatabase ||
       showDataSearch;
     cheatSheetOpenRef.current = showCheatSheet;
     overlayOpenRef.current = blockingOverlayOpenRef.current || showCheatSheet;
@@ -10165,6 +10180,12 @@ export default function App() {
         // キャンセル) の場合はここに到達しないので、切断は起きない。
         // 未確定の編集の確認は削除操作時 (handleDeleteProfile) に済ませてあるので、
         // Undo 満了後の無関係なタイミングで再確認しない (force)。
+        // 「別データベースを開く」(#2018) で派生した接続も、元プロファイルと一緒に切断する。
+        for (const c of openConnectionsRef.current.filter(
+          (c) => isVariantProfileId(c.profile.id) && baseProfileId(c.profile.id) === id,
+        )) {
+          await handleDisconnectProfile(c.profile.id, { force: true });
+        }
         await handleDisconnectProfile(id, { force: true });
         await api.deleteProfile(id);
         // 閉じたタブ履歴 (#1631) はプロファイルとともに消す。
@@ -10191,7 +10212,18 @@ export default function App() {
       if (pendingProfileDeleteTimers.current.has(id)) return;
       // アクティブ接続の削除は切断を伴いタブを閉じる。未確定の編集があればここで確認し、
       // キャンセルならプロファイルを隠さず何もしない (#1391)。
-      if (id === selectedProfile?.id && !(await confirmDiscardPendingEdits())) return;
+      // 派生接続 (#2018) も一緒に切断されるので、アクティブなのが派生でも同じ確認を通す。
+      const affected = connectionsAffectedByDelete(openConnectionsRef.current, id);
+      const activeAffected = affected.some((c) => c.profile.id === selectedProfile?.id);
+      if (activeAffected && !(await confirmDiscardPendingEdits())) return;
+      // 切断される全セッション (背景含む) の開いているトランザクションも確認する。
+      if (
+        !(await confirmDiscardOpenTransactions(
+          affected.map((c) => c.sessionId),
+          "disconnect",
+        ))
+      )
+        return;
       if (pendingProfileDeleteTimers.current.has(id)) return;
       // Hide from the sidebar right away, but defer the irreversible backend delete
       // (which wipes keyring secrets) so Undo can cancel it (#676).
@@ -10223,7 +10255,13 @@ export default function App() {
         },
       });
     },
-    [finalizeProfileDelete, toast, selectedProfile?.id, confirmDiscardPendingEdits],
+    [
+      finalizeProfileDelete,
+      toast,
+      selectedProfile?.id,
+      confirmDiscardPendingEdits,
+      confirmDiscardOpenTransactions,
+    ],
   );
 
   // 接続リストのドラッグ/キーボード並べ替え (#786)。`ConnectionList` は
@@ -10892,6 +10930,7 @@ export default function App() {
       showSnippetForm ||
       showCommandPalette ||
       showObjectSearch ||
+      showOpenDatabase ||
       showDataSearch ||
       showCheatSheet
     )
@@ -11070,6 +11109,7 @@ export default function App() {
     goToPageInTab,
     panesRef,
     tabsRef,
+    showOpenDatabase,
   ]);
 
   // Cmd/Ctrl+K でコマンドパレットを開閉する。接続前でも (接続切替・設定/ヘルプ
@@ -11917,6 +11957,17 @@ export default function App() {
         t,
       ),
     );
+    // PostgreSQL は 1 接続 = 1 データベース。別の datname は新しい接続として開く (#2018)。
+    if (sessionId && selectedProfile?.driver === "postgres") {
+      items.push({
+        id: "nav:open-database",
+        group: "navigation",
+        label: t("cmdkActionOpenDatabase"),
+        icon: "database",
+        keywords: "open database switch datname pg_database 別データベース 切り替え",
+        run: () => setShowOpenDatabase(true),
+      });
+    }
     if (sessionId) {
       items.push({
         id: "nav:disconnect",
@@ -12797,6 +12848,7 @@ export default function App() {
               <ConnectionList
                 ref={connectionListRef}
                 profiles={visibleProfiles}
+                ephemeralProfiles={ephemeralProfiles}
                 activeProfileId={selectedProfile?.id ?? null}
                 activeTable={activeTreeTable}
                 sessionId={sessionId}
@@ -14991,6 +15043,19 @@ export default function App() {
             onClose={() => setShowHistorySearch(false)}
           />
         )}
+        <AnimatePresence>
+          {showOpenDatabase && sessionId && selectedProfile && (
+            <OpenDatabaseModal
+              sessionId={sessionId}
+              currentDatabase={selectedProfile.database}
+              onOpen={(database) => {
+                setShowOpenDatabase(false);
+                void handleConnect(databaseVariantProfile(selectedProfile, database));
+              }}
+              onClose={() => setShowOpenDatabase(false)}
+            />
+          )}
+        </AnimatePresence>
         <AnimatePresence>
           {showObjectSearch && sessionId && (
             <ObjectSearchModal
