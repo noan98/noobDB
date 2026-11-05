@@ -189,13 +189,28 @@ pub fn build_statements(
         .collect())
 }
 
+/// 16 進文字列 (`Value::Bytes` の表現) を UTF-8 文字列に戻す。不正なら `None`。
+fn decode_hex_utf8(hex: &str) -> Option<String> {
+    if hex.len() % 2 != 0 || !hex.is_ascii() {
+        return None;
+    }
+    let bytes: Option<Vec<u8>> = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
+        .collect();
+    String::from_utf8(bytes?).ok()
+}
+
 /// MySQL の `ANALYZE` / `OPTIMIZE TABLE` の結果行 (Table / Op / Msg_type / Msg_text) から失敗の
 /// 本文を集める (純関数)。`Msg_type` が大文字小文字を問わず `error` の行だけを失敗とし、
 /// `status` / `note` / `warning` は数えない (InnoDB の OPTIMIZE は note と status OK を返す)。
 /// 列は位置 (2 = Msg_type, 3 = Msg_text) で読み、足りない行は無視する。
 pub fn mysql_maintenance_errors(rows: &[Vec<crate::db::types::Value>]) -> Vec<String> {
+    // 文字列型の列は String、バイナリ照合順序の列は Bytes (16 進文字列) で返ることがあるので、
+    // Bytes も UTF-8 として読む。
     let text = |v: Option<&crate::db::types::Value>| match v {
         Some(crate::db::types::Value::String(s)) => Some(s.clone()),
+        Some(crate::db::types::Value::Bytes(hex)) => decode_hex_utf8(hex),
         _ => None,
     };
     rows.iter()
@@ -339,6 +354,10 @@ mod tests {
             ]
         );
         assert!(mysql_maintenance_errors(&rows[..3]).is_empty());
+        // Bytes (16 進) の Msg_type / Msg_text も読む。
+        let hex = |s: &str| Value::Bytes(s.bytes().map(|b| format!("{b:02x}")).collect());
+        let b = vec![Value::Null, Value::Null, hex("error"), hex("boom")];
+        assert_eq!(mysql_maintenance_errors(&[b]), vec!["boom".to_string()]);
         assert!(mysql_maintenance_errors(&[vec![Value::Null]]).is_empty());
     }
 

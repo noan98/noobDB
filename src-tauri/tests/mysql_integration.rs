@@ -4765,3 +4765,38 @@ async fn mysql_list_table_partitions_when_env_set() {
     }
     conn.close().await;
 }
+
+/// 定期メンテナンス (#2025): ANALYZE / OPTIMIZE TABLE の失敗は SQL エラーではなく結果行の
+/// `Msg_type=Error` で返る。存在しないテーブルは検知でき、実在テーブルの OPTIMIZE
+/// (InnoDB の note は失敗に数えない) は空になる。
+#[tokio::test]
+async fn mysql_maintenance_error_rows_detected_when_env_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("DROP TABLE IF EXISTS noobdb_maint_ok", None)
+        .await
+        .expect("drop");
+    conn.execute("CREATE TABLE noobdb_maint_ok (id INT PRIMARY KEY)", None)
+        .await
+        .expect("create");
+
+    let missing = conn
+        .execute_maintenance("ANALYZE TABLE `noobdb_maint_missing_table`;", None)
+        .await
+        .expect("analyze missing returns rows");
+    assert!(!t::mysql_maintenance_errors(&missing.rows).is_empty());
+
+    let ok = conn
+        .execute_maintenance("OPTIMIZE TABLE `noobdb_maint_ok`;", None)
+        .await
+        .expect("optimize");
+    assert!(t::mysql_maintenance_errors(&ok.rows).is_empty());
+
+    conn.execute("DROP TABLE IF EXISTS noobdb_maint_ok", None)
+        .await
+        .expect("cleanup");
+}

@@ -697,8 +697,10 @@ async fn run_action(
                     Ok(res) => {
                         // MySQL は失敗が結果行 (Msg_type=Error) で返る。
                         if session.conn.driver_kind() == DriverKind::Mysql {
-                            for msg in maintenance::mysql_maintenance_errors(&res.rows) {
-                                failures.push((label.clone(), msg));
+                            // 1 文から Error 行が複数返っても失敗は 1 件として数える。
+                            let errors = maintenance::mysql_maintenance_errors(&res.rows);
+                            if !errors.is_empty() {
+                                failures.push((label.clone(), errors.join("; ")));
                             }
                         }
                     }
