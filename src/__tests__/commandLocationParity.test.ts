@@ -16,9 +16,15 @@ const allSources = import.meta.glob("../../src-tauri/src/**/*.rs", {
 // コマンドが read_only ガード網羅から漏れると read_only プロファイルで静かに
 // 書き込みが通りうる。ここで置き場所そのものを強制する。
 
-/** 行コメント・ブロックコメントを除去する (説明文中の記法の誤検出を避ける)。 */
+/**
+ * 行コメント・ブロックコメントを除去する (説明文中の記法の誤検出を避ける)。
+ * `"a/*b"` のような文字列リテラル内の `/*` `//` でその後ろを巻き込んで消さないよう、
+ * 先にリテラルの中身を空にする (channelMessageParity の stripRustComments と同方式。
+ * ここでは属性値を読まないので復元はしない)。
+ */
 function stripComments(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  const masked = src.replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
+  return masked.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 }
 
 const COMMAND_RE =
@@ -69,8 +75,12 @@ describe("#[tauri::command] の置き場所 (#2037)", () => {
       "/x/src-tauri/src/db/doc.rs":
         "/// `#[tauri::command]` の説明\n// #[tauri::command]\n/* #[tauri::command] */",
     };
-    const found = scan(dummy);
-    expect([...found.keys()]).toEqual(["/x/src-tauri/src/db/evil.rs"]);
+    const found = scan({
+      ...dummy,
+      "/x/src-tauri/src/db/lit.rs": 'let s = "a/*b";\n#[tauri::command]\npub fn after_literal() {}',
+    });
+    expect([...found.keys()].sort()).toEqual(["/x/src-tauri/src/db/evil.rs", "/x/src-tauri/src/db/lit.rs"]);
+    expect(found.get("/x/src-tauri/src/db/lit.rs")?.names).toEqual(["after_literal"]);
     expect(found.get("/x/src-tauri/src/db/evil.rs")?.names).toEqual(["evil"]);
   });
 });

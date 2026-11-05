@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 // (#921)、新しいコマンドモジュールを追加したときにここへの追記を忘れると、その
 // モジュールのコマンドは静かに引数パリティ検査から漏れてしまう (実際に advisor 系
 // テストのみが動いていた時期に privileges/sandbox/flight_recorder/local/tasks の
-// 5 モジュールが漏れていた)。`import.meta.glob` で `commands/*.rs` を機械的に
+// 5 モジュールが漏れていた)。`import.meta.glob` で `commands/**/*.rs` を機械的に
 // 全件取り込むことで、モジュール追加時の追記漏れ自体を構造的に無くす。
 import libRs from "../../src-tauri/src/lib.rs?raw";
 // `tauri.ts` と `api/commands/*.ts` の連結 (ラッパー本体はモジュール別ファイルに分割済み)。
@@ -177,7 +177,7 @@ function snakeToCamel(s: string): string {
  * `lib.rs` の `generate_handler![...]` ブロックから登録済みコマンド名を抽出する。
  * `ipcCommandParity.test.ts` の同名関数と同じロジック (意図的な複製 — 各テスト
  * ファイルは自己完結させる方針、`splitTopLevel` 等の他ヘルパーも共有していない)。
- * ここでは「lib.rs に登録されているのに `rustSources` (= commands/*.rs の自動
+ * ここでは「lib.rs に登録されているのに `rustSources` (= commands/ 配下の .rs の自動
  * 列挙) 側で 1 件も引数を抽出できていないコマンドが無いか」の取りこぼし検知にのみ使う。
  */
 function extractRegisteredCommands(source: string): Set<string> {
@@ -460,7 +460,7 @@ describe("IPC 引数名パリティ (Rust コマンドのパラメータ名 ↔ 
   });
 
   it("lib.rs に登録済みのコマンドが rustSources の自動列挙から漏れていない (取りこぼし検知、#921)", () => {
-    // `rustSources` を `commands/*.rs` の import.meta.glob で自動導出しているため
+    // `rustSources` を `commands/**/*.rs` の import.meta.glob で自動導出しているため
     // 通常は起こり得ないが、コマンドが commands/ 以外のファイルに定義される・
     // ファイル名が glob パターンから外れる、といった将来の変更で再びモジュール
     // 単位の取りこぼしが起きないよう、lib.rs 登録集合を正として突き合わせる。
@@ -468,11 +468,11 @@ describe("IPC 引数名パリティ (Rust コマンドのパラメータ名 ↔ 
     const missing = [...registered].filter((name) => !backendParams.has(name)).sort();
     expect(
       missing,
-      `rustSources (commands/*.rs) から引数情報を抽出できていない登録コマンド: ${missing.join(", ")}`,
+      `rustSources (commands/**/*.rs) から引数情報を抽出できていない登録コマンド: ${missing.join(", ")}`,
     ).toEqual([]);
   });
 
-  it("commands/*.rs の全 #[tauri::command] が lib.rs の generate_handler! に登録されている (#989)", () => {
+  it("commands/**/*.rs の全 #[tauri::command] が lib.rs の generate_handler! に登録されている (#989)", () => {
     // これまでのパリティ検査は「集合の一部」しか見ていなかった:
     //   - ipcCommandParity.test.ts は lib.rs 登録集合 == tauri.ts 呼び出し集合を強制。
     //   - 上のテストは lib.rs 登録集合 ⊆ backendParams (取りこぼし検知) だけを見る。
@@ -480,7 +480,7 @@ describe("IPC 引数名パリティ (Rust コマンドのパラメータ名 ↔ 
     // tauri.ts のラッパも作っていない」コマンドを検出できない。コマンド関数は
     // すべて pub async fn なので rlib の公開 API と見なされ、rustc の dead_code にも
     // ならず clippy -D warnings もすり抜ける。knip は TS 専用で Rust を見ない。
-    // ここで backendParams (= commands/*.rs の全 #[tauri::command] 名) が
+    // ここで backendParams (= commands/**/*.rs の全 #[tauri::command] 名) が
     // registered (= lib.rs の generate_handler! 登録集合) の部分集合であることを
     // 強制し、未登録の到達不能ハンドラを検出する (#907 のバックエンド版)。
     const registered = extractRegisteredCommands(libRs);
