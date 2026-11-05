@@ -377,6 +377,7 @@ pub async fn create_local_session_inner(state: &AppState) -> Result<SessionId> {
     let session = Session {
         id: new_session_id(),
         profile_id: None,
+        secret_profile_id: None,
         conn,
         connect_options: opts,
         read_only: false,

@@ -643,6 +643,7 @@ pub mod __test_api {
         Session {
             id: id.to_string(),
             profile_id: None,
+            secret_profile_id: None,
             conn,
             connect_options: opts,
             read_only,

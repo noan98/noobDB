@@ -120,6 +120,11 @@ pub struct ConnectRequest {
     /// ID 文字列の形からは何も推測しない (偽装 ID で他人の秘密を引けないようにする)。
     #[serde(default)]
     pub variant_of: Option<String>,
+    /// `variant_of` の検証に通ったときだけバックエンドが設定する、keyring の秘密を引く元プロファイル
+    /// ID。クライアントからは受け取らない (`skip`)。`profile_id` は派生 ID のまま保つ — 履歴・
+    /// フライトレコーダ・Undo の照合が DB ごとに区別できるようにするため。
+    #[serde(skip)]
+    pub secret_profile_id: Option<String>,
     pub driver: DriverKind,
     #[serde(default)]
     pub host: String,
@@ -169,6 +174,13 @@ pub struct ConnectRequest {
     /// in the query history.
     #[serde(default)]
     pub skip_history: bool,
+}
+
+impl ConnectRequest {
+    /// keyring の秘密を引くプロファイル ID。検証済みの派生接続は元プロファイル、それ以外は `profile_id`。
+    fn secret_owner(&self) -> Option<&String> {
+        self.secret_profile_id.as_ref().or(self.profile_id.as_ref())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -270,6 +282,7 @@ pub async fn connect(
     let secs = clamp_connect_timeout(timeout_secs);
     let attempt_id = attempt_id.unwrap_or_else(new_session_id);
     let profile_id = req.profile_id.clone();
+    let secret_profile_id = req.secret_profile_id.clone();
     let read_only = req.read_only;
     let skip_history = req.skip_history;
     let driver = req.driver;
@@ -293,6 +306,7 @@ pub async fn connect(
     let session = Session {
         id: new_session_id(),
         profile_id,
+        secret_profile_id,
         conn,
         read_only,
         // 緊急クエリ実行モードは常にオフで開始する (有効化は明示的な IPC のみ)。
@@ -323,8 +337,8 @@ pub async fn connect(
 /// 派生接続 (`variant_of`, #2018) を検証し、通常の接続要求へ正規化する。
 ///
 /// `variant_of` が無ければそのまま返す。あれば保存済みの元プロファイルを `profiles.json` から
-/// 読み、接続先が一致することを確かめたうえで `profile_id` を元プロファイルの ID に置き換える
-/// (以降の keyring 解決・再接続・履歴は元プロファイルとして扱われる)。`database` と
+/// 読み、接続先が一致することを確かめたうえで `secret_profile_id` に元プロファイルの ID を設定する
+/// (keyring の秘密だけを元から引く。`profile_id` は派生 ID のままで、履歴・Undo は派生側で区別される)。`database` と
 /// `init_sql` 以外の接続先が違う要求は、元プロファイルの秘密を別ホストへ送らせないため拒否する。
 fn resolve_variant(mut req: ConnectRequest) -> Result<ConnectRequest> {
     let Some(base_id) = req.variant_of.take() else {
@@ -336,7 +350,7 @@ fn resolve_variant(mut req: ConnectRequest) -> Result<ConnectRequest> {
         .find(|p| p.id == base_id)
         .ok_or_else(|| AppError::InvalidInput("variant_of: profile not found".into()))?;
     verify_variant(&req, base)?;
-    req.profile_id = Some(base.id.clone());
+    req.secret_profile_id = Some(base.id.clone());
     Ok(req)
 }
 
@@ -354,6 +368,9 @@ fn verify_variant(req: &ConnectRequest, base: &crate::profiles::ConnectionProfil
         || req.ssl_root_cert != base.ssl_root_cert
         || req.ssl_client_cert != base.ssl_client_cert
         || req.ssl_client_key != base.ssl_client_key
+        || req.init_sql != base.init_sql
+        // 安全網を弱めた派生は作らせない (元が読み取り専用なら派生も読み取り専用)。
+        || (base.read_only && !req.read_only)
         || req.aws_iam != base.aws_iam
         || req.ssm != base.ssm
     {
@@ -776,6 +793,7 @@ pub async fn reconnect_inner(state: &AppState, session_id: &str, force: bool) ->
     let new_session = Session {
         id: old.id.clone(),
         profile_id: old.profile_id.clone(),
+        secret_profile_id: old.secret_profile_id.clone(),
         conn,
         connect_options: opts,
         read_only: old.read_only,
@@ -833,7 +851,7 @@ async fn reopen_transport(
     let tunnel = if let Some(ssh) = &old.reconnect_ssh {
         // Re-resolve SSH secrets from the keyring (no new plaintext retention).
         let mut cfg = ssh.clone();
-        if let Some(pid) = &old.profile_id {
+        if let Some(pid) = old.secret_owner() {
             if cfg.passphrase.is_empty() {
                 if let Some(p) = secrets::get_ssh_passphrase(pid)? {
                     cfg.passphrase = p;
@@ -1133,7 +1151,7 @@ fn resolve_password(req: &ConnectRequest) -> Result<String> {
     if !req.password.is_empty() {
         return Ok(req.password.clone());
     }
-    if let Some(id) = &req.profile_id {
+    if let Some(id) = req.secret_owner() {
         if let Some(p) = secrets::get_db_password(id)? {
             return Ok(p);
         }
@@ -1145,7 +1163,7 @@ fn resolve_passphrase(req: &ConnectRequest, ssh: &SshRequest) -> Result<String> 
     if !ssh.passphrase.is_empty() {
         return Ok(ssh.passphrase.clone());
     }
-    if let Some(id) = &req.profile_id {
+    if let Some(id) = req.secret_owner() {
         if let Some(p) = secrets::get_ssh_passphrase(id)? {
             return Ok(p);
         }
@@ -1157,7 +1175,7 @@ fn resolve_ssh_password(req: &ConnectRequest, ssh: &SshRequest) -> Result<String
     if !ssh.password.is_empty() {
         return Ok(ssh.password.clone());
     }
-    if let Some(id) = &req.profile_id {
+    if let Some(id) = req.secret_owner() {
         if let Some(p) = secrets::get_ssh_password(id)? {
             return Ok(p);
         }
@@ -1173,7 +1191,7 @@ fn resolve_jump_passphrase(req: &ConnectRequest, jump: &SshJumpRequest) -> Resul
     if !jump.passphrase.is_empty() {
         return Ok(jump.passphrase.clone());
     }
-    if let Some(id) = &req.profile_id {
+    if let Some(id) = req.secret_owner() {
         if let Some(p) = secrets::get_ssh_jump_passphrase(id)? {
             return Ok(p);
         }
@@ -1187,7 +1205,7 @@ fn resolve_jump_password(req: &ConnectRequest, jump: &SshJumpRequest) -> Result<
     if !jump.password.is_empty() {
         return Ok(jump.password.clone());
     }
-    if let Some(id) = &req.profile_id {
+    if let Some(id) = req.secret_owner() {
         if let Some(p) = secrets::get_ssh_jump_password(id)? {
             return Ok(p);
         }
@@ -1245,6 +1263,7 @@ mod tests {
         ConnectRequest {
             profile_id: Some("prof".into()),
             variant_of: None,
+            secret_profile_id: None,
             driver: DriverKind::Mysql,
             host: "db.internal".into(),
             port: 3306,
@@ -1417,5 +1436,53 @@ mod tests {
         r.profile_id = Some("base1::db::x".into());
         let out = resolve_variant(r).expect("no variant_of");
         assert_eq!(out.profile_id.as_deref(), Some("base1::db::x"));
+    }
+
+    #[test]
+    fn variant_verification_covers_driver_names_init_sql_and_read_only_2018() {
+        // 実際のドライバ名 ("postgres" 等) で比較が一致する。
+        let mut base = variant_base();
+        base.driver = "postgres".into();
+        let mut r = variant_req();
+        r.driver = DriverKind::Postgres;
+        assert!(verify_variant(&r, &base).is_ok());
+        // init_sql が違う派生は拒否。
+        let mut r2 = variant_req();
+        r2.driver = DriverKind::Postgres;
+        r2.init_sql = Some("SET x = 1".into());
+        assert!(verify_variant(&r2, &base).is_err());
+        // 元が read_only なら、派生が read_only を外すのは拒否。
+        base.read_only = true;
+        assert!(verify_variant(&r, &base).is_err());
+        r.read_only = true;
+        assert!(verify_variant(&r, &base).is_ok());
+    }
+
+    /// 検証済みの派生は profile_id を派生 ID のまま持ち、秘密だけ元 ID から引く。
+    #[test]
+    fn variant_keeps_derived_profile_id_but_resolves_secrets_from_base_2018() {
+        let mut r = variant_req();
+        r.profile_id = Some("base1::db::x".into());
+        r.secret_profile_id = Some("base1".into());
+        assert_eq!(r.profile_id.as_deref(), Some("base1::db::x"));
+        assert_eq!(r.secret_owner().map(String::as_str), Some("base1"));
+        // 検証を通っていない要求は自身の profile_id (偽装 ID を含む) から引くだけ。
+        let mut plain = variant_req();
+        plain.profile_id = Some("base1::db::x".into());
+        assert_eq!(
+            plain.secret_owner().map(String::as_str),
+            Some("base1::db::x")
+        );
+    }
+
+    /// クライアントからの `secret_profile_id` は受け取らない (JSON に書いても無視される)。
+    #[test]
+    fn secret_profile_id_cannot_be_set_by_the_client_2018() {
+        let r: ConnectRequest = serde_json::from_value(serde_json::json!({
+            "driver": "mysql", "host": "h", "port": 1, "user": "u",
+            "secret_profile_id": "victim"
+        }))
+        .expect("deserialize");
+        assert!(r.secret_profile_id.is_none());
     }
 }
