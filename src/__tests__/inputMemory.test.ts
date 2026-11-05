@@ -156,12 +156,30 @@ function spec(over: Partial<ColumnGenSpec>): ColumnGenSpec {
     max: 1000,
     serialStart: 1,
     temporal: "datetime",
+    dateFrom: "2023-01-01",
+    dateTo: "2025-12-31",
+    template: "item-{n}",
     ...over,
   };
 }
 
 describe("テストデータの記憶", () => {
   const masks = ["password", "email"];
+  it("保存時: 機微な列名のテンプレートも保存しない", () => {
+    const snap = snapshotTestDataPrefs(
+      [
+        spec({ column: "name", strategy: "template", template: "n-{n}" }),
+        spec({ column: "user_password", strategy: "template", template: "pw-secret-{n}" }),
+      ],
+      "50",
+      42,
+      masks,
+    );
+    expect(snap.columns.name.template).toBe("n-{n}");
+    expect(snap.columns.user_password.template).toBeUndefined();
+    expect(JSON.stringify(snap)).not.toContain("pw-secret");
+  });
+
   it("保存時: 機微な列名の固定値は保存せず、スキーマ由来の候補値も含めない", () => {
     const snap = snapshotTestDataPrefs(
       [

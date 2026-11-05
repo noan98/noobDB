@@ -257,6 +257,11 @@ export interface ResolvedSshAlias {
 
 export interface ConnectRequest extends TlsSettings, SessionInitSettings, AwsIamSettings, SsmSettings {
   profile_id?: string;
+  /**
+   * 「同じサーバの別データベースを開く」(#2018) の派生接続で、元の保存済みプロファイルの ID。
+   * バックエンドが接続先の一致を検証したうえで、元プロファイルの keyring の秘密を使う。
+   */
+  variant_of?: string | null;
   driver: DriverKind;
   host: string;
   port: number;
@@ -1161,7 +1166,7 @@ export interface InsertRowsResult {
  * 戻らなかったことを表す。承認して再実行してはいけない (再読込して現状を確認させる)。
  */
 export type BulkWriteOutcome =
-  | { status: "applied"; result: QueryResult }
+  | { status: "applied"; result: QueryResult; capture: BulkCaptureOutcome }
   | {
       status: "row_count_exceeded";
       expected_rows: number;
@@ -1172,8 +1177,23 @@ export type BulkWriteOutcome =
   | { status: "optimistic_conflict"; conflict_rows: number; statement_counts: number[] }
   | { status: "rollback_incomplete"; expected_rows: number; actual_rows: number };
 
+/** `bulk_update_cells` のフライトレコーダー記録の結果 (#2024)。 */
+export interface BulkCaptureOutcome {
+  /** 保存した記録の件数。 */
+  recorded: number;
+  /** 記録を辞退した部分の数 (主キーを特定できない追加文など)。 */
+  declined: number;
+  /** 保存した記録に共通のバッチ id (1 件も保存しなければ null)。 */
+  batch_id: string | null;
+}
+
 /** `bulk_update_cells` の追加オプション (#1777)。後続の検査 (楽観ロックなど) もここへ足す。 */
 export interface BulkWriteOptions {
+  /**
+   * フライトレコーダーへ記録する (#2024)。主キーで行を特定できる編集だけが対象 (呼び出し側が
+   * `pkColumns` が実際の主キーのときだけ指定する)。失敗しても編集は妨げない。
+   */
+  capture?: { rowCap?: number; retentionDays?: number };
   /** 確認ダイアログで承認した文ごとの影響行数 (`row_count_exceeded.statement_counts`)。各文の上限にして再実行する。 */
   approvedCounts?: number[];
 }
@@ -1835,7 +1855,10 @@ export type AdvisorRuleId =
   | "missing_primary_key"
   | "unused_index"
   | "fk_type_mismatch"
-  | "sqlite_integer_pk_hint";
+  | "sqlite_integer_pk_hint"
+  | "nullable_foreign_key"
+  | "oversized_varchar"
+  | "float_for_money";
 
 /** 指摘の重要度。フロントで semantic トークンに色分けされる (#664)。 */
 export type AdvisorSeverity = "high" | "medium" | "low";
@@ -2315,7 +2338,19 @@ export type TaskAction =
       kind: "refresh_plan_watch";
       /** 対象スニペット ID。空ならこのプロファイルでウォッチ中のものすべて。 */
       snippet_ids: string[];
+    }
+  | {
+      /** ANALYZE / VACUUM / OPTIMIZE / REINDEX の定期メンテナンス (#2025)。書き込み扱いで、read_only のプロファイルでは保存・実行とも拒否される。 */
+      kind: "run_maintenance";
+      /** MySQL ではデータベース、PostgreSQL ではスキーマ (識別子の修飾)。SQLite は無視。 */
+      database?: string | null;
+      /** 対象テーブル。空ならデータベース全体 (PostgreSQL の ANALYZE / VACUUM、SQLite)。 */
+      targets: string[];
+      maintenance: TaskMaintenanceKind;
     };
+
+/** `run_maintenance` の種別。ドライバごとに使えるものが違う (`maintenanceKindsForDriver`)。 */
+export type TaskMaintenanceKind = "analyze" | "optimize" | "vacuum" | "vacuum_analyze" | "reindex";
 
 /** 接続失敗時の自動リトライ設定 (#1537)。接続段階の失敗だけを指数バックオフで再試行する。 */
 export interface ConnectRetry {

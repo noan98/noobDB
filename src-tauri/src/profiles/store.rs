@@ -58,6 +58,16 @@ fn load_all_locked() -> Result<Vec<ConnectionProfile>> {
     Ok(parse_tolerant(values).0)
 }
 
+/// フロントが「同じサーバの別データベースを開く」(#2018) の一時的な派生接続に使う ID の
+/// 区切り。保存済みプロファイルがこの形の ID を持つと一時接続と取り違えるため、保存・
+/// インポート・読み込みで受け付けない (秘密の解決には使わない。`variant_of` を参照)。
+pub const DB_VARIANT_SEP: &str = "::db::";
+
+/// 派生接続用に予約された形の ID か。
+pub fn is_reserved_profile_id(id: &str) -> bool {
+    id.contains(DB_VARIANT_SEP)
+}
+
 /// 要素ごとにプロファイルとして解釈する。解釈できない要素 (手編集・新しい版が足した
 /// 未知の列挙子など) は警告を出して読み飛ばし、生の JSON のまま第 2 戻り値で返す。
 /// 1 件の不正で全プロファイルの一覧・保存・削除が不能になるのを防ぐ。
@@ -68,6 +78,10 @@ fn parse_tolerant(
     let mut raw = Vec::new();
     for v in values {
         match serde_json::from_value::<ConnectionProfile>(v.clone()) {
+            Ok(p) if is_reserved_profile_id(&p.id) => {
+                tracing::warn!("profiles: skipping profile with a reserved id");
+                raw.push(v);
+            }
             Ok(p) => ok.push(p),
             Err(e) => {
                 tracing::warn!(error = %e, "profiles: skipping unparsable profile entry");
@@ -330,6 +344,18 @@ mod tests {
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    #[test]
+    fn reserved_derived_id_is_skipped_on_load_2018() {
+        let values = vec![
+            serde_json::json!({"id":"ok","name":"n","driver":"sqlite","host":"","port":0,"user":"","database":null,"ssh":null}),
+            serde_json::json!({"id":"ok::db::x","name":"n","driver":"mysql","host":"evil","port":1,"user":"","database":null,"ssh":null}),
+        ];
+        let (good, raw) = parse_tolerant(values);
+        assert_eq!(good.len(), 1);
+        assert_eq!(good[0].id, "ok");
+        assert_eq!(raw.len(), 1);
     }
 
     #[test]

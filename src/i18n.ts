@@ -3643,6 +3643,14 @@ const en = {
   timelapseLatest: "latest",
   timelapseRows: "{count} rows",
   timelapseLatestVsPrevious: "Latest ↔ previous",
+  timelapseScrubAria: "Timeline scrubber",
+  timelapseScrubStep: "Step {step} / {max}",
+  timelapsePlay: "Play",
+  timelapsePause: "Pause",
+  timelapseStepPrev: "Previous step",
+  timelapseStepNext: "Next step",
+  timelapsePlayReducedMotion:
+    "Playback is turned off while reduced motion is on. Use the step buttons instead.",
   timelapseDiffError: "Failed to compute the diff: {error}",
   timelapseDiffLoading: "Computing the diff…",
   timelapseCountAdded: "Added: {count}",
@@ -4583,6 +4591,13 @@ const en = {
   testDataStrategyRandomNumber: "Random number",
   testDataStrategyRandomString: "Random string",
   testDataStrategyRandomDate: "Random date/time",
+  testDataStrategyTemplate: "Template string",
+  testDataTemplate: "Template",
+  testDataTemplatePlaceholder: "user{n:4}@example.com",
+  testDataTemplateHelp:
+    "Tokens: {n} row number / {n:5} zero-padded / {rand:1-9} random integer / {pick:a|b|c} random choice / {uuid} / {alpha:6} random letters and digits",
+  testDataDateFrom: "From",
+  testDataDateTo: "To",
   testDataStrategyRandomBool: "Random boolean",
   testDataStrategyFixed: "Fixed value",
   testDataStrategyChoice: "Random from enum values",
@@ -5441,6 +5456,16 @@ const en = {
   cmdkActionSchemaExport: "Export schema for AI (Markdown)",
   cmdkActionToggleTheme: "Toggle light / dark theme",
   cmdkActionDisconnect: "Disconnect",
+  cmdkActionOpenDatabase: "Open another database on this server...",
+  openDatabaseTitle: "Open another database on this server",
+  openDatabaseHint:
+    "Opens the chosen database as a new connection, reusing this connection's host, TLS, SSH tunnel and saved credentials.",
+  openDatabaseFilterLabel: "Database",
+  openDatabaseFilterPlaceholder: "Filter by name",
+  openDatabaseLoading: "Loading databases...",
+  openDatabaseEmpty: "No matching databases",
+  openDatabaseCurrent: "Connected",
+  openDatabaseCancel: "Close",
   cmdkActionRunSnippet: "Run: {name}",
 
   // プロセスモニタパネル
@@ -6247,6 +6272,9 @@ const en = {
   advisorRuleUnusedIndexTitle: "Unused index",
   advisorRuleFkTypeMismatchTitle: "Foreign key type mismatch",
   advisorRuleSqliteIntegerPkHintTitle: "Non-INTEGER integer primary key",
+  advisorRuleNullableForeignKeyTitle: "Nullable foreign key",
+  advisorRuleOversizedVarcharTitle: "Oversized VARCHAR",
+  advisorRuleFloatForMoneyTitle: "Floating-point type for money",
   // 未知のルール ID (バックエンドだけ新ルールを足したドリフト時) の汎用フォールバック
   advisorRuleUnknownTitle: "Other schema finding",
   advisorRuleUnknownDesc:
@@ -6266,6 +6294,14 @@ const en = {
     "{table}.{column} is {srcType}, but the referenced {ref} is {refType}. The type mismatch can force an implicit conversion that prevents the index from being used in joins.",
   advisorRuleSqliteIntegerPkHintDesc:
     "{table}.{column} is declared {type} PRIMARY KEY. In SQLite only exactly INTEGER PRIMARY KEY becomes a rowid alias; {type} creates a separate index alongside the rowid, wasting space.",
+  advisorRuleNullableForeignKeyDesc:
+    "{table}({columns}) is a foreign key referencing {ref} but allows NULL. Rows can exist without a parent, leaving a hole in referential integrity. Add NOT NULL if the reference is required.",
+  advisorRuleOversizedVarcharDesc:
+    "{table}.{column} is {type} ({length} characters). In MySQL an oversized limit gives no real validation and can inflate memory use for sorting and in-memory temporary tables. Consider a realistic length, or TEXT if the length is unbounded.",
+  advisorRuleFloatForMoneyDesc:
+    "{table}.{column} looks like a monetary value but uses the floating-point type {type}. Rounding errors can accumulate; use DECIMAL / NUMERIC (or integer minor units) instead.",
+  advisorRuleFloatForMoneySqliteDesc:
+    "{table}.{column} looks like a monetary value but uses the floating-point type {type}. Rounding errors can accumulate. In SQLite, DECIMAL / NUMERIC only gives NUMERIC affinity and values may still be stored as REAL, so store integer minor units (e.g. cents) in an INTEGER column instead.",
   // 未使用ルールのスキップ理由
   advisorReasonUnsupportedDriver:
     "this driver has no server-side index usage statistics (SQLite is file-backed), so the unused-index rule is skipped.",
@@ -6620,6 +6656,19 @@ const en = {
   taskFormTimelapseHint:
     "Captures a snapshot of every table watched in the Table Timelapse panel for this connection (read-only), so history keeps accumulating while you are away. A table that cannot be captured marks the run as failed.",
   taskFormTimelapseMaxGenerations: "Generations to keep per table (optional)",
+  taskFormActionMaintenance: "Run maintenance (ANALYZE / VACUUM / OPTIMIZE / REINDEX)",
+  taskFormMaintenanceHint:
+    "Runs the chosen maintenance statement one table at a time. This is a write operation, so it is rejected for read-only profiles; the statements are generated from a fixed set (no custom SQL). A table that fails marks the run as failed, and the rest still run. With no target tables, PostgreSQL and SQLite process the whole database; the schema field is only used to qualify target table names.",
+  taskFormMaintenanceKind: "Maintenance",
+  taskFormMaintenanceDatabase: "Database / schema (optional)",
+  taskFormMaintenanceTargets: "Target tables (one per line; empty = whole database)",
+  taskFormMaintenanceTargetsRequiredMysql:
+    "MySQL has no database-wide maintenance statement. Enter at least one table.",
+  taskFormMaintenanceTargetsRequiredReindex: "PostgreSQL REINDEX needs at least one table.",
+  taskFormMaintenanceSqliteVacuumTargets:
+    "SQLite VACUUM applies to the whole database. Leave the target tables empty.",
+  taskFormMaintenanceReadOnlyProfile:
+    "This connection is read-only, so maintenance cannot be scheduled for it.",
   taskFormActionPlanWatch: "Refresh watched query plans",
   taskFormPlanWatchHint:
     "Re-runs EXPLAIN for the queries watched in the Plan Watch panel and records a new plan generation when it changed. Only warning-level changes (e.g. an index lookup that became a full scan, or an order-of-magnitude jump in estimated rows) mark the run as failed and notify you.",
@@ -6676,6 +6725,8 @@ const en = {
   taskSummaryTimelapse: "timelapse capture",
   taskSummaryPlanWatchAll: "plan watch (all watched)",
   taskSummaryPlanWatch: "plan watch ({n})",
+  taskSummaryMaintenanceAll: "maintenance: {kind} (whole database)",
+  taskSummaryMaintenance: "maintenance: {kind} ({n} tables)",
   taskRelDue: "due",
   taskRelLessThanMinute: "<1 min",
   taskRelMinutes: "{n} min",
@@ -10881,6 +10932,14 @@ const ja: Dict = {
   timelapseLatest: "最新",
   timelapseRows: "{count} 行",
   timelapseLatestVsPrevious: "最新 ↔ 1 つ前",
+  timelapseScrubAria: "タイムライン・スクラバー",
+  timelapseScrubStep: "ステップ {step} / {max}",
+  timelapsePlay: "再生",
+  timelapsePause: "一時停止",
+  timelapseStepPrev: "1 つ前のステップ",
+  timelapseStepNext: "1 つ先のステップ",
+  timelapsePlayReducedMotion:
+    "モーション低減の設定中は再生できません。ステップ送りのボタンを使ってください。",
   timelapseDiffError: "差分を計算できませんでした: {error}",
   timelapseDiffLoading: "差分を計算しています…",
   timelapseCountAdded: "追加: {count}",
@@ -11814,6 +11873,13 @@ const ja: Dict = {
   testDataStrategyRandomNumber: "ランダム数値",
   testDataStrategyRandomString: "ランダム文字列",
   testDataStrategyRandomDate: "ランダム日時",
+  testDataStrategyTemplate: "テンプレート文字列",
+  testDataTemplate: "テンプレート",
+  testDataTemplatePlaceholder: "user{n:4}@example.com",
+  testDataTemplateHelp:
+    "使えるトークン: {n} 行番号 / {n:5} 0 埋め / {rand:1-9} 整数乱数 / {pick:a|b|c} 候補から選択 / {uuid} / {alpha:6} 英数字",
+  testDataDateFrom: "開始日",
+  testDataDateTo: "終了日",
   testDataStrategyRandomBool: "ランダム真偽",
   testDataStrategyFixed: "固定値",
   testDataStrategyChoice: "列挙からランダム",
@@ -12663,6 +12729,16 @@ const ja: Dict = {
   cmdkActionSchemaExport: "スキーマを AI 向けに出力 (Markdown)",
   cmdkActionToggleTheme: "ライト / ダークテーマ切替",
   cmdkActionDisconnect: "切断する",
+  cmdkActionOpenDatabase: "同じサーバの別データベースを開く...",
+  openDatabaseTitle: "同じサーバの別データベースを開く",
+  openDatabaseHint:
+    "選んだデータベースを新しい接続として開きます。この接続のホスト・TLS・SSH トンネル・保存済みの認証情報をそのまま使います。",
+  openDatabaseFilterLabel: "データベース",
+  openDatabaseFilterPlaceholder: "名前で絞り込み",
+  openDatabaseLoading: "データベースを読み込み中...",
+  openDatabaseEmpty: "一致するデータベースがありません",
+  openDatabaseCurrent: "接続中",
+  openDatabaseCancel: "閉じる",
   cmdkActionRunSnippet: "実行: {name}",
 
   // プロセスモニタパネル
@@ -13465,6 +13541,9 @@ const ja: Dict = {
   advisorRuleUnusedIndexTitle: "未使用インデックス",
   advisorRuleFkTypeMismatchTitle: "外部キーの型不一致",
   advisorRuleSqliteIntegerPkHintTitle: "INTEGER でない整数 PK",
+  advisorRuleNullableForeignKeyTitle: "NULL を許す外部キー",
+  advisorRuleOversizedVarcharTitle: "過大な VARCHAR",
+  advisorRuleFloatForMoneyTitle: "金額に浮動小数型",
   // 未知のルール ID (バックエンドだけ新ルールを足したドリフト時) の汎用フォールバック
   advisorRuleUnknownTitle: "その他のスキーマ指摘",
   advisorRuleUnknownDesc:
@@ -13484,6 +13563,14 @@ const ja: Dict = {
     "{table}.{column} は {srcType} ですが、参照先の {ref} は {refType} です。型の不一致は暗黙変換を招き、JOIN でインデックスが効かなくなることがあります。",
   advisorRuleSqliteIntegerPkHintDesc:
     "{table}.{column} は {type} PRIMARY KEY として宣言されています。SQLite では厳密に INTEGER PRIMARY KEY のときだけ rowid エイリアスになり、{type} では rowid とは別にインデックスが作られ領域を余分に使います。",
+  advisorRuleNullableForeignKeyDesc:
+    "{table}({columns}) は {ref} を参照する外部キーですが NULL を許可しています。親を持たない行が存在でき、参照整合性に穴が開きます。参照が必須なら NOT NULL を付けてください。",
+  advisorRuleOversizedVarcharDesc:
+    "{table}.{column} は {type} ({length} 文字) です。MySQL では、過大な上限は実質的な検証にならず、ソートやメモリ上の一時テーブルのメモリ消費を膨らませることがあります。現実的な長さにするか、長さが不定なら TEXT を検討してください。",
+  advisorRuleFloatForMoneyDesc:
+    "{table}.{column} は金額を表す列に見えますが、浮動小数型 {type} です。丸め誤差が蓄積するため、DECIMAL / NUMERIC (または最小単位の整数) を使ってください。",
+  advisorRuleFloatForMoneySqliteDesc:
+    "{table}.{column} は金額を表す列に見えますが、浮動小数型 {type} です。丸め誤差が蓄積します。SQLite の DECIMAL / NUMERIC は NUMERIC 親和性になるだけで、値は REAL として保存されうるため、INTEGER 列に最小単位の整数 (円・セントなど) で保存してください。",
   // 未使用ルールのスキップ理由
   advisorReasonUnsupportedDriver:
     "このドライバはサーバ側のインデックス使用統計を持たない (SQLite はファイルベース) ため、未使用インデックスルールはスキップされます。",
@@ -13835,6 +13922,19 @@ const ja: Dict = {
   taskFormTimelapseHint:
     "この接続でテーブル・タイムラプスにウォッチ登録したテーブルのスナップショットを読み取り専用で取得し、席を外している間も履歴を積み上げます。取得できなかったテーブルがあると実行は失敗扱いになります。",
   taskFormTimelapseMaxGenerations: "テーブルごとに保持する世代数 (任意)",
+  taskFormActionMaintenance: "定期メンテナンス (ANALYZE / VACUUM / OPTIMIZE / REINDEX)",
+  taskFormMaintenanceHint:
+    "選んだメンテナンス文をテーブルごとに 1 文ずつ実行します。書き込み扱いの操作なので、読み取り専用の接続では拒否されます。実行する文は固定の組み合わせから生成し、任意の SQL は指定できません。失敗したテーブルがあると実行は失敗扱いになりますが、残りは続けて実行します。対象テーブルが空のときは PostgreSQL / SQLite ではデータベース全体が対象になり、スキーマ指定は対象テーブルの修飾にだけ使います。",
+  taskFormMaintenanceKind: "メンテナンスの種類",
+  taskFormMaintenanceDatabase: "データベース / スキーマ (省略可)",
+  taskFormMaintenanceTargets: "対象テーブル (1 行に 1 つ。空ならデータベース全体)",
+  taskFormMaintenanceTargetsRequiredMysql:
+    "MySQL にはデータベース全体を対象にするメンテナンス文がありません。テーブルを 1 つ以上入力してください。",
+  taskFormMaintenanceTargetsRequiredReindex:
+    "PostgreSQL の REINDEX にはテーブルを 1 つ以上入力してください。",
+  taskFormMaintenanceSqliteVacuumTargets:
+    "SQLite の VACUUM はデータベース全体が対象です。対象テーブルは空にしてください。",
+  taskFormMaintenanceReadOnlyProfile: "この接続は読み取り専用のため、メンテナンスは登録できません。",
   taskFormActionPlanWatch: "ウォッチ中のクエリ実行計画を再取得",
   taskFormPlanWatchHint:
     "実行計画ウォッチに登録したクエリの EXPLAIN を再実行し、計画が変わっていれば新しい世代として記録します。警告レベルの変化 (インデックス参照がフルスキャンになった、推定行数が桁違いに増えた等) があったときだけ実行を失敗扱いにしてデスクトップ通知でお知らせします。",
@@ -13892,6 +13992,8 @@ const ja: Dict = {
   taskSummaryTimelapse: "タイムラプス取得",
   taskSummaryPlanWatchAll: "実行計画ウォッチ (ウォッチ中すべて)",
   taskSummaryPlanWatch: "実行計画ウォッチ ({n} 件)",
+  taskSummaryMaintenanceAll: "メンテナンス: {kind} (データベース全体)",
+  taskSummaryMaintenance: "メンテナンス: {kind} ({n} テーブル)",
   taskRelDue: "実行待ち",
   taskRelLessThanMinute: "1 分未満",
   taskRelMinutes: "{n} 分後",

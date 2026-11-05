@@ -31,6 +31,7 @@ import { CopyButton } from "./CopyButton";
 import { useConfirm } from "./ConfirmDialog";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiSurface } from "./AiSurface";
 import { AiUsageNote } from "./AiUsageNote";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Tooltip } from "./Tooltip";
@@ -313,16 +314,8 @@ export function AiHistorySearch({ filters, periodLabel, onOpen, onSaveAsSnippet 
   const running = preparing || stream.running;
 
   return (
-    <Flex
-      direction="column"
-      gap="2"
-      px="2.5"
-      py="2"
-      bg="app.surface"
-      borderBottomWidth="1px"
-      borderBottomColor="app.borderSubtle"
-      fontSize="sm"
-      color="app.text"
+    <AiSurface
+      edge="bottom"
       role="group"
       aria-label={t("aiHistoryPanelLabel")}
       data-testid="ai-history-search"
@@ -534,6 +527,6 @@ export function AiHistorySearch({ filters, periodLabel, onOpen, onSaveAsSnippet 
         </Callout>
       )}
       {dialog}
-    </Flex>
+    </AiSurface>
   );
 }

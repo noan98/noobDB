@@ -543,6 +543,7 @@ safe(
   "incoming_foreign_keys",
   "invalidate_table_cache",
   "list_databases",
+  "list_server_databases",
   "list_indexes",
   "list_table_triggers",
   "list_table_partitions",
@@ -696,6 +697,7 @@ const CONNECTION_READ_METHODS = new Set([
   "check_upsert_keys",
   "table_is_transactional",
   "databases",
+  "server_databases",
   "sequence_definitions",
   "routine_identity_arguments",
   "trigger_tables",
@@ -774,6 +776,7 @@ const CONNECTION_WRITE_METHODS = new Set([
   "register_local_table",
   "drop_local_table",
   "sqlite_maintenance",
+  "execute_maintenance",
   "vacuum_into",
 ]);
 /** 引数 1 つ目に SQL 文字列を取るメソッド。LIFECYCLE ではその引数が固定リテラルであることを要求する。 */
@@ -921,10 +924,12 @@ const LIFECYCLE_ALLOWED_CALLS: Record<string, string[]> = {
 
 // SSM キープアライブ (#1976) は `SELECT 1` (health_check) を定期的に流すだけで、DB へ書き込まない。
 const SSM_KEEPALIVE = ["crate::ssm::keepalive::spawn_for_session"];
+// 派生接続 (#2018) の検証は profiles.json を読むだけ (書き込まない)。
+const PROFILE_STORE_READ = ["crate::profiles::store::load_all"];
 const LIFECYCLE_ALLOWED_PATHS: Record<string, string[]> = {
-  connect: [...SESSION_CACHES, ...SSM_KEEPALIVE],
-  reconnect: [...SESSION_CACHES, ...SSM_KEEPALIVE],
-  test_connection: [...SESSION_CACHES, ...SSM_KEEPALIVE],
+  connect: [...SESSION_CACHES, ...SSM_KEEPALIVE, ...PROFILE_STORE_READ],
+  reconnect: [...SESSION_CACHES, ...SSM_KEEPALIVE, ...PROFILE_STORE_READ],
+  test_connection: [...SESSION_CACHES, ...SSM_KEEPALIVE, ...PROFILE_STORE_READ],
 };
 
 /** LIFECYCLE の必須の足場。 */

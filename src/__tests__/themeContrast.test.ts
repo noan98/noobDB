@@ -5,6 +5,7 @@ import css from "../App.css?raw";
 // theme.ts の dark 判定条件 (`conditions.dark`) の実ソースを比較するため。
 import themeTsSource from "../theme.ts?raw";
 import gridSource from "../components/ResultGrid.tsx?raw";
+import aiSurfaceSource from "../components/AiSurface.tsx?raw";
 // コントラスト比の計算はアクセント色ロジック (accent.ts) と共有する (#559)。
 // 二重実装を避け、accent.test.ts と同じ式で全テーマ/プリセットを検証する。
 import { contrastRatio } from "../accent";
@@ -706,6 +707,17 @@ describe("AI 受信中キャレット / ラベル色 --stream-caret (#1756)", ()
   });
 });
 
+describe("AI 回答面の左アクセント辺 --ai-accent (#2016)", () => {
+  // --ai-accent は --stream-caret の別名。非テキストの装飾辺として全テーマで 3:1 が
+  // 検証済みの色に固定する (別の色へ差し替えるとこのテストが落ちる)。
+  it("--ai-accent は --stream-caret を指し、AiSurface は teal を文字色に使わない", () => {
+    expect(css).toMatch(/--ai-accent:\s*var\(--stream-caret\);/);
+    const src = aiSurfaceSource;
+    expect(src).toContain('borderInlineStartColor="app.aiAccent"');
+    expect(src).not.toMatch(/\bcolor="app\.aiAccent"/);
+  });
+});
+
 describe("結果グリッドのクロスハイライト地 (accent N% on bg-header) の上でも文字が AA を保つ (#1755)", () => {
   // 割合は ResultGrid の CSS から抽出して固定する (CSS だけ濃くして AA を割るのを防ぐ)。
   const m = gridSource.match(
@@ -736,5 +748,46 @@ describe("結果グリッドのクロスハイライト地 (accent N% on bg-head
       const r = contrastRatio(vars[fg], bg);
       expect(r, `--${fg} on accent ${pct}% / bg-header = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(AA_TEXT);
     }
+  });
+});
+
+describe("シグネチャ面のブランドグラデーション --brand-fill (#2043)", () => {
+  const navy = css.match(/--brand-navy-raised:\s*(#[0-9a-fA-F]{6})/)?.[1] ?? "";
+  const teal = css.match(/--brand-teal:\s*(#[0-9a-fA-F]{6})/)?.[1] ?? "";
+  const white = css.match(/--brand-on-fill:\s*(#[0-9a-fA-F]{6})/)?.[1] ?? "";
+  const block = (name: string): string =>
+    css.match(new RegExp(`--${name}:\\s*linear-gradient\\(([^;]*?)\\);`))?.[1] ?? "";
+  const mixHex = (navyPct: number): string => {
+    const ch = (i: number) => {
+      const a = Number.parseInt(navy.slice(1 + i * 2, 3 + i * 2), 16);
+      const b = Number.parseInt(teal.slice(1 + i * 2, 3 + i * 2), 16);
+      return Math.round((a * navyPct) / 100 + (b * (100 - navyPct)) / 100)
+        .toString(16)
+        .padStart(2, "0");
+    };
+    return `#${ch(0)}${ch(1)}${ch(2)}`;
+  };
+  // 両端の色を (素の navy-raised = 100%) として取り出す。
+  const stops = (name: string): string[] => {
+    const b = block(name);
+    return [...b.matchAll(/color-mix\(in srgb,\s*var\(--brand-navy-raised\)\s*(\d+)%/g)]
+      .map((m) => mixHex(Number(m[1])))
+      .concat(/(^|,\s*)var\(--brand-navy-raised\)/.test(b.replace(/color-mix\([^)]*\)/g, "")) ? [navy] : []);
+  };
+
+  it.each(["brand-fill", "brand-fill-hover"])("%s: 両端と白の前景が 4.5:1 以上", (name) => {
+    expect(white).toBe("#ffffff");
+    const list = stops(name);
+    expect(list.length).toBeGreaterThanOrEqual(2);
+    for (const c of list) {
+      expect(contrastRatio(white, c), `${name} stop ${c}`).toBeGreaterThanOrEqual(AA_TEXT);
+    }
+  });
+
+  it.each(["hc-light", "hc-dark"])("%s: グラデーションをアクセント単色に上書きする", (n) => {
+    const body = css.match(new RegExp(`:root\\[data-theme="${n}"\\]\\s*\\{([\\s\\S]*?)\\n\\}`))?.[1] ?? "";
+    expect(body).toMatch(/--brand-fill:\s*var\(--accent\);/);
+    expect(body).toMatch(/--brand-fill-hover:\s*var\(--accent-hover\);/);
+    expect(body).toMatch(/--brand-on-fill:\s*var\(--accent-text\);/);
   });
 });

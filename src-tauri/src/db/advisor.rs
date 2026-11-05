@@ -61,7 +61,22 @@ pub enum RuleId {
     /// エイリアスにならず別インデックス + rowid が二重に作られる定番の落とし穴。
     /// `columns = [PK 列]`、`context = [宣言型]`。修正 DDL 無し (テーブル再構築が必要)。
     SqliteIntegerPkHint,
+    /// NULL を許す外部キー列 (参照整合の穴になりやすい)。`columns` = NULL 許容の FK 構成列、
+    /// `context = [参照先テーブル]`。任意参照が意図の場合もあるため重要度は低く、修正 DDL 無し
+    /// (NOT NULL 化は既存データの確認が要るため生成しない)。
+    NullableForeignKey,
+    /// (MySQL のみ) 過大な `VARCHAR` (長さが [`OVERSIZED_VARCHAR_THRESHOLD`] 超)。SQLite は長さを検証せず、
+    /// PostgreSQL は n が大きくても性能に影響しないため対象外。`columns = [列]`、
+    /// `context = [宣言型, 長さ]`。修正 DDL 無し (適切な長さは設計判断)。
+    OversizedVarchar,
+    /// 金額・通貨らしい名前の列に浮動小数 (`FLOAT` / `DOUBLE` / `REAL`) を使用。丸め誤差が出るため
+    /// `DECIMAL` / `NUMERIC` を推奨する。`columns = [列]`、`context = [宣言型]`。修正 DDL 無し
+    /// (精度・小数桁の選定とデータ移行を伴うため生成しない)。
+    FloatForMoney,
 }
+
+/// `VARCHAR` を「過大」と見なす長さの閾値 (これを**超える**と指摘)。
+pub const OVERSIZED_VARCHAR_THRESHOLD: u64 = 1000;
 
 /// 1 件の指摘。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -274,10 +289,15 @@ pub fn analyze(input: &AdvisorInput) -> SchemaHealthReport {
         if input.driver == DriverKind::Sqlite {
             rule_sqlite_integer_pk_hint(table, &mut findings);
         }
+        if input.driver == DriverKind::Mysql {
+            rule_oversized_varchar(table, &mut findings);
+        }
+        rule_float_for_money(input.driver, table, &mut findings);
     }
 
     rule_fk_missing_index(input, &mut findings);
     rule_fk_type_mismatch(input, &mut findings);
+    rule_nullable_foreign_key(input, &mut findings);
     rule_unused_indexes(input, &mut findings, &mut skipped);
 
     // 決定的な出力順: テーブル名 → 重要度 (高い順) → ルール。
@@ -459,6 +479,9 @@ fn rule_rank(r: RuleId) -> u8 {
         RuleId::RedundantIndex => 4,
         RuleId::UnusedIndex => 5,
         RuleId::SqliteIntegerPkHint => 6,
+        RuleId::NullableForeignKey => 7,
+        RuleId::OversizedVarchar => 8,
+        RuleId::FloatForMoney => 9,
     }
 }
 
@@ -678,6 +701,16 @@ struct FkGroup {
     table: String,
     columns: Vec<String>,
     referenced_table: String,
+    /// いずれかの構成列の `ON DELETE` / `ON UPDATE` が `SET NULL` か (その FK は NULL 許容が前提)。
+    on_delete_set_null: bool,
+}
+
+fn is_set_null(fk: &ForeignKey) -> bool {
+    // ON UPDATE SET NULL も、参照先キーの更新時に NULL を書き込むので NOT NULL にすると更新が失敗する。
+    [fk.on_delete.as_deref(), fk.on_update.as_deref()]
+        .into_iter()
+        .flatten()
+        .any(|a| a.trim().eq_ignore_ascii_case("SET NULL"))
 }
 
 fn group_foreign_keys(fks: &[ForeignKey]) -> Vec<FkGroup> {
@@ -694,12 +727,14 @@ fn group_foreign_keys(fks: &[ForeignKey]) -> Vec<FkGroup> {
         };
         if let Some(&gi) = index_of.get(&key) {
             groups[gi].columns.push(fk.column.clone());
+            groups[gi].on_delete_set_null |= is_set_null(fk);
         } else {
             index_of.insert(key, groups.len());
             groups.push(FkGroup {
                 table: fk.table.clone(),
                 columns: vec![fk.column.clone()],
                 referenced_table: fk.referenced_table.clone(),
+                on_delete_set_null: is_set_null(fk),
             });
         }
     }
@@ -964,6 +999,182 @@ fn rule_sqlite_integer_pk_hint(table: &TableMeta, out: &mut Vec<HealthFinding>) 
             table: table.name.clone(),
             columns: vec![col.name.clone()],
             context: vec![ty.to_string()],
+            fix_ddl: None,
+            fix_ddl_online: None,
+            statistical: false,
+            size_bytes: None,
+        });
+    }
+}
+
+/// NULL を許す外部キー列の検出。FK 構成列のうち `nullable` かつ PK ではない列を `columns` に
+/// 集める (複合 FK は NULL 許容の列だけ)。SQLite は PK 列でも `notnull = 0` になりうるため PK を除く。
+fn rule_nullable_foreign_key(input: &AdvisorInput, out: &mut Vec<HealthFinding>) {
+    let by_name: std::collections::HashMap<&str, &TableMeta> =
+        input.tables.iter().map(|t| (t.name.as_str(), t)).collect();
+    for group in group_foreign_keys(&input.foreign_keys) {
+        let Some(table) = by_name.get(group.table.as_str()) else {
+            continue;
+        };
+        // ON DELETE / ON UPDATE SET NULL は NULL 許容が前提 (NOT NULL にすると壊れる)。自己参照 FK
+        // (親子・ツリー) は根が NULL になるのが普通なので対象外。
+        if group.on_delete_set_null || group.referenced_table.eq_ignore_ascii_case(&group.table) {
+            continue;
+        }
+        let nullable: Vec<String> = group
+            .columns
+            .iter()
+            .filter(|name| {
+                table
+                    .columns
+                    .iter()
+                    .find(|c| c.name.eq_ignore_ascii_case(name))
+                    .is_some_and(|c| c.nullable && !c.key.eq_ignore_ascii_case("PRI"))
+            })
+            .cloned()
+            .collect();
+        if nullable.is_empty() {
+            continue;
+        }
+        out.push(HealthFinding {
+            rule: RuleId::NullableForeignKey,
+            severity: Severity::Low,
+            table: group.table.clone(),
+            columns: nullable,
+            context: vec![group.referenced_table.clone()],
+            fix_ddl: None,
+            fix_ddl_online: None,
+            statistical: false,
+            size_bytes: None,
+        });
+    }
+}
+
+/// `varchar(n)` 系の宣言型から長さ `n` を取り出す。可変長文字列型 (`varchar` / `character varying` /
+/// `nvarchar` / SQLite の `VARYING CHARACTER`) で長さ指定があるときだけ `Some`。`char(n)` (固定長) や
+/// `text`、長さ無しの `varchar` は `None`。
+fn varchar_length(data_type: &str) -> Option<u64> {
+    let lower = data_type.trim().to_lowercase();
+    let open = lower.find('(')?;
+    let head = &lower[..open];
+    let variable = head.contains("varchar") || head.contains("varying");
+    if !variable {
+        return None;
+    }
+    let inner = lower[open + 1..].split(')').next()?;
+    inner.split(',').next()?.trim().parse().ok()
+}
+
+fn rule_oversized_varchar(table: &TableMeta, out: &mut Vec<HealthFinding>) {
+    for c in &table.columns {
+        let Some(len) = varchar_length(&c.data_type) else {
+            continue;
+        };
+        if len <= OVERSIZED_VARCHAR_THRESHOLD {
+            continue;
+        }
+        out.push(HealthFinding {
+            rule: RuleId::OversizedVarchar,
+            severity: Severity::Low,
+            table: table.name.clone(),
+            columns: vec![c.name.clone()],
+            context: vec![c.data_type.trim().to_string(), len.to_string()],
+            fix_ddl: None,
+            fix_ddl_online: None,
+            statistical: false,
+            size_bytes: None,
+        });
+    }
+}
+
+/// 列名を小文字の語に分割する (`_` / `-` / 空白 / camelCase の境界)。
+fn name_tokens(name: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut cur = String::new();
+    let mut prev_lower = false;
+    for ch in name.chars() {
+        if !ch.is_alphanumeric() {
+            if !cur.is_empty() {
+                tokens.push(std::mem::take(&mut cur));
+            }
+            prev_lower = false;
+            continue;
+        }
+        if ch.is_uppercase() && prev_lower && !cur.is_empty() {
+            tokens.push(std::mem::take(&mut cur));
+        }
+        prev_lower = ch.is_lowercase();
+        cur.extend(ch.to_lowercase());
+    }
+    if !cur.is_empty() {
+        tokens.push(cur);
+    }
+    tokens
+}
+
+/// 金額・通貨を表す語。
+const MONEY_TOKENS: &[&str] = &[
+    "price", "amount", "amt", "cost", "subtotal", "balance", "salary", "wage", "fee", "tax",
+    "money", "revenue", "payment", "charge", "fare", "currency", "yen", "usd", "jpy", "eur",
+];
+
+/// 金額ではない (個数・割合など) ことを示す語。含まれていたら金額列とは見なさない。
+const NON_MONEY_TOKENS: &[&str] = &[
+    "count", "cnt", "num", "number", "qty", "quantity", "ratio", "rate", "percent", "pct", "id",
+    "flag", "weight", "score", "time", "distance", "duration", "loss",
+];
+
+fn is_money_column_name(name: &str) -> bool {
+    let tokens = name_tokens(name);
+    if tokens
+        .iter()
+        .any(|t| NON_MONEY_TOKENS.contains(&t.as_str()))
+    {
+        return false;
+    }
+    // 日本語の金額語は語の境界が無いので部分一致で見る。
+    if JA_MONEY_WORDS.iter().any(|w| name.contains(w)) {
+        return true;
+    }
+    // `total` は個数・件数にも使われるため、他の金額語と一緒のときだけ金額扱いにする。
+    tokens
+        .iter()
+        .any(|t| t != "total" && MONEY_TOKENS.contains(&t.as_str()))
+}
+
+const JA_MONEY_WORDS: &[&str] = &["金額", "価格", "料金", "単価", "税額", "売上", "費用"];
+
+/// 浮動小数型か。MySQL `float` / `double` (`float(7,2)` / `double unsigned`)、PostgreSQL `real` /
+/// `double precision` / `float4` / `float8`、SQLite の宣言型 (`FLOAT` / `DOUBLE` / `REAL`) を拾う。
+fn is_floating_type(data_type: &str) -> bool {
+    let lower = data_type.trim().to_lowercase();
+    let word: String = lower
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .collect();
+    matches!(
+        word.as_str(),
+        "float" | "float4" | "float8" | "double" | "real"
+    )
+}
+
+fn rule_float_for_money(driver: DriverKind, table: &TableMeta, out: &mut Vec<HealthFinding>) {
+    for c in &table.columns {
+        if !is_floating_type(&c.data_type) || !is_money_column_name(&c.name) {
+            continue;
+        }
+        out.push(HealthFinding {
+            rule: RuleId::FloatForMoney,
+            severity: Severity::Medium,
+            table: table.name.clone(),
+            columns: vec![c.name.clone()],
+            // SQLite の DECIMAL / NUMERIC は NUMERIC 親和性で、実体は REAL として保存されうる
+            // (正確な十進数にならない)。UI が「最小単位の整数」を勧める文言に切り替えるための印。
+            context: if driver == DriverKind::Sqlite {
+                vec![c.data_type.trim().to_string(), "sqlite".to_string()]
+            } else {
+                vec![c.data_type.trim().to_string()]
+            },
             fix_ddl: None,
             fix_ddl_online: None,
             statistical: false,
@@ -1975,7 +2186,7 @@ mod tests {
     fn single_change_gets_no_plan() {
         let t = table(
             "orders",
-            vec![col("id", "int", true), col("user_id", "int", false)],
+            vec![col("id", "int", true), col_n("user_id", "int", false)],
             vec![idx("PRIMARY", &["id"], true, true)],
         );
         let report = analyze(&input(
@@ -2201,5 +2412,189 @@ mod tests {
             find_overlapping_indexes(&existing, &cols(&["a"]), true).len(),
             1
         );
+    }
+
+    // --- ルール: NULL 許容 FK / 過大 VARCHAR / 金額に浮動小数 (#2034) ---
+
+    fn col_n(name: &str, data_type: &str, nullable: bool) -> TableColumnInfo {
+        let mut c = col(name, data_type, false);
+        c.nullable = nullable;
+        c
+    }
+
+    #[test]
+    fn nullable_fk_detected_and_notnull_not() {
+        let orders = table(
+            "orders",
+            vec![
+                col("id", "int", true),
+                col_n("user_id", "int", true),
+                col_n("shop_id", "int", false),
+            ],
+            vec![],
+        );
+        let fks = vec![
+            fk("orders", "user_id", "users", Some("id")),
+            fk("orders", "shop_id", "shops", Some("id")),
+        ];
+        for d in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
+            let report = analyze(&input(d, vec![orders.clone()], fks.clone()));
+            let f = findings_for(&report, RuleId::NullableForeignKey);
+            assert_eq!(f.len(), 1, "{d:?}");
+            assert_eq!(f[0].columns, vec!["user_id"]);
+            assert_eq!(f[0].context, vec!["users"]);
+            assert_eq!(f[0].severity, Severity::Low);
+            assert!(f[0].fix_ddl.is_none());
+        }
+    }
+
+    #[test]
+    fn nullable_fk_skips_set_null_and_self_reference() {
+        let t = table(
+            "nodes",
+            vec![
+                col("id", "int", true),
+                col_n("parent_id", "int", true),
+                col_n("owner_id", "int", true),
+                col_n("team_id", "int", true),
+                col_n("org_id", "int", true),
+            ],
+            vec![],
+        );
+        let mut owner = fk("nodes", "owner_id", "users", Some("id"));
+        owner.on_delete = Some("SET NULL".into());
+        let mut team = fk("nodes", "team_id", "teams", Some("id"));
+        team.on_delete = Some("CASCADE".into());
+        // ON UPDATE SET NULL だけでも NULL 許容が前提なので対象外。
+        let mut org = fk("nodes", "org_id", "orgs", Some("id"));
+        org.on_delete = Some("CASCADE".into());
+        org.on_update = Some("set null".into());
+        let fks = vec![
+            fk("nodes", "parent_id", "nodes", Some("id")),
+            owner,
+            team,
+            org,
+        ];
+        for d in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
+            let report = analyze(&input(d, vec![t.clone()], fks.clone()));
+            let f = findings_for(&report, RuleId::NullableForeignKey);
+            assert_eq!(f.len(), 1, "{d:?}");
+            assert_eq!(f[0].columns, vec!["team_id"]);
+        }
+    }
+
+    #[test]
+    fn nullable_fk_composite_reports_only_nullable_columns_and_skips_pk() {
+        let t = table(
+            "m",
+            vec![col("a", "int", true), col_n("b", "int", true)],
+            vec![],
+        );
+        let mut f1 = fk("m", "a", "p", Some("a"));
+        f1.constraint_name = Some("fk".into());
+        let mut f2 = fk("m", "b", "p", Some("b"));
+        f2.constraint_name = Some("fk".into());
+        let report = analyze(&input(DriverKind::Mysql, vec![t], vec![f1, f2]));
+        let f = findings_for(&report, RuleId::NullableForeignKey);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].columns, vec!["b"]);
+    }
+
+    #[test]
+    fn oversized_varchar_boundary_mysql_only() {
+        let cases: &[(DriverKind, &str, bool)] = &[
+            (DriverKind::Mysql, "varchar(1000)", false),
+            (DriverKind::Mysql, "varchar(1001)", true),
+            (DriverKind::Mysql, "varchar(65535)", true),
+            (DriverKind::Mysql, "char(255)", false),
+            (DriverKind::Mysql, "text", false),
+            // PostgreSQL / SQLite は対象外 (長さが検証・性能に効かない)。
+            (DriverKind::Postgres, "character varying(5000)", false),
+            (DriverKind::Sqlite, "VARCHAR(2000)", false),
+            (DriverKind::Sqlite, "NVARCHAR(2000)", false),
+        ];
+        for (d, ty, expect) in cases {
+            let t = table(
+                "t",
+                vec![col("id", "int", true), col("c", ty, false)],
+                vec![],
+            );
+            let report = analyze(&input(*d, vec![t], vec![]));
+            let n = findings_for(&report, RuleId::OversizedVarchar).len();
+            assert_eq!(n == 1, *expect, "{d:?} {ty}");
+        }
+    }
+
+    #[test]
+    fn oversized_varchar_context_has_type_and_length() {
+        let t = table("t", vec![col("c", "varchar(4000)", false)], vec![]);
+        let report = analyze(&input(DriverKind::Mysql, vec![t], vec![]));
+        let f = findings_for(&report, RuleId::OversizedVarchar);
+        assert_eq!(f[0].context, vec!["varchar(4000)", "4000"]);
+        assert_eq!(f[0].columns, vec!["c"]);
+    }
+
+    #[test]
+    fn float_for_money_across_drivers() {
+        let cases: &[(DriverKind, &str, &str, bool)] = &[
+            (DriverKind::Mysql, "price", "float", true),
+            (DriverKind::Mysql, "total_amount", "double", true),
+            (DriverKind::Mysql, "unit_price", "float(7,2)", true),
+            (DriverKind::Mysql, "price", "double unsigned", true),
+            (DriverKind::Mysql, "price", "decimal(10,2)", false),
+            (DriverKind::Mysql, "weight", "double", false),
+            (DriverKind::Mysql, "item_count", "float", false),
+            (DriverKind::Mysql, "tax_rate", "double", false),
+            (DriverKind::Postgres, "salary", "double precision", true),
+            (DriverKind::Postgres, "fee", "real", true),
+            (DriverKind::Postgres, "fee", "numeric(10,2)", false),
+            (DriverKind::Postgres, "balance", "money", false),
+            (DriverKind::Sqlite, "unitPrice", "REAL", true),
+            (DriverKind::Sqlite, "Amount", "FLOAT", true),
+            (DriverKind::Sqlite, "amount", "NUMERIC", false),
+            (DriverKind::Sqlite, "latitude", "REAL", false),
+            (DriverKind::Mysql, "total", "double", false),
+            (DriverKind::Mysql, "total_price", "double", true),
+            (DriverKind::Mysql, "total_weight", "double", false),
+            (DriverKind::Mysql, "price_score", "double", false),
+            (DriverKind::Mysql, "金額", "double", true),
+            (DriverKind::Mysql, "税額", "float", true),
+            (DriverKind::Sqlite, "売上高", "REAL", true),
+            (DriverKind::Sqlite, "単価_円", "REAL", true),
+            (DriverKind::Sqlite, "重量", "REAL", false),
+            // 語の一部一致では拾わない (`pricey` は price という語ではない)。
+            (DriverKind::Sqlite, "pricey", "REAL", false),
+        ];
+        for (d, name, ty, expect) in cases {
+            let t = table(
+                "t",
+                vec![col("id", "int", true), col(name, ty, false)],
+                vec![],
+            );
+            let report = analyze(&input(*d, vec![t], vec![]));
+            let n = findings_for(&report, RuleId::FloatForMoney).len();
+            assert_eq!(n == 1, *expect, "{d:?} {name} {ty}");
+        }
+    }
+
+    #[test]
+    fn float_for_money_is_medium_without_fix() {
+        let t = table("t", vec![col("price", "float", false)], vec![]);
+        let report = analyze(&input(DriverKind::Mysql, vec![t], vec![]));
+        let f = findings_for(&report, RuleId::FloatForMoney);
+        assert_eq!(f[0].severity, Severity::Medium);
+        assert!(f[0].fix_ddl.is_none());
+        assert_eq!(f[0].context, vec!["float"]);
+    }
+
+    #[test]
+    fn float_for_money_marks_sqlite_for_integer_units_advice() {
+        let t = table("t", vec![col("price", "REAL", false)], vec![]);
+        let report = analyze(&input(DriverKind::Sqlite, vec![t.clone()], vec![]));
+        let f = findings_for(&report, RuleId::FloatForMoney);
+        assert_eq!(f[0].context, vec!["REAL", "sqlite"]);
+        let report = analyze(&input(DriverKind::Postgres, vec![t], vec![]));
+        let f = findings_for(&report, RuleId::FloatForMoney);
+        assert_eq!(f[0].context, vec!["REAL"]);
     }
 }

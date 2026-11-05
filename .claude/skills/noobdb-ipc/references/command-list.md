@@ -103,10 +103,13 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
   行条件の `OR` 連結 (複合 PK・NULL を含む PK・100 行ずつ) を組み立てる。`extraStatements` は
   同じトランザクションに載せる DELETE / INSERT。実行は `run_query_transaction_inner` へ
   委譲するため read_only ガード (緊急モード含む)・履歴・キャッシュ invalidate は従来と同一
-  (フライトレコーダーに記録しない点も従来どおり。記録対象は `run_query_stream({ capture: true })`
-  の単文のみ)。リテラルは `db::data_diff::sql_literal` (バインドにしないのは PostgreSQL が
+  (#2024 から `options.capture` (`{ rowCap?, retentionDays? }`) を指定すると、コミットした編集を
+  フライトレコーダーへ 1 バッチ (`batch_id`) で記録する。`commands/bulk_capture.rs`: UPDATE は編集した
+  行の主キーで before/after を `SELECT *`、`DELETE FROM <表> WHERE …` の追加文は条件で before を読み、
+  `INSERT` の追加文は主キー列がリテラルのときだけ after を読む。適用の前後に別接続で読むベスト
+  エフォートで、辞退・失敗しても編集は通す。フロントは `identityStrategy === "primary_key"` のときだけ指定する)。リテラルは `db::data_diff::sql_literal` (バインドにしないのは PostgreSQL が
   text 型パラメータを整数列へ暗黙変換しないため)。64bit PK は文字列のまま引用リテラルで比較。`pkBinary` (任意、`pkColumns` と同順の bool) が真の列は 16 進文字列の key を `Value::Bytes` に戻してバイナリリテラルで比較する (BLOB 列を含む all_columns 同定用)。
-  **戻り値は判別付き enum `BulkWriteOutcome`** (#1777、`status` タグ): `applied` (`result` = `QueryResult`) /
+  **戻り値は判別付き enum `BulkWriteOutcome`** (#1777、`status` タグ): `applied` (`result` = `QueryResult`、`capture` = `{ recorded, declined, batch_id }`) /
   `row_count_exceeded` / `optimistic_conflict` / `rollback_incomplete`。検算は**文ごと** (UPDATE チャンク = 対象行数、追加文 = 1 行)。
   文の `rows_affected` が想定より**多い**とコミットせずロールバックし (DB 未変更・結果キャッシュに触れない・
   履歴にはエラー `rolled back: matched M rows, expected N` として残す)、エラーではなく
@@ -149,6 +152,7 @@ DB に触れず実行もしない (UI のプレビュー専用)。両環境の�
 ## スキーマ (`commands/schema.rs`)
 
 - `list_databases`
+- `list_server_databases`
 - `list_tables`
 - `describe_table`
 - `describe_table_extras` (CHECK 制約と生成列の式、#1837)

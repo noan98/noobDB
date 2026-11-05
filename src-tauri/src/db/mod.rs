@@ -44,6 +44,7 @@ pub mod schema_scope;
 pub mod script;
 pub mod script_analysis;
 pub mod server_messages;
+pub mod server_stop;
 pub mod sqlite;
 pub mod sqlite_rebuild;
 /// ストリーミング結果のバッチ合流と逐次統計 (#1257)。
@@ -644,6 +645,21 @@ impl Connection {
     pub async fn execute(&self, sql: &str, database: Option<&str>) -> Result<QueryResult> {
         match self {
             Connection::MySql(c) => c.execute(sql, database).await,
+            Connection::Postgres(c) => c.execute(sql, database).await,
+            Connection::Sqlite(c) => c.execute(sql, database).await,
+        }
+    }
+
+    /// 定期メンテナンスの文を実行する (#2025)。MySQL は `ANALYZE` / `OPTIMIZE TABLE` が失敗を
+    /// 結果行 (`Msg_type=Error`) で返すので行を受け取る。PostgreSQL / SQLite は失敗が SQL エラーに
+    /// なるので [`Connection::execute`] と同じ。
+    pub async fn execute_maintenance(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+    ) -> Result<QueryResult> {
+        match self {
+            Connection::MySql(c) => c.execute_maintenance(sql, database).await,
             Connection::Postgres(c) => c.execute(sql, database).await,
             Connection::Sqlite(c) => c.execute(sql, database).await,
         }
@@ -1263,6 +1279,18 @@ impl Connection {
             Connection::MySql(c) => c.databases().await,
             Connection::Postgres(c) => c.databases().await,
             Connection::Sqlite(c) => c.databases().await,
+        }
+    }
+
+    /// サーバ上の実データベース名の一覧 (#2018)。PostgreSQL だけが対象 — 1 接続が 1 DB に
+    /// 固定され、別 DB を開くには新しいセッションが要るため。MySQL は 1 接続で全 DB を
+    /// 横断でき (`databases()` が `SHOW DATABASES`)、SQLite は 1 ファイル = 1 DB なので、
+    /// どちらも「該当なし」として空を返す。
+    pub async fn server_databases(&self) -> Result<Vec<String>> {
+        match self {
+            Connection::MySql(_) => Ok(Vec::new()),
+            Connection::Postgres(c) => c.server_databases().await,
+            Connection::Sqlite(_) => Ok(Vec::new()),
         }
     }
 

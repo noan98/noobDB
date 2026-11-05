@@ -6054,7 +6054,7 @@ async fn sqlite_bulk_write_row_count_overshoot_rolls_back() {
     .await
     .expect("outcome");
     match out {
-        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 1),
+        t::BulkWriteOutcome::Applied { result, .. } => assert_eq!(result.rows_affected, 1),
         other => panic!("unique row must apply: {other:?}"),
     }
 
@@ -6083,7 +6083,7 @@ async fn sqlite_bulk_write_row_count_overshoot_rolls_back() {
     .await
     .expect("outcome");
     match out {
-        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 0),
+        t::BulkWriteOutcome::Applied { result, .. } => assert_eq!(result.rows_affected, 0),
         other => panic!("fewer rows must not be blocked: {other:?}"),
     }
 
@@ -6100,6 +6100,7 @@ async fn sqlite_bulk_write_row_count_overshoot_rolls_back() {
         vec![],
         t::BulkWriteOptions {
             approved_counts: Some(vec![1]),
+            ..Default::default()
         },
     )
     .await
@@ -6132,12 +6133,13 @@ async fn sqlite_bulk_write_row_count_overshoot_rolls_back() {
         vec![],
         t::BulkWriteOptions {
             approved_counts: Some(vec![2]),
+            ..Default::default()
         },
     )
     .await
     .expect("outcome");
     match out {
-        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 2),
+        t::BulkWriteOutcome::Applied { result, .. } => assert_eq!(result.rows_affected, 2),
         other => panic!("approved overshoot must apply: {other:?}"),
     }
     assert_eq!(
@@ -6197,6 +6199,7 @@ async fn sqlite_bulk_write_optimistic_lock_detects_lost_update() {
                 vec![],
                 t::BulkWriteOptions {
                     approved_counts: approved,
+                    ..Default::default()
                 },
             )
             .await
@@ -6260,7 +6263,7 @@ async fn sqlite_bulk_write_optimistic_lock_detects_lost_update() {
     // (3) 旧値を付けない (設定オフ) と従来どおり主キーだけで当たり、他者の変更を上書きする。
     let out = apply(vec![locked(vec![])], None).await;
     match out {
-        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 3),
+        t::BulkWriteOutcome::Applied { result, .. } => assert_eq!(result.rows_affected, 3),
         other => panic!("lock off must apply: {other:?}"),
     }
 
@@ -6275,7 +6278,7 @@ async fn sqlite_bulk_write_optimistic_lock_detects_lost_update() {
     )
     .await;
     match out {
-        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 2),
+        t::BulkWriteOutcome::Applied { result, .. } => assert_eq!(result.rows_affected, 2),
         other => panic!("fresh old values must apply: {other:?}"),
     }
 
@@ -7012,4 +7015,31 @@ async fn sqlite_list_table_partitions_is_unsupported() {
         .expect_err("unsupported");
     assert!(matches!(err, t::AppError::InvalidInput(_)), "{err:?}");
     let _ = std::fs::remove_file(&p);
+}
+
+/// 定期メンテナンス (#2025) が流す VACUUM / ANALYZE / REINDEX が、ファイル DB で
+/// `Connection::execute_maintenance` から成功する。
+#[tokio::test]
+async fn sqlite_maintenance_statements_succeed_on_file_db() {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "noobdb_sqlite_sched_maint_{}.db",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("CREATE TABLE m (id INTEGER PRIMARY KEY, v TEXT)", None)
+        .await
+        .expect("create");
+    conn.execute("INSERT INTO m (id, v) VALUES (1, 'a'), (2, 'b')", None)
+        .await
+        .expect("insert");
+    for sql in ["ANALYZE \"m\";", "REINDEX \"m\";", "VACUUM;", "ANALYZE;"] {
+        conn.execute_maintenance(sql, None)
+            .await
+            .unwrap_or_else(|e| panic!("{sql} failed: {e}"));
+    }
+    let _ = std::fs::remove_file(&path);
 }

@@ -284,6 +284,10 @@ const READ_ONLY_FILES: &[(&str, &str)] = &[
         "broadcast.rs",
         "読み取り専用はバックエンド強制 (ensure_broadcast_read_only)",
     ),
+    (
+        "bulk_capture.rs",
+        "フライトレコーダー記録用の前後の SELECT のみ (書き込みと invalidate は bulk_write.rs 側)",
+    ),
     ("cell_blob.rs", "BLOB セルの SELECT のみ"),
     ("connection.rs", "接続確認の SELECT 1 のみ"),
     ("diff.rs", "データ比較の SELECT のみ (適用は sync.rs)"),

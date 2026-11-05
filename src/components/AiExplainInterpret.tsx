@@ -26,6 +26,7 @@ import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiSurface } from "./AiSurface";
 import { useAiKeyPresent } from "../ai/aiKeyStore";
 import { AiSetupHint } from "./AiSetupHint";
 import { AiUsageNote } from "./AiUsageNote";
@@ -215,19 +216,7 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
   const hasResult = state.kind !== "idle" && state.kind !== "running";
 
   return (
-    <Flex
-      direction="column"
-      gap="2"
-      px="3.5"
-      py="2"
-      bg="app.surface"
-      borderBottomWidth="1px"
-      borderBottomColor="app.border"
-      fontSize="sm"
-      color="app.text"
-      flexShrink={0}
-      data-testid="ai-explain-interpret"
-    >
+    <AiSurface edge="bottom" flexShrink={0} data-testid="ai-explain-interpret">
       <Flex align="center" gap="2" wrap="wrap">
         <Tooltip label={sendsLine(tableRefs.length)}>
           <Button
@@ -401,6 +390,6 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
         </Suspense>
       )}
       {dialog}
-    </Flex>
+    </AiSurface>
   );
 }

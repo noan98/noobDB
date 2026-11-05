@@ -61,6 +61,9 @@ describe("ruleTitleKey", () => {
       "unused_index",
       "fk_type_mismatch",
       "sqlite_integer_pk_hint",
+      "nullable_foreign_key",
+      "oversized_varchar",
+      "float_for_money",
     ] as const;
     for (const r of rules) {
       expect(ruleTitleKey(r)).toMatch(/^advisorRule/);
@@ -69,6 +72,46 @@ describe("ruleTitleKey", () => {
 });
 
 describe("findingDescription", () => {
+  it("新ルール (NULL 許容 FK / 過大 VARCHAR / 金額に浮動小数) のパラメータを差し込む", () => {
+    expect(
+      findingDescription(
+        finding({ rule: "nullable_foreign_key", table: "orders", columns: ["user_id"], context: ["users"] }),
+      ),
+    ).toEqual({
+      key: "advisorRuleNullableForeignKeyDesc",
+      params: { table: "orders", columns: "user_id", ref: "users" },
+    });
+    expect(
+      findingDescription(
+        finding({
+          rule: "oversized_varchar",
+          table: "t",
+          columns: ["c"],
+          context: ["varchar(4000)", "4000"],
+        }),
+      ),
+    ).toEqual({
+      key: "advisorRuleOversizedVarcharDesc",
+      params: { table: "t", column: "c", type: "varchar(4000)", length: "4000" },
+    });
+    expect(
+      findingDescription(
+        finding({ rule: "float_for_money", table: "t", columns: ["price"], context: ["float"] }),
+      ),
+    ).toEqual({
+      key: "advisorRuleFloatForMoneyDesc",
+      params: { table: "t", column: "price", type: "float" },
+    });
+    expect(
+      findingDescription(
+        finding({ rule: "float_for_money", table: "t", columns: ["price"], context: ["REAL", "sqlite"] }),
+      ),
+    ).toEqual({
+      key: "advisorRuleFloatForMoneySqliteDesc",
+      params: { table: "t", column: "price", type: "REAL" },
+    });
+  });
+
   it("FK 欠落は table/columns/ref を差し込む", () => {
     const d = findingDescription(
       finding({ rule: "fk_missing_index", table: "orders", columns: ["user_id"], context: ["users"] }),
@@ -142,6 +185,9 @@ describe("i18n キーが実在する", () => {
       ruleTitleKey("unused_index"),
       ruleTitleKey("fk_type_mismatch"),
       ruleTitleKey("sqlite_integer_pk_hint"),
+      ruleTitleKey("nullable_foreign_key"),
+      ruleTitleKey("oversized_varchar"),
+      ruleTitleKey("float_for_money"),
       reasonTextKey("unsupported_driver"),
       reasonTextKey("performance_schema_off"),
       reasonTextKey("stats_unreadable"),

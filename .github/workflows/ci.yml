@@ -1349,7 +1349,12 @@ jobs:
         env:
           NOOBDB_TEST_MYSQL_URL: mysql://root:rootpw@127.0.0.1:3306/testdb
           NOOBDB_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/testdb
-        run: cargo llvm-cov nextest --no-report --archive-file "$RUNNER_TEMP/nextest-cov-archive.tar.zst"
+        # rust-cache が以前の run で展開済みの target/llvm-cov-target/target を復元すると、
+        # nextest の --extract-to が「destination already exists」(exit 96) で落ちる。
+        # 展開先は毎回 archive から作り直すものなので、実行前に消しておく。
+        run: |
+          rm -rf target/llvm-cov-target/target
+          cargo llvm-cov nextest --no-report --archive-file "$RUNNER_TEMP/nextest-cov-archive.tar.zst"
 
       # 収集済みデータから lcov レポートを生成し、サマリ表を Job Summary に出して
       # main の push ごとのカバレッジを可視化する (#1420 で PR からは外した)。
