@@ -743,7 +743,7 @@ fn validate_generated_create_spec(
 pub(crate) async fn insert_generated_rows_inner(
     state: &AppState,
     session_id: &str,
-    database: Option<String>,
+    mut database: Option<String>,
     table: &str,
     columns: &[String],
     rows: &[Vec<serde_json::Value>],
@@ -765,7 +765,14 @@ pub(crate) async fn insert_generated_rows_inner(
     let mut new_schema: Option<String> = None;
     if let Some(create) = create_table {
         validate_generated_create_spec(driver, table, columns, create)?;
-        new_schema = Some(new_table_schema(driver, database.as_deref())?);
+        let schema = new_table_schema(driver, database.as_deref())?;
+        // 存在確認・CREATE・投入・DROP がすべて同じ表を指すよう、解決したスキーマ / DB を
+        // 以降の実行にも使う (PG で database 未指定のまま投入すると search_path の別スキーマの
+        // 同名表へ入りうる)。SQLite の `main` は修飾にだけ使う。
+        if driver != DriverKind::Sqlite {
+            database = Some(schema.clone());
+        }
+        new_schema = Some(schema);
     }
     let mut cells: Vec<Vec<Option<String>>> = Vec::with_capacity(rows.len());
     for row in rows {
