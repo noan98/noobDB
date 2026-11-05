@@ -44,6 +44,11 @@ describe("themePresetDataTheme (#465)", () => {
     expect(themePresetDataTheme("tokyo-night", "dark")).toBe("tokyo-night-dark");
   });
 
+  it("brand follows the light/dark toggle (#2030)", () => {
+    expect(themePresetDataTheme("brand", "light")).toBe("brand-light");
+    expect(themePresetDataTheme("brand", "dark")).toBe("brand-dark");
+  });
+
   it("every dark-variant preset name ends with 'dark' so conditions.dark matches", () => {
     for (const preset of THEME_PRESET_ORDER) {
       const dataTheme = themePresetDataTheme(preset, "dark");
@@ -55,7 +60,14 @@ describe("themePresetDataTheme (#465)", () => {
 
 describe("effectiveTheme (#1237 レビュー指摘)", () => {
   const darkOnly: ThemePreset[] = ["dracula", "nord", "one-dark", "catppuccin"];
-  const follows: ThemePreset[] = ["default", "solarized", "tokyo-night", "high-contrast", "colorblind"];
+  const follows: ThemePreset[] = [
+    "default",
+    "brand",
+    "solarized",
+    "tokyo-night",
+    "high-contrast",
+    "colorblind",
+  ];
 
   it("ダーク専用プリセットはトグルに関わらず dark", () => {
     for (const p of darkOnly) {

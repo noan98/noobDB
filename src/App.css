@@ -1904,6 +1904,201 @@
   color-scheme: dark;
 }
 
+/* ── Theme preset: Brand (#2030) ──────────────────────────────────────────
+   noobDB 自身のブランド (navy / teal、`--brand-*`) を作業面の配色として表現する
+   シグネチャ・プリセット。light/dark トグルに追従する (`brand-light` / `brand-dark`)。
+   地・サーフェス・選択面は `--brand-navy` (#12355b) / `--brand-navy-raised` (#1d4a7a)
+   の色相 (約 210°) を明度だけ動かした系統で統一し、アクセントはブランド teal
+   (`--brand-teal` #2dd4bf) を基調にする。ダークは teal をそのまま使える (地に対し
+   AA)。ライトは teal 単体だと白地で AA を割るため、同色相の濃い変種 (#0f766e) に
+   落としている。AA 検証 (themeContrast.test.ts) が値を hex で読むため、導出元の
+   `--brand-*` は var() 参照にせずここで hex に展開している (ブランド値を変える
+   ときは本ブロックも追随)。既定テーマは変えず追加プリセットとして提供する。 */
+:root[data-theme="brand-light"] {
+  --bg: #eef3f8;
+  --bg-elevated: #ffffff;
+  --bg-muted: #e2eaf3;
+  --bg-hover: #d8e3ef;
+  --bg-active: #cbdcee;
+  --bg-active-strong: #b5cde6;
+  --bg-toolbar: #e2eaf3;
+  --bg-header: #e2eaf3;
+  --bg-error: #fbe4e8;
+  --bg-warning: #f6ecd2;
+  --bg-input: #ffffff;
+  --bg-stripe: #f3f6fa;
+  --bg-row-hover: #dbe8f5;
+
+  --text: #12263d;
+  --text-secondary: #2a3f58;
+  --text-muted: #475b73;
+  --text-null: #4d6079;
+  --text-error: #b3203f;
+  --text-warning: #8a5700;
+  --text-success: #1f6b3a;
+
+  --border: #c5d3e2;
+  --border-strong: #8fa6bf;
+  --border-subtle: #dbe5f0;
+
+  /* セマンティックカラーの 4 段階トークン (#476/#664)。solid は白文字が AA を満たす濃さ。 */
+  --info-subtle: #dce9f7;
+  --info-border: #6f9bc9;
+  --info-solid: #1d4a7a;
+  --info-text: #1d4a7a;
+  --success-subtle: #daf0e3;
+  --success-border: #6aab84;
+  --success-solid: #1f6b3a;
+  --success-text: #1f6b3a;
+  --warning-subtle: #f6ecd2;
+  --warning-border: #c6a35e;
+  --warning-solid: #8a5700;
+  --warning-text: #8a5700;
+  --error-subtle: #fbe4e8;
+  --error-border: #d9809a;
+  --error-solid: #b3203f;
+  --error-text: #b3203f;
+
+  --scrollbar-thumb: #b5c5d8;
+  --scrollbar-thumb-hover: #8fa6bf;
+
+  --accent: #0f766e;
+  --accent-hover: #0b5c56;
+  --accent-text: #ffffff;
+
+  --cm-selection: #cbdcee;
+
+  --cell-number: #8a5700;
+  --cell-decimal: #1f6b3a;
+  --cell-bool-true: #0f766e;
+  --cell-bool-false: #6b3fa0;
+  --cell-date: #8a5700;
+  --key-accent: #8a5700;
+  --cell-json: #0a6a8a;
+  --cell-enum-s: 55%;
+  --cell-enum-l: 35%;
+  --cell-binary: #4d6079;
+
+  --status-connected: #1f6b3a;
+  --status-connecting: #8a5700;
+  --status-error: #b3203f;
+  --status-warning: #8a5700;
+  --status-success: #1f6b3a;
+  --status-info: #1d4a7a;
+  --status-idle: #6a7d93;
+
+  --syntax-keyword: #6b3fa0;
+  --syntax-string: #1f6b3a;
+  --syntax-number: #8a5700;
+  --syntax-comment: #5a6e86;
+  --syntax-function: #1d4a7a;
+  --syntax-operator: #0f766e;
+
+  --preview-highlight: #0f766e;
+  --preview-banner-bg: #f6ecd2;
+  --preview-banner-border: #d2b676;
+  --preview-banner-text: #6b4500;
+  --preview-banner-dot: #8a5700;
+
+  color-scheme: light;
+}
+
+:root[data-theme="brand-dark"] {
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.62);
+  --shadow-xl: 0 28px 64px rgba(0, 0, 0, 0.72);
+
+  --bg: #0b1c30;
+  /* ベタ塗り (solid/status) の上の前景。明色 solid の上は暗色にする (#1111)。 */
+  --on-solid: #07182a;
+  --bg-elevated: #11273f;
+  --bg-muted: #08162a;
+  --bg-hover: #1a3553;
+  --bg-active: #19395a;
+  --bg-active-strong: #1d4a7a;
+  --bg-toolbar: #08162a;
+  --bg-header: #08162a;
+  --bg-error: #3a1f2c;
+  --bg-warning: #35301d;
+  --bg-input: #08162a;
+  --bg-stripe: #0f2339;
+  --bg-row-hover: #16385a;
+
+  --text: #e6eef7;
+  --text-secondary: #b9c9dc;
+  --text-muted: #8ea3bb;
+  --text-null: #93a7be;
+  --text-error: #ff8fa3;
+  --text-warning: #f0c070;
+  --text-success: #7fdba0;
+
+  --border: #1f3a58;
+  --border-strong: #34567c;
+  --border-subtle: #162d47;
+
+  /* セマンティックカラーの 4 段階トークン (#476/#664)。subtle は地に混ぜた暗色。 */
+  --info-subtle: #12304f;
+  --info-border: #3f78ad;
+  --info-solid: #6fb3f0;
+  --info-text: #6fb3f0;
+  --success-subtle: #173a2b;
+  --success-border: #3f8a62;
+  --success-solid: #6fd49a;
+  --success-text: #6fd49a;
+  --warning-subtle: #35301d;
+  --warning-border: #98763f;
+  --warning-solid: #f0c070;
+  --warning-text: #f0c070;
+  --error-subtle: #3a1f2c;
+  --error-border: #a04a62;
+  --error-solid: #ff8fa3;
+  --error-text: #ff8fa3;
+
+  --scrollbar-thumb: #2c4a6b;
+  --scrollbar-thumb-hover: #3f6490;
+
+  --accent: #2dd4bf;
+  --accent-hover: #5eead4;
+  --accent-text: #04201c;
+
+  --cm-selection: #1d4a7a;
+
+  --cell-number: #ffb36b;
+  --cell-decimal: #ffb36b;
+  --cell-bool-true: #2dd4bf;
+  --cell-bool-false: #c4a8ff;
+  --cell-date: #f0c070;
+  --key-accent: #f0c070;
+  --cell-json: #67d4f0;
+  --cell-enum-s: 55%;
+  --cell-enum-l: 72%;
+  --cell-binary: #93a7be;
+
+  --status-connected: #6fd49a;
+  --status-connecting: #f0c070;
+  --status-error: #ff8fa3;
+  --status-warning: #ffb36b;
+  --status-success: #6fd49a;
+  --status-info: #6fb3f0;
+  --status-idle: #6f86a0;
+
+  --syntax-keyword: #c4a8ff;
+  --syntax-string: #7fdba0;
+  --syntax-number: #ffb36b;
+  --syntax-comment: #8ea3bb;
+  --syntax-function: #5eead4;
+  --syntax-operator: #67d4f0;
+
+  --preview-highlight: #2dd4bf;
+  --preview-banner-bg: #35301d;
+  --preview-banner-border: #6b5a30;
+  --preview-banner-text: #f0c070;
+  --preview-banner-dot: #f0c070;
+
+  color-scheme: dark;
+}
+
 /* Density overrides (#410, #620). The grid-facing tokens and the control
    padding multiplier (--density-control-scale) shift together so the same
    preset tunes the grid *and* every form / button / field; horizontal padding

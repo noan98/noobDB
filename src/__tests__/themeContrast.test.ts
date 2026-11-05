@@ -308,6 +308,9 @@ describe("WCAG AA contrast for theme presets (#465, #558)", () => {
         "catppuccin-dark",
         "tokyo-night-light",
         "tokyo-night-dark",
+        // ブランド・シグネチャ (#2030)。
+        "brand-light",
+        "brand-dark",
       ]),
     );
   });
@@ -445,8 +448,16 @@ describe("data-viz palettes stay dark-theme aware (#1187)", () => {
       "one-dark",
       "catppuccin-dark",
       "tokyo-night-dark",
+      "brand-dark",
     ];
-    const lightValues = ["light", "hc-light", "cb-light", "solarized-light", "tokyo-night-light"];
+    const lightValues = [
+      "light",
+      "hc-light",
+      "cb-light",
+      "solarized-light",
+      "tokyo-night-light",
+      "brand-light",
+    ];
     for (const v of darkValues) expect(isDarkDataTheme(v)).toBe(true);
     for (const v of lightValues) expect(isDarkDataTheme(v)).toBe(false);
     expect(isDarkDataTheme(null)).toBe(false);
@@ -478,6 +489,7 @@ describe("data-viz palettes stay dark-theme aware (#1187)", () => {
         "one-dark",
         "catppuccin-dark",
         "tokyo-night-dark",
+        "brand-dark",
       ]),
     );
   });

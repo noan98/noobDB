@@ -88,7 +88,7 @@ describe("themePresetPreview: 静的マップと App.css の同期", () => {
   });
 
   it("solarized/tokyo-night/high-contrast/colorblind は light/dark で異なる色を返す", () => {
-    for (const preset of ["solarized", "tokyo-night", "high-contrast", "colorblind"] as const) {
+    for (const preset of ["brand", "solarized", "tokyo-night", "high-contrast", "colorblind"] as const) {
       expect(themePreviewColors(preset, "light")).not.toEqual(themePreviewColors(preset, "dark"));
     }
   });
