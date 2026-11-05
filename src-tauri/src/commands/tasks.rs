@@ -115,7 +115,8 @@ fn validate_action(action: &TaskAction) -> Result<()> {
             targets, database, ..
         } => {
             crate::tasks::maintenance::validate_targets(targets)?;
-            // ドライバは未確定なので、どのドライバでも識別子にできない文字だけを弾く。
+            // ドライバは未確定なので NUL だけを弾く (ドライバ依存の文字は
+            // `validate_maintenance_for_profile` → `build_statements` で検査する)。
             crate::tasks::maintenance::validate_database(None, database.as_deref())?;
         }
     }

@@ -103,7 +103,9 @@ pub fn validate_database(driver: Option<DriverKind>, database: Option<&str>) -> 
             Some(DriverKind::Mysql) => db.contains('`'),
             Some(DriverKind::Postgres) => db.contains('"') || db.contains('\\'),
             Some(DriverKind::Sqlite) => false,
-            None => db.contains('`') || db.contains('"') || db.contains('\\'),
+            // ドライバ未確定 (保存前の事前検証) は NUL だけを弾く。ドライバ依存の文字は
+            // プロファイル解決後の `build_statements` (`Some(driver)`) で検査する。
+            None => false,
         };
     if bad {
         return Err(AppError::InvalidInput(
@@ -256,6 +258,16 @@ mod tests {
     }
     fn sqls(r: Vec<MaintenanceStatement>) -> Vec<String> {
         r.into_iter().map(|m| m.sql).collect()
+    }
+
+    #[test]
+    fn driverless_database_check_only_rejects_nul() {
+        // 保存前 (ドライバ未確定) は NUL だけを弾き、ドライバ依存の文字は通す (#2025)。
+        assert!(validate_database(None, Some("a`b")).is_ok());
+        assert!(validate_database(None, Some("a\"b")).is_ok());
+        assert!(validate_database(None, Some("a\0b")).is_err());
+        assert!(validate_database(Some(DriverKind::Mysql), Some("a`b")).is_err());
+        assert!(validate_database(Some(DriverKind::Postgres), Some("a\"b")).is_err());
     }
 
     #[test]
