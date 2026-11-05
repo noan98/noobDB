@@ -1,7 +1,9 @@
-import { describe, it, expect, vi } from "vitest";
+import { act } from "@testing-library/react";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
 import { ProfileCardGrid } from "../components/ProfileCardGrid";
 import { makeProfile } from "./fixtures/componentFixtures";
+import type { ConnectionProfile } from "../api/tauri";
 import { t } from "../i18n";
 
 /**
@@ -172,5 +174,53 @@ describe("ProfileCardGrid の検索とグループ絞り込み (#1630)", () => {
     expect(onDelete).not.toHaveBeenCalled();
     fireEvent.click(await screen.findByRole("button", { name: t("contextMenuDelete") }));
     await waitFor(() => expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ id: "p-1" })));
+  });
+
+  describe("接続経路図 (#2031)", () => {
+    afterEach(() => vi.useRealTimers());
+    const ssh = makeProfile({
+      id: "p-ssh",
+      name: "Via Bastion",
+      ssh: { host: "bastion.example.com", port: 22 } as ConnectionProfile["ssh"],
+    });
+    const diagramOf = (name: string) =>
+      screen.getByRole("button", { name }).querySelector('[data-testid="connection-path-diagram"]');
+
+    it("各カードに静的な経路プレビューを出し、SSH は踏み台ノードを含む。SQLite は出さない", () => {
+      renderWithProviders(
+        <ProfileCardGrid
+          profiles={[ssh, makeProfile({ id: "p-l", name: "Local", driver: "sqlite", file_path: "/a.db" })]}
+          connectingId={null}
+          onConnect={() => {}}
+          onCreate={() => {}}
+        />,
+      );
+      const d = diagramOf("Via Bastion");
+      expect(d).not.toBeNull();
+      expect(d?.querySelector('[data-testid="conn-path-node-bastion"]')).not.toBeNull();
+      expect(d?.getAttribute("data-phase")).toBeNull();
+      expect(diagramOf("Local")).toBeNull();
+    });
+
+    it("接続中は phase を流し、一定時間後に prominent (ラベル付き) へ昇格する", () => {
+      vi.useFakeTimers();
+      renderWithProviders(
+        <ProfileCardGrid
+          profiles={[ssh]}
+          connectingId="p-ssh"
+          connectPhase="tunnel_connecting"
+          onConnect={() => {}}
+          onCreate={() => {}}
+        />,
+      );
+      expect(diagramOf("Via Bastion")?.getAttribute("data-phase")).toBe("tunnel_connecting");
+      const wrap = () => screen.getByTestId("profile-card-path");
+      expect(wrap().getAttribute("data-promoted")).toBe("false");
+      act(() => {
+        vi.advanceTimersByTime(700);
+      });
+      expect(wrap().getAttribute("data-promoted")).toBe("true");
+      expect(screen.getByText("bastion.example.com:22")).toBeInTheDocument();
+    });
   });
 });

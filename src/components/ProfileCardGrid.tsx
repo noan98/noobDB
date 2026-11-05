@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { chakra, Flex, Text } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
 import type { ConnectionProfile } from "../api/tauri";
@@ -24,6 +24,14 @@ import { HeroHeader } from "./HeroHeader";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import { GroupAvatar, ProfileBadges, ProfileColorChip } from "./ProfileBadge";
 import { Spinner } from "./Spinner";
+import { ConnectionPathDiagram } from "./ConnectionPathDiagram";
+import { buildConnectionPath, pathInputFromProfile } from "./connectionPath";
+
+/**
+ * 接続中の経路図を prominent (非 compact) に昇格するまでの待ち時間 (ms)。接続は一瞬で
+ * 終わることが多く、すぐ昇格するとカードがちらつくので、遅い接続 (SSH 多段など) のときだけ見せる。
+ */
+const PROMOTE_AFTER_MS = 600;
 
 // Chakra でラップした motion 要素 (WelcomeView / EmptyState と同じパターン)。
 // motion 用 props は Chakra のスタイルプロップに飲まれないよう forwardProps で
@@ -72,6 +80,8 @@ interface Props {
   onDelete?: (profile: ConnectionProfile) => void;
   /** ヒーローのシグネチャ・アニメを許可する。スプラッシュ表示中は false を渡して裏での消費を防ぐ (#2042)。既定 true。 */
   animateHero?: boolean;
+  /** 接続試行中の現在フェーズ (#684)。接続中カードの経路図の点灯位置に使う。未指定は先頭 (preparing) 扱い。 */
+  connectPhase?: string | null;
 }
 
 /** プロファイルの接続先を 1 行で要約する (ヘッダーの表示と同じ書式)。 */
@@ -100,6 +110,7 @@ export function ProfileCardGrid({
   onDuplicate,
   onDelete,
   animateHero = true,
+  connectPhase = null,
 }: Props) {
   const t = useT();
   const reduced = useReducedMotion() ?? false;
@@ -223,6 +234,7 @@ export function ProfileCardGrid({
               key={p.id}
               profile={p}
               connecting={connecting}
+              connectPhase={connecting ? connectPhase : null}
               disabled={connectingId != null && !connecting}
               onConnect={() => onConnect(p)}
               onMenu={openMenu}
@@ -295,12 +307,14 @@ function GroupChip({
 function ProfileCard({
   profile: p,
   connecting,
+  connectPhase,
   disabled,
   onConnect,
   onMenu,
 }: {
   profile: ConnectionProfile;
   connecting: boolean;
+  connectPhase: string | null;
   disabled: boolean;
   onConnect: () => void;
   onMenu: (e: ContextMenuTriggerEvent, profile: ConnectionProfile) => void;
@@ -310,6 +324,22 @@ function ProfileCard({
   const driverIcon: IconName = driverIconName(p.driver) ?? "server";
   const endpoint = endpointSummary(p);
   const inert = disabled || connecting;
+  // 経路は保存済みの非秘密フィールド (ホスト・ポート・SSM ターゲット) から導出するだけ (#2031)。
+  // SQLite (ファイル) は経路を持たないので null = 図を出さない。
+  const path = useMemo(() => {
+    const input = pathInputFromProfile(p);
+    return input ? buildConnectionPath(input) : null;
+  }, [p]);
+  // 接続中でも一定時間を超えるまでは compact のまま (点灯だけ流す)。超えたら prominent に昇格。
+  const [promoted, setPromoted] = useState(false);
+  useEffect(() => {
+    if (!connecting) {
+      setPromoted(false);
+      return;
+    }
+    const id = window.setTimeout(() => setPromoted(true), PROMOTE_AFTER_MS);
+    return () => window.clearTimeout(id);
+  }, [connecting]);
   // バッジは視覚情報なので、読み上げ用に状態込みの名前を組み立てる (#1529)。
   const cardLabel = [
     p.name,
@@ -376,6 +406,23 @@ function ProfileCard({
             {connecting ? t("statusConnecting", { name: p.name }) : endpoint}
           </Text>
         </Flex>
+        {path && (
+          <Flex
+            w="100%"
+            minW={0}
+            pt={connecting && promoted ? "1" : undefined}
+            data-testid="profile-card-path"
+            data-promoted={connecting && promoted ? "true" : "false"}
+          >
+            <ConnectionPathDiagram
+              path={path}
+              driver={p.driver}
+              accentColor={p.color}
+              compact={!(connecting && promoted)}
+              phase={connecting ? (connectPhase ?? "preparing") : undefined}
+            />
+          </Flex>
+        )}
         {p.group && (
           <Flex align="center" gap="1.5" minW={0} color="app.textMuted">
             <GroupAvatar name={p.group} size={16} />
