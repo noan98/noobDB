@@ -1193,6 +1193,35 @@ pub mod __test_api {
         .await
     }
 
+    /// 上限つき記録つき書き込み (`run_captured_write_bounded_inner`、#2020)。`None` は記録を辞退する文
+    /// (何も実行していない)。
+    pub async fn run_captured_write_bounded_via_command(
+        state: &AppState,
+        session_id: &str,
+        sql: &str,
+        database: Option<&str>,
+        row_cap: u32,
+        max_rows: u64,
+    ) -> crate::error::Result<Option<crate::commands::flight_recorder::CapturedWriteResponse>> {
+        use crate::commands::flight_recorder::BoundedCaptureResponse;
+        Ok(
+            match crate::commands::flight_recorder::run_captured_write_bounded_inner(
+                state,
+                session_id.to_string(),
+                sql.to_string(),
+                database.map(str::to_string),
+                row_cap,
+                None,
+                max_rows,
+            )
+            .await?
+            {
+                BoundedCaptureResponse::Declined(_) => None,
+                BoundedCaptureResponse::Done(r) => Some(r),
+            },
+        )
+    }
+
     /// チャンク分割 DML の SQL 生成 (`db::chunked_dml::build_chunk_sql`)。成功は SQL、拒否は
     /// 理由コード (`ChunkedDmlError::code`)。実装横断ゴールデン (`tests/chunked_dml_golden.rs`) が使う。
     pub fn chunked_dml_sql(

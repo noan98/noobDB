@@ -2614,7 +2614,7 @@ async fn capture_prepare_has_no_side_effect_and_finish_applies_the_write() {
         .await
         .expect("execute");
     // COMMIT 前でも同じ接続の外からは未確定 (BEGIN IMMEDIATE) だが、commit すれば確定する。
-    let (res, cap) = conn.capture_commit(run, sql).await.expect("commit");
+    let (res, cap) = conn.capture_commit(run, sql, None).await.expect("commit");
     assert_eq!(res.rows_affected, 1);
     assert!(cap.capturable, "{:?}", cap.reason);
     let rows = conn
@@ -7233,10 +7233,11 @@ async fn sqlite_chunked_batch_goes_through_flight_recorder_when_enabled() {
     .await
     .expect("captured batch");
     assert_eq!(r.rows_affected, 10);
-    assert!(
-        r.recorded && r.capture_note.is_none(),
-        "capture must be recorded, got note {:?}",
-        r.capture_note
+    // make_session は skip_history = true なので、記録は保存されず理由が返る。
+    assert!(!r.recorded);
+    assert_eq!(
+        r.capture_note.as_deref(),
+        Some("履歴を残さない設定のため記録なし")
     );
     assert_eq!(
         count_rows(&state, &sid, "SELECT COUNT(*) FROM logs").await,
@@ -7292,5 +7293,62 @@ async fn sqlite_chunked_handles_shadowed_rowid_aliases() {
     .await
     .expect_err("all aliases shadowed");
     assert!(matches!(err, t::AppError::InvalidInput(_)), "{err:?}");
+    let _ = std::fs::remove_file(&path);
+}
+
+/// 上限つき記録経路: 上限を超える書き込みは COMMIT 前にロールバックされ、書き込みも記録も残らない。
+/// 記録を辞退する文 (複数文) は何も実行せず `None` を返す。
+#[tokio::test]
+async fn sqlite_bounded_capture_rolls_back_when_over_limit() {
+    let (state, sid, path) = chunked_state("chunk_bounded", false).await;
+    let err = t::run_captured_write_bounded_via_command(
+        &state,
+        &sid,
+        "DELETE FROM logs WHERE id <= 5",
+        None,
+        100,
+        3,
+    )
+    .await
+    .expect_err("5 rows > max 3 must fail");
+    assert!(matches!(err, t::AppError::InvalidInput(_)), "{err:?}");
+    assert_eq!(
+        count_rows(&state, &sid, "SELECT COUNT(*) FROM logs").await,
+        "[[25]]"
+    );
+
+    let ok = t::run_captured_write_bounded_via_command(
+        &state,
+        &sid,
+        "DELETE FROM logs WHERE id <= 3",
+        None,
+        100,
+        3,
+    )
+    .await
+    .expect("within limit")
+    .expect("capturable statement is not declined");
+    assert_eq!(ok.result.rows_affected, 3);
+    assert!(ok.capturable);
+    assert_eq!(
+        count_rows(&state, &sid, "SELECT COUNT(*) FROM logs").await,
+        "[[22]]"
+    );
+
+    let declined = t::run_captured_write_bounded_via_command(
+        &state,
+        &sid,
+        "DELETE FROM logs WHERE id = 20; DELETE FROM logs WHERE id = 21",
+        None,
+        100,
+        3,
+    )
+    .await
+    .expect("decline is not an error");
+    assert!(declined.is_none());
+    assert_eq!(
+        count_rows(&state, &sid, "SELECT COUNT(*) FROM logs").await,
+        "[[22]]"
+    );
     let _ = std::fs::remove_file(&path);
 }

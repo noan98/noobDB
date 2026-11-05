@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildChunkSql, buildCountSql, maxBatchesFor } from "../components/chunkedDml";
+import { buildChunkSql, buildCountSql, maxBatchesFor, pickSqliteRowKey } from "../components/chunkedDml";
 import vectors from "./fixtures/chunkedDmlVectors.json";
 
 // 大規模 DML のチャンク分割実行 (#2020) の SQL 生成ゴールデン — フロント側。
@@ -52,5 +52,14 @@ describe("maxBatchesFor", () => {
     expect(maxBatchesFor(0, 1000)).toBe(3);
     expect(maxBatchesFor(1000, 1000)).toBe(5);
     expect(maxBatchesFor(1001, 1000)).toBe(7);
+  });
+});
+
+describe("pickSqliteRowKey", () => {
+  it("実列に隠されていない別名を選ぶ (Rust pick_sqlite_row_key と同じ)", () => {
+    expect(pickSqliteRowKey(["id"])).toBe("rowid");
+    expect(pickSqliteRowKey(["RowId"])).toBe("_rowid_");
+    expect(pickSqliteRowKey(["rowid", "_rowid_"])).toBe("oid");
+    expect(pickSqliteRowKey(["rowid", "_rowid_", "OID"])).toBeNull();
   });
 });

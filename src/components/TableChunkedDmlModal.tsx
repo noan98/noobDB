@@ -8,6 +8,7 @@ import {
   buildCountSql,
   MAX_BATCH_SIZE,
   maxBatchesFor,
+  pickSqliteRowKey,
   type ChunkedDmlErrorCode,
   type ChunkedOp,
 } from "./chunkedDml";
@@ -105,9 +106,24 @@ export function TableChunkedDmlModal({
   );
   const dbArg = driver === "sqlite" ? null : database;
 
+  // SQLite: 実行時 (Rust) と同じ行の別名をプレビューにも使う (rowid が実列に隠された表は _rowid_ / oid)。
+  const [rowKey, setRowKey] = useState("rowid");
+  useEffect(() => {
+    if (driver !== "sqlite") return;
+    let cancelled = false;
+    Promise.resolve()
+      .then(() => api.describeTable(sessionId, database, table))
+      .then((cols) => {
+        if (!cancelled) setRowKey(pickSqliteRowKey(cols.map((c) => c.name)) ?? "rowid");
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [driver, sessionId, database, table]);
   const built = useMemo(
-    () => buildChunkSql({ driver, database: dbArg, table, op, where: whereText, batchSize }),
-    [driver, dbArg, table, op, whereText, batchSize],
+    () => buildChunkSql({ driver, database: dbArg, table, op, where: whereText, batchSize, rowKey }),
+    [driver, dbArg, table, op, whereText, batchSize, rowKey],
   );
   const countBuilt = useMemo(
     () => buildCountSql({ driver, database: dbArg, table, where: whereText }),

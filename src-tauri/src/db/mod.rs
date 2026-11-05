@@ -2014,7 +2014,7 @@ impl Connection {
     ) -> Result<(QueryResult, WriteCapture)> {
         let prep = self.capture_prepare(sql, database, row_cap).await?;
         let run = self.capture_execute(prep, sql, database).await?;
-        self.capture_commit(run, sql).await
+        self.capture_commit(run, sql, None).await
     }
 
     /// [`Connection::capture_write`] の前半: 書き込みを一切実行せず (件数見積もりのみ)、
@@ -2143,15 +2143,40 @@ impl Connection {
     /// COMMIT は書き込みを確定する唯一の操作なので、呼び出し側はタイムアウト / キャンセルの
     /// 外 (切り離したタスク) で実行する。行の特定などの失敗は記録を辞退するだけで、
     /// `rows_affected` の照合に失敗した場合も書き込み自体は COMMIT する (記録なしで確定)。
+    ///
+    /// `max_rows` を渡すと、COMMIT 前に影響行数がそれを超えていればロールバックして
+    /// `InvalidInput` を返す (チャンク分割 DML の上限、#2020)。`None` は従来どおり。
     pub async fn capture_commit(
         &self,
         run: CaptureRun,
         sql: &str,
+        max_rows: Option<u64>,
     ) -> Result<(QueryResult, WriteCapture)> {
+        let over = |n: u64| {
+            AppError::InvalidInput(format!(
+                "write affected {n} rows, more than the allowed {}",
+                max_rows.unwrap_or_default()
+            ))
+        };
         let pending = match run {
-            CaptureRun::Done(done) => return Ok(*done),
+            CaptureRun::Done(done) => {
+                if let Some(max) = max_rows {
+                    if done.0.rows_affected > max {
+                        return Err(over(done.0.rows_affected));
+                    }
+                }
+                return Ok(*done);
+            }
             CaptureRun::Pending(p) => *p,
         };
+        if let Some(max) = max_rows {
+            if pending.result.rows_affected > max {
+                let n = pending.result.rows_affected;
+                // COMMIT せずに drop してロールバックする。
+                drop(pending);
+                return Err(over(n));
+            }
+        }
         let PendingCapture {
             kind,
             preview,

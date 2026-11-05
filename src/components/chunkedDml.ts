@@ -164,3 +164,9 @@ export function maxBatchesFor(totalRows: number, batchSize: number): number {
   const expected = Math.ceil(Math.max(0, totalRows) / Math.max(1, batchSize));
   return expected * 2 + 3;
 }
+
+/** SQLite で行を指す別名 (Rust `pick_sqlite_row_key`)。実列に隠されていない最初のもの。全部隠されていれば null。 */
+export function pickSqliteRowKey(columnNames: readonly string[]): string | null {
+  const lower = columnNames.map((c) => c.toLowerCase());
+  return ["rowid", "_rowid_", "oid"].find((k) => !lower.includes(k)) ?? null;
+}

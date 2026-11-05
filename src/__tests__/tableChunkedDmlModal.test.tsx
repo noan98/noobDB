@@ -10,6 +10,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       ...actual.api,
       runLookupQuery: vi.fn(),
       runChunkedDmlBatch: vi.fn(),
+      describeTable: vi.fn(),
     },
   };
 });
@@ -19,6 +20,7 @@ import { TableChunkedDmlModal } from "../components/TableChunkedDmlModal";
 
 const lookup = api.runLookupQuery as ReturnType<typeof vi.fn>;
 const batch = api.runChunkedDmlBatch as ReturnType<typeof vi.fn>;
+const describe_ = api.describeTable as ReturnType<typeof vi.fn>;
 
 const result = (rows_affected: number) => ({
   rows_affected,
@@ -31,6 +33,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   batch.mockReset();
   lookup.mockReset();
+  describe_.mockReset();
+  describe_.mockResolvedValue([{ name: "id" }]);
   lookup.mockResolvedValue({ columns: [], rows: [[2500]], rows_affected: 0, elapsed_ms: 1 });
 });
 
@@ -61,6 +65,15 @@ describe("TableChunkedDmlModal (#2020)", () => {
     fill("id < 100");
     expect(screen.getByText(/DELETE FROM "logs" WHERE rowid IN/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("chunkedDmlRun") })).toBeEnabled();
+  });
+
+  it("SQLite で rowid が実列に隠された表は _rowid_ でプレビューする", async () => {
+    describe_.mockResolvedValue([{ name: "rowid" }, { name: "v" }]);
+    mount();
+    fill("v = 1");
+    await waitFor(() =>
+      expect(screen.getByText(/WHERE _rowid_ IN \(SELECT _rowid_ FROM/)).toBeInTheDocument(),
+    );
   });
 
   it("コメントで括弧を食わせる条件は理由つきで拒否する", () => {
