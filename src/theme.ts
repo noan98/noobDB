@@ -191,6 +191,10 @@ const config = defineConfig({
             navy: { value: "var(--brand-navy)" },
             navyRaised: { value: "var(--brand-navy-raised)" },
             teal: { value: "var(--brand-teal)" },
+            // シグネチャ面 (FAB / 主要空状態 CTA) のブランド固定グラデーションと前景 (#2043)。
+            fill: { value: "var(--brand-fill)" },
+            fillHover: { value: "var(--brand-fill-hover)" },
+            onFill: { value: "var(--brand-on-fill)" },
           },
           // 拡張ニュートラル階調。0=地, 950=最も濃い文字。テーマ反転は
           // App.css 側で吸収するため、ここは var() ブリッジのみ。
