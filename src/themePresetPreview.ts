@@ -52,6 +52,15 @@ const PREVIEW_COLORS_BY_DATA_THEME: Record<string, ThemePreviewColors> = {
   // 既定 (:root / :root[data-theme="dark"])
   light: { bg: "#f5f7fa", surface: "#ffffff", accent: "#2563eb", text: "#1a2330", keyword: "#7c3aed" },
   dark: { bg: "#0d1117", surface: "#161b22", accent: "#4c93f7", text: "#e6edf3", keyword: "#c4b5fd" },
+  // Brand (light/dark 追従, #2030)
+  "brand-light": {
+    bg: "#eef3f8",
+    surface: "#ffffff",
+    accent: "#0f766e",
+    text: "#12263d",
+    keyword: "#6b3fa0",
+  },
+  "brand-dark": { bg: "#0b1c30", surface: "#11273f", accent: "#2dd4bf", text: "#e6eef7", keyword: "#c4a8ff" },
   // Dracula (ダーク専用)
   "dracula-dark": {
     bg: "#282a36",

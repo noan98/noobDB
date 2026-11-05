@@ -382,10 +382,13 @@ export interface Settings {
  *   brightened from the canonical values where needed to keep WCAG AA.
  * - `one-dark` — dark-only One Dark (Atom) palette (#598).
  * - `catppuccin` — dark-only Catppuccin Mocha palette (#1237).
+ * - `brand` — noobDB signature palette (navy surfaces + brand-teal accent) that
+ *   follows the light/dark toggle (`brand-light` / `brand-dark`, #2030).
  * - `tokyo-night` — Tokyo Night palette that follows the light/dark toggle
  *   (`tokyo-night-light` = Day / `tokyo-night-dark` = Night, #1237).
  */
 export type ThemePreset =
+  | "brand"
   | "default"
   | "dracula"
   | "nord"
@@ -398,6 +401,7 @@ export type ThemePreset =
 
 /** Presets offered in settings, in display order. */
 export const THEME_PRESET_ORDER: ThemePreset[] = [
+  "brand",
   "default",
   "dracula",
   "nord",
@@ -417,6 +421,7 @@ export const DEFAULT_THEME_PRESET: ThemePreset = "default";
  * colored-button tokens correctly.
  */
 export function themePresetDataTheme(preset: ThemePreset, theme: Theme): string {
+  if (preset === "brand") return theme === "dark" ? "brand-dark" : "brand-light";
   if (preset === "dracula") return "dracula-dark";
   // Nord / One Dark はダーク専用プリセット (dracula と同じ方式)。名前が "dark" で
   // 終わるため theme.ts の conditions.dark ([data-theme$=dark]) に一致する。

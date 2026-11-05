@@ -127,10 +127,18 @@ describe("isDarkDataTheme (#1187)", () => {
       "one-dark",
       "catppuccin-dark",
       "tokyo-night-dark",
+      "brand-dark",
     ]) {
       expect(isDarkDataTheme(v)).toBe(true);
     }
-    for (const v of ["light", "hc-light", "cb-light", "solarized-light", "tokyo-night-light"]) {
+    for (const v of [
+      "light",
+      "hc-light",
+      "cb-light",
+      "solarized-light",
+      "tokyo-night-light",
+      "brand-light",
+    ]) {
       expect(isDarkDataTheme(v)).toBe(false);
     }
   });
