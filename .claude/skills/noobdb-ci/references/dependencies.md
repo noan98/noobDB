@@ -21,6 +21,10 @@ PR の自動生成と脆弱性の可視化を次のように役割分担して�
   脆弱性ゲート**。依存ライセンスの許可リスト検査に加え、RustSec Advisory DB による
   既知脆弱性チェックを **PR ごとに強制**します (fail する)。設定は
   `src-tauri/deny.toml`。詳細は上記 CI セクションを参照。
+- **cargo-machete (同 `rust (deny)` ジョブ内) — Rust の未使用依存ガード (#2029)**。
+  フロントの `pnpm run knip` と対。`cargo machete src-tauri` が Cargo.toml と use 文の
+  解析だけで未使用 crate を検出し、新規混入で fail する (コンパイル不要)。誤検出は
+  `src-tauri/Cargo.toml` の `[package.metadata.cargo-machete] ignored` に理由付きで足す。
 - **pnpm audit (`.github/workflows/audit.yml`) — フロント依存の脆弱性可視化**。
   cargo-deny に対になるフロント側の仕組みが無かったため新設しました。
   `schedule: cron` (毎週月曜) + `workflow_dispatch` で定期実行し、`pnpm audit` の
