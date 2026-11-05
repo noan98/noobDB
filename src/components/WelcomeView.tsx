@@ -42,6 +42,8 @@ interface Props {
   onOpenSqlite: (filePath: string) => void;
   /** 「はじめかたを見る」— 軽量オンボーディングツアーを開始する。 */
   onStartTour: () => void;
+  /** ヒーローのシグネチャ・アニメを許可する。スプラッシュ表示中は false を渡して裏での消費を防ぐ (#2042)。既定 true。 */
+  animateHero?: boolean;
 }
 
 interface CardProps {
@@ -75,7 +77,7 @@ function WelcomeCard({ icon, title, description, onClick, tourId }: CardProps) {
         flex="1"
         alignItems="flex-start"
       >
-        <FeatureIcon icon={icon} size="md" />
+        <FeatureIcon icon={icon} size="md" animateOnMount={false} />
         <Text textStyle="subheading">{title}</Text>
         <Text id={descId} textStyle="caption">
           {description}
@@ -93,7 +95,7 @@ function WelcomeCard({ icon, title, description, onClick, tourId }: CardProps) {
  * プリセットのみで、reduced-motion 時は `MotionConfig` により自動的に即時化
  * される。ライト/ダーク・アクセント色への追従はすべて `app.*` トークン経由。
  */
-export function WelcomeView({ onCreateConnection, onOpenSqlite, onStartTour }: Props) {
+export function WelcomeView({ onCreateConnection, onOpenSqlite, onStartTour, animateHero = true }: Props) {
   const t = useT();
   // stagger (#875) は MotionConfig が遅延まで打ち消さないため、reduced-motion
   // では同時表示へ明示的にフォールバックする (motion.ts の staggerContainer 参照)。
@@ -152,7 +154,12 @@ export function WelcomeView({ onCreateConnection, onOpenSqlite, onStartTour }: P
         <WelcomeIllustration size={128} />
       </MotionDiv>
 
-      <HeroHeader title={t("welcomeTitle")} subtitle={t("welcomeSubtitle")} maxW="46ch" />
+      <HeroHeader
+        title={t("welcomeTitle")}
+        subtitle={t("welcomeSubtitle")}
+        maxW="46ch"
+        animate={animateHero}
+      />
 
       <MotionRow
         display="flex"
