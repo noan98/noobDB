@@ -97,8 +97,10 @@
   **`crosslang parity` ジョブ (#853)**: `ipcCommandParity.test.ts` (`?raw`
   インポートで `src-tauri/src/lib.rs` を読む) / `ipcArgParity.test.ts` /
   `streamEventParity.test.ts` (いずれも `import.meta.glob` で `src-tauri/src/`
-  配下の `.rs` を網羅的に読む。前者は `commands/*.rs` 限定、後者は
+  配下の `.rs` を網羅的に読む。前者は `commands/**/*.rs` 再帰、後者は
   `src-tauri/src/**/*.rs` 再帰。#970) と
+  `commandLocationParity.test.ts` (全 `#[tauri::command]` が `commands/` 配下にあることを
+  `src-tauri/src/**/*.rs` 全体から強制 #2037) と
   `readOnlyGolden.test.ts` / `errorKindGolden.test.ts` / `errorHintGolden.test.ts` /
   `schemaParity.test.ts` / `serdeCoverageParity.test.ts` (#1243。
   `commands/**/*.rs` の `#[tauri::command]` 戻り値型を抽出し、すべてが serde ゴールデンの

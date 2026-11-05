@@ -49,6 +49,8 @@ pub (async) fn <name>` を抽出して `generate_handler!` 登録集合の部分
 wrapper above is intentionally a one-liner over this.」のような**説明文中の記法**
 (`commands/query.rs::run_query_inner` / `commands/sync.rs::apply_sync_sql_inner` /
 `commands/sandbox.rs` のモジュール doc に実例あり) を誤って属性だと検出してしまいます。
+`commands/` の外に `#[tauri::command]` を定義することは `commandLocationParity.test.ts`
+(#2037) が禁止する (read_only / serde / 引数 / 登録の 4 系統の検査範囲から外れるため)。
 
 エラーは `AppError` として上に
 伝搬し、`{ kind, message }` の**構造化 JSON** としてシリアライズされます
