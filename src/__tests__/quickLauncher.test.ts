@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Snippet } from "../api/tauri";
 import {
   DEFAULT_LAUNCHER_POSITION,
   DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS,
   buildQuickLauncherSections,
   clampLauncherPoint,
+  consumeLauncherIntro,
   computeLauncherPopoverPosition,
   exceedsDragThreshold,
   launcherPointToPosition,
@@ -248,5 +249,25 @@ describe("launcherPopoverOrigin", () => {
     expect(launcherPopoverOrigin({ above: false, alignEnd: false })).toBe("left top");
     expect(launcherPopoverOrigin({ above: true, alignEnd: false })).toBe("left bottom");
     expect(launcherPopoverOrigin({ above: false, alignEnd: true })).toBe("right top");
+  });
+});
+
+describe("consumeLauncherIntro (#2039)", () => {
+  beforeEach(() => {
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("初回だけ true を返し、2 回目以降は false", () => {
+    expect(consumeLauncherIntro()).toBe(true);
+    expect(consumeLauncherIntro()).toBe(false);
+    expect(consumeLauncherIntro()).toBe(false);
   });
 });
