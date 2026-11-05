@@ -1,8 +1,10 @@
 import { Box, chakra } from "@chakra-ui/react";
+import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useT } from "../i18n";
+import { staggerContainer, variants } from "../motion";
 import { ActiveRowHighlight } from "./ActiveRowHighlight";
-import { singleLine } from "./commandPaletteSearch";
+import { shouldStaggerEntrance, singleLine } from "./commandPaletteSearch";
 import { Modal } from "./Modal";
 import { isImeComposing } from "./modalKeys";
 import { filterHistory } from "./queryHistoryNav";
@@ -10,6 +12,10 @@ import { scrollFollowIntoView } from "./scrollFollow";
 
 /** 一度に並べる候補の最大数。履歴は最大 100 件なので実質すべて出せる。 */
 const MAX_ROWS = 50;
+
+// CommandPalette と同じ stagger 語彙 (#1212)。`variants` を子へ伝播させるため forwardProps で通す。
+const MotionListBox = chakra(motion.div, {}, { forwardProps: ["variants", "initial", "animate"] });
+const MotionRow = chakra(motion.button, {}, { forwardProps: ["variants"] });
 
 interface Props {
   /** 直近の実行クエリ (最新が先頭)。 */
@@ -26,12 +32,22 @@ interface Props {
  */
 export function HistorySearchModal({ history, onPick, onClose }: Props) {
   const t = useT();
+  const reduced = useReducedMotion() ?? false;
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   // アクティブ行ハイライトの layoutId をモーダルごとに分ける。
   const highlightId = `history-search-active-highlight-${useId()}`;
   const inputRef = useRef<HTMLInputElement>(null);
   const rows = useMemo(() => filterHistory(history, query).slice(0, MAX_ROWS), [history, query]);
+  // 絞り込みで残る行が再入場しないよう、SQL 本文 + 出現回数で安定 key を作る (位置 index は使わない)。
+  const rowKeys = useMemo(() => {
+    const seen = new Map<string, number>();
+    return rows.map((sql) => {
+      const n = seen.get(sql) ?? 0;
+      seen.set(sql, n + 1);
+      return `${n}:${sql}`;
+    });
+  }, [rows]);
   const activeIndex = Math.min(active, Math.max(0, rows.length - 1));
   const listRef = useRef<HTMLDivElement>(null);
   // アクティブ行を可視範囲へ追従させる (ObjectSearchModal と同じ block:"nearest")。
@@ -91,13 +107,16 @@ export function HistorySearchModal({ history, onPick, onClose }: Props) {
         color="app.text"
         fontSize="md"
       />
-      <Box
+      <MotionListBox
         ref={listRef}
         role="listbox"
         aria-label={t("queryHistorySearchListAria")}
         maxH="min(420px, 60vh)"
         overflowY="auto"
         py="1.5"
+        variants={staggerContainer(reduced)}
+        initial="initial"
+        animate="animate"
       >
         {rows.length === 0 ? (
           <Box px="4" py="5" textAlign="center" color="app.textMuted" fontSize="sm">
@@ -105,10 +124,11 @@ export function HistorySearchModal({ history, onPick, onClose }: Props) {
           </Box>
         ) : (
           rows.map((sql, i) => (
-            <chakra.button
-              key={`${i}:${sql}`}
+            <MotionRow
+              key={rowKeys[i]}
               type="button"
               role="option"
+              variants={shouldStaggerEntrance(i) ? variants.staggerItem : undefined}
               aria-selected={i === activeIndex}
               onClick={() => pick(sql)}
               onMouseMove={() => setActive(i)}
@@ -135,10 +155,10 @@ export function HistorySearchModal({ history, onPick, onClose }: Props) {
               >
                 {singleLine(sql)}
               </chakra.span>
-            </chakra.button>
+            </MotionRow>
           ))
         )}
-      </Box>
+      </MotionListBox>
     </Modal>
   );
 }
