@@ -28,6 +28,7 @@ import { useConfirm } from "./ConfirmDialog";
 import { Icon, ICON_SIZES } from "./Icon";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiSurface } from "./AiSurface";
 import { AiSetupHint } from "./AiSetupHint";
 import { AiUsageNote } from "./AiUsageNote";
 import { Tooltip } from "./Tooltip";
@@ -219,7 +220,7 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
   const hasResult = state.kind !== "idle" && state.kind !== "running";
 
   return (
-    <Flex direction="column" gap="2" fontSize="sm" color="app.text" data-testid="ai-impact-analysis">
+    <AiSurface data-testid="ai-impact-analysis">
       <Flex align="center" gap="2" wrap="wrap">
         <Tooltip label={sendsLine(tableRefs.length)}>
           <Button
@@ -294,7 +295,7 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
         {t("dangerousAiGuardNote")}
       </Callout>
       {dialog}
-    </Flex>
+    </AiSurface>
   );
 }
 

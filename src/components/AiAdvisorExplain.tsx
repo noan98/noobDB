@@ -24,6 +24,7 @@ import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiSurface } from "./AiSurface";
 import { AiUsageNote } from "./AiUsageNote";
 import { Tooltip } from "./Tooltip";
 
@@ -161,7 +162,7 @@ export function AiAdvisorExplain(props: AiAdvisorExplainProps) {
   const running = state.kind === "running";
 
   return (
-    <Flex direction="column" gap="2" marginTop="2" data-testid="ai-advisor-explain">
+    <AiSurface marginTop="2" data-testid="ai-advisor-explain">
       <Flex align="center" gap="2" wrap="wrap">
         <Tooltip label={sent ?? sends}>
           <Button
@@ -217,7 +218,7 @@ export function AiAdvisorExplain(props: AiAdvisorExplainProps) {
         </Flex>
       )}
       {dialog}
-    </Flex>
+    </AiSurface>
   );
 }
 
