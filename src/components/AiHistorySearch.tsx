@@ -36,12 +36,11 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { useCopyFeedback } from "./useCopyFeedback";
 import { isImeComposing } from "./modalKeys";
+import { shouldStaggerEntrance } from "./commandPaletteSearch";
 
 // CommandPalette と同じ stagger 語彙 (#1212)。`variants` を子へ伝播させるため forwardProps で通す。
 const MotionMatchList = chakra(motion.div, {}, { forwardProps: ["variants", "initial", "animate"] });
 const MotionMatchRow = chakra(motion.div, {}, { forwardProps: ["variants"] });
-/** stagger 入場させる先頭件数の上限。 */
-const MAX_STAGGER_ITEMS = 12;
 
 /** SQL 全文の取得を同時に走らせる件数。 */
 const FETCH_BATCH = 100;
@@ -422,7 +421,7 @@ export function AiHistorySearch({ filters, periodLabel, onOpen, onSaveAsSnippet 
                   gap="1"
                   alignItems="stretch"
                   data-testid="ai-history-match"
-                  variants={mi < MAX_STAGGER_ITEMS ? variants.staggerItem : undefined}
+                  variants={shouldStaggerEntrance(mi) ? variants.staggerItem : undefined}
                 >
                   <chakra.button
                     type="button"
