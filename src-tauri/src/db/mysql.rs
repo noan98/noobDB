@@ -232,6 +232,9 @@ impl MySqlConn {
 
         let mut conn = self.pool.acquire().await?;
         apply_use_database(&mut conn, database).await?;
+        if let Some(ctx) = super::server_stop::current() {
+            register_server_stop(&mut conn, &ctx).await;
+        }
 
         let initial = initial_batch.max(1);
         let chunk = chunk_size.max(1);
@@ -459,6 +462,9 @@ impl MySqlConn {
         // ようにする (#1536)。`USE` / PK 検索もこのトランザクションの接続で行う。
         let mut tx = self.pool.begin().await?;
         apply_use_database_on(&mut tx, database).await?;
+        if let Some(ctx) = super::server_stop::current() {
+            register_server_stop(&mut tx, &ctx).await;
+        }
 
         // Best-effort PK lookup — falls back to an empty Vec so a missing
         // primary key, view target, or stripped privileges just degrades to
@@ -4353,6 +4359,38 @@ fn main_statement_is_mutation(masked: &[char]) -> bool {
     // (`WITH … DELETE` のような文末が裸のキーワードで終わる形は SQL として
     // 成立しないため、挙動を変えずに据え置く)。
     false
+}
+
+/// サーバ側停止の準備 (#2023)。この接続の `CONNECTION_ID()` を控え、アプリのクエリ
+/// タイムアウトがあれば `max_execution_time` を (猶予つきで) セッションへ設定する。
+/// `max_execution_time` は読み取り専用の SELECT にしか効かず、MariaDB には変数が無い
+/// (エラーは無視する)。書き込み文はクライアント側の打ち切り時の `KILL QUERY` が止める。
+async fn register_server_stop(
+    conn: &mut sqlx::MySqlConnection,
+    ctx: &super::server_stop::ServerStopCtx,
+) {
+    if let Some(ms) = ctx.server_timeout_ms() {
+        // ms は数値なので SQL インジェクションにならない。
+        if let Err(e) = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SET SESSION max_execution_time = {ms}"
+        )))
+        .execute(&mut *conn)
+        .await
+        {
+            tracing::debug!(error = %e, "max_execution_time not set (mysql)");
+        }
+    }
+    match sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()")
+        .fetch_one(&mut *conn)
+        .await
+    {
+        Ok(id) => {
+            if let Ok(id) = i64::try_from(id) {
+                ctx.record_backend(id);
+            }
+        }
+        Err(e) => tracing::debug!(error = %e, "server-side stop setup skipped (mysql)"),
+    }
 }
 
 #[cfg(test)]

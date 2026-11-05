@@ -10,6 +10,27 @@
 プールへ接続が返ります。`query_timeout_secs` が正のときは `tokio::time::timeout` で
 実行全体をレースし、超過時は `AppError::Timeout` を返します。
 
+## サーバ側タイムアウトとサーバ側停止 (#2023)
+
+クライアント側の打ち切り (future の drop) だけではサーバで文が走り続けるため、
+`db/server_stop.rs` が `run_query_stream` / `preview_query_stream` に次を足す。
+文脈 (`ServerStopCtx`) は `task_local` で渡すので `execute_stream` のシグネチャは変わらない。
+文脈の外 (メタデータ取得など) の挙動は従来どおり。
+
+- **サーバ側タイムアウト (バックストップ)**: `query_timeout_secs` + 2 秒の猶予を実行セッションへ設定。
+  PostgreSQL `statement_timeout` (`set_config`、pid 取得と 1 往復) / MySQL `max_execution_time`
+  (SELECT のみ有効・MariaDB は変数が無いので無視) / SQLite は progress handler の期限。
+  猶予があるので通常はクライアント側の `AppError::Timeout` が先に出る。
+- **サーバ側停止**: 実行接続のバックエンド ID (`CONNECTION_ID()` / `pg_backend_pid()`) を控え、
+  `StopGuard` がタイムアウト時 (`fire`) とキャンセル時 (タスク abort = drop) に別接続から
+  `Connection::kill_processes([id], statement_only = true)` (MySQL `KILL QUERY` /
+  PostgreSQL `pg_cancel_backend`) を撃つ。SQLite は停止要求を progress handler が見て中断する。
+- 正常終了・DB エラーではガードを解除する (プールに戻った接続で次に走る別の文を止めないため)。
+- 制約: `statement_timeout` / `max_execution_time` はセッション変数なので、キャンセルで drop された
+  接続にはプール返却後も残る (次の文脈付き実行で上書き。値はアプリのタイムアウトと同じ)。
+  SQLite の handler も同様にプールに残るが、期限切れ / 終了 / 一度中断した後は無効になる。
+  アプリのタイムアウトが 0 (無制限) のときはサーバ側の設定に触れない。
+
 ## バッチ合流・逐次統計・差分パッチ (#1257)
 
 `spawn_query_stream` はドライバの 200 行バッチをそのまま Channel へ流さず、ドライバ非依存の

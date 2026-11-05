@@ -262,6 +262,9 @@ impl PostgresConn {
 
         let mut conn = self.pool.acquire().await?;
         apply_search_path(&mut conn, database, &self.search_path).await?;
+        if let Some(ctx) = super::server_stop::current() {
+            register_server_stop(&mut conn, &ctx).await;
+        }
 
         if !is_query {
             let result = sqlx::query(sqlx::AssertSqlSafe(sql))
@@ -417,6 +420,9 @@ impl PostgresConn {
         // ようにする (#1536)。search_path もこのトランザクションの接続に設定する。
         let mut tx = self.pool.begin().await?;
         apply_search_path_on(&mut tx, database, &self.search_path).await?;
+        if let Some(ctx) = super::server_stop::current() {
+            register_server_stop(&mut tx, &ctx).await;
+        }
 
         let is_insert_stmt = trimmed.starts_with("insert");
         // 書き込みキャプチャ (#1536) の INSERT は、新規行が末尾 (最大 PK 側) に付く
@@ -4540,6 +4546,33 @@ fn create_sequence_ddl(r: &PgRow) -> String {
         opt(7, "CACHE"),
         if cycle { "CYCLE" } else { "NO CYCLE" },
     )
+}
+
+/// サーバ側停止の準備 (#2023)。この接続の `pg_backend_pid()` を控え、アプリのクエリ
+/// タイムアウトがあれば `statement_timeout` を (猶予つきで) セッションへ設定する。
+/// 1 往復で済ませ、失敗しても実行自体は妨げない (従来どおりクライアント側打ち切りのみ)。
+async fn register_server_stop(
+    conn: &mut sqlx::PgConnection,
+    ctx: &super::server_stop::ServerStopCtx,
+) {
+    let ms = ctx.server_timeout_ms().unwrap_or(0);
+    let res = if ms > 0 {
+        sqlx::query_as::<_, (i32, String)>(
+            "SELECT pg_backend_pid(), set_config('statement_timeout', $1, false)",
+        )
+        .bind(ms.to_string())
+        .fetch_one(&mut *conn)
+        .await
+        .map(|(pid, _)| pid)
+    } else {
+        sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
+            .fetch_one(&mut *conn)
+            .await
+    };
+    match res {
+        Ok(pid) => ctx.record_backend(i64::from(pid)),
+        Err(e) => tracing::debug!(error = %e, "server-side stop setup skipped (postgres)"),
+    }
 }
 
 #[cfg(test)]

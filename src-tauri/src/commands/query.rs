@@ -1268,7 +1268,14 @@ async fn spawn_query_stream(
     // When a positive timeout is configured, race the whole run against it.
     // Elapsing drops the streaming future, which returns the pooled connection
     // (mirroring the manual stop button), so the session stays usable.
-    let run = async {
+    //
+    // サーバ側停止 (#2023): 実行に使う接続のバックエンド ID を控え、タイムアウト時・
+    // キャンセル時 (タスク abort = このガードの drop) に別接続から実行中の文だけを止める。
+    // 正常終了・DB エラーでは文が終わっているのでガードを解除する (プールに戻った接続で
+    // 次に走る別の文を止めないため)。サーバ側タイムアウトも同じ文脈から設定される。
+    let stop_ctx = crate::db::server_stop::ServerStopCtx::new(query_timeout_secs);
+    let mut stop_guard = crate::db::server_stop::StopGuard::new(stop_ctx.clone(), session.clone());
+    let run = crate::db::server_stop::scope(stop_ctx, async {
         match query_timeout_secs {
             Some(secs) if secs > 0 => {
                 match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
@@ -1278,7 +1285,7 @@ async fn spawn_query_stream(
             }
             _ => exec.await,
         }
-    };
+    });
     // 合流バッチの時間フラッシュ: `StreamBatcher::push` はドライバのバッチが届いたとき
     // にしか時間判定しないので、低速なクエリで行が溜まったまま止まらないよう、
     // 一定間隔で期限切れの分を送る。`run` と同じタスクで交互に polling されるため、
@@ -1297,10 +1304,19 @@ async fn spawn_query_stream(
             }
         }
     };
+    let mut ticker_failed = false;
     let result = tokio::select! {
         res = run => res,
-        e = ticker => Err(e),
+        e = ticker => {
+            ticker_failed = true;
+            Err(e)
+        }
     };
+    // 文が走ったままかもしれない終わり方 (タイムアウト / 送信失敗で打ち切り) はサーバ側でも止める。
+    if ticker_failed || matches!(result, Err(AppError::Timeout(_))) {
+        stop_guard.fire();
+    }
+    stop_guard.disarm();
 
     // 合流待ちで残った行を吐き出す (正常終了・DB エラー・タイムアウトのどれでも。
     // これで `delivered_rows` と UI が受け取った行数が一致する)。送信に失敗した
@@ -1941,9 +1957,16 @@ async fn spawn_preview_stream(
     delivered_rows: Arc<AtomicU64>,
     on_event: Channel<PreviewStreamMessage>,
 ) {
-    let exec = session
-        .conn
-        .preview_execute_with_limit(&sql, database.as_deref(), row_limit);
+    // サーバ側停止 (#2023): run_query_stream と同じ。ドライランの UPDATE / DELETE が
+    // ロック待ち・長時間実行のまま残らないよう、タイムアウト / キャンセル時に止める。
+    let stop_ctx = crate::db::server_stop::ServerStopCtx::new(query_timeout_secs);
+    let mut stop_guard = crate::db::server_stop::StopGuard::new(stop_ctx.clone(), session.clone());
+    let exec = crate::db::server_stop::scope(
+        stop_ctx,
+        session
+            .conn
+            .preview_execute_with_limit(&sql, database.as_deref(), row_limit),
+    );
     // run_query_stream と同じレース方式: 超過したら future を drop してプールへ
     // 接続を返す (プレビューはトランザクション内なので、drop は暗黙のロールバック
     // として働き、握っていた行ロックも解放される)。
@@ -1956,6 +1979,10 @@ async fn spawn_preview_stream(
         }
         _ => exec.await,
     };
+    if matches!(result, Err(AppError::Timeout(_))) {
+        stop_guard.fire();
+    }
+    stop_guard.disarm();
     match result {
         Ok(p) => {
             if let Err(e) = on_event.send(PreviewStreamMessage::Meta {

@@ -89,6 +89,7 @@ pub mod __test_api {
         create_sql as savepoint_create_sql, release_sql as savepoint_release_sql,
         rollback_to_sql as savepoint_rollback_to_sql,
     };
+    pub use crate::db::server_stop::{scope as server_stop_scope, ServerStopCtx};
     pub use crate::db::sqlite_rebuild::{
         plan_table_rebuild, RebuildChangedGenerated, RebuildCheck, RebuildColumnEdit,
         RebuildForeignKey, RebuildForeignKeyRef, RebuildNewColumn, RebuildNewGenerated,
