@@ -759,8 +759,10 @@ export function TableTimelapsePanel({
                   >
                     <Icon name="chevron-right" size={ICON_SIZES.sm} />
                   </Button>
-                  <chakra.span textStyle="caption" fontVariantNumeric="tabular-nums">
-                    {t("timelapseScrubStep", { step: currentStep, max: maxStep })}
+                  <chakra.span textStyle="caption">
+                    <chakra.span textStyle="numeric">
+                      {t("timelapseScrubStep", { step: currentStep, max: maxStep })}
+                    </chakra.span>
                   </chakra.span>
                 </Flex>
               )}
