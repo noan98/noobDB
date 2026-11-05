@@ -342,6 +342,11 @@ pub(crate) fn pg_sequences_sql(schema: &str) -> String {
                WHERE c.relkind = 'S' AND c.relname = s.sequencename AND n.nspname = s.schemaname \
                LIMIT 1) o ON true \
          WHERE s.schemaname = {lit} AND COALESCE(o.deptype, 'a') <> 'i' \
+           AND NOT EXISTS (SELECT 1 FROM pg_depend e \
+                             JOIN pg_class sc ON sc.oid = e.objid \
+                             JOIN pg_namespace sn ON sn.oid = sc.relnamespace \
+                            WHERE e.classid = 'pg_class'::regclass AND e.deptype = 'e' \
+                              AND sc.relname = s.sequencename AND sn.nspname = s.schemaname) \
          ORDER BY s.sequencename"
     )
 }
@@ -406,13 +411,22 @@ pub(crate) fn pg_types_sql(schema: &str) -> String {
             WHERE n.nspname = {s} AND t.typtype = 'e' AND {not_ext} \
            UNION ALL \
            SELECT 2, t.oid, 'domain', \
-                  format('DO $noobdb$ BEGIN CREATE DOMAIN %I.%I AS %s%s%s%s; EXCEPTION WHEN duplicate_object THEN NULL; END $noobdb$;', \
+                  format('DO $noobdb$ BEGIN CREATE DOMAIN %I.%I AS %s%s; EXCEPTION WHEN duplicate_object THEN NULL; END $noobdb$;', \
                          n.nspname, t.typname, pg_catalog.format_type(t.typbasetype, t.typtypmod), \
-                         CASE WHEN t.typdefault IS NULL THEN '' ELSE ' DEFAULT ' || t.typdefault END, \
-                         CASE WHEN t.typnotnull THEN ' NOT NULL' ELSE '' END, \
-                         COALESCE((SELECT string_agg(' CONSTRAINT ' || quote_ident(k.conname) || ' ' || pg_get_constraintdef(k.oid), '' ORDER BY k.conname) \
-                                     FROM pg_constraint k WHERE k.contypid = t.oid), '')) \
+                         CASE WHEN t.typnotnull THEN ' NOT NULL' ELSE '' END) \
              FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace \
+            WHERE n.nspname = {s} AND t.typtype = 'd' AND {not_ext} \
+           UNION ALL \
+           SELECT 4, t.oid, 'domain_late', \
+                  format('ALTER DOMAIN %I.%I SET DEFAULT %s;', n.nspname, t.typname, t.typdefault) \
+             FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace \
+            WHERE n.nspname = {s} AND t.typtype = 'd' AND t.typdefault IS NOT NULL AND {not_ext} \
+           UNION ALL \
+           SELECT 4, t.oid, 'domain_late', \
+                  format('DO $noobdb$ BEGIN ALTER DOMAIN %I.%I ADD CONSTRAINT %I %s; EXCEPTION WHEN duplicate_object THEN NULL; END $noobdb$;', \
+                         n.nspname, t.typname, k.conname, pg_get_constraintdef(k.oid)) \
+             FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace \
+             JOIN pg_constraint k ON k.contypid = t.oid AND k.contype = 'c' \
             WHERE n.nspname = {s} AND t.typtype = 'd' AND {not_ext} \
            UNION ALL \
            SELECT 3, t.oid, 'unsupported', \
@@ -422,7 +436,30 @@ pub(crate) fn pg_types_sql(schema: &str) -> String {
             WHERE n.nspname = {s} AND {not_ext} \
               AND (t.typtype = 'r' \
                    OR (t.typtype = 'c' AND EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = t.typrelid AND c.relkind = 'c'))) \
-         ) x ORDER BY ord, oid"
+         ) x ORDER BY ord, oid, stmt"
+    )
+}
+
+/// 拡張が持つ関係 (表・ビュー・マテビュー・シーケンス) の名前を引く SQL。これらは
+/// `CREATE EXTENSION` が作るので、独立した DDL としては出さない。
+pub(crate) fn pg_extension_relations_sql(schema: &str) -> String {
+    let s = pg_lit(schema);
+    format!(
+        "SELECT DISTINCT c.relname::text FROM pg_class c \
+           JOIN pg_namespace n ON n.oid = c.relnamespace \
+           JOIN pg_depend d ON d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e' \
+          WHERE n.nspname = {s}"
+    )
+}
+
+/// マテビューの索引 (`pg_get_indexdef`) を引く SQL。列は (マテビュー名, 索引定義)。
+/// 索引が無いと `REFRESH MATERIALIZED VIEW CONCURRENTLY` が使えない。
+pub(crate) fn pg_matview_indexes_sql(schema: &str) -> String {
+    let s = pg_lit(schema);
+    format!(
+        "SELECT c.relname::text, pg_get_indexdef(i.indexrelid) FROM pg_index i \
+           JOIN pg_class c ON c.oid = i.indrelid JOIN pg_namespace n ON n.oid = c.relnamespace \
+          WHERE n.nspname = {s} AND c.relkind = 'm' ORDER BY c.relname, i.indexrelid"
     )
 }
 
@@ -651,8 +688,22 @@ pub async fn dump_native_core(
     // マスキングはソルトの取得 (keyring) を伴うので、書き込み開始前に検証して fail closed。
     let mask_spec = load_mask_spec(options.masks.clone()).await?;
 
-    let all_names = conn.tables(&schema).await?;
-    let objects = conn.schema_objects(&schema).await?;
+    let mut all_names = conn.tables(&schema).await?;
+    let mut objects = conn.schema_objects(&schema).await?;
+    if pg {
+        // 拡張が所有する表・ビューは `CREATE EXTENSION` に任せる (独立した DDL にすると重複・DROP で壊れる)。
+        let ext_rels: HashSet<String> = conn
+            .execute(&pg_extension_relations_sql(&schema), None)
+            .await?
+            .rows
+            .iter()
+            .filter_map(|r| text_at(r, 0))
+            .collect();
+        all_names.retain(|n| !ext_rels.contains(n));
+        objects.retain(|o| {
+            !(matches!(o.kind.as_str(), "view" | "materialized_view") && ext_rels.contains(&o.name))
+        });
+    }
     let view_names: HashSet<&str> = objects
         .iter()
         .filter(|o| o.kind == "view" || o.kind == "materialized_view")
@@ -730,6 +781,9 @@ pub async fn dump_native_core(
 
     // PostgreSQL の事前取得 (書き込み前に済ませ、失敗は書き始める前に返す)。
     let mut type_stmts: Vec<String> = Vec::new();
+    // 関数を呼ぶ domain の DEFAULT / CHECK は、関数の後に付ける。
+    let mut domain_late_stmts: Vec<String> = Vec::new();
+    let mut matview_indexes: Vec<(String, String)> = Vec::new();
     let mut extension_stmts: Vec<String> = Vec::new();
     let mut seq_creates: Vec<String> = Vec::new();
     let mut seq_names: Vec<String> = Vec::new();
@@ -747,9 +801,18 @@ pub async fn dump_native_core(
                         "type {t} is not dumped; create it before restoring"
                     ));
                 }
+                (Some("domain_late"), Some(stmt)) => domain_late_stmts.push(stmt.to_string()),
                 (Some(_), Some(stmt)) => type_stmts.push(stmt.to_string()),
                 _ => {}
             }
+        }
+        for (m, idx) in pairs(
+            &conn
+                .execute(&pg_matview_indexes_sql(&schema), None)
+                .await?
+                .rows,
+        ) {
+            matview_indexes.push((m, idx));
         }
         if whole_schema {
             for r in &conn.execute(&pg_extensions_sql(&schema), None).await?.rows {
@@ -940,6 +1003,10 @@ pub async fn dump_native_core(
             chunk.push_str(&terminated(&def));
             chunk.push('\n');
         }
+        for s in &domain_late_stmts {
+            chunk.push_str(s);
+            chunk.push('\n');
+        }
         write_chunk(&writer, counter, &chunk)?;
     }
 
@@ -1125,6 +1192,10 @@ pub async fn dump_native_core(
             };
             chunk.push_str(&terminated(&def));
             chunk.push('\n');
+            for (_, idx) in matview_indexes.iter().filter(|(m, _)| *m == v.name) {
+                chunk.push_str(&terminated(idx));
+                chunk.push('\n');
+            }
         }
         write_chunk(&writer, counter, &chunk)?;
 
@@ -1550,6 +1621,8 @@ mod tests {
             pg_table_kinds_sql("s'"),
             pg_types_sql("s'"),
             pg_extensions_sql("s'"),
+            pg_extension_relations_sql("s'"),
+            pg_matview_indexes_sql("s'"),
             pg_skip_functions_sql("s'"),
             pg_table_dependent_functions_sql("s'"),
             pg_trigger_functions_sql("s'"),

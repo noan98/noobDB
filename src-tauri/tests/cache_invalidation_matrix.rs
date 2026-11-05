@@ -288,6 +288,10 @@ const READ_ONLY_FILES: &[(&str, &str)] = &[
     ("connection.rs", "接続確認の SELECT 1 のみ"),
     ("diff.rs", "データ比較の SELECT のみ (適用は sync.rs)"),
     ("dump.rs", "ダンプ (読み出し) のみ"),
+    (
+        "dump_native.rs",
+        "ネイティブダンプ (SELECT / SHOW と execute_stream の読み出しのみ)",
+    ),
     ("export.rs", "エクスポート (読み出し) のみ"),
     (
         "privileges.rs",
