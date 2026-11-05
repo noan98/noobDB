@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, VisuallyHidden, type SystemStyleObject } from "@chakra-ui/react";
+import { useReducedMotionConfig } from "motion/react";
 
 import {
   api,
@@ -12,6 +13,15 @@ import {
 import { useT } from "../i18n";
 import { semanticColorVar } from "../semanticColors";
 import { useSettings } from "../settings";
+import {
+  PLAYBACK_DWELL_MS,
+  initialPlayback,
+  pairAtStep,
+  playbackMaxStep,
+  playbackReducer,
+  stepOfPair,
+  type PlaybackAction,
+} from "../timelapsePlayback";
 import {
   buildTimelapseExportRows,
   buildTimelapseRows,
@@ -41,6 +51,8 @@ import { formatBytes } from "./tableSize";
 import { TimelapseRowHistoryView } from "./TimelapseRowHistory";
 import { Button } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
+import { CountUpText } from "./CountUp";
+import { useRowCrossfade } from "./useRowCrossfade";
 
 /**
  * テーブル・タイムラプス (#739) のボトムパネル。
@@ -87,6 +99,9 @@ const tdCss: SystemStyleObject = {
   verticalAlign: "top",
   whiteSpace: "nowrap",
 };
+
+/** 変更セルのフラッシュ (`.flash-ring::after`, apply-flash と同じ) の基準位置。 */
+const flashCellCss: SystemStyleObject = { position: "relative" };
 
 /** ウォッチ一覧の初回ロードスケルトン (#1174) のバー幅パターン。視覚的な単調さを
  *  避けるため周期させる (`ConnectionList` の `SKELETON_ROW_WIDTHS` と同じ発想)。 */
@@ -167,6 +182,19 @@ export function TableTimelapsePanel({
   const [actionError, setActionError] = useState<string | null>(null);
   // 行の値の推移 (#1621)。ウォッチやペアを切り替えたら閉じる。
   const [historyKey, setHistoryKey] = useState<CellValue[] | null>(null);
+  // タイムライン再生 (#2015)。段は選択中ペアから導くので、保持するのは再生中かどうかだけ。
+  const [playing, setPlaying] = useState(false);
+  // スクラバー / 再生 / ステップ送りを操作した後だけ変更セルをフラッシュする
+  // (最初に開いただけの表示は静止のまま)。
+  const [stepped, setStepped] = useState(false);
+  // 表示中の差分がどのペアのものか。再生中は次の取得が終わるまで直前の差分を残すため、
+  // 「現在のペアの差分が出揃ったか」の判定に使う。
+  const [diffFor, setDiffFor] = useState<{ fromId: number; toId: number } | null>(null);
+  const reduced = useReducedMotionConfig() ?? false;
+  // 段送り (再生 / スクラバー / ←→) で次のペアへ移るとき、直前の差分を残したまま取得する
+  // ための印。差分 effect が読んだら false に戻す。`playing` とは切り離してある (最終段へ
+  // 入る瞬間に playing が false になっても差分を消さないため)。
+  const keepDiffRef = useRef(false);
 
   const reload = useCallback(async () => {
     try {
@@ -206,11 +234,18 @@ export function TableTimelapsePanel({
     setDiffError(null);
     // 直前のペアの差分は破棄する。残すと取得が終わるまで古い件数と行が新しい結果に
     // 見えてしまう (読み込み中の表示は diff が無いときに出る, #1534)。
-    setDiff(null);
+    // ただし段送りでは、直前の差分を残して次の差分へクロスフェード / カウントアップさせる
+    // (#2015)。残している間のグリッドは aria-busy + 減光で「更新中」と分かるようにする。
+    const keep = keepDiffRef.current;
+    keepDiffRef.current = false;
+    if (!keep) setDiff(null);
     api
       .timelapseDiffGenerations(fromId, toId)
       .then((d) => {
-        if (!cancelled) setDiff(d);
+        if (!cancelled) {
+          setDiff(d);
+          setDiffFor({ fromId, toId });
+        }
       })
       .catch((e) => {
         if (!cancelled) {
@@ -225,6 +260,44 @@ export function TableTimelapsePanel({
       cancelled = true;
     };
   }, [fromId, toId]);
+
+  // ── タイムライン再生 (#2015) ──
+  const maxStep = playbackMaxStep(generations);
+  const currentStep = stepOfPair(generations, effectivePair) ?? 1;
+  const applyPlayback = (action: PlaybackAction) => {
+    const next = playbackReducer({ ...initialPlayback(currentStep, maxStep), playing }, action);
+    setPlaying(next.playing);
+    // 再生開始時も含め、ペアを現在の段 (隣接ペア) に合わせ直す (任意選択の非隣接ペアから始めない)。
+    const p = pairAtStep(generations, next.step);
+    if (p && (p.fromId !== fromId || p.toId !== toId)) {
+      keepDiffRef.current = true;
+      setPair(p);
+      setHistoryKey(null);
+    }
+    setStepped(true);
+  };
+  const applyPlaybackRef = useRef(applyPlayback);
+  applyPlaybackRef.current = applyPlayback;
+
+  const diffSettled =
+    diffFor !== null && diffFor.fromId === fromId && diffFor.toId === toId && !diffLoading && diff !== null;
+  // 再生中: 現在のペアの差分が出揃ってから一定時間見せて次の段へ進む。取得中は進めない
+  // (= 隣接ペアの取得は常に直列)。停止 / アンマウント / ペア変更で timer を破棄し、取得中の
+  // 古い応答は上の差分 effect の `cancelled` で捨てる。
+  useEffect(() => {
+    if (!playing) return;
+    if (diffError) {
+      setPlaying(false);
+      return;
+    }
+    if (!diffSettled) return;
+    const timer = setTimeout(() => applyPlaybackRef.current({ type: "advance" }), PLAYBACK_DWELL_MS);
+    return () => clearTimeout(timer);
+  }, [playing, diffSettled, diffError]);
+  // reduced-motion が有効になった / 段が無くなったら再生しない。
+  useEffect(() => {
+    if (playing && (reduced || maxStep < 2)) setPlaying(false);
+  }, [playing, reduced, maxStep]);
 
   // ── ウォッチ登録 (スキーマツリーの右クリックから) ──
   const handledSeqRef = useRef<number | null>(null);
@@ -412,6 +485,11 @@ export function TableTimelapsePanel({
     [diff, masked],
   );
 
+  // 段送りのたびにグリッドを軽くクロスフェードする (結果グリッドと同じ `useRowCrossfade`)。
+  const gridTbodyRef = useRef<HTMLTableSectionElement | null>(null);
+  const diffToken = diff ? `${diff.from_captured_at}|${diff.to_captured_at}` : "";
+  useRowCrossfade(gridTbodyRef, { sort: stepped ? diffToken : "", filter: "" }, String(selected?.id ?? ""));
+
   const kindLabel: Record<TimelapseRowKind, string> = {
     added: t("timelapseKindAdded"),
     removed: t("timelapseKindRemoved"),
@@ -546,6 +624,8 @@ export function TableTimelapsePanel({
                       setSelectedId(w.id);
                       setPair(null);
                       setHistoryKey(null);
+                      setPlaying(false);
+                      setStepped(false);
                     }}
                   >
                     <chakra.span fontFamily="var(--font-mono)" fontSize="sm" color="app.text">
@@ -600,7 +680,10 @@ export function TableTimelapsePanel({
                     ariaLabel={t("timelapseFrom")}
                     value={String(effectivePair.fromId)}
                     options={generations.map((g, i) => ({ value: String(g.id), label: genLabel(g, i) }))}
-                    onChange={(v) => setPair({ fromId: Number(v), toId: effectivePair.toId })}
+                    onChange={(v) => {
+                      setPlaying(false);
+                      setPair({ fromId: Number(v), toId: effectivePair.toId });
+                    }}
                   />
                   <Icon name="chevron-right" size={ICON_SIZES.sm} />
                   <ListboxSelect
@@ -608,11 +691,95 @@ export function TableTimelapsePanel({
                     ariaLabel={t("timelapseTo")}
                     value={String(effectivePair.toId)}
                     options={generations.map((g, i) => ({ value: String(g.id), label: genLabel(g, i) }))}
-                    onChange={(v) => setPair({ fromId: effectivePair.fromId, toId: Number(v) })}
+                    onChange={(v) => {
+                      setPlaying(false);
+                      setPair({ fromId: effectivePair.fromId, toId: Number(v) });
+                    }}
                   />
-                  <Button type="button" variant="ghost" size="sm" onClick={() => setPair(null)}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setPlaying(false);
+                      setPair(null);
+                    }}
+                  >
                     {t("timelapseLatestVsPrevious")}
                   </Button>
+                </Flex>
+              )}
+
+              {maxStep >= 2 && effectivePair && (
+                <Flex
+                  align="center"
+                  gap="2"
+                  flexWrap="wrap"
+                  role="group"
+                  aria-label={t("timelapseScrubAria")}
+                >
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() =>
+                      applyPlayback(playing ? { type: "pause" } : { type: "play", reducedMotion: reduced })
+                    }
+                    disabled={reduced || diffError !== null}
+                    minW="28"
+                  >
+                    {!playing && <Icon name="play" size={ICON_SIZES.sm} />}
+                    <chakra.span marginLeft={playing ? 0 : "1.5"}>
+                      {playing ? t("timelapsePause") : t("timelapsePlay")}
+                    </chakra.span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label={t("timelapseStepPrev")}
+                    title={t("timelapseStepPrev")}
+                    disabled={currentStep <= 1}
+                    onClick={() => applyPlayback({ type: "stepBy", delta: -1 })}
+                  >
+                    <Icon name="chevron-left" size={ICON_SIZES.sm} />
+                  </Button>
+                  <chakra.input
+                    type="range"
+                    min={1}
+                    max={maxStep}
+                    step={1}
+                    value={currentStep}
+                    aria-label={t("timelapseScrubAria")}
+                    aria-valuetext={t("timelapseScrubStep", { step: currentStep, max: maxStep })}
+                    onChange={(e) => applyPlayback({ type: "seek", step: Number(e.currentTarget.value) })}
+                    flex="1"
+                    minW="48"
+                    maxW="96"
+                    accentColor="var(--accent)"
+                    cursor="pointer"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label={t("timelapseStepNext")}
+                    title={t("timelapseStepNext")}
+                    disabled={currentStep >= maxStep}
+                    onClick={() => applyPlayback({ type: "stepBy", delta: 1 })}
+                  >
+                    <Icon name="chevron-right" size={ICON_SIZES.sm} />
+                  </Button>
+                  <chakra.span textStyle="caption">
+                    <chakra.span textStyle="numeric">
+                      {t("timelapseScrubStep", { step: currentStep, max: maxStep })}
+                    </chakra.span>
+                  </chakra.span>
+                  {reduced && (
+                    <chakra.p margin={0} w="100%" textStyle="caption" color="app.textMuted">
+                      {t("timelapsePlayReducedMotion")}
+                    </chakra.p>
+                  )}
                 </Flex>
               )}
 
@@ -639,22 +806,38 @@ export function TableTimelapsePanel({
               {diff && counts && effectivePair && (
                 <>
                   <Flex gap="2" flexWrap="wrap" align="center">
-                    <Chip status="source_only">{t("timelapseCountAdded", { count: counts.added })}</Chip>
-                    <Chip status="different">{t("timelapseCountChanged", { count: counts.changed })}</Chip>
-                    <Chip status="target_only">{t("timelapseCountRemoved", { count: counts.removed })}</Chip>
+                    <Chip status="source_only">
+                      <CountUpText
+                        values={[counts.added]}
+                        render={([n]) => t("timelapseCountAdded", { count: n })}
+                      />
+                    </Chip>
+                    <Chip status="different">
+                      <CountUpText
+                        values={[counts.changed]}
+                        render={([n]) => t("timelapseCountChanged", { count: n })}
+                      />
+                    </Chip>
+                    <Chip status="target_only">
+                      <CountUpText
+                        values={[counts.removed]}
+                        render={([n]) => t("timelapseCountRemoved", { count: n })}
+                      />
+                    </Chip>
                     <Box flex="1" />
                     <Button
                       type="button"
                       size="sm"
                       onClick={() => setDmlOpen(true)}
-                      disabled={rows.length === 0 || dmlBlocked}
+                      // 前の差分を残している間 (取得中) は、別ペアの SQL / 書き出しを作らせない。
+                      disabled={rows.length === 0 || dmlBlocked || !diffSettled}
                       title={dmlBlocked ? t("timelapseDmlRowidBlocked") : undefined}
                     >
                       {t("timelapseDmlButton")}
                     </Button>
                     <TextExportButton
                       filenameBase={`timelapse-${diff.diff.table}`}
-                      disabled={rows.length === 0}
+                      disabled={rows.length === 0 || !diffSettled}
                       formats={[
                         { id: "csv", label: "CSV", build: () => buildExport("csv") },
                         { id: "json", label: "JSON", build: () => buildExport("json") },
@@ -704,7 +887,12 @@ export function TableTimelapsePanel({
                       {t("timelapseNoChanges")}
                     </chakra.p>
                   ) : (
-                    <chakra.table style={{ borderCollapse: "collapse" }} aria-label={t("timelapseDiffAria")}>
+                    <chakra.table
+                      style={{ borderCollapse: "collapse" }}
+                      aria-label={t("timelapseDiffAria")}
+                      aria-busy={!diffSettled || undefined}
+                      opacity={diffSettled ? undefined : 0.6}
+                    >
                       <chakra.thead>
                         <chakra.tr>
                           <chakra.th css={thCss}>{t("timelapseChangeColumn")}</chakra.th>
@@ -718,10 +906,12 @@ export function TableTimelapsePanel({
                           ))}
                         </chakra.tr>
                       </chakra.thead>
-                      <chakra.tbody>
+                      <chakra.tbody ref={gridTbodyRef}>
                         {rows.map((r) => (
                           <chakra.tr
-                            key={r.key}
+                            // diffToken を混ぜるのは、段が変わるたびに行を作り直して
+                            // 変更セルの flash-ring (CSS アニメ) を再生し直すため。
+                            key={`${diffToken}:${r.key}`}
                             data-kind={r.kind}
                             style={{ background: rowBackground(r.kind) }}
                           >
@@ -749,7 +939,8 @@ export function TableTimelapsePanel({
                             {r.cells.map((c) => (
                               <chakra.td
                                 key={c.column}
-                                css={tdCss}
+                                css={stepped && c.changed ? { ...tdCss, ...flashCellCss } : tdCss}
+                                className={stepped && c.changed ? "flash-ring" : undefined}
                                 data-changed={c.changed || undefined}
                                 style={
                                   c.changed

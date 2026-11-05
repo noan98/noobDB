@@ -4,6 +4,7 @@ import { chooseListboxOption, renderWithProviders, screen, fireEvent, waitFor, w
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 import { registerTreeDropTarget } from "../components/treeDragStore";
+import { databaseVariantProfile } from "../openDatabase";
 
 /**
  * 接続一覧サイドパネル (#604)。マウント時のスキーマ取得 (`listDatabases`) は
@@ -1144,5 +1145,46 @@ describe("ConnectionList の接続管理 (#1630)", () => {
     fireEvent.contextMenu(row("Gamma DB"));
     fireEvent.click(await screen.findByRole("menuitem", { name: t("contextMenuSavedTabs") }));
     expect(onShowSavedTabs).toHaveBeenCalledWith(expect.objectContaining({ id: "p-c" }));
+  });
+});
+
+describe("ConnectionList: 派生接続 (別データベースを開く, #2018)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it("派生接続が active のとき、元プロファイルの直下に行が出てスキーマツリーが表示される", async () => {
+    const base = makeProfile({ id: "p-a", name: "Alpha DB", driver: "postgres" });
+    const variant = databaseVariantProfile(base, "analytics");
+    renderWithProviders(
+      <ConnectionList
+        {...baseProps}
+        profiles={[base]}
+        ephemeralProfiles={[variant]}
+        activeProfileId={variant.id}
+        sessionId="s1"
+      />,
+    );
+    expect(screen.getByText("Alpha DB / analytics")).toBeInTheDocument();
+    await screen.findByRole("treeitem", { name: "db1" });
+  });
+
+  it("派生接続の行は read_only を派生側の値で扱い、編集・削除は出さない", async () => {
+    const base = makeProfile({ id: "p-a", name: "Alpha DB", driver: "postgres" });
+    const variant = { ...databaseVariantProfile(base, "analytics"), read_only: true };
+    renderWithProviders(
+      <ConnectionList
+        {...baseProps}
+        profiles={[base]}
+        ephemeralProfiles={[variant]}
+        activeProfileId={variant.id}
+        sessionId="s1"
+      />,
+    );
+    const label = screen.getByText("Alpha DB / analytics");
+    fireEvent.contextMenu(label);
+    expect(screen.queryByText(t("contextMenuEdit"))).toBeNull();
+    expect(screen.queryByText(t("contextMenuDelete"))).toBeNull();
   });
 });

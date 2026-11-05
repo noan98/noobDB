@@ -21,6 +21,8 @@ mod schema_cache_integration;
 mod script_runner_integration;
 #[path = "../search_integration.rs"]
 mod search_integration;
+#[path = "../server_stop_sqlite.rs"]
+mod server_stop_sqlite;
 #[path = "../sqlite_integration.rs"]
 mod sqlite_integration;
 #[path = "../sqlite_rebuild_integration.rs"]

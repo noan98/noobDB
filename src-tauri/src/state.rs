@@ -148,6 +148,9 @@ impl DiffStore {
 pub struct Session {
     pub id: SessionId,
     pub profile_id: Option<String>,
+    /// keyring の秘密を引く元プロファイル ID (#2018)。「別データベースを開く」の派生セッション
+    /// (`profile_id` は派生 ID) で、検証済みの元 ID を持つ。それ以外は `None` (`profile_id` を使う)。
+    pub secret_profile_id: Option<String>,
     pub conn: Connection,
     /// The resolved options used to open `conn`. Kept so commands that must
     /// shell out to an external client (e.g. `mysqldump`) can reconstruct the
@@ -257,6 +260,11 @@ impl Tunnel {
 }
 
 impl Session {
+    /// keyring の秘密を引くプロファイル ID (#2018)。派生セッションは検証済みの元 ID、それ以外は `profile_id`。
+    pub fn secret_owner(&self) -> Option<&String> {
+        self.secret_profile_id.as_ref().or(self.profile_id.as_ref())
+    }
+
     /// True when the emergency-write override is currently on. Relaxed-enough
     /// ordering is fine — the flag is an independent boolean with no other
     /// memory it must synchronize with — but SeqCst keeps it trivially correct.

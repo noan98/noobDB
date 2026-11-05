@@ -103,6 +103,7 @@ pub mod __test_api {
         create_sql as savepoint_create_sql, release_sql as savepoint_release_sql,
         rollback_to_sql as savepoint_rollback_to_sql,
     };
+    pub use crate::db::server_stop::{scope as server_stop_scope, ServerStopCtx, StopGuard};
     pub use crate::db::sqlite_rebuild::{
         plan_table_rebuild, RebuildChangedGenerated, RebuildCheck, RebuildColumnEdit,
         RebuildForeignKey, RebuildForeignKeyRef, RebuildNewColumn, RebuildNewGenerated,
@@ -574,6 +575,7 @@ pub mod __test_api {
     // コマンド境界が一度も走らなかった。常時実走の `tests/sqlite_integration.rs`
     // から SQLite 短絡パス (非対応エラー / 縮退レスポンス) とセッション未検出の
     // 経路を駆動できるよう、ここでピンポイントに公開する。
+    pub use crate::commands::bulk_capture::{BulkCaptureConfig, BulkCaptureOutcome};
     pub use crate::commands::bulk_write::{
         BulkOldValue, BulkSetColumn, BulkSetValue, BulkUpdateGroup, BulkWriteOptions,
         BulkWriteOutcome, InsertRowsResult,
@@ -644,6 +646,7 @@ pub mod __test_api {
         Session {
             id: id.to_string(),
             profile_id: None,
+            secret_profile_id: None,
             conn,
             connect_options: opts,
             read_only,
@@ -1134,7 +1137,7 @@ pub mod __test_api {
         )
         .await?
         {
-            BulkWriteOutcome::Applied { result } => Ok(result),
+            BulkWriteOutcome::Applied { result, .. } => Ok(result),
             other => Err(crate::error::AppError::InvalidInput(format!(
                 "bulk write was not applied: {other:?}"
             ))),
@@ -1767,6 +1770,7 @@ pub fn run() {
             commands::query::preview_query_stream,
             commands::query::cancel_stream,
             commands::schema::list_databases,
+            commands::schema::list_server_databases,
             commands::schema::list_tables,
             commands::schema::describe_table,
             commands::schema::describe_table_extras,

@@ -405,6 +405,7 @@ pub(crate) async fn create_sandbox_inner(
     let session = Session {
         id: new_session_id(),
         profile_id: None,
+        secret_profile_id: None,
         conn,
         read_only: false,
         emergency_write: std::sync::atomic::AtomicBool::new(false),

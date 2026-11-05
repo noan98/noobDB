@@ -3667,7 +3667,7 @@ async fn postgres_bulk_write_row_count_overshoot_rolls_back() {
     .await
     .expect("outcome");
     match out {
-        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 1),
+        t::BulkWriteOutcome::Applied { result, .. } => assert_eq!(result.rows_affected, 1),
         other => panic!("unique row must apply: {other:?}"),
     }
 
@@ -3696,7 +3696,7 @@ async fn postgres_bulk_write_row_count_overshoot_rolls_back() {
     .await
     .expect("outcome");
     match out {
-        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 0),
+        t::BulkWriteOutcome::Applied { result, .. } => assert_eq!(result.rows_affected, 0),
         other => panic!("fewer rows must not be blocked: {other:?}"),
     }
 
@@ -3713,6 +3713,7 @@ async fn postgres_bulk_write_row_count_overshoot_rolls_back() {
         vec![],
         t::BulkWriteOptions {
             approved_counts: Some(vec![1]),
+            ..Default::default()
         },
     )
     .await
@@ -3745,12 +3746,13 @@ async fn postgres_bulk_write_row_count_overshoot_rolls_back() {
         vec![],
         t::BulkWriteOptions {
             approved_counts: Some(vec![2]),
+            ..Default::default()
         },
     )
     .await
     .expect("outcome");
     match out {
-        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 2),
+        t::BulkWriteOutcome::Applied { result, .. } => assert_eq!(result.rows_affected, 2),
         other => panic!("approved overshoot must apply: {other:?}"),
     }
     assert_eq!(
@@ -3822,6 +3824,7 @@ async fn postgres_bulk_write_optimistic_lock_detects_lost_update() {
                 vec![],
                 t::BulkWriteOptions {
                     approved_counts: approved,
+                    ..Default::default()
                 },
             )
             .await
@@ -3892,7 +3895,7 @@ async fn postgres_bulk_write_optimistic_lock_detects_lost_update() {
     // (3) 旧値を付けない (設定オフ) と従来どおり主キーだけで当たり、他者の変更を上書きする。
     let out = apply(vec![locked(vec![])], None).await;
     match out {
-        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 3),
+        t::BulkWriteOutcome::Applied { result, .. } => assert_eq!(result.rows_affected, 3),
         other => panic!("lock off must apply: {other:?}"),
     }
 
@@ -3907,7 +3910,7 @@ async fn postgres_bulk_write_optimistic_lock_detects_lost_update() {
     )
     .await;
     match out {
-        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 2),
+        t::BulkWriteOutcome::Applied { result, .. } => assert_eq!(result.rows_affected, 2),
         other => panic!("fresh old values must apply: {other:?}"),
     }
 
@@ -4243,6 +4246,79 @@ async fn postgres_list_table_partitions_when_env_set() {
             .await;
     }
     conn.close().await;
+}
+
+/// #2018: `pg_database` から実データベース一覧を引け、接続中の DB が含まれること。
+/// さらに接続 URL の database だけを差し替えた接続 (別 DB を開く導線と同じ組み立て) が張れる。
+#[tokio::test]
+async fn postgres_server_databases_and_database_swap_when_env_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    let current = conn
+        .execute("SELECT current_database()", None)
+        .await
+        .expect("current_database");
+    let t::Value::String(current) = &current.rows[0][0] else {
+        panic!("current_database should be a string");
+    };
+    let dbs = conn.server_databases().await.expect("server databases");
+    assert!(dbs.contains(current), "{current} not in {dbs:?}");
+    assert!(
+        dbs.iter().all(|d| !d.starts_with("template")),
+        "template DBs must be hidden: {dbs:?}"
+    );
+
+    // 既定の `postgres` DB が別にあれば、database だけ差し替えて接続できる。
+    if let Some(other) = dbs.iter().find(|d| *d != current) {
+        let mut swapped = opts.clone();
+        swapped.database = Some(other.clone());
+        let conn2 = t::connect(&swapped).await.expect("connect to other db");
+        let r = conn2
+            .execute("SELECT current_database()", None)
+            .await
+            .expect("current_database");
+        assert!(matches!(&r.rows[0][0], t::Value::String(s) if s == other));
+        conn2.close().await;
+    }
+    conn.close().await;
+}
+
+/// サーバ側停止 (#2023): 文脈つきの実行がセッションの `statement_timeout` を
+/// プールへ持ち越さない (プールの全接続で、実行前と同じ値のまま)。
+#[tokio::test]
+async fn statement_timeout_is_restored_after_scoped_stream_when_env_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let show = || async {
+        let r = conn
+            .execute("SHOW statement_timeout", None)
+            .await
+            .expect("show");
+        format!("{:?}", r.rows)
+    };
+    let before = show().await;
+    for _ in 0..3 {
+        let ctx = t::ServerStopCtx::new(Some(20));
+        t::server_stop_scope(ctx, async {
+            conn.execute_stream("SELECT 1", None, 10, 10, |_| Ok(()))
+                .await
+        })
+        .await
+        .expect("scoped stream");
+    }
+    // プールの上限 (5) を超えて確認し、どの接続にも残っていないことを見る。
+    for _ in 0..8 {
+        assert_eq!(show().await, before, "statement_timeout が残っている");
+    }
 }
 
 /// 定期メンテナンス (#2025) の VACUUM (ANALYZE) がトランザクション外の単文実行で通る。

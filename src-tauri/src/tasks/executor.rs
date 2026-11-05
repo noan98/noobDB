@@ -792,6 +792,8 @@ fn build_connect_request(
     });
     Ok(ConnectRequest {
         profile_id: Some(profile.id.clone()),
+        variant_of: None,
+        secret_profile_id: None,
         driver,
         host: profile.host.clone(),
         port: profile.port,

@@ -1016,6 +1016,27 @@ mod tests {
         assert!(check_batch_overlap(&[a, b, c]).is_ok());
     }
 
+    /// #2018: 別データベースを開いた派生セッション (profile_id が派生 ID) の記録は、元プロファイルの
+    /// セッションでは Undo できず、逆も同じ (同名テーブルへ逆 SQL が流れるのを防ぐ)。
+    #[test]
+    fn derived_database_session_records_do_not_match_the_base_session_2018() {
+        let derived = record("postgres", Some("p1::db::analytics"));
+        let err =
+            ensure_record_matches_session(&derived, Some("p1"), DriverKind::Postgres).unwrap_err();
+        assert!(matches!(err, AppError::FlightProfileMismatch));
+        let base = record("postgres", Some("p1"));
+        let err =
+            ensure_record_matches_session(&base, Some("p1::db::analytics"), DriverKind::Postgres)
+                .unwrap_err();
+        assert!(matches!(err, AppError::FlightProfileMismatch));
+        assert!(ensure_record_matches_session(
+            &derived,
+            Some("p1::db::analytics"),
+            DriverKind::Postgres
+        )
+        .is_ok());
+    }
+
     #[test]
     fn matches_when_driver_and_profile_agree() {
         let r = record("sqlite", Some("p1"));
