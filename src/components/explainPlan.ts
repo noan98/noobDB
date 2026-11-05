@@ -940,3 +940,62 @@ export function planAncestorIds(root: PlanNode, id: string): string[] {
   };
   return walk(root) ? path : [];
 }
+
+/**
+ * プランノードの大分類 (#2017)。グラフのノード頭のアイコンと凡例に使う表示専用の分類で、
+ * レイアウトやコストの計算には影響しない。3 ドライバの計画ノードを同じ語彙に寄せる。
+ */
+export type PlanNodeCategory = "scan" | "index" | "join" | "sort" | "aggregate" | "other";
+
+/** 凡例に並べる分類の順序 (other は凡例に出さない)。 */
+export const PLAN_NODE_CATEGORIES: readonly Exclude<PlanNodeCategory, "other">[] = [
+  "scan",
+  "index",
+  "join",
+  "sort",
+  "aggregate",
+];
+
+/** MySQL `FORMAT=JSON` の構造キー → 分類。`table` は access_type で別途判定する。 */
+const MYSQL_KIND_CATEGORY: Record<string, PlanNodeCategory> = {
+  nested_loop: "join",
+  ordering_operation: "sort",
+  grouping_operation: "aggregate",
+  duplicates_removal: "aggregate",
+  windowing: "aggregate",
+};
+
+/** MySQL の access_type (`ALL` だけが全表走査、`index` は全インデックス走査)。 */
+function mysqlAccessCategory(accessType: unknown): PlanNodeCategory {
+  if (typeof accessType !== "string") return "other";
+  return accessType.toUpperCase() === "ALL" ? "scan" : "index";
+}
+
+/**
+ * ラベル / Node Type 文字列 (PostgreSQL の Node Type・MySQL の TREE 形式・SQLite の detail) から
+ * 分類する。順序が重要で、「Index Scan」が scan に落ちないよう index を先に判定し、
+ * 「Sort」「Aggregate」のような演算子名を走査より前に見る。
+ */
+function categoryFromText(text: string): PlanNodeCategory {
+  const s = text.trim();
+  if (/\bsort\b|\border by\b/i.test(s)) return "sort";
+  if (/aggregate|group by|distinct|\bunique\b|windowagg|\bwindow\b/i.test(s)) return "aggregate";
+  if (/\bjoin\b|nested loop|merge append|\bunion\b/i.test(s)) return "join";
+  if (/\bindex\b|\bbitmap\b|\bsearch\b|primary key|rowid/i.test(s)) return "index";
+  if (/^(?:seq|tid|foreign) scan|table scan|^scan\b/i.test(s)) return "scan";
+  return "other";
+}
+
+/**
+ * ノードを分類する純関数 (#2017)。MySQL JSON は構造キーと `access_type`、それ以外
+ * (PostgreSQL の Node Type / MySQL TREE / SQLite) はラベル文字列で判定する。
+ */
+export function classifyPlanNode(node: PlanNode): PlanNodeCategory {
+  if (node.kind === "table") return mysqlAccessCategory(attrVal(node, "access_type"));
+  const byKind = MYSQL_KIND_CATEGORY[node.kind];
+  if (byKind) return byKind;
+  if (node.kind === "mysqlStep" || node.kind === "sqliteStep") return categoryFromText(node.label);
+  // PostgreSQL は kind が Node Type そのもの。MySQL JSON の他の構造キー (query_block 等) は other。
+  if (node.kind in KIND_LABEL_KEYS) return "other";
+  return categoryFromText(node.kind);
+}

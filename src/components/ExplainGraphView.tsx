@@ -31,6 +31,7 @@ import { semanticColorVar } from "../semanticColors";
 import {
   buildPlanGraph,
   actualTotalMs,
+  classifyPlanNode,
   computeHints,
   formatDurationMs,
   formatNumber,
@@ -38,7 +39,10 @@ import {
   layoutPlanGraph,
   worstSeverity,
   type PlanNode,
+  type PlanNodeCategory,
 } from "./explainPlan";
+import { ExplainGraphLegend, PLAN_CATEGORY_ICON } from "./ExplainGraphLegend";
+import { ICON_SIZES, Icon } from "./Icon";
 import {
   FLOW_EDGE_ENTER_CLASS,
   FLOW_MORPH_MS,
@@ -63,6 +67,8 @@ import { Tooltip } from "./Tooltip";
 
 interface PlanNodeData {
   label: string;
+  /** ノード種別の大分類 (#2017)。頭のアイコンに使う。 */
+  category: PlanNodeCategory;
   cost: number | null;
   /** 0–1 のヒート値。null なら中立色 (コスト無し)。 */
   heat: number | null;
@@ -101,6 +107,13 @@ const labelCss: SystemStyleObject = {
   whiteSpace: "nowrap",
   overflow: "hidden",
   textOverflow: "ellipsis",
+};
+
+const titleCss: SystemStyleObject = {
+  display: "flex",
+  alignItems: "center",
+  gap: "var(--space-1-5)",
+  minWidth: 0,
 };
 
 const metaCss: SystemStyleObject = {
@@ -154,7 +167,11 @@ function PlanFlowNodeView({ data }: NodeProps<PlanFlowNode>) {
       >
         <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
         <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
-        <chakra.span css={labelCss}>{data.label}</chakra.span>
+        <chakra.span css={titleCss}>
+          {/* 種別アイコンは装飾 (名前は label が持つ)。色は currentColor でヒート上の文字色に追従 */}
+          <Icon name={PLAN_CATEGORY_ICON[data.category]} size={ICON_SIZES.sm} />
+          <chakra.span css={labelCss}>{data.label}</chakra.span>
+        </chakra.span>
         <chakra.span css={metaCss} opacity={0.92}>
           {data.cost !== null && <span>{t("explainNodeCost", { cost: formatNumber(data.cost) })}</span>}
           {data.actualRows !== null ? (
@@ -261,6 +278,7 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect, matchIds }: Ex
         style: staggerStyle(ranks.get(n.id) ?? 0),
         data: {
           label: n.node.label,
+          category: classifyPlanNode(n.node),
           cost: n.node.cost,
           heat: heatT(n.node.cost, maxCost),
           rows: n.node.actual ? n.node.actual.estRows : rowsOf(n.node),
@@ -358,6 +376,10 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect, matchIds }: Ex
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
         <Controls showInteractive={false} />
         <MiniMap<PlanFlowNode> pannable zoomable nodeColor={miniMapNodeColor} />
+        {/* 左下は Controls が占めるため、凡例は左上に置く */}
+        <Panel position="top-left">
+          <ExplainGraphLegend isDark={isDark} />
+        </Panel>
         <Panel position="top-right">
           <ImageExportButton
             filenameBase="explain_plan"
