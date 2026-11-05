@@ -45,7 +45,13 @@ import { Tooltip } from "./Tooltip";
 import { Button, Checkbox, Heading, Input, PressableButton } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
 import { DraftNumberInput } from "./DraftNumberInput";
-import { DiffFilterChip, statusLabel, TableDiffDetail, TableDiffList } from "./SchemaDiffDetail";
+import {
+  DiffFilterChip,
+  DiffTableSkeleton,
+  statusLabel,
+  TableDiffDetail,
+  TableDiffList,
+} from "./SchemaDiffDetail";
 import { DataRowDiffTable } from "./DataRowDiffTable";
 
 /**
@@ -1180,6 +1186,11 @@ export function SchemaCompareView({
           })()}
         </ErrorNote>
       )}
+      {dataComparing && !dataDiff && (
+        <DiffTableSkeleton
+          columns={[t("schemaCompareColOp"), t("dataRowDiffColKey"), t("dataRowDiffColChange")]}
+        />
+      )}
       {dataDiff && (
         <>
           <chakra.p margin={0} fontSize="sm" color="app.textMuted">
@@ -1446,6 +1457,17 @@ export function SchemaCompareView({
           </Flex>
 
           {compareError && <chakra.p css={warningCss}>{compareError}</chakra.p>}
+
+          {comparing && !diff && (
+            <DiffTableSkeleton
+              columns={[
+                t("schemaCompareColOp"),
+                t("schemaCompareColName"),
+                t("schemaCompareColSource", { name: sourceLabel ?? "" }),
+                t("schemaCompareColTarget", { name: targetLabel ?? "" }),
+              ]}
+            />
+          )}
 
           {diff && (
             <Box>
