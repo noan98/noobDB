@@ -68,17 +68,15 @@ async fn stop_request_interrupts_without_a_timeout() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn quick_select_is_unaffected_and_leftover_handler_goes_inert() {
+async fn quick_select_is_unaffected_and_handler_is_removed_on_release() {
     let (conn, path) = sqlite_conn("quick").await;
     let ctx = t::ServerStopCtx::new(Some(1));
-    let res = t::server_stop_scope(ctx.clone(), async {
+    let res = t::server_stop_scope(ctx, async {
         conn.execute_stream("SELECT 1", None, 10, 10, |_| Ok(()))
             .await
     })
     .await;
     assert!(res.is_ok(), "{res:?}");
-    // 本番では StopGuard の drop が行う (実行の終了を handler へ伝える)。
-    ctx.mark_ended();
     // 文脈を使わない後続の文は、プールに残った handler に巻き込まれない。
     tokio::time::sleep(Duration::from_millis(3200)).await;
     let later = conn
@@ -91,5 +89,37 @@ async fn quick_select_is_unaffected_and_leftover_handler_goes_inert() {
         )
         .await;
     assert!(later.is_ok(), "{later:?}");
+    let _ = std::fs::remove_file(path);
+}
+
+/// キャンセル (future の drop + 停止要求) の直後、プールの全接続で別の文を実行しても
+/// 残った progress handler に中断されない (`after_release` が外す)。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handler_does_not_outlive_a_cancelled_statement() {
+    let (conn, path) = sqlite_conn("after_cancel").await;
+    let ctx = t::ServerStopCtx::new(None);
+    let stopper = ctx.clone();
+    let res = tokio::time::timeout(
+        Duration::from_millis(300),
+        t::server_stop_scope(ctx, async {
+            conn.execute_stream(HEAVY, None, 10, 10, |_| Ok(())).await
+        }),
+    )
+    .await;
+    assert!(res.is_err(), "300ms では終わらない");
+    stopper.request_stop();
+    // プールの上限 (4) を超えて繰り返し、どの接続でも中断されないことを確かめる。
+    for i in 0..8 {
+        let r = conn
+            .execute_stream(
+                "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 2000000) SELECT count(*) FROM c",
+                None,
+                10,
+                10,
+                |_| Ok(()),
+            )
+            .await;
+        assert!(r.is_ok(), "{i} 回目: {r:?}");
+    }
     let _ = std::fs::remove_file(path);
 }

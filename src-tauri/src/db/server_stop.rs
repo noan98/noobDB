@@ -18,9 +18,11 @@
 //! 渡す ([`scope`] の内側で動く future だけが見る)。文脈が無い呼び出し (メタデータ取得など)
 //! の挙動は従来どおり。
 //!
-//! 既知の制約: `statement_timeout` / `max_execution_time` はセッション変数なので、
-//! キャンセルで future が drop された接続にはプールへ戻った後も残る。次にこの文脈付きで
-//! 実行されるときに上書きされ、設定値はアプリのタイムアウトと同じなので実害は小さい。
+//! セッション変数 (`statement_timeout` / `max_execution_time`) は、文の後に元の値へ戻して
+//! からプールへ返す。戻せない・future が drop された (タイムアウト / キャンセル) 接続は
+//! [`ReleaseGuard`] が `close_on_drop` で閉じ、プールへ戻さない。サーバで走り続ける文や
+//! 設定の持ち越しが、プールを共有する別経路 (スクリプト・トランザクション・インポート等)
+//! に及ばないようにするため。SQLite の progress handler は pool の `after_release` が外す。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -31,9 +33,6 @@ use crate::state::Session;
 
 /// クライアント側タイムアウトに足す、サーバ側タイムアウトの猶予 (秒)。
 pub const SERVER_TIMEOUT_GRACE_SECS: u64 = 2;
-/// SQLite でキャンセル要求を有効とみなす時間。要求の時点で動いていた文を止めるための
-/// ものなので短い (すでに終わった文のあとに実行される文を巻き込まないため)。
-const CANCEL_WINDOW: Duration = Duration::from_secs(3);
 
 /// 1 回のクエリ実行に紐づく「サーバ側停止」の文脈。
 #[derive(Debug)]
@@ -42,7 +41,6 @@ pub struct ServerStopCtx {
     started: Instant,
     backend_id: Mutex<Option<i64>>,
     cancelled_at: Mutex<Option<Instant>>,
-    ended: AtomicBool,
     fired: AtomicBool,
 }
 
@@ -54,7 +52,6 @@ impl ServerStopCtx {
             started: Instant::now(),
             backend_id: Mutex::new(None),
             cancelled_at: Mutex::new(None),
-            ended: AtomicBool::new(false),
             fired: AtomicBool::new(false),
         })
     }
@@ -88,37 +85,23 @@ impl ServerStopCtx {
         }
     }
 
-    pub fn mark_ended(&self) {
-        self.ended.store(true, Ordering::SeqCst);
-    }
-
     /// SQLite の progress handler の判定。`true` なら実行中の文を中断する。
-    /// 一度中断したあとは常に `false` (プールに残った handler が後続の文を巻き込まない)。
+    /// 一度中断したあとは常に `false`。handler 自体はプールの `after_release` が
+    /// 接続の返却時に必ず外すので、他経路の文を巻き込まない。
     pub fn sqlite_should_interrupt(&self, now: Instant) -> bool {
         if self.fired.load(Ordering::SeqCst) {
             return false;
         }
-        let cancelled = *self.cancelled_at.lock().unwrap_or_else(|e| e.into_inner());
-        let fire = if let Some(at) = cancelled {
-            if now.saturating_duration_since(at) <= CANCEL_WINDOW {
-                true
-            } else {
-                // 要求から時間が経った = その文は終わっている。以後は無効。
-                self.fired.store(true, Ordering::SeqCst);
-                false
-            }
-        } else if self.ended.load(Ordering::SeqCst) {
-            // 文脈は正常に終わった。残っている handler は無効にする。
-            self.fired.store(true, Ordering::SeqCst);
-            false
-        } else {
-            match self.server_timeout_ms() {
-                Some(ms) => {
-                    now.saturating_duration_since(self.started) >= Duration::from_millis(ms)
-                }
-                None => false,
-            }
+        let cancelled = self
+            .cancelled_at
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some();
+        let expired = match self.server_timeout_ms() {
+            Some(ms) => now.saturating_duration_since(self.started) >= Duration::from_millis(ms),
+            None => false,
         };
+        let fire = cancelled || expired;
         if fire {
             self.fired.store(true, Ordering::SeqCst);
         }
@@ -139,6 +122,44 @@ pub async fn scope<F: std::future::Future>(ctx: Arc<ServerStopCtx>, fut: F) -> F
 pub fn current() -> Option<Arc<ServerStopCtx>> {
     CTX.try_with(Arc::clone).ok()
 }
+
+/// 文脈つきで借りたプール接続のガード。[`ReleaseGuard::arm`] したあと [`ReleaseGuard::keep`]
+/// されずに drop されたら (future の drop = タイムアウト / キャンセル、設定を戻せなかった場合)、
+/// 接続をプールへ戻さず閉じる。`arm` しなければ素のプール接続と同じ。
+pub struct ReleaseGuard<DB: sqlx::Database> {
+    pub conn: sqlx::pool::PoolConnection<DB>,
+    close_on_drop: bool,
+}
+
+impl<DB: sqlx::Database> ReleaseGuard<DB> {
+    pub fn new(conn: sqlx::pool::PoolConnection<DB>) -> Self {
+        Self {
+            conn,
+            close_on_drop: false,
+        }
+    }
+
+    /// 以後、`keep` されずに drop されたら接続を閉じる。
+    pub fn arm(&mut self) {
+        self.close_on_drop = true;
+    }
+
+    /// 接続を正常にプールへ戻してよい。
+    pub fn keep(&mut self) {
+        self.close_on_drop = false;
+    }
+}
+
+impl<DB: sqlx::Database> Drop for ReleaseGuard<DB> {
+    fn drop(&mut self) {
+        if self.close_on_drop {
+            self.conn.close_on_drop();
+        }
+    }
+}
+
+/// サーバ側の停止要求にかける時間の上限。
+const KILL_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 実行が「止める必要のある終わり方」をしたときにサーバ側の文を止めるガード。
 /// 正常終了・DB エラーでは [`StopGuard::disarm`] する。タイムアウトでは [`StopGuard::fire`]、
@@ -171,8 +192,16 @@ impl StopGuard {
         if let Some(id) = self.ctx.take_backend() {
             let session = self.session.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = session.conn.kill_processes(&[id], true).await {
-                    tracing::warn!(backend_id = id, error = %e, "server-side statement stop failed");
+                match tokio::time::timeout(KILL_TIMEOUT, session.conn.kill_processes(&[id], true))
+                    .await
+                {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(e)) => {
+                        tracing::warn!(backend_id = id, error = %e, "server-side statement stop failed");
+                    }
+                    Err(_) => {
+                        tracing::warn!(backend_id = id, "server-side statement stop timed out");
+                    }
                 }
             });
         }
@@ -184,7 +213,6 @@ impl Drop for StopGuard {
         if !self.disarmed {
             self.fire();
         }
-        self.ctx.mark_ended();
     }
 }
 
@@ -221,22 +249,13 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_interrupts_on_cancel_within_window_only() {
+    fn sqlite_interrupts_on_cancel_once() {
         let c = ServerStopCtx::new(None);
+        assert!(!c.sqlite_should_interrupt(Instant::now()));
         c.request_stop();
         assert!(c.sqlite_should_interrupt(Instant::now()));
-        let c = ServerStopCtx::new(None);
-        c.request_stop();
-        assert!(!c.sqlite_should_interrupt(Instant::now() + Duration::from_secs(10)));
-        // 窓を過ぎたあとは以後も無効。
+        // 一度中断したあとは無効 (同じ handler が後続の文を巻き込まない)。
         assert!(!c.sqlite_should_interrupt(Instant::now()));
-    }
-
-    #[test]
-    fn sqlite_handler_is_inert_after_normal_end() {
-        let c = ServerStopCtx::new(Some(1));
-        c.mark_ended();
-        assert!(!c.sqlite_should_interrupt(c.started + Duration::from_secs(60)));
     }
 
     #[tokio::test]

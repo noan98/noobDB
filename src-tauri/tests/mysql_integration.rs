@@ -4765,3 +4765,35 @@ async fn mysql_list_table_partitions_when_env_set() {
     }
     conn.close().await;
 }
+
+/// サーバ側停止 (#2023): 文脈つきの実行がセッションの `max_execution_time` を
+/// プールへ持ち越さない (プールの全接続で、実行前と同じ値のまま)。
+#[tokio::test]
+async fn max_execution_time_is_restored_after_scoped_stream_when_env_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let show = || async {
+        let r = conn
+            .execute("SELECT @@SESSION.max_execution_time", None)
+            .await;
+        // MariaDB には変数が無い (その場合は常に同じエラー)。
+        format!("{:?}", r.map(|r| r.rows).map_err(|e| e.to_string()))
+    };
+    let before = show().await;
+    for _ in 0..3 {
+        let ctx = t::ServerStopCtx::new(Some(20));
+        t::server_stop_scope(ctx, async {
+            conn.execute_stream("SELECT 1", None, 10, 10, |_| Ok(()))
+                .await
+        })
+        .await
+        .expect("scoped stream");
+    }
+    for _ in 0..8 {
+        assert_eq!(show().await, before, "max_execution_time が残っている");
+    }
+}

@@ -1091,6 +1091,14 @@ pub async fn run_query_stream(
     Ok(())
 }
 
+/// 打ち切り後もサーバで文が走り続けているかもしれない終わり方か (#2023)。
+/// タイムアウトと、結果の送信失敗によるストリーム打ち切り (`ticker_failed`) だけが対象。
+/// 正常終了・DB エラーは文が終わっているので撃たない (プールに戻った接続で次に走る別の文を
+/// 止めないため)。
+fn should_stop_on_server<T>(ticker_failed: bool, result: &Result<T>) -> bool {
+    ticker_failed || matches!(result, Err(AppError::Timeout(_)))
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn spawn_query_stream(
     app: AppHandle,
@@ -1313,7 +1321,7 @@ async fn spawn_query_stream(
         }
     };
     // 文が走ったままかもしれない終わり方 (タイムアウト / 送信失敗で打ち切り) はサーバ側でも止める。
-    if ticker_failed || matches!(result, Err(AppError::Timeout(_))) {
+    if should_stop_on_server(ticker_failed, &result) {
         stop_guard.fire();
     }
     stop_guard.disarm();
@@ -1979,7 +1987,7 @@ async fn spawn_preview_stream(
         }
         _ => exec.await,
     };
-    if matches!(result, Err(AppError::Timeout(_))) {
+    if should_stop_on_server(false, &result) {
         stop_guard.fire();
     }
     stop_guard.disarm();
@@ -2191,6 +2199,19 @@ pub async fn cancel_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_side_stop_only_for_timeout_or_ticker_failure() {
+        let ok: Result<()> = Ok(());
+        let timeout: Result<()> = Err(AppError::Timeout(30));
+        let db_err: Result<()> = Err(AppError::InvalidInput("x".into()));
+        assert!(!should_stop_on_server(false, &ok));
+        assert!(should_stop_on_server(false, &timeout));
+        // DB エラーは文が終わっているので撃たない。
+        assert!(!should_stop_on_server(false, &db_err));
+        // 送信失敗で打ち切ったときは、文が走ったままなので撃つ。
+        assert!(should_stop_on_server(true, &db_err));
+    }
 
     #[test]
     fn rolled_back_history_message_names_matched_and_expected_rows() {

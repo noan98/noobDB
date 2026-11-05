@@ -4244,3 +4244,36 @@ async fn postgres_list_table_partitions_when_env_set() {
     }
     conn.close().await;
 }
+
+/// サーバ側停止 (#2023): 文脈つきの実行がセッションの `statement_timeout` を
+/// プールへ持ち越さない (プールの全接続で、実行前と同じ値のまま)。
+#[tokio::test]
+async fn statement_timeout_is_restored_after_scoped_stream_when_env_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let show = || async {
+        let r = conn
+            .execute("SHOW statement_timeout", None)
+            .await
+            .expect("show");
+        format!("{:?}", r.rows)
+    };
+    let before = show().await;
+    for _ in 0..3 {
+        let ctx = t::ServerStopCtx::new(Some(20));
+        t::server_stop_scope(ctx, async {
+            conn.execute_stream("SELECT 1", None, 10, 10, |_| Ok(()))
+                .await
+        })
+        .await
+        .expect("scoped stream");
+    }
+    // プールの上限 (5) を超えて確認し、どの接続にも残っていないことを見る。
+    for _ in 0..8 {
+        assert_eq!(show().await, before, "statement_timeout が残っている");
+    }
+}

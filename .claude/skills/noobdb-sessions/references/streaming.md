@@ -26,10 +26,14 @@
   `Connection::kill_processes([id], statement_only = true)` (MySQL `KILL QUERY` /
   PostgreSQL `pg_cancel_backend`) を撃つ。SQLite は停止要求を progress handler が見て中断する。
 - 正常終了・DB エラーではガードを解除する (プールに戻った接続で次に走る別の文を止めないため)。
-- 制約: `statement_timeout` / `max_execution_time` はセッション変数なので、キャンセルで drop された
-  接続にはプール返却後も残る (次の文脈付き実行で上書き。値はアプリのタイムアウトと同じ)。
-  SQLite の handler も同様にプールに残るが、期限切れ / 終了 / 一度中断した後は無効になる。
-  アプリのタイムアウトが 0 (無制限) のときはサーバ側の設定に触れない。
+- **接続の扱い**: 文脈つきの実行では `ReleaseGuard` が接続を借り、`statement_timeout` /
+  `max_execution_time` を設定前の値 (設定と同じ往復で取得) へ戻してからプールへ返す。タイムアウト・
+  キャンセルで future が drop された接続、元に戻せなかった接続は `close_on_drop` で閉じ、プールへ
+  戻さない (サーバで走り続ける文・設定・KILL の誤爆を、プールを共有する別経路へ持ち越さない)。
+  ドライランはトランザクション内なので、PostgreSQL は `set_config(.., true)` (トランザクション終了で
+  戻る)、MySQL は DML に効かないため設定せず ID だけ控える。アプリのタイムアウトが 0 のときは
+  サーバ側の設定に触れない。kill には 5 秒のタイムアウトが付く。
+- SQLite の progress handler はプールの `after_release` が返却時に必ず外す。
 
 ## バッチ合流・逐次統計・差分パッチ (#1257)
 

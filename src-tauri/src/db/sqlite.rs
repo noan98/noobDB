@@ -62,6 +62,21 @@ impl SqliteConn {
                 })
             });
         }
+        // サーバ側停止 (#2023): 返却のたびに progress handler を確実に外す。外さないと
+        // キャンセルで drop された接続に残った handler が、プールを使い回す別経路の文を
+        // 中断しうる。返却時の `lock_handle` はワーカーが実行中の文を抜けるまで待つ。
+        pool_opts = pool_opts.after_release(|conn, _meta| {
+            Box::pin(async move {
+                match conn.lock_handle().await {
+                    Ok(mut handle) => {
+                        handle.set_progress_handler(0, || true);
+                        Ok(true)
+                    }
+                    // handler を外せない接続は再利用しない (破棄する)。
+                    Err(_) => Ok(false),
+                }
+            })
+        });
         let pool = pool_opts.connect_with(connect).await.map_err(|e| {
             tracing::error!(path, error = %e, "sqlite: failed to create connection pool");
             e
@@ -193,7 +208,7 @@ impl SqliteConn {
         // サーバ側停止 (#2023): progress handler で期限・キャンセルを見て文を中断する。
         let stop_ctx = super::server_stop::current();
         if let Some(ctx) = &stop_ctx {
-            install_interrupt_handler(&mut conn, ctx).await?;
+            install_interrupt_handler(&mut conn, ctx).await;
         }
 
         if !is_query {
@@ -386,7 +401,7 @@ impl SqliteConn {
             self.pool.begin().await?
         };
         if let Some(ctx) = super::server_stop::current() {
-            install_interrupt_handler(&mut tx, &ctx).await?;
+            install_interrupt_handler(&mut tx, &ctx).await;
         }
         let started = Instant::now();
 
@@ -2128,24 +2143,26 @@ pub(crate) fn is_query_shape(sql: &str) -> bool {
         || trimmed.starts_with("pragma")
 }
 
-/// Run one statement on a specific connection (pool-acquired or the held tx
-/// connection) and decode it into a [`QueryResult`]. Shared by `execute` and
-/// `tx_execute`.
 /// サーバ側停止 (#2023): progress handler を入れ、期限切れ・停止要求のときに実行中の
 /// 文を中断する (SQLite にはサーバが無いので、これが `statement_timeout` / `KILL QUERY`
-/// の代わり)。コールバックは「続行するなら true」を返す。
+/// の代わり)。コールバックは「続行するなら true」を返す。handler はプールの
+/// `after_release` が必ず外す。入れられなくても実行は妨げない (ベストエフォート)。
 async fn install_interrupt_handler(
     conn: &mut sqlx::SqliteConnection,
     ctx: &std::sync::Arc<super::server_stop::ServerStopCtx>,
-) -> Result<()> {
+) {
     let ctx = ctx.clone();
-    let mut handle = conn.lock_handle().await?;
-    handle.set_progress_handler(1000, move || {
-        !ctx.sqlite_should_interrupt(std::time::Instant::now())
-    });
-    Ok(())
+    match conn.lock_handle().await {
+        Ok(mut handle) => handle.set_progress_handler(1000, move || {
+            !ctx.sqlite_should_interrupt(std::time::Instant::now())
+        }),
+        Err(e) => tracing::debug!(error = %e, "progress handler not installed (sqlite)"),
+    }
 }
 
+/// Run one statement on a specific connection (pool-acquired or the held tx
+/// connection) and decode it into a [`QueryResult`]. Shared by `execute` and
+/// `tx_execute`.
 async fn run_sql_on(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<QueryResult> {
     let started = Instant::now();
     if is_query_shape(sql) {

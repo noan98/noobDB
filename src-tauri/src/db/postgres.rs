@@ -249,7 +249,7 @@ impl PostgresConn {
         database: Option<&str>,
         initial_batch: usize,
         chunk_size: usize,
-        mut on_batch: F,
+        on_batch: F,
     ) -> Result<QueryResult>
     where
         F: FnMut(StreamBatch) -> Result<()>,
@@ -260,12 +260,54 @@ impl PostgresConn {
         // CALL の rows_affected は元々常に 0 なので execute 経路との差は無い。
         let is_query = is_query_shape(sql) || is_call_shape(sql);
 
-        let mut conn = self.pool.acquire().await?;
-        apply_search_path(&mut conn, database, &self.search_path).await?;
-        if let Some(ctx) = super::server_stop::current() {
-            register_server_stop(&mut conn, &ctx).await;
+        // サーバ側停止 (#2023): 文脈があるあいだ、接続は「正常に終わるまで」プールへ戻さない
+        // (future が drop されたら `close_on_drop` で閉じる)。サーバで走り続ける文や、
+        // 設定したままの `statement_timeout` を後続の利用者へ持ち越さないため。
+        let mut guard = super::server_stop::ReleaseGuard::new(self.pool.acquire().await?);
+        apply_search_path(&mut guard.conn, database, &self.search_path).await?;
+        let restore = match super::server_stop::current() {
+            Some(ctx) => {
+                guard.arm();
+                register_server_stop(&mut guard.conn, &ctx, false).await
+            }
+            None => None,
+        };
+        let result = stream_on(
+            &mut guard.conn,
+            sql,
+            started,
+            is_query,
+            initial_batch,
+            chunk_size,
+            on_batch,
+        )
+        .await;
+        // 設定を元に戻せたときだけ接続をプールへ戻す (戻せなければ drop で閉じる)。
+        let restored = match restore {
+            Some(orig) => restore_statement_timeout(&mut guard.conn, &orig).await,
+            None => true,
+        };
+        if restored {
+            guard.keep();
         }
+        result
+    }
+}
 
+/// `execute_stream_inner` の本体 (接続取得・サーバ側停止の準備より後)。
+async fn stream_on<F>(
+    conn: &mut sqlx::PgConnection,
+    sql: &str,
+    started: Instant,
+    is_query: bool,
+    initial_batch: usize,
+    chunk_size: usize,
+    mut on_batch: F,
+) -> Result<QueryResult>
+where
+    F: FnMut(StreamBatch) -> Result<()>,
+{
+    {
         if !is_query {
             let result = sqlx::query(sqlx::AssertSqlSafe(sql))
                 .execute(&mut *conn)
@@ -319,7 +361,9 @@ impl PostgresConn {
             server_messages: Vec::new(),
         })
     }
+}
 
+impl PostgresConn {
     /// ドライランプレビュー: 文をトランザクション内で実行し、対象テーブルの
     /// before/after スナップショットを添えて必ずロールバックする。
     ///
@@ -421,7 +465,7 @@ impl PostgresConn {
         let mut tx = self.pool.begin().await?;
         apply_search_path_on(&mut tx, database, &self.search_path).await?;
         if let Some(ctx) = super::server_stop::current() {
-            register_server_stop(&mut tx, &ctx).await;
+            let _ = register_server_stop(&mut tx, &ctx, true).await;
         }
 
         let is_insert_stmt = trimmed.starts_with("insert");
@@ -4549,29 +4593,61 @@ fn create_sequence_ddl(r: &PgRow) -> String {
 }
 
 /// サーバ側停止の準備 (#2023)。この接続の `pg_backend_pid()` を控え、アプリのクエリ
-/// タイムアウトがあれば `statement_timeout` を (猶予つきで) セッションへ設定する。
-/// 1 往復で済ませ、失敗しても実行自体は妨げない (従来どおりクライアント側打ち切りのみ)。
+/// タイムアウトがあれば `statement_timeout` を (猶予つきで) 設定する。1 往復で済ませ、
+/// 失敗しても実行自体は妨げない (従来どおりクライアント側打ち切りのみ)。
+///
+/// `local` はトランザクション内 (ドライラン) 用で、`set_config(.., true)` なので
+/// トランザクションの終了で自動的に戻る。そうでなければセッション設定なので、
+/// 設定前の値を返す — 呼び出し側が文の後に [`restore_statement_timeout`] で戻す。
 async fn register_server_stop(
     conn: &mut sqlx::PgConnection,
     ctx: &super::server_stop::ServerStopCtx,
-) {
+    local: bool,
+) -> Option<String> {
     let ms = ctx.server_timeout_ms().unwrap_or(0);
-    let res = if ms > 0 {
-        sqlx::query_as::<_, (i32, String)>(
-            "SELECT pg_backend_pid(), set_config('statement_timeout', $1, false)",
+    if ms > 0 {
+        // 先に元の値を読むため MATERIALIZED の CTE を FROM に置く (set_config より先に評価される)。
+        match sqlx::query_as::<_, (i32, String, String)>(
+            "WITH o AS MATERIALIZED (SELECT current_setting('statement_timeout') AS v) \
+             SELECT pg_backend_pid(), o.v, set_config('statement_timeout', $1, $2) FROM o",
         )
         .bind(ms.to_string())
+        .bind(local)
         .fetch_one(&mut *conn)
         .await
-        .map(|(pid, _)| pid)
-    } else {
-        sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
-            .fetch_one(&mut *conn)
-            .await
-    };
-    match res {
+        {
+            Ok((pid, orig, _)) => {
+                ctx.record_backend(i64::from(pid));
+                return (!local).then_some(orig);
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "server-side stop setup skipped (postgres)");
+                return None;
+            }
+        }
+    }
+    match sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
+        .fetch_one(&mut *conn)
+        .await
+    {
         Ok(pid) => ctx.record_backend(i64::from(pid)),
         Err(e) => tracing::debug!(error = %e, "server-side stop setup skipped (postgres)"),
+    }
+    None
+}
+
+/// [`register_server_stop`] が返した元の値へ `statement_timeout` を戻す。戻せたら true。
+async fn restore_statement_timeout(conn: &mut sqlx::PgConnection, orig: &str) -> bool {
+    match sqlx::query_scalar::<_, String>("SELECT set_config('statement_timeout', $1, false)")
+        .bind(orig)
+        .fetch_one(&mut *conn)
+        .await
+    {
+        Ok(_) => true,
+        Err(e) => {
+            tracing::debug!(error = %e, "statement_timeout restore failed (postgres)");
+            false
+        }
     }
 }
 
