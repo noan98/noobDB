@@ -1,6 +1,6 @@
 # 定期 / 可視化専用ワークフローの結果通知 (#1395)
 
-`audit.yml` (週次) / `e2e.yml` (nightly) / `mutants.yml` / `js-mutants.yml` (手動) は
+`audit.yml` (週次) / `e2e.yml` (nightly) / `mutants.yml` (週次 + 手動) / `js-mutants.yml` (手動) は
 どれも失敗させない設計で、結果は Job Summary / artifact に出るだけだった。見に行かなければ
 腐る (silent rot) ため、各ワークフローに **`notify` ジョブ**を足し、検出 / 失敗時に
 トラッキング Issue を自動で open / update し、回復したら自動で close する。
@@ -21,7 +21,7 @@
 | `audit.yml` | `ci:audit` | Low / 3 | `pnpm audit --json` の `metadata.vulnerabilities` 合計 > 0 (`found`)。JSON が取れない (`error`) は別タイトル・別キーで通知し、close はしない | 合計 0 (`clean`) |
 | `e2e.yml` | `ci:e2e-nightly` | Mid / 3 | `e2e-linux` が failure | success |
 | `windows-db-smoke.yml` | `ci:windows-db-smoke` | Mid / 3 | `windows-db-smoke` が failure | success |
-| `mutants.yml` | `ci:mutants` | Mid / 4 | 実行失敗 (スコアが `n/a` = 母数 0 も含む)、または生存変異 > 0 (結果が前回と変わったときだけ追記) | 正常終了かつ生存 0 |
+| `mutants.yml` (週次 土曜 17:00 UTC = JST 日曜 02:00 / 手動) | `ci:mutants` | Mid / 4 | 実行失敗 (スコアが `n/a` = 母数 0 も含む)、または生存変異 > 0 (結果が前回と変わったときだけ追記) | 正常終了かつ生存 0 |
 | `js-mutants.yml` | `ci:js-mutants` | Mid / 4 | 同上 (Stryker のスコア取得可否で実行成否を判定) | 同上 |
 
 ## 守ること
