@@ -1,0 +1,226 @@
+name: js-mutants-diff
+
+# PR 差分スコープのフロント安全網ミューテーションテスト (#2021)
+#
+# Rust 側の mutants-diff.yml (#1841) のフロント版。手動専用の js-mutants.yml (Stryker、
+# 全変異で数十分) とは別に、安全網ファイルを変更した PR だけで、**その PR が追加・変更した
+# 行だけ**を Stryker で変異させ、「その PR で新しく入った未カバー分岐」(= 生存変異) を
+# PR 時点で報告する。js-mutants.yml は変更しない (全件の回帰ネットとしてそのまま維持)。
+#
+# - 対象ファイルの単一ソースは stryker.conf.json の mutate (js-mutants.yml と共有)。
+#   差分 → `path:開始行-終了行` (Stryker の mutate 範囲構文) への変換は
+#   scripts/js-mutants-diff.mjs (単体テスト付き)。PR 差分ジョブだけで足すファイルは
+#   同スクリプトの EXTRA_FILES (src/maskLiteralsIdentifiers.ts = 危険検出前の
+#   コメント/文字列マスク)。mutate や EXTRA_FILES を足す・外すときは下の `paths:` も揃える。
+# - 実行するテストは vitest.mutants.config.ts の include (js-mutants.yml と共有)。
+# - ワークフロー単位の `paths:` を使うのは、このワークフローを**必須チェックにしない**
+#   前提だから (必須だとスキップ時に「待機中」で固まる。ci.yml が paths-filter +
+#   ジョブ単位 if: を使うのはそのため)。無関係な PR のクリティカルパスは増えない。
+#   設定ファイルだけの変更 (変異させる行が無い) はセットアップを飛ばしてすぐ終わる。
+# - 可視化専用: 生存変異があっても fail させず、Job Summary と warning で報告する。
+# - 限界: 変異させるのは「ソース側で追加・変更された行」だけ。テスト側だけを弱める PR
+#   (境界アサーション削除) は、ソース行が変わらないためここでは検出できない。
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/dangerousSql.ts"
+      - "src/sqlScript.ts"
+      - "src/components/preflight.ts"
+      - "src/components/cellEdit.ts"
+      # PR 差分ジョブだけで足す対象 (scripts/js-mutants-diff.mjs の EXTRA_FILES)。
+      - "src/maskLiteralsIdentifiers.ts"
+      - "stryker.conf.json"
+      - "vitest.mutants.config.ts"
+      - "scripts/js-mutants-diff.mjs"
+      - ".github/workflows/js-mutants-diff.yml"
+
+permissions:
+  contents: read
+
+# 同じ PR の古い run は取り消す。
+concurrency:
+  group: js-mutants-diff-${{ github.ref }}
+  cancel-in-progress: true
+
+# corepack が pnpm を取得する際の対話プロンプトを無効化 (CI は非対話)。
+env:
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+
+jobs:
+  js-mutants-diff:
+    name: Stryker (PR 差分)
+    runs-on: ubuntu-latest
+    # 差分の行数に比例する。超えたら打ち切る (可視化専用なので CI は塞がない)。
+    timeout-minutes: 40
+    steps:
+      # base との merge-base 差分を取るため全履歴を取得する。
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # 差分の追加/変更行から Stryker の mutate 範囲を作る (ランナー同梱の node だけで動く
+      # 軽い処理)。変異させる行が無ければ count=0 で、重い後続ステップを丸ごと飛ばす。
+      - name: List mutate ranges in diff
+        id: list
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git diff -U0 "origin/${BASE_REF}...HEAD" -- src > js-mutants.diff
+          node scripts/js-mutants-diff.mjs js-mutants.diff > mutate-ranges.txt
+          count=$(wc -l < mutate-ranges.txt | tr -d ' ')
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          {
+            echo '### Mutation test (PR 差分, フロント安全網)'
+            echo ''
+            if [ "$count" = 0 ]; then
+              echo '変異させる行 (安全網ファイルの追加・変更行) がありません。実行をスキップしました。'
+            else
+              echo "変異対象の範囲: **${count} 件**"
+              echo ''
+              echo '```'
+              cat mutate-ranges.txt
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Setup Node
+        if: steps.list.outputs.count != '0'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Enable pnpm (corepack)
+        if: steps.list.outputs.count != '0'
+        run: corepack enable
+
+      - name: Get pnpm store directory
+        if: steps.list.outputs.count != '0'
+        shell: bash
+        run: echo "PNPM_STORE_PATH=$(pnpm store path)" >> "$GITHUB_ENV"
+
+      - name: Cache pnpm store
+        if: steps.list.outputs.count != '0'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PNPM_STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install frontend deps
+        if: steps.list.outputs.count != '0'
+        run: pnpm install --frozen-lockfile
+
+      # 生存変異があっても exit 0 で終え (stryker.conf.json は thresholds.break: null)、
+      # 結果は後段で Job Summary に出す。32 分で打ち切り、ジョブの 40 分より前に Report /
+      # artifact ステップを走らせる。打ち切られても continue-on-error で後段へ進む。
+      - name: Run Stryker (--mutate 範囲)
+        id: run
+        if: steps.list.outputs.count != '0'
+        timeout-minutes: 32
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          args=()
+          while IFS= read -r r; do args+=(--mutate "$r"); done < mutate-ranges.txt
+          pnpm exec stryker run "${args[@]}" 2>&1 | tee stryker-output.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      # 生存変異 (Survived + NoCoverage) を Job Summary に列挙する。実行失敗 (打ち切り・
+      # 結果ファイル無し・検査 0 件) は「成功」ではなく失敗として表示する (母数 0 を
+      # 生存 0 件と見なさない)。
+      - name: Report surviving mutants
+        if: always() && steps.list.outputs.count != '0'
+        env:
+          EXIT_CODE: ${{ steps.run.outputs.exit_code }}
+          RUN_OUTCOME: ${{ steps.run.outcome }}
+        run: |
+          python3 - << 'PYEOF' >> "$GITHUB_STEP_SUMMARY"
+          import json, os, pathlib, collections
+          code = os.environ.get("EXIT_CODE", "")
+          run_outcome = os.environ.get("RUN_OUTCOME", "")
+          # skipped = Run より前のセットアップが失敗して実行されなかった。
+          # exit_code が空で skipped 以外 = Run ステップが打ち切られた (timeout-minutes 等)。
+          not_run = run_outcome == "skipped"
+          truncated = code == "" and not not_run
+          warn = pathlib.Path("report-warning.txt")
+
+          def tail():
+              o = pathlib.Path("stryker-output.txt")
+              print("")
+              print("```")
+              if o.exists():
+                  print("\n".join(o.read_text().splitlines()[-50:]))
+              print("```")
+
+          counts = collections.Counter()
+          survived = []
+          p = pathlib.Path("reports/mutation/mutation.json")
+          if p.exists():
+              data = json.loads(p.read_text())
+              for path, f in sorted(data.get("files", {}).items()):
+                  for m in f.get("mutants", []):
+                      s = m.get("status")
+                      counts.update([s])
+                      if s in ("Survived", "NoCoverage"):
+                          line = m.get("location", {}).get("start", {}).get("line", "?")
+                          rep = " ".join(str(m.get("replacement", "")).split())[:80]
+                          survived.append(f"{path}:{line}: {m.get('mutatorName', '?')} -> {rep} ({s})")
+          n = len(survived)
+          tested = sum(counts.get(k, 0) for k in ("Killed", "Timeout", "Survived", "NoCoverage"))
+
+          if not_run:
+              msg = "前段のステップが失敗したため、変異テストは実行されていません。"
+              print(f"> :x: **{msg}**")
+              warn.write_text(msg)
+          elif truncated:
+              msg = "変異テストが打ち切られました (時間切れ等)。以下は部分結果です。"
+              print(f"> :x: **{msg}**")
+              warn.write_text(msg)
+              tail()
+          elif code != "0":
+              msg = f"変異テストの実行に失敗しました (Stryker 終了コード: {code})。生存変異の有無は判定できていません。"
+              print(f"> :x: **{msg}**")
+              warn.write_text(msg)
+              tail()
+          elif tested == 0:
+              msg = "検査された変異が 0 件でした (母数 0)。生存変異 0 件とは判定できません。"
+              print(f"> :x: **{msg}**")
+              warn.write_text(msg)
+              tail()
+          if n:
+              print(f"> :warning: **生存変異 (Survived + NoCoverage): {n} 件** — この PR の差分に、テストが捕捉できていない変異があります。対応する `*.test.ts` / 共有ゴールデンに境界ケースを追記してください。")
+              print("")
+              print("```")
+              print("\n".join(survived))
+              print("```")
+              if not warn.exists():
+                  warn.write_text(f"生存変異 {n} 件")
+          elif not warn.exists():
+              print("> :white_check_mark: **生存変異: 0 件**")
+          print("")
+          print(f"killed: {counts.get('Killed', 0)} / survived: {counts.get('Survived', 0)} / no coverage: {counts.get('NoCoverage', 0)} / timeout: {counts.get('Timeout', 0)}")
+          PYEOF
+          # ワークフローコマンドは Summary 行ではなくここで出す (fail はさせない)。
+          if [ -f report-warning.txt ]; then
+            echo "::warning title=変異テスト (フロント PR 差分)::$(cat report-warning.txt) (Job Summary 参照)"
+          fi
+
+      - name: Upload Stryker report artifact
+        if: always() && steps.list.outputs.count != '0'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: js-mutants-diff-out
+          path: |
+            reports/mutation/
+            js-mutants.diff
+            mutate-ranges.txt
+            stryker-output.txt
+          if-no-files-found: ignore
+          retention-days: 14
