@@ -5224,7 +5224,7 @@ const en = {
   schemaCompareKindDropTable: "DROP TABLE",
   pgListenTitle: "LISTEN / NOTIFY",
   pgListenDesc:
-    "Open a dedicated connection and watch PostgreSQL notifications (NOTIFY) on the channels you choose, as they arrive. Read-only: it only issues LISTEN, and works on read-only connections.",
+    "Open a dedicated connection and watch PostgreSQL notifications (NOTIFY) on the channels you choose, as they arrive. Read-only: it only issues LISTEN, and works on read-only connections. Listening stops when you switch tabs or close this panel.",
   pgListenChannelLabel: "Channel",
   pgListenChannelPlaceholder: "e.g. orders_changed",
   pgListenAdd: "Add channel",
@@ -12504,7 +12504,7 @@ const ja: Dict = {
   schemaCompareKindDropTable: "DROP TABLE",
   pgListenTitle: "LISTEN / NOTIFY",
   pgListenDesc:
-    "専用の接続を 1 本開き、選んだチャンネルの PostgreSQL 通知 (NOTIFY) を届いた順に監視します。読み取りのみ (LISTEN だけを発行) なので、読み取り専用接続でも使えます。",
+    "専用の接続を 1 本開き、選んだチャンネルの PostgreSQL 通知 (NOTIFY) を届いた順に監視します。読み取りのみ (LISTEN だけを発行) なので、読み取り専用接続でも使えます。タブを切り替えるかパネルを閉じると監視は止まります。",
   pgListenChannelLabel: "チャンネル",
   pgListenChannelPlaceholder: "例: orders_changed",
   pgListenAdd: "チャンネルを追加",

@@ -88,6 +88,8 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
   const [notice, setNotice] = useState<"reconnected" | "closed" | null>(null);
   const [unsupportedReason, setUnsupportedReason] = useState<string | null>(null);
   const seqRef = useRef(0);
+  /** 受信バッファの実体 (`items` はこれの表示用コピー)。 */
+  const bufferRef = useRef<BufferedNotification[]>([]);
   const activeRef = useRef<{ streamId: string; unlisten: () => void } | null>(null);
 
   /** 監視を止めて Channel の購読を外す (バックエンドのリスナも `cancel_stream` で終わる)。 */
@@ -128,11 +130,11 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
           if (!isActive()) return;
           seqRef.current += 1;
           const entry: BufferedNotification = { ...n, seq: seqRef.current };
-          setItems((cur) => {
-            const next = appendNotification(cur, entry);
-            if (next.dropped > 0) setDropped((d) => d + next.dropped);
-            return next.items;
-          });
+          // バッファは ref が正 (updater を使わないので StrictMode でも二重に数えない)。
+          const next = appendNotification(bufferRef.current, entry);
+          bufferRef.current = next.items;
+          setItems(next.items);
+          if (next.dropped > 0) setDropped((d) => d + next.dropped);
         },
         onReconnected: () => {
           if (isActive()) setNotice("reconnected");
@@ -214,6 +216,7 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
   }, []);
 
   const clear = () => {
+    bufferRef.current = [];
     setItems([]);
     setDropped(0);
     setExpanded(null);

@@ -255,7 +255,7 @@ PostgreSQL の `LISTEN` / `NOTIFY` を購読するボトムパネル (診断グ�
   payloadTruncated, pid, receivedAtMs}` / `reconnected` / `unsupported{reason}` / `error` /
   `cancelled{deliveredRows}` を送る。payload は 2000 文字に切り詰める。MySQL / SQLite は
   `unsupported`(`reason: "unsupported_driver"`) で縮退。停止は `cancel_stream(stream_id)`、
-  セッション切断 (`AppState::remove`) でも `cancelled` を送って止まり、専用接続も閉じる。
+  セッション切断 (`AppState::remove`) と再接続 (`AppState::replace`) でも `cancelled` を送って止まり、専用接続も閉じる (再接続後は開始し直す)。タスクは `Session` を持たない。画面側 Channel が閉じたときの終了は補助で、画面は必ず `cancel_stream` を呼ぶ。
 - `pg_listen_add_channel(stream_id, channel)` / `pg_listen_remove_channel(stream_id, channel)` —
   稼働中の監視へ `LISTEN` / `UNLISTEN` を足す。チャンネル名は sqlx が識別子として
   `"..."` で囲む (内部の `"` は重ねる) うえ、長さ (63 バイト)・NUL・空・件数 (50) を

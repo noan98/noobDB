@@ -85,7 +85,8 @@ pub async fn open_listener(opts: &DbConnectOptions) -> Result<sqlx::postgres::Pg
         .max_connections(1)
         .max_lifetime(None)
         .idle_timeout(None)
-        .acquire_timeout(std::time::Duration::from_secs(15))
+        // 接続できないときに原因 (拒否・認証失敗など) を早く見せる。
+        .acquire_timeout(std::time::Duration::from_secs(5))
         .connect_with(connect)
         .await?;
     let mut listener = sqlx::postgres::PgListener::connect_with(&pool).await?;

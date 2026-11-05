@@ -8,8 +8,12 @@
 //!   セッションでも使える。`NOTIFY` の送信機能は持たない。
 //! - チャンネルの追加・削除は `pg_listen_add_channel` / `pg_listen_remove_channel` (稼働中の
 //!   タスクへ制御メッセージを送る)。停止は共通の `cancel_stream(stream_id)`。
-//! - タスクは `cancel_stream`・セッション切断 (`AppState::remove`)・画面側 Channel の閉鎖の
-//!   いずれかで終わり、専用接続も一緒に閉じるので、リスナがサーバに残らない。
+//! - タスクは `cancel_stream`・セッション切断 (`AppState::remove`)・再接続による接続の入れ替え
+//!   (`AppState::replace`) で止まり、専用接続も一緒に閉じる。入れ替えでも自動では張り直さない
+//!   (画面に `cancelled` が届くので開始し直す)。補助として、画面側 Channel が閉じて送信に
+//!   失敗したときもタスクは終わる (これに頼らず、画面は必ず `cancel_stream` を呼ぶ)。
+//! - タスクは `Session` を持たず、接続設定と ID の複製だけを持つ。持ち続けると、再接続や切断の
+//!   あとも旧 SSH / SSM トンネルが解放されない。
 //! - PostgreSQL 以外のドライバは `unsupported` (理由コード `unsupported_driver`) で縮退する。
 //! - 接続オプション (パスワードを含む) はログに出さない。
 
@@ -111,6 +115,11 @@ pub async fn start_pg_listen(
         }
     }
 
+    // タスクへは接続設定と ID の複製だけを渡し、`Session` (= トンネル) は手放す。
+    let connect_options = session.connect_options.clone();
+    let log_session_id = session.id.clone();
+    let task_session_id = log_session_id.clone();
+    drop(session);
     let delivered = Arc::new(AtomicU64::new(0));
     let (control_tx, control_rx) = mpsc::unbounded_channel::<PgListenControl>();
     let cancel_channel = on_event.clone();
@@ -123,8 +132,8 @@ pub async fn start_pg_listen(
             return;
         };
         run_listener(
-            &session.connect_options,
-            &session.id,
+            &connect_options,
+            &task_session_id,
             initial,
             // 受け手 (画面) が居なくなったら送信が失敗する。`false` を返してリスナを終える。
             move |message| on_event.send(message).is_ok(),
@@ -158,11 +167,19 @@ pub async fn start_pg_listen(
             control: control_tx,
         },
     );
+    // 登録の合間にセッションが切断・再接続されていたら、取りこぼさず止める。
+    if state.get(&log_session_id).await.is_none() {
+        state.stop_pg_listeners_for_session(&log_session_id).await;
+    }
     let _ = ready_tx.send(token);
     Ok(())
 }
 
 /// 監視タスク本体。終了理由は終端メッセージ (`error`) か、外からの abort。
+///
+/// 制限: `select!` で制御メッセージを先に処理すると、`try_recv` の未完了の future は捨てられる。
+/// 再接続の途中 (旧接続を捨てて新接続を張る間) で捨てられた場合、その再接続はやり直しになり、
+/// その間に届いた通知は失われうる (NOTIFY はもともと永続化されず、切断中の通知は届かない)。
 /// `send` は 1 通ずつ届ける関数で、受け手が居なくなったら `false` を返す (実運用では Tauri の
 /// Channel、統合テストではただのキュー)。
 pub async fn run_listener(
