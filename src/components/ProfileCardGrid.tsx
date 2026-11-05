@@ -321,6 +321,7 @@ function ProfileCard({
 }) {
   const t = useT();
   const descId = useId();
+  const pathId = useId();
   const driverIcon: IconName = driverIconName(p.driver) ?? "server";
   const endpoint = endpointSummary(p);
   const inert = disabled || connecting;
@@ -330,6 +331,10 @@ function ProfileCard({
     const input = pathInputFromProfile(p);
     return input ? buildConnectionPath(input) : null;
   }, [p]);
+  const targetNode = path?.nodes[path.nodes.length - 1];
+  const targetLabel = targetNode?.label
+    ? { short: targetNode.label, full: targetNode.fullLabel ?? targetNode.label }
+    : null;
   // 接続中でも一定時間を超えるまでは compact のまま (点灯だけ流す)。超えたら prominent に昇格。
   const [promoted, setPromoted] = useState(false);
   useEffect(() => {
@@ -349,7 +354,14 @@ function ProfileCard({
     .filter((x): x is string => x !== null)
     .join(", ");
   return (
-    <MotionCardWrap variants={variants.staggerItem} flex="0 1 240px" minW="220px" maxW="280px" minH="118px">
+    <MotionCardWrap
+      variants={variants.staggerItem}
+      flex="0 1 240px"
+      minW="220px"
+      maxW="280px"
+      minH="118px"
+      alignSelf={connecting && promoted ? "flex-start" : undefined}
+    >
       <SelectableCard
         type="button"
         onClick={onConnect}
@@ -361,7 +373,9 @@ function ProfileCard({
         }}
         disabled={inert}
         aria-label={cardLabel}
-        aria-describedby={descId}
+        aria-describedby={path ? `${descId} ${pathId}` : descId}
+        // 接続中のカードも disabled だが、経路図が主役なので減光しない (他カードの減光はそのまま)。
+        css={{ "&[aria-busy=true]:disabled": { opacity: 1 } }}
         aria-busy={connecting || undefined}
         flex="1"
         // 本番は常に危険色のスパインで際立たせる (サイドバーのワークスペース・
@@ -408,19 +422,36 @@ function ProfileCard({
         </Flex>
         {path && (
           <Flex
+            direction="column"
+            gap="1"
             w="100%"
             minW={0}
-            pt={connecting && promoted ? "1" : undefined}
             data-testid="profile-card-path"
             data-promoted={connecting && promoted ? "true" : "false"}
           >
-            <ConnectionPathDiagram
-              path={path}
-              driver={p.driver}
-              accentColor={p.color}
-              compact={!(connecting && promoted)}
-              phase={connecting ? (connectPhase ?? "preparing") : undefined}
-            />
+            <Flex id={pathId} w="100%" minW={0}>
+              <ConnectionPathDiagram
+                path={path}
+                driver={p.driver}
+                accentColor={p.color}
+                compact
+                phase={connecting ? (connectPhase ?? "preparing") : undefined}
+              />
+            </Flex>
+            {connecting && promoted && targetLabel && (
+              <Text
+                fontSize="xs"
+                fontFamily="var(--font-mono)"
+                color="app.text"
+                overflow="hidden"
+                textOverflow="ellipsis"
+                whiteSpace="nowrap"
+                title={targetLabel.full}
+                data-testid="profile-card-path-target"
+              >
+                {targetLabel.short}
+              </Text>
+            )}
           </Flex>
         )}
         {p.group && (

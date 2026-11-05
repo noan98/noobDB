@@ -220,7 +220,32 @@ describe("ProfileCardGrid の検索とグループ絞り込み (#1630)", () => {
         vi.advanceTimersByTime(700);
       });
       expect(wrap().getAttribute("data-promoted")).toBe("true");
-      expect(screen.getByText("bastion.example.com:22")).toBeInTheDocument();
+      // 昇格後も図は compact のまま、目標の host:port を 1 行で図の下に出す。
+      const target = screen.getByTestId("profile-card-path-target");
+      expect(target).toHaveTextContent("127.0.0.1:3306");
+      expect(target).toHaveAttribute("title", "127.0.0.1:3306");
+    });
+
+    it("別のカードが接続中のとき、自分のカードには phase が付かず昇格もしない", () => {
+      vi.useFakeTimers();
+      const other = makeProfile({ id: "p-o", name: "Other" });
+      renderWithProviders(
+        <ProfileCardGrid
+          profiles={[ssh, other]}
+          connectingId="p-o"
+          connectPhase="db_connecting"
+          onConnect={() => {}}
+          onCreate={() => {}}
+        />,
+      );
+      act(() => {
+        vi.advanceTimersByTime(700);
+      });
+      expect(diagramOf("Via Bastion")?.getAttribute("data-phase")).toBeNull();
+      expect(diagramOf("Other")?.getAttribute("data-phase")).toBe("db_connecting");
+      const wraps = screen.getAllByTestId("profile-card-path");
+      expect(wraps[0].getAttribute("data-promoted")).toBe("false");
+      expect(wraps[1].getAttribute("data-promoted")).toBe("true");
     });
   });
 });
