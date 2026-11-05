@@ -1,0 +1,311 @@
+{
+  "description": "大規模 DML のチャンク分割実行 (#2020) の SQL 生成の実装横断ゴールデンベクタ。Rust の db::chunked_dml (build_chunk_sql / build_count_sql) と、フロントの components/chunkedDml.ts を同じ入力で固定する。cases は成功ケース (set が無ければ DELETE、あれば UPDATE)、errors は拒否ケース (drivers 省略時は全ドライバで同じ理由コードで拒否される)。新しい境界ケースはこの 1 ファイルに追記すれば両言語へ反映される。",
+  "drivers": [
+    "mysql",
+    "postgres",
+    "sqlite"
+  ],
+  "cases": [
+    {
+      "note": "単純な DELETE",
+      "table": "users",
+      "database": null,
+      "where": "created_at < '2020-01-01'",
+      "batchSize": 1000,
+      "expected": {
+        "mysql": "DELETE FROM `users` WHERE (created_at < '2020-01-01') LIMIT 1000",
+        "postgres": "DELETE FROM \"users\" WHERE ctid IN (SELECT ctid FROM \"users\" WHERE (created_at < '2020-01-01') LIMIT 1000)",
+        "sqlite": "DELETE FROM \"users\" WHERE rowid IN (SELECT rowid FROM \"users\" WHERE (created_at < '2020-01-01') LIMIT 1000)"
+      },
+      "count": {
+        "mysql": "SELECT COUNT(*) FROM `users` WHERE (created_at < '2020-01-01')",
+        "postgres": "SELECT COUNT(*) FROM \"users\" WHERE (created_at < '2020-01-01')",
+        "sqlite": "SELECT COUNT(*) FROM \"users\" WHERE (created_at < '2020-01-01')"
+      }
+    },
+    {
+      "note": "UPDATE は SET 句をそのまま載せる",
+      "table": "orders",
+      "database": null,
+      "where": "status = 'old'",
+      "batchSize": 500,
+      "set": "status = 'archived'",
+      "expected": {
+        "mysql": "UPDATE `orders` SET status = 'archived' WHERE (status = 'old') LIMIT 500",
+        "postgres": "UPDATE \"orders\" SET status = 'archived' WHERE ctid IN (SELECT ctid FROM \"orders\" WHERE (status = 'old') LIMIT 500)",
+        "sqlite": "UPDATE \"orders\" SET status = 'archived' WHERE rowid IN (SELECT rowid FROM \"orders\" WHERE (status = 'old') LIMIT 500)"
+      },
+      "count": {
+        "mysql": "SELECT COUNT(*) FROM `orders` WHERE (status = 'old')",
+        "postgres": "SELECT COUNT(*) FROM \"orders\" WHERE (status = 'old')",
+        "sqlite": "SELECT COUNT(*) FROM \"orders\" WHERE (status = 'old')"
+      }
+    },
+    {
+      "note": "DB 修飾 (SQLite は修飾しない)",
+      "table": "t",
+      "database": "app",
+      "where": "id > 10",
+      "batchSize": 1,
+      "expected": {
+        "mysql": "DELETE FROM `app`.`t` WHERE (id > 10) LIMIT 1",
+        "postgres": "DELETE FROM \"app\".\"t\" WHERE ctid IN (SELECT ctid FROM \"app\".\"t\" WHERE (id > 10) LIMIT 1)",
+        "sqlite": "DELETE FROM \"t\" WHERE rowid IN (SELECT rowid FROM \"t\" WHERE (id > 10) LIMIT 1)"
+      },
+      "count": {
+        "mysql": "SELECT COUNT(*) FROM `app`.`t` WHERE (id > 10)",
+        "postgres": "SELECT COUNT(*) FROM \"app\".\"t\" WHERE (id > 10)",
+        "sqlite": "SELECT COUNT(*) FROM \"t\" WHERE (id > 10)"
+      }
+    },
+    {
+      "note": "識別子の引用 (バッククォート / ダブルクォートの二重化)",
+      "table": "we`ird\"t",
+      "database": "d`b",
+      "where": "x = 1",
+      "batchSize": 10,
+      "expected": {
+        "mysql": "DELETE FROM `d``b`.`we``ird\"t` WHERE (x = 1) LIMIT 10",
+        "postgres": "DELETE FROM \"d`b\".\"we`ird\"\"t\" WHERE ctid IN (SELECT ctid FROM \"d`b\".\"we`ird\"\"t\" WHERE (x = 1) LIMIT 10)",
+        "sqlite": "DELETE FROM \"we`ird\"\"t\" WHERE rowid IN (SELECT rowid FROM \"we`ird\"\"t\" WHERE (x = 1) LIMIT 10)"
+      },
+      "count": {
+        "mysql": "SELECT COUNT(*) FROM `d``b`.`we``ird\"t` WHERE (x = 1)",
+        "postgres": "SELECT COUNT(*) FROM \"d`b\".\"we`ird\"\"t\" WHERE (x = 1)",
+        "sqlite": "SELECT COUNT(*) FROM \"we`ird\"\"t\" WHERE (x = 1)"
+      }
+    },
+    {
+      "note": "WHERE の前後の空白は落とし、OR を含む条件は括弧で包まれる",
+      "table": "t",
+      "database": null,
+      "where": "  a = 1 OR b = 2  ",
+      "batchSize": 100,
+      "expected": {
+        "mysql": "DELETE FROM `t` WHERE (a = 1 OR b = 2) LIMIT 100",
+        "postgres": "DELETE FROM \"t\" WHERE ctid IN (SELECT ctid FROM \"t\" WHERE (a = 1 OR b = 2) LIMIT 100)",
+        "sqlite": "DELETE FROM \"t\" WHERE rowid IN (SELECT rowid FROM \"t\" WHERE (a = 1 OR b = 2) LIMIT 100)"
+      },
+      "count": {
+        "mysql": "SELECT COUNT(*) FROM `t` WHERE (a = 1 OR b = 2)",
+        "postgres": "SELECT COUNT(*) FROM \"t\" WHERE (a = 1 OR b = 2)",
+        "sqlite": "SELECT COUNT(*) FROM \"t\" WHERE (a = 1 OR b = 2)"
+      }
+    },
+    {
+      "note": "上限ちょうどのバッチサイズ",
+      "table": "t",
+      "database": null,
+      "where": "a = 1",
+      "batchSize": 100000,
+      "expected": {
+        "mysql": "DELETE FROM `t` WHERE (a = 1) LIMIT 100000",
+        "postgres": "DELETE FROM \"t\" WHERE ctid IN (SELECT ctid FROM \"t\" WHERE (a = 1) LIMIT 100000)",
+        "sqlite": "DELETE FROM \"t\" WHERE rowid IN (SELECT rowid FROM \"t\" WHERE (a = 1) LIMIT 100000)"
+      },
+      "count": {
+        "mysql": "SELECT COUNT(*) FROM `t` WHERE (a = 1)",
+        "postgres": "SELECT COUNT(*) FROM \"t\" WHERE (a = 1)",
+        "sqlite": "SELECT COUNT(*) FROM \"t\" WHERE (a = 1)"
+      }
+    },
+    {
+      "note": "文字列リテラル中の ; -- /* は許可 (引用符内)",
+      "table": "t",
+      "database": null,
+      "where": "note = 'a;b -- c /* d'",
+      "batchSize": 10,
+      "expected": {
+        "mysql": "DELETE FROM `t` WHERE (note = 'a;b -- c /* d') LIMIT 10",
+        "postgres": "DELETE FROM \"t\" WHERE ctid IN (SELECT ctid FROM \"t\" WHERE (note = 'a;b -- c /* d') LIMIT 10)",
+        "sqlite": "DELETE FROM \"t\" WHERE rowid IN (SELECT rowid FROM \"t\" WHERE (note = 'a;b -- c /* d') LIMIT 10)"
+      },
+      "count": {
+        "mysql": "SELECT COUNT(*) FROM `t` WHERE (note = 'a;b -- c /* d')",
+        "postgres": "SELECT COUNT(*) FROM \"t\" WHERE (note = 'a;b -- c /* d')",
+        "sqlite": "SELECT COUNT(*) FROM \"t\" WHERE (note = 'a;b -- c /* d')"
+      }
+    },
+    {
+      "note": "文字列リテラル中の '' 二重化",
+      "table": "t",
+      "database": null,
+      "where": "y = 'it''s'",
+      "batchSize": 10,
+      "set": "x = 'it''s'",
+      "expected": {
+        "mysql": "UPDATE `t` SET x = 'it''s' WHERE (y = 'it''s') LIMIT 10",
+        "postgres": "UPDATE \"t\" SET x = 'it''s' WHERE ctid IN (SELECT ctid FROM \"t\" WHERE (y = 'it''s') LIMIT 10)",
+        "sqlite": "UPDATE \"t\" SET x = 'it''s' WHERE rowid IN (SELECT rowid FROM \"t\" WHERE (y = 'it''s') LIMIT 10)"
+      },
+      "count": {
+        "mysql": "SELECT COUNT(*) FROM `t` WHERE (y = 'it''s')",
+        "postgres": "SELECT COUNT(*) FROM \"t\" WHERE (y = 'it''s')",
+        "sqlite": "SELECT COUNT(*) FROM \"t\" WHERE (y = 'it''s')"
+      }
+    },
+    {
+      "note": "サブクエリ入りの条件 (括弧が釣り合う)",
+      "table": "t",
+      "database": null,
+      "where": "id IN (SELECT id FROM u WHERE (a = 1))",
+      "batchSize": 10,
+      "expected": {
+        "mysql": "DELETE FROM `t` WHERE (id IN (SELECT id FROM u WHERE (a = 1))) LIMIT 10",
+        "postgres": "DELETE FROM \"t\" WHERE ctid IN (SELECT ctid FROM \"t\" WHERE (id IN (SELECT id FROM u WHERE (a = 1))) LIMIT 10)",
+        "sqlite": "DELETE FROM \"t\" WHERE rowid IN (SELECT rowid FROM \"t\" WHERE (id IN (SELECT id FROM u WHERE (a = 1))) LIMIT 10)"
+      },
+      "count": {
+        "mysql": "SELECT COUNT(*) FROM `t` WHERE (id IN (SELECT id FROM u WHERE (a = 1)))",
+        "postgres": "SELECT COUNT(*) FROM \"t\" WHERE (id IN (SELECT id FROM u WHERE (a = 1)))",
+        "sqlite": "SELECT COUNT(*) FROM \"t\" WHERE (id IN (SELECT id FROM u WHERE (a = 1)))"
+      }
+    },
+    {
+      "note": "UPDATE の SET に複数列と式",
+      "table": "t",
+      "database": null,
+      "where": "k = 1",
+      "batchSize": 10,
+      "set": "n = n + 1, m = NULL",
+      "expected": {
+        "mysql": "UPDATE `t` SET n = n + 1, m = NULL WHERE (k = 1) LIMIT 10",
+        "postgres": "UPDATE \"t\" SET n = n + 1, m = NULL WHERE ctid IN (SELECT ctid FROM \"t\" WHERE (k = 1) LIMIT 10)",
+        "sqlite": "UPDATE \"t\" SET n = n + 1, m = NULL WHERE rowid IN (SELECT rowid FROM \"t\" WHERE (k = 1) LIMIT 10)"
+      },
+      "count": {
+        "mysql": "SELECT COUNT(*) FROM `t` WHERE (k = 1)",
+        "postgres": "SELECT COUNT(*) FROM \"t\" WHERE (k = 1)",
+        "sqlite": "SELECT COUNT(*) FROM \"t\" WHERE (k = 1)"
+      }
+    }
+  ],
+  "errors": [
+    {
+      "note": "空の WHERE は拒否 (全件操作を防ぐ)",
+      "table": "t",
+      "where": "   ",
+      "batchSize": 10,
+      "error": "emptyWhere"
+    },
+    {
+      "note": "空のテーブル名",
+      "table": "  ",
+      "where": "a = 1",
+      "batchSize": 10,
+      "error": "emptyTable"
+    },
+    {
+      "note": "UPDATE の SET が空",
+      "table": "t",
+      "where": "a = 1",
+      "batchSize": 10,
+      "error": "emptySet",
+      "set": " "
+    },
+    {
+      "note": "バッチサイズ 0",
+      "table": "t",
+      "where": "a = 1",
+      "batchSize": 0,
+      "error": "badBatchSize"
+    },
+    {
+      "note": "バッチサイズが上限超え",
+      "table": "t",
+      "where": "a = 1",
+      "batchSize": 100001,
+      "error": "badBatchSize"
+    },
+    {
+      "note": "引用符の外の ; は拒否 (文の追加)",
+      "table": "t",
+      "where": "a = 1; DROP TABLE t",
+      "batchSize": 10,
+      "error": "stackedStatement"
+    },
+    {
+      "note": "SET 側の ; も拒否",
+      "table": "t",
+      "where": "a = 1",
+      "batchSize": 10,
+      "error": "stackedStatement",
+      "set": "a = 1; DELETE FROM t"
+    },
+    {
+      "note": "-- コメントは閉じ括弧を食うので拒否",
+      "table": "t",
+      "where": "a = 1 --",
+      "batchSize": 10,
+      "error": "comment"
+    },
+    {
+      "note": "/* コメントも拒否",
+      "table": "t",
+      "where": "a = 1 /* x",
+      "batchSize": 10,
+      "error": "comment"
+    },
+    {
+      "note": "MySQL の # コメントは MySQL だけ拒否",
+      "table": "t",
+      "where": "a = 1 #",
+      "batchSize": 10,
+      "error": "comment",
+      "drivers": [
+        "mysql"
+      ]
+    },
+    {
+      "note": "閉じ括弧が多い (括弧を抜けて LIMIT を外す試み)",
+      "table": "t",
+      "where": "a = 1) OR (1 = 1",
+      "batchSize": 10,
+      "error": "unbalanced"
+    },
+    {
+      "note": "開き括弧が閉じない",
+      "table": "t",
+      "where": "(a = 1",
+      "batchSize": 10,
+      "error": "unbalanced"
+    },
+    {
+      "note": "引用符が閉じない",
+      "table": "t",
+      "where": "a = 'x",
+      "batchSize": 10,
+      "error": "unbalanced"
+    },
+    {
+      "note": "MySQL は \\' が引用符を閉じない (閉じ忘れとして拒否)",
+      "table": "t",
+      "where": "a = 'x\\'",
+      "batchSize": 10,
+      "error": "unbalanced",
+      "drivers": [
+        "mysql"
+      ]
+    },
+    {
+      "note": "PostgreSQL のドル引用は解釈しない",
+      "table": "t",
+      "where": "a = $$x$$",
+      "batchSize": 10,
+      "error": "unsupported",
+      "drivers": [
+        "postgres"
+      ]
+    },
+    {
+      "note": "PostgreSQL の E 文字列は解釈しない",
+      "table": "t",
+      "where": "a = E'x\\'y'",
+      "batchSize": 10,
+      "error": "unsupported",
+      "drivers": [
+        "postgres"
+      ]
+    }
+  ]
+}

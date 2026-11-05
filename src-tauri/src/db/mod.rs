@@ -3,6 +3,8 @@ pub mod assertions;
 pub mod aws_iam;
 /// 環境横断ブロードキャストの結果比較 (#1257)。
 pub mod broadcast_diff;
+/// 大規模 DML のチャンク分割実行の SQL 生成 (#2020)。
+pub mod chunked_dml;
 /// DROP COLUMN の依存オブジェクト検出 (#1758)。
 pub mod column_deps;
 /// ファイルから新規テーブルを作るときの方言別 CREATE TABLE 生成 (#985)。

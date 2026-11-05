@@ -7013,3 +7013,198 @@ async fn sqlite_list_table_partitions_is_unsupported() {
     assert!(matches!(err, t::AppError::InvalidInput(_)), "{err:?}");
     let _ = std::fs::remove_file(&p);
 }
+
+// ---- 大規模 DML のチャンク分割実行 (#2020) ----
+
+async fn chunked_state(tag: &str, read_only: bool) -> (t::AppState, String, PathBuf) {
+    let path = temp_cmd_db(tag);
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    for stmt in [
+        "CREATE TABLE logs (id INTEGER PRIMARY KEY, kind TEXT, n INTEGER)",
+        "CREATE TABLE norowid (id INTEGER PRIMARY KEY, kind TEXT) WITHOUT ROWID",
+        "INSERT INTO norowid VALUES (1, 'old')",
+    ] {
+        conn.execute(stmt, None).await.expect("ddl");
+    }
+    let values = (1..=25)
+        .map(|i| format!("({i}, '{}', 0)", if i <= 23 { "old" } else { "new" }))
+        .collect::<Vec<_>>()
+        .join(", ");
+    conn.execute(&format!("INSERT INTO logs VALUES {values}"), None)
+        .await
+        .expect("seed");
+    let session = t::make_session("chunked", conn, opts, read_only);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+    (state, sid, path)
+}
+
+async fn count_rows(state: &t::AppState, sid: &str, sql: &str) -> String {
+    let r = t::run_lookup_query_via_command(state, sid, sql, None, None, Some(1))
+        .await
+        .expect("count");
+    serde_json::to_string(&r.rows).expect("json")
+}
+
+/// DELETE を 10 行ずつのバッチで流す。各バッチは 10 行以下、WHERE に合わない行は残り、
+/// 0 行で終わる。
+#[tokio::test]
+async fn sqlite_chunked_delete_runs_in_batches_until_empty() {
+    let (state, sid, path) = chunked_state("chunk_del", false).await;
+    let mut sizes = Vec::new();
+    loop {
+        let r = t::run_chunked_dml_batch_via_command(
+            &state,
+            &sid,
+            None,
+            "logs",
+            t::ChunkedDmlOperation::Delete,
+            "kind = 'old'",
+            10,
+        )
+        .await
+        .expect("batch");
+        sizes.push(r.rows_affected);
+        if r.rows_affected == 0 {
+            break;
+        }
+        assert!(sizes.len() < 10, "must terminate");
+    }
+    assert_eq!(sizes, vec![10, 10, 3, 0]);
+    assert_eq!(
+        count_rows(&state, &sid, "SELECT COUNT(*) FROM logs").await,
+        "[[2]]"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+/// UPDATE は WHERE が偽になれば止まり、他の行は触れない。
+#[tokio::test]
+async fn sqlite_chunked_update_touches_only_matching_rows() {
+    let (state, sid, path) = chunked_state("chunk_upd", false).await;
+    let mut total = 0;
+    loop {
+        let r = t::run_chunked_dml_batch_via_command(
+            &state,
+            &sid,
+            None,
+            "logs",
+            t::ChunkedDmlOperation::Update {
+                set_clause: "kind = 'done', n = n + 1".into(),
+            },
+            "kind = 'old'",
+            8,
+        )
+        .await
+        .expect("batch");
+        total += r.rows_affected;
+        if r.rows_affected == 0 {
+            break;
+        }
+    }
+    assert_eq!(total, 23);
+    assert_eq!(
+        count_rows(
+            &state,
+            &sid,
+            "SELECT COUNT(*) FROM logs WHERE kind = 'done' AND n = 1"
+        )
+        .await,
+        "[[23]]"
+    );
+    assert_eq!(
+        count_rows(&state, &sid, "SELECT COUNT(*) FROM logs WHERE kind = 'new'").await,
+        "[[2]]"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+/// 途中で止めた (= ループを打ち切った) 場合、実行済みのバッチは確定し、残りは手つかず。
+#[tokio::test]
+async fn sqlite_chunked_stop_midway_keeps_committed_batches() {
+    let (state, sid, path) = chunked_state("chunk_cancel", false).await;
+    for _ in 0..2 {
+        t::run_chunked_dml_batch_via_command(
+            &state,
+            &sid,
+            None,
+            "logs",
+            t::ChunkedDmlOperation::Delete,
+            "kind = 'old'",
+            5,
+        )
+        .await
+        .expect("batch");
+    }
+    assert_eq!(
+        count_rows(&state, &sid, "SELECT COUNT(*) FROM logs").await,
+        "[[15]]"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn sqlite_chunked_read_only_session_is_rejected() {
+    let (state, sid, path) = chunked_state("chunk_ro", true).await;
+    let err = t::run_chunked_dml_batch_via_command(
+        &state,
+        &sid,
+        None,
+        "logs",
+        t::ChunkedDmlOperation::Delete,
+        "kind = 'old'",
+        10,
+    )
+    .await
+    .expect_err("read-only must reject");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+    assert_eq!(
+        count_rows(&state, &sid, "SELECT COUNT(*) FROM logs").await,
+        "[[25]]"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn sqlite_chunked_rejects_without_rowid_and_unsafe_fragments() {
+    let (state, sid, path) = chunked_state("chunk_rej", false).await;
+    let err = t::run_chunked_dml_batch_via_command(
+        &state,
+        &sid,
+        None,
+        "norowid",
+        t::ChunkedDmlOperation::Delete,
+        "kind = 'old'",
+        10,
+    )
+    .await
+    .expect_err("WITHOUT ROWID must be rejected");
+    assert!(matches!(err, t::AppError::InvalidInput(_)), "{err:?}");
+    for bad in ["", "1 = 1; DROP TABLE logs", "id > 0 --"] {
+        let err = t::run_chunked_dml_batch_via_command(
+            &state,
+            &sid,
+            None,
+            "logs",
+            t::ChunkedDmlOperation::Delete,
+            bad,
+            10,
+        )
+        .await
+        .expect_err("unsafe fragment must be rejected");
+        assert!(
+            matches!(err, t::AppError::InvalidInput(_)),
+            "{bad}: {err:?}"
+        );
+    }
+    assert_eq!(
+        count_rows(&state, &sid, "SELECT COUNT(*) FROM logs").await,
+        "[[25]]"
+    );
+    assert_eq!(
+        count_rows(&state, &sid, "SELECT COUNT(*) FROM norowid").await,
+        "[[1]]"
+    );
+    let _ = std::fs::remove_file(&path);
+}

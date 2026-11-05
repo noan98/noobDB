@@ -575,7 +575,7 @@ pub mod __test_api {
     // 経路を駆動できるよう、ここでピンポイントに公開する。
     pub use crate::commands::bulk_write::{
         BulkOldValue, BulkSetColumn, BulkSetValue, BulkUpdateGroup, BulkWriteOptions,
-        BulkWriteOutcome, InsertRowsResult,
+        BulkWriteOutcome, ChunkedDmlOperation, InsertRowsResult,
     };
     pub use crate::commands::connection::{health_probe_all_inner, HealthProbeStatus};
     pub use crate::commands::inspector::{
@@ -1167,6 +1167,60 @@ pub mod __test_api {
         .await
     }
 
+    /// チャンク分割 DML (#2020) の 1 バッチ実行のコア経路。
+    pub async fn run_chunked_dml_batch_via_command(
+        state: &AppState,
+        session_id: &str,
+        database: Option<&str>,
+        table: &str,
+        operation: ChunkedDmlOperation,
+        where_clause: &str,
+        batch_size: u32,
+    ) -> crate::error::Result<QueryResult> {
+        crate::commands::bulk_write::run_chunked_dml_batch_inner(
+            state,
+            session_id.to_string(),
+            database.map(str::to_string),
+            table.to_string(),
+            operation,
+            where_clause.to_string(),
+            batch_size,
+        )
+        .await
+    }
+
+    /// チャンク分割 DML の SQL 生成 (`db::chunked_dml::build_chunk_sql`)。成功は SQL、拒否は
+    /// 理由コード (`ChunkedDmlError::code`)。実装横断ゴールデン (`tests/chunked_dml_golden.rs`) が使う。
+    pub fn chunked_dml_sql(
+        driver: DriverKind,
+        database: Option<&str>,
+        table: &str,
+        set_clause: Option<&str>,
+        where_clause: &str,
+        batch_size: u32,
+    ) -> Result<String, String> {
+        use crate::db::chunked_dml::{build_chunk_sql, ChunkedOp};
+        let op = match set_clause {
+            Some(s) => ChunkedOp::Update {
+                set_clause: s.to_string(),
+            },
+            None => ChunkedOp::Delete,
+        };
+        build_chunk_sql(driver, database, table, &op, where_clause, batch_size)
+            .map_err(|e| e.code().to_string())
+    }
+
+    /// 対象件数 SELECT の生成 (`db::chunked_dml::build_count_sql`)。
+    pub fn chunked_dml_count_sql(
+        driver: DriverKind,
+        database: Option<&str>,
+        table: &str,
+        where_clause: &str,
+    ) -> Result<String, String> {
+        crate::db::chunked_dml::build_count_sql(driver, database, table, where_clause)
+            .map_err(|e| e.code().to_string())
+    }
+
     /// Drives the `insert_generated_rows` IPC command's core path without a
     /// Tauri runtime (#1259).
     pub async fn insert_generated_rows_via_command(
@@ -1753,6 +1807,7 @@ pub fn run() {
             commands::query::run_query_transaction,
             commands::bulk_write::bulk_update_cells,
             commands::bulk_write::insert_generated_rows,
+            commands::bulk_write::run_chunked_dml_batch,
             commands::query::run_lookup_query,
             commands::query::begin_transaction,
             commands::query::run_in_transaction,

@@ -4765,3 +4765,98 @@ async fn mysql_list_table_partitions_when_env_set() {
     }
     conn.close().await;
 }
+
+/// #2020: 大規模 DML のチャンク分割実行 (`DELETE/UPDATE ... LIMIT n`) を実 MySQL で通す。
+#[tokio::test]
+async fn mysql_chunked_dml_batches() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let Some(db) = opts.database.clone() else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL has no database");
+        return;
+    };
+    let conn = t::connect(&opts).await.expect("connect");
+    let tbl = format!("noobdb_chunked2020_{}", std::process::id());
+    let _ = conn
+        .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
+        .await;
+    conn.execute(
+        &format!("CREATE TABLE {tbl} (id INT PRIMARY KEY, kind VARCHAR(10), n INT)"),
+        Some(&db),
+    )
+    .await
+    .expect("create");
+    let values = (1..=25)
+        .map(|i| format!("({i}, '{}', 0)", if i <= 23 { "old" } else { "new" }))
+        .collect::<Vec<_>>()
+        .join(", ");
+    conn.execute(&format!("INSERT INTO {tbl} VALUES {values}"), Some(&db))
+        .await
+        .expect("seed");
+    let session = t::make_session("chunked_my", conn, opts.clone(), /* read_only */ false);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+
+    let mut sizes = Vec::new();
+    loop {
+        let r = t::run_chunked_dml_batch_via_command(
+            &state,
+            &sid,
+            Some(&db),
+            &tbl,
+            t::ChunkedDmlOperation::Update {
+                set_clause: "kind = 'done', n = n + 1".into(),
+            },
+            "kind = 'old'",
+            10,
+        )
+        .await
+        .expect("update batch");
+        sizes.push(r.rows_affected);
+        if r.rows_affected == 0 {
+            break;
+        }
+        assert!(sizes.len() < 10, "must terminate");
+    }
+    assert_eq!(sizes, vec![10, 10, 3, 0]);
+    let mut sizes = Vec::new();
+    loop {
+        let r = t::run_chunked_dml_batch_via_command(
+            &state,
+            &sid,
+            Some(&db),
+            &tbl,
+            t::ChunkedDmlOperation::Delete,
+            "kind = 'done'",
+            10,
+        )
+        .await
+        .expect("delete batch");
+        sizes.push(r.rows_affected);
+        if r.rows_affected == 0 {
+            break;
+        }
+        assert!(sizes.len() < 10, "must terminate");
+    }
+    assert_eq!(sizes, vec![10, 10, 3, 0]);
+    let left = t::run_lookup_query_via_command(
+        &state,
+        &sid,
+        &format!("SELECT COUNT(*) FROM {tbl}"),
+        Some(&db),
+        None,
+        Some(1),
+    )
+    .await
+    .expect("count");
+    assert_eq!(serde_json::to_string(&left.rows).expect("json"), "[[2]]");
+
+    let cleanup = state.get(&sid).await.expect("session");
+    let _ = cleanup
+        .conn
+        .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
+        .await;
+}

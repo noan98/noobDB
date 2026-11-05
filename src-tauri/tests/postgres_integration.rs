@@ -4284,3 +4284,97 @@ async fn postgres_server_databases_and_database_swap_when_env_set() {
     }
     conn.close().await;
 }
+
+/// #2020: 大規模 DML のチャンク分割実行 (`ctid IN (SELECT ctid ... LIMIT n)`) を実 PostgreSQL で通す。
+/// DELETE は 0 行になるまでバッチを繰り返し、WHERE に合わない行は残る。UPDATE も同様。
+#[tokio::test]
+async fn postgres_chunked_dml_batches() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let db = "public".to_string();
+    let tbl = format!("noobdb_chunked2020_{}", std::process::id());
+    let _ = conn
+        .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
+        .await;
+    conn.execute(
+        &format!("CREATE TABLE {tbl} (id INT PRIMARY KEY, kind VARCHAR(10), n INT)"),
+        Some(&db),
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        &format!(
+            "INSERT INTO {tbl} SELECT g, CASE WHEN g <= 23 THEN 'old' ELSE 'new' END, 0 FROM generate_series(1, 25) g"
+        ),
+        Some(&db),
+    )
+    .await
+    .expect("seed");
+    let session = t::make_session("chunked_pg", conn, opts.clone(), /* read_only */ false);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+
+    let mut sizes = Vec::new();
+    loop {
+        let r = t::run_chunked_dml_batch_via_command(
+            &state,
+            &sid,
+            Some(&db),
+            &tbl,
+            t::ChunkedDmlOperation::Update {
+                set_clause: "kind = 'done', n = n + 1".into(),
+            },
+            "kind = 'old'",
+            10,
+        )
+        .await
+        .expect("update batch");
+        sizes.push(r.rows_affected);
+        if r.rows_affected == 0 {
+            break;
+        }
+        assert!(sizes.len() < 10, "must terminate");
+    }
+    assert_eq!(sizes, vec![10, 10, 3, 0]);
+    let mut sizes = Vec::new();
+    loop {
+        let r = t::run_chunked_dml_batch_via_command(
+            &state,
+            &sid,
+            Some(&db),
+            &tbl,
+            t::ChunkedDmlOperation::Delete,
+            "kind = 'done'",
+            10,
+        )
+        .await
+        .expect("delete batch");
+        sizes.push(r.rows_affected);
+        if r.rows_affected == 0 {
+            break;
+        }
+        assert!(sizes.len() < 10, "must terminate");
+    }
+    assert_eq!(sizes, vec![10, 10, 3, 0]);
+    let left = t::run_lookup_query_via_command(
+        &state,
+        &sid,
+        &format!("SELECT COUNT(*) FROM {tbl}"),
+        Some(&db),
+        None,
+        Some(1),
+    )
+    .await
+    .expect("count");
+    assert_eq!(serde_json::to_string(&left.rows).expect("json"), "[[2]]");
+
+    let cleanup = state.get(&sid).await.expect("session");
+    let _ = cleanup
+        .conn
+        .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
+        .await;
+}

@@ -25,10 +25,12 @@ use crate::commands::query::{
     ensure_allowed_for_session, record_write_history, run_query_transaction_guarded_inner,
     TransactionRun,
 };
+use crate::db::chunked_dml::{build_chunk_sql, ChunkedOp};
 use crate::db::data_diff::{is_numeric_literal, sql_literal};
 use crate::db::sync::quote_ident;
 use crate::db::types::{QueryResult, Value};
 use crate::db::upsert::ImportConflict;
+use crate::db::Connection;
 use crate::db::DriverKind;
 use crate::db::RowExpectation;
 use crate::error::{AppError, Result};
@@ -1168,5 +1170,94 @@ mod tests {
             Some("x".into())
         );
         assert!(generated_cell_text(&json!([1])).is_err());
+    }
+}
+
+/// チャンク分割実行の操作 (#2020)。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum ChunkedDmlOperation {
+    Delete,
+    /// `set_clause` は `SET` の右辺。
+    Update {
+        set_clause: String,
+    },
+}
+
+/// 大規模 DML (#2020) の 1 バッチを実行する。ループ (進捗・ウェイト・キャンセル・最大バッチ数) は
+/// 呼び出し側 (フロント) が持ち、ここは `DELETE ... LIMIT n` 相当の 1 文を組み立てて
+/// `run_query_transaction_guarded_inner` に渡すだけ。read_only ガード (緊急モード含む)・履歴・
+/// キャッシュ invalidate は既存の書き込み経路と同一で、新しい書き込み経路は増やさない。
+/// 影響行数が `batch_size` を超えたらロールバックする (想定外の広がりの防波堤)。
+/// SQLite の WITHOUT ROWID 表・ビュー・仮想表は rowid で行を指せないので拒否する。
+#[tauri::command]
+pub async fn run_chunked_dml_batch(
+    session_id: String,
+    database: Option<String>,
+    table: String,
+    operation: ChunkedDmlOperation,
+    where_clause: String,
+    batch_size: u32,
+    state: State<'_, AppState>,
+) -> Result<QueryResult> {
+    run_chunked_dml_batch_inner(
+        state.inner(),
+        session_id,
+        database,
+        table,
+        operation,
+        where_clause,
+        batch_size,
+    )
+    .await
+}
+
+/// [`run_chunked_dml_batch`] の State なしコア (#881)。
+pub(crate) async fn run_chunked_dml_batch_inner(
+    state: &AppState,
+    session_id: String,
+    database: Option<String>,
+    table: String,
+    operation: ChunkedDmlOperation,
+    where_clause: String,
+    batch_size: u32,
+) -> Result<QueryResult> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    let driver = session.conn.driver_kind();
+    let op = match operation {
+        ChunkedDmlOperation::Delete => ChunkedOp::Delete,
+        ChunkedDmlOperation::Update { set_clause } => ChunkedOp::Update { set_clause },
+    };
+    let sql = build_chunk_sql(
+        driver,
+        database.as_deref(),
+        &table,
+        &op,
+        &where_clause,
+        batch_size,
+    )
+    .map_err(|e| AppError::InvalidInput(format!("chunked DML rejected: {}", e.code())))?;
+    if let Connection::Sqlite(c) = &session.conn {
+        if !c.is_rowid_table(&table).await? {
+            return Err(AppError::InvalidInput(
+                "chunked DML needs a rowid table (WITHOUT ROWID tables, views and virtual tables are not supported)"
+                    .into(),
+            ));
+        }
+    }
+    let expects = vec![RowExpectation::at_most(u64::from(batch_size))];
+    match run_query_transaction_guarded_inner(state, session_id, vec![sql], expects, database)
+        .await?
+    {
+        TransactionRun::Committed(result) => Ok(result),
+        TransactionRun::RolledBack(v) | TransactionRun::RollbackIncomplete(v) => {
+            Err(AppError::InvalidInput(format!(
+                "chunked DML batch matched {} rows, more than the batch size {}",
+                v.actual, v.expected
+            )))
+        }
     }
 }
