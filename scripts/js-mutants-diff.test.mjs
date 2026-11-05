@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, normalize } from "node:path";
 import test from "node:test";
 import {
   FIXTURE_TO_SOURCES,
@@ -128,4 +129,45 @@ test("対応表は vitest.mutants.config.ts の include と整合し、ワーク
     "vitest.mutants.config.ts",
   ];
   for (const f of required) assert.ok(paths.has(f), `paths に ${f} が無い`);
+});
+
+// テストの import を src 内で推移的にたどり、mutate 対象に届くものを集める。
+function resolveImport(from, spec) {
+  const base = normalize(join(dirname(from), spec));
+  for (const c of [`${base}.ts`, `${base}.tsx`, join(base, "index.ts"), join(base, "index.tsx")])
+    if (existsSync(c)) return c;
+  return null;
+}
+function closure(entry, mutate) {
+  const seen = new Set();
+  const hit = new Set();
+  const walk = (f) => {
+    if (seen.has(f)) return;
+    seen.add(f);
+    if (mutate.includes(f)) hit.add(f);
+    const text = readFileSync(f, "utf8");
+    // 型だけの import (`import type ...`) は実行時に評価されないので辿らない。
+    for (const m of text.matchAll(/^(?:import|export)\b([^;"]*?)\bfrom\s*"(\.[^"]*)"/gm)) {
+      if (/^\s*type\s/.test(m[1])) continue;
+      const r = resolveImport(f, m[2]);
+      if (r) walk(r);
+    }
+  };
+  walk(entry);
+  return hit;
+}
+
+test("対応表は import の推移閉包 (mutate 対象に届くもの) を含む", () => {
+  const conf = JSON.parse(readFileSync("stryker.conf.json", "utf8"));
+  for (const [t, srcs] of Object.entries(TEST_TO_SOURCES))
+    for (const s of closure(t, conf.mutate))
+      assert.ok(srcs.includes(s), `${t} は ${s} に (推移的に) 依存するが対応表に無い`);
+  for (const [fx, srcs] of Object.entries(FIXTURE_TO_SOURCES)) {
+    const users = Object.entries(TEST_TO_SOURCES).filter(([t]) =>
+      readFileSync(t, "utf8").includes(`from "./fixtures/${fx.split("/").pop()}"`), // コメント中の言及は除く
+    );
+    for (const [t] of users)
+      for (const s of TEST_TO_SOURCES[t])
+        assert.ok(srcs.includes(s), `${fx} を使う ${t} は ${s} を検証するが FIXTURE_TO_SOURCES に無い`);
+  }
 });

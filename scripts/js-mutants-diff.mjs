@@ -22,7 +22,8 @@ const DANGER = "src/dangerousSql.ts";
 const SCRIPT = "src/sqlScript.ts";
 const PREFLIGHT = "src/components/preflight.ts";
 
-// テスト / 共有ゴールデン → 検証対象のソース (import とゴールデン参照から作った対応表)。
+// テスト / 共有ゴールデン → 検証対象のソース (import とゴールデン参照から作った対応表。推移的な
+// import も含む。js-mutants-diff.test.mjs が import の推移閉包と照合する)。
 // vitest.mutants.config.ts の include にあるのにここに無いテストは、対応が分からないので
 // conf.mutate 全件にフォールバックする (js-mutants-diff.test.mjs が include との整合を検査)。
 const T = "src/__tests__/";
@@ -42,21 +43,21 @@ export const TEST_TO_SOURCES = {
   [`${T}maskGolden.test.ts`]: [DANGER],
   [`${T}maskLiteralsIdentifiers.test.ts`]: [DANGER],
   [`${T}readOnlyGolden.test.ts`]: [DANGER],
-  [`${T}relatedRows.test.ts`]: [DANGER],
+  [`${T}relatedRows.test.ts`]: [DANGER, CELL],
   [`${T}schemaMutatingGolden.test.ts`]: [DANGER],
-  [`${T}valuePicker.test.ts`]: [DANGER],
-  [`${T}preflight.test.ts`]: [PREFLIGHT],
-  [`${T}scriptSplitGolden.test.ts`]: [SCRIPT],
-  [`${T}sqlScript.test.ts`]: [SCRIPT],
-  [`${T}statementSplitGolden.test.ts`]: [SCRIPT],
+  [`${T}valuePicker.test.ts`]: [DANGER, CELL],
+  [`${T}preflight.test.ts`]: [PREFLIGHT, DANGER],
+  [`${T}scriptSplitGolden.test.ts`]: [SCRIPT, DANGER],
+  [`${T}sqlScript.test.ts`]: [SCRIPT, DANGER],
+  [`${T}statementSplitGolden.test.ts`]: [SCRIPT, DANGER],
 };
 export const FIXTURE_TO_SOURCES = {
   [`${F}dangerousSqlVectors.json`]: [DANGER],
   [`${F}maskVectors.json`]: [DANGER],
   [`${F}readOnlySqlVectors.json`]: [DANGER],
   [`${F}schemaMutatingVectors.json`]: [DANGER],
-  [`${F}scriptSplitVectors.json`]: [SCRIPT],
-  [`${F}statementSplitVectors.json`]: [SCRIPT],
+  [`${F}scriptSplitVectors.json`]: [SCRIPT, DANGER],
+  [`${F}statementSplitVectors.json`]: [SCRIPT, DANGER],
 };
 export const CONFIG_FILES = ["stryker.conf.json", "vitest.mutants.config.ts"];
 

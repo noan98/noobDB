@@ -101,17 +101,23 @@ jobs:
 
       # 差分の追加/変更行から Stryker の mutate 範囲を作る (ランナー同梱の node だけで動く
       # 軽い処理)。変異させる行が無ければ count=0 で、重い後続ステップを丸ごと飛ばす。
+      # 対応表と paths の整合を検査する単体テスト。ci.yml の automerge-gate は本スクリプトを
+      # paths 対象にしていないため、ここで走らせる (失敗すると本ジョブが赤になる)。
+      - name: Test mutate-target planner
+        run: node --test scripts/js-mutants-diff.test.mjs
+
       - name: List mutate targets in diff
         id: list
         shell: bash
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
-          git diff -U0 "origin/${BASE_REF}...HEAD" -- src stryker.conf.json vitest.mutants.config.ts > js-mutants.diff
+          git diff -U0 --no-renames "origin/${BASE_REF}...HEAD" -- src stryker.conf.json vitest.mutants.config.ts > js-mutants.diff
           node scripts/js-mutants-diff.mjs js-mutants.diff mutate-specs.txt mutate-summary.json
           count=$(node -p 'require("./mutate-summary.json").count')
           label=$(node -p 'require("./mutate-summary.json").label')
           echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "mode=$(node -p 'require("./mutate-summary.json").mode')" >> "$GITHUB_OUTPUT"
           {
             echo '### Mutation test (PR 差分, フロント安全網)'
             echo ''
@@ -179,6 +185,7 @@ jobs:
         env:
           EXIT_CODE: ${{ steps.run.outputs.exit_code }}
           RUN_OUTCOME: ${{ steps.run.outcome }}
+          MUTATE_MODE: ${{ steps.list.outputs.mode }}
         run: |
           python3 - << 'PYEOF' >> "$GITHUB_STEP_SUMMARY"
           import json, os, pathlib, collections
@@ -228,8 +235,14 @@ jobs:
               print(f"> :x: **{msg}**")
               warn.write_text(msg)
               tail()
+          elif tested == 0 and os.environ.get("MUTATE_MODE") != "lines":
+              # ファイル全体モードで 0 件はあり得ない (対象の読み込み失敗など)。生存 0 件と区別する。
+              msg = "ファイル全体モードで検査された変異が 0 件でした (母数 0)。生存変異 0 件とは判定できません。"
+              print(f"> :x: **{msg}**")
+              warn.write_text(msg)
+              tail()
           elif tested == 0:
-              # 範囲内に変異候補が無い (コメントだけの変更など)。失敗ではなく情報表示にとどめる。
+              # 行モードの 0 件は、範囲内に変異候補が無い (コメントのみの変更など)。情報表示にとどめる。
               print("> :information_source: 範囲内に変異候補が 0 件でした (コメントのみの変更など)。")
           if n:
               print(f"> :warning: **生存変異 (Survived + NoCoverage): {n} 件** — この PR の差分に、テストが捕捉できていない変異があります。対応する `*.test.ts` / 共有ゴールデンに境界ケースを追記してください。")

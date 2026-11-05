@@ -410,9 +410,9 @@ Windows 固有 × サーバ型ドライバの退行が CI で見えなかった�
     `FIXTURE_TO_SOURCES` の対応ソース全体を変異 (「テストを弱める PR」の検出)。対応表に無い include
     のテストや `stryker.conf.json` / `vitest.mutants.config.ts` の変更は `mutate` 全件。既存の生存変異も出る。
   - `--mutate` は Stryker 10 でカンマ分割・上書きなので、カンマ区切りの 1 引数で渡す。
-  - include / 対応表 / `mutate` を足す・外すときは `paths:` も揃える (単体テストが包含を検査する)。
+  - include / 対応表 / `mutate` を足す・外すときは `paths:` も揃える (`scripts/js-mutants-diff.test.mjs` が paths の包含と対応表の import 推移閉包を検査する。ci.yml の対象外なので、本ワークフローの先頭ステップ `node --test` で PR ごとに走らせる)。
 - 対象が 0 件 (ワークフローだけの変更など) なら Node/pnpm のセットアップと Stryker を丸ごと飛ばして即終了する。
 - Report は `mutation.json` から Survived + NoCoverage を `path:行` で Job Summary に列挙し `::warning` を出す。
   Stryker 終了コード非 0・打ち切りは実行失敗として表示する。変異候補 0 件 (コメントのみの変更など) は情報表示のみ。
   レポートは artifact `js-mutants-diff-out` (14 日)。
-- 限界: 行範囲は `git diff -U0` のため、複数行にまたがる式の途中だけを変えると、式の他の行にある変異が漏れる。
+- 限界: 行範囲は `git diff -U0 --no-renames` (リネームは削除+追加として検出) のため、複数行にまたがる式の途中だけを変えると、式の他の行にある変異が漏れる。
