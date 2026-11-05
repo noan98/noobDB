@@ -134,6 +134,25 @@ describe("PgListenPanel (#2019)", () => {
     expect(api.cancelStream).toHaveBeenCalledTimes(2);
   });
 
+  it("開始要求の完了前に閉じたら、完了後にもう一度取り消す", async () => {
+    let resolveStart: () => void = () => {};
+    vi.mocked(api.startPgListen).mockReturnValue(
+      new Promise<void>((r) => {
+        resolveStart = () => r(undefined);
+      }),
+    );
+    const { unmount } = renderWithProviders(<PgListenPanel sessionId="s1" driver="postgres" />);
+    addChannel("a");
+    fireEvent.click(screen.getByTestId("pglisten-start"));
+    await waitFor(() => expect(api.startPgListen).toHaveBeenCalled());
+    const streamId = vi.mocked(api.startPgListen).mock.calls[0][0].streamId;
+    unmount();
+    expect(api.cancelStream).toHaveBeenCalledTimes(1);
+    await act(async () => resolveStart());
+    expect(api.cancelStream).toHaveBeenCalledTimes(2);
+    expect(api.cancelStream).toHaveBeenLastCalledWith(streamId);
+  });
+
   it("再接続とセッション切断による停止を知らせる", async () => {
     renderWithProviders(<PgListenPanel sessionId="s1" driver="postgres" />);
     addChannel("a");

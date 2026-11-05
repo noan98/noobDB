@@ -161,6 +161,9 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
         return;
       }
       await api.startPgListen({ sessionId, streamId, channels });
+      // 開始要求の待機中に停止・パネルを閉じた場合、stopActive の取り消しは登録前に
+      // 届いて空振りしうる。登録が済んだ今もう一度取り消し、接続を残さない。
+      if (!isActive()) void api.cancelStream(streamId).catch(() => {});
     } catch (e) {
       if (!isActive()) return;
       setError(String(e));
