@@ -6255,7 +6255,7 @@ const en = {
   advisorRuleNullableForeignKeyDesc:
     "{table}({columns}) is a foreign key referencing {ref} but allows NULL. Rows can exist without a parent, leaving a hole in referential integrity. Add NOT NULL if the reference is required.",
   advisorRuleOversizedVarcharDesc:
-    "{table}.{column} is {type} ({length} characters). An oversized limit gives no real validation and can inflate memory use for sorting and temporary tables. Consider a realistic length, or TEXT if the length is unbounded.",
+    "{table}.{column} is {type} ({length} characters). In MySQL an oversized limit gives no real validation and can inflate memory use for sorting and in-memory temporary tables. Consider a realistic length, or TEXT if the length is unbounded.",
   advisorRuleFloatForMoneyDesc:
     "{table}.{column} looks like a monetary value but uses the floating-point type {type}. Rounding errors can accumulate; use DECIMAL / NUMERIC (or integer minor units) instead.",
   // 未使用ルールのスキップ理由
@@ -13465,7 +13465,7 @@ const ja: Dict = {
   advisorRuleNullableForeignKeyDesc:
     "{table}({columns}) は {ref} を参照する外部キーですが NULL を許可しています。親を持たない行が存在でき、参照整合性に穴が開きます。参照が必須なら NOT NULL を付けてください。",
   advisorRuleOversizedVarcharDesc:
-    "{table}.{column} は {type} ({length} 文字) です。過大な上限は実質的な検証にならず、ソートや一時テーブルのメモリ消費を膨らませることがあります。現実的な長さにするか、長さが不定なら TEXT を検討してください。",
+    "{table}.{column} は {type} ({length} 文字) です。MySQL では、過大な上限は実質的な検証にならず、ソートやメモリ上の一時テーブルのメモリ消費を膨らませることがあります。現実的な長さにするか、長さが不定なら TEXT を検討してください。",
   advisorRuleFloatForMoneyDesc:
     "{table}.{column} は金額を表す列に見えますが、浮動小数型 {type} です。丸め誤差が蓄積するため、DECIMAL / NUMERIC (または最小単位の整数) を使ってください。",
   // 未使用ルールのスキップ理由
