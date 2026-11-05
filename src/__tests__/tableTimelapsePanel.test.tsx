@@ -82,7 +82,7 @@ function genDiff(): TimelapseGenerationDiff {
   };
 }
 
-/** 件数チップ。数値部分は CountUp (表示用 + 読み上げ用) に分かれるので、先頭一致で探す。 */
+/** 件数チップ。数値部分は CountUp (表示用 + 読み上げ用) に分かれるので、完全一致で探す。 */
 function chip(key: "timelapseCountAdded" | "timelapseCountChanged" | "timelapseCountRemoved", count: number) {
   return screen.getByText(chipMatcher(key, count));
 }
@@ -94,7 +94,9 @@ function chipQuery(
 }
 function chipMatcher(key: string, count: number) {
   const label = t(key as "timelapseCountAdded", { count });
-  return (_: string, el: Element | null) => el?.tagName === "SPAN" && !!el.textContent?.startsWith(label);
+  // 表示用 + 読み上げ用の 2 つの数値が続くので「ラベル (数値込み) + 読み上げ用の数値」と完全一致させる (1 と 11 を区別)。
+  const full = `${label}${count}`;
+  return (_: string, el: Element | null) => el?.tagName === "SPAN" && el.textContent === full;
 }
 
 function renderPanel(watchRequest: { database: string; table: string; seq: number } | null = null) {
@@ -420,6 +422,57 @@ describe("TableTimelapsePanel (#739)", () => {
       expect(api.timelapseDiffGenerations).toHaveBeenCalledTimes(1);
     });
 
+    it("最終段へ進んでも差分は消えず、読み込み表示を出さない", async () => {
+      vi.mocked(api.timelapseListWatches).mockResolvedValue([threeGenWatch()]);
+      vi.mocked(api.timelapseDiffGenerations).mockResolvedValue(genDiff());
+      renderPanel();
+      await screen.findByRole("slider", { name: t("timelapseScrubAria") });
+      await waitFor(() => expect(screen.getByText("150")).toBeInTheDocument());
+      vi.mocked(api.timelapseDiffGenerations).mockClear();
+      const seen: boolean[] = [];
+      const obs = new MutationObserver(() => seen.push(!!screen.queryByText(t("timelapseDiffLoading"))));
+      obs.observe(document.body, { childList: true, subtree: true });
+      fireEvent.click(screen.getByRole("button", { name: t("timelapsePlay") }));
+      await waitFor(() => expect(api.timelapseDiffGenerations).toHaveBeenCalledTimes(2));
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: t("timelapsePlay") })).toBeInTheDocument(),
+      );
+      obs.disconnect();
+      expect(seen.some(Boolean)).toBe(false);
+      expect(screen.getByText("150")).toBeInTheDocument();
+    });
+
+    it("再生中に取得エラーが出たら止まる", async () => {
+      vi.mocked(api.timelapseListWatches).mockResolvedValue([threeGenWatch()]);
+      vi.mocked(api.timelapseDiffGenerations).mockResolvedValueOnce(genDiff());
+      renderPanel();
+      await screen.findByRole("slider", { name: t("timelapseScrubAria") });
+      await waitFor(() => expect(screen.getByText("150")).toBeInTheDocument());
+      vi.mocked(api.timelapseDiffGenerations).mockClear();
+      vi.mocked(api.timelapseDiffGenerations).mockRejectedValue("boom");
+      fireEvent.click(screen.getByRole("button", { name: t("timelapsePlay") }));
+      expect(await screen.findByText(t("timelapseDiffError", { error: "boom" }))).toBeInTheDocument();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(api.timelapseDiffGenerations).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("button", { name: t("timelapsePlay") })).toBeDisabled();
+    });
+
+    it("ウォッチを切り替えたら再生は止まる", async () => {
+      const other = { ...threeGenWatch(), id: 8, table: "other" };
+      vi.mocked(api.timelapseListWatches).mockResolvedValue([threeGenWatch(), other]);
+      vi.mocked(api.timelapseDiffGenerations).mockResolvedValueOnce(genDiff());
+      renderPanel();
+      await screen.findByRole("slider", { name: t("timelapseScrubAria") });
+      await waitFor(() => expect(screen.getByText("150")).toBeInTheDocument());
+      vi.mocked(api.timelapseDiffGenerations).mockReturnValue(new Promise(() => {}));
+      fireEvent.click(screen.getByRole("button", { name: t("timelapsePlay") }));
+      await screen.findByRole("button", { name: t("timelapsePause") });
+      fireEvent.click(screen.getByRole("button", { name: /other/ }));
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: t("timelapsePlay") })).toBeInTheDocument(),
+      );
+    });
+
     it("アンマウントすると再生の続きを取得しない", async () => {
       vi.mocked(api.timelapseListWatches).mockResolvedValue([threeGenWatch()]);
       vi.mocked(api.timelapseDiffGenerations).mockResolvedValue(genDiff());
@@ -430,7 +483,7 @@ describe("TableTimelapsePanel (#739)", () => {
       fireEvent.click(screen.getByRole("button", { name: t("timelapsePlay") }));
       unmount();
       await new Promise((r) => setTimeout(r, 50));
-      expect(vi.mocked(api.timelapseDiffGenerations).mock.calls.length).toBeLessThanOrEqual(1);
+      expect(api.timelapseDiffGenerations).toHaveBeenCalledTimes(1);
     });
 
     it("reduced-motion では再生を無効にし、ステップ送りだけ使える", async () => {

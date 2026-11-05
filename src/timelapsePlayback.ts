@@ -72,13 +72,6 @@ export function playbackReducer(state: PlaybackState, action: PlaybackAction): P
   }
 }
 
-/** 世代一覧 (新しい順) を時系列 (古い順) に並べ直す。 */
-export function chronologicalGenerations(
-  generations: readonly TimelapseGenerationMeta[],
-): TimelapseGenerationMeta[] {
-  return [...generations].reverse();
-}
-
 /** 最終段 (= 世代数 - 1)。 */
 export function playbackMaxStep(generations: readonly TimelapseGenerationMeta[]): number {
   return Math.max(0, generations.length - 1);

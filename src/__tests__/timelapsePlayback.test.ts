@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { TimelapseGenerationMeta } from "../api/tauri";
 import {
-  chronologicalGenerations,
   clampStep,
   initialPlayback,
   pairAtStep,
@@ -27,7 +26,6 @@ describe("timelapsePlayback (#2015)", () => {
     expect(pairAtStep(gens, 3)).toEqual({ fromId: 12, toId: 13 });
     expect(pairAtStep(gens, 0)).toBeNull();
     expect(pairAtStep(gens, 4)).toBeNull();
-    expect(chronologicalGenerations(gens).map((g) => g.id)).toEqual([10, 11, 12, 13]);
   });
 
   it("ペア → 段は新しい側の位置で決まる", () => {
