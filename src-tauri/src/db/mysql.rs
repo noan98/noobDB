@@ -223,7 +223,7 @@ impl MySqlConn {
         database: Option<&str>,
         initial_batch: usize,
         chunk_size: usize,
-        on_batch: F,
+        mut on_batch: F,
     ) -> Result<QueryResult>
     where
         F: FnMut(StreamBatch) -> Result<()>,
@@ -242,6 +242,16 @@ impl MySqlConn {
             }
             None => None,
         };
+        // アプリ側の理由 (結果の送信失敗など) で打ち切られたときは、サーバで文が走ったままの
+        // 可能性があるので、設定の復元は省き、接続は閉じる (keep しない)。
+        let app_failed = std::sync::atomic::AtomicBool::new(false);
+        let on_batch = |b| {
+            let r = on_batch(b);
+            if r.is_err() {
+                app_failed.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            r
+        };
         let result = stream_on(
             &mut guard.conn,
             sql,
@@ -251,6 +261,9 @@ impl MySqlConn {
             on_batch,
         )
         .await;
+        if app_failed.load(std::sync::atomic::Ordering::SeqCst) {
+            return result;
+        }
         // 設定を元に戻せたときだけ接続をプールへ戻す (戻せなければ drop で閉じる)。
         let restored = match restore {
             Some(orig) => restore_max_execution_time(&mut guard.conn, orig).await,

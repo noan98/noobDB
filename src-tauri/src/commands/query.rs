@@ -1967,22 +1967,35 @@ async fn spawn_preview_stream(
 ) {
     // サーバ側停止 (#2023): run_query_stream と同じ。ドライランの UPDATE / DELETE が
     // ロック待ち・長時間実行のまま残らないよう、タイムアウト / キャンセル時に止める。
+    //
+    // ドライランの接続はトランザクションが所有し、future が drop されるとプールへ戻る。
+    // その後に KILL が届くと別の文を止めうるので、(1) `exec` を先に宣言してガードより後に
+    // drop される順にし (キャンセル時は KILL を先に撃つ)、(2) タイムアウトでは future を
+    // 持ったまま先に KILL を撃ち、文が止まって future が終わってから手放す。
     let stop_ctx = crate::db::server_stop::ServerStopCtx::new(query_timeout_secs);
-    let mut stop_guard = crate::db::server_stop::StopGuard::new(stop_ctx.clone(), session.clone());
     let exec = crate::db::server_stop::scope(
-        stop_ctx,
+        stop_ctx.clone(),
         session
             .conn
             .preview_execute_with_limit(&sql, database.as_deref(), row_limit),
     );
-    // run_query_stream と同じレース方式: 超過したら future を drop してプールへ
-    // 接続を返す (プレビューはトランザクション内なので、drop は暗黙のロールバック
-    // として働き、握っていた行ロックも解放される)。
+    tokio::pin!(exec);
+    let mut stop_guard = crate::db::server_stop::StopGuard::new(stop_ctx, session.clone());
     let result = match query_timeout_secs {
         Some(secs) if secs > 0 => {
-            match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
-                Ok(res) => res,
-                Err(_) => Err(AppError::Timeout(secs)),
+            tokio::select! {
+                res = &mut exec => res,
+                _ = tokio::time::sleep(std::time::Duration::from_secs(secs)) => {
+                    stop_guard.fire();
+                    // KILL が効けば future は (エラーで) 終わり、トランザクションが
+                    // ロールバックされて接続がプールへ戻る。効かなくても待ちすぎない。
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        &mut exec,
+                    )
+                    .await;
+                    Err(AppError::Timeout(secs))
+                }
             }
         }
         _ => exec.await,
