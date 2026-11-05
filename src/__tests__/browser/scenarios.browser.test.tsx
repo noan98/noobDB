@@ -415,6 +415,9 @@ describe("シナリオ: ストリーミング実行とキャンセル (実ブラ
   });
 });
 
+// フライトレコーダー (#735、既定オン) の記録指定 (#2024)。主キーで行を特定できる編集には毎回付く。
+const FLIGHT_CAPTURE = { row_cap: expect.any(Number), retention_days: expect.any(Number) };
+
 describe("シナリオ: インラインセル編集 → pending → Apply (実ブラウザ)", () => {
   it("セルをダブルクリックで編集し、Apply で UPDATE が 1 トランザクションに乗る", async () => {
     registerAutoStream();
@@ -472,6 +475,7 @@ describe("シナリオ: インラインセル編集 → pending → Apply (実�
             table: "fruits",
             pkColumns: ["id"],
             pkBinary: [false],
+            options: { approved_counts: null, capture: FLIGHT_CAPTURE },
             groups: [
               {
                 set: [{ column: "qty", value: { kind: "number", text: "42" } }],
@@ -549,8 +553,8 @@ describe("シナリオ: 想定行数を超える書き込みの確認 (#1777)", 
     await screen.getByRole("button", { name: t("editRowOvershootConfirmButton") }).click();
 
     await vi.waitFor(() => expect(calls.length).toBe(2), { timeout: 5000 });
-    expect(calls[0]?.options).toBeUndefined();
-    expect(calls[1]?.options).toEqual({ approved_counts: [2] });
+    expect(calls[0]?.options).toEqual({ approved_counts: null, capture: FLIGHT_CAPTURE });
+    expect(calls[1]?.options).toEqual({ approved_counts: [2], capture: FLIGHT_CAPTURE });
     await expect.element(screen.getByRole("gridcell", { name: "42", exact: true })).toBeVisible();
   });
 
@@ -588,7 +592,7 @@ describe("シナリオ: 想定行数を超える書き込みの確認 (#1777)", 
       calls.push(args);
       const approved = (args.options as { approved_counts?: number[] } | undefined)?.approved_counts;
       // 1 回目は 2 行 (承認 2)、承認後の再実行では 3 行に増えていて再び超過する。
-      return approved === undefined
+      return approved == null
         ? {
             status: "row_count_exceeded",
             expected_rows: 1,
@@ -609,7 +613,7 @@ describe("シナリオ: 想定行数を超える書き込みの確認 (#1777)", 
 
     await screen.getByRole("button", { name: t("editRowOvershootConfirmButton") }).click();
     await vi.waitFor(() => expect(calls.length).toBe(2), { timeout: 5000 });
-    expect(calls[1]?.options).toEqual({ approved_counts: [2] });
+    expect(calls[1]?.options).toEqual({ approved_counts: [2], capture: FLIGHT_CAPTURE });
     // 2 回目の確認 (新しい件数 3) が出る。キャンセルすると適用されず、保留中の編集が残る。
     await expect
       .element(screen.getByText(t("editRowOvershootConfirmBody", { expected: 2, actual: 3, total: 3 })))

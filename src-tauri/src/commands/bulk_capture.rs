@@ -161,12 +161,21 @@ fn sets_pk_column(groups: &[BulkUpdateGroup], pk_columns: &[String]) -> bool {
     })
 }
 
-/// 編集グループが SET する列 (重複なし)。
+/// `INSERT INTO <ref> (…) …` の形で、対象がリクエストの表と厳密一致するか。`parse_upsert` は
+/// 表名を捨てるので、別の表への INSERT を取り違えないようここで確認する (DELETE と同じ方針)。
+fn is_insert_into(table_ref: &str, sql: &str) -> bool {
+    trim_stmt(sql)
+        .strip_prefix("INSERT INTO ")
+        .and_then(|rest| rest.strip_prefix(table_ref))
+        .is_some_and(|rest| rest.trim_start().starts_with('('))
+}
+
+/// 編集グループが SET する列 (重複なし、表記は完全一致で区別する)。
 fn set_columns(groups: &[BulkUpdateGroup]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for g in groups {
         for s in &g.set {
-            if !out.iter().any(|c| c.eq_ignore_ascii_case(&s.column)) {
+            if !out.contains(&s.column) {
                 out.push(s.column.clone());
             }
         }
@@ -221,7 +230,13 @@ fn build_update_capture(
             before
                 .columns
                 .iter()
-                .position(|b| b.name.eq_ignore_ascii_case(c))
+                .position(|b| b.name == *c)
+                .or_else(|| {
+                    before
+                        .columns
+                        .iter()
+                        .position(|b| b.name.eq_ignore_ascii_case(c))
+                })
         })
         .collect();
     if set_idx.len() != set_columns.len() || set_idx.iter().any(|i| idx.contains(i)) {
@@ -348,7 +363,7 @@ pub(crate) async fn prepare(
         if let Some(cond) = delete_condition(table_ref, sql) {
             delete_conds.push(cond);
             delete_sql.push(sql.clone());
-        } else if trim_stmt(sql).starts_with("INSERT INTO ") {
+        } else if is_insert_into(table_ref, sql) {
             let probe = format!("{} ON CONFLICT DO NOTHING", trim_stmt(sql));
             let anchor = parse_upsert(&probe).and_then(|h| {
                 let n = h.tuple_count();
@@ -770,5 +785,60 @@ mod tests {
             build(&one, &new, &["ID"], 1),
             UpdateBuild::Decline
         ));
+    }
+
+    #[test]
+    fn insert_target_must_match_requested_table() {
+        assert!(is_insert_into(
+            "`d`.`a`",
+            "INSERT INTO `d`.`a` (id) VALUES (1);"
+        ));
+        assert!(!is_insert_into(
+            "`d`.`a`",
+            "INSERT INTO `d`.`b` (id) VALUES (1);"
+        ));
+        // 接頭辞が同じ別の表。
+        assert!(!is_insert_into(
+            "`d`.`a`",
+            "INSERT INTO `d`.`ab` (id) VALUES (1);"
+        ));
+        assert!(!is_insert_into("a", "INSERT INTO ab (id) VALUES (1);"));
+        assert!(!is_insert_into("a", "INSERT INTO a SELECT 1"));
+    }
+
+    #[test]
+    fn column_names_prefer_exact_match_over_case_folding() {
+        let mk = |n: &str| crate::commands::bulk_write::BulkSetColumn {
+            column: n.into(),
+            value: crate::commands::bulk_write::BulkSetValue::Null,
+        };
+        let g = BulkUpdateGroup {
+            set: vec![mk("Name"), mk("name"), mk("name")],
+            keys: vec![],
+            olds: vec![],
+        };
+        // PostgreSQL の "Name" と "name" は別の列として残る。
+        assert_eq!(
+            set_columns(&[g]),
+            vec!["Name".to_string(), "name".to_string()]
+        );
+
+        let before = fetched(
+            &["id", "Name", "name"],
+            vec![vec![Value::Int(1), s("A0"), s("a0")]],
+        );
+        let after = fetched(
+            &["id", "Name", "name"],
+            vec![vec![Value::Int(1), s("A0"), s("a1")]],
+        );
+        let UpdateBuild::Capture(c) = build(&before, &after, &["name"], 1) else {
+            panic!("capture expected");
+        };
+        // "name" は "Name" ではなく小文字の列に解決される。
+        assert_eq!(c.before_rows, vec![vec![Value::Int(1), s("A0"), s("a0")]]);
+        let UpdateBuild::Capture(c) = build(&before, &after, &["name", "Name"], 1) else {
+            panic!("capture expected");
+        };
+        assert_eq!(c.before_rows, vec![vec![Value::Int(1), s("A0"), s("a0")]]);
     }
 }
