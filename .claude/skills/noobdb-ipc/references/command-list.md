@@ -105,10 +105,13 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
   行条件の `OR` 連結 (複合 PK・NULL を含む PK・100 行ずつ) を組み立てる。`extraStatements` は
   同じトランザクションに載せる DELETE / INSERT。実行は `run_query_transaction_inner` へ
   委譲するため read_only ガード (緊急モード含む)・履歴・キャッシュ invalidate は従来と同一
-  (フライトレコーダーに記録しない点も従来どおり。記録対象は `run_query_stream({ capture: true })`
-  の単文のみ)。リテラルは `db::data_diff::sql_literal` (バインドにしないのは PostgreSQL が
+  (#2024 から `options.capture` (`{ rowCap?, retentionDays? }`) を指定すると、コミットした編集を
+  フライトレコーダーへ 1 バッチ (`batch_id`) で記録する。`commands/bulk_capture.rs`: UPDATE は編集した
+  行の主キーで before/after を `SELECT *`、`DELETE FROM <表> WHERE …` の追加文は条件で before を読み、
+  `INSERT` の追加文は主キー列がリテラルのときだけ after を読む。適用の前後に別接続で読むベスト
+  エフォートで、辞退・失敗しても編集は通す。フロントは `identityStrategy === "primary_key"` のときだけ指定する)。リテラルは `db::data_diff::sql_literal` (バインドにしないのは PostgreSQL が
   text 型パラメータを整数列へ暗黙変換しないため)。64bit PK は文字列のまま引用リテラルで比較。`pkBinary` (任意、`pkColumns` と同順の bool) が真の列は 16 進文字列の key を `Value::Bytes` に戻してバイナリリテラルで比較する (BLOB 列を含む all_columns 同定用)。
-  **戻り値は判別付き enum `BulkWriteOutcome`** (#1777、`status` タグ): `applied` (`result` = `QueryResult`) /
+  **戻り値は判別付き enum `BulkWriteOutcome`** (#1777、`status` タグ): `applied` (`result` = `QueryResult`、`capture` = `{ recorded, declined, batch_id }`) /
   `row_count_exceeded` / `optimistic_conflict` / `rollback_incomplete`。検算は**文ごと** (UPDATE チャンク = 対象行数、追加文 = 1 行)。
   文の `rows_affected` が想定より**多い**とコミットせずロールバックし (DB 未変更・結果キャッシュに触れない・
   履歴にはエラー `rolled back: matched M rows, expected N` として残す)、エラーではなく
@@ -241,6 +244,27 @@ PostgreSQL は別スキーマの子テーブルからの単一列 FK も専用�
 `list_schema_objects` は PostgreSQL のみ `kind = "sequence"` も返し (#1957)、
 `get_object_definition` が `CREATE SEQUENCE` + `OWNED BY` + 現在値 (`last_value`) のコメントを返す。
 シーケンスはツリーの一覧・定義表示専用で、Where-used の走査対象には入らない。
+
+## LISTEN / NOTIFY 監視 (`commands/listen.rs`, #2019)
+
+- `start_pg_listen`
+- `pg_listen_add_channel`
+- `pg_listen_remove_channel`
+
+PostgreSQL の `LISTEN` / `NOTIFY` を購読するボトムパネル (診断グループの `pgListen` タブ) 用。
+いずれも読み取りのみで `read_only` でも動く (`NOTIFY` の送信は持たない)。
+
+- `start_pg_listen(session_id, stream_id, channels, on_event)` — セッションの接続設定
+  (トンネル経由ならローカルポート) から**専用接続を 1 本**開き、sqlx の `PgListener` で
+  `LISTEN` する。Channel に `started{channels}` / `notification{channel, payload,
+  payloadTruncated, pid, receivedAtMs}` / `reconnected` / `unsupported{reason}` / `error` /
+  `cancelled{deliveredRows}` を送る。payload は 2000 文字に切り詰める。MySQL / SQLite は
+  `unsupported`(`reason: "unsupported_driver"`) で縮退。停止は `cancel_stream(stream_id)`、
+  セッション切断 (`AppState::remove`) と再接続 (`AppState::replace`) でも `cancelled` を送って止まり、専用接続も閉じる (再接続後は開始し直す)。タスクは `Session` を持たない。画面側 Channel が閉じたときの終了は補助で、画面は必ず `cancel_stream` を呼ぶ。
+- `pg_listen_add_channel(stream_id, channel)` / `pg_listen_remove_channel(stream_id, channel)` —
+  稼働中の監視へ `LISTEN` / `UNLISTEN` を足す。チャンネル名は sqlx が識別子として
+  `"..."` で囲む (内部の `"` は重ねる) うえ、長さ (63 バイト)・NUL・空・件数 (50) を
+  `db/pg_listen.rs` で検証する。
 
 ## 比較・同期 (`commands/diff.rs`, `commands/sync.rs`)
 

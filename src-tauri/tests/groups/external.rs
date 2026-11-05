@@ -16,6 +16,8 @@ mod capture_integration;
 mod cross_driver_diff_integration;
 #[path = "../mysql_integration.rs"]
 mod mysql_integration;
+#[path = "../pg_listen_integration.rs"]
+mod pg_listen_integration;
 #[path = "../postgres_integration.rs"]
 mod postgres_integration;
 #[path = "../ssh_integration.rs"]

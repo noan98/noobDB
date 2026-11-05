@@ -47,6 +47,7 @@ import {
   type SandboxCreateResponse,
   type SandboxRecord,
   type AutoLimitSkip,
+  type BulkCaptureOutcome,
   Snippet,
   OpenTableResult,
   TableColumnInfo,
@@ -394,6 +395,9 @@ const PinnedComparisonView = lazy(() =>
 );
 const ProcessListPanel = lazy(() =>
   import("./components/ProcessListPanel").then((m) => ({ default: m.ProcessListPanel })),
+);
+const PgListenPanel = lazy(() =>
+  import("./components/PgListenPanel").then((m) => ({ default: m.PgListenPanel })),
 );
 const SqliteMaintenancePanel = lazy(() =>
   import("./components/SqliteMaintenancePanel").then((m) => ({ default: m.SqliteMaintenancePanel })),
@@ -7562,6 +7566,7 @@ export default function App() {
       let notApplied: { expected: number; actual: number } | null = null;
       let conflictRows: number | null = null;
       let incomplete: { expected: number; actual: number } | null = null;
+      let captureNote: BulkCaptureOutcome | null = null;
       try {
         const bulkParams = {
           sessionId,
@@ -7576,7 +7581,23 @@ export default function App() {
         // ロールバックして件数を返す (#1777)。利用者が明示的に承認した件数までに限って再実行する。
         // キャンセルなら何も変わらない (保留中の編集もそのまま残す)。
         const guarded = await applyWithRowCountGuard({
-          run: (options) => api.bulkUpdateCells({ ...bulkParams, options }),
+          // 主キーで行を特定できる編集だけをフライトレコーダーへ記録する (#2024)。unique_key / rowid /
+          // all_columns は Undo が行を取り違えうるので記録しない。
+          run: (options) =>
+            api.bulkUpdateCells({
+              ...bulkParams,
+              options: {
+                ...options,
+                ...(settings.flightRecorderEnabled && identityStrategy === "primary_key"
+                  ? {
+                      capture: {
+                        rowCap: settings.flightRecorderRowCap,
+                        retentionDays: settings.flightRecorderRetentionDays,
+                      },
+                    }
+                  : {}),
+              },
+            }),
           confirmExceeded: ({ expected, actual, total }) =>
             confirm({
               title: translate("editRowOvershootConfirmTitle"),
@@ -7599,8 +7620,10 @@ export default function App() {
             setStatus({ kind: "key", key: "statusApplyingEdits", vars: { count: opCount } });
           },
         });
-        if (guarded.kind === "applied") totalAffected = guarded.totalAffected;
-        else if (guarded.kind === "not_applied") notApplied = guarded;
+        if (guarded.kind === "applied") {
+          totalAffected = guarded.totalAffected;
+          captureNote = guarded.capture;
+        } else if (guarded.kind === "not_applied") notApplied = guarded;
         else if (guarded.kind === "conflict") conflictRows = guarded.conflictRows;
         else incomplete = guarded;
       } catch (e) {
@@ -7733,6 +7756,24 @@ export default function App() {
       }
       // 編集の適用で行数が変わりうる (削除・追加) ので、正確な件数 (#1627) は破棄する。
       patchTab(tabId, (tt) => ({ ...tt, lastEditAppliedAt: Date.now(), exactRowCount: null }));
+      // フライトレコーダーへ記録した (または辞退した) ことを知らせる (#2024)。記録は Undo 用の保険で、
+      // 編集の成否には影響しない。
+      if (captureNote && captureNote.recorded > 0) {
+        noteBatchCaptureStats(captureNote.batch_id, captureNote.recorded, captureNote.declined);
+      }
+      // 記録は Undo 用の保険なので、全件記録できたときは黙り、辞退があったときだけ知らせる。
+      if (captureNote && captureNote.declined > 0) {
+        toast.info(
+          translate("batchCaptureSummary", {
+            captured: captureNote.recorded,
+            skipped:
+              captureNote.declined > 0
+                ? translate("batchCaptureSkippedSuffix", { skipped: captureNote.declined })
+                : "",
+          }),
+          6000,
+        );
+      }
       // 期待より少ない行しか書き換わらなかったとき (別クライアントが行を削除した等) は、
       // 成功と同じ表示にせず警告する。コミット済みなので適用自体は取り消せない。
       if (appliedRowShortfall(opCount, totalAffected) > 0) {
@@ -7757,6 +7798,10 @@ export default function App() {
       runQueryInTab,
       settings.defaultDisplayCount,
       settings.optimisticCellEditLock,
+      settings.flightRecorderEnabled,
+      settings.flightRecorderRowCap,
+      settings.flightRecorderRetentionDays,
+      toast.info,
       tabsRef,
       selectedProfile?.driver,
       selectedProfile?.is_production,
@@ -12485,17 +12530,19 @@ export default function App() {
                     ? t("perfTitle")
                     : tab === "sqliteMaintenance"
                       ? t("sqliteMaintTitle")
-                      : tab === "profile"
-                        ? t("profileTitle")
-                        : tab === "structure"
-                          ? t("structureTitle")
-                          : tab === "timelapse"
-                            ? t("timelapseTitle")
-                            : tab === "aiSql"
-                              ? t("aiSqlTitle")
-                              : tab === "aiResultSummary"
-                                ? t("aiResultSummaryTitle")
-                                : t("processTitle");
+                      : tab === "pgListen"
+                        ? t("pgListenTitle")
+                        : tab === "profile"
+                          ? t("profileTitle")
+                          : tab === "structure"
+                            ? t("structureTitle")
+                            : tab === "timelapse"
+                              ? t("timelapseTitle")
+                              : tab === "aiSql"
+                                ? t("aiSqlTitle")
+                                : tab === "aiResultSummary"
+                                  ? t("aiResultSummaryTitle")
+                                  : t("processTitle");
 
   // ConnectionList (memo) へ渡すハンドラの束。`tabs` / `activeTab` / `settings` に依存する
   // ハンドラが多く、そのまま渡すと打鍵・ストリーミング・タブ切替のたびに参照が変わって
@@ -13145,6 +13192,12 @@ export default function App() {
                       <SqliteMaintenancePanel
                         sessionId={sessionId}
                         readOnly={selectedProfile?.read_only ?? false}
+                      />
+                    ) : activeBottomPanelTab === "pgListen" ? (
+                      <PgListenPanel
+                        key={sessionId}
+                        sessionId={sessionId}
+                        driver={selectedProfile?.driver ?? "mysql"}
                       />
                     ) : activeBottomPanelTab === "processes" ? (
                       <ProcessListPanel
@@ -14934,6 +14987,14 @@ export default function App() {
                 label: t("perfTitle"),
                 icon: "clock",
                 onSelect: () => toggleBottomPanel("perf"),
+              },
+              {
+                label: t("pgListenTitle"),
+                icon: "bell",
+                onSelect: () => toggleBottomPanel("pgListen"),
+                // 開けば MySQL / SQLite でも理由つきで縮退表示する。接続だけを要求する。
+                disabled: !sessionId,
+                title: !sessionId ? t("appToolsNeedsSession") : undefined,
               },
               {
                 label: t("sqliteMaintTitle"),

@@ -585,6 +585,10 @@ safe(
   "sample_live_queries",
   "sample_statement_delta",
   "start_statement_recording",
+  // LISTEN / NOTIFY 監視 (#2019。LISTEN は書き込みではない。NOTIFY の送信は持たない)
+  "start_pg_listen",
+  "pg_listen_add_channel",
+  "pg_listen_remove_channel",
   // セル BLOB 読み出し (保存先はローカルファイル)
   "fetch_cell_bytes",
   "probe_cell_blob",
@@ -777,6 +781,7 @@ const CONNECTION_WRITE_METHODS = new Set([
   "register_local_table",
   "drop_local_table",
   "sqlite_maintenance",
+  "execute_maintenance",
   "vacuum_into",
 ]);
 /** 引数 1 つ目に SQL 文字列を取るメソッド。LIFECYCLE ではその引数が固定リテラルであることを要求する。 */

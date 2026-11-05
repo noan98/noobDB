@@ -48,7 +48,19 @@ export const bulkWriteCommands = {
       groups: params.groups,
       extraStatements: params.extraStatements ?? [],
       pkBinary: params.pkBinary ?? null,
-      options: params.options ? { approved_counts: params.options.approvedCounts ?? null } : undefined,
+      options: params.options
+        ? {
+            approved_counts: params.options.approvedCounts ?? null,
+            ...(params.options.capture
+              ? {
+                  capture: {
+                    row_cap: params.options.capture.rowCap ?? null,
+                    retention_days: params.options.capture.retentionDays ?? null,
+                  },
+                }
+              : {}),
+          }
+        : undefined,
     }).then((r) => parseResponse(schemas.bulkWriteOutcome, r, "bulk_update_cells")),
   /**
    * テストデータ生成 (#602) の生成行を 1 トランザクションで投入する (#1259)。セルは

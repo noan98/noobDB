@@ -40,6 +40,7 @@ const LISTENERS: Record<string, string> = {
   BatchStreamMessage: "listenBatchStream",
   BroadcastMessage: "listenBroadcast",
   DataSearchMessage: "listenDataSearchStream",
+  PgListenMessage: "listenPgListenStream",
   PreviewStreamMessage: "listenPreviewStream",
   QueryStreamMessage: "listenQueryStream",
   WhereUsedMessage: "listenWhereUsedStream",

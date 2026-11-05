@@ -1091,6 +1091,14 @@ pub async fn run_query_stream(
     Ok(())
 }
 
+/// 打ち切り後もサーバで文が走り続けているかもしれない終わり方か (#2023)。
+/// タイムアウトと、結果の送信失敗によるストリーム打ち切り (`ticker_failed`) だけが対象。
+/// 正常終了・DB エラーは文が終わっているので撃たない (プールに戻った接続で次に走る別の文を
+/// 止めないため)。
+fn should_stop_on_server<T>(ticker_failed: bool, result: &Result<T>) -> bool {
+    ticker_failed || matches!(result, Err(AppError::Timeout(_)))
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn spawn_query_stream(
     app: AppHandle,
@@ -1268,7 +1276,14 @@ async fn spawn_query_stream(
     // When a positive timeout is configured, race the whole run against it.
     // Elapsing drops the streaming future, which returns the pooled connection
     // (mirroring the manual stop button), so the session stays usable.
-    let run = async {
+    //
+    // サーバ側停止 (#2023): 実行に使う接続のバックエンド ID を控え、タイムアウト時・
+    // キャンセル時 (タスク abort = このガードの drop) に別接続から実行中の文だけを止める。
+    // 正常終了・DB エラーでは文が終わっているのでガードを解除する (プールに戻った接続で
+    // 次に走る別の文を止めないため)。サーバ側タイムアウトも同じ文脈から設定される。
+    let stop_ctx = crate::db::server_stop::ServerStopCtx::new(query_timeout_secs);
+    let mut stop_guard = crate::db::server_stop::StopGuard::new(stop_ctx.clone(), session.clone());
+    let run = crate::db::server_stop::scope(stop_ctx, async {
         match query_timeout_secs {
             Some(secs) if secs > 0 => {
                 match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
@@ -1278,7 +1293,7 @@ async fn spawn_query_stream(
             }
             _ => exec.await,
         }
-    };
+    });
     // 合流バッチの時間フラッシュ: `StreamBatcher::push` はドライバのバッチが届いたとき
     // にしか時間判定しないので、低速なクエリで行が溜まったまま止まらないよう、
     // 一定間隔で期限切れの分を送る。`run` と同じタスクで交互に polling されるため、
@@ -1297,10 +1312,19 @@ async fn spawn_query_stream(
             }
         }
     };
+    let mut ticker_failed = false;
     let result = tokio::select! {
         res = run => res,
-        e = ticker => Err(e),
+        e = ticker => {
+            ticker_failed = true;
+            Err(e)
+        }
     };
+    // 文が走ったままかもしれない終わり方 (タイムアウト / 送信失敗で打ち切り) はサーバ側でも止める。
+    if should_stop_on_server(ticker_failed, &result) {
+        stop_guard.fire();
+    }
+    stop_guard.disarm();
 
     // 合流待ちで残った行を吐き出す (正常終了・DB エラー・タイムアウトのどれでも。
     // これで `delivered_rows` と UI が受け取った行数が一致する)。送信に失敗した
@@ -1983,21 +2007,51 @@ async fn spawn_preview_stream(
     delivered_rows: Arc<AtomicU64>,
     on_event: Channel<PreviewStreamMessage>,
 ) {
-    let exec = session
-        .conn
-        .preview_execute_with_limit(&sql, database.as_deref(), row_limit);
-    // run_query_stream と同じレース方式: 超過したら future を drop してプールへ
-    // 接続を返す (プレビューはトランザクション内なので、drop は暗黙のロールバック
-    // として働き、握っていた行ロックも解放される)。
+    // サーバ側停止 (#2023): run_query_stream と同じ。ドライランの UPDATE / DELETE が
+    // ロック待ち・長時間実行のまま残らないよう、タイムアウト / キャンセル時に止める。
+    //
+    // ドライランの接続はトランザクションが所有し、future が drop されるとプールへ戻る。
+    // その後に KILL が届くと別の文を止めうるので、(1) `exec` を先に宣言してガードより後に
+    // drop される順にし (キャンセル時は KILL を先に撃つ)、(2) タイムアウトでは future を
+    // 持ったまま先に KILL を撃ち、文が止まって future が終わってから手放す。
+    let stop_ctx = crate::db::server_stop::ServerStopCtx::new(query_timeout_secs);
+    let exec = crate::db::server_stop::scope(
+        stop_ctx.clone(),
+        session
+            .conn
+            .preview_execute_with_limit(&sql, database.as_deref(), row_limit),
+    );
+    tokio::pin!(exec);
+    // キャンセル (abort = drop) では KILL を撃たない: drop 時の KILL は接続の返却より遅れて
+    // 届きうり、再利用された接続の別の文を止めてしまう。タイムアウトだけ明示的に撃つ。
+    let mut stop_guard =
+        crate::db::server_stop::StopGuard::explicit_only(stop_ctx, session.clone());
     let result = match query_timeout_secs {
         Some(secs) if secs > 0 => {
-            match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
-                Ok(res) => res,
-                Err(_) => Err(AppError::Timeout(secs)),
+            tokio::select! {
+                res = &mut exec => res,
+                _ = tokio::time::sleep(std::time::Duration::from_secs(secs)) => {
+                    // `exec` を poll しないまま停止要求の完了を待つ。poll しなければ接続は
+                    // この future が持ち続けるので、KILL が届く前にプールへ戻って別の文に
+                    // 再利用されることがない。
+                    stop_guard.fire_and_wait().await;
+                    // KILL が効けば future は (エラーで) 終わり、トランザクションが
+                    // ロールバックされて接続がプールへ戻る。効かなくても待ちすぎない。
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        &mut exec,
+                    )
+                    .await;
+                    Err(AppError::Timeout(secs))
+                }
             }
         }
         _ => exec.await,
     };
+    if should_stop_on_server(false, &result) {
+        stop_guard.fire();
+    }
+    stop_guard.disarm();
     match result {
         Ok(p) => {
             if let Err(e) = on_event.send(PreviewStreamMessage::Meta {
@@ -2174,7 +2228,8 @@ pub async fn cancel_stream(
                     StreamKind::Query
                     | StreamKind::Preview
                     | StreamKind::Search
-                    | StreamKind::Ai => None,
+                    | StreamKind::Ai
+                    | StreamKind::Listen => None,
                     // 「今すぐ実行」のタスク (#1534)。中断は `run_task_now` の戻り値
                     // (中断として記録した実行ログ) で伝わるので通知イベントは無い。
                     StreamKind::Task => None,
@@ -2206,6 +2261,19 @@ pub async fn cancel_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_side_stop_only_for_timeout_or_ticker_failure() {
+        let ok: Result<()> = Ok(());
+        let timeout: Result<()> = Err(AppError::Timeout(30));
+        let db_err: Result<()> = Err(AppError::InvalidInput("x".into()));
+        assert!(!should_stop_on_server(false, &ok));
+        assert!(should_stop_on_server(false, &timeout));
+        // DB エラーは文が終わっているので撃たない。
+        assert!(!should_stop_on_server(false, &db_err));
+        // 送信失敗で打ち切ったときは、文が走ったままなので撃つ。
+        assert!(should_stop_on_server(true, &db_err));
+    }
 
     #[test]
     fn rolled_back_history_message_names_matched_and_expected_rows() {

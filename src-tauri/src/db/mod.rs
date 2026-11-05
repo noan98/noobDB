@@ -26,6 +26,7 @@ pub mod mysql;
 pub mod object_diff;
 /// グローバルオブジェクト検索の索引とスコアリング (#1261)。
 pub mod object_search;
+pub mod pg_listen;
 pub mod postgres;
 /// ドライラン (プレビュー) のスナップショット取得を組み立てる共有ロジック。
 /// ドライバ非依存の純粋な文字列処理なので、各ドライバの
@@ -46,6 +47,7 @@ pub mod schema_scope;
 pub mod script;
 pub mod script_analysis;
 pub mod server_messages;
+pub mod server_stop;
 pub mod sqlite;
 pub mod sqlite_rebuild;
 /// ストリーミング結果のバッチ合流と逐次統計 (#1257)。
@@ -646,6 +648,21 @@ impl Connection {
     pub async fn execute(&self, sql: &str, database: Option<&str>) -> Result<QueryResult> {
         match self {
             Connection::MySql(c) => c.execute(sql, database).await,
+            Connection::Postgres(c) => c.execute(sql, database).await,
+            Connection::Sqlite(c) => c.execute(sql, database).await,
+        }
+    }
+
+    /// 定期メンテナンスの文を実行する (#2025)。MySQL は `ANALYZE` / `OPTIMIZE TABLE` が失敗を
+    /// 結果行 (`Msg_type=Error`) で返すので行を受け取る。PostgreSQL / SQLite は失敗が SQL エラーに
+    /// なるので [`Connection::execute`] と同じ。
+    pub async fn execute_maintenance(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+    ) -> Result<QueryResult> {
+        match self {
+            Connection::MySql(c) => c.execute_maintenance(sql, database).await,
             Connection::Postgres(c) => c.execute(sql, database).await,
             Connection::Sqlite(c) => c.execute(sql, database).await,
         }

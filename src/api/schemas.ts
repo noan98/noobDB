@@ -260,6 +260,14 @@ export const insertRowsResult = z.object({
 export const bulkWriteOutcomeApplied = z.object({
   status: z.literal("applied"),
   result: queryResultLite,
+  /** フライトレコーダーへの記録結果 (#2024)。`options.capture` を指定しなければ全て 0 / null。 */
+  capture: z
+    .object({
+      recorded: z.number(),
+      declined: z.number(),
+      batch_id: z.string().nullable(),
+    })
+    .default({ recorded: 0, declined: 0, batch_id: null }),
 });
 export const bulkWriteOutcomeRowCountExceeded = z.object({
   status: z.literal("row_count_exceeded"),
@@ -1912,6 +1920,41 @@ export const aiStreamErrorMessage = z.object({
   errorKind: z.string(),
 });
 
+// --- PostgreSQL LISTEN / NOTIFY 監視 (#2019) ---------------------------------
+//
+// `start_pg_listen` が Tauri Channel へ送る `kind` タグ付きメッセージ
+// (`src-tauri/src/commands/listen.rs`)。cancelled は他の Channel と共有の
+// `channelCancelledMessage` (`deliveredRows` = 流した通知の件数)。
+
+export const pgListenStartedMessage = z.object({
+  kind: z.literal("started"),
+  channels: z.array(z.string()),
+});
+
+export const pgListenNotificationMessage = z.object({
+  kind: z.literal("notification"),
+  channel: z.string(),
+  payload: z.string(),
+  payloadTruncated: z.boolean(),
+  pid: z.number(),
+  receivedAtMs: z.number(),
+});
+
+export const pgListenReconnectedMessage = z.object({
+  kind: z.literal("reconnected"),
+});
+
+export const pgListenUnsupportedMessage = z.object({
+  kind: z.literal("unsupported"),
+  reason: z.string(),
+});
+
+export const pgListenErrorMessage = z.object({
+  kind: z.literal("error"),
+  error: z.string(),
+  connectionLost: z.boolean(),
+});
+
 export const importStartedEvent = z.object({
   streamId: z.string(),
   total: z.number(),
@@ -2232,6 +2275,12 @@ const taskAction = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("refresh_plan_watch"),
     snippet_ids: z.array(z.string()),
+  }),
+  z.object({
+    kind: z.literal("run_maintenance"),
+    database: z.string().nullable().optional(),
+    targets: z.array(z.string()),
+    maintenance: z.enum(["analyze", "optimize", "vacuum", "vacuum_analyze", "reindex"]),
   }),
 ]);
 

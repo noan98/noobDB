@@ -18,7 +18,7 @@
 
 - **`TaskAction`** (`#[serde(tag = "kind")]`) — `ExportQuery` (SQL → ファイル。
   `export_query_stream` と同じ実行基盤を共有) と `Dump` (`dump_database` と同じ基盤)
-  に加え、`RunAssertions` (#1170) がある。`output_path` は `{date}` (YYYY-MM-DD) / `{datetime}` (YYYYMMDD-HHMMSS, UTC)
+  に加え、`RunAssertions` (#1170) と、取得系の `TimelapseCapture` / `RefreshPlanWatch`、書き込み扱いの `RunMaintenance` (#2025) がある。`output_path` は `{date}` (YYYY-MM-DD) / `{datetime}` (YYYYMMDD-HHMMSS, UTC)
   のプレースホルダを実行時に展開します (`resolve_output_path`)。
 - **`RunAssertions { database, assertion_ids }`** (#1170) — 保存済みのデータ品質
   アサーション (#742) を実行する。`assertion_ids` が空ならプロファイルのスコープに
@@ -61,6 +61,25 @@
   アクション実行が始まった後の失敗は再試行しない (副作用の二重発生を避ける)。試行回数は
   `TaskRun.attempts` (`task_runs.attempts` 列。旧 DB には `ADD COLUMN` で後付け) に残る。
   旧 `tasks.json` には無いので `serde(default)` で読む (既定は再試行なし)。
+- **`RunMaintenance { database, targets, maintenance }`** (#2025) — ANALYZE / VACUUM /
+  OPTIMIZE / REINDEX の定期実行。タグ名 `kind` と衝突するため種別のフィールド名は
+  `maintenance` (`tasks::maintenance::TaskMaintenanceKind`: `analyze` / `optimize` / `vacuum` /
+  `vacuum_analyze` / `reindex`)。SQL は `tasks/maintenance.rs::build_statements` が (種別 ×
+  ドライバ) の**固定形**から生成し (フロントの `maintenanceCommands.ts` と同じ文、識別子は
+  `db::sync::quote_ident`)、任意 SQL は受けない。対応表: MySQL = ANALYZE / OPTIMIZE (対象テーブル
+  必須)、PostgreSQL = ANALYZE / VACUUM / VACUUM (ANALYZE) / REINDEX (REINDEX は対象必須)、SQLite =
+  ANALYZE / VACUUM (DB 全体のみ) / REINDEX。対応外の組み合わせは理由付きで保存時・実行時に拒否。
+  `targets` が空ならデータベース全体 (PG の ANALYZE / VACUUM、SQLite)。1 文ずつ実行する (PG の
+  VACUUM はトランザクション外でしか流せず、単文実行は包まない)。失敗したテーブルは
+  `summarize_maintenance_failures` が `TaskRun.error` に要約し、残りは続行。`TaskRun.rows` は成功した文数。MySQL の ANALYZE / OPTIMIZE は失敗しても SQL エラーにならず
+  結果行の `Msg_type=Error` で返るため、`Connection::execute_maintenance` で行を受け取り
+  `maintenance::mysql_maintenance_errors` が error 行 (大文字小文字不問、note / status は除外) だけを失敗にする。
+  `database` / 対象に識別子へ入れられない文字 (MySQL の `` ` ``、PG の `"` / `\`、NUL) があれば保存時に拒否。
+  **安全網の例外**: スケジューラのセッションは常に `read_only: true` だが、このアクションだけは
+  `build_connect_request` が `read_only: false` で接続する。代わりに**プロファイルが `read_only` なら
+  保存時 (`commands::tasks::validate_maintenance_for_profile`) と実行時 (接続前と、再試行で
+  読み直した最新のプロファイルに対するチェック) にバックエンドで拒否**する。`is_production` / `confirm_writes` は他のアクションと同じく
+  UI の保存時確認のみ。
 - **`TaskSchedule`** — `Interval { minutes }` (最小 1 分) と
   `Daily { hour, minute }` の 2 種。
 - **`SchedulerSettings.catch_up_missed`** — アプリが閉じている間に過ぎた
@@ -70,7 +89,7 @@
 
 ## 設計上の要点
 
-- **アクションは読み取り専用に限定されます** (#730 の受け入れ条件)。
+- **アクションは読み取り専用に限定されます** (#730 の受け入れ条件。唯一の例外は上記 `RunMaintenance`)。
   `ExportQuery.sql` は**保存時 (`save_task`) と実行時 (`executor::run_once`) の両方**で
   `db::is_read_only_sql` を通します。保存時の検証はプロファイル解決前に走るため、
   ドライバ非依存の保守的なマスクに倒れます (`noobdb-sql-safety` スキル参照)。

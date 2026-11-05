@@ -25,7 +25,7 @@
  *      ステータスバーに出た文の履歴 (`messageLog.ts`) を時系列で 1 本にまとめたもの。
  *      以前は「メッセージ」タブが別にあったが、同じ出来事がトーストとステータスの
  *      両方に出るため 2 タブで似た行が並んでいた。
- * 2. **診断** (`advisor` / `inspector` / `processes` / `assertions` / `sqliteMaintenance` / `health` / `perf`) —
+ * 2. **診断** (`advisor` / `inspector` / `processes` / `assertions` / `sqliteMaintenance` / `pgListen` / `health` / `perf`) —
  *    DB とサーバの状態・改善提案・データ品質の検証。
  * 3. **参照** (`whereUsed` / `structure` / `profile`) — 選んだオブジェクトの詳細。
  *
@@ -47,6 +47,11 @@
  * プロファイル既定の順で決まり (未決定ならセッションの既定)、開ける条件は接続中で
  * あることだけ。追加・編集は `AssertionEditorModal` (一時的な操作 = Modal)。
  *
+ * `pgListen` (PostgreSQL の LISTEN / NOTIFY 監視、#2019) は、SQL を書きながら通知が届くのを
+ * 眺める常駐の診断情報なので診断グループに置く。開ける条件は接続中であることだけ (MySQL /
+ * SQLite でも開け、パネル側が理由コードつきで縮退表示する)。折りたたみ時のパネルバーには
+ * PostgreSQL の接続でだけ並べる。
+ *
  * `aiSql` (SQL の AI 解説 / 最適化案、#695) は、エディタの選択範囲を見比べながら読む
  * 参照情報 (解説・diff) なので Modal ではなくここに置く。開ける条件は接続中 + AI 利用可
  * (設定で有効 かつ API キー登録済み) かつ、エディタからの依頼がある (参照グループは対象が決まってから)。
@@ -63,6 +68,7 @@ export const BOTTOM_PANEL_TABS = [
   "processes",
   "assertions",
   "sqliteMaintenance",
+  "pgListen",
   "health",
   "perf",
   "whereUsed",
@@ -86,6 +92,7 @@ export const BOTTOM_PANEL_TAB_GROUP: Record<BottomPanelTab, BottomPanelTabGroup>
   processes: "diagnostics",
   assertions: "diagnostics",
   sqliteMaintenance: "diagnostics",
+  pgListen: "diagnostics",
   health: "diagnostics",
   perf: "diagnostics",
   whereUsed: "reference",
@@ -254,6 +261,9 @@ export function bottomPanelStripTabs(ctx: BottomPanelContext): BottomPanelStripE
   const out: BottomPanelStripEntry[] = [];
   for (const tab of BOTTOM_PANEL_TABS) {
     if (BOTTOM_PANEL_TAB_GROUP[tab] === "reference") continue;
+    // LISTEN / NOTIFY 監視 (#2019) は PostgreSQL 専用。他ドライバのバーには並べない
+    // (開ければパネルが縮退表示するが、常設の入口に出しても使える日は来ない)。
+    if (tab === "pgListen" && ctx.driver !== "postgres") continue;
     // 計測 (#1622) は設定で ON にした人向けの開発寄りの診断なので、常設のパネルバーには並べない。
     if (tab === "perf") continue;
     // SQLite 専用のタブは他ドライバでは並べない (無効にしても使える日は来ない)。

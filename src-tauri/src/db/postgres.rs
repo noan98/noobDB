@@ -71,6 +71,30 @@ fn connect_options(opts: &DbConnectOptions, password: &str) -> PgConnectOptions 
     apply_tls(connect, opts)
 }
 
+/// `LISTEN` / `NOTIFY` 監視 (#2019) 用の専用接続を 1 本開く。セッションの接続設定
+/// (SSH / SSM 経由なら既にトンネルのローカルポートを指している `host` / `port`、TLS、
+/// IAM 認証) をそのまま使うので、トンネル経由でも直結と同じように動く。プールは 1 接続・
+/// 寿命なしで、`PgListener` の自動再接続にだけ使う。メイン接続プールは占有しない。
+/// 接続オプション (パスワードを含む) はログに出さない。
+pub async fn open_listener(opts: &DbConnectOptions) -> Result<sqlx::postgres::PgListener> {
+    let password = super::aws_iam::password_for(opts).await?;
+    let connect = connect_options(opts, &password);
+    drop(password);
+    let pool = PgPoolOptions::new()
+        .min_connections(0)
+        .max_connections(1)
+        .max_lifetime(None)
+        .idle_timeout(None)
+        // 接続できないときに原因 (拒否・認証失敗など) を早く見せる。
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .connect_with(connect)
+        .await?;
+    let mut listener = sqlx::postgres::PgListener::connect_with(&pool).await?;
+    // 自分でプールを閉じることは無いので、閉鎖イベントでの待機打ち切りは不要。
+    listener.ignore_pool_close_event(true);
+    Ok(listener)
+}
+
 impl PostgresConn {
     pub async fn connect(opts: &DbConnectOptions) -> Result<Self> {
         let password = super::aws_iam::password_for(opts).await?;
@@ -260,9 +284,67 @@ impl PostgresConn {
         // CALL の rows_affected は元々常に 0 なので execute 経路との差は無い。
         let is_query = is_query_shape(sql) || is_call_shape(sql);
 
-        let mut conn = self.pool.acquire().await?;
-        apply_search_path(&mut conn, database, &self.search_path).await?;
+        // サーバ側停止 (#2023): 文脈があるあいだ、接続は「正常に終わるまで」プールへ戻さない
+        // (future が drop されたら `close_on_drop` で閉じる)。サーバで走り続ける文や、
+        // 設定したままの `statement_timeout` を後続の利用者へ持ち越さないため。
+        let mut guard = super::server_stop::ReleaseGuard::new(self.pool.acquire().await?);
+        apply_search_path(&mut guard.conn, database, &self.search_path).await?;
+        let restore = match super::server_stop::current() {
+            Some(ctx) => {
+                guard.arm();
+                register_server_stop(&mut guard.conn, &ctx, false).await
+            }
+            None => None,
+        };
+        // アプリ側の理由 (結果の送信失敗など) で打ち切られたときは、サーバで文が走ったままの
+        // 可能性があるので、設定の復元は省き、接続は閉じる (keep しない)。
+        let app_failed = std::sync::atomic::AtomicBool::new(false);
+        let on_batch = |b| {
+            let r = on_batch(b);
+            if r.is_err() {
+                app_failed.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            r
+        };
+        let result = stream_on(
+            &mut guard.conn,
+            sql,
+            started,
+            is_query,
+            initial_batch,
+            chunk_size,
+            on_batch,
+        )
+        .await;
+        if app_failed.load(std::sync::atomic::Ordering::SeqCst) {
+            return result;
+        }
+        // 設定を元に戻せたときだけ接続をプールへ戻す (戻せなければ drop で閉じる)。
+        let restored = match restore {
+            Some(orig) => restore_statement_timeout(&mut guard.conn, &orig).await,
+            None => true,
+        };
+        if restored {
+            guard.keep();
+        }
+        result
+    }
+}
 
+/// `execute_stream_inner` の本体 (接続取得・サーバ側停止の準備より後)。
+async fn stream_on<F>(
+    conn: &mut sqlx::PgConnection,
+    sql: &str,
+    started: Instant,
+    is_query: bool,
+    initial_batch: usize,
+    chunk_size: usize,
+    mut on_batch: F,
+) -> Result<QueryResult>
+where
+    F: FnMut(StreamBatch) -> Result<()>,
+{
+    {
         if !is_query {
             let result = sqlx::query(sqlx::AssertSqlSafe(sql))
                 .execute(&mut *conn)
@@ -316,7 +398,9 @@ impl PostgresConn {
             server_messages: Vec::new(),
         })
     }
+}
 
+impl PostgresConn {
     /// ドライランプレビュー: 文をトランザクション内で実行し、対象テーブルの
     /// before/after スナップショットを添えて必ずロールバックする。
     ///
@@ -417,6 +501,9 @@ impl PostgresConn {
         // ようにする (#1536)。search_path もこのトランザクションの接続に設定する。
         let mut tx = self.pool.begin().await?;
         apply_search_path_on(&mut tx, database, &self.search_path).await?;
+        if let Some(ctx) = super::server_stop::current() {
+            let _ = register_server_stop(&mut tx, &ctx, true).await;
+        }
 
         let is_insert_stmt = trimmed.starts_with("insert");
         // 書き込みキャプチャ (#1536) の INSERT は、新規行が末尾 (最大 PK 側) に付く
@@ -4556,6 +4643,111 @@ fn create_sequence_ddl(r: &PgRow) -> String {
         opt(7, "CACHE"),
         if cycle { "CYCLE" } else { "NO CYCLE" },
     )
+}
+
+/// サーバ側停止の準備 (#2023)。この接続の `pg_backend_pid()` を控え、アプリのクエリ
+/// タイムアウトがあれば `statement_timeout` を (猶予つきで) 設定する。失敗しても実行自体は
+/// 妨げない (従来どおりクライアント側打ち切りのみ)。
+///
+/// `local` はトランザクション内 (ドライラン) 用で、`set_config(.., true)` なので
+/// トランザクションの終了で自動的に戻る。失敗するとトランザクションが aborted になるため
+/// SAVEPOINT で囲む。そうでなければセッション設定なので、設定前の値を返す —
+/// 呼び出し側が文の後に [`restore_statement_timeout`] で戻す。全バージョンで動くよう、
+/// 元の値の取得 (`current_setting`) と設定は別の往復にする。
+async fn register_server_stop(
+    conn: &mut sqlx::PgConnection,
+    ctx: &super::server_stop::ServerStopCtx,
+    local: bool,
+) -> Option<String> {
+    let ms = ctx.server_timeout_ms().unwrap_or(0);
+    if local {
+        register_server_stop_in_tx(conn, ctx, ms).await;
+        return None;
+    }
+    let mut orig = None;
+    if ms > 0 {
+        match sqlx::query_scalar::<_, String>("SELECT current_setting('statement_timeout')")
+            .fetch_one(&mut *conn)
+            .await
+        {
+            Ok(v) => {
+                match sqlx::query_scalar::<_, String>(
+                    "SELECT set_config('statement_timeout', $1, false)",
+                )
+                .bind(ms.to_string())
+                .fetch_one(&mut *conn)
+                .await
+                {
+                    Ok(_) => orig = Some(v),
+                    Err(e) => tracing::debug!(error = %e, "statement_timeout not set (postgres)"),
+                }
+            }
+            Err(e) => tracing::debug!(error = %e, "statement_timeout not read (postgres)"),
+        }
+    }
+    match sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
+        .fetch_one(&mut *conn)
+        .await
+    {
+        Ok(pid) => ctx.record_backend(i64::from(pid)),
+        Err(e) => tracing::debug!(error = %e, "server-side stop setup skipped (postgres)"),
+    }
+    orig
+}
+
+/// トランザクション内の準備。SAVEPOINT で囲み、失敗してもトランザクションを壊さない。
+async fn register_server_stop_in_tx(
+    conn: &mut sqlx::PgConnection,
+    ctx: &super::server_stop::ServerStopCtx,
+    ms: u64,
+) {
+    if sqlx::query("SAVEPOINT noobdb_server_stop")
+        .execute(&mut *conn)
+        .await
+        .is_err()
+    {
+        return;
+    }
+    let res = sqlx::query_as::<_, (i32, String)>(
+        "SELECT pg_backend_pid(), \
+         set_config('statement_timeout', COALESCE($1, current_setting('statement_timeout')), true)",
+    )
+    .bind((ms > 0).then(|| ms.to_string()))
+    .fetch_one(&mut *conn)
+    .await;
+    match res {
+        Ok((pid, _)) => {
+            ctx.record_backend(i64::from(pid));
+            // set_config(.., true) の効果は RELEASE 後もトランザクション末まで残る。
+            let _ = sqlx::query("RELEASE SAVEPOINT noobdb_server_stop")
+                .execute(&mut *conn)
+                .await;
+        }
+        Err(e) => {
+            tracing::debug!(error = %e, "server-side stop setup skipped (postgres tx)");
+            let _ = sqlx::query("ROLLBACK TO SAVEPOINT noobdb_server_stop")
+                .execute(&mut *conn)
+                .await;
+            let _ = sqlx::query("RELEASE SAVEPOINT noobdb_server_stop")
+                .execute(&mut *conn)
+                .await;
+        }
+    }
+}
+
+/// [`register_server_stop`] が返した元の値へ `statement_timeout` を戻す。戻せたら true。
+async fn restore_statement_timeout(conn: &mut sqlx::PgConnection, orig: &str) -> bool {
+    match sqlx::query_scalar::<_, String>("SELECT set_config('statement_timeout', $1, false)")
+        .bind(orig)
+        .fetch_one(&mut *conn)
+        .await
+    {
+        Ok(_) => true,
+        Err(e) => {
+            tracing::debug!(error = %e, "statement_timeout restore failed (postgres)");
+            false
+        }
+    }
 }
 
 #[cfg(test)]

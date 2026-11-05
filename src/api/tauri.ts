@@ -5,6 +5,7 @@ import * as schemas from "./schemas";
 import { parseResponse } from "./schemas";
 import {
   aiStreamChannels,
+  pgListenChannels,
   batchStreamChannels,
   broadcastChannels,
   dataSearchChannels,
@@ -27,6 +28,7 @@ import { processCommands } from "./commands/process";
 import { inspectorCommands } from "./commands/inspector";
 import { profileCommands } from "./commands/profile";
 import { searchCommands } from "./commands/search";
+import { listenCommands } from "./commands/listen";
 import { diffCommands } from "./commands/diff";
 import { syncCommands } from "./commands/sync";
 import { privilegesCommands } from "./commands/privileges";
@@ -1174,7 +1176,7 @@ export interface InsertRowsResult {
  * 戻らなかったことを表す。承認して再実行してはいけない (再読込して現状を確認させる)。
  */
 export type BulkWriteOutcome =
-  | { status: "applied"; result: QueryResult }
+  | { status: "applied"; result: QueryResult; capture: BulkCaptureOutcome }
   | {
       status: "row_count_exceeded";
       expected_rows: number;
@@ -1185,8 +1187,23 @@ export type BulkWriteOutcome =
   | { status: "optimistic_conflict"; conflict_rows: number; statement_counts: number[] }
   | { status: "rollback_incomplete"; expected_rows: number; actual_rows: number };
 
+/** `bulk_update_cells` のフライトレコーダー記録の結果 (#2024)。 */
+export interface BulkCaptureOutcome {
+  /** 保存した記録の件数。 */
+  recorded: number;
+  /** 記録を辞退した部分の数 (主キーを特定できない追加文など)。 */
+  declined: number;
+  /** 保存した記録に共通のバッチ id (1 件も保存しなければ null)。 */
+  batch_id: string | null;
+}
+
 /** `bulk_update_cells` の追加オプション (#1777)。後続の検査 (楽観ロックなど) もここへ足す。 */
 export interface BulkWriteOptions {
+  /**
+   * フライトレコーダーへ記録する (#2024)。主キーで行を特定できる編集だけが対象 (呼び出し側が
+   * `pkColumns` が実際の主キーのときだけ指定する)。失敗しても編集は妨げない。
+   */
+  capture?: { rowCap?: number; retentionDays?: number };
   /** 確認ダイアログで承認した文ごとの影響行数 (`row_count_exceeded.statement_counts`)。各文の上限にして再実行する。 */
   approvedCounts?: number[];
 }
@@ -2320,7 +2337,19 @@ export type TaskAction =
       kind: "refresh_plan_watch";
       /** 対象スニペット ID。空ならこのプロファイルでウォッチ中のものすべて。 */
       snippet_ids: string[];
+    }
+  | {
+      /** ANALYZE / VACUUM / OPTIMIZE / REINDEX の定期メンテナンス (#2025)。書き込み扱いで、read_only のプロファイルでは保存・実行とも拒否される。 */
+      kind: "run_maintenance";
+      /** MySQL ではデータベース、PostgreSQL ではスキーマ (識別子の修飾)。SQLite は無視。 */
+      database?: string | null;
+      /** 対象テーブル。空ならデータベース全体 (PostgreSQL の ANALYZE / VACUUM、SQLite)。 */
+      targets: string[];
+      maintenance: TaskMaintenanceKind;
     };
+
+/** `run_maintenance` の種別。ドライバごとに使えるものが違う (`maintenanceKindsForDriver`)。 */
+export type TaskMaintenanceKind = "analyze" | "optimize" | "vacuum" | "vacuum_analyze" | "reindex";
 
 /** 接続失敗時の自動リトライ設定 (#1537)。接続段階の失敗だけを指数バックオフで再試行する。 */
 export interface ConnectRetry {
@@ -2559,6 +2588,7 @@ export const api = {
   ...inspectorCommands,
   ...profileCommands,
   ...searchCommands,
+  ...listenCommands,
   ...diffCommands,
   ...syncCommands,
   ...privilegesCommands,
@@ -3705,6 +3735,114 @@ export async function listenWhereUsedStream(
     channel.onmessage = () => {};
     if (whereUsedChannels.get(streamId) === channel) {
       whereUsedChannels.delete(streamId);
+    }
+  };
+}
+
+/** PostgreSQL LISTEN / NOTIFY 監視で受けた通知 1 件 (#2019)。 */
+export interface PgNotification {
+  channel: string;
+  /** 表示用に切り詰め済み (バックエンドが 2000 文字まで)。 */
+  payload: string;
+  payloadTruncated: boolean;
+  /** 通知を送ったバックエンドプロセスの PID。 */
+  pid: number;
+  /** 受信時刻 (UNIX エポックからのミリ秒)。 */
+  receivedAtMs: number;
+}
+
+export interface PgListenStreamHandlers {
+  onStarted?: (event: { channels: string[] }) => void;
+  onNotification?: (event: PgNotification) => void;
+  /** 専用接続が切れて張り直した。切断中の通知は届かない。 */
+  onReconnected?: () => void;
+  /** 非対応ドライバ。`reason` は理由コード (`unsupported_driver`)。 */
+  onUnsupported?: (event: { reason: string }) => void;
+  onError?: (event: { error: string; connectionLost: boolean }) => void;
+  /** `deliveredRows` は流した通知の件数。セッション切断でも届く。 */
+  onCancelled?: (event: ChannelCancelledMessage) => void;
+}
+
+/**
+ * LISTEN / NOTIFY 監視 (`startPgListen`, #2019) の Channel を `streamId` 向けに作って購読する。
+ * 戻り値は `listenQueryStream` と同じく、ハンドラを外す関数。
+ */
+export async function listenPgListenStream(
+  streamId: string,
+  handlers: PgListenStreamHandlers,
+): Promise<UnlistenFn> {
+  const channel = new Channel<unknown>();
+  channel.onmessage = (raw) => {
+    const msg = raw as RawStreamMessage;
+    switch (msg.kind) {
+      case "started":
+        handlers.onStarted?.(
+          parseChannelMessage<{ channels: string[] }>(
+            schemas.pgListenStartedMessage,
+            msg,
+            "pgListenStartedMessage",
+          ),
+        );
+        break;
+      case "notification": {
+        const m = parseChannelMessage<PgNotification>(
+          schemas.pgListenNotificationMessage,
+          msg,
+          "pgListenNotificationMessage",
+        );
+        handlers.onNotification?.({
+          channel: m.channel,
+          payload: m.payload,
+          payloadTruncated: m.payloadTruncated,
+          pid: m.pid,
+          receivedAtMs: m.receivedAtMs,
+        });
+        break;
+      }
+      case "reconnected":
+        parseChannelMessage<{ kind: "reconnected" }>(
+          schemas.pgListenReconnectedMessage,
+          msg,
+          "pgListenReconnectedMessage",
+        );
+        handlers.onReconnected?.();
+        break;
+      case "unsupported":
+        handlers.onUnsupported?.(
+          parseChannelMessage<{ reason: string }>(
+            schemas.pgListenUnsupportedMessage,
+            msg,
+            "pgListenUnsupportedMessage",
+          ),
+        );
+        break;
+      case "error":
+        handlers.onError?.(
+          parseChannelMessage<{ error: string; connectionLost: boolean }>(
+            schemas.pgListenErrorMessage,
+            msg,
+            "pgListenErrorMessage",
+          ),
+        );
+        break;
+      case "cancelled":
+        handlers.onCancelled?.(
+          parseChannelMessage<ChannelCancelledMessage>(
+            schemas.channelCancelledMessage,
+            msg,
+            "channelCancelledMessage",
+          ),
+        );
+        break;
+      default:
+        break;
+    }
+  };
+  pgListenChannels.set(streamId, channel);
+  return () => {
+    channel.onmessage = () => {};
+    if (pgListenChannels.get(streamId) === channel) {
+      pgListenChannels.delete(streamId);
     }
   };
 }

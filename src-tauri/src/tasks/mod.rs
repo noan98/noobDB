@@ -13,6 +13,7 @@
 //!   `executor` に渡す。
 
 pub mod executor;
+pub mod maintenance;
 pub mod runs;
 pub mod schedule;
 pub mod scheduler;
@@ -24,7 +25,7 @@ use crate::commands::dump::DumpOptions;
 use crate::commands::export::ExportFormat;
 use crate::db::masking::ColumnMask;
 
-/// タスクが実行するアクション。読み取り専用に限定される (#730 の受け入れ条件) —
+/// タスクが実行するアクション。`RunMaintenance` (#2025) を除き読み取り専用に限定される (#730 の受け入れ条件) —
 /// `ExportQuery.sql` は保存時 (`commands::tasks::save_task`) と実行時
 /// (`executor::run_once`) の両方で `db::is_read_only_sql` を通す。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +97,21 @@ pub enum TaskAction {
         /// 対象スニペットの ID。空ならこのプロファイルでウォッチ中のものすべて。
         #[serde(default)]
         snippet_ids: Vec<String>,
+    },
+    /// ANALYZE / VACUUM / OPTIMIZE / REINDEX の定期メンテナンス (#2025)。**書き込み扱い**の
+    /// 文だが、任意 SQL は受けず `maintenance::build_statements` が (種別 × ドライバ) の
+    /// 固定形から生成した文だけを 1 文ずつ実行する (識別子は `quote_ident`)。このアクション
+    /// だけはセッションを read_only にせず接続するが、プロファイルが `read_only` なら
+    /// 保存時・実行時ともバックエンドで拒否する。
+    RunMaintenance {
+        /// MySQL ではデータベース、PostgreSQL ではスキーマ (識別子の修飾)。SQLite は無視。
+        #[serde(default)]
+        database: Option<String>,
+        /// 対象テーブル。空ならデータベース全体 (PostgreSQL の ANALYZE / VACUUM、SQLite)。
+        #[serde(default)]
+        targets: Vec<String>,
+        /// 種別。`kind` はアクションのタグ名と衝突するので `maintenance`。
+        maintenance: maintenance::TaskMaintenanceKind,
     },
 }
 

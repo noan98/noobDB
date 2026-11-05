@@ -59,6 +59,7 @@ pub mod __test_api {
         AcceptedValuesCandidates, AssertionOutcome, AssertionPrevious, ImportAssertionsResult,
     };
     pub use crate::commands::broadcast::{BroadcastEnvReport, BroadcastMessage};
+    pub use crate::commands::listen::{run_listener as run_pg_listener, PgListenMessage};
     pub use crate::db::advisor::{
         analyze, AdvisorDiff, AdvisorInput, HealthFinding, IndexOverlap, IndexOverlapKind, RuleId,
         SchemaHealthReport, Severity, SkippedRule, TableFixPlan, TableMeta, UnusedIndexEntry,
@@ -103,6 +104,7 @@ pub mod __test_api {
         create_sql as savepoint_create_sql, release_sql as savepoint_release_sql,
         rollback_to_sql as savepoint_rollback_to_sql,
     };
+    pub use crate::db::server_stop::{scope as server_stop_scope, ServerStopCtx, StopGuard};
     pub use crate::db::sqlite_rebuild::{
         plan_table_rebuild, RebuildChangedGenerated, RebuildCheck, RebuildColumnEdit,
         RebuildForeignKey, RebuildForeignKeyRef, RebuildNewColumn, RebuildNewGenerated,
@@ -152,7 +154,7 @@ pub mod __test_api {
     pub use crate::ssh::known_hosts_import::{ImportCandidate, ImportScan, ImportStatus};
     pub use crate::ssh::{SshConfig, SshJumpConfig, SshTunnel};
     pub use crate::ssm::SsmConfig;
-    pub use crate::state::{AppState, Session, StreamHandle, StreamKind};
+    pub use crate::state::{AppState, PgListenControl, Session, StreamHandle, StreamKind};
 
     // コメント/リテラル・マスキングの実装横断ゴールデン (#988)。read-only 判定・
     // auto-limit・stacked 検出・危険 SQL 検出など全安全網が乗る「マスクしてから
@@ -267,6 +269,7 @@ pub mod __test_api {
     pub use crate::schema_drift::{
         GenerationMeta as DriftGenerationMeta, TableChangeStatus, TableChangeSummary,
     };
+    pub use crate::tasks::maintenance::{mysql_maintenance_errors, TaskMaintenanceKind};
     pub use crate::tasks::scheduler::TaskRunProgressEvent;
     pub use crate::tasks::{
         AssertionRunRecord, ConnectRetry, SchedulerSettings, TaskAction, TaskDefinition, TaskRun,
@@ -573,6 +576,7 @@ pub mod __test_api {
     // コマンド境界が一度も走らなかった。常時実走の `tests/sqlite_integration.rs`
     // から SQLite 短絡パス (非対応エラー / 縮退レスポンス) とセッション未検出の
     // 経路を駆動できるよう、ここでピンポイントに公開する。
+    pub use crate::commands::bulk_capture::{BulkCaptureConfig, BulkCaptureOutcome};
     pub use crate::commands::bulk_write::{
         BulkOldValue, BulkSetColumn, BulkSetValue, BulkUpdateGroup, BulkWriteOptions,
         BulkWriteOutcome, ChunkedDmlBatchResult, ChunkedDmlOperation, InsertRowsResult,
@@ -1134,7 +1138,7 @@ pub mod __test_api {
         )
         .await?
         {
-            BulkWriteOutcome::Applied { result } => Ok(result),
+            BulkWriteOutcome::Applied { result, .. } => Ok(result),
             other => Err(crate::error::AppError::InvalidInput(format!(
                 "bulk write was not applied: {other:?}"
             ))),
@@ -1888,6 +1892,9 @@ pub fn run() {
             commands::search::search_schema_objects,
             commands::search::find_where_used,
             commands::search::data_search_stream,
+            commands::listen::start_pg_listen,
+            commands::listen::pg_listen_add_channel,
+            commands::listen::pg_listen_remove_channel,
             commands::schema::alter_table_context,
             commands::schema::plan_sqlite_table_rebuild,
             commands::schema::incoming_foreign_keys,

@@ -103,6 +103,13 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["aiStreamDoneMessage", schemas.aiStreamDoneMessage],
   ["aiStreamErrorMessage", schemas.aiStreamErrorMessage],
   ["channelCancelledMessageAi", schemas.channelCancelledMessage],
+  // #2019: PostgreSQL LISTEN / NOTIFY 監視 (`start_pg_listen`) の Channel メッセージ。
+  ["pgListenStartedMessage", schemas.pgListenStartedMessage],
+  ["pgListenNotificationMessage", schemas.pgListenNotificationMessage],
+  ["pgListenReconnectedMessage", schemas.pgListenReconnectedMessage],
+  ["pgListenUnsupportedMessage", schemas.pgListenUnsupportedMessage],
+  ["pgListenErrorMessage", schemas.pgListenErrorMessage],
+  ["pgListenCancelledMessage", schemas.channelCancelledMessage],
   ["taskRunProgressEvent", schemas.taskRunProgressEvent],
   ["knownHost", schemas.knownHost],
   ["knownHostEvent", schemas.knownHostEvent],
