@@ -156,6 +156,9 @@ function spec(over: Partial<ColumnGenSpec>): ColumnGenSpec {
     max: 1000,
     serialStart: 1,
     temporal: "datetime",
+    dateFrom: "2023-01-01",
+    dateTo: "2025-12-31",
+    template: "item-{n}",
     ...over,
   };
 }

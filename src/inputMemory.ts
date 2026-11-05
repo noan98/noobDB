@@ -9,7 +9,14 @@
 
 import type { ImportErrorMode, ImportFormat, TextEncodingId } from "./api/tauri";
 import { matchesMaskPattern } from "./components/columnMask";
-import type { ColumnGenSpec, GenStrategy, TemporalFormat } from "./components/testDataGen";
+import {
+  type ColumnGenSpec,
+  DEFAULT_DATE_FROM,
+  DEFAULT_DATE_TO,
+  DEFAULT_TEMPLATE,
+  type GenStrategy,
+  type TemporalFormat,
+} from "./components/testDataGen";
 import {
   asRecord,
   loadRemembered,
@@ -234,6 +241,7 @@ const GEN_STRATEGIES: readonly GenStrategy[] = [
   "randomString",
   "randomDate",
   "randomBool",
+  "template",
   "fixed",
   "choice",
   "fkRef",
@@ -252,6 +260,9 @@ export interface RememberedColumnSpec {
   max: number;
   serialStart: number;
   temporal: TemporalFormat;
+  dateFrom: string;
+  dateTo: string;
+  template: string;
 }
 
 export interface TestDataPrefs {
@@ -275,6 +286,9 @@ function sanitizeColumnSpec(raw: unknown): RememberedColumnSpec | null {
     max: pickNumber(o.max, 1000),
     serialStart: Math.floor(pickNumber(o.serialStart, 1)),
     temporal: pickOneOf(o.temporal, TEMPORAL_FORMATS, "datetime"),
+    dateFrom: pickString(o.dateFrom, DEFAULT_DATE_FROM).slice(0, 10),
+    dateTo: pickString(o.dateTo, DEFAULT_DATE_TO).slice(0, 10),
+    template: pickString(o.template, DEFAULT_TEMPLATE).slice(0, MAX_FIXED_VALUE),
   };
   if (typeof o.fixedValue === "string") out.fixedValue = o.fixedValue.slice(0, MAX_FIXED_VALUE);
   return out;
@@ -313,6 +327,9 @@ export function snapshotTestDataPrefs(
       max: s.max,
       serialStart: s.serialStart,
       temporal: s.temporal,
+      dateFrom: s.dateFrom,
+      dateTo: s.dateTo,
+      template: s.template,
     };
     if (!matchesMaskPattern(s.column, maskPatterns)) entry.fixedValue = s.fixedValue;
     columns[s.column] = entry;
@@ -345,6 +362,9 @@ export function applyRememberedSpecs(specs: readonly ColumnGenSpec[], prefs: Tes
       max: saved.max,
       serialStart: saved.serialStart,
       temporal: saved.temporal,
+      dateFrom: saved.dateFrom,
+      dateTo: saved.dateTo,
+      template: saved.template,
     };
   });
 }

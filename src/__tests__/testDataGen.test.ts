@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { TableColumnInfo } from "../api/tauri";
 import {
+  expandTemplate,
+  mulberry32 as mulberry32ForTemplate,
+  parseIsoDate,
+  resolveDateRange,
   activeSpecs,
   buildFkSelectSql,
   classifyDataType,
@@ -43,6 +47,9 @@ function spec(overrides: Partial<ColumnGenSpec>): ColumnGenSpec {
     max: 100,
     serialStart: 1,
     temporal: "datetime",
+    dateFrom: "2023-01-01",
+    dateTo: "2025-12-31",
+    template: "item-{n}",
     ...overrides,
   };
 }
@@ -330,5 +337,62 @@ describe("inferColumnSpec: 文字列で表せない型の既定 (#1607)", () => 
   it("SQLite は型親和性で INT を含む型を整数にする", () => {
     expect(classifyDataType("UNSIGNED BIG INT", "sqlite")).toBe("number");
     expect(classifyDataType("interval", "postgres")).toBe("string");
+  });
+});
+
+describe("テンプレート文字列と日付範囲 (#2035)", () => {
+  const rng = () => mulberry32ForTemplate(7);
+
+  it("expandTemplate: 行番号・0 埋め・範囲乱数・候補・英数字を展開する", () => {
+    expect(expandTemplate("user{n:4}@example.com", 2, rng())).toBe("user0003@example.com");
+    expect(expandTemplate("{n}", 0, rng())).toBe("1");
+    expect(expandTemplate("{rand:5-5}", 0, rng())).toBe("5");
+    expect(expandTemplate("{rand:9-3}", 0, rng())).toMatch(/^[3-9]$/);
+    expect(["a", "b"]).toContain(expandTemplate("{pick:a|b}", 0, rng()));
+    expect(expandTemplate("{alpha:6}", 0, rng())).toMatch(/^[A-Za-z0-9]{6}$/);
+    expect(expandTemplate("{uuid}", 0, rng())).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+  });
+
+  it("expandTemplate: 未知・不正なトークンはそのまま残す", () => {
+    expect(expandTemplate("{foo} {n:abc} {rand:x} {pick:} {alpha:} {uuid:1}", 0, rng())).toBe(
+      "{foo} {n:abc} {rand:x} {pick:} {alpha:} {uuid:1}",
+    );
+    expect(expandTemplate("plain", 0, rng())).toBe("plain");
+  });
+
+  it("template 戦略は決定論的で、行ごとに行番号が進む", () => {
+    const sp = spec({ strategy: "template", template: "n{n}-{rand:1-100}" });
+    const a = generateRows([sp], 3, 5);
+    expect(generateRows([sp], 3, 5)).toEqual(a);
+    expect(a.map((r) => String(r[0]).split("-")[0])).toEqual(["n1", "n2", "n3"]);
+  });
+
+  it("parseIsoDate: 実在しない日付や形式違いは null", () => {
+    expect(parseIsoDate("2024-02-29")).toBe(Date.UTC(2024, 1, 29));
+    expect(parseIsoDate("2025-02-31")).toBeNull();
+    expect(parseIsoDate("2025-2-1")).toBeNull();
+    expect(parseIsoDate("")).toBeNull();
+  });
+
+  it("resolveDateRange: 終了日を含み、逆順は入れ替え、不正は既定へ戻す", () => {
+    expect(resolveDateRange("2024-01-01", "2024-01-01")).toEqual([
+      Date.UTC(2024, 0, 1),
+      Date.UTC(2024, 0, 2),
+    ]);
+    expect(resolveDateRange("2024-03-01", "2024-01-01")).toEqual(
+      resolveDateRange("2024-01-01", "2024-03-01"),
+    );
+    expect(resolveDateRange("x", "y")).toEqual([Date.UTC(2023, 0, 1), Date.UTC(2026, 0, 1)]);
+  });
+
+  it("randomDate は指定範囲内に収まる", () => {
+    const rows = generateRows(
+      [spec({ strategy: "randomDate", temporal: "date", dateFrom: "2024-05-10", dateTo: "2024-05-12" })],
+      200,
+      3,
+    );
+    for (const [v] of rows) expect(["2024-05-10", "2024-05-11", "2024-05-12"]).toContain(v);
   });
 });
