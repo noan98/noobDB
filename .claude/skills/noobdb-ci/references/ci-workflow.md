@@ -397,18 +397,22 @@ Windows 固有 × サーバ型ドライバの退行が CI で見えなかった�
 ## `js-mutants-diff.yml` (PR 差分の Stryker / #2021)
 
 `mutants-diff.yml` のフロント版。手動専用の `js-mutants.yml` (変更しない) の補完として、
-安全網ファイル (`stryker.conf.json` の `mutate` 4 ファイル + `src/maskLiteralsIdentifiers.ts`、
-設定 2 ファイル・`scripts/js-mutants-diff.mjs`・本ワークフロー) を変更した PR だけで起動し、
-**PR が追加・変更した行だけ**を Stryker (`--mutate path:開始行-終了行`) で変異させて生存変異を報告する。
+安全網ファイル (`stryker.conf.json` の `mutate` 4 ファイル) と、それを検証するテスト
+(`vitest.mutants.config.ts` の `include`)・共有ゴールデン・設定 2 ファイル・
+`scripts/js-mutants-diff.mjs`・本ワークフローを変更した PR だけで起動する。
 **必須チェックにしない** (可視化専用で fail させない。ワークフロー単位 `paths:` なのでスキップ固着なし)。
 
-- 対象の単一ソースは `stryker.conf.json` の `mutate`。PR 差分ジョブだけで足すファイルは
-  `scripts/js-mutants-diff.mjs` の `EXTRA_FILES` (js-mutants.yml のスコープは変えない)。足す・外すときは
-  `paths:` も揃える。実行テストは `vitest.mutants.config.ts` の `include` (js-mutants.yml と共有)。
-- 差分 → 範囲の変換は純関数 (`parseDiffRanges` / `buildMutateSpecs`、`scripts/js-mutants-diff.test.mjs`)。
-  `git diff -U0` を読み、純削除・削除ファイル・対象外ファイルは捨てる。範囲が 0 件
-  (設定ファイルだけの変更など) なら Node/pnpm のセットアップと Stryker を丸ごと飛ばして即終了する。
+- 対象の単一ソースは `stryker.conf.json` の `mutate`。実行テストは `vitest.mutants.config.ts` の
+  `include` (js-mutants.yml と共有)。決定ロジックは `scripts/js-mutants-diff.mjs`
+  (`parseDiffRanges` / `planMutation`、`scripts/js-mutants-diff.test.mjs`)。Summary にモードを明示する。
+  - 差分行のみ: ソースの追加・変更行を `--mutate path:開始行-終了行` で変異。
+  - ファイル全体: include のテスト / 共有ゴールデンの変更 (純削除でも) で、`TEST_TO_SOURCES` /
+    `FIXTURE_TO_SOURCES` の対応ソース全体を変異 (「テストを弱める PR」の検出)。対応表に無い include
+    のテストや `stryker.conf.json` / `vitest.mutants.config.ts` の変更は `mutate` 全件。既存の生存変異も出る。
+  - `--mutate` は Stryker 10 でカンマ分割・上書きなので、カンマ区切りの 1 引数で渡す。
+  - include / 対応表 / `mutate` を足す・外すときは `paths:` も揃える (単体テストが包含を検査する)。
+- 対象が 0 件 (ワークフローだけの変更など) なら Node/pnpm のセットアップと Stryker を丸ごと飛ばして即終了する。
 - Report は `mutation.json` から Survived + NoCoverage を `path:行` で Job Summary に列挙し `::warning` を出す。
-  Stryker 終了コード非 0・打ち切り・検査 0 件は「生存 0 件」ではなく実行失敗として表示する。
+  Stryker 終了コード非 0・打ち切りは実行失敗として表示する。変異候補 0 件 (コメントのみの変更など) は情報表示のみ。
   レポートは artifact `js-mutants-diff-out` (14 日)。
-- 限界: 変異させるのはソース側の追加・変更行だけ。テスト側だけを弱める PR は検出できない。
+- 限界: 行範囲は `git diff -U0` のため、複数行にまたがる式の途中だけを変えると、式の他の行にある変異が漏れる。

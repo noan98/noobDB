@@ -8,18 +8,21 @@ name: js-mutants-diff
 # PR 時点で報告する。js-mutants.yml は変更しない (全件の回帰ネットとしてそのまま維持)。
 #
 # - 対象ファイルの単一ソースは stryker.conf.json の mutate (js-mutants.yml と共有)。
-#   差分 → `path:開始行-終了行` (Stryker の mutate 範囲構文) への変換は
-#   scripts/js-mutants-diff.mjs (単体テスト付き)。PR 差分ジョブだけで足すファイルは
-#   同スクリプトの EXTRA_FILES (src/maskLiteralsIdentifiers.ts = 危険検出前の
-#   コメント/文字列マスク)。mutate や EXTRA_FILES を足す・外すときは下の `paths:` も揃える。
+#   差分 → 変異対象の決定は scripts/js-mutants-diff.mjs (単体テスト付き)。モードは 2 つで、
+#   Summary に明示する。
+#     差分行のみ: 対象ソースの追加・変更行を `path:開始行-終了行` (Stryker の mutate 範囲構文) で変異。
+#     ファイル全体: vitest.mutants.config.ts の include のテスト / 共有ゴールデン (fixtures/*.json) /
+#       stryker.conf.json / vitest.mutants.config.ts が変わったとき、対応するソース全体を変異
+#       (対応不明は conf.mutate 全件)。「テストを弱める PR」の検出用で、既存の生存変異も出る。
+#   mutate・include・対応表を足す・外すときは下の `paths:` も揃える (単体テストが検査する)。
 # - 実行するテストは vitest.mutants.config.ts の include (js-mutants.yml と共有)。
 # - ワークフロー単位の `paths:` を使うのは、このワークフローを**必須チェックにしない**
 #   前提だから (必須だとスキップ時に「待機中」で固まる。ci.yml が paths-filter +
 #   ジョブ単位 if: を使うのはそのため)。無関係な PR のクリティカルパスは増えない。
 #   設定ファイルだけの変更 (変異させる行が無い) はセットアップを飛ばしてすぐ終わる。
 # - 可視化専用: 生存変異があっても fail させず、Job Summary と warning で報告する。
-# - 限界: 変異させるのは「ソース側で追加・変更された行」だけ。テスト側だけを弱める PR
-#   (境界アサーション削除) は、ソース行が変わらないためここでは検出できない。
+# - 限界: 行範囲は `git diff -U0` なので、複数行にまたがる式の途中だけを変えると式の他の行の
+#   変異が漏れる。
 on:
   pull_request:
     branches: [main]
@@ -28,8 +31,44 @@ on:
       - "src/sqlScript.ts"
       - "src/components/preflight.ts"
       - "src/components/cellEdit.ts"
-      # PR 差分ジョブだけで足す対象 (scripts/js-mutants-diff.mjs の EXTRA_FILES)。
-      - "src/maskLiteralsIdentifiers.ts"
+      # 「テストを弱める PR」の検出用 (vitest.mutants.config.ts の include と、検証対象の共有ゴールデン)。
+      - "src/__tests__/blobIo.test.ts"
+      - "src/__tests__/bulkEdit.test.ts"
+      - "src/__tests__/cellEdit.test.ts"
+      - "src/__tests__/columnReplace.test.ts"
+      - "src/__tests__/dangerousSql.test.ts"
+      - "src/__tests__/dangerousSqlGolden.test.ts"
+      - "src/__tests__/editApplyState.test.ts"
+      - "src/__tests__/maskGolden.test.ts"
+      - "src/__tests__/maskLiteralsIdentifiers.test.ts"
+      - "src/__tests__/pasteEdit.test.ts"
+      - "src/__tests__/preflight.test.ts"
+      - "src/__tests__/quickSetValues.test.ts"
+      - "src/__tests__/readOnlyGolden.test.ts"
+      - "src/__tests__/relatedRows.test.ts"
+      - "src/__tests__/rowInspectorEdit.test.ts"
+      - "src/__tests__/schemaMutatingGolden.test.ts"
+      - "src/__tests__/scriptSplitGolden.test.ts"
+      - "src/__tests__/sqlScript.test.ts"
+      - "src/__tests__/statementSplitGolden.test.ts"
+      - "src/__tests__/streamStats.test.ts"
+      - "src/__tests__/valuePicker.test.ts"
+      - "src/__tests__/keysetPagination.test.ts"
+      - "src/__tests__/fkNavigation.test.ts"
+      - "src/__tests__/typedEditor.test.ts"
+      - "src/__tests__/insertDefaults.test.ts"
+      - "src/__tests__/jsonTree.test.ts"
+      - "src/__tests__/QueryBuilder.test.ts"
+      - "src/__tests__/routineCall.test.ts"
+      - "src/__tests__/serverBrowse.test.ts"
+      - "src/__tests__/queryParams.test.ts"
+      - "src/__tests__/tabDirty.test.ts"
+      - "src/__tests__/fixtures/dangerousSqlVectors.json"
+      - "src/__tests__/fixtures/maskVectors.json"
+      - "src/__tests__/fixtures/readOnlySqlVectors.json"
+      - "src/__tests__/fixtures/schemaMutatingVectors.json"
+      - "src/__tests__/fixtures/scriptSplitVectors.json"
+      - "src/__tests__/fixtures/statementSplitVectors.json"
       - "stryker.conf.json"
       - "vitest.mutants.config.ts"
       - "scripts/js-mutants-diff.mjs"
@@ -62,26 +101,27 @@ jobs:
 
       # 差分の追加/変更行から Stryker の mutate 範囲を作る (ランナー同梱の node だけで動く
       # 軽い処理)。変異させる行が無ければ count=0 で、重い後続ステップを丸ごと飛ばす。
-      - name: List mutate ranges in diff
+      - name: List mutate targets in diff
         id: list
         shell: bash
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
-          git diff -U0 "origin/${BASE_REF}...HEAD" -- src > js-mutants.diff
-          node scripts/js-mutants-diff.mjs js-mutants.diff > mutate-ranges.txt
-          count=$(wc -l < mutate-ranges.txt | tr -d ' ')
+          git diff -U0 "origin/${BASE_REF}...HEAD" -- src stryker.conf.json vitest.mutants.config.ts > js-mutants.diff
+          node scripts/js-mutants-diff.mjs js-mutants.diff mutate-specs.txt mutate-summary.json
+          count=$(node -p 'require("./mutate-summary.json").count')
+          label=$(node -p 'require("./mutate-summary.json").label')
           echo "count=$count" >> "$GITHUB_OUTPUT"
           {
             echo '### Mutation test (PR 差分, フロント安全網)'
             echo ''
             if [ "$count" = 0 ]; then
-              echo '変異させる行 (安全網ファイルの追加・変更行) がありません。実行をスキップしました。'
+              echo '変異させる対象 (安全網の追加・変更行 / 関連テスト・ゴールデンの変更) がありません。実行をスキップしました。'
             else
-              echo "変異対象の範囲: **${count} 件**"
+              echo "モード: **${label}** / 対象: **${count} 件**"
               echo ''
               echo '```'
-              cat mutate-ranges.txt
+              tr ',' '\n' < mutate-specs.txt
               echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
@@ -126,15 +166,14 @@ jobs:
         run: |
           set +e
           set -o pipefail
-          args=()
-          while IFS= read -r r; do args+=(--mutate "$r"); done < mutate-ranges.txt
-          pnpm exec stryker run "${args[@]}" 2>&1 | tee stryker-output.txt
+          # Stryker 10 の --mutate は値をカンマ分割して上書きする (繰り返し指定は最後の 1 件だけ
+          # 効く) ので、カンマ区切りの 1 引数で渡す。
+          pnpm exec stryker run --mutate "$(cat mutate-specs.txt)" 2>&1 | tee stryker-output.txt
           echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
           exit 0
 
       # 生存変異 (Survived + NoCoverage) を Job Summary に列挙する。実行失敗 (打ち切り・
-      # 結果ファイル無し・検査 0 件) は「成功」ではなく失敗として表示する (母数 0 を
-      # 生存 0 件と見なさない)。
+      # 終了コード非 0) は「成功」ではなく失敗として表示する。候補 0 件は情報表示のみ。
       - name: Report surviving mutants
         if: always() && steps.list.outputs.count != '0'
         env:
@@ -190,10 +229,8 @@ jobs:
               warn.write_text(msg)
               tail()
           elif tested == 0:
-              msg = "検査された変異が 0 件でした (母数 0)。生存変異 0 件とは判定できません。"
-              print(f"> :x: **{msg}**")
-              warn.write_text(msg)
-              tail()
+              # 範囲内に変異候補が無い (コメントだけの変更など)。失敗ではなく情報表示にとどめる。
+              print("> :information_source: 範囲内に変異候補が 0 件でした (コメントのみの変更など)。")
           if n:
               print(f"> :warning: **生存変異 (Survived + NoCoverage): {n} 件** — この PR の差分に、テストが捕捉できていない変異があります。対応する `*.test.ts` / 共有ゴールデンに境界ケースを追記してください。")
               print("")
@@ -202,7 +239,7 @@ jobs:
               print("```")
               if not warn.exists():
                   warn.write_text(f"生存変異 {n} 件")
-          elif not warn.exists():
+          elif not warn.exists() and tested:
               print("> :white_check_mark: **生存変異: 0 件**")
           print("")
           print(f"killed: {counts.get('Killed', 0)} / survived: {counts.get('Survived', 0)} / no coverage: {counts.get('NoCoverage', 0)} / timeout: {counts.get('Timeout', 0)}")
@@ -220,7 +257,8 @@ jobs:
           path: |
             reports/mutation/
             js-mutants.diff
-            mutate-ranges.txt
+            mutate-specs.txt
+            mutate-summary.json
             stryker-output.txt
           if-no-files-found: ignore
           retention-days: 14
