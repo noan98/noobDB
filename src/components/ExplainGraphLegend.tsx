@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Box, chakra } from "@chakra-ui/react";
 
 import { SEQUENTIAL_RAMPS, rampStops, sampleRamp } from "../colorScale";
@@ -44,6 +45,7 @@ export function costHeatGradient(isDark: boolean): string {
 
 export function ExplainGraphLegend({ isDark }: { isDark: boolean }) {
   const t = useT();
+  const [open, setOpen] = useState(false);
   return (
     <Box
       data-testid="explain-legend"
@@ -64,35 +66,58 @@ export function ExplainGraphLegend({ isDark }: { isDark: boolean }) {
           className="explain-legend-fill"
           role="img"
           aria-label={t("explainLegendCostAria")}
-          w="calc(72 * var(--space-1))"
+          w="calc(24 * var(--space-1))"
           h="var(--space-2)"
           borderRadius="var(--radius-sm)"
           border="1px solid var(--border)"
           background={costHeatGradient(isDark)}
+          // 高コントラスト (forced-colors) でも勾配をそのまま見せる
+          style={{ forcedColorAdjust: "none" }}
         />
         <span>{t("explainLegendCostHigh")}</span>
       </Box>
-      <Box display="flex" alignItems="center" gap="var(--space-1-5)">
-        <chakra.span
-          fontWeight={700}
-          px="1"
-          borderRadius="var(--radius-sm)"
-          background={semanticColorVar("warning", "solid")}
-          color="app.onSolid"
-          aria-hidden="true"
-        >
-          !
-        </chakra.span>
-        <span>{t("explainLegendAttention")}</span>
-      </Box>
-      <Box display="flex" flexWrap="wrap" columnGap="var(--space-2-5)" rowGap="var(--space-1)">
-        {PLAN_NODE_CATEGORIES.map((c) => (
-          <Box key={c} display="inline-flex" alignItems="center" gap="var(--space-1)">
-            <Icon name={PLAN_CATEGORY_ICON[c]} size={ICON_SIZES.sm} strokeWidth={ICON_STROKE.regular} />
-            <span>{t(PLAN_CATEGORY_LABEL_KEY[c])}</span>
-          </Box>
-        ))}
-      </Box>
+      {(["warning", "caution"] as const).map((sev) => (
+        <Box key={sev} display="flex" alignItems="center" gap="var(--space-1-5)">
+          <chakra.span
+            fontWeight={700}
+            px="1"
+            borderRadius="var(--radius-sm)"
+            background={semanticColorVar(sev === "warning" ? "danger" : "warning", "solid")}
+            color="app.onSolid"
+            aria-hidden="true"
+          >
+            !
+          </chakra.span>
+          <span>{t(sev === "warning" ? "explainLegendWarning" : "explainLegendAttention")}</span>
+        </Box>
+      ))}
+      <chakra.button
+        type="button"
+        aria-expanded={open}
+        aria-label={t("explainLegendCategoriesToggle")}
+        onClick={() => setOpen((v) => !v)}
+        display="inline-flex"
+        alignItems="center"
+        gap="var(--space-1)"
+        alignSelf="flex-start"
+        color="inherit"
+        cursor="pointer"
+        borderRadius="var(--radius-sm)"
+        _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
+      >
+        <Icon name={open ? "chevron-down" : "chevron-right"} size="sm" />
+        <span>{t("explainLegendCategoriesToggle")}</span>
+      </chakra.button>
+      {open && (
+        <Box display="flex" flexWrap="wrap" columnGap="var(--space-2-5)" rowGap="var(--space-1)">
+          {PLAN_NODE_CATEGORIES.map((c) => (
+            <Box key={c} display="inline-flex" alignItems="center" gap="var(--space-1)">
+              <Icon name={PLAN_CATEGORY_ICON[c]} size={ICON_SIZES.sm} strokeWidth={ICON_STROKE.regular} />
+              <span>{t(PLAN_CATEGORY_LABEL_KEY[c])}</span>
+            </Box>
+          ))}
+        </Box>
+      )}
     </Box>
   );
 }

@@ -832,7 +832,9 @@ export const PLAN_NODE_MIN_WIDTH = 160;
 export const PLAN_NODE_MAX_WIDTH = 320;
 export const PLAN_NODE_HEIGHT = 64;
 const PLAN_CHAR_WIDTH = 7.3;
-const PLAN_NODE_HPAD = 28;
+// 28 (左右余白) + 20 (種別アイコン 13px + gap 6px のトークン換算, #2017)。ノード頭にアイコンを
+// 足した分だけ幅を広げないと、既存ラベルの多くが省略されるため、ここだけレイアウト計算を変える。
+const PLAN_NODE_HPAD = 48;
 
 /** ラベル長に応じた可変ノード幅 (min/max でクランプ)。長名はビューで省略。 */
 export function planNodeWidth(node: PlanNode): number {
@@ -979,11 +981,19 @@ function mysqlAccessCategory(accessType: unknown): PlanNodeCategory {
 function categoryFromText(text: string): PlanNodeCategory {
   const s = text.trim();
   if (/\bsort\b|\border by\b/i.test(s)) return "sort";
-  if (/aggregate|group by|distinct|\bunique\b|windowagg|\bwindow\b/i.test(s)) return "aggregate";
-  if (/\bjoin\b|nested loop|merge append|\bunion\b/i.test(s)) return "join";
+  if (/aggregate|group by|distinct|\bunique\b|windowagg|\bwindow\b|^group$/i.test(s)) return "aggregate";
+  if (/\b(?:semi|anti)?join\b|nested loop|merge append|\bunion\b/i.test(s)) return "join";
   if (/\bindex\b|\bbitmap\b|\bsearch\b|primary key|rowid/i.test(s)) return "index";
-  if (/^(?:seq|tid|foreign) scan|table scan|^scan\b/i.test(s)) return "scan";
+  if (/^(?:seq|tid|tid range|foreign|sample) scan|table scan|^scan\b/i.test(s)) return "scan";
   return "other";
+}
+
+/** SQLite の detail。`SCAN <表>` / `SEARCH <表>` の表名を拾わないよう先頭の動詞で判定する。 */
+function sqliteCategory(detail: string): PlanNodeCategory {
+  const s = detail.trim();
+  if (/^search\b/i.test(s)) return "index";
+  if (/^scan\b/i.test(s)) return /\busing (?:covering )?index\b/i.test(s) ? "index" : "scan";
+  return categoryFromText(s);
 }
 
 /**
@@ -992,10 +1002,14 @@ function categoryFromText(text: string): PlanNodeCategory {
  */
 export function classifyPlanNode(node: PlanNode): PlanNodeCategory {
   if (node.kind === "table") return mysqlAccessCategory(attrVal(node, "access_type"));
-  const byKind = MYSQL_KIND_CATEGORY[node.kind];
-  if (byKind) return byKind;
-  if (node.kind === "mysqlStep" || node.kind === "sqliteStep") return categoryFromText(node.label);
+  if (Object.prototype.hasOwnProperty.call(MYSQL_KIND_CATEGORY, node.kind))
+    return MYSQL_KIND_CATEGORY[node.kind];
+  if (node.kind === "mysqlStep") {
+    // 条件式やテーブル名 (`Filter: (o.index > 1)` など) を拾わないよう、見出し部だけで判定する。
+    return categoryFromText(node.label.split(/:| \(| on /)[0]);
+  }
+  if (node.kind === "sqliteStep") return sqliteCategory(node.label);
   // PostgreSQL は kind が Node Type そのもの。MySQL JSON の他の構造キー (query_block 等) は other。
-  if (node.kind in KIND_LABEL_KEYS) return "other";
+  if (Object.prototype.hasOwnProperty.call(KIND_LABEL_KEYS, node.kind)) return "other";
   return categoryFromText(node.kind);
 }

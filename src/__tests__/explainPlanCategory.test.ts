@@ -61,6 +61,18 @@ describe("classifyPlanNode (#2017)", () => {
     ["mysql tree Aggregate", node("mysqlStep", "Aggregate: count(0)"), "aggregate"],
     ["mysql tree Group aggregate", node("mysqlStep", "Group aggregate: count(0)"), "aggregate"],
     ["mysql tree Filter", node("mysqlStep", "Filter: (t.a > 1)"), "other"],
+    ["mysql tree Hash semijoin", node("mysqlStep", "Hash semijoin (t1.a = t2.a)"), "join"],
+    [
+      "mysql tree 条件式に sort を含む join",
+      node("mysqlStep", "Inner hash join (t1.sort = t2.sort)"),
+      "join",
+    ],
+    ["mysql tree 条件式に index を含む Filter", node("mysqlStep", "Filter: (o.index > 1)"), "other"],
+    ["pg Group", node("Group", "Group"), "aggregate"],
+    ["pg Sample Scan", node("Sample Scan", "Sample Scan on t"), "scan"],
+    ["pg Tid Range Scan", node("Tid Range Scan", "Tid Range Scan on t"), "scan"],
+    ["kind が Object.prototype のキー", node("constructor", "constructor"), "other"],
+    ["sqlite 表名が sort の SCAN", node("sqliteStep", "SCAN sort"), "scan"],
     // SQLite
     ["sqlite SCAN", node("sqliteStep", "SCAN users"), "scan"],
     ["sqlite SEARCH USING INDEX", node("sqliteStep", "SEARCH users USING INDEX idx_a (a=?)"), "index"],
