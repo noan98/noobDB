@@ -865,6 +865,7 @@ jobs:
   # だけでコンパイルは不要なため、Tauri のシステム依存やフロントエンドビルドは要らず
   # 軽量に走る。cargo-deny は他ツールと同様 taiki-e/install-action でプリビルド
   # バイナリを入れる (新しいアクションを増やさず既存の固定 SHA に揃える)。
+  # #2029: 同ジョブで cargo-machete による Rust の未使用依存検出も行う。
   rust-deny:
     name: rust (deny)
     needs: changes
