@@ -195,27 +195,44 @@ impl StopGuard {
         self.disarmed = true;
     }
 
-    /// 今すぐサーバ側の文を止める (冪等)。
+    /// 今すぐサーバ側の文を止める (冪等)。停止要求は別タスクで送り、完了は待たない。
     pub fn fire(&self) {
-        self.ctx.request_stop();
-        if self.session.conn.driver_kind() == DriverKind::Sqlite {
-            return;
-        }
-        if let Some(id) = self.ctx.take_backend() {
+        if let Some(id) = self.request_and_take_backend() {
             let session = self.session.clone();
             tauri::async_runtime::spawn(async move {
-                match tokio::time::timeout(KILL_TIMEOUT, session.conn.kill_processes(&[id], true))
-                    .await
-                {
-                    Ok(Ok(_)) => {}
-                    Ok(Err(e)) => {
-                        tracing::warn!(backend_id = id, error = %e, "server-side statement stop failed");
-                    }
-                    Err(_) => {
-                        tracing::warn!(backend_id = id, "server-side statement stop timed out");
-                    }
-                }
+                kill_backend(&session, id).await;
             });
+        }
+    }
+
+    /// [`StopGuard::fire`] と同じだが、停止要求が終わる (または [`KILL_TIMEOUT`] が過ぎる) まで待つ。
+    ///
+    /// ドライランのタイムアウト用。呼び出し側は実行中の future を **poll せずに** 持ったまま
+    /// これを待つ。poll しなければ future は接続を手放さない (ロールバックしてプールへ返す処理が
+    /// 進まない) ので、KILL が届く前に接続が再利用されて別の文を止める競合が起きない。
+    pub async fn fire_and_wait(&self) {
+        if let Some(id) = self.request_and_take_backend() {
+            kill_backend(&self.session, id).await;
+        }
+    }
+
+    fn request_and_take_backend(&self) -> Option<i64> {
+        self.ctx.request_stop();
+        if self.session.conn.driver_kind() == DriverKind::Sqlite {
+            return None;
+        }
+        self.ctx.take_backend()
+    }
+}
+
+async fn kill_backend(session: &Session, id: i64) {
+    match tokio::time::timeout(KILL_TIMEOUT, session.conn.kill_processes(&[id], true)).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => {
+            tracing::warn!(backend_id = id, error = %e, "server-side statement stop failed");
+        }
+        Err(_) => {
+            tracing::warn!(backend_id = id, "server-side statement stop timed out");
         }
     }
 }

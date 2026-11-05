@@ -1989,7 +1989,10 @@ async fn spawn_preview_stream(
             tokio::select! {
                 res = &mut exec => res,
                 _ = tokio::time::sleep(std::time::Duration::from_secs(secs)) => {
-                    stop_guard.fire();
+                    // `exec` を poll しないまま停止要求の完了を待つ。poll しなければ接続は
+                    // この future が持ち続けるので、KILL が届く前にプールへ戻って別の文に
+                    // 再利用されることがない。
+                    stop_guard.fire_and_wait().await;
                     // KILL が効けば future は (エラーで) 終わり、トランザクションが
                     // ロールバックされて接続がプールへ戻る。効かなくても待ちすぎない。
                     let _ = tokio::time::timeout(
