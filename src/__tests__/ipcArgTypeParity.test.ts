@@ -396,8 +396,12 @@ function classifyTsValue(
   if (e.startsWith("[") && e.endsWith("]")) return { kinds: new Set<Kind>(["array"]), nullable: false };
   if (e.startsWith("{") && e.endsWith("}") && matchClose(e, 0, true) === e.length - 1)
     return { kinds: new Set<Kind>(["object"]), nullable: false };
-  if (/\.(?:map|filter)\([\s\S]*\)$/.test(e)) return { kinds: new Set<Kind>(["array"]), nullable: false };
-  if (/^JSON\.stringify\(/.test(e)) return { kinds: new Set<Kind>(["string"]), nullable: false };
+  // 呼び出し全体が式の末尾で閉じるときだけ種別を確定する (`f(x).join()` や `a?.map()` は対象外)。
+  const call = /^(JSON\.stringify|[\w.]+\.(?:map|filter))\(/.exec(e);
+  if (call && matchClose(e, call[0].length - 1, true) === e.length - 1) {
+    const kind: Kind = call[1] === "JSON.stringify" ? "string" : "array";
+    return { kinds: new Set<Kind>([kind]), nullable: false };
+  }
   let p: WrapperParam | undefined;
   let member: string | undefined;
   const ident = /^(\w+)$/.exec(e);
@@ -510,13 +514,12 @@ function compareShapes(rust: Shape, ts: Shape): string | null | "skip" {
 
 const defs = collectRustTypeDefs(allRustSources);
 const tsTypeSources = Object.entries(
-  import.meta.glob("../**/*.{ts,tsx}", { eager: true, query: "?raw", import: "default" }) as Record<
-    string,
-    string
-  >,
-)
-  .filter(([path]) => !path.includes("/__tests__/"))
-  .map(([, src]) => src);
+  import.meta.glob(["../**/*.{ts,tsx}", "!../__tests__/**"], {
+    eager: true,
+    query: "?raw",
+    import: "default",
+  }) as Record<string, string>,
+).map(([, src]) => src);
 const tsAliases = collectTsAliases(tauriTs, tsTypeSources);
 
 const backendTypes = new Map<string, Map<string, string>>();
@@ -577,6 +580,7 @@ describe("IPC 引数型パリティ (Rust コマンドの引数型 ↔ tauri.ts 
 
   it("Rust にある引数キーが TS 側の抽出から落ちていない (抽出失敗の検知)", () => {
     const missing: string[] = [];
+    expect([...backendTypes.keys()].filter((c) => !frontendTypes.has(c))).toEqual([]);
     for (const [cmd, rustParams] of backendTypes) {
       const tsArgs = frontendTypes.get(cmd);
       if (!tsArgs) continue; // 名前レベルの欠落は ipcCommandParity / ipcArgParity の担当
@@ -665,6 +669,18 @@ export const x = {
       "object",
       "array",
     ]);
+  });
+
+  it("map / JSON.stringify の分類は誤判定しない (末尾で閉じる呼び出しだけ確定)", () => {
+    const k = (e: string) => {
+      const sh = classifyTsValue(e, new Map(), new Map());
+      return `${sh.kinds ? [...sh.kinds].join("|") : "?"}${sh.nullable ? "?" : ""}`;
+    };
+    expect(k("x.map(f)")).toBe("array");
+    expect(k("JSON.stringify(x.map(f))")).toBe("string");
+    expect(k('x.map(f).join(",")')).toBe("?");
+    expect(k("x?.map(f)")).toBe("?");
+    expect(k("cond ? null : x.map(f)")).toBe("?");
   });
 
   it("意図的に型をずらした差分を検出できる (ミューテーション確認)", () => {
