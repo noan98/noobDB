@@ -7735,8 +7735,11 @@ export default function App() {
       patchTab(tabId, (tt) => ({ ...tt, lastEditAppliedAt: Date.now(), exactRowCount: null }));
       // フライトレコーダーへ記録した (または辞退した) ことを知らせる (#2024)。記録は Undo 用の保険で、
       // 編集の成否には影響しない。
-      if (captureNote && (captureNote.recorded > 0 || captureNote.declined > 0)) {
+      if (captureNote && captureNote.recorded > 0) {
         noteBatchCaptureStats(captureNote.batch_id, captureNote.recorded, captureNote.declined);
+      }
+      // 記録は Undo 用の保険なので、全件記録できたときは黙り、辞退があったときだけ知らせる。
+      if (captureNote && captureNote.declined > 0) {
         toast.info(
           translate("batchCaptureSummary", {
             captured: captureNote.recorded,

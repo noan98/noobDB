@@ -58,6 +58,8 @@ struct Fetched {
 
 #[derive(Debug)]
 struct UpdatePart {
+    /// 今回の適用で SET した列 (小文字化はせず、編集グループの表記のまま)。
+    set_columns: Vec<String>,
     conds: Vec<String>,
     expected: usize,
     before: Fetched,
@@ -159,6 +161,109 @@ fn sets_pk_column(groups: &[BulkUpdateGroup], pk_columns: &[String]) -> bool {
     })
 }
 
+/// 編集グループが SET する列 (重複なし)。
+fn set_columns(groups: &[BulkUpdateGroup]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for g in groups {
+        for s in &g.set {
+            if !out.iter().any(|c| c.eq_ignore_ascii_case(&s.column)) {
+                out.push(s.column.clone());
+            }
+        }
+    }
+    out
+}
+
+/// [`build_update_capture`] の結果。
+#[derive(Debug)]
+enum UpdateBuild {
+    Capture(Box<WriteCapture>),
+    /// 同値の上書きなどで変わった行が無い (辞退ではない。記録するものが無いだけ)。
+    NoChange,
+    /// 突き合わせできない (行数・列・主キーの食い違い、重複) ので記録しない。
+    Decline,
+}
+
+/// UPDATE の before / after から `Update` 記録を組み立てる純関数。
+///
+/// 2 回の `SELECT *` の間に他者が**編集していない列**を変えても、その差分を記録に入れない:
+/// 保存する before は「after 行のうち SET した列だけを読み取った before の値に戻した行」にする。
+/// これで逆 SQL は編集列だけを戻し、Undo の衝突検出 (全列) は after と照合する。
+/// MySQL の `ON UPDATE CURRENT_TIMESTAMP` 列のような副作用の列も巻き戻さない。
+fn build_update_capture(
+    table: &str,
+    pk_columns: &[String],
+    set_columns: &[String],
+    before: &Fetched,
+    after: &Fetched,
+    expected: usize,
+) -> UpdateBuild {
+    let Some(idx) = pk_indices(&before.columns, pk_columns) else {
+        return UpdateBuild::Decline;
+    };
+    let same_columns = before.columns.len() == after.columns.len()
+        && before
+            .columns
+            .iter()
+            .zip(&after.columns)
+            .all(|(b, a)| b.name == a.name);
+    if !same_columns
+        || before.rows.len() != expected
+        || after.rows.len() != expected
+        || !pk_unique(&before.rows, &idx)
+        || !pk_unique(&after.rows, &idx)
+    {
+        return UpdateBuild::Decline;
+    }
+    let set_idx: Vec<usize> = set_columns
+        .iter()
+        .filter_map(|c| {
+            before
+                .columns
+                .iter()
+                .position(|b| b.name.eq_ignore_ascii_case(c))
+        })
+        .collect();
+    if set_idx.len() != set_columns.len() || set_idx.iter().any(|i| idx.contains(i)) {
+        return UpdateBuild::Decline;
+    }
+    let after_by_pk: HashMap<String, &Vec<Value>> = after
+        .rows
+        .iter()
+        .map(|r| (pk_signature(r, &idx), r))
+        .collect();
+    let mut b_rows = Vec::new();
+    let mut a_rows = Vec::new();
+    for b in &before.rows {
+        let Some(a) = after_by_pk.get(&pk_signature(b, &idx)) else {
+            return UpdateBuild::Decline;
+        };
+        if a.len() != b.len() {
+            return UpdateBuild::Decline;
+        }
+        if set_idx.iter().all(|&i| a[i] == b[i]) {
+            continue;
+        }
+        let mut restored = (*a).clone();
+        for &i in &set_idx {
+            restored[i] = b[i].clone();
+        }
+        b_rows.push(restored);
+        a_rows.push((*a).clone());
+    }
+    if b_rows.is_empty() {
+        return UpdateBuild::NoChange;
+    }
+    UpdateBuild::Capture(Box::new(build_capture(
+        WriteKind::Update,
+        table,
+        pk_columns,
+        &before.columns,
+        b_rows,
+        a_rows,
+    )))
+}
+
 /// `DELETE FROM <ref> WHERE <cond>;` から `<cond>` を取り出す (フロントが生成する形のみ)。
 fn delete_condition(table_ref: &str, sql: &str) -> Option<String> {
     let rest = trim_stmt(sql).strip_prefix("DELETE FROM ")?;
@@ -167,12 +272,34 @@ fn delete_condition(table_ref: &str, sql: &str) -> Option<String> {
     (!cond.trim().is_empty()).then(|| cond.to_string())
 }
 
+/// `pk_columns` が表の実際の主キー列 (`columns` の `key = PRI`) と、大文字小文字を無視した
+/// 集合として一致するか。
+async fn pk_matches_table_metadata(
+    conn: &Connection,
+    database: Option<&str>,
+    table: &str,
+    pk_columns: &[String],
+) -> bool {
+    let Ok(cols) = conn.columns(database.unwrap_or_default(), table).await else {
+        return false;
+    };
+    let actual: std::collections::BTreeSet<String> = cols
+        .iter()
+        .filter(|c| c.key.eq_ignore_ascii_case("PRI"))
+        .map(|c| c.name.to_ascii_lowercase())
+        .collect();
+    let given: std::collections::BTreeSet<String> =
+        pk_columns.iter().map(|c| c.to_ascii_lowercase()).collect();
+    !actual.is_empty() && actual == given
+}
+
 /// 適用前の準備: 対象行を特定し、UPDATE / DELETE の before を読む。読み取りに失敗した部分は
 /// 辞退する (エラーにしない)。
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn prepare(
     session: &Session,
     database: Option<&str>,
+    table_name: &str,
     table_ref: &str,
     pk_columns: &[String],
     groups: &[BulkUpdateGroup],
@@ -187,6 +314,13 @@ pub(crate) async fn prepare(
         .unwrap_or(DEFAULT_CAPTURE_ROW_CAP)
         .max(1);
     let mut plan = BulkCapturePlan::default();
+
+    // 呼び出し側が渡した pk_columns が実際の主キーと集合として一致しなければ、Undo が行を
+    // 取り違えうるので何も記録しない (メタデータを取れないときも辞退)。
+    if !pk_matches_table_metadata(&session.conn, database, table_name, pk_columns).await {
+        plan.declined += 1;
+        return plan;
+    }
 
     // UPDATE: 編集した行の主キー (重複は 1 つに)。
     let mut seen = std::collections::HashSet::new();
@@ -258,6 +392,7 @@ pub(crate) async fn prepare(
                             .is_some_and(|idx| pk_unique(&before.rows, &idx)) =>
                 {
                     plan.update = Some(UpdatePart {
+                        set_columns: set_columns(groups),
                         expected: update_conds.len(),
                         conds: update_conds,
                         before,
@@ -343,48 +478,39 @@ pub(crate) async fn finish(
     let mut captures: Vec<(WriteKind, String, WriteCapture)> = Vec::new();
 
     if let Some(u) = update {
-        let built = async {
-            let after = fetch_by_conds(&session.conn, database, table_ref, &u.conds)
-                .await
-                .ok()?;
-            let idx = pk_indices(&u.before.columns, pk_columns)?;
-            if after.rows.len() != u.expected
-                || after.columns.len() != u.before.columns.len()
-                || !pk_unique(&after.rows, &idx)
-            {
-                return None;
-            }
-            let after_by_pk: HashMap<String, &Vec<Value>> = after
-                .rows
-                .iter()
-                .map(|r| (pk_signature(r, &idx), r))
-                .collect();
-            let mut b_rows = Vec::new();
-            let mut a_rows = Vec::new();
-            for b in &u.before.rows {
-                let a = after_by_pk.get(&pk_signature(b, &idx))?;
-                if **a != *b {
-                    b_rows.push(b.clone());
-                    a_rows.push((*a).clone());
-                }
-            }
-            (!b_rows.is_empty()).then(|| {
-                build_capture(
-                    WriteKind::Update,
-                    table,
-                    pk_columns,
-                    &u.before.columns,
-                    b_rows,
-                    a_rows,
-                )
-            })
-        }
-        .await;
+        let after = fetch_by_conds(&session.conn, database, table_ref, &u.conds)
+            .await
+            .ok();
+        let built = after.map(|after| {
+            build_update_capture(
+                table,
+                pk_columns,
+                &u.set_columns,
+                &u.before,
+                &after,
+                u.expected,
+            )
+        });
         match built {
-            Some(c) => captures.push((WriteKind::Update, u.sql, c)),
-            None => declined += 1,
+            Some(UpdateBuild::Capture(c)) => captures.push((WriteKind::Update, u.sql, *c)),
+            Some(UpdateBuild::NoChange) => {}
+            Some(UpdateBuild::Decline) | None => declined += 1,
         }
     }
+    // 同じ適用で削除と追加の主キーが重なると、バッチの Undo は (表, 主キー) の重複として拒否される。
+    // 追加側を辞退して、削除だけを確実に取り消せるようにする。
+    let deleted_sigs: std::collections::HashSet<String> = delete
+        .as_ref()
+        .and_then(|d| {
+            pk_indices(&d.before.columns, pk_columns).map(|idx| {
+                d.before
+                    .rows
+                    .iter()
+                    .map(|r| pk_signature(r, &idx))
+                    .collect()
+            })
+        })
+        .unwrap_or_default();
     if let Some(d) = delete {
         let c = build_capture(
             WriteKind::Delete,
@@ -402,16 +528,22 @@ pub(crate) async fn finish(
                 .await
                 .ok()?;
             let idx = pk_indices(&after.columns, pk_columns)?;
-            (after.rows.len() == i.expected && pk_unique(&after.rows, &idx)).then(|| {
-                build_capture(
-                    WriteKind::Insert,
-                    table,
-                    pk_columns,
-                    &after.columns,
-                    Vec::new(),
-                    after.rows,
-                )
-            })
+            let overlaps = after
+                .rows
+                .iter()
+                .any(|r| deleted_sigs.contains(&pk_signature(r, &idx)));
+            (after.rows.len() == i.expected && pk_unique(&after.rows, &idx) && !overlaps).then(
+                || {
+                    build_capture(
+                        WriteKind::Insert,
+                        table,
+                        pk_columns,
+                        &after.columns,
+                        Vec::new(),
+                        after.rows,
+                    )
+                },
+            )
         }
         .await;
         match built {
@@ -515,5 +647,128 @@ mod tests {
         ];
         assert!(!pk_unique(&rows, &idx));
         assert!(pk_unique(&rows[..1], &idx));
+    }
+
+    fn cols(names: &[&str]) -> Vec<Column> {
+        names
+            .iter()
+            .map(|n| Column {
+                name: (*n).into(),
+                type_name: "t".into(),
+            })
+            .collect()
+    }
+
+    fn fetched(names: &[&str], rows: Vec<Vec<Value>>) -> Fetched {
+        Fetched {
+            columns: cols(names),
+            rows,
+        }
+    }
+
+    fn s(v: &str) -> Value {
+        Value::String(v.into())
+    }
+
+    fn build(before: &Fetched, after: &Fetched, set: &[&str], expected: usize) -> UpdateBuild {
+        build_update_capture(
+            "t",
+            &["id".to_string()],
+            &set.iter().map(|c| c.to_string()).collect::<Vec<_>>(),
+            before,
+            after,
+            expected,
+        )
+    }
+
+    #[test]
+    fn update_capture_restores_only_set_columns_in_before() {
+        // name を編集。他者が note (未編集列) を 2 回の読み取りの間に変えた。
+        let before = fetched(
+            &["id", "name", "note"],
+            vec![vec![Value::Int(1), s("old"), s("n0")]],
+        );
+        let after = fetched(
+            &["id", "name", "note"],
+            vec![vec![Value::Int(1), s("new"), s("n1-by-other")]],
+        );
+        let UpdateBuild::Capture(c) = build(&before, &after, &["name"], 1) else {
+            panic!("capture expected");
+        };
+        // before の note は after と同じ (他者の変更を巻き戻さない)、name だけが元の値。
+        assert_eq!(
+            c.before_rows,
+            vec![vec![Value::Int(1), s("old"), s("n1-by-other")]]
+        );
+        assert_eq!(
+            c.after_rows,
+            vec![vec![Value::Int(1), s("new"), s("n1-by-other")]]
+        );
+        assert_eq!(c.kind, WriteKind::Update);
+    }
+
+    #[test]
+    fn update_capture_pairs_rows_by_pk_not_order() {
+        let before = fetched(
+            &["id", "v"],
+            vec![vec![Value::Int(1), s("a")], vec![Value::Int(2), s("b")]],
+        );
+        let after = fetched(
+            &["id", "v"],
+            vec![vec![Value::Int(2), s("B")], vec![Value::Int(1), s("A")]],
+        );
+        let UpdateBuild::Capture(c) = build(&before, &after, &["v"], 2) else {
+            panic!("capture expected");
+        };
+        assert_eq!(c.before_rows[0], vec![Value::Int(1), s("a")]);
+        assert_eq!(c.after_rows[0], vec![Value::Int(1), s("A")]);
+        assert_eq!(c.before_rows[1], vec![Value::Int(2), s("b")]);
+    }
+
+    #[test]
+    fn update_capture_same_value_is_no_change() {
+        let f = fetched(&["id", "v"], vec![vec![Value::Int(1), s("a")]]);
+        assert!(matches!(build(&f, &f, &["v"], 1), UpdateBuild::NoChange));
+    }
+
+    #[test]
+    fn update_capture_declines_on_mismatch() {
+        let one = fetched(&["id", "v"], vec![vec![Value::Int(1), s("a")]]);
+        let new = fetched(&["id", "v"], vec![vec![Value::Int(1), s("b")]]);
+        // 行数の食い違い。
+        assert!(matches!(build(&one, &new, &["v"], 2), UpdateBuild::Decline));
+        // 行が消えた (after に同じ主キーが無い)。
+        let gone = fetched(&["id", "v"], vec![vec![Value::Int(9), s("b")]]);
+        assert!(matches!(
+            build(&one, &gone, &["v"], 1),
+            UpdateBuild::Decline
+        ));
+        // 主キー重複。
+        let dup = fetched(
+            &["id", "v"],
+            vec![vec![Value::Int(1), s("a")], vec![Value::Int(1), s("b")]],
+        );
+        assert!(matches!(build(&dup, &dup, &["v"], 2), UpdateBuild::Decline));
+        // 列の食い違い。
+        let other = fetched(&["id", "w"], vec![vec![Value::Int(1), s("b")]]);
+        assert!(matches!(
+            build(&one, &other, &["v"], 1),
+            UpdateBuild::Decline
+        ));
+        // SET 列が見つからない。
+        assert!(matches!(
+            build(&one, &new, &["zz"], 1),
+            UpdateBuild::Decline
+        ));
+    }
+
+    #[test]
+    fn update_capture_declines_when_set_touches_primary_key() {
+        let one = fetched(&["id", "v"], vec![vec![Value::Int(1), s("a")]]);
+        let new = fetched(&["id", "v"], vec![vec![Value::Int(1), s("b")]]);
+        assert!(matches!(
+            build(&one, &new, &["ID"], 1),
+            UpdateBuild::Decline
+        ));
     }
 }

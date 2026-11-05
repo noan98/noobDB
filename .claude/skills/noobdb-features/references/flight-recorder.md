@@ -127,7 +127,11 @@
 (`run_query_transaction_guarded_inner`、all-or-nothing) の**直前に before、コミット直後に after** を
 別接続の `SELECT *` で読み、UPDATE / DELETE / INSERT をそれぞれ 1 件の記録として同じ `batch_id` で
 保存する。ベストエフォート (読み取り失敗・行数の食い違い・`row_cap` 超過は記録を辞退し、編集は通す)。
-主キー列を書き換える編集、主キーを送らない INSERT (AUTO_INCREMENT) は辞退。`pk_columns` が実際の主キー
+主キー列を書き換える編集、主キーを送らない INSERT (AUTO_INCREMENT)、`pk_columns` が表の実際の主キー
+(`columns` の `PRI`) と集合として一致しない場合、同じ適用で削除と追加の主キーが重なる INSERT は辞退。
+UPDATE の before は「after 行の SET 列だけを読み取った before の値に戻した行」で保存する (2 回の読み取りの
+間に他者が未編集列を変えても、Undo がそれを巻き戻さず、衝突検出は全列で効く)。read_only でも緊急書き込みが
+有効なら記録する。`pk_columns` が実際の主キー
 でないと Undo が行を取り違えるため、フロントは `identityStrategy === "primary_key"` のときだけ指定する。
 Undo / Redo / force / read_only は既存のバッチ経路 (`apply_flight_batch`) をそのまま使う。
 

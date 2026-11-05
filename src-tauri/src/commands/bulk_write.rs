@@ -577,10 +577,11 @@ pub(crate) async fn bulk_update_cells_inner(
     let capture_cfg = options.capture.clone().filter(|_| !session.skip_history);
     let table_ref = qualified_ref(driver, database.as_deref().unwrap_or_default(), &table);
     let capture_plan = match &capture_cfg {
-        Some(cfg) if !session.read_only => Some(
+        Some(cfg) if !session.read_only || session.emergency_write_active() => Some(
             bulk_capture::prepare(
                 &session,
                 database.as_deref(),
+                &table,
                 &table_ref,
                 &pk_columns,
                 &groups,
