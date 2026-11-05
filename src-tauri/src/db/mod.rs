@@ -2461,6 +2461,9 @@ impl Connection {
                     },
                 ))
             }
+            // 上流の `kind == WriteKind::Other` ガードで早期 return 済みのため、
+            // ここには到達しない。WriteKind や上流ガードを変えるときはこのアームも見直すこと。
+            #[allow(clippy::unreachable)]
             WriteKind::Other => unreachable!("guarded above"),
         }
     }

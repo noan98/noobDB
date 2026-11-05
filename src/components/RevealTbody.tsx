@@ -1,6 +1,6 @@
 import { chakra } from "@chakra-ui/react";
 import { useReducedMotionConfig } from "motion/react";
-import { useLayoutEffect, useRef, type ComponentProps, type RefObject } from "react";
+import { useCallback, useLayoutEffect, useRef, type ComponentProps, type RefObject } from "react";
 
 import { durations, easings, firstBatchReveal } from "../motion";
 import {
@@ -22,10 +22,19 @@ import { revealViewportBottom } from "./rowsMountReveal";
  * `fill: "backwards"` で終了後に inline style を残さない。reduced-motion (`useReducedMotionConfig`) と
  * ハイコントラストは何も再生しない。`Element.animate` が無い環境 (jsdom) でも何もしない。
  */
-export function RevealTbody(props: ComponentProps<typeof chakra.tbody>) {
+export function RevealTbody({ ref: outerRef, ...props }: ComponentProps<typeof chakra.tbody>) {
   const ref = useRef<HTMLTableSectionElement>(null);
   useRevealChildren(ref, "tr");
-  return <chakra.tbody ref={ref} {...props} />;
+  // 呼び出し側が `useRowCrossfade` などで同じ要素を参照したいときのため、外から渡された ref にも反映する。
+  const setRef = useCallback(
+    (el: HTMLTableSectionElement | null) => {
+      ref.current = el;
+      if (typeof outerRef === "function") outerRef(el);
+      else if (outerRef) (outerRef as { current: HTMLTableSectionElement | null }).current = el;
+    },
+    [outerRef],
+  );
+  return <chakra.tbody ref={setRef} {...props} />;
 }
 
 /**

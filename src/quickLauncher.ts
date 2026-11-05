@@ -336,6 +336,26 @@ export function saveLauncherPosition(pos: LauncherPosition): void {
   }
 }
 
+const INTRO_SEEN_STORAGE_KEY = "noobdb.quickLauncher.introSeen.v1";
+
+/** 初回発見パルスをまだ見せていないか (#2039)。読むだけで書かない。localStorage が使えなければ false (出さない)。 */
+export function launcherIntroPending(): boolean {
+  try {
+    return !localStorage.getItem(INTRO_SEEN_STORAGE_KEY);
+  } catch {
+    return false;
+  }
+}
+
+/** 初回発見パルスを見せたことを記録する。保存できなくても動作には影響しない。 */
+export function markLauncherIntroSeen(): void {
+  try {
+    localStorage.setItem(INTRO_SEEN_STORAGE_KEY, "1");
+  } catch {
+    // 同上。
+  }
+}
+
 /** 「位置をリセット」: 保存を消して初期位置に戻す。 */
 export function clearLauncherPosition(): void {
   try {

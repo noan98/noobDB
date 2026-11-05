@@ -20,10 +20,20 @@ name: mutation-test
 #   lib.rs          __test_api のディスパッチ (is_query_shape ほか)
 # 関数を足す・外すときは mutants.toml だけを直し、`cargo mutants --list` で確認する。
 #
-# 実行時間が長い (全変異で数十分以上) ため、PR では走らせず手動トリガのみ。
+# 実行時間が長い (全変異で数十分以上) ため、PR では走らせない。手動トリガに加えて、
+# 週次の定期実行 (#2038) で PR に触られない安全網コードの生存変異 = テスト網の経年劣化を
+# 無人で検出する (PR 差分版 mutants-diff.yml は変更ファイルしか見ないため)。
 # 可視化 (Job Summary + アーティファクト) だけを目的とし、fail させない方針。
 # バンドルサイズ (#443)・カバレッジ (#482) と同じ漸進方針。
 on:
+  # 週次の全件実行 (#2038)。スコープ・設定は手動実行と同じ (mutants.toml が単一ソース)。
+  # 1 回あたり 4 シャード × 約 30 分かかるため nightly ではなく週次にする。
+  # cron は UTC: 土曜 17:17 UTC = JST 日曜 02:17 (夜間。毎時 00 分は混雑で遅延しやすいので避ける)。e2e (18:00 UTC) /
+  # windows-db-smoke (18:30 UTC) の毎日実行と時刻をずらしてランナーを奪い合わない。
+  # schedule は既定ブランチでのみ走る。結果は notify ジョブがトラッキング Issue
+  # (ci:mutants) に通知する。必須チェックにはしない (可視化目的)。
+  schedule:
+    - cron: "17 17 * * 6"
   workflow_dispatch:
     inputs:
       list_only:
@@ -34,9 +44,10 @@ on:
 permissions:
   contents: read
 
-# 手動トリガを連続起動したとき、数十分かかるジョブが重複して走らないようにする。
+# 手動トリガや週次 schedule が重なったとき、数十分かかるジョブが重複して走らないようにする。
+# list_only の手動実行は別グループにし、フル実行 (定期含む) を打ち切ってその週の通知を消さない。
 concurrency:
-  group: mutants-${{ github.ref }}
+  group: mutants-${{ github.ref }}-${{ inputs.list_only && 'list' || 'run' }}
   cancel-in-progress: true
 
 env:
@@ -262,7 +273,7 @@ jobs:
             done
           fi
 
-  # 結果の通知 (#1395)。手動実行の可視化専用で見に行かなければ腐るため、トラッキング
+  # 結果の通知 (#1395)。手動 / 週次実行の可視化専用で見に行かなければ腐るため、トラッキング
   # Issue (ラベル ci:mutants) に結果を残す。生存変異は毎回「ある」のが普通でノイズに
   # なるので、通知条件は次のとおりに絞る。
   #   - 実行失敗 (結果ファイル無し / baseline 失敗 等) … 必ず upsert
@@ -273,7 +284,7 @@ jobs:
   notify:
     name: 結果の通知 (トラッキング Issue)
     needs: [mutants, summary]
-    if: always() && !inputs.list_only && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (needs.mutants.result == 'success' || needs.mutants.result == 'failure') && needs.summary.result == 'success'
+    if: always() && !inputs.list_only && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (needs.mutants.result == 'success' || needs.mutants.result == 'failure') && needs.summary.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

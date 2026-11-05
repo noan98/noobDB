@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { api } from "../api/tauri";
-import { parseSync } from "vite";
-import { reachableModules, toSrcRelative } from "./moduleGraph";
+import { reachableModules, stripCommentsAndStrings, toSrcRelative } from "./moduleGraph";
 
 // API 到達性パリティ検証 (#907 / #1421)。
 //
@@ -43,50 +42,6 @@ const ENTRY = "main.tsx";
 
 /** `main.tsx` から実行時 import でたどれるモジュール。 */
 const reachable = reachableModules([ENTRY], allSources);
-
-/**
- * コメントと文字列リテラル (テンプレートの文字列部分・JSX テキスト含む) を空白に潰す (#1774)。
- * 生ソースのまま走査すると、`// api.fooBar は廃止予定` のようなコメントや文字列中に名前が
- * 1 回出るだけで、実際は呼ばれていないラッパーが「到達可能」と誤判定される。
- * 正規表現ではなく oxc パーサの位置情報で潰すので、正規表現リテラルや JSX 内の `'` に惑わされない。
- * テンプレートの `${api.x}` 式の中身は実コードなので残す。
- */
-function stripCommentsAndStrings(path: string, source: string): string {
-  const { program, comments, errors } = parseSync(path, source);
-  // パース失敗時は program.body が空になり、文字列が残ったまま走査されて黙って「到達可能」側へ倒れる。
-  if (errors.length > 0) {
-    throw new Error(`${path} をパースできません (コメント/文字列の除去に失敗): ${errors[0].message}`);
-  }
-  const ranges: [number, number][] = comments.map((c) => [c.start, c.end]);
-  const visit = (node: unknown): void => {
-    if (node === null || typeof node !== "object") return;
-    if (Array.isArray(node)) {
-      for (const n of node) visit(n);
-      return;
-    }
-    const n = node as { type?: string; value?: unknown; start?: number; end?: number };
-    if (
-      typeof n.start === "number" &&
-      typeof n.end === "number" &&
-      ((n.type === "Literal" && typeof n.value === "string") ||
-        n.type === "TemplateElement" ||
-        n.type === "JSXText")
-    ) {
-      ranges.push([n.start, n.end]);
-      return;
-    }
-    for (const v of Object.values(n)) visit(v);
-  };
-  visit(program);
-  let out = "";
-  let pos = 0;
-  for (const [start, end] of ranges.sort((a, b) => a[0] - b[0])) {
-    if (start < pos) continue;
-    out += source.slice(pos, start) + source.slice(start, end).replace(/[^\n]/g, " ");
-    pos = end;
-  }
-  return out + source.slice(pos);
-}
 
 /**
  * 到達性の判定に使うソース。`api/` 配下 (`tauri.ts` と、ラッパー本体を分割した

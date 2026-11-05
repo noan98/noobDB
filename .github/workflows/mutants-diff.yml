@@ -2,7 +2,7 @@ name: mutants-diff
 
 # PR 差分スコープのミューテーションテスト (#1841)
 #
-# 手動 (workflow_dispatch) の mutants.yml (全件 4 シャード、1 シャード約 30 分。定期実行ではない) とは別に、
+# mutants.yml (全件 4 シャード、1 シャード約 30 分。手動 + 週次 schedule) とは別に、
 # 安全網ファイルを変更した PR だけで `cargo mutants --in-diff` を走らせ、
 # 「その PR で新しく入った未カバー分岐」(= 生存変異) を PR 時点で報告する。
 # mutants.yml は変更しない (全件の回帰ネットとしてそのまま維持)。

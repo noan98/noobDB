@@ -30,6 +30,17 @@ describe("EmptyState onboarding (#450)", () => {
     );
     // compact ではイラストを出さず、アイコンバッジ (svg) のみ。少なくとも 1 つの svg。
     expect(container.querySelectorAll("svg").length).toBeGreaterThanOrEqual(1);
+    // リッチイラスト (.noob-illust) は出さない。
+    expect(container.querySelector(".noob-illust")).toBeNull();
+  });
+
+  it("非 compact では illustration が出て、FeatureIcon (icon) は出ない (#2044)", () => {
+    const { container } = renderWithProviders(
+      <EmptyState illustration={<WelcomeIllustration />} icon="table" title="No rows" />,
+    );
+    expect(container.querySelector(".noob-illust")).not.toBeNull();
+    // illustration と FeatureIcon は排他: svg はイラストの 1 つだけ。
+    expect(container.querySelectorAll("svg")).toHaveLength(1);
   });
 });
 

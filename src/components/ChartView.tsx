@@ -13,6 +13,7 @@ import { ListboxSelect } from "./ListboxSelect";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { elementToPngBlob, elementToSvgBytes } from "./imageExport";
 import { EmptyState } from "./EmptyState";
+import { NoResultsIllustration } from "./illustrations";
 import { ChartSkeleton } from "./Skeleton";
 import {
   CHART_PALETTES,
@@ -261,6 +262,8 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
         </Flex>
         <Flex flex="1" minH={0} align="center" justify="center">
           <EmptyState
+            illustration={<NoResultsIllustration />}
+            brandHalo
             icon="query"
             title={t("chartNoNumeric")}
             action={{ label: t("chartBackToTable"), onClick: () => onChangeView("grid") }}

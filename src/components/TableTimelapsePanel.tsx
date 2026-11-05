@@ -31,7 +31,7 @@ import { tableToCsv } from "./tabularText";
 import { useConfirm } from "./ConfirmDialog";
 import { statusColors } from "./diffStatusColors";
 import { EmptyState } from "./EmptyState";
-import { NoResultsIllustration } from "./illustrations";
+import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import { ErrorNote } from "./modalForm";
 import { rowKeyNote } from "../rowKey";
@@ -471,6 +471,7 @@ export function TableTimelapsePanel({
 
       {loadError ? (
         <EmptyState
+          illustration={errorIllustration(loadError)}
           icon="warning"
           title={t("timelapseLoadError", { error: loadError })}
           action={{ label: t("timelapseRetry"), onClick: () => void reload() }}

@@ -1,13 +1,27 @@
 // 本体コードでの unwrap / expect / panic を段階的に禁止するクレートレベル lint。
 // テストコードは src-tauri/clippy.toml の allow-*-in-tests で除外済み。
 // やむを得ず残す箇所には #[allow(...)] + 根拠コメントを付けること。
-#![warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented
+)]
 
 mod advisor_ignore;
 mod ai;
 mod assertions;
 mod atomic_write;
 mod cache;
+// 参照引数を持つ async コマンドの戻り値型チェック (tauri-macros の wrapper.rs) が
+// `unreachable!()` を生成し、clippy::unreachable を誤検知する (手書きではない)。
+// マクロ由来の誤検知を抑えるためこのモジュールに限り許可する。tauri 更新時に
+// この allow が不要になっていないか見直すこと。手書きの
+// `unreachable!` / `todo!` / `unimplemented!` は commands/mod.rs のメタテスト
+// (panic_macro_guard) が、直前の allow + 根拠コメント無しなら失敗させて補っている。
+#[allow(clippy::unreachable)]
 mod commands;
 mod db;
 mod diagnostics;
