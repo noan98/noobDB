@@ -1,8 +1,9 @@
+import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import { MotionConfig } from "motion/react";
 import { renderInBrowser } from "./render";
 import { DataRowDiffTable } from "../../components/DataRowDiffTable";
-import { DiffTableSkeleton } from "../../components/SchemaDiffDetail";
+import { DiffTableSkeleton, TableDiffList } from "../../components/SchemaDiffDetail";
 import type { DataDiff } from "../../api/tauri";
 
 // スキーマ / データ比較サーフェスの標準モーション (#2013) を実ブラウザで検証する。
@@ -42,6 +43,7 @@ describe("比較サーフェスのモーション (#2013, 実ブラウザ)", () 
 
   it("reduced-motion ではリビールしない", async () => {
     await mount("always");
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
     const rows = Array.from(document.querySelectorAll("tbody > tr"));
     expect(rows.length).toBe(3);
     expect(rows.every((r) => (r as HTMLElement).getAnimations().length === 0)).toBe(true);
@@ -61,6 +63,7 @@ describe("比較サーフェスのモーション (#2013, 実ブラウザ)", () 
     await mount("always");
     const tbody = document.querySelector("tbody") as HTMLElement;
     (document.querySelector("[role='group'] button") as HTMLElement).click();
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
     expect(tbody.getAnimations().length).toBe(0);
   });
 
@@ -70,5 +73,39 @@ describe("比較サーフェスのモーション (#2013, 実ブラウザ)", () 
     expect(sk.getAttribute("aria-hidden")).toBe("true");
     expect(sk.querySelectorAll("th").length).toBe(2);
     expect(sk.querySelectorAll("tbody tr").length).toBe(5);
+  });
+});
+
+describe("テーブル一覧のフィルタ (#2013, 実ブラウザ)", () => {
+  const tbl = (name: string) =>
+    ({ name, status: "source_only", columns: [], indexes: [], fk_changes: [], check_changes: [] }) as never;
+  function Harness() {
+    const [names, setNames] = useState(["a", "b", "c"]);
+    return (
+      <MotionConfig reducedMotion="never">
+        <button type="button" data-testid="filter" onClick={() => setNames(["b", "c"])} />
+        <TableDiffList
+          groups={[{ status: "source_only", tables: names.map(tbl) } as never]}
+          selected={null}
+          onSelect={() => {}}
+          t={((k: string) => k) as never}
+        />
+      </MotionConfig>
+    );
+  }
+  const findB = () =>
+    Array.from(document.querySelectorAll("li button")).find((b) =>
+      b.textContent?.includes("b"),
+    ) as HTMLElement;
+
+  it("フィルタで項目が減っても、残った項目の DOM ノードとフォーカスが保たれる", async () => {
+    await renderInBrowser(<Harness />);
+    const btnB = findB();
+    const liB = btnB.closest("li");
+    btnB.focus();
+    (document.querySelector("[data-testid='filter']") as HTMLElement).click();
+    await expect.poll(() => document.querySelectorAll("li").length).toBe(2);
+    expect(findB().closest("li")).toBe(liB);
+    expect(document.activeElement).toBe(findB());
   });
 });

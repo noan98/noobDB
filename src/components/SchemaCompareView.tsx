@@ -1211,7 +1211,9 @@ export function SchemaCompareView({
             </>
           ) : (
             <>
-              <DataRowDiffTable diff={dataDiff} />
+              {/* 結果ごとに key を変えて再マウントし、再比較でも行リビールを再生する (#2013)。
+                  再比較中は旧結果を残したままなのでスケルトンは出ない (スケルトンは初回の結果なし状態だけ)。 */}
+              <DataRowDiffTable key={dataDiffId ?? ""} diff={dataDiff} />
               <Flex
                 align="center"
                 gap="3"
@@ -1534,6 +1536,7 @@ export function SchemaCompareView({
                   <Box css={paneCss} p="3.5">
                     {selectedTable ? (
                       <TableDiffDetail
+                        key={selectedTable.name}
                         table={selectedTable}
                         sourceName={sourceLabel ?? ""}
                         targetName={targetLabel ?? ""}

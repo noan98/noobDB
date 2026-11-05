@@ -18,7 +18,6 @@ import type {
 } from "../api/tauri";
 import { useLocale, useT } from "../i18n";
 import { transitions, variants } from "../motion";
-import { shouldStaggerEntrance } from "./commandPaletteSearch";
 import { statusColors } from "./diffStatusColors";
 import { CodePreview } from "./modalForm";
 import { prefersStaticMotion } from "./revealOrigin";
@@ -301,6 +300,9 @@ const MotionDiv = chakra(
   { forwardProps: ["variants", "initial", "animate", "exit", "transition"] },
 );
 
+/** この件数を超えるグループは出入りの高さ補間をしない (数百件の一覧で motion 要素を増やさない)。 */
+const COLLAPSE_LIST_MAX = 100;
+
 /** 即時化した transition (reduced-motion / ハイコントラスト時)。 */
 const INSTANT = { duration: 0 } as const;
 
@@ -373,22 +375,22 @@ export function TableDiffList({
             {groupLabel(g.status, g.tables.length, t)}
           </chakra.div>
           <chakra.ul listStyle="none" m={0} p={0}>
-            <AnimatePresence initial={false}>
-              {g.tables.map((tbl, i) => {
+            {(() => {
+              // 要素の型はグループ全体の件数だけで決める。項目ごとに切り替えると、フィルタで境界をまたいだとき
+              // 再マウントされてフォーカスが外れ、残った項目まで展開アニメが走る。
+              const animated = g.tables.length <= COLLAPSE_LIST_MAX;
+              const Li = animated ? MotionLi : chakra.li;
+              const motionProps = animated
+                ? {
+                    variants: variants.collapse,
+                    initial: "initial",
+                    animate: "animate",
+                    exit: "exit",
+                    transition: still ? INSTANT : transitions.enter,
+                  }
+                : {};
+              const items = g.tables.map((tbl) => {
                 const meta = tableMeta(tbl, t);
-                // フィルタ / 検索で出入りする項目だけ高さ補間する。数百件の一覧で motion 要素を増やさないよう、
-                // 上限は CommandPalette の stagger と同じ `shouldStaggerEntrance` に揃える。
-                const animated = shouldStaggerEntrance(i);
-                const Li = animated ? MotionLi : chakra.li;
-                const motionProps = animated
-                  ? {
-                      variants: variants.collapse,
-                      initial: "initial",
-                      animate: "animate",
-                      exit: "exit",
-                      transition: still ? INSTANT : transitions.enter,
-                    }
-                  : {};
                 return (
                   <Li key={tbl.name} borderBottom="1px solid" borderColor="app.borderSubtle" {...motionProps}>
                     <chakra.button
@@ -418,8 +420,9 @@ export function TableDiffList({
                     </chakra.button>
                   </Li>
                 );
-              })}
-            </AnimatePresence>
+              });
+              return animated ? <AnimatePresence initial={false}>{items}</AnimatePresence> : items;
+            })()}
           </chakra.ul>
         </Box>
       ))}
@@ -778,9 +781,12 @@ export const TableDiffDetail = memo(function TableDiffDetail({
               ? t("schemaCompareTableSql", { count: statements.length })
               : t("schemaCompareTableSqlTitle")}
           </chakra.h4>
-          <AnimatePresence initial={false} mode="wait">
+          <AnimatePresence initial={false}>
             <MotionDiv
               key={!planReady ? "hint" : statements.length === 0 ? "none" : "sql"}
+              display="flex"
+              flexDirection="column"
+              gap="1"
               variants={variants.collapse}
               initial="initial"
               animate="animate"
