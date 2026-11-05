@@ -70,6 +70,8 @@ interface Props {
   onEdit?: (profile: ConnectionProfile) => void;
   onDuplicate?: (profile: ConnectionProfile) => void;
   onDelete?: (profile: ConnectionProfile) => void;
+  /** ヒーローのシグネチャ・アニメを許可する。スプラッシュ表示中は false を渡して裏での消費を防ぐ (#2042)。既定 true。 */
+  animateHero?: boolean;
 }
 
 /** プロファイルの接続先を 1 行で要約する (ヘッダーの表示と同じ書式)。 */
@@ -97,6 +99,7 @@ export function ProfileCardGrid({
   onEdit,
   onDuplicate,
   onDelete,
+  animateHero = true,
 }: Props) {
   const t = useT();
   const reduced = useReducedMotion() ?? false;
@@ -156,7 +159,7 @@ export function ProfileCardGrid({
       // ルート自身の背景画像として敷く (内容は常にその手前に描かれる)。
       css={{ backgroundImage: "var(--hero-wash)", backgroundRepeat: "no-repeat" }}
     >
-      <HeroHeader title={t("profileCardsTitle")} subtitle={t("profileCardsSubtitle")} />
+      <HeroHeader title={t("profileCardsTitle")} subtitle={t("profileCardsSubtitle")} animate={animateHero} />
       {showFilter && (
         <Flex direction="column" align="center" gap="2" w="100%" maxW="960px">
           <Input

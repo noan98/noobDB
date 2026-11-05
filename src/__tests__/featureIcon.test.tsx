@@ -29,3 +29,25 @@ describe("FeatureIcon (#1954)", () => {
     expect(compact.container.querySelector("[data-feature-icon='sm']")).toBeTruthy();
   });
 });
+
+describe("FeatureIcon マウント入場 (#2041)", () => {
+  it("animateOnMount=false でもタイルは描画される (opt-out)", () => {
+    const { container } = renderWithProviders(<FeatureIcon icon="database" animateOnMount={false} />);
+    expect(container.querySelector("[data-feature-icon='md'] svg")).toBeTruthy();
+  });
+
+  it("transitionKey 付き (ツアー) でもタイルは描画される", () => {
+    const { container } = renderWithProviders(<FeatureIcon icon="database" transitionKey={1} />);
+    expect(container.querySelector("[data-feature-icon='md'] svg")).toBeTruthy();
+  });
+
+  it("タイルは中央寄せで、align/justify が DOM 属性に漏れない", () => {
+    const { container } = renderWithProviders(<FeatureIcon icon="database" />);
+    const tile = container.querySelector("[data-feature-icon]");
+    expect(tile?.hasAttribute("align")).toBe(false);
+    expect(tile?.hasAttribute("justify")).toBe(false);
+    const style = getComputedStyle(tile as Element);
+    expect(style.alignItems).toBe("center");
+    expect(style.justifyContent).toBe("center");
+  });
+});
