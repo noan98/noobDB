@@ -121,6 +121,34 @@ impl MySqlConn {
         run_sql_on(&mut conn, sql).await
     }
 
+    /// `ANALYZE TABLE` / `OPTIMIZE TABLE` を実行して結果行 (Table / Op / Msg_type / Msg_text) を
+    /// 受け取る (#2025)。これらは失敗しても SQL エラーにならず `Msg_type=Error` の行で返るため、
+    /// 行を捨てる `execute` では失敗を検知できない。`is_query_shape` は変えない (対話実行の経路に
+    /// 影響させない)。テキストプロトコル (`raw_sql`) で流す。
+    pub async fn execute_maintenance(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+    ) -> Result<QueryResult> {
+        let started = Instant::now();
+        let mut conn = self.pool.acquire().await?;
+        apply_use_database(&mut conn, database).await?;
+        let rows: Vec<MySqlRow> = sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+            .fetch_all(&mut *conn)
+            .await?;
+        Ok(QueryResult {
+            columns: if rows.is_empty() {
+                Vec::new()
+            } else {
+                columns_of(&rows)
+            },
+            rows: rows.iter().map(row_to_values).collect(),
+            rows_affected: 0,
+            elapsed_ms: started.elapsed().as_millis() as u64,
+            server_messages: Vec::new(),
+        })
+    }
+
     // ── 明示トランザクション ──
 
     pub async fn tx_begin(&self, database: Option<&str>, opts: TxOptions) -> Result<()> {

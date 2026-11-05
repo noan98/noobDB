@@ -572,6 +572,50 @@ describe("TaskManager 取得系アクションと接続リトライ (#1537)", ()
   });
 });
 
+describe("TaskManager 定期メンテナンス (#2025)", () => {
+  it("PostgreSQL の VACUUM を対象テーブル付きで保存できる", async () => {
+    listTasks.mockResolvedValue([]);
+    const saveTask = vi.mocked(api.saveTask);
+    saveTask.mockResolvedValue({ ...TASK, id: "new" });
+    const user = userEvent.setup();
+    renderWithProviders(
+      <TaskManager profiles={[makeProfile({ driver: "postgres", read_only: false })]} onClose={() => {}} />,
+    );
+    await waitFor(() => expect(screen.getByText(t("taskEmpty"))).toBeInTheDocument());
+    await user.click(screen.getAllByRole("button", { name: t("taskCreate") })[0]);
+    await user.type(await screen.findByLabelText(t("taskFormName")), "Nightly vacuum");
+    chooseListboxOption(screen.getByLabelText(t("taskFormActionKind")), "run_maintenance");
+    expect(screen.getByText(t("taskFormMaintenanceHint"))).toBeInTheDocument();
+    chooseListboxOption(screen.getByLabelText(t("taskFormMaintenanceKind")), "vacuum");
+    await user.type(screen.getByLabelText(t("taskFormMaintenanceTargets")), "orders{Enter}users");
+    await user.click(screen.getByRole("button", { name: t("taskFormSave") }));
+    await waitFor(() => expect(saveTask).toHaveBeenCalledTimes(1));
+    expect(saveTask.mock.calls[0][0].action).toEqual({
+      kind: "run_maintenance",
+      database: null,
+      targets: ["orders", "users"],
+      maintenance: "vacuum",
+    });
+  });
+
+  it("MySQL は対象テーブルが空だと保存せずエラーを出す / 読み取り専用接続は拒否", async () => {
+    listTasks.mockResolvedValue([]);
+    const saveTask = vi.mocked(api.saveTask);
+    saveTask.mockClear();
+    const user = userEvent.setup();
+    renderWithProviders(
+      <TaskManager profiles={[makeProfile({ driver: "mysql", read_only: false })]} onClose={() => {}} />,
+    );
+    await waitFor(() => expect(screen.getByText(t("taskEmpty"))).toBeInTheDocument());
+    await user.click(screen.getAllByRole("button", { name: t("taskCreate") })[0]);
+    await user.type(await screen.findByLabelText(t("taskFormName")), "Analyze");
+    chooseListboxOption(screen.getByLabelText(t("taskFormActionKind")), "run_maintenance");
+    await user.click(screen.getByRole("button", { name: t("taskFormSave") }));
+    expect(await screen.findByText(t("taskFormMaintenanceTargetsRequiredMysql"))).toBeInTheDocument();
+    expect(saveTask).not.toHaveBeenCalled();
+  });
+});
+
 describe("TaskManager 初回読み込み (#1617)", () => {
   it("一覧を取得するまでは「タスクがありません」を出さない", async () => {
     let resolve: (v: TaskDefinition[]) => void = () => {};

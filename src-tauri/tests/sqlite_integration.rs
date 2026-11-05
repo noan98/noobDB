@@ -7016,3 +7016,30 @@ async fn sqlite_list_table_partitions_is_unsupported() {
     assert!(matches!(err, t::AppError::InvalidInput(_)), "{err:?}");
     let _ = std::fs::remove_file(&p);
 }
+
+/// 定期メンテナンス (#2025) が流す VACUUM / ANALYZE / REINDEX が、ファイル DB で
+/// `Connection::execute_maintenance` から成功する。
+#[tokio::test]
+async fn sqlite_maintenance_statements_succeed_on_file_db() {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "noobdb_sqlite_sched_maint_{}.db",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("CREATE TABLE m (id INTEGER PRIMARY KEY, v TEXT)", None)
+        .await
+        .expect("create");
+    conn.execute("INSERT INTO m (id, v) VALUES (1, 'a'), (2, 'b')", None)
+        .await
+        .expect("insert");
+    for sql in ["ANALYZE \"m\";", "REINDEX \"m\";", "VACUUM;", "ANALYZE;"] {
+        conn.execute_maintenance(sql, None)
+            .await
+            .unwrap_or_else(|e| panic!("{sql} failed: {e}"));
+    }
+    let _ = std::fs::remove_file(&path);
+}

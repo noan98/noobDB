@@ -2327,7 +2327,19 @@ export type TaskAction =
       kind: "refresh_plan_watch";
       /** 対象スニペット ID。空ならこのプロファイルでウォッチ中のものすべて。 */
       snippet_ids: string[];
+    }
+  | {
+      /** ANALYZE / VACUUM / OPTIMIZE / REINDEX の定期メンテナンス (#2025)。書き込み扱いで、read_only のプロファイルでは保存・実行とも拒否される。 */
+      kind: "run_maintenance";
+      /** MySQL ではデータベース、PostgreSQL ではスキーマ (識別子の修飾)。SQLite は無視。 */
+      database?: string | null;
+      /** 対象テーブル。空ならデータベース全体 (PostgreSQL の ANALYZE / VACUUM、SQLite)。 */
+      targets: string[];
+      maintenance: TaskMaintenanceKind;
     };
+
+/** `run_maintenance` の種別。ドライバごとに使えるものが違う (`maintenanceKindsForDriver`)。 */
+export type TaskMaintenanceKind = "analyze" | "optimize" | "vacuum" | "vacuum_analyze" | "reindex";
 
 /** 接続失敗時の自動リトライ設定 (#1537)。接続段階の失敗だけを指数バックオフで再試行する。 */
 export interface ConnectRetry {

@@ -12,6 +12,8 @@ import {
   previewOutputPath,
   relativeNextRun,
   sortTasksForDisplay,
+  maintenanceKindsForDriver,
+  parseMaintenanceTargets,
   summarizeAction,
   summarizeSchedule,
 } from "../taskFormat";
@@ -342,5 +344,30 @@ describe("#1621 スケジュールのドラフト変換", () => {
     );
     expect(s).toContain("Asia/Tokyo");
     expect(s).toContain("09:00");
+  });
+});
+
+describe("run_maintenance (#2025)", () => {
+  it("要約に種別と対象数を出す", () => {
+    expect(summarizeAction({ kind: "run_maintenance", targets: [], maintenance: "vacuum_analyze" }, en)).toBe(
+      "maintenance: Vacuum + Analyze (whole database)",
+    );
+    expect(
+      summarizeAction(
+        { kind: "run_maintenance", database: "d", targets: ["a", "b"], maintenance: "optimize" },
+        en,
+      ),
+    ).toBe("maintenance: Optimize (rebuild & defragment) (2 tables)");
+  });
+
+  it("ドライバごとに選べる種別が違う", () => {
+    expect(maintenanceKindsForDriver("mysql")).toEqual(["analyze", "optimize"]);
+    expect(maintenanceKindsForDriver("postgres")).toEqual(["vacuum_analyze", "analyze", "vacuum", "reindex"]);
+    expect(maintenanceKindsForDriver("sqlite")).toEqual(["analyze", "vacuum", "reindex"]);
+  });
+
+  it("対象の入力を行・カンマで分けて空と重複を除く", () => {
+    expect(parseMaintenanceTargets(" a\n\nb, c \na\r\nd")).toEqual(["a", "b", "c", "d"]);
+    expect(parseMaintenanceTargets("  ")).toEqual([]);
   });
 });

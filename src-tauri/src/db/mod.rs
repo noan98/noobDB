@@ -650,6 +650,21 @@ impl Connection {
         }
     }
 
+    /// 定期メンテナンスの文を実行する (#2025)。MySQL は `ANALYZE` / `OPTIMIZE TABLE` が失敗を
+    /// 結果行 (`Msg_type=Error`) で返すので行を受け取る。PostgreSQL / SQLite は失敗が SQL エラーに
+    /// なるので [`Connection::execute`] と同じ。
+    pub async fn execute_maintenance(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+    ) -> Result<QueryResult> {
+        match self {
+            Connection::MySql(c) => c.execute_maintenance(sql, database).await,
+            Connection::Postgres(c) => c.execute(sql, database).await,
+            Connection::Sqlite(c) => c.execute(sql, database).await,
+        }
+    }
+
     /// EXPLAIN 系の文を実行する (実行計画ウォッチ #1260)。MySQL / PostgreSQL は
     /// [`Connection::execute`] と同じ。SQLite だけは他の接続での DDL に計画が追従する
     /// よう、スキーマを再検証してから実行する (`SqliteConn::execute_explain`)。

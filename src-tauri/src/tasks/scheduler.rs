@@ -62,9 +62,9 @@ pub(crate) fn progress_unit(action: &super::TaskAction) -> &'static str {
         super::TaskAction::Dump { .. } => "bytes",
         super::TaskAction::RunAssertions { .. } => "items",
         // ウォッチ中のテーブル / スニペットの件数。
-        super::TaskAction::TimelapseCapture { .. } | super::TaskAction::RefreshPlanWatch { .. } => {
-            "items"
-        }
+        super::TaskAction::TimelapseCapture { .. }
+        | super::TaskAction::RefreshPlanWatch { .. }
+        | super::TaskAction::RunMaintenance { .. } => "items",
     }
 }
 

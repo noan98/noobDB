@@ -776,6 +776,7 @@ const CONNECTION_WRITE_METHODS = new Set([
   "register_local_table",
   "drop_local_table",
   "sqlite_maintenance",
+  "execute_maintenance",
   "vacuum_into",
 ]);
 /** 引数 1 つ目に SQL 文字列を取るメソッド。LIFECYCLE ではその引数が固定リテラルであることを要求する。 */

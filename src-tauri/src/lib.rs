@@ -268,6 +268,7 @@ pub mod __test_api {
     pub use crate::schema_drift::{
         GenerationMeta as DriftGenerationMeta, TableChangeStatus, TableChangeSummary,
     };
+    pub use crate::tasks::maintenance::{mysql_maintenance_errors, TaskMaintenanceKind};
     pub use crate::tasks::scheduler::TaskRunProgressEvent;
     pub use crate::tasks::{
         AssertionRunRecord, ConnectRetry, SchedulerSettings, TaskAction, TaskDefinition, TaskRun,
