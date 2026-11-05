@@ -75,7 +75,7 @@ function WelcomeCard({ icon, title, description, onClick, tourId }: CardProps) {
         flex="1"
         alignItems="flex-start"
       >
-        <FeatureIcon icon={icon} size="md" />
+        <FeatureIcon icon={icon} size="md" animateOnMount={false} />
         <Text textStyle="subheading">{title}</Text>
         <Text id={descId} textStyle="caption">
           {description}
