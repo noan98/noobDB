@@ -144,7 +144,8 @@ export function findingDescription(finding: HealthFinding): {
       };
     case "float_for_money":
       return {
-        key: "advisorRuleFloatForMoneyDesc",
+        // SQLite の DECIMAL / NUMERIC は正確な十進数にならないので、最小単位の整数を勧める文言へ。
+        key: ctx[1] === "sqlite" ? "advisorRuleFloatForMoneySqliteDesc" : "advisorRuleFloatForMoneyDesc",
         params: {
           table: finding.table,
           column: finding.columns[0] ?? "",

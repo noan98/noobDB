@@ -6258,6 +6258,8 @@ const en = {
     "{table}.{column} is {type} ({length} characters). In MySQL an oversized limit gives no real validation and can inflate memory use for sorting and in-memory temporary tables. Consider a realistic length, or TEXT if the length is unbounded.",
   advisorRuleFloatForMoneyDesc:
     "{table}.{column} looks like a monetary value but uses the floating-point type {type}. Rounding errors can accumulate; use DECIMAL / NUMERIC (or integer minor units) instead.",
+  advisorRuleFloatForMoneySqliteDesc:
+    "{table}.{column} looks like a monetary value but uses the floating-point type {type}. Rounding errors can accumulate. In SQLite, DECIMAL / NUMERIC only gives NUMERIC affinity and values may still be stored as REAL, so store integer minor units (e.g. cents) in an INTEGER column instead.",
   // 未使用ルールのスキップ理由
   advisorReasonUnsupportedDriver:
     "this driver has no server-side index usage statistics (SQLite is file-backed), so the unused-index rule is skipped.",
@@ -13468,6 +13470,8 @@ const ja: Dict = {
     "{table}.{column} は {type} ({length} 文字) です。MySQL では、過大な上限は実質的な検証にならず、ソートやメモリ上の一時テーブルのメモリ消費を膨らませることがあります。現実的な長さにするか、長さが不定なら TEXT を検討してください。",
   advisorRuleFloatForMoneyDesc:
     "{table}.{column} は金額を表す列に見えますが、浮動小数型 {type} です。丸め誤差が蓄積するため、DECIMAL / NUMERIC (または最小単位の整数) を使ってください。",
+  advisorRuleFloatForMoneySqliteDesc:
+    "{table}.{column} は金額を表す列に見えますが、浮動小数型 {type} です。丸め誤差が蓄積します。SQLite の DECIMAL / NUMERIC は NUMERIC 親和性になるだけで、値は REAL として保存されうるため、INTEGER 列に最小単位の整数 (円・セントなど) で保存してください。",
   // 未使用ルールのスキップ理由
   advisorReasonUnsupportedDriver:
     "このドライバはサーバ側のインデックス使用統計を持たない (SQLite はファイルベース) ため、未使用インデックスルールはスキップされます。",

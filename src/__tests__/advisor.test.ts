@@ -102,6 +102,14 @@ describe("findingDescription", () => {
       key: "advisorRuleFloatForMoneyDesc",
       params: { table: "t", column: "price", type: "float" },
     });
+    expect(
+      findingDescription(
+        finding({ rule: "float_for_money", table: "t", columns: ["price"], context: ["REAL", "sqlite"] }),
+      ),
+    ).toEqual({
+      key: "advisorRuleFloatForMoneySqliteDesc",
+      params: { table: "t", column: "price", type: "REAL" },
+    });
   });
 
   it("FK 欠落は table/columns/ref を差し込む", () => {

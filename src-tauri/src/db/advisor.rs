@@ -292,7 +292,7 @@ pub fn analyze(input: &AdvisorInput) -> SchemaHealthReport {
         if input.driver == DriverKind::Mysql {
             rule_oversized_varchar(table, &mut findings);
         }
-        rule_float_for_money(table, &mut findings);
+        rule_float_for_money(input.driver, table, &mut findings);
     }
 
     rule_fk_missing_index(input, &mut findings);
@@ -701,14 +701,16 @@ struct FkGroup {
     table: String,
     columns: Vec<String>,
     referenced_table: String,
-    /// いずれかの構成列の `ON DELETE` が `SET NULL` か (その FK は NULL 許容が前提)。
+    /// いずれかの構成列の `ON DELETE` / `ON UPDATE` が `SET NULL` か (その FK は NULL 許容が前提)。
     on_delete_set_null: bool,
 }
 
 fn is_set_null(fk: &ForeignKey) -> bool {
-    fk.on_delete
-        .as_deref()
-        .is_some_and(|a| a.trim().eq_ignore_ascii_case("SET NULL"))
+    // ON UPDATE SET NULL も、参照先キーの更新時に NULL を書き込むので NOT NULL にすると更新が失敗する。
+    [fk.on_delete.as_deref(), fk.on_update.as_deref()]
+        .into_iter()
+        .flatten()
+        .any(|a| a.trim().eq_ignore_ascii_case("SET NULL"))
 }
 
 fn group_foreign_keys(fks: &[ForeignKey]) -> Vec<FkGroup> {
@@ -1014,7 +1016,7 @@ fn rule_nullable_foreign_key(input: &AdvisorInput, out: &mut Vec<HealthFinding>)
         let Some(table) = by_name.get(group.table.as_str()) else {
             continue;
         };
-        // ON DELETE SET NULL は NULL 許容が前提 (NOT NULL にすると壊れる)。自己参照 FK
+        // ON DELETE / ON UPDATE SET NULL は NULL 許容が前提 (NOT NULL にすると壊れる)。自己参照 FK
         // (親子・ツリー) は根が NULL になるのが普通なので対象外。
         if group.on_delete_set_null || group.referenced_table.eq_ignore_ascii_case(&group.table) {
             continue;
@@ -1156,7 +1158,7 @@ fn is_floating_type(data_type: &str) -> bool {
     )
 }
 
-fn rule_float_for_money(table: &TableMeta, out: &mut Vec<HealthFinding>) {
+fn rule_float_for_money(driver: DriverKind, table: &TableMeta, out: &mut Vec<HealthFinding>) {
     for c in &table.columns {
         if !is_floating_type(&c.data_type) || !is_money_column_name(&c.name) {
             continue;
@@ -1166,7 +1168,13 @@ fn rule_float_for_money(table: &TableMeta, out: &mut Vec<HealthFinding>) {
             severity: Severity::Medium,
             table: table.name.clone(),
             columns: vec![c.name.clone()],
-            context: vec![c.data_type.trim().to_string()],
+            // SQLite の DECIMAL / NUMERIC は NUMERIC 親和性で、実体は REAL として保存されうる
+            // (正確な十進数にならない)。UI が「最小単位の整数」を勧める文言に切り替えるための印。
+            context: if driver == DriverKind::Sqlite {
+                vec![c.data_type.trim().to_string(), "sqlite".to_string()]
+            } else {
+                vec![c.data_type.trim().to_string()]
+            },
             fix_ddl: None,
             fix_ddl_online: None,
             statistical: false,
@@ -2449,6 +2457,7 @@ mod tests {
                 col_n("parent_id", "int", true),
                 col_n("owner_id", "int", true),
                 col_n("team_id", "int", true),
+                col_n("org_id", "int", true),
             ],
             vec![],
         );
@@ -2456,7 +2465,16 @@ mod tests {
         owner.on_delete = Some("SET NULL".into());
         let mut team = fk("nodes", "team_id", "teams", Some("id"));
         team.on_delete = Some("CASCADE".into());
-        let fks = vec![fk("nodes", "parent_id", "nodes", Some("id")), owner, team];
+        // ON UPDATE SET NULL だけでも NULL 許容が前提なので対象外。
+        let mut org = fk("nodes", "org_id", "orgs", Some("id"));
+        org.on_delete = Some("CASCADE".into());
+        org.on_update = Some("set null".into());
+        let fks = vec![
+            fk("nodes", "parent_id", "nodes", Some("id")),
+            owner,
+            team,
+            org,
+        ];
         for d in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
             let report = analyze(&input(d, vec![t.clone()], fks.clone()));
             let f = findings_for(&report, RuleId::NullableForeignKey);
@@ -2567,5 +2585,16 @@ mod tests {
         assert_eq!(f[0].severity, Severity::Medium);
         assert!(f[0].fix_ddl.is_none());
         assert_eq!(f[0].context, vec!["float"]);
+    }
+
+    #[test]
+    fn float_for_money_marks_sqlite_for_integer_units_advice() {
+        let t = table("t", vec![col("price", "REAL", false)], vec![]);
+        let report = analyze(&input(DriverKind::Sqlite, vec![t.clone()], vec![]));
+        let f = findings_for(&report, RuleId::FloatForMoney);
+        assert_eq!(f[0].context, vec!["REAL", "sqlite"]);
+        let report = analyze(&input(DriverKind::Postgres, vec![t], vec![]));
+        let f = findings_for(&report, RuleId::FloatForMoney);
+        assert_eq!(f[0].context, vec!["REAL"]);
     }
 }
