@@ -6,6 +6,7 @@ import { transitions, variants } from "../motion";
 import { semanticColorToken } from "../semanticColors";
 import { Icon, ICON_SIZES } from "./Icon";
 import { EmptyState } from "./EmptyState";
+import { RunQueryIllustration } from "./illustrations";
 import { FlightRecorderPanel } from "./FlightRecorderPanel";
 import { Checkbox, Input, PressableButton } from "./ui";
 import {
@@ -647,6 +648,7 @@ export const HistoryList = memo(function HistoryList({
           </chakra.p>
         ) : (
           <EmptyState
+            illustration={<RunQueryIllustration />}
             icon="clock"
             title={t("historyEmptyTitle")}
             description={t("historyEmpty")}

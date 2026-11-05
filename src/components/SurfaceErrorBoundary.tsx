@@ -2,6 +2,7 @@ import { Component, type ErrorInfo, type ReactNode } from "react";
 import { Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { EmptyState } from "./EmptyState";
+import { errorIllustration } from "./illustrations";
 
 /**
  * 全画面サーフェス (ER 図・スキーマ比較など) の描画中に起きた例外を受け止める境界。
@@ -57,6 +58,7 @@ function SurfaceErrorFallback({
   return (
     <Flex flex="1" minH="0" align="center" justify="center" overflowY="auto" py="4">
       <EmptyState
+        illustration={errorIllustration(error.message || String(error))}
         icon="warning"
         title={t("surfaceErrorTitle")}
         description={error.message || String(error)}

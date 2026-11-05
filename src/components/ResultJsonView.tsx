@@ -6,6 +6,7 @@ import { useSettings } from "../settings";
 import { copyToClipboard } from "./clipboard";
 import { resolveMaskedColumns } from "./columnMask";
 import { EmptyState } from "./EmptyState";
+import { NoResultsIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import { JsonTreeView } from "./JsonTreeView";
 import { serializeJson } from "./jsonTree";
@@ -93,7 +94,12 @@ export function ResultJsonView({ result, database, table, onChangeView }: Props)
       </Flex>
       {json.total === 0 ? (
         <Flex flex="1" minH={0} align="center" justify="center">
-          <EmptyState icon="braces" title={t("resultJsonEmpty")} />
+          <EmptyState
+            illustration={<NoResultsIllustration />}
+            brandHalo
+            icon="braces"
+            title={t("resultJsonEmpty")}
+          />
         </Flex>
       ) : (
         <Box flex="1" minH={0} overflow="auto" px="3" py="2">

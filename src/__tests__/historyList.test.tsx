@@ -69,6 +69,24 @@ describe("HistoryList render smoke (#604)", () => {
     await waitFor(() => expect(screen.getByText(t("historyEmptyTitle"))).toBeInTheDocument());
   });
 
+  it("空状態はイラスト付き (brandHalo なし) で描画される (#2044)", async () => {
+    const { container } = renderWithProviders(
+      <HistoryList
+        activeProfile={makeProfile()}
+        sessionId={null}
+        reloadKey={0}
+        onRestore={() => {}}
+        onOpenInNewTab={() => {}}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText(t("historyEmptyTitle"))).toBeInTheDocument());
+    expect(container.querySelector(".noob-illust")).not.toBeNull();
+    const halo = Array.from(container.querySelectorAll<HTMLElement>("[aria-hidden]")).find((e) =>
+      e.style.backgroundImage.includes("--hero-halo"),
+    );
+    expect(halo).toBeUndefined();
+  });
+
   it("mounts without an active profile", async () => {
     renderWithProviders(
       <HistoryList
