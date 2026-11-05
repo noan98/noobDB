@@ -215,7 +215,7 @@ pub(crate) fn mysql_footer() -> &'static str {
 pub(crate) fn postgres_header(schema: &str) -> String {
     let q = quote_ident(DriverKind::Postgres, schema);
     let mut out = String::from(
-        "SET client_encoding = 'UTF8';\nSET standard_conforming_strings = on;\nSET check_function_bodies = false;\n",
+        "SET client_encoding = 'UTF8';\nSET standard_conforming_strings = on;\nSET check_function_bodies = false;\nSET IntervalStyle = 'postgres';\n",
     );
     if schema != "public" {
         out.push_str(&format!("CREATE SCHEMA IF NOT EXISTS {q};\n"));
@@ -246,19 +246,40 @@ pub(crate) fn terminated(def: &str) -> String {
 /// SELECT 式 (MySQL)。TIMESTAMP 列だけ、セッションのタイムゾーンから UTC へ変換して読む
 /// (ヘッダの `TIME_ZONE='+00:00'` と組で、復元先のタイムゾーンに依らず同じ時刻になる)。
 /// ゼロ日付はそのまま。
+///
+/// `CONVERT_TZ` は、セッションのタイムゾーンが `SYSTEM` のときや、タイムゾーン表が未ロードの地域名の
+/// ときに NULL を返す。値が黙って NULL になるのを避けるため、非 NULL の値が変換できなかったら
+/// [`TZ_FAILURE_SENTINEL`] を返し、行を書く前に [`tz_failure_in`] で検出して中止する (fail closed)。
 pub(crate) fn mysql_select_expr(col: &str, data_type: &str) -> String {
     let q = quote_ident(DriverKind::Mysql, col);
-    if data_type
-        .trim()
-        .to_ascii_lowercase()
-        .starts_with("timestamp")
-    {
+    if is_mysql_timestamp(data_type) {
         format!(
-            "IF(UNIX_TIMESTAMP({q}) = 0, {q}, CONVERT_TZ({q}, @@session.time_zone, '+00:00')) AS {q}"
+            "CASE WHEN {q} IS NULL THEN NULL WHEN UNIX_TIMESTAMP({q}) = 0 THEN {q} \
+             ELSE IFNULL(CONVERT_TZ({q}, @@session.time_zone, '+00:00'), '{TZ_FAILURE_SENTINEL}') END AS {q}"
         )
     } else {
         q
     }
+}
+
+/// MySQL の TIMESTAMP 列か (`COLUMN_TYPE` が `timestamp` / `timestamp(3)`)。
+pub(crate) fn is_mysql_timestamp(data_type: &str) -> bool {
+    data_type
+        .trim()
+        .to_ascii_lowercase()
+        .starts_with("timestamp")
+}
+
+/// `CONVERT_TZ` が NULL を返したときに SELECT 式が埋め込む目印の文字列。
+pub(crate) const TZ_FAILURE_SENTINEL: &str = "noobdb:timezone-conversion-failed";
+
+/// `tz_cols` の列に変換失敗の目印があるか。
+pub(crate) fn tz_failure_in(rows: &[Vec<Value>], tz_cols: &[usize]) -> bool {
+    rows.iter().any(|r| {
+        tz_cols
+            .iter()
+            .any(|&i| matches!(r.get(i), Some(Value::String(v)) if v == TZ_FAILURE_SENTINEL))
+    })
 }
 
 /// SELECT 式 (PostgreSQL)。クライアントのバイナリデコードが確実な型 (整数・double・真偽値・
@@ -370,7 +391,7 @@ pub(crate) fn pg_types_sql(schema: &str) -> String {
     format!(
         "SELECT kind, stmt FROM ( \
            SELECT 1 AS ord, t.oid AS oid, 'enum' AS kind, \
-                  format('DO $$ BEGIN CREATE TYPE %I.%I AS ENUM (%s); EXCEPTION WHEN duplicate_object THEN NULL; END $$;', \
+                  format('DO $noobdb$ BEGIN CREATE TYPE %I.%I AS ENUM (%s); EXCEPTION WHEN duplicate_object THEN NULL; END $noobdb$;', \
                          n.nspname, t.typname, \
                          (SELECT string_agg(quote_literal(e.enumlabel), ', ' ORDER BY e.enumsortorder) \
                             FROM pg_enum e WHERE e.enumtypid = t.oid)) AS stmt \
@@ -378,7 +399,7 @@ pub(crate) fn pg_types_sql(schema: &str) -> String {
             WHERE n.nspname = {s} AND t.typtype = 'e' AND {not_ext} \
            UNION ALL \
            SELECT 2, t.oid, 'domain', \
-                  format('DO $$ BEGIN CREATE DOMAIN %I.%I AS %s%s%s%s; EXCEPTION WHEN duplicate_object THEN NULL; END $$;', \
+                  format('DO $noobdb$ BEGIN CREATE DOMAIN %I.%I AS %s%s%s%s; EXCEPTION WHEN duplicate_object THEN NULL; END $noobdb$;', \
                          n.nspname, t.typname, pg_catalog.format_type(t.typbasetype, t.typtypmod), \
                          CASE WHEN t.typdefault IS NULL THEN '' ELSE ' DEFAULT ' || t.typdefault END, \
                          CASE WHEN t.typnotnull THEN ' NOT NULL' ELSE '' END, \
@@ -414,6 +435,23 @@ pub(crate) fn pg_skip_functions_sql(schema: &str) -> String {
         "SELECT p.oid::text FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
           WHERE n.nspname = {s} AND (p.prokind = 'a' OR EXISTS ( \
                 SELECT 1 FROM pg_depend d WHERE d.objid = p.oid AND d.classid = 'pg_proc'::regclass AND d.deptype = 'e'))"
+    )
+}
+
+/// 表・ビューの行型に依存する関数の oid を引く SQL (`RETURNS SETOF 表`、表の行型の引数、
+/// `BEGIN ATOMIC` 本体など)。これらは表の後に作らないと失敗する。
+pub(crate) fn pg_table_dependent_functions_sql(schema: &str) -> String {
+    let s = pg_lit(schema);
+    format!(
+        "SELECT DISTINCT p.oid::text FROM pg_proc p \
+           JOIN pg_namespace n ON n.oid = p.pronamespace \
+           JOIN pg_depend d ON d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'n' \
+          WHERE n.nspname = {s} AND ( \
+                (d.refclassid = 'pg_class'::regclass AND EXISTS ( \
+                    SELECT 1 FROM pg_class c WHERE c.oid = d.refobjid AND c.relkind IN ('r', 'p', 'v', 'm', 'f'))) \
+                OR (d.refclassid = 'pg_type'::regclass AND EXISTS ( \
+                    SELECT 1 FROM pg_type t JOIN pg_class c ON c.oid = t.typrelid \
+                     WHERE t.oid = d.refobjid AND c.relkind IN ('r', 'p', 'v', 'm', 'f'))))"
     )
 }
 
@@ -632,6 +670,34 @@ pub async fn dump_native_core(
 
     // 表の種別 (PostgreSQL): パーティション親は未対応。継承・パーティションの子は警告を残す。
     let mut warnings: Vec<String> = Vec::new();
+    // 外部キー (PostgreSQL)。行データは FK の親→子の順に出す (データだけのダンプでも違反しない)。
+    let mut fk_rows: Vec<(String, String, String, String)> = Vec::new();
+    if pg {
+        for r in &conn
+            .execute(&pg_foreign_keys_sql(&schema), None)
+            .await?
+            .rows
+        {
+            if let (Some(tbl), Some(rs), Some(rt), Some(stmt)) =
+                (str_at(r, 0), str_at(r, 1), str_at(r, 2), str_at(r, 3))
+            {
+                fk_rows.push((tbl.into(), rs.into(), rt.into(), stmt.into()));
+            }
+        }
+        let edges: Vec<(String, String)> = fk_rows
+            .iter()
+            .filter(|(_, rs, _, _)| *rs == schema)
+            .map(|(t, _, rt, _)| (t.clone(), rt.clone()))
+            .collect();
+        let (ordered, cyclic) = order_by_deps(&ordered_tables, &edges);
+        ordered_tables = ordered;
+        if cyclic && options.no_create_info {
+            warnings.push(
+                "foreign keys form a cycle; the row load order may violate them (restore with session_replication_role = replica)"
+                    .into(),
+            );
+        }
+    }
     if pg {
         let kinds = conn.execute(&pg_table_kinds_sql(&schema), None).await?;
         for r in &kinds.rows {
@@ -664,6 +730,8 @@ pub async fn dump_native_core(
     let mut seq_setvals: Vec<String> = Vec::new();
     let mut fk_stmts: Vec<String> = Vec::new();
     let mut functions: Vec<&SchemaObject> = Vec::new();
+    // 表に依存する関数は表とデータの後 (ビューの前) に出す。
+    let mut late_functions: Vec<&SchemaObject> = Vec::new();
     if pg && schema_part {
         for r in &conn.execute(&pg_types_sql(&schema), None).await?.rows {
             match (str_at(r, 0), str_at(r, 1)) {
@@ -718,23 +786,24 @@ pub async fn dump_native_core(
                     || o.id.as_ref().is_some_and(|id| trigger_fns.contains(id))
             })
             .collect();
-        for r in &conn
-            .execute(&pg_foreign_keys_sql(&schema), None)
+        let late_ids: HashSet<String> = conn
+            .execute(&pg_table_dependent_functions_sql(&schema), None)
             .await?
             .rows
-        {
-            let (Some(tbl), Some(ref_schema), Some(ref_tbl), Some(stmt)) =
-                (str_at(r, 0), str_at(r, 1), str_at(r, 2), str_at(r, 3))
-            else {
-                continue;
-            };
-            let target_ok = if ref_schema == schema {
+            .iter()
+            .filter_map(|r| str_at(r, 0).map(str::to_string))
+            .collect();
+        (late_functions, functions) = functions
+            .into_iter()
+            .partition(|o| o.id.as_ref().is_some_and(|id| late_ids.contains(id)));
+        for (tbl, ref_schema, ref_tbl, stmt) in &fk_rows {
+            let target_ok = if *ref_schema == schema {
                 ordered_tables.iter().any(|t| t == ref_tbl)
             } else {
                 whole_schema
             };
             if ordered_tables.iter().any(|t| t == tbl) && target_ok {
-                fk_stmts.push(stmt.to_string());
+                fk_stmts.push(stmt.clone());
             }
         }
     }
@@ -828,9 +897,12 @@ pub async fn dump_native_core(
                     qualified_table(driver, &schema, &v.name)
                 ));
             }
+            // CASCADE はスキーマ全体のダンプだけ。部分ダンプで付けると、範囲外の表から張られた
+            // 外部キーや範囲外のビューまで黙って消えてしまう。
+            let cascade = if whole_schema { " CASCADE" } else { "" };
             for t in &ordered_tables {
                 chunk.push_str(&format!(
-                    "DROP TABLE IF EXISTS {} CASCADE;\n",
+                    "DROP TABLE IF EXISTS {}{cascade};\n",
                     qualified_table(driver, &schema, t)
                 ));
             }
@@ -914,7 +986,11 @@ pub async fn dump_native_core(
             let col_info = conn.columns(&schema, name).await?;
             let mut columns: Vec<String> = Vec::new();
             let mut exprs: Vec<String> = Vec::new();
+            let mut tz_cols: Vec<usize> = Vec::new();
             for c in col_info.iter().filter(|c| !generated.contains(&c.name)) {
+                if !pg && is_mysql_timestamp(&c.data_type) {
+                    tz_cols.push(columns.len());
+                }
                 columns.push(c.name.clone());
                 exprs.push(if pg {
                     let ty = pg_types
@@ -927,13 +1003,21 @@ pub async fn dump_native_core(
                 });
             }
             for id in &identity {
-                if let Some(v) = &id.last_value {
-                    identity_setvals.push(format!(
-                        "SELECT pg_catalog.setval(pg_get_serial_sequence({}, {}), {v}, true);",
-                        pg_lit(&qualified_table(driver, &schema, name)),
-                        pg_lit(&id.column)
-                    ));
-                }
+                let seq = format!(
+                    "pg_get_serial_sequence({}, {})",
+                    pg_lit(&qualified_table(driver, &schema, name)),
+                    pg_lit(&id.column)
+                );
+                identity_setvals.push(match &id.last_value {
+                    Some(v) => format!("SELECT pg_catalog.setval({seq}, {v}, true);"),
+                    // 一度も採番されていなくても、明示値で入れた行がある (BY DEFAULT) ことがある。
+                    // 復元後の最初の採番が衝突しないよう、列の最大値を下限にする。
+                    None => format!(
+                        "SELECT pg_catalog.setval({seq}, m.mx, true) FROM (SELECT max({}) AS mx FROM {}) m WHERE m.mx IS NOT NULL;",
+                        quote_ident(driver, &id.column),
+                        qualified_table(driver, &schema, name)
+                    ),
+                });
             }
             if !columns.is_empty() {
                 let overriding = identity.iter().any(|i| i.always);
@@ -944,6 +1028,7 @@ pub async fn dump_native_core(
                     name,
                     &columns,
                     &exprs,
+                    &tz_cols,
                     overriding,
                     options.extended_insert,
                     mask_spec.as_ref(),
@@ -968,6 +1053,13 @@ pub async fn dump_native_core(
             let mut chunk = String::new();
             for s in seq_owned_stmts.iter().chain(fk_stmts.iter()) {
                 chunk.push_str(s);
+                chunk.push('\n');
+            }
+            for o in &late_functions {
+                let def = conn
+                    .object_definition(&schema, &o.kind, &o.name, o.id.as_deref())
+                    .await?;
+                chunk.push_str(&terminated(&def));
                 chunk.push('\n');
             }
             if !chunk.is_empty() {
@@ -1139,6 +1231,7 @@ async fn stream_table_rows(
     table: &str,
     columns: &[String],
     select_exprs: &[String],
+    tz_cols: &[usize],
     overriding: bool,
     extended: bool,
     mask_spec: Option<&crate::db::masking::MaskSpec>,
@@ -1164,6 +1257,8 @@ async fn stream_table_rows(
     let counter_cb = counter.clone();
     let progress_cb = progress.clone();
     let mask_spec = mask_spec.cloned();
+    let tz_cols = tz_cols.to_vec();
+    let table_name = table.to_string();
     let mut plan: Option<MaskPlan> = None;
     let mut last_bytes = counter.load(Ordering::SeqCst);
     let mut last_at = std::time::Instant::now();
@@ -1178,6 +1273,12 @@ async fn stream_table_rows(
                     plan = mask_spec.as_ref().map(|s| s.plan(&cols));
                 }
                 StreamBatch::Rows(rows) => {
+                    if tz_failure_in(&rows, &tz_cols) {
+                        return Err(AppError::Other(format!(
+                            "cannot convert TIMESTAMP values of `{table_name}` to UTC: the session time zone is unusable \
+                             (SYSTEM, or a named zone whose tables are not loaded); aborting the dump"
+                        )));
+                    }
                     let masked;
                     let rows_ref: &[Vec<Value>] = match &plan {
                         Some(p) => {
@@ -1405,6 +1506,22 @@ mod tests {
     }
 
     #[test]
+    fn timestamp_conversion_fails_closed() {
+        let e = mysql_select_expr("ts", "timestamp(3)");
+        assert!(e.contains(TZ_FAILURE_SENTINEL) && e.contains("IFNULL(CONVERT_TZ("));
+        assert!(!mysql_select_expr("d", "datetime").contains("CONVERT_TZ"));
+        let ok = vec![
+            vec![Value::Int(1), s("2024-01-01 00:00:00")],
+            vec![Value::Null, Value::Null],
+        ];
+        assert!(!tz_failure_in(&ok, &[1]));
+        let bad = vec![vec![Value::Int(1), s(TZ_FAILURE_SENTINEL)]];
+        assert!(tz_failure_in(&bad, &[1]));
+        // 対象外の列に同じ文字列があっても (ユーザーデータ) 誤検出しない。
+        assert!(!tz_failure_in(&bad, &[0]));
+    }
+
+    #[test]
     fn pg_queries_escape_schema_literals() {
         assert!(pg_sequences_sql("we'ird").contains("s.schemaname = 'we''ird'"));
         assert!(pg_sequences_sql("x").contains("<> 'i'"));
@@ -1416,6 +1533,7 @@ mod tests {
             pg_types_sql("s'"),
             pg_extensions_sql("s'"),
             pg_skip_functions_sql("s'"),
+            pg_table_dependent_functions_sql("s'"),
             pg_trigger_functions_sql("s'"),
             pg_foreign_keys_sql("s'"),
             pg_view_deps_sql("s'"),
