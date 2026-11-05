@@ -192,7 +192,12 @@ import {
   type ServerSortDirection,
 } from "./components/serverBrowse";
 import { EmptyState } from "./components/EmptyState";
-import { DisconnectedIllustration, ProductionWarningIllustration } from "./components/illustrations";
+import {
+  ConnectionFailedIllustration,
+  DisconnectedIllustration,
+  ProductionWarningIllustration,
+  RunQueryIllustration,
+} from "./components/illustrations";
 import { WelcomeView } from "./components/WelcomeView";
 import { SkippedProfilesNotice } from "./components/SkippedProfilesNotice";
 import { ProfileCardGrid } from "./components/ProfileCardGrid";
@@ -13437,6 +13442,8 @@ export default function App() {
                         <Flex direction="column" flex="1" overflow="hidden">
                           <PaneEmpty>
                             <EmptyState
+                              illustration={<RunQueryIllustration />}
+                              brandHalo
                               icon="query"
                               title={t("tabsEmptyTitle")}
                               description={t("tabsEmpty")}
@@ -13469,6 +13476,8 @@ export default function App() {
                       <Flex direction="column" flex="1" overflow="hidden">
                         <PaneEmpty>
                           <EmptyState
+                            illustration={<ConnectionFailedIllustration />}
+                            brandHalo
                             icon="database"
                             title={t("profilesLoadFailedTitle")}
                             description={profilesLoadError}

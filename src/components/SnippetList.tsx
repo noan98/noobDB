@@ -8,6 +8,7 @@ import { useT } from "../i18n";
 import { transitions, variants } from "../motion";
 import { Icon, ICON_SIZES } from "./Icon";
 import { EmptyState } from "./EmptyState";
+import { NoResultsIllustration } from "./illustrations";
 import { Button, Checkbox, Input } from "./ui";
 import {
   MotionTreeNode,
@@ -532,6 +533,7 @@ export const SnippetList = memo(function SnippetList({
 
       {snippets.length === 0 ? (
         <EmptyState
+          illustration={<NoResultsIllustration />}
           icon="snippet"
           title={t("snippetEmptyTitle")}
           description={t("snippetEmpty")}
