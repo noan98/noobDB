@@ -137,9 +137,10 @@ export function EmptyState({
           variant="primary"
           onClick={action.onClick}
           mt="1"
-          bg="var(--brand-fill)"
-          color="var(--brand-on-fill)"
-          _hover={{ bg: "var(--brand-fill)", filter: "brightness(1.15)" }}
+          bg="app.brand.fill"
+          color="app.brand.onFill"
+          borderColor="transparent"
+          _hover={{ bg: "app.brand.fillHover", borderColor: "transparent" }}
           data-testid={action.testId}
         >
           {action.label}

@@ -404,14 +404,14 @@ export function QuickLauncher({
           alignItems="center"
           justifyContent="center"
           borderRadius="pill"
-          bg="var(--brand-fill)"
-          color="var(--brand-on-fill)"
+          bg="app.brand.fill"
+          color="app.brand.onFill"
           shadow="elevationRaised"
           border="none"
           cursor={dragPoint ? "grabbing" : "pointer"}
           touchAction="none"
           userSelect="none"
-          _hover={{ filter: "brightness(1.15)" }}
+          _hover={{ bg: "app.brand.fillHover" }}
           _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
         >
           <Icon name="star" size={ICON_SIZES.md} />

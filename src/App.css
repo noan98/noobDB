@@ -281,6 +281,14 @@
     color-mix(in srgb, var(--brand-navy-raised) 65%, var(--brand-teal))
   );
   --brand-on-fill: #ffffff;
+  /* ホバー: filter では白文字の終端が 4.5:1 を割るため別グラデーションにする。始端を
+     少し明るくし、終端は teal 38% (白文字 4.5:1 以上、themeContrast.test.ts が検証)。
+     グラデーション同士は補間されず瞬時に切り替わる。 */
+  --brand-fill-hover: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--brand-navy-raised) 85%, var(--brand-teal)),
+    color-mix(in srgb, var(--brand-navy-raised) 62%, var(--brand-teal))
+  );
   /* AI 受信中のキャレット / 「受信中」ラベル色 (#1756)。brand-teal 単体は白地で 3:1 に
      届かないため、本文色へ寄せてテーマごとに地へのコントラストを確保する
      (themeContrast.test.ts が全テーマで 3:1 以上を検証)。 */
@@ -820,6 +828,7 @@
   --hero-rule: none;
   --hero-rule-display: none;
   --brand-fill: var(--accent);
+  --brand-fill-hover: var(--accent-hover);
   --brand-on-fill: var(--accent-text);
 
   --bg: #ffffff;
@@ -928,6 +937,7 @@
   --hero-rule: none;
   --hero-rule-display: none;
   --brand-fill: var(--accent);
+  --brand-fill-hover: var(--accent-hover);
   --brand-on-fill: var(--accent-text);
 
   --bg: #000000;

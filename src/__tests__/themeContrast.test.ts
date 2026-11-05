@@ -726,3 +726,44 @@ describe("結果グリッドのクロスハイライト地 (accent N% on bg-head
     }
   });
 });
+
+describe("シグネチャ面のブランドグラデーション --brand-fill (#2043)", () => {
+  const navy = css.match(/--brand-navy-raised:\s*(#[0-9a-fA-F]{6})/)?.[1] ?? "";
+  const teal = css.match(/--brand-teal:\s*(#[0-9a-fA-F]{6})/)?.[1] ?? "";
+  const white = css.match(/--brand-on-fill:\s*(#[0-9a-fA-F]{6})/)?.[1] ?? "";
+  const block = (name: string): string =>
+    css.match(new RegExp(`--${name}:\\s*linear-gradient\\(([^;]*?)\\);`))?.[1] ?? "";
+  const mixHex = (navyPct: number): string => {
+    const ch = (i: number) => {
+      const a = Number.parseInt(navy.slice(1 + i * 2, 3 + i * 2), 16);
+      const b = Number.parseInt(teal.slice(1 + i * 2, 3 + i * 2), 16);
+      return Math.round((a * navyPct) / 100 + (b * (100 - navyPct)) / 100)
+        .toString(16)
+        .padStart(2, "0");
+    };
+    return `#${ch(0)}${ch(1)}${ch(2)}`;
+  };
+  // 両端の色を (素の navy-raised = 100%) として取り出す。
+  const stops = (name: string): string[] => {
+    const b = block(name);
+    return [...b.matchAll(/color-mix\(in srgb,\s*var\(--brand-navy-raised\)\s*(\d+)%/g)]
+      .map((m) => mixHex(Number(m[1])))
+      .concat(/(^|,\s*)var\(--brand-navy-raised\)/.test(b.replace(/color-mix\([^)]*\)/g, "")) ? [navy] : []);
+  };
+
+  it.each(["brand-fill", "brand-fill-hover"])("%s: 両端と白の前景が 4.5:1 以上", (name) => {
+    expect(white).toBe("#ffffff");
+    const list = stops(name);
+    expect(list.length).toBeGreaterThanOrEqual(2);
+    for (const c of list) {
+      expect(contrastRatio(white, c), `${name} stop ${c}`).toBeGreaterThanOrEqual(AA_TEXT);
+    }
+  });
+
+  it.each(["hc-light", "hc-dark"])("%s: グラデーションをアクセント単色に上書きする", (n) => {
+    const body = css.match(new RegExp(`:root\\[data-theme="${n}"\\]\\s*\\{([\\s\\S]*?)\\n\\}`))?.[1] ?? "";
+    expect(body).toMatch(/--brand-fill:\s*var\(--accent\);/);
+    expect(body).toMatch(/--brand-fill-hover:\s*var\(--accent-hover\);/);
+    expect(body).toMatch(/--brand-on-fill:\s*var\(--accent-text\);/);
+  });
+});
