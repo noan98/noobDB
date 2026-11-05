@@ -270,6 +270,17 @@
   --brand-navy-raised: #1d4a7a;
   --brand-teal: #2dd4bf;
   --brand-gradient: linear-gradient(135deg, var(--brand-navy-raised), var(--brand-teal));
+  /* シグネチャ面 (常駐 FAB / 主要空状態 CTA, #2043) のベタ塗り。--brand-gradient の
+     終端 teal は白文字で 3:1 に届かないため、teal を 35% に抑えて白前景で AA を確保した
+     ブランド固定色 (テーマ・接続アクセントで揺れない)。前景は --on-solid (ダーク系で暗色に
+     反転する) ではなくテーマ固定の --brand-on-fill を使う。hc-* は AAA 優先のため
+     下のプリセットでアクセント単色 + その前景色に上書きする。 */
+  --brand-fill: linear-gradient(
+    135deg,
+    var(--brand-navy-raised),
+    color-mix(in srgb, var(--brand-navy-raised) 65%, var(--brand-teal))
+  );
+  --brand-on-fill: #ffffff;
   /* AI 受信中のキャレット / 「受信中」ラベル色 (#1756)。brand-teal 単体は白地で 3:1 に
      届かないため、本文色へ寄せてテーマごとに地へのコントラストを確保する
      (themeContrast.test.ts が全テーマで 3:1 以上を検証)。 */
@@ -808,6 +819,8 @@
   --hero-halo: none;
   --hero-rule: none;
   --hero-rule-display: none;
+  --brand-fill: var(--accent);
+  --brand-on-fill: var(--accent-text);
 
   --bg: #ffffff;
   --bg-elevated: #ffffff;
@@ -914,6 +927,8 @@
   --hero-halo: none;
   --hero-rule: none;
   --hero-rule-display: none;
+  --brand-fill: var(--accent);
+  --brand-on-fill: var(--accent-text);
 
   --bg: #000000;
   /* ベタ塗り (solid/status) の上の前景。明色 solid の上は暗色にする (#1111)。 */
