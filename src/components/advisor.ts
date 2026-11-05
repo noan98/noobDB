@@ -51,6 +51,12 @@ export function ruleTitleKey(rule: AdvisorRuleId): I18nKey {
       return "advisorRuleFkTypeMismatchTitle";
     case "sqlite_integer_pk_hint":
       return "advisorRuleSqliteIntegerPkHintTitle";
+    case "nullable_foreign_key":
+      return "advisorRuleNullableForeignKeyTitle";
+    case "oversized_varchar":
+      return "advisorRuleOversizedVarcharTitle";
+    case "float_for_money":
+      return "advisorRuleFloatForMoneyTitle";
     default:
       // fail-closed (#1194): union に無い未知ルールは空描画にせず汎用見出しへ倒す。
       return "advisorRuleUnknownTitle";
@@ -115,6 +121,31 @@ export function findingDescription(finding: HealthFinding): {
     case "sqlite_integer_pk_hint":
       return {
         key: "advisorRuleSqliteIntegerPkHintDesc",
+        params: {
+          table: finding.table,
+          column: finding.columns[0] ?? "",
+          type: ctx[0] ?? "",
+        },
+      };
+    case "nullable_foreign_key":
+      return {
+        key: "advisorRuleNullableForeignKeyDesc",
+        params: { table: finding.table, columns: cols, ref: ctx[0] ?? "" },
+      };
+    case "oversized_varchar":
+      return {
+        key: "advisorRuleOversizedVarcharDesc",
+        params: {
+          table: finding.table,
+          column: finding.columns[0] ?? "",
+          type: ctx[0] ?? "",
+          length: ctx[1] ?? "",
+        },
+      };
+    case "float_for_money":
+      return {
+        // SQLite の DECIMAL / NUMERIC は正確な十進数にならないので、最小単位の整数を勧める文言へ。
+        key: ctx[1] === "sqlite" ? "advisorRuleFloatForMoneySqliteDesc" : "advisorRuleFloatForMoneyDesc",
         params: {
           table: finding.table,
           column: finding.columns[0] ?? "",
