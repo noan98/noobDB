@@ -1,7 +1,10 @@
-import { Flex } from "@chakra-ui/react";
+import { chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { transitions, variants } from "../motion";
 import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "./Icon";
+
+// タイル本体。マウント入場 (pop) のために motion 要素を chakra でラップする (EmptyState と同流儀)。
+const MotionTile = chakra(motion.span, {}, { forwardProps: ["transition"] });
 
 /** タイルの寸法。`FONT_SCALE` に追従させるため calc で組む (px 直値はフォント拡大に取り残される)。 */
 const TILE_SIZES = {
@@ -28,6 +31,12 @@ interface Props {
   tone?: FeatureIconTone;
   /** 指定すると値が変わるたびにアイコンをクロスフェードする (ツアーのステップ切替, #819)。 */
   transitionKey?: string | number;
+  /**
+   * マウント時に 1 回だけ控えめに pop する (`variants.fadeScale` + `transitions.emphasized`, #2041)。
+   * 既定 true。`transitionKey` を渡したとき (ツアーのクロスフェード) は常に無効。
+   * reduced-motion はルートの MotionConfig が自動で静止させる。
+   */
+  animateOnMount?: boolean;
 }
 
 /**
@@ -37,14 +46,24 @@ interface Props {
  * 既定の `accent` は `--accent-subtle` (アクセント追従の淡色地) + `app.accent` で、
  * 空状態にも「生きた」第一印象を持たせる。
  */
-export function FeatureIcon({ icon, size = "md", tone = "accent", transitionKey }: Props) {
+export function FeatureIcon({
+  icon,
+  size = "md",
+  tone = "accent",
+  transitionKey,
+  animateOnMount = true,
+}: Props) {
+  const pop = animateOnMount && transitionKey === undefined;
   const glyph = <Icon name={icon} size={GLYPH_SIZES[size]} strokeWidth={ICON_STROKE.thin} />;
   return (
-    <Flex
-      as="span"
+    <MotionTile
+      display="flex"
       aria-hidden
-      align="center"
-      justify="center"
+      initial={pop ? variants.fadeScale.initial : false}
+      animate={pop ? variants.fadeScale.animate : undefined}
+      transition={pop ? transitions.emphasized : undefined}
+      alignItems="center"
+      justifyContent="center"
       flexShrink={0}
       boxSize={TILE_SIZES[size]}
       rounded="lg"
@@ -72,6 +91,6 @@ export function FeatureIcon({ icon, size = "md", tone = "accent", transitionKey 
           </motion.span>
         </AnimatePresence>
       )}
-    </Flex>
+    </MotionTile>
   );
 }
