@@ -1980,7 +1980,10 @@ async fn spawn_preview_stream(
             .preview_execute_with_limit(&sql, database.as_deref(), row_limit),
     );
     tokio::pin!(exec);
-    let mut stop_guard = crate::db::server_stop::StopGuard::new(stop_ctx, session.clone());
+    // キャンセル (abort = drop) では KILL を撃たない: drop 時の KILL は接続の返却より遅れて
+    // 届きうり、再利用された接続の別の文を止めてしまう。タイムアウトだけ明示的に撃つ。
+    let mut stop_guard =
+        crate::db::server_stop::StopGuard::explicit_only(stop_ctx, session.clone());
     let result = match query_timeout_secs {
         Some(secs) if secs > 0 => {
             tokio::select! {

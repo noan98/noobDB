@@ -4688,6 +4688,9 @@ async fn register_server_stop_in_tx(
             let _ = sqlx::query("ROLLBACK TO SAVEPOINT noobdb_server_stop")
                 .execute(&mut *conn)
                 .await;
+            let _ = sqlx::query("RELEASE SAVEPOINT noobdb_server_stop")
+                .execute(&mut *conn)
+                .await;
         }
     }
 }

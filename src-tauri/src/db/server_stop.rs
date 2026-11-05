@@ -179,6 +179,18 @@ impl StopGuard {
         }
     }
 
+    /// タイムアウトの明示的な [`StopGuard::fire`] だけで止めるガード。drop (キャンセル) では撃たない。
+    ///
+    /// ドライランは接続をトランザクションが所有し、future の drop でプールへ戻る。drop 時の
+    /// KILL は返却より遅れて届きうり、再利用された接続の別の文を止める競合になるため、
+    /// キャンセルでは撃たない (PostgreSQL はトランザクション内の `statement_timeout`
+    /// = タイムアウト + 猶予がバックストップになる)。
+    pub fn explicit_only(ctx: Arc<ServerStopCtx>, session: Arc<Session>) -> Self {
+        let mut g = Self::new(ctx, session);
+        g.disarmed = true;
+        g
+    }
+
     pub fn disarm(&mut self) {
         self.disarmed = true;
     }

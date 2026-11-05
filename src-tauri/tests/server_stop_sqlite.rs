@@ -123,3 +123,25 @@ async fn handler_does_not_outlive_a_cancelled_statement() {
     }
     let _ = std::fs::remove_file(path);
 }
+
+/// ドライラン用の `explicit_only` ガードは drop (キャンセル) では停止を要求せず、
+/// 通常のガードは drop で要求する。`fire()` の明示呼び出しは両方で効く。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn explicit_only_guard_does_not_stop_on_drop() {
+    let (conn, path) = sqlite_conn("explicit_only").await;
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let session = std::sync::Arc::new(t::make_session("s", conn, opts, false));
+
+    let ctx = t::ServerStopCtx::new(None);
+    drop(t::StopGuard::explicit_only(ctx.clone(), session.clone()));
+    assert!(!ctx.sqlite_should_interrupt(Instant::now()));
+
+    let ctx = t::ServerStopCtx::new(None);
+    drop(t::StopGuard::new(ctx.clone(), session.clone()));
+    assert!(ctx.sqlite_should_interrupt(Instant::now()));
+
+    let ctx = t::ServerStopCtx::new(None);
+    t::StopGuard::explicit_only(ctx.clone(), session.clone()).fire();
+    assert!(ctx.sqlite_should_interrupt(Instant::now()));
+    let _ = std::fs::remove_file(path);
+}
