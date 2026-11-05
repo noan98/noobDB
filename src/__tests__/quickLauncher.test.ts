@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Snippet } from "../api/tauri";
 import {
   DEFAULT_LAUNCHER_POSITION,
@@ -7,9 +7,11 @@ import {
   clampLauncherPoint,
   computeLauncherPopoverPosition,
   exceedsDragThreshold,
+  launcherIntroPending,
   launcherPointToPosition,
   launcherPopoverOrigin,
   launcherPositionToPoint,
+  markLauncherIntroSeen,
   nudgeLauncherPoint,
   parseLauncherPosition,
   sanitizeQuickLauncherSectionLimits,
@@ -248,5 +250,42 @@ describe("launcherPopoverOrigin", () => {
     expect(launcherPopoverOrigin({ above: false, alignEnd: false })).toBe("left top");
     expect(launcherPopoverOrigin({ above: true, alignEnd: false })).toBe("left bottom");
     expect(launcherPopoverOrigin({ above: false, alignEnd: true })).toBe("right top");
+  });
+});
+
+describe("launcher intro (#2039)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function stubStore(): Map<string, string> {
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+    });
+    return store;
+  }
+
+  it("未記録なら pending、記録後は false。判定は書き込まない", () => {
+    const store = stubStore();
+    expect(launcherIntroPending()).toBe(true);
+    expect(launcherIntroPending()).toBe(true);
+    expect(store.size).toBe(0);
+    markLauncherIntroSeen();
+    expect(launcherIntroPending()).toBe(false);
+  });
+
+  it("localStorage が throw したらイントロを出さない側へ倒れ、記録も例外にならない", () => {
+    vi.stubGlobal("localStorage", {
+      getItem: () => {
+        throw new Error("blocked");
+      },
+      setItem: () => {
+        throw new Error("blocked");
+      },
+    });
+    expect(launcherIntroPending()).toBe(false);
+    expect(() => markLauncherIntroSeen()).not.toThrow();
   });
 });

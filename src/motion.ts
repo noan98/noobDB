@@ -138,6 +138,11 @@ import type { Transition, Variants } from "motion/react";
  * - クエリビルダーの WHERE 条件行の追加/削除 (`QueryBuilder` — `LiveRowsPresence` +
  *   `LiveCollapse` の `variants.collapse`、#1936)。行ごとに安定キーを持たせ、行間の gap は
  *   各行の内側 padding に移して畳み終わりに隙間が残らないようにする。
+ * - フローティング・ランチャー FAB の入場と初回パルス (`QuickLauncher` — `variants.fadeScale.initial` +
+ *   `springs.gentle`、初回起動だけ `introPulse`、#2039)。reduced-motion では scale が即時に切り替わり、
+ *   opacity のフェードは残る。
+ * - 空状態 / ツアーの `FeatureIcon` タイルのマウント入場 pop (`variants.fadeScale` + `transitions.emphasized`、#2052)。
+ *   `transitionKey` 指定時 (ツアーのクロスフェード) は無効。reduced-motion は `MotionConfig` が静止させる。
  * - CREATE TABLE ウィザードの列 / 外部キー / CHECK 行の追加/削除 (`CreateTableModal` /
  *   `TableConstraintEditor` — `LiveRowsPresence` + `LiveRow`、#2014)。QueryBuilder と同じ
  *   `variants.collapse` で、消えかけの行は `inert` にして二重押下を防ぐ。
@@ -191,6 +196,15 @@ export const transitions = {
   /** プログレスの伸長など大きめの移動 (out ease + slow)。 */
   progress: { duration: durations.slow, ease: easings.out },
 } satisfies Record<string, Transition>;
+
+/**
+ * 初回発見パルス (#2039)。FAB の入場に続けて 1 回だけ膨らんで戻る scale keyframes と、
+ * その時間配分。reduced-motion では MotionConfig が transform を即時化する。
+ */
+export const introPulse = {
+  scale: [0.7, 1, 1.18, 1],
+  transition: { duration: durations.slow * 3, times: [0, 0.3, 0.65, 1], ease: easings.out },
+} satisfies { scale: number[]; transition: Transition };
 
 /**
  * stagger (協調した順次出現) の間隔トークン (#875)。リストの一括出現で
