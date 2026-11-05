@@ -111,6 +111,13 @@
   `spawn_import` / `transfer_data` は Drop ガード (`CancelledImportCleanup` /
   `CancelledTransferCleanup`) で、キャッシュ無効化・履歴記録・スキップ行の掃除・(abort モードの)
   作成済みテーブルの DROP を代行する。
+- `commands/dump_native.rs` (#2033): `DumpOptions.native` を立てると MySQL / PostgreSQL も外部ツール
+  なしで接続から直接生成する (`dump_native_core`。DDL は `object_definition` / PostgreSQL は
+  `table_ddl` に `format_type` の型を渡して再構成、行は `execute_stream` + `data_diff::sql_literal`)。
+  `single_transaction` は効かず、PostgreSQL は 1 スキーマ単位。`DumpOptions.masks` は native のときだけ
+  使え、native でない指定は `InvalidInput` (マスクされずに出さない)。ラウンドトリップは
+  `tests/dump_native_integration.rs` (`NOOBDB_TEST_MYSQL_URL` / `NOOBDB_TEST_POSTGRES_URL` +
+  `mysql` / `psql` クライアントがあるときだけ実走)。
 - `commands/dump.rs`: DB ダンプ。MySQL は `mysqldump`、PostgreSQL は `pg_dump`、
   SQLite は接続から直接生成 (`dump_sqlite`。行は `execute_stream` で 1 行ずつ書き出し、1 MiB または 0.5 秒ごとに進捗を出す, #1530)。`mysqldump` の資格情報は
   プロセス引数や環境変数に出さないよう、一時オプションファイル (unix では mode 0600)

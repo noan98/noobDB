@@ -14,6 +14,8 @@ mod common;
 mod capture_integration;
 #[path = "../cross_driver_diff_integration.rs"]
 mod cross_driver_diff_integration;
+#[path = "../dump_native_integration.rs"]
+mod dump_native_integration;
 #[path = "../mysql_integration.rs"]
 mod mysql_integration;
 #[path = "../postgres_integration.rs"]

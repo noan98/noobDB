@@ -2696,6 +2696,11 @@ const en = {
   dumpOptChecksum: "Write a SHA-256 checksum file (.sha256)",
   dumpOptChecksumHint:
     "Saves <file>.sha256 next to the dump (sha256sum -c compatible) so corruption or tampering can be detected later. Computed on the final file, including gzip output.",
+  dumpOptNative: "Generate natively (no mysqldump / pg_dump)",
+  dumpOptNativeHint:
+    "Builds the SQL dump directly from this connection, so no external tool is needed (works on managed databases too). Not a consistent snapshot across tables; PostgreSQL dumps one schema; owners and privileges are not written.",
+  dumpUseNative: "Use native generation instead",
+  dumpUseNativeHint: "Skips the external tool and generates the dump from this connection.",
   dumpOptSqliteSnapshot: "Binary snapshot (.db) via VACUUM INTO",
   dumpOptSqliteSnapshotHint:
     "Instead of SQL, writes a consistent single-transaction copy of the database that opens directly as a .db file. Much faster for large databases; the SQL-format options are ignored.",
@@ -9946,6 +9951,11 @@ const ja: Dict = {
   dumpOptChecksum: "SHA-256 チェックサムファイル (.sha256) を書く",
   dumpOptChecksumHint:
     "ダンプと同じ場所に <ファイル名>.sha256 を保存します (sha256sum -c で検証可)。後から破損や改ざんを検出できます。gzip 後の最終ファイルのハッシュです。",
+  dumpOptNative: "ネイティブ生成 (mysqldump / pg_dump 不要)",
+  dumpOptNativeHint:
+    "外部ツールを使わず、この接続から直接 SQL ダンプを生成します (マネージド DB でも動作)。表をまたぐ一貫スナップショットにはならず、PostgreSQL は 1 スキーマ単位で、所有者・権限は出力しません。",
+  dumpUseNative: "ネイティブ生成に切り替える",
+  dumpUseNativeHint: "外部ツールを使わず、この接続からダンプを生成します。",
   dumpOptSqliteSnapshot: "VACUUM INTO のバイナリ・スナップショット (.db)",
   dumpOptSqliteSnapshotHint:
     "SQL ではなく、単一トランザクションで整合したデータベースのコピーを書き出します。そのまま .db として開け、大きな DB でも高速です。SQL 形式向けのオプションは無視されます。",

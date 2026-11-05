@@ -92,6 +92,39 @@ describe("DumpModal render smoke (#604)", () => {
 });
 
 // 前回のスイッチと保存先ディレクトリをプロファイルごとに復元する (#1631)。
+// #2033: MySQL / PostgreSQL は外部ツールなしのネイティブ生成を選べる。
+describe("DumpModal ネイティブ生成 (#2033)", () => {
+  it("mysql / postgres にだけネイティブ生成スイッチを出し、既定はオフ", () => {
+    const { unmount } = renderWithProviders(
+      <DumpModal sessionId="s1" database="app" driver="mysql" onClose={() => {}} />,
+    );
+    expect(screen.getByRole("switch", { name: t("dumpOptNative") })).not.toBeChecked();
+    unmount();
+    const pg = renderWithProviders(
+      <DumpModal sessionId="s1" database="public" driver="postgres" onClose={() => {}} />,
+    );
+    expect(screen.getByRole("switch", { name: t("dumpOptNative") })).not.toBeChecked();
+    pg.unmount();
+    renderWithProviders(<DumpModal sessionId="s1" database="main" driver="sqlite" onClose={() => {}} />);
+    expect(screen.queryByRole("switch", { name: t("dumpOptNative") })).not.toBeInTheDocument();
+  });
+
+  it("オンにすると注記がネイティブ用になり、外部ツール専用のスイッチが無効になる", () => {
+    renderWithProviders(<DumpModal sessionId="s1" database="app" driver="mysql" onClose={() => {}} />);
+    expect(screen.getByText(t("dumpNote", { tool: "mysqldump" }))).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: t("dumpOptSingleTransaction") })).toBeEnabled();
+    fireEvent.click(screen.getByRole("switch", { name: t("dumpOptNative") }));
+    expect(screen.getByText(t("dumpNoteNative"))).toBeInTheDocument();
+    expect(screen.queryByText(t("dumpNote", { tool: "mysqldump" }))).not.toBeInTheDocument();
+    for (const k of ["dumpOptSingleTransaction", "dumpOptNoTablespaces", "dumpOptGtidPurgedOff"] as const) {
+      expect(screen.getByRole("switch", { name: t(k) })).toBeDisabled();
+    }
+    // ネイティブでも効くスイッチは触れる。
+    expect(screen.getByRole("switch", { name: t("dumpOptNoData") })).toBeEnabled();
+    expect(screen.getByRole("switch", { name: t("dumpOptGzip") })).toBeEnabled();
+  });
+});
+
 describe("DumpModal 前回入力の記憶 (#1631)", () => {
   it("プロファイルに保存された gzip・保存先ディレクトリを初期値にする", () => {
     localStorage.clear();
