@@ -1596,10 +1596,15 @@ pub(crate) async fn run_captured_write_bounded(
             w.reason.clone().unwrap_or_default(),
         ));
     }
-    let run = session
+    // 辞退時は何も実行せず、呼び出し側の上限つき通常経路へ回す (自動コミットで先に確定させない)。
+    let run = match session
         .conn
-        .capture_execute(prep, &sql, database.as_deref())
-        .await?;
+        .capture_execute_strict(prep, &sql, database.as_deref())
+        .await?
+    {
+        Ok(run) => run,
+        Err(w) => return Ok(BoundedCapture::Declined(w.reason.unwrap_or_default())),
+    };
     let handle =
         tokio::spawn(async move { session.conn.capture_commit(run, &sql, Some(max_rows)).await });
     match handle.await {

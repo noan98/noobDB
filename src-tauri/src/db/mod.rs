@@ -2101,11 +2101,26 @@ impl Connection {
         sql: &str,
         database: Option<&str>,
     ) -> Result<CaptureRun> {
-        let ready = match prep {
-            CapturePrep::Decline(capture) => {
+        match self.capture_execute_strict(prep, sql, database).await? {
+            Ok(run) => Ok(run),
+            Err(capture) => {
                 let result = self.execute(sql, database).await?;
-                return Ok(CaptureRun::Done(Box::new((result, capture))));
+                Ok(CaptureRun::Done(Box::new((result, capture))))
             }
+        }
+    }
+
+    /// [`Connection::capture_execute`] のうち、記録を辞退する経路で**何も実行しない**版
+    /// (#2020 チャンク分割 DML)。辞退時は `Ok(Err(capture))` を返し、呼び出し側が
+    /// 件数上限つきの通常経路で実行し直せるようにする (自動コミットで先に確定させない)。
+    pub async fn capture_execute_strict(
+        &self,
+        prep: CapturePrep,
+        sql: &str,
+        database: Option<&str>,
+    ) -> Result<std::result::Result<CaptureRun, WriteCapture>> {
+        let ready = match prep {
+            CapturePrep::Decline(capture) => return Ok(Err(capture)),
             CapturePrep::Ready(r) => *r,
         };
         let ReadyCapture {
@@ -2119,22 +2134,19 @@ impl Connection {
             .execute_snapshot_uncommitted(sql, database, row_cap, upsert.as_ref())
             .await
         {
-            Ok((preview, result, tx)) => Ok(CaptureRun::Pending(Box::new(PendingCapture {
+            Ok((preview, result, tx)) => Ok(Ok(CaptureRun::Pending(Box::new(PendingCapture {
                 kind,
                 preview,
                 result,
                 tx,
                 upsert: is_upsert,
-            }))),
+            })))),
             // トランザクションを開く前に弾かれた (複数文など) 場合は何も実行されていない。
-            // 記録を辞退して通常経路で 1 回実行する。
-            Err(AppError::InvalidInput(_)) => {
-                let result = self.execute(sql, database).await?;
-                Ok(CaptureRun::Done(Box::new((
-                    result,
-                    WriteCapture::not_capturable(kind, "対象テーブル/主キーを特定できませんでした"),
-                ))))
-            }
+            // 記録を辞退する (通常経路での実行は呼び出し側が決める)。
+            Err(AppError::InvalidInput(_)) => Ok(Err(WriteCapture::not_capturable(
+                kind,
+                "対象テーブル/主キーを特定できませんでした",
+            ))),
             Err(e) => Err(e),
         }
     }
