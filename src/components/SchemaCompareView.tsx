@@ -45,7 +45,13 @@ import { Tooltip } from "./Tooltip";
 import { Button, Checkbox, Heading, Input, PressableButton } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
 import { DraftNumberInput } from "./DraftNumberInput";
-import { DiffFilterChip, statusLabel, TableDiffDetail, TableDiffList } from "./SchemaDiffDetail";
+import {
+  DiffFilterChip,
+  DiffTableSkeleton,
+  statusLabel,
+  TableDiffDetail,
+  TableDiffList,
+} from "./SchemaDiffDetail";
 import { DataRowDiffTable } from "./DataRowDiffTable";
 
 /**
@@ -1180,6 +1186,11 @@ export function SchemaCompareView({
           })()}
         </ErrorNote>
       )}
+      {dataComparing && !dataDiff && (
+        <DiffTableSkeleton
+          columns={[t("schemaCompareColOp"), t("dataRowDiffColKey"), t("dataRowDiffColChange")]}
+        />
+      )}
       {dataDiff && (
         <>
           <chakra.p margin={0} fontSize="sm" color="app.textMuted">
@@ -1200,7 +1211,9 @@ export function SchemaCompareView({
             </>
           ) : (
             <>
-              <DataRowDiffTable diff={dataDiff} />
+              {/* 結果ごとに key を変えて再マウントし、再比較でも行リビールを再生する (#2013)。
+                  再比較中は旧結果を残したままなのでスケルトンは出ない (スケルトンは初回の結果なし状態だけ)。 */}
+              <DataRowDiffTable key={dataDiffId ?? ""} diff={dataDiff} />
               <Flex
                 align="center"
                 gap="3"
@@ -1447,6 +1460,17 @@ export function SchemaCompareView({
 
           {compareError && <chakra.p css={warningCss}>{compareError}</chakra.p>}
 
+          {comparing && !diff && (
+            <DiffTableSkeleton
+              columns={[
+                t("schemaCompareColOp"),
+                t("schemaCompareColName"),
+                t("schemaCompareColSource", { name: sourceLabel ?? "" }),
+                t("schemaCompareColTarget", { name: targetLabel ?? "" }),
+              ]}
+            />
+          )}
+
           {diff && (
             <Box>
               <Box css={summaryCss} role="group" aria-label={t("schemaCompareFilterLabel")}>
@@ -1512,6 +1536,7 @@ export function SchemaCompareView({
                   <Box css={paneCss} p="3.5">
                     {selectedTable ? (
                       <TableDiffDetail
+                        key={selectedTable.name}
                         table={selectedTable}
                         sourceName={sourceLabel ?? ""}
                         targetName={targetLabel ?? ""}

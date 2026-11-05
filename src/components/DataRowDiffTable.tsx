@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex } from "@chakra-ui/react";
 
 import type { DataDiff, DiffStatus, RowDiff } from "../api/tauri";
@@ -6,6 +6,8 @@ import { useT } from "../i18n";
 import { formatCrossCell } from "./CrossDriverVerify";
 import { statusColors } from "./diffStatusColors";
 import { ActionMark, DiffFilterChip, detailTableCss, monoCellCss, statusLabel } from "./SchemaDiffDetail";
+import { RevealTbody } from "./RevealTbody";
+import { useRowCrossfade } from "./useRowCrossfade";
 import { Button } from "./ui";
 
 /**
@@ -75,6 +77,9 @@ export function DataRowDiffTable({
   const [limit, setLimit] = useState(DATA_ROW_PAGE);
   const counts = useMemo(() => countDataRows(diff), [diff]);
   const rows = useMemo(() => diff.rows.filter((r) => !hidden.has(r.status)), [diff, hidden]);
+  // ステータスチップの切替は 1 クリック = 離散操作なので `sort` 側のキーで即時にクロスフェードする (#2013)。
+  const tbodyRef = useRef<HTMLTableSectionElement>(null);
+  useRowCrossfade(tbodyRef, { sort: Array.from(hidden).sort().join(","), filter: "" }, "data-row-diff");
 
   if (diff.rows.length === 0) return null;
   const toggle = (status: DiffStatus) => {
@@ -114,7 +119,7 @@ export function DataRowDiffTable({
                 <th>{changeTitle ?? t("dataRowDiffColChange")}</th>
               </tr>
             </thead>
-            <tbody>
+            <RevealTbody ref={tbodyRef}>
               {rows.slice(0, limit).map((row) => {
                 const v = dataRowView(diff, row);
                 return (
@@ -135,7 +140,7 @@ export function DataRowDiffTable({
                   </tr>
                 );
               })}
-            </tbody>
+            </RevealTbody>
           </chakra.table>
         </Box>
       )}
