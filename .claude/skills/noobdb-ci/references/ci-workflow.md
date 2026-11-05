@@ -187,7 +187,7 @@
   `cargo fmt --all -- --check` を、`rust (deny)` が
   `cargo deny --manifest-path src-tauri/Cargo.toml check` (依存ライセンスの許可
   リスト検査と RustSec Advisory DB による脆弱性チェック。設定は
-  `src-tauri/deny.toml`) を実行します。`rust (deny)` は cargo metadata を読むだけで
+  `src-tauri/deny.toml`) に加え、`cargo machete src-tauri` で未使用依存 (#2029) を検出します。`rust (deny)` は cargo metadata を読むだけで
   コンパイル不要なため、Tauri のシステム依存やフロントエンドビルドは要らず軽量に
   走ります (cargo-deny は他ツールと同じく `taiki-e/install-action` でプリビルド
   バイナリを導入)。`rust (test)` には MySQL 用の

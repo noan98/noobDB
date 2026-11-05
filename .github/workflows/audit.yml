@@ -9,6 +9,7 @@ name: audit
 # 役割分担 (CLAUDE.md にも記載):
 #   - Dependabot (.github/dependabot.yml)  … 更新 PR の自動生成 (グルーピング/週次)
 #   - cargo-deny (ci.yml の rust (deny))   … Rust 依存のライセンス許可リスト + 脆弱性ゲート
+#   - cargo-machete (ci.yml の rust (deny)) … Rust の未使用依存ガード (#2029)
 #   - pnpm audit (このワークフロー)         … フロント依存の脆弱性可視化
 #
 # PR ごとに実走させると新規脆弱性の検出が翌 PR まで遅延しないメリットはあるが、
