@@ -1,16 +1,17 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Snippet } from "../api/tauri";
 import {
   DEFAULT_LAUNCHER_POSITION,
   DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS,
   buildQuickLauncherSections,
   clampLauncherPoint,
-  consumeLauncherIntro,
   computeLauncherPopoverPosition,
   exceedsDragThreshold,
+  launcherIntroPending,
   launcherPointToPosition,
   launcherPopoverOrigin,
   launcherPositionToPoint,
+  markLauncherIntroSeen,
   nudgeLauncherPoint,
   parseLauncherPosition,
   sanitizeQuickLauncherSectionLimits,
@@ -252,22 +253,39 @@ describe("launcherPopoverOrigin", () => {
   });
 });
 
-describe("consumeLauncherIntro (#2039)", () => {
-  beforeEach(() => {
+describe("launcher intro (#2039)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function stubStore(): Map<string, string> {
     const store = new Map<string, string>();
     vi.stubGlobal("localStorage", {
       getItem: (k: string) => store.get(k) ?? null,
       setItem: (k: string, v: string) => void store.set(k, v),
     });
+    return store;
+  }
+
+  it("未記録なら pending、記録後は false。判定は書き込まない", () => {
+    const store = stubStore();
+    expect(launcherIntroPending()).toBe(true);
+    expect(launcherIntroPending()).toBe(true);
+    expect(store.size).toBe(0);
+    markLauncherIntroSeen();
+    expect(launcherIntroPending()).toBe(false);
   });
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it("初回だけ true を返し、2 回目以降は false", () => {
-    expect(consumeLauncherIntro()).toBe(true);
-    expect(consumeLauncherIntro()).toBe(false);
-    expect(consumeLauncherIntro()).toBe(false);
+  it("localStorage が throw したらイントロを出さない側へ倒れ、記録も例外にならない", () => {
+    vi.stubGlobal("localStorage", {
+      getItem: () => {
+        throw new Error("blocked");
+      },
+      setItem: () => {
+        throw new Error("blocked");
+      },
+    });
+    expect(launcherIntroPending()).toBe(false);
+    expect(() => markLauncherIntroSeen()).not.toThrow();
   });
 });

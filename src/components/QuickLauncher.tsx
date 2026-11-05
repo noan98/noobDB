@@ -9,13 +9,14 @@ import {
   DEFAULT_LAUNCHER_POSITION,
   buildQuickLauncherSections,
   clampLauncherPoint,
-  consumeLauncherIntro,
+  launcherIntroPending,
   computeLauncherPopoverPosition,
   exceedsDragThreshold,
   launcherPointToPosition,
   launcherPopoverOrigin,
   launcherPositionToPoint,
   loadLauncherPosition,
+  markLauncherIntroSeen,
   nudgeLauncherPoint,
   saveLauncherPosition,
   singleLineSql,
@@ -28,7 +29,7 @@ import {
   type QuickLauncherSources,
 } from "../quickLauncher";
 import type { TableRef } from "../tableQuickAccess";
-import { durations, easings, springs, staggerContainer, transitions, variants } from "../motion";
+import { introPulse as introPulseMotion, springs, staggerContainer, transitions, variants } from "../motion";
 import { ActiveRowHighlight } from "./ActiveRowHighlight";
 import { ContextMenu } from "./ContextMenu";
 import { Input } from "./ui";
@@ -139,8 +140,9 @@ export function QuickLauncher({
   const [dragPoint, setDragPoint] = useState<Point | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
-  // 初回起動だけ入場に続けてパルスする (#2039)。マウント時に 1 度だけ判定して記録する。
-  const [introPulse] = useState(consumeLauncherIntro);
+  // 初回起動だけ入場に続けてパルスする (#2039)。判定はレンダーで読むだけ、記録は effect で行う。
+  const [introPulse] = useState(launcherIntroPending);
+  useEffect(() => markLauncherIntroSeen(), []);
   const popoverRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{
     pointerId: number;
@@ -362,7 +364,7 @@ export function QuickLauncher({
           initial={variants.fadeScale.initial}
           animate={{
             opacity: open || dragPoint ? 1 : 0.85,
-            scale: introPulse ? [0.7, 1, 1.18, 1] : 1,
+            scale: introPulse ? introPulseMotion.scale : 1,
           }}
           whileHover={{ opacity: 1 }}
           whileFocus={{ opacity: 1 }}
@@ -370,7 +372,7 @@ export function QuickLauncher({
             introPulse
               ? {
                   opacity: transitions.enter,
-                  scale: { duration: durations.slow * 3, times: [0, 0.3, 0.65, 1], ease: easings.out },
+                  scale: introPulseMotion.transition,
                 }
               : { opacity: transitions.enter, scale: springs.gentle }
           }
