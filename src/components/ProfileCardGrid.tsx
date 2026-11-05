@@ -156,7 +156,7 @@ export function ProfileCardGrid({
       // ルート自身の背景画像として敷く (内容は常にその手前に描かれる)。
       css={{ backgroundImage: "var(--hero-wash)", backgroundRepeat: "no-repeat" }}
     >
-      <HeroHeader title={t("profileCardsTitle")} subtitle={t("profileCardsSubtitle")} />
+      <HeroHeader title={t("profileCardsTitle")} subtitle={t("profileCardsSubtitle")} animate />
       {showFilter && (
         <Flex direction="column" align="center" gap="2" w="100%" maxW="960px">
           <Input

@@ -152,7 +152,7 @@ export function WelcomeView({ onCreateConnection, onOpenSqlite, onStartTour }: P
         <WelcomeIllustration size={128} />
       </MotionDiv>
 
-      <HeroHeader title={t("welcomeTitle")} subtitle={t("welcomeSubtitle")} maxW="46ch" />
+      <HeroHeader title={t("welcomeTitle")} subtitle={t("welcomeSubtitle")} maxW="46ch" animate />
 
       <MotionRow
         display="flex"
