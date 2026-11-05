@@ -2186,7 +2186,8 @@ pub async fn cancel_stream(
                     StreamKind::Query
                     | StreamKind::Preview
                     | StreamKind::Search
-                    | StreamKind::Ai => None,
+                    | StreamKind::Ai
+                    | StreamKind::Listen => None,
                     // 「今すぐ実行」のタスク (#1534)。中断は `run_task_now` の戻り値
                     // (中断として記録した実行ログ) で伝わるので通知イベントは無い。
                     StreamKind::Task => None,

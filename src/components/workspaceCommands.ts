@@ -126,6 +126,17 @@ export function workspaceCommandItems(
       run: () => actions.toggleBottomPanel("processes"),
     });
   }
+  // PostgreSQL の LISTEN / NOTIFY 監視 (#2019)。接続だけを要求する (他ドライバはパネルが縮退表示)。
+  if (ctx.sessionId) {
+    items.push({
+      id: "nav:pgListen",
+      group: "navigation",
+      label: t("pgListenTitle"),
+      icon: "bell",
+      keywords: "postgres postgresql listen notify pub/sub channel notification 通知 チャンネル 購読 監視",
+      run: () => actions.toggleBottomPanel("pgListen"),
+    });
+  }
   // SQLite のメンテナンス (#1625)。SQLite の接続でだけ開ける。
   if (ctx.sessionId && ctx.driver === "sqlite") {
     items.push({

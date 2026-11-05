@@ -45,6 +45,9 @@ pub enum StreamKind {
     /// キャンセルしても `run_task_now` の戻り値 (中断として記録した実行ログ) で分かるので、
     /// 通知イベントは持たない。
     Task,
+    /// PostgreSQL の `LISTEN` / `NOTIFY` 監視 (#2019)。`delivered_rows` は流した通知の件数。
+    /// キャンセルは Channel の `Cancelled` で通知する。
+    Listen,
 }
 
 /// A running streaming task tracked by [`AppState`]. Besides the `AbortHandle`
@@ -71,6 +74,26 @@ pub struct StreamHandle {
     /// `AppState.streams` map holding it) stays transport-agnostic — state.rs
     /// doesn't need to know about `commands::query`'s message enum types.
     pub on_cancel: Option<Box<dyn Fn(u64) + Send + Sync>>,
+}
+
+/// `LISTEN` 監視タスクへの制御メッセージ (#2019)。`reply` で LISTEN / UNLISTEN の成否を返す。
+pub enum PgListenControl {
+    Add {
+        channel: String,
+        reply: tokio::sync::oneshot::Sender<crate::error::Result<()>>,
+    },
+    Remove {
+        channel: String,
+        reply: tokio::sync::oneshot::Sender<crate::error::Result<()>>,
+    },
+}
+
+/// 稼働中の `LISTEN` 監視 1 本ぶんの登録情報。`token` は `register_stream` が返した値で、
+/// 同じ `stream_id` を再利用した新しい監視のエントリを古いタスクの後始末が消さないための照合用。
+pub struct PgListenerEntry {
+    pub token: u64,
+    pub session_id: SessionId,
+    pub control: tokio::sync::mpsc::UnboundedSender<PgListenControl>,
 }
 
 /// 保持する `DataDiff` の最大件数 (超えたら最古から破棄)。サンドボックスのレビューは
@@ -306,6 +329,10 @@ pub struct AppState {
     pub streams: RwLock<HashMap<StreamId, (u64, StreamHandle)>>,
     /// Monotonic source of the per-registration tokens above.
     stream_seq: AtomicU64,
+    /// `LISTEN` / `NOTIFY` 監視 (#2019) の稼働中リスナー。`stream_id` から、チャンネルの
+    /// 追加・削除を送る制御チャネルと所属セッションを引く。タスク本体は `streams` に登録され、
+    /// `cancel_stream` / セッション切断で止まる (その際このエントリも消える)。
+    pg_listeners: std::sync::Mutex<HashMap<StreamId, PgListenerEntry>>,
     /// In-flight connection attempts keyed by a client-provided attempt id.
     /// Aborting the handle cancels a connect that is hanging on an unreachable
     /// host / stuck tunnel, so the UI can offer a cancel button (#684). The
@@ -416,8 +443,31 @@ impl AppState {
             return Err(Box::new(session));
         }
         let prev = sessions.insert(id.clone(), Arc::new(session));
+        drop(sessions);
         tracing::info!(session_id = %id, "session replaced (reconnect)");
+        // 再接続で旧接続 (トンネル) は閉じるので、旧接続を向いた `LISTEN` 監視も止める。
+        // 画面には `cancelled` が届くので、ユーザが開始し直す (自動では張り直さない)。
+        self.stop_pg_listeners_for_session(&id).await;
         Ok(prev)
+    }
+
+    /// そのセッションの `LISTEN` 監視 (#2019) をすべて止める。タスクを abort して専用接続を閉じ、
+    /// 登録を消し、画面へは Channel の `cancelled` (`on_cancel`) で伝える。
+    pub async fn stop_pg_listeners_for_session(&self, session_id: &str) {
+        let streams: Vec<StreamId> = self
+            .pg_listeners
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|(_, e)| e.session_id == session_id)
+            .map(|(sid, _)| sid.clone())
+            .collect();
+        for stream_id in streams {
+            if let Some((delivered_rows, _, Some(on_cancel))) = self.cancel_stream(&stream_id).await
+            {
+                on_cancel(delivered_rows);
+            }
+        }
     }
 
     pub async fn get(&self, id: &str) -> Option<Arc<Session>> {
@@ -472,6 +522,8 @@ impl AppState {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .release_session(id);
+            // `LISTEN` 監視 (#2019) は切断したセッションの分を残さない。
+            self.stop_pg_listeners_for_session(id).await;
             // アドバイザの前回診断も、切断したセッションの分は持ち越さない。
             self.advisor_last
                 .lock()
@@ -516,6 +568,34 @@ impl AppState {
         if map.get(stream_id).is_some_and(|(cur, _)| *cur == token) {
             map.remove(stream_id);
         }
+    }
+
+    /// `LISTEN` 監視の制御チャネルを登録する (#2019)。`token` は `register_stream` の戻り値。
+    pub fn register_pg_listener(&self, stream_id: StreamId, entry: PgListenerEntry) {
+        self.pg_listeners
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(stream_id, entry);
+    }
+
+    /// 監視タスクの終了時に、自分のトークンのエントリだけを消す。
+    pub fn forget_pg_listener(&self, stream_id: &str, token: u64) {
+        let mut map = self.pg_listeners.lock().unwrap_or_else(|e| e.into_inner());
+        if map.get(stream_id).is_some_and(|e| e.token == token) {
+            map.remove(stream_id);
+        }
+    }
+
+    /// 稼働中の監視の制御チャネル (チャンネルの追加・削除用)。
+    pub fn pg_listener_control(
+        &self,
+        stream_id: &str,
+    ) -> Option<tokio::sync::mpsc::UnboundedSender<PgListenControl>> {
+        self.pg_listeners
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(stream_id)
+            .map(|e| e.control.clone())
     }
 
     /// Track an in-flight connection attempt so `cancel_connect` can abort it.
@@ -573,6 +653,10 @@ impl AppState {
         &self,
         stream_id: &str,
     ) -> Option<(u64, StreamKind, Option<Box<dyn Fn(u64) + Send + Sync>>)> {
+        self.pg_listeners
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(stream_id);
         if let Some((_, h)) = self.streams.write().await.remove(stream_id) {
             h.abort.abort();
             let delivered_rows = h.delivered_rows.load(Ordering::SeqCst);
@@ -665,6 +749,66 @@ mod tests {
             !state.streams.read().await.contains_key(&stream_id),
             "the current registration's own token must still remove its entry"
         );
+    }
+
+    /// `LISTEN` 監視を 1 本ぶん登録する (ダミーのタスク)。戻り値は `on_cancel` が呼ばれた回数。
+    async fn register_listener(
+        state: &AppState,
+        stream_id: &str,
+        session_id: &str,
+    ) -> Arc<std::sync::atomic::AtomicUsize> {
+        let cancelled = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let c = cancelled.clone();
+        let jh = tokio::spawn(std::future::pending::<()>());
+        let token = state
+            .register_stream(
+                stream_id.to_string(),
+                StreamHandle {
+                    abort: jh.abort_handle(),
+                    delivered_rows: Arc::new(AtomicU64::new(0)),
+                    kind: StreamKind::Listen,
+                    on_cancel: Some(Box::new(move |_| {
+                        c.fetch_add(1, Ordering::SeqCst);
+                    })),
+                },
+            )
+            .await;
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        state.register_pg_listener(
+            stream_id.to_string(),
+            PgListenerEntry {
+                token,
+                session_id: session_id.to_string(),
+                control: tx,
+            },
+        );
+        cancelled
+    }
+
+    #[tokio::test]
+    async fn cancel_stream_stops_a_listener_and_forgets_its_control_channel() {
+        let state = AppState::default();
+        let cancelled = register_listener(&state, "l1", "s1").await;
+        assert!(state.pg_listener_control("l1").is_some());
+        let (_, kind, on_cancel) = state.cancel_stream("l1").await.expect("running");
+        assert_eq!(kind, StreamKind::Listen);
+        assert!(on_cancel.is_some());
+        assert!(state.pg_listener_control("l1").is_none());
+        assert!(!state.streams.read().await.contains_key("l1"));
+        assert_eq!(cancelled.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn stopping_a_session_only_stops_its_own_listeners() {
+        let state = AppState::default();
+        let a = register_listener(&state, "la", "s1").await;
+        let b = register_listener(&state, "lb", "s2").await;
+        state.stop_pg_listeners_for_session("s1").await;
+        assert_eq!(a.load(Ordering::SeqCst), 1);
+        assert_eq!(b.load(Ordering::SeqCst), 0);
+        assert!(state.pg_listener_control("la").is_none());
+        assert!(state.pg_listener_control("lb").is_some());
+        assert!(!state.streams.read().await.contains_key("la"));
     }
 
     fn diff_with_rows(n: usize) -> DataDiff {

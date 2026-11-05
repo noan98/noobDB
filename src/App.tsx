@@ -393,6 +393,9 @@ const PinnedComparisonView = lazy(() =>
 const ProcessListPanel = lazy(() =>
   import("./components/ProcessListPanel").then((m) => ({ default: m.ProcessListPanel })),
 );
+const PgListenPanel = lazy(() =>
+  import("./components/PgListenPanel").then((m) => ({ default: m.PgListenPanel })),
+);
 const SqliteMaintenancePanel = lazy(() =>
   import("./components/SqliteMaintenancePanel").then((m) => ({ default: m.SqliteMaintenancePanel })),
 );
@@ -12495,17 +12498,19 @@ export default function App() {
                     ? t("perfTitle")
                     : tab === "sqliteMaintenance"
                       ? t("sqliteMaintTitle")
-                      : tab === "profile"
-                        ? t("profileTitle")
-                        : tab === "structure"
-                          ? t("structureTitle")
-                          : tab === "timelapse"
-                            ? t("timelapseTitle")
-                            : tab === "aiSql"
-                              ? t("aiSqlTitle")
-                              : tab === "aiResultSummary"
-                                ? t("aiResultSummaryTitle")
-                                : t("processTitle");
+                      : tab === "pgListen"
+                        ? t("pgListenTitle")
+                        : tab === "profile"
+                          ? t("profileTitle")
+                          : tab === "structure"
+                            ? t("structureTitle")
+                            : tab === "timelapse"
+                              ? t("timelapseTitle")
+                              : tab === "aiSql"
+                                ? t("aiSqlTitle")
+                                : tab === "aiResultSummary"
+                                  ? t("aiResultSummaryTitle")
+                                  : t("processTitle");
 
   // ConnectionList (memo) へ渡すハンドラの束。`tabs` / `activeTab` / `settings` に依存する
   // ハンドラが多く、そのまま渡すと打鍵・ストリーミング・タブ切替のたびに参照が変わって
@@ -13154,6 +13159,12 @@ export default function App() {
                       <SqliteMaintenancePanel
                         sessionId={sessionId}
                         readOnly={selectedProfile?.read_only ?? false}
+                      />
+                    ) : activeBottomPanelTab === "pgListen" ? (
+                      <PgListenPanel
+                        key={sessionId}
+                        sessionId={sessionId}
+                        driver={selectedProfile?.driver ?? "mysql"}
                       />
                     ) : activeBottomPanelTab === "processes" ? (
                       <ProcessListPanel
@@ -14921,6 +14932,14 @@ export default function App() {
                 label: t("perfTitle"),
                 icon: "clock",
                 onSelect: () => toggleBottomPanel("perf"),
+              },
+              {
+                label: t("pgListenTitle"),
+                icon: "bell",
+                onSelect: () => toggleBottomPanel("pgListen"),
+                // 開けば MySQL / SQLite でも理由つきで縮退表示する。接続だけを要求する。
+                disabled: !sessionId,
+                title: !sessionId ? t("appToolsNeedsSession") : undefined,
               },
               {
                 label: t("sqliteMaintTitle"),

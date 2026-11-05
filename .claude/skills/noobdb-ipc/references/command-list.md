@@ -243,6 +243,27 @@ PostgreSQL は別スキーマの子テーブルからの単一列 FK も専用�
 `get_object_definition` が `CREATE SEQUENCE` + `OWNED BY` + 現在値 (`last_value`) のコメントを返す。
 シーケンスはツリーの一覧・定義表示専用で、Where-used の走査対象には入らない。
 
+## LISTEN / NOTIFY 監視 (`commands/listen.rs`, #2019)
+
+- `start_pg_listen`
+- `pg_listen_add_channel`
+- `pg_listen_remove_channel`
+
+PostgreSQL の `LISTEN` / `NOTIFY` を購読するボトムパネル (診断グループの `pgListen` タブ) 用。
+いずれも読み取りのみで `read_only` でも動く (`NOTIFY` の送信は持たない)。
+
+- `start_pg_listen(session_id, stream_id, channels, on_event)` — セッションの接続設定
+  (トンネル経由ならローカルポート) から**専用接続を 1 本**開き、sqlx の `PgListener` で
+  `LISTEN` する。Channel に `started{channels}` / `notification{channel, payload,
+  payloadTruncated, pid, receivedAtMs}` / `reconnected` / `unsupported{reason}` / `error` /
+  `cancelled{deliveredRows}` を送る。payload は 2000 文字に切り詰める。MySQL / SQLite は
+  `unsupported`(`reason: "unsupported_driver"`) で縮退。停止は `cancel_stream(stream_id)`、
+  セッション切断 (`AppState::remove`) と再接続 (`AppState::replace`) でも `cancelled` を送って止まり、専用接続も閉じる (再接続後は開始し直す)。タスクは `Session` を持たない。画面側 Channel が閉じたときの終了は補助で、画面は必ず `cancel_stream` を呼ぶ。
+- `pg_listen_add_channel(stream_id, channel)` / `pg_listen_remove_channel(stream_id, channel)` —
+  稼働中の監視へ `LISTEN` / `UNLISTEN` を足す。チャンネル名は sqlx が識別子として
+  `"..."` で囲む (内部の `"` は重ねる) うえ、長さ (63 バイト)・NUL・空・件数 (50) を
+  `db/pg_listen.rs` で検証する。
+
 ## 比較・同期 (`commands/diff.rs`, `commands/sync.rs`)
 
 - `compare_schema`

@@ -5,6 +5,7 @@ import * as schemas from "./schemas";
 import { parseResponse } from "./schemas";
 import {
   aiStreamChannels,
+  pgListenChannels,
   batchStreamChannels,
   broadcastChannels,
   dataSearchChannels,
@@ -27,6 +28,7 @@ import { processCommands } from "./commands/process";
 import { inspectorCommands } from "./commands/inspector";
 import { profileCommands } from "./commands/profile";
 import { searchCommands } from "./commands/search";
+import { listenCommands } from "./commands/listen";
 import { diffCommands } from "./commands/diff";
 import { syncCommands } from "./commands/sync";
 import { privilegesCommands } from "./commands/privileges";
@@ -2578,6 +2580,7 @@ export const api = {
   ...inspectorCommands,
   ...profileCommands,
   ...searchCommands,
+  ...listenCommands,
   ...diffCommands,
   ...syncCommands,
   ...privilegesCommands,
@@ -3724,6 +3727,114 @@ export async function listenWhereUsedStream(
     channel.onmessage = () => {};
     if (whereUsedChannels.get(streamId) === channel) {
       whereUsedChannels.delete(streamId);
+    }
+  };
+}
+
+/** PostgreSQL LISTEN / NOTIFY 監視で受けた通知 1 件 (#2019)。 */
+export interface PgNotification {
+  channel: string;
+  /** 表示用に切り詰め済み (バックエンドが 2000 文字まで)。 */
+  payload: string;
+  payloadTruncated: boolean;
+  /** 通知を送ったバックエンドプロセスの PID。 */
+  pid: number;
+  /** 受信時刻 (UNIX エポックからのミリ秒)。 */
+  receivedAtMs: number;
+}
+
+export interface PgListenStreamHandlers {
+  onStarted?: (event: { channels: string[] }) => void;
+  onNotification?: (event: PgNotification) => void;
+  /** 専用接続が切れて張り直した。切断中の通知は届かない。 */
+  onReconnected?: () => void;
+  /** 非対応ドライバ。`reason` は理由コード (`unsupported_driver`)。 */
+  onUnsupported?: (event: { reason: string }) => void;
+  onError?: (event: { error: string; connectionLost: boolean }) => void;
+  /** `deliveredRows` は流した通知の件数。セッション切断でも届く。 */
+  onCancelled?: (event: ChannelCancelledMessage) => void;
+}
+
+/**
+ * LISTEN / NOTIFY 監視 (`startPgListen`, #2019) の Channel を `streamId` 向けに作って購読する。
+ * 戻り値は `listenQueryStream` と同じく、ハンドラを外す関数。
+ */
+export async function listenPgListenStream(
+  streamId: string,
+  handlers: PgListenStreamHandlers,
+): Promise<UnlistenFn> {
+  const channel = new Channel<unknown>();
+  channel.onmessage = (raw) => {
+    const msg = raw as RawStreamMessage;
+    switch (msg.kind) {
+      case "started":
+        handlers.onStarted?.(
+          parseChannelMessage<{ channels: string[] }>(
+            schemas.pgListenStartedMessage,
+            msg,
+            "pgListenStartedMessage",
+          ),
+        );
+        break;
+      case "notification": {
+        const m = parseChannelMessage<PgNotification>(
+          schemas.pgListenNotificationMessage,
+          msg,
+          "pgListenNotificationMessage",
+        );
+        handlers.onNotification?.({
+          channel: m.channel,
+          payload: m.payload,
+          payloadTruncated: m.payloadTruncated,
+          pid: m.pid,
+          receivedAtMs: m.receivedAtMs,
+        });
+        break;
+      }
+      case "reconnected":
+        parseChannelMessage<{ kind: "reconnected" }>(
+          schemas.pgListenReconnectedMessage,
+          msg,
+          "pgListenReconnectedMessage",
+        );
+        handlers.onReconnected?.();
+        break;
+      case "unsupported":
+        handlers.onUnsupported?.(
+          parseChannelMessage<{ reason: string }>(
+            schemas.pgListenUnsupportedMessage,
+            msg,
+            "pgListenUnsupportedMessage",
+          ),
+        );
+        break;
+      case "error":
+        handlers.onError?.(
+          parseChannelMessage<{ error: string; connectionLost: boolean }>(
+            schemas.pgListenErrorMessage,
+            msg,
+            "pgListenErrorMessage",
+          ),
+        );
+        break;
+      case "cancelled":
+        handlers.onCancelled?.(
+          parseChannelMessage<ChannelCancelledMessage>(
+            schemas.channelCancelledMessage,
+            msg,
+            "channelCancelledMessage",
+          ),
+        );
+        break;
+      default:
+        break;
+    }
+  };
+  pgListenChannels.set(streamId, channel);
+  return () => {
+    channel.onmessage = () => {};
+    if (pgListenChannels.get(streamId) === channel) {
+      pgListenChannels.delete(streamId);
     }
   };
 }

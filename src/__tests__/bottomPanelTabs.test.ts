@@ -80,11 +80,30 @@ describe("availableBottomPanelTabs", () => {
     ).not.toContain("sqliteMaintenance");
   });
 
+  it("LISTEN / NOTIFY 監視 (#2019) は診断グループで、接続していれば全ドライバで開ける", () => {
+    expect(BOTTOM_PANEL_TAB_GROUP.pgListen).toBe("diagnostics");
+    for (const driver of ["postgres", "mysql", "sqlite"]) {
+      expect(availableBottomPanelTabs({ ...connected, driver })).toContain("pgListen");
+    }
+    expect(
+      availableBottomPanelTabs({ sessionId: null, advisorDatabase: null, openConnectionCount: 0 }),
+    ).not.toContain("pgListen");
+  });
+
   it("対象データベースが決まらないとアドバイザだけ落ちる", () => {
     for (const db of [null, undefined, ""]) {
       expect(
         availableBottomPanelTabs({ sessionId: "sess1", advisorDatabase: db, openConnectionCount: 1 }),
-      ).toEqual([...LOG_TABS, "inspector", "processes", "assertions", "health", "perf", "whereUsed"]);
+      ).toEqual([
+        ...LOG_TABS,
+        "inspector",
+        "processes",
+        "assertions",
+        "pgListen",
+        "health",
+        "perf",
+        "whereUsed",
+      ]);
     }
   });
 
@@ -402,11 +421,23 @@ describe("bottomPanelStripTabs (折りたたみ時のパネルバー)", () => {
     expect(bottomPanelStripTabs(connected).map((e) => e.tab)).not.toContain("perf");
   });
 
+  it("LISTEN / NOTIFY 監視 (#2019) のパネルバーは PostgreSQL の接続でだけ並べる", () => {
+    const has = (driver: string) =>
+      bottomPanelStripTabs({ ...connected, driver }).some((e) => e.tab === "pgListen");
+    expect(has("postgres")).toBe(true);
+    expect(has("mysql")).toBe(false);
+    expect(has("sqlite")).toBe(false);
+  });
+
   it("参照グループは対象が揃っていても並べない (対象を決めて開くもの)", () => {
     const entries = bottomPanelStripTabs(connected);
     expect(entries.map((e) => e.tab)).toEqual(
       BOTTOM_PANEL_TABS.filter(
-        (tab) => BOTTOM_PANEL_TAB_GROUP[tab] !== "reference" && tab !== "perf" && tab !== "sqliteMaintenance",
+        (tab) =>
+          BOTTOM_PANEL_TAB_GROUP[tab] !== "reference" &&
+          tab !== "perf" &&
+          tab !== "sqliteMaintenance" &&
+          tab !== "pgListen",
       ),
     );
     expect(entries.every((e) => e.enabled && e.reason === null)).toBe(true);

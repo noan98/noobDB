@@ -87,6 +87,23 @@
 - UI: `components/QueryInspectorPanel.tsx`、純ロジック (N+1 窓判定・テールのマージ/
   フィルタ) は `components/queryInspector.ts`。
 
+## LISTEN / NOTIFY 監視 (#2019)
+
+PostgreSQL の pub/sub を観測するボトムパネル (`pgListen` タブ、診断グループ)。読み取りのみで
+`read_only` でも使える。`NOTIFY` の送信機能は持たない。
+
+- `commands/listen.rs` の `start_pg_listen` が専用接続を 1 本張り (`db/postgres.rs::open_listener`。
+  セッションの `connect_options` を使うので SSH / SSM トンネルのローカルポートでも動く)、
+  sqlx の `PgListener` で受けた通知を Tauri Channel (`PgListenMessage`) へ流す。
+- チャンネルの追加・削除は `pg_listen_add_channel` / `pg_listen_remove_channel` (`AppState` の
+  `pg_listeners` に制御チャネルを登録し、タスクが `select!` で受ける)。停止は `cancel_stream`
+  (`StreamKind::Listen`)、切断は `AppState::remove` が止める。パネルを閉じるとフロントが cancel する。
+- 純ロジックは `db/pg_listen.rs` (チャンネル名検証・payload 切り詰め) と
+  `components/pgListen.ts` (受信バッファ 1000 件で古い順に破棄・検証の鏡・縮退理由)。
+- MySQL / SQLite は `unsupported_driver` の理由コードで縮退表示する。限界: 接続が切れて張り直す間の
+  通知は届かない (`reconnected` で画面に示す)。AWS IAM 認証の接続は、再接続時に張り直す
+  トークンの期限 (15 分) 以降は自動再接続できない。
+
 ## サーバ情報 / メトリクス (#563)
 
 `commands/server.rs` の `server_info` (バージョン + 主要設定変数) と `server_metrics`。

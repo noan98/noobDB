@@ -19,6 +19,7 @@ pub mod import_decode;
 pub mod import_templates;
 pub mod import_xlsx;
 pub mod inspector;
+pub mod listen;
 pub mod local;
 pub mod logs;
 pub mod plan_watch;
