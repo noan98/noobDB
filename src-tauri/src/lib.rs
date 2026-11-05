@@ -15,9 +15,10 @@ mod ai;
 mod assertions;
 mod atomic_write;
 mod cache;
-// `#[tauri::command]` マクロが全コマンドの展開コードに `unreachable!()` を埋め込み、
-// 戻り値型のスパンで clippy::unreachable を誤検知する (手書きの unreachable ではない)。
-// マクロ由来の誤検知を抑えるためこのモジュールに限り許可する。手書きの
+// 参照引数を持つ async コマンドの戻り値型チェック (tauri-macros の wrapper.rs) が
+// `unreachable!()` を生成し、clippy::unreachable を誤検知する (手書きではない)。
+// マクロ由来の誤検知を抑えるためこのモジュールに限り許可する。tauri 更新時に
+// この allow が不要になっていないか見直すこと。手書きの
 // `unreachable!` / `todo!` / `unimplemented!` は commands/mod.rs のメタテスト
 // (panic_macro_guard) が、直前の allow + 根拠コメント無しなら失敗させて補っている。
 #[allow(clippy::unreachable)]
