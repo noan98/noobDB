@@ -12,7 +12,7 @@
  * 識別子クオートは既存の方言ユーティリティ (`sqlDialect.quoteIdentFor`) を再利用する。
  */
 
-import type { CellValue, TableColumnInfo } from "../api/tauri";
+import type { CellValue, NewColumnType, TableColumnInfo } from "../api/tauri";
 import type { CellKind } from "./cellTypeMeta";
 import { quoteIdentFor } from "./sqlDialect";
 
@@ -419,6 +419,41 @@ function generateValue(spec: ColumnGenSpec, rowIndex: number, rng: () => number)
     }
     case "omit":
       return null;
+  }
+}
+
+/**
+ * 「新規テーブルを作って投入」(#2066) で、生成方針から既定の列型を決める。型は抽象型の列挙
+ * (DDL はバックエンドが方言別に生成する) なので、ここで SQL 断片は作らない。
+ * MySQL の BOOLEAN は文字列リテラルで流す投入と相性が悪いため、真偽は整数にする
+ * (`newColumnTypeOptions` が MySQL で boolean を出さないのと揃える)。
+ */
+export function defaultNewColumnType(spec: ColumnGenSpec, driver: string): NewColumnType {
+  const numeric = (): NewColumnType => {
+    if (spec.kind === "decimal") return "double";
+    if (spec.kind === "number") return "bigint";
+    return "text";
+  };
+  switch (spec.strategy) {
+    case "serial":
+      return "bigint";
+    case "randomNumber": {
+      if (spec.kind === "decimal") return "double";
+      const small = Math.abs(spec.min) <= 2_000_000_000 && Math.abs(spec.max) <= 2_000_000_000;
+      return small ? "integer" : "bigint";
+    }
+    case "randomBool":
+      return driver === "mysql" ? "integer" : "boolean";
+    case "randomDate":
+      if (spec.temporal === "date") return "date";
+      if (spec.temporal === "datetime") return "datetime";
+      return "text";
+    case "fixed":
+    case "fkRef":
+      if (spec.kind === "bool") return driver === "mysql" ? "integer" : "boolean";
+      return numeric();
+    default:
+      return "text";
   }
 }
 
