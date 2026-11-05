@@ -24,7 +24,11 @@ const ROOT: PlanNode = {
   ],
 };
 
-const killStyle = () => document.querySelector("style[data-test-disable-animations]") as HTMLStyleElement;
+const killStyle = () => {
+  const el = document.querySelector("style[data-test-disable-animations]") as HTMLStyleElement | null;
+  if (!el?.sheet) throw new Error("共通セットアップのアニメ無効化 <style> が見つからない");
+  return el;
+};
 
 function Host() {
   return (
@@ -51,7 +55,9 @@ describe("EXPLAIN グラフの凡例 (#2017, 実ブラウザ)", () => {
     await expect.poll(() => document.querySelector('[data-testid="explain-legend"]')).not.toBeNull();
     const legend = document.querySelector('[data-testid="explain-legend"]') as HTMLElement;
     expect(legend.querySelector(".explain-legend-fill")).not.toBeNull();
-    await expect.poll(() => document.querySelectorAll('[role="button"][aria-label] svg').length).toBe(3);
+    await expect
+      .poll(() => document.querySelectorAll('.react-flow__node [role="button"] svg').length)
+      .toBe(3);
     const toggle = legend.querySelector("button") as HTMLButtonElement;
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     const before = legend.querySelectorAll("svg").length;

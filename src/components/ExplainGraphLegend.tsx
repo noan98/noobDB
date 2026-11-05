@@ -59,6 +59,7 @@ export function ExplainGraphLegend({ isDark }: { isDark: boolean }) {
       boxShadow="var(--elevation-raised)"
       color="var(--text-muted)"
       fontSize="var(--text-2xs)"
+      maxW="calc(60 * var(--space-1))"
     >
       <Box display="flex" alignItems="center" gap="var(--space-1-5)">
         <span>{t("explainLegendCostLow")}</span>
@@ -94,7 +95,6 @@ export function ExplainGraphLegend({ isDark }: { isDark: boolean }) {
       <chakra.button
         type="button"
         aria-expanded={open}
-        aria-label={t("explainLegendCategoriesToggle")}
         onClick={() => setOpen((v) => !v)}
         display="inline-flex"
         alignItems="center"
