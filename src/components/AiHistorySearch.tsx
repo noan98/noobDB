@@ -1,3 +1,4 @@
+import { motion, useReducedMotion } from "motion/react";
 import { useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { api } from "../api/tauri";
@@ -22,6 +23,7 @@ import {
 } from "../ai/historySearch";
 import { useAiAvailable } from "../ai/useAiAvailable";
 import { useLocale, useT } from "../i18n";
+import { staggerContainer, variants } from "../motion";
 import { useSettings } from "../settings";
 import { Button, Input } from "./ui";
 import { Callout } from "./Callout";
@@ -34,6 +36,12 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { useCopyFeedback } from "./useCopyFeedback";
 import { isImeComposing } from "./modalKeys";
+
+// CommandPalette と同じ stagger 語彙 (#1212)。`variants` を子へ伝播させるため forwardProps で通す。
+const MotionMatchList = chakra(motion.div, {}, { forwardProps: ["variants", "initial", "animate"] });
+const MotionMatchRow = chakra(motion.div, {}, { forwardProps: ["variants"] });
+/** stagger 入場させる先頭件数の上限。 */
+const MAX_STAGGER_ITEMS = 12;
 
 /** SQL 全文の取得を同時に走らせる件数。 */
 const FETCH_BATCH = 100;
@@ -86,6 +94,7 @@ export interface AiHistorySearchProps {
  */
 export function AiHistorySearch({ filters, periodLabel, onOpen, onSaveAsSnippet }: AiHistorySearchProps) {
   const t = useT();
+  const reduced = useReducedMotion() ?? false;
   const locale = useLocale();
   const ai = useSettings().ai;
   const available = useAiAvailable();
@@ -394,10 +403,27 @@ export function AiHistorySearch({ filters, periodLabel, onOpen, onSaveAsSnippet 
             {t("aiHistoryNoMatches")}
           </Callout>
         ) : (
-          <Flex direction="column" gap="1.5" aria-live="polite" maxH="320px" overflow="auto">
-            {state.matches.map((m) => {
+          <MotionMatchList
+            display="flex"
+            flexDirection="column"
+            gap="1.5"
+            aria-live="polite"
+            maxH="320px"
+            overflow="auto"
+            variants={staggerContainer(reduced)}
+            initial="initial"
+            animate="animate"
+          >
+            {state.matches.map((m, mi) => {
               return (
-                <Flex key={m.historyId} gap="1" align="stretch" data-testid="ai-history-match">
+                <MotionMatchRow
+                  key={m.historyId}
+                  display="flex"
+                  gap="1"
+                  alignItems="stretch"
+                  data-testid="ai-history-match"
+                  variants={mi < MAX_STAGGER_ITEMS ? variants.staggerItem : undefined}
+                >
                   <chakra.button
                     type="button"
                     flex="1"
@@ -453,10 +479,10 @@ export function AiHistorySearch({ filters, periodLabel, onOpen, onSaveAsSnippet 
                       </chakra.button>
                     </Tooltip>
                   )}
-                </Flex>
+                </MotionMatchRow>
               );
             })}
-          </Flex>
+          </MotionMatchList>
         ))}
       {state.kind === "summary" && (
         <Flex direction="column" gap="1">

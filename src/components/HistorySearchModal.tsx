@@ -1,6 +1,8 @@
 import { Box, chakra } from "@chakra-ui/react";
+import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useT } from "../i18n";
+import { staggerContainer, variants } from "../motion";
 import { ActiveRowHighlight } from "./ActiveRowHighlight";
 import { singleLine } from "./commandPaletteSearch";
 import { Modal } from "./Modal";
@@ -10,6 +12,12 @@ import { scrollFollowIntoView } from "./scrollFollow";
 
 /** 一度に並べる候補の最大数。履歴は最大 100 件なので実質すべて出せる。 */
 const MAX_ROWS = 50;
+/** stagger 入場させる先頭件数の上限 (CommandPalette / ObjectSearchModal と同じ上限ガード)。 */
+const MAX_STAGGER_ITEMS = 12;
+
+// CommandPalette と同じ stagger 語彙 (#1212)。`variants` を子へ伝播させるため forwardProps で通す。
+const MotionListBox = chakra(motion.div, {}, { forwardProps: ["variants", "initial", "animate"] });
+const MotionRow = chakra(motion.button, {}, { forwardProps: ["variants"] });
 
 interface Props {
   /** 直近の実行クエリ (最新が先頭)。 */
@@ -26,6 +34,7 @@ interface Props {
  */
 export function HistorySearchModal({ history, onPick, onClose }: Props) {
   const t = useT();
+  const reduced = useReducedMotion() ?? false;
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   // アクティブ行ハイライトの layoutId をモーダルごとに分ける。
@@ -91,13 +100,16 @@ export function HistorySearchModal({ history, onPick, onClose }: Props) {
         color="app.text"
         fontSize="md"
       />
-      <Box
+      <MotionListBox
         ref={listRef}
         role="listbox"
         aria-label={t("queryHistorySearchListAria")}
         maxH="min(420px, 60vh)"
         overflowY="auto"
         py="1.5"
+        variants={staggerContainer(reduced)}
+        initial="initial"
+        animate="animate"
       >
         {rows.length === 0 ? (
           <Box px="4" py="5" textAlign="center" color="app.textMuted" fontSize="sm">
@@ -105,10 +117,11 @@ export function HistorySearchModal({ history, onPick, onClose }: Props) {
           </Box>
         ) : (
           rows.map((sql, i) => (
-            <chakra.button
+            <MotionRow
               key={`${i}:${sql}`}
               type="button"
               role="option"
+              variants={i < MAX_STAGGER_ITEMS ? variants.staggerItem : undefined}
               aria-selected={i === activeIndex}
               onClick={() => pick(sql)}
               onMouseMove={() => setActive(i)}
@@ -135,10 +148,10 @@ export function HistorySearchModal({ history, onPick, onClose }: Props) {
               >
                 {singleLine(sql)}
               </chakra.span>
-            </chakra.button>
+            </MotionRow>
           ))
         )}
-      </Box>
+      </MotionListBox>
     </Modal>
   );
 }
