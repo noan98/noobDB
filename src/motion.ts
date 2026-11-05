@@ -138,6 +138,9 @@ import type { Transition, Variants } from "motion/react";
  * - クエリビルダーの WHERE 条件行の追加/削除 (`QueryBuilder` — `LiveRowsPresence` +
  *   `LiveCollapse` の `variants.collapse`、#1936)。行ごとに安定キーを持たせ、行間の gap は
  *   各行の内側 padding に移して畳み終わりに隙間が残らないようにする。
+ * - CREATE TABLE ウィザードの列 / 外部キー / CHECK 行の追加/削除 (`CreateTableModal` /
+ *   `TableConstraintEditor` — `LiveRowsPresence` + `LiveRow`、#2014)。QueryBuilder と同じ
+ *   `variants.collapse` で、消えかけの行は `inert` にして二重押下を防ぐ。
  */
 
 /** cubic-bezier カーブ。CSS の `--ease` / `--ease-out` と同じ値。 */

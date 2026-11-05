@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { chakra, type HTMLChakraProps, type SystemStyleObject } from "@chakra-ui/react";
-import { AnimatePresence, MotionConfig, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, MotionConfig, motion, useIsPresent, useReducedMotion } from "motion/react";
 
 import { transitions, variants } from "../motion";
 import { diffLiveRows, type LiveChanges, type LiveField } from "./liveDiff";
@@ -111,6 +111,29 @@ export function LiveCollapse({
     </MotionDiv>
   ) : (
     <MotionDiv variants={variants.collapse}>{children}</MotionDiv>
+  );
+}
+
+/**
+ * フォームの動的行 (列 / 制約など) の 1 行。`LiveRowsPresence` の直下に `key` 付きで置く。
+ * 行間の余白は内側の上 padding (`pt`) に持たせ、畳み終わりに隙間が残らないようにする
+ * (親リストは `mt` の負値で先頭ぶんを相殺する)。消えかけの行は `inert` にして、
+ * 古い添字を握った削除ボタンの二重押下で別の行が消えるのを防ぐ。
+ */
+export function LiveRow({ children }: { children: ReactNode }) {
+  return (
+    <LiveCollapse standalone>
+      <PresenceGuard>{children}</PresenceGuard>
+    </LiveCollapse>
+  );
+}
+
+function PresenceGuard({ children }: { children: ReactNode }) {
+  const present = useIsPresent();
+  return (
+    <chakra.div pt="1.5" inert={!present} pointerEvents={present ? undefined : "none"}>
+      {children}
+    </chakra.div>
   );
 }
 

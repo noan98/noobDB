@@ -168,3 +168,48 @@ describe("CreateTableModal 既存テーブルからの雛形 (#1540)", () => {
     expect(screen.queryByLabelText(t("createTableTemplate"))).toBeNull();
   });
 });
+
+describe("CreateTableModal 動的行の出入り (#2014)", () => {
+  const renderModal = () =>
+    renderWithProviders(
+      <CreateTableModal
+        driver="mysql"
+        database="appdb"
+        readOnly={false}
+        onRun={() => {}}
+        onSendToEditor={() => {}}
+        onClose={() => {}}
+      />,
+    );
+  const nameInputs = () => screen.getAllByLabelText(new RegExp(`^${t("createTableColName")} \\(`));
+
+  it("列を途中で削除しても、残った列の入力値は取り違えない (安定キー)", async () => {
+    renderModal();
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("createTableAddCol")) }));
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("createTableAddCol")) }));
+    ["a", "b", "c"].forEach((v, i) => fireEvent.change(nameInputs()[i], { target: { value: v } }));
+    fireEvent.click(screen.getAllByRole("button", { name: t("createTableRemoveCol") })[0]);
+    await waitFor(() => expect(nameInputs()).toHaveLength(2));
+    expect(nameInputs().map((el) => (el as HTMLInputElement).value)).toEqual(["b", "c"]);
+  });
+
+  it("消えかけの列の × をもう一度押しても、残りの列は減らない", async () => {
+    renderModal();
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("createTableAddCol")) }));
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("createTableAddCol")) }));
+    ["a", "b", "c"].forEach((v, i) => fireEvent.change(nameInputs()[i], { target: { value: v } }));
+    const firstRemove = screen.getAllByRole("button", { name: t("createTableRemoveCol") })[0];
+    fireEvent.click(firstRemove);
+    fireEvent.click(firstRemove);
+    await waitFor(() => expect(nameInputs()).toHaveLength(2));
+    expect(nameInputs().map((el) => (el as HTMLInputElement).value)).toEqual(["b", "c"]);
+  });
+
+  it("CHECK 行を追加・削除できる", async () => {
+    renderModal();
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("constraintCheckAdd")) }));
+    expect(screen.getAllByLabelText(t("constraintCheckExpr"))).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: t("constraintCheckRemove") }));
+    await waitFor(() => expect(screen.queryAllByLabelText(t("constraintCheckExpr"))).toHaveLength(0));
+  });
+});
