@@ -320,6 +320,8 @@ function MetricChart({
             if (s.pts.length === 0) return null;
             const d = s.pts.map((p) => `${xAt(p.atMs)},${yAt(p.value)}`).join(" ");
             const color = categoricalColor(s.colorIndex, isDark);
+            // 最新サンプルでこの系列が欠測 (リセット・未報告) なら末尾は古いままなので描き入れない。
+            const lastIsNew = animateLast && s.pts.length >= 2 && s.pts[s.pts.length - 1].atMs === lastAt;
             return (
               <g key={s.key}>
                 {s.pts.length === 1 ? (
@@ -328,7 +330,7 @@ function MetricChart({
                   <>
                     <polyline
                       points={
-                        animateLast
+                        lastIsNew
                           ? s.pts
                               .slice(0, -1)
                               .map((p) => `${xAt(p.atMs)},${yAt(p.value)}`)
@@ -339,7 +341,7 @@ function MetricChart({
                       stroke={color}
                       strokeWidth={1.75}
                     />
-                    {animateLast && (
+                    {lastIsNew && (
                       <motion.line
                         key={`last${gen.n}`}
                         data-testid="metric-latest-segment"
@@ -349,6 +351,7 @@ function MetricChart({
                         y2={yAt(s.pts[s.pts.length - 1].value)}
                         stroke={color}
                         strokeWidth={1.75}
+                        strokeLinecap="round"
                         initial={{ pathLength: 0, opacity: 0 }}
                         animate={{ pathLength: 1, opacity: 1 }}
                         transition={{ duration: durations.slow, ease: easings.out }}

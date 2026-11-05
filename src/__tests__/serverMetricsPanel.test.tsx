@@ -289,31 +289,46 @@ describe("ServerMetricsPanel 要約タイル (#1833)", () => {
  * ときだけ最新区間を motion.line で描き入れる。
  */
 describe("ServerMetricsPanel latest segment animation (#2026)", () => {
-  it("初回は描き入れず、更新後の最新区間だけ描き入れる", async () => {
-    const m = (connections: number): ServerMetrics => ({
-      connections,
-      active: null,
-      idle_in_transaction: null,
-      lock_waiting: null,
-      questions: null,
-      slow_queries: null,
-      lock_waits: null,
-    });
+  const m = (connections: number | null, questions: number | null): ServerMetrics => ({
+    connections,
+    active: null,
+    idle_in_transaction: null,
+    lock_waiting: null,
+    questions,
+    slow_queries: null,
+    lock_waits: null,
+  });
+  const setup = async (seq: ServerMetrics[]) => {
     let now = 1_700_000_000_000;
     vi.spyOn(Date, "now").mockImplementation(() => now);
-    vi.mocked(api.serverMetrics)
-      .mockResolvedValueOnce(m(5))
-      .mockResolvedValueOnce(m(6))
-      .mockResolvedValue(m(7));
+    for (const x of seq) vi.mocked(api.serverMetrics).mockResolvedValueOnce(x);
     renderWithProviders(<ServerMetricsPanel sessionId="s1" driver="postgres" />);
     await waitFor(() => expect(screen.getByTestId("metrics-summary-tiles")).toBeInTheDocument());
-    const refresh = async (calls: number) => {
+    expect(screen.queryAllByTestId("metric-latest-segment")).toHaveLength(0);
+    return async (calls: number) => {
       now += 1000;
       fireEvent.click(screen.getByRole("button", { name: t("metricsRefresh") }));
       await waitFor(() => expect(api.serverMetrics).toHaveBeenCalledTimes(calls));
     };
+  };
+
+  it("初回は描き入れず、更新後の最新区間だけ描き入れる", async () => {
+    const refresh = await setup([m(5, null), m(6, null)]);
     await refresh(2);
     await waitFor(() => expect(screen.getAllByTestId("metric-latest-segment").length).toBeGreaterThan(0));
+    vi.restoreAllMocks();
+  });
+
+  it("最新サンプルで系列が null (リセット) なら古い区間を描き直さない", async () => {
+    const refresh = await setup([m(5, 100), m(5, 200), m(5, 300), m(5, 50)]);
+    await refresh(2);
+    await refresh(3);
+    // レート系列が 2 点そろい、接続数と合わせて描き入れる。
+    await waitFor(() => expect(screen.getAllByTestId("metric-latest-segment").length).toBeGreaterThan(1));
+    const before = screen.getAllByTestId("metric-latest-segment").length;
+    await refresh(4);
+    // questions はリセットでレートが null になるため、描き入れる系列が減る。
+    await waitFor(() => expect(screen.queryAllByTestId("metric-latest-segment").length).toBeLessThan(before));
     vi.restoreAllMocks();
   });
 });
