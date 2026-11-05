@@ -16,7 +16,8 @@
   `context`) を持ち、フロントが `RuleId` をタイトル・説明テンプレートへマップします
   (`QueryStatsSupport` の理由コードと同じ発想)。
 - `RuleId`: `FkMissingIndex` / `DuplicateIndex` / `RedundantIndex` /
-  `MissingPrimaryKey` / `UnusedIndex` / `FkTypeMismatch` / `SqliteIntegerPkHint`。
+  `MissingPrimaryKey` / `UnusedIndex` / `FkTypeMismatch` / `SqliteIntegerPkHint` / `NullableForeignKey` /
+  `OversizedVarchar` (長さ 1000 超) / `FloatForMoney` (金額らしい列名 + FLOAT/DOUBLE/REAL)。
   重要度は `Severity` (`High` / `Medium` / `Low`) で、フロントで semantic トークン
   (#664) に色分けされます。
 - **修正 DDL は安全で一意に定まるルールについてのみ生成し、実行はしません**

@@ -1835,7 +1835,10 @@ export type AdvisorRuleId =
   | "missing_primary_key"
   | "unused_index"
   | "fk_type_mismatch"
-  | "sqlite_integer_pk_hint";
+  | "sqlite_integer_pk_hint"
+  | "nullable_foreign_key"
+  | "oversized_varchar"
+  | "float_for_money";
 
 /** 指摘の重要度。フロントで semantic トークンに色分けされる (#664)。 */
 export type AdvisorSeverity = "high" | "medium" | "low";

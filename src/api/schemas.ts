@@ -1172,6 +1172,9 @@ const advisorRuleId = z.enum([
   "unused_index",
   "fk_type_mismatch",
   "sqlite_integer_pk_hint",
+  "nullable_foreign_key",
+  "oversized_varchar",
+  "float_for_money",
 ]);
 
 export const healthFinding = z.object({
