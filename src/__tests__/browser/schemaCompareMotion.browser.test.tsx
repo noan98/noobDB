@@ -98,7 +98,9 @@ describe("テーブル一覧のフィルタ (#2013, 実ブラウザ)", () => {
     );
   }
   const findB = () =>
-    Array.from(document.querySelectorAll("li button")).find((b) => b.textContent === "t22") as HTMLElement;
+    Array.from(document.querySelectorAll("li button")).find((b) =>
+      b.textContent?.includes("t22"),
+    ) as HTMLElement;
 
   it("フィルタで項目が減っても、残った項目の DOM ノードとフォーカスが保たれる", async () => {
     await renderInBrowser(<Harness />);
