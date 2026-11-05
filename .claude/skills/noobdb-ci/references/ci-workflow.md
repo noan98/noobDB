@@ -352,8 +352,8 @@ Windows 固有 × サーバ型ドライバの退行が CI で見えなかった�
 
 ## `mutants-diff.yml` (PR 差分の `cargo mutants --in-diff` / #1841)
 
-`ci.yml` とは別の独立ワークフロー。手動 (`workflow_dispatch`) の `mutants.yml` (全件 4 シャード、
-定期実行ではない。変更しない) の補完として、安全網ファイル (`src-tauri/.cargo/mutants.toml` の
+`ci.yml` とは別の独立ワークフロー。手動 (`workflow_dispatch`) + 週次 `schedule` (#2038) の `mutants.yml` (全件 4 シャード。
+スコープは変更しない) の補完として、安全網ファイル (`src-tauri/.cargo/mutants.toml` の
 `examine_globs` と同じ `db/mod.rs` / `mysql.rs` / `postgres.rs` / `sqlite.rs` / `sync.rs` /
 `data_diff.rs` / `lib.rs`、加えて `script_analysis.rs` と `masking.rs`、`mutants.toml` 自体と本
 ワークフロー) を変更した PR だけで起動し、新しく入った未カバー分岐 (生存変異) を PR 時点で報告する。
@@ -391,5 +391,5 @@ Windows 固有 × サーバ型ドライバの退行が CI で見えなかった�
   `failure` / `cancelled` なら「打ち切り」と出し分ける。`mutants.out/` ・diff・list 結果は artifact
   `mutants-diff-out` (14 日) に保存。ジョブは 40 分で打ち切り、同一 PR の古い run は取り消す。
 - ジョブ ID と `rust-cache` の `key` は `mutants.yml` と同じ `mutants`。main で `mutants.yml` を手動
-  実行したキャッシュは PR の初回 run でも復元されるが、定期実行がないので通常は初回が cold で、
-  同じ PR の 2 回目以降の push から効く。actions は同じ SHA ピン。
+  実行したキャッシュは PR の初回 run でも復元される。週次 schedule (#2038) が main のキャッシュを
+  更新するので初回から効くことが多い (rust-cache は 7 日未アクセスで消えるため境界付近では cold もある)。actions は同じ SHA ピン。
