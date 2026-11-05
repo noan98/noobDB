@@ -283,3 +283,37 @@ describe("ServerMetricsPanel 要約タイル (#1833)", () => {
     vi.restoreAllMocks();
   });
 });
+
+/**
+ * 折れ線の最新区間の描き入れ (#2026)。初回表示では静止し、ポーリングで新サンプルが届いた
+ * ときだけ最新区間を motion.line で描き入れる。
+ */
+describe("ServerMetricsPanel latest segment animation (#2026)", () => {
+  it("初回は描き入れず、更新後の最新区間だけ描き入れる", async () => {
+    const m = (connections: number): ServerMetrics => ({
+      connections,
+      active: null,
+      idle_in_transaction: null,
+      lock_waiting: null,
+      questions: null,
+      slow_queries: null,
+      lock_waits: null,
+    });
+    let now = 1_700_000_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    vi.mocked(api.serverMetrics)
+      .mockResolvedValueOnce(m(5))
+      .mockResolvedValueOnce(m(6))
+      .mockResolvedValue(m(7));
+    renderWithProviders(<ServerMetricsPanel sessionId="s1" driver="postgres" />);
+    await waitFor(() => expect(screen.getByTestId("metrics-summary-tiles")).toBeInTheDocument());
+    const refresh = async (calls: number) => {
+      now += 1000;
+      fireEvent.click(screen.getByRole("button", { name: t("metricsRefresh") }));
+      await waitFor(() => expect(api.serverMetrics).toHaveBeenCalledTimes(calls));
+    };
+    await refresh(2);
+    await waitFor(() => expect(screen.getAllByTestId("metric-latest-segment").length).toBeGreaterThan(0));
+    vi.restoreAllMocks();
+  });
+});
