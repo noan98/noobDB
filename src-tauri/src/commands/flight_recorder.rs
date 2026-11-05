@@ -83,11 +83,78 @@ pub(crate) async fn run_captured_write_inner(
     )
     .await;
     let elapsed_ms = started.elapsed().as_millis() as i64;
+    finish_captured_write(&session, sql, database, outcome, elapsed_ms, retention_days).await
+}
 
+/// [`run_captured_write_bounded_inner`] の結果。
+pub(crate) enum BoundedCaptureResponse {
+    /// 記録を辞退する文。何も実行していない(辞退理由つき)。
+    Declined(String),
+    Done(CapturedWriteResponse),
+}
+
+/// 上限つきの記録つき書き込み (チャンク分割 DML、#2020)。記録を辞退する文は何も実行せずに `Declined` を
+/// 返す (呼び出し側が通常経路で実行する)。実行後 COMMIT 前に影響行数が `max_rows` を超えていれば
+/// ロールバックしてエラーにする (書き込みも記録も残らない)。
+pub(crate) async fn run_captured_write_bounded_inner(
+    state: &AppState,
+    session_id: String,
+    sql: String,
+    database: Option<String>,
+    row_cap: u32,
+    retention_days: Option<u32>,
+    max_rows: u64,
+) -> Result<BoundedCaptureResponse> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    ensure_allowed_for_session(&session, &sql)?;
+    let started = std::time::Instant::now();
+    let outcome = crate::commands::query::run_captured_write_bounded(
+        session.clone(),
+        sql.clone(),
+        database.clone(),
+        row_cap as usize,
+        max_rows,
+    )
+    .await;
+    let elapsed_ms = started.elapsed().as_millis() as i64;
+    match outcome {
+        Ok(crate::commands::query::BoundedCapture::Declined(reason)) => {
+            Ok(BoundedCaptureResponse::Declined(reason))
+        }
+        Ok(crate::commands::query::BoundedCapture::Done(done)) => finish_captured_write(
+            &session,
+            sql,
+            database,
+            Ok(*done),
+            elapsed_ms,
+            retention_days,
+        )
+        .await
+        .map(BoundedCaptureResponse::Done),
+        Err(e) => {
+            finish_captured_write(&session, sql, database, Err(e), elapsed_ms, retention_days)
+                .await
+                .map(BoundedCaptureResponse::Done)
+        }
+    }
+}
+
+/// 記録つき書き込みの後始末 (履歴・キャッシュ invalidate・記録の保存)。通常版と上限つき版で共有する。
+async fn finish_captured_write(
+    session: &std::sync::Arc<crate::state::Session>,
+    sql: String,
+    database: Option<String>,
+    outcome: Result<(QueryResult, crate::db::WriteCapture)>,
+    elapsed_ms: i64,
+    retention_days: Option<u32>,
+) -> Result<CapturedWriteResponse> {
     match &outcome {
         Ok((result, _)) => {
             record_write_history(
-                &session,
+                session,
                 sql.clone(),
                 database.as_deref(),
                 Some(result.rows_affected as i64),
@@ -98,7 +165,7 @@ pub(crate) async fn run_captured_write_inner(
         }
         Err(e) => {
             record_write_history(
-                &session,
+                session,
                 sql.clone(),
                 database.as_deref(),
                 None,

@@ -3,7 +3,14 @@ import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
 import type { UpdateGroup } from "../../components/cellEdit";
-import type { BulkWriteOptions, BulkWriteOutcome, CellValue, InsertRowsResult } from "../tauri";
+import type {
+  BulkWriteOptions,
+  BulkWriteOutcome,
+  CellValue,
+  InsertRowsResult,
+  ChunkedDmlBatchResult,
+} from "../tauri";
+import type { ChunkedOp } from "../../components/chunkedDml";
 
 export const bulkWriteCommands = {
   /**
@@ -73,4 +80,32 @@ export const bulkWriteCommands = {
       columns: params.columns,
       rows: params.rows,
     }).then((r) => parseResponse(schemas.insertRowsResult, r, "insert_generated_rows")),
+  /**
+   * 大規模 DML のチャンク分割実行 (#2020) の 1 バッチ。Rust が `DELETE/UPDATE ... LIMIT n` 相当の 1 文を
+   * 組み立てて `run_query_transaction` と同じ経路 (read_only ガード・履歴・キャッシュ) で流す。
+   * 戻り値の `rows_affected` が 0 ならもう対象が無い。ループ・ウェイト・キャンセルは呼び出し側が持つ。
+   */
+  runChunkedDmlBatch: (params: {
+    sessionId: string;
+    database?: string | null;
+    table: string;
+    operation: ChunkedOp;
+    whereClause: string;
+    batchSize: number;
+    /** フライトレコーダ有効時に各バッチを記録経路へ流す (#735)。辞退されても書き込みは行われる。 */
+    capture?: { retentionDays?: number | null } | null;
+  }) =>
+    invoke<ChunkedDmlBatchResult>("run_chunked_dml_batch", {
+      sessionId: params.sessionId,
+      database: params.database ?? null,
+      table: params.table,
+      operation:
+        params.operation.kind === "delete"
+          ? { kind: "delete" }
+          : { kind: "update", set_clause: params.operation.setClause },
+      whereClause: params.whereClause,
+      batchSize: params.batchSize,
+      captureEnabled: params.capture ? true : null,
+      captureRetentionDays: params.capture?.retentionDays ?? null,
+    }).then((r) => parseResponse(schemas.chunkedDmlBatchResult, r, "run_chunked_dml_batch")),
 };

@@ -358,6 +358,9 @@ const CreateNamespaceModal = lazy(() =>
 const CreateIndexModal = lazy(() =>
   import("./components/CreateIndexModal").then((m) => ({ default: m.CreateIndexModal })),
 );
+const TableChunkedDmlModal = lazy(() =>
+  import("./components/TableChunkedDmlModal").then((m) => ({ default: m.TableChunkedDmlModal })),
+);
 const TableCloneModal = lazy(() =>
   import("./components/TableCloneModal").then((m) => ({ default: m.TableCloneModal })),
 );
@@ -2243,6 +2246,8 @@ export default function App() {
   // 名前変更ダイアログの衝突検出用に、対象スキーマの既存テーブル名を取得する。
   const [renameExistingTables, setRenameExistingTables] = useState<string[]>([]);
   const [cloneTarget, setCloneTarget] = useState<{ database: string; table: string } | null>(null);
+  // 分割一括 DELETE / UPDATE ダイアログの対象 (#2020)。
+  const [chunkedDmlTarget, setChunkedDmlTarget] = useState<{ database: string; table: string } | null>(null);
   // スキーマツリーで複数選択したテーブルの一括エクスポート / ダンプ (#1399): 対象。null で閉じる。
   const [exportTablesTarget, setExportTablesTarget] = useState<{ database: string; tables: string[] } | null>(
     null,
@@ -8878,6 +8883,33 @@ export default function App() {
     [cloneTarget, sessionId, selectedProfile?.driver, invalidateSchemaCache, noteSchemaDdl, toast],
   );
 
+  // 分割一括 DELETE / UPDATE (#2020) の開始前確認。ループ自体はモーダルが持ち、1 バッチごとに
+  // 既存の書き込み経路 (`run_query_transaction` と同じ read_only ガード・履歴) を通る。確定済みの
+  // バッチはまとめて取り消せない破壊的操作なので、接続設定に関わらず常に確認し、本番ではテーブル名の
+  // 入力確認 (#675) を要求する。
+  const confirmChunkedDmlStart = useCallback(
+    (info: { table: string; batchSize: number; total: number; sql: string }) =>
+      confirm({
+        title: translate("chunkedDmlConfirmTitle", { table: info.table }),
+        message: (
+          <>
+            <chakra.p m={0} mb="3" whiteSpace="pre-line">
+              {translate("chunkedDmlConfirmBody", { rows: info.total, size: info.batchSize })}
+            </chakra.p>
+            <CodePreview wrap maxH="30vh">
+              {info.sql}
+            </CodePreview>
+          </>
+        ),
+        confirmLabel: translate("chunkedDmlConfirmButton"),
+        tone: "danger",
+        typedConfirmation: selectedProfile?.is_production
+          ? resolveTypedConfirmTarget([info.table])
+          : undefined,
+      }),
+    [confirm, selectedProfile?.is_production],
+  );
+
   // 列編集ダイアログ (ALTER TABLE ADD/MODIFY/DROP/RENAME COLUMN・CREATE INDEX、#794) の
   // 「エディタへ転送」: モーダルを閉じて生成済み SQL をクエリタブへ渡すだけ
   // (CreateTableModal の `onSendToEditor` と同じ流儀)。
@@ -12550,6 +12582,7 @@ export default function App() {
     onDropTable: handleDropTable,
     onRenameTable: (database: string, table: string) => setRenameTarget({ database, table }),
     onCloneTable: (database: string, table: string) => setCloneTarget({ database, table }),
+    onChunkedDml: (database: string, table: string) => setChunkedDmlTarget({ database, table }),
     onShowCreateTables: handleShowCreateTables,
     onCopyTablesDdl: handleCopyTablesDdl,
     onCopyTableNames: handleCopyTableNames,
@@ -14508,6 +14541,28 @@ export default function App() {
                   sourceTable={cloneTarget.table}
                   onConfirm={handleCloneTableConfirm}
                   onClose={() => setCloneTarget(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {chunkedDmlTarget && sessionId && (
+              <Suspense fallback={null}>
+                <TableChunkedDmlModal
+                  sessionId={sessionId}
+                  driver={selectedProfile?.driver ?? "mysql"}
+                  database={chunkedDmlTarget.database}
+                  table={chunkedDmlTarget.table}
+                  readOnly={selectedProfile?.read_only ?? false}
+                  isProduction={selectedProfile?.is_production ?? false}
+                  capture={
+                    settings.flightRecorderEnabled
+                      ? { retentionDays: settings.flightRecorderRetentionDays }
+                      : null
+                  }
+                  onConfirmStart={confirmChunkedDmlStart}
+                  onClose={() => setChunkedDmlTarget(null)}
                 />
               </Suspense>
             )}

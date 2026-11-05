@@ -334,6 +334,7 @@ const WRITE_CAPABLE: Record<string, WriteCapable> = {
   ),
   // --- 経由ヘルパのガード ---
   bulk_update_cells: VIA_TX,
+  run_chunked_dml_batch: VIA_TX,
   undo_flight_record: wc(
     "flight_recorder.rs の apply_flight_plan が run_query_transaction_inner 経由",
     /\brun_query_transaction_inner\s*\(/,
@@ -776,6 +777,7 @@ const CONNECTION_WRITE_METHODS = new Set([
   "capture_write",
   "capture_prepare",
   "capture_execute",
+  "capture_execute_strict",
   "capture_commit",
   "register_local_table",
   "drop_local_table",

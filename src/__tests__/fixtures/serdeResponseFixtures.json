@@ -626,6 +626,12 @@
     "deliveredRows": 0,
     "kind": "cancelled"
   },
+  "chunkedDmlBatchResult": {
+    "capture_note": "declined",
+    "elapsed_ms": 12,
+    "recorded": false,
+    "rows_affected": 1000
+  },
   "column": {
     "name": "id",
     "type_name": "INTEGER"

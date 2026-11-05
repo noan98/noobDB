@@ -96,7 +96,9 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
 
 - `bulk_update_cells`
 - `insert_generated_rows`
+- `run_chunked_dml_batch`
 
+- `run_chunked_dml_batch(sessionId, database, table, operation, whereClause, batchSize)` は大規模 DML のチャンク分割実行 (#2020) の **1 バッチ**。`operation` は `{kind:"delete"}` / `{kind:"update", set_clause}`。Rust (`db::chunked_dml`) が MySQL=`... WHERE (cond) LIMIT n`、PostgreSQL=`ctid IN (SELECT ctid ... LIMIT n)`、SQLite=`rowid IN (SELECT rowid ... LIMIT n)` を組み立て、`run_query_transaction_guarded_inner` (影響行数が `batchSize` 超ならロールバック) に渡す。read_only ガード・履歴・キャッシュは既存経路と同一。WHERE/SET の `;`・コメント・括弧の不整合は拒否、SQLite の WITHOUT ROWID 表は拒否。ループ・バッチ間ウェイト・キャンセル・最大バッチ数 (UPDATE の無限ループ対策) はフロント (`TableChunkedDmlModal`) が持つ。生成は `chunkedDmlVectors.json` で TS (`components/chunkedDml.ts`) と固定。
 - `bulk_update_cells(sessionId, database, table, pkColumns, groups, extraStatements, pkBinary?, options?)` は結果グリッドの
   セル編集 Apply。フロント (`cellEdit.buildUpdateGroups`) が同じ (列, 値) ごとにまとめた
   構造化入力を送り、Rust が `UPDATE t SET c = v WHERE pk IN (…)` (単一 PK・500 件ずつ) /

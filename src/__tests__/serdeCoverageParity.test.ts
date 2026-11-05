@@ -72,6 +72,7 @@ const COVERED: Record<string, string> = {
   TableTrigger: "tableTrigger",
   TablePartitions: "tablePartitions",
   InsertRowsResult: "insertRowsResult",
+  ChunkedDmlBatchResult: "chunkedDmlBatchResult",
   KillProcessesResult: "killProcessesResult",
   KnownHost: "knownHost",
   KnownHostEvent: "knownHostEvent",

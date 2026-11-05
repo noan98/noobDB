@@ -394,6 +394,8 @@ interface Props {
   onRenameTable?: (database: string, table: string) => void;
   /** テーブルを複製するダイアログを開く (#1398)。read_only では無効化される。 */
   onCloneTable?: (database: string, table: string) => void;
+  /** テーブルを分割して一括 DELETE / UPDATE するダイアログを開く (#2020)。read_only では無効化される。 */
+  onChunkedDml?: (database: string, table: string) => void;
   /**
    * テーブルの複数選択 (#1399) 時の一括操作。選んだ 2 件以上のテーブル (同一データベース内、
    * データベース内の並び順) を渡す。未指定ならそのメニュー項目を出さない。実行は呼び出し側 (App) が
@@ -2001,6 +2003,7 @@ export const ConnectionList = memo(
       onDropTable,
       onRenameTable,
       onCloneTable,
+      onChunkedDml,
       onShowCreateTables,
       onCopyTablesDdl,
       onCopyTableNames,
@@ -3236,7 +3239,15 @@ export const ConnectionList = memo(
       // テーブル保守操作: TRUNCATE / DROP / RENAME / 列編集 (#794) / インデックス作成
       // (#850)。破壊的なので read_only では無効化し、実行時は呼び出し側 (App) が
       // 確認ダイアログを挟む。
-      if (onTruncateTable || onDropTable || onRenameTable || onCloneTable || onAlterTable || onCreateIndex) {
+      if (
+        onTruncateTable ||
+        onDropTable ||
+        onRenameTable ||
+        onCloneTable ||
+        onChunkedDml ||
+        onAlterTable ||
+        onCreateIndex
+      ) {
         const roTitle = activeReadOnly ? t("listReadOnlyTitle") : undefined;
         items.push({ separator: true });
         if (onRenameTable) {
@@ -3251,6 +3262,14 @@ export const ConnectionList = memo(
           items.push({
             label: t("contextMenuCloneTable"),
             onSelect: () => onCloneTable(db, tbl),
+            disabled: activeReadOnly,
+            title: roTitle,
+          });
+        }
+        if (onChunkedDml) {
+          items.push({
+            label: t("contextMenuChunkedDml"),
+            onSelect: () => onChunkedDml(db, tbl),
             disabled: activeReadOnly,
             title: roTitle,
           });

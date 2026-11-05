@@ -1588,9 +1588,51 @@ pub(crate) async fn run_captured_write(
         query_timeout_secs,
     )
     .await?;
-    let handle = tokio::spawn(async move { session.conn.capture_commit(run, &sql).await });
+    let handle = tokio::spawn(async move { session.conn.capture_commit(run, &sql, None).await });
     match handle.await {
         Ok(res) => res,
+        Err(e) => Err(AppError::Other(format!("captured write task failed: {e}"))),
+    }
+}
+
+/// [`run_captured_write_bounded`] の結果。`Declined` は記録を辞退する文で、何も実行していない。
+pub(crate) enum BoundedCapture {
+    Declined(String),
+    Done(Box<(crate::db::types::QueryResult, crate::db::WriteCapture)>),
+}
+
+/// 上限つきの記録つき書き込み (チャンク分割 DML、#2020)。記録を辞退する文 (`Decline`) は何も実行せず
+/// `Declined` を返す。実行できた場合、COMMIT 前に影響行数が `max_rows` を超えていればロールバックして
+/// エラーにする (書き込みも記録も残らない)。
+pub(crate) async fn run_captured_write_bounded(
+    session: Arc<Session>,
+    sql: String,
+    database: Option<String>,
+    row_cap: usize,
+    max_rows: u64,
+) -> Result<BoundedCapture> {
+    let prep = session
+        .conn
+        .capture_prepare(&sql, database.as_deref(), row_cap)
+        .await?;
+    if let crate::db::CapturePrep::Decline(w) = &prep {
+        return Ok(BoundedCapture::Declined(
+            w.reason.clone().unwrap_or_default(),
+        ));
+    }
+    // 辞退時は何も実行せず、呼び出し側の上限つき通常経路へ回す (自動コミットで先に確定させない)。
+    let run = match session
+        .conn
+        .capture_execute_strict(prep, &sql, database.as_deref())
+        .await?
+    {
+        Ok(run) => run,
+        Err(w) => return Ok(BoundedCapture::Declined(w.reason.unwrap_or_default())),
+    };
+    let handle =
+        tokio::spawn(async move { session.conn.capture_commit(run, &sql, Some(max_rows)).await });
+    match handle.await {
+        Ok(res) => res.map(|d| BoundedCapture::Done(Box::new(d))),
         Err(e) => Err(AppError::Other(format!("captured write task failed: {e}"))),
     }
 }
@@ -1658,7 +1700,7 @@ async fn spawn_captured_write(
             let task_session = session.clone();
             let task_sql = sql.clone();
             let handle = tokio::spawn(async move {
-                let outcome = task_session.conn.capture_commit(run, &task_sql).await;
+                let outcome = task_session.conn.capture_commit(run, &task_sql, None).await;
                 finish_captured_write(
                     app,
                     task_session,

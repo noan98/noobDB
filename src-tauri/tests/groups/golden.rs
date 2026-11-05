@@ -10,6 +10,8 @@
 mod auto_limit_golden;
 #[path = "../cache_invalidation_matrix.rs"]
 mod cache_invalidation_matrix;
+#[path = "../chunked_dml_golden.rs"]
+mod chunked_dml_golden;
 #[path = "../collation_key_golden.rs"]
 mod collation_key_golden;
 #[path = "../dangerous_sql_golden.rs"]
