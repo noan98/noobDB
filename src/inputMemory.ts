@@ -13,7 +13,6 @@ import {
   type ColumnGenSpec,
   DEFAULT_DATE_FROM,
   DEFAULT_DATE_TO,
-  DEFAULT_TEMPLATE,
   type GenStrategy,
   type TemporalFormat,
 } from "./components/testDataGen";
