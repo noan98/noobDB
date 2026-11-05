@@ -13580,6 +13580,7 @@ export default function App() {
                           onDuplicate={handleDuplicateProfile}
                           onDelete={(p) => void handleDeleteProfile(p)}
                           animateHero={booted}
+                          connectPhase={connectAttempt?.phase ?? null}
                         />
                       </Flex>
                     )}
