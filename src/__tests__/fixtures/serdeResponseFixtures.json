@@ -1960,6 +1960,37 @@
     ],
     "ui_enabled": true
   },
+  "pgListenCancelledMessage": {
+    "deliveredRows": 7,
+    "kind": "cancelled"
+  },
+  "pgListenErrorMessage": {
+    "connectionLost": true,
+    "error": "connection reset",
+    "kind": "error"
+  },
+  "pgListenNotificationMessage": {
+    "channel": "orders_changed",
+    "kind": "notification",
+    "payload": "{\"id\":42}",
+    "payloadTruncated": false,
+    "pid": 4242,
+    "receivedAtMs": 1767225600000
+  },
+  "pgListenReconnectedMessage": {
+    "kind": "reconnected"
+  },
+  "pgListenStartedMessage": {
+    "channels": [
+      "orders_changed",
+      "Mixed Case"
+    ],
+    "kind": "started"
+  },
+  "pgListenUnsupportedMessage": {
+    "kind": "unsupported",
+    "reason": "unsupported_driver"
+  },
   "planWatchEntryVariants": [
     {
       "generations": [

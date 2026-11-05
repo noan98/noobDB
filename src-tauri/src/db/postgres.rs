@@ -71,6 +71,29 @@ fn connect_options(opts: &DbConnectOptions, password: &str) -> PgConnectOptions 
     apply_tls(connect, opts)
 }
 
+/// `LISTEN` / `NOTIFY` 監視 (#2019) 用の専用接続を 1 本開く。セッションの接続設定
+/// (SSH / SSM 経由なら既にトンネルのローカルポートを指している `host` / `port`、TLS、
+/// IAM 認証) をそのまま使うので、トンネル経由でも直結と同じように動く。プールは 1 接続・
+/// 寿命なしで、`PgListener` の自動再接続にだけ使う。メイン接続プールは占有しない。
+/// 接続オプション (パスワードを含む) はログに出さない。
+pub async fn open_listener(opts: &DbConnectOptions) -> Result<sqlx::postgres::PgListener> {
+    let password = super::aws_iam::password_for(opts).await?;
+    let connect = connect_options(opts, &password);
+    drop(password);
+    let pool = PgPoolOptions::new()
+        .min_connections(0)
+        .max_connections(1)
+        .max_lifetime(None)
+        .idle_timeout(None)
+        .acquire_timeout(std::time::Duration::from_secs(15))
+        .connect_with(connect)
+        .await?;
+    let mut listener = sqlx::postgres::PgListener::connect_with(&pool).await?;
+    // 自分でプールを閉じることは無いので、閉鎖イベントでの待機打ち切りは不要。
+    listener.ignore_pool_close_event(true);
+    Ok(listener)
+}
+
 impl PostgresConn {
     pub async fn connect(opts: &DbConnectOptions) -> Result<Self> {
         let password = super::aws_iam::password_for(opts).await?;

@@ -59,6 +59,7 @@ pub mod __test_api {
         AcceptedValuesCandidates, AssertionOutcome, AssertionPrevious, ImportAssertionsResult,
     };
     pub use crate::commands::broadcast::{BroadcastEnvReport, BroadcastMessage};
+    pub use crate::commands::listen::{run_listener as run_pg_listener, PgListenMessage};
     pub use crate::db::advisor::{
         analyze, AdvisorDiff, AdvisorInput, HealthFinding, IndexOverlap, IndexOverlapKind, RuleId,
         SchemaHealthReport, Severity, SkippedRule, TableFixPlan, TableMeta, UnusedIndexEntry,
@@ -152,7 +153,7 @@ pub mod __test_api {
     pub use crate::ssh::known_hosts_import::{ImportCandidate, ImportScan, ImportStatus};
     pub use crate::ssh::{SshConfig, SshJumpConfig, SshTunnel};
     pub use crate::ssm::SsmConfig;
-    pub use crate::state::{AppState, Session, StreamHandle, StreamKind};
+    pub use crate::state::{AppState, PgListenControl, Session, StreamHandle, StreamKind};
 
     // コメント/リテラル・マスキングの実装横断ゴールデン (#988)。read-only 判定・
     // auto-limit・stacked 検出・危険 SQL 検出など全安全網が乗る「マスクしてから
@@ -1791,6 +1792,9 @@ pub fn run() {
             commands::search::search_schema_objects,
             commands::search::find_where_used,
             commands::search::data_search_stream,
+            commands::listen::start_pg_listen,
+            commands::listen::pg_listen_add_channel,
+            commands::listen::pg_listen_remove_channel,
             commands::schema::alter_table_context,
             commands::schema::plan_sqlite_table_rebuild,
             commands::schema::incoming_foreign_keys,

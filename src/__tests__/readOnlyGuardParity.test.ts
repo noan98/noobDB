@@ -584,6 +584,10 @@ safe(
   "sample_live_queries",
   "sample_statement_delta",
   "start_statement_recording",
+  // LISTEN / NOTIFY 監視 (#2019。LISTEN は書き込みではない。NOTIFY の送信は持たない)
+  "start_pg_listen",
+  "pg_listen_add_channel",
+  "pg_listen_remove_channel",
   // セル BLOB 読み出し (保存先はローカルファイル)
   "fetch_cell_bytes",
   "probe_cell_blob",

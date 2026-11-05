@@ -1904,6 +1904,41 @@ export const aiStreamErrorMessage = z.object({
   errorKind: z.string(),
 });
 
+// --- PostgreSQL LISTEN / NOTIFY 監視 (#2019) ---------------------------------
+//
+// `start_pg_listen` が Tauri Channel へ送る `kind` タグ付きメッセージ
+// (`src-tauri/src/commands/listen.rs`)。cancelled は他の Channel と共有の
+// `channelCancelledMessage` (`deliveredRows` = 流した通知の件数)。
+
+export const pgListenStartedMessage = z.object({
+  kind: z.literal("started"),
+  channels: z.array(z.string()),
+});
+
+export const pgListenNotificationMessage = z.object({
+  kind: z.literal("notification"),
+  channel: z.string(),
+  payload: z.string(),
+  payloadTruncated: z.boolean(),
+  pid: z.number(),
+  receivedAtMs: z.number(),
+});
+
+export const pgListenReconnectedMessage = z.object({
+  kind: z.literal("reconnected"),
+});
+
+export const pgListenUnsupportedMessage = z.object({
+  kind: z.literal("unsupported"),
+  reason: z.string(),
+});
+
+export const pgListenErrorMessage = z.object({
+  kind: z.literal("error"),
+  error: z.string(),
+  connectionLost: z.boolean(),
+});
+
 export const importStartedEvent = z.object({
   streamId: z.string(),
   total: z.number(),

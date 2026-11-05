@@ -45,6 +45,9 @@ pub enum StreamKind {
     /// キャンセルしても `run_task_now` の戻り値 (中断として記録した実行ログ) で分かるので、
     /// 通知イベントは持たない。
     Task,
+    /// PostgreSQL の `LISTEN` / `NOTIFY` 監視 (#2019)。`delivered_rows` は流した通知の件数。
+    /// キャンセルは Channel の `Cancelled` で通知する。
+    Listen,
 }
 
 /// A running streaming task tracked by [`AppState`]. Besides the `AbortHandle`
@@ -71,6 +74,26 @@ pub struct StreamHandle {
     /// `AppState.streams` map holding it) stays transport-agnostic — state.rs
     /// doesn't need to know about `commands::query`'s message enum types.
     pub on_cancel: Option<Box<dyn Fn(u64) + Send + Sync>>,
+}
+
+/// `LISTEN` 監視タスクへの制御メッセージ (#2019)。`reply` で LISTEN / UNLISTEN の成否を返す。
+pub enum PgListenControl {
+    Add {
+        channel: String,
+        reply: tokio::sync::oneshot::Sender<crate::error::Result<()>>,
+    },
+    Remove {
+        channel: String,
+        reply: tokio::sync::oneshot::Sender<crate::error::Result<()>>,
+    },
+}
+
+/// 稼働中の `LISTEN` 監視 1 本ぶんの登録情報。`token` は `register_stream` が返した値で、
+/// 同じ `stream_id` を再利用した新しい監視のエントリを古いタスクの後始末が消さないための照合用。
+pub struct PgListenerEntry {
+    pub token: u64,
+    pub session_id: SessionId,
+    pub control: tokio::sync::mpsc::UnboundedSender<PgListenControl>,
 }
 
 /// 保持する `DataDiff` の最大件数 (超えたら最古から破棄)。サンドボックスのレビューは
@@ -306,6 +329,10 @@ pub struct AppState {
     pub streams: RwLock<HashMap<StreamId, (u64, StreamHandle)>>,
     /// Monotonic source of the per-registration tokens above.
     stream_seq: AtomicU64,
+    /// `LISTEN` / `NOTIFY` 監視 (#2019) の稼働中リスナー。`stream_id` から、チャンネルの
+    /// 追加・削除を送る制御チャネルと所属セッションを引く。タスク本体は `streams` に登録され、
+    /// `cancel_stream` / セッション切断で止まる (その際このエントリも消える)。
+    pg_listeners: std::sync::Mutex<HashMap<StreamId, PgListenerEntry>>,
     /// In-flight connection attempts keyed by a client-provided attempt id.
     /// Aborting the handle cancels a connect that is hanging on an unreachable
     /// host / stuck tunnel, so the UI can offer a cancel button (#684). The
@@ -472,6 +499,23 @@ impl AppState {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .release_session(id);
+            // `LISTEN` 監視 (#2019) は切断したセッションの分を残さない。タスクを止め、
+            // 画面には Channel の `cancelled` で伝える (専用接続もここで閉じる)。
+            let listener_streams: Vec<StreamId> = self
+                .pg_listeners
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .filter(|(_, e)| e.session_id == id)
+                .map(|(sid, _)| sid.clone())
+                .collect();
+            for stream_id in listener_streams {
+                if let Some((delivered_rows, _, Some(on_cancel))) =
+                    self.cancel_stream(&stream_id).await
+                {
+                    on_cancel(delivered_rows);
+                }
+            }
             // アドバイザの前回診断も、切断したセッションの分は持ち越さない。
             self.advisor_last
                 .lock()
@@ -516,6 +560,34 @@ impl AppState {
         if map.get(stream_id).is_some_and(|(cur, _)| *cur == token) {
             map.remove(stream_id);
         }
+    }
+
+    /// `LISTEN` 監視の制御チャネルを登録する (#2019)。`token` は `register_stream` の戻り値。
+    pub fn register_pg_listener(&self, stream_id: StreamId, entry: PgListenerEntry) {
+        self.pg_listeners
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(stream_id, entry);
+    }
+
+    /// 監視タスクの終了時に、自分のトークンのエントリだけを消す。
+    pub fn forget_pg_listener(&self, stream_id: &str, token: u64) {
+        let mut map = self.pg_listeners.lock().unwrap_or_else(|e| e.into_inner());
+        if map.get(stream_id).is_some_and(|e| e.token == token) {
+            map.remove(stream_id);
+        }
+    }
+
+    /// 稼働中の監視の制御チャネル (チャンネルの追加・削除用)。
+    pub fn pg_listener_control(
+        &self,
+        stream_id: &str,
+    ) -> Option<tokio::sync::mpsc::UnboundedSender<PgListenControl>> {
+        self.pg_listeners
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(stream_id)
+            .map(|e| e.control.clone())
     }
 
     /// Track an in-flight connection attempt so `cancel_connect` can abort it.
@@ -573,6 +645,10 @@ impl AppState {
         &self,
         stream_id: &str,
     ) -> Option<(u64, StreamKind, Option<Box<dyn Fn(u64) + Send + Sync>>)> {
+        self.pg_listeners
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(stream_id);
         if let Some((_, h)) = self.streams.write().await.remove(stream_id) {
             h.abort.abort();
             let delivered_rows = h.delivered_rows.load(Ordering::SeqCst);

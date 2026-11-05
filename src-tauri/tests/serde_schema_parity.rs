@@ -50,7 +50,7 @@ use t::{
     HistoryEntry, ImportDoneEvent, ImportDryRunResult, ImportErrorEvent, ImportProgressEvent,
     ImportResult, ImportStartedEvent, ImportTemplate, IndexInfo, IndexOverlap, IndexOverlapKind,
     KeyringStatus, KnownHost, LiveQuery, LocalTableMeta, LogView, ObjectComparison, ObjectDiff,
-    PatchRun, PerfSample, PerfStatus, PreviewStreamMessage, ProcessListItem,
+    PatchRun, PerfSample, PerfStatus, PgListenMessage, PreviewStreamMessage, ProcessListItem,
     ProfileHistogramBucket, ProfileValueCount, ProfileWithSecretFlags, QueryResult,
     QueryStatsSupport, QueryStreamMessage, RoutineParameter, RoutineSignature, RowDiff, RowStatus,
     RuleId, SchemaDiff, SchemaHealthReport, SchemaObject, ScriptDoneEvent, ScriptErrorEvent,
@@ -122,6 +122,18 @@ fn _exhaustive_where_used_message(m: &WhereUsedMessage) {
         | WhereUsedMessage::Done { .. }
         | WhereUsedMessage::Error { .. }
         | WhereUsedMessage::Cancelled { .. } => {}
+    }
+}
+
+#[allow(dead_code)]
+fn _exhaustive_pg_listen_message(m: &PgListenMessage) {
+    match m {
+        PgListenMessage::Started { .. }
+        | PgListenMessage::Notification { .. }
+        | PgListenMessage::Reconnected { .. }
+        | PgListenMessage::Unsupported { .. }
+        | PgListenMessage::Error { .. }
+        | PgListenMessage::Cancelled { .. } => {}
     }
 }
 
@@ -632,6 +644,26 @@ fn build_fixtures() -> serde_json::Value {
         error_kind: "aiOverloaded".into(),
     };
     let ai_stream_cancelled_message = AiStreamMessage::Cancelled { delivered_rows: 3 };
+    // --- #2019: PostgreSQL LISTEN / NOTIFY 監視 (Channel) ---
+    let pg_listen_started_message = PgListenMessage::Started {
+        channels: vec!["orders_changed".into(), "Mixed Case".into()],
+    };
+    let pg_listen_notification_message = PgListenMessage::Notification {
+        channel: "orders_changed".into(),
+        payload: "{\"id\":42}".into(),
+        payload_truncated: false,
+        pid: 4242,
+        received_at_ms: 1_767_225_600_000,
+    };
+    let pg_listen_reconnected_message = PgListenMessage::Reconnected {};
+    let pg_listen_unsupported_message = PgListenMessage::Unsupported {
+        reason: "unsupported_driver".into(),
+    };
+    let pg_listen_error_message = PgListenMessage::Error {
+        error: "connection reset".into(),
+        connection_lost: true,
+    };
+    let pg_listen_cancelled_message = PgListenMessage::Cancelled { delivered_rows: 7 };
     let task_run_progress_event = TaskRunProgressEvent {
         stream_id: "task_t1_abc".into(),
         task_id: "t1".into(),
@@ -2586,6 +2618,12 @@ fn build_fixtures() -> serde_json::Value {
         "aiStreamDoneMessage": ai_stream_done_message,
         "aiStreamErrorMessage": ai_stream_error_message,
         "channelCancelledMessageAi": ai_stream_cancelled_message,
+        "pgListenStartedMessage": pg_listen_started_message,
+        "pgListenNotificationMessage": pg_listen_notification_message,
+        "pgListenReconnectedMessage": pg_listen_reconnected_message,
+        "pgListenUnsupportedMessage": pg_listen_unsupported_message,
+        "pgListenErrorMessage": pg_listen_error_message,
+        "pgListenCancelledMessage": pg_listen_cancelled_message,
         "taskRunProgressEvent": task_run_progress_event,
         "knownHost": known_host,
         "knownHostEvent": known_host_event,

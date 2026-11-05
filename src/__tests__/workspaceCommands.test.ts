@@ -50,6 +50,7 @@ describe("workspaceCommandItems", () => {
       "nav:advisor",
       "nav:inspector",
       "nav:processes",
+      "nav:pgListen",
       "nav:assertions",
       "nav:connectionHealth",
       "nav:perf",
