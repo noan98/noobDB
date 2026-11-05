@@ -111,7 +111,7 @@ Anthropic の Claude API を使う補助機能です。**既定はオフ**で、
 ### その他
 
 - 日本語 / 英語の UI (i18n)
-- テーマプリセット (default / dracula / nord / solarized / one-dark / catppuccin /
+- テーマプリセット (brand / default / dracula / nord / solarized / one-dark / catppuccin /
   tokyo-night / high-contrast / colorblind)、アクセント色・フォント・UI 密度などの設定。
   設定項目の説明は各ラベル横の ⓘ アイコンから読めます
 - 実行ログ・メッセージ・アドバイザなど、SQL を書きながら参照する情報は画面下部の

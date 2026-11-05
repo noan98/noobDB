@@ -9,12 +9,14 @@ import {
   DEFAULT_LAUNCHER_POSITION,
   buildQuickLauncherSections,
   clampLauncherPoint,
+  launcherIntroPending,
   computeLauncherPopoverPosition,
   exceedsDragThreshold,
   launcherPointToPosition,
   launcherPopoverOrigin,
   launcherPositionToPoint,
   loadLauncherPosition,
+  markLauncherIntroSeen,
   nudgeLauncherPoint,
   saveLauncherPosition,
   singleLineSql,
@@ -27,7 +29,7 @@ import {
   type QuickLauncherSources,
 } from "../quickLauncher";
 import type { TableRef } from "../tableQuickAccess";
-import { staggerContainer, transitions, variants } from "../motion";
+import { introPulse as introPulseMotion, springs, staggerContainer, transitions, variants } from "../motion";
 import { ActiveRowHighlight } from "./ActiveRowHighlight";
 import { ContextMenu } from "./ContextMenu";
 import { Input } from "./ui";
@@ -112,6 +114,7 @@ const ITEM_SELECTOR = "[data-launcher-item]";
 // stagger 完了後に検索で新しく現れるセクションを再演出させないための静止 variants。
 const STATIC_ITEM: Variants = { initial: { opacity: 1, y: 0 }, animate: { opacity: 1, y: 0 } };
 const MotionPopover = chakra(motion.div, {}, { forwardProps: ["transition"] });
+const MotionButton = chakra(motion.button, {}, { forwardProps: ["transition"] });
 const MotionSection = chakra(motion.div, {}, { forwardProps: ["transition"] });
 
 export function QuickLauncher({
@@ -137,6 +140,9 @@ export function QuickLauncher({
   const [dragPoint, setDragPoint] = useState<Point | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  // 初回起動だけ入場に続けてパルスする (#2039)。判定はレンダーで読むだけ、記録は effect で行う。
+  const [introPulse] = useState(launcherIntroPending);
+  useEffect(() => markLauncherIntroSeen(), []);
   const popoverRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{
     pointerId: number;
@@ -350,9 +356,26 @@ export function QuickLauncher({
   return (
     <>
       <Tooltip label={t("quickLauncherButtonTooltip")}>
-        <chakra.button
+        <MotionButton
           ref={buttonRef}
           type="button"
+          // マウント時の入場 (#2039)。初回起動だけ入場に続けて 1 回パルスする。reduced-motion /
+          // data-motion="reduced" は MotionConfig が scale を即時化する (独自分岐は持たない)。
+          initial={variants.fadeScale.initial}
+          animate={{
+            opacity: open || dragPoint ? 1 : 0.85,
+            scale: introPulse ? introPulseMotion.scale : 1,
+          }}
+          whileHover={{ opacity: 1 }}
+          whileFocus={{ opacity: 1 }}
+          transition={
+            introPulse
+              ? {
+                  opacity: transitions.enter,
+                  scale: introPulseMotion.transition,
+                }
+              : { opacity: transitions.enter, scale: springs.gentle }
+          }
           data-testid="quick-launcher-button"
           aria-label={t("quickLauncherButtonAria")}
           aria-haspopup="dialog"
@@ -381,19 +404,18 @@ export function QuickLauncher({
           alignItems="center"
           justifyContent="center"
           borderRadius="pill"
-          bg="app.accent"
-          color="app.accentText"
+          bg="app.brand.fill"
+          color="app.brand.onFill"
           shadow="elevationRaised"
           border="none"
           cursor={dragPoint ? "grabbing" : "pointer"}
           touchAction="none"
           userSelect="none"
-          opacity={open || dragPoint ? 1 : 0.85}
-          _hover={{ opacity: 1, bg: "app.accentHover" }}
-          _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)", opacity: 1 }}
+          _hover={{ bg: "app.brand.fillHover" }}
+          _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
         >
           <Icon name="star" size={ICON_SIZES.md} />
-        </chakra.button>
+        </MotionButton>
       </Tooltip>
 
       {open &&

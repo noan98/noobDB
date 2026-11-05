@@ -279,6 +279,11 @@ pub async fn save_profile(req: SaveProfileRequest) -> Result<ConnectionProfile> 
         .clone()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(new_profile_id);
+    if store::is_reserved_profile_id(&id) {
+        return Err(AppError::InvalidInput(
+            "profile id uses a reserved form".to_string(),
+        ));
+    }
     let result = save_profile_inner(id.clone(), req);
     match &result {
         Ok(_) => tracing::info!(profile_id = %id, "profile saved"),
@@ -586,6 +591,10 @@ pub(crate) fn merge_imported_placed(
             result.invalid += 1;
             placed.push(None);
             continue;
+        }
+        // 派生接続 (#2018) 用に予約された形の ID は受け付けず、採番し直す。
+        if store::is_reserved_profile_id(&profile.id) {
+            profile.id = gen_id();
         }
         let collides = !profile.id.is_empty() && all.iter().any(|p| p.id == profile.id);
         if collides {
@@ -1079,6 +1088,18 @@ mod tests {
         // Rename never touches an existing id in place, so no keyring secrets
         // need clearing.
         assert!(overwritten_ids.is_empty());
+    }
+
+    #[test]
+    fn import_renumbers_reserved_derived_ids_2018() {
+        let existing = vec![profile("a", "Existing", "mysql")];
+        let incoming = vec![profile("a::db::x", "Spoof", "mysql")];
+        let (merged, res, _) =
+            merge_imported(existing, incoming, ImportStrategy::Overwrite, counter());
+        assert_eq!(res.imported, 1);
+        assert!(merged.iter().all(|p| !store::is_reserved_profile_id(&p.id)));
+        assert!(merged.iter().any(|p| p.name == "Spoof" && p.id == "new1"));
+        assert!(merged.iter().any(|p| p.id == "a" && p.name == "Existing"));
     }
 
     #[test]

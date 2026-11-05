@@ -1439,7 +1439,7 @@ fn build_fixtures() -> serde_json::Value {
 
     let all_rules = variants!(RuleId [
         FkMissingIndex, DuplicateIndex, RedundantIndex, MissingPrimaryKey,
-        UnusedIndex, FkTypeMismatch, SqliteIntegerPkHint
+        UnusedIndex, FkTypeMismatch, SqliteIntegerPkHint, NullableForeignKey, OversizedVarchar, FloatForMoney
     ]);
     let all_severities = variants!(Severity [High, Medium, Low]);
     // ルール × 重要度を巡回させ、全ルールと全重要度を最低 1 回ずつ通す。
@@ -1981,6 +1981,11 @@ fn build_fixtures() -> serde_json::Value {
     // `status` タグ付き enum は shape がバリアントごとに違うので、1 バリアント 1 キーで持つ。
     let bulk_write_outcome_applied = t::BulkWriteOutcome::Applied {
         result: query_result.clone(),
+        capture: t::BulkCaptureOutcome {
+            recorded: 2,
+            declined: 1,
+            batch_id: Some("b18c-abc123".into()),
+        },
     };
     let bulk_write_outcome_row_count_exceeded = t::BulkWriteOutcome::RowCountExceeded {
         expected_rows: 1,

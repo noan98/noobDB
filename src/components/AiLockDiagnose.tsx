@@ -33,6 +33,7 @@ import { useConfirm } from "./ConfirmDialog";
 import { Icon, ICON_SIZES } from "./Icon";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiSurface } from "./AiSurface";
 import { AiUsageNote } from "./AiUsageNote";
 import { Tooltip } from "./Tooltip";
 
@@ -222,7 +223,7 @@ export function AiLockDiagnose(props: AiLockDiagnoseProps) {
   };
 
   return (
-    <Flex direction="column" gap="2" fontSize="sm" color="app.text" data-testid="ai-lock-diagnose">
+    <AiSurface data-testid="ai-lock-diagnose">
       <Flex align="center" gap="2" wrap="wrap">
         <Tooltip label={targets ? sendsLine(null) : t("lockDiagnoseNoTarget")} focusableWrapper={!targets}>
           <Button
@@ -303,7 +304,7 @@ export function AiLockDiagnose(props: AiLockDiagnoseProps) {
         </Callout>
       )}
       {dialog}
-    </Flex>
+    </AiSurface>
   );
 }
 

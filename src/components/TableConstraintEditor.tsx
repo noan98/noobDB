@@ -4,6 +4,7 @@ import { Checkbox, Button, Input } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
 import { FieldLabel } from "./modalForm";
 import { Icon } from "./Icon";
+import { LiveRow, LiveRowsPresence } from "./LiveRows";
 import {
   REFERENTIAL_ACTIONS,
   emptyCheck,
@@ -79,83 +80,91 @@ export function TableConstraintEditor({
 
       <chakra.div display="flex" flexDirection="column" gap="1.5">
         <FieldLabel as="div">{t("constraintFkSection")}</FieldLabel>
-        {foreignKeys.map((fk, i) => (
-          <chakra.div
-            key={fk.id}
-            display="flex"
-            flexDirection="column"
-            gap="1.5"
-            p="2"
-            borderWidth="1px"
-            borderColor="app.border"
-            borderRadius="lg"
-          >
-            <Flex gap="1.5" align="center" wrap="wrap">
-              <Input
-                value={fk.name}
-                onChange={(e) => setFk(i, { name: e.target.value })}
-                placeholder={t("constraintNamePlaceholder")}
-                aria-label={t("constraintNamePlaceholder")}
-                flex="1"
-                minW="140px"
-              />
-              <Input
-                value={fk.refTable}
-                onChange={(e) => setFk(i, { refTable: e.target.value })}
-                list={tablesId}
-                placeholder={t("constraintFkRefTable")}
-                aria-label={t("constraintFkRefTable")}
-                flex="1"
-                minW="140px"
-              />
-              <Input
-                // 入力途中の空白 (`Order Id` など) を保つため trim せず、"," で分割・結合するだけに
-                // して往復で文字列が変わらないようにする。trim は SQL 生成側 (identList) が行う。
-                value={fk.refColumns.join(",")}
-                onChange={(e) => setFk(i, { refColumns: e.target.value.split(",") })}
-                placeholder={t("constraintFkRefColumns")}
-                aria-label={t("constraintFkRefColumns")}
-                flex="1"
-                minW="140px"
-              />
-              <chakra.button
-                type="button"
-                onClick={() => onForeignKeysChange(foreignKeys.filter((_, idx) => idx !== i))}
-                aria-label={t("constraintFkRemove")}
-                color="app.textMuted"
-                _hover={{ color: "app.textError" }}
-                px="1"
-              >
-                <Icon name="close" />
-              </chakra.button>
-            </Flex>
-            <Flex gap="3" wrap="wrap">
-              {columnNames.length === 0 && (
-                <chakra.span fontSize="xs" color="app.textMuted">
-                  {t("treeNoColumns")}
-                </chakra.span>
-              )}
-              {columnNames.map((col) => (
-                <chakra.label key={col} display="flex" alignItems="center" gap="1" fontSize="sm">
-                  <Checkbox checked={fk.columns.includes(col)} onChange={() => toggleFkColumn(i, col)} />
-                  {col}
-                </chakra.label>
-              ))}
-            </Flex>
-            <Flex gap="3" wrap="wrap" align="center">
-              <ActionSelect
-                label="ON DELETE"
-                value={fk.onDelete}
-                onChange={(v) => setFk(i, { onDelete: v })}
-              />
-              <ActionSelect
-                label="ON UPDATE"
-                value={fk.onUpdate}
-                onChange={(v) => setFk(i, { onUpdate: v })}
-              />
-            </Flex>
-          </chakra.div>
-        ))}
+        <chakra.div mt="-1.5">
+          <LiveRowsPresence>
+            {foreignKeys.map((fk, i) => (
+              <LiveRow key={fk.id}>
+                <chakra.div
+                  display="flex"
+                  flexDirection="column"
+                  gap="1.5"
+                  p="2"
+                  borderWidth="1px"
+                  borderColor="app.border"
+                  borderRadius="lg"
+                >
+                  <Flex gap="1.5" align="center" wrap="wrap">
+                    <Input
+                      value={fk.name}
+                      onChange={(e) => setFk(i, { name: e.target.value })}
+                      placeholder={t("constraintNamePlaceholder")}
+                      aria-label={t("constraintNamePlaceholder")}
+                      flex="1"
+                      minW="140px"
+                    />
+                    <Input
+                      value={fk.refTable}
+                      onChange={(e) => setFk(i, { refTable: e.target.value })}
+                      list={tablesId}
+                      placeholder={t("constraintFkRefTable")}
+                      aria-label={t("constraintFkRefTable")}
+                      flex="1"
+                      minW="140px"
+                    />
+                    <Input
+                      // 入力途中の空白 (`Order Id` など) を保つため trim せず、"," で分割・結合するだけに
+                      // して往復で文字列が変わらないようにする。trim は SQL 生成側 (identList) が行う。
+                      value={fk.refColumns.join(",")}
+                      onChange={(e) => setFk(i, { refColumns: e.target.value.split(",") })}
+                      placeholder={t("constraintFkRefColumns")}
+                      aria-label={t("constraintFkRefColumns")}
+                      flex="1"
+                      minW="140px"
+                    />
+                    <chakra.button
+                      type="button"
+                      onClick={() => onForeignKeysChange(foreignKeys.filter((_, idx) => idx !== i))}
+                      aria-label={t("constraintFkRemove")}
+                      color="app.textMuted"
+                      _hover={{ color: "app.textError" }}
+                      px="1"
+                    >
+                      <Icon name="close" />
+                    </chakra.button>
+                  </Flex>
+                  <Flex gap="3" wrap="wrap">
+                    {columnNames.length === 0 && (
+                      <chakra.span fontSize="xs" color="app.textMuted">
+                        {t("treeNoColumns")}
+                      </chakra.span>
+                    )}
+                    {columnNames.map((col) => (
+                      <chakra.label key={col} display="flex" alignItems="center" gap="1" fontSize="sm">
+                        <Checkbox
+                          checked={fk.columns.includes(col)}
+                          onChange={() => toggleFkColumn(i, col)}
+                        />
+                        {col}
+                      </chakra.label>
+                    ))}
+                  </Flex>
+                  <Flex gap="3" wrap="wrap" align="center">
+                    <ActionSelect
+                      label="ON DELETE"
+                      value={fk.onDelete}
+                      onChange={(v) => setFk(i, { onDelete: v })}
+                    />
+                    <ActionSelect
+                      label="ON UPDATE"
+                      value={fk.onUpdate}
+                      onChange={(v) => setFk(i, { onUpdate: v })}
+                    />
+                  </Flex>
+                </chakra.div>
+              </LiveRow>
+            ))}
+          </LiveRowsPresence>
+        </chakra.div>
         {!disabled && columnNames.length === 0 && (
           <chakra.span textStyle="caption" data-testid="fk-need-columns">
             {t("constraintFkNeedColumns")}
@@ -176,35 +185,41 @@ export function TableConstraintEditor({
 
       <chakra.div display="flex" flexDirection="column" gap="1.5">
         <FieldLabel as="div">{t("constraintCheckSection")}</FieldLabel>
-        {checks.map((ck, i) => (
-          <Flex key={ck.id} gap="1.5" align="center">
-            <Input
-              value={ck.name}
-              onChange={(e) => setCheck(i, { name: e.target.value })}
-              placeholder={t("constraintNamePlaceholder")}
-              aria-label={t("constraintNamePlaceholder")}
-              flex="1"
-            />
-            <Input
-              value={ck.expression}
-              onChange={(e) => setCheck(i, { expression: e.target.value })}
-              placeholder={t("constraintCheckExpr")}
-              aria-label={t("constraintCheckExpr")}
-              flex="2"
-              fontFamily="mono"
-            />
-            <chakra.button
-              type="button"
-              onClick={() => onChecksChange(checks.filter((_, idx) => idx !== i))}
-              aria-label={t("constraintCheckRemove")}
-              color="app.textMuted"
-              _hover={{ color: "app.textError" }}
-              px="1"
-            >
-              <Icon name="close" />
-            </chakra.button>
-          </Flex>
-        ))}
+        <chakra.div mt="-1.5">
+          <LiveRowsPresence>
+            {checks.map((ck, i) => (
+              <LiveRow key={ck.id}>
+                <Flex gap="1.5" align="center">
+                  <Input
+                    value={ck.name}
+                    onChange={(e) => setCheck(i, { name: e.target.value })}
+                    placeholder={t("constraintNamePlaceholder")}
+                    aria-label={t("constraintNamePlaceholder")}
+                    flex="1"
+                  />
+                  <Input
+                    value={ck.expression}
+                    onChange={(e) => setCheck(i, { expression: e.target.value })}
+                    placeholder={t("constraintCheckExpr")}
+                    aria-label={t("constraintCheckExpr")}
+                    flex="2"
+                    fontFamily="mono"
+                  />
+                  <chakra.button
+                    type="button"
+                    onClick={() => onChecksChange(checks.filter((_, idx) => idx !== i))}
+                    aria-label={t("constraintCheckRemove")}
+                    color="app.textMuted"
+                    _hover={{ color: "app.textError" }}
+                    px="1"
+                  >
+                    <Icon name="close" />
+                  </chakra.button>
+                </Flex>
+              </LiveRow>
+            ))}
+          </LiveRowsPresence>
+        </chakra.div>
         <Flex>
           <Button
             type="button"

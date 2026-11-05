@@ -22,6 +22,7 @@ import { useKeyedStable } from "../useKeyedStable";
 import { isCtasEligibleSql } from "./resultsToTable";
 import { applyServerBrowse, type ServerFilterOp, type ServerSortDirection } from "./serverBrowse";
 import { EmptyState } from "./EmptyState";
+import { RunQueryIllustration } from "./illustrations";
 import { StreamProgressBar } from "./StreamProgressBar";
 import { ResultPaneSkeleton } from "./ResultPaneSkeleton";
 import { showsResultSkeletonFallback } from "./resultSkeleton";
@@ -1398,6 +1399,8 @@ export const PaneView = memo(
           ) : (
             <PaneEmpty>
               <EmptyState
+                illustration={<RunQueryIllustration />}
+                brandHalo
                 icon="query"
                 title={t("tabsEmptyTitle")}
                 description={t("tabsEmpty")}

@@ -414,7 +414,8 @@ pub fn compute_schema_diff(
                         ..Default::default()
                     }
                 }
-                // `names` is the union of the two sides, so at least one is Some.
+                // `names` は両側の和集合なので、少なくとも片方は必ず Some になる。
+                #[allow(clippy::unreachable)]
                 (None, None) => unreachable!(),
             }
         })
@@ -1056,6 +1057,8 @@ fn diff_columns(source: &[TableColumnInfo], target: &[TableColumnInfo]) -> Vec<C
                     });
                 }
             }
+            // 列名は source / target の和集合から作っているため、両方 None にはならない。
+            #[allow(clippy::unreachable)]
             (None, None) => unreachable!(),
         }
     }

@@ -1,13 +1,27 @@
 // 本体コードでの unwrap / expect / panic を段階的に禁止するクレートレベル lint。
 // テストコードは src-tauri/clippy.toml の allow-*-in-tests で除外済み。
 // やむを得ず残す箇所には #[allow(...)] + 根拠コメントを付けること。
-#![warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::todo,
+    clippy::unimplemented
+)]
 
 mod advisor_ignore;
 mod ai;
 mod assertions;
 mod atomic_write;
 mod cache;
+// 参照引数を持つ async コマンドの戻り値型チェック (tauri-macros の wrapper.rs) が
+// `unreachable!()` を生成し、clippy::unreachable を誤検知する (手書きではない)。
+// マクロ由来の誤検知を抑えるためこのモジュールに限り許可する。tauri 更新時に
+// この allow が不要になっていないか見直すこと。手書きの
+// `unreachable!` / `todo!` / `unimplemented!` は commands/mod.rs のメタテスト
+// (panic_macro_guard) が、直前の allow + 根拠コメント無しなら失敗させて補っている。
+#[allow(clippy::unreachable)]
 mod commands;
 mod db;
 mod diagnostics;
@@ -560,6 +574,7 @@ pub mod __test_api {
     // コマンド境界が一度も走らなかった。常時実走の `tests/sqlite_integration.rs`
     // から SQLite 短絡パス (非対応エラー / 縮退レスポンス) とセッション未検出の
     // 経路を駆動できるよう、ここでピンポイントに公開する。
+    pub use crate::commands::bulk_capture::{BulkCaptureConfig, BulkCaptureOutcome};
     pub use crate::commands::bulk_write::{
         BulkOldValue, BulkSetColumn, BulkSetValue, BulkUpdateGroup, BulkWriteOptions,
         BulkWriteOutcome, InsertRowsResult,
@@ -630,6 +645,7 @@ pub mod __test_api {
         Session {
             id: id.to_string(),
             profile_id: None,
+            secret_profile_id: None,
             conn,
             connect_options: opts,
             read_only,
@@ -1120,7 +1136,7 @@ pub mod __test_api {
         )
         .await?
         {
-            BulkWriteOutcome::Applied { result } => Ok(result),
+            BulkWriteOutcome::Applied { result, .. } => Ok(result),
             other => Err(crate::error::AppError::InvalidInput(format!(
                 "bulk write was not applied: {other:?}"
             ))),
@@ -1753,6 +1769,7 @@ pub fn run() {
             commands::query::preview_query_stream,
             commands::query::cancel_stream,
             commands::schema::list_databases,
+            commands::schema::list_server_databases,
             commands::schema::list_tables,
             commands::schema::describe_table,
             commands::schema::describe_table_extras,

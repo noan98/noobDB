@@ -63,6 +63,7 @@ import {
   type ContextMenuTriggerEvent,
 } from "./contextMenuKeyboard";
 import { existingGroupNames } from "../profileGroup";
+import { insertVariantProfiles, isVariantProfileId } from "../openDatabase";
 import {
   EMPTY_PROFILE_SELECTION,
   isProfileSelected,
@@ -299,6 +300,12 @@ const QuickAccessHeader = chakra("div", {
 
 interface Props {
   profiles: ConnectionProfile[];
+  /**
+   * 「同じサーバの別データベースを開く」(#2018) で開いている派生接続 (保存しない一時プロファイル)。
+   * 元プロファイルの直下に一時的な行として並べ、スキーマツリー・読み取り専用・ドライバ判定を
+   * 通常の行と同じに扱う。編集・複製・削除・並べ替え・グループ移動の対象にはしない。
+   */
+  ephemeralProfiles?: ConnectionProfile[];
   activeProfileId: string | null;
   /**
    * 現在アクティブなタブが開いている (database, table)。table タブ以外
@@ -1955,7 +1962,8 @@ function findRowElement(list: HTMLElement | null, key: string): HTMLElement | nu
 export const ConnectionList = memo(
   forwardRef<ConnectionListHandle, Props>(function ConnectionList(
     {
-      profiles,
+      profiles: savedProfiles,
+      ephemeralProfiles,
       activeProfileId,
       activeTable,
       sessionId,
@@ -2039,6 +2047,12 @@ export const ConnectionList = memo(
     const t = useT();
     const toast = useToast();
     const { confirm, dialog: confirmDialog } = useConfirm();
+    // 保存済みの一覧に、開いている派生接続 (#2018) を元プロファイルの直下へ差し込んだもの。
+    // 以降の行描画・ドライバ/読み取り専用の判定はこの一覧を使う。保存・並べ替えは savedProfiles。
+    const profiles = useMemo(
+      () => insertVariantProfiles(savedProfiles, ephemeralProfiles ?? []),
+      [savedProfiles, ephemeralProfiles],
+    );
     // アクティブテーブル行のスパインが共有する layoutId (#982)。`TabBar` の
     // `indicatorId` と同じ理由でコンポーネントインスタンスごとにスコープする。
     const activeTableIndicatorId = `tree-active-table-indicator-${useId()}`;
@@ -2714,8 +2728,12 @@ export const ConnectionList = memo(
       if (!onReorderProfiles) return;
       const validated = reorderIfPermutation(siblingIds, proposed);
       if (!validated) return;
-      const currentIds = profiles.map((p) => p.id);
-      const full = applySubsequenceOrder(currentIds, validated);
+      // 派生接続 (#2018) は保存対象ではないので、並び順の永続化には含めない。
+      const currentIds = savedProfiles.map((p) => p.id);
+      const full = applySubsequenceOrder(
+        currentIds,
+        validated.filter((id) => !isVariantProfileId(id)),
+      );
       if (full !== currentIds) onReorderProfiles(full);
     };
 
@@ -2822,11 +2840,12 @@ export const ConnectionList = memo(
 
     /** いま画面に並んでいる接続の ID (表示順)。畳んだグループの中は含めない。範囲選択の基準 (#1630)。 */
     const displayedProfileIds = (): string[] =>
-      grouped === null
+      (grouped === null
         ? visibleProfiles.map((pp) => pp.id)
         : grouped.flatMap((g) =>
             expandedGroups[g.name ?? "__ungrouped__"] !== false ? g.profiles.map((pp) => pp.id) : [],
-          );
+          )
+      ).filter((id) => !isVariantProfileId(id));
 
     // 行のクリック (#1630): Ctrl/Cmd で出し入れ、Shift で範囲。修飾なしは選択を解除してから従来どおり
     // 接続 / 展開する。
@@ -2971,27 +2990,32 @@ export const ConnectionList = memo(
                 },
               ]
             : []),
-          { label: t("contextMenuEdit"), onSelect: () => onEdit(p) },
-          { label: t("contextMenuDuplicate"), onSelect: () => onDuplicate(p) },
-          ...(groupMove ? [groupMove] : []),
-          // 保存済みワークスペース (タブ) の確認・消去 (#1630)。
-          ...(onShowSavedTabs
-            ? [{ label: t("contextMenuSavedTabs"), onSelect: () => onShowSavedTabs(p) }]
-            : []),
-          {
-            label: t("contextMenuDelete"),
-            danger: true,
-            onSelect: () => {
-              void confirm({
-                title: t("listDeleteConfirmTitle"),
-                message: t("listDeleteConfirm", { name: p.name }),
-                confirmLabel: t("contextMenuDelete"),
-                tone: "danger",
-              }).then((ok) => {
-                if (ok) onDelete(p);
-              });
-            },
-          },
+          // 派生接続 (#2018) は保存されていないので、編集・複製・移動・削除は出さない (切断のみ)。
+          ...(isVariantProfileId(p.id)
+            ? []
+            : [
+                { label: t("contextMenuEdit"), onSelect: () => onEdit(p) },
+                { label: t("contextMenuDuplicate"), onSelect: () => onDuplicate(p) },
+                ...(groupMove ? [groupMove] : []),
+                // 保存済みワークスペース (タブ) の確認・消去 (#1630)。
+                ...(onShowSavedTabs
+                  ? [{ label: t("contextMenuSavedTabs"), onSelect: () => onShowSavedTabs(p) }]
+                  : []),
+                {
+                  label: t("contextMenuDelete"),
+                  danger: true,
+                  onSelect: () => {
+                    void confirm({
+                      title: t("listDeleteConfirmTitle"),
+                      message: t("listDeleteConfirm", { name: p.name }),
+                      confirmLabel: t("contextMenuDelete"),
+                      tone: "danger",
+                    }).then((ok) => {
+                      if (ok) onDelete(p);
+                    });
+                  },
+                },
+              ]),
         ],
       });
     };

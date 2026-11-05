@@ -1267,6 +1267,18 @@ impl Connection {
         }
     }
 
+    /// サーバ上の実データベース名の一覧 (#2018)。PostgreSQL だけが対象 — 1 接続が 1 DB に
+    /// 固定され、別 DB を開くには新しいセッションが要るため。MySQL は 1 接続で全 DB を
+    /// 横断でき (`databases()` が `SHOW DATABASES`)、SQLite は 1 ファイル = 1 DB なので、
+    /// どちらも「該当なし」として空を返す。
+    pub async fn server_databases(&self) -> Result<Vec<String>> {
+        match self {
+            Connection::MySql(_) => Ok(Vec::new()),
+            Connection::Postgres(c) => c.server_databases().await,
+            Connection::Sqlite(_) => Ok(Vec::new()),
+        }
+    }
+
     pub async fn tables(&self, db: &str) -> Result<Vec<String>> {
         match self {
             Connection::MySql(c) => c.tables(db).await,
@@ -2462,6 +2474,9 @@ impl Connection {
                     },
                 ))
             }
+            // 上流の `kind == WriteKind::Other` ガードで早期 return 済みのため、
+            // ここには到達しない。WriteKind や上流ガードを変えるときはこのアームも見直すこと。
+            #[allow(clippy::unreachable)]
             WriteKind::Other => unreachable!("guarded above"),
         }
     }

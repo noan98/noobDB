@@ -961,6 +961,22 @@ impl PostgresConn {
             .collect()
     }
 
+    /// サーバ上の「実データベース」(`pg_database`) の一覧 (#2018)。`databases()` が返すのは
+    /// 接続中 DB 内のスキーマなので、別の `datname` を開くための候補はこちらで引く。
+    /// テンプレート DB と接続を許可していない DB (`datallowconn = false`) は除く。
+    pub async fn server_databases(&self) -> Result<Vec<String>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            "SELECT datname FROM pg_database
+             WHERE datallowconn AND NOT datistemplate
+             ORDER BY datname",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(|r| r.try_get::<String, _>(0).map_err(Into::into))
+            .collect()
+    }
+
     /// Client backends from `pg_stat_activity` for the process monitor panel.
     /// Background workers (autovacuum, WAL writer, ...) are filtered out — the
     /// panel is about client connections, and terminating system backends is

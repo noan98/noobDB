@@ -252,6 +252,14 @@ export const insertRowsResult = z.object({
 export const bulkWriteOutcomeApplied = z.object({
   status: z.literal("applied"),
   result: queryResultLite,
+  /** フライトレコーダーへの記録結果 (#2024)。`options.capture` を指定しなければ全て 0 / null。 */
+  capture: z
+    .object({
+      recorded: z.number(),
+      declined: z.number(),
+      batch_id: z.string().nullable(),
+    })
+    .default({ recorded: 0, declined: 0, batch_id: null }),
 });
 export const bulkWriteOutcomeRowCountExceeded = z.object({
   status: z.literal("row_count_exceeded"),
@@ -1172,6 +1180,9 @@ const advisorRuleId = z.enum([
   "unused_index",
   "fk_type_mismatch",
   "sqlite_integer_pk_hint",
+  "nullable_foreign_key",
+  "oversized_varchar",
+  "float_for_money",
 ]);
 
 export const healthFinding = z.object({

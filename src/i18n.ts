@@ -897,6 +897,7 @@ const en = {
   customThemeApplyAnyway: "Apply anyway",
   customThemeApplied: "Applied {count} color tokens.",
   customThemeImportError: "Could not load the custom theme: {error}",
+  themePresetBrand: "noobDB Brand",
   themePresetDefault: "Default",
   themePresetDracula: "Dracula",
   themePresetNord: "Nord",
@@ -1844,6 +1845,17 @@ const en = {
   explainTotalCost: "Query cost: {cost}",
   explainQueryPlanRoot: "QUERY PLAN",
   explainUnexpectedShape: "unexpected plan shape",
+  explainLegendCostLow: "Low cost",
+  explainLegendCostHigh: "High cost",
+  explainLegendCostAria: "Node color shows relative cost, from low (left) to high (right)",
+  explainLegendAttention: "Needs attention (caution)",
+  explainLegendWarning: "Likely problem (warning)",
+  explainLegendCategoriesToggle: "Node type icons",
+  explainLegendCategoryScan: "Full scan",
+  explainLegendCategoryIndex: "Index access",
+  explainLegendCategoryJoin: "Join",
+  explainLegendCategorySort: "Sort",
+  explainLegendCategoryAggregate: "Aggregate / group",
   explainNodeCost: "cost {cost}",
   explainNodeRows: "{rows} rows",
   explainNodeActualRows: "{est} → {actual} rows",
@@ -4566,6 +4578,13 @@ const en = {
   testDataStrategyRandomNumber: "Random number",
   testDataStrategyRandomString: "Random string",
   testDataStrategyRandomDate: "Random date/time",
+  testDataStrategyTemplate: "Template string",
+  testDataTemplate: "Template",
+  testDataTemplatePlaceholder: "user{n:4}@example.com",
+  testDataTemplateHelp:
+    "Tokens: {n} row number / {n:5} zero-padded / {rand:1-9} random integer / {pick:a|b|c} random choice / {uuid} / {alpha:6} random letters and digits",
+  testDataDateFrom: "From",
+  testDataDateTo: "To",
   testDataStrategyRandomBool: "Random boolean",
   testDataStrategyFixed: "Fixed value",
   testDataStrategyChoice: "Random from enum values",
@@ -5424,6 +5443,16 @@ const en = {
   cmdkActionSchemaExport: "Export schema for AI (Markdown)",
   cmdkActionToggleTheme: "Toggle light / dark theme",
   cmdkActionDisconnect: "Disconnect",
+  cmdkActionOpenDatabase: "Open another database on this server...",
+  openDatabaseTitle: "Open another database on this server",
+  openDatabaseHint:
+    "Opens the chosen database as a new connection, reusing this connection's host, TLS, SSH tunnel and saved credentials.",
+  openDatabaseFilterLabel: "Database",
+  openDatabaseFilterPlaceholder: "Filter by name",
+  openDatabaseLoading: "Loading databases...",
+  openDatabaseEmpty: "No matching databases",
+  openDatabaseCurrent: "Connected",
+  openDatabaseCancel: "Close",
   cmdkActionRunSnippet: "Run: {name}",
 
   // プロセスモニタパネル
@@ -6230,6 +6259,9 @@ const en = {
   advisorRuleUnusedIndexTitle: "Unused index",
   advisorRuleFkTypeMismatchTitle: "Foreign key type mismatch",
   advisorRuleSqliteIntegerPkHintTitle: "Non-INTEGER integer primary key",
+  advisorRuleNullableForeignKeyTitle: "Nullable foreign key",
+  advisorRuleOversizedVarcharTitle: "Oversized VARCHAR",
+  advisorRuleFloatForMoneyTitle: "Floating-point type for money",
   // 未知のルール ID (バックエンドだけ新ルールを足したドリフト時) の汎用フォールバック
   advisorRuleUnknownTitle: "Other schema finding",
   advisorRuleUnknownDesc:
@@ -6249,6 +6281,14 @@ const en = {
     "{table}.{column} is {srcType}, but the referenced {ref} is {refType}. The type mismatch can force an implicit conversion that prevents the index from being used in joins.",
   advisorRuleSqliteIntegerPkHintDesc:
     "{table}.{column} is declared {type} PRIMARY KEY. In SQLite only exactly INTEGER PRIMARY KEY becomes a rowid alias; {type} creates a separate index alongside the rowid, wasting space.",
+  advisorRuleNullableForeignKeyDesc:
+    "{table}({columns}) is a foreign key referencing {ref} but allows NULL. Rows can exist without a parent, leaving a hole in referential integrity. Add NOT NULL if the reference is required.",
+  advisorRuleOversizedVarcharDesc:
+    "{table}.{column} is {type} ({length} characters). In MySQL an oversized limit gives no real validation and can inflate memory use for sorting and in-memory temporary tables. Consider a realistic length, or TEXT if the length is unbounded.",
+  advisorRuleFloatForMoneyDesc:
+    "{table}.{column} looks like a monetary value but uses the floating-point type {type}. Rounding errors can accumulate; use DECIMAL / NUMERIC (or integer minor units) instead.",
+  advisorRuleFloatForMoneySqliteDesc:
+    "{table}.{column} looks like a monetary value but uses the floating-point type {type}. Rounding errors can accumulate. In SQLite, DECIMAL / NUMERIC only gives NUMERIC affinity and values may still be stored as REAL, so store integer minor units (e.g. cents) in an INTEGER column instead.",
   // 未使用ルールのスキップ理由
   advisorReasonUnsupportedDriver:
     "this driver has no server-side index usage statistics (SQLite is file-backed), so the unused-index rule is skipped.",
@@ -8134,6 +8174,7 @@ const ja: Dict = {
   customThemeApplyAnyway: "このまま適用",
   customThemeApplied: "{count} 個の色トークンを適用しました。",
   customThemeImportError: "カスタムテーマを読み込めませんでした: {error}",
+  themePresetBrand: "noobDB ブランド",
   themePresetDefault: "デフォルト",
   themePresetDracula: "Dracula",
   themePresetNord: "Nord",
@@ -9078,6 +9119,17 @@ const ja: Dict = {
   explainTotalCost: "クエリコスト: {cost}",
   explainQueryPlanRoot: "クエリプラン",
   explainUnexpectedShape: "プランの形式が想定と異なります",
+  explainLegendCostLow: "低コスト",
+  explainLegendCostHigh: "高コスト",
+  explainLegendCostAria: "ノードの色は相対コストを表します (左が低コスト、右が高コスト)",
+  explainLegendAttention: "注意が必要なノード (注意)",
+  explainLegendWarning: "問題の可能性が高いノード (警告)",
+  explainLegendCategoriesToggle: "ノード種別のアイコン",
+  explainLegendCategoryScan: "全件走査",
+  explainLegendCategoryIndex: "インデックス利用",
+  explainLegendCategoryJoin: "結合",
+  explainLegendCategorySort: "ソート",
+  explainLegendCategoryAggregate: "集約・グループ化",
   explainNodeCost: "コスト {cost}",
   explainNodeRows: "{rows} 行",
   explainNodeActualRows: "{est} → {actual} 行",
@@ -11780,6 +11832,13 @@ const ja: Dict = {
   testDataStrategyRandomNumber: "ランダム数値",
   testDataStrategyRandomString: "ランダム文字列",
   testDataStrategyRandomDate: "ランダム日時",
+  testDataStrategyTemplate: "テンプレート文字列",
+  testDataTemplate: "テンプレート",
+  testDataTemplatePlaceholder: "user{n:4}@example.com",
+  testDataTemplateHelp:
+    "使えるトークン: {n} 行番号 / {n:5} 0 埋め / {rand:1-9} 整数乱数 / {pick:a|b|c} 候補から選択 / {uuid} / {alpha:6} 英数字",
+  testDataDateFrom: "開始日",
+  testDataDateTo: "終了日",
   testDataStrategyRandomBool: "ランダム真偽",
   testDataStrategyFixed: "固定値",
   testDataStrategyChoice: "列挙からランダム",
@@ -12629,6 +12688,16 @@ const ja: Dict = {
   cmdkActionSchemaExport: "スキーマを AI 向けに出力 (Markdown)",
   cmdkActionToggleTheme: "ライト / ダークテーマ切替",
   cmdkActionDisconnect: "切断する",
+  cmdkActionOpenDatabase: "同じサーバの別データベースを開く...",
+  openDatabaseTitle: "同じサーバの別データベースを開く",
+  openDatabaseHint:
+    "選んだデータベースを新しい接続として開きます。この接続のホスト・TLS・SSH トンネル・保存済みの認証情報をそのまま使います。",
+  openDatabaseFilterLabel: "データベース",
+  openDatabaseFilterPlaceholder: "名前で絞り込み",
+  openDatabaseLoading: "データベースを読み込み中...",
+  openDatabaseEmpty: "一致するデータベースがありません",
+  openDatabaseCurrent: "接続中",
+  openDatabaseCancel: "閉じる",
   cmdkActionRunSnippet: "実行: {name}",
 
   // プロセスモニタパネル
@@ -13431,6 +13500,9 @@ const ja: Dict = {
   advisorRuleUnusedIndexTitle: "未使用インデックス",
   advisorRuleFkTypeMismatchTitle: "外部キーの型不一致",
   advisorRuleSqliteIntegerPkHintTitle: "INTEGER でない整数 PK",
+  advisorRuleNullableForeignKeyTitle: "NULL を許す外部キー",
+  advisorRuleOversizedVarcharTitle: "過大な VARCHAR",
+  advisorRuleFloatForMoneyTitle: "金額に浮動小数型",
   // 未知のルール ID (バックエンドだけ新ルールを足したドリフト時) の汎用フォールバック
   advisorRuleUnknownTitle: "その他のスキーマ指摘",
   advisorRuleUnknownDesc:
@@ -13450,6 +13522,14 @@ const ja: Dict = {
     "{table}.{column} は {srcType} ですが、参照先の {ref} は {refType} です。型の不一致は暗黙変換を招き、JOIN でインデックスが効かなくなることがあります。",
   advisorRuleSqliteIntegerPkHintDesc:
     "{table}.{column} は {type} PRIMARY KEY として宣言されています。SQLite では厳密に INTEGER PRIMARY KEY のときだけ rowid エイリアスになり、{type} では rowid とは別にインデックスが作られ領域を余分に使います。",
+  advisorRuleNullableForeignKeyDesc:
+    "{table}({columns}) は {ref} を参照する外部キーですが NULL を許可しています。親を持たない行が存在でき、参照整合性に穴が開きます。参照が必須なら NOT NULL を付けてください。",
+  advisorRuleOversizedVarcharDesc:
+    "{table}.{column} は {type} ({length} 文字) です。MySQL では、過大な上限は実質的な検証にならず、ソートやメモリ上の一時テーブルのメモリ消費を膨らませることがあります。現実的な長さにするか、長さが不定なら TEXT を検討してください。",
+  advisorRuleFloatForMoneyDesc:
+    "{table}.{column} は金額を表す列に見えますが、浮動小数型 {type} です。丸め誤差が蓄積するため、DECIMAL / NUMERIC (または最小単位の整数) を使ってください。",
+  advisorRuleFloatForMoneySqliteDesc:
+    "{table}.{column} は金額を表す列に見えますが、浮動小数型 {type} です。丸め誤差が蓄積します。SQLite の DECIMAL / NUMERIC は NUMERIC 親和性になるだけで、値は REAL として保存されうるため、INTEGER 列に最小単位の整数 (円・セントなど) で保存してください。",
   // 未使用ルールのスキップ理由
   advisorReasonUnsupportedDriver:
     "このドライバはサーバ側のインデックス使用統計を持たない (SQLite はファイルベース) ため、未使用インデックスルールはスキップされます。",

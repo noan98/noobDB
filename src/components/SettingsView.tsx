@@ -583,6 +583,7 @@ const DENSITY_LABEL_KEYS: Record<Density, Parameters<ReturnType<typeof useT>>[0]
 };
 
 const THEME_PRESET_LABEL_KEYS: Record<ThemePreset, Parameters<ReturnType<typeof useT>>[0]> = {
+  brand: "themePresetBrand",
   default: "themePresetDefault",
   dracula: "themePresetDracula",
   nord: "themePresetNord",

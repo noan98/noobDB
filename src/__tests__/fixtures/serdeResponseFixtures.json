@@ -544,6 +544,11 @@
     }
   ],
   "bulkWriteOutcomeApplied": {
+    "capture": {
+      "batch_id": "b18c-abc123",
+      "declined": 1,
+      "recorded": 2
+    },
     "result": {
       "columns": [
         {
@@ -1575,6 +1580,45 @@
       "severity": "high",
       "size_bytes": 4096,
       "statistical": true,
+      "table": "orders"
+    },
+    {
+      "columns": [
+        "user_id"
+      ],
+      "context": [],
+      "fix_ddl": null,
+      "fix_ddl_online": null,
+      "rule": "nullable_foreign_key",
+      "severity": "medium",
+      "size_bytes": null,
+      "statistical": false,
+      "table": "orders"
+    },
+    {
+      "columns": [
+        "user_id"
+      ],
+      "context": [],
+      "fix_ddl": null,
+      "fix_ddl_online": null,
+      "rule": "oversized_varchar",
+      "severity": "low",
+      "size_bytes": 4096,
+      "statistical": true,
+      "table": "orders"
+    },
+    {
+      "columns": [
+        "user_id"
+      ],
+      "context": [],
+      "fix_ddl": null,
+      "fix_ddl_online": null,
+      "rule": "float_for_money",
+      "severity": "high",
+      "size_bytes": null,
+      "statistical": false,
       "table": "orders"
     }
   ],
@@ -5018,6 +5062,45 @@
           "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "fix_ddl_online": null,
+          "rule": "nullable_foreign_key",
+          "severity": "medium",
+          "size_bytes": null,
+          "statistical": false,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "fix_ddl_online": null,
+          "rule": "oversized_varchar",
+          "severity": "low",
+          "size_bytes": 4096,
+          "statistical": true,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "fix_ddl_online": null,
+          "rule": "float_for_money",
+          "severity": "high",
+          "size_bytes": null,
+          "statistical": false,
+          "table": "orders"
         }
       ],
       "ignored": [],
@@ -5049,6 +5132,18 @@
         {
           "reason": "performance_schema_off",
           "rule": "sqlite_integer_pk_hint"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "nullable_foreign_key"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "oversized_varchar"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "float_for_money"
         }
       ],
       "table_plans": [
@@ -5155,6 +5250,45 @@
           "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "fix_ddl_online": null,
+          "rule": "nullable_foreign_key",
+          "severity": "medium",
+          "size_bytes": null,
+          "statistical": false,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "fix_ddl_online": null,
+          "rule": "oversized_varchar",
+          "severity": "low",
+          "size_bytes": 4096,
+          "statistical": true,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "fix_ddl_online": null,
+          "rule": "float_for_money",
+          "severity": "high",
+          "size_bytes": null,
+          "statistical": false,
+          "table": "orders"
         }
       ],
       "ignored": [],
@@ -5186,6 +5320,18 @@
         {
           "reason": "performance_schema_off",
           "rule": "sqlite_integer_pk_hint"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "nullable_foreign_key"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "oversized_varchar"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "float_for_money"
         }
       ],
       "table_plans": [
@@ -5292,6 +5438,45 @@
           "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "fix_ddl_online": null,
+          "rule": "nullable_foreign_key",
+          "severity": "medium",
+          "size_bytes": null,
+          "statistical": false,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "fix_ddl_online": null,
+          "rule": "oversized_varchar",
+          "severity": "low",
+          "size_bytes": 4096,
+          "statistical": true,
+          "table": "orders"
+        },
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [],
+          "fix_ddl": null,
+          "fix_ddl_online": null,
+          "rule": "float_for_money",
+          "severity": "high",
+          "size_bytes": null,
+          "statistical": false,
+          "table": "orders"
         }
       ],
       "ignored": [],
@@ -5323,6 +5508,18 @@
         {
           "reason": "performance_schema_off",
           "rule": "sqlite_integer_pk_hint"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "nullable_foreign_key"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "oversized_varchar"
+        },
+        {
+          "reason": "performance_schema_off",
+          "rule": "float_for_money"
         }
       ],
       "table_plans": [

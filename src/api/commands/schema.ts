@@ -29,6 +29,14 @@ export const schemaCommands = {
     invoke<string[]>("list_databases", { sessionId }).then((r) =>
       parseResponse(schemas.stringArray, r, "list_databases"),
     ),
+  /**
+   * サーバ上の実データベース名の一覧 (#2018)。PostgreSQL のみ (`pg_database`)。MySQL / SQLite は
+   * 空配列 — 「同じサーバの別データベースを開く」導線を出すかどうかの判定にも使う。
+   */
+  listServerDatabases: (sessionId: string) =>
+    invoke<string[]>("list_server_databases", { sessionId }).then((r) =>
+      parseResponse(schemas.stringArray, r, "list_server_databases"),
+    ),
   listTables: (sessionId: string, database: string) =>
     invoke<string[]>("list_tables", { sessionId, database }).then((r) =>
       parseResponse(schemas.stringArray, r, "list_tables"),

@@ -21,6 +21,7 @@ import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiSurface } from "./AiSurface";
 import { AiUsageNote } from "./AiUsageNote";
 
 /** 結果グリッドの「AI で要約」が組み立てる依頼。 */
@@ -178,17 +179,12 @@ export function AiResultSummaryPanel(props: AiResultSummaryPanelProps) {
   const running = state.kind === "running";
 
   return (
-    <Flex
+    <AiSurface
       ref={rootRef}
       tabIndex={-1}
       outline="none"
-      direction="column"
-      gap="2"
-      p="3"
       h="100%"
       overflow="auto"
-      fontSize="sm"
-      color="app.text"
       data-testid="ai-result-summary-panel"
     >
       <chakra.span textStyle="caption" data-testid="ai-result-summary-source">
@@ -245,7 +241,7 @@ export function AiResultSummaryPanel(props: AiResultSummaryPanelProps) {
         </Callout>
       )}
       {dialog}
-    </Flex>
+    </AiSurface>
   );
 }
 

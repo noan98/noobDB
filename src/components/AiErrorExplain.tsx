@@ -23,6 +23,7 @@ import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
 import { DiffView } from "./AiSqlDiff";
+import { AiSurface } from "./AiSurface";
 import { AiStreamProgress } from "./AiStreamProgress";
 import { useAiKeyPresent } from "../ai/aiKeyStore";
 import { AiSetupHint } from "./AiSetupHint";
@@ -165,18 +166,7 @@ export function AiErrorExplain(props: AiErrorExplainProps) {
   const running = state.kind === "running";
 
   return (
-    <Flex
-      direction="column"
-      gap="2"
-      px="3.5"
-      py="2"
-      bg="app.surface"
-      borderTopWidth="1px"
-      borderTopColor="app.border"
-      fontSize="sm"
-      color="app.text"
-      data-testid="ai-error-explain"
-    >
+    <AiSurface edge="top" data-testid="ai-error-explain">
       <Flex align="center" gap="2" wrap="wrap">
         <Tooltip label={sendsLine(tableRefs.length)}>
           <Button
@@ -258,7 +248,7 @@ export function AiErrorExplain(props: AiErrorExplainProps) {
         </Callout>
       )}
       {dialog}
-    </Flex>
+    </AiSurface>
   );
 }
 

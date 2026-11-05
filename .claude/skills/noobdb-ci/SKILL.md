@@ -19,14 +19,14 @@ description: noobDB の CI が落ちたとき、GitHub Actions ワークフロ�
 | `crosslang parity` | 言語横断のパリティ/ゴールデンテスト。rust 専用差分の穴埋め用 |
 | `rust (clippy)` / `rust (test)` | 旧 `rust (check + clippy + test)` から分割。`rust (test)` は計装なしの高速 nextest (#1153) |
 | `rust (coverage)` | **必須に含めない** (非ブロッキング)。カバレッジ計装 + 閾値 (#1153)。main push 限定で PR では走らない (#1420) |
-| `rust (deny)` | 依存ライセンス + RustSec 脆弱性チェック |
+| `rust (deny)` | 依存ライセンス + RustSec 脆弱性チェック + 未使用依存 (cargo-machete) |
 | `rust (windows)` | Windows の clippy + nextest を 1 ジョブで直列実行 (#1872)。旧 `rust (windows clippy)` / `rust (windows test)` を統合 (それ以前は `rust (windows)` を分割していた) |
 
 ## 参照
 
 | ファイル | 内容 |
 |---|---|
-| `references/ci-workflow.md` | `ci.yml` — paths-filter によるジョブ出し分け、frontend / crosslang parity / rust 系 7 ジョブ、カバレッジ閾値。`mutants-diff.yml` (PR 差分の `cargo mutants --in-diff`, #1841)・`e2e.yml` の節も含む |
+| `references/ci-workflow.md` | `ci.yml` — paths-filter によるジョブ出し分け、frontend / crosslang parity / rust 系 7 ジョブ、カバレッジ閾値。`mutants-diff.yml` (PR 差分の `cargo mutants --in-diff`, #1841)・`js-mutants-diff.yml` (フロント版 Stryker 差分, #2021)・`e2e.yml` の節も含む |
 | `references/release-workflow.md` | `release.yml` — タグビルド、キャッシュ温めの paths ゲート、`releaseDraft: false` の理由 |
 | `references/dependencies.md` | Dependabot / cargo-deny / pnpm audit の役割分担 |
 | `references/scheduled-notify.md` | 定期 / 手動の可視化専用ワークフロー (audit / e2e nightly / windows-db-smoke / mutants / js-mutants) の検出結果をトラッキング Issue へ通知する仕組み (#1395) |

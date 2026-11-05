@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { AnimatePresence, motion, useReducedMotionConfig } from "motion/react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import type {
@@ -16,8 +17,12 @@ import type {
   TableDiff,
 } from "../api/tauri";
 import { useLocale, useT } from "../i18n";
+import { transitions, variants } from "../motion";
 import { statusColors } from "./diffStatusColors";
 import { CodePreview } from "./modalForm";
+import { prefersStaticMotion } from "./revealOrigin";
+import { RevealTbody } from "./RevealTbody";
+import { SkeletonTableRows } from "./Skeleton";
 import { countTableItems, DIFF_ACTION_GLYPH, type TableGroup } from "./schemaCompareModel";
 
 /**
@@ -283,6 +288,61 @@ const listItemCss: SystemStyleObject = {
   },
 };
 
+// motion.* に chakra の style props を渡せるようにする (variants 等は forwardProps で素通し)。
+const MotionLi = chakra(
+  motion.li,
+  {},
+  { forwardProps: ["variants", "initial", "animate", "exit", "transition"] },
+);
+const MotionDiv = chakra(
+  motion.div,
+  {},
+  { forwardProps: ["variants", "initial", "animate", "exit", "transition"] },
+);
+
+/** この件数を超えるグループは出入りの高さ補間をしない (数百件の一覧で motion 要素を増やさない)。 */
+const COLLAPSE_LIST_MAX = 100;
+
+/** 即時化した transition (reduced-motion / ハイコントラスト時)。 */
+const INSTANT = { duration: 0 } as const;
+
+/** reduced-motion (アプリ設定 / OS) とハイコントラストでは出入りを即時にする。height の補間は MotionConfig では止まらない。 */
+function useStillMotion(): boolean {
+  const reduced = useReducedMotionConfig() ?? false;
+  return reduced || prefersStaticMotion();
+}
+
+/**
+ * 比較実行中に差分表の形を予告するスケルトン (#2013)。実データの `<thead>` と同じ列見出しを出し、
+ * `<tbody>` だけを `SkeletonTableRows` にする。結果が届くと `RevealTbody` の表に差し替わる。
+ * 支援技術には比較ボタンの文言 (比較中…) が伝えるので、ここは視覚専用 (`aria-hidden`)。
+ */
+export function DiffTableSkeleton({ columns, rows = 5 }: { columns: readonly string[]; rows?: number }) {
+  return (
+    <Box
+      aria-hidden
+      data-testid="diff-table-skeleton"
+      border="1px solid"
+      borderColor="app.border"
+      borderRadius="md"
+      overflow="hidden"
+    >
+      <chakra.table css={detailTableCss}>
+        <thead>
+          <tr>
+            {columns.map((c) => (
+              <th key={c}>{c}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          <SkeletonTableRows columns={columns.length} rows={rows} />
+        </tbody>
+      </chakra.table>
+    </Box>
+  );
+}
+
 /**
  * 2 ペインの左側: 操作ごとのグループに分けたテーブル名の一覧。押したテーブルの
  * 中身が右の `TableDiffDetail` に出る。
@@ -298,6 +358,7 @@ export function TableDiffList({
   onSelect: (name: string) => void;
   t: ReturnType<typeof useT>;
 }) {
+  const still = useStillMotion();
   return (
     <chakra.nav aria-label={t("schemaCompareTableListLabel")}>
       {groups.map((g) => (
@@ -314,38 +375,54 @@ export function TableDiffList({
             {groupLabel(g.status, g.tables.length, t)}
           </chakra.div>
           <chakra.ul listStyle="none" m={0} p={0}>
-            {g.tables.map((tbl) => {
-              const meta = tableMeta(tbl, t);
-              return (
-                <chakra.li key={tbl.name} borderBottom="1px solid" borderColor="app.borderSubtle">
-                  <chakra.button
-                    type="button"
-                    css={listItemCss}
-                    aria-current={tbl.name === selected ? "true" : undefined}
-                    onClick={() => onSelect(tbl.name)}
-                  >
-                    <ActionMark status={tbl.status} />
-                    <chakra.span
-                      fontFamily="mono"
-                      fontSize="sm"
-                      color="app.text"
-                      overflow="hidden"
-                      textOverflow="ellipsis"
-                      whiteSpace="nowrap"
-                      minW={0}
-                      flex="1"
+            {(() => {
+              // 要素の型はグループ全体の件数だけで決める。項目ごとに切り替えると、フィルタで境界をまたいだとき
+              // 再マウントされてフォーカスが外れ、残った項目まで展開アニメが走る。
+              const animated = g.tables.length <= COLLAPSE_LIST_MAX;
+              const Li = animated ? MotionLi : chakra.li;
+              const motionProps = animated
+                ? {
+                    variants: variants.collapse,
+                    initial: "initial",
+                    animate: "animate",
+                    exit: "exit",
+                    transition: still ? INSTANT : transitions.enter,
+                  }
+                : {};
+              const items = g.tables.map((tbl) => {
+                const meta = tableMeta(tbl, t);
+                return (
+                  <Li key={tbl.name} borderBottom="1px solid" borderColor="app.borderSubtle" {...motionProps}>
+                    <chakra.button
+                      type="button"
+                      css={listItemCss}
+                      aria-current={tbl.name === selected ? "true" : undefined}
+                      onClick={() => onSelect(tbl.name)}
                     >
-                      {tbl.name}
-                    </chakra.span>
-                    {meta && (
-                      <chakra.span textStyle="caption" whiteSpace="nowrap" flex="none">
-                        {meta}
+                      <ActionMark status={tbl.status} />
+                      <chakra.span
+                        fontFamily="mono"
+                        fontSize="sm"
+                        color="app.text"
+                        overflow="hidden"
+                        textOverflow="ellipsis"
+                        whiteSpace="nowrap"
+                        minW={0}
+                        flex="1"
+                      >
+                        {tbl.name}
                       </chakra.span>
-                    )}
-                  </chakra.button>
-                </chakra.li>
-              );
-            })}
+                      {meta && (
+                        <chakra.span textStyle="caption" whiteSpace="nowrap" flex="none">
+                          {meta}
+                        </chakra.span>
+                      )}
+                    </chakra.button>
+                  </Li>
+                );
+              });
+              return animated ? <AnimatePresence initial={false}>{items}</AnimatePresence> : items;
+            })()}
           </chakra.ul>
         </Box>
       ))}
@@ -593,7 +670,7 @@ function DiffItemSection({
             <th>{targetTitle ?? t("schemaCompareColTarget", { name: targetName })}</th>
           </tr>
         </thead>
-        <tbody>
+        <RevealTbody>
           {rows.map((row) => (
             <tr key={row.key}>
               <chakra.td whiteSpace="nowrap">
@@ -611,7 +688,7 @@ function DiffItemSection({
               </td>
             </tr>
           ))}
-        </tbody>
+        </RevealTbody>
       </chakra.table>
     </chakra.section>
   );
@@ -670,6 +747,7 @@ export const TableDiffDetail = memo(function TableDiffDetail({
 }) {
   // memo で親の再レンダーを遮断しても、言語切替では描き直す (t は参照が変わらない)。
   useLocale();
+  const still = useStillMotion();
   const columns = table.columns.map((c) => columnItem(c, t));
   const indexes = (table.indexes ?? []).map((ix) => indexItem(ix, t));
   const fks = (table.fk_changes ?? []).map((fk, i) => fkItem(fk, i, t));
@@ -703,26 +781,40 @@ export const TableDiffDetail = memo(function TableDiffDetail({
               ? t("schemaCompareTableSql", { count: statements.length })
               : t("schemaCompareTableSqlTitle")}
           </chakra.h4>
-          {!planReady ? (
-            <chakra.p m={0} textStyle="caption">
-              {t("schemaCompareTableSqlHint")}
-            </chakra.p>
-          ) : statements.length === 0 ? (
-            <chakra.p m={0} textStyle="caption">
-              {t("schemaCompareTableSqlNone")}
-            </chakra.p>
-          ) : (
-            <>
-              {destructive > 0 && (
-                <chakra.p m={0} fontSize="xs" color="app.textError">
-                  {t("schemaCompareTableSqlDestructive", { count: destructive })}
+          <AnimatePresence initial={false}>
+            <MotionDiv
+              key={!planReady ? "hint" : statements.length === 0 ? "none" : "sql"}
+              display="flex"
+              flexDirection="column"
+              gap="1"
+              variants={variants.collapse}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={still ? INSTANT : transitions.enter}
+            >
+              {!planReady ? (
+                <chakra.p m={0} textStyle="caption">
+                  {t("schemaCompareTableSqlHint")}
                 </chakra.p>
+              ) : statements.length === 0 ? (
+                <chakra.p m={0} textStyle="caption">
+                  {t("schemaCompareTableSqlNone")}
+                </chakra.p>
+              ) : (
+                <>
+                  {destructive > 0 && (
+                    <chakra.p m={0} fontSize="xs" color="app.textError">
+                      {t("schemaCompareTableSqlDestructive", { count: destructive })}
+                    </chakra.p>
+                  )}
+                  <CodePreview wrap fontSize="xs" maxH="240px">
+                    {statements.map((s) => s.sql).join("\n")}
+                  </CodePreview>
+                </>
               )}
-              <CodePreview wrap fontSize="xs" maxH="240px">
-                {statements.map((s) => s.sql).join("\n")}
-              </CodePreview>
-            </>
-          )}
+            </MotionDiv>
+          </AnimatePresence>
         </chakra.section>
       )}
     </Flex>

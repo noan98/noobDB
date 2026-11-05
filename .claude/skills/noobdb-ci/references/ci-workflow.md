@@ -187,7 +187,7 @@
   `cargo fmt --all -- --check` を、`rust (deny)` が
   `cargo deny --manifest-path src-tauri/Cargo.toml check` (依存ライセンスの許可
   リスト検査と RustSec Advisory DB による脆弱性チェック。設定は
-  `src-tauri/deny.toml`) を実行します。`rust (deny)` は cargo metadata を読むだけで
+  `src-tauri/deny.toml`) に加え、`cargo machete src-tauri` で未使用依存 (#2029) を検出します。`rust (deny)` は cargo metadata を読むだけで
   コンパイル不要なため、Tauri のシステム依存やフロントエンドビルドは要らず軽量に
   走ります (cargo-deny は他ツールと同じく `taiki-e/install-action` でプリビルド
   バイナリを導入)。`rust (test)` には MySQL 用の
@@ -352,8 +352,8 @@ Windows 固有 × サーバ型ドライバの退行が CI で見えなかった�
 
 ## `mutants-diff.yml` (PR 差分の `cargo mutants --in-diff` / #1841)
 
-`ci.yml` とは別の独立ワークフロー。手動 (`workflow_dispatch`) の `mutants.yml` (全件 4 シャード、
-定期実行ではない。変更しない) の補完として、安全網ファイル (`src-tauri/.cargo/mutants.toml` の
+`ci.yml` とは別の独立ワークフロー。手動 (`workflow_dispatch`) + 週次 `schedule` (#2038) の `mutants.yml` (全件 4 シャード。
+スコープは変更しない) の補完として、安全網ファイル (`src-tauri/.cargo/mutants.toml` の
 `examine_globs` と同じ `db/mod.rs` / `mysql.rs` / `postgres.rs` / `sqlite.rs` / `sync.rs` /
 `data_diff.rs` / `lib.rs`、加えて `script_analysis.rs` と `masking.rs`、`mutants.toml` 自体と本
 ワークフロー) を変更した PR だけで起動し、新しく入った未カバー分岐 (生存変異) を PR 時点で報告する。
@@ -391,5 +391,28 @@ Windows 固有 × サーバ型ドライバの退行が CI で見えなかった�
   `failure` / `cancelled` なら「打ち切り」と出し分ける。`mutants.out/` ・diff・list 結果は artifact
   `mutants-diff-out` (14 日) に保存。ジョブは 40 分で打ち切り、同一 PR の古い run は取り消す。
 - ジョブ ID と `rust-cache` の `key` は `mutants.yml` と同じ `mutants`。main で `mutants.yml` を手動
-  実行したキャッシュは PR の初回 run でも復元されるが、定期実行がないので通常は初回が cold で、
-  同じ PR の 2 回目以降の push から効く。actions は同じ SHA ピン。
+  実行したキャッシュは PR の初回 run でも復元される。週次 schedule (#2038) が main のキャッシュを
+  更新するので初回から効くことが多い (rust-cache は 7 日未アクセスで消えるため境界付近では cold もある)。actions は同じ SHA ピン。
+
+## `js-mutants-diff.yml` (PR 差分の Stryker / #2021)
+
+`mutants-diff.yml` のフロント版。手動専用の `js-mutants.yml` (変更しない) の補完として、
+安全網ファイル (`stryker.conf.json` の `mutate` 4 ファイル) と、それを検証するテスト
+(`vitest.mutants.config.ts` の `include`)・共有ゴールデン・設定 2 ファイル・
+`scripts/js-mutants-diff.mjs`・本ワークフローを変更した PR だけで起動する。
+**必須チェックにしない** (可視化専用で fail させない。ワークフロー単位 `paths:` なのでスキップ固着なし)。
+
+- 対象の単一ソースは `stryker.conf.json` の `mutate`。実行テストは `vitest.mutants.config.ts` の
+  `include` (js-mutants.yml と共有)。決定ロジックは `scripts/js-mutants-diff.mjs`
+  (`parseDiffRanges` / `planMutation`、`scripts/js-mutants-diff.test.mjs`)。Summary にモードを明示する。
+  - 差分行のみ: ソースの追加・変更行を `--mutate path:開始行-終了行` で変異。
+  - ファイル全体: include のテスト / 共有ゴールデンの変更 (純削除でも) で、`TEST_TO_SOURCES` /
+    `FIXTURE_TO_SOURCES` の対応ソース全体を変異 (「テストを弱める PR」の検出)。対応表に無い include
+    のテストや `stryker.conf.json` / `vitest.mutants.config.ts` の変更は `mutate` 全件。既存の生存変異も出る。
+  - `--mutate` は Stryker 10 でカンマ分割・上書きなので、カンマ区切りの 1 引数で渡す。
+  - include / 対応表 / `mutate` を足す・外すときは `paths:` も揃える (`scripts/js-mutants-diff.test.mjs` が paths の包含と対応表の import 推移閉包を検査する。ci.yml の対象外なので、本ワークフローの先頭ステップ `node --test` で PR ごとに走らせる)。
+- 対象が 0 件 (ワークフローだけの変更など) なら Node/pnpm のセットアップと Stryker を丸ごと飛ばして即終了する。
+- Report は `mutation.json` から Survived + NoCoverage を `path:行` で Job Summary に列挙し `::warning` を出す。
+  Stryker 終了コード非 0・打ち切りは実行失敗として表示する。変異候補 0 件 (コメントのみの変更など) は情報表示のみ。
+  レポートは artifact `js-mutants-diff-out` (14 日)。
+- 限界: 行範囲は `git diff -U0 --no-renames` (リネームは削除+追加として検出) のため、複数行にまたがる式の途中だけを変えると、式の他の行にある変異が漏れる。

@@ -832,7 +832,9 @@ export const PLAN_NODE_MIN_WIDTH = 160;
 export const PLAN_NODE_MAX_WIDTH = 320;
 export const PLAN_NODE_HEIGHT = 64;
 const PLAN_CHAR_WIDTH = 7.3;
-const PLAN_NODE_HPAD = 28;
+// 28 (左右余白) + 20 (種別アイコン 13px + gap 6px のトークン換算, #2017)。ノード頭にアイコンを
+// 足した分だけ幅を広げないと、既存ラベルの多くが省略されるため、ここだけレイアウト計算を変える。
+const PLAN_NODE_HPAD = 48;
 
 /** ラベル長に応じた可変ノード幅 (min/max でクランプ)。長名はビューで省略。 */
 export function planNodeWidth(node: PlanNode): number {
@@ -939,4 +941,75 @@ export function planAncestorIds(root: PlanNode, id: string): string[] {
     return false;
   };
   return walk(root) ? path : [];
+}
+
+/**
+ * プランノードの大分類 (#2017)。グラフのノード頭のアイコンと凡例に使う表示専用の分類で、
+ * レイアウトやコストの計算には影響しない。3 ドライバの計画ノードを同じ語彙に寄せる。
+ */
+export type PlanNodeCategory = "scan" | "index" | "join" | "sort" | "aggregate" | "other";
+
+/** 凡例に並べる分類の順序 (other は凡例に出さない)。 */
+export const PLAN_NODE_CATEGORIES: readonly Exclude<PlanNodeCategory, "other">[] = [
+  "scan",
+  "index",
+  "join",
+  "sort",
+  "aggregate",
+];
+
+/** MySQL `FORMAT=JSON` の構造キー → 分類。`table` は access_type で別途判定する。 */
+const MYSQL_KIND_CATEGORY: Record<string, PlanNodeCategory> = {
+  nested_loop: "join",
+  ordering_operation: "sort",
+  grouping_operation: "aggregate",
+  duplicates_removal: "aggregate",
+  windowing: "aggregate",
+};
+
+/** MySQL の access_type (`ALL` だけが全表走査、`index` は全インデックス走査)。 */
+function mysqlAccessCategory(accessType: unknown): PlanNodeCategory {
+  if (typeof accessType !== "string") return "other";
+  return accessType.toUpperCase() === "ALL" ? "scan" : "index";
+}
+
+/**
+ * ラベル / Node Type 文字列 (PostgreSQL の Node Type・MySQL の TREE 形式・SQLite の detail) から
+ * 分類する。順序が重要で、「Index Scan」が scan に落ちないよう index を先に判定し、
+ * 「Sort」「Aggregate」のような演算子名を走査より前に見る。
+ */
+function categoryFromText(text: string): PlanNodeCategory {
+  const s = text.trim();
+  if (/\bsort\b|\border by\b/i.test(s)) return "sort";
+  if (/aggregate|group by|distinct|\bunique\b|windowagg|\bwindow\b|^group$/i.test(s)) return "aggregate";
+  if (/\b(?:semi|anti)?join\b|nested loop|merge append|\bunion\b/i.test(s)) return "join";
+  if (/\bindex\b|\bbitmap\b|\bsearch\b|primary key|rowid/i.test(s)) return "index";
+  if (/^(?:seq|tid|tid range|foreign|sample) scan|table scan|^scan\b/i.test(s)) return "scan";
+  return "other";
+}
+
+/** SQLite の detail。`SCAN <表>` / `SEARCH <表>` の表名を拾わないよう先頭の動詞で判定する。 */
+function sqliteCategory(detail: string): PlanNodeCategory {
+  const s = detail.trim();
+  if (/^search\b/i.test(s)) return "index";
+  if (/^scan\b/i.test(s)) return /\busing (?:covering )?index\b/i.test(s) ? "index" : "scan";
+  return categoryFromText(s);
+}
+
+/**
+ * ノードを分類する純関数 (#2017)。MySQL JSON は構造キーと `access_type`、それ以外
+ * (PostgreSQL の Node Type / MySQL TREE / SQLite) はラベル文字列で判定する。
+ */
+export function classifyPlanNode(node: PlanNode): PlanNodeCategory {
+  if (node.kind === "table") return mysqlAccessCategory(attrVal(node, "access_type"));
+  if (Object.prototype.hasOwnProperty.call(MYSQL_KIND_CATEGORY, node.kind))
+    return MYSQL_KIND_CATEGORY[node.kind];
+  if (node.kind === "mysqlStep") {
+    // 条件式やテーブル名 (`Filter: (o.index > 1)` など) を拾わないよう、見出し部だけで判定する。
+    return categoryFromText(node.label.split(/:| \(| on /)[0]);
+  }
+  if (node.kind === "sqliteStep") return sqliteCategory(node.label);
+  // PostgreSQL は kind が Node Type そのもの。MySQL JSON の他の構造キー (query_block 等) は other。
+  if (Object.prototype.hasOwnProperty.call(KIND_LABEL_KEYS, node.kind)) return "other";
+  return categoryFromText(node.kind);
 }

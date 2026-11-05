@@ -184,6 +184,8 @@ const config = defineConfig({
           // セル色) を PK アイコンに流用していたが、日付表示調整が PK 表示へ波及
           // する意図しない結合を避けるため分離した。
           keyAccent: { value: "var(--key-accent)" },
+          // AI 回答面の左アクセント辺 (#2016)。AiSurface 専用。
+          aiAccent: { value: "var(--ai-accent)" },
           // ブランド基調色 (#619)。アクセントと違いテーマ/接続で変わらず固定。
           // ロゴマーク・スプラッシュ・ブランド面が参照する。値は App.css の
           // --brand-* と brand.tsx の定数に一致。
@@ -191,6 +193,10 @@ const config = defineConfig({
             navy: { value: "var(--brand-navy)" },
             navyRaised: { value: "var(--brand-navy-raised)" },
             teal: { value: "var(--brand-teal)" },
+            // シグネチャ面 (FAB / 主要空状態 CTA) のブランド固定グラデーションと前景 (#2043)。
+            fill: { value: "var(--brand-fill)" },
+            fillHover: { value: "var(--brand-fill-hover)" },
+            onFill: { value: "var(--brand-on-fill)" },
           },
           // 拡張ニュートラル階調。0=地, 950=最も濃い文字。テーマ反転は
           // App.css 側で吸収するため、ここは var() ブリッジのみ。

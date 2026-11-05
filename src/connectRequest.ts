@@ -8,6 +8,7 @@
  * 秘密 (DB パスワード / SSH パスフレーズ・パスワード) は常に空にし、`profile_id` を渡して
  * バックエンドにキーチェーンから解決させる。
  */
+import { baseProfileId, isVariantProfileId } from "./openDatabase";
 import type { ConnectRequest, ConnectionProfile, DriverKind } from "./api/tauri";
 
 /** プロファイルの `driver` (プレーンな文字列) を `DriverKind` に絞る。未知は mysql。 */
@@ -39,6 +40,8 @@ export function connectRequestFromProfile(
     : null;
   return {
     profile_id: profile.id,
+    // 派生接続 (#2018) は ID の形ではなく明示の `variant_of` で元プロファイルを指す。
+    ...(isVariantProfileId(profile.id) ? { variant_of: baseProfileId(profile.id) } : {}),
     driver: normalizeDriver(profile.driver),
     host: profile.host,
     port: profile.port,

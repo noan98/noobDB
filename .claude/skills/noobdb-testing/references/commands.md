@@ -66,7 +66,7 @@ cargo mutants --in-place
 直し、`cargo mutants --list` で確認する。cargo-mutants は構造体フィールド削除
 (`delete field ...`) の変異に `--re` を適用しないため、`examine_globs` でもファイルを
 絞っている。CI トリガは
-`.github/workflows/mutants.yml` の `workflow_dispatch` (手動) のみ。ただし安全網ファイルを
+`.github/workflows/mutants.yml` の `workflow_dispatch` (手動) と週次 `schedule` (JST 日曜 02:17、#2038。生存変異は `ci:mutants` Issue に通知)。ただし安全網ファイルを
 触った PR には差分スコープの `.github/workflows/mutants-diff.yml` (`--in-diff`, #1841。
 `script_analysis.rs` / `masking.rs` も対象に足す。詳細は `noobdb-ci` の ci-workflow.md) が走る。**fail させない** (可視化のみ) — バンドルサイズ (#443) ・カバレッジ
 (#482) と同じ漸進方針。生き残り変異 (MISSED) が出たら `db::tests` に境界ケースを
@@ -91,7 +91,8 @@ pnpm exec stryker run --mutate src/dangerousSql.ts
 足したら `include` にも足す。Stryker は TypeScript 7 の JS API 非互換のため
 `tsconfigFile` に存在しないパスを指定して tsconfig の書き換えを避けている。
 CI トリガは `.github/workflows/js-mutants.yml` の `workflow_dispatch` (手動) のみで、
-PR では走らせない。**fail させない** (可視化のみ) — mutants.yml と同じ漸進方針で、
+PR では全件は走らせない (対象ファイルを変更した PR だけ、差分行に絞った
+`.github/workflows/js-mutants-diff.yml` が走る。#2021。詳細は `noobdb-ci` の ci-workflow.md)。**fail させない** (可視化のみ) — mutants.yml と同じ漸進方針で、
 Job Summary にスコアとモジュール別の生存数、アーティファクト `stryker-report` に
 HTML/JSON レポートを出す。生き残り変異 (Survived / NoCoverage) は `reports/mutation/mutation.html`
 で確認し、対応する `*.test.ts` に境界ケースを追記して潰す (等価変異や性能目的の

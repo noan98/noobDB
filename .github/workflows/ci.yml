@@ -865,6 +865,7 @@ jobs:
   # だけでコンパイルは不要なため、Tauri のシステム依存やフロントエンドビルドは要らず
   # 軽量に走る。cargo-deny は他ツールと同様 taiki-e/install-action でプリビルド
   # バイナリを入れる (新しいアクションを増やさず既存の固定 SHA に揃える)。
+  # #2029: 同ジョブで cargo-machete による Rust の未使用依存検出も行う。
   rust-deny:
     name: rust (deny)
     needs: changes
@@ -879,13 +880,20 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
-      - name: Install cargo-deny
+      - name: Install cargo-deny / cargo-machete
         uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
-          tool: cargo-deny
+          tool: cargo-deny,cargo-machete
 
       - name: cargo deny check
         run: cargo deny --manifest-path src-tauri/Cargo.toml check
+
+      # #2029: 未使用の Rust 依存を検出する (フロントの `pnpm run knip` と対)。
+      # Cargo.toml と use 文の解析のみでコンパイル不要。新規混入で fail する。
+      # 誤検出は src-tauri/Cargo.toml の [package.metadata.cargo-machete] ignored に
+      # 理由付きで足す。
+      - name: cargo machete (未使用依存)
+        run: cargo machete src-tauri
 
   rust-test:
     name: rust (test)
@@ -1341,7 +1349,12 @@ jobs:
         env:
           NOOBDB_TEST_MYSQL_URL: mysql://root:rootpw@127.0.0.1:3306/testdb
           NOOBDB_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/testdb
-        run: cargo llvm-cov nextest --no-report --archive-file "$RUNNER_TEMP/nextest-cov-archive.tar.zst"
+        # rust-cache が以前の run で展開済みの target/llvm-cov-target/target を復元すると、
+        # nextest の --extract-to が「destination already exists」(exit 96) で落ちる。
+        # 展開先は毎回 archive から作り直すものなので、実行前に消しておく。
+        run: |
+          rm -rf target/llvm-cov-target/target
+          cargo llvm-cov nextest --no-report --archive-file "$RUNNER_TEMP/nextest-cov-archive.tar.zst"
 
       # 収集済みデータから lcov レポートを生成し、サマリ表を Job Summary に出して
       # main の push ごとのカバレッジを可視化する (#1420 で PR からは外した)。
