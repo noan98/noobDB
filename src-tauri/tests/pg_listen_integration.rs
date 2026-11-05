@@ -193,7 +193,7 @@ async fn pg_listen_rejects_nothing_silently_when_the_server_is_unreachable() {
     let mut opts = t::parse_postgres_url("postgres://u:p@127.0.0.1:1/db").expect("valid url");
     opts.password = "secret-should-not-leak".into();
     let mut h = spawn_listener(opts, vec!["x".to_string()]);
-    // 接続の確立はプールの取得待ち (最大 15 秒) まで粘るので、通常の待ち時間より長く待つ。
+    // 接続の確立はプールの取得待ち (最大 5 秒) まで粘るので、通常の待ち時間より長く待つ。
     let first = tokio::time::timeout(Duration::from_secs(40), h.events.recv())
         .await
         .expect("timed out waiting for the error")
