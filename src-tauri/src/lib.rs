@@ -18,7 +18,8 @@ mod cache;
 // `#[tauri::command]` マクロが全コマンドの展開コードに `unreachable!()` を埋め込み、
 // 戻り値型のスパンで clippy::unreachable を誤検知する (手書きの unreachable ではない)。
 // マクロ由来の誤検知を抑えるためこのモジュールに限り許可する。手書きの
-// `unreachable!` を commands 配下に足すときは個別に根拠コメントを付けること。
+// `unreachable!` / `todo!` / `unimplemented!` は commands/mod.rs のメタテスト
+// (panic_macro_guard) が、直前の allow + 根拠コメント無しなら失敗させて補っている。
 #[allow(clippy::unreachable)]
 mod commands;
 mod db;
