@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useLayoutEffect, useState } from "react";
 import { chakra, Flex, Text } from "@chakra-ui/react";
 import { BrandMark } from "../brand";
 import { Heading } from "./ui";
@@ -26,7 +26,7 @@ export function resetHeroAnimationForTest() {
  */
 function useOnceAnimate(enabled: boolean): boolean {
   const [play, setPlay] = useState(false);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!enabled || heroAnimationPlayed) return;
     heroAnimationPlayed = true;
     setPlay(true);
