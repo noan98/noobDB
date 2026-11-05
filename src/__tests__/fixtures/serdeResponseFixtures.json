@@ -6473,6 +6473,7 @@
           "extendedInsert": false,
           "formatSql": false,
           "gzip": false,
+          "native": false,
           "noCreateInfo": false,
           "noData": false,
           "noOwner": false,

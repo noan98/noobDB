@@ -2289,6 +2289,17 @@ export interface DumpOptions {
   writeChecksum?: boolean;
   /** SQLite のみ — SQL ではなく `VACUUM INTO` による整合したバイナリ・スナップショット (`.db`, #1624)。 */
   sqliteSnapshot?: boolean;
+  /**
+   * MySQL / PostgreSQL のみ — 外部ツール (`mysqldump` / `pg_dump`) を使わず、接続から直接 SQL を
+   * 生成する (#2033)。マネージド DB やツール未導入でも動く。`singleTransaction` は効かず、
+   * PostgreSQL は 1 スキーマ単位 (`pgSchema`)。SQLite は常にネイティブなので無視される。
+   */
+  native?: boolean;
+  /**
+   * ネイティブ生成のときだけ、指定列の値をマスクして書き出す (列名の完全一致, #2033)。
+   * `native` が偽のときに指定するとバックエンドが拒否する (マスクされないまま出さないため)。
+   */
+  masks?: ExportColumnMask[];
 }
 
 // --- タスクスケジューラ (#730) -------------------------------------------

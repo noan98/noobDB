@@ -81,6 +81,7 @@ export const DUMP_BOOL_KEYS = [
   "setGtidPurgedOff",
   "writeChecksum",
   "sqliteSnapshot",
+  "native",
 ] as const;
 export type DumpBoolKey = (typeof DUMP_BOOL_KEYS)[number];
 
