@@ -185,6 +185,25 @@ pub fn render_create_table(
     table: &str,
     columns: &[NewColumn],
 ) -> Result<String> {
+    render_create_table_in(driver, None, table, columns)
+}
+
+/// スキーマ修飾付きのテーブル参照 (`"schema"."t"`)。`schema` が `None` なら素の `"t"`。
+pub fn qualified_table(driver: DriverKind, schema: Option<&str>, table: &str) -> String {
+    match schema {
+        Some(s) => format!("{}.{}", quote_ident(driver, s), quote_ident(driver, table)),
+        None => quote_ident(driver, table),
+    }
+}
+
+/// [`render_create_table`] のスキーマ修飾版 (#2066)。同名の一時テーブル (`temp` スキーマ) を
+/// 取り違えないよう、PostgreSQL / SQLite の呼び出し側は `public` / `main` を渡す。
+pub fn render_create_table_in(
+    driver: DriverKind,
+    schema: Option<&str>,
+    table: &str,
+    columns: &[NewColumn],
+) -> Result<String> {
     validate_new_table(driver, table, columns)?;
     let mut lines: Vec<String> = columns
         .iter()
@@ -215,14 +234,19 @@ pub fn render_create_table(
     let body = lines.join(",\n");
     Ok(format!(
         "CREATE TABLE {} (\n{}\n)",
-        quote_ident(driver, table),
+        qualified_table(driver, schema, table),
         body
     ))
 }
 
 /// 取り込み失敗時 (abort モード) に、直前に自分で作ったテーブルを片付ける DDL。
 pub fn render_drop_table(driver: DriverKind, table: &str) -> String {
-    format!("DROP TABLE {}", quote_ident(driver, table))
+    render_drop_table_in(driver, None, table)
+}
+
+/// [`render_drop_table`] のスキーマ修飾版 (#2066)。
+pub fn render_drop_table_in(driver: DriverKind, schema: Option<&str>, table: &str) -> String {
+    format!("DROP TABLE {}", qualified_table(driver, schema, table))
 }
 
 #[cfg(test)]
@@ -407,6 +431,23 @@ mod tests {
         assert_eq!(cols[0], col("id", NewColumnType::Bigint));
         assert_eq!(cols[1], col("at", NewColumnType::Datetime));
         assert!(serde_json::from_str::<NewColumn>(r#"{"name":"x","type":"varchar(10)"}"#).is_err());
+    }
+
+    #[test]
+    fn schema_qualified_create_and_drop() {
+        let cols = vec![col("id", NewColumnType::Integer)];
+        assert_eq!(
+            render_create_table_in(DriverKind::Postgres, Some("public"), "t", &cols).unwrap(),
+            "CREATE TABLE \"public\".\"t\" (\n  \"id\" INTEGER\n)"
+        );
+        assert_eq!(
+            render_drop_table_in(DriverKind::Sqlite, Some("main"), "t"),
+            "DROP TABLE \"main\".\"t\""
+        );
+        assert_eq!(
+            render_drop_table_in(DriverKind::Mysql, Some("db"), "t"),
+            "DROP TABLE `db`.`t`"
+        );
     }
 
     #[test]

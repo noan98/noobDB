@@ -344,7 +344,10 @@ const WRITE_CAPABLE: Record<string, WriteCapable> = {
   ),
   apply_flight_batch: VIA_TX,
   // --- SQL 文字列を経由しない書き込み経路: session.read_only を手書きで拒否 ---
-  insert_generated_rows: wc("ensure_allowed_for_session (INSERT 相当で検査)", ESA_SESSION),
+  insert_generated_rows: wc(
+    "ensure_allowed_for_session (INSERT 相当で検査。create_table 付きは CREATE TABLE 相当も検査)",
+    ESA_SESSION,
+  ),
   apply_sync_sql: wc("session.read_only を拒否 (SQL 判定を通らない)", RO_IF_SESSION),
   apply_sqlite_table_rebuild: wc("apply_sync_sql_inner 経由で session.read_only を拒否", RO_IF_SESSION),
   apply_privilege_sql: wc("session.read_only を拒否 (SQL 判定を通らない)", RO_IF_SESSION),

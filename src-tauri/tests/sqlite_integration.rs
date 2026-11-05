@@ -1645,6 +1645,20 @@ async fn read_only_session_rejects_every_representative_write_command() {
     .expect_err("insert_generated_rows must reject a write");
     assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
 
+    // 生成行 + 新規テーブル作成 (#2066)。作成前に拒否され、テーブルは作られない。
+    let err = t::insert_generated_rows_new_table_via_command(
+        &state,
+        &sid,
+        None,
+        "ro_new_t",
+        &["id".to_string()],
+        &[vec![serde_json::json!(9)]],
+        serde_json::json!([{"name": "id", "type": "integer"}]),
+    )
+    .await
+    .expect_err("insert_generated_rows with createTable must reject a write");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+
     // スキーマ同期の適用。
     let err = t::apply_sync_sql_via_command(&state, &sid, None, vec!["DROP TABLE ro_t".into()])
         .await

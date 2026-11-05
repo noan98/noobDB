@@ -284,6 +284,8 @@ export function TestDataModal({
       return;
     }
     let cancelled = false;
+    // 取得中は古い DDL を見せず、実行も止める (名前や型を変えた直後に古い定義で投入しない)。
+    setDdl(null);
     api
       .previewCreateTableDdl(driver as DriverKind, targetTable, newColumns)
       .then((sql) => {
@@ -328,6 +330,15 @@ export function TestDataModal({
   );
 
   const updateSpec = (index: number, patch: Partial<ColumnGenSpec>) => {
+    // 生成方針を変えたら、その列の型の手動上書きは捨てて新しい方針の既定型へ戻す。
+    const changed = patch.strategy !== undefined ? specs?.[index]?.column : undefined;
+    if (changed !== undefined) {
+      setTypeOverrides((prev) => {
+        if (!(changed in prev)) return prev;
+        const { [changed]: _drop, ...rest } = prev;
+        return rest;
+      });
+    }
     setSpecs((prev) => {
       if (!prev) return prev;
       const next = prev.slice();
@@ -437,7 +448,7 @@ export function TestDataModal({
   const handleRun = async () => {
     if (!specs || !rowCountValid || insertColumns.length === 0 || running || aiRunning) return;
     if (aiMode && !aiDataset) return;
-    if (createNew && (targetTable === "" || ddlError !== null)) return;
+    if (createNew && (targetTable === "" || ddl === null)) return;
     setRunError(null);
     // 本番接続では対象テーブル名のタイプ入力を要求する強確認 (#675 と同じ流儀)。
     if (isProduction) {
@@ -490,6 +501,8 @@ export function TestDataModal({
       onClose();
     } catch (e) {
       setRunError(String(e));
+      // 投入失敗後の DROP も失敗してテーブルが残ったときは、サイドバーに出すためスキーマを再読込する。
+      if (createNew && String(e).includes("still exists")) onTableCreated?.(database, targetTable);
     } finally {
       setRunning(false);
     }
@@ -502,7 +515,7 @@ export function TestDataModal({
     !rowCountValid ||
     insertColumns.length === 0 ||
     (aiMode && !aiDataset) ||
-    (createNew && (targetTable === "" || ddlError !== null));
+    (createNew && (targetTable === "" || ddl === null));
 
   return (
     <Modal

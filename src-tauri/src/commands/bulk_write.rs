@@ -26,7 +26,7 @@ use crate::commands::query::{
     ensure_allowed_for_session, record_write_history, run_query_transaction_guarded_inner,
     TransactionRun,
 };
-use crate::db::create_table::{render_create_table, render_drop_table, NewColumn};
+use crate::db::create_table::{render_create_table_in, render_drop_table_in, NewColumn};
 use crate::db::data_diff::{is_numeric_literal, sql_literal};
 use crate::db::sync::quote_ident;
 use crate::db::types::{QueryResult, Value};
@@ -693,6 +693,23 @@ pub async fn insert_generated_rows(
     .await
 }
 
+/// 新規テーブルを作る / 消すときのスキーマ修飾 (#2066)。PostgreSQL は `database` (= スキーマ、
+/// 無ければ `public`)、SQLite は常に `main` で修飾し、同名の一時テーブルを取り違えない。
+/// MySQL は `database` が必須 (無いと接続の既定 DB に作られて検査とずれるため拒否)。
+/// 限界: MySQL では `db.t` と修飾しても同名の TEMPORARY TABLE が先に解決される
+/// (`DROP TABLE` は TEMPORARY を先に消す)。また取り込み (`import_rows`) は素の表名で
+/// 入れるため、SQLite の同名一時テーブルがあるとそちらへ入りうる (既知の限界)。
+fn new_table_schema(driver: DriverKind, database: Option<&str>) -> Result<String> {
+    let db = database.map(str::trim).filter(|d| !d.is_empty());
+    match driver {
+        DriverKind::Mysql => db.map(str::to_string).ok_or_else(|| {
+            AppError::InvalidInput("a database is required to create a table".into())
+        }),
+        DriverKind::Postgres => Ok(db.unwrap_or("public").to_string()),
+        DriverKind::Sqlite => Ok("main".to_string()),
+    }
+}
+
 /// 新規テーブル定義 (#2066) を検証する: DDL をレンダリングして名前・重複・長さ上限を確かめ、
 /// 投入列と作成する列が過不足なく一致することを確かめる。
 fn validate_generated_create_spec(
@@ -701,7 +718,7 @@ fn validate_generated_create_spec(
     columns: &[String],
     create: &[NewColumn],
 ) -> Result<()> {
-    render_create_table(driver, table, create)?;
+    render_create_table_in(driver, None, table, create)?;
     if create.len() != columns.len() {
         return Err(AppError::InvalidInput(
             "the new table definition must match the generated columns".into(),
@@ -739,8 +756,11 @@ pub(crate) async fn insert_generated_rows_inner(
     if columns.is_empty() {
         return Err(AppError::InvalidInput("no columns to insert".into()));
     }
+    let driver = session.conn.driver_kind();
+    let mut new_schema: Option<String> = None;
     if let Some(create) = create_table {
-        validate_generated_create_spec(session.conn.driver_kind(), table, columns, create)?;
+        validate_generated_create_spec(driver, table, columns, create)?;
+        new_schema = Some(new_table_schema(driver, database.as_deref())?);
     }
     let mut cells: Vec<Vec<Option<String>>> = Vec::with_capacity(rows.len());
     for row in rows {
@@ -756,25 +776,21 @@ pub(crate) async fn insert_generated_rows_inner(
     let started = std::time::Instant::now();
     // 新規テーブル (#2066): 既存の同名を拒否してから作成する。以降の失敗では DROP で戻す。
     let mut created = false;
-    if let Some(create) = create_table {
-        let db_name = database.as_deref().unwrap_or("");
-        let existing = session.conn.tables(db_name).await?;
+    if let (Some(create), Some(schema)) = (create_table, new_schema.as_deref()) {
+        let existing = session.conn.tables(schema).await?;
         if existing.iter().any(|t| t.eq_ignore_ascii_case(table)) {
             return Err(AppError::InvalidInput(format!(
                 "table {table} already exists"
             )));
         }
         let ddl_started = std::time::Instant::now();
-        match session
-            .conn
-            .create_table_from_columns(database.as_deref(), table, create)
-            .await
-        {
-            Ok(ddl) => {
+        let ddl = render_create_table_in(driver, Some(schema), table, create)?;
+        match session.conn.execute(&ddl, database.as_deref()).await {
+            Ok(_) => {
                 created = true;
                 record_write_history(
                     &session,
-                    ddl,
+                    ddl.clone(),
                     database.as_deref(),
                     None,
                     Some(ddl_started.elapsed().as_millis() as i64),
@@ -785,8 +801,6 @@ pub(crate) async fn insert_generated_rows_inner(
                 session.query_cache.invalidate_all().await;
             }
             Err(e) => {
-                let ddl = render_create_table(session.conn.driver_kind(), table, create)
-                    .unwrap_or_else(|_| format!("-- CREATE TABLE {table}"));
                 record_write_history(
                     &session,
                     ddl,
@@ -815,7 +829,7 @@ pub(crate) async fn insert_generated_rows_inner(
     if created {
         if let Err(e) = &result {
             // 作ったテーブルを残さない。DROP も失敗したら、その旨を元のエラーへ足す。
-            let sql = render_drop_table(session.conn.driver_kind(), table);
+            let sql = render_drop_table_in(driver, new_schema.as_deref(), table);
             let msg = match session.conn.execute(&sql, database.as_deref()).await {
                 Ok(_) => {
                     record_write_history(&session, sql, database.as_deref(), None, None, None)
@@ -881,6 +895,34 @@ pub(crate) async fn insert_generated_rows_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_table_schema_per_driver() {
+        assert!(matches!(
+            new_table_schema(DriverKind::Mysql, None),
+            Err(AppError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            new_table_schema(DriverKind::Mysql, Some("  ")),
+            Err(AppError::InvalidInput(_))
+        ));
+        assert_eq!(
+            new_table_schema(DriverKind::Mysql, Some("app")).unwrap(),
+            "app"
+        );
+        assert_eq!(
+            new_table_schema(DriverKind::Postgres, None).unwrap(),
+            "public"
+        );
+        assert_eq!(
+            new_table_schema(DriverKind::Postgres, Some("s1")).unwrap(),
+            "s1"
+        );
+        assert_eq!(
+            new_table_schema(DriverKind::Sqlite, Some("x")).unwrap(),
+            "main"
+        );
+    }
 
     fn set_text(col: &str, text: &str) -> BulkSetColumn {
         BulkSetColumn {

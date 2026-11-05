@@ -44,14 +44,14 @@ function column(name: string, over: Record<string, unknown> = {}) {
   };
 }
 
-function ui() {
+function ui(isProduction = false) {
   return (
     <TestDataModal
       sessionId="s1"
       database="app"
       table="orders"
       driver="postgres"
-      isProduction={false}
+      isProduction={isProduction}
       onClose={onClose}
       onInserted={onInserted}
       onTableCreated={onTableCreated}
@@ -159,5 +159,72 @@ describe("TestDataModal 新規テーブルを作って投入 (#2066)", () => {
     expect(args.createTable).toBeNull();
     await waitFor(() => expect(onInserted).toHaveBeenCalled());
     expect(onTableCreated).not.toHaveBeenCalled();
+  });
+
+  it("生成方針を変えると、その列の型の上書きは既定へ戻る", async () => {
+    renderWithProviders(ui());
+    await screen.findByLabelText(t("testDataStrategyAria", { column: "name" }));
+    fireEvent.click(screen.getByRole("switch", { name: t("testDataCreateNew") }));
+    fireEvent.change(await screen.findByLabelText(t("importNewTableName")), { target: { value: "x" } });
+    chooseListboxOption(screen.getByLabelText(t("testDataNewColumnTypeAria", { column: "name" })), "integer");
+    await waitFor(() =>
+      expect(previewCreateTableDdl.mock.lastCall?.[2]).toContainEqual({ name: "name", type: "integer" }),
+    );
+    chooseListboxOption(screen.getByLabelText(t("testDataStrategyAria", { column: "name" })), "uuid");
+    await waitFor(() =>
+      expect(previewCreateTableDdl.mock.lastCall?.[2]).toContainEqual({ name: "name", type: "text" }),
+    );
+  });
+
+  it("DDL プレビュー取得中は実行できない", async () => {
+    renderWithProviders(ui());
+    await screen.findByLabelText(t("testDataStrategyAria", { column: "name" }));
+    fireEvent.click(screen.getByRole("switch", { name: t("testDataCreateNew") }));
+    let release: (v: string) => void = () => {};
+    previewCreateTableDdl.mockImplementation(() => new Promise<string>((r) => (release = r)));
+    fireEvent.change(await screen.findByLabelText(t("importNewTableName")), { target: { value: "x" } });
+    await waitFor(() => expect(previewCreateTableDdl).toHaveBeenCalled());
+    expect((screen.getByRole("button", { name: t("testDataRun") }) as HTMLButtonElement).disabled).toBe(true);
+    release('CREATE TABLE "x" ()');
+    await waitFor(() =>
+      expect((screen.getByRole("button", { name: t("testDataRun") }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    );
+  });
+
+  it("DROP も失敗してテーブルが残ったときは onTableCreated でスキーマを再読込する", async () => {
+    insertGeneratedRows.mockRejectedValue(
+      "x (the newly created table x could not be dropped and still exists: y)",
+    );
+    renderWithProviders(ui());
+    await screen.findByLabelText(t("testDataStrategyAria", { column: "name" }));
+    fireEvent.click(screen.getByRole("switch", { name: t("testDataCreateNew") }));
+    fireEvent.change(await screen.findByLabelText(t("importNewTableName")), { target: { value: "x" } });
+    const run = screen.getByRole("button", { name: t("testDataRun") }) as HTMLButtonElement;
+    await waitFor(() => expect(run.disabled).toBe(false));
+    fireEvent.click(run);
+    await waitFor(() => expect(onTableCreated).toHaveBeenCalledWith("app", "x"));
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("本番接続 + 新規作成では新しい表名のタイプ入力を要求する", async () => {
+    renderWithProviders(ui(true));
+    await screen.findByLabelText(t("testDataStrategyAria", { column: "name" }));
+    fireEvent.click(screen.getByRole("switch", { name: t("testDataCreateNew") }));
+    fireEvent.change(await screen.findByLabelText(t("importNewTableName")), { target: { value: "fresh" } });
+    const run = screen.getByRole("button", { name: t("testDataRun") }) as HTMLButtonElement;
+    await waitFor(() => expect(run.disabled).toBe(false));
+    fireEvent.click(run);
+    // 確認ダイアログは新しい表名の入力を求め、確定するまで投入しない。
+    await screen.findByText(t("testDataProductionConfirmNewTitle", { table: "fresh" }));
+    expect(insertGeneratedRows).not.toHaveBeenCalled();
+    // 既存の表名 (orders) ではなく新しい表名 (fresh) を打ったときだけ確定できる。
+    const input = await screen.findByLabelText(t("typeToConfirmLabel", { target: "fresh" }));
+    expect(screen.queryByLabelText(t("typeToConfirmLabel", { target: "orders" }))).toBeNull();
+    fireEvent.change(input, { target: { value: "fresh" } });
+    fireEvent.click(screen.getAllByRole("button", { name: t("testDataRun") }).at(-1) as HTMLElement);
+    await waitFor(() => expect(insertGeneratedRows).toHaveBeenCalledTimes(1));
+    expect(insertGeneratedRows.mock.calls[0][0].table).toBe("fresh");
   });
 });
