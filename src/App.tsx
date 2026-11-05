@@ -193,8 +193,8 @@ import {
 } from "./components/serverBrowse";
 import { EmptyState } from "./components/EmptyState";
 import {
-  ConnectionFailedIllustration,
   DisconnectedIllustration,
+  errorIllustration,
   ProductionWarningIllustration,
   RunQueryIllustration,
 } from "./components/illustrations";
@@ -13476,7 +13476,7 @@ export default function App() {
                       <Flex direction="column" flex="1" overflow="hidden">
                         <PaneEmpty>
                           <EmptyState
-                            illustration={<ConnectionFailedIllustration />}
+                            illustration={errorIllustration(profilesLoadError)}
                             brandHalo
                             icon="database"
                             title={t("profilesLoadFailedTitle")}
