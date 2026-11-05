@@ -80,10 +80,14 @@ describe("テーブル一覧のフィルタ (#2013, 実ブラウザ)", () => {
   const tbl = (name: string) =>
     ({ name, status: "source_only", columns: [], indexes: [], fk_changes: [], check_changes: [] }) as never;
   function Harness() {
-    const [names, setNames] = useState(["a", "b", "c"]);
+    const [names, setNames] = useState(Array.from({ length: 25 }, (_, i) => `t${i}`));
     return (
       <MotionConfig reducedMotion="never">
-        <button type="button" data-testid="filter" onClick={() => setNames(["b", "c"])} />
+        <button
+          type="button"
+          data-testid="filter"
+          onClick={() => setNames(Array.from({ length: 15 }, (_, i) => `t${i + 10}`))}
+        />
         <TableDiffList
           groups={[{ status: "source_only", tables: names.map(tbl) } as never]}
           selected={null}
@@ -104,7 +108,7 @@ describe("テーブル一覧のフィルタ (#2013, 実ブラウザ)", () => {
     const liB = btnB.closest("li");
     btnB.focus();
     (document.querySelector("[data-testid='filter']") as HTMLElement).click();
-    await expect.poll(() => document.querySelectorAll("li").length).toBe(2);
+    await expect.poll(() => document.querySelectorAll("li").length).toBe(15);
     expect(findB().closest("li")).toBe(liB);
     expect(document.activeElement).toBe(findB());
   });

@@ -81,3 +81,4 @@ src/__tests__/perf/__screenshots__/
 # Stryker (JS ミューテーションテスト, #1358)
 /.stryker-tmp/
 /reports/mutation/
+.vitest/
