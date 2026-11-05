@@ -99,6 +99,7 @@ const STRATEGY_LABEL_KEYS: Record<GenStrategy, I18nKey> = {
   randomString: "testDataStrategyRandomString",
   randomDate: "testDataStrategyRandomDate",
   randomBool: "testDataStrategyRandomBool",
+  template: "testDataStrategyTemplate",
   fixed: "testDataStrategyFixed",
   choice: "testDataStrategyChoice",
   fkRef: "testDataStrategyFkRef",
@@ -114,6 +115,7 @@ function strategyOptions(spec: ColumnGenSpec): GenStrategy[] {
     "randomString",
     "randomDate",
     "randomBool",
+    "template",
     "fixed",
   ];
   if (spec.kind === "enum") opts.push("choice");
@@ -528,6 +530,44 @@ export function TestDataModal({
                       placeholder={t("testDataFixedValue")}
                       aria-label={t("testDataFixedValue")}
                     />
+                  )}
+                  {spec.strategy === "template" && (
+                    <Input
+                      css={{ width: "220px" }}
+                      fontFamily="mono"
+                      value={spec.template}
+                      onChange={(e) => updateSpec(i, { template: e.target.value })}
+                      disabled={running}
+                      placeholder={t("testDataTemplatePlaceholder")}
+                      title={t("testDataTemplateHelp")}
+                      aria-label={t("testDataTemplate")}
+                    />
+                  )}
+                  {spec.strategy === "randomDate" && spec.temporal !== "time" && (
+                    <>
+                      <chakra.label display="inline-flex" alignItems="center" gap="1" textStyle="caption">
+                        {t("testDataDateFrom")}
+                        <Input
+                          type="date"
+                          css={{ width: "140px" }}
+                          value={spec.dateFrom}
+                          onChange={(e) => updateSpec(i, { dateFrom: e.target.value })}
+                          disabled={running}
+                          aria-label={t("testDataDateFrom")}
+                        />
+                      </chakra.label>
+                      <chakra.label display="inline-flex" alignItems="center" gap="1" textStyle="caption">
+                        {t("testDataDateTo")}
+                        <Input
+                          type="date"
+                          css={{ width: "140px" }}
+                          value={spec.dateTo}
+                          onChange={(e) => updateSpec(i, { dateTo: e.target.value })}
+                          disabled={running}
+                          aria-label={t("testDataDateTo")}
+                        />
+                      </chakra.label>
+                    </>
                   )}
                   {spec.strategy === "serial" && (
                     <chakra.label display="inline-flex" alignItems="center" gap="1" textStyle="caption">
