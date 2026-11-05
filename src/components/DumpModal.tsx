@@ -160,6 +160,7 @@ const DRIVER_OPTIONS: Record<DriverKind, BoolOptionKey[]> = {
   ],
   postgres: [
     "native",
+    "routines",
     "addDropTable",
     "noData",
     "noCreateInfo",
@@ -408,9 +409,13 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
   const visibleRows = useMemo(() => {
     const allowed = new Set(DRIVER_OPTIONS[driver]);
     return OPTION_ROWS.filter(
-      (row) => allowed.has(row.key) && !(tableScope && TABLE_SCOPE_HIDDEN_OPTIONS.has(row.key)),
+      (row) =>
+        allowed.has(row.key) &&
+        !(tableScope && TABLE_SCOPE_HIDDEN_OPTIONS.has(row.key)) &&
+        // PostgreSQL のルーチン (関数) はネイティブ生成のときだけ意味がある (pg_dump は常に出す)。
+        !(driver === "postgres" && row.key === "routines" && !options.native),
     );
-  }, [driver, tableScope]);
+  }, [driver, tableScope, options.native]);
 
   /** SQLite スナップショットは SQL を生成しないので、SQL 形式向けのスイッチは効かない (#1624)。 */
   const ignoredBySnapshot = (key: BoolOptionKey): boolean =>
@@ -420,7 +425,13 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
 
   const toggle = (key: BoolOptionKey) => {
     if (ignoredBySnapshot(key)) return;
-    setOptions((prev) => ({ ...prev, [key]: !prev[key] }));
+    // PostgreSQL のネイティブ生成は、トリガーが参照する関数を出さないと復元できないので、
+    // オンにしたときルーチンも既定でオンにする。
+    setOptions((prev) => ({
+      ...prev,
+      [key]: !prev[key],
+      ...(key === "native" && driver === "postgres" && !prev.native ? { routines: true } : {}),
+    }));
     // gzip (#1539) / SQLite スナップショット (#1624): 保存先の拡張子を追従させる。
     if (key === "gzip" || key === "sqliteSnapshot") {
       const next = { ...options, [key]: !options[key] };

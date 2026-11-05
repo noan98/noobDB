@@ -164,8 +164,20 @@
     {
       "kind": "string",
       "value": "x\u0000y",
-      "note": "NUL 文字はどの実装も除去しない (既知の挙動として固定)",
-      "expected": { "mysql": "'x\u0000y'", "postgres": "'x\u0000y'", "sqlite": "'x\u0000y'" }
+      "note": "NUL 文字: MySQL は生の NUL を出さず \\0 エスケープ、他方言はそのまま (#2033)",
+      "expected": { "mysql": "'x\\0y'", "postgres": "'x\u0000y'", "sqlite": "'x\u0000y'" }
+    },
+    {
+      "kind": "string",
+      "value": "a\u001ab",
+      "note": "Ctrl-Z (0x1A): MySQL は \\Z エスケープ (Windows クライアントで EOF 扱いされないため)、他方言はそのまま (#2033)",
+      "expected": { "mysql": "'a\\Zb'", "postgres": "'a\u001ab'", "sqlite": "'a\u001ab'" }
+    },
+    {
+      "kind": "string",
+      "value": "\\\u0000",
+      "note": "バックスラッシュ直後の NUL: 先にバックスラッシュを二重化してから NUL を \\0 にする (順序の固定, #2033)",
+      "expected": { "mysql": "'\\\\\\0'", "postgres": "'\\\u0000'", "sqlite": "'\\\u0000'" }
     },
     {
       "kind": "string",

@@ -465,7 +465,12 @@ pub(crate) async fn run_dump(
     // AWS IAM 認証 (#734) のセッションは `connect_options.password` が空なので、
     // 外部ダンプツールへ渡す直前に今有効なトークンを作って差し込む (トークンは
     // 一時オプションファイル / PGPASSFILE にのみ書かれ、ダンプ後に消える)。
-    let dump_opts = crate::db::aws_iam::with_fresh_password(&session.connect_options).await?;
+    // ネイティブ生成は接続プールをそのまま使うので、トークンの作り直しは不要。
+    let dump_opts = if native_sql {
+        session.connect_options.clone()
+    } else {
+        crate::db::aws_iam::with_fresh_password(&session.connect_options).await?
+    };
     let bytes = match session.connect_options.driver {
         DriverKind::Mysql | DriverKind::Postgres if native_sql => {
             dump_native(

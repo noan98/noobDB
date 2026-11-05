@@ -302,7 +302,9 @@ export function sqlLiteral(driver: string, v: CellValue): string {
   }
   if (typeof v === "number") return Number.isFinite(v) ? formatFloat(v) : "NULL";
   const standardStrings = driver === "postgres" || driver === "sqlite";
-  const escaped = standardStrings ? v.replace(/'/g, "''") : v.replace(/\\/g, "\\\\").replace(/'/g, "''");
+  const escaped = standardStrings
+    ? v.replace(/'/g, "''")
+    : v.replace(/\\/g, "\\\\").replace(/'/g, "''").replace(/\0/g, "\\0").replace(/\x1a/g, "\\Z");
   return "'" + escaped + "'";
 }
 

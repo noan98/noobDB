@@ -93,9 +93,10 @@ async fn rows_of(conn: &t::Connection, sql: &str) -> String {
 // ---------------------------------------------------------------------------
 
 const MYSQL_SELECTS: &[&str] = &[
-    "SELECT id, name, note, big, ubig, f, HEX(bin), d, dt, dec_v, js, flag, gen_v FROM nb2033_dump_db.parent ORDER BY id",
+    "SELECT id, name, note, big, ubig, f, HEX(bin), d, dt, dec_v, js, flag, gen_v, ts, UNIX_TIMESTAMP(ts) FROM nb2033_dump_db.parent ORDER BY id",
     "SELECT id, pid, label FROM nb2033_dump_db.a_child ORDER BY id",
     "SELECT * FROM nb2033_dump_db.v_parent ORDER BY id",
+    "SELECT * FROM nb2033_dump_db.a_v_over ORDER BY id",
 ];
 
 async fn mysql_setup(opts: &t::DbConnectOptions) {
@@ -107,7 +108,7 @@ async fn mysql_setup(opts: &t::DbConnectOptions) {
             "CREATE TABLE {MYSQL_DB}.parent (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, \
              name VARCHAR(100), note TEXT, big BIGINT, ubig BIGINT UNSIGNED, f DOUBLE, bin BLOB, d DATE, \
              dt DATETIME(3), dec_v DECIMAL(20,4), js JSON, flag TINYINT(1), \
-             gen_v INT AS (flag * 2) VIRTUAL, UNIQUE KEY nb2033_name (name))"
+             gen_v INT AS (flag * 2) VIRTUAL, ts TIMESTAMP(3) NULL DEFAULT NULL, UNIQUE KEY nb2033_name (name))"
         ),
         // 名前順で親より先に来る子表 (FK 先行順に頼らず FOREIGN_KEY_CHECKS=0 で復元できること)。
         format!(
@@ -116,6 +117,8 @@ async fn mysql_setup(opts: &t::DbConnectOptions) {
         ),
         format!("CREATE TABLE {MYSQL_DB}.empty_t (id INT PRIMARY KEY)"),
         format!("CREATE VIEW {MYSQL_DB}.v_parent AS SELECT id, name FROM {MYSQL_DB}.parent WHERE flag = 1"),
+        // 名前順では v_parent より前に来るが、v_parent に依存するビュー (依存順に出ること)。
+        format!("CREATE VIEW {MYSQL_DB}.a_v_over AS SELECT id FROM {MYSQL_DB}.v_parent"),
     ] {
         conn.execute(&sql, None).await.expect("ddl");
     }
@@ -149,11 +152,11 @@ async fn mysql_setup(opts: &t::DbConnectOptions) {
     t::mysql_exec_text(
         opts,
         &format!(
-            "INSERT INTO {MYSQL_DB}.parent (id, name, note, big, ubig, f, bin, d, dt, dec_v, js, flag) VALUES \
-             (1, 'plain', 'a', -9223372036854775808, 18446744073709551615, 0.1, X'00FF10', '2024-02-29', '2024-02-29 23:59:59.123', 12345678901234.5678, '{{\"k\": [1, 2]}}', 1), \
-             (2, 'it''s \\\\ back\\nslash \"dq\" \\t tab', 'emoji \u{1F600} \u{65E5}\u{672C}\u{8A9E}', 9007199254740993, 9007199254740993, -1.5e10, X'', NULL, NULL, NULL, NULL, 0), \
-             (3, NULL, NULL, NULL, NULL, NULL, NULL, '1000-01-01', '9999-12-31 00:00:00.000', -0.0001, 'null', NULL), \
-             (0, 'zero-id', '', 0, 0, 0, X'27225C', '2000-01-01', '2000-01-01 00:00:00.000', 0, '{{}}', 1)"
+            "INSERT INTO {MYSQL_DB}.parent (id, name, note, big, ubig, f, bin, d, dt, dec_v, js, flag, ts) VALUES \
+             (1, 'plain', 'a', -9223372036854775808, 18446744073709551615, 0.1, X'00FF10', '2024-02-29', '2024-02-29 23:59:59.123', 12345678901234.5678, '{{\"k\": [1, 2]}}', 1, '2024-06-01 12:00:00.250'), \
+             (2, 'it''s \\\\ back\\nslash \"dq\" \\t tab', 'emoji \u{1F600} \u{65E5}\u{672C}\u{8A9E}', 9007199254740993, 9007199254740993, -1.5e10, X'', NULL, NULL, NULL, NULL, 0, NULL), \
+             (3, NULL, NULL, NULL, NULL, NULL, NULL, '1000-01-01', '9999-12-31 00:00:00.000', -0.0001, 'null', NULL, '2038-01-19 03:14:07.000'), \
+             (0, 'zero-id', 'nul\\0z\\Zend', 0, 0, 0, X'27225C', '2000-01-01', '2000-01-01 00:00:00.000', 0, '{{}}', 1, '1970-01-02 00:00:00.000')"
         ),
     )
     .await
@@ -166,6 +169,19 @@ async fn mysql_setup(opts: &t::DbConnectOptions) {
     )
     .await
     .expect("insert child");
+}
+
+fn mysql_cli_sql(opts: &t::DbConnectOptions, sql: &str) -> bool {
+    let mut cmd = Command::new("mysql");
+    cmd.arg(format!("--host={}", opts.host))
+        .arg(format!("--port={}", opts.port))
+        .arg(format!("--user={}", opts.user))
+        .arg("-e")
+        .arg(sql);
+    if !opts.password.is_empty() {
+        cmd.env("MYSQL_PWD", &opts.password);
+    }
+    cmd.output().is_ok_and(|o| o.status.success())
 }
 
 fn mysql_cli(
@@ -210,8 +226,21 @@ async fn mysql_native_dump_roundtrips_when_env_set() {
         return;
     }
     let opts = t::parse_mysql_url(&url).expect("valid url");
+    // 非 UTC のサーバ既定タイムゾーンで TIMESTAMP がずれないこと。権限が無ければこの部分は飛ばす。
+    let admin = t::connect(&opts).await.expect("connect");
+    let _ = admin.execute("SET GLOBAL time_zone = '+09:00'", None).await;
     mysql_setup(&opts).await;
     let conn = t::connect(&opts).await.expect("connect");
+    // アプリの接続は UTC 固定なので、+09:00 のクライアントセッションから TIMESTAMP を入れ直す。
+    assert!(
+        mysql_cli_sql(
+            &opts,
+            &format!(
+                "SET time_zone = '+09:00'; UPDATE {MYSQL_DB}.parent SET ts = '2024-06-01 12:00:00.250' WHERE id = 1"
+            )
+        ),
+        "update via client"
+    );
 
     let mut before = Vec::new();
     for sql in MYSQL_SELECTS {
@@ -224,6 +253,20 @@ async fn mysql_native_dump_roundtrips_when_env_set() {
         .await
         .expect("dump");
     assert!(dump.contains("DROP TABLE IF EXISTS `parent`;"));
+    assert!(dump.contains("SET TIME_ZONE='+00:00'"));
+    assert!(
+        !dump.contains('\0') && !dump.contains('\u{1a}'),
+        "NUL / Ctrl-Z are escaped"
+    );
+    assert!(dump.contains("nul\\0z\\Zend"));
+    // +09:00 のセッションで入れた TIMESTAMP (12:00 JST = 03:00 UTC) が UTC で出る。
+    assert!(dump.contains("'2024-06-01 03:00:00.250'"), "{dump}");
+    // ビューは依存順 (v_parent が a_v_over より前)。
+    let (pv, ov) = (
+        dump.find("VIEW `nb2033_dump_db`.`v_parent`"),
+        dump.find("VIEW `nb2033_dump_db`.`a_v_over`"),
+    );
+    assert!(pv.is_some() && ov.is_some() && pv < ov);
     assert!(dump.contains("DELIMITER ;;"));
     assert!(
         !dump.contains("gen_v`) VALUES"),
@@ -335,6 +378,7 @@ async fn mysql_native_dump_roundtrips_when_env_set() {
     conn.execute(&format!("DROP DATABASE {MYSQL_DB}"), None)
         .await
         .expect("cleanup");
+    let _ = admin.execute("SET GLOBAL time_zone = 'SYSTEM'", None).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -342,23 +386,37 @@ async fn mysql_native_dump_roundtrips_when_env_set() {
 // ---------------------------------------------------------------------------
 
 const PG_SELECTS: &[&str] = &[
-    "SELECT id, name, note, big, num, f, encode(bin, 'hex'), d, ts, js::text, flag, u::text, arr::text, gen_v FROM nb2033_dump.parent ORDER BY id",
+    "SELECT id, name, note, big, num, f, encode(bin, 'hex'), d, ts, js::text, flag, u::text, arr::text, gen_v, mo::text, pz::int FROM nb2033_dump.parent ORDER BY id",
     "SELECT id, pid, label FROM nb2033_dump.a_child ORDER BY id",
     "SELECT * FROM nb2033_dump.v_parent ORDER BY id",
     "SELECT * FROM nb2033_dump.mv_parent ORDER BY 1",
     "SELECT * FROM nb2033_dump.\"Odd \"\"Name\" ORDER BY 1",
+    "SELECT * FROM nb2033_dump.a_view_over ORDER BY 1",
+    "SELECT id, v FROM nb2033_dump.ident_always ORDER BY id",
+    "SELECT id, v FROM nb2033_dump.ident_def ORDER BY id",
+    "SELECT pg_sequence_last_value(pg_get_serial_sequence('nb2033_dump.ident_always', 'id')::regclass), \
+            pg_sequence_last_value(pg_get_serial_sequence('nb2033_dump.ident_def', 'id')::regclass)",
+    "SELECT * FROM nb2033_dump.tree ORDER BY id",
+    "SELECT * FROM nb2033_dump.cx ORDER BY id",
+    "SELECT * FROM nb2033_dump.cy ORDER BY id",
+    "SELECT id, r::text, pt::text, tsv::text, tz::text, ts_inf::text, d_inf::text, n_inf::text FROM nb2033_dump.odd ORDER BY id",
+    "SELECT * FROM ONLY nb2033_dump.inh_parent ORDER BY id",
+    "SELECT * FROM ONLY nb2033_dump.inh_child ORDER BY id",
 ];
 
 async fn pg_setup(conn: &t::Connection) {
     for sql in [
         format!("DROP SCHEMA IF EXISTS {PG_SCHEMA} CASCADE"),
         format!("CREATE SCHEMA {PG_SCHEMA}"),
+        format!("CREATE TYPE {PG_SCHEMA}.mood AS ENUM ('ok', 'sad', 'it''s')"),
+        format!("CREATE DOMAIN {PG_SCHEMA}.posint AS int CHECK (VALUE > 0)"),
         format!("CREATE SEQUENCE {PG_SCHEMA}.standalone_seq START 100 INCREMENT 5"),
         format!(
             "CREATE TABLE {PG_SCHEMA}.parent (id bigserial PRIMARY KEY, name text UNIQUE, note text, big bigint, \
              num numeric(20,4), f double precision, bin bytea, d date, ts timestamptz, js jsonb, flag boolean, \
              u uuid, arr text[], gen_v int GENERATED ALWAYS AS (length(coalesce(name, ''))) STORED, \
-             seq_v bigint DEFAULT nextval('{PG_SCHEMA}.standalone_seq'))"
+             seq_v bigint DEFAULT nextval('{PG_SCHEMA}.standalone_seq'), \
+             mo {PG_SCHEMA}.mood DEFAULT 'ok', pz {PG_SCHEMA}.posint)"
         ),
         // 名前順で親より先 (FK 先行順の並べ替えで復元できること)。
         format!(
@@ -367,8 +425,25 @@ async fn pg_setup(conn: &t::Connection) {
         ),
         format!("CREATE TABLE {PG_SCHEMA}.\"Odd \"\"Name\" (\"Col A\" int PRIMARY KEY, \"select\" text)"),
         format!("CREATE INDEX nb2033_idx ON {PG_SCHEMA}.parent (big)"),
+        format!("CREATE TABLE {PG_SCHEMA}.ident_always (id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY, v text)"),
+        format!("CREATE TABLE {PG_SCHEMA}.ident_def (id bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, v text)"),
+        // 自己参照と循環の外部キー (CREATE TABLE に埋め込まず後付けされること)。
+        format!("CREATE TABLE {PG_SCHEMA}.tree (id int PRIMARY KEY, parent int REFERENCES {PG_SCHEMA}.tree(id))"),
+        format!("CREATE TABLE {PG_SCHEMA}.cx (id int PRIMARY KEY, y_id int)"),
+        format!("CREATE TABLE {PG_SCHEMA}.cy (id int PRIMARY KEY, x_id int)"),
+        format!("ALTER TABLE {PG_SCHEMA}.cx ADD CONSTRAINT cx_fk FOREIGN KEY (y_id) REFERENCES {PG_SCHEMA}.cy(id)"),
+        format!("ALTER TABLE {PG_SCHEMA}.cy ADD CONSTRAINT cy_fk FOREIGN KEY (x_id) REFERENCES {PG_SCHEMA}.cx(id) DEFERRABLE INITIALLY DEFERRED"),
+        // クライアントのバイナリデコードが対応しない型。
+        format!(
+            "CREATE TABLE {PG_SCHEMA}.odd (id int PRIMARY KEY, r int4range, pt point, tsv tsvector, tz timetz, \
+             ts_inf timestamptz, d_inf date, n_inf numeric)"
+        ),
+        format!("CREATE TABLE {PG_SCHEMA}.inh_parent (id int)"),
+        format!("CREATE TABLE {PG_SCHEMA}.inh_child (extra int) INHERITS ({PG_SCHEMA}.inh_parent)"),
         format!("CREATE VIEW {PG_SCHEMA}.v_parent AS SELECT id, name FROM {PG_SCHEMA}.parent WHERE flag"),
         format!("CREATE MATERIALIZED VIEW {PG_SCHEMA}.mv_parent AS SELECT id FROM {PG_SCHEMA}.parent"),
+        // 名前順では v_parent より前に来るが、v_parent に依存するビュー。
+        format!("CREATE VIEW {PG_SCHEMA}.a_view_over AS SELECT id FROM {PG_SCHEMA}.v_parent"),
         format!(
             "CREATE FUNCTION {PG_SCHEMA}.nb2033_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.label := coalesce(NEW.label, 'trg'); RETURN NEW; END $$"
         ),
@@ -384,7 +459,24 @@ async fn pg_setup(conn: &t::Connection) {
             nl = "\n",
             tab = "\t"
         ),
+        format!("UPDATE {PG_SCHEMA}.parent SET mo = 'it''s', pz = 5 WHERE id = 2"),
         format!("INSERT INTO {PG_SCHEMA}.a_child (id, pid, label) VALUES (1, 1, 'x'), (2, 2, NULL), (3, NULL, 'o''k')"),
+        format!("INSERT INTO {PG_SCHEMA}.ident_always (id, v) OVERRIDING SYSTEM VALUE VALUES (10, 'a'), (20, 'b')"),
+        format!("INSERT INTO {PG_SCHEMA}.ident_always (v) VALUES ('auto')"),
+        format!("INSERT INTO {PG_SCHEMA}.ident_def (id, v) VALUES (7, 'x')"),
+        format!("INSERT INTO {PG_SCHEMA}.ident_def (v) VALUES ('auto')"),
+        format!("INSERT INTO {PG_SCHEMA}.tree VALUES (1, NULL), (2, 1), (3, 2)"),
+        format!("INSERT INTO {PG_SCHEMA}.cx VALUES (1, NULL)"),
+        format!("INSERT INTO {PG_SCHEMA}.cy VALUES (1, 1)"),
+        format!("UPDATE {PG_SCHEMA}.cx SET y_id = 1"),
+        format!(
+            "INSERT INTO {PG_SCHEMA}.odd VALUES \
+             (1, '[1,10)', '(1,2)', to_tsvector('simple', 'a b'), '12:00:00+09', 'infinity', '-infinity', 'Infinity'), \
+             (2, 'empty', NULL, NULL, NULL, '-infinity', 'infinity', '-Infinity'), \
+             (3, NULL, NULL, NULL, NULL, NULL, NULL, 'NaN')"
+        ),
+        format!("INSERT INTO {PG_SCHEMA}.inh_parent VALUES (1)"),
+        format!("INSERT INTO {PG_SCHEMA}.inh_child VALUES (2, 9)"),
         format!("INSERT INTO {PG_SCHEMA}.\"Odd \"\"Name\" VALUES (1, 'select'), (2, NULL)"),
         format!("REFRESH MATERIALIZED VIEW {PG_SCHEMA}.mv_parent"),
         // 採番の現在値 (復元後の次の値が続くこと)。
@@ -458,6 +550,34 @@ async fn postgres_native_dump_roundtrips_when_env_set() {
         !dump.contains("gen_v\") VALUES"),
         "generated column not inserted"
     );
+    assert!(dump.contains("OVERRIDING SYSTEM VALUE VALUES"));
+    assert!(dump.contains("inherits from another table"));
+    // 外部キーは CREATE TABLE に埋め込まず、データの後に ALTER TABLE で付く。
+    let create_a = dump
+        .find("CREATE TABLE \"nb2033_dump\".\"a_child\"")
+        .expect("a_child ddl");
+    let fk_alter = dump.find("ADD CONSTRAINT nb2033_fk").expect("fk alter");
+    assert!(fk_alter > create_a);
+    assert!(!dump[create_a..fk_alter].contains("REFERENCES"));
+    // add_drop_table の DROP は、シーケンス作成より前にまとめて出る。
+    let last_drop = dump.rfind("DROP TABLE IF EXISTS").expect("drop");
+    assert!(last_drop < dump.find("CREATE SEQUENCE").expect("seq"));
+    // ビューは依存順。
+    let (pv, ov) = (
+        dump.find("VIEW \"nb2033_dump\".\"v_parent\" AS"),
+        dump.find("VIEW \"nb2033_dump\".\"a_view_over\" AS"),
+    );
+    assert!(pv.is_some() && ov.is_some() && pv < ov);
+    // トリガー関数は routines オフでも出る (トリガーだけだと復元できない)。
+    let no_routines = dump_to_string(
+        &conn,
+        PG_SCHEMA,
+        &options(serde_json::json!({"routines": false})),
+    )
+    .await
+    .expect("dump");
+    assert!(no_routines.contains("nb2033_fn"));
+    assert!(no_routines.contains("CREATE OR REPLACE FUNCTION"));
 
     // 復元: スキーマごと消してダンプだけから作り直す。
     conn.execute(&format!("DROP SCHEMA {PG_SCHEMA} CASCADE"), None)
@@ -477,6 +597,55 @@ async fn postgres_native_dump_roundtrips_when_env_set() {
         // 復元でスナップショットが作り直されるマテビューも内容は同じ。
         assert_eq!(rows_of(&conn, sql).await, before[i], "rows differ: {sql}");
     }
+    // 既存のオブジェクトがある状態へもう一度復元できる (DROP が先にあり、所有シーケンスの
+    // 道連れ削除で CREATE が失敗しない)。復元前に足した行は消える。
+    conn.execute(
+        &format!("INSERT INTO {PG_SCHEMA}.tree VALUES (99, NULL)"),
+        None,
+    )
+    .await
+    .expect("junk row");
+    let mut path2 = std::env::temp_dir();
+    path2.push(format!(
+        "noobdb_dump_native_pg_restore2_{}.sql",
+        std::process::id()
+    ));
+    std::fs::write(&path2, &dump).expect("write dump");
+    let ok2 = psql_cli(&opts, &path2);
+    let _ = std::fs::remove_file(&path2);
+    assert!(ok2, "restore over existing objects failed");
+    for (i, sql) in PG_SELECTS.iter().enumerate() {
+        assert_eq!(
+            rows_of(&conn, sql).await,
+            before[i],
+            "rows differ after 2nd restore: {sql}"
+        );
+    }
+    // identity の続きから採番される (ALWAYS / BY DEFAULT どちらも)。
+    conn.execute(
+        &format!("INSERT INTO {PG_SCHEMA}.ident_always (v) VALUES ('n')"),
+        None,
+    )
+    .await
+    .expect("insert after restore");
+    let ia = rows_of(
+        &conn,
+        &format!("SELECT id FROM {PG_SCHEMA}.ident_always WHERE v = 'n'"),
+    )
+    .await;
+    assert!(ia.contains("Int(2)"), "{ia}");
+    conn.execute(
+        &format!("INSERT INTO {PG_SCHEMA}.ident_def (v) VALUES ('n')"),
+        None,
+    )
+    .await
+    .expect("insert after restore");
+    let id = rows_of(
+        &conn,
+        &format!("SELECT id FROM {PG_SCHEMA}.ident_def WHERE v = 'n'"),
+    )
+    .await;
+    assert!(id.contains("Int(2)"), "{id}");
     // 標準シーケンスの続き (setval が効いている) と、serial の既定値・FK・トリガー・索引。
     let next_after = rows_of(
         &conn,
@@ -505,7 +674,11 @@ async fn postgres_native_dump_roundtrips_when_env_set() {
         ),
     )
     .await;
-    assert_eq!(objs.matches("Int(1)").count(), 3, "{objs}");
+    // トリガー 1 / 外部キー 4 (a_child, tree, cx, cy) / 索引 1。
+    assert!(
+        objs.contains("Int(4)") && objs.matches("Int(1)").count() == 2,
+        "{objs}"
+    );
 
     // 1 行 1 文 / データなし / データのみ / テーブル指定 / マスキング。
     let single = dump_to_string(
@@ -563,4 +736,20 @@ async fn postgres_native_dump_roundtrips_when_env_set() {
     conn.execute(&format!("DROP SCHEMA {PG_SCHEMA} CASCADE"), None)
         .await
         .expect("cleanup");
+
+    // パーティション親は未対応として明示エラー。
+    for sql in [
+        "DROP SCHEMA IF EXISTS nb2033_part CASCADE",
+        "CREATE SCHEMA nb2033_part",
+        "CREATE TABLE nb2033_part.pt (id int) PARTITION BY RANGE (id)",
+    ] {
+        conn.execute(sql, None).await.expect("partition ddl");
+    }
+    let err = dump_to_string(&conn, "nb2033_part", &options(serde_json::json!({})))
+        .await
+        .expect_err("partitioned table is rejected");
+    assert!(err.contains("partitioned table"), "{err}");
+    conn.execute("DROP SCHEMA nb2033_part CASCADE", None)
+        .await
+        .expect("cleanup partition");
 }

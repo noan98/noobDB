@@ -373,7 +373,8 @@ export function quoteString(driver: string, s: string): string {
   const escaped =
     driver === "postgres" || driver === "sqlite"
       ? s.replace(/'/g, "''")
-      : s.replace(/\\/g, "\\\\").replace(/'/g, "''");
+      : // MySQL は NUL (`\0`) と Ctrl-Z (`\Z`) もエスケープで出す (Rust `quote_string` と同じ, #2033)。
+        s.replace(/\\/g, "\\\\").replace(/'/g, "''").replace(/\0/g, "\\0").replace(/\x1a/g, "\\Z");
   return "'" + escaped + "'";
 }
 

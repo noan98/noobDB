@@ -125,6 +125,16 @@ describe("DumpModal ネイティブ生成 (#2033)", () => {
   });
 });
 
+// #2033: PostgreSQL のネイティブ生成は関数 (ルーチン) も出す。トリガーが参照する関数が無いと復元できない。
+describe("DumpModal PostgreSQL ネイティブ生成のルーチン (#2033)", () => {
+  it("外部ツールのときはルーチンのスイッチを隠し、ネイティブをオンにすると表示して既定オンにする", () => {
+    renderWithProviders(<DumpModal sessionId="s1" database="public" driver="postgres" onClose={() => {}} />);
+    expect(screen.queryByRole("switch", { name: t("dumpOptRoutines") })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: t("dumpOptNative") }));
+    expect(screen.getByRole("switch", { name: t("dumpOptRoutines") })).toBeChecked();
+  });
+});
+
 describe("DumpModal 前回入力の記憶 (#1631)", () => {
   it("プロファイルに保存された gzip・保存先ディレクトリを初期値にする", () => {
     localStorage.clear();

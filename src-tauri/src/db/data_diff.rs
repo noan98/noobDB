@@ -761,7 +761,13 @@ pub(crate) fn sql_literal(driver: DriverKind, value: &Value) -> String {
 
 fn quote_string(driver: DriverKind, s: &str) -> String {
     let escaped = match driver {
-        DriverKind::Mysql => s.replace('\\', "\\\\").replace('\'', "''"),
+        // NUL と Ctrl-Z は生のままだと切り捨て/EOF 扱いされうるので `\0` / `\Z` で出す (#2033)。
+        // バックスラッシュの二重化を先にしないと、足したエスケープが二重化されてしまう。
+        DriverKind::Mysql => s
+            .replace('\\', "\\\\")
+            .replace('\'', "''")
+            .replace('\0', "\\0")
+            .replace('\x1a', "\\Z"),
         // PostgreSQL/SQLite treat `\` as an ordinary character inside a
         // string literal — only the quote char itself doubles.
         DriverKind::Postgres | DriverKind::Sqlite => s.replace('\'', "''"),

@@ -111,13 +111,22 @@
   `spawn_import` / `transfer_data` は Drop ガード (`CancelledImportCleanup` /
   `CancelledTransferCleanup`) で、キャッシュ無効化・履歴記録・スキップ行の掃除・(abort モードの)
   作成済みテーブルの DROP を代行する。
-- `commands/dump_native.rs` (#2033): `DumpOptions.native` を立てると MySQL / PostgreSQL も外部ツール
-  なしで接続から直接生成する (`dump_native_core`。DDL は `object_definition` / PostgreSQL は
-  `table_ddl` に `format_type` の型を渡して再構成、行は `execute_stream` + `data_diff::sql_literal`)。
-  `single_transaction` は効かず、PostgreSQL は 1 スキーマ単位。`DumpOptions.masks` は native のときだけ
-  使え、native でない指定は `InvalidInput` (マスクされずに出さない)。ラウンドトリップは
-  `tests/dump_native_integration.rs` (`NOOBDB_TEST_MYSQL_URL` / `NOOBDB_TEST_POSTGRES_URL` +
-  `mysql` / `psql` クライアントがあるときだけ実走)。
+- - `commands/dump_native.rs` (#2033): `DumpOptions.native` を立てると MySQL / PostgreSQL も外部ツール
+  なしで接続から直接生成する (`dump_native_core`。行は `execute_stream` + `data_diff::sql_literal`)。
+  `DumpOptions.masks` は native のときだけ使え、native でない指定は `InvalidInput` (マスクされずに出さない)。
+  - MySQL: `TIME_ZONE='+00:00'` 固定 + TIMESTAMP 列は UTC へ変換して読む。ビューは `VIEW_TABLE_USAGE` の
+    依存順、ルーチンはビューより前。NUL / Ctrl-Z は `\0` / `\Z` (`quote_string`、共有ゴールデン `sqlQuotingVectors.json`)。
+  - PostgreSQL: 表 DDL は `table_ddl` に `format_type` の型を渡して再構成し、外部キーは `ALTER TABLE ... ADD
+    CONSTRAINT` を行データの後にまとめて付ける (自己参照・循環可)。identity 列は `ADD GENERATED` + `setval`
+    (ALWAYS は `OVERRIDING SYSTEM VALUE`)。enum / domain / 拡張を先に出し、add_drop_table の DROP は
+    シーケンス作成より前にまとめる。行は `FROM ONLY` で読み、整数・double・真偽値・文字列・bytea 以外は
+    `::text` (range / point / tsvector / timetz / infinity 等)。パーティション親は明示エラー。関数は
+    `check_function_bodies = false` で表より前に出し、トリガーを出すなら routines オフでもトリガー関数は出す。
+  - 制約: `single_transaction` は効かず**表をまたぐ一貫スナップショットにはならない**。PostgreSQL は 1 スキーマ単位で、
+    所有者・権限・COMMENT・複合型 / range 型の定義は出さない。**MySQL のルーチン・トリガー・イベントを含むダンプは
+    `DELIMITER ;;` 書式なので `mysql` クライアントでの復元が前提** (アプリ内のスクリプトランナーは `DELIMITER` 非対応)。
+  - ラウンドトリップは `tests/dump_native_integration.rs` (`NOOBDB_TEST_MYSQL_URL` / `NOOBDB_TEST_POSTGRES_URL` +
+    `mysql` / `psql` クライアントがあるときだけ実走)。
 - `commands/dump.rs`: DB ダンプ。MySQL は `mysqldump`、PostgreSQL は `pg_dump`、
   SQLite は接続から直接生成 (`dump_sqlite`。行は `execute_stream` で 1 行ずつ書き出し、1 MiB または 0.5 秒ごとに進捗を出す, #1530)。`mysqldump` の資格情報は
   プロセス引数や環境変数に出さないよう、一時オプションファイル (unix では mode 0600)
