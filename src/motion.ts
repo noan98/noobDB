@@ -53,6 +53,7 @@ import type { Transition, Variants } from "motion/react";
  *
  * ### 具体的に Motion 化したもの
  *
+ * - AI 回答面の共通シェル (`AiSurface`、#2016) の入場 (`variants.slideUp`、マウント時 1 回。退場は付けない)。
  * - サイドバー / ボトムパネル (#1952) のタブ切替の中身 (`KeepAlive` の `slideDirection` / `App` の接続タブ — `directionalSlide`、
  *   #1830)。滑るインジケータと同じ向きに、表示へ切り替わる側だけスライド + フェードで入る
  *   (再マウントしない)。reduced-motion では x 移動が止まり、opacity の短いフェードは残る。

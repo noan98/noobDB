@@ -50,6 +50,8 @@ export function AiSurface({ edge = "none", children, ...rest }: AiSurfaceProps) 
         : edge === "box"
           ? { borderWidth: "1px", borderColor: "app.border", borderRadius: "md" }
           : {};
+  // edgeProps (box の borderWidth/borderColor shorthand) は左アクセント指定より前に展開する。
+  // Chakra は props 順のまま出力するため、後ろに置くと shorthand が左辺を上書きする。
   return (
     <MotionSurface
       initial={variants.slideUp.initial}
@@ -63,10 +65,10 @@ export function AiSurface({ edge = "none", children, ...rest }: AiSurfaceProps) 
       bg="app.surface"
       fontSize="sm"
       color="app.text"
+      {...edgeProps}
       borderInlineStartWidth="3px"
       borderInlineStartColor="app.aiAccent"
       data-ai-surface=""
-      {...edgeProps}
       {...rest}
     >
       {children}
