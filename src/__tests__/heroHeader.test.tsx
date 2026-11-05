@@ -26,4 +26,21 @@ describe("HeroHeader animate (#2042)", () => {
     const { container } = renderWithProviders(<HeroHeader title="a" subtitle="b" />);
     expect(container.querySelector(".brand-mark-anim")).toBeNull();
   });
+
+  it("animate=false の間はフラグを消費せず、true になった時点で再生する", () => {
+    const { container, rerender } = renderWithProviders(
+      <HeroHeader title="a" subtitle="b" animate={false} />,
+    );
+    expect(container.querySelector(".brand-mark-anim")).toBeNull();
+    rerender(<HeroHeader title="a" subtitle="b" animate />);
+    expect(container.querySelector(".brand-mark-anim")).toBeTruthy();
+  });
+
+  it("Welcome → Profile の遷移後 (別インスタンス) は静止する", () => {
+    const welcome = renderWithProviders(<HeroHeader title="a" subtitle="b" animate />);
+    expect(welcome.container.querySelector(".brand-mark-anim")).toBeTruthy();
+    welcome.unmount();
+    const profile = renderWithProviders(<HeroHeader title="c" subtitle="d" animate />);
+    expect(profile.container.querySelector(".brand-mark-anim")).toBeNull();
+  });
 });

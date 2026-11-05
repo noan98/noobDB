@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { chakra, Flex, Text } from "@chakra-ui/react";
 import { BrandMark } from "../brand";
 import { Heading } from "./ui";
@@ -20,13 +20,17 @@ export function resetHeroAnimationForTest() {
   heroAnimationPlayed = false;
 }
 
-/** 初回マウントのときだけ true を返し、以降は false。再レンダで値が揺れないよう state に固定する。 */
+/**
+ * `enabled` が初めて true になった時点でフラグを消費し、以降は再生状態を保つ。
+ * スプラッシュ表示中 (enabled=false) の裏マウントではフラグを消費しない。
+ */
 function useOnceAnimate(enabled: boolean): boolean {
-  const [play] = useState(() => {
-    if (!enabled || heroAnimationPlayed) return false;
+  const [play, setPlay] = useState(false);
+  useEffect(() => {
+    if (!enabled || heroAnimationPlayed) return;
     heroAnimationPlayed = true;
-    return true;
-  });
+    setPlay(true);
+  }, [enabled]);
   return play;
 }
 
