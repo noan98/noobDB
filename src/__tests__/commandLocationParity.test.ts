@@ -28,14 +28,14 @@ function stripComments(src: string): string {
 }
 
 const COMMAND_RE =
-  /#\[tauri::command\](?:\s*#\[[^\]]*\])*\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([a-zA-Z_][a-zA-Z0-9_]*)/g;
+  /#\[tauri::command(?:\([^\]]*\))?\](?:\s*#\[[^\]]*\])*\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([a-zA-Z_][a-zA-Z0-9_]*)/g;
 
 /** `#[tauri::command]` を含むファイルごとに、コマンド名と属性の出現数を返す。 */
 function scan(sources: Record<string, string>): Map<string, { count: number; names: string[] }> {
   const result = new Map<string, { count: number; names: string[] }>();
   for (const [path, raw] of Object.entries(sources)) {
     const cleaned = stripComments(raw);
-    const count = (cleaned.match(/#\[tauri::command\]/g) ?? []).length;
+    const count = (cleaned.match(/#\[tauri::command\b/g) ?? []).length;
     if (count === 0) continue;
     const names = [...cleaned.matchAll(COMMAND_RE)].map((m) => m[1]);
     result.set(path, { count, names });
@@ -77,9 +77,16 @@ describe("#[tauri::command] の置き場所 (#2037)", () => {
     };
     const found = scan({
       ...dummy,
+      "/x/src-tauri/src/db/args.rs":
+        '#[tauri::command(rename_all = "snake_case")]\npub async fn with_args() {}',
       "/x/src-tauri/src/db/lit.rs": 'let s = "a/*b";\n#[tauri::command]\npub fn after_literal() {}',
     });
-    expect([...found.keys()].sort()).toEqual(["/x/src-tauri/src/db/evil.rs", "/x/src-tauri/src/db/lit.rs"]);
+    expect([...found.keys()].sort()).toEqual([
+      "/x/src-tauri/src/db/args.rs",
+      "/x/src-tauri/src/db/evil.rs",
+      "/x/src-tauri/src/db/lit.rs",
+    ]);
+    expect(found.get("/x/src-tauri/src/db/args.rs")?.names).toEqual(["with_args"]);
     expect(found.get("/x/src-tauri/src/db/lit.rs")?.names).toEqual(["after_literal"]);
     expect(found.get("/x/src-tauri/src/db/evil.rs")?.names).toEqual(["evil"]);
   });
