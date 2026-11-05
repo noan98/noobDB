@@ -1,11 +1,10 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
 import { chakra } from "@chakra-ui/react";
-import { AnimatePresence, motion } from "motion/react";
-import { springs, variants } from "../motion";
+import { AnimatePresence } from "motion/react";
 import { useT } from "../i18n";
 import { isConfirmSuppressed, suppressConfirm } from "../settings";
 import { typedConfirmMatches } from "../typeToConfirm";
-import { Icon, ICON_SIZES } from "./Icon";
+import { DestructiveTitle } from "./DestructiveTitle";
 import { FieldLabel, FormSection } from "./modalForm";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Input, PressableButton } from "./ui";
@@ -63,14 +62,6 @@ export interface ConfirmOptions {
    */
   rememberKey?: string;
 }
-
-// 破壊的確認のヘッダ危険アイコン。motion 用 props は Chakra のスタイルプロップに
-// 飲まれないよう forwardProps で素通しする (Callout と同じパターン)。
-const MotionWeightIcon = chakra(
-  motion.span,
-  {},
-  { forwardProps: ["initial", "animate", "transition", "variants"] },
-);
 
 /** `rememberKey` が有効になる確認か (非破壊で、タイプ確認も第 3 の選択肢も無い)。 */
 function rememberApplies(opts: ConfirmOptions): boolean {
@@ -225,22 +216,7 @@ function ConfirmDialog({
     >
       <ModalHeader onClose={onCancel} closeLabel={cancelLabel}>
         {destructive ? (
-          <chakra.span display="inline-flex" alignItems="center" gap="2">
-            {/* 取り返しのつかなさを色だけに頼らず「重み」として伝えるワンショット pop。
-                reduced-motion / data-motion オフは MotionConfig が自動で抑制する。 */}
-            <MotionWeightIcon
-              aria-hidden="true"
-              display="inline-flex"
-              color={tone === "danger" ? "app.textError" : "app.textWarning"}
-              variants={variants.fadeScale}
-              initial="initial"
-              animate="animate"
-              transition={springs.gentle}
-            >
-              <Icon name={tone === "danger" ? "alert-circle" : "warning"} size={ICON_SIZES.md} />
-            </MotionWeightIcon>
-            {title}
-          </chakra.span>
+          <DestructiveTitle tone={tone === "danger" ? "danger" : "warning"}>{title}</DestructiveTitle>
         ) : (
           title
         )}
