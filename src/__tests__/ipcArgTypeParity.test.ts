@@ -531,25 +531,6 @@ for (const src of commandSources) {
 }
 const frontendTypes = extractInvokeArgTypes(tauriTs, tsAliases);
 
-/** 種別照合できた件数と、TS 側が不明で検査できなかった件数。 */
-function countCoverage(
-  backend: Map<string, Map<string, string>>,
-  frontend: Map<string, Map<string, InvokeArg>>,
-  rustDefs: RustTypeDefs,
-): { compared: number; tsUnknown: number } {
-  let compared = 0;
-  let tsUnknown = 0;
-  for (const [cmd, rustParams] of backend) {
-    for (const [key, rustType] of rustParams) {
-      const arg = frontend.get(cmd)?.get(key);
-      if (!arg) continue;
-      if (arg.shape.kinds === null) tsUnknown++;
-      else if (classifyRustType(rustType, rustDefs).kinds !== null) compared++;
-    }
-  }
-  return { compared, tsUnknown };
-}
-
 function findMismatches(
   backend: Map<string, Map<string, string>>,
   frontend: Map<string, Map<string, InvokeArg>>,
