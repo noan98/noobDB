@@ -158,7 +158,7 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 rust_xlsxwriter = { version = "0.101", default-features = false, features = ["constant_memory"] }
 # Excel (xlsx) インポート (#1171)。読み取り専用の純 Rust 実装 (MIT)。default features
 # (chrono) は使わず、日時セルは自前で ISO 文字列へ変換する。
-calamine = { version = "0.37", default-features = false, features = ["dates"] }
+calamine = { version = "0.38", default-features = false, features = ["dates"] }
 chrono = { version = "0.4", features = ["serde"] }
 rust_decimal = { version = "1", features = ["serde"] }
 rand = "0.10"
@@ -215,7 +215,7 @@ proptest = "1"
 # xlsx エクスポート (#711) の共有ゴールデン (tests/export_format_golden.rs) が、書き出した
 # xlsx を展開してシート XML を読み戻すために使う。rust_xlsxwriter が既に引き込む zip と
 # 同じ版・同じ feature なので依存グラフは増えない。
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [features]
 default = ["custom-protocol"]

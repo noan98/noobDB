@@ -18,6 +18,7 @@ import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, Input, PressableButton, Switch } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
 import { Icon } from "./Icon";
+import { LiveRow, LiveRowsPresence } from "./LiveRows";
 import { Tooltip } from "./Tooltip";
 import { TableConstraintEditor, type CheckRow, type FkRow } from "./TableConstraintEditor";
 import { isCompleteCheck, isCompleteForeignKey, isPartialForeignKey } from "./tableConstraints";
@@ -113,6 +114,12 @@ export function CreateTableModal({
   const [tableNames, setTableNames] = useState<string[]>([]);
   const rowIdCounter = useRef(0);
   const nextRowId = () => `row${++rowIdCounter.current}`;
+  // 列ごとの安定キー (`columns` と同じ並び)。添字キーだと途中の列を消したときに
+  // 出入りアニメの対象がずれるため、列行ごとに ID を持たせる (#2014)。
+  const [colKeys, setColKeys] = useState<string[]>(() => ["col0"]);
+  const colKeysRef = useRef(colKeys);
+  colKeysRef.current = colKeys;
+  const nextColKey = () => `col${++rowIdCounter.current}`;
 
   useEffect(() => {
     if (!sessionId || !database) return;
@@ -157,7 +164,9 @@ export function CreateTableModal({
         });
         if (!ok) return;
       }
-      setColumns(columnDefsFromTableInfo(info));
+      const defs = columnDefsFromTableInfo(info);
+      setColumns(defs);
+      setColKeys(defs.map(() => nextColKey()));
       // 列を入れ替えたので、生成式の「触った行」の記録も捨てる (古い行番号が新しい列に当たらないように)。
       setGenTouched([]);
       setTemplateCaveats(templateCaveats(driver, info));
@@ -176,7 +185,10 @@ export function CreateTableModal({
 
   const setCol = (i: number, patch: Partial<ColumnDef>) =>
     setColumns((cols) => cols.map((c, idx) => (idx === i ? { ...c, ...patch } : c)));
-  const addCol = () => setColumns((cols) => [...cols, emptyColumn(driver)]);
+  const addCol = () => {
+    setColumns((cols) => [...cols, emptyColumn(driver)]);
+    setColKeys((ks) => [...ks, nextColKey()]);
+  };
   // 生成列にすると DEFAULT・自動採番・主キーは併用できないので外す (#1893)。
   const toggleGenerated = (i: number) =>
     setColumns((cols) =>
@@ -195,8 +207,13 @@ export function CreateTableModal({
         };
       }),
     );
-  const removeCol = (i: number) => {
+  // 退場アニメ中の行の × は古い添字を握っているので、キーで現在の位置を引き直す
+  // (既に消えた行なら何もしない)。
+  const removeCol = (key: string) => {
+    const i = colKeysRef.current.indexOf(key);
+    if (i < 0) return;
     setColumns((cols) => cols.filter((_, idx) => idx !== i));
+    setColKeys((ks) => ks.filter((_, idx) => idx !== i));
     setGenTouched((cur) => cur.filter((n) => n !== i).map((n) => (n > i ? n - 1 : n)));
   };
   // 生成式の欄を触った行。空の式のエラーは触った後に出す (スイッチを入れた直後は伏せる)。
@@ -330,118 +347,130 @@ export function CreateTableModal({
             <span>{t("createTableColDefault")}</span>
             <span />
           </chakra.div>
-          {columns.map((c, i) => (
-            <chakra.div key={i} display="flex" flexDirection="column" gap="1">
-              <chakra.div
-                display="grid"
-                gridTemplateColumns={COLUMN_GRID}
-                gap="1.5"
-                alignItems="center"
-                justifyItems="stretch"
-                css={{ "& > :nth-child(n+3):nth-child(-n+7)": { justifySelf: "center" } }}
-              >
-                <Input
-                  value={c.name}
-                  onChange={(e) => setCol(i, { name: e.target.value })}
-                  placeholder={t("createTableColNamePlaceholder")}
-                  aria-label={`${t("createTableColName")} (${i + 1})`}
-                />
-                <Input
-                  value={c.type}
-                  onChange={(e) => setCol(i, { type: e.target.value })}
-                  list={dataListId}
-                  aria-label={`${t("createTableColType")} (${i + 1})`}
-                />
-                <Switch
-                  checked={c.notNull}
-                  onChange={() => setCol(i, { notNull: !c.notNull })}
-                  aria-label={`${t("createTableColNotNull")} (${i + 1})`}
-                />
-                <Switch
-                  checked={c.primaryKey}
-                  disabled={!!c.generated}
-                  // 主キーは NULL を持てないので、オンにしたら NOT NULL も一緒にオンにする。
-                  onChange={() =>
-                    setCol(i, c.primaryKey ? { primaryKey: false } : { primaryKey: true, notNull: true })
-                  }
-                  aria-label={`${t("createTableColPk")} (${i + 1})`}
-                />
-                <Switch
-                  checked={c.unique}
-                  onChange={() => setCol(i, { unique: !c.unique })}
-                  aria-label={`${t("createTableColUnique")} (${i + 1})`}
-                />
-                <Switch
-                  checked={c.autoIncrement}
-                  disabled={!!c.generated}
-                  onChange={() => setCol(i, { autoIncrement: !c.autoIncrement })}
-                  aria-label={`${t("createTableColAuto")} (${i + 1})`}
-                />
-                <Switch
-                  checked={!!c.generated}
-                  onChange={() => toggleGenerated(i)}
-                  aria-label={`${t("createTableColGenerated")} (${i + 1})`}
-                />
-                <Input
-                  value={c.defaultValue}
-                  onChange={(e) => setCol(i, { defaultValue: e.target.value })}
-                  disabled={!!c.generated}
-                  placeholder={t("createTableColDefault")}
-                  aria-label={`${t("createTableColDefault")} (${i + 1})`}
-                />
-                <Tooltip label={t("createTableRemoveCol")} focusableWrapper={columns.length <= 1}>
-                  <chakra.button
-                    type="button"
-                    onClick={() => removeCol(i)}
-                    aria-label={t("createTableRemoveCol")}
-                    color="app.textMuted"
-                    _hover={{ color: "app.textError" }}
-                    disabled={columns.length <= 1}
-                    px="1"
-                  >
-                    <Icon name="close" />
-                  </chakra.button>
-                </Tooltip>
-              </chakra.div>
-              {c.generated && (
-                <Flex gap="1.5" align="center" pl="2">
-                  <Input
-                    value={c.generated.expression}
-                    onBlur={() => touchGen(i)}
-                    onChange={(e) =>
-                      setCol(i, {
-                        generated: { ...(c.generated ?? { virtual: false }), expression: e.target.value },
-                      })
-                    }
-                    placeholder={t("createTableGeneratedExprPlaceholder")}
-                    aria-label={`${t("createTableGeneratedExpr")} (${i + 1})`}
-                    fontFamily="mono"
-                    flex="1"
-                  />
-                  <ListboxSelect
-                    value={c.generated.virtual ? "virtual" : "stored"}
-                    options={[
-                      { value: "stored", label: t("createTableGeneratedStored") },
-                      // ListboxSelect には候補単位の disabled が無いので、非対応ドライバでは
-                      // VIRTUAL を並べない (既に選択済みの場合だけ表示のため残す)。
-                      ...(supportsVirtualGenerated(driver) || c.generated.virtual
-                        ? [{ value: "virtual", label: t("createTableGeneratedVirtual") }]
-                        : []),
-                    ]}
-                    onChange={(v) =>
-                      setCol(i, {
-                        generated: {
-                          expression: c.generated?.expression ?? "",
-                          virtual: v === "virtual",
-                        },
-                      })
-                    }
-                    ariaLabel={`${t("createTableGeneratedStorage")} (${i + 1})`}
-                  />
-                </Flex>
-              )}
-            </chakra.div>
-          ))}
+          <chakra.div mt="-1.5">
+            <LiveRowsPresence>
+              {columns.map((c, i) => (
+                <LiveRow key={colKeys[i] ?? `col-fallback-${i}`}>
+                  <chakra.div display="flex" flexDirection="column" gap="1">
+                    <chakra.div
+                      display="grid"
+                      gridTemplateColumns={COLUMN_GRID}
+                      gap="1.5"
+                      alignItems="center"
+                      justifyItems="stretch"
+                      css={{ "& > :nth-child(n+3):nth-child(-n+7)": { justifySelf: "center" } }}
+                    >
+                      <Input
+                        value={c.name}
+                        onChange={(e) => setCol(i, { name: e.target.value })}
+                        placeholder={t("createTableColNamePlaceholder")}
+                        aria-label={`${t("createTableColName")} (${i + 1})`}
+                      />
+                      <Input
+                        value={c.type}
+                        onChange={(e) => setCol(i, { type: e.target.value })}
+                        list={dataListId}
+                        aria-label={`${t("createTableColType")} (${i + 1})`}
+                      />
+                      <Switch
+                        checked={c.notNull}
+                        onChange={() => setCol(i, { notNull: !c.notNull })}
+                        aria-label={`${t("createTableColNotNull")} (${i + 1})`}
+                      />
+                      <Switch
+                        checked={c.primaryKey}
+                        disabled={!!c.generated}
+                        // 主キーは NULL を持てないので、オンにしたら NOT NULL も一緒にオンにする。
+                        onChange={() =>
+                          setCol(
+                            i,
+                            c.primaryKey ? { primaryKey: false } : { primaryKey: true, notNull: true },
+                          )
+                        }
+                        aria-label={`${t("createTableColPk")} (${i + 1})`}
+                      />
+                      <Switch
+                        checked={c.unique}
+                        onChange={() => setCol(i, { unique: !c.unique })}
+                        aria-label={`${t("createTableColUnique")} (${i + 1})`}
+                      />
+                      <Switch
+                        checked={c.autoIncrement}
+                        disabled={!!c.generated}
+                        onChange={() => setCol(i, { autoIncrement: !c.autoIncrement })}
+                        aria-label={`${t("createTableColAuto")} (${i + 1})`}
+                      />
+                      <Switch
+                        checked={!!c.generated}
+                        onChange={() => toggleGenerated(i)}
+                        aria-label={`${t("createTableColGenerated")} (${i + 1})`}
+                      />
+                      <Input
+                        value={c.defaultValue}
+                        onChange={(e) => setCol(i, { defaultValue: e.target.value })}
+                        disabled={!!c.generated}
+                        placeholder={t("createTableColDefault")}
+                        aria-label={`${t("createTableColDefault")} (${i + 1})`}
+                      />
+                      <Tooltip label={t("createTableRemoveCol")} focusableWrapper={columns.length <= 1}>
+                        <chakra.button
+                          type="button"
+                          onClick={() => removeCol(colKeys[i] ?? "")}
+                          aria-label={t("createTableRemoveCol")}
+                          color="app.textMuted"
+                          _hover={{ color: "app.textError" }}
+                          disabled={columns.length <= 1}
+                          px="1"
+                        >
+                          <Icon name="close" />
+                        </chakra.button>
+                      </Tooltip>
+                    </chakra.div>
+                    {c.generated && (
+                      <Flex gap="1.5" align="center" pl="2">
+                        <Input
+                          value={c.generated.expression}
+                          onBlur={() => touchGen(i)}
+                          onChange={(e) =>
+                            setCol(i, {
+                              generated: {
+                                ...(c.generated ?? { virtual: false }),
+                                expression: e.target.value,
+                              },
+                            })
+                          }
+                          placeholder={t("createTableGeneratedExprPlaceholder")}
+                          aria-label={`${t("createTableGeneratedExpr")} (${i + 1})`}
+                          fontFamily="mono"
+                          flex="1"
+                        />
+                        <ListboxSelect
+                          value={c.generated.virtual ? "virtual" : "stored"}
+                          options={[
+                            { value: "stored", label: t("createTableGeneratedStored") },
+                            // ListboxSelect には候補単位の disabled が無いので、非対応ドライバでは
+                            // VIRTUAL を並べない (既に選択済みの場合だけ表示のため残す)。
+                            ...(supportsVirtualGenerated(driver) || c.generated.virtual
+                              ? [{ value: "virtual", label: t("createTableGeneratedVirtual") }]
+                              : []),
+                          ]}
+                          onChange={(v) =>
+                            setCol(i, {
+                              generated: {
+                                expression: c.generated?.expression ?? "",
+                                virtual: v === "virtual",
+                              },
+                            })
+                          }
+                          ariaLabel={`${t("createTableGeneratedStorage")} (${i + 1})`}
+                        />
+                      </Flex>
+                    )}
+                  </chakra.div>
+                </LiveRow>
+              ))}
+            </LiveRowsPresence>
+          </chakra.div>
           {columns.some((c) => c.generated) && (
             <chakra.div textStyle="caption">
               {t("createTableGeneratedExclusive")}

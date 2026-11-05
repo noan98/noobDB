@@ -142,3 +142,41 @@ describe("useConfirm.choose (#1615)", () => {
     await vi.waitFor(() => expect(onResult).toHaveBeenCalledWith("cancel"));
   });
 });
+
+describe("ConfirmDialog 破壊的確認の重みアイコン (#2040)", () => {
+  beforeEach(() => {
+    setLocale("en");
+  });
+
+  function TitleHarness({ tone }: { tone: "danger" | "primary" }) {
+    const { confirm, dialog } = useConfirm();
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => void confirm({ title: "Drop table users?", message: "x", tone })}
+        >
+          open
+        </button>
+        {dialog}
+      </>
+    );
+  }
+
+  it("danger では aria-hidden のアイコンが出て、見出しの名前はタイトルのまま", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<TitleHarness tone="danger" />);
+    await user.click(screen.getByRole("button", { name: "open" }));
+    const icon = await screen.findByTestId("destructive-title-icon");
+    expect(icon).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("heading", { name: "Drop table users?" })).toBeInTheDocument();
+  });
+
+  it("primary ではアイコンが出ない", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<TitleHarness tone="primary" />);
+    await user.click(screen.getByRole("button", { name: "open" }));
+    await screen.findByRole("heading", { name: "Drop table users?" });
+    expect(screen.queryByTestId("destructive-title-icon")).not.toBeInTheDocument();
+  });
+});

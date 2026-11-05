@@ -374,4 +374,17 @@ describe("DangerousQueryDialog", () => {
     expect(await screen.findByText(/boom/, undefined, { timeout: 3000 })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("dangerousConfirm") })).toBeEnabled();
   });
+
+  it("ヘッダに aria-hidden の危険アイコンが出て、見出しの名前はタイトルのまま (#2040)", () => {
+    renderWithProviders(
+      <DangerousQueryDialog
+        findings={findings}
+        isProduction={false}
+        onConfirm={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("destructive-title-icon")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("heading", { name: t("dangerousTitle") })).toBeInTheDocument();
+  });
 });

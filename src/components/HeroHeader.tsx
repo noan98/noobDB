@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useLayoutEffect, useState } from "react";
 import { chakra, Flex, Text } from "@chakra-ui/react";
 import { BrandMark } from "../brand";
 import { Heading } from "./ui";
@@ -8,6 +8,30 @@ interface Props {
   subtitle: ReactNode;
   /** 見出しブロック全体の最大幅 (サブタイトルの折り返し幅)。既定 `52ch`。 */
   maxW?: string;
+  /** 初回表示でマークのシグネチャ・アニメーションをワンショット再生する (#2042)。セッション内 1 回のみ。既定 false。 */
+  animate?: boolean;
+}
+
+/** セッション内でヒーロー面のシグネチャ・アニメを再生済みか (Welcome → Profile の遷移でも 2 回目は静止)。 */
+let heroAnimationPlayed = false;
+
+/** テスト用: 再生済みフラグを戻す。 */
+export function resetHeroAnimationForTest() {
+  heroAnimationPlayed = false;
+}
+
+/**
+ * `enabled` が初めて true になった時点でフラグを消費し、以降は再生状態を保つ。
+ * スプラッシュ表示中 (enabled=false) の裏マウントではフラグを消費しない。
+ */
+function useOnceAnimate(enabled: boolean): boolean {
+  const [play, setPlay] = useState(false);
+  useLayoutEffect(() => {
+    if (!enabled || heroAnimationPlayed) return;
+    heroAnimationPlayed = true;
+    setPlay(true);
+  }, [enabled]);
+  return play;
 }
 
 /**
@@ -16,11 +40,17 @@ interface Props {
  * 有無でブランドの第一印象が揺らがないようにする。罫線の値は App.css の `--hero-rule` /
  * `--hero-rule-display` が単一ソース (hc-* では none)。
  */
-export function HeroHeader({ title, subtitle, maxW = "52ch" }: Props) {
+export function HeroHeader({ title, subtitle, maxW = "52ch", animate = false }: Props) {
+  const play = useOnceAnimate(animate);
   return (
     <Flex direction="column" align="center" gap="1.5" maxW={maxW} textAlign="center">
       <Flex align="center" gap="2">
-        <BrandMark size={34} width="calc(34px * var(--font-scale))" height="calc(34px * var(--font-scale))" />
+        <BrandMark
+          size={34}
+          animate={play}
+          width="calc(34px * var(--font-scale))"
+          height="calc(34px * var(--font-scale))"
+        />
         <Heading role="display">{title}</Heading>
       </Flex>
       {/* 見出し下のブランドグラデーションの短い罫線 (#1216 / #1891、hc-* では none) */}

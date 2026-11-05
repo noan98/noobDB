@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useKeepAliveActive, useRefreshOnReactivate } from "./KeepAlive";
 import { Box, chakra, Flex } from "@chakra-ui/react";
+import { motion, useReducedMotion } from "motion/react";
 
 import { api, type DriverKind } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { AUTO_REFRESH_INTERVAL_OPTIONS, useSettings } from "../settings";
 import { categoricalColor, useIsDarkTheme } from "../colorScale";
 import { niceTicks } from "./chartData";
+import { durations, easings, reducedMotionActive } from "../motion";
+import { prefersStaticMotion } from "./revealOrigin";
 import {
   connectionHeadroom,
   DEFAULT_METRICS_WINDOW_SECS,
@@ -175,6 +178,15 @@ function MetricChart({
   const keys = def.series.map((s) => s.key);
   const hasData = hasSeriesData(points, keys);
 
+  // 最新サンプルの時刻が変わった世代 (#2026)。ポーリングで新サンプルが届くたびに最新区間だけを
+  // 控えめに描き入れる (LatencySparkline の animateLatest と同じ語彙)。初回表示 (世代 0) と
+  // reduced-motion / ハイコントラストでは静止のまま。全線の再描画はしない。
+  const reduced = useReducedMotion();
+  const lastAt = points.length > 0 ? points[points.length - 1].atMs : -1;
+  const [gen, setGen] = useState({ lastAt, n: 0 });
+  if (gen.lastAt !== lastAt) setGen({ lastAt, n: gen.n + 1 });
+  const animateLast = gen.n > 0 && !reduced && !reducedMotionActive() && !prefersStaticMotion();
+
   // 時間ドメイン: 全系列共通に、リングバッファの端から端まで。
   const [t0, t1] = useMemo(() => {
     const times = points.map((p) => p.atMs);
@@ -308,12 +320,44 @@ function MetricChart({
             if (s.pts.length === 0) return null;
             const d = s.pts.map((p) => `${xAt(p.atMs)},${yAt(p.value)}`).join(" ");
             const color = categoricalColor(s.colorIndex, isDark);
+            // 最新サンプルでこの系列が欠測 (リセット・未報告) なら末尾は古いままなので描き入れない。
+            const lastIsNew = animateLast && s.pts.length >= 2 && s.pts[s.pts.length - 1].atMs === lastAt;
             return (
               <g key={s.key}>
                 {s.pts.length === 1 ? (
                   <circle cx={xAt(s.pts[0].atMs)} cy={yAt(s.pts[0].value)} r={2.5} fill={color} />
                 ) : (
-                  <polyline points={d} fill="none" stroke={color} strokeWidth={1.75} />
+                  <>
+                    <polyline
+                      points={
+                        lastIsNew
+                          ? s.pts
+                              .slice(0, -1)
+                              .map((p) => `${xAt(p.atMs)},${yAt(p.value)}`)
+                              .join(" ")
+                          : d
+                      }
+                      fill="none"
+                      stroke={color}
+                      strokeWidth={1.75}
+                    />
+                    {lastIsNew && (
+                      <motion.line
+                        key={`last${gen.n}`}
+                        data-testid="metric-latest-segment"
+                        x1={xAt(s.pts[s.pts.length - 2].atMs)}
+                        y1={yAt(s.pts[s.pts.length - 2].value)}
+                        x2={xAt(s.pts[s.pts.length - 1].atMs)}
+                        y2={yAt(s.pts[s.pts.length - 1].value)}
+                        stroke={color}
+                        strokeWidth={1.75}
+                        strokeLinecap="round"
+                        initial={{ pathLength: 0, opacity: 0 }}
+                        animate={{ pathLength: 1, opacity: 1 }}
+                        transition={{ duration: durations.slow, ease: easings.out }}
+                      />
+                    )}
+                  </>
                 )}
               </g>
             );

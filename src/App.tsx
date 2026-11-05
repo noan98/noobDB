@@ -13488,6 +13488,7 @@ export default function App() {
                           onCreateConnection={handleOpenCreateForm}
                           onOpenSqlite={handleWelcomeOpenSqlite}
                           onStartTour={handleStartTour}
+                          animateHero={booted}
                         />
                       </Flex>
                     ) : visibleProfiles.length === 0 ? (
@@ -13517,6 +13518,7 @@ export default function App() {
                           onEdit={handleOpenEditForm}
                           onDuplicate={handleDuplicateProfile}
                           onDelete={(p) => void handleDeleteProfile(p)}
+                          animateHero={booted}
                         />
                       </Flex>
                     )}

@@ -4,6 +4,7 @@ import { AnimatePresence } from "motion/react";
 import { useT } from "../i18n";
 import { isConfirmSuppressed, suppressConfirm } from "../settings";
 import { typedConfirmMatches } from "../typeToConfirm";
+import { DestructiveTitle } from "./DestructiveTitle";
 import { FieldLabel, FormSection } from "./modalForm";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Input, PressableButton } from "./ui";
@@ -214,7 +215,11 @@ function ConfirmDialog({
       initialFocusEl={() => (requiresTyped ? typedInputRef.current : cancelRef.current)}
     >
       <ModalHeader onClose={onCancel} closeLabel={cancelLabel}>
-        {title}
+        {destructive ? (
+          <DestructiveTitle tone={tone === "danger" ? "danger" : "warning"}>{title}</DestructiveTitle>
+        ) : (
+          title
+        )}
       </ModalHeader>
       <ModalBody display="flex" flexDirection="column" gap="3">
         {typeof message === "function" ? message({ cancel: onCancel }) : message}

@@ -143,6 +143,9 @@ import type { Transition, Variants } from "motion/react";
  *   opacity のフェードは残る。
  * - 空状態 / ツアーの `FeatureIcon` タイルのマウント入場 pop (`variants.fadeScale` + `transitions.emphasized`、#2052)。
  *   `transitionKey` 指定時 (ツアーのクロスフェード) は無効。reduced-motion は `MotionConfig` が静止させる。
+ * - CREATE TABLE ウィザードの列 / 外部キー / CHECK 行の追加/削除 (`CreateTableModal` /
+ *   `TableConstraintEditor` — `LiveRowsPresence` + `LiveRow`、#2014)。QueryBuilder と同じ
+ *   `variants.collapse` で、消えかけの行は `inert` にして二重押下を防ぐ。
  */
 
 /** cubic-bezier カーブ。CSS の `--ease` / `--ease-out` と同じ値。 */
