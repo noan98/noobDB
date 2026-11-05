@@ -1,5 +1,5 @@
 {
-  "description": "大規模 DML のチャンク分割実行 (#2020) の SQL 生成の実装横断ゴールデンベクタ。Rust の db::chunked_dml (build_chunk_sql / build_count_sql) と、フロントの components/chunkedDml.ts を同じ入力で固定する。cases は成功ケース (set が無ければ DELETE、あれば UPDATE)、errors は拒否ケース (drivers 省略時は全ドライバで同じ理由コードで拒否される)。新しい境界ケースはこの 1 ファイルに追記すれば両言語へ反映される。",
+  "description": "大規模 DML のチャンク分割実行 (#2020) の SQL 生成の実装横断ゴールデンベクタ。Rust の db::chunked_dml (build_chunk_sql / build_count_sql) と、フロントの components/chunkedDml.ts を同じ入力で固定する。cases は成功ケース (set が無ければ DELETE、あれば UPDATE)、errors は拒否ケース (drivers 省略時は全ドライバで同じ理由コードで拒否される)。新しい境界ケースはこの 1 ファイルに追記すれば両言語へ反映される。 PostgreSQL は (tableoid, ctid) の組でバッチ対象を指す (パーティション表・継承表では ctid が子表ごとに独立なため)。SQLite の rowKey は rowid / _rowid_ / oid のうち実列に隠されていないもの。expected / count は検査するドライバだけを持つことがある。",
   "drivers": [
     "mysql",
     "postgres",
@@ -14,7 +14,7 @@
       "batchSize": 1000,
       "expected": {
         "mysql": "DELETE FROM `users` WHERE (created_at < '2020-01-01') LIMIT 1000",
-        "postgres": "DELETE FROM \"users\" WHERE ctid IN (SELECT ctid FROM \"users\" WHERE (created_at < '2020-01-01') LIMIT 1000)",
+        "postgres": "DELETE FROM \"users\" WHERE (tableoid, ctid) IN (SELECT tableoid, ctid FROM \"users\" WHERE (created_at < '2020-01-01') LIMIT 1000)",
         "sqlite": "DELETE FROM \"users\" WHERE rowid IN (SELECT rowid FROM \"users\" WHERE (created_at < '2020-01-01') LIMIT 1000)"
       },
       "count": {
@@ -32,7 +32,7 @@
       "set": "status = 'archived'",
       "expected": {
         "mysql": "UPDATE `orders` SET status = 'archived' WHERE (status = 'old') LIMIT 500",
-        "postgres": "UPDATE \"orders\" SET status = 'archived' WHERE ctid IN (SELECT ctid FROM \"orders\" WHERE (status = 'old') LIMIT 500)",
+        "postgres": "UPDATE \"orders\" SET status = 'archived' WHERE (tableoid, ctid) IN (SELECT tableoid, ctid FROM \"orders\" WHERE (status = 'old') LIMIT 500)",
         "sqlite": "UPDATE \"orders\" SET status = 'archived' WHERE rowid IN (SELECT rowid FROM \"orders\" WHERE (status = 'old') LIMIT 500)"
       },
       "count": {
@@ -49,7 +49,7 @@
       "batchSize": 1,
       "expected": {
         "mysql": "DELETE FROM `app`.`t` WHERE (id > 10) LIMIT 1",
-        "postgres": "DELETE FROM \"app\".\"t\" WHERE ctid IN (SELECT ctid FROM \"app\".\"t\" WHERE (id > 10) LIMIT 1)",
+        "postgres": "DELETE FROM \"app\".\"t\" WHERE (tableoid, ctid) IN (SELECT tableoid, ctid FROM \"app\".\"t\" WHERE (id > 10) LIMIT 1)",
         "sqlite": "DELETE FROM \"t\" WHERE rowid IN (SELECT rowid FROM \"t\" WHERE (id > 10) LIMIT 1)"
       },
       "count": {
@@ -66,7 +66,7 @@
       "batchSize": 10,
       "expected": {
         "mysql": "DELETE FROM `d``b`.`we``ird\"t` WHERE (x = 1) LIMIT 10",
-        "postgres": "DELETE FROM \"d`b\".\"we`ird\"\"t\" WHERE ctid IN (SELECT ctid FROM \"d`b\".\"we`ird\"\"t\" WHERE (x = 1) LIMIT 10)",
+        "postgres": "DELETE FROM \"d`b\".\"we`ird\"\"t\" WHERE (tableoid, ctid) IN (SELECT tableoid, ctid FROM \"d`b\".\"we`ird\"\"t\" WHERE (x = 1) LIMIT 10)",
         "sqlite": "DELETE FROM \"we`ird\"\"t\" WHERE rowid IN (SELECT rowid FROM \"we`ird\"\"t\" WHERE (x = 1) LIMIT 10)"
       },
       "count": {
@@ -83,7 +83,7 @@
       "batchSize": 100,
       "expected": {
         "mysql": "DELETE FROM `t` WHERE (a = 1 OR b = 2) LIMIT 100",
-        "postgres": "DELETE FROM \"t\" WHERE ctid IN (SELECT ctid FROM \"t\" WHERE (a = 1 OR b = 2) LIMIT 100)",
+        "postgres": "DELETE FROM \"t\" WHERE (tableoid, ctid) IN (SELECT tableoid, ctid FROM \"t\" WHERE (a = 1 OR b = 2) LIMIT 100)",
         "sqlite": "DELETE FROM \"t\" WHERE rowid IN (SELECT rowid FROM \"t\" WHERE (a = 1 OR b = 2) LIMIT 100)"
       },
       "count": {
@@ -100,7 +100,7 @@
       "batchSize": 100000,
       "expected": {
         "mysql": "DELETE FROM `t` WHERE (a = 1) LIMIT 100000",
-        "postgres": "DELETE FROM \"t\" WHERE ctid IN (SELECT ctid FROM \"t\" WHERE (a = 1) LIMIT 100000)",
+        "postgres": "DELETE FROM \"t\" WHERE (tableoid, ctid) IN (SELECT tableoid, ctid FROM \"t\" WHERE (a = 1) LIMIT 100000)",
         "sqlite": "DELETE FROM \"t\" WHERE rowid IN (SELECT rowid FROM \"t\" WHERE (a = 1) LIMIT 100000)"
       },
       "count": {
@@ -117,7 +117,7 @@
       "batchSize": 10,
       "expected": {
         "mysql": "DELETE FROM `t` WHERE (note = 'a;b -- c /* d') LIMIT 10",
-        "postgres": "DELETE FROM \"t\" WHERE ctid IN (SELECT ctid FROM \"t\" WHERE (note = 'a;b -- c /* d') LIMIT 10)",
+        "postgres": "DELETE FROM \"t\" WHERE (tableoid, ctid) IN (SELECT tableoid, ctid FROM \"t\" WHERE (note = 'a;b -- c /* d') LIMIT 10)",
         "sqlite": "DELETE FROM \"t\" WHERE rowid IN (SELECT rowid FROM \"t\" WHERE (note = 'a;b -- c /* d') LIMIT 10)"
       },
       "count": {
@@ -135,7 +135,7 @@
       "set": "x = 'it''s'",
       "expected": {
         "mysql": "UPDATE `t` SET x = 'it''s' WHERE (y = 'it''s') LIMIT 10",
-        "postgres": "UPDATE \"t\" SET x = 'it''s' WHERE ctid IN (SELECT ctid FROM \"t\" WHERE (y = 'it''s') LIMIT 10)",
+        "postgres": "UPDATE \"t\" SET x = 'it''s' WHERE (tableoid, ctid) IN (SELECT tableoid, ctid FROM \"t\" WHERE (y = 'it''s') LIMIT 10)",
         "sqlite": "UPDATE \"t\" SET x = 'it''s' WHERE rowid IN (SELECT rowid FROM \"t\" WHERE (y = 'it''s') LIMIT 10)"
       },
       "count": {
@@ -152,7 +152,7 @@
       "batchSize": 10,
       "expected": {
         "mysql": "DELETE FROM `t` WHERE (id IN (SELECT id FROM u WHERE (a = 1))) LIMIT 10",
-        "postgres": "DELETE FROM \"t\" WHERE ctid IN (SELECT ctid FROM \"t\" WHERE (id IN (SELECT id FROM u WHERE (a = 1))) LIMIT 10)",
+        "postgres": "DELETE FROM \"t\" WHERE (tableoid, ctid) IN (SELECT tableoid, ctid FROM \"t\" WHERE (id IN (SELECT id FROM u WHERE (a = 1))) LIMIT 10)",
         "sqlite": "DELETE FROM \"t\" WHERE rowid IN (SELECT rowid FROM \"t\" WHERE (id IN (SELECT id FROM u WHERE (a = 1))) LIMIT 10)"
       },
       "count": {
@@ -170,13 +170,56 @@
       "set": "n = n + 1, m = NULL",
       "expected": {
         "mysql": "UPDATE `t` SET n = n + 1, m = NULL WHERE (k = 1) LIMIT 10",
-        "postgres": "UPDATE \"t\" SET n = n + 1, m = NULL WHERE ctid IN (SELECT ctid FROM \"t\" WHERE (k = 1) LIMIT 10)",
+        "postgres": "UPDATE \"t\" SET n = n + 1, m = NULL WHERE (tableoid, ctid) IN (SELECT tableoid, ctid FROM \"t\" WHERE (k = 1) LIMIT 10)",
         "sqlite": "UPDATE \"t\" SET n = n + 1, m = NULL WHERE rowid IN (SELECT rowid FROM \"t\" WHERE (k = 1) LIMIT 10)"
       },
       "count": {
         "mysql": "SELECT COUNT(*) FROM `t` WHERE (k = 1)",
         "postgres": "SELECT COUNT(*) FROM \"t\" WHERE (k = 1)",
         "sqlite": "SELECT COUNT(*) FROM \"t\" WHERE (k = 1)"
+      }
+    },
+    {
+      "note": "SQLite: rowid が実列に隠されたら _rowid_ を使う",
+      "table": "t",
+      "database": null,
+      "where": "a = 1",
+      "batchSize": 10,
+      "rowKey": "_rowid_",
+      "expected": {
+        "sqlite": "DELETE FROM \"t\" WHERE _rowid_ IN (SELECT _rowid_ FROM \"t\" WHERE (a = 1) LIMIT 10)"
+      },
+      "count": {
+        "sqlite": "SELECT COUNT(*) FROM \"t\" WHERE (a = 1)"
+      }
+    },
+    {
+      "note": "SQLite: _rowid_ も隠されたら oid",
+      "table": "t",
+      "database": null,
+      "where": "a = 1",
+      "batchSize": 10,
+      "rowKey": "oid",
+      "set": "n = 1",
+      "expected": {
+        "sqlite": "UPDATE \"t\" SET n = 1 WHERE oid IN (SELECT oid FROM \"t\" WHERE (a = 1) LIMIT 10)"
+      },
+      "count": {
+        "sqlite": "SELECT COUNT(*) FROM \"t\" WHERE (a = 1)"
+      }
+    },
+    {
+      "note": "SQLite: [ ] 引用の中の ; や -- は許可",
+      "table": "t",
+      "database": null,
+      "where": "[a;b--c] = 1",
+      "batchSize": 10,
+      "rowKey": "rowid",
+      "expected": {
+        "sqlite": "DELETE FROM \"t\" WHERE rowid IN (SELECT rowid FROM \"t\" WHERE ([a;b--c] = 1) LIMIT 10)"
+      },
+      "count": {
+        "sqlite": "SELECT COUNT(*) FROM \"t\" WHERE ([a;b--c] = 1)"
       }
     }
   ],
@@ -305,6 +348,37 @@
       "error": "unsupported",
       "drivers": [
         "postgres"
+      ]
+    },
+    {
+      "note": "MySQL / PostgreSQL では [ ] は引用ではないので ; が見える",
+      "table": "t",
+      "where": "[a;b] = 1",
+      "batchSize": 10,
+      "error": "stackedStatement",
+      "drivers": [
+        "mysql",
+        "postgres"
+      ]
+    },
+    {
+      "note": "SQLite: ] で閉じない [ 引用は拒否",
+      "table": "t",
+      "where": "[a = 1",
+      "batchSize": 10,
+      "error": "unbalanced",
+      "drivers": [
+        "sqlite"
+      ]
+    },
+    {
+      "note": "SQLite: [ ] の外に出たコメントは拒否",
+      "table": "t",
+      "where": "[a] = 1 --",
+      "batchSize": 10,
+      "error": "comment",
+      "drivers": [
+        "sqlite"
       ]
     }
   ]

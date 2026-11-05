@@ -4,7 +4,8 @@
 //! だけで、任意の 1 文を書き換えることはしない。1 バッチ分の文を次の形で組み立てる。
 //!
 //! - MySQL: `DELETE FROM t WHERE (cond) LIMIT n` / `UPDATE t SET ... WHERE (cond) LIMIT n`
-//! - PostgreSQL: `... WHERE ctid IN (SELECT ctid FROM t WHERE (cond) LIMIT n)`
+//! - PostgreSQL: `... WHERE (tableoid, ctid) IN (SELECT tableoid, ctid FROM t WHERE (cond) LIMIT n)`
+//!   (ctid は子表ごとに独立なので、パーティション表・継承表では tableoid と組にする)
 //! - SQLite: `... WHERE rowid IN (SELECT rowid FROM t WHERE (cond) LIMIT n)`
 //!
 //! WHERE / SET は利用者が書いた SQL 断片なので、文を抜けたりコメントで閉じ括弧を食わせたり
@@ -73,7 +74,7 @@ pub fn validate_fragment(driver: DriverKind, frag: &str) -> Result<(), ChunkedDm
     while i < chars.len() {
         let c = chars[i];
         match c {
-            '\'' | '"' | '`' => {
+            '\'' | '"' | '`' | '[' if c != '[' || driver == DriverKind::Sqlite => {
                 // PostgreSQL の E'..' は `\'` で閉じない解釈が要るので扱わない。
                 if c == '\'' && driver == DriverKind::Postgres && i > 0 {
                     let prev = chars[i - 1];
@@ -84,6 +85,17 @@ pub fn validate_fragment(driver: DriverKind, frag: &str) -> Result<(), ChunkedDm
                 }
                 let mut j = i + 1;
                 let mut closed = false;
+                // SQLite の `[ident]` は `]` で閉じる (二重化なし)。
+                if c == '[' {
+                    while j < chars.len() && chars[j] != ']' {
+                        j += 1;
+                    }
+                    if j >= chars.len() {
+                        return Err(ChunkedDmlError::Unbalanced);
+                    }
+                    i = j + 1;
+                    continue;
+                }
                 while j < chars.len() {
                     if mysql && chars[j] == '\\' && c != '`' {
                         j += 2;
@@ -145,7 +157,8 @@ fn check_common(
     validate_fragment(driver, where_clause)
 }
 
-/// 1 バッチ分の DML を組み立てる (末尾のセミコロンなし)。
+/// 1 バッチ分の DML を組み立てる (末尾のセミコロンなし)。`row_key` は SQLite のときだけ使う
+/// (`rowid` / `_rowid_` / `oid` のうち実列に隠されていないもの。普通は `rowid`)。
 pub fn build_chunk_sql(
     driver: DriverKind,
     database: Option<&str>,
@@ -153,6 +166,7 @@ pub fn build_chunk_sql(
     op: &ChunkedOp,
     where_clause: &str,
     batch_size: u32,
+    row_key: &str,
 ) -> Result<String, ChunkedDmlError> {
     check_common(driver, table, where_clause, batch_size)?;
     let head = match op {
@@ -174,10 +188,10 @@ pub fn build_chunk_sql(
     Ok(match driver {
         DriverKind::Mysql => format!("{head}{name}{set} WHERE ({cond}) LIMIT {batch_size}"),
         DriverKind::Postgres => format!(
-            "{head}{name}{set} WHERE ctid IN (SELECT ctid FROM {name} WHERE ({cond}) LIMIT {batch_size})"
+            "{head}{name}{set} WHERE (tableoid, ctid) IN (SELECT tableoid, ctid FROM {name} WHERE ({cond}) LIMIT {batch_size})"
         ),
         DriverKind::Sqlite => format!(
-            "{head}{name}{set} WHERE rowid IN (SELECT rowid FROM {name} WHERE ({cond}) LIMIT {batch_size})"
+            "{head}{name}{set} WHERE {row_key} IN (SELECT {row_key} FROM {name} WHERE ({cond}) LIMIT {batch_size})"
         ),
     })
 }
@@ -195,4 +209,50 @@ pub fn build_count_sql(
         qualified_table(driver, database, table),
         where_clause.trim()
     ))
+}
+
+/// SQLite で行を指す別名を選ぶ。`rowid` / `_rowid_` / `oid` のうち、同名の実列が無い最初のもの。
+/// 3 つとも実列に使われていれば `None` (行を指せないので拒否する)。
+pub fn pick_sqlite_row_key(column_names: &[String]) -> Option<&'static str> {
+    ["rowid", "_rowid_", "oid"]
+        .into_iter()
+        .find(|k| !column_names.iter().any(|c| c.eq_ignore_ascii_case(k)))
+}
+
+/// MySQL の `sql_mode` が断片の解釈をずらすか。`NO_BACKSLASH_ESCAPES` は `\` の扱い、
+/// `ANSI_QUOTES` は `"` の意味 (識別子)、が変わり、検査 (`validate_fragment`) の前提と食い違う。
+pub fn mysql_sql_mode_is_unsafe(sql_mode: &str) -> bool {
+    sql_mode.split(',').map(str::trim).any(|m| {
+        m.eq_ignore_ascii_case("NO_BACKSLASH_ESCAPES") || m.eq_ignore_ascii_case("ANSI_QUOTES")
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn row_key_falls_back_when_shadowed() {
+        let cols = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(pick_sqlite_row_key(&cols(&["id"])), Some("rowid"));
+        assert_eq!(pick_sqlite_row_key(&cols(&["RowId"])), Some("_rowid_"));
+        assert_eq!(
+            pick_sqlite_row_key(&cols(&["rowid", "_rowid_"])),
+            Some("oid")
+        );
+        assert_eq!(
+            pick_sqlite_row_key(&cols(&["rowid", "_rowid_", "OID"])),
+            None
+        );
+    }
+
+    #[test]
+    fn sql_mode_detection() {
+        assert!(mysql_sql_mode_is_unsafe(
+            "STRICT_TRANS_TABLES,NO_BACKSLASH_ESCAPES"
+        ));
+        assert!(mysql_sql_mode_is_unsafe("ansi_quotes"));
+        assert!(!mysql_sql_mode_is_unsafe("STRICT_TRANS_TABLES,ANSI"));
+        assert!(!mysql_sql_mode_is_unsafe(""));
+    }
 }

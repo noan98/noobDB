@@ -10,7 +10,7 @@ const drivers = vectors.drivers as Driver[];
 
 describe("chunked DML golden vectors", () => {
   for (const c of vectors.cases) {
-    for (const driver of drivers) {
+    for (const driver of Object.keys(c.expected) as Driver[]) {
       it(`${c.note} [${driver}]`, () => {
         const sql = buildChunkSql({
           driver,
@@ -19,11 +19,12 @@ describe("chunked DML golden vectors", () => {
           op: "set" in c && c.set !== undefined ? { kind: "update", setClause: c.set } : { kind: "delete" },
           where: c.where,
           batchSize: c.batchSize,
+          rowKey: (c as { rowKey?: string }).rowKey,
         });
-        expect(sql).toEqual({ ok: true, sql: c.expected[driver] });
+        expect(sql).toEqual({ ok: true, sql: (c.expected as Record<string, string>)[driver] });
         expect(buildCountSql({ driver, database: c.database, table: c.table, where: c.where })).toEqual({
           ok: true,
-          sql: c.count[driver],
+          sql: (c.count as Record<string, string>)[driver],
         });
       });
     }

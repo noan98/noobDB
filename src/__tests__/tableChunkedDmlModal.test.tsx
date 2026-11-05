@@ -20,14 +20,21 @@ import { TableChunkedDmlModal } from "../components/TableChunkedDmlModal";
 const lookup = api.runLookupQuery as ReturnType<typeof vi.fn>;
 const batch = api.runChunkedDmlBatch as ReturnType<typeof vi.fn>;
 
-const result = (rows_affected: number) => ({ columns: [], rows: [], rows_affected, elapsed_ms: 1 });
+const result = (rows_affected: number) => ({
+  rows_affected,
+  elapsed_ms: 1,
+  recorded: false,
+  capture_note: null,
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
+  batch.mockReset();
+  lookup.mockReset();
   lookup.mockResolvedValue({ columns: [], rows: [[2500]], rows_affected: 0, elapsed_ms: 1 });
 });
 
-const mount = (props: { readOnly?: boolean; confirm?: boolean } = {}) =>
+const mount = (props: { readOnly?: boolean; confirm?: boolean; production?: boolean } = {}) =>
   renderWithProviders(
     <TableChunkedDmlModal
       sessionId="s1"
@@ -35,6 +42,8 @@ const mount = (props: { readOnly?: boolean; confirm?: boolean } = {}) =>
       database="main"
       table="logs"
       readOnly={props.readOnly ?? false}
+      isProduction={props.production ?? false}
+      capture={null}
       onConfirmStart={vi.fn().mockResolvedValue(props.confirm ?? true)}
       onClose={vi.fn()}
     />,
@@ -61,7 +70,7 @@ describe("TableChunkedDmlModal (#2020)", () => {
     expect(screen.getByRole("button", { name: t("chunkedDmlRun") })).toBeDisabled();
   });
 
-  it("0 行になるまでバッチを繰り返し、進捗と完了を出す", async () => {
+  it("DELETE はバッチサイズ未満で終了し、完了と残り件数の警告を出す", async () => {
     batch
       .mockResolvedValueOnce(result(1000))
       .mockResolvedValueOnce(result(1000))
@@ -71,9 +80,9 @@ describe("TableChunkedDmlModal (#2020)", () => {
     fill("id < 100");
     fireEvent.click(screen.getByRole("button", { name: t("chunkedDmlRun") }));
     await waitFor(() =>
-      expect(screen.getByText(t("chunkedDmlDone", { batches: 4, rows: 2500 }))).toBeInTheDocument(),
+      expect(screen.getByText(t("chunkedDmlDone", { batches: 3, rows: 2500 }))).toBeInTheDocument(),
     );
-    expect(batch).toHaveBeenCalledTimes(4);
+    expect(batch).toHaveBeenCalledTimes(3);
     expect(batch).toHaveBeenCalledWith(
       expect.objectContaining({
         table: "logs",
@@ -89,9 +98,6 @@ describe("TableChunkedDmlModal (#2020)", () => {
     fill("id < 100");
     fireEvent.click(screen.getByRole("button", { name: t("chunkedDmlRun") }));
     await new Promise((r) => setTimeout(r, 20));
-    expect(lookup).not.toHaveBeenCalledWith(
-      expect.objectContaining({ sql: expect.stringContaining('COUNT(*) FROM "logs" WHERE (id < 100)') }),
-    );
     expect(batch).not.toHaveBeenCalled();
   });
 
@@ -110,7 +116,7 @@ describe("TableChunkedDmlModal (#2020)", () => {
     expect(batch).toHaveBeenCalledTimes(1);
   });
 
-  it("UPDATE が同じ行に当たり続けても最大バッチ数で止まる", async () => {
+  it("UPDATE の最初のバッチ後に件数が減っていなければ止める", async () => {
     lookup.mockResolvedValue({ columns: [], rows: [[10]], rows_affected: 0, elapsed_ms: 1 });
     batch.mockResolvedValue(result(10));
     mount();
@@ -118,11 +124,37 @@ describe("TableChunkedDmlModal (#2020)", () => {
     fireEvent.change(screen.getByLabelText(t("chunkedDmlSet")), { target: { value: "n = n + 1" } });
     fill("n >= 0");
     fireEvent.click(screen.getByRole("button", { name: t("chunkedDmlRun") }));
-    // 10 行 / 1000 = 1 バッチ想定 → 上限は 1*2+3 = 5
+    await waitFor(() =>
+      expect(screen.getByText(t("chunkedDmlStalled", { rows: 10, affected: 10 }))).toBeInTheDocument(),
+    );
+    expect(batch).toHaveBeenCalledTimes(1);
+  });
+
+  it("件数が減り続けても最大バッチ数で止まる", async () => {
+    lookup
+      .mockResolvedValueOnce({ columns: [], rows: [[20]], rows_affected: 0, elapsed_ms: 1 })
+      .mockResolvedValue({ columns: [], rows: [[10]], rows_affected: 0, elapsed_ms: 1 });
+    batch.mockResolvedValue(result(10));
+    mount();
+    fireEvent.click(screen.getByText(t("chunkedDmlOpUpdate")));
+    fireEvent.change(screen.getByLabelText(t("chunkedDmlSet")), { target: { value: "n = n + 1" } });
+    fill("n >= 0");
+    fireEvent.click(screen.getByRole("button", { name: t("chunkedDmlRun") }));
     await waitFor(() =>
       expect(screen.getByText(t("chunkedDmlLimitReached", { limit: 5, rows: 50 }))).toBeInTheDocument(),
     );
     expect(batch).toHaveBeenCalledTimes(5);
+  });
+
+  it("本番では件数を自動で数えず、ボタンで数える", async () => {
+    mount({ production: true });
+    fill("id < 100");
+    await new Promise((r) => setTimeout(r, 700));
+    expect(lookup).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: t("chunkedDmlCountNow") }));
+    await waitFor(() =>
+      expect(screen.getByText(t("chunkedDmlRowsMatching", { rows: 2500 }))).toBeInTheDocument(),
+    );
   });
 
   it("read_only 接続では実行を無効化する", () => {

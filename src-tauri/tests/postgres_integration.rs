@@ -4330,6 +4330,7 @@ async fn postgres_chunked_dml_batches() {
             },
             "kind = 'old'",
             10,
+            false,
         )
         .await
         .expect("update batch");
@@ -4350,6 +4351,7 @@ async fn postgres_chunked_dml_batches() {
             t::ChunkedDmlOperation::Delete,
             "kind = 'done'",
             10,
+            false,
         )
         .await
         .expect("delete batch");
@@ -4377,4 +4379,96 @@ async fn postgres_chunked_dml_batches() {
         .conn
         .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
         .await;
+}
+
+/// #2020: パーティション表・継承表では ctid が子表ごとに独立なので、`(tableoid, ctid)` の組で
+/// 指さないと条件に合わない別の子表の行まで消える。同じ ctid を持つ行が別の子表にあっても無傷であること。
+#[tokio::test]
+async fn postgres_chunked_dml_partitioned_and_inherited_tables() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let db = "public".to_string();
+    let pid = std::process::id();
+    let part = format!("noobdb_chunk_part_{pid}");
+    let part_a = format!("{part}_a");
+    let part_b = format!("{part}_b");
+    let inh = format!("noobdb_chunk_inh_{pid}");
+    let inh_c = format!("{inh}_c");
+    for tbl in [&part, &inh] {
+        let _ = conn
+            .execute(&format!("DROP TABLE IF EXISTS {tbl} CASCADE"), Some(&db))
+            .await;
+    }
+    for sql in [
+        format!("CREATE TABLE {part} (id INT, kind TEXT) PARTITION BY LIST (kind)"),
+        format!("CREATE TABLE {part_a} PARTITION OF {part} FOR VALUES IN ('a')"),
+        format!("CREATE TABLE {part_b} PARTITION OF {part} FOR VALUES IN ('b')"),
+        format!("INSERT INTO {part} SELECT g, 'a' FROM generate_series(1, 15) g"),
+        format!("INSERT INTO {part} SELECT g, 'b' FROM generate_series(1, 15) g"),
+        format!("CREATE TABLE {inh} (id INT, src TEXT)"),
+        format!("CREATE TABLE {inh_c} () INHERITS ({inh})"),
+        format!("INSERT INTO {inh} SELECT g, 'parent' FROM generate_series(1, 15) g"),
+        format!("INSERT INTO {inh_c} SELECT g, 'child' FROM generate_series(1, 15) g"),
+    ] {
+        conn.execute(&sql, Some(&db)).await.expect(&sql);
+    }
+    let session = t::make_session("chunked_pg_part", conn, opts.clone(), false);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+
+    for (tbl, cond, kept_sql) in [
+        (
+            &part,
+            "kind = 'a'",
+            format!("SELECT COUNT(*) FROM {part} WHERE kind = 'b'"),
+        ),
+        (
+            &inh,
+            "src = 'parent'",
+            format!("SELECT COUNT(*) FROM {inh} WHERE src = 'child'"),
+        ),
+    ] {
+        let mut sizes = Vec::new();
+        loop {
+            let r = t::run_chunked_dml_batch_via_command(
+                &state,
+                &sid,
+                Some(&db),
+                tbl,
+                t::ChunkedDmlOperation::Delete,
+                cond,
+                10,
+                false,
+            )
+            .await
+            .expect("batch");
+            sizes.push(r.rows_affected);
+            if r.rows_affected == 0 {
+                break;
+            }
+            assert!(sizes.len() < 10, "must terminate");
+        }
+        assert_eq!(sizes, vec![10, 5, 0], "{tbl}");
+        let kept =
+            t::run_lookup_query_via_command(&state, &sid, &kept_sql, Some(&db), None, Some(1))
+                .await
+                .expect("count");
+        assert_eq!(
+            serde_json::to_string(&kept.rows).expect("json"),
+            "[[15]]",
+            "{tbl}: rows of other child tables must be untouched"
+        );
+    }
+
+    let cleanup = state.get(&sid).await.expect("session");
+    for tbl in [&part, &inh] {
+        let _ = cleanup
+            .conn
+            .execute(&format!("DROP TABLE IF EXISTS {tbl} CASCADE"), Some(&db))
+            .await;
+    }
 }

@@ -4812,6 +4812,7 @@ async fn mysql_chunked_dml_batches() {
             },
             "kind = 'old'",
             10,
+            false,
         )
         .await
         .expect("update batch");
@@ -4832,6 +4833,7 @@ async fn mysql_chunked_dml_batches() {
             t::ChunkedDmlOperation::Delete,
             "kind = 'done'",
             10,
+            false,
         )
         .await
         .expect("delete batch");

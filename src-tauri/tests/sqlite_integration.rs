@@ -7062,6 +7062,7 @@ async fn sqlite_chunked_delete_runs_in_batches_until_empty() {
             t::ChunkedDmlOperation::Delete,
             "kind = 'old'",
             10,
+            false,
         )
         .await
         .expect("batch");
@@ -7095,6 +7096,7 @@ async fn sqlite_chunked_update_touches_only_matching_rows() {
             },
             "kind = 'old'",
             8,
+            false,
         )
         .await
         .expect("batch");
@@ -7133,6 +7135,7 @@ async fn sqlite_chunked_stop_midway_keeps_committed_batches() {
             t::ChunkedDmlOperation::Delete,
             "kind = 'old'",
             5,
+            false,
         )
         .await
         .expect("batch");
@@ -7155,6 +7158,7 @@ async fn sqlite_chunked_read_only_session_is_rejected() {
         t::ChunkedDmlOperation::Delete,
         "kind = 'old'",
         10,
+        false,
     )
     .await
     .expect_err("read-only must reject");
@@ -7177,6 +7181,7 @@ async fn sqlite_chunked_rejects_without_rowid_and_unsafe_fragments() {
         t::ChunkedDmlOperation::Delete,
         "kind = 'old'",
         10,
+        false,
     )
     .await
     .expect_err("WITHOUT ROWID must be rejected");
@@ -7190,6 +7195,7 @@ async fn sqlite_chunked_rejects_without_rowid_and_unsafe_fragments() {
             t::ChunkedDmlOperation::Delete,
             bad,
             10,
+            false,
         )
         .await
         .expect_err("unsafe fragment must be rejected");
@@ -7206,5 +7212,85 @@ async fn sqlite_chunked_rejects_without_rowid_and_unsafe_fragments() {
         count_rows(&state, &sid, "SELECT COUNT(*) FROM norowid").await,
         "[[1]]"
     );
+    let _ = std::fs::remove_file(&path);
+}
+
+/// フライトレコーダ有効時は各バッチが記録経路 (`run_captured_write_inner`) を通る (#2020)。
+/// 記録できない/辞退された場合も書き込みは行われ、理由が返る。
+#[tokio::test]
+async fn sqlite_chunked_batch_goes_through_flight_recorder_when_enabled() {
+    let (state, sid, path) = chunked_state("chunk_capture", false).await;
+    let r = t::run_chunked_dml_batch_via_command(
+        &state,
+        &sid,
+        None,
+        "logs",
+        t::ChunkedDmlOperation::Delete,
+        "kind = 'old'",
+        10,
+        true,
+    )
+    .await
+    .expect("captured batch");
+    assert_eq!(r.rows_affected, 10);
+    assert!(
+        r.recorded && r.capture_note.is_none(),
+        "capture must be recorded, got note {:?}",
+        r.capture_note
+    );
+    assert_eq!(
+        count_rows(&state, &sid, "SELECT COUNT(*) FROM logs").await,
+        "[[15]]"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+/// rowid が実列に隠された表は `_rowid_` で行を指し、3 つとも隠された表は拒否する。
+#[tokio::test]
+async fn sqlite_chunked_handles_shadowed_rowid_aliases() {
+    let path = temp_cmd_db("chunk_alias");
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    for stmt in [
+        "CREATE TABLE shadow (rowid TEXT, v INTEGER)",
+        "INSERT INTO shadow VALUES ('a', 1), ('a', 2), ('a', 3)",
+        "CREATE TABLE allshadow (rowid TEXT, _rowid_ TEXT, oid TEXT)",
+        "INSERT INTO allshadow VALUES ('a', 'b', 'c')",
+    ] {
+        conn.execute(stmt, None).await.expect("ddl");
+    }
+    let session = t::make_session("chunk_alias", conn, opts, false);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+    let r = t::run_chunked_dml_batch_via_command(
+        &state,
+        &sid,
+        None,
+        "shadow",
+        t::ChunkedDmlOperation::Delete,
+        "rowid = 'a'",
+        2,
+        false,
+    )
+    .await
+    .expect("batch via _rowid_");
+    assert_eq!(r.rows_affected, 2);
+    assert_eq!(
+        count_rows(&state, &sid, "SELECT COUNT(*) FROM shadow").await,
+        "[[1]]"
+    );
+    let err = t::run_chunked_dml_batch_via_command(
+        &state,
+        &sid,
+        None,
+        "allshadow",
+        t::ChunkedDmlOperation::Delete,
+        "rowid = 'a'",
+        2,
+        false,
+    )
+    .await
+    .expect_err("all aliases shadowed");
+    assert!(matches!(err, t::AppError::InvalidInput(_)), "{err:?}");
     let _ = std::fs::remove_file(&path);
 }

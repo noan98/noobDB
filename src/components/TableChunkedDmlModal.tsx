@@ -32,13 +32,23 @@ interface Props {
   database: string;
   table: string;
   readOnly: boolean;
+  /** 本番プロファイル。対象件数の COUNT は自動ではなく手動ボタンにする (重い COUNT を勝手に撃たない)。 */
+  isProduction: boolean;
+  /** フライトレコーダ有効。各バッチを記録経路へ流す。 */
+  capture: { retentionDays: number | null } | null;
   /** 実行前の確認。false なら開始しない。 */
-  onConfirmStart: (info: { table: string; operation: ChunkedOp; batchSize: number }) => Promise<boolean>;
+  onConfirmStart: (info: {
+    table: string;
+    operation: ChunkedOp;
+    batchSize: number;
+    total: number;
+    sql: string;
+  }) => Promise<boolean>;
   onClose: () => void;
 }
 
 type OpKind = "delete" | "update";
-type Phase = "idle" | "running" | "done" | "cancelled" | "limit" | "error";
+type Phase = "idle" | "running" | "done" | "cancelled" | "limit" | "error" | "stalled";
 
 const DEFAULT_BATCH = 1000;
 
@@ -52,6 +62,8 @@ export function TableChunkedDmlModal({
   database,
   table,
   readOnly,
+  isProduction,
+  capture,
   onConfirmStart,
   onClose,
 }: Props) {
@@ -67,6 +79,12 @@ export function TableChunkedDmlModal({
   const [total, setTotal] = useState<number | null>(null);
   const [limit, setLimit] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [remaining, setRemaining] = useState<number | null>(null);
+  const [captureNote, setCaptureNote] = useState<string | null>(null);
+  const [recordedBatches, setRecordedBatches] = useState(0);
+  const [manualCount, setManualCount] = useState<
+    { status: "loading" } | { status: "ok"; count: number } | { status: "error"; error: string } | null
+  >(null);
   const cancelRef = useRef(false);
   const whereRef = useRef<HTMLInputElement>(null);
   const cancelBtnRef = useRef<HTMLButtonElement>(null);
@@ -105,7 +123,11 @@ export function TableChunkedDmlModal({
     () => (countBuilt.ok ? [{ id: "target", sql: countBuilt.sql }] : []),
     [countBuilt],
   );
-  const countState = useCountPreviews(runCount, countItems, phase === "idle").target;
+  const autoCount = useCountPreviews(runCount, countItems, phase === "idle" && !isProduction).target;
+  const countState = isProduction ? manualCount : autoCount;
+  // 条件を変えたら手動の件数は古くなる。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 入力が変わったら捨てる
+  useEffect(() => setManualCount(null), [whereText, table]);
 
   // 入力が空のうちはエラーを出さず、入力が始まってから理由を見せる。
   const errorCode: ChunkedDmlErrorCode | null = built.ok ? null : built.code;
@@ -114,34 +136,44 @@ export function TableChunkedDmlModal({
   const canRun = built.ok && waitValid && !readOnly && !running;
 
   const start = async () => {
-    if (!canRun) return;
-    const ok = await onConfirmStart({ table, operation: op, batchSize });
-    if (!ok) return;
-    cancelRef.current = false;
-    setPhase("running");
+    if (!canRun || !built.ok || !countBuilt.ok) return;
     setBatches(0);
     setAffected(0);
     setTotal(null);
     setError(null);
+    setRemaining(null);
+    setCaptureNote(null);
+    setRecordedBatches(0);
     let done = 0;
     let sum = 0;
+    const countRows = async (): Promise<number> => {
+      if (!countBuilt.ok) throw new Error("count");
+      const r = await api.runLookupQuery({ sessionId, sql: countBuilt.sql, database: dbArg, rowCap: 1 });
+      const n = parseCountCell(r.rows[0]?.[0]);
+      if (n === null) throw new Error("count");
+      return n;
+    };
+    let rows: number;
     try {
-      if (!countBuilt.ok) return;
-      const counted = await api.runLookupQuery({
-        sessionId,
-        sql: countBuilt.sql,
-        database: dbArg,
-        rowCap: 1,
-      });
-      const rows = parseCountCell(counted.rows[0]?.[0]);
-      if (rows === null) throw new Error("count");
-      setTotal(rows);
+      rows = await countRows();
+    } catch (e) {
+      setError(String(e));
+      setPhase("error");
+      return;
+    }
+    const ok = await onConfirmStart({ table, operation: op, batchSize, total: rows, sql: built.sql });
+    if (!ok) return;
+    cancelRef.current = false;
+    setPhase("running");
+    setTotal(rows);
+    try {
       if (rows === 0) {
         setPhase("done");
         return;
       }
       const cap = maxBatchesFor(rows, batchSize);
       setLimit(cap);
+      let prevCount = rows;
       for (;;) {
         if (cancelRef.current) {
           setPhase("cancelled");
@@ -158,13 +190,31 @@ export function TableChunkedDmlModal({
           operation: op,
           whereClause: whereText,
           batchSize,
+          capture,
         });
         const n = Number(res.rows_affected ?? 0);
         done += 1;
         sum += n;
         setBatches(done);
         setAffected(sum);
-        if (n === 0) {
+        if (res.recorded) setRecordedBatches((c) => c + 1);
+        if (res.capture_note) setCaptureNote(res.capture_note);
+        // UPDATE の暴走対策: 最初のバッチの後に件数を数え直し、更新した分だけ減っていなければ止める
+        // (WHERE が更新後も真のままだと同じ行を更新し続ける)。
+        if (kind === "update" && done === 1 && n > 0) {
+          const now = await countRows();
+          if (now > prevCount - n) {
+            setRemaining(now);
+            setPhase("stalled");
+            return;
+          }
+          prevCount = now;
+        }
+        // DELETE は影響行数がバッチサイズ未満なら対象が尽きた。UPDATE は 0 行まで続ける。
+        if (n === 0 || (kind === "delete" && n < batchSize)) {
+          // 終了時にも数え直し、残りがあれば警告する。
+          const left = await countRows();
+          setRemaining(left);
           setPhase("done");
           return;
         }
@@ -177,7 +227,6 @@ export function TableChunkedDmlModal({
       setError(String(e));
       setPhase("error");
     } finally {
-      // 失敗時に進捗を見せるため、最後の値を反映する。
       setBatches(done);
       setAffected(sum);
     }
@@ -185,6 +234,20 @@ export function TableChunkedDmlModal({
 
   const stop = () => {
     cancelRef.current = true;
+  };
+  // 実行中は × / Esc / 背景クリックで閉じず、中断として扱う (実行済みバッチは確定済み)。
+  const guardedClose = () => (running ? stop() : onClose());
+
+  const countNow = async () => {
+    if (!countBuilt.ok) return;
+    setManualCount({ status: "loading" });
+    try {
+      const r = await api.runLookupQuery({ sessionId, sql: countBuilt.sql, database: dbArg, rowCap: 1 });
+      const n = parseCountCell(r.rows[0]?.[0]);
+      setManualCount(n === null ? { status: "error", error: "?" } : { status: "ok", count: n });
+    } catch (e) {
+      setManualCount({ status: "error", error: String(e) });
+    }
   };
 
   const progress = t("chunkedDmlProgress", {
@@ -197,10 +260,10 @@ export function TableChunkedDmlModal({
     <Modal
       // no-submit: 破壊的な書き込み。Enter / Cmd+Enter で誤って開始させず、キャンセルが既定
       width="640px"
-      onClose={onClose}
+      onClose={guardedClose}
       initialFocusEl={() => cancelBtnRef.current}
     >
-      <ModalHeader onClose={onClose} closeLabel={t("chunkedDmlClose")}>
+      <ModalHeader onClose={guardedClose} closeLabel={t("chunkedDmlClose")}>
         {t("chunkedDmlTitle", { table })}
       </ModalHeader>
       <ModalBody display="flex" flexDirection="column" gap="4">
@@ -247,6 +310,16 @@ export function TableChunkedDmlModal({
             fontFamily="mono"
           />
           {showError && errorCode && <FieldError>{t(`chunkedDmlErr_${errorCode}` as I18nKey)}</FieldError>}
+          {countBuilt.ok && phase === "idle" && isProduction && (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => void countNow()}
+              disabled={manualCount?.status === "loading"}
+            >
+              {t("chunkedDmlCountNow")}
+            </Button>
+          )}
           {countBuilt.ok && phase === "idle" && countState && (
             <chakra.span textStyle="caption">
               {countState.status === "ok"
@@ -296,12 +369,26 @@ export function TableChunkedDmlModal({
         {phase !== "idle" && (
           <chakra.div role="status" aria-live="polite" display="flex" flexDirection="column" gap="2">
             {phase === "running" && <chakra.span>{progress}</chakra.span>}
+            {capture && recordedBatches > 0 && (
+              <chakra.span textStyle="caption">
+                {t("chunkedDmlRecorded", { count: recordedBatches })}
+              </chakra.span>
+            )}
+            {captureNote && (
+              <Callout tone="info">{t("chunkedDmlCaptureDeclined", { reason: captureNote })}</Callout>
+            )}
             {phase === "done" &&
               (total === 0 ? (
                 <Callout tone="info">{t("chunkedDmlNothing")}</Callout>
               ) : (
                 <Callout tone="success">{t("chunkedDmlDone", { batches, rows: affected })}</Callout>
               ))}
+            {phase === "done" && remaining !== null && remaining > 0 && (
+              <Callout tone="warning">{t("chunkedDmlRemaining", { rows: remaining })}</Callout>
+            )}
+            {phase === "stalled" && (
+              <ErrorNote>{t("chunkedDmlStalled", { rows: remaining ?? 0, affected })}</ErrorNote>
+            )}
             {phase === "cancelled" && (
               <Callout tone="warning">{t("chunkedDmlCancelled", { batches, rows: affected })}</Callout>
             )}

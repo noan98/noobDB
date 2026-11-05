@@ -1,5 +1,6 @@
 // 大規模 DML のチャンク分割実行 (#2020) の純ロジック。
 //
+// PostgreSQL は ctid が子表ごとに独立なので (tableoid, ctid) の組で指す。
 // SQL 生成は Rust の `db::chunked_dml` をミラーし、共有ゴールデン
 // (`__tests__/fixtures/chunkedDmlVectors.json`) で両者を固定する。実行時の SQL は Rust が
 // 組み立てる (`run_chunked_dml_batch`) ので、ここの生成はプレビュー表示と対象件数の取得用。
@@ -29,10 +30,18 @@ export function validateFragment(driver: string, frag: string): ChunkedDmlErrorC
   const chars = Array.from(frag);
   const mysql = driver === "mysql";
   const pg = driver === "postgres";
+  const sqlite = driver === "sqlite";
   let depth = 0;
   let i = 0;
   while (i < chars.length) {
     const c = chars[i];
+    // SQLite の [ident] は ] で閉じる (二重化なし)。
+    if (c === "[" && sqlite) {
+      const close = chars.indexOf("]", i + 1);
+      if (close < 0) return "unbalanced";
+      i = close + 1;
+      continue;
+    }
     if (c === "'" || c === '"' || c === "`") {
       if (c === "'" && pg && i > 0) {
         const prev = chars[i - 1];
@@ -100,6 +109,8 @@ export function buildChunkSql(params: {
   op: ChunkedOp;
   where: string;
   batchSize: number;
+  /** SQLite のみ: rowid / _rowid_ / oid のうち実列に隠されていないもの。既定 rowid。 */
+  rowKey?: string;
 }): ChunkedResult<string> {
   const { driver, database, table, op, where, batchSize } = params;
   const bad = checkCommon(driver, table, where, batchSize);
@@ -117,7 +128,13 @@ export function buildChunkSql(params: {
   if (driver === "mysql") {
     return { ok: true, sql: `${head}${name}${set} WHERE (${cond}) LIMIT ${batchSize}` };
   }
-  const key = driver === "postgres" ? "ctid" : "rowid";
+  if (driver === "postgres") {
+    return {
+      ok: true,
+      sql: `${head}${name}${set} WHERE (tableoid, ctid) IN (SELECT tableoid, ctid FROM ${name} WHERE (${cond}) LIMIT ${batchSize})`,
+    };
+  }
+  const key = params.rowKey ?? "rowid";
   return {
     ok: true,
     sql: `${head}${name}${set} WHERE ${key} IN (SELECT ${key} FROM ${name} WHERE (${cond}) LIMIT ${batchSize})`,

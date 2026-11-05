@@ -575,7 +575,7 @@ pub mod __test_api {
     // 経路を駆動できるよう、ここでピンポイントに公開する。
     pub use crate::commands::bulk_write::{
         BulkOldValue, BulkSetColumn, BulkSetValue, BulkUpdateGroup, BulkWriteOptions,
-        BulkWriteOutcome, ChunkedDmlOperation, InsertRowsResult,
+        BulkWriteOutcome, ChunkedDmlBatchResult, ChunkedDmlOperation, InsertRowsResult,
     };
     pub use crate::commands::connection::{health_probe_all_inner, HealthProbeStatus};
     pub use crate::commands::inspector::{
@@ -1168,6 +1168,7 @@ pub mod __test_api {
     }
 
     /// チャンク分割 DML (#2020) の 1 バッチ実行のコア経路。
+    #[allow(clippy::too_many_arguments)]
     pub async fn run_chunked_dml_batch_via_command(
         state: &AppState,
         session_id: &str,
@@ -1176,7 +1177,8 @@ pub mod __test_api {
         operation: ChunkedDmlOperation,
         where_clause: &str,
         batch_size: u32,
-    ) -> crate::error::Result<QueryResult> {
+        capture_enabled: bool,
+    ) -> crate::error::Result<ChunkedDmlBatchResult> {
         crate::commands::bulk_write::run_chunked_dml_batch_inner(
             state,
             session_id.to_string(),
@@ -1185,6 +1187,8 @@ pub mod __test_api {
             operation,
             where_clause.to_string(),
             batch_size,
+            capture_enabled,
+            None,
         )
         .await
     }
@@ -1198,6 +1202,7 @@ pub mod __test_api {
         set_clause: Option<&str>,
         where_clause: &str,
         batch_size: u32,
+        row_key: &str,
     ) -> Result<String, String> {
         use crate::db::chunked_dml::{build_chunk_sql, ChunkedOp};
         let op = match set_clause {
@@ -1206,8 +1211,16 @@ pub mod __test_api {
             },
             None => ChunkedOp::Delete,
         };
-        build_chunk_sql(driver, database, table, &op, where_clause, batch_size)
-            .map_err(|e| e.code().to_string())
+        build_chunk_sql(
+            driver,
+            database,
+            table,
+            &op,
+            where_clause,
+            batch_size,
+            row_key,
+        )
+        .map_err(|e| e.code().to_string())
     }
 
     /// 対象件数 SELECT の生成 (`db::chunked_dml::build_count_sql`)。

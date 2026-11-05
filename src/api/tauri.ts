@@ -1149,6 +1149,14 @@ export interface ServerInfo {
  * クエリ本文は Rust 側で 1 行要約 (`query_summary`) にして返し、全文は
  * `getProcessQuery` で id 指定で取得する (#1259)。
  */
+/** `run_chunked_dml_batch` の結果 (#2020)。`capture_note` は記録を求めたのに辞退された理由。 */
+export interface ChunkedDmlBatchResult {
+  rows_affected: number;
+  elapsed_ms: number;
+  recorded: boolean;
+  capture_note: string | null;
+}
+
 /** `insert_generated_rows` の結果 (#1259)。 */
 export interface InsertRowsResult {
   inserted: number;

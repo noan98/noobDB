@@ -3185,7 +3185,7 @@ const en = {
   chunkedDmlPreview: "SQL run for each batch",
   chunkedDmlPreviewEmpty: "Enter a WHERE condition to preview the SQL.",
   chunkedDmlIntro:
-    "Runs the DELETE / UPDATE in small batches, one transaction each, so a huge change does not hold locks or build replication lag for long. Each batch goes through the normal write path (read-only guard, history).",
+    "Runs the DELETE / UPDATE in small batches, one transaction each, so a huge change does not hold locks or build replication lag for long. Each batch goes through the normal write path (read-only guard, history). Notes: with MySQL binlog_format=STATEMENT, LIMIT makes the statements unsafe for replication (a warning is logged); without an index on the WHERE columns every batch scans the table and the locked range grows.",
   chunkedDmlUpdateWarning:
     "The WHERE condition must become false for a row once it is updated. Otherwise the same rows are updated again and again; the run stops after a safety limit of batches.",
   chunkedDmlRowsMatching: "Rows matching now: {rows}",
@@ -3211,8 +3211,15 @@ const en = {
     "Stopped at the safety limit of {limit} batches ({rows} rows affected). The UPDATE may keep matching the same rows; check the WHERE condition.",
   chunkedDmlConfirmTitle: "Run {table} in batches?",
   chunkedDmlConfirmBody:
-    "Rows matching the condition are changed in batches of {size}. Every finished batch is committed and cannot be rolled back as a whole; stopping midway leaves the table partly changed.",
+    "{rows} rows currently match. They are changed in batches of {size}. Every finished batch is committed and cannot be rolled back as a whole; stopping midway leaves the table partly changed.",
   chunkedDmlConfirmButton: "Start",
+  chunkedDmlCountNow: "Count matching rows",
+  chunkedDmlRecorded: "{count} batches recorded in the flight recorder.",
+  chunkedDmlCaptureDeclined: "Flight recorder skipped some batches (the writes were still run): {reason}",
+  chunkedDmlRemaining:
+    "Finished, but {rows} rows still match the condition (rows added meanwhile, or the change did not remove them from the condition).",
+  chunkedDmlStalled:
+    "Stopped after the first UPDATE batch: {rows} rows still match, so the WHERE condition stays true after the update (or rows were added meanwhile). {affected} rows were changed. Fix the condition and retry.",
   // テーブルの複数選択と一括操作 (#1399)。
   batchMenuShowDdl: "Show DDL of {count} tables",
   batchMenuCopyDdl: "Copy DDL of {count} tables",
@@ -10504,7 +10511,7 @@ const ja: Dict = {
   chunkedDmlPreview: "バッチごとに実行する SQL",
   chunkedDmlPreviewEmpty: "WHERE 条件を入力すると SQL がプレビューされます。",
   chunkedDmlIntro:
-    "DELETE / UPDATE を小さなバッチに分け、1 バッチずつ別トランザクションで実行します。巨大な 1 文によるロックの長期化やレプリケーション遅延を避けられます。各バッチは通常の書き込み経路 (読み取り専用ガード・履歴) を通ります。",
+    "DELETE / UPDATE を小さなバッチに分け、1 バッチずつ別トランザクションで実行します。巨大な 1 文によるロックの長期化やレプリケーション遅延を避けられます。各バッチは通常の書き込み経路 (読み取り専用ガード・履歴) を通ります。注意: MySQL の binlog_format=STATEMENT では LIMIT 付きの文がレプリケーション上 unsafe として警告されます。WHERE の列に索引が無いと、バッチごとに全表を走査し、ロックされる範囲も広がります。",
   chunkedDmlUpdateWarning:
     "UPDATE では、更新した行が WHERE 条件に当てはまらなくなる必要があります。そうでないと同じ行を何度も更新し続けます (安全のため、上限のバッチ数で止まります)。",
   chunkedDmlRowsMatching: "現在の対象: {rows} 行",
@@ -10530,8 +10537,16 @@ const ja: Dict = {
     "安全のための上限 {limit} バッチで停止しました (影響行数 {rows})。UPDATE が同じ行に当たり続けている可能性があります。WHERE 条件を確認してください。",
   chunkedDmlConfirmTitle: "{table} を分割実行しますか?",
   chunkedDmlConfirmBody:
-    "条件に合う行を {size} 行ずつ変更します。終わったバッチはそれぞれ確定し、全体をまとめて取り消すことはできません。途中で止めると、表は一部だけ変更された状態になります。",
+    "現在 {rows} 行が対象です。{size} 行ずつ変更します。終わったバッチはそれぞれ確定し、全体をまとめて取り消すことはできません。途中で止めると、表は一部だけ変更された状態になります。",
   chunkedDmlConfirmButton: "開始",
+  chunkedDmlCountNow: "対象行数を数える",
+  chunkedDmlRecorded: "{count} バッチをフライトレコーダに記録しました。",
+  chunkedDmlCaptureDeclined:
+    "フライトレコーダが一部のバッチの記録を辞退しました (書き込み自体は実行済み): {reason}",
+  chunkedDmlRemaining:
+    "完了しましたが、条件に合う行が {rows} 行残っています (途中で追加された行、または更新後も条件から外れない可能性があります)。",
+  chunkedDmlStalled:
+    "最初の UPDATE バッチの後で停止しました: 条件に合う行が {rows} 行残っており、更新後も WHERE が真のままです (または途中で行が追加されました)。{affected} 行を変更済みです。条件を見直して再実行してください。",
   // テーブルの複数選択と一括操作 (#1399)。
   batchMenuShowDdl: "選択した {count} テーブルの DDL を表示",
   batchMenuCopyDdl: "選択した {count} テーブルの DDL をコピー",

@@ -28,6 +28,8 @@ struct Case {
     #[serde(rename = "batchSize")]
     batch_size: u32,
     set: Option<String>,
+    #[serde(rename = "rowKey")]
+    row_key: Option<String>,
     expected: BTreeMap<String, String>,
     count: BTreeMap<String, String>,
 }
@@ -55,7 +57,7 @@ fn chunk_sql_matches_shared_vectors() {
     assert!(v.cases.len() >= 8);
     let mut failures = Vec::new();
     for case in &v.cases {
-        for name in &v.drivers {
+        for name in case.expected.keys() {
             let d = driver_of(name);
             let got = t::chunked_dml_sql(
                 d,
@@ -64,6 +66,7 @@ fn chunk_sql_matches_shared_vectors() {
                 case.set.as_deref(),
                 &case.where_clause,
                 case.batch_size,
+                case.row_key.as_deref().unwrap_or("rowid"),
             );
             if got.as_ref() != Ok(&case.expected[name]) {
                 failures.push(format!(
@@ -103,6 +106,7 @@ fn chunk_sql_rejections_match_shared_vectors() {
                 case.set.as_deref(),
                 &case.where_clause,
                 case.batch_size,
+                "rowid",
             );
             if got.as_ref() != Err(&case.error) {
                 failures.push(format!(

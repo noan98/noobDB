@@ -3,7 +3,13 @@ import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
 import type { UpdateGroup } from "../../components/cellEdit";
-import type { BulkWriteOptions, BulkWriteOutcome, CellValue, InsertRowsResult, QueryResult } from "../tauri";
+import type {
+  BulkWriteOptions,
+  BulkWriteOutcome,
+  CellValue,
+  InsertRowsResult,
+  ChunkedDmlBatchResult,
+} from "../tauri";
 import type { ChunkedOp } from "../../components/chunkedDml";
 
 export const bulkWriteCommands = {
@@ -74,8 +80,10 @@ export const bulkWriteCommands = {
     operation: ChunkedOp;
     whereClause: string;
     batchSize: number;
+    /** フライトレコーダ有効時に各バッチを記録経路へ流す (#735)。辞退されても書き込みは行われる。 */
+    capture?: { retentionDays?: number | null } | null;
   }) =>
-    invoke<QueryResult>("run_chunked_dml_batch", {
+    invoke<ChunkedDmlBatchResult>("run_chunked_dml_batch", {
       sessionId: params.sessionId,
       database: params.database ?? null,
       table: params.table,
@@ -85,5 +93,7 @@ export const bulkWriteCommands = {
           : { kind: "update", set_clause: params.operation.setClause },
       whereClause: params.whereClause,
       batchSize: params.batchSize,
-    }).then((r) => parseResponse(schemas.queryResultLite, r, "run_chunked_dml_batch")),
+      captureEnabled: params.capture ? true : null,
+      captureRetentionDays: params.capture?.retentionDays ?? null,
+    }).then((r) => parseResponse(schemas.chunkedDmlBatchResult, r, "run_chunked_dml_batch")),
 };

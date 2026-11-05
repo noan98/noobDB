@@ -8843,13 +8843,18 @@ export default function App() {
   // バッチはまとめて取り消せない破壊的操作なので、接続設定に関わらず常に確認し、本番ではテーブル名の
   // 入力確認 (#675) を要求する。
   const confirmChunkedDmlStart = useCallback(
-    (info: { table: string; operation: { kind: "delete" | "update" }; batchSize: number }) =>
+    (info: { table: string; batchSize: number; total: number; sql: string }) =>
       confirm({
         title: translate("chunkedDmlConfirmTitle", { table: info.table }),
         message: (
-          <chakra.p m={0} whiteSpace="pre-line">
-            {translate("chunkedDmlConfirmBody", { size: info.batchSize })}
-          </chakra.p>
+          <>
+            <chakra.p m={0} mb="3" whiteSpace="pre-line">
+              {translate("chunkedDmlConfirmBody", { rows: info.total, size: info.batchSize })}
+            </chakra.p>
+            <CodePreview wrap maxH="30vh">
+              {info.sql}
+            </CodePreview>
+          </>
         ),
         confirmLabel: translate("chunkedDmlConfirmButton"),
         tone: "danger",
@@ -14497,6 +14502,12 @@ export default function App() {
                   database={chunkedDmlTarget.database}
                   table={chunkedDmlTarget.table}
                   readOnly={selectedProfile?.read_only ?? false}
+                  isProduction={selectedProfile?.is_production ?? false}
+                  capture={
+                    settings.flightRecorderEnabled
+                      ? { retentionDays: settings.flightRecorderRetentionDays }
+                      : null
+                  }
                   onConfirmStart={confirmChunkedDmlStart}
                   onClose={() => setChunkedDmlTarget(null)}
                 />

@@ -21,11 +21,14 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use crate::commands::flight_recorder::run_captured_write_inner;
 use crate::commands::query::{
     ensure_allowed_for_session, record_write_history, run_query_transaction_guarded_inner,
     TransactionRun,
 };
-use crate::db::chunked_dml::{build_chunk_sql, ChunkedOp};
+use crate::db::chunked_dml::{
+    build_chunk_sql, mysql_sql_mode_is_unsafe, pick_sqlite_row_key, ChunkedOp,
+};
 use crate::db::data_diff::{is_numeric_literal, sql_literal};
 use crate::db::sync::quote_ident;
 use crate::db::types::{QueryResult, Value};
@@ -1184,12 +1187,27 @@ pub enum ChunkedDmlOperation {
     },
 }
 
+/// `run_chunked_dml_batch` の結果。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ChunkedDmlBatchResult {
+    pub rows_affected: u64,
+    pub elapsed_ms: u64,
+    /// フライトレコーダに記録した。
+    pub recorded: bool,
+    /// 記録を求めたのに辞退された理由 (MyISAM・上限超過・対象を特定できない等)。書き込み自体は行われている。
+    pub capture_note: Option<String>,
+}
+
 /// 大規模 DML (#2020) の 1 バッチを実行する。ループ (進捗・ウェイト・キャンセル・最大バッチ数) は
-/// 呼び出し側 (フロント) が持ち、ここは `DELETE ... LIMIT n` 相当の 1 文を組み立てて
-/// `run_query_transaction_guarded_inner` に渡すだけ。read_only ガード (緊急モード含む)・履歴・
-/// キャッシュ invalidate は既存の書き込み経路と同一で、新しい書き込み経路は増やさない。
-/// 影響行数が `batch_size` を超えたらロールバックする (想定外の広がりの防波堤)。
-/// SQLite の WITHOUT ROWID 表・ビュー・仮想表は rowid で行を指せないので拒否する。
+/// 呼び出し側 (フロント) が持ち、ここは `DELETE ... LIMIT n` 相当の 1 文を組み立てて既存の書き込み経路に渡すだけ。
+/// - 通常: `run_query_transaction_guarded_inner` (影響行数が `batch_size` 超ならロールバック)。
+/// - `capture_enabled` (フライトレコーダ有効): `run_captured_write_inner` (`row_cap` = `batch_size`)。
+///   辞退されても書き込みは 1 回実行される。捕捉経路は事後にしか件数を検算できない。
+///
+/// どちらも read_only ガード (緊急モード含む)・履歴・キャッシュ invalidate は既存と同一。
+/// SQLite の WITHOUT ROWID 表・ビュー・仮想表と、`rowid`/`_rowid_`/`oid` が全て実列の表は拒否する。
+/// MySQL は非トランザクショナル表と、`NO_BACKSLASH_ESCAPES` / `ANSI_QUOTES` の `sql_mode` を拒否する。
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn run_chunked_dml_batch(
     session_id: String,
@@ -1198,8 +1216,10 @@ pub async fn run_chunked_dml_batch(
     operation: ChunkedDmlOperation,
     where_clause: String,
     batch_size: u32,
+    capture_enabled: Option<bool>,
+    capture_retention_days: Option<u32>,
     state: State<'_, AppState>,
-) -> Result<QueryResult> {
+) -> Result<ChunkedDmlBatchResult> {
     run_chunked_dml_batch_inner(
         state.inner(),
         session_id,
@@ -1208,11 +1228,14 @@ pub async fn run_chunked_dml_batch(
         operation,
         where_clause,
         batch_size,
+        capture_enabled.unwrap_or(false),
+        capture_retention_days,
     )
     .await
 }
 
 /// [`run_chunked_dml_batch`] の State なしコア (#881)。
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_chunked_dml_batch_inner(
     state: &AppState,
     session_id: String,
@@ -1221,7 +1244,9 @@ pub(crate) async fn run_chunked_dml_batch_inner(
     operation: ChunkedDmlOperation,
     where_clause: String,
     batch_size: u32,
-) -> Result<QueryResult> {
+    capture_enabled: bool,
+    capture_retention_days: Option<u32>,
+) -> Result<ChunkedDmlBatchResult> {
     let session = state
         .get(&session_id)
         .await
@@ -1231,15 +1256,7 @@ pub(crate) async fn run_chunked_dml_batch_inner(
         ChunkedDmlOperation::Delete => ChunkedOp::Delete,
         ChunkedDmlOperation::Update { set_clause } => ChunkedOp::Update { set_clause },
     };
-    let sql = build_chunk_sql(
-        driver,
-        database.as_deref(),
-        &table,
-        &op,
-        &where_clause,
-        batch_size,
-    )
-    .map_err(|e| AppError::InvalidInput(format!("chunked DML rejected: {}", e.code())))?;
+    let mut row_key = "rowid";
     if let Connection::Sqlite(c) = &session.conn {
         if !c.is_rowid_table(&table).await? {
             return Err(AppError::InvalidInput(
@@ -1247,12 +1264,95 @@ pub(crate) async fn run_chunked_dml_batch_inner(
                     .into(),
             ));
         }
+        let names: Vec<String> = c
+            .columns("main", &table)
+            .await?
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
+        row_key = pick_sqlite_row_key(&names).ok_or_else(|| {
+            AppError::InvalidInput(
+                "chunked DML cannot address rows: rowid, _rowid_ and oid are all real columns"
+                    .into(),
+            )
+        })?;
+    }
+    let sql = build_chunk_sql(
+        driver,
+        database.as_deref(),
+        &table,
+        &op,
+        &where_clause,
+        batch_size,
+        row_key,
+    )
+    .map_err(|e| AppError::InvalidInput(format!("chunked DML rejected: {}", e.code())))?;
+    if let Connection::MySql(c) = &session.conn {
+        // sql_mode が断片の解釈 (バックスラッシュ・二重引用符) を変えるなら、検査の前提が崩れるので拒否する。
+        let mode = session.conn.execute("SELECT @@sql_mode", None).await?;
+        let mode_text = mode
+            .rows
+            .first()
+            .and_then(|r| r.first())
+            .map(|v| match v {
+                Value::String(s) => s.clone(),
+                other => format!("{other:?}"),
+            })
+            .unwrap_or_default();
+        if mysql_sql_mode_is_unsafe(&mode_text) {
+            return Err(AppError::InvalidInput(
+                "chunked DML rejected: sql_mode contains NO_BACKSLASH_ESCAPES or ANSI_QUOTES"
+                    .into(),
+            ));
+        }
+        // ROLLBACK で戻らない表 (MyISAM 等) では、途中で止めると取り返しがつかない。
+        if c.write_target_is_non_transactional(database.as_deref(), &sql)
+            .await
+            .unwrap_or(true)
+        {
+            return Err(AppError::InvalidInput(
+                "chunked DML rejected: the table is non-transactional (or its engine could not be determined)"
+                    .into(),
+            ));
+        }
+    }
+    if capture_enabled {
+        let resp = run_captured_write_inner(
+            state,
+            session_id,
+            sql,
+            database,
+            Some(batch_size),
+            capture_retention_days,
+        )
+        .await?;
+        let n = resp.result.rows_affected;
+        if n > u64::from(batch_size) {
+            return Err(AppError::InvalidInput(format!(
+                "chunked DML batch affected {n} rows, more than the batch size {batch_size}"
+            )));
+        }
+        return Ok(ChunkedDmlBatchResult {
+            rows_affected: n,
+            elapsed_ms: resp.result.elapsed_ms,
+            recorded: resp.capturable,
+            capture_note: if resp.capturable {
+                None
+            } else {
+                Some(resp.reason.unwrap_or_default())
+            },
+        });
     }
     let expects = vec![RowExpectation::at_most(u64::from(batch_size))];
     match run_query_transaction_guarded_inner(state, session_id, vec![sql], expects, database)
         .await?
     {
-        TransactionRun::Committed(result) => Ok(result),
+        TransactionRun::Committed(result) => Ok(ChunkedDmlBatchResult {
+            rows_affected: result.rows_affected,
+            elapsed_ms: result.elapsed_ms,
+            recorded: false,
+            capture_note: None,
+        }),
         TransactionRun::RolledBack(v) | TransactionRun::RollbackIncomplete(v) => {
             Err(AppError::InvalidInput(format!(
                 "chunked DML batch matched {} rows, more than the batch size {}",
