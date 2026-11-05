@@ -26,6 +26,7 @@ import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiSurface } from "./AiSurface";
 import { AiUsageNote } from "./AiUsageNote";
 
 /** index ごとのリスク項目 (同期文の行バッジ用)。 */
@@ -227,19 +228,7 @@ export function AiSyncRisk(props: AiSyncRiskProps) {
   const running = state.kind === "running";
 
   return (
-    <Flex
-      direction="column"
-      gap="2"
-      my="3"
-      p="3"
-      borderWidth="1px"
-      borderColor="app.border"
-      borderRadius="md"
-      bg="app.surface"
-      fontSize="sm"
-      color="app.text"
-      data-testid="ai-sync-risk"
-    >
+    <AiSurface edge="box" my="3" data-testid="ai-sync-risk">
       <Flex align="center" gap="2" wrap="wrap">
         <Button
           type="button"
@@ -315,6 +304,6 @@ export function AiSyncRisk(props: AiSyncRiskProps) {
         </Callout>
       )}
       {dialog}
-    </Flex>
+    </AiSurface>
   );
 }

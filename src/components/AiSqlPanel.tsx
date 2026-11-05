@@ -44,6 +44,7 @@ import { EmptyState } from "./EmptyState";
 import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
 import { DiffView } from "./AiSqlDiff";
+import { AiSurface } from "./AiSurface";
 import { AiStreamProgress } from "./AiStreamProgress";
 import { AiUsageNote } from "./AiUsageNote";
 
@@ -401,19 +402,7 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
     conversation.sendScope === ai.sendScope;
 
   return (
-    <Flex
-      ref={rootRef}
-      tabIndex={-1}
-      outline="none"
-      direction="column"
-      gap="2"
-      p="3"
-      h="100%"
-      overflow="auto"
-      fontSize="sm"
-      color="app.text"
-      data-testid="ai-sql-panel"
-    >
+    <AiSurface ref={rootRef} tabIndex={-1} outline="none" h="100%" overflow="auto" data-testid="ai-sql-panel">
       <Flex align="center" gap="2" wrap="wrap">
         <Button
           type="button"
@@ -531,7 +520,7 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
         </FormSection>
       )}
       {dialog}
-    </Flex>
+    </AiSurface>
   );
 }
 

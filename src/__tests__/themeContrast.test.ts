@@ -5,6 +5,7 @@ import css from "../App.css?raw";
 // theme.ts の dark 判定条件 (`conditions.dark`) の実ソースを比較するため。
 import themeTsSource from "../theme.ts?raw";
 import gridSource from "../components/ResultGrid.tsx?raw";
+import aiSurfaceSource from "../components/AiSurface.tsx?raw";
 // コントラスト比の計算はアクセント色ロジック (accent.ts) と共有する (#559)。
 // 二重実装を避け、accent.test.ts と同じ式で全テーマ/プリセットを検証する。
 import { contrastRatio } from "../accent";
@@ -703,6 +704,17 @@ describe("AI 受信中キャレット / ラベル色 --stream-caret (#1756)", ()
       expect(contrastRatio(c, vars[bg]), `caret ${c} on --${bg}`).toBeGreaterThanOrEqual(AA_UI);
       expect(contrastRatio(c, vars[bg]), `label ${c} on --${bg}`).toBeGreaterThanOrEqual(AA_TEXT);
     }
+  });
+});
+
+describe("AI 回答面の左アクセント辺 --ai-accent (#2016)", () => {
+  // --ai-accent は --stream-caret の別名。非テキストの装飾辺として全テーマで 3:1 が
+  // 検証済みの色に固定する (別の色へ差し替えるとこのテストが落ちる)。
+  it("--ai-accent は --stream-caret を指し、AiSurface は teal を文字色に使わない", () => {
+    expect(css).toMatch(/--ai-accent:\s*var\(--stream-caret\);/);
+    const src = aiSurfaceSource;
+    expect(src).toContain('borderInlineStartColor="app.aiAccent"');
+    expect(src).not.toMatch(/\bcolor="app\.aiAccent"/);
   });
 });
 

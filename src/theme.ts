@@ -184,6 +184,8 @@ const config = defineConfig({
           // セル色) を PK アイコンに流用していたが、日付表示調整が PK 表示へ波及
           // する意図しない結合を避けるため分離した。
           keyAccent: { value: "var(--key-accent)" },
+          // AI 回答面の左アクセント辺 (#2016)。AiSurface 専用。
+          aiAccent: { value: "var(--ai-accent)" },
           // ブランド基調色 (#619)。アクセントと違いテーマ/接続で変わらず固定。
           // ロゴマーク・スプラッシュ・ブランド面が参照する。値は App.css の
           // --brand-* と brand.tsx の定数に一致。
