@@ -262,7 +262,8 @@ export interface RememberedColumnSpec {
   temporal: TemporalFormat;
   dateFrom: string;
   dateTo: string;
-  template: string;
+  /** 機微な列名のテンプレートは保存しない (undefined)。 */
+  template?: string;
 }
 
 export interface TestDataPrefs {
@@ -288,8 +289,8 @@ function sanitizeColumnSpec(raw: unknown): RememberedColumnSpec | null {
     temporal: pickOneOf(o.temporal, TEMPORAL_FORMATS, "datetime"),
     dateFrom: pickString(o.dateFrom, DEFAULT_DATE_FROM).slice(0, 10),
     dateTo: pickString(o.dateTo, DEFAULT_DATE_TO).slice(0, 10),
-    template: pickString(o.template, DEFAULT_TEMPLATE).slice(0, MAX_FIXED_VALUE),
   };
+  if (typeof o.template === "string") out.template = o.template.slice(0, MAX_FIXED_VALUE);
   if (typeof o.fixedValue === "string") out.fixedValue = o.fixedValue.slice(0, MAX_FIXED_VALUE);
   return out;
 }
@@ -329,9 +330,11 @@ export function snapshotTestDataPrefs(
       temporal: s.temporal,
       dateFrom: s.dateFrom,
       dateTo: s.dateTo,
-      template: s.template,
     };
-    if (!matchesMaskPattern(s.column, maskPatterns)) entry.fixedValue = s.fixedValue;
+    if (!matchesMaskPattern(s.column, maskPatterns)) {
+      entry.fixedValue = s.fixedValue;
+      entry.template = s.template;
+    }
     columns[s.column] = entry;
   }
   return { rowCountText, seed, columns };
@@ -364,7 +367,7 @@ export function applyRememberedSpecs(specs: readonly ColumnGenSpec[], prefs: Tes
       temporal: saved.temporal,
       dateFrom: saved.dateFrom,
       dateTo: saved.dateTo,
-      template: saved.template,
+      template: saved.template ?? spec.template,
     };
   });
 }

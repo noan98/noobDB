@@ -543,7 +543,7 @@ export function TestDataModal({
                       aria-label={t("testDataTemplate")}
                     />
                   )}
-                  {spec.strategy === "randomDate" && (
+                  {spec.strategy === "randomDate" && spec.temporal !== "time" && (
                     <>
                       <chakra.label display="inline-flex" alignItems="center" gap="1" textStyle="caption">
                         {t("testDataDateFrom")}

@@ -409,7 +409,7 @@ function generateValue(spec: ColumnGenSpec, rowIndex: number, rng: () => number)
     case "randomBool":
       return rng() < 0.5;
     case "template":
-      return expandTemplate(spec.template, rowIndex, rng);
+      return coerceFixedValue(expandTemplate(spec.template, rowIndex, rng), spec.kind);
     case "fixed":
       return coerceFixedValue(spec.fixedValue, spec.kind);
     case "choice":

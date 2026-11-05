@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { TableColumnInfo } from "../api/tauri";
 import {
   expandTemplate,
-  mulberry32 as mulberry32ForTemplate,
   parseIsoDate,
   resolveDateRange,
   activeSpecs,
@@ -341,7 +340,7 @@ describe("inferColumnSpec: 文字列で表せない型の既定 (#1607)", () => 
 });
 
 describe("テンプレート文字列と日付範囲 (#2035)", () => {
-  const rng = () => mulberry32ForTemplate(7);
+  const rng = () => mulberry32(7);
 
   it("expandTemplate: 行番号・0 埋め・範囲乱数・候補・英数字を展開する", () => {
     expect(expandTemplate("user{n:4}@example.com", 2, rng())).toBe("user0003@example.com");
@@ -367,6 +366,11 @@ describe("テンプレート文字列と日付範囲 (#2035)", () => {
     const a = generateRows([sp], 3, 5);
     expect(generateRows([sp], 3, 5)).toEqual(a);
     expect(a.map((r) => String(r[0]).split("-")[0])).toEqual(["n1", "n2", "n3"]);
+  });
+
+  it("template は数値列では数値へ型変換される", () => {
+    const rows = generateRows([spec({ strategy: "template", kind: "number", template: "{n}" })], 2, 1);
+    expect(rows).toEqual([[1], [2]]);
   });
 
   it("parseIsoDate: 実在しない日付や形式違いは null", () => {
