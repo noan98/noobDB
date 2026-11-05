@@ -62,8 +62,8 @@ export function FeatureIcon({
       initial={pop ? variants.fadeScale.initial : false}
       animate={pop ? variants.fadeScale.animate : undefined}
       transition={pop ? transitions.emphasized : undefined}
-      align="center"
-      justify="center"
+      alignItems="center"
+      justifyContent="center"
       flexShrink={0}
       boxSize={TILE_SIZES[size]}
       rounded="lg"
