@@ -1766,6 +1766,7 @@ pub fn run() {
             commands::query::preview_query_stream,
             commands::query::cancel_stream,
             commands::schema::list_databases,
+            commands::schema::list_server_databases,
             commands::schema::list_tables,
             commands::schema::describe_table,
             commands::schema::describe_table_extras,

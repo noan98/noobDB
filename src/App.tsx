@@ -15,6 +15,8 @@ import {
   type ReactNode,
 } from "react";
 import { connectRequestFromProfile } from "./connectRequest";
+import { databaseVariantProfile } from "./openDatabase";
+import { OpenDatabaseModal } from "./components/OpenDatabaseModal";
 import { beginBatchRun, endBatchRun, isCurrentBatchRun } from "./batchRunGuard";
 import { Box, Flex, Grid, chakra, visuallyHiddenStyle } from "@chakra-ui/react";
 import { Callout } from "./components/Callout";
@@ -1558,6 +1560,8 @@ export default function App() {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   // スキーマ横断のグローバルオブジェクト検索の開閉。
   const [showObjectSearch, setShowObjectSearch] = useState(false);
+  // 同じサーバの別データベースを開く (#2018, PostgreSQL)。
+  const [showOpenDatabase, setShowOpenDatabase] = useState(false);
   const [showHistorySearch, setShowHistorySearch] = useState(false);
   // DB 全体からの値検索 (#748) の開閉。
   const [showDataSearch, setShowDataSearch] = useState(false);
@@ -2141,6 +2145,7 @@ export default function App() {
       showSnippetForm ||
       showCommandPalette ||
       showObjectSearch ||
+      showOpenDatabase ||
       showDataSearch;
     cheatSheetOpenRef.current = showCheatSheet;
     overlayOpenRef.current = blockingOverlayOpenRef.current || showCheatSheet;
@@ -10892,6 +10897,7 @@ export default function App() {
       showSnippetForm ||
       showCommandPalette ||
       showObjectSearch ||
+      showOpenDatabase ||
       showDataSearch ||
       showCheatSheet
     )
@@ -11070,6 +11076,7 @@ export default function App() {
     goToPageInTab,
     panesRef,
     tabsRef,
+    showOpenDatabase,
   ]);
 
   // Cmd/Ctrl+K でコマンドパレットを開閉する。接続前でも (接続切替・設定/ヘルプ
@@ -11917,6 +11924,17 @@ export default function App() {
         t,
       ),
     );
+    // PostgreSQL は 1 接続 = 1 データベース。別の datname は新しい接続として開く (#2018)。
+    if (sessionId && selectedProfile?.driver === "postgres") {
+      items.push({
+        id: "nav:open-database",
+        group: "navigation",
+        label: t("cmdkActionOpenDatabase"),
+        icon: "database",
+        keywords: "open database switch datname pg_database 別データベース 切り替え",
+        run: () => setShowOpenDatabase(true),
+      });
+    }
     if (sessionId) {
       items.push({
         id: "nav:disconnect",
@@ -14991,6 +15009,19 @@ export default function App() {
             onClose={() => setShowHistorySearch(false)}
           />
         )}
+        <AnimatePresence>
+          {showOpenDatabase && sessionId && selectedProfile && (
+            <OpenDatabaseModal
+              sessionId={sessionId}
+              currentDatabase={selectedProfile.database}
+              onOpen={(database) => {
+                setShowOpenDatabase(false);
+                void handleConnect(databaseVariantProfile(selectedProfile, database));
+              }}
+              onClose={() => setShowOpenDatabase(false)}
+            />
+          )}
+        </AnimatePresence>
         <AnimatePresence>
           {showObjectSearch && sessionId && (
             <ObjectSearchModal

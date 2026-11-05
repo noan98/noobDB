@@ -41,6 +41,21 @@ pub async fn list_databases(session_id: String, state: State<'_, AppState>) -> R
     session.schema_cache.databases(|| conn.databases()).await
 }
 
+/// サーバ上の実データベース一覧 (#2018)。PostgreSQL のみ値を返し、MySQL / SQLite は空
+/// (UI は空のとき「別データベースを開く」導線を出さない)。読み取りのみで `read_only` でも許可。
+/// スキーマキャッシュは経由しない (DB の増減を即反映するため。呼ぶのはユーザ操作時だけ)。
+#[tauri::command]
+pub async fn list_server_databases(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session.conn.server_databases().await
+}
+
 #[tauri::command]
 pub async fn list_tables(
     session_id: String,
