@@ -239,6 +239,14 @@ export const processInfo = z.object({
     .nullish(),
 });
 
+/** `run_chunked_dml_batch` の結果 (#2020)。 */
+export const chunkedDmlBatchResult = z.object({
+  rows_affected: z.number(),
+  elapsed_ms: z.number(),
+  recorded: z.boolean(),
+  capture_note: z.string().nullable(),
+});
+
 /** `insert_generated_rows` の結果 (#1259)。 */
 export const insertRowsResult = z.object({
   inserted: z.number(),

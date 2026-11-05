@@ -2010,6 +2010,12 @@ fn build_fixtures() -> serde_json::Value {
         inserted: 100,
         elapsed_ms: 8,
     };
+    let chunked_dml_batch_result = t::ChunkedDmlBatchResult {
+        rows_affected: 1000,
+        elapsed_ms: 12,
+        recorded: false,
+        capture_note: Some("declined".into()),
+    };
     // `status` タグ付き enum は shape がバリアントごとに違うので、1 バリアント 1 キーで持つ。
     let bulk_write_outcome_applied = t::BulkWriteOutcome::Applied {
         result: query_result.clone(),
@@ -2739,6 +2745,7 @@ fn build_fixtures() -> serde_json::Value {
         "columnDependencyReport": column_dependency_report,
         "tableStatistic": table_statistic,
         "insertRowsResult": insert_rows_result,
+        "chunkedDmlBatchResult": chunked_dml_batch_result,
         "bulkWriteOutcomeApplied": bulk_write_outcome_applied,
         "bulkWriteOutcomeRowCountExceeded": bulk_write_outcome_row_count_exceeded,
         "bulkWriteOutcomeOptimisticConflict": bulk_write_outcome_optimistic_conflict,

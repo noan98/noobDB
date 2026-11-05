@@ -580,7 +580,7 @@ pub mod __test_api {
     pub use crate::commands::bulk_capture::{BulkCaptureConfig, BulkCaptureOutcome};
     pub use crate::commands::bulk_write::{
         BulkOldValue, BulkSetColumn, BulkSetValue, BulkUpdateGroup, BulkWriteOptions,
-        BulkWriteOutcome, InsertRowsResult,
+        BulkWriteOutcome, ChunkedDmlBatchResult, ChunkedDmlOperation, InsertRowsResult,
     };
     pub use crate::commands::connection::{health_probe_all_inner, HealthProbeStatus};
     pub use crate::commands::inspector::{
@@ -1170,6 +1170,102 @@ pub mod __test_api {
             options,
         )
         .await
+    }
+
+    /// チャンク分割 DML (#2020) の 1 バッチ実行のコア経路。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run_chunked_dml_batch_via_command(
+        state: &AppState,
+        session_id: &str,
+        database: Option<&str>,
+        table: &str,
+        operation: ChunkedDmlOperation,
+        where_clause: &str,
+        batch_size: u32,
+        capture_enabled: bool,
+    ) -> crate::error::Result<ChunkedDmlBatchResult> {
+        crate::commands::bulk_write::run_chunked_dml_batch_inner(
+            state,
+            session_id.to_string(),
+            database.map(str::to_string),
+            table.to_string(),
+            operation,
+            where_clause.to_string(),
+            batch_size,
+            capture_enabled,
+            None,
+        )
+        .await
+    }
+
+    /// 上限つき記録つき書き込み (`run_captured_write_bounded_inner`、#2020)。`None` は記録を辞退する文
+    /// (何も実行していない)。
+    pub async fn run_captured_write_bounded_via_command(
+        state: &AppState,
+        session_id: &str,
+        sql: &str,
+        database: Option<&str>,
+        row_cap: u32,
+        max_rows: u64,
+    ) -> crate::error::Result<Option<crate::commands::flight_recorder::CapturedWriteResponse>> {
+        use crate::commands::flight_recorder::BoundedCaptureResponse;
+        Ok(
+            match crate::commands::flight_recorder::run_captured_write_bounded_inner(
+                state,
+                session_id.to_string(),
+                sql.to_string(),
+                database.map(str::to_string),
+                row_cap,
+                None,
+                max_rows,
+            )
+            .await?
+            {
+                BoundedCaptureResponse::Declined(_) => None,
+                BoundedCaptureResponse::Done(r) => Some(r),
+            },
+        )
+    }
+
+    /// チャンク分割 DML の SQL 生成 (`db::chunked_dml::build_chunk_sql`)。成功は SQL、拒否は
+    /// 理由コード (`ChunkedDmlError::code`)。実装横断ゴールデン (`tests/chunked_dml_golden.rs`) が使う。
+    pub fn chunked_dml_sql(
+        driver: DriverKind,
+        database: Option<&str>,
+        table: &str,
+        set_clause: Option<&str>,
+        where_clause: &str,
+        batch_size: u32,
+        row_key: &str,
+    ) -> Result<String, String> {
+        use crate::db::chunked_dml::{build_chunk_sql, ChunkedOp};
+        let op = match set_clause {
+            Some(s) => ChunkedOp::Update {
+                set_clause: s.to_string(),
+            },
+            None => ChunkedOp::Delete,
+        };
+        build_chunk_sql(
+            driver,
+            database,
+            table,
+            &op,
+            where_clause,
+            batch_size,
+            row_key,
+        )
+        .map_err(|e| e.code().to_string())
+    }
+
+    /// 対象件数 SELECT の生成 (`db::chunked_dml::build_count_sql`)。
+    pub fn chunked_dml_count_sql(
+        driver: DriverKind,
+        database: Option<&str>,
+        table: &str,
+        where_clause: &str,
+    ) -> Result<String, String> {
+        crate::db::chunked_dml::build_count_sql(driver, database, table, where_clause)
+            .map_err(|e| e.code().to_string())
     }
 
     /// Drives the `insert_generated_rows` IPC command's core path without a
@@ -1784,6 +1880,7 @@ pub fn run() {
             commands::query::run_query_transaction,
             commands::bulk_write::bulk_update_cells,
             commands::bulk_write::insert_generated_rows,
+            commands::bulk_write::run_chunked_dml_batch,
             commands::query::run_lookup_query,
             commands::query::begin_transaction,
             commands::query::run_in_transaction,

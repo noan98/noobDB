@@ -22,15 +22,20 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::commands::bulk_capture::{self, BulkCaptureConfig, BulkCaptureOutcome};
+use crate::commands::flight_recorder::{run_captured_write_bounded_inner, BoundedCaptureResponse};
 use crate::commands::query::{
     ensure_allowed_for_session, record_write_history, run_query_transaction_guarded_inner,
     TransactionRun,
+};
+use crate::db::chunked_dml::{
+    build_chunk_sql, mysql_sql_mode_is_unsafe, pick_sqlite_row_key, ChunkedOp,
 };
 use crate::db::create_table::{render_create_table_in, render_drop_table_in, NewColumn};
 use crate::db::data_diff::{is_numeric_literal, sql_literal};
 use crate::db::sync::quote_ident;
 use crate::db::types::{QueryResult, Value};
 use crate::db::upsert::ImportConflict;
+use crate::db::Connection;
 use crate::db::DriverKind;
 use crate::db::RowExpectation;
 use crate::error::{AppError, Result};
@@ -1373,4 +1378,214 @@ mod tests {
         );
         assert!(generated_cell_text(&json!([1])).is_err());
     }
+}
+
+/// チャンク分割実行の操作 (#2020)。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum ChunkedDmlOperation {
+    Delete,
+    /// `set_clause` は `SET` の右辺。
+    Update {
+        set_clause: String,
+    },
+}
+
+/// `run_chunked_dml_batch` の結果。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ChunkedDmlBatchResult {
+    pub rows_affected: u64,
+    pub elapsed_ms: u64,
+    /// フライトレコーダに記録した。
+    pub recorded: bool,
+    /// 記録を求めたのに辞退された理由 (MyISAM・上限超過・対象を特定できない等)。書き込み自体は行われている。
+    pub capture_note: Option<String>,
+}
+
+/// 大規模 DML (#2020) の 1 バッチを実行する。ループ (進捗・ウェイト・キャンセル・最大バッチ数) は
+/// 呼び出し側 (フロント) が持ち、ここは `DELETE ... LIMIT n` 相当の 1 文を組み立てて既存の書き込み経路に渡すだけ。
+/// - 通常: `run_query_transaction_guarded_inner` (影響行数が `batch_size` 超ならロールバック)。
+/// - `capture_enabled` (フライトレコーダ有効): `run_captured_write_inner` (`row_cap` = `batch_size`)。
+///   辞退されても書き込みは 1 回実行される。捕捉経路は事後にしか件数を検算できない。
+///
+/// どちらも read_only ガード (緊急モード含む)・履歴・キャッシュ invalidate は既存と同一。
+/// SQLite の WITHOUT ROWID 表・ビュー・仮想表と、`rowid`/`_rowid_`/`oid` が全て実列の表は拒否する。
+/// MySQL は非トランザクショナル表と、`NO_BACKSLASH_ESCAPES` / `ANSI_QUOTES` の `sql_mode` を拒否する。
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub async fn run_chunked_dml_batch(
+    session_id: String,
+    database: Option<String>,
+    table: String,
+    operation: ChunkedDmlOperation,
+    where_clause: String,
+    batch_size: u32,
+    capture_enabled: Option<bool>,
+    capture_retention_days: Option<u32>,
+    state: State<'_, AppState>,
+) -> Result<ChunkedDmlBatchResult> {
+    run_chunked_dml_batch_inner(
+        state.inner(),
+        session_id,
+        database,
+        table,
+        operation,
+        where_clause,
+        batch_size,
+        capture_enabled.unwrap_or(false),
+        capture_retention_days,
+    )
+    .await
+}
+
+/// [`run_chunked_dml_batch`] の State なしコア (#881)。
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_chunked_dml_batch_inner(
+    state: &AppState,
+    session_id: String,
+    database: Option<String>,
+    table: String,
+    operation: ChunkedDmlOperation,
+    where_clause: String,
+    batch_size: u32,
+    capture_enabled: bool,
+    capture_retention_days: Option<u32>,
+) -> Result<ChunkedDmlBatchResult> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    let driver = session.conn.driver_kind();
+    let op = match operation {
+        ChunkedDmlOperation::Delete => ChunkedOp::Delete,
+        ChunkedDmlOperation::Update { set_clause } => ChunkedOp::Update { set_clause },
+    };
+    let mut row_key = "rowid";
+    if let Connection::Sqlite(c) = &session.conn {
+        if !c.is_rowid_table(&table).await? {
+            return Err(AppError::InvalidInput(
+                "chunked DML needs a rowid table (WITHOUT ROWID tables, views and virtual tables are not supported)"
+                    .into(),
+            ));
+        }
+        let names: Vec<String> = c
+            .columns("main", &table)
+            .await?
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
+        row_key = pick_sqlite_row_key(&names).ok_or_else(|| {
+            AppError::InvalidInput(
+                "chunked DML cannot address rows: rowid, _rowid_ and oid are all real columns"
+                    .into(),
+            )
+        })?;
+    }
+    let sql = build_chunk_sql(
+        driver,
+        database.as_deref(),
+        &table,
+        &op,
+        &where_clause,
+        batch_size,
+        row_key,
+    )
+    .map_err(|e| AppError::InvalidInput(format!("chunked DML rejected: {}", e.code())))?;
+    if let Connection::MySql(c) = &session.conn {
+        // sql_mode が断片の解釈 (バックスラッシュ・二重引用符) を変えるなら、検査の前提が崩れるので拒否する。
+        let mode = session.conn.execute("SELECT @@sql_mode", None).await?;
+        // 読めない (String 以外・NULL) ときは fail-closed。Bytes は UTF-8 として解釈できれば判定に使う。
+        let mode_text = match mode.rows.first().and_then(|r| r.first()) {
+            Some(Value::String(s)) => Some(s.clone()),
+            Some(Value::Bytes(h)) => decode_hex(h).and_then(|b| String::from_utf8(b).ok()),
+            _ => None,
+        };
+        let Some(mode_text) = mode_text else {
+            return Err(AppError::InvalidInput(
+                "chunked DML rejected: could not read sql_mode".into(),
+            ));
+        };
+        if mysql_sql_mode_is_unsafe(&mode_text) {
+            return Err(AppError::InvalidInput(
+                "chunked DML rejected: sql_mode contains NO_BACKSLASH_ESCAPES or ANSI_QUOTES"
+                    .into(),
+            ));
+        }
+        // ROLLBACK で戻らない表 (MyISAM 等) では、途中で止めると取り返しがつかない。
+        if c.write_target_is_non_transactional(database.as_deref(), &sql)
+            .await
+            .unwrap_or(true)
+        {
+            return Err(AppError::InvalidInput(
+                "chunked DML rejected: the table is non-transactional (or its engine could not be determined)"
+                    .into(),
+            ));
+        }
+    }
+    // 記録を辞退された文は何も実行されていないので、通常経路 (影響行数の上限つき) で実行する。
+    let mut decline_note: Option<String> = None;
+    if capture_enabled {
+        match run_captured_write_bounded_inner(
+            state,
+            session_id.clone(),
+            sql.clone(),
+            database.clone(),
+            batch_size,
+            capture_retention_days,
+            u64::from(batch_size),
+        )
+        .await?
+        {
+            BoundedCaptureResponse::Done(resp) => {
+                let recorded = resp.capturable && resp.capture_id.is_some();
+                let capture_note = if !resp.capturable {
+                    Some(resp.reason.unwrap_or_default())
+                } else if resp.capture_id.is_none() {
+                    Some(if session.skip_history {
+                        "履歴を残さない設定のため記録なし".to_string()
+                    } else {
+                        "記録の保存に失敗したため記録なし".to_string()
+                    })
+                } else {
+                    None
+                };
+                return Ok(ChunkedDmlBatchResult {
+                    rows_affected: resp.result.rows_affected,
+                    elapsed_ms: resp.result.elapsed_ms,
+                    recorded,
+                    capture_note,
+                });
+            }
+            BoundedCaptureResponse::Declined(reason) => decline_note = Some(reason),
+        }
+    }
+    let expects = vec![RowExpectation::at_most(u64::from(batch_size))];
+    match run_query_transaction_guarded_inner(state, session_id, vec![sql], expects, database)
+        .await?
+    {
+        TransactionRun::Committed(result) => Ok(ChunkedDmlBatchResult {
+            rows_affected: result.rows_affected,
+            elapsed_ms: result.elapsed_ms,
+            recorded: false,
+            capture_note: decline_note,
+        }),
+        TransactionRun::RolledBack(v) | TransactionRun::RollbackIncomplete(v) => {
+            Err(AppError::InvalidInput(format!(
+                "chunked DML batch matched {} rows, more than the batch size {}",
+                v.actual, v.expected
+            )))
+        }
+    }
+}
+
+/// `Value::Bytes` の 16 進文字列をバイト列に戻す (読めなければ None)。
+fn decode_hex(hex: &str) -> Option<Vec<u8>> {
+    let hex = hex.trim();
+    if hex.len() % 2 != 0 {
+        return None;
+    }
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok())
+        .collect()
 }

@@ -3,6 +3,8 @@ pub mod assertions;
 pub mod aws_iam;
 /// 環境横断ブロードキャストの結果比較 (#1257)。
 pub mod broadcast_diff;
+/// 大規模 DML のチャンク分割実行の SQL 生成 (#2020)。
+pub mod chunked_dml;
 /// DROP COLUMN の依存オブジェクト検出 (#1758)。
 pub mod column_deps;
 /// ファイルから新規テーブルを作るときの方言別 CREATE TABLE 生成 (#985)。
@@ -2029,7 +2031,7 @@ impl Connection {
     ) -> Result<(QueryResult, WriteCapture)> {
         let prep = self.capture_prepare(sql, database, row_cap).await?;
         let run = self.capture_execute(prep, sql, database).await?;
-        self.capture_commit(run, sql).await
+        self.capture_commit(run, sql, None).await
     }
 
     /// [`Connection::capture_write`] の前半: 書き込みを一切実行せず (件数見積もりのみ)、
@@ -2116,11 +2118,26 @@ impl Connection {
         sql: &str,
         database: Option<&str>,
     ) -> Result<CaptureRun> {
-        let ready = match prep {
-            CapturePrep::Decline(capture) => {
+        match self.capture_execute_strict(prep, sql, database).await? {
+            Ok(run) => Ok(run),
+            Err(capture) => {
                 let result = self.execute(sql, database).await?;
-                return Ok(CaptureRun::Done(Box::new((result, capture))));
+                Ok(CaptureRun::Done(Box::new((result, capture))))
             }
+        }
+    }
+
+    /// [`Connection::capture_execute`] のうち、記録を辞退する経路で**何も実行しない**版
+    /// (#2020 チャンク分割 DML)。辞退時は `Ok(Err(capture))` を返し、呼び出し側が
+    /// 件数上限つきの通常経路で実行し直せるようにする (自動コミットで先に確定させない)。
+    pub async fn capture_execute_strict(
+        &self,
+        prep: CapturePrep,
+        sql: &str,
+        database: Option<&str>,
+    ) -> Result<std::result::Result<CaptureRun, WriteCapture>> {
+        let ready = match prep {
+            CapturePrep::Decline(capture) => return Ok(Err(capture)),
             CapturePrep::Ready(r) => *r,
         };
         let ReadyCapture {
@@ -2134,22 +2151,19 @@ impl Connection {
             .execute_snapshot_uncommitted(sql, database, row_cap, upsert.as_ref())
             .await
         {
-            Ok((preview, result, tx)) => Ok(CaptureRun::Pending(Box::new(PendingCapture {
+            Ok((preview, result, tx)) => Ok(Ok(CaptureRun::Pending(Box::new(PendingCapture {
                 kind,
                 preview,
                 result,
                 tx,
                 upsert: is_upsert,
-            }))),
+            })))),
             // トランザクションを開く前に弾かれた (複数文など) 場合は何も実行されていない。
-            // 記録を辞退して通常経路で 1 回実行する。
-            Err(AppError::InvalidInput(_)) => {
-                let result = self.execute(sql, database).await?;
-                Ok(CaptureRun::Done(Box::new((
-                    result,
-                    WriteCapture::not_capturable(kind, "対象テーブル/主キーを特定できませんでした"),
-                ))))
-            }
+            // 記録を辞退する (通常経路での実行は呼び出し側が決める)。
+            Err(AppError::InvalidInput(_)) => Ok(Err(WriteCapture::not_capturable(
+                kind,
+                "対象テーブル/主キーを特定できませんでした",
+            ))),
             Err(e) => Err(e),
         }
     }
@@ -2158,15 +2172,40 @@ impl Connection {
     /// COMMIT は書き込みを確定する唯一の操作なので、呼び出し側はタイムアウト / キャンセルの
     /// 外 (切り離したタスク) で実行する。行の特定などの失敗は記録を辞退するだけで、
     /// `rows_affected` の照合に失敗した場合も書き込み自体は COMMIT する (記録なしで確定)。
+    ///
+    /// `max_rows` を渡すと、COMMIT 前に影響行数がそれを超えていればロールバックして
+    /// `InvalidInput` を返す (チャンク分割 DML の上限、#2020)。`None` は従来どおり。
     pub async fn capture_commit(
         &self,
         run: CaptureRun,
         sql: &str,
+        max_rows: Option<u64>,
     ) -> Result<(QueryResult, WriteCapture)> {
+        let over = |n: u64| {
+            AppError::InvalidInput(format!(
+                "write affected {n} rows, more than the allowed {}",
+                max_rows.unwrap_or_default()
+            ))
+        };
         let pending = match run {
-            CaptureRun::Done(done) => return Ok(*done),
+            CaptureRun::Done(done) => {
+                if let Some(max) = max_rows {
+                    if done.0.rows_affected > max {
+                        return Err(over(done.0.rows_affected));
+                    }
+                }
+                return Ok(*done);
+            }
             CaptureRun::Pending(p) => *p,
         };
+        if let Some(max) = max_rows {
+            if pending.result.rows_affected > max {
+                let n = pending.result.rows_affected;
+                // COMMIT せずに drop してロールバックする。
+                drop(pending);
+                return Err(over(n));
+            }
+        }
         let PendingCapture {
             kind,
             preview,
