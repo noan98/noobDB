@@ -27,6 +27,7 @@ const allRustSources = Object.values(rustModules);
 //   - TS: `invoke("cmd", { key: expr })` の値式 + それが参照するラッパー関数のパラメータ型。
 //     識別子 / `params.x` / `x ?? null` / リテラルなど静的に分かる式だけを比べ、
 //     分からないもの (任意の式・解決できない名前付き型) は「不明」として検査しない。
+// 64bit 整数の範囲 (JS の安全整数を超える値) は種別 (number) 粒度では見えないため対象外。
 // 「不明」を増やして偽陽性を避ける一方、Rust が確定した種別なのに TS が明確に食い違う
 // 場合 (null を渡しうるのに Rust が必須、種別違い) は fail させる。
 
@@ -42,7 +43,11 @@ interface Shape {
 
 const UNKNOWN: Shape = { kinds: null, nullable: false };
 
-function splitTop(text: string, delimiter: string, trackStrings: boolean): string[] {
+/**
+ * `angle` が true のとき `<` `>` もネスト深さに数える (型を分割するとき)。TS の値式や
+ * invoke の引数では比較演算子 `a > b` が現れるため false にする。
+ */
+function splitTop(text: string, delimiter: string, trackStrings: boolean, angle: boolean): string[] {
   const parts: string[] = [];
   let depth = 0;
   let cur = "";
@@ -67,8 +72,8 @@ function splitTop(text: string, delimiter: string, trackStrings: boolean): strin
       cur += ch;
       continue;
     }
-    if ("([{<".includes(ch)) depth++;
-    else if (")]}>".includes(ch)) depth = Math.max(0, depth - 1);
+    if ("([{".includes(ch) || (angle && ch === "<")) depth++;
+    else if (")]}".includes(ch) || (angle && ch === ">")) depth = Math.max(0, depth - 1);
     if (ch === delimiter && depth === 0) {
       parts.push(cur);
       cur = "";
@@ -229,7 +234,7 @@ function extractRustCommandParamTypes(source: string): Map<string, Map<string, s
     if (closeParen === -1) throw new Error(`${fm[1]} の引数リストが閉じていない`);
     const params = chunk.slice(openParen + 1, closeParen).replace(/\/\/[^\n]*/g, "");
     const map = new Map<string, string>();
-    for (const raw of splitTop(params, ",", false)
+    for (const raw of splitTop(params, ",", false, true)
       .map((p) => p.trim())
       .filter((p) => p !== "")) {
       const cleaned = raw.replace(/^mut\s+/, "");
@@ -247,10 +252,25 @@ function extractRustCommandParamTypes(source: string): Map<string, Map<string, s
 // ---------------------------------------------------------------- TS 側
 
 /** TS のローカルな型エイリアス (`type X = ...;`)。ラッパー層から参照されるもののうち解決できるもの。 */
-function collectTsAliases(source: string): Map<string, string> {
+function collectTsAliases(source: string, extraSources: string[] = []): Map<string, string> {
   const aliases = new Map<string, string>();
+  // `interface X { ... }` は本体を `{ ... }` のオブジェクト型として登録する (extends は無視)。
+  for (const src of [source, ...extraSources]) {
+    for (const m of src.matchAll(
+      /^(?:export\s+)?interface\s+(\w+)(?:<[^>{]*>)?(?:\s+extends\s+[^{]+)?\s*\{/gm,
+    )) {
+      const open = m.index + m[0].length - 1;
+      const close = matchClose(src, open, true);
+      if (close !== -1 && !aliases.has(m[1])) aliases.set(m[1], src.slice(open, close + 1));
+    }
+    for (const m of src.matchAll(/^(?:export\s+)?type\s+(\w+)\s*=\s*(\{)/gm)) {
+      const open = m.index + m[0].length - 1;
+      const close = matchClose(src, open, true);
+      if (close !== -1 && !aliases.has(m[1])) aliases.set(m[1], src.slice(open, close + 1));
+    }
+  }
   for (const m of source.matchAll(/^(?:export\s+)?type\s+(\w+)\s*=\s*([^;]+);/gm)) {
-    aliases.set(m[1], m[2].trim());
+    if (!aliases.has(m[1])) aliases.set(m[1], m[2].trim());
   }
   return aliases;
 }
@@ -259,7 +279,7 @@ function classifyTsType(rawType: string, aliases: Map<string, string>, depth = 0
   if (depth > 8) return UNKNOWN;
   const t = rawType.trim().replace(/^\|\s*/, "");
   if (t === "") return UNKNOWN;
-  const members = splitTop(t, "|", true).map((s) => s.trim());
+  const members = splitTop(t, "|", true, true).map((s) => s.trim());
   if (members.length > 1) {
     let nullable = false;
     const kinds = new Set<Kind>();
@@ -314,12 +334,21 @@ function findEnclosingWrapperParams(source: string, at: number): Map<string, Wra
   const openIdx = last.index + last[0].length - 1;
   const closeIdx = matchClose(source, openIdx, true);
   if (closeIdx === -1 || closeIdx > at) return result;
-  for (const p of splitTop(source.slice(openIdx + 1, closeIdx), ",", true)
+  for (const p of splitTop(source.slice(openIdx + 1, closeIdx), ",", true, true)
     .map((s) => s.trim())
     .filter((s) => s !== "")) {
     const pm = /^(\w+)(\?)?\s*(?::\s*([\s\S]*?))?(?:\s=\s([\s\S]*))?$/.exec(p);
     if (!pm) continue;
-    result.set(pm[1], { type: pm[3] ?? "", optional: pm[2] === "?", hasDefault: pm[4] !== undefined });
+    let type = pm[3] ?? "";
+    // 型注釈が無く既定値だけある引数は、既定値のリテラルから種別を推論する。
+    if (type === "" && pm[4] !== undefined) {
+      const lit = pm[4].trim();
+      if (lit === "true" || lit === "false") type = "boolean";
+      else if (/^-?\d+(\.\d+)?$/.test(lit)) type = "number";
+      else if (/^(["'`]).*\1$/s.test(lit)) type = "string";
+      else if (lit.startsWith("[")) type = "unknown[]";
+    }
+    result.set(pm[1], { type, optional: pm[2] === "?", hasDefault: pm[4] !== undefined });
   }
   return result;
 }
@@ -335,7 +364,7 @@ function parseObjectTypeMembers(typeText: string): Map<string, WrapperParam> {
     .slice(1, close)
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^\s*\/\/.*$/gm, "");
-  for (const part of splitTop(body.replace(/;/g, ","), ",", true)
+  for (const part of splitTop(body.replace(/;/g, ","), ",", true, true)
     .map((s) => s.trim())
     .filter((s) => s !== "")) {
     const pm = /^(\w+)(\?)?\s*:\s*([\s\S]+)$/.exec(part);
@@ -365,6 +394,9 @@ function classifyTsValue(
   if (e === "true" || e === "false") return { kinds: new Set<Kind>(["boolean"]), nullable: false };
   if (e === "null") return { kinds: new Set(), nullable: true };
   if (e.startsWith("[") && e.endsWith("]")) return { kinds: new Set<Kind>(["array"]), nullable: false };
+  if (e.startsWith("{") && e.endsWith("}") && matchClose(e, 0, true) === e.length - 1)
+    return { kinds: new Set<Kind>(["object"]), nullable: false };
+  if (/\.(?:map|filter)\([\s\S]*\)$/.test(e)) return { kinds: new Set<Kind>(["array"]), nullable: false };
   if (/^JSON\.stringify\(/.test(e)) return { kinds: new Set<Kind>(["string"]), nullable: false };
   let p: WrapperParam | undefined;
   let member: string | undefined;
@@ -374,7 +406,10 @@ function classifyTsValue(
   else if (dotted) {
     const base = params.get(dotted[1]);
     if (base) {
-      p = parseObjectTypeMembers(base.type).get(dotted[2]);
+      const baseType = /^\w+$/.test(base.type.trim())
+        ? (aliases.get(base.type.trim()) ?? base.type)
+        : base.type;
+      p = parseObjectTypeMembers(baseType).get(dotted[2]);
       member = dotted[2];
     }
   }
@@ -409,7 +444,7 @@ function extractInvokeArgTypes(
     if (source[i] !== "(") continue;
     const close = matchClose(source, i, true);
     if (close === -1) continue;
-    const rawArgs = splitTop(source.slice(i + 1, close), ",", true)
+    const rawArgs = splitTop(source.slice(i + 1, close), ",", true, false)
       .map((s) => s.trim())
       .filter((s) => s !== "");
     const cmd = /^"([a-z_][a-z0-9_]*)"$/.exec(rawArgs[0] ?? "");
@@ -419,7 +454,7 @@ function extractInvokeArgTypes(
     const obj = rawArgs[1];
     if (!obj || !obj.startsWith("{") || !obj.endsWith("}")) continue;
     const params = findEnclosingWrapperParams(source, m.index);
-    for (const prop of splitTop(obj.slice(1, -1), ",", true)
+    for (const prop of splitTop(obj.slice(1, -1), ",", true, false)
       .map((s) => s.trim())
       .filter((s) => s !== "")) {
       const colon = firstTopColon(prop);
@@ -474,13 +509,40 @@ function compareShapes(rust: Shape, ts: Shape): string | null | "skip" {
 }
 
 const defs = collectRustTypeDefs(allRustSources);
-const tsAliases = collectTsAliases(tauriTs);
+const tsTypeSources = Object.entries(
+  import.meta.glob("../**/*.{ts,tsx}", { eager: true, query: "?raw", import: "default" }) as Record<
+    string,
+    string
+  >,
+)
+  .filter(([path]) => !path.includes("/__tests__/"))
+  .map(([, src]) => src);
+const tsAliases = collectTsAliases(tauriTs, tsTypeSources);
 
 const backendTypes = new Map<string, Map<string, string>>();
 for (const src of commandSources) {
   for (const [name, params] of extractRustCommandParamTypes(src)) backendTypes.set(name, params);
 }
 const frontendTypes = extractInvokeArgTypes(tauriTs, tsAliases);
+
+/** 種別照合できた件数と、TS 側が不明で検査できなかった件数。 */
+function countCoverage(
+  backend: Map<string, Map<string, string>>,
+  frontend: Map<string, Map<string, InvokeArg>>,
+  rustDefs: RustTypeDefs,
+): { compared: number; tsUnknown: number } {
+  let compared = 0;
+  let tsUnknown = 0;
+  for (const [cmd, rustParams] of backend) {
+    for (const [key, rustType] of rustParams) {
+      const arg = frontend.get(cmd)?.get(key);
+      if (!arg) continue;
+      if (arg.shape.kinds === null) tsUnknown++;
+      else if (classifyRustType(rustType, rustDefs).kinds !== null) compared++;
+    }
+  }
+  return { compared, tsUnknown };
+}
 
 function findMismatches(
   backend: Map<string, Map<string, string>>,
@@ -510,7 +572,17 @@ describe("IPC 引数型パリティ (Rust コマンドの引数型 ↔ tauri.ts 
   it("抽出ロジックの保険: 十分な数の引数が両側から型付きで取れている", () => {
     expect(backendTypes.size).toBeGreaterThanOrEqual(200);
     expect(frontendTypes.size).toBeGreaterThanOrEqual(200);
-    expect(findMismatches(backendTypes, frontendTypes, defs).compared).toBeGreaterThanOrEqual(400);
+    expect(findMismatches(backendTypes, frontendTypes, defs).compared).toBeGreaterThanOrEqual(500);
+  });
+
+  it("Rust にある引数キーが TS 側の抽出から落ちていない (抽出失敗の検知)", () => {
+    const missing: string[] = [];
+    for (const [cmd, rustParams] of backendTypes) {
+      const tsArgs = frontendTypes.get(cmd);
+      if (!tsArgs) continue; // 名前レベルの欠落は ipcCommandParity / ipcArgParity の担当
+      for (const key of rustParams.keys()) if (!tsArgs.has(key)) missing.push(`${cmd}.${key}`);
+    }
+    expect(missing.sort(), `TS 側で抽出できていない引数: ${missing.join(", ")}`).toEqual([]);
   });
 
   it("Rust 型の分類 (Option / エイリアス / struct / enum / ジェネリクス)", () => {
@@ -553,6 +625,46 @@ describe("IPC 引数型パリティ (Rust コマンドの引数型 ↔ tauri.ts 
     expect(k("opts.b")).toBe("array?");
     expect(k("mode")).toBe("string?");
     expect(k("unknownVar")).toBe("?");
+  });
+
+  it("引数に比較演算子 (>) を含む invoke も分割されずキーが取れる", () => {
+    const ts = `
+export const x = {
+  a: (ids: string[], n: number) =>
+    invoke<void>("cmd_a", { ids: ids.length > 0 ? ids : null, n }),
+};`;
+    const frontend = extractInvokeArgTypes(ts, new Map());
+    expect([...(frontend.get("cmd_a")?.keys() ?? [])]).toEqual(["ids", "n"]);
+    const run = (rust: string) =>
+      findMismatches(
+        extractRustCommandParamTypes(`#[tauri::command]\n${rust} {`),
+        frontend,
+        collectRustTypeDefs([]),
+      ).mismatches;
+    expect(run("pub async fn cmd_a(ids: Option<Vec<String>>, n: u32) -> Result<()>")).toEqual([]);
+    expect(run("pub async fn cmd_a(ids: Option<Vec<String>>, n: String) -> Result<()>")).toHaveLength(1);
+  });
+
+  it("interface / 既定値からの推論 / オブジェクト・map 式", () => {
+    const aliases = collectTsAliases("", ["export interface P { a: string; b?: number[] }"]);
+    const ts = `
+export const x = {
+  a: (p: P, flag = false, limit = 10) =>
+    invoke<void>("cmd_a", { a: p.a, b: p.b, flag, limit, o: { z: 1 }, m: ids.map((i) => i) }),
+};`;
+    const args = extractInvokeArgTypes(ts, aliases).get("cmd_a");
+    const k = (key: string) => {
+      const sh = args?.get(key)?.shape;
+      return `${sh?.kinds ? [...sh.kinds].join("|") : "?"}${sh?.nullable ? "?" : ""}`;
+    };
+    expect([k("a"), k("b"), k("flag"), k("limit"), k("o"), k("m")]).toEqual([
+      "string",
+      "array?",
+      "boolean",
+      "number",
+      "object",
+      "array",
+    ]);
   });
 
   it("意図的に型をずらした差分を検出できる (ミューテーション確認)", () => {
