@@ -29,3 +29,15 @@ describe("FeatureIcon (#1954)", () => {
     expect(compact.container.querySelector("[data-feature-icon='sm']")).toBeTruthy();
   });
 });
+
+describe("FeatureIcon マウント入場 (#2041)", () => {
+  it("animateOnMount=false でもタイルは描画される (opt-out)", () => {
+    const { container } = renderWithProviders(<FeatureIcon icon="database" animateOnMount={false} />);
+    expect(container.querySelector("[data-feature-icon='md'] svg")).toBeTruthy();
+  });
+
+  it("transitionKey 付き (ツアー) でもタイルは描画される", () => {
+    const { container } = renderWithProviders(<FeatureIcon icon="database" transitionKey={1} />);
+    expect(container.querySelector("[data-feature-icon='md'] svg")).toBeTruthy();
+  });
+});
