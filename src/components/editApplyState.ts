@@ -8,7 +8,7 @@
  *   だけ。ほかの保留編集・削除予定・新規行・取り消し/やり直し履歴は残す。削除予定の
  *   行はまだ削除されていないので、表示からも消さない。
  */
-import type { BulkWriteOptions, BulkWriteOutcome, CellValue, Column } from "../api/tauri";
+import type { BulkCaptureOutcome, BulkWriteOptions, BulkWriteOutcome, CellValue, Column } from "../api/tauri";
 import { applyEditsToRows, type PendingEdits, type PendingInsertRow } from "./cellEdit";
 
 /** 適用後に表示用の結果行を持つ最小形 (`QueryResult` の該当部分)。 */
@@ -139,7 +139,7 @@ export const MAX_OVERSHOOT_CONFIRMATIONS = 3;
 /** `applyWithRowCountGuard` の結果。 */
 export type GuardedApplyResult =
   /** コミットした。 */
-  | { kind: "applied"; totalAffected: number }
+  | { kind: "applied"; totalAffected: number; capture: BulkCaptureOutcome }
   /** 適用していない (キャンセル / 承認後も超過が続いて確認の上限に達した)。DB は未変更。 */
   | { kind: "not_applied"; expected: number; actual: number; total: number }
   /**
@@ -168,7 +168,7 @@ export async function applyWithRowCountGuard(input: {
   for (let confirmations = 0; ; confirmations++) {
     const res = await input.run(options);
     if (res.status === "applied") {
-      return { kind: "applied", totalAffected: Number(res.result.rows_affected ?? 0) };
+      return { kind: "applied", totalAffected: Number(res.result.rows_affected ?? 0), capture: res.capture };
     }
     if (res.status === "optimistic_conflict") return { kind: "conflict", conflictRows: res.conflict_rows };
     if (res.status === "rollback_incomplete") {

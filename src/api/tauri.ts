@@ -1161,7 +1161,7 @@ export interface InsertRowsResult {
  * 戻らなかったことを表す。承認して再実行してはいけない (再読込して現状を確認させる)。
  */
 export type BulkWriteOutcome =
-  | { status: "applied"; result: QueryResult }
+  | { status: "applied"; result: QueryResult; capture: BulkCaptureOutcome }
   | {
       status: "row_count_exceeded";
       expected_rows: number;
@@ -1172,8 +1172,23 @@ export type BulkWriteOutcome =
   | { status: "optimistic_conflict"; conflict_rows: number; statement_counts: number[] }
   | { status: "rollback_incomplete"; expected_rows: number; actual_rows: number };
 
+/** `bulk_update_cells` のフライトレコーダー記録の結果 (#2024)。 */
+export interface BulkCaptureOutcome {
+  /** 保存した記録の件数。 */
+  recorded: number;
+  /** 記録を辞退した部分の数 (主キーを特定できない追加文など)。 */
+  declined: number;
+  /** 保存した記録に共通のバッチ id (1 件も保存しなければ null)。 */
+  batch_id: string | null;
+}
+
 /** `bulk_update_cells` の追加オプション (#1777)。後続の検査 (楽観ロックなど) もここへ足す。 */
 export interface BulkWriteOptions {
+  /**
+   * フライトレコーダーへ記録する (#2024)。主キーで行を特定できる編集だけが対象 (呼び出し側が
+   * `pkColumns` が実際の主キーのときだけ指定する)。失敗しても編集は妨げない。
+   */
+  capture?: { rowCap?: number; retentionDays?: number };
   /** 確認ダイアログで承認した文ごとの影響行数 (`row_count_exceeded.statement_counts`)。各文の上限にして再実行する。 */
   approvedCounts?: number[];
 }

@@ -121,6 +121,16 @@
 (#907 で `run_captured_write` / `precheck_captured_write` の IPC は削除。共通コアの
 `run_captured_write_inner` は残存)。
 
+例外として、結果グリッドのインラインセル編集・行追加/削除 (`bulk_update_cells`) は
+`options.capture` を指定すると `commands/bulk_capture.rs` が記録する (#2024)。単文用の
+`capture_write` (同一トランザクションで前後を撮る) は使わず、書き込みトランザクション
+(`run_query_transaction_guarded_inner`、all-or-nothing) の**直前に before、コミット直後に after** を
+別接続の `SELECT *` で読み、UPDATE / DELETE / INSERT をそれぞれ 1 件の記録として同じ `batch_id` で
+保存する。ベストエフォート (読み取り失敗・行数の食い違い・`row_cap` 超過は記録を辞退し、編集は通す)。
+主キー列を書き換える編集、主キーを送らない INSERT (AUTO_INCREMENT) は辞退。`pk_columns` が実際の主キー
+でないと Undo が行を取り違えるため、フロントは `identityStrategy === "primary_key"` のときだけ指定する。
+Undo / Redo / force / read_only は既存のバッチ経路 (`apply_flight_batch`) をそのまま使う。
+
 ## IPC / フロント
 
 `list_flight_records` / `clear_flight_records` / `preview_undo` /

@@ -6,8 +6,8 @@
 //!   Rust 側で `UPDATE t SET c = v WHERE pk IN (…)` をチャンク化して組み立て、
 //!   既存の `run_query_transaction_inner` にそのまま渡す。read_only ガード (緊急モード
 //!   含む)・クエリ履歴・スキーマ/結果キャッシュの invalidate は従来と完全に同じ経路を
-//!   通る (フライトレコーダーへ記録しない点も従来どおり — 記録するのは
-//!   `run_query_stream({ capture: true })` の単文だけ)。
+//!   通る。`options.capture` を指定したときだけ、コミットした編集をフライトレコーダーへ
+//!   1 バッチで記録する (#2024、`commands::bulk_capture`)。
 //! - [`insert_generated_rows`]: テストデータ生成 (#602) の投入。従来は 100 行ずつの
 //!   リテラル `INSERT` 文を `run_query_transaction` へ送っていたのを、生成行を
 //!   `Connection::import_rows` (1 トランザクション・all-or-nothing) に直接渡す。
@@ -21,6 +21,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use crate::commands::bulk_capture::{self, BulkCaptureConfig, BulkCaptureOutcome};
 use crate::commands::query::{
     ensure_allowed_for_session, record_write_history, run_query_transaction_guarded_inner,
     TransactionRun,
@@ -37,7 +38,7 @@ use crate::state::AppState;
 /// `IN (...)` 1 文に載せる主キー値の上限。
 const IN_CHUNK: usize = 500;
 /// 複合主キー / NULL を含む主キーで `OR` 連結する行数の上限。
-const OR_CHUNK: usize = 100;
+pub(crate) const OR_CHUNK: usize = 100;
 /// テストデータ投入の 1 INSERT あたりの行数 (`import_rows` のバッチサイズ)。
 const INSERT_BATCH: usize = 100;
 
@@ -115,6 +116,10 @@ pub struct BulkWriteOptions {
     /// 相殺されて通ることもない。`min` の検査は承認でも外れない。文の並び (純関数で決まる) と
     /// 長さが合わなければ拒否する。
     pub approved_counts: Option<Vec<u64>>,
+    /// フライトレコーダー (#735) へ before/after を記録する (#2024)。指定すると、コミットした
+    /// 編集を 1 バッチの記録として保存し、Undo / Redo の対象にする。記録の失敗は編集を妨げない。
+    /// 主キー (`pk_columns` が実際の主キー) で行を特定できる呼び出しだけが指定すること。
+    pub capture: Option<BulkCaptureConfig>,
 }
 
 /// `bulk_update_cells` の結果 (#1777)。想定外はエラーではなく判別できる値で返し、フロントが
@@ -124,7 +129,11 @@ pub struct BulkWriteOptions {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum BulkWriteOutcome {
     /// コミットした。
-    Applied { result: QueryResult },
+    Applied {
+        result: QueryResult,
+        /// フライトレコーダーへの記録結果 (`options.capture` を指定したときだけ非ゼロ、#2024)。
+        capture: BulkCaptureOutcome,
+    },
     /// 実影響行数が想定 (編集対象として指定した行数) を外れたのでロールバックした。DB は未変更。
     /// `expected_rows` / `actual_rows` は違反した文だけの合計 (表示用)、`batch_total_rows` は
     /// 全文の合計 (「最大で N 行が変わる」の表示用)、`statement_counts` は文ごとの実際の影響行数
@@ -186,7 +195,7 @@ pub(crate) fn apply_approved_counts(
     Ok(())
 }
 
-fn qualified_ref(driver: DriverKind, database: &str, table: &str) -> String {
+pub(crate) fn qualified_ref(driver: DriverKind, database: &str, table: &str) -> String {
     // SQLite は接続ごとに単一の名前空間なので DB 名で修飾しない (フロントの
     // `qualifiedTableRef` と同じ規約)。
     match driver {
@@ -549,6 +558,7 @@ pub(crate) async fn bulk_update_cells_inner(
         statements.push(b.sql);
     }
     // 追加文 (DELETE / INSERT) は 1 文 = 1 行。多い側だけを止める (少ない側は従来どおり通す)。
+    let extra_count = extra_statements.len();
     for sql in extra_statements {
         expects.push(RowExpectation::at_most(EXTRA_STATEMENT_ROWS));
         statements.push(sql);
@@ -559,13 +569,52 @@ pub(crate) async fn bulk_update_cells_inner(
     if statements.is_empty() {
         return Ok(BulkWriteOutcome::Applied {
             result: QueryResult::empty(0, 0),
+            capture: BulkCaptureOutcome::default(),
         });
     }
+    // フライトレコーダー (#2024): 適用前に対象行の before を読む。読み取り専用セッションなどで
+    // 適用が拒否されるときは記録しない (保存は Committed のときだけ)。
+    let capture_cfg = options.capture.clone().filter(|_| !session.skip_history);
+    let table_ref = qualified_ref(driver, database.as_deref().unwrap_or_default(), &table);
+    let capture_plan = match &capture_cfg {
+        Some(cfg) if !session.read_only => Some(
+            bulk_capture::prepare(
+                &session,
+                database.as_deref(),
+                &table_ref,
+                &pk_columns,
+                &groups,
+                &statements[..statements.len() - extra_count],
+                &statements[statements.len() - extra_count..],
+                cfg,
+            )
+            .await,
+        ),
+        _ => None,
+    };
+    let capture_db = database.clone();
     Ok(
         match run_query_transaction_guarded_inner(state, session_id, statements, expects, database)
             .await?
         {
-            TransactionRun::Committed(result) => BulkWriteOutcome::Applied { result },
+            TransactionRun::Committed(result) => {
+                let capture = match (capture_plan, &capture_cfg) {
+                    (Some(plan), Some(cfg)) => {
+                        bulk_capture::finish(
+                            plan,
+                            &session,
+                            capture_db.as_deref(),
+                            &table,
+                            &table_ref,
+                            &pk_columns,
+                            cfg,
+                        )
+                        .await
+                    }
+                    _ => BulkCaptureOutcome::default(),
+                };
+                BulkWriteOutcome::Applied { result, capture }
+            }
             // 楽観ロックの競合は承認で上書きさせない。多い側の違反が同居していても競合を優先する。
             TransactionRun::RolledBack(v) if v.under > 0 => BulkWriteOutcome::OptimisticConflict {
                 conflict_rows: v.under,

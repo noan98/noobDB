@@ -185,9 +185,11 @@ describe("appliedRowShortfall", () => {
 
 // 想定行数の超過 (#1777): 承認した件数を上限にして再実行し、また超えたら確認し直す。
 describe("applyWithRowCountGuard", () => {
+  const noCapture = { recorded: 0, declined: 0, batch_id: null };
   const applied = (n: number): BulkWriteOutcome => ({
     status: "applied",
     result: { columns: [], rows: [], rows_affected: n, elapsed_ms: 1 },
+    capture: noCapture,
   });
   const exceeded = (expected: number, actual: number, counts: number[] = [actual]): BulkWriteOutcome => ({
     status: "row_count_exceeded",
@@ -212,10 +214,23 @@ describe("applyWithRowCountGuard", () => {
     expect(confirmExceeded).not.toHaveBeenCalled();
   });
 
+  it("フライトレコーダーの記録結果を適用結果に載せて返す (#2024)", async () => {
+    const capture = { recorded: 2, declined: 1, batch_id: "b1-abc" };
+    const run = vi.fn(
+      async (): Promise<BulkWriteOutcome> => ({
+        status: "applied",
+        result: { columns: [], rows: [], rows_affected: 4, elapsed_ms: 1 },
+        capture,
+      }),
+    );
+    const res = await applyWithRowCountGuard({ run, confirmExceeded: vi.fn(async () => true) });
+    expect(res).toEqual({ kind: "applied", totalAffected: 4, capture });
+  });
+
   it("超過が無ければ確認せずそのまま適用する", async () => {
     const confirmExceeded = vi.fn(async () => true);
     const res = await applyWithRowCountGuard({ run: async () => applied(3), confirmExceeded });
-    expect(res).toEqual({ kind: "applied", totalAffected: 3 });
+    expect(res).toEqual({ kind: "applied", totalAffected: 3, capture: noCapture });
     expect(confirmExceeded).not.toHaveBeenCalled();
   });
 
@@ -234,7 +249,7 @@ describe("applyWithRowCountGuard", () => {
       onAwaitingConfirm: () => events.push("awaiting"),
       onResume: () => events.push("resume"),
     });
-    expect(res).toEqual({ kind: "applied", totalAffected: 5 });
+    expect(res).toEqual({ kind: "applied", totalAffected: 5, capture: noCapture });
     expect(seen).toEqual([undefined, { approvedCounts: [2, 3] }]);
     expect(events).toEqual(["awaiting", "confirm 1/2/5", "resume"]);
   });

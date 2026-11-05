@@ -40,6 +40,7 @@ import {
   type SandboxCreateResponse,
   type SandboxRecord,
   type AutoLimitSkip,
+  type BulkCaptureOutcome,
   Snippet,
   OpenTableResult,
   TableColumnInfo,
@@ -7542,6 +7543,7 @@ export default function App() {
       let notApplied: { expected: number; actual: number } | null = null;
       let conflictRows: number | null = null;
       let incomplete: { expected: number; actual: number } | null = null;
+      let captureNote: BulkCaptureOutcome | null = null;
       try {
         const bulkParams = {
           sessionId,
@@ -7556,7 +7558,23 @@ export default function App() {
         // ロールバックして件数を返す (#1777)。利用者が明示的に承認した件数までに限って再実行する。
         // キャンセルなら何も変わらない (保留中の編集もそのまま残す)。
         const guarded = await applyWithRowCountGuard({
-          run: (options) => api.bulkUpdateCells({ ...bulkParams, options }),
+          // 主キーで行を特定できる編集だけをフライトレコーダーへ記録する (#2024)。unique_key / rowid /
+          // all_columns は Undo が行を取り違えうるので記録しない。
+          run: (options) =>
+            api.bulkUpdateCells({
+              ...bulkParams,
+              options: {
+                ...options,
+                ...(settings.flightRecorderEnabled && identityStrategy === "primary_key"
+                  ? {
+                      capture: {
+                        rowCap: settings.flightRecorderRowCap,
+                        retentionDays: settings.flightRecorderRetentionDays,
+                      },
+                    }
+                  : {}),
+              },
+            }),
           confirmExceeded: ({ expected, actual, total }) =>
             confirm({
               title: translate("editRowOvershootConfirmTitle"),
@@ -7579,8 +7597,10 @@ export default function App() {
             setStatus({ kind: "key", key: "statusApplyingEdits", vars: { count: opCount } });
           },
         });
-        if (guarded.kind === "applied") totalAffected = guarded.totalAffected;
-        else if (guarded.kind === "not_applied") notApplied = guarded;
+        if (guarded.kind === "applied") {
+          totalAffected = guarded.totalAffected;
+          captureNote = guarded.capture;
+        } else if (guarded.kind === "not_applied") notApplied = guarded;
         else if (guarded.kind === "conflict") conflictRows = guarded.conflictRows;
         else incomplete = guarded;
       } catch (e) {
@@ -7713,6 +7733,21 @@ export default function App() {
       }
       // 編集の適用で行数が変わりうる (削除・追加) ので、正確な件数 (#1627) は破棄する。
       patchTab(tabId, (tt) => ({ ...tt, lastEditAppliedAt: Date.now(), exactRowCount: null }));
+      // フライトレコーダーへ記録した (または辞退した) ことを知らせる (#2024)。記録は Undo 用の保険で、
+      // 編集の成否には影響しない。
+      if (captureNote && (captureNote.recorded > 0 || captureNote.declined > 0)) {
+        noteBatchCaptureStats(captureNote.batch_id, captureNote.recorded, captureNote.declined);
+        toast.info(
+          translate("batchCaptureSummary", {
+            captured: captureNote.recorded,
+            skipped:
+              captureNote.declined > 0
+                ? translate("batchCaptureSkippedSuffix", { skipped: captureNote.declined })
+                : "",
+          }),
+          6000,
+        );
+      }
       // 期待より少ない行しか書き換わらなかったとき (別クライアントが行を削除した等) は、
       // 成功と同じ表示にせず警告する。コミット済みなので適用自体は取り消せない。
       if (appliedRowShortfall(opCount, totalAffected) > 0) {
@@ -7737,6 +7772,10 @@ export default function App() {
       runQueryInTab,
       settings.defaultDisplayCount,
       settings.optimisticCellEditLock,
+      settings.flightRecorderEnabled,
+      settings.flightRecorderRowCap,
+      settings.flightRecorderRetentionDays,
+      toast.info,
       tabsRef,
       selectedProfile?.driver,
       selectedProfile?.is_production,

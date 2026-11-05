@@ -573,6 +573,7 @@ pub mod __test_api {
     // コマンド境界が一度も走らなかった。常時実走の `tests/sqlite_integration.rs`
     // から SQLite 短絡パス (非対応エラー / 縮退レスポンス) とセッション未検出の
     // 経路を駆動できるよう、ここでピンポイントに公開する。
+    pub use crate::commands::bulk_capture::{BulkCaptureConfig, BulkCaptureOutcome};
     pub use crate::commands::bulk_write::{
         BulkOldValue, BulkSetColumn, BulkSetValue, BulkUpdateGroup, BulkWriteOptions,
         BulkWriteOutcome, InsertRowsResult,
@@ -1133,7 +1134,7 @@ pub mod __test_api {
         )
         .await?
         {
-            BulkWriteOutcome::Applied { result } => Ok(result),
+            BulkWriteOutcome::Applied { result, .. } => Ok(result),
             other => Err(crate::error::AppError::InvalidInput(format!(
                 "bulk write was not applied: {other:?}"
             ))),
