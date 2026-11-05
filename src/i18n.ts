@@ -6635,7 +6635,7 @@ const en = {
   taskFormTimelapseMaxGenerations: "Generations to keep per table (optional)",
   taskFormActionMaintenance: "Run maintenance (ANALYZE / VACUUM / OPTIMIZE / REINDEX)",
   taskFormMaintenanceHint:
-    "Runs the chosen maintenance statement one table at a time. This is a write operation, so it is rejected for read-only profiles; the statements are generated from a fixed set (no custom SQL). A table that fails marks the run as failed, and the rest still run.",
+    "Runs the chosen maintenance statement one table at a time. This is a write operation, so it is rejected for read-only profiles; the statements are generated from a fixed set (no custom SQL). A table that fails marks the run as failed, and the rest still run. With no target tables, PostgreSQL and SQLite process the whole database; the schema field is only used to qualify target table names.",
   taskFormMaintenanceKind: "Maintenance",
   taskFormMaintenanceDatabase: "Database / schema (optional)",
   taskFormMaintenanceTargets: "Target tables (one per line; empty = whole database)",
@@ -13878,7 +13878,7 @@ const ja: Dict = {
   taskFormTimelapseMaxGenerations: "テーブルごとに保持する世代数 (任意)",
   taskFormActionMaintenance: "定期メンテナンス (ANALYZE / VACUUM / OPTIMIZE / REINDEX)",
   taskFormMaintenanceHint:
-    "選んだメンテナンス文をテーブルごとに 1 文ずつ実行します。書き込み扱いの操作なので、読み取り専用の接続では拒否されます。実行する文は固定の組み合わせから生成し、任意の SQL は指定できません。失敗したテーブルがあると実行は失敗扱いになりますが、残りは続けて実行します。",
+    "選んだメンテナンス文をテーブルごとに 1 文ずつ実行します。書き込み扱いの操作なので、読み取り専用の接続では拒否されます。実行する文は固定の組み合わせから生成し、任意の SQL は指定できません。失敗したテーブルがあると実行は失敗扱いになりますが、残りは続けて実行します。対象テーブルが空のときは PostgreSQL / SQLite ではデータベース全体が対象になり、スキーマ指定は対象テーブルの修飾にだけ使います。",
   taskFormMaintenanceKind: "メンテナンスの種類",
   taskFormMaintenanceDatabase: "データベース / スキーマ (省略可)",
   taskFormMaintenanceTargets: "対象テーブル (1 行に 1 つ。空ならデータベース全体)",

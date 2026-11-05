@@ -666,13 +666,8 @@ async fn run_action(
             targets,
             maintenance: kind,
         } => {
-            // 待機中にプロファイルが read_only へ変わった場合 (再試行時の読み直し) にも効くよう、
-            // 実際に張ったセッションのフラグも見る。
-            if session.read_only {
-                return TaskOutcome::err(
-                    "maintenance is a write operation and cannot run on a read-only session",
-                );
-            }
+            // read_only の拒否は `run_once` の接続前チェックと、再試行で読み直した最新の
+            // `profile` に対する下のチェックで行う (セッションは read_only: false で張る)。
             if let Err(e) =
                 crate::commands::tasks::validate_maintenance_for_profile(&task.action, profile)
             {
@@ -692,9 +687,21 @@ async fn run_action(
             let mut failures: Vec<(String, String)> = Vec::new();
             for (i, st) in statements.iter().enumerate() {
                 progress.store(i as u64, Ordering::SeqCst);
-                if let Err(e) = session.conn.execute(&st.sql, database.as_deref()).await {
-                    let label = st.target.clone().unwrap_or_else(|| "(database)".into());
-                    failures.push((label, e.to_string()));
+                let label = st.target.clone().unwrap_or_else(|| "(database)".into());
+                match session
+                    .conn
+                    .execute_maintenance(&st.sql, database.as_deref())
+                    .await
+                {
+                    Err(e) => failures.push((label, e.to_string())),
+                    Ok(res) => {
+                        // MySQL は失敗が結果行 (Msg_type=Error) で返る。
+                        if session.conn.driver_kind() == DriverKind::Mysql {
+                            for msg in maintenance::mysql_maintenance_errors(&res.rows) {
+                                failures.push((label.clone(), msg));
+                            }
+                        }
+                    }
                 }
             }
             progress.store(statements.len() as u64, Ordering::SeqCst);
@@ -703,7 +710,7 @@ async fn run_action(
                 ok: error.is_none(),
                 error,
                 output_path: None,
-                rows: Some((statements.len() - failures.len()) as i64),
+                rows: Some(statements.len().saturating_sub(failures.len()) as i64),
                 bytes: None,
                 assertion_results: Vec::new(),
                 attempts: 1,
@@ -1115,5 +1122,33 @@ mod tests {
         assert_eq!(driver_kind_of("postgres").unwrap(), DriverKind::Postgres);
         assert_eq!(driver_kind_of("sqlite").unwrap(), DriverKind::Sqlite);
         assert!(driver_kind_of("oracle").is_err());
+    }
+
+    /// 接続のセッションが read_only になるのは RunMaintenance 以外だけ (#2025)。
+    #[test]
+    fn only_run_maintenance_connects_writable() {
+        let profile = crate::commands::tasks::maintenance_tests::profile("mysql", false);
+        let cases = [
+            (
+                r#"{"kind":"export_query","sql":"SELECT 1","format":"csv","output_path":"/tmp/o.csv"}"#,
+                true,
+            ),
+            (
+                r#"{"kind":"dump","database":"d","output_path":"/tmp/o.sql"}"#,
+                true,
+            ),
+            (r#"{"kind":"run_assertions","assertion_ids":[]}"#, true),
+            (r#"{"kind":"timelapse_capture"}"#, true),
+            (r#"{"kind":"refresh_plan_watch","snippet_ids":[]}"#, true),
+            (
+                r#"{"kind":"run_maintenance","targets":["t"],"maintenance":"analyze"}"#,
+                false,
+            ),
+        ];
+        for (json, read_only) in cases {
+            let action: TaskAction = serde_json::from_str(json).unwrap();
+            let req = build_connect_request(&profile, &action).unwrap();
+            assert_eq!(req.read_only, read_only, "{json}");
+        }
     }
 }

@@ -111,8 +111,12 @@ fn validate_action(action: &TaskAction) -> Result<()> {
         TaskAction::TimelapseCapture { .. } | TaskAction::RefreshPlanWatch { .. } => {}
         // メンテナンスは書き込み扱いだが、任意 SQL は載らず固定形の文だけを生成する (#2025)。
         // ドライバ依存の検証 (種別の可否・対象の要否) は `save_task` がプロファイルから行う。
-        TaskAction::RunMaintenance { targets, .. } => {
+        TaskAction::RunMaintenance {
+            targets, database, ..
+        } => {
             crate::tasks::maintenance::validate_targets(targets)?;
+            // ドライバは未確定なので、どのドライバでも識別子にできない文字だけを弾く。
+            crate::tasks::maintenance::validate_database(None, database.as_deref())?;
         }
     }
     Ok(())
@@ -615,5 +619,43 @@ mod mask_validation_tests {
             validate_action(&action(&format!("[{many}]"))),
             Err(AppError::InvalidInput(_))
         ));
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod maintenance_tests {
+    use super::*;
+
+    pub(crate) fn profile(driver: &str, read_only: bool) -> profiles::ConnectionProfile {
+        serde_json::from_value(serde_json::json!({
+            "id": "p0000001", "name": "p", "driver": driver, "host": "h", "port": 1,
+            "user": "u", "read_only": read_only,
+        }))
+        .expect("profile json")
+    }
+
+    fn maint(json: &str) -> TaskAction {
+        serde_json::from_str(json).expect("action json")
+    }
+
+    #[test]
+    fn read_only_profile_is_rejected_with_read_only_error() {
+        let a = maint(r#"{"kind":"run_maintenance","targets":["t"],"maintenance":"analyze"}"#);
+        let err = validate_maintenance_for_profile(&a, &profile("mysql", true)).unwrap_err();
+        assert!(matches!(err, AppError::ReadOnly(_)));
+        assert!(validate_maintenance_for_profile(&a, &profile("mysql", false)).is_ok());
+    }
+
+    #[test]
+    fn unsupported_kind_for_driver_is_rejected() {
+        let a = maint(r#"{"kind":"run_maintenance","targets":["t"],"maintenance":"vacuum"}"#);
+        assert!(validate_maintenance_for_profile(&a, &profile("mysql", false)).is_err());
+        assert!(validate_maintenance_for_profile(&a, &profile("postgres", false)).is_ok());
+    }
+
+    #[test]
+    fn other_actions_are_not_checked() {
+        let a = maint(r#"{"kind":"timelapse_capture"}"#);
+        assert!(validate_maintenance_for_profile(&a, &profile("mysql", true)).is_ok());
     }
 }

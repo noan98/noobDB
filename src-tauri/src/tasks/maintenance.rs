@@ -75,6 +75,11 @@ pub fn validate_targets(targets: &[String]) -> Result<()> {
     }
     let mut seen = std::collections::HashSet::new();
     for t in targets {
+        if t.contains('\0') {
+            return Err(AppError::InvalidInput(
+                "maintenance target contains a NUL character".into(),
+            ));
+        }
         if t.trim().is_empty() || t != t.trim() {
             return Err(AppError::InvalidInput(
                 "maintenance target is empty or has surrounding whitespace".into(),
@@ -85,6 +90,25 @@ pub fn validate_targets(targets: &[String]) -> Result<()> {
                 "duplicate maintenance target `{t}`"
             )));
         }
+    }
+    Ok(())
+}
+
+/// 修飾に使う `database` (MySQL のデータベース / PG のスキーマ) を検証する。実行時に必ず
+/// 失敗する文字 (MySQL の `` ` ``、PG の `"` / `\`、NUL) は保存時に弾く。
+pub fn validate_database(driver: Option<DriverKind>, database: Option<&str>) -> Result<()> {
+    let Some(db) = database else { return Ok(()) };
+    let bad = db.contains('\0')
+        || match driver {
+            Some(DriverKind::Mysql) => db.contains('`'),
+            Some(DriverKind::Postgres) => db.contains('"') || db.contains('\\'),
+            Some(DriverKind::Sqlite) => false,
+            None => db.contains('`') || db.contains('"') || db.contains('\\'),
+        };
+    if bad {
+        return Err(AppError::InvalidInput(
+            "maintenance database / schema name contains an unsupported character".into(),
+        ));
     }
     Ok(())
 }
@@ -109,6 +133,7 @@ pub fn build_statements(
     use TaskMaintenanceKind::*;
     check_supported(driver, kind)?;
     validate_targets(targets)?;
+    validate_database(Some(driver), database)?;
     if targets.is_empty() {
         let sql = match (driver, kind) {
             (Mysql, _) => {
@@ -164,6 +189,27 @@ pub fn build_statements(
         .collect())
 }
 
+/// MySQL の `ANALYZE` / `OPTIMIZE TABLE` の結果行 (Table / Op / Msg_type / Msg_text) から失敗の
+/// 本文を集める (純関数)。`Msg_type` が大文字小文字を問わず `error` の行だけを失敗とし、
+/// `status` / `note` / `warning` は数えない (InnoDB の OPTIMIZE は note と status OK を返す)。
+/// 列は位置 (2 = Msg_type, 3 = Msg_text) で読み、足りない行は無視する。
+pub fn mysql_maintenance_errors(rows: &[Vec<crate::db::types::Value>]) -> Vec<String> {
+    let text = |v: Option<&crate::db::types::Value>| match v {
+        Some(crate::db::types::Value::String(s)) => Some(s.clone()),
+        _ => None,
+    };
+    rows.iter()
+        .filter_map(|r| {
+            let ty = text(r.get(2))?;
+            if ty.eq_ignore_ascii_case("error") {
+                Some(text(r.get(3)).unwrap_or_else(|| "error".to_string()))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// 失敗した対象の要約 (`TaskRun.error`)。全成功なら `None`。他の `summarize_*_failures` と同形。
 pub fn summarize_maintenance_failures(
     total: usize,
@@ -199,12 +245,12 @@ mod tests {
 
     #[test]
     fn mysql_table_statements_quote_identifiers() {
-        let r = build_statements(Mysql, Some("my`db"), &s(&["a", "b`c"]), Optimize).unwrap();
+        let r = build_statements(Mysql, Some("mydb"), &s(&["a", "b`c"]), Optimize).unwrap();
         assert_eq!(
             sqls(r),
             vec![
-                "OPTIMIZE TABLE `my``db`.`a`;",
-                "OPTIMIZE TABLE `my``db`.`b``c`;"
+                "OPTIMIZE TABLE `mydb`.`a`;",
+                "OPTIMIZE TABLE `mydb`.`b``c`;"
             ]
         );
         let r = build_statements(Mysql, Some("d"), &s(&["t"]), Analyze).unwrap();
@@ -262,6 +308,49 @@ mod tests {
         assert!(build_statements(Sqlite, None, &s(&["t", "t"]), Analyze).is_err());
         let many: Vec<String> = (0..=MAX_TARGETS).map(|i| format!("t{i}")).collect();
         assert!(build_statements(Sqlite, None, &many, Analyze).is_err());
+    }
+
+    #[test]
+    fn mysql_error_rows_are_detected_case_insensitively() {
+        use crate::db::types::Value;
+        let row = |ty: &str, msg: &str| {
+            vec![
+                Value::String("d.t".into()),
+                Value::String("analyze".into()),
+                Value::String(ty.into()),
+                Value::String(msg.into()),
+            ]
+        };
+        let rows = vec![
+            row(
+                "note",
+                "Table does not support optimize, doing recreate + analyze instead",
+            ),
+            row("status", "OK"),
+            row("warning", "w"),
+            row("Error", "Table 'd.t' doesn't exist"),
+            row("ERROR", "denied"),
+        ];
+        assert_eq!(
+            mysql_maintenance_errors(&rows),
+            vec![
+                "Table 'd.t' doesn't exist".to_string(),
+                "denied".to_string()
+            ]
+        );
+        assert!(mysql_maintenance_errors(&rows[..3]).is_empty());
+        assert!(mysql_maintenance_errors(&[vec![Value::Null]]).is_empty());
+    }
+
+    #[test]
+    fn rejects_unquotable_database_and_nul_targets() {
+        assert!(build_statements(Mysql, Some("a`b"), &s(&["t"]), Analyze).is_err());
+        assert!(build_statements(Postgres, Some("a\"b"), &s(&["t"]), Analyze).is_err());
+        assert!(build_statements(Postgres, Some("a\\b"), &s(&["t"]), Analyze).is_err());
+        assert!(build_statements(Postgres, Some("a\0b"), &s(&["t"]), Analyze).is_err());
+        assert!(build_statements(Sqlite, None, &s(&["a\0b"]), Analyze).is_err());
+        // MySQL では " や \ は識別子として有効 (バッククォートだけが問題)。
+        assert!(build_statements(Mysql, Some("a\"b"), &s(&["t"]), Analyze).is_ok());
     }
 
     #[test]

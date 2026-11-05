@@ -4244,3 +4244,33 @@ async fn postgres_list_table_partitions_when_env_set() {
     }
     conn.close().await;
 }
+
+/// 定期メンテナンス (#2025) の VACUUM (ANALYZE) がトランザクション外の単文実行で通る。
+#[tokio::test]
+async fn postgres_maintenance_vacuum_analyze_runs_outside_transaction() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS public.noobdb_pg_maint (id int)",
+        None,
+    )
+    .await
+    .expect("create");
+    for sql in [
+        "VACUUM (ANALYZE) \"public\".\"noobdb_pg_maint\";",
+        "VACUUM \"public\".\"noobdb_pg_maint\";",
+        "ANALYZE \"public\".\"noobdb_pg_maint\";",
+        "REINDEX TABLE \"public\".\"noobdb_pg_maint\";",
+    ] {
+        conn.execute_maintenance(sql, None)
+            .await
+            .unwrap_or_else(|e| panic!("{sql} failed: {e}"));
+    }
+    conn.execute("DROP TABLE IF EXISTS public.noobdb_pg_maint", None)
+        .await
+        .expect("drop");
+}

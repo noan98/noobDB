@@ -71,11 +71,14 @@
   ANALYZE / VACUUM (DB 全体のみ) / REINDEX。対応外の組み合わせは理由付きで保存時・実行時に拒否。
   `targets` が空ならデータベース全体 (PG の ANALYZE / VACUUM、SQLite)。1 文ずつ実行する (PG の
   VACUUM はトランザクション外でしか流せず、単文実行は包まない)。失敗したテーブルは
-  `summarize_maintenance_failures` が `TaskRun.error` に要約し、残りは続行。`TaskRun.rows` は成功した文数。
+  `summarize_maintenance_failures` が `TaskRun.error` に要約し、残りは続行。`TaskRun.rows` は成功した文数。MySQL の ANALYZE / OPTIMIZE は失敗しても SQL エラーにならず
+  結果行の `Msg_type=Error` で返るため、`Connection::execute_maintenance` で行を受け取り
+  `maintenance::mysql_maintenance_errors` が error 行 (大文字小文字不問、note / status は除外) だけを失敗にする。
+  `database` / 対象に識別子へ入れられない文字 (MySQL の `` ` ``、PG の `"` / `\`、NUL) があれば保存時に拒否。
   **安全網の例外**: スケジューラのセッションは常に `read_only: true` だが、このアクションだけは
   `build_connect_request` が `read_only: false` で接続する。代わりに**プロファイルが `read_only` なら
-  保存時 (`commands::tasks::validate_maintenance_for_profile`) と実行時 (接続前 + セッションの
-  フラグ) にバックエンドで拒否**する。`is_production` / `confirm_writes` は他のアクションと同じく
+  保存時 (`commands::tasks::validate_maintenance_for_profile`) と実行時 (接続前と、再試行で
+  読み直した最新のプロファイルに対するチェック) にバックエンドで拒否**する。`is_production` / `confirm_writes` は他のアクションと同じく
   UI の保存時確認のみ。
 - **`TaskSchedule`** — `Interval { minutes }` (最小 1 分) と
   `Daily { hour, minute }` の 2 種。
