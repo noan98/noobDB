@@ -777,6 +777,7 @@ const CONNECTION_WRITE_METHODS = new Set([
   "capture_write",
   "capture_prepare",
   "capture_execute",
+  "capture_execute_strict",
   "capture_commit",
   "register_local_table",
   "drop_local_table",
