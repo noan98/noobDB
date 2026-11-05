@@ -128,7 +128,11 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
   同居しても競合を優先し (1 文の中で多い/少ないが相殺される場合は見逃す既知の限界)、承認での上書き経路は無い (UI は再読込を案内)。旧値を付けるか (BLOB / JSON などは除外) と設定
   `optimisticCellEditLock` (既定オン) はフロント (`cellEdit.oldValueForLock` / `buildUpdateGroups`) が決める。オフなら `olds` を送らず従来どおり。**行識別が PK / UNIQUE / rowid の表のみ**で、全列一致 (`all_columns`) と `ctid` は誤競合するため `olds` を送らない (不足は適用後の shortfall 警告)。
 - `insert_generated_rows` はテストデータ生成の投入。生成行を `Connection::import_rows`
-  (1 トランザクション) へ直接渡す。履歴には 1 行の要約を残す。
+  (1 トランザクション) へ直接渡す。履歴には 1 行の要約を残す。`create_table` (任意, #2066) に
+  `NewColumn[]` (抽象型の列挙。ファイル取り込みの新規テーブルと同じ `render_create_table`) を渡すと、
+  投入の前に新規テーブルを作る: read_only は作成前に拒否・同名のテーブル/ビューは作成前に拒否 (上書きしない)・
+  投入が失敗したら作ったテーブルを DROP して戻す (3 ドライバとも明示 DROP。DROP も失敗したらエラー文に
+  「テーブルが残っている」旨を含める)。DDL は履歴に別エントリで残り、スキーマ / 結果キャッシュを捨てる。
 
 `run_query_stream` は結果を Channel の `columns` / `rows` / `done` のほかに、バッチ合流
 (`db::stream_batch::StreamBatcher`: 初回は即送信、以降は時間 / サイズ倍々) と逐次統計

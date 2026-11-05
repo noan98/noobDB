@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
-import { api, type CellValue, type TableColumnInfo } from "../api/tauri";
+import {
+  api,
+  type CellValue,
+  type DriverKind,
+  type NewColumnType,
+  type NewTableColumn,
+  type TableColumnInfo,
+} from "../api/tauri";
 import { toAiSnapshot } from "../ai/aiSettings";
 import { aiCacheKey, loadAiCache, saveAiCache } from "../ai/aiCache";
 import { formatDocTimestamp } from "../ai/schemaDoc";
@@ -27,7 +34,7 @@ import { useAiAvailable } from "../ai/useAiAvailable";
 import { useLocale, useT, type I18nKey } from "../i18n";
 import { useSettings } from "../settings";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Input } from "./ui";
+import { Button, Input, Switch } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
 import { DraftNumberInput } from "./DraftNumberInput";
 import { AiStreamProgress } from "./AiStreamProgress";
@@ -35,7 +42,7 @@ import { AiUsageNote } from "./AiUsageNote";
 import { Spinner } from "./Spinner";
 import { LoadingButton } from "./LoadingButton";
 import { Callout } from "./Callout";
-import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
+import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { useToast } from "./Toast";
 import { useConfirm } from "./ConfirmDialog";
 import { Tooltip } from "./Tooltip";
@@ -49,11 +56,13 @@ import {
 import {
   activeSpecs,
   buildFkSelectSql,
+  defaultNewColumnType,
   generateRows,
   inferColumnSpec,
   type ColumnGenSpec,
   type GenStrategy,
 } from "./testDataGen";
+import { newColumnTypeOptions } from "./newTableInference";
 
 /**
  * スキーマに基づくテストデータ生成ウィザード (#602)。
@@ -84,7 +93,24 @@ interface Props {
   onClose: () => void;
   /** 投入成功後に呼ばれる (開いているテーブルタブの再読込など)。 */
   onInserted: () => void;
+  /**
+   * 「新規テーブルを作って投入」(#2066) が成功したときに、`onInserted` の代わりに呼ばれる
+   * (スキーマキャッシュの破棄とサイドバーの再読込)。
+   */
+  onTableCreated?: (database: string, table: string) => void;
 }
+
+/** 新規テーブルの列型 → 表示ラベルの i18n キー (取り込みの新規テーブルと同じ文言)。 */
+const NEW_TYPE_LABEL_KEYS: Record<NewColumnType, I18nKey> = {
+  integer: "importTypeInteger",
+  bigint: "importTypeBigint",
+  decimal: "importTypeDecimal",
+  double: "importTypeDouble",
+  boolean: "importTypeBoolean",
+  date: "importTypeDate",
+  datetime: "importTypeDatetime",
+  text: "importTypeText",
+};
 
 const MAX_ROWS = 10000;
 const PREVIEW_ROWS = 5;
@@ -144,6 +170,7 @@ export function TestDataModal({
   isProduction,
   onClose,
   onInserted,
+  onTableCreated,
 }: Props) {
   const t = useT();
   const toast = useToast();
@@ -177,6 +204,14 @@ export function TestDataModal({
   const [seed, setSeed] = useState<number>(() => remembered?.seed ?? randomSeed());
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+
+  // 新規テーブルを作って投入 (#2066)。列名・生成方針は開いた表の定義を雛形にし、列型だけ選び直せる。
+  const [createNew, setCreateNew] = useState(false);
+  const [newTableName, setNewTableName] = useState("");
+  const [typeOverrides, setTypeOverrides] = useState<Record<string, NewColumnType>>({});
+  const [ddl, setDdl] = useState<string | null>(null);
+  const [ddlError, setDdlError] = useState<string | null>(null);
+  const targetTable = createNew ? newTableName.trim() : table;
 
   // カラム定義を取得して既定方針を推定し、FK カラムは参照先の既存値を
   // ベストエフォートで読み込む (失敗/空でも開ける — その列は NULL 生成になり、
@@ -230,6 +265,41 @@ export function TestDataModal({
   const rowCountValid = rowCount >= 1 && rowCount <= MAX_ROWS;
 
   const insertColumns = useMemo(() => (specs ? activeSpecs(specs) : []), [specs]);
+
+  const newColumns = useMemo<NewTableColumn[]>(
+    () =>
+      insertColumns.map((s) => ({
+        name: s.column,
+        type: typeOverrides[s.column] ?? defaultNewColumnType(s, driver),
+      })),
+    [insertColumns, typeOverrides, driver],
+  );
+
+  // 実行される CREATE TABLE をバックエンドの生成関数から取ってきて見せる (プレビュー = 実際に流れる DDL)。
+  // 名前の長さ上限や重複などの検証エラーもバックエンドの文言をそのまま出す。
+  useEffect(() => {
+    if (!createNew || targetTable === "" || newColumns.length === 0) {
+      setDdl(null);
+      setDdlError(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .previewCreateTableDdl(driver as DriverKind, targetTable, newColumns)
+      .then((sql) => {
+        if (cancelled) return;
+        setDdl(sql);
+        setDdlError(null);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setDdl(null);
+        setDdlError(String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [createNew, targetTable, newColumns, driver]);
 
   const aiContext = useMemo(
     () => (cols && specs ? buildTestDataAiContext(cols, specs, hints, uniqueInfo.columns) : null),
@@ -367,15 +437,21 @@ export function TestDataModal({
   const handleRun = async () => {
     if (!specs || !rowCountValid || insertColumns.length === 0 || running || aiRunning) return;
     if (aiMode && !aiDataset) return;
+    if (createNew && (targetTable === "" || ddlError !== null)) return;
     setRunError(null);
     // 本番接続では対象テーブル名のタイプ入力を要求する強確認 (#675 と同じ流儀)。
     if (isProduction) {
       const ok = await confirm({
-        title: t("testDataProductionConfirmTitle", { table }),
-        message: t("testDataProductionConfirmBody", { count: rowCount, table }),
+        title: t(createNew ? "testDataProductionConfirmNewTitle" : "testDataProductionConfirmTitle", {
+          table: targetTable,
+        }),
+        message: t(createNew ? "testDataProductionConfirmNewBody" : "testDataProductionConfirmBody", {
+          count: rowCount,
+          table: targetTable,
+        }),
         confirmLabel: t("testDataRun"),
         tone: "danger",
-        typedConfirmation: table,
+        typedConfirmation: targetTable,
       });
       if (!ok) return;
     }
@@ -390,9 +466,10 @@ export function TestDataModal({
       const result = await api.insertGeneratedRows({
         sessionId,
         database,
-        table,
+        table: targetTable,
         columns: insertColumns.map((s) => s.column),
         rows,
+        createTable: createNew ? newColumns : null,
       });
       // 同じ検証データを再現できるよう、方針・シード・行数を覚える (#1631)。
       if (profileId) {
@@ -401,8 +478,15 @@ export function TestDataModal({
           snapshotTestDataPrefs(specs, rowCountText, seed, settings.columnMaskPatterns),
         );
       }
-      toast.success(t("testDataSuccess", { count: rowCount, table, ms: result.elapsed_ms }));
-      onInserted();
+      toast.success(
+        t(createNew ? "testDataSuccessNewTable" : "testDataSuccess", {
+          count: rowCount,
+          table: targetTable,
+          ms: result.elapsed_ms,
+        }),
+      );
+      if (createNew) onTableCreated?.(database, targetTable);
+      else onInserted();
       onClose();
     } catch (e) {
       setRunError(String(e));
@@ -412,7 +496,13 @@ export function TestDataModal({
   };
 
   const insertDisabled =
-    running || aiRunning || !specs || !rowCountValid || insertColumns.length === 0 || (aiMode && !aiDataset);
+    running ||
+    aiRunning ||
+    !specs ||
+    !rowCountValid ||
+    insertColumns.length === 0 ||
+    (aiMode && !aiDataset) ||
+    (createNew && (targetTable === "" || ddlError !== null));
 
   return (
     <Modal
@@ -449,6 +539,34 @@ export function TestDataModal({
             />
           </FormSection>
         )}
+
+        <FormSection>
+          <Switch
+            checked={createNew}
+            onChange={setCreateNew}
+            disabled={running}
+            label={t("testDataCreateNew")}
+          />
+          {createNew && (
+            <>
+              <Callout tone="info" role="status">
+                {t("testDataCreateNewHint")}
+              </Callout>
+              <FieldLabel htmlFor="testdata-new-table">{t("importNewTableName")}</FieldLabel>
+              <Input
+                id="testdata-new-table"
+                type="text"
+                fontFamily="mono"
+                value={newTableName}
+                onChange={(e) => setNewTableName(e.target.value)}
+                disabled={running}
+                aria-invalid={ddlError !== null}
+                autoFocus
+              />
+              {ddlError && <FieldError>{ddlError}</FieldError>}
+            </>
+          )}
+        </FormSection>
 
         <FormSection flexDirection="row" flexWrap="wrap" gap="3.5" alignItems="flex-end">
           <chakra.div display="flex" flexDirection="column" gap="1.5">
@@ -521,6 +639,21 @@ export function TestDataModal({
                     disabled={running}
                     ariaLabel={t("testDataStrategyAria", { column: spec.column })}
                   />
+                  {createNew && spec.strategy !== "omit" && (
+                    <ListboxSelect
+                      css={{ width: "100%", minWidth: "120px", maxWidth: "160px" }}
+                      value={typeOverrides[spec.column] ?? defaultNewColumnType(spec, driver)}
+                      options={newColumnTypeOptions(driver as DriverKind).map((ty) => ({
+                        value: ty,
+                        label: t(NEW_TYPE_LABEL_KEYS[ty]),
+                      }))}
+                      onChange={(v) =>
+                        setTypeOverrides((prev) => ({ ...prev, [spec.column]: v as NewColumnType }))
+                      }
+                      disabled={running}
+                      ariaLabel={t("testDataNewColumnTypeAria", { column: spec.column })}
+                    />
+                  )}
                   {spec.strategy === "fixed" && (
                     <Input
                       css={{ width: "140px" }}
@@ -769,6 +902,13 @@ export function TestDataModal({
         )}
 
         {specs && insertColumns.length === 0 && <ErrorNote>{t("testDataNoColumns")}</ErrorNote>}
+
+        {createNew && ddl && (
+          <FormSection>
+            <FieldLabel as="div">{t("importNewTableDdl")}</FieldLabel>
+            <CodePreview maxH="160px">{ddl}</CodePreview>
+          </FormSection>
+        )}
 
         {specs && previewRows.length > 0 && (
           <FormSection>

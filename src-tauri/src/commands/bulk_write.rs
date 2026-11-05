@@ -26,6 +26,7 @@ use crate::commands::query::{
     ensure_allowed_for_session, record_write_history, run_query_transaction_guarded_inner,
     TransactionRun,
 };
+use crate::db::create_table::{render_create_table, render_drop_table, NewColumn};
 use crate::db::data_diff::{is_numeric_literal, sql_literal};
 use crate::db::sync::quote_ident;
 use crate::db::types::{QueryResult, Value};
@@ -663,6 +664,13 @@ fn generated_cell_text(v: &serde_json::Value) -> Result<Option<String>> {
 /// all-or-nothing。セルは `null` / 真偽 / 数値 / 文字列で、ドライバが列型へ強制変換する。
 /// read_only ガード (緊急モード含む)・履歴 (1 行の要約)・キャッシュ invalidate は
 /// `run_query_transaction` と揃える。
+///
+/// `create_table` を渡すと (#2066)、投入の前に新規テーブルを作る。列型は任意の SQL 断片
+/// ではなく抽象型 (`NewColumnType`) の列挙で、DDL は `render_create_table` が方言別に
+/// 生成する (識別子は必ずクォート)。同名のテーブル / ビューが既にあれば作成前に拒否し
+/// (上書きしない)、投入が失敗したら作ったテーブルを DROP して元に戻す。DDL を
+/// トランザクションに包めない MySQL に合わせ、3 ドライバとも明示 DROP で揃える。
+/// DROP も失敗したらエラーに「テーブルが残っている」旨を含める。
 #[tauri::command]
 pub async fn insert_generated_rows(
     session_id: String,
@@ -670,6 +678,7 @@ pub async fn insert_generated_rows(
     table: String,
     columns: Vec<String>,
     rows: Vec<Vec<serde_json::Value>>,
+    create_table: Option<Vec<NewColumn>>,
     state: State<'_, AppState>,
 ) -> Result<InsertRowsResult> {
     insert_generated_rows_inner(
@@ -679,8 +688,33 @@ pub async fn insert_generated_rows(
         &table,
         &columns,
         &rows,
+        create_table.as_deref(),
     )
     .await
+}
+
+/// 新規テーブル定義 (#2066) を検証する: DDL をレンダリングして名前・重複・長さ上限を確かめ、
+/// 投入列と作成する列が過不足なく一致することを確かめる。
+fn validate_generated_create_spec(
+    driver: DriverKind,
+    table: &str,
+    columns: &[String],
+    create: &[NewColumn],
+) -> Result<()> {
+    render_create_table(driver, table, create)?;
+    if create.len() != columns.len() {
+        return Err(AppError::InvalidInput(
+            "the new table definition must match the generated columns".into(),
+        ));
+    }
+    for c in columns {
+        if !create.iter().any(|n| &n.name == c) {
+            return Err(AppError::InvalidInput(format!(
+                "generated column {c} is not part of the new table definition"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Core of [`insert_generated_rows`] without Tauri's `State` wrapper (#881)。
@@ -691,6 +725,7 @@ pub(crate) async fn insert_generated_rows_inner(
     table: &str,
     columns: &[String],
     rows: &[Vec<serde_json::Value>],
+    create_table: Option<&[NewColumn]>,
 ) -> Result<InsertRowsResult> {
     let session = state
         .get(session_id)
@@ -698,8 +733,14 @@ pub(crate) async fn insert_generated_rows_inner(
         .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
     // 従来の INSERT 文経路と同じゲート (読み取り専用セッションは緊急モードでのみ通す)。
     ensure_allowed_for_session(&session, "INSERT INTO t DEFAULT VALUES")?;
+    if create_table.is_some() {
+        ensure_allowed_for_session(&session, "CREATE TABLE t (id INT)")?;
+    }
     if columns.is_empty() {
         return Err(AppError::InvalidInput("no columns to insert".into()));
+    }
+    if let Some(create) = create_table {
+        validate_generated_create_spec(session.conn.driver_kind(), table, columns, create)?;
     }
     let mut cells: Vec<Vec<Option<String>>> = Vec::with_capacity(rows.len());
     for row in rows {
@@ -713,7 +754,53 @@ pub(crate) async fn insert_generated_rows_inner(
         cells.push(row.iter().map(generated_cell_text).collect::<Result<_>>()?);
     }
     let started = std::time::Instant::now();
-    let result = session
+    // 新規テーブル (#2066): 既存の同名を拒否してから作成する。以降の失敗では DROP で戻す。
+    let mut created = false;
+    if let Some(create) = create_table {
+        let db_name = database.as_deref().unwrap_or("");
+        let existing = session.conn.tables(db_name).await?;
+        if existing.iter().any(|t| t.eq_ignore_ascii_case(table)) {
+            return Err(AppError::InvalidInput(format!(
+                "table {table} already exists"
+            )));
+        }
+        let ddl_started = std::time::Instant::now();
+        match session
+            .conn
+            .create_table_from_columns(database.as_deref(), table, create)
+            .await
+        {
+            Ok(ddl) => {
+                created = true;
+                record_write_history(
+                    &session,
+                    ddl,
+                    database.as_deref(),
+                    None,
+                    Some(ddl_started.elapsed().as_millis() as i64),
+                    None,
+                )
+                .await;
+                session.schema_cache.invalidate_all().await;
+                session.query_cache.invalidate_all().await;
+            }
+            Err(e) => {
+                let ddl = render_create_table(session.conn.driver_kind(), table, create)
+                    .unwrap_or_else(|_| format!("-- CREATE TABLE {table}"));
+                record_write_history(
+                    &session,
+                    ddl,
+                    database.as_deref(),
+                    None,
+                    None,
+                    Some(e.to_string()),
+                )
+                .await;
+                return Err(e);
+            }
+        }
+    }
+    let mut result = session
         .conn
         .import_rows(
             database.as_deref(),
@@ -725,6 +812,31 @@ pub(crate) async fn insert_generated_rows_inner(
             |_| Ok(()),
         )
         .await;
+    if created {
+        if let Err(e) = &result {
+            // 作ったテーブルを残さない。DROP も失敗したら、その旨を元のエラーへ足す。
+            let sql = render_drop_table(session.conn.driver_kind(), table);
+            let msg = match session.conn.execute(&sql, database.as_deref()).await {
+                Ok(_) => {
+                    record_write_history(&session, sql, database.as_deref(), None, None, None)
+                        .await;
+                    format!("{e} (the newly created table was dropped)")
+                }
+                Err(drop_err) => {
+                    tracing::warn!(
+                        table = %table,
+                        error = %drop_err,
+                        "failed to drop the table created for failed generated rows"
+                    );
+                    format!(
+                        "{e} (the newly created table {table} could not be dropped and still exists: {drop_err})"
+                    )
+                }
+            };
+            session.schema_cache.invalidate_all().await;
+            result = Err(AppError::Other(msg));
+        }
+    }
     let elapsed_ms = started.elapsed().as_millis() as u64;
     let summary = format!(
         "INSERT INTO {} ({}) -- {} generated rows",

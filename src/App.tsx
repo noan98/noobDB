@@ -14182,6 +14182,11 @@ export default function App() {
                 isProduction={selectedProfile?.is_production ?? false}
                 onClose={() => setTestDataTarget(null)}
                 onInserted={() => handleImported(testDataTarget.database, testDataTarget.table)}
+                onTableCreated={(database) => {
+                  // 新しいテーブルが増えたので、スキーマキャッシュを捨ててサイドバーを再読込する (#2066)。
+                  invalidateSchemaCache(database);
+                  connectionListRef.current?.refreshSchema();
+                }}
               />
             )}
           </AnimatePresence>

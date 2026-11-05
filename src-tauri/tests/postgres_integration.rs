@@ -2051,6 +2051,73 @@ async fn postgres_bulk_write_and_health_probe_commands() {
         r.rows[0]
     );
 
+    // 新規テーブルの作成 + 投入 (#2066): 成功、同名拒否、投入失敗でテーブルが残らない。
+    let fresh = format!("noobdb_gen2066_{}", std::process::id());
+    let spec = serde_json::json!([
+        {"name": "id", "type": "bigint", "primaryKey": true},
+        {"name": "label", "type": "text"},
+        {"name": "flag", "type": "integer"},
+        {"name": "score", "type": "double"},
+        {"name": "note", "type": "text"},
+    ]);
+    let _ = s
+        .conn
+        .execute(&format!("DROP TABLE IF EXISTS {fresh}"), Some(&db))
+        .await;
+    let created = t::insert_generated_rows_new_table_via_command(
+        &state,
+        &sid,
+        Some(&db),
+        &fresh,
+        &cols,
+        &rows,
+        spec.clone(),
+    )
+    .await
+    .expect("create + insert");
+    assert_eq!(created.inserted, 250);
+    let r = s
+        .conn
+        .execute(&format!("SELECT count(*) FROM {fresh}"), Some(&db))
+        .await
+        .expect("count new table");
+    assert!(
+        matches!(&r.rows[0][0], t::Value::Int(250)),
+        "{:?}",
+        r.rows[0]
+    );
+    assert!(matches!(
+        t::insert_generated_rows_new_table_via_command(
+            &state,
+            &sid,
+            Some(&db),
+            &fresh,
+            &cols,
+            &rows,
+            spec.clone(),
+        )
+        .await,
+        Err(t::AppError::InvalidInput(_))
+    ));
+    let _ = s
+        .conn
+        .execute(&format!("DROP TABLE IF EXISTS {fresh}"), Some(&db))
+        .await;
+    let err = t::insert_generated_rows_new_table_via_command(
+        &state,
+        &sid,
+        Some(&db),
+        &fresh,
+        &cols,
+        &dup,
+        spec,
+    )
+    .await
+    .expect_err("duplicate pk fails");
+    assert!(err.to_string().contains("was dropped"), "{err}");
+    let tables = s.conn.tables(&db).await.expect("tables");
+    assert!(!tables.iter().any(|n| n == &fresh), "{tables:?}");
+
     // 接続ヘルス: 生きている接続は up + バージョン + 接続数、未知のセッションは down。
     let probe =
         t::health_probe_all_inner(&state, &[sid.clone(), "nope".to_string()], 5_000, false).await;

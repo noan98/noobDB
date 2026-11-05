@@ -3,7 +3,13 @@ import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
 import type { UpdateGroup } from "../../components/cellEdit";
-import type { BulkWriteOptions, BulkWriteOutcome, CellValue, InsertRowsResult } from "../tauri";
+import type {
+  BulkWriteOptions,
+  BulkWriteOutcome,
+  CellValue,
+  InsertRowsResult,
+  NewTableColumn,
+} from "../tauri";
 
 export const bulkWriteCommands = {
   /**
@@ -57,7 +63,8 @@ export const bulkWriteCommands = {
     }).then((r) => parseResponse(schemas.bulkWriteOutcome, r, "bulk_update_cells")),
   /**
    * テストデータ生成 (#602) の生成行を 1 トランザクションで投入する (#1259)。セルは
-   * null / 真偽 / 数値 / 文字列で、ドライバが列型へ強制変換する。
+   * null / 真偽 / 数値 / 文字列で、ドライバが列型へ強制変換する。`createTable` を渡すと (#2066)
+   * 投入の前に新規テーブルを作る (同名があれば拒否、投入失敗なら作ったテーブルを DROP して戻す)。
    */
   insertGeneratedRows: (params: {
     sessionId: string;
@@ -65,6 +72,7 @@ export const bulkWriteCommands = {
     table: string;
     columns: string[];
     rows: CellValue[][];
+    createTable?: NewTableColumn[] | null;
   }) =>
     invoke<InsertRowsResult>("insert_generated_rows", {
       sessionId: params.sessionId,
@@ -72,5 +80,6 @@ export const bulkWriteCommands = {
       table: params.table,
       columns: params.columns,
       rows: params.rows,
+      createTable: params.createTable ?? null,
     }).then((r) => parseResponse(schemas.insertRowsResult, r, "insert_generated_rows")),
 };

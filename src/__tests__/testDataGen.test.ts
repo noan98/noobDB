@@ -5,6 +5,7 @@ import {
   parseIsoDate,
   resolveDateRange,
   activeSpecs,
+  defaultNewColumnType,
   buildFkSelectSql,
   classifyDataType,
   coerceFixedValue,
@@ -398,5 +399,44 @@ describe("テンプレート文字列と日付範囲 (#2035)", () => {
       3,
     );
     for (const [v] of rows) expect(["2024-05-10", "2024-05-11", "2024-05-12"]).toContain(v);
+  });
+});
+
+describe("defaultNewColumnType (#2066)", () => {
+  const col = (name: string, dataType: string, over: Partial<TableColumnInfo> = {}): TableColumnInfo => ({
+    name,
+    data_type: dataType,
+    nullable: false,
+    key: "",
+    default: null,
+    extra: "",
+    referenced_table: null,
+    referenced_column: null,
+    ...over,
+  });
+
+  it("生成方針と型から抽象型を決める", () => {
+    const spec = (c: TableColumnInfo, over: Partial<ColumnGenSpec> = {}) => ({
+      ...inferColumnSpec(c, "postgres"),
+      ...over,
+    });
+    expect(defaultNewColumnType(spec(col("id", "bigint"), { strategy: "serial" }), "postgres")).toBe(
+      "bigint",
+    );
+    expect(defaultNewColumnType(spec(col("n", "int")), "postgres")).toBe("integer");
+    expect(defaultNewColumnType(spec(col("n", "int"), { max: 5_000_000_000 }), "postgres")).toBe("bigint");
+    expect(defaultNewColumnType(spec(col("p", "numeric(10,2)")), "postgres")).toBe("double");
+    expect(defaultNewColumnType(spec(col("s", "text")), "postgres")).toBe("text");
+    expect(defaultNewColumnType(spec(col("d", "date")), "postgres")).toBe("date");
+    expect(defaultNewColumnType(spec(col("d", "timestamp")), "postgres")).toBe("datetime");
+    expect(defaultNewColumnType(spec(col("t", "time")), "postgres")).toBe("text");
+    expect(defaultNewColumnType(spec(col("u", "text"), { strategy: "uuid" }), "postgres")).toBe("text");
+  });
+
+  it("真偽は MySQL では整数 (BOOLEAN を選択肢に出さない方針と揃える)", () => {
+    const b = { ...inferColumnSpec(col("f", "boolean"), "postgres"), strategy: "randomBool" as const };
+    expect(defaultNewColumnType(b, "postgres")).toBe("boolean");
+    expect(defaultNewColumnType(b, "sqlite")).toBe("boolean");
+    expect(defaultNewColumnType(b, "mysql")).toBe("integer");
   });
 });

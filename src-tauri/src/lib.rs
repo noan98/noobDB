@@ -1189,6 +1189,32 @@ pub mod __test_api {
             table,
             columns,
             rows,
+            None,
+        )
+        .await
+    }
+
+    /// `insert_generated_rows` の新規テーブル作成付き経路 (#2066)。`create_table` は
+    /// フロントが送る JSON (`[{name, type, primaryKey?}]`) をそのまま受ける。
+    pub async fn insert_generated_rows_new_table_via_command(
+        state: &AppState,
+        session_id: &str,
+        database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<serde_json::Value>],
+        create_table: serde_json::Value,
+    ) -> crate::error::Result<InsertRowsResult> {
+        let create: Vec<crate::db::create_table::NewColumn> = serde_json::from_value(create_table)
+            .map_err(|e| crate::error::AppError::InvalidInput(e.to_string()))?;
+        crate::commands::bulk_write::insert_generated_rows_inner(
+            state,
+            session_id,
+            database.map(str::to_string),
+            table,
+            columns,
+            rows,
+            Some(&create),
         )
         .await
     }

@@ -4564,6 +4564,130 @@ async fn sqlite_insert_generated_rows_is_atomic_and_guarded() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// 新規テーブルを作って生成行を投入する (#2066): 成功 / 投入失敗でテーブルが残らない /
+/// 同名は作成前に拒否 / read_only 拒否 / 定義と投入列の食い違い拒否。
+#[tokio::test]
+async fn sqlite_insert_generated_rows_into_new_table() {
+    let path = temp_cmd_db("gennew");
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("CREATE TABLE taken (id INTEGER)", None)
+        .await
+        .expect("ddl");
+    let session = t::make_session("gen_new_rw", conn, opts.clone(), /* read_only */ false);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+    let s = state.get(&sid).await.expect("session");
+    let cols: Vec<String> = ["id", "na\"me"].iter().map(|s| s.to_string()).collect();
+    let spec = serde_json::json!([
+        {"name": "id", "type": "bigint", "primaryKey": true},
+        {"name": "na\"me", "type": "text"},
+    ]);
+    let rows: Vec<Vec<serde_json::Value>> = (1..=30)
+        .map(|i| vec![serde_json::json!(i), serde_json::json!(format!("n{i}"))])
+        .collect();
+
+    // 成功: テーブルが作られ、行が入る。
+    let res = t::insert_generated_rows_new_table_via_command(
+        &state,
+        &sid,
+        None,
+        "fresh t",
+        &cols,
+        &rows,
+        spec.clone(),
+    )
+    .await
+    .expect("create + insert");
+    assert_eq!(res.inserted, 30);
+    let r = s
+        .conn
+        .execute("SELECT count(*) FROM \"fresh t\"", None)
+        .await
+        .expect("count");
+    assert!(matches!(&r.rows[0][0], t::Value::Int(30)));
+
+    // 同名 (大文字小文字違いも) は作成前に拒否し、既存テーブルには触れない。
+    for name in ["fresh t", "TAKEN"] {
+        let err = t::insert_generated_rows_new_table_via_command(
+            &state,
+            &sid,
+            None,
+            name,
+            &cols,
+            &rows,
+            spec.clone(),
+        )
+        .await;
+        assert!(matches!(err, Err(t::AppError::InvalidInput(_))), "{name}");
+    }
+    let r = s
+        .conn
+        .execute("SELECT count(*) FROM \"fresh t\"", None)
+        .await
+        .expect("count again");
+    assert!(matches!(&r.rows[0][0], t::Value::Int(30)));
+
+    // 投入失敗 (主キー重複): 作ったテーブルは DROP されて残らない。
+    let mut dup = rows.clone();
+    dup.push(rows[0].clone());
+    let err = t::insert_generated_rows_new_table_via_command(
+        &state,
+        &sid,
+        None,
+        "rolled_back",
+        &cols,
+        &dup,
+        spec.clone(),
+    )
+    .await
+    .expect_err("duplicate pk fails");
+    assert!(err.to_string().contains("was dropped"), "{err}");
+    let tables = s.conn.tables("main").await.expect("tables");
+    assert!(!tables.iter().any(|n| n == "rolled_back"), "{tables:?}");
+
+    // 定義と投入列の食い違いは作成前に拒否 (テーブルは作られない)。
+    let mismatch = serde_json::json!([{"name": "id", "type": "bigint"}]);
+    assert!(matches!(
+        t::insert_generated_rows_new_table_via_command(
+            &state, &sid, None, "mismatch", &cols, &rows, mismatch,
+        )
+        .await,
+        Err(t::AppError::InvalidInput(_))
+    ));
+    // 型は列挙のみ: 任意の SQL 断片は型として受け付けない。
+    let evil = serde_json::json!([
+        {"name": "id", "type": "integer); DROP TABLE taken; --"},
+        {"name": "na\"me", "type": "text"},
+    ]);
+    assert!(matches!(
+        t::insert_generated_rows_new_table_via_command(
+            &state, &sid, None, "evil", &cols, &rows, evil,
+        )
+        .await,
+        Err(t::AppError::InvalidInput(_))
+    ));
+    let tables = s.conn.tables("main").await.expect("tables");
+    assert!(tables.iter().any(|n| n == "taken"));
+    assert!(!tables.iter().any(|n| n == "mismatch" || n == "evil"));
+
+    // read_only は作成前にバックエンドが拒否する。
+    let ro_conn = t::connect(&opts).await.expect("connect ro");
+    let ro = t::make_session("gen_new_ro", ro_conn, opts, /* read_only */ true);
+    let ro_id = state.insert(ro).await;
+    assert!(matches!(
+        t::insert_generated_rows_new_table_via_command(
+            &state, &ro_id, None, "ro_new", &cols, &rows, spec,
+        )
+        .await,
+        Err(t::AppError::ReadOnly(_))
+    ));
+    let tables = s.conn.tables("main").await.expect("tables");
+    assert!(!tables.iter().any(|n| n == "ro_new"));
+
+    let _ = std::fs::remove_file(&path);
+}
+
 /// `columns_for_database` / `indexes_for_database` (#1255) は、テーブルごとの
 /// `columns` / `list_indexes` を並べたものと同じ結果でなければならない。
 async fn assert_bulk_matches_per_table(conn: &t::Connection, db: &str) {
