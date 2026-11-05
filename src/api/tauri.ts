@@ -257,6 +257,11 @@ export interface ResolvedSshAlias {
 
 export interface ConnectRequest extends TlsSettings, SessionInitSettings, AwsIamSettings, SsmSettings {
   profile_id?: string;
+  /**
+   * 「同じサーバの別データベースを開く」(#2018) の派生接続で、元の保存済みプロファイルの ID。
+   * バックエンドが接続先の一致を検証したうえで、元プロファイルの keyring の秘密を使う。
+   */
+  variant_of?: string | null;
   driver: DriverKind;
   host: string;
   port: number;

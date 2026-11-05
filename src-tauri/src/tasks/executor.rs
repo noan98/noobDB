@@ -724,6 +724,7 @@ fn build_connect_request(profile: &ConnectionProfile) -> Result<ConnectRequest, 
     });
     Ok(ConnectRequest {
         profile_id: Some(profile.id.clone()),
+        variant_of: None,
         driver,
         host: profile.host.clone(),
         port: profile.port,

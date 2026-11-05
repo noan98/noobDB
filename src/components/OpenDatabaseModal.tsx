@@ -101,7 +101,7 @@ export function OpenDatabaseModal({ sessionId, currentDatabase, onOpen, onClose 
       </ModalBody>
       <ModalFooter>
         <Flex flex="1" />
-        <Button type="button" variant="primary" onClick={onClose}>
+        <Button type="button" variant="secondary" onClick={onClose}>
           {t("openDatabaseCancel")}
         </Button>
       </ModalFooter>

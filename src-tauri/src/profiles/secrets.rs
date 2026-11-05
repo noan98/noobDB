@@ -4,19 +4,6 @@ use crate::error::Result;
 
 const SERVICE: &str = "noobDB";
 
-/// 「同じサーバの別データベースを開く」(#2018) ための派生プロファイル ID の区切り。
-/// 派生 ID は `<元のプロファイル ID>::db::<datname>` で、秘密 (keyring) は常に元の
-/// プロファイルのものを使う。
-const DB_VARIANT_SEP: &str = "::db::";
-
-/// 派生プロファイル ID から元のプロファイル ID を取り出す (通常の ID はそのまま)。
-/// 派生プロファイルは秘密を自分では持たないため、読み出しは必ず元の ID に解決する。
-fn secret_owner_id(profile_id: &str) -> &str {
-    profile_id
-        .split_once(DB_VARIANT_SEP)
-        .map_or(profile_id, |(base, _)| base)
-}
-
 fn target(profile_id: &str, kind: &str) -> String {
     format!("{profile_id}/{kind}")
 }
@@ -37,7 +24,6 @@ fn set_secret(profile_id: &str, kind: &str, value: &str) -> Result<()> {
 /// Reads a secret. A missing entry (`NoEntry`) is normal and returns `None`
 /// without logging; any other failure is logged as an error.
 fn get_secret(profile_id: &str, kind: &str) -> Result<Option<String>> {
-    let profile_id = secret_owner_id(profile_id);
     let entry = Entry::new(SERVICE, &target(profile_id, kind))?;
     match entry.get_password() {
         Ok(p) => Ok(Some(p)),
@@ -355,18 +341,5 @@ mod probe_tests {
                 st.reason
             );
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn derived_profile_id_resolves_to_base_owner_2018() {
-        assert_eq!(secret_owner_id("abc-123"), "abc-123");
-        assert_eq!(secret_owner_id("abc-123::db::analytics"), "abc-123");
-        // datname 側に区切りが含まれても、最初の区切りで元の ID に戻る。
-        assert_eq!(secret_owner_id("abc-123::db::a::db::b"), "abc-123");
     }
 }

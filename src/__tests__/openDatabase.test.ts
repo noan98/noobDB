@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { ConnectionProfile } from "../api/tauri";
-import { baseProfileId, databaseVariantProfile, filterDatabases } from "../openDatabase";
+import { connectRequestFromProfile } from "../connectRequest";
+import {
+  baseProfileId,
+  databaseVariantProfile,
+  filterDatabases,
+  insertVariantProfiles,
+  isVariantProfileId,
+} from "../openDatabase";
 
 const profile = {
   id: "p1",
@@ -44,5 +51,49 @@ describe("filterDatabases", () => {
   it("大文字小文字を無視した部分一致、空語は全件", () => {
     expect(filterDatabases(["App", "analytics", "postgres"], "AN")).toEqual(["analytics"]);
     expect(filterDatabases(["a", "b"], "  ")).toEqual(["a", "b"]);
+  });
+});
+
+describe("固定ローカルポートと名前 (#2018)", () => {
+  const withSsh = {
+    ...profile,
+    ssh: { host: "b", port: 22, user: "u", auth_method: "key", private_key_path: "/k", local_port: 15432 },
+  } as unknown as ConnectionProfile;
+
+  it("派生プロファイルは ssh.local_port を引き継がない (元の接続が握っているため)", () => {
+    const v = databaseVariantProfile(withSsh, "analytics");
+    expect(v.ssh?.local_port).toBeNull();
+    expect(withSsh.ssh?.local_port).toBe(15432);
+    const req = connectRequestFromProfile(v, { pinLocalPort: true });
+    expect(req.ssh?.local_port).toBeNull();
+  });
+
+  it("元の名前に ' / ' を含んでも、末尾の ' / <db>' だけを外して組み立てる", () => {
+    const base = { ...profile, name: "A / B" } as ConnectionProfile;
+    const v1 = databaseVariantProfile(base, "x");
+    expect(v1.name).toBe("A / B / x");
+    expect(databaseVariantProfile(v1, "y").name).toBe("A / B / y");
+  });
+
+  it("variant_of は派生のときだけ元 ID を明示する", () => {
+    expect(connectRequestFromProfile(profile).variant_of).toBeUndefined();
+    expect(connectRequestFromProfile(databaseVariantProfile(profile, "a")).variant_of).toBe("p1");
+  });
+});
+
+describe("insertVariantProfiles", () => {
+  it("派生を元プロファイルの直下へ、元が無ければ末尾へ差し込む", () => {
+    const a = { ...profile, id: "a" } as ConnectionProfile;
+    const b = { ...profile, id: "b" } as ConnectionProfile;
+    const va = databaseVariantProfile(a, "x");
+    const orphan = databaseVariantProfile({ ...profile, id: "gone" } as ConnectionProfile, "y");
+    expect(insertVariantProfiles([a, b], [orphan, va]).map((p) => p.id)).toEqual([
+      "a",
+      "a::db::x",
+      "b",
+      "gone::db::y",
+    ]);
+    expect(isVariantProfileId("a::db::x")).toBe(true);
+    expect(isVariantProfileId("a")).toBe(false);
   });
 });

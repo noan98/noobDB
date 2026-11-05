@@ -19,13 +19,40 @@ export function baseProfileId(id: string): string {
   return i < 0 ? id : id.slice(0, i);
 }
 
+/** 派生プロファイルの ID か。 */
+export function isVariantProfileId(id: string): boolean {
+  return id.includes(DB_VARIANT_SEP);
+}
+
+/**
+ * 保存済み一覧に派生プロファイルを差し込む。各派生は元プロファイルの直下に (元が無ければ末尾に)
+ * 並べる。保存済みの並びと派生同士の相対順は保つ。
+ */
+export function insertVariantProfiles(
+  saved: readonly ConnectionProfile[],
+  variants: readonly ConnectionProfile[],
+): ConnectionProfile[] {
+  if (variants.length === 0) return saved as ConnectionProfile[];
+  const savedIds = new Set(saved.map((p) => p.id));
+  const out: ConnectionProfile[] = [];
+  for (const p of saved) {
+    out.push(p);
+    for (const v of variants) if (baseProfileId(v.id) === p.id) out.push(v);
+  }
+  for (const v of variants) if (!savedIds.has(baseProfileId(v.id))) out.push(v);
+  return out;
+}
+
 /** 元のプロファイルから `database` だけ差し替えた派生プロファイルを作る。 */
 export function databaseVariantProfile(profile: ConnectionProfile, database: string): ConnectionProfile {
   const baseId = baseProfileId(profile.id);
-  const baseName =
-    profile.name.includes(" / ") && profile.id !== baseId ? profile.name.split(" / ")[0] : profile.name;
+  // 派生から更に派生するときは、末尾の " / <db>" だけを外して元の名前に戻す。
+  const cut = profile.name.lastIndexOf(" / ");
+  const baseName = profile.id !== baseId && cut >= 0 ? profile.name.slice(0, cut) : profile.name;
   return {
     ...profile,
+    // 固定ローカルポート (#1630) は元の接続が握っているので、派生は自動割当にする。
+    ssh: profile.ssh ? { ...profile.ssh, local_port: null } : profile.ssh,
     id: `${baseId}${DB_VARIANT_SEP}${database}`,
     name: `${baseName} / ${database}`,
     database,

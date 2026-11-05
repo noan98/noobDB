@@ -15,7 +15,7 @@ import {
   type ReactNode,
 } from "react";
 import { connectRequestFromProfile } from "./connectRequest";
-import { databaseVariantProfile } from "./openDatabase";
+import { baseProfileId, databaseVariantProfile, isVariantProfileId } from "./openDatabase";
 import { OpenDatabaseModal } from "./components/OpenDatabaseModal";
 import { beginBatchRun, endBatchRun, isCurrentBatchRun } from "./batchRunGuard";
 import { Box, Flex, Grid, chakra, visuallyHiddenStyle } from "@chakra-ui/react";
@@ -2051,6 +2051,11 @@ export default function App() {
   }, [staleProfileIds]);
   // 保存済みタブの確認・消去モーダルの対象 (#1630)。
   const [savedTabsTarget, setSavedTabsTarget] = useState<ConnectionProfile | null>(null);
+  // 「別データベースを開く」(#2018) で開いている派生接続。保存せず、接続リストに一時的な行で出す。
+  const ephemeralProfiles = useMemo(
+    () => openConnections.map((c) => c.profile).filter((p) => isVariantProfileId(p.id)),
+    [openConnections],
+  );
   // プロファイル id の集合 (ConnectionList の接続済み表示・切替/切断 UI 用)。
   const openProfileIds = useMemo(() => new Set(openConnections.map((c) => c.profile.id)), [openConnections]);
   // レジストリへの登録/差し替え (同一プロファイルは最新セッションで上書き)。
@@ -10170,6 +10175,12 @@ export default function App() {
         // キャンセル) の場合はここに到達しないので、切断は起きない。
         // 未確定の編集の確認は削除操作時 (handleDeleteProfile) に済ませてあるので、
         // Undo 満了後の無関係なタイミングで再確認しない (force)。
+        // 「別データベースを開く」(#2018) で派生した接続も、元プロファイルと一緒に切断する。
+        for (const c of openConnectionsRef.current.filter(
+          (c) => isVariantProfileId(c.profile.id) && baseProfileId(c.profile.id) === id,
+        )) {
+          await handleDisconnectProfile(c.profile.id, { force: true });
+        }
         await handleDisconnectProfile(id, { force: true });
         await api.deleteProfile(id);
         // 閉じたタブ履歴 (#1631) はプロファイルとともに消す。
@@ -12815,6 +12826,7 @@ export default function App() {
               <ConnectionList
                 ref={connectionListRef}
                 profiles={visibleProfiles}
+                ephemeralProfiles={ephemeralProfiles}
                 activeProfileId={selectedProfile?.id ?? null}
                 activeTable={activeTreeTable}
                 sessionId={sessionId}
