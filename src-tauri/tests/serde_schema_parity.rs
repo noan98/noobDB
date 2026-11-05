@@ -2268,6 +2268,14 @@ fn build_fixtures() -> serde_json::Value {
             },
             t::TaskSchedule::Interval { minutes: 60 },
         ),
+        (
+            t::TaskAction::RunMaintenance {
+                database: Some("public".into()),
+                targets: vec!["orders".into()],
+                maintenance: t::TaskMaintenanceKind::VacuumAnalyze,
+            },
+            t::TaskSchedule::Interval { minutes: 1440 },
+        ),
     ]
     .into_iter()
     .map(|(action, schedule)| t::TaskDefinition {

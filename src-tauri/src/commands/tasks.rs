@@ -109,7 +109,43 @@ fn validate_action(action: &TaskAction) -> Result<()> {
         // 実行する SQL は取得側が組み立てる読み取り専用の SELECT / EXPLAIN で、
         // タスク定義にユーザの SQL は載らない。
         TaskAction::TimelapseCapture { .. } | TaskAction::RefreshPlanWatch { .. } => {}
+        // メンテナンスは書き込み扱いだが、任意 SQL は載らず固定形の文だけを生成する (#2025)。
+        // ドライバ依存の検証 (種別の可否・対象の要否) は `save_task` がプロファイルから行う。
+        TaskAction::RunMaintenance { targets, .. } => {
+            crate::tasks::maintenance::validate_targets(targets)?;
+        }
     }
+    Ok(())
+}
+
+/// `RunMaintenance` をプロファイルに照らして検証する (#2025)。read_only のプロファイルは
+/// 書き込み扱いのメンテナンスをバックエンドで拒否し、ドライバが対応しない種別・対象の組み合わせ
+/// (例: MySQL の VACUUM) も保存時に弾く。他のアクションでは何もしない。
+pub(crate) fn validate_maintenance_for_profile(
+    action: &TaskAction,
+    profile: &profiles::ConnectionProfile,
+) -> Result<()> {
+    let TaskAction::RunMaintenance {
+        database,
+        targets,
+        maintenance,
+    } = action
+    else {
+        return Ok(());
+    };
+    if profile.read_only {
+        return Err(AppError::ReadOnly(
+            "maintenance (VACUUM / OPTIMIZE / ...) is a write operation and is not allowed on a read-only profile"
+                .into(),
+        ));
+    }
+    let driver = executor::driver_kind_of(&profile.driver)?;
+    crate::tasks::maintenance::build_statements(
+        driver,
+        database.as_deref(),
+        targets,
+        *maintenance,
+    )?;
     Ok(())
 }
 
@@ -179,12 +215,13 @@ pub async fn save_task(req: SaveTaskRequest) -> Result<TaskDefinition> {
 
     // プロファイルが実在することを確認する (孤立タスクの作成を防ぐ)。
     let profiles = profiles::store::load_all()?;
-    if !profiles.iter().any(|p| p.id == req.profile_id) {
+    let Some(profile) = profiles.iter().find(|p| p.id == req.profile_id) else {
         return Err(AppError::InvalidInput(format!(
             "unknown profile: {}",
             req.profile_id
         )));
-    }
+    };
+    validate_maintenance_for_profile(&req.action, profile)?;
 
     let requested_id = req.id.clone().filter(|s| !s.is_empty());
     let id = requested_id.clone().unwrap_or_else(store::new_task_id);

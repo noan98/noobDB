@@ -13,7 +13,7 @@ use std::time::Instant;
 use chrono::{DateTime, Utc};
 use tauri::{AppHandle, Manager};
 
-use super::{runs, NewAssertionResult, TaskAction, TaskDefinition};
+use super::{maintenance, runs, NewAssertionResult, TaskAction, TaskDefinition};
 use crate::assertions;
 use crate::commands::assertions::run_assertion_with;
 use crate::commands::connection::{
@@ -185,6 +185,12 @@ pub async fn run_once(
         Ok(p) => p,
         Err(e) => return TaskOutcome::err(e.to_string()),
     };
+    // メンテナンス (#2025) は書き込み扱い。read_only のプロファイルや、ドライバが対応しない
+    // 種別・対象は接続コストを払う前に拒否する。
+    if let Err(e) = crate::commands::tasks::validate_maintenance_for_profile(&task.action, &profile)
+    {
+        return TaskOutcome::err(e.to_string());
+    }
 
     // 接続段階だけを再試行する (#1537)。クエリ / エクスポート / ダンプが始まった後の失敗は
     // 再試行しない (副作用の二重発生を避ける)。再試行しないタスクは従来どおり 1 回で終わる。
@@ -193,7 +199,7 @@ pub async fn run_once(
     let session_id = loop {
         attempts += 1;
         // 接続のたびに組み立て直す (`connect` が `ConnectRequest` を消費するため)。
-        let req = match build_connect_request(&profile) {
+        let req = match build_connect_request(&profile, &task.action) {
             Ok(r) => r,
             Err(e) => return TaskOutcome::err(e.to_string()),
         };
@@ -655,6 +661,54 @@ async fn run_action(
                 Err(e) => TaskOutcome::err(e.to_string()),
             }
         }
+        TaskAction::RunMaintenance {
+            database,
+            targets,
+            maintenance: kind,
+        } => {
+            // 待機中にプロファイルが read_only へ変わった場合 (再試行時の読み直し) にも効くよう、
+            // 実際に張ったセッションのフラグも見る。
+            if session.read_only {
+                return TaskOutcome::err(
+                    "maintenance is a write operation and cannot run on a read-only session",
+                );
+            }
+            if let Err(e) =
+                crate::commands::tasks::validate_maintenance_for_profile(&task.action, profile)
+            {
+                return TaskOutcome::err(e.to_string());
+            }
+            let statements = match maintenance::build_statements(
+                session.conn.driver_kind(),
+                database.as_deref(),
+                targets,
+                *kind,
+            ) {
+                Ok(s) => s,
+                Err(e) => return TaskOutcome::err(e.to_string()),
+            };
+            // 1 文ずつ実行する (PostgreSQL の VACUUM はトランザクション外でしか流せず、単文実行は
+            // 包まない)。1 件の失敗で残りを止めず、失敗した対象を要約する。
+            let mut failures: Vec<(String, String)> = Vec::new();
+            for (i, st) in statements.iter().enumerate() {
+                progress.store(i as u64, Ordering::SeqCst);
+                if let Err(e) = session.conn.execute(&st.sql, database.as_deref()).await {
+                    let label = st.target.clone().unwrap_or_else(|| "(database)".into());
+                    failures.push((label, e.to_string()));
+                }
+            }
+            progress.store(statements.len() as u64, Ordering::SeqCst);
+            let error = maintenance::summarize_maintenance_failures(statements.len(), &failures);
+            TaskOutcome {
+                ok: error.is_none(),
+                error,
+                output_path: None,
+                rows: Some((statements.len() - failures.len()) as i64),
+                bytes: None,
+                assertion_results: Vec::new(),
+                attempts: 1,
+            }
+        }
         TaskAction::RefreshPlanWatch { snippet_ids } => {
             let only = (!snippet_ids.is_empty()).then_some(snippet_ids.as_slice());
             match plan_watch::refresh_plans(&session, &profile.id, only, Some(progress)).await {
@@ -684,7 +738,7 @@ fn load_profile(profile_id: &str) -> Result<ConnectionProfile, AppError> {
         .ok_or_else(|| AppError::InvalidInput(format!("profile not found: {profile_id}")))
 }
 
-fn driver_kind_of(driver: &str) -> Result<DriverKind, AppError> {
+pub(crate) fn driver_kind_of(driver: &str) -> Result<DriverKind, AppError> {
     match driver {
         "mysql" => Ok(DriverKind::Mysql),
         "postgres" => Ok(DriverKind::Postgres),
@@ -697,8 +751,13 @@ fn driver_kind_of(driver: &str) -> Result<DriverKind, AppError> {
 /// パスフレーズは常に空文字列にし (`profile_id` を渡すことで `connect` 内部の
 /// `resolve_password` 等が keyring から解決する)、常に `read_only: true` を
 /// 強制する — プロファイル自体が書き込み可能でも、スケジューラが張るセッションは
-/// 読み取り専用に固定する多重の安全網 (#730)。
-fn build_connect_request(profile: &ConnectionProfile) -> Result<ConnectRequest, AppError> {
+/// 読み取り専用に固定する多重の安全網 (#730)。唯一の例外は `RunMaintenance` (#2025) で、
+/// 書き込み扱いの文を流すためセッションを read_only にしない (read_only のプロファイルは
+/// `run_once` が接続前に拒否する)。
+fn build_connect_request(
+    profile: &ConnectionProfile,
+    action: &TaskAction,
+) -> Result<ConnectRequest, AppError> {
     let driver = driver_kind_of(&profile.driver)?;
     // ジャンプホスト (#708) も同じく秘密は常に空にし、`connect` 側が
     // `profile_id` から keyring (kind `_hop0`) を解決する。
@@ -739,7 +798,7 @@ fn build_connect_request(profile: &ConnectionProfile) -> Result<ConnectRequest, 
         init_sql: profile.init_sql.clone(),
         aws_iam: profile.aws_iam.clone(),
         ssm: profile.ssm.clone(),
-        read_only: true,
+        read_only: !matches!(action, TaskAction::RunMaintenance { .. }),
         skip_history: true,
     })
 }

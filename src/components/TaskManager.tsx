@@ -13,6 +13,7 @@ import {
   type ExportFormat,
   type TaskAction,
   type TaskDefinition,
+  type TaskMaintenanceKind,
   type TaskRun,
   type TaskRunProgressEvent,
   type TaskSchedule,
@@ -25,17 +26,21 @@ import {
   buildAssertionTrends,
   deviceTimeZone,
   draftFromSchedule,
+  maintenanceKindsForDriver,
+  parseMaintenanceTargets,
   previewOutputPath,
   relativeNextRun,
   scheduleFromDraft,
   sortTasksForDisplay,
   summarizeAction,
   summarizeSchedule,
+  TASK_MAINTENANCE_LABEL_KEYS,
   type AssertionTrend,
   type ScheduleDraft,
 } from "../taskFormat";
 import { TaskScheduleEditor } from "./TaskScheduleEditor";
 import { useConfirm } from "./ConfirmDialog";
+import { Callout } from "./Callout";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -812,7 +817,9 @@ function TaskForm({
   const [actionKind, setActionKind] = useState<ActionKind>(task?.action.kind ?? "export_query");
   const [sql, setSql] = useState(task?.action.kind === "export_query" ? task.action.sql : "");
   const [database, setDatabase] = useState(
-    task?.action.kind === "export_query" || task?.action.kind === "run_assertions"
+    task?.action.kind === "export_query" ||
+      task?.action.kind === "run_assertions" ||
+      task?.action.kind === "run_maintenance"
       ? (task.action.database ?? "")
       : task?.action.kind === "dump"
         ? task.action.database
@@ -870,6 +877,12 @@ function TaskForm({
       ? String(task.action.max_generations)
       : "",
   );
+  const [maintenanceKind, setMaintenanceKind] = useState<TaskMaintenanceKind>(
+    task?.action.kind === "run_maintenance" ? task.action.maintenance : "analyze",
+  );
+  const [maintenanceTargets, setMaintenanceTargets] = useState(
+    task?.action.kind === "run_maintenance" ? task.action.targets.join("\n") : "",
+  );
   const [connectRetries, setConnectRetries] = useState(String(task?.connect_retry?.max_retries ?? 0));
   const [connectRetryInterval, setConnectRetryInterval] = useState(
     String(task?.connect_retry?.interval_secs ?? 30),
@@ -909,6 +922,11 @@ function TaskForm({
   // プロファイル解決前に同じドライバ非依存の判定で弾くため (#852)。ここで
   // MySQL 解釈を使うと、UI が通した SQL を保存時にバックエンドが拒否しうる。
   const sqlLooksReadOnly = actionKind !== "export_query" || sql.trim() === "" || isReadOnlySql(sql);
+  const maintenanceKinds = maintenanceKindsForDriver(selectedProfile?.driver);
+  // プロファイルを切り替えてドライバが変わったとき、使えない種別が残らないようにする。
+  const effectiveMaintenanceKind = maintenanceKinds.includes(maintenanceKind)
+    ? maintenanceKind
+    : maintenanceKinds[0];
   const preview = outputPath ? previewOutputPath(outputPath, new Date()) : "";
 
   const browseOutputPath = async () => {
@@ -996,6 +1014,33 @@ function TaskForm({
     } else if (actionKind === "refresh_plan_watch") {
       // ウォッチ中のものすべて (スニペット単位の絞り込み UI は持たない)。
       action = { kind: "refresh_plan_watch", snippet_ids: [] };
+    } else if (actionKind === "run_maintenance") {
+      // バックエンド (`tasks::maintenance::build_statements`) と同じ組み合わせ規則を先に見て、
+      // 保存してから拒否されるのを避ける。
+      if (selectedProfile?.read_only) {
+        setFormError(t("taskFormMaintenanceReadOnlyProfile"));
+        return;
+      }
+      const targets = parseMaintenanceTargets(maintenanceTargets);
+      const driver = selectedProfile?.driver;
+      if (targets.length === 0 && (driver === "mysql" || driver === undefined)) {
+        setFormError(t("taskFormMaintenanceTargetsRequiredMysql"));
+        return;
+      }
+      if (targets.length === 0 && driver === "postgres" && effectiveMaintenanceKind === "reindex") {
+        setFormError(t("taskFormMaintenanceTargetsRequiredReindex"));
+        return;
+      }
+      if (targets.length > 0 && driver === "sqlite" && effectiveMaintenanceKind === "vacuum") {
+        setFormError(t("taskFormMaintenanceSqliteVacuumTargets"));
+        return;
+      }
+      action = {
+        kind: "run_maintenance",
+        database: database.trim() === "" ? null : database.trim(),
+        targets,
+        maintenance: effectiveMaintenanceKind,
+      };
     } else {
       if (database.trim() === "") {
         setFormError(t("taskFormDatabaseRequired"));
@@ -1102,6 +1147,7 @@ function TaskForm({
             { value: "run_assertions", label: t("taskFormActionAssertions") },
             { value: "timelapse_capture", label: t("taskFormActionTimelapse") },
             { value: "refresh_plan_watch", label: t("taskFormActionPlanWatch") },
+            { value: "run_maintenance", label: t("taskFormActionMaintenance") },
           ]}
           onChange={(v) => setActionKind(v as ActionKind)}
         />
@@ -1221,6 +1267,48 @@ function TaskForm({
         <chakra.p margin={0} textStyle="caption" color="app.textMuted">
           {t("taskFormPlanWatchHint")}
         </chakra.p>
+      ) : actionKind === "run_maintenance" ? (
+        <>
+          <Callout tone="warning">{t("taskFormMaintenanceHint")}</Callout>
+          <FormSection>
+            <FieldLabel as="div">{t("taskFormMaintenanceKind")}</FieldLabel>
+            <ListboxSelect
+              css={{ width: "100%" }}
+              ariaLabel={t("taskFormMaintenanceKind")}
+              value={effectiveMaintenanceKind}
+              options={maintenanceKinds.map((k) => ({
+                value: k,
+                label: t(TASK_MAINTENANCE_LABEL_KEYS[k]),
+              }))}
+              onChange={(v) => setMaintenanceKind(v as TaskMaintenanceKind)}
+            />
+          </FormSection>
+          {selectedProfile?.driver !== "sqlite" && (
+            <FormSection>
+              <FieldLabel htmlFor="task-database-maintenance">{t("taskFormMaintenanceDatabase")}</FieldLabel>
+              <Input
+                id="task-database-maintenance"
+                value={database}
+                placeholder={
+                  selectedProfile?.database
+                    ? t("taskFormDatabaseDefault", { database: selectedProfile.database })
+                    : undefined
+                }
+                onChange={(e) => setDatabase(e.target.value)}
+              />
+            </FormSection>
+          )}
+          <FormSection>
+            <FieldLabel htmlFor="task-maintenance-targets">{t("taskFormMaintenanceTargets")}</FieldLabel>
+            <Textarea
+              id="task-maintenance-targets"
+              value={maintenanceTargets}
+              onChange={(e) => setMaintenanceTargets(e.target.value)}
+              rows={4}
+              fontFamily="var(--font-mono)"
+            />
+          </FormSection>
+        </>
       ) : actionKind === "run_assertions" ? (
         <>
           <chakra.p margin={0} fontSize="xs" color="app.textMuted">

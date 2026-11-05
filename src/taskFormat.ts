@@ -3,7 +3,7 @@
  * 引数として明示的に渡す形にしてあるので `Vitest` で決定的にテストできる
  * (`sqlLint.ts` / `gridStats.ts` などと同じ方針)。
  */
-import type { TaskAction, TaskSchedule } from "./api/tauri";
+import type { TaskAction, TaskMaintenanceKind, TaskSchedule } from "./api/tauri";
 import type { I18nKey } from "./i18n";
 
 /** 翻訳関数 (`i18n.t` と同じ形)。テストでは固定辞書を渡せる。 */
@@ -285,6 +285,32 @@ export function formatRunPreview(iso: string, locale?: string, timeZone?: string
   });
 }
 
+/** メンテナンス種別の表示ラベル (既存の保守メニューの i18n を共有する)。 */
+export const TASK_MAINTENANCE_LABEL_KEYS: Record<TaskMaintenanceKind, I18nKey> = {
+  analyze: "maintenanceAnalyze",
+  optimize: "maintenanceOptimize",
+  vacuum: "maintenanceVacuum",
+  vacuum_analyze: "maintenanceVacuumAnalyze",
+  reindex: "maintenanceReindex",
+};
+
+/** ドライバごとに定期メンテナンスで選べる種別 (バックエンド `tasks::maintenance::check_supported` と同じ)。 */
+export function maintenanceKindsForDriver(driver: string | undefined): TaskMaintenanceKind[] {
+  if (driver === "postgres") return ["vacuum_analyze", "analyze", "vacuum", "reindex"];
+  if (driver === "sqlite") return ["analyze", "vacuum", "reindex"];
+  return ["analyze", "optimize"];
+}
+
+/** 入力欄 (1 行 1 テーブル、カンマ区切りも可) を対象テーブルの配列にする。空行除去・重複除去。 */
+export function parseMaintenanceTargets(text: string): string[] {
+  const out: string[] = [];
+  for (const raw of text.split(/[\r\n,]+/)) {
+    const name = raw.trim();
+    if (name !== "" && !out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
 /** アクションの短い要約 ("Export (csv)" / "Dump (sales)")。 */
 export function summarizeAction(action: TaskAction, t: TaskT): string {
   if (action.kind === "export_query") {
@@ -302,6 +328,12 @@ export function summarizeAction(action: TaskAction, t: TaskT): string {
     return action.snippet_ids.length === 0
       ? t("taskSummaryPlanWatchAll")
       : t("taskSummaryPlanWatch", { n: action.snippet_ids.length });
+  }
+  if (action.kind === "run_maintenance") {
+    const kind = t(TASK_MAINTENANCE_LABEL_KEYS[action.maintenance]);
+    return action.targets.length === 0
+      ? t("taskSummaryMaintenanceAll", { kind })
+      : t("taskSummaryMaintenance", { kind, n: action.targets.length });
   }
   return t("taskSummaryDump", { database: action.database || "?" });
 }

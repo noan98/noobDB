@@ -2225,6 +2225,12 @@ const taskAction = z.discriminatedUnion("kind", [
     kind: z.literal("refresh_plan_watch"),
     snippet_ids: z.array(z.string()),
   }),
+  z.object({
+    kind: z.literal("run_maintenance"),
+    database: z.string().nullable().optional(),
+    targets: z.array(z.string()),
+    maintenance: z.enum(["analyze", "optimize", "vacuum", "vacuum_analyze", "reindex"]),
+  }),
 ]);
 
 /** 接続失敗時の自動リトライ設定 (#1537)。 */

@@ -6633,6 +6633,19 @@ const en = {
   taskFormTimelapseHint:
     "Captures a snapshot of every table watched in the Table Timelapse panel for this connection (read-only), so history keeps accumulating while you are away. A table that cannot be captured marks the run as failed.",
   taskFormTimelapseMaxGenerations: "Generations to keep per table (optional)",
+  taskFormActionMaintenance: "Run maintenance (ANALYZE / VACUUM / OPTIMIZE / REINDEX)",
+  taskFormMaintenanceHint:
+    "Runs the chosen maintenance statement one table at a time. This is a write operation, so it is rejected for read-only profiles; the statements are generated from a fixed set (no custom SQL). A table that fails marks the run as failed, and the rest still run.",
+  taskFormMaintenanceKind: "Maintenance",
+  taskFormMaintenanceDatabase: "Database / schema (optional)",
+  taskFormMaintenanceTargets: "Target tables (one per line; empty = whole database)",
+  taskFormMaintenanceTargetsRequiredMysql:
+    "MySQL has no database-wide maintenance statement. Enter at least one table.",
+  taskFormMaintenanceTargetsRequiredReindex: "PostgreSQL REINDEX needs at least one table.",
+  taskFormMaintenanceSqliteVacuumTargets:
+    "SQLite VACUUM applies to the whole database. Leave the target tables empty.",
+  taskFormMaintenanceReadOnlyProfile:
+    "This connection is read-only, so maintenance cannot be scheduled for it.",
   taskFormActionPlanWatch: "Refresh watched query plans",
   taskFormPlanWatchHint:
     "Re-runs EXPLAIN for the queries watched in the Plan Watch panel and records a new plan generation when it changed. Only warning-level changes (e.g. an index lookup that became a full scan, or an order-of-magnitude jump in estimated rows) mark the run as failed and notify you.",
@@ -6689,6 +6702,8 @@ const en = {
   taskSummaryTimelapse: "timelapse capture",
   taskSummaryPlanWatchAll: "plan watch (all watched)",
   taskSummaryPlanWatch: "plan watch ({n})",
+  taskSummaryMaintenanceAll: "maintenance: {kind} (whole database)",
+  taskSummaryMaintenance: "maintenance: {kind} ({n} tables)",
   taskRelDue: "due",
   taskRelLessThanMinute: "<1 min",
   taskRelMinutes: "{n} min",
@@ -13861,6 +13876,19 @@ const ja: Dict = {
   taskFormTimelapseHint:
     "この接続でテーブル・タイムラプスにウォッチ登録したテーブルのスナップショットを読み取り専用で取得し、席を外している間も履歴を積み上げます。取得できなかったテーブルがあると実行は失敗扱いになります。",
   taskFormTimelapseMaxGenerations: "テーブルごとに保持する世代数 (任意)",
+  taskFormActionMaintenance: "定期メンテナンス (ANALYZE / VACUUM / OPTIMIZE / REINDEX)",
+  taskFormMaintenanceHint:
+    "選んだメンテナンス文をテーブルごとに 1 文ずつ実行します。書き込み扱いの操作なので、読み取り専用の接続では拒否されます。実行する文は固定の組み合わせから生成し、任意の SQL は指定できません。失敗したテーブルがあると実行は失敗扱いになりますが、残りは続けて実行します。",
+  taskFormMaintenanceKind: "メンテナンスの種類",
+  taskFormMaintenanceDatabase: "データベース / スキーマ (省略可)",
+  taskFormMaintenanceTargets: "対象テーブル (1 行に 1 つ。空ならデータベース全体)",
+  taskFormMaintenanceTargetsRequiredMysql:
+    "MySQL にはデータベース全体を対象にするメンテナンス文がありません。テーブルを 1 つ以上入力してください。",
+  taskFormMaintenanceTargetsRequiredReindex:
+    "PostgreSQL の REINDEX にはテーブルを 1 つ以上入力してください。",
+  taskFormMaintenanceSqliteVacuumTargets:
+    "SQLite の VACUUM はデータベース全体が対象です。対象テーブルは空にしてください。",
+  taskFormMaintenanceReadOnlyProfile: "この接続は読み取り専用のため、メンテナンスは登録できません。",
   taskFormActionPlanWatch: "ウォッチ中のクエリ実行計画を再取得",
   taskFormPlanWatchHint:
     "実行計画ウォッチに登録したクエリの EXPLAIN を再実行し、計画が変わっていれば新しい世代として記録します。警告レベルの変化 (インデックス参照がフルスキャンになった、推定行数が桁違いに増えた等) があったときだけ実行を失敗扱いにしてデスクトップ通知でお知らせします。",
@@ -13918,6 +13946,8 @@ const ja: Dict = {
   taskSummaryTimelapse: "タイムラプス取得",
   taskSummaryPlanWatchAll: "実行計画ウォッチ (ウォッチ中すべて)",
   taskSummaryPlanWatch: "実行計画ウォッチ ({n} 件)",
+  taskSummaryMaintenanceAll: "メンテナンス: {kind} (データベース全体)",
+  taskSummaryMaintenance: "メンテナンス: {kind} ({n} テーブル)",
   taskRelDue: "実行待ち",
   taskRelLessThanMinute: "1 分未満",
   taskRelMinutes: "{n} 分後",

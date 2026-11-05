@@ -6557,6 +6557,36 @@
         "minutes": 60
       },
       "updated_at": "2026-01-02T00:00:00Z"
+    },
+    {
+      "action": {
+        "database": "public",
+        "kind": "run_maintenance",
+        "maintenance": "vacuum_analyze",
+        "targets": [
+          "orders"
+        ]
+      },
+      "auto_paused_at": "2026-01-02T00:00:00Z",
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 3
+      },
+      "consecutive_failures": 2,
+      "created_at": "2026-01-01T00:00:00Z",
+      "enabled": true,
+      "id": "task0001",
+      "last_run_at": "2026-01-02T00:00:00Z",
+      "last_status": "ok",
+      "name": "nightly",
+      "next_run_at": "2026-01-03T00:00:00Z",
+      "pause_after_failures": 5,
+      "profile_id": "abc12345",
+      "schedule": {
+        "kind": "interval",
+        "minutes": 1440
+      },
+      "updated_at": "2026-01-02T00:00:00Z"
     }
   ],
   "taskExportFormatVariants": [
