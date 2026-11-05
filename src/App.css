@@ -2811,6 +2811,21 @@ td.is-find-current::after {
   opacity: var(--er-dim-opacity);
 }
 
+/* ---------- EXPLAIN グラフ凡例: 勾配バーが左→右へ満ちる (#2017) ----------
+   clip-path で右端から切り詰めた状態から開く。reduced-motion は末尾の全体規則 (duration 0.01ms) で即時。 */
+@keyframes explain-legend-fill {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+}
+.explain-legend-fill {
+  animation: explain-legend-fill calc(var(--dur-med) * 2) var(--ease-out) backwards;
+}
+:root[data-theme="hc-light"] .explain-legend-fill,
+:root[data-theme="hc-dark"] .explain-legend-fill {
+  animation: none;
+}
+
 /* ---------- React Flow: ノードの深さ順入場と再レイアウト・モーフ (#1861) ----------
    ノード / エッジには ERDiagramView・ExplainGraphView が `flow-node-enter` /
    `flow-edge-enter` と `--stagger-index` (ルート=0 からの深さ) を付ける。入場は個別の
