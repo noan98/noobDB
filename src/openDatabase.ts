@@ -64,3 +64,16 @@ export function filterDatabases(names: readonly string[], query: string): string
   const q = query.trim().toLowerCase();
   return q ? names.filter((n) => n.toLowerCase().includes(q)) : [...names];
 }
+
+/**
+ * プロファイル `id` の削除で切断される開いている接続 (本体と、その派生接続 #2018)。
+ * 削除前の確認 (未適用編集・開いているトランザクション) の対象を決めるのに使う。
+ */
+export function connectionsAffectedByDelete<T extends { profile: { id: string } }>(
+  connections: readonly T[],
+  id: string,
+): T[] {
+  return connections.filter(
+    (c) => c.profile.id === id || (isVariantProfileId(c.profile.id) && baseProfileId(c.profile.id) === id),
+  );
+}

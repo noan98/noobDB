@@ -15,7 +15,12 @@ import {
   type ReactNode,
 } from "react";
 import { connectRequestFromProfile } from "./connectRequest";
-import { baseProfileId, databaseVariantProfile, isVariantProfileId } from "./openDatabase";
+import {
+  baseProfileId,
+  connectionsAffectedByDelete,
+  databaseVariantProfile,
+  isVariantProfileId,
+} from "./openDatabase";
 import { OpenDatabaseModal } from "./components/OpenDatabaseModal";
 import { beginBatchRun, endBatchRun, isCurrentBatchRun } from "./batchRunGuard";
 import { Box, Flex, Grid, chakra, visuallyHiddenStyle } from "@chakra-ui/react";
@@ -10207,7 +10212,18 @@ export default function App() {
       if (pendingProfileDeleteTimers.current.has(id)) return;
       // アクティブ接続の削除は切断を伴いタブを閉じる。未確定の編集があればここで確認し、
       // キャンセルならプロファイルを隠さず何もしない (#1391)。
-      if (id === selectedProfile?.id && !(await confirmDiscardPendingEdits())) return;
+      // 派生接続 (#2018) も一緒に切断されるので、アクティブなのが派生でも同じ確認を通す。
+      const affected = connectionsAffectedByDelete(openConnectionsRef.current, id);
+      const activeAffected = affected.some((c) => c.profile.id === selectedProfile?.id);
+      if (activeAffected && !(await confirmDiscardPendingEdits())) return;
+      // 切断される全セッション (背景含む) の開いているトランザクションも確認する。
+      if (
+        !(await confirmDiscardOpenTransactions(
+          affected.map((c) => c.sessionId),
+          "disconnect",
+        ))
+      )
+        return;
       if (pendingProfileDeleteTimers.current.has(id)) return;
       // Hide from the sidebar right away, but defer the irreversible backend delete
       // (which wipes keyring secrets) so Undo can cancel it (#676).
@@ -10239,7 +10255,13 @@ export default function App() {
         },
       });
     },
-    [finalizeProfileDelete, toast, selectedProfile?.id, confirmDiscardPendingEdits],
+    [
+      finalizeProfileDelete,
+      toast,
+      selectedProfile?.id,
+      confirmDiscardPendingEdits,
+      confirmDiscardOpenTransactions,
+    ],
   );
 
   // 接続リストのドラッグ/キーボード並べ替え (#786)。`ConnectionList` は

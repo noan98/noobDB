@@ -3,6 +3,7 @@ import type { ConnectionProfile } from "../api/tauri";
 import { connectRequestFromProfile } from "../connectRequest";
 import {
   baseProfileId,
+  connectionsAffectedByDelete,
   databaseVariantProfile,
   filterDatabases,
   insertVariantProfiles,
@@ -95,5 +96,17 @@ describe("insertVariantProfiles", () => {
     ]);
     expect(isVariantProfileId("a::db::x")).toBe(true);
     expect(isVariantProfileId("a")).toBe(false);
+  });
+});
+
+describe("connectionsAffectedByDelete (#2018)", () => {
+  it("本体と派生接続だけを返し、別プロファイルや前方一致の ID は含めない", () => {
+    const conns = ["p1", "p1::db::a", "p1::db::b", "p10", "p10::db::a", "p2"].map((id, i) => ({
+      sessionId: `s${i}`,
+      profile: { id },
+    }));
+    expect(connectionsAffectedByDelete(conns, "p1").map((c) => c.sessionId)).toEqual(["s0", "s1", "s2"]);
+    expect(connectionsAffectedByDelete(conns, "p2").map((c) => c.sessionId)).toEqual(["s5"]);
+    expect(connectionsAffectedByDelete(conns, "p3")).toEqual([]);
   });
 });
