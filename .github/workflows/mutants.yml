@@ -28,12 +28,12 @@ name: mutation-test
 on:
   # 週次の全件実行 (#2038)。スコープ・設定は手動実行と同じ (mutants.toml が単一ソース)。
   # 1 回あたり 4 シャード × 約 30 分かかるため nightly ではなく週次にする。
-  # cron は UTC: 土曜 17:00 UTC = JST 日曜 02:00 (夜間)。e2e (18:00 UTC) /
+  # cron は UTC: 土曜 17:17 UTC = JST 日曜 02:17 (夜間。毎時 00 分は混雑で遅延しやすいので避ける)。e2e (18:00 UTC) /
   # windows-db-smoke (18:30 UTC) の毎日実行と時刻をずらしてランナーを奪い合わない。
   # schedule は既定ブランチでのみ走る。結果は notify ジョブがトラッキング Issue
   # (ci:mutants) に通知する。必須チェックにはしない (可視化目的)。
   schedule:
-    - cron: "0 17 * * 6"
+    - cron: "17 17 * * 6"
   workflow_dispatch:
     inputs:
       list_only:
@@ -44,9 +44,10 @@ on:
 permissions:
   contents: read
 
-# 手動トリガを連続起動したとき、数十分かかるジョブが重複して走らないようにする。
+# 手動トリガや週次 schedule が重なったとき、数十分かかるジョブが重複して走らないようにする。
+# list_only の手動実行は別グループにし、フル実行 (定期含む) を打ち切ってその週の通知を消さない。
 concurrency:
-  group: mutants-${{ github.ref }}
+  group: mutants-${{ github.ref }}-${{ inputs.list_only && 'list' || 'run' }}
   cancel-in-progress: true
 
 env:
@@ -272,7 +273,7 @@ jobs:
             done
           fi
 
-  # 結果の通知 (#1395)。手動実行の可視化専用で見に行かなければ腐るため、トラッキング
+  # 結果の通知 (#1395)。手動 / 週次実行の可視化専用で見に行かなければ腐るため、トラッキング
   # Issue (ラベル ci:mutants) に結果を残す。生存変異は毎回「ある」のが普通でノイズに
   # なるので、通知条件は次のとおりに絞る。
   #   - 実行失敗 (結果ファイル無し / baseline 失敗 等) … 必ず upsert

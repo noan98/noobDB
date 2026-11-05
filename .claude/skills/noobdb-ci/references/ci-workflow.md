@@ -391,5 +391,5 @@ Windows 固有 × サーバ型ドライバの退行が CI で見えなかった�
   `failure` / `cancelled` なら「打ち切り」と出し分ける。`mutants.out/` ・diff・list 結果は artifact
   `mutants-diff-out` (14 日) に保存。ジョブは 40 分で打ち切り、同一 PR の古い run は取り消す。
 - ジョブ ID と `rust-cache` の `key` は `mutants.yml` と同じ `mutants`。main で `mutants.yml` を手動
-  実行したキャッシュは PR の初回 run でも復元されるが、定期実行がないので通常は初回が cold で、
-  同じ PR の 2 回目以降の push から効く。actions は同じ SHA ピン。
+  実行したキャッシュは PR の初回 run でも復元される。週次 schedule (#2038) が main のキャッシュを
+  更新するので初回から効くことが多い (rust-cache は 7 日未アクセスで消えるため境界付近では cold もある)。actions は同じ SHA ピン。
