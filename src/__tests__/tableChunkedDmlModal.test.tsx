@@ -170,6 +170,41 @@ describe("TableChunkedDmlModal (#2020)", () => {
     );
   });
 
+  it("開始前の件数取得中は二重に開始できず、閉じたら確認も実行もしない", async () => {
+    let resolveCount: () => void = () => {};
+    lookup.mockImplementation(
+      () =>
+        new Promise((r) => {
+          resolveCount = () => r({ columns: [], rows: [[10]], rows_affected: 0, elapsed_ms: 1 });
+        }),
+    );
+    const confirm = vi.fn().mockResolvedValue(true);
+    const { unmount } = renderWithProviders(
+      <TableChunkedDmlModal
+        sessionId="s1"
+        driver="sqlite"
+        database="main"
+        table="logs"
+        readOnly={false}
+        isProduction={true}
+        capture={null}
+        onConfirmStart={confirm}
+        onClose={vi.fn()}
+      />,
+    );
+    fill("id < 100");
+    const run = screen.getByRole("button", { name: t("chunkedDmlRun") });
+    fireEvent.click(run);
+    await waitFor(() => expect(run).toBeDisabled());
+    fireEvent.click(run);
+    expect(lookup).toHaveBeenCalledTimes(1);
+    unmount();
+    resolveCount();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(confirm).not.toHaveBeenCalled();
+    expect(batch).not.toHaveBeenCalled();
+  });
+
   it("read_only 接続では実行を無効化する", () => {
     mount({ readOnly: true });
     fill("id < 100");

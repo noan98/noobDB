@@ -87,6 +87,10 @@ export function TableChunkedDmlModal({
     { status: "loading" } | { status: "ok"; count: number } | { status: "error"; error: string } | null
   >(null);
   const cancelRef = useRef(false);
+  // 開始準備 (件数の COUNT と確認ダイアログ) の間も二重起動させない。閉じられたら準備後に打ち切る。
+  const startingRef = useRef(false);
+  const unmountedRef = useRef(false);
+  const [preparing, setPreparing] = useState(false);
   const whereRef = useRef<HTMLInputElement>(null);
   const cancelBtnRef = useRef<HTMLButtonElement>(null);
 
@@ -94,6 +98,7 @@ export function TableChunkedDmlModal({
   useEffect(
     () => () => {
       cancelRef.current = true;
+      unmountedRef.current = true;
     },
     [],
   );
@@ -149,10 +154,22 @@ export function TableChunkedDmlModal({
   const errorCode: ChunkedDmlErrorCode | null = built.ok ? null : built.code;
   const showError = errorCode !== null && !(errorCode === "emptyWhere" && whereText.trim() === "");
   const running = phase === "running";
-  const canRun = built.ok && waitValid && !readOnly && !running;
+  const canRun = built.ok && waitValid && !readOnly && !running && !preparing;
 
   const start = async () => {
-    if (!canRun || !built.ok || !countBuilt.ok) return;
+    if (!canRun || !built.ok || !countBuilt.ok || startingRef.current) return;
+    startingRef.current = true;
+    setPreparing(true);
+    try {
+      await prepareAndRun();
+    } finally {
+      startingRef.current = false;
+      if (!unmountedRef.current) setPreparing(false);
+    }
+  };
+
+  const prepareAndRun = async () => {
+    if (!built.ok || !countBuilt.ok) return;
     setBatches(0);
     setAffected(0);
     setTotal(null);
@@ -173,12 +190,14 @@ export function TableChunkedDmlModal({
     try {
       rows = await countRows();
     } catch (e) {
+      if (unmountedRef.current) return;
       setError(String(e));
       setPhase("error");
       return;
     }
+    if (unmountedRef.current) return;
     const ok = await onConfirmStart({ table, operation: op, batchSize, total: rows, sql: built.sql });
-    if (!ok) return;
+    if (!ok || unmountedRef.current) return;
     cancelRef.current = false;
     setPhase("running");
     setTotal(rows);
