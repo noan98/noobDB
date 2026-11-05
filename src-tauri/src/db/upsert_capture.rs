@@ -61,6 +61,11 @@ impl UpsertHint {
         a == b
     }
 
+    /// VALUES の行数 (グリッド経由の行追加の記録 #2024 で、後から読める行数の検算に使う)。
+    pub(crate) fn tuple_count(&self) -> usize {
+        self.tuples.len()
+    }
+
     /// 競合時の更新に `WHERE` 条件があるか (文字列リテラルの外に語 `where` がある)。
     pub(crate) fn has_update_where(&self) -> bool {
         self.update_where

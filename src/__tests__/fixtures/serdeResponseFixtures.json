@@ -544,6 +544,11 @@
     }
   ],
   "bulkWriteOutcomeApplied": {
+    "capture": {
+      "batch_id": "b18c-abc123",
+      "declined": 1,
+      "recorded": 2
+    },
     "result": {
       "columns": [
         {

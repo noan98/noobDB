@@ -3667,7 +3667,7 @@ async fn postgres_bulk_write_row_count_overshoot_rolls_back() {
     .await
     .expect("outcome");
     match out {
-        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 1),
+        t::BulkWriteOutcome::Applied { result, .. } => assert_eq!(result.rows_affected, 1),
         other => panic!("unique row must apply: {other:?}"),
     }
 
@@ -3696,7 +3696,7 @@ async fn postgres_bulk_write_row_count_overshoot_rolls_back() {
     .await
     .expect("outcome");
     match out {
-        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 0),
+        t::BulkWriteOutcome::Applied { result, .. } => assert_eq!(result.rows_affected, 0),
         other => panic!("fewer rows must not be blocked: {other:?}"),
     }
 
@@ -3713,6 +3713,7 @@ async fn postgres_bulk_write_row_count_overshoot_rolls_back() {
         vec![],
         t::BulkWriteOptions {
             approved_counts: Some(vec![1]),
+            ..Default::default()
         },
     )
     .await
@@ -3745,12 +3746,13 @@ async fn postgres_bulk_write_row_count_overshoot_rolls_back() {
         vec![],
         t::BulkWriteOptions {
             approved_counts: Some(vec![2]),
+            ..Default::default()
         },
     )
     .await
     .expect("outcome");
     match out {
-        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 2),
+        t::BulkWriteOutcome::Applied { result, .. } => assert_eq!(result.rows_affected, 2),
         other => panic!("approved overshoot must apply: {other:?}"),
     }
     assert_eq!(
@@ -3822,6 +3824,7 @@ async fn postgres_bulk_write_optimistic_lock_detects_lost_update() {
                 vec![],
                 t::BulkWriteOptions {
                     approved_counts: approved,
+                    ..Default::default()
                 },
             )
             .await
@@ -3892,7 +3895,7 @@ async fn postgres_bulk_write_optimistic_lock_detects_lost_update() {
     // (3) 旧値を付けない (設定オフ) と従来どおり主キーだけで当たり、他者の変更を上書きする。
     let out = apply(vec![locked(vec![])], None).await;
     match out {
-        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 3),
+        t::BulkWriteOutcome::Applied { result, .. } => assert_eq!(result.rows_affected, 3),
         other => panic!("lock off must apply: {other:?}"),
     }
 
@@ -3907,7 +3910,7 @@ async fn postgres_bulk_write_optimistic_lock_detects_lost_update() {
     )
     .await;
     match out {
-        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 2),
+        t::BulkWriteOutcome::Applied { result, .. } => assert_eq!(result.rows_affected, 2),
         other => panic!("fresh old values must apply: {other:?}"),
     }
 
