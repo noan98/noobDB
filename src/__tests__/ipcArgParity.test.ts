@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 // `ipcCommandParity.test.ts` と同じ `?raw` インポートパターン。バックエンドの
-// コマンド実装は `src-tauri/src/commands/*.rs` に散らばっている。
+// コマンド実装は `src-tauri/src/commands/**/*.rs` に散らばっている。
 //
 // かつては各ファイルを個別に `import ... from ".../xxx.rs?raw"` で列挙していたが
 // (#921)、新しいコマンドモジュールを追加したときにここへの追記を忘れると、その
@@ -12,7 +12,7 @@ import libRs from "../../src-tauri/src/lib.rs?raw";
 // `tauri.ts` と `api/commands/*.ts` の連結 (ラッパー本体はモジュール別ファイルに分割済み)。
 import { apiWrapperSource as tauriTs } from "./apiSources";
 
-const commandModules = import.meta.glob("../../src-tauri/src/commands/*.rs", {
+const commandModules = import.meta.glob("../../src-tauri/src/commands/**/*.rs", {
   eager: true,
   query: "?raw",
   import: "default",
