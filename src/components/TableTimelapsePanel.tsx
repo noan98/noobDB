@@ -829,14 +829,15 @@ export function TableTimelapsePanel({
                       type="button"
                       size="sm"
                       onClick={() => setDmlOpen(true)}
-                      disabled={rows.length === 0 || dmlBlocked}
+                      // 前の差分を残している間 (取得中) は、別ペアの SQL / 書き出しを作らせない。
+                      disabled={rows.length === 0 || dmlBlocked || !diffSettled}
                       title={dmlBlocked ? t("timelapseDmlRowidBlocked") : undefined}
                     >
                       {t("timelapseDmlButton")}
                     </Button>
                     <TextExportButton
                       filenameBase={`timelapse-${diff.diff.table}`}
-                      disabled={rows.length === 0}
+                      disabled={rows.length === 0 || !diffSettled}
                       formats={[
                         { id: "csv", label: "CSV", build: () => buildExport("csv") },
                         { id: "json", label: "JSON", build: () => buildExport("json") },

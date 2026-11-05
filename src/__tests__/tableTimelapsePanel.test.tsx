@@ -402,6 +402,31 @@ describe("TableTimelapsePanel (#739)", () => {
       expect(screen.getByText("777")).toBeInTheDocument();
     });
 
+    it("前の差分を残して取得中の間は、DML と書き出しのボタンを無効にする", async () => {
+      vi.mocked(api.timelapseListWatches).mockResolvedValue([threeGenWatch()]);
+      vi.mocked(api.timelapseDiffGenerations).mockResolvedValueOnce(genDiff());
+      renderPanel();
+      const slider = await screen.findByRole("slider", { name: t("timelapseScrubAria") });
+      const dml = await screen.findByRole("button", { name: t("timelapseDmlButton") });
+      await waitFor(() => expect(dml).toBeEnabled());
+      let resolveNext: (d: TimelapseGenerationDiff) => void = () => {};
+      vi.mocked(api.timelapseDiffGenerations).mockReturnValueOnce(
+        new Promise<TimelapseGenerationDiff>((resolve) => {
+          resolveNext = resolve;
+        }),
+      );
+      fireEvent.change(slider, { target: { value: "1" } });
+      // 前の差分 (150) が残ったまま取得中。
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: t("timelapseDmlButton") })).toBeDisabled(),
+      );
+      expect(screen.getByText("150")).toBeInTheDocument();
+      resolveNext(genDiff());
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: t("timelapseDmlButton") })).toBeEnabled(),
+      );
+    });
+
     it("再生中に一時停止すると、それ以上は取得しない", async () => {
       vi.mocked(api.timelapseListWatches).mockResolvedValue([threeGenWatch()]);
       let resolveFirst: (d: TimelapseGenerationDiff) => void = () => {};
