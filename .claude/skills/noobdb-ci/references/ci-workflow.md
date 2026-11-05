@@ -393,3 +393,26 @@ Windows 固有 × サーバ型ドライバの退行が CI で見えなかった�
 - ジョブ ID と `rust-cache` の `key` は `mutants.yml` と同じ `mutants`。main で `mutants.yml` を手動
   実行したキャッシュは PR の初回 run でも復元される。週次 schedule (#2038) が main のキャッシュを
   更新するので初回から効くことが多い (rust-cache は 7 日未アクセスで消えるため境界付近では cold もある)。actions は同じ SHA ピン。
+
+## `js-mutants-diff.yml` (PR 差分の Stryker / #2021)
+
+`mutants-diff.yml` のフロント版。手動専用の `js-mutants.yml` (変更しない) の補完として、
+安全網ファイル (`stryker.conf.json` の `mutate` 4 ファイル) と、それを検証するテスト
+(`vitest.mutants.config.ts` の `include`)・共有ゴールデン・設定 2 ファイル・
+`scripts/js-mutants-diff.mjs`・本ワークフローを変更した PR だけで起動する。
+**必須チェックにしない** (可視化専用で fail させない。ワークフロー単位 `paths:` なのでスキップ固着なし)。
+
+- 対象の単一ソースは `stryker.conf.json` の `mutate`。実行テストは `vitest.mutants.config.ts` の
+  `include` (js-mutants.yml と共有)。決定ロジックは `scripts/js-mutants-diff.mjs`
+  (`parseDiffRanges` / `planMutation`、`scripts/js-mutants-diff.test.mjs`)。Summary にモードを明示する。
+  - 差分行のみ: ソースの追加・変更行を `--mutate path:開始行-終了行` で変異。
+  - ファイル全体: include のテスト / 共有ゴールデンの変更 (純削除でも) で、`TEST_TO_SOURCES` /
+    `FIXTURE_TO_SOURCES` の対応ソース全体を変異 (「テストを弱める PR」の検出)。対応表に無い include
+    のテストや `stryker.conf.json` / `vitest.mutants.config.ts` の変更は `mutate` 全件。既存の生存変異も出る。
+  - `--mutate` は Stryker 10 でカンマ分割・上書きなので、カンマ区切りの 1 引数で渡す。
+  - include / 対応表 / `mutate` を足す・外すときは `paths:` も揃える (`scripts/js-mutants-diff.test.mjs` が paths の包含と対応表の import 推移閉包を検査する。ci.yml の対象外なので、本ワークフローの先頭ステップ `node --test` で PR ごとに走らせる)。
+- 対象が 0 件 (ワークフローだけの変更など) なら Node/pnpm のセットアップと Stryker を丸ごと飛ばして即終了する。
+- Report は `mutation.json` から Survived + NoCoverage を `path:行` で Job Summary に列挙し `::warning` を出す。
+  Stryker 終了コード非 0・打ち切りは実行失敗として表示する。変異候補 0 件 (コメントのみの変更など) は情報表示のみ。
+  レポートは artifact `js-mutants-diff-out` (14 日)。
+- 限界: 行範囲は `git diff -U0 --no-renames` (リネームは削除+追加として検出) のため、複数行にまたがる式の途中だけを変えると、式の他の行にある変異が漏れる。
