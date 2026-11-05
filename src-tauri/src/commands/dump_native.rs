@@ -212,10 +212,17 @@ pub(crate) fn mysql_footer() -> &'static str {
 /// PostgreSQL の先頭。`standard_conforming_strings = on` は `'\x..'` (bytea) と
 /// バックスラッシュ非エスケープのリテラルが正しく読まれるための前提。
 /// `check_function_bodies = false` は、表より前に出す関数の本体検証を遅らせる。
-pub(crate) fn postgres_header(schema: &str) -> String {
+/// `interval_style` はダンプ時の `IntervalStyle` (interval を `::text` で書くので、復元側も同じ
+/// 書式で読む)。未知の値は `postgres` にする。
+pub(crate) fn postgres_header(schema: &str, interval_style: &str) -> String {
     let q = quote_ident(DriverKind::Postgres, schema);
-    let mut out = String::from(
-        "SET client_encoding = 'UTF8';\nSET standard_conforming_strings = on;\nSET check_function_bodies = false;\nSET IntervalStyle = 'postgres';\n",
+    let style = match interval_style {
+        "postgres" | "postgres_verbose" | "sql_standard" | "iso_8601" => interval_style,
+        _ => "postgres",
+    };
+    let mut out = format!(
+        "-- Restore with: psql -v ON_ERROR_STOP=1 -f <this file> (psql continues after errors by default)\n\
+         SET client_encoding = 'UTF8';\nSET standard_conforming_strings = on;\nSET check_function_bodies = false;\nSET IntervalStyle = '{style}';\n"
     );
     if schema != "public" {
         out.push_str(&format!("CREATE SCHEMA IF NOT EXISTS {q};\n"));
@@ -867,7 +874,15 @@ pub async fn dump_native_core(
     // ---- 先頭 ----
     match driver {
         DriverKind::Mysql => write_chunk(&writer, counter, mysql_header())?,
-        _ => write_chunk(&writer, counter, &postgres_header(&schema))?,
+        _ => {
+            let style = conn
+                .execute("SHOW IntervalStyle", None)
+                .await
+                .ok()
+                .and_then(|r| r.rows.first().and_then(|row| text_at(row, 0)))
+                .unwrap_or_default();
+            write_chunk(&writer, counter, &postgres_header(&schema, &style))?
+        }
     }
     if !warnings.is_empty() {
         let w: String = warnings
@@ -900,7 +915,8 @@ pub async fn dump_native_core(
             // CASCADE はスキーマ全体のダンプだけ。部分ダンプで付けると、範囲外の表から張られた
             // 外部キーや範囲外のビューまで黙って消えてしまう。
             let cascade = if whole_schema { " CASCADE" } else { "" };
-            for t in &ordered_tables {
+            // 子→親の順 (CASCADE なしでは、親を先に消すと子の FK に阻まれる)。
+            for t in ordered_tables.iter().rev() {
                 chunk.push_str(&format!(
                     "DROP TABLE IF EXISTS {}{cascade};\n",
                     qualified_table(driver, &schema, t)
@@ -1443,12 +1459,14 @@ mod tests {
         assert!(mysql_header().contains("SET TIME_ZONE='+00:00'"));
         assert!(mysql_footer().contains("SET TIME_ZONE=@OLD_TIME_ZONE"));
         assert!(mysql_footer().contains("SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS"));
-        let h = postgres_header("public");
+        let h = postgres_header("public", "sql_standard");
+        assert!(h.contains("SET IntervalStyle = 'sql_standard'") && h.contains("ON_ERROR_STOP=1"));
+        assert!(postgres_header("public", "x'; DROP").contains("IntervalStyle = 'postgres'"));
         assert!(h.contains("standard_conforming_strings = on"));
         assert!(h.contains("check_function_bodies = false"));
         assert!(!h.contains("CREATE SCHEMA"));
         assert!(h.contains("SET search_path TO \"public\", public;"));
-        let h = postgres_header("my\"s");
+        let h = postgres_header("my\"s", "postgres");
         assert!(h.contains("CREATE SCHEMA IF NOT EXISTS \"my\"\"s\";"));
     }
 

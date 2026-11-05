@@ -826,6 +826,63 @@ async fn postgres_native_dump_roundtrips_when_env_set() {
         .await
         .expect("cleanup");
 
+    // 親子 2 表の部分ダンプを、既存の (旧データが残った) 表へ復元できる。DROP は子→親の順で、
+    // CASCADE なしでも親が子の FK に阻まれない。
+    for sql in [
+        "DROP SCHEMA IF EXISTS nb2033_pair CASCADE",
+        "CREATE SCHEMA nb2033_pair",
+        "CREATE TABLE nb2033_pair.pp (id int PRIMARY KEY, v text)",
+        "CREATE TABLE nb2033_pair.cc (id int PRIMARY KEY, pid int REFERENCES nb2033_pair.pp(id))",
+        "INSERT INTO nb2033_pair.pp VALUES (1, 'a'), (2, 'b')",
+        "INSERT INTO nb2033_pair.cc VALUES (1, 1), (2, 2)",
+    ] {
+        conn.execute(sql, None).await.expect("pair ddl");
+    }
+    let pair_sel = [
+        "SELECT * FROM nb2033_pair.pp ORDER BY id",
+        "SELECT * FROM nb2033_pair.cc ORDER BY id",
+    ];
+    let pair_before = [
+        rows_of(&conn, pair_sel[0]).await,
+        rows_of(&conn, pair_sel[1]).await,
+    ];
+    let pair_dump = dump_to_string(
+        &conn,
+        "nb2033_pair",
+        &options(serde_json::json!({"tables": ["cc", "pp"]})),
+    )
+    .await
+    .expect("pair dump");
+    assert!(!pair_dump.contains("CASCADE"));
+    assert!(
+        pair_dump.find("DROP TABLE IF EXISTS \"nb2033_pair\".\"cc\"")
+            < pair_dump.find("DROP TABLE IF EXISTS \"nb2033_pair\".\"pp\"")
+    );
+    conn.execute("INSERT INTO nb2033_pair.pp VALUES (99, 'old')", None)
+        .await
+        .expect("old parent row");
+    conn.execute("INSERT INTO nb2033_pair.cc VALUES (99, 99)", None)
+        .await
+        .expect("old child row");
+    let mut path4 = std::env::temp_dir();
+    path4.push(format!(
+        "noobdb_dump_native_pg_pair_{}.sql",
+        std::process::id()
+    ));
+    std::fs::write(&path4, &pair_dump).expect("write dump");
+    let ok4 = psql_cli(&opts, &path4);
+    let _ = std::fs::remove_file(&path4);
+    assert!(
+        ok4,
+        "partial restore over existing tables failed\n{pair_dump}"
+    );
+    for (i, sql) in pair_sel.iter().enumerate() {
+        assert_eq!(rows_of(&conn, sql).await, pair_before[i], "{sql}");
+    }
+    conn.execute("DROP SCHEMA nb2033_pair CASCADE", None)
+        .await
+        .expect("cleanup pair");
+
     // パーティション親は未対応として明示エラー。
     for sql in [
         "DROP SCHEMA IF EXISTS nb2033_part CASCADE",

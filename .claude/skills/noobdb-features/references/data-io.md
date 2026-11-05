@@ -127,6 +127,9 @@
     `DELIMITER ;;` 書式なので `mysql` クライアントでの復元が前提** (アプリ内のスクリプトランナーは `DELIMITER` 非対応)。
   - 既知の未対応: 式インデックス (列を持たない索引は DDL 再構成が省く)、MySQL 側の識別子・リテラルのクォート処理は
     SQL エクスポートと共有していない箇所が残る (今回は範囲外)。
+  - 既知の制約: ビューの行型に依存する関数は、ビューより前に作られて失敗しうる。部分ダンプ (CASCADE なし) で DROP が
+    失敗しても psql は既定で続行して旧データへ INSERT してしまうので、復元は `psql -v ON_ERROR_STOP=1` を推奨
+    (PostgreSQL ダンプのヘッダコメントにも書く)。ヘッダの `IntervalStyle` はダンプ時の値 (`SHOW IntervalStyle`)。
   - ラウンドトリップは `tests/dump_native_integration.rs` (`NOOBDB_TEST_MYSQL_URL` / `NOOBDB_TEST_POSTGRES_URL` +
     `mysql` / `psql` クライアントがあるときだけ実走)。
 - `commands/dump.rs`: DB ダンプ。MySQL は `mysqldump`、PostgreSQL は `pg_dump`、
