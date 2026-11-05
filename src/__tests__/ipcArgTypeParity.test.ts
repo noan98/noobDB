@@ -386,8 +386,11 @@ function classifyTsValue(
     const left = classifyTsValue(nn[1], params, aliases);
     const right = nn[2].trim();
     if (right === "null" || right === "undefined") return { kinds: left.kinds, nullable: true };
+    // 左辺が undefined/null のときは右辺 (既定値) が送られるので、両辺の種別の和を取り、
+    // null 許容は右辺に従う。片側でも不明なら全体を不明にする (誤った確定で素通りさせない)。
     const r = classifyTsValue(right, params, aliases);
-    return { kinds: left.kinds ?? r.kinds, nullable: false };
+    if (left.kinds === null || r.kinds === null) return { kinds: null, nullable: r.nullable };
+    return { kinds: new Set<Kind>([...left.kinds, ...r.kinds]), nullable: r.nullable };
   }
   if (/^(["'`]).*\1$/s.test(e)) return { kinds: new Set<Kind>(["string"]), nullable: false };
   if (/^-?\d+(\.\d+)?$/.test(e)) return { kinds: new Set<Kind>(["number"]), nullable: false };
@@ -625,6 +628,10 @@ describe("IPC 引数型パリティ (Rust コマンドの引数型 ↔ tauri.ts 
     expect(k("limit")).toBe("number?");
     expect(k("limit ?? null")).toBe("number?");
     expect(k("limit ?? 10")).toBe("number");
+    // 既定値の種別も送られうるので和を取る (左辺だけを見ると "" への変更を見逃す)。
+    expect(k("opts.b ?? []")).toBe("array");
+    expect(k('opts.b ?? ""')).toBe("array|string");
+    expect(k("limit ?? unknownVar")).toBe("?");
     expect(k("opts.a")).toBe("boolean");
     expect(k("opts.b")).toBe("array?");
     expect(k("mode")).toBe("string?");
