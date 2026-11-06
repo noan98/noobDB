@@ -169,6 +169,41 @@
         "a": "c"
       },
       "unmatched": []
+    },
+    {
+      "name": "Object.prototype-named column is not treated as mapped",
+      "caseInsensitive": false,
+      "source": [
+        "id",
+        "constructor",
+        "toString"
+      ],
+      "target": [
+        "id",
+        "ctor",
+        "to_string"
+      ],
+      "mapping": {},
+      "unmatched": [
+        "constructor",
+        "toString"
+      ]
+    },
+    {
+      "name": "column names with surrounding whitespace are kept verbatim",
+      "caseInsensitive": false,
+      "source": [
+        "id",
+        " name"
+      ],
+      "target": [
+        "id",
+        "name"
+      ],
+      "mapping": {},
+      "unmatched": [
+        " name"
+      ]
     }
   ]
 }

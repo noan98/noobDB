@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { assignableTargetColumns, unmatchedSourceColumns } from "../components/columnMapping";
+import {
+  assignableTargetColumns,
+  hasMapping,
+  mappedTarget,
+  unmatchedSourceColumns,
+  withMapping,
+} from "../components/columnMapping";
 import golden from "./fixtures/columnMappingVectors.json";
 
 // データ比較の列の対応付け (#2099)。Rust (`db/column_mapping.rs`) と同じ判定を共有ゴールデンで固定する。
@@ -33,5 +39,20 @@ describe("assignableTargetColumns", () => {
       "email",
       "extra",
     ]);
+  });
+});
+
+describe("対応表の継承プロパティ", () => {
+  it("Object.prototype と同名の列を割り当て済みとみなさない", () => {
+    expect(hasMapping({}, "constructor")).toBe(false);
+    expect(mappedTarget({}, "toString")).toBeUndefined();
+    expect(mappedTarget({ constructor: "ctor" }, "constructor")).toBe("ctor");
+  });
+
+  it("withMapping は __proto__ も自前のキーとして持ち、空なら外す", () => {
+    const m = withMapping({}, "__proto__", "proto_col");
+    expect(hasMapping(m, "__proto__")).toBe(true);
+    expect(mappedTarget(m, "__proto__")).toBe("proto_col");
+    expect(withMapping(m, "__proto__", "")).toEqual({});
   });
 });

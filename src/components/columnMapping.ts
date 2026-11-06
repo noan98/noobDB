@@ -14,6 +14,25 @@ function eqAscii(a: string, b: string): boolean {
 }
 
 /**
+ * 対応表がその列を「自分のキーとして」持つか。`constructor` / `toString` のような
+ * `Object.prototype` と同名の列を、継承プロパティで割り当て済みと誤判定しないため `in` は使わない。
+ */
+export function hasMapping(mapping: ColumnMapping, column: string): boolean {
+  return Object.prototype.hasOwnProperty.call(mapping, column);
+}
+
+/** 列の割り当て先 (未割り当てなら undefined)。継承プロパティは読まない。 */
+export function mappedTarget(mapping: ColumnMapping, column: string): string | undefined {
+  return hasMapping(mapping, column) ? mapping[column] : undefined;
+}
+
+/** 列の割り当てを変えた新しい対応表 (`target` が空なら外す)。`__proto__` も自前のキーとして持てるよう fromEntries で作る。 */
+export function withMapping(mapping: ColumnMapping, column: string, target: string): ColumnMapping {
+  const rest = Object.entries(mapping).filter(([k]) => k !== column);
+  return Object.fromEntries(target === "" ? rest : [...rest, [column, target]]);
+}
+
+/**
  * 対応表に無く、ターゲットに同名の列も無いソース列 (「手動で割り当てる」候補)。
  * `caseInsensitive` は同名の照合規則 (MySQL / SQLite とクロスドライバは true、PostgreSQL 同士は false)。
  */
@@ -24,7 +43,7 @@ export function unmatchedSourceColumns(
   caseInsensitive: boolean,
 ): string[] {
   const same = (a: string, b: string) => (caseInsensitive ? eqAscii(a, b) : a === b);
-  return source.filter((s) => !(s in mapping) && !target.some((t) => same(t, s)));
+  return source.filter((s) => !hasMapping(mapping, s) && !target.some((t) => same(t, s)));
 }
 
 /**
@@ -41,6 +60,6 @@ export function assignableTargetColumns(
   const same = (a: string, b: string) => (caseInsensitive ? eqAscii(a, b) : a === b);
   const taken = new Set<string>(Object.values(mapping));
   return target.filter(
-    (t) => t === current || (!taken.has(t) && !source.some((s) => !(s in mapping) && same(s, t))),
+    (t) => t === current || (!taken.has(t) && !source.some((s) => !hasMapping(mapping, s) && same(s, t))),
   );
 }

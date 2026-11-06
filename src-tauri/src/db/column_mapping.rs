@@ -16,15 +16,13 @@ use super::cross_compare::map_target_columns;
 /// ソース列名 → ターゲット列名。
 pub type ColumnMapping = BTreeMap<String, String>;
 
-/// IPC で受け取った対応表を整える。前後の空白を除き、空のキー / 値と、同名への対応
-/// (`a → a`、指定しないのと同じ) は落とす。
+/// IPC で受け取った対応表を整える。空のキー / 値と、同名への対応 (`a → a`、指定しないのと
+/// 同じ) は落とす。列名は UI が実際の列一覧から選んだ値なので、前後の空白も含めてそのまま使う
+/// (PostgreSQL / SQLite は `" name"` のような空白入りの引用識別子を持てる)。
 pub fn clean_mapping(raw: Option<HashMap<String, String>>) -> ColumnMapping {
     raw.unwrap_or_default()
         .into_iter()
-        .filter_map(|(k, v)| {
-            let (k, v) = (k.trim().to_string(), v.trim().to_string());
-            (!k.is_empty() && !v.is_empty() && k != v).then_some((k, v))
-        })
+        .filter_map(|(k, v)| (!k.is_empty() && !v.is_empty() && k != v).then_some((k, v)))
         .collect()
 }
 
@@ -167,12 +165,22 @@ mod tests {
 
     #[test]
     fn clean_mapping_drops_blank_and_identity_entries() {
-        let raw: HashMap<String, String> = [(" a ", " b "), ("", "x"), ("c", ""), ("d", "d")]
+        let raw: HashMap<String, String> = [("a", "b"), ("", "x"), ("c", ""), ("d", "d")]
             .iter()
             .map(|(a, b)| (a.to_string(), b.to_string()))
             .collect();
         assert_eq!(clean_mapping(Some(raw)), m(&[("a", "b")]));
         assert!(clean_mapping(None).is_empty());
+    }
+
+    #[test]
+    fn clean_mapping_keeps_surrounding_whitespace_of_identifiers() {
+        // PostgreSQL / SQLite の引用識別子は前後に空白を持てる。削ると別の列名になり解決に失敗する。
+        let raw: HashMap<String, String> = [(" name", "full_name "), (" x ", " x ")]
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect();
+        assert_eq!(clean_mapping(Some(raw)), m(&[(" name", "full_name ")]));
     }
 
     #[test]

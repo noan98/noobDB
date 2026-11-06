@@ -3,7 +3,14 @@ import { useEffect, useMemo, useState } from "react";
 
 import { api } from "../api/tauri";
 import { useT } from "../i18n";
-import { assignableTargetColumns, type ColumnMapping, unmatchedSourceColumns } from "./columnMapping";
+import {
+  assignableTargetColumns,
+  type ColumnMapping,
+  hasMapping,
+  mappedTarget,
+  unmatchedSourceColumns,
+  withMapping,
+} from "./columnMapping";
 import { ListboxSelect } from "./ListboxSelect";
 
 // データ比較の列の対応付け (#2099)。列名を変えた移行 (user_name → username など) の検証用。
@@ -88,7 +95,7 @@ export function DataColumnMapping({
   // アンマウント時 (表が未選択など) は未割り当てなしに戻す。
   useEffect(() => () => onUnassignedChange?.(0), [onUnassignedChange]);
   if (!columns) return null;
-  const rows = columns.source.filter((c) => c in mapping || unmatched.includes(c));
+  const rows = columns.source.filter((c) => hasMapping(mapping, c) || unmatched.includes(c));
   if (rows.length === 0) return null;
 
   return (
@@ -105,7 +112,7 @@ export function DataColumnMapping({
           </chakra.span>
           <ListboxSelect
             ariaLabel={t("schemaCompareColMapTarget", { column: col })}
-            value={mapping[col] ?? ""}
+            value={mappedTarget(mapping, col) ?? ""}
             disabled={disabled}
             options={[
               { value: "", label: t("schemaCompareColMapNone") },
@@ -114,15 +121,10 @@ export function DataColumnMapping({
                 columns.target,
                 mapping,
                 caseInsensitive,
-                mapping[col],
+                mappedTarget(mapping, col),
               ).map((name) => ({ value: name })),
             ]}
-            onChange={(v) => {
-              const next = { ...mapping };
-              if (v === "") delete next[col];
-              else next[col] = v;
-              onChange(next);
-            }}
+            onChange={(v) => onChange(withMapping(mapping, col, v))}
             css={{ width: "100%" }}
           />
         </Box>
