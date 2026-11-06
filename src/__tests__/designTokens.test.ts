@@ -260,7 +260,7 @@ describe("design tokens: 本文 / 補足の textStyle (#1392)", () => {
     ["../components/CreateIndexModal.tsx", 1],
     ["../components/DataSearchModal.tsx", 4],
     ["../components/DataTransferModal.tsx", 1],
-    ["../components/DumpModal.tsx", 4],
+    ["../components/DumpModal.tsx", 3],
     ["../components/ExportMaskingSection.tsx", 4],
     ["../components/ExportModal.tsx", 4],
     ["../components/GridReplaceModal.tsx", 3],
@@ -792,6 +792,8 @@ describe("共通コンポーネントの迂回", () => {
     "../components/ServerMetricsPanel.tsx",
     // 接続ヘルスのレイテンシ推移 (#1630): 算出した座標で折れ線を描くデータの図。
     "../components/LatencySparkline.tsx",
+    // タイムラプスのスクラバー (#2095): 取得時刻・行数から算出した座標で描く行数スパークライン。
+    "../components/TimelapseScrubber.tsx",
     // ブランドカラー定数と同様、noobDB ロゴそのもの (favicon / App.css と parity
     // 固定) を描く単一ソース。
     "../brand.tsx",
