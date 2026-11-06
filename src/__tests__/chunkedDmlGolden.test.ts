@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildChunkSql, buildCountSql, maxBatchesFor, pickSqliteRowKey } from "../components/chunkedDml";
+import {
+  buildChunkSql,
+  buildCountSql,
+  maxBatchesFor,
+  pickSqliteRowKey,
+  validateFragment,
+} from "../components/chunkedDml";
 import vectors from "./fixtures/chunkedDmlVectors.json";
 
 // 大規模 DML のチャンク分割実行 (#2020) の SQL 生成ゴールデン — フロント側。
@@ -42,6 +48,32 @@ describe("chunked DML golden vectors", () => {
           batchSize: c.batchSize,
         });
         expect(sql).toEqual({ ok: false, code: c.error });
+      });
+    }
+  }
+});
+
+describe("chunked DML count SQL rejections", () => {
+  for (const c of vectors.errors) {
+    // 件数 SELECT は SET もバッチサイズも持たない (SET 側の拒否は対象外、バッチサイズは 1 で固定)。
+    if ("set" in c || c.error === "badBatchSize") continue;
+    for (const driver of ((c as { drivers?: Driver[] }).drivers ?? drivers) as Driver[]) {
+      it(`reject count: ${c.note} [${driver}]`, () => {
+        expect(buildCountSql({ driver, database: null, table: c.table, where: c.where })).toEqual({
+          ok: false,
+          code: c.error,
+        });
+      });
+    }
+  }
+});
+
+// validate_fragment の単体判定 (#2103)。Rust 側は同じ JSON を chunked_dml_golden.rs が読む。
+describe("validateFragment golden vectors", () => {
+  for (const c of vectors.fragments) {
+    for (const driver of (c.drivers ?? drivers) as Driver[]) {
+      it(`${c.note} [${driver}] ${JSON.stringify(c.frag)}`, () => {
+        expect(validateFragment(driver, c.frag)).toBe(c.error);
       });
     }
   }

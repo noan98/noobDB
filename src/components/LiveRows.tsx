@@ -73,16 +73,20 @@ export function LiveTr({
   children,
   highlighted = false,
   rowId,
+  testId,
 }: {
   children: ReactNode;
   /** 強調表示する行 (#1538: AI の停止候補をプロセス行へ連動させる)。 */
   highlighted?: boolean;
   /** 行の DOM id (スクロール先の指定用)。 */
   rowId?: string;
+  /** テスト用の `data-testid`。 */
+  testId?: string;
 }) {
   return (
     <MotionTr
       id={rowId}
+      data-testid={testId}
       data-highlighted={highlighted ? "true" : undefined}
       bg={highlighted ? "var(--accent-subtle)" : undefined}
       boxShadow={highlighted ? "inset 3px 0 0 var(--accent)" : undefined}

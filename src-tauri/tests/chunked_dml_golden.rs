@@ -16,6 +16,16 @@ struct Vectors {
     drivers: Vec<String>,
     cases: Vec<Case>,
     errors: Vec<ErrorCase>,
+    fragments: Vec<FragmentCase>,
+}
+
+#[derive(Deserialize)]
+struct FragmentCase {
+    note: String,
+    frag: String,
+    /// `null` なら通る。
+    error: Option<String>,
+    drivers: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -112,6 +122,54 @@ fn chunk_sql_rejections_match_shared_vectors() {
                 failures.push(format!(
                     "  - {} [{name}]: expected Err({:?}), got {got:?}",
                     case.note, case.error
+                ));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn count_sql_rejections_match_shared_vectors() {
+    let v: Vectors = serde_json::from_str(VECTORS_JSON).expect("valid vectors JSON");
+    let mut failures = Vec::new();
+    for case in &v.errors {
+        // 件数 SELECT は SET もバッチサイズも持たない (SET 側の拒否は対象外、バッチサイズは 1 で固定)。
+        if case.set.is_some() || case.error == "badBatchSize" {
+            continue;
+        }
+        let names = case.drivers.clone().unwrap_or_else(|| v.drivers.clone());
+        for name in &names {
+            let got =
+                t::chunked_dml_count_sql(driver_of(name), None, &case.table, &case.where_clause);
+            if got.as_ref() != Err(&case.error) {
+                failures.push(format!(
+                    "  - {} count [{name}]: expected Err({:?}), got {got:?}",
+                    case.note, case.error
+                ));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn validate_fragment_matches_shared_vectors() {
+    let v: Vectors = serde_json::from_str(VECTORS_JSON).expect("valid vectors JSON");
+    assert!(v.fragments.len() >= 40);
+    let mut failures = Vec::new();
+    for case in &v.fragments {
+        let names = case.drivers.clone().unwrap_or_else(|| v.drivers.clone());
+        for name in &names {
+            let got = t::chunked_dml_validate_fragment(driver_of(name), &case.frag);
+            let want = match &case.error {
+                None => Ok(()),
+                Some(e) => Err(e.clone()),
+            };
+            if got != want {
+                failures.push(format!(
+                    "  - {} [{name}] {:?}: expected {want:?}, got {got:?}",
+                    case.note, case.frag
                 ));
             }
         }
