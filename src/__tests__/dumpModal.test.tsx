@@ -328,6 +328,56 @@ describe("DumpModal 生成エンジンのカード選択 (#2094)", () => {
     expect(bar.style.background).toContain("--success-solid");
   });
 
+  const startDump = async () => {
+    vi.spyOn(api, "dumpToolStatus").mockResolvedValue({
+      tool: "mysqldump",
+      path: "/x",
+      install: null,
+    } as never);
+    vi.spyOn(api, "dumpDatabase").mockResolvedValue(undefined as never);
+    let handlers: DumpStreamHandlers | null = null;
+    vi.mocked(listenDumpStream).mockImplementationOnce(async (_id, h) => {
+      handlers = h;
+      return () => {};
+    });
+    renderWithProviders(<DumpModal sessionId="s1" database="app" driver="mysql" onClose={() => {}} />);
+    fireEvent.change(screen.getByLabelText(t("dumpSavePath")), { target: { value: "/tmp/out.sql" } });
+    fireEvent.click(screen.getByRole("button", { name: t("dumpExecute") }));
+    await waitFor(() => expect(handlers).not.toBeNull());
+    await waitFor(() => expect(api.dumpDatabase).toHaveBeenCalled());
+    return handlers as unknown as DumpStreamHandlers;
+  };
+  const barBg = () =>
+    (screen.getByTestId("dump-progress-detail").querySelector("[aria-hidden] > div") as HTMLElement).style
+      .background;
+
+  it("進捗イベントが 0 件で完了しても結果の Callout を出す (バーは出さない) (#2092)", async () => {
+    const h = await startDump();
+    act(() => h.onDone?.({ bytes: 1000 } as never));
+    expect(await screen.findByText(/Dump finished: 1\.0 KB written in/)).toBeInTheDocument();
+    expect(screen.queryByTestId("dump-progress-detail")).not.toBeInTheDocument();
+  });
+
+  it("中止すると警告色のバーと Callout を残す (#2092)", async () => {
+    const h = await startDump();
+    act(() => h.onProgress?.({ bytes: 2000, elapsedMs: 5000, tables: 1, tablesTotal: 4 } as never));
+    await screen.findByTestId("dump-progress-detail");
+    fireEvent.click(screen.getByRole("button", { name: t("dumpCancelRun") }));
+    await screen.findByText(t("dumpResultCancelled", { bytes: "2.0 KB", secs: "5.0" }));
+    await waitFor(() => expect(barBg()).toContain("--warning-solid"));
+  });
+
+  it("エラー時は危険色のバーを ErrorNote と並べ、進捗中は文言とタイルを重複させない (#2092)", async () => {
+    const h = await startDump();
+    act(() => h.onProgress?.({ bytes: 2000, elapsedMs: 5000, tables: 1, tablesTotal: 4 } as never));
+    await screen.findByTestId("dump-progress-detail");
+    expect(screen.queryByText(/Dumping… 1\/4/)).not.toBeInTheDocument();
+    act(() => h.onError?.({ error: "boom" } as never));
+    await screen.findByText(t("dumpError", { error: "boom" }));
+    // クロスフェードで実行中の表示が抜けきってから確認する。
+    await waitFor(() => expect(barBg()).toContain("--error-solid"));
+  });
+
   it("ツールが検出済みならカードに検出済みを出し、選べる", async () => {
     mockTool("/usr/bin/mysqldump");
     renderWithProviders(<DumpModal sessionId="s1" database="app" driver="mysql" onClose={() => {}} />);

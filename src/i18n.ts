@@ -2839,8 +2839,6 @@ const en = {
   // Streaming dump progress + cancel (#686).
   dumpCancelRun: "Cancel dump",
   dumpCancelled: "Dump cancelled.",
-  dumpProgressBytes: "Dumping… {bytes} written",
-  dumpProgressTables: "Dumping… {tables}/{total} tables ({bytes})",
   dumpProgressElapsed: "{secs}s elapsed",
   progressEta: "ETA {time}",
   progressEtaPending: "ETA: calculating…",
@@ -10293,8 +10291,6 @@ const ja: Dict = {
   // ストリーミングダンプの進捗表示 + キャンセル (#686)。
   dumpCancelRun: "ダンプを中止",
   dumpCancelled: "ダンプを中止しました。",
-  dumpProgressBytes: "ダンプ中… {bytes} 書き出し済み",
-  dumpProgressTables: "ダンプ中… {tables}/{total} テーブル ({bytes})",
   dumpProgressElapsed: "経過 {secs} 秒",
   progressEta: "残り約 {time}",
   progressEtaPending: "残り時間: 算出中…",

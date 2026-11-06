@@ -280,7 +280,12 @@ export function TableChunkedDmlModal({
           return;
         }
         // バッチ間ウェイト。中断を素早く拾うため細切れに待つ。
-        if (waitMs > 0) setWaitUntil(Date.now() + waitMs);
+        if (waitMs > 0) {
+          // now も同時に進める (古い now のままだと切り上げで 1 秒多く出る)。
+          const t0 = Date.now();
+          setNow(t0);
+          setWaitUntil(t0 + waitMs);
+        }
         for (let waited = 0; waited < waitMs && !cancelRef.current; waited += 100) {
           await new Promise((r) => setTimeout(r, Math.min(100, waitMs - waited)));
         }
@@ -316,7 +321,7 @@ export function TableChunkedDmlModal({
 
   // 進捗バー / StatTile の値 (#2092)。終了後は endedAt で時計を止める。
   const elapsedMs = startedAt === null ? 0 : Math.max(0, (endedAt ?? now) - startedAt);
-  const fullyDone = phase === "done" && (remaining ?? 0) === 0;
+  const fullyDone = phase === "done" && total !== null && total > 0 && (remaining ?? 0) === 0;
   const ratio = fullyDone ? 1 : progressRatio(affected, total);
   const etaMs = running ? estimateEtaMs(affected, total, elapsedMs) : null;
   const waitLeft = running ? waitSecondsLeft(waitUntil, now) : null;
@@ -330,7 +335,8 @@ export function TableChunkedDmlModal({
         : phase === "stalled" || phase === "error"
           ? "danger"
           : undefined;
-  const remainingEstimate = total === null ? null : Math.max(0, total - affected);
+  const remainingEstimate =
+    total === null ? null : phase === "done" ? (remaining ?? 0) : Math.max(0, total - affected);
   const etaText =
     phase === "running"
       ? etaMs === null
@@ -449,67 +455,80 @@ export function TableChunkedDmlModal({
         </FormSection>
 
         {phase !== "idle" && (
-          <chakra.div role="status" aria-live="polite" display="flex" flexDirection="column" gap="2">
-            {ratio !== null && (
-              <chakra.div display="flex" alignItems="center" gap="3" data-testid="chunked-dml-progress">
-                <chakra.div flex="1">
-                  <DeterminateProgressBar value={ratio} tone={barTone} />
+          <chakra.div display="flex" flexDirection="column" gap="2">
+            {/* 毎秒変わる時計系 (バー・経過・ETA・待機秒) は読み上げない。結果は下の role="status" だけ。 */}
+            <chakra.div
+              aria-live="off"
+              display="flex"
+              flexDirection="column"
+              gap="2"
+              data-testid="chunked-dml-clock"
+            >
+              {ratio !== null && (
+                <chakra.div display="flex" alignItems="center" gap="3" data-testid="chunked-dml-progress">
+                  <chakra.div flex="1">
+                    <DeterminateProgressBar value={ratio} tone={barTone} />
+                  </chakra.div>
+                  <chakra.span textStyle="numeric" minW="4ch" textAlign="right">
+                    {t("progressPercent", { percent: Math.floor(ratio * 100) })}
+                  </chakra.span>
                 </chakra.div>
-                <chakra.span textStyle="numeric" minW="4ch" textAlign="right">
-                  {t("progressPercent", { percent: Math.floor(ratio * 100) })}
+              )}
+              {total !== null && total > 0 && (
+                <chakra.div display="flex" gap="2" flexWrap="wrap" data-testid="chunked-dml-stats">
+                  <StatTile label={t("chunkedDmlStatBatches")} value={batches} />
+                  <StatTile label={t("chunkedDmlStatRows")} value={affected} />
+                  <StatTile
+                    label={t("chunkedDmlStatRemaining")}
+                    value={remainingEstimate ?? "-"}
+                    sub={total !== null ? t("chunkedDmlProgressTotal", { rows: total }) : undefined}
+                  />
+                  <StatTile
+                    label={t("chunkedDmlStatElapsed")}
+                    value={formatDuration(elapsedMs)}
+                    sub={etaText}
+                  />
+                </chakra.div>
+              )}
+              {waitLeft !== null && (
+                <chakra.span textStyle="caption" color="app.textMuted" data-testid="chunked-dml-waiting">
+                  {t("chunkedDmlWaiting", { secs: waitLeft })}
                 </chakra.span>
-              </chakra.div>
-            )}
-            {total !== null && total > 0 && (
-              <chakra.div display="flex" gap="2" flexWrap="wrap" data-testid="chunked-dml-stats">
-                <StatTile label={t("chunkedDmlStatBatches")} value={batches} />
-                <StatTile label={t("chunkedDmlStatRows")} value={affected} />
-                <StatTile
-                  label={t("chunkedDmlStatRemaining")}
-                  value={remainingEstimate ?? "-"}
-                  sub={total !== null ? t("chunkedDmlProgressTotal", { rows: total }) : undefined}
-                />
-                <StatTile
-                  label={t("chunkedDmlStatElapsed")}
-                  value={formatDuration(elapsedMs)}
-                  sub={etaText}
-                />
-              </chakra.div>
-            )}
-            {waitLeft !== null && (
-              <chakra.span textStyle="caption" color="app.textMuted" data-testid="chunked-dml-waiting">
-                {t("chunkedDmlWaiting", { secs: waitLeft })}
-              </chakra.span>
-            )}
-            {capture && recordedBatches > 0 && (
-              <chakra.span textStyle="caption">
-                {t("chunkedDmlRecorded", { count: recordedBatches })}
-              </chakra.span>
-            )}
-            {captureNote && (
-              <Callout tone="info">{t("chunkedDmlCaptureDeclined", { reason: captureNote })}</Callout>
-            )}
-            {phase === "done" &&
-              (total === 0 ? (
-                <Callout tone="info">{t("chunkedDmlNothing")}</Callout>
-              ) : (
-                <Callout tone="success">{t("chunkedDmlDone", { batches, rows: affected })}</Callout>
-              ))}
-            {phase === "done" && remaining !== null && remaining > 0 && (
-              <Callout tone="warning">{t("chunkedDmlRemaining", { rows: remaining })}</Callout>
-            )}
-            {phase === "stalled" && (
-              <ErrorNote>{t("chunkedDmlStalled", { rows: remaining ?? 0, affected })}</ErrorNote>
-            )}
-            {phase === "cancelled" && (
-              <Callout tone="warning">{t("chunkedDmlCancelled", { batches, rows: affected })}</Callout>
-            )}
-            {phase === "limit" && (
-              <Callout tone="warning">{t("chunkedDmlLimitReached", { limit, rows: affected })}</Callout>
-            )}
-            {phase === "error" && (
-              <ErrorNote>{t("chunkedDmlFailed", { batches, rows: affected, error: error ?? "" })}</ErrorNote>
-            )}
+              )}
+            </chakra.div>
+            <chakra.div role="status" aria-live="polite" display="flex" flexDirection="column" gap="2">
+              {capture && recordedBatches > 0 && (
+                <chakra.span textStyle="caption">
+                  {t("chunkedDmlRecorded", { count: recordedBatches })}
+                </chakra.span>
+              )}
+              {captureNote && (
+                <Callout tone="info">{t("chunkedDmlCaptureDeclined", { reason: captureNote })}</Callout>
+              )}
+              {phase === "done" &&
+                (total === 0 ? (
+                  <Callout tone="info">{t("chunkedDmlNothing")}</Callout>
+                ) : (
+                  <Callout tone="success">{t("chunkedDmlDone", { batches, rows: affected })}</Callout>
+                ))}
+              {phase === "done" && remaining !== null && remaining > 0 && (
+                <Callout tone="warning">{t("chunkedDmlRemaining", { rows: remaining })}</Callout>
+              )}
+              {phase === "stalled" && (
+                <ErrorNote>{t("chunkedDmlStalled", { rows: remaining ?? 0, affected })}</ErrorNote>
+              )}
+              {phase === "cancelled" && (
+                <Callout tone="warning">{t("chunkedDmlCancelled", { batches, rows: affected })}</Callout>
+              )}
+              {phase === "limit" && (
+                <Callout tone="warning">{t("chunkedDmlLimitReached", { limit, rows: affected })}</Callout>
+              )}
+              {phase === "error" && (
+                <ErrorNote>
+                  {t("chunkedDmlFailed", { batches, rows: affected, error: error ?? "" })}
+                </ErrorNote>
+              )}
+            </chakra.div>
           </chakra.div>
         )}
       </ModalBody>

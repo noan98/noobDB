@@ -223,6 +223,12 @@ describe("TableChunkedDmlModal (#2020)", () => {
     await waitFor(() =>
       expect(screen.getByText(t("chunkedDmlDone", { batches: 2, rows: 1500 }))).toBeInTheDocument(),
     );
+    // 毎秒変わる時計系はライブリージョンの外 (読み上げを止めない)。
+    expect(screen.getByTestId("chunked-dml-clock")).toHaveAttribute("aria-live", "off");
+    expect(screen.getByTestId("chunked-dml-clock").closest('[role="status"]')).toBeNull();
+    expect(
+      screen.getByText(t("chunkedDmlDone", { batches: 2, rows: 1500 })).closest('[role="status"]'),
+    ).not.toBeNull();
     const stats = screen.getByTestId("chunked-dml-stats");
     for (const k of [
       "chunkedDmlStatBatches",
