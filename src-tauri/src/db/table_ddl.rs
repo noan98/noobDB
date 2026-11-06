@@ -30,6 +30,15 @@ pub const SYNTHESIZED_DDL_HEADER: &str = "\
 -- Review before running.
 ";
 
+/// パーティション親 (`PARTITION BY` 付き) の再構成 DDL の注意書き。パーティション自体は含むが、
+/// 子パーティションは別の `CREATE TABLE ... PARTITION OF` で作る。
+pub const SYNTHESIZED_PARTITIONED_DDL_HEADER: &str = "\
+-- Reconstructed by noobDB from catalog metadata (best-effort).
+-- Child partitions are created separately (CREATE TABLE ... PARTITION OF).
+-- Storage options and expression indexes are not included.
+-- Review before running.
+";
+
 /// ドライバ別の注意書き。CHECK 制約と生成列の式は 3 ドライバとも [`TableDdlExtras`] で
 /// 含めるので (#1625 / #1837)、注意書きもドライバによらず同じ。
 pub fn synthesized_ddl_header(_driver: DriverKind) -> &'static str {
@@ -311,7 +320,11 @@ pub fn synthesize_create_table_partitioned(
             .filter_map(|idx| render_index(driver, &qualified, idx)),
     );
 
-    let mut out = String::from(synthesized_ddl_header(driver));
+    let mut out = String::from(if partition_by.is_some() {
+        SYNTHESIZED_PARTITIONED_DDL_HEADER
+    } else {
+        synthesized_ddl_header(driver)
+    });
     out.push_str(&statements.join(";\n\n"));
     out.push(';');
     out.push('\n');

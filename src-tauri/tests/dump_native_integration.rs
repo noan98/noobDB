@@ -935,6 +935,7 @@ const PART_ROW_SELECTS: &[&str] = &[
     "SELECT tableoid::regclass::text, id FROM nb2098_part.hp ORDER BY 1, 2",
     "SELECT id, event_id, event_created FROM nb2098_part.child_ref ORDER BY id",
     "SELECT id, label FROM nb2098_part.ref_t ORDER BY id",
+    "SELECT tableoid::regclass::text, id, pid, kind FROM nb2098_part.tree ORDER BY 1, 2",
 ];
 
 /// 定義側の突き合わせ。パーティション構造・索引・制約・トリガー。
@@ -995,6 +996,13 @@ async fn part_setup(conn: &t::Connection) {
         "CREATE TABLE nb2098_part.child_ref (id int PRIMARY KEY, event_id bigint, event_created date, \
            FOREIGN KEY (event_id, event_created) REFERENCES nb2098_part.events (id, created))".into(),
         "INSERT INTO nb2098_part.child_ref VALUES (1, 1, '2024-03-01'), (2, 5, '2030-01-01')".into(),
+        // 自己参照 FK を持つパーティション表。子の名前 (a_tree_x) が親 (tree) より辞書順で前でも、
+        // 親が先に出ること (循環扱いで名前順に落ちて PARTITION OF が先に出ない)。
+        "CREATE TABLE nb2098_part.tree (id int NOT NULL, pid int, kind text NOT NULL, \
+           PRIMARY KEY (id, kind), FOREIGN KEY (pid, kind) REFERENCES nb2098_part.tree (id, kind)) PARTITION BY LIST (kind)".into(),
+        "CREATE TABLE nb2098_part.a_tree_x PARTITION OF nb2098_part.tree FOR VALUES IN ('x')".into(),
+        "CREATE TABLE nb2098_part.b_tree_y PARTITION OF nb2098_part.tree FOR VALUES IN ('y')".into(),
+        "INSERT INTO nb2098_part.tree VALUES (1, NULL, 'x'), (2, 1, 'x'), (3, 2, 'x'), (1, NULL, 'y'), (2, 1, 'y')".into(),
         // 親のトリガーは子へ複製される (子の分を二重に出すと復元が失敗する)。
         "CREATE FUNCTION nb2098_part.touch() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RETURN NEW; END'".into(),
         "CREATE TRIGGER events_touch AFTER UPDATE ON nb2098_part.events FOR EACH ROW EXECUTE FUNCTION nb2098_part.touch()".into(),
@@ -1084,6 +1092,17 @@ async fn postgres_native_dump_partitions_roundtrip_when_env_set() {
         "{dump}"
     );
     assert!(!dump.contains("not supported"), "{dump}");
+    assert!(!dump.contains("foreign keys form a cycle"), "{dump}");
+    assert!(
+        dump.find("CREATE TABLE \"nb2098_part\".\"tree\" (")
+            < dump.find("CREATE TABLE \"nb2098_part\".\"a_tree_x\" PARTITION OF"),
+        "{dump}"
+    );
+    assert_eq!(
+        dump.matches("ADD CONSTRAINT tree_pid_kind_fkey").count(),
+        1,
+        "{dump}"
+    );
     // 親から伝播する FK / トリガーは子に重ねて出さない。
     assert_eq!(
         dump.matches("ADD CONSTRAINT events_ref_id_fkey").count(),
@@ -1190,14 +1209,24 @@ async fn postgres_native_dump_partitions_roundtrip_when_env_set() {
     let child_only = dump_to_string(
         &conn,
         PART_SCHEMA,
-        &options(serde_json::json!({"tables": ["e_2024"]})),
+        &options(serde_json::json!({"tables": ["e_2024", "ref_t"]})),
     )
     .await
     .expect("child-only dump");
     assert!(!child_only.contains("PARTITION OF"), "{child_only}");
+    // 親由来の FK とトリガーは、通常表として出す子では黙って消さない。
     assert!(
-        child_only
-            .contains("-- WARNING: table e_2024 is a partition whose parent is not in this dump"),
+        child_only.contains(
+            "ALTER TABLE nb2098_part.e_2024 ADD CONSTRAINT events_ref_id_fkey FOREIGN KEY"
+        ),
+        "{child_only}"
+    );
+    assert!(
+        child_only.contains("CREATE TRIGGER events_touch"),
+        "{child_only}"
+    );
+    assert!(
+        child_only.contains("-- WARNING: table e_2024 is a partition;"),
         "{child_only}"
     );
 
