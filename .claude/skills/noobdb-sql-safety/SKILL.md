@@ -23,7 +23,7 @@ description: noobDB の SQL 安全網を変更するとき — 読み取り専�
    | `statementSplitVectors.json` | 文境界 (`splitSqlStatements` / `isMultiStatement`、#1074) |
    | `autoLimitVectors.json` | `apply_auto_limit_for` (5 ドライバ) |
    | `queryShapeVectors.json` | fetch/execute 経路の振り分け |
-   | `chunkedDmlVectors.json` | チャンク DML (#2020) の SQL 生成と字句検査。`fragments` は `validate_fragment` / `validateFragment` の単体判定 (#2103)。Rust `tests/groups/chunked_dml_golden.rs` と `chunkedDmlGolden.test.ts` |
+   | `chunkedDmlVectors.json` | チャンク DML (#2020) の SQL 生成と字句検査。`fragments` は `validate_fragment` / `validateFragment` の単体判定 (#2103)。Rust `tests/chunked_dml_golden.rs` (`--test golden`) と `chunkedDmlGolden.test.ts` |
    | `sqlQuotingVectors.json` | 識別子引用・リテラルエスケープ |
    | `objectSearchVectors.json` | グローバルオブジェクト検索の順位付け (Rust `db::object_search`、#1261) |
    | `whereUsedVectors.json` | Where-used の参照検出・マスク・行単位のまとめ (Rust `db::where_used`、#1261) |
