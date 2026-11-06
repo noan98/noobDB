@@ -109,19 +109,24 @@ describe("表示一時停止とチャンネル別件数 (#2093)", () => {
   });
   const items = [mk(1, "a"), mk(2, "b"), mk(3, "a"), mk(4, "a")];
 
-  it("一時停止中は凍結点より後の通知を見せず、件数だけ数える", () => {
+  it("一時停止中はスナップショットを見せ、件数は凍結点より後をバッファから数える", () => {
     expect(visibleNotifications(items, null).map((n) => n.seq)).toEqual([1, 2, 3, 4]);
-    expect(visibleNotifications(items, 2).map((n) => n.seq)).toEqual([1, 2]);
+    const snap = items.filter((n) => n.seq <= 2);
+    expect(visibleNotifications(items, snap).map((n) => n.seq)).toEqual([1, 2]);
     expect(pendingCount(items, null)).toBe(0);
     expect(pendingCount(items, 2)).toBe(2);
+    expect(pendingCount(items, 2, "a")).toBe(2);
+    expect(pendingCount(items, 2, "b")).toBe(0);
   });
 
-  it("一時停止中もバッファ上限は守られる", () => {
+  it("バッファが上限を超えて古い通知を捨てても、停止中の表示は変わらない", () => {
     let buf: BufferedNotification[] = [];
-    for (let i = 1; i <= 5; i++) buf = appendNotification(buf, mk(i, "a"), 3).items;
-    expect(buf.map((n) => n.seq)).toEqual([3, 4, 5]);
-    expect(visibleNotifications(buf, 2)).toEqual([]);
-    expect(pendingCount(buf, 2)).toBe(3);
+    for (let i = 1; i <= 3; i++) buf = appendNotification(buf, mk(i, "a"), 3).items;
+    const snap = buf;
+    for (let i = 4; i <= 9; i++) buf = appendNotification(buf, mk(i, "a"), 3).items;
+    expect(buf.map((n) => n.seq)).toEqual([7, 8, 9]);
+    expect(visibleNotifications(buf, snap).map((n) => n.seq)).toEqual([1, 2, 3]);
+    expect(pendingCount(buf, 3)).toBe(3);
   });
 
   it("チャンネル別に数える", () => {

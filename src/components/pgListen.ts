@@ -93,19 +93,27 @@ export function formatReceivedAt(ms: number): string {
 }
 
 /**
- * 表示一時停止 (#2093) の凍結点 `pausedAt` (停止時点の最新 seq。null なら一時停止していない)
- * より後に届いた通知を除いた、いま画面に見せてよい通知。受信自体は止めない (バッファが正)。
+ * 表示一時停止 (#2093) 中は、停止した時点の一覧 (スナップショット) をそのまま見せる。
+ * 受信バッファは上限で古い方から捨てられていくが、見ている行は消さない。`frozen` が null なら追従表示。
  */
 export function visibleNotifications(
   items: readonly BufferedNotification[],
-  pausedAt: number | null,
+  frozen: readonly BufferedNotification[] | null,
 ): BufferedNotification[] {
-  return pausedAt === null ? [...items] : items.filter((n) => n.seq <= pausedAt);
+  return [...(frozen ?? items)];
 }
 
-/** 一時停止中に溜まった (まだ画面に出ていない) 通知の件数。 */
-export function pendingCount(items: readonly BufferedNotification[], pausedAt: number | null): number {
-  return pausedAt === null ? 0 : items.filter((n) => n.seq > pausedAt).length;
+/**
+ * 一時停止中に溜まった (まだ画面に出ていない) 通知の件数 (バッファ上の seq > 凍結点)。
+ * `channel` を渡すとそのチャンネルの分だけ数える (絞り込み中のバッジ用)。
+ */
+export function pendingCount(
+  items: readonly BufferedNotification[],
+  pausedAt: number | null,
+  channel: string | null = null,
+): number {
+  if (pausedAt === null) return 0;
+  return items.filter((n) => n.seq > pausedAt && (channel === null || n.channel === channel)).length;
 }
 
 /** チャンネル別の件数 (チップに出す)。 */

@@ -250,4 +250,101 @@ describe("PgListenPanel のライブフィード (#2093)", () => {
     fireEvent.click(screen.getByTestId("pglisten-filter-all"));
     await waitFor(() => expect(screen.getAllByTestId("pglisten-row")).toHaveLength(3));
   });
+
+  const flashed = (row: HTMLElement) => row.querySelectorAll("[data-live-flash]").length;
+
+  it("既存行は新着が来ても再フラッシュ(作り直し)されない", async () => {
+    await startListening(["a"]);
+    act(() => handlers?.onNotification?.(note("a", "one", 1)));
+    const before = screen.getAllByTestId("pglisten-row")[0].querySelector("[data-live-flash]");
+    act(() => handlers?.onNotification?.(note("a", "two", 2)));
+    const rows = screen.getAllByTestId("pglisten-row");
+    expect(rows).toHaveLength(2);
+    expect(rows[1].querySelector("[data-live-flash]")).toBe(before);
+  });
+
+  it("再開時は溜まった分だけフラッシュし、大量に溜まったときは省く", async () => {
+    await startListening(["a"]);
+    act(() => handlers?.onNotification?.(note("a", "one", 1)));
+    fireEvent.click(screen.getByTestId("pglisten-pause"));
+    act(() => {
+      handlers?.onNotification?.(note("a", "two", 2));
+      handlers?.onNotification?.(note("a", "three", 3));
+    });
+    fireEvent.click(screen.getByTestId("pglisten-pending"));
+    await waitFor(() => expect(screen.getAllByTestId("pglisten-row")).toHaveLength(3));
+    expect(screen.getAllByTestId("pglisten-row").filter((r) => flashed(r) > 0)).toHaveLength(3);
+
+    fireEvent.click(screen.getByTestId("pglisten-pause"));
+    act(() => {
+      for (let i = 4; i < 50; i++) handlers?.onNotification?.(note("a", `n${i}`, i));
+    });
+    fireEvent.click(screen.getByTestId("pglisten-pending"));
+    await waitFor(() => expect(screen.getAllByTestId("pglisten-row")).toHaveLength(49));
+    expect(screen.getAllByTestId("pglisten-row").filter((r) => flashed(r) > 0)).toHaveLength(3);
+  });
+
+  it("一時停止中にバッファが上限を超えても、見ている行と展開は保たれる", async () => {
+    await startListening(["a"]);
+    act(() => handlers?.onNotification?.(note("a", "first", 1)));
+    fireEvent.click(within(screen.getByTestId("pglisten-row")).getByRole("button", { expanded: false }));
+    act(() => {
+      for (let i = 2; i <= 1100; i++) handlers?.onNotification?.(note("a", `n${i}`, i));
+    });
+    const rows = screen.getAllByTestId("pglisten-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveTextContent("first");
+    expect(within(rows[0]).getByRole("button", { expanded: true })).toBeInTheDocument();
+    // 展開を閉じれば自動停止が解け、最新の 1000 件に追従する。
+    fireEvent.click(within(rows[0]).getByRole("button", { expanded: true }));
+    await waitFor(() => expect(screen.getAllByTestId("pglisten-row")).toHaveLength(1000));
+  });
+
+  it("自動停止中に絞り込みで展開行が隠れたら、折りたたんで自動停止を解く", async () => {
+    await startListening(["a", "b"]);
+    act(() => handlers?.onNotification?.(note("a", "x", 1)));
+    fireEvent.click(within(screen.getByTestId("pglisten-row")).getByRole("button", { expanded: false }));
+    expect(screen.getByTestId("pglisten-paused-note")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("pglisten-filter-b"));
+    await waitFor(() => expect(screen.queryByTestId("pglisten-paused-note")).toBeNull());
+  });
+
+  it("絞り込み中のチャンネル削除と停止後の再開始で、絞り込みは「すべて」に戻る", async () => {
+    await startListening(["a", "b"]);
+    act(() => {
+      handlers?.onNotification?.(note("a", "x", 1));
+      handlers?.onNotification?.(note("b", "y", 2));
+    });
+    fireEvent.click(screen.getByTestId("pglisten-filter-b"));
+    await waitFor(() => expect(screen.getAllByTestId("pglisten-row")).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: t("pgListenRemoveChannel", { channel: "b" }) }));
+    await waitFor(() =>
+      expect(screen.getByTestId("pglisten-filter-all")).toHaveAttribute("aria-pressed", "true"),
+    );
+    addChannel("b");
+    await waitFor(() =>
+      expect(screen.getByTestId("pglisten-filter-b")).toHaveAttribute("aria-pressed", "false"),
+    );
+
+    fireEvent.click(screen.getByTestId("pglisten-filter-a"));
+    fireEvent.click(screen.getByTestId("pglisten-stop"));
+    fireEvent.click(screen.getByTestId("pglisten-start"));
+    await waitFor(() => expect(api.startPgListen).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId("pglisten-filter-all")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("絞り込み中の新着バッジはそのチャンネルの件数、チップは件数つきの名前を持つ", async () => {
+    await startListening(["a", "b"]);
+    fireEvent.click(screen.getByTestId("pglisten-filter-a"));
+    fireEvent.click(screen.getByTestId("pglisten-pause"));
+    act(() => {
+      handlers?.onNotification?.(note("a", "x", 1));
+      handlers?.onNotification?.(note("b", "y", 2));
+      handlers?.onNotification?.(note("b", "z", 3));
+    });
+    expect(screen.getByTestId("pglisten-pending")).toHaveTextContent(t("pgListenPending", { count: 1 }));
+    expect(screen.getByTestId("pglisten-filter-a")).toHaveAccessibleName(
+      t("pgListenChipAria", { channel: "a", count: 0 }),
+    );
+  });
 });

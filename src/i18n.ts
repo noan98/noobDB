@@ -5335,6 +5335,7 @@ const en = {
   pgListenPausedManual: "View paused. Notifications keep being received.",
   pgListenPausedAuto: "View paused while a payload is open.",
   pgListenPending: "{count} new",
+  pgListenChipAria: "{channel}: {count}",
   sqliteMaintTitle: "SQLite maintenance",
   sqliteMaintDesc:
     "Check the file for corruption and broken foreign keys, or refresh the query planner statistics. The two checks only read; optimize and ANALYZE update statistics.",
@@ -12710,6 +12711,7 @@ const ja: Dict = {
   pgListenPausedManual: "表示を止めています。通知の受信は続いています。",
   pgListenPausedAuto: "ペイロードを開いている間、表示を止めています。",
   pgListenPending: "新着 {count} 件",
+  pgListenChipAria: "{channel}: {count} 件",
   sqliteMaintTitle: "SQLite メンテナンス",
   sqliteMaintDesc:
     "ファイルの破損や外部キーの不整合を調べたり、実行計画の統計を更新します。2 つの検査は読み取りのみで、optimize と ANALYZE は統計を更新します。",

@@ -59,6 +59,9 @@ const tdCss: SystemStyleObject = {
   verticalAlign: "top",
 };
 
+/** 一時停止から再開するとき、これを超える件数が溜まっていたら入場フラッシュを省く。 */
+const FLASH_BATCH_MAX = 30;
+
 /** `LiveCell` の内側 (パディング)。`<td>` 側の境界線・フォントとは別に持つ。 */
 const cellInnerCss: SystemStyleObject = { padding: "var(--space-1-25) var(--space-2-5)" };
 
@@ -92,7 +95,8 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
   const [dropped, setDropped] = useState(0);
   const [expanded, setExpanded] = useState<number | null>(null);
   /** 表示一時停止の凍結点 (停止した時点の最新 seq)。null なら追従表示。受信は止めない (#2093)。 */
-  const [pausedAt, setPausedAt] = useState<number | null>(null);
+  const [pause, setPause] = useState<{ at: number; snapshot: BufferedNotification[] } | null>(null);
+  const pausedAt = pause?.at ?? null;
   /** 一時停止が payload 展開による自動のものか (折りたたむと自動で解除する)。 */
   const [autoPaused, setAutoPaused] = useState(false);
   /** 絞り込み中のチャンネル。null なら全チャンネル。 */
@@ -105,6 +109,8 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
   const bufferRef = useRef<BufferedNotification[]>([]);
   /** 画面に出し終えた最新の seq (これより新しい行だけ入場時にフラッシュさせる)。 */
   const shownSeqRef = useRef(0);
+  /** 大量の新着を一度に反映するとき、この seq 以下の行はフラッシュさせない。 */
+  const noFlashUpToRef = useRef(0);
   const activeRef = useRef<{ streamId: string; unlisten: () => void } | null>(null);
 
   // 描画後に「ここまで見せた」を更新する (次に入場する行だけをフラッシュさせるため)。
@@ -140,6 +146,10 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
     setError(null);
     setNotice(null);
     setUnsupportedReason(null);
+    // 新しい監視は「すべて」・追従表示から始める (古いスナップショットや絞り込みを持ち越さない)。
+    setFilter(null);
+    setPause(null);
+    setAutoPaused(false);
     setStatus("connecting");
     try {
       slot.unlisten = await listenPgListenStream(streamId, {
@@ -236,6 +246,7 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
       }
     }
     setChannels((cur) => cur.filter((c) => c !== name));
+    setFilter((f) => (f === name ? null : f));
   }, []);
 
   const clear = () => {
@@ -243,33 +254,55 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
     setItems([]);
     setDropped(0);
     setExpanded(null);
-    setPausedAt(null);
+    setPause(null);
     setAutoPaused(false);
   };
 
-  const togglePause = () => {
-    if (pausedAt === null) {
-      setPausedAt(seqRef.current);
-    } else {
-      setPausedAt(null);
+  /** 表示を止める。停止時点の一覧をスナップショットで握り、バッファが溢れても見ている行を消さない。 */
+  const freeze = () => setPause({ at: seqRef.current, snapshot: bufferRef.current });
+  const resume = useCallback(() => {
+    // 溜まった件数が多いときは、入場フラッシュを省く (画面全体が一斉に光るのを避ける)。
+    if (
+      bufferRef.current.length > 0 &&
+      seqRef.current - (latest.current.pause?.at ?? seqRef.current) > FLASH_BATCH_MAX
+    ) {
+      noFlashUpToRef.current = seqRef.current;
     }
+    setPause(null);
+    setAutoPaused(false);
+  }, []);
+  const togglePause = () => {
+    if (pause === null) freeze();
+    else resume();
     setAutoPaused(false);
   };
-  const resume = () => {
-    setPausedAt(null);
-    setAutoPaused(false);
-  };
-  const toggleExpanded = (seq: number) => {
-    if (expanded === seq) {
+  const latest = useRef({ expanded, autoPaused, pause });
+  latest.current = { expanded, autoPaused, pause };
+  const toggleExpanded = useCallback(
+    (seq: number) => {
+      const cur = latest.current;
+      if (cur.expanded === seq) {
+        setExpanded(null);
+        if (cur.autoPaused) resume();
+        return;
+      }
+      setExpanded(seq);
+      // 読んでいる行がずれないよう、展開中は自動で表示を止める (手動で止めていればそのまま)。
+      if (cur.pause === null) {
+        setPause({ at: seqRef.current, snapshot: bufferRef.current });
+        setAutoPaused(true);
+      }
+    },
+    [resume],
+  );
+  /** 絞り込みを変える。自動停止中に展開行が隠れるなら、折りたたんで自動停止も解く。 */
+  const selectFilter = (next: string | null) => {
+    setFilter(next);
+    if (expanded === null || next === null) return;
+    const row = (pause?.snapshot ?? items).find((n) => n.seq === expanded);
+    if (row && row.channel !== next) {
       setExpanded(null);
       if (autoPaused) resume();
-      return;
-    }
-    setExpanded(seq);
-    // 読んでいる行がずれないよう、展開中は自動で表示を止める (手動で止めていればそのまま)。
-    if (pausedAt === null) {
-      setPausedAt(seqRef.current);
-      setAutoPaused(true);
     }
   };
 
@@ -292,10 +325,10 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
       : status === "listening"
         ? t("pgListenStatusListening", { count: channels.length })
         : t("pgListenStatusIdle");
-  const shown = visibleNotifications(items, pausedAt);
-  const pending = pendingCount(items, pausedAt);
+  const shown = visibleNotifications(items, pause?.snapshot ?? null);
   const counts = countByChannel(shown);
   const activeFilter = filter !== null && channels.includes(filter) ? filter : null;
+  const pending = pendingCount(items, pausedAt, activeFilter);
   const ordered = (activeFilter === null ? shown : shown.filter((n) => n.channel === activeFilter)).reverse();
 
   return (
@@ -364,7 +397,7 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
               label={t("pgListenFilterAll")}
               count={shown.length}
               pressed={activeFilter === null}
-              onClick={() => setFilter(null)}
+              onClick={() => selectFilter(null)}
               testId="pglisten-filter-all"
             />
             {channels.map((c) => (
@@ -384,7 +417,7 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
                   label={c}
                   count={counts.get(c) ?? 0}
                   pressed={activeFilter === c}
-                  onClick={() => setFilter(activeFilter === c ? null : c)}
+                  onClick={() => selectFilter(activeFilter === c ? null : c)}
                   testId={`pglisten-filter-${c}`}
                   bare
                 />
@@ -417,7 +450,6 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
           type="button"
           size="sm"
           variant="secondary"
-          aria-pressed={pausedAt !== null}
           onClick={togglePause}
           data-testid="pglisten-pause"
         >
@@ -477,7 +509,7 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
                     key={n.seq}
                     n={n}
                     open={expanded === n.seq}
-                    isNew={n.seq > shownSeqRef.current}
+                    isNew={n.seq > shownSeqRef.current && n.seq > noFlashUpToRef.current}
                     onToggle={toggleExpanded}
                   />
                 ))}
@@ -506,10 +538,12 @@ function ChannelChip({
   testId: string;
   bare?: boolean;
 }) {
+  const t = useT();
   return (
     <chakra.button
       type="button"
       aria-pressed={pressed}
+      aria-label={t("pgListenChipAria", { channel: label, count })}
       onClick={onClick}
       data-testid={testId}
       display="inline-flex"
@@ -537,6 +571,7 @@ function ChannelChip({
 /** 監視状態のピル。listening 中だけ点を脈動させる (reduced-motion では止める)。 */
 function StatusPill({ status, label }: { status: Status; label: string }) {
   const reduced = useReducedMotion();
+  const animated = (status === "listening" || status === "connecting") && !reduced;
   const dot =
     status === "listening"
       ? "var(--status-connected)"
@@ -566,13 +601,10 @@ function StatusPill({ status, label }: { status: Status; label: string }) {
         height="2"
         borderRadius="pill"
         flexShrink={0}
-        data-pulsing={status === "listening" && !reduced ? "true" : "false"}
+        data-pulsing={animated ? "true" : "false"}
         style={{
           background: dot,
-          animation:
-            (status === "listening" || status === "connecting") && !reduced
-              ? "pulse 1.2s ease-in-out infinite"
-              : undefined,
+          animation: animated ? "pulse 1.2s ease-in-out infinite" : undefined,
         }}
       />
       {label}
