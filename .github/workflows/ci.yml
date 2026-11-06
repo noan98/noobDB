@@ -98,6 +98,7 @@ jobs:
             # (crosslang と同じパターン)。
             ci-scripts:
               - 'scripts/ci-setup-*.sh'
+              - 'scripts/ci-skip-summary.sh'
             # docCommandParity.test.ts が ?raw で読む IPC コマンド一覧ドキュメント。
             # このファイルだけを編集した PR (一覧から誤ってコマンドを消した等) でも
             # パリティ検証が実走するよう、`crosslang parity` ジョブの if: へ OR で
@@ -1112,13 +1113,16 @@ jobs:
           # 実行するので、すべての NOOBDB_TEST_* が揃っているはずである。
           NOOBDB_TEST_REQUIRE_EXTERNAL: "1"
           NOOBDB_TEST_SKIP_LOG: ${{ runner.temp }}/noobdb-test-skips.log
-        run: cargo nextest run --archive-file "$RUNNER_TEMP/nextest-archive.tar.zst"
+        # 最終の Summary 行 (N tests run: ... skipped) を Job Summary に出すため出力を控える (#2101)。
+        run: |
+          set -o pipefail
+          cargo nextest run --archive-file "$RUNNER_TEMP/nextest-archive.tar.zst" 2>&1 | tee "$RUNNER_TEMP/nextest-out.txt"
 
       # #2101: skip したテスト (サーバ機能の有無による正当な skip のみ。env 欠落は上で失敗する) を
       # Job Summary へ出す。可視化のみで fail はさせない。
       - name: External test skip summary (#2101)
-        if: always()
-        run: bash scripts/ci-skip-summary.sh "$RUNNER_TEMP/noobdb-test-skips.log" "rust (test)"
+        if: always() && github.event_name != 'push'
+        run: bash scripts/ci-skip-summary.sh "$RUNNER_TEMP/noobdb-test-skips.log" "rust (test)" "$RUNNER_TEMP/nextest-out.txt"
 
       # ジョブ所要時間・rust-cache ヒット・sccache ヒット率を Job Summary へ
       # 出力する (#565)。#417 の sccache stats (ログ出力) を Job Summary 可視化へ
@@ -1370,13 +1374,14 @@ jobs:
         # 展開先は毎回 archive から作り直すものなので、実行前に消しておく。
         run: |
           rm -rf target/llvm-cov-target/target
-          cargo llvm-cov nextest --no-report --archive-file "$RUNNER_TEMP/nextest-cov-archive.tar.zst"
+          set -o pipefail
+          cargo llvm-cov nextest --no-report --archive-file "$RUNNER_TEMP/nextest-cov-archive.tar.zst" 2>&1 | tee "$RUNNER_TEMP/nextest-out.txt"
 
       # #2101: skip したテスト (サーバ機能の有無による正当な skip のみ。env 欠落は上で失敗する) を
       # Job Summary へ出す。可視化のみで fail はさせない。
       - name: External test skip summary (#2101)
         if: always()
-        run: bash scripts/ci-skip-summary.sh "$RUNNER_TEMP/noobdb-test-skips.log" "rust (coverage)"
+        run: bash scripts/ci-skip-summary.sh "$RUNNER_TEMP/noobdb-test-skips.log" "rust (coverage)" "$RUNNER_TEMP/nextest-out.txt"
 
       # 収集済みデータから lcov レポートを生成し、サマリ表を Job Summary に出して
       # main の push ごとのカバレッジを可視化する (#1420 で PR からは外した)。

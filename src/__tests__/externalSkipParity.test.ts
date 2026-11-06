@@ -45,23 +45,18 @@ describe("外部 DB 統合テストの skip は require_env 経由 (#2101)", () 
   it('`eprintln!("skip` を common 以外に直書きしていない', () => {
     const offenders = entries
       .filter(([p]) => p !== COMMON)
-      .filter(([, s]) => /eprintln!\(\s*"skip/.test(stripLineComments(s)))
+      .filter(([, s]) => /e?println!\(\s*"skip/.test(stripLineComments(s)))
       .map(([p]) => p);
     expect(offenders).toEqual([]);
   });
 
   it("NOOBDB_TEST_* の環境変数を直接読んで skip していない (require_env を使う)", () => {
-    const re = /std::env::var\(\s*"NOOBDB_TEST_(?!REQUIRE_EXTERNAL|SKIP_LOG)\w+"\s*\)/;
+    const re = /(?:std::)?env::var(?:_os)?\(\s*"NOOBDB_TEST_(?!REQUIRE_EXTERNAL|SKIP_LOG)\w+"\s*\)/;
     const offenders = entries
       .filter(([p]) => p !== COMMON)
       .filter(([, s]) => re.test(stripLineComments(s)))
       .map(([p]) => p);
-    // tls / ssh は URL と CA を 1 組で読むヘルパ内で `.ok()?` を使う。skip 自体は
-    // skip_external を通すので、ヘルパ内の直接読みだけを許可する。
-    expect(offenders.sort()).toEqual([
-      "src-tauri/tests/ssh_integration.rs",
-      "src-tauri/tests/tls_integration.rs",
-    ]);
+    expect(offenders).toEqual([]);
   });
 
   it("skip_external は NOOBDB_TEST_REQUIRE_EXTERNAL で panic する", () => {

@@ -3770,7 +3770,7 @@ async fn mysql_advisor_unused_index_query_with_size_degrades_safely() {
         .any(|s| s.rule == t::RuleId::UnusedIndex);
     if skipped {
         // performance_schema が無効 / sys が読めない環境: 縮退の理由が付く (失敗にはしない)。
-        eprintln!("unused index stats unavailable; degraded as designed");
+        common::skip_capability("unused index stats unavailable; degraded as designed");
         return;
     }
     let f = report
