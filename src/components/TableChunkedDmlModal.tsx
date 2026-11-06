@@ -16,7 +16,11 @@ import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Segmented } from "./Segmented";
+import { DeterminateProgressBar } from "./StreamProgressBar";
+import { StatTile } from "./StatTile";
 import { Button, Input } from "./ui";
+import { estimateEtaMs, formatDuration, progressRatio, waitSecondsLeft } from "../progressEta";
+import type { SemanticRole } from "../semanticColors";
 
 /**
  * 大規模 DML のチャンク分割実行ダイアログ (#2020)。
@@ -86,6 +90,11 @@ export function TableChunkedDmlModal({
   const [manualCount, setManualCount] = useState<
     { status: "loading" } | { status: "ok"; count: number } | { status: "error"; error: string } | null
   >(null);
+  // 経過時間・ETA・スロットル待機カウントダウン用 (#2092)。実行中だけ 250ms ごとに時計を進める。
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [endedAt, setEndedAt] = useState<number | null>(null);
+  const [waitUntil, setWaitUntil] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   const cancelRef = useRef(false);
   // 開始準備 (件数の COUNT と確認ダイアログ) の間も二重起動させない。閉じられたら準備後に打ち切る。
   const startingRef = useRef(false);
@@ -102,6 +111,19 @@ export function TableChunkedDmlModal({
     },
     [],
   );
+
+  const isRunningPhase = phase === "running";
+  useEffect(() => {
+    if (!isRunningPhase) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(id);
+  }, [isRunningPhase]);
+  // 終了した瞬間に経過時間を止める。
+  useEffect(() => {
+    if (phase === "idle" || phase === "running") return;
+    setEndedAt((v) => v ?? Date.now());
+  }, [phase]);
 
   const batchSize = parseInt10(batchText);
   const waitMs = parseInt10(waitText);
@@ -177,6 +199,9 @@ export function TableChunkedDmlModal({
     setRemaining(null);
     setCaptureNote(null);
     setRecordedBatches(0);
+    setStartedAt(null);
+    setEndedAt(null);
+    setWaitUntil(null);
     let done = 0;
     let sum = 0;
     const countRows = async (): Promise<number> => {
@@ -200,6 +225,7 @@ export function TableChunkedDmlModal({
     if (!ok || unmountedRef.current) return;
     cancelRef.current = false;
     setPhase("running");
+    setStartedAt(Date.now());
     setTotal(rows);
     try {
       if (rows === 0) {
@@ -254,14 +280,17 @@ export function TableChunkedDmlModal({
           return;
         }
         // バッチ間ウェイト。中断を素早く拾うため細切れに待つ。
+        if (waitMs > 0) setWaitUntil(Date.now() + waitMs);
         for (let waited = 0; waited < waitMs && !cancelRef.current; waited += 100) {
           await new Promise((r) => setTimeout(r, Math.min(100, waitMs - waited)));
         }
+        setWaitUntil(null);
       }
     } catch (e) {
       setError(String(e));
       setPhase("error");
     } finally {
+      setWaitUntil(null);
       setBatches(done);
       setAffected(sum);
     }
@@ -285,11 +314,29 @@ export function TableChunkedDmlModal({
     }
   };
 
-  const progress = t("chunkedDmlProgress", {
-    batches,
-    rows: affected,
-    total: total !== null ? t("chunkedDmlProgressTotal", { rows: total }) : "",
-  });
+  // 進捗バー / StatTile の値 (#2092)。終了後は endedAt で時計を止める。
+  const elapsedMs = startedAt === null ? 0 : Math.max(0, (endedAt ?? now) - startedAt);
+  const fullyDone = phase === "done" && (remaining ?? 0) === 0;
+  const ratio = fullyDone ? 1 : progressRatio(affected, total);
+  const etaMs = running ? estimateEtaMs(affected, total, elapsedMs) : null;
+  const waitLeft = running ? waitSecondsLeft(waitUntil, now) : null;
+  const barTone: SemanticRole | undefined =
+    phase === "done"
+      ? fullyDone
+        ? "success"
+        : "warning"
+      : phase === "cancelled" || phase === "limit"
+        ? "warning"
+        : phase === "stalled" || phase === "error"
+          ? "danger"
+          : undefined;
+  const remainingEstimate = total === null ? null : Math.max(0, total - affected);
+  const etaText =
+    phase === "running"
+      ? etaMs === null
+        ? t("progressEtaPending")
+        : t("progressEta", { time: formatDuration(etaMs) })
+      : undefined;
 
   return (
     <Modal
@@ -403,7 +450,37 @@ export function TableChunkedDmlModal({
 
         {phase !== "idle" && (
           <chakra.div role="status" aria-live="polite" display="flex" flexDirection="column" gap="2">
-            {phase === "running" && <chakra.span>{progress}</chakra.span>}
+            {ratio !== null && (
+              <chakra.div display="flex" alignItems="center" gap="3" data-testid="chunked-dml-progress">
+                <chakra.div flex="1">
+                  <DeterminateProgressBar value={ratio} tone={barTone} />
+                </chakra.div>
+                <chakra.span textStyle="numeric" minW="4ch" textAlign="right">
+                  {t("progressPercent", { percent: Math.floor(ratio * 100) })}
+                </chakra.span>
+              </chakra.div>
+            )}
+            {total !== null && total > 0 && (
+              <chakra.div display="flex" gap="2" flexWrap="wrap" data-testid="chunked-dml-stats">
+                <StatTile label={t("chunkedDmlStatBatches")} value={batches} />
+                <StatTile label={t("chunkedDmlStatRows")} value={affected} />
+                <StatTile
+                  label={t("chunkedDmlStatRemaining")}
+                  value={remainingEstimate ?? "-"}
+                  sub={total !== null ? t("chunkedDmlProgressTotal", { rows: total }) : undefined}
+                />
+                <StatTile
+                  label={t("chunkedDmlStatElapsed")}
+                  value={formatDuration(elapsedMs)}
+                  sub={etaText}
+                />
+              </chakra.div>
+            )}
+            {waitLeft !== null && (
+              <chakra.span textStyle="caption" color="app.textMuted" data-testid="chunked-dml-waiting">
+                {t("chunkedDmlWaiting", { secs: waitLeft })}
+              </chakra.span>
+            )}
             {capture && recordedBatches > 0 && (
               <chakra.span textStyle="caption">
                 {t("chunkedDmlRecorded", { count: recordedBatches })}

@@ -11,6 +11,10 @@ import { Button, Input, SelectableCard, Switch } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { CodePreview, ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { Callout } from "./Callout";
+import { DeterminateProgressBar } from "./StreamProgressBar";
+import { StatTile } from "./StatTile";
+import { estimateEtaMs, formatDuration, progressRatio } from "../progressEta";
+import type { SemanticRole } from "../semanticColors";
 import { copyToClipboard } from "./clipboard";
 import { Icon, ICON_SIZES } from "./Icon";
 import { useToast } from "./Toast";
@@ -44,6 +48,79 @@ interface DumpProgress {
   elapsedMs: number;
   tables: number | null;
   tablesTotal: number | null;
+}
+
+/** バー + StatTile 行 (#2092)。テーブル総数が分かる間だけバーと ETA を出す。 */
+function DumpProgressDetail({
+  progress,
+  running,
+  tone,
+  full,
+}: {
+  progress: DumpProgress;
+  running?: boolean;
+  tone?: SemanticRole;
+  full?: boolean;
+}) {
+  const t = useT();
+  const ratio = full ? 1 : progressRatio(progress.tables ?? 0, progress.tablesTotal);
+  const etaMs = running
+    ? estimateEtaMs(progress.tables ?? 0, progress.tablesTotal, progress.elapsedMs)
+    : null;
+  const etaText = running
+    ? etaMs === null
+      ? t("progressEtaPending")
+      : t("progressEta", { time: formatDuration(etaMs) })
+    : undefined;
+  return (
+    <chakra.div display="flex" flexDirection="column" gap="2" data-testid="dump-progress-detail">
+      {ratio !== null && (
+        <chakra.div display="flex" alignItems="center" gap="3">
+          <chakra.div flex="1">
+            <DeterminateProgressBar value={ratio} tone={tone} />
+          </chakra.div>
+          <chakra.span textStyle="numeric" minW="4ch" textAlign="right">
+            {t("progressPercent", { percent: Math.floor(ratio * 100) })}
+          </chakra.span>
+        </chakra.div>
+      )}
+      <chakra.div display="flex" gap="2" flexWrap="wrap">
+        {progress.tablesTotal != null && (
+          <StatTile
+            label={t("dumpStatTables")}
+            value={progress.tables ?? 0}
+            sub={`/ ${progress.tablesTotal}`}
+          />
+        )}
+        <StatTile label={t("dumpStatBytes")} value={formatBytes(progress.bytes)} />
+        <StatTile label={t("dumpStatElapsed")} value={formatDuration(progress.elapsedMs)} sub={etaText} />
+      </chakra.div>
+    </chakra.div>
+  );
+}
+
+/** 終了後: バーを意味色で止め、結果を Callout で示す (#2092)。 */
+function DumpOutcome({
+  outcome,
+}: {
+  outcome: { kind: "done" | "cancelled" | "error"; progress: DumpProgress | null };
+}) {
+  const t = useT();
+  const p = outcome.progress;
+  if (!p || outcome.kind === "error") {
+    // エラー本文は ErrorNote 側が出す。進捗が残っていれば危険色で止めたバーだけ添える。
+    return p ? <DumpProgressDetail progress={p} tone="danger" /> : null;
+  }
+  const tone: SemanticRole = outcome.kind === "done" ? "success" : "warning";
+  const values = { bytes: formatBytes(p.bytes), secs: (p.elapsedMs / 1000).toFixed(1) };
+  return (
+    <chakra.div display="flex" flexDirection="column" gap="2">
+      <DumpProgressDetail progress={p} tone={tone} full={outcome.kind === "done"} />
+      <Callout tone={tone} role="status">
+        {t(outcome.kind === "done" ? "dumpResultDone" : "dumpResultCancelled", values)}
+      </Callout>
+    </chakra.div>
+  );
 }
 
 interface Props {
@@ -447,6 +524,12 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
   });
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [progress, setProgress] = useState<DumpProgress | null>(null);
+  // 終了後も最後の進捗を意味色のバー + Callout で残す (#2092)。次の実行開始で消す。
+  const [outcome, setOutcome] = useState<{
+    kind: "done" | "cancelled" | "error";
+    progress: DumpProgress | null;
+  } | null>(null);
+  const lastProgressRef = useRef<DumpProgress | null>(null);
   // Active dump's stream id + event unlistener, so the modal can cancel and
   // clean up its subscription (#686).
   const streamIdRef = useRef<string | null>(null);
@@ -622,24 +705,34 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
     streamIdRef.current = streamId;
     setStatus({ kind: "running" });
     setProgress(null);
+    setOutcome(null);
+    lastProgressRef.current = null;
 
     try {
       // Subscribe before starting so no early progress event is missed. Both the
       // subscription and the kick-off are in this try/catch so a failure in
       // either can't leave the modal stuck in the "running" state.
       unlistenRef.current = await listenDumpStream(streamId, {
-        onProgress: (e) =>
-          setProgress({
+        onProgress: (e) => {
+          const p = {
             bytes: e.bytes,
             elapsedMs: e.elapsedMs,
             tables: e.tables,
             tablesTotal: e.tablesTotal,
-          }),
+          };
+          lastProgressRef.current = p;
+          setProgress(p);
+        },
         onDone: (e) => {
           cleanupStream();
           toast.success(t("dumpSuccess", { bytes: e.bytes, path: target }));
           setStatus({ kind: "idle" });
           setProgress(null);
+          setOutcome({
+            kind: "done",
+            // 最終サイズは完了イベントの値を優先する (進捗イベントは間引かれうる)。
+            progress: lastProgressRef.current ? { ...lastProgressRef.current, bytes: e.bytes } : null,
+          });
         },
         onError: (e) => {
           cleanupStream();
@@ -648,11 +741,13 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
           void refreshToolStatus();
           toast.error(t("dumpError", { error: e.error }));
           setProgress(null);
+          setOutcome({ kind: "error", progress: lastProgressRef.current });
         },
         onCancelled: () => {
           cleanupStream();
           setStatus({ kind: "idle" });
           setProgress(null);
+          setOutcome({ kind: "cancelled", progress: lastProgressRef.current });
           toast.info(t("dumpCancelled"));
         },
       });
@@ -678,6 +773,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
       setStatus({ kind: "error", message: String(e) });
       toast.error(t("dumpError", { error: String(e) }));
       setProgress(null);
+      setOutcome({ kind: "error", progress: lastProgressRef.current });
     }
   };
 
@@ -689,6 +785,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
     cleanupStream();
     setStatus({ kind: "idle" });
     setProgress(null);
+    setOutcome({ kind: "cancelled", progress: lastProgressRef.current });
     await api.cancelStream(streamId).catch(() => {
       /* already finished */
     });
@@ -916,26 +1013,33 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
               exit={variants.fade.exit}
               transition={transitions.crossfade}
             >
-              <chakra.div fontSize="sm" color="app.textMuted" display="flex" alignItems="center" gap="2">
-                <chakra.span fontWeight={500} color="app.text">
-                  {progress
-                    ? progress.tablesTotal != null
-                      ? t("dumpProgressTables", {
-                          tables: progress.tables ?? 0,
-                          total: progress.tablesTotal,
-                          bytes: formatBytes(progress.bytes),
-                        })
-                      : t("dumpProgressBytes", { bytes: formatBytes(progress.bytes) })
-                    : t("dumpRunning")}
-                </chakra.span>
-                {progress && (
-                  <chakra.span opacity={0.8}>
-                    {t("dumpProgressElapsed", {
-                      secs: (progress.elapsedMs / 1000).toFixed(1),
-                    })}
+              <chakra.div display="flex" flexDirection="column" gap="2">
+                <chakra.div fontSize="sm" color="app.textMuted" display="flex" alignItems="center" gap="2">
+                  <chakra.span fontWeight={500} color="app.text">
+                    {progress
+                      ? progress.tablesTotal != null
+                        ? t("dumpProgressTables", {
+                            tables: progress.tables ?? 0,
+                            total: progress.tablesTotal,
+                            bytes: formatBytes(progress.bytes),
+                          })
+                        : t("dumpProgressBytes", { bytes: formatBytes(progress.bytes) })
+                      : t("dumpRunning")}
                   </chakra.span>
-                )}
+                </chakra.div>
+                {progress && <DumpProgressDetail progress={progress} running />}
               </chakra.div>
+            </motion.div>
+          )}
+          {status.kind === "idle" && outcome && (
+            <motion.div
+              key="dump-outcome"
+              initial={variants.fade.initial}
+              animate={variants.fade.animate}
+              exit={variants.fade.exit}
+              transition={transitions.crossfade}
+            >
+              <DumpOutcome outcome={outcome} />
             </motion.div>
           )}
           {status.kind === "error" && (
