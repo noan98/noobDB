@@ -885,6 +885,8 @@ function TaskForm({
   const [maintenanceKind, setMaintenanceKind] = useState<TaskMaintenanceKind>(
     task?.action.kind === "run_maintenance" ? task.action.maintenance : "analyze",
   );
+  // 「対象テーブル必須」は、対象欄を触るか保存を押すまで出さない (初期表示で騒がない)。
+  const [maintenanceTouched, setMaintenanceTouched] = useState(false);
   const [maintenanceTargets, setMaintenanceTargets] = useState(
     task?.action.kind === "run_maintenance" ? task.action.targets.join("\n") : "",
   );
@@ -1036,7 +1038,16 @@ function TaskForm({
         return;
       }
       // 組み合わせ違反は入力欄の下の FieldError に出ているので、ここでは保存を止めるだけ。
-      if (maintenanceError !== null) return;
+      if (maintenanceError !== null) {
+        setMaintenanceTouched(true);
+        // 無反応にせず、違反のある入力欄へ移動する。
+        const el = document.getElementById(
+          maintenanceError === "invalidDatabase" ? "task-database-maintenance" : "task-maintenance-targets",
+        );
+        el?.scrollIntoView?.({ block: "center" });
+        el?.focus();
+        return;
+      }
       const targets = maintenanceTargetList;
       action = {
         kind: "run_maintenance",
@@ -1305,13 +1316,20 @@ function TaskForm({
             <Textarea
               id="task-maintenance-targets"
               value={maintenanceTargets}
-              onChange={(e) => setMaintenanceTargets(e.target.value)}
+              onChange={(e) => {
+                setMaintenanceTouched(true);
+                setMaintenanceTargets(e.target.value);
+              }}
               rows={4}
               fontFamily="var(--font-mono)"
             />
-            {maintenanceError !== null && maintenanceError !== "invalidDatabase" && (
-              <FieldError>{t(TASK_MAINTENANCE_ERROR_KEYS[maintenanceError])}</FieldError>
-            )}
+            {maintenanceError !== null &&
+              maintenanceError !== "invalidDatabase" &&
+              (maintenanceTouched ||
+                (maintenanceError !== "targetsRequiredMysql" &&
+                  maintenanceError !== "targetsRequiredReindex")) && (
+                <FieldError>{t(TASK_MAINTENANCE_ERROR_KEYS[maintenanceError])}</FieldError>
+              )}
           </FormSection>
           {"sql" in maintenanceBuild && (
             <FormSection>

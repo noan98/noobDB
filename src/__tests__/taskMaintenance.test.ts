@@ -50,10 +50,25 @@ describe("buildTaskMaintenanceStatements (#2096)", () => {
   });
 
   it("ロックの重さ: 統計更新は軽く、再構築は重い", () => {
-    expect(maintenanceImpact("postgres", "analyze")).toEqual({ lock: "light", blocksWrites: false });
+    expect(maintenanceImpact("postgres", "analyze")).toEqual({
+      lock: "light",
+      blocksWrites: false,
+      blocksReads: false,
+    });
+    // SQLite の ANALYZE はデータベース全体の書き込みロックを取る。
+    expect(maintenanceImpact("sqlite", "analyze").blocksWrites).toBe(true);
     expect(maintenanceImpact("postgres", "vacuum").lock).toBe("light");
-    expect(maintenanceImpact("sqlite", "vacuum")).toEqual({ lock: "heavy", blocksWrites: true });
-    expect(maintenanceImpact("postgres", "reindex")).toEqual({ lock: "heavy", blocksWrites: true });
+    expect(maintenanceImpact("sqlite", "vacuum")).toEqual({
+      lock: "heavy",
+      blocksWrites: true,
+      blocksReads: true,
+    });
+    expect(maintenanceImpact("postgres", "reindex")).toEqual({
+      lock: "heavy",
+      blocksWrites: true,
+      blocksReads: true,
+    });
+    expect(maintenanceImpact("sqlite", "reindex").blocksReads).toBe(false);
     expect(maintenanceImpact("mysql", "optimize").lock).toBe("heavy");
   });
 });

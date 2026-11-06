@@ -621,11 +621,13 @@ describe("TaskManager 定期メンテナンス (#2025)", () => {
     await user.click(screen.getAllByRole("button", { name: t("taskCreate") })[0]);
     await user.type(await screen.findByLabelText(t("taskFormName")), "Analyze");
     chooseListboxOption(screen.getByLabelText(t("taskFormActionKind")), "run_maintenance");
-    // 保存前に、入力欄の下へ組み合わせ違反が出る。
-    expect(screen.getByText(t("taskFormMaintenanceTargetsRequiredMysql"))).toBeInTheDocument();
+    // 初期表示では必須エラーを出さない。保存を押すと出て、対象欄へフォーカスする。
+    expect(screen.queryByText(t("taskFormMaintenanceTargetsRequiredMysql"))).toBeNull();
     expect(screen.queryByTestId("task-maint-preview")).toBeNull();
     await user.click(screen.getByRole("button", { name: t("taskFormSave") }));
     expect(saveTask).not.toHaveBeenCalled();
+    expect(screen.getByText(t("taskFormMaintenanceTargetsRequiredMysql"))).toBeInTheDocument();
+    expect(screen.getByLabelText(t("taskFormMaintenanceTargets"))).toHaveFocus();
     await user.type(screen.getByLabelText(t("taskFormMaintenanceTargets")), "orders");
     expect(screen.getByTestId("task-maint-preview")).toHaveTextContent("ANALYZE TABLE `orders`;");
     expect(screen.queryByText(t("taskFormMaintenanceTargetsRequiredMysql"))).toBeNull();

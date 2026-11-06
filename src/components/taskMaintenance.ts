@@ -105,6 +105,8 @@ export interface MaintenanceImpact {
   lock: "light" | "heavy";
   /** 実行中、対象への書き込みを待たせる (ブロックする) か。 */
   blocksWrites: boolean;
+  /** 読み取りも待たせる (PostgreSQL の REINDEX は索引に ACCESS EXCLUSIVE、SQLite の VACUUM は排他ロック)。 */
+  blocksReads: boolean;
 }
 
 export function maintenanceImpact(
@@ -114,15 +116,20 @@ export function maintenanceImpact(
   const sqlite = driverIn === "sqlite";
   switch (kind) {
     case "analyze":
+      // SQLite はデータベース全体の単一書き込みロックを取る。
+      return { lock: "light", blocksWrites: sqlite, blocksReads: false };
     case "vacuum_analyze":
-      return { lock: "light", blocksWrites: false };
+      return { lock: "light", blocksWrites: false, blocksReads: false };
     case "vacuum":
       // PostgreSQL の VACUUM は書き込みと並行して動く。SQLite はファイル全体を作り直す。
-      return sqlite ? { lock: "heavy", blocksWrites: true } : { lock: "light", blocksWrites: false };
+      return sqlite
+        ? { lock: "heavy", blocksWrites: true, blocksReads: true }
+        : { lock: "light", blocksWrites: false, blocksReads: false };
     case "optimize":
-      return { lock: "heavy", blocksWrites: false };
+      return { lock: "heavy", blocksWrites: false, blocksReads: false };
     case "reindex":
-      return { lock: "heavy", blocksWrites: true };
+      // CONCURRENTLY なしの PostgreSQL は表に SHARE・索引に ACCESS EXCLUSIVE でほぼ全クエリが待つ。
+      return { lock: "heavy", blocksWrites: true, blocksReads: !sqlite };
   }
 }
 

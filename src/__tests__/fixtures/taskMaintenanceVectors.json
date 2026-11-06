@@ -1847,6 +1847,60 @@
     "ANALYZE \"t498\";",
     "ANALYZE \"t499\";"
    ]
+  },
+  {
+   "name": "database 前後空白はトリムして修飾",
+   "driver": "mysql",
+   "database": " d ",
+   "targets": [
+    "t"
+   ],
+   "kind": "analyze",
+   "sql": [
+    "ANALYZE TABLE `d`.`t`;"
+   ]
+  },
+  {
+   "name": "database の NUL",
+   "driver": "sqlite",
+   "database": "a\u0000b",
+   "targets": [
+    "t"
+   ],
+   "kind": "analyze",
+   "sql": null
+  },
+  {
+   "name": "sqlite テーブル名の二重引用符",
+   "driver": "sqlite",
+   "database": null,
+   "targets": [
+    "a\"b"
+   ],
+   "kind": "analyze",
+   "sql": [
+    "ANALYZE \"a\"\"b\";"
+   ]
+  },
+  {
+   "name": "pg reindex のスキーマ修飾",
+   "driver": "postgres",
+   "database": "s",
+   "targets": [
+    "t"
+   ],
+   "kind": "reindex",
+   "sql": [
+    "REINDEX TABLE \"s\".\"t\";"
+   ]
+  },
+  {
+   "name": "mysql optimize は対象必須",
+   "driver": "mysql",
+   "database": null,
+   "targets": [],
+   "kind": "optimize",
+   "sql": null
   }
  ]
 }

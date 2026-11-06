@@ -3,7 +3,8 @@
 //! スケジューラのアクションは読み取り専用が前提 (#730) だが、メンテナンスは書き込み扱いの
 //! 文 (VACUUM / OPTIMIZE など)。任意 SQL は受けず、**ここの列挙 (種別 × ドライバ) から
 //! 生成した固定形の文だけ**を実行することで安全前提を保つ。識別子は必ず
-//! `db::sync::quote_ident` を通す。フロントの `maintenanceCommands.ts` と同じ文を返す。
+//! `db::sync::quote_ident` を通す。フロントの `taskMaintenance.ts` (`buildTaskMaintenanceStatements`) と同じ文を返し、
+//! 共有ゴールデンベクタ `src/__tests__/fixtures/taskMaintenanceVectors.json` で一致を固定している。
 //! 副作用なしの純関数で、ドライバが対応しない組み合わせは理由付きで弾く。
 
 use serde::{Deserialize, Serialize};

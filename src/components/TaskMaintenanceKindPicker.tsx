@@ -89,6 +89,11 @@ export function TaskMaintenanceKindPicker({
                   >
                     {t(impact.lock === "heavy" ? "taskMaintLockHeavy" : "taskMaintLockLight")}
                   </ImpactBadge>
+                  {impact.blocksReads && (
+                    <ImpactBadge tone="danger" testId={`task-maint-blocks-reads-${kind}`}>
+                      {t("taskMaintBlocksReads")}
+                    </ImpactBadge>
+                  )}
                   {impact.blocksWrites && (
                     <ImpactBadge tone="danger" testId={`task-maint-blocks-${kind}`}>
                       {t("taskMaintBlocksWrites")}
