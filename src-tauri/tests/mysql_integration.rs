@@ -5019,7 +5019,9 @@ fn mysql_stop_sql() -> common::StopSql {
             sleeping_update: format!("UPDATE {t} SET v = v + SLEEP(30) WHERE id = 1"),
             lock_nowait: format!("SELECT id FROM {t} WHERE id = 1 FOR UPDATE NOWAIT"),
             select_v: format!("SELECT v FROM {t} WHERE id = 1"),
+            teardown: vec![format!("DROP TABLE IF EXISTS {t}")],
         },
+        lock_conflict_marker: "3572",
     }
 }
 

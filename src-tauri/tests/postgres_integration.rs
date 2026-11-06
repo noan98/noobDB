@@ -4685,7 +4685,12 @@ fn postgres_stop_sql() -> common::StopSql {
             sleeping_update: format!("UPDATE public.{t} SET v = v + 1 WHERE id = 1"),
             lock_nowait: format!("SELECT id FROM public.{t} WHERE id = 1 FOR UPDATE NOWAIT"),
             select_v: format!("SELECT v FROM public.{t} WHERE id = 1"),
+            teardown: vec![
+                format!("DROP TABLE IF EXISTS public.{t}"),
+                format!("DROP FUNCTION IF EXISTS public.{t}_sleep()"),
+            ],
         },
+        lock_conflict_marker: "55P03",
     }
 }
 
