@@ -193,6 +193,38 @@ describe("DumpModal 生成エンジンのカード選択 (#2094)", () => {
     expect(loadDumpPrefs("p-auto")?.options.native).toBe(false);
   });
 
+  it("自動切り替え後にルーチンを自分で変えたら、その選択を prefs に保存する", async () => {
+    localStorage.clear();
+    mockTool(null);
+    vi.spyOn(api, "dumpDatabase").mockResolvedValue(undefined as never);
+    renderWithProviders(
+      <DumpModal sessionId="s1" database="app" driver="mysql" profileId="p-rt" onClose={() => {}} />,
+    );
+    await waitFor(() => expect(engine("native")).toHaveAttribute("aria-pressed", "true"));
+    fireEvent.click(screen.getByRole("switch", { name: t("dumpOptRoutines") }));
+    fireEvent.change(screen.getByLabelText(t("dumpSavePath")), { target: { value: "/tmp/out.sql" } });
+    fireEvent.click(screen.getByRole("button", { name: t("dumpExecute") }));
+    await waitFor(() => expect(api.dumpDatabase).toHaveBeenCalled());
+    expect(vi.mocked(api.dumpDatabase).mock.calls[0][0].options.routines).toBe(true);
+    expect(loadDumpPrefs("p-rt")?.options.routines).toBe(true);
+    expect(loadDumpPrefs("p-rt")?.options.native).toBe(false);
+  });
+
+  it("内蔵でダンプ実行中は、未導入ツールのインストールボタンを押せない", async () => {
+    vi.spyOn(api, "dumpToolStatus").mockResolvedValue({
+      tool: "mysqldump",
+      path: null,
+      install: { manager: "winget", command: "winget install mysql", location: "C:/x", oneClick: true },
+    } as never);
+    vi.spyOn(api, "dumpDatabase").mockReturnValue(new Promise(() => {}) as never);
+    renderWithProviders(<DumpModal sessionId="s1" database="app" driver="mysql" onClose={() => {}} />);
+    const install = await screen.findByRole("button", { name: t("dumpToolInstall", { tool: "mysqldump" }) });
+    expect(install).toBeEnabled();
+    fireEvent.change(screen.getByLabelText(t("dumpSavePath")), { target: { value: "/tmp/out.sql" } });
+    fireEvent.click(screen.getByRole("button", { name: t("dumpExecute") }));
+    await waitFor(() => expect(install).toBeDisabled());
+  });
+
   it("prefs の native: true でツール未導入なら「切り替えました」は出さず、未導入の案内だけを info で出す", async () => {
     localStorage.clear();
     saveDumpPrefs("p-nat2", { options: { native: true }, dir: "" });

@@ -212,6 +212,7 @@ function DumpToolNotice({
   installing,
   installError,
   onInstall,
+  busy,
   nativeSelected,
   autoSwitched,
 }: {
@@ -219,6 +220,8 @@ function DumpToolNotice({
   installing: boolean;
   installError: string | null;
   onInstall: () => void;
+  /** ダンプ実行中はインストールさせない (完了時の状態リセットが実行中のダンプを壊すため)。 */
+  busy: boolean;
   /** 内蔵生成を選んでいるとき (未導入のため自動で切り替えた場合を含む) は警告ではなく情報の帯にする。 */
   nativeSelected: boolean;
   /** 未導入を検出して**自動で**内蔵へ切り替えたときだけ「切り替えました」と伝える。 */
@@ -275,7 +278,7 @@ function DumpToolNotice({
                   size="sm"
                   variant="primary"
                   loading={installing}
-                  disabled={installing}
+                  disabled={installing || busy}
                   onClick={onInstall}
                 >
                   <Icon name="download" size={ICON_SIZES.sm} />
@@ -456,7 +459,8 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
   // 未導入で自動的に内蔵生成へ切り替えたか。prefs には元の選択を保存するために覚える。
   const [autoSwitched, setAutoSwitched] = useState(false);
   // 自動切り替え前のルーチン (PostgreSQL は切り替えで ON にするので、prefs には元の値を保存する)。
-  const preAutoRoutinesRef = useRef(false);
+  // null は「戻す必要なし」(MySQL は切り替えで変えない / 切り替え後にユーザーが自分で変えた)。
+  const preAutoRoutinesRef = useRef<boolean | null>(null);
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const refreshToolStatus = useMemo(
@@ -468,7 +472,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
           setToolStatus(next);
           // 最初の検出でツールが無ければ内蔵生成へ切り替える (エラー後の再検出では動かさない)。
           if (initial && next.path == null && !optionsRef.current.native) {
-            preAutoRoutinesRef.current = !!optionsRef.current.routines;
+            preAutoRoutinesRef.current = driver === "postgres" ? !!optionsRef.current.routines : null;
             setAutoSwitched(true);
             setOptions((prev) => ({
               ...prev,
@@ -492,7 +496,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
   const toolAbsent = !!toolStatus && toolStatus.path == null;
 
   const handleInstallTool = async () => {
-    if (!toolName) return;
+    if (!toolName || status.kind === "running") return;
     setInstalling(true);
     setInstallError(null);
     try {
@@ -554,6 +558,8 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
 
   const toggle = (key: BoolOptionKey) => {
     if (lockOf(key)) return;
+    // 自動切り替え後にルーチンを自分で変えたら、その選択をそのまま覚える。
+    if (key === "routines") preAutoRoutinesRef.current = null;
     setOptions((prev) => ({ ...prev, [key]: !prev[key] }));
     // gzip (#1539) / SQLite スナップショット (#1624): 保存先の拡張子を追従させる。
     if (key === "gzip" || key === "sqliteSnapshot") {
@@ -603,7 +609,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
             k,
             autoSwitched && k === "native"
               ? false
-              : autoSwitched && k === "routines"
+              : autoSwitched && k === "routines" && preAutoRoutinesRef.current !== null
                 ? preAutoRoutinesRef.current
                 : options[k] === true,
           ],
@@ -773,6 +779,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
                 installing={installing}
                 installError={installError}
                 onInstall={() => void handleInstallTool()}
+                busy={isRunning}
                 nativeSelected={useNative}
                 autoSwitched={autoSwitched}
               />
