@@ -4,6 +4,7 @@
 //! `NOOBDB_TEST_MYSQL_URL` / `NOOBDB_TEST_POSTGRES_URL` があるときだけ実行し、他のテストと
 //! 干渉しないよう専用のデータベース / スキーマ (`nb1261_search*`) に閉じる。
 
+use super::common; // 共有ヘルパは groups/*.rs が 1 度だけ取り込む
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -589,8 +590,7 @@ const MYSQL_DB: &str = "nb1261_search_db";
 
 #[tokio::test]
 async fn mysql_search_commands_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -730,8 +730,7 @@ const PG_SCHEMA: &str = "nb1261_search";
 
 #[tokio::test]
 async fn postgres_search_commands_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");

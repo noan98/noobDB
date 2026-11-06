@@ -193,7 +193,11 @@
   バイナリを導入)。`rust (test)` には MySQL 用の
   `NOOBDB_TEST_MYSQL_URL` と PostgreSQL 用の `NOOBDB_TEST_POSTGRES_URL` を両方
   渡しており、両ドライバの統合テストが CI で実走します (SQLite は環境変数不要で
-  常に走る)。`rust (coverage)` ジョブは `rust (test)` と同じ準備 (平文 DB・sshd・
+  常に走る)。`rust (test)` / `rust (coverage)` / `windows-db-smoke` は
+  `NOOBDB_TEST_REQUIRE_EXTERNAL=1` も立てており、env 欠落の skip は失敗扱いになります
+  (#2101。`rust (windows)` など env を用意しないジョブでは立てない。skip は
+  `tests/common/mod.rs` の `require_env` / `skip_external` を通し、サーバ機能の有無による
+  正当な skip は `skip_capability`。skip 件数は `scripts/ci-skip-summary.sh` が Job Summary へ出す)。`rust (coverage)` ジョブは `rust (test)` と同じ準備 (平文 DB・sshd・
   TLS DB・dist スタブ。複製しており composite action 化はしていない) の上で
   計装 archive を `cargo llvm-cov nextest --archive-file ... --no-report` で実行し、`cargo llvm-cov report` で lcov を生成しつつ、サマリ表を
   Job Summary に出力して PR ごとに可視化し、加えて `--fail-under-lines` で行

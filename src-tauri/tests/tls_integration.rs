@@ -14,6 +14,7 @@
 //! (CI では `rust (test)` ジョブが `$GITHUB_ENV` へ書き出す)。いずれも未設定なら
 //! 全テストがスキップ経路を通り green になる (コンパイルは常に検証される)。
 
+use super::common; // 共有ヘルパは groups/*.rs が 1 度だけ取り込む
 use noobdb_lib::__test_api as t;
 
 fn mysql_tls_env() -> Option<(String, Option<String>)> {
@@ -33,7 +34,7 @@ fn postgres_tls_env() -> Option<(String, Option<String>)> {
 #[tokio::test]
 async fn mysql_tls_require_connects() {
     let Some((url, _)) = mysql_tls_env() else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_TLS_URL not set");
+        common::skip_external("NOOBDB_TEST_MYSQL_TLS_URL not set");
         return;
     };
     let mut opts = t::parse_mysql_url(&url).expect("valid url");
@@ -49,7 +50,7 @@ async fn mysql_tls_require_connects() {
 #[tokio::test]
 async fn mysql_tls_verify_ca_with_correct_ca_connects() {
     let Some((url, Some(ca))) = mysql_tls_env() else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_TLS_URL / NOOBDB_TEST_TLS_CA not set");
+        common::skip_external("NOOBDB_TEST_MYSQL_TLS_URL / NOOBDB_TEST_TLS_CA not set");
         return;
     };
     let mut opts = t::parse_mysql_url(&url).expect("valid url");
@@ -68,7 +69,7 @@ async fn mysql_tls_verify_ca_with_correct_ca_connects() {
 #[tokio::test]
 async fn mysql_tls_verify_full_with_correct_ca_connects() {
     let Some((url, Some(ca))) = mysql_tls_env() else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_TLS_URL / NOOBDB_TEST_TLS_CA not set");
+        common::skip_external("NOOBDB_TEST_MYSQL_TLS_URL / NOOBDB_TEST_TLS_CA not set");
         return;
     };
     let mut opts = t::parse_mysql_url(&url).expect("valid url");
@@ -88,7 +89,7 @@ async fn mysql_tls_verify_full_with_correct_ca_connects() {
 #[tokio::test]
 async fn mysql_tls_verify_full_without_ca_fails() {
     let Some((url, _)) = mysql_tls_env() else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_TLS_URL not set");
+        common::skip_external("NOOBDB_TEST_MYSQL_TLS_URL not set");
         return;
     };
     let mut opts = t::parse_mysql_url(&url).expect("valid url");
@@ -108,7 +109,7 @@ async fn mysql_tls_verify_full_without_ca_fails() {
 #[tokio::test]
 async fn postgres_tls_require_connects() {
     let Some((url, _)) = postgres_tls_env() else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_TLS_URL not set");
+        common::skip_external("NOOBDB_TEST_POSTGRES_TLS_URL not set");
         return;
     };
     let mut opts = t::parse_postgres_url(&url).expect("valid url");
@@ -124,7 +125,7 @@ async fn postgres_tls_require_connects() {
 #[tokio::test]
 async fn postgres_tls_verify_ca_with_correct_ca_connects() {
     let Some((url, Some(ca))) = postgres_tls_env() else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_TLS_URL / NOOBDB_TEST_TLS_CA not set");
+        common::skip_external("NOOBDB_TEST_POSTGRES_TLS_URL / NOOBDB_TEST_TLS_CA not set");
         return;
     };
     let mut opts = t::parse_postgres_url(&url).expect("valid url");
@@ -143,7 +144,7 @@ async fn postgres_tls_verify_ca_with_correct_ca_connects() {
 #[tokio::test]
 async fn postgres_tls_verify_full_with_correct_ca_connects() {
     let Some((url, Some(ca))) = postgres_tls_env() else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_TLS_URL / NOOBDB_TEST_TLS_CA not set");
+        common::skip_external("NOOBDB_TEST_POSTGRES_TLS_URL / NOOBDB_TEST_TLS_CA not set");
         return;
     };
     let mut opts = t::parse_postgres_url(&url).expect("valid url");
@@ -161,7 +162,7 @@ async fn postgres_tls_verify_full_with_correct_ca_connects() {
 #[tokio::test]
 async fn postgres_tls_verify_full_without_ca_fails() {
     let Some((url, _)) = postgres_tls_env() else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_TLS_URL not set");
+        common::skip_external("NOOBDB_TEST_POSTGRES_TLS_URL not set");
         return;
     };
     let mut opts = t::parse_postgres_url(&url).expect("valid url");

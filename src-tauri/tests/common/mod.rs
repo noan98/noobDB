@@ -7,6 +7,72 @@
 
 use noobdb_lib::__test_api as t;
 
+// ---------------------------------------------------------------------------
+// 外部サービス前提テストの skip 制御 (#2101)
+//
+// 外部 DB / SSH / クライアントコマンドが無いとき、従来は `eprintln!("skip: ...")` して
+// `return` する (= 成功扱い)。CI でこれが起きると DB の起動や環境変数の受け渡しが壊れても
+// 必須チェックが緑のままになるため、`NOOBDB_TEST_REQUIRE_EXTERNAL=1` のときは skip せず
+// panic する。ローカルで環境変数が無いときは従来どおり skip で通る。
+//
+// skip 分岐は必ずこのモジュールの関数を経由する (`src/__tests__/externalSkipParity.test.ts`
+// が `eprintln!("skip` の直書きを CI で検出する)。
+// ---------------------------------------------------------------------------
+
+/// 外部サービスの存在を必須とするか (CI の external 実行ジョブが立てる)。
+pub fn external_required() -> bool {
+    matches!(
+        std::env::var("NOOBDB_TEST_REQUIRE_EXTERNAL").as_deref(),
+        Ok("1") | Ok("true")
+    )
+}
+
+/// skip を `NOOBDB_TEST_SKIP_LOG` のファイルへ 1 行追記する (CI の Job Summary 用)。
+/// nextest はテストごとにプロセスが別なので、プロセス内カウンタでは集計できない。
+fn record_skip(reason: &str) {
+    use std::io::Write;
+    let Ok(path) = std::env::var("NOOBDB_TEST_SKIP_LOG") else {
+        return;
+    };
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(f, "{reason}");
+    }
+}
+
+/// 外部サービスが無い (= 本来は走るべきテストが走れない) ときの skip。
+/// `NOOBDB_TEST_REQUIRE_EXTERNAL=1` なら panic、そうでなければ記録して戻る。
+/// 呼び出し側は直後に `return` する。
+pub fn skip_external(reason: &str) {
+    if external_required() {
+        // テスト失敗として CI に気付かせるのが目的の意図的な panic。
+        panic!("{reason} (NOOBDB_TEST_REQUIRE_EXTERNAL=1 のため skip せず失敗扱い)");
+    }
+    eprintln!("skip: {reason}");
+    record_skip(reason);
+}
+
+/// サーバ機能の有無など、CI でも環境次第で正当に成立しない条件による skip。
+/// `NOOBDB_TEST_REQUIRE_EXTERNAL` の影響を受けず、常に記録して戻る。
+pub fn skip_capability(reason: &str) {
+    eprintln!("skip: {reason}");
+    record_skip(reason);
+}
+
+/// 環境変数 `name` を返す。無ければ `skip_external` して `None`。
+pub fn require_env(name: &str) -> Option<String> {
+    match std::env::var(name) {
+        Ok(v) => Some(v),
+        Err(_) => {
+            skip_external(&format!("{name} not set"));
+            None
+        }
+    }
+}
+
 /// `tables` は `db` に実在する 4 件以上のテーブル (一括取得の経路も通すため)。
 pub async fn assert_tree_and_open_match_individual_ipcs(
     state: &t::AppState,

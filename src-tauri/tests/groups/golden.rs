@@ -6,6 +6,11 @@
 //! (`include_str!` の相対パスやドキュメント上の参照先を変えないため)。新しいテストを足すときは
 //! ファイルを作ってここに `mod` を 1 行足す (足し忘れるとそのテストは走らない。`src/__tests__/testWiringParity.test.ts` が結線漏れを CI で検出する)。
 
+// 外部 DB 前提テストの skip 制御など共有ヘルパ。複数の `mod common;` から同じファイルを
+// 読むと clippy::duplicate_mod になるので、ここで 1 度だけ取り込む。
+#[path = "../common/mod.rs"]
+mod common;
+
 #[path = "../auto_limit_golden.rs"]
 mod auto_limit_golden;
 #[path = "../cache_invalidation_matrix.rs"]

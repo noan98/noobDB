@@ -10,6 +10,7 @@
 //! `NOOBDB_TEST_{MYSQL,POSTGRES}_URL` 設定時のみ実走し、CI の `rust (test)` で
 //! カバーされる。
 
+use super::common; // 共有ヘルパは groups/*.rs が 1 度だけ取り込む
 use noobdb_lib::__test_api as t;
 use t::{Connection, TableColumnInfo};
 
@@ -139,8 +140,7 @@ async fn sqlite_introspection_golden() {
 
 #[tokio::test]
 async fn mysql_introspection_golden_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid mysql url");
@@ -211,8 +211,7 @@ async fn mysql_introspection_golden_when_env_set() {
 
 #[tokio::test]
 async fn postgres_introspection_golden_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid postgres url");

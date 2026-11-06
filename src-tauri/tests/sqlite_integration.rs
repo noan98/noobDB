@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-mod common;
+use super::common; // 共有ヘルパは groups/integration.rs が 1 度だけ取り込む
 
 use noobdb_lib::__test_api as t;
 

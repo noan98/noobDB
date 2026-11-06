@@ -4,6 +4,7 @@
 //! 追加・削除、識別子として正しくクオートされること (インジェクションにならない)、
 //! payload の切り詰め、タスクを止めたあとに通知が流れないことを固定する。
 
+use super::common; // 共有ヘルパは groups/*.rs が 1 度だけ取り込む
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::Duration;
@@ -75,8 +76,7 @@ async fn control_ok(
 
 #[tokio::test]
 async fn pg_listen_delivers_notifications_and_follows_channel_changes() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
