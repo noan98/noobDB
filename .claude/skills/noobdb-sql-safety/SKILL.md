@@ -23,6 +23,7 @@ description: noobDB の SQL 安全網を変更するとき — 読み取り専�
    | `statementSplitVectors.json` | 文境界 (`splitSqlStatements` / `isMultiStatement`、#1074) |
    | `autoLimitVectors.json` | `apply_auto_limit_for` (5 ドライバ) |
    | `queryShapeVectors.json` | fetch/execute 経路の振り分け |
+   | `chunkedDmlVectors.json` | チャンク DML (#2020) の SQL 生成と字句検査。`fragments` は `validate_fragment` / `validateFragment` の単体判定 (#2103)。Rust `tests/chunked_dml_golden.rs` (`--test golden`) と `chunkedDmlGolden.test.ts` |
    | `sqlQuotingVectors.json` | 識別子引用・リテラルエスケープ |
    | `objectSearchVectors.json` | グローバルオブジェクト検索の順位付け (Rust `db::object_search`、#1261) |
    | `whereUsedVectors.json` | Where-used の参照検出・マスク・行単位のまとめ (Rust `db::where_used`、#1261) |
@@ -31,6 +32,13 @@ description: noobDB の SQL 安全網を変更するとき — 読み取り専�
    後ろ 3 つは**移植前の TS 実装を `src/__tests__/oracles/` にオラクルとして残し**、その出力を
    期待値に固定している (製品コードの TS には実装が無い)。境界ケースを足すときは
    オラクルの出力を `expected` に貼り、Rust 側の `tests/*_golden.rs` も通す。
+
+   **安全網の関数を足したら変異テストの対象にも入れる** (#2103)。Rust は
+   `src-tauri/.cargo/mutants.toml` の `examine_globs` / `examine_re`、フロントは
+   `stryker.conf.json` の `mutate` (+ `vitest.mutants.config.ts` の `include`)。PR 差分ゲート
+   (`mutants-diff.yml` / `js-mutants-diff.yml`) の `paths:` も揃える。漏れは
+   `src/__tests__/mutationScopeParity.test.ts` が検出する (チャンク DML の関数は
+   `chunked_dml.rs` の全関数を `examine_re` と突合)。
 
 2. **マスクはドライバ別**である点を忘れない。バックスラッシュをエスケープ文字と
    見なすのは **MySQL/MariaDB だけ**です。ドライバを知っている呼び出し口は

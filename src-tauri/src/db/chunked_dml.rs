@@ -93,7 +93,9 @@ pub fn validate_fragment(driver: DriverKind, frag: &str) -> Result<(), ChunkedDm
                     if j >= chars.len() {
                         return Err(ChunkedDmlError::Unbalanced);
                     }
-                    i = j + 1;
+                    // `]` 自身は次の周回で通常文字として読み飛ばされる (`j + 1` と書くと
+                    // `j * 1` が同値変異になるので加算を避ける)。
+                    i = j;
                     continue;
                 }
                 while j < chars.len() {

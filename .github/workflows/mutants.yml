@@ -17,6 +17,9 @@ name: mutation-test
 #   db/sqlite.rs    is_query_shape / quote_ident
 #   db/sync.rs      quote_ident
 #   db/data_diff.rs sql_literal
+#   db/chunked_dml.rs validate_fragment / build_chunk_sql / mysql_sql_mode_is_unsafe ほか
+#                   (#2103。chunked_dml.rs で約 112 変異が増える。全体は約 244 変異で、
+#                   シャードあたり約 73 分なので、シャード数は 5〜6 に増やすことを検討する)
 #   lib.rs          __test_api のディスパッチ (is_query_shape ほか)
 # 関数を足す・外すときは mutants.toml だけを直し、`cargo mutants --list` で確認する。
 #

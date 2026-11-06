@@ -1,6 +1,7 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { chakra } from "@chakra-ui/react";
 import { transitions } from "../motion";
+import { semanticColorVar, type SemanticRole } from "../semanticColors";
 
 /**
  * ストリーミング実行中に表示する高さ 2px の indeterminate 進捗バー (#872)。
@@ -59,14 +60,15 @@ export function StreamProgressBar({ active }: { active: boolean }) {
  * width を補間する。インポートと影響分析で同じ表現になるよう単一ソース化している。
  * reduced-motion では補間せず即時反映する (`MotionConfig` は width を抑制しない)。
  * 進捗の文言は呼び出し側が併記し、バー自体は装飾 (`aria-hidden`)。
+ * `tone` を渡すと終了状態を意味色 (success / warning / danger) で止める (#2092)。
  */
-export function DeterminateProgressBar({ value }: { value: number }) {
+export function DeterminateProgressBar({ value, tone }: { value: number; tone?: SemanticRole }) {
   const reduced = useReducedMotion() ?? false;
   const ratio = Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0;
   return (
     <chakra.div aria-hidden h="8px" borderRadius="sm" bg="app.surfaceMuted" overflow="hidden">
       <motion.div
-        style={{ height: "100%", background: "var(--accent)" }}
+        style={{ height: "100%", background: tone ? semanticColorVar(tone, "solid") : "var(--accent)" }}
         animate={{ width: `${ratio * 100}%` }}
         transition={reduced ? { duration: 0 } : transitions.progress}
       />

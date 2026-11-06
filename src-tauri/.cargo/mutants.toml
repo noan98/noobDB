@@ -25,6 +25,8 @@
 #   db/sqlite.rs     is_query_shape / quote_ident
 #   db/sync.rs       quote_ident
 #   db/data_diff.rs  sql_literal
+#   db/chunked_dml.rs validate_fragment / is_ident_char / check_common / build_chunk_sql /
+#                    build_count_sql / pick_sqlite_row_key / mysql_sql_mode_is_unsafe (#2103)
 #   lib.rs           __test_api の has_stacked_statements_for / is_query_shape (ディスパッチ) /
 #                    quote_ident / sql_literal
 
@@ -41,6 +43,7 @@ examine_globs = [
   "src/db/sqlite.rs",
   "src/db/sync.rs",
   "src/db/data_diff.rs",
+  "src/db/chunked_dml.rs",
   "src/lib.rs",
 ]
 
@@ -48,7 +51,7 @@ examine_globs = [
 # in <fn>") の関数名で絞る。ファイル丸ごと指定をやめ、上のファイル内の安全網関数
 # 以外 (接続・型デコード・diff ロジックなど) を変異対象から外す。
 examine_re = [
-  "(replace | in )([A-Za-z_0-9]+::)*(is_read_only_sql|is_read_only_sql_for|is_read_only_sql_masked|apply_auto_limit|apply_auto_limit_for|apply_auto_limit_masked|has_stacked_statements|has_stacked_statements_for|has_stacked_statements_masked|is_query_shape|with_cte_is_mutation|quote_ident|sql_literal)( -> |$)",
+  "(replace | in )([A-Za-z_0-9]+::)*(is_read_only_sql|is_read_only_sql_for|is_read_only_sql_masked|apply_auto_limit|apply_auto_limit_for|apply_auto_limit_masked|has_stacked_statements|has_stacked_statements_for|has_stacked_statements_masked|is_query_shape|with_cte_is_mutation|quote_ident|sql_literal|validate_fragment|is_ident_char|check_common|build_chunk_sql|build_count_sql|pick_sqlite_row_key|mysql_sql_mode_is_unsafe)( -> |$)",
 ]
 
 # ベースラインテストが完走したときの倍率で各変異のタイムアウトを決める。

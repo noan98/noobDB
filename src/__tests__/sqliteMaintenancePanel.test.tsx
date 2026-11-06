@@ -55,7 +55,11 @@ describe("SqliteMaintenancePanel (#1625)", () => {
     fireEvent.click(screen.getByTestId("sqlite-maint-integrity_check"));
     await waitFor(() => expect(screen.getByTestId("sqlite-maint-ok")).toBeInTheDocument());
     expect(api.sqliteMaintenance).toHaveBeenCalledWith("s1", "integrity_check");
-    expect(screen.getByTestId("sqlite-maint-pages")).toHaveTextContent("1000");
+    expect(screen.getByTestId("sqlite-maint-pages")).toHaveTextContent("1,000");
+    const meter = screen.getByRole("meter");
+    expect(meter).toHaveAttribute("aria-valuenow", "1");
+    expect(screen.getByTestId("sqlite-maint-meter-threshold")).toBeInTheDocument();
+    expect(screen.queryByTestId("sqlite-maint-vacuum")).toBeNull();
   });
 
   it("外部キー違反を表に出し、空きが多ければ VACUUM を案内する", async () => {
@@ -72,7 +76,8 @@ describe("SqliteMaintenancePanel (#1625)", () => {
     await waitFor(() => expect(screen.getByTestId("sqlite-maint-problem")).toBeInTheDocument());
     expect(screen.getByTestId("sqlite-maint-violation")).toHaveTextContent("orders");
     expect(screen.getByTestId("sqlite-maint-violation")).toHaveTextContent("7");
-    expect(screen.getByTestId("sqlite-maint-vacuum")).toBeInTheDocument();
+    expect(screen.getByTestId("sqlite-maint-vacuum")).toHaveTextContent("50%");
+    expect(screen.getByTestId("sqlite-maint-vacuum")).toHaveTextContent("20%");
   });
 
   it("読み取り専用の接続では統計を更新する操作を無効にする", () => {
@@ -81,6 +86,23 @@ describe("SqliteMaintenancePanel (#1625)", () => {
     expect(screen.getByTestId("sqlite-maint-analyze")).toBeDisabled();
     expect(screen.getByTestId("sqlite-maint-integrity_check")).toBeEnabled();
     expect(screen.getByText(t("sqliteMaintEmpty"))).toBeInTheDocument();
+    expect(screen.getByTestId("sqlite-maint-purposes").children).toHaveLength(4);
+  });
+
+  it("100 ページ未満ではメーターも警告色にしない (Callout と一致)", async () => {
+    vi.mocked(api.sqliteMaintenance).mockResolvedValue(result({ page_count: 50, freelist_count: 40 }));
+    renderWithProviders(<SqliteMaintenancePanel sessionId="s1" readOnly={false} />);
+    fireEvent.click(screen.getByTestId("sqlite-maint-integrity_check"));
+    await waitFor(() => expect(screen.getByTestId("sqlite-maint-meter")).toBeInTheDocument());
+    expect(screen.queryByTestId("sqlite-maint-vacuum")).toBeNull();
+    expect(screen.getByRole("meter")).toHaveAttribute("aria-valuetext", "80%");
+    const smallClass = screen.getByTestId("sqlite-maint-meter-fill").className;
+    vi.mocked(api.sqliteMaintenance).mockResolvedValue(result({ page_count: 1000, freelist_count: 500 }));
+    fireEvent.click(screen.getByTestId("sqlite-maint-integrity_check"));
+    await waitFor(() => expect(screen.getByRole("meter")).toHaveAttribute("aria-valuetext", "50%"));
+    expect(screen.getByTestId("sqlite-maint-vacuum")).toBeInTheDocument();
+    // 警告色 (閾値超過かつ十分なページ数) のときだけクラスが変わる。
+    expect(screen.getByTestId("sqlite-maint-meter-fill").className).not.toBe(smallClass);
   });
 
   it("ANALYZE 後は実行計画の変化に注意を促す", async () => {
