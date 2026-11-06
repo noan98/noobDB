@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   appendNotification,
   checkChannelName,
+  countByChannel,
   formatReceivedAt,
   payloadPreview,
+  pendingCount,
   pgListenReasonKey,
   prettyJsonPayload,
   supportsPgListen,
+  visibleNotifications,
   type BufferedNotification,
 } from "../components/pgListen";
 
@@ -92,5 +95,39 @@ describe("縮退と表示の補助 (#2019)", () => {
   it("受信時刻を HH:MM:SS.mmm にする", () => {
     const d = new Date(2026, 0, 2, 3, 4, 5, 6);
     expect(formatReceivedAt(d.getTime())).toBe("03:04:05.006");
+  });
+});
+
+describe("表示一時停止とチャンネル別件数 (#2093)", () => {
+  const mk = (seq: number, channel: string): BufferedNotification => ({
+    seq,
+    channel,
+    payload: "",
+    payloadTruncated: false,
+    pid: 1,
+    receivedAtMs: seq,
+  });
+  const items = [mk(1, "a"), mk(2, "b"), mk(3, "a"), mk(4, "a")];
+
+  it("一時停止中は凍結点より後の通知を見せず、件数だけ数える", () => {
+    expect(visibleNotifications(items, null).map((n) => n.seq)).toEqual([1, 2, 3, 4]);
+    expect(visibleNotifications(items, 2).map((n) => n.seq)).toEqual([1, 2]);
+    expect(pendingCount(items, null)).toBe(0);
+    expect(pendingCount(items, 2)).toBe(2);
+  });
+
+  it("一時停止中もバッファ上限は守られる", () => {
+    let buf: BufferedNotification[] = [];
+    for (let i = 1; i <= 5; i++) buf = appendNotification(buf, mk(i, "a"), 3).items;
+    expect(buf.map((n) => n.seq)).toEqual([3, 4, 5]);
+    expect(visibleNotifications(buf, 2)).toEqual([]);
+    expect(pendingCount(buf, 2)).toBe(3);
+  });
+
+  it("チャンネル別に数える", () => {
+    expect([...countByChannel(items)]).toEqual([
+      ["a", 3],
+      ["b", 1],
+    ]);
   });
 });

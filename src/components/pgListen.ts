@@ -91,3 +91,26 @@ export function formatReceivedAt(ms: number): string {
   const p = (n: number, w = 2) => String(n).padStart(w, "0");
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
 }
+
+/**
+ * 表示一時停止 (#2093) の凍結点 `pausedAt` (停止時点の最新 seq。null なら一時停止していない)
+ * より後に届いた通知を除いた、いま画面に見せてよい通知。受信自体は止めない (バッファが正)。
+ */
+export function visibleNotifications(
+  items: readonly BufferedNotification[],
+  pausedAt: number | null,
+): BufferedNotification[] {
+  return pausedAt === null ? [...items] : items.filter((n) => n.seq <= pausedAt);
+}
+
+/** 一時停止中に溜まった (まだ画面に出ていない) 通知の件数。 */
+export function pendingCount(items: readonly BufferedNotification[], pausedAt: number | null): number {
+  return pausedAt === null ? 0 : items.filter((n) => n.seq > pausedAt).length;
+}
+
+/** チャンネル別の件数 (チップに出す)。 */
+export function countByChannel(items: readonly BufferedNotification[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const n of items) out.set(n.channel, (out.get(n.channel) ?? 0) + 1);
+  return out;
+}
