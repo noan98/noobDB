@@ -4971,8 +4971,7 @@ fn mysql_stop_sql() -> common::StopSql {
 /// タイムアウトしたら、サーバの `PROCESSLIST` から実行中の文が消える (#2102 / #2023)。
 #[tokio::test]
 async fn mysql_timeout_stops_statement_server_side_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -4983,8 +4982,7 @@ async fn mysql_timeout_stops_statement_server_side_when_env_set() {
 /// 止められない (誤 KILL の回帰防止、a32a680)。
 #[tokio::test]
 async fn mysql_late_stop_never_hits_the_next_statement_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -4994,8 +4992,7 @@ async fn mysql_late_stop_never_hits_the_next_statement_when_env_set() {
 /// ドライランがタイムアウトしたら、掴んでいた行ロックが解放される。
 #[tokio::test]
 async fn mysql_dry_run_timeout_releases_row_lock_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
