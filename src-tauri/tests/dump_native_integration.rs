@@ -18,6 +18,7 @@ use noobdb_lib::__test_api as t;
 
 const MYSQL_DB: &str = "nb2033_dump_db";
 const PG_SCHEMA: &str = "nb2033_dump";
+const PART_SCHEMA: &str = "nb2098_part";
 
 fn options(extra: serde_json::Value) -> t::DumpOptions {
     let mut base = serde_json::json!({
@@ -918,20 +919,293 @@ async fn postgres_native_dump_roundtrips_when_env_set() {
     conn.execute("DROP SCHEMA nb2033_pair CASCADE", None)
         .await
         .expect("cleanup pair");
+}
 
-    // パーティション親は未対応として明示エラー。
+// ---------------------------------------------------------------------------
+// PostgreSQL パーティション表 (#2098)
+// ---------------------------------------------------------------------------
+
+/// 元と復元先で突き合わせる SELECT。行は親経由 (全葉の合算) と、葉ごとの配置 (`tableoid`) の両方を見る。
+const PART_ROW_SELECTS: &[&str] = &[
+    "SELECT id, created, region, payload, ref_id FROM nb2098_part.events ORDER BY id, created",
+    "SELECT tableoid::regclass::text, id FROM nb2098_part.events ORDER BY 1, 2",
+    "SELECT id, region, v FROM nb2098_part.by_region ORDER BY id",
+    "SELECT tableoid::regclass::text, id FROM nb2098_part.by_region ORDER BY 1, 2",
+    "SELECT id, v FROM nb2098_part.hp ORDER BY id",
+    "SELECT tableoid::regclass::text, id FROM nb2098_part.hp ORDER BY 1, 2",
+    "SELECT id, event_id, event_created FROM nb2098_part.child_ref ORDER BY id",
+    "SELECT id, label FROM nb2098_part.ref_t ORDER BY id",
+];
+
+/// 定義側の突き合わせ。パーティション構造・索引・制約・トリガー。
+const PART_DEF_SELECTS: &[&str] = &[
+    "SELECT c.relname, c.relkind::text, c.relispartition, pg_get_partkeydef(c.oid), \
+            pg_get_expr(c.relpartbound, c.oid), \
+            (SELECT pc.relname FROM pg_inherits i JOIN pg_class pc ON pc.oid = i.inhparent WHERE i.inhrelid = c.oid) \
+       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+      WHERE n.nspname = 'nb2098_part' AND c.relkind IN ('r', 'p') ORDER BY 1",
+    "SELECT tablename, indexname, indexdef FROM pg_indexes WHERE schemaname = 'nb2098_part' ORDER BY 1, 2",
+    "SELECT conrelid::regclass::text, conname, contype::text, pg_get_constraintdef(oid) \
+       FROM pg_constraint WHERE connamespace = 'nb2098_part'::regnamespace ORDER BY 1, 2",
+    "SELECT tgrelid::regclass::text, tgname, pg_get_triggerdef(oid) FROM pg_trigger \
+      WHERE NOT tgisinternal AND tgrelid::regclass::text LIKE 'nb2098_part.%' ORDER BY 1, 2",
+];
+
+async fn part_setup(conn: &t::Connection) {
+    // データは親経由で入れる。元の DB ではサーバの振り分け (既定パーティション・hash を含む) に任せ、
+    // ダンプが葉ごとに読んで葉へ直接書く (親からは出さない) ことを、`tableoid` の配置の一致で確かめる。
     for sql in [
-        "DROP SCHEMA IF EXISTS nb2033_part CASCADE",
-        "CREATE SCHEMA nb2033_part",
-        "CREATE TABLE nb2033_part.pt (id int) PARTITION BY RANGE (id)",
+        "DROP SCHEMA IF EXISTS nb2098_part CASCADE".to_string(),
+        "CREATE SCHEMA nb2098_part".to_string(),
+        "CREATE TABLE nb2098_part.ref_t (id int PRIMARY KEY, label text)".into(),
+        "INSERT INTO nb2098_part.ref_t VALUES (1, 'a'), (2, 'it''s')".into(),
+        // range + 既定パーティション。PK・通常索引・親の外部キー・CHECK を持つ。
+        "CREATE TABLE nb2098_part.events (id bigint NOT NULL, created date NOT NULL, region text, \
+           payload text, ref_id int REFERENCES nb2098_part.ref_t (id), CHECK (id > 0), \
+           PRIMARY KEY (id, created)) PARTITION BY RANGE (created)".into(),
+        "CREATE TABLE nb2098_part.e_2024 PARTITION OF nb2098_part.events FOR VALUES FROM ('2024-01-01') TO ('2025-01-01')".into(),
+        "CREATE TABLE nb2098_part.e_2025 PARTITION OF nb2098_part.events FOR VALUES FROM ('2025-01-01') TO ('2026-01-01')".into(),
+        "CREATE TABLE nb2098_part.e_default PARTITION OF nb2098_part.events DEFAULT".into(),
+        "CREATE INDEX events_region_idx ON nb2098_part.events (region)".into(),
+        // 子だけが持つ索引と制約 (親から伝播しないもの)。
+        "CREATE INDEX e_2024_payload_local ON nb2098_part.e_2024 (payload)".into(),
+        "ALTER TABLE nb2098_part.e_2025 ADD CONSTRAINT e_2025_payload_chk CHECK (payload <> 'forbidden')".into(),
+        "INSERT INTO nb2098_part.events VALUES \
+           (1, '2024-03-01', 'eu', 'one', 1), (2, '2024-12-31', 'us', 'it''s', NULL), \
+           (3, '2025-01-01', 'eu', E'tab\there', 2), (4, '2025-06-15', NULL, NULL, 1), \
+           (5, '2030-01-01', 'jp', 'future', NULL), (6, '2020-02-02', 'cn', 'past', 2), \
+           (9007199254740993, '2024-05-05', 'eu', 'big', NULL)".into(),
+        // list + 既定 + 多段 (list の下に hash)。
+        "CREATE TABLE nb2098_part.by_region (id int NOT NULL, region text NOT NULL, v text, \
+           PRIMARY KEY (id, region)) PARTITION BY LIST (region)".into(),
+        "CREATE TABLE nb2098_part.r_eu PARTITION OF nb2098_part.by_region FOR VALUES IN ('fr', 'de')".into(),
+        "CREATE TABLE nb2098_part.r_us PARTITION OF nb2098_part.by_region FOR VALUES IN ('us')".into(),
+        "CREATE TABLE nb2098_part.r_asia PARTITION OF nb2098_part.by_region FOR VALUES IN ('jp', 'cn') PARTITION BY HASH (id)".into(),
+        "CREATE TABLE nb2098_part.r_asia_0 PARTITION OF nb2098_part.r_asia FOR VALUES WITH (modulus 2, remainder 0)".into(),
+        "CREATE TABLE nb2098_part.r_asia_1 PARTITION OF nb2098_part.r_asia FOR VALUES WITH (modulus 2, remainder 1)".into(),
+        "CREATE TABLE nb2098_part.r_other PARTITION OF nb2098_part.by_region DEFAULT".into(),
+        "INSERT INTO nb2098_part.by_region SELECT g, (ARRAY['fr','de','us','jp','cn','br'])[g % 6 + 1], 'v' || g FROM generate_series(1, 18) g".into(),
+        // hash のみ。
+        "CREATE TABLE nb2098_part.hp (id int PRIMARY KEY, v text) PARTITION BY HASH (id)".into(),
+        "CREATE TABLE nb2098_part.hp_0 PARTITION OF nb2098_part.hp FOR VALUES WITH (modulus 3, remainder 0)".into(),
+        "CREATE TABLE nb2098_part.hp_1 PARTITION OF nb2098_part.hp FOR VALUES WITH (modulus 3, remainder 1)".into(),
+        "CREATE TABLE nb2098_part.hp_2 PARTITION OF nb2098_part.hp FOR VALUES WITH (modulus 3, remainder 2)".into(),
+        "INSERT INTO nb2098_part.hp SELECT g, 'h' || g FROM generate_series(1, 20) g".into(),
+        // パーティション表を参照する外部キー (複合キー)。
+        "CREATE TABLE nb2098_part.child_ref (id int PRIMARY KEY, event_id bigint, event_created date, \
+           FOREIGN KEY (event_id, event_created) REFERENCES nb2098_part.events (id, created))".into(),
+        "INSERT INTO nb2098_part.child_ref VALUES (1, 1, '2024-03-01'), (2, 5, '2030-01-01')".into(),
+        // 親のトリガーは子へ複製される (子の分を二重に出すと復元が失敗する)。
+        "CREATE FUNCTION nb2098_part.touch() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RETURN NEW; END'".into(),
+        "CREATE TRIGGER events_touch AFTER UPDATE ON nb2098_part.events FOR EACH ROW EXECUTE FUNCTION nb2098_part.touch()".into(),
     ] {
-        conn.execute(sql, None).await.expect("partition ddl");
+        conn.execute(&sql, None)
+            .await
+            .unwrap_or_else(|e| panic!("ddl failed: {e}\n{sql}"));
     }
-    let err = dump_to_string(&conn, "nb2033_part", &options(serde_json::json!({})))
+}
+
+async fn snapshot(conn: &t::Connection, selects: &[&str]) -> Vec<String> {
+    let mut out = Vec::new();
+    for sql in selects {
+        out.push(rows_of(conn, sql).await);
+    }
+    out
+}
+
+fn psql_restore(opts: &t::DbConnectOptions, sql: &str, tag: &str) -> bool {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "noobdb_dump_native_pg_{tag}_{}.sql",
+        std::process::id()
+    ));
+    std::fs::write(&path, sql).expect("write dump");
+    let ok = psql_cli(opts, &path);
+    let _ = std::fs::remove_file(&path);
+    ok
+}
+
+#[tokio::test]
+async fn postgres_native_dump_partitions_roundtrip_when_env_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    if !client_available("psql") {
+        eprintln!("skip: psql client not found");
+        return;
+    }
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    // 親のトリガー複製・パーティション表への外部キーは PG12+ 前提。
+    let ver = rows_of(
+        &conn,
+        "SELECT current_setting('server_version_num')::int >= 120000",
+    )
+    .await;
+    if !ver.contains("true") {
+        eprintln!("skip: PostgreSQL < 12");
+        return;
+    }
+    part_setup(&conn).await;
+    // 拡張が持つ表は独立した DDL にしない (パーティション表と同居しても除外が効く)。
+    let ext_ok = conn
+        .execute("CREATE EXTENSION pg_buffercache SCHEMA nb2098_part", None)
         .await
-        .expect_err("partitioned table is rejected");
-    assert!(err.contains("partitioned table"), "{err}");
-    conn.execute("DROP SCHEMA nb2033_part CASCADE", None)
+        .is_ok();
+
+    let rows_before = snapshot(&conn, PART_ROW_SELECTS).await;
+    let defs_before = snapshot(&conn, PART_DEF_SELECTS).await;
+
+    let dump = dump_to_string(&conn, PART_SCHEMA, &options(serde_json::json!({})))
         .await
-        .expect("cleanup partition");
+        .expect("partition dump");
+    assert!(dump.contains("PARTITION BY RANGE (created)"), "{dump}");
+    assert!(dump.contains("PARTITION BY HASH (id)"), "{dump}");
+    assert!(
+        dump.contains("\"e_default\" PARTITION OF \"nb2098_part\".\"events\" DEFAULT"),
+        "{dump}"
+    );
+    assert!(
+        dump.contains("FOR VALUES WITH (modulus 3, remainder 1)"),
+        "{dump}"
+    );
+    // 行は葉へ直接書き、親へは書かない。
+    assert!(
+        dump.contains("INSERT INTO \"nb2098_part\".\"e_2024\""),
+        "{dump}"
+    );
+    assert!(
+        !dump.contains("INSERT INTO \"nb2098_part\".\"events\""),
+        "{dump}"
+    );
+    assert!(
+        !dump.contains("INSERT INTO \"nb2098_part\".\"r_asia\" "),
+        "{dump}"
+    );
+    assert!(!dump.contains("not supported"), "{dump}");
+    // 親から伝播する FK / トリガーは子に重ねて出さない。
+    assert_eq!(
+        dump.matches("ADD CONSTRAINT events_ref_id_fkey").count(),
+        1,
+        "{dump}"
+    );
+    assert_eq!(
+        dump.matches("CREATE TRIGGER events_touch").count(),
+        1,
+        "{dump}"
+    );
+    if ext_ok {
+        assert!(
+            !dump.contains("CREATE TABLE \"nb2098_part\".\"pg_buffercache\""),
+            "{dump}"
+        );
+    }
+
+    // 別 DB へ復元する。
+    let mut restore_opts = opts.clone();
+    restore_opts.database = Some("nb2098_restore".into());
+    let restore = t::connect(&restore_opts).await.expect("connect restore db");
+    restore
+        .execute("DROP SCHEMA IF EXISTS nb2098_part CASCADE", None)
+        .await
+        .expect("clean restore db");
+    if ext_ok {
+        // 復元先にも拡張は要る (CREATE EXTENSION IF NOT EXISTS がダンプに入っている)。
+        assert!(dump.contains("CREATE EXTENSION IF NOT EXISTS"), "{dump}");
+    }
+    assert!(
+        psql_restore(&restore_opts, &dump, "part"),
+        "restore failed\n{dump}"
+    );
+    assert_eq!(snapshot(&restore, PART_ROW_SELECTS).await, rows_before);
+    assert_eq!(snapshot(&restore, PART_DEF_SELECTS).await, defs_before);
+
+    // 既存の DB へ上書き復元しても通る (DROP TABLE の順序 / CASCADE)。
+    assert!(
+        psql_restore(&restore_opts, &dump, "part2"),
+        "re-restore failed\n{dump}"
+    );
+    assert_eq!(snapshot(&restore, PART_ROW_SELECTS).await, rows_before);
+
+    // スキーマだけ / データだけ。
+    let schema_only = dump_to_string(
+        &conn,
+        PART_SCHEMA,
+        &options(serde_json::json!({"noData": true})),
+    )
+    .await
+    .expect("schema-only dump");
+    assert!(!schema_only.contains("INSERT INTO"), "{schema_only}");
+    let data_only = dump_to_string(
+        &conn,
+        PART_SCHEMA,
+        &options(serde_json::json!({"noCreateInfo": true})),
+    )
+    .await
+    .expect("data-only dump");
+    assert!(!data_only.contains("CREATE TABLE"), "{data_only}");
+    // 参照先の葉が先 (FK 違反にならない順)。
+    assert!(
+        data_only.find("INSERT INTO \"nb2098_part\".\"e_2024\"")
+            < data_only.find("INSERT INTO \"nb2098_part\".\"child_ref\""),
+        "{data_only}"
+    );
+
+    // 部分ダンプ: 親を選ぶと子孫も入り、無関係の表は入らない。
+    restore
+        .execute("DROP SCHEMA nb2098_part CASCADE", None)
+        .await
+        .expect("drop restored");
+    let partial = dump_to_string(
+        &conn,
+        PART_SCHEMA,
+        &options(serde_json::json!({"tables": ["by_region"]})),
+    )
+    .await
+    .expect("partial dump");
+    for leaf in ["r_eu", "r_us", "r_asia", "r_asia_0", "r_asia_1", "r_other"] {
+        assert!(
+            partial.contains(&format!(
+                "CREATE TABLE \"nb2098_part\".\"{leaf}\" PARTITION OF"
+            )),
+            "{leaf}\n{partial}"
+        );
+    }
+    assert!(
+        !partial.contains("\"events\"") && !partial.contains("\"hp_0\""),
+        "{partial}"
+    );
+    assert!(
+        psql_restore(&restore_opts, &partial, "part3"),
+        "partial restore failed\n{partial}"
+    );
+    let by_region = [PART_ROW_SELECTS[2], PART_ROW_SELECTS[3]];
+    assert_eq!(
+        snapshot(&restore, &by_region).await,
+        rows_before[2..4].to_vec()
+    );
+
+    // 子だけを選ぶと、親が出力に無いので通常表として書く (警告つき)。
+    let child_only = dump_to_string(
+        &conn,
+        PART_SCHEMA,
+        &options(serde_json::json!({"tables": ["e_2024"]})),
+    )
+    .await
+    .expect("child-only dump");
+    assert!(!child_only.contains("PARTITION OF"), "{child_only}");
+    assert!(
+        child_only
+            .contains("-- WARNING: table e_2024 is a partition whose parent is not in this dump"),
+        "{child_only}"
+    );
+
+    restore
+        .execute("DROP SCHEMA IF EXISTS nb2098_part CASCADE", None)
+        .await
+        .expect("cleanup restore");
+    conn.execute("DROP SCHEMA nb2098_part CASCADE", None)
+        .await
+        .expect("cleanup source");
 }

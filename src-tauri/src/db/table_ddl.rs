@@ -256,6 +256,31 @@ pub fn synthesize_create_table(
     foreign_keys: &[ForeignKey],
     extras: &TableDdlExtras,
 ) -> String {
+    synthesize_create_table_partitioned(
+        driver,
+        schema,
+        table,
+        columns,
+        indexes,
+        foreign_keys,
+        extras,
+        None,
+    )
+}
+
+/// [`synthesize_create_table`] の `PARTITION BY <partition_by>` 付き版 (PostgreSQL のパーティション親、
+/// ネイティブダンプ #2098 用)。`partition_by` は `pg_get_partkeydef` の戻り値 (`RANGE (d)` など)。
+#[allow(clippy::too_many_arguments)]
+pub fn synthesize_create_table_partitioned(
+    driver: DriverKind,
+    schema: Option<&str>,
+    table: &str,
+    columns: &[TableColumnInfo],
+    indexes: &[IndexInfo],
+    foreign_keys: &[ForeignKey],
+    extras: &TableDdlExtras,
+    partition_by: Option<&str>,
+) -> String {
     let qualified = qualified_name(driver, schema, table);
     let mut lines: Vec<String> = columns
         .iter()
@@ -275,7 +300,11 @@ pub fn synthesize_create_table(
         lines.push(render_check(driver, name, def));
     }
 
-    let mut statements = vec![render_create_table(&qualified, &lines)];
+    let mut create = render_create_table(&qualified, &lines);
+    if let Some(key) = partition_by {
+        create.push_str(&format!(" PARTITION BY {key}"));
+    }
+    let mut statements = vec![create];
     statements.extend(
         indexes
             .iter()
