@@ -4671,6 +4671,14 @@ const en = {
   testDataRun: "Insert",
   testDataRunning: "Inserting...",
   testDataSuccess: "Inserted {count} test rows into {table} ({ms} ms).",
+  testDataCreateNew: "Create a new table and insert into it",
+  testDataCreateNewHint:
+    "The new table gets the columns below (skipped columns are left out). If the insert fails, the new table is dropped again; an existing table is never overwritten.",
+  testDataNewColumnTypeAria: "Type of new column {column}",
+  testDataSuccessNewTable: "Created {table} and inserted {count} test rows ({ms} ms).",
+  testDataProductionConfirmNewTitle: "Create {table} and insert test data?",
+  testDataProductionConfirmNewBody:
+    "This connection is marked as production. A new table {table} will be created and {count} generated rows written to it.",
   testDataProductionConfirmTitle: "Insert test data into {table}?",
   testDataProductionConfirmBody:
     "This connection is marked as production. {count} generated rows will be written to {table}. This cannot be undone easily.",
@@ -12040,6 +12048,14 @@ const ja: Dict = {
   testDataRun: "投入",
   testDataRunning: "投入中...",
   testDataSuccess: "{table} にテストデータ {count} 行を投入しました ({ms} ms)。",
+  testDataCreateNew: "新しいテーブルを作って投入する",
+  testDataCreateNewHint:
+    "下の列で新しいテーブルを作ります (対象外の列は含みません)。投入に失敗したら作ったテーブルは削除して元に戻します。既存のテーブルは上書きしません。",
+  testDataNewColumnTypeAria: "新しい列 {column} の型",
+  testDataSuccessNewTable: "{table} を作成し、テストデータ {count} 行を投入しました ({ms} ms)。",
+  testDataProductionConfirmNewTitle: "{table} を作成してテストデータを投入しますか?",
+  testDataProductionConfirmNewBody:
+    "この接続は本番として設定されています。新しいテーブル {table} を作成し、生成した {count} 行を書き込みます。",
   testDataProductionConfirmTitle: "{table} にテストデータを投入しますか?",
   testDataProductionConfirmBody:
     "この接続は本番として設定されています。生成した {count} 行が {table} に書き込まれます。この操作は簡単には取り消せません。",

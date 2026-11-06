@@ -8,6 +8,7 @@ import type {
   BulkWriteOutcome,
   CellValue,
   InsertRowsResult,
+  NewTableColumn,
   ChunkedDmlBatchResult,
 } from "../tauri";
 import type { ChunkedOp } from "../../components/chunkedDml";
@@ -64,7 +65,8 @@ export const bulkWriteCommands = {
     }).then((r) => parseResponse(schemas.bulkWriteOutcome, r, "bulk_update_cells")),
   /**
    * テストデータ生成 (#602) の生成行を 1 トランザクションで投入する (#1259)。セルは
-   * null / 真偽 / 数値 / 文字列で、ドライバが列型へ強制変換する。
+   * null / 真偽 / 数値 / 文字列で、ドライバが列型へ強制変換する。`createTable` を渡すと (#2066)
+   * 投入の前に新規テーブルを作る (同名があれば拒否、投入失敗なら作ったテーブルを DROP して戻す)。
    */
   insertGeneratedRows: (params: {
     sessionId: string;
@@ -72,6 +74,7 @@ export const bulkWriteCommands = {
     table: string;
     columns: string[];
     rows: CellValue[][];
+    createTable?: NewTableColumn[] | null;
   }) =>
     invoke<InsertRowsResult>("insert_generated_rows", {
       sessionId: params.sessionId,
@@ -79,6 +82,7 @@ export const bulkWriteCommands = {
       table: params.table,
       columns: params.columns,
       rows: params.rows,
+      createTable: params.createTable ?? null,
     }).then((r) => parseResponse(schemas.insertRowsResult, r, "insert_generated_rows")),
   /**
    * 大規模 DML のチャンク分割実行 (#2020) の 1 バッチ。Rust が `DELETE/UPDATE ... LIMIT n` 相当の 1 文を

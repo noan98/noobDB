@@ -30,6 +30,7 @@ use crate::commands::query::{
 use crate::db::chunked_dml::{
     build_chunk_sql, mysql_sql_mode_is_unsafe, pick_sqlite_row_key, ChunkedOp,
 };
+use crate::db::create_table::{render_create_table_in, render_drop_table_in, NewColumn};
 use crate::db::data_diff::{is_numeric_literal, sql_literal};
 use crate::db::sync::quote_ident;
 use crate::db::types::{QueryResult, Value};
@@ -668,6 +669,13 @@ fn generated_cell_text(v: &serde_json::Value) -> Result<Option<String>> {
 /// all-or-nothing。セルは `null` / 真偽 / 数値 / 文字列で、ドライバが列型へ強制変換する。
 /// read_only ガード (緊急モード含む)・履歴 (1 行の要約)・キャッシュ invalidate は
 /// `run_query_transaction` と揃える。
+///
+/// `create_table` を渡すと (#2066)、投入の前に新規テーブルを作る。列型は任意の SQL 断片
+/// ではなく抽象型 (`NewColumnType`) の列挙で、DDL は `render_create_table` が方言別に
+/// 生成する (識別子は必ずクォート)。同名のテーブル / ビューが既にあれば作成前に拒否し
+/// (上書きしない)、投入が失敗したら作ったテーブルを DROP して元に戻す。DDL を
+/// トランザクションに包めない MySQL に合わせ、3 ドライバとも明示 DROP で揃える。
+/// DROP も失敗したらエラーに「テーブルが残っている」旨を含める。
 #[tauri::command]
 pub async fn insert_generated_rows(
     session_id: String,
@@ -675,6 +683,7 @@ pub async fn insert_generated_rows(
     table: String,
     columns: Vec<String>,
     rows: Vec<Vec<serde_json::Value>>,
+    create_table: Option<Vec<NewColumn>>,
     state: State<'_, AppState>,
 ) -> Result<InsertRowsResult> {
     insert_generated_rows_inner(
@@ -684,18 +693,61 @@ pub async fn insert_generated_rows(
         &table,
         &columns,
         &rows,
+        create_table.as_deref(),
     )
     .await
+}
+
+/// 新規テーブルを作る / 消すときのスキーマ修飾 (#2066)。PostgreSQL は `database` (= スキーマ、
+/// 無ければ `public`)、SQLite は常に `main` で修飾し、同名の一時テーブルを取り違えない。
+/// MySQL は `database` が必須 (無いと接続の既定 DB に作られて検査とずれるため拒否)。
+/// 限界: MySQL では `db.t` と修飾しても同名の TEMPORARY TABLE が先に解決される
+/// (`DROP TABLE` は TEMPORARY を先に消す)。また取り込み (`import_rows`) は素の表名で
+/// 入れるため、SQLite の同名一時テーブルがあるとそちらへ入りうる (既知の限界)。
+fn new_table_schema(driver: DriverKind, database: Option<&str>) -> Result<String> {
+    let db = database.map(str::trim).filter(|d| !d.is_empty());
+    match driver {
+        DriverKind::Mysql => db.map(str::to_string).ok_or_else(|| {
+            AppError::InvalidInput("a database is required to create a table".into())
+        }),
+        DriverKind::Postgres => Ok(db.unwrap_or("public").to_string()),
+        DriverKind::Sqlite => Ok("main".to_string()),
+    }
+}
+
+/// 新規テーブル定義 (#2066) を検証する: DDL をレンダリングして名前・重複・長さ上限を確かめ、
+/// 投入列と作成する列が過不足なく一致することを確かめる。
+fn validate_generated_create_spec(
+    driver: DriverKind,
+    table: &str,
+    columns: &[String],
+    create: &[NewColumn],
+) -> Result<()> {
+    render_create_table_in(driver, None, table, create)?;
+    if create.len() != columns.len() {
+        return Err(AppError::InvalidInput(
+            "the new table definition must match the generated columns".into(),
+        ));
+    }
+    for c in columns {
+        if !create.iter().any(|n| &n.name == c) {
+            return Err(AppError::InvalidInput(format!(
+                "generated column {c} is not part of the new table definition"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Core of [`insert_generated_rows`] without Tauri's `State` wrapper (#881)。
 pub(crate) async fn insert_generated_rows_inner(
     state: &AppState,
     session_id: &str,
-    database: Option<String>,
+    mut database: Option<String>,
     table: &str,
     columns: &[String],
     rows: &[Vec<serde_json::Value>],
+    create_table: Option<&[NewColumn]>,
 ) -> Result<InsertRowsResult> {
     let session = state
         .get(session_id)
@@ -703,8 +755,24 @@ pub(crate) async fn insert_generated_rows_inner(
         .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
     // 従来の INSERT 文経路と同じゲート (読み取り専用セッションは緊急モードでのみ通す)。
     ensure_allowed_for_session(&session, "INSERT INTO t DEFAULT VALUES")?;
+    if create_table.is_some() {
+        ensure_allowed_for_session(&session, "CREATE TABLE t (id INT)")?;
+    }
     if columns.is_empty() {
         return Err(AppError::InvalidInput("no columns to insert".into()));
+    }
+    let driver = session.conn.driver_kind();
+    let mut new_schema: Option<String> = None;
+    if let Some(create) = create_table {
+        validate_generated_create_spec(driver, table, columns, create)?;
+        let schema = new_table_schema(driver, database.as_deref())?;
+        // 存在確認・CREATE・投入・DROP がすべて同じ表を指すよう、解決したスキーマ / DB を
+        // 以降の実行にも使う (PG で database 未指定のまま投入すると search_path の別スキーマの
+        // 同名表へ入りうる)。SQLite の `main` は修飾にだけ使う。
+        if driver != DriverKind::Sqlite {
+            database = Some(schema.clone());
+        }
+        new_schema = Some(schema);
     }
     let mut cells: Vec<Vec<Option<String>>> = Vec::with_capacity(rows.len());
     for row in rows {
@@ -718,7 +786,47 @@ pub(crate) async fn insert_generated_rows_inner(
         cells.push(row.iter().map(generated_cell_text).collect::<Result<_>>()?);
     }
     let started = std::time::Instant::now();
-    let result = session
+    // 新規テーブル (#2066): 既存の同名を拒否してから作成する。以降の失敗では DROP で戻す。
+    let mut created = false;
+    if let (Some(create), Some(schema)) = (create_table, new_schema.as_deref()) {
+        let existing = session.conn.tables(schema).await?;
+        if existing.iter().any(|t| t.eq_ignore_ascii_case(table)) {
+            return Err(AppError::InvalidInput(format!(
+                "table {table} already exists"
+            )));
+        }
+        let ddl_started = std::time::Instant::now();
+        let ddl = render_create_table_in(driver, Some(schema), table, create)?;
+        match session.conn.execute(&ddl, database.as_deref()).await {
+            Ok(_) => {
+                created = true;
+                record_write_history(
+                    &session,
+                    ddl.clone(),
+                    database.as_deref(),
+                    None,
+                    Some(ddl_started.elapsed().as_millis() as i64),
+                    None,
+                )
+                .await;
+                session.schema_cache.invalidate_all().await;
+                session.query_cache.invalidate_all().await;
+            }
+            Err(e) => {
+                record_write_history(
+                    &session,
+                    ddl,
+                    database.as_deref(),
+                    None,
+                    None,
+                    Some(e.to_string()),
+                )
+                .await;
+                return Err(e);
+            }
+        }
+    }
+    let mut result = session
         .conn
         .import_rows(
             database.as_deref(),
@@ -730,6 +838,31 @@ pub(crate) async fn insert_generated_rows_inner(
             |_| Ok(()),
         )
         .await;
+    if created {
+        if let Err(e) = &result {
+            // 作ったテーブルを残さない。DROP も失敗したら、その旨を元のエラーへ足す。
+            let sql = render_drop_table_in(driver, new_schema.as_deref(), table);
+            let msg = match session.conn.execute(&sql, database.as_deref()).await {
+                Ok(_) => {
+                    record_write_history(&session, sql, database.as_deref(), None, None, None)
+                        .await;
+                    format!("{e} (the newly created table was dropped)")
+                }
+                Err(drop_err) => {
+                    tracing::warn!(
+                        table = %table,
+                        error = %drop_err,
+                        "failed to drop the table created for failed generated rows"
+                    );
+                    format!(
+                        "{e} (the newly created table {table} could not be dropped and still exists: {drop_err})"
+                    )
+                }
+            };
+            session.schema_cache.invalidate_all().await;
+            result = Err(AppError::Other(msg));
+        }
+    }
     let elapsed_ms = started.elapsed().as_millis() as u64;
     let summary = format!(
         "INSERT INTO {} ({}) -- {} generated rows",
@@ -774,6 +907,34 @@ pub(crate) async fn insert_generated_rows_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_table_schema_per_driver() {
+        assert!(matches!(
+            new_table_schema(DriverKind::Mysql, None),
+            Err(AppError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            new_table_schema(DriverKind::Mysql, Some("  ")),
+            Err(AppError::InvalidInput(_))
+        ));
+        assert_eq!(
+            new_table_schema(DriverKind::Mysql, Some("app")).unwrap(),
+            "app"
+        );
+        assert_eq!(
+            new_table_schema(DriverKind::Postgres, None).unwrap(),
+            "public"
+        );
+        assert_eq!(
+            new_table_schema(DriverKind::Postgres, Some("s1")).unwrap(),
+            "s1"
+        );
+        assert_eq!(
+            new_table_schema(DriverKind::Sqlite, Some("x")).unwrap(),
+            "main"
+        );
+    }
 
     fn set_text(col: &str, text: &str) -> BulkSetColumn {
         BulkSetColumn {
