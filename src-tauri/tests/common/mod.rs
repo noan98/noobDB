@@ -225,3 +225,366 @@ pub async fn assert_tree_and_open_match_individual_ipcs(
     sorted.dedup();
     assert_eq!(names.len(), sorted.len(), "no duplicated database entries");
 }
+
+// ---------------------------------------------------------------------------
+// サーバ側停止 (#2023) の MySQL / PostgreSQL 実検証 (#2102)
+//
+// タイムアウト / キャンセルでクライアント側の future を捨てても、サーバでは文が走り続ける。
+// `StopGuard` が別接続から実行中の文だけを止められることを、`PROCESSLIST` /
+// `pg_stat_activity` のポーリング (決定的。固定 sleep で待たない) で確かめる。
+// ドライバ差は SQL 文字列だけなので、シナリオはここに 1 つだけ置き、各ドライバのテストから呼ぶ。
+// ---------------------------------------------------------------------------
+
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+/// ドライバごとに異なる SQL。`marker` は文に埋め込むコメント用の一意な目印。
+/// [`StopSql::lock_sql`] の結果。
+pub struct LockSql {
+    /// テーブルの作り直し (DROP → CREATE → INSERT)。
+    pub setup: Vec<String>,
+    /// 行 id=1 を掴んだまま眠る UPDATE (ドライラン用)。
+    pub sleeping_update: String,
+    /// 行 id=1 を待たずに掴む。ロック中ならエラーになる。
+    pub lock_nowait: String,
+    pub select_v: String,
+    /// テーブル (と関連オブジェクト) の後始末。
+    pub teardown: Vec<String>,
+}
+
+pub struct StopSql {
+    /// 30 秒眠るだけの SELECT (目印つき)。
+    pub sleep_30: fn(marker: &str) -> String,
+    /// 実行中 (他接続から見える) の目印つきの文の数を返す SELECT。自分自身は数えない。
+    /// `list_processes` を使わず専用の COUNT にしたのは、`pg_stat_activity` が待機中の接続にも
+    /// 直前の文を残すため、`state = 'active'` で「今走っている文」だけを数える必要があるから。
+    pub active_count: fn(marker: &str) -> String,
+    /// 2 秒眠る SELECT。中断されずに終われば最初のセルが `0` (MySQL の SLEEP は中断されると 1)。
+    pub sleep_2: &'static str,
+    /// ロック用テーブル (行 id=1, v=0) に対する SQL を、テーブル名から組み立てる。
+    /// テストごとに別テーブルを使う (同じテーブルの DROP が他テストの眠る UPDATE に待たされるため)。
+    pub lock_sql: fn(table: &str) -> LockSql,
+    /// `lock_nowait` がロック競合で失敗したときのエラーに含まれる文字列
+    /// (MySQL 3572 / PostgreSQL 55P03)。別の理由 (構文エラーなど) の失敗と区別する。
+    pub lock_conflict_marker: &'static str,
+}
+
+fn cell_as_i64(v: &t::Value) -> i64 {
+    match v {
+        t::Value::Int(i) => *i,
+        t::Value::UInt(u) => i64::try_from(*u).unwrap_or(i64::MAX),
+        t::Value::String(s) => s.parse().unwrap_or(-1),
+        other => panic!("unexpected count cell: {other:?}"),
+    }
+}
+
+async fn active_count(poller: &t::Connection, sql: &StopSql, marker: &str) -> i64 {
+    let res = poller
+        .execute(&(sql.active_count)(marker), None)
+        .await
+        .expect("poll process list");
+    cell_as_i64(&res.rows[0][0])
+}
+
+/// 条件が満たされるまで 25ms 間隔でポーリングする。期限内に満たされなければ panic。
+async fn poll_until<F, Fut>(what: &str, limit: Duration, mut check: F)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let started = Instant::now();
+    loop {
+        if check().await {
+            return;
+        }
+        assert!(started.elapsed() < limit, "timed out waiting for: {what}");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+const POLL_LIMIT: Duration = Duration::from_secs(10);
+
+/// 「サーバで走る文が消えた」ことを待つ上限。停止要求 (KILL) だけで間に合う短さにする。
+/// MySQL の SLEEP は約 5 秒ごとにクライアント切断を検知して終わるため、これを長くすると
+/// KILL が壊れていても (切断検知で消えて) 通ってしまう。
+const STOP_WAIT_LIMIT: Duration = Duration::from_secs(3);
+
+/// `cond` が満たされるまで待つ。そのあいだに `task` が終わったら、失敗なら原因 (panic) を先に
+/// 表に出す。正常終了なら `true` を返す (`task_done` を立てる)。`cond` が先に満たされたら `false`。
+async fn wait_watching_task<F: std::future::Future<Output = ()>>(
+    cond: F,
+    task: &mut tokio::task::JoinHandle<()>,
+    task_done: &mut bool,
+) -> bool {
+    tokio::pin!(cond);
+    loop {
+        tokio::select! {
+            _ = &mut cond => return false,
+            r = &mut *task, if !*task_done => {
+                *task_done = true;
+                r.expect("the spawned run task failed");
+                // 正常終了。条件の成立を引き続き待つ。
+            }
+        }
+    }
+}
+
+fn assert_lock_conflict<T: std::fmt::Debug, E: std::fmt::Display + std::fmt::Debug>(
+    res: &Result<T, E>,
+    marker: &str,
+) -> bool {
+    match res {
+        Ok(_) => false,
+        Err(e) => {
+            let text = format!("{e} / {e:?}");
+            assert!(
+                text.contains(marker),
+                "the NOWAIT probe failed for a reason other than lock contention: {text}"
+            );
+            true
+        }
+    }
+}
+
+/// 本番 (`run_query_stream`) と同じ形でストリームを実行し、クライアント側タイムアウトに達したら
+/// `StopGuard::fire` で止める。サーバ側タイムアウトは付けない (`None`) ので、文が消えたのは
+/// 停止要求の効果だけ。タイムアウトしたことを確認して返す。
+async fn run_streamed_sleep_until_timeout(
+    session: &Arc<t::Session>,
+    sleep_sql: &str,
+    timeout: Duration,
+) {
+    let ctx = t::ServerStopCtx::new(None);
+    let mut guard = t::StopGuard::new(ctx.clone(), session.clone());
+    let timed_out = tokio::time::timeout(
+        timeout,
+        t::server_stop_scope(ctx, async {
+            session
+                .conn
+                .execute_stream(sleep_sql, None, 10, 10, |_| Ok(()))
+                .await
+        }),
+    )
+    .await
+    .is_err();
+    assert!(timed_out, "sleep(30) must hit the client-side timeout");
+    guard.fire();
+    guard.disarm();
+}
+
+/// 1. タイムアウトしたらサーバ側の文が一定時間内に消える。
+pub async fn assert_timeout_stops_statement_server_side(
+    opts: &t::DbConnectOptions,
+    sql: &StopSql,
+    tag: &str,
+) {
+    let marker = format!("noobdb_2102_{tag}_timeout");
+    let poller = t::connect(opts).await.expect("connect poller");
+    let runner = t::connect(opts).await.expect("connect runner");
+    let session = Arc::new(t::make_session("s2102", runner, opts.clone(), false));
+
+    let sleep_sql = (sql.sleep_30)(&marker);
+    let mut run = {
+        let session = session.clone();
+        tokio::spawn(async move {
+            run_streamed_sleep_until_timeout(&session, &sleep_sql, Duration::from_secs(1)).await;
+        })
+    };
+    let mut run_done = false;
+    // 先に「実際にサーバで走っている」ことを確かめる (でなければ消えたことの検証にならない)。
+    wait_watching_task(
+        poll_until("the sleeping statement appears", POLL_LIMIT, || async {
+            active_count(&poller, sql, &marker).await > 0
+        }),
+        &mut run,
+        &mut run_done,
+    )
+    .await;
+    assert!(
+        !run_done,
+        "the run task ended before the statement became visible"
+    );
+    wait_watching_task(
+        poll_until(
+            "the sleeping statement is stopped server-side",
+            STOP_WAIT_LIMIT,
+            || async { active_count(&poller, sql, &marker).await == 0 },
+        ),
+        &mut run,
+        &mut run_done,
+    )
+    .await;
+    if !run_done {
+        run.await.expect("run task");
+    }
+    // 停止後もプールは使える。
+    assert!(session.conn.execute("SELECT 1", None).await.is_ok());
+}
+
+/// 2. キャンセル直後に同じプールで実行した別の文が、遅れて届いた停止要求で止められない
+///    (a32a680 の競合の回帰防止)。ストリーム経路と、ドライラン経路 (接続がトランザクションごと
+///    プールへ戻って再利用される) の両方で、停止の直後に 2 秒の文を流して完走を確かめる。
+pub async fn assert_late_stop_never_hits_next_statement(
+    opts: &t::DbConnectOptions,
+    sql: &StopSql,
+    tag: &str,
+) {
+    let runner = t::connect(opts).await.expect("connect runner");
+    let session = Arc::new(t::make_session("s2102b", runner, opts.clone(), false));
+    let marker = format!("noobdb_2102_{tag}_reuse");
+    let sleep_sql = (sql.sleep_30)(&marker);
+
+    let assert_next_statement_survives = |round: &'static str| {
+        let session = session.clone();
+        async move {
+            let started = Instant::now();
+            let res = session
+                .conn
+                .execute(sql.sleep_2, None)
+                .await
+                .unwrap_or_else(|e| panic!("{round}: the next statement was stopped: {e}"));
+            assert!(
+                started.elapsed() >= Duration::from_millis(1900),
+                "{round}: the next statement finished early ({:?})",
+                started.elapsed()
+            );
+            assert_eq!(
+                cell_as_i64(&res.rows[0][0]),
+                0,
+                "{round}: the next statement was interrupted"
+            );
+        }
+    };
+
+    // ストリーム経路: 停止要求は別タスクで送られる (fire は完了を待たない) まま、
+    // 同じプールですぐ次の文を流す。
+    for i in 0..2 {
+        run_streamed_sleep_until_timeout(&session, &sleep_sql, Duration::from_millis(500)).await;
+        assert_next_statement_survives(if i == 0 { "stream#0" } else { "stream#1" }).await;
+    }
+
+    // キャンセル経路 (タスクの abort): `StopGuard` の Drop が停止要求を送る。文がサーバで走って
+    // いることを確かめてから abort し、直後に次の文を流す。
+    {
+        let poller = t::connect(opts).await.expect("connect poller");
+        let ctx = t::ServerStopCtx::new(None);
+        let task = {
+            let session = session.clone();
+            let sleep_sql = sleep_sql.clone();
+            tokio::spawn(async move {
+                let _guard = t::StopGuard::new(ctx.clone(), session.clone());
+                let _ = t::server_stop_scope(ctx, async {
+                    session
+                        .conn
+                        .execute_stream(&sleep_sql, None, 10, 10, |_| Ok(()))
+                        .await
+                })
+                .await;
+            })
+        };
+        poll_until("the cancelled statement appears", POLL_LIMIT, || async {
+            active_count(&poller, sql, &marker).await > 0
+        })
+        .await;
+        task.abort();
+        let _ = task.await; // abort の完了 (= Drop 済み) を待つ
+        assert_next_statement_survives("abort").await;
+    }
+
+    // ドライラン経路 (`spawn_preview_stream` と同じ手順): 文を poll しないまま停止要求の完了を
+    // 待ち、future が終わって接続がプールへ戻ってから、タイムアウト後の `fire` を呼び、直後に
+    // 再利用された接続で別の文を流す。この 2 回目の `fire` は冪等性の確認で、控えたバックエンド
+    // ID は 1 度きりしか取り出せないため何も撃たないはず (本番もタイムアウト後に呼ぶ)。
+    let lock = (sql.lock_sql)("noobdb_2102_lock_reuse");
+    prepare_lock_table(&session, &lock).await;
+    for _ in 0..2 {
+        let mut guard = run_dry_run_with_probe(&session, &lock, None).await;
+        guard.fire();
+        guard.disarm();
+        assert_next_statement_survives("dry-run").await;
+    }
+    teardown(&session, &lock).await;
+}
+
+async fn prepare_lock_table(session: &Arc<t::Session>, lock: &LockSql) {
+    for stmt in &lock.setup {
+        session
+            .conn
+            .execute(stmt, None)
+            .await
+            .unwrap_or_else(|e| panic!("{stmt}: {e}"));
+    }
+}
+
+/// ドライランの UPDATE (行ロックを掴んで眠る) を `spawn_preview_stream` と同じ手順でタイムアウトさせる。
+/// `lock_probe` が `Some` なら、停止前に行がロック中であることを、停止後に解放されたことを確かめる。
+async fn run_dry_run_with_probe(
+    session: &Arc<t::Session>,
+    lock: &LockSql,
+    probe: Option<(&t::Connection, &str)>,
+) -> t::StopGuard {
+    let ctx = t::ServerStopCtx::new(None);
+    let exec = t::server_stop_scope(
+        ctx.clone(),
+        session
+            .conn
+            .preview_execute_with_limit(&lock.sleeping_update, None, 10),
+    );
+    tokio::pin!(exec);
+    let guard = t::StopGuard::explicit_only(ctx, session.clone());
+    tokio::select! {
+        res = &mut exec => panic!("the sleeping dry-run must not finish by itself: {res:?}"),
+        _ = tokio::time::sleep(Duration::from_secs(1)) => {
+            if let Some((probe, marker)) = probe {
+                // exec は poll していない (= 接続は future が持ったまま)。1 秒のあいだに
+                // UPDATE は送信済みなので、行はロックされているはず。
+                poll_until("the dry-run holds the row lock", POLL_LIMIT, || async {
+                    assert_lock_conflict(&probe.execute(&lock.lock_nowait, None).await, marker)
+                })
+                .await;
+            }
+            let finished = guard.fire_and_drain(&mut exec).await;
+            assert!(finished, "the dry-run future must end once its statement is stopped");
+        }
+    }
+    guard
+}
+
+/// 3. ドライランがタイムアウトしたら、掴んでいた行ロックが解放される (別接続から待たずに取れる)。
+pub async fn assert_dry_run_timeout_releases_row_lock(opts: &t::DbConnectOptions, sql: &StopSql) {
+    let runner = t::connect(opts).await.expect("connect runner");
+    let probe = t::connect(opts).await.expect("connect probe");
+    let session = Arc::new(t::make_session("s2102c", runner, opts.clone(), false));
+    let lock = (sql.lock_sql)("noobdb_2102_lock_release");
+    prepare_lock_table(&session, &lock).await;
+
+    // 実行前は誰もロックしていない。
+    probe
+        .execute(&lock.lock_nowait, None)
+        .await
+        .expect("row is free before the dry-run");
+
+    let mut guard =
+        run_dry_run_with_probe(&session, &lock, Some((&probe, sql.lock_conflict_marker))).await;
+    guard.fire();
+    guard.disarm();
+
+    poll_until("the row lock is released", POLL_LIMIT, || async {
+        probe.execute(&lock.lock_nowait, None).await.is_ok()
+    })
+    .await;
+    // ドライランなので値は変わらない (ロールバックされた)。
+    let v = probe.execute(&lock.select_v, None).await.expect("select v");
+    assert_eq!(cell_as_i64(&v.rows[0][0]), 0);
+    teardown(&session, &lock).await;
+}
+
+async fn teardown(session: &Arc<t::Session>, lock: &LockSql) {
+    for stmt in &lock.teardown {
+        session
+            .conn
+            .execute(stmt, None)
+            .await
+            .unwrap_or_else(|e| panic!("{stmt}: {e}"));
+    }
+}

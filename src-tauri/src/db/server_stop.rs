@@ -161,6 +161,9 @@ impl<DB: sqlx::Database> Drop for ReleaseGuard<DB> {
 /// サーバ側の停止要求にかける時間の上限。
 const KILL_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// 文を止めたあと、その文を持つ future が終わるのを待つ時間の上限 ([`StopGuard::fire_and_drain`])。
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// 実行が「止める必要のある終わり方」をしたときにサーバ側の文を止めるガード。
 /// 正常終了・DB エラーでは [`StopGuard::disarm`] する。タイムアウトでは [`StopGuard::fire`]、
 /// キャンセル (タスクの abort) では drop で自動的に止める。
@@ -214,6 +217,19 @@ impl StopGuard {
         if let Some(id) = self.request_and_take_backend() {
             kill_backend(&self.session, id).await;
         }
+    }
+
+    /// [`StopGuard::fire_and_wait`] のあと、止めた文を持つ `exec` が終わる (トランザクションが
+    /// ロールバックされて接続がプールへ戻る) のを [`DRAIN_TIMEOUT`] まで待つ。効かなくても
+    /// 待ちすぎない。`exec` が終わったら `true`。
+    ///
+    /// ドライランのタイムアウト用。`exec` は [`StopGuard::fire_and_wait`] のあいだ poll しない。
+    pub async fn fire_and_drain<F>(&self, exec: &mut F) -> bool
+    where
+        F: std::future::Future + Unpin,
+    {
+        self.fire_and_wait().await;
+        tokio::time::timeout(DRAIN_TIMEOUT, exec).await.is_ok()
     }
 
     fn request_and_take_backend(&self) -> Option<i64> {

@@ -4605,12 +4605,82 @@ async fn postgres_select_survives_table_recreation_with_cached_statement() {
     conn.close().await;
 }
 
+fn postgres_stop_sql() -> common::StopSql {
+    common::StopSql {
+        sleep_30: |m| format!("SELECT /* {m} */ pg_sleep(30)"),
+        active_count: |m| {
+            format!(
+                "SELECT COUNT(*)::bigint FROM pg_stat_activity \
+                 WHERE state = 'active' AND query LIKE '%{m}%' AND pid <> pg_backend_pid()"
+            )
+        },
+        sleep_2: "SELECT 0 FROM pg_sleep(2)",
+        lock_sql: |t| common::LockSql {
+            setup: vec![
+                format!("DROP TABLE IF EXISTS public.{t}"),
+                format!("DROP FUNCTION IF EXISTS public.{t}_sleep()"),
+                format!("CREATE TABLE public.{t} (id INT PRIMARY KEY, v INT NOT NULL)"),
+                format!("INSERT INTO public.{t} VALUES (1, 0)"),
+                // PostgreSQL の UPDATE は式の評価 (pg_sleep) の後に行ロックを取るため、式で眠らせると
+                // 「ロックを掴んだまま眠る」状態にならない。行トリガ内で眠らせる (AFTER UPDATE の
+                // 時点で行ロックは取得済みで、トランザクションの終わりまで保持される)。
+                format!(
+                    "CREATE FUNCTION public.{t}_sleep() RETURNS trigger LANGUAGE plpgsql \
+                     AS $$ BEGIN PERFORM pg_sleep(30); RETURN NEW; END $$"
+                ),
+                format!(
+                    "CREATE TRIGGER {t}_sleep AFTER UPDATE ON public.{t} \
+                     FOR EACH ROW EXECUTE FUNCTION public.{t}_sleep()"
+                ),
+            ],
+            sleeping_update: format!("UPDATE public.{t} SET v = v + 1 WHERE id = 1"),
+            lock_nowait: format!("SELECT id FROM public.{t} WHERE id = 1 FOR UPDATE NOWAIT"),
+            select_v: format!("SELECT v FROM public.{t} WHERE id = 1"),
+            teardown: vec![
+                format!("DROP TABLE IF EXISTS public.{t}"),
+                format!("DROP FUNCTION IF EXISTS public.{t}_sleep()"),
+            ],
+        },
+        lock_conflict_marker: "55P03",
+    }
+}
+
+/// タイムアウトしたら、サーバの `pg_stat_activity` から実行中の文が消える (#2102 / #2023)。
+#[tokio::test]
+async fn postgres_timeout_stops_statement_server_side_when_env_set() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    common::assert_timeout_stops_statement_server_side(&opts, &postgres_stop_sql(), "pg").await;
+}
+
+/// キャンセル / タイムアウト直後に同じプールで流した別の文が、遅れて届いた停止要求で
+/// 止められない (誤 KILL の回帰防止、a32a680)。
+#[tokio::test]
+async fn postgres_late_stop_never_hits_the_next_statement_when_env_set() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    common::assert_late_stop_never_hits_next_statement(&opts, &postgres_stop_sql(), "pg").await;
+}
+
+/// ドライランがタイムアウトしたら、掴んでいた行ロックが解放される。
+#[tokio::test]
+async fn postgres_dry_run_timeout_releases_row_lock_when_env_set() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    common::assert_dry_run_timeout_releases_row_lock(&opts, &postgres_stop_sql()).await;
+}
+
 /// 列名を変えた移行の検証 (#2099, PostgreSQL): 大文字を含む列と主キーのリネームを対応表で比べ、
 /// ターゲットの列名 (引用符つき) で生成した同期 SQL を適用すると再比較で差分なしになる。
 #[tokio::test]
 async fn postgres_compare_with_column_mapping_renames_columns_and_primary_key() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");

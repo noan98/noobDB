@@ -4943,13 +4943,68 @@ async fn mysql_chunked_dml_batches() {
         .await;
 }
 
+fn mysql_stop_sql() -> common::StopSql {
+    common::StopSql {
+        sleep_30: |m| format!("SELECT /* {m} */ SLEEP(30)"),
+        active_count: |m| {
+            format!(
+                "SELECT COUNT(*) FROM information_schema.PROCESSLIST \
+                 WHERE INFO LIKE '%{m}%' AND ID <> CONNECTION_ID()"
+            )
+        },
+        sleep_2: "SELECT SLEEP(2)",
+        lock_sql: |t| common::LockSql {
+            setup: vec![
+                format!("DROP TABLE IF EXISTS {t}"),
+                format!("CREATE TABLE {t} (id INT PRIMARY KEY, v INT NOT NULL) ENGINE=InnoDB"),
+                format!("INSERT INTO {t} VALUES (1, 0)"),
+            ],
+            sleeping_update: format!("UPDATE {t} SET v = v + SLEEP(30) WHERE id = 1"),
+            lock_nowait: format!("SELECT id FROM {t} WHERE id = 1 FOR UPDATE NOWAIT"),
+            select_v: format!("SELECT v FROM {t} WHERE id = 1"),
+            teardown: vec![format!("DROP TABLE IF EXISTS {t}")],
+        },
+        lock_conflict_marker: "3572",
+    }
+}
+
+/// タイムアウトしたら、サーバの `PROCESSLIST` から実行中の文が消える (#2102 / #2023)。
+#[tokio::test]
+async fn mysql_timeout_stops_statement_server_side_when_env_set() {
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    common::assert_timeout_stops_statement_server_side(&opts, &mysql_stop_sql(), "my").await;
+}
+
+/// キャンセル / タイムアウト直後に同じプールで流した別の文が、遅れて届いた停止要求で
+/// 止められない (誤 KILL の回帰防止、a32a680)。
+#[tokio::test]
+async fn mysql_late_stop_never_hits_the_next_statement_when_env_set() {
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    common::assert_late_stop_never_hits_next_statement(&opts, &mysql_stop_sql(), "my").await;
+}
+
+/// ドライランがタイムアウトしたら、掴んでいた行ロックが解放される。
+#[tokio::test]
+async fn mysql_dry_run_timeout_releases_row_lock_when_env_set() {
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    common::assert_dry_run_timeout_releases_row_lock(&opts, &mysql_stop_sql()).await;
+}
+
 /// MySQL の EVENT (#2100): スキーマツリーの一覧・定義表示・スキーマ比較 (欠落と定義差) を
 /// 実サーバで確かめる。EVENT の作成は prepared protocol で通らない (error 1295) ので、
 /// 作成は text protocol (`mysql_exec_text`) で行う。
 #[tokio::test]
 async fn mysql_events_are_listed_defined_and_compared() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -5031,8 +5086,7 @@ async fn mysql_events_are_listed_defined_and_compared() {
 /// 定義が違えば Different になり、生成した置換 SQL (ALTER EVENT) を実サーバで実行すると Same に収束する (#2100)。
 #[tokio::test]
 async fn mysql_event_compare_ignores_starts_and_replace_sql_runs() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -5123,8 +5177,7 @@ async fn mysql_event_compare_ignores_starts_and_replace_sql_runs() {
 /// 同期の実行後、プールの接続にセッションの time_zone 差し替えが残らないことも確かめる。
 #[tokio::test]
 async fn mysql_event_time_zone_is_compared_and_synced() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
