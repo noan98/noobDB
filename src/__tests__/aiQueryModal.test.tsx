@@ -544,7 +544,11 @@ describe("AiQueryModal (#691)", () => {
       await screen.findByLabelText("orders");
       // 一度確定させてから別の依頼に書き換え、待たずに送る。
       fireEvent.change(input, { target: { value: "orders amount" } });
-      await waitFor(() => expect((screen.getByLabelText("orders") as HTMLInputElement).checked).toBe(true));
+      // 自動提案はデバウンス (300ms) 後に反映される。CI のシャードは負荷で再描画が遅れ、
+      // 既定の 1 秒では反映前に打ち切られることがあるので待ち時間を延ばす。
+      await waitFor(() => expect((screen.getByLabelText("orders") as HTMLInputElement).checked).toBe(true), {
+        timeout: 3000,
+      });
       fireEvent.change(input, { target: { value: "orders amount please" } });
       fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
       await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
