@@ -722,12 +722,16 @@ export type SchemaObjectKind =
   | "procedure"
   | "function"
   | "trigger"
-  | "sequence";
+  | "sequence"
+  /** MySQL のイベントスケジューラの EVENT (#2100)。MySQL だけ。 */
+  | "event";
 
 /** 非テーブルのスキーマオブジェクト。 */
 export interface SchemaObject {
   kind: SchemaObjectKind;
   name: string;
+  /** ツリーの補足表示。EVENT の状態とスケジュールの要約 (`ENABLED · EVERY 1 DAY`)。他は null。 */
+  detail?: string | null;
   /** 同名衝突を避ける一意識別子 (PostgreSQL の oid 等)。無いドライバ/種別では null。 */
   id: string | null;
 }
@@ -779,7 +783,7 @@ export interface WhereUsedMatch {
   lines: ReferenceLine[];
   source: "object" | "snippet";
   /** オブジェクト種別。スニペットは "snippet"。 */
-  kind: Exclude<SchemaObjectKind, "sequence"> | "snippet";
+  kind: Exclude<SchemaObjectKind, "sequence" | "event"> | "snippet";
   name: string;
   /** スキーマオブジェクトの一意識別子 (`get_object_definition` へそのまま渡す)。 */
   id: string | null;
@@ -788,7 +792,7 @@ export interface WhereUsedMatch {
 }
 
 export interface WhereUsedFailure {
-  kind: Exclude<SchemaObjectKind, "sequence">;
+  kind: Exclude<SchemaObjectKind, "sequence" | "event">;
   name: string;
   error: string;
 }
@@ -801,7 +805,7 @@ export interface WhereUsedReport {
   /** 定義の取得に失敗したオブジェクト (権限不足など)。 */
   failed: WhereUsedFailure[];
   /** 定義本文が空で返ったオブジェクト。 */
-  emptyDefinitions: { kind: Exclude<SchemaObjectKind, "sequence">; name: string }[];
+  emptyDefinitions: { kind: Exclude<SchemaObjectKind, "sequence" | "event">; name: string }[];
   /** キャンセルされ、途中までの結果であること。 */
   cancelled: boolean;
 }

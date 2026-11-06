@@ -7520,3 +7520,90 @@ async fn sqlite_bounded_capture_rolls_back_when_over_limit() {
     );
     let _ = std::fs::remove_file(&path);
 }
+
+/// 列名を変えた移行の検証 (#2099): 列の対応表を通して差分を検出し、ターゲットの列名で生成した
+/// 同期 SQL を適用すると、同じ対応表での再比較が差分なしになる。
+#[tokio::test]
+async fn sqlite_compare_with_column_mapping_syncs_into_renamed_columns() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_colmap_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(path.to_str().expect("utf8 path")))
+        .await
+        .expect("connect");
+    for ddl in [
+        "CREATE TABLE users_old (uid INTEGER PRIMARY KEY, user_name TEXT, email TEXT)",
+        "CREATE TABLE users_new (id INTEGER PRIMARY KEY, username TEXT, email TEXT)",
+        "INSERT INTO users_old VALUES (1,'a','a@x'),(2,'b','b@x'),(3,'c','c@x')",
+        "INSERT INTO users_new VALUES (1,'a','a@x'),(2,'B','b@x'),(4,'d','d@x')",
+    ] {
+        conn.execute(ddl, None).await.expect("ddl");
+    }
+    let mapping = || {
+        Some(std::collections::HashMap::from([
+            ("uid".to_string(), "id".to_string()),
+            ("user_name".to_string(), "username".to_string()),
+        ]))
+    };
+    // 対応表なしでは、ターゲットに無い列があるので比較できない。
+    let err = t::compare_table_data_via_core(
+        &conn,
+        "main",
+        &conn,
+        "main",
+        "users_old",
+        "users_new",
+        None,
+        true,
+        None,
+        None,
+    )
+    .await
+    .expect_err("missing columns without a mapping");
+    assert!(err.to_string().contains("missing column(s)"), "{err}");
+
+    let (diff, _) = t::compare_table_data_via_core(
+        &conn,
+        "main",
+        &conn,
+        "main",
+        "users_old",
+        "users_new",
+        None,
+        true,
+        None,
+        mapping(),
+    )
+    .await
+    .expect("compare with mapping");
+    assert_eq!(diff.columns, vec!["id", "username", "email"]);
+    assert_eq!(diff.rows.len(), 3);
+    let plan = t::generate_data_sync_sql(&diff, true);
+    assert_eq!(plan.statements.len(), 3, "{:?}", plan.statements);
+    for st in &plan.statements {
+        assert!(st.sql.contains("\"users_new\""), "{}", st.sql);
+        assert!(
+            !st.sql.contains("user_name") && !st.sql.contains("uid"),
+            "{}",
+            st.sql
+        );
+        conn.execute(&st.sql, None).await.expect("apply");
+    }
+    let (after, _) = t::compare_table_data_via_core(
+        &conn,
+        "main",
+        &conn,
+        "main",
+        "users_old",
+        "users_new",
+        None,
+        true,
+        None,
+        mapping(),
+    )
+    .await
+    .expect("re-compare");
+    assert!(after.rows.is_empty(), "{:?}", after.rows);
+    let _ = std::fs::remove_file(&path);
+}

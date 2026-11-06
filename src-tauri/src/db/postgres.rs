@@ -2136,6 +2136,7 @@ impl PostgresConn {
                 kind: r.try_get::<String, _>(0).unwrap_or_default(),
                 name: r.try_get::<String, _>(1).unwrap_or_default(),
                 id: r.try_get::<Option<String>, _>(2).ok().flatten(),
+                detail: None,
             })
             .collect())
     }

@@ -723,6 +723,7 @@ const CONNECTION_READ_METHODS = new Set([
   "cross_schema_incoming_foreign_keys",
   "foreign_keys_for_table",
   "schema_objects",
+  "schema_objects_checked",
   "object_definition",
   "table_ddl_extras",
   "ddl_extras_for_database",

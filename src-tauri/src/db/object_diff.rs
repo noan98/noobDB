@@ -1,4 +1,4 @@
-//! 非テーブルオブジェクト (ビュー / マテビュー / ルーチン / トリガー / シーケンス) の
+//! 非テーブルオブジェクト (ビュー / マテビュー / ルーチン / トリガー / シーケンス / イベント) の
 //! スキーマ比較 (#1879)。
 //!
 //! `db::diff` がテーブルと列を比べるのに対し、こちらは「定義 DDL の本文」を比べる純粋層。
@@ -16,31 +16,41 @@ use super::where_used::supports_kind;
 use super::DriverKind;
 
 /// 比較対象のオブジェクト種別 (表示・作成順の基準)。作成は関数 → プロシージャ → ビュー →
-/// マテビュー → トリガーの順 (後ろの種別が前の種別を参照しうる)。シーケンスは表の既定値から
-/// 参照されるので、同期では表より先に作る。
-pub const OBJECT_KINDS: [&str; 6] = [
+/// マテビュー → トリガー → イベントの順 (後ろの種別が前の種別を参照しうる。EVENT の本体は
+/// プロシージャや関数を呼べる)。シーケンスは表の既定値から参照されるので、同期では表より先に作る。
+pub const OBJECT_KINDS: [&str; 7] = [
     "sequence",
     "function",
     "procedure",
     "view",
     "materialized_view",
     "trigger",
+    "event",
 ];
 
 /// このドライバがその種別を持ち、定義を比較できるか。`where_used::supports_kind` に
-/// シーケンス (PostgreSQL のみ) を足したもの。
+/// シーケンス (PostgreSQL のみ) と EVENT (MySQL のみ, #2100) を足したもの。PostgreSQL / SQLite に
+/// EVENT 相当の組み込み機能は無い (pg_cron などの拡張は対象外)。
 pub fn supports_object_kind(driver: DriverKind, kind: &str) -> bool {
-    if kind == "sequence" {
-        return driver == DriverKind::Postgres;
+    match kind {
+        "sequence" => return driver == DriverKind::Postgres,
+        "event" => {
+            return match driver {
+                DriverKind::Mysql => true,
+                DriverKind::Postgres | DriverKind::Sqlite => false,
+            }
+        }
+        _ => {}
     }
     supports_kind(driver, kind)
 }
 
 /// このドライバが持たない (比較対象外の) 種別。UI が「対象外」と理由付きで表示する。
+/// MySQL だけの概念である `event` は、他ドライバでは「対象外」の行を増やすだけなので載せない。
 pub fn unsupported_object_kinds(driver: DriverKind) -> Vec<String> {
     OBJECT_KINDS
         .iter()
-        .filter(|k| !supports_object_kind(driver, k))
+        .filter(|k| **k != "event" && !supports_object_kind(driver, k))
         .map(|k| k.to_string())
         .collect()
 }
@@ -112,11 +122,53 @@ struct Prepared {
     identity: String,
 }
 
+/// EVENT の定義の先頭に付ける time_zone のコメント行の頭 (#2100)。
+const EVENT_TZ_PREFIX: &str = "-- noobdb:time_zone: ";
+
+/// `time_zone` が分かるときだけ、EVENT の定義の先頭にコメント行で載せる。
+pub fn with_event_time_zone(tz: &str, ddl: &str) -> String {
+    let tz = tz.trim();
+    if tz.is_empty() || tz.contains(['\n', '\r']) {
+        ddl.to_string()
+    } else {
+        format!("{EVENT_TZ_PREFIX}{tz}\n{ddl}")
+    }
+}
+
+/// [`with_event_time_zone`] の逆。コメント行があれば (time_zone, 残りの本文)。
+fn split_event_time_zone(def: &str) -> Option<(String, &str)> {
+    let rest = def.trim_start().strip_prefix(EVENT_TZ_PREFIX)?;
+    let (tz, body) = rest.split_once('\n')?;
+    let tz = tz.trim();
+    (!tz.is_empty()).then(|| (tz.to_string(), body))
+}
+
+/// 同期文がセッションの time_zone を一時的に差し替えるか (`create_object_sql` の EVENT)。
+pub fn swaps_session_time_zone(sql: &str) -> bool {
+    sql.contains("@noobdb_prev_tz")
+}
+
 fn prepare(driver: DriverKind, from_db: &str, to_db: &str, def: &ObjectDefinition) -> Prepared {
+    // EVENT の time_zone 行は本文と切り離して扱う (コメント行を空白の正規化に巻き込まない)。
+    let (event_tz, raw_body) = match driver == DriverKind::Mysql && def.kind == "event" {
+        true => match split_event_time_zone(&def.definition) {
+            Some((tz, body)) => (Some(tz), body),
+            None => (None, def.definition.as_str()),
+        },
+        false => (None, def.definition.as_str()),
+    };
     // 同期に使う本文: 自スキーマの修飾は消さず、target のスキーマ名へ置き換える。
-    let portable = portable_definition(driver, from_db, to_db, &def.definition);
+    let mut portable = portable_definition(driver, from_db, to_db, raw_body);
     // 比較用: 自スキーマの修飾を (両側とも) 取り除いてから空白を畳む。
-    let normalized = normalize_definition(driver, from_db, &def.definition);
+    let mut normalized = normalize_definition(driver, from_db, raw_body);
+    if driver == DriverKind::Mysql && def.kind == "event" {
+        normalized = normalize_event(&normalized);
+    }
+    if let Some(tz) = &event_tz {
+        // time_zone が違えば時刻の意味が変わるので、比較にも同期にも含める。
+        normalized = format!("time_zone={tz} {normalized}");
+        portable = format!("{EVENT_TZ_PREFIX}{tz}\n{portable}");
+    }
     let table = if def.kind == "trigger" {
         def.table
             .clone()
@@ -242,6 +294,58 @@ fn normalize_definition(driver: DriverKind, db: &str, raw: &str) -> String {
         .trim_end_matches(';')
         .trim_end()
         .to_string()
+}
+
+/// 比較用に EVENT の定義から環境ごとに違って当然の部分を除く (#2100)。
+/// - `STARTS '...'`: 繰り返し EVENT は MySQL が作成時刻を入れるので、同じ定義でも必ず食い違う。
+///   同期に使う本文 (`portable`) には残すので、比較から外れるだけ。
+/// - `DISABLE ON SLAVE` / `DISABLE ON REPLICA`: ソースで有効な EVENT のレプリカ側の表示なので `ENABLE` と同一視する。
+fn normalize_event(s: &str) -> String {
+    let segs = segments(DriverKind::Mysql, s);
+    let mut out = String::with_capacity(s.len());
+    let mut skip_next = false;
+    for (i, seg) in segs.iter().enumerate() {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        match seg {
+            Seg::Code(c) => {
+                let mut code = replace_ci(c, " DISABLE ON SLAVE", " ENABLE");
+                code = replace_ci(&code, " DISABLE ON REPLICA", " ENABLE");
+                let t = code.trim_end();
+                let n = t.len();
+                let is_starts = n >= 6
+                    && t.is_char_boundary(n - 6)
+                    && t[n - 6..].eq_ignore_ascii_case("STARTS")
+                    && (n == 6 || t[..n - 6].ends_with(' '))
+                    && matches!(segs.get(i + 1), Some(Seg::Literal(l)) if l.starts_with('\''));
+                if is_starts {
+                    out.push_str(t[..n - 6].trim_end());
+                    skip_next = true;
+                } else {
+                    out.push_str(&code);
+                }
+            }
+            Seg::Quoted(t) | Seg::Literal(t) => out.push_str(t),
+        }
+    }
+    out
+}
+
+/// ASCII の大文字小文字を無視した置換 (`from` は ASCII)。
+fn replace_ci(s: &str, from: &str, to: &str) -> String {
+    let lower = s.to_ascii_lowercase();
+    let from_l = from.to_ascii_lowercase();
+    let mut out = String::with_capacity(s.len());
+    let mut last = 0;
+    while let Some(p) = lower[last..].find(&from_l) {
+        out.push_str(&s[last..last + p]);
+        out.push_str(to);
+        last += p + from.len();
+    }
+    out.push_str(&s[last..]);
+    out
 }
 
 fn is_ident_char(c: char) -> bool {
@@ -542,6 +646,7 @@ fn drop_keyword(kind: &str) -> &'static str {
         "function" => "FUNCTION",
         "procedure" => "PROCEDURE",
         "trigger" => "TRIGGER",
+        "event" => "EVENT",
         _ => "SEQUENCE",
     }
 }
@@ -590,7 +695,7 @@ pub fn split_statements(sql: &str) -> Vec<&str> {
         .collect()
 }
 
-/// MySQL がテキストプロトコルを要する文か: ルーチン・トリガーの CREATE / DROP (prepared
+/// MySQL がテキストプロトコルを要する文か: ルーチン・トリガー・イベントの CREATE / DROP / ALTER (prepared
 /// protocol だとエラー 1295) と、[`STMT_SPLIT`] を含む複数文。
 pub fn needs_text_protocol(sql: &str) -> bool {
     if sql.lines().any(|l| l.trim() == STMT_SPLIT) {
@@ -601,16 +706,16 @@ pub fn needs_text_protocol(sql: &str) -> bool {
         .split(|c: char| !(c.is_alphanumeric() || c == '_'))
         .filter(|w| !w.is_empty())
         .map(str::to_ascii_uppercase);
-    if !matches!(words.next().as_deref(), Some("CREATE" | "DROP")) {
+    if !matches!(words.next().as_deref(), Some("CREATE" | "DROP" | "ALTER")) {
         return false;
     }
     // 先頭の数語 (OR REPLACE / DEFINER=... のあと) に現れる種別で決める。TABLE などが先に
     // 来る文は対象外。
     for w in words.take(16) {
         match w.as_str() {
-            "PROCEDURE" | "FUNCTION" | "TRIGGER" => return true,
-            "TABLE" | "VIEW" | "INDEX" | "DATABASE" | "SCHEMA" | "USER" | "ROLE" | "EVENT"
-            | "SEQUENCE" | "ALGORITHM" => return false,
+            "PROCEDURE" | "FUNCTION" | "TRIGGER" | "EVENT" => return true,
+            "TABLE" | "VIEW" | "INDEX" | "DATABASE" | "SCHEMA" | "USER" | "ROLE" | "SEQUENCE"
+            | "ALGORITHM" => return false,
             _ => {}
         }
     }
@@ -637,6 +742,20 @@ pub fn contains_split_marker(definition: &str) -> bool {
 /// `CREATE ...` 文。`definition` は [`ObjectDiff::source_definition`]。複数文の定義
 /// (マテビュー + 索引) は PostgreSQL では DO ブロックにまとめる (拡張プロトコルは 1 文だけ)。
 pub fn create_object_sql(driver: DriverKind, definition: &str) -> String {
+    if driver == DriverKind::Mysql {
+        if let Some((tz, body)) = split_event_time_zone(definition) {
+            // EVENT は作成時の time_zone で時刻が解釈されるので、source の time_zone に差し替えて作り、戻す。
+            let q = tz.replace('\\', "\\\\").replace('\'', "''");
+            let body = body.trim().trim_end_matches(';').trim_end();
+            return [
+                "SET @noobdb_prev_tz = @@session.time_zone".to_string(),
+                format!("SET time_zone = '{q}'"),
+                body.to_string(),
+                "SET time_zone = @noobdb_prev_tz".to_string(),
+            ]
+            .join(&format!(";\n{STMT_SPLIT}\n"));
+        }
+    }
     let parts = split_statements(definition);
     if parts.len() > 1 && driver == DriverKind::Postgres {
         return pg_do_block(&parts.iter().map(|p| p.to_string()).collect::<Vec<_>>());
@@ -680,10 +799,12 @@ fn pg_do_block(parts: &[String]) -> String {
 
 /// この置換が元の定義を失いうるか (許可が要る)。MySQL のルーチン / トリガーは DROP + CREATE で
 /// DDL が暗黙コミットされ、CREATE 失敗時に戻せない。マテビューの置換は DROP + CREATE で
-/// データを再計算する。
+/// データを再計算する。EVENT も DROP + CREATE (`ALTER EVENT` は書かれていない
+/// COMMENT / ENDS を target に残し、同期しても収束しないため)。
 pub fn replace_is_destructive(driver: DriverKind, kind: &str) -> bool {
     kind == "materialized_view"
-        || (driver == DriverKind::Mysql && matches!(kind, "procedure" | "function" | "trigger"))
+        || (driver == DriverKind::Mysql
+            && matches!(kind, "procedure" | "function" | "trigger" | "event"))
 }
 
 /// 定義が変わったオブジェクトを target で置き換える SQL。複数文になるとき、MySQL は
@@ -1083,6 +1204,165 @@ mod tests {
             vec!["sequence", "materialized_view"]
         );
         assert!(unsupported_object_kinds(DriverKind::Postgres).is_empty());
+    }
+
+    #[test]
+    fn event_is_a_mysql_only_kind() {
+        assert!(supports_object_kind(DriverKind::Mysql, "event"));
+        assert!(!supports_object_kind(DriverKind::Postgres, "event"));
+        assert!(!supports_object_kind(DriverKind::Sqlite, "event"));
+        // 他ドライバの「対象外」一覧には載せない (UI に出さない)。
+        for d in [DriverKind::Postgres, DriverKind::Sqlite] {
+            assert!(!unsupported_object_kinds(d).contains(&"event".to_string()));
+        }
+    }
+
+    #[test]
+    fn event_comparison_ignores_starts_and_replica_disable() {
+        let mk = |def: &str| ObjectDefinition {
+            kind: "event".into(),
+            name: "e".into(),
+            signature: None,
+            table: None,
+            definition: def.into(),
+        };
+        let a = mk("CREATE DEFINER=`r`@`%` EVENT `e` ON SCHEDULE EVERY 1 DAY STARTS '2026-11-06 10:00:00' ON COMPLETION NOT PRESERVE ENABLE DO SELECT 'STARTS ''x'''");
+        let b = mk("CREATE DEFINER=`r`@`%` EVENT `e` ON SCHEDULE EVERY 1 DAY STARTS '2026-11-06 10:00:07' ON COMPLETION NOT PRESERVE DISABLE ON SLAVE DO SELECT 'STARTS ''x'''");
+        let d = compute_object_diff(DriverKind::Mysql, "a", "b", std::slice::from_ref(&a), &[b]);
+        assert_eq!(d[0].status, DiffStatus::Same, "{d:?}");
+        // 同期に使う本文には STARTS が残る。
+        let only = compute_object_diff(DriverKind::Mysql, "a", "b", std::slice::from_ref(&a), &[]);
+        assert!(only[0]
+            .source_definition
+            .clone()
+            .unwrap_or_default()
+            .contains("STARTS '2026"));
+        // 間隔が違えば Different のまま。
+        let mut c = a.clone();
+        c.definition = c.definition.replace("EVERY 1 DAY", "EVERY 2 DAY");
+        let d = compute_object_diff(DriverKind::Mysql, "a", "b", std::slice::from_ref(&a), &[c]);
+        assert_eq!(d[0].status, DiffStatus::Different);
+        // 本文のリテラルが違えば Different (リテラル内の STARTS は触らない)。
+        let mut e = a.clone();
+        e.definition = e.definition.replace("''x''", "''y''");
+        let d = compute_object_diff(DriverKind::Mysql, "a", "b", &[a], &[e]);
+        assert_eq!(d[0].status, DiffStatus::Different);
+    }
+
+    #[test]
+    fn event_time_zone_is_compared_and_applied_on_sync() {
+        let mk = |tz: &str| {
+            ObjectDefinition {
+            kind: "event".into(),
+            name: "e".into(),
+            signature: None,
+            table: None,
+            definition: with_event_time_zone(
+                tz,
+                "CREATE DEFINER=`r`@`%` EVENT `e` ON SCHEDULE EVERY 1 DAY STARTS '2026-11-06 09:00:00' DO SELECT 1",
+            ),
+        }
+        };
+        let (jst, utc) = (mk("+09:00"), mk("+00:00"));
+        // 同じ time_zone なら Same、違えば Different (時刻の意味が変わるため)。
+        let same = compute_object_diff(
+            DriverKind::Mysql,
+            "a",
+            "b",
+            std::slice::from_ref(&jst),
+            std::slice::from_ref(&jst),
+        );
+        assert_eq!(same[0].status, DiffStatus::Same);
+        let diff = compute_object_diff(
+            DriverKind::Mysql,
+            "a",
+            "b",
+            std::slice::from_ref(&jst),
+            std::slice::from_ref(&utc),
+        );
+        assert_eq!(diff[0].status, DiffStatus::Different);
+        // 同期 SQL は source の time_zone に差し替えて作り、元に戻す。
+        let def = diff[0].source_definition.clone().unwrap_or_default();
+        let create = create_object_sql(DriverKind::Mysql, &def);
+        let parts = split_statements(&create);
+        assert_eq!(parts.len(), 4, "{create}");
+        assert_eq!(parts[0], "SET @noobdb_prev_tz = @@session.time_zone");
+        assert_eq!(parts[1], "SET time_zone = '+09:00'");
+        assert!(parts[2].starts_with("CREATE EVENT `e`"), "{create}");
+        assert_eq!(parts[3], "SET time_zone = @noobdb_prev_tz");
+        assert!(needs_text_protocol(&create));
+        assert!(swaps_session_time_zone(&create));
+        let replace = replace_object_sql(DriverKind::Mysql, &diff[0], &def);
+        assert!(replace.starts_with("DROP EVENT `e`;"), "{replace}");
+        // 引用符は二重にして escape する。
+        let quoted = create_object_sql(
+            DriverKind::Mysql,
+            &with_event_time_zone(
+                "a'b\\c",
+                "CREATE EVENT `e` ON SCHEDULE EVERY 1 DAY DO SELECT 1",
+            ),
+        );
+        assert!(quoted.contains("SET time_zone = 'a''b\\\\c'"), "{quoted}");
+        // time_zone が無い定義は従来どおり (SET を挟まない)。
+        assert_eq!(
+            create_object_sql(
+                DriverKind::Mysql,
+                "CREATE EVENT `e` ON SCHEDULE EVERY 1 DAY DO SELECT 1"
+            ),
+            "CREATE EVENT `e` ON SCHEDULE EVERY 1 DAY DO SELECT 1"
+        );
+    }
+
+    #[test]
+    fn event_diff_and_sync_sql() {
+        let src = ObjectDefinition {
+            kind: "event".into(),
+            name: "ev_purge".into(),
+            signature: None,
+            table: None,
+            definition: "CREATE DEFINER=`root`@`%` EVENT `ev_purge` ON SCHEDULE EVERY 1 DAY DO DELETE FROM `app`.`t`"
+                .into(),
+        };
+        let mut tgt = src.clone();
+        tgt.definition =
+            "CREATE DEFINER=`bob`@`localhost` EVENT `ev_purge` ON SCHEDULE EVERY 2 DAY DO DELETE FROM `stg`.`t`"
+                .into();
+        let diffs = compute_object_diff(
+            DriverKind::Mysql,
+            "app",
+            "stg",
+            std::slice::from_ref(&src),
+            &[tgt],
+        );
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].status, DiffStatus::Different);
+        let sd = diffs[0].source_definition.clone().unwrap_or_default();
+        assert!(!sd.contains("DEFINER"), "{sd}");
+        let sql = replace_object_sql(DriverKind::Mysql, &diffs[0], &sd);
+        assert!(
+            sql.starts_with("DROP EVENT `ev_purge`;\n-- noobdb:split\nCREATE EVENT"),
+            "{sql}"
+        );
+        assert!(needs_text_protocol(&sql));
+        assert!(needs_text_protocol(
+            "CREATE EVENT `e` ON SCHEDULE EVERY 1 DAY DO SELECT 1"
+        ));
+        assert!(needs_text_protocol("DROP EVENT `e`"));
+        // 置換は DROP + CREATE (暗黙コミットされ、CREATE に失敗すると元の定義が失われる)。
+        assert!(replace_is_destructive(DriverKind::Mysql, "event"));
+        assert!(needs_text_protocol(
+            "ALTER EVENT `e` ON SCHEDULE EVERY 1 DAY DO SELECT 1"
+        ));
+        // EVENT という語を含む別物は、テキストプロトコルにしない。
+        assert!(!needs_text_protocol("DROP TABLE `event`"));
+        assert!(!needs_text_protocol("CREATE TABLE event_log (id INT)"));
+        assert!(!needs_text_protocol("CREATE TABLE `event` (id INT)"));
+        assert!(!needs_text_protocol("ALTER TABLE t ADD COLUMN event INT"));
+        assert!(!needs_text_protocol("CREATE INDEX event ON t (a)"));
+        assert_eq!(
+            drop_object_sql(DriverKind::Mysql, &od("event", "e", None, None)),
+            "DROP EVENT `e`"
+        );
     }
 
     fn od(kind: &str, name: &str, table: Option<&str>, sig: Option<&str>) -> ObjectDiff {

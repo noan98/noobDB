@@ -421,6 +421,7 @@ mod tests {
             kind: kind.to_string(),
             name: name.to_string(),
             id: id.map(str::to_string),
+            detail: None,
         }
     }
 

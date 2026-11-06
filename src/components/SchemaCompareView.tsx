@@ -53,6 +53,8 @@ import {
   TableDiffList,
 } from "./SchemaDiffDetail";
 import { DataRowDiffTable } from "./DataRowDiffTable";
+import { DataColumnMapping } from "./DataColumnMapping";
+import type { ColumnMapping } from "./columnMapping";
 
 /**
  * スキーマ比較ビューの本体スタイル。各要素へ直接 `css` を適用する。
@@ -420,6 +422,10 @@ export function SchemaCompareView({
   });
   // 比較から外す列 (カンマ区切り, #1539)。updated_at のように環境ごとに違う列を差分にしない。
   const [dataIgnore, setDataIgnore] = useState("");
+  // 列の対応付け (ソース列 → ターゲット列, #2099)。表や接続を変えたら破棄する。
+  const [dataColumnMap, setDataColumnMap] = useState<ColumnMapping>({});
+  // 同名の相手がおらず割り当ても無いソース列の数。残っていると比較は欠落列で必ず失敗するので止める。
+  const [dataUnassigned, setDataUnassigned] = useState(0);
   const [dataDiff, setDataDiff] = useState<DataDiff | null>(null);
   // ドライバをまたぐ検証専用の比較か・正規化して一致とみなした列 (#1869)。
   const [dataCross, setDataCross] = useState(false);
@@ -795,6 +801,12 @@ export function SchemaCompareView({
   })();
   const dataTablesValid = dataTable !== "" && dataTablesBlockReason === null;
 
+  // 表や接続が変わったら、前の表の列に対する対応付けは破棄する。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 依存の変化を合図に消すだけ
+  useEffect(() => {
+    setDataColumnMap({});
+  }, [source.sessionId, source.database, target.sessionId, target.database, dataTable, dataTargetTable]);
+
   const resetDataDiffForTableChange = () => {
     setDataDiff(null);
     setDataDiffId(null);
@@ -842,6 +854,7 @@ export function SchemaCompareView({
           .split(",")
           .map((c) => c.trim())
           .filter((c) => c !== ""),
+        columnMapping: dataColumnMap,
         streamId,
       });
       // 直前の比較結果はバックエンドの保持を解放してから差し替える。
@@ -878,6 +891,7 @@ export function SchemaCompareView({
     dataLimit,
     dataAllRows,
     dataIgnore,
+    dataColumnMap,
     releaseHeldDiff,
   ]);
 
@@ -1120,6 +1134,24 @@ export function SchemaCompareView({
             />
           </Box>
         </Box>
+        {dataTablesValid && source.sessionId && target.sessionId && (
+          <DataColumnMapping
+            sourceSessionId={source.sessionId}
+            sourceDatabase={source.database ?? ""}
+            sourceTable={dataTable}
+            targetSessionId={target.sessionId}
+            targetDatabase={target.database ?? ""}
+            targetTable={effectiveTargetTable}
+            caseInsensitive={driverMismatch || sourceDriver !== "postgres"}
+            mapping={dataColumnMap}
+            onUnassignedChange={setDataUnassigned}
+            onChange={(m) => {
+              setDataColumnMap(m);
+              resetDataDiffForTableChange();
+            }}
+            disabled={dataComparing || generating}
+          />
+        )}
         <chakra.label css={optionLabelCss}>
           <Checkbox
             checked={dataAllRows}
@@ -1143,7 +1175,7 @@ export function SchemaCompareView({
             disabled={dataComparing}
           />
         </chakra.label>
-        <Button onClick={compareData} disabled={!dataTablesValid || dataComparing}>
+        <Button onClick={compareData} disabled={!dataTablesValid || dataComparing || dataUnassigned > 0}>
           {dataComparing ? t("schemaCompareComparing") : t("schemaCompareDataCompare")}
         </Button>
         {dataComparing && dataCancellable && (
