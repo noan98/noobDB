@@ -5174,3 +5174,94 @@ async fn mysql_event_compare_ignores_starts_and_replace_sql_runs() {
         let _ = t::mysql_exec_text(&opts, &format!("DROP DATABASE IF EXISTS `{s}`")).await;
     }
 }
+
+/// EVENT の time_zone (#2100): time_zone の違う同じ EVENT は Different になり、`+09:00` で作った EVENT を
+/// 別の time_zone の target へ同期すると、target の `TIME_ZONE` も `+09:00` になって Same に収束する。
+/// 同期の実行後、プールの接続にセッションの time_zone 差し替えが残らないことも確かめる。
+#[tokio::test]
+async fn mysql_event_time_zone_is_compared_and_synced() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts.database.clone().expect("test db in url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let (a, b) = (format!("{db}_tz_a"), format!("{db}_tz_b"));
+    for s in [&a, &b] {
+        let _ = t::mysql_exec_text(&opts, &format!("DROP DATABASE IF EXISTS `{s}`")).await;
+        conn.execute(&format!("CREATE DATABASE `{s}`"), None)
+            .await
+            .expect("create scratch database");
+    }
+    let body = |s: &str| {
+        format!(
+            "CREATE EVENT `{s}`.`nb2100_tz` ON SCHEDULE EVERY 1 DAY STARTS '2030-01-01 09:00:00' DISABLE DO SELECT 1"
+        )
+    };
+    // source: +09:00 で作る / target: +00:00 で作る (同じ文面でも時刻の意味が違う)。
+    t::mysql_exec_text(&opts, &format!("SET time_zone = '+09:00'; {}", body(&a)))
+        .await
+        .expect("create a");
+    t::mysql_exec_text(&opts, &format!("SET time_zone = '+00:00'; {}", body(&b)))
+        .await
+        .expect("create b");
+    let tz_of = |schema: String| {
+        let conn = &conn;
+        async move {
+            let r = conn
+                .execute(
+                    &format!(
+                        "SELECT CAST(TIME_ZONE AS CHAR) FROM information_schema.EVENTS WHERE EVENT_SCHEMA = '{schema}' AND EVENT_NAME = 'nb2100_tz'"
+                    ),
+                    None,
+                )
+                .await
+                .expect("tz query");
+            format!("{:?}", r.rows[0][0])
+        }
+    };
+    assert!(tz_of(a.clone()).await.contains("+09:00"));
+    assert!(tz_of(b.clone()).await.contains("+00:00"));
+    let find = |d: &t::SchemaDiff| {
+        d.objects
+            .items
+            .iter()
+            .find(|i| i.kind == "event" && i.name == "nb2100_tz")
+            .cloned()
+            .expect("event in diff")
+    };
+    let diff = t::compare_schema_via_core(&conn, &a, &conn, &b)
+        .await
+        .expect("compare");
+    let item = find(&diff);
+    assert_eq!(item.status, t::DiffStatus::Different);
+    let def = item.source_definition.clone().expect("source definition");
+    let sql = t::replace_object_sql(t::DriverKind::Mysql, &item, &def);
+    // 接続は sqlx が session time_zone を '+00:00' にしている。その値が同期後も保たれること。
+    let session_tz = || async {
+        let r = conn
+            .execute("SELECT @@session.time_zone", None)
+            .await
+            .expect("session tz");
+        format!("{:?}", r.rows[0][0])
+    };
+    let before = session_tz().await;
+    conn.execute_sync_transaction(&[sql], Some(&b))
+        .await
+        .expect("replace sql runs on the server");
+    assert!(tz_of(b.clone()).await.contains("+09:00"));
+    let diff = t::compare_schema_via_core(&conn, &a, &conn, &b)
+        .await
+        .expect("re-compare");
+    assert_eq!(find(&diff).status, t::DiffStatus::Same);
+    // 差し替えがプールの接続に残っていない。
+    assert_eq!(
+        session_tz().await,
+        before,
+        "session time_zone must be restored"
+    );
+    for s in [&a, &b] {
+        let _ = t::mysql_exec_text(&opts, &format!("DROP DATABASE IF EXISTS `{s}`")).await;
+    }
+}

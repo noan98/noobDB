@@ -122,13 +122,52 @@ struct Prepared {
     identity: String,
 }
 
+/// EVENT の定義の先頭に付ける time_zone のコメント行の頭 (#2100)。
+const EVENT_TZ_PREFIX: &str = "-- noobdb:time_zone: ";
+
+/// `time_zone` が分かるときだけ、EVENT の定義の先頭にコメント行で載せる。
+pub fn with_event_time_zone(tz: &str, ddl: &str) -> String {
+    let tz = tz.trim();
+    if tz.is_empty() || tz.contains(['\n', '\r']) {
+        ddl.to_string()
+    } else {
+        format!("{EVENT_TZ_PREFIX}{tz}\n{ddl}")
+    }
+}
+
+/// [`with_event_time_zone`] の逆。コメント行があれば (time_zone, 残りの本文)。
+fn split_event_time_zone(def: &str) -> Option<(String, &str)> {
+    let rest = def.trim_start().strip_prefix(EVENT_TZ_PREFIX)?;
+    let (tz, body) = rest.split_once('\n')?;
+    let tz = tz.trim();
+    (!tz.is_empty()).then(|| (tz.to_string(), body))
+}
+
+/// 同期文がセッションの time_zone を一時的に差し替えるか (`create_object_sql` の EVENT)。
+pub fn swaps_session_time_zone(sql: &str) -> bool {
+    sql.contains("@noobdb_prev_tz")
+}
+
 fn prepare(driver: DriverKind, from_db: &str, to_db: &str, def: &ObjectDefinition) -> Prepared {
+    // EVENT の time_zone 行は本文と切り離して扱う (コメント行を空白の正規化に巻き込まない)。
+    let (event_tz, raw_body) = match driver == DriverKind::Mysql && def.kind == "event" {
+        true => match split_event_time_zone(&def.definition) {
+            Some((tz, body)) => (Some(tz), body),
+            None => (None, def.definition.as_str()),
+        },
+        false => (None, def.definition.as_str()),
+    };
     // 同期に使う本文: 自スキーマの修飾は消さず、target のスキーマ名へ置き換える。
-    let portable = portable_definition(driver, from_db, to_db, &def.definition);
+    let mut portable = portable_definition(driver, from_db, to_db, raw_body);
     // 比較用: 自スキーマの修飾を (両側とも) 取り除いてから空白を畳む。
-    let mut normalized = normalize_definition(driver, from_db, &def.definition);
+    let mut normalized = normalize_definition(driver, from_db, raw_body);
     if driver == DriverKind::Mysql && def.kind == "event" {
         normalized = normalize_event(&normalized);
+    }
+    if let Some(tz) = &event_tz {
+        // time_zone が違えば時刻の意味が変わるので、比較にも同期にも含める。
+        normalized = format!("time_zone={tz} {normalized}");
+        portable = format!("{EVENT_TZ_PREFIX}{tz}\n{portable}");
     }
     let table = if def.kind == "trigger" {
         def.table
@@ -703,6 +742,20 @@ pub fn contains_split_marker(definition: &str) -> bool {
 /// `CREATE ...` 文。`definition` は [`ObjectDiff::source_definition`]。複数文の定義
 /// (マテビュー + 索引) は PostgreSQL では DO ブロックにまとめる (拡張プロトコルは 1 文だけ)。
 pub fn create_object_sql(driver: DriverKind, definition: &str) -> String {
+    if driver == DriverKind::Mysql {
+        if let Some((tz, body)) = split_event_time_zone(definition) {
+            // EVENT は作成時の time_zone で時刻が解釈されるので、source の time_zone に差し替えて作り、戻す。
+            let q = tz.replace('\\', "\\\\").replace('\'', "''");
+            let body = body.trim().trim_end_matches(';').trim_end();
+            return [
+                "SET @noobdb_prev_tz = @@session.time_zone".to_string(),
+                format!("SET time_zone = '{q}'"),
+                body.to_string(),
+                "SET time_zone = @noobdb_prev_tz".to_string(),
+            ]
+            .join(&format!(";\n{STMT_SPLIT}\n"));
+        }
+    }
     let parts = split_statements(definition);
     if parts.len() > 1 && driver == DriverKind::Postgres {
         return pg_do_block(&parts.iter().map(|p| p.to_string()).collect::<Vec<_>>());
@@ -1194,6 +1247,70 @@ mod tests {
         e.definition = e.definition.replace("''x''", "''y''");
         let d = compute_object_diff(DriverKind::Mysql, "a", "b", &[a], &[e]);
         assert_eq!(d[0].status, DiffStatus::Different);
+    }
+
+    #[test]
+    fn event_time_zone_is_compared_and_applied_on_sync() {
+        let mk = |tz: &str| {
+            ObjectDefinition {
+            kind: "event".into(),
+            name: "e".into(),
+            signature: None,
+            table: None,
+            definition: with_event_time_zone(
+                tz,
+                "CREATE DEFINER=`r`@`%` EVENT `e` ON SCHEDULE EVERY 1 DAY STARTS '2026-11-06 09:00:00' DO SELECT 1",
+            ),
+        }
+        };
+        let (jst, utc) = (mk("+09:00"), mk("+00:00"));
+        // 同じ time_zone なら Same、違えば Different (時刻の意味が変わるため)。
+        let same = compute_object_diff(
+            DriverKind::Mysql,
+            "a",
+            "b",
+            std::slice::from_ref(&jst),
+            std::slice::from_ref(&jst),
+        );
+        assert_eq!(same[0].status, DiffStatus::Same);
+        let diff = compute_object_diff(
+            DriverKind::Mysql,
+            "a",
+            "b",
+            std::slice::from_ref(&jst),
+            std::slice::from_ref(&utc),
+        );
+        assert_eq!(diff[0].status, DiffStatus::Different);
+        // 同期 SQL は source の time_zone に差し替えて作り、元に戻す。
+        let def = diff[0].source_definition.clone().unwrap_or_default();
+        let create = create_object_sql(DriverKind::Mysql, &def);
+        let parts = split_statements(&create);
+        assert_eq!(parts.len(), 4, "{create}");
+        assert_eq!(parts[0], "SET @noobdb_prev_tz = @@session.time_zone");
+        assert_eq!(parts[1], "SET time_zone = '+09:00'");
+        assert!(parts[2].starts_with("CREATE EVENT `e`"), "{create}");
+        assert_eq!(parts[3], "SET time_zone = @noobdb_prev_tz");
+        assert!(needs_text_protocol(&create));
+        assert!(swaps_session_time_zone(&create));
+        let replace = replace_object_sql(DriverKind::Mysql, &diff[0], &def);
+        assert!(replace.starts_with("DROP EVENT `e`;"), "{replace}");
+        // 引用符は二重にして escape する。
+        let quoted = create_object_sql(
+            DriverKind::Mysql,
+            &with_event_time_zone(
+                "a'b\\c",
+                "CREATE EVENT `e` ON SCHEDULE EVERY 1 DAY DO SELECT 1",
+            ),
+        );
+        assert!(quoted.contains("SET time_zone = 'a''b\\\\c'"), "{quoted}");
+        // time_zone が無い定義は従来どおり (SET を挟まない)。
+        assert_eq!(
+            create_object_sql(
+                DriverKind::Mysql,
+                "CREATE EVENT `e` ON SCHEDULE EVERY 1 DAY DO SELECT 1"
+            ),
+            "CREATE EVENT `e` ON SCHEDULE EVERY 1 DAY DO SELECT 1"
+        );
     }
 
     #[test]

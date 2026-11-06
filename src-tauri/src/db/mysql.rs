@@ -1359,27 +1359,47 @@ impl MySqlConn {
         apply_use_database(&mut conn, database).await?;
         let mut tx = conn.begin().await?;
         let mut counts: Vec<u64> = Vec::with_capacity(statements.len());
-        for st in statements {
-            // ルーチン・トリガーの CREATE / DROP と、区切り行で連ねた複数文 (スキーマ同期の
-            // オブジェクト置換, #1879) は prepared protocol だとエラー 1295 / 構文エラーに
-            // なるので、1 文ずつテキストプロトコル (`raw_sql`) で流す。
-            if allow_text_protocol && super::object_diff::needs_text_protocol(st.sql) {
-                let mut affected = 0u64;
-                for part in super::object_diff::split_statements(st.sql) {
-                    let r = sqlx::Executor::execute(
-                        &mut *tx,
-                        sqlx::raw_sql(sqlx::AssertSqlSafe(part.to_string())),
-                    )
-                    .await?;
-                    affected += r.rows_affected();
+        // EVENT の同期は作成中だけ time_zone を差し替える (#2100)。途中で失敗しても、プールへ戻る接続に
+        // 差し替えが残らないよう、失敗時はここで元に戻す。
+        let tz_swapped = statements
+            .iter()
+            .any(|s| super::object_diff::swaps_session_time_zone(s.sql));
+        let run: Result<()> = async {
+            for st in statements {
+                // ルーチン・トリガーの CREATE / DROP と、区切り行で連ねた複数文 (スキーマ同期の
+                // オブジェクト置換, #1879) は prepared protocol だとエラー 1295 / 構文エラーに
+                // なるので、1 文ずつテキストプロトコル (`raw_sql`) で流す。
+                if allow_text_protocol && super::object_diff::needs_text_protocol(st.sql) {
+                    let mut affected = 0u64;
+                    for part in super::object_diff::split_statements(st.sql) {
+                        let r = sqlx::Executor::execute(
+                            &mut *tx,
+                            sqlx::raw_sql(sqlx::AssertSqlSafe(part.to_string())),
+                        )
+                        .await?;
+                        affected += r.rows_affected();
+                    }
+                    counts.push(affected);
+                    continue;
                 }
-                counts.push(affected);
-                continue;
+                let result = sqlx::query(sqlx::AssertSqlSafe(st.sql))
+                    .execute(&mut *tx)
+                    .await?;
+                counts.push(result.rows_affected());
             }
-            let result = sqlx::query(sqlx::AssertSqlSafe(st.sql))
-                .execute(&mut *tx)
-                .await?;
-            counts.push(result.rows_affected());
+            Ok(())
+        }
+        .await;
+        if let Err(e) = run {
+            drop(tx);
+            if tz_swapped {
+                let _ = sqlx::Executor::execute(
+                    &mut *conn,
+                    sqlx::raw_sql("SET time_zone = IFNULL(@noobdb_prev_tz, @@global.time_zone)"),
+                )
+                .await;
+            }
+            return Err(e);
         }
         if let Some(violation) = super::evaluate_guard(statements, &counts) {
             tx.rollback().await?;
@@ -2722,7 +2742,15 @@ impl MySqlConn {
         let row: MySqlRow = sqlx::query(sqlx::AssertSqlSafe(stmt))
             .fetch_one(&self.pool)
             .await?;
-        show_create_text(&row, &[col])
+        let ddl = show_create_text(&row, &[col])?;
+        if kind == "event" {
+            // EVENT のスケジュール時刻 (STARTS / AT / ENDS) は作成時のセッション time_zone で解釈され、
+            // 実行時の time_zone にもなる。`time_zone` 列は別に返るので、先頭のコメント行に載せて
+            // 比較・表示・同期で失わないようにする (#2100)。
+            let tz = show_create_text(&row, &["time_zone"]).unwrap_or_default();
+            return Ok(super::object_diff::with_event_time_zone(&tz, &ddl));
+        }
+        Ok(ddl)
     }
 
     /// `table` のトリガー一覧 (#1867)。`information_schema.TRIGGERS` から名前・タイミング・
