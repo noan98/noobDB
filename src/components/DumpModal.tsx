@@ -213,6 +213,7 @@ function DumpToolNotice({
   installError,
   onInstall,
   nativeSelected,
+  autoSwitched,
 }: {
   status: DumpToolStatus;
   installing: boolean;
@@ -220,6 +221,8 @@ function DumpToolNotice({
   onInstall: () => void;
   /** 内蔵生成を選んでいるとき (未導入のため自動で切り替えた場合を含む) は警告ではなく情報の帯にする。 */
   nativeSelected: boolean;
+  /** 未導入を検出して**自動で**内蔵へ切り替えたときだけ「切り替えました」と伝える。 */
+  autoSwitched: boolean;
 }) {
   const t = useT();
   const toast = useToast();
@@ -228,7 +231,7 @@ function DumpToolNotice({
     <Callout
       tone={nativeSelected ? "info" : "warning"}
       title={
-        nativeSelected
+        autoSwitched
           ? t("dumpEngineAutoSwitched", { tool: status.tool })
           : t("dumpToolMissingTitle", { tool: status.tool })
       }
@@ -452,6 +455,8 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
   const [installError, setInstallError] = useState<string | null>(null);
   // 未導入で自動的に内蔵生成へ切り替えたか。prefs には元の選択を保存するために覚える。
   const [autoSwitched, setAutoSwitched] = useState(false);
+  // 自動切り替え前のルーチン (PostgreSQL は切り替えで ON にするので、prefs には元の値を保存する)。
+  const preAutoRoutinesRef = useRef(false);
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const refreshToolStatus = useMemo(
@@ -463,6 +468,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
           setToolStatus(next);
           // 最初の検出でツールが無ければ内蔵生成へ切り替える (エラー後の再検出では動かさない)。
           if (initial && next.path == null && !optionsRef.current.native) {
+            preAutoRoutinesRef.current = !!optionsRef.current.routines;
             setAutoSwitched(true);
             setOptions((prev) => ({
               ...prev,
@@ -536,7 +542,8 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
   /** 生成エンジンを選ぶ。PostgreSQL のネイティブ生成は、トリガーが参照する関数を出さないと復元できないので、
    *  内蔵に切り替えたときルーチンも既定でオンにする。 */
   const selectEngine = (native: boolean) => {
-    if (isRunning) return;
+    // 選択中のカードの再押下では何も変えない (自動切り替えの記録を落として prefs を上書きしないため)。
+    if (isRunning || native === useNative) return;
     setAutoSwitched(false);
     setOptions((prev) => ({
       ...prev,
@@ -592,7 +599,14 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
       options: Object.fromEntries(
         [...visibleRows.map((row) => row.key), ...(engineSelectable ? (["native"] as const) : [])].map(
           // 自動で内蔵へ切り替えただけなら、元の選択 (外部ツール) を覚える。
-          (k) => [k, k === "native" && autoSwitched ? false : options[k] === true],
+          (k) => [
+            k,
+            autoSwitched && k === "native"
+              ? false
+              : autoSwitched && k === "routines"
+                ? preAutoRoutinesRef.current
+                : options[k] === true,
+          ],
         ),
       ) as Partial<Record<DumpBoolKey, boolean>>,
       dir: dirnameOf(target),
@@ -760,6 +774,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
                 installError={installError}
                 onInstall={() => void handleInstallTool()}
                 nativeSelected={useNative}
+                autoSwitched={autoSwitched}
               />
             </motion.div>
           )}

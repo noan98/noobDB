@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
-import { api } from "../api/tauri";
+import { api, listenDumpStream, type DumpStreamHandlers } from "../api/tauri";
 import { dumpOptionLock, resolveDumpOptions, type DumpLockContext } from "../dumpOptionLocks";
 import { DumpModal } from "../components/DumpModal";
 import { t } from "../i18n";
@@ -191,6 +191,42 @@ describe("DumpModal 生成エンジンのカード選択 (#2094)", () => {
     await waitFor(() => expect(api.dumpDatabase).toHaveBeenCalled());
     expect(vi.mocked(api.dumpDatabase).mock.calls[0][0].options.native).toBe(true);
     expect(loadDumpPrefs("p-auto")?.options.native).toBe(false);
+  });
+
+  it("prefs の native: true でツール未導入なら「切り替えました」は出さず、未導入の案内だけを info で出す", async () => {
+    localStorage.clear();
+    saveDumpPrefs("p-nat2", { options: { native: true }, dir: "" });
+    mockTool(null);
+    renderWithProviders(
+      <DumpModal sessionId="s1" database="app" driver="mysql" profileId="p-nat2" onClose={() => {}} />,
+    );
+    await waitFor(() => expect(engine("external")).toBeDisabled());
+    expect(engine("native")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText(t("dumpEngineAutoSwitched", { tool: "mysqldump" }))).not.toBeInTheDocument();
+    expect(screen.getByText(t("dumpToolMissingTitle", { tool: "mysqldump" }))).toBeInTheDocument();
+  });
+
+  it("実行エラー後の再検出でツールが無くても、選択中の外部ツールを内蔵へ切り替えない", async () => {
+    const status = vi.spyOn(api, "dumpToolStatus");
+    status.mockResolvedValueOnce({ tool: "mysqldump", path: "/x", install: null } as never);
+    status.mockResolvedValue({ tool: "mysqldump", path: null, install: null } as never);
+    vi.spyOn(api, "dumpDatabase").mockResolvedValue(undefined as never);
+    let handlers: DumpStreamHandlers | null = null;
+    vi.mocked(listenDumpStream).mockImplementationOnce(async (_id, h) => {
+      handlers = h;
+      return () => {};
+    });
+    renderWithProviders(<DumpModal sessionId="s1" database="app" driver="mysql" onClose={() => {}} />);
+    await waitFor(() => expect(engine("external")).toHaveTextContent(t("dumpEngineToolFound")));
+    fireEvent.change(screen.getByLabelText(t("dumpSavePath")), { target: { value: "/tmp/out.sql" } });
+    fireEvent.click(screen.getByRole("button", { name: t("dumpExecute") }));
+    await waitFor(() => expect(handlers).not.toBeNull());
+    await waitFor(() => expect(api.dumpDatabase).toHaveBeenCalled());
+    (handlers as unknown as DumpStreamHandlers).onError?.({ error: "boom" } as never);
+    await waitFor(() => expect(status).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(engine("external")).toBeDisabled());
+    expect(engine("external")).toHaveAttribute("aria-pressed", "true");
+    expect(engine("native")).toHaveAttribute("aria-pressed", "false");
   });
 
   it("prefs の native: true で開くと内蔵が選ばれ、外部へ戻すと元の値が復帰する", () => {
