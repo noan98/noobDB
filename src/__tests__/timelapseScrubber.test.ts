@@ -62,3 +62,21 @@ describe("formatCaptured", () => {
     expect(formatCaptured("bad", "ja")).toBe("bad");
   });
 });
+
+describe("目盛りの最小間隔と単調性", () => {
+  it("連続取得した世代でも目盛りが重ならず、時刻が逆転しても位置は戻らない", () => {
+    const close = scrubberTicks([
+      g(3, "2026-01-01T01:00:00Z", 1),
+      g(2, "2026-01-01T00:00:01Z", 1),
+      g(1, "2026-01-01T00:00:00Z", 1),
+    ]);
+    expect(close[1].x - close[0].x).toBeGreaterThanOrEqual(0.02 - 1e-9);
+    expect(close[2].x).toBeLessThanOrEqual(1);
+    const rev = scrubberTicks([
+      g(3, "2026-01-01T00:00:00Z", 1),
+      g(2, "2026-01-01T02:00:00Z", 1),
+      g(1, "2026-01-01T01:00:00Z", 1),
+    ]);
+    for (let i = 1; i < rev.length; i++) expect(rev[i].x).toBeGreaterThan(rev[i - 1].x);
+  });
+});

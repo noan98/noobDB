@@ -20,6 +20,29 @@ export interface ScrubberTick {
   y: number;
 }
 
+/** 隣り合う目盛りの最小間隔 (トラック幅に対する比率)。連続取得した世代が重ならないようにする。 */
+export const MIN_TICK_GAP = 0.02;
+
+/**
+ * 時系列順の位置 (0〜1) を単調非減少にしたうえで、最小間隔を確保する。時刻が id 順と逆転していても
+ * 位置は戻らない。最小間隔を取れない数 (世代が多すぎる) なら等間隔にする。
+ */
+export function spreadPositions(raw: readonly number[], gap: number = MIN_TICK_GAP): number[] {
+  const n = raw.length;
+  if (n <= 1) return [...raw];
+  if (gap * (n - 1) >= 1) return raw.map((_, i) => i / (n - 1));
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) out.push(i === 0 ? raw[0] : Math.max(raw[i], out[i - 1] + gap));
+  const first = out[0];
+  const last = out[n - 1];
+  // 右端を超えた分は全体を [first, 1] に収めて再スケールする (間隔比は保たれ、最小間隔は gap 以上のまま)。
+  if (last > 1) {
+    const room = 1 - first;
+    return out.map((v) => first + ((v - first) * room) / (last - first));
+  }
+  return out;
+}
+
 export function scrubberTicks(generations: readonly TimelapseGenerationMeta[]): ScrubberTick[] {
   const chron = [...generations].reverse();
   const n = chron.length;
@@ -33,13 +56,17 @@ export function scrubberTicks(generations: readonly TimelapseGenerationMeta[]): 
   const counts = chron.map((g) => g.row_count);
   const minC = Math.min(...counts);
   const maxC = Math.max(...counts);
+  const raw = chron.map((_, index) =>
+    usable ? (times[index] - minT) / (maxT - minT) : n === 1 ? 0.5 : index / (n - 1),
+  );
+  const xs = spreadPositions(raw);
   return chron.map((g, index) => ({
     id: g.id,
     index,
     capturedAt: g.captured_at,
     rowCount: g.row_count,
     truncated: g.truncated,
-    x: usable ? (times[index] - minT) / (maxT - minT) : n === 1 ? 0.5 : index / (n - 1),
+    x: xs[index],
     y: maxC > minC ? (g.row_count - minC) / (maxC - minC) : 0.5,
   }));
 }

@@ -38,6 +38,7 @@ export function TimelapseScrubber({
   const reduced = useReducedMotion();
   const trackRef = useRef<HTMLDivElement | null>(null);
   const dragging = useRef(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const ticks = scrubberTicks(generations);
   const current = ticks[step];
   if (!current) return null;
@@ -75,6 +76,9 @@ export function TimelapseScrubber({
         css={{ touchAction: "none", "&:has(input:focus-visible)": { boxShadow: "var(--focus-ring)" } }}
         data-testid="timelapse-track"
         onPointerDown={(e) => {
+          if (e.button !== 0) return;
+          // 透明な range にフォーカスを移し、直後の矢印キーが効くようにする。
+          inputRef.current?.focus({ preventScroll: true });
           dragging.current = true;
           e.currentTarget.setPointerCapture?.(e.pointerId);
           seekFromPointer(e.clientX);
@@ -139,7 +143,7 @@ export function TimelapseScrubber({
                 top="0"
                 bottom="0"
                 left="50%"
-                w={tk.truncated ? "1" : "0.5"}
+                w={tk.truncated ? "1.5" : "0.5"}
                 style={{
                   transform: "translateX(-50%)",
                   background: tk.truncated ? HATCH : "var(--border-strong)",
@@ -163,6 +167,7 @@ export function TimelapseScrubber({
           transition={reduced ? { duration: 0 } : springs.snappy}
         />
         <chakra.input
+          ref={inputRef}
           type="range"
           min={1}
           max={maxStep}
