@@ -168,6 +168,16 @@ impl PostgresConn {
         apply_search_path(&mut conn, database, &self.search_path).await?;
         // NOTICE / WARNING を捕捉して結果へ載せる (#1165)。
         let (result, messages) = capture(run_sql_on(&mut conn, sql)).await;
+        // 同じ接続で表を作り直す (DROP → CREATE、ダンプ復元など) と、接続にキャッシュされた
+        // プリペアド文の結果型が変わり、PostgreSQL は実行前の再検証で 0A000 を返す。
+        // 文はまだ実行されていないので、キャッシュを捨てて 1 回だけやり直す。
+        if let Err(e) = &result {
+            if is_stale_cached_plan(e) {
+                sqlx::Connection::clear_cached_statements(&mut *conn).await?;
+                let (result, messages) = capture(run_sql_on(&mut conn, sql)).await;
+                return Ok(result?.with_server_messages(messages));
+            }
+        }
         Ok(result?.with_server_messages(messages))
     }
 
@@ -3476,6 +3486,21 @@ async fn apply_search_path_on(
 
 /// Run one statement on a specific connection and decode it. Shared by
 /// `execute` (pool connection) and `tx_execute` (held transaction connection).
+/// 接続にキャッシュされたプリペアド文が、表の作り直しで結果型と合わなくなったときのエラー
+/// (SQLSTATE 0A000 `cached plan must not change result type`)。実行前の再検証で出るので
+/// 副作用は無く、キャッシュを捨てればやり直せる。
+fn is_stale_cached_plan(e: &AppError) -> bool {
+    match e {
+        AppError::Sqlx(sqlx::Error::Database(db)) => {
+            db.code().as_deref() == Some("0A000")
+                && db
+                    .message()
+                    .contains("cached plan must not change result type")
+        }
+        _ => false,
+    }
+}
+
 async fn run_sql_on(conn: &mut sqlx::PgConnection, sql: &str) -> Result<QueryResult> {
     let started = Instant::now();
     if is_query_shape(sql) || is_call_shape(sql) {
