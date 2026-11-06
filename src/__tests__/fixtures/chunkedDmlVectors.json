@@ -687,6 +687,11 @@
       ]
     },
     {
+      "note": "断片の先頭が単一引用符でも直前の文字を引かない (添字の下溢れ防止)",
+      "frag": "'x' = a",
+      "error": null
+    },
+    {
       "note": "PostgreSQL: E 文字列 (小文字) は拒否",
       "frag": "a = e'x'",
       "error": "unsupported",
