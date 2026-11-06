@@ -34,7 +34,6 @@ import {
   sortTasksForDisplay,
   summarizeAction,
   summarizeSchedule,
-  TASK_MAINTENANCE_LABEL_KEYS,
   type AssertionTrend,
   type ScheduleDraft,
 } from "../taskFormat";
@@ -46,7 +45,13 @@ import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import { LoadingButton } from "./LoadingButton";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
-import { ErrorNote, FieldError, FieldLabel, FormSection, PathRow } from "./modalForm";
+import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection, PathRow } from "./modalForm";
+import { TaskMaintenanceKindPicker } from "./TaskMaintenanceKindPicker";
+import {
+  buildTaskMaintenanceStatements,
+  maintenanceImpact,
+  TASK_MAINTENANCE_ERROR_KEYS,
+} from "./taskMaintenance";
 import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
 import { Spinner } from "./Spinner";
 import { Button, Checkbox, Input, Switch, Textarea } from "./ui";
@@ -880,6 +885,8 @@ function TaskForm({
   const [maintenanceKind, setMaintenanceKind] = useState<TaskMaintenanceKind>(
     task?.action.kind === "run_maintenance" ? task.action.maintenance : "analyze",
   );
+  // 「対象テーブル必須」は、対象欄を触るか保存を押すまで出さない (初期表示で騒がない)。
+  const [maintenanceTouched, setMaintenanceTouched] = useState(false);
   const [maintenanceTargets, setMaintenanceTargets] = useState(
     task?.action.kind === "run_maintenance" ? task.action.targets.join("\n") : "",
   );
@@ -927,6 +934,15 @@ function TaskForm({
   const effectiveMaintenanceKind = maintenanceKinds.includes(maintenanceKind)
     ? maintenanceKind
     : maintenanceKinds[0];
+  // ライブプレビューと保存前の組み合わせ検証は同じ関数 (`build_statements` の写し) を通す (#2096)。
+  const maintenanceTargetList = parseMaintenanceTargets(maintenanceTargets);
+  const maintenanceBuild = buildTaskMaintenanceStatements(
+    selectedProfile?.driver,
+    database.trim() === "" ? null : database,
+    maintenanceTargetList,
+    effectiveMaintenanceKind,
+  );
+  const maintenanceError = "error" in maintenanceBuild ? maintenanceBuild.error : null;
   const preview = outputPath ? previewOutputPath(outputPath, new Date()) : "";
 
   const browseOutputPath = async () => {
@@ -1021,20 +1037,18 @@ function TaskForm({
         setFormError(t("taskFormMaintenanceReadOnlyProfile"));
         return;
       }
-      const targets = parseMaintenanceTargets(maintenanceTargets);
-      const driver = selectedProfile?.driver;
-      if (targets.length === 0 && (driver === "mysql" || driver === undefined)) {
-        setFormError(t("taskFormMaintenanceTargetsRequiredMysql"));
+      // 組み合わせ違反は入力欄の下の FieldError に出ているので、ここでは保存を止めるだけ。
+      if (maintenanceError !== null) {
+        setMaintenanceTouched(true);
+        // 無反応にせず、違反のある入力欄へ移動する。
+        const el = document.getElementById(
+          maintenanceError === "invalidDatabase" ? "task-database-maintenance" : "task-maintenance-targets",
+        );
+        el?.scrollIntoView?.({ block: "center" });
+        el?.focus();
         return;
       }
-      if (targets.length === 0 && driver === "postgres" && effectiveMaintenanceKind === "reindex") {
-        setFormError(t("taskFormMaintenanceTargetsRequiredReindex"));
-        return;
-      }
-      if (targets.length > 0 && driver === "sqlite" && effectiveMaintenanceKind === "vacuum") {
-        setFormError(t("taskFormMaintenanceSqliteVacuumTargets"));
-        return;
-      }
+      const targets = maintenanceTargetList;
       action = {
         kind: "run_maintenance",
         database: database.trim() === "" ? null : database.trim(),
@@ -1269,20 +1283,16 @@ function TaskForm({
         </chakra.p>
       ) : actionKind === "run_maintenance" ? (
         <>
-          <Callout tone="warning">{t("taskFormMaintenanceHint")}</Callout>
-          <FormSection>
-            <FieldLabel as="div">{t("taskFormMaintenanceKind")}</FieldLabel>
-            <ListboxSelect
-              css={{ width: "100%" }}
-              ariaLabel={t("taskFormMaintenanceKind")}
-              value={effectiveMaintenanceKind}
-              options={maintenanceKinds.map((k) => ({
-                value: k,
-                label: t(TASK_MAINTENANCE_LABEL_KEYS[k]),
-              }))}
-              onChange={(v) => setMaintenanceKind(v as TaskMaintenanceKind)}
-            />
-          </FormSection>
+          <TaskMaintenanceKindPicker
+            driver={selectedProfile?.driver}
+            value={effectiveMaintenanceKind}
+            onChange={setMaintenanceKind}
+          />
+          {maintenanceImpact(selectedProfile?.driver, effectiveMaintenanceKind).lock === "heavy" && (
+            <Callout tone="warning" data-testid="task-maint-heavy-hint">
+              {t("taskMaintHeavyHint")}
+            </Callout>
+          )}
           {selectedProfile?.driver !== "sqlite" && (
             <FormSection>
               <FieldLabel htmlFor="task-database-maintenance">{t("taskFormMaintenanceDatabase")}</FieldLabel>
@@ -1296,6 +1306,9 @@ function TaskForm({
                 }
                 onChange={(e) => setDatabase(e.target.value)}
               />
+              {maintenanceError === "invalidDatabase" && (
+                <FieldError>{t(TASK_MAINTENANCE_ERROR_KEYS.invalidDatabase)}</FieldError>
+              )}
             </FormSection>
           )}
           <FormSection>
@@ -1303,11 +1316,29 @@ function TaskForm({
             <Textarea
               id="task-maintenance-targets"
               value={maintenanceTargets}
-              onChange={(e) => setMaintenanceTargets(e.target.value)}
+              onChange={(e) => {
+                setMaintenanceTouched(true);
+                setMaintenanceTargets(e.target.value);
+              }}
               rows={4}
               fontFamily="var(--font-mono)"
             />
+            {maintenanceError !== null &&
+              maintenanceError !== "invalidDatabase" &&
+              (maintenanceTouched ||
+                (maintenanceError !== "targetsRequiredMysql" &&
+                  maintenanceError !== "targetsRequiredReindex")) && (
+                <FieldError>{t(TASK_MAINTENANCE_ERROR_KEYS[maintenanceError])}</FieldError>
+              )}
           </FormSection>
+          {"sql" in maintenanceBuild && (
+            <FormSection>
+              <FieldLabel as="div">{t("taskMaintPreviewLabel")}</FieldLabel>
+              <CodePreview maxH="48" data-testid="task-maint-preview">
+                {maintenanceBuild.sql.join("\n")}
+              </CodePreview>
+            </FormSection>
+          )}
         </>
       ) : actionKind === "run_assertions" ? (
         <>
