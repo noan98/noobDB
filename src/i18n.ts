@@ -6804,8 +6804,6 @@ const en = {
     "Captures a snapshot of every table watched in the Table Timelapse panel for this connection (read-only), so history keeps accumulating while you are away. A table that cannot be captured marks the run as failed.",
   taskFormTimelapseMaxGenerations: "Generations to keep per table (optional)",
   taskFormActionMaintenance: "Run maintenance (ANALYZE / VACUUM / OPTIMIZE / REINDEX)",
-  taskFormMaintenanceHint:
-    "Runs the chosen maintenance statement one table at a time. This is a write operation, so it is rejected for read-only profiles; the statements are generated from a fixed set (no custom SQL). A table that fails marks the run as failed, and the rest still run. With no target tables, PostgreSQL and SQLite process the whole database; the schema field is only used to qualify target table names.",
   taskFormMaintenanceKind: "Maintenance",
   taskFormMaintenanceDatabase: "Database / schema (optional)",
   taskFormMaintenanceTargets: "Target tables (one per line; empty = whole database)",
@@ -6816,6 +6814,28 @@ const en = {
     "SQLite VACUUM applies to the whole database. Leave the target tables empty.",
   taskFormMaintenanceReadOnlyProfile:
     "This connection is read-only, so maintenance cannot be scheduled for it.",
+  taskMaintEffectAnalyze: "Refreshes the planner statistics so queries pick better plans.",
+  taskMaintEffectVacuumAnalyze: "Reclaims dead space and refreshes statistics in one pass.",
+  taskMaintEffectVacuum: "Reclaims space left by deleted and updated rows.",
+  taskMaintEffectReindex: "Rebuilds indexes from scratch to remove bloat and corruption.",
+  taskMaintEffectOptimize:
+    "Rebuilds the table and refreshes its statistics (reclaims space). Online for InnoDB; FULLTEXT indexes and MyISAM block writes.",
+  taskMaintLockLight: "Lock: light",
+  taskMaintLockHeavy: "Lock: heavy",
+  taskMaintBlocksWrites: "Blocks writes",
+  taskMaintBlocksReads: "Blocks reads too",
+  taskMaintUnsupportedMysql: "Not available on MySQL (it has no VACUUM / REINDEX; use OPTIMIZE).",
+  taskMaintUnsupportedPgOptimize: "Not available on PostgreSQL (use VACUUM).",
+  taskMaintUnsupportedSqliteOptimize: "Not available on SQLite (use VACUUM).",
+  taskMaintUnsupportedSqliteVacuumAnalyze:
+    "Not available on SQLite (schedule VACUUM and ANALYZE separately).",
+  taskMaintUnsupportedKind: "This maintenance kind is not available for the selected connection.",
+  taskMaintInvalidTargets:
+    "Target tables must be unique, non-empty, and at most 500. Remove duplicates or blank names.",
+  taskMaintInvalidDatabase: "The database / schema name contains a character that cannot be quoted.",
+  taskMaintPreviewLabel: "Statements that will run",
+  taskMaintHeavyHint:
+    "This kind takes heavier locks and can make other sessions wait while it runs. Schedule it for a quiet time. It is a write operation, so it is rejected for read-only profiles; a table that fails marks the run as failed, and the rest still run.",
   taskFormActionPlanWatch: "Refresh watched query plans",
   taskFormPlanWatchHint:
     "Re-runs EXPLAIN for the queries watched in the Plan Watch panel and records a new plan generation when it changed. Only warning-level changes (e.g. an index lookup that became a full scan, or an order-of-magnitude jump in estimated rows) mark the run as failed and notify you.",
@@ -14216,8 +14236,6 @@ const ja: Dict = {
     "この接続でテーブル・タイムラプスにウォッチ登録したテーブルのスナップショットを読み取り専用で取得し、席を外している間も履歴を積み上げます。取得できなかったテーブルがあると実行は失敗扱いになります。",
   taskFormTimelapseMaxGenerations: "テーブルごとに保持する世代数 (任意)",
   taskFormActionMaintenance: "定期メンテナンス (ANALYZE / VACUUM / OPTIMIZE / REINDEX)",
-  taskFormMaintenanceHint:
-    "選んだメンテナンス文をテーブルごとに 1 文ずつ実行します。書き込み扱いの操作なので、読み取り専用の接続では拒否されます。実行する文は固定の組み合わせから生成し、任意の SQL は指定できません。失敗したテーブルがあると実行は失敗扱いになりますが、残りは続けて実行します。対象テーブルが空のときは PostgreSQL / SQLite ではデータベース全体が対象になり、スキーマ指定は対象テーブルの修飾にだけ使います。",
   taskFormMaintenanceKind: "メンテナンスの種類",
   taskFormMaintenanceDatabase: "データベース / スキーマ (省略可)",
   taskFormMaintenanceTargets: "対象テーブル (1 行に 1 つ。空ならデータベース全体)",
@@ -14228,6 +14246,28 @@ const ja: Dict = {
   taskFormMaintenanceSqliteVacuumTargets:
     "SQLite の VACUUM はデータベース全体が対象です。対象テーブルは空にしてください。",
   taskFormMaintenanceReadOnlyProfile: "この接続は読み取り専用のため、メンテナンスは登録できません。",
+  taskMaintEffectAnalyze: "実行計画の統計を更新し、クエリがより良い計画を選べるようにします。",
+  taskMaintEffectVacuumAnalyze: "不要領域の回収と統計の更新を一度に行います。",
+  taskMaintEffectVacuum: "削除・更新された行が残した領域を回収します。",
+  taskMaintEffectReindex: "索引を作り直し、肥大化や破損を解消します。",
+  taskMaintEffectOptimize:
+    "テーブルを再構築し、統計も更新します (領域を回収)。InnoDB ではオンライン実行。FULLTEXT 索引・MyISAM は書き込みを止めます。",
+  taskMaintLockLight: "ロック: 軽",
+  taskMaintLockHeavy: "ロック: 重",
+  taskMaintBlocksWrites: "書き込みをブロック",
+  taskMaintBlocksReads: "読み取りも止まる",
+  taskMaintUnsupportedMysql: "MySQL では使えません (VACUUM / REINDEX は無く、OPTIMIZE を使います)。",
+  taskMaintUnsupportedPgOptimize: "PostgreSQL では使えません (VACUUM を使います)。",
+  taskMaintUnsupportedSqliteOptimize: "SQLite では使えません (VACUUM を使います)。",
+  taskMaintUnsupportedSqliteVacuumAnalyze:
+    "SQLite では使えません (VACUUM と ANALYZE を別々にスケジュールしてください)。",
+  taskMaintUnsupportedKind: "選んだ接続ではこの種類のメンテナンスは使えません。",
+  taskMaintInvalidTargets:
+    "対象テーブルは重複なし・空でない名前で、500 件までです。重複や空の名前を取り除いてください。",
+  taskMaintInvalidDatabase: "データベース / スキーマ名に、引用できない文字が含まれています。",
+  taskMaintPreviewLabel: "実行される文",
+  taskMaintHeavyHint:
+    "この種類は強いロックを取り、実行中は他のセッションを待たせることがあります。空いている時間帯に設定してください。書き込み扱いの操作なので、読み取り専用の接続では拒否されます。失敗したテーブルがあると実行は失敗扱いになりますが、残りは続けて実行します。",
   taskFormActionPlanWatch: "ウォッチ中のクエリ実行計画を再取得",
   taskFormPlanWatchHint:
     "実行計画ウォッチに登録したクエリの EXPLAIN を再実行し、計画が変わっていれば新しい世代として記録します。警告レベルの変化 (インデックス参照がフルスキャンになった、推定行数が桁違いに増えた等) があったときだけ実行を失敗扱いにしてデスクトップ通知でお知らせします。",
