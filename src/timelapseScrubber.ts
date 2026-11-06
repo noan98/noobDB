@@ -33,12 +33,12 @@ export function spreadPositions(raw: readonly number[], gap: number = MIN_TICK_G
   if (gap * (n - 1) >= 1) return raw.map((_, i) => i / (n - 1));
   const out: number[] = [];
   for (let i = 0; i < n; i++) out.push(i === 0 ? raw[0] : Math.max(raw[i], out[i - 1] + gap));
-  const first = out[0];
-  const last = out[n - 1];
-  // 右端を超えた分は全体を [first, 1] に収めて再スケールする (間隔比は保たれ、最小間隔は gap 以上のまま)。
-  if (last > 1) {
-    const room = 1 - first;
-    return out.map((v) => first + ((v - first) * room) / (last - first));
+  // 右端を超えた分は、末尾を 1 に抑えて後ろ向きに詰める (隣接差は gap 以上のまま)。
+  if (out[n - 1] > 1) {
+    out[n - 1] = 1;
+    for (let i = n - 2; i >= 0; i--) out[i] = Math.min(out[i], out[i + 1] - gap);
+    // 左端が 0 を割るなら詰め切れない。等間隔にする。
+    if (out[0] < 0) return raw.map((_, i) => i / (n - 1));
   }
   return out;
 }

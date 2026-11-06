@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { TimelapseGenerationMeta } from "../api/tauri";
-import { formatCaptured, nearestStep, scrubberTicks } from "../timelapseScrubber";
+import { formatCaptured, nearestStep, scrubberTicks, spreadPositions } from "../timelapseScrubber";
 
 const g = (id: number, at: string, rows: number, truncated = false): TimelapseGenerationMeta => ({
   id,
@@ -78,5 +78,26 @@ describe("目盛りの最小間隔と単調性", () => {
       g(1, "2026-01-01T01:00:00Z", 1),
     ]);
     for (let i = 1; i < rev.length; i++) expect(rev[i].x).toBeGreaterThan(rev[i - 1].x);
+  });
+
+  it("最古の世代の時刻が最大でも潰れず、隣接差が最小間隔以上になる", () => {
+    const check = (gs: TimelapseGenerationMeta[]) => {
+      const xs = scrubberTicks(gs).map((t) => t.x);
+      for (let i = 1; i < xs.length; i++) expect(xs[i] - xs[i - 1]).toBeGreaterThanOrEqual(0.02 - 1e-9);
+      expect(xs[0]).toBeGreaterThanOrEqual(0);
+      expect(xs[xs.length - 1]).toBeLessThanOrEqual(1 + 1e-9);
+    };
+    // 新しい順で届く: 時系列は id1@02:00, id2@00:00, id3@01:00。
+    check([
+      g(3, "2026-01-01T01:00:00Z", 1),
+      g(2, "2026-01-01T00:00:00Z", 1),
+      g(1, "2026-01-01T02:00:00Z", 1),
+    ]);
+  });
+
+  it("spreadPositions は [0.99, 0, 1] でも単調で間隔を保つ", () => {
+    const xs = spreadPositions([0.99, 0, 1]);
+    for (let i = 1; i < xs.length; i++) expect(xs[i] - xs[i - 1]).toBeGreaterThanOrEqual(0.02 - 1e-9);
+    expect(xs[2]).toBeLessThanOrEqual(1);
   });
 });

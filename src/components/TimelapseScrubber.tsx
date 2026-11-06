@@ -77,6 +77,8 @@ export function TimelapseScrubber({
         data-testid="timelapse-track"
         onPointerDown={(e) => {
           if (e.button !== 0) return;
+          // 既定動作を止める。続く mousedown の既定動作でフォーカスが body に戻るのを防ぐ。
+          e.preventDefault();
           // 透明な range にフォーカスを移し、直後の矢印キーが効くようにする。
           inputRef.current?.focus({ preventScroll: true });
           dragging.current = true;
@@ -90,6 +92,9 @@ export function TimelapseScrubber({
           dragging.current = false;
         }}
         onPointerCancel={() => {
+          dragging.current = false;
+        }}
+        onLostPointerCapture={() => {
           dragging.current = false;
         }}
       >
