@@ -4605,3 +4605,51 @@ async fn postgres_chunked_dml_partitioned_and_inherited_tables() {
             .await;
     }
 }
+
+/// 同じ接続で表を作り直したあと同じ SELECT を流しても、キャッシュ済みプリペアド文の
+/// 結果型不一致 (0A000 `cached plan must not change result type`) で落ちない。
+/// ダンプ復元 (#2033) のあとに同じクエリを再実行するとプールの接続によって失敗していた。
+#[tokio::test]
+async fn postgres_select_survives_table_recreation_with_cached_statement() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let tbl = format!("noobdb_stale_plan_{}", std::process::id());
+    let select = format!("SELECT * FROM {tbl} ORDER BY 1");
+    conn.execute(&format!("DROP TABLE IF EXISTS {tbl}"), None)
+        .await
+        .expect("drop");
+    conn.execute(&format!("CREATE TABLE {tbl} (id INT)"), None)
+        .await
+        .expect("create");
+    conn.execute(&format!("INSERT INTO {tbl} VALUES (1)"), None)
+        .await
+        .expect("insert");
+    // プールの全接続 (上限 5) に同じ文をキャッシュさせる。
+    for _ in 0..8 {
+        conn.execute(&select, None).await.expect("first select");
+    }
+    conn.execute(&format!("DROP TABLE {tbl}"), None)
+        .await
+        .expect("drop again");
+    conn.execute(&format!("CREATE TABLE {tbl} (id INT, name TEXT)"), None)
+        .await
+        .expect("recreate");
+    conn.execute(&format!("INSERT INTO {tbl} VALUES (1, 'a')"), None)
+        .await
+        .expect("insert again");
+    for _ in 0..8 {
+        let r = conn
+            .execute(&select, None)
+            .await
+            .expect("select after recreation");
+        assert_eq!(r.columns.len(), 2);
+    }
+    let _ = conn
+        .execute(&format!("DROP TABLE IF EXISTS {tbl}"), None)
+        .await;
+    conn.close().await;
+}
