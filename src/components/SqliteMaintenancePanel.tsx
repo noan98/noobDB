@@ -6,7 +6,15 @@ import { useT } from "../i18n";
 import { SurfaceRule } from "./SurfaceRule";
 import { Callout } from "./Callout";
 import { EmptyState } from "./EmptyState";
-import { groupFkViolations, freelistRatio, shouldSuggestVacuum } from "./sqliteMaintenance";
+import { StatTile } from "./StatTile";
+import { RunQueryIllustration } from "./illustrations";
+import {
+  groupFkViolations,
+  freelistRatio,
+  shouldSuggestVacuum,
+  VACUUM_HINT_MIN_PAGES,
+  VACUUM_HINT_RATIO,
+} from "./sqliteMaintenance";
 import { CodePreview } from "./modalForm";
 import { Tooltip } from "./Tooltip";
 import { Button, Heading } from "./ui";
@@ -40,6 +48,61 @@ const tdCss: SystemStyleObject = {
   color: "var(--text)",
   whiteSpace: "nowrap",
 };
+const tdNumCss: SystemStyleObject = { ...tdCss, textStyle: "numeric" };
+
+const PURPOSE_KEYS = [
+  "sqliteMaintPurposeIntegrity",
+  "sqliteMaintPurposeForeignKey",
+  "sqliteMaintPurposeOptimize",
+  "sqliteMaintPurposeAnalyze",
+] as const;
+
+/** 空き率メーター。VACUUM を提案する閾値の位置にマーカーを置く (0〜100% の目盛り)。 */
+function FreelistMeter({ ratio }: { ratio: number }) {
+  const t = useT();
+  const pct = Math.min(100, Math.max(0, ratio * 100));
+  const thresholdPct = VACUUM_HINT_RATIO * 100;
+  const over = ratio >= VACUUM_HINT_RATIO;
+  return (
+    <Box data-testid="sqlite-maint-meter">
+      <Box
+        role="meter"
+        aria-label={t("sqliteMaintMeterAria", { threshold: thresholdPct })}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(pct)}
+        position="relative"
+        h="2"
+        borderRadius="sm"
+        bg="app.surfaceMuted"
+        overflow="visible"
+      >
+        <Box
+          h="100%"
+          borderRadius="sm"
+          bg={over ? "app.warningBg" : "app.accent"}
+          style={{ width: `${pct}%` }}
+          data-testid="sqlite-maint-meter-fill"
+        />
+        <Box
+          aria-hidden
+          position="absolute"
+          top="-1"
+          bottom="-1"
+          w="0.5"
+          bg="app.text"
+          style={{ left: `${thresholdPct}%` }}
+          data-testid="sqlite-maint-meter-threshold"
+        />
+      </Box>
+      <chakra.div position="relative" h="4" mt="1" textStyle="caption" color="app.textMuted" aria-hidden>
+        <chakra.span position="absolute" textStyle="numeric" style={{ left: `${thresholdPct}%` }}>
+          {t("sqliteMaintMeterThreshold", { threshold: thresholdPct })}
+        </chakra.span>
+      </chakra.div>
+    </Box>
+  );
+}
 
 const ACTIONS: Array<{ action: SqliteMaintenanceAction; writes: boolean }> = [
   { action: "integrity_check", writes: false },
@@ -120,7 +183,29 @@ export function SqliteMaintenancePanel({ sessionId, readOnly }: { sessionId: str
       </chakra.p>
 
       {result === null ? (
-        <EmptyState compact icon="check" title={t("sqliteMaintEmpty")} />
+        <>
+          <EmptyState
+            illustration={<RunQueryIllustration />}
+            icon="check"
+            title={t("sqliteMaintEmpty")}
+            description={t("sqliteMaintEmptyDesc")}
+          />
+          <chakra.ul
+            margin={0}
+            padding={0}
+            listStyleType="none"
+            display="flex"
+            flexDirection="column"
+            gap="1.5"
+            fontSize="sm"
+            color="app.textMuted"
+            data-testid="sqlite-maint-purposes"
+          >
+            {PURPOSE_KEYS.map((k) => (
+              <li key={k}>{t(k)}</li>
+            ))}
+          </chakra.ul>
+        </>
       ) : (
         <>
           {(result.action === "integrity_check" || result.action === "foreign_key_check") &&
@@ -161,7 +246,7 @@ export function SqliteMaintenancePanel({ sessionId, readOnly }: { sessionId: str
                     <tr key={`${g.table}->${g.parent}`} data-testid="sqlite-maint-violation">
                       <chakra.td css={tdCss}>{g.table}</chakra.td>
                       <chakra.td css={tdCss}>{g.parent}</chakra.td>
-                      <chakra.td css={tdCss}>{g.count}</chakra.td>
+                      <chakra.td css={tdNumCss}>{g.count}</chakra.td>
                       <chakra.td css={tdCss}>
                         {result.fk_violations
                           .filter((v) => v.table === g.table && v.parent === g.parent)
@@ -177,17 +262,30 @@ export function SqliteMaintenancePanel({ sessionId, readOnly }: { sessionId: str
           )}
 
           {result.page_count != null && result.freelist_count != null && (
-            <chakra.p margin={0} fontSize="sm" color="app.text" data-testid="sqlite-maint-pages">
-              {t("sqliteMaintPages", {
-                pages: result.page_count,
-                free: result.freelist_count,
-                percent: ratio === null ? 0 : Math.round(ratio * 100),
-              })}
-            </chakra.p>
+            <Flex direction="column" gap="2" data-testid="sqlite-maint-pages">
+              <Flex gap="2" wrap="wrap">
+                <StatTile label={t("sqliteMaintStatPages")} value={result.page_count.toLocaleString()} />
+                <StatTile label={t("sqliteMaintStatFree")} value={result.freelist_count.toLocaleString()} />
+                <StatTile
+                  label={t("sqliteMaintStatRatio")}
+                  value={ratio === null ? "–" : `${Math.round(ratio * 100)}%`}
+                />
+                <StatTile
+                  label={t("sqliteMaintStatElapsed")}
+                  value={`${result.elapsed_ms.toLocaleString()} ms`}
+                />
+              </Flex>
+              {ratio !== null && <FreelistMeter ratio={ratio} />}
+            </Flex>
           )}
-          {shouldSuggestVacuum(result) && (
+          {shouldSuggestVacuum(result) && ratio !== null && (
             <Callout tone="warning" data-testid="sqlite-maint-vacuum">
-              {t("sqliteMaintVacuumHint")}
+              {t("sqliteMaintVacuumHint")}{" "}
+              {t("sqliteMaintVacuumReason", {
+                percent: Math.round(ratio * 100),
+                threshold: VACUUM_HINT_RATIO * 100,
+                minPages: VACUUM_HINT_MIN_PAGES,
+              })}
             </Callout>
           )}
         </>
