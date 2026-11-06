@@ -927,7 +927,7 @@ async fn postgres_native_dump_roundtrips_when_env_set() {
 
 /// 元と復元先で突き合わせる SELECT。行は親経由 (全葉の合算) と、葉ごとの配置 (`tableoid`) の両方を見る。
 const PART_ROW_SELECTS: &[&str] = &[
-    "SELECT id, created, region, payload, ref_id FROM nb2098_part.events ORDER BY id, created",
+    "SELECT id, created, region, payload, ref_id, rid FROM nb2098_part.events ORDER BY id, created",
     "SELECT tableoid::regclass::text, id FROM nb2098_part.events ORDER BY 1, 2",
     "SELECT id, region, v FROM nb2098_part.by_region ORDER BY id",
     "SELECT tableoid::regclass::text, id FROM nb2098_part.by_region ORDER BY 1, 2",
@@ -946,6 +946,9 @@ const PART_DEF_SELECTS: &[&str] = &[
        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
       WHERE n.nspname = 'nb2098_part' AND c.relkind IN ('r', 'p') ORDER BY 1",
     "SELECT tablename, indexname, indexdef FROM pg_indexes WHERE schemaname = 'nb2098_part' ORDER BY 1, 2",
+    // 分割表の索引が無効 (ON ONLY のまま) で復元されていないことも、状態で突き合わせる。
+    "SELECT c.relname, i.indisvalid, i.indisready FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid \
+      WHERE c.relnamespace = 'nb2098_part'::regnamespace ORDER BY 1",
     "SELECT conrelid::regclass::text, conname, contype::text, pg_get_constraintdef(oid) \
        FROM pg_constraint WHERE connamespace = 'nb2098_part'::regnamespace ORDER BY 1, 2",
     "SELECT tgrelid::regclass::text, tgname, pg_get_triggerdef(oid) FROM pg_trigger \
@@ -962,7 +965,7 @@ async fn part_setup(conn: &t::Connection) {
         "INSERT INTO nb2098_part.ref_t VALUES (1, 'a'), (2, 'it''s')".into(),
         // range + 既定パーティション。PK・通常索引・親の外部キー・CHECK を持つ。
         "CREATE TABLE nb2098_part.events (id bigint NOT NULL, created date NOT NULL, region text, \
-           payload text, ref_id int REFERENCES nb2098_part.ref_t (id), CHECK (id > 0), \
+           payload text, ref_id int REFERENCES nb2098_part.ref_t (id), rid int, CHECK (id > 0), \
            PRIMARY KEY (id, created)) PARTITION BY RANGE (created)".into(),
         "CREATE TABLE nb2098_part.e_2024 PARTITION OF nb2098_part.events FOR VALUES FROM ('2024-01-01') TO ('2025-01-01')".into(),
         "CREATE TABLE nb2098_part.e_2025 PARTITION OF nb2098_part.events FOR VALUES FROM ('2025-01-01') TO ('2026-01-01')".into(),
@@ -986,6 +989,12 @@ async fn part_setup(conn: &t::Connection) {
         "CREATE TABLE nb2098_part.r_asia_1 PARTITION OF nb2098_part.r_asia FOR VALUES WITH (modulus 2, remainder 1)".into(),
         "CREATE TABLE nb2098_part.r_other PARTITION OF nb2098_part.by_region DEFAULT".into(),
         "INSERT INTO nb2098_part.by_region SELECT g, (ARRAY['fr','de','us','jp','cn','br'])[g % 6 + 1], 'v' || g FROM generate_series(1, 18) g".into(),
+        // 子 (分割表) だけが持つ索引。ON ONLY のまま出すと復元先で無効な分割索引になる。
+        "CREATE INDEX ON nb2098_part.r_asia (v)".into(),
+        // events から by_region (別の分割表) への複合 FK。r_eu / r_us の葉のデータが e_* より先でなければ
+        // ならず (名前順だと e_* が先)、複製された FK は二重に出さない。
+        "ALTER TABLE nb2098_part.events ADD CONSTRAINT events_rid_region_fkey FOREIGN KEY (rid, region) REFERENCES nb2098_part.by_region (id, region)".into(),
+        "INSERT INTO nb2098_part.events (id, created, region, payload, rid) VALUES (10, '2024-02-02', 'de', 'fk1', 1), (11, '2025-02-02', 'us', 'fk2', 2)".into(),
         // hash のみ。
         "CREATE TABLE nb2098_part.hp (id int PRIMARY KEY, v text) PARTITION BY HASH (id)".into(),
         "CREATE TABLE nb2098_part.hp_0 PARTITION OF nb2098_part.hp FOR VALUES WITH (modulus 3, remainder 0)".into(),
@@ -1045,14 +1054,14 @@ async fn postgres_native_dump_partitions_roundtrip_when_env_set() {
     }
     let opts = t::parse_postgres_url(&url).expect("valid url");
     let conn = t::connect(&opts).await.expect("connect");
-    // 親のトリガー複製・パーティション表への外部キーは PG12+ 前提。
+    // 親のトリガー複製の判別 (tgparentid) は PG13+。PG12 では複製が内部トリガー扱いで、通常表として出す子に親由来のトリガーが付かない。
     let ver = rows_of(
         &conn,
-        "SELECT current_setting('server_version_num')::int >= 120000",
+        "SELECT current_setting('server_version_num')::int >= 130000",
     )
     .await;
     if !ver.contains("true") {
-        eprintln!("skip: PostgreSQL < 12");
+        eprintln!("skip: PostgreSQL < 13");
         return;
     }
     part_setup(&conn).await;
@@ -1114,6 +1123,18 @@ async fn postgres_native_dump_partitions_roundtrip_when_env_set() {
         1,
         "{dump}"
     );
+    assert_eq!(
+        dump.matches("ADD CONSTRAINT events_rid_region_fkey")
+            .count(),
+        1,
+        "{dump}"
+    );
+    // 分割表の子の索引は ON ONLY ではなく ON で出る。
+    assert!(!dump.contains(" ON ONLY "), "{dump}");
+    assert!(
+        dump.contains("ON nb2098_part.r_asia USING btree (v)"),
+        "{dump}"
+    );
     if ext_ok {
         assert!(
             !dump.contains("CREATE TABLE \"nb2098_part\".\"pg_buffercache\""),
@@ -1139,6 +1160,12 @@ async fn postgres_native_dump_partitions_roundtrip_when_env_set() {
     );
     assert_eq!(snapshot(&restore, PART_ROW_SELECTS).await, rows_before);
     assert_eq!(snapshot(&restore, PART_DEF_SELECTS).await, defs_before);
+    let invalid = rows_of(
+        &restore,
+        "SELECT count(*) FROM pg_index WHERE NOT indisvalid AND indrelid::regclass::text LIKE 'nb2098_part.%'",
+    )
+    .await;
+    assert!(invalid.contains('0') && !invalid.contains('1'), "{invalid}");
 
     // 既存の DB へ上書き復元しても通る (DROP TABLE の順序 / CASCADE)。
     assert!(
@@ -1168,6 +1195,13 @@ async fn postgres_native_dump_partitions_roundtrip_when_env_set() {
     assert!(
         data_only.find("INSERT INTO \"nb2098_part\".\"e_2024\"")
             < data_only.find("INSERT INTO \"nb2098_part\".\"child_ref\""),
+        "{data_only}"
+    );
+
+    // 参照先 (by_region) の葉が、参照元 (events) の葉より先 (名前順なら e_* が先になる)。
+    assert!(
+        data_only.find("INSERT INTO \"nb2098_part\".\"r_eu\"")
+            < data_only.find("INSERT INTO \"nb2098_part\".\"e_2024\""),
         "{data_only}"
     );
 

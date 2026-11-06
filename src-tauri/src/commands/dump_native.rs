@@ -33,7 +33,8 @@
 //!   (既定・多段も同様) で書き、行は葉 (子) ごとに出して親からは出さない。親の索引・外部キーは
 //!   子へ伝播するものを二重に出さない。親が出力に含まれない子 (表の選択で子だけ指定した場合や、
 //!   別スキーマの親) と継承の子は継承関係なしの通常表として書き (警告コメント付き)、別スキーマに
-//!   ある子 (外部テーブルを含む) は出さず警告にする。子固有の列既定値・NOT NULL は再現せず親のものを
+//!   ある子 (外部テーブルを含む) は出さず警告にする。PG12 以下は親から子へ複製されたトリガーが
+//!   内部トリガー扱いで取れないため、通常表として出す子に親由来のトリガーは付かない (PG13+ は付く)。子固有の列既定値・NOT NULL は再現せず親のものを
 //!   引き継ぐ。複合型・range 型の定義は出さず警告コメントにする。
 //! - MySQL のビュー定義は `SHOW CREATE VIEW` のままなので、元と別名の DB へ復元すると
 //!   DB 名修飾が残る。ルーチン・トリガー・イベントは `DELIMITER ;;` 書式 (mysqldump と同じ) なので、
@@ -153,6 +154,17 @@ pub(crate) fn render_row_batch(
 /// 同順位は名前順。自己参照・集合外への依存は無視し、循環があれば残りを名前順で末尾に付けて
 /// `true` を返す。
 pub(crate) fn order_by_deps(names: &[String], edges: &[(String, String)]) -> (Vec<String>, bool) {
+    let (out, placed) = order_by_deps_placed(names, edges);
+    let cyclic = placed < out.len();
+    (out, cyclic)
+}
+
+/// [`order_by_deps`] と同じ並べ替えで、依存順に並べられた件数も返す。`out[..placed]` は依存順、
+/// それ以降は循環に巻き込まれて名前順で末尾に付いた表。
+pub(crate) fn order_by_deps_placed(
+    names: &[String],
+    edges: &[(String, String)],
+) -> (Vec<String>, usize) {
     let mut remaining: Vec<String> = names.to_vec();
     remaining.sort();
     remaining.dedup();
@@ -186,9 +198,9 @@ pub(crate) fn order_by_deps(names: &[String], edges: &[(String, String)]) -> (Ve
             break;
         }
     }
-    let cyclic = !remaining.is_empty();
+    let placed = out.len();
     out.extend(remaining);
-    (out, cyclic)
+    (out, placed)
 }
 
 /// MySQL の先頭/末尾。文字コード・チェック類を一時的に緩め、`AUTO_INCREMENT` の 0 を保ち、
@@ -420,11 +432,16 @@ pub(crate) fn pg_foreign_partitions_sql(schema: &str) -> String {
 /// パーティションの子だけが持つ索引・制約の作成文を引く SQL。列は (子の表名, 文)。親から伝播した
 /// もの (索引は `relispartition`、制約は `conparentid <> 0` / 継承した CHECK) は、子を
 /// `PARTITION OF` で作るときに自動で付くので除く。`conparentid` は PG11+ の列なので `to_jsonb`
-/// 経由で読む (古い版でも問い合わせ自体は通る)。
+/// 経由で読む (古い版でも問い合わせ自体は通る)。子自身が分割表のとき、`pg_get_indexdef` は
+/// `ON ONLY` を返す (子の索引を後で付ける前提の形) が、そのまま出すと復元先で無効な分割索引に
+/// なるので `ON` に直す (自動で子の索引も作られる)。
 pub(crate) fn pg_partition_local_sql(schema: &str) -> String {
     let s = pg_lit(schema);
     format!(
-        "SELECT c.relname::text, pg_get_indexdef(ix.indexrelid) FROM pg_index ix \
+        "SELECT c.relname::text, \
+                CASE WHEN c.relkind = 'p' THEN replace(pg_get_indexdef(ix.indexrelid), ' ON ONLY ', ' ON ') \
+                     ELSE pg_get_indexdef(ix.indexrelid) END \
+           FROM pg_index ix \
            JOIN pg_class c ON c.oid = ix.indrelid JOIN pg_namespace n ON n.oid = c.relnamespace \
            JOIN pg_class i ON i.oid = ix.indexrelid \
           WHERE n.nspname = {s} AND c.relispartition AND NOT i.relispartition \
@@ -578,7 +595,7 @@ pub(crate) fn pg_foreign_keys_sql(schema: &str) -> String {
     let s = pg_lit(schema);
     format!(
         "SELECT c.relname::text, rn.nspname::text, rc.relname::text, \
-format('ALTER TABLE %I.%I ADD CONSTRAINT %I %s;', n.nspname, c.relname, k.conname, pg_get_constraintdef(k.oid)), \
+                format('ALTER TABLE %I.%I ADD CONSTRAINT %I %s;', n.nspname, c.relname, k.conname, pg_get_constraintdef(k.oid)), \
                 CASE WHEN pk.oid IS NULL THEN '' WHEN pk.conrelid = k.conrelid THEN 'ref' ELSE 'src' END \
            FROM pg_constraint k \
            JOIN pg_class c ON c.oid = k.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace \
@@ -710,11 +727,61 @@ pub(crate) fn expand_partition_selection(
 }
 
 /// 子 → 親 の辺 (`PARTITION OF` は親が先に要る)。常に非循環。
+/// 既定パーティションは兄弟より後 (先に行を入れた既定パーティションへ後から兄弟を足すと、
+/// 兄弟の範囲に当たる行の有無を既定側で走査されるため)。これも常に非循環。
 pub(crate) fn partition_parent_edges(schema: &str, kinds: &[PgTableKind]) -> Vec<(String, String)> {
-    kinds
-        .iter()
-        .filter_map(|k| Some((k.name.clone(), same_schema_parent(k, schema)?.to_string())))
-        .collect()
+    let mut out: Vec<(String, String)> = Vec::new();
+    for k in kinds {
+        let Some(p) = same_schema_parent(k, schema) else {
+            continue;
+        };
+        out.push((k.name.clone(), p.to_string()));
+        if k.bound.as_deref() == Some("DEFAULT") {
+            for sib in kinds
+                .iter()
+                .filter(|o| o.name != k.name && same_schema_parent(o, schema) == Some(p))
+            {
+                out.push((k.name.clone(), sib.name.clone()));
+            }
+        }
+    }
+    out
+}
+
+/// 表の出力順。外部キー (とパーティションの展開辺) の依存順に並べる。循環が残ったときは、
+/// 依存順に並べられた先頭部分はそのまま、末尾の循環に巻き込まれた表だけを 子 → 親 の辺で
+/// 並べ直す (名前順のままだと子が親より前に出て `PARTITION OF` が失敗しうる)。戻り値の
+/// `bool` は循環の有無。
+pub(crate) fn order_tables(
+    names: &[String],
+    fk_edges: &[(String, String)],
+    schema: &str,
+    kinds: &[PgTableKind],
+) -> (Vec<String>, bool) {
+    let edges = expand_partition_edges(fk_edges, schema, kinds);
+    let (mut ordered, placed) = order_by_deps_placed(names, &edges);
+    let cyclic = placed < ordered.len();
+    if cyclic {
+        let tail = ordered.split_off(placed);
+        ordered.extend(order_by_deps_placed(&tail, &partition_parent_edges(schema, kinds)).0);
+    }
+    (ordered, cyclic)
+}
+
+/// 最上位の祖先 (同じスキーマ内)。パーティションでなければ自分自身。
+pub(crate) fn root_ancestor<'a>(name: &'a str, schema: &str, kinds: &'a [PgTableKind]) -> &'a str {
+    let mut cur = name;
+    for _ in 0..=kinds.len() {
+        match kinds
+            .iter()
+            .find(|k| k.name == cur)
+            .and_then(|k| same_schema_parent(k, schema))
+        {
+            Some(p) => cur = p,
+            None => break,
+        }
+    }
+    cur
 }
 
 /// `anc` が `desc` の祖先 (同じスキーマ内のパーティション階層) か。
@@ -994,14 +1061,8 @@ pub async fn dump_native_core(
             .map(|f| (f.table.clone(), f.ref_table.clone()))
             .collect();
         // パーティションの子は親の後、外部キーの参照先がパーティション表なら葉のデータが先
-        // (展開辺は `expand_partition_edges` が子 → 親 の辺も含めて返す)。
-        let edges = expand_partition_edges(&edges, &schema, &kinds);
-        let (mut ordered, cyclic) = order_by_deps(&ordered_tables, &edges);
-        if cyclic {
-            // 循環が残ると名前順になり、子が親より前に出て `PARTITION OF` が失敗しうる。
-            // 子 → 親 の辺 (常に非循環) だけで並べ直し、親を必ず先にする。
-            ordered = order_by_deps(&ordered, &partition_parent_edges(&schema, &kinds)).0;
-        }
+        // (展開は `order_tables` の中。循環が残っても親を必ず先に出す)。
+        let (ordered, cyclic) = order_tables(&ordered_tables, &edges, &schema, &kinds);
         ordered_tables = ordered;
         if cyclic && options.no_create_info {
             warnings.push(
@@ -1424,7 +1485,18 @@ pub async fn dump_native_core(
                 });
             }
             if !columns.is_empty() && !is_parent {
-                let overriding = identity.iter().any(|i| i.always);
+                let mut overriding = identity.iter().any(|i| i.always);
+                // PARTITION OF で出す子は、最上位の親の identity が ALWAYS なら、葉への直書きにも
+                // OVERRIDING SYSTEM VALUE が要る (PG17+ の復元。子自身の identity 情報に出ないことがある)。
+                if part_of.is_some() && !overriding {
+                    let root = root_ancestor(name, &schema, &kinds);
+                    overriding = conn
+                        .execute(&pg_identity_sql(&schema, root), None)
+                        .await?
+                        .rows
+                        .iter()
+                        .any(|r| str_at(r, 1) == Some("a"));
+                }
                 stream_table_rows(
                     conn,
                     driver,
@@ -2090,6 +2162,69 @@ mod tests {
         let fixed = order_by_deps(&order, &partition_parent_edges("s", &k2)).0;
         let pos = |n: &str| fixed.iter().position(|x| x == n);
         assert!(pos("p") < pos("a_child"));
+    }
+
+    #[test]
+    fn cycle_keeps_fk_order_of_tables_outside_the_cycle() {
+        // パーティションなし。a <-> b が循環でも、z -> c の FK 順 (z が先) は保たれる。
+        let edges = vec![edge("a", "b"), edge("b", "a"), edge("c", "z")];
+        let (order, cyclic) = order_tables(&names(&["a", "b", "c", "z"]), &edges, "s", &[]);
+        assert!(cyclic);
+        assert_eq!(order, ["z", "c", "a", "b"]);
+        // 循環がなければ cyclic は false で、従来どおりの並び。
+        let (order, cyclic) = order_tables(&names(&["c", "z"]), &[edge("c", "z")], "s", &[]);
+        assert!(!cyclic);
+        assert_eq!(order, ["z", "c"]);
+    }
+
+    #[test]
+    fn cycle_tail_is_reordered_parent_first() {
+        let k = vec![
+            kind("p", None, Some("LIST (r)"), None),
+            kind("a_child", Some("p"), None, Some("FOR VALUES IN ('x')")),
+            kind("q", None, None, None),
+            kind("z", None, None, None),
+            kind("b_other", None, None, None),
+        ];
+        // p <-> q の循環 + 循環外の b_other -> z。
+        let edges = vec![edge("p", "q"), edge("q", "p"), edge("b_other", "z")];
+        let (order, cyclic) = order_tables(
+            &names(&["a_child", "b_other", "p", "q", "z"]),
+            &edges,
+            "s",
+            &k,
+        );
+        assert!(cyclic);
+        let pos = |n: &str| order.iter().position(|x| x == n);
+        assert!(pos("z") < pos("b_other"));
+        assert!(pos("p") < pos("a_child"));
+    }
+
+    #[test]
+    fn default_partition_follows_its_siblings() {
+        let k = vec![
+            kind("p", None, Some("LIST (r)"), None),
+            kind("a_default", Some("p"), None, Some("DEFAULT")),
+            kind("z_one", Some("p"), None, Some("FOR VALUES IN ('x')")),
+        ];
+        let (order, cyclic) = order_tables(&names(&["a_default", "p", "z_one"]), &[], "s", &k);
+        assert!(!cyclic);
+        assert_eq!(order, ["p", "z_one", "a_default"]);
+    }
+
+    #[test]
+    fn root_ancestor_walks_up_the_hierarchy() {
+        let k = sample_kinds();
+        assert_eq!(root_ancestor("p_a0", "s", &k), "p");
+        assert_eq!(root_ancestor("p", "s", &k), "p");
+        assert_eq!(root_ancestor("plain", "s", &k), "plain");
+        assert_eq!(root_ancestor("p_a0", "other", &k), "p_a0");
+    }
+
+    #[test]
+    fn partition_local_index_sql_rewrites_on_only_for_partitioned_children() {
+        let sql = pg_partition_local_sql("s");
+        assert!(sql.contains("c.relkind = 'p'") && sql.contains("' ON ONLY ', ' ON '"));
     }
 
     #[test]
