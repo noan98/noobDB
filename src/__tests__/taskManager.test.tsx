@@ -585,9 +585,20 @@ describe("TaskManager 定期メンテナンス (#2025)", () => {
     await user.click(screen.getAllByRole("button", { name: t("taskCreate") })[0]);
     await user.type(await screen.findByLabelText(t("taskFormName")), "Nightly vacuum");
     chooseListboxOption(screen.getByLabelText(t("taskFormActionKind")), "run_maintenance");
-    expect(screen.getByText(t("taskFormMaintenanceHint"))).toBeInTheDocument();
-    chooseListboxOption(screen.getByLabelText(t("taskFormMaintenanceKind")), "vacuum");
+    // 既定 (VACUUM (ANALYZE)) は軽いので重い種別の警告は出ない。REINDEX を選ぶと出る。
+    expect(screen.queryByTestId("task-maint-heavy-hint")).toBeNull();
+    await user.click(screen.getByTestId("task-maint-kind-reindex"));
+    expect(screen.getByTestId("task-maint-heavy-hint")).toBeInTheDocument();
+    expect(screen.getByTestId("task-maint-blocks-reindex")).toBeInTheDocument();
+    // PostgreSQL では OPTIMIZE を使えない (理由付きで無効)。
+    expect(screen.getByTestId("task-maint-kind-optimize")).toBeDisabled();
+    expect(screen.getByText(t("taskMaintUnsupportedPgOptimize"))).toBeInTheDocument();
+    await user.click(screen.getByTestId("task-maint-kind-vacuum"));
+    expect(screen.queryByTestId("task-maint-heavy-hint")).toBeNull();
     await user.type(screen.getByLabelText(t("taskFormMaintenanceTargets")), "orders{Enter}users");
+    // 実行される文がライブで更新される。
+    expect(screen.getByTestId("task-maint-preview")).toHaveTextContent('VACUUM "orders";');
+    expect(screen.getByTestId("task-maint-preview")).toHaveTextContent('VACUUM "users";');
     await user.click(screen.getByRole("button", { name: t("taskFormSave") }));
     await waitFor(() => expect(saveTask).toHaveBeenCalledTimes(1));
     expect(saveTask.mock.calls[0][0].action).toEqual({
@@ -610,9 +621,14 @@ describe("TaskManager 定期メンテナンス (#2025)", () => {
     await user.click(screen.getAllByRole("button", { name: t("taskCreate") })[0]);
     await user.type(await screen.findByLabelText(t("taskFormName")), "Analyze");
     chooseListboxOption(screen.getByLabelText(t("taskFormActionKind")), "run_maintenance");
+    // 保存前に、入力欄の下へ組み合わせ違反が出る。
+    expect(screen.getByText(t("taskFormMaintenanceTargetsRequiredMysql"))).toBeInTheDocument();
+    expect(screen.queryByTestId("task-maint-preview")).toBeNull();
     await user.click(screen.getByRole("button", { name: t("taskFormSave") }));
-    expect(await screen.findByText(t("taskFormMaintenanceTargetsRequiredMysql"))).toBeInTheDocument();
     expect(saveTask).not.toHaveBeenCalled();
+    await user.type(screen.getByLabelText(t("taskFormMaintenanceTargets")), "orders");
+    expect(screen.getByTestId("task-maint-preview")).toHaveTextContent("ANALYZE TABLE `orders`;");
+    expect(screen.queryByText(t("taskFormMaintenanceTargetsRequiredMysql"))).toBeNull();
   });
 });
 

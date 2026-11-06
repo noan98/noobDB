@@ -385,6 +385,41 @@ mod tests {
     }
 
     #[test]
+    fn statements_match_the_shared_vectors() {
+        // フロント `buildTaskMaintenanceStatements` (タスク作成フォームのライブプレビュー) と同じ共有ベクタ。
+        // 片方だけ生成規則を変えるとどちらかが落ちる (#2096)。
+        let v: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../src/__tests__/fixtures/taskMaintenanceVectors.json"
+        ))
+        .unwrap();
+        let cases = v["cases"].as_array().unwrap();
+        assert!(!cases.is_empty());
+        for c in cases {
+            let name = c["name"].as_str().unwrap();
+            let driver = DriverKind::parse(c["driver"].as_str().unwrap()).unwrap();
+            let kind: TaskMaintenanceKind = serde_json::from_value(c["kind"].clone()).unwrap();
+            let database = c["database"].as_str();
+            let targets: Vec<String> = c["targets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| t.as_str().unwrap().to_string())
+                .collect();
+            let got = build_statements(driver, database, &targets, kind);
+            match c["sql"].as_array() {
+                Some(expected) => {
+                    let expected: Vec<&str> =
+                        expected.iter().map(|x| x.as_str().unwrap()).collect();
+                    let got = got.unwrap_or_else(|e| panic!("{name}: {e}"));
+                    let got: Vec<&str> = got.iter().map(|m| m.sql.as_str()).collect();
+                    assert_eq!(got, expected, "{name}");
+                }
+                None => assert!(got.is_err(), "{name}: エラーになるはず"),
+            }
+        }
+    }
+
+    #[test]
     fn summarize_failures() {
         assert_eq!(summarize_maintenance_failures(2, &[]), None);
         let e = summarize_maintenance_failures(3, &[("a".into(), "boom".into())]).unwrap();
