@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import { api, type SqliteMaintenanceAction, type SqliteMaintenanceResult } from "../api/tauri";
-import { useT } from "../i18n";
+import { useT, type I18nKey } from "../i18n";
 import { SurfaceRule } from "./SurfaceRule";
 import { Callout } from "./Callout";
 import { EmptyState } from "./EmptyState";
@@ -50,19 +50,11 @@ const tdCss: SystemStyleObject = {
 };
 const tdNumCss: SystemStyleObject = { ...tdCss, textStyle: "numeric" };
 
-const PURPOSE_KEYS = [
-  "sqliteMaintPurposeIntegrity",
-  "sqliteMaintPurposeForeignKey",
-  "sqliteMaintPurposeOptimize",
-  "sqliteMaintPurposeAnalyze",
-] as const;
-
 /** 空き率メーター。VACUUM を提案する閾値の位置にマーカーを置く (0〜100% の目盛り)。 */
-function FreelistMeter({ ratio }: { ratio: number }) {
+function FreelistMeter({ ratio, over }: { ratio: number; over: boolean }) {
   const t = useT();
   const pct = Math.min(100, Math.max(0, ratio * 100));
   const thresholdPct = VACUUM_HINT_RATIO * 100;
-  const over = ratio >= VACUUM_HINT_RATIO;
   return (
     <Box data-testid="sqlite-maint-meter">
       <Box
@@ -71,6 +63,7 @@ function FreelistMeter({ ratio }: { ratio: number }) {
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(pct)}
+        aria-valuetext={`${Math.round(pct)}%`}
         position="relative"
         h="2"
         borderRadius="sm"
@@ -104,11 +97,11 @@ function FreelistMeter({ ratio }: { ratio: number }) {
   );
 }
 
-const ACTIONS: Array<{ action: SqliteMaintenanceAction; writes: boolean }> = [
-  { action: "integrity_check", writes: false },
-  { action: "foreign_key_check", writes: false },
-  { action: "optimize", writes: true },
-  { action: "analyze", writes: true },
+const ACTIONS: Array<{ action: SqliteMaintenanceAction; writes: boolean; purposeKey: I18nKey }> = [
+  { action: "integrity_check", writes: false, purposeKey: "sqliteMaintPurposeIntegrity" },
+  { action: "foreign_key_check", writes: false, purposeKey: "sqliteMaintPurposeForeignKey" },
+  { action: "optimize", writes: true, purposeKey: "sqliteMaintPurposeOptimize" },
+  { action: "analyze", writes: true, purposeKey: "sqliteMaintPurposeAnalyze" },
 ];
 
 export function SqliteMaintenancePanel({ sessionId, readOnly }: { sessionId: string; readOnly: boolean }) {
@@ -185,12 +178,15 @@ export function SqliteMaintenancePanel({ sessionId, readOnly }: { sessionId: str
       {result === null ? (
         <>
           <EmptyState
+            brandHalo
             illustration={<RunQueryIllustration />}
             icon="check"
             title={t("sqliteMaintEmpty")}
             description={t("sqliteMaintEmptyDesc")}
           />
           <chakra.ul
+            marginX="auto"
+            maxW="64ch"
             margin={0}
             padding={0}
             listStyleType="none"
@@ -201,8 +197,8 @@ export function SqliteMaintenancePanel({ sessionId, readOnly }: { sessionId: str
             color="app.textMuted"
             data-testid="sqlite-maint-purposes"
           >
-            {PURPOSE_KEYS.map((k) => (
-              <li key={k}>{t(k)}</li>
+            {ACTIONS.map(({ action, purposeKey }) => (
+              <li key={action}>{t(purposeKey)}</li>
             ))}
           </chakra.ul>
         </>
@@ -223,8 +219,7 @@ export function SqliteMaintenancePanel({ sessionId, readOnly }: { sessionId: str
             ))}
           {(result.action === "optimize" || result.action === "analyze") && (
             <Callout tone="info" role="status" data-testid="sqlite-maint-done">
-              {t("sqliteMaintDone", { action: label(result.action), ms: result.elapsed_ms })}{" "}
-              {t("sqliteMaintPlanChange")}
+              {t("sqliteMaintDone", { action: label(result.action) })} {t("sqliteMaintPlanChange")}
             </Callout>
           )}
 
@@ -275,7 +270,7 @@ export function SqliteMaintenancePanel({ sessionId, readOnly }: { sessionId: str
                   value={`${result.elapsed_ms.toLocaleString()} ms`}
                 />
               </Flex>
-              {ratio !== null && <FreelistMeter ratio={ratio} />}
+              {ratio !== null && <FreelistMeter ratio={ratio} over={shouldSuggestVacuum(result)} />}
             </Flex>
           )}
           {shouldSuggestVacuum(result) && ratio !== null && (

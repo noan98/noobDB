@@ -5345,7 +5345,7 @@ const en = {
   sqliteMaintFkOk: "No foreign key violations.",
   sqliteMaintFkNg: "{count} row(s) violate a foreign key.",
   sqliteMaintTruncated: "(Only the first rows are shown.)",
-  sqliteMaintDone: "{action} finished ({ms} ms).",
+  sqliteMaintDone: "{action} finished.",
   sqliteMaintPlanChange:
     "Statistics changed, so query plans may change. Check the plan watch for regressions.",
   sqliteMaintColTable: "Table",
@@ -12728,7 +12728,7 @@ const ja: Dict = {
   sqliteMaintFkOk: "外部キーの違反はありません。",
   sqliteMaintFkNg: "外部キーに違反する行が {count} 件あります。",
   sqliteMaintTruncated: "(先頭の行のみ表示しています。)",
-  sqliteMaintDone: "{action} を実行しました ({ms} ms)。",
+  sqliteMaintDone: "{action} を実行しました。",
   sqliteMaintPlanChange:
     "統計が変わるため実行計画が変わることがあります。実行計画ウォッチで悪化がないか確認してください。",
   sqliteMaintColTable: "表",
