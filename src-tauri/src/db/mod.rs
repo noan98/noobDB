@@ -7,6 +7,7 @@ pub mod broadcast_diff;
 pub mod chunked_dml;
 /// DROP COLUMN の依存オブジェクト検出 (#1758)。
 pub mod column_deps;
+pub mod column_mapping;
 /// ファイルから新規テーブルを作るときの方言別 CREATE TABLE 生成 (#985)。
 pub mod create_table;
 pub mod cross_compare;

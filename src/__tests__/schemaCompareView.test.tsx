@@ -32,6 +32,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       releaseDataDiffs: vi.fn().mockResolvedValue(undefined),
       compareTableData: vi.fn(),
       listTables: vi.fn(),
+      describeTable: vi.fn().mockResolvedValue([]),
     },
   };
 });
@@ -204,6 +205,67 @@ describe("SchemaCompareView の異名テーブル比較 (#1880)", () => {
     chooseListboxOption(targetTable, "orders_archive");
     await waitFor(() => expect(screen.queryByText(t("schemaCompareDataSameTable"))).toBeNull());
     expect(screen.getByRole("button", { name: t("schemaCompareDataCompare") })).not.toBeDisabled();
+  });
+});
+
+/** 列の対応付け (#2099)。 */
+describe("SchemaCompareView の列の対応付け (#2099)", () => {
+  const colInfo = (name: string) => ({
+    name,
+    data_type: "text",
+    nullable: true,
+    key: "",
+    default: null,
+    extra: "",
+    referenced_table: null,
+    referenced_column: null,
+  });
+
+  it("未割り当ての列があると比較できず、表を変えると対応表を破棄する", async () => {
+    vi.mocked(api.connect).mockResolvedValue({ session_id: "s1" } as never);
+    const tbl = (name: string, status: string) => ({ name, status, columns: [], foreign_keys: [] });
+    vi.mocked(api.compareSchema).mockResolvedValue({
+      source_driver: "mysql",
+      target_driver: "mysql",
+      tables: [tbl("users_old", "same"), tbl("users_new", "same"), tbl("users_x", "same")],
+    } as never);
+    vi.mocked(api.describeTable).mockImplementation((async (_s: string, _d: string, table: string) =>
+      table === "users_old"
+        ? [colInfo("id"), colInfo("user_name")]
+        : table === "users_new"
+          ? [colInfo("id"), colInfo("username")]
+          : [colInfo("id"), colInfo("user_name")]) as never);
+    renderWithProviders(<SchemaCompareView profiles={PROFILES} onClose={() => {}} />);
+    const boxes = () => screen.getAllByRole("combobox") as HTMLElement[];
+    chooseListboxOption(boxes()[0], "p-a");
+    await waitFor(() => expect(boxes()[1]).not.toBeDisabled());
+    chooseListboxOption(boxes()[2], "p-b");
+    await waitFor(() => expect(boxes()[3]).not.toBeDisabled());
+    await waitFor(() => expect(boxes()[3]).toHaveTextContent("db1"));
+    fireEvent.click(screen.getByText(t("schemaCompareCompare")));
+    const sourceTable = await screen.findByLabelText(t("schemaCompareDataSourceTable"));
+    const targetTable = screen.getByLabelText(t("schemaCompareDataTargetTable"));
+    chooseListboxOption(sourceTable, "users_old");
+    chooseListboxOption(targetTable, "users_new");
+    const mapTrigger = await screen.findByRole("combobox", {
+      name: t("schemaCompareColMapTarget", { column: "user_name" }),
+    });
+    const compareBtn = () => screen.getByRole("button", { name: t("schemaCompareDataCompare") });
+    await waitFor(() => expect(compareBtn()).toBeDisabled());
+    chooseListboxOption(mapTrigger, "username");
+    await waitFor(() => expect(compareBtn()).not.toBeDisabled());
+    // ターゲット表を変えると前の対応付けは破棄され、新しい表で再び未割り当てになる。
+    chooseListboxOption(targetTable, "users_x");
+    await waitFor(() =>
+      expect(screen.queryByRole("group", { name: t("schemaCompareColMapTitle") })).toBeNull(),
+    );
+    expect(compareBtn()).not.toBeDisabled();
+    chooseListboxOption(targetTable, "users_new");
+    const again = await screen.findByRole("combobox", {
+      name: t("schemaCompareColMapTarget", { column: "user_name" }),
+    });
+    expect(again).toHaveTextContent(t("schemaCompareColMapNone"));
+    await waitFor(() => expect(compareBtn()).toBeDisabled());
   });
 });
 
