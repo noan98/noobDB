@@ -40,8 +40,10 @@ const RUST_TO_TS: Record<string, string | null> = {
 /** テスト用モジュール (`#[cfg(test)] mod tests`) より前の `fn` 名を取り出す。 */
 function rustFnNames(): string[] {
   const src = read(`src-tauri/${RUST_FILE}`);
-  const body = src.slice(0, src.indexOf("#[cfg(test)]"));
-  return [...body.matchAll(/^\s*(?:pub(?:\([a-z]+\))? )?fn ([a-z0-9_]+)/gm)].map((m) => m[1]);
+  const body = src.slice(0, src.search(/#\[cfg\(test\)\]\s*mod tests/));
+  return [...body.matchAll(/^\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+|async\s+|unsafe\s+)*fn\s+(\w+)/gm)].map(
+    (m) => m[1],
+  );
 }
 
 /** mutants.toml の examine_re から、関数名の選択肢 (`a|b|c`) を取り出す。 */

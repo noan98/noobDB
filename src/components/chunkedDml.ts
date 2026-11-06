@@ -39,8 +39,7 @@ export function validateFragment(driver: string, frag: string): ChunkedDmlErrorC
     // SQLite の [ident] は ] で閉じる (二重化なし)。
     if (c === "[" && sqlite) {
       const close = chars.indexOf("]", i + 1);
-      // Stryker disable next-line EqualityOperator: `[` の位置が i なので indexOf(i + 1 以降) は 0 を返さない (同値変異)
-      if (close < 0) return "unbalanced";
+      if (close === -1) return "unbalanced";
       i = close + 1;
       continue;
     }
