@@ -117,7 +117,7 @@ function DumpOutcome({
     <chakra.div display="flex" flexDirection="column" gap="2">
       {outcome.progress && (
         <DumpProgressDetail
-          progress={{ ...outcome.progress, bytes: outcome.bytes }}
+          progress={{ ...outcome.progress, bytes: outcome.bytes, elapsedMs: outcome.elapsedMs }}
           tone={tone}
           full={outcome.kind === "done"}
         />
@@ -539,14 +539,15 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
   } | null>(null);
   const lastProgressRef = useRef<DumpProgress | null>(null);
   const startedAtRef = useRef(0);
-  // 終了状態を記録する。進捗イベントが 0 件でも、クライアント計測の経過時間で結果を示せる。
-  const recordOutcome = (kind: "done" | "cancelled" | "error", bytes?: number) => {
+  // 終了状態を記録する。所要時間は終了まで含める: 完了はバックエンドの値 (最後の進捗の後の
+  // 整形・圧縮も含む)、中止・エラーはクライアント計測。進捗イベントが 0 件でも結果を示せる。
+  const recordOutcome = (kind: "done" | "cancelled" | "error", bytes?: number, finalElapsedMs?: number) => {
     const last = lastProgressRef.current;
     setOutcome({
       kind,
       progress: last,
       bytes: bytes ?? last?.bytes ?? 0,
-      elapsedMs: last?.elapsedMs ?? Math.max(0, Date.now() - startedAtRef.current),
+      elapsedMs: finalElapsedMs ?? Math.max(last?.elapsedMs ?? 0, Date.now() - startedAtRef.current),
     });
   };
   // Active dump's stream id + event unlistener, so the modal can cancel and
@@ -750,7 +751,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
           setStatus({ kind: "idle" });
           setProgress(null);
           // 最終サイズは完了イベントの値を優先する (進捗イベントは間引かれうる)。
-          recordOutcome("done", e.bytes);
+          recordOutcome("done", e.bytes, e.elapsedMs);
         },
         onError: (e) => {
           cleanupStream();

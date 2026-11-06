@@ -319,8 +319,8 @@ describe("DumpModal 生成エンジンのカード選択 (#2094)", () => {
     expect(detail).toHaveTextContent(t("progressPercent", { percent: 25 }));
     expect(detail).toHaveTextContent(t("dumpStatTables"));
     expect(detail).toHaveTextContent(t("progressEta", { time: "0:30" }));
-    act(() => h.onDone?.({ bytes: 4096 } as never));
-    const cb = await screen.findByText(t("dumpResultDone", { bytes: "4.1 KB", secs: "10.0" }));
+    act(() => h.onDone?.({ bytes: 4096, elapsedMs: 12000 } as never));
+    const cb = await screen.findByText(t("dumpResultDone", { bytes: "4.1 KB", secs: "12.0" }));
     expect(cb).toBeInTheDocument();
     const bar = screen
       .getByTestId("dump-progress-detail")
