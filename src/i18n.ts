@@ -2656,7 +2656,7 @@ const en = {
   dumpNote:
     "Runs {tool} on this computer for this database (through the SSH tunnel if one is configured). {tool} must be installed on this computer.",
   dumpNoteNative:
-    "Generates the SQL dump (schema DDL + INSERT statements) directly from this connection. No external client tools are needed.",
+    "Built-in generation builds the SQL dump (schema DDL + INSERT statements) directly from this connection. No external client tools are needed.",
   dumpOptionsLabel: "Options",
   dumpOptSingleTransaction: "Single transaction",
   dumpOptSingleTransactionHint: "--single-transaction: consistent InnoDB snapshot without locking tables.",
@@ -2696,11 +2696,33 @@ const en = {
   dumpOptChecksum: "Write a SHA-256 checksum file (.sha256)",
   dumpOptChecksumHint:
     "Saves <file>.sha256 next to the dump (sha256sum -c compatible) so corruption or tampering can be detected later. Computed on the final file, including gzip output.",
-  dumpOptNative: "Generate natively (no mysqldump / pg_dump)",
-  dumpOptNativeHint:
-    "Builds the SQL dump directly from this connection, so no external tool is needed (works on managed databases too). Not a consistent snapshot across tables; PostgreSQL dumps one schema; owners and privileges are not written.",
-  dumpUseNative: "Use native generation instead",
-  dumpUseNativeHint: "Skips the external tool and generates the dump from this connection.",
+  dumpEngineLabel: "Dump engine",
+  dumpEngineNativeTitle: "Built-in generation",
+  dumpEngineNativeDesc:
+    "Builds the SQL straight from this connection. No external tool is needed, so it also works on managed databases.",
+  dumpEngineNativeLimits:
+    "Limits: no consistent snapshot across tables (no single transaction); owners and privileges are not written; PostgreSQL dumps one schema at a time.",
+  dumpEngineExternalTitle: "External tool ({tool})",
+  dumpEngineExternalDesc:
+    "Runs {tool} on this computer. Supports a consistent snapshot (single transaction) and all compatibility options.",
+  dumpEngineExternalLimits: "Limits: {tool} must be installed on this computer.",
+  dumpEngineAutoSwitched: "{tool} was not found on this computer, so built-in generation was selected.",
+  dumpEngineToolFound: "Detected",
+  dumpEngineToolMissing: "Not installed",
+  dumpEngineExternalDisabled:
+    "{tool} was not found on this computer, so it can't be selected. Install it below, or use built-in generation.",
+  dumpGroupStructure: "Structure",
+  dumpGroupData: "Data",
+  dumpGroupOutput: "Output",
+  dumpGroupCompat: "Compatibility",
+  dumpLockBadge: "Unavailable",
+  dumpLockNativeAlways:
+    "Built-in generation always behaves this way (cannot be changed). Select the external tool to choose.",
+  dumpLockNativeConsistency:
+    "Built-in generation cannot take a consistent snapshot, so a single transaction is unavailable. Select the external tool for a consistent dump.",
+  dumpLockSnapshot: "Ignored by the binary snapshot (.db), which does not generate SQL.",
+  dumpLockPgDumpRoutines:
+    "pg_dump always writes functions, so this cannot be turned off. Built-in generation lets you choose.",
   dumpOptSqliteSnapshot: "Binary snapshot (.db) via VACUUM INTO",
   dumpOptSqliteSnapshotHint:
     "Instead of SQL, writes a consistent single-transaction copy of the database that opens directly as a .db file. Much faster for large databases; the SQL-format options are ignored.",
@@ -2817,9 +2839,20 @@ const en = {
   // Streaming dump progress + cancel (#686).
   dumpCancelRun: "Cancel dump",
   dumpCancelled: "Dump cancelled.",
-  dumpProgressBytes: "Dumping… {bytes} written",
-  dumpProgressTables: "Dumping… {tables}/{total} tables ({bytes})",
   dumpProgressElapsed: "{secs}s elapsed",
+  progressEta: "ETA {time}",
+  progressEtaPending: "ETA: calculating…",
+  progressPercent: "{percent}%",
+  chunkedDmlStatBatches: "Batches done",
+  chunkedDmlStatRows: "Rows affected",
+  chunkedDmlStatRemaining: "Estimated remaining",
+  chunkedDmlStatElapsed: "Elapsed",
+  chunkedDmlWaiting: "Next batch in {secs}s (throttle wait)",
+  dumpStatTables: "Tables",
+  dumpStatBytes: "Written",
+  dumpStatElapsed: "Elapsed",
+  dumpResultDone: "Dump finished: {bytes} written in {secs}s.",
+  dumpResultCancelled: "Dump cancelled after {secs}s ({bytes} written; the partial file may remain).",
   // `.sql` script runner (#973).
   contextMenuRunScript: "Run SQL file...",
   scriptTitle: "Run SQL file",
@@ -3205,8 +3238,7 @@ const en = {
   chunkedDmlErr_unbalanced: "Parentheses or quotes are not balanced.",
   chunkedDmlErr_unsupported: "This syntax (dollar quoting or E'...' strings) is not supported here.",
   chunkedDmlReadOnly: "This connection is read-only, so nothing can be written.",
-  chunkedDmlProgress: "{batches} batches done, {rows} rows affected{total}",
-  chunkedDmlProgressTotal: " (of about {rows})",
+  chunkedDmlProgressTotal: "of about {rows} rows",
   chunkedDmlDone: "Done: {batches} batches, {rows} rows affected.",
   chunkedDmlNothing: "No rows match; nothing was changed.",
   chunkedDmlCancelled:
@@ -5329,6 +5361,13 @@ const en = {
   pgListenErrNul: "A channel name cannot contain a NUL character.",
   pgListenErrDuplicate: "Already listening to this channel.",
   pgListenErrTooMany: "You can listen to at most {max} channels.",
+  pgListenFilterAll: "All",
+  pgListenPause: "Pause view",
+  pgListenResume: "Resume view",
+  pgListenPausedManual: "View paused. Notifications keep being received.",
+  pgListenPausedAuto: "View paused while a payload is open.",
+  pgListenPending: "{count} new",
+  pgListenChipAria: "{channel}: {count}",
   sqliteMaintTitle: "SQLite maintenance",
   sqliteMaintDesc:
     "Check the file for corruption and broken foreign keys, or refresh the query planner statistics. The two checks only read; optimize and ANALYZE update statistics.",
@@ -5345,16 +5384,30 @@ const en = {
   sqliteMaintFkOk: "No foreign key violations.",
   sqliteMaintFkNg: "{count} row(s) violate a foreign key.",
   sqliteMaintTruncated: "(Only the first rows are shown.)",
-  sqliteMaintDone: "{action} finished ({ms} ms).",
+  sqliteMaintDone: "{action} finished.",
   sqliteMaintPlanChange:
     "Statistics changed, so query plans may change. Check the plan watch for regressions.",
   sqliteMaintColTable: "Table",
   sqliteMaintColParent: "Parent table",
   sqliteMaintColCount: "Rows",
   sqliteMaintColRowids: "rowid (first 20)",
-  sqliteMaintPages: "{pages} pages, {free} free ({percent}%)",
   sqliteMaintVacuumHint:
     "Many pages are free. Running VACUUM can shrink the file (run it from the SQL editor; it needs temporary space as large as the database).",
+  sqliteMaintStatPages: "Pages",
+  sqliteMaintStatFree: "Free pages",
+  sqliteMaintStatRatio: "Free ratio",
+  sqliteMaintStatElapsed: "Elapsed",
+  sqliteMaintMeterAria: "Free page ratio (VACUUM suggestion threshold: {threshold}%)",
+  sqliteMaintMeterThreshold: "Threshold {threshold}%",
+  sqliteMaintVacuumReason:
+    "Free ratio {percent}% is at or above the {threshold}% threshold (databases of {minPages}+ pages).",
+  sqliteMaintEmptyDesc: "Pick a check above. Each one looks at a different part of the file.",
+  sqliteMaintPurposeIntegrity:
+    "Integrity check (integrity_check): looks for corrupted pages and broken indexes.",
+  sqliteMaintPurposeForeignKey:
+    "Foreign key check (foreign_key_check): lists rows whose parent row is missing.",
+  sqliteMaintPurposeOptimize: "PRAGMA optimize: refreshes planner statistics only where they look stale.",
+  sqliteMaintPurposeAnalyze: "ANALYZE: recollects planner statistics for every table.",
   alterTablePositionEnd: "At the end",
   alterTablePositionFirst: "First",
   alterTablePositionAfter: "After {column}",
@@ -6751,8 +6804,6 @@ const en = {
     "Captures a snapshot of every table watched in the Table Timelapse panel for this connection (read-only), so history keeps accumulating while you are away. A table that cannot be captured marks the run as failed.",
   taskFormTimelapseMaxGenerations: "Generations to keep per table (optional)",
   taskFormActionMaintenance: "Run maintenance (ANALYZE / VACUUM / OPTIMIZE / REINDEX)",
-  taskFormMaintenanceHint:
-    "Runs the chosen maintenance statement one table at a time. This is a write operation, so it is rejected for read-only profiles; the statements are generated from a fixed set (no custom SQL). A table that fails marks the run as failed, and the rest still run. With no target tables, PostgreSQL and SQLite process the whole database; the schema field is only used to qualify target table names.",
   taskFormMaintenanceKind: "Maintenance",
   taskFormMaintenanceDatabase: "Database / schema (optional)",
   taskFormMaintenanceTargets: "Target tables (one per line; empty = whole database)",
@@ -6763,6 +6814,28 @@ const en = {
     "SQLite VACUUM applies to the whole database. Leave the target tables empty.",
   taskFormMaintenanceReadOnlyProfile:
     "This connection is read-only, so maintenance cannot be scheduled for it.",
+  taskMaintEffectAnalyze: "Refreshes the planner statistics so queries pick better plans.",
+  taskMaintEffectVacuumAnalyze: "Reclaims dead space and refreshes statistics in one pass.",
+  taskMaintEffectVacuum: "Reclaims space left by deleted and updated rows.",
+  taskMaintEffectReindex: "Rebuilds indexes from scratch to remove bloat and corruption.",
+  taskMaintEffectOptimize:
+    "Rebuilds the table and refreshes its statistics (reclaims space). Online for InnoDB; FULLTEXT indexes and MyISAM block writes.",
+  taskMaintLockLight: "Lock: light",
+  taskMaintLockHeavy: "Lock: heavy",
+  taskMaintBlocksWrites: "Blocks writes",
+  taskMaintBlocksReads: "Blocks reads too",
+  taskMaintUnsupportedMysql: "Not available on MySQL (it has no VACUUM / REINDEX; use OPTIMIZE).",
+  taskMaintUnsupportedPgOptimize: "Not available on PostgreSQL (use VACUUM).",
+  taskMaintUnsupportedSqliteOptimize: "Not available on SQLite (use VACUUM).",
+  taskMaintUnsupportedSqliteVacuumAnalyze:
+    "Not available on SQLite (schedule VACUUM and ANALYZE separately).",
+  taskMaintUnsupportedKind: "This maintenance kind is not available for the selected connection.",
+  taskMaintInvalidTargets:
+    "Target tables must be unique, non-empty, and at most 500. Remove duplicates or blank names.",
+  taskMaintInvalidDatabase: "The database / schema name contains a character that cannot be quoted.",
+  taskMaintPreviewLabel: "Statements that will run",
+  taskMaintHeavyHint:
+    "This kind takes heavier locks and can make other sessions wait while it runs. Schedule it for a quiet time. It is a write operation, so it is rejected for read-only profiles; a table that fails marks the run as failed, and the rest still run.",
   taskFormActionPlanWatch: "Refresh watched query plans",
   taskFormPlanWatchHint:
     "Re-runs EXPLAIN for the queries watched in the Plan Watch panel and records a new plan generation when it changed. Only warning-level changes (e.g. an index lookup that became a full scan, or an order-of-magnitude jump in estimated rows) mark the run as failed and notify you.",
@@ -10054,7 +10127,7 @@ const ja: Dict = {
   dumpNote:
     "このデータベースに対して、この PC 上で {tool} を実行します (設定があれば SSH トンネル経由で接続)。この PC に {tool} がインストールされている必要があります。",
   dumpNoteNative:
-    "この接続から SQL ダンプ (スキーマの DDL + INSERT 文) を直接生成します。外部のクライアントツールは不要です。",
+    "内蔵生成で、この接続から SQL ダンプ (スキーマの DDL + INSERT 文) を直接生成します。外部のクライアントツールは不要です。",
   dumpOptionsLabel: "オプション",
   dumpOptSingleTransaction: "単一トランザクション",
   dumpOptSingleTransactionHint:
@@ -10096,11 +10169,32 @@ const ja: Dict = {
   dumpOptChecksum: "SHA-256 チェックサムファイル (.sha256) を書く",
   dumpOptChecksumHint:
     "ダンプと同じ場所に <ファイル名>.sha256 を保存します (sha256sum -c で検証可)。後から破損や改ざんを検出できます。gzip 後の最終ファイルのハッシュです。",
-  dumpOptNative: "ネイティブ生成 (mysqldump / pg_dump 不要)",
-  dumpOptNativeHint:
-    "外部ツールを使わず、この接続から直接 SQL ダンプを生成します (マネージド DB でも動作)。表をまたぐ一貫スナップショットにはならず、PostgreSQL は 1 スキーマ単位で、所有者・権限は出力しません。",
-  dumpUseNative: "ネイティブ生成に切り替える",
-  dumpUseNativeHint: "外部ツールを使わず、この接続からダンプを生成します。",
+  dumpEngineLabel: "生成エンジン",
+  dumpEngineNativeTitle: "内蔵生成",
+  dumpEngineNativeDesc:
+    "この接続から直接 SQL を組み立てます。外部ツールは不要で、マネージド DB でも使えます。",
+  dumpEngineNativeLimits:
+    "制約: テーブル間で一貫したスナップショットは取れず (単一トランザクション非対応)、所有者・権限は出力されません。PostgreSQL は 1 スキーマ単位です。",
+  dumpEngineExternalTitle: "外部ツール ({tool})",
+  dumpEngineExternalDesc:
+    "この PC で {tool} を実行します。一貫したスナップショット (単一トランザクション) と互換オプションがすべて使えます。",
+  dumpEngineExternalLimits: "制約: この PC に {tool} が必要です。",
+  dumpEngineAutoSwitched: "この PC に {tool} が見つからないため、内蔵生成に切り替えました。",
+  dumpEngineToolFound: "検出済み",
+  dumpEngineToolMissing: "未導入",
+  dumpEngineExternalDisabled:
+    "この PC に {tool} が見つからないため選べません。下の案内から導入するか、内蔵生成を使ってください。",
+  dumpGroupStructure: "構造",
+  dumpGroupData: "データ",
+  dumpGroupOutput: "出力",
+  dumpGroupCompat: "互換",
+  dumpLockBadge: "使用不可",
+  dumpLockNativeAlways:
+    "内蔵生成では常にこの動作になります (変更不可)。選びたい場合は外部ツールを選んでください。",
+  dumpLockNativeConsistency:
+    "内蔵生成は一貫したスナップショットを取れないため、単一トランザクションは使えません。一貫したダンプが必要なら外部ツールを選んでください。",
+  dumpLockSnapshot: "バイナリスナップショット (.db) は SQL を生成しないため、このオプションは無視されます。",
+  dumpLockPgDumpRoutines: "pg_dump は関数を常に出力するため、オフにできません。内蔵生成なら選べます。",
   dumpOptSqliteSnapshot: "VACUUM INTO のバイナリ・スナップショット (.db)",
   dumpOptSqliteSnapshotHint:
     "SQL ではなく、単一トランザクションで整合したデータベースのコピーを書き出します。そのまま .db として開け、大きな DB でも高速です。SQL 形式向けのオプションは無視されます。",
@@ -10217,9 +10311,21 @@ const ja: Dict = {
   // ストリーミングダンプの進捗表示 + キャンセル (#686)。
   dumpCancelRun: "ダンプを中止",
   dumpCancelled: "ダンプを中止しました。",
-  dumpProgressBytes: "ダンプ中… {bytes} 書き出し済み",
-  dumpProgressTables: "ダンプ中… {tables}/{total} テーブル ({bytes})",
   dumpProgressElapsed: "経過 {secs} 秒",
+  progressEta: "残り約 {time}",
+  progressEtaPending: "残り時間: 算出中…",
+  progressPercent: "{percent}%",
+  chunkedDmlStatBatches: "完了バッチ数",
+  chunkedDmlStatRows: "影響行数",
+  chunkedDmlStatRemaining: "残りの推定",
+  chunkedDmlStatElapsed: "経過時間",
+  chunkedDmlWaiting: "次のバッチまで {secs} 秒 (スロットル待機中)",
+  dumpStatTables: "テーブル",
+  dumpStatBytes: "書き出し量",
+  dumpStatElapsed: "経過時間",
+  dumpResultDone: "ダンプが完了しました: {bytes} を {secs} 秒で書き出しました。",
+  dumpResultCancelled:
+    "ダンプを {secs} 秒で中止しました ({bytes} 書き出し済み。途中のファイルが残る場合があります)。",
   // `.sql` スクリプト実行 (#973)。
   contextMenuRunScript: "SQL ファイルを実行",
   scriptTitle: "SQL ファイルを実行",
@@ -10601,8 +10707,7 @@ const ja: Dict = {
   chunkedDmlErr_unbalanced: "括弧または引用符が閉じていません。",
   chunkedDmlErr_unsupported: "この記法 (ドル引用・E'...' 文字列) はここでは使えません。",
   chunkedDmlReadOnly: "この接続は読み取り専用のため、書き込めません。",
-  chunkedDmlProgress: "{batches} バッチ完了、影響行数 {rows}{total}",
-  chunkedDmlProgressTotal: " (約 {rows} 行中)",
+  chunkedDmlProgressTotal: "約 {rows} 行中",
   chunkedDmlDone: "完了: {batches} バッチ、影響行数 {rows}。",
   chunkedDmlNothing: "対象の行がないため、何も変更していません。",
   chunkedDmlCancelled:
@@ -12698,6 +12803,13 @@ const ja: Dict = {
   pgListenErrNul: "チャンネル名に NUL 文字は使えません。",
   pgListenErrDuplicate: "このチャンネルはすでに監視しています。",
   pgListenErrTooMany: "監視できるチャンネルは最大 {max} 件です。",
+  pgListenFilterAll: "すべて",
+  pgListenPause: "表示を一時停止",
+  pgListenResume: "表示を再開",
+  pgListenPausedManual: "表示を止めています。通知の受信は続いています。",
+  pgListenPausedAuto: "ペイロードを開いている間、表示を止めています。",
+  pgListenPending: "新着 {count} 件",
+  pgListenChipAria: "{channel}: {count} 件",
   sqliteMaintTitle: "SQLite メンテナンス",
   sqliteMaintDesc:
     "ファイルの破損や外部キーの不整合を調べたり、実行計画の統計を更新します。2 つの検査は読み取りのみで、optimize と ANALYZE は統計を更新します。",
@@ -12714,16 +12826,28 @@ const ja: Dict = {
   sqliteMaintFkOk: "外部キーの違反はありません。",
   sqliteMaintFkNg: "外部キーに違反する行が {count} 件あります。",
   sqliteMaintTruncated: "(先頭の行のみ表示しています。)",
-  sqliteMaintDone: "{action} を実行しました ({ms} ms)。",
+  sqliteMaintDone: "{action} を実行しました。",
   sqliteMaintPlanChange:
     "統計が変わるため実行計画が変わることがあります。実行計画ウォッチで悪化がないか確認してください。",
   sqliteMaintColTable: "表",
   sqliteMaintColParent: "参照先の表",
   sqliteMaintColCount: "行数",
   sqliteMaintColRowids: "rowid (先頭 20 件)",
-  sqliteMaintPages: "{pages} ページ中 {free} ページが空き ({percent}%)",
   sqliteMaintVacuumHint:
     "空きページが多くなっています。VACUUM でファイルを縮められます (SQL エディタから実行。DB と同じ大きさの一時領域が必要です)。",
+  sqliteMaintStatPages: "ページ数",
+  sqliteMaintStatFree: "空きページ",
+  sqliteMaintStatRatio: "空き率",
+  sqliteMaintStatElapsed: "所要時間",
+  sqliteMaintMeterAria: "空きページ率 (VACUUM を提案する閾値: {threshold}%)",
+  sqliteMaintMeterThreshold: "閾値 {threshold}%",
+  sqliteMaintVacuumReason:
+    "空き率 {percent}% が閾値 {threshold}% 以上です ({minPages} ページ以上の DB が対象)。",
+  sqliteMaintEmptyDesc: "上のボタンから検査を選んでください。検査ごとに調べる場所が違います。",
+  sqliteMaintPurposeIntegrity: "整合性検査 (integrity_check): ページの破損や索引の不整合を調べます。",
+  sqliteMaintPurposeForeignKey: "外部キー検査 (foreign_key_check): 参照先の行が無い行を洗い出します。",
+  sqliteMaintPurposeOptimize: "PRAGMA optimize: 統計が古そうな箇所だけ実行計画の統計を更新します。",
+  sqliteMaintPurposeAnalyze: "ANALYZE: すべての表の実行計画の統計を取り直します。",
   alterTablePositionEnd: "末尾",
   alterTablePositionFirst: "先頭",
   alterTablePositionAfter: "{column} の後",
@@ -14112,8 +14236,6 @@ const ja: Dict = {
     "この接続でテーブル・タイムラプスにウォッチ登録したテーブルのスナップショットを読み取り専用で取得し、席を外している間も履歴を積み上げます。取得できなかったテーブルがあると実行は失敗扱いになります。",
   taskFormTimelapseMaxGenerations: "テーブルごとに保持する世代数 (任意)",
   taskFormActionMaintenance: "定期メンテナンス (ANALYZE / VACUUM / OPTIMIZE / REINDEX)",
-  taskFormMaintenanceHint:
-    "選んだメンテナンス文をテーブルごとに 1 文ずつ実行します。書き込み扱いの操作なので、読み取り専用の接続では拒否されます。実行する文は固定の組み合わせから生成し、任意の SQL は指定できません。失敗したテーブルがあると実行は失敗扱いになりますが、残りは続けて実行します。対象テーブルが空のときは PostgreSQL / SQLite ではデータベース全体が対象になり、スキーマ指定は対象テーブルの修飾にだけ使います。",
   taskFormMaintenanceKind: "メンテナンスの種類",
   taskFormMaintenanceDatabase: "データベース / スキーマ (省略可)",
   taskFormMaintenanceTargets: "対象テーブル (1 行に 1 つ。空ならデータベース全体)",
@@ -14124,6 +14246,28 @@ const ja: Dict = {
   taskFormMaintenanceSqliteVacuumTargets:
     "SQLite の VACUUM はデータベース全体が対象です。対象テーブルは空にしてください。",
   taskFormMaintenanceReadOnlyProfile: "この接続は読み取り専用のため、メンテナンスは登録できません。",
+  taskMaintEffectAnalyze: "実行計画の統計を更新し、クエリがより良い計画を選べるようにします。",
+  taskMaintEffectVacuumAnalyze: "不要領域の回収と統計の更新を一度に行います。",
+  taskMaintEffectVacuum: "削除・更新された行が残した領域を回収します。",
+  taskMaintEffectReindex: "索引を作り直し、肥大化や破損を解消します。",
+  taskMaintEffectOptimize:
+    "テーブルを再構築し、統計も更新します (領域を回収)。InnoDB ではオンライン実行。FULLTEXT 索引・MyISAM は書き込みを止めます。",
+  taskMaintLockLight: "ロック: 軽",
+  taskMaintLockHeavy: "ロック: 重",
+  taskMaintBlocksWrites: "書き込みをブロック",
+  taskMaintBlocksReads: "読み取りも止まる",
+  taskMaintUnsupportedMysql: "MySQL では使えません (VACUUM / REINDEX は無く、OPTIMIZE を使います)。",
+  taskMaintUnsupportedPgOptimize: "PostgreSQL では使えません (VACUUM を使います)。",
+  taskMaintUnsupportedSqliteOptimize: "SQLite では使えません (VACUUM を使います)。",
+  taskMaintUnsupportedSqliteVacuumAnalyze:
+    "SQLite では使えません (VACUUM と ANALYZE を別々にスケジュールしてください)。",
+  taskMaintUnsupportedKind: "選んだ接続ではこの種類のメンテナンスは使えません。",
+  taskMaintInvalidTargets:
+    "対象テーブルは重複なし・空でない名前で、500 件までです。重複や空の名前を取り除いてください。",
+  taskMaintInvalidDatabase: "データベース / スキーマ名に、引用できない文字が含まれています。",
+  taskMaintPreviewLabel: "実行される文",
+  taskMaintHeavyHint:
+    "この種類は強いロックを取り、実行中は他のセッションを待たせることがあります。空いている時間帯に設定してください。書き込み扱いの操作なので、読み取り専用の接続では拒否されます。失敗したテーブルがあると実行は失敗扱いになりますが、残りは続けて実行します。",
   taskFormActionPlanWatch: "ウォッチ中のクエリ実行計画を再取得",
   taskFormPlanWatchHint:
     "実行計画ウォッチに登録したクエリの EXPLAIN を再実行し、計画が変わっていれば新しい世代として記録します。警告レベルの変化 (インデックス参照がフルスキャンになった、推定行数が桁違いに増えた等) があったときだけ実行を失敗扱いにしてデスクトップ通知でお知らせします。",

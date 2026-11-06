@@ -28,9 +28,14 @@
 //!   一貫したスナップショットにはならない)。
 //! - PostgreSQL は 1 スキーマ単位 (`pg_schema`、無ければツリーのスキーマ、タスク経路では
 //!   `public`)。所有者・権限・COMMENT は出さない。identity 列のシーケンスオプション(開始値・
-//!   増分)は既定値に戻る(現在値は `setval` で引き継ぐ)。パーティション親は未対応で明示エラー、
-//!   継承・パーティションの子は継承関係なしの通常表として書き (警告コメント付き)、複合型・range 型の
-//!   定義は出さず警告コメントにする。
+//!   増分)は既定値に戻る(現在値は `setval` で引き継ぐ)。パーティション表 (#2098) は親を
+//!   `CREATE TABLE ... PARTITION BY`、子を親の後に `CREATE TABLE ... PARTITION OF ... FOR VALUES`
+//!   (既定・多段も同様) で書き、行は葉 (子) ごとに出して親からは出さない。親の索引・外部キーは
+//!   子へ伝播するものを二重に出さない。親が出力に含まれない子 (表の選択で子だけ指定した場合や、
+//!   別スキーマの親) と継承の子は継承関係なしの通常表として書き (警告コメント付き)、別スキーマに
+//!   ある子 (外部テーブルを含む) は出さず警告にする。PG12 以下は親から子へ複製されたトリガーが
+//!   内部トリガー扱いで取れないため、通常表として出す子に親由来のトリガーは付かない (PG13+ は付く)。子固有の列既定値・NOT NULL は再現せず親のものを
+//!   引き継ぐ。複合型・range 型の定義は出さず警告コメントにする。
 //! - MySQL のビュー定義は `SHOW CREATE VIEW` のままなので、元と別名の DB へ復元すると
 //!   DB 名修飾が残る。ルーチン・トリガー・イベントは `DELIMITER ;;` 書式 (mysqldump と同じ) なので、
 //!   復元は `mysql` クライアント前提 (アプリ内のスクリプトランナーは `DELIMITER` 非対応)。
@@ -149,6 +154,17 @@ pub(crate) fn render_row_batch(
 /// 同順位は名前順。自己参照・集合外への依存は無視し、循環があれば残りを名前順で末尾に付けて
 /// `true` を返す。
 pub(crate) fn order_by_deps(names: &[String], edges: &[(String, String)]) -> (Vec<String>, bool) {
+    let (out, placed) = order_by_deps_placed(names, edges);
+    let cyclic = placed < out.len();
+    (out, cyclic)
+}
+
+/// [`order_by_deps`] と同じ並べ替えで、依存順に並べられた件数も返す。`out[..placed]` は依存順、
+/// それ以降は循環に巻き込まれて名前順で末尾に付いた表。
+pub(crate) fn order_by_deps_placed(
+    names: &[String],
+    edges: &[(String, String)],
+) -> (Vec<String>, usize) {
     let mut remaining: Vec<String> = names.to_vec();
     remaining.sort();
     remaining.dedup();
@@ -182,9 +198,9 @@ pub(crate) fn order_by_deps(names: &[String], edges: &[(String, String)]) -> (Ve
             break;
         }
     }
-    let cyclic = !remaining.is_empty();
+    let placed = out.len();
     out.extend(remaining);
-    (out, cyclic)
+    (out, placed)
 }
 
 /// MySQL の先頭/末尾。文字コード・チェック類を一時的に緩め、`AUTO_INCREMENT` の 0 を保ち、
@@ -382,14 +398,96 @@ pub(crate) fn pg_identity_sql(schema: &str, table: &str) -> String {
     )
 }
 
-/// 表の種別を引く SQL。列は (表名, relkind, パーティションの子か, 継承の子か)。
+/// 表の種別を引く SQL。列は (表名, relkind, パーティションの子か, 継承の子か, 親のスキーマ,
+/// 親の表名, パーティションキー (`pg_get_partkeydef`、親のみ), 境界 (`pg_get_expr(relpartbound)`、
+/// 子のみ))。親の列はパーティションの子だけ埋まる。
 pub(crate) fn pg_table_kinds_sql(schema: &str) -> String {
     let s = pg_lit(schema);
     format!(
         "SELECT c.relname::text, c.relkind::text, c.relispartition::text, \
-                EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)::text \
+                EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)::text, \
+                pn.nspname::text, pc.relname::text, \
+                CASE WHEN c.relkind = 'p' THEN pg_get_partkeydef(c.oid) END, \
+                CASE WHEN c.relispartition THEN pg_get_expr(c.relpartbound, c.oid) END \
            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+           LEFT JOIN pg_inherits ih ON ih.inhrelid = c.oid AND c.relispartition \
+           LEFT JOIN pg_class pc ON pc.oid = ih.inhparent \
+           LEFT JOIN pg_namespace pn ON pn.oid = pc.relnamespace \
           WHERE n.nspname = {s} AND c.relkind IN ('r', 'p') ORDER BY c.relname"
+    )
+}
+
+/// 親がこのスキーマにあり、子が別スキーマにある (または外部テーブルの) パーティションを引く SQL。列は (子のスキーマ,
+/// 子の表名, 親の表名)。このダンプは 1 スキーマ単位なので、これらの子は出せない (警告にする)。
+pub(crate) fn pg_foreign_partitions_sql(schema: &str) -> String {
+    let s = pg_lit(schema);
+    format!(
+        "SELECT cn.nspname::text, c.relname::text, p.relname::text FROM pg_inherits i \
+           JOIN pg_class c ON c.oid = i.inhrelid JOIN pg_namespace cn ON cn.oid = c.relnamespace \
+           JOIN pg_class p ON p.oid = i.inhparent JOIN pg_namespace pn ON pn.oid = p.relnamespace \
+          WHERE c.relispartition AND pn.nspname = {s} AND (cn.nspname <> {s} OR c.relkind = 'f') ORDER BY 1, 2"
+    )
+}
+
+/// パーティションの子だけが持つ索引・制約の作成文を引く SQL。列は (子の表名, 文)。親から伝播した
+/// もの (索引は `relispartition`、制約は `conparentid <> 0` / 継承した CHECK) は、子を
+/// `PARTITION OF` で作るときに自動で付くので除く。`conparentid` は PG11+ の列なので `to_jsonb`
+/// 経由で読む (古い版でも問い合わせ自体は通る)。子自身が分割表のとき、`pg_get_indexdef` は
+/// `ON ONLY` を返す (子の索引を後で付ける前提の形) が、そのまま出すと復元先で無効な分割索引に
+/// なるので `ON` に直す (自動で子の索引も作られる)。
+pub(crate) fn pg_partition_local_sql(schema: &str) -> String {
+    let s = pg_lit(schema);
+    format!(
+        "SELECT c.relname::text, \
+                CASE WHEN c.relkind = 'p' THEN replace(pg_get_indexdef(ix.indexrelid), ' ON ONLY ', ' ON ') \
+                     ELSE pg_get_indexdef(ix.indexrelid) END \
+           FROM pg_index ix \
+           JOIN pg_class c ON c.oid = ix.indrelid JOIN pg_namespace n ON n.oid = c.relnamespace \
+           JOIN pg_class i ON i.oid = ix.indexrelid \
+          WHERE n.nspname = {s} AND c.relispartition AND NOT i.relispartition \
+            AND NOT EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conindid = ix.indexrelid AND k.contype IN ('p', 'u', 'x')) \
+         UNION ALL \
+         SELECT c.relname::text, format('ALTER TABLE %I.%I ADD CONSTRAINT %I %s;', n.nspname, c.relname, k.conname, pg_get_constraintdef(k.oid)) \
+           FROM pg_constraint k \
+           JOIN pg_class c ON c.oid = k.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace \
+          WHERE n.nspname = {s} AND c.relispartition \
+            AND ((k.contype = 'c' AND k.conislocal) \
+                 OR (k.contype IN ('p', 'u', 'x') AND COALESCE((to_jsonb(k) ->> 'conparentid')::oid, 0) = 0)) \
+          ORDER BY 1, 2"
+    )
+}
+
+/// 親と式が異なる生成列を持つパーティションの子を引く SQL。列は (子の表名, 列名, 種別 (`s` =
+/// STORED / `v` = VIRTUAL), 子の式 (`pg_get_expr`))。パーティションの生成列は親と別の式を持てる
+/// (PG16 docs ddl-generated-columns) が、`PARTITION OF` は親の式を引き継ぐので、異なる子だけ
+/// `PARTITION OF 親 (列 WITH OPTIONS GENERATED ALWAYS AS (式) ...)` で式を保つ。比較は直接の親との間。
+/// `attgenerated` は PG12+ の列なので `to_jsonb` 経由で読む。
+pub(crate) fn pg_generated_overrides_sql(schema: &str) -> String {
+    let s = pg_lit(schema);
+    format!(
+        "SELECT c.relname::text, a.attname::text, to_jsonb(a) ->> 'attgenerated', pg_get_expr(d.adbin, d.adrelid) \
+           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+           JOIN pg_inherits i ON i.inhrelid = c.oid \
+           JOIN pg_attribute a ON a.attrelid = c.oid AND NOT a.attisdropped \
+                AND COALESCE(to_jsonb(a) ->> 'attgenerated', '') <> '' \
+           JOIN pg_attrdef d ON d.adrelid = c.oid AND d.adnum = a.attnum \
+           JOIN pg_attribute pa ON pa.attrelid = i.inhparent AND pa.attname = a.attname AND NOT pa.attisdropped \
+           JOIN pg_attrdef pd ON pd.adrelid = i.inhparent AND pd.adnum = pa.attnum \
+          WHERE n.nspname = {s} AND c.relispartition \
+            AND pg_get_expr(d.adbin, d.adrelid) IS DISTINCT FROM pg_get_expr(pd.adbin, pd.adrelid) \
+          ORDER BY 1, 2"
+    )
+}
+
+/// 親トリガーから子へ複製されたトリガー (`tgparentid <> 0`、PG13+) を引く SQL。列は (表名,
+/// トリガー名)。子の `CREATE TRIGGER` は親のトリガーを作った時点で済んでいるので、二重に出さない。
+pub(crate) fn pg_cloned_triggers_sql(schema: &str) -> String {
+    let s = pg_lit(schema);
+    format!(
+        "SELECT c.relname::text, t.tgname::text FROM pg_trigger t \
+           JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace \
+          WHERE n.nspname = {s} AND NOT t.tgisinternal \
+            AND COALESCE((to_jsonb(t) ->> 'tgparentid')::oid, 0) <> 0"
     )
 }
 
@@ -509,17 +607,24 @@ pub(crate) fn pg_trigger_functions_sql(schema: &str) -> String {
     )
 }
 
-/// 外部キーを後付けする `ALTER TABLE` を引く SQL。列は (表名, 参照先スキーマ, 参照先表, 文)。
+/// 外部キーを後付けする `ALTER TABLE` を引く SQL。列は (表名, 参照先スキーマ, 参照先表, 文, 複製の種別)。
+/// 複製の種別は、通常の制約なら空、PG が親の制約から複製したものなら `ref` (参照される側の
+/// パーティションへの複製。参照元は同じ表) か `src` (参照する側のパーティションへの複製)。
 /// 定義本文は `pg_get_constraintdef` (複合キー・ON DELETE/UPDATE・DEFERRABLE を含む)。
+/// 複製を出すかどうかは呼び出し側が決める: `ref` は常に除く (親側の制約から伝播する)、`src` は
+/// その子が `PARTITION OF` で出るときだけ除く (通常表として出す子には、複製を普通の FK として残す)。
 pub(crate) fn pg_foreign_keys_sql(schema: &str) -> String {
     let s = pg_lit(schema);
     format!(
         "SELECT c.relname::text, rn.nspname::text, rc.relname::text, \
-                format('ALTER TABLE %I.%I ADD CONSTRAINT %I %s;', n.nspname, c.relname, k.conname, pg_get_constraintdef(k.oid)) \
+                format('ALTER TABLE %I.%I ADD CONSTRAINT %I %s;', n.nspname, c.relname, k.conname, pg_get_constraintdef(k.oid)), \
+                CASE WHEN pk.oid IS NULL THEN '' WHEN pk.conrelid = k.conrelid THEN 'ref' ELSE 'src' END \
            FROM pg_constraint k \
            JOIN pg_class c ON c.oid = k.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace \
            JOIN pg_class rc ON rc.oid = k.confrelid JOIN pg_namespace rn ON rn.oid = rc.relnamespace \
-          WHERE k.contype = 'f' AND n.nspname = {s} ORDER BY c.relname, k.conname"
+           LEFT JOIN pg_constraint pk ON pk.oid = COALESCE((to_jsonb(k) ->> 'conparentid')::oid, 0) \
+          WHERE k.contype = 'f' AND n.nspname = {s} \
+          ORDER BY c.relname, k.conname"
     )
 }
 
@@ -575,6 +680,240 @@ fn pairs(rows: &[Vec<Value>]) -> Vec<(String, String)> {
         .collect()
 }
 
+/// `pg_table_kinds_sql` の 1 行 (表の種別とパーティション情報)。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct PgTableKind {
+    pub name: String,
+    /// `relkind = 'p'` (パーティション親。多段の中間パーティションも含む)。
+    pub partitioned: bool,
+    pub is_partition: bool,
+    /// パーティション以外の継承の子。
+    pub inherits: bool,
+    /// パーティションの子の親 (スキーマ, 表名)。
+    pub parent: Option<(String, String)>,
+    /// 親の `pg_get_partkeydef` (`RANGE (d)` など)。
+    pub key: Option<String>,
+    /// 子の境界 (`FOR VALUES ...` / `DEFAULT`)。
+    pub bound: Option<String>,
+}
+
+pub(crate) fn parse_pg_table_kinds(rows: &[Vec<Value>]) -> Vec<PgTableKind> {
+    rows.iter()
+        .filter_map(|r| {
+            let is_partition = str_at(r, 2) == Some("true");
+            Some(PgTableKind {
+                name: str_at(r, 0)?.to_string(),
+                partitioned: str_at(r, 1) == Some("p"),
+                is_partition,
+                inherits: !is_partition && str_at(r, 3) == Some("true"),
+                parent: match (str_at(r, 4), str_at(r, 5)) {
+                    (Some(s), Some(t)) => Some((s.to_string(), t.to_string())),
+                    _ => None,
+                },
+                key: str_at(r, 6).map(str::to_string),
+                bound: str_at(r, 7).map(str::to_string),
+            })
+        })
+        .collect()
+}
+
+/// 同じスキーマ内の親の名前 (別スキーマの親は `None`)。
+fn same_schema_parent<'a>(kind: &'a PgTableKind, schema: &str) -> Option<&'a str> {
+    kind.parent
+        .as_ref()
+        .filter(|(s, _)| s == schema)
+        .map(|(_, t)| t.as_str())
+}
+
+/// 表の選択にパーティション親が含まれるなら、その子孫 (葉・中間) もすべて対象にする。親だけ
+/// 出して子を出さないと、DDL もデータも欠けるため。子だけの選択はそのまま (通常表として出る)。
+pub(crate) fn expand_partition_selection(
+    selected: &[String],
+    schema: &str,
+    kinds: &[PgTableKind],
+) -> Vec<String> {
+    let mut out: Vec<String> = selected.to_vec();
+    loop {
+        let before = out.len();
+        for k in kinds {
+            if let Some(p) = same_schema_parent(k, schema) {
+                if out.iter().any(|x| x == p) && !out.contains(&k.name) {
+                    out.push(k.name.clone());
+                }
+            }
+        }
+        if out.len() == before {
+            return out;
+        }
+    }
+}
+
+/// 子 → 親 の辺 (`PARTITION OF` は親が先に要る)。常に非循環。
+/// 既定パーティションは兄弟より後 (先に行を入れた既定パーティションへ後から兄弟を足すと、
+/// 兄弟の範囲に当たる行の有無を既定側で走査されるため)。これも常に非循環。
+pub(crate) fn partition_parent_edges(schema: &str, kinds: &[PgTableKind]) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for k in kinds {
+        let Some(p) = same_schema_parent(k, schema) else {
+            continue;
+        };
+        out.push((k.name.clone(), p.to_string()));
+        if k.bound.as_deref() == Some("DEFAULT") {
+            for sib in kinds
+                .iter()
+                .filter(|o| o.name != k.name && same_schema_parent(o, schema) == Some(p))
+            {
+                out.push((k.name.clone(), sib.name.clone()));
+            }
+        }
+    }
+    out
+}
+
+/// 表の出力順。外部キー (とパーティションの展開辺) の依存順に並べる。循環が残ったときは、
+/// 依存順に並べられた先頭部分はそのまま、末尾の循環に巻き込まれた表だけを 子 → 親 の辺で
+/// 並べ直す (名前順のままだと子が親より前に出て `PARTITION OF` が失敗しうる)。戻り値の
+/// `bool` は循環の有無。
+pub(crate) fn order_tables(
+    names: &[String],
+    fk_edges: &[(String, String)],
+    schema: &str,
+    kinds: &[PgTableKind],
+) -> (Vec<String>, bool) {
+    let edges = expand_partition_edges(fk_edges, schema, kinds);
+    let (mut ordered, placed) = order_by_deps_placed(names, &edges);
+    let cyclic = placed < ordered.len();
+    if cyclic {
+        let tail = ordered.split_off(placed);
+        ordered.extend(order_by_deps_placed(&tail, &partition_parent_edges(schema, kinds)).0);
+    }
+    (ordered, cyclic)
+}
+
+/// 最上位の祖先 (同じスキーマ内)。パーティションでなければ自分自身。
+pub(crate) fn root_ancestor<'a>(name: &'a str, schema: &str, kinds: &'a [PgTableKind]) -> &'a str {
+    let mut cur = name;
+    for _ in 0..=kinds.len() {
+        match kinds
+            .iter()
+            .find(|k| k.name == cur)
+            .and_then(|k| same_schema_parent(k, schema))
+        {
+            Some(p) => cur = p,
+            None => break,
+        }
+    }
+    cur
+}
+
+/// `anc` が `desc` の祖先 (同じスキーマ内のパーティション階層) か。
+fn is_ancestor(anc: &str, desc: &str, schema: &str, kinds: &[PgTableKind]) -> bool {
+    let mut cur = desc;
+    // 階層の深さ以上は上らない (壊れたカタログでの無限ループ防止)。
+    for _ in 0..=kinds.len() {
+        let Some(p) = kinds
+            .iter()
+            .find(|k| k.name == cur)
+            .and_then(|k| same_schema_parent(k, schema))
+        else {
+            return false;
+        };
+        if p == anc {
+            return true;
+        }
+        cur = p;
+    }
+    false
+}
+
+/// 外部キーの辺 `(a, b)` (a が b を参照) に、パーティションの子孫を足す: `b` とその子孫の葉すべての
+/// データが `a` より先 (`b` 自身はデータを持たず、`a` の子は `a` の後なので、`a -> b の子孫` の辺で
+/// 連鎖する)。自己参照 (`a == b`) や、祖先・子孫どうしの FK は、子 → 親 の辺と必ずぶつかって偽の
+/// 循環になるので、展開せず元の辺も落とす (表の並びは子 → 親 の辺だけで決まる)。
+pub(crate) fn expand_partition_edges(
+    edges: &[(String, String)],
+    schema: &str,
+    kinds: &[PgTableKind],
+) -> Vec<(String, String)> {
+    let mut out = partition_parent_edges(schema, kinds);
+    for (a, b) in edges {
+        if a == b || is_ancestor(a, b, schema, kinds) || is_ancestor(b, a, schema, kinds) {
+            continue;
+        }
+        out.push((a.clone(), b.clone()));
+        // b の子孫 (多段) をたどる。
+        let mut frontier = vec![b.as_str()];
+        while let Some(cur) = frontier.pop() {
+            for k in kinds
+                .iter()
+                .filter(|k| same_schema_parent(k, schema) == Some(cur))
+            {
+                out.push((a.clone(), k.name.clone()));
+                frontier.push(k.name.as_str());
+            }
+        }
+    }
+    out
+}
+
+/// パーティションの子の `CREATE TABLE ... PARTITION OF` (列・既定値・NOT NULL は親から引き継ぐ)。
+/// 子がさらに分割されるなら `PARTITION BY` を続ける。
+pub(crate) fn partition_of_ddl(
+    schema: &str,
+    kind: &PgTableKind,
+    parent: &str,
+    bound: &str,
+    gen_overrides: &[GenOverride],
+) -> String {
+    let pg = DriverKind::Postgres;
+    let cols = if gen_overrides.is_empty() {
+        String::new()
+    } else {
+        let items: Vec<String> = gen_overrides
+            .iter()
+            .map(|g| {
+                format!(
+                    "{} WITH OPTIONS GENERATED ALWAYS AS ({}) {}",
+                    quote_ident(pg, &g.column),
+                    g.expr,
+                    if g.stored { "STORED" } else { "VIRTUAL" }
+                )
+            })
+            .collect();
+        format!(" ({})", items.join(", "))
+    };
+    let sub = kind
+        .key
+        .as_deref()
+        .map(|k| format!(" PARTITION BY {k}"))
+        .unwrap_or_default();
+    format!(
+        "CREATE TABLE {} PARTITION OF {}{} {}{};\n",
+        qualified_table(pg, schema, &kind.name),
+        qualified_table(pg, schema, parent),
+        cols,
+        bound,
+        sub
+    )
+}
+
+/// 親と式が異なる子の生成列 (`pg_generated_overrides_sql` の 1 行)。
+pub(crate) struct GenOverride {
+    pub column: String,
+    pub expr: String,
+    pub stored: bool,
+}
+
+/// `pg_foreign_keys_sql` の 1 行。
+struct FkRow {
+    table: String,
+    ref_schema: String,
+    ref_table: String,
+    stmt: String,
+    /// 空 = 通常の制約、`ref` / `src` = 親の制約からの複製 (`pg_foreign_keys_sql` 参照)。
+    clone_kind: String,
+}
+
 /// PostgreSQL の identity 列。
 struct IdentityCol {
     column: String,
@@ -591,6 +930,7 @@ async fn postgres_table_ddl(
     table: &str,
     types: &[(String, String)],
     identity: &[IdentityCol],
+    partition_by: Option<&str>,
 ) -> Result<String> {
     let mut columns = conn.columns(schema, table).await?;
     if columns.is_empty() {
@@ -606,7 +946,7 @@ async fn postgres_table_ddl(
     let indexes = conn.list_indexes(schema, table).await?;
     // 外部キーは別途 (データ投入後に) 付ける。
     let extras = conn.table_ddl_extras(schema, table).await?;
-    let mut ddl = crate::db::table_ddl::synthesize_create_table(
+    let mut ddl = crate::db::table_ddl::synthesize_create_table_partitioned(
         DriverKind::Postgres,
         Some(schema),
         table,
@@ -614,6 +954,7 @@ async fn postgres_table_ddl(
         &indexes,
         &[],
         &extras,
+        partition_by,
     );
     for id in identity {
         ddl.push_str(&format!(
@@ -712,6 +1053,20 @@ pub async fn dump_native_core(
     if let Some(sel) = &selected {
         ensure_tables_exist(sel, all_names.iter().map(String::as_str))?;
     }
+    // 表の種別 (PostgreSQL): パーティション親・子の関係。選択にパーティション親が含まれるなら子孫も
+    // 対象にする (親だけ出すと子の DDL とデータが欠ける)。
+    let kinds: Vec<PgTableKind> = if pg {
+        parse_pg_table_kinds(&conn.execute(&pg_table_kinds_sql(&schema), None).await?.rows)
+    } else {
+        Vec::new()
+    };
+    let selected = selected.map(|sel| {
+        if pg {
+            expand_partition_selection(&sel, &schema, &kinds)
+        } else {
+            sel
+        }
+    });
     let in_scope = |n: &str| selected.as_ref().map_or(true, |s| s.iter().any(|x| x == n));
     let mut ordered_tables: Vec<String> = all_names
         .iter()
@@ -726,10 +1081,9 @@ pub async fn dump_native_core(
     let whole_schema = selected.is_none();
     let schema_part = !options.no_create_info;
 
-    // 表の種別 (PostgreSQL): パーティション親は未対応。継承・パーティションの子は警告を残す。
     let mut warnings: Vec<String> = Vec::new();
     // 外部キー (PostgreSQL)。行データは FK の親→子の順に出す (データだけのダンプでも違反しない)。
-    let mut fk_rows: Vec<(String, String, String, String)> = Vec::new();
+    let mut fk_rows: Vec<FkRow> = Vec::new();
     if pg {
         for r in &conn
             .execute(&pg_foreign_keys_sql(&schema), None)
@@ -739,15 +1093,23 @@ pub async fn dump_native_core(
             if let (Some(tbl), Some(rs), Some(rt), Some(stmt)) =
                 (str_at(r, 0), str_at(r, 1), str_at(r, 2), str_at(r, 3))
             {
-                fk_rows.push((tbl.into(), rs.into(), rt.into(), stmt.into()));
+                fk_rows.push(FkRow {
+                    table: tbl.into(),
+                    ref_schema: rs.into(),
+                    ref_table: rt.into(),
+                    stmt: stmt.into(),
+                    clone_kind: str_at(r, 4).unwrap_or_default().into(),
+                });
             }
         }
         let edges: Vec<(String, String)> = fk_rows
             .iter()
-            .filter(|(_, rs, _, _)| *rs == schema)
-            .map(|(t, _, rt, _)| (t.clone(), rt.clone()))
+            .filter(|f| f.ref_schema == schema && f.clone_kind != "ref")
+            .map(|f| (f.table.clone(), f.ref_table.clone()))
             .collect();
-        let (ordered, cyclic) = order_by_deps(&ordered_tables, &edges);
+        // パーティションの子は親の後、外部キーの参照先がパーティション表なら葉のデータが先
+        // (展開は `order_tables` の中。循環が残っても親を必ず先に出す)。
+        let (ordered, cyclic) = order_tables(&ordered_tables, &edges, &schema, &kinds);
         ordered_tables = ordered;
         if cyclic && options.no_create_info {
             warnings.push(
@@ -756,28 +1118,93 @@ pub async fn dump_native_core(
             );
         }
     }
+    // 親が出力に含まれるパーティションの子 (`PARTITION OF` で出す)。それ以外の子は通常表になる。
+    let attached: HashSet<&str> = kinds
+        .iter()
+        .filter(|k| {
+            k.bound.is_some()
+                && same_schema_parent(k, &schema)
+                    .is_some_and(|p| ordered_tables.iter().any(|t| t == p))
+        })
+        .map(|k| k.name.as_str())
+        .collect();
     if pg {
-        let kinds = conn.execute(&pg_table_kinds_sql(&schema), None).await?;
-        for r in &kinds.rows {
-            let Some(name) = str_at(r, 0).filter(|n| in_scope(n)) else {
-                continue;
-            };
-            if str_at(r, 1) == Some("p") {
-                return Err(AppError::InvalidInput(format!(
-                    "partitioned table '{name}' is not supported by the native dump; use pg_dump"
-                )));
-            }
-            if str_at(r, 2) == Some("true") {
+        for k in kinds.iter().filter(|k| ordered_tables.contains(&k.name)) {
+            if k.is_partition && !attached.contains(k.name.as_str()) {
                 warnings.push(format!(
-                    "table {name} is a partition; dumped as a plain table without its partition parent"
+                    "table {} is a partition; dumped as a plain table without its partition parent (parent not in this dump, or its bound is unavailable)",
+                    k.name
                 ));
-            } else if str_at(r, 3) == Some("true") {
+            } else if k.inherits {
                 warnings.push(format!(
-                    "table {name} inherits from another table; dumped without INHERITS"
+                    "table {} inherits from another table; dumped without INHERITS",
+                    k.name
                 ));
             }
         }
+        for r in &conn
+            .execute(&pg_foreign_partitions_sql(&schema), None)
+            .await?
+            .rows
+        {
+            if let (Some(cs), Some(c), Some(p)) = (str_at(r, 0), str_at(r, 1), str_at(r, 2)) {
+                if ordered_tables.iter().any(|t| t == p) {
+                    warnings.push(format!(
+                        "partition {cs}.{c} of {p} is in another schema or a foreign table and is not dumped"
+                    ));
+                }
+            }
+        }
     }
+
+    // パーティションの子だけが持つ索引・制約 (親から伝播しないもの)。親から伝播する索引・FK・トリガー
+    // は子の作成時に自動で付くので、ここには含まれない。
+    // 親と式が異なる生成列 (子 -> 列の上書き)。
+    let mut gen_overrides: std::collections::HashMap<String, Vec<GenOverride>> =
+        std::collections::HashMap::new();
+    if pg && schema_part && !attached.is_empty() {
+        for r in &conn
+            .execute(&pg_generated_overrides_sql(&schema), None)
+            .await?
+            .rows
+        {
+            if let (Some(t), Some(c), Some(kind), Some(e)) =
+                (str_at(r, 0), str_at(r, 1), str_at(r, 2), str_at(r, 3))
+            {
+                gen_overrides
+                    .entry(t.to_string())
+                    .or_default()
+                    .push(GenOverride {
+                        column: c.to_string(),
+                        expr: e.to_string(),
+                        stored: kind == "s",
+                    });
+            }
+        }
+    }
+    let partition_local: Vec<(String, String)> = if pg && schema_part && !attached.is_empty() {
+        pairs(
+            &conn
+                .execute(&pg_partition_local_sql(&schema), None)
+                .await?
+                .rows,
+        )
+    } else {
+        Vec::new()
+    };
+    let cloned_triggers: HashSet<(String, String)> =
+        if pg && options.triggers && !attached.is_empty() {
+            pairs(
+                &conn
+                    .execute(&pg_cloned_triggers_sql(&schema), None)
+                    .await?
+                    .rows,
+            )
+            .into_iter()
+            .collect()
+        } else {
+            HashSet::new()
+        };
 
     // PostgreSQL の事前取得 (書き込み前に済ませ、失敗は書き始める前に返す)。
     let mut type_stmts: Vec<String> = Vec::new();
@@ -866,14 +1293,21 @@ pub async fn dump_native_core(
         (late_functions, functions) = functions
             .into_iter()
             .partition(|o| o.id.as_ref().is_some_and(|id| late_ids.contains(id)));
-        for (tbl, ref_schema, ref_tbl, stmt) in &fk_rows {
-            let target_ok = if *ref_schema == schema {
-                ordered_tables.iter().any(|t| t == ref_tbl)
+        for f in &fk_rows {
+            // 複製は親側の制約から伝播する。`ref` は常にそう、`src` は子が `PARTITION OF` で出るときだけ
+            // (通常表として出す子では、複製が唯一の FK なので残す)。
+            if f.clone_kind == "ref"
+                || (f.clone_kind == "src" && attached.contains(f.table.as_str()))
+            {
+                continue;
+            }
+            let target_ok = if f.ref_schema == schema {
+                ordered_tables.contains(&f.ref_table)
             } else {
                 whole_schema
             };
-            if ordered_tables.iter().any(|t| t == tbl) && target_ok {
-                fk_stmts.push(stmt.clone());
+            if ordered_tables.contains(&f.table) && target_ok {
+                fk_stmts.push(f.stmt.clone());
             }
         }
     }
@@ -1041,6 +1475,11 @@ pub async fn dump_native_core(
             Vec::new()
         };
 
+        let kind = kinds.iter().find(|k| k.name == *name);
+        let is_parent = kind.is_some_and(|k| k.partitioned);
+        let part_of = kind
+            .filter(|k| attached.contains(k.name.as_str()))
+            .and_then(|k| same_schema_parent(k, &schema).map(|p| (k, p)));
         let mut chunk = String::new();
         if schema_part {
             if !pg && options.add_drop_table {
@@ -1049,8 +1488,23 @@ pub async fn dump_native_core(
                     qualified_table(driver, &schema, name)
                 ));
             }
-            let ddl = if pg {
-                postgres_table_ddl(conn, &schema, name, &pg_types, &identity).await?
+            let ddl = if let Some((k, parent)) = part_of {
+                // 子は列・既定値・親から伝播する索引 / 制約 / トリガーを `PARTITION OF` で引き継ぐ。
+                // identity は PG17+ で子が親のものを共有するので、子には出さない。
+                let mut d = partition_of_ddl(
+                    &schema,
+                    k,
+                    parent,
+                    k.bound.as_deref().unwrap_or_default(),
+                    gen_overrides.get(name).map_or(&[], Vec::as_slice),
+                );
+                for (_, stmt) in partition_local.iter().filter(|(t, _)| t == name) {
+                    d.push_str(&terminated(stmt));
+                }
+                d
+            } else if pg {
+                let key = kind.and_then(|k| k.key.as_deref());
+                postgres_table_ddl(conn, &schema, name, &pg_types, &identity, key).await?
             } else {
                 conn.object_definition(&schema, "table", name, None).await?
             };
@@ -1059,6 +1513,9 @@ pub async fn dump_native_core(
         }
         write_chunk(&writer, counter, &chunk)?;
 
+        // データは葉 (親でない表) だけ。親 (中間パーティションを含む) は行を持たず、親経由で入れると
+        // 全行が振り分け直され (遅い・境界の外の行や hash の分割数が変わる復元先で行き先が変わる)、
+        // 葉ごとの直書きなら復元先でも元と同じ表に入る (pg_dump の既定と同じ)。
         if !options.no_data {
             // 生成列は INSERT できないので外し、列を明示して SELECT / INSERT の対応を固定する。
             let generated: HashSet<String> = conn
@@ -1085,7 +1542,7 @@ pub async fn dump_native_core(
                     mysql_select_expr(&c.name, &c.data_type)
                 });
             }
-            for id in &identity {
+            for id in identity.iter().filter(|_| part_of.is_none()) {
                 let seq = format!(
                     "pg_get_serial_sequence({}, {})",
                     pg_lit(&qualified_table(driver, &schema, name)),
@@ -1102,8 +1559,19 @@ pub async fn dump_native_core(
                     ),
                 });
             }
-            if !columns.is_empty() {
-                let overriding = identity.iter().any(|i| i.always);
+            if !columns.is_empty() && !is_parent {
+                let mut overriding = identity.iter().any(|i| i.always);
+                // PARTITION OF で出す子は、最上位の親の identity が ALWAYS なら、葉への直書きにも
+                // OVERRIDING SYSTEM VALUE が要る (PG17+ の復元。子自身の identity 情報に出ないことがある)。
+                if part_of.is_some() && !overriding {
+                    let root = root_ancestor(name, &schema, &kinds);
+                    overriding = conn
+                        .execute(&pg_identity_sql(&schema, root), None)
+                        .await?
+                        .rows
+                        .iter()
+                        .any(|r| str_at(r, 1) == Some("a"));
+                }
                 stream_table_rows(
                     conn,
                     driver,
@@ -1203,6 +1671,12 @@ pub async fn dump_native_core(
             let mut chunk = String::new();
             for table in &ordered_tables {
                 for trg in conn.list_table_triggers(&schema, table).await? {
+                    // 親のトリガーから子へ複製されたもの (親の CREATE TRIGGER で付く)。
+                    if attached.contains(table.as_str())
+                        && cloned_triggers.contains(&(table.clone(), trg.name.clone()))
+                    {
+                        continue;
+                    }
                     if trg.definition.trim().is_empty() {
                         chunk.push_str(&format!(
                             "-- trigger {} on {} skipped: definition unavailable\n",
@@ -1627,11 +2101,264 @@ mod tests {
             pg_table_dependent_functions_sql("s'"),
             pg_trigger_functions_sql("s'"),
             pg_foreign_keys_sql("s'"),
+            pg_foreign_partitions_sql("s'"),
+            pg_partition_local_sql("s'"),
+            pg_cloned_triggers_sql("s'"),
+            pg_generated_overrides_sql("s'"),
             pg_view_deps_sql("s'"),
         ] {
             assert!(q.contains("'s'''"), "{q}");
         }
         assert!(mysql_view_deps_sql("d'b").contains("VIEW_SCHEMA = 'd''b'"));
+    }
+
+    fn kind(
+        name: &str,
+        parent: Option<&str>,
+        key: Option<&str>,
+        bound: Option<&str>,
+    ) -> PgTableKind {
+        PgTableKind {
+            name: name.into(),
+            partitioned: key.is_some(),
+            is_partition: parent.is_some(),
+            parent: parent.map(|p| ("s".to_string(), p.to_string())),
+            key: key.map(str::to_string),
+            bound: bound.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    fn sample_kinds() -> Vec<PgTableKind> {
+        vec![
+            kind("p", None, Some("LIST (r)"), None),
+            kind(
+                "p_a",
+                Some("p"),
+                Some("HASH (id)"),
+                Some("FOR VALUES IN ('a')"),
+            ),
+            kind(
+                "p_a0",
+                Some("p_a"),
+                None,
+                Some("FOR VALUES WITH (modulus 2, remainder 0)"),
+            ),
+            kind("p_d", Some("p"), None, Some("DEFAULT")),
+            kind("plain", None, None, None),
+        ]
+    }
+
+    #[test]
+    fn partition_of_ddl_handles_default_and_subpartitions() {
+        let k = sample_kinds();
+        assert_eq!(
+            partition_of_ddl("s", &k[3], "p", "DEFAULT", &[]),
+            "CREATE TABLE \"s\".\"p_d\" PARTITION OF \"s\".\"p\" DEFAULT;\n"
+        );
+        assert_eq!(
+            partition_of_ddl("s", &k[1], "p", "FOR VALUES IN ('a')", &[]),
+            "CREATE TABLE \"s\".\"p_a\" PARTITION OF \"s\".\"p\" FOR VALUES IN ('a') PARTITION BY HASH (id);\n"
+        );
+    }
+
+    #[test]
+    fn partition_of_ddl_keeps_child_generated_expressions() {
+        let k = sample_kinds();
+        let g = [
+            GenOverride {
+                column: "g".into(),
+                expr: "(a * 3)".into(),
+                stored: true,
+            },
+            GenOverride {
+                column: "h".into(),
+                expr: "(a + 1)".into(),
+                stored: false,
+            },
+        ];
+        assert_eq!(
+            partition_of_ddl("s", &k[3], "p", "DEFAULT", &g),
+            "CREATE TABLE \"s\".\"p_d\" PARTITION OF \"s\".\"p\" (\"g\" WITH OPTIONS GENERATED ALWAYS AS ((a * 3)) STORED, \"h\" WITH OPTIONS GENERATED ALWAYS AS ((a + 1)) VIRTUAL) DEFAULT;\n"
+        );
+        assert!(pg_generated_overrides_sql("s'").contains("IS DISTINCT FROM"));
+    }
+
+    #[test]
+    fn selecting_a_parent_pulls_in_descendants_only() {
+        let k = sample_kinds();
+        let mut got = expand_partition_selection(&["p".to_string()], "s", &k);
+        got.sort();
+        assert_eq!(got, ["p", "p_a", "p_a0", "p_d"]);
+        // 子だけの選択は広げない。別スキーマの親は無関係。
+        assert_eq!(
+            expand_partition_selection(&["p_d".to_string()], "s", &k),
+            ["p_d"]
+        );
+        assert_eq!(
+            expand_partition_selection(&["p".to_string()], "other", &k),
+            ["p"]
+        );
+    }
+
+    #[test]
+    fn partition_edges_put_parents_first_and_fk_targets_leaves_first() {
+        let k = sample_kinds();
+        let edges = expand_partition_edges(&[("plain".into(), "p".into())], "s", &k);
+        // 子 → 親、FK の参照元 → 参照先の子孫すべて。
+        for e in [
+            ("p_a", "p"),
+            ("p_a0", "p_a"),
+            ("plain", "p"),
+            ("plain", "p_a0"),
+            ("plain", "p_d"),
+        ] {
+            assert!(edges.contains(&(e.0.to_string(), e.1.to_string())), "{e:?}");
+        }
+        let names: Vec<String> = ["plain", "p", "p_a", "p_a0", "p_d"]
+            .map(String::from)
+            .to_vec();
+        let (order, cyclic) = order_by_deps(&names, &edges);
+        assert!(!cyclic);
+        let pos = |n: &str| order.iter().position(|x| x == n);
+        assert!(pos("p") < pos("p_a") && pos("p_a") < pos("p_a0"));
+        assert!(pos("p_a0") < pos("plain") && pos("p_d") < pos("plain"));
+    }
+
+    #[test]
+    fn self_and_ancestor_fks_do_not_create_false_cycles() {
+        // 子の名前が親より辞書順で前 (a_child < p) でも、親が先に出る。
+        let k = vec![
+            kind("p", None, Some("LIST (r)"), None),
+            kind("a_child", Some("p"), None, Some("DEFAULT")),
+        ];
+        let names: Vec<String> = ["a_child", "p"].map(String::from).to_vec();
+        for fk in [
+            ("p".to_string(), "p".to_string()),
+            ("a_child".to_string(), "p".to_string()),
+            ("p".to_string(), "a_child".to_string()),
+        ] {
+            let edges = expand_partition_edges(std::slice::from_ref(&fk), "s", &k);
+            let (order, cyclic) = order_by_deps(&names, &edges);
+            assert!(!cyclic, "{fk:?}");
+            assert_eq!(order, ["p", "a_child"], "{fk:?}");
+        }
+        // 本物の循環 (p <-> q) が残っても、並べ直しで親が先。
+        let k2 = vec![
+            kind("p", None, Some("LIST (r)"), None),
+            kind("a_child", Some("p"), None, Some("DEFAULT")),
+            kind("q", None, None, None),
+        ];
+        let edges = expand_partition_edges(
+            &[("p".into(), "q".into()), ("q".into(), "p".into())],
+            "s",
+            &k2,
+        );
+        let names: Vec<String> = ["a_child", "p", "q"].map(String::from).to_vec();
+        let (order, cyclic) = order_by_deps(&names, &edges);
+        assert!(cyclic);
+        let fixed = order_by_deps(&order, &partition_parent_edges("s", &k2)).0;
+        let pos = |n: &str| fixed.iter().position(|x| x == n);
+        assert!(pos("p") < pos("a_child"));
+    }
+
+    #[test]
+    fn cycle_keeps_fk_order_of_tables_outside_the_cycle() {
+        // パーティションなし。a <-> b が循環でも、z -> c の FK 順 (z が先) は保たれる。
+        let edges = vec![edge("a", "b"), edge("b", "a"), edge("c", "z")];
+        let (order, cyclic) = order_tables(&names(&["a", "b", "c", "z"]), &edges, "s", &[]);
+        assert!(cyclic);
+        assert_eq!(order, ["z", "c", "a", "b"]);
+        // 循環がなければ cyclic は false で、従来どおりの並び。
+        let (order, cyclic) = order_tables(&names(&["c", "z"]), &[edge("c", "z")], "s", &[]);
+        assert!(!cyclic);
+        assert_eq!(order, ["z", "c"]);
+    }
+
+    #[test]
+    fn cycle_tail_is_reordered_parent_first() {
+        let k = vec![
+            kind("p", None, Some("LIST (r)"), None),
+            kind("a_child", Some("p"), None, Some("FOR VALUES IN ('x')")),
+            kind("q", None, None, None),
+            kind("z", None, None, None),
+            kind("b_other", None, None, None),
+        ];
+        // p <-> q の循環 + 循環外の b_other -> z。
+        let edges = vec![edge("p", "q"), edge("q", "p"), edge("b_other", "z")];
+        let (order, cyclic) = order_tables(
+            &names(&["a_child", "b_other", "p", "q", "z"]),
+            &edges,
+            "s",
+            &k,
+        );
+        assert!(cyclic);
+        let pos = |n: &str| order.iter().position(|x| x == n);
+        assert!(pos("z") < pos("b_other"));
+        assert!(pos("p") < pos("a_child"));
+    }
+
+    #[test]
+    fn default_partition_follows_its_siblings() {
+        let k = vec![
+            kind("p", None, Some("LIST (r)"), None),
+            kind("a_default", Some("p"), None, Some("DEFAULT")),
+            kind("z_one", Some("p"), None, Some("FOR VALUES IN ('x')")),
+        ];
+        let (order, cyclic) = order_tables(&names(&["a_default", "p", "z_one"]), &[], "s", &k);
+        assert!(!cyclic);
+        assert_eq!(order, ["p", "z_one", "a_default"]);
+    }
+
+    #[test]
+    fn root_ancestor_walks_up_the_hierarchy() {
+        let k = sample_kinds();
+        assert_eq!(root_ancestor("p_a0", "s", &k), "p");
+        assert_eq!(root_ancestor("p", "s", &k), "p");
+        assert_eq!(root_ancestor("plain", "s", &k), "plain");
+        assert_eq!(root_ancestor("p_a0", "other", &k), "p_a0");
+    }
+
+    #[test]
+    fn partition_local_index_sql_rewrites_on_only_for_partitioned_children() {
+        let sql = pg_partition_local_sql("s");
+        assert!(sql.contains("c.relkind = 'p'") && sql.contains("' ON ONLY ', ' ON '"));
+    }
+
+    #[test]
+    fn parse_table_kinds_reads_partition_columns() {
+        let row = |v: &[Option<&str>]| -> Vec<Value> {
+            v.iter()
+                .map(|x| x.map_or(Value::Null, |s| Value::String(s.into())))
+                .collect()
+        };
+        let rows = vec![
+            row(&[
+                Some("p"),
+                Some("p"),
+                Some("false"),
+                Some("false"),
+                None,
+                None,
+                Some("RANGE (d)"),
+                None,
+            ]),
+            row(&[
+                Some("c"),
+                Some("r"),
+                Some("true"),
+                Some("true"),
+                Some("s"),
+                Some("p"),
+                None,
+                Some("DEFAULT"),
+            ]),
+        ];
+        let got = parse_pg_table_kinds(&rows);
+        assert!(got[0].partitioned && got[0].key.as_deref() == Some("RANGE (d)"));
+        assert!(got[1].is_partition && !got[1].inherits);
+        assert_eq!(got[1].parent, Some(("s".into(), "p".into())));
+        assert_eq!(got[1].bound.as_deref(), Some("DEFAULT"));
     }
 
     #[test]

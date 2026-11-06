@@ -5,6 +5,7 @@
 //! JSON・2^53 超の BIGINT) が差分にならないこと、実際の差分は検出されること、結果が検証専用で
 //! 同期 SQL を出さないことを確かめる。
 
+use super::common; // 共有ヘルパは groups/*.rs が 1 度だけ取り込む
 use noobdb_lib::__test_api as t;
 use t::{RowStatus, Value};
 
@@ -13,13 +14,8 @@ const TABLE_PGSQLITE: &str = "noobdb_xdiff_1869_pgsqlite";
 const TEXT_KEY_TABLE: &str = "noobdb_xdiff_1869_text";
 
 async fn connect_both() -> Option<(t::Connection, String, t::Connection, String)> {
-    let (Ok(mysql_url), Ok(pg_url)) = (
-        std::env::var("NOOBDB_TEST_MYSQL_URL"),
-        std::env::var("NOOBDB_TEST_POSTGRES_URL"),
-    ) else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL / NOOBDB_TEST_POSTGRES_URL not both set");
-        return None;
-    };
+    let mysql_url = common::require_env("NOOBDB_TEST_MYSQL_URL")?;
+    let pg_url = common::require_env("NOOBDB_TEST_POSTGRES_URL")?;
     let mysql_opts = t::parse_mysql_url(&mysql_url).expect("valid mysql url");
     let mysql_db = mysql_opts
         .database
@@ -219,8 +215,7 @@ async fn mysql_vs_postgres_data_diff_normalizes_and_stays_verify_only() {
 /// SQLite 側の列名は大文字小文字が違う (`Name`) が、1 つに決まるので対応付けられる。
 #[tokio::test]
 async fn postgres_vs_sqlite_data_diff_handles_floats_and_column_case() {
-    let Ok(pg_url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(pg_url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let pg = t::connect(&t::parse_postgres_url(&pg_url).expect("valid postgres url"))

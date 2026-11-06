@@ -14,26 +14,14 @@
 //! (CI では `rust (test)` ジョブが `$GITHUB_ENV` へ書き出す)。いずれも未設定なら
 //! 全テストがスキップ経路を通り green になる (コンパイルは常に検証される)。
 
+use super::common; // 共有ヘルパは groups/*.rs が 1 度だけ取り込む
 use noobdb_lib::__test_api as t;
-
-fn mysql_tls_env() -> Option<(String, Option<String>)> {
-    let url = std::env::var("NOOBDB_TEST_MYSQL_TLS_URL").ok()?;
-    let ca = std::env::var("NOOBDB_TEST_TLS_CA").ok();
-    Some((url, ca))
-}
-
-fn postgres_tls_env() -> Option<(String, Option<String>)> {
-    let url = std::env::var("NOOBDB_TEST_POSTGRES_TLS_URL").ok()?;
-    let ca = std::env::var("NOOBDB_TEST_TLS_CA").ok();
-    Some((url, ca))
-}
 
 /// `ssl_mode=require` だけで (CA 検証なしに) TLS ハンドシェイクが成立し、通常どおり
 /// クエリが実行できること。
 #[tokio::test]
 async fn mysql_tls_require_connects() {
-    let Some((url, _)) = mysql_tls_env() else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_TLS_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_TLS_URL") else {
         return;
     };
     let mut opts = t::parse_mysql_url(&url).expect("valid url");
@@ -48,8 +36,10 @@ async fn mysql_tls_require_connects() {
 /// `verify_ca` + 正しい CA を渡すと、証明書チェーン検証込みで接続が成立すること。
 #[tokio::test]
 async fn mysql_tls_verify_ca_with_correct_ca_connects() {
-    let Some((url, Some(ca))) = mysql_tls_env() else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_TLS_URL / NOOBDB_TEST_TLS_CA not set");
+    let (Some(url), Some(ca)) = (
+        common::require_env("NOOBDB_TEST_MYSQL_TLS_URL"),
+        common::require_env("NOOBDB_TEST_TLS_CA"),
+    ) else {
         return;
     };
     let mut opts = t::parse_mysql_url(&url).expect("valid url");
@@ -67,8 +57,10 @@ async fn mysql_tls_verify_ca_with_correct_ca_connects() {
 /// `scripts/ci-setup-tls-db.sh` 参照)。
 #[tokio::test]
 async fn mysql_tls_verify_full_with_correct_ca_connects() {
-    let Some((url, Some(ca))) = mysql_tls_env() else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_TLS_URL / NOOBDB_TEST_TLS_CA not set");
+    let (Some(url), Some(ca)) = (
+        common::require_env("NOOBDB_TEST_MYSQL_TLS_URL"),
+        common::require_env("NOOBDB_TEST_TLS_CA"),
+    ) else {
         return;
     };
     let mut opts = t::parse_mysql_url(&url).expect("valid url");
@@ -87,8 +79,7 @@ async fn mysql_tls_verify_full_with_correct_ca_connects() {
 /// こと自体が「AppError として表面化した」ことの確認になる。
 #[tokio::test]
 async fn mysql_tls_verify_full_without_ca_fails() {
-    let Some((url, _)) = mysql_tls_env() else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_TLS_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_TLS_URL") else {
         return;
     };
     let mut opts = t::parse_mysql_url(&url).expect("valid url");
@@ -107,8 +98,7 @@ async fn mysql_tls_verify_full_without_ca_fails() {
 /// クエリが実行できること。
 #[tokio::test]
 async fn postgres_tls_require_connects() {
-    let Some((url, _)) = postgres_tls_env() else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_TLS_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_TLS_URL") else {
         return;
     };
     let mut opts = t::parse_postgres_url(&url).expect("valid url");
@@ -123,8 +113,10 @@ async fn postgres_tls_require_connects() {
 /// `verify_ca` + 正しい CA を渡すと、証明書チェーン検証込みで接続が成立すること。
 #[tokio::test]
 async fn postgres_tls_verify_ca_with_correct_ca_connects() {
-    let Some((url, Some(ca))) = postgres_tls_env() else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_TLS_URL / NOOBDB_TEST_TLS_CA not set");
+    let (Some(url), Some(ca)) = (
+        common::require_env("NOOBDB_TEST_POSTGRES_TLS_URL"),
+        common::require_env("NOOBDB_TEST_TLS_CA"),
+    ) else {
         return;
     };
     let mut opts = t::parse_postgres_url(&url).expect("valid url");
@@ -142,8 +134,10 @@ async fn postgres_tls_verify_ca_with_correct_ca_connects() {
 /// `scripts/ci-setup-tls-db.sh` 参照)。
 #[tokio::test]
 async fn postgres_tls_verify_full_with_correct_ca_connects() {
-    let Some((url, Some(ca))) = postgres_tls_env() else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_TLS_URL / NOOBDB_TEST_TLS_CA not set");
+    let (Some(url), Some(ca)) = (
+        common::require_env("NOOBDB_TEST_POSTGRES_TLS_URL"),
+        common::require_env("NOOBDB_TEST_TLS_CA"),
+    ) else {
         return;
     };
     let mut opts = t::parse_postgres_url(&url).expect("valid url");
@@ -160,8 +154,7 @@ async fn postgres_tls_verify_full_with_correct_ca_connects() {
 /// エラーが表面化すること。
 #[tokio::test]
 async fn postgres_tls_verify_full_without_ca_fails() {
-    let Some((url, _)) = postgres_tls_env() else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_TLS_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_TLS_URL") else {
         return;
     };
     let mut opts = t::parse_postgres_url(&url).expect("valid url");

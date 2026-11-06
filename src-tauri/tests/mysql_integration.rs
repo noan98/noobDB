@@ -12,8 +12,7 @@ use noobdb_lib::__test_api as t;
 
 #[tokio::test]
 async fn mysql_roundtrip_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -49,8 +48,7 @@ async fn mysql_roundtrip_when_env_set() {
 /// the contract the tree relies on (base tables get a badge, views don't).
 #[tokio::test]
 async fn mysql_table_row_estimates_present_for_base_table() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -101,8 +99,7 @@ async fn mysql_table_row_estimates_present_for_base_table() {
 /// without one always falls back to `all_columns`.
 #[tokio::test]
 async fn mysql_row_identity_pk_and_all_columns_fallback() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -157,8 +154,7 @@ async fn mysql_row_identity_pk_and_all_columns_fallback() {
 /// #1776: PK が無くても UNIQUE NOT NULL キーがあれば `all_columns` ではなく `unique_key`。
 #[tokio::test]
 async fn mysql_row_identity_prefers_unique_not_null_key() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -214,8 +210,7 @@ async fn mysql_row_identity_prefers_unique_not_null_key() {
 /// and that total == data + index when both are present.
 #[tokio::test]
 async fn mysql_table_sizes_present_for_base_table() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -271,8 +266,7 @@ async fn mysql_table_sizes_present_for_base_table() {
 /// `SHOW VARIABLES` (e.g. the always-present `version` variable).
 #[tokio::test]
 async fn mysql_server_info_reports_version_and_variables() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -293,8 +287,7 @@ async fn mysql_server_info_reports_version_and_variables() {
 /// (`Threads_connected` / `Questions`) は必ず報告されるので `Some` を要求する。
 #[tokio::test]
 async fn mysql_server_metrics_reports_connection_and_throughput_counters() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -332,8 +325,7 @@ async fn mysql_server_metrics_reports_connection_and_throughput_counters() {
 /// 同じ意味 (自分自身を含むので 1 以上) を返すこと。
 #[tokio::test]
 async fn mysql_connection_count_is_reported() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -350,8 +342,7 @@ async fn mysql_connection_count_is_reported() {
 /// テーブル別の行は空になり、global 行 (mysql.user) は絞り込みに関係なく返る。
 #[tokio::test]
 async fn mysql_user_privileges_database_filter_narrows_table_rows() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -387,8 +378,7 @@ async fn mysql_user_privileges_database_filter_narrows_table_rows() {
 /// before/after panes instead of empty ones.
 #[tokio::test]
 async fn preview_captures_affected_rows_past_row_limit() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -479,8 +469,7 @@ async fn preview_captures_affected_rows_past_row_limit() {
 /// result-set path, whose empty "0 rows" grid would hide that data changed.
 #[tokio::test]
 async fn with_cte_dml_reports_rows_affected() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -560,8 +549,7 @@ async fn with_cte_dml_reports_rows_affected() {
 /// and only `rows_affected` (0) is reported (#1052).
 #[tokio::test]
 async fn bare_values_statement_returns_result_rows() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -597,8 +585,7 @@ async fn bare_values_statement_returns_result_rows() {
 /// reporting `rows_affected`.
 #[tokio::test]
 async fn call_stored_procedure_returns_result_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -649,8 +636,7 @@ async fn call_stored_procedure_returns_result_set() {
 /// counts and surface them instead of reporting `rows_affected = 0`.
 #[tokio::test]
 async fn call_dml_only_procedure_reports_rows_affected() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -721,8 +707,7 @@ async fn call_dml_only_procedure_reports_rows_affected() {
 /// `NOW()` read NULL in both panes and never highlight as changed.
 #[tokio::test]
 async fn temporal_columns_decode_to_strings() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -835,8 +820,7 @@ async fn temporal_columns_decode_to_strings() {
 /// 動作とカバレッジを担保する。
 #[tokio::test]
 async fn mysql_new_schema_apis_and_transaction_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -1013,8 +997,7 @@ async fn mysql_new_schema_apis_and_transaction_when_env_set() {
 /// 一覧から消えることを確認する。
 #[tokio::test]
 async fn mysql_process_list_and_kill() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -1183,8 +1166,7 @@ async fn mysql_process_list_and_kill() {
 /// 静かに壊れないようにする。
 #[tokio::test]
 async fn mysql_process_list_information_schema_fallback_query_is_valid() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -1218,8 +1200,7 @@ async fn mysql_process_list_information_schema_fallback_query_is_valid() {
 /// と合わせてドライバ差を可視化する。
 #[tokio::test]
 async fn mysql_ddl_dml_mixed_batch_is_not_atomic() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -1275,8 +1256,7 @@ async fn mysql_ddl_dml_mixed_batch_is_not_atomic() {
 /// は prepared protocol だとエラー 1295 になるので、実行側がテキストプロトコルで 1 文ずつ流す。
 #[tokio::test]
 async fn mysql_sync_replaces_routines_and_triggers_via_text_protocol() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -1363,8 +1343,7 @@ async fn mysql_sync_replaces_routines_and_triggers_via_text_protocol() {
 /// 自身のポーリング等) を返さないことを確認する。
 #[tokio::test]
 async fn mysql_query_inspector_support_and_stats() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -1438,8 +1417,7 @@ async fn mysql_query_inspector_support_and_stats() {
 /// (フロントの `cellEdit.ts` も「2^53 超は文字列で届く」前提)。
 #[tokio::test]
 async fn mysql_bigint_beyond_safe_integer_is_a_string() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -1582,8 +1560,7 @@ async fn assert_upsert_roundtrip(conn: &t::Connection, table: &str) {
 
 #[tokio::test]
 async fn mysql_upsert_import_roundtrip() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -1609,8 +1586,7 @@ async fn mysql_upsert_import_roundtrip() {
 /// 拒否された取り込みはテーブルに触れない。
 #[tokio::test]
 async fn mysql_upsert_import_rejects_key_that_leaves_another_unique_key() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -1682,8 +1658,7 @@ async fn mysql_upsert_import_rejects_key_that_leaves_another_unique_key() {
 /// (#1520)。MySQL の文字列 'true' は TINYINT に変換できず従来は失敗していた。
 #[tokio::test]
 async fn mysql_json_bool_imports_into_tinyint_column() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -1752,8 +1727,7 @@ async fn mysql_json_bool_imports_into_tinyint_column() {
 /// IN/OUT/INOUT とパラメータ順・型を読み、関数の戻り値型を返す。
 #[tokio::test]
 async fn mysql_routine_signature_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -1820,8 +1794,7 @@ async fn mysql_routine_signature_when_env_set() {
 /// NULL になる。これは失敗ではなく従来どおり「空の定義」として返す (#1614)。
 #[tokio::test]
 async fn mysql_object_definition_null_body_for_limited_user_is_empty() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -1875,8 +1848,7 @@ async fn mysql_object_definition_null_body_for_limited_user_is_empty() {
 /// 違反件数と pass/fail を実データで確かめる (SQLite 版と同じシナリオ)。
 #[tokio::test]
 async fn mysql_data_quality_assertions_on_read_only_session() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -2033,8 +2005,7 @@ async fn mysql_data_quality_assertions_on_read_only_session() {
 /// UPDATE が方言どおりに解釈され、生成行の真偽・NULL・数値が列型へ強制変換されることを確認する。
 #[tokio::test]
 async fn mysql_bulk_write_and_health_probe_commands() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -2311,15 +2282,14 @@ async fn mysql_bulk_write_and_health_probe_commands() {
 /// 1 回だけ載り、累積表示でも同じ digest は本文なしで返る。
 #[tokio::test]
 async fn mysql_inspector_delta_and_tail_fingerprint_commands() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
     let conn = t::connect(&opts).await.expect("connect");
     let support = conn.query_stats_support().await.expect("support probe");
     if !support.statements || !support.live_tail {
-        eprintln!("skip: performance_schema digest / history consumers unavailable");
+        common::skip_capability("performance_schema digest / history consumers unavailable");
         conn.close().await;
         return;
     }
@@ -2446,8 +2416,7 @@ async fn assert_bulk_matches_per_table(conn: &t::Connection, db: &str) {
 
 #[tokio::test]
 async fn mysql_bulk_columns_and_indexes_match_per_table_queries() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -2488,8 +2457,7 @@ async fn mysql_bulk_columns_and_indexes_match_per_table_queries() {
 /// 実地確認にもなる。テーブル名は `stream_batch_1257` 固定で、実行後に DROP する。
 #[tokio::test]
 async fn mysql_stream_coalescing_and_stats() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -2568,8 +2536,7 @@ async fn mysql_stream_coalescing_and_stats() {
 /// 部分取得 SQL が動き、種別判定とサイズが正しいことを確認する。
 #[tokio::test]
 async fn mysql_cell_blob_probe_and_fetch() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -2758,8 +2725,7 @@ async fn assert_plan_watch_detects_index(
 
 #[tokio::test]
 async fn mysql_schema_drift_capture_and_plan_watch() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -2836,8 +2802,7 @@ async fn mysql_schema_drift_capture_and_plan_watch() {
 /// データベース `noobdb_t1263` に閉じる。
 #[tokio::test]
 async fn mysql_tree_and_open_table_match_individual_ipcs() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -2903,8 +2868,7 @@ async fn mysql_tree_and_open_table_match_individual_ipcs() {
 /// (`b`) を書き換えてしまう。
 #[tokio::test]
 async fn mysql_bigint_pk_roundtrips_losslessly_into_cell_edit_where() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -3004,8 +2968,7 @@ async fn mysql_bigint_pk_roundtrips_losslessly_into_cell_edit_where() {
 /// 待つ。`list_processes` で B の `blocked_by` に A の接続 id が入り、A を kill すると解消する。
 #[tokio::test]
 async fn mysql_blocking_chain_is_listed_and_resolved_by_kill() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -3091,8 +3054,7 @@ async fn mysql_blocking_chain_is_listed_and_resolved_by_kill() {
 /// 間に接続 B が `ALTER TABLE` すると MDL 待ちになる。`blocked_by` に A が入ること。
 #[tokio::test]
 async fn mysql_metadata_lock_wait_is_listed_as_blocked() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -3173,8 +3135,7 @@ async fn mysql_metadata_lock_wait_is_listed_as_blocked() {
 /// SR 同士は互換なので T1 はブロッカー扱いしない。
 #[tokio::test]
 async fn mysql_metadata_lock_reader_behind_pending_alter_waits_on_the_alter() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -3282,8 +3243,7 @@ async fn mysql_metadata_lock_reader_behind_pending_alter_waits_on_the_alter() {
 /// 二重適用になるので `tx_begin_statement` を載せない (`in_transaction` は true) (#1535)。
 #[tokio::test]
 async fn mysql_script_failure_after_implicit_commit_does_not_offer_begin_restart() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -3336,14 +3296,13 @@ async fn mysql_script_failure_after_implicit_commit_does_not_offer_begin_restart
 /// 型の都合で MIN/MAX を外した列に理由コードが付くこと。
 #[tokio::test]
 async fn mysql_table_overview_single_scan() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
     let conn = t::connect(&opts).await.expect("connect");
     let Some(db) = opts.database.clone() else {
-        eprintln!("skip: no database in URL");
+        common::skip_external("no database in URL");
         return;
     };
     conn.execute("DROP TABLE IF EXISTS noobdb_my_overview", Some(&db))
@@ -3388,14 +3347,13 @@ async fn mysql_table_overview_single_scan() {
 async fn mysql_transfer_upsert_updates_and_skips() {
     use std::sync::atomic::AtomicU64;
     use std::sync::Arc;
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
     let conn = t::connect(&opts).await.expect("connect");
     let Some(db) = opts.database.clone() else {
-        eprintln!("skip: no database in URL");
+        common::skip_external("no database in URL");
         return;
     };
     conn.execute("DROP TABLE IF EXISTS noobdb_upsert_my", Some(&db))
@@ -3513,14 +3471,13 @@ async fn mysql_transfer_upsert_updates_and_skips() {
 async fn mysql_transfer_upsert_rejects_table_with_other_unique_key() {
     use std::sync::atomic::AtomicU64;
     use std::sync::Arc;
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
     let conn = t::connect(&opts).await.expect("connect");
     let Some(db) = opts.database.clone() else {
-        eprintln!("skip: no database in URL");
+        common::skip_external("no database in URL");
         return;
     };
     conn.execute("DROP TABLE IF EXISTS noobdb_upsert_guard_my", Some(&db))
@@ -3618,8 +3575,7 @@ async fn mysql_transfer_upsert_rejects_table_with_other_unique_key() {
 /// 主キー由来の名前・種別由来の拡張子で行われ、NULL が飛ばされること。
 #[tokio::test]
 async fn mysql_save_cells_to_folder() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -3718,8 +3674,7 @@ async fn assert_dry_run_counts_failures_without_persisting(conn: &t::Connection,
 
 #[tokio::test]
 async fn mysql_import_dry_run_does_not_persist_and_rejects_myisam() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -3792,8 +3747,7 @@ async fn mysql_import_dry_run_does_not_persist_and_rejects_myisam() {
 /// を足しても、統計が読めない環境で指摘そのものが消えたり失敗したりしない。
 #[tokio::test]
 async fn mysql_advisor_unused_index_query_with_size_degrades_safely() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -3816,7 +3770,7 @@ async fn mysql_advisor_unused_index_query_with_size_degrades_safely() {
         .any(|s| s.rule == t::RuleId::UnusedIndex);
     if skipped {
         // performance_schema が無効 / sys が読めない環境: 縮退の理由が付く (失敗にはしない)。
-        eprintln!("unused index stats unavailable; degraded as designed");
+        common::skip_capability("unused index stats unavailable; degraded as designed");
         return;
     }
     let f = report
@@ -3830,14 +3784,13 @@ async fn mysql_advisor_unused_index_query_with_size_degrades_safely() {
 
 #[tokio::test]
 async fn mysql_column_profile_sampled_is_subset_of_table() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
     let conn = t::connect(&opts).await.expect("connect");
     let Some(db) = opts.database.clone() else {
-        eprintln!("skip: no database in url");
+        common::skip_external("no database in url");
         return;
     };
     conn.execute("DROP TABLE IF EXISTS prof_sample_t", Some(&db))
@@ -3876,8 +3829,7 @@ async fn mysql_column_profile_sampled_is_subset_of_table() {
 /// (ロールを作れない版) ではスキップする。
 #[tokio::test]
 async fn mysql_role_membership_is_listed_and_revocable() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -3893,7 +3845,7 @@ async fn mysql_role_membership_is_listed_and_revocable() {
         .await
         .is_err()
     {
-        eprintln!("skip: roles are not supported by this server");
+        common::skip_capability("roles are not supported by this server");
         conn.close().await;
         return;
     }
@@ -3944,8 +3896,7 @@ async fn mysql_role_membership_is_listed_and_revocable() {
 /// なし) や値が変わらない UPDATE は止めない。
 #[tokio::test]
 async fn mysql_bulk_write_row_count_overshoot_rolls_back() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -4188,8 +4139,7 @@ async fn mysql_bulk_write_row_count_overshoot_rolls_back() {
 /// 変更されていない」とは言わない)、承認して再実行させない。InnoDB では通常どおり `RowCountExceeded`。
 #[tokio::test]
 async fn mysql_bulk_write_rollback_incomplete_on_myisam() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -4209,7 +4159,7 @@ async fn mysql_bulk_write_rollback_incomplete_on_myisam() {
         .await
         .is_err()
     {
-        eprintln!("skip: MyISAM is not available");
+        common::skip_capability("MyISAM is not available");
         return;
     }
     conn.execute(
@@ -4282,8 +4232,7 @@ async fn mysql_bulk_write_rollback_incomplete_on_myisam() {
 /// 承認で上書きできないこと、read_only の拒否を固定する。
 #[tokio::test]
 async fn mysql_bulk_write_optimistic_lock_detects_lost_update() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -4576,8 +4525,7 @@ async fn mysql_bulk_write_optimistic_lock_detects_lost_update() {
 /// (5.7 / 古い MariaDB) では CHECK の取得が空になるだけで失敗しない。
 #[tokio::test]
 async fn mysql_check_and_generated_expressions_are_introspected_and_compared() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -4650,13 +4598,12 @@ async fn mysql_check_and_generated_expressions_are_introspected_and_compared() {
 /// #1867: `list_table_triggers` が対象テーブルのトリガーをタイミング・イベント付きで返す。
 #[tokio::test]
 async fn mysql_list_table_triggers_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
     let Some(db) = opts.database.clone() else {
-        eprintln!("skip: URL has no database");
+        common::skip_external("URL has no database");
         return;
     };
     let conn = t::connect(&opts).await.expect("connect");
@@ -4698,13 +4645,12 @@ async fn mysql_list_table_triggers_when_env_set() {
 /// パーティション単位の保守 / TRUNCATE / DROP の SQL がアプリの実行経路 (`execute`) でそのまま通る。
 #[tokio::test]
 async fn mysql_list_table_partitions_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
     let Some(db) = opts.database.clone() else {
-        eprintln!("skip: URL has no database");
+        common::skip_external("URL has no database");
         return;
     };
     let conn = t::connect(&opts).await.expect("connect");
@@ -4840,8 +4786,7 @@ async fn mysql_list_table_partitions_when_env_set() {
 /// プールへ持ち越さない (プールの全接続で、実行前と同じ値のまま)。
 #[tokio::test]
 async fn max_execution_time_is_restored_after_scoped_stream_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -4873,8 +4818,7 @@ async fn max_execution_time_is_restored_after_scoped_stream_when_env_set() {
 /// (InnoDB の note は失敗に数えない) は空になる。
 #[tokio::test]
 async fn mysql_maintenance_error_rows_detected_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -4906,13 +4850,12 @@ async fn mysql_maintenance_error_rows_detected_when_env_set() {
 /// #2020: 大規模 DML のチャンク分割実行 (`DELETE/UPDATE ... LIMIT n`) を実 MySQL で通す。
 #[tokio::test]
 async fn mysql_chunked_dml_batches() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
     let Some(db) = opts.database.clone() else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL has no database");
+        common::skip_external("NOOBDB_TEST_MYSQL_URL has no database");
         return;
     };
     let conn = t::connect(&opts).await.expect("connect");

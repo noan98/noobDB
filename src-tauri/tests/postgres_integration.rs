@@ -14,8 +14,7 @@ use noobdb_lib::__test_api as t;
 
 #[tokio::test]
 async fn postgres_roundtrip_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -166,8 +165,7 @@ async fn postgres_roundtrip_when_env_set() {
 /// `server_info` must return a version and a non-empty pg_settings list.
 #[tokio::test]
 async fn postgres_table_sizes_and_server_info() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -246,8 +244,7 @@ async fn postgres_table_sizes_and_server_info() {
 /// PK が見えず ctid、SELECT だけのユーザは書き込み不可で "none" 相当の結果になる。
 #[tokio::test]
 async fn postgres_row_identity_matview_and_column_privileges() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -334,8 +331,7 @@ async fn postgres_row_identity_matview_and_column_privileges() {
 /// `all_columns`.
 #[tokio::test]
 async fn postgres_row_identity_pk_ctid_and_view_fallback() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -406,8 +402,7 @@ async fn postgres_row_identity_pk_ctid_and_view_fallback() {
 /// 部分インデックス・式インデックス・NULL 可の UNIQUE・INCLUDE 列は対象外/除外。
 #[tokio::test]
 async fn postgres_row_identity_prefers_unique_not_null_key() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -513,8 +508,7 @@ async fn postgres_row_identity_prefers_unique_not_null_key() {
 /// CI のサービスコンテナで実走し、ドライバメソッドの動作とカバレッジを担保する。
 #[tokio::test]
 async fn postgres_new_schema_apis_and_transaction_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -820,8 +814,7 @@ async fn postgres_new_schema_apis_and_transaction_when_env_set() {
 /// pg_terminate_backend で終了させると一覧から消えることを確認する。
 #[tokio::test]
 async fn postgres_process_list_and_kill() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -1012,8 +1005,7 @@ async fn postgres_process_list_and_kill() {
 /// CREATE が残るのに対し、PostgreSQL では何も残らない — このドライバ差を明示する。
 #[tokio::test]
 async fn postgres_ddl_dml_mixed_batch_rolls_back() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -1065,8 +1057,7 @@ async fn postgres_ddl_dml_mixed_batch_rolls_back() {
 /// テールに自アプリ由来の行や内部カタログ参照文が混ざらないことを固定する。
 #[tokio::test]
 async fn postgres_query_inspector_support_and_tail() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -1131,8 +1122,7 @@ async fn postgres_query_inspector_support_and_tail() {
 /// は PostgreSQL では None に縮退する。
 #[tokio::test]
 async fn postgres_server_metrics_reports_connection_and_transaction_counters() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -1170,8 +1160,7 @@ async fn postgres_server_metrics_reports_connection_and_transaction_counters() {
 /// 含めて 1 以上を返すこと。
 #[tokio::test]
 async fn postgres_connection_count_is_reported() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -1185,8 +1174,7 @@ async fn postgres_connection_count_is_reported() {
 /// を指定するとテーブル別の行は空になり、指定した場合は全行がそのスキーマのものだけになる。
 #[tokio::test]
 async fn postgres_user_privileges_schema_filter_narrows_rows() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -1211,8 +1199,7 @@ async fn postgres_user_privileges_schema_filter_narrows_rows() {
 /// 取り違えていないこと) も確認する。
 #[tokio::test]
 async fn postgres_exotic_types_decode_to_values_not_null() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -1394,8 +1381,7 @@ async fn postgres_exotic_types_decode_to_values_not_null() {
 /// 更新すると before/after が同一になり「変更なし」に見えていた。
 #[tokio::test]
 async fn postgres_preview_captures_rows_outside_the_default_window() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -1575,8 +1561,7 @@ async fn assert_upsert_roundtrip(conn: &t::Connection, table: &str) {
 
 #[tokio::test]
 async fn postgres_upsert_import_roundtrip() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -1607,8 +1592,7 @@ async fn postgres_upsert_import_roundtrip() {
 /// 結果を返すことを確認する。
 #[tokio::test]
 async fn postgres_routine_signature_and_call_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -1709,8 +1693,7 @@ async fn postgres_routine_signature_and_call_when_env_set() {
 /// 違反件数と pass/fail を実データで確かめる (SQLite 版と同じシナリオ)。
 #[tokio::test]
 async fn postgres_data_quality_assertions_on_read_only_session() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -1867,8 +1850,7 @@ async fn postgres_data_quality_assertions_on_read_only_session() {
 /// UPDATE が方言どおりに解釈され、生成行の真偽・NULL・数値が列型へ強制変換されることを確認する。
 #[tokio::test]
 async fn postgres_bulk_write_and_health_probe_commands() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -2181,8 +2163,7 @@ async fn assert_bulk_matches_per_table(conn: &t::Connection, db: &str) {
 
 #[tokio::test]
 async fn postgres_bulk_columns_and_indexes_match_per_table_queries() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -2232,8 +2213,7 @@ async fn postgres_bulk_columns_and_indexes_match_per_table_queries() {
 /// 実地確認にもなる。テーブル名は `stream_batch_1257` 固定で、実行後に DROP する。
 #[tokio::test]
 async fn postgres_stream_coalescing_and_stats() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -2307,8 +2287,7 @@ async fn postgres_stream_coalescing_and_stats() {
 /// 部分取得 SQL が動き、種別判定とサイズが正しいことを確認する。
 #[tokio::test]
 async fn postgres_cell_blob_probe_and_fetch() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -2497,8 +2476,7 @@ async fn assert_plan_watch_detects_index(
 
 #[tokio::test]
 async fn postgres_schema_drift_capture_and_plan_watch() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -2573,8 +2551,7 @@ async fn postgres_schema_drift_capture_and_plan_watch() {
 /// スナップショットになり、スキーマ名を明示したときはそのスキーマになる。
 #[tokio::test]
 async fn postgres_schema_drift_resolves_db_name_to_default_schema() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -2642,8 +2619,7 @@ async fn postgres_schema_drift_resolves_db_name_to_default_schema() {
 /// スキーマ `noobdb_t1263` に閉じる。
 #[tokio::test]
 async fn postgres_tree_and_open_table_match_individual_ipcs() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -2711,8 +2687,7 @@ async fn postgres_tree_and_open_table_match_individual_ipcs() {
 /// (`b`) を書き換えてしまう。
 #[tokio::test]
 async fn postgres_bigint_pk_roundtrips_losslessly_into_cell_edit_where() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -2813,8 +2788,7 @@ async fn postgres_bigint_pk_roundtrips_losslessly_into_cell_edit_where() {
 /// `list_processes` で B の `blocked_by` に A の pid が入り、A を kill すると待機が解消する。
 #[tokio::test]
 async fn postgres_blocking_chain_is_listed_and_resolved_by_kill() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -2894,8 +2868,7 @@ async fn postgres_blocking_chain_is_listed_and_resolved_by_kill() {
 /// #1519: 複合 FK は列ごとに正しく 1 対 1 対応し、別テーブルの同名 FK が混ざらない。
 #[tokio::test]
 async fn postgres_foreign_keys_pair_composite_columns_and_ignore_same_named_fk() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -2955,8 +2928,7 @@ async fn postgres_foreign_keys_pair_composite_columns_and_ignore_same_named_fk()
 /// 同一スキーマの FK・複合 FK は含まれず、`foreign_keys` (ER 図用) も変わらない。
 #[tokio::test]
 async fn postgres_cross_schema_incoming_foreign_keys_are_listed() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -3012,8 +2984,7 @@ async fn postgres_cross_schema_incoming_foreign_keys_are_listed() {
 /// `STORED GENERATED` を返す。通常列は空 (#1521)。
 #[tokio::test]
 async fn postgres_columns_report_generated_columns_in_extra() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -3050,8 +3021,7 @@ async fn postgres_columns_report_generated_columns_in_extra() {
 /// 型の都合で MIN/MAX を外した列に理由コードが付くこと。
 #[tokio::test]
 async fn postgres_table_overview_single_scan() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -3141,8 +3111,7 @@ async fn postgres_table_overview_single_scan() {
 async fn postgres_transfer_upsert_updates_and_skips() {
     use std::sync::atomic::AtomicU64;
     use std::sync::Arc;
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -3263,8 +3232,7 @@ async fn postgres_transfer_upsert_updates_and_skips() {
 /// 主キー由来の名前・種別由来の拡張子で行われ、NULL が飛ばされること。
 #[tokio::test]
 async fn postgres_save_cells_to_folder() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -3331,8 +3299,7 @@ async fn postgres_save_cells_to_folder() {
 /// `list_indexes` の SELECT が追加列を返していることの確認を兼ねる。
 #[tokio::test]
 async fn postgres_reconstructed_ddl_keeps_include_and_sort_order() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -3365,8 +3332,7 @@ async fn postgres_reconstructed_ddl_keeps_include_and_sort_order() {
 /// CHECK 制約と生成列の式が再構成 DDL に含まれ、そのまま別名のテーブルを作れる (#1625)。
 #[tokio::test]
 async fn postgres_reconstructed_ddl_keeps_check_and_generated_columns() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -3457,8 +3423,7 @@ async fn assert_dry_run_counts_failures_without_persisting(conn: &t::Connection,
 
 #[tokio::test]
 async fn postgres_import_dry_run_does_not_persist() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -3485,8 +3450,7 @@ async fn postgres_import_dry_run_does_not_persist() {
 /// 指摘に、削除で空く容量 (`pg_relation_size`) が載る。
 #[tokio::test]
 async fn postgres_advisor_unused_index_reports_reclaimable_size() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -3528,8 +3492,7 @@ async fn postgres_advisor_unused_index_reports_reclaimable_size() {
 
 #[tokio::test]
 async fn postgres_column_profile_sampled_is_subset_of_table() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -3563,8 +3526,7 @@ async fn postgres_column_profile_sampled_is_subset_of_table() {
 /// ` (position n)` として載る (#1627)。出力タブの「エラー位置へ移動」がこれを使う。
 #[tokio::test]
 async fn postgres_syntax_error_message_carries_the_error_position() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -3594,8 +3556,7 @@ async fn postgres_syntax_error_message_carries_the_error_position() {
 /// なし) や値が変わらない UPDATE は止めない。
 #[tokio::test]
 async fn postgres_bulk_write_row_count_overshoot_rolls_back() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -3838,8 +3799,7 @@ async fn postgres_bulk_write_row_count_overshoot_rolls_back() {
 /// 承認で上書きできないこと、read_only の拒否を固定する。
 #[tokio::test]
 async fn postgres_bulk_write_optimistic_lock_detects_lost_update() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -4131,8 +4091,7 @@ async fn postgres_bulk_write_optimistic_lock_detects_lost_update() {
 /// 1 表版 (`table_ddl_extras`) と一致する。
 #[tokio::test]
 async fn postgres_ddl_extras_for_database_matches_per_table_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -4187,8 +4146,7 @@ async fn postgres_ddl_extras_for_database_matches_per_table_when_env_set() {
 /// #1867: `list_table_triggers` が対象テーブルのトリガーをタイミング・イベント付きで返す。
 #[tokio::test]
 async fn postgres_list_table_triggers_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -4222,8 +4180,7 @@ async fn postgres_list_table_triggers_when_env_set() {
 /// 非分割表は `None`。DETACH / DROP の SQL は既存の `execute` 経路でそのまま流れる。
 #[tokio::test]
 async fn postgres_list_table_partitions_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -4319,8 +4276,7 @@ async fn postgres_list_table_partitions_when_env_set() {
 /// さらに接続 URL の database だけを差し替えた接続 (別 DB を開く導線と同じ組み立て) が張れる。
 #[tokio::test]
 async fn postgres_server_databases_and_database_swap_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -4359,8 +4315,7 @@ async fn postgres_server_databases_and_database_swap_when_env_set() {
 /// プールへ持ち越さない (プールの全接続で、実行前と同じ値のまま)。
 #[tokio::test]
 async fn statement_timeout_is_restored_after_scoped_stream_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -4391,8 +4346,7 @@ async fn statement_timeout_is_restored_after_scoped_stream_when_env_set() {
 /// 定期メンテナンス (#2025) の VACUUM (ANALYZE) がトランザクション外の単文実行で通る。
 #[tokio::test]
 async fn postgres_maintenance_vacuum_analyze_runs_outside_transaction() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -4422,8 +4376,7 @@ async fn postgres_maintenance_vacuum_analyze_runs_outside_transaction() {
 /// DELETE は 0 行になるまでバッチを繰り返し、WHERE に合わない行は残る。UPDATE も同様。
 #[tokio::test]
 async fn postgres_chunked_dml_batches() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -4518,8 +4471,7 @@ async fn postgres_chunked_dml_batches() {
 /// 指さないと条件に合わない別の子表の行まで消える。同じ ctid を持つ行が別の子表にあっても無傷であること。
 #[tokio::test]
 async fn postgres_chunked_dml_partitioned_and_inherited_tables() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -4611,8 +4563,7 @@ async fn postgres_chunked_dml_partitioned_and_inherited_tables() {
 /// ダンプ復元 (#2033) のあとに同じクエリを再実行するとプールの接続によって失敗していた。
 #[tokio::test]
 async fn postgres_select_survives_table_recreation_with_cached_statement() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");

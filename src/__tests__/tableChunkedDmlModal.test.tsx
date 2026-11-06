@@ -205,6 +205,93 @@ describe("TableChunkedDmlModal (#2020)", () => {
     expect(batch).not.toHaveBeenCalled();
   });
 
+  it("進捗バー・StatTile・完了時の意味色と Callout を出す (#2092)", async () => {
+    batch
+      .mockResolvedValueOnce(result(1000))
+      .mockResolvedValueOnce(result(500))
+      .mockResolvedValueOnce(result(0));
+    // 開始前は 1500 件、バッチ実行後の数え直しは 0 件。
+    lookup.mockImplementation(async () => ({
+      columns: [],
+      rows: [[batch.mock.calls.length === 0 ? 1500 : 0]],
+      rows_affected: 0,
+      elapsed_ms: 1,
+    }));
+    mount();
+    fill("id < 100");
+    fireEvent.click(screen.getByRole("button", { name: t("chunkedDmlRun") }));
+    await waitFor(() =>
+      expect(screen.getByText(t("chunkedDmlDone", { batches: 2, rows: 1500 }))).toBeInTheDocument(),
+    );
+    // 毎秒変わる時計系はライブリージョンの外 (読み上げを止めない)。
+    expect(screen.getByTestId("chunked-dml-clock")).toHaveAttribute("aria-live", "off");
+    expect(screen.getByTestId("chunked-dml-clock").closest('[role="status"]')).toBeNull();
+    expect(
+      screen.getByText(t("chunkedDmlDone", { batches: 2, rows: 1500 })).closest('[role="status"]'),
+    ).not.toBeNull();
+    const stats = screen.getByTestId("chunked-dml-stats");
+    for (const k of [
+      "chunkedDmlStatBatches",
+      "chunkedDmlStatRows",
+      "chunkedDmlStatRemaining",
+      "chunkedDmlStatElapsed",
+    ] as const) {
+      expect(stats).toHaveTextContent(t(k));
+    }
+    expect(screen.getByTestId("chunked-dml-progress")).toHaveTextContent(
+      t("progressPercent", { percent: 100 }),
+    );
+    const fill_ = screen
+      .getByTestId("chunked-dml-progress")
+      .querySelector("[aria-hidden] > div") as HTMLElement;
+    expect(fill_.style.background).toContain("--success-solid");
+  });
+
+  it("中断するとバーを警告色で止める (#2092)", async () => {
+    let release: (v: unknown) => void = () => {};
+    batch.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    mount();
+    fill("id < 100");
+    fireEvent.click(screen.getByRole("button", { name: t("chunkedDmlRun") }));
+    fireEvent.click(await screen.findByRole("button", { name: t("chunkedDmlStop") }));
+    release(result(1000));
+    await waitFor(() =>
+      expect(screen.getByText(t("chunkedDmlCancelled", { batches: 1, rows: 1000 }))).toBeInTheDocument(),
+    );
+    const fill_ = screen
+      .getByTestId("chunked-dml-progress")
+      .querySelector("[aria-hidden] > div") as HTMLElement;
+    expect(fill_.style.background).toContain("--warning-solid");
+    expect(screen.getByTestId("chunked-dml-progress")).toHaveTextContent(
+      t("progressPercent", { percent: 40 }),
+    );
+  });
+
+  it("バッチ間のスロットル待機中は次のバッチまでの秒数を出す (#2092)", async () => {
+    let release: () => void = () => {};
+    batch
+      .mockResolvedValueOnce(result(1000))
+      .mockImplementationOnce(() => new Promise((r) => (release = () => r(result(0)))));
+    mount();
+    fill("id < 100");
+    fireEvent.change(screen.getByLabelText(t("chunkedDmlWait")), { target: { value: "3000" } });
+    fireEvent.click(screen.getByRole("button", { name: t("chunkedDmlRun") }));
+    const waiting = await screen.findByTestId("chunked-dml-waiting");
+    expect(waiting).toHaveTextContent(t("chunkedDmlWaiting", { secs: 3 }));
+    await waitFor(
+      () =>
+        expect(screen.getByTestId("chunked-dml-waiting")).toHaveTextContent(
+          t("chunkedDmlWaiting", { secs: 2 }),
+        ),
+      {
+        timeout: 2000,
+      },
+    );
+    fireEvent.click(screen.getByRole("button", { name: t("chunkedDmlStop") }));
+    await waitFor(() => expect(screen.queryByTestId("chunked-dml-waiting")).not.toBeInTheDocument());
+    release();
+  });
+
   it("read_only 接続では実行を無効化する", () => {
     mount({ readOnly: true });
     fill("id < 100");
