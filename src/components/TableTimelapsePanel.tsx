@@ -10,7 +10,8 @@ import {
   type TimelapseGenerationDiff,
   type TimelapseGenerationMeta,
 } from "../api/tauri";
-import { useT } from "../i18n";
+import { useLocale, useT } from "../i18n";
+import { formatCaptured } from "../timelapseScrubber";
 import { semanticColorVar } from "../semanticColors";
 import { useSettings } from "../settings";
 import {
@@ -50,6 +51,8 @@ import { Spinner } from "./Spinner";
 import { formatBytes } from "./tableSize";
 import { TimelapseRowHistoryView } from "./TimelapseRowHistory";
 import { Button } from "./ui";
+import { Tooltip } from "./Tooltip";
+import { TimelapseScrubber } from "./TimelapseScrubber";
 import { ListboxSelect } from "./ListboxSelect";
 import { CountUpText } from "./CountUp";
 import { useRowCrossfade } from "./useRowCrossfade";
@@ -125,11 +128,6 @@ function rowBackground(kind: TimelapseRowKind): string | undefined {
   return undefined;
 }
 
-function formatCaptured(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
-}
-
 function Chip({ status, children }: { status: DiffStatus; children: React.ReactNode }) {
   const c = statusColors(status);
   return (
@@ -167,6 +165,7 @@ export function TableTimelapsePanel({
   refreshKey: number;
 }) {
   const t = useT();
+  const locale = useLocale();
   const { columnMaskEnabled, columnMaskPatterns } = useSettings();
   const { confirm, dialog } = useConfirm();
 
@@ -497,9 +496,12 @@ export function TableTimelapsePanel({
   };
 
   const genLabel = (g: TimelapseGenerationMeta, i: number) =>
-    `${i === 0 ? `${t("timelapseLatest")} · ` : ""}${formatCaptured(g.captured_at)} (${t("timelapseRows", {
-      count: g.row_count,
-    })}${g.truncated ? ` · ${t("timelapsePartial")}` : ""})`;
+    `${i === 0 ? `${t("timelapseLatest")} · ` : ""}${formatCaptured(g.captured_at, locale)} (${t(
+      "timelapseRows",
+      {
+        count: g.row_count,
+      },
+    )}${g.truncated ? ` · ${t("timelapsePartial")}` : ""})`;
 
   return (
     <Box flex="1" minH={0} display="flex" flexDirection="column">
@@ -733,43 +735,36 @@ export function TableTimelapsePanel({
                       {playing ? t("timelapsePause") : t("timelapsePlay")}
                     </chakra.span>
                   </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    aria-label={t("timelapseStepPrev")}
-                    title={t("timelapseStepPrev")}
-                    disabled={currentStep <= 1}
-                    onClick={() => applyPlayback({ type: "stepBy", delta: -1 })}
-                  >
-                    <Icon name="chevron-left" size={ICON_SIZES.sm} />
-                  </Button>
-                  <chakra.input
-                    type="range"
-                    min={1}
-                    max={maxStep}
-                    step={1}
-                    value={currentStep}
-                    aria-label={t("timelapseScrubAria")}
-                    aria-valuetext={t("timelapseScrubStep", { step: currentStep, max: maxStep })}
-                    onChange={(e) => applyPlayback({ type: "seek", step: Number(e.currentTarget.value) })}
-                    flex="1"
-                    minW="48"
-                    maxW="96"
-                    accentColor="var(--accent)"
-                    cursor="pointer"
+                  <Tooltip label={t("timelapseStepPrev")}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-label={t("timelapseStepPrev")}
+                      disabled={currentStep <= 1}
+                      onClick={() => applyPlayback({ type: "stepBy", delta: -1 })}
+                    >
+                      <Icon name="chevron-left" size={ICON_SIZES.sm} />
+                    </Button>
+                  </Tooltip>
+                  <TimelapseScrubber
+                    generations={generations}
+                    step={currentStep}
+                    maxStep={maxStep}
+                    onSeek={(step) => applyPlayback({ type: "seek", step })}
                   />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    aria-label={t("timelapseStepNext")}
-                    title={t("timelapseStepNext")}
-                    disabled={currentStep >= maxStep}
-                    onClick={() => applyPlayback({ type: "stepBy", delta: 1 })}
-                  >
-                    <Icon name="chevron-right" size={ICON_SIZES.sm} />
-                  </Button>
+                  <Tooltip label={t("timelapseStepNext")}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-label={t("timelapseStepNext")}
+                      disabled={currentStep >= maxStep}
+                      onClick={() => applyPlayback({ type: "stepBy", delta: 1 })}
+                    >
+                      <Icon name="chevron-right" size={ICON_SIZES.sm} />
+                    </Button>
+                  </Tooltip>
                   <chakra.span textStyle="caption">
                     <chakra.span textStyle="numeric">
                       {t("timelapseScrubStep", { step: currentStep, max: maxStep })}

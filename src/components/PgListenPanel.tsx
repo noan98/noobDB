@@ -1,20 +1,25 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
+import { useReducedMotion } from "motion/react";
 
 import { api, listenPgListenStream } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { Callout } from "./Callout";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
+import { LiveCell, LiveRowsPresence, LiveTr } from "./LiveRows";
 import { ErrorNote, FieldError, FieldLabel } from "./modalForm";
 import {
   appendNotification,
   checkChannelName,
+  countByChannel,
   formatReceivedAt,
   payloadPreview,
+  pendingCount,
   pgListenReasonKey,
   prettyJsonPayload,
   supportsPgListen,
+  visibleNotifications,
   PG_LISTEN_MAX_BUFFER,
   PG_LISTEN_MAX_CHANNELS,
   type BufferedNotification,
@@ -48,12 +53,17 @@ const thCss: SystemStyleObject = {
 };
 const tdCss: SystemStyleObject = {
   borderBottom: "1px solid var(--border-subtle, var(--border))",
-  padding: "var(--space-1-25) var(--space-2-5)",
   fontSize: "var(--text-sm)",
   fontFamily: "var(--font-mono)",
   color: "var(--text)",
   verticalAlign: "top",
 };
+
+/** 一時停止から再開するとき、これを超える件数が溜まっていたら入場フラッシュを省く。 */
+const FLASH_BATCH_MAX = 30;
+
+/** `LiveCell` の内側 (パディング)。`<td>` 側の境界線・フォントとは別に持つ。 */
+const cellInnerCss: SystemStyleObject = { padding: "var(--space-1-25) var(--space-2-5)" };
 
 type Status = "idle" | "connecting" | "listening";
 
@@ -84,13 +94,29 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
   const [items, setItems] = useState<BufferedNotification[]>([]);
   const [dropped, setDropped] = useState(0);
   const [expanded, setExpanded] = useState<number | null>(null);
+  /** 表示一時停止の凍結点 (停止した時点の最新 seq)。null なら追従表示。受信は止めない (#2093)。 */
+  const [pause, setPause] = useState<{ at: number; snapshot: BufferedNotification[] } | null>(null);
+  const pausedAt = pause?.at ?? null;
+  /** 一時停止が payload 展開による自動のものか (折りたたむと自動で解除する)。 */
+  const [autoPaused, setAutoPaused] = useState(false);
+  /** 絞り込み中のチャンネル。null なら全チャンネル。 */
+  const [filter, setFilter] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<"reconnected" | "closed" | null>(null);
   const [unsupportedReason, setUnsupportedReason] = useState<string | null>(null);
   const seqRef = useRef(0);
   /** 受信バッファの実体 (`items` はこれの表示用コピー)。 */
   const bufferRef = useRef<BufferedNotification[]>([]);
+  /** 画面に出し終えた最新の seq (これより新しい行だけ入場時にフラッシュさせる)。 */
+  const shownSeqRef = useRef(0);
+  /** 大量の新着を一度に反映するとき、この seq 以下の行はフラッシュさせない。 */
+  const noFlashUpToRef = useRef(0);
   const activeRef = useRef<{ streamId: string; unlisten: () => void } | null>(null);
+
+  // 描画後に「ここまで見せた」を更新する (次に入場する行だけをフラッシュさせるため)。
+  useEffect(() => {
+    shownSeqRef.current = pausedAt ?? items[items.length - 1]?.seq ?? 0;
+  });
 
   /** 監視を止めて Channel の購読を外す (バックエンドのリスナも `cancel_stream` で終わる)。 */
   const stopActive = useCallback(() => {
@@ -120,6 +146,10 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
     setError(null);
     setNotice(null);
     setUnsupportedReason(null);
+    // 新しい監視は「すべて」・追従表示から始める (古いスナップショットや絞り込みを持ち越さない)。
+    setFilter(null);
+    setPause(null);
+    setAutoPaused(false);
     setStatus("connecting");
     try {
       slot.unlisten = await listenPgListenStream(streamId, {
@@ -216,6 +246,7 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
       }
     }
     setChannels((cur) => cur.filter((c) => c !== name));
+    setFilter((f) => (f === name ? null : f));
   }, []);
 
   const clear = () => {
@@ -223,6 +254,56 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
     setItems([]);
     setDropped(0);
     setExpanded(null);
+    setPause(null);
+    setAutoPaused(false);
+  };
+
+  /** 表示を止める。停止時点の一覧をスナップショットで握り、バッファが溢れても見ている行を消さない。 */
+  const freeze = () => setPause({ at: seqRef.current, snapshot: bufferRef.current });
+  const resume = useCallback(() => {
+    // 溜まった件数が多いときは、入場フラッシュを省く (画面全体が一斉に光るのを避ける)。
+    if (
+      bufferRef.current.length > 0 &&
+      seqRef.current - (latest.current.pause?.at ?? seqRef.current) > FLASH_BATCH_MAX
+    ) {
+      noFlashUpToRef.current = seqRef.current;
+    }
+    setPause(null);
+    setAutoPaused(false);
+  }, []);
+  const togglePause = () => {
+    if (pause === null) freeze();
+    else resume();
+    setAutoPaused(false);
+  };
+  const latest = useRef({ expanded, autoPaused, pause });
+  latest.current = { expanded, autoPaused, pause };
+  const toggleExpanded = useCallback(
+    (seq: number) => {
+      const cur = latest.current;
+      if (cur.expanded === seq) {
+        setExpanded(null);
+        if (cur.autoPaused) resume();
+        return;
+      }
+      setExpanded(seq);
+      // 読んでいる行がずれないよう、展開中は自動で表示を止める (手動で止めていればそのまま)。
+      if (cur.pause === null) {
+        setPause({ at: seqRef.current, snapshot: bufferRef.current });
+        setAutoPaused(true);
+      }
+    },
+    [resume],
+  );
+  /** 絞り込みを変える。自動停止中に展開行が隠れるなら、折りたたんで自動停止も解く。 */
+  const selectFilter = (next: string | null) => {
+    setFilter(next);
+    if (expanded === null || next === null) return;
+    const row = (pause?.snapshot ?? items).find((n) => n.seq === expanded);
+    if (row && row.channel !== next) {
+      setExpanded(null);
+      if (autoPaused) resume();
+    }
   };
 
   if (!supported) {
@@ -238,7 +319,17 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
   }
 
   const running = status !== "idle";
-  const ordered = [...items].reverse();
+  const statusLabel =
+    status === "connecting"
+      ? t("pgListenStatusConnecting")
+      : status === "listening"
+        ? t("pgListenStatusListening", { count: channels.length })
+        : t("pgListenStatusIdle");
+  const shown = visibleNotifications(items, pause?.snapshot ?? null);
+  const counts = countByChannel(shown);
+  const activeFilter = filter !== null && channels.includes(filter) ? filter : null;
+  const pending = pendingCount(items, pausedAt, activeFilter);
+  const ordered = (activeFilter === null ? shown : shown.filter((n) => n.channel === activeFilter)).reverse();
 
   return (
     <Box flex="1" overflowY="auto" py="3.5" px="4" display="flex" flexDirection="column" gap="3">
@@ -301,50 +392,80 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
         {channels.length === 0 ? (
           <chakra.span textStyle="caption">{t("pgListenNoChannels")}</chakra.span>
         ) : (
-          channels.map((c) => (
-            <Flex
-              key={c}
-              align="center"
-              gap="1"
-              paddingY="0.5"
-              paddingLeft="2"
-              paddingRight="1"
-              borderWidth="1px"
-              borderColor="app.border"
-              borderRadius="md"
-              fontFamily="var(--font-mono)"
-              fontSize="sm"
-              color="app.text"
-            >
-              <span>{c}</span>
-              <chakra.button
-                type="button"
-                aria-label={t("pgListenRemoveChannel", { channel: c })}
-                disabled={status === "connecting"}
-                onClick={() => void removeChannel(c)}
-                display="inline-flex"
-                color="app.textMuted"
-                cursor="pointer"
-                background="transparent"
-                border="none"
-                padding="0.5"
+          <>
+            <ChannelChip
+              label={t("pgListenFilterAll")}
+              count={shown.length}
+              pressed={activeFilter === null}
+              onClick={() => selectFilter(null)}
+              testId="pglisten-filter-all"
+            />
+            {channels.map((c) => (
+              <Flex
+                key={c}
+                align="center"
+                gap="1"
+                paddingRight="1"
+                borderWidth="1px"
+                borderColor={activeFilter === c ? "app.accent" : "app.border"}
+                borderRadius="md"
+                fontFamily="var(--font-mono)"
+                fontSize="sm"
+                color="app.text"
               >
-                <Icon name="close" size={ICON_SIZES.sm} />
-              </chakra.button>
-            </Flex>
-          ))
+                <ChannelChip
+                  label={c}
+                  count={counts.get(c) ?? 0}
+                  pressed={activeFilter === c}
+                  onClick={() => selectFilter(activeFilter === c ? null : c)}
+                  testId={`pglisten-filter-${c}`}
+                  bare
+                />
+                <chakra.button
+                  type="button"
+                  aria-label={t("pgListenRemoveChannel", { channel: c })}
+                  disabled={status === "connecting"}
+                  onClick={() => void removeChannel(c)}
+                  display="inline-flex"
+                  color="app.textMuted"
+                  cursor="pointer"
+                  background="transparent"
+                  border="none"
+                  padding="0.5"
+                >
+                  <Icon name="close" size={ICON_SIZES.sm} />
+                </chakra.button>
+              </Flex>
+            ))}
+          </>
         )}
       </Flex>
 
-      <chakra.div textStyle="caption" aria-live="polite" data-testid="pglisten-status">
-        {status === "connecting"
-          ? t("pgListenStatusConnecting")
-          : status === "listening"
-            ? t("pgListenStatusListening", { count: channels.length })
-            : t("pgListenStatusIdle")}
-        {" · "}
-        {t("pgListenCount", { count: items.length })}
-      </chakra.div>
+      <Flex align="center" gap="2" wrap="wrap">
+        <StatusPill status={status} label={statusLabel} />
+        <chakra.span textStyle="caption" data-testid="pglisten-count">
+          {t("pgListenCount", { count: items.length })}
+        </chakra.span>
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          onClick={togglePause}
+          data-testid="pglisten-pause"
+        >
+          {pausedAt !== null ? t("pgListenResume") : t("pgListenPause")}
+        </Button>
+        {pausedAt !== null && (
+          <chakra.span textStyle="caption" data-testid="pglisten-paused-note">
+            {autoPaused ? t("pgListenPausedAuto") : t("pgListenPausedManual")}
+          </chakra.span>
+        )}
+        {pending > 0 && (
+          <Button type="button" size="sm" variant="primary" onClick={resume} data-testid="pglisten-pending">
+            {t("pgListenPending", { count: pending })}
+          </Button>
+        )}
+      </Flex>
 
       {unsupportedReason && (
         <Callout tone="warning" role="status" data-testid="pglisten-unsupported">
@@ -382,46 +503,17 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
               </tr>
             </thead>
             <tbody>
-              {ordered.map((n) => {
-                const open = expanded === n.seq;
-                const pretty = open ? prettyJsonPayload(n.payload) : null;
-                return (
-                  <tr key={n.seq} data-testid="pglisten-row">
-                    <chakra.td css={tdCss} whiteSpace="nowrap">
-                      {formatReceivedAt(n.receivedAtMs)}
-                    </chakra.td>
-                    <chakra.td css={tdCss} whiteSpace="nowrap">
-                      {n.channel}
-                    </chakra.td>
-                    <chakra.td css={tdCss} whiteSpace="nowrap">
-                      {n.pid}
-                    </chakra.td>
-                    <chakra.td css={tdCss}>
-                      <chakra.button
-                        type="button"
-                        aria-expanded={open}
-                        onClick={() => setExpanded(open ? null : n.seq)}
-                        textAlign="left"
-                        background="transparent"
-                        border="none"
-                        padding="0"
-                        cursor="pointer"
-                        color="inherit"
-                        font="inherit"
-                        wordBreak="break-all"
-                        whiteSpace={open ? "pre-wrap" : "normal"}
-                      >
-                        {open ? (pretty ?? n.payload) : payloadPreview(n.payload)}
-                      </chakra.button>
-                      {n.payloadTruncated && (
-                        <chakra.span marginLeft="2" textStyle="caption">
-                          {t("pgListenTruncated")}
-                        </chakra.span>
-                      )}
-                    </chakra.td>
-                  </tr>
-                );
-              })}
+              <LiveRowsPresence>
+                {ordered.map((n) => (
+                  <NotificationRow
+                    key={n.seq}
+                    n={n}
+                    open={expanded === n.seq}
+                    isNew={n.seq > shownSeqRef.current && n.seq > noFlashUpToRef.current}
+                    onToggle={toggleExpanded}
+                  />
+                ))}
+              </LiveRowsPresence>
             </tbody>
           </chakra.table>
         </Box>
@@ -429,3 +521,164 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
     </Box>
   );
 }
+
+/** チャンネルのフィルタ用チップ (件数つき)。`bare` は外枠を持たない (購読解除ボタンと枠を共有する)。 */
+function ChannelChip({
+  label,
+  count,
+  pressed,
+  onClick,
+  testId,
+  bare = false,
+}: {
+  label: string;
+  count: number;
+  pressed: boolean;
+  onClick: () => void;
+  testId: string;
+  bare?: boolean;
+}) {
+  const t = useT();
+  return (
+    <chakra.button
+      type="button"
+      aria-pressed={pressed}
+      aria-label={t("pgListenChipAria", { channel: label, count })}
+      onClick={onClick}
+      data-testid={testId}
+      display="inline-flex"
+      alignItems="center"
+      gap="1.5"
+      paddingY="0.5"
+      paddingX="2"
+      borderRadius="md"
+      borderWidth={bare ? 0 : "1px"}
+      borderColor={pressed ? "app.accent" : "app.border"}
+      bg={pressed ? "var(--accent-subtle)" : "transparent"}
+      color="app.text"
+      fontFamily="inherit"
+      fontSize="inherit"
+      cursor="pointer"
+    >
+      <span>{label}</span>
+      <chakra.span textStyle="numeric" color="app.textMuted">
+        {count}
+      </chakra.span>
+    </chakra.button>
+  );
+}
+
+/** 監視状態のピル。listening 中だけ点を脈動させる (reduced-motion では止める)。 */
+function StatusPill({ status, label }: { status: Status; label: string }) {
+  const reduced = useReducedMotion();
+  const animated = (status === "listening" || status === "connecting") && !reduced;
+  const dot =
+    status === "listening"
+      ? "var(--status-connected)"
+      : status === "connecting"
+        ? "var(--status-connecting)"
+        : "var(--status-idle)";
+  return (
+    <chakra.span
+      display="inline-flex"
+      alignItems="center"
+      gap="1.5"
+      paddingY="0.5"
+      paddingX="2"
+      borderRadius="pill"
+      borderWidth="1px"
+      borderColor="app.border"
+      textStyle="caption"
+      color="app.text"
+      data-testid="pglisten-status"
+      aria-live="polite"
+      data-status={status}
+    >
+      <chakra.span
+        aria-hidden="true"
+        display="inline-block"
+        width="2"
+        height="2"
+        borderRadius="pill"
+        flexShrink={0}
+        data-pulsing={animated ? "true" : "false"}
+        style={{
+          background: dot,
+          animation: animated ? "pulse 1.2s ease-in-out infinite" : undefined,
+        }}
+      />
+      {label}
+    </chakra.span>
+  );
+}
+
+/**
+ * 通知 1 行。入場時のフラッシュは「マウント時に新着だったか」を一度だけ決めて固定する
+ * (再描画で token が変わってフラッシュが途切れたり、フィルタ切替で再生し直したりしない)。
+ */
+const NotificationRow = memo(function NotificationRow({
+  n,
+  open,
+  isNew,
+  onToggle,
+}: {
+  n: BufferedNotification;
+  open: boolean;
+  isNew: boolean;
+  onToggle: (seq: number) => void;
+}) {
+  const t = useT();
+  const [flash] = useState<number | null>(isNew ? n.seq : null);
+  const pretty = useMemo(() => (open ? prettyJsonPayload(n.payload) : null), [open, n.payload]);
+  return (
+    <LiveTr testId="pglisten-row">
+      <LiveCell
+        css={tdCss}
+        innerCss={{ ...cellInnerCss, whiteSpace: "nowrap" }}
+        flash={flash}
+        collapse={false}
+      >
+        {formatReceivedAt(n.receivedAtMs)}
+      </LiveCell>
+      <LiveCell
+        css={tdCss}
+        innerCss={{ ...cellInnerCss, whiteSpace: "nowrap" }}
+        flash={flash}
+        collapse={false}
+      >
+        {n.channel}
+      </LiveCell>
+      <LiveCell
+        css={tdCss}
+        innerCss={{ ...cellInnerCss, whiteSpace: "nowrap" }}
+        flash={flash}
+        collapse={false}
+      >
+        {n.pid}
+      </LiveCell>
+      <LiveCell css={tdCss} innerCss={cellInnerCss} flash={flash} collapse={false}>
+        <chakra.button
+          type="button"
+          aria-expanded={open}
+          onClick={() => onToggle(n.seq)}
+          textAlign="left"
+          background="transparent"
+          border="none"
+          padding="0"
+          cursor="pointer"
+          color="inherit"
+          font="inherit"
+          wordBreak="break-all"
+          whiteSpace={open ? "pre-wrap" : "normal"}
+        >
+          {open ? (pretty ?? n.payload) : payloadPreview(n.payload)}
+        </chakra.button>
+        {n.payloadTruncated && (
+          <chakra.span marginLeft="2" textStyle="caption">
+            {t("pgListenTruncated")}
+          </chakra.span>
+        )}
+      </LiveCell>
+    </LiveTr>
+  );
+});

@@ -3,7 +3,8 @@
 //! スケジューラのアクションは読み取り専用が前提 (#730) だが、メンテナンスは書き込み扱いの
 //! 文 (VACUUM / OPTIMIZE など)。任意 SQL は受けず、**ここの列挙 (種別 × ドライバ) から
 //! 生成した固定形の文だけ**を実行することで安全前提を保つ。識別子は必ず
-//! `db::sync::quote_ident` を通す。フロントの `maintenanceCommands.ts` と同じ文を返す。
+//! `db::sync::quote_ident` を通す。フロントの `taskMaintenance.ts` (`buildTaskMaintenanceStatements`) と同じ文を返し、
+//! 共有ゴールデンベクタ `src/__tests__/fixtures/taskMaintenanceVectors.json` で一致を固定している。
 //! 副作用なしの純関数で、ドライバが対応しない組み合わせは理由付きで弾く。
 
 use serde::{Deserialize, Serialize};
@@ -382,6 +383,41 @@ mod tests {
         assert!(build_statements(Sqlite, None, &s(&["a\0b"]), Analyze).is_err());
         // MySQL では " や \ は識別子として有効 (バッククォートだけが問題)。
         assert!(build_statements(Mysql, Some("a\"b"), &s(&["t"]), Analyze).is_ok());
+    }
+
+    #[test]
+    fn statements_match_the_shared_vectors() {
+        // フロント `buildTaskMaintenanceStatements` (タスク作成フォームのライブプレビュー) と同じ共有ベクタ。
+        // 片方だけ生成規則を変えるとどちらかが落ちる (#2096)。
+        let v: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../src/__tests__/fixtures/taskMaintenanceVectors.json"
+        ))
+        .unwrap();
+        let cases = v["cases"].as_array().unwrap();
+        assert!(!cases.is_empty());
+        for c in cases {
+            let name = c["name"].as_str().unwrap();
+            let driver = DriverKind::parse(c["driver"].as_str().unwrap()).unwrap();
+            let kind: TaskMaintenanceKind = serde_json::from_value(c["kind"].clone()).unwrap();
+            let database = c["database"].as_str();
+            let targets: Vec<String> = c["targets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| t.as_str().unwrap().to_string())
+                .collect();
+            let got = build_statements(driver, database, &targets, kind);
+            match c["sql"].as_array() {
+                Some(expected) => {
+                    let expected: Vec<&str> =
+                        expected.iter().map(|x| x.as_str().unwrap()).collect();
+                    let got = got.unwrap_or_else(|e| panic!("{name}: {e}"));
+                    let got: Vec<&str> = got.iter().map(|m| m.sql.as_str()).collect();
+                    assert_eq!(got, expected, "{name}");
+                }
+                None => assert!(got.is_err(), "{name}: エラーになるはず"),
+            }
+        }
     }
 
     #[test]
