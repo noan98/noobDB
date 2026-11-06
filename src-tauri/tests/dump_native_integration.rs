@@ -936,6 +936,8 @@ const PART_ROW_SELECTS: &[&str] = &[
     "SELECT id, event_id, event_created FROM nb2098_part.child_ref ORDER BY id",
     "SELECT id, label FROM nb2098_part.ref_t ORDER BY id",
     "SELECT tableoid::regclass::text, id, pid, kind FROM nb2098_part.tree ORDER BY 1, 2",
+    // 子だけ式が違う生成列 (gc1 は a*3、gc2 は親と同じ a*2)。値は復元先でも子の式で再計算される。
+    "SELECT tableoid::regclass::text, a, g FROM nb2098_part.gen_p ORDER BY 1, 2",
 ];
 
 /// 定義側の突き合わせ。パーティション構造・索引・制約・トリガー。
@@ -949,6 +951,9 @@ const PART_DEF_SELECTS: &[&str] = &[
     // 分割表の索引が無効 (ON ONLY のまま) で復元されていないことも、状態で突き合わせる。
     "SELECT c.relname, i.indisvalid, i.indisready FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid \
       WHERE c.relnamespace = 'nb2098_part'::regnamespace ORDER BY 1",
+    "SELECT c.relname, a.attname, pg_get_expr(d.adbin, d.adrelid) FROM pg_attrdef d \
+       JOIN pg_class c ON c.oid = d.adrelid JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum \
+      WHERE c.relnamespace = 'nb2098_part'::regnamespace AND c.relname IN ('gen_p', 'gc1', 'gc2') ORDER BY 1, 2",
     "SELECT conrelid::regclass::text, conname, contype::text, pg_get_constraintdef(oid) \
        FROM pg_constraint WHERE connamespace = 'nb2098_part'::regnamespace ORDER BY 1, 2",
     "SELECT tgrelid::regclass::text, tgname, pg_get_triggerdef(oid) FROM pg_trigger \
@@ -995,6 +1000,11 @@ async fn part_setup(conn: &t::Connection) {
         // ならず (名前順だと e_* が先)、複製された FK は二重に出さない。
         "ALTER TABLE nb2098_part.events ADD CONSTRAINT events_rid_region_fkey FOREIGN KEY (rid, region) REFERENCES nb2098_part.by_region (id, region)".into(),
         "INSERT INTO nb2098_part.events (id, created, region, payload, rid) VALUES (10, '2024-02-02', 'de', 'fk1', 1), (11, '2025-02-02', 'us', 'fk2', 2)".into(),
+        // 生成列の式が親と違う子 (PARTITION OF の列オプションで式を保つ必要がある)。
+        "CREATE TABLE nb2098_part.gen_p (a int NOT NULL, g int GENERATED ALWAYS AS (a * 2) STORED) PARTITION BY LIST (a)".into(),
+        "CREATE TABLE nb2098_part.gc1 PARTITION OF nb2098_part.gen_p (g WITH OPTIONS GENERATED ALWAYS AS (a * 3) STORED) FOR VALUES IN (1, 3)".into(),
+        "CREATE TABLE nb2098_part.gc2 PARTITION OF nb2098_part.gen_p FOR VALUES IN (2)".into(),
+        "INSERT INTO nb2098_part.gen_p (a) VALUES (1), (2), (3)".into(),
         // hash のみ。
         "CREATE TABLE nb2098_part.hp (id int PRIMARY KEY, v text) PARTITION BY HASH (id)".into(),
         "CREATE TABLE nb2098_part.hp_0 PARTITION OF nb2098_part.hp FOR VALUES WITH (modulus 3, remainder 0)".into(),
@@ -1132,6 +1142,11 @@ async fn postgres_native_dump_partitions_roundtrip_when_env_set() {
     // 分割表の子の索引は ON ONLY ではなく ON で出る。
     assert!(!dump.contains(" ON ONLY "), "{dump}");
     assert!(
+        dump.contains("WITH OPTIONS GENERATED ALWAYS AS ((a * 3)) STORED"),
+        "{dump}"
+    );
+    assert_eq!(dump.matches("WITH OPTIONS GENERATED").count(), 1, "{dump}");
+    assert!(
         dump.contains("ON nb2098_part.r_asia USING btree (v)"),
         "{dump}"
     );
@@ -1143,6 +1158,14 @@ async fn postgres_native_dump_partitions_roundtrip_when_env_set() {
     }
 
     // 別 DB へ復元する。
+    // 復元先 DB はテスト内で作り直す (事前に用意しておく前提にしない。CI の PG ユーザーは superuser)。
+    // 接続が残っていても消せるよう FORCE (PG13+) を使う。
+    conn.execute("DROP DATABASE IF EXISTS nb2098_restore WITH (FORCE)", None)
+        .await
+        .expect("drop stale restore db");
+    conn.execute("CREATE DATABASE nb2098_restore", None)
+        .await
+        .expect("create restore db");
     let mut restore_opts = opts.clone();
     restore_opts.database = Some("nb2098_restore".into());
     let restore = t::connect(&restore_opts).await.expect("connect restore db");
@@ -1264,10 +1287,9 @@ async fn postgres_native_dump_partitions_roundtrip_when_env_set() {
         "{child_only}"
     );
 
-    restore
-        .execute("DROP SCHEMA IF EXISTS nb2098_part CASCADE", None)
+    conn.execute("DROP DATABASE IF EXISTS nb2098_restore WITH (FORCE)", None)
         .await
-        .expect("cleanup restore");
+        .expect("cleanup restore db");
     conn.execute("DROP SCHEMA nb2098_part CASCADE", None)
         .await
         .expect("cleanup source");

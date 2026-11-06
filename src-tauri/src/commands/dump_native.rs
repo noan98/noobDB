@@ -457,6 +457,28 @@ pub(crate) fn pg_partition_local_sql(schema: &str) -> String {
     )
 }
 
+/// 親と式が異なる生成列を持つパーティションの子を引く SQL。列は (子の表名, 列名, 種別 (`s` =
+/// STORED / `v` = VIRTUAL), 子の式 (`pg_get_expr`))。パーティションの生成列は親と別の式を持てる
+/// (PG16 docs ddl-generated-columns) が、`PARTITION OF` は親の式を引き継ぐので、異なる子だけ
+/// `PARTITION OF 親 (列 WITH OPTIONS GENERATED ALWAYS AS (式) ...)` で式を保つ。比較は直接の親との間。
+/// `attgenerated` は PG12+ の列なので `to_jsonb` 経由で読む。
+pub(crate) fn pg_generated_overrides_sql(schema: &str) -> String {
+    let s = pg_lit(schema);
+    format!(
+        "SELECT c.relname::text, a.attname::text, to_jsonb(a) ->> 'attgenerated', pg_get_expr(d.adbin, d.adrelid) \
+           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+           JOIN pg_inherits i ON i.inhrelid = c.oid \
+           JOIN pg_attribute a ON a.attrelid = c.oid AND NOT a.attisdropped \
+                AND COALESCE(to_jsonb(a) ->> 'attgenerated', '') <> '' \
+           JOIN pg_attrdef d ON d.adrelid = c.oid AND d.adnum = a.attnum \
+           JOIN pg_attribute pa ON pa.attrelid = i.inhparent AND pa.attname = a.attname AND NOT pa.attisdropped \
+           JOIN pg_attrdef pd ON pd.adrelid = i.inhparent AND pd.adnum = pa.attnum \
+          WHERE n.nspname = {s} AND c.relispartition \
+            AND pg_get_expr(d.adbin, d.adrelid) IS DISTINCT FROM pg_get_expr(pd.adbin, pd.adrelid) \
+          ORDER BY 1, 2"
+    )
+}
+
 /// 親トリガーから子へ複製されたトリガー (`tgparentid <> 0`、PG13+) を引く SQL。列は (表名,
 /// トリガー名)。子の `CREATE TRIGGER` は親のトリガーを作った時点で済んでいるので、二重に出さない。
 pub(crate) fn pg_cloned_triggers_sql(schema: &str) -> String {
@@ -841,20 +863,45 @@ pub(crate) fn partition_of_ddl(
     kind: &PgTableKind,
     parent: &str,
     bound: &str,
+    gen_overrides: &[GenOverride],
 ) -> String {
     let pg = DriverKind::Postgres;
+    let cols = if gen_overrides.is_empty() {
+        String::new()
+    } else {
+        let items: Vec<String> = gen_overrides
+            .iter()
+            .map(|g| {
+                format!(
+                    "{} WITH OPTIONS GENERATED ALWAYS AS ({}) {}",
+                    quote_ident(pg, &g.column),
+                    g.expr,
+                    if g.stored { "STORED" } else { "VIRTUAL" }
+                )
+            })
+            .collect();
+        format!(" ({})", items.join(", "))
+    };
     let sub = kind
         .key
         .as_deref()
         .map(|k| format!(" PARTITION BY {k}"))
         .unwrap_or_default();
     format!(
-        "CREATE TABLE {} PARTITION OF {} {}{};\n",
+        "CREATE TABLE {} PARTITION OF {}{} {}{};\n",
         qualified_table(pg, schema, &kind.name),
         qualified_table(pg, schema, parent),
+        cols,
         bound,
         sub
     )
+}
+
+/// 親と式が異なる子の生成列 (`pg_generated_overrides_sql` の 1 行)。
+pub(crate) struct GenOverride {
+    pub column: String,
+    pub expr: String,
+    pub stored: bool,
 }
 
 /// `pg_foreign_keys_sql` の 1 行。
@@ -1112,6 +1159,29 @@ pub async fn dump_native_core(
 
     // パーティションの子だけが持つ索引・制約 (親から伝播しないもの)。親から伝播する索引・FK・トリガー
     // は子の作成時に自動で付くので、ここには含まれない。
+    // 親と式が異なる生成列 (子 -> 列の上書き)。
+    let mut gen_overrides: std::collections::HashMap<String, Vec<GenOverride>> =
+        std::collections::HashMap::new();
+    if pg && schema_part && !attached.is_empty() {
+        for r in &conn
+            .execute(&pg_generated_overrides_sql(&schema), None)
+            .await?
+            .rows
+        {
+            if let (Some(t), Some(c), Some(kind), Some(e)) =
+                (str_at(r, 0), str_at(r, 1), str_at(r, 2), str_at(r, 3))
+            {
+                gen_overrides
+                    .entry(t.to_string())
+                    .or_default()
+                    .push(GenOverride {
+                        column: c.to_string(),
+                        expr: e.to_string(),
+                        stored: kind == "s",
+                    });
+            }
+        }
+    }
     let partition_local: Vec<(String, String)> = if pg && schema_part && !attached.is_empty() {
         pairs(
             &conn
@@ -1421,8 +1491,13 @@ pub async fn dump_native_core(
             let ddl = if let Some((k, parent)) = part_of {
                 // 子は列・既定値・親から伝播する索引 / 制約 / トリガーを `PARTITION OF` で引き継ぐ。
                 // identity は PG17+ で子が親のものを共有するので、子には出さない。
-                let mut d =
-                    partition_of_ddl(&schema, k, parent, k.bound.as_deref().unwrap_or_default());
+                let mut d = partition_of_ddl(
+                    &schema,
+                    k,
+                    parent,
+                    k.bound.as_deref().unwrap_or_default(),
+                    gen_overrides.get(name).map_or(&[], Vec::as_slice),
+                );
                 for (_, stmt) in partition_local.iter().filter(|(t, _)| t == name) {
                     d.push_str(&terminated(stmt));
                 }
@@ -2029,6 +2104,7 @@ mod tests {
             pg_foreign_partitions_sql("s'"),
             pg_partition_local_sql("s'"),
             pg_cloned_triggers_sql("s'"),
+            pg_generated_overrides_sql("s'"),
             pg_view_deps_sql("s'"),
         ] {
             assert!(q.contains("'s'''"), "{q}");
@@ -2077,13 +2153,35 @@ mod tests {
     fn partition_of_ddl_handles_default_and_subpartitions() {
         let k = sample_kinds();
         assert_eq!(
-            partition_of_ddl("s", &k[3], "p", "DEFAULT"),
+            partition_of_ddl("s", &k[3], "p", "DEFAULT", &[]),
             "CREATE TABLE \"s\".\"p_d\" PARTITION OF \"s\".\"p\" DEFAULT;\n"
         );
         assert_eq!(
-            partition_of_ddl("s", &k[1], "p", "FOR VALUES IN ('a')"),
+            partition_of_ddl("s", &k[1], "p", "FOR VALUES IN ('a')", &[]),
             "CREATE TABLE \"s\".\"p_a\" PARTITION OF \"s\".\"p\" FOR VALUES IN ('a') PARTITION BY HASH (id);\n"
         );
+    }
+
+    #[test]
+    fn partition_of_ddl_keeps_child_generated_expressions() {
+        let k = sample_kinds();
+        let g = [
+            GenOverride {
+                column: "g".into(),
+                expr: "(a * 3)".into(),
+                stored: true,
+            },
+            GenOverride {
+                column: "h".into(),
+                expr: "(a + 1)".into(),
+                stored: false,
+            },
+        ];
+        assert_eq!(
+            partition_of_ddl("s", &k[3], "p", "DEFAULT", &g),
+            "CREATE TABLE \"s\".\"p_d\" PARTITION OF \"s\".\"p\" (\"g\" WITH OPTIONS GENERATED ALWAYS AS ((a * 3)) STORED, \"h\" WITH OPTIONS GENERATED ALWAYS AS ((a + 1)) VIRTUAL) DEFAULT;\n"
+        );
+        assert!(pg_generated_overrides_sql("s'").contains("IS DISTINCT FROM"));
     }
 
     #[test]
