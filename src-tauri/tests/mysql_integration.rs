@@ -4999,3 +4999,60 @@ async fn mysql_chunked_dml_batches() {
         .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
         .await;
 }
+
+fn mysql_stop_sql() -> common::StopSql {
+    common::StopSql {
+        sleep_30: |m| format!("SELECT /* {m} */ SLEEP(30)"),
+        active_count: |m| {
+            format!(
+                "SELECT COUNT(*) FROM information_schema.PROCESSLIST \
+                 WHERE INFO LIKE '%{m}%' AND ID <> CONNECTION_ID()"
+            )
+        },
+        sleep_2: "SELECT SLEEP(2)",
+        lock_sql: |t| common::LockSql {
+            setup: vec![
+                format!("DROP TABLE IF EXISTS {t}"),
+                format!("CREATE TABLE {t} (id INT PRIMARY KEY, v INT NOT NULL) ENGINE=InnoDB"),
+                format!("INSERT INTO {t} VALUES (1, 0)"),
+            ],
+            sleeping_update: format!("UPDATE {t} SET v = v + SLEEP(30) WHERE id = 1"),
+            lock_nowait: format!("SELECT id FROM {t} WHERE id = 1 FOR UPDATE NOWAIT"),
+            select_v: format!("SELECT v FROM {t} WHERE id = 1"),
+        },
+    }
+}
+
+/// タイムアウトしたら、サーバの `PROCESSLIST` から実行中の文が消える (#2102 / #2023)。
+#[tokio::test]
+async fn mysql_timeout_stops_statement_server_side_when_env_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    common::assert_timeout_stops_statement_server_side(&opts, &mysql_stop_sql(), "my").await;
+}
+
+/// キャンセル / タイムアウト直後に同じプールで流した別の文が、遅れて届いた停止要求で
+/// 止められない (誤 KILL の回帰防止、a32a680)。
+#[tokio::test]
+async fn mysql_late_stop_never_hits_the_next_statement_when_env_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    common::assert_late_stop_never_hits_next_statement(&opts, &mysql_stop_sql(), "my").await;
+}
+
+/// ドライランがタイムアウトしたら、掴んでいた行ロックが解放される。
+#[tokio::test]
+async fn mysql_dry_run_timeout_releases_row_lock_when_env_set() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    common::assert_dry_run_timeout_releases_row_lock(&opts, &mysql_stop_sql()).await;
+}
