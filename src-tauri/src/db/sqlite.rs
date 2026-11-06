@@ -1816,6 +1816,7 @@ impl SqliteConn {
                     kind,
                     name,
                     id: None,
+                    detail: None,
                 })
             })
             .collect())

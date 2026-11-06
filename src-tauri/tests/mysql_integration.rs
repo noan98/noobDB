@@ -4999,3 +4999,87 @@ async fn mysql_chunked_dml_batches() {
         .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
         .await;
 }
+
+/// MySQL の EVENT (#2100): スキーマツリーの一覧・定義表示・スキーマ比較 (欠落と定義差) を
+/// 実サーバで確かめる。EVENT の作成は prepared protocol で通らない (error 1295) ので、
+/// 作成は text protocol (`mysql_exec_text`) で行う。
+#[tokio::test]
+async fn mysql_events_are_listed_defined_and_compared() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts.database.clone().expect("test db in url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let tgt_db = format!("{db}_ev_tgt");
+
+    for stmt in [
+        format!("DROP EVENT IF EXISTS `{db}`.`noobdb_ev_a`"),
+        format!("DROP EVENT IF EXISTS `{db}`.`noobdb_ev_b`"),
+        format!("DROP DATABASE IF EXISTS `{tgt_db}`"),
+    ] {
+        let _ = t::mysql_exec_text(&opts, &stmt).await;
+    }
+    conn.execute(&format!("CREATE DATABASE `{tgt_db}`"), None)
+        .await
+        .expect("create scratch database");
+    let create = |schema: &str, name: &str, every: u32| {
+        format!(
+            "CREATE EVENT `{schema}`.`{name}` ON SCHEDULE EVERY {every} DAY \
+             DISABLE DO SELECT 1"
+        )
+    };
+    for stmt in [create(&db, "noobdb_ev_a", 1), create(&db, "noobdb_ev_b", 1)] {
+        t::mysql_exec_text(&opts, &stmt)
+            .await
+            .expect("create event");
+    }
+    // target には ev_a だけを別の間隔で作る (ev_a: 定義差 / ev_b: source のみ)。
+    t::mysql_exec_text(&opts, &create(&tgt_db, "noobdb_ev_a", 2))
+        .await
+        .expect("create target event");
+
+    // 一覧: kind=event、状態とスケジュールの要約が付く。
+    let objects = conn.schema_objects(&db).await.expect("schema_objects");
+    let ev = objects
+        .iter()
+        .find(|o| o.kind == "event" && o.name == "noobdb_ev_a")
+        .expect("event listed");
+    let detail = ev.detail.clone().unwrap_or_default();
+    assert!(
+        detail.contains("DISABLED") && detail.contains("EVERY 1 DAY"),
+        "detail: {detail}"
+    );
+
+    // 定義表示。
+    let def = conn
+        .object_definition(&db, "event", "noobdb_ev_a", None)
+        .await
+        .expect("event definition");
+    assert!(def.to_uppercase().contains("CREATE"), "{def}");
+    assert!(def.contains("noobdb_ev_a"), "{def}");
+
+    // スキーマ比較: ev_a は Different、ev_b は SourceOnly。
+    let diff = t::compare_schema_via_core(&conn, &db, &conn, &tgt_db)
+        .await
+        .expect("compare");
+    assert!(diff.objects.compared);
+    let find = |n: &str| {
+        diff.objects
+            .items
+            .iter()
+            .find(|i| i.kind == "event" && i.name == n)
+            .unwrap_or_else(|| panic!("event {n} missing from diff"))
+    };
+    assert_eq!(find("noobdb_ev_a").status, t::DiffStatus::Different);
+    assert_eq!(find("noobdb_ev_b").status, t::DiffStatus::SourceOnly);
+
+    for stmt in [
+        format!("DROP EVENT IF EXISTS `{db}`.`noobdb_ev_a`"),
+        format!("DROP EVENT IF EXISTS `{db}`.`noobdb_ev_b`"),
+        format!("DROP DATABASE IF EXISTS `{tgt_db}`"),
+    ] {
+        let _ = t::mysql_exec_text(&opts, &stmt).await;
+    }
+}

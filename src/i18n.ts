@@ -1509,7 +1509,7 @@ const en = {
   treeKindFilter_all: "All",
   treeKindFilter_tables: "Tables",
   treeKindFilter_views: "Views",
-  treeKindFilter_routines: "Routines / triggers / sequences",
+  treeKindFilter_routines: "Routines / triggers / sequences / events",
   treeExpandSiblingsLimited:
     "Expanded the first {limit} tables only ({skipped} more were left collapsed to avoid loading too many at once)",
   treeKindFilterEmpty: "No objects of this type",
@@ -3657,6 +3657,7 @@ const en = {
   objGroupFunctions: "Functions",
   objGroupTriggers: "Triggers",
   objGroupSequences: "Sequences",
+  objGroupEvents: "Events",
   objDefinitionError: "Failed to load definition: {error}",
   // テーブルのインデックス表示。
   indexesLabel: "Indexes",
@@ -5388,6 +5389,7 @@ const en = {
   schemaCompareObjectKindProcedure: "Procedure",
   schemaCompareObjectKindTrigger: "Trigger",
   schemaCompareObjectKindSequence: "Sequence",
+  schemaCompareObjectKindEvent: "Event",
   schemaCompareObjectOnTable: "on {table}",
   schemaCompareObjectSourceDefinition: "Source definition",
   schemaCompareObjectTargetDefinition: "Target definition",
@@ -8907,7 +8909,7 @@ const ja: Dict = {
   treeKindFilter_all: "すべて",
   treeKindFilter_tables: "テーブル",
   treeKindFilter_views: "ビュー",
-  treeKindFilter_routines: "ルーチン / トリガー / シーケンス",
+  treeKindFilter_routines: "ルーチン / トリガー / シーケンス / イベント",
   treeExpandSiblingsLimited:
     "先頭の {limit} 件だけ展開しました (残り {skipped} 件は一度に読み込みすぎないよう閉じたままです)",
   treeKindFilterEmpty: "この種別のオブジェクトはありません",
@@ -11041,6 +11043,7 @@ const ja: Dict = {
   objGroupFunctions: "関数",
   objGroupTriggers: "トリガー",
   objGroupSequences: "シーケンス",
+  objGroupEvents: "イベント",
   objDefinitionError: "定義の取得に失敗しました: {error}",
   // テーブルのインデックス表示。
   indexesLabel: "インデックス",
@@ -12757,6 +12760,7 @@ const ja: Dict = {
   schemaCompareObjectKindProcedure: "プロシージャ",
   schemaCompareObjectKindTrigger: "トリガー",
   schemaCompareObjectKindSequence: "シーケンス",
+  schemaCompareObjectKindEvent: "イベント",
   schemaCompareObjectOnTable: "対象: {table}",
   schemaCompareObjectSourceDefinition: "ソース側の定義",
   schemaCompareObjectTargetDefinition: "ターゲット側の定義",

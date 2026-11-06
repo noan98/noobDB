@@ -965,6 +965,7 @@ const SCHEMA_OBJECT_ICONS: Record<string, IconName> = {
   function: "routine",
   trigger: "trigger",
   sequence: "hash",
+  event: "clock",
 };
 
 /** 非テーブルのスキーマオブジェクト (ルーチン / トリガー / 突き合わなかったビュー) の 1 行。
@@ -1010,7 +1011,9 @@ const SchemaObjectRow = memo(function SchemaObjectRow({
       onKeyDown={actions.makeKeyDown(activate, openMenu)}
       onClick={activate}
       onContextMenu={openMenu}
-      {...actions.treeTooltip(`${o.name} — ${kindLabel}`)}
+      {...actions.treeTooltip(
+        o.detail ? `${o.name} — ${kindLabel} (${o.detail})` : `${o.name} — ${kindLabel}`,
+      )}
       _hover={{ bg: "app.rowHover" }}
     >
       <TreeChevron visibility="hidden" aria-hidden />
@@ -1020,6 +1023,11 @@ const SchemaObjectRow = memo(function SchemaObjectRow({
       <TreeLabel fontWeight={400}>
         <HighlightText text={o.name} query={q} />
       </TreeLabel>
+      {o.detail && (
+        <TreeBadge fontSize="2xs" textTransform="none" letterSpacing="0" aria-hidden>
+          {o.detail}
+        </TreeBadge>
+      )}
     </TreeRow>
   );
 });
@@ -1461,6 +1469,8 @@ function useHeaderLabel(): (group: ExplorerHeaderGroup) => string {
         return t("objGroupTriggers");
       case "sequence":
         return t("objGroupSequences");
+      case "event":
+        return t("objGroupEvents");
     }
   };
 }

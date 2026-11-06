@@ -1244,11 +1244,10 @@ pub async fn dump_native_core(
         if !pg && whole_schema && options.events {
             let events = conn
                 .execute(
-                    &format!(
-                        "SELECT EVENT_NAME FROM information_schema.EVENTS \
-                         WHERE EVENT_SCHEMA = {} ORDER BY EVENT_NAME",
-                        sql_literal(driver, &Value::String(schema.clone()))
-                    ),
+                    &crate::db::types::mysql_events_list_sql(&sql_literal(
+                        driver,
+                        &Value::String(schema.clone()),
+                    )),
                     None,
                 )
                 .await?;

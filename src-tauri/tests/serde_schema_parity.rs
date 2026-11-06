@@ -222,6 +222,7 @@ fn build_fixtures() -> serde_json::Value {
         kind: "view".into(),
         name: "active_users".into(),
         id: Some("1234".into()),
+        detail: Some("ENABLED · EVERY 1 DAY".into()),
     };
     let routine_signature = RoutineSignature {
         kind: "function".into(),

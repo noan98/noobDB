@@ -1,4 +1,4 @@
-//! 非テーブルオブジェクト (ビュー / マテビュー / ルーチン / トリガー / シーケンス) の
+//! 非テーブルオブジェクト (ビュー / マテビュー / ルーチン / トリガー / シーケンス / イベント) の
 //! スキーマ比較 (#1879)。
 //!
 //! `db::diff` がテーブルと列を比べるのに対し、こちらは「定義 DDL の本文」を比べる純粋層。
@@ -16,31 +16,41 @@ use super::where_used::supports_kind;
 use super::DriverKind;
 
 /// 比較対象のオブジェクト種別 (表示・作成順の基準)。作成は関数 → プロシージャ → ビュー →
-/// マテビュー → トリガーの順 (後ろの種別が前の種別を参照しうる)。シーケンスは表の既定値から
-/// 参照されるので、同期では表より先に作る。
-pub const OBJECT_KINDS: [&str; 6] = [
+/// マテビュー → トリガー → イベントの順 (後ろの種別が前の種別を参照しうる。EVENT の本体は
+/// プロシージャや関数を呼べる)。シーケンスは表の既定値から参照されるので、同期では表より先に作る。
+pub const OBJECT_KINDS: [&str; 7] = [
     "sequence",
     "function",
     "procedure",
     "view",
     "materialized_view",
     "trigger",
+    "event",
 ];
 
 /// このドライバがその種別を持ち、定義を比較できるか。`where_used::supports_kind` に
-/// シーケンス (PostgreSQL のみ) を足したもの。
+/// シーケンス (PostgreSQL のみ) と EVENT (MySQL のみ, #2100) を足したもの。PostgreSQL / SQLite に
+/// EVENT 相当の組み込み機能は無い (pg_cron などの拡張は対象外)。
 pub fn supports_object_kind(driver: DriverKind, kind: &str) -> bool {
-    if kind == "sequence" {
-        return driver == DriverKind::Postgres;
+    match kind {
+        "sequence" => return driver == DriverKind::Postgres,
+        "event" => {
+            return match driver {
+                DriverKind::Mysql => true,
+                DriverKind::Postgres | DriverKind::Sqlite => false,
+            }
+        }
+        _ => {}
     }
     supports_kind(driver, kind)
 }
 
 /// このドライバが持たない (比較対象外の) 種別。UI が「対象外」と理由付きで表示する。
+/// MySQL だけの概念である `event` は、他ドライバでは「対象外」の行を増やすだけなので載せない。
 pub fn unsupported_object_kinds(driver: DriverKind) -> Vec<String> {
     OBJECT_KINDS
         .iter()
-        .filter(|k| !supports_object_kind(driver, k))
+        .filter(|k| **k != "event" && !supports_object_kind(driver, k))
         .map(|k| k.to_string())
         .collect()
 }
@@ -542,6 +552,7 @@ fn drop_keyword(kind: &str) -> &'static str {
         "function" => "FUNCTION",
         "procedure" => "PROCEDURE",
         "trigger" => "TRIGGER",
+        "event" => "EVENT",
         _ => "SEQUENCE",
     }
 }
@@ -590,7 +601,7 @@ pub fn split_statements(sql: &str) -> Vec<&str> {
         .collect()
 }
 
-/// MySQL がテキストプロトコルを要する文か: ルーチン・トリガーの CREATE / DROP (prepared
+/// MySQL がテキストプロトコルを要する文か: ルーチン・トリガー・イベントの CREATE / DROP (prepared
 /// protocol だとエラー 1295) と、[`STMT_SPLIT`] を含む複数文。
 pub fn needs_text_protocol(sql: &str) -> bool {
     if sql.lines().any(|l| l.trim() == STMT_SPLIT) {
@@ -608,9 +619,9 @@ pub fn needs_text_protocol(sql: &str) -> bool {
     // 来る文は対象外。
     for w in words.take(16) {
         match w.as_str() {
-            "PROCEDURE" | "FUNCTION" | "TRIGGER" => return true,
-            "TABLE" | "VIEW" | "INDEX" | "DATABASE" | "SCHEMA" | "USER" | "ROLE" | "EVENT"
-            | "SEQUENCE" | "ALGORITHM" => return false,
+            "PROCEDURE" | "FUNCTION" | "TRIGGER" | "EVENT" => return true,
+            "TABLE" | "VIEW" | "INDEX" | "DATABASE" | "SCHEMA" | "USER" | "ROLE" | "SEQUENCE"
+            | "ALGORITHM" => return false,
             _ => {}
         }
     }
@@ -683,7 +694,8 @@ fn pg_do_block(parts: &[String]) -> String {
 /// データを再計算する。
 pub fn replace_is_destructive(driver: DriverKind, kind: &str) -> bool {
     kind == "materialized_view"
-        || (driver == DriverKind::Mysql && matches!(kind, "procedure" | "function" | "trigger"))
+        || (driver == DriverKind::Mysql
+            && matches!(kind, "procedure" | "function" | "trigger" | "event"))
 }
 
 /// 定義が変わったオブジェクトを target で置き換える SQL。複数文になるとき、MySQL は
@@ -1083,6 +1095,59 @@ mod tests {
             vec!["sequence", "materialized_view"]
         );
         assert!(unsupported_object_kinds(DriverKind::Postgres).is_empty());
+    }
+
+    #[test]
+    fn event_is_a_mysql_only_kind() {
+        assert!(supports_object_kind(DriverKind::Mysql, "event"));
+        assert!(!supports_object_kind(DriverKind::Postgres, "event"));
+        assert!(!supports_object_kind(DriverKind::Sqlite, "event"));
+        // 他ドライバの「対象外」一覧には載せない (UI に出さない)。
+        for d in [DriverKind::Postgres, DriverKind::Sqlite] {
+            assert!(!unsupported_object_kinds(d).contains(&"event".to_string()));
+        }
+    }
+
+    #[test]
+    fn event_diff_and_sync_sql() {
+        let src = ObjectDefinition {
+            kind: "event".into(),
+            name: "ev_purge".into(),
+            signature: None,
+            table: None,
+            definition: "CREATE DEFINER=`root`@`%` EVENT `ev_purge` ON SCHEDULE EVERY 1 DAY DO DELETE FROM `app`.`t`"
+                .into(),
+        };
+        let mut tgt = src.clone();
+        tgt.definition =
+            "CREATE DEFINER=`bob`@`localhost` EVENT `ev_purge` ON SCHEDULE EVERY 2 DAY DO DELETE FROM `stg`.`t`"
+                .into();
+        let diffs = compute_object_diff(
+            DriverKind::Mysql,
+            "app",
+            "stg",
+            std::slice::from_ref(&src),
+            &[tgt],
+        );
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].status, DiffStatus::Different);
+        let sd = diffs[0].source_definition.clone().unwrap_or_default();
+        assert!(!sd.contains("DEFINER"), "{sd}");
+        let sql = replace_object_sql(DriverKind::Mysql, &diffs[0], &sd);
+        assert!(
+            sql.starts_with("DROP EVENT `ev_purge`;\n-- noobdb:split\nCREATE EVENT"),
+            "{sql}"
+        );
+        assert!(needs_text_protocol(&sql));
+        assert!(needs_text_protocol(
+            "CREATE EVENT `e` ON SCHEDULE EVERY 1 DAY DO SELECT 1"
+        ));
+        assert!(needs_text_protocol("DROP EVENT `e`"));
+        assert!(replace_is_destructive(DriverKind::Mysql, "event"));
+        assert_eq!(
+            drop_object_sql(DriverKind::Mysql, &od("event", "e", None, None)),
+            "DROP EVENT `e`"
+        );
     }
 
     fn od(kind: &str, name: &str, table: Option<&str>, sig: Option<&str>) -> ObjectDiff {

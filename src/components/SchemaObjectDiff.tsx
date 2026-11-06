@@ -119,6 +119,7 @@ const KIND_KEYS = {
   procedure: "schemaCompareObjectKindProcedure",
   trigger: "schemaCompareObjectKindTrigger",
   sequence: "schemaCompareObjectKindSequence",
+  event: "schemaCompareObjectKindEvent",
 } as const;
 
 export function objectKindLabel(kind: string, t: ReturnType<typeof useT>): string {

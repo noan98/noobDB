@@ -2532,6 +2532,7 @@ impl MySqlConn {
                 kind: "view".into(),
                 name: r.try_get::<String, _>(0).unwrap_or_default(),
                 id: None,
+                detail: None,
             });
         }
         // Routines (procedures / functions).
@@ -2553,6 +2554,7 @@ impl MySqlConn {
                 kind: kind.into(),
                 name: r.try_get::<String, _>(0).unwrap_or_default(),
                 id: None,
+                detail: None,
             });
         }
         // Triggers.
@@ -2567,7 +2569,36 @@ impl MySqlConn {
                 kind: "trigger".into(),
                 name: r.try_get::<String, _>(0).unwrap_or_default(),
                 id: None,
+                detail: None,
             });
+        }
+        // Events (イベントスケジューラ, #2100)。MySQL だけの概念 (PostgreSQL / SQLite の
+        // `schema_objects` は event を返さない)。取得 SQL はダンプと共有する。権限不足などで
+        // 読めなくても、他の種別の一覧は返す。
+        match sqlx::query(sqlx::AssertSqlSafe(super::types::mysql_events_list_sql(
+            "?",
+        )))
+        .bind(db)
+        .fetch_all(&self.pool)
+        .await
+        {
+            Ok(events) => {
+                for r in &events {
+                    out.push(SchemaObject {
+                        kind: "event".into(),
+                        name: text_or_bytes(r, 0).unwrap_or_default(),
+                        id: None,
+                        detail: Some(super::types::event_detail(
+                            &text_or_bytes(r, 1).unwrap_or_default(),
+                            &text_or_bytes(r, 2).unwrap_or_default(),
+                            &text_or_bytes(r, 3).unwrap_or_default(),
+                            &text_or_bytes(r, 4).unwrap_or_default(),
+                            &text_or_bytes(r, 5).unwrap_or_default(),
+                        )),
+                    });
+                }
+            }
+            Err(e) => tracing::warn!(error = %e, "schema_objects: could not list events"),
         }
         Ok(out)
     }
@@ -2671,6 +2702,7 @@ impl MySqlConn {
                 format!("SHOW CREATE TRIGGER {qualified}"),
                 "SQL Original Statement",
             ),
+            "event" => (format!("SHOW CREATE EVENT {qualified}"), "Create Event"),
             other => {
                 return Err(AppError::InvalidInput(format!(
                     "unsupported object kind: {other}"

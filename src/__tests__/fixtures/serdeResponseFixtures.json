@@ -5571,6 +5571,7 @@
     }
   ],
   "schemaObject": {
+    "detail": "ENABLED · EVERY 1 DAY",
     "id": "1234",
     "kind": "view",
     "name": "active_users"
@@ -5606,6 +5607,7 @@
         "database": "appdb",
         "objects": [
           {
+            "detail": "ENABLED · EVERY 1 DAY",
             "id": "1234",
             "kind": "view",
             "name": "active_users"

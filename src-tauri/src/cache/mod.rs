@@ -1639,6 +1639,7 @@ mod tests {
                     kind: "view".to_string(),
                     name: "v".to_string(),
                     id: None,
+                    detail: None,
                 }])
             })
             .await;

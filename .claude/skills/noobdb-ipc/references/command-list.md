@@ -249,6 +249,11 @@ PostgreSQL は別スキーマの子テーブルからの単一列 FK も専用�
 `get_object_definition` が `CREATE SEQUENCE` + `OWNED BY` + 現在値 (`last_value`) のコメントを返す。
 シーケンスはツリーの一覧・定義表示専用で、Where-used の走査対象には入らない。
 
+MySQL のみ `kind = "event"` (イベントスケジューラの EVENT, #2100) も返し、`SchemaObject.detail` に状態とスケジュールの要約
+(`ENABLED · EVERY 1 DAY`) を載せる。`get_object_definition` は `SHOW CREATE EVENT` の本文を返す。PostgreSQL / SQLite は event を返さず
+(スキーマ比較の「対象外」一覧にも出さない)、スキーマ比較 (`ObjectDiff`) の比較・同期の対象は MySQL の event のみ。
+イベントもツリー専用の種別で、Where-used の走査対象には入らない。
+
 ## LISTEN / NOTIFY 監視 (`commands/listen.rs`, #2019)
 
 - `start_pg_listen`

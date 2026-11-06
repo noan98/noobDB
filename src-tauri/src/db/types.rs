@@ -452,16 +452,60 @@ pub const SCHEMA_OBJECT_KINDS: &[&str] = &[
     "function",
     "trigger",
     "sequence",
+    "event",
 ];
 
 /// `SCHEMA_OBJECT_KINDS` のうち、ツリーの一覧・定義表示だけで使い、Where-used (参照元の
 /// 逆引き) では走査しない種別 (#1957)。`where_used::supports_kind` はこれを含まない。
 #[cfg(test)]
-pub const TREE_ONLY_SCHEMA_OBJECT_KINDS: &[&str] = &["sequence"];
+pub const TREE_ONLY_SCHEMA_OBJECT_KINDS: &[&str] = &["sequence", "event"];
+
+/// MySQL の EVENT 一覧の取得 SQL (#2100)。スキーマツリー (`MySqlConn::schema_objects`) と
+/// ネイティブダンプが共有する。`schema_expr` は `EVENT_SCHEMA` と比べる式 (バインド用の
+/// `?`、またはエスケープ済みの SQL リテラル)。列は 名前 / 状態 / 種類 / 実行時刻 /
+/// 間隔の値 / 間隔の単位 (information_schema の型の揺れを避けて文字列に揃える)。
+pub fn mysql_events_list_sql(schema_expr: &str) -> String {
+    format!(
+        "SELECT CAST(EVENT_NAME AS CHAR), CAST(STATUS AS CHAR), CAST(EVENT_TYPE AS CHAR), \
+                CAST(EXECUTE_AT AS CHAR), CAST(INTERVAL_VALUE AS CHAR), CAST(INTERVAL_FIELD AS CHAR) \
+           FROM information_schema.EVENTS WHERE EVENT_SCHEMA = {schema_expr} ORDER BY EVENT_NAME"
+    )
+}
+
+/// EVENT の状態とスケジュールの要約 (ツリーの補足表示, #2100)。
+/// 例: `ENABLED · EVERY 1 DAY` / `DISABLED · AT 2030-01-01 00:00:00`。
+/// 値が空の部分は省く。
+pub fn event_detail(
+    status: &str,
+    event_type: &str,
+    execute_at: &str,
+    interval_value: &str,
+    interval_field: &str,
+) -> String {
+    let schedule = if event_type.eq_ignore_ascii_case("RECURRING") {
+        if interval_value.is_empty() {
+            String::new()
+        } else {
+            format!("EVERY {interval_value} {interval_field}")
+                .trim_end()
+                .to_string()
+        }
+    } else if execute_at.is_empty() {
+        String::new()
+    } else {
+        format!("AT {execute_at}")
+    };
+    [status, schedule.as_str()]
+        .iter()
+        .filter(|p| !p.is_empty())
+        .copied()
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
 
 /// A non-table schema object: a view, materialized view, stored
-/// procedure, function, trigger, or sequence (PostgreSQL only). `kind` is one of `view` /
-/// `materialized_view` / `procedure` / `function` / `trigger` / `sequence` so the UI can
+/// procedure, function, trigger, sequence (PostgreSQL only), or event (MySQL only). `kind` is one of `view` /
+/// `materialized_view` / `procedure` / `function` / `trigger` / `sequence` / `event` so the UI can
 /// group them; `name` is the object's identifier within the database/schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaObject {
@@ -473,6 +517,10 @@ pub struct SchemaObject {
     /// MySQL/SQLite では `None`。
     #[serde(default)]
     pub id: Option<String>,
+    /// ツリーの補足表示 (#2100)。MySQL の EVENT の状態とスケジュール要約
+    /// (例: `ENABLED · EVERY 1 DAY`) だけが入れる。他の種別・ドライバでは `None`。
+    #[serde(default)]
+    pub detail: Option<String>,
 }
 
 /// One table (or view) and its column names, used to feed whole-schema SQL
