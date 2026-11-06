@@ -13,15 +13,21 @@ export type DumpBoolOptionKey = {
   [K in keyof DumpOptions]-?: DumpOptions[K] extends boolean | undefined ? K : never;
 }[keyof DumpOptions];
 
-/** ネイティブ生成 (#2033) では外部ツールの引数に相当し、効かなくなるスイッチ。 */
-const EXTERNAL_TOOL_ONLY_OPTIONS: readonly DumpBoolOptionKey[] = [
-  "singleTransaction",
-  "noTablespaces",
-  "setGtidPurgedOff",
-  "noOwner",
-  "noPrivileges",
-  "completeInsert",
-];
+/**
+ * ネイティブ生成 (#2033) では外部ツールの引数に相当し、ユーザが切り替えられなくなるスイッチ。
+ * 値は `dump_native.rs` の実挙動に合わせる: 表をまたぐ一貫性は取れない (`singleTransaction` = false)、
+ * 列名つき INSERT を常に出す (`completeInsert`)、所有者・権限・GTID・テーブルスペース文は常に出さない
+ * (`noOwner` / `noPrivileges` / `setGtidPurgedOff` / `noTablespaces`)。
+ */
+const NATIVE_FIXED_OPTIONS: Readonly<Partial<Record<DumpBoolOptionKey, boolean>>> = {
+  singleTransaction: false,
+  completeInsert: true,
+  noOwner: true,
+  noPrivileges: true,
+  setGtidPurgedOff: true,
+  noTablespaces: true,
+};
+const EXTERNAL_TOOL_ONLY_OPTIONS = Object.keys(NATIVE_FIXED_OPTIONS) as DumpBoolOptionKey[];
 
 /** SQLite スナップショット (#1624) は SQL を生成しないので、SQL 形式向けのスイッチは効かない。 */
 const SNAPSHOT_IGNORED_OPTIONS: readonly DumpBoolOptionKey[] = [
@@ -51,11 +57,9 @@ export function dumpOptionLock(key: DumpBoolOptionKey, ctx: DumpLockContext): Du
     return { reason: "dumpLockSnapshot", forced: false };
   }
   const native = ctx.driver !== "sqlite" && ctx.native;
-  if (native && EXTERNAL_TOOL_ONLY_OPTIONS.includes(key)) {
-    return {
-      reason: key === "singleTransaction" ? "dumpLockNativeConsistency" : "dumpLockNative",
-      forced: false,
-    };
+  if (native && key in NATIVE_FIXED_OPTIONS) {
+    const forced = NATIVE_FIXED_OPTIONS[key] === true;
+    return { reason: forced ? "dumpLockNativeAlways" : "dumpLockNativeConsistency", forced };
   }
   // pg_dump は関数を常に出力する (ネイティブ生成のときだけ選べる)。
   if (ctx.driver === "postgres" && !native && key === "routines") {

@@ -212,23 +212,27 @@ function DumpToolNotice({
   installing,
   installError,
   onInstall,
-  onUseNative,
   nativeSelected,
 }: {
   status: DumpToolStatus;
   installing: boolean;
   installError: string | null;
   onInstall: () => void;
-  /** ツールを入れずにネイティブ生成へ切り替える (#2033)。 */
-  onUseNative: () => void;
-  /** すでに内蔵生成を選んでいるときは「切り替える」ボタンを出さない。 */
+  /** 内蔵生成を選んでいるとき (未導入のため自動で切り替えた場合を含む) は警告ではなく情報の帯にする。 */
   nativeSelected: boolean;
 }) {
   const t = useT();
   const toast = useToast();
   const plan = status.install;
   return (
-    <Callout tone="warning" title={t("dumpToolMissingTitle", { tool: status.tool })}>
+    <Callout
+      tone={nativeSelected ? "info" : "warning"}
+      title={
+        nativeSelected
+          ? t("dumpEngineAutoSwitched", { tool: status.tool })
+          : t("dumpToolMissingTitle", { tool: status.tool })
+      }
+    >
       <chakra.div display="flex" flexDirection="column" gap="2" fontSize="sm" lineHeight={1.5}>
         <chakra.div>{t("dumpToolWhere", { tool: status.tool })}</chakra.div>
         {plan ? (
@@ -282,14 +286,6 @@ function DumpToolNotice({
           </>
         ) : (
           <chakra.div>{t("dumpToolNoPlan", { tool: status.tool })}</chakra.div>
-        )}
-        {!nativeSelected && (
-          <chakra.div display="flex" alignItems="center" gap="2" flexWrap="wrap">
-            <Button type="button" size="sm" onClick={onUseNative}>
-              {t("dumpUseNative")}
-            </Button>
-            <chakra.span textStyle="caption">{t("dumpUseNativeHint")}</chakra.span>
-          </chakra.div>
         )}
         {installError && <ErrorNote>{t("dumpToolInstallFailed", { error: installError })}</ErrorNote>}
       </chakra.div>
@@ -350,12 +346,16 @@ function EngineCard({
   disabledReason?: string | null;
   onSelect: () => void;
 }) {
+  const descId = `${testId}-desc`;
+  const limitsId = `${testId}-limits`;
+  const reasonId = `${testId}-reason`;
   return (
     <SelectableCard
       type="button"
       size="compact"
       flex="1 1 240px"
       aria-pressed={selected}
+      aria-describedby={[descId, limitsId, disabledReason ? reasonId : null].filter(Boolean).join(" ")}
       disabled={disabled}
       data-testid={testId}
       onClick={onSelect}
@@ -366,14 +366,14 @@ function EngineCard({
         </chakra.span>
         {badge}
       </chakra.span>
-      <chakra.span textStyle="caption" textAlign="left">
+      <chakra.span id={descId} textStyle="caption" textAlign="left">
         {desc}
       </chakra.span>
-      <chakra.span textStyle="caption" textAlign="left">
+      <chakra.span id={limitsId} textStyle="caption" textAlign="left">
         {limits}
       </chakra.span>
       {disabledReason && (
-        <chakra.span fontSize="xs" color="app.textWarning" lineHeight={1.4} textAlign="left">
+        <chakra.span id={reasonId} fontSize="xs" color="app.textWarning" lineHeight={1.4} textAlign="left">
           {disabledReason}
         </chakra.span>
       )}
@@ -450,24 +450,40 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
   const [toolStatus, setToolStatus] = useState<DumpToolStatus | null>(null);
   const [installing, setInstalling] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
+  // 未導入で自動的に内蔵生成へ切り替えたか。prefs には元の選択を保存するために覚える。
+  const [autoSwitched, setAutoSwitched] = useState(false);
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
   const refreshToolStatus = useMemo(
-    () => async () => {
-      if (!toolName) return;
-      try {
-        setToolStatus(await api.dumpToolStatus(toolName));
-      } catch {
-        // 検出自体の失敗は致命的ではない (実行時のエラーで分かる) ので黙って続ける。
-        setToolStatus(null);
-      }
-    },
-    [toolName],
+    () =>
+      async (initial = false) => {
+        if (!toolName) return;
+        try {
+          const next = await api.dumpToolStatus(toolName);
+          setToolStatus(next);
+          // 最初の検出でツールが無ければ内蔵生成へ切り替える (エラー後の再検出では動かさない)。
+          if (initial && next.path == null && !optionsRef.current.native) {
+            setAutoSwitched(true);
+            setOptions((prev) => ({
+              ...prev,
+              native: true,
+              ...(driver === "postgres" ? { routines: true } : {}),
+            }));
+          }
+        } catch {
+          // 検出自体の失敗は致命的ではない (実行時のエラーで分かる) ので黙って続ける。
+          setToolStatus(null);
+        }
+      },
+    [toolName, driver],
   );
   useEffect(() => {
-    void refreshToolStatus();
+    void refreshToolStatus(true);
   }, [refreshToolStatus]);
   // ネイティブ生成 (#2033) を選ぶと外部ツールは使わない (SQLite は元から不要)。
   const useNative = NATIVE_DUMP_DRIVERS.has(driver) || !!options.native;
-  const toolMissing = !useNative && !!toolStatus && toolStatus.path == null;
+  // 外部ツールのカードを無効にする条件は、どちらのエンジンを選んでいるかと独立にする。
+  const toolAbsent = !!toolStatus && toolStatus.path == null;
 
   const handleInstallTool = async () => {
     if (!toolName) return;
@@ -521,6 +537,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
    *  内蔵に切り替えたときルーチンも既定でオンにする。 */
   const selectEngine = (native: boolean) => {
     if (isRunning) return;
+    setAutoSwitched(false);
     setOptions((prev) => ({
       ...prev,
       native,
@@ -574,7 +591,8 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
     saveDumpPrefs(profileId, {
       options: Object.fromEntries(
         [...visibleRows.map((row) => row.key), ...(engineSelectable ? (["native"] as const) : [])].map(
-          (k) => [k, options[k] === true],
+          // 自動で内蔵へ切り替えただけなら、元の選択 (外部ツール) を覚える。
+          (k) => [k, k === "native" && autoSwitched ? false : options[k] === true],
         ),
       ) as Partial<Record<DumpBoolKey, boolean>>,
       dir: dirnameOf(target),
@@ -700,7 +718,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
                 selected={useNative}
                 disabled={isRunning}
                 title={t("dumpEngineNativeTitle")}
-                badge={<EngineBadge tone="accent">{t("dumpEngineRecommended")}</EngineBadge>}
+                badge={null}
                 desc={t("dumpEngineNativeDesc")}
                 limits={t("dumpEngineNativeLimits")}
                 onSelect={() => selectEngine(true)}
@@ -708,7 +726,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
               <EngineCard
                 testId="dump-engine-external"
                 selected={!useNative}
-                disabled={isRunning || toolMissing}
+                disabled={isRunning || toolAbsent}
                 title={t("dumpEngineExternalTitle", { tool: toolName })}
                 badge={
                   toolStatus ? (
@@ -719,7 +737,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
                 }
                 desc={t("dumpEngineExternalDesc", { tool: toolName })}
                 limits={t("dumpEngineExternalLimits", { tool: toolName })}
-                disabledReason={toolMissing ? t("dumpEngineExternalDisabled", { tool: toolName }) : null}
+                disabledReason={toolAbsent ? t("dumpEngineExternalDisabled", { tool: toolName }) : null}
                 onSelect={() => selectEngine(false)}
               />
             </chakra.div>
@@ -741,7 +759,6 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
                 installing={installing}
                 installError={installError}
                 onInstall={() => void handleInstallTool()}
-                onUseNative={() => selectEngine(true)}
                 nativeSelected={useNative}
               />
             </motion.div>

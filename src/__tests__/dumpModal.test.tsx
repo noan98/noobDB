@@ -4,7 +4,7 @@ import { api } from "../api/tauri";
 import { dumpOptionLock, resolveDumpOptions, type DumpLockContext } from "../dumpOptionLocks";
 import { DumpModal } from "../components/DumpModal";
 import { t } from "../i18n";
-import { saveDumpPrefs } from "../inputMemory";
+import { loadDumpPrefs, saveDumpPrefs } from "../inputMemory";
 
 // ダンプ実行時のイベント購読は Tauri 無しの jsdom では張れないので、購読だけ差し替える。
 vi.mock("../api/tauri", async (importOriginal) => ({
@@ -114,8 +114,6 @@ describe("DumpModal 生成エンジンのカード選択 (#2094)", () => {
     );
     expect(engine("external")).toHaveAttribute("aria-pressed", "true");
     expect(engine("native")).toHaveAttribute("aria-pressed", "false");
-    // 内蔵が推奨表示。
-    expect(engine("native")).toHaveTextContent(t("dumpEngineRecommended"));
     unmount();
     const pg = renderWithProviders(
       <DumpModal sessionId="s1" database="public" driver="postgres" onClose={() => {}} />,
@@ -143,14 +141,18 @@ describe("DumpModal 生成エンジンのカード選択 (#2094)", () => {
     fireEvent.click(engine("native"));
     expect(engine("native")).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText(t("dumpNoteNative"))).toBeInTheDocument();
-    for (const k of ["dumpOptSingleTransaction", "dumpOptNoTablespaces", "dumpOptGtidPurgedOff"] as const) {
+    // 内蔵の実挙動に合わせた固定値で表示する (一貫性は取れない = OFF、GTID / テーブルスペース / 所有者などは常に出さない = ON)。
+    const single = screen.getByRole("switch", { name: t("dumpOptSingleTransaction") });
+    expect(single).toBeDisabled();
+    expect(single).not.toBeChecked();
+    for (const k of ["dumpOptNoTablespaces", "dumpOptGtidPurgedOff", "dumpOptCompleteInsert"] as const) {
       const sw = screen.getByRole("switch", { name: t(k) });
       expect(sw).toBeDisabled();
-      expect(sw).not.toBeChecked();
+      expect(sw).toBeChecked();
     }
     // 理由が画面に出る (単一トランザクションは一貫性の説明つき)。
     expect(screen.getByText(t("dumpLockNativeConsistency"))).toBeInTheDocument();
-    expect(screen.getAllByText(t("dumpLockNative")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(t("dumpLockNativeAlways")).length).toBeGreaterThan(0);
     expect(screen.getAllByText(t("dumpLockBadge")).length).toBeGreaterThan(0);
     // ネイティブでも効くスイッチは触れる。
     expect(screen.getByRole("switch", { name: t("dumpOptNoData") })).toBeEnabled();
@@ -161,15 +163,68 @@ describe("DumpModal 生成エンジンのカード選択 (#2094)", () => {
     expect(screen.getByRole("switch", { name: t("dumpOptSingleTransaction") })).toBeChecked();
   });
 
-  it("ツール未導入なら外部ツールのカードを無効にして理由を出す", async () => {
+  it("ツール未導入なら自動で内蔵へ切り替え、外部ツールのカードは無効 + 理由つきになる", async () => {
     mockTool(null);
     renderWithProviders(<DumpModal sessionId="s1" database="app" driver="mysql" onClose={() => {}} />);
-    await waitFor(() => expect(engine("external")).toBeDisabled());
+    await waitFor(() => expect(engine("native")).toHaveAttribute("aria-pressed", "true"));
+    // 内蔵を選んでいても、未導入の外部カードは無効 + 理由つき。
+    expect(engine("external")).toBeDisabled();
     expect(engine("external")).toHaveTextContent(t("dumpEngineToolMissing"));
     expect(engine("external")).toHaveTextContent(t("dumpEngineExternalDisabled", { tool: "mysqldump" }));
     expect(engine("native")).toBeEnabled();
-    fireEvent.click(engine("native"));
+    // 警告ではなく info の帯で切り替えを知らせる。
+    expect(screen.getByText(t("dumpEngineAutoSwitched", { tool: "mysqldump" }))).toBeInTheDocument();
+    expect(screen.queryByText(t("dumpToolMissingTitle", { tool: "mysqldump" }))).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: t("dumpOptSingleTransaction") })).toBeDisabled();
+  });
+
+  it("自動で内蔵へ切り替えても、実行時の prefs には元の選択 (外部ツール) を保存する", async () => {
+    localStorage.clear();
+    mockTool(null);
+    vi.spyOn(api, "dumpDatabase").mockResolvedValue(undefined as never);
+    renderWithProviders(
+      <DumpModal sessionId="s1" database="app" driver="mysql" profileId="p-auto" onClose={() => {}} />,
+    );
+    await waitFor(() => expect(engine("native")).toHaveAttribute("aria-pressed", "true"));
+    fireEvent.change(screen.getByLabelText(t("dumpSavePath")), { target: { value: "/tmp/out.sql" } });
+    fireEvent.click(screen.getByRole("button", { name: t("dumpExecute") }));
+    await waitFor(() => expect(api.dumpDatabase).toHaveBeenCalled());
+    expect(vi.mocked(api.dumpDatabase).mock.calls[0][0].options.native).toBe(true);
+    expect(loadDumpPrefs("p-auto")?.options.native).toBe(false);
+  });
+
+  it("prefs の native: true で開くと内蔵が選ばれ、外部へ戻すと元の値が復帰する", () => {
+    localStorage.clear();
+    saveDumpPrefs("p-nat", { options: { native: true, singleTransaction: true }, dir: "" });
+    renderWithProviders(
+      <DumpModal sessionId="s1" database="app" driver="mysql" profileId="p-nat" onClose={() => {}} />,
+    );
     expect(engine("native")).toHaveAttribute("aria-pressed", "true");
+    const single = screen.getByRole("switch", { name: t("dumpOptSingleTransaction") });
+    expect(single).toBeDisabled();
+    expect(single).not.toBeChecked();
+    fireEvent.click(engine("external"));
+    expect(screen.getByRole("switch", { name: t("dumpOptSingleTransaction") })).toBeChecked();
+    expect(screen.getByRole("switch", { name: t("dumpOptSingleTransaction") })).toBeEnabled();
+  });
+
+  it("SQLite のスナップショット ON では SQL 形式向けスイッチが OFF 表示になり、送信値も false になる", async () => {
+    const dump = vi.spyOn(api, "dumpDatabase").mockResolvedValue(undefined as never);
+    renderWithProviders(<DumpModal sessionId="s1" database="main" driver="sqlite" onClose={() => {}} />);
+    fireEvent.change(screen.getByLabelText(t("dumpSavePath")), { target: { value: "/tmp/out.db" } });
+    fireEvent.click(screen.getByRole("switch", { name: t("dumpOptNoData") }));
+    fireEvent.click(screen.getByRole("switch", { name: t("dumpOptSqliteSnapshot") }));
+    for (const k of ["dumpOptNoData", "dumpOptAddDropTable"] as const) {
+      expect(screen.getByRole("switch", { name: t(k) })).toBeDisabled();
+      expect(screen.getByRole("switch", { name: t(k) })).not.toBeChecked();
+    }
+    expect(screen.getAllByText(t("dumpLockSnapshot")).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: t("dumpExecute") }));
+    await waitFor(() => expect(dump).toHaveBeenCalled());
+    const sent = dump.mock.calls[0][0].options;
+    expect(sent.sqliteSnapshot).toBe(true);
+    expect(sent.noData).toBe(false);
+    expect(sent.addDropTable).toBe(false);
   });
 
   it("ツールが検出済みならカードに検出済みを出し、選べる", async () => {
@@ -207,8 +262,10 @@ describe("DumpModal 生成エンジンのカード選択 (#2094)", () => {
     const sent = dump.mock.calls[0][0].options;
     expect(sent.native).toBe(true);
     expect(sent.singleTransaction).toBe(false);
-    expect(sent.setGtidPurgedOff).toBe(false);
-    expect(sent.noTablespaces).toBe(false);
+    // 内蔵は GTID / テーブルスペース文 / 所有者などを常に出さない (= 常にその動作) ので true を送る。
+    expect(sent.setGtidPurgedOff).toBe(true);
+    expect(sent.noTablespaces).toBe(true);
+    expect(sent.completeInsert).toBe(true);
     // 効くスイッチは保たれる。
     expect(sent.triggers).toBe(true);
   });
@@ -248,19 +305,31 @@ describe("resolveDumpOptions (#2094)", () => {
     expect(resolveDumpOptions(base, ctx({}))).toEqual(base);
   });
 
-  it("内蔵生成では外部ツール専用のオプションを false にする", () => {
-    const r = resolveDumpOptions(base, ctx({ native: true }));
+  it("内蔵生成では項目ごとの固定値に置き換える (一貫性 = false、常に出さない / 列名つき = true)", () => {
+    const flipped = {
+      ...base,
+      singleTransaction: true,
+      completeInsert: false,
+      noOwner: false,
+      noPrivileges: false,
+      setGtidPurgedOff: false,
+      noTablespaces: false,
+    };
+    const r = resolveDumpOptions(flipped, ctx({ native: true }));
+    expect(r.singleTransaction).toBe(false);
     for (const k of [
-      "singleTransaction",
-      "noTablespaces",
-      "setGtidPurgedOff",
+      "completeInsert",
       "noOwner",
       "noPrivileges",
-      "completeInsert",
+      "setGtidPurgedOff",
+      "noTablespaces",
     ] as const) {
-      expect(r[k]).toBe(false);
-      expect(dumpOptionLock(k, ctx({ native: true }))).not.toBeNull();
+      expect(r[k]).toBe(true);
     }
+    expect(dumpOptionLock("singleTransaction", ctx({ native: true }))?.reason).toBe(
+      "dumpLockNativeConsistency",
+    );
+    expect(dumpOptionLock("noOwner", ctx({ native: true }))?.reason).toBe("dumpLockNativeAlways");
     expect(r.noData).toBe(true);
     expect(r.triggers).toBe(true);
   });

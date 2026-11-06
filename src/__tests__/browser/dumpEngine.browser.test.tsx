@@ -45,15 +45,16 @@ describe("ダンプの生成エンジン (実ブラウザ)", () => {
 describe("ダンプの生成エンジン: ツール未導入 (実ブラウザ)", () => {
   beforeEach(() => mockTool(null));
 
-  it("外部ツールのカードが無効になり、理由が画面に出る", async () => {
+  it("自動で内蔵に切り替わり、外部ツールのカードは無効 + 理由つきのまま", async () => {
     const screen = await renderInBrowser(
       <DumpModal sessionId="s1" database="app" driver="mysql" onClose={() => {}} />,
     );
-    const external = screen.getByTestId("dump-engine-external");
-    await expect.element(external).toBeDisabled();
+    await expect.element(screen.getByTestId("dump-engine-native")).toHaveAttribute("aria-pressed", "true");
+    await expect.element(screen.getByTestId("dump-engine-external")).toBeDisabled();
     await expect
       .element(screen.getByText(t("dumpEngineExternalDisabled", { tool: "mysqldump" })))
       .toBeVisible();
+    await expect.element(screen.getByText(t("dumpEngineAutoSwitched", { tool: "mysqldump" }))).toBeVisible();
     await expect.element(screen.getByTestId("dump-engine-native")).toBeEnabled();
   });
 });
