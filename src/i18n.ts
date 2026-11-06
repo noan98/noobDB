@@ -2656,7 +2656,7 @@ const en = {
   dumpNote:
     "Runs {tool} on this computer for this database (through the SSH tunnel if one is configured). {tool} must be installed on this computer.",
   dumpNoteNative:
-    "Generates the SQL dump (schema DDL + INSERT statements) directly from this connection. No external client tools are needed.",
+    "Built-in generation builds the SQL dump (schema DDL + INSERT statements) directly from this connection. No external client tools are needed.",
   dumpOptionsLabel: "Options",
   dumpOptSingleTransaction: "Single transaction",
   dumpOptSingleTransactionHint: "--single-transaction: consistent InnoDB snapshot without locking tables.",
@@ -2696,11 +2696,33 @@ const en = {
   dumpOptChecksum: "Write a SHA-256 checksum file (.sha256)",
   dumpOptChecksumHint:
     "Saves <file>.sha256 next to the dump (sha256sum -c compatible) so corruption or tampering can be detected later. Computed on the final file, including gzip output.",
-  dumpOptNative: "Generate natively (no mysqldump / pg_dump)",
-  dumpOptNativeHint:
-    "Builds the SQL dump directly from this connection, so no external tool is needed (works on managed databases too). Not a consistent snapshot across tables; PostgreSQL dumps one schema; owners and privileges are not written.",
-  dumpUseNative: "Use native generation instead",
-  dumpUseNativeHint: "Skips the external tool and generates the dump from this connection.",
+  dumpEngineLabel: "Dump engine",
+  dumpEngineNativeTitle: "Built-in generation",
+  dumpEngineNativeDesc:
+    "Builds the SQL straight from this connection. No external tool is needed, so it also works on managed databases.",
+  dumpEngineNativeLimits:
+    "Limits: no consistent snapshot across tables (no single transaction); owners and privileges are not written; PostgreSQL dumps one schema at a time.",
+  dumpEngineExternalTitle: "External tool ({tool})",
+  dumpEngineExternalDesc:
+    "Runs {tool} on this computer. Supports a consistent snapshot (single transaction) and all compatibility options.",
+  dumpEngineExternalLimits: "Limits: {tool} must be installed on this computer.",
+  dumpEngineAutoSwitched: "{tool} was not found on this computer, so built-in generation was selected.",
+  dumpEngineToolFound: "Detected",
+  dumpEngineToolMissing: "Not installed",
+  dumpEngineExternalDisabled:
+    "{tool} was not found on this computer, so it can't be selected. Install it below, or use built-in generation.",
+  dumpGroupStructure: "Structure",
+  dumpGroupData: "Data",
+  dumpGroupOutput: "Output",
+  dumpGroupCompat: "Compatibility",
+  dumpLockBadge: "Unavailable",
+  dumpLockNativeAlways:
+    "Built-in generation always behaves this way (cannot be changed). Select the external tool to choose.",
+  dumpLockNativeConsistency:
+    "Built-in generation cannot take a consistent snapshot, so a single transaction is unavailable. Select the external tool for a consistent dump.",
+  dumpLockSnapshot: "Ignored by the binary snapshot (.db), which does not generate SQL.",
+  dumpLockPgDumpRoutines:
+    "pg_dump always writes functions, so this cannot be turned off. Built-in generation lets you choose.",
   dumpOptSqliteSnapshot: "Binary snapshot (.db) via VACUUM INTO",
   dumpOptSqliteSnapshotHint:
     "Instead of SQL, writes a consistent single-transaction copy of the database that opens directly as a .db file. Much faster for large databases; the SQL-format options are ignored.",
@@ -10075,7 +10097,7 @@ const ja: Dict = {
   dumpNote:
     "このデータベースに対して、この PC 上で {tool} を実行します (設定があれば SSH トンネル経由で接続)。この PC に {tool} がインストールされている必要があります。",
   dumpNoteNative:
-    "この接続から SQL ダンプ (スキーマの DDL + INSERT 文) を直接生成します。外部のクライアントツールは不要です。",
+    "内蔵生成で、この接続から SQL ダンプ (スキーマの DDL + INSERT 文) を直接生成します。外部のクライアントツールは不要です。",
   dumpOptionsLabel: "オプション",
   dumpOptSingleTransaction: "単一トランザクション",
   dumpOptSingleTransactionHint:
@@ -10117,11 +10139,32 @@ const ja: Dict = {
   dumpOptChecksum: "SHA-256 チェックサムファイル (.sha256) を書く",
   dumpOptChecksumHint:
     "ダンプと同じ場所に <ファイル名>.sha256 を保存します (sha256sum -c で検証可)。後から破損や改ざんを検出できます。gzip 後の最終ファイルのハッシュです。",
-  dumpOptNative: "ネイティブ生成 (mysqldump / pg_dump 不要)",
-  dumpOptNativeHint:
-    "外部ツールを使わず、この接続から直接 SQL ダンプを生成します (マネージド DB でも動作)。表をまたぐ一貫スナップショットにはならず、PostgreSQL は 1 スキーマ単位で、所有者・権限は出力しません。",
-  dumpUseNative: "ネイティブ生成に切り替える",
-  dumpUseNativeHint: "外部ツールを使わず、この接続からダンプを生成します。",
+  dumpEngineLabel: "生成エンジン",
+  dumpEngineNativeTitle: "内蔵生成",
+  dumpEngineNativeDesc:
+    "この接続から直接 SQL を組み立てます。外部ツールは不要で、マネージド DB でも使えます。",
+  dumpEngineNativeLimits:
+    "制約: テーブル間で一貫したスナップショットは取れず (単一トランザクション非対応)、所有者・権限は出力されません。PostgreSQL は 1 スキーマ単位です。",
+  dumpEngineExternalTitle: "外部ツール ({tool})",
+  dumpEngineExternalDesc:
+    "この PC で {tool} を実行します。一貫したスナップショット (単一トランザクション) と互換オプションがすべて使えます。",
+  dumpEngineExternalLimits: "制約: この PC に {tool} が必要です。",
+  dumpEngineAutoSwitched: "この PC に {tool} が見つからないため、内蔵生成に切り替えました。",
+  dumpEngineToolFound: "検出済み",
+  dumpEngineToolMissing: "未導入",
+  dumpEngineExternalDisabled:
+    "この PC に {tool} が見つからないため選べません。下の案内から導入するか、内蔵生成を使ってください。",
+  dumpGroupStructure: "構造",
+  dumpGroupData: "データ",
+  dumpGroupOutput: "出力",
+  dumpGroupCompat: "互換",
+  dumpLockBadge: "使用不可",
+  dumpLockNativeAlways:
+    "内蔵生成では常にこの動作になります (変更不可)。選びたい場合は外部ツールを選んでください。",
+  dumpLockNativeConsistency:
+    "内蔵生成は一貫したスナップショットを取れないため、単一トランザクションは使えません。一貫したダンプが必要なら外部ツールを選んでください。",
+  dumpLockSnapshot: "バイナリスナップショット (.db) は SQL を生成しないため、このオプションは無視されます。",
+  dumpLockPgDumpRoutines: "pg_dump は関数を常に出力するため、オフにできません。内蔵生成なら選べます。",
   dumpOptSqliteSnapshot: "VACUUM INTO のバイナリ・スナップショット (.db)",
   dumpOptSqliteSnapshotHint:
     "SQL ではなく、単一トランザクションで整合したデータベースのコピーを書き出します。そのまま .db として開け、大きな DB でも高速です。SQL 形式向けのオプションは無視されます。",
