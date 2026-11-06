@@ -17,6 +17,7 @@ name: mutation-test
 #   db/sqlite.rs    is_query_shape / quote_ident
 #   db/sync.rs      quote_ident
 #   db/data_diff.rs sql_literal
+#   db/chunked_dml.rs validate_fragment / build_chunk_sql / mysql_sql_mode_is_unsafe ほか
 #   lib.rs          __test_api のディスパッチ (is_query_shape ほか)
 # 関数を足す・外すときは mutants.toml だけを直し、`cargo mutants --list` で確認する。
 #

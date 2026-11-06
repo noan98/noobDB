@@ -33,16 +33,19 @@ export function validateFragment(driver: string, frag: string): ChunkedDmlErrorC
   const sqlite = driver === "sqlite";
   let depth = 0;
   let i = 0;
+  // Stryker disable next-line EqualityOperator: `<=` でも chars[length] は undefined でどの分岐にも入らず、結果が同じ (同値変異)
   while (i < chars.length) {
     const c = chars[i];
     // SQLite の [ident] は ] で閉じる (二重化なし)。
     if (c === "[" && sqlite) {
       const close = chars.indexOf("]", i + 1);
+      // Stryker disable next-line EqualityOperator: `[` の位置が i なので indexOf(i + 1 以降) は 0 を返さない (同値変異)
       if (close < 0) return "unbalanced";
       i = close + 1;
       continue;
     }
     if (c === "'" || c === '"' || c === "`") {
+      // Stryker disable next-line ConditionalExpression,EqualityOperator: i === 0 では prev が undefined で E 判定に入らず結果が同じ (同値変異)
       if (c === "'" && pg && i > 0) {
         const prev = chars[i - 1];
         const beforeOk = i < 2 || !isIdentChar(chars[i - 2]);
@@ -50,12 +53,14 @@ export function validateFragment(driver: string, frag: string): ChunkedDmlErrorC
       }
       let j = i + 1;
       let closed = false;
+      // Stryker disable next-line EqualityOperator: `<=` でも chars[length] は undefined で閉じ判定に入らず結果が同じ (同値変異)
       while (j < chars.length) {
         if (mysql && chars[j] === "\\" && c !== "`") {
           j += 2;
           continue;
         }
         if (chars[j] === c) {
+          // Stryker disable next-line ConditionalExpression,BlockStatement: 二重化を無視しても隣接する 2 つのリテラルとして走査され、閉じ忘れ・断片内の記号の判定が変わらない (同値変異)
           if (chars[j + 1] === c) {
             j += 2;
             continue;
@@ -70,6 +75,7 @@ export function validateFragment(driver: string, frag: string): ChunkedDmlErrorC
       continue;
     }
     if (c === ";") return "stackedStatement";
+    // Stryker disable next-line ArithmeticOperator: `--` の 2 文字目で必ず検出されるので、前後どちらを見ても結果が同じ (同値変異)
     if (c === "-" && chars[i + 1] === "-") return "comment";
     if (c === "/" && chars[i + 1] === "*") return "comment";
     if (c === "#" && mysql) return "comment";
