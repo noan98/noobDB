@@ -12,6 +12,7 @@ export default defineConfig({
       "src/__tests__/blobIo.test.ts",
       "src/__tests__/bulkEdit.test.ts",
       "src/__tests__/cellEdit.test.ts",
+      "src/__tests__/chunkedDmlGolden.test.ts",
       "src/__tests__/columnReplace.test.ts",
       "src/__tests__/dangerousSql.test.ts",
       "src/__tests__/dangerousSqlGolden.test.ts",

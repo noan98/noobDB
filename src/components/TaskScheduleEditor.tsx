@@ -15,7 +15,7 @@ import {
   weekdaysToFlags,
   type ScheduleDraft,
 } from "../taskFormat";
-import { FieldError } from "./modalForm";
+import { FieldError, FieldLabel } from "./modalForm";
 import { Button, Checkbox, Input } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
 
@@ -137,9 +137,7 @@ export function TaskScheduleEditor({
       {draft.kind === "daily" && (
         <>
           <Flex gap="2" align="center" flexWrap="wrap">
-            <chakra.label htmlFor="task-timezone" fontSize="sm" color="app.textSecondary">
-              {t("taskScheduleTimezone")}
-            </chakra.label>
+            <FieldLabel htmlFor="task-timezone">{t("taskScheduleTimezone")}</FieldLabel>
             <ListboxSelect
               id="task-timezone"
               value={draft.timezone}

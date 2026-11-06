@@ -1,5 +1,5 @@
 {
-  "description": "大規模 DML のチャンク分割実行 (#2020) の SQL 生成の実装横断ゴールデンベクタ。Rust の db::chunked_dml (build_chunk_sql / build_count_sql) と、フロントの components/chunkedDml.ts を同じ入力で固定する。cases は成功ケース (set が無ければ DELETE、あれば UPDATE)、errors は拒否ケース (drivers 省略時は全ドライバで同じ理由コードで拒否される)。新しい境界ケースはこの 1 ファイルに追記すれば両言語へ反映される。 PostgreSQL は (tableoid, ctid) の組でバッチ対象を指す (パーティション表・継承表では ctid が子表ごとに独立なため)。SQLite の rowKey は rowid / _rowid_ / oid のうち実列に隠されていないもの。expected / count は検査するドライバだけを持つことがある。",
+  "description": "大規模 DML のチャンク分割実行 (#2020) の SQL 生成の実装横断ゴールデンベクタ。Rust の db::chunked_dml (build_chunk_sql / build_count_sql) と、フロントの components/chunkedDml.ts を同じ入力で固定する。cases は成功ケース (set が無ければ DELETE、あれば UPDATE)、errors は拒否ケース (drivers 省略時は全ドライバで同じ理由コードで拒否される)。新しい境界ケースはこの 1 ファイルに追記すれば両言語へ反映される。 PostgreSQL は (tableoid, ctid) の組でバッチ対象を指す (パーティション表・継承表では ctid が子表ごとに独立なため)。SQLite の rowKey は rowid / _rowid_ / oid のうち実列に隠されていないもの。expected / count は検査するドライバだけを持つことがある。 fragments は validate_fragment (Rust) / validateFragment (TS) の単体判定 (error が null なら通る。drivers 省略時は全ドライバ同じ結果)。変異テスト (#2103) で生き残った分岐を殺すための境界ケースを含む。",
   "drivers": [
     "mysql",
     "postgres",
@@ -221,6 +221,41 @@
       "count": {
         "sqlite": "SELECT COUNT(*) FROM \"t\" WHERE ([a;b--c] = 1)"
       }
+    },
+    {
+      "note": "WHERE / SET の前後の空白は取り除いて載せる",
+      "table": "t",
+      "database": null,
+      "where": "  a = 1  ",
+      "batchSize": 1,
+      "set": "  b = 2  ",
+      "expected": {
+        "mysql": "UPDATE `t` SET b = 2 WHERE (a = 1) LIMIT 1",
+        "postgres": "UPDATE \"t\" SET b = 2 WHERE (tableoid, ctid) IN (SELECT tableoid, ctid FROM \"t\" WHERE (a = 1) LIMIT 1)",
+        "sqlite": "UPDATE \"t\" SET b = 2 WHERE rowid IN (SELECT rowid FROM \"t\" WHERE (a = 1) LIMIT 1)"
+      },
+      "count": {
+        "mysql": "SELECT COUNT(*) FROM `t` WHERE (a = 1)",
+        "postgres": "SELECT COUNT(*) FROM \"t\" WHERE (a = 1)",
+        "sqlite": "SELECT COUNT(*) FROM \"t\" WHERE (a = 1)"
+      }
+    },
+    {
+      "note": "バッチサイズの上限ちょうどは通る",
+      "table": "t",
+      "database": null,
+      "where": "a = 1",
+      "batchSize": 100000,
+      "expected": {
+        "mysql": "DELETE FROM `t` WHERE (a = 1) LIMIT 100000",
+        "postgres": "DELETE FROM \"t\" WHERE (tableoid, ctid) IN (SELECT tableoid, ctid FROM \"t\" WHERE (a = 1) LIMIT 100000)",
+        "sqlite": "DELETE FROM \"t\" WHERE rowid IN (SELECT rowid FROM \"t\" WHERE (a = 1) LIMIT 100000)"
+      },
+      "count": {
+        "mysql": "SELECT COUNT(*) FROM `t` WHERE (a = 1)",
+        "postgres": "SELECT COUNT(*) FROM \"t\" WHERE (a = 1)",
+        "sqlite": "SELECT COUNT(*) FROM \"t\" WHERE (a = 1)"
+      }
     }
   ],
   "errors": [
@@ -380,6 +415,441 @@
       "drivers": [
         "sqlite"
       ]
+    }
+  ],
+  "fragments": [
+    {
+      "note": "単純な比較は通る",
+      "frag": "a = 1",
+      "error": null
+    },
+    {
+      "note": "括弧が釣り合っていれば通る",
+      "frag": "(a = 1 AND (b = 2 OR c = 3))",
+      "error": null
+    },
+    {
+      "note": "閉じ括弧が先に来る",
+      "frag": "a = 1)",
+      "error": "unbalanced"
+    },
+    {
+      "note": "閉じ括弧のあとに開き括弧 (深さが負になる)",
+      "frag": ")(",
+      "error": "unbalanced"
+    },
+    {
+      "note": "開き括弧が二重で一つだけ閉じる",
+      "frag": "((a = 1)",
+      "error": "unbalanced"
+    },
+    {
+      "note": "開き括弧の直後の閉じ括弧は深さ 0 に戻るだけ",
+      "frag": "()",
+      "error": null
+    },
+    {
+      "note": "引用符の外の ;",
+      "frag": "a = 1; DROP TABLE t",
+      "error": "stackedStatement"
+    },
+    {
+      "note": "単一引用符の中の ; は通る",
+      "frag": "a = 'x;y'",
+      "error": null
+    },
+    {
+      "note": "二重引用符の中の ; は通る",
+      "frag": "a = \"x;y\"",
+      "error": null
+    },
+    {
+      "note": "バッククォートの中の ; は通る",
+      "frag": "`a;b` = 1",
+      "error": null
+    },
+    {
+      "note": "単一引用符の中の -- と /* と # は通る",
+      "frag": "a = '-- /* #'",
+      "error": null
+    },
+    {
+      "note": "二重引用符の中の -- は通る",
+      "frag": "\"a--b\" = 1",
+      "error": null
+    },
+    {
+      "note": "バッククォートの中の /* は通る",
+      "frag": "`a/*b` = 1",
+      "error": null
+    },
+    {
+      "note": "引用符の中の括弧は深さに数えない",
+      "frag": "a = ')('",
+      "error": null
+    },
+    {
+      "note": "空文字列リテラル '' は二重化ではない",
+      "frag": "a = ''",
+      "error": null
+    },
+    {
+      "note": "空の二重引用符",
+      "frag": "a = \"\"",
+      "error": null
+    },
+    {
+      "note": "空のバッククォート",
+      "frag": "a = ``",
+      "error": null
+    },
+    {
+      "note": "二重化した単一引用符はエスケープ",
+      "frag": "a = 'it''s'",
+      "error": null
+    },
+    {
+      "note": "二重化した二重引用符はエスケープ",
+      "frag": "\"a\"\"b\" = 1",
+      "error": null
+    },
+    {
+      "note": "二重化したバッククォートはエスケープ",
+      "frag": "`a``b` = 1",
+      "error": null
+    },
+    {
+      "note": "二重化の直後に ; が来れば拒否",
+      "frag": "a = 'it''s'; x",
+      "error": "stackedStatement"
+    },
+    {
+      "note": "二重化した引用符だけで閉じない",
+      "frag": "a = 'x''",
+      "error": "unbalanced"
+    },
+    {
+      "note": "単一引用符が閉じない",
+      "frag": "a = 'x",
+      "error": "unbalanced"
+    },
+    {
+      "note": "二重引用符が閉じない",
+      "frag": "a = \"x",
+      "error": "unbalanced"
+    },
+    {
+      "note": "バッククォートが閉じない",
+      "frag": "`a = 1",
+      "error": "unbalanced"
+    },
+    {
+      "note": "-- コメント (先頭)",
+      "frag": "--1",
+      "error": "comment"
+    },
+    {
+      "note": "-- コメント (末尾)",
+      "frag": "a = 1 --",
+      "error": "comment"
+    },
+    {
+      "note": "単独の - (引き算・負数) は通る",
+      "frag": "a - 1 = -b",
+      "error": null
+    },
+    {
+      "note": "/* コメント (先頭)",
+      "frag": "/*",
+      "error": "comment"
+    },
+    {
+      "note": "/* コメント (途中)",
+      "frag": "a = 1 /* x */",
+      "error": "comment"
+    },
+    {
+      "note": "単独の / (割り算) は通る",
+      "frag": "a / 2 = 1",
+      "error": null
+    },
+    {
+      "note": "* だけでは通る (掛け算・列挙)",
+      "frag": "a * 2 = 1",
+      "error": null
+    },
+    {
+      "note": "# は MySQL だけコメント",
+      "frag": "a = 1 # x",
+      "error": "comment",
+      "drivers": [
+        "mysql"
+      ]
+    },
+    {
+      "note": "# は MySQL 以外ではコメントではない",
+      "frag": "a = 1 # x",
+      "error": null,
+      "drivers": [
+        "postgres",
+        "sqlite"
+      ]
+    },
+    {
+      "note": "MySQL: バックスラッシュは単一引用符の中でエスケープ",
+      "frag": "a = 'x\\'y'",
+      "error": null,
+      "drivers": [
+        "mysql"
+      ]
+    },
+    {
+      "note": "MySQL: エスケープされた引用符では閉じない",
+      "frag": "a = 'x\\'",
+      "error": "unbalanced",
+      "drivers": [
+        "mysql"
+      ]
+    },
+    {
+      "note": "MySQL: 二重引用符の中のバックスラッシュもエスケープ",
+      "frag": "a = \"x\\\"y\"",
+      "error": null,
+      "drivers": [
+        "mysql"
+      ]
+    },
+    {
+      "note": "MySQL: 引用符の最後のバックスラッシュ (範囲外までスキップ) は閉じ忘れ",
+      "frag": "a = 'x\\",
+      "error": "unbalanced",
+      "drivers": [
+        "mysql"
+      ]
+    },
+    {
+      "note": "MySQL: バッククォートの中のバックスラッシュはエスケープではない",
+      "frag": "`a\\` = 1",
+      "error": null,
+      "drivers": [
+        "mysql"
+      ]
+    },
+    {
+      "note": "MySQL 以外: バックスラッシュは引用符を閉じる",
+      "frag": "a = 'x\\'",
+      "error": null,
+      "drivers": [
+        "postgres",
+        "sqlite"
+      ]
+    },
+    {
+      "note": "MySQL 以外: バックスラッシュ直後の引用符で閉じて残りが閉じ忘れ",
+      "frag": "a = 'x\\'y'",
+      "error": "unbalanced",
+      "drivers": [
+        "postgres",
+        "sqlite"
+      ]
+    },
+    {
+      "note": "PostgreSQL: ドル記号は拒否",
+      "frag": "a = $$x$$",
+      "error": "unsupported",
+      "drivers": [
+        "postgres"
+      ]
+    },
+    {
+      "note": "PostgreSQL: パラメータ風の $1 も拒否",
+      "frag": "a = $1",
+      "error": "unsupported",
+      "drivers": [
+        "postgres"
+      ]
+    },
+    {
+      "note": "PostgreSQL 以外: ドル記号は通る",
+      "frag": "a = $1",
+      "error": null,
+      "drivers": [
+        "mysql",
+        "sqlite"
+      ]
+    },
+    {
+      "note": "PostgreSQL: 引用符の中のドル記号は通る",
+      "frag": "a = '$$'",
+      "error": null,
+      "drivers": [
+        "postgres"
+      ]
+    },
+    {
+      "note": "断片の先頭が単一引用符でも直前の文字を引かない (添字の下溢れ防止)",
+      "frag": "'x' = a",
+      "error": null
+    },
+    {
+      "note": "PostgreSQL: E 文字列 (小文字) は拒否",
+      "frag": "a = e'x'",
+      "error": "unsupported",
+      "drivers": [
+        "postgres"
+      ]
+    },
+    {
+      "note": "PostgreSQL: E 文字列 (大文字) は拒否",
+      "frag": "a = E'x'",
+      "error": "unsupported",
+      "drivers": [
+        "postgres"
+      ]
+    },
+    {
+      "note": "PostgreSQL: 先頭の E 文字列 (2 文字目の引用符) も拒否",
+      "frag": "e'x'",
+      "error": "unsupported",
+      "drivers": [
+        "postgres"
+      ]
+    },
+    {
+      "note": "PostgreSQL: 括弧の直後の e も E 文字列 (e の前が識別子でない)",
+      "frag": "(e'x')",
+      "error": "unsupported",
+      "drivers": [
+        "postgres"
+      ]
+    },
+    {
+      "note": "PostgreSQL: 識別子の末尾が e の直後の引用符は E 文字列ではない",
+      "frag": "a = name'x'",
+      "error": null,
+      "drivers": [
+        "postgres"
+      ]
+    },
+    {
+      "note": "PostgreSQL: 3 文字目の e の前が識別子なら E 文字列ではない",
+      "frag": "xe'a'",
+      "error": null,
+      "drivers": [
+        "postgres"
+      ]
+    },
+    {
+      "note": "PostgreSQL: Unicode 文字の直後の e も識別子の一部",
+      "frag": "éé'a'",
+      "error": null,
+      "drivers": [
+        "postgres"
+      ]
+    },
+    {
+      "note": "PostgreSQL: 数字の直後の e も識別子の一部",
+      "frag": "1e'a'",
+      "error": null,
+      "drivers": [
+        "postgres"
+      ]
+    },
+    {
+      "note": "PostgreSQL: アンダースコアの直後の e も識別子の一部",
+      "frag": "_e'a'",
+      "error": null,
+      "drivers": [
+        "postgres"
+      ]
+    },
+    {
+      "note": "PostgreSQL: e 以外の直前文字は E 文字列ではない",
+      "frag": "a = x'a'",
+      "error": null,
+      "drivers": [
+        "postgres"
+      ]
+    },
+    {
+      "note": "PostgreSQL: 二重引用符の直前の e は E 文字列ではない",
+      "frag": "e\"a\"",
+      "error": null,
+      "drivers": [
+        "postgres"
+      ]
+    },
+    {
+      "note": "MySQL / SQLite: e の直後の引用符は普通の文字列",
+      "frag": "a = e'x'",
+      "error": null,
+      "drivers": [
+        "mysql",
+        "sqlite"
+      ]
+    },
+    {
+      "note": "SQLite: [ ] 引用の中の ; は通る",
+      "frag": "[a;b] = 1",
+      "error": null,
+      "drivers": [
+        "sqlite"
+      ]
+    },
+    {
+      "note": "SQLite: [ ] 引用は最後の文字でも ; を隠す",
+      "frag": "[a;] = 1",
+      "error": null,
+      "drivers": [
+        "sqlite"
+      ]
+    },
+    {
+      "note": "SQLite: [ ] 引用の中の ' は閉じ忘れではない",
+      "frag": "[a'b] = 1",
+      "error": null,
+      "drivers": [
+        "sqlite"
+      ]
+    },
+    {
+      "note": "SQLite: [ ] 引用の直後に ; が来れば拒否",
+      "frag": "[a] ; x",
+      "error": "stackedStatement",
+      "drivers": [
+        "sqlite"
+      ]
+    },
+    {
+      "note": "SQLite: [ が閉じない",
+      "frag": "[a = 1",
+      "error": "unbalanced",
+      "drivers": [
+        "sqlite"
+      ]
+    },
+    {
+      "note": "MySQL / PostgreSQL: [ は引用ではなく ; が見える",
+      "frag": "[a;b] = 1",
+      "error": "stackedStatement",
+      "drivers": [
+        "mysql",
+        "postgres"
+      ]
+    },
+    {
+      "note": "MySQL / PostgreSQL: [ ] の中の ' は引用の開始",
+      "frag": "[a'b] = 1",
+      "error": "unbalanced",
+      "drivers": [
+        "mysql",
+        "postgres"
+      ]
+    },
+    {
+      "note": "空の断片は通る (空の検査は呼び出し側)",
+      "frag": "",
+      "error": null
     }
   ]
 }

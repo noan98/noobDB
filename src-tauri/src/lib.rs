@@ -1257,6 +1257,12 @@ pub mod __test_api {
         .map_err(|e| e.code().to_string())
     }
 
+    /// WHERE / SET 断片の字句検査 (`db::chunked_dml::validate_fragment`)。通れば `Ok`、拒否は理由コード。
+    /// 実装横断ゴールデン (`tests/chunked_dml_golden.rs`) が使う。
+    pub fn chunked_dml_validate_fragment(driver: DriverKind, frag: &str) -> Result<(), String> {
+        crate::db::chunked_dml::validate_fragment(driver, frag).map_err(|e| e.code().to_string())
+    }
+
     /// 対象件数 SELECT の生成 (`db::chunked_dml::build_count_sql`)。
     pub fn chunked_dml_count_sql(
         driver: DriverKind,
