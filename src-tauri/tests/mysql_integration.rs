@@ -5129,28 +5129,46 @@ async fn mysql_event_compare_ignores_starts_and_replace_sql_runs() {
         .expect("compare");
     assert_eq!(find(&diff).status, t::DiffStatus::Same);
 
-    // 間隔を変えると Different。置換 SQL (ALTER EVENT) を実行すると Same に戻る。
+    // 間隔を変えると Different。置換 SQL (DROP + CREATE) を実サーバで実行すると Same に収束する。
+    let converge = |src: String, tgt: String| {
+        let conn = &conn;
+        async move {
+            let diff = t::compare_schema_via_core(conn, &src, conn, &tgt)
+                .await
+                .expect("compare");
+            let item = find(&diff);
+            assert_eq!(item.status, t::DiffStatus::Different);
+            let def = item.source_definition.clone().expect("source definition");
+            let sql = t::replace_object_sql(t::DriverKind::Mysql, &item, &def);
+            assert!(sql.starts_with("DROP EVENT"), "{sql}");
+            // 同期の実行側と同じ、区切り行で分けて 1 文ずつテキストプロトコルで流す経路。
+            conn.execute_sync_transaction(&[sql], Some(&tgt))
+                .await
+                .expect("replace sql runs on the server");
+            let diff = t::compare_schema_via_core(conn, &src, conn, &tgt)
+                .await
+                .expect("re-compare");
+            assert_eq!(find(&diff).status, t::DiffStatus::Same);
+        }
+    };
     t::mysql_exec_text(
         &opts,
         &format!("ALTER EVENT `{a}`.`nb2100_same` ON SCHEDULE EVERY 3 DAY"),
     )
     .await
     .expect("alter a");
-    let diff = t::compare_schema_via_core(&conn, &a, &conn, &b)
-        .await
-        .expect("compare");
-    let item = find(&diff);
-    assert_eq!(item.status, t::DiffStatus::Different);
-    let def = item.source_definition.clone().expect("source definition");
-    let sql = t::replace_object_sql(t::DriverKind::Mysql, &item, &def);
-    assert!(sql.starts_with("ALTER EVENT"), "{sql}");
-    conn.execute_sync_transaction(&[sql], Some(&b))
-        .await
-        .expect("replace sql runs on the server");
-    let diff = t::compare_schema_via_core(&conn, &a, &conn, &b)
-        .await
-        .expect("compare");
-    assert_eq!(find(&diff).status, t::DiffStatus::Same);
+    converge(a.clone(), b.clone()).await;
+
+    // target だけに COMMENT / ENDS がある場合も、置換で source と同じ定義に収束する。
+    t::mysql_exec_text(
+        &opts,
+        &format!(
+            "ALTER EVENT `{b}`.`nb2100_same` ON SCHEDULE EVERY 3 DAY ENDS '2099-01-01 00:00:00' COMMENT 'only on target'"
+        ),
+    )
+    .await
+    .expect("alter b");
+    converge(a.clone(), b.clone()).await;
 
     for s in [&a, &b] {
         let _ = t::mysql_exec_text(&opts, &format!("DROP DATABASE IF EXISTS `{s}`")).await;

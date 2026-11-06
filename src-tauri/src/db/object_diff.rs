@@ -656,7 +656,7 @@ pub fn split_statements(sql: &str) -> Vec<&str> {
         .collect()
 }
 
-/// MySQL がテキストプロトコルを要する文か: ルーチン・トリガー・イベントの CREATE / DROP (prepared
+/// MySQL がテキストプロトコルを要する文か: ルーチン・トリガー・イベントの CREATE / DROP / ALTER (prepared
 /// protocol だとエラー 1295) と、[`STMT_SPLIT`] を含む複数文。
 pub fn needs_text_protocol(sql: &str) -> bool {
     if sql.lines().any(|l| l.trim() == STMT_SPLIT) {
@@ -727,17 +727,6 @@ fn with_or_replace(definition: &str) -> String {
     format!("CREATE OR REPLACE{}", &d["create".len()..])
 }
 
-/// 先頭の `CREATE` を `ALTER` にする (`CREATE EVENT ... ON SCHEDULE ... DO ...` はそのまま
-/// `ALTER EVENT` の構文になる)。`IF NOT EXISTS` は `ALTER` に無いので外す。
-fn with_alter_event(definition: &str) -> String {
-    let d = definition.trim_start();
-    if !d.get(..6).is_some_and(|h| h.eq_ignore_ascii_case("create")) {
-        return d.to_string();
-    }
-    let rest = replace_ci(&d[6..], " IF NOT EXISTS", "");
-    format!("ALTER{rest}")
-}
-
 /// PostgreSQL の DO ブロックで複数文を 1 文にまとめる。ブロック内で使うドル引用の
 /// タグは本文に現れないものを選ぶ。
 fn pg_do_block(parts: &[String]) -> String {
@@ -757,10 +746,12 @@ fn pg_do_block(parts: &[String]) -> String {
 
 /// この置換が元の定義を失いうるか (許可が要る)。MySQL のルーチン / トリガーは DROP + CREATE で
 /// DDL が暗黙コミットされ、CREATE 失敗時に戻せない。マテビューの置換は DROP + CREATE で
-/// データを再計算する。EVENT は `ALTER EVENT` で置き換える (元の EVENT が残る) ので対象外。
+/// データを再計算する。EVENT も DROP + CREATE (`ALTER EVENT` は書かれていない
+/// COMMENT / ENDS を target に残し、同期しても収束しないため)。
 pub fn replace_is_destructive(driver: DriverKind, kind: &str) -> bool {
     kind == "materialized_view"
-        || (driver == DriverKind::Mysql && matches!(kind, "procedure" | "function" | "trigger"))
+        || (driver == DriverKind::Mysql
+            && matches!(kind, "procedure" | "function" | "trigger" | "event"))
 }
 
 /// 定義が変わったオブジェクトを target で置き換える SQL。複数文になるとき、MySQL は
@@ -782,8 +773,6 @@ pub fn replace_object_sql(driver: DriverKind, d: &ObjectDiff, definition: &str) 
             pg_do_block(&parts)
         }
         (DriverKind::Mysql, "view") => with_or_replace(&create),
-        // EVENT は DROP せず `ALTER EVENT` で置き換える (失敗しても元の EVENT が残る, #2100)。
-        (DriverKind::Mysql, "event") => with_alter_event(&create),
         (DriverKind::Mysql, _) => format!("{drop};\n{STMT_SPLIT}\n{create}"),
         (DriverKind::Sqlite, _) => format!("{drop};\n{create}"),
     }
@@ -1234,7 +1223,7 @@ mod tests {
         assert!(!sd.contains("DEFINER"), "{sd}");
         let sql = replace_object_sql(DriverKind::Mysql, &diffs[0], &sd);
         assert!(
-            sql.starts_with("ALTER EVENT `ev_purge` ON SCHEDULE EVERY 1 DAY"),
+            sql.starts_with("DROP EVENT `ev_purge`;\n-- noobdb:split\nCREATE EVENT"),
             "{sql}"
         );
         assert!(needs_text_protocol(&sql));
@@ -1242,8 +1231,8 @@ mod tests {
             "CREATE EVENT `e` ON SCHEDULE EVERY 1 DAY DO SELECT 1"
         ));
         assert!(needs_text_protocol("DROP EVENT `e`"));
-        // 置換は ALTER EVENT なので、元の定義を失わない (破壊的ではない)。
-        assert!(!replace_is_destructive(DriverKind::Mysql, "event"));
+        // 置換は DROP + CREATE (暗黙コミットされ、CREATE に失敗すると元の定義が失われる)。
+        assert!(replace_is_destructive(DriverKind::Mysql, "event"));
         assert!(needs_text_protocol(
             "ALTER EVENT `e` ON SCHEDULE EVERY 1 DAY DO SELECT 1"
         ));

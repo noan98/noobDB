@@ -360,6 +360,26 @@ async fn collect_object_comparison(
     let mut warnings: Vec<String> = Vec::new();
     warnings.extend(s.warnings.iter().cloned());
     warnings.extend(t.warnings.iter().cloned());
+    // 比較では `DISABLE ON SLAVE` / `DISABLE ON REPLICA` を ENABLE と同一視する。レプリカから昇格した後に
+    // 動かなくなるので、該当する EVENT があれば知らせる。
+    let mut replica_disabled: Vec<&str> = src
+        .iter()
+        .chain(tgt.iter())
+        .filter(|d| {
+            let u = d.definition.to_ascii_uppercase();
+            d.kind == "event"
+                && (u.contains("DISABLE ON SLAVE") || u.contains("DISABLE ON REPLICA"))
+        })
+        .map(|d| d.name.as_str())
+        .collect();
+    replica_disabled.sort_unstable();
+    replica_disabled.dedup();
+    if !replica_disabled.is_empty() {
+        warnings.push(format!(
+            "イベント {} は DISABLE ON SLAVE/REPLICA です。比較では ENABLE と同一視しています (レプリカを昇格した後は動かない点に注意)。",
+            replica_disabled.join(", ")
+        ));
+    }
     if events_skipped {
         warnings.push(
             "イベント (EVENT) の一覧を取得できなかったため、イベントは比較に含めていません。これは「差分なし」ではありません。"

@@ -259,7 +259,7 @@ export function SchemaObjectDiff({
               ))}
             </Box>
           )}
-          {driver === "mysql" && (
+          {driver === "mysql" && objects.items.some((o) => o.kind === "event") && (
             <chakra.p margin={0} textStyle="caption" color="app.textMuted">
               {t("schemaCompareObjectEventStartsNote")}
             </chakra.p>
