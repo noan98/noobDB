@@ -57,6 +57,9 @@ describe("buildTaskMaintenanceStatements (#2096)", () => {
     });
     // SQLite の ANALYZE はデータベース全体の書き込みロックを取る。
     expect(maintenanceImpact("sqlite", "analyze").blocksWrites).toBe(true);
+    // MySQL の ANALYZE TABLE は解析中に読み取りロックを取り、書き込みを待たせる。
+    expect(maintenanceImpact("mysql", "analyze").blocksWrites).toBe(true);
+    expect(maintenanceImpact("postgres", "analyze").blocksWrites).toBe(false);
     expect(maintenanceImpact("postgres", "vacuum").lock).toBe("light");
     expect(maintenanceImpact("sqlite", "vacuum")).toEqual({
       lock: "heavy",

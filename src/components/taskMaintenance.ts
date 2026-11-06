@@ -116,8 +116,9 @@ export function maintenanceImpact(
   const sqlite = driverIn === "sqlite";
   switch (kind) {
     case "analyze":
-      // SQLite はデータベース全体の単一書き込みロックを取る。
-      return { lock: "light", blocksWrites: sqlite, blocksReads: false };
+      // PostgreSQL は SHARE UPDATE EXCLUSIVE で DML と衝突しない。
+      // SQLite はデータベース全体の単一書き込みロック、MySQL の ANALYZE TABLE は解析中に表へ読み取りロック (書き込みは待つ) を取る。
+      return { lock: "light", blocksWrites: driverIn !== "postgres", blocksReads: false };
     case "vacuum_analyze":
       return { lock: "light", blocksWrites: false, blocksReads: false };
     case "vacuum":
