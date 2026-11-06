@@ -91,3 +91,34 @@ export function formatReceivedAt(ms: number): string {
   const p = (n: number, w = 2) => String(n).padStart(w, "0");
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
 }
+
+/**
+ * 表示一時停止 (#2093) 中は、停止した時点の一覧 (スナップショット) をそのまま見せる。
+ * 受信バッファは上限で古い方から捨てられていくが、見ている行は消さない。`frozen` が null なら追従表示。
+ */
+export function visibleNotifications(
+  items: readonly BufferedNotification[],
+  frozen: readonly BufferedNotification[] | null,
+): BufferedNotification[] {
+  return [...(frozen ?? items)];
+}
+
+/**
+ * 一時停止中に溜まった (まだ画面に出ていない) 通知の件数 (バッファ上の seq > 凍結点)。
+ * `channel` を渡すとそのチャンネルの分だけ数える (絞り込み中のバッジ用)。
+ */
+export function pendingCount(
+  items: readonly BufferedNotification[],
+  pausedAt: number | null,
+  channel: string | null = null,
+): number {
+  if (pausedAt === null) return 0;
+  return items.filter((n) => n.seq > pausedAt && (channel === null || n.channel === channel)).length;
+}
+
+/** チャンネル別の件数 (チップに出す)。 */
+export function countByChannel(items: readonly BufferedNotification[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const n of items) out.set(n.channel, (out.get(n.channel) ?? 0) + 1);
+  return out;
+}
