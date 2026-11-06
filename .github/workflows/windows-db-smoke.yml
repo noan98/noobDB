@@ -193,6 +193,9 @@ jobs:
         env:
           NOOBDB_TEST_MYSQL_URL: mysql://root:rootpw@127.0.0.1:13306/testdb
           NOOBDB_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:15432/testdb
+          # #2101: 対象テストの env が欠けたら skip して成功にせず失敗させる (下の NEXTEST_FILTER は
+          # MySQL / PostgreSQL の URL だけで走る最小集合なので、他の env を要求するテストは含まれない)。
+          NOOBDB_TEST_REQUIRE_EXTERNAL: "1"
         run: |
           # 環境変数ゲートでテストが黙ってスキップされると緑のまま死角が戻るため、
           # 対象テストが 1 件以上選ばれていることを先に確認する (色付けの ANSI で grep が外れないよう --color never)。

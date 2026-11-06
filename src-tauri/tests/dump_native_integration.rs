@@ -10,6 +10,7 @@
 //!    (クライアントが無ければスキップ)。
 //! 4. 復元後の全行が元と一致し、オブジェクトが揃っていることを確かめる。
 
+use super::common; // 共有ヘルパは groups/*.rs が 1 度だけ取り込む
 use std::process::{Command, Stdio};
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
@@ -218,12 +219,11 @@ fn mysql_cli(
 
 #[tokio::test]
 async fn mysql_native_dump_roundtrips_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     if !client_available("mysql") {
-        eprintln!("skip: mysql client not found");
+        common::skip_external("mysql client not found");
         return;
     }
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -534,12 +534,11 @@ fn psql_cli(opts: &t::DbConnectOptions, sql_file: &std::path::Path) -> bool {
 
 #[tokio::test]
 async fn postgres_native_dump_roundtrips_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     if !client_available("psql") {
-        eprintln!("skip: psql client not found");
+        common::skip_external("psql client not found");
         return;
     }
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -1054,12 +1053,11 @@ fn psql_restore(opts: &t::DbConnectOptions, sql: &str, tag: &str) -> bool {
 
 #[tokio::test]
 async fn postgres_native_dump_partitions_roundtrip_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     if !client_available("psql") {
-        eprintln!("skip: psql client not found");
+        common::skip_external("psql client not found");
         return;
     }
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -1071,7 +1069,7 @@ async fn postgres_native_dump_partitions_roundtrip_when_env_set() {
     )
     .await;
     if !ver.contains("true") {
-        eprintln!("skip: PostgreSQL < 13");
+        common::skip_capability("PostgreSQL < 13");
         return;
     }
     part_setup(&conn).await;

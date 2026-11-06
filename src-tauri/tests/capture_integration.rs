@@ -3,6 +3,7 @@
 //! (INSERT の取り違え・無関係な行のロック待ち・タイムアウト / キャンセルが効かない) を固定する。
 //! テーブル名は一意にして後片付けする (テスト DB は共有)。
 
+use super::common; // 共有ヘルパは groups/external.rs が 1 度だけ取り込む
 use noobdb_lib::__test_api as t;
 use std::time::Duration;
 
@@ -16,11 +17,11 @@ fn n(v: &t::Value) -> i64 {
 }
 
 async fn pg_opts() -> Option<t::DbConnectOptions> {
-    let url = std::env::var("NOOBDB_TEST_POSTGRES_URL").ok()?;
+    let url = common::require_env("NOOBDB_TEST_POSTGRES_URL")?;
     Some(t::parse_postgres_url(&url).expect("pg url"))
 }
 async fn my_opts() -> Option<t::DbConnectOptions> {
-    let url = std::env::var("NOOBDB_TEST_MYSQL_URL").ok()?;
+    let url = common::require_env("NOOBDB_TEST_MYSQL_URL")?;
     Some(t::parse_mysql_url(&url).expect("mysql url"))
 }
 async fn connect(o: &t::DbConnectOptions) -> t::Connection {

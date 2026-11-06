@@ -107,7 +107,12 @@ i18n キー文字列・`validateCellInput` / `classifyEditType` の分類 (安�
 `encodePkPart` のタグ単独除去 (単独では値域が衝突しない)、プリフライトの `depth` ガードや
 `\s*` の正規表現 (マスク済み文字列では到達しない/結果が同じ)。
 
-統合テストは対応する環境変数が設定されていない限りスキップされます (SQLite を除く):
+統合テストは対応する環境変数が設定されていない限りスキップされます (SQLite を除く)。
+ただし `NOOBDB_TEST_REQUIRE_EXTERNAL=1` を立てると、env 欠落 (と mysql / psql クライアント
+欠落) の skip は panic で失敗扱いになります (#2101。CI の `rust (test)` / `rust (coverage)` /
+windows-db-smoke が立てる)。新しい skip 分岐は `tests/common/mod.rs` の `require_env` を通すこと
+(`eprintln!("skip` の直書きは `externalSkipParity.test.ts` が検出)。サーバ機能の有無による
+skip は `skip_capability`。`NOOBDB_TEST_SKIP_LOG=<ファイル>` に skip を追記できます:
 
 ```sh
 NOOBDB_TEST_MYSQL_URL=mysql://root:rootpw@127.0.0.1:3306/testdb \

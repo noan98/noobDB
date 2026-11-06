@@ -12,6 +12,7 @@
 //! `ssh/handler.rs` の単体テストが known_hosts パスを制御して網羅済み。ここでは実
 //! sshd に対する初回接続 (TOFU 記録) と再接続 (既知ホスト一致) が通ることを確認する。
 
+use super::common; // 共有ヘルパは groups/*.rs が 1 度だけ取り込む
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -48,8 +49,9 @@ fn parse_ssh_url(url: &str) -> Option<SshUrl> {
 }
 
 fn test_url() -> Option<SshUrl> {
-    let url = std::env::var("NOOBDB_TEST_SSH_URL").ok()?;
-    parse_ssh_url(&url)
+    let url = common::require_env("NOOBDB_TEST_SSH_URL")?;
+    // 環境変数が設定されているのに形式が不正なのはテスト環境の誤りなので、skip せず失敗させる。
+    Some(parse_ssh_url(&url).expect("NOOBDB_TEST_SSH_URL must be ssh://user:password@host:port"))
 }
 
 /// 127.0.0.1 の OS 割り当てポートで「受信したバイトをそのまま返す」エコーサーバを
@@ -154,7 +156,6 @@ fn chained_config_for(
 #[tokio::test]
 async fn ssh_password_auth_tunnel_forwards_when_env_set() {
     let Some(url) = test_url() else {
-        eprintln!("skip: NOOBDB_TEST_SSH_URL not set");
         return;
     };
     let echo_port = spawn_echo_server().await;
@@ -174,11 +175,9 @@ async fn ssh_password_auth_tunnel_forwards_when_env_set() {
 #[tokio::test]
 async fn ssh_key_auth_tunnel_forwards_when_env_set() {
     let Some(url) = test_url() else {
-        eprintln!("skip: NOOBDB_TEST_SSH_URL not set");
         return;
     };
-    let Ok(key_path) = std::env::var("NOOBDB_TEST_SSH_KEY") else {
-        eprintln!("skip: NOOBDB_TEST_SSH_KEY not set");
+    let Some(key_path) = common::require_env("NOOBDB_TEST_SSH_KEY") else {
         return;
     };
     let echo_port = spawn_echo_server().await;
@@ -201,7 +200,6 @@ async fn ssh_reconnect_succeeds_with_known_host_when_env_set() {
     // 初回接続で TOFU により host key が known_hosts に記録され、再接続では
     // 「既知ホスト一致」経路を通って成功する (handler.rs の TOFU を実 sshd で確認)。
     let Some(url) = test_url() else {
-        eprintln!("skip: NOOBDB_TEST_SSH_URL not set");
         return;
     };
     let echo_port = spawn_echo_server().await;
@@ -224,7 +222,6 @@ async fn ssh_reconnect_succeeds_with_known_host_when_env_set() {
 #[tokio::test]
 async fn ssh_pinned_port_can_be_rebound_after_release_listener_when_env_set() {
     let Some(url) = test_url() else {
-        eprintln!("skip: NOOBDB_TEST_SSH_URL not set");
         return;
     };
     let echo_port = spawn_echo_server().await;
@@ -256,7 +253,6 @@ async fn ssh_pinned_port_can_be_rebound_after_release_listener_when_env_set() {
 #[tokio::test]
 async fn ssh_two_hop_chain_forwards_when_env_set() {
     let Some(url) = test_url() else {
-        eprintln!("skip: NOOBDB_TEST_SSH_URL not set");
         return;
     };
     let echo_port = spawn_echo_server().await;
@@ -280,11 +276,9 @@ async fn ssh_two_hop_chain_forwards_when_env_set() {
 #[tokio::test]
 async fn ssh_two_hop_chain_with_key_auth_forwards_when_env_set() {
     let Some(url) = test_url() else {
-        eprintln!("skip: NOOBDB_TEST_SSH_URL not set");
         return;
     };
-    let Ok(key_path) = std::env::var("NOOBDB_TEST_SSH_KEY") else {
-        eprintln!("skip: NOOBDB_TEST_SSH_KEY not set");
+    let Some(key_path) = common::require_env("NOOBDB_TEST_SSH_KEY") else {
         return;
     };
     let echo_port = spawn_echo_server().await;

@@ -4,6 +4,7 @@
 //! `NOOBDB_TEST_POSTGRES_URL` があるときだけ実行し、専用のデータベース / スキーマ
 //! (`nb1758_*`) に閉じる。
 
+use super::common; // 共有ヘルパは groups/*.rs が 1 度だけ取り込む
 use std::sync::Arc;
 
 use noobdb_lib::__test_api as t;
@@ -100,8 +101,7 @@ const MYSQL_DB: &str = "nb1758_deps_db";
 
 #[tokio::test]
 async fn mysql_column_dependencies_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
-        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
         return;
     };
     let opts = t::parse_mysql_url(&url).expect("valid url");
@@ -171,8 +171,7 @@ const PG_SCHEMA: &str = "nb1758_deps";
 
 #[tokio::test]
 async fn postgres_column_dependencies_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     let opts = t::parse_postgres_url(&url).expect("valid url");
