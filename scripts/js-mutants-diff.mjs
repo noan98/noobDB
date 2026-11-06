@@ -20,6 +20,7 @@ import { pathToFileURL } from "node:url";
 const CELL = "src/components/cellEdit.ts";
 const DANGER = "src/dangerousSql.ts";
 const SCRIPT = "src/sqlScript.ts";
+const CHUNKED = "src/components/chunkedDml.ts";
 const PREFLIGHT = "src/components/preflight.ts";
 
 // テスト / 共有ゴールデン → 検証対象のソース (import とゴールデン参照から作った対応表。推移的な
@@ -38,6 +39,7 @@ export const TEST_TO_SOURCES = {
   [`${T}quickSetValues.test.ts`]: [CELL],
   [`${T}rowInspectorEdit.test.ts`]: [CELL],
   [`${T}streamStats.test.ts`]: [CELL],
+  [`${T}chunkedDmlGolden.test.ts`]: [CHUNKED],
   [`${T}dangerousSql.test.ts`]: [DANGER],
   [`${T}dangerousSqlGolden.test.ts`]: [DANGER],
   [`${T}maskGolden.test.ts`]: [DANGER],
@@ -52,6 +54,7 @@ export const TEST_TO_SOURCES = {
   [`${T}statementSplitGolden.test.ts`]: [SCRIPT, DANGER],
 };
 export const FIXTURE_TO_SOURCES = {
+  [`${F}chunkedDmlVectors.json`]: [CHUNKED],
   [`${F}dangerousSqlVectors.json`]: [DANGER],
   [`${F}maskVectors.json`]: [DANGER],
   [`${F}readOnlySqlVectors.json`]: [DANGER],

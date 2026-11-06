@@ -28,6 +28,7 @@ on:
       - "src-tauri/src/db/sqlite.rs"
       - "src-tauri/src/db/sync.rs"
       - "src-tauri/src/db/data_diff.rs"
+      - "src-tauri/src/db/chunked_dml.rs"
       - "src-tauri/src/lib.rs"
       # 危険文の検出とマスク処理 (下の EXTRA_FILES / EXTRA_RE で対象に足す)。
       - "src-tauri/src/db/script_analysis.rs"

@@ -5,7 +5,8 @@
     "src/dangerousSql.ts",
     "src/sqlScript.ts",
     "src/components/preflight.ts",
-    "src/components/cellEdit.ts"
+    "src/components/cellEdit.ts",
+    "src/components/chunkedDml.ts"
   ],
   "coverageAnalysis": "perTest",
   "concurrency": 2,
