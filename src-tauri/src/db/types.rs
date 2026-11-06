@@ -1842,7 +1842,10 @@ mod schema_object_kind_tests {
     /// kind は必ず**小文字のリテラル**で書くこと。別の書き方に変えると抽出が不足し、
     /// 定数・ゴールデンとの不一致で落ちる (見逃して通ることはない)。
     fn mysql_kinds() -> BTreeSet<String> {
-        let body = method_body(include_str!("mysql.rs"), "pub async fn schema_objects(");
+        let body = method_body(
+            include_str!("mysql.rs"),
+            "pub async fn schema_objects_checked(",
+        );
         let norm = body.split_whitespace().collect::<Vec<_>>().join(" ");
         let mut out = BTreeSet::new();
         // `"lit".into()` / `"lit".to_string()`: 直前が閉じ引用符のものだけ。

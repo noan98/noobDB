@@ -5390,6 +5390,8 @@ const en = {
   schemaCompareObjectKindTrigger: "Trigger",
   schemaCompareObjectKindSequence: "Sequence",
   schemaCompareObjectKindEvent: "Event",
+  schemaCompareObjectEventStartsNote:
+    "Events are compared without their STARTS time, because MySQL records the creation time there for recurring events.",
   schemaCompareObjectOnTable: "on {table}",
   schemaCompareObjectSourceDefinition: "Source definition",
   schemaCompareObjectTargetDefinition: "Target definition",
@@ -12761,6 +12763,8 @@ const ja: Dict = {
   schemaCompareObjectKindTrigger: "トリガー",
   schemaCompareObjectKindSequence: "シーケンス",
   schemaCompareObjectKindEvent: "イベント",
+  schemaCompareObjectEventStartsNote:
+    "イベントは STARTS (開始時刻) を除いて比較します。繰り返しイベントは MySQL が作成時刻を入れるため、同じ定義でも値が食い違うためです。",
   schemaCompareObjectOnTable: "対象: {table}",
   schemaCompareObjectSourceDefinition: "ソース側の定義",
   schemaCompareObjectTargetDefinition: "ターゲット側の定義",

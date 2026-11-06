@@ -219,7 +219,7 @@ fn build_fixtures() -> serde_json::Value {
         ..Default::default()
     };
     let schema_object = SchemaObject {
-        kind: "view".into(),
+        kind: "event".into(),
         name: "active_users".into(),
         id: Some("1234".into()),
         detail: Some("ENABLED · EVERY 1 DAY".into()),

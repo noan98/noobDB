@@ -126,7 +126,10 @@ fn prepare(driver: DriverKind, from_db: &str, to_db: &str, def: &ObjectDefinitio
     // 同期に使う本文: 自スキーマの修飾は消さず、target のスキーマ名へ置き換える。
     let portable = portable_definition(driver, from_db, to_db, &def.definition);
     // 比較用: 自スキーマの修飾を (両側とも) 取り除いてから空白を畳む。
-    let normalized = normalize_definition(driver, from_db, &def.definition);
+    let mut normalized = normalize_definition(driver, from_db, &def.definition);
+    if driver == DriverKind::Mysql && def.kind == "event" {
+        normalized = normalize_event(&normalized);
+    }
     let table = if def.kind == "trigger" {
         def.table
             .clone()
@@ -252,6 +255,58 @@ fn normalize_definition(driver: DriverKind, db: &str, raw: &str) -> String {
         .trim_end_matches(';')
         .trim_end()
         .to_string()
+}
+
+/// 比較用に EVENT の定義から環境ごとに違って当然の部分を除く (#2100)。
+/// - `STARTS '...'`: 繰り返し EVENT は MySQL が作成時刻を入れるので、同じ定義でも必ず食い違う。
+///   同期に使う本文 (`portable`) には残すので、比較から外れるだけ。
+/// - `DISABLE ON SLAVE` / `DISABLE ON REPLICA`: ソースで有効な EVENT のレプリカ側の表示なので `ENABLE` と同一視する。
+fn normalize_event(s: &str) -> String {
+    let segs = segments(DriverKind::Mysql, s);
+    let mut out = String::with_capacity(s.len());
+    let mut skip_next = false;
+    for (i, seg) in segs.iter().enumerate() {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        match seg {
+            Seg::Code(c) => {
+                let mut code = replace_ci(c, " DISABLE ON SLAVE", " ENABLE");
+                code = replace_ci(&code, " DISABLE ON REPLICA", " ENABLE");
+                let t = code.trim_end();
+                let n = t.len();
+                let is_starts = n >= 6
+                    && t.is_char_boundary(n - 6)
+                    && t[n - 6..].eq_ignore_ascii_case("STARTS")
+                    && (n == 6 || t[..n - 6].ends_with(' '))
+                    && matches!(segs.get(i + 1), Some(Seg::Literal(l)) if l.starts_with('\''));
+                if is_starts {
+                    out.push_str(t[..n - 6].trim_end());
+                    skip_next = true;
+                } else {
+                    out.push_str(&code);
+                }
+            }
+            Seg::Quoted(t) | Seg::Literal(t) => out.push_str(t),
+        }
+    }
+    out
+}
+
+/// ASCII の大文字小文字を無視した置換 (`from` は ASCII)。
+fn replace_ci(s: &str, from: &str, to: &str) -> String {
+    let lower = s.to_ascii_lowercase();
+    let from_l = from.to_ascii_lowercase();
+    let mut out = String::with_capacity(s.len());
+    let mut last = 0;
+    while let Some(p) = lower[last..].find(&from_l) {
+        out.push_str(&s[last..last + p]);
+        out.push_str(to);
+        last += p + from.len();
+    }
+    out.push_str(&s[last..]);
+    out
 }
 
 fn is_ident_char(c: char) -> bool {
@@ -612,7 +667,7 @@ pub fn needs_text_protocol(sql: &str) -> bool {
         .split(|c: char| !(c.is_alphanumeric() || c == '_'))
         .filter(|w| !w.is_empty())
         .map(str::to_ascii_uppercase);
-    if !matches!(words.next().as_deref(), Some("CREATE" | "DROP")) {
+    if !matches!(words.next().as_deref(), Some("CREATE" | "DROP" | "ALTER")) {
         return false;
     }
     // 先頭の数語 (OR REPLACE / DEFINER=... のあと) に現れる種別で決める。TABLE などが先に
@@ -672,6 +727,17 @@ fn with_or_replace(definition: &str) -> String {
     format!("CREATE OR REPLACE{}", &d["create".len()..])
 }
 
+/// 先頭の `CREATE` を `ALTER` にする (`CREATE EVENT ... ON SCHEDULE ... DO ...` はそのまま
+/// `ALTER EVENT` の構文になる)。`IF NOT EXISTS` は `ALTER` に無いので外す。
+fn with_alter_event(definition: &str) -> String {
+    let d = definition.trim_start();
+    if !d.get(..6).is_some_and(|h| h.eq_ignore_ascii_case("create")) {
+        return d.to_string();
+    }
+    let rest = replace_ci(&d[6..], " IF NOT EXISTS", "");
+    format!("ALTER{rest}")
+}
+
 /// PostgreSQL の DO ブロックで複数文を 1 文にまとめる。ブロック内で使うドル引用の
 /// タグは本文に現れないものを選ぶ。
 fn pg_do_block(parts: &[String]) -> String {
@@ -691,11 +757,10 @@ fn pg_do_block(parts: &[String]) -> String {
 
 /// この置換が元の定義を失いうるか (許可が要る)。MySQL のルーチン / トリガーは DROP + CREATE で
 /// DDL が暗黙コミットされ、CREATE 失敗時に戻せない。マテビューの置換は DROP + CREATE で
-/// データを再計算する。
+/// データを再計算する。EVENT は `ALTER EVENT` で置き換える (元の EVENT が残る) ので対象外。
 pub fn replace_is_destructive(driver: DriverKind, kind: &str) -> bool {
     kind == "materialized_view"
-        || (driver == DriverKind::Mysql
-            && matches!(kind, "procedure" | "function" | "trigger" | "event"))
+        || (driver == DriverKind::Mysql && matches!(kind, "procedure" | "function" | "trigger"))
 }
 
 /// 定義が変わったオブジェクトを target で置き換える SQL。複数文になるとき、MySQL は
@@ -717,6 +782,8 @@ pub fn replace_object_sql(driver: DriverKind, d: &ObjectDiff, definition: &str) 
             pg_do_block(&parts)
         }
         (DriverKind::Mysql, "view") => with_or_replace(&create),
+        // EVENT は DROP せず `ALTER EVENT` で置き換える (失敗しても元の EVENT が残る, #2100)。
+        (DriverKind::Mysql, "event") => with_alter_event(&create),
         (DriverKind::Mysql, _) => format!("{drop};\n{STMT_SPLIT}\n{create}"),
         (DriverKind::Sqlite, _) => format!("{drop};\n{create}"),
     }
@@ -1109,6 +1176,38 @@ mod tests {
     }
 
     #[test]
+    fn event_comparison_ignores_starts_and_replica_disable() {
+        let mk = |def: &str| ObjectDefinition {
+            kind: "event".into(),
+            name: "e".into(),
+            signature: None,
+            table: None,
+            definition: def.into(),
+        };
+        let a = mk("CREATE DEFINER=`r`@`%` EVENT `e` ON SCHEDULE EVERY 1 DAY STARTS '2026-11-06 10:00:00' ON COMPLETION NOT PRESERVE ENABLE DO SELECT 'STARTS ''x'''");
+        let b = mk("CREATE DEFINER=`r`@`%` EVENT `e` ON SCHEDULE EVERY 1 DAY STARTS '2026-11-06 10:00:07' ON COMPLETION NOT PRESERVE DISABLE ON SLAVE DO SELECT 'STARTS ''x'''");
+        let d = compute_object_diff(DriverKind::Mysql, "a", "b", std::slice::from_ref(&a), &[b]);
+        assert_eq!(d[0].status, DiffStatus::Same, "{d:?}");
+        // 同期に使う本文には STARTS が残る。
+        let only = compute_object_diff(DriverKind::Mysql, "a", "b", std::slice::from_ref(&a), &[]);
+        assert!(only[0]
+            .source_definition
+            .clone()
+            .unwrap_or_default()
+            .contains("STARTS '2026"));
+        // 間隔が違えば Different のまま。
+        let mut c = a.clone();
+        c.definition = c.definition.replace("EVERY 1 DAY", "EVERY 2 DAY");
+        let d = compute_object_diff(DriverKind::Mysql, "a", "b", std::slice::from_ref(&a), &[c]);
+        assert_eq!(d[0].status, DiffStatus::Different);
+        // 本文のリテラルが違えば Different (リテラル内の STARTS は触らない)。
+        let mut e = a.clone();
+        e.definition = e.definition.replace("''x''", "''y''");
+        let d = compute_object_diff(DriverKind::Mysql, "a", "b", &[a], &[e]);
+        assert_eq!(d[0].status, DiffStatus::Different);
+    }
+
+    #[test]
     fn event_diff_and_sync_sql() {
         let src = ObjectDefinition {
             kind: "event".into(),
@@ -1135,7 +1234,7 @@ mod tests {
         assert!(!sd.contains("DEFINER"), "{sd}");
         let sql = replace_object_sql(DriverKind::Mysql, &diffs[0], &sd);
         assert!(
-            sql.starts_with("DROP EVENT `ev_purge`;\n-- noobdb:split\nCREATE EVENT"),
+            sql.starts_with("ALTER EVENT `ev_purge` ON SCHEDULE EVERY 1 DAY"),
             "{sql}"
         );
         assert!(needs_text_protocol(&sql));
@@ -1143,7 +1242,17 @@ mod tests {
             "CREATE EVENT `e` ON SCHEDULE EVERY 1 DAY DO SELECT 1"
         ));
         assert!(needs_text_protocol("DROP EVENT `e`"));
-        assert!(replace_is_destructive(DriverKind::Mysql, "event"));
+        // 置換は ALTER EVENT なので、元の定義を失わない (破壊的ではない)。
+        assert!(!replace_is_destructive(DriverKind::Mysql, "event"));
+        assert!(needs_text_protocol(
+            "ALTER EVENT `e` ON SCHEDULE EVERY 1 DAY DO SELECT 1"
+        ));
+        // EVENT という語を含む別物は、テキストプロトコルにしない。
+        assert!(!needs_text_protocol("DROP TABLE `event`"));
+        assert!(!needs_text_protocol("CREATE TABLE event_log (id INT)"));
+        assert!(!needs_text_protocol("CREATE TABLE `event` (id INT)"));
+        assert!(!needs_text_protocol("ALTER TABLE t ADD COLUMN event INT"));
+        assert!(!needs_text_protocol("CREATE INDEX event ON t (a)"));
         assert_eq!(
             drop_object_sql(DriverKind::Mysql, &od("event", "e", None, None)),
             "DROP EVENT `e`"

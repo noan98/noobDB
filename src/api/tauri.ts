@@ -1076,7 +1076,7 @@ export interface ColumnDependency {
   column: string;
   kind: ColumnDependencyKind;
   name: string;
-  detail?: string | null;
+  detail: string | null;
   confidence: ReferenceConfidence;
 }
 

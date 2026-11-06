@@ -5573,7 +5573,7 @@
   "schemaObject": {
     "detail": "ENABLED · EVERY 1 DAY",
     "id": "1234",
-    "kind": "view",
+    "kind": "event",
     "name": "active_users"
   },
   "schemaSnapshotTable": {
@@ -5609,7 +5609,7 @@
           {
             "detail": "ENABLED · EVERY 1 DAY",
             "id": "1234",
-            "kind": "view",
+            "kind": "event",
             "name": "active_users"
           }
         ],

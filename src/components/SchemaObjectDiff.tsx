@@ -259,6 +259,11 @@ export function SchemaObjectDiff({
               ))}
             </Box>
           )}
+          {driver === "mysql" && (
+            <chakra.p margin={0} textStyle="caption" color="app.textMuted">
+              {t("schemaCompareObjectEventStartsNote")}
+            </chakra.p>
+          )}
         </>
       )}
       {objects.unsupported_kinds.length > 0 && (

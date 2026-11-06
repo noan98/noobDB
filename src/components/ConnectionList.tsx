@@ -1024,8 +1024,9 @@ const SchemaObjectRow = memo(function SchemaObjectRow({
         <HighlightText text={o.name} query={q} />
       </TreeLabel>
       {o.detail && (
-        <TreeBadge fontSize="2xs" textTransform="none" letterSpacing="0" aria-hidden>
-          {o.detail}
+        // バッジは状態だけ (ENABLED / DISABLED)。スケジュールの要約はツールチップに出す。
+        <TreeBadge flexShrink={0} fontSize="2xs" textTransform="none" letterSpacing="0" aria-hidden>
+          {o.detail.split(" · ")[0]}
         </TreeBadge>
       )}
     </TreeRow>

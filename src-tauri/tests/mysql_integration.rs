@@ -5083,3 +5083,76 @@ async fn mysql_events_are_listed_defined_and_compared() {
         let _ = t::mysql_exec_text(&opts, &stmt).await;
     }
 }
+
+/// 同じ CREATE EVENT を 2 スキーマに時間をずらして作っても、STARTS (作成時刻) の違いは差分にならない。
+/// 定義が違えば Different になり、生成した置換 SQL (ALTER EVENT) を実サーバで実行すると Same に収束する (#2100)。
+#[tokio::test]
+async fn mysql_event_compare_ignores_starts_and_replace_sql_runs() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts.database.clone().expect("test db in url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let (a, b) = (format!("{db}_ev_a"), format!("{db}_ev_b"));
+    for s in [&a, &b] {
+        let _ = t::mysql_exec_text(&opts, &format!("DROP DATABASE IF EXISTS `{s}`")).await;
+        conn.execute(&format!("CREATE DATABASE `{s}`"), None)
+            .await
+            .expect("create scratch database");
+    }
+    let create = |schema: &str, every: u32| {
+        format!(
+            "CREATE EVENT `{schema}`.`nb2100_same` ON SCHEDULE EVERY {every} DAY \
+             DISABLE DO SELECT 1"
+        )
+    };
+    t::mysql_exec_text(&opts, &create(&a, 1))
+        .await
+        .expect("create a");
+    // 作成時刻 (STARTS) が変わるよう、数秒ずらす。
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    t::mysql_exec_text(&opts, &create(&b, 1))
+        .await
+        .expect("create b");
+    let find = |d: &t::SchemaDiff| {
+        d.objects
+            .items
+            .iter()
+            .find(|i| i.kind == "event" && i.name == "nb2100_same")
+            .cloned()
+            .expect("event in diff")
+    };
+    let diff = t::compare_schema_via_core(&conn, &a, &conn, &b)
+        .await
+        .expect("compare");
+    assert_eq!(find(&diff).status, t::DiffStatus::Same);
+
+    // 間隔を変えると Different。置換 SQL (ALTER EVENT) を実行すると Same に戻る。
+    t::mysql_exec_text(
+        &opts,
+        &format!("ALTER EVENT `{a}`.`nb2100_same` ON SCHEDULE EVERY 3 DAY"),
+    )
+    .await
+    .expect("alter a");
+    let diff = t::compare_schema_via_core(&conn, &a, &conn, &b)
+        .await
+        .expect("compare");
+    let item = find(&diff);
+    assert_eq!(item.status, t::DiffStatus::Different);
+    let def = item.source_definition.clone().expect("source definition");
+    let sql = t::replace_object_sql(t::DriverKind::Mysql, &item, &def);
+    assert!(sql.starts_with("ALTER EVENT"), "{sql}");
+    conn.execute_sync_transaction(&[sql], Some(&b))
+        .await
+        .expect("replace sql runs on the server");
+    let diff = t::compare_schema_via_core(&conn, &a, &conn, &b)
+        .await
+        .expect("compare");
+    assert_eq!(find(&diff).status, t::DiffStatus::Same);
+
+    for s in [&a, &b] {
+        let _ = t::mysql_exec_text(&opts, &format!("DROP DATABASE IF EXISTS `{s}`")).await;
+    }
+}

@@ -55,7 +55,7 @@ pub enum SyncKind {
     AddCheck,
     /// 既存テーブルの CHECK 制約の削除 (#1837)。
     DropCheck,
-    /// ビュー / マテビュー / ルーチン / トリガー / シーケンスの作成 (#1879)。
+    /// ビュー / マテビュー / ルーチン / トリガー / シーケンス / イベントの作成 (#1879, #2100)。
     CreateObject,
     /// 定義が変わった非テーブルオブジェクトの置き換え (#1879)。ビュー等は DROP + CREATE、
     /// PostgreSQL の関数は `CREATE OR REPLACE`、シーケンスは `ALTER SEQUENCE`。
@@ -253,7 +253,7 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
 /// 差し込み位置は、表の作成・列の追加と変更・索引・外部キーの後ろで、列と表の DROP の前
 /// (新しい列を使うビューは作成後に、消す列を使うビュー / トリガーは先に置き換える・消す)。
 /// シーケンスの作成だけは表の既定値から参照されるので先頭に置く。作成・置換は
-/// 関数 → プロシージャ → ビュー → マテビュー → トリガーの順 (ビュー同士は参照順)、削除は
+/// 関数 → プロシージャ → ビュー → マテビュー → トリガー → イベントの順 (ビュー同士は参照順)、削除は
 /// 逆順で、`allow_destructive` が無いと削除は出さない。
 fn object_statements(
     diff: &SchemaDiff,
@@ -302,7 +302,7 @@ fn object_statements(
             continue;
         };
         // MySQL のルーチン / トリガーは DROP + CREATE で DDL が暗黙コミットされ、CREATE に失敗すると
-        // 元の定義が戻らない。マテビューの置換は DROP + CREATE でデータを再計算する。どちらも
+        // 元の定義が戻らない (EVENT は `ALTER EVENT` なので対象外)。マテビューの置換は DROP + CREATE でデータを再計算する。どちらも
         // 破壊的として扱い、許可がなければ出さずに警告する。
         let non_atomic = replace_is_destructive(driver, &o.kind);
         if non_atomic && !allow_destructive {

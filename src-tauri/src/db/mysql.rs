@@ -2519,6 +2519,13 @@ impl MySqlConn {
     }
 
     pub async fn schema_objects(&self, db: &str) -> Result<Vec<SchemaObject>> {
+        Ok(self.schema_objects_checked(db).await?.0)
+    }
+
+    /// [`Self::schema_objects`] に、EVENT 一覧を取得できたかを添える (#2100)。ツリーは EVENT が読めなくても
+    /// 他の種別を出すが、スキーマ比較は読めなかった側があると偽の追加 / 削除になるので区別する。
+    pub async fn schema_objects_checked(&self, db: &str) -> Result<(Vec<SchemaObject>, bool)> {
+        let mut events_ok = true;
         let mut out: Vec<SchemaObject> = Vec::new();
         // Views.
         let views: Vec<MySqlRow> = sqlx::query(
@@ -2598,9 +2605,12 @@ impl MySqlConn {
                     });
                 }
             }
-            Err(e) => tracing::warn!(error = %e, "schema_objects: could not list events"),
+            Err(e) => {
+                events_ok = false;
+                tracing::warn!(error = %e, "schema_objects: could not list events");
+            }
         }
-        Ok(out)
+        Ok((out, events_ok))
     }
 
     /// ルーチンのシグネチャ (#1003)。存在確認と関数の戻り値型は
