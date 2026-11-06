@@ -323,8 +323,14 @@ async fn collect_object_comparison(
     let driver = source.driver_kind();
     // 一覧が取れた時点でテーブル一覧からビュー名を外す。後続の定義の取得に失敗しても
     // ビューに CREATE TABLE が出る不具合に戻らないよう、取得の成否とは切り分ける。
-    let source_objects = source.schema_objects(source_db).await?;
-    let target_objects = target.schema_objects(target_db).await?;
+    let (mut source_objects, source_events_ok) = source.schema_objects_checked(source_db).await?;
+    let (mut target_objects, target_events_ok) = target.schema_objects_checked(target_db).await?;
+    // 片側でも EVENT の一覧を取得できなかったら、偽の追加 / 削除を出さないよう両側から外す (#2100)。
+    let events_skipped = !(source_events_ok && target_events_ok);
+    if events_skipped {
+        source_objects.retain(|o| o.kind != "event");
+        target_objects.retain(|o| o.kind != "event");
+    }
     let is_view = |o: &crate::db::types::SchemaObject| {
         matches!(o.kind.as_str(), "view" | "materialized_view")
     };
@@ -357,6 +363,32 @@ async fn collect_object_comparison(
     let mut warnings: Vec<String> = Vec::new();
     warnings.extend(s.warnings.iter().cloned());
     warnings.extend(t.warnings.iter().cloned());
+    // 比較では `DISABLE ON SLAVE` / `DISABLE ON REPLICA` を ENABLE と同一視する。レプリカから昇格した後に
+    // 動かなくなるので、該当する EVENT があれば知らせる。
+    let mut replica_disabled: Vec<&str> = src
+        .iter()
+        .chain(tgt.iter())
+        .filter(|d| {
+            let u = d.definition.to_ascii_uppercase();
+            d.kind == "event"
+                && (u.contains("DISABLE ON SLAVE") || u.contains("DISABLE ON REPLICA"))
+        })
+        .map(|d| d.name.as_str())
+        .collect();
+    replica_disabled.sort_unstable();
+    replica_disabled.dedup();
+    if !replica_disabled.is_empty() {
+        warnings.push(format!(
+            "イベント {} は DISABLE ON SLAVE/REPLICA です。比較では ENABLE と同一視しています (レプリカを昇格した後は動かない点に注意)。",
+            replica_disabled.join(", ")
+        ));
+    }
+    if events_skipped {
+        warnings.push(
+            "イベント (EVENT) の一覧を取得できなかったため、イベントは比較に含めていません。これは「差分なし」ではありません。"
+                .to_string(),
+        );
+    }
     if !skip.is_empty() {
         let mut names: Vec<String> = skip.iter().map(|(k, n)| format!("{k} {n}")).collect();
         names.sort();

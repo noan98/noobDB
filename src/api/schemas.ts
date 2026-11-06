@@ -527,6 +527,10 @@ export const tableProfileOverview = z.object({
 export const schemaObject = z.object({
   kind: z.string(),
   name: z.string(),
+  detail: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? null),
   id: z
     .string()
     .nullish()

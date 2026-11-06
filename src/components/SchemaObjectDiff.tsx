@@ -119,6 +119,7 @@ const KIND_KEYS = {
   procedure: "schemaCompareObjectKindProcedure",
   trigger: "schemaCompareObjectKindTrigger",
   sequence: "schemaCompareObjectKindSequence",
+  event: "schemaCompareObjectKindEvent",
 } as const;
 
 export function objectKindLabel(kind: string, t: ReturnType<typeof useT>): string {
@@ -257,6 +258,11 @@ export function SchemaObjectDiff({
                 <ObjectRow key={`${o.kind}:${o.name}:${o.signature ?? ""}:${o.table ?? ""}`} item={o} />
               ))}
             </Box>
+          )}
+          {driver === "mysql" && objects.items.some((o) => o.kind === "event") && (
+            <chakra.p margin={0} textStyle="caption" color="app.textMuted">
+              {t("schemaCompareObjectEventStartsNote")}
+            </chakra.p>
           )}
         </>
       )}

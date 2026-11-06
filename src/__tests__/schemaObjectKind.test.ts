@@ -18,6 +18,7 @@ const TS_KINDS = {
   function: true,
   trigger: true,
   sequence: true,
+  event: true,
 } as const satisfies Record<SchemaObjectKind, true>;
 
 describe("SchemaObjectKind 共有ゴールデン", () => {

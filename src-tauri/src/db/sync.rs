@@ -55,9 +55,9 @@ pub enum SyncKind {
     AddCheck,
     /// 既存テーブルの CHECK 制約の削除 (#1837)。
     DropCheck,
-    /// ビュー / マテビュー / ルーチン / トリガー / シーケンスの作成 (#1879)。
+    /// ビュー / マテビュー / ルーチン / トリガー / シーケンス / イベントの作成 (#1879, #2100)。
     CreateObject,
-    /// 定義が変わった非テーブルオブジェクトの置き換え (#1879)。ビュー等は DROP + CREATE、
+    /// 定義が変わった非テーブルオブジェクトの置き換え (#1879)。ビュー・イベント等は DROP + CREATE、
     /// PostgreSQL の関数は `CREATE OR REPLACE`、シーケンスは `ALTER SEQUENCE`。
     ReplaceObject,
     /// target にだけある非テーブルオブジェクトの削除 (#1879)。
@@ -253,7 +253,7 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
 /// 差し込み位置は、表の作成・列の追加と変更・索引・外部キーの後ろで、列と表の DROP の前
 /// (新しい列を使うビューは作成後に、消す列を使うビュー / トリガーは先に置き換える・消す)。
 /// シーケンスの作成だけは表の既定値から参照されるので先頭に置く。作成・置換は
-/// 関数 → プロシージャ → ビュー → マテビュー → トリガーの順 (ビュー同士は参照順)、削除は
+/// 関数 → プロシージャ → ビュー → マテビュー → トリガー → イベントの順 (ビュー同士は参照順)、削除は
 /// 逆順で、`allow_destructive` が無いと削除は出さない。
 fn object_statements(
     diff: &SchemaDiff,
@@ -301,7 +301,7 @@ fn object_statements(
         let Some(def) = o.source_definition.as_deref() else {
             continue;
         };
-        // MySQL のルーチン / トリガーは DROP + CREATE で DDL が暗黙コミットされ、CREATE に失敗すると
+        // MySQL のルーチン / トリガー / イベントは DROP + CREATE で DDL が暗黙コミットされ、CREATE に失敗すると
         // 元の定義が戻らない。マテビューの置換は DROP + CREATE でデータを再計算する。どちらも
         // 破壊的として扱い、許可がなければ出さずに警告する。
         let non_atomic = replace_is_destructive(driver, &o.kind);
@@ -309,7 +309,7 @@ fn object_statements(
             let why = if o.kind == "materialized_view" {
                 "マテリアライズドビューの置換は DROP + CREATE でデータを再計算します"
             } else {
-                "MySQL はルーチン・トリガーを DROP + CREATE で置き換えます (DDL は暗黙コミットされ、CREATE に失敗すると元の定義が失われます)"
+                "MySQL はルーチン・トリガー・イベントを DROP + CREATE で置き換えます (DDL は暗黙コミットされ、CREATE に失敗すると元の定義が失われます)"
             };
             warnings.push(format!(
                 "{} {}: {}。「破壊的な操作を許可」を有効にすると出力します",

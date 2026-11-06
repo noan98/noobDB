@@ -96,6 +96,11 @@ describe("partitionDatabaseNodes", () => {
     );
     expect(g.objects.map((o) => o.name)).toEqual(["f1", "tr1", "s1"]);
   });
+
+  it("イベント (MySQL) は最後のグループに並ぶ (#2100)", () => {
+    const g = partitionDatabaseNodes([], [obj("event", "ev1"), obj("trigger", "tr1"), obj("function", "f1")]);
+    expect(g.objects.map((o) => o.name)).toEqual(["f1", "tr1", "ev1"]);
+  });
 });
 
 describe("showTablesHeader", () => {

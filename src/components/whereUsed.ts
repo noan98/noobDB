@@ -23,8 +23,8 @@ import type {
 } from "../api/tauri";
 import { tableToMarkdown } from "./tabularText";
 
-/** Where-used が走査する種別。`sequence` はツリーの一覧・定義表示専用 (#1957) なので含めない。 */
-export type WhereUsedObjectKind = Exclude<SchemaObjectKind, "sequence">;
+/** Where-used が走査する種別。`sequence` / `event` はツリーの一覧・定義表示専用 (#1957, #2100) なので含めない。 */
+export type WhereUsedObjectKind = Exclude<SchemaObjectKind, "sequence" | "event">;
 
 export const ALL_KINDS: readonly WhereUsedObjectKind[] = [
   "view",

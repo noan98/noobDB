@@ -1487,6 +1487,16 @@ impl Connection {
         }
     }
 
+    /// [`Self::schema_objects`] に、EVENT 一覧を取得できたか (MySQL 以外は常に true) を添える (#2100)。
+    pub async fn schema_objects_checked(&self, db: &str) -> Result<(Vec<SchemaObject>, bool)> {
+        match self {
+            Connection::MySql(c) => c.schema_objects_checked(db).await,
+            Connection::Postgres(_) | Connection::Sqlite(_) => {
+                Ok((self.schema_objects(db).await?, true))
+            }
+        }
+    }
+
     /// 独立したシーケンスの (名前, `CREATE SEQUENCE` 文) (スキーマ比較, #1879)。シーケンスを
     /// 独立したオブジェクトとして持つのは PostgreSQL だけ。MySQL (`AUTO_INCREMENT`) と
     /// SQLite (`AUTOINCREMENT`) は列の属性なので空を返す。
