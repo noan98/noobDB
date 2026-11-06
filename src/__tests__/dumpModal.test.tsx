@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { act } from "@testing-library/react";
 import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
 import { api, listenDumpStream, type DumpStreamHandlers } from "../api/tauri";
 import { dumpOptionLock, resolveDumpOptions, type DumpLockContext } from "../dumpOptionLocks";
@@ -293,6 +294,88 @@ describe("DumpModal 生成エンジンのカード選択 (#2094)", () => {
     expect(sent.sqliteSnapshot).toBe(true);
     expect(sent.noData).toBe(false);
     expect(sent.addDropTable).toBe(false);
+  });
+
+  it("ダンプ進捗を進捗バー・StatTile で出し、完了で緑のバーと Callout を残す (#2092)", async () => {
+    vi.spyOn(api, "dumpToolStatus").mockResolvedValue({
+      tool: "mysqldump",
+      path: "/x",
+      install: null,
+    } as never);
+    vi.spyOn(api, "dumpDatabase").mockResolvedValue(undefined as never);
+    let handlers: DumpStreamHandlers | null = null;
+    vi.mocked(listenDumpStream).mockImplementationOnce(async (_id, h) => {
+      handlers = h;
+      return () => {};
+    });
+    renderWithProviders(<DumpModal sessionId="s1" database="app" driver="mysql" onClose={() => {}} />);
+    fireEvent.change(screen.getByLabelText(t("dumpSavePath")), { target: { value: "/tmp/out.sql" } });
+    fireEvent.click(screen.getByRole("button", { name: t("dumpExecute") }));
+    await waitFor(() => expect(handlers).not.toBeNull());
+    await waitFor(() => expect(api.dumpDatabase).toHaveBeenCalled());
+    const h = handlers as unknown as DumpStreamHandlers;
+    act(() => h.onProgress?.({ bytes: 2048, elapsedMs: 10_000, tables: 1, tablesTotal: 4 } as never));
+    const detail = await screen.findByTestId("dump-progress-detail");
+    expect(detail).toHaveTextContent(t("progressPercent", { percent: 25 }));
+    expect(detail).toHaveTextContent(t("dumpStatTables"));
+    expect(detail).toHaveTextContent(t("progressEta", { time: "0:30" }));
+    act(() => h.onDone?.({ bytes: 4096, elapsedMs: 12000 } as never));
+    const cb = await screen.findByText(t("dumpResultDone", { bytes: "4.1 KB", secs: "12.0" }));
+    expect(cb).toBeInTheDocument();
+    const bar = screen
+      .getByTestId("dump-progress-detail")
+      .querySelector("[aria-hidden] > div") as HTMLElement;
+    expect(bar.style.background).toContain("--success-solid");
+  });
+
+  const startDump = async () => {
+    vi.spyOn(api, "dumpToolStatus").mockResolvedValue({
+      tool: "mysqldump",
+      path: "/x",
+      install: null,
+    } as never);
+    vi.spyOn(api, "dumpDatabase").mockResolvedValue(undefined as never);
+    let handlers: DumpStreamHandlers | null = null;
+    vi.mocked(listenDumpStream).mockImplementationOnce(async (_id, h) => {
+      handlers = h;
+      return () => {};
+    });
+    renderWithProviders(<DumpModal sessionId="s1" database="app" driver="mysql" onClose={() => {}} />);
+    fireEvent.change(screen.getByLabelText(t("dumpSavePath")), { target: { value: "/tmp/out.sql" } });
+    fireEvent.click(screen.getByRole("button", { name: t("dumpExecute") }));
+    await waitFor(() => expect(handlers).not.toBeNull());
+    await waitFor(() => expect(api.dumpDatabase).toHaveBeenCalled());
+    return handlers as unknown as DumpStreamHandlers;
+  };
+  const barBg = () =>
+    (screen.getByTestId("dump-progress-detail").querySelector("[aria-hidden] > div") as HTMLElement).style
+      .background;
+
+  it("進捗イベントが 0 件で完了しても結果の Callout を出す (バーは出さない) (#2092)", async () => {
+    const h = await startDump();
+    act(() => h.onDone?.({ bytes: 1000 } as never));
+    expect(await screen.findByText(/Dump finished: 1\.0 KB written in/)).toBeInTheDocument();
+    expect(screen.queryByTestId("dump-progress-detail")).not.toBeInTheDocument();
+  });
+
+  it("中止すると警告色のバーと Callout を残す (#2092)", async () => {
+    const h = await startDump();
+    act(() => h.onProgress?.({ bytes: 2000, elapsedMs: 5000, tables: 1, tablesTotal: 4 } as never));
+    await screen.findByTestId("dump-progress-detail");
+    fireEvent.click(screen.getByRole("button", { name: t("dumpCancelRun") }));
+    await screen.findByText(t("dumpResultCancelled", { bytes: "2.0 KB", secs: "5.0" }));
+    await waitFor(() => expect(barBg()).toContain("--warning-solid"));
+  });
+
+  it("エラー時は危険色のバーを ErrorNote と並べ、進捗中は文言とタイルを重複させない (#2092)", async () => {
+    const h = await startDump();
+    act(() => h.onProgress?.({ bytes: 2000, elapsedMs: 5000, tables: 1, tablesTotal: 4 } as never));
+    await screen.findByTestId("dump-progress-detail");
+    expect(screen.queryByText(/Dumping… 1\/4/)).not.toBeInTheDocument();
+    act(() => h.onError?.({ error: "boom" } as never));
+    await screen.findByText(t("dumpError", { error: "boom" }));
+    // クロスフェードで実行中の表示が抜けきってから確認する。
+    await waitFor(() => expect(barBg()).toContain("--error-solid"));
   });
 
   it("ツールが検出済みならカードに検出済みを出し、選べる", async () => {
