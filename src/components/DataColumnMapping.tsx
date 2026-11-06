@@ -36,6 +36,8 @@ interface Props {
   caseInsensitive: boolean;
   mapping: ColumnMapping;
   onChange: (mapping: ColumnMapping) => void;
+  /** 未割り当て (同名の相手がおらず対応表にも無い) のソース列の数が変わったら通知する。 */
+  onUnassignedChange?: (count: number) => void;
   disabled?: boolean;
 }
 
@@ -49,6 +51,7 @@ export function DataColumnMapping({
   caseInsensitive,
   mapping,
   onChange,
+  onUnassignedChange,
   disabled,
 }: Props) {
   const t = useT();
@@ -66,6 +69,8 @@ export function DataColumnMapping({
       .then(([s, tg]) => {
         if (!cancelled) setColumns({ source: s.map((c) => c.name), target: tg.map((c) => c.name) });
       })
+      // 意図的に握りつぶす: 列が取れないときは対応付けの UI を出さないだけで、比較そのものが
+      // 同じ理由でエラーを返してユーザーに見える。
       .catch(() => {});
     return () => {
       cancelled = true;
@@ -76,6 +81,12 @@ export function DataColumnMapping({
     () => (columns ? unmatchedSourceColumns(columns.source, columns.target, mapping, caseInsensitive) : []),
     [columns, mapping, caseInsensitive],
   );
+  const unassignedCount = unmatched.length;
+  useEffect(() => {
+    onUnassignedChange?.(unassignedCount);
+  }, [unassignedCount, onUnassignedChange]);
+  // アンマウント時 (表が未選択など) は未割り当てなしに戻す。
+  useEffect(() => () => onUnassignedChange?.(0), [onUnassignedChange]);
   if (!columns) return null;
   const rows = columns.source.filter((c) => c in mapping || unmatched.includes(c));
   if (rows.length === 0) return null;

@@ -7,6 +7,12 @@
 /** ソース列名 → ターゲット列名。 */
 export type ColumnMapping = Record<string, string>;
 
+/** ASCII だけを小文字化して比べる (Rust の `eq_ignore_ascii_case` と同じ。`toLowerCase` は Unicode 全体を変えるのでずれる)。 */
+function eqAscii(a: string, b: string): boolean {
+  const lower = (x: string) => x.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
+  return lower(a) === lower(b);
+}
+
 /**
  * 対応表に無く、ターゲットに同名の列も無いソース列 (「手動で割り当てる」候補)。
  * `caseInsensitive` は同名の照合規則 (MySQL / SQLite とクロスドライバは true、PostgreSQL 同士は false)。
@@ -17,7 +23,7 @@ export function unmatchedSourceColumns(
   mapping: ColumnMapping,
   caseInsensitive: boolean,
 ): string[] {
-  const same = (a: string, b: string) => (caseInsensitive ? a.toLowerCase() === b.toLowerCase() : a === b);
+  const same = (a: string, b: string) => (caseInsensitive ? eqAscii(a, b) : a === b);
   return source.filter((s) => !(s in mapping) && !target.some((t) => same(t, s)));
 }
 
@@ -32,7 +38,7 @@ export function assignableTargetColumns(
   caseInsensitive: boolean,
   current: string | undefined,
 ): string[] {
-  const same = (a: string, b: string) => (caseInsensitive ? a.toLowerCase() === b.toLowerCase() : a === b);
+  const same = (a: string, b: string) => (caseInsensitive ? eqAscii(a, b) : a === b);
   const taken = new Set<string>(Object.values(mapping));
   return target.filter(
     (t) => t === current || (!taken.has(t) && !source.some((s) => !(s in mapping) && same(s, t))),

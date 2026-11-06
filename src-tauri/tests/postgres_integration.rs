@@ -4653,3 +4653,93 @@ async fn postgres_select_survives_table_recreation_with_cached_statement() {
         .await;
     conn.close().await;
 }
+
+/// 列名を変えた移行の検証 (#2099, PostgreSQL): 大文字を含む列と主キーのリネームを対応表で比べ、
+/// ターゲットの列名 (引用符つき) で生成した同期 SQL を適用すると再比較で差分なしになる。
+#[tokio::test]
+async fn postgres_compare_with_column_mapping_renames_columns_and_primary_key() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    for ddl in [
+        "DROP TABLE IF EXISTS nb2099_src",
+        "DROP TABLE IF EXISTS nb2099_dst",
+        "CREATE TABLE nb2099_src (\"UserId\" integer PRIMARY KEY, \"FullName\" text, note text)",
+        "CREATE TABLE nb2099_dst (id integer PRIMARY KEY, full_name text, note text)",
+        "INSERT INTO nb2099_src VALUES (1,'a','n'),(2,'b','n'),(3,'c','n')",
+        "INSERT INTO nb2099_dst VALUES (1,'a','n'),(2,'B','n'),(4,'d','n')",
+    ] {
+        conn.execute(ddl, None).await.expect("ddl");
+    }
+    let mapping = || {
+        Some(std::collections::HashMap::from([
+            ("UserId".to_string(), "id".to_string()),
+            ("FullName".to_string(), "full_name".to_string()),
+        ]))
+    };
+    // PostgreSQL は列名の大小を区別するので、対応表なしでは欠落扱い。
+    let err = t::compare_table_data_via_core(
+        &conn,
+        "public",
+        &conn,
+        "public",
+        "nb2099_src",
+        "nb2099_dst",
+        None,
+        true,
+        None,
+        None,
+    )
+    .await
+    .expect_err("missing columns without a mapping");
+    assert!(err.to_string().contains("missing column(s)"), "{err}");
+
+    let (diff, _) = t::compare_table_data_via_core(
+        &conn,
+        "public",
+        &conn,
+        "public",
+        "nb2099_src",
+        "nb2099_dst",
+        None,
+        true,
+        None,
+        mapping(),
+    )
+    .await
+    .expect("compare with mapping");
+    assert_eq!(diff.columns, vec!["id", "full_name", "note"]);
+    assert_eq!(diff.primary_key, vec!["id"]);
+    assert_eq!(diff.rows.len(), 3);
+    let plan = t::generate_data_sync_sql(&diff, true);
+    assert_eq!(plan.statements.len(), 3, "{:?}", plan.statements);
+    for st in &plan.statements {
+        assert!(
+            !st.sql.contains("UserId") && !st.sql.contains("FullName"),
+            "{}",
+            st.sql
+        );
+        conn.execute(&st.sql, None).await.expect("apply");
+    }
+    let (after, _) = t::compare_table_data_via_core(
+        &conn,
+        "public",
+        &conn,
+        "public",
+        "nb2099_src",
+        "nb2099_dst",
+        None,
+        false,
+        None,
+        mapping(),
+    )
+    .await
+    .expect("re-compare");
+    assert!(after.rows.is_empty(), "{:?}", after.rows);
+    for ddl in ["DROP TABLE nb2099_src", "DROP TABLE nb2099_dst"] {
+        let _ = conn.execute(ddl, None).await;
+    }
+}

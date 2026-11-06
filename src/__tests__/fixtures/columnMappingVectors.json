@@ -138,6 +138,37 @@
       ],
       "mapping": {},
       "unmatched": []
+    },
+    {
+      "name": "non-ASCII case differences are not folded",
+      "caseInsensitive": true,
+      "source": [
+        "Ä"
+      ],
+      "target": [
+        "ä"
+      ],
+      "mapping": {},
+      "unmatched": [
+        "Ä"
+      ]
+    },
+    {
+      "name": "a mapped column is not unmatched even if a same-name target exists",
+      "caseInsensitive": false,
+      "source": [
+        "a",
+        "b"
+      ],
+      "target": [
+        "a",
+        "b",
+        "c"
+      ],
+      "mapping": {
+        "a": "c"
+      },
+      "unmatched": []
     }
   ]
 }

@@ -1241,19 +1241,27 @@ fn clamp_to_common_window(
 fn normalize_ignore_columns(
     ignore: Option<Vec<String>>,
     columns: &[String],
+    target_names: &[String],
 ) -> Result<Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     for name in ignore.unwrap_or_default() {
         let name = name.trim().to_string();
-        if name.is_empty() || out.contains(&name) {
+        if name.is_empty() {
             continue;
         }
-        if !columns.contains(&name) {
+        // ソース名のほか、対応付けたターゲット側の名前でも指定できる (#2099)。内部はソース名で持つ。
+        let source_name = if columns.contains(&name) {
+            name.clone()
+        } else if let Some(i) = target_names.iter().position(|t| *t == name) {
+            columns[i].clone()
+        } else {
             return Err(AppError::InvalidInput(format!(
                 "ignore column '{name}' does not exist in the table"
             )));
+        };
+        if !out.contains(&source_name) {
+            out.push(source_name);
         }
-        out.push(name);
     }
     Ok(out)
 }
@@ -1922,7 +1930,7 @@ async fn prepare_data_compare(
     )
     .await?;
 
-    let ignore_columns = normalize_ignore_columns(ignore_columns, &columns)?;
+    let ignore_columns = normalize_ignore_columns(ignore_columns, &columns, &target_names)?;
 
     let (norms, normalized_columns) = if cross_driver {
         // 主キーの照合順序・並びはドライバごとに違う (文字列は照合順序)。整数キーだけが
@@ -2652,13 +2660,19 @@ mod keyset_tests {
     fn normalize_ignore_columns_trims_dedups_and_rejects_unknown() {
         let cols = s(&["id", "name", "updated_at"]);
         assert_eq!(
-            normalize_ignore_columns(Some(s(&[" updated_at ", "", "updated_at", "name"])), &cols)
-                .unwrap(),
+            normalize_ignore_columns(
+                Some(s(&[" updated_at ", "", "updated_at", "name"])),
+                &cols,
+                &[]
+            )
+            .unwrap(),
             s(&["updated_at", "name"])
         );
-        assert!(normalize_ignore_columns(None, &cols).unwrap().is_empty());
+        assert!(normalize_ignore_columns(None, &cols, &[])
+            .unwrap()
+            .is_empty());
         assert!(matches!(
-            normalize_ignore_columns(Some(s(&["nope"])), &cols),
+            normalize_ignore_columns(Some(s(&["nope"])), &cols, &[]),
             Err(AppError::InvalidInput(_))
         ));
     }
@@ -2840,6 +2854,70 @@ mod keyset_tests {
         .await
         .unwrap();
         assert!(diff.rows.is_empty(), "{:?}", diff.rows);
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// 無視列はターゲット側の名前でも指定できる (#2099)。
+    #[test]
+    fn ignore_columns_accept_target_names() {
+        let cols = s(&["uid", "user_name"]);
+        let tgt = s(&["id", "username"]);
+        assert_eq!(
+            normalize_ignore_columns(Some(s(&["username", "user_name"])), &cols, &tgt).unwrap(),
+            s(&["user_name"])
+        );
+    }
+
+    /// 2 列の入れ替え (a↔b) も、比較から同期 SQL まで通る (#2099)。
+    #[tokio::test]
+    async fn column_mapping_swap_flows_into_sync_sql() {
+        let (conn, path) = sqlite_conn("map_swap").await;
+        for ddl in [
+            "CREATE TABLE s (id INTEGER PRIMARY KEY, a TEXT, b TEXT)",
+            "CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT, b TEXT)",
+            "INSERT INTO s VALUES (1,'x','y')",
+            "INSERT INTO t VALUES (1,'y','x')",
+        ] {
+            conn.execute(ddl, None).await.unwrap();
+        }
+        let m = || mapping(&[("a", "b"), ("b", "a")]);
+        let (diff, _) = compare_table_data_core(
+            &conn,
+            "main",
+            &conn,
+            "main",
+            "s",
+            "t",
+            None,
+            false,
+            None,
+            m(),
+        )
+        .await
+        .unwrap();
+        assert!(diff.rows.is_empty(), "{:?}", diff.rows);
+        // 入れ替えなしなら差分あり。
+        conn.execute("UPDATE t SET b='zz' WHERE id=1", None)
+            .await
+            .unwrap();
+        let (diff, _) = compare_table_data_core(
+            &conn,
+            "main",
+            &conn,
+            "main",
+            "s",
+            "t",
+            None,
+            false,
+            None,
+            m(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(diff.columns, s(&["id", "b", "a"]));
+        let plan = crate::db::data_diff::generate_data_sync_sql(&diff, false);
+        let sqls: Vec<&str> = plan.statements.iter().map(|x| x.sql.as_str()).collect();
+        assert_eq!(sqls, vec!["UPDATE \"t\" SET \"b\" = 'x' WHERE \"id\" = 1"]);
         let _ = std::fs::remove_file(path);
     }
 

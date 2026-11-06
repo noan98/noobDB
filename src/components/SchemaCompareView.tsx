@@ -424,6 +424,8 @@ export function SchemaCompareView({
   const [dataIgnore, setDataIgnore] = useState("");
   // 列の対応付け (ソース列 → ターゲット列, #2099)。表や接続を変えたら破棄する。
   const [dataColumnMap, setDataColumnMap] = useState<ColumnMapping>({});
+  // 同名の相手がおらず割り当ても無いソース列の数。残っていると比較は欠落列で必ず失敗するので止める。
+  const [dataUnassigned, setDataUnassigned] = useState(0);
   const [dataDiff, setDataDiff] = useState<DataDiff | null>(null);
   // ドライバをまたぐ検証専用の比較か・正規化して一致とみなした列 (#1869)。
   const [dataCross, setDataCross] = useState(false);
@@ -1142,6 +1144,7 @@ export function SchemaCompareView({
             targetTable={effectiveTargetTable}
             caseInsensitive={driverMismatch || sourceDriver !== "postgres"}
             mapping={dataColumnMap}
+            onUnassignedChange={setDataUnassigned}
             onChange={(m) => {
               setDataColumnMap(m);
               resetDataDiffForTableChange();
@@ -1172,7 +1175,7 @@ export function SchemaCompareView({
             disabled={dataComparing}
           />
         </chakra.label>
-        <Button onClick={compareData} disabled={!dataTablesValid || dataComparing}>
+        <Button onClick={compareData} disabled={!dataTablesValid || dataComparing || dataUnassigned > 0}>
           {dataComparing ? t("schemaCompareComparing") : t("schemaCompareDataCompare")}
         </Button>
         {dataComparing && dataCancellable && (
