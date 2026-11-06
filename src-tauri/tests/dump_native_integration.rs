@@ -1053,12 +1053,11 @@ fn psql_restore(opts: &t::DbConnectOptions, sql: &str, tag: &str) -> bool {
 
 #[tokio::test]
 async fn postgres_native_dump_partitions_roundtrip_when_env_set() {
-    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
-        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
         return;
     };
     if !client_available("psql") {
-        eprintln!("skip: psql client not found");
+        common::skip_external("psql client not found");
         return;
     }
     let opts = t::parse_postgres_url(&url).expect("valid url");
@@ -1070,7 +1069,7 @@ async fn postgres_native_dump_partitions_roundtrip_when_env_set() {
     )
     .await;
     if !ver.contains("true") {
-        eprintln!("skip: PostgreSQL < 13");
+        common::skip_capability("PostgreSQL < 13");
         return;
     }
     part_setup(&conn).await;
