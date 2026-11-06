@@ -359,6 +359,17 @@ describe("TableTimelapsePanel (#739)", () => {
       expect(screen.getByLabelText(t("timelapseFrom"))).toBeInTheDocument();
     });
 
+    it("スクラバーは世代ごとの目盛りと行数スパークラインを描き、日時は aria-valuetext に出す (#2095)", async () => {
+      vi.mocked(api.timelapseListWatches).mockResolvedValue([threeGenWatch()]);
+      vi.mocked(api.timelapseDiffGenerations).mockResolvedValue(genDiff());
+      renderPanel();
+      const slider = await screen.findByRole("slider", { name: t("timelapseScrubAria") });
+      expect(screen.getAllByTestId("timelapse-tick")).toHaveLength(3);
+      expect(screen.getByTestId("timelapse-sparkline")).toBeInTheDocument();
+      expect(slider.getAttribute("aria-valuetext")).toContain(t("timelapseScrubStep", { step: 2, max: 2 }));
+      expect(document.querySelector("[title]")).toBeNull();
+    });
+
     it("再生すると最初の段から終端まで順に取得して自動停止する", async () => {
       vi.mocked(api.timelapseListWatches).mockResolvedValue([threeGenWatch()]);
       vi.mocked(api.timelapseDiffGenerations).mockResolvedValue(genDiff());
