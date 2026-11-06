@@ -1,8 +1,16 @@
-import { describe, it, expect, vi } from "vitest";
-import { renderWithProviders, screen, fireEvent } from "./testUtils";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { api } from "../api/tauri";
+import { dumpOptionLock, resolveDumpOptions, type DumpLockContext } from "../dumpOptionLocks";
 import { DumpModal } from "../components/DumpModal";
 import { t } from "../i18n";
 import { saveDumpPrefs } from "../inputMemory";
+
+// ダンプ実行時のイベント購読は Tauri 無しの jsdom では張れないので、購読だけ差し替える。
+vi.mock("../api/tauri", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api/tauri")>()),
+  listenDumpStream: vi.fn(async () => () => {}),
+}));
 
 /**
  * DB ダンプモーダル (#604)。マウント時に Tauri 呼び出しを持たない (`dumpDatabase` は
@@ -93,45 +101,183 @@ describe("DumpModal render smoke (#604)", () => {
 
 // 前回のスイッチと保存先ディレクトリをプロファイルごとに復元する (#1631)。
 // #2033: MySQL / PostgreSQL は外部ツールなしのネイティブ生成を選べる。
-describe("DumpModal ネイティブ生成 (#2033)", () => {
-  it("mysql / postgres にだけネイティブ生成スイッチを出し、既定はオフ", () => {
+describe("DumpModal 生成エンジンのカード選択 (#2094)", () => {
+  const engine = (id: "native" | "external") => screen.getByTestId(`dump-engine-${id}`);
+  const mockTool = (path: string | null) =>
+    vi.spyOn(api, "dumpToolStatus").mockResolvedValue({ tool: "mysqldump", path, install: null } as never);
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("mysql / postgres にだけエンジンのカードを出し、既定は外部ツール。SQLite には出さない", () => {
     const { unmount } = renderWithProviders(
       <DumpModal sessionId="s1" database="app" driver="mysql" onClose={() => {}} />,
     );
-    expect(screen.getByRole("switch", { name: t("dumpOptNative") })).not.toBeChecked();
+    expect(engine("external")).toHaveAttribute("aria-pressed", "true");
+    expect(engine("native")).toHaveAttribute("aria-pressed", "false");
+    // 内蔵が推奨表示。
+    expect(engine("native")).toHaveTextContent(t("dumpEngineRecommended"));
     unmount();
     const pg = renderWithProviders(
       <DumpModal sessionId="s1" database="public" driver="postgres" onClose={() => {}} />,
     );
-    expect(screen.getByRole("switch", { name: t("dumpOptNative") })).not.toBeChecked();
+    expect(engine("native")).toBeInTheDocument();
     pg.unmount();
     renderWithProviders(<DumpModal sessionId="s1" database="main" driver="sqlite" onClose={() => {}} />);
-    expect(screen.queryByRole("switch", { name: t("dumpOptNative") })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("dump-engine-native")).not.toBeInTheDocument();
   });
 
-  it("オンにすると注記がネイティブ用になり、外部ツール専用のスイッチが無効になる", () => {
+  it("オプションは構造 / データ / 出力 / 互換の 4 グループに分かれる", () => {
+    renderWithProviders(<DumpModal sessionId="s1" database="app" driver="mysql" onClose={() => {}} />);
+    for (const g of ["structure", "data", "output", "compat"]) {
+      expect(screen.getByTestId(`dump-group-${g}`)).toBeInTheDocument();
+    }
+    expect(screen.getByTestId("dump-group-data")).toContainElement(
+      screen.getByRole("switch", { name: t("dumpOptSingleTransaction") }),
+    );
+  });
+
+  it("内蔵を選ぶと注記が切り替わり、外部ツール専用のスイッチは消さずに理由つきで無効になる", () => {
     renderWithProviders(<DumpModal sessionId="s1" database="app" driver="mysql" onClose={() => {}} />);
     expect(screen.getByText(t("dumpNote", { tool: "mysqldump" }))).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: t("dumpOptSingleTransaction") })).toBeEnabled();
-    fireEvent.click(screen.getByRole("switch", { name: t("dumpOptNative") }));
+    fireEvent.click(engine("native"));
+    expect(engine("native")).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText(t("dumpNoteNative"))).toBeInTheDocument();
-    expect(screen.queryByText(t("dumpNote", { tool: "mysqldump" }))).not.toBeInTheDocument();
     for (const k of ["dumpOptSingleTransaction", "dumpOptNoTablespaces", "dumpOptGtidPurgedOff"] as const) {
-      expect(screen.getByRole("switch", { name: t(k) })).toBeDisabled();
+      const sw = screen.getByRole("switch", { name: t(k) });
+      expect(sw).toBeDisabled();
+      expect(sw).not.toBeChecked();
     }
+    // 理由が画面に出る (単一トランザクションは一貫性の説明つき)。
+    expect(screen.getByText(t("dumpLockNativeConsistency"))).toBeInTheDocument();
+    expect(screen.getAllByText(t("dumpLockNative")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(t("dumpLockBadge")).length).toBeGreaterThan(0);
     // ネイティブでも効くスイッチは触れる。
     expect(screen.getByRole("switch", { name: t("dumpOptNoData") })).toBeEnabled();
     expect(screen.getByRole("switch", { name: t("dumpOptGzip") })).toBeEnabled();
+    // 外部ツールへ戻すと復帰する。
+    fireEvent.click(engine("external"));
+    expect(screen.getByRole("switch", { name: t("dumpOptSingleTransaction") })).toBeEnabled();
+    expect(screen.getByRole("switch", { name: t("dumpOptSingleTransaction") })).toBeChecked();
+  });
+
+  it("ツール未導入なら外部ツールのカードを無効にして理由を出す", async () => {
+    mockTool(null);
+    renderWithProviders(<DumpModal sessionId="s1" database="app" driver="mysql" onClose={() => {}} />);
+    await waitFor(() => expect(engine("external")).toBeDisabled());
+    expect(engine("external")).toHaveTextContent(t("dumpEngineToolMissing"));
+    expect(engine("external")).toHaveTextContent(t("dumpEngineExternalDisabled", { tool: "mysqldump" }));
+    expect(engine("native")).toBeEnabled();
+    fireEvent.click(engine("native"));
+    expect(engine("native")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("ツールが検出済みならカードに検出済みを出し、選べる", async () => {
+    mockTool("/usr/bin/mysqldump");
+    renderWithProviders(<DumpModal sessionId="s1" database="app" driver="mysql" onClose={() => {}} />);
+    await waitFor(() => expect(engine("external")).toHaveTextContent(t("dumpEngineToolFound")));
+    expect(engine("external")).toBeEnabled();
+  });
+
+  it("PostgreSQL は pg_dump のとき関数を常に出す旨で無効 (表示は固定)、内蔵なら選べて既定オン", () => {
+    renderWithProviders(<DumpModal sessionId="s1" database="public" driver="postgres" onClose={() => {}} />);
+    const routines = screen.getByRole("switch", { name: t("dumpOptRoutines") });
+    expect(routines).toBeDisabled();
+    expect(routines).toBeChecked();
+    expect(screen.getByText(t("dumpLockPgDumpRoutines"))).toBeInTheDocument();
+    fireEvent.click(engine("native"));
+    expect(screen.getByRole("switch", { name: t("dumpOptRoutines") })).toBeEnabled();
+    expect(screen.getByRole("switch", { name: t("dumpOptRoutines") })).toBeChecked();
+  });
+
+  it("無効にしたスイッチの理由が画面に出て、実行時の値もそれに一致する (表示と実行の一致)", async () => {
+    const dump = vi.spyOn(api, "dumpDatabase").mockResolvedValue(undefined as never);
+    vi.spyOn(api, "dumpToolStatus").mockResolvedValue({
+      tool: "mysqldump",
+      path: "/x",
+      install: null,
+    } as never);
+    renderWithProviders(<DumpModal sessionId="s1" database="app" driver="mysql" onClose={() => {}} />);
+    fireEvent.change(screen.getByLabelText(t("dumpSavePath")), { target: { value: "/tmp/out.sql" } });
+    // 単一トランザクション・GTID を ON にしてから内蔵へ切り替える。
+    fireEvent.click(screen.getByRole("switch", { name: t("dumpOptGtidPurgedOff") }));
+    fireEvent.click(engine("native"));
+    fireEvent.click(screen.getByRole("button", { name: t("dumpExecute") }));
+    await waitFor(() => expect(dump).toHaveBeenCalled());
+    const sent = dump.mock.calls[0][0].options;
+    expect(sent.native).toBe(true);
+    expect(sent.singleTransaction).toBe(false);
+    expect(sent.setGtidPurgedOff).toBe(false);
+    expect(sent.noTablespaces).toBe(false);
+    // 効くスイッチは保たれる。
+    expect(sent.triggers).toBe(true);
   });
 });
 
-// #2033: PostgreSQL のネイティブ生成は関数 (ルーチン) も出す。トリガーが参照する関数が無いと復元できない。
-describe("DumpModal PostgreSQL ネイティブ生成のルーチン (#2033)", () => {
-  it("外部ツールのときはルーチンのスイッチを隠し、ネイティブをオンにすると表示して既定オンにする", () => {
-    renderWithProviders(<DumpModal sessionId="s1" database="public" driver="postgres" onClose={() => {}} />);
-    expect(screen.queryByRole("switch", { name: t("dumpOptRoutines") })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("switch", { name: t("dumpOptNative") }));
-    expect(screen.getByRole("switch", { name: t("dumpOptRoutines") })).toBeChecked();
+// 送信値の上書きは画面の無効判定と同じ関数を通る (#2094)。
+describe("resolveDumpOptions (#2094)", () => {
+  const base = {
+    singleTransaction: true,
+    routines: false,
+    events: false,
+    triggers: true,
+    addDropTable: true,
+    extendedInsert: true,
+    completeInsert: true,
+    noData: true,
+    noCreateInfo: true,
+    noOwner: true,
+    noPrivileges: true,
+    pgSchema: null,
+    formatSql: true,
+    gzip: false,
+    noTablespaces: true,
+    setGtidPurgedOff: true,
+    writeChecksum: false,
+    sqliteSnapshot: false,
+    native: false,
+  };
+  const ctx = (o: Partial<DumpLockContext>): DumpLockContext => ({
+    driver: "mysql",
+    native: false,
+    sqliteSnapshot: false,
+    ...o,
+  });
+
+  it("外部ツールでは何も上書きしない (MySQL)", () => {
+    expect(resolveDumpOptions(base, ctx({}))).toEqual(base);
+  });
+
+  it("内蔵生成では外部ツール専用のオプションを false にする", () => {
+    const r = resolveDumpOptions(base, ctx({ native: true }));
+    for (const k of [
+      "singleTransaction",
+      "noTablespaces",
+      "setGtidPurgedOff",
+      "noOwner",
+      "noPrivileges",
+      "completeInsert",
+    ] as const) {
+      expect(r[k]).toBe(false);
+      expect(dumpOptionLock(k, ctx({ native: true }))).not.toBeNull();
+    }
+    expect(r.noData).toBe(true);
+    expect(r.triggers).toBe(true);
+  });
+
+  it("SQLite スナップショットでは SQL 形式向けのオプションを false にする", () => {
+    const r = resolveDumpOptions(base, ctx({ driver: "sqlite", sqliteSnapshot: true }));
+    expect(r.addDropTable).toBe(false);
+    expect(r.noData).toBe(false);
+    expect(r.noCreateInfo).toBe(false);
+    expect(r.formatSql).toBe(false);
+    expect(r.gzip).toBe(false);
+  });
+
+  it("PostgreSQL の pg_dump ではルーチンを常に true、内蔵ではユーザの値のまま", () => {
+    expect(resolveDumpOptions(base, ctx({ driver: "postgres" })).routines).toBe(true);
+    expect(resolveDumpOptions(base, ctx({ driver: "postgres", native: true })).routines).toBe(false);
+    expect(dumpOptionLock("routines", ctx({ driver: "postgres", native: true }))).toBeNull();
   });
 });
 
