@@ -7,6 +7,9 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::progress::ProgressThrottle;
+use crate::db::column_mapping::{
+    clean_mapping, resolve_target_columns, unmatched_source_columns, ColumnMapping, MappingError,
+};
 use crate::db::cross_compare::{build_norms, CompareNorms, NormalizedColumn};
 use crate::db::data_diff::{
     compute_data_diff_normalized, is_binary_type, is_hex_wire, is_numeric_literal, sql_literal,
@@ -911,6 +914,10 @@ fn check_integer_key(
     key: &[Value],
 ) -> Result<()> {
     let Some(n) = norms else { return Ok(()) };
+    // 値の正規化が無い (列名の対応付けだけの同一ドライバ比較, #2099) ときは整数キーに限らない。
+    if n.types.is_empty() {
+        return Ok(());
+    }
     for (j, v) in key.iter().enumerate() {
         let col = pk_idx.get(j).copied().unwrap_or(usize::MAX);
         if !n.key_is_integer(col, v) {
@@ -1470,7 +1477,7 @@ fn serialize_shared_diff<S: serde::Serializer>(
 }
 
 /// ターゲット表が比較できる形かを事前に確かめる (#1880)。
-/// - 表が存在し (列が取れ)、ソースの全列がターゲットにある (列の対応付けは未対応)。
+/// - 表が存在し (列が取れ)、ソースの全列 (列の対応付け #2099 を通した名前) がターゲットにある。
 /// - 行の対応付けに使うキーが、ターゲット側でも PK / UNIQUE NOT NULL で一意に定まる。
 ///   CTAS で作ったバックアップ表のように PK / UNIQUE が無いターゲットは、同期 SQL の WHERE が
 ///   複数行に当たりうるので拒否する (安全側)。
@@ -1494,18 +1501,22 @@ async fn validate_target_table(
             "target table '{tgt}' has no columns (does it exist on the target?)"
         )));
     }
-    let missing: Vec<&str> = source_cols
-        .iter()
-        .filter(|c| {
-            !target_cols
-                .iter()
-                .any(|t| column_names_match(driver, &t.name, &c.name))
-        })
-        .map(|c| c.name.as_str())
-        .collect();
+    // `source_cols` は対応付けを通したターゲットでの名前。照合規則は `column_names_match` と同じ。
+    let missing: Vec<String> = unmatched_source_columns(
+        &source_cols
+            .iter()
+            .map(|c| c.name.clone())
+            .collect::<Vec<_>>(),
+        &target_cols
+            .iter()
+            .map(|c| c.name.clone())
+            .collect::<Vec<_>>(),
+        &ColumnMapping::new(),
+        driver != DriverKind::Postgres,
+    );
     if !missing.is_empty() {
         return Err(AppError::InvalidInput(format!(
-            "target table '{tgt}' is missing column(s) {} present on source '{src}' (column mapping is not supported)",
+            "target table '{tgt}' is missing column(s) {} present on source '{src}'; map them to target columns with the column mapping",
             missing.join(", ")
         )));
     }
@@ -1571,6 +1582,10 @@ pub async fn compare_table_data(
     // 比較から外す列 (`updated_at` など環境ごとに値が違う列, #1539)。表に無い列名は
     // 打ち間違いの可能性が高いのでエラーにする。
     ignore_columns: Option<Vec<String>>,
+    // 列の対応付け (ソース列 → ターゲット列, #2099)。列名を変えた移行の検証用。指定の無い列は
+    // 同名 (クロスドライバでは大文字小文字を無視して 1 つに決まる列) に対応する。同期 SQL は
+    // ターゲットの列名で生成される。
+    column_mapping: Option<std::collections::HashMap<String, String>>,
     // 全行比較 (`all_rows`) の進捗イベント (`data-diff:progress`) と `cancel_stream` による
     // 中止に使う ID (#1612)。省略時は進捗も中止も無い従来動作。
     stream_id: Option<String>,
@@ -1618,6 +1633,7 @@ pub async fn compare_table_data(
         &source_table,
         &target_table,
         ignore_columns,
+        clean_mapping(column_mapping),
     )
     .await?;
     let PreparedCompare {
@@ -1630,6 +1646,7 @@ pub async fn compare_table_data(
         generated_columns,
         norms,
         normalized_columns,
+        rename_to,
     } = prepared;
     let tables = TablePair {
         source: &source_table,
@@ -1652,6 +1669,11 @@ pub async fn compare_table_data(
             target_count: outcome.target_count,
             generated_columns: generated_columns.clone(),
             verify_only: cross_driver,
+        };
+        // 列名を対応付けた比較は、ターゲットの列名で持つ (同期 SQL もその名前で生成される, #2099)。
+        let diff = match &rename_to {
+            Some(names) => diff.into_target_names(names),
+            None => diff,
         };
         let diff = Arc::new(diff);
         let diff_id = state.store_data_diff(
@@ -1738,12 +1760,17 @@ struct PreparedCompare {
     pk_idx: Vec<usize>,
     ignore_columns: Vec<String>,
     generated_columns: Vec<String>,
-    /// ドライバをまたぐときだけ `Some`。
+    /// ドライバをまたぐとき、または列名を対応付けたときに `Some`。
     norms: Option<CompareNorms>,
     normalized_columns: Vec<NormalizedColumn>,
+    /// 同一ドライバで列名を対応付けたとき、結果に使うターゲットの列名 (`columns` と同じ並び)。
+    /// ドライバをまたぐ比較 (検証専用) と対応付けなしでは `None` (ソースの列名のまま)。
+    rename_to: Option<Vec<String>>,
 }
 
 /// 列・行キーの解決とターゲット表の検証、ドライバをまたぐ場合の値正規化の用意。
+// 比較の入力 (接続 2 + DB 2 + 表 2 + 無視列 + 列の対応) をそのまま受けるので引数が多い。
+#[allow(clippy::too_many_arguments)]
 async fn prepare_data_compare(
     source: &Connection,
     source_database: &str,
@@ -1752,6 +1779,7 @@ async fn prepare_data_compare(
     source_table: &str,
     target_table: &str,
     ignore_columns: Option<Vec<String>>,
+    column_mapping: ColumnMapping,
 ) -> Result<PreparedCompare> {
     let driver = source.driver_kind();
     let target_driver = target.driver_kind();
@@ -1789,26 +1817,50 @@ async fn prepare_data_compare(
             }
         }
     }
-    // クロスドライバでは、完全一致が無い列だけ大文字小文字を無視して 1 つに決まる列へ対応付ける。
-    // (MySQL の `Id` と PostgreSQL の `id` など。複数の候補があれば曖昧なのでエラー。)
-    let target_names: Vec<String> = if cross_driver {
-        match target_cols.as_ref() {
-            Ok(tc) => {
-                let names: Vec<String> = tc.iter().map(|t| t.name.clone()).collect();
-                crate::db::cross_compare::map_target_columns(&columns, &names).map_err(
-                    |(col, candidates)| {
-                        AppError::InvalidInput(format!(
-                            "column '{col}' cannot be matched to exactly one column on the target (candidates: {}); rename the columns so that exactly one matches",
-                            candidates.join(", ")
-                        ))
-                    },
-                )?
-            }
-            Err(_) => columns.clone(),
+    // ターゲットの列名への対応 (#2099)。明示の対応表が優先で、無い列は同名。クロスドライバでは、
+    // 同名が無い列だけ大文字小文字を無視して 1 つに決まる列へ対応付ける
+    // (MySQL の `Id` と PostgreSQL の `id` など。複数の候補があれば曖昧なのでエラー)。
+    // ターゲットの列を取れないときは、後段の検証がそのエラーを返すので名前はそのままにする。
+    let target_names: Vec<String> = match target_cols.as_ref() {
+        Ok(tc) => {
+            let names: Vec<String> = tc.iter().map(|t| t.name.clone()).collect();
+            resolve_target_columns(
+                &columns,
+                &names,
+                &column_mapping,
+                |a, b| column_names_match(target_driver, a, b),
+                cross_driver,
+            )
+            .map_err(mapping_error)?
         }
-    } else {
-        columns.clone()
+        Err(_) if column_mapping.is_empty() => columns.clone(),
+        Err(_) => columns
+            .iter()
+            .map(|c| column_mapping.get(c).cloned().unwrap_or_else(|| c.clone()))
+            .collect(),
     };
+    // 同一ドライバで列名が変わるとき (対応付けた比較) は、結果をターゲットの列名で持つ。
+    let renamed = !cross_driver && target_names != columns;
+    // 生成列はターゲットの列名で持つ。ソース側の生成列は対応先の名前に直し、ターゲット側の
+    // 生成列 (もともとターゲットの名前) はそのまま足す。
+    if renamed {
+        generated_columns = generated_column_names(&col_info)
+            .into_iter()
+            .map(|g| {
+                columns
+                    .iter()
+                    .position(|c| *c == g)
+                    .map_or(g, |i| target_names[i].clone())
+            })
+            .collect();
+        if let Ok(tc) = target_cols.as_ref() {
+            for name in generated_column_names(tc) {
+                if !generated_columns.contains(&name) {
+                    generated_columns.push(name);
+                }
+            }
+        }
+    }
     // ターゲットの列型 (`columns` と同じ並び)。ドライバをまたぐ正規化に使う。
     let target_types: Vec<String> = match target_cols.as_ref() {
         Ok(tc) => target_names
@@ -1846,7 +1898,7 @@ async fn prepare_data_compare(
         .filter_map(|&i| target_names.get(i).cloned())
         .collect();
     let (validate_cols, validate_pk) =
-        if cross_driver && target_primary_key.len() == primary_key.len() {
+        if (cross_driver || renamed) && target_primary_key.len() == primary_key.len() {
             let renamed: Vec<TableColumnInfo> = col_info
                 .iter()
                 .zip(&target_names)
@@ -1914,9 +1966,19 @@ async fn prepare_data_compare(
         norms.target_columns = target_names.clone();
         norms.target_pk = target_primary_key.clone();
         (Some(norms), report)
+    } else if renamed {
+        // 値は厳密に比べ、ターゲットの SELECT / ORDER BY の列名だけを差し替える。
+        (
+            Some(CompareNorms::rename_only(
+                target_names.clone(),
+                target_primary_key.clone(),
+            )),
+            Vec::new(),
+        )
     } else {
         (None, Vec::new())
     };
+    let rename_to = renamed.then(|| target_names.clone());
 
     Ok(PreparedCompare {
         columns,
@@ -1928,6 +1990,27 @@ async fn prepare_data_compare(
         generated_columns,
         norms,
         normalized_columns,
+        rename_to,
+    })
+}
+
+/// 列の対応付けのエラーを `InvalidInput` にする (#2099)。
+fn mapping_error(e: MappingError) -> AppError {
+    AppError::InvalidInput(match e {
+        MappingError::UnknownSource(c) => {
+            format!("column mapping: source column '{c}' does not exist in the table")
+        }
+        MappingError::UnknownTarget { source, target } => format!(
+            "column mapping: target column '{target}' (mapped from '{source}') does not exist on the target table"
+        ),
+        MappingError::Duplicate { target, sources } => format!(
+            "column mapping: target column '{target}' is the destination of more than one source column ({}); map each source column to a different target column",
+            sources.join(", ")
+        ),
+        MappingError::Ambiguous { column, candidates } => format!(
+            "column '{column}' cannot be matched to exactly one column on the target (candidates: {}); rename the columns so that exactly one matches",
+            candidates.join(", ")
+        ),
     })
 }
 
@@ -1944,6 +2027,7 @@ pub(crate) async fn compare_table_data_core(
     limit: Option<usize>,
     all_rows: bool,
     ignore_columns: Option<Vec<String>>,
+    column_mapping: Option<std::collections::HashMap<String, String>>,
 ) -> Result<(DataDiff, Vec<NormalizedColumn>)> {
     let prepared = prepare_data_compare(
         source,
@@ -1953,6 +2037,7 @@ pub(crate) async fn compare_table_data_core(
         source_table,
         target_table,
         ignore_columns,
+        clean_mapping(column_mapping),
     )
     .await?;
     let tables = TablePair {
@@ -2010,6 +2095,10 @@ pub(crate) async fn compare_table_data_core(
         target_count: outcome.target_count,
         generated_columns: prepared.generated_columns,
         verify_only: source.driver_kind() != target.driver_kind(),
+    };
+    let diff = match &prepared.rename_to {
+        Some(names) => diff.into_target_names(names),
+        None => diff,
     };
     Ok((diff, prepared.normalized_columns))
 }
@@ -2636,6 +2725,154 @@ mod keyset_tests {
         let sql = &plan.statements[0].sql;
         assert!(sql.contains("\"orders_archive\""), "{sql}");
         assert!(!sql.contains("INTO \"orders\""), "{sql}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    fn mapping(pairs: &[(&str, &str)]) -> Option<std::collections::HashMap<String, String>> {
+        Some(
+            pairs
+                .iter()
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .collect(),
+        )
+    }
+
+    /// 列名を変えた移行の検証 (#2099): 列の対応表でソース列をターゲットの別名の列に対応付け、
+    /// 差分の検出と、ターゲットの列名での同期 SQL の生成ができる (上限つき・全行の両方)。
+    #[tokio::test]
+    async fn column_mapping_compares_renamed_columns_and_syncs_with_target_names() {
+        let (conn, path) = sqlite_conn("map_ok").await;
+        for ddl in [
+            "CREATE TABLE users_old (uid INTEGER PRIMARY KEY, user_name TEXT, email TEXT)",
+            "CREATE TABLE users_new (id INTEGER PRIMARY KEY, username TEXT, email TEXT)",
+            "INSERT INTO users_old VALUES (1,'a','a@x'),(2,'b','b@x'),(3,'c','c@x')",
+            "INSERT INTO users_new VALUES (1,'a','a@x'),(2,'B','b@x'),(4,'d','d@x')",
+        ] {
+            conn.execute(ddl, None).await.unwrap();
+        }
+        let map = || mapping(&[("uid", "id"), ("user_name", "username")]);
+        for all_rows in [false, true] {
+            let (diff, _) = compare_table_data_core(
+                &conn,
+                "main",
+                &conn,
+                "main",
+                "users_old",
+                "users_new",
+                None,
+                all_rows,
+                None,
+                map(),
+            )
+            .await
+            .unwrap();
+            // 結果はターゲットの列名で持つ。
+            assert_eq!(diff.columns, s(&["id", "username", "email"]));
+            assert_eq!(diff.primary_key, s(&["id"]));
+            assert_eq!(diff.table, "users_new");
+            assert_eq!((diff.source_count, diff.target_count), (3, 3));
+            let status = |st: RowStatus| diff.rows.iter().filter(|r| r.status == st).count();
+            assert_eq!(status(RowStatus::SourceOnly), 1); // id=3
+            assert_eq!(status(RowStatus::Different), 1); // id=2
+            assert_eq!(status(RowStatus::TargetOnly), 1); // id=4
+            let changed = diff
+                .rows
+                .iter()
+                .find(|r| r.status == RowStatus::Different)
+                .map(|r| r.changed_columns.clone());
+            assert_eq!(changed, Some(s(&["username"])));
+            let plan = crate::db::data_diff::generate_data_sync_sql(&diff, true);
+            let sqls: Vec<&str> = plan.statements.iter().map(|x| x.sql.as_str()).collect();
+            assert!(
+                sqls.contains(&"INSERT INTO \"users_new\" (\"id\", \"username\", \"email\") VALUES (3, 'c', 'c@x')"),
+                "{sqls:?}"
+            );
+            assert!(
+                sqls.contains(&"UPDATE \"users_new\" SET \"username\" = 'b' WHERE \"id\" = 2"),
+                "{sqls:?}"
+            );
+            assert!(
+                sqls.contains(&"DELETE FROM \"users_new\" WHERE \"id\" = 4"),
+                "{sqls:?}"
+            );
+        }
+        // 対応付けた結果が同じなら差分なし。
+        conn.execute("UPDATE users_new SET username='b' WHERE id=2", None)
+            .await
+            .unwrap();
+        conn.execute("DELETE FROM users_new WHERE id=4", None)
+            .await
+            .unwrap();
+        conn.execute("INSERT INTO users_new VALUES (3,'c','c@x')", None)
+            .await
+            .unwrap();
+        let (diff, _) = compare_table_data_core(
+            &conn,
+            "main",
+            &conn,
+            "main",
+            "users_old",
+            "users_new",
+            None,
+            false,
+            None,
+            map(),
+        )
+        .await
+        .unwrap();
+        assert!(diff.rows.is_empty(), "{:?}", diff.rows);
+        // 無視列はソースの列名で指定する。
+        conn.execute("UPDATE users_new SET username='zzz' WHERE id=1", None)
+            .await
+            .unwrap();
+        let (diff, _) = compare_table_data_core(
+            &conn,
+            "main",
+            &conn,
+            "main",
+            "users_old",
+            "users_new",
+            None,
+            false,
+            Some(s(&["user_name"])),
+            map(),
+        )
+        .await
+        .unwrap();
+        assert!(diff.rows.is_empty(), "{:?}", diff.rows);
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// 対応表が無ければ従来どおり欠落列で拒否し、不正な対応表 (存在しない列・複数の列が同じ
+    /// ターゲット列に対応) も分かりやすいエラーにする (#2099)。
+    #[tokio::test]
+    async fn column_mapping_rejects_missing_unknown_and_colliding_columns() {
+        let (conn, path) = sqlite_conn("map_err").await;
+        for ddl in [
+            "CREATE TABLE a (id INTEGER PRIMARY KEY, user_name TEXT)",
+            "CREATE TABLE b (id INTEGER PRIMARY KEY, username TEXT)",
+        ] {
+            conn.execute(ddl, None).await.unwrap();
+        }
+        let run = |m: Option<std::collections::HashMap<String, String>>| {
+            let conn = &conn;
+            async move {
+                compare_table_data_core(conn, "main", conn, "main", "a", "b", None, false, None, m)
+                    .await
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
+            }
+        };
+        let e = run(None).await.unwrap_err();
+        assert!(e.contains("missing column(s) user_name"), "{e}");
+        assert!(run(mapping(&[("user_name", "username")])).await.is_ok());
+        let e = run(mapping(&[("nope", "username")])).await.unwrap_err();
+        assert!(e.contains("source column 'nope'"), "{e}");
+        let e = run(mapping(&[("user_name", "zzz")])).await.unwrap_err();
+        assert!(e.contains("target column 'zzz'"), "{e}");
+        // user_name → id は、同名の id と同じターゲット列を取り合う。
+        let e = run(mapping(&[("user_name", "id")])).await.unwrap_err();
+        assert!(e.contains("more than one source column"), "{e}");
         let _ = std::fs::remove_file(path);
     }
 

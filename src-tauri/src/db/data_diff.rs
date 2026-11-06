@@ -100,6 +100,32 @@ pub struct DataDiff {
     pub verify_only: bool,
 }
 
+impl DataDiff {
+    /// 列名をターゲット側の名前へ置き換える (#2099)。列名を対応付けた比較の結果を、
+    /// ターゲットの列名で表示し、同期 SQL もターゲットの列名で生成するために使う。
+    /// `target_names` は `columns` と同じ並び。`generated_columns` は呼び出し側が
+    /// 既にターゲットの名前で渡している前提で触らない。
+    pub fn into_target_names(mut self, target_names: &[String]) -> DataDiff {
+        let map: std::collections::HashMap<&str, &str> = self
+            .columns
+            .iter()
+            .zip(target_names)
+            .map(|(s, t)| (s.as_str(), t.as_str()))
+            .collect();
+        let rename = |n: &String| {
+            map.get(n.as_str())
+                .map_or_else(|| n.clone(), |t| t.to_string())
+        };
+        let primary_key: Vec<String> = self.primary_key.iter().map(rename).collect();
+        for row in &mut self.rows {
+            row.changed_columns = row.changed_columns.iter().map(rename).collect();
+        }
+        self.columns = target_names.to_vec();
+        self.primary_key = primary_key;
+        self
+    }
+}
+
 /// Pairs `source` and `target` rows by their primary-key columns and returns
 /// the non-identical rows. `pk_idx` lists the positions of the PK columns
 /// within each row (which is laid out as `columns`).
@@ -896,6 +922,47 @@ mod tests {
         assert_eq!(
             plan.statements[0].sql,
             "UPDATE `t` SET `name` = 'b' WHERE `id` = 2"
+        );
+    }
+
+    // #2099: 列名を対応付けた比較は、ターゲットの列名で同期 SQL を生成する。
+    #[test]
+    fn renamed_columns_generate_sync_sql_with_target_names() {
+        let columns = cols(); // id / name / score
+        let pk = vec![0usize];
+        let source = vec![row(1, "a", 10), row(2, "b", 20), row(3, "c", 30)];
+        let target = vec![row(1, "a", 99), row(2, "b", 20), row(4, "d", 40)];
+        let diffs = compute_data_diff(&columns, &pk, &source, &target);
+        let diff = DataDiff {
+            key_kind: Default::default(),
+            target_driver: DriverKind::Mysql,
+            table: "t2".into(),
+            columns: columns.clone(),
+            primary_key: vec!["id".into()],
+            column_types: vec!["int".into(), "varchar".into(), "int".into()],
+            rows: diffs,
+            truncated: false,
+            source_count: 3,
+            target_count: 3,
+            generated_columns: vec![],
+            verify_only: false,
+        }
+        .into_target_names(&["pk".into(), "full_name".into(), "points".into()]);
+        assert_eq!(diff.columns, vec!["pk", "full_name", "points"]);
+        assert_eq!(diff.primary_key, vec!["pk"]);
+        let plan = generate_data_sync_sql(&diff, true);
+        let sqls: Vec<&str> = plan.statements.iter().map(|s| s.sql.as_str()).collect();
+        assert!(
+            sqls.contains(&"INSERT INTO `t2` (`pk`, `full_name`, `points`) VALUES (3, 'c', 30)"),
+            "{sqls:?}"
+        );
+        assert!(
+            sqls.contains(&"UPDATE `t2` SET `points` = 10 WHERE `pk` = 1"),
+            "{sqls:?}"
+        );
+        assert!(
+            sqls.contains(&"DELETE FROM `t2` WHERE `pk` = 4"),
+            "{sqls:?}"
         );
     }
 

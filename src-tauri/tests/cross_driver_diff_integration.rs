@@ -104,7 +104,7 @@ async fn mysql_vs_postgres_data_diff_normalizes_and_stays_verify_only() {
     for all_rows in [false, true] {
         // 表現が違うだけなので差分なし。
         let (diff, normalized) = t::compare_table_data_via_core(
-            &mysql, &mysql_db, &pg, &pg_db, TABLE, TABLE, None, all_rows, None,
+            &mysql, &mysql_db, &pg, &pg_db, TABLE, TABLE, None, all_rows, None, None,
         )
         .await
         .expect("compare");
@@ -170,6 +170,7 @@ async fn mysql_vs_postgres_data_diff_normalizes_and_stays_verify_only() {
             None,
             all_rows,
             Some(vec!["name".to_string()]),
+            None,
         )
         .await
         .expect("compare with diffs");
@@ -206,6 +207,7 @@ async fn mysql_vs_postgres_data_diff_normalizes_and_stays_verify_only() {
         TEXT_KEY_TABLE,
         None,
         false,
+        None,
         None,
     )
     .await
@@ -290,6 +292,7 @@ async fn postgres_vs_sqlite_data_diff_handles_floats_and_column_case() {
                 None,
                 true,
                 None,
+                None,
             )
             .await
         } else {
@@ -302,6 +305,7 @@ async fn postgres_vs_sqlite_data_diff_handles_floats_and_column_case() {
                 TABLE_PGSQLITE,
                 None,
                 true,
+                None,
                 None,
             )
             .await
@@ -340,6 +344,7 @@ async fn postgres_vs_sqlite_data_diff_handles_floats_and_column_case() {
         TABLE_PGSQLITE,
         None,
         false,
+        None,
         None,
     )
     .await

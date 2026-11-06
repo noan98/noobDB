@@ -31,6 +31,11 @@ export const diffCommands = {
     allRows?: boolean | null;
     /** 比較から外す列 (updated_at など環境ごとに値が違う列, #1539)。 */
     ignoreColumns?: string[] | null;
+    /**
+     * 列の対応付け (ソース列 → ターゲット列, #2099)。列名を変えた移行の検証用で、指定の無い列は同名に
+     * 対応する。同期 SQL はターゲットの列名で生成され、`DataDiff.columns` もターゲットの列名になる。
+     */
+    columnMapping?: Record<string, string> | null;
     /** 全行比較の進捗 (`listenDataDiffProgress`) と `cancelStream` による中止に使う ID (#1612)。 */
     streamId?: string | null;
   }) =>
@@ -44,6 +49,8 @@ export const diffCommands = {
       limit: params.limit ?? null,
       allRows: params.allRows ?? null,
       ignoreColumns: params.ignoreColumns && params.ignoreColumns.length > 0 ? params.ignoreColumns : null,
+      columnMapping:
+        params.columnMapping && Object.keys(params.columnMapping).length > 0 ? params.columnMapping : null,
       streamId: params.streamId ?? null,
     }).then((r) => parseResponse(schemas.dataDiffHandle, r, "compare_table_data")),
 };

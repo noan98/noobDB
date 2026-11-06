@@ -1,0 +1,143 @@
+{
+  "description": "データ比較の列の対応付け (#2099) の判定を Rust / TS で固定する共有ゴールデン。Rust の src-tauri/src/db/column_mapping.rs (golden_vectors) の unmatched_source_columns と、TS の src/components/columnMapping.ts の unmatchedSourceColumns が、各ケースの unmatched (対応表に無く、ターゲットに同名の列も無いソース列。caseInsensitive は同名の照合規則) を返すこと。判定を変えるときは両方と、この JSON の境界ケースを揃える。",
+  "cases": [
+    {
+      "name": "all same names",
+      "caseInsensitive": false,
+      "source": [
+        "id",
+        "name"
+      ],
+      "target": [
+        "id",
+        "name"
+      ],
+      "mapping": {},
+      "unmatched": []
+    },
+    {
+      "name": "renamed column is unmatched",
+      "caseInsensitive": false,
+      "source": [
+        "id",
+        "user_name",
+        "email"
+      ],
+      "target": [
+        "id",
+        "username",
+        "email"
+      ],
+      "mapping": {},
+      "unmatched": [
+        "user_name"
+      ]
+    },
+    {
+      "name": "mapping resolves the unmatched column",
+      "caseInsensitive": false,
+      "source": [
+        "id",
+        "user_name"
+      ],
+      "target": [
+        "id",
+        "username"
+      ],
+      "mapping": {
+        "user_name": "username"
+      },
+      "unmatched": []
+    },
+    {
+      "name": "postgres is case sensitive",
+      "caseInsensitive": false,
+      "source": [
+        "id",
+        "Name"
+      ],
+      "target": [
+        "id",
+        "name"
+      ],
+      "mapping": {},
+      "unmatched": [
+        "Name"
+      ]
+    },
+    {
+      "name": "mysql / sqlite / cross-driver ignore case",
+      "caseInsensitive": true,
+      "source": [
+        "id",
+        "Name"
+      ],
+      "target": [
+        "ID",
+        "name"
+      ],
+      "mapping": {},
+      "unmatched": []
+    },
+    {
+      "name": "extra target columns do not matter",
+      "caseInsensitive": false,
+      "source": [
+        "id"
+      ],
+      "target": [
+        "id",
+        "created_at"
+      ],
+      "mapping": {},
+      "unmatched": []
+    },
+    {
+      "name": "every source column missing",
+      "caseInsensitive": true,
+      "source": [
+        "a",
+        "b"
+      ],
+      "target": [
+        "x",
+        "y"
+      ],
+      "mapping": {},
+      "unmatched": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "name": "partial mapping leaves the rest",
+      "caseInsensitive": false,
+      "source": [
+        "a",
+        "b",
+        "id"
+      ],
+      "target": [
+        "x",
+        "y",
+        "id"
+      ],
+      "mapping": {
+        "a": "x"
+      },
+      "unmatched": [
+        "b"
+      ]
+    },
+    {
+      "name": "empty source",
+      "caseInsensitive": false,
+      "source": [],
+      "target": [
+        "id"
+      ],
+      "mapping": {},
+      "unmatched": []
+    }
+  ]
+}

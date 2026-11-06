@@ -5431,6 +5431,13 @@ const en = {
   schemaCompareDataLimit: "Row limit",
   schemaCompareDataAllRows: "Compare all rows",
   schemaCompareDataIgnore: "Ignore columns",
+  schemaCompareColMapTitle: "Column mapping",
+  schemaCompareColMapHint:
+    "Columns with the same name are matched automatically. Assign the remaining source columns to renamed target columns (for example user_name → username). Unassigned columns on the target are not compared.",
+  schemaCompareColMapNone: "Not assigned",
+  schemaCompareColMapTarget: "Target column for {column}",
+  schemaCompareColMapUnassigned:
+    "No same-name column on the target and not assigned yet: {columns}. The comparison cannot run until each one is assigned.",
   schemaCompareDataIgnorePlaceholder: "e.g. updated_at, modified_by",
   schemaCompareDataTruncatedAll:
     "The comparison stopped at the safety cap on rows or differences, so the rest was not compared and DELETE is not generated. Narrow the table or compare it in parts.",
@@ -12800,6 +12807,13 @@ const ja: Dict = {
   schemaCompareDataLimit: "件数上限",
   schemaCompareDataAllRows: "全行を比較する",
   schemaCompareDataIgnore: "除外列",
+  schemaCompareColMapTitle: "列の対応付け",
+  schemaCompareColMapHint:
+    "同名の列は自動で対応付きます。残りのソース列を、名前を変えたターゲット列に割り当てます (例: user_name → username)。割り当てなかったターゲット側の列は比較しません。",
+  schemaCompareColMapNone: "未割り当て",
+  schemaCompareColMapTarget: "{column} の対応先 (ターゲット列)",
+  schemaCompareColMapUnassigned:
+    "ターゲットに同名の列が無く、まだ割り当てていない列: {columns}。すべて割り当てるまで比較できません。",
   schemaCompareDataIgnorePlaceholder: "例: updated_at, modified_by",
   schemaCompareDataTruncatedAll:
     "行数または差分数の安全上限で比較を止めたため、残りは未比較で、削除 (DELETE) は生成しません。対象を絞るか分けて比較してください。",

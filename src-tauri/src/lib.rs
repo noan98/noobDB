@@ -616,6 +616,7 @@ pub mod __test_api {
         limit: Option<usize>,
         all_rows: bool,
         ignore_columns: Option<Vec<String>>,
+        column_mapping: Option<std::collections::HashMap<String, String>>,
     ) -> crate::error::Result<(DataDiff, Vec<crate::db::cross_compare::NormalizedColumn>)> {
         crate::commands::diff::compare_table_data_core(
             source,
@@ -627,6 +628,7 @@ pub mod __test_api {
             limit,
             all_rows,
             ignore_columns,
+            column_mapping,
         )
         .await
     }

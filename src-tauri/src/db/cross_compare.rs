@@ -65,6 +65,16 @@ pub struct CompareNorms {
 }
 
 impl CompareNorms {
+    /// 同一ドライバで列名だけを対応付ける比較 (#2099) 用。値は厳密に比べ (`types` が空)、
+    /// 整数キーの制約も課さない。ターゲットの SELECT / ORDER BY の列名だけを差し替える。
+    pub fn rename_only(target_columns: Vec<String>, target_pk: Vec<String>) -> Self {
+        Self {
+            types: Vec::new(),
+            target_columns,
+            target_pk,
+        }
+    }
+
     /// 全列を「そのまま比較」にする (同一ドライバ向けの恒等)。
     #[cfg(test)]
     pub fn identity(n: usize) -> Self {
