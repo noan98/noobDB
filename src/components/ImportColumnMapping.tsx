@@ -163,7 +163,12 @@ export function ImportColumnMapping({
                   >
                     {col.name}
                   </chakra.span>
-                  <chakra.span textStyle="caption" fontFamily="mono" whiteSpace="nowrap">
+                  <chakra.span
+                    textStyle="caption"
+                    fontFamily="mono"
+                    whiteSpace="nowrap"
+                    title={col.data_type}
+                  >
                     {shortTypeName(col.data_type)}
                   </chakra.span>
                   {col.key === "PRI" && (
@@ -180,7 +185,6 @@ export function ImportColumnMapping({
                     display="inline-flex"
                     alignItems="center"
                     gap="1"
-                    role="status"
                   >
                     <Icon name="warning" size={ICON_SIZES.sm} />
                     {t("importMappingRequiredRow")}
