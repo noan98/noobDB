@@ -5,7 +5,7 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "../../components/Mod
 import { Button } from "../../components/ui";
 
 // 内容の増減で見出しと主ボタンが上下へジャンプしない (上寄せアンカー配置、#2123)。
-function Harness({ placement }: { placement?: "top" | "center" }) {
+function Harness({ placement, growBy = 240 }: { placement?: "top" | "center"; growBy?: number }) {
   const [extra, setExtra] = useState(false);
   return (
     <Modal onClose={() => {}} placement={placement} width="480px">
@@ -16,7 +16,7 @@ function Harness({ placement }: { placement?: "top" | "center" }) {
         <button type="button" onClick={() => setExtra((v) => !v)}>
           grow
         </button>
-        {extra && <div style={{ height: 240 }}>more</div>}
+        {extra && <div style={{ height: growBy }}>more</div>}
       </ModalBody>
       <ModalFooter>
         <Button type="button">ok</Button>
@@ -48,5 +48,15 @@ describe("Modal の配置 (実ブラウザ)", () => {
     await screen.getByRole("button", { name: "grow" }).click();
     await expect.element(screen.getByText("more")).toBeVisible();
     expect(top(heading.element())).toBeLessThan(before);
+  });
+
+  it("top で本文がとても高くても、モーダルの下端 (主ボタン) は画面内に収まる", async () => {
+    const screen = await renderInBrowser(<Harness growBy={2000} />);
+    await screen.getByRole("button", { name: "grow" }).click();
+    const ok = screen.getByRole("button", { name: "ok" });
+    await expect.element(ok).toBeVisible();
+    const dialog = screen.getByRole("dialog").element();
+    await expect.poll(() => dialog.getBoundingClientRect().bottom).toBeLessThanOrEqual(window.innerHeight);
+    expect(ok.element().getBoundingClientRect().bottom).toBeLessThanOrEqual(window.innerHeight);
   });
 });

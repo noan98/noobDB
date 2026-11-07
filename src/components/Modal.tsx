@@ -233,6 +233,9 @@ export function Modal({
                 // 上寄せの余白ぶんを引いても 90vh を超えない (フォント拡大時も下端が見切れない)。
                 maxHeight:
                   placement === "top" ? "min(90vh, calc(100dvh - var(--space-12) - var(--space-5)))" : "90vh",
+                // Chakra の dialog recipe は top 配置で content に縦マージン (--dialog-base-margin) を
+                // 付けるため、上余白が二重になり背の高いモーダルの下端が画面外へ出る。打ち消す。
+                ...(placement === "top" ? { my: "0" } : {}),
                 overflow: "hidden",
                 bg: "app.surface",
                 border: "1px solid",
