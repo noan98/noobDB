@@ -4343,6 +4343,100 @@ async fn statement_timeout_is_restored_after_scoped_stream_when_env_set() {
     }
 }
 
+/// #2130: アプリ側の猶予つきタイムアウトが、より厳しい既存の `statement_timeout`
+/// (接続ごとの初期化 SQL #522) を緩めない。短い方で止まり、実行後もその値が保たれる。
+#[tokio::test]
+async fn shorter_existing_statement_timeout_is_not_loosened_when_env_set() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let mut opts = t::parse_postgres_url(&url).expect("valid url");
+    opts.init_sql = Some("SET statement_timeout = '1s'".into());
+    let conn = t::connect(&opts).await.expect("connect");
+    let start = std::time::Instant::now();
+    let ctx = t::ServerStopCtx::new(Some(30));
+    let res = t::server_stop_scope(ctx, async {
+        conn.execute_stream("SELECT pg_sleep(10)", None, 10, 10, |_| Ok(()))
+            .await
+    })
+    .await;
+    assert!(res.is_err(), "既存の 1s で止まるはず: {res:?}");
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(8),
+        "緩められて長く走った: {:?}",
+        start.elapsed()
+    );
+    // 実行後も、プールのどの接続でも元の値が保たれる。
+    for _ in 0..8 {
+        let r = conn
+            .execute("SHOW statement_timeout", None)
+            .await
+            .expect("show");
+        assert!(
+            format!("{:?}", r.rows).contains("1s"),
+            "statement_timeout が変わった: {:?}",
+            r.rows
+        );
+    }
+    conn.close().await;
+}
+
+/// #2130: トランザクション内 (ドライラン) の経路でも、より厳しい既存の
+/// `statement_timeout` を緩めず、終了後もその値が保たれる。
+#[tokio::test]
+async fn shorter_existing_statement_timeout_is_not_loosened_in_dry_run_when_env_set() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let mut opts = t::parse_postgres_url(&url).expect("valid url");
+    opts.init_sql = Some("SET statement_timeout = '1s'".into());
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS public.noobdb_pg_2130 (id int PRIMARY KEY, label text)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO public.noobdb_pg_2130 VALUES (1, 'a') ON CONFLICT DO NOTHING",
+        None,
+    )
+    .await
+    .expect("insert");
+    let start = std::time::Instant::now();
+    let ctx = t::ServerStopCtx::new(Some(30));
+    let res = t::server_stop_scope(ctx, async {
+        conn.preview_execute_with_limit(
+            "UPDATE public.noobdb_pg_2130 SET label = 'x' WHERE id = 1 AND pg_sleep(10) IS NOT NULL",
+            None,
+            10,
+        )
+        .await
+    })
+    .await;
+    assert!(res.is_err(), "既存の 1s で止まるはず");
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(8),
+        "緩められて長く走った: {:?}",
+        start.elapsed()
+    );
+    for _ in 0..8 {
+        let r = conn
+            .execute("SHOW statement_timeout", None)
+            .await
+            .expect("show");
+        assert!(
+            format!("{:?}", r.rows).contains("1s"),
+            "statement_timeout が変わった: {:?}",
+            r.rows
+        );
+    }
+    conn.execute("DROP TABLE IF EXISTS public.noobdb_pg_2130", None)
+        .await
+        .expect("drop");
+    conn.close().await;
+}
+
 /// 定期メンテナンス (#2025) の VACUUM (ANALYZE) がトランザクション外の単文実行で通る。
 #[tokio::test]
 async fn postgres_maintenance_vacuum_analyze_runs_outside_transaction() {
