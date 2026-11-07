@@ -115,7 +115,7 @@ const BASELINE_ALLOWED: ReadonlyArray<{
     ruleId: "color-contrast",
     targets: [".th-type", ".help-impact-badge"],
     reason:
-      "実行効果バッジ (#15803d on #d4e3df = 3.78:1) とサンプルグリッドの " +
+      "DB への影響バッジ (.help-impact-badge、読み取りのみ = success 文字色) とサンプルグリッドの " +
       ".th-type (result-grid と同一)。配色調整は #559 で対応。",
   },
 ];

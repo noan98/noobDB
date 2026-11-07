@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { renderWithProviders, screen, fireEvent, within } from "./testUtils";
 import { HelpView } from "../components/HelpView";
 import { t } from "../i18n";
@@ -23,19 +23,66 @@ describe("HelpView render smoke (#604)", () => {
   });
 });
 
-describe("HelpView 節ナビ・検索・導線 (#1273 / #1274)", () => {
-  beforeEach(() => {
-    Element.prototype.scrollIntoView = vi.fn();
+/** 目次の項目ボタン (タイトルで引く)。 */
+function navItem(title: string) {
+  const nav = screen.getByRole("navigation", { name: t("helpTitle") });
+  return within(nav).getByRole("button", {
+    name: new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+  });
+}
+
+/** 詳細ペインの見出し (h3)。 */
+function detailHeading() {
+  return within(screen.getByTestId("help-detail")).getByRole("heading", { level: 3 });
+}
+
+describe("HelpView 目次 + 詳細 (#1273 / #1274 / ヘルプ刷新)", () => {
+  it("最初は目次の先頭項目を表示し、目次のクリックで詳細が切り替わる", () => {
+    renderWithProviders(<HelpView onClose={() => {}} />);
+    expect(detailHeading()).toHaveTextContent(t("helpRunTitle"));
+    fireEvent.click(navItem(t("helpDryRunTitle")));
+    expect(detailHeading()).toHaveTextContent(t("helpDryRunTitle"));
+    expect(navItem(t("helpDryRunTitle"))).toHaveAttribute("aria-current", "true");
+    // 手順は番号付きリスト、注意は Callout で出る。
+    expect(screen.getByText(t("helpDryRunStep1"))).toBeInTheDocument();
+    expect(screen.getByText(t("helpDryRunNote"))).toBeInTheDocument();
   });
 
-  it("検索欄でカードを絞り込める", () => {
+  it("DB に書き込む項目だけに目印が付き、詳細にもバッジが出る", () => {
     renderWithProviders(<HelpView onClose={() => {}} />);
-    expect(screen.getByText(t("helpDryRunTitle"))).toBeInTheDocument();
+    expect(navItem(t("helpRunTitle"))).toHaveTextContent(t("helpImpactWrites"));
+    expect(navItem(t("helpDryRunTitle"))).not.toHaveTextContent(t("helpImpactWrites"));
+    expect(within(screen.getByTestId("help-detail")).getByText(t("helpImpactWrites"))).toBeInTheDocument();
+    fireEvent.click(navItem(t("helpExplainTitle")));
+    expect(within(screen.getByTestId("help-detail")).getByText(t("helpImpactReadOnly"))).toBeInTheDocument();
+  });
+
+  it("前へ / 次へで目次順に移動できる", () => {
+    renderWithProviders(<HelpView onClose={() => {}} />);
+    expect(screen.queryByTestId("help-prev")).toBeNull();
+    fireEvent.click(screen.getByTestId("help-next"));
+    expect(detailHeading()).toHaveTextContent(t("helpDryRunTitle"));
+    fireEvent.click(screen.getByTestId("help-prev"));
+    expect(detailHeading()).toHaveTextContent(t("helpRunTitle"));
+  });
+
+  it("目次で ↓ / ↑ キーを押すと選択が移る", () => {
+    renderWithProviders(<HelpView onClose={() => {}} />);
+    const nav = screen.getByRole("navigation", { name: t("helpTitle") });
+    fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(detailHeading()).toHaveTextContent(t("helpDryRunTitle"));
+    fireEvent.keyDown(nav, { key: "ArrowUp" });
+    expect(detailHeading()).toHaveTextContent(t("helpRunTitle"));
+  });
+
+  it("検索欄で目次を絞り込み、表示中の項目が消えたら残った先頭を出す", () => {
+    renderWithProviders(<HelpView onClose={() => {}} />);
     fireEvent.change(screen.getByPlaceholderText(t("helpSearchPlaceholder")), {
       target: { value: t("helpExplainTitle") },
     });
-    expect(screen.getAllByText(t("helpExplainTitle")).length).toBeGreaterThan(0);
-    expect(screen.queryByText(t("helpDryRunTitle"))).toBeNull();
+    const nav = screen.getByRole("navigation", { name: t("helpTitle") });
+    expect(within(nav).queryByRole("button", { name: t("helpDryRunTitle") })).toBeNull();
+    expect(detailHeading()).toHaveTextContent(t("helpExplainTitle"));
   });
 
   it("一致が無いと空表示になる", () => {
@@ -43,14 +90,26 @@ describe("HelpView 節ナビ・検索・導線 (#1273 / #1274)", () => {
     fireEvent.change(screen.getByPlaceholderText(t("helpSearchPlaceholder")), {
       target: { value: "zzzz-no-such-entry" },
     });
-    expect(screen.getByText(t("helpSearchNoMatch"))).toBeInTheDocument();
+    expect(screen.getAllByText(t("helpSearchNoMatch")).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("navigation", { name: t("helpTitle") })).toBeNull();
   });
 
-  it("節ボタンのクリックで該当節へスクロールする", () => {
+  it("ショートカットはキーと説明の表で出る", () => {
     renderWithProviders(<HelpView onClose={() => {}} />);
-    const nav = screen.getByRole("navigation", { name: t("helpTitle") });
-    fireEvent.click(within(nav).getByRole("button", { name: t("helpSectionGuards") }));
-    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+    fireEvent.click(navItem(t("helpSectionShortcuts")));
+    expect(detailHeading()).toHaveTextContent(t("helpSectionShortcuts"));
+    const tables = within(screen.getByTestId("help-detail")).getAllByRole("table");
+    expect(tables.length).toBeGreaterThan(0);
+    expect(screen.getByText(t("shortcutCatGlobal"))).toBeInTheDocument();
+  });
+
+  it("ショートカットの説明で検索すると、ショートカット表だけが残る", () => {
+    renderWithProviders(<HelpView onClose={() => {}} />);
+    fireEvent.change(screen.getByPlaceholderText(t("helpSearchPlaceholder")), {
+      target: { value: t("helpShortcutRunDesc") },
+    });
+    expect(detailHeading()).toHaveTextContent(t("helpSectionShortcuts"));
+    expect(screen.getAllByRole("row")).toHaveLength(1);
   });
 
   it("ツアー / ショートカット一覧ボタンがコールバックを呼ぶ", () => {
@@ -71,8 +130,10 @@ describe("HelpView 節ナビ・検索・導線 (#1273 / #1274)", () => {
     unmount();
     const onOpenFeature = vi.fn();
     renderWithProviders(<HelpView onClose={() => {}} onOpenFeature={onOpenFeature} />);
+    fireEvent.click(navItem(t("helpSqlLintTitle")));
     fireEvent.click(screen.getByRole("button", { name: t("helpTryAria", { title: t("helpSqlLintTitle") }) }));
     expect(onOpenFeature).toHaveBeenCalledWith({ kind: "settings", section: "settings-sec-sql-lint" });
+    fireEvent.click(navItem(t("helpSchemaCompareTitle")));
     fireEvent.click(
       screen.getByRole("button", { name: t("helpTryAria", { title: t("helpSchemaCompareTitle") }) }),
     );
@@ -82,40 +143,16 @@ describe("HelpView 節ナビ・検索・導線 (#1273 / #1274)", () => {
   it("SSM 経路の項目が表示され、『試す』で新規接続フォームを開く (#1977)", () => {
     const onOpenFeature = vi.fn();
     renderWithProviders(<HelpView onClose={() => {}} onOpenFeature={onOpenFeature} />);
-    expect(screen.getByText(t("helpSsmTitle"))).toBeInTheDocument();
-    expect(screen.getByText(t("helpSsmTroubleTitle"))).toBeInTheDocument();
+    expect(navItem(t("helpSsmTroubleTitle"))).toBeInTheDocument();
+    fireEvent.click(navItem(t("helpSsmTitle")));
     fireEvent.click(screen.getByRole("button", { name: t("helpTryAria", { title: t("helpSsmTitle") }) }));
     expect(onOpenFeature).toHaveBeenCalledWith({ kind: "view", view: "newConnection" });
   });
 
   it("SSM トラブル項目には『試す』ボタンが無い (#1977)", () => {
     renderWithProviders(<HelpView onClose={() => {}} onOpenFeature={vi.fn()} />);
-    expect(
-      screen.queryByRole("button", { name: t("helpTryAria", { title: t("helpSsmTroubleTitle") }) }),
-    ).toBeNull();
-  });
-});
-
-describe("HelpView 視覚アンカー (#1835)", () => {
-  it("各節の見出しと全フィーチャーカードに装飾グリフが付き、支援技術から隠れる", () => {
-    renderWithProviders(<HelpView onClose={() => {}} />);
-    const cards = screen.getAllByRole("article");
-    const featureGlyphs = screen.getAllByTestId("help-feature-glyph");
-    expect(featureGlyphs).toHaveLength(cards.length);
-    for (const c of cards) expect(within(c).getAllByTestId("help-feature-glyph")).toHaveLength(1);
-    const sectionGlyphs = screen.getAllByTestId("help-section-glyph");
-    expect(sectionGlyphs.length).toBeGreaterThan(0);
-    for (const g of [...featureGlyphs, ...sectionGlyphs]) {
-      expect(g).toHaveAttribute("aria-hidden", "true");
-      expect(g.querySelector("svg")).not.toBeNull();
-    }
-  });
-});
-
-describe("HelpView ショートカット節のグリフ (#1835)", () => {
-  it("category ごとに異なるグリフになる (全カード同一ではない)", () => {
-    renderWithProviders(<HelpView onClose={() => {}} />);
-    const glyphs = screen.getAllByTestId("help-feature-glyph").map((g) => g.innerHTML);
-    expect(new Set(glyphs).size).toBeGreaterThan(5);
+    fireEvent.click(navItem(t("helpSsmTroubleTitle")));
+    expect(detailHeading()).toHaveTextContent(t("helpSsmTroubleTitle"));
+    expect(screen.queryByTestId("help-try")).toBeNull();
   });
 });
