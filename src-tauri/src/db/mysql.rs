@@ -4518,6 +4518,7 @@ fn main_statement_is_mutation(masked: &[char]) -> bool {
 /// タイムアウトがあれば `max_execution_time` を (猶予つきで) セッションへ設定する。
 /// `max_execution_time` は読み取り専用の SELECT にしか効かず、MariaDB には変数が無い
 /// (その場合は ID だけ控える)。書き込み文はタイムアウト / キャンセル時の `KILL QUERY` が止める。
+/// 既存の値の方が厳しければ設定せず `None` を返す (復元しない)。
 ///
 /// 設定した場合は設定前の値を返す — 呼び出し側が文の後に [`restore_max_execution_time`]
 /// で戻す。`in_tx` (ドライラン) は DML 専用で `max_execution_time` が効かず、セッション変数は
