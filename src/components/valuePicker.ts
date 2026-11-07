@@ -29,8 +29,8 @@
 
 import type { CellValue, QueryResult, TableColumnInfo } from "../api/tauri";
 import { escapeLikeWildcards } from "./dataSearch";
-import { qualifiedTableRef, quoteString } from "./cellEdit";
-import { quoteIdentFor } from "./sqlDialect";
+import { quoteString } from "./cellEdit";
+import { qualifiedTableName, quoteIdentFor } from "./sqlDialect";
 
 /** FK 候補 1 回の取得で返す既定の最大件数。 */
 export const FK_CANDIDATE_LIMIT = 50;
@@ -62,7 +62,7 @@ function textCastExpr(driver: string, quotedCol: string): string {
 }
 
 function tableRef(driver: string, database: string | null | undefined, table: string): string {
-  return database ? qualifiedTableRef(driver, database, table) : quoteIdentFor(driver, table);
+  return database ? qualifiedTableName(driver, database, table) : quoteIdentFor(driver, table);
 }
 
 export interface FkCandidatesParams {

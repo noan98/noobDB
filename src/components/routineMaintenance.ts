@@ -19,7 +19,7 @@
 
 import type { I18nKey } from "../i18n";
 import { splitSqlStatements } from "../sqlScript";
-import { quoteIdentFor } from "./sqlDialect";
+import { quoteIdentFor, qualifiedTableName } from "./sqlDialect";
 
 export type EditableObjectKind = "procedure" | "function" | "trigger";
 
@@ -38,15 +38,9 @@ export function routineApplyIsAtomic(driver: string): boolean {
   return driver !== "mysql";
 }
 
-/** 修飾名: MySQL `db`.`name`、PostgreSQL "schema"."name"、SQLite は修飾なし。 */
-function qualified(driver: string, database: string, name: string): string {
-  if (driver === "sqlite" || !database) return quoteIdentFor(driver, name);
-  return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, name)}`;
-}
-
 /** 新規作成テンプレート。名前・型・本体はユーザが書き換える前提のプレースホルダ。 */
 export function buildRoutineTemplate(driver: string, kind: EditableObjectKind, database: string): string {
-  const q = (name: string) => qualified(driver, database, name);
+  const q = (name: string) => qualifiedTableName(driver, database, name);
   if (driver === "postgres") {
     if (kind === "procedure") {
       return [
@@ -240,7 +234,7 @@ export function buildApplyRoutineStatements(input: ApplyRoutineInput): ApplyRout
       if (!table) return { ok: false, error: "routineEditErrNoTable" };
       statements.push(`DROP TRIGGER IF EXISTS ${ident} ON ${table};`);
     } else if (driver === "mysql") {
-      statements.push(`DROP ${kindWord} IF EXISTS ${qualified(driver, database, name)};`);
+      statements.push(`DROP ${kindWord} IF EXISTS ${qualifiedTableName(driver, database, name)};`);
     } else {
       statements.push(`DROP TRIGGER IF EXISTS ${ident};`);
     }

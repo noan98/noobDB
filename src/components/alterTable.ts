@@ -39,7 +39,7 @@
 // 呼び出し側 (i18n) に任せる — このモジュールは表示に依存しない。
 
 import type { SqliteRebuildEdit } from "../api/tauri";
-import { quoteIdentFor } from "./sqlDialect";
+import { qualifiedTableName, quoteIdentFor } from "./sqlDialect";
 import {
   activeGenerated,
   CURRENT_TIME_FN_RE,
@@ -298,11 +298,6 @@ function columnCommentSql(
 
 /** 完全修飾したテーブル名 (SQLite はスキーマ非対応なので table のみ)。`tableMaintenance.ts` /
  * `createTable.ts` と同じ規則。 */
-function qualifiedName(driver: string, database: string | null | undefined, table: string): string {
-  if (driver === "sqlite" || !database) return quoteIdentFor(driver, table);
-  return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
-}
-
 /** `ADD COLUMN` 1 列ぶんの定義断片 (`<ident> <type> [NOT NULL] [DEFAULT x]`)。 */
 function newColumnLine(driver: string, col: NewColumn): string {
   const type = col.type.trim() || "TEXT";
@@ -791,7 +786,7 @@ export function buildSqliteRebuildEdit(form: AlterTableForm): SqliteRebuildEdit 
  * ({@link buildSqliteRebuildEdit})。
  */
 export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan {
-  const tIdent = qualifiedName(driver, form.database, form.table);
+  const tIdent = qualifiedTableName(driver, form.database, form.table);
   const statements: AlterStatement[] = [];
   const warnings: AlterWarning[] = [];
   // SQLite の型 / NOT NULL / DEFAULT 変更・FK / CHECK の変更はテーブル再作成で行う (#1888)。

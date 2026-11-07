@@ -528,7 +528,7 @@ describe("buildAlterPlan: 式 DEFAULT / DEFAULT_GENERATED (#1527)", () => {
     );
     const lite = buildAlterPlan(
       "sqlite",
-      form({ added: [{ name: "c", type: "text", notNull: false, defaultValue: "007" }] }),
+      form({ database: "main", added: [{ name: "c", type: "text", notNull: false, defaultValue: "007" }] }),
     );
     expect(lite.statements[0].sql).toBe('ALTER TABLE "users" ADD COLUMN "c" text DEFAULT \'007\';');
   });

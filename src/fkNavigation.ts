@@ -7,17 +7,7 @@
 
 import type { CellValue } from "./api/tauri";
 import { rowValueLiteral } from "./components/cellEdit";
-import { quoteIdentFor } from "./components/sqlDialect";
-
-/**
- * テーブル参照を必要なら `database`.`table` で修飾する。SQLite はデータベース
- * 修飾子を持たず、`database` が空のときも修飾しない (既存のジャンプ SQL 生成と
- * 同じ判定)。DB 全体検索 (`dataSearch.ts`、#748) のジャンプ SQL 生成とも共有する。
- */
-export function qualifiedTable(driver: string, database: string | null | undefined, table: string): string {
-  if (driver === "sqlite" || !database) return quoteIdentFor(driver, table);
-  return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
-}
+import { qualifiedTableName, quoteIdentFor } from "./components/sqlDialect";
 
 /** `column` を `value` に一致させる述語を NULL 安全に生成する。 */
 function matchPredicate(driver: string, column: string, value: CellValue, typeName?: string): string {
@@ -47,7 +37,7 @@ export interface FkJumpParams {
  * 例: `user_id` のセル → `SELECT * FROM users WHERE id = 42`。
  */
 export function buildFkJumpSql(p: FkJumpParams): string {
-  return `SELECT * FROM ${qualifiedTable(p.driver, p.database, p.refTable)} WHERE ${matchPredicate(
+  return `SELECT * FROM ${qualifiedTableName(p.driver, p.database, p.refTable)} WHERE ${matchPredicate(
     p.driver,
     p.refColumn,
     p.value,
@@ -94,7 +84,7 @@ export interface ReverseRefParams {
  * 生成する。例: `users.id = 42` の行 → `SELECT * FROM orders WHERE user_id = 42`。
  */
 export function buildReverseRefSql(p: ReverseRefParams): string {
-  return `SELECT * FROM ${qualifiedTable(p.driver, p.childSchema ?? p.database, p.childTable)} WHERE ${matchPredicate(
+  return `SELECT * FROM ${qualifiedTableName(p.driver, p.childSchema ?? p.database, p.childTable)} WHERE ${matchPredicate(
     p.driver,
     p.childColumn,
     p.value,

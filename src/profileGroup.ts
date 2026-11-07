@@ -45,5 +45,6 @@ export function buildGroupMoveRequest(profile: ConnectionProfile, group: string 
     init_sql: profile.init_sql ?? null,
     aws_iam: profile.aws_iam ?? null,
     ssm: profile.ssm ?? null,
+    sqlite_attachments: profile.sqlite_attachments ?? [],
   };
 }

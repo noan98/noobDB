@@ -20,3 +20,19 @@ export function suggestAttachAlias(path: string, existing: readonly SqliteAttach
   for (let n = 2; used.has(name.toLowerCase()); n++) name = `${base}_${n}`;
   return name;
 }
+
+/**
+ * `index` 番目の行の別名の問題 (空は未入力なので問題にしない)。`invalid` は形式の誤り、`duplicate` は
+ * 先に出てきた行と大文字小文字を除いて同じ別名 (バックエンド `validate_attachments` と同じ規則)。
+ */
+export function attachAliasProblem(
+  attachments: readonly SqliteAttachment[],
+  index: number,
+): "invalid" | "duplicate" | null {
+  const alias = (attachments[index]?.alias ?? "").trim();
+  if (alias === "") return null;
+  if (!isValidAttachAlias(alias)) return "invalid";
+  const lower = alias.toLowerCase();
+  const dup = attachments.slice(0, index).some((a) => a.alias.trim().toLowerCase() === lower);
+  return dup ? "duplicate" : null;
+}

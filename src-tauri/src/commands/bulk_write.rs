@@ -202,17 +202,9 @@ pub(crate) fn apply_approved_counts(
 }
 
 pub(crate) fn qualified_ref(driver: DriverKind, database: &str, table: &str) -> String {
-    // SQLite は `main` なら修飾しない。設定でアタッチしたファイルの別名のときだけ
-    // `"別名"."表"` にする (フロントの `qualifiedTableRef` と同じ規約、#2129)。
+    // SQLite の規則は `db::sync::sqlite_table_ref` に一本化 (フロントの `qualifiedTableName` と同じ、#2129)。
     match driver {
-        DriverKind::Sqlite if database.is_empty() || database.eq_ignore_ascii_case("main") => {
-            quote_ident(driver, table)
-        }
-        DriverKind::Sqlite => format!(
-            "{}.{}",
-            quote_ident(driver, database),
-            quote_ident(driver, table)
-        ),
+        DriverKind::Sqlite => crate::db::sync::sqlite_table_ref(database, table),
         DriverKind::Mysql | DriverKind::Postgres => {
             format!(
                 "{}.{}",
@@ -543,16 +535,14 @@ pub(crate) async fn bulk_update_cells_inner(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     let driver = session.conn.driver_kind();
+    // SQLite は、アタッチ先でない値 (古いプロファイルの `database` など) を main 扱いにする (#2129)。
+    let table_db = session
+        .conn
+        .resolve_attached_database(database.as_deref().unwrap_or_default());
     let built = if groups.is_empty() {
         Vec::new()
     } else {
-        build_bulk_update_statements_expected(
-            driver,
-            database.as_deref().unwrap_or_default(),
-            &table,
-            &pk_columns,
-            &groups,
-        )?
+        build_bulk_update_statements_expected(driver, &table_db, &table, &pk_columns, &groups)?
     };
     let mut statements: Vec<String> = Vec::with_capacity(built.len() + extra_statements.len());
     let mut expects: Vec<RowExpectation> = Vec::with_capacity(statements.capacity());
@@ -588,7 +578,7 @@ pub(crate) async fn bulk_update_cells_inner(
     // フライトレコーダー (#2024): 適用前に対象行の before を読む。読み取り専用セッションなどで
     // 適用が拒否されるときは記録しない (保存は Committed のときだけ)。
     let capture_cfg = options.capture.clone().filter(|_| !session.skip_history);
-    let table_ref = qualified_ref(driver, database.as_deref().unwrap_or_default(), &table);
+    let table_ref = qualified_ref(driver, &table_db, &table);
     let capture_plan = match &capture_cfg {
         Some(cfg) if !session.read_only || session.emergency_write_active() => Some(
             bulk_capture::prepare(

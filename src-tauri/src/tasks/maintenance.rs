@@ -118,7 +118,8 @@ pub fn validate_database(driver: Option<DriverKind>, database: Option<&str>) -> 
 
 fn qualified(driver: DriverKind, database: Option<&str>, table: &str) -> String {
     match (driver, database.map(str::trim).filter(|d| !d.is_empty())) {
-        (DriverKind::Sqlite, _) | (_, None) => quote_ident(driver, table),
+        (DriverKind::Sqlite, db) => crate::db::sync::sqlite_table_ref(db.unwrap_or(""), table),
+        (_, None) => quote_ident(driver, table),
         (_, Some(db)) => format!("{}.{}", quote_ident(driver, db), quote_ident(driver, table)),
     }
 }
@@ -313,8 +314,13 @@ mod tests {
     #[test]
     fn sqlite_statements() {
         assert_eq!(
-            sqls(build_statements(Sqlite, Some("ignored"), &s(&["t"]), Analyze).unwrap()),
+            sqls(build_statements(Sqlite, Some("main"), &s(&["t"]), Analyze).unwrap()),
             vec!["ANALYZE \"t\";"]
+        );
+        // アタッチした別名は修飾する (#2129)。
+        assert_eq!(
+            sqls(build_statements(Sqlite, Some("ext"), &s(&["t"]), Analyze).unwrap()),
+            vec!["ANALYZE \"ext\".\"t\";"]
         );
         assert_eq!(
             sqls(build_statements(Sqlite, None, &s(&["t"]), Reindex).unwrap()),

@@ -77,7 +77,8 @@ pub(crate) fn qualified_table(driver: DriverKind, schema: &str, table: &str) -> 
             quote_ident(driver, schema),
             quote_ident(driver, table)
         ),
-        DriverKind::Mysql | DriverKind::Sqlite => quote_ident(driver, table),
+        DriverKind::Mysql => quote_ident(driver, table),
+        DriverKind::Sqlite => crate::db::sync::sqlite_table_ref(schema, table),
     }
 }
 

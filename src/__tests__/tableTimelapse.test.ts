@@ -272,8 +272,21 @@ describe("buildTimelapseDml (#1624)", () => {
   it("PostgreSQL / SQLite は二重引用符で識別子を囲み、SQLite は DB 修飾を付けない", () => {
     const pg = buildTimelapseDml(rows(), { ...base, driver: "postgres", direction: "forward" });
     expect(pg.sql).toContain('DELETE FROM "shop"."fees" WHERE "id" = 3;');
-    const lite = buildTimelapseDml(rows(), { ...base, driver: "sqlite", direction: "forward" });
+    const lite = buildTimelapseDml(rows(), {
+      ...base,
+      driver: "sqlite",
+      database: "main",
+      direction: "forward",
+    });
     expect(lite.sql).toContain('DELETE FROM "fees" WHERE "id" = 3;');
+    // アタッチした別名は修飾する (#2129)。
+    const ext = buildTimelapseDml(rows(), {
+      ...base,
+      driver: "sqlite",
+      database: "ext",
+      direction: "forward",
+    });
+    expect(ext.sql).toContain('DELETE FROM "ext"."fees" WHERE "id" = 3;');
   });
 
   it("マスク列を含む文はコメントにし、伏せ字を SQL に書かない", () => {

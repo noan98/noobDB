@@ -12,7 +12,7 @@ import type { CellKind } from "../../components/cellTypeMeta";
 import { numericLiteral, searchKindFor } from "../../components/dataSearch";
 import { quoteString } from "../../components/cellEdit";
 import { quoteIdentFor } from "../../components/sqlDialect";
-import { qualifiedTable } from "../../fkNavigation";
+import { qualifiedTableName } from "../../components/sqlDialect";
 
 /** 一致モード: 完全一致 / 部分一致 (contains) / 前方一致。 */
 export type MatchMode = "exact" | "contains" | "prefix";
@@ -147,7 +147,7 @@ export function buildTableScanSql(
         `SUM(CASE WHEN ${predicate} THEN 1 ELSE 0 END) AS ${quoteIdentFor(driver, name)}`,
     )
     .join(", ");
-  const sql = `SELECT ${selectList} FROM ${qualifiedTable(driver, database, table)}`;
+  const sql = `SELECT ${selectList} FROM ${qualifiedTableName(driver, database, table)}`;
   return { sql, columns: parts.map((p) => p.name) };
 }
 

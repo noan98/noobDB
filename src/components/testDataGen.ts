@@ -14,7 +14,7 @@
 
 import type { CellValue, NewColumnType, TableColumnInfo } from "../api/tauri";
 import type { CellKind } from "./cellTypeMeta";
-import { quoteIdentFor } from "./sqlDialect";
+import { quoteIdentFor, qualifiedTableName } from "./sqlDialect";
 
 /** 1 カラムの値の生成方針。 */
 export type GenStrategy =
@@ -477,12 +477,6 @@ export function generateRows(specs: ColumnGenSpec[], count: number, seed: number
   return rows;
 }
 
-/** SQLite は単一名前空間なので DB 名で修飾しない (cellEdit と同じ規約)。 */
-function qualifiedTableRef(driver: string, database: string, table: string): string {
-  if (driver === "sqlite") return quoteIdentFor(driver, table);
-  return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
-}
-
 /**
  * FK 参照先の既存値を取得する SELECT を方言別クオートで組み立てる。
  * 取得結果 (1 列目) を `ColumnGenSpec.choices` に入れて "fkRef" で使う。
@@ -495,7 +489,7 @@ export function buildFkSelectSql(
   limit: number,
 ): string {
   const col = quoteIdentFor(driver, refColumn);
-  const tableRef = qualifiedTableRef(driver, database, refTable);
+  const tableRef = qualifiedTableName(driver, database, refTable);
   const n = Math.max(1, Math.floor(limit));
   return `SELECT DISTINCT ${col} FROM ${tableRef} WHERE ${col} IS NOT NULL LIMIT ${n}`;
 }

@@ -5,7 +5,7 @@
 // quoteString を流用する。副作用が無いので Vitest でユニットテストする。
 
 import type { TableColumnInfo } from "../api/tauri";
-import { quoteIdentFor } from "./sqlDialect";
+import { quoteIdentFor, qualifiedTableName } from "./sqlDialect";
 import { quoteString } from "./cellEdit";
 import {
   checkClause,
@@ -211,12 +211,6 @@ export function formatDefault(
   return quoteString(driver, v);
 }
 
-/** 完全修飾したテーブル名 (SQLite はスキーマ非対応なので table のみ)。 */
-function qualifiedName(driver: string, database: string | null | undefined, table: string): string {
-  if (driver === "sqlite" || !database) return quoteIdentFor(driver, table);
-  return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
-}
-
 /**
  * フォーム定義から CREATE TABLE 文を生成する。空のテーブル名/カラム名はそのまま
  * (UI 側でバリデーション)。SQLite の `INTEGER PRIMARY KEY AUTOINCREMENT` 特殊形に対応。
@@ -250,7 +244,7 @@ export function buildCreateTableSql(driver: string, form: CreateTableForm): stri
     if (isCompleteCheck(ck)) lines.push(checkClause(driver, ck));
   }
 
-  const name = qualifiedName(driver, form.database, form.table);
+  const name = qualifiedTableName(driver, form.database, form.table);
   return `CREATE TABLE ${name} (\n  ${lines.join(",\n  ")}\n);`;
 }
 

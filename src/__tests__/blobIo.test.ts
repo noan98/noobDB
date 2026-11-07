@@ -52,8 +52,12 @@ describe("buildBlobUpdateStatement", () => {
     expect(buildBlobUpdateStatement({ ...base, driver: "postgres", hex: "dead" })).toBe(
       'UPDATE "app"."files" SET "data" = \'\\xdead\' WHERE "id" = 7;',
     );
-    expect(buildBlobUpdateStatement({ ...base, driver: "sqlite", hex: "dead" })).toBe(
+    expect(buildBlobUpdateStatement({ ...base, driver: "sqlite", database: "main", hex: "dead" })).toBe(
       'UPDATE "files" SET "data" = X\'dead\' WHERE "id" = 7;',
+    );
+    // アタッチした別名は修飾する (#2129)。
+    expect(buildBlobUpdateStatement({ ...base, driver: "sqlite", hex: "dead" })).toBe(
+      'UPDATE "app"."files" SET "data" = X\'dead\' WHERE "id" = 7;',
     );
   });
   it("空ファイルは MySQL では '' になる", () => {

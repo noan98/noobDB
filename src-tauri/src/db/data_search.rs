@@ -301,10 +301,12 @@ pub fn build_column_predicate(
     })
 }
 
-/// テーブル参照の DB 修飾 (`fkNavigation.ts::qualifiedTable`)。SQLite と DB 名が空のときは修飾しない。
+/// テーブル参照の DB 修飾 (`fkNavigation.ts::qualifiedTable`)。DB 名が空のときは修飾しない。
+/// SQLite は `main` なら修飾せず、アタッチした別名のときだけ修飾する (`sqlite_table_ref`、#2129)。
 pub fn qualified_table(driver: DriverKind, database: Option<&str>, table: &str) -> String {
-    match database {
-        Some(db) if driver != DriverKind::Sqlite && !db.is_empty() => {
+    match (driver, database) {
+        (DriverKind::Sqlite, db) => super::sync::sqlite_table_ref(db.unwrap_or(""), table),
+        (_, Some(db)) if !db.is_empty() => {
             format!("{}.{}", quote_ident(driver, db), quote_ident(driver, table))
         }
         _ => quote_ident(driver, table),

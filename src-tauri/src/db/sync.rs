@@ -1914,10 +1914,41 @@ pub(crate) fn quote_ident(driver: DriverKind, name: &str) -> String {
     }
 }
 
+/// SQLite の `database` が修飾不要の `main` (空文字を含む) か (#2129)。
+pub(crate) fn sqlite_is_main(database: &str) -> bool {
+    database.is_empty() || database.eq_ignore_ascii_case("main")
+}
+
+/// SQLite の表参照。**SQLite の表参照の修飾規則はここに一本化している**。
+/// 修飾なしの名前は temp → main → アタッチ順に探されるため、アタッチ先に `main` と同名の表が
+/// あると main 側を指してしまう。そこで `main` / 空なら修飾なし (移植性を保つ)、それ以外
+/// (設定済みの別名) は `"別名"."表"` にする。フロントの `qualifiedTableName` (`sqlDialect.ts`) と
+/// 同じ規則で、共有ゴールデン `tableSelectSql.json` で固定している。
+pub(crate) fn sqlite_table_ref(database: &str, table: &str) -> String {
+    if sqlite_is_main(database) {
+        quote_ident(DriverKind::Sqlite, table)
+    } else {
+        format!(
+            "{}.{}",
+            quote_ident(DriverKind::Sqlite, database),
+            quote_ident(DriverKind::Sqlite, table)
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::diff::{ColumnDiff, TableDiff};
+
+    #[test]
+    fn sqlite_table_ref_qualifies_only_non_main() {
+        assert_eq!(sqlite_table_ref("main", "t"), "\"t\"");
+        assert_eq!(sqlite_table_ref("MAIN", "t"), "\"t\"");
+        assert_eq!(sqlite_table_ref("", "t"), "\"t\"");
+        assert_eq!(sqlite_table_ref("ext", "t"), "\"ext\".\"t\"");
+        assert_eq!(sqlite_table_ref("e\"x", "t\"1"), "\"e\"\"x\".\"t\"\"1\"");
+    }
 
     fn col(name: &str, data_type: &str) -> TableColumnInfo {
         TableColumnInfo {

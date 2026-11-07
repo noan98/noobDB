@@ -177,11 +177,11 @@ import { Button, Input } from "./ui";
 import { FieldLabel, FormSection } from "./modalForm";
 import { LoadingButton } from "./LoadingButton";
 import { Tooltip, TooltipBubble, useDelegatedTooltip } from "./Tooltip";
+import { qualifiedTableName } from "./sqlDialect";
 import { columnCommentsFor, withComment } from "./schemaComment";
 import {
   buildRowSql,
   buildRowWhere,
-  qualifiedTableRef,
   countEditedCells,
   countEditedRows,
   editIsNoop,
@@ -8379,7 +8379,7 @@ export const DataGrid = memo(function DataGrid({
                   columnKinds[viewer.colIdx] === "json" &&
                   !rowSqlBlockedByMask([viewer.rowIdx])
                     ? {
-                        tableRef: qualifiedTableRef(
+                        tableRef: qualifiedTableName(
                           rowSqlDriver ?? "mysql",
                           rowSqlDatabase ?? "",
                           rowSqlTable,

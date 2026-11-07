@@ -17,8 +17,14 @@ export type DangerKind =
   | "dropColumn"
   | "dropConstraint";
 
+/**
+ * 確認ダイアログに出す指摘の種別。`DangerKind` (Rust の `script_analysis::DangerKind` と同じ名前の集合) に加えて、
+ * フロントだけが出す `sqliteAttach` (SQLite で生の ATTACH / DETACH、プールの一部の接続にしか効かない、#2129)。
+ */
+export type DangerFindingKind = DangerKind | "sqliteAttach";
+
 export interface DangerFinding {
-  kind: DangerKind;
+  kind: DangerFindingKind;
   /** Best-effort target table/object name, or null when it couldn't be parsed. */
   target: string | null;
 }
@@ -489,6 +495,38 @@ export function analyzeDangerousSql(sql: string, driver?: string): DangerFinding
     if (i === masked.length || masked[i] === ";") {
       const finding = classifyStatement(masked.slice(start, i), sql.slice(start, i));
       if (finding) findings.push(finding);
+      start = i + 1;
+    }
+  }
+  return findings;
+}
+
+/** 先頭が ATTACH / DETACH の文か。コメント・先頭の空白と `(` は読み飛ばし、大文字小文字は区別しない。 */
+export function isSqliteAttachStatement(sql: string): boolean {
+  const body = maskLiterals(sql, "sqlite")
+    .toLowerCase()
+    .replace(/^[\s(\u0085\uFEFF]+/, "");
+  return startsWithKeyword(body, "attach") || startsWithKeyword(body, "detach");
+}
+
+/**
+ * SQLite セッションで生の ATTACH / DETACH を実行しようとしているときの警告 (#2129)。
+ * 接続はプールで、ATTACH が効くのはそのとき使った 1 本の物理接続だけなので、後続のクエリが別の接続に当たると
+ * `no such table` になる。接続設定の「アタッチするファイル」(全接続に付く) を使うよう促す。
+ * MySQL / PostgreSQL では何も返さない。`analyzeDangerousSql` と同じく `;` 区切りで文ごとに調べる。
+ * 既存の危険クエリ確認 (`DangerousQueryDialog`) に載せる純関数で、設定 (`confirmDangerousQueries`) に関わらず使う。
+ */
+export function analyzeSqliteAttach(sql: string, driver?: string): DangerFinding[] {
+  if (driver !== "sqlite") return [];
+  const masked = maskLiterals(sql, driver);
+  const findings: DangerFinding[] = [];
+  let start = 0;
+  for (let i = 0; i <= masked.length; i++) {
+    if (i === masked.length || masked[i] === ";") {
+      if (isSqliteAttachStatement(sql.slice(start, i))) {
+        const text = sql.slice(start, i).trim();
+        findings.push({ kind: "sqliteAttach", target: text.length > 80 ? `${text.slice(0, 80)}...` : text });
+      }
       start = i + 1;
     }
   }

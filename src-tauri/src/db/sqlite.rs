@@ -115,28 +115,45 @@ impl SqliteConn {
     /// アタッチした別名 (大文字小文字は区別しない) ならその別名、それ以外は `main`。
     /// 別名は接続時に識別子として検証済みで、ここでも二重引用符をエスケープする。
     fn schema_ident(&self, db: &str) -> String {
-        let name = self
-            .attached
+        quote_ident(self.resolve_db(db))
+    }
+
+    /// `db` が設定でアタッチした別名 (大文字小文字は区別しない) ならその別名、それ以外は `main`。
+    /// 古いプロファイルの `database` のような「アタッチ先でない値」で表を修飾して失敗するのを防ぐ。
+    pub(crate) fn resolve_db(&self, db: &str) -> &str {
+        self.attached
             .iter()
             .find(|a| a.eq_ignore_ascii_case(db))
             .map(String::as_str)
-            .unwrap_or(DEFAULT_DB_NAME);
-        quote_ident(name)
+            .unwrap_or(DEFAULT_DB_NAME)
     }
 
     /// `schema_ident` の SQL 文字列リテラル版 (`pragma_table_info(name, 'alias')` のスキーマ引数用)。
     fn schema_lit(&self, db: &str) -> String {
-        let name = self
-            .attached
-            .iter()
-            .find(|a| a.eq_ignore_ascii_case(db))
-            .map(String::as_str)
-            .unwrap_or(DEFAULT_DB_NAME);
-        format!("'{}'", name.replace('\'', "''"))
+        format!("'{}'", self.resolve_db(db).replace('\'', "''"))
     }
 
     pub async fn close(&self) {
         self.pool.close().await;
+    }
+
+    /// プールの物理接続を `n` 本**同時に**確保し (全て保持したまま)、それぞれで `sql` を実行する。
+    /// 設定した ATTACH が全ての物理接続に付いていることを統合テストで示すためのもの (#2129)。
+    /// 逐次に流しても同じ接続を使い回すだけで全接続の証明にならない。
+    pub(crate) async fn execute_on_n_connections(
+        &self,
+        sql: &str,
+        n: usize,
+    ) -> Result<Vec<QueryResult>> {
+        let mut held = Vec::with_capacity(n);
+        for _ in 0..n {
+            held.push(self.pool.acquire().await?);
+        }
+        let mut out = Vec::with_capacity(n);
+        for conn in held.iter_mut() {
+            out.push(run_sql_on(conn, sql).await?);
+        }
+        Ok(out)
     }
 
     pub async fn execute(&self, sql: &str, _database: Option<&str>) -> Result<QueryResult> {
@@ -2567,13 +2584,55 @@ fn fresh_pragma(
     sqlx::query(sqlx::AssertSqlSafe(sql)).persistent(false)
 }
 
+/// `extract_target_table` が返す対象表 (`t` / `"t"` / `"ext"."t"` / `ext.t`) を `(スキーマ, 表)` に分ける
+/// (#2129)。引用符の中の `.` では区切らない。3 つ以上に分かれるときは分けずに全体を表名として返す。
+fn split_target_table(target: &str) -> (Option<String>, String) {
+    let target = target.trim();
+    let mut parts: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    for c in target.chars() {
+        match quote {
+            Some(q) => {
+                cur.push(c);
+                if c == q {
+                    quote = None;
+                }
+            }
+            None if c == '"' || c == '`' => {
+                cur.push(c);
+                quote = Some(c);
+            }
+            None if c == '.' => parts.push(std::mem::take(&mut cur)),
+            None => cur.push(c),
+        }
+    }
+    parts.push(cur);
+    match parts.as_slice() {
+        [schema, table] if !schema.is_empty() && !table.is_empty() => (
+            Some(strip_identifier_quotes(schema)),
+            strip_identifier_quotes(table),
+        ),
+        _ => (None, strip_identifier_quotes(target)),
+    }
+}
+
 async fn fetch_primary_key(pool: &SqlitePool, target: &str) -> Result<Vec<String>> {
-    let table = strip_identifier_quotes(target);
-    if table.contains('\0') {
+    let (schema, table) = split_target_table(target);
+    if table.contains('\0') || schema.as_deref().is_some_and(|s| s.contains('\0')) {
         return Ok(Vec::new());
     }
     let mut conn = fresh_schema_conn(pool).await?;
-    let sql = format!("PRAGMA table_info(\"{}\")", table.replace('"', "\"\""));
+    // アタッチ先の表は `PRAGMA "別名".table_info(...)` で引く。修飾の規則 (main は付けない) は
+    // `sqlite_table_ref` と同じ。
+    let prefix = match schema.as_deref() {
+        Some(s) if !super::sync::sqlite_is_main(s) => format!("{}.", quote_ident(s)),
+        _ => String::new(),
+    };
+    let sql = format!(
+        "PRAGMA {prefix}table_info(\"{}\")",
+        table.replace('"', "\"\"")
+    );
     let rows: Vec<SqliteRow> = fresh_pragma(sql).fetch_all(&mut *conn).await?;
     let mut entries: Vec<(i64, String)> = rows
         .iter()
@@ -2681,9 +2740,16 @@ fn attach_target(path: &str, read_only: bool) -> String {
             c => vec![c],
         })
         .collect();
-    // Windows のドライブ付きパス (`C:/x`) は `file:///C:/x`、UNIX の絶対パスは `file:/x`。
-    let uri_path = if encoded.as_bytes().get(1) == Some(&b':') {
+    // Windows のドライブ付きパス (`C:/x`) は `file:///C:/x`、UNC (`//srv/share/x`) は
+    // `file:////srv/share/x` (`//` で始まると authority と解釈されるため空の authority を足す)、
+    // UNIX の絶対パスは `file:/x`。ドライブ名は「1 文字目が英字 + `:`」のときだけ。
+    let bytes = encoded.as_bytes();
+    let is_drive =
+        bytes.first().is_some_and(u8::is_ascii_alphabetic) && bytes.get(1) == Some(&b':');
+    let uri_path = if is_drive {
         format!("///{encoded}")
+    } else if encoded.starts_with("//") {
+        format!("//{encoded}")
     } else {
         encoded
     };
@@ -2934,6 +3000,22 @@ mod tests {
     }
 
     #[test]
+    fn split_target_table_handles_schema_and_quotes() {
+        assert_eq!(split_target_table("t"), (None, "t".to_string()));
+        assert_eq!(split_target_table("\"t\""), (None, "t".to_string()));
+        assert_eq!(
+            split_target_table("\"ext\".\"t\""),
+            (Some("ext".to_string()), "t".to_string())
+        );
+        assert_eq!(
+            split_target_table("ext.t"),
+            (Some("ext".to_string()), "t".to_string())
+        );
+        // 引用符の中の `.` では区切らない。
+        assert_eq!(split_target_table("\"a.b\""), (None, "a.b".to_string()));
+    }
+
+    #[test]
     fn attach_target_is_plain_path_or_ro_uri() {
         assert_eq!(attach_target(" /d/a.db ", false), "/d/a.db");
         assert_eq!(attach_target("/d/a.db", true), "file:/d/a.db?mode=ro");
@@ -2945,6 +3027,13 @@ mod tests {
             attach_target("C:\\d\\a.db", true),
             "file:///C:/d/a.db?mode=ro"
         );
+        // UNC パスは空の authority を足した `file:////srv/share/...` にする。
+        assert_eq!(
+            attach_target("\\\\srv\\share\\a.db", true),
+            "file:////srv/share/a.db?mode=ro"
+        );
+        // 2 文字目が `:` でも 1 文字目が英字でなければドライブ名ではない。
+        assert_eq!(attach_target("1:/a.db", true), "file:1:/a.db?mode=ro");
         assert_eq!(attach_statement("ext"), "ATTACH DATABASE ?1 AS \"ext\"");
     }
 

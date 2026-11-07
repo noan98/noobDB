@@ -53,7 +53,8 @@ pub struct OpenTableEntry {
 ///
 /// `hidden_column` は PK の無いテーブルで行を特定するための疑似列
 /// (SQLite `rowid` / PostgreSQL `ctid`) で、結果列として返るよう末尾に足す。
-/// SQLite は名前空間が 1 つなので DB 修飾を付けない。フロントの
+/// SQLite は `main` なら DB 修飾を付けず、アタッチした別名のときだけ `"別名"."表"` にする
+/// (`db::sync::sqlite_table_ref`、#2129)。フロントの
 /// `qualifiedTableSql` (`sqlDialect.ts`) と同一の SQL を返す
 /// (`src/__tests__/fixtures/tableSelectSql.json` の共有ゴールデンで固定)。
 pub fn table_select_sql(
@@ -67,7 +68,10 @@ pub fn table_select_sql(
         _ => String::new(),
     };
     match driver {
-        DriverKind::Sqlite => format!("SELECT *{extra} FROM {}", quote_ident(driver, table)),
+        DriverKind::Sqlite => format!(
+            "SELECT *{extra} FROM {}",
+            crate::db::sync::sqlite_table_ref(database, table)
+        ),
         DriverKind::Mysql | DriverKind::Postgres => format!(
             "SELECT *{extra} FROM {}.{}",
             quote_ident(driver, database),
@@ -127,9 +131,11 @@ pub(crate) async fn open_table_inner(
     };
     let (schema, row_estimate) = tokio::join!(schema, estimate);
     let (columns, row_identity) = schema?;
+    // 設定したアタッチ先に当たらない値 (古いプロファイルの `database` など) は main 扱い。
+    let database = conn.resolve_attached_database(database);
     let base = table_select_sql(
         conn.driver_kind(),
-        database,
+        &database,
         table,
         hidden_column_of(&row_identity),
     );

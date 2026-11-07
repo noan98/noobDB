@@ -652,6 +652,16 @@ impl Connection {
         }
     }
 
+    /// 表を修飾する `database` を、この接続で意味のある値に正す (#2129)。SQLite は設定でアタッチした
+    /// 別名に一致するときだけその別名、それ以外 (古いプロファイルの値など) は `main` にする。
+    /// MySQL / PostgreSQL は渡された値のまま。
+    pub fn resolve_attached_database(&self, database: &str) -> String {
+        match self {
+            Connection::Sqlite(c) => c.resolve_db(database).to_string(),
+            Connection::MySql(_) | Connection::Postgres(_) => database.to_string(),
+        }
+    }
+
     pub async fn connect(opts: &DbConnectOptions) -> Result<Self> {
         match opts.driver {
             DriverKind::Mysql => Ok(Connection::MySql(mysql::MySqlConn::connect(opts).await?)),

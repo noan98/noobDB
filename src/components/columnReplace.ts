@@ -1,8 +1,8 @@
 import type { CellValue, Column } from "../api/tauri";
 import type { BulkEditTarget } from "./bulkEdit";
-import { editIsNoop, qualifiedTableRef, quoteString, rowEditKey } from "./cellEdit";
+import { editIsNoop, quoteString, rowEditKey } from "./cellEdit";
 import { computeColumnMatchRows } from "./gridFind";
-import { quoteIdentFor } from "./sqlDialect";
+import { qualifiedTableName, quoteIdentFor } from "./sqlDialect";
 
 /**
  * 結果グリッド列の「検索して置換」(#1242) の純ロジック。
@@ -15,7 +15,7 @@ import { quoteIdentFor } from "./sqlDialect";
  *   PK 指定の個別 UPDATE として組み、`run_query_transaction` の all-or-nothing に乗る。
  * - **列全体 (`buildColumnReplaceSql`)**: 行を取得済みかに関わらず
  *   `UPDATE t SET c = REPLACE(c, 'a', 'b') WHERE ...` を 1 文で発行する。文字列 /
- *   識別子のエスケープは `cellEdit.ts` の `quoteString` / `qualifiedTableRef` を共有する。
+ *   識別子のエスケープは `cellEdit.ts` の `quoteString` と `sqlDialect.ts` の `qualifiedTableName` を共有する。
  *
  * ## 方言差 (3 ドライバに固定)
  *
@@ -183,7 +183,7 @@ function columnReplaceParts(
   }
   const extra = input.extraWhere?.trim();
   const where = extra ? `(${extra}) AND ${cond}` : cond;
-  const ref = qualifiedTableRef(driver, input.database, input.table);
+  const ref = qualifiedTableName(driver, input.database, input.table);
   return { ok: true, ref, col, expr, where };
 }
 

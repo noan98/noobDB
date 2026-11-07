@@ -186,7 +186,12 @@ pub async fn list_profiles() -> Result<Vec<ProfileWithSecretFlags>> {
         let profiles = filter_supported_driver_profiles(store::load_all()?);
         Ok(profiles
             .into_iter()
-            .map(|profile| {
+            .map(|mut profile| {
+                // SQLite に DB 名は無い (ツリーの `main` / 別名はセッションが返す)。別ドライバだった頃の
+                // 値が残っていると表の修飾に使われて失敗するので、読み出し時に捨てる (#2129)。
+                if profile.driver == "sqlite" {
+                    profile.database = None;
+                }
                 let has_db_password = secrets::has_db_password(&profile.id);
                 let has_ssh_passphrase = secrets::has_ssh_passphrase(&profile.id);
                 let has_ssh_password = secrets::has_ssh_password(&profile.id);

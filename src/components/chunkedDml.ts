@@ -5,7 +5,7 @@
 // (`__tests__/fixtures/chunkedDmlVectors.json`) で両者を固定する。実行時の SQL は Rust が
 // 組み立てる (`run_chunked_dml_batch`) ので、ここの生成はプレビュー表示と対象件数の取得用。
 
-import { quoteIdentFor } from "./sqlDialect";
+import { qualifiedTableName } from "./sqlDialect";
 
 export const MAX_BATCH_SIZE = 100_000;
 
@@ -89,11 +89,6 @@ export function validateFragment(driver: string, frag: string): ChunkedDmlErrorC
   return depth === 0 ? null : "unbalanced";
 }
 
-function qualified(driver: string, database: string | null | undefined, table: string): string {
-  if (driver === "sqlite" || !database) return quoteIdentFor(driver, table);
-  return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
-}
-
 function checkCommon(
   driver: string,
   table: string,
@@ -128,7 +123,7 @@ export function buildChunkSql(params: {
     set = ` SET ${op.setClause.trim()}`;
   }
   const head = op.kind === "delete" ? "DELETE FROM " : "UPDATE ";
-  const name = qualified(driver, database, table);
+  const name = qualifiedTableName(driver, database, table);
   const cond = where.trim();
   if (driver === "mysql") {
     return { ok: true, sql: `${head}${name}${set} WHERE (${cond}) LIMIT ${batchSize}` };
@@ -157,7 +152,7 @@ export function buildCountSql(params: {
   if (bad) return { ok: false, code: bad };
   return {
     ok: true,
-    sql: `SELECT COUNT(*) FROM ${qualified(params.driver, params.database, params.table)} WHERE (${params.where.trim()})`,
+    sql: `SELECT COUNT(*) FROM ${qualifiedTableName(params.driver, params.database, params.table)} WHERE (${params.where.trim()})`,
   };
 }
 

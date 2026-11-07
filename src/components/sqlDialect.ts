@@ -34,7 +34,7 @@ export function quoteIdentFor(driver: string, name: string): string {
  */
 export function qualifiedTableSql(
   driver: string,
-  database: string,
+  database: string | null | undefined,
   table: string,
   hiddenColumn?: string | null,
 ): string {
@@ -43,12 +43,29 @@ export function qualifiedTableSql(
 }
 
 /**
- * `db.table` 形式の修飾テーブル名 (識別子はドライバ別にクォート済み)。SQLite は接続あたり
- * 1 つの名前空間 (main) なので DB 修飾を付けず、生成する SQL を移植可能に保つ。
- * `qualifiedTableSql` と JOIN 雛形 (`fkJoin.ts`) が同じ修飾規則を共有する (#1540)。
+ * SQLite で `database` が修飾不要の `main` (空文字・大文字小文字違いを含む) か (#2129)。
+ * ツリーの `main` は仮ラベルで、SQL には出さない。
  */
-export function qualifiedTableName(driver: string, database: string, table: string): string {
-  if (driver === "sqlite") return quoteIdentFor(driver, table);
+export function isSqliteMainDatabase(database: string | null | undefined): boolean {
+  return !database || database.toLowerCase() === "main";
+}
+
+/**
+ * `db.table` 形式の修飾テーブル名 (識別子はドライバ別にクォート済み)。**表参照の修飾規則はここに
+ * 一本化している** (`qualifiedTableSql` / JOIN 雛形 `fkJoin.ts` / `cellEdit.ts` / 保守系 SQL が共有、#1540)。
+ *
+ * SQLite は `main` / 空なら DB 修飾を付けず (移植性を保つ)、設定でアタッチしたファイルの別名だけ
+ * `"別名"."表"` にする (#2129)。修飾なしの名前は temp → main → アタッチ順に探されるため、
+ * main に同名の表があると別名側のつもりで main を読み書きしてしまうのを防ぐ。
+ * Rust の `db::sync::sqlite_table_ref` と同じ規則 (共有ゴールデン `tableSelectSql.json`)。
+ */
+export function qualifiedTableName(
+  driver: string,
+  database: string | null | undefined,
+  table: string,
+): string {
+  if (!database || (driver === "sqlite" && isSqliteMainDatabase(database)))
+    return quoteIdentFor(driver, table);
   return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
 }
 

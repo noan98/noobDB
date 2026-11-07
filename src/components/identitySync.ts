@@ -6,14 +6,8 @@
 // 同期 SQL の組み立てだけを担い、実行は既存の保守コマンド経路 (`runMaintenanceDdl`) に
 // 任せる。副作用は無く Vitest でユニットテストする。
 
-import { quoteIdentFor } from "./sqlDialect";
+import { quoteIdentFor, qualifiedTableName } from "./sqlDialect";
 import type { TableColumnInfo } from "../api/tauri";
-
-/** 完全修飾したテーブル名 (SQLite はスキーマ非対応なので table のみ)。 */
-function qualified(driver: string, database: string | null | undefined, table: string): string {
-  if (driver === "sqlite" || !database) return quoteIdentFor(driver, table);
-  return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
-}
 
 /** SQL 文字列リテラル (シングルクォートを二重化)。 */
 function sqlString(value: string): string {
@@ -48,7 +42,7 @@ export function findIdentityColumn(driver: string, columns: TableColumnInfo[]): 
 
 /** MySQL 用: 採番列の最大値を問い合わせる SELECT (`run_lookup_query` で実行する)。 */
 export function mysqlMaxValueSql(database: string | null, table: string, column: string): string {
-  return `SELECT MAX(${quoteIdentFor("mysql", column)}) FROM ${qualified("mysql", database, table)}`;
+  return `SELECT MAX(${quoteIdentFor("mysql", column)}) FROM ${qualifiedTableName("mysql", database, table)}`;
 }
 
 /**
@@ -91,7 +85,7 @@ export function buildIdentitySyncSql(
   maxValue?: string | null,
   opts: IdentitySyncOptions = {},
 ): string | null {
-  const name = qualified(driver, database, table);
+  const name = qualifiedTableName(driver, database, table);
   const col = quoteIdentFor(driver, column);
   if (driver === "postgres") {
     const seq = `pg_get_serial_sequence(${sqlString(name)}, ${sqlString(column)})`;
@@ -141,7 +135,7 @@ export interface IdentitySyncOptions {
 
 /** MySQL 用: 現在の AUTO_INCREMENT を読むための文 (`run_lookup_query` で実行する)。 */
 export function mysqlShowCreateTableSql(database: string | null, table: string): string {
-  return `SHOW CREATE TABLE ${qualified("mysql", database, table)}`;
+  return `SHOW CREATE TABLE ${qualifiedTableName("mysql", database, table)}`;
 }
 
 /**
@@ -170,7 +164,7 @@ export function identityStatsSql(
   table: string,
   column: string,
 ): string | null {
-  const name = qualified(driver, database, table);
+  const name = qualifiedTableName(driver, database, table);
   if (driver === "postgres") {
     const seq = `pg_get_serial_sequence(${sqlString(name)}, ${sqlString(column)})`;
     return `SELECT MAX(${quoteIdentFor(driver, column)}), pg_sequence_last_value(${seq}::regclass) FROM ${name}`;

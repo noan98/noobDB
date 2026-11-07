@@ -121,6 +121,13 @@ describe("profileGroup (#1630)", () => {
     }
     expect(buildGroupMoveRequest(p, "").group).toBeNull();
   });
+
+  it("SQLite のアタッチ設定を引き継ぐ (#2129)", () => {
+    const attachments = [{ path: "/data/ext.db", alias: "ext" }];
+    const p = prof("p2", { driver: "sqlite", file_path: "/tmp/a.db", sqlite_attachments: attachments });
+    expect(buildGroupMoveRequest(p, "g").sqlite_attachments).toEqual(attachments);
+    expect(buildGroupMoveRequest(prof("p3"), "g").sqlite_attachments).toEqual([]);
+  });
 });
 
 describe("profileSearch (#1630)", () => {

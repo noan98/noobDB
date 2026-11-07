@@ -475,6 +475,7 @@ const RunRoutineModal = lazy(() =>
 );
 import {
   analyzeDangerousSql,
+  analyzeSqliteAttach,
   appendWhereTemplate,
   buildPkWhereTemplate,
   isReadOnlySql,
@@ -6488,10 +6489,13 @@ export default function App() {
       // 文分割・危険判定・読み取り専用判定 (下の isReadOnlySql) は同じ driver を参照
       // し、1 回の実行ゲート内でマスク解釈が食い違わないようにする (#852、#1004)。
       const batch = target.kind === "query" && isMultiStatement(sql, selectedProfile?.driver);
-      const findings =
-        isProduction || settings.confirmDangerousQueries
+      const findings = [
+        ...(isProduction || settings.confirmDangerousQueries
           ? analyzeDangerousSql(sql, selectedProfile?.driver)
-          : [];
+          : []),
+        // 生の ATTACH / DETACH は破壊的ではなく罠なので、確認の設定に関わらず警告する (#2129)。
+        ...analyzeSqliteAttach(sql, selectedProfile?.driver),
+      ];
       // 緊急クエリ実行モード中の書き込みは、本番の confirm_writes と同じく毎回
       // 確認を要求する (read-only と明示した接続への書き込みは常に例外的な操作)。
       const needsWriteApproval =

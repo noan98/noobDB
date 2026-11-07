@@ -6,13 +6,7 @@
 // `isCtasEligibleSql` / `tableNameCollides` をそのまま共有する (view/table で
 // 判定ロジックは同一のため二重実装しない)。
 
-import { quoteIdentFor } from "./sqlDialect";
-
-/** 完全修飾したビュー名。 */
-function qualifiedView(driver: string, database: string | null | undefined, name: string): string {
-  if (driver === "sqlite" || !database) return quoteIdentFor(driver, name);
-  return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, name)}`;
-}
+import { qualifiedTableName } from "./sqlDialect";
 
 /** `sourceSql` 末尾のセミコロン/空白を剥がす (呼び出し元の SQL をそのまま連結して
  *  二重セミコロンにならないようにする、`resultsToTable.ts` と同じ方針)。 */
@@ -31,7 +25,7 @@ export function buildCreateViewSql(
   name: string,
   query: string,
 ): string {
-  const qualified = qualifiedView(driver, database, name);
+  const qualified = qualifiedTableName(driver, database, name);
   return `CREATE VIEW ${qualified} AS\n${stripTrailingSemicolon(query)};`;
 }
 
@@ -53,7 +47,7 @@ export function buildReplaceViewSql(
   name: string,
   query: string,
 ): string[] {
-  const qualified = qualifiedView(driver, database, name);
+  const qualified = qualifiedTableName(driver, database, name);
   const body = stripTrailingSemicolon(query);
   if (driver === "sqlite") {
     return [`DROP VIEW IF EXISTS ${qualified};`, `CREATE VIEW ${qualified} AS\n${body};`];
@@ -64,7 +58,7 @@ export function buildReplaceViewSql(
 /** `DROP VIEW` 文。テーブル保守の削除確認導線 (`App.tsx` の `handleDropTable` と
  *  同じ確認ダイアログ・実行経路) から呼ばれる想定。 */
 export function buildDropViewSql(driver: string, database: string | null, name: string): string {
-  return `DROP VIEW ${qualifiedView(driver, database, name)};`;
+  return `DROP VIEW ${qualifiedTableName(driver, database, name)};`;
 }
 
 /**

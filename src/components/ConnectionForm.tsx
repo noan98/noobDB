@@ -14,7 +14,7 @@ import {
   SqliteAttachment,
   SslMode,
 } from "../api/tauri";
-import { isValidAttachAlias, suggestAttachAlias } from "./sqliteAttach";
+import { attachAliasProblem, suggestAttachAlias } from "./sqliteAttach";
 import { useT } from "../i18n";
 import { CopyButton } from "./CopyButton";
 import { useCopyFeedback } from "./useCopyFeedback";
@@ -1169,38 +1169,50 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
           </Box>
           <Box mt="3" data-testid="connection-form-sqlite-attachments">
             <FieldLabel as="div">{t("formSqliteAttachLegend")}</FieldLabel>
-            {attachments.map((a, i) => (
-              // 行に安定した ID は無い (パスも別名も編集中に変わる) ので位置をキーにする。
-              <Flex key={i} gap="2" align="end" mb="2">
-                <Input
-                  aria-label={t("formSqliteAttachPath")}
-                  value={a.path}
-                  onChange={(e) => updateAttachment(i, { path: e.target.value })}
-                  placeholder={t("formSqliteFilePathPlaceholder")}
-                />
-                <Button type="button" onClick={() => pickAttachFile(i)}>
-                  {t("formBrowse")}
-                </Button>
-                <Input
-                  aria-label={t("formSqliteAttachAlias")}
-                  placeholder={t("formSqliteAttachAlias")}
-                  width="40"
-                  flexShrink={0}
-                  fontFamily="mono"
-                  value={a.alias}
-                  aria-invalid={
-                    a.alias.trim() !== "" && !isValidAttachAlias(a.alias.trim()) ? true : undefined
-                  }
-                  onChange={(e) => updateAttachment(i, { alias: e.target.value })}
-                />
-                <Button
-                  type="button"
-                  onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
-                >
-                  {t("formSqliteAttachRemove")}
-                </Button>
-              </Flex>
-            ))}
+            {attachments.map((a, i) => {
+              const aliasProblem = attachAliasProblem(attachments, i);
+              return (
+                // 行に安定した ID は無い (パスも別名も編集中に変わる) ので位置をキーにする。
+                <Box key={i} mb="2">
+                  <Flex gap="2" align="end">
+                    <Input
+                      aria-label={t("formSqliteAttachPath")}
+                      value={a.path}
+                      onChange={(e) => updateAttachment(i, { path: e.target.value })}
+                      placeholder={t("formSqliteFilePathPlaceholder")}
+                    />
+                    <Button type="button" onClick={() => pickAttachFile(i)}>
+                      {t("formBrowse")}
+                    </Button>
+                    <Input
+                      aria-label={t("formSqliteAttachAlias")}
+                      placeholder={t("formSqliteAttachAlias")}
+                      width="40"
+                      flexShrink={0}
+                      fontFamily="mono"
+                      value={a.alias}
+                      aria-invalid={aliasProblem ? true : undefined}
+                      onChange={(e) => updateAttachment(i, { alias: e.target.value })}
+                    />
+                    <Button
+                      type="button"
+                      onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
+                    >
+                      {t("formSqliteAttachRemove")}
+                    </Button>
+                  </Flex>
+                  {aliasProblem && (
+                    <FieldError display="block" mt="1">
+                      {t(
+                        aliasProblem === "invalid"
+                          ? "formSqliteAttachAliasInvalid"
+                          : "formSqliteAttachAliasDuplicate",
+                      )}
+                    </FieldError>
+                  )}
+                </Box>
+              );
+            })}
             <Button
               type="button"
               onClick={() => setAttachments((prev) => [...prev, { path: "", alias: "" }])}

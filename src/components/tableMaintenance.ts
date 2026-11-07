@@ -3,27 +3,21 @@
 // TRUNCATE / DROP / RENAME のドライバ別 DDL を組み立てる。識別子クオートは
 // sqlDialect.ts を流用。副作用が無いので Vitest でユニットテストする。
 
-import { quoteIdentFor } from "./sqlDialect";
-
-/** 完全修飾したテーブル名 (SQLite はスキーマ非対応なので table のみ)。 */
-function qualified(driver: string, database: string | null | undefined, table: string): string {
-  if (driver === "sqlite" || !database) return quoteIdentFor(driver, table);
-  return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
-}
+import { quoteIdentFor, qualifiedTableName } from "./sqlDialect";
 
 /**
  * TRUNCATE 文。SQLite には TRUNCATE が無いので、等価な `DELETE FROM`
  * (WHERE なし全削除) を生成する。
  */
 export function buildTruncateSql(driver: string, database: string | null, table: string): string {
-  const name = qualified(driver, database, table);
+  const name = qualifiedTableName(driver, database, table);
   if (driver === "sqlite") return `DELETE FROM ${name};`;
   return `TRUNCATE TABLE ${name};`;
 }
 
 /** DROP TABLE 文。 */
 export function buildDropTableSql(driver: string, database: string | null, table: string): string {
-  return `DROP TABLE ${qualified(driver, database, table)};`;
+  return `DROP TABLE ${qualifiedTableName(driver, database, table)};`;
 }
 
 /**
@@ -39,7 +33,7 @@ export function buildDropTablesSql(
 ): string[] {
   if (tables.length === 0) return [];
   if (driver === "sqlite") return tables.map((t) => buildDropTableSql(driver, database, t));
-  return [`DROP TABLE ${tables.map((t) => qualified(driver, database, t)).join(", ")};`];
+  return [`DROP TABLE ${tables.map((t) => qualifiedTableName(driver, database, t)).join(", ")};`];
 }
 
 /** パーティション操作の対象 (子パーティション)。PostgreSQL の子は別スキーマにも置ける。 */
@@ -53,7 +47,7 @@ export interface PartitionRef {
 
 /** PostgreSQL の子パーティションの完全修飾名 (親と別スキーマなら子のスキーマを優先する)。 */
 function qualifiedPartition(driver: string, database: string | null, p: PartitionRef): string {
-  return qualified(driver, p.schema ?? database, p.name);
+  return qualifiedTableName(driver, p.schema ?? database, p.name);
 }
 
 /**
@@ -69,7 +63,7 @@ export function buildPartitionTruncateSql(
 ): string {
   if (driver === "sqlite") return "";
   if (driver === "postgres") return `TRUNCATE TABLE ${qualifiedPartition(driver, database, p)};`;
-  return `ALTER TABLE ${qualified(driver, database, table)} TRUNCATE PARTITION ${quoteIdentFor(driver, p.name)};`;
+  return `ALTER TABLE ${qualifiedTableName(driver, database, table)} TRUNCATE PARTITION ${quoteIdentFor(driver, p.name)};`;
 }
 
 /**
@@ -84,7 +78,7 @@ export function buildPartitionDropSql(
 ): string {
   if (driver === "sqlite") return "";
   if (driver === "postgres") return `DROP TABLE ${qualifiedPartition(driver, database, p)};`;
-  return `ALTER TABLE ${qualified(driver, database, table)} DROP PARTITION ${quoteIdentFor(driver, p.name)};`;
+  return `ALTER TABLE ${qualifiedTableName(driver, database, table)} DROP PARTITION ${quoteIdentFor(driver, p.name)};`;
 }
 
 /** PostgreSQL の `ALTER TABLE <parent> DETACH PARTITION <child>` (#1868)。他ドライバは空文字。 */
@@ -97,8 +91,8 @@ export function buildDetachPartitionSql(
   if (driver !== "postgres") return "";
   // サブパーティションは直上のパーティション (中間表) から外す。直下の子は開いている親表から。
   const parent = p.parent
-    ? qualified(driver, p.parentSchema ?? database, p.parent)
-    : qualified(driver, database, table);
+    ? qualifiedTableName(driver, p.parentSchema ?? database, p.parent)
+    : qualifiedTableName(driver, database, table);
   return `ALTER TABLE ${parent} DETACH PARTITION ${qualifiedPartition(driver, database, p)};`;
 }
 
@@ -115,7 +109,7 @@ export function buildAttachPartitionSql(
   boundClause: string,
 ): string {
   if (driver !== "postgres" || boundClause.trim() === "") return "";
-  return `ALTER TABLE ${qualified(driver, database, table)} ATTACH PARTITION ${qualifiedPartition(driver, database, child)} ${boundClause};`;
+  return `ALTER TABLE ${qualifiedTableName(driver, database, table)} ATTACH PARTITION ${qualifiedPartition(driver, database, child)} ${boundClause};`;
 }
 
 /** 複数テーブルの TRUNCATE の実行方式 (#1629)。 */
@@ -140,7 +134,9 @@ export function buildTruncateTablesSql(
   if (driver === "postgres") {
     return {
       mode: "single",
-      statements: [`TRUNCATE TABLE ${tables.map((t) => qualified(driver, database, t)).join(", ")};`],
+      statements: [
+        `TRUNCATE TABLE ${tables.map((t) => qualifiedTableName(driver, database, t)).join(", ")};`,
+      ],
     };
   }
   return {
@@ -159,7 +155,7 @@ export function buildRenameTableSql(
   table: string,
   newName: string,
 ): string {
-  const from = qualified(driver, database, table);
+  const from = qualifiedTableName(driver, database, table);
   const to = quoteIdentFor(driver, newName);
   return `ALTER TABLE ${from} RENAME TO ${to};`;
 }
@@ -303,7 +299,11 @@ export function buildCreateIndexSql(
     : opts.unique && support.unique
       ? "CREATE UNIQUE INDEX"
       : "CREATE INDEX";
-  let sql = `${keyword} ${quoteIdentFor(driver, idxName)} ON ${qualified(driver, database, table)}`;
+  // SQLite は ON の表を修飾できず、アタッチ先のスキーマは索引名の側に付ける (`CREATE INDEX "別名"."idx" ON "t"`)。
+  let sql =
+    driver === "sqlite"
+      ? `${keyword} ${qualifiedTableName(driver, database, idxName)} ON ${quoteIdentFor(driver, table)}`
+      : `${keyword} ${quoteIdentFor(driver, idxName)} ON ${qualifiedTableName(driver, database, table)}`;
   if (driver === "postgres" && method) sql += ` USING ${method}`;
   sql += ` (${keyList})`;
   if (driver === "mysql" && (method === "btree" || method === "hash"))
@@ -329,7 +329,9 @@ export function buildDropIndexSql(
   indexName: string,
 ): string {
   if (driver === "mysql") {
-    return `DROP INDEX ${quoteIdentFor(driver, indexName)} ON ${qualified(driver, database, table)};`;
+    return `DROP INDEX ${quoteIdentFor(driver, indexName)} ON ${qualifiedTableName(driver, database, table)};`;
   }
+  // SQLite のアタッチ先の索引は `DROP INDEX "別名"."idx"` (索引名はスキーマ内で一意)。
+  if (driver === "sqlite") return `DROP INDEX ${qualifiedTableName(driver, database, indexName)};`;
   return `DROP INDEX ${quoteIdentFor(driver, indexName)};`;
 }

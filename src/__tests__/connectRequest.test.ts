@@ -54,9 +54,16 @@ describe("connectRequestFromProfile", () => {
       init_sql: "SET search_path = app;",
       aws_iam: { region: "ap-northeast-1", profile: "work" },
       ssm: { target: "i-0123456789abcdef0", region: "", profile: "work" },
+      sqlite_attachments: [],
       read_only: true,
       skip_history: false,
     });
+  });
+
+  it("SQLite のアタッチ設定を写す (#2129)", () => {
+    const attachments = [{ path: "/data/ext.db", alias: "ext" }];
+    const req = connectRequestFromProfile({ ...profile, ssh: null, sqlite_attachments: attachments });
+    expect(req.sqlite_attachments).toEqual(attachments);
   });
 
   it("SSH の秘密は空にして踏み台も写す", () => {

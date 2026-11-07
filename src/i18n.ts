@@ -1079,6 +1079,8 @@ const en = {
   dangerousPkSuggestInsert: "Cancel and add this WHERE to the editor",
   dangerousKindDropColumn: "ALTER TABLE ... DROP COLUMN (removes the column and its data)",
   dangerousKindDropConstraint: "ALTER TABLE ... DROP CONSTRAINT (removes a constraint)",
+  dangerousKindSqliteAttach:
+    'ATTACH / DETACH only affects some of the pooled connections, so later queries may fail with "no such table". Use "Attached files" in the connection settings instead',
   dangerousTargetTable: "Target: {target}",
   dangerousTargetUnknown: "Target: (could not determine)",
   // Impact-row count handed off from the editor preflight (#737).
@@ -1625,6 +1627,9 @@ const en = {
   formSqliteAttachPath: "File path",
   formSqliteAttachAlias: "Alias",
   formSqliteAttachRemove: "Remove",
+  formSqliteAttachAliasInvalid:
+    "Use letters, digits and _ only, not starting with a digit (main and temp are reserved)",
+  formSqliteAttachAliasDuplicate: "This alias is already used by another file",
   formHost: "Host",
   formPort: "Port",
   formUser: "User",
@@ -8568,6 +8573,8 @@ const ja: Dict = {
   dangerousPkSuggestInsert: "キャンセルしてエディタに WHERE を追加",
   dangerousKindDropColumn: "ALTER TABLE ... DROP COLUMN（列とそのデータを削除します）",
   dangerousKindDropConstraint: "ALTER TABLE ... DROP CONSTRAINT（制約を削除します）",
+  dangerousKindSqliteAttach:
+    "ATTACH / DETACH はプールの一部の接続にしか効かず、後続のクエリが「no such table」で失敗することがあります。接続設定の「アタッチするファイル」を使ってください",
   dangerousTargetTable: "対象: {target}",
   dangerousTargetUnknown: "対象: (特定できませんでした)",
   // エディタのプリフライトから引き継ぐ影響行数 (#737)。
@@ -9115,6 +9122,8 @@ const ja: Dict = {
   formSqliteAttachPath: "ファイルのパス",
   formSqliteAttachAlias: "別名",
   formSqliteAttachRemove: "削除",
+  formSqliteAttachAliasInvalid: "英数字と _ だけが使えます。先頭に数字は使えず、main と temp は予約済みです",
+  formSqliteAttachAliasDuplicate: "この別名はほかのファイルですでに使われています",
   formHost: "ホスト",
   formPort: "ポート",
   formUser: "ユーザー",
