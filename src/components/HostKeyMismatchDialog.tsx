@@ -41,6 +41,7 @@ export function HostKeyMismatchDialog({ profile, message, busy, onReTrust, onCan
     <Modal
       // no-submit: ホスト鍵の再信頼は破壊的操作。キャンセルが既定
       width="520px"
+      placement="center"
       onClose={onCancel}
       closeOnEscape={!busy}
       closeOnInteractOutside={!busy}

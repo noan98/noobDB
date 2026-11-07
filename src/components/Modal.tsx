@@ -74,6 +74,12 @@ interface ModalProps {
   width?: string;
   /** バックドロップ (外側) クリックで閉じるか。既定 true。 */
   closeOnInteractOutside?: boolean;
+  /**
+   * 縦方向の配置。既定 `top` は上寄せのアンカー配置で、内容の増減 (プレビュー・結果・
+   * バリデーションエラー) があっても見出しと主ボタンが上下へジャンプせず、下方向にだけ
+   * 伸びる。`center` は内容が変わらない小さな確認ダイアログ向けの上下中央 (#2123)。
+   */
+  placement?: "top" | "center";
   /** Escape キーで閉じるか。既定 true。 */
   closeOnEscape?: boolean;
   /**
@@ -123,6 +129,7 @@ export function Modal({
   onClose,
   width = "760px",
   closeOnInteractOutside = true,
+  placement = "top",
   closeOnEscape = true,
   initialFocusEl,
   onSubmit,
@@ -173,7 +180,7 @@ export function Modal({
       onOpenChange={(e) => {
         if (!e.open) onClose();
       }}
-      placement="center"
+      placement={placement}
       closeOnInteractOutside={closeOnInteractOutside}
       closeOnEscape={closeOnEscape}
       // ListboxSelect / ComboSelect を開いたままの Esc は、候補リストだけを閉じる。
@@ -201,9 +208,11 @@ export function Modal({
             inset: 0,
             zIndex: "modal",
             display: "flex",
-            alignItems: "center",
+            alignItems: placement === "top" ? "flex-start" : "center",
             justifyContent: "center",
             padding: "5",
+            // 上寄せでは上余白をトークンで取り、下端は 90vh の上限で画面内に収める。
+            ...(placement === "top" ? { paddingTop: "var(--space-12)" } : {}),
           }}
         >
           <Dialog.Content asChild>
@@ -221,7 +230,9 @@ export function Modal({
                 // 開いたまま幅が変わるモーダル (Ask Agent の 2 ペイン化) で幅を滑らかに広げる。
                 // reduced-motion では App.css の全体ルールが transition を止める。
                 transition: "width var(--dur-med) var(--ease-out), max-width var(--dur-med) var(--ease-out)",
-                maxHeight: "90vh",
+                // 上寄せの余白ぶんを引いても 90vh を超えない (フォント拡大時も下端が見切れない)。
+                maxHeight:
+                  placement === "top" ? "min(90vh, calc(100dvh - var(--space-12) - var(--space-5)))" : "90vh",
                 overflow: "hidden",
                 bg: "app.surface",
                 border: "1px solid",
