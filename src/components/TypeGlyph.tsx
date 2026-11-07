@@ -48,16 +48,9 @@ export const TypeGlyph = memo(function TypeGlyph({
       justifyContent="center"
       flexShrink={0}
       color={KIND_COLOR[kind]}
-      opacity={0.85}
     >
       <Icon name={CELL_KIND_META[kind].icon} size={ICON_SIZES.sm} />
     </chakra.span>
   );
-  return tooltip ? (
-    <Tooltip label={label} focusableWrapper>
-      {glyph}
-    </Tooltip>
-  ) : (
-    glyph
-  );
+  return tooltip ? <Tooltip label={label}>{glyph}</Tooltip> : glyph;
 });
