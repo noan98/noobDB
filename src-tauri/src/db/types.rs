@@ -476,10 +476,11 @@ pub const PG_LISTED_TYPE_FILTER: &str = "(t.typtype IN ('e', 'd', 'r') \
 /// ツリーに出すルーチン (`pg_proc` を `p` で参照) から、型に付随して自動で作られるものを除く条件 (#2127)。
 /// 範囲型は同名のコンストラクタ関数 (`int4range(...)` など) と、対応する多範囲型のコンストラクタを
 /// 内部依存 (`deptype = 'i'`) として作る。`CREATE TYPE ... AS RANGE` が作り直すものなので、独立した関数として
-/// 並べず、スキーマ比較・同期の対象にもしない。
+/// 並べず、スキーマ比較・同期の対象にもしない。拡張機能に属する関数 (`deptype = 'e'`、earthdistance の
+/// `earth()` など) も、型と同じく `CREATE EXTENSION` が作るものなので除く。
 pub const PG_ROUTINE_NOT_TYPE_MEMBER: &str = "NOT EXISTS (SELECT 1 FROM pg_depend d \
-     WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'i' \
-       AND d.refclassid = 'pg_type'::regclass)";
+     WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid \
+       AND ((d.deptype = 'i' AND d.refclassid = 'pg_type'::regclass) OR d.deptype = 'e'))";
 
 /// `schema_objects` の `detail` に入れる型の種別名 (`pg_type.typtype` の 1 文字から)。
 /// PostgreSQL の `type` 種別 1 つで ENUM / DOMAIN / 複合型 / 範囲型を運び、ツリーはこの

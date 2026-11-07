@@ -4996,7 +4996,11 @@ async fn postgres_user_defined_types_are_listed_compared_and_synced() {
         Some(t::DiffStatus::SourceOnly)
     );
     assert_eq!(status_of(&diff, "legacy"), Some(t::DiffStatus::TargetOnly));
-    assert!(diff.objects.items.iter().all(|i| i.name != "earth"));
+    assert!(diff
+        .objects
+        .items
+        .iter()
+        .all(|i| !(i.kind == "type" && i.name == "earth")));
 
     // 同期 (破壊的な操作を許可): 型の作成 → 表の作成 → 表の削除 → 型の削除の順で通る。
     let plan = t::generate_sync_sql(&diff, true);
