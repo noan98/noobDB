@@ -36,6 +36,7 @@ slow-timeout = { period = "20s", terminate-after = 15 }
 [test-groups]
 sandbox-store = { max-threads = 1 }
 dump-temp-files = { max-threads = 1 }
+sqlite-cpu-heavy = { max-threads = 1 }
 
 [[profile.default.overrides]]
 filter = 'test(/^sandbox_integration::/)'
@@ -44,3 +45,13 @@ test-group = 'sandbox-store'
 [[profile.default.overrides]]
 filter = 'test(commands::dump::tests::)'
 test-group = 'dump-temp-files'
+
+# `timeout_cancel_pool` と `server_stop_sqlite` は、再帰 CTE で数百万〜1,000 万行を数える CPU を
+# 食う SQLite クエリを、タイムアウト / キャンセル後の回収期限 (20 秒) 付きで走らせる。2 コアの
+# runner で両者が同時に走ると、キャンセル後もワーカースレッドが数え続ける分の CPU を奪い合い、
+# 回収が期限に間に合わず `repeated_timeouts_do_not_exhaust_pool` が落ちた (PR #2145 で 2 回連続)。
+# 互いの CPU を奪わないよう、この 2 つのモジュールのテストは 1 本ずつ走らせる。
+
+[[profile.default.overrides]]
+filter = 'test(/^timeout_cancel_pool::/) | test(/^server_stop_sqlite::/)'
+test-group = 'sqlite-cpu-heavy'
