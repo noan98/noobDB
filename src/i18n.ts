@@ -4524,6 +4524,11 @@ const en = {
   importMappingTitle: "Column mapping",
   importSkipColumn: "(skip)",
   importMappingAria: "CSV column to import into {column}",
+  importMappingSummary: "{mapped} / {total} columns mapped",
+  importMappingRequiredWarning:
+    "{count} required column(s) are not mapped: {columns}. They are NOT NULL with no default, so the import will fail unless you map them.",
+  importMappingRequiredRow: "This column is required",
+  importMappingSampleEmpty: "(empty)",
   importColumnNumbered: "Column {n}",
   importPreviewTitle: "Preview",
   importPreviewTruncated: "(showing the first rows)",
@@ -11988,6 +11993,11 @@ const ja: Dict = {
   importMappingTitle: "カラムマッピング",
   importSkipColumn: "(取り込まない)",
   importMappingAria: "{column} に取り込む CSV の列",
+  importMappingSummary: "対応 {mapped} / {total} 列",
+  importMappingRequiredWarning:
+    "必須列 {count} 件が未対応です: {columns}。NOT NULL で既定値がないため、対応付けないと取り込みに失敗します。",
+  importMappingRequiredRow: "この列は必須です",
+  importMappingSampleEmpty: "(空)",
   importColumnNumbered: "列 {n}",
   importPreviewTitle: "プレビュー",
   importPreviewTruncated: "(先頭の行を表示しています)",
