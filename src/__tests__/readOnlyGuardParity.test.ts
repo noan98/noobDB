@@ -703,6 +703,9 @@ const CONNECTION_READ_METHODS = new Set([
   "health_check",
   "resolve_database",
   "check_upsert_keys",
+  // SQLite の別名を解決する・別名側を拒否するだけで DB に書かない (#2129)
+  "resolve_attached_database",
+  "reject_if_attached_sqlite",
   // 列のユーザー定義型を pg_catalog から引くだけ (#2127)
   "user_type_columns",
   "table_is_transactional",
