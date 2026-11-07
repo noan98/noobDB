@@ -91,4 +91,41 @@ mod tests {
         assert_eq!(cut.chars().count(), PAYLOAD_DISPLAY_MAX_CHARS);
         assert!(long.starts_with(&cut));
     }
+
+    #[test]
+    fn channel_names_match_the_shared_vectors() {
+        // フロント `checkChannelName` / `foldUnquotedChannel` と同じ共有ベクタ (#2132)。UI が前後の空白を
+        // 落としてから渡す前提なので、ここでも trim してから検証する。片方だけ規則を変えるとどちらかが落ちる。
+        let v: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../src/__tests__/fixtures/pgListenChannelVectors.json"
+        ))
+        .unwrap();
+        let cases = v["cases"].as_array().unwrap();
+        assert!(!cases.is_empty());
+        for c in cases {
+            let name = c["name"].as_str().unwrap();
+            let raw = c["raw"].as_str().unwrap().trim();
+            let got = validate_channel(raw);
+            if c["ok"].as_bool().unwrap() {
+                let channel = c["channel"].as_str().unwrap();
+                assert_eq!(got, Ok(channel), "{name}");
+                // 引用符なしの識別子は ASCII の大文字だけが小文字に畳まれる (非 ASCII は畳まれない)。
+                assert_eq!(
+                    channel.to_ascii_lowercase(),
+                    c["folded"].as_str().unwrap(),
+                    "{name}"
+                );
+            } else {
+                let reason = got.expect_err(name);
+                let problem = if reason.contains("empty") {
+                    "empty"
+                } else if reason.contains("NUL") {
+                    "nul"
+                } else {
+                    "tooLong"
+                };
+                assert_eq!(problem, c["problem"].as_str().unwrap(), "{name}");
+            }
+        }
+    }
 }

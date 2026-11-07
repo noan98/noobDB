@@ -52,6 +52,27 @@ export function checkChannelName(raw: string): ChannelNameCheck {
   return { ok: true, name };
 }
 
+/**
+ * 引用符なしの識別子が PostgreSQL で畳まれた後の名前 (ASCII の大文字だけを小文字にする)。
+ * `NOTIFY OrdersChanged` は `orderschanged` に畳まれる。非 ASCII は (UTF-8 DB では) 畳まれないので
+ * `toLowerCase()` は使わない。
+ */
+export function foldUnquotedChannel(name: string): string {
+  return name.replace(/[A-Z]/g, (c) => c.toLowerCase());
+}
+
+/**
+ * チャンネル名の大文字小文字の注意 (#2132)。このアプリは名前を `"..."` で囲んで購読するため大文字小文字を
+ * 区別するが、引用符なしの `NOTIFY Foo` は `foo` に畳まれて届かない。大文字を含む有効な名前なら、
+ * 入力された名前と畳んだ名前を返す。注意が要らなければ `null`。
+ */
+export function channelCaseWarning(raw: string): { name: string; folded: string } | null {
+  const checked = checkChannelName(raw);
+  if (!checked.ok) return null;
+  const folded = foldUnquotedChannel(checked.name);
+  return folded === checked.name ? null : { name: checked.name, folded };
+}
+
 /** PostgreSQL 以外には LISTEN / NOTIFY が無い。 */
 export function supportsPgListen(driver: string | null | undefined): boolean {
   return driver === "postgres";
