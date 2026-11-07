@@ -6770,6 +6770,15 @@ export default function App() {
     [pendingParams, selectedProfile?.driver, dispatchEditorAction],
   );
 
+  // 「展開せずにそのまま実行」: PREPARE や関数本体の `$1` など、値を入れたくない文を元の SQL のまま
+  // 通常の実行経路 (実行ゲート込み) へ渡す。
+  const handleParamsRunRaw = useCallback(() => {
+    if (!pendingParams) return;
+    const { tab, sql, mode } = pendingParams;
+    setPendingParams(null);
+    dispatchEditorAction(tab, sql, mode);
+  }, [pendingParams, dispatchEditorAction]);
+
   const handleParamsCancel = useCallback(() => setPendingParams(null), []);
 
   // User-driven stop: cancel the tab's in-flight stream, drop the streaming
@@ -14761,6 +14770,7 @@ export default function App() {
                 sql={pendingParams.sql}
                 driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                 onSubmit={handleParamsSubmit}
+                onRunRaw={handleParamsRunRaw}
                 onCancel={handleParamsCancel}
               />
             )}

@@ -1219,6 +1219,9 @@ const en = {
   parameterInputPasteLabel: "Paste values from a log",
   parameterInputPastePlaceholder: "1, 'active', NULL   or   [1, \"active\", null]",
   parameterInputPasteApply: "Assign in order",
+  parameterInputRunRaw: "Run without expanding",
+  parameterInputRunRawHint:
+    "Run the SQL as written, without substituting values. Use this for PREPARE or function bodies where $1 is an argument.",
   parameterInputPasteCountMismatch:
     "{actual} values pasted, but the query has {expected} positional placeholders.",
   contextMenuEdit: "Edit connection",
@@ -8709,6 +8712,9 @@ const ja: Dict = {
   parameterInputPasteLabel: "ログから値を貼り付け",
   parameterInputPastePlaceholder: "1, 'active', NULL  または  [1, \"active\", null]",
   parameterInputPasteApply: "順に割り当て",
+  parameterInputRunRaw: "展開せずにそのまま実行",
+  parameterInputRunRawHint:
+    "値を埋め込まず、書いたとおりの SQL を実行します。PREPARE や関数本体の $1 が引数のときに使います。",
   parameterInputPasteCountMismatch:
     "貼り付けた値は {actual} 個ですが、位置プレースホルダーは {expected} 個です。",
   contextMenuEdit: "接続情報を編集",

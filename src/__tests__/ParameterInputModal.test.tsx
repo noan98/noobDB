@@ -146,4 +146,35 @@ describe("ParameterInputModal", () => {
     expect(screen.getByLabelText(t("parameterInputValueLabelFor", { name: "$1" }))).toBeInTheDocument();
     expect(screen.queryByLabelText(t("parameterInputValueLabelFor", { name: "?1" }))).not.toBeInTheDocument();
   });
+
+  it("ネイティブプレースホルダでは「展開せずにそのまま実行」を出し、押すと onRunRaw を呼ぶ", async () => {
+    const user = userEvent.setup();
+    const onRunRaw = vi.fn();
+    const onSubmit = vi.fn();
+    renderWithProviders(
+      <ParameterInputModal
+        sql="PREPARE p AS SELECT 1; SELECT $1"
+        driver="postgres"
+        onSubmit={onSubmit}
+        onRunRaw={onRunRaw}
+        onCancel={() => {}}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: t("parameterInputRunRaw") }));
+    expect(onRunRaw).toHaveBeenCalledTimes(1);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("{{name}} だけのときは「展開せずにそのまま実行」を出さない", () => {
+    renderWithProviders(
+      <ParameterInputModal
+        sql={SQL}
+        driver="mysql"
+        onSubmit={() => {}}
+        onRunRaw={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: t("parameterInputRunRaw") })).toBeNull();
+  });
 });

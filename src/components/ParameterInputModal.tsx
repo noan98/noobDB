@@ -33,6 +33,8 @@ interface Props {
   driver: DriverKind;
   /** Run with the entered values (App substitutes + executes). */
   onSubmit: (values: Record<string, string>, types: Record<string, ParamType>) => void;
+  /** 展開せずに元の SQL をそのまま実行する (PREPARE / 関数本体の `$n` など)。 */
+  onRunRaw?: () => void;
   onCancel: () => void;
 }
 
@@ -82,7 +84,7 @@ const TYPE_KEYS: { type: ParamType; key: Parameters<ReturnType<typeof useT>>[0] 
   { type: "null", key: "parameterInputTypeNull" },
 ];
 
-export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) {
+export function ParameterInputModal({ sql, driver, onSubmit, onRunRaw, onCancel }: Props) {
   const t = useT();
   // `{{name}}` とネイティブプレースホルダ (`?` / `$n` / `:name`) は同じ一覧で入力する。
   // ネイティブのキーは先頭記号 (`?1` / `$1` / `:name`) で `{{name}}` の名前と衝突しない。
@@ -94,6 +96,7 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
   const hasNative = useMemo(() => names.some((n) => !/^\w+$/.test(n)), [names]);
   const [pasteText, setPasteText] = useState("");
   const firstInputRef = useRef<HTMLInputElement>(null);
+  const pasteRef = useRef<HTMLTextAreaElement>(null);
 
   const [drafts, setDrafts] = useState<Record<string, Draft>>(() => {
     const cache = readCache();
@@ -172,7 +175,8 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
       submitDisabled={hasError}
       width="600px"
       onClose={onCancel}
-      initialFocusEl={() => firstInputRef.current}
+      // 先頭の欄が NULL 型で無効化されることがあるので、貼り付け欄があればそこへ最初のフォーカスを置く。
+      initialFocusEl={() => pasteRef.current ?? firstInputRef.current}
     >
       <ModalHeader onClose={onCancel} closeLabel={t("parameterInputCancel")}>
         {t("parameterInputTitle")}
@@ -188,6 +192,7 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
             <FieldLabel as="div">{t("parameterInputPasteLabel")}</FieldLabel>
             <chakra.div display="flex" gap="2" alignItems="flex-start">
               <Textarea
+                ref={pasteRef}
                 fontFamily="mono"
                 fontSize="sm"
                 rows={2}
@@ -298,7 +303,14 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
       </ModalBody>
 
       <ModalFooter>
-        {/* spacer → secondary (Cancel) → primary (Run) の右寄せ配置。他モーダルと統一 */}
+        {/* 補助 → spacer → キャンセル → 主アクション。他モーダルと統一 */}
+        {hasNative && onRunRaw && (
+          <Tooltip label={t("parameterInputRunRawHint")}>
+            <Button type="button" variant="secondary" onClick={onRunRaw}>
+              {t("parameterInputRunRaw")}
+            </Button>
+          </Tooltip>
+        )}
         <div style={{ flex: 1 }} />
         <Button type="button" variant="secondary" onClick={onCancel}>
           {t("parameterInputCancel")}

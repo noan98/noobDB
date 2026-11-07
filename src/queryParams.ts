@@ -135,12 +135,56 @@ function isWordCh(ch: string | undefined): boolean {
   return ch !== undefined && /[A-Za-z0-9_]/.test(ch);
 }
 
+/** 文頭が `PREPARE` / `CREATE [OR REPLACE] FUNCTION|PROCEDURE` か (マスク済みなのでコメントは空白)。 */
+const DEFINITION_START_RE =
+  /^\s*(?:PREPARE\b|CREATE\s+(?:OR\s+REPLACE\s+)?(?:DEFINER\s*=\s*\S+\s+)?(?:FUNCTION|PROCEDURE)\b)/i;
+
+/**
+ * ネイティブ検出から外す範囲 `[start, end)`。`PREPARE p(int) AS ... $1` や
+ * `CREATE FUNCTION f(int) ... RETURN $1 + 1` の `$n` は定義側の引数で、値に置き換えると
+ * 意味の違う定義になる。複文は文ごと (マスク後に残る `;` で分割) に判定し、
+ * `BEGIN ATOMIC ... END` の本体は `END` の文まで含める。
+ */
+function definitionRanges(masked: string): [number, number][] {
+  const out: [number, number][] = [];
+  let start = 0;
+  let inAtomic = false;
+  let atomicFrom = 0;
+  const flush = (end: number) => {
+    const seg = masked.slice(start, end);
+    if (inAtomic) {
+      if (/^\s*END\b/i.test(seg)) {
+        out.push([atomicFrom, end]);
+        inAtomic = false;
+      }
+      return;
+    }
+    if (!DEFINITION_START_RE.test(seg)) return;
+    if (/\bBEGIN\s+ATOMIC\b/i.test(seg)) {
+      inAtomic = true;
+      atomicFrom = start;
+      return;
+    }
+    out.push([start, end]);
+  };
+  for (let i = 0; i < masked.length; i++) {
+    if (masked[i] === ";") {
+      flush(i);
+      start = i + 1;
+    }
+  }
+  flush(masked.length);
+  if (inAtomic) out.push([atomicFrom, masked.length]);
+  return out;
+}
+
 /**
  * `sql` 中のネイティブプレースホルダを出現順に列挙する。
  *   - MySQL / SQLite: `?` (SQLite は `?NNN` の番号付きも)
  *   - PostgreSQL: `$n` (jsonb の `?` / `?|` / `?&` は検出しない)
  *   - 全ドライバ共通: `:name` (`::` キャスト・`:=`・`a[x:y]` のスライス・`@var` は除く)
- * SQLite の `$name` / `@name` と MySQL の `@var` は検出しない。
+ * SQLite の `$name` / `@name` と MySQL の `@var` は検出しない。`PREPARE` と
+ * `CREATE FUNCTION|PROCEDURE` の文は丸ごと検出対象外 (中の `$n` は定義の引数)。
  */
 export function scanNativePlaceholders(sql: string, driver?: string): NativePlaceholder[] {
   const masked = maskLiterals(sql, driver);
@@ -148,10 +192,22 @@ export function scanNativePlaceholders(sql: string, driver?: string): NativePlac
   if (masked.length !== sql.length) return [];
   const out: NativePlaceholder[] = [];
   const n = masked.length;
+  const excluded = definitionRanges(masked);
+  let exIdx = 0;
   let maxIndex = 0;
+  // `[` `]` の深さ。PostgreSQL の配列スライス (`arr[1 : n]` / `arr[:n]`) の `:n` を名前と誤認しない。
+  let bracketDepth = 0;
   let i = 0;
   while (i < n) {
+    while (exIdx < excluded.length && i >= excluded[exIdx][1]) exIdx++;
+    if (exIdx < excluded.length && i >= excluded[exIdx][0]) {
+      // PREPARE / 関数・プロシージャ定義の本文の `$n` / `?` は、その文自身の引数。展開しない。
+      i = excluded[exIdx][1];
+      continue;
+    }
     const c = masked[i];
+    if (c === "[") bracketDepth++;
+    else if (c === "]") bracketDepth = Math.max(0, bracketDepth - 1);
     if (c === "?" && (driver === "mysql" || driver === "sqlite")) {
       let j = i + 1;
       if (driver === "sqlite" && /[0-9]/.test(masked[j] ?? "")) {
@@ -184,6 +240,7 @@ export function scanNativePlaceholders(sql: string, driver?: string): NativePlac
       }
       const prev = masked[i - 1];
       if (
+        bracketDepth === 0 &&
         /[A-Za-z_]/.test(masked[i + 1] ?? "") &&
         !isWordCh(prev) &&
         prev !== ":" &&
@@ -286,36 +343,85 @@ export function parsePastedValues(input: string, driver?: string): PastedValue[]
   const text = input.trim();
   if (text === "") return [];
   if (text.startsWith("[")) {
-    try {
-      const parsed: unknown = JSON.parse(text);
-      if (Array.isArray(parsed)) return parsed.map((v) => fromJsonValue(v, driver));
-    } catch {
-      // JSON として読めなければ CSV として扱う
-    }
+    const items = parseJsonArrayItems(text, driver);
+    if (items) return items;
+    // JSON として読めなければ CSV として扱う
   }
-  return splitCsv(text).map(({ raw, quoted }) => {
+  return splitCsv(text, driver).map(({ raw, quoted }) => {
     if (quoted) return { value: raw, type: "text" as const };
     if (/^null$/i.test(raw)) return { value: "", type: "null" as const };
+    if (/^(?:true|false)$/i.test(raw)) return boolValue(raw.toLowerCase() === "true", driver);
     if (isNumericParam(raw)) return { value: raw, type: "number" as const };
     return { value: raw, type: "text" as const };
   });
 }
 
+/** JSON 数値トークン (JSON.parse に通さず生テキストのまま保つ。64bit 整数・小数・指数を丸めない)。 */
+const JSON_NUMBER_RE = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+
+/**
+ * JSON 配列の要素を、数値は生テキストのまま取り出して解釈する。
+ * 配列でない・壊れている場合は null。
+ */
+function parseJsonArrayItems(text: string, driver?: string): PastedValue[] | null {
+  try {
+    if (!Array.isArray(JSON.parse(text))) return null;
+  } catch {
+    return null;
+  }
+  // 構文は検証済み。トップレベルの要素を文字列・入れ子を追いながら切り出す。
+  const tokens: string[] = [];
+  let depth = 0;
+  let inStr = false;
+  let from = 1;
+  for (let i = 1; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (ch === "\\") i++;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "[" || ch === "{") depth++;
+    else if ((ch === "]" || ch === "}") && depth > 0) depth--;
+    else if ((ch === "," && depth === 0) || (ch === "]" && depth === 0)) {
+      tokens.push(text.slice(from, i).trim());
+      from = i + 1;
+      if (ch === "]") break;
+    }
+  }
+  // `[]` は空配列 (トークンが空文字 1 個になるので除く)。
+  const real = tokens.length === 1 && tokens[0] === "" ? [] : tokens;
+  return real.map((tok) =>
+    JSON_NUMBER_RE.test(tok)
+      ? { value: tok, type: "number" as const }
+      : fromJsonValue(JSON.parse(tok), driver),
+  );
+}
+
+/** 真偽値の貼り付け (JSON でも裸の true/false でも同じ)。MySQL / SQLite は 1 / 0、PostgreSQL は 'true' / 'false'。 */
+function boolValue(b: boolean, driver?: string): PastedValue {
+  if (driver === "postgres") return { value: b ? "true" : "false", type: "text" };
+  return { value: b ? "1" : "0", type: "number" };
+}
+
 function fromJsonValue(v: unknown, driver?: string): PastedValue {
   if (v === null || v === undefined) return { value: "", type: "null" };
   if (typeof v === "number") return { value: String(v), type: "number" };
-  if (typeof v === "boolean") {
-    // MySQL / SQLite は真偽値を 1 / 0 で持つ。PostgreSQL は 'true' / 'false' の文字列から boolean へ解決される。
-    if (driver === "postgres") return { value: v ? "true" : "false", type: "text" };
-    return { value: v ? "1" : "0", type: "number" };
-  }
+  if (typeof v === "boolean") return boolValue(v, driver);
   if (typeof v === "string") return { value: v, type: "text" };
   return { value: JSON.stringify(v), type: "text" };
 }
 
-/** カンマ区切りを分割する。`'…'` / `"…"` の中のカンマは区切りにせず、引用符の二重化は 1 個に戻す。 */
-function splitCsv(text: string): { raw: string; quoted: boolean }[] {
+const MYSQL_ESCAPES: Record<string, string> = { n: "\n", t: "\t", r: "\r", "0": "\0", b: "\b", Z: "\x1a" };
+
+/**
+ * カンマ区切りを分割する。`'…'` / `"…"` の中のカンマは区切りにせず、引用符の二重化は 1 個に戻す。
+ * MySQL は引用の内側のバックスラッシュエスケープ (`\'` / `\\` / `\n` …) も解釈する。
+ */
+function splitCsv(text: string, driver?: string): { raw: string; quoted: boolean }[] {
   const out: { raw: string; quoted: boolean }[] = [];
+  const backslash = driver === "mysql";
   let cur = "";
   let quoted = false;
   let quote: string | null = null;
@@ -327,7 +433,11 @@ function splitCsv(text: string): { raw: string; quoted: boolean }[] {
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     if (quote) {
-      if (ch === quote) {
+      if (backslash && ch === "\\" && i + 1 < text.length) {
+        const nx = text[i + 1];
+        cur += MYSQL_ESCAPES[nx] ?? nx;
+        i++;
+      } else if (ch === quote) {
         if (text[i + 1] === quote) {
           cur += quote;
           i++;

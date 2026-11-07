@@ -189,6 +189,60 @@ const DETECT_VECTORS: { name: string; driver: string; sql: string; keys: string[
   { name: "@var / SQLite @name $name", driver: "sqlite", sql: "SELECT @name, $name, @v", keys: [] },
   { name: "配列スライス", driver: "postgres", sql: "SELECT arr[lo:hi], arr[1:2] FROM t", keys: [] },
   { name: "時刻リテラル", driver: "mysql", sql: "SELECT TIME '12:30:00'", keys: [] },
+  { name: "PG の配列スライス (空白あり)", driver: "postgres", sql: "SELECT arr[1 : n] FROM t", keys: [] },
+  { name: "PG の配列スライス (下限なし)", driver: "postgres", sql: "SELECT arr[:n] FROM t", keys: [] },
+  { name: "PG の配列スライス (関数)", driver: "postgres", sql: "SELECT arr[lower(r):hi] FROM t", keys: [] },
+  { name: "角括弧の外の :name は拾う", driver: "postgres", sql: "SELECT arr[1], :x FROM t", keys: [":x"] },
+  { name: "PG の E'' 文字列の \\' を越えない", driver: "postgres", sql: "SELECT E'it\\'s ? $1'", keys: [] },
+  { name: "MySQL の \\' を越えない", driver: "mysql", sql: "SELECT 'a\\' ? :x'", keys: [] },
+  {
+    name: "'10:00'::time と $1::int",
+    driver: "postgres",
+    sql: "SELECT '10:00'::time, $1::int",
+    keys: ["$1"],
+  },
+  {
+    name: "SQLite の ?, ?5, ? は ?1, ?5, ?6",
+    driver: "sqlite",
+    sql: "SELECT ?, ?5, ?",
+    keys: ["?1", "?5", "?6"],
+  },
+  {
+    name: "PG の PREPARE は対象外",
+    driver: "postgres",
+    sql: "PREPARE p(int) AS SELECT * FROM t WHERE id = $1",
+    keys: [],
+  },
+  {
+    name: "PREPARE (先頭コメント・小文字)",
+    driver: "postgres",
+    sql: "-- c\n  /* x */ prepare p AS SELECT $1",
+    keys: [],
+  },
+  {
+    name: "CREATE FUNCTION (SQL 標準本体)",
+    driver: "postgres",
+    sql: "CREATE FUNCTION f(int) RETURNS int LANGUAGE sql RETURN $1 + 1",
+    keys: [],
+  },
+  {
+    name: "CREATE OR REPLACE PROCEDURE",
+    driver: "postgres",
+    sql: "create or replace procedure p(int) language sql as 'select 1'; ",
+    keys: [],
+  },
+  {
+    name: "BEGIN ATOMIC 本体は END まで対象外",
+    driver: "postgres",
+    sql: "CREATE FUNCTION f(int) RETURNS int BEGIN ATOMIC SELECT $1; SELECT $1 + 1; END; SELECT $1",
+    keys: ["$1"],
+  },
+  {
+    name: "複文は文ごとに判定する",
+    driver: "postgres",
+    sql: "PREPARE p AS SELECT $1; SELECT $2",
+    keys: ["$2"],
+  },
   { name: "PG では ? を拾わない", driver: "postgres", sql: "SELECT ?", keys: [] },
   { name: "SQLite では $1 を拾わない", driver: "sqlite", sql: "SELECT $1", keys: [] },
 ];
@@ -277,6 +331,50 @@ describe("parsePastedValues", () => {
       { value: "1", type: "number" },
     ]);
     expect(parsePastedValues("[true]", "postgres")).toEqual([{ value: "true", type: "text" }]);
+  });
+
+  it("JSON の 64bit 整数・小数・指数を丸めずに保つ", () => {
+    expect(
+      parsePastedValues("[9007199254740993, 12345678901234567890, -0.10, 1.5e3, 2E-2, 0]", "mysql"),
+    ).toEqual([
+      { value: "9007199254740993", type: "number" },
+      { value: "12345678901234567890", type: "number" },
+      { value: "-0.10", type: "number" },
+      { value: "1.5e3", type: "number" },
+      { value: "2E-2", type: "number" },
+      { value: "0", type: "number" },
+    ]);
+  });
+
+  it("JSON の文字列・入れ子・空配列を壊さない", () => {
+    expect(parsePastedValues('["a,]\\"b", [1, 2], {"k": 3}, 7]')).toEqual([
+      { value: 'a,]"b', type: "text" },
+      { value: "[1,2]", type: "text" },
+      { value: '{"k":3}', type: "text" },
+      { value: "7", type: "number" },
+    ]);
+    expect(parsePastedValues("[]")).toEqual([]);
+  });
+
+  it("カンマ区切り: MySQL は \\' と \\\\ を解釈し、他ドライバは文字どおり", () => {
+    expect(parsePastedValues("'it\\'s', 2, 'a\\\\b'", "mysql")).toEqual([
+      { value: "it's", type: "text" },
+      { value: "2", type: "number" },
+      { value: "a\\b", type: "text" },
+    ]);
+    expect(parsePastedValues("'a\\b'", "postgres")).toEqual([{ value: "a\\b", type: "text" }]);
+  });
+
+  it("裸の true / false は JSON と同じ規則", () => {
+    expect(parsePastedValues("true, FALSE", "postgres")).toEqual([
+      { value: "true", type: "text" },
+      { value: "false", type: "text" },
+    ]);
+    expect(parsePastedValues("true, false", "sqlite")).toEqual([
+      { value: "1", type: "number" },
+      { value: "0", type: "number" },
+    ]);
+    expect(parsePastedValues("'true'", "sqlite")).toEqual([{ value: "true", type: "text" }]);
   });
 
   it("空入力は空配列、壊れた JSON は CSV として読む", () => {
