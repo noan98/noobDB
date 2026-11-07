@@ -11,9 +11,7 @@ import { Button, Input } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { CodePreview, ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { Callout } from "./Callout";
-import { DeterminateProgressBar } from "./StreamProgressBar";
-import { StatTile } from "./StatTile";
-import { estimateEtaMs, formatDuration, progressRatio } from "../progressEta";
+import { JobOutcome, JobProgressDetail, type JobProgressDetailProps } from "./JobProgress";
 import type { SemanticRole } from "../semanticColors";
 import { copyToClipboard } from "./clipboard";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -58,53 +56,33 @@ interface DumpProgress {
   tablesTotal: number | null;
 }
 
-/** バー + StatTile 行 (#2092)。テーブル総数が分かる間だけバーと ETA を出す。 */
+/** ダンプの進捗を共通部品 (`JobProgressDetail`、#2122) の入力へ写す。テーブル総数が分かる間だけバーと ETA が出る。 */
+function dumpDetailProps(progress: DumpProgress, t: ReturnType<typeof useT>): JobProgressDetailProps {
+  return {
+    done: progress.tables ?? 0,
+    total: progress.tablesTotal,
+    elapsedMs: progress.elapsedMs,
+    testId: "dump-progress-detail",
+    stats: [
+      ...(progress.tablesTotal != null
+        ? [{ label: t("dumpStatTables"), value: progress.tables ?? 0, sub: `/ ${progress.tablesTotal}` }]
+        : []),
+      { label: t("dumpStatBytes"), value: formatBytes(progress.bytes) },
+    ],
+  };
+}
+
 function DumpProgressDetail({
   progress,
   running,
   tone,
-  full,
 }: {
   progress: DumpProgress;
   running?: boolean;
   tone?: SemanticRole;
-  full?: boolean;
 }) {
   const t = useT();
-  const ratio = full ? 1 : progressRatio(progress.tables ?? 0, progress.tablesTotal);
-  const etaMs = running
-    ? estimateEtaMs(progress.tables ?? 0, progress.tablesTotal, progress.elapsedMs)
-    : null;
-  const etaText = running
-    ? etaMs === null
-      ? t("progressEtaPending")
-      : t("progressEta", { time: formatDuration(etaMs) })
-    : undefined;
-  return (
-    <chakra.div display="flex" flexDirection="column" gap="2" data-testid="dump-progress-detail">
-      {ratio !== null && (
-        <chakra.div display="flex" alignItems="center" gap="3">
-          <chakra.div flex="1">
-            <DeterminateProgressBar value={ratio} tone={tone} />
-          </chakra.div>
-          <chakra.span textStyle="numeric" minW="4ch" textAlign="right">
-            {t("progressPercent", { percent: Math.floor(ratio * 100) })}
-          </chakra.span>
-        </chakra.div>
-      )}
-      <chakra.div display="flex" gap="2" flexWrap="wrap">
-        {progress.tablesTotal != null && (
-          <StatTile
-            label={t("dumpStatTables")}
-            value={progress.tables ?? 0}
-            sub={`/ ${progress.tablesTotal}`}
-          />
-        )}
-        <StatTile label={t("dumpStatBytes")} value={formatBytes(progress.bytes)} />
-        <StatTile label={t("dumpStatElapsed")} value={formatDuration(progress.elapsedMs)} sub={etaText} />
-      </chakra.div>
-    </chakra.div>
-  );
+  return <JobProgressDetail {...dumpDetailProps(progress, t)} running={running} tone={tone} />;
 }
 
 /** 終了後: バーを意味色で止め、結果を Callout で示す (#2092)。進捗イベントが 0 件なら Callout のみ。 */
@@ -119,21 +97,17 @@ function DumpOutcome({
   };
 }) {
   const t = useT();
-  const tone: SemanticRole = outcome.kind === "done" ? "success" : "warning";
   const values = { bytes: formatBytes(outcome.bytes), secs: (outcome.elapsedMs / 1000).toFixed(1) };
   return (
-    <chakra.div display="flex" flexDirection="column" gap="2">
-      {outcome.progress && (
-        <DumpProgressDetail
-          progress={{ ...outcome.progress, bytes: outcome.bytes, elapsedMs: outcome.elapsedMs }}
-          tone={tone}
-          full={outcome.kind === "done"}
-        />
-      )}
-      <Callout tone={tone} role="status">
-        {t(outcome.kind === "done" ? "dumpResultDone" : "dumpResultCancelled", values)}
-      </Callout>
-    </chakra.div>
+    <JobOutcome
+      kind={outcome.kind}
+      tone={outcome.kind === "done" ? "success" : "warning"}
+      detail={
+        outcome.progress &&
+        dumpDetailProps({ ...outcome.progress, bytes: outcome.bytes, elapsedMs: outcome.elapsedMs }, t)
+      }
+      message={t(outcome.kind === "done" ? "dumpResultDone" : "dumpResultCancelled", values)}
+    />
   );
 }
 

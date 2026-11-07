@@ -315,7 +315,18 @@ describe("シナリオ: ストリーミング実行とキャンセル (実ブラ
       readOnly: true,
       schemaMayChange: false,
     });
-    await expect.element(screen.getByText(t("statusStreamingDone", { rows: 2, ms: 5 }))).toBeVisible();
+    // 完了文言はステータスバー本体と、読み上げ専用のライブリージョン (StatusAnnouncer) の
+    // 2 か所に入る。getByText は両方に一致し、厳密モードで 1 件に絞れずタイムアウトしていた
+    // ため、読み上げ領域を除いた表示側だけを確かめる。
+    const doneText = t("statusStreamingDone", { rows: 2, ms: 5 });
+    await expect
+      .poll(() =>
+        screen
+          .getByText(doneText)
+          .elements()
+          .some((el) => !el.closest('[data-testid^="status-live-"]') && el.getBoundingClientRect().width > 1),
+      )
+      .toBe(true);
     await expect.element(screen.getByRole("button", { name: t("gridStopButton") })).not.toBeInTheDocument();
   });
 
