@@ -36,6 +36,13 @@ describe("JobProgressDetail", () => {
     expect(screen.getByText("ETA 0:30")).toBeInTheDocument();
   });
 
+  it("etaElapsedMs を渡すと、ETA はその経過時間で計算する (経過タイルは elapsedMs のまま)", () => {
+    renderWithProviders(
+      <JobProgressDetail done={50} total={100} elapsedMs={600_000} etaElapsedMs={5_000} running />,
+    );
+    expect(screen.getByText("ETA 0:05")).toBeInTheDocument();
+  });
+
   it("total=0 (0 件) はバーを出さない", () => {
     renderWithProviders(<JobProgressDetail done={0} total={0} elapsedMs={1000} running />);
     expect(screen.queryByText(/%$/)).toBeNull();

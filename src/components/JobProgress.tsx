@@ -31,6 +31,11 @@ export interface JobProgressDetailProps {
   /** 総件数。不定なら null (バーと ETA を出さない)。 */
   total: number | null;
   elapsedMs: number;
+  /**
+   * ETA の計算に使う経過時間。`done` / `total` がジョブ全体ではなく一部 (シート取り込みの
+   * 「今のシート」など) の進捗のときは、同じ範囲の経過時間を渡す。省略時は `elapsedMs`。
+   */
+  etaElapsedMs?: number;
   /** 実行中か。実行中のときだけ ETA を出す。 */
   running?: boolean;
   /** 終了後にバーを止める意味色。 */
@@ -54,6 +59,7 @@ export function JobProgressDetail({
   done,
   total,
   elapsedMs,
+  etaElapsedMs,
   running,
   tone,
   full,
@@ -65,7 +71,7 @@ export function JobProgressDetail({
 }: JobProgressDetailProps) {
   const t = useT();
   const ratio = full && total !== null && total > 0 ? 1 : progressRatio(done, total);
-  const etaMs = running ? estimateEtaMs(done, total, elapsedMs) : null;
+  const etaMs = running ? estimateEtaMs(done, total, etaElapsedMs ?? elapsedMs) : null;
   // 総数が分からないときは ETA を算出できないので、行を出さず経過だけにする。
   const etaText =
     running && ratio !== null

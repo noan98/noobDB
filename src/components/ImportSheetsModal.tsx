@@ -94,6 +94,8 @@ export function ImportSheetsModal({
   const jobElapsedMs = useJobClock(importing);
   // 速度用の行数累計。進捗の inserted はシートごとに 0 へ戻るので、終わったシートの分を足し込む。
   const doneRowsRef = useRef(0);
+  // 今のシートの開始時刻。バー・ETA はシート単位の進捗なので、ETA も同じ範囲の経過で出す。
+  const sheetStartedAtRef = useRef(0);
   const lastInsertedRef = useRef(0);
 
   const nullToken = options.nullToken ?? null;
@@ -197,12 +199,14 @@ export function ImportSheetsModal({
     // `started` はシートごとに届く。何枚目かはその回数で分かる。
     let startedCount = 0;
     doneRowsRef.current = 0;
+    sheetStartedAtRef.current = 0;
     lastInsertedRef.current = 0;
     const unlisten = await listenImportStream(streamId, {
       onStarted: (e) => {
         startedCount += 1;
         doneRowsRef.current += lastInsertedRef.current;
         lastInsertedRef.current = 0;
+        sheetStartedAtRef.current = Date.now();
         setStatus({ kind: "importing", index: startedCount, inserted: 0, total: e.total });
       },
       onProgress: (e) => {
@@ -349,6 +353,9 @@ export function ImportSheetsModal({
                   done={status.inserted}
                   total={status.total > 0 ? status.total : null}
                   elapsedMs={jobElapsedMs}
+                  etaElapsedMs={
+                    sheetStartedAtRef.current > 0 ? Date.now() - sheetStartedAtRef.current : undefined
+                  }
                   running
                   rate={{ label: t("jobStatRowsPerSec"), count: doneRowsRef.current + status.inserted }}
                   stats={[
