@@ -1,115 +1,35 @@
-import { useId, useRef, useState } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
-import { semanticColorVar } from "../semanticColors";
-import { resolveShortcutBindings, SHORTCUTS, type ShortcutCategory, type ShortcutId } from "../shortcuts";
+import {
+  filterShortcuts,
+  resolveShortcutBindings,
+  SHORTCUTS,
+  SHORTCUT_CATEGORY_LABEL,
+  SHORTCUT_CATEGORY_ORDER,
+} from "../shortcuts";
 import { formatCombo } from "../shortcutKeys";
 import { useSettings } from "../settings";
-import { ICON_SIZES, Icon, type IconName } from "./Icon";
+import { Callout } from "./Callout";
+import { Icon, type IconName } from "./Icon";
+import { Kbd } from "./Kbd";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
-import {
-  SettingsHelp,
-  SettingsNavAside,
-  SettingsNavItem,
-  SettingsNavEmpty,
-  SettingsNavList,
-  SettingsSection,
-  SettingsSectionHeader,
-} from "./settingsLayout";
 import { Button, Input } from "./ui";
 import { filterHelpSections } from "../helpSearch";
-import { pickActiveSection } from "../sectionNav";
+
+/*
+ * 機能ガイド (ヘルプ)。「目次 + 詳細」の 2 ペイン構成。
+ *
+ * - 左: 検索欄と、用途別グループに分けた全項目の目次。DB に書き込む項目には赤い点を付ける
+ *   (読み取りのみの項目にはバッジを付けない — 以前は全カードに「反映されない」が並び、
+ *   本当に注意すべき項目が埋もれていた)。
+ * - 右: 選んだ 1 項目だけを大きめの文字で表示する。手順は番号付き、注意は警告の Callout。
+ *   末尾の「前へ / 次へ」で目次順に読み進められる。
+ * - ショートカットはカードではなく、カテゴリ別の「キー | 説明」の表にする。
+ */
 
 type Key = Parameters<ReturnType<typeof useT>>[0];
 type Impact = "yes" | "no";
-
-// 広げたモーダル幅で 1 行が長くなりすぎないよう、カードは 2 カラムに折り返す
-// (狭いウィンドウでは minmax により自然に 1 カラムへフォールバック)。
-const HelpFeatureGrid = chakra("div", {
-  base: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(min(320px, 100%), 1fr))",
-    gap: "2",
-    mt: "1.5",
-  },
-});
-
-const HelpFeature = chakra("article", {
-  base: {
-    border: "1px solid",
-    borderColor: "app.borderSubtle",
-    borderRadius: "md",
-    bg: "app.surfaceMuted",
-    px: "3",
-    py: "2.5",
-  },
-});
-
-/** 見出し左の視覚アンカー (#1835)。accent の淡い面にグリフを載せる装飾で、支援技術からは隠す。 */
-const HelpGlyph = chakra("span", {
-  base: {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-    width: ICON_SIZES.xl,
-    height: ICON_SIZES.xl,
-    borderRadius: "md",
-    color: "app.accent",
-    background: "color-mix(in srgb, var(--accent) 14%, transparent)",
-    border: "1px solid",
-    borderColor: "var(--accent-highlight)",
-  },
-});
-
-const HelpFeatureTitle = chakra("div", {
-  base: { display: "flex", alignItems: "center", gap: "2", minWidth: 0 },
-});
-
-const HelpFeatureHead = chakra("div", {
-  base: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: "3",
-    flexWrap: "wrap",
-    "& h4": { margin: 0, textStyle: "subheading", fontSize: "md" },
-  },
-});
-
-const HelpFeatureDesc = chakra("p", {
-  base: {
-    margin: "var(--space-2) 0 0",
-    fontSize: "sm",
-    lineHeight: "var(--leading-normal)",
-    color: "app.text",
-  },
-});
-
-const HelpUsageTitle = chakra("p", {
-  base: { margin: "var(--space-2-5) 0 var(--space-0-5)", textStyle: "subheading" },
-});
-
-const HelpSteps = chakra("ol", {
-  base: {
-    margin: 0,
-    pl: "5",
-    fontSize: "sm",
-    lineHeight: "var(--leading-normal)",
-    color: "app.text",
-    "& li": { margin: "var(--space-0-5) 0" },
-  },
-});
-
-const HelpNote = chakra("p", {
-  base: {
-    margin: "var(--space-2-5) 0 0",
-    fontSize: "sm",
-    lineHeight: "1.5",
-    color: "app.textMuted",
-    "& strong": { color: "app.text" },
-  },
-});
 
 /** 『試す』ボタンの行き先 (#1631)。実際に開く処理は App が持つ (`onOpenFeature`)。 */
 type HelpTryTarget =
@@ -123,38 +43,37 @@ interface Feature {
   impact?: Impact;
   stepKeys?: Key[];
   noteKey?: Key;
-  /** 再割り当て可能なショートカット。見出しを解決済みコンボで表示する (#557)。 */
-  shortcutId?: ShortcutId;
   /** 『試す』ボタンで開く画面 (#1631)。 */
   tryTarget?: HelpTryTarget;
-  /** カード固有のグリフ。未指定なら節の `icon` (#1835)。 */
+  /** 項目固有のグリフ。未指定なら節の `icon` (#1835)。 */
   icon?: IconName;
 }
 
 interface Section {
   headerKey: Key;
-  descKey: Key;
-  /** 節の既定グリフ。各カードは `Feature.icon` で上書きできる (#1835)。 */
+  /** 節の既定グリフ。各項目は `Feature.icon` で上書きできる (#1835)。 */
   icon: IconName;
   features: Feature[];
 }
 
-/** ショートカット節のカードは category ごとにグリフを変える (#1835)。 */
-const SHORTCUT_CATEGORY_ICON: Record<ShortcutCategory, IconName> = {
-  global: "settings",
-  editor: "query",
-  grid: "table",
-  tabs: "columns",
-};
-
+// 用途別のグループ。以前は「DB に反映されない / される」で 2 分していたが、前者に
+// 16 項目が詰め込まれて探しにくかったため、作業の流れに沿って分け直した。DB への
+// 影響は各項目の `impact` (目次の赤い点と詳細のバッジ) で示す。
 const SECTIONS: Section[] = [
   {
-    headerKey: "helpSectionSafe",
-    icon: "eye",
-    descKey: "helpSectionSafeDesc",
+    headerKey: "helpGroupQuery",
+    icon: "query",
     features: [
       {
+        titleKey: "helpRunTitle",
+        icon: "play",
+        descKey: "helpRunDesc",
+        impact: "yes",
+        tryTarget: { kind: "newQuery" },
+      },
+      {
         titleKey: "helpDryRunTitle",
+        icon: "eye",
         tryTarget: { kind: "newQuery" },
         descKey: "helpDryRunDesc",
         impact: "no",
@@ -191,18 +110,6 @@ const SECTIONS: Section[] = [
         tryTarget: { kind: "newQuery" },
       },
       { titleKey: "helpSnippetTitle", icon: "snippet", descKey: "helpSnippetDesc", impact: "no" },
-      { titleKey: "helpExportTitle", icon: "download", descKey: "helpExportDesc", impact: "no" },
-      {
-        titleKey: "helpProfileBackupTitle",
-        icon: "transfer",
-        tryTarget: { kind: "settings", section: "settings-sec-backup" },
-        descKey: "helpProfileBackupDesc",
-        impact: "no",
-        stepKeys: ["helpProfileBackupStep1", "helpProfileBackupStep2", "helpProfileBackupStep3"],
-        noteKey: "helpProfileBackupNote",
-      },
-      { titleKey: "helpCellEditTitle", icon: "table", descKey: "helpCellEditDesc", impact: "no" },
-      { titleKey: "helpDiscardTitle", icon: "undo", descKey: "helpDiscardDesc", impact: "no" },
       {
         titleKey: "helpHistoryTitle",
         icon: "clock",
@@ -210,7 +117,30 @@ const SECTIONS: Section[] = [
         impact: "no",
         tryTarget: { kind: "settings", section: "settings-sec-history" },
       },
+    ],
+  },
+  {
+    headerKey: "helpGroupResults",
+    icon: "table",
+    features: [
       { titleKey: "helpPaginationTitle", icon: "list", descKey: "helpPaginationDesc", impact: "no" },
+      { titleKey: "helpCellEditTitle", icon: "table", descKey: "helpCellEditDesc", impact: "no" },
+      { titleKey: "helpDiscardTitle", icon: "undo", descKey: "helpDiscardDesc", impact: "no" },
+      {
+        titleKey: "helpApplyTitle",
+        icon: "check",
+        descKey: "helpApplyDesc",
+        impact: "yes",
+        noteKey: "helpApplyNote",
+      },
+      { titleKey: "helpExportTitle", icon: "download", descKey: "helpExportDesc", impact: "no" },
+      { titleKey: "helpImportTitle", icon: "upload", descKey: "helpImportDesc", impact: "yes" },
+    ],
+  },
+  {
+    headerKey: "helpGroupCompare",
+    icon: "diff",
+    features: [
       {
         titleKey: "helpSchemaCompareTitle",
         icon: "diff",
@@ -227,14 +157,6 @@ const SECTIONS: Section[] = [
         noteKey: "helpSandboxNote",
       },
       {
-        titleKey: "helpTaskSchedulerTitle",
-        icon: "calendar",
-        tryTarget: { kind: "view", view: "tasks" },
-        descKey: "helpTaskSchedulerDesc",
-        impact: "no",
-        noteKey: "helpTaskSchedulerNote",
-      },
-      {
         titleKey: "helpFlightRecorderTitle",
         icon: "broadcast",
         tryTarget: { kind: "settings", section: "settings-sec-flight-recorder" },
@@ -246,31 +168,31 @@ const SECTIONS: Section[] = [
     ],
   },
   {
-    headerKey: "helpSectionWrite",
-    icon: "pencil",
-    descKey: "helpSectionWriteDesc",
+    headerKey: "helpGroupAutomation",
+    icon: "calendar",
     features: [
       {
-        titleKey: "helpRunTitle",
-        icon: "play",
-        descKey: "helpRunDesc",
-        impact: "yes",
-        tryTarget: { kind: "newQuery" },
+        titleKey: "helpTaskSchedulerTitle",
+        icon: "calendar",
+        tryTarget: { kind: "view", view: "tasks" },
+        descKey: "helpTaskSchedulerDesc",
+        impact: "no",
+        noteKey: "helpTaskSchedulerNote",
       },
       {
-        titleKey: "helpApplyTitle",
-        icon: "check",
-        descKey: "helpApplyDesc",
-        impact: "yes",
-        noteKey: "helpApplyNote",
+        titleKey: "helpProfileBackupTitle",
+        icon: "transfer",
+        tryTarget: { kind: "settings", section: "settings-sec-backup" },
+        descKey: "helpProfileBackupDesc",
+        impact: "no",
+        stepKeys: ["helpProfileBackupStep1", "helpProfileBackupStep2", "helpProfileBackupStep3"],
+        noteKey: "helpProfileBackupNote",
       },
-      { titleKey: "helpImportTitle", icon: "upload", descKey: "helpImportDesc", impact: "yes" },
     ],
   },
   {
     headerKey: "helpSectionGuards",
     icon: "lock",
-    descKey: "helpSectionGuardsDesc",
     features: [
       { titleKey: "helpReadOnlyTitle", descKey: "helpReadOnlyDesc" },
       { titleKey: "helpProductionTitle", icon: "production", descKey: "helpProductionDesc" },
@@ -282,7 +204,6 @@ const SECTIONS: Section[] = [
   {
     headerKey: "helpSectionConnection",
     icon: "server",
-    descKey: "helpSectionConnectionDesc",
     features: [
       {
         // AWS IAM 認証 (#734)。トークン失効 (15 分) 後の再接続挙動をここに明記する。
@@ -314,7 +235,6 @@ const SECTIONS: Section[] = [
     // AI 基盤 (#690)。何を送る / 送らないか、モデルの保持要件、価格の目安を明記する。
     headerKey: "helpSectionAi",
     icon: "sparkles",
-    descKey: "helpSectionAiDesc",
     features: [
       {
         titleKey: "helpAiPolicyTitle",
@@ -336,55 +256,99 @@ const SECTIONS: Section[] = [
       },
     ],
   },
-  {
-    headerKey: "helpSectionShortcuts",
-    icon: "query",
-    descKey: "helpSectionShortcutsDesc",
-    // ショートカット一覧は `shortcuts.ts` の単一ソースから生成し、`?` で開く
-    // チートシート (`ShortcutCheatSheet`) と定義を共有する。
-    features: SHORTCUTS.map((s) => ({
-      titleKey: s.keysKey,
-      icon: SHORTCUT_CATEGORY_ICON[s.category],
-      descKey: s.descKey,
-      ...(s.id ? { shortcutId: s.id } : {}),
-    })),
-  },
 ];
 
-function DbImpactBadge({ impact }: { impact: Impact }) {
+/** ショートカット表の擬似項目 id (目次の末尾に置く)。 */
+const SHORTCUTS_ID = "shortcuts";
+
+/** 目次の項目 id (= 詳細ペインに表示する対象)。項目は i18n キーで一意。 */
+function featureId(f: Feature): string {
+  return `help-item-${f.titleKey}`;
+}
+
+/** DB への影響を示すピル。書き込む項目は danger、読み取りのみは success の文字色。 */
+function ImpactPill({ impact }: { impact: Impact }) {
   const t = useT();
   const writes = impact === "yes";
-  const tone = writes ? semanticColorVar("danger", "solid") : semanticColorVar("success", "solid");
   return (
     <chakra.span
-      // a11y ベースライン (a11y.browser.test.tsx) が対象ノードを特定する
-      // ための安定クラス。配色調整 (#559) で AA を満たしたら外してよい。
+      // a11y ベースライン (a11y.browser.test.tsx) が対象ノードを特定するための安定クラス。
       className="help-impact-badge"
       display="inline-flex"
       alignItems="center"
-      gap="1.25"
+      gap="1"
       px="2"
       py="0.5"
       borderRadius="pill"
       textStyle="overline"
       whiteSpace="nowrap"
-      border="1px solid transparent"
-      color={tone}
-      background={`color-mix(in srgb, ${tone} 12%, transparent)`}
-      borderColor={`color-mix(in srgb, ${tone} 35%, transparent)`}
+      border="1px solid"
+      borderColor={writes ? "app.textError" : "app.borderSubtle"}
+      color={writes ? "app.textError" : "app.textSuccess"}
     >
-      <chakra.span fontSize="xs" lineHeight="1" aria-hidden>
-        <Icon name={writes ? "check" : "close"} />
-      </chakra.span>
-      {`${t("helpImpactLabel")}: ${t(writes ? "helpImpactYes" : "helpImpactNo")}`}
+      <Icon name={writes ? "pencil" : "eye"} size="sm" />
+      {t(writes ? "helpImpactWrites" : "helpImpactReadOnly")}
     </chakra.span>
   );
 }
 
-/** 節ナビ / スクロール先に使う DOM id (節の見出し i18n キーから一意に決まる)。 */
-function sectionDomId(section: Section): string {
-  return `help-sec-${section.headerKey}`;
-}
+const NavGroupLabel = chakra("div", {
+  base: {
+    display: "flex",
+    alignItems: "center",
+    gap: "1.5",
+    px: "2",
+    pt: "3",
+    pb: "1",
+    textStyle: "overline",
+    color: "app.textMuted",
+  },
+});
+
+const NavItem = chakra("button", {
+  base: {
+    display: "flex",
+    alignItems: "center",
+    gap: "2",
+    width: "100%",
+    textAlign: "left",
+    pl: "6",
+    pr: "2",
+    py: "1",
+    border: "none",
+    borderRadius: "sm",
+    background: "transparent",
+    color: "app.textSecondary",
+    fontSize: "sm",
+    lineHeight: "var(--leading-normal)",
+    cursor: "pointer",
+    _hover: { background: "app.hover", color: "app.text" },
+    _focusVisible: { outline: "2px solid", outlineColor: "app.accent", outlineOffset: "-2px" },
+    "&[aria-current=true]": { background: "app.active", color: "app.text", fontWeight: 600 },
+  },
+});
+
+const WriteDot = chakra("span", {
+  base: { flexShrink: 0, width: "1.5", height: "1.5", borderRadius: "pill", background: "app.textError" },
+});
+
+const StepNumber = chakra("span", {
+  base: {
+    flexShrink: 0,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "6",
+    height: "6",
+    borderRadius: "pill",
+    border: "1px solid",
+    borderColor: "app.border",
+    background: "app.surfaceMuted",
+    color: "app.accent",
+    fontSize: "xs",
+    fontWeight: 600,
+  },
+});
 
 interface HelpViewProps {
   onClose: () => void;
@@ -392,7 +356,7 @@ interface HelpViewProps {
   onStartTour?: () => void;
   /** 「ショートカット一覧」(#1274)。未指定ならボタンを出さない。 */
   onOpenCheatSheet?: () => void;
-  /** 機能カードの『試す』ボタン (#1631)。未指定ならボタンを出さない。 */
+  /** 詳細の『試す』ボタン (#1631)。未指定ならボタンを出さない。 */
   onOpenFeature?: (target: HelpTryTarget) => void;
 }
 
@@ -401,170 +365,366 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
   const settings = useSettings();
   const resolved = resolveShortcutBindings(settings.shortcutOverrides);
 
-  // 節ナビ + 検索 (#1273)。設定画面 (#680) と同じ構造・同じ純ロジック (`sectionNav.ts`)。
   const [query, setQuery] = useState("");
-  const [activeSection, setActiveSection] = useState<string>(sectionDomId(SECTIONS[0]));
-  const suppressSpyUntilRef = useRef(0);
-  const navHighlightId = `help-nav-highlight-${useId()}`;
+  const [selected, setSelected] = useState<string>(featureId(SECTIONS[0].features[0]));
+  const searchRef = useRef<HTMLInputElement>(null);
+  const navRef = useRef<HTMLDivElement>(null);
+  const detailRef = useRef<HTMLDivElement>(null);
 
-  const featureTitle = (f: Feature) => (f.shortcutId ? formatCombo(resolved[f.shortcutId]) : t(f.titleKey));
   const visibleSections = filterHelpSections(
-    SECTIONS.map((sec) => ({
-      ...sec,
-      header: t(sec.headerKey),
-      desc: t(sec.descKey),
-    })),
+    SECTIONS.map((sec) => ({ ...sec, header: t(sec.headerKey), desc: "" })),
     query,
     (f: Feature) => ({
-      title: featureTitle(f),
+      title: t(f.titleKey),
       desc: t(f.descKey),
       steps: f.stepKeys?.map((k) => t(k)),
       note: f.noteKey ? t(f.noteKey) : undefined,
     }),
   );
+  const shortcutKeysText = (s: (typeof SHORTCUTS)[number]) =>
+    s.id ? formatCombo(resolved[s.id]) : t(s.keysKey);
+  const shortcutsTitle = t("helpSectionShortcuts");
+  const visibleShortcuts =
+    query.trim() === "" || shortcutsTitle.toLowerCase().includes(query.trim().toLowerCase())
+      ? SHORTCUTS
+      : filterShortcuts(SHORTCUTS, query, (s) => ({ label: t(s.descKey), keys: shortcutKeysText(s) }));
 
-  const handleNavClick = (id: string) => {
-    setActiveSection(id);
-    suppressSpyUntilRef.current = Date.now() + 600;
-    document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "smooth" });
+  // 目次の並び順そのままの id 列。前へ / 次へ・矢印キー・検索後の自動選択に使う。
+  const orderedIds = [
+    ...visibleSections.flatMap((sec) => sec.features.map(featureId)),
+    ...(visibleShortcuts.length > 0 ? [SHORTCUTS_ID] : []),
+  ];
+  // 検索で選択中の項目が消えたら、残った先頭を表示する (state は変えない — 検索を消せば戻る)。
+  const current = orderedIds.includes(selected) ? selected : orderedIds[0];
+  const currentIndex = current ? orderedIds.indexOf(current) : -1;
+
+  const select = (id: string, focus = false) => {
+    setSelected(id);
+    detailRef.current?.scrollTo?.({ top: 0 });
+    if (focus) navRef.current?.querySelector<HTMLElement>(`[data-help-id="${id}"]`)?.focus();
   };
-  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    if (Date.now() < suppressSpyUntilRef.current) return;
-    const container = e.currentTarget;
-    const containerTop = container.getBoundingClientRect().top;
-    const ids = visibleSections.map(sectionDomId);
-    const next = pickActiveSection(
-      ids,
-      ids.map((id) => {
-        const el = document.getElementById(id);
-        return el ? el.getBoundingClientRect().top - containerTop : null;
-      }),
-      container.scrollTop + container.clientHeight >= container.scrollHeight - 4,
+
+  const handleNavKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    if (orderedIds.length === 0) return;
+    const delta = e.key === "ArrowDown" ? 1 : -1;
+    const next = Math.min(orderedIds.length - 1, Math.max(0, currentIndex + delta));
+    select(orderedIds[next], true);
+  };
+
+  const titleOf = (id: string): string => {
+    if (id === SHORTCUTS_ID) return shortcutsTitle;
+    for (const sec of SECTIONS) {
+      const f = sec.features.find((x) => featureId(x) === id);
+      if (f) return t(f.titleKey);
+    }
+    return "";
+  };
+
+  const renderFeature = (sec: (typeof visibleSections)[number], f: Feature) => {
+    const title = t(f.titleKey);
+    return (
+      <chakra.article display="flex" flexDirection="column" gap="4" aria-labelledby="help-detail-title">
+        <chakra.div display="flex" flexDirection="column" gap="1.5">
+          <chakra.div textStyle="caption" color="app.textMuted" display="flex" alignItems="center" gap="1.5">
+            <Icon name={sec.icon} size="sm" />
+            {sec.header}
+          </chakra.div>
+          <chakra.div display="flex" alignItems="center" gap="3" flexWrap="wrap">
+            <chakra.span color="app.accent" display="inline-flex" aria-hidden="true">
+              <Icon name={f.icon ?? sec.icon} size="lg" />
+            </chakra.span>
+            <chakra.h3 id="help-detail-title" m="0" fontSize="xl" fontWeight="semibold" lineHeight="1.3">
+              {title}
+            </chakra.h3>
+            {f.impact && <ImpactPill impact={f.impact} />}
+          </chakra.div>
+        </chakra.div>
+
+        <chakra.p m="0" fontSize="md" lineHeight="1.8" color="app.text">
+          {t(f.descKey)}
+        </chakra.p>
+
+        {f.stepKeys && (
+          <chakra.section>
+            <chakra.h4 m="0" mb="2" textStyle="subheading">
+              {t("helpUsageTitle")}
+            </chakra.h4>
+            <chakra.ol m="0" p="0" listStyle="none" display="flex" flexDirection="column" gap="2.5">
+              {f.stepKeys.map((s, i) => (
+                <chakra.li
+                  key={s}
+                  display="flex"
+                  gap="3"
+                  alignItems="flex-start"
+                  fontSize="md"
+                  lineHeight="1.7"
+                >
+                  <StepNumber aria-hidden="true">{i + 1}</StepNumber>
+                  <chakra.span color="app.text">{t(s)}</chakra.span>
+                </chakra.li>
+              ))}
+            </chakra.ol>
+          </chakra.section>
+        )}
+
+        {f.noteKey && (
+          <Callout tone="warning" title={t("helpNoteLabel")}>
+            {t(f.noteKey)}
+          </Callout>
+        )}
+
+        {onOpenFeature && f.tryTarget && (
+          <chakra.div>
+            <Button
+              size="sm"
+              variant="primary"
+              data-testid="help-try"
+              aria-label={t("helpTryAria", { title })}
+              onClick={() => f.tryTarget && onOpenFeature(f.tryTarget)}
+            >
+              <Icon name="external-link" size="sm" />
+              {t("helpTry")}
+            </Button>
+          </chakra.div>
+        )}
+      </chakra.article>
     );
-    if (next) setActiveSection(next);
   };
+
+  const renderShortcuts = () => (
+    <chakra.article display="flex" flexDirection="column" gap="4" aria-labelledby="help-detail-title">
+      <chakra.div display="flex" flexDirection="column" gap="1.5">
+        <chakra.div display="flex" alignItems="center" gap="3">
+          <chakra.span color="app.accent" display="inline-flex" aria-hidden="true">
+            <Icon name="query" size="lg" />
+          </chakra.span>
+          <chakra.h3 id="help-detail-title" m="0" fontSize="xl" fontWeight="semibold" lineHeight="1.3">
+            {shortcutsTitle}
+          </chakra.h3>
+        </chakra.div>
+        <chakra.p m="0" fontSize="sm" color="app.textMuted">
+          {t("helpSectionShortcutsDesc")}
+        </chakra.p>
+      </chakra.div>
+      {SHORTCUT_CATEGORY_ORDER.map((category) => {
+        const items = visibleShortcuts.filter((s) => s.category === category);
+        if (items.length === 0) return null;
+        return (
+          <chakra.section key={category}>
+            <chakra.h4 m="0" mb="1.5" textStyle="overline" color="app.textMuted">
+              {t(SHORTCUT_CATEGORY_LABEL[category])}
+            </chakra.h4>
+            <chakra.table width="100%" borderCollapse="collapse" fontSize="sm">
+              <tbody>
+                {items.map((s) => (
+                  <chakra.tr key={s.keysKey} borderBottom="1px solid" borderColor="app.borderSubtle">
+                    <chakra.td py="1.5" pr="4" width="38%" verticalAlign="top">
+                      <Kbd splitCombo>{shortcutKeysText(s)}</Kbd>
+                    </chakra.td>
+                    <chakra.td py="1.5" color="app.text" lineHeight="var(--leading-normal)">
+                      {t(s.descKey)}
+                    </chakra.td>
+                  </chakra.tr>
+                ))}
+              </tbody>
+            </chakra.table>
+          </chakra.section>
+        );
+      })}
+    </chakra.article>
+  );
+
+  const renderDetail = () => {
+    if (!current) {
+      return (
+        <chakra.p m="0" color="app.textMuted" role="status">
+          {t("helpSearchNoMatch")}
+        </chakra.p>
+      );
+    }
+    if (current === SHORTCUTS_ID) return renderShortcuts();
+    for (const sec of visibleSections) {
+      const f = sec.features.find((x) => featureId(x) === current);
+      if (f) return renderFeature(sec, f);
+    }
+    return null;
+  };
+
+  const prevId = currentIndex > 0 ? orderedIds[currentIndex - 1] : undefined;
+  const nextId =
+    currentIndex >= 0 && currentIndex < orderedIds.length - 1 ? orderedIds[currentIndex + 1] : undefined;
 
   return (
     <Modal
       // no-submit: 参照画面 (閉じるのみ)
       onClose={onClose}
       width="1120px"
+      initialFocusEl={() => searchRef.current}
     >
       <ModalHeader onClose={onClose} closeLabel={t("helpClose")} brandRule>
         {t("helpTitle")}
       </ModalHeader>
-      <ModalBody onScroll={handleScroll}>
-        <chakra.div display="flex" gap="4" alignItems="flex-start">
-          <SettingsNavAside aria-label={t("helpNavAria")}>
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={t("helpSearchPlaceholder")}
-              aria-label={t("helpSearchPlaceholder")}
-            />
-            {visibleSections.length === 0 ? (
-              <SettingsNavEmpty>{t("helpSearchNoMatch")}</SettingsNavEmpty>
+      <ModalBody p="0" overflow="hidden" display="flex">
+        <chakra.div display="flex" width="100%" height="min(680px, calc(90vh - 72px))" minH="0">
+          <chakra.aside
+            aria-label={t("helpNavAria")}
+            width="300px"
+            flexShrink={0}
+            display="flex"
+            flexDirection="column"
+            borderRight="1px solid"
+            borderColor="app.borderSubtle"
+            minH="0"
+          >
+            <chakra.div px="3" pt="3" pb="2">
+              <Input
+                ref={searchRef}
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  // 検索欄から ↓ で目次へ降りられるようにする。
+                  if (e.key === "ArrowDown" && current) {
+                    e.preventDefault();
+                    select(current, true);
+                  }
+                }}
+                placeholder={t("helpSearchPlaceholder")}
+                aria-label={t("helpSearchPlaceholder")}
+                autoComplete="off"
+              />
+              <chakra.div
+                mt="1.5"
+                display="flex"
+                alignItems="center"
+                gap="1.5"
+                textStyle="caption"
+                color="app.textMuted"
+              >
+                <WriteDot aria-hidden="true" />
+                {t("helpWritesLegend")}
+              </chakra.div>
+            </chakra.div>
+            {orderedIds.length === 0 ? (
+              <chakra.p px="4" py="2" m="0" fontSize="sm" color="app.textMuted" role="status">
+                {t("helpSearchNoMatch")}
+              </chakra.p>
             ) : (
-              <SettingsNavList role="navigation" aria-label={t("helpTitle")}>
+              <chakra.nav
+                ref={navRef}
+                aria-label={t("helpTitle")}
+                flex="1"
+                minH="0"
+                overflowY="auto"
+                px="2"
+                pb="3"
+                onKeyDown={handleNavKeyDown}
+              >
                 {visibleSections.map((sec) => (
-                  <SettingsNavItem
-                    key={sec.headerKey}
-                    active={activeSection === sectionDomId(sec)}
-                    icon={sec.icon}
-                    layoutId={navHighlightId}
-                    onClick={() => handleNavClick(sectionDomId(sec))}
-                  >
-                    {sec.header}
-                  </SettingsNavItem>
+                  <chakra.div key={sec.headerKey} role="group" aria-label={sec.header}>
+                    <NavGroupLabel aria-hidden="true">
+                      <Icon name={sec.icon} size="sm" />
+                      {sec.header}
+                    </NavGroupLabel>
+                    {sec.features.map((f) => {
+                      const id = featureId(f);
+                      return (
+                        <NavItem
+                          key={id}
+                          type="button"
+                          data-help-id={id}
+                          aria-current={current === id}
+                          tabIndex={current === id ? 0 : -1}
+                          onClick={() => select(id)}
+                        >
+                          <chakra.span flex="1" minW="0">
+                            {t(f.titleKey)}
+                          </chakra.span>
+                          {f.impact === "yes" && (
+                            <>
+                              <WriteDot aria-hidden="true" />
+                              <chakra.span srOnly>{t("helpImpactWrites")}</chakra.span>
+                            </>
+                          )}
+                        </NavItem>
+                      );
+                    })}
+                  </chakra.div>
                 ))}
-              </SettingsNavList>
+                {visibleShortcuts.length > 0 && (
+                  <chakra.div mt="2" pt="2" borderTop="1px solid" borderColor="app.borderSubtle">
+                    <NavItem
+                      type="button"
+                      data-help-id={SHORTCUTS_ID}
+                      aria-current={current === SHORTCUTS_ID}
+                      tabIndex={current === SHORTCUTS_ID ? 0 : -1}
+                      onClick={() => select(SHORTCUTS_ID)}
+                      pl="2"
+                    >
+                      <Icon name="query" size="sm" />
+                      <chakra.span flex="1">{shortcutsTitle}</chakra.span>
+                    </NavItem>
+                  </chakra.div>
+                )}
+              </chakra.nav>
             )}
-          </SettingsNavAside>
-          <chakra.div display="flex" flexDirection="column" gap="4.5" flex="1" minW={0}>
-            <SettingsHelp fontSize="md" lineHeight="1.5">
-              {t("helpIntro")}
-            </SettingsHelp>
-
             {(onStartTour || onOpenCheatSheet) && (
-              <chakra.div display="flex" gap="2" flexWrap="wrap">
+              <chakra.div
+                display="flex"
+                flexDirection="column"
+                gap="1"
+                px="3"
+                py="2.5"
+                borderTop="1px solid"
+                borderColor="app.borderSubtle"
+              >
                 {onStartTour && (
-                  <Button size="sm" onClick={onStartTour}>
+                  <Button size="sm" variant="ghost" justifyContent="flex-start" onClick={onStartTour}>
+                    <Icon name="play" size="sm" />
                     {t("helpReplayTour")}
                   </Button>
                 )}
                 {onOpenCheatSheet && (
-                  <Button size="sm" onClick={onOpenCheatSheet}>
+                  <Button size="sm" variant="ghost" justifyContent="flex-start" onClick={onOpenCheatSheet}>
+                    <Icon name="query" size="sm" />
                     {t("helpOpenCheatSheet")}
                   </Button>
                 )}
               </chakra.div>
             )}
+          </chakra.aside>
 
-            {visibleSections.map((section) => (
-              <SettingsSection key={section.headerKey} id={sectionDomId(section)} scrollMarginTop="8px">
-                <SettingsSectionHeader>
-                  <chakra.h3 display="flex" alignItems="center" gap="2">
-                    <HelpGlyph
-                      data-testid="help-section-glyph"
-                      aria-hidden="true"
-                      border="none"
-                      background="transparent"
-                    >
-                      <Icon name={section.icon} size="md" />
-                    </HelpGlyph>
-                    {section.header}
-                  </chakra.h3>
-                </SettingsSectionHeader>
-                <SettingsHelp>{section.desc}</SettingsHelp>
-
-                <HelpFeatureGrid>
-                  {section.features.map((f) => (
-                    <HelpFeature key={f.titleKey}>
-                      <HelpFeatureHead>
-                        <HelpFeatureTitle>
-                          <HelpGlyph data-testid="help-feature-glyph" aria-hidden="true">
-                            <Icon name={f.icon ?? section.icon} size="md" />
-                          </HelpGlyph>
-                          <chakra.h4>{featureTitle(f)}</chakra.h4>
-                        </HelpFeatureTitle>
-                        {f.impact && <DbImpactBadge impact={f.impact} />}
-                      </HelpFeatureHead>
-                      <HelpFeatureDesc>{t(f.descKey)}</HelpFeatureDesc>
-
-                      {f.stepKeys && (
-                        <>
-                          <HelpUsageTitle>{t("helpUsageTitle")}</HelpUsageTitle>
-                          <HelpSteps>
-                            {f.stepKeys.map((s) => (
-                              <chakra.li key={s}>{t(s)}</chakra.li>
-                            ))}
-                          </HelpSteps>
-                        </>
-                      )}
-
-                      {f.noteKey && (
-                        <HelpNote>
-                          <chakra.strong>{t("helpNoteLabel")}:</chakra.strong> {t(f.noteKey)}
-                        </HelpNote>
-                      )}
-
-                      {onOpenFeature && f.tryTarget && (
-                        <chakra.div mt="2">
-                          <Button
-                            size="sm"
-                            data-testid="help-try"
-                            aria-label={t("helpTryAria", { title: featureTitle(f) })}
-                            onClick={() => f.tryTarget && onOpenFeature(f.tryTarget)}
-                          >
-                            {t("helpTry")}
-                          </Button>
-                        </chakra.div>
-                      )}
-                    </HelpFeature>
-                  ))}
-                </HelpFeatureGrid>
-              </SettingsSection>
-            ))}
+          <chakra.div ref={detailRef} flex="1" minW="0" overflowY="auto" data-testid="help-detail">
+            <chakra.div maxW="760px" px="8" py="6" display="flex" flexDirection="column" gap="6">
+              {renderDetail()}
+              {(prevId || nextId) && (
+                <chakra.div
+                  display="flex"
+                  gap="2"
+                  pt="4"
+                  borderTop="1px solid"
+                  borderColor="app.borderSubtle"
+                  justifyContent="space-between"
+                >
+                  {prevId ? (
+                    <Button size="sm" variant="ghost" onClick={() => select(prevId)} data-testid="help-prev">
+                      <Icon name="chevron-left" size="sm" />
+                      {t("helpPrev", { title: titleOf(prevId) })}
+                    </Button>
+                  ) : (
+                    <span />
+                  )}
+                  {nextId && (
+                    <Button size="sm" variant="ghost" onClick={() => select(nextId)} data-testid="help-next">
+                      {t("helpNext", { title: titleOf(nextId) })}
+                      <Icon name="chevron-right" size="sm" />
+                    </Button>
+                  )}
+                </chakra.div>
+              )}
+            </chakra.div>
           </chakra.div>
         </chakra.div>
       </ModalBody>
