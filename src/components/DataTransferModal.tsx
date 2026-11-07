@@ -11,6 +11,7 @@ import {
   type TransferTypeKind,
 } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
+import { JobPresence, JobProgressDetail, useJobClock } from "./JobProgress";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Callout } from "./Callout";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
@@ -128,6 +129,7 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
     [profiles, profileId],
   );
   const isRunning = status.kind === "running";
+  const jobElapsedMs = useJobClock(isRunning);
 
   const releaseSession = useCallback(() => {
     const sid = ownedSessionRef.current;
@@ -787,11 +789,27 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
           </Callout>
         )}
 
-        {isRunning && (
-          <chakra.div fontSize="sm" color="app.text" textStyle="numeric">
-            {t("transferProgress", { rows: status.rows })}
-          </chakra.div>
-        )}
+        <JobPresence show={isRunning}>
+          {isRunning && (
+            <chakra.div display="flex" flexDirection="column" gap="2">
+              {/* 総行数は事前に分からないのでバーは出さず、件数・経過・速度のタイルだけにする。 */}
+              <chakra.div aria-live="off">
+                <JobProgressDetail
+                  done={status.rows}
+                  total={null}
+                  elapsedMs={jobElapsedMs}
+                  running
+                  rate={{ label: t("jobStatRowsPerSec"), count: status.rows }}
+                  stats={[{ label: t("jobStatRows"), value: status.rows }]}
+                />
+              </chakra.div>
+              {/* ライブリージョンには変わらない文言だけ置く (150ms ごとの進捗で読み上げが走らないように)。件数はタイルが示す。 */}
+              <chakra.div role="status" aria-live="polite" fontSize="sm" color="app.text">
+                {t("transferRunning")}
+              </chakra.div>
+            </chakra.div>
+          )}
+        </JobPresence>
         {status.kind === "error" && <ErrorNote>{t("transferError", { error: status.message })}</ErrorNote>}
       </ModalBody>
       <ModalFooter>

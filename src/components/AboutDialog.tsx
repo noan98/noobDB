@@ -57,6 +57,7 @@ export function AboutDialog({ onClose }: Props) {
     <Modal
       // no-submit: 情報表示のみで実行する主アクションが無い (閉じるだけ)
       width="420px"
+      placement="center"
       onClose={onClose}
     >
       <ModalHeader onClose={onClose} closeLabel={t("aboutClose")}>

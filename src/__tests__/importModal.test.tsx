@@ -806,3 +806,50 @@ describe("ImportModal 前回の取り込み設定 (#1631)", () => {
     expect(screen.getByLabelText(t("importDelimiter"))).toHaveTextContent(t("importDelimiterComma"));
   });
 });
+
+describe("ImportModal column mapping diagram (#2126)", () => {
+  const col = (name: string, over: Record<string, unknown> = {}) => ({
+    name,
+    data_type: "varchar(20)",
+    nullable: true,
+    key: "",
+    default: null,
+    extra: "",
+    referenced_table: null,
+    referenced_column: null,
+    ...over,
+  });
+
+  it("shows sample values, the mapped count and warns about an unmapped required column before running", async () => {
+    vi.mocked(api.parseCsvPreview).mockResolvedValue({
+      headers: ["id", "name"],
+      rows: [["1", "alice"]],
+      truncated: false,
+      sheets: [],
+    });
+    vi.mocked(api.describeTable).mockResolvedValueOnce([
+      col("id", { data_type: "int", nullable: false, key: "PRI" }),
+      col("name"),
+      col("code", { nullable: false }),
+    ] as never);
+    renderWithProviders(
+      <ImportModal
+        sessionId="s1"
+        database="appdb"
+        table="users"
+        driver="postgres"
+        initialPath="/tmp/users.csv"
+        onClose={() => {}}
+        onImported={() => {}}
+      />,
+    );
+    await screen.findByText(t("importMappingTitle"));
+    expect(screen.getByTestId("import-mapping-summary")).toHaveTextContent(
+      t("importMappingSummary", { mapped: 2, total: 3 }),
+    );
+    expect(screen.getByTestId("import-mapping-sample-name")).toHaveTextContent("alice");
+    expect(screen.getByTestId("import-mapping-row-code")).toHaveAttribute("data-state", "required");
+    expect(screen.getByTestId("import-mapping-row-name")).toHaveAttribute("data-state", "mapped");
+    expect(screen.getByTestId("import-mapping-required-warning")).toHaveTextContent("code");
+  });
+});

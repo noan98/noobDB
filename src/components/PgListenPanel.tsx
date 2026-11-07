@@ -11,6 +11,7 @@ import { LiveCell, LiveRowsPresence, LiveTr } from "./LiveRows";
 import { ErrorNote, FieldError, FieldLabel } from "./modalForm";
 import {
   appendNotification,
+  channelCaseWarning,
   checkChannelName,
   countByChannel,
   formatReceivedAt,
@@ -206,6 +207,9 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
     setStatus("idle");
   }, [stopActive]);
 
+  // 大文字を含む名前は、引用符なしの NOTIFY では届かない旨を入力中に知らせる (#2132)。
+  const caseWarning = useMemo(() => channelCaseWarning(input), [input]);
+
   const addChannel = useCallback(async () => {
     const checked = checkChannelName(input);
     if (!checked.ok) {
@@ -387,6 +391,26 @@ export function PgListenPanel({ sessionId, driver }: { sessionId: string; driver
       </chakra.form>
 
       {inputError && <FieldError display="block">{inputError}</FieldError>}
+      {caseWarning && (
+        <Callout
+          tone="warning"
+          role="status"
+          data-testid="pglisten-case-warning"
+          action={
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() => setInput(caseWarning.folded)}
+              data-testid="pglisten-case-fold"
+            >
+              {t("pgListenCaseFold", { folded: caseWarning.folded })}
+            </Button>
+          }
+        >
+          {t("pgListenCaseWarning", { name: caseWarning.name, folded: caseWarning.folded })}
+        </Callout>
+      )}
 
       <Flex align="center" gap="2" wrap="wrap" data-testid="pglisten-channels">
         {channels.length === 0 ? (

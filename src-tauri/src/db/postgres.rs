@@ -4776,7 +4776,8 @@ fn create_sequence_ddl(r: &PgRow) -> String {
 
 /// サーバ側停止の準備 (#2023)。この接続の `pg_backend_pid()` を控え、アプリのクエリ
 /// タイムアウトがあれば `statement_timeout` を (猶予つきで) 設定する。失敗しても実行自体は
-/// 妨げない (従来どおりクライアント側打ち切りのみ)。
+/// 妨げない (従来どおりクライアント側打ち切りのみ)。既存の `statement_timeout` の方が
+/// 厳しければ設定せず `None` を返す (復元もしない)。
 ///
 /// `local` はトランザクション内 (ドライラン) 用で、`set_config(.., true)` なので
 /// トランザクションの終了で自動的に戻る。失敗するとトランザクションが aborted になるため
@@ -4795,20 +4796,30 @@ async fn register_server_stop(
     }
     let mut orig = None;
     if ms > 0 {
-        match sqlx::query_scalar::<_, String>("SELECT current_setting('statement_timeout')")
-            .fetch_one(&mut *conn)
-            .await
+        // 既存値は pg_settings.setting (ミリ秒の数値) で読み、単位つき文字列の比較を避ける。
+        // より厳しい既存値 (ALTER ROLE / 初期化 SQL など) は緩めない (#2130)。
+        match sqlx::query_as::<_, (String, i64)>(
+            "SELECT current_setting('statement_timeout'), \
+             COALESCE((SELECT setting::bigint FROM pg_settings WHERE name = 'statement_timeout'), 0)",
+        )
+        .fetch_one(&mut *conn)
+        .await
         {
-            Ok(v) => {
-                match sqlx::query_scalar::<_, String>(
-                    "SELECT set_config('statement_timeout', $1, false)",
-                )
-                .bind(ms.to_string())
-                .fetch_one(&mut *conn)
-                .await
-                {
-                    Ok(_) => orig = Some(v),
-                    Err(e) => tracing::debug!(error = %e, "statement_timeout not set (postgres)"),
+            Ok((v, existing)) => {
+                let existing = u64::try_from(existing).unwrap_or(0);
+                if let Some(target) = super::server_stop::tighter_server_timeout_ms(existing, ms) {
+                    match sqlx::query_scalar::<_, String>(
+                        "SELECT set_config('statement_timeout', $1, false)",
+                    )
+                    .bind(target.to_string())
+                    .fetch_one(&mut *conn)
+                    .await
+                    {
+                        Ok(_) => orig = Some(v),
+                        Err(e) => {
+                            tracing::debug!(error = %e, "statement_timeout not set (postgres)")
+                        }
+                    }
                 }
             }
             Err(e) => tracing::debug!(error = %e, "statement_timeout not read (postgres)"),
@@ -4837,31 +4848,56 @@ async fn register_server_stop_in_tx(
     {
         return;
     }
-    let res = sqlx::query_as::<_, (i32, String)>(
+    let res = sqlx::query_as::<_, (i32, i64)>(
         "SELECT pg_backend_pid(), \
-         set_config('statement_timeout', COALESCE($1, current_setting('statement_timeout')), true)",
+         COALESCE((SELECT setting::bigint FROM pg_settings WHERE name = 'statement_timeout'), 0)",
     )
-    .bind((ms > 0).then(|| ms.to_string()))
     .fetch_one(&mut *conn)
     .await;
     match res {
-        Ok((pid, _)) => {
+        Ok((pid, existing)) => {
             ctx.record_backend(i64::from(pid));
+            // より厳しい既存値は緩めない (#2130)。
+            let existing = u64::try_from(existing).unwrap_or(0);
+            let target = if ms > 0 {
+                super::server_stop::tighter_server_timeout_ms(existing, ms)
+            } else {
+                None
+            };
+            if let Some(target) = target {
+                let set = sqlx::query("SELECT set_config('statement_timeout', $1, true)")
+                    .bind(target.to_string())
+                    .fetch_one(&mut *conn)
+                    .await;
+                if let Err(e) = set {
+                    // set_config が失敗するとトランザクションが aborted のままになるため、
+                    // SAVEPOINT まで戻してから解放する。
+                    tracing::debug!(error = %e, "statement_timeout not set (postgres tx)");
+                    end_server_stop_savepoint(conn, true).await;
+                    return;
+                }
+            }
             // set_config(.., true) の効果は RELEASE 後もトランザクション末まで残る。
-            let _ = sqlx::query("RELEASE SAVEPOINT noobdb_server_stop")
-                .execute(&mut *conn)
-                .await;
+            end_server_stop_savepoint(conn, false).await;
         }
         Err(e) => {
             tracing::debug!(error = %e, "server-side stop setup skipped (postgres tx)");
-            let _ = sqlx::query("ROLLBACK TO SAVEPOINT noobdb_server_stop")
-                .execute(&mut *conn)
-                .await;
-            let _ = sqlx::query("RELEASE SAVEPOINT noobdb_server_stop")
-                .execute(&mut *conn)
-                .await;
+            end_server_stop_savepoint(conn, true).await;
         }
     }
+}
+
+/// `noobdb_server_stop` SAVEPOINT の後始末。`rollback` なら先に ROLLBACK TO して
+/// aborted 状態を解消してから解放する。
+async fn end_server_stop_savepoint(conn: &mut sqlx::PgConnection, rollback: bool) {
+    if rollback {
+        let _ = sqlx::query("ROLLBACK TO SAVEPOINT noobdb_server_stop")
+            .execute(&mut *conn)
+            .await;
+    }
+    let _ = sqlx::query("RELEASE SAVEPOINT noobdb_server_stop")
+        .execute(&mut *conn)
+        .await;
 }
 
 /// [`register_server_stop`] が返した元の値へ `statement_timeout` を戻す。戻せたら true。

@@ -2689,7 +2689,6 @@ const en = {
     "Runs {tool} on this computer for this database (through the SSH tunnel if one is configured). {tool} must be installed on this computer.",
   dumpNoteNative:
     "Built-in generation builds the SQL dump (schema DDL + INSERT statements) directly from this connection. No external client tools are needed.",
-  dumpOptionsLabel: "Options",
   dumpOptSingleTransaction: "Single transaction",
   dumpOptSingleTransactionHint: "--single-transaction: consistent InnoDB snapshot without locking tables.",
   dumpOptRoutines: "Stored procedures & functions",
@@ -2875,14 +2874,18 @@ const en = {
   progressEta: "ETA {time}",
   progressEtaPending: "ETA: calculating…",
   progressPercent: "{percent}%",
+  jobStatElapsed: "Elapsed",
+  jobStatRows: "Rows",
+  importSheetsStatSheets: "Sheets",
+  jobStatRowsPerSec: "Rows / sec",
+  jobStatTables: "Tables",
+  jobRateValue: "{rate} / s",
   chunkedDmlStatBatches: "Batches done",
   chunkedDmlStatRows: "Rows affected",
   chunkedDmlStatRemaining: "Estimated remaining",
-  chunkedDmlStatElapsed: "Elapsed",
   chunkedDmlWaiting: "Next batch in {secs}s (throttle wait)",
   dumpStatTables: "Tables",
   dumpStatBytes: "Written",
-  dumpStatElapsed: "Elapsed",
   dumpResultDone: "Dump finished: {bytes} written in {secs}s.",
   dumpResultCancelled: "Dump cancelled after {secs}s ({bytes} written; the partial file may remain).",
   // `.sql` script runner (#973).
@@ -3129,10 +3132,9 @@ const en = {
     "{column} ({source}): SQLite stores it as a number ({target}), so digits beyond 15 significant digits may be lost.",
   transferLossyTimestampTz:
     "{column} ({source}): this target has no timezone-aware type, so it is stored as {target} (the offset stays as text).",
-  transferProgress: "Transferring… {rows} rows written",
+  transferRunning: "Transferring…",
   transferError: "Transfer failed: {error}",
   transferCancelRun: "Cancel transfer",
-  transferRunning: "Transferring…",
   transferExecute: "Transfer",
   transferReplaceConfirmTitle: "Replace the existing table?",
   transferReplaceConfirmBody:
@@ -4554,6 +4556,11 @@ const en = {
   importMappingTitle: "Column mapping",
   importSkipColumn: "(skip)",
   importMappingAria: "CSV column to import into {column}",
+  importMappingSummary: "{mapped} / {total} columns mapped",
+  importMappingRequiredWarning:
+    "{count} required column(s) are not mapped: {columns}. They are NOT NULL with no default, so the import will fail unless you map them.",
+  importMappingRequiredRow: "This column is required",
+  importMappingSampleEmpty: "(empty)",
   importColumnNumbered: "Column {n}",
   importPreviewTitle: "Preview",
   importPreviewTruncated: "(showing the first rows)",
@@ -5367,6 +5374,9 @@ const en = {
   pgListenChannelLabel: "Channel",
   pgListenChannelPlaceholder: "e.g. orders_changed",
   pgListenAdd: "Add channel",
+  pgListenCaseWarning:
+    "{name} is matched case-sensitively. An unquoted NOTIFY folds the name to lowercase ({folded}), so it would not be received. Listen to the lowercase name instead, unless the sender quotes the channel (NOTIFY \"{name}\" / pg_notify('{name}', …)).",
+  pgListenCaseFold: "Use {folded}",
   pgListenStart: "Start listening",
   pgListenStop: "Stop",
   pgListenClear: "Clear",
@@ -6920,6 +6930,13 @@ const en = {
   taskFormOutputPathRequired: "Enter an output path.",
   taskFormMaskHint:
     "Mask these columns in every scheduled output so PII does not leak to unattended destinations. Columns are matched by exact name in the query result; if a column is missing from the result, that run fails and writes nothing.",
+  taskFormPgSchemaNativeHint:
+    "Built-in generation dumps one schema at a time. If left empty, only the public schema is dumped.",
+  taskFormDumpMaskHint:
+    "Mask these columns in the dump so PII does not leak to unattended destinations. A column with the same name is masked in every table. Available with built-in generation only.",
+  taskFormDumpMasksNeedNative: "Masking requires built-in generation. Select it above, or turn masking off.",
+  taskFormDumpToolMissing:
+    "{tool} was not found on this computer, so a scheduled dump with this engine will fail. Select built-in generation, or install {tool}.",
   taskFormMaskAddColumn: "Column name to mask",
   taskFormMaskAdd: "Add column",
   taskFormMaskRemove: "Remove {column} from masking",
@@ -10205,7 +10222,6 @@ const ja: Dict = {
     "このデータベースに対して、この PC 上で {tool} を実行します (設定があれば SSH トンネル経由で接続)。この PC に {tool} がインストールされている必要があります。",
   dumpNoteNative:
     "内蔵生成で、この接続から SQL ダンプ (スキーマの DDL + INSERT 文) を直接生成します。外部のクライアントツールは不要です。",
-  dumpOptionsLabel: "オプション",
   dumpOptSingleTransaction: "単一トランザクション",
   dumpOptSingleTransactionHint:
     "--single-transaction: テーブルをロックせずに InnoDB の一貫したスナップショットを取得します。",
@@ -10392,14 +10408,18 @@ const ja: Dict = {
   progressEta: "残り約 {time}",
   progressEtaPending: "残り時間: 算出中…",
   progressPercent: "{percent}%",
+  jobStatElapsed: "経過時間",
+  jobStatRows: "行数",
+  importSheetsStatSheets: "シート",
+  jobStatRowsPerSec: "行/秒",
+  jobStatTables: "テーブル",
+  jobRateValue: "{rate} / 秒",
   chunkedDmlStatBatches: "完了バッチ数",
   chunkedDmlStatRows: "影響行数",
   chunkedDmlStatRemaining: "残りの推定",
-  chunkedDmlStatElapsed: "経過時間",
   chunkedDmlWaiting: "次のバッチまで {secs} 秒 (スロットル待機中)",
   dumpStatTables: "テーブル",
   dumpStatBytes: "書き出し量",
-  dumpStatElapsed: "経過時間",
   dumpResultDone: "ダンプが完了しました: {bytes} を {secs} 秒で書き出しました。",
   dumpResultCancelled:
     "ダンプを {secs} 秒で中止しました ({bytes} 書き出し済み。途中のファイルが残る場合があります)。",
@@ -10643,10 +10663,9 @@ const ja: Dict = {
     "{column} ({source}): SQLite では数値 ({target}) として保存されるため、有効桁 15 桁を超える部分は失われることがあります。",
   transferLossyTimestampTz:
     "{column} ({source}): コピー先にはタイムゾーン付きの型がないため {target} として保存されます (オフセットは文字列のまま残ります)。",
-  transferProgress: "転送中… {rows} 行を書き込みました",
+  transferRunning: "転送中…",
   transferError: "転送に失敗しました: {error}",
   transferCancelRun: "転送を中止",
-  transferRunning: "転送中…",
   transferExecute: "転送",
   transferReplaceConfirmTitle: "既存のテーブルを置き換えますか？",
   transferReplaceConfirmBody:
@@ -12049,6 +12068,11 @@ const ja: Dict = {
   importMappingTitle: "カラムマッピング",
   importSkipColumn: "(取り込まない)",
   importMappingAria: "{column} に取り込む CSV の列",
+  importMappingSummary: "対応 {mapped} / {total} 列",
+  importMappingRequiredWarning:
+    "必須列 {count} 件が未対応です: {columns}。NOT NULL で既定値がないため、対応付けないと取り込みに失敗します。",
+  importMappingRequiredRow: "この列は必須です",
+  importMappingSampleEmpty: "(空)",
   importColumnNumbered: "列 {n}",
   importPreviewTitle: "プレビュー",
   importPreviewTruncated: "(先頭の行を表示しています)",
@@ -12854,6 +12878,9 @@ const ja: Dict = {
   pgListenChannelLabel: "チャンネル",
   pgListenChannelPlaceholder: "例: orders_changed",
   pgListenAdd: "チャンネルを追加",
+  pgListenCaseWarning:
+    "{name} は大文字小文字を区別して購読します。引用符なしの NOTIFY は名前を小文字に畳む ({folded}) ため、このままでは届きません。送信側が引用符つき (NOTIFY \"{name}\" / pg_notify('{name}', …)) でない限り、小文字の名前で購読してください。",
+  pgListenCaseFold: "{folded} にする",
   pgListenStart: "監視を開始",
   pgListenStop: "停止",
   pgListenClear: "クリア",
@@ -14398,6 +14425,14 @@ const ja: Dict = {
   taskFormOutputPathRequired: "出力先パスを入力してください。",
   taskFormMaskHint:
     "スケジュール実行のたびに、これらの列をマスクして書き出します (無人の出力先への PII 流出を防ぎます)。列はクエリ結果の列名と完全一致で対応付けます。結果に無い列名があると、その実行は失敗し何も書き出しません。",
+  taskFormPgSchemaNativeHint:
+    "内蔵生成は 1 スキーマ単位です。空のときは public スキーマだけをダンプします (全スキーマではありません)。",
+  taskFormDumpMaskHint:
+    "ダンプの中でこれらの列をマスクして書き出します (無人の出力先への PII 流出を防ぎます)。同じ名前の列はすべてのテーブルでマスクされます。内蔵生成でのみ使えます。",
+  taskFormDumpMasksNeedNative:
+    "マスキングは内蔵生成でのみ使えます。上で内蔵生成を選ぶか、マスキングをオフにしてください。",
+  taskFormDumpToolMissing:
+    "この PC に {tool} が見つからないため、このエンジンの定期ダンプは失敗します。内蔵生成を選ぶか、{tool} を導入してください。",
   taskFormMaskAddColumn: "マスクする列名",
   taskFormMaskAdd: "列を追加",
   taskFormMaskRemove: "{column} をマスク対象から外す",

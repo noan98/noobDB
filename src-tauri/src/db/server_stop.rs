@@ -118,6 +118,22 @@ pub async fn scope<F: std::future::Future>(ctx: Arc<ServerStopCtx>, fut: F) -> F
     CTX.scope(ctx, fut).await
 }
 
+/// サーバ側へ設定するタイムアウトを「アプリの値」と「サーバに既にある値」の厳しい方に決める (#2130)。
+///
+/// `existing_ms` は `statement_timeout` / `max_execution_time` の現在値 (ミリ秒、0 = 無制限)。
+/// DBA の `ALTER ROLE ... SET` やセッション初期化 SQL が置いた短い制限を、猶予つきの
+/// アプリ値で緩めないための判定。
+/// - 既存値が 0 (無制限) → `Some(app_ms)` (アプリの値を設定する)
+/// - 既存値が `app_ms` 以下 → `None` (SET しない。復元も不要)
+/// - 既存値が `app_ms` より長い → `Some(app_ms)`
+pub fn tighter_server_timeout_ms(existing_ms: u64, app_ms: u64) -> Option<u64> {
+    if existing_ms > 0 && existing_ms <= app_ms {
+        None
+    } else {
+        Some(app_ms)
+    }
+}
+
 /// 現在のタスクの文脈 (無ければ `None`)。ドライバの `execute_stream` が見る。
 pub fn current() -> Option<Arc<ServerStopCtx>> {
     CTX.try_with(Arc::clone).ok()
@@ -273,6 +289,20 @@ mod tests {
         );
         assert_eq!(ServerStopCtx::new(Some(0)).server_timeout_ms(), None);
         assert_eq!(ServerStopCtx::new(None).server_timeout_ms(), None);
+    }
+
+    #[test]
+    fn tighter_server_timeout_keeps_stricter_existing() {
+        // 無制限 (0) → アプリの値を設定する。
+        assert_eq!(tighter_server_timeout_ms(0, 32_000), Some(32_000));
+        // 等しい → 設定しない。
+        assert_eq!(tighter_server_timeout_ms(32_000, 32_000), None);
+        // 既存の方が短い → 設定しない (緩めない)。
+        assert_eq!(tighter_server_timeout_ms(5_000, 32_000), None);
+        assert_eq!(tighter_server_timeout_ms(1, 32_000), None);
+        // 既存の方が長い → アプリの値で締める。
+        assert_eq!(tighter_server_timeout_ms(60_000, 32_000), Some(32_000));
+        assert_eq!(tighter_server_timeout_ms(32_001, 32_000), Some(32_000));
     }
 
     #[test]

@@ -260,7 +260,7 @@ describe("design tokens: 本文 / 補足の textStyle (#1392)", () => {
     ["../components/CreateIndexModal.tsx", 1],
     ["../components/DataSearchModal.tsx", 4],
     ["../components/DataTransferModal.tsx", 1],
-    ["../components/DumpModal.tsx", 3],
+    ["../components/DumpModal.tsx", 2],
     ["../components/ExportMaskingSection.tsx", 4],
     ["../components/ExportModal.tsx", 4],
     ["../components/GridReplaceModal.tsx", 3],
