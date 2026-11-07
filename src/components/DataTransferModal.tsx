@@ -799,12 +799,13 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
                   total={null}
                   elapsedMs={jobElapsedMs}
                   running
-                  rateLabel={t("jobStatRowsPerSec")}
+                  rate={{ label: t("jobStatRowsPerSec"), count: status.rows }}
                   stats={[{ label: t("jobStatRows"), value: status.rows }]}
                 />
               </chakra.div>
-              <chakra.div role="status" aria-live="polite" fontSize="sm" color="app.text" textStyle="numeric">
-                {t("transferProgress", { rows: status.rows })}
+              {/* ライブリージョンには変わらない文言だけ置く (150ms ごとの進捗で読み上げが走らないように)。件数はタイルが示す。 */}
+              <chakra.div role="status" aria-live="polite" fontSize="sm" color="app.text">
+                {t("transferRunning")}
               </chakra.div>
             </chakra.div>
           )}

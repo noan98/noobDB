@@ -1561,7 +1561,7 @@ export function ImportModal({
                   total={status.total > 0 ? status.total : null}
                   elapsedMs={jobElapsedMs}
                   running
-                  rateLabel={t("jobStatRowsPerSec")}
+                  rate={{ label: t("jobStatRowsPerSec"), count: status.inserted }}
                   stats={[
                     {
                       label: t("jobStatRows"),
@@ -1586,7 +1586,7 @@ export function ImportModal({
                 done: status.inserted,
                 total: status.inserted + status.skippedTotal,
                 elapsedMs: jobElapsedMs,
-                rateLabel: t("jobStatRowsPerSec"),
+                rate: { label: t("jobStatRowsPerSec"), count: status.inserted },
                 stats: [{ label: t("jobStatRows"), value: status.inserted }],
               }}
               message={t("importSkippedSummary", {

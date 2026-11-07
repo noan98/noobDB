@@ -73,6 +73,8 @@ export function TablesExportModal({ sessionId, driver, database, tables, profile
   const userEditedDirRef = useRef(!!remembered?.dir);
   const isRunning = status.kind === "running";
   const jobElapsedMs = useJobClock(isRunning);
+  // 速度用の行数累計。進捗の rows はテーブルごとに 0 へ戻るので、終わったテーブルの分を足し込む。
+  const doneRowsRef = useRef(0);
   const workbookMode = format === "xlsx" && singleWorkbook && tables.length > 1;
 
   // 既定の保存先は OS のダウンロードフォルダ (`ExportModal` と同じ)。取得できなければ空のまま。
@@ -239,6 +241,7 @@ export function TablesExportModal({ sessionId, driver, database, tables, profile
     const stamp = batchTimestamp();
     const failures: { table: string; error: string }[] = [];
     let written = 0;
+    doneRowsRef.current = 0;
     if (workbookMode) {
       // 1 ブックにまとめる: 1 回の書き出しで全テーブルが成功か失敗かになる。
       const label = t("batchExportWorkbookLabel", { count: tables.length });
@@ -264,8 +267,10 @@ export function TablesExportModal({ sessionId, driver, database, tables, profile
         } catch (e) {
           result = { ok: false, error: String(e) };
         }
-        if (result.ok === true) written += 1;
-        else if (result.ok === false) failures.push({ table, error: result.error });
+        if (result.ok === true) {
+          written += 1;
+          doneRowsRef.current += result.rows;
+        } else if (result.ok === false) failures.push({ table, error: result.error });
         else break;
       }
     }
@@ -456,7 +461,7 @@ export function TablesExportModal({ sessionId, driver, database, tables, profile
                   total={workbookMode ? null : tables.length}
                   elapsedMs={jobElapsedMs}
                   running
-                  rateLabel={t("jobStatRowsPerSec")}
+                  rate={{ label: t("jobStatRowsPerSec"), count: doneRowsRef.current + status.rows }}
                   stats={[
                     ...(workbookMode
                       ? []

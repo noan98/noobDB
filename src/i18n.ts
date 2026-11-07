@@ -2852,7 +2852,6 @@ const en = {
   chunkedDmlStatBatches: "Batches done",
   chunkedDmlStatRows: "Rows affected",
   chunkedDmlStatRemaining: "Estimated remaining",
-  chunkedDmlStatElapsed: "Elapsed",
   chunkedDmlWaiting: "Next batch in {secs}s (throttle wait)",
   dumpStatTables: "Tables",
   dumpStatBytes: "Written",
@@ -3102,10 +3101,9 @@ const en = {
     "{column} ({source}): SQLite stores it as a number ({target}), so digits beyond 15 significant digits may be lost.",
   transferLossyTimestampTz:
     "{column} ({source}): this target has no timezone-aware type, so it is stored as {target} (the offset stays as text).",
-  transferProgress: "Transferring… {rows} rows written",
+  transferRunning: "Transferring…",
   transferError: "Transfer failed: {error}",
   transferCancelRun: "Cancel transfer",
-  transferRunning: "Transferring…",
   transferExecute: "Transfer",
   transferReplaceConfirmTitle: "Replace the existing table?",
   transferReplaceConfirmBody:
@@ -10340,7 +10338,6 @@ const ja: Dict = {
   chunkedDmlStatBatches: "完了バッチ数",
   chunkedDmlStatRows: "影響行数",
   chunkedDmlStatRemaining: "残りの推定",
-  chunkedDmlStatElapsed: "経過時間",
   chunkedDmlWaiting: "次のバッチまで {secs} 秒 (スロットル待機中)",
   dumpStatTables: "テーブル",
   dumpStatBytes: "書き出し量",
@@ -10587,10 +10584,9 @@ const ja: Dict = {
     "{column} ({source}): SQLite では数値 ({target}) として保存されるため、有効桁 15 桁を超える部分は失われることがあります。",
   transferLossyTimestampTz:
     "{column} ({source}): コピー先にはタイムゾーン付きの型がないため {target} として保存されます (オフセットは文字列のまま残ります)。",
-  transferProgress: "転送中… {rows} 行を書き込みました",
+  transferRunning: "転送中…",
   transferError: "転送に失敗しました: {error}",
   transferCancelRun: "転送を中止",
-  transferRunning: "転送中…",
   transferExecute: "転送",
   transferReplaceConfirmTitle: "既存のテーブルを置き換えますか？",
   transferReplaceConfirmBody:

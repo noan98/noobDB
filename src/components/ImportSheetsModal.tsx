@@ -92,6 +92,9 @@ export function ImportSheetsModal({
   const disposedRef = useRef(false);
   const importing = status.kind === "importing";
   const jobElapsedMs = useJobClock(importing);
+  // 速度用の行数累計。進捗の inserted はシートごとに 0 へ戻るので、終わったシートの分を足し込む。
+  const doneRowsRef = useRef(0);
+  const lastInsertedRef = useRef(0);
 
   const nullToken = options.nullToken ?? null;
   // シートごとの読み込み: 先頭行 (プレビュー) から列名と型を推論する。
@@ -193,13 +196,19 @@ export function ImportSheetsModal({
     if (unlistenRef.current) unlistenRef.current();
     // `started` はシートごとに届く。何枚目かはその回数で分かる。
     let startedCount = 0;
+    doneRowsRef.current = 0;
+    lastInsertedRef.current = 0;
     const unlisten = await listenImportStream(streamId, {
       onStarted: (e) => {
         startedCount += 1;
+        doneRowsRef.current += lastInsertedRef.current;
+        lastInsertedRef.current = 0;
         setStatus({ kind: "importing", index: startedCount, inserted: 0, total: e.total });
       },
-      onProgress: (e) =>
-        setStatus({ kind: "importing", index: startedCount, inserted: e.inserted, total: e.total }),
+      onProgress: (e) => {
+        lastInsertedRef.current = e.inserted;
+        setStatus({ kind: "importing", index: startedCount, inserted: e.inserted, total: e.total });
+      },
       onDone: (e) => {
         if (unlistenRef.current) {
           unlistenRef.current();
@@ -341,7 +350,7 @@ export function ImportSheetsModal({
                   total={status.total > 0 ? status.total : null}
                   elapsedMs={jobElapsedMs}
                   running
-                  rateLabel={t("jobStatRowsPerSec")}
+                  rate={{ label: t("jobStatRowsPerSec"), count: doneRowsRef.current + status.inserted }}
                   stats={[
                     { label: t("importSheetsStatSheets"), value: status.index, sub: `/ ${selected}` },
                     { label: t("jobStatRows"), value: status.inserted },
@@ -368,7 +377,7 @@ export function ImportSheetsModal({
                 done: status.event.sheets.length,
                 total: selected,
                 elapsedMs: jobElapsedMs,
-                rateLabel: t("jobStatRowsPerSec"),
+                rate: { label: t("jobStatRowsPerSec"), count: status.event.inserted },
                 stats: [
                   {
                     label: t("importSheetsStatSheets"),

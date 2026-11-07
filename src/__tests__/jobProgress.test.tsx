@@ -11,7 +11,7 @@ describe("JobProgressDetail", () => {
         total={null}
         elapsedMs={5000}
         running
-        rateLabel="Rows / sec"
+        rate={{ label: "Rows / sec", count: 500 }}
         stats={[{ label: "Rows", value: 500 }]}
         testId="d"
       />,
@@ -41,8 +41,18 @@ describe("JobProgressDetail", () => {
     expect(screen.queryByText(/%$/)).toBeNull();
   });
 
+  it("速度は done ではなく rate.count から計算する (done と件数が別)", () => {
+    // done=テーブル 2 個目、速度の件数は累計 1000 行。
+    renderWithProviders(
+      <JobProgressDetail done={2} total={10} elapsedMs={10_000} rate={{ label: "Rate", count: 1000 }} />,
+    );
+    expect(screen.getByText("100 / s")).toBeInTheDocument();
+  });
+
   it("速度は経過 1 秒未満なら - にする", () => {
-    renderWithProviders(<JobProgressDetail done={10} total={null} elapsedMs={200} rateLabel="Rate" />);
+    renderWithProviders(
+      <JobProgressDetail done={10} total={null} elapsedMs={200} rate={{ label: "Rate", count: 10 }} />,
+    );
     expect(screen.getByText("-")).toBeInTheDocument();
   });
 });

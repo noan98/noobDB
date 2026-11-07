@@ -39,8 +39,11 @@ export interface JobProgressDetailProps {
   full?: boolean;
   /** 経過時間タイルの前に並べる追加のタイル。 */
   stats?: JobStat[];
-  /** 1 秒あたりの件数タイルを出す。ラベルを渡したときだけ表示する。 */
-  rateLabel?: string;
+  /**
+   * 1 秒あたりの行数タイル。バーの分子 `done` とは別に、行数の累計 (`count`) を渡す
+   * (done がテーブル数・シート数のことがあるため)。渡したときだけ表示する。
+   */
+  rate?: { label: string; count: number };
   testId?: string;
   barTestId?: string;
   statsTestId?: string;
@@ -55,7 +58,7 @@ export function JobProgressDetail({
   tone,
   full,
   stats = [],
-  rateLabel,
+  rate: rateSpec,
   testId,
   barTestId,
   statsTestId,
@@ -70,7 +73,7 @@ export function JobProgressDetail({
         ? t("progressEtaPending")
         : t("progressEta", { time: formatDuration(etaMs) })
       : undefined;
-  const rate = rateLabel ? ratePerSecond(done, elapsedMs) : null;
+  const rate = rateSpec ? ratePerSecond(rateSpec.count, elapsedMs) : null;
   return (
     <chakra.div display="flex" flexDirection="column" gap="2" data-testid={testId}>
       {ratio !== null && (
@@ -87,9 +90,9 @@ export function JobProgressDetail({
         {stats.map((s) => (
           <StatTile key={s.label} label={s.label} value={s.value} sub={s.sub} />
         ))}
-        {rateLabel && (
+        {rateSpec && (
           <StatTile
-            label={rateLabel}
+            label={rateSpec.label}
             value={rate === null ? "-" : t("jobRateValue", { rate: Math.round(rate).toLocaleString() })}
           />
         )}
@@ -158,7 +161,7 @@ export function JobPresence({ show, children }: { show: boolean; children: React
 }
 
 /**
- * 実行中の経過時間 (ms)。`running` が true の間 0.5 秒ごとに更新し、false になったら
+ * 実行中の経過時間 (ms)。`running` が true の間 1 秒ごとに更新し、false になったら
  * その時点の値で止める (終了後の結果表示が最終の経過時間を出せる)。
  */
 export function useJobClock(running: boolean): number {
@@ -167,7 +170,7 @@ export function useJobClock(running: boolean): number {
     if (!running) return;
     const t0 = Date.now();
     setElapsed(0);
-    const id = setInterval(() => setElapsed(Date.now() - t0), 500);
+    const id = setInterval(() => setElapsed(Date.now() - t0), 1000);
     return () => {
       clearInterval(id);
       setElapsed(Date.now() - t0);
