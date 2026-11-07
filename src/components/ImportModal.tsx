@@ -25,6 +25,7 @@ import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Input, PressableButton, Radio, Switch } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
+import { ImportColumnMapping } from "./ImportColumnMapping";
 import { Spinner } from "./Spinner";
 import { LoadingButton } from "./LoadingButton";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection, PathRow } from "./modalForm";
@@ -1338,52 +1339,18 @@ export function ImportModal({
 
         {!createNew && preview && tableColumns && (
           <FormSection>
-            <FieldLabel as="div">{t("importMappingTitle")}</FieldLabel>
-            <chakra.div display="grid" gridTemplateColumns="repeat(auto-fill, minmax(280px, 1fr))" gap="2">
-              {tableColumns.map((col) => (
-                <chakra.div display="flex" alignItems="center" gap="2" key={col.name}>
-                  <Tooltip label={col.data_type}>
-                    <chakra.span
-                      flex="0 0 40%"
-                      fontSize="md"
-                      fontFamily="mono"
-                      overflow="hidden"
-                      textOverflow="ellipsis"
-                      whiteSpace="nowrap"
-                    >
-                      {col.name}
-                      {col.key === "PRI" && (
-                        <Tooltip label={t("colPkTitle")}>
-                          <chakra.span fontSize="xs" ml="1" color="app.cell.date">
-                            <Icon name="key" />
-                          </chakra.span>
-                        </Tooltip>
-                      )}
-                    </chakra.span>
-                  </Tooltip>
-                  <ListboxSelect
-                    css={{ flex: "1", minWidth: 0 }}
-                    value={String(mapping[col.name] ?? "")}
-                    options={[
-                      { value: "", label: t("importSkipColumn") },
-                      ...preview.headers.map((_, idx) => ({
-                        value: String(idx),
-                        label: csvColumnLabel(idx),
-                      })),
-                    ]}
-                    onChange={(v) => {
-                      mappingEditedRef.current = true;
-                      setMapping((prev) => ({
-                        ...prev,
-                        [col.name]: v === "" ? null : Number(v),
-                      }));
-                    }}
-                    disabled={importing}
-                    ariaLabel={t("importMappingAria", { column: col.name })}
-                  />
-                </chakra.div>
-              ))}
-            </chakra.div>
+            <ImportColumnMapping
+              driver={driver}
+              tableColumns={tableColumns}
+              preview={preview}
+              mapping={mapping}
+              fileColumnLabel={csvColumnLabel}
+              disabled={importing}
+              onChange={(column, csvIndex) => {
+                mappingEditedRef.current = true;
+                setMapping((prev) => ({ ...prev, [column]: csvIndex }));
+              }}
+            />
             {profileId && (
               <chakra.div>
                 <Tooltip label={t("importTemplateSaveHint")}>
