@@ -1212,6 +1212,15 @@ const en = {
   parameterInputCancel: "Cancel",
   parameterInputErrNumber: "Enter a number",
   parameterInputErrRequired: "Required",
+  parameterInputTypeNull: "NULL",
+  parameterInputNullPlaceholder: "NULL",
+  parameterInputNativeIntro:
+    "This query contains driver placeholders (?, $1, :name). Provide a value and type for each; they are expanded into literals before the query runs.",
+  parameterInputPasteLabel: "Paste values from a log",
+  parameterInputPastePlaceholder: "1, 'active', NULL   or   [1, \"active\", null]",
+  parameterInputPasteApply: "Assign in order",
+  parameterInputPasteCountMismatch:
+    "{actual} values pasted, but the query has {expected} positional placeholders.",
   contextMenuEdit: "Edit connection",
   contextMenuDuplicate: "Duplicate connection",
   contextMenuDelete: "Delete connection",
@@ -8693,6 +8702,15 @@ const ja: Dict = {
   parameterInputCancel: "キャンセル",
   parameterInputErrNumber: "数値を入力してください",
   parameterInputErrRequired: "入力してください",
+  parameterInputTypeNull: "NULL",
+  parameterInputNullPlaceholder: "NULL",
+  parameterInputNativeIntro:
+    "このクエリにはドライバのプレースホルダー (?, $1, :name) が含まれています。各項目の値と型を指定してください。実行前にリテラルへ展開されます。",
+  parameterInputPasteLabel: "ログから値を貼り付け",
+  parameterInputPastePlaceholder: "1, 'active', NULL  または  [1, \"active\", null]",
+  parameterInputPasteApply: "順に割り当て",
+  parameterInputPasteCountMismatch:
+    "貼り付けた値は {actual} 個ですが、位置プレースホルダーは {expected} 個です。",
   contextMenuEdit: "接続情報を編集",
   contextMenuDuplicate: "接続情報を複製",
   contextMenuDelete: "接続先を削除",

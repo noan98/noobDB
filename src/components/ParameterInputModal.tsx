@@ -3,16 +3,19 @@ import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import type { DriverKind } from "../api/tauri";
 import {
+  extractNativeParams,
   extractQueryParams,
   findQuotedParams,
   isNumericParam,
-  substituteQueryParams,
+  isPositionalParamKey,
+  parsePastedValues,
+  substituteAllParams,
   type ParamType,
 } from "../queryParams";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Callout } from "./Callout";
 import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
-import { Button, Input, PressableButton } from "./ui";
+import { Button, Input, PressableButton, Textarea } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
 import { Tooltip } from "./Tooltip";
 import { isPlainEnterKey } from "./modalKeys";
@@ -48,7 +51,10 @@ function readCache(): Cache {
         // 旧版が保存した値は読み捨てる (型だけ使う)。
         const out: Cache = {};
         for (const [k, v] of Object.entries(parsed as Record<string, Partial<Draft>>)) {
-          if (v && (v.type === "text" || v.type === "number" || v.type === "identifier")) {
+          if (
+            v &&
+            (v.type === "text" || v.type === "number" || v.type === "identifier" || v.type === "null")
+          ) {
             out[k] = { value: "", type: v.type };
           }
         }
@@ -73,17 +79,28 @@ const TYPE_KEYS: { type: ParamType; key: Parameters<ReturnType<typeof useT>>[0] 
   { type: "text", key: "parameterInputTypeText" },
   { type: "number", key: "parameterInputTypeNumber" },
   { type: "identifier", key: "parameterInputTypeIdentifier" },
+  { type: "null", key: "parameterInputTypeNull" },
 ];
 
 export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) {
   const t = useT();
-  const names = useMemo(() => extractQueryParams(sql), [sql]);
+  // `{{name}}` とネイティブプレースホルダ (`?` / `$n` / `:name`) は同じ一覧で入力する。
+  // ネイティブのキーは先頭記号 (`?1` / `$1` / `:name`) で `{{name}}` の名前と衝突しない。
+  const names = useMemo(
+    () => [...extractQueryParams(sql), ...extractNativeParams(sql, driver)],
+    [sql, driver],
+  );
+  const positionalNames = useMemo(() => names.filter(isPositionalParamKey), [names]);
+  const hasNative = useMemo(() => names.some((n) => !/^\w+$/.test(n)), [names]);
+  const [pasteText, setPasteText] = useState("");
   const firstInputRef = useRef<HTMLInputElement>(null);
 
   const [drafts, setDrafts] = useState<Record<string, Draft>>(() => {
     const cache = readCache();
     const init: Record<string, Draft> = {};
-    for (const n of names) init[n] = cache[n] ? { ...cache[n] } : { value: "", type: "text" };
+    // 型の記憶は `{{name}}` だけ。ネイティブのキー (`?1` など) は SQL ごとに意味が違う。
+    for (const n of names)
+      init[n] = cache[n] && /^\w+$/.test(n) ? { ...cache[n] } : { value: "", type: "text" };
     return init;
   });
 
@@ -94,6 +111,7 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
   const errorKey = (name: string): "parameterInputErrNumber" | "parameterInputErrRequired" | null => {
     const d = drafts[name];
     if (!d) return null;
+    if (d.type === "null") return null;
     if (d.type === "number") return isNumericParam(d.value) ? null : "parameterInputErrNumber";
     // Identifiers can't be empty (an empty quoted identifier is invalid SQL).
     if (d.type === "identifier") return d.value.trim() === "" ? "parameterInputErrRequired" : null;
@@ -119,15 +137,31 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
 
   // Live preview of the exact SQL that will run, so the escaping is visible.
   const preview = useMemo(
-    () => substituteQueryParams(sql, driver, values, types),
+    () => substituteAllParams(sql, driver, values, types),
     [sql, driver, values, types],
   );
+
+  // 貼り付けた値の個数が位置プレースホルダ数と合うか。空欄のときはエラーにしない。
+  const pasted = useMemo(() => parsePastedValues(pasteText, driver), [pasteText, driver]);
+  const pasteMismatch = pasted.length > 0 && pasted.length !== positionalNames.length;
+
+  const applyPaste = () => {
+    if (pasted.length === 0 || pasteMismatch) return;
+    setDrafts((prev) => {
+      const next = { ...prev };
+      positionalNames.forEach((n, i) => {
+        next[n] = { value: pasted[i].value, type: pasted[i].type };
+      });
+      return next;
+    });
+  };
 
   const submit = () => {
     if (hasError) return;
     // 型だけ保存する (値は保存しない)。
     const typesOnly: Cache = {};
-    for (const [n, d] of Object.entries(drafts)) typesOnly[n] = { value: "", type: d.type };
+    for (const [n, d] of Object.entries(drafts))
+      if (/^\w+$/.test(n)) typesOnly[n] = { value: "", type: d.type };
     writeCache({ ...readCache(), ...typesOnly });
     onSubmit(values, types);
   };
@@ -146,13 +180,49 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
 
       <ModalBody display="flex" flexDirection="column" gap="3">
         <chakra.p m={0} color="app.textMuted" fontSize="sm">
-          {t("parameterInputIntro")}
+          {t(hasNative ? "parameterInputNativeIntro" : "parameterInputIntro")}
         </chakra.p>
+
+        {positionalNames.length > 0 && (
+          <FormSection>
+            <FieldLabel as="div">{t("parameterInputPasteLabel")}</FieldLabel>
+            <chakra.div display="flex" gap="2" alignItems="flex-start">
+              <Textarea
+                fontFamily="mono"
+                fontSize="sm"
+                rows={2}
+                value={pasteText}
+                placeholder={t("parameterInputPastePlaceholder")}
+                aria-label={t("parameterInputPasteLabel")}
+                aria-invalid={pasteMismatch ? true : undefined}
+                onChange={(e) => setPasteText(e.target.value)}
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={applyPaste}
+                disabled={pasted.length === 0 || pasteMismatch}
+              >
+                {t("parameterInputPasteApply")}
+              </Button>
+            </chakra.div>
+            {pasteMismatch && (
+              <FieldError>
+                {t("parameterInputPasteCountMismatch", {
+                  actual: pasted.length,
+                  expected: positionalNames.length,
+                })}
+              </FieldError>
+            )}
+          </FormSection>
+        )}
 
         <chakra.div display="flex" flexDirection="column" gap="2">
           {names.map((name, idx) => {
             const d = drafts[name];
             const err = errorKey(name);
+            // `{{name}}` は波括弧つきで、ネイティブ (`?1` / `$1` / `:name`) はそのまま表示する。
+            const label = /^\w+$/.test(name) ? `{{${name}}}` : name;
             return (
               <chakra.div
                 key={name}
@@ -161,14 +231,16 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
                 gap="2"
                 alignItems="center"
               >
-                <Tooltip label={`{{${name}}}`}>
+                <Tooltip label={label}>
                   <chakra.code
                     fontSize="sm"
                     color="app.text"
                     whiteSpace="nowrap"
                     overflow="hidden"
                     textOverflow="ellipsis"
-                  >{`{{${name}}}`}</chakra.code>
+                  >
+                    {label}
+                  </chakra.code>
                 </Tooltip>
                 <ListboxSelect
                   css={{ fontSize: "var(--text-sm)", width: "100%" }}
@@ -184,8 +256,13 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
                     fontSize="sm"
                     type="text"
                     inputMode={d?.type === "number" ? "decimal" : undefined}
-                    value={d?.value ?? ""}
-                    placeholder={t("parameterInputValuePlaceholder")}
+                    value={d?.type === "null" ? "" : (d?.value ?? "")}
+                    disabled={d?.type === "null"}
+                    placeholder={
+                      d?.type === "null"
+                        ? t("parameterInputNullPlaceholder")
+                        : t("parameterInputValuePlaceholder")
+                    }
                     aria-label={t("parameterInputValueLabelFor", { name })}
                     aria-invalid={err ? true : undefined}
                     onChange={(e) => setDraft(name, { value: e.target.value })}
