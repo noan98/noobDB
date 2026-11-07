@@ -1305,7 +1305,7 @@ impl SqliteConn {
         if table.contains('"') || table.contains('\0') {
             return Err(AppError::InvalidInput("invalid table name".into()));
         }
-        let mut conn = fresh_schema_conn(&self.pool).await?;
+        let mut conn = fresh_schema_conn(&self.pool, &sc).await?;
         let sql = format!("PRAGMA {sc}.table_xinfo(\"{}\")", table);
         let rows: Vec<SqliteRow> = fresh_pragma(sql).fetch_all(&mut *conn).await?;
         Ok(rows
@@ -1330,7 +1330,7 @@ impl SqliteConn {
             table.replace('"', "\"\"")
         );
         // DDL 直後でも別接続の古いスキーマで読まないよう、1 本の接続に揃える。
-        let mut conn = fresh_schema_conn(&self.pool).await?;
+        let mut conn = fresh_schema_conn(&self.pool, &sc).await?;
         let fk_rows: Vec<SqliteRow> = fresh_pragma(fk_sql).fetch_all(&mut *conn).await?;
         let mut fks: std::collections::HashMap<String, (String, Option<String>)> =
             std::collections::HashMap::new();
@@ -1818,7 +1818,7 @@ impl SqliteConn {
         let list_sql = format!("PRAGMA {sc}.index_list(\"{}\")", table.replace('"', "\"\""));
         // index_list と index_info を別々の接続で読むと、片方だけ古いスキーマのまま
         // 空になる (CI で複合インデックスの列が `[]`)。1 本の接続に揃える。
-        let mut conn = fresh_schema_conn(&self.pool).await?;
+        let mut conn = fresh_schema_conn(&self.pool, &sc).await?;
         let list_rows: Vec<SqliteRow> = fresh_pragma(list_sql).fetch_all(&mut *conn).await?;
         // #1776: 照合順序の食い違いを疑うため、インデックス / テーブルの DDL を引いておく。
         // 取れなければ全インデックスを照合順序不一致の疑いありとして扱う (安全側)。
@@ -2575,11 +2575,20 @@ fn strip_sql_comments(sql: &str) -> String {
 /// 組み立てた結果が文ごと再利用されるのを防ぐ)。キャッシュに残った空結果の PRAGMA 文は
 /// クッキー検証を持たないので、スキーマを読み直しても空のまま再利用され続ける。
 /// `persistent(false)` を外さないこと。
-async fn fresh_schema_conn(pool: &SqlitePool) -> Result<sqlx::pool::PoolConnection<sqlx::Sqlite>> {
+async fn fresh_schema_conn(
+    pool: &SqlitePool,
+    schema: &str,
+) -> Result<sqlx::pool::PoolConnection<sqlx::Sqlite>> {
     let mut conn = pool.acquire().await?;
-    sqlx::query("SELECT 1 FROM sqlite_master LIMIT 1")
-        .fetch_optional(&mut *conn)
-        .await?;
+    // 読み込みはスキーマごと。アタッチ先 (`"ext"`) の PRAGMA の前には、そのスキーマの
+    // `sqlite_master` を読んでおかないと、別接続で作られた索引などが見えない (#2129)。
+    // `schema` は呼び出し側でクォート済みの識別子 (`quote_ident`) か `main`。
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT 1 FROM {schema}.sqlite_master LIMIT 1"
+    )))
+    .persistent(false)
+    .fetch_optional(&mut *conn)
+    .await?;
     Ok(conn)
 }
 
@@ -2630,13 +2639,15 @@ async fn fetch_primary_key(pool: &SqlitePool, target: &str) -> Result<Vec<String
     if table.contains('\0') || schema.as_deref().is_some_and(|s| s.contains('\0')) {
         return Ok(Vec::new());
     }
-    let mut conn = fresh_schema_conn(pool).await?;
     // アタッチ先の表は `PRAGMA "別名".table_info(...)` で引く。修飾の規則 (main は付けない) は
     // `sqlite_table_ref` と同じ。
-    let prefix = match schema.as_deref() {
-        Some(s) if !super::sync::sqlite_is_main(s) => format!("{}.", quote_ident(s)),
-        _ => String::new(),
+    let (prefix, catalog) = match schema.as_deref() {
+        Some(s) if !super::sync::sqlite_is_main(s) => {
+            (format!("{}.", quote_ident(s)), quote_ident(s))
+        }
+        _ => (String::new(), DEFAULT_DB_NAME.to_string()),
     };
+    let mut conn = fresh_schema_conn(pool, &catalog).await?;
     let sql = format!(
         "PRAGMA {prefix}table_info(\"{}\")",
         table.replace('"', "\"\"")

@@ -162,6 +162,18 @@ describe("buildIdentitySyncSql", () => {
     );
   });
 
+  it("SQLite のアタッチ先では sqlite_sequence / sqlite_master も別名で修飾する (#2129)", () => {
+    expect(buildIdentitySyncSql("sqlite", "ext", "notes", "id")).toBe(
+      `UPDATE "ext".sqlite_sequence SET seq = MAX(seq, (SELECT COALESCE(MAX(rowid), 0) FROM "ext"."notes")) WHERE name = 'notes';`,
+    );
+    expect(sqliteHasAutoincrementSql("notes", "ext")).toBe(
+      `SELECT 1 FROM "ext".sqlite_master WHERE type = 'table' AND name = 'notes' AND UPPER(sql) LIKE '%AUTOINCREMENT%'`,
+    );
+    expect(sqliteHasAutoincrementSql("notes", "main")).toBe(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notes' AND UPPER(sql) LIKE '%AUTOINCREMENT%'",
+    );
+  });
+
   it("SQLite の AUTOINCREMENT 判定 SQL", () => {
     expect(sqliteHasAutoincrementSql("it's")).toBe(
       "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'it''s' AND UPPER(sql) LIKE '%AUTOINCREMENT%'",

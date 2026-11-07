@@ -9633,7 +9633,7 @@ export default function App() {
           try {
             const res = await api.runLookupQuery({
               sessionId,
-              sql: sqliteHasAutoincrementSql(table),
+              sql: sqliteHasAutoincrementSql(table, database),
               database,
             });
             if (res.rows.length === 0) {
