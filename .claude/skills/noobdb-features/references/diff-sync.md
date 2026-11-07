@@ -29,6 +29,15 @@
   DO ブロック (拡張プロトコルは複数文を受けない)、関数 / プロシージャが `CREATE OR REPLACE`、
   シーケンスが `ALTER SEQUENCE` (採番の現在値を保つ)。適用は既存の `apply_sync_sql` 経路
   (read_only 拒否・トランザクション) に乗る。
+  **PostgreSQL のユーザー定義型 (`type`: ENUM / DOMAIN / 複合型 / 範囲型, #2127)** も同じ層で比べる
+  (PostgreSQL のみ)。作成は表・シーケンスより前、DROP は表の DROP より後 (末尾)。置換は使用中の型を
+  DROP + CREATE できないので、ENUM に source だけの値があれば `ALTER TYPE ... ADD VALUE IF NOT EXISTS`
+  (source の並びの位置に BEFORE / AFTER) を出し、値の削除・並び替えと ENUM 以外の変更は文を出さず警告する
+  (`object_diff::type_replace_statements`)。型を使う列は `information_schema` の `USER-DEFINED` のままだと
+  `CREATE TABLE` が失敗するので、スキーマ比較だけ `collect_table_columns` が `user_type_columns` で
+  実際の型名 (同じスキーマなら修飾なし) に置き換える (ENUM 等の配列列は `"mood"[]` の形)。
+  既知の制限: 型はシーケンス・関数より先に作るので、それらを参照する DOMAIN (`DEFAULT nextval('s'::regclass)`
+  やユーザー関数を呼ぶ CHECK) は作成時に解決できず失敗する (参照先を先に手動で作る)。
 - `db/data_diff.rs`: `compute_data_diff` がプライマリキーで行をペアリングして
   `RowDiff` を計算し、`generate_data_sync_sql` がそこから INSERT / UPDATE / DELETE を
   生成します。リテラルはドライバ別にエスケープ (MySQL はバックスラッシュも二重化)。

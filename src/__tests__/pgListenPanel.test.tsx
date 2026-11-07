@@ -41,6 +41,32 @@ const addChannel = (name: string) => {
   fireEvent.click(screen.getByTestId("pglisten-add"));
 };
 
+describe("大文字を含むチャンネル名の注意 (#2132)", () => {
+  const type = (value: string) =>
+    fireEvent.change(screen.getByTestId("pglisten-channel-input"), { target: { value } });
+
+  it("大文字を含むと注意が出て、ワンクリックで小文字にできる", () => {
+    renderWithProviders(<PgListenPanel sessionId="s1" driver="postgres" />);
+    expect(screen.queryByTestId("pglisten-case-warning")).toBeNull();
+    type("OrdersChanged");
+    expect(screen.getByTestId("pglisten-case-warning")).toHaveTextContent(
+      t("pgListenCaseWarning", { name: "OrdersChanged", folded: "orderschanged" }),
+    );
+    fireEvent.click(screen.getByTestId("pglisten-case-fold"));
+    expect(screen.getByTestId("pglisten-channel-input")).toHaveValue("orderschanged");
+    expect(screen.queryByTestId("pglisten-case-warning")).toBeNull();
+  });
+
+  it("小文字だけなら注意を出さない。大文字のままでも (引用符つきの送信側向けに) 追加できる", () => {
+    renderWithProviders(<PgListenPanel sessionId="s1" driver="postgres" />);
+    type("orders_changed");
+    expect(screen.queryByTestId("pglisten-case-warning")).toBeNull();
+    type("Orders");
+    fireEvent.click(screen.getByTestId("pglisten-add"));
+    expect(within(screen.getByTestId("pglisten-channels")).getByText("Orders")).toBeInTheDocument();
+  });
+});
+
 describe("PgListenPanel の縮退表示 (#2019)", () => {
   it.each(["mysql", "sqlite"])("%s では理由コードの説明つきで縮退し、何も呼ばない", (driver) => {
     renderWithProviders(<PgListenPanel sessionId="s1" driver={driver} />);

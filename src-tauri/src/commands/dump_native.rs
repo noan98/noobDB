@@ -498,8 +498,8 @@ pub(crate) fn pg_cloned_triggers_sql(schema: &str) -> String {
 /// 拡張が持つ型は除く (拡張の `CREATE EXTENSION` が作る)。
 pub(crate) fn pg_types_sql(schema: &str) -> String {
     let s = pg_lit(schema);
-    let not_ext =
-        "NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = t.oid AND d.deptype = 'e')";
+    // スキーマツリー / 定義表示 / スキーマ比較と同じ「拡張が持つ型を除く」条件 (#2127)。
+    let not_ext = crate::db::types::PG_TYPE_NOT_EXTENSION;
     format!(
         "SELECT kind, stmt FROM ( \
            SELECT 1 AS ord, t.oid AS oid, 'enum' AS kind, \

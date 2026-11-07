@@ -9990,6 +9990,7 @@ export const ResultGrid = memo(
               <Modal
                 // no-submit: 未保存編集の破棄確認 (破壊的)。キャンセルが既定
                 width="400px"
+                placement="center"
                 onClose={() => setShowDiscardConfirm(false)}
                 // 破壊的パターン (#1114): 右端のキャンセルに初期フォーカス。
                 initialFocusEl={() => document.getElementById(DISCARD_CANCEL_ID)}

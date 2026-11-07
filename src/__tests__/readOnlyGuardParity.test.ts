@@ -703,6 +703,8 @@ const CONNECTION_READ_METHODS = new Set([
   "health_check",
   "resolve_database",
   "check_upsert_keys",
+  // 列のユーザー定義型を pg_catalog から引くだけ (#2127)
+  "user_type_columns",
   "table_is_transactional",
   "databases",
   "server_databases",

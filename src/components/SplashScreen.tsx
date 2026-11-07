@@ -49,6 +49,8 @@ export function SplashScreen() {
         backgroundRepeat: "no-repeat",
       }}
       aria-hidden
+      // E2E が「スプラッシュが畳まれて操作できる」ことを待つための目印 (#2117)。
+      data-testid="splash-screen"
       initial={{ opacity: 1 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}

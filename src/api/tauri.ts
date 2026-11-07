@@ -735,7 +735,9 @@ export type SchemaObjectKind =
   | "trigger"
   | "sequence"
   /** MySQL のイベントスケジューラの EVENT (#2100)。MySQL だけ。 */
-  | "event";
+  | "event"
+  /** PostgreSQL のユーザー定義型 (ENUM / DOMAIN / 複合型 / 範囲型, #2127)。種類は `detail`。PostgreSQL だけ。 */
+  | "type";
 
 /** 非テーブルのスキーマオブジェクト。 */
 export interface SchemaObject {
@@ -794,7 +796,7 @@ export interface WhereUsedMatch {
   lines: ReferenceLine[];
   source: "object" | "snippet";
   /** オブジェクト種別。スニペットは "snippet"。 */
-  kind: Exclude<SchemaObjectKind, "sequence" | "event"> | "snippet";
+  kind: Exclude<SchemaObjectKind, "sequence" | "event" | "type"> | "snippet";
   name: string;
   /** スキーマオブジェクトの一意識別子 (`get_object_definition` へそのまま渡す)。 */
   id: string | null;
@@ -803,7 +805,7 @@ export interface WhereUsedMatch {
 }
 
 export interface WhereUsedFailure {
-  kind: Exclude<SchemaObjectKind, "sequence" | "event">;
+  kind: Exclude<SchemaObjectKind, "sequence" | "event" | "type">;
   name: string;
   error: string;
 }
@@ -816,7 +818,7 @@ export interface WhereUsedReport {
   /** 定義の取得に失敗したオブジェクト (権限不足など)。 */
   failed: WhereUsedFailure[];
   /** 定義本文が空で返ったオブジェクト。 */
-  emptyDefinitions: { kind: Exclude<SchemaObjectKind, "sequence" | "event">; name: string }[];
+  emptyDefinitions: { kind: Exclude<SchemaObjectKind, "sequence" | "event" | "type">; name: string }[];
   /** キャンセルされ、途中までの結果であること。 */
   cancelled: boolean;
 }

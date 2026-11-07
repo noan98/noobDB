@@ -77,6 +77,8 @@ import {
 import { GroupNameModal } from "./GroupNameModal";
 import { ICON_SIZES, Icon, type IconName } from "./Icon";
 import { EmptyState } from "./EmptyState";
+import { shortTypeName } from "./cellTypeMeta";
+import { kindOfDataType, TypeGlyph } from "./TypeGlyph";
 import { WelcomeIllustration } from "./illustrations";
 import { SkeletonRow } from "./Skeleton";
 import { ContextMenu, submenuOrFlat, type ContextMenuEntry } from "./ContextMenu";
@@ -489,6 +491,11 @@ interface Props {
   /** ルーチン / トリガーの新規作成 (#1192)。DB の右クリックメニューから呼ぶ。 */
   onCreateRoutine?: (database: string, kind: EditableObjectKind) => void;
   /**
+   * PostgreSQL の ENUM 型の編集ダイアログ (#2127): 値の追加 (BEFORE / AFTER) と値の名前の変更。
+   * ENUM 型の右クリックメニューから呼ぶ。read_only では項目を無効化する。未指定ならメニュー項目を出さない。
+   */
+  onEditEnumType?: (database: string, name: string, mode: "add" | "rename") => void;
+  /**
    * 影響分析 (#1027): テーブル / ビュー / 列を参照している定義・スニペットを
    * ボトムパネルで検索する。`column` が null ならテーブル (ビュー) 自体。読み取りの
    * introspection だけなので read_only でも有効。未指定ならメニュー項目を出さない。
@@ -676,6 +683,7 @@ interface TreeActions {
   tableMenu: (e: ContextMenuTriggerEvent, db: string, tbl: string) => void;
   viewMenu: (e: ContextMenuTriggerEvent, db: string, view: ExplorerViewNode, asNode?: boolean) => void;
   routineMenu: (e: ContextMenuTriggerEvent, db: string, o: SchemaObject) => void;
+  enumTypeMenu: (e: ContextMenuTriggerEvent, db: string, o: SchemaObject) => void;
   columnMenu: (
     e: ContextMenuTriggerEvent,
     db: string,
@@ -966,6 +974,7 @@ const SCHEMA_OBJECT_ICONS: Record<string, IconName> = {
   trigger: "trigger",
   sequence: "hash",
   event: "clock",
+  type: "braces",
 };
 
 /** 非テーブルのスキーマオブジェクト (ルーチン / トリガー / 突き合わなかったビュー) の 1 行。
@@ -988,8 +997,12 @@ const SchemaObjectRow = memo(function SchemaObjectRow({
   q: string;
 }) {
   const actions = useTreeActions();
+  const t = useT();
   const kind = o.kind;
   const key = `so:${db}:${kind}:${o.name}:${o.id ?? ""}`;
+  // detail は種別ごとに意味が違う。型 (PostgreSQL) は ENUM / DOMAIN / 複合型 / 範囲型の識別子
+  // (内部値) なので表示用のラベルに直す。それ以外 (イベントの状態など) はサーバの値のまま。
+  const detail = kind === "type" && o.detail ? (typeKindLabel(o.detail, t) ?? o.detail) : o.detail;
   const { tabIndex, onFocus } = useTabStop(actions.store, key);
   const activate = () => actions.openObjectDefinition(db, o.kind, o.name, o.id);
   const openMenu: ((ev: ContextMenuTriggerEvent) => void) | undefined =
@@ -997,7 +1010,9 @@ const SchemaObjectRow = memo(function SchemaObjectRow({
       ? (ev) => actions.viewMenu(ev, db, { name: o.name, kind: "view", id: o.id }, false)
       : isEditableObjectKind(kind)
         ? (ev) => actions.routineMenu(ev, db, o)
-        : undefined;
+        : kind === "type" && o.detail === "enum"
+          ? (ev) => actions.enumTypeMenu(ev, db, o)
+          : undefined;
   return (
     <TreeRow
       data-tree-key={key}
@@ -1011,9 +1026,7 @@ const SchemaObjectRow = memo(function SchemaObjectRow({
       onKeyDown={actions.makeKeyDown(activate, openMenu)}
       onClick={activate}
       onContextMenu={openMenu}
-      {...actions.treeTooltip(
-        o.detail ? `${o.name} — ${kindLabel} (${o.detail})` : `${o.name} — ${kindLabel}`,
-      )}
+      {...actions.treeTooltip(detail ? `${o.name} — ${kindLabel} (${detail})` : `${o.name} — ${kindLabel}`)}
       _hover={{ bg: "app.rowHover" }}
     >
       <TreeChevron visibility="hidden" aria-hidden />
@@ -1023,15 +1036,32 @@ const SchemaObjectRow = memo(function SchemaObjectRow({
       <TreeLabel fontWeight={400}>
         <HighlightText text={o.name} query={q} />
       </TreeLabel>
-      {o.detail && (
-        // バッジは状態だけ (ENABLED / DISABLED)。スケジュールの要約はツールチップに出す。
+      {detail && (
+        // バッジはイベントなら状態だけ (ENABLED / DISABLED。スケジュールの要約はツールチップに出す)、
+        // 型なら種類 (ENUM / DOMAIN / 複合型 / 範囲型) の表示ラベル。
         <TreeBadge flexShrink={0} fontSize="2xs" textTransform="none" letterSpacing="0" aria-hidden>
-          {o.detail.split(" · ")[0]}
+          {detail.split(" · ")[0]}
         </TreeBadge>
       )}
     </TreeRow>
   );
 });
+
+/** PostgreSQL の型の種類 (`SchemaObject.detail` の内部値) を表示ラベルにする。未知の値は `null`。 */
+function typeKindLabel(detail: string, t: ReturnType<typeof useT>): string | null {
+  switch (detail) {
+    case "enum":
+      return t("typeKindEnum");
+    case "domain":
+      return t("typeKindDomain");
+    case "composite":
+      return t("typeKindComposite");
+    case "range":
+      return t("typeKindRange");
+    default:
+      return null;
+  }
+}
 
 const ColumnRow = memo(function ColumnRow({
   db,
@@ -1053,6 +1083,9 @@ const ColumnRow = memo(function ColumnRow({
   const actions = useTreeActions();
   const isPk = col.key === "PRI";
   const isFk = col.referenced_table !== null;
+  // 型ファミリーは列定義が変わらない限り再計算しない (巨大ツリーでの再描画コスト対策、#2125)。
+  const kind = useMemo(() => kindOfDataType(col.data_type), [col.data_type]);
+  const typeLabel = useMemo(() => shortTypeName(col.data_type), [col.data_type]);
   const colKey = `col:${tableKey(db, tbl)}:${col.name}`;
   const { tabIndex, onFocus } = useTabStop(actions.store, colKey);
   const openMenu = (e: ContextMenuTriggerEvent) =>
@@ -1087,15 +1120,15 @@ const ColumnRow = memo(function ColumnRow({
       <TreeIcon
         fontSize="xs"
         color={isPk ? "app.keyAccent" : isFk ? "app.accent" : "app.textMuted"}
-        aria-hidden
+        aria-hidden={isPk || isFk ? true : undefined}
       >
-        {isPk ? <Icon name="key" /> : isFk ? <Icon name="link" /> : "·"}
+        {isPk ? <Icon name="key" /> : isFk ? <Icon name="link" /> : <TypeGlyph kind={kind} />}
       </TreeIcon>
       <TreeLabel fontFamily="mono" color="app.text">
         <HighlightText text={col.name} query={q} />
       </TreeLabel>
       <TreeBadge fontFamily="mono" textTransform="lowercase" fontSize="2xs">
-        {col.data_type}
+        {typeLabel}
       </TreeBadge>
     </TreeRow>
   );
@@ -1472,6 +1505,8 @@ function useHeaderLabel(): (group: ExplorerHeaderGroup) => string {
         return t("objGroupSequences");
       case "event":
         return t("objGroupEvents");
+      case "type":
+        return t("objGroupTypes");
     }
   };
 }
@@ -2048,6 +2083,7 @@ export const ConnectionList = memo(
       onDropView,
       onRunRoutine,
       onEditRoutine,
+      onEditEnumType,
       onCreateRoutine,
       onFindUsages,
       selectLimit,
@@ -3394,6 +3430,29 @@ export const ConnectionList = memo(
       setMenu({ x: e.clientX, y: e.clientY, items });
     };
 
+    // ENUM 型の右クリック (#2127): 値の追加 / 名前の変更。ダイアログで ALTER TYPE を見せてから実行する。
+    // 書き込みなので read_only では無効化する (拒否そのものはバックエンドが行う)。
+    const handleEnumTypeContextMenu = (e: ContextMenuTriggerEvent, db: string, o: SchemaObject) => {
+      if (!onEditEnumType) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const items: ContextMenuEntry[] = [
+        {
+          label: t("contextMenuEnumAddValue"),
+          onSelect: () => onEditEnumType(db, o.name, "add"),
+          disabled: activeReadOnly,
+          title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
+        },
+        {
+          label: t("contextMenuEnumRenameValue"),
+          onSelect: () => onEditEnumType(db, o.name, "rename"),
+          disabled: activeReadOnly,
+          title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
+        },
+      ];
+      setMenu({ x: e.clientX, y: e.clientY, items });
+    };
+
     // ビューの右クリックメニュー: データ / 構造 (#1112)・定義の表示 / 編集 (#851)・
     // 影響分析 (#1027)・DROP VIEW。ルーチン/トリガーの定義編集は
     // `handleRoutineContextMenu` (#1192)。`asNode` が false のときは定義だけを開く旧来のビュー行
@@ -4101,6 +4160,7 @@ export const ConnectionList = memo(
     const tableMenuEvent = useEvent(handleTableContextMenu);
     const viewMenuEvent = useEvent(handleViewContextMenu);
     const routineMenuEvent = useEvent(handleRoutineContextMenu);
+    const enumTypeMenuEvent = useEvent(handleEnumTypeContextMenu);
     const columnMenuEvent = useEvent(handleColumnContextMenu);
     const insertColumnEvent = useEvent((db: string, tbl: string, column: string) =>
       onInsertColumn?.(db, tbl, column, false),
@@ -4125,6 +4185,7 @@ export const ConnectionList = memo(
         tableMenu: tableMenuEvent,
         viewMenu: viewMenuEvent,
         routineMenu: routineMenuEvent,
+        enumTypeMenu: enumTypeMenuEvent,
         columnMenu: columnMenuEvent,
         insertColumn: insertColumnEvent,
         indexMenu: indexMenuEvent,
@@ -4148,6 +4209,7 @@ export const ConnectionList = memo(
         tableMenuEvent,
         viewMenuEvent,
         routineMenuEvent,
+        enumTypeMenuEvent,
         columnMenuEvent,
         insertColumnEvent,
         indexMenuEvent,

@@ -10,6 +10,7 @@ import {
   type Assertion,
   type ConnectionProfile,
   type DumpOptions,
+  type DumpToolStatus,
   type ExportFormat,
   type TaskAction,
   type TaskDefinition,
@@ -61,6 +62,17 @@ import { Tooltip } from "./Tooltip";
 import { prefersStaticMotion } from "./revealOrigin";
 import { ExportMaskingSection } from "./ExportMaskingSection";
 import { sanitizeMaskRule, type ExportColumnMask, type ExportMaskOverrides } from "./exportMasking";
+import { DumpEngineSelector, DumpOptionGroups, DumpPgSchemaField } from "./DumpOptionsFields";
+import { toDriverKind } from "./dataTransfer";
+import { dumpOptionLock, resolveDumpOptions, type DumpBoolOptionKey } from "../dumpOptionLocks";
+import {
+  DEFAULT_DUMP_OPTIONS,
+  DRIVER_OPTIONS,
+  DUMP_TOOL,
+  NATIVE_DUMP_DRIVERS,
+  OPTION_ROWS,
+  visibleOptionRows,
+} from "../dumpOptionForm";
 
 // motion.div に chakra の style props を渡せるようにする (variants 等は forwardProps で素通し)。
 const MotionDiv = chakra(
@@ -78,18 +90,6 @@ const MAX_PAUSE_AFTER_FAILURES = 100;
 
 /** 接続リトライの間隔入力の上限 (秒)。バックエンドの `MAX_RETRY_DELAY_SECS` (15 分) と揃える。 */
 const MAX_RETRY_INTERVAL_SECS = 15 * 60;
-
-const DEFAULT_DUMP_OPTIONS: DumpOptions = {
-  singleTransaction: true,
-  routines: true,
-  events: true,
-  triggers: true,
-  addDropTable: true,
-  extendedInsert: true,
-  completeInsert: false,
-  noData: false,
-  noCreateInfo: false,
-};
 
 const EXPORT_FORMATS: ExportFormat[] = ["csv", "json", "ndjson", "markdown", "sql", "xlsx"];
 
@@ -842,7 +842,13 @@ function TaskForm({
       : "",
   );
   // 列マスク (#1836)。列は SQL の結果列が実行時まで分からないので、名前を手入力で足す。
-  const initialMasks = task?.action.kind === "export_query" ? (task.action.masks ?? []) : [];
+  // ダンプ (ネイティブ生成のマスキング, #2131) も同じ状態を使う。保存するのは選択中のアクションの分だけ。
+  const initialMasks =
+    task?.action.kind === "export_query"
+      ? (task.action.masks ?? [])
+      : task?.action.kind === "dump"
+        ? (task.action.options.masks ?? [])
+        : [];
   const [maskEnabled, setMaskEnabled] = useState(initialMasks.length > 0);
   const [maskColumns, setMaskColumns] = useState<string[]>(() => initialMasks.map((m) => m.column));
   const [maskOverrides, setMaskOverrides] = useState<ExportMaskOverrides>(() =>
@@ -907,6 +913,8 @@ function TaskForm({
       .then(setAssertions)
       .catch(() => setAssertions([]));
   }, []);
+  // 既存タスクは保存された値をそのまま開く (旧データに無い項目は「オフ」= バックエンドの既定。
+  // 新規の既定値を混ぜると、編集して保存しただけで挙動が変わってしまう)。
   const [dumpOptions, setDumpOptions] = useState<DumpOptions>(
     task?.action.kind === "dump" ? task.action.options : DEFAULT_DUMP_OPTIONS,
   );
@@ -924,6 +932,69 @@ function TaskForm({
   const [formError, setFormError] = useState<string | null>(null);
 
   const selectedProfile = profiles.find((p) => p.id === profileId) ?? null;
+
+  // ダンプ設定 (#2131): DumpModal と同じ部品・同じ判定で、ドライバはプロファイルから決める。
+  const dumpDriver = selectedProfile ? toDriverKind(selectedProfile.driver) : null;
+  const dumpToolName = dumpDriver ? (DUMP_TOOL[dumpDriver] ?? null) : null;
+  const dumpEngineSelectable = !!dumpDriver && !NATIVE_DUMP_DRIVERS.has(dumpDriver);
+  const dumpUseNative = !dumpEngineSelectable || !!dumpOptions.native;
+  const dumpLockCtx = {
+    driver: dumpDriver ?? "mysql",
+    native: !!dumpOptions.native,
+    // SQLite 以外のプロファイルに変えたあとは、スナップショットの名残でロックしない
+    // (画面に出ないスイッチの値で addDropTable などを強制 OFF にしないため)。
+    sqliteSnapshot: dumpDriver === "sqlite" && !!dumpOptions.sqliteSnapshot,
+  } as const;
+  const dumpRows = useMemo(() => (dumpDriver ? visibleOptionRows(dumpDriver) : []), [dumpDriver]);
+  // 外部ツールの導入状況 (表示のみ。無人実行は同じ PC で動くので、未導入なら失敗する旨を警告する)。
+  const [dumpToolStatus, setDumpToolStatus] = useState<DumpToolStatus | null>(null);
+  const dumpAutoNativeDone = useRef(false);
+  useEffect(() => {
+    setDumpToolStatus(null);
+    if (actionKind !== "dump" || !dumpToolName) return;
+    let cancelled = false;
+    void api
+      .dumpToolStatus(dumpToolName)
+      .then((st) => {
+        if (cancelled) return;
+        setDumpToolStatus(st);
+        // 新規タスクで外部ツールが未導入なら、DumpModal と同じく内蔵生成を初期選択にする (既存タスクは保存値を優先)。
+        if (!task && st.path == null && !dumpAutoNativeDone.current) {
+          dumpAutoNativeDone.current = true;
+          setDumpOptions((prev) =>
+            prev.native
+              ? prev
+              : { ...prev, native: true, ...(dumpDriver === "postgres" ? { routines: true } : {}) },
+          );
+        }
+      })
+      .catch(() => {
+        /* 検出の失敗は致命的ではない (実行時のエラーで分かる) */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [actionKind, dumpToolName, dumpDriver, task]);
+  const selectDumpEngine = (native: boolean) => {
+    if (native === dumpUseNative) return;
+    setDumpOptions((prev) => ({
+      ...prev,
+      native,
+      // PostgreSQL のネイティブ生成はトリガーが参照する関数も出さないと復元できない (DumpModal と同じ)。
+      ...(native && !prev.native && dumpDriver === "postgres" ? { routines: true } : {}),
+    }));
+  };
+  const toggleDumpOption = (key: DumpBoolOptionKey) => {
+    if (dumpOptionLock(key, dumpLockCtx)) return;
+    // gzip / スナップショットは出力パスの拡張子を追従させる (手で別の名前にした場合は触らない)。
+    if (key === "gzip" || key === "sqliteSnapshot") {
+      const next = { ...dumpOptions, [key]: !dumpOptions[key] };
+      const base = next.sqliteSnapshot ? "db" : "sql";
+      const ext = next.gzip ? `${base}.gz` : base;
+      setOutputPath((cur) => cur.replace(/\.(sql\.gz|sql|db\.gz|db)$/i, `.${ext}`));
+    }
+    setDumpOptions((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
   // ドライバを渡さない (= 保守的なマスク) のは意図的: バックエンドの
   // `commands::tasks::validate_action` / `tasks::executor::run_once` も、
   // プロファイル解決前に同じドライバ非依存の判定で弾くため (#852)。ここで
@@ -1060,11 +1131,35 @@ function TaskForm({
         setFormError(t("taskFormDatabaseRequired"));
         return;
       }
+      // マスクはネイティブ生成のみ。外部ツール経路ではマスクされずに出てしまうので、黙って捨てず止める。
+      // SQLite ではマスク欄を描かない (マスク非対応) ので、残っていても無視して空で送る。
+      const maskActive = maskEnabled && dumpDriver !== "sqlite";
+      const dumpMasks = maskActive ? collectMasks(maskColumns, maskOverrides) : [];
+      const unruled = maskActive ? maskColumns.filter((c) => !overridesHaveRule(maskOverrides, c)) : [];
+      if (unruled.length > 0) {
+        setMaskError(t("taskFormMaskNoRule", { columns: unruled.join(", ") }));
+        return;
+      }
+      if (dumpMasks.length > 0 && !(dumpDriver !== "sqlite" && dumpOptions.native)) {
+        setMaskError(t("taskFormDumpMasksNeedNative"));
+        return;
+      }
+      setMaskError(null);
+      // 画面で無効にしたオプションは強制値で送る (表示と実行の一致, DumpModal と同じ)。
+      // 現在のドライバで表示されない値 (別ドライバで触った名残) は持ち込まず既定値に戻す。
+      const shownKeys = new Set<string>(dumpDriver ? DRIVER_OPTIONS[dumpDriver] : []);
+      const carried: DumpOptions = { ...dumpOptions };
+      for (const row of OPTION_ROWS) {
+        if (!shownKeys.has(row.key))
+          (carried as unknown as Record<string, unknown>)[row.key] = DEFAULT_DUMP_OPTIONS[row.key];
+      }
+      if (dumpDriver !== "postgres") carried.pgSchema = null;
+      const resolved = resolveDumpOptions(carried, dumpLockCtx);
       action = {
         kind: "dump",
         database: database.trim(),
         output_path: outputPath,
-        options: dumpOptions,
+        options: { ...resolved, masks: dumpMasks.length > 0 ? dumpMasks : undefined },
       };
     }
 
@@ -1114,6 +1209,43 @@ function TaskForm({
       setSaving(false);
     }
   };
+
+  /** 列マスクの入力 (定期エクスポートと定期ダンプで共通)。 */
+  const renderMasking = (hint: string) => (
+    <>
+      <ExportMaskingSection
+        columnNames={maskColumns}
+        enabled={maskEnabled}
+        onEnabledChange={setMaskEnabled}
+        presets={[]}
+        overrides={maskOverrides}
+        onOverridesChange={setMaskOverrides}
+        hint={hint}
+        onRemoveColumn={removeMaskColumn}
+        footer={
+          <Flex gap="2" alignItems="center">
+            <Input
+              value={maskColumnInput}
+              aria-label={t("taskFormMaskAddColumn")}
+              placeholder={t("taskFormMaskAddColumn")}
+              onChange={(e) => setMaskColumnInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  addMaskColumn();
+                }
+              }}
+            />
+            <Button type="button" variant="secondary" size="sm" onClick={addMaskColumn}>
+              {t("taskFormMaskAdd")}
+            </Button>
+          </Flex>
+        }
+      />
+      {maskError && <FieldError>{maskError}</FieldError>}
+    </>
+  );
 
   return (
     <chakra.div
@@ -1208,37 +1340,7 @@ function TaskForm({
               onChange={(v) => setFormat(v as ExportFormat)}
             />
           </FormSection>
-          <ExportMaskingSection
-            columnNames={maskColumns}
-            enabled={maskEnabled}
-            onEnabledChange={setMaskEnabled}
-            presets={[]}
-            overrides={maskOverrides}
-            onOverridesChange={setMaskOverrides}
-            hint={t("taskFormMaskHint")}
-            onRemoveColumn={removeMaskColumn}
-            footer={
-              <Flex gap="2" alignItems="center">
-                <Input
-                  value={maskColumnInput}
-                  aria-label={t("taskFormMaskAddColumn")}
-                  placeholder={t("taskFormMaskAddColumn")}
-                  onChange={(e) => setMaskColumnInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      addMaskColumn();
-                    }
-                  }}
-                />
-                <Button type="button" variant="secondary" size="sm" onClick={addMaskColumn}>
-                  {t("taskFormMaskAdd")}
-                </Button>
-              </Flex>
-            }
-          />
-          {maskError && <FieldError>{maskError}</FieldError>}
+          {renderMasking(t("taskFormMaskHint"))}
           {format === "sql" && (
             <Flex gap="3" flexWrap="wrap">
               <FormSection flex="1" minW="160px">
@@ -1416,39 +1518,43 @@ function TaskForm({
             <FieldLabel htmlFor="task-database-dump">{t("taskFormDatabase")}</FieldLabel>
             <Input id="task-database-dump" value={database} onChange={(e) => setDatabase(e.target.value)} />
           </FormSection>
-          <FormSection>
-            <FieldLabel as="div">{t("dumpOptionsLabel")}</FieldLabel>
-            <chakra.div display="grid" gridTemplateColumns="repeat(auto-fill, minmax(200px, 1fr))" gap="1.5">
-              {(
-                [
-                  ["singleTransaction", "dumpOptSingleTransaction"],
-                  ["routines", "dumpOptRoutines"],
-                  ["events", "dumpOptEvents"],
-                  ["triggers", "dumpOptTriggers"],
-                  ["addDropTable", "dumpOptAddDropTable"],
-                  ["extendedInsert", "dumpOptExtendedInsert"],
-                  ["completeInsert", "dumpOptCompleteInsert"],
-                  ["noData", "dumpOptNoData"],
-                  ["noCreateInfo", "dumpOptNoCreateInfo"],
-                ] as const
-              ).map(([key, labelKey]) => (
-                <chakra.label
-                  key={key}
-                  display="inline-flex"
-                  alignItems="center"
-                  gap="1.5"
-                  fontSize="sm"
-                  color="app.textSecondary"
-                >
-                  <Checkbox
-                    checked={dumpOptions[key]}
-                    onChange={(e) => setDumpOptions((cur) => ({ ...cur, [key]: e.target.checked }))}
-                  />
-                  {t(labelKey)}
-                </chakra.label>
-              ))}
-            </chakra.div>
-          </FormSection>
+          {dumpEngineSelectable && dumpToolName && (
+            <DumpEngineSelector
+              toolName={dumpToolName}
+              useNative={dumpUseNative}
+              disabled={false}
+              toolStatus={dumpToolStatus}
+              toolAbsent={!task && !!dumpToolStatus && dumpToolStatus.path == null}
+              onSelect={selectDumpEngine}
+            />
+          )}
+          {dumpEngineSelectable &&
+            dumpToolName &&
+            !dumpUseNative &&
+            dumpToolStatus &&
+            dumpToolStatus.path == null && (
+              <Callout tone="warning" role="status">
+                {t("taskFormDumpToolMissing", { tool: dumpToolName })}
+              </Callout>
+            )}
+          <DumpOptionGroups
+            rows={dumpRows}
+            options={dumpOptions}
+            lockOf={(key) => dumpOptionLock(key, dumpLockCtx)}
+            disabled={false}
+            onToggle={toggleDumpOption}
+          />
+          {dumpDriver === "postgres" && (
+            <DumpPgSchemaField
+              value={dumpOptions.pgSchema}
+              disabled={false}
+              nativeEmpty={
+                dumpUseNative ? { hint: t("taskFormPgSchemaNativeHint"), placeholder: "public" } : null
+              }
+              onChange={(pgSchema) => setDumpOptions((prev) => ({ ...prev, pgSchema }))}
+            />
+          )}
+          {dumpDriver !== null && dumpDriver !== "sqlite" && renderMasking(t("taskFormDumpMaskHint"))}
         </>
       )}
 

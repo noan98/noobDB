@@ -4518,6 +4518,7 @@ fn main_statement_is_mutation(masked: &[char]) -> bool {
 /// タイムアウトがあれば `max_execution_time` を (猶予つきで) セッションへ設定する。
 /// `max_execution_time` は読み取り専用の SELECT にしか効かず、MariaDB には変数が無い
 /// (その場合は ID だけ控える)。書き込み文はタイムアウト / キャンセル時の `KILL QUERY` が止める。
+/// 既存の値の方が厳しければ設定せず `None` を返す (復元しない)。
 ///
 /// 設定した場合は設定前の値を返す — 呼び出し側が文の後に [`restore_max_execution_time`]
 /// で戻す。`in_tx` (ドライラン) は DML 専用で `max_execution_time` が効かず、セッション変数は
@@ -4538,9 +4539,11 @@ async fn register_server_stop(
             if let Ok(id) = i64::try_from(id) {
                 ctx.record_backend(id);
             }
-            // ms は数値なので SQL インジェクションにならない。
+            // より厳しい既存値 (SET GLOBAL / 初期化 SQL など) は緩めない (#2130)。
+            let target = super::server_stop::tighter_server_timeout_ms(orig, ms)?;
+            // target は数値なので SQL インジェクションにならない。
             return match sqlx::query(sqlx::AssertSqlSafe(format!(
-                "SET SESSION max_execution_time = {ms}"
+                "SET SESSION max_execution_time = {target}"
             )))
             .execute(&mut *conn)
             .await

@@ -25,6 +25,7 @@ import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Input, PressableButton, Radio, Switch } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
+import { ImportColumnMapping } from "./ImportColumnMapping";
 import { Spinner } from "./Spinner";
 import { LoadingButton } from "./LoadingButton";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection, PathRow } from "./modalForm";
@@ -47,7 +48,7 @@ import { cellKindIcon } from "./cellTypeMeta";
 import type { I18nKey } from "../i18n";
 import { copyToClipboard } from "./clipboard";
 import { useToast } from "./Toast";
-import { DeterminateProgressBar } from "./StreamProgressBar";
+import { JobOutcome, JobPresence, JobProgressDetail, useJobClock } from "./JobProgress";
 import { Tooltip } from "./Tooltip";
 import { delimiterAfterPick, importScope, loadImportPrefs, saveImportPrefs } from "../inputMemory";
 
@@ -251,6 +252,7 @@ export function ImportModal({
   const disposedRef = useRef(false);
 
   const importing = status.kind === "importing";
+  const jobElapsedMs = useJobClock(importing);
   const isCsv = format === "csv";
   const isXlsx = format === "xlsx";
   const excelErrorCount = useMemo(
@@ -891,11 +893,6 @@ export function ImportModal({
     });
   };
 
-  const percent =
-    status.kind === "importing" && status.total > 0
-      ? Math.min(100, Math.round((status.inserted / status.total) * 100))
-      : 0;
-
   return (
     <Modal
       onSubmit={handleImport}
@@ -1338,52 +1335,18 @@ export function ImportModal({
 
         {!createNew && preview && tableColumns && (
           <FormSection>
-            <FieldLabel as="div">{t("importMappingTitle")}</FieldLabel>
-            <chakra.div display="grid" gridTemplateColumns="repeat(auto-fill, minmax(280px, 1fr))" gap="2">
-              {tableColumns.map((col) => (
-                <chakra.div display="flex" alignItems="center" gap="2" key={col.name}>
-                  <Tooltip label={col.data_type}>
-                    <chakra.span
-                      flex="0 0 40%"
-                      fontSize="md"
-                      fontFamily="mono"
-                      overflow="hidden"
-                      textOverflow="ellipsis"
-                      whiteSpace="nowrap"
-                    >
-                      {col.name}
-                      {col.key === "PRI" && (
-                        <Tooltip label={t("colPkTitle")}>
-                          <chakra.span fontSize="xs" ml="1" color="app.cell.date">
-                            <Icon name="key" />
-                          </chakra.span>
-                        </Tooltip>
-                      )}
-                    </chakra.span>
-                  </Tooltip>
-                  <ListboxSelect
-                    css={{ flex: "1", minWidth: 0 }}
-                    value={String(mapping[col.name] ?? "")}
-                    options={[
-                      { value: "", label: t("importSkipColumn") },
-                      ...preview.headers.map((_, idx) => ({
-                        value: String(idx),
-                        label: csvColumnLabel(idx),
-                      })),
-                    ]}
-                    onChange={(v) => {
-                      mappingEditedRef.current = true;
-                      setMapping((prev) => ({
-                        ...prev,
-                        [col.name]: v === "" ? null : Number(v),
-                      }));
-                    }}
-                    disabled={importing}
-                    ariaLabel={t("importMappingAria", { column: col.name })}
-                  />
-                </chakra.div>
-              ))}
-            </chakra.div>
+            <ImportColumnMapping
+              driver={driver}
+              tableColumns={tableColumns}
+              preview={preview}
+              mapping={mapping}
+              fileColumnLabel={csvColumnLabel}
+              disabled={importing}
+              onChange={(column, csvIndex) => {
+                mappingEditedRef.current = true;
+                setMapping((prev) => ({ ...prev, [column]: csvIndex }));
+              }}
+            />
             {profileId && (
               <chakra.div>
                 <Tooltip label={t("importTemplateSaveHint")}>
@@ -1556,24 +1519,49 @@ export function ImportModal({
             )}
           </chakra.div>
         )}
-        {status.kind === "importing" && (
-          <chakra.div role="status" aria-live="polite" display="flex" flexDirection="column" gap="1.5">
-            <DeterminateProgressBar value={percent / 100} />
-            <chakra.div fontSize="sm" color="app.textMuted">
-              {t("importProgress", { inserted: status.inserted, total: status.total })}
+        <JobPresence show={status.kind === "importing"}>
+          {status.kind === "importing" && (
+            <chakra.div display="flex" flexDirection="column" gap="2">
+              <chakra.div aria-live="off">
+                <JobProgressDetail
+                  done={status.inserted}
+                  total={status.total > 0 ? status.total : null}
+                  elapsedMs={jobElapsedMs}
+                  running
+                  rate={{ label: t("jobStatRowsPerSec"), count: status.inserted }}
+                  stats={[
+                    {
+                      label: t("jobStatRows"),
+                      value: status.inserted,
+                      sub: status.total > 0 ? `/ ${status.total}` : undefined,
+                    },
+                  ]}
+                />
+              </chakra.div>
+              <chakra.div role="status" aria-live="polite" fontSize="sm" color="app.textMuted">
+                {t("importProgress", { inserted: status.inserted, total: status.total })}
+              </chakra.div>
             </chakra.div>
-          </chakra.div>
-        )}
+          )}
+        </JobPresence>
         {status.kind === "done" && (
           <chakra.div display="flex" flexDirection="column" gap="2">
-            <chakra.div display="flex" alignItems="center" justifyContent="space-between" gap="3">
-              <chakra.span fontSize="sm" fontWeight={500}>
-                {t("importSkippedSummary", {
-                  inserted: status.inserted,
-                  skipped: status.skippedTotal,
-                })}
-              </chakra.span>
-              <chakra.div display="flex" gap="2">
+            <JobOutcome
+              kind="done"
+              tone={status.skippedTotal > 0 ? "warning" : "success"}
+              detail={{
+                done: status.inserted,
+                total: status.inserted + status.skippedTotal,
+                elapsedMs: jobElapsedMs,
+                rate: { label: t("jobStatRowsPerSec"), count: status.inserted },
+                stats: [{ label: t("jobStatRows"), value: status.inserted }],
+              }}
+              message={t("importSkippedSummary", {
+                inserted: status.inserted,
+                skipped: status.skippedTotal,
+              })}
+            >
+              <chakra.div display="flex" gap="2" flexWrap="wrap">
                 <Button type="button" variant="secondary" size="sm" onClick={() => void saveSkipped()}>
                   {t("importSkippedSave")}
                 </Button>
@@ -1594,7 +1582,7 @@ export function ImportModal({
                   {t("importSkippedCopy")}
                 </Button>
               </chakra.div>
-            </chakra.div>
+            </JobOutcome>
             {status.dataTruncated && (
               <chakra.div textStyle="caption">{t("importSkippedDataTruncated")}</chakra.div>
             )}

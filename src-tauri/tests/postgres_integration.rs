@@ -4343,6 +4343,100 @@ async fn statement_timeout_is_restored_after_scoped_stream_when_env_set() {
     }
 }
 
+/// #2130: アプリ側の猶予つきタイムアウトが、より厳しい既存の `statement_timeout`
+/// (接続ごとの初期化 SQL #522) を緩めない。短い方で止まり、実行後もその値が保たれる。
+#[tokio::test]
+async fn shorter_existing_statement_timeout_is_not_loosened_when_env_set() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let mut opts = t::parse_postgres_url(&url).expect("valid url");
+    opts.init_sql = Some("SET statement_timeout = '1s'".into());
+    let conn = t::connect(&opts).await.expect("connect");
+    let start = std::time::Instant::now();
+    let ctx = t::ServerStopCtx::new(Some(30));
+    let res = t::server_stop_scope(ctx, async {
+        conn.execute_stream("SELECT pg_sleep(10)", None, 10, 10, |_| Ok(()))
+            .await
+    })
+    .await;
+    assert!(res.is_err(), "既存の 1s で止まるはず: {res:?}");
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(8),
+        "緩められて長く走った: {:?}",
+        start.elapsed()
+    );
+    // 実行後も、プールのどの接続でも元の値が保たれる。
+    for _ in 0..8 {
+        let r = conn
+            .execute("SHOW statement_timeout", None)
+            .await
+            .expect("show");
+        assert!(
+            format!("{:?}", r.rows).contains("1s"),
+            "statement_timeout が変わった: {:?}",
+            r.rows
+        );
+    }
+    conn.close().await;
+}
+
+/// #2130: トランザクション内 (ドライラン) の経路でも、より厳しい既存の
+/// `statement_timeout` を緩めず、終了後もその値が保たれる。
+#[tokio::test]
+async fn shorter_existing_statement_timeout_is_not_loosened_in_dry_run_when_env_set() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let mut opts = t::parse_postgres_url(&url).expect("valid url");
+    opts.init_sql = Some("SET statement_timeout = '1s'".into());
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS public.noobdb_pg_2130 (id int PRIMARY KEY, label text)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO public.noobdb_pg_2130 VALUES (1, 'a') ON CONFLICT DO NOTHING",
+        None,
+    )
+    .await
+    .expect("insert");
+    let start = std::time::Instant::now();
+    let ctx = t::ServerStopCtx::new(Some(30));
+    let res = t::server_stop_scope(ctx, async {
+        conn.preview_execute_with_limit(
+            "UPDATE public.noobdb_pg_2130 SET label = 'x' WHERE id = 1 AND pg_sleep(10) IS NOT NULL",
+            None,
+            10,
+        )
+        .await
+    })
+    .await;
+    assert!(res.is_err(), "既存の 1s で止まるはず");
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(8),
+        "緩められて長く走った: {:?}",
+        start.elapsed()
+    );
+    for _ in 0..8 {
+        let r = conn
+            .execute("SHOW statement_timeout", None)
+            .await
+            .expect("show");
+        assert!(
+            format!("{:?}", r.rows).contains("1s"),
+            "statement_timeout が変わった: {:?}",
+            r.rows
+        );
+    }
+    conn.execute("DROP TABLE IF EXISTS public.noobdb_pg_2130", None)
+        .await
+        .expect("drop");
+    conn.close().await;
+}
+
 /// 定期メンテナンス (#2025) の VACUUM (ANALYZE) がトランザクション外の単文実行で通る。
 #[tokio::test]
 async fn postgres_maintenance_vacuum_analyze_runs_outside_transaction() {
@@ -4763,4 +4857,221 @@ async fn postgres_compare_with_column_mapping_renames_columns_and_primary_key() 
     for ddl in ["DROP TABLE nb2099_src", "DROP TABLE nb2099_dst"] {
         let _ = conn.execute(ddl, None).await;
     }
+}
+
+/// ユーザー定義型 (ENUM / DOMAIN / 複合型 / 範囲型, #2127): ツリーの一覧と定義表示、
+/// 拡張が持つ型の除外、スキーマ比較・同期 (型を表より先に作る / ENUM の値の追加 / 削除は表より後)。
+#[tokio::test]
+async fn postgres_user_defined_types_are_listed_compared_and_synced() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let (a, b) = ("nb2127_a", "nb2127_b");
+    for s in [a, b] {
+        let _ = conn
+            .execute(&format!("DROP SCHEMA IF EXISTS {s} CASCADE"), None)
+            .await;
+        conn.execute(&format!("CREATE SCHEMA {s}"), None)
+            .await
+            .expect("create schema");
+    }
+    // 拡張が持つ型はツリーにも比較にも出ない。contrib の earthdistance は DOMAIN `earth` を作る
+    // (cube に依存)。拡張が入らない環境 (contrib 無し・権限不足) ではこの確認だけ飛ばす。
+    let ext_ok = conn
+        .execute(
+            &format!("CREATE EXTENSION IF NOT EXISTS cube SCHEMA {a}"),
+            None,
+        )
+        .await
+        .is_ok()
+        && conn
+            .execute(
+                &format!("CREATE EXTENSION IF NOT EXISTS earthdistance SCHEMA {a}"),
+                None,
+            )
+            .await
+            .is_ok();
+    for ddl in [
+        format!("CREATE TYPE {a}.mood AS ENUM ('sad', 'ok', 'it''s')"),
+        format!("CREATE DOMAIN {a}.posint AS integer NOT NULL DEFAULT 1 CONSTRAINT posint_pos CHECK (VALUE > 0)"),
+        format!("CREATE TYPE {a}.pair AS (x integer, y text)"),
+        format!("CREATE TYPE {a}.floatrange AS RANGE (subtype = float8)"),
+        // 型を使う列を持つ表 (型が無い target へ同期すると type does not exist で失敗していた)。
+        format!("CREATE TABLE {a}.person (id integer PRIMARY KEY, m {a}.mood, p {a}.posint, pr {a}.pair, ms {a}.mood[])"),
+        // target: ENUM は値が足りない。残りの型は無い。
+        format!("CREATE TYPE {b}.mood AS ENUM ('sad', 'it''s')"),
+        // target だけにある型と、それを使う表 (削除は表の削除より後)。
+        format!("CREATE TYPE {b}.legacy AS ENUM ('old')"),
+        format!("CREATE TABLE {b}.legacy_tbl (id integer, l {b}.legacy)"),
+    ] {
+        conn.execute(&ddl, None)
+            .await
+            .unwrap_or_else(|e| panic!("{ddl}: {e}"));
+    }
+
+    // ツリー: 4 種類の型が出て、種類が detail に入る。拡張の型は出ない。
+    let objects = conn.schema_objects(a).await.expect("schema_objects");
+    let mut types: Vec<(String, Option<String>)> = objects
+        .iter()
+        .filter(|o| o.kind == "type")
+        .map(|o| (o.name.clone(), o.detail.clone()))
+        .collect();
+    types.sort();
+    let kind_of = |n: &str| {
+        types
+            .iter()
+            .find(|(name, _)| name == n)
+            .and_then(|(_, d)| d.clone())
+    };
+    assert_eq!(kind_of("mood").as_deref(), Some("enum"), "{types:?}");
+    assert_eq!(kind_of("posint").as_deref(), Some("domain"), "{types:?}");
+    assert_eq!(kind_of("pair").as_deref(), Some("composite"), "{types:?}");
+    assert_eq!(kind_of("floatrange").as_deref(), Some("range"), "{types:?}");
+    // 表の行型 (person) や配列型 (_mood) は型として出ない。
+    assert!(
+        !types
+            .iter()
+            .any(|(n, _)| n == "person" || n.starts_with('_')),
+        "{types:?}"
+    );
+    if ext_ok {
+        assert!(
+            !types.iter().any(|(n, _)| n == "earth"),
+            "extension type must be hidden: {types:?}"
+        );
+    }
+
+    // 定義表示: そのまま実行できる DDL。別スキーマで流して同じ定義に戻る。
+    let mut defs = Vec::new();
+    for (name, _) in &types {
+        let def = conn
+            .object_definition(a, "type", name, None)
+            .await
+            .unwrap_or_else(|e| panic!("definition of {name}: {e}"));
+        assert!(def.starts_with("CREATE "), "{def}");
+        defs.push((name.clone(), def));
+    }
+    let def_of = |n: &str| {
+        defs.iter()
+            .find(|(name, _)| name == n)
+            .map(|(_, d)| d.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    assert!(
+        def_of("mood").contains("AS ENUM ('sad', 'ok', 'it''s')"),
+        "{}",
+        def_of("mood")
+    );
+    assert!(
+        def_of("posint").contains("NOT NULL"),
+        "{}",
+        def_of("posint")
+    );
+    assert!(
+        def_of("posint").contains("DEFAULT 1"),
+        "{}",
+        def_of("posint")
+    );
+    assert!(def_of("posint").contains("CHECK"), "{}", def_of("posint"));
+
+    // 比較: source だけの型 3 つ (posint / pair / floatrange)、mood は Different、legacy は TargetOnly。
+    let diff = t::compare_schema_via_core(&conn, a, &conn, b)
+        .await
+        .expect("compare");
+    let status_of = |d: &t::SchemaDiff, n: &str| {
+        d.objects
+            .items
+            .iter()
+            .find(|i| i.kind == "type" && i.name == n)
+            .map(|i| i.status)
+    };
+    assert_eq!(status_of(&diff, "mood"), Some(t::DiffStatus::Different));
+    assert_eq!(status_of(&diff, "posint"), Some(t::DiffStatus::SourceOnly));
+    assert_eq!(status_of(&diff, "pair"), Some(t::DiffStatus::SourceOnly));
+    assert_eq!(
+        status_of(&diff, "floatrange"),
+        Some(t::DiffStatus::SourceOnly)
+    );
+    assert_eq!(status_of(&diff, "legacy"), Some(t::DiffStatus::TargetOnly));
+    assert!(diff
+        .objects
+        .items
+        .iter()
+        .all(|i| !(i.kind == "type" && i.name == "earth")));
+
+    // 同期 (破壊的な操作を許可): 型の作成 → 表の作成 → 表の削除 → 型の削除の順で通る。
+    let plan = t::generate_sync_sql(&diff, true);
+    let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
+    let pos = |needle: &str| sqls.iter().position(|s| s.contains(needle));
+    let create_tbl = pos("CREATE TABLE").expect("create table in plan");
+    // ENUM の配列列 (`mood[]`) も、型名を補正した形 (`"mood"[]`) で CREATE TABLE に載る。
+    assert!(
+        sqls[create_tbl].contains("\"mood\"[]"),
+        "array column of a user type must keep its type: {}",
+        sqls[create_tbl]
+    );
+    let create_pair = pos("AS (").expect("create composite in plan");
+    let drop_legacy_tbl = pos("DROP TABLE").expect("drop table in plan");
+    let drop_legacy_type = pos("DROP TYPE").expect("drop type in plan");
+    assert!(
+        create_pair < create_tbl,
+        "types must be created before tables: {sqls:?}"
+    );
+    assert!(
+        drop_legacy_tbl < drop_legacy_type,
+        "types must be dropped after tables: {sqls:?}"
+    );
+    assert!(
+        sqls.iter()
+            .any(|s| s.contains("ADD VALUE IF NOT EXISTS 'ok' AFTER 'sad'")),
+        "{sqls:?}"
+    );
+    conn.execute_sync_transaction(&sqls, Some(b))
+        .await
+        .unwrap_or_else(|e| panic!("sync failed: {e}\n{sqls:#?}"));
+    let after = t::compare_schema_via_core(&conn, a, &conn, b)
+        .await
+        .expect("re-compare");
+    for n in ["mood", "posint", "pair", "floatrange"] {
+        assert_eq!(
+            status_of(&after, n),
+            Some(t::DiffStatus::Same),
+            "{n}: {:?}",
+            after.objects.items
+        );
+    }
+    assert_eq!(status_of(&after, "legacy"), None);
+
+    // 値の削除・並び替えは自動で同期できず、警告だけで文を出さない。
+    conn.execute(&format!("CREATE TYPE {a}.shape AS ENUM ('b', 'a')"), None)
+        .await
+        .expect("create shape a");
+    conn.execute(&format!("CREATE TYPE {b}.shape AS ENUM ('a', 'b')"), None)
+        .await
+        .expect("create shape b");
+    let diff = t::compare_schema_via_core(&conn, a, &conn, b)
+        .await
+        .expect("compare reorder");
+    assert_eq!(status_of(&diff, "shape"), Some(t::DiffStatus::Different));
+    let plan = t::generate_sync_sql(&diff, true);
+    assert!(
+        !plan.statements.iter().any(|s| s.sql.contains("shape")),
+        "{:?}",
+        plan.statements
+    );
+    assert!(
+        plan.warnings.iter().any(|w| w.contains("type shape")),
+        "{:?}",
+        plan.warnings
+    );
+
+    for s in [a, b] {
+        let _ = conn
+            .execute(&format!("DROP SCHEMA IF EXISTS {s} CASCADE"), None)
+            .await;
+    }
+    // 拡張は schema a に入れたものなので、上の DROP SCHEMA ... CASCADE で一緒に消える。
 }

@@ -252,7 +252,7 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
 ///
 /// 差し込み位置は、表の作成・列の追加と変更・索引・外部キーの後ろで、列と表の DROP の前
 /// (新しい列を使うビューは作成後に、消す列を使うビュー / トリガーは先に置き換える・消す)。
-/// シーケンスの作成だけは表の既定値から参照されるので先頭に置く。作成・置換は
+/// シーケンスと型の作成は表の列・既定値から参照されるので先頭に置き、型の削除は表の削除より後の末尾に置く (#2127)。作成・置換は
 /// 関数 → プロシージャ → ビュー → マテビュー → トリガー → イベントの順 (ビュー同士は参照順)、削除は
 /// 逆順で、`allow_destructive` が無いと削除は出さない。
 fn object_statements(
@@ -263,7 +263,7 @@ fn object_statements(
 ) {
     use super::object_diff::{
         create_object_sql, drop_object_sql, order_for_create, replace_is_destructive,
-        replace_object_sql,
+        replace_object_sql, type_replace_statements,
     };
     let driver = diff.target_driver;
     let items = &diff.objects.items;
@@ -291,7 +291,8 @@ fn object_statements(
             SyncKind::CreateObject,
             false,
         );
-        if o.kind == "sequence" {
+        // シーケンスと型は表の列・既定値から参照されるので、表より先に作る。
+        if matches!(o.kind.as_str(), "sequence" | "type") {
             early.push(stmt);
         } else {
             late.push(stmt);
@@ -304,6 +305,25 @@ fn object_statements(
         // MySQL のルーチン / トリガー / イベントは DROP + CREATE で DDL が暗黙コミットされ、CREATE に失敗すると
         // 元の定義が戻らない。マテビューの置換は DROP + CREATE でデータを再計算する。どちらも
         // 破壊的として扱い、許可がなければ出さずに警告する。
+        // ユーザー定義型 (#2127) は DROP + CREATE できない (使用中の列がある) ので、ENUM の値の追加
+        // だけを `ALTER TYPE ... ADD VALUE` で出し、できない変更は警告にして出力しない。
+        if o.kind == "type" {
+            match type_replace_statements(o) {
+                Ok(sqls) => {
+                    if !sqls.is_empty() {
+                        warnings.push(format!(
+                            "type {}: ENUM に値を追加します (ALTER TYPE ... ADD VALUE)。追加した値は同じトランザクションの中では使えないので、その値を使う既定値・行を同時に同期する場合は、型の同期を先に別実行してください",
+                            o.name
+                        ));
+                    }
+                    for sql in sqls {
+                        early.push(mk(o, sql, SyncKind::ReplaceObject, false));
+                    }
+                }
+                Err(why) => warnings.push(format!("type {}: {why}", o.name)),
+            }
+            continue;
+        }
         let non_atomic = replace_is_destructive(driver, &o.kind);
         if non_atomic && !allow_destructive {
             let why = if o.kind == "materialized_view" {
@@ -320,16 +340,18 @@ fn object_statements(
         let sql = replace_object_sql(driver, o, def);
         late.push(mk(o, sql, SyncKind::ReplaceObject, non_atomic));
     }
+    // 型の削除は、型を使う表の列・表そのものを消した後 (statements の末尾) に出す (#2127)。
+    let mut last: Vec<SyncStatement> = Vec::new();
     if allow_destructive {
         let mut drops = order_for_create(&pick(DiffStatus::TargetOnly));
         drops.reverse();
         for o in drops {
-            late.push(mk(
-                o,
-                drop_object_sql(driver, o),
-                SyncKind::DropObject,
-                true,
-            ));
+            let stmt = mk(o, drop_object_sql(driver, o), SyncKind::DropObject, true);
+            if o.kind == "type" {
+                last.push(stmt);
+            } else {
+                late.push(stmt);
+            }
         }
     }
 
@@ -340,6 +362,7 @@ fn object_statements(
         .unwrap_or(statements.len());
     statements.splice(at..at, late);
     statements.splice(0..0, early);
+    statements.extend(last);
 }
 
 /// SQLite で target のみの表を `DROP TABLE` すると、残る表の ON DELETE CASCADE / SET NULL /
@@ -3976,6 +3999,97 @@ mod object_sync_tests {
             ]
         );
         assert!(plan.statements[0].sql.starts_with("CREATE SEQUENCE"));
+    }
+
+    #[test]
+    fn types_are_created_before_tables_and_dropped_after_them() {
+        let new_tbl = TableDiff {
+            name: "new_t".into(),
+            status: DiffStatus::SourceOnly,
+            columns: vec![crate::db::diff::ColumnDiff {
+                name: "id".into(),
+                status: DiffStatus::SourceOnly,
+                source: Some(TableColumnInfo {
+                    name: "id".into(),
+                    data_type: "\"mood\"".into(),
+                    nullable: false,
+                    key: String::new(),
+                    default: None,
+                    extra: String::new(),
+                    referenced_table: None,
+                    referenced_column: None,
+                    comment: None,
+                }),
+                target: None,
+                changed_fields: vec![],
+            }],
+            ..Default::default()
+        };
+        let old_tbl = TableDiff {
+            name: "old_t".into(),
+            status: DiffStatus::TargetOnly,
+            ..Default::default()
+        };
+        let mut changed = obj(
+            "type",
+            "shade",
+            DiffStatus::Different,
+            Some("CREATE TYPE \"p\".\"shade\" AS ENUM ('a', 'b')"),
+        );
+        changed.target_definition = Some("CREATE TYPE \"p\".\"shade\" AS ENUM ('a')".into());
+        let d = diff(
+            DriverKind::Postgres,
+            vec![new_tbl, old_tbl],
+            vec![
+                obj(
+                    "type",
+                    "mood",
+                    DiffStatus::SourceOnly,
+                    Some("CREATE TYPE \"p\".\"mood\" AS ENUM ('a')"),
+                ),
+                changed,
+                obj("type", "legacy", DiffStatus::TargetOnly, None),
+                obj(
+                    "sequence",
+                    "seq",
+                    DiffStatus::SourceOnly,
+                    Some("CREATE SEQUENCE \"seq\" AS bigint"),
+                ),
+            ],
+        );
+        let plan = generate_sync_sql(&d, true);
+        let sqls: Vec<&str> = plan.statements.iter().map(|s| s.sql.as_str()).collect();
+        let pos = |needle: &str| sqls.iter().position(|s| s.contains(needle)).unwrap();
+        assert!(pos("CREATE TYPE") < pos("CREATE SEQUENCE"), "{sqls:?}");
+        assert!(pos("CREATE SEQUENCE") < pos("CREATE TABLE"), "{sqls:?}");
+        assert!(pos("ADD VALUE") < pos("CREATE TABLE"), "{sqls:?}");
+        assert!(pos("DROP TABLE") < pos("DROP TYPE"), "{sqls:?}");
+        assert_eq!(*sqls.last().unwrap(), "DROP TYPE \"legacy\"", "{sqls:?}");
+        // ENUM の値の追加は、同じトランザクションで使えない旨を警告する。
+        assert!(
+            plan.warnings.iter().any(|w| w.contains("ADD VALUE")),
+            "{:?}",
+            plan.warnings
+        );
+    }
+
+    #[test]
+    fn types_that_cannot_be_altered_are_skipped_with_a_warning() {
+        let mut dom = obj(
+            "type",
+            "posint",
+            DiffStatus::Different,
+            Some("CREATE DOMAIN \"p\".\"posint\" AS integer CHECK (VALUE > 0)"),
+        );
+        dom.target_definition = Some("CREATE DOMAIN \"p\".\"posint\" AS integer".into());
+        let d = diff(DriverKind::Postgres, vec![], vec![dom]);
+        let plan = generate_sync_sql(&d, true);
+        assert!(plan.statements.is_empty(), "{:?}", plan.statements);
+        assert!(
+            plan.warnings.iter().any(|w| w.contains("type posint")),
+            "{:?}",
+            plan.warnings
+        );
     }
 
     #[test]

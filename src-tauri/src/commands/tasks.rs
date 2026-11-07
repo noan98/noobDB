@@ -41,6 +41,32 @@ fn default_task_enabled() -> bool {
     true
 }
 
+/// マスク列の件数・名前を検証する (上限超え・空白だけ / 前後空白あり・重複は `InvalidInput`)。
+/// 定期エクスポート (#1836) と定期ダンプのネイティブ生成 (#2131) で共通。
+fn validate_mask_columns(masks: &[crate::db::masking::ColumnMask]) -> Result<()> {
+    if masks.len() > crate::db::masking::MAX_COLUMN_MASKS {
+        return Err(AppError::InvalidInput(format!(
+            "too many masked columns (max {})",
+            crate::db::masking::MAX_COLUMN_MASKS
+        )));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for m in masks {
+        if m.column.trim().is_empty() || m.column != m.column.trim() {
+            return Err(AppError::InvalidInput(
+                "mask column name is empty or has surrounding whitespace".into(),
+            ));
+        }
+        if !seen.insert(m.column.as_str()) {
+            return Err(AppError::InvalidInput(format!(
+                "duplicate mask column `{}`",
+                m.column
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// アクションを検証する。`ExportQuery` の SQL は読み取り専用のみ (#730 の受け入れ
 /// 条件: 作成時・実行時の両方で拒否)。空の出力パス / データベース名も弾く。
 fn validate_action(action: &TaskAction) -> Result<()> {
@@ -51,26 +77,7 @@ fn validate_action(action: &TaskAction) -> Result<()> {
             masks,
             ..
         } => {
-            if masks.len() > crate::db::masking::MAX_COLUMN_MASKS {
-                return Err(AppError::InvalidInput(format!(
-                    "too many masked columns (max {})",
-                    crate::db::masking::MAX_COLUMN_MASKS
-                )));
-            }
-            let mut seen = std::collections::HashSet::new();
-            for m in masks {
-                if m.column.trim().is_empty() || m.column != m.column.trim() {
-                    return Err(AppError::InvalidInput(
-                        "mask column name is empty or has surrounding whitespace".into(),
-                    ));
-                }
-                if !seen.insert(m.column.as_str()) {
-                    return Err(AppError::InvalidInput(format!(
-                        "duplicate mask column `{}`",
-                        m.column
-                    )));
-                }
-            }
+            validate_mask_columns(masks)?;
             if sql.trim().is_empty() {
                 return Err(AppError::InvalidInput("task SQL is empty".into()));
             }
@@ -92,13 +99,23 @@ fn validate_action(action: &TaskAction) -> Result<()> {
         TaskAction::Dump {
             database,
             output_path,
-            ..
+            options,
         } => {
             if database.trim().is_empty() {
                 return Err(AppError::InvalidInput("database name is empty".into()));
             }
             if output_path.trim().is_empty() {
                 return Err(AppError::InvalidInput("output path is empty".into()));
+            }
+            // 無人実行で失敗や取りこぼしになる組み合わせは、保存時に拒否する (#2131)。
+            if let Some(masks) = options.masks.as_deref().filter(|m| !m.is_empty()) {
+                // マスクはネイティブ生成のみ。外部ツール経路ではマスクされずに出てしまう。
+                if !options.native {
+                    return Err(AppError::InvalidInput(
+                        "masks require the native dump (enable the built-in engine)".into(),
+                    ));
+                }
+                validate_mask_columns(masks)?;
             }
         }
         // アサーションは保存済みの定義を ID で参照するだけで、SQL は実行時に
@@ -151,6 +168,32 @@ pub(crate) fn validate_maintenance_for_profile(
         targets,
         *maintenance,
     )?;
+    Ok(())
+}
+
+/// `Dump` をプロファイルのドライバに照らして検証する (#2131)。SQLite 以外のスナップショットや、
+/// SQLite でのマスク (SQLite は常にネイティブ生成だがマスクは MySQL / PostgreSQL のみ) を
+/// 保存時に弾く。他のアクションでは何もしない。
+pub(crate) fn validate_dump_for_profile(
+    action: &TaskAction,
+    profile: &profiles::ConnectionProfile,
+) -> Result<()> {
+    let TaskAction::Dump { options, .. } = action else {
+        return Ok(());
+    };
+    let driver = executor::driver_kind_of(&profile.driver)?;
+    if options.sqlite_snapshot && driver != crate::db::DriverKind::Sqlite {
+        return Err(AppError::InvalidInput(
+            "sqliteSnapshot is only supported for SQLite connections".into(),
+        ));
+    }
+    if options.masks.as_ref().is_some_and(|m| !m.is_empty())
+        && driver == crate::db::DriverKind::Sqlite
+    {
+        return Err(AppError::InvalidInput(
+            "masks require the native dump of a MySQL / PostgreSQL connection".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -227,6 +270,7 @@ pub async fn save_task(req: SaveTaskRequest) -> Result<TaskDefinition> {
         )));
     };
     validate_maintenance_for_profile(&req.action, profile)?;
+    validate_dump_for_profile(&req.action, profile)?;
 
     let requested_id = req.id.clone().filter(|s| !s.is_empty());
     let id = requested_id.clone().unwrap_or_else(store::new_task_id);
@@ -658,5 +702,62 @@ pub(crate) mod maintenance_tests {
     fn other_actions_are_not_checked() {
         let a = maint(r#"{"kind":"timelapse_capture"}"#);
         assert!(validate_maintenance_for_profile(&a, &profile("mysql", true)).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod dump_validation_tests {
+    use super::maintenance_tests::profile;
+    use super::*;
+
+    fn dump(options: &str) -> TaskAction {
+        serde_json::from_str(&format!(
+            r#"{{"kind":"dump","database":"d","output_path":"/tmp/o.sql","options":{options}}}"#
+        ))
+        .unwrap()
+    }
+
+    const BASE: &str = r#""singleTransaction":true,"routines":false,"events":false,"triggers":true,"addDropTable":true,"extendedInsert":true,"completeInsert":false,"noData":false,"noCreateInfo":false"#;
+    const MASK: &str = r#""masks":[{"column":"email","rule":{"kind":"null"}}]"#;
+
+    #[test]
+    fn masks_require_native() {
+        let ext = dump(&format!("{{{BASE},{MASK}}}"));
+        assert!(matches!(
+            validate_action(&ext),
+            Err(AppError::InvalidInput(_))
+        ));
+        let native = dump(&format!(r#"{{{BASE},"native":true,{MASK}}}"#));
+        assert!(validate_action(&native).is_ok());
+        // 空のマスクは無指定と同じ。
+        assert!(validate_action(&dump(&format!(r#"{{{BASE},"masks":[]}}"#))).is_ok());
+    }
+
+    #[test]
+    fn native_masks_check_column_names() {
+        let n = r#"{"kind":"null"}"#;
+        let dup = dump(&format!(
+            r#"{{{BASE},"native":true,"masks":[{{"column":"a","rule":{n}}},{{"column":"a","rule":{n}}}]}}"#
+        ));
+        assert!(matches!(
+            validate_action(&dup),
+            Err(AppError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn profile_driver_checks() {
+        let snap = dump(&format!(r#"{{{BASE},"sqliteSnapshot":true}}"#));
+        assert!(validate_dump_for_profile(&snap, &profile("mysql", false)).is_err());
+        assert!(validate_dump_for_profile(&snap, &profile("sqlite", false)).is_ok());
+        let masked = dump(&format!(r#"{{{BASE},"native":true,{MASK}}}"#));
+        assert!(validate_dump_for_profile(&masked, &profile("sqlite", false)).is_err());
+        assert!(validate_dump_for_profile(&masked, &profile("postgres", false)).is_ok());
+        let other = maintenance_tests_other();
+        assert!(validate_dump_for_profile(&other, &profile("sqlite", true)).is_ok());
+    }
+
+    fn maintenance_tests_other() -> TaskAction {
+        serde_json::from_str(r#"{"kind":"timelapse_capture"}"#).unwrap()
     }
 }

@@ -29,7 +29,14 @@ import type { TableRef } from "../tableQuickAccess";
 const VIEW_KINDS: ReadonlySet<SchemaObjectKind> = new Set(["view", "materialized_view"]);
 
 /** 定義だけを開くオブジェクトの表示順 (ビュー系を除く)。 */
-const ROUTINE_ORDER: readonly SchemaObjectKind[] = ["procedure", "function", "trigger", "sequence", "event"];
+const ROUTINE_ORDER: readonly SchemaObjectKind[] = [
+  "procedure",
+  "function",
+  "trigger",
+  "sequence",
+  "event",
+  "type",
+];
 
 /** 「ビュー」グループに並ぶノード。列の展開・データを開く導線はテーブルと共通。 */
 export interface ExplorerViewNode {
@@ -332,6 +339,7 @@ const OBJECT_GROUP_ORDER: readonly SchemaObjectKind[] = [
   "trigger",
   "sequence",
   "event",
+  "type",
 ];
 
 /**

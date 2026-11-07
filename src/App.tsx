@@ -467,6 +467,9 @@ const ShortcutCheatSheet = lazy(() =>
 const ParameterInputModal = lazy(() =>
   import("./components/ParameterInputModal").then((m) => ({ default: m.ParameterInputModal })),
 );
+const EnumTypeModal = lazy(() =>
+  import("./components/EnumTypeModal").then((m) => ({ default: m.EnumTypeModal })),
+);
 const RoutineEditorModal = lazy(() =>
   import("./components/RoutineEditorModal").then((m) => ({ default: m.RoutineEditorModal })),
 );
@@ -483,7 +486,7 @@ import {
   type DangerFinding,
 } from "./dangerousSql";
 import { resolveTypedConfirmTarget } from "./typeToConfirm";
-import { extractQueryParams, substituteQueryParams, type ParamType } from "./queryParams";
+import { extractNativeParams, extractQueryParams, substituteAllParams, type ParamType } from "./queryParams";
 import {
   countCapturableStatements,
   isSingleCapturableStatement,
@@ -2321,6 +2324,12 @@ export default function App() {
     kind: EditableObjectKind;
     name: string | null;
     id: string | null;
+  } | null>(null);
+  // PostgreSQL の ENUM 型への値の追加 / 名前の変更ダイアログ (#2127) の対象。
+  const [enumTypeEditor, setEnumTypeEditor] = useState<{
+    database: string;
+    name: string;
+    mode: "add" | "rename";
   } | null>(null);
   // トランザクション開始時に実際に渡した DB (出力ログの execDatabase 用)。PG は begin に渡す値が
   // search_path 扱いでプロファイルの DB 名のため、再実行に使えず null を記録する。
@@ -6748,17 +6757,18 @@ export default function App() {
     [previewQueryInTab, explainForTab, runInTabWithGate],
   );
 
-  // Editor run/preview/explain gate for {{variable}} parameters: when the SQL
+  // Editor run/preview/explain gate for {{variable}} and native (?, $n, :name) parameters: when the SQL
   // has placeholders, prompt for values first; otherwise run straight through.
   const resolveParamsThen = useCallback(
     (tab: Tab, sql: string, mode: "run" | "runNewTab" | "preview" | "explain") => {
-      if (extractQueryParams(sql).length === 0) {
+      const driver = selectedProfile?.driver ?? "mysql";
+      if (extractQueryParams(sql).length === 0 && extractNativeParams(sql, driver).length === 0) {
         dispatchEditorAction(tab, sql, mode);
         return;
       }
       setPendingParams({ tab, sql, mode });
     },
-    [dispatchEditorAction],
+    [dispatchEditorAction, selectedProfile?.driver],
   );
 
   const handleParamsSubmit = useCallback(
@@ -6766,12 +6776,21 @@ export default function App() {
       if (!pendingParams) return;
       const { tab, sql, mode } = pendingParams;
       const driver = (selectedProfile?.driver ?? "mysql") as DriverKind;
-      const finalSql = substituteQueryParams(sql, driver, values, types);
+      const finalSql = substituteAllParams(sql, driver, values, types);
       setPendingParams(null);
       dispatchEditorAction(tab, finalSql, mode);
     },
     [pendingParams, selectedProfile?.driver, dispatchEditorAction],
   );
+
+  // 「展開せずにそのまま実行」: PREPARE や関数本体の `$1` など、値を入れたくない文を元の SQL のまま
+  // 通常の実行経路 (実行ゲート込み) へ渡す。
+  const handleParamsRunRaw = useCallback(() => {
+    if (!pendingParams) return;
+    const { tab, sql, mode } = pendingParams;
+    setPendingParams(null);
+    dispatchEditorAction(tab, sql, mode);
+  }, [pendingParams, dispatchEditorAction]);
 
   const handleParamsCancel = useCallback(() => setPendingParams(null), []);
 
@@ -8271,6 +8290,13 @@ export default function App() {
     (database: string, kind: EditableObjectKind, name: string, id: string | null) => {
       if (!sessionId) return;
       setRoutineEditor({ database, kind, name, id });
+    },
+    [sessionId],
+  );
+  const handleEditEnumType = useCallback(
+    (database: string, name: string, mode: "add" | "rename") => {
+      if (!sessionId) return;
+      setEnumTypeEditor({ database, name, mode });
     },
     [sessionId],
   );
@@ -12614,6 +12640,7 @@ export default function App() {
     onDropView: handleDropView,
     onRunRoutine: handleRunRoutine,
     onEditRoutine: handleEditRoutine,
+    onEditEnumType: handleEditEnumType,
     onCreateRoutine: handleCreateRoutine,
     onCreateSandbox: sessionId ? (db: string) => setSandboxCreateTarget({ database: db }) : undefined,
     onOpenSandbox: handleOpenSandbox,
@@ -14674,6 +14701,29 @@ export default function App() {
           </AnimatePresence>
 
           <AnimatePresence>
+            {enumTypeEditor && sessionId && (
+              <Suspense fallback={null}>
+                <EnumTypeModal
+                  sessionId={sessionId}
+                  database={enumTypeEditor.database}
+                  name={enumTypeEditor.name}
+                  mode={enumTypeEditor.mode}
+                  readOnly={readOnly}
+                  onConfirm={async (sql) => {
+                    const target = enumTypeEditor;
+                    // 実行は通常の保守 DDL 経路 (read_only の拒否はバックエンド)。成功時だけ閉じる。
+                    if (await runMaintenanceDdl(sql, target.database)) {
+                      toast.success(translate("enumTypeDone", { name: target.name }));
+                      setEnumTypeEditor(null);
+                    }
+                  }}
+                  onClose={() => setEnumTypeEditor(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
             {routineEditor && sessionId && (
               <Suspense fallback={null}>
                 <RoutineEditorModal
@@ -14764,6 +14814,7 @@ export default function App() {
                 sql={pendingParams.sql}
                 driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                 onSubmit={handleParamsSubmit}
+                onRunRaw={handleParamsRunRaw}
                 onCancel={handleParamsCancel}
               />
             )}

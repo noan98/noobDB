@@ -35,7 +35,19 @@ const MotionBox = chakra(motion.div, {}, { forwardProps: ["transition"] });
  * 程度に短い値を採っている。
  */
 export const TOOLTIP_OPEN_DELAY_MS = 400;
+/**
+ * ウォームアップ (#2124)。ツールチップが表示中、または閉じてからこの時間 (ms) 以内なら、
+ * 次の hover は遅延なしで開き、入場アニメーションも scale を省く。アイコンが並ぶ
+ * ツールバーを端からなぞって探すとき、隣へ移るたびに「消える → 待つ → 拡大して出る」を
+ * 繰り返さないための挙動 (OS のツールバーや Radix の `skipDelayDuration` と同じ)。
+ */
+export const TOOLTIP_SKIP_DELAY_MS = 300;
 const MARGIN_PX = 8;
+/** ウォーム表示用: scale を動かさず opacity だけ。 */
+const warmFade = {
+  initial: { opacity: 0, scale: 1 },
+  exit: { opacity: 0, scale: 1 },
+};
 
 /**
  * 現在表示中のツールチップを閉じる関数 (アプリ全体で高々 1 つ)。ポインタは 1 つ
@@ -48,6 +60,39 @@ const MARGIN_PX = 8;
  * 合わせて「新しく開いたものが直前のものを閉じる」ようにする。
  */
 let activeClose: (() => void) | null = null;
+
+/** いま実際に表示されているツールチップの `hide` (高々 1 つ)。ウォーム判定に使う。 */
+let shownClose: (() => void) | null = null;
+/** 直近に表示が閉じた時刻 (`Date.now()`)。クリック / Escape で閉じたときは -Infinity (冷める)。 */
+let lastClosedAt = Number.NEGATIVE_INFINITY;
+
+/** 次の hover を遅延なしで開いてよいか。表示予約 (`claimTooltip`) より前に呼ぶこと。 */
+function isTooltipWarm(): boolean {
+  return shownClose !== null || Date.now() - lastClosedAt <= TOOLTIP_SKIP_DELAY_MS;
+}
+
+/** 実際に表示した側が呼ぶ。 */
+function markTooltipShown(close: () => void) {
+  shownClose = close;
+}
+
+/** 表示が閉じた側が呼ぶ。表示されていなかった (遅延の途中で取り消した) ときは何もしない。 */
+function markTooltipHidden(close: () => void) {
+  if (shownClose !== close) return;
+  shownClose = null;
+  lastClosedAt = Date.now();
+}
+
+/** クリックや Escape で閉じたとき、ウォームを解除する。 */
+function coolDownTooltips() {
+  shownClose = null;
+  lastClosedAt = Number.NEGATIVE_INFINITY;
+}
+
+/** テスト用: 他のテストで残ったウォーム状態を捨てる。 */
+export function resetTooltipWarmth() {
+  coolDownTooltips();
+}
 
 /** 表示を開始する側が呼ぶ。直前に開いていたツールチップがあれば閉じる。 */
 function claimTooltip(close: () => void) {
@@ -215,6 +260,8 @@ export function Tooltip({
   const anchorRef = useRef<HTMLElement | null>(null);
   const bubbleRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
+  // 今回の表示がウォーム (遅延なし) で始まったか。入場 / 退場の scale を省くために使う。
+  const [warmOpen, setWarmOpen] = useState(false);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   // Portal / AnimatePresence を実際に置いているか (#1319)。開いた時点で立て、
   // 退場アニメーションが終わる (`onExitComplete`) まで残す。閉じたまま一度も
@@ -241,13 +288,22 @@ export function Tooltip({
     hideRef.current = () => {
       clearShowTimer();
       releaseTooltip(hideRef.current!);
+      markTooltipHidden(hideRef.current!);
       setOpen(false);
     };
   }
   const hide = hideRef.current;
 
-  const show = (delay: number) => {
+  const show = (requestedDelay: number) => {
     clearShowTimer();
+    // 所有権を取る前に判定する (取ると直前のツールチップが閉じて「表示中」でなくなる)。
+    const warm = requestedDelay > 0 && isTooltipWarm();
+    const delay = warm ? 0 : requestedDelay;
+    const open_ = () => {
+      markTooltipShown(hide);
+      setWarmOpen(warm);
+      setOpen(true);
+    };
     // 所有権は**表示予約の時点**で取る。hover 遅延の途中に子トリガーへ入ると
     // 親の `onMouseLeave` は発火しない (React の enter/leave は行 → 子の移動で
     // 親側を呼ばない) ため、`setTimeout` の発火時まで claim を遅らせると、
@@ -255,10 +311,10 @@ export function Tooltip({
     // claim すると子の要求が親の `hide` を呼び、親の予約タイマーも解除される。
     claimTooltip(hide);
     if (delay <= 0) {
-      setOpen(true);
+      open_();
       return;
     }
-    showTimer.current = setTimeout(() => setOpen(true), delay);
+    showTimer.current = setTimeout(open_, delay);
   };
 
   // キーボード由来のフォーカスでだけ開く。
@@ -267,7 +323,10 @@ export function Tooltip({
   };
   // クリックしたら閉じる (押した結果を吹き出しが覆わないように)。説明専用の
   // ボタンだけはクリックで開く。
-  const onTriggerPointerDown = () => hide();
+  const onTriggerPointerDown = () => {
+    hide();
+    coolDownTooltips();
+  };
   const onTriggerClick = openOnClick ? () => show(0) : undefined;
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: clearShowTimer は ref (showTimer) しか触らないのでクロージャが古くても挙動は変わらない。マウント時 1 回だけ登録する
@@ -277,6 +336,7 @@ export function Tooltip({
     return () => {
       clearShowTimer();
       releaseTooltip(close);
+      markTooltipHidden(close);
     };
   }, []);
 
@@ -284,7 +344,10 @@ export function Tooltip({
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") hide();
+      if (e.key === "Escape") {
+        hide();
+        coolDownTooltips();
+      }
     };
     const onMouseOver = (e: MouseEvent) => {
       if (isOutsideAnchor(anchorRef.current, e.target)) hide();
@@ -399,10 +462,11 @@ export function Tooltip({
                   top: `${pos ? pos.top : 0}px`,
                   visibility: pos ? "visible" : "hidden",
                 }}
-                initial={variants.fadeScale.initial}
+                // ウォーム表示は scale を使わず opacity だけの短いクロスフェードにする (#2124)。
+                initial={warmOpen ? warmFade.initial : variants.fadeScale.initial}
                 animate={variants.fadeScale.animate}
-                exit={variants.fadeScale.exit}
-                transition={transitions.enter}
+                exit={warmOpen ? warmFade.exit : variants.fadeScale.exit}
+                transition={warmOpen ? transitions.crossfade : transitions.enter}
               >
                 {label}
               </MotionBox>
@@ -496,6 +560,8 @@ export function useDelegatedHover<T>(openDelay: number = TOOLTIP_OPEN_DELAY_MS) 
   // 遅延の途中でどの要素の表示を待っているか。離脱した要素が予約の主でなければ
   // 予約は生かす (兄弟の leave → enter が交錯しても取りこぼさない)。
   const pendingTarget = useRef<EventTarget | null>(null);
+  // 実際に表示している要素 (離脱時にウォーム用の「閉じた時刻」を記録するため)。
+  const shownTarget = useRef<EventTarget | null>(null);
 
   const clearShowTimer = () => {
     if (showTimer.current !== null) {
@@ -514,6 +580,8 @@ export function useDelegatedHover<T>(openDelay: number = TOOLTIP_OPEN_DELAY_MS) 
     hideRef.current = () => {
       clearShowTimer();
       releaseTooltip(hideRef.current!);
+      markTooltipHidden(hideRef.current!);
+      shownTarget.current = null;
       setState(null);
     };
   }
@@ -533,13 +601,17 @@ export function useDelegatedHover<T>(openDelay: number = TOOLTIP_OPEN_DELAY_MS) 
     window.addEventListener("scroll", close, true);
     window.addEventListener("resize", close);
     window.addEventListener("blur", close);
-    window.addEventListener("pointerdown", close, true);
+    const onPointerDown = () => {
+      close();
+      coolDownTooltips();
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("mouseover", onMouseOver, true);
     return () => {
       window.removeEventListener("scroll", close, true);
       window.removeEventListener("resize", close);
       window.removeEventListener("blur", close);
-      window.removeEventListener("pointerdown", close, true);
+      window.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("mouseover", onMouseOver, true);
     };
   }, [state]);
@@ -549,6 +621,7 @@ export function useDelegatedHover<T>(openDelay: number = TOOLTIP_OPEN_DELAY_MS) 
     return () => {
       if (showTimer.current !== null) clearTimeout(showTimer.current);
       releaseTooltip(close);
+      markTooltipHidden(close);
     };
   }, []);
 
@@ -562,21 +635,32 @@ export function useDelegatedHover<T>(openDelay: number = TOOLTIP_OPEN_DELAY_MS) 
         // 理由も無い (レイアウトが動いたならスクロール連動で閉じる)。
         const next: DelegatedHoverState<T> = { value, rect: target.getBoundingClientRect(), target };
         clearShowTimer();
+        // 所有権を取る前に判定する (`Tooltip` 本体と同じ)。ウォームなら遅延なし。
+        const delay = isTooltipWarm() ? 0 : openDelay;
         claimTooltip(hide);
-        if (openDelay <= 0) {
+        const open = () => {
+          markTooltipShown(hide);
+          shownTarget.current = target;
           setState(next);
+        };
+        if (delay <= 0) {
+          open();
           return;
         }
         pendingTarget.current = target;
         showTimer.current = setTimeout(() => {
           showTimer.current = null;
           pendingTarget.current = null;
-          setState(next);
-        }, openDelay);
+          open();
+        }, delay);
       },
       onMouseLeave: (e: ReactMouseEvent<HTMLElement>) => {
         if (pendingTarget.current === e.currentTarget) clearShowTimer();
         releaseTooltip(hide);
+        if (shownTarget.current === e.currentTarget) {
+          markTooltipHidden(hide);
+          shownTarget.current = null;
+        }
         setState((cur) => (cur?.target === e.currentTarget ? null : cur));
       },
     };

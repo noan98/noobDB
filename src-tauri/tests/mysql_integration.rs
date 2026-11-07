@@ -4813,6 +4813,52 @@ async fn max_execution_time_is_restored_after_scoped_stream_when_env_set() {
     }
 }
 
+/// #2130: アプリ側の猶予つきタイムアウトが、より厳しい既存の `max_execution_time`
+/// (接続ごとの初期化 SQL #522) を緩めない。短い方で止まり、実行後もその値が保たれる。
+#[tokio::test]
+async fn shorter_existing_max_execution_time_is_not_loosened_when_env_set() {
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
+        return;
+    };
+    let mut opts = t::parse_mysql_url(&url).expect("valid url");
+    opts.init_sql = Some("SET SESSION max_execution_time = 1000".into());
+    // MariaDB には変数が無く初期化 SQL が失敗する。その場合はスキップ。
+    let Ok(conn) = t::connect(&opts).await else {
+        return;
+    };
+    let start = std::time::Instant::now();
+    let ctx = t::ServerStopCtx::new(Some(30));
+    // SLEEP は中断されてもエラーにならず 1 を返すことがあるので、経過時間で確かめる。
+    let _ = t::server_stop_scope(ctx, async {
+        conn.execute_stream(
+            "SELECT SLEEP(10) FROM information_schema.tables LIMIT 1",
+            None,
+            10,
+            10,
+            |_| Ok(()),
+        )
+        .await
+    })
+    .await;
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(8),
+        "緩められて長く走った: {:?}",
+        start.elapsed()
+    );
+    for _ in 0..8 {
+        let r = conn
+            .execute("SELECT @@SESSION.max_execution_time", None)
+            .await
+            .expect("show");
+        assert!(
+            format!("{:?}", r.rows).contains("1000"),
+            "max_execution_time が変わった: {:?}",
+            r.rows
+        );
+    }
+    conn.close().await;
+}
+
 /// 定期メンテナンス (#2025): ANALYZE / OPTIMIZE TABLE の失敗は SQL エラーではなく結果行の
 /// `Msg_type=Error` で返る。存在しないテーブルは検知でき、実在テーブルの OPTIMIZE
 /// (InnoDB の note は失敗に数えない) は空になる。

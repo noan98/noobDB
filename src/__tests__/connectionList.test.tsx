@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { chooseListboxOption, renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
-import { t } from "../i18n";
+import { setLocale, t } from "../i18n";
 import { registerTreeDropTarget } from "../components/treeDragStore";
 import { databaseVariantProfile } from "../openDatabase";
 
@@ -289,6 +289,25 @@ describe("Database Explorer の階層 (#1112)", () => {
     expect(inTree(t("objGroupTables"))).toHaveLength(1);
     expect(screen.getAllByRole("treeitem", { name: "v1" })).toHaveLength(1);
     expect(screen.getByRole("treeitem", { name: "tbl1" })).toBeInTheDocument();
+  });
+
+  it("PostgreSQL の型は内部値 (enum 等) ではなく表示ラベルをバッジに出す", async () => {
+    setLocale("ja");
+    try {
+      vi.mocked(api.listSchemaObjects).mockResolvedValueOnce([
+        { kind: "type", name: "mood", id: null, detail: "enum" },
+        { kind: "type", name: "pair", id: null, detail: "composite" },
+      ]);
+      await openDb();
+      const row = await screen.findByRole("treeitem", { name: "mood" });
+      expect(within(row).getByText(t("typeKindEnum"))).toBeInTheDocument();
+      expect(within(row).queryByText("enum")).toBeNull();
+      const pair = await screen.findByRole("treeitem", { name: "pair" });
+      expect(within(pair).getByText("複合型")).toBeInTheDocument();
+      expect(within(pair).queryByText("composite")).toBeNull();
+    } finally {
+      setLocale("en");
+    }
   });
 
   it("ビューを Ctrl+クリックしても複数選択に入らず、テーブルの右クリックは通常のメニューのまま (#1594)", async () => {
