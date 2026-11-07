@@ -4538,9 +4538,11 @@ async fn register_server_stop(
             if let Ok(id) = i64::try_from(id) {
                 ctx.record_backend(id);
             }
-            // ms は数値なので SQL インジェクションにならない。
+            // より厳しい既存値 (SET GLOBAL / 初期化 SQL など) は緩めない (#2130)。
+            let target = super::server_stop::tighter_server_timeout_ms(orig, ms)?;
+            // target は数値なので SQL インジェクションにならない。
             return match sqlx::query(sqlx::AssertSqlSafe(format!(
-                "SET SESSION max_execution_time = {ms}"
+                "SET SESSION max_execution_time = {target}"
             )))
             .execute(&mut *conn)
             .await

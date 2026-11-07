@@ -4343,6 +4343,64 @@ async fn statement_timeout_is_restored_after_scoped_stream_when_env_set() {
     }
 }
 
+/// #2130: アプリ側の猶予つきタイムアウトが、より厳しい既存の `statement_timeout`
+/// (ALTER DATABASE など) を緩めない。短い方で止まり、実行後もその値が保たれる。
+#[tokio::test]
+async fn shorter_existing_statement_timeout_is_not_loosened_when_env_set() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let admin = t::connect(&opts).await.expect("connect");
+    admin
+        .execute(
+            "DO $$ BEGIN EXECUTE format('ALTER DATABASE %I SET statement_timeout = ''1s''', current_database()); END $$",
+            None,
+        )
+        .await
+        .expect("alter database");
+    // 設定は新しい接続から効く。接続しなおして確かめる。
+    let conn = t::connect(&opts).await.expect("reconnect");
+    let result = async {
+        let start = std::time::Instant::now();
+        let ctx = t::ServerStopCtx::new(Some(30));
+        let res = t::server_stop_scope(ctx, async {
+            conn.execute_stream("SELECT pg_sleep(10)", None, 10, 10, |_| Ok(()))
+                .await
+        })
+        .await;
+        assert!(res.is_err(), "既存の 1s で止まるはず: {res:?}");
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(8),
+            "緩められて長く走った: {:?}",
+            start.elapsed()
+        );
+        // 実行後も、プールのどの接続でも元の値が保たれる。
+        for _ in 0..8 {
+            let r = conn
+                .execute("SHOW statement_timeout", None)
+                .await
+                .expect("show");
+            assert!(
+                format!("{:?}", r.rows).contains("1s"),
+                "statement_timeout が変わった: {:?}",
+                r.rows
+            );
+        }
+    }
+    .await;
+    conn.close().await;
+    admin
+        .execute(
+            "DO $$ BEGIN EXECUTE format('ALTER DATABASE %I RESET statement_timeout', current_database()); END $$",
+            None,
+        )
+        .await
+        .expect("reset");
+    admin.close().await;
+    result
+}
+
 /// 定期メンテナンス (#2025) の VACUUM (ANALYZE) がトランザクション外の単文実行で通る。
 #[tokio::test]
 async fn postgres_maintenance_vacuum_analyze_runs_outside_transaction() {

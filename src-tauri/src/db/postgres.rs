@@ -4692,20 +4692,30 @@ async fn register_server_stop(
     }
     let mut orig = None;
     if ms > 0 {
-        match sqlx::query_scalar::<_, String>("SELECT current_setting('statement_timeout')")
-            .fetch_one(&mut *conn)
-            .await
+        // 既存値は pg_settings.setting (ミリ秒の数値) で読み、単位つき文字列の比較を避ける。
+        // より厳しい既存値 (ALTER ROLE / 初期化 SQL など) は緩めない (#2130)。
+        match sqlx::query_as::<_, (String, i64)>(
+            "SELECT current_setting('statement_timeout'), \
+             (SELECT setting::bigint FROM pg_settings WHERE name = 'statement_timeout')",
+        )
+        .fetch_one(&mut *conn)
+        .await
         {
-            Ok(v) => {
-                match sqlx::query_scalar::<_, String>(
-                    "SELECT set_config('statement_timeout', $1, false)",
-                )
-                .bind(ms.to_string())
-                .fetch_one(&mut *conn)
-                .await
-                {
-                    Ok(_) => orig = Some(v),
-                    Err(e) => tracing::debug!(error = %e, "statement_timeout not set (postgres)"),
+            Ok((v, existing)) => {
+                let existing = u64::try_from(existing).unwrap_or(0);
+                if let Some(target) = super::server_stop::tighter_server_timeout_ms(existing, ms) {
+                    match sqlx::query_scalar::<_, String>(
+                        "SELECT set_config('statement_timeout', $1, false)",
+                    )
+                    .bind(target.to_string())
+                    .fetch_one(&mut *conn)
+                    .await
+                    {
+                        Ok(_) => orig = Some(v),
+                        Err(e) => {
+                            tracing::debug!(error = %e, "statement_timeout not set (postgres)")
+                        }
+                    }
                 }
             }
             Err(e) => tracing::debug!(error = %e, "statement_timeout not read (postgres)"),
@@ -4734,16 +4744,28 @@ async fn register_server_stop_in_tx(
     {
         return;
     }
-    let res = sqlx::query_as::<_, (i32, String)>(
+    let res = sqlx::query_as::<_, (i32, i64)>(
         "SELECT pg_backend_pid(), \
-         set_config('statement_timeout', COALESCE($1, current_setting('statement_timeout')), true)",
+         COALESCE((SELECT setting::bigint FROM pg_settings WHERE name = 'statement_timeout'), 0)",
     )
-    .bind((ms > 0).then(|| ms.to_string()))
     .fetch_one(&mut *conn)
     .await;
     match res {
-        Ok((pid, _)) => {
+        Ok((pid, existing)) => {
             ctx.record_backend(i64::from(pid));
+            // より厳しい既存値は緩めない (#2130)。
+            let existing = u64::try_from(existing).unwrap_or(0);
+            let target = if ms > 0 {
+                super::server_stop::tighter_server_timeout_ms(existing, ms)
+            } else {
+                None
+            };
+            if let Some(target) = target {
+                let _ = sqlx::query("SELECT set_config('statement_timeout', $1, true)")
+                    .bind(target.to_string())
+                    .fetch_one(&mut *conn)
+                    .await;
+            }
             // set_config(.., true) の効果は RELEASE 後もトランザクション末まで残る。
             let _ = sqlx::query("RELEASE SAVEPOINT noobdb_server_stop")
                 .execute(&mut *conn)
