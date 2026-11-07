@@ -234,7 +234,7 @@ describe("TableChunkedDmlModal (#2020)", () => {
       "chunkedDmlStatBatches",
       "chunkedDmlStatRows",
       "chunkedDmlStatRemaining",
-      "chunkedDmlStatElapsed",
+      "jobStatElapsed",
     ] as const) {
       expect(stats).toHaveTextContent(t(k));
     }

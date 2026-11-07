@@ -1,0 +1,84 @@
+{
+ "note": "LISTEN/NOTIFY のチャンネル名 (#2132)。フロントの checkChannelName / foldUnquotedChannel と Rust の db::pg_listen::validate_channel (UI が前後の空白を落としてから渡す) が両側のテストで一致を固定する。ok=false のとき problem は empty / nul / tooLong。folded は引用符なしの識別子が畳まれた名前 (ASCII のみ小文字化)。",
+ "cases": [
+  {
+   "name": "小文字は注意なし",
+   "raw": "orders_changed",
+   "ok": true,
+   "channel": "orders_changed",
+   "folded": "orders_changed"
+  },
+  {
+   "name": "大文字を含む名前",
+   "raw": "OrdersChanged",
+   "ok": true,
+   "channel": "OrdersChanged",
+   "folded": "orderschanged"
+  },
+  {
+   "name": "前後の空白は落とす",
+   "raw": "  Orders  ",
+   "ok": true,
+   "channel": "Orders",
+   "folded": "orders"
+  },
+  {
+   "name": "内部の空白・引用符・SQL 断片はそのまま",
+   "raw": "Ev\"il chan; DROP TABLE t; --",
+   "ok": true,
+   "channel": "Ev\"il chan; DROP TABLE t; --",
+   "folded": "ev\"il chan; drop table t; --"
+  },
+  {
+   "name": "非 ASCII は畳まれない",
+   "raw": "ÄÖ日本語",
+   "ok": true,
+   "channel": "ÄÖ日本語",
+   "folded": "ÄÖ日本語"
+  },
+  {
+   "name": "空",
+   "raw": "",
+   "ok": false,
+   "problem": "empty"
+  },
+  {
+   "name": "空白だけ",
+   "raw": "   ",
+   "ok": false,
+   "problem": "empty"
+  },
+  {
+   "name": "NUL",
+   "raw": "a\u0000b",
+   "ok": false,
+   "problem": "nul"
+  },
+  {
+   "name": "63 バイトちょうど",
+   "raw": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "ok": true,
+   "channel": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "folded": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  {
+   "name": "64 バイトは長すぎ",
+   "raw": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "ok": false,
+   "problem": "tooLong"
+  },
+  {
+   "name": "日本語 21 文字 = 63 バイト",
+   "raw": "あああああああああああああああああああああ",
+   "ok": true,
+   "channel": "あああああああああああああああああああああ",
+   "folded": "あああああああああああああああああああああ"
+  },
+  {
+   "name": "日本語 22 文字 = 66 バイトは長すぎ",
+   "raw": "ああああああああああああああああああああああ",
+   "ok": false,
+   "problem": "tooLong"
+  }
+ ]
+}

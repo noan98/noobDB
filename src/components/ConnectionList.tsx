@@ -77,6 +77,8 @@ import {
 import { GroupNameModal } from "./GroupNameModal";
 import { ICON_SIZES, Icon, type IconName } from "./Icon";
 import { EmptyState } from "./EmptyState";
+import { shortTypeName } from "./cellTypeMeta";
+import { kindOfDataType, TypeGlyph } from "./TypeGlyph";
 import { WelcomeIllustration } from "./illustrations";
 import { SkeletonRow } from "./Skeleton";
 import { ContextMenu, submenuOrFlat, type ContextMenuEntry } from "./ContextMenu";
@@ -1053,6 +1055,9 @@ const ColumnRow = memo(function ColumnRow({
   const actions = useTreeActions();
   const isPk = col.key === "PRI";
   const isFk = col.referenced_table !== null;
+  // 型ファミリーは列定義が変わらない限り再計算しない (巨大ツリーでの再描画コスト対策、#2125)。
+  const kind = useMemo(() => kindOfDataType(col.data_type), [col.data_type]);
+  const typeLabel = useMemo(() => shortTypeName(col.data_type), [col.data_type]);
   const colKey = `col:${tableKey(db, tbl)}:${col.name}`;
   const { tabIndex, onFocus } = useTabStop(actions.store, colKey);
   const openMenu = (e: ContextMenuTriggerEvent) =>
@@ -1087,15 +1092,15 @@ const ColumnRow = memo(function ColumnRow({
       <TreeIcon
         fontSize="xs"
         color={isPk ? "app.keyAccent" : isFk ? "app.accent" : "app.textMuted"}
-        aria-hidden
+        aria-hidden={isPk || isFk ? true : undefined}
       >
-        {isPk ? <Icon name="key" /> : isFk ? <Icon name="link" /> : "·"}
+        {isPk ? <Icon name="key" /> : isFk ? <Icon name="link" /> : <TypeGlyph kind={kind} />}
       </TreeIcon>
       <TreeLabel fontFamily="mono" color="app.text">
         <HighlightText text={col.name} query={q} />
       </TreeLabel>
       <TreeBadge fontFamily="mono" textTransform="lowercase" fontSize="2xs">
-        {col.data_type}
+        {typeLabel}
       </TreeBadge>
     </TreeRow>
   );

@@ -16,10 +16,9 @@ import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Segmented } from "./Segmented";
-import { DeterminateProgressBar } from "./StreamProgressBar";
-import { StatTile } from "./StatTile";
+import { JobProgressDetail } from "./JobProgress";
 import { Button, Input } from "./ui";
-import { estimateEtaMs, formatDuration, progressRatio, waitSecondsLeft } from "../progressEta";
+import { waitSecondsLeft } from "../progressEta";
 import type { SemanticRole } from "../semanticColors";
 
 /**
@@ -322,8 +321,6 @@ export function TableChunkedDmlModal({
   // 進捗バー / StatTile の値 (#2092)。終了後は endedAt で時計を止める。
   const elapsedMs = startedAt === null ? 0 : Math.max(0, (endedAt ?? now) - startedAt);
   const fullyDone = phase === "done" && total !== null && total > 0 && (remaining ?? 0) === 0;
-  const ratio = fullyDone ? 1 : progressRatio(affected, total);
-  const etaMs = running ? estimateEtaMs(affected, total, elapsedMs) : null;
   const waitLeft = running ? waitSecondsLeft(waitUntil, now) : null;
   const barTone: SemanticRole | undefined =
     phase === "done"
@@ -337,12 +334,6 @@ export function TableChunkedDmlModal({
           : undefined;
   const remainingEstimate =
     total === null ? null : phase === "done" ? (remaining ?? 0) : Math.max(0, total - affected);
-  const etaText =
-    phase === "running"
-      ? etaMs === null
-        ? t("progressEtaPending")
-        : t("progressEta", { time: formatDuration(etaMs) })
-      : undefined;
 
   return (
     <Modal
@@ -464,31 +455,26 @@ export function TableChunkedDmlModal({
               gap="2"
               data-testid="chunked-dml-clock"
             >
-              {ratio !== null && (
-                <chakra.div display="flex" alignItems="center" gap="3" data-testid="chunked-dml-progress">
-                  <chakra.div flex="1">
-                    <DeterminateProgressBar value={ratio} tone={barTone} />
-                  </chakra.div>
-                  <chakra.span textStyle="numeric" minW="4ch" textAlign="right">
-                    {t("progressPercent", { percent: Math.floor(ratio * 100) })}
-                  </chakra.span>
-                </chakra.div>
-              )}
               {total !== null && total > 0 && (
-                <chakra.div display="flex" gap="2" flexWrap="wrap" data-testid="chunked-dml-stats">
-                  <StatTile label={t("chunkedDmlStatBatches")} value={batches} />
-                  <StatTile label={t("chunkedDmlStatRows")} value={affected} />
-                  <StatTile
-                    label={t("chunkedDmlStatRemaining")}
-                    value={remainingEstimate ?? "-"}
-                    sub={total !== null ? t("chunkedDmlProgressTotal", { rows: total }) : undefined}
-                  />
-                  <StatTile
-                    label={t("chunkedDmlStatElapsed")}
-                    value={formatDuration(elapsedMs)}
-                    sub={etaText}
-                  />
-                </chakra.div>
+                <JobProgressDetail
+                  done={affected}
+                  total={total}
+                  elapsedMs={elapsedMs}
+                  running={phase === "running"}
+                  tone={barTone}
+                  full={fullyDone}
+                  barTestId="chunked-dml-progress"
+                  statsTestId="chunked-dml-stats"
+                  stats={[
+                    { label: t("chunkedDmlStatBatches"), value: batches },
+                    { label: t("chunkedDmlStatRows"), value: affected },
+                    {
+                      label: t("chunkedDmlStatRemaining"),
+                      value: remainingEstimate ?? "-",
+                      sub: t("chunkedDmlProgressTotal", { rows: total }),
+                    },
+                  ]}
+                />
               )}
               {waitLeft !== null && (
                 <chakra.span textStyle="caption" color="app.textMuted" data-testid="chunked-dml-waiting">

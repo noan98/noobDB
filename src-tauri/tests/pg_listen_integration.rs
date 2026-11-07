@@ -206,3 +206,85 @@ async fn pg_listen_rejects_nothing_silently_when_the_server_is_unreachable() {
     }
     let _ = h.task.await;
 }
+
+/// #2132: チャンネル名は `"..."` で囲んで購読する (大文字小文字を区別する)。引用符なしの
+/// `NOTIFY Foo` は `foo` に畳まれるので、`Foo` の購読者には届かず `foo` の購読者に届く。
+/// 引用符つきの `NOTIFY "Foo"` / `pg_notify('Foo', ..)` は `Foo` に届く。
+#[tokio::test]
+async fn pg_listen_channel_names_are_case_sensitive() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let sender = t::connect(&opts).await.expect("connect");
+
+    let mut h = spawn_listener(
+        opts.clone(),
+        vec!["NoobdbFoo".to_string(), "noobdbfoo".to_string()],
+    );
+    match next_event(&mut h).await {
+        t::PgListenMessage::Started { .. } => {}
+        other => panic!("expected started, got {other:?}"),
+    }
+
+    // 引用符なしの NOTIFY は畳まれた名前 (小文字) の購読者にだけ届く。
+    sender
+        .execute("NOTIFY NoobdbFoo, 'unquoted'", None)
+        .await
+        .expect("notify unquoted");
+    let (channel, payload, _, _) = expect_notification(&mut h).await;
+    assert_eq!(
+        (channel.as_str(), payload.as_str()),
+        ("noobdbfoo", "unquoted")
+    );
+
+    // 引用符つきの NOTIFY と pg_notify は大文字小文字を保つ。
+    sender
+        .execute("NOTIFY \"NoobdbFoo\", 'quoted'", None)
+        .await
+        .expect("notify quoted");
+    let (channel, payload, _, _) = expect_notification(&mut h).await;
+    assert_eq!(
+        (channel.as_str(), payload.as_str()),
+        ("NoobdbFoo", "quoted")
+    );
+    sender
+        .execute("SELECT pg_notify('NoobdbFoo', 'fn-upper')", None)
+        .await
+        .expect("pg_notify upper");
+    let (channel, payload, _, _) = expect_notification(&mut h).await;
+    assert_eq!(
+        (channel.as_str(), payload.as_str()),
+        ("NoobdbFoo", "fn-upper")
+    );
+    sender
+        .execute("SELECT pg_notify('noobdbfoo', 'fn-lower')", None)
+        .await
+        .expect("pg_notify lower");
+    let (channel, payload, _, _) = expect_notification(&mut h).await;
+    assert_eq!(
+        (channel.as_str(), payload.as_str()),
+        ("noobdbfoo", "fn-lower")
+    );
+    h.task.abort();
+    let _ = h.task.await;
+
+    // 大文字だけを購読していると、引用符なしの NOTIFY は黙って届かない (UI が事前に注意する理由)。
+    let mut only_upper = spawn_listener(opts, vec!["NoobdbFoo".to_string()]);
+    match next_event(&mut only_upper).await {
+        t::PgListenMessage::Started { .. } => {}
+        other => panic!("expected started, got {other:?}"),
+    }
+    sender
+        .execute("NOTIFY NoobdbFoo, 'lost'", None)
+        .await
+        .expect("notify unquoted lost");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(800), only_upper.events.recv())
+            .await
+            .is_err(),
+        "an unquoted NOTIFY must not reach a case-sensitive listener"
+    );
+    only_upper.task.abort();
+    let _ = only_upper.task.await;
+}

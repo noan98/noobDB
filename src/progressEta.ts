@@ -41,3 +41,9 @@ export function waitSecondsLeft(waitUntil: number | null, now: number): number |
   if (waitUntil == null) return null;
   return Math.max(0, Math.ceil((waitUntil - now) / 1000));
 }
+
+/** 1 秒あたりの処理件数。経過が 1 秒未満 (まだ測れない)・非有限値は null。 */
+export function ratePerSecond(done: number, elapsedMs: number): number | null {
+  if (!Number.isFinite(done) || !Number.isFinite(elapsedMs) || elapsedMs < 1000) return null;
+  return Math.max(0, done) / (elapsedMs / 1000);
+}
