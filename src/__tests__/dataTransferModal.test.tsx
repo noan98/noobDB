@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor, chooseListboxOption } from "./testUtils";
+import { renderWithProviders, screen, act, waitFor, chooseListboxOption } from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 import type { TransferDoneEvent, TransferStreamHandlers } from "../api/tauri";
@@ -147,5 +147,17 @@ describe("DataTransferModal の列・範囲指定 (#1623)", () => {
         }),
       ),
     );
+  });
+
+  it("実行中のライブリージョンには変わらない文言だけを置き、件数は入れない", async () => {
+    const user = await setup();
+    await user.click(screen.getByRole("button", { name: t("transferExecute") }));
+    await waitFor(() => expect(handlers.current).not.toBeNull());
+    act(() => handlers.current?.onProgress?.({ streamId: "s", rows: 12345 }));
+    const live = await screen.findByRole("status");
+    expect(live).toHaveTextContent(t("transferRunning"));
+    expect(live).not.toHaveTextContent("12345");
+    // 件数はライブでないタイルに出る。
+    expect(screen.getByText("12,345").closest('[aria-live="polite"]')).toBeNull();
   });
 });

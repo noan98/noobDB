@@ -48,7 +48,7 @@ import { cellKindIcon } from "./cellTypeMeta";
 import type { I18nKey } from "../i18n";
 import { copyToClipboard } from "./clipboard";
 import { useToast } from "./Toast";
-import { DeterminateProgressBar } from "./StreamProgressBar";
+import { JobOutcome, JobPresence, JobProgressDetail, useJobClock } from "./JobProgress";
 import { Tooltip } from "./Tooltip";
 import { delimiterAfterPick, importScope, loadImportPrefs, saveImportPrefs } from "../inputMemory";
 
@@ -252,6 +252,7 @@ export function ImportModal({
   const disposedRef = useRef(false);
 
   const importing = status.kind === "importing";
+  const jobElapsedMs = useJobClock(importing);
   const isCsv = format === "csv";
   const isXlsx = format === "xlsx";
   const excelErrorCount = useMemo(
@@ -892,11 +893,6 @@ export function ImportModal({
     });
   };
 
-  const percent =
-    status.kind === "importing" && status.total > 0
-      ? Math.min(100, Math.round((status.inserted / status.total) * 100))
-      : 0;
-
   return (
     <Modal
       onSubmit={handleImport}
@@ -1523,24 +1519,49 @@ export function ImportModal({
             )}
           </chakra.div>
         )}
-        {status.kind === "importing" && (
-          <chakra.div role="status" aria-live="polite" display="flex" flexDirection="column" gap="1.5">
-            <DeterminateProgressBar value={percent / 100} />
-            <chakra.div fontSize="sm" color="app.textMuted">
-              {t("importProgress", { inserted: status.inserted, total: status.total })}
+        <JobPresence show={status.kind === "importing"}>
+          {status.kind === "importing" && (
+            <chakra.div display="flex" flexDirection="column" gap="2">
+              <chakra.div aria-live="off">
+                <JobProgressDetail
+                  done={status.inserted}
+                  total={status.total > 0 ? status.total : null}
+                  elapsedMs={jobElapsedMs}
+                  running
+                  rate={{ label: t("jobStatRowsPerSec"), count: status.inserted }}
+                  stats={[
+                    {
+                      label: t("jobStatRows"),
+                      value: status.inserted,
+                      sub: status.total > 0 ? `/ ${status.total}` : undefined,
+                    },
+                  ]}
+                />
+              </chakra.div>
+              <chakra.div role="status" aria-live="polite" fontSize="sm" color="app.textMuted">
+                {t("importProgress", { inserted: status.inserted, total: status.total })}
+              </chakra.div>
             </chakra.div>
-          </chakra.div>
-        )}
+          )}
+        </JobPresence>
         {status.kind === "done" && (
           <chakra.div display="flex" flexDirection="column" gap="2">
-            <chakra.div display="flex" alignItems="center" justifyContent="space-between" gap="3">
-              <chakra.span fontSize="sm" fontWeight={500}>
-                {t("importSkippedSummary", {
-                  inserted: status.inserted,
-                  skipped: status.skippedTotal,
-                })}
-              </chakra.span>
-              <chakra.div display="flex" gap="2">
+            <JobOutcome
+              kind="done"
+              tone={status.skippedTotal > 0 ? "warning" : "success"}
+              detail={{
+                done: status.inserted,
+                total: status.inserted + status.skippedTotal,
+                elapsedMs: jobElapsedMs,
+                rate: { label: t("jobStatRowsPerSec"), count: status.inserted },
+                stats: [{ label: t("jobStatRows"), value: status.inserted }],
+              }}
+              message={t("importSkippedSummary", {
+                inserted: status.inserted,
+                skipped: status.skippedTotal,
+              })}
+            >
+              <chakra.div display="flex" gap="2" flexWrap="wrap">
                 <Button type="button" variant="secondary" size="sm" onClick={() => void saveSkipped()}>
                   {t("importSkippedSave")}
                 </Button>
@@ -1561,7 +1582,7 @@ export function ImportModal({
                   {t("importSkippedCopy")}
                 </Button>
               </chakra.div>
-            </chakra.div>
+            </JobOutcome>
             {status.dataTruncated && (
               <chakra.div textStyle="caption">{t("importSkippedDataTruncated")}</chakra.div>
             )}

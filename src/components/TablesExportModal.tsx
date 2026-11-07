@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { DeterminateProgressBar } from "./StreamProgressBar";
+import { JobPresence, JobProgressDetail, useJobClock } from "./JobProgress";
 import { chakra } from "@chakra-ui/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { downloadDir, join } from "@tauri-apps/api/path";
@@ -72,6 +72,9 @@ export function TablesExportModal({ sessionId, driver, database, tables, profile
   const disposedRef = useRef(false);
   const userEditedDirRef = useRef(!!remembered?.dir);
   const isRunning = status.kind === "running";
+  const jobElapsedMs = useJobClock(isRunning);
+  // 速度用の行数累計。進捗の rows はテーブルごとに 0 へ戻るので、終わったテーブルの分を足し込む。
+  const doneRowsRef = useRef(0);
   const workbookMode = format === "xlsx" && singleWorkbook && tables.length > 1;
 
   // 既定の保存先は OS のダウンロードフォルダ (`ExportModal` と同じ)。取得できなければ空のまま。
@@ -238,6 +241,7 @@ export function TablesExportModal({ sessionId, driver, database, tables, profile
     const stamp = batchTimestamp();
     const failures: { table: string; error: string }[] = [];
     let written = 0;
+    doneRowsRef.current = 0;
     if (workbookMode) {
       // 1 ブックにまとめる: 1 回の書き出しで全テーブルが成功か失敗かになる。
       const label = t("batchExportWorkbookLabel", { count: tables.length });
@@ -263,8 +267,10 @@ export function TablesExportModal({ sessionId, driver, database, tables, profile
         } catch (e) {
           result = { ok: false, error: String(e) };
         }
-        if (result.ok === true) written += 1;
-        else if (result.ok === false) failures.push({ table, error: result.error });
+        if (result.ok === true) {
+          written += 1;
+          doneRowsRef.current += result.rows;
+        } else if (result.ok === false) failures.push({ table, error: result.error });
         else break;
       }
     }
@@ -446,21 +452,37 @@ export function TablesExportModal({ sessionId, driver, database, tables, profile
           </PathRow>
         </FormSection>
 
-        {status.kind === "running" && (
-          <chakra.div display="flex" flexDirection="column" gap="1.5">
-            <DeterminateProgressBar value={tables.length > 0 ? status.index / tables.length : 0} />
-            <chakra.div fontSize="sm" color="app.text" role="status" fontWeight={500}>
-              {workbookMode
-                ? t("batchExportWorkbookProgress", { count: tables.length, rows: status.rows })
-                : t("batchExportProgress", {
-                    index: status.index + 1,
-                    count: tables.length,
-                    table: status.table,
-                    rows: status.rows,
-                  })}
+        <JobPresence show={status.kind === "running"}>
+          {status.kind === "running" && (
+            <chakra.div display="flex" flexDirection="column" gap="2">
+              <chakra.div aria-live="off">
+                <JobProgressDetail
+                  done={status.index}
+                  total={workbookMode ? null : tables.length}
+                  elapsedMs={jobElapsedMs}
+                  running
+                  rate={{ label: t("jobStatRowsPerSec"), count: doneRowsRef.current + status.rows }}
+                  stats={[
+                    ...(workbookMode
+                      ? []
+                      : [{ label: t("jobStatTables"), value: status.index, sub: `/ ${tables.length}` }]),
+                    { label: t("jobStatRows"), value: status.rows },
+                  ]}
+                />
+              </chakra.div>
+              <chakra.div fontSize="sm" color="app.text" role="status" aria-live="polite" fontWeight={500}>
+                {workbookMode
+                  ? t("batchExportWorkbookProgress", { count: tables.length, rows: status.rows })
+                  : t("batchExportProgress", {
+                      index: status.index + 1,
+                      count: tables.length,
+                      table: status.table,
+                      rows: status.rows,
+                    })}
+              </chakra.div>
             </chakra.div>
-          </chakra.div>
-        )}
+          )}
+        </JobPresence>
         {status.kind === "error" && (
           <ErrorNote>
             {status.failures.map((f) => (
