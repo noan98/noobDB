@@ -57,6 +57,25 @@ pub(crate) async fn collect_table_columns(
         .into_iter()
         .map(|t| (t.name, t.columns))
         .collect();
+    // PostgreSQL のユーザー定義型の列は `USER-DEFINED` (DOMAIN は土台の型) と報告されるので、
+    // 実際の型名に置き換える (ENUM 列を持つ表の同期が `CREATE TABLE` で失敗しないように, #2127)。
+    // 取れなければ従来どおりの型のまま。
+    match conn.user_type_columns(db).await {
+        Ok(types) if !types.is_empty() => {
+            for (table, columns) in by_table.iter_mut() {
+                for c in columns.iter_mut() {
+                    if let Some(ty) = types.get(&(table.clone(), c.name.clone())) {
+                        c.data_type = ty.clone();
+                    }
+                }
+            }
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!(
+            kind = e.kind(),
+            "schema compare: could not load user-defined column types"
+        ),
+    }
     Ok(tables
         .into_iter()
         .map(|name| TableColumns {

@@ -1,4 +1,4 @@
-//! 非テーブルオブジェクト (ビュー / マテビュー / ルーチン / トリガー / シーケンス / イベント) の
+//! 非テーブルオブジェクト (ビュー / マテビュー / ルーチン / トリガー / シーケンス / イベント / 型) の
 //! スキーマ比較 (#1879)。
 //!
 //! `db::diff` がテーブルと列を比べるのに対し、こちらは「定義 DDL の本文」を比べる純粋層。
@@ -18,7 +18,11 @@ use super::DriverKind;
 /// 比較対象のオブジェクト種別 (表示・作成順の基準)。作成は関数 → プロシージャ → ビュー →
 /// マテビュー → トリガー → イベントの順 (後ろの種別が前の種別を参照しうる。EVENT の本体は
 /// プロシージャや関数を呼べる)。シーケンスは表の既定値から参照されるので、同期では表より先に作る。
-pub const OBJECT_KINDS: [&str; 7] = [
+/// PostgreSQL のユーザー定義型 (ENUM / DOMAIN / 複合型 / 範囲型, #2127) は表の列・関数の引数から
+/// 参照されるので、同期では表どころかシーケンスよりも先に作り (DOMAIN の既定値が使うシーケンスが
+/// 型より後でも、作成順は型 → シーケンスで困らない)、削除は表の削除より後にする。
+pub const OBJECT_KINDS: [&str; 8] = [
+    "type",
     "sequence",
     "function",
     "procedure",
@@ -29,11 +33,12 @@ pub const OBJECT_KINDS: [&str; 7] = [
 ];
 
 /// このドライバがその種別を持ち、定義を比較できるか。`where_used::supports_kind` に
-/// シーケンス (PostgreSQL のみ) と EVENT (MySQL のみ, #2100) を足したもの。PostgreSQL / SQLite に
-/// EVENT 相当の組み込み機能は無い (pg_cron などの拡張は対象外)。
+/// シーケンスとユーザー定義型 (どちらも PostgreSQL のみ, #2127) と EVENT (MySQL のみ, #2100) を足したもの。
+/// PostgreSQL / SQLite に EVENT 相当の組み込み機能は無い (pg_cron などの拡張は対象外)。MySQL / SQLite に
+/// ユーザー定義型は無い。
 pub fn supports_object_kind(driver: DriverKind, kind: &str) -> bool {
     match kind {
-        "sequence" => return driver == DriverKind::Postgres,
+        "sequence" | "type" => return driver == DriverKind::Postgres,
         "event" => {
             return match driver {
                 DriverKind::Mysql => true,
@@ -46,11 +51,12 @@ pub fn supports_object_kind(driver: DriverKind, kind: &str) -> bool {
 }
 
 /// このドライバが持たない (比較対象外の) 種別。UI が「対象外」と理由付きで表示する。
-/// MySQL だけの概念である `event` は、他ドライバでは「対象外」の行を増やすだけなので載せない。
+/// MySQL だけの概念である `event` と、PostgreSQL だけの概念である `type` は、他ドライバでは
+/// 「対象外」の行を増やすだけなので載せない。
 pub fn unsupported_object_kinds(driver: DriverKind) -> Vec<String> {
     OBJECT_KINDS
         .iter()
-        .filter(|k| **k != "event" && !supports_object_kind(driver, k))
+        .filter(|k| !matches!(**k, "event" | "type") && !supports_object_kind(driver, k))
         .map(|k| k.to_string())
         .collect()
 }
@@ -647,6 +653,7 @@ fn drop_keyword(kind: &str) -> &'static str {
         "procedure" => "PROCEDURE",
         "trigger" => "TRIGGER",
         "event" => "EVENT",
+        "type" => "TYPE",
         _ => "SEQUENCE",
     }
 }
@@ -829,6 +836,121 @@ pub fn replace_object_sql(driver: DriverKind, d: &ObjectDiff, definition: &str) 
         (DriverKind::Mysql, _) => format!("{drop};\n{STMT_SPLIT}\n{create}"),
         (DriverKind::Sqlite, _) => format!("{drop};\n{create}"),
     }
+}
+
+/// ENUM の `CREATE TYPE ... AS ENUM (...)` を (型名, 値の並び) に読む (#2127)。ENUM 以外や、
+/// 読めない形なら `None`。型名は定義に書かれた修飾つきの表記のまま返す。値は
+/// `quote_literal` が出す `'a''b'` / `E'a\\b'` を戻した文字列。
+fn parse_enum_definition(def: &str) -> Option<(String, Vec<String>)> {
+    let d = def.trim().trim_end_matches(';').trim_end();
+    let rest = d.strip_prefix("CREATE TYPE ")?;
+    let at = rest.find(" AS ENUM (")?;
+    let name = rest[..at].to_string();
+    let body = rest[at + " AS ENUM (".len()..].strip_suffix(')')?;
+    let chars: Vec<char> = body.chars().collect();
+    let mut values = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            ',' | ' ' | '\n' | '\t' => i += 1,
+            c @ ('E' | 'e' | '\'') => {
+                let escaped = c != '\'';
+                if escaped {
+                    i += 1;
+                }
+                if chars.get(i) != Some(&'\'') {
+                    return None;
+                }
+                i += 1;
+                let mut v = String::new();
+                loop {
+                    match chars.get(i) {
+                        None => return None,
+                        Some('\'') if chars.get(i + 1) == Some(&'\'') => {
+                            v.push('\'');
+                            i += 2;
+                        }
+                        Some('\'') => {
+                            i += 1;
+                            break;
+                        }
+                        Some('\\') if escaped => match chars.get(i + 1) {
+                            Some(&n) => {
+                                v.push(n);
+                                i += 2;
+                            }
+                            None => return None,
+                        },
+                        Some(&ch) => {
+                            v.push(ch);
+                            i += 1;
+                        }
+                    }
+                }
+                values.push(v);
+            }
+            _ => return None,
+        }
+    }
+    Some((name, values))
+}
+
+/// ENUM の値を SQL リテラルにする (`'` は二重化、`\` を含むときは `E'...'`)。
+pub fn enum_value_literal(v: &str) -> String {
+    let q = v.replace('\'', "''");
+    if v.contains('\\') {
+        format!("E'{}'", q.replace('\\', "\\\\"))
+    } else {
+        format!("'{q}'")
+    }
+}
+
+/// 定義が違う PostgreSQL の型を target で揃える SQL (#2127)。使用中の型は DROP + CREATE できないので、
+/// 非破壊にできるものだけ出す: ENUM に source だけにある値を `ALTER TYPE ... ADD VALUE` で足す
+/// (source の並び順になる位置に挿入)。値の削除・並び替え・ENUM 以外 (DOMAIN / 複合型 / 範囲型) の
+/// 変更は自動で同期できないので `Err` で理由を返す (呼び出し側が警告にして出力しない)。
+pub fn type_replace_statements(d: &ObjectDiff) -> std::result::Result<Vec<String>, String> {
+    let (Some(src), Some(tgt)) = (
+        d.source_definition
+            .as_deref()
+            .and_then(parse_enum_definition),
+        d.target_definition
+            .as_deref()
+            .and_then(parse_enum_definition),
+    ) else {
+        return Err("ENUM 以外の型の定義の変更は自動で同期できません (使用中の型は DROP + CREATE できないため)。手動で ALTER してください".to_string());
+    };
+    let (name, src_vals) = src;
+    let tgt_vals = tgt.1;
+    // target の値が source の並びの部分列でなければ、削除か並び替えが必要。
+    let mut it = src_vals.iter();
+    if !tgt_vals.iter().all(|t| it.any(|s| s == t)) {
+        return Err("ENUM の値の削除・並び替えは自動で同期できません (ALTER TYPE ... ADD VALUE は追加しかできない)。手動で対応してください".to_string());
+    }
+    let mut present: HashSet<&str> = tgt_vals.iter().map(String::as_str).collect();
+    let mut out = Vec::new();
+    for (i, v) in src_vals.iter().enumerate() {
+        if present.contains(v.as_str()) {
+            continue;
+        }
+        let position = if i > 0 {
+            format!(" AFTER {}", enum_value_literal(&src_vals[i - 1]))
+        } else if let Some(next) = src_vals
+            .iter()
+            .skip(1)
+            .find(|n| present.contains(n.as_str()))
+        {
+            format!(" BEFORE {}", enum_value_literal(next))
+        } else {
+            String::new()
+        };
+        out.push(format!(
+            "ALTER TYPE {name} ADD VALUE IF NOT EXISTS {}{position}",
+            enum_value_literal(v)
+        ));
+        present.insert(v.as_str());
+    }
+    Ok(out)
 }
 
 /// 作成・置換の依存順。ビュー同士など、別のオブジェクトの名前を本文に含むものを後ろへ回す
@@ -1375,6 +1497,131 @@ mod tests {
             source_definition: None,
             target_definition: None,
         }
+    }
+
+    fn enum_diff(src: &str, tgt: &str) -> ObjectDiff {
+        let mut d = od("type", "mood", None, None);
+        d.source_definition = Some(src.to_string());
+        d.target_definition = Some(tgt.to_string());
+        d
+    }
+
+    #[test]
+    fn user_defined_types_are_postgres_only_and_not_listed_as_unsupported() {
+        assert!(supports_object_kind(DriverKind::Postgres, "type"));
+        assert!(!supports_object_kind(DriverKind::Mysql, "type"));
+        assert!(!supports_object_kind(DriverKind::Sqlite, "type"));
+        for d in [DriverKind::Mysql, DriverKind::Sqlite, DriverKind::Postgres] {
+            assert!(!unsupported_object_kinds(d).contains(&"type".to_string()));
+        }
+        // 型は表より先 (シーケンスより先) に作る。
+        assert!(kind_rank("type") < kind_rank("sequence"));
+        assert_eq!(
+            drop_object_sql(DriverKind::Postgres, &od("type", "mood", None, None)),
+            "DROP TYPE \"mood\""
+        );
+    }
+
+    #[test]
+    fn type_definitions_compare_across_schemas() {
+        let s = [def(
+            "type",
+            "mood",
+            "CREATE TYPE \"stg\".\"mood\" AS ENUM ('a', 'b');",
+        )];
+        let t = [def(
+            "type",
+            "mood",
+            "CREATE TYPE \"prod\".\"mood\" AS ENUM ('a', 'b');",
+        )];
+        let d = diffs(DriverKind::Postgres, "stg", "prod", &s, &t);
+        assert_eq!(d[0].status, DiffStatus::Same);
+        // 値の順序の違いは差分。
+        let t = [def(
+            "type",
+            "mood",
+            "CREATE TYPE \"prod\".\"mood\" AS ENUM ('b', 'a');",
+        )];
+        let d = diffs(DriverKind::Postgres, "stg", "prod", &s, &t);
+        assert_eq!(d[0].status, DiffStatus::Different);
+        // 同期に使う本文は target のスキーマに修飾される。
+        assert_eq!(
+            d[0].source_definition.as_deref(),
+            Some("CREATE TYPE \"prod\".\"mood\" AS ENUM ('a', 'b')")
+        );
+    }
+
+    #[test]
+    fn enum_additions_become_add_value_in_source_order() {
+        let d = enum_diff(
+            "CREATE TYPE \"p\".\"mood\" AS ENUM ('new0', 'a', 'new1', 'b', 'it''s', 'new2')",
+            "CREATE TYPE \"p\".\"mood\" AS ENUM ('a', 'b', 'it''s')",
+        );
+        assert_eq!(
+            type_replace_statements(&d).unwrap(),
+            vec![
+                "ALTER TYPE \"p\".\"mood\" ADD VALUE IF NOT EXISTS 'new0' BEFORE 'a'",
+                "ALTER TYPE \"p\".\"mood\" ADD VALUE IF NOT EXISTS 'new1' AFTER 'a'",
+                "ALTER TYPE \"p\".\"mood\" ADD VALUE IF NOT EXISTS 'new2' AFTER 'it''s'",
+            ]
+        );
+    }
+
+    #[test]
+    fn enum_leading_additions_anchor_on_an_existing_value() {
+        let d = enum_diff(
+            "CREATE TYPE \"p\".\"m\" AS ENUM ('x', 'y', 'c')",
+            "CREATE TYPE \"p\".\"m\" AS ENUM ('c')",
+        );
+        assert_eq!(
+            type_replace_statements(&d).unwrap(),
+            vec![
+                "ALTER TYPE \"p\".\"m\" ADD VALUE IF NOT EXISTS 'x' BEFORE 'c'",
+                "ALTER TYPE \"p\".\"m\" ADD VALUE IF NOT EXISTS 'y' AFTER 'x'",
+            ]
+        );
+        // target が空の ENUM は末尾追加から始める。
+        let d = enum_diff(
+            "CREATE TYPE \"p\".\"m\" AS ENUM ('x', 'y')",
+            "CREATE TYPE \"p\".\"m\" AS ENUM ()",
+        );
+        assert_eq!(
+            type_replace_statements(&d).unwrap(),
+            vec![
+                "ALTER TYPE \"p\".\"m\" ADD VALUE IF NOT EXISTS 'x'",
+                "ALTER TYPE \"p\".\"m\" ADD VALUE IF NOT EXISTS 'y' AFTER 'x'",
+            ]
+        );
+    }
+
+    #[test]
+    fn enum_removal_reorder_and_non_enum_types_are_not_synced() {
+        let removed = enum_diff(
+            "CREATE TYPE \"p\".\"m\" AS ENUM ('a')",
+            "CREATE TYPE \"p\".\"m\" AS ENUM ('a', 'b')",
+        );
+        assert!(type_replace_statements(&removed).is_err());
+        let reordered = enum_diff(
+            "CREATE TYPE \"p\".\"m\" AS ENUM ('b', 'a')",
+            "CREATE TYPE \"p\".\"m\" AS ENUM ('a', 'b')",
+        );
+        assert!(type_replace_statements(&reordered).is_err());
+        let domain = enum_diff(
+            "CREATE DOMAIN \"p\".\"m\" AS integer CHECK (VALUE > 0)",
+            "CREATE DOMAIN \"p\".\"m\" AS integer",
+        );
+        assert!(type_replace_statements(&domain).is_err());
+    }
+
+    #[test]
+    fn enum_labels_with_backslashes_round_trip() {
+        let (name, vals) =
+            parse_enum_definition("CREATE TYPE \"p\".\"m\" AS ENUM ('a''b', E'c\\\\d', 'x y')")
+                .unwrap();
+        assert_eq!(name, "\"p\".\"m\"");
+        assert_eq!(vals, vec!["a'b", "c\\d", "x y"]);
+        assert_eq!(enum_value_literal("c\\d"), "E'c\\\\d'");
+        assert_eq!(enum_value_literal("a'b"), "'a''b'");
     }
 
     #[test]

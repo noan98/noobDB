@@ -467,6 +467,9 @@ const ShortcutCheatSheet = lazy(() =>
 const ParameterInputModal = lazy(() =>
   import("./components/ParameterInputModal").then((m) => ({ default: m.ParameterInputModal })),
 );
+const EnumTypeModal = lazy(() =>
+  import("./components/EnumTypeModal").then((m) => ({ default: m.EnumTypeModal })),
+);
 const RoutineEditorModal = lazy(() =>
   import("./components/RoutineEditorModal").then((m) => ({ default: m.RoutineEditorModal })),
 );
@@ -2320,6 +2323,12 @@ export default function App() {
     kind: EditableObjectKind;
     name: string | null;
     id: string | null;
+  } | null>(null);
+  // PostgreSQL の ENUM 型への値の追加 / 名前の変更ダイアログ (#2127) の対象。
+  const [enumTypeEditor, setEnumTypeEditor] = useState<{
+    database: string;
+    name: string;
+    mode: "add" | "rename";
   } | null>(null);
   // トランザクション開始時に実際に渡した DB (出力ログの execDatabase 用)。PG は begin に渡す値が
   // search_path 扱いでプロファイルの DB 名のため、再実行に使えず null を記録する。
@@ -8270,6 +8279,13 @@ export default function App() {
     },
     [sessionId],
   );
+  const handleEditEnumType = useCallback(
+    (database: string, name: string, mode: "add" | "rename") => {
+      if (!sessionId) return;
+      setEnumTypeEditor({ database, name, mode });
+    },
+    [sessionId],
+  );
   const handleCreateRoutine = useCallback(
     (database: string, kind: EditableObjectKind) => {
       if (!sessionId) return;
@@ -12610,6 +12626,7 @@ export default function App() {
     onDropView: handleDropView,
     onRunRoutine: handleRunRoutine,
     onEditRoutine: handleEditRoutine,
+    onEditEnumType: handleEditEnumType,
     onCreateRoutine: handleCreateRoutine,
     onCreateSandbox: sessionId ? (db: string) => setSandboxCreateTarget({ database: db }) : undefined,
     onOpenSandbox: handleOpenSandbox,
@@ -14664,6 +14681,29 @@ export default function App() {
                   initialName={saveAsViewRequest.initialName}
                   onConfirm={handleSaveAsViewConfirm}
                   onClose={() => setSaveAsViewRequest(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {enumTypeEditor && sessionId && (
+              <Suspense fallback={null}>
+                <EnumTypeModal
+                  sessionId={sessionId}
+                  database={enumTypeEditor.database}
+                  name={enumTypeEditor.name}
+                  mode={enumTypeEditor.mode}
+                  readOnly={readOnly}
+                  onConfirm={async (sql) => {
+                    const target = enumTypeEditor;
+                    // 実行は通常の保守 DDL 経路 (read_only の拒否はバックエンド)。成功時だけ閉じる。
+                    if (await runMaintenanceDdl(sql, target.database)) {
+                      toast.success(translate("enumTypeDone", { name: target.name }));
+                      setEnumTypeEditor(null);
+                    }
+                  }}
+                  onClose={() => setEnumTypeEditor(null)}
                 />
               </Suspense>
             )}

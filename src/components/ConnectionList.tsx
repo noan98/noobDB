@@ -489,6 +489,11 @@ interface Props {
   /** ルーチン / トリガーの新規作成 (#1192)。DB の右クリックメニューから呼ぶ。 */
   onCreateRoutine?: (database: string, kind: EditableObjectKind) => void;
   /**
+   * PostgreSQL の ENUM 型の編集ダイアログ (#2127): 値の追加 (BEFORE / AFTER) と値の名前の変更。
+   * ENUM 型の右クリックメニューから呼ぶ。read_only では項目を無効化する。未指定ならメニュー項目を出さない。
+   */
+  onEditEnumType?: (database: string, name: string, mode: "add" | "rename") => void;
+  /**
    * 影響分析 (#1027): テーブル / ビュー / 列を参照している定義・スニペットを
    * ボトムパネルで検索する。`column` が null ならテーブル (ビュー) 自体。読み取りの
    * introspection だけなので read_only でも有効。未指定ならメニュー項目を出さない。
@@ -676,6 +681,7 @@ interface TreeActions {
   tableMenu: (e: ContextMenuTriggerEvent, db: string, tbl: string) => void;
   viewMenu: (e: ContextMenuTriggerEvent, db: string, view: ExplorerViewNode, asNode?: boolean) => void;
   routineMenu: (e: ContextMenuTriggerEvent, db: string, o: SchemaObject) => void;
+  enumTypeMenu: (e: ContextMenuTriggerEvent, db: string, o: SchemaObject) => void;
   columnMenu: (
     e: ContextMenuTriggerEvent,
     db: string,
@@ -966,6 +972,7 @@ const SCHEMA_OBJECT_ICONS: Record<string, IconName> = {
   trigger: "trigger",
   sequence: "hash",
   event: "clock",
+  type: "braces",
 };
 
 /** 非テーブルのスキーマオブジェクト (ルーチン / トリガー / 突き合わなかったビュー) の 1 行。
@@ -997,7 +1004,9 @@ const SchemaObjectRow = memo(function SchemaObjectRow({
       ? (ev) => actions.viewMenu(ev, db, { name: o.name, kind: "view", id: o.id }, false)
       : isEditableObjectKind(kind)
         ? (ev) => actions.routineMenu(ev, db, o)
-        : undefined;
+        : kind === "type" && o.detail === "enum"
+          ? (ev) => actions.enumTypeMenu(ev, db, o)
+          : undefined;
   return (
     <TreeRow
       data-tree-key={key}
@@ -1472,6 +1481,8 @@ function useHeaderLabel(): (group: ExplorerHeaderGroup) => string {
         return t("objGroupSequences");
       case "event":
         return t("objGroupEvents");
+      case "type":
+        return t("objGroupTypes");
     }
   };
 }
@@ -2048,6 +2059,7 @@ export const ConnectionList = memo(
       onDropView,
       onRunRoutine,
       onEditRoutine,
+      onEditEnumType,
       onCreateRoutine,
       onFindUsages,
       selectLimit,
@@ -3394,6 +3406,29 @@ export const ConnectionList = memo(
       setMenu({ x: e.clientX, y: e.clientY, items });
     };
 
+    // ENUM 型の右クリック (#2127): 値の追加 / 名前の変更。ダイアログで ALTER TYPE を見せてから実行する。
+    // 書き込みなので read_only では無効化する (拒否そのものはバックエンドが行う)。
+    const handleEnumTypeContextMenu = (e: ContextMenuTriggerEvent, db: string, o: SchemaObject) => {
+      if (!onEditEnumType) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const items: ContextMenuEntry[] = [
+        {
+          label: t("contextMenuEnumAddValue"),
+          onSelect: () => onEditEnumType(db, o.name, "add"),
+          disabled: activeReadOnly,
+          title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
+        },
+        {
+          label: t("contextMenuEnumRenameValue"),
+          onSelect: () => onEditEnumType(db, o.name, "rename"),
+          disabled: activeReadOnly,
+          title: activeReadOnly ? t("listReadOnlyTitle") : undefined,
+        },
+      ];
+      setMenu({ x: e.clientX, y: e.clientY, items });
+    };
+
     // ビューの右クリックメニュー: データ / 構造 (#1112)・定義の表示 / 編集 (#851)・
     // 影響分析 (#1027)・DROP VIEW。ルーチン/トリガーの定義編集は
     // `handleRoutineContextMenu` (#1192)。`asNode` が false のときは定義だけを開く旧来のビュー行
@@ -4101,6 +4136,7 @@ export const ConnectionList = memo(
     const tableMenuEvent = useEvent(handleTableContextMenu);
     const viewMenuEvent = useEvent(handleViewContextMenu);
     const routineMenuEvent = useEvent(handleRoutineContextMenu);
+    const enumTypeMenuEvent = useEvent(handleEnumTypeContextMenu);
     const columnMenuEvent = useEvent(handleColumnContextMenu);
     const insertColumnEvent = useEvent((db: string, tbl: string, column: string) =>
       onInsertColumn?.(db, tbl, column, false),
@@ -4125,6 +4161,7 @@ export const ConnectionList = memo(
         tableMenu: tableMenuEvent,
         viewMenu: viewMenuEvent,
         routineMenu: routineMenuEvent,
+        enumTypeMenu: enumTypeMenuEvent,
         columnMenu: columnMenuEvent,
         insertColumn: insertColumnEvent,
         indexMenu: indexMenuEvent,
@@ -4148,6 +4185,7 @@ export const ConnectionList = memo(
         tableMenuEvent,
         viewMenuEvent,
         routineMenuEvent,
+        enumTypeMenuEvent,
         columnMenuEvent,
         insertColumnEvent,
         indexMenuEvent,

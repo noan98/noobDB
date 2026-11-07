@@ -453,12 +453,102 @@ pub const SCHEMA_OBJECT_KINDS: &[&str] = &[
     "trigger",
     "sequence",
     "event",
+    "type",
 ];
 
 /// `SCHEMA_OBJECT_KINDS` のうち、ツリーの一覧・定義表示だけで使い、Where-used (参照元の
 /// 逆引き) では走査しない種別 (#1957)。`where_used::supports_kind` はこれを含まない。
 #[cfg(test)]
-pub const TREE_ONLY_SCHEMA_OBJECT_KINDS: &[&str] = &["sequence", "event"];
+pub const TREE_ONLY_SCHEMA_OBJECT_KINDS: &[&str] = &["sequence", "event", "type"];
+
+/// PostgreSQL のユーザー定義型 (`pg_type` を `t` で参照する問い合わせ) から、拡張が持つ型を除く条件 (#2127)。
+/// スキーマツリー (`PostgresConn::schema_objects`)・定義表示・ネイティブダンプが共有する
+/// (拡張の型は `CREATE EXTENSION` が作るので、独立した型としては扱わない)。
+pub const PG_TYPE_NOT_EXTENSION: &str =
+    "NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = t.oid AND d.deptype = 'e')";
+
+/// ツリーに出す型の条件 (`pg_type` を `t` で参照): ENUM / DOMAIN / 範囲型と、独立した複合型
+/// (`CREATE TYPE ... AS (...)`。表の行型は除く)。拡張が持つ型は除く ([`PG_TYPE_NOT_EXTENSION`])。
+pub const PG_LISTED_TYPE_FILTER: &str = "(t.typtype IN ('e', 'd', 'r') \
+     OR (t.typtype = 'c' AND EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = t.typrelid AND c.relkind = 'c'))) \
+     AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = t.oid AND d.deptype = 'e')";
+
+/// ツリーに出すルーチン (`pg_proc` を `p` で参照) から、型に付随して自動で作られるものを除く条件 (#2127)。
+/// 範囲型は同名のコンストラクタ関数 (`int4range(...)` など) と、対応する多範囲型のコンストラクタを
+/// 内部依存 (`deptype = 'i'`) として作る。`CREATE TYPE ... AS RANGE` が作り直すものなので、独立した関数として
+/// 並べず、スキーマ比較・同期の対象にもしない。
+pub const PG_ROUTINE_NOT_TYPE_MEMBER: &str = "NOT EXISTS (SELECT 1 FROM pg_depend d \
+     WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'i' \
+       AND d.refclassid = 'pg_type'::regclass)";
+
+/// `schema_objects` の `detail` に入れる型の種別名 (`pg_type.typtype` の 1 文字から)。
+/// PostgreSQL の `type` 種別 1 つで ENUM / DOMAIN / 複合型 / 範囲型を運び、ツリーはこの
+/// 値で見分ける (#2127)。
+pub fn pg_type_detail(typtype: &str) -> Option<&'static str> {
+    match typtype {
+        "e" => Some("enum"),
+        "d" => Some("domain"),
+        "c" => Some("composite"),
+        "r" => Some("range"),
+        _ => None,
+    }
+}
+
+/// PostgreSQL の型 1 つの `CREATE TYPE` / `CREATE DOMAIN` を組み立てる問い合わせ (#2127)。
+/// `$1` = スキーマ名、`$2` = 型名。結果は 0 行 (該当なし) か 1 行 1 列の DDL。
+/// スキーマツリーの定義表示とスキーマ比較・同期が共有する (同期は `rewrite_schema_qualifier` で
+/// 修飾を target のスキーマに置き換える)。ENUM の値は `ALTER TYPE ... ADD VALUE` の差分計算が
+/// 読み返すので、`quote_literal` で 1 行に並べる。
+pub const PG_TYPE_DEFINITION_SQL: &str = r#"
+SELECT CASE t.typtype
+  WHEN 'e' THEN format('CREATE TYPE %I.%I AS ENUM (%s);', n.nspname, t.typname,
+         COALESCE((SELECT string_agg(quote_literal(e.enumlabel), ', ' ORDER BY e.enumsortorder)
+                     FROM pg_enum e WHERE e.enumtypid = t.oid), ''))
+  WHEN 'd' THEN format('CREATE DOMAIN %I.%I AS %s%s%s%s%s;', n.nspname, t.typname,
+         pg_catalog.format_type(t.typbasetype, t.typtypmod),
+         CASE WHEN t.typcollation <> 0 AND t.typcollation IS DISTINCT FROM bt.typcollation
+              THEN ' COLLATE ' || (SELECT quote_ident(cn.nspname) || '.' || quote_ident(co.collname)
+                                     FROM pg_collation co JOIN pg_namespace cn ON cn.oid = co.collnamespace
+                                    WHERE co.oid = t.typcollation)
+              ELSE '' END,
+         CASE WHEN t.typdefault IS NOT NULL THEN ' DEFAULT ' || t.typdefault ELSE '' END,
+         CASE WHEN t.typnotnull THEN ' NOT NULL' ELSE '' END,
+         COALESCE((SELECT string_agg(' CONSTRAINT ' || quote_ident(k.conname) || ' ' || pg_get_constraintdef(k.oid), '' ORDER BY k.conname)
+                     FROM pg_constraint k WHERE k.contypid = t.oid AND k.contype = 'c'), ''))
+  WHEN 'c' THEN format('CREATE TYPE %I.%I AS (%s);', n.nspname, t.typname,
+         COALESCE((SELECT string_agg(quote_ident(a.attname) || ' ' || pg_catalog.format_type(a.atttypid, a.atttypmod)
+                          || CASE WHEN a.attcollation <> 0 AND a.attcollation IS DISTINCT FROM aty.typcollation
+                                  THEN ' COLLATE ' || (SELECT quote_ident(cn.nspname) || '.' || quote_ident(co.collname)
+                                                         FROM pg_collation co JOIN pg_namespace cn ON cn.oid = co.collnamespace
+                                                        WHERE co.oid = a.attcollation)
+                                  ELSE '' END, ', ' ORDER BY a.attnum)
+                     FROM pg_attribute a JOIN pg_type aty ON aty.oid = a.atttypid
+                    WHERE a.attrelid = t.typrelid AND a.attnum > 0 AND NOT a.attisdropped), ''))
+  WHEN 'r' THEN (SELECT format('CREATE TYPE %I.%I AS RANGE (SUBTYPE = %s%s%s%s%s);', n.nspname, t.typname,
+         pg_catalog.format_type(r.rngsubtype, NULL),
+         CASE WHEN NOT oc.opcdefault
+              THEN ', SUBTYPE_OPCLASS = ' || (SELECT quote_ident(on_.nspname) || '.' || quote_ident(oc.opcname)
+                                                FROM pg_namespace on_ WHERE on_.oid = oc.opcnamespace)
+              ELSE '' END,
+         CASE WHEN r.rngcollation <> 0 AND r.rngcollation IS DISTINCT FROM st.typcollation
+              THEN ', COLLATION = ' || (SELECT quote_ident(cn.nspname) || '.' || quote_ident(co.collname)
+                                          FROM pg_collation co JOIN pg_namespace cn ON cn.oid = co.collnamespace
+                                         WHERE co.oid = r.rngcollation)
+              ELSE '' END,
+         CASE WHEN r.rngcanonical::oid <> 0 THEN ', CANONICAL = ' || r.rngcanonical::regproc::text ELSE '' END,
+         CASE WHEN r.rngsubdiff::oid <> 0 THEN ', SUBTYPE_DIFF = ' || r.rngsubdiff::regproc::text ELSE '' END)
+         FROM pg_range r
+         JOIN pg_type st ON st.oid = r.rngsubtype
+         JOIN pg_opclass oc ON oc.oid = r.rngsubopc
+        WHERE r.rngtypid = t.oid)
+  END
+  FROM pg_type t
+  JOIN pg_namespace n ON n.oid = t.typnamespace
+  LEFT JOIN pg_type bt ON bt.oid = t.typbasetype
+ WHERE n.nspname = $1 AND t.typname = $2
+   AND (t.typtype IN ('e', 'd', 'r')
+        OR (t.typtype = 'c' AND EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = t.typrelid AND c.relkind = 'c')))
+"#;
 
 /// MySQL の EVENT 一覧の取得 SQL (#2100)。スキーマツリー (`MySqlConn::schema_objects`) と
 /// ネイティブダンプが共有する。`schema_expr` は `EVENT_SCHEMA` と比べる式 (バインド用の
@@ -504,8 +594,8 @@ pub fn event_detail(
 }
 
 /// A non-table schema object: a view, materialized view, stored
-/// procedure, function, trigger, sequence (PostgreSQL only), or event (MySQL only). `kind` is one of `view` /
-/// `materialized_view` / `procedure` / `function` / `trigger` / `sequence` / `event` so the UI can
+/// procedure, function, trigger, sequence / user-defined type (PostgreSQL only), or event (MySQL only). `kind` is one of `view` /
+/// `materialized_view` / `procedure` / `function` / `trigger` / `sequence` / `event` / `type` so the UI can
 /// group them; `name` is the object's identifier within the database/schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaObject {
@@ -518,7 +608,8 @@ pub struct SchemaObject {
     #[serde(default)]
     pub id: Option<String>,
     /// ツリーの補足表示 (#2100)。MySQL の EVENT の状態とスケジュール要約
-    /// (例: `ENABLED · EVERY 1 DAY`) だけが入れる。他の種別・ドライバでは `None`。
+    /// (例: `ENABLED · EVERY 1 DAY`) と、PostgreSQL の `type` の種類 (`enum` / `domain` /
+    /// `composite` / `range`, #2127) だけが入れる。他の種別・ドライバでは `None`。
     #[serde(default)]
     pub detail: Option<String>,
 }
