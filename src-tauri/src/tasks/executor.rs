@@ -790,6 +790,18 @@ fn build_connect_request(
         // 定期実行は対話セッションの固定ポートと衝突しないよう常に自動割当にする (#1630)。
         local_port: None,
     });
+    // PostgreSQL の内蔵ダンプは接続した DB しか読めない。タスクの `database` (接続先 DB 名) が
+    // プロファイルの既定 DB と違っても正しい DB を書き出せるよう、その DB へ接続する (#2131)。
+    // 外部ツール経路 (`pg_dump --dbname`) は元からタスクの DB を使う。MySQL の内蔵ダンプは
+    // スキーマ (DB) 名で修飾して読むので接続先は変えなくてよい。
+    let database = match action {
+        TaskAction::Dump {
+            database, options, ..
+        } if driver == DriverKind::Postgres && options.native && !database.trim().is_empty() => {
+            Some(database.trim().to_string())
+        }
+        _ => profile.database.clone(),
+    };
     Ok(ConnectRequest {
         profile_id: Some(profile.id.clone()),
         variant_of: None,
@@ -799,7 +811,7 @@ fn build_connect_request(
         port: profile.port,
         user: profile.user.clone(),
         password: String::new(),
-        database: profile.database.clone(),
+        database,
         ssh,
         file_path: profile.file_path.clone(),
         ssl_mode: profile.ssl_mode,
@@ -1154,5 +1166,37 @@ mod tests {
             let req = build_connect_request(&profile, &action).unwrap();
             assert_eq!(req.read_only, read_only, "{json}");
         }
+    }
+
+    /// PostgreSQL の内蔵ダンプは、タスクの DB (プロファイルの既定 DB と違ってもよい) へ接続する (#2131)。
+    #[test]
+    fn native_pg_dump_connects_to_the_task_database() {
+        let profile: ConnectionProfile = serde_json::from_value(serde_json::json!({
+            "id": "p0000001", "name": "p", "driver": "postgres", "host": "h", "port": 1,
+            "user": "u", "database": "profile_db",
+        }))
+        .unwrap();
+        let dump = |db: &str, native: bool| -> TaskAction {
+            serde_json::from_str(&format!(
+                r#"{{"kind":"dump","database":"{db}","output_path":"/tmp/o.sql","options":{{"singleTransaction":true,"routines":false,"events":false,"triggers":true,"addDropTable":true,"extendedInsert":true,"completeInsert":false,"noData":false,"noCreateInfo":false,"native":{native}}}}}"#
+            ))
+            .unwrap()
+        };
+        let db_of = |a: &TaskAction| build_connect_request(&profile, a).unwrap().database;
+        assert_eq!(db_of(&dump("other_db", true)).as_deref(), Some("other_db"));
+        assert_eq!(
+            db_of(&dump(" other_db ", true)).as_deref(),
+            Some("other_db")
+        );
+        // 外部ツールは `--dbname` でタスクの DB を使うので、接続は従来どおり。
+        assert_eq!(
+            db_of(&dump("other_db", false)).as_deref(),
+            Some("profile_db")
+        );
+        // MySQL は接続先を変えない。
+        let mut my = profile.clone();
+        my.driver = "mysql".into();
+        let req = build_connect_request(&my, &dump("other_db", true)).unwrap();
+        assert_eq!(req.database.as_deref(), Some("profile_db"));
     }
 }

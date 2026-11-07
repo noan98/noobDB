@@ -1,6 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, renderWithProviders, screen } from "./testUtils";
-import { Tooltip, TooltipBubble, useDelegatedTooltip } from "../components/Tooltip";
+import {
+  resetTooltipWarmth,
+  Tooltip,
+  TOOLTIP_OPEN_DELAY_MS,
+  TOOLTIP_SKIP_DELAY_MS,
+  TooltipBubble,
+  useDelegatedTooltip,
+} from "../components/Tooltip";
 import { LoadingButton } from "../components/LoadingButton";
 
 // 共有ツールチッププリミティブ (#814/#884) の挙動を固定するテスト。
@@ -18,6 +25,9 @@ function describedText(trigger: HTMLElement): string | null {
   const id = trigger.getAttribute("aria-describedby");
   return id ? (document.getElementById(id)?.textContent ?? null) : null;
 }
+
+// 他のテストが残したウォーム状態 (モジュール変数) を持ち越さない。
+beforeEach(() => resetTooltipWarmth());
 
 describe("Tooltip", () => {
   it("hover では openDelay 経過後に、フォーカスでは即座に表示される", () => {
@@ -309,5 +319,148 @@ describe("useDelegatedTooltip", () => {
     renderWithProviders(<DelegatedList openDelay={0} />);
     fireEvent.mouseEnter(screen.getByText("row3"));
     expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+});
+
+describe("Tooltip のウォームアップ (#2124)", () => {
+  function Pair() {
+    return (
+      <>
+        <Tooltip label="A">
+          <button type="button">a</button>
+        </Tooltip>
+        <Tooltip label="B">
+          <button type="button">b</button>
+        </Tooltip>
+      </>
+    );
+  }
+  const setup = () => {
+    renderWithProviders(<Pair />);
+    return { a: screen.getByRole("button", { name: "a" }), b: screen.getByRole("button", { name: "b" }) };
+  };
+
+  it("1 つ目は通常の遅延、隣へ移ると遅延なしで切り替わる", () => {
+    vi.useFakeTimers();
+    try {
+      const { a, b } = setup();
+      fireEvent.mouseEnter(a);
+      act(() => void vi.advanceTimersByTime(TOOLTIP_OPEN_DELAY_MS - 1));
+      expect(a.getAttribute("aria-describedby")).toBeNull();
+      act(() => void vi.advanceTimersByTime(1));
+      expect(a.getAttribute("aria-describedby")).not.toBeNull();
+
+      fireEvent.mouseLeave(a);
+      fireEvent.mouseEnter(b);
+      expect(b.getAttribute("aria-describedby")).not.toBeNull();
+      expect(describedText(b)).toBe("B");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("閉じてから TOOLTIP_SKIP_DELAY_MS を超えると通常の遅延に戻る", () => {
+    vi.useFakeTimers();
+    try {
+      const { a, b } = setup();
+      fireEvent.mouseEnter(a);
+      act(() => void vi.advanceTimersByTime(TOOLTIP_OPEN_DELAY_MS));
+      fireEvent.mouseLeave(a);
+
+      act(() => void vi.advanceTimersByTime(TOOLTIP_SKIP_DELAY_MS - 1));
+      fireEvent.mouseEnter(b);
+      expect(b.getAttribute("aria-describedby")).not.toBeNull();
+      fireEvent.mouseLeave(b);
+
+      act(() => void vi.advanceTimersByTime(TOOLTIP_SKIP_DELAY_MS + 1));
+      fireEvent.mouseEnter(a);
+      expect(a.getAttribute("aria-describedby")).toBeNull();
+      act(() => void vi.advanceTimersByTime(TOOLTIP_OPEN_DELAY_MS));
+      expect(a.getAttribute("aria-describedby")).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("クリックで閉じた直後は隣もウォームにならない", () => {
+    vi.useFakeTimers();
+    try {
+      const { a, b } = setup();
+      fireEvent.mouseEnter(a);
+      act(() => void vi.advanceTimersByTime(TOOLTIP_OPEN_DELAY_MS));
+      fireEvent.pointerDown(a);
+      fireEvent.mouseLeave(a);
+      fireEvent.mouseEnter(b);
+      expect(b.getAttribute("aria-describedby")).toBeNull();
+      act(() => void vi.advanceTimersByTime(TOOLTIP_OPEN_DELAY_MS));
+      expect(b.getAttribute("aria-describedby")).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("Escape で閉じた直後はウォームにならない", () => {
+    vi.useFakeTimers();
+    try {
+      const { a, b } = setup();
+      fireEvent.mouseEnter(a);
+      act(() => void vi.advanceTimersByTime(TOOLTIP_OPEN_DELAY_MS));
+      fireEvent.keyDown(window, { key: "Escape" });
+      expect(a.getAttribute("aria-describedby")).toBeNull();
+      fireEvent.mouseEnter(b);
+      expect(b.getAttribute("aria-describedby")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("遅延の途中で離れて表示に至らなかったときはウォームにならない", () => {
+    vi.useFakeTimers();
+    try {
+      const { a, b } = setup();
+      fireEvent.mouseEnter(a);
+      act(() => void vi.advanceTimersByTime(TOOLTIP_OPEN_DELAY_MS - 100));
+      fireEvent.mouseLeave(a);
+      fireEvent.mouseEnter(b);
+      expect(b.getAttribute("aria-describedby")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("フォーカス表示は従来どおり即時", () => {
+    const { a } = setup();
+    // キーボード操作 (Tab) の直後のフォーカスだけが表示対象。
+    fireEvent.keyDown(window, { key: "Tab" });
+    fireEvent.focus(a);
+    expect(a.getAttribute("aria-describedby")).not.toBeNull();
+  });
+
+  it("委譲ツールチップも同じウォーム状態を共有する", () => {
+    vi.useFakeTimers();
+    try {
+      function Cells() {
+        const { hovered, bind } = useDelegatedTooltip();
+        return (
+          <>
+            <span data-testid="c1" {...bind("one")} />
+            <span data-testid="c2" {...bind("two")} />
+            {hovered && <TooltipBubble label={hovered.label} anchor={hovered.rect} />}
+          </>
+        );
+      }
+      renderWithProviders(<Cells />);
+      const c1 = screen.getByTestId("c1");
+      const c2 = screen.getByTestId("c2");
+      fireEvent.mouseEnter(c1);
+      expect(screen.queryByRole("tooltip")).toBeNull();
+      act(() => void vi.advanceTimersByTime(TOOLTIP_OPEN_DELAY_MS));
+      expect(screen.getByRole("tooltip").textContent).toBe("one");
+      fireEvent.mouseLeave(c1);
+      fireEvent.mouseEnter(c2);
+      expect(screen.getByRole("tooltip").textContent).toBe("two");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

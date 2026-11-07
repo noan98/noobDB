@@ -99,6 +99,12 @@ describeMaybe("SQLite ハッピーパス E2E (#1245)", () => {
     await createFirst.waitForExist({ timeout: 30_000 });
     await expect(createFirst).toBeDisplayed();
 
+    // 起動スプラッシュはプロファイル一覧の読み込みが終わるまで全面を覆う。ボタン自体は
+    // 背後に描画済みで「存在」はするので、スプラッシュが外れるまで待ってから操作する
+    // (CI ランナーが遅いと読み込みが数秒かかり、クリックが遮られる: #2117)。
+    const splash = await $('[data-testid="splash-screen"]');
+    await splash.waitForExist({ timeout: 30_000, reverse: true });
+
     // 初回起動のオンボーディングツアーが全画面を覆い、背後のクリックを遮る (element click
     // intercepted)。ユーザーと同じくスキップして閉じてから先へ進む。
     const skip = await $('[data-testid="onboarding-skip"]');

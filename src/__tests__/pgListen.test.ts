@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
+import vectors from "./fixtures/pgListenChannelVectors.json";
 import {
   appendNotification,
+  channelCaseWarning,
   checkChannelName,
+  foldUnquotedChannel,
   countByChannel,
   formatReceivedAt,
   payloadPreview,
@@ -64,6 +67,39 @@ describe("checkChannelName (#2019)", () => {
   it("長さはバイトで数える (日本語は 1 文字 3 バイト)", () => {
     expect(checkChannelName("あ".repeat(21)).ok).toBe(true);
     expect(checkChannelName("あ".repeat(22))).toEqual({ ok: false, problem: "tooLong" });
+  });
+});
+
+describe("チャンネル名の共有ゴールデンベクタ (#2132)", () => {
+  it("Rust の validate_channel と同じ判定・畳み込みになる", () => {
+    expect(vectors.cases.length).toBeGreaterThan(0);
+    for (const c of vectors.cases) {
+      const got = checkChannelName(c.raw);
+      if (c.ok) {
+        expect(got, c.name).toEqual({ ok: true, name: c.channel });
+        expect(foldUnquotedChannel(c.channel as string), c.name).toBe(c.folded);
+      } else {
+        expect(got, c.name).toEqual({ ok: false, problem: c.problem });
+      }
+    }
+  });
+});
+
+describe("channelCaseWarning (#2132)", () => {
+  it("大文字を含む有効な名前だけ、畳んだ名前つきで注意を返す", () => {
+    expect(channelCaseWarning("OrdersChanged")).toEqual({
+      name: "OrdersChanged",
+      folded: "orderschanged",
+    });
+    expect(channelCaseWarning("  Orders ")).toEqual({ name: "Orders", folded: "orders" });
+    expect(channelCaseWarning("orders_changed")).toBeNull();
+    // 非 ASCII は PostgreSQL も畳まないので注意しない。
+    expect(channelCaseWarning("日本語")).toBeNull();
+  });
+
+  it("無効な名前 (空・長すぎ) には出さない (エラーが先に出る)", () => {
+    expect(channelCaseWarning("")).toBeNull();
+    expect(channelCaseWarning(`A${"x".repeat(63)}`)).toBeNull();
   });
 });
 

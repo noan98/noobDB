@@ -19,6 +19,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { RevealTbody } from "./RevealTbody";
 import { SkeletonTableRows } from "./Skeleton";
 import { Tooltip } from "./Tooltip";
+import { kindOfDataType, TypeGlyph } from "./TypeGlyph";
 import { Button } from "./ui";
 import { CopyButton } from "./CopyButton";
 import { AttachPartitionModal } from "./AttachPartitionModal";
@@ -107,6 +108,29 @@ function KeyBadge({ kind, label }: { kind: StructureKeyKind; label: string }) {
     >
       {kind === "pk" && <Icon name="key" size={ICON_SIZES.sm} />}
       {kind === "fk" && <Icon name="link" size={ICON_SIZES.sm} />}
+      {label}
+    </chakra.span>
+  );
+}
+
+/** NULL 可否の状態ピル。NOT NULL は強調し、NULL 可は淡色にする (#2125)。 */
+function NullablePill({ nullable, label }: { nullable: boolean; label: string }) {
+  return (
+    <chakra.span
+      display="inline-flex"
+      alignItems="center"
+      px="1.5"
+      py="0.25"
+      borderRadius="pill"
+      borderWidth="1px"
+      borderColor={nullable ? "app.borderSubtle" : "app.border"}
+      bg={nullable ? "transparent" : "app.surfaceMuted"}
+      fontSize="2xs"
+      fontWeight={nullable ? 400 : 700}
+      letterSpacing="wide"
+      color={nullable ? "app.textMuted" : "app.text"}
+      whiteSpace="nowrap"
+    >
       {label}
     </chakra.span>
   );
@@ -508,10 +532,16 @@ export function TableStructurePanel({
                       {r.comment && <chakra.div textStyle="caption">{r.comment}</chakra.div>}
                     </chakra.td>
                     <chakra.td css={tdCss} fontFamily="var(--font-mono)" color="app.textSecondary">
-                      {r.dataType}
+                      <Flex align="center" gap="1.5">
+                        <TypeGlyph kind={kindOfDataType(r.dataType)} tooltip />
+                        {r.dataType}
+                      </Flex>
                     </chakra.td>
-                    <chakra.td css={tdCss} color={r.nullable ? "app.textMuted" : "app.text"}>
-                      {r.nullable ? t("structureNullableYes") : t("structureNullableNo")}
+                    <chakra.td css={tdCss}>
+                      <NullablePill
+                        nullable={r.nullable}
+                        label={r.nullable ? t("structureNullableYes") : t("structureNullableNo")}
+                      />
                     </chakra.td>
                     <chakra.td
                       css={tdCss}
