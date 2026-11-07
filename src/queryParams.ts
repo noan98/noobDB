@@ -186,6 +186,23 @@ function definitionRanges(masked: string): [number, number][] {
  * SQLite の `$name` / `@name` と MySQL の `@var` は検出しない。`PREPARE` と
  * `CREATE FUNCTION|PROCEDURE` の文は丸ごと検出対象外 (中の `$n` は定義の引数)。
  */
+/**
+ * `masked[i]` の `[` が添字 (配列スライス) か配列リテラルか。直前 (空白を除く) が識別子・`)`・`]` なら
+ * 添字。ただし識別子がキーワード `ARRAY` のときは配列コンストラクタ。それ以外 (`[` `,` `(` 演算子など) は
+ * 配列リテラル。
+ */
+function bracketKind(masked: string, i: number): "subscript" | "array" {
+  let k = i - 1;
+  while (k >= 0 && /\s/.test(masked[k])) k--;
+  if (k < 0) return "array";
+  const ch = masked[k];
+  if (ch === ")" || ch === "]") return "subscript";
+  if (!isWordCh(ch)) return "array";
+  let start = k;
+  while (start > 0 && isWordCh(masked[start - 1])) start--;
+  return masked.slice(start, k + 1).toUpperCase() === "ARRAY" ? "array" : "subscript";
+}
+
 export function scanNativePlaceholders(sql: string, driver?: string): NativePlaceholder[] {
   const masked = maskLiterals(sql, driver);
   // マスクは長さを変えない前提 (1 文字ずつ空白化する)。万一ずれたら安全側で何も検出しない。
@@ -195,8 +212,9 @@ export function scanNativePlaceholders(sql: string, driver?: string): NativePlac
   const excluded = definitionRanges(masked);
   let exIdx = 0;
   let maxIndex = 0;
-  // `[` `]` の深さ。PostgreSQL の配列スライス (`arr[1 : n]` / `arr[:n]`) の `:n` を名前と誤認しない。
-  let bracketDepth = 0;
+  // 開いている `[` の種類のスタック。添字 (`arr[1 : n]` / `arr[:n]`) の中の `:n` は配列スライスなので
+  // 名前と誤認しない。`ARRAY[:a, :b]` や入れ子の配列リテラル `[[...]]` の中は通常どおり検出する。
+  const brackets: ("subscript" | "array")[] = [];
   let i = 0;
   while (i < n) {
     while (exIdx < excluded.length && i >= excluded[exIdx][1]) exIdx++;
@@ -206,8 +224,8 @@ export function scanNativePlaceholders(sql: string, driver?: string): NativePlac
       continue;
     }
     const c = masked[i];
-    if (c === "[") bracketDepth++;
-    else if (c === "]") bracketDepth = Math.max(0, bracketDepth - 1);
+    if (c === "[") brackets.push(bracketKind(masked, i));
+    else if (c === "]") brackets.pop();
     if (c === "?" && (driver === "mysql" || driver === "sqlite")) {
       let j = i + 1;
       if (driver === "sqlite" && /[0-9]/.test(masked[j] ?? "")) {
@@ -240,7 +258,7 @@ export function scanNativePlaceholders(sql: string, driver?: string): NativePlac
       }
       const prev = masked[i - 1];
       if (
-        bracketDepth === 0 &&
+        brackets[brackets.length - 1] !== "subscript" &&
         /[A-Za-z_]/.test(masked[i + 1] ?? "") &&
         !isWordCh(prev) &&
         prev !== ":" &&
@@ -297,10 +315,14 @@ export function substituteNativePlaceholders(
   let pos = 0;
   for (const p of found) {
     out += sql.slice(pos, p.start);
-    out +=
-      p.key in values
-        ? renderParamValue(driver, values[p.key], types[p.key] ?? "text")
-        : sql.slice(p.start, p.end);
+    if (p.key in values) {
+      const rendered = renderParamValue(driver, values[p.key], types[p.key] ?? "text");
+      // 負数は括弧で包む。`10-?` に -2 を入れると `10--2` となり、`--` 以降が行コメントになって
+      // 意味が変わるため (`10-(-2)` にする)。
+      out += rendered.startsWith("-") ? `(${rendered})` : rendered;
+    } else {
+      out += sql.slice(p.start, p.end);
+    }
     pos = p.end;
   }
   return out + sql.slice(pos);

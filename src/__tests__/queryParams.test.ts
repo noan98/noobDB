@@ -193,6 +193,14 @@ const DETECT_VECTORS: { name: string; driver: string; sql: string; keys: string[
   { name: "PG の配列スライス (下限なし)", driver: "postgres", sql: "SELECT arr[:n] FROM t", keys: [] },
   { name: "PG の配列スライス (関数)", driver: "postgres", sql: "SELECT arr[lower(r):hi] FROM t", keys: [] },
   { name: "角括弧の外の :name は拾う", driver: "postgres", sql: "SELECT arr[1], :x FROM t", keys: [":x"] },
+  {
+    name: "ARRAY[...] の中の :name は拾う",
+    driver: "postgres",
+    sql: "SELECT ARRAY[:a, :b], :c",
+    keys: [":a", ":b", ":c"],
+  },
+  { name: "入れ子の配列リテラルの中も拾う", driver: "postgres", sql: "SELECT array[[:a]]", keys: [":a"] },
+  { name: "式の結果への添字はスライス", driver: "postgres", sql: "SELECT (f(x))[1:n]", keys: [] },
   { name: "PG の E'' 文字列の \\' を越えない", driver: "postgres", sql: "SELECT E'it\\'s ? $1'", keys: [] },
   { name: "MySQL の \\' を越えない", driver: "mysql", sql: "SELECT 'a\\' ? :x'", keys: [] },
   {
@@ -278,6 +286,15 @@ describe("substituteNativePlaceholders / substituteAllParams", () => {
     expect(
       substituteNativePlaceholders("WHERE a = $1 OR b = $1", "postgres", { $1: "7" }, { $1: "number" }),
     ).toBe("WHERE a = 7 OR b = 7");
+  });
+
+  it("負数は括弧で包み、直前の - と合わさって -- コメントにならない", () => {
+    expect(substituteNativePlaceholders("SELECT 10-?", "sqlite", { "?1": "-2" }, { "?1": "number" })).toBe(
+      "SELECT 10-(-2)",
+    );
+    expect(substituteNativePlaceholders("SELECT $1", "postgres", { $1: "5" }, { $1: "number" })).toBe(
+      "SELECT 5",
+    );
   });
 
   it("値に含まれる ? や引用符でインジェクションしない", () => {
