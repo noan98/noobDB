@@ -63,7 +63,8 @@ fn build_cell_query(
         ));
     }
     let table_ref = match (driver, database.map(str::trim).filter(|d| !d.is_empty())) {
-        (DriverKind::Sqlite, _) | (_, None) => quote_ident(driver, table),
+        (DriverKind::Sqlite, db) => crate::db::sync::sqlite_table_ref(db.unwrap_or(""), table),
+        (_, None) => quote_ident(driver, table),
         (_, Some(db)) => format!("{}.{}", quote_ident(driver, db), quote_ident(driver, table)),
     };
     let mut conds = Vec::with_capacity(key.len());
@@ -282,7 +283,8 @@ pub(crate) async fn probe_blob(
     key: &[CellKeyPart],
 ) -> Result<Option<CellBlobProbe>> {
     let driver = session.conn.driver_kind();
-    let sql = build_cell_probe_select(driver, database, table, column, key)?;
+    let resolved = database.map(|d| session.conn.resolve_attached_database(d));
+    let sql = build_cell_probe_select(driver, resolved.as_deref(), table, column, key)?;
     let result = session.conn.execute(&sql, database).await?;
     if result.rows.len() != 1 {
         return Err(AppError::InvalidInput(format!(
@@ -332,7 +334,8 @@ async fn fetch_probe_and_body(
     key: &[CellKeyPart],
 ) -> Result<Option<(CellBlobProbe, Option<Vec<u8>>)>> {
     let driver = session.conn.driver_kind();
-    let sql = build_cell_probe_body_select(driver, database, table, column, key)?;
+    let resolved = database.map(|d| session.conn.resolve_attached_database(d));
+    let sql = build_cell_probe_body_select(driver, resolved.as_deref(), table, column, key)?;
     let result = session.conn.execute(&sql, database).await?;
     if result.rows.len() != 1 {
         return Err(AppError::InvalidInput(format!(

@@ -146,6 +146,19 @@ describe("AlterTableModal SQLite のテーブル再作成 (#1888)", () => {
     expect(screen.queryByText(/rebuild_error/)).toBeNull();
   });
 
+  it("アタッチしたデータベースの表の再作成の拒否を翻訳して出す (#2129)", async () => {
+    vi.mocked(api.planSqliteTableRebuild).mockRejectedValue(
+      new Error("invalid input: rebuild_error:attached_unsupported:"),
+    );
+    renderModal();
+    const typeInput = (await screen.findAllByLabelText(new RegExp(`${t("createTableColType")}: memo`)))[0];
+    fireEvent.change(typeInput, { target: { value: "INTEGER" } });
+    expect(
+      await screen.findByText(new RegExp(t("alterTableRebuildErrAttachedUnsupported").slice(0, 12))),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/rebuild_error/)).toBeNull();
+  });
+
   it("生成中は実行できない", async () => {
     vi.mocked(api.planSqliteTableRebuild).mockReturnValue(new Promise(() => {}));
     renderModal();

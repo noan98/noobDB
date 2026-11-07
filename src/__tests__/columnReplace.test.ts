@@ -47,8 +47,9 @@ describe("buildColumnReplaceSql: 通常置換 (3 ドライバ)", () => {
       'UPDATE "app"."users" SET "url" = REPLACE("url", \'http://\', \'https://\') WHERE POSITION(\'http://\' IN "url") > 0;',
     );
   });
-  it("SQLite はデータベース修飾なし", () => {
-    expect(sqlOf(base({ driver: "sqlite" }))).toBe(
+  it("SQLite は main なら修飾なし、アタッチした別名なら修飾する (#2129)", () => {
+    expect(sqlOf(base({ driver: "sqlite" }))).toContain('UPDATE "app"."users" SET');
+    expect(sqlOf(base({ driver: "sqlite", database: "main" }))).toBe(
       'UPDATE "users" SET "url" = REPLACE("url", \'http://\', \'https://\') WHERE INSTR("url", \'http://\') > 0;',
     );
   });
@@ -89,7 +90,7 @@ describe("buildColumnReplaceCountSql (#1536)", () => {
     expect(countOf(base({ driver: "postgres" }))).toBe(
       'SELECT COUNT(*) FROM "app"."users" WHERE POSITION(\'http://\' IN "url") > 0',
     );
-    expect(countOf(base({ driver: "sqlite" }))).toBe(
+    expect(countOf(base({ driver: "sqlite", database: "main" }))).toBe(
       'SELECT COUNT(*) FROM "users" WHERE INSTR("url", \'http://\') > 0',
     );
   });

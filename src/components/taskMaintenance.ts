@@ -1,6 +1,6 @@
 import type { I18nKey } from "../i18n";
 import type { TaskMaintenanceKind } from "../api/tauri";
-import { quoteIdentFor } from "./sqlDialect";
+import { qualifiedTableName } from "./sqlDialect";
 import type { IconName } from "./Icon";
 
 /**
@@ -83,10 +83,7 @@ export function buildTaskMaintenanceStatements(
   const db = database?.trim() ?? "";
   return {
     sql: targets.map((table) => {
-      const name =
-        driver === "sqlite" || db === ""
-          ? quoteIdentFor(driver, table)
-          : `${quoteIdentFor(driver, db)}.${quoteIdentFor(driver, table)}`;
+      const name = qualifiedTableName(driver, db, table);
       if (driver === "mysql")
         return kind === "analyze" ? `ANALYZE TABLE ${name};` : `OPTIMIZE TABLE ${name};`;
       if (kind === "analyze") return `ANALYZE ${name};`;

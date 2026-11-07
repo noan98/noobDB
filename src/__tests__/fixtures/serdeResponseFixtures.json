@@ -717,6 +717,12 @@
     "port": 3306,
     "read_only": false,
     "skip_history": false,
+    "sqlite_attachments": [
+      {
+        "path": "/data/archive.db",
+        "alias": "archive"
+      }
+    ],
     "ssh": {
       "auth_method": "key",
       "host": "jump.example.com",
@@ -764,6 +770,12 @@
       "port": 3306,
       "read_only": false,
       "skip_history": false,
+      "sqlite_attachments": [
+        {
+          "path": "/data/archive.db",
+          "alias": "archive"
+        }
+      ],
       "ssh": {
         "auth_method": "key",
         "host": "jump.example.com",
@@ -810,6 +822,12 @@
       "port": 3306,
       "read_only": false,
       "skip_history": false,
+      "sqlite_attachments": [
+        {
+          "path": "/data/archive.db",
+          "alias": "archive"
+        }
+      ],
       "ssh": {
         "auth_method": "agent",
         "host": "jump.example.com",
@@ -856,6 +874,12 @@
       "port": 3306,
       "read_only": false,
       "skip_history": false,
+      "sqlite_attachments": [
+        {
+          "path": "/data/archive.db",
+          "alias": "archive"
+        }
+      ],
       "ssh": {
         "auth_method": "password",
         "host": "jump.example.com",
@@ -902,6 +926,12 @@
       "port": 3306,
       "read_only": false,
       "skip_history": false,
+      "sqlite_attachments": [
+        {
+          "path": "/data/archive.db",
+          "alias": "archive"
+        }
+      ],
       "ssh": {
         "auth_method": "key",
         "host": "jump.example.com",
@@ -948,6 +978,12 @@
       "port": 3306,
       "read_only": false,
       "skip_history": false,
+      "sqlite_attachments": [
+        {
+          "path": "/data/archive.db",
+          "alias": "archive"
+        }
+      ],
       "ssh": {
         "auth_method": "agent",
         "host": "jump.example.com",
@@ -994,6 +1030,12 @@
       "port": 3306,
       "read_only": false,
       "skip_history": false,
+      "sqlite_attachments": [
+        {
+          "path": "/data/archive.db",
+          "alias": "archive"
+        }
+      ],
       "ssh": {
         "auth_method": "key",
         "host": "jump.example.com",

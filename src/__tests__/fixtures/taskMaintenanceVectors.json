@@ -208,15 +208,39 @@
    "sql": null
   },
   {
-   "name": "sqlite analyze は database を無視",
+   "name": "sqlite analyze は main なら修飾しない",
    "driver": "sqlite",
-   "database": "ignored",
+   "database": "main",
    "targets": [
     "t"
    ],
    "kind": "analyze",
    "sql": [
     "ANALYZE \"t\";"
+   ]
+  },
+  {
+   "name": "sqlite analyze はアタッチした別名で修飾する",
+   "driver": "sqlite",
+   "database": "ext",
+   "targets": [
+    "t"
+   ],
+   "kind": "analyze",
+   "sql": [
+    "ANALYZE \"ext\".\"t\";"
+   ]
+  },
+  {
+   "name": "sqlite reindex はアタッチした別名で修飾する",
+   "driver": "sqlite",
+   "database": "ext",
+   "targets": [
+    "t"
+   ],
+   "kind": "reindex",
+   "sql": [
+    "REINDEX \"ext\".\"t\";"
    ]
   },
   {

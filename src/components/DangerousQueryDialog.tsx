@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
-import type { DangerFinding, DangerKind } from "../dangerousSql";
+import type { DangerFinding, DangerFindingKind } from "../dangerousSql";
 import { typedConfirmMatches } from "../typeToConfirm";
 import { semanticColorToken } from "../semanticColors";
 import { AiImpactAnalysis } from "./AiImpactAnalysis";
@@ -92,13 +92,14 @@ export interface PreflightImpact {
   allRows: boolean;
 }
 
-const KIND_LABEL_KEYS: Record<DangerKind, Parameters<ReturnType<typeof useT>>[0]> = {
+const KIND_LABEL_KEYS: Record<DangerFindingKind, Parameters<ReturnType<typeof useT>>[0]> = {
   deleteNoWhere: "dangerousKindDeleteNoWhere",
   updateNoWhere: "dangerousKindUpdateNoWhere",
   drop: "dangerousKindDrop",
   truncate: "dangerousKindTruncate",
   dropColumn: "dangerousKindDropColumn",
   dropConstraint: "dangerousKindDropConstraint",
+  sqliteAttach: "dangerousKindSqliteAttach",
 };
 
 export function DangerousQueryDialog({

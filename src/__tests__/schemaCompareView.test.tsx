@@ -129,6 +129,52 @@ describe("SchemaCompareView の非同期整合 (#1599)", () => {
   });
 });
 
+describe("SchemaCompareView: アタッチした SQLite がターゲットのとき適用できない (#2129)", () => {
+  const profiles = [
+    makeProfile({ id: "p-a", name: "Alpha", driver: "sqlite" }),
+    makeProfile({ id: "p-b", name: "Beta", driver: "sqlite" }),
+  ];
+
+  async function openPlan(targetDb: string) {
+    vi.mocked(api.connect).mockResolvedValue({ session_id: "s1" } as never);
+    vi.mocked(api.listDatabases).mockResolvedValue(["main", "ext"]);
+    vi.mocked(api.compareSchema).mockResolvedValue({
+      source_driver: "sqlite",
+      target_driver: "sqlite",
+      tables: [{ name: "users", status: "source_only", columns: [], foreign_keys: [] }],
+    } as never);
+    vi.mocked(api.generateSyncSql).mockResolvedValue({
+      statements: [
+        { sql: "CREATE TABLE users (id int)", table: "users", kind: "create_table", destructive: false },
+      ],
+      warnings: [],
+    } as never);
+    renderWithProviders(<SchemaCompareView profiles={profiles} onClose={() => {}} />);
+    const boxes = () => screen.getAllByRole("combobox") as HTMLElement[];
+    chooseListboxOption(boxes()[0], "p-a");
+    await waitFor(() => expect(boxes()[1]).not.toBeDisabled());
+    chooseListboxOption(boxes()[2], "p-b");
+    await waitFor(() => expect(boxes()[3]).not.toBeDisabled());
+    await waitFor(() => expect(boxes()[3]).toHaveTextContent("main"));
+    chooseListboxOption(boxes()[3], targetDb);
+    fireEvent.click(screen.getByText(t("schemaCompareCompare")));
+    fireEvent.click(await screen.findByText(t("schemaCompareGenerate")));
+    return screen.findByText(t("schemaCompareApply", { count: 1 }));
+  }
+
+  it("別名がターゲットなら「適用」を無効にして理由を出す", async () => {
+    const apply = await openPlan("ext");
+    expect(apply.closest("button")).toBeDisabled();
+    expect(screen.getByText(t("schemaCompareApplyAttachedUnsupported"))).toBeInTheDocument();
+  });
+
+  it("main がターゲットなら従来どおり適用できる", async () => {
+    const apply = await openPlan("main");
+    expect(apply.closest("button")).not.toBeDisabled();
+    expect(screen.queryByText(t("schemaCompareApplyAttachedUnsupported"))).not.toBeInTheDocument();
+  });
+});
+
 /** 異名の 2 表のデータ比較 (#1880)。 */
 describe("SchemaCompareView の異名テーブル比較 (#1880)", () => {
   it("ターゲットの表を選ぶと targetTable を付けて比較し、既定は同名 (null)", async () => {

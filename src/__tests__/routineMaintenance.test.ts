@@ -197,6 +197,55 @@ END`;
       statements: ['DROP TRIGGER IF EXISTS "t1";', `${trg};`],
     });
   });
+
+  it("アタッチした別名では DROP / CREATE の両方を別名で修飾する (#2129)", () => {
+    const r = buildApplyRoutineStatements({
+      driver: "sqlite",
+      database: "ext",
+      kind: "trigger",
+      name: "t1",
+      originalDdl: trg,
+      ddl: `${trg};`,
+    });
+    expect(r).toEqual({
+      ok: true,
+      statements: [
+        'DROP TRIGGER IF EXISTS "ext"."t1";',
+        `${trg.replace("TRIGGER t1", 'TRIGGER "ext"."t1"')};`,
+      ],
+    });
+    // 引用付きの名前・IF NOT EXISTS も読み取って修飾する。
+    const q = buildApplyRoutineStatements({
+      driver: "sqlite",
+      database: "ext",
+      kind: "trigger",
+      name: null,
+      originalDdl: null,
+      ddl: 'CREATE TRIGGER IF NOT EXISTS "we""ird" AFTER INSERT ON a BEGIN SELECT 1; END',
+    });
+    expect(q).toEqual({
+      ok: true,
+      statements: ['CREATE TRIGGER IF NOT EXISTS "ext"."we""ird" AFTER INSERT ON a BEGIN SELECT 1; END;'],
+    });
+  });
+
+  it("別名で名前を修飾できない定義 (修飾済み・TEMP) は拒否する (#2129)", () => {
+    for (const ddl of [
+      "CREATE TRIGGER main.t1 AFTER INSERT ON a BEGIN SELECT 1; END",
+      "CREATE TEMP TRIGGER t1 AFTER INSERT ON a BEGIN SELECT 1; END",
+    ]) {
+      expect(
+        buildApplyRoutineStatements({
+          driver: "sqlite",
+          database: "ext",
+          kind: "trigger",
+          name: null,
+          originalDdl: null,
+          ddl,
+        }),
+      ).toEqual({ ok: false, error: "routineEditErrAttachedTrigger" });
+    }
+  });
 });
 
 describe("validation", () => {

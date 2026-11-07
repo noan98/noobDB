@@ -42,7 +42,7 @@
       }
     },
     {
-      "note": "DB 修飾 (SQLite は修飾しない)",
+      "note": "DB 修飾 (SQLite はアタッチした別名のときだけ修飾する)",
       "table": "t",
       "database": "app",
       "where": "id > 10",
@@ -50,11 +50,28 @@
       "expected": {
         "mysql": "DELETE FROM `app`.`t` WHERE (id > 10) LIMIT 1",
         "postgres": "DELETE FROM \"app\".\"t\" WHERE (tableoid, ctid) IN (SELECT tableoid, ctid FROM \"app\".\"t\" WHERE (id > 10) LIMIT 1)",
-        "sqlite": "DELETE FROM \"t\" WHERE rowid IN (SELECT rowid FROM \"t\" WHERE (id > 10) LIMIT 1)"
+        "sqlite": "DELETE FROM \"app\".\"t\" WHERE rowid IN (SELECT rowid FROM \"app\".\"t\" WHERE (id > 10) LIMIT 1)"
       },
       "count": {
         "mysql": "SELECT COUNT(*) FROM `app`.`t` WHERE (id > 10)",
         "postgres": "SELECT COUNT(*) FROM \"app\".\"t\" WHERE (id > 10)",
+        "sqlite": "SELECT COUNT(*) FROM \"app\".\"t\" WHERE (id > 10)"
+      }
+    },
+    {
+      "note": "SQLite の main は修飾しない (MySQL / PostgreSQL は従来どおり修飾)",
+      "table": "t",
+      "database": "main",
+      "where": "id > 10",
+      "batchSize": 1,
+      "expected": {
+        "mysql": "DELETE FROM `main`.`t` WHERE (id > 10) LIMIT 1",
+        "postgres": "DELETE FROM \"main\".\"t\" WHERE (tableoid, ctid) IN (SELECT tableoid, ctid FROM \"main\".\"t\" WHERE (id > 10) LIMIT 1)",
+        "sqlite": "DELETE FROM \"t\" WHERE rowid IN (SELECT rowid FROM \"t\" WHERE (id > 10) LIMIT 1)"
+      },
+      "count": {
+        "mysql": "SELECT COUNT(*) FROM `main`.`t` WHERE (id > 10)",
+        "postgres": "SELECT COUNT(*) FROM \"main\".\"t\" WHERE (id > 10)",
         "sqlite": "SELECT COUNT(*) FROM \"t\" WHERE (id > 10)"
       }
     },
@@ -67,12 +84,12 @@
       "expected": {
         "mysql": "DELETE FROM `d``b`.`we``ird\"t` WHERE (x = 1) LIMIT 10",
         "postgres": "DELETE FROM \"d`b\".\"we`ird\"\"t\" WHERE (tableoid, ctid) IN (SELECT tableoid, ctid FROM \"d`b\".\"we`ird\"\"t\" WHERE (x = 1) LIMIT 10)",
-        "sqlite": "DELETE FROM \"we`ird\"\"t\" WHERE rowid IN (SELECT rowid FROM \"we`ird\"\"t\" WHERE (x = 1) LIMIT 10)"
+        "sqlite": "DELETE FROM \"d`b\".\"we`ird\"\"t\" WHERE rowid IN (SELECT rowid FROM \"d`b\".\"we`ird\"\"t\" WHERE (x = 1) LIMIT 10)"
       },
       "count": {
         "mysql": "SELECT COUNT(*) FROM `d``b`.`we``ird\"t` WHERE (x = 1)",
         "postgres": "SELECT COUNT(*) FROM \"d`b\".\"we`ird\"\"t\" WHERE (x = 1)",
-        "sqlite": "SELECT COUNT(*) FROM \"we`ird\"\"t\" WHERE (x = 1)"
+        "sqlite": "SELECT COUNT(*) FROM \"d`b\".\"we`ird\"\"t\" WHERE (x = 1)"
       }
     },
     {

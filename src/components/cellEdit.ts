@@ -1,6 +1,6 @@
 import { CellValue, Column, TableColumnInfo, TableRowIdentity } from "../api/tauri";
 import type { I18nKey } from "../i18n";
-import { insertFunctionSql, quoteIdentFor, type InsertFunctionId } from "./sqlDialect";
+import { insertFunctionSql, qualifiedTableName, quoteIdentFor, type InsertFunctionId } from "./sqlDialect";
 
 /**
  * Inline cell edits awaiting Preview/Apply.
@@ -356,13 +356,6 @@ export function hasAmbiguousIdentity(rows: CellValue[][], indices: number[]): bo
   return false;
 }
 
-export function qualifiedTableRef(driver: string, database: string, table: string): string {
-  // SQLite has a single namespace per connection — the synthetic "main"
-  // database label is for the UI tree, not the SQL itself.
-  if (driver === "sqlite") return quoteIdentFor(driver, table);
-  return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
-}
-
 export function quoteString(driver: string, s: string): string {
   // Single quotes are doubled in every dialect. Backslash is only special
   // inside MySQL string literals; Postgres/SQLite (with the default
@@ -645,7 +638,7 @@ export interface BuildUpdateInput {
  */
 export function buildUpdateStatements(input: BuildUpdateInput): string[] {
   if (input.pkIndices.length === 0) return [];
-  const ref = qualifiedTableRef(input.driver, input.database, input.table);
+  const ref = qualifiedTableName(input.driver, input.database, input.table);
   const stmts: string[] = [];
   const emitted = new Set<string>();
   for (let rowIdx = 0; rowIdx < input.rows.length; rowIdx++) {
@@ -893,7 +886,7 @@ export function buildBlobUpdateStatement(input: {
   if (!col || pkIndices.length === 0 || !/^[0-9a-fA-F]*$/.test(hex) || hex.length % 2 !== 0) {
     return null;
   }
-  const ref = qualifiedTableRef(driver, input.database, input.table);
+  const ref = qualifiedTableName(driver, input.database, input.table);
   const where = pkIndices.map((i) => whereEqualsClause(driver, columns[i], row[i]));
   return `UPDATE ${ref} SET ${quoteIdentFor(driver, col.name)} = ${blobLiteral(driver, hex.toLowerCase())} WHERE ${where.join(" AND ")};`;
 }
@@ -960,7 +953,7 @@ export function buildInsertStatements(input: {
   columns: Column[];
   inserts: PendingInsertRow[];
 }): string[] {
-  const ref = qualifiedTableRef(input.driver, input.database, input.table);
+  const ref = qualifiedTableName(input.driver, input.database, input.table);
   const stmts: string[] = [];
   for (const row of input.inserts) {
     const cols: string[] = [];
@@ -1005,7 +998,7 @@ export function buildDeleteStatements(input: {
   deleteKeys: Set<string>;
 }): string[] {
   if (input.pkIndices.length === 0 || input.deleteKeys.size === 0) return [];
-  const ref = qualifiedTableRef(input.driver, input.database, input.table);
+  const ref = qualifiedTableName(input.driver, input.database, input.table);
   const stmts: string[] = [];
   const emitted = new Set<string>();
   for (let rowIdx = 0; rowIdx < input.rows.length; rowIdx++) {
@@ -1130,7 +1123,7 @@ export function buildRowSql(input: BuildRowSqlInput, kind: RowSqlKind): string[]
   const { driver, database, table, columns, rows, pkIndices } = input;
   if (columns.length === 0) return [];
   if ((kind === "update" || kind === "delete") && pkIndices.length === 0) return [];
-  const ref = qualifiedTableRef(driver, database, table);
+  const ref = qualifiedTableName(driver, database, table);
   const pkSet = new Set(pkIndices);
   const stmts: string[] = [];
   for (const row of rows) {
@@ -1217,7 +1210,7 @@ export function buildInsertClipboard(
     const stmts = buildRowSql({ driver, database, table, columns, rows: validRows, pkIndices: [] }, "insert");
     return { sql: stmts.join("\n"), tableResolved };
   }
-  const ref = qualifiedTableRef(driver, database, table);
+  const ref = qualifiedTableName(driver, database, table);
   const cols = columns.map((c) => quoteIdentFor(driver, c.name)).join(", ");
   const tuples = validRows.map(
     (row) => `(${columns.map((c, i) => rowValueLiteral(driver, row[i], c)).join(", ")})`,

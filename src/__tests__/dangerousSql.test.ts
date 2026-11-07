@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   analyzeDangerousSql,
+  analyzeSqliteAttach,
   appendWhereTemplate,
   buildPkWhereTemplate,
   isReadOnlySql,
@@ -622,5 +623,44 @@ describe("変異テスト補強 その 2 (#1663)", () => {
     expect(analyzeDangerousSql("DELETE FROM dbo.[my table]")).toEqual([
       { kind: "deleteNoWhere", target: "dbo.my table" },
     ]);
+  });
+});
+
+describe("analyzeSqliteAttach (#2129)", () => {
+  const attach = "ATTACH DATABASE '/tmp/a.db' AS ext";
+
+  it("SQLite の ATTACH / DETACH を警告する", () => {
+    expect(analyzeSqliteAttach(attach, "sqlite").map((f) => f.kind)).toEqual(["sqliteAttach"]);
+    expect(analyzeSqliteAttach("DETACH DATABASE ext", "sqlite").map((f) => f.kind)).toEqual(["sqliteAttach"]);
+    expect(analyzeSqliteAttach("ATTACH '/tmp/a.db' AS ext", "sqlite")).toHaveLength(1);
+  });
+
+  it("大文字小文字を区別しない", () => {
+    expect(analyzeSqliteAttach("attach database 'x' as e", "sqlite")).toHaveLength(1);
+    expect(analyzeSqliteAttach("Detach ext", "sqlite")).toHaveLength(1);
+  });
+
+  it("先頭のコメントと空白を読み飛ばす", () => {
+    expect(analyzeSqliteAttach(`-- メモ\n  ${attach}`, "sqlite")).toHaveLength(1);
+    expect(analyzeSqliteAttach(`/* a */\n\t${attach}`, "sqlite")).toHaveLength(1);
+  });
+
+  it("複数文のうち ATTACH / DETACH の文だけを数える", () => {
+    const found = analyzeSqliteAttach(`SELECT 1; ${attach}; DETACH ext;`, "sqlite");
+    expect(found).toHaveLength(2);
+    expect(found[0]?.target).toBe(attach);
+  });
+
+  it("文字列・コメントの中の語や別の文では警告しない", () => {
+    expect(analyzeSqliteAttach("SELECT 'attach x'", "sqlite")).toEqual([]);
+    expect(analyzeSqliteAttach("-- attach x\nSELECT 1", "sqlite")).toEqual([]);
+    expect(analyzeSqliteAttach("SELECT * FROM attachments", "sqlite")).toEqual([]);
+    expect(analyzeSqliteAttach("UPDATE t SET detach = 1 WHERE id = 1", "sqlite")).toEqual([]);
+  });
+
+  it("MySQL / PostgreSQL では警告しない", () => {
+    expect(analyzeSqliteAttach(attach, "mysql")).toEqual([]);
+    expect(analyzeSqliteAttach(attach, "postgres")).toEqual([]);
+    expect(analyzeSqliteAttach(attach, undefined)).toEqual([]);
   });
 });

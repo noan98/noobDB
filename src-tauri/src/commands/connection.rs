@@ -167,6 +167,10 @@ pub struct ConnectRequest {
     /// (両方あれば InvalidInput)。SQLite では `ssh` と同様に無視する。すべて非秘密。
     #[serde(default)]
     pub ssm: Option<SsmConfig>,
+    /// SQLite で、メインのファイルに加えて全ての物理接続へ ATTACH する別ファイル (#2129)。
+    /// SQLite 以外では無視する。
+    #[serde(default)]
+    pub sqlite_attachments: Vec<crate::db::SqliteAttachment>,
     /// When true the resulting session refuses to execute non-read-only SQL.
     #[serde(default)]
     pub read_only: bool,
@@ -373,6 +377,7 @@ fn verify_variant(req: &ConnectRequest, base: &crate::profiles::ConnectionProfil
         || (base.read_only && !req.read_only)
         || req.aws_iam != base.aws_iam
         || req.ssm != base.ssm
+        || req.sqlite_attachments != base.sqlite_attachments
     {
         return Err(mismatch());
     }
@@ -1034,6 +1039,8 @@ async fn build_options(
             ssl_client_key: None,
             init_sql,
             aws_iam: None,
+            sqlite_attachments: req.sqlite_attachments.clone(),
+            read_only: req.read_only,
         };
         return Ok((None, opts));
     }
@@ -1126,6 +1133,8 @@ async fn build_options(
         ssl_client_key: req.ssl_client_key.clone(),
         init_sql,
         aws_iam,
+        sqlite_attachments: Vec::new(),
+        read_only: false,
     };
     Ok((tunnel, opts))
 }
@@ -1279,6 +1288,7 @@ mod tests {
             init_sql: None,
             aws_iam: None,
             ssm: None,
+            sqlite_attachments: Vec::new(),
             read_only: false,
             skip_history: false,
         }

@@ -44,7 +44,7 @@ describe("gridCopyGolden", () => {
           const r = buildGridCopyInsert({
             ...base,
             driver,
-            database: "shop",
+            database: driver === "sqlite" ? "main" : "shop",
             table: "items",
             combineValues: false,
           });
@@ -55,7 +55,7 @@ describe("gridCopyGolden", () => {
           const r = buildGridCopyInsert({
             ...base,
             driver,
-            database: "shop",
+            database: driver === "sqlite" ? "main" : "shop",
             table: "items",
             combineValues: true,
           });
@@ -64,6 +64,22 @@ describe("gridCopyGolden", () => {
       }
     });
   }
+
+  it("SQLite はアタッチした別名のときだけ INSERT 先を修飾する (#2129)", () => {
+    const c = (vectors.cases as Case[])[0];
+    const r = buildGridCopyInsert({
+      columns: c.columns,
+      rows: c.rows,
+      rowIndices: [0],
+      colIndices: c.colIndices,
+      isMasked: noMask,
+      driver: "sqlite",
+      database: "ext",
+      table: "items",
+      combineValues: false,
+    });
+    expect(r.sql).toContain('INSERT INTO "ext"."items"');
+  });
 
   it("テーブル未解決ならプレースホルダ名で出し、tableResolved=false を返す", () => {
     const c = (vectors.cases as Case[])[0];

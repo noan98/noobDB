@@ -57,6 +57,7 @@ export function connectRequestFromProfile(
     init_sql: profile.init_sql ?? null,
     aws_iam: profile.aws_iam ?? null,
     ssm: profile.ssm ?? null,
+    sqlite_attachments: profile.sqlite_attachments ?? [],
     read_only: overrides.read_only ?? profile.read_only,
     skip_history: overrides.skip_history ?? profile.skip_history,
   };

@@ -95,14 +95,20 @@ describe("buildCreateTableSql", () => {
     expect(sql).toContain("`status` VARCHAR(20) DEFAULT 'active'");
   });
 
-  it("omits the database qualifier for SQLite", () => {
+  it("omits the database qualifier for SQLite main, qualifies an attached alias (#2129)", () => {
     const sql = buildCreateTableSql("sqlite", {
-      database: "ignored",
+      database: "main",
       table: "t",
       columns: [col({ name: "x", type: "TEXT" })],
     });
     expect(sql).toContain('CREATE TABLE "t"');
-    expect(sql).not.toContain("ignored");
+    expect(sql).not.toContain("main");
+    const ext = buildCreateTableSql("sqlite", {
+      database: "ext",
+      table: "t",
+      columns: [col({ name: "x", type: "TEXT" })],
+    });
+    expect(ext).toContain('CREATE TABLE "ext"."t"');
   });
 });
 

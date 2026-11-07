@@ -7,8 +7,8 @@
 
 import type { CellValue, QueryResult } from "./api/tauri";
 import { rowEditKey, rowValueLiteral } from "./components/cellEdit";
-import { quoteIdentFor } from "./components/sqlDialect";
-import { type IncomingFk, incomingFkTableName, qualifiedTable } from "./fkNavigation";
+import { qualifiedTableName, quoteIdentFor } from "./components/sqlDialect";
+import { type IncomingFk, incomingFkTableName } from "./fkNavigation";
 
 /** 参照先 (削除する行側) の 1 列あたりに数える値の最大数。超えた分は数えず `partial` にする。 */
 export const REF_KEY_LIMIT = 2000;
@@ -137,7 +137,7 @@ export function buildRefCountSqls(input: {
   const branches: string[] = [];
   refs.forEach((fk, fkIndex) => {
     const col = quoteIdentFor(driver, fk.column);
-    const from = qualifiedTable(driver, fk.schema ?? database, fk.table);
+    const from = qualifiedTableName(driver, fk.schema ?? database, fk.table);
     const wheres: string[] = [];
     if (keys === null) {
       // TRUNCATE: 全件を数えると重いので 1 件余分に拾う上限付きサブクエリにする (3 方言共通)。
@@ -230,7 +230,7 @@ export function buildOpenChildrenSql(input: {
 }): string {
   const { driver, database, impact, keys, types } = input;
   const col = quoteIdentFor(driver, impact.column);
-  const from = qualifiedTable(driver, impact.schema ?? database, impact.table);
+  const from = qualifiedTableName(driver, impact.schema ?? database, impact.table);
   if (keys === null) return `SELECT * FROM ${from} WHERE ${col} IS NOT NULL`;
   const vals = (keys.get(impact.referencedColumn) ?? []).slice(0, input.limit ?? 100);
   if (vals.length === 0) return `SELECT * FROM ${from} WHERE 1 = 0`;
@@ -351,7 +351,7 @@ export async function loadCascadeImpacts(input: {
   while (level.length > 0) {
     const branches: string[] = [];
     level.forEach((edge, i) => {
-      const from = qualifiedTable(driver, edge.fk.schema ?? database, edge.fk.table);
+      const from = qualifiedTableName(driver, edge.fk.schema ?? database, edge.fk.table);
       for (const pred of edge.preds) {
         branches.push(`SELECT ${i} AS i, COUNT(*) AS n FROM ${from} WHERE ${pred}`);
       }
@@ -399,7 +399,7 @@ export async function loadCascadeImpacts(input: {
         moreCascade = true;
         continue;
       }
-      const childFrom = qualifiedTable(driver, fk.schema ?? database, fk.table);
+      const childFrom = qualifiedTableName(driver, fk.schema ?? database, fk.table);
       for (const g of grand) {
         const key = edgeKey(g);
         if (visited.has(key) || budget <= 0) {

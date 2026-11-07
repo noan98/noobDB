@@ -81,6 +81,10 @@ pub struct ConnectionProfile {
     /// 旧プロファイルも `None` として読める。
     #[serde(default)]
     pub ssm: Option<crate::ssm::SsmConfig>,
+    /// SQLite で、メインのファイルに加えて全接続へ ATTACH する別ファイル (#2129)。パスと別名だけの非秘密。
+    /// 空は何もアタッチしない (この項目の追加前に保存された旧プロファイルも空として読める)。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sqlite_attachments: Vec<crate::db::SqliteAttachment>,
 }
 
 /// How an SSH tunnel authenticates with the jump host.

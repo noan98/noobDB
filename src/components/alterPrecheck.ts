@@ -1,4 +1,4 @@
-import { quoteIdentFor } from "./sqlDialect";
+import { qualifiedTableName, quoteIdentFor } from "./sqlDialect";
 import {
   supportsConstraintAlter,
   type ExistingColumnBaseline,
@@ -149,13 +149,6 @@ function intDigitsOfRange(r: NumericRange): number {
   return (r.max > -r.min ? r.max : -r.min).toString().length;
 }
 
-function qualified(driver: string, database: string | null, table: string): string {
-  // SQLite は接続あたり 1 つの名前空間なので DB 修飾を付けない (`qualifiedTableName` と同じ規則)。
-  return database && driver !== "sqlite"
-    ? `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`
-    : quoteIdentFor(driver, table);
-}
-
 /**
  * 編集内容から事前検査の SQL を作る。型が変わっていない列・削除予定の列・縮小にならない変更は
  * 何も返さない。検査は元の列名 (`original`) に対して行う (ALTER 前のデータを数えるため)。
@@ -170,7 +163,7 @@ export function buildAlterPrechecks(
   // SQLite は NOT NULL 化の NULL 行だけ数える (型の縮小は親和性で値が変わるだけで失敗しない, #1888)。
   if (driver !== "mysql" && driver !== "postgres" && driver !== "sqlite") return [];
   const baseByName = new Map(baseline.map((b) => [b.name, b]));
-  const from = qualified(driver, database, table);
+  const from = qualifiedTableName(driver, database, table);
   const out: AlterPrecheck[] = [];
   for (const edit of existing) {
     if (edit.drop) continue;
@@ -302,7 +295,7 @@ export function buildConstraintPrechecks(
   table: string,
   input: ConstraintPrecheckInput,
 ): AlterPrecheck[] {
-  const from = qualified(driver, database, table);
+  const from = qualifiedTableName(driver, database, table);
   const q = (n: string) => quoteIdentFor(driver, n.trim());
   const known = input.knownColumns;
   const allKnown = (cols: readonly string[]) => !known || cols.every((c) => known.has(c.trim()));
@@ -313,7 +306,7 @@ export function buildConstraintPrechecks(
       const cols = fk.columns.map((c) => c.trim()).filter((c) => c);
       const refs = fk.refColumns.map((c) => c.trim()).filter((c) => c);
       if (!allKnown(cols)) return;
-      const target = qualified(driver, database, fk.refTable.trim());
+      const target = qualifiedTableName(driver, database, fk.refTable.trim());
       const notNull = cols.map((c) => `a_src.${q(c)} IS NOT NULL`).join(" AND ");
       const join = cols.map((c, k) => `a_ref.${q(refs[k])} = a_src.${q(c)}`).join(" AND ");
       out.push({

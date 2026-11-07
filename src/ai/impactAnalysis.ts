@@ -3,7 +3,7 @@
 // 行データ・セル値は一切扱わない (入力型がスキーマ情報と件数のメタ情報しか持たない)。
 
 import { z } from "zod";
-import type { DangerFinding, DangerKind } from "../dangerousSql";
+import type { DangerFinding, DangerFindingKind } from "../dangerousSql";
 import type { SemanticRole } from "../semanticColors";
 import {
   dialectLabel,
@@ -175,13 +175,14 @@ export interface ImpactAnalysisInput {
   locale: "ja" | "en";
 }
 
-const KIND_DESCRIPTION: Record<DangerKind, string> = {
+const KIND_DESCRIPTION: Record<DangerFindingKind, string> = {
   deleteNoWhere: "DELETE without WHERE",
   updateNoWhere: "UPDATE without WHERE",
   drop: "DROP",
   truncate: "TRUNCATE",
   dropColumn: "ALTER TABLE DROP COLUMN",
   dropConstraint: "ALTER TABLE DROP CONSTRAINT",
+  sqliteAttach: "SQLite ATTACH / DETACH",
 };
 
 export function buildImpactAnalysisSystem(locale: "ja" | "en"): string {

@@ -216,6 +216,14 @@ async fn prepare_transfer_with(
         ensure_transfer_target_writable(&target)?;
     }
     validate_target_table(&request.target_table)?;
+    // SQLite でアタッチした別名への転送は、表を作る / 作り直すモード (create / replace) を拒否する (#2129)。
+    // DROP / CREATE は表名を修飾できず main に作られてしまう。追記 / upsert は修飾した INSERT で動く。
+    if !request.mode.writes_existing_table() {
+        target.conn.reject_if_attached_sqlite(
+            request.target_database.as_deref().unwrap_or_default(),
+            "data transfer (create / replace)",
+        )?;
+    }
 
     let source_driver = source.conn.driver_kind();
     let where_clause = request
@@ -236,14 +244,19 @@ async fn prepare_transfer_with(
             // 除外する列があるテーブル元は、SELECT リストをカタログから組んで読まない列を
             // サーバ側で省く (大きな BLOB 列などを無駄に転送しない)。
             let select_columns = excluded_aware_select_columns(&source, &request, t).await?;
+            // SQLite でアタッチした別名の表は `"別名"."表"` で読む (#2129)。
+            let source_db = source
+                .conn
+                .resolve_attached_database(request.source_database.as_deref().unwrap_or_default());
             let sql = if select_columns.is_none()
                 && where_clause.is_none()
                 && request.limit_rows.is_none()
             {
-                source_select_sql(source_driver, t)
+                source_select_sql(source_driver, &source_db, t)
             } else {
                 source_select_sql_ext(
                     source_driver,
+                    &source_db,
                     t,
                     select_columns.as_deref(),
                     where_clause,
@@ -706,6 +719,13 @@ fn verify_enabled(request: &TransferRequest) -> bool {
 fn target_count_sql(prepared: &PreparedTransfer) -> String {
     source_count_sql(
         prepared.target.conn.driver_kind(),
+        &prepared.target.conn.resolve_attached_database(
+            prepared
+                .request
+                .target_database
+                .as_deref()
+                .unwrap_or_default(),
+        ),
         prepared.request.target_table.trim(),
         None,
     )
@@ -724,6 +744,9 @@ async fn count_before(prepared: &PreparedTransfer) -> CountsBefore {
         Some(t) => {
             let sql = source_count_sql(
                 prepared.source.conn.driver_kind(),
+                &prepared.source.conn.resolve_attached_database(
+                    request.source_database.as_deref().unwrap_or_default(),
+                ),
                 t.trim(),
                 source_where(request),
             );
@@ -763,6 +786,10 @@ async fn verify_counts(
     if let (Some(b), Some(t)) = (before.source, request.source_table.as_deref()) {
         let sql = source_count_sql(
             prepared.source.conn.driver_kind(),
+            &prepared
+                .source
+                .conn
+                .resolve_attached_database(request.source_database.as_deref().unwrap_or_default()),
             t.trim(),
             source_where(request),
         );

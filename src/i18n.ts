@@ -1079,6 +1079,8 @@ const en = {
   dangerousPkSuggestInsert: "Cancel and add this WHERE to the editor",
   dangerousKindDropColumn: "ALTER TABLE ... DROP COLUMN (removes the column and its data)",
   dangerousKindDropConstraint: "ALTER TABLE ... DROP CONSTRAINT (removes a constraint)",
+  dangerousKindSqliteAttach:
+    'ATTACH / DETACH only affects some of the pooled connections, so later queries may fail with "no such table". Use "Attached files" in the connection settings instead',
   dangerousTargetTable: "Target: {target}",
   dangerousTargetUnknown: "Target: (could not determine)",
   // Impact-row count handed off from the editor preflight (#737).
@@ -1630,6 +1632,16 @@ const en = {
   formSqliteFilePath: "Database file",
   formSqliteFilePathPlaceholder: "/path/to/database.db",
   formSqliteFilePathHelp: "Absolute path to a SQLite database file. The file must already exist.",
+  formSqliteAttachLegend: "Attached files",
+  formSqliteAttachHelp:
+    "Attach extra SQLite files (ATTACH DATABASE) to this connection. They appear next to main in the tree, and you can query them as alias.table. Up to 10 files; aliases may use letters, digits and underscores.",
+  formSqliteAttachAdd: "Add file",
+  formSqliteAttachPath: "File path",
+  formSqliteAttachAlias: "Alias",
+  formSqliteAttachRemove: "Remove",
+  formSqliteAttachAliasInvalid:
+    "Use letters, digits and _ only, not starting with a digit (main and temp are reserved)",
+  formSqliteAttachAliasDuplicate: "This alias is already used by another file",
   formHost: "Host",
   formPort: "Port",
   formUser: "User",
@@ -2570,6 +2582,8 @@ const en = {
   routineEditErrEmpty: "Enter a definition.",
   routineEditErrNotCreate: "The definition must be a CREATE {kind} statement.",
   routineEditErrNoTable: "Could not find the trigger's table in the original definition.",
+  routineEditErrAttachedTrigger:
+    "Could not place this trigger in the attached database. Write CREATE TRIGGER <name> without a schema prefix (TEMP triggers are not supported).",
   routineEditApplied: "Applied the {kind} definition.",
   routineEditCreated: "Created the {kind}.",
   routineEditFailedRestored: "Could not apply the definition: {error}. The original definition was restored.",
@@ -3579,6 +3593,8 @@ const en = {
     "The generated columns of this table could not be read, so they cannot be edited.",
   alterTableRebuildErrOtherTableTrigger:
     'Trigger "{arg}" on another table refers to this table, so SQLite cannot rename the rebuilt table. Drop that trigger first and recreate it afterwards.',
+  alterTableRebuildErrAttachedUnsupported:
+    "Rebuilding a table in an attached database is not supported. Edit it in a connection opened directly on that file.",
   alterTableConfirmBodyRebuild:
     "The table is recreated in one transaction (copy the rows, DROP the old table, rename). The following script will run:",
   alterTableConfirmOk: "Apply",
@@ -5359,6 +5375,8 @@ const en = {
   schemaCompareDataCancelled: "The data comparison was cancelled.",
   schemaCompareNoStatements:
     "No statements to apply. Enable destructive changes to generate DROP statements.",
+  schemaCompareApplyAttachedUnsupported:
+    "Applying to an attached SQLite database is not supported. Review the SQL here and run it against a connection opened directly on that file.",
   schemaCompareBackupNote:
     "Back up the target before applying. DDL is not always reversible, and on MySQL each statement implicitly commits (no rollback).",
   schemaCompareApply: "Apply {count} statement(s) to target",
@@ -8624,6 +8642,8 @@ const ja: Dict = {
   dangerousPkSuggestInsert: "キャンセルしてエディタに WHERE を追加",
   dangerousKindDropColumn: "ALTER TABLE ... DROP COLUMN（列とそのデータを削除します）",
   dangerousKindDropConstraint: "ALTER TABLE ... DROP CONSTRAINT（制約を削除します）",
+  dangerousKindSqliteAttach:
+    "ATTACH / DETACH はプールの一部の接続にしか効かず、後続のクエリが「no such table」で失敗することがあります。接続設定の「アタッチするファイル」を使ってください",
   dangerousTargetTable: "対象: {target}",
   dangerousTargetUnknown: "対象: (特定できませんでした)",
   // エディタのプリフライトから引き継ぐ影響行数 (#737)。
@@ -9176,6 +9196,15 @@ const ja: Dict = {
   formSqliteFilePathPlaceholder: "/path/to/database.db",
   formSqliteFilePathHelp:
     "SQLite データベースファイルへの絶対パス。ファイルは既に存在している必要があります。",
+  formSqliteAttachLegend: "アタッチするファイル",
+  formSqliteAttachHelp:
+    "この接続に SQLite のファイルを追加でアタッチ (ATTACH DATABASE) します。ツリーでは main と並んで表示され、別名.テーブル名 で参照できます。最大 10 件、別名は英数字とアンダースコアが使えます。",
+  formSqliteAttachAdd: "ファイルを追加",
+  formSqliteAttachPath: "ファイルのパス",
+  formSqliteAttachAlias: "別名",
+  formSqliteAttachRemove: "削除",
+  formSqliteAttachAliasInvalid: "英数字と _ だけが使えます。先頭に数字は使えず、main と temp は予約済みです",
+  formSqliteAttachAliasDuplicate: "この別名はほかのファイルですでに使われています",
   formHost: "ホスト",
   formPort: "ポート",
   formUser: "ユーザー",
@@ -10115,6 +10144,8 @@ const ja: Dict = {
   routineEditErrEmpty: "定義を入力してください。",
   routineEditErrNotCreate: "定義は CREATE {kind} 文にしてください。",
   routineEditErrNoTable: "元の定義からトリガーの対象テーブルを特定できませんでした。",
+  routineEditErrAttachedTrigger:
+    "アタッチしたデータベースにこのトリガーを作れませんでした。スキーマ修飾なしの CREATE TRIGGER <名前> の形で書いてください (TEMP トリガーは未対応です)。",
   routineEditApplied: "{kind}の定義を適用しました。",
   routineEditCreated: "{kind}を作成しました。",
   routineEditFailedRestored: "定義を適用できませんでした: {error}。元の定義を復元しました。",
@@ -11115,6 +11146,8 @@ const ja: Dict = {
   alterTableRebuildErrGeneratedUnreadable: "このテーブルの生成列を読み取れなかったため、編集できません。",
   alterTableRebuildErrOtherTableTrigger:
     "他のテーブルのトリガー「{arg}」がこのテーブルを参照しているため、SQLite は再作成後のテーブルの名前を戻せません。先にそのトリガーを削除し、適用後に作り直してください。",
+  alterTableRebuildErrAttachedUnsupported:
+    "アタッチしたデータベースの表の再作成には未対応です。そのファイルを直接開いた接続で編集してください。",
   alterTableConfirmBodyRebuild:
     "テーブルを 1 トランザクションで作り直します (行をコピー → 旧表を DROP → 名前を戻す)。以下のスクリプトが実行されます:",
   alterTableConfirmOk: "適用",
@@ -12875,6 +12908,8 @@ const ja: Dict = {
   schemaCompareDataCancel: "比較を中止",
   schemaCompareDataCancelled: "データ比較を中止しました。",
   schemaCompareNoStatements: "適用する文がありません。DROP を生成するには破壊的変更を許可してください。",
+  schemaCompareApplyAttachedUnsupported:
+    "アタッチした SQLite データベースへの適用には未対応です。SQL はここで確認でき、そのファイルを直接開いた接続で実行してください。",
   schemaCompareBackupNote:
     "適用前にターゲットのバックアップを取得してください。DDL は常に元に戻せるとは限らず、MySQL では各文が暗黙にコミットされ (ロールバック不可) です。",
   schemaCompareApply: "{count} 文を更新先へ適用",

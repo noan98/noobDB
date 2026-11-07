@@ -273,6 +273,7 @@ pub(crate) async fn create_sandbox_inner(
             .collect();
         let sql = select_rows_where_sql(
             source_driver,
+            "",
             t,
             &col_names,
             &order_cols,
@@ -312,6 +313,8 @@ pub(crate) async fn create_sandbox_inner(
         ssl_client_key: None,
         init_sql: None,
         aws_iam: None,
+        sqlite_attachments: Vec::new(),
+        read_only: false,
     };
     let conn = match Connection::connect(&opts).await {
         Ok(c) => c,
@@ -605,9 +608,17 @@ pub(crate) async fn sandbox_table_diff_inner(
     }
 
     let want = limit.unwrap_or(DEFAULT_DATA_ROWS).min(MAX_DATA_ROWS);
-    let live_sql = select_rows_sql(DriverKind::Sqlite, &table, &columns, &primary_key, want + 1);
+    let live_sql = select_rows_sql(
+        DriverKind::Sqlite,
+        "main",
+        &table,
+        &columns,
+        &primary_key,
+        want + 1,
+    );
     let base_sql = select_rows_sql(
         DriverKind::Sqlite,
+        "main",
         &shadow_table_name(&table),
         &columns,
         &primary_key,
@@ -654,6 +665,7 @@ pub(crate) async fn sandbox_table_diff_inner(
             };
             let sql = select_rows_where_sql(
                 record.source_driver,
+                "",
                 &table,
                 &columns,
                 &primary_key,

@@ -92,7 +92,15 @@ async fn fetch_snapshot(session: &Session, database: &str, table: &str) -> Resul
         column_types.insert(0, "INTEGER".to_string());
     }
     let primary_key = row_key.columns;
-    let sql = select_rows_sql(driver, table, &columns, &primary_key, MAX_DATA_ROWS + 1);
+    // SQLite でアタッチした別名の表は修飾して読む (#2129)。
+    let sql = select_rows_sql(
+        driver,
+        &session.conn.resolve_attached_database(database),
+        table,
+        &columns,
+        &primary_key,
+        MAX_DATA_ROWS + 1,
+    );
     ensure_allowed_for_session(session, &sql)?;
     let res = session.conn.execute(&sql, Some(database)).await?;
     let truncated = res.rows.len() > MAX_DATA_ROWS;

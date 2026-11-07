@@ -18,7 +18,7 @@
 // 落とすので、PostgreSQL だけは `CREATE TABLE new (LIKE old INCLUDING ALL)` でネイティブに写し、
 // 再構成 DDL からは外部キー制約だけを抜き出して `ALTER TABLE ... ADD CONSTRAINT` で足す。
 
-import { quoteIdentFor } from "./components/sqlDialect";
+import { qualifiedTableName, quoteIdentFor } from "./components/sqlDialect";
 
 // `versioned` は MySQL のバージョン付きコメント (`/*!80023 INVISIBLE */`、`/*!50100 PARTITION BY ... */`)。
 // サーバが SQL として実行するので、通常のコメントと違い捨てずに不透明トークンとして保持する。
@@ -170,11 +170,6 @@ function readQualifiedName(
   return { start, end, last, qualifier };
 }
 
-function qualified(driver: string, database: string | null | undefined, table: string): string {
-  if (driver === "sqlite" || !database) return quoteIdentFor(driver, table);
-  return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
-}
-
 /** 識別子の最大長 (MySQL 64 / PostgreSQL 63)。SQLite は実質無制限。 */
 function maxIdentLength(driver: string): number {
   if (driver === "postgres") return 63;
@@ -271,9 +266,10 @@ function rewriteCreateTable(tokens: Token[], o: CloneOptions, used: Set<string>)
   }
   const nm = readQualifiedName(tokens, i);
   if (!nm) return null;
-  const newName = qualified(o.driver, o.database, o.newTable);
+  const newName = qualifiedTableName(o.driver, o.database, o.newTable);
   const out: Token[] = [...tokens.slice(0, nm.start), { kind: "word", text: newName }];
   const sameTable = (ref: { last: string; qualifier: string | null }) => isSelfReference(o, ref);
+  const refName = o.driver === "sqlite" ? quoteIdentFor(o.driver, o.newTable) : newName;
 
   let depth = 0;
   const rest = tokens.slice(nm.end);
@@ -317,7 +313,8 @@ function rewriteCreateTable(tokens: Token[], o: CloneOptions, used: Set<string>)
       if (kw === "REFERENCES") {
         const ref = readQualifiedName(rest, k + 1);
         if (ref && sameTable(ref)) {
-          out.push(t, ...rest.slice(k + 1, ref.start), { kind: "word", text: newName });
+          // SQLite の REFERENCES は表名だけ (スキーマ修飾を書けない, #2129)。
+          out.push(t, ...rest.slice(k + 1, ref.start), { kind: "word", text: refName });
           k = ref.end - 1;
           continue;
         }
@@ -351,16 +348,27 @@ function rewriteCreateIndex(tokens: Token[], o: CloneOptions, used: Set<string>)
   if (!target) return null;
 
   // MySQL のインデックス名はテーブル内で一意なので名前はそのまま。
-  const indexName =
-    o.driver === "mysql"
-      ? quoteIdentFor(o.driver, idx.last)
-      : quoteIdentFor(o.driver, cloneObjectName(o.driver, idx.last, o.sourceTable, o.newTable, used));
+  const rawIndexName =
+    o.driver === "mysql" ? idx.last : cloneObjectName(o.driver, idx.last, o.sourceTable, o.newTable, used);
   // PostgreSQL のインデックスは対象テーブルと同じスキーマに作られる (名前は修飾しない)。
+  // SQLite は ON の表を修飾できず、アタッチ先のスキーマは索引名の側に付ける
+  // (`CREATE INDEX "別名"."idx" ON "t"`, #2129)。
+  const sqlite = o.driver === "sqlite";
   return [
     ...tokens.slice(0, idx.start),
-    { kind: "word", text: indexName },
+    {
+      kind: "word",
+      text: sqlite
+        ? qualifiedTableName(o.driver, o.database, rawIndexName)
+        : quoteIdentFor(o.driver, rawIndexName),
+    },
     ...tokens.slice(idx.end, target.start),
-    { kind: "word", text: qualified(o.driver, o.database, o.newTable) },
+    {
+      kind: "word",
+      text: sqlite
+        ? quoteIdentFor(o.driver, o.newTable)
+        : qualifiedTableName(o.driver, o.database, o.newTable),
+    },
     ...tokens.slice(target.end),
   ];
 }
@@ -373,13 +381,15 @@ const render = (tokens: Token[]) =>
 
 /** `REFERENCES` が複製元自身を指していたら新テーブルに付け替えたトークン列を返す。 */
 function retargetSelfReferences(tokens: Token[], o: CloneOptions, newName: string): Token[] {
+  // SQLite の REFERENCES は表名だけ (スキーマ修飾を書けない, #2129)。
+  const refName = o.driver === "sqlite" ? quoteIdentFor(o.driver, o.newTable) : newName;
   const out: Token[] = [];
   for (let k = 0; k < tokens.length; k++) {
     const t = tokens[k];
     if (t.kind === "word" && t.text.toUpperCase() === "REFERENCES") {
       const ref = readQualifiedName(tokens, k + 1);
       if (ref && isSelfReference(o, ref)) {
-        out.push(t, ...tokens.slice(k + 1, ref.start), { kind: "word", text: newName });
+        out.push(t, ...tokens.slice(k + 1, ref.start), { kind: "word", text: refName });
         k = ref.end - 1;
         continue;
       }
@@ -395,7 +405,7 @@ function retargetSelfReferences(tokens: Token[], o: CloneOptions, newName: strin
  * 両方を `isSelfReference` で判定して新名に書き換える。
  */
 function pgForeignKeyAlters(o: CloneOptions, used: Set<string>): string[] {
-  const newName = qualified(o.driver, o.database, o.newTable);
+  const newName = qualifiedTableName(o.driver, o.database, o.newTable);
   return (o.pgForeignKeys ?? []).map((fk) => {
     const def = retargetSelfReferences(tokenize(fk.def, o.driver), o, newName);
     const name = cloneObjectName(o.driver, fk.name, o.sourceTable, o.newTable, used);
@@ -435,7 +445,7 @@ function detachSelfForeignKeys(tokens: Token[], o: CloneOptions): { tokens: Toke
     cur.push(t);
   }
   if (close < 0) return { tokens, alters: [] };
-  const newName = qualified(o.driver, o.database, o.newTable);
+  const newName = qualifiedTableName(o.driver, o.database, o.newTable);
   const kept: Token[][] = [];
   const alters: string[] = [];
   for (const seg of segs) {
@@ -560,8 +570,8 @@ export function buildCloneStatements(o: CloneOptions): CloneResult {
   const stmts = splitStatements(tokenize(o.ddl, o.driver));
   if (stmts.length === 0) return empty;
 
-  const newName = qualified(o.driver, o.database, o.newTable);
-  const oldName = qualified(o.driver, o.database, o.sourceTable);
+  const newName = qualifiedTableName(o.driver, o.database, o.newTable);
+  const oldName = qualifiedTableName(o.driver, o.database, o.sourceTable);
   // 複製先が元と同名 (衝突チェックをすり抜けた入力) だと元テーブルを操作する文になるので弾く。
   const sameName =
     o.driver === "postgres"
@@ -579,7 +589,7 @@ export function buildCloneStatements(o: CloneOptions): CloneResult {
     // serial 列は元のシーケンスを共有してしまう (元テーブルを DROP できなくなる) ので、新テーブル専用の
     // シーケンスを作って付け替える。
     for (const col of o.pgColumns?.serial ?? []) {
-      const seq = qualified(o.driver, o.database, seqName(o, col));
+      const seq = qualifiedTableName(o.driver, o.database, seqName(o, col));
       head.push(`CREATE SEQUENCE ${seq} OWNED BY ${newName}.${q(col)}`);
       head.push(`ALTER TABLE ${newName} ALTER COLUMN ${q(col)} SET DEFAULT nextval(${lit(seq)}::regclass)`);
     }
@@ -651,7 +661,7 @@ export function violatesLiteralRules(sql: string, o: CloneOptions): boolean {
     return !!nm && nm.last.toLowerCase() === o.sourceTable.toLowerCase();
   };
   if (first === "SELECT") {
-    const newName = qualified(o.driver, o.database, o.newTable);
+    const newName = qualifiedTableName(o.driver, o.database, o.newTable);
     return !/^SELECT\s+setval\s*\(\s*pg_get_serial_sequence\s*\(/i.test(sql.trim()) || lits[0] !== newName;
   }
   const isSeq = first === "CREATE" && tokens.some((t) => t.text.toUpperCase() === "SEQUENCE");

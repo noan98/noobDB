@@ -6,14 +6,8 @@
 // 同期 SQL の組み立てだけを担い、実行は既存の保守コマンド経路 (`runMaintenanceDdl`) に
 // 任せる。副作用は無く Vitest でユニットテストする。
 
-import { quoteIdentFor } from "./sqlDialect";
+import { isSqliteMainDatabase, quoteIdentFor, qualifiedTableName } from "./sqlDialect";
 import type { TableColumnInfo } from "../api/tauri";
-
-/** 完全修飾したテーブル名 (SQLite はスキーマ非対応なので table のみ)。 */
-function qualified(driver: string, database: string | null | undefined, table: string): string {
-  if (driver === "sqlite" || !database) return quoteIdentFor(driver, table);
-  return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
-}
 
 /** SQL 文字列リテラル (シングルクォートを二重化)。 */
 function sqlString(value: string): string {
@@ -48,15 +42,23 @@ export function findIdentityColumn(driver: string, columns: TableColumnInfo[]): 
 
 /** MySQL 用: 採番列の最大値を問い合わせる SELECT (`run_lookup_query` で実行する)。 */
 export function mysqlMaxValueSql(database: string | null, table: string, column: string): string {
-  return `SELECT MAX(${quoteIdentFor("mysql", column)}) FROM ${qualified("mysql", database, table)}`;
+  return `SELECT MAX(${quoteIdentFor("mysql", column)}) FROM ${qualifiedTableName("mysql", database, table)}`;
+}
+
+/**
+ * SQLite のカタログ表 (`sqlite_master` / `sqlite_sequence`) の参照。アタッチした別名ではその別名の
+ * カタログを指す (修飾しないと main のカタログを読み書きし、main の同名表の採番を進めてしまう, #2129)。
+ */
+function sqliteCatalog(database: string | null, name: string): string {
+  return isSqliteMainDatabase(database) ? name : `${quoteIdentFor("sqlite", database ?? "")}.${name}`;
 }
 
 /**
  * SQLite 用: 対象表が AUTOINCREMENT 付きで作られているか (= `sqlite_sequence` に行を持ち得るか)
  * を調べる SELECT。行が返れば同期可能、0 行なら同期対象外。
  */
-export function sqliteHasAutoincrementSql(table: string): string {
-  return `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ${sqlString(table)} AND UPPER(sql) LIKE '%AUTOINCREMENT%'`;
+export function sqliteHasAutoincrementSql(table: string, database: string | null = null): string {
+  return `SELECT 1 FROM ${sqliteCatalog(database, "sqlite_master")} WHERE type = 'table' AND name = ${sqlString(table)} AND UPPER(sql) LIKE '%AUTOINCREMENT%'`;
 }
 
 /**
@@ -91,7 +93,7 @@ export function buildIdentitySyncSql(
   maxValue?: string | null,
   opts: IdentitySyncOptions = {},
 ): string | null {
-  const name = qualified(driver, database, table);
+  const name = qualifiedTableName(driver, database, table);
   const col = quoteIdentFor(driver, column);
   if (driver === "postgres") {
     const seq = `pg_get_serial_sequence(${sqlString(name)}, ${sqlString(column)})`;
@@ -112,7 +114,7 @@ export function buildIdentitySyncSql(
     return (
       // 採番値は下げない (MAX(seq, …))。下げると AUTOINCREMENT の「削除済み ID を再利用しない」
       // 保証が壊れる。
-      `UPDATE sqlite_sequence SET seq = MAX(seq, (SELECT COALESCE(MAX(rowid), 0) FROM ${name})) ` +
+      `UPDATE ${sqliteCatalog(database, "sqlite_sequence")} SET seq = MAX(seq, (SELECT COALESCE(MAX(rowid), 0) FROM ${name})) ` +
       `WHERE name = ${sqlString(table)};`
     );
   }
@@ -141,7 +143,7 @@ export interface IdentitySyncOptions {
 
 /** MySQL 用: 現在の AUTO_INCREMENT を読むための文 (`run_lookup_query` で実行する)。 */
 export function mysqlShowCreateTableSql(database: string | null, table: string): string {
-  return `SHOW CREATE TABLE ${qualified("mysql", database, table)}`;
+  return `SHOW CREATE TABLE ${qualifiedTableName("mysql", database, table)}`;
 }
 
 /**
@@ -170,7 +172,7 @@ export function identityStatsSql(
   table: string,
   column: string,
 ): string | null {
-  const name = qualified(driver, database, table);
+  const name = qualifiedTableName(driver, database, table);
   if (driver === "postgres") {
     const seq = `pg_get_serial_sequence(${sqlString(name)}, ${sqlString(column)})`;
     return `SELECT MAX(${quoteIdentFor(driver, column)}), pg_sequence_last_value(${seq}::regclass) FROM ${name}`;

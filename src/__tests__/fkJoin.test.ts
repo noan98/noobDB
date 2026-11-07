@@ -20,7 +20,9 @@ function fk(
 }
 
 const run = (driver: string, fks: ForeignKey[], table = "orders", column = "user_id") =>
-  fkJoinSnippets({ driver, database: "shop", table, column, fks }).map((s) => s.text);
+  fkJoinSnippets({ driver, database: driver === "sqlite" ? "main" : "shop", table, column, fks }).map(
+    (s) => s.text,
+  );
 
 describe("fkJoinSnippets (#1540)", () => {
   const fks = [fk("orders", "user_id", "users", "id", "fk_orders_user")];
@@ -28,8 +30,13 @@ describe("fkJoinSnippets (#1540)", () => {
   it("3 ドライバでスキーマ修飾とクォートが方言に揃う", () => {
     expect(run("mysql", fks)).toEqual(["JOIN `shop`.`users` ON users.id = orders.user_id"]);
     expect(run("postgres", fks)).toEqual(['JOIN "shop"."users" ON users.id = orders.user_id']);
-    // SQLite は DB 修飾なし。
+    // SQLite は main なら DB 修飾なし、アタッチした別名なら修飾する (#2129)。
     expect(run("sqlite", fks)).toEqual(['JOIN "users" ON users.id = orders.user_id']);
+    expect(
+      fkJoinSnippets({ driver: "sqlite", database: "ext", table: "orders", column: "user_id", fks }).map(
+        (s) => s.text,
+      ),
+    ).toEqual(['JOIN "ext"."users" ON users.id = orders.user_id']);
   });
 
   it("予約語・大文字を含む名前は ON 側でもクォートする", () => {
@@ -83,8 +90,10 @@ describe("fkJoinSnippets (#1540)", () => {
 describe("qualifiedTableName (#1540)", () => {
   it("qualifiedTableSql と同じ修飾規則", () => {
     expect(qualifiedTableName("mysql", "d", "t")).toBe("`d`.`t`");
-    expect(qualifiedTableName("sqlite", "d", "t")).toBe('"t"');
+    expect(qualifiedTableName("sqlite", "main", "t")).toBe('"t"');
+    expect(qualifiedTableName("sqlite", "d", "t")).toBe('"d"."t"');
     expect(qualifiedTableSql("postgres", "d", "t")).toBe('SELECT * FROM "d"."t"');
-    expect(qualifiedTableSql("sqlite", "d", "t", "rowid")).toBe('SELECT *, rowid FROM "t"');
+    expect(qualifiedTableSql("sqlite", "main", "t", "rowid")).toBe('SELECT *, rowid FROM "t"');
+    expect(qualifiedTableSql("sqlite", "d", "t", "rowid")).toBe('SELECT *, rowid FROM "d"."t"');
   });
 });

@@ -12,7 +12,7 @@
 // 導線 (非 SELECT・複数文) を早めに隠すこと。
 
 import { maskLiterals } from "../dangerousSql";
-import { quoteIdentFor } from "./sqlDialect";
+import { qualifiedTableName, quoteIdentFor } from "./sqlDialect";
 
 /**
  * `sql` が単一の `SELECT` / `WITH ...` 文であり、CTAS のソースとして妥当かを判定する。
@@ -32,12 +32,6 @@ export function isCtasEligibleSql(sql: string, driver?: string): boolean {
   return /^select\b/.test(lower) || /^with\b/.test(lower);
 }
 
-/** 完全修飾したテーブル名 (SQLite はスキーマ非対応なので table のみ)。 */
-function qualified(driver: string, database: string | null | undefined, table: string): string {
-  if (driver === "sqlite" || !database) return quoteIdentFor(driver, table);
-  return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
-}
-
 /**
  * `CREATE TABLE <name> AS <sourceSql>` 文を生成する。`sourceSql` 末尾の
  * セミコロン/空白は剥がし、生成した文の末尾にだけ 1 つ付与する
@@ -49,7 +43,7 @@ export function buildCreateTableAsSql(
   table: string,
   sourceSql: string,
 ): string {
-  const name = qualified(driver, database, table);
+  const name = qualifiedTableName(driver, database, table);
   const query = sourceSql.trim().replace(/;\s*$/, "");
   return `CREATE TABLE ${name} AS\n${query};`;
 }
@@ -168,7 +162,7 @@ export function buildInsertSelectSql(
   const q = (n: string) => quoteIdentFor(driver, n);
   const query = sourceSql.trim().replace(/;\s*$/, "");
   return (
-    `INSERT INTO ${qualified(driver, database, table)} (${pairs.map((p) => q(p.target)).join(", ")})\n` +
+    `INSERT INTO ${qualifiedTableName(driver, database, table)} (${pairs.map((p) => q(p.target)).join(", ")})\n` +
     `SELECT ${pairs.map((p) => q(p.source)).join(", ")}\nFROM (\n${query}\n) AS _src;`
   );
 }

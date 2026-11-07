@@ -990,6 +990,12 @@ pub async fn plan_table_rebuild(
     table: &str,
     edit: &SqliteRebuildEdit,
 ) -> Result<SqliteRebuildPlan> {
+    // アタッチした別名の表は再作成できない (再作成 SQL は表名を修飾できず、main の同名表を壊しうる, #2129)。
+    if conn.driver_kind() == crate::db::DriverKind::Sqlite
+        && !crate::db::sync::sqlite_is_main(&conn.resolve_attached_database(database))
+    {
+        return Err(coded("attached_unsupported", ""));
+    }
     let (snap, master) = load_snapshot(conn, database, table).await?;
     // 他の表のトリガーがこの表を参照していると、旧表を DROP して名前を戻す `RENAME TO` のスキーマ検査で
     // 失敗する (SQLite はその時点で他表のトリガーの参照先を検証する)。実行前に分かりやすく止める。

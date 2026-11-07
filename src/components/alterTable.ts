@@ -39,7 +39,7 @@
 // 呼び出し側 (i18n) に任せる — このモジュールは表示に依存しない。
 
 import type { SqliteRebuildEdit } from "../api/tauri";
-import { quoteIdentFor } from "./sqlDialect";
+import { qualifiedTableName, quoteIdentFor } from "./sqlDialect";
 import {
   activeGenerated,
   CURRENT_TIME_FN_RE,
@@ -298,11 +298,6 @@ function columnCommentSql(
 
 /** 完全修飾したテーブル名 (SQLite はスキーマ非対応なので table のみ)。`tableMaintenance.ts` /
  * `createTable.ts` と同じ規則。 */
-function qualifiedName(driver: string, database: string | null | undefined, table: string): string {
-  if (driver === "sqlite" || !database) return quoteIdentFor(driver, table);
-  return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
-}
-
 /** `ADD COLUMN` 1 列ぶんの定義断片 (`<ident> <type> [NOT NULL] [DEFAULT x]`)。 */
 function newColumnLine(driver: string, col: NewColumn): string {
   const type = col.type.trim() || "TEXT";
@@ -648,7 +643,13 @@ export function renameCollisions(
 
 /** `CREATE INDEX` 文 (不備のある行は捨てる。UI は `indexRowProblems` で行ごとにエラーを出し、不備が残る間は
  * 実行を止めるので、黙って作られないまま実行されることはない, #1532)。 */
-function indexStatements(driver: string, tIdent: string, indexes: IndexDef[]): AlterStatement[] {
+function indexStatements(
+  driver: string,
+  tIdent: string,
+  database: string | null | undefined,
+  table: string,
+  indexes: IndexDef[],
+): AlterStatement[] {
   const out: AlterStatement[] = [];
   for (const idx of indexes) {
     if (indexRowProblems(idx)) continue;
@@ -656,8 +657,14 @@ function indexStatements(driver: string, tIdent: string, indexes: IndexDef[]): A
     const cols = idx.columns.map((c) => c.trim()).filter((c) => c.length > 0);
     const colList = cols.map((c) => quoteIdentFor(driver, c)).join(", ");
     const keyword = idx.unique ? "CREATE UNIQUE INDEX" : "CREATE INDEX";
+    // SQLite は ON の表を修飾できず、アタッチ先のスキーマは索引名の側に付ける
+    // (`CREATE INDEX "別名"."idx" ON "t"`, `tableMaintenance.ts` の `buildCreateIndexSql` と同じ, #2129)。
+    const head =
+      driver === "sqlite"
+        ? `${keyword} ${qualifiedTableName(driver, database, name)} ON ${quoteIdentFor(driver, table)}`
+        : `${keyword} ${quoteIdentFor(driver, name)} ON ${tIdent}`;
     out.push({
-      sql: `${keyword} ${quoteIdentFor(driver, name)} ON ${tIdent} (${colList});`,
+      sql: `${head} (${colList});`,
       kind: "createIndex",
       destructive: false,
     });
@@ -791,7 +798,7 @@ export function buildSqliteRebuildEdit(form: AlterTableForm): SqliteRebuildEdit 
  * ({@link buildSqliteRebuildEdit})。
  */
 export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan {
-  const tIdent = qualifiedName(driver, form.database, form.table);
+  const tIdent = qualifiedTableName(driver, form.database, form.table);
   const statements: AlterStatement[] = [];
   const warnings: AlterWarning[] = [];
   // SQLite の型 / NOT NULL / DEFAULT 変更・FK / CHECK の変更はテーブル再作成で行う (#1888)。
@@ -799,7 +806,11 @@ export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan 
   if (driver === "sqlite") {
     const rebuild = buildSqliteRebuildEdit(form);
     if (rebuild) {
-      return { statements: indexStatements(driver, tIdent, form.indexes), warnings, rebuild };
+      return {
+        statements: indexStatements(driver, tIdent, form.database, form.table, form.indexes),
+        warnings,
+        rebuild,
+      };
     }
   }
   // 同じ ALTER の中で DROP / リネームして空けた列名を、新規列が再利用するときは、
@@ -867,7 +878,7 @@ export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan 
   };
   statements.sort((a, b) => orderOf(a) - orderOf(b));
 
-  statements.push(...indexStatements(driver, tIdent, form.indexes));
+  statements.push(...indexStatements(driver, tIdent, form.database, form.table, form.indexes));
 
   return { statements, warnings, rebuild: null };
 }

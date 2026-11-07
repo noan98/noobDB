@@ -77,6 +77,8 @@ pub(crate) fn qualified_table(driver: DriverKind, schema: &str, table: &str) -> 
             quote_ident(driver, schema),
             quote_ident(driver, table)
         ),
+        // ファイルに書く文 (DROP / INSERT) は修飾しない (CREATE の原文と揃える, #2129)。読み出しの
+        // SELECT だけは別名で修飾する。
         DriverKind::Mysql | DriverKind::Sqlite => quote_ident(driver, table),
     }
 }
@@ -1809,7 +1811,9 @@ async fn stream_table_rows(
             quote_ident(driver, schema),
             quote_ident(driver, table)
         ),
-        _ => format!("ONLY {}", qualified_table(driver, schema, table)),
+        // SQLite でアタッチした別名の表は読み出しだけ `"別名"."表"` にする (#2129)。
+        DriverKind::Sqlite => crate::db::sync::sqlite_table_ref(schema, table),
+        DriverKind::Postgres => format!("ONLY {}", qualified_table(driver, schema, table)),
     };
     let select_sql = format!("SELECT {} FROM {from}", select_exprs.join(", "));
     let prefix = insert_prefix(driver, schema, table, columns, overriding);
@@ -1885,6 +1889,8 @@ mod tests {
     #[test]
     fn qualified_table_follows_driver() {
         assert_eq!(qualified_table(DriverKind::Mysql, "d", "t`x"), "`t``x`");
+        // SQLite はファイルに書く文では修飾しない (#2129)。
+        assert_eq!(qualified_table(DriverKind::Sqlite, "ext", "t"), "\"t\"");
         assert_eq!(
             qualified_table(DriverKind::Postgres, "s\"1", "T"),
             "\"s\"\"1\".\"T\""

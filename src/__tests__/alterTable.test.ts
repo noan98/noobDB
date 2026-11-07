@@ -528,7 +528,7 @@ describe("buildAlterPlan: 式 DEFAULT / DEFAULT_GENERATED (#1527)", () => {
     );
     const lite = buildAlterPlan(
       "sqlite",
-      form({ added: [{ name: "c", type: "text", notNull: false, defaultValue: "007" }] }),
+      form({ database: "main", added: [{ name: "c", type: "text", notNull: false, defaultValue: "007" }] }),
     );
     expect(lite.statements[0].sql).toBe('ALTER TABLE "users" ADD COLUMN "c" text DEFAULT \'007\';');
   });
@@ -753,5 +753,35 @@ describe("buildAlterPlan: 新規列の位置 (#1625)", () => {
       expect(supportsColumnPosition(driver)).toBe(false);
     }
     expect(supportsColumnPosition("mysql")).toBe(true);
+  });
+});
+
+describe("buildAlterPlan: アタッチした SQLite の CREATE INDEX (#2129)", () => {
+  const idx = [{ name: "idx_email", columns: ["email"], unique: false }];
+
+  it("別名側は索引名にスキーマを付け、ON の表は修飾しない", () => {
+    const plan = buildAlterPlan("sqlite", form({ database: "ext", indexes: idx }));
+    expect(plan.statements.map((s) => s.sql)).toEqual([
+      'CREATE INDEX "ext"."idx_email" ON "users" ("email");',
+    ]);
+    const uniq = buildAlterPlan(
+      "sqlite",
+      form({ database: "ext", indexes: [{ name: "u", columns: ["a", "b"], unique: true }] }),
+    );
+    expect(uniq.statements[0].sql).toBe('CREATE UNIQUE INDEX "ext"."u" ON "users" ("a", "b");');
+  });
+
+  it("main / 未指定は修飾なし、他ドライバは従来どおり", () => {
+    for (const database of ["main", null]) {
+      expect(buildAlterPlan("sqlite", form({ database, indexes: idx })).statements[0].sql).toBe(
+        'CREATE INDEX "idx_email" ON "users" ("email");',
+      );
+    }
+    expect(buildAlterPlan("mysql", form({ indexes: idx })).statements[0].sql).toBe(
+      "CREATE INDEX `idx_email` ON `shop`.`users` (`email`);",
+    );
+    expect(buildAlterPlan("postgres", form({ indexes: idx })).statements[0].sql).toBe(
+      'CREATE INDEX "idx_email" ON "shop"."users" ("email");',
+    );
   });
 });

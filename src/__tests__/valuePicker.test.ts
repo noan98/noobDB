@@ -344,9 +344,12 @@ describe("buildDistinctValuesSql (#1627)", () => {
     expect(buildDistinctValuesSql({ driver: "postgres", ...p, limit: 10 })).toBe(
       'SELECT DISTINCT "status" FROM "db"."users" WHERE "status" IS NOT NULL LIMIT 10',
     );
-    // SQLite は名前空間修飾なし。
-    expect(buildDistinctValuesSql({ driver: "sqlite", ...p })).toBe(
+    // SQLite は main なら修飾なし、アタッチした別名なら修飾する (#2129)。
+    expect(buildDistinctValuesSql({ driver: "sqlite", ...p, database: "main" })).toBe(
       'SELECT DISTINCT "status" FROM "users" WHERE "status" IS NOT NULL LIMIT 50',
+    );
+    expect(buildDistinctValuesSql({ driver: "sqlite", ...p })).toBe(
+      'SELECT DISTINCT "status" FROM "db"."users" WHERE "status" IS NOT NULL LIMIT 50',
     );
   });
 

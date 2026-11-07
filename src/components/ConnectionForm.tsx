@@ -11,8 +11,10 @@ import {
   ProfileSecretKind,
   SshAuthMethod,
   SsmConfig,
+  SqliteAttachment,
   SslMode,
 } from "../api/tauri";
+import { attachAliasProblem, suggestAttachAlias } from "./sqliteAttach";
 import { useT } from "../i18n";
 import { CopyButton } from "./CopyButton";
 import { useCopyFeedback } from "./useCopyFeedback";
@@ -457,6 +459,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [database, setDatabase] = useState(initial?.database ?? "");
   const [password, setPassword] = useState("");
   const [filePath, setFilePath] = useState(initial?.file_path ?? "");
+  const [attachments, setAttachments] = useState<SqliteAttachment[]>(initial?.sqlite_attachments ?? []);
   const [group, setGroup] = useState(initial?.group ?? "");
   const [color, setColor] = useState<string | null>(initial?.color ?? null);
   const [isProduction, setIsProduction] = useState<boolean>(initial?.is_production ?? false);
@@ -777,6 +780,31 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     if (typeof selected === "string") setFilePath(selected);
   };
 
+  const pickAttachFile = async (index: number) => {
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      title: t("formPickDbFileTitle"),
+      filters: [
+        { name: t("formSqliteFileFilter"), extensions: ["db", "sqlite", "sqlite3"] },
+        { name: t("formAnyFileFilter"), extensions: ["*"] },
+      ],
+    });
+    if (typeof selected !== "string") return;
+    setAttachments((prev) =>
+      prev.map((a, i) =>
+        i === index ? { path: selected, alias: a.alias || suggestAttachAlias(selected, prev) } : a,
+      ),
+    );
+  };
+  const updateAttachment = (index: number, patch: Partial<SqliteAttachment>) =>
+    setAttachments((prev) => prev.map((a, i) => (i === index ? { ...a, ...patch } : a)));
+  // 空の行は保存・接続に含めない。
+  const cleanAttachments = () =>
+    attachments
+      .map((a) => ({ path: a.path.trim(), alias: a.alias.trim() }))
+      .filter((a) => a.path !== "" || a.alias !== "");
+
   const buildRequest = () => {
     if (isFileBacked) {
       return {
@@ -790,6 +818,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         ssh: null,
         ssm: null,
         file_path: filePath || null,
+        sqlite_attachments: cleanAttachments(),
         read_only: readOnly,
         skip_history: skipHistory,
         init_sql: initSql.trim() || null,
@@ -993,6 +1022,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         read_only: readOnly,
         skip_history: skipHistory,
         file_path: isFileBacked ? filePath || null : null,
+        sqlite_attachments: isFileBacked ? cleanAttachments() : [],
         // SQLite is file-backed and never negotiates TLS; persist null so a
         // driver switch can't leave stale TLS settings on the profile.
         // IAM で引き上げた値ではなく利用者が選んだ値を保存する (IAM を後で外したときに
@@ -1135,6 +1165,62 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             </Flex>
             <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
               {t("formSqliteFilePathHelp")}
+            </Text>
+          </Box>
+          <Box mt="3" data-testid="connection-form-sqlite-attachments">
+            <FieldLabel as="div">{t("formSqliteAttachLegend")}</FieldLabel>
+            {attachments.map((a, i) => {
+              const aliasProblem = attachAliasProblem(attachments, i);
+              return (
+                // 行に安定した ID は無い (パスも別名も編集中に変わる) ので位置をキーにする。
+                <Box key={i} mb="2">
+                  <Flex gap="2" align="end">
+                    <Input
+                      aria-label={t("formSqliteAttachPath")}
+                      value={a.path}
+                      onChange={(e) => updateAttachment(i, { path: e.target.value })}
+                      placeholder={t("formSqliteFilePathPlaceholder")}
+                    />
+                    <Button type="button" onClick={() => pickAttachFile(i)}>
+                      {t("formBrowse")}
+                    </Button>
+                    <Input
+                      aria-label={t("formSqliteAttachAlias")}
+                      placeholder={t("formSqliteAttachAlias")}
+                      width="40"
+                      flexShrink={0}
+                      fontFamily="mono"
+                      value={a.alias}
+                      aria-invalid={aliasProblem ? true : undefined}
+                      onChange={(e) => updateAttachment(i, { alias: e.target.value })}
+                    />
+                    <Button
+                      type="button"
+                      onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
+                    >
+                      {t("formSqliteAttachRemove")}
+                    </Button>
+                  </Flex>
+                  {aliasProblem && (
+                    <FieldError display="block" mt="1">
+                      {t(
+                        aliasProblem === "invalid"
+                          ? "formSqliteAttachAliasInvalid"
+                          : "formSqliteAttachAliasDuplicate",
+                      )}
+                    </FieldError>
+                  )}
+                </Box>
+              );
+            })}
+            <Button
+              type="button"
+              onClick={() => setAttachments((prev) => [...prev, { path: "", alias: "" }])}
+            >
+              {t("formSqliteAttachAdd")}
+            </Button>
+            <Text textStyle="caption" color="app.textMuted" mt="1" mb="0">
+              {t("formSqliteAttachHelp")}
             </Text>
           </Box>
         </Fieldset>

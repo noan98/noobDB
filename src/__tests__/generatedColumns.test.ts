@@ -158,7 +158,7 @@ describe("ALTER TABLE: generated columns (#1893)", () => {
   });
 
   it("SQLite: VIRTUAL is added in place, STORED goes through the rebuild", () => {
-    const v = buildAlterPlan("sqlite", form({ added: [newGen(true)] }));
+    const v = buildAlterPlan("sqlite", form({ database: "main", added: [newGen(true)] }));
     expect(v.rebuild).toBeNull();
     expect(v.statements[0].sql).toBe(
       'ALTER TABLE "t" ADD COLUMN "g" INT GENERATED ALWAYS AS (a * 2) VIRTUAL;',
@@ -166,6 +166,7 @@ describe("ALTER TABLE: generated columns (#1893)", () => {
     const s = buildAlterPlan(
       "sqlite",
       form({
+        database: "main",
         baseline: [{ name: "a", type: "INT", notNull: false, defaultValue: "", extra: "" }],
         existing: [{ original: "a", drop: false, name: "a", type: "INT", notNull: false, defaultValue: "" }],
         added: [newGen(false, { notNull: true })],
@@ -184,7 +185,11 @@ describe("ALTER TABLE: generated columns (#1893)", () => {
     const ea = { original: "a", drop: false, name: "a", type: "INT", notNull: false, defaultValue: "" };
     const changed = buildAlterPlan(
       "sqlite",
-      form({ baseline: [a, gbase("", "a + 1", true)], existing: [ea, gedit("a + 2", true)] }),
+      form({
+        database: "main",
+        baseline: [a, gbase("", "a + 1", true)],
+        existing: [ea, gedit("a + 2", true)],
+      }),
     );
     expect(changed.rebuild?.changed_generated).toEqual([
       { column: "total", expression: "a + 2", is_virtual: true },
@@ -193,19 +198,28 @@ describe("ALTER TABLE: generated columns (#1893)", () => {
     expect(changed.rebuild?.columns.map((c) => c.original)).toEqual(["a"]);
     const untouched = buildAlterPlan(
       "sqlite",
-      form({ baseline: [a, gbase("", "a + 1", true)], existing: [ea, gedit("a + 1", true)] }),
+      form({
+        database: "main",
+        baseline: [a, gbase("", "a + 1", true)],
+        existing: [ea, gedit("a + 1", true)],
+      }),
     );
     expect(untouched.rebuild).toBeNull();
     expect(untouched.statements).toEqual([]);
     const dropped = buildAlterPlan(
       "sqlite",
-      form({ baseline: [a, gbase("", "a + 1", true)], existing: [ea, gedit("a + 1", true, { drop: true })] }),
+      form({
+        database: "main",
+        baseline: [a, gbase("", "a + 1", true)],
+        existing: [ea, gedit("a + 1", true, { drop: true })],
+      }),
     );
     expect(dropped.rebuild).toBeNull();
     expect(dropped.statements[0].sql).toBe('ALTER TABLE "t" DROP COLUMN "total";');
     const both = buildAlterPlan(
       "sqlite",
       form({
+        database: "main",
         baseline: [a, gbase("", "a + 1", true)],
         existing: [ea, gedit("a + 1", true, { drop: true })],
         added: [newGen(false)],

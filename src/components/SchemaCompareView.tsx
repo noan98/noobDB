@@ -24,6 +24,7 @@ import { useSettings } from "../settings";
 import { SurfaceRule } from "./SurfaceRule";
 import { CrossDriverNotice, CrossDriverResult, crossDriverErrorKey } from "./CrossDriverVerify";
 import { Callout } from "./Callout";
+import { isSqliteMainDatabase } from "./sqlDialect";
 import { ErrorNote } from "./modalForm";
 import { useConfirm } from "./ConfirmDialog";
 import { AiSyncRisk, RiskBadge, type RiskByIndex } from "./AiSyncRisk";
@@ -574,6 +575,9 @@ export function SchemaCompareView({
     [profiles, target.profileId],
   );
   const driverMismatch = sourceDriver !== null && targetDriver !== null && sourceDriver !== targetDriver;
+  // SQLite でアタッチした別名がターゲットのときは適用できない (生成 SQL は表名を修飾せず、バックエンドも
+  // 拒否する, #2129)。比較と SQL の確認までは使える。
+  const applyUnsupported = targetDriver === "sqlite" && !isSqliteMainDatabase(target.database);
 
   // ドライバをまたぐ組み合わせでは、データ比較だけを許す (検証専用, #1869)。接続・DB が変わるたびに
   // 前回の結果を捨て、両側の表の一覧を取り直す。
@@ -1362,12 +1366,18 @@ export function SchemaCompareView({
                   onRisks={setRisks}
                 />
               )}
+              {applyUnsupported && (
+                <Callout tone="warning" role="status">
+                  {t("schemaCompareApplyAttachedUnsupported")}
+                </Callout>
+              )}
               <chakra.p css={backupCss}>{t("schemaCompareBackupNote")}</chakra.p>
               <Box css={actionsCss} display="flex" gap="2" flexWrap="wrap">
                 <PressableButton
                   variant="primary"
                   onClick={applyPlan}
-                  disabled={applying || selectedCount === 0}
+                  disabled={applying || selectedCount === 0 || applyUnsupported}
+                  title={applyUnsupported ? t("schemaCompareApplyAttachedUnsupported") : undefined}
                 >
                   {applying ? t("schemaCompareApplying") : t("schemaCompareApply", { count: selectedCount })}
                 </PressableButton>

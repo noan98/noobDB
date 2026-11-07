@@ -202,10 +202,9 @@ pub(crate) fn apply_approved_counts(
 }
 
 pub(crate) fn qualified_ref(driver: DriverKind, database: &str, table: &str) -> String {
-    // SQLite は接続ごとに単一の名前空間なので DB 名で修飾しない (フロントの
-    // `qualifiedTableRef` と同じ規約)。
+    // SQLite の規則は `db::sync::sqlite_table_ref` に一本化 (フロントの `qualifiedTableName` と同じ、#2129)。
     match driver {
-        DriverKind::Sqlite => quote_ident(driver, table),
+        DriverKind::Sqlite => crate::db::sync::sqlite_table_ref(database, table),
         DriverKind::Mysql | DriverKind::Postgres => {
             format!(
                 "{}.{}",
@@ -536,16 +535,14 @@ pub(crate) async fn bulk_update_cells_inner(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     let driver = session.conn.driver_kind();
+    // SQLite は、アタッチ先でない値 (古いプロファイルの `database` など) を main 扱いにする (#2129)。
+    let table_db = session
+        .conn
+        .resolve_attached_database(database.as_deref().unwrap_or_default());
     let built = if groups.is_empty() {
         Vec::new()
     } else {
-        build_bulk_update_statements_expected(
-            driver,
-            database.as_deref().unwrap_or_default(),
-            &table,
-            &pk_columns,
-            &groups,
-        )?
+        build_bulk_update_statements_expected(driver, &table_db, &table, &pk_columns, &groups)?
     };
     let mut statements: Vec<String> = Vec::with_capacity(built.len() + extra_statements.len());
     let mut expects: Vec<RowExpectation> = Vec::with_capacity(statements.capacity());
@@ -581,7 +578,7 @@ pub(crate) async fn bulk_update_cells_inner(
     // フライトレコーダー (#2024): 適用前に対象行の before を読む。読み取り専用セッションなどで
     // 適用が拒否されるときは記録しない (保存は Committed のときだけ)。
     let capture_cfg = options.capture.clone().filter(|_| !session.skip_history);
-    let table_ref = qualified_ref(driver, database.as_deref().unwrap_or_default(), &table);
+    let table_ref = qualified_ref(driver, &table_db, &table);
     let capture_plan = match &capture_cfg {
         Some(cfg) if !session.read_only || session.emergency_write_active() => Some(
             bulk_capture::prepare(
@@ -699,7 +696,7 @@ pub async fn insert_generated_rows(
 }
 
 /// 新規テーブルを作る / 消すときのスキーマ修飾 (#2066)。PostgreSQL は `database` (= スキーマ、
-/// 無ければ `public`)、SQLite は常に `main` で修飾し、同名の一時テーブルを取り違えない。
+/// 無ければ `public`)、SQLite は `main` (アタッチした別名を選んだときはその別名) で修飾し、同名の一時テーブルを取り違えない。
 /// MySQL は `database` が必須 (無いと接続の既定 DB に作られて検査とずれるため拒否)。
 /// 限界: MySQL では `db.t` と修飾しても同名の TEMPORARY TABLE が先に解決される
 /// (`DROP TABLE` は TEMPORARY を先に消す)。また取り込み (`import_rows`) は素の表名で
@@ -711,7 +708,9 @@ fn new_table_schema(driver: DriverKind, database: Option<&str>) -> Result<String
             AppError::InvalidInput("a database is required to create a table".into())
         }),
         DriverKind::Postgres => Ok(db.unwrap_or("public").to_string()),
-        DriverKind::Sqlite => Ok("main".to_string()),
+        // SQLite は呼び出し側が `resolve_attached_database` で正した値を渡す。アタッチした別名を
+        // 選んだときはその別名に作り、それ以外 (未指定・古い値) は `main` (#2129)。
+        DriverKind::Sqlite => Ok(db.unwrap_or("main").to_string()),
     }
 }
 
@@ -765,7 +764,17 @@ pub(crate) async fn insert_generated_rows_inner(
     let mut new_schema: Option<String> = None;
     if let Some(create) = create_table {
         validate_generated_create_spec(driver, table, columns, create)?;
-        let schema = new_table_schema(driver, database.as_deref())?;
+        let resolved_db = session
+            .conn
+            .resolve_attached_database(database.as_deref().unwrap_or_default());
+        let schema = new_table_schema(
+            driver,
+            if driver == DriverKind::Sqlite {
+                Some(resolved_db.as_str())
+            } else {
+                database.as_deref()
+            },
+        )?;
         // 存在確認・CREATE・投入・DROP がすべて同じ表を指すよう、解決したスキーマ / DB を
         // 以降の実行にも使う (PG で database 未指定のまま投入すると search_path の別スキーマの
         // 同名表へ入りうる)。SQLite の `main` は修飾にだけ使う。
@@ -931,8 +940,14 @@ mod tests {
             "s1"
         );
         assert_eq!(
-            new_table_schema(DriverKind::Sqlite, Some("x")).unwrap(),
+            new_table_schema(DriverKind::Sqlite, Some("main")).unwrap(),
             "main"
+        );
+        assert_eq!(new_table_schema(DriverKind::Sqlite, None).unwrap(), "main");
+        // アタッチした別名 (解決済み) はそのまま返す (#2129)。
+        assert_eq!(
+            new_table_schema(DriverKind::Sqlite, Some("ext")).unwrap(),
+            "ext"
         );
     }
 
@@ -1469,7 +1484,10 @@ pub(crate) async fn run_chunked_dml_batch_inner(
     };
     let mut row_key = "rowid";
     if let Connection::Sqlite(c) = &session.conn {
-        if !c.is_rowid_table(&table).await? {
+        if !c
+            .is_rowid_table(database.as_deref().unwrap_or("main"), &table)
+            .await?
+        {
             return Err(AppError::InvalidInput(
                 "chunked DML needs a rowid table (WITHOUT ROWID tables, views and virtual tables are not supported)"
                     .into(),

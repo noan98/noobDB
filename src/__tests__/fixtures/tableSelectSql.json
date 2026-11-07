@@ -7,5 +7,10 @@
   { "driver": "postgres", "database": "s\"x", "table": "t\"y", "hidden": null, "expected": "SELECT * FROM \"s\"\"x\".\"t\"\"y\"" },
   { "driver": "sqlite", "database": "main", "table": "items", "hidden": null, "expected": "SELECT * FROM \"items\"" },
   { "driver": "sqlite", "database": "main", "table": "no_pk", "hidden": "rowid", "expected": "SELECT *, rowid FROM \"no_pk\"" },
-  { "driver": "sqlite", "database": "main", "table": "we\"ird", "hidden": null, "expected": "SELECT * FROM \"we\"\"ird\"" }
+  { "driver": "sqlite", "database": "main", "table": "we\"ird", "hidden": null, "expected": "SELECT * FROM \"we\"\"ird\"" },
+  { "driver": "sqlite", "database": "", "table": "items", "hidden": null, "expected": "SELECT * FROM \"items\"" },
+  { "driver": "sqlite", "database": "MAIN", "table": "items", "hidden": null, "expected": "SELECT * FROM \"items\"" },
+  { "driver": "sqlite", "database": "ext", "table": "items", "hidden": null, "expected": "SELECT * FROM \"ext\".\"items\"" },
+  { "driver": "sqlite", "database": "ext", "table": "no_pk", "hidden": "rowid", "expected": "SELECT *, rowid FROM \"ext\".\"no_pk\"" },
+  { "driver": "sqlite", "database": "ext", "table": "we\"ird", "hidden": null, "expected": "SELECT * FROM \"ext\".\"we\"\"ird\"" }
 ]

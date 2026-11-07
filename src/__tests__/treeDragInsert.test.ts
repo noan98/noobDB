@@ -13,8 +13,9 @@ describe("treeDragInsert", () => {
   it("テーブルは SELECT 雛形 (右クリックの挿入と同じ整形) になる", () => {
     expect(treeItemInsertText("mysql", table)).toBe("SELECT * FROM `shop`.`orders`");
     expect(treeItemInsertText("postgres", table)).toBe('SELECT * FROM "shop"."orders"');
-    // SQLite は名前空間修飾を付けない。
-    expect(treeItemInsertText("sqlite", table)).toBe('SELECT * FROM "orders"');
+    // SQLite は main なら修飾を付けず、アタッチした別名なら付ける (#2129)。
+    expect(treeItemInsertText("sqlite", { ...table, database: "main" })).toBe('SELECT * FROM "orders"');
+    expect(treeItemInsertText("sqlite", table)).toBe('SELECT * FROM "shop"."orders"');
   });
 
   it("列は既定で 表.列、qualified=false で列名のみ。予約語はクォートする", () => {

@@ -173,10 +173,13 @@ pub fn is_numeric_type(driver: DriverKind, data_type: &str) -> bool {
 }
 
 /// テーブル参照をドライバ方言で修飾する (`cellEdit.ts::qualifiedTableRef` と同じ規約)。
-/// SQLite はファイル単位なので名前空間を付けない。
+/// SQLite は `main` なら付けず、アタッチした別名のときだけ付ける (#2129)。
 pub fn table_ref(t: &ProfileTarget<'_>) -> String {
+    if t.driver == DriverKind::Sqlite {
+        return super::sync::sqlite_table_ref(t.database, t.table);
+    }
     let table = quote_ident(t.driver, t.table);
-    if t.driver == DriverKind::Sqlite || t.database.is_empty() {
+    if t.database.is_empty() {
         return table;
     }
     let db = quote_ident(t.driver, t.database);
@@ -1159,7 +1162,13 @@ mod tests {
             my.ends_with("FROM `app`.`users` WHERE RAND(1628) < 0.1"),
             "{my}"
         );
-        let lite = build_summary_sql(&sampled(DriverKind::Sqlite, 10.0), DistinctMode::Exact);
+        let lite = build_summary_sql(
+            &ProfileTarget {
+                database: "main",
+                ..sampled(DriverKind::Sqlite, 10.0)
+            },
+            DistinctMode::Exact,
+        );
         assert!(
             lite.ends_with(
                 "FROM \"users\" WHERE (random() & 9223372036854775807) % 1000000 < 100000"
@@ -1198,8 +1207,14 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_ignores_database() {
-        assert!(build_count_sql(&target(DriverKind::Sqlite)).ends_with("FROM \"users\""));
+    fn sqlite_qualifies_only_attached_aliases() {
+        let main = ProfileTarget {
+            database: "main",
+            ..target(DriverKind::Sqlite)
+        };
+        assert!(build_count_sql(&main).ends_with("FROM \"users\""));
+        // アタッチした別名は修飾する (#2129)。
+        assert!(build_count_sql(&target(DriverKind::Sqlite)).ends_with("FROM \"app\".\"users\""));
     }
 
     #[test]

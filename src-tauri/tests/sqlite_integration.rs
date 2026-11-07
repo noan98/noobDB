@@ -1269,6 +1269,8 @@ async fn sqlite_missing_path_reports_invalid_input() {
         ssl_client_key: None,
         init_sql: None,
         aws_iam: None,
+        sqlite_attachments: Vec::new(),
+        read_only: false,
     };
     let err = noobdb_lib::__test_api::connect(&opts)
         .await
@@ -7606,4 +7608,516 @@ async fn sqlite_compare_with_column_mapping_syncs_into_renamed_columns() {
     .expect("re-compare");
     assert!(after.rows.is_empty(), "{:?}", after.rows);
     let _ = std::fs::remove_file(&path);
+}
+
+// ---------------------------------------------------------------------------
+// ATTACH した追加ファイル (#2129)
+// ---------------------------------------------------------------------------
+
+async fn attach_fixture(tag: &str) -> (PathBuf, PathBuf) {
+    let dir = std::env::temp_dir();
+    let main = dir.join(format!(
+        "noobdb_attach_main_{tag}_{}.db",
+        std::process::id()
+    ));
+    let other = dir.join(format!(
+        "noobdb_attach_other_{tag}_{}.db",
+        std::process::id()
+    ));
+    for (p, sql) in [
+        (&main, "CREATE TABLE m_t (id INTEGER PRIMARY KEY, v TEXT)"),
+        (
+            &other,
+            "CREATE TABLE o_t (id INTEGER PRIMARY KEY, w TEXT NOT NULL); INSERT INTO o_t VALUES (1, 'x')",
+        ),
+    ] {
+        let _ = std::fs::remove_file(p);
+        std::fs::File::create(p).expect("create");
+        let conn = t::connect(&t::sqlite_options(p.to_str().expect("utf8")))
+            .await
+            .expect("connect");
+        for stmt in sql.split(';') {
+            conn.execute(stmt, None).await.expect("seed");
+        }
+        conn.close().await;
+    }
+    (main, other)
+}
+
+fn attach_opts(main: &Path, other: &Path, alias: &str, ro: bool) -> t::DbConnectOptions {
+    let mut o = t::sqlite_options(main.to_str().expect("utf8"));
+    o.sqlite_attachments = vec![t::SqliteAttachment {
+        path: other.to_str().expect("utf8").to_string(),
+        alias: alias.to_string(),
+    }];
+    o.read_only = ro;
+    o
+}
+
+#[tokio::test]
+async fn sqlite_attached_file_is_listed_and_introspected() {
+    let (main, other) = attach_fixture("list").await;
+    let conn = t::connect(&attach_opts(&main, &other, "ext", false))
+        .await
+        .expect("connect");
+    assert_eq!(conn.databases().await.expect("dbs"), vec!["main", "ext"]);
+    assert_eq!(conn.tables("main").await.expect("t"), vec!["m_t"]);
+    assert_eq!(conn.tables("ext").await.expect("t"), vec!["o_t"]);
+    let cols = conn.columns("ext", "o_t").await.expect("cols");
+    assert_eq!(cols.len(), 2);
+    assert_eq!(cols[1].name, "w");
+    // プールの全物理接続 (上限 4 本) を**同時に**保持し、どの接続からも別名が見えることを示す。
+    // 逐次に流すだけでは同じ接続を使い回すので、全接続の証明にならない。
+    let all = t::sqlite_execute_on_n_connections(&conn, "SELECT count(*) FROM ext.o_t", 4)
+        .await
+        .expect("query on every pooled connection");
+    assert_eq!(all.len(), 4);
+    for r in &all {
+        assert!(matches!(&r.rows[0][0], t::Value::Int(1)), "{:?}", r.rows);
+    }
+    // 並列に流しても同じ (各クエリが別の接続に当たりうる)。
+    let parallel = futures_util::future::join_all(
+        (0..8).map(|_| conn.execute("SELECT w FROM ext.o_t WHERE id = 1", None)),
+    )
+    .await;
+    for r in parallel {
+        let r = r.expect("parallel query");
+        assert!(matches!(&r.rows[0][0], t::Value::String(w) if w == "x"));
+    }
+    conn.close().await;
+    let _ = std::fs::remove_file(&main);
+    let _ = std::fs::remove_file(&other);
+}
+
+#[tokio::test]
+async fn sqlite_attached_file_is_write_protected_when_read_only() {
+    let (main, other) = attach_fixture("ro").await;
+    let conn = t::connect(&attach_opts(&main, &other, "ext", true))
+        .await
+        .expect("connect");
+    let err = conn
+        .execute("INSERT INTO ext.o_t VALUES (2, 'y')", None)
+        .await;
+    assert!(err.is_err(), "mode=ro attach must reject writes");
+    conn.close().await;
+    let _ = std::fs::remove_file(&main);
+    let _ = std::fs::remove_file(&other);
+}
+
+#[tokio::test]
+async fn sqlite_attach_rejects_bad_alias_and_missing_file() {
+    let (main, other) = attach_fixture("bad").await;
+    for alias in ["", "a b", "main", "x\"; DROP TABLE m_t; --"] {
+        let r = t::connect(&attach_opts(&main, &other, alias, false)).await;
+        assert!(r.is_err(), "alias {alias:?} must be rejected");
+    }
+    let missing = other.with_extension("missing");
+    assert!(t::connect(&attach_opts(&main, &missing, "ext", false))
+        .await
+        .is_err());
+    let _ = std::fs::remove_file(&main);
+    let _ = std::fs::remove_file(&other);
+}
+
+/// main と別名の両方に同名の表がある状態で、別名側の表を指して読み書きできる (#2129)。
+/// 修飾なしの名前は main を先に探すため、別名での修飾が無いと main 側を読み書きしてしまう。
+#[tokio::test]
+async fn sqlite_attached_alias_is_not_shadowed_by_same_named_main_table() {
+    let dir = std::env::temp_dir();
+    let main = dir.join(format!(
+        "noobdb_attach_shadow_main_{}.db",
+        std::process::id()
+    ));
+    let other = dir.join(format!(
+        "noobdb_attach_shadow_other_{}.db",
+        std::process::id()
+    ));
+    for (p, sql) in [
+        (
+            &main,
+            "CREATE TABLE same (id INTEGER PRIMARY KEY, label TEXT); \
+             INSERT INTO same VALUES (1, 'main-a'), (2, 'main-b'); \
+             CREATE TABLE same_np (id INTEGER PRIMARY KEY, v TEXT)",
+        ),
+        (
+            &other,
+            "CREATE TABLE same_parent (id INTEGER PRIMARY KEY); \
+             INSERT INTO same_parent VALUES (7); \
+             CREATE TABLE same (id INTEGER PRIMARY KEY, label TEXT NOT NULL, \
+               parent_id INTEGER REFERENCES same_parent(id)); \
+             CREATE INDEX same_label ON same(label); \
+             INSERT INTO same VALUES (1, 'ext-a', 7); \
+             CREATE TABLE same_np (x INTEGER, y TEXT); \
+             INSERT INTO same_np VALUES (5, 'five')",
+        ),
+    ] {
+        let _ = std::fs::remove_file(p);
+        std::fs::File::create(p).expect("create");
+        let c = t::connect(&t::sqlite_options(p.to_str().expect("utf8")))
+            .await
+            .expect("connect");
+        for stmt in sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+            c.execute(stmt, None).await.expect(stmt);
+        }
+        c.close().await;
+    }
+    let opts = attach_opts(&main, &other, "ext", false);
+    let conn = t::connect(&opts).await.expect("connect");
+
+    // 列・インデックス・FK・DDL・行識別は別名側のものを返す (main 側には無い情報で見分ける)。
+    let cols = conn.columns("ext", "same").await.expect("columns");
+    assert!(cols.iter().any(|c| c.name == "parent_id"), "{cols:?}");
+    let idx = conn.list_indexes("ext", "same").await.expect("indexes");
+    assert!(idx.iter().any(|i| i.name == "same_label"), "{idx:?}");
+    let main_idx = conn.list_indexes("main", "same").await.expect("indexes");
+    assert!(
+        !main_idx.iter().any(|i| i.name == "same_label"),
+        "{main_idx:?}"
+    );
+    let fks = conn
+        .foreign_keys_for_table("ext", "same")
+        .await
+        .expect("foreign keys");
+    assert_eq!(fks.len(), 1, "{fks:?}");
+    assert_eq!(fks[0].referenced_table, "same_parent");
+    assert!(conn
+        .foreign_keys_for_table("main", "same")
+        .await
+        .expect("foreign keys")
+        .is_empty());
+    let ddl = conn
+        .object_definition("ext", "table", "same", None)
+        .await
+        .expect("ddl");
+    assert!(ddl.contains("parent_id"), "{ddl}");
+    let main_ddl = conn
+        .object_definition("main", "table", "same", None)
+        .await
+        .expect("ddl");
+    assert!(!main_ddl.contains("parent_id"), "{main_ddl}");
+    // 主キーの無い別名側の表は rowid、main 側の同名表は主キー。
+    let ext_id = conn.row_identity("ext", "same_np").await.expect("identity");
+    assert_eq!(ext_id.strategy, "rowid", "{ext_id:?}");
+    let main_id = conn
+        .row_identity("main", "same_np")
+        .await
+        .expect("identity");
+    assert_ne!(main_id.strategy, "rowid", "{main_id:?}");
+
+    // 表を開く SQL は別名側を読む。
+    let session_conn = t::connect(&opts).await.expect("connect (session)");
+    let session = t::make_session("attach_shadow", session_conn, opts.clone(), false);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+    let opened = t::open_table_via_command(&state, &sid, "ext", "same", 10, false)
+        .await
+        .expect("open_table");
+    assert_eq!(opened.base, "SELECT * FROM \"ext\".\"same\"");
+    let rows = conn.execute(&opened.sql, None).await.expect("select");
+    assert_eq!(rows.rows.len(), 1, "{:?}", rows.rows);
+    assert!(matches!(&rows.rows[1 - 1][1], t::Value::String(s) if s == "ext-a"));
+    let no_pk = t::open_table_via_command(&state, &sid, "ext", "same_np", 10, false)
+        .await
+        .expect("open_table");
+    assert_eq!(no_pk.base, "SELECT *, rowid FROM \"ext\".\"same_np\"");
+    // 古い値 (アタッチ先でない名前) は main 扱いで、存在しない DB を修飾して失敗しない。
+    let stale = t::open_table_via_command(&state, &sid, "legacy_db", "same", 10, false)
+        .await
+        .expect("open_table with a stale database name");
+    assert_eq!(stale.base, "SELECT * FROM \"same\"");
+
+    // 書き込みプレビュー (対象表の主キー取得) も別名側を見る。
+    let preview = conn
+        .preview_execute_with_limit(
+            "UPDATE \"ext\".\"same\" SET label = 'preview' WHERE id = 1",
+            None,
+            10,
+        )
+        .await
+        .expect("preview");
+    assert_eq!(preview.primary_key, vec!["id".to_string()]);
+    assert_eq!(preview.before_rows.len(), 1);
+    assert!(matches!(&preview.before_rows[0][1], t::Value::String(s) if s == "ext-a"));
+
+    // インライン編集 (一括更新) は別名側だけを書き換え、同じ主キーの main 側は変えない。
+    t::bulk_update_cells_via_command(
+        &state,
+        &sid,
+        Some("ext"),
+        "same",
+        vec!["id".into()],
+        vec![t::BulkUpdateGroup {
+            set: vec![t::BulkSetColumn {
+                column: "label".into(),
+                value: t::BulkSetValue::Text {
+                    text: "edited".into(),
+                },
+            }],
+            keys: vec![vec![t::Value::Int(1)]],
+            olds: Vec::new(),
+        }],
+        Vec::new(),
+    )
+    .await
+    .expect("inline edit on the attached table");
+    let ext_rows = conn
+        .execute("SELECT label FROM ext.same ORDER BY id", None)
+        .await
+        .expect("ext rows");
+    assert!(matches!(&ext_rows.rows[0][0], t::Value::String(s) if s == "edited"));
+    let main_rows = conn
+        .execute("SELECT id, label FROM main.same ORDER BY id", None)
+        .await
+        .expect("main rows");
+    assert_eq!(main_rows.rows.len(), 2);
+    assert!(matches!(&main_rows.rows[0][1], t::Value::String(s) if s == "main-a"));
+    assert!(matches!(&main_rows.rows[1][1], t::Value::String(s) if s == "main-b"));
+
+    // エクスポートは別名側の行を出す (main は 2 行、別名は 1 行)。
+    let sql = t::table_select_sql(t::DriverKind::Sqlite, "ext", "same", None);
+    let out = dir.join(format!("noobdb_attach_shadow_{}.xlsx", std::process::id()));
+    let (_, exported) = t::export_workbook_via_command(
+        &session_of(&opts).await,
+        &[("same", sql.as_str())],
+        out.to_str().expect("utf8"),
+    )
+    .await
+    .expect("export");
+    assert_eq!(exported, 1);
+    let main_sql = t::table_select_sql(t::DriverKind::Sqlite, "main", "same", None);
+    let (_, exported_main) = t::export_workbook_via_command(
+        &session_of(&opts).await,
+        &[("same", main_sql.as_str())],
+        out.to_str().expect("utf8"),
+    )
+    .await
+    .expect("export main");
+    assert_eq!(exported_main, 2);
+
+    conn.close().await;
+    for p in [&main, &other, &out] {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+async fn session_of(opts: &t::DbConnectOptions) -> t::Session {
+    let conn = t::connect(opts).await.expect("connect (export session)");
+    t::make_session("attach_export", conn, opts.clone(), false)
+}
+
+/// アタッチした別名の表に対する「作り直す / 書き換える」系を拒否し、インポート・転送の追記は
+/// 別名側へ入り main の同名表は変わらない (#2129)。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sqlite_attached_alias_rejects_rebuild_sync_and_qualifies_import() {
+    let dir = std::env::temp_dir();
+    let main = dir.join(format!("noobdb_attach_rej_main_{}.db", std::process::id()));
+    let other = dir.join(format!("noobdb_attach_rej_other_{}.db", std::process::id()));
+    for (p, sql) in [
+        (
+            &main,
+            "CREATE TABLE same (id INTEGER PRIMARY KEY, label TEXT); \
+             INSERT INTO same VALUES (1, 'main-a'); \
+             CREATE TABLE extra (id INTEGER PRIMARY KEY, label TEXT)",
+        ),
+        (
+            &other,
+            "CREATE TABLE same (id INTEGER PRIMARY KEY, label TEXT NOT NULL); \
+             INSERT INTO same VALUES (1, 'ext-a'); \
+             CREATE TABLE extra (id INTEGER PRIMARY KEY, label TEXT)",
+        ),
+    ] {
+        let _ = std::fs::remove_file(p);
+        std::fs::File::create(p).expect("create");
+        let c = t::connect(&t::sqlite_options(p.to_str().expect("utf8")))
+            .await
+            .expect("connect");
+        for stmt in sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+            c.execute(stmt, None).await.expect(stmt);
+        }
+        c.close().await;
+    }
+    let opts = attach_opts(&main, &other, "ext", false);
+    let conn = t::connect(&opts).await.expect("connect");
+    let state = t::AppState::default();
+    let sid = state
+        .insert(t::make_session(
+            "attach_reject",
+            t::connect(&opts).await.expect("connect (session)"),
+            opts.clone(),
+            false,
+        ))
+        .await;
+    let is_unsupported = |e: &t::AppError| {
+        matches!(e, t::AppError::InvalidInput(m) if m.contains("アタッチしたデータベースの表には未対応")
+            || m.contains("attached_unsupported"))
+    };
+
+    // 再構築の計画 (変更の中身に関わらず、別名なら計画の前に拒否する)。
+    let edit = t::SqliteRebuildEdit::default();
+    let err = t::plan_table_rebuild(
+        &state.get(&sid).await.expect("session").conn,
+        "ext",
+        "same",
+        &edit,
+    )
+    .await
+    .expect_err("rebuild plan on an attached alias must be rejected");
+    assert!(is_unsupported(&err), "{err:?}");
+
+    // スキーマ / データ同期の適用と、再構築の適用。
+    let stmts = vec!["DELETE FROM \"same\"".to_string()];
+    let err = t::apply_sync_sql_via_command(&state, &sid, Some("ext"), stmts.clone())
+        .await
+        .expect_err("sync apply on an attached alias must be rejected");
+    assert!(is_unsupported(&err), "{err:?}");
+    let err = t::apply_sqlite_table_rebuild_via_command(&state, &sid, Some("ext"), stmts.clone())
+        .await
+        .expect_err("rebuild apply on an attached alias must be rejected");
+    assert!(is_unsupported(&err), "{err:?}");
+    // main への適用は従来どおり通る (拒否は別名だけ)。
+    t::apply_sync_sql_via_command(
+        &state,
+        &sid,
+        Some("main"),
+        vec!["UPDATE \"same\" SET label = 'main-b' WHERE id = 1".to_string()],
+    )
+    .await
+    .expect("sync apply on main");
+
+    // インポートは別名側に入り、main の同名表は変わらない。
+    let cols = vec!["id".to_string(), "label".to_string()];
+    let rows = vec![vec![Some("2".to_string()), Some("ext-b".to_string())]];
+    let n = conn
+        .import_rows(
+            Some("ext"),
+            "same",
+            &cols,
+            &rows,
+            100,
+            &t::ImportConflict::insert_only(),
+            |_| Ok(()),
+        )
+        .await
+        .expect("import into the attached table");
+    assert_eq!(n, 1);
+    let ext_n = conn
+        .execute("SELECT COUNT(*) FROM ext.same", None)
+        .await
+        .expect("ext count");
+    assert!(
+        matches!(&ext_n.rows[0][0], t::Value::Int(2)),
+        "{:?}",
+        ext_n.rows
+    );
+    let main_rows = conn
+        .execute("SELECT id, label FROM main.same ORDER BY id", None)
+        .await
+        .expect("main rows");
+    assert_eq!(main_rows.rows.len(), 1, "{:?}", main_rows.rows);
+    assert!(matches!(&main_rows.rows[0][1], t::Value::String(s) if s == "main-b"));
+
+    // 事前検証 (dry-run) と失敗行の特定も別名側を見る: NOT NULL の label に NULL は別名側でだけ失敗する。
+    let bad = vec![vec![Some("9".to_string()), None]];
+    let probe = conn
+        .probe_failing_row(
+            Some("ext"),
+            "same",
+            &cols,
+            &bad,
+            &t::ImportConflict::insert_only(),
+        )
+        .await
+        .expect("probe");
+    assert!(probe.is_some(), "NOT NULL of the attached table must apply");
+    let probe_main = conn
+        .probe_failing_row(
+            Some("main"),
+            "same",
+            &cols,
+            &bad,
+            &t::ImportConflict::insert_only(),
+        )
+        .await
+        .expect("probe main");
+    assert!(probe_main.is_none());
+
+    // データ転送: 別名への作成 / 置換は拒否、追記は別名側へ入る。
+    let req = |mode: t::TransferMode, table: &str| t::TransferRequest {
+        source_session_id: sid.clone(),
+        target_session_id: sid.clone(),
+        source_database: Some("main".into()),
+        source_table: Some("same".into()),
+        source_sql: None,
+        target_database: Some("ext".into()),
+        target_table: table.into(),
+        mode,
+        batch_size: Some(1000),
+        conflict_mode: None,
+        key_columns: None,
+        columns: Vec::new(),
+        where_clause: None,
+        limit_rows: None,
+        verify_counts: None,
+    };
+    for mode in [t::TransferMode::Create, t::TransferMode::Replace] {
+        let err = t::transfer_data_inner(
+            &state,
+            req(mode, "copy_of_same"),
+            std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            |_| {},
+        )
+        .await
+        .expect_err("create / replace into an attached alias must be rejected");
+        assert!(is_unsupported(&err), "{err:?}");
+    }
+    // 追記は修飾した INSERT / 件数照合で別名側の表へ入り、main の同名表には入らない。
+    let out = t::transfer_data_inner(
+        &state,
+        req(t::TransferMode::Append, "extra"),
+        std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        |_| {},
+    )
+    .await
+    .expect("append into the attached table");
+    assert_eq!(out.rows, 1);
+    assert!(
+        out.integrity_warnings.is_empty(),
+        "{:?}",
+        out.integrity_warnings
+    );
+    let ext_extra = conn
+        .execute("SELECT COUNT(*) FROM ext.extra", None)
+        .await
+        .expect("ext extra");
+    assert!(
+        matches!(&ext_extra.rows[0][0], t::Value::Int(1)),
+        "{:?}",
+        ext_extra.rows
+    );
+    let main_extra = conn
+        .execute("SELECT COUNT(*) FROM main.extra", None)
+        .await
+        .expect("main extra");
+    assert!(
+        matches!(&main_extra.rows[0][0], t::Value::Int(0)),
+        "{:?}",
+        main_extra.rows
+    );
+    let leaked = conn
+        .execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = 'copy_of_same'",
+            None,
+        )
+        .await
+        .expect("master");
+    assert!(
+        matches!(&leaked.rows[0][0], t::Value::Int(0)),
+        "{:?}",
+        leaked.rows
+    );
+
+    conn.close().await;
+    for p in [&main, &other] {
+        let _ = std::fs::remove_file(p);
+    }
 }

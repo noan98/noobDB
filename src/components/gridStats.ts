@@ -16,7 +16,7 @@
 import type { CellValue } from "../api/tauri";
 import type { CellKind } from "./cellTypeMeta";
 import { toNumber } from "./cellConditionalFormat";
-import { quoteIdentFor } from "./sqlDialect";
+import { quoteIdentFor, qualifiedTableName } from "./sqlDialect";
 
 const isNullish = (v: CellValue): boolean => v === null || v === undefined;
 
@@ -259,22 +259,13 @@ export interface FullStatsRequest {
 }
 
 /**
- * テーブル参照をドライバ方言でクオート・修飾する。SQLite はファイル単位なので
- * データベース名を付けない (`cellEdit.ts` の `qualifiedTableRef` と同じ規約)。
- */
-function qualifiedTableRef(driver: string, database: string | null | undefined, table: string): string {
-  if (driver === "sqlite" || !database) return quoteIdentFor(driver, table);
-  return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
-}
-
-/**
  * 列の全件集計 SQL を生成する。識別子はドライバ方言でクオートする。常に
  * COUNT(*) / COUNT(col) / COUNT(DISTINCT col) / MIN / MAX を出し、数値列のときだけ
  * AVG / SUM を追加する。列の並びは `parseFullColumnStats` が位置で読むため固定。
  */
 export function buildColumnStatsSql(req: FullStatsRequest): string {
   const col = quoteIdentFor(req.driver, req.column);
-  const ref = qualifiedTableRef(req.driver, req.database, req.table);
+  const ref = qualifiedTableName(req.driver, req.database, req.table);
   const numeric = isNumericStatsKind(req.kind);
   const parts = [
     `COUNT(*) AS total_count`,

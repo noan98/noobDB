@@ -126,6 +126,22 @@ pub struct DbConnectOptions {
     /// at connect time and never stored. `password` stays empty in this mode.
     #[serde(default)]
     pub aws_iam: Option<aws_iam::AwsIamOptions>,
+    /// SQLite で、メインのファイルに加えて全ての物理接続へ `ATTACH` する別ファイル (#2129)。
+    /// パスと別名だけの非秘密情報。SQLite 以外では無視する。
+    #[serde(default)]
+    pub sqlite_attachments: Vec<SqliteAttachment>,
+    /// セッションが読み取り専用か (#2129)。SQLite の `ATTACH` を `mode=ro` の URI で行い、
+    /// アタッチしたファイルへの書き込みを SQLite 自身にも拒否させる (セッションの安全網とは別の二重の防御)。
+    #[serde(default)]
+    pub read_only: bool,
+}
+
+/// SQLite で追加アタッチするファイル 1 つ (#2129)。`alias` は `ATTACH DATABASE ? AS <alias>` の
+/// 別名で、ツリーには `main` と並ぶデータベースとして出る。どちらも非秘密で `profiles.json` に保存する。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SqliteAttachment {
+    pub path: String,
+    pub alias: String,
 }
 
 /// Driver-neutral TLS requirement level. Each driver's `connect` maps this to
@@ -634,6 +650,30 @@ impl Connection {
             Connection::Postgres(_) => DriverKind::Postgres,
             Connection::Sqlite(_) => DriverKind::Sqlite,
         }
+    }
+
+    /// 表を修飾する `database` を、この接続で意味のある値に正す (#2129)。SQLite は設定でアタッチした
+    /// 別名に一致するときだけその別名、それ以外 (古いプロファイルの値など) は `main` にする。
+    /// MySQL / PostgreSQL は渡された値のまま。
+    pub fn resolve_attached_database(&self, database: &str) -> String {
+        match self {
+            Connection::Sqlite(c) => c.resolve_db(database).to_string(),
+            Connection::MySql(_) | Connection::Postgres(_) => database.to_string(),
+        }
+    }
+
+    /// SQLite でアタッチした別名 (`main` 以外) の表に対する「表を作り直す / 書き換える」系の操作を
+    /// 拒否する (#2129)。それらは修飾できない文 (`RENAME TO` / `DROP TABLE` の相手や生成 SQL の
+    /// 本文) を含むため、別名側では意図しない `main` の表を壊しうる。MySQL / PostgreSQL は常に許可。
+    pub fn reject_if_attached_sqlite(&self, database: &str, what: &str) -> Result<()> {
+        if self.driver_kind() == DriverKind::Sqlite
+            && !sync::sqlite_is_main(&self.resolve_attached_database(database))
+        {
+            return Err(AppError::InvalidInput(format!(
+                "{what}: アタッチしたデータベースの表には未対応です (tables in an attached database are not supported)"
+            )));
+        }
+        Ok(())
     }
 
     pub async fn connect(opts: &DbConnectOptions) -> Result<Self> {
@@ -1433,7 +1473,7 @@ impl Connection {
         let map = match self {
             Connection::MySql(_) => return Ok(None),
             Connection::Postgres(c) => c.definitions_bulk(db).await?,
-            Connection::Sqlite(c) => c.definitions_bulk().await?,
+            Connection::Sqlite(c) => c.definitions_bulk(db).await?,
         };
         Ok(Some(BulkDefinitions {
             map,
@@ -1609,7 +1649,7 @@ impl Connection {
         match self {
             Connection::MySql(c) => c.list_table_triggers(db, table).await,
             Connection::Postgres(c) => c.list_table_triggers(db, table).await,
-            Connection::Sqlite(c) => c.list_table_triggers(table).await,
+            Connection::Sqlite(c) => c.list_table_triggers(db, table).await,
         }
     }
 
@@ -1635,7 +1675,7 @@ impl Connection {
         match self {
             Connection::MySql(c) => c.ddl_extras_for_database(db).await,
             Connection::Postgres(c) => c.ddl_extras_for_database(db).await,
-            Connection::Sqlite(c) => c.ddl_extras_for_database().await,
+            Connection::Sqlite(c) => c.ddl_extras_for_database(db).await,
         }
     }
 
@@ -1723,7 +1763,7 @@ impl Connection {
         // PostgreSQL の ctid は VACUUM や更新で変わるので経時の識別子にならず採らない。
         let rowid_available = allow_rowid
             && match self {
-                Connection::Sqlite(c) => c.is_rowid_table(table).await?,
+                Connection::Sqlite(c) => c.is_rowid_table(db, table).await?,
                 Connection::MySql(_) | Connection::Postgres(_) => false,
             };
         Ok(resolve_row_key(cols, &indexes, rowid_available))
@@ -1800,7 +1840,7 @@ impl Connection {
         match self {
             Connection::MySql(c) => c.generated_column_exprs(db, table).await,
             Connection::Postgres(c) => c.generated_column_exprs(db, table).await,
-            Connection::Sqlite(c) => c.generated_column_exprs(table).await,
+            Connection::Sqlite(c) => c.generated_column_exprs(db, table).await,
         }
     }
 
@@ -5462,6 +5502,8 @@ mod tests {
                 ssl_client_key: None,
                 init_sql: init.map(str::to_string),
                 aws_iam: None,
+                sqlite_attachments: Vec::new(),
+                read_only: false,
             }
         }
         // No statement to run → None (so no after_connect hook runs an empty query).

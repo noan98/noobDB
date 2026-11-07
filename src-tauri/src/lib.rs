@@ -128,7 +128,7 @@ pub mod __test_api {
         apply_auto_limit, apply_auto_limit_for, classify_write_kind, classify_write_kind_for,
         decide_auto_limit_for, is_read_only_sql, is_read_only_sql_for, is_session_init_sql,
         is_session_init_sql_for, sql_may_change_schema, AutoLimitSkip, Connection,
-        DbConnectOptions, DriverKind, SslMode, WriteCapture, WriteKind,
+        DbConnectOptions, DriverKind, SqliteAttachment, SslMode, WriteCapture, WriteKind,
     };
     pub use crate::db::{key_is_unique_in, ResolvedRowKey, RowKeyKind};
     pub use crate::error::AppError;
@@ -1376,6 +1376,20 @@ pub mod __test_api {
     pub use crate::commands::schema_tree::{SchemaTree, SchemaTreeDatabase, SchemaTreeTable};
     pub use crate::commands::table_open::{table_select_sql, OpenTableEntry, OpenTableResult};
 
+    /// SQLite のプールの物理接続を `n` 本同時に保持して `sql` を実行する (#2129 の統合テスト用)。
+    pub async fn sqlite_execute_on_n_connections(
+        conn: &crate::db::Connection,
+        sql: &str,
+        n: usize,
+    ) -> crate::error::Result<Vec<crate::db::types::QueryResult>> {
+        match conn {
+            crate::db::Connection::Sqlite(c) => c.execute_on_n_connections(sql, n).await,
+            _ => Err(crate::error::AppError::InvalidInput(
+                "not a SQLite connection".into(),
+            )),
+        }
+    }
+
     pub async fn load_schema_tree_via_command(
         state: &AppState,
         session_id: &str,
@@ -1727,6 +1741,8 @@ pub mod __test_api {
             ssl_client_key: None,
             init_sql: None,
             aws_iam: None,
+            sqlite_attachments: Vec::new(),
+            read_only: false,
         }
     }
 
@@ -1771,6 +1787,8 @@ pub mod __test_api {
             ssl_client_key: None,
             init_sql: None,
             aws_iam: None,
+            sqlite_attachments: Vec::new(),
+            read_only: false,
         })
     }
 

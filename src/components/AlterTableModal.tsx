@@ -166,6 +166,7 @@ const REBUILD_ERROR_KEYS = {
   empty_check: "alterTableRebuildErrEmptyCheck",
   unchanged: "alterTableRebuildErrUnchanged",
   other_table_trigger: "alterTableRebuildErrOtherTableTrigger",
+  attached_unsupported: "alterTableRebuildErrAttachedUnsupported",
   unknown_generated: "alterTableRebuildErrUnknownGenerated",
   empty_generated_expression: "alterTableRebuildErrEmptyGeneratedExpression",
   generated_refs_dropped: "alterTableRebuildErrGeneratedRefsDropped",

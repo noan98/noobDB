@@ -511,8 +511,11 @@ pub fn drop_table_sql(driver: DriverKind, table: &str) -> String {
 }
 
 /// テーブル全件を読むソース SQL。
-pub fn source_select_sql(driver: DriverKind, table: &str) -> String {
-    format!("SELECT * FROM {}", quote_ident(driver, table))
+pub fn source_select_sql(driver: DriverKind, database: &str, table: &str) -> String {
+    format!(
+        "SELECT * FROM {}",
+        crate::db::sync::table_ref_for(driver, database, table)
+    )
 }
 
 /// 列の絞り込み・WHERE・LIMIT 付きのテーブル元 SQL (#1623)。`columns` が `None` なら `*`。
@@ -520,6 +523,7 @@ pub fn source_select_sql(driver: DriverKind, table: &str) -> String {
 /// 完成した SQL 全体に掛ける)。
 pub fn source_select_sql_ext(
     driver: DriverKind,
+    database: &str,
     table: &str,
     columns: Option<&[String]>,
     where_clause: Option<&str>,
@@ -533,7 +537,10 @@ pub fn source_select_sql_ext(
             .join(", "),
         _ => "*".to_string(),
     };
-    let mut sql = format!("SELECT {list} FROM {}", quote_ident(driver, table));
+    let mut sql = format!(
+        "SELECT {list} FROM {}",
+        crate::db::sync::table_ref_for(driver, database, table)
+    );
     if let Some(w) = where_clause.map(str::trim).filter(|w| !w.is_empty()) {
         // 末尾の行コメント (`-- ...`) が閉じ括弧を巻き込まないよう、改行を挟む。
         sql.push_str(&format!(" WHERE ({w}\n)"));
@@ -545,8 +552,16 @@ pub fn source_select_sql_ext(
 }
 
 /// テーブル元の件数を数える SQL (#1623)。転送後の件数照合に使う。
-pub fn source_count_sql(driver: DriverKind, table: &str, where_clause: Option<&str>) -> String {
-    let mut sql = format!("SELECT COUNT(*) FROM {}", quote_ident(driver, table));
+pub fn source_count_sql(
+    driver: DriverKind,
+    database: &str,
+    table: &str,
+    where_clause: Option<&str>,
+) -> String {
+    let mut sql = format!(
+        "SELECT COUNT(*) FROM {}",
+        crate::db::sync::table_ref_for(driver, database, table)
+    );
     if let Some(w) = where_clause.map(str::trim).filter(|w| !w.is_empty()) {
         sql.push_str(&format!(" WHERE ({w}\n)"));
     }
@@ -918,6 +933,7 @@ mod tests {
         assert_eq!(
             source_select_sql_ext(
                 DriverKind::Mysql,
+                "",
                 "t",
                 Some(&cols),
                 Some(" id > 5 "),
@@ -926,17 +942,30 @@ mod tests {
             "SELECT `id`, `name` FROM `t` WHERE (id > 5\n) LIMIT 10"
         );
         assert_eq!(
-            source_select_sql_ext(DriverKind::Postgres, "t", None, None, None),
+            source_select_sql_ext(DriverKind::Postgres, "", "t", None, None, None),
             "SELECT * FROM \"t\""
         );
         assert_eq!(
-            source_count_sql(DriverKind::Sqlite, "t", Some("x = 1")),
+            source_count_sql(DriverKind::Sqlite, "main", "t", Some("x = 1")),
             "SELECT COUNT(*) FROM \"t\" WHERE (x = 1\n)"
         );
         // 空白だけの WHERE は無視する。
         assert_eq!(
-            source_count_sql(DriverKind::Sqlite, "t", Some("  ")),
+            source_count_sql(DriverKind::Sqlite, "main", "t", Some("  ")),
             "SELECT COUNT(*) FROM \"t\""
+        );
+        // アタッチした別名は表を修飾する (#2129)。MySQL / PostgreSQL は database を無視する。
+        assert_eq!(
+            source_count_sql(DriverKind::Sqlite, "ext", "t", None),
+            "SELECT COUNT(*) FROM \"ext\".\"t\""
+        );
+        assert_eq!(
+            source_select_sql(DriverKind::Sqlite, "ext", "t"),
+            "SELECT * FROM \"ext\".\"t\""
+        );
+        assert_eq!(
+            source_select_sql(DriverKind::Postgres, "ext", "t"),
+            "SELECT * FROM \"t\""
         );
     }
     use super::*;
@@ -1160,7 +1189,7 @@ mod tests {
             "DROP TABLE IF EXISTS \"t\""
         );
         assert_eq!(
-            source_select_sql(DriverKind::Mysql, "a`b"),
+            source_select_sql(DriverKind::Mysql, "", "a`b"),
             "SELECT * FROM `a``b`"
         );
     }

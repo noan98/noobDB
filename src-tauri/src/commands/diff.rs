@@ -16,7 +16,7 @@ use crate::db::data_diff::{
     DataDiff, RowDiff,
 };
 use crate::db::diff::{compute_schema_diff, SchemaDiff, TableColumns};
-use crate::db::sync::quote_ident;
+use crate::db::sync::{quote_ident, table_ref_for};
 use crate::db::transfer::{classify_source_type, TransferType};
 use crate::db::types::{generated_column_names, TableColumnInfo, Value};
 use crate::db::{column_names_match, key_is_unique_in, Connection, DriverKind};
@@ -649,12 +649,13 @@ pub(crate) async fn sqlite_master_entries(
 /// by `commands::sandbox` for its base/live/external row reads (same shape).
 pub(crate) fn select_rows_sql(
     driver: DriverKind,
+    database: &str,
     table: &str,
     columns: &[String],
     primary_key: &[String],
     limit: usize,
 ) -> String {
-    select_rows_where_sql(driver, table, columns, primary_key, limit, None)
+    select_rows_where_sql(driver, database, table, columns, primary_key, limit, None)
 }
 
 /// [`select_rows_sql`] に抽出条件を足したもの (サンドボックスの表ごとの WHERE, #1625)。
@@ -662,6 +663,7 @@ pub(crate) fn select_rows_sql(
 /// 埋め込むので、`a OR b` のような条件でも `ORDER BY` / `LIMIT` に影響しない。
 pub(crate) fn select_rows_where_sql(
     driver: DriverKind,
+    database: &str,
     table: &str,
     columns: &[String],
     primary_key: &[String],
@@ -678,7 +680,8 @@ pub(crate) fn select_rows_where_sql(
         .map(|c| quote_ident(driver, c))
         .collect::<Vec<_>>()
         .join(", ");
-    let table = quote_ident(driver, table);
+    // SQLite でアタッチした別名の表は `"別名"."表"` で読む (#2129)。`database` は解決済みの値。
+    let table = table_ref_for(driver, database, table);
     // 主キーが無い表 (サンドボックスの取り込みなど) は ORDER BY を省く。全列で並べると、
     // json など順序演算子の無い型を含む表で SQL エラーになる。
     let where_clause = filter.map_or(String::new(), |f| format!(" WHERE ({f})"));
@@ -757,6 +760,7 @@ fn key_predicate(
 #[allow(clippy::too_many_arguments)]
 fn keyset_select_sql(
     driver: DriverKind,
+    database: &str,
     table: &str,
     columns: &[String],
     primary_key: &[String],
@@ -787,7 +791,7 @@ fn keyset_select_sql(
     } else {
         format!(" WHERE {}", conds.join(" AND "))
     };
-    let table = quote_ident(driver, table);
+    let table = table_ref_for(driver, database, table);
     format!("SELECT {cols} FROM {table}{where_clause} ORDER BY {order} LIMIT {limit}")
 }
 
@@ -808,7 +812,7 @@ async fn any_key_exists(
         .map(|c| quote_ident(driver, c))
         .collect::<Vec<_>>()
         .join(", ");
-    let table = quote_ident(driver, table);
+    let table = table_ref_for(driver, &conn.resolve_attached_database(db), table);
     for chunk in keys.chunks(200) {
         let terms: Vec<String> = chunk
             .iter()
@@ -1013,6 +1017,9 @@ async fn keyset_compare(
 ) -> Result<KeysetOutcome> {
     let source_driver = source.driver_kind();
     let target_driver = target.driver_kind();
+    // SQLite でアタッチした別名の表を修飾して読むための、解決済みの DB 名 (#2129)。
+    let source_ref_db = source.resolve_attached_database(source_db);
+    let target_ref_db = target.resolve_attached_database(target_db);
     let pk_types: Vec<String> = pk_idx
         .iter()
         .map(|&i| column_types.get(i).cloned().unwrap_or_default())
@@ -1041,6 +1048,7 @@ async fn keyset_compare(
     loop {
         let sql = keyset_select_sql(
             source_driver,
+            &source_ref_db,
             tables.source,
             columns,
             primary_key,
@@ -1065,6 +1073,7 @@ async fn keyset_compare(
         loop {
             let sql = keyset_select_sql(
                 target_driver,
+                &target_ref_db,
                 tables.target,
                 tables.target_columns(columns),
                 tables.target_pk(primary_key),
@@ -1136,6 +1145,7 @@ async fn keyset_compare(
     loop {
         let sql = keyset_select_sql(
             target_driver,
+            &target_ref_db,
             tables.target,
             tables.target_columns(columns),
             tables.target_pk(primary_key),
@@ -1189,17 +1199,50 @@ mod select_rows_sql_tests {
         let cols = vec!["id".to_string(), "v".to_string()];
         let pk = vec!["id".to_string()];
         assert_eq!(
-            select_rows_sql(DriverKind::Mysql, "t", &cols, &pk, 11),
+            select_rows_sql(DriverKind::Mysql, "", "t", &cols, &pk, 11),
             "SELECT `id`, `v` FROM `t` ORDER BY `id` LIMIT 11"
         );
         // 主キー無しなら ORDER BY を出さない (json 列などで ORDER BY が失敗するため)。
         assert_eq!(
-            select_rows_sql(DriverKind::Postgres, "t", &cols, &[], 11),
+            select_rows_sql(DriverKind::Postgres, "", "t", &cols, &[], 11),
             "SELECT \"id\", \"v\" FROM \"t\" LIMIT 11"
         );
         assert_eq!(
-            select_rows_sql(DriverKind::Postgres, "t", &cols, &pk, 11),
+            select_rows_sql(DriverKind::Postgres, "", "t", &cols, &pk, 11),
             "SELECT \"id\", \"v\" FROM \"t\" ORDER BY \"id\" LIMIT 11"
+        );
+    }
+
+    /// SQLite でアタッチした別名の表は `"別名"."表"` で読み、main / 他ドライバは修飾しない (#2129)。
+    #[test]
+    fn select_rows_sql_qualifies_only_attached_sqlite() {
+        let cols = vec!["id".to_string()];
+        let pk = vec!["id".to_string()];
+        assert_eq!(
+            select_rows_sql(DriverKind::Sqlite, "ext", "t", &cols, &pk, 11),
+            "SELECT \"id\" FROM \"ext\".\"t\" ORDER BY \"id\" LIMIT 11"
+        );
+        assert_eq!(
+            select_rows_sql(DriverKind::Sqlite, "main", "t", &cols, &pk, 11),
+            "SELECT \"id\" FROM \"t\" ORDER BY \"id\" LIMIT 11"
+        );
+        assert_eq!(
+            select_rows_sql(DriverKind::Postgres, "ext", "t", &cols, &pk, 11),
+            "SELECT \"id\" FROM \"t\" ORDER BY \"id\" LIMIT 11"
+        );
+        assert_eq!(
+            keyset_select_sql(
+                DriverKind::Sqlite,
+                "ext",
+                "t",
+                &cols,
+                &pk,
+                &["int".into()],
+                None,
+                None,
+                5
+            ),
+            "SELECT \"id\" FROM \"ext\".\"t\" ORDER BY \"id\" LIMIT 5"
         );
     }
 }
@@ -1345,9 +1388,17 @@ async fn bounded_compare(
     want: usize,
 ) -> Result<BoundedOutcome> {
     let (source_driver, target_driver) = (source.0.driver_kind(), target.0.driver_kind());
-    let source_sql = select_rows_sql(source_driver, tables.source, columns, primary_key, want + 1);
+    let source_sql = select_rows_sql(
+        source_driver,
+        &source.0.resolve_attached_database(source.1),
+        tables.source,
+        columns,
+        primary_key,
+        want + 1,
+    );
     let target_sql = select_rows_sql(
         target_driver,
+        &target.0.resolve_attached_database(target.1),
         tables.target,
         tables.target_columns(columns),
         tables.target_pk(primary_key),
@@ -2294,13 +2345,14 @@ mod keyset_tests {
         let after = [Value::Int(1), Value::String("x'y".into())];
         let upto = [Value::Int(9), Value::String("z".into())];
         assert_eq!(
-            keyset_select_sql(DriverKind::Mysql, "t", &cols, &pk, &types, Some(&after), Some(&upto), 50),
+            keyset_select_sql(DriverKind::Mysql, "", "t", &cols, &pk, &types, Some(&after), Some(&upto), 50),
             "SELECT `a`, `b`, `v` FROM `t` WHERE (`a` > 1 OR (`a` = 1 AND `b` > 'x''y')) AND (`a` < 9 OR (`a` = 9 AND `b` <= 'z')) \
              ORDER BY `a`, `b` LIMIT 50"
         );
         assert_eq!(
             keyset_select_sql(
                 DriverKind::Postgres,
+                "",
                 "t",
                 &cols,
                 &pk,
@@ -2313,7 +2365,17 @@ mod keyset_tests {
              ORDER BY \"a\", \"b\" LIMIT 7"
         );
         assert_eq!(
-            keyset_select_sql(DriverKind::Postgres, "t", &cols, &pk, &types, None, None, 7),
+            keyset_select_sql(
+                DriverKind::Postgres,
+                "",
+                "t",
+                &cols,
+                &pk,
+                &types,
+                None,
+                None,
+                7
+            ),
             "SELECT \"a\", \"b\", \"v\" FROM \"t\" ORDER BY \"a\", \"b\" LIMIT 7"
         );
         // 単一キーは素の比較。2^53 超の整数 (String で届く) は引用符なしの数値で書く。
@@ -2321,6 +2383,7 @@ mod keyset_tests {
         assert_eq!(
             keyset_select_sql(
                 DriverKind::Sqlite,
+                "main",
                 "t",
                 &s(&["id"]),
                 &s(&["id"]),
@@ -2335,6 +2398,7 @@ mod keyset_tests {
         let bin = [Value::String("00ff".into())];
         assert!(keyset_select_sql(
             DriverKind::Mysql,
+            "",
             "t",
             &s(&["k"]),
             &s(&["k"]),
@@ -2365,6 +2429,8 @@ mod keyset_tests {
             ssl_client_key: None,
             init_sql: None,
             aws_iam: None,
+            sqlite_attachments: Vec::new(),
+            read_only: false,
         };
         (Connection::connect(&opts).await.unwrap(), path)
     }

@@ -11,12 +11,11 @@
 // (CellKind 分類。ResultGrid のセル描画と同じ基準) を再利用し、二重定義しない。
 // 識別子のクオートは `sqlDialect.ts`、文字列リテラルのエスケープは `cellEdit.ts`
 // の `quoteString` (FK ジャンプ #621 と同じ関数) を、テーブル参照の DB 修飾は
-// `fkNavigation.ts` の `qualifiedTable` をそれぞれ再利用する。
+// `sqlDialect.ts` の `qualifiedTableName` をそれぞれ再利用する。
 
 import { classifyTypeName, type CellKind } from "./cellTypeMeta";
 import { quoteString } from "./cellEdit";
-import { quoteIdentFor } from "./sqlDialect";
-import { qualifiedTable } from "../fkNavigation";
+import { qualifiedTableName, quoteIdentFor } from "./sqlDialect";
 import type { ScanColumn } from "../api/tauri";
 
 /** 一致モード: 完全一致 / 部分一致 (contains) / 前方一致。 */
@@ -209,7 +208,7 @@ export function buildColumnJumpSql(
     includeDates,
   );
   if (!predicate) return null;
-  return `SELECT * FROM ${qualifiedTable(driver, database, table)} WHERE ${predicate}`;
+  return `SELECT * FROM ${qualifiedTableName(driver, database, table)} WHERE ${predicate}`;
 }
 
 /**
@@ -242,7 +241,7 @@ export function buildTableJumpSql(
     if (predicate) predicates.push(predicate);
   }
   if (predicates.length === 0) return null;
-  return `SELECT * FROM ${qualifiedTable(driver, database, table)} WHERE (${predicates.join(" OR ")})`;
+  return `SELECT * FROM ${qualifiedTableName(driver, database, table)} WHERE (${predicates.join(" OR ")})`;
 }
 
 /** スキャン対象を絞り込む既定の概算行数しきい値。これを超えるテーブルは既定でスキップする。 */

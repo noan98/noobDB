@@ -7,7 +7,7 @@
 // ここは副作用の無い純関数に徹し、Vitest でユニットテストする。
 
 import type { I18nKey } from "../i18n";
-import { quoteIdentFor } from "./sqlDialect";
+import { qualifiedTableName, quoteIdentFor } from "./sqlDialect";
 
 /** 保守コマンドの種別。UI 側で i18n ラベル・説明にマップする。 */
 export type MaintenanceKind =
@@ -42,12 +42,6 @@ export interface MaintenanceCommand {
   sql: string;
 }
 
-/** 完全修飾したテーブル名 (SQLite はスキーマ非対応なので table のみ)。 */
-function qualified(driver: string, database: string | null | undefined, table: string): string {
-  if (driver === "sqlite" || !database) return quoteIdentFor(driver, table);
-  return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
-}
-
 /**
  * 指定テーブルに対して、そのドライバで利用可能な保守コマンドを生成する。
  *
@@ -63,7 +57,7 @@ export function tableMaintenanceCommands(
   database: string | null,
   table: string,
 ): MaintenanceCommand[] {
-  const name = qualified(driver, database, table);
+  const name = qualifiedTableName(driver, database, table);
   if (driver === "postgres") {
     return [
       { kind: "vacuumAnalyze", sql: `VACUUM (ANALYZE) ${name};` },
@@ -106,7 +100,7 @@ export function partitionMaintenanceCommands(
   if (driver === "postgres") {
     return tableMaintenanceCommands(driver, partition.schema ?? database, partition.name);
   }
-  const t = qualified(driver, database, table);
+  const t = qualifiedTableName(driver, database, table);
   const p = quoteIdentFor(driver, partition.name);
   return [
     { kind: "analyze", sql: `ALTER TABLE ${t} ANALYZE PARTITION ${p};` },
@@ -178,7 +172,7 @@ export function matviewRefreshCommands(
   name: string,
 ): MaintenanceCommand[] {
   if (driver !== "postgres") return [];
-  const target = qualified(driver, database, name);
+  const target = qualifiedTableName(driver, database, name);
   return [
     { kind: "refreshMatview", sql: `REFRESH MATERIALIZED VIEW ${target};` },
     { kind: "refreshMatviewConcurrently", sql: `REFRESH MATERIALIZED VIEW CONCURRENTLY ${target};` },
