@@ -524,7 +524,7 @@ SELECT CASE t.typtype
                                   ELSE '' END, ', ' ORDER BY a.attnum)
                      FROM pg_attribute a JOIN pg_type aty ON aty.oid = a.atttypid
                     WHERE a.attrelid = t.typrelid AND a.attnum > 0 AND NOT a.attisdropped), ''))
-  WHEN 'r' THEN (SELECT format('CREATE TYPE %I.%I AS RANGE (SUBTYPE = %s%s%s%s%s);', n.nspname, t.typname,
+  WHEN 'r' THEN (SELECT format('CREATE TYPE %I.%I AS RANGE (SUBTYPE = %s%s%s%s%s%s);', n.nspname, t.typname,
          pg_catalog.format_type(r.rngsubtype, NULL),
          CASE WHEN NOT oc.opcdefault
               THEN ', SUBTYPE_OPCLASS = ' || (SELECT quote_ident(on_.nspname) || '.' || quote_ident(oc.opcname)
@@ -536,7 +536,17 @@ SELECT CASE t.typtype
                                          WHERE co.oid = r.rngcollation)
               ELSE '' END,
          CASE WHEN r.rngcanonical::oid <> 0 THEN ', CANONICAL = ' || r.rngcanonical::regproc::text ELSE '' END,
-         CASE WHEN r.rngsubdiff::oid <> 0 THEN ', SUBTYPE_DIFF = ' || r.rngsubdiff::regproc::text ELSE '' END)
+         CASE WHEN r.rngsubdiff::oid <> 0 THEN ', SUBTYPE_DIFF = ' || r.rngsubdiff::regproc::text ELSE '' END,
+         -- 対応する多範囲型の名前が既定 (名前中の range を multirange に置換、無ければ _multirange を付加) と
+         -- 違うときだけ MULTIRANGE_TYPE_NAME を出す。rngmultitypid は PostgreSQL 14 以降の列なので、
+         -- 13 以前でも列参照エラーにならないよう to_jsonb 経由で読む。
+         COALESCE((SELECT ', MULTIRANGE_TYPE_NAME = ' || quote_ident(mn.nspname) || '.' || quote_ident(mt.typname)
+                     FROM pg_type mt JOIN pg_namespace mn ON mn.oid = mt.typnamespace
+                    WHERE mt.oid = (to_jsonb(r) ->> 'rngmultitypid')::oid
+                      AND (mt.typnamespace <> t.typnamespace
+                           OR mt.typname <> CASE WHEN strpos(t.typname, 'range') > 0
+                                                 THEN overlay(t.typname placing 'multirange' from strpos(t.typname, 'range') for 5)
+                                                 ELSE t.typname || '_multirange' END)), ''))
          FROM pg_range r
          JOIN pg_type st ON st.oid = r.rngsubtype
          JOIN pg_opclass oc ON oc.oid = r.rngsubopc

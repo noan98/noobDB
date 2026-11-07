@@ -966,11 +966,13 @@ pub fn order_for_create<'a>(items: &[&'a ObjectDiff]) -> Vec<&'a ObjectDiff> {
             .then_with(|| a.name.cmp(&b.name))
     });
     let mentions = |a: &ObjectDiff, b: &ObjectDiff| -> bool {
-        // a の本文が b の名前を含むか (b を先に作る必要がある)
+        // a の本文が b の名前を含むか (b を先に作る必要がある)。target にしか無いもの (削除対象) は
+        // source の本文が無いので target の本文で判定する (削除順は呼び出し側でこの逆順にする, #2127)。
         a.kind == b.kind
             && a.name != b.name
             && a.source_definition
                 .as_deref()
+                .or(a.target_definition.as_deref())
                 .is_some_and(|d| contains_word(d, &b.name))
     };
     let mut out: Vec<&ObjectDiff> = Vec::with_capacity(sorted.len());
@@ -1809,5 +1811,21 @@ mod tests {
         let mut b = od("view", "b", None, None);
         b.source_definition = Some("CREATE VIEW b AS SELECT * FROM a".into());
         assert_eq!(order_for_create(&[&a, &b]).len(), 2);
+    }
+
+    #[test]
+    fn target_only_types_order_by_target_definition() {
+        // target にしか無い型 (削除対象) は source の本文が無いので、target の本文で依存を見る。
+        // 削除は逆順なので、a (z を使う複合型) → z の順に DROP される (#2127)。
+        let mut a = od("type", "a", None, None);
+        a.status = DiffStatus::TargetOnly;
+        a.target_definition = Some("CREATE TYPE s.a AS (value s.z);".into());
+        let mut z = od("type", "z", None, None);
+        z.status = DiffStatus::TargetOnly;
+        z.target_definition = Some("CREATE TYPE s.z AS ENUM ('x');".into());
+        let mut drops = order_for_create(&[&a, &z]);
+        drops.reverse();
+        let names: Vec<&str> = drops.iter().map(|o| o.name.as_str()).collect();
+        assert_eq!(names, vec!["a", "z"]);
     }
 }
