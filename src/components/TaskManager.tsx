@@ -941,7 +941,9 @@ function TaskForm({
   const dumpLockCtx = {
     driver: dumpDriver ?? "mysql",
     native: !!dumpOptions.native,
-    sqliteSnapshot: !!dumpOptions.sqliteSnapshot,
+    // SQLite 以外のプロファイルに変えたあとは、スナップショットの名残でロックしない
+    // (画面に出ないスイッチの値で addDropTable などを強制 OFF にしないため)。
+    sqliteSnapshot: dumpDriver === "sqlite" && !!dumpOptions.sqliteSnapshot,
   } as const;
   const dumpRows = useMemo(() => (dumpDriver ? visibleOptionRows(dumpDriver) : []), [dumpDriver]);
   // 外部ツールの導入状況 (表示のみ。無人実行は同じ PC で動くので、未導入なら失敗する旨を警告する)。

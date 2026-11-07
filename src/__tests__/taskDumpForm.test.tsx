@@ -192,12 +192,17 @@ describe("タスクのダンプ設定 (#2131)", () => {
   it("現在のドライバで表示されない真偽値は既定値に戻して送る (SQLite のスナップショットの名残)", async () => {
     const saveTask = vi.mocked(api.saveTask);
     saveTask.mockResolvedValue(dumpTask(BASE_OPTIONS));
-    const user = await openEdit(dumpTask({ ...BASE_OPTIONS, sqliteSnapshot: true }), "mysql");
+    const user = await openEdit(
+      dumpTask({ ...BASE_OPTIONS, sqliteSnapshot: true, addDropTable: true }),
+      "mysql",
+    );
     await user.click(screen.getByRole("button", { name: t("taskFormSave") }));
     await waitFor(() => expect(saveTask).toHaveBeenCalled());
     const saved = saveTask.mock.calls[0][0].action;
     if (saved.kind !== "dump") throw new Error("dump expected");
     expect(saved.options.sqliteSnapshot).toBe(false);
+    // スナップショットの名残で、MySQL で有効な addDropTable が強制 OFF にされない。
+    expect(saved.options.addDropTable).toBe(true);
   });
 
   it("新規タスクで外部ツールが未導入なら内蔵エンジンが初期選択になる (既存タスクは保存値のまま)", async () => {
