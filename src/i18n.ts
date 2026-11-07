@@ -2570,6 +2570,8 @@ const en = {
   routineEditErrEmpty: "Enter a definition.",
   routineEditErrNotCreate: "The definition must be a CREATE {kind} statement.",
   routineEditErrNoTable: "Could not find the trigger's table in the original definition.",
+  routineEditErrAttachedTrigger:
+    "Could not place this trigger in the attached database. Write CREATE TRIGGER <name> without a schema prefix (TEMP triggers are not supported).",
   routineEditApplied: "Applied the {kind} definition.",
   routineEditCreated: "Created the {kind}.",
   routineEditFailedRestored: "Could not apply the definition: {error}. The original definition was restored.",
@@ -3545,6 +3547,8 @@ const en = {
     "The generated columns of this table could not be read, so they cannot be edited.",
   alterTableRebuildErrOtherTableTrigger:
     'Trigger "{arg}" on another table refers to this table, so SQLite cannot rename the rebuilt table. Drop that trigger first and recreate it afterwards.',
+  alterTableRebuildErrAttachedUnsupported:
+    "Rebuilding a table in an attached database is not supported. Edit it in a connection opened directly on that file.",
   alterTableConfirmBodyRebuild:
     "The table is recreated in one transaction (copy the rows, DROP the old table, rename). The following script will run:",
   alterTableConfirmOk: "Apply",
@@ -5319,6 +5323,8 @@ const en = {
   schemaCompareDataCancelled: "The data comparison was cancelled.",
   schemaCompareNoStatements:
     "No statements to apply. Enable destructive changes to generate DROP statements.",
+  schemaCompareApplyAttachedUnsupported:
+    "Applying to an attached SQLite database is not supported. Review the SQL here and run it against a connection opened directly on that file.",
   schemaCompareBackupNote:
     "Back up the target before applying. DDL is not always reversible, and on MySQL each statement implicitly commits (no rollback).",
   schemaCompareApply: "Apply {count} statement(s) to target",
@@ -10063,6 +10069,8 @@ const ja: Dict = {
   routineEditErrEmpty: "定義を入力してください。",
   routineEditErrNotCreate: "定義は CREATE {kind} 文にしてください。",
   routineEditErrNoTable: "元の定義からトリガーの対象テーブルを特定できませんでした。",
+  routineEditErrAttachedTrigger:
+    "アタッチしたデータベースにこのトリガーを作れませんでした。スキーマ修飾なしの CREATE TRIGGER <名前> の形で書いてください (TEMP トリガーは未対応です)。",
   routineEditApplied: "{kind}の定義を適用しました。",
   routineEditCreated: "{kind}を作成しました。",
   routineEditFailedRestored: "定義を適用できませんでした: {error}。元の定義を復元しました。",
@@ -11029,6 +11037,8 @@ const ja: Dict = {
   alterTableRebuildErrGeneratedUnreadable: "このテーブルの生成列を読み取れなかったため、編集できません。",
   alterTableRebuildErrOtherTableTrigger:
     "他のテーブルのトリガー「{arg}」がこのテーブルを参照しているため、SQLite は再作成後のテーブルの名前を戻せません。先にそのトリガーを削除し、適用後に作り直してください。",
+  alterTableRebuildErrAttachedUnsupported:
+    "アタッチしたデータベースの表の再作成には未対応です。そのファイルを直接開いた接続で編集してください。",
   alterTableConfirmBodyRebuild:
     "テーブルを 1 トランザクションで作り直します (行をコピー → 旧表を DROP → 名前を戻す)。以下のスクリプトが実行されます:",
   alterTableConfirmOk: "適用",
@@ -12783,6 +12793,8 @@ const ja: Dict = {
   schemaCompareDataCancel: "比較を中止",
   schemaCompareDataCancelled: "データ比較を中止しました。",
   schemaCompareNoStatements: "適用する文がありません。DROP を生成するには破壊的変更を許可してください。",
+  schemaCompareApplyAttachedUnsupported:
+    "アタッチした SQLite データベースへの適用には未対応です。SQL はここで確認でき、そのファイルを直接開いた接続で実行してください。",
   schemaCompareBackupNote:
     "適用前にターゲットのバックアップを取得してください。DDL は常に元に戻せるとは限らず、MySQL では各文が暗黙にコミットされ (ロールバック不可) です。",
   schemaCompareApply: "{count} 文を更新先へ適用",

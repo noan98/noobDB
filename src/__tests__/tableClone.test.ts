@@ -219,6 +219,26 @@ describe("buildCloneStatements (#1398)", () => {
     expect(r.statements[2]).toBe('INSERT INTO "orders_copy" SELECT * FROM "orders"');
   });
 
+  it("SQLite でアタッチした別名: 索引名にスキーマ・ON の表と REFERENCES は表名だけ (#2129)", () => {
+    const ddl =
+      'CREATE TABLE node (id integer primary key, parent integer REFERENCES "node"(id));\n\n' +
+      "CREATE INDEX idx_node ON node (parent);";
+    const r = buildCloneStatements({
+      driver: "sqlite",
+      database: "ext",
+      sourceTable: "node",
+      newTable: "node2",
+      ddl,
+      includeData: true,
+    });
+    expect(r.errors).toEqual([]);
+    expect(r.statements).toEqual([
+      'CREATE TABLE "ext"."node2" (id integer primary key, parent integer REFERENCES "node2"(id))',
+      'CREATE INDEX "ext"."idx_node2" ON "node2" (parent)',
+      'INSERT INTO "ext"."node2" SELECT * FROM "ext"."node"',
+    ]);
+  });
+
   it("includeData は MySQL/PostgreSQL では修飾付きの INSERT ... SELECT を末尾に足す", () => {
     const my = buildCloneStatements({
       driver: "mysql",

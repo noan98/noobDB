@@ -170,6 +170,11 @@ describe("buildAlterPrechecks", () => {
     expect(got[0].sql).toBe('SELECT COUNT(*) FROM "t" WHERE "a" IS NULL');
   });
 
+  it("SQLite でアタッチした別名の表は修飾して数える (#2129)", () => {
+    const got = buildAlterPrechecks("sqlite", "ext", "t", [base("a", "TEXT")], [edit("a", "INTEGER", true)]);
+    expect(got[0].sql).toBe('SELECT COUNT(*) FROM "ext"."t" WHERE "a" IS NULL');
+  });
+
   it("リネームしても元の列名で数える", () => {
     const e: ExistingColumnEdit = { ...edit("a", "varchar(5)"), name: "renamed" };
     const got = buildAlterPrechecks("mysql", "d", "t", [base("a", "varchar(255)")], [e]);

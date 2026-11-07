@@ -19,7 +19,7 @@
 
 import type { I18nKey } from "../i18n";
 import { splitSqlStatements } from "../sqlScript";
-import { quoteIdentFor, qualifiedTableName } from "./sqlDialect";
+import { isSqliteMainDatabase, quoteIdentFor, qualifiedTableName } from "./sqlDialect";
 
 export type EditableObjectKind = "procedure" | "function" | "trigger";
 
@@ -236,14 +236,39 @@ export function buildApplyRoutineStatements(input: ApplyRoutineInput): ApplyRout
     } else if (driver === "mysql") {
       statements.push(`DROP ${kindWord} IF EXISTS ${qualifiedTableName(driver, database, name)};`);
     } else {
-      statements.push(`DROP TRIGGER IF EXISTS ${ident};`);
+      // アタッチした別名のトリガーは `DROP TRIGGER "別名"."名前"` (main / 未指定は修飾なし, #2129)。
+      statements.push(`DROP TRIGGER IF EXISTS ${qualifiedTableName(driver, database, name)};`);
     }
+  }
+  // SQLite でアタッチした別名のトリガーは `CREATE TRIGGER "別名"."名前" ...` にして、その別名に作る
+  // (修飾しないと main に作られる)。名前を読み取れない定義は、main に誤って作らないよう拒否する。
+  if (driver === "sqlite" && !isSqliteMainDatabase(database)) {
+    const qualified = creates.map((sql) => qualifySqliteTriggerName(sql, database));
+    if (qualified.some((q) => q === null)) return { ok: false, error: "routineEditErrAttachedTrigger" };
+    creates = qualified as string[];
   }
   for (const sql of creates) {
     const body = driver === "postgres" ? stripTrailingSemicolons(sql) : sql;
     statements.push(`${body};`);
   }
   return { ok: true, statements };
+}
+
+/**
+ * SQLite の `CREATE [TEMP] TRIGGER [IF NOT EXISTS] <名前>` の名前を `"別名"."名前"` にする (#2129)。
+ * 既にスキーマ修飾されている・名前を読み取れない・TEMP トリガーのときは null (呼び出し側が拒否する)。
+ */
+function qualifySqliteTriggerName(sql: string, database: string | null): string | null {
+  const body = stripLeadingComments(sql);
+  const m =
+    /^(CREATE\s+TRIGGER\s+(?:IF\s+NOT\s+EXISTS\s+)?)("(?:[^"]|"")+"|`[^`]+`|\[[^\]]+\]|[^\s."`[(]+)(?=\s)/i.exec(
+      body,
+    );
+  if (!m) return null;
+  let raw = m[2];
+  if (raw.startsWith('"')) raw = raw.slice(1, -1).replace(/""/g, '"');
+  else if (raw.startsWith("`") || raw.startsWith("[")) raw = raw.slice(1, -1);
+  return `${m[1]}${qualifiedTableName("sqlite", database, raw)}${body.slice(m[0].length)}`;
 }
 
 /** `CREATE [OR REPLACE] FUNCTION|PROCEDURE name(args...)` の名前と引数リストを取り出す。 */

@@ -643,7 +643,13 @@ export function renameCollisions(
 
 /** `CREATE INDEX` 文 (不備のある行は捨てる。UI は `indexRowProblems` で行ごとにエラーを出し、不備が残る間は
  * 実行を止めるので、黙って作られないまま実行されることはない, #1532)。 */
-function indexStatements(driver: string, tIdent: string, indexes: IndexDef[]): AlterStatement[] {
+function indexStatements(
+  driver: string,
+  tIdent: string,
+  database: string | null | undefined,
+  table: string,
+  indexes: IndexDef[],
+): AlterStatement[] {
   const out: AlterStatement[] = [];
   for (const idx of indexes) {
     if (indexRowProblems(idx)) continue;
@@ -651,8 +657,14 @@ function indexStatements(driver: string, tIdent: string, indexes: IndexDef[]): A
     const cols = idx.columns.map((c) => c.trim()).filter((c) => c.length > 0);
     const colList = cols.map((c) => quoteIdentFor(driver, c)).join(", ");
     const keyword = idx.unique ? "CREATE UNIQUE INDEX" : "CREATE INDEX";
+    // SQLite は ON の表を修飾できず、アタッチ先のスキーマは索引名の側に付ける
+    // (`CREATE INDEX "別名"."idx" ON "t"`, `tableMaintenance.ts` の `buildCreateIndexSql` と同じ, #2129)。
+    const head =
+      driver === "sqlite"
+        ? `${keyword} ${qualifiedTableName(driver, database, name)} ON ${quoteIdentFor(driver, table)}`
+        : `${keyword} ${quoteIdentFor(driver, name)} ON ${tIdent}`;
     out.push({
-      sql: `${keyword} ${quoteIdentFor(driver, name)} ON ${tIdent} (${colList});`,
+      sql: `${head} (${colList});`,
       kind: "createIndex",
       destructive: false,
     });
@@ -794,7 +806,11 @@ export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan 
   if (driver === "sqlite") {
     const rebuild = buildSqliteRebuildEdit(form);
     if (rebuild) {
-      return { statements: indexStatements(driver, tIdent, form.indexes), warnings, rebuild };
+      return {
+        statements: indexStatements(driver, tIdent, form.database, form.table, form.indexes),
+        warnings,
+        rebuild,
+      };
     }
   }
   // 同じ ALTER の中で DROP / リネームして空けた列名を、新規列が再利用するときは、
@@ -862,7 +878,7 @@ export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan 
   };
   statements.sort((a, b) => orderOf(a) - orderOf(b));
 
-  statements.push(...indexStatements(driver, tIdent, form.indexes));
+  statements.push(...indexStatements(driver, tIdent, form.database, form.table, form.indexes));
 
   return { statements, warnings, rebuild: null };
 }

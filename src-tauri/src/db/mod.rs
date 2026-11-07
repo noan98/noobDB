@@ -662,6 +662,20 @@ impl Connection {
         }
     }
 
+    /// SQLite でアタッチした別名 (`main` 以外) の表に対する「表を作り直す / 書き換える」系の操作を
+    /// 拒否する (#2129)。それらは修飾できない文 (`RENAME TO` / `DROP TABLE` の相手や生成 SQL の
+    /// 本文) を含むため、別名側では意図しない `main` の表を壊しうる。MySQL / PostgreSQL は常に許可。
+    pub fn reject_if_attached_sqlite(&self, database: &str, what: &str) -> Result<()> {
+        if self.driver_kind() == DriverKind::Sqlite
+            && !sync::sqlite_is_main(&self.resolve_attached_database(database))
+        {
+            return Err(AppError::InvalidInput(format!(
+                "{what}: アタッチしたデータベースの表には未対応です (tables in an attached database are not supported)"
+            )));
+        }
+        Ok(())
+    }
+
     pub async fn connect(opts: &DbConnectOptions) -> Result<Self> {
         match opts.driver {
             DriverKind::Mysql => Ok(Connection::MySql(mysql::MySqlConn::connect(opts).await?)),

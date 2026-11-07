@@ -615,7 +615,7 @@ impl SqliteConn {
     #[allow(clippy::too_many_arguments)]
     pub async fn import_rows_with_hex<F>(
         &self,
-        _database: Option<&str>,
+        database: Option<&str>,
         table: &str,
         columns: &[String],
         rows: &[Vec<Option<String>>],
@@ -639,7 +639,9 @@ impl SqliteConn {
             .map(|c| quote_ident(c))
             .collect::<Vec<_>>()
             .join(", ");
-        let table_ident = quote_ident(table);
+        // アタッチした別名の表は `"別名"."表"` に修飾する (#2129)。
+        let table_ident =
+            super::sync::sqlite_table_ref(self.resolve_db(database.unwrap_or_default()), table);
         // SQLite's default bound-variable limit is conservative (historically
         // 999); keep each statement under it regardless of the requested size.
         let max_rows = (900 / ncols).max(1);
@@ -684,7 +686,7 @@ impl SqliteConn {
     /// to row-by-row retries.
     pub(crate) async fn try_insert_chunk(
         &self,
-        _database: Option<&str>,
+        database: Option<&str>,
         table: &str,
         columns: &[String],
         rows: &[Vec<Option<String>>],
@@ -699,7 +701,9 @@ impl SqliteConn {
             .map(|c| quote_ident(c))
             .collect::<Vec<_>>()
             .join(", ");
-        let table_ident = quote_ident(table);
+        // アタッチした別名の表は `"別名"."表"` に修飾する (#2129)。
+        let table_ident =
+            super::sync::sqlite_table_ref(self.resolve_db(database.unwrap_or_default()), table);
         // 同梱 SQLite (3.32 以降) の変数上限 (32766) を超えないよう、列数から 1 文あたり
         // の行数を決める。超える分は 1 つのトランザクション内で複数文に分けるので、
         // チャンク全体の原子性は保たれる (列数が多い表で全チャンクが失敗し 1 行ずつ
@@ -726,7 +730,7 @@ impl SqliteConn {
     /// rejected row. See [`Connection::probe_failing_row`] (#687).
     pub(crate) async fn probe_failing_row(
         &self,
-        _database: Option<&str>,
+        database: Option<&str>,
         table: &str,
         columns: &[String],
         rows: &[Vec<Option<String>>],
@@ -738,7 +742,9 @@ impl SqliteConn {
             .map(|c| quote_ident(c))
             .collect::<Vec<_>>()
             .join(", ");
-        let table_ident = quote_ident(table);
+        // アタッチした別名の表は `"別名"."表"` に修飾する (#2129)。
+        let table_ident =
+            super::sync::sqlite_table_ref(self.resolve_db(database.unwrap_or_default()), table);
         let mut sql = build_insert_sql(&table_ident, &cols_sql, ncols, 1);
         sql.push_str(&conflict_clause(DriverKind::Sqlite, columns, conflict));
         let mut conn = self.pool.acquire().await?;
@@ -759,7 +765,7 @@ impl SqliteConn {
     /// See [`Connection::dry_run_failures`].
     pub(crate) async fn dry_run_failures(
         &self,
-        _database: Option<&str>,
+        database: Option<&str>,
         table: &str,
         columns: &[String],
         rows: &[Vec<Option<String>>],
@@ -772,7 +778,9 @@ impl SqliteConn {
             .map(|c| quote_ident(c))
             .collect::<Vec<_>>()
             .join(", ");
-        let table_ident = quote_ident(table);
+        // アタッチした別名の表は `"別名"."表"` に修飾する (#2129)。
+        let table_ident =
+            super::sync::sqlite_table_ref(self.resolve_db(database.unwrap_or_default()), table);
         let mut sql = build_insert_sql(&table_ident, &cols_sql, ncols, 1);
         sql.push_str(&conflict_clause(DriverKind::Sqlite, columns, conflict));
         let mut conn = self.pool.acquire().await?;

@@ -152,6 +152,10 @@ pub(crate) async fn apply_sqlite_table_rebuild_inner(
             "table rebuild is only available for SQLite".into(),
         ));
     }
+    // アタッチした別名の表の再作成は拒否する (#2129)。実行を試みていないので履歴にも残さない。
+    session
+        .conn
+        .reject_if_attached_sqlite(database.as_deref().unwrap_or_default(), "table rebuild")?;
     // 空の文の拒否は履歴の対象外にするため、ここで先に判定する。
     if statements.is_empty() {
         return Err(AppError::InvalidInput(
@@ -203,6 +207,11 @@ pub(crate) async fn apply_sync_sql_inner(
             "no statements selected to apply".into(),
         ));
     }
+    // SQLite でアタッチした別名がターゲットのときは適用しない (#2129)。スキーマ / データ同期の生成 SQL と
+    // 表の再作成は表名を修飾しないため、main の同名表に当たってしまう。
+    session
+        .conn
+        .reject_if_attached_sqlite(database.as_deref().unwrap_or_default(), "sync apply")?;
 
     let result = session
         .conn

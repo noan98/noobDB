@@ -1936,6 +1936,17 @@ pub(crate) fn sqlite_table_ref(database: &str, table: &str) -> String {
     }
 }
 
+/// ドライバ共通の表参照。SQLite でアタッチした別名 (`main` 以外) は `"別名"."表"` に修飾する (#2129)。
+/// `database` は `Connection::resolve_attached_database` で正した値を渡す。MySQL / PostgreSQL は
+/// `database` を無視して表名だけを引用符で包む (呼び出し側が接続先 DB / スキーマを別に指定する)。
+pub(crate) fn table_ref_for(driver: DriverKind, database: &str, table: &str) -> String {
+    if driver == DriverKind::Sqlite {
+        sqlite_table_ref(database, table)
+    } else {
+        quote_ident(driver, table)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

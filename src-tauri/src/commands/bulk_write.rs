@@ -696,7 +696,7 @@ pub async fn insert_generated_rows(
 }
 
 /// 新規テーブルを作る / 消すときのスキーマ修飾 (#2066)。PostgreSQL は `database` (= スキーマ、
-/// 無ければ `public`)、SQLite は常に `main` で修飾し、同名の一時テーブルを取り違えない。
+/// 無ければ `public`)、SQLite は `main` (アタッチした別名を選んだときはその別名) で修飾し、同名の一時テーブルを取り違えない。
 /// MySQL は `database` が必須 (無いと接続の既定 DB に作られて検査とずれるため拒否)。
 /// 限界: MySQL では `db.t` と修飾しても同名の TEMPORARY TABLE が先に解決される
 /// (`DROP TABLE` は TEMPORARY を先に消す)。また取り込み (`import_rows`) は素の表名で
@@ -708,7 +708,9 @@ fn new_table_schema(driver: DriverKind, database: Option<&str>) -> Result<String
             AppError::InvalidInput("a database is required to create a table".into())
         }),
         DriverKind::Postgres => Ok(db.unwrap_or("public").to_string()),
-        DriverKind::Sqlite => Ok("main".to_string()),
+        // SQLite は呼び出し側が `resolve_attached_database` で正した値を渡す。アタッチした別名を
+        // 選んだときはその別名に作り、それ以外 (未指定・古い値) は `main` (#2129)。
+        DriverKind::Sqlite => Ok(db.unwrap_or("main").to_string()),
     }
 }
 
@@ -762,7 +764,17 @@ pub(crate) async fn insert_generated_rows_inner(
     let mut new_schema: Option<String> = None;
     if let Some(create) = create_table {
         validate_generated_create_spec(driver, table, columns, create)?;
-        let schema = new_table_schema(driver, database.as_deref())?;
+        let resolved_db = session
+            .conn
+            .resolve_attached_database(database.as_deref().unwrap_or_default());
+        let schema = new_table_schema(
+            driver,
+            if driver == DriverKind::Sqlite {
+                Some(resolved_db.as_str())
+            } else {
+                database.as_deref()
+            },
+        )?;
         // 存在確認・CREATE・投入・DROP がすべて同じ表を指すよう、解決したスキーマ / DB を
         // 以降の実行にも使う (PG で database 未指定のまま投入すると search_path の別スキーマの
         // 同名表へ入りうる)。SQLite の `main` は修飾にだけ使う。
@@ -928,8 +940,14 @@ mod tests {
             "s1"
         );
         assert_eq!(
-            new_table_schema(DriverKind::Sqlite, Some("x")).unwrap(),
+            new_table_schema(DriverKind::Sqlite, Some("main")).unwrap(),
             "main"
+        );
+        assert_eq!(new_table_schema(DriverKind::Sqlite, None).unwrap(), "main");
+        // アタッチした別名 (解決済み) はそのまま返す (#2129)。
+        assert_eq!(
+            new_table_schema(DriverKind::Sqlite, Some("ext")).unwrap(),
+            "ext"
         );
     }
 
