@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { estimateEtaMs, formatDuration, progressRatio, waitSecondsLeft } from "../progressEta";
+import { estimateEtaMs, formatDuration, progressRatio, ratePerSecond, waitSecondsLeft } from "../progressEta";
 
 describe("progressEta (#2092)", () => {
   it("progressRatio: 総数不明・0 は null、範囲外はクランプ", () => {
@@ -42,5 +42,15 @@ describe("progressEta (#2092)", () => {
     expect(waitSecondsLeft(2500, 1000)).toBe(2);
     expect(waitSecondsLeft(2000, 1000)).toBe(1);
     expect(waitSecondsLeft(1000, 2000)).toBe(0);
+  });
+});
+
+describe("ratePerSecond (#2122)", () => {
+  it("1 秒未満・非有限値は null、それ以外は件数 / 秒", () => {
+    expect(ratePerSecond(100, 0)).toBeNull();
+    expect(ratePerSecond(100, 999)).toBeNull();
+    expect(ratePerSecond(Number.NaN, 5000)).toBeNull();
+    expect(ratePerSecond(100, 2000)).toBe(50);
+    expect(ratePerSecond(-5, 2000)).toBe(0);
   });
 });

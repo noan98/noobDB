@@ -10,12 +10,11 @@ import {
 } from "../api/tauri";
 import { useT } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Callout } from "./Callout";
 import { ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, Checkbox, Input, PressableButton } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { Spinner } from "./Spinner";
-import { DeterminateProgressBar } from "./StreamProgressBar";
+import { JobOutcome, JobPresence, JobProgressDetail, useJobClock } from "./JobProgress";
 import { useToast } from "./Toast";
 import {
   buildColumnDrafts,
@@ -92,6 +91,12 @@ export function ImportSheetsModal({
   const streamIdRef = useRef<string | null>(null);
   const disposedRef = useRef(false);
   const importing = status.kind === "importing";
+  const jobElapsedMs = useJobClock(importing);
+  // 速度用の行数累計。進捗の inserted はシートごとに 0 へ戻るので、終わったシートの分を足し込む。
+  const doneRowsRef = useRef(0);
+  // 今のシートの開始時刻。バー・ETA はシート単位の進捗なので、ETA も同じ範囲の経過で出す。
+  const sheetStartedAtRef = useRef(0);
+  const lastInsertedRef = useRef(0);
 
   const nullToken = options.nullToken ?? null;
   // シートごとの読み込み: 先頭行 (プレビュー) から列名と型を推論する。
@@ -193,13 +198,21 @@ export function ImportSheetsModal({
     if (unlistenRef.current) unlistenRef.current();
     // `started` はシートごとに届く。何枚目かはその回数で分かる。
     let startedCount = 0;
+    doneRowsRef.current = 0;
+    sheetStartedAtRef.current = 0;
+    lastInsertedRef.current = 0;
     const unlisten = await listenImportStream(streamId, {
       onStarted: (e) => {
         startedCount += 1;
+        doneRowsRef.current += lastInsertedRef.current;
+        lastInsertedRef.current = 0;
+        sheetStartedAtRef.current = Date.now();
         setStatus({ kind: "importing", index: startedCount, inserted: 0, total: e.total });
       },
-      onProgress: (e) =>
-        setStatus({ kind: "importing", index: startedCount, inserted: e.inserted, total: e.total }),
+      onProgress: (e) => {
+        lastInsertedRef.current = e.inserted;
+        setStatus({ kind: "importing", index: startedCount, inserted: e.inserted, total: e.total });
+      },
       onDone: (e) => {
         if (unlistenRef.current) {
           unlistenRef.current();
@@ -258,11 +271,6 @@ export function ImportSheetsModal({
     }
     setStatus({ kind: "error", message: t("importSheetsCancelled") });
   }, [t]);
-
-  const percent =
-    status.kind === "importing" && status.total > 0
-      ? Math.min(100, Math.round((status.inserted / status.total) * 100))
-      : 0;
 
   return (
     <Modal
@@ -337,27 +345,61 @@ export function ImportSheetsModal({
             <chakra.div textStyle="caption">{t("importSheetsHint")}</chakra.div>
           </FormSection>
         )}
-        {status.kind === "importing" && (
-          <chakra.div role="status" aria-live="polite" display="flex" flexDirection="column" gap="1.5">
-            <DeterminateProgressBar value={percent / 100} />
-            <chakra.div textStyle="caption">
-              {t("importSheetsProgress", {
-                index: status.index,
-                count: selected,
-                inserted: status.inserted,
-                total: status.total,
-              })}
+        <JobPresence show={status.kind === "importing"}>
+          {status.kind === "importing" && (
+            <chakra.div display="flex" flexDirection="column" gap="2">
+              <chakra.div aria-live="off">
+                <JobProgressDetail
+                  done={status.inserted}
+                  total={status.total > 0 ? status.total : null}
+                  elapsedMs={jobElapsedMs}
+                  etaElapsedMs={
+                    sheetStartedAtRef.current > 0 ? Date.now() - sheetStartedAtRef.current : undefined
+                  }
+                  running
+                  rate={{ label: t("jobStatRowsPerSec"), count: doneRowsRef.current + status.inserted }}
+                  stats={[
+                    { label: t("importSheetsStatSheets"), value: status.index, sub: `/ ${selected}` },
+                    { label: t("jobStatRows"), value: status.inserted },
+                  ]}
+                />
+              </chakra.div>
+              <chakra.div role="status" aria-live="polite" textStyle="caption">
+                {t("importSheetsProgress", {
+                  index: status.index,
+                  count: selected,
+                  inserted: status.inserted,
+                  total: status.total,
+                })}
+              </chakra.div>
             </chakra.div>
-          </chakra.div>
-        )}
+          )}
+        </JobPresence>
         {status.kind === "done" && (
           <chakra.div display="flex" flexDirection="column" gap="2" data-testid="import-sheets-result">
-            <Callout tone={status.event.skippedTotal > 0 ? "warning" : "success"} role="status">
-              {t("importSheetsDone", { sheets: status.event.sheets.length, inserted: status.event.inserted })}
-              {status.event.skippedTotal > 0
-                ? ` ${t("importSheetsSkipped", { skipped: status.event.skippedTotal })}`
-                : ""}
-            </Callout>
+            <JobOutcome
+              kind="done"
+              tone={status.event.skippedTotal > 0 ? "warning" : "success"}
+              detail={{
+                done: status.event.sheets.length,
+                total: selected,
+                elapsedMs: jobElapsedMs,
+                rate: { label: t("jobStatRowsPerSec"), count: status.event.inserted },
+                stats: [
+                  {
+                    label: t("importSheetsStatSheets"),
+                    value: status.event.sheets.length,
+                    sub: `/ ${selected}`,
+                  },
+                  { label: t("jobStatRows"), value: status.event.inserted },
+                ],
+              }}
+              message={`${t("importSheetsDone", { sheets: status.event.sheets.length, inserted: status.event.inserted })}${
+                status.event.skippedTotal > 0
+                  ? ` ${t("importSheetsSkipped", { skipped: status.event.skippedTotal })}`
+                  : ""
+              }`}
+            />
             <chakra.ul listStyleType="disc" pl="4" m="0" textStyle="caption">
               {status.event.sheets.map((r) => (
                 <li key={r.sheet}>
