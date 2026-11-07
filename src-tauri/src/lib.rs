@@ -128,7 +128,7 @@ pub mod __test_api {
         apply_auto_limit, apply_auto_limit_for, classify_write_kind, classify_write_kind_for,
         decide_auto_limit_for, is_read_only_sql, is_read_only_sql_for, is_session_init_sql,
         is_session_init_sql_for, sql_may_change_schema, AutoLimitSkip, Connection,
-        DbConnectOptions, DriverKind, SslMode, WriteCapture, WriteKind,
+        DbConnectOptions, DriverKind, SqliteAttachment, SslMode, WriteCapture, WriteKind,
     };
     pub use crate::db::{key_is_unique_in, ResolvedRowKey, RowKeyKind};
     pub use crate::error::AppError;
@@ -1727,6 +1727,8 @@ pub mod __test_api {
             ssl_client_key: None,
             init_sql: None,
             aws_iam: None,
+            sqlite_attachments: Vec::new(),
+            read_only: false,
         }
     }
 
@@ -1771,6 +1773,8 @@ pub mod __test_api {
             ssl_client_key: None,
             init_sql: None,
             aws_iam: None,
+            sqlite_attachments: Vec::new(),
+            read_only: false,
         })
     }
 

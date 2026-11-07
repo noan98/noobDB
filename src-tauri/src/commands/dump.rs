@@ -2003,6 +2003,8 @@ mod tests {
             ssl_client_key: None,
             init_sql: None,
             aws_iam: None,
+            sqlite_attachments: Vec::new(),
+            read_only: false,
         };
         assert_eq!(pg_connect_database(&o), Some("app"));
         o.database = Some("  ".into());
@@ -2027,6 +2029,8 @@ mod tests {
             ssl_client_key: None,
             init_sql: None,
             aws_iam: None,
+            sqlite_attachments: Vec::new(),
+            read_only: false,
         };
         // タスク経路: 入力された DB 名が --dbname になる。
         assert_eq!(pg_dbname(&o, "realdb", true), Some("realdb"));
@@ -2180,6 +2184,8 @@ mod tests {
             ssl_client_key: None,
             init_sql: None,
             aws_iam: None,
+            sqlite_attachments: Vec::new(),
+            read_only: false,
         };
         let path = {
             let f = PgPassFile::create(&opts, Some("testdb")).expect("create");
@@ -2262,6 +2268,8 @@ mod tests {
             ssl_client_key: None,
             init_sql: None,
             aws_iam: None,
+            sqlite_attachments: Vec::new(),
+            read_only: false,
         }
     }
 
@@ -2416,6 +2424,8 @@ mod tests {
             ssl_client_key: None,
             init_sql: None,
             aws_iam: None,
+            sqlite_attachments: Vec::new(),
+            read_only: false,
         };
         let path = {
             let f = DefaultsFile::create(&opts).expect("create");

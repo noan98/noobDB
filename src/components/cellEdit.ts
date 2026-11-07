@@ -357,9 +357,11 @@ export function hasAmbiguousIdentity(rows: CellValue[][], indices: number[]): bo
 }
 
 export function qualifiedTableRef(driver: string, database: string, table: string): string {
-  // SQLite has a single namespace per connection — the synthetic "main"
-  // database label is for the UI tree, not the SQL itself.
-  if (driver === "sqlite") return quoteIdentFor(driver, table);
+  // SQLite の "main" はツリー用の仮ラベルで SQL には出さない。設定でアタッチしたファイル
+  // (別名) のテーブルだけ `"別名"."表"` にする (#2129)。
+  if (driver === "sqlite" && (database === "" || database.toLowerCase() === "main")) {
+    return quoteIdentFor(driver, table);
+  }
   return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
 }
 

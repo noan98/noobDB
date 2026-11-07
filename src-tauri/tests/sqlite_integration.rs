@@ -1269,6 +1269,8 @@ async fn sqlite_missing_path_reports_invalid_input() {
         ssl_client_key: None,
         init_sql: None,
         aws_iam: None,
+        sqlite_attachments: Vec::new(),
+        read_only: false,
     };
     let err = noobdb_lib::__test_api::connect(&opts)
         .await
@@ -7606,4 +7608,103 @@ async fn sqlite_compare_with_column_mapping_syncs_into_renamed_columns() {
     .expect("re-compare");
     assert!(after.rows.is_empty(), "{:?}", after.rows);
     let _ = std::fs::remove_file(&path);
+}
+
+// ---------------------------------------------------------------------------
+// ATTACH した追加ファイル (#2129)
+// ---------------------------------------------------------------------------
+
+async fn attach_fixture(tag: &str) -> (PathBuf, PathBuf) {
+    let dir = std::env::temp_dir();
+    let main = dir.join(format!(
+        "noobdb_attach_main_{tag}_{}.db",
+        std::process::id()
+    ));
+    let other = dir.join(format!(
+        "noobdb_attach_other_{tag}_{}.db",
+        std::process::id()
+    ));
+    for (p, sql) in [
+        (&main, "CREATE TABLE m_t (id INTEGER PRIMARY KEY, v TEXT)"),
+        (
+            &other,
+            "CREATE TABLE o_t (id INTEGER PRIMARY KEY, w TEXT NOT NULL); INSERT INTO o_t VALUES (1, 'x')",
+        ),
+    ] {
+        let _ = std::fs::remove_file(p);
+        std::fs::File::create(p).expect("create");
+        let conn = t::connect(&t::sqlite_options(p.to_str().expect("utf8")))
+            .await
+            .expect("connect");
+        for stmt in sql.split(';') {
+            conn.execute(stmt, None).await.expect("seed");
+        }
+        conn.close().await;
+    }
+    (main, other)
+}
+
+fn attach_opts(main: &Path, other: &Path, alias: &str, ro: bool) -> t::DbConnectOptions {
+    let mut o = t::sqlite_options(main.to_str().expect("utf8"));
+    o.sqlite_attachments = vec![t::SqliteAttachment {
+        path: other.to_str().expect("utf8").to_string(),
+        alias: alias.to_string(),
+    }];
+    o.read_only = ro;
+    o
+}
+
+#[tokio::test]
+async fn sqlite_attached_file_is_listed_and_introspected() {
+    let (main, other) = attach_fixture("list").await;
+    let conn = t::connect(&attach_opts(&main, &other, "ext", false))
+        .await
+        .expect("connect");
+    assert_eq!(conn.databases().await.expect("dbs"), vec!["main", "ext"]);
+    assert_eq!(conn.tables("main").await.expect("t"), vec!["m_t"]);
+    assert_eq!(conn.tables("ext").await.expect("t"), vec!["o_t"]);
+    let cols = conn.columns("ext", "o_t").await.expect("cols");
+    assert_eq!(cols.len(), 2);
+    assert_eq!(cols[1].name, "w");
+    // プールの別の物理接続からも別名が見える (接続ごとの ATTACH)。
+    for _ in 0..6 {
+        let r = conn
+            .execute("SELECT count(*) FROM ext.o_t", None)
+            .await
+            .expect("query");
+        assert!(matches!(&r.rows[0][0], t::Value::Int(1)));
+    }
+    conn.close().await;
+    let _ = std::fs::remove_file(&main);
+    let _ = std::fs::remove_file(&other);
+}
+
+#[tokio::test]
+async fn sqlite_attached_file_is_write_protected_when_read_only() {
+    let (main, other) = attach_fixture("ro").await;
+    let conn = t::connect(&attach_opts(&main, &other, "ext", true))
+        .await
+        .expect("connect");
+    let err = conn
+        .execute("INSERT INTO ext.o_t VALUES (2, 'y')", None)
+        .await;
+    assert!(err.is_err(), "mode=ro attach must reject writes");
+    conn.close().await;
+    let _ = std::fs::remove_file(&main);
+    let _ = std::fs::remove_file(&other);
+}
+
+#[tokio::test]
+async fn sqlite_attach_rejects_bad_alias_and_missing_file() {
+    let (main, other) = attach_fixture("bad").await;
+    for alias in ["", "a b", "main", "x\"; DROP TABLE m_t; --"] {
+        let r = t::connect(&attach_opts(&main, &other, alias, false)).await;
+        assert!(r.is_err(), "alias {alias:?} must be rejected");
+    }
+    let missing = other.with_extension("missing");
+    assert!(t::connect(&attach_opts(&main, &missing, "ext", false))
+        .await
+        .is_err());
+    let _ = std::fs::remove_file(&main);
+    let _ = std::fs::remove_file(&other);
 }

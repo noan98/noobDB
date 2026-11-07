@@ -2346,6 +2346,8 @@ mod keyset_tests {
             ssl_client_key: None,
             init_sql: None,
             aws_iam: None,
+            sqlite_attachments: Vec::new(),
+            read_only: false,
         };
         (Connection::connect(&opts).await.unwrap(), path)
     }

@@ -74,6 +74,9 @@ pub struct SaveProfileRequest {
     /// AWS SSM ポートフォワード設定 (#1683)。`ssh` と排他。非秘密。
     #[serde(default)]
     pub ssm: Option<crate::ssm::SsmConfig>,
+    /// SQLite で追加アタッチするファイル (#2129)。非秘密。SQLite 以外は保存しない。
+    #[serde(default)]
+    pub sqlite_attachments: Vec<crate::db::SqliteAttachment>,
 }
 
 /// A stored profile plus flags telling the UI which secrets already exist in the
@@ -335,6 +338,7 @@ fn normalize_ssm(
 fn save_profile_inner(id: String, req: SaveProfileRequest) -> Result<ConnectionProfile> {
     validate_profile_name(&req.name)?;
     let ssm = normalize_ssm(req.ssm.as_ref(), req.ssh.is_some(), &req.driver)?;
+    let is_sqlite = req.driver == "sqlite";
     let req_secrets = ProfileSecretUpdates {
         db_password: req.db_password.clone(),
         ssh_passphrase: req.ssh_passphrase.clone(),
@@ -382,6 +386,18 @@ fn save_profile_inner(id: String, req: SaveProfileRequest) -> Result<ConnectionP
                 .filter(|p| !p.is_empty()),
         }),
         ssm,
+        sqlite_attachments: if is_sqlite {
+            req.sqlite_attachments
+                .into_iter()
+                .map(|a| crate::db::SqliteAttachment {
+                    path: a.path.trim().to_string(),
+                    alias: a.alias.trim().to_string(),
+                })
+                .filter(|a| !a.path.is_empty() || !a.alias.is_empty())
+                .collect()
+        } else {
+            Vec::new()
+        },
     };
     // 秘密を先に書き、すべて成功してから本体を upsert する。秘密の書き込みが途中で失敗しても
     // それまでに書いた秘密は元の値へ戻し (既存プロファイル)、新規プロファイルなら孤立
@@ -1039,6 +1055,7 @@ mod tests {
             init_sql: None,
             aws_iam: None,
             ssm: None,
+            sqlite_attachments: Vec::new(),
         }
     }
 

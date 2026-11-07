@@ -26,6 +26,9 @@ pub const DEFAULT_DB_NAME: &str = "main";
 
 pub struct SqliteConn {
     pool: SqlitePool,
+    /// 設定で追加アタッチしたファイルの別名 (#2129)。`databases()` が `main` に続けて返し、メタデータ取得の
+    /// 対象スキーマ (`"<別名>".sqlite_master` など) を決める。全ての物理接続に接続時 ATTACH 済み。
+    attached: Vec<String>,
     /// 明示トランザクションで確保した専用接続。BEGIN で取得し、COMMIT/ROLLBACK
     /// で解放する。トランザクション中の文はこの 1 本の接続で実行され、確実に同一
     /// トランザクションに乗る (プールの別接続に散らばらない)。
@@ -45,19 +48,53 @@ impl SqliteConn {
             .create_if_missing(false)
             .foreign_keys(true);
 
+        // 追加アタッチするファイル (#2129)。別名の形式・重複・ファイルの存在は、プールを作る前に
+        // 分かりやすいエラーで弾く (ATTACH の失敗は接続時の汎用エラーになってしまう)。
+        validate_attachments(&opts.sqlite_attachments)?;
+        let attach_stmts: Vec<(String, String)> = opts
+            .sqlite_attachments
+            .iter()
+            .map(|a| {
+                (
+                    attach_statement(&a.alias),
+                    attach_target(&a.path, opts.read_only),
+                )
+            })
+            .collect();
+        let attached: Vec<String> = opts
+            .sqlite_attachments
+            .iter()
+            .map(|a| a.alias.clone())
+            .collect();
+
         let mut pool_opts = SqlitePoolOptions::new()
             .min_connections(0)
             // SQLite tolerates concurrent reads but writes serialise — keep
             // the pool small to avoid noisy SQLITE_BUSY retries.
             .max_connections(4)
             .acquire_timeout(std::time::Duration::from_secs(15));
-        if let Some(sql) = init_sql_of(opts) {
-            // Run the session-init SQL (e.g. PRAGMAs) on every physical connection.
+        let init_sql = init_sql_of(opts);
+        if !attach_stmts.is_empty() || init_sql.is_some() {
+            // 全ての物理接続で、まず ATTACH (パスはバインド)、続けてセッション初期化 SQL
+            // (PRAGMA など) を流す。ATTACH は接続ごとの状態なので、プールのどの接続からでも
+            // 別名のテーブルを参照できるよう、新しい接続のたびにここで行う (#2129)。
             pool_opts = pool_opts.after_connect(move |conn, _meta| {
-                let sql = sql.clone();
+                let attach_stmts = attach_stmts.clone();
+                let sql = init_sql.clone();
                 Box::pin(async move {
-                    sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(sqlx::AssertSqlSafe(sql)))
+                    for (stmt, target) in &attach_stmts {
+                        sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
+                            .bind(target.clone())
+                            .execute(&mut *conn)
+                            .await?;
+                    }
+                    if let Some(sql) = sql {
+                        sqlx::Executor::execute(
+                            &mut *conn,
+                            sqlx::raw_sql(sqlx::AssertSqlSafe(sql)),
+                        )
                         .await?;
+                    }
                     Ok(())
                 })
             });
@@ -69,8 +106,33 @@ impl SqliteConn {
         })?;
         Ok(Self {
             pool,
+            attached,
             tx: tokio::sync::Mutex::new(None),
         })
+    }
+
+    /// メタデータ問い合わせの対象スキーマを、引用符付きの識別子で返す (#2129)。`db` が設定で
+    /// アタッチした別名 (大文字小文字は区別しない) ならその別名、それ以外は `main`。
+    /// 別名は接続時に識別子として検証済みで、ここでも二重引用符をエスケープする。
+    fn schema_ident(&self, db: &str) -> String {
+        let name = self
+            .attached
+            .iter()
+            .find(|a| a.eq_ignore_ascii_case(db))
+            .map(String::as_str)
+            .unwrap_or(DEFAULT_DB_NAME);
+        quote_ident(name)
+    }
+
+    /// `schema_ident` の SQL 文字列リテラル版 (`pragma_table_info(name, 'alias')` のスキーマ引数用)。
+    fn schema_lit(&self, db: &str) -> String {
+        let name = self
+            .attached
+            .iter()
+            .find(|a| a.eq_ignore_ascii_case(db))
+            .map(String::as_str)
+            .unwrap_or(DEFAULT_DB_NAME);
+        format!("'{}'", name.replace('\'', "''"))
     }
 
     pub async fn close(&self) {
@@ -1070,10 +1132,13 @@ impl SqliteConn {
         Ok(())
     }
 
+    /// `main` と、設定でアタッチしたファイルの別名 (#2129)。全ての物理接続に同じ ATTACH を
+    /// 接続時に行っているので、`PRAGMA database_list` もどの接続でも同じ並びになる。エディタで
+    /// 生の ATTACH / DETACH を流した 1 本の接続だけの差で一覧が揺れないよう、設定済みの別名を返す。
     pub async fn databases(&self) -> Result<Vec<String>> {
-        // SQLite uses one database per connection (ATTACH not supported here).
-        // Surface the conventional "main" alias so the tree UI has a node.
-        Ok(vec![DEFAULT_DB_NAME.to_string()])
+        let mut out = vec![DEFAULT_DB_NAME.to_string()];
+        out.extend(self.attached.iter().cloned());
+        Ok(out)
     }
 
     /// SQLite is file-backed — there is no server and no processes to list.
@@ -1185,13 +1250,14 @@ impl SqliteConn {
         })
     }
 
-    pub async fn tables(&self, _db: &str) -> Result<Vec<String>> {
-        let rows: Vec<SqliteRow> = sqlx::query(
-            "SELECT name FROM sqlite_master
+    pub async fn tables(&self, db: &str) -> Result<Vec<String>> {
+        let sc = self.schema_ident(db);
+        let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT name FROM {sc}.sqlite_master
              WHERE type IN ('table', 'view')
                AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
-             ORDER BY name",
-        )
+             ORDER BY name"
+        )))
         .fetch_all(&self.pool)
         .await?;
         rows.iter()
@@ -1204,9 +1270,10 @@ impl SqliteConn {
     /// `table_xinfo` から拾う。
     pub async fn generated_columns(
         &self,
-        _database: Option<&str>,
+        database: Option<&str>,
         table: &str,
     ) -> Result<Vec<String>> {
+        let sc = self.schema_ident(database.unwrap_or(DEFAULT_DB_NAME));
         // 記録の表名は SQL 上の表記のまま (引用符付きのことがある) なので外す。
         let table = strip_identifier_quotes(table);
         let table = table.as_str();
@@ -1214,7 +1281,7 @@ impl SqliteConn {
             return Err(AppError::InvalidInput("invalid table name".into()));
         }
         let mut conn = fresh_schema_conn(&self.pool).await?;
-        let sql = format!("PRAGMA table_xinfo(\"{}\")", table);
+        let sql = format!("PRAGMA {sc}.table_xinfo(\"{}\")", table);
         let rows: Vec<SqliteRow> = fresh_pragma(sql).fetch_all(&mut *conn).await?;
         Ok(rows
             .iter()
@@ -1223,7 +1290,8 @@ impl SqliteConn {
             .collect())
     }
 
-    pub async fn columns(&self, _db: &str, table: &str) -> Result<Vec<TableColumnInfo>> {
+    pub async fn columns(&self, db: &str, table: &str) -> Result<Vec<TableColumnInfo>> {
+        let sc = self.schema_ident(db);
         // PRAGMA can't be bound — quote the identifier manually (`"` は `""` に二重化)
         // after rejecting NUL.
         if table.contains('\0') {
@@ -1233,7 +1301,7 @@ impl SqliteConn {
         // Map each local column ("from") to its referenced table and column ("to",
         // which is NULL when the FK targets the parent's primary key implicitly).
         let fk_sql = format!(
-            "PRAGMA foreign_key_list(\"{}\")",
+            "PRAGMA {sc}.foreign_key_list(\"{}\")",
             table.replace('"', "\"\"")
         );
         // DDL 直後でも別接続の古いスキーマで読まないよう、1 本の接続に揃える。
@@ -1266,7 +1334,10 @@ impl SqliteConn {
                 resolved_pks.insert(ref_table.clone(), None);
                 continue;
             }
-            let pk_sql = format!("PRAGMA table_info(\"{}\")", ref_table.replace('"', "\"\""));
+            let pk_sql = format!(
+                "PRAGMA {sc}.table_info(\"{}\")",
+                ref_table.replace('"', "\"\"")
+            );
             let pk_rows: Vec<SqliteRow> = fresh_pragma(pk_sql)
                 .fetch_all(&mut *conn)
                 .await
@@ -1296,7 +1367,7 @@ impl SqliteConn {
             }
         }
 
-        let sql = format!("PRAGMA table_info(\"{}\")", table.replace('"', "\"\""));
+        let sql = format!("PRAGMA {sc}.table_info(\"{}\")", table.replace('"', "\"\""));
         let rows: Vec<SqliteRow> = fresh_pragma(sql).fetch_all(&mut *conn).await?;
         Ok(rows
             .into_iter()
@@ -1332,13 +1403,17 @@ impl SqliteConn {
     /// [`super::ddl_extras::parse_sqlite_extras`] で読む。`table_info` は生成列を隠すため、
     /// 型・NOT NULL・元の列位置は `pragma_table_xinfo` (hidden = 2 VIRTUAL / 3 STORED) で補う。
     /// 何も無い表は含めない。
-    pub async fn ddl_extras_for_database(&self) -> Result<super::types::DatabaseDdlExtras> {
-        let rows: Vec<SqliteRow> = sqlx::query(
-            "SELECT name, sql FROM sqlite_master \
+    pub async fn ddl_extras_for_database(
+        &self,
+        db: &str,
+    ) -> Result<super::types::DatabaseDdlExtras> {
+        let (sc, sl) = (self.schema_ident(db), self.schema_lit(db));
+        let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT name, sql FROM {sc}.sqlite_master \
              WHERE type = 'table' AND sql IS NOT NULL \
                AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' \
-             ORDER BY name",
-        )
+             ORDER BY name"
+        )))
         .fetch_all(&self.pool)
         .await?;
         let mut tables: Vec<(String, super::types::TableDdlExtras)> = rows
@@ -1353,11 +1428,11 @@ impl SqliteConn {
         // 生成列のある表だけ、表ごとに `pragma_table_xinfo` を引く。3.26 未満や 1 表の失敗は
         // その表の型を補えないだけで、式は返し、ほかの表にも影響しない。
         for (table, extras) in tables.iter_mut().filter(|(_, e)| !e.generated.is_empty()) {
-            let Ok(hidden) = sqlx::query(
+            let Ok(hidden) = sqlx::query(sqlx::AssertSqlSafe(format!(
                 "SELECT x.cid, x.name, x.type, x.\"notnull\", x.hidden
-                 FROM pragma_table_xinfo(?) x
-                 WHERE x.hidden IN (2, 3)",
-            )
+                 FROM pragma_table_xinfo(?, {sl}) x
+                 WHERE x.hidden IN (2, 3)"
+            )))
             .bind(table.as_str())
             .fetch_all(&self.pool)
             .await
@@ -1391,27 +1466,28 @@ impl SqliteConn {
     /// 結合して 2 本の問い合わせで済ませる。列ごとの値は [`SqliteConn::columns`] と
     /// 同じ (FK の参照先列が暗黙の主キー指定のときは、親テーブルが単一列 PK の場合に
     /// だけその列名を補う)。`_db` は SQLite では使わない (常に main)。
-    pub async fn columns_for_database(&self, _db: &str) -> Result<Vec<super::diff::TableColumns>> {
+    pub async fn columns_for_database(&self, db: &str) -> Result<Vec<super::diff::TableColumns>> {
+        let (sc, sl) = (self.schema_ident(db), self.schema_lit(db));
         // PRAGMA table_info: cid, name, type, notnull, dflt_value, pk
-        let rows: Vec<SqliteRow> = sqlx::query(
+        let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT m.name, ti.name, ti.type, ti.\"notnull\", ti.dflt_value, ti.pk
-             FROM sqlite_master m
-             JOIN pragma_table_info(m.name) ti
+             FROM {sc}.sqlite_master m
+             JOIN pragma_table_info(m.name, {sl}) ti
              WHERE m.type IN ('table', 'view')
                AND m.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
-             ORDER BY m.name, ti.cid",
-        )
+             ORDER BY m.name, ti.cid"
+        )))
         .fetch_all(&self.pool)
         .await?;
         // PRAGMA foreign_key_list: id, seq, table, from, to, on_update, on_delete, match.
         // 列ごとに最初に現れた 1 件を採用する (単一テーブル版と同じ)。
-        let fk_rows: Vec<SqliteRow> = sqlx::query(
+        let fk_rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT m.name, f.\"from\", f.\"table\", f.\"to\"
-             FROM sqlite_master m
-             JOIN pragma_foreign_key_list(m.name) f
+             FROM {sc}.sqlite_master m
+             JOIN pragma_foreign_key_list(m.name, {sl}) f
              WHERE m.type IN ('table', 'view')
-               AND m.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'",
-        )
+               AND m.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'"
+        )))
         .fetch_all(&self.pool)
         .await?;
 
@@ -1484,20 +1560,21 @@ impl SqliteConn {
     /// `pragma_index_list` / `pragma_index_info` を結合して 1 本で済ませる。
     /// 並び・PK 判定 (`origin = 'pk'`)・式インデックス列の扱いは
     /// [`SqliteConn::list_indexes`] と同じ。
-    pub async fn indexes_for_database(&self, _db: &str) -> Result<Vec<super::types::TableIndexes>> {
+    pub async fn indexes_for_database(&self, db: &str) -> Result<Vec<super::types::TableIndexes>> {
+        let (sc, sl) = (self.schema_ident(db), self.schema_lit(db));
         // index_list: seq, name, unique, origin, partial / index_info: seqno, cid, name。
         // 式インデックスの列は name が NULL なので列としては積まない。
-        let rows: Vec<SqliteRow> = sqlx::query(
+        let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT m.name, il.name, il.\"unique\", il.origin, ii.name, il.partial,
                     CASE WHEN il.partial THEN
-                        (SELECT x.sql FROM sqlite_master x WHERE x.type = 'index' AND x.name = il.name)
+                        (SELECT x.sql FROM {sc}.sqlite_master x WHERE x.type = 'index' AND x.name = il.name)
                     END
-             FROM sqlite_master m
-             JOIN pragma_index_list(m.name) il
-             LEFT JOIN pragma_index_info(il.name) ii
+             FROM {sc}.sqlite_master m
+             JOIN pragma_index_list(m.name, {sl}) il
+             LEFT JOIN pragma_index_info(il.name, {sl}) ii
              WHERE m.type = 'table'
-               AND m.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'",
-        )
+               AND m.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'"
+        )))
         .fetch_all(&self.pool)
         .await?;
         let index_rows = rows
@@ -1537,12 +1614,14 @@ impl SqliteConn {
 
     /// 暗黙の `rowid` を持つ通常表か (WITHOUT ROWID・ビュー・仮想表は false)。
     /// `row_identity` と、データ比較・タイムラプスの行識別子解決 (#1838) で共有する。
-    pub(crate) async fn is_rowid_table(&self, table: &str) -> Result<bool> {
-        let row: Option<SqliteRow> =
-            sqlx::query("SELECT type, sql FROM sqlite_master WHERE name = ?1")
-                .bind(table)
-                .fetch_optional(&self.pool)
-                .await?;
+    pub(crate) async fn is_rowid_table(&self, db: &str, table: &str) -> Result<bool> {
+        let sc = self.schema_ident(db);
+        let row: Option<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT type, sql FROM {sc}.sqlite_master WHERE name = ?1"
+        )))
+        .bind(table)
+        .fetch_optional(&self.pool)
+        .await?;
         Ok(row.is_some_and(|r| {
             let kind = r.try_get::<String, _>("type").unwrap_or_default();
             let ddl = r
@@ -1576,7 +1655,7 @@ impl SqliteConn {
         if let Some(key) = super::pick_unique_row_key(&cols, &indexes) {
             return Ok(super::unique_key_identity(key));
         }
-        if self.is_rowid_table(table).await? {
+        if self.is_rowid_table(db, table).await? {
             return Ok(TableRowIdentity {
                 strategy: "rowid".into(),
                 hidden_column: Some("rowid".into()),
@@ -1601,21 +1680,22 @@ impl SqliteConn {
         // `sqlite_master` と結合した 1 本の SQL で全表分を取る。表名に `"` を含んでも
         // 識別子を組み立てないので失敗しない。表の並びは従来どおり `tables()` の順に
         // 揃え (安定ソート)、同じ表の中の行順は PRAGMA の返す順のまま保つ。
+        let (sc, sl) = (self.schema_ident(db), self.schema_lit(db));
         let tables = self.tables(db).await?;
         let order: std::collections::HashMap<&str, usize> = tables
             .iter()
             .enumerate()
             .map(|(i, t)| (t.as_str(), i))
             .collect();
-        let rows: Vec<SqliteRow> = sqlx::query(
+        let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT m.name AS tbl, f.\"from\" AS \"from\", f.\"table\" AS \"table\", \
                     f.\"to\" AS \"to\", f.id AS id, f.on_update AS on_update, \
                     f.on_delete AS on_delete
-               FROM sqlite_master m
-               JOIN pragma_foreign_key_list(m.name) f
+               FROM {sc}.sqlite_master m
+               JOIN pragma_foreign_key_list(m.name, {sl}) f
               WHERE m.type = 'table'
-                AND m.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'",
-        )
+                AND m.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'"
+        )))
         .fetch_all(&self.pool)
         .await?;
         let mut out = Vec::new();
@@ -1683,10 +1763,15 @@ impl SqliteConn {
     }
 
     /// 生成列の式 (#1758)。`PRAGMA table_info` は生成列を返さないので、`sqlite_master.sql` を解析する。
-    pub async fn generated_column_exprs(&self, table: &str) -> Result<Vec<(String, String)>> {
-        let sql: Option<String> = sqlx::query_scalar(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ? COLLATE NOCASE",
-        )
+    pub async fn generated_column_exprs(
+        &self,
+        db: &str,
+        table: &str,
+    ) -> Result<Vec<(String, String)>> {
+        let sc = self.schema_ident(db);
+        let sql: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT sql FROM {sc}.sqlite_master WHERE type = 'table' AND name = ? COLLATE NOCASE"
+        )))
         .bind(table)
         .fetch_optional(&self.pool)
         .await?
@@ -1696,7 +1781,8 @@ impl SqliteConn {
             .unwrap_or_default())
     }
 
-    pub async fn list_indexes(&self, _db: &str, table: &str) -> Result<Vec<IndexInfo>> {
+    pub async fn list_indexes(&self, db: &str, table: &str) -> Result<Vec<IndexInfo>> {
+        let sc = self.schema_ident(db);
         // PRAGMA can't bind parameters — double any `"` and reject NUL, then build
         // the statement literally.
         if table.contains('\0') {
@@ -1704,16 +1790,16 @@ impl SqliteConn {
         }
         // index_list columns: seq, name, unique, origin, partial.
         // origin = 'pk' for the implicit/auto PRIMARY KEY index.
-        let list_sql = format!("PRAGMA index_list(\"{}\")", table.replace('"', "\"\""));
+        let list_sql = format!("PRAGMA {sc}.index_list(\"{}\")", table.replace('"', "\"\""));
         // index_list と index_info を別々の接続で読むと、片方だけ古いスキーマのまま
         // 空になる (CI で複合インデックスの列が `[]`)。1 本の接続に揃える。
         let mut conn = fresh_schema_conn(&self.pool).await?;
         let list_rows: Vec<SqliteRow> = fresh_pragma(list_sql).fetch_all(&mut *conn).await?;
         // #1776: 照合順序の食い違いを疑うため、インデックス / テーブルの DDL を引いておく。
         // 取れなければ全インデックスを照合順序不一致の疑いありとして扱う (安全側)。
-        let ddl_rows: Option<Vec<SqliteRow>> = sqlx::query(
-            "SELECT type, name, sql FROM sqlite_master WHERE tbl_name = ?1 COLLATE NOCASE AND type IN ('index', 'table')",
-        )
+        let ddl_rows: Option<Vec<SqliteRow>> = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT type, name, sql FROM {sc}.sqlite_master WHERE tbl_name = ?1 COLLATE NOCASE AND type IN ('index', 'table')"
+        )))
         .bind(table)
         .fetch_all(&mut *conn)
         .await
@@ -1757,7 +1843,7 @@ impl SqliteConn {
                 .unwrap_or(false);
             // index_info columns: seqno, cid, name. NULL name = an expression
             // index column; skip those (no plain column name to show).
-            let info_sql = format!("PRAGMA index_info(\"{}\")", name.replace('"', "\"\""));
+            let info_sql = format!("PRAGMA {sc}.index_info(\"{}\")", name.replace('"', "\"\""));
             let info_rows: Vec<SqliteRow> = fresh_pragma(info_sql).fetch_all(&mut *conn).await?;
             let names: Vec<Option<String>> = info_rows
                 .iter()
@@ -1767,9 +1853,9 @@ impl SqliteConn {
             let columns = names.into_iter().flatten().collect();
             let partial = r.try_get::<i64, _>("partial").unwrap_or(0) != 0;
             let predicate = if partial {
-                let sql: Option<String> = sqlx::query_scalar(
-                    "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
-                )
+                let sql: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                    "SELECT sql FROM {sc}.sqlite_master WHERE type = 'index' AND name = ?"
+                )))
                 .bind(&name)
                 .fetch_optional(&mut *conn)
                 .await?
@@ -1798,13 +1884,14 @@ impl SqliteConn {
         Ok(out)
     }
 
-    pub async fn schema_objects(&self, _db: &str) -> Result<Vec<SchemaObject>> {
+    pub async fn schema_objects(&self, db: &str) -> Result<Vec<SchemaObject>> {
+        let sc = self.schema_ident(db);
         // SQLite only has views and triggers (no stored procedures/functions).
-        let rows: Vec<SqliteRow> = sqlx::query(
-            "SELECT type, name FROM sqlite_master \
+        let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT type, name FROM {sc}.sqlite_master \
              WHERE type IN ('view','trigger') AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' \
-             ORDER BY type, name",
-        )
+             ORDER BY type, name"
+        )))
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
@@ -1827,16 +1914,18 @@ impl SqliteConn {
     /// TEMP トリガー (`sqlite_temp_master`) も含める。
     pub async fn list_table_triggers(
         &self,
+        db: &str,
         table: &str,
     ) -> Result<Vec<super::types::TableTrigger>> {
-        let rows: Vec<SqliteRow> = sqlx::query(
+        let sc = self.schema_ident(db);
+        let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT name, sql FROM (\
-               SELECT name, sql FROM sqlite_master \
+               SELECT name, sql FROM {sc}.sqlite_master \
                 WHERE type = 'trigger' AND tbl_name = ?1 COLLATE NOCASE \
                UNION ALL \
                SELECT name, sql FROM sqlite_temp_master \
-                WHERE type = 'trigger' AND tbl_name = ?1 COLLATE NOCASE) ORDER BY name",
-        )
+                WHERE type = 'trigger' AND tbl_name = ?1 COLLATE NOCASE) ORDER BY name"
+        )))
         .bind(table)
         .fetch_all(&self.pool)
         .await?;
@@ -1859,10 +1948,14 @@ impl SqliteConn {
     /// 全ビュー / トリガーの定義本文 (`sqlite_master.sql`) を 1 回の問い合わせで返す
     /// (#1261 Where-used)。キーは `"<kind>:<name>"`。`object_definition` が引く
     /// 列と同じなので本文は一致する。
-    pub async fn definitions_bulk(&self) -> Result<std::collections::HashMap<String, String>> {
-        let rows: Vec<SqliteRow> = sqlx::query(
-            "SELECT type, name, sql FROM sqlite_master WHERE type IN ('view','trigger')",
-        )
+    pub async fn definitions_bulk(
+        &self,
+        db: &str,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        let sc = self.schema_ident(db);
+        let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT type, name, sql FROM {sc}.sqlite_master WHERE type IN ('view','trigger')"
+        )))
         .fetch_all(&self.pool)
         .await?;
         let mut out = std::collections::HashMap::with_capacity(rows.len());
@@ -1876,17 +1969,19 @@ impl SqliteConn {
         Ok(out)
     }
 
-    pub async fn object_definition(&self, _db: &str, kind: &str, name: &str) -> Result<String> {
+    pub async fn object_definition(&self, db: &str, kind: &str, name: &str) -> Result<String> {
         if kind == "table" {
-            return self.table_definition(name).await;
+            return self.table_definition(db, name).await;
         }
+        let sc = self.schema_ident(db);
         // The DDL is stored verbatim in sqlite_master.sql.
-        let row: Option<SqliteRow> =
-            sqlx::query("SELECT sql FROM sqlite_master WHERE type = ?1 AND name = ?2")
-                .bind(kind)
-                .bind(name)
-                .fetch_optional(&self.pool)
-                .await?;
+        let row: Option<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT sql FROM {sc}.sqlite_master WHERE type = ?1 AND name = ?2"
+        )))
+        .bind(kind)
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
         match row.and_then(|r| r.try_get::<Option<String>, _>("sql").ok().flatten()) {
             Some(sql) => Ok(sql),
             None => Err(AppError::InvalidInput(format!(
@@ -1898,10 +1993,11 @@ impl SqliteConn {
     /// テーブル (またはテーブル一覧に並ぶビュー) の DDL (#1001)。`sqlite_master.sql`
     /// にはユーザが書いた CREATE 文がそのまま残るので、それに明示的に作られた
     /// インデックス (`sql` が NULL の自動インデックスは除く) を続けて返す。
-    async fn table_definition(&self, name: &str) -> Result<String> {
-        let row: Option<SqliteRow> = sqlx::query(
-            "SELECT sql FROM sqlite_master WHERE type IN ('table', 'view') AND name = ?1",
-        )
+    async fn table_definition(&self, db: &str, name: &str) -> Result<String> {
+        let sc = self.schema_ident(db);
+        let row: Option<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT sql FROM {sc}.sqlite_master WHERE type IN ('table', 'view') AND name = ?1"
+        )))
         .bind(name)
         .fetch_optional(&self.pool)
         .await?;
@@ -1912,11 +2008,11 @@ impl SqliteConn {
                 "no definition found for table '{name}'"
             )));
         };
-        let index_rows: Vec<SqliteRow> = sqlx::query(
-            "SELECT sql FROM sqlite_master \
+        let index_rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT sql FROM {sc}.sqlite_master \
              WHERE type = 'index' AND tbl_name = ?1 AND sql IS NOT NULL \
-             ORDER BY name",
-        )
+             ORDER BY name"
+        )))
         .bind(name)
         .fetch_all(&self.pool)
         .await?;
@@ -1959,7 +2055,8 @@ impl SqliteConn {
         Ok(Vec::new())
     }
 
-    pub async fn table_sizes(&self, _db: &str) -> Result<Vec<TableSizeInfo>> {
+    pub async fn table_sizes(&self, db: &str) -> Result<Vec<TableSizeInfo>> {
+        let (sc, sl) = (self.schema_ident(db), self.schema_lit(db));
         // `dbstat` is a virtual table that reports a page row per b-tree, so
         // SUM(pgsize) grouped through sqlite_master gives real on-disk bytes for
         // each table and (separately) its indexes — no scan of user data. It is
@@ -1967,19 +2064,21 @@ impl SqliteConn {
         // not, the query errors and we fall back to listing tables with no
         // sizes (mirroring `table_row_estimates`' "no cheap stat" behaviour).
         // SQLite keeps no cheap row estimate, so `row_estimate` is always None.
-        let dbstat: std::result::Result<Vec<SqliteRow>, _> = sqlx::query(
-            r#"SELECT m.tbl_name,
+        let dbstat: std::result::Result<Vec<SqliteRow>, _> =
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                r#"SELECT m.tbl_name,
                       SUM(CASE WHEN m.type = 'table' THEN s.pgsize ELSE 0 END) AS data_bytes,
                       SUM(CASE WHEN m.type = 'index' THEN s.pgsize ELSE 0 END) AS index_bytes
                FROM dbstat s
-               JOIN sqlite_master m ON m.name = s.name
-               WHERE m.type IN ('table', 'index')
+               JOIN {sc}.sqlite_master m ON m.name = s.name
+               WHERE s.schema = {sl}
+                 AND m.type IN ('table', 'index')
                  AND m.tbl_name NOT LIKE 'sqlite\_%' ESCAPE '\'
                GROUP BY m.tbl_name
-               ORDER BY m.tbl_name"#,
-        )
-        .fetch_all(&self.pool)
-        .await;
+               ORDER BY m.tbl_name"#
+            )))
+            .fetch_all(&self.pool)
+            .await;
 
         let err = match dbstat {
             Ok(rows) => {
@@ -2016,12 +2115,12 @@ impl SqliteConn {
         // dbstat unavailable: still return one row per base table so the panel
         // lists them, just without byte figures. Restrict to base tables (no
         // views) to honour the table_sizes contract.
-        let rows: Vec<SqliteRow> = sqlx::query(
-            "SELECT name FROM sqlite_master
+        let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT name FROM {sc}.sqlite_master
              WHERE type = 'table'
                AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
-             ORDER BY name",
-        )
+             ORDER BY name"
+        )))
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
@@ -2491,6 +2590,106 @@ async fn fetch_primary_key(pool: &SqlitePool, target: &str) -> Result<Vec<String
     Ok(entries.into_iter().map(|(_, n)| n).collect())
 }
 
+/// アタッチできる別名か (#2129)。SQLite の識別子として安全な `[A-Za-z_][A-Za-z0-9_]*` だけを許し、
+/// 予約済みの `main` / `temp` (大文字小文字を問わない) は使えない。
+fn is_valid_attach_alias(alias: &str) -> bool {
+    let mut chars = alias.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && alias.len() <= 64
+        && !alias.eq_ignore_ascii_case("main")
+        && !alias.eq_ignore_ascii_case("temp")
+}
+
+/// SQLite が同時にアタッチできる上限の既定値 (`SQLITE_MAX_ATTACHED`、`main` / `temp` を除く)。
+const SQLITE_MAX_ATTACHED: usize = 10;
+
+/// 追加アタッチの設定を接続前に検証する (#2129)。別名の形式・重複、ファイルの存在をここで弾いて、
+/// 接続時の汎用エラー (`unable to open database file`) ではなく原因が分かるメッセージにする。
+/// ファイルが無いまま ATTACH すると SQLite は黙って空のファイルを作ってしまうので、存在確認は必須。
+fn validate_attachments(attachments: &[super::SqliteAttachment]) -> Result<()> {
+    if attachments.len() > SQLITE_MAX_ATTACHED {
+        return Err(AppError::InvalidInput(format!(
+            "too many attached SQLite files: {} (maximum {SQLITE_MAX_ATTACHED})",
+            attachments.len()
+        )));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for a in attachments {
+        if !is_valid_attach_alias(&a.alias) {
+            return Err(AppError::InvalidInput(format!(
+                "invalid alias for attached SQLite file: '{}' (use letters, digits and '_', not starting with a digit; 'main' and 'temp' are reserved)",
+                a.alias
+            )));
+        }
+        if !seen.insert(a.alias.to_ascii_lowercase()) {
+            return Err(AppError::InvalidInput(format!(
+                "duplicate alias for attached SQLite file: '{}'",
+                a.alias
+            )));
+        }
+        let path = a.path.trim();
+        if path.is_empty() || path.contains('\0') {
+            return Err(AppError::InvalidInput(format!(
+                "attached SQLite file path is required (alias '{}')",
+                a.alias
+            )));
+        }
+        match std::fs::metadata(path) {
+            Ok(m) if m.is_file() => {}
+            Ok(_) => {
+                return Err(AppError::InvalidInput(format!(
+                    "attached SQLite path is not a file: {path} (alias '{}')",
+                    a.alias
+                )))
+            }
+            Err(_) => {
+                return Err(AppError::InvalidInput(format!(
+                    "attached SQLite file not found: {path} (alias '{}')",
+                    a.alias
+                )))
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `ATTACH DATABASE ?1 AS "<別名>"` 文。別名は [`is_valid_attach_alias`] で検証済みの識別子
+/// (ここでも引用符を二重化する)。パスはバインドするので文には入らない。
+fn attach_statement(alias: &str) -> String {
+    format!("ATTACH DATABASE ?1 AS {}", quote_ident(alias))
+}
+
+/// `ATTACH` にバインドするファイル指定。読み取り専用のときは `file:...?mode=ro` の URI にして、
+/// SQLite 自身にも書き込みを拒否させる (sqlx は URI を有効にして接続を開く)。
+/// パス中の `%` / `?` / `#` は URI の予約文字なのでパーセントエンコードする。
+fn attach_target(path: &str, read_only: bool) -> String {
+    let path = path.trim();
+    if !read_only {
+        return path.to_string();
+    }
+    let norm = path.replace('\\', "/");
+    let encoded: String = norm
+        .chars()
+        .flat_map(|c| match c {
+            '%' => "%25".chars().collect::<Vec<_>>(),
+            '?' => "%3f".chars().collect(),
+            '#' => "%23".chars().collect(),
+            c => vec![c],
+        })
+        .collect();
+    // Windows のドライブ付きパス (`C:/x`) は `file:///C:/x`、UNIX の絶対パスは `file:/x`。
+    let uri_path = if encoded.as_bytes().get(1) == Some(&b':') {
+        format!("///{encoded}")
+    } else {
+        encoded
+    };
+    format!("file:{uri_path}?mode=ro")
+}
+
 /// Double-quotes a single identifier, doubling any embedded double quotes.
 /// 実装は方言共通の `sync::quote_ident` に一本化している (`fn(&str) -> String`
 /// のシグネチャは `pk_order_clause` 等へ関数ポインタとして渡すため維持)。
@@ -2721,6 +2920,45 @@ async fn run_batch_checked(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn attach_alias_rules() {
+        for ok in ["ext", "_x", "a1", "Archive_2"] {
+            assert!(is_valid_attach_alias(ok), "{ok}");
+        }
+        for ng in ["", "1a", "a b", "a\"b", "main", "MAIN", "Temp", "あ"] {
+            assert!(!is_valid_attach_alias(ng), "{ng}");
+        }
+        assert!(!is_valid_attach_alias(&"a".repeat(65)));
+    }
+
+    #[test]
+    fn attach_target_is_plain_path_or_ro_uri() {
+        assert_eq!(attach_target(" /d/a.db ", false), "/d/a.db");
+        assert_eq!(attach_target("/d/a.db", true), "file:/d/a.db?mode=ro");
+        assert_eq!(
+            attach_target("/d/a?b#c%.db", true),
+            "file:/d/a%3fb%23c%25.db?mode=ro"
+        );
+        assert_eq!(
+            attach_target("C:\\d\\a.db", true),
+            "file:///C:/d/a.db?mode=ro"
+        );
+        assert_eq!(attach_statement("ext"), "ATTACH DATABASE ?1 AS \"ext\"");
+    }
+
+    #[test]
+    fn validate_attachments_rejects_duplicates_and_overflow() {
+        let mk = |alias: &str| super::super::SqliteAttachment {
+            path: "/nonexistent".into(),
+            alias: alias.into(),
+        };
+        let many: Vec<_> = (0..11).map(|i| mk(&format!("a{i}"))).collect();
+        assert!(validate_attachments(&many).is_err());
+        assert!(validate_attachments(&[mk("x"), mk("X")]).is_err());
+        assert!(validate_attachments(&[mk("main")]).is_err());
+    }
 
     /// 停止要求で中断された接続を使い回しても、残った progress handler に別の文が
     /// 中断されない (`after_release` が外す)。プール上限 1 なので必ず同じ接続を使う。
@@ -2740,6 +2978,7 @@ mod tests {
         .await
         .expect("pool");
         let conn = SqliteConn {
+            attached: Vec::new(),
             pool,
             tx: tokio::sync::Mutex::new(None),
         };
@@ -2798,8 +3037,6 @@ mod tests {
         assert_eq!(p("CREATE INDEX i ON t(a, \"where\")"), None);
         assert_eq!(p("CREATE INDEX i ON t(a)"), None);
     }
-
-    use super::*;
 
     #[test]
     fn parses_basic_update() {
@@ -2930,6 +3167,7 @@ mod tests {
                 .expect("insert");
         }
         let conn = SqliteConn {
+            attached: Vec::new(),
             pool,
             tx: tokio::sync::Mutex::new(None),
         };

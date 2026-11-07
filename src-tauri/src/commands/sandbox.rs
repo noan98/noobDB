@@ -312,6 +312,8 @@ pub(crate) async fn create_sandbox_inner(
         ssl_client_key: None,
         init_sql: None,
         aws_iam: None,
+        sqlite_attachments: Vec::new(),
+        read_only: false,
     };
     let conn = match Connection::connect(&opts).await {
         Ok(c) => c,

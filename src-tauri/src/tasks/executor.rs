@@ -809,6 +809,7 @@ fn build_connect_request(
         init_sql: profile.init_sql.clone(),
         aws_iam: profile.aws_iam.clone(),
         ssm: profile.ssm.clone(),
+        sqlite_attachments: profile.sqlite_attachments.clone(),
         read_only: !matches!(action, TaskAction::RunMaintenance { .. }),
         skip_history: true,
     })

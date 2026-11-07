@@ -85,8 +85,19 @@ export interface TlsSettings {
   ssl_client_key?: string | null;
 }
 
+/** SQLite の追加アタッチ 1 件 (#2129)。 */
+export interface SqliteAttachment {
+  path: string;
+  alias: string;
+}
+
 /** Non-secret session-initialization settings shared by request and profile. */
 export interface SessionInitSettings {
+  /**
+   * SQLite で追加アタッチするファイル (#2129)。`alias` が `main` と並ぶデータベース名になる。
+   * パスと別名のみの非秘密情報。SQLite 以外では無視される。
+   */
+  sqlite_attachments?: SqliteAttachment[];
   /**
    * Session-initialization SQL run right after each connection is established
    * (e.g. `SET search_path`, `SET time_zone`, `PRAGMA`). Multiple statements

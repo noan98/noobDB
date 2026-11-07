@@ -363,9 +363,11 @@ describe("buildUpdateStatements", () => {
   });
 
   it("omits the database prefix for SQLite", () => {
-    expect(buildUpdateStatements(baseInput({ driver: "sqlite", edits: { [k(1)]: { 1: "new" } } }))).toEqual([
-      'UPDATE "tbl" SET "name" = \'new\' WHERE "id" = 1;',
-    ]);
+    expect(
+      buildUpdateStatements(
+        baseInput({ driver: "sqlite", database: "main", edits: { [k(1)]: { 1: "new" } } }),
+      ),
+    ).toEqual(['UPDATE "tbl" SET "name" = \'new\' WHERE "id" = 1;']);
   });
 
   it("doubles single quotes in string literals", () => {
@@ -504,7 +506,7 @@ describe("buildRowSql", () => {
     });
 
     it("omits the database prefix for SQLite", () => {
-      expect(buildRowSql(baseRowSql({ driver: "sqlite" }), "insert")).toEqual([
+      expect(buildRowSql(baseRowSql({ driver: "sqlite", database: "main" }), "insert")).toEqual([
         'INSERT INTO "tbl" ("id", "name") VALUES (1, \'old\');',
       ]);
     });
@@ -537,9 +539,9 @@ describe("buildRowSql", () => {
       expect(buildRowSql(baseRowSql({ driver: "postgres", columns, rows }), "insert")).toEqual([
         'INSERT INTO "db"."tbl" ("id", "data") VALUES (1, \'\\xdeadbeef\');',
       ]);
-      expect(buildRowSql(baseRowSql({ driver: "sqlite", columns, rows }), "insert")).toEqual([
-        'INSERT INTO "tbl" ("id", "data") VALUES (1, X\'deadbeef\');',
-      ]);
+      expect(
+        buildRowSql(baseRowSql({ driver: "sqlite", database: "main", columns, rows }), "insert"),
+      ).toEqual(['INSERT INTO "tbl" ("id", "data") VALUES (1, X\'deadbeef\');']);
     });
 
     it("treats PostgreSQL BYTEA as a BLOB-family column (regression: #修正4)", () => {
@@ -1752,7 +1754,7 @@ describe("WHERE 項・リテラル生成の境界 (#1663)", () => {
     const f = (type: string, v: CellValue, driver = "postgres") =>
       buildDeleteStatements({
         driver,
-        database: "d",
+        database: driver === "sqlite" ? "main" : "d",
         table: "t",
         columns: [col("x", type)],
         rows: [[v]],

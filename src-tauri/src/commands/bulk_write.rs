@@ -202,10 +202,17 @@ pub(crate) fn apply_approved_counts(
 }
 
 pub(crate) fn qualified_ref(driver: DriverKind, database: &str, table: &str) -> String {
-    // SQLite は接続ごとに単一の名前空間なので DB 名で修飾しない (フロントの
-    // `qualifiedTableRef` と同じ規約)。
+    // SQLite は `main` なら修飾しない。設定でアタッチしたファイルの別名のときだけ
+    // `"別名"."表"` にする (フロントの `qualifiedTableRef` と同じ規約、#2129)。
     match driver {
-        DriverKind::Sqlite => quote_ident(driver, table),
+        DriverKind::Sqlite if database.is_empty() || database.eq_ignore_ascii_case("main") => {
+            quote_ident(driver, table)
+        }
+        DriverKind::Sqlite => format!(
+            "{}.{}",
+            quote_ident(driver, database),
+            quote_ident(driver, table)
+        ),
         DriverKind::Mysql | DriverKind::Postgres => {
             format!(
                 "{}.{}",
@@ -1469,7 +1476,10 @@ pub(crate) async fn run_chunked_dml_batch_inner(
     };
     let mut row_key = "rowid";
     if let Connection::Sqlite(c) = &session.conn {
-        if !c.is_rowid_table(&table).await? {
+        if !c
+            .is_rowid_table(database.as_deref().unwrap_or("main"), &table)
+            .await?
+        {
             return Err(AppError::InvalidInput(
                 "chunked DML needs a rowid table (WITHOUT ROWID tables, views and virtual tables are not supported)"
                     .into(),

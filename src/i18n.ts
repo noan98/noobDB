@@ -1618,6 +1618,13 @@ const en = {
   formSqliteFilePath: "Database file",
   formSqliteFilePathPlaceholder: "/path/to/database.db",
   formSqliteFilePathHelp: "Absolute path to a SQLite database file. The file must already exist.",
+  formSqliteAttachLegend: "Attached files",
+  formSqliteAttachHelp:
+    "Attach extra SQLite files (ATTACH DATABASE) to this connection. They appear next to main in the tree, and you can query them as alias.table. Up to 10 files; aliases may use letters, digits and underscores.",
+  formSqliteAttachAdd: "Add file",
+  formSqliteAttachPath: "File path",
+  formSqliteAttachAlias: "Alias",
+  formSqliteAttachRemove: "Remove",
   formHost: "Host",
   formPort: "Port",
   formUser: "User",
@@ -9101,6 +9108,13 @@ const ja: Dict = {
   formSqliteFilePathPlaceholder: "/path/to/database.db",
   formSqliteFilePathHelp:
     "SQLite データベースファイルへの絶対パス。ファイルは既に存在している必要があります。",
+  formSqliteAttachLegend: "アタッチするファイル",
+  formSqliteAttachHelp:
+    "この接続に SQLite のファイルを追加でアタッチ (ATTACH DATABASE) します。ツリーでは main と並んで表示され、別名.テーブル名 で参照できます。最大 10 件、別名は英数字とアンダースコアが使えます。",
+  formSqliteAttachAdd: "ファイルを追加",
+  formSqliteAttachPath: "ファイルのパス",
+  formSqliteAttachAlias: "別名",
+  formSqliteAttachRemove: "削除",
   formHost: "ホスト",
   formPort: "ポート",
   formUser: "ユーザー",

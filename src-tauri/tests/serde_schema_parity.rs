@@ -496,6 +496,10 @@ fn build_fixtures() -> serde_json::Value {
             profile: Some("work".into()),
         }),
         ssm: None,
+        sqlite_attachments: vec![t::SqliteAttachment {
+            path: "/data/archive.db".into(),
+            alias: "archive".into(),
+        }],
     };
     let connection_profile = ProfileWithSecretFlags {
         profile: connection_profile_inner,
