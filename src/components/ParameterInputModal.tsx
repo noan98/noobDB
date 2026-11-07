@@ -94,6 +94,9 @@ export function ParameterInputModal({ sql, driver, onSubmit, onRunRaw, onCancel 
   );
   const positionalNames = useMemo(() => names.filter(isPositionalParamKey), [names]);
   const hasNative = useMemo(() => names.some((n) => !/^\w+$/.test(n)), [names]);
+  // {{name}} が混ざっていると「そのまま実行」で {{x}} が残って構文エラーになるので、
+  // ネイティブだけのときに限ってボタンを出す。
+  const hasTemplate = useMemo(() => names.some((n) => /^\w+$/.test(n)), [names]);
   const [pasteText, setPasteText] = useState("");
   const firstInputRef = useRef<HTMLInputElement>(null);
   const pasteRef = useRef<HTMLTextAreaElement>(null);
@@ -304,7 +307,7 @@ export function ParameterInputModal({ sql, driver, onSubmit, onRunRaw, onCancel 
 
       <ModalFooter>
         {/* 補助 → spacer → キャンセル → 主アクション。他モーダルと統一 */}
-        {hasNative && onRunRaw && (
+        {hasNative && !hasTemplate && onRunRaw && (
           <Tooltip label={t("parameterInputRunRawHint")}>
             <Button type="button" variant="secondary" onClick={onRunRaw}>
               {t("parameterInputRunRaw")}

@@ -435,7 +435,8 @@ function splitCsv(text: string, driver?: string): { raw: string; quoted: boolean
     if (quote) {
       if (backslash && ch === "\\" && i + 1 < text.length) {
         const nx = text[i + 1];
-        cur += MYSQL_ESCAPES[nx] ?? nx;
+        // MySQL は \% と \_ をバックスラッシュ付きのまま残す (LIKE のエスケープ用)
+        cur += nx === "%" || nx === "_" ? `\\${nx}` : (MYSQL_ESCAPES[nx] ?? nx);
         i++;
       } else if (ch === quote) {
         if (text[i + 1] === quote) {

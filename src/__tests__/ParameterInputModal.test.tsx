@@ -177,4 +177,17 @@ describe("ParameterInputModal", () => {
     );
     expect(screen.queryByRole("button", { name: t("parameterInputRunRaw") })).toBeNull();
   });
+
+  it("{{name}} とネイティブが混在するときも「展開せずにそのまま実行」を出さない ({{x}} が残るため)", () => {
+    renderWithProviders(
+      <ParameterInputModal
+        sql="SELECT * FROM t WHERE a = {{x}} AND b = $1"
+        driver="postgres"
+        onSubmit={() => {}}
+        onRunRaw={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: t("parameterInputRunRaw") })).toBeNull();
+  });
 });

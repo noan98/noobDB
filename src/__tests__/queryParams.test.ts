@@ -365,6 +365,13 @@ describe("parsePastedValues", () => {
     expect(parsePastedValues("'a\\b'", "postgres")).toEqual([{ value: "a\\b", type: "text" }]);
   });
 
+  it("カンマ区切り: MySQL の \\% と \\_ はバックスラッシュ付きのまま残す (LIKE 用)", () => {
+    expect(parsePastedValues("'g\\%h', 'a\\_b'", "mysql")).toEqual([
+      { value: "g\\%h", type: "text" },
+      { value: "a\\_b", type: "text" },
+    ]);
+  });
+
   it("裸の true / false は JSON と同じ規則", () => {
     expect(parsePastedValues("true, FALSE", "postgres")).toEqual([
       { value: "true", type: "text" },
