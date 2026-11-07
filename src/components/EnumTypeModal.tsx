@@ -29,7 +29,7 @@ interface Props {
   name: string;
   mode: "add" | "rename";
   readOnly: boolean;
-  onConfirm: (sql: string) => void;
+  onConfirm: (sql: string) => void | Promise<void>;
   onClose: () => void;
 }
 
@@ -49,7 +49,16 @@ export function EnumTypeModal({ sessionId, database, name, mode, readOnly, onCon
   const [positionKind, setPositionKind] = useState<PositionKind>("end");
   const [reference, setReference] = useState("");
   const [target, setTarget] = useState("");
+  const [busy, setBusy] = useState(false);
+  const mountedRef = useRef(true);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,7 +100,15 @@ export function EnumTypeModal({ sessionId, database, name, mode, readOnly, onCon
   }
 
   const submit = () => {
-    if (sql !== "") onConfirm(sql);
+    if (sql === "" || busy) return;
+    // 実行中は確定できない (二重送信で同じ ALTER TYPE が 2 回走るのを防ぐ)。完了・失敗で解除する。
+    setBusy(true);
+    void Promise.resolve()
+      .then(() => onConfirm(sql))
+      .catch(() => {})
+      .finally(() => {
+        if (mountedRef.current) setBusy(false);
+      });
   };
 
   const positionOptions: { value: PositionKind; label: string }[] = [
@@ -105,7 +122,7 @@ export function EnumTypeModal({ sessionId, database, name, mode, readOnly, onCon
   return (
     <Modal
       onSubmit={submit}
-      submitDisabled={sql === ""}
+      submitDisabled={sql === "" || busy}
       width="560px"
       onClose={onClose}
       initialFocusEl={() => inputRef.current}
@@ -197,7 +214,7 @@ export function EnumTypeModal({ sessionId, database, name, mode, readOnly, onCon
         <Button type="button" variant="secondary" onClick={onClose}>
           {t("enumTypeCancel")}
         </Button>
-        <PressableButton type="button" variant="primary" disabled={sql === ""} onClick={submit}>
+        <PressableButton type="button" variant="primary" disabled={sql === "" || busy} onClick={submit}>
           {mode === "add" ? t("enumTypeConfirmAdd") : t("enumTypeConfirmRename")}
         </PressableButton>
       </ModalFooter>

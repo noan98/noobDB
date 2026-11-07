@@ -2161,6 +2161,8 @@ impl PostgresConn {
     /// `information_schema.columns.data_type` は ENUM / 複合型 / 範囲型を `USER-DEFINED` と、DOMAIN を
     /// 土台の型としか返さず、そのままでは `CREATE TABLE` に使えない (型が無い target への同期が失敗する)。
     /// 同じスキーマの型は修飾なし (同期先のスキーマの同名の型を指す)、別スキーマの型は修飾つき。
+    /// 配列列 (`mood[]`) は atttypid が配列型なので、要素型 (`typelem`) がユーザー定義型のときに
+    /// `"mood"[]` の形で返す (整形は [`user_type_ref`])。
     /// スキーマ比較だけがこれで型を置き換える (画面の列型表示は従来どおり)。
     pub async fn user_type_columns(
         &self,
@@ -2168,17 +2170,18 @@ impl PostgresConn {
     ) -> Result<std::collections::HashMap<(String, String), String>> {
         let rows: Vec<PgRow> = sqlx::query(
             r#"
-            SELECT c.relname::text, a.attname::text,
-                   CASE WHEN tn.nspname = n.nspname THEN quote_ident(t.typname)
-                        ELSE quote_ident(tn.nspname) || '.' || quote_ident(t.typname) END
+            SELECT c.relname::text, a.attname::text, tn.nspname::text, et.typname::text,
+                   (et.oid <> t.oid), a.attndims::int4
               FROM pg_attribute a
               JOIN pg_class c ON c.oid = a.attrelid
               JOIN pg_namespace n ON n.oid = c.relnamespace
               JOIN pg_type t ON t.oid = a.atttypid
-              JOIN pg_namespace tn ON tn.oid = t.typnamespace
+              JOIN pg_type et ON et.oid = CASE WHEN t.typcategory = 'A' AND t.typelem <> 0
+                                               THEN t.typelem ELSE t.oid END
+              JOIN pg_namespace tn ON tn.oid = et.typnamespace
              WHERE n.nspname = $1 AND c.relkind IN ('r', 'p')
                AND a.attnum > 0 AND NOT a.attisdropped
-               AND t.typtype IN ('e', 'c', 'r', 'd')
+               AND et.typtype IN ('e', 'c', 'r', 'd')
             "#,
         )
         .bind(schema)
@@ -2187,12 +2190,16 @@ impl PostgresConn {
         Ok(rows
             .iter()
             .map(|r| {
+                let type_schema: String = r.try_get(2).unwrap_or_default();
+                let type_name: String = r.try_get(3).unwrap_or_default();
+                let is_array: bool = r.try_get(4).unwrap_or(false);
+                let dims: i32 = r.try_get(5).unwrap_or(0);
                 (
                     (
                         r.try_get::<String, _>(0).unwrap_or_default(),
                         r.try_get::<String, _>(1).unwrap_or_default(),
                     ),
-                    r.try_get::<String, _>(2).unwrap_or_default(),
+                    user_type_ref(schema, &type_schema, &type_name, is_array, dims),
                 )
             })
             .collect())
@@ -4395,6 +4402,33 @@ fn pg_quote_ident(name: &str) -> String {
     super::sync::quote_ident(super::DriverKind::Postgres, name)
 }
 
+/// ユーザー定義型の列の型名 (`CREATE TABLE` にそのまま書ける形, #2127)。`current` と同じスキーマの
+/// 型は修飾なし、別スキーマなら `"schema"."type"`。配列列は `[]` を次元数ぶん付ける
+/// (`attndims` が 0 でも配列なら 1 次元として扱う)。
+fn user_type_ref(
+    current: &str,
+    type_schema: &str,
+    type_name: &str,
+    is_array: bool,
+    dims: i32,
+) -> String {
+    let mut out = if type_schema == current {
+        pg_quote_ident(type_name)
+    } else {
+        format!(
+            "{}.{}",
+            pg_quote_ident(type_schema),
+            pg_quote_ident(type_name)
+        )
+    };
+    if is_array {
+        for _ in 0..dims.clamp(1, 6) {
+            out.push_str("[]");
+        }
+    }
+    out
+}
+
 /// Renders a cell as a Postgres string literal (`'...'`) or `NULL`. Relies on
 /// `standard_conforming_strings = on` so only single quotes need doubling;
 /// backslashes are literal.
@@ -4848,6 +4882,27 @@ async fn restore_statement_timeout(conn: &mut sqlx::PgConnection, orig: &str) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn user_type_ref_qualifies_only_other_schemas_and_marks_arrays() {
+        assert_eq!(user_type_ref("app", "app", "mood", false, 0), "\"mood\"");
+        assert_eq!(
+            user_type_ref("app", "other", "mood", false, 0),
+            "\"other\".\"mood\""
+        );
+        assert_eq!(user_type_ref("app", "app", "mood", true, 1), "\"mood\"[]");
+        // attndims が 0 (CREATE TABLE AS 等) でも配列なら 1 次元。
+        assert_eq!(user_type_ref("app", "app", "mood", true, 0), "\"mood\"[]");
+        assert_eq!(
+            user_type_ref("app", "other", "mood", true, 2),
+            "\"other\".\"mood\"[][]"
+        );
+        // 識別子の引用符は二重にする。
+        assert_eq!(
+            user_type_ref("app", "app", "we\"ird", false, 0),
+            "\"we\"\"ird\""
+        );
+    }
 
     #[test]
     fn self_terminate_connection_drop_is_not_counted_as_failure() {

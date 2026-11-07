@@ -2593,6 +2593,10 @@ const en = {
   enumTypeAddNote:
     "A value added with ALTER TYPE cannot be removed or reordered later. Inside a transaction it cannot be used until the transaction commits.",
   enumTypeDone: "Updated type {name}",
+  typeKindEnum: "ENUM",
+  typeKindDomain: "DOMAIN",
+  typeKindComposite: "Composite",
+  typeKindRange: "Range",
   contextMenuCreateRoutineGroup: "New routine / trigger",
   contextMenuCreateProcedure: "New procedure...",
   contextMenuCreateFunction: "New function...",
@@ -10105,6 +10109,10 @@ const ja: Dict = {
   enumTypeAddNote:
     "ALTER TYPE で追加した値は、後から削除・並び替えできません。トランザクション内で追加した値は、コミットされるまで使えません。",
   enumTypeDone: "型 {name} を更新しました",
+  typeKindEnum: "ENUM",
+  typeKindDomain: "DOMAIN",
+  typeKindComposite: "複合型",
+  typeKindRange: "範囲型",
   contextMenuCreateRoutineGroup: "ルーチン / トリガーを新規作成",
   contextMenuCreateProcedure: "プロシージャを新規作成",
   contextMenuCreateFunction: "関数を新規作成",

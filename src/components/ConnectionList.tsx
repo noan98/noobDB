@@ -995,8 +995,12 @@ const SchemaObjectRow = memo(function SchemaObjectRow({
   q: string;
 }) {
   const actions = useTreeActions();
+  const t = useT();
   const kind = o.kind;
   const key = `so:${db}:${kind}:${o.name}:${o.id ?? ""}`;
+  // detail は種別ごとに意味が違う。型 (PostgreSQL) は ENUM / DOMAIN / 複合型 / 範囲型の識別子
+  // (内部値) なので表示用のラベルに直す。それ以外 (イベントの状態など) はサーバの値のまま。
+  const detail = kind === "type" && o.detail ? (typeKindLabel(o.detail, t) ?? o.detail) : o.detail;
   const { tabIndex, onFocus } = useTabStop(actions.store, key);
   const activate = () => actions.openObjectDefinition(db, o.kind, o.name, o.id);
   const openMenu: ((ev: ContextMenuTriggerEvent) => void) | undefined =
@@ -1020,9 +1024,7 @@ const SchemaObjectRow = memo(function SchemaObjectRow({
       onKeyDown={actions.makeKeyDown(activate, openMenu)}
       onClick={activate}
       onContextMenu={openMenu}
-      {...actions.treeTooltip(
-        o.detail ? `${o.name} — ${kindLabel} (${o.detail})` : `${o.name} — ${kindLabel}`,
-      )}
+      {...actions.treeTooltip(detail ? `${o.name} — ${kindLabel} (${detail})` : `${o.name} — ${kindLabel}`)}
       _hover={{ bg: "app.rowHover" }}
     >
       <TreeChevron visibility="hidden" aria-hidden />
@@ -1032,15 +1034,32 @@ const SchemaObjectRow = memo(function SchemaObjectRow({
       <TreeLabel fontWeight={400}>
         <HighlightText text={o.name} query={q} />
       </TreeLabel>
-      {o.detail && (
-        // バッジは状態だけ (ENABLED / DISABLED)。スケジュールの要約はツールチップに出す。
+      {detail && (
+        // バッジはイベントなら状態だけ (ENABLED / DISABLED。スケジュールの要約はツールチップに出す)、
+        // 型なら種類 (ENUM / DOMAIN / 複合型 / 範囲型) の表示ラベル。
         <TreeBadge flexShrink={0} fontSize="2xs" textTransform="none" letterSpacing="0" aria-hidden>
-          {o.detail.split(" · ")[0]}
+          {detail.split(" · ")[0]}
         </TreeBadge>
       )}
     </TreeRow>
   );
 });
+
+/** PostgreSQL の型の種類 (`SchemaObject.detail` の内部値) を表示ラベルにする。未知の値は `null`。 */
+function typeKindLabel(detail: string, t: ReturnType<typeof useT>): string | null {
+  switch (detail) {
+    case "enum":
+      return t("typeKindEnum");
+    case "domain":
+      return t("typeKindDomain");
+    case "composite":
+      return t("typeKindComposite");
+    case "range":
+      return t("typeKindRange");
+    default:
+      return null;
+  }
+}
 
 const ColumnRow = memo(function ColumnRow({
   db,

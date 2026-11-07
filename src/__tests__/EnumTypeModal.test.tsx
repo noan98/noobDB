@@ -54,6 +54,60 @@ describe("EnumTypeModal", () => {
     expect(onConfirm).toHaveBeenCalledWith(`ALTER TYPE "public"."mood" ADD VALUE 'meh' AFTER 'sad';`);
   });
 
+  it("実行中は確定ボタンが無効になり、二重に押しても 1 回だけ渡す。完了で解除される", async () => {
+    const user = userEvent.setup();
+    let finish: () => void = () => {};
+    const onConfirm = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    renderWithProviders(
+      <EnumTypeModal
+        sessionId="s1"
+        database="public"
+        name="mood"
+        mode="add"
+        readOnly={false}
+        onConfirm={onConfirm}
+        onClose={() => {}}
+      />,
+    );
+    await screen.findByText("sad, ok, happy");
+    await user.type(screen.getByLabelText(t("enumTypeNewValue")), "meh");
+    const confirm = screen.getByRole("button", { name: t("enumTypeConfirmAdd") });
+    await user.click(confirm);
+    await waitFor(() => expect(confirm).toBeDisabled());
+    await user.click(confirm);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+
+    finish();
+    await waitFor(() => expect(confirm).toBeEnabled());
+  });
+
+  it("実行が失敗しても確定ボタンの無効化は解除される", async () => {
+    const user = userEvent.setup();
+    const onConfirm = vi.fn(() => Promise.reject(new Error("boom")));
+    renderWithProviders(
+      <EnumTypeModal
+        sessionId="s1"
+        database="public"
+        name="mood"
+        mode="add"
+        readOnly={false}
+        onConfirm={onConfirm}
+        onClose={() => {}}
+      />,
+    );
+    await screen.findByText("sad, ok, happy");
+    await user.type(screen.getByLabelText(t("enumTypeNewValue")), "meh");
+    const confirm = screen.getByRole("button", { name: t("enumTypeConfirmAdd") });
+    await user.click(confirm);
+    await waitFor(() => expect(confirm).toBeEnabled());
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
   it("既存の値は重複エラーで確定できない", async () => {
     const user = userEvent.setup();
     const { onConfirm } = setup();

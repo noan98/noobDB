@@ -4783,21 +4783,29 @@ async fn postgres_user_defined_types_are_listed_compared_and_synced() {
             .await
             .expect("create schema");
     }
-    // 拡張が持つ型 (ENUM) はツリーにも比較にも出ない。
+    // 拡張が持つ型はツリーにも比較にも出ない。contrib の earthdistance は DOMAIN `earth` を作る
+    // (cube に依存)。拡張が入らない環境 (contrib 無し・権限不足) ではこの確認だけ飛ばす。
     let ext_ok = conn
         .execute(
-            &format!("CREATE EXTENSION IF NOT EXISTS nb2127ext SCHEMA {a}"),
+            &format!("CREATE EXTENSION IF NOT EXISTS cube SCHEMA {a}"),
             None,
         )
         .await
-        .is_ok();
+        .is_ok()
+        && conn
+            .execute(
+                &format!("CREATE EXTENSION IF NOT EXISTS earthdistance SCHEMA {a}"),
+                None,
+            )
+            .await
+            .is_ok();
     for ddl in [
         format!("CREATE TYPE {a}.mood AS ENUM ('sad', 'ok', 'it''s')"),
         format!("CREATE DOMAIN {a}.posint AS integer NOT NULL DEFAULT 1 CONSTRAINT posint_pos CHECK (VALUE > 0)"),
         format!("CREATE TYPE {a}.pair AS (x integer, y text)"),
         format!("CREATE TYPE {a}.floatrange AS RANGE (subtype = float8)"),
         // 型を使う列を持つ表 (型が無い target へ同期すると type does not exist で失敗していた)。
-        format!("CREATE TABLE {a}.person (id integer PRIMARY KEY, m {a}.mood, p {a}.posint, pr {a}.pair)"),
+        format!("CREATE TABLE {a}.person (id integer PRIMARY KEY, m {a}.mood, p {a}.posint, pr {a}.pair, ms {a}.mood[])"),
         // target: ENUM は値が足りない。残りの型は無い。
         format!("CREATE TYPE {b}.mood AS ENUM ('sad', 'it''s')"),
         // target だけにある型と、それを使う表 (削除は表の削除より後)。
@@ -4836,7 +4844,7 @@ async fn postgres_user_defined_types_are_listed_compared_and_synced() {
     );
     if ext_ok {
         assert!(
-            !types.iter().any(|(n, _)| n == "nb2127_ext_mood"),
+            !types.iter().any(|(n, _)| n == "earth"),
             "extension type must be hidden: {types:?}"
         );
     }
@@ -4894,17 +4902,19 @@ async fn postgres_user_defined_types_are_listed_compared_and_synced() {
         Some(t::DiffStatus::SourceOnly)
     );
     assert_eq!(status_of(&diff, "legacy"), Some(t::DiffStatus::TargetOnly));
-    assert!(diff
-        .objects
-        .items
-        .iter()
-        .all(|i| i.name != "nb2127_ext_mood"));
+    assert!(diff.objects.items.iter().all(|i| i.name != "earth"));
 
     // 同期 (破壊的な操作を許可): 型の作成 → 表の作成 → 表の削除 → 型の削除の順で通る。
     let plan = t::generate_sync_sql(&diff, true);
     let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
     let pos = |needle: &str| sqls.iter().position(|s| s.contains(needle));
     let create_tbl = pos("CREATE TABLE").expect("create table in plan");
+    // ENUM の配列列 (`mood[]`) も、型名を補正した形 (`"mood"[]`) で CREATE TABLE に載る。
+    assert!(
+        sqls[create_tbl].contains("\"mood\"[]"),
+        "array column of a user type must keep its type: {}",
+        sqls[create_tbl]
+    );
     let create_pair = pos("AS (").expect("create composite in plan");
     let drop_legacy_tbl = pos("DROP TABLE").expect("drop table in plan");
     let drop_legacy_type = pos("DROP TYPE").expect("drop type in plan");
@@ -4965,7 +4975,5 @@ async fn postgres_user_defined_types_are_listed_compared_and_synced() {
             .execute(&format!("DROP SCHEMA IF EXISTS {s} CASCADE"), None)
             .await;
     }
-    let _ = conn
-        .execute("DROP EXTENSION IF EXISTS nb2127ext CASCADE", None)
-        .await;
+    // 拡張は schema a に入れたものなので、上の DROP SCHEMA ... CASCADE で一緒に消える。
 }
