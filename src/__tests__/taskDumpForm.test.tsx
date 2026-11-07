@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor } from "./testUtils";
+import { chooseListboxOption, fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 import { api, type DumpOptions, type TaskDefinition } from "../api/tauri";
@@ -172,5 +172,66 @@ describe("タスクのダンプ設定 (#2131)", () => {
     expect(screen.queryByTestId("dump-engine-native")).toBeNull();
     expect(screen.queryByText(t("taskFormDumpMaskHint"))).toBeNull();
     expect(screen.getByRole("switch", { name: t("dumpOptSqliteSnapshot") })).toBeInTheDocument();
+  });
+
+  it("SQLite ではマスクが残っていても無視して空で送る", async () => {
+    const saveTask = vi.mocked(api.saveTask);
+    saveTask.mockResolvedValue(dumpTask(BASE_OPTIONS));
+    // 旧データ: マスクつきのタスクを SQLite プロファイルで開く (マスク欄は描かれない)。
+    const user = await openEdit(
+      dumpTask({ ...BASE_OPTIONS, native: true, masks: [{ column: "email", rule: { kind: "null" } }] }),
+      "sqlite",
+    );
+    await user.click(screen.getByRole("button", { name: t("taskFormSave") }));
+    await waitFor(() => expect(saveTask).toHaveBeenCalled());
+    const saved = saveTask.mock.calls[0][0].action;
+    if (saved.kind !== "dump") throw new Error("dump expected");
+    expect(saved.options.masks).toBeUndefined();
+  });
+
+  it("現在のドライバで表示されない真偽値は既定値に戻して送る (SQLite のスナップショットの名残)", async () => {
+    const saveTask = vi.mocked(api.saveTask);
+    saveTask.mockResolvedValue(dumpTask(BASE_OPTIONS));
+    const user = await openEdit(dumpTask({ ...BASE_OPTIONS, sqliteSnapshot: true }), "mysql");
+    await user.click(screen.getByRole("button", { name: t("taskFormSave") }));
+    await waitFor(() => expect(saveTask).toHaveBeenCalled());
+    const saved = saveTask.mock.calls[0][0].action;
+    if (saved.kind !== "dump") throw new Error("dump expected");
+    expect(saved.options.sqliteSnapshot).toBe(false);
+  });
+
+  it("新規タスクで外部ツールが未導入なら内蔵エンジンが初期選択になる (既存タスクは保存値のまま)", async () => {
+    dumpToolStatus.mockResolvedValue({ tool: "mysqldump", path: null, install: null });
+    listTasks.mockResolvedValue([]);
+    const user = userEvent.setup();
+    renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText(t("taskEmpty"))).toBeInTheDocument());
+    await user.click(screen.getAllByRole("button", { name: t("taskCreate") })[0]);
+    await screen.findByLabelText(t("taskFormName"));
+    chooseListboxOption(screen.getByLabelText(t("taskFormActionKind")), "dump");
+    await waitFor(() =>
+      expect(screen.getByTestId("dump-engine-native")).toHaveAttribute("aria-pressed", "true"),
+    );
+    expect(screen.getByTestId("dump-engine-external")).toBeDisabled();
+  });
+
+  it("既存タスクは未導入でも保存値 (外部ツール) のまま開く", async () => {
+    dumpToolStatus.mockResolvedValue({ tool: "mysqldump", path: null, install: null });
+    await openEdit(dumpTask(BASE_OPTIONS));
+    await screen.findByText(t("taskFormDumpToolMissing", { tool: "mysqldump" }));
+    expect(screen.getByTestId("dump-engine-external")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("gzip を切り替えると出力パスの拡張子が追従する", async () => {
+    await openEdit(dumpTask(BASE_OPTIONS));
+    const input = screen.getByLabelText(t("taskFormOutputPath"));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("switch", { name: t("dumpOptGzip") }));
+    expect(input).toHaveValue("/tmp/out.sql.gz");
+    await user.click(screen.getByRole("switch", { name: t("dumpOptGzip") }));
+    expect(input).toHaveValue("/tmp/out.sql");
+    fireEvent.change(input, { target: { value: "/tmp/custom.bak" } });
+    await user.click(screen.getByRole("switch", { name: t("dumpOptGzip") }));
+    expect(input).toHaveValue("/tmp/custom.bak");
   });
 });

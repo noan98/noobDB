@@ -65,7 +65,14 @@ import { sanitizeMaskRule, type ExportColumnMask, type ExportMaskOverrides } fro
 import { DumpEngineSelector, DumpOptionGroups, DumpPgSchemaField } from "./DumpOptionsFields";
 import { toDriverKind } from "./dataTransfer";
 import { dumpOptionLock, resolveDumpOptions, type DumpBoolOptionKey } from "../dumpOptionLocks";
-import { DEFAULT_DUMP_OPTIONS, DUMP_TOOL, NATIVE_DUMP_DRIVERS, visibleOptionRows } from "../dumpOptionForm";
+import {
+  DEFAULT_DUMP_OPTIONS,
+  DRIVER_OPTIONS,
+  DUMP_TOOL,
+  NATIVE_DUMP_DRIVERS,
+  OPTION_ROWS,
+  visibleOptionRows,
+} from "../dumpOptionForm";
 
 // motion.div に chakra の style props を渡せるようにする (variants 等は forwardProps で素通し)。
 const MotionDiv = chakra(
@@ -939,6 +946,7 @@ function TaskForm({
   const dumpRows = useMemo(() => (dumpDriver ? visibleOptionRows(dumpDriver) : []), [dumpDriver]);
   // 外部ツールの導入状況 (表示のみ。無人実行は同じ PC で動くので、未導入なら失敗する旨を警告する)。
   const [dumpToolStatus, setDumpToolStatus] = useState<DumpToolStatus | null>(null);
+  const dumpAutoNativeDone = useRef(false);
   useEffect(() => {
     setDumpToolStatus(null);
     if (actionKind !== "dump" || !dumpToolName) return;
@@ -946,7 +954,17 @@ function TaskForm({
     void api
       .dumpToolStatus(dumpToolName)
       .then((st) => {
-        if (!cancelled) setDumpToolStatus(st);
+        if (cancelled) return;
+        setDumpToolStatus(st);
+        // 新規タスクで外部ツールが未導入なら、DumpModal と同じく内蔵生成を初期選択にする (既存タスクは保存値を優先)。
+        if (!task && st.path == null && !dumpAutoNativeDone.current) {
+          dumpAutoNativeDone.current = true;
+          setDumpOptions((prev) =>
+            prev.native
+              ? prev
+              : { ...prev, native: true, ...(dumpDriver === "postgres" ? { routines: true } : {}) },
+          );
+        }
       })
       .catch(() => {
         /* 検出の失敗は致命的ではない (実行時のエラーで分かる) */
@@ -954,7 +972,7 @@ function TaskForm({
     return () => {
       cancelled = true;
     };
-  }, [actionKind, dumpToolName]);
+  }, [actionKind, dumpToolName, dumpDriver, task]);
   const selectDumpEngine = (native: boolean) => {
     if (native === dumpUseNative) return;
     setDumpOptions((prev) => ({
@@ -966,6 +984,13 @@ function TaskForm({
   };
   const toggleDumpOption = (key: DumpBoolOptionKey) => {
     if (dumpOptionLock(key, dumpLockCtx)) return;
+    // gzip / スナップショットは出力パスの拡張子を追従させる (手で別の名前にした場合は触らない)。
+    if (key === "gzip" || key === "sqliteSnapshot") {
+      const next = { ...dumpOptions, [key]: !dumpOptions[key] };
+      const base = next.sqliteSnapshot ? "db" : "sql";
+      const ext = next.gzip ? `${base}.gz` : base;
+      setOutputPath((cur) => cur.replace(/\.(sql\.gz|sql|db\.gz|db)$/i, `.${ext}`));
+    }
     setDumpOptions((prev) => ({ ...prev, [key]: !prev[key] }));
   };
   // ドライバを渡さない (= 保守的なマスク) のは意図的: バックエンドの
@@ -1105,8 +1130,10 @@ function TaskForm({
         return;
       }
       // マスクはネイティブ生成のみ。外部ツール経路ではマスクされずに出てしまうので、黙って捨てず止める。
-      const dumpMasks = maskEnabled ? collectMasks(maskColumns, maskOverrides) : [];
-      const unruled = maskEnabled ? maskColumns.filter((c) => !overridesHaveRule(maskOverrides, c)) : [];
+      // SQLite ではマスク欄を描かない (マスク非対応) ので、残っていても無視して空で送る。
+      const maskActive = maskEnabled && dumpDriver !== "sqlite";
+      const dumpMasks = maskActive ? collectMasks(maskColumns, maskOverrides) : [];
+      const unruled = maskActive ? maskColumns.filter((c) => !overridesHaveRule(maskOverrides, c)) : [];
       if (unruled.length > 0) {
         setMaskError(t("taskFormMaskNoRule", { columns: unruled.join(", ") }));
         return;
@@ -1117,7 +1144,15 @@ function TaskForm({
       }
       setMaskError(null);
       // 画面で無効にしたオプションは強制値で送る (表示と実行の一致, DumpModal と同じ)。
-      const resolved = resolveDumpOptions(dumpOptions, dumpLockCtx);
+      // 現在のドライバで表示されない値 (別ドライバで触った名残) は持ち込まず既定値に戻す。
+      const shownKeys = new Set<string>(dumpDriver ? DRIVER_OPTIONS[dumpDriver] : []);
+      const carried: DumpOptions = { ...dumpOptions };
+      for (const row of OPTION_ROWS) {
+        if (!shownKeys.has(row.key))
+          (carried as unknown as Record<string, unknown>)[row.key] = DEFAULT_DUMP_OPTIONS[row.key];
+      }
+      if (dumpDriver !== "postgres") carried.pgSchema = null;
+      const resolved = resolveDumpOptions(carried, dumpLockCtx);
       action = {
         kind: "dump",
         database: database.trim(),
@@ -1487,7 +1522,7 @@ function TaskForm({
               useNative={dumpUseNative}
               disabled={false}
               toolStatus={dumpToolStatus}
-              toolAbsent={false}
+              toolAbsent={!task && !!dumpToolStatus && dumpToolStatus.path == null}
               onSelect={selectDumpEngine}
             />
           )}
