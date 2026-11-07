@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { DeterminateProgressBar } from "./StreamProgressBar";
+import { JobPresence, JobProgressDetail, useJobClock } from "./JobProgress";
 import { chakra } from "@chakra-ui/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { downloadDir, join } from "@tauri-apps/api/path";
@@ -72,6 +72,7 @@ export function TablesExportModal({ sessionId, driver, database, tables, profile
   const disposedRef = useRef(false);
   const userEditedDirRef = useRef(!!remembered?.dir);
   const isRunning = status.kind === "running";
+  const jobElapsedMs = useJobClock(isRunning);
   const workbookMode = format === "xlsx" && singleWorkbook && tables.length > 1;
 
   // 既定の保存先は OS のダウンロードフォルダ (`ExportModal` と同じ)。取得できなければ空のまま。
@@ -446,21 +447,37 @@ export function TablesExportModal({ sessionId, driver, database, tables, profile
           </PathRow>
         </FormSection>
 
-        {status.kind === "running" && (
-          <chakra.div display="flex" flexDirection="column" gap="1.5">
-            <DeterminateProgressBar value={tables.length > 0 ? status.index / tables.length : 0} />
-            <chakra.div fontSize="sm" color="app.text" role="status" fontWeight={500}>
-              {workbookMode
-                ? t("batchExportWorkbookProgress", { count: tables.length, rows: status.rows })
-                : t("batchExportProgress", {
-                    index: status.index + 1,
-                    count: tables.length,
-                    table: status.table,
-                    rows: status.rows,
-                  })}
+        <JobPresence show={status.kind === "running"}>
+          {status.kind === "running" && (
+            <chakra.div display="flex" flexDirection="column" gap="2">
+              <chakra.div aria-live="off">
+                <JobProgressDetail
+                  done={status.index}
+                  total={workbookMode ? null : tables.length}
+                  elapsedMs={jobElapsedMs}
+                  running
+                  rateLabel={t("jobStatRowsPerSec")}
+                  stats={[
+                    ...(workbookMode
+                      ? []
+                      : [{ label: t("jobStatTables"), value: status.index, sub: `/ ${tables.length}` }]),
+                    { label: t("jobStatRows"), value: status.rows },
+                  ]}
+                />
+              </chakra.div>
+              <chakra.div fontSize="sm" color="app.text" role="status" aria-live="polite" fontWeight={500}>
+                {workbookMode
+                  ? t("batchExportWorkbookProgress", { count: tables.length, rows: status.rows })
+                  : t("batchExportProgress", {
+                      index: status.index + 1,
+                      count: tables.length,
+                      table: status.table,
+                      rows: status.rows,
+                    })}
+              </chakra.div>
             </chakra.div>
-          </chakra.div>
-        )}
+          )}
+        </JobPresence>
         {status.kind === "error" && (
           <ErrorNote>
             {status.failures.map((f) => (
