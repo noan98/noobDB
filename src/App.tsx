@@ -482,7 +482,7 @@ import {
   type DangerFinding,
 } from "./dangerousSql";
 import { resolveTypedConfirmTarget } from "./typeToConfirm";
-import { extractQueryParams, substituteQueryParams, type ParamType } from "./queryParams";
+import { extractNativeParams, extractQueryParams, substituteAllParams, type ParamType } from "./queryParams";
 import {
   countCapturableStatements,
   isSingleCapturableStatement,
@@ -6744,17 +6744,18 @@ export default function App() {
     [previewQueryInTab, explainForTab, runInTabWithGate],
   );
 
-  // Editor run/preview/explain gate for {{variable}} parameters: when the SQL
+  // Editor run/preview/explain gate for {{variable}} and native (?, $n, :name) parameters: when the SQL
   // has placeholders, prompt for values first; otherwise run straight through.
   const resolveParamsThen = useCallback(
     (tab: Tab, sql: string, mode: "run" | "runNewTab" | "preview" | "explain") => {
-      if (extractQueryParams(sql).length === 0) {
+      const driver = selectedProfile?.driver ?? "mysql";
+      if (extractQueryParams(sql).length === 0 && extractNativeParams(sql, driver).length === 0) {
         dispatchEditorAction(tab, sql, mode);
         return;
       }
       setPendingParams({ tab, sql, mode });
     },
-    [dispatchEditorAction],
+    [dispatchEditorAction, selectedProfile?.driver],
   );
 
   const handleParamsSubmit = useCallback(
@@ -6762,12 +6763,21 @@ export default function App() {
       if (!pendingParams) return;
       const { tab, sql, mode } = pendingParams;
       const driver = (selectedProfile?.driver ?? "mysql") as DriverKind;
-      const finalSql = substituteQueryParams(sql, driver, values, types);
+      const finalSql = substituteAllParams(sql, driver, values, types);
       setPendingParams(null);
       dispatchEditorAction(tab, finalSql, mode);
     },
     [pendingParams, selectedProfile?.driver, dispatchEditorAction],
   );
+
+  // 「展開せずにそのまま実行」: PREPARE や関数本体の `$1` など、値を入れたくない文を元の SQL のまま
+  // 通常の実行経路 (実行ゲート込み) へ渡す。
+  const handleParamsRunRaw = useCallback(() => {
+    if (!pendingParams) return;
+    const { tab, sql, mode } = pendingParams;
+    setPendingParams(null);
+    dispatchEditorAction(tab, sql, mode);
+  }, [pendingParams, dispatchEditorAction]);
 
   const handleParamsCancel = useCallback(() => setPendingParams(null), []);
 
@@ -14760,6 +14770,7 @@ export default function App() {
                 sql={pendingParams.sql}
                 driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                 onSubmit={handleParamsSubmit}
+                onRunRaw={handleParamsRunRaw}
                 onCancel={handleParamsCancel}
               />
             )}

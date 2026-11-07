@@ -96,4 +96,98 @@ describe("ParameterInputModal", () => {
     await user.click(screen.getByRole("button", { name: t("parameterInputRun") }));
     expect(localStorage.getItem("noobdb.queryparams.v1") ?? "").not.toContain("s3cret-value");
   });
+
+  it("位置パラメータ (?) を検出し、一括貼り付けで順に割り当てる (#2128)", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    renderWithProviders(
+      <ParameterInputModal
+        sql="SELECT * FROM t WHERE id = ? AND status = ? AND note IS NOT DISTINCT FROM ?"
+        driver="mysql"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+      />,
+    );
+    const paste = screen.getByLabelText(t("parameterInputPasteLabel"));
+    // 個数が合わない間は FieldError を出し、割り当てを無効にする。
+    await user.click(paste);
+    await user.paste('[1, "active"]');
+    expect(
+      screen.getByText(t("parameterInputPasteCountMismatch", { actual: 2, expected: 3 })),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("parameterInputPasteApply") })).toBeDisabled();
+
+    await user.clear(paste);
+    await user.click(paste);
+    await user.paste("1, 'active', NULL");
+    await user.click(screen.getByRole("button", { name: t("parameterInputPasteApply") }));
+    expect(
+      screen.getByText(
+        "SELECT * FROM t WHERE id = 1 AND status = 'active' AND note IS NOT DISTINCT FROM NULL",
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: t("parameterInputRun") }));
+    expect(onSubmit).toHaveBeenCalledWith(
+      { "?1": "1", "?2": "active", "?3": "" },
+      { "?1": "number", "?2": "text", "?3": "null" },
+    );
+  });
+
+  it("PostgreSQL の jsonb の ? は検出せず、$n だけ入力欄になる (#2128)", () => {
+    renderWithProviders(
+      <ParameterInputModal
+        sql="SELECT * FROM t WHERE data ? 'k' AND id = $1"
+        driver="postgres"
+        onSubmit={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.getByLabelText(t("parameterInputValueLabelFor", { name: "$1" }))).toBeInTheDocument();
+    expect(screen.queryByLabelText(t("parameterInputValueLabelFor", { name: "?1" }))).not.toBeInTheDocument();
+  });
+
+  it("ネイティブプレースホルダでは「展開せずにそのまま実行」を出し、押すと onRunRaw を呼ぶ", async () => {
+    const user = userEvent.setup();
+    const onRunRaw = vi.fn();
+    const onSubmit = vi.fn();
+    renderWithProviders(
+      <ParameterInputModal
+        sql="PREPARE p AS SELECT 1; SELECT $1"
+        driver="postgres"
+        onSubmit={onSubmit}
+        onRunRaw={onRunRaw}
+        onCancel={() => {}}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: t("parameterInputRunRaw") }));
+    expect(onRunRaw).toHaveBeenCalledTimes(1);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("{{name}} だけのときは「展開せずにそのまま実行」を出さない", () => {
+    renderWithProviders(
+      <ParameterInputModal
+        sql={SQL}
+        driver="mysql"
+        onSubmit={() => {}}
+        onRunRaw={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: t("parameterInputRunRaw") })).toBeNull();
+  });
+
+  it("{{name}} とネイティブが混在するときも「展開せずにそのまま実行」を出さない ({{x}} が残るため)", () => {
+    renderWithProviders(
+      <ParameterInputModal
+        sql="SELECT * FROM t WHERE a = {{x}} AND b = $1"
+        driver="postgres"
+        onSubmit={() => {}}
+        onRunRaw={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: t("parameterInputRunRaw") })).toBeNull();
+  });
 });
