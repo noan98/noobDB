@@ -2657,7 +2657,6 @@ const en = {
     "Runs {tool} on this computer for this database (through the SSH tunnel if one is configured). {tool} must be installed on this computer.",
   dumpNoteNative:
     "Built-in generation builds the SQL dump (schema DDL + INSERT statements) directly from this connection. No external client tools are needed.",
-  dumpOptionsLabel: "Options",
   dumpOptSingleTransaction: "Single transaction",
   dumpOptSingleTransactionHint: "--single-transaction: consistent InnoDB snapshot without locking tables.",
   dumpOptRoutines: "Stored procedures & functions",
@@ -6897,6 +6896,13 @@ const en = {
   taskFormOutputPathRequired: "Enter an output path.",
   taskFormMaskHint:
     "Mask these columns in every scheduled output so PII does not leak to unattended destinations. Columns are matched by exact name in the query result; if a column is missing from the result, that run fails and writes nothing.",
+  taskFormPgSchemaNativeHint:
+    "Built-in generation dumps one schema at a time. If left empty, only the public schema is dumped.",
+  taskFormDumpMaskHint:
+    "Mask these columns in the dump so PII does not leak to unattended destinations. A column with the same name is masked in every table. Available with built-in generation only.",
+  taskFormDumpMasksNeedNative: "Masking requires built-in generation. Select it above, or turn masking off.",
+  taskFormDumpToolMissing:
+    "{tool} was not found on this computer, so a scheduled dump with this engine will fail. Select built-in generation, or install {tool}.",
   taskFormMaskAddColumn: "Column name to mask",
   taskFormMaskAdd: "Add column",
   taskFormMaskRemove: "Remove {column} from masking",
@@ -10150,7 +10156,6 @@ const ja: Dict = {
     "このデータベースに対して、この PC 上で {tool} を実行します (設定があれば SSH トンネル経由で接続)。この PC に {tool} がインストールされている必要があります。",
   dumpNoteNative:
     "内蔵生成で、この接続から SQL ダンプ (スキーマの DDL + INSERT 文) を直接生成します。外部のクライアントツールは不要です。",
-  dumpOptionsLabel: "オプション",
   dumpOptSingleTransaction: "単一トランザクション",
   dumpOptSingleTransactionHint:
     "--single-transaction: テーブルをロックせずに InnoDB の一貫したスナップショットを取得します。",
@@ -14352,6 +14357,14 @@ const ja: Dict = {
   taskFormOutputPathRequired: "出力先パスを入力してください。",
   taskFormMaskHint:
     "スケジュール実行のたびに、これらの列をマスクして書き出します (無人の出力先への PII 流出を防ぎます)。列はクエリ結果の列名と完全一致で対応付けます。結果に無い列名があると、その実行は失敗し何も書き出しません。",
+  taskFormPgSchemaNativeHint:
+    "内蔵生成は 1 スキーマ単位です。空のときは public スキーマだけをダンプします (全スキーマではありません)。",
+  taskFormDumpMaskHint:
+    "ダンプの中でこれらの列をマスクして書き出します (無人の出力先への PII 流出を防ぎます)。同じ名前の列はすべてのテーブルでマスクされます。内蔵生成でのみ使えます。",
+  taskFormDumpMasksNeedNative:
+    "マスキングは内蔵生成でのみ使えます。上で内蔵生成を選ぶか、マスキングをオフにしてください。",
+  taskFormDumpToolMissing:
+    "この PC に {tool} が見つからないため、このエンジンの定期ダンプは失敗します。内蔵生成を選ぶか、{tool} を導入してください。",
   taskFormMaskAddColumn: "マスクする列名",
   taskFormMaskAdd: "列を追加",
   taskFormMaskRemove: "{column} をマスク対象から外す",

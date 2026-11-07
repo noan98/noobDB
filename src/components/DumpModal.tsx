@@ -1,13 +1,13 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { save } from "@tauri-apps/plugin-dialog";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { api, DumpOptions, listenDumpStream, type DriverKind, type DumpToolStatus } from "../api/tauri";
-import { useT, type I18nKey } from "../i18n";
+import { useT } from "../i18n";
 import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Input, SelectableCard, Switch } from "./ui";
+import { Button, Input } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { CodePreview, ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { Callout } from "./Callout";
@@ -17,8 +17,16 @@ import { copyToClipboard } from "./clipboard";
 import { Icon, ICON_SIZES } from "./Icon";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
+import { DumpEngineSelector, DumpOptionGroups, DumpPgSchemaField } from "./DumpOptionsFields";
 import { isAbsolutePath } from "./pathUtil";
 import { dumpOptionLock, resolveDumpOptions, type DumpBoolOptionKey } from "../dumpOptionLocks";
+import {
+  DEFAULT_DUMP_OPTIONS,
+  DRIVER_OPTIONS,
+  DUMP_TOOL,
+  NATIVE_DUMP_DRIVERS,
+  visibleOptionRows,
+} from "../dumpOptionForm";
 import { dirnameOf, joinDirAndName, loadDumpPrefs, saveDumpPrefs, type DumpBoolKey } from "../inputMemory";
 
 let dumpStreamSeq = 0;
@@ -148,115 +156,6 @@ function defaultBasename(database: string, tableCount?: number): string {
   return tableCount ? `${schema}_${tableCount}tables_dump_${timestamp()}` : `${schema}_dump_${timestamp()}`;
 }
 
-const DEFAULT_OPTIONS: DumpOptions = {
-  singleTransaction: true,
-  routines: false,
-  events: false,
-  triggers: true,
-  addDropTable: true,
-  extendedInsert: true,
-  completeInsert: false,
-  noData: false,
-  noCreateInfo: false,
-  noOwner: true,
-  noPrivileges: false,
-  pgSchema: null,
-  formatSql: false,
-  gzip: false,
-  noTablespaces: false,
-  setGtidPurgedOff: false,
-  writeChecksum: false,
-  sqliteSnapshot: false,
-  native: false,
-};
-
-type BoolOptionKey = DumpBoolOptionKey;
-
-/** Each toggle maps one checkbox to a boolean `DumpOptions` field and its labels. */
-const OPTION_ROWS: { key: BoolOptionKey; label: I18nKey; hint: I18nKey }[] = [
-  { key: "singleTransaction", label: "dumpOptSingleTransaction", hint: "dumpOptSingleTransactionHint" },
-  { key: "routines", label: "dumpOptRoutines", hint: "dumpOptRoutinesHint" },
-  { key: "events", label: "dumpOptEvents", hint: "dumpOptEventsHint" },
-  { key: "triggers", label: "dumpOptTriggers", hint: "dumpOptTriggersHint" },
-  { key: "addDropTable", label: "dumpOptAddDropTable", hint: "dumpOptAddDropTableHint" },
-  { key: "extendedInsert", label: "dumpOptExtendedInsert", hint: "dumpOptExtendedInsertHint" },
-  { key: "completeInsert", label: "dumpOptCompleteInsert", hint: "dumpOptCompleteInsertHint" },
-  { key: "noData", label: "dumpOptNoData", hint: "dumpOptNoDataHint" },
-  { key: "noCreateInfo", label: "dumpOptNoCreateInfo", hint: "dumpOptNoCreateInfoHint" },
-  { key: "noOwner", label: "dumpOptNoOwner", hint: "dumpOptNoOwnerHint" },
-  { key: "noPrivileges", label: "dumpOptNoPrivileges", hint: "dumpOptNoPrivilegesHint" },
-  { key: "formatSql", label: "dumpOptFormatSql", hint: "dumpOptFormatSqlHint" },
-  { key: "gzip", label: "dumpOptGzip", hint: "dumpOptGzipHint" },
-  { key: "noTablespaces", label: "dumpOptNoTablespaces", hint: "dumpOptNoTablespacesHint" },
-  { key: "setGtidPurgedOff", label: "dumpOptGtidPurgedOff", hint: "dumpOptGtidPurgedOffHint" },
-  { key: "writeChecksum", label: "dumpOptChecksum", hint: "dumpOptChecksumHint" },
-  { key: "sqliteSnapshot", label: "dumpOptSqliteSnapshot", hint: "dumpOptSqliteSnapshotHint" },
-];
-
-/** オプションを「構造 / データ / 出力 / 互換」に分けて見せる (#2094)。 */
-const OPTION_GROUPS: { id: string; label: I18nKey; keys: BoolOptionKey[] }[] = [
-  {
-    id: "structure",
-    label: "dumpGroupStructure",
-    keys: ["routines", "events", "triggers", "addDropTable", "noCreateInfo"],
-  },
-  {
-    id: "data",
-    label: "dumpGroupData",
-    keys: ["singleTransaction", "extendedInsert", "completeInsert", "noData"],
-  },
-  { id: "output", label: "dumpGroupOutput", keys: ["formatSql", "gzip", "writeChecksum", "sqliteSnapshot"] },
-  {
-    id: "compat",
-    label: "dumpGroupCompat",
-    keys: ["noTablespaces", "setGtidPurgedOff", "noOwner", "noPrivileges"],
-  },
-];
-
-/** Which toggle keys each driver shows. Omitted fields are sent at their default
- *  but hidden, so the wire shape stays a full `DumpOptions` for every driver. */
-const DRIVER_OPTIONS: Record<DriverKind, BoolOptionKey[]> = {
-  mysql: [
-    "native",
-    "singleTransaction",
-    "routines",
-    "events",
-    "triggers",
-    "addDropTable",
-    "extendedInsert",
-    "completeInsert",
-    "noData",
-    "noCreateInfo",
-    "noTablespaces",
-    "setGtidPurgedOff",
-    "formatSql",
-    "gzip",
-    "writeChecksum",
-  ],
-  postgres: [
-    "native",
-    "routines",
-    "addDropTable",
-    "noData",
-    "noCreateInfo",
-    "noOwner",
-    "noPrivileges",
-    "formatSql",
-    "gzip",
-    "writeChecksum",
-  ],
-  sqlite: ["addDropTable", "noData", "noCreateInfo", "formatSql", "gzip", "writeChecksum", "sqliteSnapshot"],
-};
-
-/** 外部クライアントツールを使わずに接続から直接 SQL を生成するドライバ。 */
-const NATIVE_DUMP_DRIVERS: ReadonlySet<DriverKind> = new Set<DriverKind>(["sqlite"]);
-
-/** ドライバ → ダンプに使う外部ツール (SQLite は接続から直接生成するので無し)。 */
-const DUMP_TOOL: Partial<Record<DriverKind, "mysqldump" | "pg_dump">> = {
-  mysql: "mysqldump",
-  postgres: "pg_dump",
-};
-
 /**
  * ダンプ用ツールが見つからないときの案内と、ワンクリック導入 (winget / Homebrew)。
  *
@@ -356,98 +255,10 @@ function DumpToolNotice({
   );
 }
 
-type EngineBadgeTone = "accent" | "success" | "warning" | "muted";
-
-/** エンジンカード / ロック行に付ける小さなラベル。 */
-function EngineBadge({ tone, children }: { tone: EngineBadgeTone; children: ReactNode }) {
-  const color =
-    tone === "accent"
-      ? "app.accent"
-      : tone === "success"
-        ? "app.textSuccess"
-        : tone === "warning"
-          ? "app.textWarning"
-          : "app.textMuted";
-  return (
-    <chakra.span
-      display="inline-flex"
-      alignItems="center"
-      px="1.5"
-      border="1px solid"
-      borderColor="currentColor"
-      borderRadius="full"
-      fontSize="xs"
-      fontWeight={500}
-      lineHeight={1.5}
-      color={color}
-      whiteSpace="nowrap"
-    >
-      {children}
-    </chakra.span>
-  );
-}
-
-/** 生成エンジンの選択カード (#2094)。利点と制約をカード内に出し、選べないときは理由を表示する。 */
-function EngineCard({
-  testId,
-  selected,
-  disabled,
-  title,
-  badge,
-  desc,
-  limits,
-  disabledReason,
-  onSelect,
-}: {
-  testId: string;
-  selected: boolean;
-  disabled: boolean;
-  title: string;
-  badge: ReactNode;
-  desc: string;
-  limits: string;
-  disabledReason?: string | null;
-  onSelect: () => void;
-}) {
-  const descId = `${testId}-desc`;
-  const limitsId = `${testId}-limits`;
-  const reasonId = `${testId}-reason`;
-  return (
-    <SelectableCard
-      type="button"
-      size="compact"
-      flex="1 1 240px"
-      aria-pressed={selected}
-      aria-describedby={[descId, limitsId, disabledReason ? reasonId : null].filter(Boolean).join(" ")}
-      disabled={disabled}
-      data-testid={testId}
-      onClick={onSelect}
-    >
-      <chakra.span display="flex" alignItems="center" gap="1.5" flexWrap="wrap">
-        <chakra.span fontSize="md" fontWeight={600} color="app.text">
-          {title}
-        </chakra.span>
-        {badge}
-      </chakra.span>
-      <chakra.span id={descId} textStyle="caption" textAlign="left">
-        {desc}
-      </chakra.span>
-      <chakra.span id={limitsId} textStyle="caption" textAlign="left">
-        {limits}
-      </chakra.span>
-      {disabledReason && (
-        <chakra.span id={reasonId} fontSize="xs" color="app.textWarning" lineHeight={1.4} textAlign="left">
-          {disabledReason}
-        </chakra.span>
-      )}
-    </SelectableCard>
-  );
-}
-
 type Status = { kind: "idle" } | { kind: "running" } | { kind: "error"; message: string };
 
 /** テーブル指定のダンプでは意味を持たない (テーブル指定時はバックエンドが無効にする) スイッチ。 */
-const TABLE_SCOPE_HIDDEN_OPTIONS: ReadonlySet<BoolOptionKey> = new Set<BoolOptionKey>([
+const TABLE_SCOPE_HIDDEN_OPTIONS: ReadonlySet<DumpBoolOptionKey> = new Set<DumpBoolOptionKey>([
   "routines",
   "events",
   "sqliteSnapshot",
@@ -472,7 +283,6 @@ function dumpFilter(o: Pick<DumpOptions, "gzip" | "sqliteSnapshot">): { name: st
 
 export function DumpModal({ sessionId, database, driver, tables, profileId, onClose }: Props) {
   const t = useT();
-  const optionsIdBase = `dump-opt-${useId().replace(/:/g, "")}`;
   const toast = useToast();
   const tableScope = tables && tables.length > 0 ? tables : null;
   const initialBasename = useMemo(
@@ -497,7 +307,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
     joinDirAndName(remembered?.dir ?? "", `${initialBasename}.${dumpExtension(remembered?.options ?? {})}`),
   );
   const [options, setOptions] = useState<DumpOptions>(() => {
-    const base = { ...DEFAULT_OPTIONS, ...remembered?.options };
+    const base = { ...DEFAULT_DUMP_OPTIONS, ...remembered?.options };
     // PostgreSQL のツリーの「database」はスキーマ。スキーマノードからの全体ダンプは、タイトルの範囲と
     // 揃えるためスキーマ欄を初期入力する (一括 = tables 指定は送信時に database で固定される)。
     return driver === "postgres" && !(tables && tables.length > 0) ? { ...base, pgSchema: database } : base;
@@ -607,19 +417,16 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
   );
 
   const isRunning = status.kind === "running";
-  const visibleRows = useMemo(() => {
-    const allowed = new Set(DRIVER_OPTIONS[driver]);
-    return OPTION_ROWS.filter(
-      (row) => allowed.has(row.key) && !(tableScope && TABLE_SCOPE_HIDDEN_OPTIONS.has(row.key)),
-    );
-  }, [driver, tableScope]);
-  const rowByKey = useMemo(() => new Map(visibleRows.map((row) => [row.key, row])), [visibleRows]);
+  const visibleRows = useMemo(
+    () => visibleOptionRows(driver, tableScope ? TABLE_SCOPE_HIDDEN_OPTIONS : null),
+    [driver, tableScope],
+  );
 
   // 生成エンジンを選べるのは外部ツールのあるドライバだけ (SQLite は常に内蔵)。
   const engineSelectable = !NATIVE_DUMP_DRIVERS.has(driver);
   // 効かないオプションの判定。画面 (無効 + 理由) と実行時の値の上書きが同じ文脈を使う (#2094)。
   const lockCtx = { driver, native: !!options.native, sqliteSnapshot: !!options.sqliteSnapshot };
-  const lockOf = (key: BoolOptionKey) => dumpOptionLock(key, lockCtx);
+  const lockOf = (key: DumpBoolOptionKey) => dumpOptionLock(key, lockCtx);
 
   /** 生成エンジンを選ぶ。PostgreSQL のネイティブ生成は、トリガーが参照する関数を出さないと復元できないので、
    *  内蔵に切り替えたときルーチンも既定でオンにする。 */
@@ -634,7 +441,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
     }));
   };
 
-  const toggle = (key: BoolOptionKey) => {
+  const toggle = (key: DumpBoolOptionKey) => {
     if (lockOf(key)) return;
     // 自動切り替え後にルーチンを自分で変えたら、その選択をそのまま覚える。
     if (key === "routines") preAutoRoutinesRef.current = null;
@@ -820,38 +627,14 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
         )}
 
         {engineSelectable && toolName && (
-          <FormSection>
-            <FieldLabel as="div">{t("dumpEngineLabel")}</FieldLabel>
-            <chakra.div display="flex" flexWrap="wrap" gap="2" role="group" aria-label={t("dumpEngineLabel")}>
-              <EngineCard
-                testId="dump-engine-native"
-                selected={useNative}
-                disabled={isRunning}
-                title={t("dumpEngineNativeTitle")}
-                badge={null}
-                desc={t("dumpEngineNativeDesc")}
-                limits={t("dumpEngineNativeLimits")}
-                onSelect={() => selectEngine(true)}
-              />
-              <EngineCard
-                testId="dump-engine-external"
-                selected={!useNative}
-                disabled={isRunning || toolAbsent}
-                title={t("dumpEngineExternalTitle", { tool: toolName })}
-                badge={
-                  toolStatus ? (
-                    <EngineBadge tone={toolStatus.path ? "success" : "warning"}>
-                      {toolStatus.path ? t("dumpEngineToolFound") : t("dumpEngineToolMissing")}
-                    </EngineBadge>
-                  ) : null
-                }
-                desc={t("dumpEngineExternalDesc", { tool: toolName })}
-                limits={t("dumpEngineExternalLimits", { tool: toolName })}
-                disabledReason={toolAbsent ? t("dumpEngineExternalDisabled", { tool: toolName }) : null}
-                onSelect={() => selectEngine(false)}
-              />
-            </chakra.div>
-          </FormSection>
+          <DumpEngineSelector
+            toolName={toolName}
+            useNative={useNative}
+            disabled={isRunning}
+            toolStatus={toolStatus}
+            toolAbsent={toolAbsent}
+            onSelect={selectEngine}
+          />
         )}
 
         {/* ツール未導入の案内は出入りでレイアウトが跳ばないよう collapse で開閉する。 */}
@@ -882,96 +665,19 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
           </chakra.div>
         )}
 
-        {OPTION_GROUPS.map((group) => {
-          const rows = group.keys.map((k) => rowByKey.get(k)).filter((r): r is NonNullable<typeof r> => !!r);
-          if (rows.length === 0) return null;
-          return (
-            <FormSection key={group.id} data-testid={`dump-group-${group.id}`}>
-              <FieldLabel as="div">{t(group.label)}</FieldLabel>
-              <chakra.div
-                display="grid"
-                gridTemplateColumns="repeat(auto-fill, minmax(240px, 1fr))"
-                rowGap="1.5"
-                columnGap="4"
-              >
-                {rows.map((row) => {
-                  const lock = lockOf(row.key);
-                  const reason = lock ? t(lock.reason) : null;
-                  return (
-                    <Tooltip key={row.key} label={reason ?? t(row.hint)}>
-                      <chakra.div
-                        display="flex"
-                        alignItems="flex-start"
-                        gap="2"
-                        py="1"
-                        cursor={isRunning || lock ? "not-allowed" : "pointer"}
-                        userSelect="none"
-                        data-locked={lock ? "true" : undefined}
-                        onClick={(e) => {
-                          if (isRunning || lock) return;
-                          // Switch 自身のクリックはコンポーネント側で処理されるので、
-                          // ラッパーは text 部分のクリックだけを引き受ける。
-                          if (e.target instanceof HTMLElement && e.target.closest("button[role=switch]")) {
-                            return;
-                          }
-                          toggle(row.key);
-                        }}
-                      >
-                        <chakra.span mt="0.5" flex="none">
-                          <Switch
-                            checked={lock ? lock.forced : !!options[row.key]}
-                            onChange={() => toggle(row.key)}
-                            disabled={isRunning || !!lock}
-                            size="sm"
-                            aria-labelledby={`${optionsIdBase}-${row.key}-label`}
-                            aria-describedby={`${optionsIdBase}-${row.key}-hint`}
-                          />
-                        </chakra.span>
-                        <chakra.span display="flex" flexDirection="column" gap="0.5" minW={0}>
-                          <chakra.span display="flex" alignItems="center" gap="1.5" flexWrap="wrap">
-                            <chakra.span
-                              id={`${optionsIdBase}-${row.key}-label`}
-                              fontSize="md"
-                              color={lock ? "app.textMuted" : "app.text"}
-                            >
-                              {t(row.label)}
-                            </chakra.span>
-                            {lock && <EngineBadge tone="muted">{t("dumpLockBadge")}</EngineBadge>}
-                          </chakra.span>
-                          <chakra.span
-                            id={`${optionsIdBase}-${row.key}-hint`}
-                            fontSize="xs"
-                            color={lock ? "app.textWarning" : "app.textMuted"}
-                            lineHeight={1.4}
-                          >
-                            {reason ?? t(row.hint)}
-                          </chakra.span>
-                        </chakra.span>
-                      </chakra.div>
-                    </Tooltip>
-                  );
-                })}
-              </chakra.div>
-            </FormSection>
-          );
-        })}
+        <DumpOptionGroups
+          rows={visibleRows}
+          options={options}
+          lockOf={lockOf}
+          disabled={isRunning}
+          onToggle={toggle}
+        />
         {driver === "postgres" && !tableScope && (
-          <FormSection>
-            <chakra.div display="flex" flexDirection="column" gap="1">
-              <FieldLabel htmlFor="dump-pg-schema">{t("dumpOptPgSchema")}</FieldLabel>
-              <Input
-                id="dump-pg-schema"
-                type="text"
-                value={options.pgSchema ?? ""}
-                onChange={(e) => setOptions((prev) => ({ ...prev, pgSchema: e.target.value || null }))}
-                placeholder={t("dumpOptPgSchemaPlaceholder")}
-                disabled={isRunning}
-              />
-              <chakra.span fontSize="xs" color="app.textMuted">
-                {t("dumpOptPgSchemaHint")}
-              </chakra.span>
-            </chakra.div>
-          </FormSection>
+          <DumpPgSchemaField
+            value={options.pgSchema}
+            disabled={isRunning}
+            onChange={(pgSchema) => setOptions((prev) => ({ ...prev, pgSchema }))}
+          />
         )}
 
         <FormSection>
