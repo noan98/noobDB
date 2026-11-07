@@ -6893,6 +6893,8 @@ const en = {
   taskFormOutputPathRequired: "Enter an output path.",
   taskFormMaskHint:
     "Mask these columns in every scheduled output so PII does not leak to unattended destinations. Columns are matched by exact name in the query result; if a column is missing from the result, that run fails and writes nothing.",
+  taskFormPgSchemaNativeHint:
+    "Built-in generation dumps one schema at a time. If left empty, only the public schema is dumped.",
   taskFormDumpMaskHint:
     "Mask these columns in the dump so PII does not leak to unattended destinations. A column with the same name is masked in every table. Available with built-in generation only.",
   taskFormDumpMasksNeedNative: "Masking requires built-in generation. Select it above, or turn masking off.",
@@ -14349,6 +14351,8 @@ const ja: Dict = {
   taskFormOutputPathRequired: "出力先パスを入力してください。",
   taskFormMaskHint:
     "スケジュール実行のたびに、これらの列をマスクして書き出します (無人の出力先への PII 流出を防ぎます)。列はクエリ結果の列名と完全一致で対応付けます。結果に無い列名があると、その実行は失敗し何も書き出しません。",
+  taskFormPgSchemaNativeHint:
+    "内蔵生成は 1 スキーマ単位です。空のときは public スキーマだけをダンプします (全スキーマではありません)。",
   taskFormDumpMaskHint:
     "ダンプの中でこれらの列をマスクして書き出します (無人の出力先への PII 流出を防ぎます)。同じ名前の列はすべてのテーブルでマスクされます。内蔵生成でのみ使えます。",
   taskFormDumpMasksNeedNative:

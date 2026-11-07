@@ -257,9 +257,12 @@ export function DumpPgSchemaField({
   value,
   disabled,
   onChange,
+  nativeEmpty,
 }: {
   value: string | null | undefined;
   disabled: boolean;
+  /** 内蔵生成は 1 スキーマ単位で、空のときの扱いが外部ツール (空 = 全スキーマ) と違う。その説明と既定値。 */
+  nativeEmpty?: { hint: string; placeholder: string } | null;
   onChange: (next: string | null) => void;
 }) {
   const t = useT();
@@ -272,10 +275,10 @@ export function DumpPgSchemaField({
           type="text"
           value={value ?? ""}
           onChange={(e) => onChange(e.target.value || null)}
-          placeholder={t("dumpOptPgSchemaPlaceholder")}
+          placeholder={nativeEmpty?.placeholder ?? t("dumpOptPgSchemaPlaceholder")}
           disabled={disabled}
         />
-        <chakra.span textStyle="caption">{t("dumpOptPgSchemaHint")}</chakra.span>
+        <chakra.span textStyle="caption">{nativeEmpty?.hint ?? t("dumpOptPgSchemaHint")}</chakra.span>
       </chakra.div>
     </FormSection>
   );

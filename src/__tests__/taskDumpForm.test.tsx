@@ -167,6 +167,15 @@ describe("タスクのダンプ設定 (#2131)", () => {
     expect(screen.getByLabelText(t("dumpOptPgSchema"))).toBeInTheDocument();
   });
 
+  it("内蔵エンジンでは PG スキーマ欄の説明が「空なら public」になる (外部ツールは空 = 全スキーマ)", async () => {
+    const user = await openEdit(dumpTask(BASE_OPTIONS), "postgres");
+    expect(screen.getByText(t("dumpOptPgSchemaHint"))).toBeInTheDocument();
+    await user.click(screen.getByTestId("dump-engine-native"));
+    expect(screen.getByText(t("taskFormPgSchemaNativeHint"))).toBeInTheDocument();
+    expect(screen.getByLabelText(t("dumpOptPgSchema"))).toHaveAttribute("placeholder", "public");
+    expect(screen.queryByText(t("dumpOptPgSchemaHint"))).toBeNull();
+  });
+
   it("SQLite はエンジン選択もマスキングも出さない", async () => {
     await openEdit(dumpTask(BASE_OPTIONS), "sqlite");
     expect(screen.queryByTestId("dump-engine-native")).toBeNull();

@@ -1548,6 +1548,9 @@ function TaskForm({
             <DumpPgSchemaField
               value={dumpOptions.pgSchema}
               disabled={false}
+              nativeEmpty={
+                dumpUseNative ? { hint: t("taskFormPgSchemaNativeHint"), placeholder: "public" } : null
+              }
               onChange={(pgSchema) => setDumpOptions((prev) => ({ ...prev, pgSchema }))}
             />
           )}
