@@ -1342,6 +1342,19 @@ impl Connection {
         }
     }
 
+    /// ユーザー定義型の列の型名 ((表名, 列名) -> 型, #2127)。PostgreSQL 専用で、スキーマ比較が
+    /// `information_schema` の `USER-DEFINED` を実際の型名に置き換えるために使う。MySQL (ENUM / SET は
+    /// 列の型にそのまま書かれている) と SQLite (ユーザー定義型が無い) は空を返す。
+    pub async fn user_type_columns(
+        &self,
+        db: &str,
+    ) -> Result<std::collections::HashMap<(String, String), String>> {
+        match self {
+            Connection::Postgres(c) => c.user_type_columns(db).await,
+            Connection::MySql(_) | Connection::Sqlite(_) => Ok(Default::default()),
+        }
+    }
+
     /// `db` の全テーブルのインデックスを 1 回の問い合わせで取得する (#1255)。
     /// 単一テーブル版 [`Connection::list_indexes`] と同じ結果形式。インデックスを
     /// 持たないテーブルは戻り値に現れない。

@@ -254,6 +254,13 @@ MySQL のみ `kind = "event"` (イベントスケジューラの EVENT, #2100) �
 (スキーマ比較の「対象外」一覧にも出さない)、スキーマ比較 (`ObjectDiff`) の比較・同期の対象は MySQL の event のみ。
 イベントもツリー専用の種別で、Where-used の走査対象には入らない。
 
+PostgreSQL のみ `kind = "type"` (ユーザー定義型: ENUM / DOMAIN / 複合型 / 範囲型, #2127) も返し、`SchemaObject.detail` に
+`enum` / `domain` / `composite` / `range` を載せる。拡張が持つ型・表の行型・配列型・範囲型が自動で作るコンストラクタ関数は出さない。
+`get_object_definition` は実行できる `CREATE TYPE` / `CREATE DOMAIN` を返す (`types::PG_TYPE_DEFINITION_SQL`)。MySQL / SQLite は
+type を返さず (比較の「対象外」一覧にも出さない)、スキーマ比較・同期の対象は PostgreSQL の type のみ。型もツリー専用の種別で
+Where-used の走査対象には入らない。ENUM の値の追加 / 名前の変更は新しい IPC を足さず、`run_query` で `ALTER TYPE` を流す
+(read_only の拒否はバックエンド。SQL は `enumTypeSql.ts` が組み立てる)。
+
 ## LISTEN / NOTIFY 監視 (`commands/listen.rs`, #2019)
 
 - `start_pg_listen`

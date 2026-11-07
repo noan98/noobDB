@@ -2097,21 +2097,24 @@ impl PostgresConn {
         // Routines and triggers carry their `oid` (as text) so `object_definition`
         // can fetch the exact object — same-name overloaded functions and
         // same-name triggers on different tables would otherwise collide.
-        let rows: Vec<PgRow> = sqlx::query(
+        // 型 (ENUM / DOMAIN / 複合型 / 範囲型, #2127) は 4 列目に `typtype` の 1 文字を載せる
+        // (`detail` に enum / domain / composite / range として出す)。拡張が持つ型は除く。
+        // 条件の副問い合わせは定数側に置く (`schema_object_kind_tests` が本文の分岐数を数えるため)。
+        let sql = format!(
             r#"
-            SELECT 'view'::text AS kind, viewname AS name, NULL::text AS id
+            SELECT 'view'::text AS kind, viewname AS name, NULL::text AS id, NULL::text AS detail
               FROM pg_views WHERE schemaname = $1
             UNION ALL
-            SELECT 'materialized_view', matviewname, NULL::text
+            SELECT 'materialized_view', matviewname, NULL::text, NULL::text
               FROM pg_matviews WHERE schemaname = $1
             UNION ALL
             SELECT CASE WHEN p.prokind = 'p' THEN 'procedure' ELSE 'function' END,
-                   p.proname, p.oid::text
+                   p.proname, p.oid::text, NULL::text
               FROM pg_proc p
               JOIN pg_namespace n ON n.oid = p.pronamespace
-             WHERE n.nspname = $1
+             WHERE n.nspname = $1 AND {not_type_member}
             UNION ALL
-            SELECT 'trigger', t.tgname, t.oid::text
+            SELECT 'trigger', t.tgname, t.oid::text, NULL::text
               FROM pg_trigger t
               JOIN pg_class c ON c.oid = t.tgrelid
               JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -2120,25 +2123,97 @@ impl PostgresConn {
             -- pg_sequences は行ごとに pg_sequence_last_value() を評価してシーケンスを
             -- ロックするため、ALTER / DROP 中のシーケンスがあるとツリー一覧ごと待たされる。
             -- 一覧は名前だけで足りるので pg_class から引く (#1957)。
-            SELECT 'sequence', c.relname, NULL::text
+            SELECT 'sequence', c.relname, NULL::text, NULL::text
               FROM pg_class c
               JOIN pg_namespace n ON n.oid = c.relnamespace
              WHERE n.nspname = $1 AND c.relkind = 'S'
+            UNION ALL
+            SELECT 'type', t.typname, NULL::text, t.typtype::text
+              FROM pg_type t
+              JOIN pg_namespace n ON n.oid = t.typnamespace
+             WHERE n.nspname = $1 AND {listed_types}
             ORDER BY kind, name
             "#,
-        )
-        .bind(schema)
-        .fetch_all(&self.pool)
-        .await?;
+            listed_types = super::types::PG_LISTED_TYPE_FILTER,
+            not_type_member = super::types::PG_ROUTINE_NOT_TYPE_MEMBER
+        );
+        // 埋め込むのはコンパイル時定数 (`PG_LISTED_TYPE_FILTER`) だけで、スキーマ名は bind する。
+        let rows: Vec<PgRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(schema)
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows
             .into_iter()
             .map(|r| SchemaObject {
                 kind: r.try_get::<String, _>(0).unwrap_or_default(),
                 name: r.try_get::<String, _>(1).unwrap_or_default(),
                 id: r.try_get::<Option<String>, _>(2).ok().flatten(),
-                detail: None,
+                detail: r
+                    .try_get::<Option<String>, _>(3)
+                    .ok()
+                    .flatten()
+                    .and_then(|t| super::types::pg_type_detail(&t).map(str::to_string)),
             })
             .collect())
+    }
+
+    /// ユーザー定義型 (ENUM / DOMAIN / 複合型 / 範囲型) の列の型名 ((表名, 列名) -> 型, #2127)。
+    /// `information_schema.columns.data_type` は ENUM / 複合型 / 範囲型を `USER-DEFINED` と、DOMAIN を
+    /// 土台の型としか返さず、そのままでは `CREATE TABLE` に使えない (型が無い target への同期が失敗する)。
+    /// 同じスキーマの型は修飾なし (同期先のスキーマの同名の型を指す)、別スキーマの型は修飾つき。
+    /// 配列列 (`mood[]`) は atttypid が配列型なので、要素型 (`typelem`) がユーザー定義型のときに
+    /// `"mood"[]` の形で返す (整形は [`user_type_ref`])。
+    /// スキーマ比較だけがこれで型を置き換える (画面の列型表示は従来どおり)。
+    pub async fn user_type_columns(
+        &self,
+        schema: &str,
+    ) -> Result<std::collections::HashMap<(String, String), String>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"
+            SELECT c.relname::text, a.attname::text, tn.nspname::text, et.typname::text,
+                   (et.oid <> t.oid), a.attndims::int4
+              FROM pg_attribute a
+              JOIN pg_class c ON c.oid = a.attrelid
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+              JOIN pg_type t ON t.oid = a.atttypid
+              JOIN pg_type et ON et.oid = CASE WHEN t.typcategory = 'A' AND t.typelem <> 0
+                                               THEN t.typelem ELSE t.oid END
+              JOIN pg_namespace tn ON tn.oid = et.typnamespace
+             WHERE n.nspname = $1 AND c.relkind IN ('r', 'p')
+               AND a.attnum > 0 AND NOT a.attisdropped
+               AND et.typtype IN ('e', 'c', 'r', 'd')
+            "#,
+        )
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|r| {
+                let type_schema: String = r.try_get(2).unwrap_or_default();
+                let type_name: String = r.try_get(3).unwrap_or_default();
+                let is_array: bool = r.try_get(4).unwrap_or(false);
+                let dims: i32 = r.try_get(5).unwrap_or(0);
+                (
+                    (
+                        r.try_get::<String, _>(0).unwrap_or_default(),
+                        r.try_get::<String, _>(1).unwrap_or_default(),
+                    ),
+                    user_type_ref(schema, &type_schema, &type_name, is_array, dims),
+                )
+            })
+            .collect())
+    }
+
+    /// 1 つの型 (ENUM / DOMAIN / 複合型 / 範囲型) の `CREATE TYPE` / `CREATE DOMAIN` (#2127)。
+    /// スキーマツリーの定義表示とスキーマ比較・同期が共有する。該当する型が無ければ `None`。
+    async fn type_definition(&self, schema: &str, name: &str) -> Result<Option<String>> {
+        let ddl: Option<Option<String>> = sqlx::query_scalar(super::types::PG_TYPE_DEFINITION_SQL)
+            .bind(schema)
+            .bind(name)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(ddl.flatten())
     }
 
     /// `schema` の独立したシーケンス (テーブルの serial / identity 列が所有するものを除く) と、
@@ -2482,6 +2557,7 @@ impl PostgresConn {
                 }
             },
             "sequence" => self.sequence_definition(schema, name).await?,
+            "type" => self.type_definition(schema, name).await?,
             other => {
                 return Err(AppError::InvalidInput(format!(
                     "unsupported object kind: {other}"
@@ -4326,6 +4402,33 @@ fn pg_quote_ident(name: &str) -> String {
     super::sync::quote_ident(super::DriverKind::Postgres, name)
 }
 
+/// ユーザー定義型の列の型名 (`CREATE TABLE` にそのまま書ける形, #2127)。`current` と同じスキーマの
+/// 型は修飾なし、別スキーマなら `"schema"."type"`。配列列は `[]` を次元数ぶん付ける
+/// (`attndims` が 0 でも配列なら 1 次元として扱う)。
+fn user_type_ref(
+    current: &str,
+    type_schema: &str,
+    type_name: &str,
+    is_array: bool,
+    dims: i32,
+) -> String {
+    let mut out = if type_schema == current {
+        pg_quote_ident(type_name)
+    } else {
+        format!(
+            "{}.{}",
+            pg_quote_ident(type_schema),
+            pg_quote_ident(type_name)
+        )
+    };
+    if is_array {
+        for _ in 0..dims.clamp(1, 6) {
+            out.push_str("[]");
+        }
+    }
+    out
+}
+
 /// Renders a cell as a Postgres string literal (`'...'`) or `NULL`. Relies on
 /// `standard_conforming_strings = on` so only single quotes need doubling;
 /// backslashes are literal.
@@ -4815,6 +4918,27 @@ async fn restore_statement_timeout(conn: &mut sqlx::PgConnection, orig: &str) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn user_type_ref_qualifies_only_other_schemas_and_marks_arrays() {
+        assert_eq!(user_type_ref("app", "app", "mood", false, 0), "\"mood\"");
+        assert_eq!(
+            user_type_ref("app", "other", "mood", false, 0),
+            "\"other\".\"mood\""
+        );
+        assert_eq!(user_type_ref("app", "app", "mood", true, 1), "\"mood\"[]");
+        // attndims が 0 (CREATE TABLE AS 等) でも配列なら 1 次元。
+        assert_eq!(user_type_ref("app", "app", "mood", true, 0), "\"mood\"[]");
+        assert_eq!(
+            user_type_ref("app", "other", "mood", true, 2),
+            "\"other\".\"mood\"[][]"
+        );
+        // 識別子の引用符は二重にする。
+        assert_eq!(
+            user_type_ref("app", "app", "we\"ird", false, 0),
+            "\"we\"\"ird\""
+        );
+    }
 
     #[test]
     fn self_terminate_connection_drop_is_not_counted_as_failure() {
