@@ -5334,6 +5334,9 @@ const en = {
   pgListenChannelLabel: "Channel",
   pgListenChannelPlaceholder: "e.g. orders_changed",
   pgListenAdd: "Add channel",
+  pgListenCaseWarning:
+    "{name} is matched case-sensitively. An unquoted NOTIFY folds the name to lowercase ({folded}), so it would not be received. Listen to the lowercase name instead, unless the sender quotes the channel (NOTIFY \"{name}\" / pg_notify('{name}', …)).",
+  pgListenCaseFold: "Use {folded}",
   pgListenStart: "Start listening",
   pgListenStop: "Stop",
   pgListenClear: "Clear",
@@ -12787,6 +12790,9 @@ const ja: Dict = {
   pgListenChannelLabel: "チャンネル",
   pgListenChannelPlaceholder: "例: orders_changed",
   pgListenAdd: "チャンネルを追加",
+  pgListenCaseWarning:
+    "{name} は大文字小文字を区別して購読します。引用符なしの NOTIFY は名前を小文字に畳む ({folded}) ため、このままでは届きません。送信側が引用符つき (NOTIFY \"{name}\" / pg_notify('{name}', …)) でない限り、小文字の名前で購読してください。",
+  pgListenCaseFold: "{folded} にする",
   pgListenStart: "監視を開始",
   pgListenStop: "停止",
   pgListenClear: "クリア",
