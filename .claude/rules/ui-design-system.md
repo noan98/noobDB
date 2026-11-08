@@ -344,6 +344,7 @@ Bottom Panel に足すときは:
 | 操作をブロックする持続的エラー | `ErrorNote` (= `Callout tone="danger"`) |
 | 危険以外の状態の帯 (成功 / 警告 / 情報) | `Callout` (`components/Callout.tsx`) |
 | SQL / エクスポート内容のプレビュー | `CodePreview` (`wrap` で折り返し、高さは `minH` / `maxH`) |
+| SQL (DDL / DML) のプレビュー | `SqlPreview` (`components/SqlPreview.tsx`、`CodePreview` + エディタと同じ `--syntax-*` 配色。`sql` と `driver` を渡す。1 万行 / 50 万文字超は単色) (#2157) |
 
 例外はチェックボックス / ラジオを包む `<label>` (コントロールの一部であって
 フィールドラベルではないので本文サイズのまま) と、設定画面の行

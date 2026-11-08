@@ -4,7 +4,8 @@ import { api, type TablePartitions } from "../api/tauri";
 import { useT } from "../i18n";
 import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
+import { ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Spinner } from "./Spinner";
 import { Button, Input, PressableButton, Switch } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
@@ -218,9 +219,7 @@ export function AttachPartitionModal({ sessionId, database, table, info, kind, o
 
         <FormSection>
           <FieldLabel as="div">{t("attachPartitionPreview")}</FieldLabel>
-          <CodePreview minH="64px" wrap>
-            {sql || t("attachPartitionPreviewEmpty")}
-          </CodePreview>
+          <SqlPreview sql={sql} driver="postgres" empty={t("attachPartitionPreviewEmpty")} minH="64px" wrap />
         </FormSection>
       </ModalBody>
       <ModalFooter>

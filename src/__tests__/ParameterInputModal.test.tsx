@@ -65,7 +65,7 @@ describe("ParameterInputModal", () => {
     );
     // シングルクオートを含む値が二重化されてプレビューに反映される。
     await user.type(screen.getByLabelText(t("parameterInputValueLabelFor", { name: "name" })), "O'Brien");
-    expect(screen.getByText("SELECT 'O''Brien'")).toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent("SELECT 'O''Brien'");
   });
 
   it("前回の型だけを localStorage から復元し、値は復元しない", () => {
@@ -121,11 +121,9 @@ describe("ParameterInputModal", () => {
     await user.click(paste);
     await user.paste("1, 'active', NULL");
     await user.click(screen.getByRole("button", { name: t("parameterInputPasteApply") }));
-    expect(
-      screen.getByText(
-        "SELECT * FROM t WHERE id = 1 AND status = 'active' AND note IS NOT DISTINCT FROM NULL",
-      ),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent(
+      "SELECT * FROM t WHERE id = 1 AND status = 'active' AND note IS NOT DISTINCT FROM NULL",
+    );
 
     await user.click(screen.getByRole("button", { name: t("parameterInputRun") }));
     expect(onSubmit).toHaveBeenCalledWith(

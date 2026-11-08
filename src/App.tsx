@@ -265,7 +265,7 @@ import {
   type TxIsolation,
 } from "./txOptions";
 import { useConfirm, type ConfirmControls } from "./components/ConfirmDialog";
-import { CodePreview } from "./components/modalForm";
+import { SqlPreview } from "./components/SqlPreview";
 import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
 import { SavepointControl } from "./components/SavepointControl";
 import {
@@ -7858,9 +7858,7 @@ export default function App() {
               {translate("gridReplaceConfirmBody", { table: tab.table }) +
                 (findings.length > 0 ? `\n${translate("gridReplaceConfirmDanger")}` : "")}
             </chakra.p>
-            <CodePreview wrap maxH="40vh">
-              {sql}
-            </CodePreview>
+            <SqlPreview sql={sql} driver={selectedProfileRef.current?.driver ?? "mysql"} wrap maxH="40vh" />
           </>
         ),
         confirmLabel: translate("gridReplaceConfirmButton"),
@@ -8926,9 +8924,12 @@ export default function App() {
             <chakra.p m={0} mb="3" whiteSpace="pre-line">
               {translate("chunkedDmlConfirmBody", { rows: info.total, size: info.batchSize })}
             </chakra.p>
-            <CodePreview wrap maxH="30vh">
-              {info.sql}
-            </CodePreview>
+            <SqlPreview
+              sql={info.sql}
+              driver={selectedProfileRef.current?.driver ?? "mysql"}
+              wrap
+              maxH="30vh"
+            />
           </>
         ),
         confirmLabel: translate("chunkedDmlConfirmButton"),
@@ -8979,9 +8980,12 @@ export default function App() {
             {translate(rebuild ? "alterTableConfirmBodyRebuild" : "alterTableConfirmBody")}
             <br />
             <br />
-            <CodePreview wrap maxH="40vh">
-              {sqls.join("\n")}
-            </CodePreview>
+            <SqlPreview
+              sql={sqls.join("\n")}
+              driver={selectedProfileRef.current?.driver ?? "mysql"}
+              wrap
+              maxH="40vh"
+            />
           </>,
         ),
         confirmLabel: translate("alterTableConfirmOk"),
@@ -9466,9 +9470,12 @@ export default function App() {
             {translate("maintenanceConfirmBody", { target: table })}
             <br />
             <br />
-            <CodePreview wrap maxH="40vh">
-              {command.sql}
-            </CodePreview>
+            <SqlPreview
+              sql={command.sql}
+              driver={selectedProfileRef.current?.driver ?? "mysql"}
+              wrap
+              maxH="40vh"
+            />
           </>,
         ),
         confirmLabel: translate("maintenanceConfirmOk"),
@@ -9496,9 +9503,12 @@ export default function App() {
             {translate("maintenanceConfirmBody", { target: label })}
             <br />
             <br />
-            <CodePreview wrap maxH="40vh">
-              {command.sql}
-            </CodePreview>
+            <SqlPreview
+              sql={command.sql}
+              driver={selectedProfileRef.current?.driver ?? "mysql"}
+              wrap
+              maxH="40vh"
+            />
           </>,
         ),
         confirmLabel: translate("maintenanceConfirmOk"),
@@ -9543,9 +9553,7 @@ export default function App() {
             )}
             <br />
             <br />
-            <CodePreview wrap maxH="40vh">
-              {sql}
-            </CodePreview>
+            <SqlPreview sql={sql} driver={selectedProfileRef.current?.driver ?? "mysql"} wrap maxH="40vh" />
           </>,
         ),
         confirmLabel: translate(
@@ -9595,9 +9603,7 @@ export default function App() {
             {translate("partitionAttachConfirmBody", vars)}
             <br />
             <br />
-            <CodePreview wrap maxH="40vh">
-              {sql}
-            </CodePreview>
+            <SqlPreview sql={sql} driver={selectedProfileRef.current?.driver ?? "mysql"} wrap maxH="40vh" />
           </>,
         ),
         confirmLabel: translate("attachPartitionConfirm"),
@@ -9743,9 +9749,12 @@ export default function App() {
             {translate("maintenanceConfirmBody", { target: database })}
             <br />
             <br />
-            <CodePreview wrap maxH="40vh">
-              {command.sql}
-            </CodePreview>
+            <SqlPreview
+              sql={command.sql}
+              driver={selectedProfileRef.current?.driver ?? "mysql"}
+              wrap
+              maxH="40vh"
+            />
           </>,
         ),
         confirmLabel: translate("maintenanceConfirmOk"),
@@ -10072,9 +10081,12 @@ export default function App() {
             {translate("batchMaintenanceConfirmBody", { count: commands.length, database })}
             <br />
             <br />
-            <CodePreview wrap maxH="40vh">
-              {commands.map((c) => c.command.sql).join("\n")}
-            </CodePreview>
+            <SqlPreview
+              sql={commands.map((c) => c.command.sql).join("\n")}
+              driver={selectedProfileRef.current?.driver ?? "mysql"}
+              wrap
+              maxH="40vh"
+            />
           </>,
         ),
         confirmLabel: translate("batchMaintenanceConfirmOk", { count: commands.length }),
