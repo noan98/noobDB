@@ -1,6 +1,6 @@
 import { useRef, type KeyboardEvent } from "react";
 import { chakra } from "@chakra-ui/react";
-import { AnimatePresence, MotionConfig, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, MotionConfig, motion, useReducedMotionConfig } from "motion/react";
 import { transitions, variants } from "../motion";
 import { stepChipIndex } from "./enumTypeSql";
 
@@ -13,7 +13,7 @@ import { stepChipIndex } from "./enumTypeSql";
  *   `layout` で滑って詰め直す。
  * - 名前変更では、対象のチップを旧名から新名へクロスフェードする (`renamed`)。
  *
- * reduced-motion では `MotionConfig` が layout の移動を止め、opacity の補間も `useReducedMotion()` で即時化する。
+ * reduced-motion では `MotionConfig` が layout の移動を止め、opacity の補間も `useReducedMotionConfig()` (アプリのモーション設定 + OS 設定) で即時化する。
  */
 
 const Chip = chakra("button", {
@@ -83,7 +83,7 @@ interface Props {
 }
 
 export function EnumValueChips({ values, ghost, renamed, selected, onSelect, disabled, ariaLabel }: Props) {
-  const reduced = useReducedMotion() ?? false;
+  const reduced = useReducedMotionConfig() ?? false;
   const groupRef = useRef<HTMLDivElement>(null);
   const tabbable = selected !== null && values.includes(selected) ? selected : (values[0] ?? null);
 

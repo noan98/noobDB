@@ -172,9 +172,11 @@ export function EnumTypeModal({ sessionId, database, name, mode, readOnly, onCon
                 onSelect={selectChip}
                 disabled={readOnly}
               />
-              <chakra.span textStyle="caption">
-                {t(mode === "add" ? "enumTypeChipsHintAdd" : "enumTypeChipsHintRename")}
-              </chakra.span>
+              {!readOnly && (
+                <chakra.span textStyle="caption">
+                  {t(mode === "add" ? "enumTypeChipsHintAdd" : "enumTypeChipsHintRename")}
+                </chakra.span>
+              )}
             </>
           ) : (
             <chakra.code textStyle="caption" wordBreak="break-word">
