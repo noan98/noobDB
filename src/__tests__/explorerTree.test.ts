@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { IndexInfo, SchemaObject, TableColumnInfo } from "../api/tauri";
 import {
+  rlsStateOf,
   buildExplorerRows,
   explorerRowExpansion,
   explorerRowLabel,
@@ -100,6 +101,17 @@ describe("partitionDatabaseNodes", () => {
   it("型 (PostgreSQL) はシーケンスの後ろ (最後のグループ) に並ぶ (#2127)", () => {
     const g = partitionDatabaseNodes([], [obj("type", "mood"), obj("sequence", "s1"), obj("function", "f1")]);
     expect(g.objects.map((o) => o.name)).toEqual(["f1", "s1", "mood"]);
+  });
+
+  it("RLS ポリシー (PostgreSQL) は型の後ろ (最後のグループ) に並ぶ (#2159)", () => {
+    const g = partitionDatabaseNodes([], [obj("policy", "p1"), obj("type", "mood"), obj("function", "f1")]);
+    expect(g.objects.map((o) => o.name)).toEqual(["f1", "mood", "p1"]);
+  });
+
+  it("RLS の状態: 有効 / FORCE / FORCE だけ (効果なし) を見分ける (#2159)", () => {
+    expect(rlsStateOf({ table: "t", enabled: true, forced: false })).toBe("enabled");
+    expect(rlsStateOf({ table: "t", enabled: true, forced: true })).toBe("forced");
+    expect(rlsStateOf({ table: "t", enabled: false, forced: true })).toBe("forcedOnly");
   });
 
   it("イベント (MySQL) は最後のグループに並ぶ (#2100)", () => {

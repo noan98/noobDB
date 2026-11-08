@@ -70,6 +70,7 @@ const COVERED: Record<string, string> = {
   IndexInfo: "indexInfo",
   TableExtrasInfo: "tableExtrasInfo",
   TableTrigger: "tableTrigger",
+  RlsTable: "rlsTable",
   TablePartitions: "tablePartitions",
   InsertRowsResult: "insertRowsResult",
   ChunkedDmlBatchResult: "chunkedDmlBatchResult",

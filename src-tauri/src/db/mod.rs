@@ -1653,6 +1653,17 @@ impl Connection {
         }
     }
 
+    /// RLS が有効 / FORCE の表の一覧 (#2159)。PostgreSQL 専用で、MySQL / SQLite は
+    /// 行レベルセキュリティを持たないので `InvalidInput`。読み取りのみ。
+    pub async fn rls_tables(&self, db: &str) -> Result<Vec<types::RlsTable>> {
+        match self {
+            Connection::Postgres(c) => c.rls_tables(db).await,
+            Connection::MySql(_) | Connection::Sqlite(_) => Err(AppError::InvalidInput(
+                "row level security is only supported on PostgreSQL".into(),
+            )),
+        }
+    }
+
     /// `table` がパーティション表なら子パーティションの一覧 (#1868)。そうでなければ `None`。
     /// 読み取りのみ。SQLite はパーティション非対応なので `InvalidInput`。
     pub async fn list_table_partitions(
@@ -3101,7 +3112,7 @@ impl BulkDefinitions {
     /// `obj` の定義本文。一括取得に含まれない (NULL だった・取得後に消えた) ときは `None`。
     pub fn get(&self, obj: &types::SchemaObject) -> Option<&str> {
         let key = match (self.by_oid, obj.kind.as_str(), obj.id.as_deref()) {
-            (true, "function" | "procedure" | "trigger", Some(id)) => format!("id:{id}"),
+            (true, "function" | "procedure" | "trigger" | "policy", Some(id)) => format!("id:{id}"),
             _ => format!("{}:{}", obj.kind, obj.name),
         };
         self.map.get(&key).map(String::as_str)

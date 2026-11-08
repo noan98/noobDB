@@ -215,6 +215,14 @@ export const tableTrigger = z.object({
 });
 export const tableTriggerArray = z.array(tableTrigger);
 
+/** `list_rls_tables` の 1 件: RLS が有効 / FORCE の表 (#2159)。 */
+export const rlsTable = z.object({
+  table: z.string(),
+  enabled: z.boolean(),
+  forced: z.boolean(),
+});
+export const rlsTableArray = z.array(rlsTable);
+
 /** サーバ側プロセス/接続 (プロセス監視パネル)。 */
 export const processInfo = z.object({
   id: z.number(),

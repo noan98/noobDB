@@ -83,7 +83,7 @@ import { WelcomeIllustration } from "./illustrations";
 import { SkeletonRow } from "./Skeleton";
 import { ContextMenu, submenuOrFlat, type ContextMenuEntry } from "./ContextMenu";
 import { isSynthesizedTableDdl } from "./tableDdl";
-import type { TableNameSeparator } from "./explorerTree";
+import type { RlsState, TableNameSeparator } from "./explorerTree";
 import { tableCommentMap, withComment } from "./schemaComment";
 import { computeTooltipPosition, type TooltipRect } from "./tooltipPosition";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
@@ -124,6 +124,7 @@ import {
   partitionDatabaseNodes,
   pruneTableSelection,
   rangeTableSelection,
+  rlsStateOf,
   selectedTableCount,
   splitTableKey,
   tableKey,
@@ -495,6 +496,11 @@ interface Props {
    * ENUM 型の右クリックメニューから呼ぶ。read_only では項目を無効化する。未指定ならメニュー項目を出さない。
    */
   onEditEnumType?: (database: string, name: string, mode: "add" | "rename") => void;
+  /**
+   * PostgreSQL の RLS ポリシーの作成ダイアログ (#2159)。テーブルの右クリックメニューから呼ぶ。
+   * PostgreSQL 以外・read_only では項目を出さない / 無効化する。未指定ならメニュー項目を出さない。
+   */
+  onCreatePolicy?: (database: string, table: string) => void;
   /**
    * 影響分析 (#1027): テーブル / ビュー / 列を参照している定義・スニペットを
    * ボトムパネルで検索する。`column` が null ならテーブル (ビュー) 自体。読み取りの
@@ -975,6 +981,7 @@ const SCHEMA_OBJECT_ICONS: Record<string, IconName> = {
   sequence: "hash",
   event: "clock",
   type: "braces",
+  policy: "lock",
 };
 
 /** 非テーブルのスキーマオブジェクト (ルーチン / トリガー / 突き合わなかったビュー) の 1 行。
@@ -1256,6 +1263,8 @@ interface TableNodeProps {
   open: boolean;
   rowEst: number | null | undefined;
   comment: string | undefined;
+  /** 行レベルセキュリティの状態 (PostgreSQL のみ。無効な表は undefined, #2159)。 */
+  rls: RlsState | undefined;
   /** 現在結果パネルに開いているテーブルか (#982)。 */
   isActive: boolean;
   posInSet?: number;
@@ -1279,6 +1288,7 @@ const TableNode = memo(function TableNode({
   open: tOpen,
   rowEst,
   comment,
+  rls,
   isActive: isActiveTable,
   posInSet,
   setSize,
@@ -1393,6 +1403,23 @@ const TableNode = memo(function TableNode({
       <TreeLabel fontWeight={400}>
         <HighlightText text={tbl} query={q} />
       </TreeLabel>
+      {rls && (
+        <TreeBadge
+          flexShrink={0}
+          fontSize="2xs"
+          textTransform="none"
+          letterSpacing="0"
+          {...actions.treeTooltip(
+            rls === "forced"
+              ? t("treeRlsForcedTitle")
+              : rls === "forcedOnly"
+                ? t("treeRlsForcedOnlyTitle")
+                : t("treeRlsEnabledTitle"),
+          )}
+        >
+          {t("treeRlsBadge")}
+        </TreeBadge>
+      )}
       {rowEstLabel && (
         <TreeBadge
           fontFamily="mono"
@@ -1507,6 +1534,8 @@ function useHeaderLabel(): (group: ExplorerHeaderGroup) => string {
         return t("objGroupEvents");
       case "type":
         return t("objGroupTypes");
+      case "policy":
+        return t("objGroupPolicies");
     }
   };
 }
@@ -1605,6 +1634,7 @@ function SchemaRowContent({ row, level, q, removableFavorites, containerLabel }:
           open={row.open}
           rowEst={row.rowEst}
           comment={row.comment}
+          rls={row.rls}
           isActive={row.isActive}
           posInSet={row.posInSet}
           setSize={row.setSize}
@@ -2084,6 +2114,7 @@ export const ConnectionList = memo(
       onRunRoutine,
       onEditRoutine,
       onEditEnumType,
+      onCreatePolicy,
       onCreateRoutine,
       onFindUsages,
       selectLimit,
@@ -2131,6 +2162,8 @@ export const ConnectionList = memo(
     // (views, SQLite, stats not yet gathered) simply has no entry and shows no
     // badge. Loaded alongside the table list when a database is expanded.
     const [rowEstimates, setRowEstimates] = useState<Record<string, Record<string, number | null>>>({});
+    // PostgreSQL の行レベルセキュリティ (RLS) の状態 (db -> 表 -> 状態, #2159)。
+    const [rlsTables, setRlsTables] = useState<Record<string, Record<string, RlsState>>>({});
     // DB ごとのテーブルコメント (#1002)、`db -> table -> comment`。コメントを持つ
     // テーブルだけが入る。行ツールチップに添える装飾情報なので失敗は無視する。
     const [tableComments, setTableComments] = useState<Record<string, Record<string, string>>>({});
@@ -3337,6 +3370,15 @@ export const ConnectionList = memo(
             title: roTitle,
           });
         }
+        // RLS ポリシーの作成 (#2159)。PostgreSQL だけ (MySQL / SQLite には行レベルセキュリティが無い)。
+        if (onCreatePolicy && activeDriver === "postgres") {
+          items.push({
+            label: t("contextMenuCreatePolicy"),
+            onSelect: () => onCreatePolicy(db, tbl),
+            disabled: activeReadOnly,
+            title: roTitle,
+          });
+        }
         if (onTruncateTable) {
           items.push({
             label: t("contextMenuTruncateTable"),
@@ -3921,6 +3963,32 @@ export const ConnectionList = memo(
     // 保守コマンドの SQL 方言はアクティブ接続のドライバで決まる (ツリーは
     // アクティブ接続のみを表示する)。
     const activeDriver = profiles.find((p) => p.id === activeProfileId)?.driver ?? "mysql";
+
+    // PostgreSQL の RLS の状態 (#2159)。ツリーのオブジェクト一覧が (再) 取得されるたびに DB ごとに引き直す
+    // (ポリシーの作成後は `refreshSchema` で一覧が差し替わるので、バッジも追従する)。
+    useEffect(() => {
+      if (!sessionId || activeDriver !== "postgres") {
+        setRlsTables((prev) => (Object.keys(prev).length > 0 ? {} : prev));
+        return;
+      }
+      let cancelled = false;
+      for (const db of Object.keys(schemaObjects)) {
+        void api
+          .listRlsTables(sessionId, db)
+          .then((rows) => {
+            if (cancelled) return;
+            const next: Record<string, RlsState> = {};
+            for (const r of rows) next[r.table] = rlsStateOf(r);
+            setRlsTables((prev) => ({ ...prev, [db]: next }));
+          })
+          .catch(() => {
+            // バッジは補助表示なので、取得に失敗しても何も出さない。
+          });
+      }
+      return () => {
+        cancelled = true;
+      };
+    }, [sessionId, activeDriver, schemaObjects]);
     // ツリーの「データベース」階層が何を表すか (PostgreSQL ではスキーマ)。#1112
     const containerLabel =
       explorerContainerKind(activeDriver) === "schema"
@@ -4274,6 +4342,7 @@ export const ConnectionList = memo(
         favorites: favorites ?? EMPTY_REFS,
         recent: recent ?? EMPTY_REFS,
         rowEstimate: (db, tbl) => rowEstimates[db]?.[tbl],
+        rls: (db, tbl) => rlsTables[db]?.[tbl],
         comment: (db, tbl) => tableComments[db]?.[tbl],
         // 現在結果パネルに開いているテーブルかどうか (#982)。ツリーはアクティブ接続のみを
         // 表示するので db/table の一致だけで十分 (プロファイル跨ぎの衝突はない)。
@@ -4300,6 +4369,7 @@ export const ConnectionList = memo(
       favorites,
       recent,
       rowEstimates,
+      rlsTables,
       tableComments,
       activeTableDb,
       activeTableName,

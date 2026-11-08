@@ -242,6 +242,22 @@ pub async fn list_table_triggers(
     session.conn.list_table_triggers(&database, &table).await
 }
 
+/// RLS が有効 / FORCE の表の一覧を返す (#2159)。ツリーの表ノードに「RLS」バッジを出すための
+/// 読み取り専用 introspection なので read_only セッションでも許可する。PostgreSQL 専用で、
+/// MySQL / SQLite は `InvalidInput`。ポリシー本体は `list_schema_objects` の `policy` 種別が運ぶ。
+#[tauri::command]
+pub async fn list_rls_tables(
+    session_id: String,
+    database: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::db::types::RlsTable>> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session.conn.rls_tables(&database).await
+}
+
 /// パーティション表の子パーティション (境界・サイズ・行推定) とパーティションキーを返す (#1868)。
 /// パーティション表でなければ `None`。SQLite は非対応 (`InvalidInput`)。読み取り専用 introspection
 /// なので read_only セッションでも許可する。保守 / 削除の SQL は UI が組み立てて既存の `run_query` 経路で流す。

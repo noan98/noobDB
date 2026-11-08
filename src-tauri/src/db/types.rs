@@ -454,12 +454,13 @@ pub const SCHEMA_OBJECT_KINDS: &[&str] = &[
     "sequence",
     "event",
     "type",
+    "policy",
 ];
 
 /// `SCHEMA_OBJECT_KINDS` のうち、ツリーの一覧・定義表示だけで使い、Where-used (参照元の
 /// 逆引き) では走査しない種別 (#1957)。`where_used::supports_kind` はこれを含まない。
 #[cfg(test)]
-pub const TREE_ONLY_SCHEMA_OBJECT_KINDS: &[&str] = &["sequence", "event", "type"];
+pub const TREE_ONLY_SCHEMA_OBJECT_KINDS: &[&str] = &["sequence", "event", "type", "policy"];
 
 /// PostgreSQL のユーザー定義型 (`pg_type` を `t` で参照する問い合わせ) から、拡張が持つ型を除く条件 (#2127)。
 /// スキーマツリー (`PostgresConn::schema_objects`)・定義表示・ネイティブダンプが共有する
@@ -481,6 +482,30 @@ pub const PG_LISTED_TYPE_FILTER: &str = "(t.typtype IN ('e', 'd', 'r') \
 pub const PG_ROUTINE_NOT_TYPE_MEMBER: &str = "NOT EXISTS (SELECT 1 FROM pg_depend d \
      WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid \
        AND ((d.deptype = 'i' AND d.refclassid = 'pg_type'::regclass) OR d.deptype = 'e'))";
+
+/// ツリーに出す行レベルセキュリティ (RLS) ポリシーから、拡張機能に属するものを除く条件 (#2159)。
+/// `pg_policy` を `p` で参照する。拡張が持つポリシーは `CREATE EXTENSION` が作るので、独立した
+/// オブジェクトとしては扱わない (ツリー・定義表示・スキーマ比較が共有する)。
+pub const PG_POLICY_NOT_EXTENSION: &str = "NOT EXISTS (SELECT 1 FROM pg_depend d \
+     WHERE d.classid = 'pg_policy'::regclass AND d.objid = p.oid AND d.deptype = 'e')";
+
+/// RLS ポリシー 1 件の `CREATE POLICY` を組み立てる式 (#2159)。`pg_policy` を `p`、その表を `c`、
+/// 表のスキーマを `n` で参照する問い合わせの SELECT 句に埋め込む。ロールは `PUBLIC` (`polroles = {0}`)
+/// か名前の昇順、`USING` / `WITH CHECK` は `pg_get_expr`。ツリーの定義表示とスキーマ比較・同期が共有する
+/// (同期は `rewrite_schema_qualifier` で修飾を target のスキーマに置き換える)。
+pub const PG_POLICY_DEFINITION_EXPR: &str =
+    "format('CREATE POLICY %I ON %I.%I AS %s FOR %s TO %s%s%s;', \
+     p.polname, n.nspname, c.relname, \
+     CASE WHEN p.polpermissive THEN 'PERMISSIVE' ELSE 'RESTRICTIVE' END, \
+     CASE p.polcmd WHEN 'r' THEN 'SELECT' WHEN 'a' THEN 'INSERT' WHEN 'w' THEN 'UPDATE' \
+                   WHEN 'd' THEN 'DELETE' ELSE 'ALL' END, \
+     CASE WHEN p.polroles = '{0}'::oid[] THEN 'PUBLIC' \
+          ELSE COALESCE((SELECT string_agg(quote_ident(r.rolname), ', ' ORDER BY r.rolname) \
+                           FROM pg_roles r WHERE r.oid = ANY(p.polroles)), 'PUBLIC') END, \
+     CASE WHEN p.polqual IS NOT NULL \
+          THEN ' USING (' || pg_get_expr(p.polqual, p.polrelid) || ')' ELSE '' END, \
+     CASE WHEN p.polwithcheck IS NOT NULL \
+          THEN ' WITH CHECK (' || pg_get_expr(p.polwithcheck, p.polrelid) || ')' ELSE '' END)";
 
 /// `schema_objects` の `detail` に入れる型の種別名 (`pg_type.typtype` の 1 文字から)。
 /// PostgreSQL の `type` 種別 1 つで ENUM / DOMAIN / 複合型 / 範囲型を運び、ツリーはこの
@@ -604,6 +629,18 @@ pub fn event_detail(
         .join(" · ")
 }
 
+/// 行レベルセキュリティ (RLS) が有効 / FORCE の表 1 件 (`list_rls_tables`、#2159)。PostgreSQL 専用。
+/// ツリーの表ノードのバッジに使う。RLS が無効で FORCE も無い表は返さない。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RlsTable {
+    pub table: String,
+    /// `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` 済み (`pg_class.relrowsecurity`)。
+    pub enabled: bool,
+    /// `ALTER TABLE ... FORCE ROW LEVEL SECURITY` 済み (`pg_class.relforcerowsecurity`)。
+    /// 表の所有者にもポリシーが適用される。
+    pub forced: bool,
+}
+
 /// A non-table schema object: a view, materialized view, stored
 /// procedure, function, trigger, sequence / user-defined type (PostgreSQL only), or event (MySQL only). `kind` is one of `view` /
 /// `materialized_view` / `procedure` / `function` / `trigger` / `sequence` / `event` / `type` so the UI can
@@ -620,7 +657,7 @@ pub struct SchemaObject {
     pub id: Option<String>,
     /// ツリーの補足表示 (#2100)。MySQL の EVENT の状態とスケジュール要約
     /// (例: `ENABLED · EVERY 1 DAY`) と、PostgreSQL の `type` の種類 (`enum` / `domain` /
-    /// `composite` / `range`, #2127) だけが入れる。他の種別・ドライバでは `None`。
+    /// `composite` / `range`, #2127)・`policy` の対象表名 (#2159) だけが入れる。他の種別・ドライバでは `None`。
     #[serde(default)]
     pub detail: Option<String>,
 }

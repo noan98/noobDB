@@ -470,6 +470,7 @@ const ParameterInputModal = lazy(() =>
 const EnumTypeModal = lazy(() =>
   import("./components/EnumTypeModal").then((m) => ({ default: m.EnumTypeModal })),
 );
+const PolicyModal = lazy(() => import("./components/PolicyModal").then((m) => ({ default: m.PolicyModal })));
 const RoutineEditorModal = lazy(() =>
   import("./components/RoutineEditorModal").then((m) => ({ default: m.RoutineEditorModal })),
 );
@@ -2331,6 +2332,8 @@ export default function App() {
     name: string;
     mode: "add" | "rename";
   } | null>(null);
+  // PostgreSQL の RLS ポリシー作成ダイアログ (#2159) の対象。
+  const [policyEditor, setPolicyEditor] = useState<{ database: string; table: string } | null>(null);
   // トランザクション開始時に実際に渡した DB (出力ログの execDatabase 用)。PG は begin に渡す値が
   // search_path 扱いでプロファイルの DB 名のため、再実行に使えず null を記録する。
   const txDatabaseRef = useRef<string | null>(null);
@@ -8300,6 +8303,13 @@ export default function App() {
     },
     [sessionId],
   );
+  const handleCreatePolicy = useCallback(
+    (database: string, table: string) => {
+      if (!sessionId) return;
+      setPolicyEditor({ database, table });
+    },
+    [sessionId],
+  );
   const handleCreateRoutine = useCallback(
     (database: string, kind: EditableObjectKind) => {
       if (!sessionId) return;
@@ -12641,6 +12651,7 @@ export default function App() {
     onRunRoutine: handleRunRoutine,
     onEditRoutine: handleEditRoutine,
     onEditEnumType: handleEditEnumType,
+    onCreatePolicy: handleCreatePolicy,
     onCreateRoutine: handleCreateRoutine,
     onCreateSandbox: sessionId ? (db: string) => setSandboxCreateTarget({ database: db }) : undefined,
     onOpenSandbox: handleOpenSandbox,
@@ -14718,6 +14729,34 @@ export default function App() {
                     }
                   }}
                   onClose={() => setEnumTypeEditor(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {policyEditor && sessionId && (
+              <Suspense fallback={null}>
+                <PolicyModal
+                  sessionId={sessionId}
+                  database={policyEditor.database}
+                  initialTable={policyEditor.table}
+                  readOnly={readOnly}
+                  onConfirm={async (statements, name) => {
+                    const target = policyEditor;
+                    // 実行は通常のトランザクション経路 (read_only の拒否はバックエンド)。成功時だけ閉じる。
+                    try {
+                      await api.runQueryTransaction(sessionId, statements, target.database);
+                      invalidateSchemaCache(target.database);
+                      noteSchemaDdl(statements.join(";\n"), target.database);
+                      connectionListRef.current?.refreshSchema();
+                      toast.success(translate("policyDone", { name }));
+                      setPolicyEditor(null);
+                    } catch (e) {
+                      toast.error(translate("statusQueryError", { error: String(e) }));
+                    }
+                  }}
+                  onClose={() => setPolicyEditor(null)}
                 />
               </Suspense>
             )}

@@ -38,6 +38,11 @@
   実際の型名 (同じスキーマなら修飾なし) に置き換える (ENUM 等の配列列は `"mood"[]` の形)。
   既知の制限: 型はシーケンス・関数より先に作るので、それらを参照する DOMAIN (`DEFAULT nextval('s'::regclass)`
   やユーザー関数を呼ぶ CHECK) は作成時に解決できず失敗する (参照先を先に手動で作る)。
+  **PostgreSQL の RLS ポリシー (`policy`, #2159)** も同じ層で比べる (PostgreSQL のみ)。ポリシー名は表ごとにしか
+  一意でないので、トリガーと同じく (名前, 対象表) で対応づける (対象表は `schema_objects` の `detail` から取る)。
+  定義は `types::PG_POLICY_DEFINITION_EXPR` の `CREATE POLICY` (ロールは PUBLIC か名前順)。作成は表・関数より後、
+  置換は DROP + CREATE (DO ブロック)、DROP は表の DROP より前 (破壊的な操作の許可が要る)。表の `ENABLE / FORCE ROW LEVEL SECURITY`
+  は同期しない (表の属性であり、ポリシーの定義ではない) ので、作成時に警告を出す。
 - `db/data_diff.rs`: `compute_data_diff` がプライマリキーで行をペアリングして
   `RowDiff` を計算し、`generate_data_sync_sql` がそこから INSERT / UPDATE / DELETE を
   生成します。リテラルはドライバ別にエスケープ (MySQL はバックスラッシュも二重化)。

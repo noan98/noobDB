@@ -538,12 +538,16 @@ async fn collect_side_objects(
                 .and_then(|id| signatures.get(id))
                 .filter(|_| matches!(o.kind.as_str(), "function" | "procedure"))
                 .cloned(),
-            table: o
-                .id
-                .as_deref()
-                .filter(|_| o.kind == "trigger")
-                .and_then(|id| trigger_tables.get(id))
-                .cloned(),
+            table: match o.kind.as_str() {
+                "trigger" => {
+                    o.id.as_deref()
+                        .and_then(|id| trigger_tables.get(id))
+                        .cloned()
+                }
+                // ポリシーの対象表は一覧の detail に載っている (#2159)。
+                "policy" => o.detail.clone(),
+                _ => None,
+            },
             definition: complete_definition(
                 driver,
                 &o.kind,

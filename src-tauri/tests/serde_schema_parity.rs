@@ -755,6 +755,11 @@ fn build_fixtures() -> serde_json::Value {
             .into(),
         enabled: true,
     };
+    let rls_table = t::RlsTable {
+        table: "docs".into(),
+        enabled: true,
+        forced: false,
+    };
     let table_partitions = t::TablePartitions {
         method: "RANGE".into(),
         key: "created_at".into(),
@@ -2602,6 +2607,7 @@ fn build_fixtures() -> serde_json::Value {
         "indexInfo": index_info,
         "tableExtrasInfo": table_extras_info,
         "tableTrigger": table_trigger,
+        "rlsTable": rls_table,
         "tablePartitions": table_partitions,
         "schemaObject": schema_object,
         "routineSignature": routine_signature,

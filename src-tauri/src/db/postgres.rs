@@ -2132,10 +2132,19 @@ impl PostgresConn {
               FROM pg_type t
               JOIN pg_namespace n ON n.oid = t.typnamespace
              WHERE n.nspname = $1 AND {listed_types}
+            UNION ALL
+            -- 行レベルセキュリティのポリシー (#2159)。名前は表ごとに一意なので oid を id にし、
+            -- 4 列目 (detail) に対象表名を載せる。拡張が持つものは除く。
+            SELECT 'policy', p.polname, p.oid::text, c.relname::text
+              FROM pg_policy p
+              JOIN pg_class c ON c.oid = p.polrelid
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = $1 AND {policy_not_ext}
             ORDER BY kind, name
             "#,
             listed_types = super::types::PG_LISTED_TYPE_FILTER,
-            not_type_member = super::types::PG_ROUTINE_NOT_TYPE_MEMBER
+            not_type_member = super::types::PG_ROUTINE_NOT_TYPE_MEMBER,
+            policy_not_ext = super::types::PG_POLICY_NOT_EXTENSION
         );
         // 埋め込むのはコンパイル時定数 (`PG_LISTED_TYPE_FILTER`) だけで、スキーマ名は bind する。
         let rows: Vec<PgRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
@@ -2144,15 +2153,23 @@ impl PostgresConn {
             .await?;
         Ok(rows
             .into_iter()
-            .map(|r| SchemaObject {
-                kind: r.try_get::<String, _>(0).unwrap_or_default(),
-                name: r.try_get::<String, _>(1).unwrap_or_default(),
-                id: r.try_get::<Option<String>, _>(2).ok().flatten(),
-                detail: r
-                    .try_get::<Option<String>, _>(3)
-                    .ok()
-                    .flatten()
-                    .and_then(|t| super::types::pg_type_detail(&t).map(str::to_string)),
+            .map(|r| {
+                let kind = r.try_get::<String, _>(0).unwrap_or_default();
+                let raw = r.try_get::<Option<String>, _>(3).ok().flatten();
+                // 型は typtype の 1 文字を種類名に直す。ポリシーは対象表名をそのまま運ぶ (#2159)。
+                let detail = match kind.as_str() {
+                    "type" => {
+                        raw.and_then(|t| super::types::pg_type_detail(&t).map(str::to_string))
+                    }
+                    "policy" => raw,
+                    _ => None,
+                };
+                SchemaObject {
+                    kind,
+                    name: r.try_get::<String, _>(1).unwrap_or_default(),
+                    id: r.try_get::<Option<String>, _>(2).ok().flatten(),
+                    detail,
+                }
             })
             .collect())
     }
@@ -2203,6 +2220,59 @@ impl PostgresConn {
                 )
             })
             .collect())
+    }
+
+    /// RLS が有効 / FORCE の表の一覧 (#2159)。ツリーの表ノードのバッジ用で、パーティション表も含む。
+    /// どちらでもない表は返さない。
+    pub async fn rls_tables(&self, schema: &str) -> Result<Vec<super::types::RlsTable>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            "SELECT c.relname::text, c.relrowsecurity, c.relforcerowsecurity
+               FROM pg_class c
+               JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = $1 AND c.relkind IN ('r', 'p')
+                AND (c.relrowsecurity OR c.relforcerowsecurity)
+              ORDER BY c.relname",
+        )
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                Some(super::types::RlsTable {
+                    table: r.try_get::<String, _>(0).ok()?,
+                    enabled: r.try_get::<bool, _>(1).unwrap_or(false),
+                    forced: r.try_get::<bool, _>(2).unwrap_or(false),
+                })
+            })
+            .collect())
+    }
+
+    /// 1 つの RLS ポリシーの `CREATE POLICY` (#2159)。ポリシー名は表ごとにしか一意でないので、
+    /// `id` (oid) があればそれで引き、無ければスキーマ内の同名の最初の 1 件。
+    async fn policy_definition(
+        &self,
+        schema: &str,
+        name: &str,
+        id: Option<&str>,
+    ) -> Result<Option<String>> {
+        let sql = format!(
+            "SELECT {def} FROM pg_policy p \
+               JOIN pg_class c ON c.oid = p.polrelid \
+               JOIN pg_namespace n ON n.oid = c.relnamespace \
+              WHERE n.nspname = $1 AND ($2::text IS NULL OR p.oid::text = $2) \
+                AND ($2::text IS NOT NULL OR p.polname = $3) \
+              ORDER BY c.relname LIMIT 1",
+            def = super::types::PG_POLICY_DEFINITION_EXPR
+        );
+        // 埋め込むのはコンパイル時定数だけで、スキーマ名・id・名前は bind する。
+        let def: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+            .bind(schema)
+            .bind(id)
+            .bind(name)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(def)
     }
 
     /// 1 つの型 (ENUM / DOMAIN / 複合型 / 範囲型) の `CREATE TYPE` / `CREATE DOMAIN` (#2127)。
@@ -2558,6 +2628,7 @@ impl PostgresConn {
             },
             "sequence" => self.sequence_definition(schema, name).await?,
             "type" => self.type_definition(schema, name).await?,
+            "policy" => self.policy_definition(schema, name, id).await?,
             other => {
                 return Err(AppError::InvalidInput(format!(
                     "unsupported object kind: {other}"
@@ -2579,7 +2650,7 @@ impl PostgresConn {
         &self,
         schema: &str,
     ) -> Result<std::collections::HashMap<String, String>> {
-        let rows: Vec<PgRow> = sqlx::query(
+        let sql = format!(
             r#"
             SELECT 'view:' || v.viewname AS k,
                    pg_get_viewdef(format('%I.%I', v.schemaname, v.viewname)::regclass, true) AS def
@@ -2600,11 +2671,20 @@ impl PostgresConn {
               JOIN pg_class c ON c.oid = t.tgrelid
               JOIN pg_namespace n ON n.oid = c.relnamespace
              WHERE n.nspname = $1 AND NOT t.tgisinternal
+            UNION ALL
+            SELECT 'id:' || p.oid::text, {policy_def}
+              FROM pg_policy p
+              JOIN pg_class c ON c.oid = p.polrelid
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = $1
             "#,
-        )
-        .bind(schema)
-        .fetch_all(&self.pool)
-        .await?;
+            policy_def = super::types::PG_POLICY_DEFINITION_EXPR
+        );
+        // 埋め込むのはコンパイル時定数だけで、スキーマ名は bind する。
+        let rows: Vec<PgRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(schema)
+            .fetch_all(&self.pool)
+            .await?;
         let mut out = std::collections::HashMap::with_capacity(rows.len());
         for r in &rows {
             let key: String = r.try_get(0)?;

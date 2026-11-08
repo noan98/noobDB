@@ -9,6 +9,7 @@ import type {
   IndexInfo,
   TableExtrasInfo,
   TablePartitions,
+  RlsTable,
   TableTrigger,
   SchemaObject,
   RoutineSignature,
@@ -141,6 +142,11 @@ export const schemaCommands = {
   listTableTriggers: (sessionId: string, database: string, table: string) =>
     invoke<TableTrigger[]>("list_table_triggers", { sessionId, database, table }).then((r) =>
       parseResponse(schemas.tableTriggerArray, r, "list_table_triggers"),
+    ),
+  /** RLS が有効 / FORCE の表の一覧 (#2159)。PostgreSQL だけ (他ドライバはエラー)。読み取りのみ。 */
+  listRlsTables: (sessionId: string, database: string) =>
+    invoke<RlsTable[]>("list_rls_tables", { sessionId, database }).then((r) =>
+      parseResponse(schemas.rlsTableArray, r, "list_rls_tables"),
     ),
   /** 非テーブルのスキーマオブジェクト (ビュー/ルーチン/トリガー) を取得する。 */
   listSchemaObjects: (sessionId: string, database: string) =>
