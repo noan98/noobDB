@@ -116,6 +116,26 @@ pub fn validate_database(driver: Option<DriverKind>, database: Option<&str>) -> 
     Ok(())
 }
 
+/// SQLite の `database` を、プロファイルでアタッチした別名に正す (#2152)。別名 (大文字小文字は
+/// 区別しない) に一致すればその別名、それ以外 (MySQL 用に入れた値の持ち越しなど) は `None` (= `main`、
+/// 修飾なし)。MySQL / PostgreSQL は値をそのまま返す。接続側の `Connection::resolve_attached_database`
+/// と同じ規則で、保存時 (接続前) に使えるようアタッチ別名の一覧から引く。共有ゴールデンの
+/// `attached` 付きケースで、フロントの `resolveTaskDatabase` と一致を固定する。
+pub fn resolve_database(
+    driver: DriverKind,
+    database: Option<&str>,
+    attached: &[String],
+) -> Option<String> {
+    let db = database.map(str::trim).filter(|d| !d.is_empty())?;
+    if driver != DriverKind::Sqlite {
+        return Some(db.to_string());
+    }
+    attached
+        .iter()
+        .find(|a| a.eq_ignore_ascii_case(db))
+        .cloned()
+}
+
 fn qualified(driver: DriverKind, database: Option<&str>, table: &str) -> String {
     match (driver, database.map(str::trim).filter(|d| !d.is_empty())) {
         (DriverKind::Sqlite, db) => crate::db::sync::sqlite_table_ref(db.unwrap_or(""), table),
@@ -412,7 +432,13 @@ mod tests {
                 .iter()
                 .map(|t| t.as_str().unwrap().to_string())
                 .collect();
-            let got = build_statements(driver, database, &targets, kind);
+            // `attached` (SQLite のアタッチ別名) があるケースは、実行・保存と同じく先に正してから組み立てる。
+            let attached: Vec<String> = c["attached"]
+                .as_array()
+                .map(|a| a.iter().map(|x| x.as_str().unwrap().to_string()).collect())
+                .unwrap_or_default();
+            let resolved = resolve_database(driver, database, &attached);
+            let got = build_statements(driver, resolved.as_deref(), &targets, kind);
             match c["sql"].as_array() {
                 Some(expected) => {
                     let expected: Vec<&str> =

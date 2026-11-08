@@ -1,5 +1,5 @@
 {
- "note": "定期メンテナンスの実行文 (#2096)。Rust の tasks::maintenance::build_statements と taskMaintenance.ts の buildTaskMaintenanceStatements を両側のテストが固定する。sql が null のものはエラー。",
+ "note": "定期メンテナンスの実行文 (#2096)。Rust の tasks::maintenance::build_statements と taskMaintenance.ts の buildTaskMaintenanceStatements を両側のテストが固定する。sql が null のものはエラー。 attached は SQLite のアタッチ別名 (省略は空)。両側とも build の前に resolveTaskDatabase / resolve_database で database を正す (#2152): 別名 (大文字小文字不問) なら設定の綴り、それ以外は修飾なし。MySQL / PostgreSQL は値のまま。",
  "cases": [
   {
    "name": "mysql optimize 修飾",
@@ -223,6 +223,9 @@
    "name": "sqlite analyze はアタッチした別名で修飾する",
    "driver": "sqlite",
    "database": "ext",
+   "attached": [
+    "ext"
+   ],
    "targets": [
     "t"
    ],
@@ -235,6 +238,9 @@
    "name": "sqlite reindex はアタッチした別名で修飾する",
    "driver": "sqlite",
    "database": "ext",
+   "attached": [
+    "ext"
+   ],
    "targets": [
     "t"
    ],
@@ -1885,14 +1891,16 @@
    ]
   },
   {
-   "name": "database の NUL",
+   "name": "database の NUL (sqlite は別名に当たらないので捨てて main 扱い)",
    "driver": "sqlite",
    "database": "a\u0000b",
    "targets": [
     "t"
    ],
    "kind": "analyze",
-   "sql": null
+   "sql": [
+    "ANALYZE \"t\";"
+   ]
   },
   {
    "name": "sqlite テーブル名の二重引用符",
@@ -1925,6 +1933,120 @@
    "targets": [],
    "kind": "optimize",
    "sql": null
+  },
+  {
+   "name": "sqlite 未知の database は main 扱いで修飾しない (#2152)",
+   "driver": "sqlite",
+   "database": "shop",
+   "attached": [],
+   "targets": [
+    "t"
+   ],
+   "kind": "analyze",
+   "sql": [
+    "ANALYZE \"t\";"
+   ]
+  },
+  {
+   "name": "sqlite 別名に当たらない database は、別の別名があっても修飾しない",
+   "driver": "sqlite",
+   "database": "shop",
+   "attached": [
+    "ext"
+   ],
+   "targets": [
+    "t"
+   ],
+   "kind": "analyze",
+   "sql": [
+    "ANALYZE \"t\";"
+   ]
+  },
+  {
+   "name": "sqlite 別名は大文字小文字を区別せず、設定の綴りで修飾する",
+   "driver": "sqlite",
+   "database": "EXT",
+   "attached": [
+    "ext"
+   ],
+   "targets": [
+    "t"
+   ],
+   "kind": "analyze",
+   "sql": [
+    "ANALYZE \"ext\".\"t\";"
+   ]
+  },
+  {
+   "name": "sqlite 空白つきの別名も trim して解決する",
+   "driver": "sqlite",
+   "database": " ext ",
+   "attached": [
+    "ext"
+   ],
+   "targets": [
+    "t"
+   ],
+   "kind": "reindex",
+   "sql": [
+    "REINDEX \"ext\".\"t\";"
+   ]
+  },
+  {
+   "name": "sqlite main の大文字は修飾しない",
+   "driver": "sqlite",
+   "database": "MAIN",
+   "attached": [
+    "ext"
+   ],
+   "targets": [
+    "t"
+   ],
+   "kind": "analyze",
+   "sql": [
+    "ANALYZE \"t\";"
+   ]
+  },
+  {
+   "name": "sqlite 未知の database でも全体 ANALYZE は変わらない",
+   "driver": "sqlite",
+   "database": "shop",
+   "attached": [],
+   "targets": [],
+   "kind": "analyze",
+   "sql": [
+    "ANALYZE;"
+   ]
+  },
+  {
+   "name": "mysql はアタッチ別名を無視して database で修飾する",
+   "driver": "mysql",
+   "database": "shop",
+   "attached": [
+    "ext"
+   ],
+   "targets": [
+    "t"
+   ],
+   "kind": "analyze",
+   "sql": [
+    "ANALYZE TABLE `shop`.`t`;"
+   ]
+  },
+  {
+   "name": "postgres はアタッチ別名を無視して schema で修飾する",
+   "driver": "postgres",
+   "database": "shop",
+   "attached": [
+    "ext"
+   ],
+   "targets": [
+    "t"
+   ],
+   "kind": "analyze",
+   "sql": [
+    "ANALYZE \"shop\".\"t\";"
+   ]
   }
  ]
 }
