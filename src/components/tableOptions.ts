@@ -11,6 +11,7 @@
 
 import type { ColumnDef } from "./createTable";
 import { quoteIdentFor, qualifiedTableName } from "./sqlDialect";
+import { isCompleteForeignKey, type ForeignKeyDef } from "./tableConstraints";
 import {
   buildPartitionBoundClause,
   parseListValues,
@@ -128,7 +129,8 @@ export type TableOptionProblem =
   | { code: "partitionKeyUnique"; columns: string[] }
   | { code: "partitionNeedsFirst" }
   | { code: "partitionBound"; error: AttachBoundError }
-  | { code: "partitionCount" };
+  | { code: "partitionCount" }
+  | { code: "partitionForeignKey" };
 
 /** パーティションキーの 1 要素が素の識別子か (引用符つきも含む)。式 (`YEAR(d)` など) は false。 */
 function plainIdentifier(part: string): string | null {
@@ -195,6 +197,8 @@ export function tableOptionProblems(
   driver: string,
   columns: readonly ColumnDef[],
   o: TableOptions,
+  /** 完成済みの外部キー。MySQL (InnoDB) はパーティション表に外部キーを付けられない (ER 1506)。 */
+  foreignKeys: readonly ForeignKeyDef[] = [],
 ): TableOptionProblem[] {
   const out: TableOptionProblem[] = [];
   if (driver === "mysql") {
@@ -258,12 +262,21 @@ export function tableOptionProblems(
         if (p.firstName.trim() === "") out.push({ code: "partitionNeedsFirst" });
         else if (p.method === "RANGE" && parseListValues(p.to).length === 0) {
           out.push({ code: "partitionBound", error: "rangeEmpty" });
+        } else if (
+          p.method === "RANGE" &&
+          parts.length > 1 &&
+          parts.every((k) => k.column !== null) &&
+          parseListValues(p.to).length !== parts.length
+        ) {
+          // RANGE COLUMNS (素の列 2 つ以上) は、境界の値の数がキーの列の数と一致する必要がある。
+          out.push({ code: "partitionBound", error: "rangeEmpty" });
         } else if (p.method === "LIST" && parseListValues(p.values).length === 0) {
           out.push({ code: "partitionBound", error: "listEmpty" });
         }
       } else if (!/^\d+$/.test(p.modulus.trim()) || Number(p.modulus) < 1) {
         out.push({ code: "partitionCount" });
       }
+      if (foreignKeys.some(isCompleteForeignKey)) out.push({ code: "partitionForeignKey" });
     }
   }
   return out;

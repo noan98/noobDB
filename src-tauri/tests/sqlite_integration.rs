@@ -8121,3 +8121,44 @@ async fn sqlite_attached_alias_rejects_rebuild_sync_and_qualifies_import() {
         let _ = std::fs::remove_file(p);
     }
 }
+
+/// CREATE TABLE ウィザードのテーブルオプション (#2161) が生成する DDL (STRICT / WITHOUT ROWID) が
+/// 実際の SQLite で通ることを、共有ゴールデン (`createTableOptionVectors.json`) で確かめる。
+#[tokio::test]
+async fn sqlite_create_table_wizard_options_ddl_runs() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_ct_opts_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    for case in common::create_table_cases("sqlite") {
+        let table = &case.form.table;
+        conn.execute_transaction(&case.statements, None)
+            .await
+            .unwrap_or_else(|e| panic!("{}: {e}\n{:?}", case.name, case.statements));
+        // sqlite_master に表ができ、オプションが SQL に残っている。
+        let res = conn
+            .execute(
+                &format!("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = '{table}'"),
+                None,
+            )
+            .await
+            .expect("sqlite_master");
+        assert_eq!(res.rows.len(), 1, "{}: table not created", case.name);
+        let ddl = match &res.rows[0][0] {
+            t::Value::String(s) => s.to_uppercase(),
+            other => panic!("{}: unexpected sql cell {other:?}", case.name),
+        };
+        if case.name.contains("strict") {
+            assert!(ddl.contains("STRICT"), "{}: {ddl}", case.name);
+        }
+        if case.name.contains("without_rowid") {
+            assert!(ddl.contains("WITHOUT ROWID"), "{}: {ddl}", case.name);
+        }
+    }
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}

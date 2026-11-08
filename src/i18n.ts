@@ -2491,6 +2491,7 @@ const en = {
   cloneTablePreviewEmpty: "Enter a table name to preview the SQL.",
   cloneTableConfirm: "Duplicate",
   cloneTableSuccess: 'Duplicated "{source}" as "{table}".',
+  createTableCreated: "Created the table (including its first partition).",
   cloneTableMetaError: "Couldn't read column / foreign key metadata: {error}",
   cloneTableNotTable: "Only tables can be duplicated (this object is a view or another kind).",
   cloneTableRewriteError:
@@ -3294,6 +3295,8 @@ const en = {
     "Every PRIMARY KEY / UNIQUE constraint must include the partition key columns. Missing: {columns}",
   createTableOptErrNeedsFirst: "MySQL needs at least one partition in RANGE / LIST. Enter its name.",
   createTableOptErrCount: "Enter the number of partitions (1 or more).",
+  createTableOptErrForeignKey:
+    "MySQL (InnoDB) cannot put foreign keys on a partitioned table. Remove the foreign keys or the partitioning.",
   createTableOptErrRange: "Enter FROM and TO / LESS THAN for every key column.",
   createTableOptErrList: "Enter at least one value.",
   createTableOptErrModulus: "MODULUS must be an integer of 1 or more.",
@@ -10094,6 +10097,7 @@ const ja: Dict = {
   cloneTablePreviewEmpty: "テーブル名を入力すると SQL がプレビューされます。",
   cloneTableConfirm: "複製",
   cloneTableSuccess: "「{source}」を「{table}」として複製しました。",
+  createTableCreated: "テーブルを作成しました (最初のパーティションを含む)。",
   cloneTableMetaError: "列・外部キーのメタデータを取得できませんでした: {error}",
   cloneTableNotTable: "テーブル以外 (ビューなど) は複製できません。",
   cloneTableRewriteError:
@@ -10894,6 +10898,8 @@ const ja: Dict = {
   createTableOptErrNeedsFirst:
     "MySQL の RANGE / LIST には、パーティションが 1 つ以上必要です。名前を入力してください",
   createTableOptErrCount: "パーティション数 (1 以上) を入力してください",
+  createTableOptErrForeignKey:
+    "MySQL (InnoDB) はパーティション表に外部キーを付けられません。外部キーかパーティションのどちらかを外してください",
   createTableOptErrRange: "キーの列ごとに FROM と TO (LESS THAN) を入力してください",
   createTableOptErrList: "値を 1 つ以上入力してください",
   createTableOptErrModulus: "MODULUS は 1 以上の整数にしてください",

@@ -3,7 +3,7 @@ import { chakra, Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { api, type DriverKind } from "../api/tauri";
 import {
-  buildCreateTableSql,
+  buildCreateTableStatements,
   columnDefsFromTableInfo,
   generatedColumnProblems,
   supportsVirtualGenerated,
@@ -46,7 +46,8 @@ interface Props {
   driver: DriverKind;
   database: string | null;
   readOnly: boolean;
-  onRun: (sql: string) => void;
+  /** `statements` は文ごとの配列。複数文のときは呼び出し側がトランザクションで流す (#2161)。 */
+  onRun: (sql: string, statements: string[]) => void;
   onSendToEditor: (sql: string) => void;
   onClose: () => void;
 }
@@ -241,11 +242,10 @@ export function CreateTableModal({
       .filter((p) => p === "emptyExpression" || p === "invalidExpression" || p === "virtualUnsupported")
       .map((p) => ({ index: i, problem: p, name: c.name.trim() || `#${i + 1}` })),
   );
-  // 名前が空の列がある間は、列名に依存する検査 (パーティションキー・STRICT の型) が当てにならないので、
-  // 名前の検証 (`valid` の他の条件) を先に直させる。
+  // テーブルオプションの不備。列名が空の列はキー・型の検査から外れるので、列名の不備と同時に直せる。
   const optionProblems = useMemo(
-    () => tableOptionProblems(driver, columns, options),
-    [driver, columns, options],
+    () => tableOptionProblems(driver, columns, options, foreignKeys.filter(isCompleteForeignKey)),
+    [driver, columns, options, foreignKeys],
   );
   const valid =
     table.trim().length > 0 &&
@@ -254,10 +254,10 @@ export function CreateTableModal({
     !hasPartialForeignKey &&
     generatedErrors.length === 0 &&
     optionProblems.length === 0;
-  const sql = useMemo(
+  const statements = useMemo(
     () =>
       valid
-        ? buildCreateTableSql(driver, {
+        ? buildCreateTableStatements(driver, {
             database,
             table: table.trim(),
             // 列名の前後空白は検証側 (trim 済み) と制約エディタ候補に合わせて落とす。
@@ -267,9 +267,10 @@ export function CreateTableModal({
             checks: checks.filter(isCompleteCheck).map(({ id: _id, ...ck }) => ck),
             options,
           })
-        : "",
+        : [],
     [valid, driver, database, table, columns, foreignKeys, checks, options],
   );
+  const sql = statements.join("\n");
   const columnNames = useMemo(
     () => [...new Set(columns.map((c) => c.name.trim()).filter((n) => n.length > 0))],
     [columns],
@@ -278,7 +279,12 @@ export function CreateTableModal({
   const dataListId = "create-table-types";
 
   return (
-    <Modal onSubmit={() => onRun(sql)} submitDisabled={!valid || readOnly} width="820px" onClose={onClose}>
+    <Modal
+      onSubmit={() => onRun(sql, statements)}
+      submitDisabled={!valid || readOnly}
+      width="820px"
+      onClose={onClose}
+    >
       <ModalHeader onClose={onClose} closeLabel={t("createTableClose")}>
         {t("createTableTitle")}
       </ModalHeader>
@@ -553,7 +559,7 @@ export function CreateTableModal({
           type="button"
           variant="primary"
           disabled={!valid || readOnly}
-          onClick={() => onRun(sql)}
+          onClick={() => onRun(sql, statements)}
         >
           {t("createTableRun")}
         </PressableButton>
@@ -590,6 +596,8 @@ function optionProblemText(p: TableOptionProblem, t: ReturnType<typeof useT>): s
       return t("createTableOptErrNeedsFirst");
     case "partitionCount":
       return t("createTableOptErrCount");
+    case "partitionForeignKey":
+      return t("createTableOptErrForeignKey");
     case "partitionBound":
       switch (p.error) {
         case "rangeEmpty":
@@ -632,9 +640,14 @@ function TableOptionsSection({
   const active = hasTableOptions(driver, options);
   return (
     <chakra.details>
-      <chakra.summary cursor="pointer" textStyle="overline">
+      <chakra.summary
+        cursor="pointer"
+        textStyle="overline"
+        color={problems.length > 0 ? "app.textError" : undefined}
+      >
         {t("createTableOptions")}
         {active ? ` (${t("createTableOptionsActive")})` : ""}
+        {problems.length > 0 ? ` [!${problems.length}]` : ""}
       </chakra.summary>
       <chakra.div display="flex" flexDirection="column" gap="3" marginTop="2">
         {isMysql && (

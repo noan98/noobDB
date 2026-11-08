@@ -228,6 +228,15 @@ export function formatDefault(
  * (UI 側でバリデーション)。SQLite の `INTEGER PRIMARY KEY AUTOINCREMENT` 特殊形に対応。
  */
 export function buildCreateTableSql(driver: string, form: CreateTableForm): string {
+  return buildCreateTableStatements(driver, form).join("\n");
+}
+
+/**
+ * [`buildCreateTableSql`] を文ごとの配列で返す。PostgreSQL の最初の子パーティションは親の後ろの
+ * 別の文になる。PostgreSQL の実行経路 (拡張プロトコル) は 1 回に 1 文しか受け付けないので、
+ * 実行は文の配列を `run_query_transaction` に渡す (#2161)。
+ */
+export function buildCreateTableStatements(driver: string, form: CreateTableForm): string[] {
   const cols = form.columns;
   // 生成列は主キー・自動採番にできない (#1893)。指定されていても無視する。
   const pkCols = cols.filter((c) => c.primaryKey && !activeGenerated(c));
@@ -265,7 +274,7 @@ export function buildCreateTableSql(driver: string, form: CreateTableForm): stri
   const create = `CREATE ${unlogged}TABLE ${name} (\n  ${lines.join(",\n  ")}\n)${suffix};`;
   // PostgreSQL の最初の子パーティションは、親の後ろの別の文になる。
   const extra = opts ? tableOptionExtraStatements(driver, form.database, form.table, opts) : [];
-  return [create, ...extra].join("\n");
+  return [create, ...extra];
 }
 
 function columnLine(driver: string, col: ColumnDef, opts: { sqliteAutoPk: boolean }): string {

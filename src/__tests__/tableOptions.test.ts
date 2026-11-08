@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildCreateTableSql, type ColumnDef } from "../components/createTable";
+import vectors from "./fixtures/createTableOptionVectors.json";
+import { buildCreateTableSql, buildCreateTableStatements, type ColumnDef } from "../components/createTable";
 import {
   emptyPartitionSpec,
   emptyTableOptions,
@@ -158,7 +159,73 @@ describe("MySQL", () => {
   });
 });
 
+describe("MySQL の RANGE COLUMNS と外部キー", () => {
+  const columns = [id({ type: "INT" }), col({ name: "y", type: "INT", primaryKey: true, notNull: true })];
+  const range = (over: Partial<PartitionSpec>) =>
+    opts({ partition: part("mysql", { method: "RANGE", key: "id, y", firstName: "p0", ...over }) });
+
+  it("素の列 2 つ以上のキーは、境界の数がキーの列数と一致しないと問題になる", () => {
+    expect(tableOptionProblems("mysql", columns, range({ to: "10" }))).toEqual([
+      { code: "partitionBound", error: "rangeEmpty" },
+    ]);
+    expect(tableOptionProblems("mysql", columns, range({ to: "10, 20, 30" }))).toEqual([
+      { code: "partitionBound", error: "rangeEmpty" },
+    ]);
+    expect(tableOptionProblems("mysql", columns, range({ to: "10, 20" }))).toEqual([]);
+    expect(buildCreateTableSql("mysql", { table: "t", columns, options: range({ to: "10, 20" }) })).toContain(
+      "PARTITION BY RANGE COLUMNS (`id`, `y`) (\n  PARTITION `p0` VALUES LESS THAN (10, 20)",
+    );
+  });
+
+  const fk = {
+    name: "",
+    columns: ["y"],
+    refTable: "other",
+    refColumns: ["id"],
+    onDelete: "" as const,
+    onUpdate: "" as const,
+  };
+
+  it("パーティション表と完成済みの外部キーは同時に指定できない (ER 1506)", () => {
+    const o = opts({ partition: part("mysql", { method: "HASH", key: "id", modulus: "4" }) });
+    expect(tableOptionProblems("mysql", [id({ type: "INT" })], o, [fk])).toEqual([
+      { code: "partitionForeignKey" },
+    ]);
+    expect(tableOptionProblems("mysql", [id({ type: "INT" })], o, [])).toEqual([]);
+    // パーティションを使わなければ外部キーは問題にならない。
+    expect(tableOptionProblems("mysql", [id({ type: "INT" })], opts({ engine: "InnoDB" }), [fk])).toEqual([]);
+    // PostgreSQL はパーティション表にも外部キーを付けられる。
+    const pg = opts({ partition: part("postgres", { method: "HASH", key: "id" }) });
+    expect(tableOptionProblems("postgres", [id({ type: "INT" })], pg, [fk])).toEqual([]);
+  });
+});
+
 describe("PostgreSQL", () => {
+  it("最初の子パーティションは親と別の文として返る (1 回に 1 文しか流せない)", () => {
+    const statements = buildCreateTableStatements("postgres", {
+      table: "t",
+      columns: [id({ type: "INT" })],
+      options: opts({
+        partition: part("postgres", { method: "HASH", key: "id", firstName: "t_p0", modulus: "2" }),
+      }),
+    });
+    expect(statements).toHaveLength(2);
+    expect(statements[0]).toMatch(/^CREATE TABLE "t" \(/);
+    expect(statements[0]).not.toContain("PARTITION OF");
+    expect(statements[1]).toBe(
+      `CREATE TABLE "t_p0" PARTITION OF "t" FOR VALUES WITH (MODULUS 2, REMAINDER 0);`,
+    );
+    expect(statements.join("\n")).toBe(
+      buildCreateTableSql("postgres", {
+        table: "t",
+        columns: [id({ type: "INT" })],
+        options: opts({
+          partition: part("postgres", { method: "HASH", key: "id", firstName: "t_p0", modulus: "2" }),
+        }),
+      }),
+    );
+  });
+
   it("UNLOGGED は CREATE の後ろに入る", () => {
     const sql = buildCreateTableSql("postgres", {
       database: "public",
@@ -330,4 +397,26 @@ describe("SQLite", () => {
       /ENGINE|UNLOGGED|PARTITION/,
     );
   });
+});
+
+// 共有ゴールデン: 同じ JSON を src-tauri/tests の mysql / postgres / sqlite 統合テストが実 DB で流す。
+describe("共有ゴールデン (createTableOptionVectors.json)", () => {
+  for (const c of vectors.cases) {
+    it(`${c.name}: フォームから生成した文が JSON と一致し、検証を通る`, () => {
+      const form = c.form as {
+        table: string;
+        columns: Partial<ColumnDef>[];
+        options: Partial<TableOptions> & { partition?: Partial<PartitionSpec> };
+      };
+      const columns = form.columns.map((x) => col(x));
+      const options = opts({
+        ...form.options,
+        partition: form.options.partition ? part(c.driver, form.options.partition) : null,
+      });
+      expect(tableOptionProblems(c.driver, columns, options)).toEqual([]);
+      expect(buildCreateTableStatements(c.driver, { table: form.table, columns, options })).toEqual(
+        c.statements,
+      );
+    });
+  }
 });
