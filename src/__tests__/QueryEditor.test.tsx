@@ -82,6 +82,18 @@ describe("QueryEditor", () => {
     expect(onPreview).toHaveBeenCalledWith("DELETE FROM t");
   });
 
+  it("プレースホルダをチップ装飾し、リテラル・コメントの中と ::cast は装飾しない (#2155)", () => {
+    renderWithProviders(
+      <QueryEditor
+        onRun={vi.fn()}
+        driver="mysql"
+        initialSql={"SELECT {{t}}, ?, ':no', a::int /* ? */, :name"}
+      />,
+    );
+    const chips = [...document.querySelectorAll(".cm-query-placeholder")].map((e) => e.textContent);
+    expect(chips).toEqual(["{{t}}", "?", ":name"]);
+  });
+
   it("Ctrl+F でエディタ内の検索・置換パネルが開く (#464)", async () => {
     renderWithProviders(<QueryEditor onRun={() => {}} initialSql="SELECT id FROM users" />);
     const editable = document.querySelector(".cm-content") as HTMLElement;

@@ -65,7 +65,7 @@ describe("ParameterInputModal", () => {
     );
     // シングルクオートを含む値が二重化されてプレビューに反映される。
     await user.type(screen.getByLabelText(t("parameterInputValueLabelFor", { name: "name" })), "O'Brien");
-    expect(screen.getByText("SELECT 'O''Brien'")).toBeInTheDocument();
+    expect(screen.getByTestId("param-preview")).toHaveTextContent("SELECT 'O''Brien'");
   });
 
   it("前回の型だけを localStorage から復元し、値は復元しない", () => {
@@ -189,5 +189,38 @@ describe("ParameterInputModal", () => {
       />,
     );
     expect(screen.queryByRole("button", { name: t("parameterInputRunRaw") })).toBeNull();
+  });
+
+  it("入力行にフォーカスすると、プレビューの該当箇所をすべて強調する (#2155)", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <ParameterInputModal
+        sql="SELECT $1, $2, $1"
+        driver="postgres"
+        onSubmit={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    const preview = screen.getByTestId("param-preview");
+    expect(preview.querySelectorAll("[data-active]")).toHaveLength(0);
+    // 値を入れた欄は未入力の下線が消え、フォーカス中の欄の箇所だけが強調される。
+    const first = screen.getByLabelText(t("parameterInputValueLabelFor", { name: "$1" }));
+    await user.type(first, "a");
+    const active = [...preview.querySelectorAll("[data-active]")].map((e) => e.textContent);
+    expect(active).toEqual(["'a'", "'a'"]);
+    // 別の欄へ移ると強調も移る。
+    await user.click(screen.getByLabelText(t("parameterInputValueLabelFor", { name: "$2" })));
+    expect([...preview.querySelectorAll("[data-active]")].map((e) => e.textContent)).toEqual(["''"]);
+  });
+
+  it("未入力の箇所を点線下線で示し、入力すると消える (#2155)", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <ParameterInputModal sql="SELECT ?, ?" driver="mysql" onSubmit={() => {}} onCancel={() => {}} />,
+    );
+    const preview = screen.getByTestId("param-preview");
+    expect(preview.querySelectorAll("[data-unfilled]")).toHaveLength(2);
+    await user.type(screen.getByLabelText(t("parameterInputValueLabelFor", { name: "?1" })), "x");
+    expect(preview.querySelectorAll("[data-unfilled]")).toHaveLength(1);
   });
 });

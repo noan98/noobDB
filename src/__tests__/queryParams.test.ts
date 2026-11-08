@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   extractNativeParams,
+  findPlaceholderRanges,
+  substituteAllParamsWithSpans,
   extractQueryParams,
   parsePastedValues,
   scanNativePlaceholders,
@@ -404,5 +406,71 @@ describe("parsePastedValues", () => {
   it("空入力は空配列、壊れた JSON は CSV として読む", () => {
     expect(parsePastedValues("  ")).toEqual([]);
     expect(parsePastedValues("[1, 2")).toHaveLength(2);
+  });
+});
+
+describe("findPlaceholderRanges (エディタの装飾位置, #2155)", () => {
+  const slice = (sql: string, driver: string) =>
+    findPlaceholderRanges(sql, driver).map((r) => sql.slice(r.start, r.end));
+
+  it("{{name}} とネイティブを出現順に返す", () => {
+    expect(slice("SELECT * FROM {{t}} WHERE a = ? AND b = :x", "mysql")).toEqual(["{{t}}", "?", ":x"]);
+  });
+
+  it("$1 を複数回使うとそれぞれの範囲を返す", () => {
+    const r = findPlaceholderRanges("SELECT $1, $1 + $2", "postgres");
+    expect(r.map((p) => p.key)).toEqual(["$1", "$1", "$2"]);
+  });
+
+  it("文字列リテラルとコメントの中は装飾しない", () => {
+    expect(slice("SELECT '?' /* :a */ -- $1\n, ?", "mysql")).toEqual(["?"]);
+    expect(slice("SELECT 'it''s :a', $$ $1 $$, $1", "postgres")).toEqual(["$1"]);
+  });
+
+  it("::cast は誤検出しない", () => {
+    expect(slice("SELECT a::int, b::text, :c", "postgres")).toEqual([":c"]);
+  });
+
+  it("PostgreSQL の jsonb の ? 演算子は拾わない", () => {
+    expect(slice("SELECT data ? 'k' FROM t WHERE id = $1", "postgres")).toEqual(["$1"]);
+  });
+
+  it("{{name}} は native でないフラグを持つ", () => {
+    expect(findPlaceholderRanges("SELECT {{a}}, ?", "mysql").map((r) => r.native)).toEqual([false, true]);
+  });
+});
+
+describe("substituteAllParamsWithSpans (プレビューのハイライト範囲, #2155)", () => {
+  it("展開結果は substituteAllParams と一致する", () => {
+    const sql = "SELECT {{t}}, ?, :n, ? FROM x WHERE y = {{t}} AND z = 10-?";
+    const values = { t: "a'b", "?1": "1", ":n": "x", "?2": "", "?3": "-2" };
+    const r = substituteAllParamsWithSpans(sql, "mysql", values, { "?1": "number" });
+    expect(r.sql).toBe(substituteAllParams(sql, "mysql", values, { "?1": "number" }));
+  });
+
+  it("各範囲は展開後の SQL 上のリテラルを指す (同じ名前の複数回・位置の ? を含む)", () => {
+    const sql = "SELECT $1, $2, $1";
+    const r = substituteAllParamsWithSpans(sql, "postgres", { $1: "a", $2: "7" }, { $2: "number" });
+    expect(r.spans.map((s) => [s.key, r.sql.slice(s.start, s.end)])).toEqual([
+      ["$1", "'a'"],
+      ["$2", "7"],
+      ["$1", "'a'"],
+    ]);
+  });
+
+  it("{{name}} とネイティブが混ざっても、長さの変化を引き継いで正しい位置を指す", () => {
+    const sql = "SELECT {{t}} FROM x WHERE id = ? AND n = {{t}}";
+    const r = substituteAllParamsWithSpans(sql, "mysql", { t: "long value", "?1": "5" }, { "?1": "number" });
+    expect(r.spans.map((s) => [s.key, r.sql.slice(s.start, s.end)])).toEqual([
+      ["t", "'long value'"],
+      ["?1", "5"],
+      ["t", "'long value'"],
+    ]);
+  });
+
+  it("負数は括弧つきの範囲になり、値の無いものは原文のまま範囲を返す", () => {
+    const r = substituteAllParamsWithSpans("SELECT 10-?, ?", "mysql", { "?1": "-2" }, { "?1": "number" });
+    expect(r.sql).toBe("SELECT 10-(-2), ?");
+    expect(r.spans.map((s) => r.sql.slice(s.start, s.end))).toEqual(["(-2)", "?"]);
   });
 });

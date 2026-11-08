@@ -20,6 +20,7 @@ import { Box, chakra } from "@chakra-ui/react";
 import { registerTreeDropTarget } from "./treeDragStore";
 import { tableSelectWithColumnsText, treeItemInsertText } from "./treeDragInsert";
 import { AnimatePresence, motion } from "motion/react";
+import { placeholderDecorations } from "./placeholderDecorations";
 import { Compartment, EditorState, StateEffect, StateField, type Text } from "@codemirror/state";
 import {
   Decoration,
@@ -1233,6 +1234,11 @@ export const QueryEditor = memo(
             search({ top: true }),
             highlightSelectionMatches(),
             stmtFlashField,
+            // `{{name}}` / `?` / `$n` / `:name` のチップ装飾とホバーのヒント (#2155)。
+            placeholderDecorations(
+              () => driverRef.current,
+              () => t("editorQueryParamHint"),
+            ),
             // スキーマツリー行のドラッグ挿入 (#1414) の着地点マーカー。
             treeDropMarkerField,
             // 識別子の Ctrl/Cmd+クリックでスキーマツリーの対象を選ぶ (#1629)。補完用スキーマに

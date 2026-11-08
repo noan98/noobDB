@@ -9,15 +9,16 @@ import {
   isNumericParam,
   isPositionalParamKey,
   parsePastedValues,
-  substituteAllParams,
+  substituteAllParamsWithSpans,
   type ParamType,
 } from "../queryParams";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Callout } from "./Callout";
-import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, Input, PressableButton, Textarea } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
 import { Tooltip } from "./Tooltip";
+import { ParamPreview } from "./ParamPreview";
 import { isPlainEnterKey } from "./modalKeys";
 
 /** Per-parameter draft: the typed value and how it's rendered into SQL. */
@@ -143,9 +144,22 @@ export function ParameterInputModal({ sql, driver, onSubmit, onRunRaw, onCancel 
 
   // Live preview of the exact SQL that will run, so the escaping is visible.
   const preview = useMemo(
-    () => substituteAllParams(sql, driver, values, types),
+    () => substituteAllParamsWithSpans(sql, driver, values, types),
     [sql, driver, values, types],
   );
+  // 入力行にフォーカスしている欄のキー。プレビューの該当箇所 (複数あればすべて) を強調する (#2155)。
+  const [focusKey, setFocusKey] = useState<string | null>(null);
+  // 未入力 (空のテキスト・不正な数値・空の識別子) の欄。プレビューで点線下線にする。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: errorKey は drafts だけに依存する
+  const unfilledKeys = useMemo(() => {
+    const out = new Set<string>();
+    for (const n of names) {
+      const d = drafts[n];
+      if (!d || d.type === "null") continue;
+      if (d.type === "text" ? d.value === "" : errorKey(n) !== null) out.add(n);
+    }
+    return out;
+  }, [names, drafts]);
 
   // 貼り付けた値の個数が位置プレースホルダ数と合うか。空欄のときはエラーにしない。
   const pasted = useMemo(() => parsePastedValues(pasteText, driver), [pasteText, driver]);
@@ -234,6 +248,14 @@ export function ParameterInputModal({ sql, driver, onSubmit, onRunRaw, onCancel 
             return (
               <chakra.div
                 key={name}
+                data-param-row={name}
+                onFocusCapture={() => setFocusKey(name)}
+                onBlurCapture={(e) => {
+                  // 同じ行の中でフォーカスが移るだけなら外さない (型の選択 → 値の入力など)。
+                  if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                    setFocusKey((cur) => (cur === name ? null : cur));
+                  }
+                }}
                 display="grid"
                 gridTemplateColumns="minmax(90px, 1fr) 120px minmax(0, 2fr)"
                 gap="2"
@@ -296,9 +318,13 @@ export function ParameterInputModal({ sql, driver, onSubmit, onRunRaw, onCancel 
 
         <FormSection>
           <FieldLabel as="div">{t("parameterInputPreviewLabel")}</FieldLabel>
-          <CodePreview wrap maxH="160px">
-            {preview}
-          </CodePreview>
+          <ParamPreview
+            sql={preview.sql}
+            spans={preview.spans}
+            focusKey={focusKey}
+            unfilledKeys={unfilledKeys}
+            maxH="160px"
+          />
           <chakra.span fontSize="xs" color="app.textMuted">
             {t("parameterInputEscapeNote")}
           </chakra.span>
