@@ -265,7 +265,7 @@ import {
   type TxIsolation,
 } from "./txOptions";
 import { useConfirm, type ConfirmControls } from "./components/ConfirmDialog";
-import { CodePreview } from "./components/modalForm";
+import { SqlPreview } from "./components/SqlPreview";
 import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
 import { SavepointControl } from "./components/SavepointControl";
 import {
@@ -469,6 +469,9 @@ const ParameterInputModal = lazy(() =>
 );
 const EnumTypeModal = lazy(() =>
   import("./components/EnumTypeModal").then((m) => ({ default: m.EnumTypeModal })),
+);
+const ExtensionsModal = lazy(() =>
+  import("./components/ExtensionsModal").then((m) => ({ default: m.ExtensionsModal })),
 );
 const RoutineEditorModal = lazy(() =>
   import("./components/RoutineEditorModal").then((m) => ({ default: m.RoutineEditorModal })),
@@ -2331,6 +2334,8 @@ export default function App() {
     name: string;
     mode: "add" | "rename";
   } | null>(null);
+  // PostgreSQL の拡張機能ダイアログ (#2160) を開いているか。
+  const [extensionsOpen, setExtensionsOpen] = useState(false);
   // トランザクション開始時に実際に渡した DB (出力ログの execDatabase 用)。PG は begin に渡す値が
   // search_path 扱いでプロファイルの DB 名のため、再実行に使えず null を記録する。
   const txDatabaseRef = useRef<string | null>(null);
@@ -7878,9 +7883,7 @@ export default function App() {
               {translate("gridReplaceConfirmBody", { table: tab.table }) +
                 (findings.length > 0 ? `\n${translate("gridReplaceConfirmDanger")}` : "")}
             </chakra.p>
-            <CodePreview wrap maxH="40vh">
-              {sql}
-            </CodePreview>
+            <SqlPreview sql={sql} driver={selectedProfileRef.current?.driver ?? "mysql"} wrap maxH="40vh" />
           </>
         ),
         confirmLabel: translate("gridReplaceConfirmButton"),
@@ -8321,6 +8324,10 @@ export default function App() {
     },
     [sessionId],
   );
+  const handleManageExtensions = useCallback(() => {
+    if (!sessionId) return;
+    setExtensionsOpen(true);
+  }, [sessionId]);
   const handleCreateRoutine = useCallback(
     (database: string, kind: EditableObjectKind) => {
       if (!sessionId) return;
@@ -8947,9 +8954,12 @@ export default function App() {
             <chakra.p m={0} mb="3" whiteSpace="pre-line">
               {translate("chunkedDmlConfirmBody", { rows: info.total, size: info.batchSize })}
             </chakra.p>
-            <CodePreview wrap maxH="30vh">
-              {info.sql}
-            </CodePreview>
+            <SqlPreview
+              sql={info.sql}
+              driver={selectedProfileRef.current?.driver ?? "mysql"}
+              wrap
+              maxH="30vh"
+            />
           </>
         ),
         confirmLabel: translate("chunkedDmlConfirmButton"),
@@ -9000,9 +9010,12 @@ export default function App() {
             {translate(rebuild ? "alterTableConfirmBodyRebuild" : "alterTableConfirmBody")}
             <br />
             <br />
-            <CodePreview wrap maxH="40vh">
-              {sqls.join("\n")}
-            </CodePreview>
+            <SqlPreview
+              sql={sqls.join("\n")}
+              driver={selectedProfileRef.current?.driver ?? "mysql"}
+              wrap
+              maxH="40vh"
+            />
           </>,
         ),
         confirmLabel: translate("alterTableConfirmOk"),
@@ -9487,9 +9500,12 @@ export default function App() {
             {translate("maintenanceConfirmBody", { target: table })}
             <br />
             <br />
-            <CodePreview wrap maxH="40vh">
-              {command.sql}
-            </CodePreview>
+            <SqlPreview
+              sql={command.sql}
+              driver={selectedProfileRef.current?.driver ?? "mysql"}
+              wrap
+              maxH="40vh"
+            />
           </>,
         ),
         confirmLabel: translate("maintenanceConfirmOk"),
@@ -9517,9 +9533,12 @@ export default function App() {
             {translate("maintenanceConfirmBody", { target: label })}
             <br />
             <br />
-            <CodePreview wrap maxH="40vh">
-              {command.sql}
-            </CodePreview>
+            <SqlPreview
+              sql={command.sql}
+              driver={selectedProfileRef.current?.driver ?? "mysql"}
+              wrap
+              maxH="40vh"
+            />
           </>,
         ),
         confirmLabel: translate("maintenanceConfirmOk"),
@@ -9564,9 +9583,7 @@ export default function App() {
             )}
             <br />
             <br />
-            <CodePreview wrap maxH="40vh">
-              {sql}
-            </CodePreview>
+            <SqlPreview sql={sql} driver={selectedProfileRef.current?.driver ?? "mysql"} wrap maxH="40vh" />
           </>,
         ),
         confirmLabel: translate(
@@ -9616,9 +9633,7 @@ export default function App() {
             {translate("partitionAttachConfirmBody", vars)}
             <br />
             <br />
-            <CodePreview wrap maxH="40vh">
-              {sql}
-            </CodePreview>
+            <SqlPreview sql={sql} driver={selectedProfileRef.current?.driver ?? "mysql"} wrap maxH="40vh" />
           </>,
         ),
         confirmLabel: translate("attachPartitionConfirm"),
@@ -9764,9 +9779,12 @@ export default function App() {
             {translate("maintenanceConfirmBody", { target: database })}
             <br />
             <br />
-            <CodePreview wrap maxH="40vh">
-              {command.sql}
-            </CodePreview>
+            <SqlPreview
+              sql={command.sql}
+              driver={selectedProfileRef.current?.driver ?? "mysql"}
+              wrap
+              maxH="40vh"
+            />
           </>,
         ),
         confirmLabel: translate("maintenanceConfirmOk"),
@@ -10093,9 +10111,12 @@ export default function App() {
             {translate("batchMaintenanceConfirmBody", { count: commands.length, database })}
             <br />
             <br />
-            <CodePreview wrap maxH="40vh">
-              {commands.map((c) => c.command.sql).join("\n")}
-            </CodePreview>
+            <SqlPreview
+              sql={commands.map((c) => c.command.sql).join("\n")}
+              driver={selectedProfileRef.current?.driver ?? "mysql"}
+              wrap
+              maxH="40vh"
+            />
           </>,
         ),
         confirmLabel: translate("batchMaintenanceConfirmOk", { count: commands.length }),
@@ -12665,6 +12686,7 @@ export default function App() {
     onRunRoutine: handleRunRoutine,
     onEditRoutine: handleEditRoutine,
     onEditEnumType: handleEditEnumType,
+    onManageExtensions: handleManageExtensions,
     onCreateRoutine: handleCreateRoutine,
     onCreateSandbox: sessionId ? (db: string) => setSandboxCreateTarget({ database: db }) : undefined,
     onOpenSandbox: handleOpenSandbox,
@@ -13305,6 +13327,7 @@ export default function App() {
                         sessionId={sessionId}
                         driver={selectedProfile?.driver ?? "mysql"}
                         onExplain={explainTailSql}
+                        onManageExtensions={handleManageExtensions}
                       />
                     ) : activeBottomPanelTab === "whereUsed" ? (
                       <WhereUsedPanel
@@ -14742,6 +14765,37 @@ export default function App() {
                     }
                   }}
                   onClose={() => setEnumTypeEditor(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {extensionsOpen && sessionId && (
+              <Suspense fallback={null}>
+                <ExtensionsModal
+                  sessionId={sessionId}
+                  readOnly={readOnly}
+                  onExecute={async (sql, action, name) => {
+                    // 実行は通常のクエリ経路 (read_only の拒否はバックエンド)。失敗はダイアログが理由とヒントを表示する。
+                    await api.runQuery(sessionId, sql, null);
+                    invalidateSchemaCache(null);
+                    noteSchemaDdl(sql, selectedProfile?.database ?? null);
+                    connectionListRef.current?.refreshSchema();
+                    toast.success(
+                      translate("extensionsDone", {
+                        name,
+                        action: translate(
+                          action === "install"
+                            ? "extensionsInstall"
+                            : action === "update"
+                              ? "extensionsUpdate"
+                              : "extensionsDrop",
+                        ),
+                      }),
+                    );
+                  }}
+                  onClose={() => setExtensionsOpen(false)}
                 />
               </Suspense>
             )}

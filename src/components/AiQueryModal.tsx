@@ -40,7 +40,7 @@ import { Tooltip } from "./Tooltip";
 import { useCopyFeedback } from "./useCopyFeedback";
 import { formatSqlAsync } from "./sqlFormat";
 import { SqlCountCheck } from "./SqlCountCheck";
-import { SQL_TOKEN_STYLE, sqlHighlightSegments } from "./sqlHighlight";
+import { SqlPreview } from "./SqlPreview";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
@@ -897,17 +897,13 @@ export function AiQueryModal(props: AiQueryModalProps) {
                           _hover={{ bg: "app.hover", color: "app.text" }}
                         />
                       </Flex>
-                      <CodePreview wrap maxH="260px" data-testid="ai-query-sql">
-                        {sqlHighlightSegments(result.sql, props.driver).map((seg, i) =>
-                          seg.kind === null ? (
-                            seg.text
-                          ) : (
-                            <span key={i} style={SQL_TOKEN_STYLE[seg.kind]}>
-                              {seg.text}
-                            </span>
-                          ),
-                        )}
-                      </CodePreview>
+                      <SqlPreview
+                        sql={result.sql}
+                        driver={props.driver}
+                        wrap
+                        maxH="260px"
+                        data-testid="ai-query-sql"
+                      />
                       <SqlCountCheck
                         sessionId={props.sessionId}
                         database={database}
