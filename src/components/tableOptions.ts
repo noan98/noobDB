@@ -264,13 +264,20 @@ export function tableOptionProblems(
           out.push({ code: "partitionBound", error: "rangeEmpty" });
         } else if (
           p.method === "RANGE" &&
-          parts.length > 1 &&
-          parts.every((k) => k.column !== null) &&
-          parseListValues(p.to).length !== parts.length
+          parseListValues(p.to).length !==
+            (parts.length > 1 && parts.every((k) => k.column !== null) ? parts.length : 1)
         ) {
-          // RANGE COLUMNS (素の列 2 つ以上) は、境界の値の数がキーの列の数と一致する必要がある。
+          // RANGE COLUMNS (素の列 2 つ以上) は境界の値の数がキーの列の数と一致し、
+          // それ以外 (1 列・式) は LESS THAN の値が 1 つでなければならない。
           out.push({ code: "partitionBound", error: "rangeEmpty" });
         } else if (p.method === "LIST" && parseListValues(p.values).length === 0) {
+          out.push({ code: "partitionBound", error: "listEmpty" });
+        } else if (
+          p.method === "LIST" &&
+          parts.length > 1 &&
+          !parseListValues(p.values).every((v) => /^\(.*\)$/s.test(v.trim()))
+        ) {
+          // 複数列の LIST COLUMNS は値をタプル `(1, 'a'), (2, 'b')` で書く必要がある (平坦だと ER 1653)。
           out.push({ code: "partitionBound", error: "listEmpty" });
         }
       } else if (!/^\d+$/.test(p.modulus.trim()) || Number(p.modulus) < 1) {

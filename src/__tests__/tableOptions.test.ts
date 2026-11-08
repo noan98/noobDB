@@ -177,6 +177,24 @@ describe("MySQL の RANGE COLUMNS と外部キー", () => {
     );
   });
 
+  it("1 列・式のキーは LESS THAN の値が 1 つでないと問題になる", () => {
+    const single = (over: Partial<PartitionSpec>) =>
+      opts({ partition: part("mysql", { method: "RANGE", key: "id", firstName: "p0", ...over }) });
+    expect(tableOptionProblems("mysql", columns, single({ key: "y", to: "10, 20" }))).toEqual([
+      { code: "partitionBound", error: "rangeEmpty" },
+    ]);
+    expect(tableOptionProblems("mysql", columns, single({ key: "y", to: "MAXVALUE" }))).toEqual([]);
+  });
+
+  it("複数列の LIST COLUMNS は値をタプルで書かないと問題になる", () => {
+    const list = (values: string) =>
+      opts({ partition: part("mysql", { method: "LIST", key: "id, y", firstName: "p0", values }) });
+    expect(tableOptionProblems("mysql", columns, list("1, 2"))).toEqual([
+      { code: "partitionBound", error: "listEmpty" },
+    ]);
+    expect(tableOptionProblems("mysql", columns, list("(1, 2), (3, 4)"))).toEqual([]);
+  });
+
   const fk = {
     name: "",
     columns: ["y"],
