@@ -673,6 +673,12 @@ async fn run_action(
             {
                 return TaskOutcome::err(e.to_string());
             }
+            // SQLite は、アタッチ別名に当たらない database (古いタスクに残った MySQL 用の値など) を
+            // `main` 扱いにして修飾しない (#2152)。MySQL / PostgreSQL は値のまま。
+            let resolved_db: Option<String> = database
+                .as_deref()
+                .map(|d| session.conn.resolve_attached_database(d));
+            let database = &resolved_db;
             let statements = match maintenance::build_statements(
                 session.conn.driver_kind(),
                 database.as_deref(),
