@@ -877,3 +877,98 @@ describe("ConnectionForm ドライバ選択カード (#1503)", () => {
     expect(screen.getByTestId("connection-form-sqlite-path")).toBeInTheDocument();
   });
 });
+
+/**
+ * SQLite の ATTACH 設定は保存時に検証する (#2153)。別名が空・不正・重複、または 11 件以上のまま
+ * 保存すると、以後そのプロファイルに毎回接続できなくなるため、保存も接続テストも止めて FieldError を出す。
+ */
+describe("ConnectionForm SQLite attachments validation (#2153)", () => {
+  const saveProfile = vi.mocked(api.saveProfile);
+  const testConnection = vi.mocked(api.testConnection);
+  const base: ConnectionProfile = {
+    id: "sqlt0001",
+    name: "Local",
+    driver: "sqlite",
+    host: "",
+    port: 0,
+    user: "",
+    database: null,
+    ssh: null,
+    group: null,
+    color: null,
+    is_production: false,
+    confirm_writes: false,
+    read_only: false,
+    skip_history: false,
+    file_path: "/tmp/main.db",
+  };
+
+  beforeEach(() => {
+    saveProfile.mockReset();
+    testConnection.mockReset();
+  });
+
+  const renderWith = (attachments: { path: string; alias: string }[]) =>
+    renderWithProviders(
+      <ConnectionForm
+        initial={{ ...base, sqlite_attachments: attachments }}
+        profiles={[]}
+        onSaved={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+
+  it.each([
+    ["別名が空", [{ path: "/tmp/a.db", alias: "" }], "formSqliteAttachAliasRequired"],
+    ["別名が予約語", [{ path: "/tmp/a.db", alias: "main" }], "formSqliteAttachAliasInvalid"],
+    ["別名が数字始まり", [{ path: "/tmp/a.db", alias: "1abc" }], "formSqliteAttachAliasInvalid"],
+    [
+      "別名が重複",
+      [
+        { path: "/tmp/a.db", alias: "ext" },
+        { path: "/tmp/b.db", alias: "EXT" },
+      ],
+      "formSqliteAttachAliasDuplicate",
+    ],
+    ["パスが空", [{ path: "", alias: "ext" }], "formSqliteAttachPathRequired"],
+  ] as const)("%s のときは保存せず、行に FieldError を出す", async (_name, rows, key) => {
+    renderWith([...rows]);
+    fireEvent.click(screen.getByRole("button", { name: t("formSave") }));
+    expect(await screen.findByText(t(key))).toBeInTheDocument();
+    expect(saveProfile).not.toHaveBeenCalled();
+  });
+
+  it("問題があるときは接続テストも止める", async () => {
+    renderWith([{ path: "/tmp/a.db", alias: "" }]);
+    fireEvent.click(screen.getByRole("button", { name: t("formTest") }));
+    expect(await screen.findByText(t("formSqliteAttachAliasRequired"))).toBeInTheDocument();
+    expect(testConnection).not.toHaveBeenCalled();
+  });
+
+  it("入力途中 (保存を試す前) の空の別名は責めない", () => {
+    renderWith([{ path: "/tmp/a.db", alias: "" }]);
+    expect(screen.queryByText(t("formSqliteAttachAliasRequired"))).toBeNull();
+  });
+
+  it("10 件で「追加」を無効にし、11 件のまま保存しようとすると止める", async () => {
+    const ten = Array.from({ length: 10 }, (_, i) => ({ path: `/tmp/${i}.db`, alias: `a${i}` }));
+    renderWith(ten);
+    expect(screen.getByRole("button", { name: t("formSqliteAttachAdd") })).toBeDisabled();
+    // 上限を超えた既存設定 (古い版で保存されたもの) は、保存時にまとめて止める。
+    renderWith([...ten, { path: "/tmp/10.db", alias: "a10" }]);
+    fireEvent.click(screen.getAllByRole("button", { name: t("formSave") })[1]);
+    expect(await screen.findByText(t("formSqliteAttachTooMany", { max: 10 }))).toBeInTheDocument();
+    expect(saveProfile).not.toHaveBeenCalled();
+  });
+
+  it("問題が無ければ、空行を除いて保存する", async () => {
+    saveProfile.mockResolvedValue({} as never);
+    renderWith([
+      { path: "/tmp/a.db", alias: " ext " },
+      { path: " ", alias: "" },
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: t("formSave") }));
+    await waitFor(() => expect(saveProfile).toHaveBeenCalled());
+    expect(saveProfile.mock.calls[0][0].sqlite_attachments).toEqual([{ path: "/tmp/a.db", alias: "ext" }]);
+  });
+});
