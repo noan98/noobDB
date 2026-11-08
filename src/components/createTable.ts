@@ -15,6 +15,12 @@ import {
   type CheckDef,
   type ForeignKeyDef,
 } from "./tableConstraints";
+import {
+  tableOptionExtraStatements,
+  tableOptionSuffix,
+  usesUnlogged,
+  type TableOptions,
+} from "./tableOptions";
 
 export interface ColumnDef {
   name: string;
@@ -121,6 +127,12 @@ export interface CreateTableForm {
   foreignKeys?: ForeignKeyDef[];
   /** CHECK 制約 (#1191)。式が空の行は無視する。 */
   checks?: CheckDef[];
+  /**
+   * テーブルオプション (#2161): MySQL の ENGINE / CHARSET / COLLATE・PostgreSQL の UNLOGGED・
+   * SQLite の STRICT / WITHOUT ROWID・パーティション表。省略は従来どおり何も付けない。
+   * 入力の不備は `tableOptionProblems` が返す (SQL 生成は検証済みの前提)。
+   */
+  options?: TableOptions;
 }
 
 const NUMERIC_TYPE_RE =
@@ -222,8 +234,10 @@ export function buildCreateTableSql(driver: string, form: CreateTableForm): stri
 
   // SQLite の AUTOINCREMENT は単一 INTEGER PRIMARY KEY のときだけ有効。その場合は
   // インライン宣言にし、テーブルレベルの PRIMARY KEY 制約は付けない。
+  // WITHOUT ROWID の表では AUTOINCREMENT を使えないので、この特殊形にしない (#2161)。
   const sqliteAutoPk =
     driver === "sqlite" &&
+    !form.options?.withoutRowid &&
     pkCols.length === 1 &&
     pkCols[0].autoIncrement &&
     cols.filter((c) => c.autoIncrement && !activeGenerated(c)).length === 1;
@@ -245,7 +259,13 @@ export function buildCreateTableSql(driver: string, form: CreateTableForm): stri
   }
 
   const name = qualifiedTableName(driver, form.database, form.table);
-  return `CREATE TABLE ${name} (\n  ${lines.join(",\n  ")}\n);`;
+  const opts = form.options;
+  const unlogged = opts && usesUnlogged(driver, opts) ? "UNLOGGED " : "";
+  const suffix = opts ? tableOptionSuffix(driver, cols, opts) : "";
+  const create = `CREATE ${unlogged}TABLE ${name} (\n  ${lines.join(",\n  ")}\n)${suffix};`;
+  // PostgreSQL の最初の子パーティションは、親の後ろの別の文になる。
+  const extra = opts ? tableOptionExtraStatements(driver, form.database, form.table, opts) : [];
+  return [create, ...extra].join("\n");
 }
 
 function columnLine(driver: string, col: ColumnDef, opts: { sqliteAutoPk: boolean }): string {

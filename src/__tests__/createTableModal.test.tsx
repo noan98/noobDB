@@ -213,3 +213,46 @@ describe("CreateTableModal 動的行の出入り (#2014)", () => {
     await waitFor(() => expect(screen.queryAllByLabelText(t("constraintCheckExpr"))).toHaveLength(0));
   });
 });
+
+describe("CreateTableModal テーブルオプション (#2161)", () => {
+  const renderFor = (driver: "mysql" | "postgres" | "sqlite") =>
+    renderWithProviders(
+      <CreateTableModal
+        driver={driver}
+        database={driver === "mysql" ? "appdb" : null}
+        readOnly={false}
+        onRun={() => {}}
+        onSendToEditor={() => {}}
+        onClose={() => {}}
+      />,
+    );
+  const fillName = () =>
+    fireEvent.change(screen.getByLabelText(t("createTableName")), { target: { value: "ev" } });
+
+  it("MySQL: ENGINE / CHARSET が CREATE 文の末尾へ反映される", () => {
+    renderFor("mysql");
+    fillName();
+    fireEvent.change(screen.getByLabelText("ENGINE"), { target: { value: "InnoDB" } });
+    fireEvent.change(screen.getByLabelText("CHARSET"), { target: { value: "utf8mb4" } });
+    expect(screen.getByText(/ENGINE=InnoDB/)).toBeInTheDocument();
+    expect(screen.getByText(/CHARSET=utf8mb4/)).toBeInTheDocument();
+  });
+
+  it("PostgreSQL: UNLOGGED を入れると CREATE UNLOGGED TABLE になる", () => {
+    renderFor("postgres");
+    fillName();
+    fireEvent.click(screen.getByLabelText("UNLOGGED"));
+    expect(screen.getByText(/CREATE UNLOGGED TABLE/)).toBeInTheDocument();
+  });
+
+  it("SQLite: STRICT で非対応の型の列があるとエラーを出す", () => {
+    renderFor("sqlite");
+    fillName();
+    fireEvent.change(screen.getAllByLabelText(new RegExp(`^${t("createTableColName")} \\(`))[0], {
+      target: { value: "a" },
+    });
+    fireEvent.click(screen.getByLabelText("STRICT"));
+    fireEvent.change(screen.getByLabelText("Type (1)"), { target: { value: "VARCHAR(10)" } });
+    expect(screen.getByText(/STRICT tables allow only/)).toBeInTheDocument();
+  });
+});
