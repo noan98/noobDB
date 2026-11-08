@@ -1207,3 +1207,27 @@ describe("ConnectionList: 派生接続 (別データベースを開く, #2018)",
     expect(screen.queryByText(t("contextMenuDelete"))).toBeNull();
   });
 });
+
+describe("ConnectionList: SQLite のアタッチ DB (#2154)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it("アタッチ別名の行にだけ ATTACH バッジを出す", async () => {
+    vi.mocked(api.listDatabases).mockResolvedValue(["main", "archive"]);
+    const profile = makeProfile({
+      id: "p-a",
+      name: "Alpha DB",
+      driver: "sqlite",
+      sqlite_attachments: [{ path: "/data/archive.db", alias: "Archive" }],
+    });
+    renderWithProviders(
+      <ConnectionList {...baseProps} profiles={[profile]} activeProfileId="p-a" sessionId="s1" />,
+    );
+    const archive = await screen.findByRole("treeitem", { name: "archive" });
+    expect(within(archive).getByTestId("tree-attach-badge")).toHaveTextContent(t("treeAttachBadge"));
+    const main = screen.getByRole("treeitem", { name: "main" });
+    expect(within(main).queryByTestId("tree-attach-badge")).toBeNull();
+  });
+});

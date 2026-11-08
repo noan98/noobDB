@@ -14,6 +14,7 @@ import {
   SqliteAttachment,
   SslMode,
 } from "../api/tauri";
+import { LiveRow, LiveRowsPresence } from "./LiveRows";
 import {
   attachmentsProblem,
   attachRowProblem,
@@ -476,6 +477,17 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [attachments, setAttachments] = useState<SqliteAttachment[]>(initial?.sqlite_attachments ?? []);
   // 保存 / 接続テストを一度試したら、未入力の別名・パスも行のエラーに出す (入力途中は責めない, #2153)。
   const [attachChecked, setAttachChecked] = useState(false);
+  // 添付行の出入りをアニメーションするための安定キー (attachments と同じ並び, #2154)。
+  const attachKeySeq = useRef(attachments.length);
+  const [attachKeys, setAttachKeys] = useState<string[]>(() => attachments.map((_, i) => `att${i}`));
+  const addAttachment = () => {
+    setAttachKeys((prev) => [...prev, `att${attachKeySeq.current++}`]);
+    setAttachments((prev) => [...prev, { path: "", alias: "" }]);
+  };
+  const removeAttachment = (index: number) => {
+    setAttachKeys((prev) => prev.filter((_, j) => j !== index));
+    setAttachments((prev) => prev.filter((_, j) => j !== index));
+  };
   const [group, setGroup] = useState(initial?.group ?? "");
   const [color, setColor] = useState<string | null>(initial?.color ?? null);
   const [isProduction, setIsProduction] = useState<boolean>(initial?.is_production ?? false);
@@ -1189,50 +1201,52 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
           </Box>
           <Box mt="3" data-testid="connection-form-sqlite-attachments">
             <FieldLabel as="div">{t("formSqliteAttachLegend")}</FieldLabel>
-            {attachments.map((a, i) => {
-              const aliasProblem = attachRowProblem(attachments, i, attachChecked);
-              return (
-                // 行に安定した ID は無い (パスも別名も編集中に変わる) ので位置をキーにする。
-                <Box key={i} mb="2">
-                  <Flex gap="2" align="end">
-                    <Input
-                      aria-label={t("formSqliteAttachPath")}
-                      value={a.path}
-                      onChange={(e) => updateAttachment(i, { path: e.target.value })}
-                      placeholder={t("formSqliteFilePathPlaceholder")}
-                    />
-                    <Button type="button" onClick={() => pickAttachFile(i)}>
-                      {t("formBrowse")}
-                    </Button>
-                    <Input
-                      aria-label={t("formSqliteAttachAlias")}
-                      placeholder={t("formSqliteAttachAlias")}
-                      width="40"
-                      flexShrink={0}
-                      fontFamily="mono"
-                      value={a.alias}
-                      aria-invalid={aliasProblem && aliasProblem !== "pathRequired" ? true : undefined}
-                      onChange={(e) => updateAttachment(i, { alias: e.target.value })}
-                    />
-                    <Button
-                      type="button"
-                      onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
-                    >
-                      {t("formSqliteAttachRemove")}
-                    </Button>
-                  </Flex>
-                  {aliasProblem && (
-                    <FieldError display="block" mt="1">
-                      {t(ATTACH_PROBLEM_KEYS[aliasProblem])}
-                    </FieldError>
-                  )}
-                </Box>
-              );
-            })}
+            <LiveRowsPresence>
+              {attachments.map((a, i) => {
+                const aliasProblem = attachRowProblem(attachments, i, attachChecked);
+                return (
+                  <LiveRow key={attachKeys[i] ?? `att-fallback-${i}`}>
+                    <Box>
+                      <Flex gap="2" align="end">
+                        <Input
+                          aria-label={t("formSqliteAttachPath")}
+                          value={a.path}
+                          aria-invalid={aliasProblem === "pathRequired" ? true : undefined}
+                          onChange={(e) => updateAttachment(i, { path: e.target.value })}
+                          placeholder={t("formSqliteFilePathPlaceholder")}
+                        />
+                        <Button type="button" onClick={() => pickAttachFile(i)}>
+                          {t("formBrowse")}
+                        </Button>
+                        <Input
+                          aria-label={t("formSqliteAttachAlias")}
+                          placeholder={t("formSqliteAttachAlias")}
+                          width="40"
+                          flexShrink={0}
+                          fontFamily="mono"
+                          value={a.alias}
+                          aria-invalid={aliasProblem && aliasProblem !== "pathRequired" ? true : undefined}
+                          onChange={(e) => updateAttachment(i, { alias: e.target.value })}
+                        />
+                        <Button type="button" onClick={() => removeAttachment(i)}>
+                          {t("formSqliteAttachRemove")}
+                        </Button>
+                      </Flex>
+                      {aliasProblem && (
+                        <FieldError display="block" mt="1">
+                          {t(ATTACH_PROBLEM_KEYS[aliasProblem])}
+                        </FieldError>
+                      )}
+                    </Box>
+                  </LiveRow>
+                );
+              })}
+            </LiveRowsPresence>
             <Button
               type="button"
               disabled={attachments.length >= MAX_ATTACHED}
-              onClick={() => setAttachments((prev) => [...prev, { path: "", alias: "" }])}
+              onClick={addAttachment}
+              mt="2"
             >
               {t("formSqliteAttachAdd")}
             </Button>

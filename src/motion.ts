@@ -57,6 +57,8 @@ import type { Transition, Variants } from "motion/react";
  * - サイドバー / ボトムパネル (#1952) のタブ切替の中身 (`KeepAlive` の `slideDirection` / `App` の接続タブ — `directionalSlide`、
  *   #1830)。滑るインジケータと同じ向きに、表示へ切り替わる側だけスライド + フェードで入る
  *   (再マウントしない)。reduced-motion では x 移動が止まり、opacity の短いフェードは残る。
+ * - ヘルプ (`HelpView`、#2156) の目次の滑るインジケータ (`ActiveRowHighlight` の layoutId) と、詳細ペインの方向付きクロスフェード
+ *   (`AnimatePresence mode="wait"` + `directionalSlide`)。後ろの項目へは右から、前へは左から入る。reduced-motion では即時に切り替える。
  * - モーダル/ダイアログの開閉 (`Modal` — `variants.dialog` / `fade`)。
  * - タブの追加/削除とアクティブインジケータ (`TabBar` — `layout` / `layoutId`)。
  * - トースト通知の出入り (`Toast` — `transitions.emphasized`)。

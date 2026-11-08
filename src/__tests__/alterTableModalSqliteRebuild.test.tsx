@@ -67,12 +67,12 @@ vi.mock("../api/tauri", async (importOriginal) => {
 import { api } from "../api/tauri";
 import { AlterTableModal } from "../components/AlterTableModal";
 
-function renderModal(onRun = vi.fn()) {
+function renderModal(onRun = vi.fn(), database = "main") {
   renderWithProviders(
     <AlterTableModal
       sessionId="s1"
       driver="sqlite"
-      database="main"
+      database={database}
       table="t"
       readOnly={false}
       onRun={onRun}
@@ -157,6 +157,18 @@ describe("AlterTableModal SQLite のテーブル再作成 (#1888)", () => {
       await screen.findByText(new RegExp(t("alterTableRebuildErrAttachedUnsupported").slice(0, 12))),
     ).toBeInTheDocument();
     expect(screen.queryByText(/rebuild_error/)).toBeNull();
+  });
+
+  it("アタッチ DB では計画を問い合わせず、理由を先に出して実行できない (#2154)", async () => {
+    vi.mocked(api.planSqliteTableRebuild).mockClear();
+    renderModal(vi.fn(), "archive");
+    const typeInput = (await screen.findAllByLabelText(new RegExp(`${t("createTableColType")}: memo`)))[0];
+    fireEvent.change(typeInput, { target: { value: "INTEGER" } });
+    expect(await screen.findByTestId("alter-rebuild-attached-unsupported")).toHaveTextContent(
+      t("attachedUnsupportedRebuild"),
+    );
+    await new Promise((r) => setTimeout(r, 400));
+    expect(api.planSqliteTableRebuild).not.toHaveBeenCalled();
   });
 
   it("生成中は実行できない", async () => {

@@ -548,6 +548,38 @@ describe("design tokens: フォーカスリング (#1162)", () => {
     ).toEqual([]);
   });
 
+  it("_focusVisible / :focus-visible で outline を手書きしない (#2156)", () => {
+    // 既存のガードは box-shadow しか見ないので、`outline: "2px solid"` + `outlineColor: "app.accent"` の
+    // 手書きリング (ヘルプの目次で発生) が素通りしていた。リングは `outline: "none"` + var(--focus-ring) に揃える。
+    const OUTLINE_NEAR = /outline\s*:\s*"([^"]*)"/g;
+    const offenders: string[] = [];
+    for (const [path, content] of sources) {
+      const focusRe = new RegExp(FOCUS_SELECTOR.source, "g");
+      let fm: RegExpExecArray | null;
+      while ((fm = focusRe.exec(content))) {
+        // `_focusVisible: { ... }` / `_focusVisible={{ ... }}` のオブジェクト 1 個ぶんだけを見る。
+        const open = content.indexOf("{", fm.index);
+        if (open < 0 || open - fm.index > 20) continue;
+        let depth = 0;
+        let end = open;
+        for (; end < content.length; end++) {
+          if (content[end] === "{") depth++;
+          else if (content[end] === "}" && --depth === 0) break;
+        }
+        const body = content.slice(open, end + 1);
+        for (const om of body.matchAll(OUTLINE_NEAR)) {
+          if (om[1].trim() === "none" || om[1].trim() === "0") continue;
+          const line = content.slice(0, open + (om.index ?? 0)).split("\n").length;
+          offenders.push(`${toDisplayPath(path)}:${line}: outline: ${JSON.stringify(om[1])}`);
+        }
+      }
+    }
+    expect(
+      offenders,
+      "キーボードフォーカスの枠は outline を手書きせず、outline: none + boxShadow: var(--focus-ring) にする。",
+    ).toEqual([]);
+  });
+
   it("_focus / :focus でも box-shadow に手書きの color-mix リングを使わない (#1618)", () => {
     // `_focus` (マウスクリックでも出る) の枠を `0 0 0 1px color-mix(...)` で組んだ旧実装の再発防止。
     const offenders = findViolations(/boxShadow\s*[:=]\s*\{?"0 0 0 1px color-mix\(/, () => true);

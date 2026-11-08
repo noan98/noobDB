@@ -166,6 +166,7 @@ DB に触れず実行もしない (UI のプレビュー専用)。両環境の�
 - `list_table_partitions` (パーティション表の子パーティション・境界・サイズ、SQLite は非対応、#1868)
 - `schema_overview`
 - `foreign_keys`
+- `list_extensions` (PostgreSQL の拡張機能: 導入済み (バージョン / スキーマ) とサーバが提供できるもの (既定のバージョン / 更新の可否) + `shared_preload_libraries`。PostgreSQL 専用で他ドライバは `InvalidInput`、#2160)
 - `list_schema_objects`
 - `get_object_definition`
 - `list_indexes`
@@ -253,6 +254,10 @@ MySQL のみ `kind = "event"` (イベントスケジューラの EVENT, #2100) �
 (`ENABLED · EVERY 1 DAY`) を載せる。`get_object_definition` は `SHOW CREATE EVENT` の本文を返す。PostgreSQL / SQLite は event を返さず
 (スキーマ比較の「対象外」一覧にも出さない)、スキーマ比較 (`ObjectDiff`) の比較・同期の対象は MySQL の event のみ。
 イベントもツリー専用の種別で、Where-used の走査対象には入らない。
+
+拡張機能の導入・更新・削除は新しい IPC を足さず、UI (`ExtensionsModal` / `extensionSql.ts`) が組み立てた `CREATE EXTENSION [IF NOT EXISTS] ... [SCHEMA ...] [CASCADE]` /
+`ALTER EXTENSION ... UPDATE` / `DROP EXTENSION [CASCADE]` を `run_query` で流す (read_only の拒否はバックエンド。権限不足は `errorHints` の
+`errorHintInsufficientPrivilege` が `permission denied to create extension` も拾って案内する)。pg_stat_statements が無い / 読めないときのインスペクタの空状態からこのダイアログへ誘導する。
 
 PostgreSQL のみ `kind = "type"` (ユーザー定義型: ENUM / DOMAIN / 複合型 / 範囲型, #2127) も返し、`SchemaObject.detail` に
 `enum` / `domain` / `composite` / `range` を載せる。拡張が持つ型・表の行型・配列型・範囲型が自動で作るコンストラクタ関数は出さない。
