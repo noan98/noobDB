@@ -27,7 +27,8 @@ import {
 } from "./alterTable";
 import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
+import { ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, Checkbox, Input, PressableButton, Switch } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
 import { Callout } from "./Callout";
@@ -1261,7 +1262,12 @@ export function AlterTableModal({
 
               <FormSection>
                 <FieldLabel as="div">{t("alterTablePreview")}</FieldLabel>
-                <CodePreview minH="60px">{sqlPreview || t("alterTablePreviewEmpty")}</CodePreview>
+                <SqlPreview
+                  sql={sqlPreview}
+                  driver={driver}
+                  empty={t("alterTablePreviewEmpty")}
+                  minH="60px"
+                />
               </FormSection>
               <AlterPrecheckNotice
                 prechecks={prechecks}

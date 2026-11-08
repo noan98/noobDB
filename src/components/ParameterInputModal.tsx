@@ -14,7 +14,8 @@ import {
 } from "../queryParams";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Callout } from "./Callout";
-import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
+import { FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, Input, PressableButton, Textarea } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
 import { Tooltip } from "./Tooltip";
@@ -296,9 +297,7 @@ export function ParameterInputModal({ sql, driver, onSubmit, onRunRaw, onCancel 
 
         <FormSection>
           <FieldLabel as="div">{t("parameterInputPreviewLabel")}</FieldLabel>
-          <CodePreview wrap maxH="160px">
-            {preview}
-          </CodePreview>
+          <SqlPreview sql={preview} driver={driver} wrap maxH="160px" />
           <chakra.span fontSize="xs" color="app.textMuted">
             {t("parameterInputEscapeNote")}
           </chakra.span>

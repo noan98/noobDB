@@ -343,14 +343,15 @@ Bottom Panel に足すときは:
 | フィールド単位のバリデーションエラー | `FieldError` (`role="alert"` 込み) |
 | 操作をブロックする持続的エラー | `ErrorNote` (= `Callout tone="danger"`) |
 | 危険以外の状態の帯 (成功 / 警告 / 情報) | `Callout` (`components/Callout.tsx`) |
-| SQL / エクスポート内容のプレビュー | `CodePreview` (`wrap` で折り返し、高さは `minH` / `maxH`) |
+| エクスポート内容 / SQL 以外のコードのプレビュー | `CodePreview` (`wrap` で折り返し、高さは `minH` / `maxH`) |
+| SQL (DDL / DML) のプレビュー | `SqlPreview` (`components/SqlPreview.tsx`、`CodePreview` + エディタと同じ `--syntax-*` 配色。`sql` と `driver` を渡す。1 万行 / 50 万文字超は単色) (#2157) |
 
 例外はチェックボックス / ラジオを包む `<label>` (コントロールの一部であって
 フィールドラベルではないので本文サイズのまま) と、設定画面の行
 (`SettingsView` の `SettingsNumberRow` 等が `& label` でまとめてスタイルを持つ)。
 
 **モーダルの外 (接続フォーム・スニペットフォーム・Bottom Panel の各パネル) でも同じ
-プリミティブを使う** (#1114)。SQL / 生成コードの表示は `CodePreview`、入力エラーは
+プリミティブを使う** (#1114)。SQL の表示は `SqlPreview` (未移行の既存箇所は `CodePreview` のまま段階移行中、#2157)、SQL 以外の生成コードは `CodePreview`、入力エラーは
 `FieldError`、操作を止めるエラーは `ErrorNote role="alert"`。`role="alert"` を
 `<Text>` / `<chakra.div>` に手書きしない。例外は値そのものを見せるビューア
 (`CellValueViewer` / `RowInspector` / `ExplainViewer` など) の `<pre>` と、結果グリッド

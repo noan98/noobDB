@@ -19,7 +19,8 @@ import { Callout } from "./Callout";
  * | 入力 + 参照ボタンの横並び | `PathRow` |
  * | フィールド単位のバリデーションエラー | `FieldError` (`role="alert"` 込み) |
  * | 操作をブロックする持続的エラー | `ErrorNote` |
- * | SQL / エクスポート内容のプレビュー | `CodePreview` |
+ * | SQL (DDL / DML) のプレビュー | `SqlPreview` (`components/SqlPreview.tsx`) |
+ * | エクスポート内容 / SQL 以外のコードのプレビュー | `CodePreview` |
  */
 
 /** モーダル内のフィールドブロック (縦積み)。 */

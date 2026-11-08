@@ -57,3 +57,20 @@ export function sqlHighlightSegments(sql: string, driver: string): SqlHighlightS
   );
   return out;
 }
+
+/**
+ * これを超える SQL は色分けせず単色で表示する (#2157)。lezer での解析と数万個の `<span>` 生成が、
+ * モーダルの入力操作を妨げないようにする安全弁。行数 (1 万行) か文字数のどちらかで判定する。
+ */
+export const SQL_HIGHLIGHT_MAX_LINES = 10_000;
+export const SQL_HIGHLIGHT_MAX_CHARS = 500_000;
+
+/** `sql` を色分けしてよい大きさか。上限ちょうどは色分けし、超えたら単色。 */
+export function shouldHighlightSql(sql: string): boolean {
+  if (sql.length > SQL_HIGHLIGHT_MAX_CHARS) return false;
+  let lines = 1;
+  for (let i = sql.indexOf("\n"); i !== -1; i = sql.indexOf("\n", i + 1)) {
+    if (++lines > SQL_HIGHLIGHT_MAX_LINES) return false;
+  }
+  return true;
+}
