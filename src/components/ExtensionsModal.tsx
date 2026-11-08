@@ -139,10 +139,16 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
     drop: t("extensionsDrop"),
   };
   const destructive = step ? isDestructiveExtensionAction(step.action) : false;
+  // 一覧から確認画面へ切り替わったとき、破壊的ならキャンセルへ初期フォーカスを移す
+  // (initialFocusEl はモーダルを開いたときにしか評価されない)。
+  useEffect(() => {
+    if (step && isDestructiveExtensionAction(step.action)) cancelRef.current?.focus();
+  }, [step]);
 
   return (
     <Modal
-      onSubmit={run}
+      // 破壊的な確認画面ではショートカット (Cmd/Ctrl+Enter) で実行させない。
+      onSubmit={step && destructive ? undefined : run}
       submitDisabled={!canRun}
       width="720px"
       onClose={onClose}

@@ -125,6 +125,17 @@ describe("ExtensionsModal", () => {
     expect(onExecute).toHaveBeenCalledWith('DROP EXTENSION "pg_trgm" CASCADE', "drop", "pg_trgm");
   });
 
+  it("削除の確認画面ではキャンセルにフォーカスが移り、Cmd/Ctrl+Enter では実行しない", async () => {
+    const user = userEvent.setup();
+    const { onExecute } = setup();
+    await screen.findByText("pg_trgm");
+    await user.click(screen.getByRole("button", { name: t("extensionsDrop") }));
+    expect(screen.getByRole("button", { name: t("extensionsCancel") })).toHaveFocus();
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await user.keyboard("{Meta>}{Enter}{/Meta}");
+    expect(onExecute).not.toHaveBeenCalled();
+  });
+
   it("実行に失敗したら理由と権限不足のヒントを出し、手順は閉じない", async () => {
     const user = userEvent.setup();
     setup({
