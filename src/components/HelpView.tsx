@@ -1,6 +1,6 @@
 import { useId, useRef, useState, type KeyboardEvent } from "react";
 import { chakra } from "@chakra-ui/react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotionConfig } from "motion/react";
 import { directionalSlide, transitions } from "../motion";
 import { useT } from "../i18n";
 import {
@@ -328,7 +328,7 @@ const NavItem = chakra("button", {
     lineHeight: "var(--leading-normal)",
     cursor: "pointer",
     _hover: { background: "app.hover", color: "app.text" },
-    _focusVisible: { outline: "none", boxShadow: "inset var(--focus-ring)" },
+    _focusVisible: { outline: "none", boxShadow: "var(--focus-ring)" },
     "&[aria-current=true]": { color: "app.text", fontWeight: 600 },
   },
 });
@@ -377,7 +377,7 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
   // 詳細ペインの入場方向。目次で後ろへ進むとき +1 (右から)、前へ戻るとき -1 (左から)。
   const [slideDir, setSlideDir] = useState(0);
   // reduced-motion (OS 設定とアプリ内設定の両方) では opacity の補間も止めて即時に切り替える。
-  const reducedMotion = useReducedMotion() ?? false;
+  const reducedMotion = useReducedMotionConfig() ?? false;
   const searchRef = useRef<HTMLInputElement>(null);
   const navRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLDivElement>(null);
@@ -411,7 +411,6 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
 
   const select = (id: string, focus = false) => {
     const to = orderedIds.indexOf(id);
-
     if (to >= 0 && currentIndex >= 0 && to !== currentIndex) setSlideDir(to > currentIndex ? 1 : -1);
     setSelected(id);
     if (focus) navRef.current?.querySelector<HTMLElement>(`[data-help-id="${id}"]`)?.focus();
