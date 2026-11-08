@@ -4,6 +4,7 @@ import type { TaskMaintenanceKind } from "../api/tauri";
 import { maintenanceKindsForDriver } from "../taskFormat";
 import {
   buildTaskMaintenanceStatements,
+  resolveTaskDatabase,
   isMaintenanceSupported,
   maintenanceImpact,
   TASK_MAINTENANCE_ORDER,
@@ -12,9 +13,15 @@ import {
 describe("buildTaskMaintenanceStatements (#2096)", () => {
   it("Rust の build_statements と共有ゴールデンベクタで一致する", () => {
     for (const c of vectors.cases) {
-      const got = buildTaskMaintenanceStatements(
+      // `attached` (SQLite のアタッチ別名) があれば Rust と同じく先に database を正す (#2152)。
+      const database = resolveTaskDatabase(
         c.driver,
         c.database,
+        "attached" in c ? (c.attached as string[]) : [],
+      );
+      const got = buildTaskMaintenanceStatements(
+        c.driver,
+        database,
         c.targets,
         c.kind as TaskMaintenanceKind,
       );

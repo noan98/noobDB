@@ -300,11 +300,14 @@ export function QueryInspectorPanel({
   sessionId,
   driver,
   onExplain,
+  onManageExtensions,
 }: {
   sessionId: string;
   driver: string;
   /** ライブテールの原文を EXPLAIN タブで開く (#1622)。 */
   onExplain?: (sql: string, database: string | null) => void;
+  /** PostgreSQL の拡張機能ダイアログを開く (#2160)。pg_stat_statements が無い / 読めないときの導線。 */
+  onManageExtensions?: () => void;
 }) {
   const t = useT();
   const toast = useToast();
@@ -595,6 +598,16 @@ export function QueryInspectorPanel({
               })}
             </chakra.p>
           )}
+          {driver === "postgres" &&
+            onManageExtensions &&
+            (support.statements_reason === "pg_stat_statements_missing" ||
+              support.statements_reason === "pg_stat_statements_not_preloaded") && (
+              <Flex>
+                <Button type="button" variant="secondary" size="sm" onClick={onManageExtensions}>
+                  {t("inspectorManageExtensions")}
+                </Button>
+              </Flex>
+            )}
 
           <Flex align="center" gap="3" flexWrap="wrap">
             {recording ? (

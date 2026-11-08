@@ -1866,3 +1866,106 @@ describe("シナリオ: WHERE 付き DELETE の子行影響の確認 (#1767)", (
     expect(document.querySelector('[data-testid="ref-impact-list"]')).toBeNull();
   });
 });
+
+describe("シナリオ: エディタ外の実行入口もパラメータ入力を通る (#2151, 実ブラウザ)", () => {
+  const runSqls = () =>
+    invocationsOf("run_query_stream").map((a) => String((a as { sql?: unknown }).sql ?? ""));
+
+  it("エディタ外にフォーカスがあっても Ctrl+Shift+Enter で入力モーダルが開き、値を入れると展開後の SQL が送られる", async () => {
+    registerAutoStream();
+    localStorage.setItem(
+      `noobdb.tabs.${ALPHA.id}`,
+      JSON.stringify({
+        panes: [
+          {
+            tabs: [{ kind: "query", title: "Param", sql: "SELECT * FROM fruits WHERE id = {{cid}}" }],
+            activeIndex: 0,
+          },
+        ],
+        activePane: 0,
+      }),
+    );
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await expect.element(screen.getByRole("tab", { name: /Param/ })).toBeVisible();
+    // エディタにフォーカスが無い状態 (グローバルのハンドラだけが拾う) にする。
+    (document.activeElement as HTMLElement | null)?.blur();
+    await userEvent.keyboard("{Control>}{Shift>}{Enter}{/Shift}{/Control}");
+
+    const input = screen.getByRole("textbox", { name: t("parameterInputValueLabelFor", { name: "cid" }) });
+    await expect.element(input).toBeVisible();
+    // モーダルが開いている間は生の SQL を送らない。
+    expect(runSqls().some((sql) => sql.includes("{{cid}}"))).toBe(false);
+    await userEvent.type(input, "42");
+    await screen.getByRole("button", { name: t("parameterInputRun") }).click();
+    await vi.waitFor(() => expect(runSqls().some((sql) => sql.includes("id = '42'"))).toBe(true), {
+      timeout: 5000,
+    });
+    expect(runSqls().some((sql) => sql.includes("{{cid}}"))).toBe(false);
+  });
+
+  /** スニペット 1 件を登録して、一覧の実行ボタンを押す。 */
+  async function runSnippetFromList(sql: string) {
+    registerAutoStream();
+    onCommand("list_snippets", () => [
+      { id: "sn-1", name: "ByCustomer", folder: null, tags: [], sql, driver: null, scope: { kind: "any" } },
+    ]);
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await screen.getByRole("tab", { name: t("sidebarTabSnippets") }).click();
+    // 実行ボタンは行のホバーで現れ、それまで名前の span が重なっている。
+    (screen.getByRole("button", { name: t("snippetMenuRun") }).element() as HTMLElement).click();
+    return screen;
+  }
+
+  it("スニペットの実行ボタンは {{name}} の入力モーダルを開き、値を入れると展開後の SQL が送られる", async () => {
+    const screen = await runSnippetFromList("SELECT * FROM fruits WHERE customer_id = {{customer_id}}");
+    const input = screen.getByRole("textbox", {
+      name: t("parameterInputValueLabelFor", { name: "customer_id" }),
+    });
+    await expect.element(input).toBeVisible();
+    expect(runSqls().some((sql) => sql.includes("customer_id"))).toBe(false);
+    await userEvent.type(input, "7");
+    await screen.getByRole("button", { name: t("parameterInputRun") }).click();
+    await vi.waitFor(() => expect(runSqls().some((sql) => sql.includes("customer_id = '7'"))).toBe(true), {
+      timeout: 5000,
+    });
+  });
+
+  it("スニペットのネイティブ ? も入力モーダルを開き、「展開せずにそのまま実行」で元の SQL が送られる", async () => {
+    const screen = await runSnippetFromList("SELECT * FROM fruits WHERE customer_id = ?");
+    await expect.element(screen.getByRole("button", { name: t("parameterInputRunRaw") })).toBeVisible();
+    expect(runSqls().some((sql) => sql.includes("customer_id"))).toBe(false);
+    await screen.getByRole("button", { name: t("parameterInputRunRaw") }).click();
+    await vi.waitFor(() => expect(runSqls().some((sql) => sql.includes("customer_id = ?"))).toBe(true), {
+      timeout: 5000,
+    });
+  });
+
+  it("プレースホルダの無いスニペットは入力モーダルを出さず、すぐ実行される", async () => {
+    registerAutoStream();
+    onCommand("list_snippets", () => [
+      {
+        id: "sn-2",
+        name: "Plain",
+        folder: null,
+        tags: [],
+        sql: "SELECT * FROM fruits",
+        driver: null,
+        scope: { kind: "any" },
+      },
+    ]);
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await screen.getByRole("tab", { name: t("sidebarTabSnippets") }).click();
+    // 実行ボタンは行のホバーで現れ、それまで名前の span が重なっている。
+    (screen.getByRole("button", { name: t("snippetMenuRun") }).element() as HTMLElement).click();
+    await vi.waitFor(
+      () => expect(runSqls().some((sql) => sql.startsWith("SELECT * FROM fruits"))).toBe(true),
+      {
+        timeout: 5000,
+      },
+    );
+    expect(screen.getByRole("dialog", { name: t("parameterInputTitle") }).elements().length).toBe(0);
+  });
+});

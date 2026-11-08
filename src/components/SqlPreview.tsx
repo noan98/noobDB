@@ -39,13 +39,11 @@ export function SqlPreview({
   const reduced = useReducedMotionConfig();
   const reducedRef = useRef(reduced);
   reducedRef.current = reduced;
-  const first = useRef(true);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: sql の変化だけを契機にする
+  // 前回の sql と比べて変わったときだけ再生する (StrictMode の effect 二重実行で初回に光らないように)。
+  const prevSql = useRef(sql);
   useEffect(() => {
-    if (first.current) {
-      first.current = false;
-      return;
-    }
+    if (prevSql.current === sql) return;
+    prevSql.current = sql;
     const timer = setTimeout(() => {
       const el = ref.current;
       if (reducedRef.current || !el || typeof el.animate !== "function") return;
