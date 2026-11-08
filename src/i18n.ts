@@ -6889,6 +6889,7 @@ const en = {
   taskFormActionMaintenance: "Run maintenance (ANALYZE / VACUUM / OPTIMIZE / REINDEX)",
   taskFormMaintenanceKind: "Maintenance",
   taskFormMaintenanceDatabase: "Database / schema (optional)",
+  taskFormMaintenanceAttachedDb: "Database",
   taskFormMaintenanceTargets: "Target tables (one per line; empty = whole database)",
   taskFormMaintenanceTargetsRequiredMysql:
     "MySQL has no database-wide maintenance statement. Enter at least one table.",
@@ -14409,6 +14410,7 @@ const ja: Dict = {
   taskFormActionMaintenance: "定期メンテナンス (ANALYZE / VACUUM / OPTIMIZE / REINDEX)",
   taskFormMaintenanceKind: "メンテナンスの種類",
   taskFormMaintenanceDatabase: "データベース / スキーマ (省略可)",
+  taskFormMaintenanceAttachedDb: "データベース (main / アタッチ済み)",
   taskFormMaintenanceTargets: "対象テーブル (1 行に 1 つ。空ならデータベース全体)",
   taskFormMaintenanceTargetsRequiredMysql:
     "MySQL にはデータベース全体を対象にするメンテナンス文がありません。テーブルを 1 つ以上入力してください。",
