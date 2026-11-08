@@ -99,7 +99,9 @@ describe("QueryEditor", () => {
     const view = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement) as EditorView;
     view.dispatch({ changes: { from: view.state.doc.length, insert: " WHERE a = ?" } });
     await waitFor(() =>
-      expect([...document.querySelectorAll(".cm-query-placeholder")].map((e) => e.textContent)).toEqual(["?"]),
+      expect([...document.querySelectorAll(".cm-query-placeholder")].map((e) => e.textContent)).toEqual([
+        "?",
+      ]),
     );
   });
 
