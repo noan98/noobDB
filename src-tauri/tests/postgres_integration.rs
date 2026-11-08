@@ -5075,3 +5075,129 @@ async fn postgres_user_defined_types_are_listed_compared_and_synced() {
     }
     // 拡張は schema a に入れたものなので、上の DROP SCHEMA ... CASCADE で一緒に消える。
 }
+
+/// 拡張機能 (#2160): 一覧 (導入済み / 提供できるもの / 更新の可否)、導入・更新・削除の SQL が通ること、
+/// read_only セッションではバックエンドが拒否すること。contrib の無い環境では導入の確認だけ飛ばす。
+#[tokio::test]
+async fn postgres_extensions_are_listed_installed_updated_and_dropped() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let _ = conn.execute("DROP EXTENSION IF EXISTS pg_trgm", None).await;
+    let _ = conn.execute("DROP EXTENSION IF EXISTS hstore", None).await;
+
+    // 一覧: 導入済みの plpgsql が先頭側に出て、未導入の拡張はバージョンだけ持つ。
+    let before = conn.list_extensions().await.expect("list_extensions");
+    let find =
+        |o: &t::ExtensionsOverview, n: &str| o.extensions.iter().find(|e| e.name == n).cloned();
+    let plpgsql = find(&before, "plpgsql").expect("plpgsql is installed");
+    assert!(plpgsql.installed_version.is_some(), "{plpgsql:?}");
+    assert_eq!(plpgsql.schema.as_deref(), Some("pg_catalog"));
+    assert!(!plpgsql.updatable, "{plpgsql:?}");
+    let first_available = before
+        .extensions
+        .iter()
+        .position(|e| e.installed_version.is_none());
+    let last_installed = before
+        .extensions
+        .iter()
+        .rposition(|e| e.installed_version.is_some());
+    if let (Some(a), Some(i)) = (first_available, last_installed) {
+        assert!(i < a, "installed extensions come first: {before:?}");
+    }
+    // contrib が入っていない環境では、導入・更新・削除の確認だけ飛ばす。
+    let Some(trgm) = find(&before, "pg_trgm") else {
+        return;
+    };
+    assert!(trgm.installed_version.is_none(), "{trgm:?}");
+    let default = trgm.default_version.clone().expect("default version");
+
+    // 導入: 古いバージョンを指定して入れると、更新できるものとして出る。
+    // `CREATE EXTENSION` の権限が無い環境 (非スーパーユーザー) ではここまでで終える。
+    if conn
+        .execute(
+            "CREATE EXTENSION IF NOT EXISTS \"pg_trgm\" VERSION '1.5'",
+            None,
+        )
+        .await
+        .is_err()
+    {
+        return;
+    }
+    let after_install = conn.list_extensions().await.expect("list after install");
+    let installed = find(&after_install, "pg_trgm").expect("pg_trgm listed");
+    assert_eq!(installed.installed_version.as_deref(), Some("1.5"));
+    assert_eq!(installed.schema.as_deref(), Some("public"));
+    assert_eq!(installed.updatable, default != "1.5", "{installed:?}");
+
+    // 更新: 既定のバージョンになり、更新できる印が消える。
+    conn.execute("ALTER EXTENSION \"pg_trgm\" UPDATE", None)
+        .await
+        .expect("update");
+    let after_update = conn.list_extensions().await.expect("list after update");
+    let updated = find(&after_update, "pg_trgm").expect("pg_trgm listed");
+    assert_eq!(updated.installed_version.as_deref(), Some(default.as_str()));
+    assert!(!updated.updatable, "{updated:?}");
+
+    // スキーマ指定と CASCADE (hstore は依存が無いので、スキーマだけ確かめる)。
+    conn.execute("DROP SCHEMA IF EXISTS nb2160_ext CASCADE", None)
+        .await
+        .expect("drop schema");
+    conn.execute("CREATE SCHEMA nb2160_ext", None)
+        .await
+        .expect("create schema");
+    conn.execute(
+        "CREATE EXTENSION IF NOT EXISTS \"hstore\" SCHEMA \"nb2160_ext\"",
+        None,
+    )
+    .await
+    .expect("install hstore into a schema");
+    let hstore = find(
+        &conn.list_extensions().await.expect("list hstore"),
+        "hstore",
+    )
+    .expect("hstore listed");
+    assert_eq!(hstore.schema.as_deref(), Some("nb2160_ext"));
+
+    // read_only のセッションでは、導入・更新・削除のどれもバックエンドが拒否し、状態は変わらない。
+    let state = t::AppState::default();
+    let ro_conn = t::connect(&opts).await.expect("ro connect");
+    let ro_sid = state
+        .insert(t::make_session(
+            "ext_ro",
+            ro_conn,
+            opts.clone(),
+            /* read_only */ true,
+        ))
+        .await;
+    for sql in [
+        "CREATE EXTENSION IF NOT EXISTS \"cube\"",
+        "ALTER EXTENSION \"pg_trgm\" UPDATE",
+        "DROP EXTENSION \"pg_trgm\"",
+        "DROP EXTENSION \"hstore\" CASCADE",
+    ] {
+        let denied = t::run_query_via_command(&state, &ro_sid, sql, None).await;
+        assert!(
+            matches!(denied, Err(t::AppError::ReadOnly(_))),
+            "read_only must reject `{sql}`: {denied:?}"
+        );
+    }
+    let still = find(&conn.list_extensions().await.expect("list ro"), "pg_trgm").expect("listed");
+    assert!(still.installed_version.is_some(), "{still:?}");
+
+    // 削除。
+    conn.execute("DROP EXTENSION \"pg_trgm\"", None)
+        .await
+        .expect("drop pg_trgm");
+    conn.execute("DROP EXTENSION \"hstore\"", None)
+        .await
+        .expect("drop hstore");
+    let end = conn.list_extensions().await.expect("list end");
+    assert!(find(&end, "pg_trgm").is_some_and(|e| e.installed_version.is_none()));
+    assert!(find(&end, "hstore").is_some_and(|e| e.installed_version.is_none()));
+    let _ = conn
+        .execute("DROP SCHEMA IF EXISTS nb2160_ext CASCADE", None)
+        .await;
+}

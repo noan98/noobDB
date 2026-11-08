@@ -242,6 +242,22 @@ pub async fn list_table_triggers(
     session.conn.list_table_triggers(&database, &table).await
 }
 
+/// PostgreSQL の拡張機能 (導入済み + サーバが提供できるもの) の一覧を返す (#2160)。読み取り専用の
+/// introspection なので read_only セッションでも許可する。導入・更新・削除の `CREATE / ALTER / DROP
+/// EXTENSION` は UI が組み立てて通常の `run_query` 経路で流す (read_only の拒否はそこで行う)。
+/// MySQL / SQLite は `InvalidInput`。
+#[tauri::command]
+pub async fn list_extensions(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<crate::db::types::ExtensionsOverview> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session.conn.list_extensions().await
+}
+
 /// パーティション表の子パーティション (境界・サイズ・行推定) とパーティションキーを返す (#1868)。
 /// パーティション表でなければ `None`。SQLite は非対応 (`InvalidInput`)。読み取り専用 introspection
 /// なので read_only セッションでも許可する。保守 / 削除の SQL は UI が組み立てて既存の `run_query` 経路で流す。

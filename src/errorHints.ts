@@ -84,11 +84,12 @@ const PATTERNS: { test: RegExp; key: I18nKey }[] = [
   // failing outright) — MySQL's "<STMT> command denied to user" wording
   // (SELECT/INSERT/UPDATE/DELETE/CREATE/... on mysql.user itself, a table, or
   // a database), and PostgreSQL's "permission denied for ..." /
+  // "permission denied to create extension ..." (#2160) /
   // "must be owner of ..." / "must be superuser" (#732: surfaces when the
   // Users & permissions panel's own `mysql.user`/`pg_roles` reads, or a
   // GRANT/REVOKE apply, hit an under-privileged session).
   {
-    test: /command denied to user|permission denied for|must be owner of|must be superuser|insufficient privilege/i,
+    test: /command denied to user|permission denied (?:for|to)|must be owner of|must be superuser|insufficient privilege/i,
     key: "errorHintInsufficientPrivilege",
   },
   // Connection dropped mid-session (server closed an idle connection, socket

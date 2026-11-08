@@ -497,6 +497,11 @@ interface Props {
    */
   onEditEnumType?: (database: string, name: string, mode: "add" | "rename") => void;
   /**
+   * PostgreSQL の拡張機能ダイアログ (#2160)。データベース (スキーマ) ノードの右クリックメニューから呼ぶ。
+   * PostgreSQL 以外では項目を出さない。拡張機能はデータベース単位なので、どのスキーマから開いても同じ。
+   */
+  onManageExtensions?: () => void;
+  /**
    * 影響分析 (#1027): テーブル / ビュー / 列を参照している定義・スニペットを
    * ボトムパネルで検索する。`column` が null ならテーブル (ビュー) 自体。読み取りの
    * introspection だけなので read_only でも有効。未指定ならメニュー項目を出さない。
@@ -2103,6 +2108,7 @@ export const ConnectionList = memo(
       onRunRoutine,
       onEditRoutine,
       onEditEnumType,
+      onManageExtensions,
       onCreateRoutine,
       onFindUsages,
       selectLimit,
@@ -3726,6 +3732,11 @@ export const ConnectionList = memo(
       }
       if (onShowDatabaseSizes) {
         items.push({ label: t("sizeMenuLabel"), onSelect: () => onShowDatabaseSizes(db) });
+      }
+      // 拡張機能の一覧・導入・更新・削除 (#2160)。PostgreSQL だけ。read_only でも一覧は開ける
+      // (導入などはダイアログ内で無効化し、拒否そのものはバックエンドが行う)。
+      if (onManageExtensions && activeDriver === "postgres") {
+        items.push({ label: t("contextMenuExtensions"), onSelect: onManageExtensions });
       }
       if (onCreateSandbox) {
         items.push({ label: t("contextMenuCreateSandbox"), onSelect: () => onCreateSandbox(db) });
