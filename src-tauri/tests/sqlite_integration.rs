@@ -7184,6 +7184,35 @@ async fn sqlite_maintenance_statements_succeed_on_file_db() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// 保守タスクの `database` は、実行前に `resolve_attached_database` で正す (#2152)。アタッチ別名に
+/// 当たらない古い値 (MySQL 用に入れた `shop` など) は `main` (= 修飾なし)、別名は設定の綴りの別名になり、
+/// その結果の文が実際に成功する。
+#[tokio::test]
+async fn sqlite_maintenance_database_is_resolved_to_main_or_attached_alias() {
+    let (main, other) = attach_fixture("maint_resolve").await;
+    let conn = t::connect(&attach_opts(&main, &other, "ext", false))
+        .await
+        .expect("connect");
+    assert_eq!(conn.resolve_attached_database("shop"), "main");
+    assert_eq!(conn.resolve_attached_database(""), "main");
+    assert_eq!(conn.resolve_attached_database("EXT"), "ext");
+    // main 扱いなら修飾なしの文 (`ANALYZE "m_t";`)、別名なら `"ext"."o_t"` の文が成功する。
+    conn.execute_maintenance("ANALYZE \"m_t\";", Some("shop"))
+        .await
+        .expect("analyze main table");
+    conn.execute_maintenance("ANALYZE \"ext\".\"o_t\";", Some("ext"))
+        .await
+        .expect("analyze attached table");
+    // 修飾しない文は別名側の表を見つけられない (= 別名の指定が効いていることの裏返し)。
+    assert!(conn
+        .execute_maintenance("ANALYZE \"shop\".\"m_t\";", Some("shop"))
+        .await
+        .is_err());
+    conn.close().await;
+    let _ = std::fs::remove_file(&main);
+    let _ = std::fs::remove_file(&other);
+}
+
 // ---- 大規模 DML のチャンク分割実行 (#2020) ----
 
 async fn chunked_state(tag: &str, read_only: bool) -> (t::AppState, String, PathBuf) {

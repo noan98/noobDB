@@ -104,7 +104,8 @@ pub enum TaskAction {
     /// だけはセッションを read_only にせず接続するが、プロファイルが `read_only` なら
     /// 保存時・実行時ともバックエンドで拒否する。
     RunMaintenance {
-        /// MySQL ではデータベース、PostgreSQL ではスキーマ (識別子の修飾)。SQLite は無視。
+        /// MySQL ではデータベース、PostgreSQL ではスキーマ (識別子の修飾)。SQLite ではアタッチした別名
+        /// (空 / 別名に当たらない値は `main` 扱いで修飾しない。#2152)。
         #[serde(default)]
         database: Option<String>,
         /// 対象テーブル。空ならデータベース全体 (PostgreSQL の ANALYZE / VACUUM、SQLite)。

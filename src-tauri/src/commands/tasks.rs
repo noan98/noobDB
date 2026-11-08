@@ -171,6 +171,45 @@ pub(crate) fn validate_maintenance_for_profile(
     Ok(())
 }
 
+/// SQLite プロファイルの `RunMaintenance` の `database` を、プロファイルでアタッチした別名に正す
+/// (#2152)。別名に当たらない値は空 (`main`) にする。他のドライバ・アクションは変更しない。
+pub(crate) fn normalize_task_action_for_profile(
+    action: TaskAction,
+    profile: &profiles::ConnectionProfile,
+) -> TaskAction {
+    let TaskAction::RunMaintenance {
+        database,
+        targets,
+        maintenance,
+    } = action
+    else {
+        return action;
+    };
+    let is_sqlite = matches!(
+        executor::driver_kind_of(&profile.driver),
+        Ok(crate::db::DriverKind::Sqlite)
+    );
+    let database = if is_sqlite {
+        let aliases: Vec<String> = profile
+            .sqlite_attachments
+            .iter()
+            .map(|a| a.alias.clone())
+            .collect();
+        crate::tasks::maintenance::resolve_database(
+            crate::db::DriverKind::Sqlite,
+            database.as_deref(),
+            &aliases,
+        )
+    } else {
+        database
+    };
+    TaskAction::RunMaintenance {
+        database,
+        targets,
+        maintenance,
+    }
+}
+
 /// `Dump` をプロファイルのドライバに照らして検証する (#2131)。SQLite 以外のスナップショットや、
 /// SQLite でのマスク (SQLite は常にネイティブ生成だがマスクは MySQL / PostgreSQL のみ) を
 /// 保存時に弾く。他のアクションでは何もしない。
@@ -269,6 +308,10 @@ pub async fn save_task(req: SaveTaskRequest) -> Result<TaskDefinition> {
             req.profile_id
         )));
     };
+    // SQLite の保守タスクは、MySQL 用に入れた値の持ち越しなど「アタッチ先でない database」を
+    // 保存前に捨てる (実行時に `"shop"."t"` と修飾されて失敗するのを防ぐ。#2152)。
+    let mut req = req;
+    req.action = normalize_task_action_for_profile(req.action, profile);
     validate_maintenance_for_profile(&req.action, profile)?;
     validate_dump_for_profile(&req.action, profile)?;
 
@@ -702,6 +745,63 @@ pub(crate) mod maintenance_tests {
     fn other_actions_are_not_checked() {
         let a = maint(r#"{"kind":"timelapse_capture"}"#);
         assert!(validate_maintenance_for_profile(&a, &profile("mysql", true)).is_ok());
+    }
+
+    fn db_of(a: &TaskAction) -> Option<String> {
+        match a {
+            TaskAction::RunMaintenance { database, .. } => database.clone(),
+            _ => panic!("not a maintenance action"),
+        }
+    }
+
+    fn sqlite_profile_with(aliases: &[&str]) -> profiles::ConnectionProfile {
+        let mut p = profile("sqlite", false);
+        p.sqlite_attachments = aliases
+            .iter()
+            .map(|a| crate::db::SqliteAttachment {
+                path: format!("/tmp/{a}.db"),
+                alias: (*a).to_string(),
+            })
+            .collect();
+        p
+    }
+
+    #[test]
+    fn sqlite_save_drops_database_that_is_not_an_attached_alias() {
+        let json = |db: &str| {
+            maint(&format!(
+                r#"{{"kind":"run_maintenance","database":"{db}","targets":["t"],"maintenance":"analyze"}}"#
+            ))
+        };
+        let p = sqlite_profile_with(&["ext"]);
+        // MySQL 用に入れた値の持ち越しは捨てる (main 扱い)。
+        assert_eq!(
+            db_of(&normalize_task_action_for_profile(json("shop"), &p)),
+            None
+        );
+        // アタッチ別名は設定の綴りで残す (大文字小文字は区別しない)。
+        assert_eq!(
+            db_of(&normalize_task_action_for_profile(json("EXT"), &p)),
+            Some("ext".to_string())
+        );
+        assert_eq!(
+            db_of(&normalize_task_action_for_profile(json("main"), &p)),
+            None
+        );
+        // MySQL / PostgreSQL は値のまま。
+        assert_eq!(
+            db_of(&normalize_task_action_for_profile(
+                json("shop"),
+                &profile("mysql", false)
+            )),
+            Some("shop".to_string())
+        );
+        // 保守以外のアクションは変えない。
+        let other = maint(r#"{"kind":"timelapse_capture"}"#);
+        assert!(matches!(
+            normalize_task_action_for_profile(other, &p),
+            TaskAction::TimelapseCapture { .. }
+        ));
     }
 }
 
