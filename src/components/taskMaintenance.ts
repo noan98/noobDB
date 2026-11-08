@@ -53,6 +53,24 @@ function validDatabase(driver: string, database: string | null): boolean {
 }
 
 /**
+ * 保守タスクの `database` を正す (Rust の `tasks::maintenance::resolve_database` の写し, #2152)。
+ * SQLite はアタッチした別名 (大文字小文字は区別しない) に当たるときだけ**設定の綴りの**別名を返し、
+ * それ以外 (MySQL 用に入れた値の持ち越しなど) は `null` (= main、修飾なし)。MySQL / PostgreSQL は
+ * 前後の空白を除いた値をそのまま返し、空なら `null`。
+ */
+export function resolveTaskDatabase(
+  driver: string | undefined,
+  database: string | null,
+  attached: readonly string[],
+): string | null {
+  const db = database?.trim() ?? "";
+  if (db === "") return null;
+  if (driver !== "sqlite") return db;
+  const lower = db.toLowerCase();
+  return attached.find((a) => a.toLowerCase() === lower) ?? null;
+}
+
+/**
  * 実行される文を組み立てる。`driver` が不明 (プロファイル未選択) のときは MySQL 扱い
  * (`maintenanceKindsForDriver` と同じ)。
  */
