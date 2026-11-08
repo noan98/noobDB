@@ -7,7 +7,7 @@ import { isSqliteMainDatabase } from "./sqlDialect";
  * Rust の `Connection::reject_if_attached_sqlite` の `what` と 1 対 1 で対応する
  * (`rebuildTable` = "table rebuild" / `syncApply` = "sync apply" /
  * `transferCreateReplace` = "data transfer (create / replace)")。追記 / upsert の転送は
- * 修飾した INSERT で動くので、ここには含めない。集合の一致は `sqliteAttachSupport.test.ts` が
+ * 修飾した INSERT で動くので、ここには含めない。集合の一致は `sqliteAttachSupportParity.test.ts` が
  * Rust のソースを読んで固定する。
  */
 export type AttachedRejectedOperation = "rebuildTable" | "syncApply" | "transferCreateReplace";
