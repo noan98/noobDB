@@ -1902,6 +1902,7 @@
     "ANALYZE \"t\";"
    ]
   },
+   {"name": "database の NUL (mysql は拒否)", "driver": "mysql", "database": "a\u0000b", "targets": ["t"], "kind": "analyze", "sql": null},
   {
    "name": "sqlite テーブル名の二重引用符",
    "driver": "sqlite",
