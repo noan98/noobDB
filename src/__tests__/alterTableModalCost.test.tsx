@@ -71,11 +71,13 @@ describe("AlterTableModal 書き換え警告 (#1771)", () => {
     await changeType("bigint");
     expect(await screen.findByTestId("alter-cost-warning")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId("alter-cost-rows")).toHaveTextContent("5,000,000"));
-    expect(screen.queryByText(/ALGORITHM=INPLACE, LOCK=NONE;/)).toBeNull();
+    expect(screen.getByTestId("sql-preview")).not.toHaveTextContent(/ALGORITHM=INPLACE, LOCK=NONE;/);
     fireEvent.click(
       screen.getByLabelText(t("alterCostOnlineToggle", { clause: "ALGORITHM=INPLACE, LOCK=NONE" })),
     );
-    await waitFor(() => expect(screen.getByText(/, ALGORITHM=INPLACE, LOCK=NONE;/)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId("sql-preview")).toHaveTextContent(/, ALGORITHM=INPLACE, LOCK=NONE;/),
+    );
   });
 
   it("PostgreSQL: 型変更で警告が出る (切り替えは出ない)", async () => {
@@ -99,7 +101,7 @@ describe("AlterTableModal 書き換え警告 (#1771)", () => {
     stats.rows = 100;
     renderModal("mysql");
     await changeType("bigint");
-    await waitFor(() => expect(screen.getByText(/CHANGE COLUMN/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("sql-preview")).toHaveTextContent(/CHANGE COLUMN/));
     await waitFor(() => expect(screen.queryByTestId("alter-cost-warning")).toBeNull());
   });
 

@@ -10,7 +10,8 @@ import {
   type IndexOptionReason,
 } from "./tableMaintenance";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
+import { ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Callout } from "./Callout";
 import { AlterPrecheckNotice } from "./AlterPrecheckNotice";
 import { buildConstraintPrechecks } from "./alterPrecheck";
@@ -405,9 +406,7 @@ export function CreateIndexModal({
             </FormSection>
             <FormSection>
               <FieldLabel as="div">{t("createTablePreview")}</FieldLabel>
-              <CodePreview minH="48px" wrap>
-                {sql || t("createIndexPreviewEmpty")}
-              </CodePreview>
+              <SqlPreview sql={sql} driver={driver} empty={t("createIndexPreviewEmpty")} minH="48px" wrap />
               {overlaps.map((o) => (
                 <Callout key={o.name} tone="warning" data-testid="create-index-overlap">
                   {o.kind === "duplicate"

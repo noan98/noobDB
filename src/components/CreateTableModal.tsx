@@ -14,7 +14,8 @@ import {
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
+import { FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, Input, PressableButton, Switch } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
 import { Icon } from "./Icon";
@@ -531,7 +532,7 @@ export function CreateTableModal({
 
         <FormSection>
           <FieldLabel as="div">{t("createTablePreview")}</FieldLabel>
-          <CodePreview minH="60px">{sql || t("createTablePreviewEmpty")}</CodePreview>
+          <SqlPreview sql={sql} driver={driver} empty={t("createTablePreviewEmpty")} minH="60px" />
         </FormSection>
         {generatedErrors
           .filter((g) => g.problem !== "emptyExpression" || genTouched.includes(g.index))

@@ -42,6 +42,10 @@ vi.mock("../../api/tauri", async (importOriginal) => {
     api: {
       ...actual.api,
       readLogs: vi.fn(async () => ({ text: "", path: "/tmp/noobdb.log" })),
+      // known_hosts パネルもマウント時に読む。スタブの既定応答は形式が合わず、失敗トーストが
+      // フェードイン中に axe が走ると color-contrast で落ちる (実行速度次第で再現する)。空一覧を返す。
+      listKnownHosts: vi.fn(async () => []),
+      listKnownHostsHistory: vi.fn(async () => []),
     },
   };
 });

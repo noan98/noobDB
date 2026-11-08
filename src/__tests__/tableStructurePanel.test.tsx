@@ -441,7 +441,7 @@ describe("TableStructurePanel 被参照の外部キー (#1628)", () => {
         target: { value: "2026-03-01" },
       });
       const sql = `ALTER TABLE "app"."orders" ATTACH PARTITION "app"."ev_legacy" FOR VALUES FROM ('2026-02-01') TO ('2026-03-01');`;
-      expect(screen.getByText(sql)).toBeInTheDocument();
+      expect(screen.getByTestId("sql-preview")).toHaveTextContent(sql);
 
       fireEvent.click(screen.getByRole("button", { name: t("attachPartitionConfirm") }));
       expect(onAttachPartition).toHaveBeenCalledWith("app", "orders", "ev_legacy", sql);

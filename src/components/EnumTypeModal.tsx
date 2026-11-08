@@ -4,7 +4,8 @@ import { api } from "../api/tauri";
 import { useT } from "../i18n";
 import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
+import { ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Spinner } from "./Spinner";
 import { Button, Input, PressableButton } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
@@ -204,9 +205,7 @@ export function EnumTypeModal({ sessionId, database, name, mode, readOnly, onCon
 
         <FormSection>
           <FieldLabel as="div">{t("enumTypePreview")}</FieldLabel>
-          <CodePreview minH="48px" wrap>
-            {sql || t("enumTypePreviewEmpty")}
-          </CodePreview>
+          <SqlPreview sql={sql} driver="postgres" empty={t("enumTypePreviewEmpty")} minH="48px" wrap />
         </FormSection>
       </ModalBody>
       <ModalFooter>

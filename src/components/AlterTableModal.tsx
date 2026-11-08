@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { useT } from "../i18n";
+import { attachedUnsupportedReason } from "./sqliteAttachSupport";
 import {
   api,
   type CheckConstraintInfo,
@@ -26,7 +27,8 @@ import {
 } from "./alterTable";
 import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
+import { ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, Checkbox, Input, PressableButton, Switch } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
 import { Callout } from "./Callout";
@@ -438,7 +440,16 @@ export function AlterTableModal({
   const applyOnline = onlineClause && showOnlineToggle;
   // SQLite の型 / NOT NULL / DEFAULT 変更・FK / CHECK の変更は、バックエンドがスキーマ同期と同じ
   // テーブル再作成 SQL を組み立てる (#1888)。生成中・失敗中は実行できない。
-  const rebuildState = useSqliteRebuildPlan(sessionId, database, table, plan.rebuild, !loading && !loadError);
+  // アタッチ DB の表は再作成できない (バックエンドが拒否する, #2154)。計画を問い合わせる前に理由を出す。
+  const attachedRebuildReason =
+    plan.rebuild !== null ? attachedUnsupportedReason(driver, database, "rebuildTable") : null;
+  const rebuildState = useSqliteRebuildPlan(
+    sessionId,
+    database,
+    table,
+    plan.rebuild,
+    !loading && !loadError && attachedRebuildReason === null,
+  );
   const rebuildPending = plan.rebuild !== null && rebuildState.status !== "ok";
   const statements = useMemo(() => {
     const base = applyOnline ? withMysqlOnlineClause(driver, plan.statements) : plan.statements;
@@ -1216,6 +1227,11 @@ export function AlterTableModal({
                       : t("createTableGeneratedEmpty", { column: g.column })}
                 </FieldError>
               ))}
+              {attachedRebuildReason !== null && (
+                <ErrorNote data-testid="alter-rebuild-attached-unsupported">
+                  {t(attachedRebuildReason)}
+                </ErrorNote>
+              )}
               {rebuildState.status === "error" && (
                 <ErrorNote>
                   {t("alterTableRebuildPlanError", { error: rebuildErrorText(t, rebuildState.error) })}
@@ -1246,7 +1262,12 @@ export function AlterTableModal({
 
               <FormSection>
                 <FieldLabel as="div">{t("alterTablePreview")}</FieldLabel>
-                <CodePreview minH="60px">{sqlPreview || t("alterTablePreviewEmpty")}</CodePreview>
+                <SqlPreview
+                  sql={sqlPreview}
+                  driver={driver}
+                  empty={t("alterTablePreviewEmpty")}
+                  minH="60px"
+                />
               </FormSection>
               <AlterPrecheckNotice
                 prechecks={prechecks}

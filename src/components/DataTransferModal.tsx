@@ -10,6 +10,7 @@ import {
   type TransferMode,
   type TransferTypeKind,
 } from "../api/tauri";
+import { attachedUnsupportedReason } from "./sqliteAttachSupport";
 import { useT, type I18nKey } from "../i18n";
 import { JobPresence, JobProgressDetail, useJobClock } from "./JobProgress";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
@@ -289,7 +290,16 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
     source,
     targetDriver: targetProfile ? toDriverKind(targetProfile.driver) : null,
   });
+  // SQLite のアタッチ DB へは、表を作る / 置き換えるモードを使えない (バックエンドが拒否する, #2154)。
+  const attachedCreateReason = attachedUnsupportedReason(
+    targetProfile?.driver,
+    database,
+    "transferCreateReplace",
+  );
+  const attachedModeReason =
+    attachedCreateReason !== null && !writesExistingTable(mode) ? attachedCreateReason : null;
   const canRun =
+    attachedModeReason === null &&
     !!targetSession &&
     !!targetProfile &&
     !targetProfile.read_only &&
@@ -527,9 +537,11 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
               <Button type="button" size="sm" variant="secondary" onClick={() => setMode("append")}>
                 {t("transferUseAppend")}
               </Button>
-              <Button type="button" size="sm" variant="secondary" onClick={() => setMode("replace")}>
-                {t("transferUseReplace")}
-              </Button>
+              {attachedCreateReason === null && (
+                <Button type="button" size="sm" variant="secondary" onClick={() => setMode("replace")}>
+                  {t("transferUseReplace")}
+                </Button>
+              )}
             </Flex>
           )}
         </FormSection>
@@ -549,6 +561,7 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
             disabled={isRunning}
             css={{ width: "100%" }}
           />
+          {attachedModeReason && <FieldError>{t(attachedModeReason)}</FieldError>}
           <chakra.span fontSize="xs" color="app.textMuted">
             {mode === "upsert"
               ? t("transferModeUpsertHint")

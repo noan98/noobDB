@@ -112,7 +112,7 @@ describe("CreateTableModal 既存テーブルからの雛形 (#1540)", () => {
     expect(screen.getByDisplayValue("nick")).toBeInTheDocument();
     // テーブル名が空なら「<元>_copy」を提案する。
     expect(screen.getByLabelText(t("createTableName"))).toHaveValue("users_copy");
-    expect(screen.getByText(/CREATE TABLE `appdb`\.`users_copy`/)).toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent(/CREATE TABLE `appdb`\.`users_copy`/);
   });
 
   it("入力済みの列があるときだけ置き換えを確認し、キャンセルすると列は変わらない", async () => {

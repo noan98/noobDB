@@ -59,9 +59,13 @@ describe("AlterTableModal 新規列の位置 (#1625)", () => {
     const select = screen.getByLabelText(t("alterTablePositionAria", { n: 1 }));
     expect(select).toBeEnabled();
     chooseListboxOption(select, "after:id");
-    await waitFor(() => expect(screen.getByText(/ADD COLUMN `age`.*AFTER `id`/)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId("sql-preview")).toHaveTextContent(/ADD COLUMN `age`.*AFTER `id`/),
+    );
     chooseListboxOption(select, "first");
-    await waitFor(() => expect(screen.getByText(/ADD COLUMN `age`.*FIRST/)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId("sql-preview")).toHaveTextContent(/ADD COLUMN `age`.*FIRST/),
+    );
   });
 
   it("PostgreSQL では位置の選択が無効になる", async () => {

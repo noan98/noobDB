@@ -44,11 +44,15 @@ describe("EnumTypeModal", () => {
     const { onConfirm } = setup();
     await screen.findByText("sad, ok, happy");
     await user.type(screen.getByLabelText(t("enumTypeNewValue")), "meh");
-    expect(screen.getByText(`ALTER TYPE "public"."mood" ADD VALUE 'meh';`)).toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent(
+      `ALTER TYPE "public"."mood" ADD VALUE 'meh';`,
+    );
 
     chooseListboxOption(screen.getByLabelText(t("enumTypePosition")), "after");
     await waitFor(() =>
-      expect(screen.getByText(`ALTER TYPE "public"."mood" ADD VALUE 'meh' AFTER 'sad';`)).toBeInTheDocument(),
+      expect(screen.getByTestId("sql-preview")).toHaveTextContent(
+        `ALTER TYPE "public"."mood" ADD VALUE 'meh' AFTER 'sad';`,
+      ),
     );
     await user.click(screen.getByRole("button", { name: t("enumTypeConfirmAdd") }));
     expect(onConfirm).toHaveBeenCalledWith(`ALTER TYPE "public"."mood" ADD VALUE 'meh' AFTER 'sad';`);

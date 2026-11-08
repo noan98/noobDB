@@ -9,6 +9,7 @@ import type {
   IndexInfo,
   TableExtrasInfo,
   TablePartitions,
+  ExtensionsOverview,
   TableTrigger,
   SchemaObject,
   RoutineSignature,
@@ -141,6 +142,14 @@ export const schemaCommands = {
   listTableTriggers: (sessionId: string, database: string, table: string) =>
     invoke<TableTrigger[]>("list_table_triggers", { sessionId, database, table }).then((r) =>
       parseResponse(schemas.tableTriggerArray, r, "list_table_triggers"),
+    ),
+  /**
+   * PostgreSQL の拡張機能 (導入済み + サーバが提供できるもの) の一覧 (#2160)。PostgreSQL だけ (他ドライバはエラー)。
+   * 読み取りのみ。導入・更新・削除は `CREATE / ALTER / DROP EXTENSION` を `run_query` で流す。
+   */
+  listExtensions: (sessionId: string) =>
+    invoke<ExtensionsOverview>("list_extensions", { sessionId }).then((r) =>
+      parseResponse(schemas.extensionsOverview, r, "list_extensions"),
     ),
   /** 非テーブルのスキーマオブジェクト (ビュー/ルーチン/トリガー) を取得する。 */
   listSchemaObjects: (sessionId: string, database: string) =>
