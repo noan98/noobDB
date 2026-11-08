@@ -1,5 +1,7 @@
-import { useRef, useState, type KeyboardEvent } from "react";
+import { useId, useRef, useState, type KeyboardEvent } from "react";
 import { chakra } from "@chakra-ui/react";
+import { AnimatePresence, motion, useReducedMotionConfig } from "motion/react";
+import { directionalSlide, transitions } from "../motion";
 import { useT } from "../i18n";
 import {
   filterShortcuts,
@@ -10,6 +12,7 @@ import {
 } from "../shortcuts";
 import { formatCombo } from "../shortcutKeys";
 import { useSettings } from "../settings";
+import { ActiveRowHighlight } from "./ActiveRowHighlight";
 import { Callout } from "./Callout";
 import { Icon, type IconName } from "./Icon";
 import { Kbd } from "./Kbd";
@@ -307,6 +310,8 @@ const NavGroupLabel = chakra("div", {
 
 const NavItem = chakra("button", {
   base: {
+    // アクティブ行の背景は滑る ActiveRowHighlight (設定画面の左ナビと同じ layoutId 手法) が担う。
+    position: "relative",
     display: "flex",
     alignItems: "center",
     gap: "2",
@@ -323,8 +328,8 @@ const NavItem = chakra("button", {
     lineHeight: "var(--leading-normal)",
     cursor: "pointer",
     _hover: { background: "app.hover", color: "app.text" },
-    _focusVisible: { outline: "2px solid", outlineColor: "app.accent", outlineOffset: "-2px" },
-    "&[aria-current=true]": { background: "app.active", color: "app.text", fontWeight: 600 },
+    _focusVisible: { outline: "none", boxShadow: "var(--focus-ring)" },
+    "&[aria-current=true]": { color: "app.text", fontWeight: 600 },
   },
 });
 
@@ -367,6 +372,12 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
 
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string>(featureId(SECTIONS[0].features[0]));
+  // 目次の滑るインジケータ (設定画面と同じ layoutId 手法)。ダイアログごとに名前空間を分ける。
+  const navHighlightId = `help-nav-highlight-${useId()}`;
+  // 詳細ペインの入場方向。目次で後ろへ進むとき +1 (右から)、前へ戻るとき -1 (左から)。
+  const [slideDir, setSlideDir] = useState(0);
+  // reduced-motion (OS 設定とアプリ内設定の両方) では opacity の補間も止めて即時に切り替える。
+  const reducedMotion = useReducedMotionConfig() ?? false;
   const searchRef = useRef<HTMLInputElement>(null);
   const navRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLDivElement>(null);
@@ -399,8 +410,9 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
   const currentIndex = current ? orderedIds.indexOf(current) : -1;
 
   const select = (id: string, focus = false) => {
+    const to = orderedIds.indexOf(id);
+    if (to >= 0 && currentIndex >= 0 && to !== currentIndex) setSlideDir(to > currentIndex ? 1 : -1);
     setSelected(id);
-    detailRef.current?.scrollTo?.({ top: 0 });
     if (focus) navRef.current?.querySelector<HTMLElement>(`[data-help-id="${id}"]`)?.focus();
   };
 
@@ -639,12 +651,13 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
                           tabIndex={current === id ? 0 : -1}
                           onClick={() => select(id)}
                         >
-                          <chakra.span flex="1" minW="0">
+                          {current === id && <ActiveRowHighlight layoutId={navHighlightId} />}
+                          <chakra.span position="relative" zIndex={1} flex="1" minW="0">
                             {t(f.titleKey)}
                           </chakra.span>
                           {f.impact === "yes" && (
                             <>
-                              <WriteDot aria-hidden="true" />
+                              <WriteDot position="relative" zIndex={1} aria-hidden="true" />
                               <chakra.span srOnly>{t("helpImpactWrites")}</chakra.span>
                             </>
                           )}
@@ -663,8 +676,13 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
                       onClick={() => select(SHORTCUTS_ID)}
                       pl="2"
                     >
-                      <Icon name="query" size="sm" />
-                      <chakra.span flex="1">{shortcutsTitle}</chakra.span>
+                      {current === SHORTCUTS_ID && <ActiveRowHighlight layoutId={navHighlightId} />}
+                      <chakra.span position="relative" zIndex={1} display="inline-flex" aria-hidden="true">
+                        <Icon name="query" size="sm" />
+                      </chakra.span>
+                      <chakra.span position="relative" zIndex={1} flex="1">
+                        {shortcutsTitle}
+                      </chakra.span>
                     </NavItem>
                   </chakra.div>
                 )}
@@ -698,7 +716,28 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
 
           <chakra.div ref={detailRef} flex="1" minW="0" overflowY="auto" data-testid="help-detail">
             <chakra.div maxW="760px" px="8" py="6" display="flex" flexDirection="column" gap="6">
-              {renderDetail()}
+              {/* 目次の前後関係に応じて、右 / 左から入るクロスフェード。退場を待ってから次を出す
+                  (mode="wait")。先頭へのスクロールは旧内容が退場し終えてから行う。 */}
+              <AnimatePresence
+                mode="wait"
+                initial={false}
+                custom={slideDir}
+                onExitComplete={() => detailRef.current?.scrollTo?.({ top: 0 })}
+              >
+                <motion.div
+                  key={current ?? "none"}
+                  custom={slideDir}
+                  variants={directionalSlide}
+                  initial="initial"
+                  animate="animate"
+                  exit="exit"
+                  transition={reducedMotion ? { duration: 0 } : transitions.enter}
+                  data-testid="help-detail-pane"
+                  data-slide-dir={slideDir}
+                >
+                  {renderDetail()}
+                </motion.div>
+              </AnimatePresence>
               {(prevId || nextId) && (
                 <chakra.div
                   display="flex"

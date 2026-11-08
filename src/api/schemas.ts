@@ -223,6 +223,20 @@ export const rlsTable = z.object({
 });
 export const rlsTableArray = z.array(rlsTable);
 
+/** `list_extensions` の結果 (#2160)。 */
+export const extensionInfo = z.object({
+  name: z.string(),
+  installed_version: z.string().nullable(),
+  default_version: z.string().nullable(),
+  schema: z.string().nullable(),
+  comment: z.string().nullable(),
+  updatable: z.boolean(),
+});
+export const extensionsOverview = z.object({
+  extensions: z.array(extensionInfo),
+  shared_preload_libraries: z.array(z.string()),
+});
+
 /** サーバ側プロセス/接続 (プロセス監視パネル)。 */
 export const processInfo = z.object({
   id: z.number(),

@@ -1516,6 +1516,29 @@
     "rows": 200,
     "streamId": "strm0005"
   },
+  "extensionsOverview": {
+    "extensions": [
+      {
+        "comment": "text similarity measurement and index searching based on trigrams",
+        "default_version": "1.6",
+        "installed_version": "1.5",
+        "name": "pg_trgm",
+        "schema": "public",
+        "updatable": true
+      },
+      {
+        "comment": null,
+        "default_version": "1.8",
+        "installed_version": null,
+        "name": "hstore",
+        "schema": null,
+        "updatable": false
+      }
+    ],
+    "shared_preload_libraries": [
+      "pg_stat_statements"
+    ]
+  },
   "foreignKey": {
     "column": "user_id",
     "constraint_name": "fk_orders_user",

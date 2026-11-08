@@ -167,6 +167,7 @@ DB に触れず実行もしない (UI のプレビュー専用)。両環境の�
 - `schema_overview`
 - `foreign_keys`
 - `list_rls_tables` (行レベルセキュリティ (RLS) が有効 / FORCE の表の一覧。PostgreSQL 専用で他ドライバは `InvalidInput`。ツリーの「RLS」バッジ用、#2159)
+- `list_extensions` (PostgreSQL の拡張機能: 導入済み (バージョン / スキーマ) とサーバが提供できるもの (既定のバージョン / 更新の可否) + `shared_preload_libraries`。PostgreSQL 専用で他ドライバは `InvalidInput`、#2160)
 - `list_schema_objects`
 - `get_object_definition`
 - `list_indexes`
@@ -262,6 +263,10 @@ PostgreSQL のみ `kind = "policy"` (行レベルセキュリティのポリシ�
 PostgreSQL の policy のみ (トリガーと同じく (名前, 対象表) で対応づけ、置換は DROP + CREATE、表の ENABLE / FORCE ROW LEVEL SECURITY は同期しない)。
 ポリシーもツリー専用の種別で Where-used の走査対象には入らない。作成は新しい IPC を足さず、UI (`PolicyModal` / `policySql.ts`) が組み立てた
 `CREATE POLICY` (と任意の `ALTER TABLE ... ENABLE / FORCE ROW LEVEL SECURITY`) を `run_query_transaction` で流す (read_only の拒否はバックエンド)。
+
+拡張機能の導入・更新・削除は新しい IPC を足さず、UI (`ExtensionsModal` / `extensionSql.ts`) が組み立てた `CREATE EXTENSION [IF NOT EXISTS] ... [SCHEMA ...] [CASCADE]` /
+`ALTER EXTENSION ... UPDATE` / `DROP EXTENSION [CASCADE]` を `run_query` で流す (read_only の拒否はバックエンド。権限不足は `errorHints` の
+`errorHintInsufficientPrivilege` が `permission denied to create extension` も拾って案内する)。pg_stat_statements が無い / 読めないときのインスペクタの空状態からこのダイアログへ誘導する。
 
 PostgreSQL のみ `kind = "type"` (ユーザー定義型: ENUM / DOMAIN / 複合型 / 範囲型, #2127) も返し、`SchemaObject.detail` に
 `enum` / `domain` / `composite` / `range` を載せる。拡張が持つ型・表の行型・配列型・範囲型が自動で作るコンストラクタ関数は出さない。

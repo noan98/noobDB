@@ -71,6 +71,7 @@ const COVERED: Record<string, string> = {
   TableExtrasInfo: "tableExtrasInfo",
   TableTrigger: "tableTrigger",
   RlsTable: "rlsTable",
+  ExtensionsOverview: "extensionsOverview",
   TablePartitions: "tablePartitions",
   InsertRowsResult: "insertRowsResult",
   ChunkedDmlBatchResult: "chunkedDmlBatchResult",

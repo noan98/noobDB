@@ -722,6 +722,28 @@ export interface RlsTable {
   forced: boolean;
 }
 
+/** `list_extensions` の 1 件: PostgreSQL の拡張機能 (#2160)。 */
+export interface ExtensionInfo {
+  name: string;
+  /** 導入済みのバージョン。未導入は null。 */
+  installed_version: string | null;
+  /** サーバが提供する既定のバージョン。サーバに無い導入済み拡張は null。 */
+  default_version: string | null;
+  /** 導入先のスキーマ。未導入は null。 */
+  schema: string | null;
+  comment: string | null;
+  /** 導入済みで、既定のバージョンのほうが新しい (`ALTER EXTENSION ... UPDATE` で更新できる)。 */
+  updatable: boolean;
+}
+
+/** `list_extensions` の結果 (#2160)。 */
+export interface ExtensionsOverview {
+  /** 導入済みを先、未導入を後に、それぞれ名前順。 */
+  extensions: ExtensionInfo[];
+  /** `shared_preload_libraries` のライブラリ名 (読めなければ空)。 */
+  shared_preload_libraries: string[];
+}
+
 /** `list_table_triggers` の 1 件: テーブルで発火するトリガー (#1867)。 */
 export interface TableTrigger {
   name: string;

@@ -641,6 +641,33 @@ pub struct RlsTable {
     pub forced: bool,
 }
 
+/// PostgreSQL の拡張機能 (EXTENSION) 1 件 (`list_extensions`、#2160)。サーバが提供できるもの
+/// (`pg_available_extensions`) と、このデータベースに導入済みのもの (`pg_extension`) を名前でまとめる。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionInfo {
+    pub name: String,
+    /// 導入済みのバージョン。未導入は `None`。
+    pub installed_version: Option<String>,
+    /// サーバが提供する既定のバージョン (`CREATE EXTENSION` で入るもの)。サーバに無い導入済み拡張は `None`。
+    pub default_version: Option<String>,
+    /// 導入先のスキーマ。未導入は `None`。
+    pub schema: Option<String>,
+    /// 拡張の説明 (`pg_available_extensions.comment`)。
+    pub comment: Option<String>,
+    /// 導入済みで、既定のバージョンのほうが新しい (`ALTER EXTENSION ... UPDATE` で更新できる)。
+    pub updatable: bool,
+}
+
+/// `list_extensions` の結果 (#2160)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionsOverview {
+    /// 導入済みを先、未導入を後に、それぞれ名前順。
+    pub extensions: Vec<ExtensionInfo>,
+    /// `shared_preload_libraries` のライブラリ名 (読めなければ空)。`pg_stat_statements` のように
+    /// `CREATE EXTENSION` だけでは動かず、postgresql.conf への追記と再起動が要る拡張の注記に使う。
+    pub shared_preload_libraries: Vec<String>,
+}
+
 /// A non-table schema object: a view, materialized view, stored
 /// procedure, function, trigger, sequence / user-defined type (PostgreSQL only), or event (MySQL only). `kind` is one of `view` /
 /// `materialized_view` / `procedure` / `function` / `trigger` / `sequence` / `event` / `type` so the UI can

@@ -2275,6 +2275,55 @@ impl PostgresConn {
         Ok(def)
     }
 
+    /// 拡張機能の一覧 (#2160): 導入済み (`pg_extension`) とサーバが提供できるもの
+    /// (`pg_available_extensions`) を名前で結合する。拡張はデータベース単位なので、スキーマには依存しない。
+    /// 導入・更新・削除は UI が組み立てた `CREATE / ALTER / DROP EXTENSION` を通常のクエリ経路
+    /// (read_only の拒否はバックエンド) で流す。
+    pub async fn list_extensions(&self) -> Result<super::types::ExtensionsOverview> {
+        let rows: Vec<PgRow> = sqlx::query(
+            "SELECT COALESCE(a.name, e.extname)::text,
+                    e.extversion::text,
+                    a.default_version::text,
+                    n.nspname::text,
+                    a.comment::text
+               FROM pg_extension e
+               JOIN pg_namespace n ON n.oid = e.extnamespace
+               FULL JOIN pg_available_extensions a ON a.name = e.extname
+              ORDER BY (e.extname IS NULL), 1",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let extensions = rows
+            .iter()
+            .filter_map(|r| {
+                let installed: Option<String> = r.try_get(1).ok().flatten();
+                let default: Option<String> = r.try_get(2).ok().flatten();
+                let updatable = matches!((&installed, &default), (Some(i), Some(d)) if i != d);
+                Some(super::types::ExtensionInfo {
+                    name: r.try_get::<String, _>(0).ok()?,
+                    installed_version: installed,
+                    default_version: default,
+                    schema: r.try_get(3).ok().flatten(),
+                    comment: r.try_get(4).ok().flatten(),
+                    updatable,
+                })
+            })
+            .collect();
+        // 読めなくても一覧は返す (注記が出ないだけ)。
+        let preload: Option<String> =
+            sqlx::query_scalar("SELECT current_setting('shared_preload_libraries', true)")
+                .fetch_one(&self.pool)
+                .await
+                .ok()
+                .flatten();
+        Ok(super::types::ExtensionsOverview {
+            extensions,
+            shared_preload_libraries: parse_preload_libraries(
+                preload.as_deref().unwrap_or_default(),
+            ),
+        })
+    }
+
     /// 1 つの型 (ENUM / DOMAIN / 複合型 / 範囲型) の `CREATE TYPE` / `CREATE DOMAIN` (#2127)。
     /// スキーマツリーの定義表示とスキーマ比較・同期が共有する。該当する型が無ければ `None`。
     async fn type_definition(&self, schema: &str, name: &str) -> Result<Option<String>> {
@@ -4482,6 +4531,15 @@ fn pg_quote_ident(name: &str) -> String {
     super::sync::quote_ident(super::DriverKind::Postgres, name)
 }
 
+/// `shared_preload_libraries` の値 (カンマ区切り。各要素は引用符で囲まれうる) をライブラリ名の一覧にする (#2160)。
+fn parse_preload_libraries(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|s| s.trim().trim_matches('"').trim())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 /// ユーザー定義型の列の型名 (`CREATE TABLE` にそのまま書ける形, #2127)。`current` と同じスキーマの
 /// 型は修飾なし、別スキーマなら `"schema"."type"`。配列列は `[]` を次元数ぶん付ける
 /// (`attndims` が 0 でも配列なら 1 次元として扱う)。
@@ -4998,6 +5056,16 @@ async fn restore_statement_timeout(conn: &mut sqlx::PgConnection, orig: &str) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preload_libraries_are_split_and_unquoted() {
+        assert_eq!(
+            parse_preload_libraries("pg_stat_statements, \"auto_explain\" ,,timescaledb"),
+            vec!["pg_stat_statements", "auto_explain", "timescaledb"]
+        );
+        assert!(parse_preload_libraries("").is_empty());
+        assert!(parse_preload_libraries("  ").is_empty());
+    }
 
     #[test]
     fn user_type_ref_qualifies_only_other_schemas_and_marks_arrays() {

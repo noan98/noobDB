@@ -10,6 +10,7 @@ import type {
   TableExtrasInfo,
   TablePartitions,
   RlsTable,
+  ExtensionsOverview,
   TableTrigger,
   SchemaObject,
   RoutineSignature,
@@ -147,6 +148,14 @@ export const schemaCommands = {
   listRlsTables: (sessionId: string, database: string) =>
     invoke<RlsTable[]>("list_rls_tables", { sessionId, database }).then((r) =>
       parseResponse(schemas.rlsTableArray, r, "list_rls_tables"),
+    ),
+  /**
+   * PostgreSQL の拡張機能 (導入済み + サーバが提供できるもの) の一覧 (#2160)。PostgreSQL だけ (他ドライバはエラー)。
+   * 読み取りのみ。導入・更新・削除は `CREATE / ALTER / DROP EXTENSION` を `run_query` で流す。
+   */
+  listExtensions: (sessionId: string) =>
+    invoke<ExtensionsOverview>("list_extensions", { sessionId }).then((r) =>
+      parseResponse(schemas.extensionsOverview, r, "list_extensions"),
     ),
   /** 非テーブルのスキーマオブジェクト (ビュー/ルーチン/トリガー) を取得する。 */
   listSchemaObjects: (sessionId: string, database: string) =>
