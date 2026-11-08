@@ -51,6 +51,7 @@ import { TaskMaintenanceKindPicker } from "./TaskMaintenanceKindPicker";
 import {
   buildTaskMaintenanceStatements,
   maintenanceImpact,
+  resolveTaskDatabase,
   TASK_MAINTENANCE_ERROR_KEYS,
 } from "./taskMaintenance";
 import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
@@ -822,13 +823,16 @@ function TaskForm({
   const [actionKind, setActionKind] = useState<ActionKind>(task?.action.kind ?? "export_query");
   const [sql, setSql] = useState(task?.action.kind === "export_query" ? task.action.sql : "");
   const [database, setDatabase] = useState(
-    task?.action.kind === "export_query" ||
-      task?.action.kind === "run_assertions" ||
-      task?.action.kind === "run_maintenance"
+    task?.action.kind === "export_query" || task?.action.kind === "run_assertions"
       ? (task.action.database ?? "")
       : task?.action.kind === "dump"
         ? task.action.database
         : "",
+  );
+  // 保守タスクの database / スキーマ。他のアクションの `database` とは別の状態にして、
+  // アクションを切り替えても値が持ち越されないようにする (#2152)。
+  const [maintenanceDatabase, setMaintenanceDatabase] = useState(
+    task?.action.kind === "run_maintenance" ? (task.action.database ?? "") : "",
   );
   const [format, setFormat] = useState<ExportFormat>(
     task?.action.kind === "export_query" ? task.action.format : "csv",
@@ -1007,9 +1011,17 @@ function TaskForm({
     : maintenanceKinds[0];
   // ライブプレビューと保存前の組み合わせ検証は同じ関数 (`build_statements` の写し) を通す (#2096)。
   const maintenanceTargetList = parseMaintenanceTargets(maintenanceTargets);
+  // SQLite は、アタッチした別名に当たらない値 (MySQL の値の持ち越しなど) を捨てて main 扱いにする。
+  // 実行時・保存時のバックエンドと同じ規則 (`resolveTaskDatabase`) で、画面に出ない値は送らない (#2152)。
+  const attachedAliases = (selectedProfile?.sqlite_attachments ?? []).map((a) => a.alias);
+  const effectiveMaintenanceDatabase = resolveTaskDatabase(
+    selectedProfile?.driver,
+    maintenanceDatabase,
+    attachedAliases,
+  );
   const maintenanceBuild = buildTaskMaintenanceStatements(
     selectedProfile?.driver,
-    database.trim() === "" ? null : database,
+    effectiveMaintenanceDatabase,
     maintenanceTargetList,
     effectiveMaintenanceKind,
   );
@@ -1122,7 +1134,7 @@ function TaskForm({
       const targets = maintenanceTargetList;
       action = {
         kind: "run_maintenance",
-        database: database.trim() === "" ? null : database.trim(),
+        database: effectiveMaintenanceDatabase,
         targets,
         maintenance: effectiveMaintenanceKind,
       };
@@ -1395,18 +1407,35 @@ function TaskForm({
               {t("taskMaintHeavyHint")}
             </Callout>
           )}
-          {selectedProfile?.driver !== "sqlite" && (
+          {selectedProfile?.driver === "sqlite" ? (
+            // SQLite は自由入力ではなく、main と設定でアタッチした別名から選ぶ (#2152)。
+            <FormSection>
+              <FieldLabel htmlFor="task-database-maintenance">
+                {t("taskFormMaintenanceAttachedDb")}
+              </FieldLabel>
+              <ListboxSelect
+                id="task-database-maintenance"
+                css={{ width: "100%" }}
+                value={effectiveMaintenanceDatabase ?? ""}
+                options={[
+                  { value: "", label: "main" },
+                  ...attachedAliases.map((alias) => ({ value: alias, label: alias })),
+                ]}
+                onChange={setMaintenanceDatabase}
+              />
+            </FormSection>
+          ) : (
             <FormSection>
               <FieldLabel htmlFor="task-database-maintenance">{t("taskFormMaintenanceDatabase")}</FieldLabel>
               <Input
                 id="task-database-maintenance"
-                value={database}
+                value={maintenanceDatabase}
                 placeholder={
                   selectedProfile?.database
                     ? t("taskFormDatabaseDefault", { database: selectedProfile.database })
                     : undefined
                 }
-                onChange={(e) => setDatabase(e.target.value)}
+                onChange={(e) => setMaintenanceDatabase(e.target.value)}
               />
               {maintenanceError === "invalidDatabase" && (
                 <FieldError>{t(TASK_MAINTENANCE_ERROR_KEYS.invalidDatabase)}</FieldError>

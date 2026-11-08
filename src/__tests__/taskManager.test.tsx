@@ -634,6 +634,85 @@ describe("TaskManager 定期メンテナンス (#2025)", () => {
   });
 });
 
+describe("TaskManager SQLite の保守タスクの database (#2152)", () => {
+  const sqliteProfile = (id: string, aliases: string[]) =>
+    makeProfile({
+      id,
+      name: `SQLite ${id}`,
+      driver: "sqlite",
+      database: null,
+      file_path: "/tmp/main.db",
+      sqlite_attachments: aliases.map((alias) => ({ path: `/tmp/${alias}.db`, alias })),
+    });
+
+  beforeEach(() => {
+    listTasks.mockResolvedValue([]);
+  });
+
+  async function openMaintenanceForm(user: ReturnType<typeof userEvent.setup>) {
+    await waitFor(() => expect(screen.getByText(t("taskEmpty"))).toBeInTheDocument());
+    await user.click(screen.getAllByRole("button", { name: t("taskCreate") })[0]);
+    await user.type(await screen.findByLabelText(t("taskFormName")), "Maint");
+    chooseListboxOption(screen.getByLabelText(t("taskFormActionKind")), "run_maintenance");
+  }
+
+  it("欄を隠さず、main とアタッチした別名から選べる。別名を選ぶと修飾して保存する", async () => {
+    const saveTask = vi.mocked(api.saveTask);
+    saveTask.mockClear();
+    saveTask.mockResolvedValue({ ...TASK, id: "new" });
+    const user = userEvent.setup();
+    renderWithProviders(<TaskManager profiles={[sqliteProfile("s1", ["ext", "arch"])]} onClose={() => {}} />);
+    await openMaintenanceForm(user);
+    await user.type(screen.getByLabelText(t("taskFormMaintenanceTargets")), "t");
+    expect(screen.getByTestId("task-maint-preview")).toHaveTextContent('ANALYZE "t";');
+    chooseListboxOption(screen.getByLabelText(t("taskFormMaintenanceAttachedDb")), "ext");
+    expect(screen.getByTestId("task-maint-preview")).toHaveTextContent('ANALYZE "ext"."t";');
+    await user.click(screen.getByRole("button", { name: t("taskFormSave") }));
+    await waitFor(() => expect(saveTask).toHaveBeenCalledTimes(1));
+    expect(saveTask.mock.calls[0][0].action).toMatchObject({ kind: "run_maintenance", database: "ext" });
+  });
+
+  it("別のドライバで入れた database は、SQLite に切り替えると捨てて修飾なしで保存する", async () => {
+    const saveTask = vi.mocked(api.saveTask);
+    saveTask.mockClear();
+    saveTask.mockResolvedValue({ ...TASK, id: "new" });
+    const user = userEvent.setup();
+    renderWithProviders(
+      <TaskManager
+        profiles={[makeProfile({ id: "m1", name: "MySQL", driver: "mysql" }), sqliteProfile("s1", ["ext"])]}
+        onClose={() => {}}
+      />,
+    );
+    await openMaintenanceForm(user);
+    await user.type(screen.getByLabelText(t("taskFormMaintenanceDatabase")), "shop");
+    await user.type(screen.getByLabelText(t("taskFormMaintenanceTargets")), "t");
+    expect(screen.getByTestId("task-maint-preview")).toHaveTextContent("ANALYZE TABLE `shop`.`t`;");
+    chooseListboxOption(screen.getByLabelText(t("taskFormProfile")), "s1");
+    expect(screen.getByTestId("task-maint-preview")).toHaveTextContent('ANALYZE "t";');
+    expect(screen.getByTestId("task-maint-preview")).not.toHaveTextContent("shop");
+    await user.click(screen.getByRole("button", { name: t("taskFormSave") }));
+    await waitFor(() => expect(saveTask).toHaveBeenCalledTimes(1));
+    expect(saveTask.mock.calls[0][0].action).toMatchObject({ kind: "run_maintenance", database: null });
+  });
+
+  it("他のアクションの database は保守タスクへ持ち越さない", async () => {
+    const saveTask = vi.mocked(api.saveTask);
+    saveTask.mockClear();
+    saveTask.mockResolvedValue({ ...TASK, id: "new" });
+    const user = userEvent.setup();
+    renderWithProviders(
+      <TaskManager profiles={[makeProfile({ driver: "mysql", read_only: false })]} onClose={() => {}} />,
+    );
+    await waitFor(() => expect(screen.getByText(t("taskEmpty"))).toBeInTheDocument());
+    await user.click(screen.getAllByRole("button", { name: t("taskCreate") })[0]);
+    await user.type(await screen.findByLabelText(t("taskFormName")), "Carry");
+    await user.type(await screen.findByLabelText(t("taskFormSql")), "SELECT 1");
+    await user.type(screen.getByLabelText(t("taskFormDatabaseOptional")), "shop");
+    chooseListboxOption(screen.getByLabelText(t("taskFormActionKind")), "run_maintenance");
+    expect((screen.getByLabelText(t("taskFormMaintenanceDatabase")) as HTMLInputElement).value).toBe("");
+  });
+});
+
 describe("TaskManager 初回読み込み (#1617)", () => {
   it("一覧を取得するまでは「タスクがありません」を出さない", async () => {
     let resolve: (v: TaskDefinition[]) => void = () => {};
