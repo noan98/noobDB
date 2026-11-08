@@ -2508,6 +2508,8 @@ export default function App() {
     tab: Tab;
     sql: string;
     mode: "run" | "runNewTab" | "preview" | "explain";
+    /** "run" 再開時に `runInTabWithGate` へ渡す指定 (スニペット実行の `newTab: false` など)。 */
+    runOpts?: { newTab?: boolean };
   } | null>(null);
 
   // The focused pane drives all the "active tab" handlers (sidebar inserts,
@@ -6753,25 +6755,39 @@ export default function App() {
   // Run the resolved SQL through whichever action the user triggered. Used both
   // directly (no parameters) and after the parameter modal substitutes values.
   const dispatchEditorAction = useCallback(
-    (tab: Tab, sql: string, mode: "run" | "runNewTab" | "preview" | "explain") => {
+    (
+      tab: Tab,
+      sql: string,
+      mode: "run" | "runNewTab" | "preview" | "explain",
+      runOpts?: { newTab?: boolean },
+    ) => {
       if (mode === "preview") void previewQueryInTab(tab.id, sql);
       else if (mode === "explain") explainForTab(tab, sql);
       else if (mode === "runNewTab") runInTabWithGate(tab, sql, { newTab: true });
-      else runInTabWithGate(tab, sql);
+      else runInTabWithGate(tab, sql, runOpts);
     },
     [previewQueryInTab, explainForTab, runInTabWithGate],
   );
 
   // Editor run/preview/explain gate for {{variable}} and native (?, $n, :name) parameters: when the SQL
   // has placeholders, prompt for values first; otherwise run straight through.
+  //
+  // **エディタ由来の (ユーザが書いた / 保存した) SQL を実行する入口は、必ずこの関数を通す** (#2151)。
+  // `runInTabWithGate` を直接呼んでよいのは、アプリが生成して展開済みの SQL (ルーチン呼び出し・
+  // 出力タブの再実行・ランチャーの履歴など) を流す箇所だけで、その呼び出し箇所にコメントで明示する。
   const resolveParamsThen = useCallback(
-    (tab: Tab, sql: string, mode: "run" | "runNewTab" | "preview" | "explain") => {
+    (
+      tab: Tab,
+      sql: string,
+      mode: "run" | "runNewTab" | "preview" | "explain",
+      runOpts?: { newTab?: boolean },
+    ) => {
       const driver = selectedProfile?.driver ?? "mysql";
       if (extractQueryParams(sql).length === 0 && extractNativeParams(sql, driver).length === 0) {
-        dispatchEditorAction(tab, sql, mode);
+        dispatchEditorAction(tab, sql, mode, runOpts);
         return;
       }
-      setPendingParams({ tab, sql, mode });
+      setPendingParams({ tab, sql, mode, runOpts });
     },
     [dispatchEditorAction, selectedProfile?.driver],
   );
@@ -6779,11 +6795,11 @@ export default function App() {
   const handleParamsSubmit = useCallback(
     (values: Record<string, string>, types: Record<string, ParamType>) => {
       if (!pendingParams) return;
-      const { tab, sql, mode } = pendingParams;
+      const { tab, sql, mode, runOpts } = pendingParams;
       const driver = (selectedProfile?.driver ?? "mysql") as DriverKind;
       const finalSql = substituteAllParams(sql, driver, values, types);
       setPendingParams(null);
-      dispatchEditorAction(tab, finalSql, mode);
+      dispatchEditorAction(tab, finalSql, mode, runOpts);
     },
     [pendingParams, selectedProfile?.driver, dispatchEditorAction],
   );
@@ -6792,9 +6808,9 @@ export default function App() {
   // 通常の実行経路 (実行ゲート込み) へ渡す。
   const handleParamsRunRaw = useCallback(() => {
     if (!pendingParams) return;
-    const { tab, sql, mode } = pendingParams;
+    const { tab, sql, mode, runOpts } = pendingParams;
     setPendingParams(null);
-    dispatchEditorAction(tab, sql, mode);
+    dispatchEditorAction(tab, sql, mode, runOpts);
   }, [pendingParams, dispatchEditorAction]);
 
   const handleParamsCancel = useCallback(() => setPendingParams(null), []);
@@ -6887,6 +6903,8 @@ export default function App() {
   // 通し、実行経路を二重実装しない。`newTab: false` は「このスニペット専用に
   // 作った新タブをそのまま使う」指定で、`settings.resultsInNewTab` が有効でも
   // さらにもう 1 枚タブを開かせない。
+  // スニペット本文はユーザが書いた SQL なので `{{name}}` / `?` / `$n` / `:name` を含みうる。
+  // 直接 `runInTabWithGate` へ渡さず、エディタ実行と同じ `resolveParamsThen` (入力モーダル) を通す (#2151)。
   const handleRunSnippet = useCallback(
     (snippet: Snippet) => {
       if (!sessionId) return;
@@ -6900,10 +6918,10 @@ export default function App() {
         titleManual: true,
       };
       addTab(tab);
-      runInTabWithGate(tab, plain, { newTab: false });
+      resolveParamsThen(tab, plain, "run", { newTab: false });
       recordSnippetRunUsage(snippet.id);
     },
-    [sessionId, addTab, runInTabWithGate, recordSnippetRunUsage],
+    [sessionId, addTab, resolveParamsThen, recordSnippetRunUsage],
   );
 
   // Insert an advisor's fix DDL (#741) into the focused query/explain editor,
@@ -7135,7 +7153,8 @@ export default function App() {
   );
 
   // ランチャーから最近のクエリを実行する。スニペットのワンクリック実行 (#877) と同じく
-  // 新しいクエリタブを作り、通常のエディタ実行と同じ `runInTabWithGate` に委ねる
+  // 新しいクエリタブを作り、通常のエディタ実行と同じ `runInTabWithGate` に委ねる。
+  // 履歴は実行済みの展開後 SQL なので、パラメータ入力 (`resolveParamsThen`) は通さない (#2151)
   // (危険クエリ確認・読み取り専用ガード・本番書き込み承認・自動 LIMIT をそのまま通す)。
   const handleLauncherRunSql = useCallback(
     (sql: string) => {
@@ -7168,6 +7187,7 @@ export default function App() {
 
   // 出力タブの「再実行」(#1541)。記録時と同じ DB のタブで流す (`database` が無ければ接続の既定)。
   // 接続が違う行はパネル側で無効にしている。実行は通常の `runInTabWithGate` に委ねる。
+  // 出力ログは実行時に展開済みの SQL なので、パラメータ入力 (`resolveParamsThen`) は通さない (#2151)。
   const handleOutputRunSql = useCallback(
     (sql: string, execDatabase: string | null) => {
       if (!sessionId) return;
@@ -8279,6 +8299,7 @@ export default function App() {
   );
 
   // ストアドプロシージャ / 関数の実行 (#1003): 右クリック「実行...」でフォームを開き、
+  // (生成済みの展開後 SQL なのでパラメータ入力 `resolveParamsThen` は通さない #2151)
   // 生成した呼び出し SQL を新しいクエリタブで **通常の実行ゲート** (`runInTabWithGate`
   // = 危険クエリ確認・confirm_writes → run_query_stream / バッチ / 明示トランザクション)
   // に渡す。独自の実行経路は持たない — read_only の拒否もバックエンドの
@@ -11276,13 +11297,16 @@ export default function App() {
         const body = t ? getTabSql(t) : "";
         if (t && t.kind === "query" && body.trim() && sessionId) {
           e.preventDefault();
-          runInTabWithGate(t, body, { newTab: true });
+          // 入力モーダル表示中は保留中の入力 (スニペットの runOpts など) を上書きしない。
+          if (pendingParams) return;
+          // エディタ内の Mod+Shift+Enter と同じく入力モーダルを通す (#2151)。
+          resolveParamsThen(t, body, "runNewTab");
         }
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeTab, sessionId, runInTabWithGate, getTabSql]);
+  }, [activeTab, sessionId, resolveParamsThen, getTabSql, pendingParams]);
 
   // Cmd/Ctrl+Z / Cmd/Ctrl+Shift+Z で、アクティブなテーブルタブの未適用インライン
   // セル編集を Undo / Redo する。トーストやツールバーのボタンと同じ編集
