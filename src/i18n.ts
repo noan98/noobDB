@@ -1641,6 +1641,14 @@ const en = {
   formSqliteAttachRemove: "Remove",
   formSqliteAttachAliasInvalid:
     "Use letters, digits and _ only, not starting with a digit (main and temp are reserved)",
+  treeAttachBadge: "ATTACH",
+  treeAttachTooltip: "{db} - attached file: {path}",
+  treeAttachTooltipReadOnly: "{db} - attached file: {path} (read-only)",
+  attachedUnsupportedRebuild:
+    "Rebuilding a table in an attached database is not supported. Edit it in a connection opened directly on that file.",
+  attachedUnsupportedTransfer:
+    "Creating or replacing a table in an attached database is not supported. Choose append or upsert, or pick a table that already exists.",
+  contextMenuAlterAttachedHint: "Changes that need a table rebuild are not supported in an attached database",
   formSqliteAttachAliasDuplicate: "This alias is already used by another file",
   formHost: "Host",
   formPort: "Port",
@@ -9202,6 +9210,14 @@ const ja: Dict = {
   formSqliteAttachAlias: "別名",
   formSqliteAttachRemove: "削除",
   formSqliteAttachAliasInvalid: "英数字と _ だけが使えます。先頭に数字は使えず、main と temp は予約済みです",
+  treeAttachBadge: "ATTACH",
+  treeAttachTooltip: "{db} - アタッチしたファイル: {path}",
+  treeAttachTooltipReadOnly: "{db} - アタッチしたファイル: {path} (読み取り専用)",
+  attachedUnsupportedRebuild:
+    "アタッチしたデータベースの表は再構築できません。そのファイルを直接開いた接続で編集してください。",
+  attachedUnsupportedTransfer:
+    "アタッチしたデータベースへの表の作成・置換は未対応です。追記か upsert を選ぶか、既存の表を指定してください。",
+  contextMenuAlterAttachedHint: "表の再構築が必要な変更は、アタッチしたデータベースでは未対応です",
   formSqliteAttachAliasDuplicate: "この別名はほかのファイルですでに使われています",
   formHost: "ホスト",
   formPort: "ポート",
