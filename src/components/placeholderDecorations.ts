@@ -1,4 +1,4 @@
-import { RangeSetBuilder, type Extension } from "@codemirror/state";
+import { RangeSetBuilder, StateEffect, type Extension } from "@codemirror/state";
 import {
   Decoration,
   EditorView,
@@ -18,8 +18,14 @@ import { findPlaceholderRanges } from "../queryParams";
 
 const placeholderMark = Decoration.mark({ class: "cm-query-placeholder" });
 
-/** これより長い文書は装飾しない (キー入力ごとの全体走査を避ける)。 */
+/** これより長い文書は装飾しない (全体走査のコストを抑える)。 */
 const MAX_DECORATED_LENGTH = 200_000;
+
+/** 打鍵が落ち着いてから全体を走査し直すまでの待ち時間 (ms)。打鍵中は既存の装飾を変更位置に追従させるだけにする
+ *  (#1316: 打鍵ごとに Text 全体を文字列化しない)。 */
+const REBUILD_DELAY_MS = 150;
+
+const rebuildEffect = StateEffect.define<null>();
 
 function build(view: EditorView, driver: string): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
@@ -40,26 +46,48 @@ export function placeholderDecorations(getDriver: () => string, getHint: () => s
     class {
       decorations: DecorationSet;
       driver: string;
+      timer: ReturnType<typeof setTimeout> | null = null;
       constructor(view: EditorView) {
         this.driver = getDriver();
         this.decorations = build(view, this.driver);
       }
       update(u: ViewUpdate) {
         const driver = getDriver();
-        if (u.docChanged || driver !== this.driver) {
+        const requested = u.transactions.some((tr) => tr.effects.some((e) => e.is(rebuildEffect)));
+        if (requested || driver !== this.driver) {
           this.driver = driver;
           this.decorations = build(u.view, driver);
+          return;
         }
+        if (u.docChanged) {
+          // 打鍵中は位置だけ追従させ、走査し直しは入力が落ち着いてから。
+          this.decorations = this.decorations.map(u.changes);
+          this.schedule(u.view);
+        }
+      }
+      schedule(view: EditorView) {
+        if (this.timer !== null) clearTimeout(this.timer);
+        this.timer = setTimeout(() => {
+          this.timer = null;
+          view.dispatch({ effects: rebuildEffect.of(null) });
+        }, REBUILD_DELAY_MS);
+      }
+      destroy() {
+        if (this.timer !== null) clearTimeout(this.timer);
       }
     },
     { decorations: (v) => v.decorations },
   );
   const tooltip = hoverTooltip((view, pos) => {
-    const doc = view.state.doc;
-    if (doc.length > MAX_DECORATED_LENGTH) return null;
-    const hit = findPlaceholderRanges(doc.toString(), getDriver()).find(
-      (r) => pos >= r.start && pos <= r.end,
-    );
+    // 走査し直さず、作成済みの装飾から当たりを引く。
+    let hit = null as { start: number; end: number } | null;
+    view.plugin(plugin)?.decorations.between(pos, pos, (from, to) => {
+      if (pos >= from && pos < to) {
+        hit = { start: from, end: to };
+        return false;
+      }
+      return undefined;
+    });
     if (!hit) return null;
     return {
       pos: hit.start,
