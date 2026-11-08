@@ -28,6 +28,7 @@
     { "id": "access-denied-generic", "note": "汎用認証失敗", "backendKind": "sqlxProtocol", "message": "authentication failed", "hintKey": "errorHintAccessDenied", "illustration": "permissionDenied" },
 
     { "id": "insufficient-privilege-mysql-command-denied", "note": "MySQL 個別操作の権限不足 (#732 ユーザ一覧・GRANT/REVOKE 実行時想定)", "backendKind": "sqlxProtocol", "message": "SELECT command denied to user 'app'@'%' for table 'orders'", "hintKey": "errorHintInsufficientPrivilege", "illustration": "permissionDenied" },
+    { "id": "insufficient-privilege-postgres-create-extension", "note": "PostgreSQL の CREATE EXTENSION の権限不足 (#2160): 非スーパーユーザーが trusted ではない拡張を導入したとき", "backendKind": "sqlxProtocol", "message": "permission denied to create extension \"pg_stat_statements\"", "hintKey": "errorHintInsufficientPrivilege", "illustration": "permissionDenied" },
     { "id": "insufficient-privilege-postgres-permission-denied", "note": "PostgreSQL 個別操作の権限不足", "backendKind": "sqlxProtocol", "message": "permission denied for table orders", "hintKey": "errorHintInsufficientPrivilege", "illustration": "permissionDenied" },
     { "id": "insufficient-privilege-postgres-must-be-owner", "note": "PostgreSQL 所有者権限不足 (ALTER 等)", "backendKind": "sqlxProtocol", "message": "must be owner of table orders", "hintKey": "errorHintInsufficientPrivilege", "illustration": "permissionDenied" },
 

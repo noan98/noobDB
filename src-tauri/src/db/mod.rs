@@ -1653,6 +1653,17 @@ impl Connection {
         }
     }
 
+    /// 拡張機能 (EXTENSION) の一覧 (#2160)。PostgreSQL 専用で、MySQL / SQLite には拡張機能の
+    /// 仕組みが無いので `InvalidInput`。読み取りのみ (導入・更新・削除は通常のクエリ経路)。
+    pub async fn list_extensions(&self) -> Result<types::ExtensionsOverview> {
+        match self {
+            Connection::Postgres(c) => c.list_extensions().await,
+            Connection::MySql(_) | Connection::Sqlite(_) => Err(AppError::InvalidInput(
+                "extensions are only supported on PostgreSQL".into(),
+            )),
+        }
+    }
+
     /// `table` がパーティション表なら子パーティションの一覧 (#1868)。そうでなければ `None`。
     /// 読み取りのみ。SQLite はパーティション非対応なので `InvalidInput`。
     pub async fn list_table_partitions(

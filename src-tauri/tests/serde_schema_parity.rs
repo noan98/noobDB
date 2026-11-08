@@ -755,6 +755,29 @@ fn build_fixtures() -> serde_json::Value {
             .into(),
         enabled: true,
     };
+    let extensions_overview = t::ExtensionsOverview {
+        extensions: vec![
+            t::ExtensionInfo {
+                name: "pg_trgm".into(),
+                installed_version: Some("1.5".into()),
+                default_version: Some("1.6".into()),
+                schema: Some("public".into()),
+                comment: Some(
+                    "text similarity measurement and index searching based on trigrams".into(),
+                ),
+                updatable: true,
+            },
+            t::ExtensionInfo {
+                name: "hstore".into(),
+                installed_version: None,
+                default_version: Some("1.8".into()),
+                schema: None,
+                comment: None,
+                updatable: false,
+            },
+        ],
+        shared_preload_libraries: vec!["pg_stat_statements".into()],
+    };
     let table_partitions = t::TablePartitions {
         method: "RANGE".into(),
         key: "created_at".into(),
@@ -2602,6 +2625,7 @@ fn build_fixtures() -> serde_json::Value {
         "indexInfo": index_info,
         "tableExtrasInfo": table_extras_info,
         "tableTrigger": table_trigger,
+        "extensionsOverview": extensions_overview,
         "tablePartitions": table_partitions,
         "schemaObject": schema_object,
         "routineSignature": routine_signature,

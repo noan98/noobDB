@@ -3,6 +3,9 @@
   "driverDimension": "readOnly は「標準的な文字列リテラル解釈」(バックスラッシュをエスケープと見なさない = PostgreSQL / SQLite、およびドライバ非依存の呼び出し口) での期待値 (#852)。MySQL だけは \\' を引用符のエスケープとして扱うため判定が変わりうる。異なる場合のみ readOnlyMysql を書く (省略時は readOnly と同じ)。MySQL のマスクは標準解釈より多くを文字列内へ隠すため、readOnlyMysql が readOnly より厳しくなる (true→false) ことはない。",
   "cases": [
     { "sql": "SELECT * FROM users", "readOnly": true, "note": "素の SELECT" },
+    { "sql": "CREATE EXTENSION IF NOT EXISTS \"pg_trgm\"", "readOnly": false, "note": "拡張機能の導入 (#2160) は書き込み" },
+    { "sql": "ALTER EXTENSION pg_trgm UPDATE", "readOnly": false, "note": "拡張機能の更新 (#2160) は書き込み" },
+    { "sql": "DROP EXTENSION pg_trgm CASCADE", "readOnly": false, "note": "拡張機能の削除 (#2160) は書き込み" },
     { "sql": "  select 1  ", "readOnly": true, "note": "前後空白・小文字" },
     { "sql": "SELECT * FROM users;", "readOnly": true, "note": "末尾セミコロンは許容" },
     { "sql": "SELECT * FROM users;  \n ", "readOnly": true, "note": "末尾セミコロン+空白" },

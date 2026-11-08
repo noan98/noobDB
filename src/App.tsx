@@ -470,6 +470,9 @@ const ParameterInputModal = lazy(() =>
 const EnumTypeModal = lazy(() =>
   import("./components/EnumTypeModal").then((m) => ({ default: m.EnumTypeModal })),
 );
+const ExtensionsModal = lazy(() =>
+  import("./components/ExtensionsModal").then((m) => ({ default: m.ExtensionsModal })),
+);
 const RoutineEditorModal = lazy(() =>
   import("./components/RoutineEditorModal").then((m) => ({ default: m.RoutineEditorModal })),
 );
@@ -2331,6 +2334,8 @@ export default function App() {
     name: string;
     mode: "add" | "rename";
   } | null>(null);
+  // PostgreSQL の拡張機能ダイアログ (#2160) を開いているか。
+  const [extensionsOpen, setExtensionsOpen] = useState(false);
   // トランザクション開始時に実際に渡した DB (出力ログの execDatabase 用)。PG は begin に渡す値が
   // search_path 扱いでプロファイルの DB 名のため、再実行に使えず null を記録する。
   const txDatabaseRef = useRef<string | null>(null);
@@ -8300,6 +8305,10 @@ export default function App() {
     },
     [sessionId],
   );
+  const handleManageExtensions = useCallback(() => {
+    if (!sessionId) return;
+    setExtensionsOpen(true);
+  }, [sessionId]);
   const handleCreateRoutine = useCallback(
     (database: string, kind: EditableObjectKind) => {
       if (!sessionId) return;
@@ -12641,6 +12650,7 @@ export default function App() {
     onRunRoutine: handleRunRoutine,
     onEditRoutine: handleEditRoutine,
     onEditEnumType: handleEditEnumType,
+    onManageExtensions: handleManageExtensions,
     onCreateRoutine: handleCreateRoutine,
     onCreateSandbox: sessionId ? (db: string) => setSandboxCreateTarget({ database: db }) : undefined,
     onOpenSandbox: handleOpenSandbox,
@@ -13281,6 +13291,7 @@ export default function App() {
                         sessionId={sessionId}
                         driver={selectedProfile?.driver ?? "mysql"}
                         onExplain={explainTailSql}
+                        onManageExtensions={handleManageExtensions}
                       />
                     ) : activeBottomPanelTab === "whereUsed" ? (
                       <WhereUsedPanel
@@ -14718,6 +14729,37 @@ export default function App() {
                     }
                   }}
                   onClose={() => setEnumTypeEditor(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {extensionsOpen && sessionId && (
+              <Suspense fallback={null}>
+                <ExtensionsModal
+                  sessionId={sessionId}
+                  readOnly={readOnly}
+                  onExecute={async (sql, action, name) => {
+                    // 実行は通常のクエリ経路 (read_only の拒否はバックエンド)。失敗はダイアログが理由とヒントを表示する。
+                    await api.runQuery(sessionId, sql, null);
+                    invalidateSchemaCache(null);
+                    noteSchemaDdl(sql, selectedProfile?.database ?? null);
+                    connectionListRef.current?.refreshSchema();
+                    toast.success(
+                      translate("extensionsDone", {
+                        name,
+                        action: translate(
+                          action === "install"
+                            ? "extensionsInstall"
+                            : action === "update"
+                              ? "extensionsUpdate"
+                              : "extensionsDrop",
+                        ),
+                      }),
+                    );
+                  }}
+                  onClose={() => setExtensionsOpen(false)}
                 />
               </Suspense>
             )}
