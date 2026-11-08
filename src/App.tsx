@@ -11288,6 +11288,8 @@ export default function App() {
         const body = t ? getTabSql(t) : "";
         if (t && t.kind === "query" && body.trim() && sessionId) {
           e.preventDefault();
+          // 入力モーダル表示中は保留中の入力 (スニペットの runOpts など) を上書きしない。
+          if (pendingParams) return;
           // エディタ内の Mod+Shift+Enter と同じく入力モーダルを通す (#2151)。
           resolveParamsThen(t, body, "runNewTab");
         }
@@ -11295,7 +11297,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeTab, sessionId, resolveParamsThen, getTabSql]);
+  }, [activeTab, sessionId, resolveParamsThen, getTabSql, pendingParams]);
 
   // Cmd/Ctrl+Z / Cmd/Ctrl+Shift+Z で、アクティブなテーブルタブの未適用インライン
   // セル編集を Undo / Redo する。トーストやツールバーのボタンと同じ編集
