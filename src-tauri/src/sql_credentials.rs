@@ -658,8 +658,12 @@ pub(crate) fn conninfo_secret_values(conninfo: &str) -> Vec<String> {
         if let Some(at) = rest.rfind('@') {
             if let Some(colon) = rest[..at].find(':') {
                 let pw = &rest[colon + 1..at];
-                out.push(pw.to_string());
-                out.push(percent_decode(pw));
+                // libpq は `/` の手前までで `@` を探すので、素の `/` を含むパスワードは前半が
+                // host:port として引用される。`/` で分けた各片も秘密値にする。
+                for v in [pw.to_string(), percent_decode(pw)] {
+                    out.extend(v.split('/').map(str::to_string));
+                    out.push(v);
+                }
             }
         }
         if let Some((_, q)) = rest.split_once('?') {

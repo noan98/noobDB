@@ -462,7 +462,9 @@ function conninfoSecretValues(conninfo: string): string[] {
       const colon = rest.slice(0, at).indexOf(":");
       if (colon >= 0) {
         const pw = rest.slice(colon + 1, at);
-        out.push(pw, percentDecode(pw));
+        // libpq は `/` の手前までで `@` を探すので、素の `/` を含むパスワードは前半が host:port として
+        // 引用される。`/` で分けた各片も秘密値にする。
+        for (const v of [pw, percentDecode(pw)]) out.push(...v.split("/"), v);
       }
     }
     const q = rest.indexOf("?");
