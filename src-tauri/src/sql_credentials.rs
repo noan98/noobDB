@@ -734,27 +734,26 @@ pub(crate) fn conninfo_secret_values(conninfo: &str) -> Vec<String> {
             let raw = &chars[raw_start..raw_end];
             out.push(raw.iter().collect());
             out.push(unescape_literal(raw, '\'', true));
-            if !quoted {
-                // 空白で切れた値の続き: 次の `key=` (または `key =`) が現れるまでの語。
-                loop {
-                    let mut a = i;
-                    while a < n && is_ws(chars[a]) {
-                        a += 1;
-                    }
-                    let mut b = a;
-                    while b < n && !is_ws(chars[b]) {
-                        b += 1;
-                    }
-                    let mut c = b;
-                    while c < n && is_ws(chars[c]) {
-                        c += 1;
-                    }
-                    if a == b || chars[a..b].contains(&'=') || chars.get(c) == Some(&'=') {
-                        break;
-                    }
-                    out.push(chars[a..b].iter().collect());
-                    i = b;
+            // 空白で切れた値の続き、または引用符が途中で閉じた値の残り (`'ab''cd'` など):
+            // 次の `key=` (または `key =`) が現れるまでの語。
+            loop {
+                let mut a = i;
+                while a < n && is_ws(chars[a]) {
+                    a += 1;
                 }
+                let mut b = a;
+                while b < n && !is_ws(chars[b]) {
+                    b += 1;
+                }
+                let mut c = b;
+                while c < n && is_ws(chars[c]) {
+                    c += 1;
+                }
+                if a == b || chars[a..b].contains(&'=') || chars.get(c) == Some(&'=') {
+                    break;
+                }
+                out.push(chars[a..b].iter().collect());
+                i = b;
             }
         }
     }

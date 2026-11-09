@@ -521,19 +521,18 @@ function conninfoSecretValues(conninfo: string): string[] {
     if (CONNINFO_SECRET_KEYS.includes(asciiLower(key))) {
       const raw = conninfo.slice(rawStart, rawEnd);
       out.push(raw, unescapeLiteral(raw, "'", true));
-      if (!quoted) {
-        // 空白で切れた値の続き: 次の `key=` (または `key =`) が現れるまでの語。
-        for (;;) {
-          let a = i;
-          while (a < n && isWs(conninfo[a])) a++;
-          let b = a;
-          while (b < n && !isWs(conninfo[b])) b++;
-          let c = b;
-          while (c < n && isWs(conninfo[c])) c++;
-          if (a === b || conninfo.slice(a, b).includes("=") || conninfo[c] === "=") break;
-          out.push(conninfo.slice(a, b));
-          i = b;
-        }
+      // 空白で切れた値の続き、または引用符が途中で閉じた値の残り (`'ab''cd'` など):
+      // 次の `key=` (または `key =`) が現れるまでの語。
+      for (;;) {
+        let a = i;
+        while (a < n && isWs(conninfo[a])) a++;
+        let b = a;
+        while (b < n && !isWs(conninfo[b])) b++;
+        let c = b;
+        while (c < n && isWs(conninfo[c])) c++;
+        if (a === b || conninfo.slice(a, b).includes("=") || conninfo[c] === "=") break;
+        out.push(conninfo.slice(a, b));
+        i = b;
       }
     }
   }
