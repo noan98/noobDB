@@ -1,5 +1,6 @@
 use tauri::State;
 
+use crate::db::replication::ReplicationStatus;
 use crate::db::types::{
     ServerInfo, ServerMetrics, SqliteMaintenanceAction, SqliteMaintenanceResult,
 };
@@ -82,4 +83,28 @@ pub async fn sqlite_maintenance_inner(
         session.query_cache.invalidate_all().await;
     }
     result
+}
+
+/// レプリケーションの状態 (役割・接続先ごとの遅延・スロット一覧, #2180)。カタログの読み取りのみ
+/// なので read_only セッションでも許可し、フロントはボトムパネルの表示中だけポーリングする。
+/// 権限不足 (`pg_monitor` / `REPLICATION CLIENT` が無い) はエラーにせず `missing_privilege` として返す。
+/// SQLite は非対応エラー。
+#[tauri::command]
+pub async fn get_replication_status(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<ReplicationStatus> {
+    get_replication_status_inner(state.inner(), &session_id).await
+}
+
+/// Core of [`get_replication_status`]. See [`server_info_inner`] (#881).
+pub async fn get_replication_status_inner(
+    state: &AppState,
+    session_id: &str,
+) -> Result<ReplicationStatus> {
+    let session = state
+        .get(session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
+    session.conn.replication_status().await
 }

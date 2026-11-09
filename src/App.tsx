@@ -396,6 +396,9 @@ const PinnedComparisonView = lazy(() =>
 const ProcessListPanel = lazy(() =>
   import("./components/ProcessListPanel").then((m) => ({ default: m.ProcessListPanel })),
 );
+const ReplicationPanel = lazy(() =>
+  import("./components/ReplicationPanel").then((m) => ({ default: m.ReplicationPanel })),
+);
 const PgListenPanel = lazy(() =>
   import("./components/PgListenPanel").then((m) => ({ default: m.PgListenPanel })),
 );
@@ -12589,7 +12592,9 @@ export default function App() {
     reason === "sqliteUnsupported"
       ? tab === "inspector"
         ? t("appQueryInspectorUnsupported")
-        : t("appProcessesUnsupported")
+        : tab === "replication"
+          ? t("replicationUnsupported")
+          : t("appProcessesUnsupported")
       : reason === "needsDatabase"
         ? t("appAdvisorUnsupported")
         : t("appToolsNeedsSession");
@@ -12617,17 +12622,19 @@ export default function App() {
                       ? t("sqliteMaintTitle")
                       : tab === "pgListen"
                         ? t("pgListenTitle")
-                        : tab === "profile"
-                          ? t("profileTitle")
-                          : tab === "structure"
-                            ? t("structureTitle")
-                            : tab === "timelapse"
-                              ? t("timelapseTitle")
-                              : tab === "aiSql"
-                                ? t("aiSqlTitle")
-                                : tab === "aiResultSummary"
-                                  ? t("aiResultSummaryTitle")
-                                  : t("processTitle");
+                        : tab === "replication"
+                          ? t("replicationTitle")
+                          : tab === "profile"
+                            ? t("profileTitle")
+                            : tab === "structure"
+                              ? t("structureTitle")
+                              : tab === "timelapse"
+                                ? t("timelapseTitle")
+                                : tab === "aiSql"
+                                  ? t("aiSqlTitle")
+                                  : tab === "aiResultSummary"
+                                    ? t("aiResultSummaryTitle")
+                                    : t("processTitle");
 
   // ConnectionList (memo) へ渡すハンドラの束。`tabs` / `activeTab` / `settings` に依存する
   // ハンドラが多く、そのまま渡すと打鍵・ストリーミング・タブ切替のたびに参照が変わって
@@ -13286,6 +13293,12 @@ export default function App() {
                         key={sessionId}
                         sessionId={sessionId}
                         driver={selectedProfile?.driver ?? "mysql"}
+                      />
+                    ) : activeBottomPanelTab === "replication" ? (
+                      <ReplicationPanel
+                        key={sessionId}
+                        sessionId={sessionId}
+                        driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                       />
                     ) : activeBottomPanelTab === "processes" ? (
                       <ProcessListPanel
@@ -15124,6 +15137,18 @@ export default function App() {
                   ? t("appToolsNeedsSession")
                   : selectedProfile?.driver === "sqlite"
                     ? t("appProcessesUnsupported")
+                    : undefined,
+              },
+              {
+                label: t("replicationTitle"),
+                icon: "server",
+                onSelect: () => toggleBottomPanel("replication"),
+                // SQLite はレプリケーションの概念が無く非対応 (#2180)。
+                disabled: !sessionId || selectedProfile?.driver === "sqlite",
+                title: !sessionId
+                  ? t("appToolsNeedsSession")
+                  : selectedProfile?.driver === "sqlite"
+                    ? t("replicationUnsupported")
                     : undefined,
               },
               {

@@ -2,7 +2,13 @@
 import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
-import type { ServerInfo, ServerMetrics, SqliteMaintenanceAction, SqliteMaintenanceResult } from "../tauri";
+import type {
+  ReplicationStatus,
+  ServerInfo,
+  ServerMetrics,
+  SqliteMaintenanceAction,
+  SqliteMaintenanceResult,
+} from "../tauri";
 
 export const serverCommands = {
   /** 接続中サーバの情報 (バージョン + 設定変数) を取得する (サーバ情報パネル #563)。 */
@@ -16,6 +22,12 @@ export const serverCommands = {
    * 読み取り操作なので read_only セッションでも許可される。SQLite は非対応で
    * エラーを返す (呼び出し側で catch して導線ごと非表示にする)。
    */
+  /** レプリケーションの状態 (役割・接続先ごとの遅延・スロット, #2180)。読み取りのみで read_only でも動く。
+   *  権限不足はエラーでなく `missing_privilege` で返る。SQLite は非対応エラー。 */
+  getReplicationStatus: (sessionId: string) =>
+    invoke<ReplicationStatus>("get_replication_status", { sessionId }).then((r) =>
+      parseResponse(schemas.replicationStatus, r, "get_replication_status"),
+    ),
   serverMetrics: (sessionId: string) =>
     invoke<ServerMetrics>("server_metrics", { sessionId }).then((r) =>
       parseResponse(schemas.serverMetrics, r, "server_metrics"),

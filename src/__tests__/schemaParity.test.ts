@@ -70,6 +70,7 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["tableSizeInfo", schemas.tableSizeInfo],
   ["serverInfo", schemas.serverInfo],
   ["serverMetrics", schemas.serverMetrics],
+  ["replicationStatus", schemas.replicationStatus],
   ["sqliteMaintenanceResult", schemas.sqliteMaintenanceResult],
   ["indexOverlap", schemas.indexOverlap],
   ["processInfo", schemas.processInfo],

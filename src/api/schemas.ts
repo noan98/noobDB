@@ -393,6 +393,36 @@ export const serverMetrics = z.object({
   max_connections: z.number().nullish(),
 });
 
+/** レプリケーション状態 (`get_replication_status`, #2180)。 */
+export const replicationLink = z.object({
+  direction: z.enum(["downstream", "upstream"]),
+  name: z.string(),
+  address: z.string().nullable(),
+  state: z.string().nullable(),
+  sync_state: z.string().nullable(),
+  lag_secs: z.number().nullable(),
+  write_lag_secs: z.number().nullable(),
+  flush_lag_secs: z.number().nullable(),
+  lag_bytes: z.number().nullable(),
+  io_running: z.boolean().nullable(),
+  sql_running: z.boolean().nullable(),
+  last_error: z.string().nullable(),
+});
+export const replicationSlot = z.object({
+  name: z.string(),
+  slot_type: z.string(),
+  plugin: z.string().nullable(),
+  active: z.boolean(),
+  retained_bytes: z.number().nullable(),
+  wal_status: z.string().nullable(),
+});
+export const replicationStatus = z.object({
+  role: z.enum(["primary", "replica", "standalone"]),
+  missing_privilege: z.string().nullable(),
+  links: z.array(replicationLink),
+  slots: z.array(replicationSlot),
+});
+
 /** 接続ヘルスの一括プローブ (`health_probe_all`, #1259) の 1 セッション分。 */
 export const healthProbeItem = z.object({
   session_id: z.string(),

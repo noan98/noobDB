@@ -7,6 +7,10 @@ use sqlx::postgres::{
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
+use super::replication::{
+    clamp_js_safe, ReplicationDirection, ReplicationLink, ReplicationRole, ReplicationSlot,
+    ReplicationStatus,
+};
 use super::schema_insight::IncomingForeignKey;
 use super::server_messages::capture;
 use super::tx_options::TxOptions;
@@ -5050,6 +5054,143 @@ async fn restore_statement_timeout(conn: &mut sqlx::PgConnection, orig: &str) ->
             tracing::debug!(error = %e, "statement_timeout restore failed (postgres)");
             false
         }
+    }
+}
+
+impl PostgresConn {
+    /// レプリケーションの状態 (#2180)。送信側は `pg_stat_replication`、受信側は
+    /// `pg_stat_wal_receiver`、スロットは `pg_replication_slots`。参照のみ (read_only でも動く)。
+    /// `pg_monitor` (または `pg_read_all_stats` / スーパーユーザ) が無いと他ユーザのセッションの
+    /// 列が NULL になるので、その場合は `missing_privilege` に `pg_monitor` を入れ、
+    /// 権限なしで読めるスロット一覧だけを返す。
+    pub async fn replication_status(&self) -> Result<ReplicationStatus> {
+        let in_recovery: bool = sqlx::query_scalar("SELECT pg_is_in_recovery()")
+            .fetch_one(&self.pool)
+            .await?;
+        // pg_monitor 系ロールが無い版 (PostgreSQL 10 未満) ではエラーになるので、判定不能は「足りている」扱い。
+        let privileged: bool = sqlx::query_scalar(
+            "SELECT COALESCE((SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname = current_user), false) \
+                 OR pg_catalog.pg_has_role(current_user, 'pg_monitor', 'MEMBER') \
+                 OR pg_catalog.pg_has_role(current_user, 'pg_read_all_stats', 'MEMBER')",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(true);
+
+        let mut links: Vec<ReplicationLink> = Vec::new();
+        if privileged {
+            if in_recovery {
+                // 受信側。遅延は「最後に反映したトランザクションからの経過」。送信側が静かだと
+                // 遅延しているように見えるが、PostgreSQL にはそれ以上の指標が無い。
+                let lag: Option<f64> = sqlx::query_scalar(
+                    "SELECT EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp()))::float8",
+                )
+                .fetch_one(&self.pool)
+                .await
+                .unwrap_or(None);
+                // sender_host / sender_port は PostgreSQL 11+。無い版では取れずに縮退する。
+                let receiver = sqlx::query(
+                    "SELECT status::text, sender_host::text, sender_port::int4 \
+                     FROM pg_catalog.pg_stat_wal_receiver LIMIT 1",
+                )
+                .fetch_optional(&self.pool)
+                .await
+                .ok()
+                .flatten();
+                let (state, host, port) = match &receiver {
+                    Some(r) => (
+                        r.try_get::<Option<String>, _>(0).ok().flatten(),
+                        r.try_get::<Option<String>, _>(1).ok().flatten(),
+                        r.try_get::<Option<i32>, _>(2).ok().flatten(),
+                    ),
+                    None => (None, None, None),
+                };
+                let address = host.map(|h| match port {
+                    Some(p) => format!("{h}:{p}"),
+                    None => h,
+                });
+                links.push(ReplicationLink {
+                    direction: ReplicationDirection::Upstream,
+                    name: address.clone().unwrap_or_else(|| "primary".into()),
+                    address,
+                    state: state.or_else(|| receiver.is_none().then(|| "no_receiver".into())),
+                    sync_state: None,
+                    lag_secs: lag.map(|v| v.max(0.0)),
+                    write_lag_secs: None,
+                    flush_lag_secs: None,
+                    lag_bytes: None,
+                    io_running: None,
+                    sql_running: None,
+                    last_error: None,
+                });
+            } else {
+                let rows: Vec<PgRow> = sqlx::query(
+                    "SELECT COALESCE(NULLIF(application_name, ''), host(client_addr), 'unknown'), \
+                            host(client_addr), state, sync_state, \
+                            EXTRACT(EPOCH FROM replay_lag)::float8, \
+                            EXTRACT(EPOCH FROM write_lag)::float8, \
+                            EXTRACT(EPOCH FROM flush_lag)::float8, \
+                            pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn)::bigint \
+                     FROM pg_catalog.pg_stat_replication ORDER BY application_name, client_addr",
+                )
+                .fetch_all(&self.pool)
+                .await?;
+                for r in rows {
+                    links.push(ReplicationLink {
+                        direction: ReplicationDirection::Downstream,
+                        name: r.try_get::<String, _>(0)?,
+                        address: r.try_get::<Option<String>, _>(1)?,
+                        state: r.try_get::<Option<String>, _>(2)?,
+                        sync_state: r.try_get::<Option<String>, _>(3)?,
+                        lag_secs: r.try_get::<Option<f64>, _>(4)?,
+                        write_lag_secs: r.try_get::<Option<f64>, _>(5)?,
+                        flush_lag_secs: r.try_get::<Option<f64>, _>(6)?,
+                        lag_bytes: r.try_get::<Option<i64>, _>(7)?.map(clamp_js_safe),
+                        io_running: None,
+                        sql_running: None,
+                        last_error: None,
+                    });
+                }
+            }
+        }
+
+        // wal_status は PostgreSQL 13+。to_jsonb 経由なら列が無い版でも NULL で済む。
+        let slot_rows: Vec<PgRow> = sqlx::query(
+            "SELECT s.slot_name::text, s.slot_type::text, s.plugin::text, s.active, \
+                    CASE WHEN s.restart_lsn IS NULL THEN NULL \
+                         WHEN pg_is_in_recovery() THEN \
+                              pg_wal_lsn_diff(pg_last_wal_replay_lsn(), s.restart_lsn)::bigint \
+                         ELSE pg_wal_lsn_diff(pg_current_wal_lsn(), s.restart_lsn)::bigint END, \
+                    to_jsonb(s) ->> 'wal_status' \
+             FROM pg_catalog.pg_replication_slots s ORDER BY s.slot_name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut slots = Vec::with_capacity(slot_rows.len());
+        for r in slot_rows {
+            slots.push(ReplicationSlot {
+                name: r.try_get::<String, _>(0)?,
+                slot_type: r.try_get::<String, _>(1)?,
+                plugin: r.try_get::<Option<String>, _>(2)?,
+                active: r.try_get::<bool, _>(3)?,
+                retained_bytes: r.try_get::<Option<i64>, _>(4)?.map(clamp_js_safe),
+                wal_status: r.try_get::<Option<String>, _>(5)?,
+            });
+        }
+
+        let role = if in_recovery {
+            ReplicationRole::Replica
+        } else if !links.is_empty() || !slots.is_empty() {
+            ReplicationRole::Primary
+        } else {
+            ReplicationRole::Standalone
+        };
+        Ok(ReplicationStatus {
+            role,
+            missing_privilege: (!privileged).then(|| "pg_monitor".to_string()),
+            links,
+            slots,
+        })
     }
 }
 

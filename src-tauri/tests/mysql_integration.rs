@@ -992,6 +992,31 @@ async fn mysql_new_schema_apis_and_transaction_when_env_set() {
     conn.close().await;
 }
 
+/// レプリケーション監視 (#2180)。レプリカ構成のない環境では「単独」と返ること。
+/// `REPLICATION CLIENT` が無い接続ではエラーにせず、権限名つきの状態として返ること。
+#[tokio::test]
+async fn mysql_replication_status_standalone() {
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    let status = conn.replication_status().await.expect("replication_status");
+    match status.missing_privilege.as_deref() {
+        None => {
+            assert_eq!(status.role, t::ReplicationRole::Standalone);
+            assert!(
+                status.links.is_empty(),
+                "no replication expected: {status:?}"
+            );
+        }
+        Some(p) => assert_eq!(p, "REPLICATION CLIENT"),
+    }
+    assert!(status.slots.is_empty(), "MySQL has no replication slots");
+    conn.close().await;
+}
+
 /// プロセス監視パネル (list_processes / kill_processes) の MySQL 経路。一覧には
 /// 少なくとも自分自身のプール接続が現れること、別接続を KILL するとその接続が
 /// 一覧から消えることを確認する。
