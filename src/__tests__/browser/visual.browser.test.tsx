@@ -148,11 +148,25 @@ describe.runIf(RUN_VISUAL)("ビジュアル回帰 (実ブラウザ)", { retry: 0
           return active?.tagName === "BUTTON" && active.closest('[role="dialog"]') !== null;
         })
         .toBe(true);
-      // 開くアニメーション (フェード・拡大) の途中や直後は、Chromium がダイアログを合成レイヤに
-      // 載せて文字をグレースケールでアンチエイリアスする。終わった後はサブピクセル描画に戻るので、
-      // 撮るタイミング次第でタイトル文字だけ数百ピクセルずれて落ちていた (#2195、CI の差分画像で
-      // 確認)。アニメーションの完了と、レイヤが外れた後の 2 フレームを待ってから撮る。
-      await Promise.all(document.getAnimations().map((a) => a.finished.catch(() => undefined)));
+      // 開くアニメーション (フェード + 拡大 + 上下スライド。`motion` が JS で毎フレーム style を
+      // 書き換えるので `document.getAnimations()` には出てこない) の途中は、Chromium がダイアログを
+      // 合成レイヤに載せてタイトル文字をグレースケールでアンチエイリアスする。終わるとサブピクセル
+      // 描画に戻るので、撮るタイミング次第でタイトルだけ 378 ピクセルずれて落ちていた (#2195、
+      // CI の差分画像で確認)。ダイアログと祖先の opacity / transform が終値になるのを待ち、
+      // レイヤが外れた後の 2 フレームを置いてから撮る。
+      await expect
+        .poll(() => {
+          for (let el = document.querySelector('[role="dialog"]'); el; el = el.parentElement) {
+            const style = getComputedStyle(el);
+            if (
+              style.opacity !== "1" ||
+              (style.transform !== "none" && style.transform !== "matrix(1, 0, 0, 1, 0, 0)")
+            )
+              return false;
+          }
+          return document.querySelector('[role="dialog"]') !== null;
+        })
+        .toBe(true);
       await new Promise<void>((resolve) =>
         requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
       );
