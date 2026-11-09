@@ -2324,6 +2324,31 @@ impl PostgresConn {
         })
     }
 
+    /// 拡張機能 `name` を `DROP EXTENSION ... CASCADE` したときに巻き添えで消える依存オブジェクト (#2177)。
+    /// 拡張が持つオブジェクト (`pg_depend.deptype = 'e'`) に依存するもののうち、拡張自身のメンバーと、
+    /// メンバーの表に付随する索引・制約などを除いたものを、種別・スキーマ・名前・(列なら) 表名で返す。
+    /// 未導入の拡張は空。`pg_catalog` を引くだけの読み取りで、read_only でも動く。
+    pub async fn list_extension_dependents(
+        &self,
+        name: &str,
+    ) -> Result<Vec<super::types::ExtensionDependent>> {
+        let rows: Vec<PgRow> = sqlx::query(EXTENSION_DEPENDENTS_SQL)
+            .bind(name)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                Some(super::types::ExtensionDependent {
+                    kind: r.try_get::<String, _>(0).ok()?,
+                    schema: r.try_get(1).ok().flatten(),
+                    name: r.try_get::<String, _>(2).ok()?,
+                    table: r.try_get(3).ok().flatten(),
+                })
+            })
+            .collect())
+    }
+
     /// 1 つの型 (ENUM / DOMAIN / 複合型 / 範囲型) の `CREATE TYPE` / `CREATE DOMAIN` (#2127)。
     /// スキーマツリーの定義表示とスキーマ比較・同期が共有する。該当する型が無ければ `None`。
     async fn type_definition(&self, schema: &str, name: &str) -> Result<Option<String>> {
@@ -4530,6 +4555,107 @@ fn split_outside_quotes(s: &str, sep: char) -> Option<(String, String)> {
 fn pg_quote_ident(name: &str) -> String {
     super::sync::quote_ident(super::DriverKind::Postgres, name)
 }
+
+/// `list_extension_dependents` (#2177) の問い合わせ。`$1` は拡張名。
+/// `members` = 拡張が持つオブジェクト。`deps` = それらに依存する (`n` / `a`) オブジェクト。
+/// 各依存を種別ごとのカタログ (列・索引・関数・ビューの rewrite ルール・制約・トリガー・既定値・型 ...) で名前に
+/// 引き直し、拡張自身のメンバーと、メンバーに付随するもの (所有する表が `owner`、演算子族の要素のように
+/// メンバーへ `a` / `i` で付くもの) は除く。
+const EXTENSION_DEPENDENTS_SQL: &str = "\
+WITH members AS (
+  SELECT d.classid, d.objid
+    FROM pg_depend d
+    JOIN pg_extension e ON e.oid = d.refobjid
+   WHERE d.refclassid = 'pg_extension'::regclass
+     AND e.extname = $1
+     AND d.deptype = 'e'
+), deps AS (
+  SELECT DISTINCT d.classid, d.objid, d.objsubid
+    FROM pg_depend d
+    JOIN members m ON m.classid = d.refclassid AND m.objid = d.refobjid
+   WHERE d.deptype IN ('n', 'a')
+)
+SELECT x.kind, n.nspname::text, x.name, x.tbl
+  FROM deps dp
+  LEFT JOIN pg_class c ON dp.classid = 'pg_class'::regclass AND c.oid = dp.objid
+  LEFT JOIN pg_attribute ca ON ca.attrelid = c.oid AND ca.attnum = dp.objsubid AND dp.objsubid > 0
+  LEFT JOIN pg_index ix ON ix.indexrelid = c.oid
+  LEFT JOIN pg_class ixt ON ixt.oid = ix.indrelid
+  LEFT JOIN pg_proc p ON dp.classid = 'pg_proc'::regclass AND p.oid = dp.objid
+  LEFT JOIN pg_rewrite rw ON dp.classid = 'pg_rewrite'::regclass AND rw.oid = dp.objid
+  LEFT JOIN pg_class rc ON rc.oid = rw.ev_class
+  LEFT JOIN pg_constraint co ON dp.classid = 'pg_constraint'::regclass AND co.oid = dp.objid
+  LEFT JOIN pg_class cc ON cc.oid = co.conrelid
+  LEFT JOIN pg_trigger tg ON dp.classid = 'pg_trigger'::regclass AND tg.oid = dp.objid
+  LEFT JOIN pg_class tc ON tc.oid = tg.tgrelid
+  LEFT JOIN pg_attrdef ad ON dp.classid = 'pg_attrdef'::regclass AND ad.oid = dp.objid
+  LEFT JOIN pg_class adc ON adc.oid = ad.adrelid
+  LEFT JOIN pg_attribute ada ON ada.attrelid = ad.adrelid AND ada.attnum = ad.adnum
+  LEFT JOIN pg_type ty ON dp.classid = 'pg_type'::regclass AND ty.oid = dp.objid
+  LEFT JOIN pg_extension ex ON dp.classid = 'pg_extension'::regclass AND ex.oid = dp.objid
+  CROSS JOIN LATERAL (
+    SELECT
+      CASE
+        WHEN c.oid IS NOT NULL AND dp.objsubid > 0 THEN 'column'
+        WHEN c.oid IS NOT NULL THEN CASE c.relkind
+          WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized_view'
+          WHEN 'i' THEN 'index' WHEN 'I' THEN 'index'
+          WHEN 'S' THEN 'sequence' WHEN 'c' THEN 'type' ELSE 'table' END
+        WHEN p.oid IS NOT NULL THEN CASE p.prokind WHEN 'p' THEN 'procedure' ELSE 'function' END
+        WHEN rw.oid IS NOT NULL THEN CASE rc.relkind
+          WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized_view' ELSE 'rule' END
+        WHEN co.oid IS NOT NULL THEN 'constraint'
+        WHEN tg.oid IS NOT NULL THEN 'trigger'
+        WHEN ad.oid IS NOT NULL THEN 'default'
+        WHEN ty.oid IS NOT NULL THEN 'type'
+        WHEN ex.oid IS NOT NULL THEN 'extension'
+        ELSE 'other' END AS kind,
+      CASE
+        WHEN c.oid IS NOT NULL THEN c.relnamespace
+        WHEN p.oid IS NOT NULL THEN p.pronamespace
+        WHEN rw.oid IS NOT NULL THEN rc.relnamespace
+        WHEN co.oid IS NOT NULL THEN co.connamespace
+        WHEN tg.oid IS NOT NULL THEN tc.relnamespace
+        WHEN ad.oid IS NOT NULL THEN adc.relnamespace
+        WHEN ty.oid IS NOT NULL THEN ty.typnamespace END AS nsp,
+      CASE
+        WHEN c.oid IS NOT NULL AND dp.objsubid > 0 THEN ca.attname::text
+        WHEN c.oid IS NOT NULL THEN c.relname::text
+        WHEN p.oid IS NOT NULL THEN p.proname::text || '(' || pg_get_function_identity_arguments(p.oid) || ')'
+        WHEN rw.oid IS NOT NULL THEN rc.relname::text
+        WHEN co.oid IS NOT NULL THEN co.conname::text
+        WHEN tg.oid IS NOT NULL THEN tg.tgname::text
+        WHEN ad.oid IS NOT NULL THEN ada.attname::text
+        WHEN ty.oid IS NOT NULL THEN ty.typname::text
+        WHEN ex.oid IS NOT NULL THEN ex.extname::text
+        ELSE (pg_identify_object(dp.classid, dp.objid, dp.objsubid)).identity END AS name,
+      CASE
+        WHEN c.oid IS NOT NULL AND dp.objsubid > 0 THEN c.relname::text
+        WHEN ix.indexrelid IS NOT NULL THEN ixt.relname::text
+        WHEN co.oid IS NOT NULL THEN cc.relname::text
+        WHEN tg.oid IS NOT NULL THEN tc.relname::text
+        WHEN ad.oid IS NOT NULL THEN adc.relname::text END AS tbl,
+      CASE
+        WHEN c.oid IS NOT NULL AND dp.objsubid > 0 THEN c.oid
+        WHEN ix.indexrelid IS NOT NULL THEN ix.indrelid
+        WHEN rw.oid IS NOT NULL THEN rc.oid
+        WHEN co.oid IS NOT NULL THEN co.conrelid
+        WHEN tg.oid IS NOT NULL THEN tg.tgrelid
+        WHEN ad.oid IS NOT NULL THEN ad.adrelid END AS owner
+  ) x
+  LEFT JOIN pg_namespace n ON n.oid = x.nsp
+ WHERE x.name IS NOT NULL
+   AND NOT (tg.oid IS NOT NULL AND tg.tgisinternal)
+   AND NOT EXISTS (
+         SELECT 1 FROM members m
+          WHERE (m.classid = dp.classid AND m.objid = dp.objid)
+             OR (m.classid = 'pg_class'::regclass AND m.objid = x.owner))
+   AND NOT EXISTS (
+         SELECT 1 FROM pg_depend d2
+           JOIN members m ON m.classid = d2.refclassid AND m.objid = d2.refobjid
+          WHERE d2.classid = dp.classid AND d2.objid = dp.objid AND d2.objsubid = dp.objsubid
+            AND d2.deptype IN ('a', 'i'))
+ ORDER BY (x.kind <> 'column'), x.kind, n.nspname, x.tbl, x.name";
 
 /// `shared_preload_libraries` の値 (カンマ区切り。各要素は引用符で囲まれうる) をライブラリ名の一覧にする (#2160)。
 fn parse_preload_libraries(raw: &str) -> Vec<String> {

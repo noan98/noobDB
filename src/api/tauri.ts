@@ -736,6 +736,18 @@ export interface ExtensionInfo {
   updatable: boolean;
 }
 
+/** `list_extension_dependents` の 1 件: 拡張機能を CASCADE で削除したときに巻き添えで消えるオブジェクト (#2177)。 */
+export interface ExtensionDependent {
+  /** `column` / `table` / `view` / `materialized_view` / `index` / `sequence` / `function` / `procedure` /
+   *  `constraint` / `trigger` / `default` / `type` / `rule` / `extension` / `other`。 */
+  kind: string;
+  schema: string | null;
+  /** 列は列名、関数は `名前(引数の型)`。 */
+  name: string;
+  /** 所属する表 (列 / 索引 / 制約 / トリガー / 既定値)。 */
+  table: string | null;
+}
+
 /** `list_extensions` の結果 (#2160)。 */
 export interface ExtensionsOverview {
   /** 導入済みを先、未導入を後に、それぞれ名前順。 */

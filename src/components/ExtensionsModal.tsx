@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
-import { api, type ExtensionInfo, type ExtensionsOverview } from "../api/tauri";
+import { api, type ExtensionDependent, type ExtensionInfo, type ExtensionsOverview } from "../api/tauri";
 import { resolveErrorHint } from "../errorHints";
 import { useT } from "../i18n";
 import { Callout } from "./Callout";
+import { ExtensionDependents } from "./ExtensionDependents";
 import {
   buildExtensionSql,
   isDestructiveExtensionAction,
@@ -54,6 +55,9 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
   const [busy, setBusy] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   const [cancelled, setCancelled] = useState(false);
+  // 削除の確認画面で出す依存オブジェクト (#2177)。null は取得中。失敗しても削除は妨げない。
+  const [dependents, setDependents] = useState<ExtensionDependent[] | null>(null);
+  const [dependentsError, setDependentsError] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const searchRef = useRef<HTMLInputElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -81,6 +85,25 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
   useEffect(() => {
     void load();
   }, [load]);
+
+  const dropName = step?.action === "drop" ? step.ext.name : null;
+  useEffect(() => {
+    if (dropName === null) return;
+    let alive = true;
+    setDependents(null);
+    setDependentsError(null);
+    api
+      .listExtensionDependents(sessionId, dropName)
+      .then((d) => {
+        if (alive) setDependents(d);
+      })
+      .catch((e) => {
+        if (alive) setDependentsError(String(e));
+      });
+    return () => {
+      alive = false;
+    };
+  }, [sessionId, dropName]);
 
   const loading = overview === null;
   const preload = overview?.shared_preload_libraries ?? [];
@@ -266,6 +289,9 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
               <Callout tone="danger">
                 {cascade ? t("extensionsDropCascadeWarning") : t("extensionsDropWarning")}
               </Callout>
+            )}
+            {step.action === "drop" && (
+              <ExtensionDependents dependents={dependents} error={dependentsError} cascade={cascade} />
             )}
             {step.action === "install" &&
               needsPreload(step.ext.name) &&

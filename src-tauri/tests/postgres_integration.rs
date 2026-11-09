@@ -5498,3 +5498,102 @@ async fn postgres_extensions_are_listed_installed_updated_and_dropped() {
         .execute("DROP SCHEMA IF EXISTS nb2160_ext CASCADE", None)
         .await;
 }
+
+/// 拡張機能の CASCADE 削除で巻き添えになる依存オブジェクトの一覧 (#2177): 拡張 (citext) の型を使う列・
+/// 関数・ビュー・索引が種別つきで出て、拡張自身のメンバーは出ないこと。read_only のセッションでも引けること。
+/// contrib の無い環境・`CREATE EXTENSION` の権限が無い環境では確認だけ飛ばす。
+#[tokio::test]
+async fn postgres_extension_dependents_list_columns_functions_and_views() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let _ = conn
+        .execute("DROP SCHEMA IF EXISTS nb2177 CASCADE", None)
+        .await;
+    let _ = conn
+        .execute("DROP EXTENSION IF EXISTS citext CASCADE", None)
+        .await;
+
+    // 未導入の拡張・存在しない拡張は空 (エラーにしない)。
+    assert!(conn
+        .list_extension_dependents("nb2177_no_such_extension")
+        .await
+        .expect("unknown extension")
+        .is_empty());
+
+    if conn
+        .execute("CREATE EXTENSION IF NOT EXISTS citext", None)
+        .await
+        .is_err()
+    {
+        return;
+    }
+    // 依存が無い間は 0 件 (拡張自身の型・関数は含めない)。
+    let none = conn
+        .list_extension_dependents("citext")
+        .await
+        .expect("no dependents yet");
+    assert!(none.is_empty(), "{none:?}");
+
+    for sql in [
+        "CREATE SCHEMA nb2177",
+        "CREATE TABLE nb2177.places (id int PRIMARY KEY, tags citext, note text)",
+        "CREATE INDEX nb2177_tags_idx ON nb2177.places (tags)",
+        "CREATE FUNCTION nb2177.tag_count(h citext) RETURNS int LANGUAGE sql AS 'SELECT length(h::text)'",
+        "CREATE VIEW nb2177.v_keys AS SELECT id, tags = 'x' AS m FROM nb2177.places",
+    ] {
+        conn.execute(sql, None)
+            .await
+            .unwrap_or_else(|e| panic!("`{sql}`: {e:?}"));
+    }
+
+    let deps = conn
+        .list_extension_dependents("citext")
+        .await
+        .expect("list_extension_dependents");
+    let has = |kind: &str, name: &str, table: Option<&str>| {
+        deps.iter().any(|d| {
+            d.kind == kind
+                && d.name == name
+                && d.table.as_deref() == table
+                && d.schema.as_deref() == Some("nb2177")
+        })
+    };
+    assert!(has("column", "tags", Some("places")), "{deps:?}");
+    assert!(!has("column", "note", Some("places")), "{deps:?}");
+    assert!(has("function", "tag_count(h citext)", None), "{deps:?}");
+    assert!(has("view", "v_keys", None), "{deps:?}");
+    assert!(has("index", "nb2177_tags_idx", Some("places")), "{deps:?}");
+    // 拡張自身のメンバー (citext 型・関数) は含めない。
+    assert!(
+        deps.iter().all(|d| d.schema.as_deref() == Some("nb2177")),
+        "only the user's objects: {deps:?}"
+    );
+    // 列が先頭 (データが消えるものを最初に出す)。
+    assert_eq!(
+        deps.first().map(|d| d.kind.as_str()),
+        Some("column"),
+        "{deps:?}"
+    );
+
+    // read_only のセッションでも、読み取りの introspection なので引ける。
+    let ro_conn = t::connect(&opts).await.expect("ro connect");
+    let state = t::AppState::default();
+    let ro_sid = state
+        .insert(t::make_session("ext_dep_ro", ro_conn, opts.clone(), true))
+        .await;
+    let ro = state.get(&ro_sid).await.expect("session");
+    let via_ro = ro
+        .conn
+        .list_extension_dependents("citext")
+        .await
+        .expect("read_only list");
+    assert_eq!(via_ro, deps);
+
+    let _ = conn
+        .execute("DROP SCHEMA IF EXISTS nb2177 CASCADE", None)
+        .await;
+    let _ = conn.execute("DROP EXTENSION IF EXISTS citext", None).await;
+}

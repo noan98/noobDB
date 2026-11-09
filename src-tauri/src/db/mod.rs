@@ -1675,6 +1675,20 @@ impl Connection {
         }
     }
 
+    /// 拡張機能 `name` を CASCADE で削除したときに巻き添えで消える依存オブジェクトの一覧 (#2177)。
+    /// PostgreSQL 専用で、MySQL / SQLite は `InvalidInput`。読み取りのみ。
+    pub async fn list_extension_dependents(
+        &self,
+        name: &str,
+    ) -> Result<Vec<types::ExtensionDependent>> {
+        match self {
+            Connection::Postgres(c) => c.list_extension_dependents(name).await,
+            Connection::MySql(_) | Connection::Sqlite(_) => Err(AppError::InvalidInput(
+                "extensions are only supported on PostgreSQL".into(),
+            )),
+        }
+    }
+
     /// `table` がパーティション表なら子パーティションの一覧 (#1868)。そうでなければ `None`。
     /// 読み取りのみ。SQLite はパーティション非対応なので `InvalidInput`。
     pub async fn list_table_partitions(
