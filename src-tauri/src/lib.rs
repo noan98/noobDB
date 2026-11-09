@@ -120,13 +120,13 @@ pub mod __test_api {
         CheckConstraintInfo, Column, DbUserInfo, ExtensionDependent, ExtensionInfo,
         ExtensionsOverview, ForeignKey, GeneratedColumnInfo, IndexInfo, KillOutcomeStatus,
         KillProcessOutcome, KillProcessesResult, LiveQuery, LocalTableMeta, PreviewResult,
-        ProcessInfo, ProcessListItem, ProcessProgress, QueryResult, QueryStatsSupport, RlsTable,
-        RoutineParameter, RoutineSignature, SchemaObject, ServerInfo, ServerMessage,
-        ServerMessageSeverity, ServerMetrics, ServerVariable, SqliteFkViolation,
-        SqliteMaintenanceAction, SqliteMaintenanceResult, StreamBatch, TableColumnInfo,
-        TableComment, TableExtrasInfo, TablePartition, TablePartitions, TablePrivilegeRow,
-        TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, TableTrigger,
-        UserPrivileges, Value,
+        ProcessInfo, ProcessListItem, ProcessProgress, PublicationInfo, PublicationTable,
+        QueryResult, QueryStatsSupport, RlsTable, RoutineParameter, RoutineSignature, SchemaObject,
+        ServerInfo, ServerMessage, ServerMessageSeverity, ServerMetrics, ServerVariable,
+        SqliteFkViolation, SqliteMaintenanceAction, SqliteMaintenanceResult, StreamBatch,
+        TableColumnInfo, TableComment, TableExtrasInfo, TablePartition, TablePartitions,
+        TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+        TableTrigger, UserPrivileges, Value,
     };
     pub use crate::db::upsert::{ConflictMode, ImportConflict};
     pub use crate::db::{
@@ -1944,6 +1944,7 @@ pub fn run() {
             commands::schema::describe_table_extras,
             commands::schema::list_table_triggers,
             commands::schema::list_rls_tables,
+            commands::schema::list_publications,
             commands::schema::list_extensions,
             commands::schema::list_extension_dependents,
             commands::schema::list_table_partitions,

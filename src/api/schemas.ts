@@ -223,6 +223,24 @@ export const rlsTable = z.object({
 });
 export const rlsTableArray = z.array(rlsTable);
 
+/** `list_publications` の 1 件: 論理レプリケーションのパブリケーション内の表 (#2181)。 */
+export const publicationTable = z.object({
+  schema: z.string(),
+  table: z.string(),
+  columns: z.array(z.string()).nullable(),
+  row_filter: z.string().nullable(),
+});
+/** `list_publications` の 1 件: 論理レプリケーションのパブリケーション (#2181)。 */
+export const publicationInfo = z.object({
+  name: z.string(),
+  all_tables: z.boolean(),
+  publish: z.array(z.string()),
+  via_root: z.boolean(),
+  tables: z.array(publicationTable),
+  schemas: z.array(z.string()),
+});
+export const publicationInfoArray = z.array(publicationInfo);
+
 /** `list_extensions` の結果 (#2160)。 */
 export const extensionInfo = z.object({
   name: z.string(),

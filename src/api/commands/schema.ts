@@ -10,6 +10,7 @@ import type {
   TableExtrasInfo,
   TablePartitions,
   RlsTable,
+  PublicationInfo,
   ExtensionDependent,
   ExtensionsOverview,
   TableTrigger,
@@ -149,6 +150,15 @@ export const schemaCommands = {
   listRlsTables: (sessionId: string, database: string) =>
     invoke<RlsTable[]>("list_rls_tables", { sessionId, database }).then((r) =>
       parseResponse(schemas.rlsTableArray, r, "list_rls_tables"),
+    ),
+  /**
+   * 論理レプリケーションのパブリケーションの一覧 (表・行フィルタ・列リスト・公開する操作, #2181)。
+   * PostgreSQL 以外は空。読み取りのみ。追加・除外は `ALTER PUBLICATION ... ADD / DROP TABLE` を
+   * 実行ゲート (`runGuardedDdl`) 経由で流す。
+   */
+  listPublications: (sessionId: string) =>
+    invoke<PublicationInfo[]>("list_publications", { sessionId }).then((r) =>
+      parseResponse(schemas.publicationInfoArray, r, "list_publications"),
     ),
   /**
    * PostgreSQL の拡張機能 (導入済み + サーバが提供できるもの) の一覧 (#2160)。PostgreSQL だけ (他ドライバはエラー)。

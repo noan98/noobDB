@@ -258,6 +258,23 @@ pub async fn list_rls_tables(
     session.conn.rls_tables(&database).await
 }
 
+/// 論理レプリケーションのパブリケーションの一覧 (表・行フィルタ・列リスト・公開する操作) を返す (#2181)。
+/// 表の右クリックメニューの「パブリケーションに追加 / から外す」が、どの表がどのパブリケーションに入っているかを
+/// 知るための読み取り専用の introspection なので read_only セッションでも許可する。パブリケーションは
+/// データベース全体のオブジェクトで、スキーマをまたぐ。MySQL / SQLite は空。追加・除外の
+/// `ALTER PUBLICATION ... ADD / DROP TABLE` は UI が組み立てて通常の実行ゲート経由で流す。
+#[tauri::command]
+pub async fn list_publications(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::db::types::PublicationInfo>> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session.conn.list_publications().await
+}
+
 /// PostgreSQL の拡張機能 (導入済み + サーバが提供できるもの) の一覧を返す (#2160)。読み取り専用の
 /// introspection なので read_only セッションでも許可する。導入・更新・削除の `CREATE / ALTER / DROP
 /// EXTENSION` は UI が組み立てて通常の `run_query` 経路で流す (read_only の拒否はそこで行う)。

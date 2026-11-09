@@ -294,13 +294,39 @@ fn object_statements(
             policies_to_create.join(", ")
         ));
     }
+    // パブリケーション (#2181): 作成は比較するスキーマの表を公開するだけ。購読側 (サブスクリプション) は
+    // 同期しないので、購読側で `ALTER SUBSCRIPTION ... REFRESH PUBLICATION` が要ることを知らせる。
+    let publications_changed: Vec<&str> = items
+        .iter()
+        .filter(|o| o.kind == "publication" && o.status != DiffStatus::Same)
+        .map(|o| o.name.as_str())
+        .collect();
+    if !publications_changed.is_empty() {
+        warnings.push(format!(
+            "publication {}: パブリケーションの表の変更は、購読側で ALTER SUBSCRIPTION ... REFRESH PUBLICATION を実行するまで反映されません (サブスクリプションは同期の対象外です)。スキーマ単位 (TABLES IN SCHEMA) の公開は表の列挙として同期されます。target にだけあるパブリケーションは DROP PUBLICATION せず、比較するスキーマの表を外すだけです",
+            publications_changed.join(", ")
+        ));
+    }
     for o in order_for_create(&pick(DiffStatus::SourceOnly)) {
         let Some(def) = o.source_definition.as_deref() else {
             continue;
         };
+        // パブリケーション (#2181) は比較するスキーマの表だけで作る。FOR ALL TABLES はデータベース全体に
+        // 影響するので作らず警告にとどめる。
+        let def = if o.kind == "publication" {
+            match super::publication::create_definition(def) {
+                Ok(d) => std::borrow::Cow::Owned(d),
+                Err(why) => {
+                    warnings.push(format!("publication {}: {why}", o.name));
+                    continue;
+                }
+            }
+        } else {
+            std::borrow::Cow::Borrowed(def)
+        };
         let stmt = mk(
             o,
-            create_object_sql(driver, def),
+            create_object_sql(driver, &def),
             SyncKind::CreateObject,
             false,
         );
@@ -318,6 +344,41 @@ fn object_statements(
         // MySQL のルーチン / トリガー / イベントは DROP + CREATE で DDL が暗黙コミットされ、CREATE に失敗すると
         // 元の定義が戻らない。マテビューの置換は DROP + CREATE でデータを再計算する。どちらも
         // 破壊的として扱い、許可がなければ出さずに警告する。
+        // パブリケーション (#2181) は DROP + CREATE できない (購読側の同期状態が壊れる) ので、オプションは
+        // `SET`、表の差は `ADD TABLE` / `DROP TABLE` の最小の差分にする。表を外す文は破壊的な操作の許可が要る
+        // (購読側への配信が止まる)。許可が無ければ出さずに警告する。
+        if o.kind == "publication" {
+            let (Some(src), Some(tgt)) = (
+                o.source_definition.as_deref(),
+                o.target_definition.as_deref(),
+            ) else {
+                continue;
+            };
+            match super::publication::replace_statements(src, tgt) {
+                Ok(plan) => {
+                    let mut skipped = false;
+                    for st in plan.statements {
+                        // 外す文を出さないときは、その表を足し直す文も出さない (まだメンバーなので拒否される)。
+                        if (st.destructive || st.after_drop) && !allow_destructive {
+                            skipped = true;
+                            continue;
+                        }
+                        late.push(mk(o, st.sql, SyncKind::ReplaceObject, st.destructive));
+                    }
+                    if skipped {
+                        warnings.push(format!(
+                            "publication {}: 表を外す操作 (ALTER PUBLICATION ... DROP TABLE) は、破壊的な操作を許可しないと出力しません (外すと購読側への配信が止まります)",
+                            o.name
+                        ));
+                    }
+                    for w in plan.warnings {
+                        warnings.push(format!("publication {}: {w}", o.name));
+                    }
+                }
+                Err(why) => warnings.push(format!("publication {}: {why}", o.name)),
+            }
+            continue;
+        }
         // ユーザー定義型 (#2127) は DROP + CREATE できない (使用中の列がある) ので、ENUM の値の追加
         // だけを `ALTER TYPE ... ADD VALUE` で出し、できない変更は警告にして出力しない。
         if o.kind == "type" {
@@ -359,6 +420,27 @@ fn object_statements(
         let mut drops = order_for_create(&pick(DiffStatus::TargetOnly));
         drops.reverse();
         for o in drops {
+            // target にだけあるパブリケーション (#2181) は、データベース全体に影響するので DROP PUBLICATION は
+            // 出さず、比較するスキーマの表を明示メンバーから外す差分に縮める。
+            if o.kind == "publication" {
+                match o
+                    .target_definition
+                    .as_deref()
+                    .map(super::publication::target_only_statements)
+                {
+                    Some(Ok(plan)) => {
+                        for st in plan.statements {
+                            late.push(mk(o, st.sql, SyncKind::DropObject, true));
+                        }
+                        for w in plan.warnings {
+                            warnings.push(format!("publication {}: {w}", o.name));
+                        }
+                    }
+                    Some(Err(why)) => warnings.push(format!("publication {}: {why}", o.name)),
+                    None => {}
+                }
+                continue;
+            }
             let stmt = mk(o, drop_object_sql(driver, o), SyncKind::DropObject, true);
             if o.kind == "type" {
                 last.push(stmt);
@@ -4151,6 +4233,190 @@ mod object_sync_tests {
             .statements
             .iter()
             .any(|s| s.sql.contains("DROP POLICY")));
+    }
+
+    #[test]
+    fn publications_are_created_after_tables_and_table_removal_needs_permission() {
+        let new_tbl = TableDiff {
+            name: "new_t".into(),
+            status: DiffStatus::SourceOnly,
+            columns: vec![crate::db::diff::ColumnDiff {
+                name: "id".into(),
+                status: DiffStatus::SourceOnly,
+                source: Some(TableColumnInfo {
+                    name: "id".into(),
+                    data_type: "integer".into(),
+                    nullable: false,
+                    key: String::new(),
+                    default: None,
+                    extra: String::new(),
+                    referenced_table: None,
+                    referenced_column: None,
+                    comment: None,
+                }),
+                target: None,
+                changed_fields: vec![],
+            }],
+            ..Default::default()
+        };
+        let created = obj(
+            "publication",
+            "pub_new",
+            DiffStatus::SourceOnly,
+            Some("CREATE PUBLICATION \"pub_new\" WITH (publish = 'insert', publish_via_partition_root = false);\n-- noobdb:split\nALTER PUBLICATION \"pub_new\" ADD TABLE \"p\".\"new_t\";"),
+        );
+        let mut changed = obj(
+            "publication",
+            "pub_old",
+            DiffStatus::Different,
+            Some("CREATE PUBLICATION \"pub_old\" WITH (publish = 'insert', publish_via_partition_root = false);\n-- noobdb:split\nALTER PUBLICATION \"pub_old\" ADD TABLE \"p\".\"a\";"),
+        );
+        changed.target_definition = Some("CREATE PUBLICATION \"pub_old\" WITH (publish = 'insert', publish_via_partition_root = false);\n-- noobdb:split\nALTER PUBLICATION \"pub_old\" ADD TABLE \"p\".\"b\";".into());
+        let mut gone = obj("publication", "gone", DiffStatus::TargetOnly, None);
+        gone.target_definition = Some("CREATE PUBLICATION \"gone\" WITH (publish = 'insert', publish_via_partition_root = false);\n-- noobdb:split\nALTER PUBLICATION \"gone\" ADD TABLE \"p\".\"g\";\n-- noobdb:split\nALTER PUBLICATION \"gone\" ADD TABLE \"p\".\"h\" /* via schema */;".into());
+        let d = diff(
+            DriverKind::Postgres,
+            vec![new_tbl],
+            vec![created, changed, gone],
+        );
+        let plan = generate_sync_sql(&d, true);
+        let sqls: Vec<&str> = plan.statements.iter().map(|s| s.sql.as_str()).collect();
+        let pos = |needle: &str| sqls.iter().position(|s| s.contains(needle)).unwrap();
+        assert!(pos("CREATE TABLE") < pos("CREATE PUBLICATION"), "{sqls:?}");
+        assert!(
+            pos("DROP TABLE \"p\".\"b\"") < pos("ADD TABLE \"p\".\"a\""),
+            "{sqls:?}"
+        );
+        // target にだけあるパブリケーションは DROP PUBLICATION せず、比較するスキーマの明示メンバーの表だけを外す。
+        assert!(
+            !sqls.iter().any(|s| s.contains("DROP PUBLICATION")),
+            "{sqls:?}"
+        );
+        assert!(
+            sqls.contains(&"ALTER PUBLICATION \"gone\" DROP TABLE \"p\".\"g\""),
+            "{sqls:?}"
+        );
+        assert!(!sqls.iter().any(|s| s.contains("\"p\".\"h\"")), "{sqls:?}");
+        assert!(
+            plan.warnings.iter().any(|w| w.contains("TABLES IN SCHEMA")),
+            "{:?}",
+            plan.warnings
+        );
+        let drop_table = plan
+            .statements
+            .iter()
+            .find(|s| s.sql.contains("DROP TABLE \"p\".\"b\""))
+            .unwrap();
+        assert!(drop_table.destructive);
+        // 購読側の REFRESH PUBLICATION が要る旨を警告する。
+        assert!(
+            plan.warnings
+                .iter()
+                .any(|w| w.contains("REFRESH PUBLICATION")),
+            "{:?}",
+            plan.warnings
+        );
+        // 破壊的な操作を許可しないと、表を外す文とパブリケーションの DROP は出ず、警告になる。
+        let plan = generate_sync_sql(&d, false);
+        let sqls: Vec<&str> = plan.statements.iter().map(|s| s.sql.as_str()).collect();
+        assert!(
+            !sqls
+                .iter()
+                .any(|s| s.contains("DROP TABLE \"p\".\"b\"")
+                    || s.contains("DROP TABLE \"p\".\"g\"")),
+            "{sqls:?}"
+        );
+        assert!(
+            sqls.iter().any(|s| s.contains("ADD TABLE \"p\".\"a\"")),
+            "{sqls:?}"
+        );
+        assert!(
+            plan.warnings.iter().any(|w| w.contains("DROP TABLE")),
+            "{:?}",
+            plan.warnings
+        );
+    }
+
+    #[test]
+    fn publication_row_filter_change_without_permission_skips_both_drop_and_re_add() {
+        // 行フィルタが違う表は DROP TABLE + ADD TABLE で揃える。破壊的な操作を許可しないと DROP が出ないので、
+        // 足し直す ADD も出さない (表はまだメンバーなので、出すと PostgreSQL が拒否して同期全体が失敗する)。
+        // 新しく足すだけの表 (c) の ADD は出す。
+        let mut changed = obj(
+            "publication",
+            "pub_f",
+            DiffStatus::Different,
+            Some("CREATE PUBLICATION \"pub_f\" WITH (publish = 'insert', publish_via_partition_root = false);\n-- noobdb:split\nALTER PUBLICATION \"pub_f\" ADD TABLE \"p\".\"a\" WHERE ((id > 0));\n-- noobdb:split\nALTER PUBLICATION \"pub_f\" ADD TABLE \"p\".\"c\";"),
+        );
+        changed.target_definition = Some("CREATE PUBLICATION \"pub_f\" WITH (publish = 'insert', publish_via_partition_root = false);\n-- noobdb:split\nALTER PUBLICATION \"pub_f\" ADD TABLE \"p\".\"a\" WHERE ((id > 10));".into());
+        let d = diff(DriverKind::Postgres, vec![], vec![changed]);
+        let plan = generate_sync_sql(&d, false);
+        let sqls: Vec<&str> = plan.statements.iter().map(|s| s.sql.as_str()).collect();
+        assert_eq!(
+            sqls,
+            vec!["ALTER PUBLICATION \"pub_f\" ADD TABLE \"p\".\"c\""]
+        );
+        assert!(
+            plan.warnings.iter().any(|w| w.contains("DROP TABLE")),
+            "{:?}",
+            plan.warnings
+        );
+        // 許可すれば DROP → ADD の順で両方出る。
+        let plan = generate_sync_sql(&d, true);
+        let sqls: Vec<&str> = plan.statements.iter().map(|s| s.sql.as_str()).collect();
+        let pos = |needle: &str| sqls.iter().position(|s| s.contains(needle)).unwrap();
+        assert!(
+            pos("DROP TABLE \"p\".\"a\"") < pos("ADD TABLE \"p\".\"a\" WHERE ((id > 0))"),
+            "{sqls:?}"
+        );
+    }
+
+    #[test]
+    fn source_only_all_tables_publication_is_not_created() {
+        let p = obj(
+            "publication",
+            "pub_all",
+            DiffStatus::SourceOnly,
+            Some("CREATE PUBLICATION \"pub_all\" FOR ALL TABLES WITH (publish = 'insert', publish_via_partition_root = false);"),
+        );
+        let plan = generate_sync_sql(&diff(DriverKind::Postgres, vec![], vec![p]), true);
+        assert!(plan.statements.is_empty(), "{:?}", plan.statements);
+        assert!(
+            plan.warnings.iter().any(|w| w.contains("FOR ALL TABLES")),
+            "{:?}",
+            plan.warnings
+        );
+        // スキーマ由来の印は作成文に残さない。
+        let q = obj(
+            "publication",
+            "pub_s",
+            DiffStatus::SourceOnly,
+            Some("CREATE PUBLICATION \"pub_s\" WITH (publish = 'insert', publish_via_partition_root = false);\n-- noobdb:split\nALTER PUBLICATION \"pub_s\" ADD TABLE \"p\".\"a\" /* via schema */;"),
+        );
+        let plan = generate_sync_sql(&diff(DriverKind::Postgres, vec![], vec![q]), true);
+        assert!(plan.statements[0].sql.contains("ADD TABLE \"p\".\"a\""));
+        assert!(!plan.statements[0].sql.contains("via schema"));
+    }
+
+    #[test]
+    fn publications_with_all_tables_mismatch_are_skipped_with_a_warning() {
+        let mut p = obj(
+            "publication",
+            "pub_x",
+            DiffStatus::Different,
+            Some("CREATE PUBLICATION \"pub_x\" FOR ALL TABLES WITH (publish = 'insert', publish_via_partition_root = false);"),
+        );
+        p.target_definition = Some("CREATE PUBLICATION \"pub_x\" WITH (publish = 'insert', publish_via_partition_root = false);".into());
+        let d = diff(DriverKind::Postgres, vec![], vec![p]);
+        let plan = generate_sync_sql(&d, true);
+        assert!(plan.statements.is_empty(), "{:?}", plan.statements);
+        assert!(
+            plan.warnings
+                .iter()
+                .any(|w| w.contains("publication pub_x")),
+            "{:?}",
+            plan.warnings
+        );
     }
 
     #[test]

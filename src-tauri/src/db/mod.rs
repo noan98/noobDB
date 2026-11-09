@@ -35,6 +35,8 @@ pub mod postgres;
 pub mod preview;
 pub mod privileges;
 pub mod profile;
+/// PostgreSQL 論理レプリケーションのパブリケーションの定義の組み立てと比較・同期の差分 (#2181)。
+pub mod publication;
 /// 自動リフレッシュの差分パッチ (#1257)。
 pub mod refresh_diff;
 /// レプリケーション監視 (#2180) の共通型と純ロジック。
@@ -1652,6 +1654,24 @@ impl Connection {
             Connection::MySql(c) => c.list_table_triggers(db, table).await,
             Connection::Postgres(c) => c.list_table_triggers(db, table).await,
             Connection::Sqlite(c) => c.list_table_triggers(db, table).await,
+        }
+    }
+
+    /// 論理レプリケーションのパブリケーションの一覧 (#2181)。PostgreSQL 専用で、MySQL / SQLite には
+    /// 論理レプリケーションの PUBLICATION が無いので空。読み取りのみ。
+    pub async fn list_publications(&self) -> Result<Vec<types::PublicationInfo>> {
+        match self {
+            Connection::Postgres(c) => c.list_publications().await,
+            Connection::MySql(_) | Connection::Sqlite(_) => Ok(Vec::new()),
+        }
+    }
+
+    /// スキーマ比較用: 全パブリケーションの (名前, `db` の表だけを含む定義) (#2181)。PostgreSQL 専用で、
+    /// MySQL / SQLite は空。
+    pub async fn publication_definitions(&self, db: &str) -> Result<Vec<(String, String)>> {
+        match self {
+            Connection::Postgres(c) => c.publication_definitions(db).await,
+            Connection::MySql(_) | Connection::Sqlite(_) => Ok(Vec::new()),
         }
     }
 

@@ -108,6 +108,14 @@ describe("partitionDatabaseNodes", () => {
     expect(g.objects.map((o) => o.name)).toEqual(["f1", "mood", "p1"]);
   });
 
+  it("パブリケーション / サブスクリプション (PostgreSQL) は RLS ポリシーの後ろに並ぶ (#2181)", () => {
+    const g = partitionDatabaseNodes(
+      [],
+      [obj("subscription", "s1"), obj("publication", "pb1"), obj("policy", "p1"), obj("function", "f1")],
+    );
+    expect(g.objects.map((o) => o.name)).toEqual(["f1", "p1", "pb1", "s1"]);
+  });
+
   it("RLS の状態: 有効 / FORCE / FORCE だけ (効果なし) を見分ける (#2159)", () => {
     expect(rlsStateOf({ table: "t", enabled: true, forced: false })).toBe("enabled");
     expect(rlsStateOf({ table: "t", enabled: true, forced: true })).toBe("forced");

@@ -5552,6 +5552,366 @@ async fn postgres_extensions_are_listed_installed_updated_and_dropped() {
         .await;
 }
 
+/// 論理レプリケーションのパブリケーション / サブスクリプション (#2181): ツリーの一覧 (スキーマに関係するものだけ)、
+/// 定義表示 (対象表・行フィルタ・列リスト、接続文字列のパスワードの伏せ字)、`list_publications`、
+/// スキーマ比較の対象表の差と、`ALTER PUBLICATION ... ADD / DROP TABLE` の同期。
+#[tokio::test]
+async fn postgres_logical_replication_is_listed_compared_and_synced() {
+    // パブリケーション / サブスクリプションはデータベース全体のオブジェクト。名前は専用の接頭辞で固定する。
+    async fn cleanup(conn: &t::Connection) {
+        for sql in [
+            "DROP SUBSCRIPTION IF EXISTS nb2181_sub",
+            "DROP PUBLICATION IF EXISTS nb2181_main",
+            "DROP PUBLICATION IF EXISTS nb2181_all",
+            "DROP PUBLICATION IF EXISTS nb2181_empty",
+            "DROP PUBLICATION IF EXISTS nb2181_schema",
+            "DROP PUBLICATION IF EXISTS nb2181_rev",
+            "DROP SCHEMA IF EXISTS nb2181_a CASCADE",
+            "DROP SCHEMA IF EXISTS nb2181_b CASCADE",
+        ] {
+            let _ = conn.execute(sql, None).await;
+        }
+    }
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let (a, b) = ("nb2181_a", "nb2181_b");
+    cleanup(&conn).await;
+    for s in [a, b] {
+        conn.execute(&format!("CREATE SCHEMA {s}"), None)
+            .await
+            .expect("create schema");
+    }
+    let version: i32 = conn
+        .execute("SHOW server_version_num", None)
+        .await
+        .ok()
+        .and_then(|r| match r.rows.first().and_then(|row| row.first()) {
+            Some(t::Value::String(s)) => s.trim().parse().ok(),
+            _ => None,
+        })
+        .unwrap_or(0);
+    let v15 = version >= 150_000;
+    for s in [a, b] {
+        for tbl in ["orders", "items", "logs"] {
+            conn.execute(
+                &format!("CREATE TABLE {s}.{tbl} (id integer PRIMARY KEY, status text, note text)"),
+                None,
+            )
+            .await
+            .expect("create table");
+        }
+    }
+    // 行フィルタと列リストは 15 以降。13 / 14 は表の指定だけ。
+    let orders_spec = if v15 {
+        format!("{a}.orders (id, status) WHERE (status <> 'draft')")
+    } else {
+        format!("{a}.orders")
+    };
+    conn.execute(
+        &format!(
+            "CREATE PUBLICATION nb2181_main FOR TABLE {orders_spec}, {a}.items \
+             WITH (publish = 'insert, update')"
+        ),
+        None,
+    )
+    .await
+    .expect("create publication");
+    conn.execute("CREATE PUBLICATION nb2181_empty", None)
+        .await
+        .expect("create empty publication");
+    // FOR ALL TABLES / サブスクリプションの作成には権限が要る。無い環境では該当部分を飛ばす。
+    let has_all = conn
+        .execute("CREATE PUBLICATION nb2181_all FOR ALL TABLES", None)
+        .await
+        .is_ok();
+    let has_sub = conn
+        .execute(
+            "CREATE SUBSCRIPTION nb2181_sub \
+             CONNECTION 'host=127.0.0.1 port=1 dbname=x user=repl password=s3cr3tpw' \
+             PUBLICATION nb2181_main \
+             WITH (connect = false, enabled = false, create_slot = false, slot_name = NONE)",
+            None,
+        )
+        .await
+        .is_ok();
+
+    // ツリーの一覧: a には main (公開表 2 件) と空の empty、b には empty だけ (main は a の表だけを公開している)。
+    let objs_a = conn.schema_objects(a).await.expect("schema_objects a");
+    let find = |objs: &[t::SchemaObject], kind: &str, name: &str| {
+        objs.iter()
+            .find(|o| o.kind == kind && o.name == name)
+            .cloned()
+    };
+    assert_eq!(
+        find(&objs_a, "publication", "nb2181_main").and_then(|o| o.detail),
+        Some("2".to_string())
+    );
+    assert!(find(&objs_a, "publication", "nb2181_empty").is_some());
+    let objs_b = conn.schema_objects(b).await.expect("schema_objects b");
+    assert!(find(&objs_b, "publication", "nb2181_main").is_none());
+    assert!(find(&objs_b, "publication", "nb2181_empty").is_some());
+    if has_all {
+        for objs in [&objs_a, &objs_b] {
+            assert_eq!(
+                find(objs, "publication", "nb2181_all").and_then(|o| o.detail),
+                Some("all".to_string())
+            );
+        }
+    }
+    if has_sub {
+        let sub = find(&objs_a, "subscription", "nb2181_sub").expect("subscription listed");
+        assert_eq!(sub.detail.as_deref(), Some("disabled"));
+        assert!(sub.id.is_some());
+    }
+
+    // 定義表示: 対象表・公開する操作・(15 以降) 列リストと行フィルタ。
+    let def = conn
+        .object_definition(a, "publication", "nb2181_main", None)
+        .await
+        .expect("publication definition");
+    assert!(
+        def.starts_with("CREATE PUBLICATION \"nb2181_main\"\n  FOR TABLE "),
+        "{def}"
+    );
+    assert!(def.contains("\"nb2181_a\".\"items\""), "{def}");
+    assert!(def.contains("publish = 'insert, update'"), "{def}");
+    if v15 {
+        assert!(
+            def.contains("\"nb2181_a\".\"orders\" (\"id\", \"status\") WHERE ("),
+            "{def}"
+        );
+    }
+    if has_all {
+        let all = conn
+            .object_definition(a, "publication", "nb2181_all", None)
+            .await
+            .expect("all tables definition");
+        assert!(all.contains("FOR ALL TABLES"), "{all}");
+    }
+
+    // サブスクリプションの定義: 接続文字列のパスワードは平文で出ない。
+    if has_sub {
+        let sub = find(&objs_a, "subscription", "nb2181_sub").expect("listed");
+        let def = conn
+            .object_definition(a, "subscription", &sub.name, sub.id.as_deref())
+            .await
+            .expect("subscription definition");
+        assert!(def.contains("CREATE SUBSCRIPTION \"nb2181_sub\""), "{def}");
+        assert!(
+            !def.contains("s3cr3tpw"),
+            "パスワードが平文で出ている: {def}"
+        );
+        assert!(def.contains("password=''********''"), "{def}");
+        assert!(def.contains("PUBLICATION \"nb2181_main\""), "{def}");
+        assert!(def.contains("enabled = false"), "{def}");
+    }
+
+    // list_publications: 表の所属 (スキーマをまたぐ)。
+    let pubs = conn.list_publications().await.expect("list_publications");
+    let main = pubs
+        .iter()
+        .find(|p| p.name == "nb2181_main")
+        .expect("main listed");
+    assert!(!main.all_tables);
+    assert_eq!(
+        main.publish,
+        vec!["insert".to_string(), "update".to_string()]
+    );
+    assert_eq!(
+        main.tables
+            .iter()
+            .map(|t| format!("{}.{}", t.schema, t.table))
+            .collect::<Vec<_>>(),
+        vec!["nb2181_a.items".to_string(), "nb2181_a.orders".to_string()]
+    );
+    if v15 {
+        let o = main
+            .tables
+            .iter()
+            .find(|t| t.table == "orders")
+            .expect("orders");
+        assert_eq!(
+            o.columns.as_deref(),
+            Some(&["id".to_string(), "status".to_string()][..])
+        );
+        assert!(o.row_filter.as_deref().is_some_and(|f| f.contains("draft")));
+    }
+    assert!(pubs
+        .iter()
+        .any(|p| p.name == "nb2181_empty" && p.tables.is_empty()));
+    assert!(pubs
+        .iter()
+        .all(|p| p.all_tables == (p.name == "nb2181_all")));
+
+    // 比較 (a → b): main は b に表が無いので Different、empty / all は Same。
+    let status_of = |d: &t::SchemaDiff, n: &str| {
+        d.objects
+            .items
+            .iter()
+            .find(|i| i.kind == "publication" && i.name == n)
+            .map(|i| i.status)
+    };
+    let diff = t::compare_schema_via_core(&conn, a, &conn, b)
+        .await
+        .expect("compare");
+    assert_eq!(
+        status_of(&diff, "nb2181_main"),
+        Some(t::DiffStatus::Different)
+    );
+    assert_eq!(status_of(&diff, "nb2181_empty"), Some(t::DiffStatus::Same));
+    if has_all {
+        assert_eq!(status_of(&diff, "nb2181_all"), Some(t::DiffStatus::Same));
+    }
+    // サブスクリプションは比較の対象外。
+    assert!(!diff.objects.items.iter().any(|i| i.kind == "subscription"));
+
+    // 同期: target (b) の表を ADD TABLE する (非破壊)。再比較で一致する。
+    let plan = t::generate_sync_sql(&diff, false);
+    let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
+    assert!(
+        sqls.iter()
+            .any(|s| s
+                .starts_with("ALTER PUBLICATION \"nb2181_main\" ADD TABLE \"nb2181_b\".\"items\"")),
+        "{sqls:?}"
+    );
+    assert!(
+        plan.warnings
+            .iter()
+            .any(|w| w.contains("REFRESH PUBLICATION")),
+        "{:?}",
+        plan.warnings
+    );
+    conn.execute_sync_transaction(&sqls, Some(b))
+        .await
+        .unwrap_or_else(|e| panic!("sync failed: {e}\n{sqls:#?}"));
+    let after = t::compare_schema_via_core(&conn, a, &conn, b)
+        .await
+        .expect("re-compare");
+    assert_eq!(status_of(&after, "nb2181_main"), Some(t::DiffStatus::Same));
+
+    // target にだけある表 (b.logs) は DROP TABLE。破壊的な操作を許可しなければ出ず、警告になる。
+    conn.execute(
+        &format!("ALTER PUBLICATION nb2181_main ADD TABLE {b}.logs"),
+        None,
+    )
+    .await
+    .expect("add extra table");
+    let diff = t::compare_schema_via_core(&conn, a, &conn, b)
+        .await
+        .expect("compare extra");
+    assert_eq!(
+        status_of(&diff, "nb2181_main"),
+        Some(t::DiffStatus::Different)
+    );
+    let plan = t::generate_sync_sql(&diff, false);
+    assert!(
+        !plan.statements.iter().any(|s| s.sql.contains("DROP TABLE")),
+        "{:?}",
+        plan.statements
+    );
+    assert!(
+        plan.warnings.iter().any(|w| w.contains("DROP TABLE")),
+        "{:?}",
+        plan.warnings
+    );
+    let plan = t::generate_sync_sql(&diff, true);
+    let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
+    assert!(
+        sqls.iter()
+            .any(|s| s == "ALTER PUBLICATION \"nb2181_main\" DROP TABLE \"nb2181_b\".\"logs\""),
+        "{sqls:?}"
+    );
+    conn.execute_sync_transaction(&sqls, Some(b))
+        .await
+        .unwrap_or_else(|e| panic!("sync failed: {e}\n{sqls:#?}"));
+    let after = t::compare_schema_via_core(&conn, a, &conn, b)
+        .await
+        .expect("re-compare 2");
+    assert_eq!(status_of(&after, "nb2181_main"), Some(t::DiffStatus::Same));
+
+    // TABLES IN SCHEMA (15 以降): ツリーの定義表示はスキーマ単位のまま、比較では a の表に展開して揃える。
+    if v15 {
+        conn.execute(
+            &format!("CREATE PUBLICATION nb2181_schema FOR TABLES IN SCHEMA {a}"),
+            None,
+        )
+        .await
+        .expect("create schema publication");
+        let def = conn
+            .object_definition(a, "publication", "nb2181_schema", None)
+            .await
+            .expect("schema publication definition");
+        assert!(def.contains("TABLES IN SCHEMA \"nb2181_a\""), "{def}");
+        let pubs = conn
+            .list_publications()
+            .await
+            .expect("list_publications 15");
+        let sp = pubs
+            .iter()
+            .find(|p| p.name == "nb2181_schema")
+            .expect("listed");
+        assert_eq!(sp.schemas, vec!["nb2181_a".to_string()]);
+        assert!(sp.tables.is_empty());
+        let diff = t::compare_schema_via_core(&conn, a, &conn, b)
+            .await
+            .expect("compare schema publication");
+        assert_eq!(
+            status_of(&diff, "nb2181_schema"),
+            Some(t::DiffStatus::Different)
+        );
+        let plan = t::generate_sync_sql(&diff, false);
+        let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
+        assert!(
+            sqls.iter()
+                .any(|s| s.contains("ADD TABLE \"nb2181_b\".\"orders\"")),
+            "{sqls:?}"
+        );
+        conn.execute_sync_transaction(&sqls, Some(b))
+            .await
+            .unwrap_or_else(|e| panic!("sync failed: {e}\n{sqls:#?}"));
+        let after = t::compare_schema_via_core(&conn, a, &conn, b)
+            .await
+            .expect("re-compare schema publication");
+        assert_eq!(
+            status_of(&after, "nb2181_schema"),
+            Some(t::DiffStatus::Same)
+        );
+
+        // 逆方向: target 側が TABLES IN SCHEMA で公開している表は DROP TABLE できない (PG が拒否する)。
+        // source に無い表があっても同期 SQL に DROP を出さず、実行が成功する。
+        conn.execute(
+            &format!("CREATE PUBLICATION nb2181_rev FOR TABLE {a}.orders, TABLES IN SCHEMA {b}"),
+            None,
+        )
+        .await
+        .expect("create rev publication");
+        let diff = t::compare_schema_via_core(&conn, a, &conn, b)
+            .await
+            .expect("compare rev");
+        let plan = t::generate_sync_sql(&diff, true);
+        let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
+        assert!(
+            !sqls
+                .iter()
+                .any(|s| s.contains("DROP TABLE \"nb2181_b\"") && s.contains("nb2181_rev")),
+            "{sqls:?}"
+        );
+        assert!(
+            !sqls.iter().any(|s| s.starts_with("DROP PUBLICATION")),
+            "{sqls:?}"
+        );
+        conn.execute_sync_transaction(&sqls, Some(b))
+            .await
+            .unwrap_or_else(|e| panic!("rev sync failed: {e}\n{sqls:#?}"));
+    }
+
+    cleanup(&conn).await;
+    conn.close().await;
+}
+
 /// 拡張機能の CASCADE 削除で巻き添えになる依存オブジェクトの一覧 (#2177): 拡張 (citext) の型を使う列・
 /// 関数・ビュー・索引が種別つきで出て、拡張自身のメンバーは出ないこと。read_only のセッションでも引けること。
 /// contrib の無い環境・`CREATE EXTENSION` の権限が無い環境では確認だけ飛ばす。

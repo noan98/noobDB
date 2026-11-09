@@ -43,6 +43,17 @@
   定義は `types::PG_POLICY_DEFINITION_EXPR` の `CREATE POLICY` (ロールは PUBLIC か名前順)。作成は表・関数より後、
   置換は DROP + CREATE (DO ブロック)、DROP は表の DROP より前 (破壊的な操作の許可が要る)。表の `ENABLE / FORCE ROW LEVEL SECURITY`
   は同期しない (表の属性であり、ポリシーの定義ではない) ので、作成時に警告を出す。
+  **PostgreSQL の論理レプリケーションのパブリケーション (`publication`, #2181)** も同じ層で比べる (PostgreSQL のみ)。パブリケーションは
+  データベース全体のオブジェクトで表がスキーマをまたぐので、`schema_objects` の一覧ではなく `publication_definitions` が
+  両側の**全パブリケーション**を返し、定義には**比較するスキーマに属する表だけ**を載せる (`TABLES IN SCHEMA` のスキーマは表に展開)。
+  定義は `CREATE PUBLICATION "p" [FOR ALL TABLES] WITH (publish = ..., publish_via_partition_root = ...)` + 表ごとの
+  `ALTER PUBLICATION "p" ADD TABLE "s"."t" [(列リスト)] [WHERE (行フィルタ)]` を `STMT_SPLIT` で連ねた形 (`db/publication.rs`)。
+  作成は表より後 (ポリシーの隣、DO ブロック)。置換は DROP + CREATE できない (購読側の同期状態が壊れる) ので `publication::replace_statements` が
+  最小の差分 (`SET (publish = ...)` / `ADD TABLE` / `DROP TABLE`。行フィルタ・列リストの違いは `DROP TABLE` + `ADD TABLE`) にする。
+  表を外す文は破壊的な操作の許可が要り、許可が無ければ出さずに警告する。`FOR ALL TABLES` の有無の違いは同期せず警告する。
+  購読側の `ALTER SUBSCRIPTION ... REFRESH PUBLICATION` は同期しない旨を常に警告する。サブスクリプションは比較・同期の対象外 (ツリー専用)。
+  TABLES IN SCHEMA 経由の表は定義に `/* via schema */` を付けて比較し、target 側でその表が差分でも `DROP TABLE` を出さず警告にする (PG が拒否するため)。target だけにあるパブリケーションは `DROP PUBLICATION` せず比較スキーマの明示表の `DROP TABLE` だけ、source だけの FOR ALL TABLES は作らず警告のみ。
+  一覧を取得できなかった側があれば、偽の追加 / 削除を出さないようパブリケーションを両側から外して警告する。
 - `db/data_diff.rs`: `compute_data_diff` がプライマリキーで行をペアリングして
   `RowDiff` を計算し、`generate_data_sync_sql` がそこから INSERT / UPDATE / DELETE を
   生成します。リテラルはドライバ別にエスケープ (MySQL はバックスラッシュも二重化)。

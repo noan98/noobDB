@@ -503,6 +503,11 @@ interface Props {
    */
   onCreatePolicy?: (database: string, table: string) => void;
   /**
+   * 論理レプリケーションのパブリケーションへの表の追加 / 除外ダイアログ (#2181)。テーブルの右クリックメニューから呼ぶ。
+   * PostgreSQL 以外では項目を出さない。read_only では項目を無効化する。未指定ならメニュー項目を出さない。
+   */
+  onManagePublication?: (database: string, table: string) => void;
+  /**
    * PostgreSQL の拡張機能ダイアログ (#2160)。データベース (スキーマ) ノードの右クリックメニューから呼ぶ。
    * PostgreSQL 以外では項目を出さない。拡張機能はデータベース単位なので、どのスキーマから開いても同じ。
    */
@@ -993,6 +998,8 @@ const SCHEMA_OBJECT_ICONS: Record<string, IconName> = {
   event: "clock",
   type: "braces",
   policy: "lock",
+  publication: "send",
+  subscription: "link",
 };
 
 /** 非テーブルのスキーマオブジェクト (ルーチン / トリガー / 突き合わなかったビュー) の 1 行。
@@ -1018,9 +1025,10 @@ const SchemaObjectRow = memo(function SchemaObjectRow({
   const t = useT();
   const kind = o.kind;
   const key = `so:${db}:${kind}:${o.name}:${o.id ?? ""}`;
-  // detail は種別ごとに意味が違う。型 (PostgreSQL) は ENUM / DOMAIN / 複合型 / 範囲型の識別子
-  // (内部値) なので表示用のラベルに直す。それ以外 (イベントの状態など) はサーバの値のまま。
-  const detail = kind === "type" && o.detail ? (typeKindLabel(o.detail, t) ?? o.detail) : o.detail;
+  // detail は種別ごとに意味が違う。型 (PostgreSQL) は ENUM / DOMAIN / 複合型 / 範囲型の識別子、
+  // パブリケーションは公開範囲 (all / 件数)、サブスクリプションは enabled / disabled (いずれも内部値) なので
+  // 表示用のラベルに直す。それ以外 (イベントの状態など) はサーバの値のまま。
+  const detail = objectDetailLabel(kind, o.detail, t);
   const { tabIndex, onFocus } = useTabStop(actions.store, key);
   const activate = () => actions.openObjectDefinition(db, o.kind, o.name, o.id);
   const openMenu: ((ev: ContextMenuTriggerEvent) => void) | undefined =
@@ -1064,6 +1072,23 @@ const SchemaObjectRow = memo(function SchemaObjectRow({
     </TreeRow>
   );
 });
+
+/** ツリー行のバッジ・ツールチップに出す `SchemaObject.detail` の表示ラベル (#2127 / #2181)。 */
+function objectDetailLabel(
+  kind: string,
+  detail: string | null | undefined,
+  t: ReturnType<typeof useT>,
+): string | null | undefined {
+  if (!detail) return detail;
+  if (kind === "type") return typeKindLabel(detail, t) ?? detail;
+  if (kind === "publication") {
+    return detail === "all" ? t("pubScopeAllTables") : t("pubScopeTables", { n: detail });
+  }
+  if (kind === "subscription") {
+    return detail === "enabled" ? t("subStateEnabled") : t("subStateDisabled");
+  }
+  return detail;
+}
 
 /** PostgreSQL の型の種類 (`SchemaObject.detail` の内部値) を表示ラベルにする。未知の値は `null`。 */
 function typeKindLabel(detail: string, t: ReturnType<typeof useT>): string | null {
@@ -1560,6 +1585,10 @@ function useHeaderLabel(): (group: ExplorerHeaderGroup) => string {
         return t("objGroupTypes");
       case "policy":
         return t("objGroupPolicies");
+      case "publication":
+        return t("objGroupPublications");
+      case "subscription":
+        return t("objGroupSubscriptions");
     }
   };
 }
@@ -2139,6 +2168,7 @@ export const ConnectionList = memo(
       onEditRoutine,
       onEditEnumType,
       onCreatePolicy,
+      onManagePublication,
       onManageExtensions,
       onCreateRoutine,
       onFindUsages,
@@ -3405,6 +3435,15 @@ export const ConnectionList = memo(
           items.push({
             label: t("contextMenuCreatePolicy"),
             onSelect: () => onCreatePolicy(db, tbl),
+            disabled: activeReadOnly,
+            title: roTitle,
+          });
+        }
+        // 論理レプリケーションのパブリケーションへの追加 / 除外 (#2181)。PostgreSQL だけ。
+        if (onManagePublication && activeDriver === "postgres") {
+          items.push({
+            label: t("contextMenuManagePublication"),
+            onSelect: () => onManagePublication(db, tbl),
             disabled: activeReadOnly,
             title: roTitle,
           });

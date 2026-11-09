@@ -327,6 +327,8 @@ struct SideObjects {
     /// 定義を読めなかった (種別, 名前)。片側だけ読めないと偽の「追加 / 削除」になるので、
     /// 両側の比較から外す。
     unreadable: Vec<(String, String)>,
+    /// パブリケーションの一覧を取得できたか (PostgreSQL 以外は常に true, #2181)。
+    publications_ok: bool,
 }
 
 /// 両側のオブジェクトを集めて比較する。テーブル一覧からビュー名を外す副作用がある。
@@ -376,6 +378,11 @@ async fn collect_object_comparison(
     let keep = |d: &crate::db::object_diff::ObjectDefinition| {
         !skip.contains(&(d.kind.clone(), d.name.clone()))
     };
+    // 片側でもパブリケーションの一覧を取得できなかったら、偽の追加 / 削除を出さないよう両側から外す (#2181)。
+    let publications_skipped = !(s.publications_ok && t.publications_ok);
+    let keep = |d: &crate::db::object_diff::ObjectDefinition| {
+        keep(d) && !(publications_skipped && d.kind == "publication")
+    };
     let src: Vec<_> = s.defs.into_iter().filter(|d| keep(d)).collect();
     let tgt: Vec<_> = t.defs.into_iter().filter(|d| keep(d)).collect();
 
@@ -405,6 +412,12 @@ async fn collect_object_comparison(
     if events_skipped {
         warnings.push(
             "イベント (EVENT) の一覧を取得できなかったため、イベントは比較に含めていません。これは「差分なし」ではありません。"
+                .to_string(),
+        );
+    }
+    if publications_skipped {
+        warnings.push(
+            "パブリケーション (PUBLICATION) の一覧を取得できなかったため、パブリケーションは比較に含めていません。これは「差分なし」ではありません。"
                 .to_string(),
         );
     }
@@ -453,9 +466,12 @@ async fn collect_object_comparison(
 
 /// `schema_objects` の一覧のうち、定義を取って比較に入れる種別か。シーケンスは一覧に載るが
 /// (#1957)、その定義は現在値と OWNED BY を含む表示用で比較に向かないので、従来どおり
-/// `sequence_definitions` だけで扱い、ここでは除く。
+/// `sequence_definitions` だけで扱い、ここでは除く。パブリケーションも、ツリーの一覧は「そのスキーマに
+/// 関係するもの」だけで、比較は両側のデータベース全体の有無と「比較するスキーマの表」の差を見るので、
+/// `publication_definitions` だけで扱う (#2181)。
 fn is_listed_object_compared(driver: DriverKind, kind: &str) -> bool {
-    kind != "sequence" && crate::db::object_diff::supports_object_kind(driver, kind)
+    !matches!(kind, "sequence" | "publication")
+        && crate::db::object_diff::supports_object_kind(driver, kind)
 }
 
 /// 1 つの接続のオブジェクト一覧と定義本文を集める。定義は可能なら 1 問い合わせでまとめて、
@@ -573,10 +589,34 @@ async fn collect_side_objects(
             });
         }
     }
+    let mut publications_ok = true;
+    if supports_object_kind(driver, "publication") {
+        match conn.publication_definitions(db).await {
+            Ok(list) => {
+                for (name, ddl) in list {
+                    defs.push(ObjectDefinition {
+                        kind: "publication".into(),
+                        name,
+                        signature: None,
+                        table: None,
+                        definition: ddl,
+                    });
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    kind = e.kind(),
+                    "schema compare: could not load publications"
+                );
+                publications_ok = false;
+            }
+        }
+    }
     Ok(SideObjects {
         defs,
         warnings,
         unreadable,
+        publications_ok,
     })
 }
 
@@ -3164,5 +3204,14 @@ mod listed_object_tests {
             "materialized_view"
         ));
         assert!(!is_listed_object_compared(DriverKind::Mysql, "sequence"));
+        // パブリケーションとサブスクリプションは一覧の定義では比べない (#2181)。
+        assert!(!is_listed_object_compared(
+            DriverKind::Postgres,
+            "publication"
+        ));
+        assert!(!is_listed_object_compared(
+            DriverKind::Postgres,
+            "subscription"
+        ));
     }
 }

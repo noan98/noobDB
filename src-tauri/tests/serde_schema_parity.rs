@@ -803,6 +803,27 @@ fn build_fixtures() -> serde_json::Value {
         enabled: true,
         forced: false,
     };
+    let publication_info = t::PublicationInfo {
+        name: "pub_orders".into(),
+        all_tables: false,
+        publish: vec!["insert".into(), "update".into()],
+        via_root: false,
+        tables: vec![
+            t::PublicationTable {
+                schema: "public".into(),
+                table: "orders".into(),
+                columns: Some(vec!["id".into(), "status".into()]),
+                row_filter: Some("(status <> 'draft'::text)".into()),
+            },
+            t::PublicationTable {
+                schema: "public".into(),
+                table: "items".into(),
+                columns: None,
+                row_filter: None,
+            },
+        ],
+        schemas: vec!["audit".into()],
+    };
     let extensions_overview = t::ExtensionsOverview {
         extensions: vec![
             t::ExtensionInfo {
@@ -2680,6 +2701,7 @@ fn build_fixtures() -> serde_json::Value {
         "tableExtrasInfo": table_extras_info,
         "tableTrigger": table_trigger,
         "rlsTable": rls_table,
+        "publicationInfo": publication_info,
         "extensionsOverview": extensions_overview,
         "extensionDependent": extension_dependent,
         "tablePartitions": table_partitions,

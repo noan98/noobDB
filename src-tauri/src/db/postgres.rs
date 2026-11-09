@@ -2104,8 +2104,23 @@ impl PostgresConn {
         // 型 (ENUM / DOMAIN / 複合型 / 範囲型, #2127) は 4 列目に `typtype` の 1 文字を載せる
         // (`detail` に enum / domain / composite / range として出す)。拡張が持つ型は除く。
         // 条件の副問い合わせは定数側に置く (`schema_object_kind_tests` が本文の分岐数を数えるため)。
-        let sql = format!(
-            r#"
+        // 論理レプリケーションのサブスクリプション (#2181)。データベースに属し、表を購読しているスキーマ
+        // (購読している表が無ければ全スキーマ) に出す。pg_subscription は列単位で公開されており、
+        // 接続文字列以外の列は誰でも読める。それでも読めない環境 (権限を絞ったマネージド DB など) では
+        // この分岐だけを外して再実行する (一覧全体を失敗させない)。
+        let subscription_branch = r#"
+            UNION ALL
+            SELECT 'subscription', s.subname::text, s.oid::text, s.subenabled::text
+              FROM pg_subscription s
+             WHERE {subscription_in_schema}
+            "#
+        .replace(
+            "{subscription_in_schema}",
+            super::types::PG_SUBSCRIPTION_IN_SCHEMA,
+        );
+        let build_sql = |branch: &str| {
+            format!(
+                r#"
             SELECT 'view'::text AS kind, viewname AS name, NULL::text AS id, NULL::text AS detail
               FROM pg_views WHERE schemaname = $1
             UNION ALL
@@ -2144,17 +2159,44 @@ impl PostgresConn {
               JOIN pg_class c ON c.oid = p.polrelid
               JOIN pg_namespace n ON n.oid = c.relnamespace
              WHERE n.nspname = $1 AND {policy_not_ext}
+            UNION ALL
+            -- 論理レプリケーションのパブリケーション (#2181)。データベース全体のオブジェクトなので、
+            -- このスキーマの表を公開しているもの・FOR ALL TABLES・表をまだ持たない空のものを出す。
+            -- 4 列目 (detail) は FOR ALL TABLES なら all、それ以外はこのスキーマの公開表の件数。
+            SELECT 'publication', p.pubname::text, NULL::text, {publication_detail}
+              FROM pg_publication p
+             WHERE {publication_in_schema}
+            {subscription_branch}
             ORDER BY kind, name
             "#,
-            listed_types = super::types::PG_LISTED_TYPE_FILTER,
-            not_type_member = super::types::PG_ROUTINE_NOT_TYPE_MEMBER,
-            policy_not_ext = super::types::PG_POLICY_NOT_EXTENSION
-        );
-        // 埋め込むのはコンパイル時定数 (`PG_LISTED_TYPE_FILTER`) だけで、スキーマ名は bind する。
-        let rows: Vec<PgRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
-            .bind(schema)
-            .fetch_all(&self.pool)
-            .await?;
+                listed_types = super::types::PG_LISTED_TYPE_FILTER,
+                not_type_member = super::types::PG_ROUTINE_NOT_TYPE_MEMBER,
+                policy_not_ext = super::types::PG_POLICY_NOT_EXTENSION,
+                subscription_branch = branch,
+                publication_detail = super::types::PG_PUBLICATION_DETAIL,
+                publication_in_schema = super::types::PG_PUBLICATION_IN_SCHEMA
+            )
+        };
+        // 埋め込むのはコンパイル時定数だけで、スキーマ名は bind する。
+        let rows: Vec<PgRow> =
+            match sqlx::query(sqlx::AssertSqlSafe(build_sql(&subscription_branch)))
+                .bind(schema)
+                .fetch_all(&self.pool)
+                .await
+            {
+                Ok(rows) => rows,
+                // 権限不足ならサブスクリプションを空として扱い、残りの一覧は返す。
+                Err(e) if is_insufficient_privilege(&e) => {
+                    tracing::warn!(
+                        "schema objects: subscriptions are not readable; listing without them"
+                    );
+                    sqlx::query(sqlx::AssertSqlSafe(build_sql("")))
+                        .bind(schema)
+                        .fetch_all(&self.pool)
+                        .await?
+                }
+                Err(e) => return Err(e.into()),
+            };
         Ok(rows
             .into_iter()
             .map(|r| {
@@ -2165,7 +2207,11 @@ impl PostgresConn {
                     "type" => {
                         raw.and_then(|t| super::types::pg_type_detail(&t).map(str::to_string))
                     }
-                    "policy" => raw,
+                    "policy" | "publication" => raw,
+                    // 有効 / 無効は boolean の文字列 (true / false) を種類名に直す。
+                    "subscription" => {
+                        raw.map(|b| if b == "true" { "enabled" } else { "disabled" }.to_string())
+                    }
                     _ => None,
                 };
                 SchemaObject {
@@ -2176,6 +2222,235 @@ impl PostgresConn {
                 }
             })
             .collect())
+    }
+
+    /// サーバのバージョン番号 (`server_version_num`、例: 160002)。取れなければ `Err`
+    /// (0 扱いにすると、15 以降でも列リスト・行フィルタ・`TABLES IN SCHEMA` を黙って落とすため)。
+    async fn server_version_num(&self) -> Result<i32> {
+        let v: String = sqlx::query_scalar("SHOW server_version_num")
+            .fetch_one(&self.pool)
+            .await?;
+        v.trim()
+            .parse()
+            .map_err(|_| AppError::InvalidInput(format!("unexpected server_version_num: {v}")))
+    }
+
+    /// 論理レプリケーションのパブリケーションの一覧 (#2181)。データベース全体 (スキーマをまたぐ) で、
+    /// 明示した表・行フィルタ・列リスト (PostgreSQL 15 以降)・`TABLES IN SCHEMA` (15 以降) を含む。
+    /// `FOR ALL TABLES` は表を展開しない。pg_publication 系は誰でも読める。
+    pub async fn list_publications(&self) -> Result<Vec<super::types::PublicationInfo>> {
+        use super::types::{PublicationInfo, PublicationTable};
+        let v15 = self.server_version_num().await? >= 150_000;
+        // 列リスト (prattrs) と行フィルタ (prqual) は 15 以降の列。13 / 14 には無いので別の問い合わせにする。
+        let tables_sql = if v15 {
+            "SELECT p.pubname::text, n.nspname::text, c.relname::text, \
+                    CASE WHEN pr.prattrs IS NULL THEN NULL \
+                         ELSE (SELECT array_agg(a.attname::text ORDER BY a.attnum) FROM pg_attribute a \
+                                WHERE a.attrelid = pr.prrelid AND a.attnum = ANY (pr.prattrs)) END, \
+                    pg_get_expr(pr.prqual, pr.prrelid) \
+               FROM pg_publication_rel pr \
+               JOIN pg_publication p ON p.oid = pr.prpubid \
+               JOIN pg_class c ON c.oid = pr.prrelid \
+               JOIN pg_namespace n ON n.oid = c.relnamespace \
+              ORDER BY 1, 2, 3"
+        } else {
+            "SELECT p.pubname::text, n.nspname::text, c.relname::text, NULL::text[], NULL::text \
+               FROM pg_publication_rel pr \
+               JOIN pg_publication p ON p.oid = pr.prpubid \
+               JOIN pg_class c ON c.oid = pr.prrelid \
+               JOIN pg_namespace n ON n.oid = c.relnamespace \
+              ORDER BY 1, 2, 3"
+        };
+        // pubviaroot は 13 以降の列。jsonb 経由で読めば、無い版でも列参照エラーにならない。
+        let pub_rows: Vec<PgRow> = sqlx::query(
+            "SELECT p.pubname::text, p.puballtables, p.pubinsert, p.pubupdate, p.pubdelete, \
+                    p.pubtruncate, COALESCE((to_jsonb(p) ->> 'pubviaroot')::boolean, false) \
+               FROM pg_publication p ORDER BY p.pubname",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let table_rows: Vec<PgRow> = sqlx::query(tables_sql).fetch_all(&self.pool).await?;
+        let schema_rows: Vec<PgRow> = if v15 {
+            sqlx::query(
+                "SELECT p.pubname::text, n.nspname::text \
+                   FROM pg_publication_namespace pn \
+                   JOIN pg_publication p ON p.oid = pn.pnpubid \
+                   JOIN pg_namespace n ON n.oid = pn.pnnspid \
+                  ORDER BY 1, 2",
+            )
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            Vec::new()
+        };
+        let mut out: Vec<PublicationInfo> = pub_rows
+            .iter()
+            .map(|r| {
+                let flag = |i: usize| r.try_get::<bool, _>(i).unwrap_or(false);
+                let publish = [(2, "insert"), (3, "update"), (4, "delete"), (5, "truncate")]
+                    .iter()
+                    .filter(|(i, _)| flag(*i))
+                    .map(|(_, n)| (*n).to_string())
+                    .collect();
+                PublicationInfo {
+                    name: r.try_get::<String, _>(0).unwrap_or_default(),
+                    all_tables: flag(1),
+                    publish,
+                    via_root: flag(6),
+                    tables: Vec::new(),
+                    schemas: Vec::new(),
+                }
+            })
+            .collect();
+        for r in &table_rows {
+            let pubname: String = r.try_get(0).unwrap_or_default();
+            if let Some(p) = out.iter_mut().find(|p| p.name == pubname) {
+                p.tables.push(PublicationTable {
+                    schema: r.try_get(1).unwrap_or_default(),
+                    table: r.try_get(2).unwrap_or_default(),
+                    columns: r.try_get::<Option<Vec<String>>, _>(3).ok().flatten(),
+                    row_filter: r.try_get::<Option<String>, _>(4).ok().flatten(),
+                });
+            }
+        }
+        for r in &schema_rows {
+            let pubname: String = r.try_get(0).unwrap_or_default();
+            if let Some(p) = out.iter_mut().find(|p| p.name == pubname) {
+                p.schemas.push(r.try_get(1).unwrap_or_default());
+            }
+        }
+        Ok(out)
+    }
+
+    /// ツリーの定義表示: パブリケーション 1 件の `CREATE PUBLICATION` (#2181)。無ければ `None`。
+    async fn publication_definition(&self, name: &str) -> Result<Option<String>> {
+        Ok(self
+            .list_publications()
+            .await?
+            .iter()
+            .find(|p| p.name == name)
+            .map(super::publication::display_definition))
+    }
+
+    /// スキーマ比較用: 全パブリケーションの (名前, 定義)。定義は `schema` に属する表だけを含み
+    /// ([`super::publication::compare_definition`])、`TABLES IN SCHEMA schema` の公開は表に展開する (#2181)。
+    /// パブリケーションの有無は両側のデータベース全体で比べるので、表を持たないものも返す。
+    pub async fn publication_definitions(&self, schema: &str) -> Result<Vec<(String, String)>> {
+        use super::types::PublicationTable;
+        let pubs = self.list_publications().await?;
+        if pubs.is_empty() {
+            return Ok(Vec::new());
+        }
+        // `TABLES IN SCHEMA schema` で公開される表 (パブリケーション名, 表名)。FOR ALL TABLES の
+        // パブリケーションまで展開すると重いので、スキーマ単位で公開しているものだけを引く。
+        let by_schema: Vec<String> = pubs
+            .iter()
+            .filter(|p| p.schemas.iter().any(|s| s == schema))
+            .map(|p| p.name.clone())
+            .collect();
+        let expanded: Vec<(String, String)> = if by_schema.is_empty() {
+            Vec::new()
+        } else {
+            sqlx::query_as(
+                "SELECT pubname::text, tablename::text FROM pg_publication_tables \
+                  WHERE schemaname = $1 AND pubname = ANY ($2) ORDER BY 1, 2",
+            )
+            .bind(schema)
+            .bind(&by_schema)
+            .fetch_all(&self.pool)
+            .await?
+        };
+        Ok(pubs
+            .iter()
+            .map(|p| {
+                let mut tables: Vec<PublicationTable> = p
+                    .tables
+                    .iter()
+                    .filter(|t| t.schema == schema)
+                    .cloned()
+                    .collect();
+                // `TABLES IN SCHEMA` 由来 (明示メンバーではない) の表。定義に印を付け、同期が DROP TABLE を出さないようにする。
+                let mut via_schema: Vec<String> = Vec::new();
+                if p.schemas.iter().any(|s| s == schema) {
+                    for (_, table) in expanded.iter().filter(|(n, _)| *n == p.name) {
+                        if !tables.iter().any(|t| t.table == *table) {
+                            via_schema.push(table.clone());
+                            tables.push(PublicationTable {
+                                schema: schema.to_string(),
+                                table: table.clone(),
+                                columns: None,
+                                row_filter: None,
+                            });
+                        }
+                    }
+                }
+                tables.sort_by(|a, b| a.table.cmp(&b.table));
+                (
+                    p.name.clone(),
+                    super::publication::compare_definition(p, &tables, &via_schema),
+                )
+            })
+            .collect())
+    }
+
+    /// サブスクリプション 1 件の定義表示 (#2181): 実行できる形の `CREATE SUBSCRIPTION` に、有効 / 無効と
+    /// `pg_stat_subscription` の最終受信時刻をコメントで添える。接続文字列は**バックエンドでパスワードを
+    /// 伏せてから**返す (平文を IPC に載せない)。接続文字列を読めない (権限不足) ときはコメントで知らせる。
+    async fn subscription_definition(
+        &self,
+        name: &str,
+        id: Option<&str>,
+    ) -> Result<Option<String>> {
+        // 列単位の権限で誰でも読める列だけ (接続文字列は含まない)。名前は同一データベース内で一意。
+        let row: Option<PgRow> = sqlx::query(
+            "SELECT s.oid::text, s.subenabled, s.subslotname::text, s.subsynccommit, \
+                    s.subpublications::text[] \
+               FROM pg_subscription s \
+              WHERE s.subdbid = (SELECT d.oid FROM pg_database d WHERE d.datname = current_database()) \
+                AND ($1::text IS NULL OR s.oid::text = $1) AND s.subname = $2",
+        )
+        .bind(id)
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let oid: String = row.try_get(0).unwrap_or_default();
+        let enabled: bool = row.try_get(1).unwrap_or(false);
+        let slot: Option<String> = row.try_get(2).ok().flatten();
+        let sync_commit: String = row.try_get(3).unwrap_or_default();
+        let publications: Vec<String> = row.try_get(4).unwrap_or_default();
+        // 接続文字列は権限が要る列。読めなければ None (エラーにしない)。
+        let conninfo: Option<String> =
+            sqlx::query_scalar("SELECT subconninfo FROM pg_subscription WHERE oid = $1::oid")
+                .bind(&oid)
+                .fetch_optional(&self.pool)
+                .await
+                .ok()
+                .flatten();
+        // pg_stat_subscription は購読ワーカーが動いている間だけ行がある (無効・未起動なら NULL)。
+        let last_receipt: Option<String> = sqlx::query_scalar(
+            "SELECT max(last_msg_receipt_time)::text FROM pg_stat_subscription WHERE subid = $1::oid",
+        )
+        .bind(&oid)
+        .fetch_one(&self.pool)
+        .await
+        .ok()
+        .flatten();
+        Ok(Some(super::publication::subscription_definition(
+            &super::publication::SubscriptionParts {
+                name,
+                enabled,
+                slot: slot.as_deref(),
+                synchronize_commit: &sync_commit,
+                publications: &publications,
+                conninfo: conninfo
+                    .as_deref()
+                    .map(crate::sql_credentials::redact_conninfo),
+                last_receipt: last_receipt.as_deref(),
+            },
+        )))
     }
 
     /// ユーザー定義型 (ENUM / DOMAIN / 複合型 / 範囲型) の列の型名 ((表名, 列名) -> 型, #2127)。
@@ -2712,6 +2987,8 @@ impl PostgresConn {
             "sequence" => self.sequence_definition(schema, name).await?,
             "type" => self.type_definition(schema, name).await?,
             "policy" => self.policy_definition(schema, name, id).await?,
+            "publication" => self.publication_definition(name).await?,
+            "subscription" => self.subscription_definition(name, id).await?,
             other => {
                 return Err(AppError::InvalidInput(format!(
                     "unsupported object kind: {other}"
@@ -4556,6 +4833,13 @@ fn split_outside_quotes(s: &str, sep: char) -> Option<(String, String)> {
         }
     }
     None
+}
+
+/// SQLSTATE 42501 (insufficient_privilege) か。権限が足りないだけのときに、機能を空にして続けるために使う。
+fn is_insufficient_privilege(e: &sqlx::Error) -> bool {
+    e.as_database_error()
+        .and_then(|d| d.code())
+        .is_some_and(|c| c == "42501")
 }
 
 /// Double-quotes a single identifier, doubling any embedded double quotes.
