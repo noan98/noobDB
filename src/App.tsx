@@ -2489,7 +2489,7 @@ export default function App() {
   // GUI モーダル経由の DDL の実行ゲート (#2176)。`runGuardedDdl` が開き、承認 / キャンセルで
   // `resolve` を呼んで待機中の呼び出しへ結果を返す。ダイアログはエディタの実行ゲートと同じ。
   const [pendingDdlGate, setPendingDdlGate] = useState<
-    (DdlGate & { sql: string; resolve: (approved: boolean) => void }) | null
+    (DdlGate & { resolve: (approved: boolean) => void }) | null
   >(null);
   // WHERE 付きの通常 DELETE を実行する前の子行影響の事前確認 (#1767)。定義は loadEditorDeleteImpacts の後ろ。
   const precheckingTabsRef = useRef<Set<string>>(new Set());
@@ -8451,7 +8451,7 @@ export default function App() {
         // 既に待機中のゲートがあれば取り消し扱いで閉じる (二重に開かない)。
         setPendingDdlGate((prev) => {
           prev?.resolve(false);
-          return { ...gate, sql, resolve };
+          return { ...gate, resolve };
         });
       });
     },
@@ -8981,6 +8981,8 @@ export default function App() {
       setCloneTarget(null);
       if (!target || !sessionId) return;
       void (async () => {
+        // 共通の DDL ゲート (#2176)。キャンセルなら何も実行しない。
+        if (!(await runGuardedDdl(statements.join(";\n")))) return;
         try {
           await api.runQueryTransaction(sessionId, statements, target.database);
           invalidateSchemaCache(target.database);
@@ -9010,7 +9012,15 @@ export default function App() {
         }
       })();
     },
-    [cloneTarget, sessionId, selectedProfile?.driver, invalidateSchemaCache, noteSchemaDdl, toast],
+    [
+      cloneTarget,
+      sessionId,
+      selectedProfile?.driver,
+      runGuardedDdl,
+      invalidateSchemaCache,
+      noteSchemaDdl,
+      toast,
+    ],
   );
 
   // 分割一括 DELETE / UPDATE (#2020) の開始前確認。ループ自体はモーダルが持ち、1 バッチごとに
@@ -14853,6 +14863,8 @@ export default function App() {
                   readOnly={readOnly}
                   onConfirm={async (statements, name) => {
                     const target = policyEditor;
+                    // 共通の DDL ゲート (#2176)。キャンセルなら実行せず、モーダルは開いたまま。
+                    if (!(await runGuardedDdl(statements.join(";\n")))) return;
                     // 実行は通常のトランザクション経路 (read_only の拒否はバックエンド)。成功時だけ閉じる。
                     try {
                       await api.runQueryTransaction(sessionId, statements, target.database);
