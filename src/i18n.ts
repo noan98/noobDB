@@ -2512,7 +2512,8 @@ const en = {
   createTableCreatedSingle: "Created the table.",
   createTablePublicationAction: "Add to a publication...",
   createTablePublicationStale:
-    "The connection has changed, so the publication dialog was not opened. Reconnect and use the table's context menu.",
+    "The connection has changed, so the publication dialog was not opened. Use the table's context menu instead.",
+  createTableSessionChanged: "The connection changed while confirming, so the table was not created.",
   cloneTableMetaError: "Couldn't read column / foreign key metadata: {error}",
   cloneTableNotTable: "Only tables can be duplicated (this object is a view or another kind).",
   cloneTableRewriteError:
@@ -10332,6 +10333,7 @@ const ja: Dict = {
   createTablePublicationAction: "パブリケーションに追加...",
   createTablePublicationStale:
     "接続が切り替わったため、パブリケーションの画面は開きませんでした。表の右クリックメニューから操作してください。",
+  createTableSessionChanged: "確認中に接続が切り替わったため、テーブルは作成していません。",
   cloneTableMetaError: "列・外部キーのメタデータを取得できませんでした: {error}",
   cloneTableNotTable: "テーブル以外 (ビューなど) は複製できません。",
   cloneTableRewriteError:

@@ -8550,6 +8550,11 @@ export default function App() {
       void (async () => {
         // 単文・複数文とも、実行前に共通の実行ゲートを通す (#2176)。
         if (!(await runGuardedDdl(statements.join(";\n")))) return;
+        // 確認ダイアログの間に接続を切り替えたら、古い接続では実行しない。
+        if (sessionIdRef.current !== createdSid) {
+          toast.info(translate("createTableSessionChanged"));
+          return;
+        }
         if (statements.length <= 1) {
           openAndRunQuery(sql, undefined, {
             onSettled: (ok) => {
@@ -8559,7 +8564,7 @@ export default function App() {
           return;
         }
         try {
-          await api.runQueryTransaction(sessionId, statements, database || null);
+          await api.runQueryTransaction(createdSid, statements, database || null);
           invalidateSchemaCache(database || null);
           noteSchemaDdl(statements.join(";\n"), database || null);
           connectionListRef.current?.refreshSchema();
