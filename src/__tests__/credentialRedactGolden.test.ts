@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { CREDENTIAL_PLACEHOLDER, findCredentialRanges, redactCredentials } from "../sqlCredentials";
+import {
+  CREDENTIAL_PLACEHOLDER,
+  findCredentialRanges,
+  redactCredentials,
+  redactErrorText,
+} from "../sqlCredentials";
 import vectors from "./fixtures/credentialRedactVectors.json";
 
 // SQL 中の資格情報リテラルの伏せ字化 ゴールデンテスト (#2174、フロント側)。
@@ -15,6 +20,35 @@ interface VectorCase {
 }
 
 const cases = vectors.cases as VectorCase[];
+
+interface ErrorCase {
+  note: string;
+  sql: string;
+  error: string;
+  mysql: string;
+  postgres: string;
+}
+
+const errorCases = vectors.errorCases as ErrorCase[];
+
+describe("エラー文の伏せ字化 ゴールデン (フロント redactErrorText)", () => {
+  it("ケースがある", () => {
+    expect(errorCases.length).toBeGreaterThanOrEqual(5);
+  });
+
+  for (const c of errorCases) {
+    it(`${c.note} — ${JSON.stringify(c.error)}`, () => {
+      expect(redactErrorText(c.error, c.sql, "mysql")).toBe(c.mysql);
+      expect(redactErrorText(c.error, c.sql, "postgres")).toBe(c.postgres);
+      expect(redactErrorText(c.error, c.sql, "sqlite")).toBe(c.error);
+    });
+  }
+
+  it("ドライバ省略時は両方言の値を置換する", () => {
+    const sql = "ALTER USER u IDENTIFIED BY 'p\\'ass word'";
+    expect(redactErrorText("near p'ass word and p\\'ass word", sql)).toBe("near ******** and ********");
+  });
+});
 
 describe("資格情報の伏せ字化 ゴールデン (フロント redactCredentials)", () => {
   it("ベクタが 3 ドライバを覆い、十分なケース数を持つ", () => {
