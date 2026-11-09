@@ -167,6 +167,7 @@ DB に触れず実行もしない (UI のプレビュー専用)。両環境の�
 - `schema_overview`
 - `foreign_keys`
 - `list_rls_tables` (行レベルセキュリティ (RLS) が有効 / FORCE の表の一覧。PostgreSQL 専用で他ドライバは `InvalidInput`。ツリーの「RLS」バッジ用、#2159)
+- `list_publications` (論理レプリケーションのパブリケーション一覧: 公開する操作・明示した表 (行フィルタ・列リストは PostgreSQL 15 以降)・`TABLES IN SCHEMA` のスキーマ・`FOR ALL TABLES`。データベース全体でスキーマをまたぐ。表の右クリック「パブリケーションに追加 / から外す」の所属判定用。PostgreSQL 専用で MySQL / SQLite は空、読み取りのみ、#2181)
 - `list_extensions` (PostgreSQL の拡張機能: 導入済み (バージョン / スキーマ) とサーバが提供できるもの (既定のバージョン / 更新の可否) + `shared_preload_libraries`。PostgreSQL 専用で他ドライバは `InvalidInput`、#2160)
 - `list_schema_objects`
 - `get_object_definition`
@@ -263,6 +264,18 @@ PostgreSQL のみ `kind = "policy"` (行レベルセキュリティのポリシ�
 PostgreSQL の policy のみ (トリガーと同じく (名前, 対象表) で対応づけ、置換は DROP + CREATE、表の ENABLE / FORCE ROW LEVEL SECURITY は同期しない)。
 ポリシーもツリー専用の種別で Where-used の走査対象には入らない。作成は新しい IPC を足さず、UI (`PolicyModal` / `policySql.ts`) が組み立てた
 `CREATE POLICY` (と任意の `ALTER TABLE ... ENABLE / FORCE ROW LEVEL SECURITY`) を `run_query_transaction` で流す (read_only の拒否はバックエンド)。
+
+PostgreSQL のみ `kind = "publication"` / `kind = "subscription"` (論理レプリケーション, #2181) も返す。どちらもデータベース全体のオブジェクトで、
+ツリーにはそのスキーマに関係するものだけを出す: パブリケーションは「このスキーマの表を公開している / FOR ALL TABLES / 表を持たない空のもの」
+(`SchemaObject.detail` は `all` かこのスキーマの公開表の件数)、サブスクリプションは「このデータベースのもので、購読する表がこのスキーマにある (購読表が無ければ全スキーマ)」
+(`id` は oid、`detail` は `enabled` / `disabled`)。`pg_subscription` が列単位の権限で読めない環境では、サブスクリプションの分岐だけを外して一覧を返す (エラーにしない)。
+`get_object_definition` はパブリケーションなら `CREATE PUBLICATION ... FOR ALL TABLES | FOR TABLE <表 (列リスト) WHERE (行フィルタ)>, TABLES IN SCHEMA <s> WITH (publish = '...', publish_via_partition_root = ...)`
+(`db/publication.rs::display_definition`)、サブスクリプションなら `CREATE SUBSCRIPTION` に状態 (有効 / 無効)・`pg_stat_subscription` の最終受信時刻をコメントで添えたもの。
+**接続文字列 (`subconninfo`) のパスワードはバックエンドで伏せてから返す** (`sql_credentials::redact_conninfo`: `key=value` 形式 (引用符・エスケープ込み) と URI 形式、`password` / `sslpassword`)。
+接続文字列を読めない (権限不足) ときは、エラーにせず定義にその旨のコメントを出す。MySQL / SQLite は publication / subscription を返さない (全 match アームで空)。
+スキーマ比較・同期の対象は PostgreSQL の publication のみ (subscription は環境ごとに違って当然なので対象外、ツリー専用。どちらも Where-used の走査対象には入らない)。比較の詳細は `diff-sync.md`。
+表の追加 / 除外は新しい IPC を足さず、UI (`PublicationModal` / `publicationSql.ts`) が `list_publications` で所属を見て組み立てた `ALTER PUBLICATION ... ADD / DROP TABLE` を
+実行ゲート (`runGuardedDdl`) を通して `run_query_transaction` で流す (read_only の拒否はバックエンド)。
 
 拡張機能の導入・更新・削除は新しい IPC を足さず、UI (`ExtensionsModal` / `extensionSql.ts`) が組み立てた `CREATE EXTENSION [IF NOT EXISTS] ... [SCHEMA ...] [CASCADE]` /
 `ALTER EXTENSION ... UPDATE` / `DROP EXTENSION [CASCADE]` を `run_query` で流す (read_only の拒否はバックエンド。権限不足は `errorHints` の

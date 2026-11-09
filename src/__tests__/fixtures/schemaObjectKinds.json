@@ -1,10 +1,10 @@
 {
-  "description": "SchemaObject.kind (#1840) の取りうる値の集合を Rust / TS で固定する共有ゴールデン。Rust の src-tauri/src/db/types.rs (schema_object_kind_tests) は SCHEMA_OBJECT_KINDS と、3 ドライバの schema_objects が吐く kind をこの JSON と照合する。TS の src/__tests__/schemaObjectKind.test.ts は SchemaObjectKind union の全値をこの JSON と照合する。kind を足すときは Rust 定数・TS union・この JSON を揃える。treeOnlyKinds (#1957) はツリーの一覧・定義表示だけに使い、Where-used が走査しない種別 (event は MySQL のみ, #2100。type は PostgreSQL のユーザー定義型で、ENUM / DOMAIN / 複合型 / 範囲型を 1 つの kind にまとめ、種類は SchemaObject.detail に入る, #2127。policy は PostgreSQL の RLS ポリシーで、detail に対象表名が入る, #2159)。",
-  "kinds": ["view", "materialized_view", "procedure", "function", "trigger", "sequence", "event", "type", "policy"],
-  "treeOnlyKinds": ["sequence", "event", "type", "policy"],
+  "description": "SchemaObject.kind (#1840) の取りうる値の集合を Rust / TS で固定する共有ゴールデン。Rust の src-tauri/src/db/types.rs (schema_object_kind_tests) は SCHEMA_OBJECT_KINDS と、3 ドライバの schema_objects が吐く kind をこの JSON と照合する。TS の src/__tests__/schemaObjectKind.test.ts は SchemaObjectKind union の全値をこの JSON と照合する。kind を足すときは Rust 定数・TS union・この JSON を揃える。treeOnlyKinds (#1957) はツリーの一覧・定義表示だけに使い、Where-used が走査しない種別 (event は MySQL のみ, #2100。type は PostgreSQL のユーザー定義型で、ENUM / DOMAIN / 複合型 / 範囲型を 1 つの kind にまとめ、種類は SchemaObject.detail に入る, #2127。policy は PostgreSQL の RLS ポリシーで、detail に対象表名が入る, #2159。publication / subscription は PostgreSQL の論理レプリケーションで、detail は公開範囲 (all / 件数) と enabled / disabled, #2181)。",
+  "kinds": ["view", "materialized_view", "procedure", "function", "trigger", "sequence", "event", "type", "policy", "publication", "subscription"],
+  "treeOnlyKinds": ["sequence", "event", "type", "policy", "publication", "subscription"],
   "drivers": {
     "mysql": ["view", "procedure", "function", "trigger", "event"],
-    "postgres": ["view", "materialized_view", "procedure", "function", "trigger", "sequence", "type", "policy"],
+    "postgres": ["view", "materialized_view", "procedure", "function", "trigger", "sequence", "type", "policy", "publication", "subscription"],
     "sqlite": ["view", "trigger"]
   }
 }

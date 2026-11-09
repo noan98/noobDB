@@ -722,6 +722,31 @@ export interface RlsTable {
   forced: boolean;
 }
 
+/** `list_publications` の表 1 件: パブリケーションに明示的に入っている表 (#2181)。 */
+export interface PublicationTable {
+  schema: string;
+  table: string;
+  /** 列リスト (PostgreSQL 15 以降)。指定が無い (全列) と 13 / 14 は null。 */
+  columns: string[] | null;
+  /** 行フィルタ `WHERE (...)` の式 (PostgreSQL 15 以降)。指定が無い・13 / 14 は null。 */
+  row_filter: string | null;
+}
+
+/** `list_publications` の 1 件: 論理レプリケーションのパブリケーション (#2181)。PostgreSQL だけ。 */
+export interface PublicationInfo {
+  name: string;
+  /** `FOR ALL TABLES`。このとき `tables` は展開されない (空)。 */
+  all_tables: boolean;
+  /** 公開する操作 (`insert` / `update` / `delete` / `truncate` のうち有効なもの)。 */
+  publish: string[];
+  /** `publish_via_partition_root`。 */
+  via_root: boolean;
+  /** 明示的に追加した表 (スキーマをまたぐ)。 */
+  tables: PublicationTable[];
+  /** `FOR TABLES IN SCHEMA` で丸ごと公開しているスキーマ (PostgreSQL 15 以降)。 */
+  schemas: string[];
+}
+
 /** `list_extensions` の 1 件: PostgreSQL の拡張機能 (#2160)。 */
 export interface ExtensionInfo {
   name: string;
@@ -770,7 +795,11 @@ export type SchemaObjectKind =
   /** PostgreSQL のユーザー定義型 (ENUM / DOMAIN / 複合型 / 範囲型, #2127)。種類は `detail`。PostgreSQL だけ。 */
   | "type"
   /** PostgreSQL の行レベルセキュリティ (RLS) ポリシー (#2159)。対象表名は `detail`。PostgreSQL だけ。 */
-  | "policy";
+  | "policy"
+  /** PostgreSQL の論理レプリケーションのパブリケーション (#2181)。`detail` は公開範囲 (`all` = FOR ALL TABLES、他はこのスキーマの公開表の件数)。PostgreSQL だけ。 */
+  | "publication"
+  /** PostgreSQL の論理レプリケーションのサブスクリプション (#2181)。`detail` は `enabled` / `disabled`。PostgreSQL だけ。 */
+  | "subscription";
 
 /** 非テーブルのスキーマオブジェクト。 */
 export interface SchemaObject {
@@ -829,7 +858,9 @@ export interface WhereUsedMatch {
   lines: ReferenceLine[];
   source: "object" | "snippet";
   /** オブジェクト種別。スニペットは "snippet"。 */
-  kind: Exclude<SchemaObjectKind, "sequence" | "event" | "type" | "policy"> | "snippet";
+  kind:
+    | Exclude<SchemaObjectKind, "sequence" | "event" | "type" | "policy" | "publication" | "subscription">
+    | "snippet";
   name: string;
   /** スキーマオブジェクトの一意識別子 (`get_object_definition` へそのまま渡す)。 */
   id: string | null;
@@ -838,7 +869,7 @@ export interface WhereUsedMatch {
 }
 
 export interface WhereUsedFailure {
-  kind: Exclude<SchemaObjectKind, "sequence" | "event" | "type" | "policy">;
+  kind: Exclude<SchemaObjectKind, "sequence" | "event" | "type" | "policy" | "publication" | "subscription">;
   name: string;
   error: string;
 }
@@ -852,7 +883,10 @@ export interface WhereUsedReport {
   failed: WhereUsedFailure[];
   /** 定義本文が空で返ったオブジェクト。 */
   emptyDefinitions: {
-    kind: Exclude<SchemaObjectKind, "sequence" | "event" | "type" | "policy">;
+    kind: Exclude<
+      SchemaObjectKind,
+      "sequence" | "event" | "type" | "policy" | "publication" | "subscription"
+    >;
     name: string;
   }[];
   /** キャンセルされ、途中までの結果であること。 */

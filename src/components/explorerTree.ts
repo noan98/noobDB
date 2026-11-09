@@ -49,6 +49,8 @@ const ROUTINE_ORDER: readonly SchemaObjectKind[] = [
   "event",
   "type",
   "policy",
+  "publication",
+  "subscription",
 ];
 
 /** 「ビュー」グループに並ぶノード。列の展開・データを開く導線はテーブルと共通。 */
@@ -358,6 +360,8 @@ const OBJECT_GROUP_ORDER: readonly SchemaObjectKind[] = [
   "event",
   "type",
   "policy",
+  "publication",
+  "subscription",
 ];
 
 /**

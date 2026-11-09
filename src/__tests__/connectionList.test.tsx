@@ -310,6 +310,57 @@ describe("Database Explorer の階層 (#1112)", () => {
     }
   });
 
+  it("パブリケーションは公開範囲、サブスクリプションは有効 / 無効を表示ラベルでバッジに出す (#2181)", async () => {
+    setLocale("ja");
+    try {
+      vi.mocked(api.listSchemaObjects).mockResolvedValueOnce([
+        { kind: "publication", name: "pub_all", id: null, detail: "all" },
+        { kind: "publication", name: "pub_two", id: null, detail: "2" },
+        { kind: "subscription", name: "sub_on", id: "1", detail: "enabled" },
+        { kind: "subscription", name: "sub_off", id: "2", detail: "disabled" },
+      ]);
+      await openDb({}, { driver: "postgres" });
+      const all = await screen.findByRole("treeitem", { name: "pub_all" });
+      expect(within(all).getByText(t("pubScopeAllTables"))).toBeInTheDocument();
+      expect(within(all).queryByText("all")).toBeNull();
+      const two = await screen.findByRole("treeitem", { name: "pub_two" });
+      expect(within(two).getByText("2 表")).toBeInTheDocument();
+      const on = await screen.findByRole("treeitem", { name: "sub_on" });
+      expect(within(on).getByText(t("subStateEnabled"))).toBeInTheDocument();
+      const off = await screen.findByRole("treeitem", { name: "sub_off" });
+      expect(within(off).getByText(t("subStateDisabled"))).toBeInTheDocument();
+      expect(screen.getByText(t("objGroupPublications"))).toBeInTheDocument();
+      expect(screen.getByText(t("objGroupSubscriptions"))).toBeInTheDocument();
+    } finally {
+      setLocale("en");
+    }
+  });
+
+  it("「パブリケーションに追加 / から外す」は PostgreSQL の表だけに出て onManagePublication を呼ぶ (#2181)", async () => {
+    const onManagePublication = vi.fn();
+    await openDb({ onManagePublication, onTruncateTable: vi.fn() }, { driver: "postgres" });
+    fireEvent.contextMenu(await screen.findByRole("treeitem", { name: "tbl1" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("contextMenuManagePublication") }));
+    expect(onManagePublication).toHaveBeenCalledWith("db1", "tbl1");
+  });
+
+  it("MySQL の表には「パブリケーションに追加 / から外す」を出さない (#2181)", async () => {
+    await openDb({ onManagePublication: vi.fn(), onTruncateTable: vi.fn() }, { driver: "mysql" });
+    fireEvent.contextMenu(await screen.findByRole("treeitem", { name: "tbl1" }));
+    await screen.findByRole("menuitem", { name: t("contextMenuTruncateTable") });
+    expect(screen.queryByRole("menuitem", { name: t("contextMenuManagePublication") })).toBeNull();
+  });
+
+  it("read_only の PostgreSQL 接続では「パブリケーションに追加 / から外す」が無効 (#2181)", async () => {
+    const onManagePublication = vi.fn();
+    await openDb({ onManagePublication, onTruncateTable: vi.fn() }, { driver: "postgres", read_only: true });
+    fireEvent.contextMenu(await screen.findByRole("treeitem", { name: "tbl1" }));
+    const item = await screen.findByRole("menuitem", { name: t("contextMenuManagePublication") });
+    expect(item).toBeDisabled();
+    fireEvent.click(item);
+    expect(onManagePublication).not.toHaveBeenCalled();
+  });
+
   it("ビューを Ctrl+クリックしても複数選択に入らず、テーブルの右クリックは通常のメニューのまま (#1594)", async () => {
     vi.mocked(api.listTables).mockResolvedValueOnce(["tbl1", "v1"]);
     vi.mocked(api.listSchemaObjects).mockResolvedValueOnce([{ kind: "view", name: "v1", id: null }]);

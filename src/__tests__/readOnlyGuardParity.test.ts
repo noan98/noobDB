@@ -553,6 +553,7 @@ safe(
   "list_table_partitions",
   "list_schema_objects",
   "list_rls_tables",
+  "list_publications",
   "list_extensions",
   "list_table_comments",
   "list_tables",
@@ -712,6 +713,9 @@ const CONNECTION_READ_METHODS = new Set([
   "user_type_columns",
   // RLS が有効な表を pg_class から引くだけ (#2159)
   "rls_tables",
+  // パブリケーションの一覧 / 比較用の定義を pg_publication 系から引くだけ (#2181)
+  "list_publications",
+  "publication_definitions",
   // 拡張機能の一覧を pg_extension / pg_available_extensions から引くだけ (#2160)
   "list_extensions",
   "table_is_transactional",

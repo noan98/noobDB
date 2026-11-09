@@ -471,6 +471,9 @@ const EnumTypeModal = lazy(() =>
   import("./components/EnumTypeModal").then((m) => ({ default: m.EnumTypeModal })),
 );
 const PolicyModal = lazy(() => import("./components/PolicyModal").then((m) => ({ default: m.PolicyModal })));
+const PublicationModal = lazy(() =>
+  import("./components/PublicationModal").then((m) => ({ default: m.PublicationModal })),
+);
 const ExtensionsModal = lazy(() =>
   import("./components/ExtensionsModal").then((m) => ({ default: m.ExtensionsModal })),
 );
@@ -2341,6 +2344,10 @@ export default function App() {
   } | null>(null);
   // PostgreSQL の RLS ポリシー作成ダイアログ (#2159) の対象。
   const [policyEditor, setPolicyEditor] = useState<{ database: string; table: string } | null>(null);
+  // 論理レプリケーションのパブリケーションへの表の追加 / 除外ダイアログ (#2181) の対象。
+  const [publicationEditor, setPublicationEditor] = useState<{ database: string; table: string } | null>(
+    null,
+  );
   // PostgreSQL の拡張機能ダイアログ (#2160) を開いているか。
   const [extensionsOpen, setExtensionsOpen] = useState(false);
   // トランザクション開始時に実際に渡した DB (出力ログの execDatabase 用)。PG は begin に渡す値が
@@ -8357,6 +8364,13 @@ export default function App() {
     },
     [sessionId],
   );
+  const handleManagePublication = useCallback(
+    (database: string, table: string) => {
+      if (!sessionId) return;
+      setPublicationEditor({ database, table });
+    },
+    [sessionId],
+  );
   const handleManageExtensions = useCallback(() => {
     if (!sessionId) return;
     setExtensionsOpen(true);
@@ -8531,6 +8545,26 @@ export default function App() {
     [sessionId, runGuardedDdl, invalidateSchemaCache, noteSchemaDdl, toast],
   );
 
+  // パブリケーションへの表の追加 / 除外 (#2181)。モーダルでプレビューを確認済みの `ALTER PUBLICATION ... ADD / DROP TABLE` を、
+  // 共通の DDL ゲート (#2176) を通してから 1 つのトランザクションで流す。キャンセルなら false (モーダルは開いたまま)。
+  const handlePublicationApply = useCallback(
+    async (database: string, statements: string[], names: string[]): Promise<boolean> => {
+      if (!sessionId) return false;
+      if (!(await runGuardedDdl(statements.join(";\n")))) return false;
+      try {
+        await api.runQueryTransaction(sessionId, statements, database);
+        invalidateSchemaCache(database);
+        noteSchemaDdl(statements.join(";\n"), database);
+        connectionListRef.current?.refreshSchema();
+        toast.success(translate("publicationDone", { names: names.join(", ") }));
+        return true;
+      } catch (e) {
+        toast.error(translate("statusQueryError", { error: String(e) }));
+        return false;
+      }
+    },
+    [sessionId, runGuardedDdl, invalidateSchemaCache, noteSchemaDdl, toast],
+  );
   const handleCopyTableName = useCallback(
     async (table: string) => {
       if (await copyToClipboard(table)) {
@@ -12808,6 +12842,7 @@ export default function App() {
     onEditRoutine: handleEditRoutine,
     onEditEnumType: handleEditEnumType,
     onCreatePolicy: handleCreatePolicy,
+    onManagePublication: handleManagePublication,
     onManageExtensions: handleManageExtensions,
     onCreateRoutine: handleCreateRoutine,
     onCreateSandbox: sessionId ? (db: string) => setSandboxCreateTarget({ database: db }) : undefined,
@@ -14917,6 +14952,22 @@ export default function App() {
                     }
                   }}
                   onClose={() => setPolicyEditor(null)}
+                />
+              </Suspense>
+            )}
+            {publicationEditor && sessionId && (
+              <Suspense fallback={null}>
+                <PublicationModal
+                  sessionId={sessionId}
+                  database={publicationEditor.database}
+                  table={publicationEditor.table}
+                  readOnly={readOnly}
+                  onConfirm={async (statements, names) => {
+                    if (await handlePublicationApply(publicationEditor.database, statements, names)) {
+                      setPublicationEditor(null);
+                    }
+                  }}
+                  onClose={() => setPublicationEditor(null)}
                 />
               </Suspense>
             )}

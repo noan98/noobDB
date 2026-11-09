@@ -455,12 +455,21 @@ pub const SCHEMA_OBJECT_KINDS: &[&str] = &[
     "event",
     "type",
     "policy",
+    "publication",
+    "subscription",
 ];
 
 /// `SCHEMA_OBJECT_KINDS` のうち、ツリーの一覧・定義表示だけで使い、Where-used (参照元の
 /// 逆引き) では走査しない種別 (#1957)。`where_used::supports_kind` はこれを含まない。
 #[cfg(test)]
-pub const TREE_ONLY_SCHEMA_OBJECT_KINDS: &[&str] = &["sequence", "event", "type", "policy"];
+pub const TREE_ONLY_SCHEMA_OBJECT_KINDS: &[&str] = &[
+    "sequence",
+    "event",
+    "type",
+    "policy",
+    "publication",
+    "subscription",
+];
 
 /// PostgreSQL のユーザー定義型 (`pg_type` を `t` で参照する問い合わせ) から、拡張が持つ型を除く条件 (#2127)。
 /// スキーマツリー (`PostgresConn::schema_objects`)・定義表示・ネイティブダンプが共有する
@@ -506,6 +515,29 @@ pub const PG_POLICY_DEFINITION_EXPR: &str =
           THEN ' USING (' || pg_get_expr(p.polqual, p.polrelid) || ')' ELSE '' END, \
      CASE WHEN p.polwithcheck IS NOT NULL \
           THEN ' WITH CHECK (' || pg_get_expr(p.polwithcheck, p.polrelid) || ')' ELSE '' END)";
+
+/// ツリーに出すパブリケーション (`pg_publication` を `p` で参照、スキーマ名は `$1`) の条件 (#2181)。
+/// パブリケーションはデータベース全体のオブジェクトなので、このスキーマの表を公開しているもの・
+/// FOR ALL TABLES・表をまだ持たない空のものを出す (他のスキーマの表だけを公開するものは出さない)。
+/// `pg_publication_tables` は 15 以降の `TABLES IN SCHEMA` も展開して返す。
+pub const PG_PUBLICATION_IN_SCHEMA: &str = "(p.puballtables \
+     OR EXISTS (SELECT 1 FROM pg_publication_tables pt WHERE pt.pubname = p.pubname AND pt.schemaname = $1) \
+     OR NOT EXISTS (SELECT 1 FROM pg_publication_tables pt WHERE pt.pubname = p.pubname))";
+
+/// ツリーのパブリケーションの補足 (`detail`): FOR ALL TABLES は `all`、それ以外はこのスキーマの公開表の件数。
+pub const PG_PUBLICATION_DETAIL: &str = "CASE WHEN p.puballtables THEN 'all' \
+     ELSE (SELECT count(*)::text FROM pg_publication_tables pt \
+            WHERE pt.pubname = p.pubname AND pt.schemaname = $1) END";
+
+/// ツリーに出すサブスクリプション (`pg_subscription` を `s` で参照、スキーマ名は `$1`) の条件 (#2181)。
+/// このデータベースのものに限り、購読している表がこのスキーマにあるもの (購読する表がまだ無いものは全スキーマ)。
+pub const PG_SUBSCRIPTION_IN_SCHEMA: &str =
+    "s.subdbid = (SELECT d.oid FROM pg_database d WHERE d.datname = current_database()) \
+     AND (NOT EXISTS (SELECT 1 FROM pg_subscription_rel sr WHERE sr.srsubid = s.oid) \
+          OR EXISTS (SELECT 1 FROM pg_subscription_rel sr \
+                       JOIN pg_class c ON c.oid = sr.srrelid \
+                       JOIN pg_namespace n ON n.oid = c.relnamespace \
+                      WHERE sr.srsubid = s.oid AND n.nspname = $1))";
 
 /// `schema_objects` の `detail` に入れる型の種別名 (`pg_type.typtype` の 1 文字から)。
 /// PostgreSQL の `type` 種別 1 つで ENUM / DOMAIN / 複合型 / 範囲型を運び、ツリーはこの
@@ -641,6 +673,35 @@ pub struct RlsTable {
     pub forced: bool,
 }
 
+/// 論理レプリケーションのパブリケーションに入っている表 1 件 (`list_publications`、#2181)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicationTable {
+    pub schema: String,
+    pub table: String,
+    /// 列リスト (PostgreSQL 15 以降)。指定が無い (全列) と 13 / 14 は `None`。
+    pub columns: Option<Vec<String>>,
+    /// 行フィルタ (`WHERE (...)`、PostgreSQL 15 以降)。指定が無い・13 / 14 は `None`。
+    pub row_filter: Option<String>,
+}
+
+/// 論理レプリケーションのパブリケーション 1 件 (`list_publications`、#2181)。PostgreSQL 専用。
+/// データベース全体のオブジェクトで、`tables` はスキーマをまたぐ。`FOR ALL TABLES` のときは
+/// `tables` を展開しない (空)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicationInfo {
+    pub name: String,
+    /// `FOR ALL TABLES`。
+    pub all_tables: bool,
+    /// 公開する操作 (`insert` / `update` / `delete` / `truncate` のうち有効なもの)。
+    pub publish: Vec<String>,
+    /// `publish_via_partition_root` (PostgreSQL 13 以降)。
+    pub via_root: bool,
+    /// 明示的に追加した表 (`FOR TABLE` / `ADD TABLE`)。スキーマ名・表名順。
+    pub tables: Vec<PublicationTable>,
+    /// `FOR TABLES IN SCHEMA` で丸ごと公開しているスキーマ (PostgreSQL 15 以降)。
+    pub schemas: Vec<String>,
+}
+
 /// PostgreSQL の拡張機能 (EXTENSION) 1 件 (`list_extensions`、#2160)。サーバが提供できるもの
 /// (`pg_available_extensions`) と、このデータベースに導入済みのもの (`pg_extension`) を名前でまとめる。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -684,7 +745,9 @@ pub struct SchemaObject {
     pub id: Option<String>,
     /// ツリーの補足表示 (#2100)。MySQL の EVENT の状態とスケジュール要約
     /// (例: `ENABLED · EVERY 1 DAY`) と、PostgreSQL の `type` の種類 (`enum` / `domain` /
-    /// `composite` / `range`, #2127)・`policy` の対象表名 (#2159) だけが入れる。他の種別・ドライバでは `None`。
+    /// `composite` / `range`, #2127)・`policy` の対象表名 (#2159)・`publication` の公開範囲 (`all` = FOR ALL TABLES、
+    /// それ以外はこのスキーマの公開表の件数) と `subscription` の `enabled` / `disabled` (#2181) だけが入れる。
+    /// 他の種別・ドライバでは `None`。
     #[serde(default)]
     pub detail: Option<String>,
 }

@@ -21,6 +21,8 @@ const TS_KINDS = {
   event: true,
   type: true,
   policy: true,
+  publication: true,
+  subscription: true,
 } as const satisfies Record<SchemaObjectKind, true>;
 
 describe("SchemaObjectKind 共有ゴールデン", () => {

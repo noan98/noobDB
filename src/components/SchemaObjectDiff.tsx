@@ -122,6 +122,7 @@ const KIND_KEYS = {
   event: "schemaCompareObjectKindEvent",
   type: "schemaCompareObjectKindType",
   policy: "schemaCompareObjectKindPolicy",
+  publication: "schemaCompareObjectKindPublication",
 } as const;
 
 export function objectKindLabel(kind: string, t: ReturnType<typeof useT>): string {
@@ -264,6 +265,11 @@ export function SchemaObjectDiff({
           {driver === "mysql" && objects.items.some((o) => o.kind === "event") && (
             <chakra.p margin={0} textStyle="caption" color="app.textMuted">
               {t("schemaCompareObjectEventStartsNote")}
+            </chakra.p>
+          )}
+          {driver === "postgres" && objects.items.some((o) => o.kind === "publication") && (
+            <chakra.p margin={0} textStyle="caption" color="app.textMuted">
+              {t("schemaComparePublicationScopeNote")}
             </chakra.p>
           )}
         </>

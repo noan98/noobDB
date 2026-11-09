@@ -27,7 +27,10 @@ use super::DriverKind;
 /// PostgreSQL の行レベルセキュリティ (RLS) ポリシー (`policy`, #2159) は表に付き、`USING` /
 /// `WITH CHECK` が関数を呼べるので、表・関数の後 (トリガーの隣) に作る。削除は表の削除より前。
 /// 対象表ごとに名前が一意なので、トリガーと同じく (名前, 対象表) で対応づける。
-pub const OBJECT_KINDS: [&str; 9] = [
+/// PostgreSQL の論理レプリケーションのパブリケーション (`publication`, #2181) は、`ADD TABLE` が表を参照するので
+/// 表より後 (ポリシーの隣) に作る。比較・同期するのは比較するスキーマに属する表の差で、
+/// 表の追加 / 除外は `ALTER PUBLICATION` の差分にする (`publication::replace_statements`)。
+pub const OBJECT_KINDS: [&str; 10] = [
     "type",
     "sequence",
     "function",
@@ -36,6 +39,7 @@ pub const OBJECT_KINDS: [&str; 9] = [
     "materialized_view",
     "trigger",
     "policy",
+    "publication",
     "event",
 ];
 
@@ -45,7 +49,7 @@ pub const OBJECT_KINDS: [&str; 9] = [
 /// ユーザー定義型は無い。
 pub fn supports_object_kind(driver: DriverKind, kind: &str) -> bool {
     match kind {
-        "sequence" | "type" | "policy" => return driver == DriverKind::Postgres,
+        "sequence" | "type" | "policy" | "publication" => return driver == DriverKind::Postgres,
         "event" => {
             return match driver {
                 DriverKind::Mysql => true,
@@ -63,7 +67,10 @@ pub fn supports_object_kind(driver: DriverKind, kind: &str) -> bool {
 pub fn unsupported_object_kinds(driver: DriverKind) -> Vec<String> {
     OBJECT_KINDS
         .iter()
-        .filter(|k| !matches!(**k, "event" | "type" | "policy") && !supports_object_kind(driver, k))
+        .filter(|k| {
+            !matches!(**k, "event" | "type" | "policy" | "publication")
+                && !supports_object_kind(driver, k)
+        })
         .map(|k| k.to_string())
         .collect()
 }
@@ -665,6 +672,7 @@ fn drop_keyword(kind: &str) -> &'static str {
         "event" => "EVENT",
         "type" => "TYPE",
         "policy" => "POLICY",
+        "publication" => "PUBLICATION",
         _ => "SEQUENCE",
     }
 }
@@ -1613,6 +1621,51 @@ mod tests {
         assert!(sql.contains("DROP POLICY \"p\" ON \"a\";"), "{sql}");
         assert!(sql.contains("CREATE POLICY \"p\""), "{sql}");
         assert!(!replace_is_destructive(DriverKind::Postgres, "policy"));
+    }
+
+    #[test]
+    fn publications_are_postgres_only_and_compare_scoped_tables_across_schemas() {
+        assert!(supports_object_kind(DriverKind::Postgres, "publication"));
+        assert!(!supports_object_kind(DriverKind::Mysql, "publication"));
+        assert!(!supports_object_kind(DriverKind::Sqlite, "publication"));
+        // サブスクリプションはツリー専用で、比較の対象ではない。
+        assert!(!supports_object_kind(DriverKind::Postgres, "subscription"));
+        for d in [DriverKind::Mysql, DriverKind::Sqlite, DriverKind::Postgres] {
+            assert!(!unsupported_object_kinds(d).contains(&"publication".to_string()));
+        }
+        assert!(kind_rank("trigger") < kind_rank("publication"));
+        assert_eq!(
+            drop_object_sql(DriverKind::Postgres, &od("publication", "pub", None, None)),
+            "DROP PUBLICATION \"pub\""
+        );
+        let head = "CREATE PUBLICATION \"pub\" WITH (publish = 'insert', publish_via_partition_root = false);";
+        let s = [def(
+            "publication",
+            "pub",
+            &format!("{head}\n{STMT_SPLIT}\nALTER PUBLICATION \"pub\" ADD TABLE \"stg\".\"a\";"),
+        )];
+        let t_same = [def(
+            "publication",
+            "pub",
+            &format!("{head}\n{STMT_SPLIT}\nALTER PUBLICATION \"pub\" ADD TABLE \"prod\".\"a\";"),
+        )];
+        // スキーマ名が違っても、同じ表を公開していれば Same。
+        let d = diffs(DriverKind::Postgres, "stg", "prod", &s, &t_same);
+        assert_eq!(d[0].status, DiffStatus::Same);
+        // target の表が足りなければ Different で、同期に使う本文は target のスキーマに修飾される。
+        let t_empty = [def("publication", "pub", head)];
+        let d = diffs(DriverKind::Postgres, "stg", "prod", &s, &t_empty);
+        assert_eq!(d[0].status, DiffStatus::Different);
+        assert!(d[0]
+            .source_definition
+            .as_deref()
+            .is_some_and(|x| x.contains("ADD TABLE \"prod\".\"a\"")));
+        // 作成は DO ブロックにまとまる (拡張プロトコルは複数文を受けない)。
+        let sql = create_object_sql(
+            DriverKind::Postgres,
+            d[0].source_definition.as_deref().unwrap(),
+        );
+        assert!(sql.starts_with("DO "), "{sql}");
     }
 
     #[test]

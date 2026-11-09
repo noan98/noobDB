@@ -32,6 +32,11 @@ const ALLOWED: Record<string, { count: number; kind: Kind; reason: string }> = {
   runNamespaceDdl: { count: 1, kind: "gated", reason: "共通ゲート経由の名前空間 DDL" },
   handleSaveAsViewConfirm: { count: 2, kind: "gated", reason: "CREATE / REPLACE VIEW" },
   handleCloneTableConfirm: { count: 1, kind: "gated", reason: "テーブル複製" },
+  handlePublicationApply: {
+    count: 1,
+    kind: "gated",
+    reason: "パブリケーションへの表の追加 / 除外 (ALTER PUBLICATION, #2181)",
+  },
 };
 
 interface Site {

@@ -719,8 +719,8 @@
     "skip_history": false,
     "sqlite_attachments": [
       {
-        "path": "/data/archive.db",
-        "alias": "archive"
+        "alias": "archive",
+        "path": "/data/archive.db"
       }
     ],
     "ssh": {
@@ -772,8 +772,8 @@
       "skip_history": false,
       "sqlite_attachments": [
         {
-          "path": "/data/archive.db",
-          "alias": "archive"
+          "alias": "archive",
+          "path": "/data/archive.db"
         }
       ],
       "ssh": {
@@ -824,8 +824,8 @@
       "skip_history": false,
       "sqlite_attachments": [
         {
-          "path": "/data/archive.db",
-          "alias": "archive"
+          "alias": "archive",
+          "path": "/data/archive.db"
         }
       ],
       "ssh": {
@@ -876,8 +876,8 @@
       "skip_history": false,
       "sqlite_attachments": [
         {
-          "path": "/data/archive.db",
-          "alias": "archive"
+          "alias": "archive",
+          "path": "/data/archive.db"
         }
       ],
       "ssh": {
@@ -928,8 +928,8 @@
       "skip_history": false,
       "sqlite_attachments": [
         {
-          "path": "/data/archive.db",
-          "alias": "archive"
+          "alias": "archive",
+          "path": "/data/archive.db"
         }
       ],
       "ssh": {
@@ -980,8 +980,8 @@
       "skip_history": false,
       "sqlite_attachments": [
         {
-          "path": "/data/archive.db",
-          "alias": "archive"
+          "alias": "archive",
+          "path": "/data/archive.db"
         }
       ],
       "ssh": {
@@ -1032,8 +1032,8 @@
       "skip_history": false,
       "sqlite_attachments": [
         {
-          "path": "/data/archive.db",
-          "alias": "archive"
+          "alias": "archive",
+          "path": "/data/archive.db"
         }
       ],
       "ssh": {
@@ -2191,6 +2191,35 @@
     "invalid": 0,
     "overwritten": 0,
     "skipped": 1
+  },
+  "publicationInfo": {
+    "all_tables": false,
+    "name": "pub_orders",
+    "publish": [
+      "insert",
+      "update"
+    ],
+    "schemas": [
+      "audit"
+    ],
+    "tables": [
+      {
+        "columns": [
+          "id",
+          "status"
+        ],
+        "row_filter": "(status <> 'draft'::text)",
+        "schema": "public",
+        "table": "orders"
+      },
+      {
+        "columns": null,
+        "row_filter": null,
+        "schema": "public",
+        "table": "items"
+      }
+    ],
+    "via_root": false
   },
   "queryResult": {
     "columns": [

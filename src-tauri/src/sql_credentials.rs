@@ -478,6 +478,126 @@ pub(crate) fn redact_credentials(sql: &str, driver: DriverKind) -> Cow<'_, str> 
     Cow::Owned(out)
 }
 
+/// 接続文字列に含まれるパスワードとして伏せるキーワード (小文字)。`sslpassword` は TLS クライアント鍵の
+/// パスフレーズ。パスファイルへの**パス** (`passfile`) は秘密ではないので対象外。
+const CONNINFO_SECRET_KEYS: [&str; 2] = ["password", "sslpassword"];
+
+/// PostgreSQL の接続文字列 (libpq の `key=value ...` 形式、または `postgresql://` の URI) から
+/// パスワードを伏せる (#2181)。`pg_subscription.subconninfo` を画面に出す前にバックエンドで通す。
+/// 値は引用符つき (`password='a b\'c'`、`\` のエスケープ) も裸の値も扱い、`password` / `sslpassword` の値を
+/// `'********'` (URI は `********`) に置き換える。解釈できない残りに "password" が含まれていれば、
+/// 漏らさないよう残り全体を伏せる (安全側)。
+pub(crate) fn redact_conninfo(conninfo: &str) -> String {
+    let t = conninfo.trim_start();
+    let lower = t.to_ascii_lowercase();
+    if lower.starts_with("postgresql://") || lower.starts_with("postgres://") {
+        return redact_conninfo_uri(conninfo);
+    }
+    let chars: Vec<char> = conninfo.chars().collect();
+    let mut out = String::with_capacity(conninfo.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if is_ws(chars[i]) {
+            out.push(chars[i]);
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && chars[i] != '=' && !is_ws(chars[i]) {
+            i += 1;
+        }
+        let key: String = chars[start..i].iter().collect();
+        let mut j = i;
+        while j < chars.len() && is_ws(chars[j]) {
+            j += 1;
+        }
+        if chars.get(j) != Some(&'=') {
+            // `key=value` の形でない。パスワードの語を含むなら残り全体を伏せる。
+            let rest: String = chars[start..].iter().collect();
+            if rest.to_ascii_lowercase().contains("password") {
+                out.push_str(REDACTED_LITERAL);
+            } else {
+                out.push_str(&rest);
+            }
+            return out;
+        }
+        j += 1;
+        while j < chars.len() && is_ws(chars[j]) {
+            j += 1;
+        }
+        // 値の範囲 [j, end)。
+        let mut end = j;
+        if chars.get(j) == Some(&'\'') {
+            end += 1;
+            while end < chars.len() {
+                match chars[end] {
+                    '\\' => end += 2,
+                    '\'' => {
+                        end += 1;
+                        break;
+                    }
+                    _ => end += 1,
+                }
+            }
+            end = end.min(chars.len());
+        } else {
+            while end < chars.len() && !is_ws(chars[end]) {
+                end += if chars[end] == '\\' { 2 } else { 1 };
+            }
+            end = end.min(chars.len());
+        }
+        if CONNINFO_SECRET_KEYS.contains(&key.to_ascii_lowercase().as_str()) {
+            out.push_str(&key.to_ascii_lowercase());
+            out.push('=');
+            out.push_str(REDACTED_LITERAL);
+        } else {
+            out.extend(&chars[start..end]);
+        }
+        i = end;
+    }
+    out
+}
+
+/// [`redact_conninfo`] の URI 形式: `user:パスワード@` と `?password=...` / `&sslpassword=...` を伏せる。
+fn redact_conninfo_uri(uri: &str) -> String {
+    let (head, query) = match uri.split_once('?') {
+        Some((h, q)) => (h, Some(q)),
+        None => (uri, None),
+    };
+    let mut head = head.to_string();
+    if let Some(scheme_end) = head.find("://").map(|p| p + 3) {
+        let authority_end = head[scheme_end..]
+            .find('/')
+            .map_or(head.len(), |p| p + scheme_end);
+        // ユーザー情報の区切りは最後の `@` (パスワードの `@` は通常パーセントエンコードされるが念のため)。
+        if let Some(at) = head[scheme_end..authority_end]
+            .rfind('@')
+            .map(|p| p + scheme_end)
+        {
+            if let Some(colon) = head[scheme_end..at].find(':').map(|p| p + scheme_end) {
+                head = format!("{}:********{}", &head[..colon], &head[at..]);
+            }
+        }
+    }
+    match query {
+        None => head,
+        Some(q) => {
+            let parts: Vec<String> = q
+                .split('&')
+                .map(|kv| match kv.split_once('=') {
+                    Some((k, _))
+                        if CONNINFO_SECRET_KEYS.contains(&k.to_ascii_lowercase().as_str()) =>
+                    {
+                        format!("{k}=********")
+                    }
+                    _ => kv.to_string(),
+                })
+                .collect();
+            format!("{head}?{}", parts.join("&"))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -510,5 +630,53 @@ mod tests {
         let once =
             redact_credentials("CREATE ROLE r PASSWORD 'abc'", DriverKind::Postgres).into_owned();
         assert_eq!(redact_credentials(&once, DriverKind::Postgres), once);
+    }
+
+    #[test]
+    fn conninfo_password_is_redacted_in_every_value_form() {
+        // 裸の値・引用符つき (空白・エスケープ入り)・= の前後の空白・大文字のキー。
+        assert_eq!(
+            redact_conninfo("host=db.example port=5432 user=repl password=s3cret dbname=app"),
+            "host=db.example port=5432 user=repl password='********' dbname=app"
+        );
+        assert_eq!(
+            redact_conninfo(r"host=h password='a b\'c\\d' dbname=x"),
+            "host=h password='********' dbname=x"
+        );
+        assert_eq!(
+            redact_conninfo("host=h PASSWORD = 'p w' sslpassword=zz"),
+            "host=h password='********' sslpassword='********'"
+        );
+        // パスワードが無ければそのまま。passfile (パス) は伏せない。
+        assert_eq!(
+            redact_conninfo("host=h passfile=/home/u/.pgpass sslmode=require"),
+            "host=h passfile=/home/u/.pgpass sslmode=require"
+        );
+        // 値の文字列中に password という語があっても、キーが password でなければ触らない。
+        assert_eq!(
+            redact_conninfo("application_name='my password app' host=h"),
+            "application_name='my password app' host=h"
+        );
+    }
+
+    #[test]
+    fn conninfo_uri_and_malformed_input_never_leak() {
+        assert_eq!(
+            redact_conninfo("postgresql://repl:s3cret@db:5432/app?sslmode=require&password=zzz"),
+            "postgresql://repl:********@db:5432/app?sslmode=require&password=********"
+        );
+        assert_eq!(
+            redact_conninfo("postgres://repl@db/app"),
+            "postgres://repl@db/app"
+        );
+        // 閉じていない引用符・形式が壊れた残りでも、パスワードの値を出さない。
+        let broken = redact_conninfo("host=h password='abc");
+        assert!(!broken.contains("abc"), "{broken}");
+        let garbled = redact_conninfo("host=h password");
+        assert!(!garbled.to_lowercase().contains("password") || garbled.contains("********"));
+        assert_eq!(redact_conninfo(""), "");
+        // 伏せたあとの再実行で変わらない。
+        let once = redact_conninfo("host=h password=abc");
+        assert_eq!(redact_conninfo(&once), once);
     }
 }
