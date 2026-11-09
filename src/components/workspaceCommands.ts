@@ -126,6 +126,18 @@ export function workspaceCommandItems(
       run: () => actions.toggleBottomPanel("processes"),
     });
   }
+  // レプリケーション監視 (#2180)。SQLite には概念が無いので導線を出さない。
+  if (ctx.sessionId && !NO_SERVER_STATS.has(ctx.driver ?? "")) {
+    items.push({
+      id: "nav:replication",
+      group: "navigation",
+      label: t("replicationTitle"),
+      icon: "server",
+      keywords:
+        "replication replica slot wal lag primary standby streaming レプリケーション レプリカ スロット 遅延 複製",
+      run: () => actions.toggleBottomPanel("replication"),
+    });
+  }
   // PostgreSQL の LISTEN / NOTIFY 監視 (#2019)。接続だけを要求する (他ドライバはパネルが縮退表示)。
   if (ctx.sessionId) {
     items.push({

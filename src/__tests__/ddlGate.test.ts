@@ -70,4 +70,17 @@ describe("evaluateDdlGate (#2176)", () => {
     const g = evaluateDdlGate({ ...base, isProduction: true, destructiveTargets: ["a", "b"] });
     expect(g?.typedConfirmTarget).toBe("CONFIRM");
   });
+
+  it("forceTypedConfirm: 関数呼び出しでも本番では書き込み承認と対象名の型入力を求める (#2180)", () => {
+    const sql = "SELECT pg_drop_replication_slot('slot_a')";
+    const input = { ...base, sql, destructiveTargets: ["slot_a"], forceTypedConfirm: true };
+    expect(evaluateDdlGate({ ...input, isProduction: true })).toMatchObject({
+      writeApproval: true,
+      typedConfirmTarget: "slot_a",
+    });
+    // 非本番・設定 OFF では素通り (パネル自身の SQL プレビュー確認だけ)。
+    expect(evaluateDdlGate(input)).toBeNull();
+    // 指定しなければ従来どおり (DROP 文ではないので型入力なし)。
+    expect(evaluateDdlGate({ ...input, forceTypedConfirm: false, isProduction: true })).toBeNull();
+  });
 });

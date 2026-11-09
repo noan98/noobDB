@@ -31,6 +31,11 @@ const ALLOWED: Record<string, { count: number; kind: Kind; reason: string }> = {
   runMaintenanceDdl: { count: 1, kind: "gated", reason: "共通ゲート経由の保守 DDL" },
   runNamespaceDdl: { count: 1, kind: "gated", reason: "共通ゲート経由の名前空間 DDL" },
   handleSaveAsViewConfirm: { count: 2, kind: "gated", reason: "CREATE / REPLACE VIEW" },
+  handleDropReplicationSlot: {
+    count: 1,
+    kind: "gated",
+    reason: "レプリケーションスロットの削除 (#2180)。本番はスロット名の型入力",
+  },
   handleCloneTableConfirm: { count: 1, kind: "gated", reason: "テーブル複製" },
 };
 

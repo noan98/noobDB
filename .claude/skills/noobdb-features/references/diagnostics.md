@@ -104,6 +104,26 @@ PostgreSQL の pub/sub を観測するボトムパネル (`pgListen` タブ、�
   通知は届かない (`reconnected` で画面に示す)。AWS IAM 認証の接続は、再接続時に張り直す
   トークンの期限 (15 分) 以降は自動再接続できない。
 
+## レプリケーション監視 (#2180)
+
+ボトムパネルの `replication` タブ (診断グループ)。`commands/server.rs` の `get_replication_status` が
+役割 (primary / replica / standalone)・接続先ごとの遅延 (`ReplicationLink`)・スロット
+(`ReplicationSlot`) を共通の型 (`db/replication.rs`) で返す。カタログの読み取りのみで `read_only` でも動く。
+
+- PostgreSQL: 送信側は `pg_stat_replication`、受信側は `pg_stat_wal_receiver` + `now() - pg_last_xact_replay_timestamp()`、
+  スロットは `pg_replication_slots` (`pg_wal_lsn_diff` = 保持している WAL)。`pg_monitor` / `pg_read_all_stats` /
+  スーパーユーザが無いと他ユーザの行が NULL になるので、`missing_privilege = "pg_monitor"` を返しスロットだけ返す。
+- MySQL: 8.0.22 以上は `SHOW REPLICA STATUS` / `SHOW REPLICAS`、未満と MariaDB は `SHOW SLAVE STATUS` /
+  `SHOW SLAVE HOSTS` (`mysql_replica_status_sql`)。`REPLICATION CLIENT` (MariaDB 10.5.9+ は `SLAVE MONITOR`) が無い (1227 など) ときは
+  エラーにせず `missing_privilege` に権限名を入れる。マルチソースは行ごとのチャンネルとして上流に並ぶ。スロットの概念は無く空。
+- SQLite は未対応エラー。UI はパネルバー・ツールメニューを `aria-disabled` + 理由にし、コマンドパレットには出さない。
+- フロント: `components/ReplicationPanel.tsx` (表示中だけポーリング、履歴に残さない)、純ロジックは
+  `components/replication.ts` (非アクティブスロットが 1 GiB 以上の WAL を溜めたら先頭で警告、遅延メーターの閾値 30 秒)。
+- スロット削除は実装済み: パネルが SQL プレビュー付きの確認を出したあと、App の `handleDropReplicationSlot` が
+  共通ゲート `runGuardedDdl` (#2176) を `forceTypedConfirm` 付きで通す (本番は書き込み承認 + スロット名の型入力)。
+  実行は通常の `run_query` で、`pg_drop_replication_slot` は拒否リストにあるので read_only はバックエンドが止める
+  (UI も無効 + 理由)。使用中のスロットは削除不可 (ボタン無効 + 理由)。スロット名は文字列リテラルなので `'` を `''` に重ねて埋め込む (`buildDropSlotSql`)。
+
 ## サーバ情報 / メトリクス (#563)
 
 `commands/server.rs` の `server_info` (バージョン + 主要設定変数) と `server_metrics`。
