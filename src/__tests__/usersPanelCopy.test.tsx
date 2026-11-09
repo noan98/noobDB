@@ -193,7 +193,9 @@ describe("UsersPanel: ロール・列単位・テンプレート・パスワー�
     fireEvent.click(
       await screen.findByRole("button", { name: t("usersRoleRevokeAria", { role: "reader" }) }),
     );
-    expect(await screen.findByText(/REVOKE "reader" FROM "app"/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("sql-preview")).toHaveTextContent(/REVOKE "reader" FROM "app"/),
+    );
     fireEvent.click(screen.getByRole("button", { name: t("usersRoleRevokeOk") }));
     await waitFor(() =>
       expect(api.applyPrivilegeSql).toHaveBeenCalledWith({

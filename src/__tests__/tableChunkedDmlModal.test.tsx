@@ -63,7 +63,7 @@ describe("TableChunkedDmlModal (#2020)", () => {
     mount();
     expect(screen.getByRole("button", { name: t("chunkedDmlRun") })).toBeDisabled();
     fill("id < 100");
-    expect(screen.getByText(/DELETE FROM "logs" WHERE rowid IN/)).toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent(/DELETE FROM "logs" WHERE rowid IN/);
     expect(screen.getByRole("button", { name: t("chunkedDmlRun") })).toBeEnabled();
   });
 
@@ -72,7 +72,7 @@ describe("TableChunkedDmlModal (#2020)", () => {
     mount();
     fill("v = 1");
     await waitFor(() =>
-      expect(screen.getByText(/WHERE _rowid_ IN \(SELECT _rowid_ FROM/)).toBeInTheDocument(),
+      expect(screen.getByTestId("sql-preview")).toHaveTextContent(/WHERE _rowid_ IN \(SELECT _rowid_ FROM/),
     );
   });
 

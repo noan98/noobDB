@@ -17,9 +17,9 @@ describe("RenameTableDialog (#1615)", () => {
         onCancel={() => {}}
       />,
     );
-    expect(screen.queryByText("ALTER TABLE users RENAME TO users;")).toBeNull();
+    expect(screen.queryByTestId("sql-preview")).toBeNull();
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "people" } });
-    expect(screen.getByText("ALTER TABLE users RENAME TO people;")).toBeTruthy();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent("ALTER TABLE users RENAME TO people;");
   });
 
   it("既存テーブル名と大小無視で衝突したら警告して確定させない", () => {

@@ -10,7 +10,7 @@ describe("CreateNamespaceModal (#1190)", () => {
     const onRun = vi.fn();
     renderWithProviders(<CreateNamespaceModal {...base} driver="mysql" onRun={onRun} />);
     fireEvent.change(screen.getByLabelText(t("createNamespaceName")), { target: { value: "shop" } });
-    expect(screen.getByText("CREATE DATABASE `shop`;")).toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent("CREATE DATABASE `shop`;");
     fireEvent.click(screen.getByRole("button", { name: t("createNamespaceRun") }));
     expect(onRun).toHaveBeenCalledWith("CREATE DATABASE `shop`;", "database", "shop");
   });
@@ -18,7 +18,7 @@ describe("CreateNamespaceModal (#1190)", () => {
   it("lets PostgreSQL pick SCHEMA and quotes the identifier", () => {
     renderWithProviders(<CreateNamespaceModal {...base} driver="postgres" initialKind="schema" />);
     fireEvent.change(screen.getByLabelText(t("createNamespaceName")), { target: { value: "au dit" } });
-    expect(screen.getByText('CREATE SCHEMA "au dit";')).toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent('CREATE SCHEMA "au dit";');
   });
 
   it("disables the run button on a read-only session", () => {

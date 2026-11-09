@@ -5,7 +5,8 @@ import { useT } from "../i18n";
 import { tableNameCollides } from "./resultsToTable";
 import { buildCreateViewSql, buildReplaceViewSql } from "./viewMaintenance";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview, FieldLabel, FormSection } from "./modalForm";
+import { FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { isPlainEnterKey } from "./modalKeys";
 import { Button, Input, PressableButton } from "./ui";
 import { Spinner } from "./Spinner";
@@ -131,7 +132,7 @@ export function SaveAsViewModal({
 
         <FormSection>
           <FieldLabel as="div">{t("saveAsViewPreview")}</FieldLabel>
-          <CodePreview minH="60px">{sql || t("saveAsViewPreviewEmpty")}</CodePreview>
+          <SqlPreview sql={sql} driver={driver} empty={t("saveAsViewPreviewEmpty")} minH="60px" />
         </FormSection>
       </ModalBody>
       <ModalFooter>

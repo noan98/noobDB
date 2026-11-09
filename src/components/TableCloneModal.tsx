@@ -17,7 +17,8 @@ import {
 import { tableNameCollides } from "./resultsToTable";
 import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { Button, Input, PressableButton, Switch } from "./ui";
 import { Spinner } from "./Spinner";
 import { isPlainEnterKey } from "./modalKeys";
@@ -222,13 +223,12 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
 
         <FormSection>
           <FieldLabel as="div">{t("cloneTablePreview")}</FieldLabel>
-          <CodePreview minH="120px">
-            {metaPending
-              ? t("cloneTablePreviewLoading")
-              : statements.length > 0
-                ? formatCloneStatements(statements)
-                : t("cloneTablePreviewEmpty")}
-          </CodePreview>
+          <SqlPreview
+            sql={!metaPending && statements.length > 0 ? formatCloneStatements(statements) : ""}
+            driver={driver}
+            empty={metaPending ? t("cloneTablePreviewLoading") : t("cloneTablePreviewEmpty")}
+            minH="120px"
+          />
           <chakra.span textStyle="caption">{t("cloneTableNotes")}</chakra.span>
         </FormSection>
       </ModalBody>

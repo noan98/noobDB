@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sqlHighlightSegments } from "../components/sqlHighlight";
+import { sqlHighlightLines, sqlHighlightSegments } from "../components/sqlHighlight";
 
 describe("sqlHighlightSegments", () => {
   it("連結すると元の SQL に戻り、改行も保つ", () => {
@@ -22,5 +22,25 @@ describe("sqlHighlightSegments", () => {
     expect(kindOf("42")).toBe("number");
     expect(kindOf("-- note")).toBe("comment");
     expect(kindOf("t")).toBeNull();
+  });
+});
+
+describe("sqlHighlightLines (#2178)", () => {
+  it("行ごとに分け、連結すると元の各行に戻る", () => {
+    const lines = ["SELECT 1", "", "  FROM t -- c"];
+    const out = sqlHighlightLines(lines, "mysql");
+    expect(out).not.toBeNull();
+    expect(out?.map((segs) => segs.map((s) => s.text).join(""))).toEqual(lines);
+    expect(out?.[0]?.some((s) => s.kind === "keyword")).toBe(true);
+  });
+
+  it("行内に改行がある / 大きすぎるときは null (単色フォールバック)", () => {
+    expect(sqlHighlightLines(["a\nb"], "mysql")).toBeNull();
+    expect(
+      sqlHighlightLines(
+        Array.from({ length: 10_001 }, () => "x"),
+        "mysql",
+      ),
+    ).toBeNull();
   });
 });

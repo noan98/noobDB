@@ -5,7 +5,7 @@ import { useT, type I18nKey } from "../i18n";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
-import { CodePreview } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { Input, PressableButton } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
 import {
@@ -240,7 +240,8 @@ export function LocalTablesPanel({
                     {t("localPanelSourceLabel", { name: tbl.source_profile })}
                   </chakra.span>
                 )}
-                <CodePreview
+                <SqlPreview
+                  sql={tbl.source_sql}
                   wrap
                   // CodePreview の上下 padding の分を足し、本文 3 行ぶんを見せる。
                   maxH="calc(4.5em + 2 * var(--space-2-5))"
@@ -248,9 +249,7 @@ export function LocalTablesPanel({
                   fontSize="xs"
                   color="app.textMuted"
                   wordBreak="break-all"
-                >
-                  {tbl.source_sql}
-                </CodePreview>
+                />
               </chakra.li>
             ))}
           </chakra.ul>

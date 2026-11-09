@@ -19,7 +19,7 @@ import type {
 import { useLocale, useT } from "../i18n";
 import { transitions, variants } from "../motion";
 import { statusColors } from "./diffStatusColors";
-import { CodePreview } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { prefersStaticMotion } from "./revealOrigin";
 import { RevealTbody } from "./RevealTbody";
 import { SkeletonTableRows } from "./Skeleton";
@@ -729,6 +729,7 @@ export const TableDiffDetail = memo(function TableDiffDetail({
   planReady,
   showSql = true,
   targetTitle,
+  driver,
   t,
 }: {
   table: TableDiff;
@@ -743,6 +744,8 @@ export const TableDiffDetail = memo(function TableDiffDetail({
   /** 右列の見出しを差し替える (既定は「更新先の現在 → 適用後 (名前)」)。比べている相手が
    *  更新先の今の値ではない画面 (サンドボックスはスナップショットと比べる) で使う。 */
   targetTitle?: string;
+  /** 同期 SQL を色分けする方言 (`mysql` / `postgres` / `sqlite`)。SQL を出す先 (更新先) の接続のもの。 */
+  driver?: string;
   t: ReturnType<typeof useT>;
 }) {
   // memo で親の再レンダーを遮断しても、言語切替では描き直す (t は参照が変わらない)。
@@ -808,9 +811,13 @@ export const TableDiffDetail = memo(function TableDiffDetail({
                       {t("schemaCompareTableSqlDestructive", { count: destructive })}
                     </chakra.p>
                   )}
-                  <CodePreview wrap fontSize="xs" maxH="240px">
-                    {statements.map((s) => s.sql).join("\n")}
-                  </CodePreview>
+                  <SqlPreview
+                    sql={statements.map((s) => s.sql).join("\n")}
+                    driver={driver}
+                    wrap
+                    fontSize="xs"
+                    maxH="240px"
+                  />
                 </>
               )}
             </MotionDiv>

@@ -187,7 +187,7 @@ describe("TableDiffDetail (右ペイン)", () => {
       ],
       true,
     );
-    expect(screen.getByText(/ALTER TABLE orders MODIFY total bigint/)).toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent(/ALTER TABLE orders MODIFY total bigint/);
     expect(screen.getByText(t("schemaCompareTableSqlDestructive", { count: 1 }))).toBeInTheDocument();
   });
 

@@ -1585,6 +1585,7 @@ export function SchemaCompareView({
                         targetName={targetLabel ?? ""}
                         statements={selectedStatements}
                         planReady={planKind === "schema" && plan !== null}
+                        driver={targetDriver ?? undefined}
                         t={t}
                       />
                     ) : (

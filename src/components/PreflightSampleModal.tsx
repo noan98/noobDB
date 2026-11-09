@@ -3,7 +3,8 @@ import { api } from "../api/tauri";
 import { useT } from "../i18n";
 import { useRowSample } from "../useRowSample";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview, FieldLabel, FormSection } from "./modalForm";
+import { FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { PREFLIGHT_SAMPLE_ROWS } from "./preflight";
 import { RowSampleTable } from "./RowSampleTable";
 import { Button } from "./ui";
@@ -42,9 +43,7 @@ export function PreflightSampleModal({
       <ModalBody display="flex" flexDirection="column" gap="3">
         <FormSection>
           <FieldLabel as="div">{t("preflightSampleSql")}</FieldLabel>
-          <CodePreview wrap maxH="120px">
-            {sampleSql}
-          </CodePreview>
+          <SqlPreview sql={sampleSql} wrap maxH="120px" />
         </FormSection>
         <RowSampleTable
           state={state}

@@ -15,7 +15,8 @@ import { useT, type I18nKey } from "../i18n";
 import { JobPresence, JobProgressDetail, useJobClock } from "./JobProgress";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Callout } from "./Callout";
-import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { Button, Checkbox, Input } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
 import { DraftNumberInput } from "./DraftNumberInput";
@@ -426,6 +427,7 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
   const sourceLabel =
     source.kind === "table" ? t("transferSourceTable", { table: source.table }) : t("transferSourceQuery");
   // 「どこから → どこへ」を 1 行で見せる (コピー元の接続名が出ないと、どの DB から読むのか分からない)。
+  const sourceDriver = profiles.find((p) => p.id === sourceProfileId)?.driver;
   const sourceProfileName = profiles.find((p) => p.id === sourceProfileId)?.name ?? null;
   const routeFrom = [
     sourceProfileName,
@@ -486,7 +488,7 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
           <chakra.div fontSize="md" color="app.text">
             {sourceLabel}
           </chakra.div>
-          {source.kind === "query" && <CodePreview maxH="120px">{source.sql}</CodePreview>}
+          {source.kind === "query" && <SqlPreview sql={source.sql} driver={sourceDriver} maxH="120px" />}
         </FormSection>
 
         <FormSection>

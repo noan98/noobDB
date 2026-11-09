@@ -22,7 +22,8 @@ import {
 } from "./assertions";
 import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { SqlCountCheck } from "./SqlCountCheck";
 import { Button, Input, PressableButton, Textarea } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
@@ -459,15 +460,25 @@ export function AssertionEditorModal({
 
         <FormSection>
           <FieldLabel as="div">{t("assertPreviewCheck")}</FieldLabel>
-          <CodePreview wrap minH="40px" maxH="120px">
-            {preview?.check_sql ?? (previewError ? previewError : t("assertPreviewEmpty"))}
-          </CodePreview>
+          <SqlPreview
+            sql={preview?.check_sql ?? ""}
+            driver={driver}
+            empty={previewError ? previewError : t("assertPreviewEmpty")}
+            wrap
+            minH="40px"
+            maxH="120px"
+          />
         </FormSection>
         <FormSection>
           <FieldLabel as="div">{t("assertPreviewViolations")}</FieldLabel>
-          <CodePreview wrap minH="40px" maxH="120px">
-            {preview?.violations_sql ?? t("assertPreviewEmpty")}
-          </CodePreview>
+          <SqlPreview
+            sql={preview?.violations_sql ?? ""}
+            driver={driver}
+            empty={t("assertPreviewEmpty")}
+            wrap
+            minH="40px"
+            maxH="120px"
+          />
         </FormSection>
 
         {preview && draft.kind !== "row_count" && (

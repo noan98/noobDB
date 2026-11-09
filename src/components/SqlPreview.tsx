@@ -38,8 +38,8 @@ export function SqlPreview({
   ...props
 }: Omit<ComponentProps<typeof CodePreview>, "children"> & {
   sql: string;
-  /** `mysql` / `postgres` / `sqlite`。方言ごとにキーワード・引用規則が違う。 */
-  driver: string;
+  /** `mysql` / `postgres` / `sqlite`。方言ごとにキーワード・引用規則が違う。接続元が分からない画面は省略 (MySQL 方言で解析する)。 */
+  driver?: string;
   /** `sql` が空のときに出す文言。 */
   empty?: string;
   /** 資格情報リテラルを伏せ字にし、「表示」切り替えを付ける (#2175)。 */
@@ -57,7 +57,7 @@ export function SqlPreview({
   );
   const highlight = sql !== "" && shouldHighlightSql(sql);
   const segments = useMemo(
-    () => (highlight ? sqlHighlightSegments(sql, driver) : null),
+    () => (highlight ? sqlHighlightSegments(sql, driver ?? "") : null),
     [highlight, sql, driver],
   );
 

@@ -87,12 +87,14 @@ describe("ExtensionsModal", () => {
     const { onExecute } = setup();
     await screen.findByText("pg_stat_statements");
     await user.click(screen.getByRole("button", { name: t("extensionsInstall") }));
-    expect(screen.getByText('CREATE EXTENSION IF NOT EXISTS "pg_stat_statements";')).toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent(
+      'CREATE EXTENSION IF NOT EXISTS "pg_stat_statements";',
+    );
     expect(screen.getByText(t("extensionsPreloadNote", { name: "pg_stat_statements" }))).toBeInTheDocument();
     await user.type(screen.getByLabelText(t("extensionsSchema")), "ext");
-    expect(
-      screen.getByText('CREATE EXTENSION IF NOT EXISTS "pg_stat_statements" SCHEMA "ext";'),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent(
+      'CREATE EXTENSION IF NOT EXISTS "pg_stat_statements" SCHEMA "ext";',
+    );
     await user.click(screen.getAllByRole("button", { name: t("extensionsInstall") }).at(-1) as HTMLElement);
     expect(onExecute).toHaveBeenCalledWith(
       'CREATE EXTENSION IF NOT EXISTS "pg_stat_statements" SCHEMA "ext"',
@@ -108,7 +110,9 @@ describe("ExtensionsModal", () => {
     const { onExecute } = setup();
     await screen.findByText("pg_trgm");
     await user.click(screen.getByRole("button", { name: t("extensionsUpdate") }));
-    expect(screen.getByText("ALTER EXTENSION \"pg_trgm\" UPDATE TO '1.6';")).toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent(
+      "ALTER EXTENSION \"pg_trgm\" UPDATE TO '1.6';",
+    );
     await user.click(screen.getAllByRole("button", { name: t("extensionsUpdate") }).at(-1) as HTMLElement);
     expect(onExecute).toHaveBeenCalledWith(
       "ALTER EXTENSION \"pg_trgm\" UPDATE TO '1.6'",
@@ -124,7 +128,7 @@ describe("ExtensionsModal", () => {
     await user.click(screen.getByRole("button", { name: t("extensionsDrop") }));
     expect(screen.getByText(t("extensionsDropWarning"))).toBeInTheDocument();
     await user.click(screen.getByLabelText(t("extensionsCascadeDrop")));
-    expect(screen.getByText('DROP EXTENSION "pg_trgm" CASCADE;')).toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent('DROP EXTENSION "pg_trgm" CASCADE;');
     expect(screen.getByText(t("extensionsDropCascadeWarning"))).toBeInTheDocument();
     const buttons = screen.getAllByRole("button").map((b) => b.textContent);
     expect(buttons.indexOf(t("extensionsDrop"))).toBeLessThan(buttons.indexOf(t("extensionsCancel")));
@@ -151,7 +155,7 @@ describe("ExtensionsModal", () => {
     await user.click(screen.getAllByRole("button", { name: t("extensionsDrop") }).at(-1) as HTMLElement);
     expect(onExecute).toHaveBeenCalledTimes(1);
     expect(await screen.findByText(t("extensionsNotExecuted"))).toBeInTheDocument();
-    expect(screen.getByText('DROP EXTENSION "pg_trgm";')).toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent('DROP EXTENSION "pg_trgm";');
   });
 
   it("実行に失敗したら理由と権限不足のヒントを出し、手順は閉じない", async () => {

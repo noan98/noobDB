@@ -20,6 +20,7 @@ import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { AiStreamProgress } from "./AiStreamProgress";
 import { AiSurface } from "./AiSurface";
 import { AiUsageNote } from "./AiUsageNote";
@@ -206,6 +207,7 @@ export function AiResultSummaryPanel(props: AiResultSummaryPanelProps) {
       {running && <AiStreamProgress stream={stream} fields={["summary"]} waitingLabel={t("aiSqlRunning")} />}
       {state.kind === "done" && (
         <Result
+          driver={props.driver}
           value={state.value}
           inserted={inserted}
           onInsert={(i, sql) => {
@@ -260,10 +262,12 @@ function BulletSection({ label, items }: { label: string; items: readonly string
 }
 
 function Result({
+  driver,
   value,
   inserted,
   onInsert,
 }: {
+  driver: string;
   value: ResultSummaryResponse;
   inserted: Record<number, "inserted" | "closed">;
   onInsert: (index: number, sql: string) => void;
@@ -284,9 +288,7 @@ function Result({
               <chakra.span color="app.textSecondary" whiteSpace="pre-wrap">
                 {q.reason}
               </chakra.span>
-              <CodePreview wrap maxH="160px">
-                {q.sql}
-              </CodePreview>
+              <SqlPreview sql={q.sql} driver={driver} wrap maxH="160px" />
               <Flex align="center" gap="2" wrap="wrap">
                 <Button
                   type="button"

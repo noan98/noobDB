@@ -6,7 +6,8 @@ import { useT } from "../i18n";
 import { Callout } from "./Callout";
 import { CopyButton } from "./CopyButton";
 import { Icon, ICON_SIZES } from "./Icon";
-import { CodePreview, ErrorNote } from "./modalForm";
+import { ErrorNote } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { Spinner } from "./Spinner";
 import { Button, Switch } from "./ui";
 import { useCopyFeedback } from "./useCopyFeedback";
@@ -18,12 +19,15 @@ import { useCopyFeedback } from "./useCopyFeedback";
  */
 export function SchemaDriftRevert({
   profileId,
+  driver,
   fromId,
   toId,
   onInsertSql,
   onClose,
 }: {
   profileId: string;
+  /** 巻き戻し DDL を色分けする方言。 */
+  driver?: string;
   fromId: string;
   toId: string;
   /** 指定されると「エディタに挿入」を出す。 */
@@ -124,9 +128,7 @@ export function SchemaDriftRevert({
                   {t("schemaDriftRevertDestructiveNote")}
                 </Callout>
               )}
-              <CodePreview maxH="220px" data-testid="schema-drift-revert-sql">
-                {sql}
-              </CodePreview>
+              <SqlPreview sql={sql} driver={driver} maxH="220px" data-testid="schema-drift-revert-sql" />
               <Flex gap="2" justify="flex-end">
                 <CopyButton
                   copied={copied}

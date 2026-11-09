@@ -9,7 +9,8 @@ import {
 } from "../tableQueryTemplate";
 import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { FieldError, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { Button, PressableButton, Textarea } from "./ui";
 
 /**
@@ -124,9 +125,13 @@ export function TableOpenQueryModal({
         {preview && (
           <FormSection>
             <FieldLabel as="div">{t("tableOpenQueryModalPreview")}</FieldLabel>
-            <CodePreview wrap minH="40px">
-              {preview.openTemplate ? preview.sql : t("tableOpenQueryModalPreviewLegacy")}
-            </CodePreview>
+            <SqlPreview
+              sql={preview.openTemplate ? preview.sql : ""}
+              driver={driver}
+              empty={t("tableOpenQueryModalPreviewLegacy")}
+              wrap
+              minH="40px"
+            />
             {preview.openTemplate && !preview.openTemplate.editable && (
               <Callout tone="warning" role="status">
                 {t("tableOpenQueryModalReadOnly")}

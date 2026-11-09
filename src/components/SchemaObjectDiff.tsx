@@ -5,7 +5,7 @@ import type { DiffStatus, DriverKind, ObjectComparison, ObjectDiff } from "../ap
 import { useT } from "../i18n";
 import { Callout } from "./Callout";
 import { statusColors } from "./diffStatusColors";
-import { CodePreview } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { TreeChevron } from "./tree";
 
 /**
@@ -145,7 +145,7 @@ function unsupportedReason(kind: string, driver: DriverKind, t: ReturnType<typeo
   }
 }
 
-function ObjectRow({ item }: { item: ObjectDiff }) {
+function ObjectRow({ item, driver }: { item: ObjectDiff; driver: DriverKind }) {
   const t = useT();
   const [open, setOpen] = useState(item.status === "different");
   const bodyId = `${useId()}-body`;
@@ -188,17 +188,13 @@ function ObjectRow({ item }: { item: ObjectDiff }) {
           {item.source_definition !== null && (
             <Box>
               <chakra.div css={defLabelCss}>{t("schemaCompareObjectSourceDefinition")}</chakra.div>
-              <CodePreview wrap maxH="16rem">
-                {item.source_definition}
-              </CodePreview>
+              <SqlPreview sql={item.source_definition} driver={driver} wrap maxH="16rem" />
             </Box>
           )}
           {item.target_definition !== null && (
             <Box>
               <chakra.div css={defLabelCss}>{t("schemaCompareObjectTargetDefinition")}</chakra.div>
-              <CodePreview wrap maxH="16rem">
-                {item.target_definition}
-              </CodePreview>
+              <SqlPreview sql={item.target_definition} driver={driver} wrap maxH="16rem" />
             </Box>
           )}
         </Box>
@@ -257,7 +253,11 @@ export function SchemaObjectDiff({
           ) : (
             <Box css={listCss}>
               {visible.map((o) => (
-                <ObjectRow key={`${o.kind}:${o.name}:${o.signature ?? ""}:${o.table ?? ""}`} item={o} />
+                <ObjectRow
+                  key={`${o.kind}:${o.name}:${o.signature ?? ""}:${o.table ?? ""}`}
+                  item={o}
+                  driver={driver}
+                />
               ))}
             </Box>
           )}

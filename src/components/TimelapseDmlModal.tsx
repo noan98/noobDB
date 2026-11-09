@@ -6,7 +6,8 @@ import { buildTimelapseDml, type TimelapseDmlDirection, type TimelapseExportRow 
 import { Callout } from "./Callout";
 import { CopyButton } from "./CopyButton";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview, FieldLabel, FormSection } from "./modalForm";
+import { FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { Button } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
 import { useCopyFeedback } from "./useCopyFeedback";
@@ -100,9 +101,13 @@ export function TimelapseDmlModal({ rows, maskedColumns, driver, database, table
               fontSize="xs"
             />
           </chakra.div>
-          <CodePreview aria-label={t("timelapseDmlPreviewAria")} maxH="320px">
-            {result.statements === 0 && result.skipped === 0 ? t("timelapseDmlEmpty") : preview}
-          </CodePreview>
+          <SqlPreview
+            sql={result.statements === 0 && result.skipped === 0 ? "" : preview}
+            driver={driver}
+            empty={t("timelapseDmlEmpty")}
+            aria-label={t("timelapseDmlPreviewAria")}
+            maxH="320px"
+          />
           {result.skipped > 0 && (
             <Callout tone="warning">{t("timelapseDmlSkippedNote", { count: result.skipped })}</Callout>
           )}

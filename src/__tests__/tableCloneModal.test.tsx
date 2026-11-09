@@ -52,7 +52,9 @@ describe("TableCloneModal (#1398)", () => {
     mount(onConfirm);
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText(/users/)).toHaveValue("users_copy"));
-    await waitFor(() => expect(screen.getByText(/CREATE TABLE "users_copy"/)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId("sql-preview")).toHaveTextContent(/CREATE TABLE "users_copy"/),
+    );
     fireEvent.click(screen.getByRole("button", { name: t("cloneTableConfirm") }));
     expect(onConfirm).toHaveBeenCalledWith("users_copy", [
       'CREATE TABLE "users_copy" (id INTEGER PRIMARY KEY)',
@@ -111,13 +113,15 @@ describe("TableCloneModal (#1398)", () => {
       elapsed_ms: 0,
     }));
     mount(vi.fn(), vi.fn(), "postgres");
-    expect(await screen.findByText(/LIKE "main"\."users" INCLUDING ALL/)).toBeInTheDocument();
-    expect(screen.getByText(/CREATE SEQUENCE "main"\."users_copy_id_seq"/)).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /ADD CONSTRAINT "users_copy_boss_fkey" FOREIGN KEY \(boss\) REFERENCES "main"\."users_copy"\(id\)/,
-      ),
-    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("sql-preview")).toHaveTextContent(/LIKE "main"\."users" INCLUDING ALL/),
+    );
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent(
+      /CREATE SEQUENCE "main"\."users_copy_id_seq"/,
+    );
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent(
+      /ADD CONSTRAINT "users_copy_boss_fkey" FOREIGN KEY \(boss\) REFERENCES "main"\."users_copy"\(id\)/,
+    );
     expect(screen.queryByText(t("cloneTableSharedSequence"))).not.toBeInTheDocument();
   });
 

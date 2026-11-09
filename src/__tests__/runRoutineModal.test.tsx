@@ -73,7 +73,7 @@ describe("RunRoutineModal (#1003)", () => {
     const idInput = await screen.findByLabelText(/^id ·/);
     fireEvent.change(idInput, { target: { value: "7" } });
     fireEvent.change(screen.getByLabelText(/^note ·/), { target: { value: "it's" } });
-    expect(screen.getByText("CALL `shop`.`add_order`(7, 'it''s')")).toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent("CALL `shop`.`add_order`(7, 'it''s')");
     fireEvent.click(screen.getByRole("button", { name: t("runRoutineRun") }));
     expect(onRun).toHaveBeenCalledWith("CALL `shop`.`add_order`(7, 'it''s')");
   });

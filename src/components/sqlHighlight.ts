@@ -59,6 +59,24 @@ export function sqlHighlightSegments(sql: string, driver: string): SqlHighlightS
 }
 
 /**
+ * 行ごとに分けた色分け (差分表示など、行単位で背景色を付ける画面向け)。`lines` を改行でつないで 1 回だけ
+ * 解析し (複数行にまたがる文字列・コメントも崩れない)、行ごとの区切りの配列に戻す。
+ *
+ * 返り値の i 番目が `lines[i]` に対応する。大きすぎる (`shouldHighlightSql` が偽)、または
+ * いずれかの行が改行を含んで行数が合わないときは null (呼び出し側は単色で出す)。
+ */
+export function sqlHighlightLines(lines: readonly string[], driver: string): SqlHighlightSegment[][] | null {
+  const joined = lines.join("\n");
+  if (lines.some((l) => l.includes("\n")) || !shouldHighlightSql(joined)) return null;
+  const out: SqlHighlightSegment[][] = [[]];
+  for (const seg of sqlHighlightSegments(joined, driver)) {
+    if (seg.text === "\n" && seg.kind === null) out.push([]);
+    else (out[out.length - 1] as SqlHighlightSegment[]).push(seg);
+  }
+  return out.length === lines.length ? out : null;
+}
+
+/**
  * これを超える SQL は色分けせず単色で表示する (#2157)。lezer での解析と数万個の `<span>` 生成が、
  * モーダルの入力操作を妨げないようにする安全弁。行数 (1 万行) か文字数のどちらかで判定する。
  */

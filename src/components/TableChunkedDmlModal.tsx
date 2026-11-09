@@ -14,7 +14,8 @@ import {
 } from "./chunkedDml";
 import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { Segmented } from "./Segmented";
 import { JobProgressDetail } from "./JobProgress";
 import { Button, Input } from "./ui";
@@ -440,9 +441,13 @@ export function TableChunkedDmlModal({
 
         <FormSection>
           <FieldLabel as="div">{t("chunkedDmlPreview")}</FieldLabel>
-          <CodePreview minH="80px" wrap>
-            {built.ok ? built.sql : t("chunkedDmlPreviewEmpty")}
-          </CodePreview>
+          <SqlPreview
+            sql={built.ok ? built.sql : ""}
+            driver={driver}
+            empty={t("chunkedDmlPreviewEmpty")}
+            minH="80px"
+            wrap
+          />
         </FormSection>
 
         {phase !== "idle" && (

@@ -25,6 +25,7 @@ import { Button } from "./ui";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { AiStreamProgress } from "./AiStreamProgress";
 import { AiSurface } from "./AiSurface";
 import { useAiKeyPresent } from "../ai/aiKeyStore";
@@ -299,9 +300,7 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
                       {s.kind === "ddl" ? t("explainAiKindDdl") : t("explainAiKindRewrite")}
                     </chakra.span>
                     <chakra.span whiteSpace="pre-wrap">{s.rationale}</chakra.span>
-                    <CodePreview wrap maxH="160px">
-                      {s.sql}
-                    </CodePreview>
+                    <SqlPreview sql={s.sql} driver={props.driver} wrap maxH="160px" />
                     <Flex align="center" gap="2">
                       <Button
                         type="button"

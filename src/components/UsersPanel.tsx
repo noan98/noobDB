@@ -18,7 +18,7 @@ import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
-import { CodePreview, FieldLabel, FormSection } from "./modalForm";
+import { FieldLabel, FormSection } from "./modalForm";
 import { SqlPreview } from "./SqlPreview";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
@@ -527,9 +527,7 @@ export function UsersPanel({
               {t("usersApplyMysqlNonAtomic")}
             </Callout>
           )}
-          <CodePreview wrap mt="2" maxH="260px">
-            {statements.join(";\n")}
-          </CodePreview>
+          <SqlPreview sql={statements.join(";\n")} driver={driver} wrap mt="2" maxH="260px" />
         </>
       ),
       confirmLabel: t("usersApplyConfirmOk"),
@@ -609,9 +607,7 @@ export function UsersPanel({
                 {t("usersApplyMysqlNonAtomic")}
               </Callout>
             )}
-            <CodePreview wrap mt="2" maxH="260px">
-              {statements.join(";\n")}
-            </CodePreview>
+            <SqlPreview sql={statements.join(";\n")} driver={driver} wrap mt="2" maxH="260px" />
           </>
         ),
         confirmLabel: opts.okLabel,
@@ -761,9 +757,7 @@ export function UsersPanel({
       message: (
         <>
           <chakra.p margin={0}>{t("usersDropConfirmMessage", { name: selected.name })}</chakra.p>
-          <CodePreview wrap mt="2" maxH="260px">
-            {sql}
-          </CodePreview>
+          <SqlPreview sql={sql} driver={driver} wrap mt="2" maxH="260px" />
         </>
       ),
       confirmLabel: t("usersDropConfirmOk"),

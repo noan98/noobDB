@@ -5,7 +5,8 @@ import { useT } from "../i18n";
 import { Callout } from "./Callout";
 import { ListboxSelect } from "./ListboxSelect";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { Spinner } from "./Spinner";
 import { Button, Checkbox, Input, PressableButton, Textarea } from "./ui";
 import {
@@ -311,9 +312,13 @@ export function PolicyModal({ sessionId, database, initialTable, readOnly, onCon
 
         <FormSection>
           <FieldLabel as="div">{t("policyPreview")}</FieldLabel>
-          <CodePreview minH="48px" wrap>
-            {statements.length > 0 ? formatPolicyPreview(statements) : t("policyPreviewEmpty")}
-          </CodePreview>
+          <SqlPreview
+            sql={statements.length > 0 ? formatPolicyPreview(statements) : ""}
+            driver="postgres"
+            empty={t("policyPreviewEmpty")}
+            minH="48px"
+            wrap
+          />
         </FormSection>
       </ModalBody>
       <ModalFooter>
