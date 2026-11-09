@@ -204,6 +204,9 @@ fn parse_compare_definition(def: &str) -> Option<ParsedPublication> {
 pub struct ReplaceStatement {
     pub sql: String,
     pub destructive: bool,
+    /// 行フィルタ・列リストの違いで同じ表を外してから足し直す `ADD TABLE`。前段の `DROP TABLE` を出さない
+    /// (破壊的な操作を許可しない) ときは、表がまだメンバーなのでこの文も出さない (出すと PostgreSQL が拒否する)。
+    pub after_drop: bool,
 }
 
 /// 同期の計画: 出す文と、出せなかった差分の警告 (パブリケーション名は呼び出し側が付ける)。
@@ -244,21 +247,24 @@ pub fn replace_statements(
                 src.name, src.publish, src.via_root
             ),
             destructive: false,
+            after_drop: false,
         });
     }
     let find = |list: &'_ [ParsedTable], key: &str| -> Option<usize> {
         list.iter().position(|t| t.key == key)
     };
-    let add = |t: &ParsedTable| ReplaceStatement {
+    let add = |t: &ParsedTable, after_drop: bool| ReplaceStatement {
         sql: format!(
             "ALTER PUBLICATION {} ADD TABLE {}{}",
             src.name, t.key, t.rest
         ),
         destructive: false,
+        after_drop,
     };
     let drop = |t: &ParsedTable| ReplaceStatement {
         sql: format!("ALTER PUBLICATION {} DROP TABLE {}", src.name, t.key),
         destructive: true,
+        after_drop: false,
     };
     // 外す文は先に出す (指定が違う表の DROP → ADD が成り立つように)。外した表を足し直せるかも合わせて決める。
     let mut skip_add: Vec<&str> = Vec::new();
@@ -281,12 +287,10 @@ pub fn replace_statements(
         if skip_add.contains(&t.key.as_str()) {
             continue;
         }
-        let differs = match find(&tgt.tables, &t.key) {
-            None => true,
-            Some(i) => tgt.tables[i].rest != t.rest,
-        };
-        if differs {
-            plan.statements.push(add(t));
+        match find(&tgt.tables, &t.key) {
+            None => plan.statements.push(add(t, false)),
+            Some(i) if tgt.tables[i].rest != t.rest => plan.statements.push(add(t, true)),
+            Some(_) => {}
         }
     }
     Ok(plan)
@@ -317,6 +321,7 @@ pub fn target_only_statements(target_definition: &str) -> Result<ReplacePlan, St
             plan.statements.push(ReplaceStatement {
                 sql: format!("ALTER PUBLICATION {} DROP TABLE {}", tgt.name, t.key),
                 destructive: true,
+                after_drop: false,
             });
         }
     }
@@ -387,7 +392,7 @@ pub fn subscription_definition(p: &SubscriptionParts) -> String {
     }
     if !p.synchronize_commit.is_empty() {
         opts.push(format!(
-            "synchronize_commit = {}",
+            "synchronous_commit = {}",
             lit(p.synchronize_commit)
         ));
     }
@@ -538,6 +543,14 @@ mod tests {
                 "ALTER PUBLICATION \"p\" ADD TABLE \"t\".\"a\" WHERE ((id > 0))",
             ]
         );
+        // 足し直す ADD は前段の DROP に依存する印が付く (DROP を出さないときは一緒に止める)。
+        let flags: Vec<(bool, bool)> = replace_statements(&s, &t)
+            .unwrap()
+            .statements
+            .iter()
+            .map(|x| (x.destructive, x.after_drop))
+            .collect();
+        assert_eq!(flags, vec![(false, false), (true, false), (false, true)]);
         // 同じ定義なら何も出さない。
         assert!(replace_statements(&s, &s).unwrap().statements.is_empty());
     }
@@ -653,7 +666,7 @@ mod tests {
         );
         assert!(d.contains("PUBLICATION \"pub_a\", \"we\"\"ird\""), "{d}");
         assert!(
-            d.contains("WITH (enabled = true, slot_name = 'sub1', synchronize_commit = 'off')"),
+            d.contains("WITH (enabled = true, slot_name = 'sub1', synchronous_commit = 'off')"),
             "{d}"
         );
         let d = subscription_definition(&SubscriptionParts {

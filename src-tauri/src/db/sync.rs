@@ -358,7 +358,8 @@ fn object_statements(
                 Ok(plan) => {
                     let mut skipped = false;
                     for st in plan.statements {
-                        if st.destructive && !allow_destructive {
+                        // 外す文を出さないときは、その表を足し直す文も出さない (まだメンバーなので拒否される)。
+                        if (st.destructive || st.after_drop) && !allow_destructive {
                             skipped = true;
                             continue;
                         }
@@ -4333,6 +4334,40 @@ mod object_sync_tests {
             plan.warnings.iter().any(|w| w.contains("DROP TABLE")),
             "{:?}",
             plan.warnings
+        );
+    }
+
+    #[test]
+    fn publication_row_filter_change_without_permission_skips_both_drop_and_re_add() {
+        // 行フィルタが違う表は DROP TABLE + ADD TABLE で揃える。破壊的な操作を許可しないと DROP が出ないので、
+        // 足し直す ADD も出さない (表はまだメンバーなので、出すと PostgreSQL が拒否して同期全体が失敗する)。
+        // 新しく足すだけの表 (c) の ADD は出す。
+        let mut changed = obj(
+            "publication",
+            "pub_f",
+            DiffStatus::Different,
+            Some("CREATE PUBLICATION \"pub_f\" WITH (publish = 'insert', publish_via_partition_root = false);\n-- noobdb:split\nALTER PUBLICATION \"pub_f\" ADD TABLE \"p\".\"a\" WHERE ((id > 0));\n-- noobdb:split\nALTER PUBLICATION \"pub_f\" ADD TABLE \"p\".\"c\";"),
+        );
+        changed.target_definition = Some("CREATE PUBLICATION \"pub_f\" WITH (publish = 'insert', publish_via_partition_root = false);\n-- noobdb:split\nALTER PUBLICATION \"pub_f\" ADD TABLE \"p\".\"a\" WHERE ((id > 10));".into());
+        let d = diff(DriverKind::Postgres, vec![], vec![changed]);
+        let plan = generate_sync_sql(&d, false);
+        let sqls: Vec<&str> = plan.statements.iter().map(|s| s.sql.as_str()).collect();
+        assert_eq!(
+            sqls,
+            vec!["ALTER PUBLICATION \"pub_f\" ADD TABLE \"p\".\"c\""]
+        );
+        assert!(
+            plan.warnings.iter().any(|w| w.contains("DROP TABLE")),
+            "{:?}",
+            plan.warnings
+        );
+        // 許可すれば DROP → ADD の順で両方出る。
+        let plan = generate_sync_sql(&d, true);
+        let sqls: Vec<&str> = plan.statements.iter().map(|s| s.sql.as_str()).collect();
+        let pos = |needle: &str| sqls.iter().position(|s| s.contains(needle)).unwrap();
+        assert!(
+            pos("DROP TABLE \"p\".\"a\"") < pos("ADD TABLE \"p\".\"a\" WHERE ((id > 0))"),
+            "{sqls:?}"
         );
     }
 
