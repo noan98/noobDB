@@ -1516,6 +1516,12 @@
     "rows": 200,
     "streamId": "strm0005"
   },
+  "extensionDependent": {
+    "kind": "column",
+    "name": "tags",
+    "schema": "public",
+    "table": "places"
+  },
   "extensionsOverview": {
     "extensions": [
       {

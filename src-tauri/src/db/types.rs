@@ -729,6 +729,20 @@ pub struct ExtensionsOverview {
     pub shared_preload_libraries: Vec<String>,
 }
 
+/// 拡張機能を `DROP EXTENSION ... CASCADE` したときに巻き添えで消える依存オブジェクト 1 件
+/// (`list_extension_dependents`、#2177)。拡張自身が持つオブジェクト (型・関数など) は含めない。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionDependent {
+    /// `column` / `table` / `view` / `materialized_view` / `index` / `sequence` / `function` /
+    /// `procedure` / `constraint` / `trigger` / `default` / `policy` / `statistic` / `type` / `rule` / `extension` / `other`。
+    pub kind: String,
+    pub schema: Option<String>,
+    /// オブジェクト名。列は列名、関数は `名前(引数の型)`、`other` は PostgreSQL の識別文字列。
+    pub name: String,
+    /// 所属する表。列 / 索引 / 制約 / トリガー / 既定値で入る (それ以外は `None`)。
+    pub table: Option<String>,
+}
+
 /// A non-table schema object: a view, materialized view, stored
 /// procedure, function, trigger, sequence / user-defined type (PostgreSQL only), or event (MySQL only). `kind` is one of `view` /
 /// `materialized_view` / `procedure` / `function` / `trigger` / `sequence` / `event` / `type` so the UI can

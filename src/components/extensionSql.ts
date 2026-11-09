@@ -97,3 +97,61 @@ export function matchesExtensionFilter(
       return e.updatable;
   }
 }
+
+/** 削除の巻き添えになる依存オブジェクトの種別。見出しの並び順 (データが消える列が先頭)。 */
+export const EXTENSION_DEPENDENT_KINDS = [
+  "column",
+  "table",
+  "view",
+  "materialized_view",
+  "function",
+  "procedure",
+  "index",
+  "constraint",
+  "trigger",
+  "default",
+  "policy",
+  "statistic",
+  "sequence",
+  "type",
+  "rule",
+  "extension",
+  "other",
+] as const;
+
+export type ExtensionDependentKind = (typeof EXTENSION_DEPENDENT_KINDS)[number];
+
+export interface ExtensionDependentGroup<T> {
+  kind: ExtensionDependentKind;
+  items: T[];
+}
+
+/**
+ * 依存オブジェクトを種別ごとにまとめる (#2177)。並びは `EXTENSION_DEPENDENT_KINDS` の順で、
+ * 件数 0 の種別は出さない。未知の種別は `other` に寄せる。各グループ内の順序は入力のまま。
+ */
+export function groupExtensionDependents<T extends { kind: string }>(
+  items: readonly T[],
+): ExtensionDependentGroup<T>[] {
+  const known = new Set<string>(EXTENSION_DEPENDENT_KINDS);
+  const buckets = new Map<ExtensionDependentKind, T[]>();
+  for (const item of items) {
+    const kind = (known.has(item.kind) ? item.kind : "other") as ExtensionDependentKind;
+    const list = buckets.get(kind);
+    if (list) list.push(item);
+    else buckets.set(kind, [item]);
+  }
+  return EXTENSION_DEPENDENT_KINDS.flatMap((kind) => {
+    const list = buckets.get(kind);
+    return list ? [{ kind, items: list }] : [];
+  });
+}
+
+/** 依存オブジェクト 1 件の表示名: `schema.table.name` (無い部分は省く)。 */
+export function formatExtensionDependent(d: {
+  schema: string | null;
+  table: string | null;
+  name: string;
+}): string {
+  return [d.schema, d.table, d.name].filter((p): p is string => p !== null && p !== "").join(".");
+}

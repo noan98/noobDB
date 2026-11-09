@@ -4,6 +4,8 @@ import {
   buildDropExtensionSql,
   buildExtensionSql,
   buildUpdateExtensionSql,
+  formatExtensionDependent,
+  groupExtensionDependents,
   isDestructiveExtensionAction,
   isPreloaded,
   matchesExtensionFilter,
@@ -85,5 +87,30 @@ describe("matchesExtensionFilter", () => {
       true,
       false,
     ]);
+  });
+});
+
+describe("依存オブジェクトのまとめ (#2177)", () => {
+  it("種別の並びは列が先頭で、0 件の種別は出さない。未知の種別は other に寄せる", () => {
+    const groups = groupExtensionDependents([
+      { kind: "view", name: "v" },
+      { kind: "function", name: "f" },
+      { kind: "column", name: "c1" },
+      { kind: "mystery", name: "m" },
+      { kind: "column", name: "c2" },
+    ]);
+    expect(groups.map((g) => [g.kind, g.items.length])).toEqual([
+      ["column", 2],
+      ["view", 1],
+      ["function", 1],
+      ["other", 1],
+    ]);
+    expect(groups[0]?.items.map((i) => i.name)).toEqual(["c1", "c2"]);
+    expect(groupExtensionDependents([])).toEqual([]);
+  });
+
+  it("表示名は schema.table.name で、無い部分は省く", () => {
+    expect(formatExtensionDependent({ schema: "public", table: "t", name: "c" })).toBe("public.t.c");
+    expect(formatExtensionDependent({ schema: null, table: null, name: "f()" })).toBe("f()");
   });
 });

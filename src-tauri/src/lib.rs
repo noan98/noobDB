@@ -117,16 +117,16 @@ pub mod __test_api {
     pub use crate::db::stream_batch::{StreamBatcher, StreamStats, StreamStatsSnapshot};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
-        CheckConstraintInfo, Column, DbUserInfo, ExtensionInfo, ExtensionsOverview, ForeignKey,
-        GeneratedColumnInfo, IndexInfo, KillOutcomeStatus, KillProcessOutcome, KillProcessesResult,
-        LiveQuery, LocalTableMeta, PreviewResult, ProcessInfo, ProcessListItem, ProcessProgress,
-        PublicationInfo, PublicationTable, QueryResult, QueryStatsSupport, RlsTable,
-        RoutineParameter, RoutineSignature, SchemaObject, ServerInfo, ServerMessage,
-        ServerMessageSeverity, ServerMetrics, ServerVariable, SqliteFkViolation,
-        SqliteMaintenanceAction, SqliteMaintenanceResult, StreamBatch, TableColumnInfo,
-        TableComment, TableExtrasInfo, TablePartition, TablePartitions, TablePrivilegeRow,
-        TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, TableTrigger,
-        UserPrivileges, Value,
+        CheckConstraintInfo, Column, DbUserInfo, ExtensionDependent, ExtensionInfo,
+        ExtensionsOverview, ForeignKey, GeneratedColumnInfo, IndexInfo, KillOutcomeStatus,
+        KillProcessOutcome, KillProcessesResult, LiveQuery, LocalTableMeta, PreviewResult,
+        ProcessInfo, ProcessListItem, ProcessProgress, PublicationInfo, PublicationTable,
+        QueryResult, QueryStatsSupport, RlsTable, RoutineParameter, RoutineSignature, SchemaObject,
+        ServerInfo, ServerMessage, ServerMessageSeverity, ServerMetrics, ServerVariable,
+        SqliteFkViolation, SqliteMaintenanceAction, SqliteMaintenanceResult, StreamBatch,
+        TableColumnInfo, TableComment, TableExtrasInfo, TablePartition, TablePartitions,
+        TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+        TableTrigger, UserPrivileges, Value,
     };
     pub use crate::db::upsert::{ConflictMode, ImportConflict};
     pub use crate::db::{
@@ -1946,6 +1946,7 @@ pub fn run() {
             commands::schema::list_rls_tables,
             commands::schema::list_publications,
             commands::schema::list_extensions,
+            commands::schema::list_extension_dependents,
             commands::schema::list_table_partitions,
             commands::schema::schema_overview,
             commands::schema::foreign_keys,

@@ -291,6 +291,22 @@ pub async fn list_extensions(
     session.conn.list_extensions().await
 }
 
+/// 拡張機能を `DROP EXTENSION ... CASCADE` したときに巻き添えで消える依存オブジェクト (その拡張の型を使う列・
+/// 関数・ビューなど) を `pg_depend` から引いて返す (#2177)。削除の確認画面が実行前に見せる。読み取り専用の
+/// introspection なので read_only セッションでも許可する。PostgreSQL 専用で、MySQL / SQLite は `InvalidInput`。
+#[tauri::command]
+pub async fn list_extension_dependents(
+    session_id: String,
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::db::types::ExtensionDependent>> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session.conn.list_extension_dependents(&name).await
+}
+
 /// パーティション表の子パーティション (境界・サイズ・行推定) とパーティションキーを返す (#1868)。
 /// パーティション表でなければ `None`。SQLite は非対応 (`InvalidInput`)。読み取り専用 introspection
 /// なので read_only セッションでも許可する。保守 / 削除の SQL は UI が組み立てて既存の `run_query` 経路で流す。

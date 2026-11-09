@@ -168,6 +168,7 @@ DB に触れず実行もしない (UI のプレビュー専用)。両環境の�
 - `foreign_keys`
 - `list_rls_tables` (行レベルセキュリティ (RLS) が有効 / FORCE の表の一覧。PostgreSQL 専用で他ドライバは `InvalidInput`。ツリーの「RLS」バッジ用、#2159)
 - `list_publications` (論理レプリケーションのパブリケーション一覧: 公開する操作・明示した表 (行フィルタ・列リストは PostgreSQL 15 以降)・`TABLES IN SCHEMA` のスキーマ・`FOR ALL TABLES`。データベース全体でスキーマをまたぐ。表の右クリック「パブリケーションに追加 / から外す」の所属判定用。PostgreSQL 専用で MySQL / SQLite は空、読み取りのみ、#2181)
+- `list_extension_dependents` (拡張機能を CASCADE で削除したときに巻き添えで消える依存オブジェクト (その拡張の型を使う列・関数・ビュー・索引・制約など) を `pg_depend` から引く: 種別 / スキーマ / 名前 / 表。削除の確認画面が実行前に表示する。PostgreSQL 専用で他ドライバは `InvalidInput`、読み取りのみ、#2177)
 - `list_extensions` (PostgreSQL の拡張機能: 導入済み (バージョン / スキーマ) とサーバが提供できるもの (既定のバージョン / 更新の可否) + `shared_preload_libraries`。PostgreSQL 専用で他ドライバは `InvalidInput`、#2160)
 - `list_schema_objects`
 - `get_object_definition`

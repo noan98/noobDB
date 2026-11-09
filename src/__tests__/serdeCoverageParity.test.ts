@@ -72,6 +72,7 @@ const COVERED: Record<string, string> = {
   TableTrigger: "tableTrigger",
   RlsTable: "rlsTable",
   PublicationInfo: "publicationInfo",
+  ExtensionDependent: "extensionDependent",
   ExtensionsOverview: "extensionsOverview",
   TablePartitions: "tablePartitions",
   InsertRowsResult: "insertRowsResult",

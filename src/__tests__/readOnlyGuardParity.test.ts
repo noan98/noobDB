@@ -555,6 +555,7 @@ safe(
   "list_rls_tables",
   "list_publications",
   "list_extensions",
+  "list_extension_dependents",
   "list_table_comments",
   "list_tables",
   "plan_sqlite_table_rebuild",
@@ -719,6 +720,8 @@ const CONNECTION_READ_METHODS = new Set([
   "publication_definitions",
   // 拡張機能の一覧を pg_extension / pg_available_extensions から引くだけ (#2160)
   "list_extensions",
+  // 拡張機能の CASCADE 削除で巻き添えになるオブジェクトを pg_depend から引くだけ (#2177)
+  "list_extension_dependents",
   "table_is_transactional",
   "databases",
   "server_databases",
