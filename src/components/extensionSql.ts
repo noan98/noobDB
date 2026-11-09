@@ -110,6 +110,8 @@ export const EXTENSION_DEPENDENT_KINDS = [
   "constraint",
   "trigger",
   "default",
+  "policy",
+  "statistic",
   "sequence",
   "type",
   "rule",

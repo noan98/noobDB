@@ -4589,20 +4589,35 @@ WITH RECURSIVE members AS (
    WHERE d.deptype IN ('n', 'a', 'i', 'x')
      AND NOT EXISTS (SELECT 1 FROM members m2 WHERE m2.classid = d.classid AND m2.objid = d.objid)
   UNION
-  SELECT d.classid, d.objid, d.objsubid,
+  SELECT r.classid, r.objid, r.objsubid,
          (SELECT fe.refobjid FROM pg_depend fe
-           WHERE fe.classid = d.classid AND fe.objid = d.objid
+           WHERE fe.classid = r.classid AND fe.objid = r.objid
              AND fe.refclassid = 'pg_extension'::regclass AND fe.deptype = 'e' LIMIT 1)
     FROM closure c
-    LEFT JOIN pg_rewrite crw
-           ON c.classid = 'pg_rewrite'::regclass AND crw.oid = c.objid AND crw.rulename = '_RETURN'
-    JOIN pg_depend d
-      ON (d.refclassid = c.classid AND d.refobjid = c.objid
-          AND (c.objsubid = 0 OR d.refobjsubid = c.objsubid))
-      OR (crw.oid IS NOT NULL AND d.refclassid = 'pg_class'::regclass AND d.refobjid = crw.ev_class)
-   WHERE c.foreign_ext IS NULL
-     AND d.deptype IN ('n', 'a', 'i')
-     AND NOT EXISTS (SELECT 1 FROM members m2 WHERE m2.classid = d.classid AND m2.objid = d.objid)
+    CROSS JOIN LATERAL (
+      -- 通常の依存の連鎖 (ビューは `_RETURN` ルールを経由して、そのビューに依存するものへ)
+      SELECT d.classid, d.objid, d.objsubid
+        FROM pg_depend d
+        LEFT JOIN pg_rewrite crw
+               ON c.classid = 'pg_rewrite'::regclass AND crw.oid = c.objid AND crw.rulename = '_RETURN'
+       WHERE d.deptype IN ('n', 'a', 'i')
+         AND ((d.refclassid = c.classid AND d.refobjid = c.objid
+               AND (c.objsubid = 0 OR d.refobjsubid = c.objsubid))
+              OR (crw.oid IS NOT NULL AND d.refclassid = 'pg_class'::regclass
+                  AND d.refobjid = crw.ev_class))
+      UNION ALL
+      -- 拡張ノードからは、その拡張のメンバー全部へ (その拡張を消すと、メンバーの利用者も消える)
+      SELECT d.classid, d.objid, d.objsubid
+        FROM pg_depend d
+       WHERE c.classid = 'pg_extension'::regclass
+         AND d.refclassid = 'pg_extension'::regclass AND d.refobjid = c.objid
+         AND d.deptype = 'e'
+      UNION ALL
+      -- 他の拡張のメンバーに着いたら、その拡張ノードを足す (必要とする側の拡張 1 件として出す)
+      SELECT 'pg_extension'::regclass::oid, c.foreign_ext, 0
+       WHERE c.foreign_ext IS NOT NULL
+    ) r
+   WHERE NOT EXISTS (SELECT 1 FROM members m2 WHERE m2.classid = r.classid AND m2.objid = r.objid)
 )
 SELECT kind, schema_name, name, tbl FROM (
 SELECT DISTINCT x.kind, n.nspname::text AS schema_name, x.name, x.tbl
@@ -4622,6 +4637,10 @@ SELECT DISTINCT x.kind, n.nspname::text AS schema_name, x.name, x.tbl
   LEFT JOIN pg_attrdef ad ON dp.classid = 'pg_attrdef'::regclass AND ad.oid = dp.objid
   LEFT JOIN pg_class adc ON adc.oid = ad.adrelid
   LEFT JOIN pg_attribute ada ON ada.attrelid = ad.adrelid AND ada.attnum = ad.adnum
+  LEFT JOIN pg_policy pol ON dp.classid = 'pg_policy'::regclass AND pol.oid = dp.objid
+  LEFT JOIN pg_class polc ON polc.oid = pol.polrelid
+  LEFT JOIN pg_statistic_ext se ON dp.classid = 'pg_statistic_ext'::regclass AND se.oid = dp.objid
+  LEFT JOIN pg_class sec ON sec.oid = se.stxrelid
   LEFT JOIN pg_type ty ON dp.classid = 'pg_type'::regclass AND ty.oid = dp.objid
   LEFT JOIN pg_extension ex ON dp.classid = 'pg_extension'::regclass AND ex.oid = dp.objid
   CROSS JOIN LATERAL (
@@ -4643,7 +4662,10 @@ SELECT DISTINCT x.kind, n.nspname::text AS schema_name, x.name, x.tbl
           ELSE 'rule' END
         WHEN co.oid IS NOT NULL THEN 'constraint'
         WHEN tg.oid IS NOT NULL THEN 'trigger'
+        WHEN ad.oid IS NOT NULL AND ada.attgenerated <> '' THEN 'column'
         WHEN ad.oid IS NOT NULL THEN 'default'
+        WHEN pol.oid IS NOT NULL THEN 'policy'
+        WHEN se.oid IS NOT NULL THEN 'statistic'
         WHEN ty.oid IS NOT NULL THEN 'type'
         WHEN ex.oid IS NOT NULL THEN 'extension'
         ELSE 'other' END AS kind,
@@ -4655,6 +4677,8 @@ SELECT DISTINCT x.kind, n.nspname::text AS schema_name, x.name, x.tbl
         WHEN co.oid IS NOT NULL THEN co.connamespace
         WHEN tg.oid IS NOT NULL THEN tc.relnamespace
         WHEN ad.oid IS NOT NULL THEN adc.relnamespace
+        WHEN pol.oid IS NOT NULL THEN polc.relnamespace
+        WHEN se.oid IS NOT NULL THEN se.stxnamespace
         WHEN ty.oid IS NOT NULL THEN ty.typnamespace END AS nsp,
       CASE
         WHEN fex.oid IS NOT NULL THEN fex.extname::text
@@ -4666,6 +4690,8 @@ SELECT DISTINCT x.kind, n.nspname::text AS schema_name, x.name, x.tbl
         WHEN co.oid IS NOT NULL THEN co.conname::text
         WHEN tg.oid IS NOT NULL THEN tg.tgname::text
         WHEN ad.oid IS NOT NULL THEN ada.attname::text
+        WHEN pol.oid IS NOT NULL THEN pol.polname::text
+        WHEN se.oid IS NOT NULL THEN se.stxname::text
         WHEN ty.oid IS NOT NULL THEN ty.typname::text
         WHEN ex.oid IS NOT NULL THEN ex.extname::text
         ELSE (pg_identify_object(dp.classid, dp.objid, dp.objsubid)).identity END AS name,
@@ -4676,20 +4702,30 @@ SELECT DISTINCT x.kind, n.nspname::text AS schema_name, x.name, x.tbl
         WHEN rw.oid IS NOT NULL AND rw.rulename <> '_RETURN' THEN rc.relname::text
         WHEN co.oid IS NOT NULL THEN cc.relname::text
         WHEN tg.oid IS NOT NULL THEN tc.relname::text
-        WHEN ad.oid IS NOT NULL THEN adc.relname::text END AS tbl,
+        WHEN ad.oid IS NOT NULL THEN adc.relname::text
+        WHEN pol.oid IS NOT NULL THEN polc.relname::text
+        WHEN se.oid IS NOT NULL THEN sec.relname::text END AS tbl,
       CASE
         WHEN c.oid IS NOT NULL AND dp.objsubid > 0 THEN c.oid
         WHEN ix.indexrelid IS NOT NULL THEN ix.indrelid
         WHEN rw.oid IS NOT NULL THEN rc.oid
         WHEN co.oid IS NOT NULL THEN co.conrelid
         WHEN tg.oid IS NOT NULL THEN tg.tgrelid
-        WHEN ad.oid IS NOT NULL THEN ad.adrelid END AS owner
+        WHEN ad.oid IS NOT NULL THEN ad.adrelid
+        WHEN pol.oid IS NOT NULL THEN pol.polrelid
+        WHEN se.oid IS NOT NULL THEN se.stxrelid END AS owner
   ) x
   LEFT JOIN pg_namespace n ON n.oid = x.nsp
  WHERE x.name IS NOT NULL
    AND dp.classid NOT IN ('pg_amop'::regclass, 'pg_amproc'::regclass)
    AND NOT (tg.oid IS NOT NULL AND tg.tgisinternal)
    AND NOT (co.oid IS NOT NULL AND co.contypid <> 0)
+   AND NOT (c.oid IS NOT NULL AND (c.relkind = 't' OR c.relnamespace = 'pg_toast'::regnamespace))
+   AND NOT EXISTS (
+         SELECT 1 FROM pg_depend d3
+           JOIN closure cl ON cl.classid = d3.refclassid AND cl.objid = d3.refobjid
+          WHERE d3.classid = dp.classid AND d3.objid = dp.objid AND d3.objsubid = dp.objsubid
+            AND d3.deptype = 'i')
    AND NOT (ty.oid IS NOT NULL AND (ty.typcategory = 'A' OR ty.typrelid <> 0))
    AND NOT EXISTS (
          SELECT 1 FROM members m

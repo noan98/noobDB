@@ -739,7 +739,7 @@ export interface ExtensionInfo {
 /** `list_extension_dependents` の 1 件: 拡張機能を CASCADE で削除したときに巻き添えで消えるオブジェクト (#2177)。 */
 export interface ExtensionDependent {
   /** `column` / `table` / `view` / `materialized_view` / `index` / `sequence` / `function` / `procedure` /
-   *  `constraint` / `trigger` / `default` / `type` / `rule` / `extension` / `other`。 */
+   *  `constraint` / `trigger` / `default` / `policy` / `statistic` / `type` / `rule` / `extension` / `other`。 */
   kind: string;
   schema: string | null;
   /** 列は列名、関数は `名前(引数の型)`。 */

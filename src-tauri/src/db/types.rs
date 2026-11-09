@@ -673,7 +673,7 @@ pub struct ExtensionsOverview {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExtensionDependent {
     /// `column` / `table` / `view` / `materialized_view` / `index` / `sequence` / `function` /
-    /// `procedure` / `constraint` / `trigger` / `default` / `type` / `rule` / `extension` / `other`。
+    /// `procedure` / `constraint` / `trigger` / `default` / `policy` / `statistic` / `type` / `rule` / `extension` / `other`。
     pub kind: String,
     pub schema: Option<String>,
     /// オブジェクト名。列は列名、関数は `名前(引数の型)`、`other` は PostgreSQL の識別文字列。

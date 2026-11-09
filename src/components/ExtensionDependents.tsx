@@ -47,6 +47,8 @@ const KIND_LABEL: Record<ExtensionDependentKind, I18nKey> = {
   constraint: "extensionsDepsKind_constraint",
   trigger: "extensionsDepsKind_trigger",
   default: "extensionsDepsKind_default",
+  policy: "extensionsDepsKind_policy",
+  statistic: "extensionsDepsKind_statistic",
   sequence: "extensionsDepsKind_sequence",
   type: "extensionsDepsKind_type",
   rule: "extensionsDepsKind_rule",

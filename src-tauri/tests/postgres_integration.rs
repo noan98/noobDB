@@ -5543,6 +5543,9 @@ async fn postgres_extension_dependents_list_columns_functions_and_views() {
         "CREATE DOMAIN nb2177.email AS citext",
         "CREATE TABLE nb2177.users (id int, e nb2177.email)",
         "CREATE VIEW nb2177.v_cast AS SELECT id, tags::text AS t FROM nb2177.places",
+        "CREATE TABLE nb2177.gen (a text, g text GENERATED ALWAYS AS (lower(a::citext::text)) STORED)",
+        "CREATE TYPE nb2177.cirange AS RANGE (subtype = citext)",
+        "CREATE MATERIALIZED VIEW nb2177.mv_big AS SELECT id, tags FROM nb2177.places",
         "CREATE FUNCTION nb2177.f_dep() RETURNS int LANGUAGE sql AS 'SELECT 1'",
         "ALTER FUNCTION nb2177.f_dep() DEPENDS ON EXTENSION citext",
         "CREATE INDEX nb2177_tags_idx ON nb2177.places (tags)",
@@ -5573,6 +5576,20 @@ async fn postgres_extension_dependents_list_columns_functions_and_views() {
     assert!(has("type", "email", None), "{deps:?}");
     assert!(has("view", "v_cast", None), "{deps:?}");
     assert!(has("function", "f_dep()", None), "{deps:?}");
+    // 生成列は 'default' ではなく列ごと消える。range 型は型 1 件で、付属物 (multirange・コンストラクタ) は出ない。
+    assert!(has("column", "g", Some("gen")), "{deps:?}");
+    assert!(!deps.iter().any(|d| d.kind == "default"), "{deps:?}");
+    assert!(has("type", "cirange", None), "{deps:?}");
+    assert!(
+        !deps.iter().any(|d| d.name.contains("multirange")),
+        "{deps:?}"
+    );
+    assert!(has("materialized_view", "mv_big", None), "{deps:?}");
+    // マテビューの TOAST 表・索引は出ない。
+    assert!(
+        !deps.iter().any(|d| d.name.starts_with("pg_toast")),
+        "{deps:?}"
+    );
     // 部品 (配列型・演算子族の要素) や、ビューの列は別の行として出ない。
     assert!(
         !deps
@@ -5641,6 +5658,15 @@ async fn postgres_extension_dependents_show_requiring_extension_as_one_entry() {
     {
         return;
     }
+    for sql in [
+        "DROP SCHEMA IF EXISTS nb2177b CASCADE",
+        "CREATE SCHEMA nb2177b",
+        "CREATE TABLE nb2177b.ed2 (id int, e earth)",
+    ] {
+        conn.execute(sql, None)
+            .await
+            .unwrap_or_else(|e| panic!("`{sql}`: {e:?}"));
+    }
     let deps = conn
         .list_extension_dependents("cube")
         .await
@@ -5648,10 +5674,21 @@ async fn postgres_extension_dependents_show_requiring_extension_as_one_entry() {
     let ext_entries: Vec<_> = deps.iter().filter(|d| d.kind == "extension").collect();
     assert_eq!(ext_entries.len(), 1, "{deps:?}");
     assert_eq!(ext_entries[0].name, "earthdistance", "{deps:?}");
+    // earthdistance のメンバー (earth ドメイン) を使う利用者の列も、cube を消すと一緒に消える。
+    assert!(
+        deps.iter().any(|d| d.kind == "column"
+            && d.name == "e"
+            && d.table.as_deref() == Some("ed2")
+            && d.schema.as_deref() == Some("nb2177b")),
+        "{deps:?}"
+    );
     // earthdistance の部品が、ばらばらの行として出ない。
     assert!(
         deps.iter()
             .all(|d| d.kind == "extension" || d.name != "earth" && d.kind != "other"),
         "{deps:?}"
     );
+    let _ = conn
+        .execute("DROP SCHEMA IF EXISTS nb2177b CASCADE", None)
+        .await;
 }
