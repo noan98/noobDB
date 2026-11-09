@@ -2709,6 +2709,7 @@ const en = {
   extensionsPreloadNote:
     "{name} also needs to be listed in shared_preload_libraries in postgresql.conf, followed by a server restart. CREATE EXTENSION alone is not enough.",
   extensionsDone: "Ran {action} on extension {name}",
+  extensionsNotExecuted: "The confirmation was cancelled, so nothing was run.",
   inspectorManageExtensions: "Manage extensions...",
   contextMenuCreateRoutineGroup: "New routine / trigger",
   contextMenuCreateProcedure: "New procedure...",
@@ -10356,6 +10357,7 @@ const ja: Dict = {
   extensionsPreloadNote:
     "{name} は、CREATE EXTENSION だけでは動きません。postgresql.conf の shared_preload_libraries に追記して、サーバを再起動してください",
   extensionsDone: "拡張機能 {name} の{action}を実行しました",
+  extensionsNotExecuted: "確認がキャンセルされたため、何も実行していません",
   inspectorManageExtensions: "拡張機能を管理...",
   contextMenuCreateRoutineGroup: "ルーチン / トリガーを新規作成",
   contextMenuCreateProcedure: "プロシージャを新規作成",
