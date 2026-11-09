@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
-import { api, type ExtensionInfo, type ExtensionsOverview } from "../api/tauri";
+import { api, type ExtensionDependent, type ExtensionInfo, type ExtensionsOverview } from "../api/tauri";
 import { resolveErrorHint } from "../errorHints";
 import { useT } from "../i18n";
 import { Callout } from "./Callout";
+import { ExtensionDependents } from "./ExtensionDependents";
 import {
   buildExtensionSql,
   isDestructiveExtensionAction,
@@ -54,6 +55,13 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
   const [busy, setBusy] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   const [cancelled, setCancelled] = useState(false);
+  // 削除の確認画面で出す依存オブジェクト (#2177)。null は取得中。失敗しても削除は妨げない。
+  // 取得した拡張名と一緒に持つ (拡張を切り替えた直後に前の拡張の一覧が見えないように)。
+  const [depsState, setDepsState] = useState<{
+    name: string;
+    data: ExtensionDependent[] | null;
+    error: string | null;
+  } | null>(null);
   const mountedRef = useRef(true);
   const searchRef = useRef<HTMLInputElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -81,6 +89,29 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
   useEffect(() => {
     void load();
   }, [load]);
+
+  const dropName = step?.action === "drop" ? step.ext.name : null;
+  useEffect(() => {
+    if (dropName === null) return;
+    let alive = true;
+    api
+      .listExtensionDependents(sessionId, dropName)
+      .then((d) => {
+        if (alive) setDepsState({ name: dropName, data: d, error: null });
+      })
+      .catch((e) => {
+        if (alive) setDepsState({ name: dropName, data: null, error: String(e) });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [sessionId, dropName]);
+
+  const deps = depsState !== null && depsState.name === dropName ? depsState : null;
+  const dependents = deps?.data ?? null;
+  const dependentsError = deps?.error ?? null;
+  // CASCADE なしで依存があるときは、ExtensionDependents の「このままでは失敗します」が危険帯を兼ねる。
+  const failsWithoutCascade = !cascade && dependents !== null && dependents.length > 0;
 
   const loading = overview === null;
   const preload = overview?.shared_preload_libraries ?? [];
@@ -262,10 +293,18 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
               </FormSection>
             )}
 
-            {step.action === "drop" && (
+            {step.action === "drop" && !failsWithoutCascade && (
               <Callout tone="danger">
                 {cascade ? t("extensionsDropCascadeWarning") : t("extensionsDropWarning")}
               </Callout>
+            )}
+            {step.action === "drop" && (
+              <ExtensionDependents
+                key={step.ext.name}
+                dependents={dependents}
+                error={dependentsError}
+                cascade={cascade}
+              />
             )}
             {step.action === "install" &&
               needsPreload(step.ext.name) &&

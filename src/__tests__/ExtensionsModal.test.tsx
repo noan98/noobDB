@@ -35,11 +35,17 @@ const OVERVIEW = {
   shared_preload_libraries: [] as string[],
 };
 
+const dependentsMock = vi.hoisted(() => vi.fn());
+
 vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();
   return {
     ...actual,
-    api: { ...actual.api, listExtensions: () => Promise.resolve(OVERVIEW) },
+    api: {
+      ...actual.api,
+      listExtensions: () => Promise.resolve(OVERVIEW),
+      listExtensionDependents: (...a: unknown[]) => dependentsMock(...a),
+    },
   };
 });
 
@@ -62,6 +68,7 @@ describe("ExtensionsModal", () => {
   beforeEach(() => {
     setLocale("en");
     vi.clearAllMocks();
+    dependentsMock.mockResolvedValue([]);
   });
 
   it("導入済みと未導入を並べ、更新できるものに印を付ける。plpgsql は削除できない", async () => {
@@ -168,5 +175,95 @@ describe("ExtensionsModal", () => {
     for (const name of [t("extensionsInstall"), t("extensionsUpdate"), t("extensionsDrop")]) {
       expect(screen.getByRole("button", { name })).toBeDisabled();
     }
+  });
+
+  describe("削除の確認で依存オブジェクトを出す (#2177)", () => {
+    const DEPS = [
+      { kind: "column", schema: "public", name: "geom", table: "places" },
+      { kind: "column", schema: "public", name: "loc", table: "shops" },
+      { kind: "function", schema: "public", name: "near(geometry)", table: null },
+      { kind: "view", schema: "public", name: "v_places", table: null },
+    ];
+
+    async function openDrop() {
+      const user = userEvent.setup();
+      const out = setup();
+      await screen.findByText("pg_trgm");
+      await user.click(screen.getByRole("button", { name: t("extensionsDrop") }));
+      return { user, ...out };
+    }
+
+    it("拡張機能の名前で取得し、CASCADE を付けると種別ごとの件数見出しを出す。列が先頭で最初から開く", async () => {
+      dependentsMock.mockResolvedValue(DEPS);
+      const { user } = await openDrop();
+      expect(dependentsMock).toHaveBeenCalledWith("s1", "pg_trgm");
+      await screen.findByText(t("extensionsDepsWillFail", { count: 4 }));
+      await user.click(screen.getByLabelText(t("extensionsCascadeDrop")));
+      expect(screen.getByText(t("extensionsDepsCascadeTitle", { count: 4 }))).toBeInTheDocument();
+      const headings = screen
+        .getAllByRole("button")
+        .filter((b) => b.hasAttribute("aria-expanded"))
+        .map((b) => b.textContent);
+      expect(headings[0]).toContain(`${t("extensionsDepsKind_column")} (2)`);
+      expect(headings[1]).toContain(`${t("extensionsDepsKind_view")} (1)`);
+      expect(headings[2]).toContain(`${t("extensionsDepsKind_function")} (1)`);
+      // 列は開いていて、表と列が見える。関数は閉じている。
+      expect(screen.getByText("public.places.geom")).toBeInTheDocument();
+      expect(screen.queryByText("public.near(geometry)")).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: new RegExp(t("extensionsDepsKind_function")) }));
+      expect(await screen.findByText("public.near(geometry)")).toBeInTheDocument();
+    });
+
+    it("CASCADE なしで依存があれば「このままでは失敗します」を実行前に出す", async () => {
+      dependentsMock.mockResolvedValue(DEPS);
+      await openDrop();
+      expect(await screen.findByText(t("extensionsDepsWillFail", { count: 4 }))).toBeInTheDocument();
+    });
+
+    it("依存が 0 件なら「依存するオブジェクトはありません」", async () => {
+      await openDrop();
+      expect(await screen.findByText(t("extensionsDepsNone"))).toBeInTheDocument();
+    });
+
+    it("取得に失敗したらエラーを出すが、削除は実行できる", async () => {
+      dependentsMock.mockRejectedValue(new Error("boom"));
+      const { user, onExecute } = await openDrop();
+      expect(await screen.findByText(/boom/)).toBeInTheDocument();
+      await user.click(screen.getAllByRole("button", { name: t("extensionsDrop") }).at(-1) as HTMLElement);
+      expect(onExecute).toHaveBeenCalledWith('DROP EXTENSION "pg_trgm"', "drop", "pg_trgm");
+    });
+
+    it("確認を開き直したとき、前の取得の遅い応答は捨てる", async () => {
+      let resolveFirst: (v: typeof DEPS) => void = () => {};
+      dependentsMock.mockImplementationOnce(
+        () =>
+          new Promise((r) => {
+            resolveFirst = r;
+          }),
+      );
+      const { user } = await openDrop();
+      await user.click(screen.getByRole("button", { name: t("extensionsCancel") }));
+      await user.click(screen.getByRole("button", { name: t("extensionsDrop") }));
+      expect(await screen.findByText(t("extensionsDepsNone"))).toBeInTheDocument();
+      resolveFirst(DEPS);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(screen.getByText(t("extensionsDepsNone"))).toBeInTheDocument();
+      expect(screen.queryByText(t("extensionsDepsWillFail", { count: 4 }))).not.toBeInTheDocument();
+    });
+
+    it("CASCADE なしで依存があるときは、危険帯を 1 つにまとめる", async () => {
+      dependentsMock.mockResolvedValue(DEPS);
+      await openDrop();
+      await screen.findByText(t("extensionsDepsWillFail", { count: 4 }));
+      expect(screen.queryByText(t("extensionsDropWarning"))).not.toBeInTheDocument();
+    });
+
+    it("導入・更新では依存を取得しない", async () => {
+      const user = userEvent.setup();
+      setup();
+      await screen.findByText("pg_trgm");
+      await user.click(screen.getByRole("button", { name: t("extensionsUpdate") }));
+      expect(dependentsMock).not.toHaveBeenCalled();
+    });
   });
 });

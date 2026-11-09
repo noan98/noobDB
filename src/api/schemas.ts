@@ -237,6 +237,15 @@ export const extensionsOverview = z.object({
   shared_preload_libraries: z.array(z.string()),
 });
 
+/** `list_extension_dependents` の 1 件 (#2177)。 */
+export const extensionDependent = z.object({
+  kind: z.string(),
+  schema: z.string().nullable(),
+  name: z.string(),
+  table: z.string().nullable(),
+});
+export const extensionDependentArray = z.array(extensionDependent);
+
 /** サーバ側プロセス/接続 (プロセス監視パネル)。 */
 export const processInfo = z.object({
   id: z.number(),

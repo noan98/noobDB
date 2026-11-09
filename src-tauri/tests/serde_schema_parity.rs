@@ -826,6 +826,12 @@ fn build_fixtures() -> serde_json::Value {
         ],
         shared_preload_libraries: vec!["pg_stat_statements".into()],
     };
+    let extension_dependent = t::ExtensionDependent {
+        kind: "column".into(),
+        schema: Some("public".into()),
+        name: "tags".into(),
+        table: Some("places".into()),
+    };
     let table_partitions = t::TablePartitions {
         method: "RANGE".into(),
         key: "created_at".into(),
@@ -2675,6 +2681,7 @@ fn build_fixtures() -> serde_json::Value {
         "tableTrigger": table_trigger,
         "rlsTable": rls_table,
         "extensionsOverview": extensions_overview,
+        "extensionDependent": extension_dependent,
         "tablePartitions": table_partitions,
         "schemaObject": schema_object,
         "routineSignature": routine_signature,

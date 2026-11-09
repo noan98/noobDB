@@ -10,6 +10,7 @@ import type {
   TableExtrasInfo,
   TablePartitions,
   RlsTable,
+  ExtensionDependent,
   ExtensionsOverview,
   TableTrigger,
   SchemaObject,
@@ -156,6 +157,14 @@ export const schemaCommands = {
   listExtensions: (sessionId: string) =>
     invoke<ExtensionsOverview>("list_extensions", { sessionId }).then((r) =>
       parseResponse(schemas.extensionsOverview, r, "list_extensions"),
+    ),
+  /**
+   * 拡張機能を `DROP EXTENSION ... CASCADE` したときに巻き添えで消える依存オブジェクト (その拡張の型を使う列・
+   * 関数・ビューなど) の一覧 (#2177)。PostgreSQL だけ。読み取りのみ (read_only でも動く)。
+   */
+  listExtensionDependents: (sessionId: string, name: string) =>
+    invoke<ExtensionDependent[]>("list_extension_dependents", { sessionId, name }).then((r) =>
+      parseResponse(schemas.extensionDependentArray, r, "list_extension_dependents"),
     ),
   /** 非テーブルのスキーマオブジェクト (ビュー/ルーチン/トリガー) を取得する。 */
   listSchemaObjects: (sessionId: string, database: string) =>

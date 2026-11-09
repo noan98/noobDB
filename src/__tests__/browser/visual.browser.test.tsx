@@ -139,6 +139,15 @@ describe.runIf(RUN_VISUAL)("ビジュアル回帰 (実ブラウザ)", { retry: 0
         <DangerousQueryDialog findings={FINDINGS} isProduction onConfirm={() => {}} onCancel={() => {}} />,
       );
       const dialog = page.getByRole("dialog");
+      // 初期フォーカス (キャンセル) は開いた直後に非同期で当たる。当たる前に撮ると
+      // フォーカスリングの有無だけ (数百ピクセル) がベースラインとずれて落ちるので、
+      // ダイアログ内のボタンにフォーカスが着くのを待ってから撮る。
+      await expect
+        .poll(() => {
+          const active = document.activeElement;
+          return active?.tagName === "BUTTON" && active.closest('[role="dialog"]') !== null;
+        })
+        .toBe(true);
       await expect(dialog).toMatchScreenshot(`dangerous-dialog-${theme}`);
     });
 
