@@ -19,6 +19,8 @@ mod cache_invalidation_matrix;
 mod chunked_dml_golden;
 #[path = "../collation_key_golden.rs"]
 mod collation_key_golden;
+#[path = "../credential_redact_golden.rs"]
+mod credential_redact_golden;
 #[path = "../dangerous_sql_golden.rs"]
 mod dangerous_sql_golden;
 #[path = "../data_search_golden.rs"]

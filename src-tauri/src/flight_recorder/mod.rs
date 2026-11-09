@@ -203,6 +203,9 @@ async fn persist_one(
     retention: i64,
     batch_id: Option<String>,
 ) -> Option<i64> {
+    // 記録に資格情報を平文で残さない (#2174)。取り消し / やり直しは `sql` ではなく
+    // 行スナップショットから組み立てるので、伏せても動作は変わらない。
+    let sql = crate::sql_credentials::redact_credentials(&sql, driver).into_owned();
     let new = NewWriteCapture {
         profile_id,
         driver: driver.as_str().to_string(),

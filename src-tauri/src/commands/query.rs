@@ -19,6 +19,7 @@ use crate::error::{AppError, Result};
 use crate::history::store as history_store;
 use crate::history::NewHistoryEntry;
 use crate::perf;
+use crate::sql_credentials::redact_credentials;
 use crate::state::{AppState, Session, StreamHandle, StreamKind};
 
 /// Returns `Err(AppError::ReadOnly)` when the session is RO and `sql` is not
@@ -1837,8 +1838,11 @@ pub(crate) async fn record_history(
     if session.skip_history {
         return;
     }
-    let driver = session.conn.driver_kind().as_str().to_string();
+    let driver_kind = session.conn.driver_kind();
+    let driver = driver_kind.as_str().to_string();
     let database = database.map(str::to_string);
+    // 履歴にパスワードを平文で残さない (#2174)。実行される SQL は変えず、保存分だけ伏せる。
+    let stored_sql = redact_credentials(sql, driver_kind).into_owned();
     let executed_at = chrono::Utc::now().to_rfc3339();
     let entry = match result {
         Ok(res) => {
@@ -1847,7 +1851,7 @@ pub(crate) async fn record_history(
                 profile_id: session.profile_id.clone(),
                 driver,
                 database,
-                sql: sql.to_string(),
+                sql: stored_sql,
                 rows: has_columns.then_some(res.rows_affected as i64),
                 rows_affected: (!has_columns).then_some(res.rows_affected as i64),
                 elapsed_ms: Some(res.elapsed_ms as i64),
@@ -1860,12 +1864,13 @@ pub(crate) async fn record_history(
             profile_id: session.profile_id.clone(),
             driver,
             database,
-            sql: sql.to_string(),
+            sql: stored_sql,
             rows: None,
             rows_affected: None,
             elapsed_ms: None,
             status: "error".to_string(),
-            error: Some(e.to_string()),
+            // サーバのエラー文は該当箇所の SQL 断片を含みうるので、同じ規則で伏せる。
+            error: Some(redact_credentials(&e.to_string(), driver_kind).into_owned()),
             executed_at,
         },
     };
@@ -1891,9 +1896,13 @@ pub(crate) async fn record_write_history(
         return;
     }
     let status = if error.is_some() { "error" } else { "ok" };
+    let driver_kind = session.conn.driver_kind();
+    // `record_history` と同じく、保存する SQL / エラー文の資格情報を伏せる (#2174)。
+    let sql = redact_credentials(&sql, driver_kind).into_owned();
+    let error = error.map(|e| redact_credentials(&e, driver_kind).into_owned());
     let entry = NewHistoryEntry {
         profile_id: session.profile_id.clone(),
-        driver: session.conn.driver_kind().as_str().to_string(),
+        driver: driver_kind.as_str().to_string(),
         database: database.map(str::to_string),
         sql,
         rows: None,

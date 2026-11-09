@@ -38,6 +38,7 @@ mod profiles;
 mod sandboxes;
 mod schema_drift;
 mod snippets;
+mod sql_credentials;
 mod ssh;
 mod ssm;
 mod state;
@@ -179,6 +180,12 @@ pub mod __test_api {
         crate::db::mask_for_driver(driver, &chars)
             .into_iter()
             .collect()
+    }
+
+    /// 資格情報リテラルの伏せ字化 (#2174)。共有ゴールデン
+    /// (`tests/credential_redact_golden.rs`) が `&str -> String` で突き合わせる。
+    pub fn redact_credentials(driver: DriverKind, sql: &str) -> String {
+        crate::sql_credentials::redact_credentials(sql, driver).into_owned()
     }
 
     /// バックエンドの stacked 文検出 (#852)。文境界ゴールデン (#1074、

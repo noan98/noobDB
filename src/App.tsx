@@ -640,6 +640,7 @@ import {
   reverseRowsForPrev,
 } from "./keysetPagination";
 import { isMultiStatement, type BatchStatementResult, toBatchOutputInput, toBatchResult } from "./sqlScript";
+import { redactCredentials } from "./sqlCredentials";
 import {
   EMPTY_QUICK_ACCESS,
   loadQuickAccess,
@@ -3280,7 +3281,10 @@ export default function App() {
   // (履歴を記録しない接続 `skip_history` を除く) ので、それと同じ内容を JS 側で足す。
   const pushQueryHistory = useCallback((sql: string) => {
     if (selectedProfileRef.current?.skip_history) return;
-    setQueryHistory((prev) => pushHistoryEntry(prev, sql));
+    // バックエンドは履歴に伏せ字化した SQL を保存する (#2174) ので、同じ内容を積む。
+    setQueryHistory((prev) =>
+      pushHistoryEntry(prev, redactCredentials(sql, selectedProfileRef.current?.driver)),
+    );
   }, []);
 
   // クイックアクセス: アクティブ接続が変わったら、そのプロファイルの

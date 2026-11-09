@@ -334,3 +334,20 @@ describe("pushOutput の保持量 (#1534)", () => {
     expect(result.current[0].error).toHaveLength(OUTPUT_ERROR_MAX_CHARS);
   });
 });
+
+describe("pushOutput のパスワード伏せ字 (#2174)", () => {
+  it("資格情報リテラルを伏せて保持し、再実行を無効にする", () => {
+    run({ sql: "ALTER USER 'app'@'%' IDENTIFIED BY 'S3cret!'", rows: null });
+    const { result } = renderHook(() => useOutputLog());
+    expect(result.current[0].sql).toBe("ALTER USER 'app'@'%' IDENTIFIED BY '********'");
+    expect(result.current[0].credentialsRedacted).toBe(true);
+    expect(JSON.stringify(result.current)).not.toContain("S3cret");
+  });
+
+  it("対象のない SQL はそのまま保持する", () => {
+    run({ sql: "select 1" });
+    const { result } = renderHook(() => useOutputLog());
+    expect(result.current[0].sql).toBe("select 1");
+    expect(result.current[0].credentialsRedacted).toBeUndefined();
+  });
+});
