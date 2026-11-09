@@ -18,6 +18,8 @@
 //!   `START REPLICA|SLAVE … PASSWORD = '…'`
 //! - PostgreSQL: `CREATE|ALTER ROLE|USER|GROUP` 内の `[ENCRYPTED] PASSWORD '…'`
 //!   (`USER MAPPING … OPTIONS (password '…')` を含む。`E'…'` とドル引用も)
+//!   と `CREATE|ALTER SUBSCRIPTION … CONNECTION '<接続文字列>'` (#2189。中身に
+//!   [`redact_conninfo`] が伏せる `password` / `sslpassword` / URI のパスワードがあるときだけリテラル全体)
 //! - SQLite: 対象なし
 //!
 //! リテラルの前置 (`E` / `U&` / `N` / `_utf8mb4`) は残し、引用符から終端までを
@@ -41,7 +43,10 @@ fn is_ws(c: char) -> bool {
 }
 
 struct Scanner<'a> {
+    /// 解析用マスク後の文字列 (元の SQL と同じ長さ)。
     m: &'a [char],
+    /// 元の SQL (リテラルの中身を読むときに使う)。
+    src: &'a [char],
     mysql: bool,
     pg: bool,
     out: Vec<(usize, usize)>,
@@ -300,6 +305,65 @@ impl Scanner<'_> {
         }
     }
 
+    /// `CONNECTION '…'` のリテラル `lit` の中身 (エスケープを解いたもの) に、[`redact_conninfo`] が伏せる値が
+    /// あるか。`U&'…'` は `\XXXX` でキー名を隠せるので、中身を読まず常に「あり」(安全側)。
+    fn conninfo_has_secret(&self, lit: (usize, usize)) -> bool {
+        let (s, e) = lit;
+        let mut decoded = String::new();
+        if self.m[s] == '$' {
+            let Some(tag_len) = self.dollar_tag_len(s) else {
+                return true;
+            };
+            let closed = e >= s + 2 * tag_len && self.m[e - tag_len..e] == self.m[s..s + tag_len];
+            let inner_end = if closed { e - tag_len } else { e };
+            if s + tag_len <= inner_end {
+                decoded.extend(&self.src[s + tag_len..inner_end]);
+            }
+        } else {
+            if s >= 2 && self.m[s - 1] == '&' && matches!(self.m[s - 2], 'u' | 'U') {
+                return true;
+            }
+            let backslash = s >= 1 && matches!(self.m[s - 1], 'e' | 'E');
+            let mut i = s;
+            while i < e {
+                if self.m[i] != '\'' {
+                    i += 1;
+                    continue;
+                }
+                // 連結文字列は各片の中身をつなげる。閉じていなければ文末まで。
+                let (inner_end, next) = match (i + 1..e).find(|&j| self.m[j] == '\'') {
+                    Some(c) => (c, c + 1),
+                    None => (e, e),
+                };
+                decoded.push_str(&unescape_literal(
+                    &self.src[i + 1..inner_end],
+                    '\'',
+                    backslash,
+                ));
+                i = next;
+            }
+        }
+        redact_conninfo(&decoded) != decoded
+    }
+
+    /// PostgreSQL の `CREATE|ALTER SUBSCRIPTION … CONNECTION '<接続文字列>'` (#2189)。接続文字列に
+    /// パスワードがあるときだけ、リテラル全体を伏せる (ホスト名などを残すためにリテラルの内側だけ
+    /// 置換すると、引用符のエスケープ次第で崩れるので、他の資格情報と同じくリテラル単位にする)。
+    fn pg_subscription_connection(&mut self, i: usize, e: usize) {
+        let (a, b) = self.leading_words(i);
+        if !matches!(a.as_deref(), Some("create") | Some("alter"))
+            || b.as_deref() != Some("subscription")
+        {
+            return;
+        }
+        let p = self.skip_ws(e);
+        if let Some(lit) = self.literal_at(p) {
+            if self.conninfo_has_secret(lit) {
+                self.push(lit);
+            }
+        }
+    }
+
     fn scan(&mut self) {
         let n = self.m.len();
         let mut i = 0;
@@ -315,6 +379,7 @@ impl Scanner<'_> {
             let w: String = self.m[i..e].iter().collect::<String>().to_lowercase();
             match w.as_str() {
                 "identified" if self.mysql => self.mysql_identified(e),
+                "connection" if self.pg => self.pg_subscription_connection(i, e),
                 "set" if self.mysql => self.mysql_set_password(i, e),
                 "master_password" | "source_password" if self.mysql => {
                     let p = self.skip_ws(e);
@@ -360,6 +425,7 @@ fn scan_ranges(sql: &str, driver: DriverKind) -> (Vec<(usize, usize)>, Vec<char>
     let masked = mask_for_driver(driver, &chars);
     let mut sc = Scanner {
         m: &masked,
+        src: &chars,
         mysql: driver == DriverKind::Mysql,
         pg: driver == DriverKind::Postgres,
         out: Vec::new(),
