@@ -4596,15 +4596,18 @@ WITH RECURSIVE members AS (
     FROM closure c
     CROSS JOIN LATERAL (
       -- 通常の依存の連鎖 (ビューは `_RETURN` ルールを経由して、そのビューに依存するものへ)
+      -- (OR で 1 本にまとめると pg_depend の索引が使えず全件走査になるので、2 本に分ける)
       SELECT d.classid, d.objid, d.objsubid
         FROM pg_depend d
-        LEFT JOIN pg_rewrite crw
-               ON c.classid = 'pg_rewrite'::regclass AND crw.oid = c.objid AND crw.rulename = '_RETURN'
        WHERE d.deptype IN ('n', 'a', 'i')
-         AND ((d.refclassid = c.classid AND d.refobjid = c.objid
-               AND (c.objsubid = 0 OR d.refobjsubid = c.objsubid))
-              OR (crw.oid IS NOT NULL AND d.refclassid = 'pg_class'::regclass
-                  AND d.refobjid = crw.ev_class))
+         AND d.refclassid = c.classid AND d.refobjid = c.objid
+         AND (c.objsubid = 0 OR d.refobjsubid = c.objsubid)
+      UNION ALL
+      SELECT d.classid, d.objid, d.objsubid
+        FROM pg_rewrite crw
+        JOIN pg_depend d ON d.refclassid = 'pg_class'::regclass AND d.refobjid = crw.ev_class
+       WHERE c.classid = 'pg_rewrite'::regclass AND crw.oid = c.objid AND crw.rulename = '_RETURN'
+         AND d.deptype IN ('n', 'a', 'i')
       UNION ALL
       -- 拡張ノードからは、その拡張のメンバー全部へ (その拡張を消すと、メンバーの利用者も消える)
       SELECT d.classid, d.objid, d.objsubid
@@ -4721,11 +4724,12 @@ SELECT DISTINCT x.kind, n.nspname::text AS schema_name, x.name, x.tbl
    AND NOT (tg.oid IS NOT NULL AND tg.tgisinternal)
    AND NOT (co.oid IS NOT NULL AND co.contypid <> 0)
    AND NOT (c.oid IS NOT NULL AND (c.relkind = 't' OR c.relnamespace = 'pg_toast'::regnamespace))
-   AND NOT EXISTS (
-         SELECT 1 FROM pg_depend d3
+   -- 相関しない NOT IN にしてハッシュ化させる (相関 NOT EXISTS は行ごとに閉包を走査して遅い)。
+   -- 列はすべて NOT NULL の oid / int なので NOT IN の NULL の落とし穴は無い。
+   AND (dp.classid, dp.objid, dp.objsubid) NOT IN (
+         SELECT d3.classid, d3.objid, d3.objsubid FROM pg_depend d3
            JOIN closure cl ON cl.classid = d3.refclassid AND cl.objid = d3.refobjid
-          WHERE d3.classid = dp.classid AND d3.objid = dp.objid AND d3.objsubid = dp.objsubid
-            AND d3.deptype = 'i')
+          WHERE d3.deptype = 'i')
    AND NOT (ty.oid IS NOT NULL AND (ty.typcategory = 'A' OR ty.typrelid <> 0))
    AND NOT EXISTS (
          SELECT 1 FROM members m
