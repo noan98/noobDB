@@ -293,4 +293,28 @@ describe("CreateTableModal テーブルオプション (#2161)", () => {
     expect(statements[1]).toContain('PARTITION OF "ev"');
     expect(sql).toBe(statements.join("\n"));
   });
+
+  it("PostgreSQL: onRun に表名 (trim 済み) と UNLOGGED かどうかを渡す (#2190)", () => {
+    const onRun = vi.fn();
+    renderWithProviders(
+      <CreateTableModal
+        driver="postgres"
+        database={null}
+        readOnly={false}
+        onRun={onRun}
+        onSendToEditor={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    fillName();
+    fireEvent.change(screen.getAllByLabelText(new RegExp(`^${t("createTableColName")} \\(`))[0], {
+      target: { value: "id" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: t("createTableRun") }));
+    expect(onRun.mock.calls[0][2]).toBe("ev");
+    expect(onRun.mock.calls[0][3]).toBe(false);
+    fireEvent.click(screen.getByLabelText("UNLOGGED"));
+    fireEvent.click(screen.getByRole("button", { name: t("createTableRun") }));
+    expect(onRun.mock.calls[1][3]).toBe(true);
+  });
 });

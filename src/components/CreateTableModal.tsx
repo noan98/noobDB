@@ -22,6 +22,7 @@ import { Icon } from "./Icon";
 import { LiveRow, LiveRowsPresence } from "./LiveRows";
 import { Tooltip } from "./Tooltip";
 import { TableConstraintEditor, type CheckRow, type FkRow } from "./TableConstraintEditor";
+import { usesUnlogged } from "./tableOptions";
 import { isCompleteCheck, isCompleteForeignKey, isPartialForeignKey } from "./tableConstraints";
 import {
   emptyPartitionSpec,
@@ -48,7 +49,8 @@ interface Props {
   database: string | null;
   readOnly: boolean;
   /** `statements` は文ごとの配列。複数文のときは呼び出し側がトランザクションで流す (#2161)。 */
-  onRun: (sql: string, statements: string[]) => void;
+  /** `table` は作った表名、`unlogged` は UNLOGGED 表か (パブリケーションに追加できない、#2190)。 */
+  onRun: (sql: string, statements: string[], table: string, unlogged: boolean) => void;
   onSendToEditor: (sql: string) => void;
   onClose: () => void;
 }
@@ -281,7 +283,7 @@ export function CreateTableModal({
 
   return (
     <Modal
-      onSubmit={() => onRun(sql, statements)}
+      onSubmit={() => onRun(sql, statements, table.trim(), usesUnlogged(driver, options))}
       submitDisabled={!valid || readOnly}
       width="820px"
       onClose={onClose}
@@ -560,7 +562,7 @@ export function CreateTableModal({
           type="button"
           variant="primary"
           disabled={!valid || readOnly}
-          onClick={() => onRun(sql, statements)}
+          onClick={() => onRun(sql, statements, table.trim(), usesUnlogged(driver, options))}
         >
           {t("createTableRun")}
         </PressableButton>
