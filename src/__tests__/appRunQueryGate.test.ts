@@ -82,7 +82,7 @@ describe("App.tsx の api.runQuery(Transaction) は実行ゲートか許可リ�
     }
   });
 
-  it("kind ごとの前提: gated は runGuardedDdl、confirmed は await confirm( が呼び出しより前にある", () => {
+  it("kind ごとの前提: gated は runGuardedDdl、confirmed は await confirm の呼び出しが実行より前にある", () => {
     for (const s of sites) {
       const a = ALLOWED[s.name];
       if (!a) continue;
@@ -91,7 +91,7 @@ describe("App.tsx の api.runQuery(Transaction) は実行ゲートか許可リ�
     }
   });
 
-  it("alreadyConfirmed: true の自己申告は、同じ関数内で前に await confirm( がある", () => {
+  it("alreadyConfirmed: true の自己申告は、同じ関数内で前に await confirm の呼び出しがある", () => {
     const marks = [...appSource.matchAll(/alreadyConfirmed: (?:true|!!appendSql)/g)];
     expect(marks.length).toBeGreaterThan(5);
     for (const m of marks) {
