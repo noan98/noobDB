@@ -2689,33 +2689,9 @@ const SQLITE_MAX_ATTACHED: usize = 10;
 /// 接続時の汎用エラー (`unable to open database file`) ではなく原因が分かるメッセージにする。
 /// ファイルが無いまま ATTACH すると SQLite は黙って空のファイルを作ってしまうので、存在確認は必須。
 fn validate_attachments(attachments: &[super::SqliteAttachment]) -> Result<()> {
-    if attachments.len() > SQLITE_MAX_ATTACHED {
-        return Err(AppError::InvalidInput(format!(
-            "too many attached SQLite files: {} (maximum {SQLITE_MAX_ATTACHED})",
-            attachments.len()
-        )));
-    }
-    let mut seen = std::collections::HashSet::new();
+    validate_attachment_settings(attachments)?;
     for a in attachments {
-        if !is_valid_attach_alias(&a.alias) {
-            return Err(AppError::InvalidInput(format!(
-                "invalid alias for attached SQLite file: '{}' (use letters, digits and '_', not starting with a digit; 'main' and 'temp' are reserved)",
-                a.alias
-            )));
-        }
-        if !seen.insert(a.alias.to_ascii_lowercase()) {
-            return Err(AppError::InvalidInput(format!(
-                "duplicate alias for attached SQLite file: '{}'",
-                a.alias
-            )));
-        }
         let path = a.path.trim();
-        if path.is_empty() || path.contains('\0') {
-            return Err(AppError::InvalidInput(format!(
-                "attached SQLite file path is required (alias '{}')",
-                a.alias
-            )));
-        }
         match std::fs::metadata(path) {
             Ok(m) if m.is_file() => {}
             Ok(_) => {
@@ -2733,6 +2709,66 @@ fn validate_attachments(attachments: &[super::SqliteAttachment]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// 追加アタッチの設定の問題の種類 (#2153)。共有ゴールデン `sqliteAttachVectors.json` で、
+/// フロント `attachmentsProblem` (`sqliteAttach.ts`) と同じ判定になることを固定している。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AttachProblem {
+    TooMany,
+    InvalidAlias,
+    DuplicateAlias,
+    PathRequired,
+}
+
+/// 最初に見つかった問題と、その行の位置 (`TooMany` は行に依らないので 0)。判定の順序は
+/// 件数 → 行ごとに (別名の形式 → 重複 → パスの有無)。
+fn attachment_settings_problem(
+    attachments: &[super::SqliteAttachment],
+) -> Option<(AttachProblem, usize)> {
+    if attachments.len() > SQLITE_MAX_ATTACHED {
+        return Some((AttachProblem::TooMany, 0));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for (i, a) in attachments.iter().enumerate() {
+        if !is_valid_attach_alias(&a.alias) {
+            return Some((AttachProblem::InvalidAlias, i));
+        }
+        if !seen.insert(a.alias.to_ascii_lowercase()) {
+            return Some((AttachProblem::DuplicateAlias, i));
+        }
+        let path = a.path.trim();
+        if path.is_empty() || path.contains('\0') {
+            return Some((AttachProblem::PathRequired, i));
+        }
+    }
+    None
+}
+
+/// 追加アタッチの設定のうち、ファイルの存在に依らない部分 (件数・別名の形式と重複・パスの有無) を
+/// 検証する (#2153)。接続時の [`validate_attachments`] と、プロファイル保存時 (`save_profile`) の
+/// 両方がこれを通るので、「保存できたのに毎回接続できない」設定を保存の時点で弾ける。
+/// ファイルの存在は接続のたびに変わりうるので、保存時には見ない。
+pub(crate) fn validate_attachment_settings(attachments: &[super::SqliteAttachment]) -> Result<()> {
+    let Some((problem, i)) = attachment_settings_problem(attachments) else {
+        return Ok(());
+    };
+    let alias = attachments.get(i).map(|a| a.alias.as_str()).unwrap_or("");
+    Err(AppError::InvalidInput(match problem {
+        AttachProblem::TooMany => format!(
+            "too many attached SQLite files: {} (maximum {SQLITE_MAX_ATTACHED})",
+            attachments.len()
+        ),
+        AttachProblem::InvalidAlias => format!(
+            "invalid alias for attached SQLite file: '{alias}' (use letters, digits and '_', not starting with a digit; 'main' and 'temp' are reserved)"
+        ),
+        AttachProblem::DuplicateAlias => {
+            format!("duplicate alias for attached SQLite file: '{alias}'")
+        }
+        AttachProblem::PathRequired => {
+            format!("attached SQLite file path is required (alias '{alias}')")
+        }
+    }))
 }
 
 /// `ATTACH DATABASE ?1 AS "<別名>"` 文。別名は [`is_valid_attach_alias`] で検証済みの識別子
@@ -3016,6 +3052,55 @@ mod tests {
             assert!(!is_valid_attach_alias(ng), "{ng}");
         }
         assert!(!is_valid_attach_alias(&"a".repeat(65)));
+    }
+
+    /// フロント `isValidAttachAlias` / `attachmentsProblem` と同じ共有ゴールデンで判定を固定する (#2153)。
+    #[test]
+    fn attach_rules_match_the_shared_vectors() {
+        let v: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../src/__tests__/fixtures/sqliteAttachVectors.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            v["maxAttached"].as_u64().unwrap() as usize,
+            SQLITE_MAX_ATTACHED
+        );
+        let aliases = v["aliases"].as_array().unwrap();
+        assert!(!aliases.is_empty());
+        for c in aliases {
+            let alias = c["alias"].as_str().unwrap();
+            let valid = c["valid"].as_bool().unwrap();
+            assert_eq!(is_valid_attach_alias(alias), valid, "{}", c["name"]);
+        }
+        let sets = v["sets"].as_array().unwrap();
+        assert!(!sets.is_empty());
+        for c in sets {
+            let rows: Vec<crate::db::SqliteAttachment> = c["attachments"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|a| crate::db::SqliteAttachment {
+                    path: a["path"].as_str().unwrap().to_string(),
+                    alias: a["alias"].as_str().unwrap().to_string(),
+                })
+                .collect();
+            let got = attachment_settings_problem(&rows).map(|(p, _)| match p {
+                AttachProblem::TooMany => "tooMany",
+                AttachProblem::InvalidAlias => "invalidAlias",
+                AttachProblem::DuplicateAlias => "duplicateAlias",
+                AttachProblem::PathRequired => "pathRequired",
+            });
+            assert_eq!(got, c["problem"].as_str(), "{}", c["name"]);
+            // 保存時の検証も同じ結果 (問題があれば InvalidInput)。
+            match validate_attachment_settings(&rows) {
+                Ok(()) => assert!(got.is_none(), "{}", c["name"]),
+                Err(e) => assert!(
+                    matches!(e, AppError::InvalidInput(_)) && got.is_some(),
+                    "{}",
+                    c["name"]
+                ),
+            }
+        }
     }
 
     #[test]
