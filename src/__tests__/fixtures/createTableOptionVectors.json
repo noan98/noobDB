@@ -1,0 +1,218 @@
+{
+  "_comment": "CREATE TABLE ウィザードのテーブルオプション (#2161) の共有ゴールデン。form から TS の buildCreateTableStatements が statements を生成することを tableOptions.test.ts が、statements が実 DB で通ることを src-tauri/tests の各ドライバ統合テスト (mysql / postgres / sqlite) が確かめる。statements は 1 文ずつの配列 (PostgreSQL の最初の子パーティションは 2 文目)。",
+  "cases": [
+    {
+      "name": "mysql_engine_charset_collate",
+      "driver": "mysql",
+      "form": {
+        "table": "noobdb_ct_mysql_opts",
+        "columns": [{ "name": "id", "type": "INT", "notNull": true, "primaryKey": true }],
+        "options": { "engine": "InnoDB", "charset": "utf8mb4", "collation": "utf8mb4_unicode_ci" }
+      },
+      "statements": [
+        "CREATE TABLE `noobdb_ct_mysql_opts` (\n  `id` INT NOT NULL,\n  PRIMARY KEY (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;"
+      ]
+    },
+    {
+      "name": "mysql_range_columns_string_bound",
+      "driver": "mysql",
+      "form": {
+        "table": "noobdb_ct_mysql_range_cols",
+        "columns": [
+          { "name": "id", "type": "INT", "notNull": true, "primaryKey": true },
+          { "name": "created", "type": "DATE", "notNull": true, "primaryKey": true }
+        ],
+        "options": {
+          "partition": { "method": "RANGE", "key": "created", "firstName": "p0", "to": "'2026-01-01'" }
+        }
+      },
+      "statements": [
+        "CREATE TABLE `noobdb_ct_mysql_range_cols` (\n  `id` INT NOT NULL,\n  `created` DATE NOT NULL,\n  PRIMARY KEY (`id`, `created`)\n)\nPARTITION BY RANGE COLUMNS (`created`) (\n  PARTITION `p0` VALUES LESS THAN ('2026-01-01')\n);"
+      ]
+    },
+    {
+      "name": "mysql_range_multi_column",
+      "driver": "mysql",
+      "form": {
+        "table": "noobdb_ct_mysql_range_multi",
+        "columns": [
+          { "name": "a", "type": "INT", "notNull": true, "primaryKey": true },
+          { "name": "b", "type": "INT", "notNull": true, "primaryKey": true }
+        ],
+        "options": { "partition": { "method": "RANGE", "key": "a, b", "firstName": "p0", "to": "10, 20" } }
+      },
+      "statements": [
+        "CREATE TABLE `noobdb_ct_mysql_range_multi` (\n  `a` INT NOT NULL,\n  `b` INT NOT NULL,\n  PRIMARY KEY (`a`, `b`)\n)\nPARTITION BY RANGE COLUMNS (`a`, `b`) (\n  PARTITION `p0` VALUES LESS THAN (10, 20)\n);"
+      ]
+    },
+    {
+      "name": "mysql_range_expression_maxvalue",
+      "driver": "mysql",
+      "form": {
+        "table": "noobdb_ct_mysql_range_expr",
+        "columns": [
+          { "name": "id", "type": "INT", "notNull": true, "primaryKey": true },
+          { "name": "created", "type": "DATE", "notNull": true, "primaryKey": true }
+        ],
+        "options": {
+          "partition": { "method": "RANGE", "key": "YEAR(created)", "firstName": "pmax", "to": "MAXVALUE" }
+        }
+      },
+      "statements": [
+        "CREATE TABLE `noobdb_ct_mysql_range_expr` (\n  `id` INT NOT NULL,\n  `created` DATE NOT NULL,\n  PRIMARY KEY (`id`, `created`)\n)\nPARTITION BY RANGE (YEAR(created)) (\n  PARTITION `pmax` VALUES LESS THAN MAXVALUE\n);"
+      ]
+    },
+    {
+      "name": "mysql_list",
+      "driver": "mysql",
+      "form": {
+        "table": "noobdb_ct_mysql_list",
+        "columns": [{ "name": "id", "type": "INT", "notNull": true, "primaryKey": true }],
+        "options": { "partition": { "method": "LIST", "key": "id", "firstName": "pa", "values": "1, 2, 3" } }
+      },
+      "statements": [
+        "CREATE TABLE `noobdb_ct_mysql_list` (\n  `id` INT NOT NULL,\n  PRIMARY KEY (`id`)\n)\nPARTITION BY LIST (`id`) (\n  PARTITION `pa` VALUES IN (1, 2, 3)\n);"
+      ]
+    },
+    {
+      "name": "mysql_hash",
+      "driver": "mysql",
+      "form": {
+        "table": "noobdb_ct_mysql_hash",
+        "columns": [{ "name": "id", "type": "INT", "notNull": true, "primaryKey": true }],
+        "options": { "partition": { "method": "HASH", "key": "id", "modulus": "4" } }
+      },
+      "statements": [
+        "CREATE TABLE `noobdb_ct_mysql_hash` (\n  `id` INT NOT NULL,\n  PRIMARY KEY (`id`)\n)\nPARTITION BY HASH (`id`) PARTITIONS 4;"
+      ]
+    },
+    {
+      "name": "mysql_key",
+      "driver": "mysql",
+      "form": {
+        "table": "noobdb_ct_mysql_key",
+        "columns": [{ "name": "id", "type": "INT", "notNull": true, "primaryKey": true }],
+        "options": { "partition": { "method": "KEY", "key": "id", "modulus": "4" } }
+      },
+      "statements": [
+        "CREATE TABLE `noobdb_ct_mysql_key` (\n  `id` INT NOT NULL,\n  PRIMARY KEY (`id`)\n)\nPARTITION BY KEY (`id`) PARTITIONS 4;"
+      ]
+    },
+    {
+      "name": "postgres_unlogged",
+      "driver": "postgres",
+      "form": {
+        "table": "noobdb_ct_pg_unlogged",
+        "columns": [{ "name": "id", "type": "INTEGER", "notNull": true, "primaryKey": true }],
+        "options": { "unlogged": true }
+      },
+      "statements": [
+        "CREATE UNLOGGED TABLE \"noobdb_ct_pg_unlogged\" (\n  \"id\" INTEGER NOT NULL,\n  PRIMARY KEY (\"id\")\n);"
+      ]
+    },
+    {
+      "name": "postgres_range_with_first_child",
+      "driver": "postgres",
+      "form": {
+        "table": "noobdb_ct_pg_range",
+        "columns": [
+          { "name": "id", "type": "INTEGER", "notNull": true, "primaryKey": true }
+        ],
+        "options": {
+          "partition": { "method": "RANGE", "key": "id", "firstName": "noobdb_ct_pg_range_p0", "from": "1", "to": "100" }
+        }
+      },
+      "statements": [
+        "CREATE TABLE \"noobdb_ct_pg_range\" (\n  \"id\" INTEGER NOT NULL,\n  PRIMARY KEY (\"id\")\n) PARTITION BY RANGE (\"id\");",
+        "CREATE TABLE \"noobdb_ct_pg_range_p0\" PARTITION OF \"noobdb_ct_pg_range\" FOR VALUES FROM ('1') TO ('100');"
+      ]
+    },
+    {
+      "name": "postgres_list_with_first_child",
+      "driver": "postgres",
+      "form": {
+        "table": "noobdb_ct_pg_list",
+        "columns": [{ "name": "region", "type": "TEXT", "notNull": true, "primaryKey": true }],
+        "options": {
+          "partition": { "method": "LIST", "key": "region", "firstName": "noobdb_ct_pg_list_p0", "values": "jp, us" }
+        }
+      },
+      "statements": [
+        "CREATE TABLE \"noobdb_ct_pg_list\" (\n  \"region\" TEXT NOT NULL,\n  PRIMARY KEY (\"region\")\n) PARTITION BY LIST (\"region\");",
+        "CREATE TABLE \"noobdb_ct_pg_list_p0\" PARTITION OF \"noobdb_ct_pg_list\" FOR VALUES IN ('jp', 'us');"
+      ]
+    },
+    {
+      "name": "postgres_hash_with_first_child",
+      "driver": "postgres",
+      "form": {
+        "table": "noobdb_ct_pg_hash",
+        "columns": [{ "name": "id", "type": "INTEGER", "notNull": true, "primaryKey": true }],
+        "options": {
+          "partition": { "method": "HASH", "key": "id", "firstName": "noobdb_ct_pg_hash_p0", "modulus": "2", "remainder": "0" }
+        }
+      },
+      "statements": [
+        "CREATE TABLE \"noobdb_ct_pg_hash\" (\n  \"id\" INTEGER NOT NULL,\n  PRIMARY KEY (\"id\")\n) PARTITION BY HASH (\"id\");",
+        "CREATE TABLE \"noobdb_ct_pg_hash_p0\" PARTITION OF \"noobdb_ct_pg_hash\" FOR VALUES WITH (MODULUS 2, REMAINDER 0);"
+      ]
+    },
+    {
+      "name": "postgres_parent_only",
+      "driver": "postgres",
+      "form": {
+        "table": "noobdb_ct_pg_parent_only",
+        "columns": [{ "name": "id", "type": "INTEGER", "notNull": true, "primaryKey": true }],
+        "options": { "partition": { "method": "RANGE", "key": "id" } }
+      },
+      "statements": [
+        "CREATE TABLE \"noobdb_ct_pg_parent_only\" (\n  \"id\" INTEGER NOT NULL,\n  PRIMARY KEY (\"id\")\n) PARTITION BY RANGE (\"id\");"
+      ]
+    },
+    {
+      "name": "sqlite_strict",
+      "driver": "sqlite",
+      "form": {
+        "table": "noobdb_ct_sqlite_strict",
+        "columns": [
+          { "name": "id", "type": "INTEGER", "notNull": true, "primaryKey": true, "autoIncrement": true },
+          { "name": "label", "type": "TEXT" }
+        ],
+        "options": { "strict": true }
+      },
+      "statements": [
+        "CREATE TABLE \"noobdb_ct_sqlite_strict\" (\n  \"id\" INTEGER PRIMARY KEY AUTOINCREMENT,\n  \"label\" TEXT\n) STRICT;"
+      ]
+    },
+    {
+      "name": "sqlite_without_rowid",
+      "driver": "sqlite",
+      "form": {
+        "table": "noobdb_ct_sqlite_wr",
+        "columns": [
+          { "name": "k", "type": "TEXT", "notNull": true, "primaryKey": true },
+          { "name": "v", "type": "INTEGER" }
+        ],
+        "options": { "withoutRowid": true }
+      },
+      "statements": [
+        "CREATE TABLE \"noobdb_ct_sqlite_wr\" (\n  \"k\" TEXT NOT NULL,\n  \"v\" INTEGER,\n  PRIMARY KEY (\"k\")\n) WITHOUT ROWID;"
+      ]
+    },
+    {
+      "name": "sqlite_strict_without_rowid",
+      "driver": "sqlite",
+      "form": {
+        "table": "noobdb_ct_sqlite_both",
+        "columns": [
+          { "name": "k", "type": "TEXT", "notNull": true, "primaryKey": true },
+          { "name": "v", "type": "INTEGER" }
+        ],
+        "options": { "strict": true, "withoutRowid": true }
+      },
+      "statements": [
+        "CREATE TABLE \"noobdb_ct_sqlite_both\" (\n  \"k\" TEXT NOT NULL,\n  \"v\" INTEGER,\n  PRIMARY KEY (\"k\")\n) STRICT, WITHOUT ROWID;"
+      ]
+    }
+  ]
+}

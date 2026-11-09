@@ -588,3 +588,45 @@ async fn teardown(session: &Arc<t::Session>, lock: &LockSql) {
             .unwrap_or_else(|e| panic!("{stmt}: {e}"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// CREATE TABLE ウィザードのテーブルオプション (#2161) の共有ゴールデン
+//
+// `src/__tests__/fixtures/createTableOptionVectors.json` の `statements` は、フロントの
+// `buildCreateTableStatements` の出力と一致することを Vitest が固定している。各ドライバの
+// 統合テストが同じ文を実 DB へ流し、生成した DDL が通ることを確かめる。
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+pub struct CreateTableCase {
+    pub name: String,
+    pub driver: String,
+    pub form: CreateTableForm,
+    pub statements: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct CreateTableForm {
+    pub table: String,
+}
+
+#[derive(serde::Deserialize)]
+struct CreateTableVectors {
+    cases: Vec<CreateTableCase>,
+}
+
+const CREATE_TABLE_VECTORS_JSON: &str =
+    include_str!("../../../src/__tests__/fixtures/createTableOptionVectors.json");
+
+/// 指定ドライバのケースだけを返す。
+pub fn create_table_cases(driver: &str) -> Vec<CreateTableCase> {
+    let vectors: CreateTableVectors =
+        serde_json::from_str(CREATE_TABLE_VECTORS_JSON).expect("createTableOptionVectors.json");
+    let cases: Vec<CreateTableCase> = vectors
+        .cases
+        .into_iter()
+        .filter(|c| c.driver == driver)
+        .collect();
+    assert!(!cases.is_empty(), "no cases for driver {driver}");
+    cases
+}

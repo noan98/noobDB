@@ -15,6 +15,12 @@ import {
   type CheckDef,
   type ForeignKeyDef,
 } from "./tableConstraints";
+import {
+  tableOptionExtraStatements,
+  tableOptionSuffix,
+  usesUnlogged,
+  type TableOptions,
+} from "./tableOptions";
 
 export interface ColumnDef {
   name: string;
@@ -121,6 +127,12 @@ export interface CreateTableForm {
   foreignKeys?: ForeignKeyDef[];
   /** CHECK 制約 (#1191)。式が空の行は無視する。 */
   checks?: CheckDef[];
+  /**
+   * テーブルオプション (#2161): MySQL の ENGINE / CHARSET / COLLATE・PostgreSQL の UNLOGGED・
+   * SQLite の STRICT / WITHOUT ROWID・パーティション表。省略は従来どおり何も付けない。
+   * 入力の不備は `tableOptionProblems` が返す (SQL 生成は検証済みの前提)。
+   */
+  options?: TableOptions;
 }
 
 const NUMERIC_TYPE_RE =
@@ -216,14 +228,25 @@ export function formatDefault(
  * (UI 側でバリデーション)。SQLite の `INTEGER PRIMARY KEY AUTOINCREMENT` 特殊形に対応。
  */
 export function buildCreateTableSql(driver: string, form: CreateTableForm): string {
+  return buildCreateTableStatements(driver, form).join("\n");
+}
+
+/**
+ * [`buildCreateTableSql`] を文ごとの配列で返す。PostgreSQL の最初の子パーティションは親の後ろの
+ * 別の文になる。PostgreSQL の実行経路 (拡張プロトコル) は 1 回に 1 文しか受け付けないので、
+ * 実行は文の配列を `run_query_transaction` に渡す (#2161)。
+ */
+export function buildCreateTableStatements(driver: string, form: CreateTableForm): string[] {
   const cols = form.columns;
   // 生成列は主キー・自動採番にできない (#1893)。指定されていても無視する。
   const pkCols = cols.filter((c) => c.primaryKey && !activeGenerated(c));
 
   // SQLite の AUTOINCREMENT は単一 INTEGER PRIMARY KEY のときだけ有効。その場合は
   // インライン宣言にし、テーブルレベルの PRIMARY KEY 制約は付けない。
+  // WITHOUT ROWID の表では AUTOINCREMENT を使えないので、この特殊形にしない (#2161)。
   const sqliteAutoPk =
     driver === "sqlite" &&
+    !form.options?.withoutRowid &&
     pkCols.length === 1 &&
     pkCols[0].autoIncrement &&
     cols.filter((c) => c.autoIncrement && !activeGenerated(c)).length === 1;
@@ -245,7 +268,13 @@ export function buildCreateTableSql(driver: string, form: CreateTableForm): stri
   }
 
   const name = qualifiedTableName(driver, form.database, form.table);
-  return `CREATE TABLE ${name} (\n  ${lines.join(",\n  ")}\n);`;
+  const opts = form.options;
+  const unlogged = opts && usesUnlogged(driver, opts) ? "UNLOGGED " : "";
+  const suffix = opts ? tableOptionSuffix(driver, cols, opts) : "";
+  const create = `CREATE ${unlogged}TABLE ${name} (\n  ${lines.join(",\n  ")}\n)${suffix};`;
+  // PostgreSQL の最初の子パーティションは、親の後ろの別の文になる。
+  const extra = opts ? tableOptionExtraStatements(driver, form.database, form.table, opts) : [];
+  return [create, ...extra];
 }
 
 function columnLine(driver: string, col: ColumnDef, opts: { sqliteAutoPk: boolean }): string {

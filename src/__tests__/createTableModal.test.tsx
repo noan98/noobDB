@@ -213,3 +213,84 @@ describe("CreateTableModal 動的行の出入り (#2014)", () => {
     await waitFor(() => expect(screen.queryAllByLabelText(t("constraintCheckExpr"))).toHaveLength(0));
   });
 });
+
+describe("CreateTableModal テーブルオプション (#2161)", () => {
+  const renderFor = (driver: "mysql" | "postgres" | "sqlite") =>
+    renderWithProviders(
+      <CreateTableModal
+        driver={driver}
+        database={driver === "mysql" ? "appdb" : null}
+        readOnly={false}
+        onRun={() => {}}
+        onSendToEditor={() => {}}
+        onClose={() => {}}
+      />,
+    );
+  const fillName = () =>
+    fireEvent.change(screen.getByLabelText(t("createTableName")), { target: { value: "ev" } });
+
+  it("MySQL: ENGINE / CHARSET が CREATE 文の末尾へ反映される", () => {
+    renderFor("mysql");
+    fillName();
+    fireEvent.change(screen.getByLabelText("ENGINE"), { target: { value: "InnoDB" } });
+    fireEvent.change(screen.getByLabelText("CHARSET"), { target: { value: "utf8mb4" } });
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent(/ENGINE=InnoDB/);
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent(/CHARSET=utf8mb4/);
+  });
+
+  it("PostgreSQL: UNLOGGED を入れると CREATE UNLOGGED TABLE になる", () => {
+    renderFor("postgres");
+    fillName();
+    fireEvent.click(screen.getByLabelText("UNLOGGED"));
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent(/CREATE UNLOGGED TABLE/);
+  });
+
+  it("SQLite: STRICT で非対応の型の列があるとエラーを出す", () => {
+    renderFor("sqlite");
+    fillName();
+    fireEvent.change(screen.getAllByLabelText(new RegExp(`^${t("createTableColName")} \\(`))[0], {
+      target: { value: "a" },
+    });
+    fireEvent.click(screen.getByLabelText("STRICT"));
+    fireEvent.change(screen.getByLabelText("Type (1)"), { target: { value: "VARCHAR(10)" } });
+    expect(screen.getByText(/STRICT tables allow only/)).toBeInTheDocument();
+  });
+
+  it("PostgreSQL: 最初の子パーティションを指定すると、onRun に親と子の 2 文を配列で渡す", () => {
+    const onRun = vi.fn();
+    renderWithProviders(
+      <CreateTableModal
+        driver="postgres"
+        database={null}
+        readOnly={false}
+        onRun={onRun}
+        onSendToEditor={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    fillName();
+    fireEvent.change(screen.getAllByLabelText(new RegExp(`^${t("createTableColName")} \\(`))[0], {
+      target: { value: "id" },
+    });
+    fireEvent.click(screen.getByLabelText(t("createTableOptPartition")));
+    fireEvent.change(document.getElementById("create-table-part-key") as HTMLInputElement, {
+      target: { value: "id" },
+    });
+    fireEvent.change(document.getElementById("create-table-part-first") as HTMLInputElement, {
+      target: { value: "ev_p0" },
+    });
+    fireEvent.change(document.getElementById("create-table-part-from") as HTMLInputElement, {
+      target: { value: "1" },
+    });
+    fireEvent.change(document.getElementById("create-table-part-to") as HTMLInputElement, {
+      target: { value: "100" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: t("createTableRun") }));
+    expect(onRun).toHaveBeenCalledOnce();
+    const [sql, statements] = onRun.mock.calls[0] as [string, string[]];
+    expect(statements).toHaveLength(2);
+    expect(statements[0]).toContain("PARTITION BY RANGE");
+    expect(statements[1]).toContain('PARTITION OF "ev"');
+    expect(sql).toBe(statements.join("\n"));
+  });
+});
