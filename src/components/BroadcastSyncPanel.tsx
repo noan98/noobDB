@@ -5,7 +5,8 @@ import type { SyncPlan } from "../api/tauri";
 import { useT } from "../i18n";
 import { copyToClipboard } from "./clipboard";
 import { Callout } from "./Callout";
-import { CodePreview, ErrorNote } from "./modalForm";
+import { ErrorNote } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { Button, Checkbox } from "./ui";
 import { useToast } from "./Toast";
 
@@ -94,9 +95,7 @@ export function BroadcastSyncPanel({
             </chakra.p>
           ) : (
             <>
-              <CodePreview maxHeight="200px" aria-label={t("broadcastSyncPreviewLabel")}>
-                {text}
-              </CodePreview>
+              <SqlPreview sql={text} maxHeight="200px" aria-label={t("broadcastSyncPreviewLabel")} />
               <Flex align="center" gap="2">
                 <chakra.span textStyle="caption" color="app.textMuted">
                   {t("broadcastSyncCount", { count: plan.statements.length })}

@@ -52,7 +52,9 @@ describe("PolicyModal", () => {
     await user.type(screen.getByLabelText(t("policyName")), "own_rows");
     await user.type(screen.getByLabelText(t("policyUsing")), "owner = current_user");
     await waitFor(() =>
-      expect(screen.getByText(/ALTER TABLE "public"."plain" ENABLE ROW LEVEL SECURITY;/)).toBeInTheDocument(),
+      expect(screen.getByTestId("sql-preview")).toHaveTextContent(
+        /ALTER TABLE "public"."plain" ENABLE ROW LEVEL SECURITY;/,
+      ),
     );
     await user.click(screen.getByRole("button", { name: t("policyConfirm") }));
     expect(onConfirm).toHaveBeenCalledWith(
@@ -70,8 +72,8 @@ describe("PolicyModal", () => {
     await waitFor(() => expect(screen.getByLabelText(t("policyName"))).toBeEnabled());
     expect(screen.getByText(t("policyRlsAlreadyOn"))).toBeInTheDocument();
     await user.type(screen.getByLabelText(t("policyName")), "p1");
-    expect(screen.queryByText(/ENABLE ROW LEVEL SECURITY/)).not.toBeInTheDocument();
-    expect(screen.getByText(/CREATE POLICY "p1" ON "public"."docs"/)).toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).not.toHaveTextContent(/ENABLE ROW LEVEL SECURITY/);
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent(/CREATE POLICY "p1" ON "public"."docs"/);
     await user.click(screen.getByLabelText(t("policyTable")));
     expect(screen.queryByRole("option", { name: "v_docs" })).not.toBeInTheDocument();
   });
@@ -94,13 +96,13 @@ describe("PolicyModal", () => {
     await waitFor(() => expect(screen.getByLabelText(t("policyName"))).toBeEnabled());
     await user.type(screen.getByLabelText(t("policyName")), "ins");
     await user.type(screen.getByLabelText(t("policyUsing")), "a = 1");
-    expect(screen.getByText(/USING \(a = 1\)/)).toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent(/USING \(a = 1\)/);
     chooseListboxOption(screen.getByLabelText(t("policyCommand")), "INSERT");
     await waitFor(() => expect(screen.getByLabelText(t("policyUsing"))).toBeDisabled());
     await user.type(screen.getByLabelText(t("policyWithCheck")), "id > 0");
-    expect(screen.getByText(/FOR INSERT/)).toBeInTheDocument();
-    expect(screen.getByText(/WITH CHECK \(id > 0\)/)).toBeInTheDocument();
-    expect(screen.queryByText(/USING \(a = 1\)/)).not.toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent(/FOR INSERT/);
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent(/WITH CHECK \(id > 0\)/);
+    expect(screen.getByTestId("sql-preview")).not.toHaveTextContent(/USING \(a = 1\)/);
   });
 
   it("read_only では警告を出して確定できない", async () => {

@@ -235,6 +235,50 @@ describe("design tokens: 等幅数字 (#1072)", () => {
   });
 });
 
+describe("design tokens: SQL のプレビューは SqlPreview (#2178)", () => {
+  // `CodePreview` の子に sql / statements / ddl を含む式を渡している箇所のベースライン。SQL は
+  // エディタと同じ配色で色分けする `SqlPreview` に渡す (SQL 以外 — CSV / JSON / シェルコマンド /
+  // フィンガープリント — は CodePreview のまま)。ここに残るのは移行待ちの箇所だけ。増やすのは禁止、
+  // 減らしたらベースラインも下げる。
+  const SQL_IN_CODE_PREVIEW_BASELINE = new Map<string, number>([["../components/ExtensionsModal.tsx", 1]]);
+
+  const CODE_PREVIEW = /<CodePreview\b(?:[^>=]|=(?!>))*>([\s\S]*?)<\/CodePreview>/g;
+  function countSqlInCodePreview(content: string): number {
+    let n = 0;
+    for (const m of content.matchAll(CODE_PREVIEW)) {
+      // 文字列リテラル (i18n キーなど) は式ではないので除いてから判定する。
+      const expr = (m[1] ?? "").replace(/"[^"]*"|'[^']*'/g, "");
+      if (/sql|statements|ddl/i.test(expr)) n += 1;
+    }
+    return n;
+  }
+
+  it("CodePreview に SQL を渡す箇所を増やさず、減ったらベースラインも下げる", () => {
+    const counts = new Map<string, number>();
+    for (const [path, content] of sources) {
+      if (!path.startsWith("../components/")) continue;
+      const n = countSqlInCodePreview(content);
+      if (n > 0) counts.set(path, n);
+    }
+    const paths = new Set([...counts.keys(), ...SQL_IN_CODE_PREVIEW_BASELINE.keys()]);
+    const offenders: string[] = [];
+    for (const path of paths) {
+      const n = counts.get(path) ?? 0;
+      const allowed = SQL_IN_CODE_PREVIEW_BASELINE.get(path) ?? 0;
+      if (n > allowed) offenders.push(`${toDisplayPath(path)}: ${n} 箇所 (許容 ${allowed})`);
+      else if (n < allowed)
+        offenders.push(
+          `${toDisplayPath(path)}: ${n} 箇所に減った。ベースラインを ${n} へ下げてください (許容 ${allowed})`,
+        );
+    }
+    expect(
+      offenders,
+      "SQL (DDL / DML) は CodePreview ではなく SqlPreview (sql と driver を渡す) で表示する。" +
+        "SQL 以外のコードだけ CodePreview。移行したらベースラインも下げる。",
+    ).toEqual([]);
+  });
+});
+
 describe("design tokens: 本文 / 補足の textStyle (#1392)", () => {
   // 手書き caption (`fontSize="xs"` + `color="app.textMuted"`) の残存数のベースライン。
   // theme.ts の textStyles.caption (xs / snug / textMuted) と同じ組み合わせを

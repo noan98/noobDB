@@ -138,8 +138,8 @@ describe("TableStructurePanel (#1112)", () => {
     ]);
     renderPanel();
     expect(await screen.findByText("trg_audit")).toBeInTheDocument();
-    expect(screen.getByText("AFTER")).toBeInTheDocument();
-    expect(screen.getByText("UPDATE")).toBeInTheDocument();
+    expect(screen.getAllByText("AFTER").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("UPDATE").length).toBeGreaterThan(0);
     expect(screen.getByText(t("structureTriggerNote"))).toBeInTheDocument();
     expect(screen.getByText(t("structureTriggerDisabled"))).toBeInTheDocument();
   });
@@ -196,7 +196,9 @@ describe("TableStructurePanel (#1112)", () => {
     const show = await screen.findByRole("button", { name: t("structureDdlShow") });
     expect(api.getObjectDefinition).not.toHaveBeenCalled();
     fireEvent.click(show);
-    expect(await screen.findByText("CREATE TABLE `orders` (`id` int)")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("sql-preview")).toHaveTextContent("CREATE TABLE `orders` (`id` int)"),
+    );
     expect(api.getObjectDefinition).toHaveBeenCalledWith("s1", "app", "table", "orders", null);
     expect(screen.getByRole("button", { name: t("structureDdlCopy") })).toBeInTheDocument();
     // MySQL はネイティブ出力なので「再構成」の注記は出さない。
@@ -217,11 +219,13 @@ describe("TableStructurePanel (#1112)", () => {
     fireEvent.click(await screen.findByRole("button", { name: t("structureDdlShow") }));
     rerender(<TableStructurePanel {...props} target={{ database: "app", table: "items" }} />);
     fireEvent.click(await screen.findByRole("button", { name: t("structureDdlShow") }));
-    expect(await screen.findByText("CREATE TABLE `items` (`id` int)")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("sql-preview")).toHaveTextContent("CREATE TABLE `items` (`id` int)"),
+    );
     resolveA("CREATE TABLE `orders` (`id` int)");
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.queryByText("CREATE TABLE `orders` (`id` int)")).not.toBeInTheDocument();
-    expect(screen.getByText("CREATE TABLE `items` (`id` int)")).toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent("CREATE TABLE `items` (`id` int)");
   });
 
   it("DDL の取得に失敗したらエラーを出し、再度試せる (#1540)", async () => {

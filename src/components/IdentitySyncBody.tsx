@@ -3,7 +3,8 @@ import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { Callout } from "./Callout";
 import { identitySyncPreview } from "./identitySync";
-import { CodePreview, FieldError } from "./modalForm";
+import { FieldError } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { Switch } from "./ui";
 
 interface Props {
@@ -70,7 +71,7 @@ export function IdentitySyncBody({
           <br />
         </>
       )}
-      <CodePreview minH="10">{buildSql(lower) ?? ""}</CodePreview>
+      <SqlPreview sql={buildSql(lower) ?? ""} driver={stats?.driver} minH="10" />
       {unavailable && !lower && <FieldError>{unavailable}</FieldError>}
     </>
   );

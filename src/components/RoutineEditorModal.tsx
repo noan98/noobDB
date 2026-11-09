@@ -15,7 +15,8 @@ import { useConfirm } from "./ConfirmDialog";
 import { Callout } from "./Callout";
 import { DiffView } from "./AiSqlDiff";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
+import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { Button, PressableButton, Textarea } from "./ui";
 
 /**
@@ -124,7 +125,7 @@ export function RoutineEditorModal({
         message: (
           <>
             {t("routineEditConfirmBody", { name: name ?? "" })}
-            {diff && diffChanged && <DiffView lines={diff} />}
+            {diff && diffChanged && <DiffView lines={diff} driver={driver} />}
           </>
         ),
         confirmLabel: t("routineEditConfirmApply"),
@@ -214,7 +215,7 @@ export function RoutineEditorModal({
             <FormSection>
               <FieldLabel as="div">{t("routineEditDiffLabel")}</FieldLabel>
               {diffChanged ? (
-                <DiffView lines={diff} />
+                <DiffView lines={diff} driver={driver} />
               ) : (
                 <chakra.span color="app.textMuted" textStyle="caption" data-testid="routine-diff-none">
                   {t("routineEditDiffNone")}
@@ -225,9 +226,7 @@ export function RoutineEditorModal({
           {built.ok && (
             <FormSection>
               <FieldLabel as="div">{t("routineEditPreviewLabel")}</FieldLabel>
-              <CodePreview minH="60px" maxH="200px">
-                {built.statements.join("\n")}
-              </CodePreview>
+              <SqlPreview sql={built.statements.join("\n")} driver={driver} minH="60px" maxH="200px" />
             </FormSection>
           )}
           {error && <ErrorNote role="alert">{error}</ErrorNote>}

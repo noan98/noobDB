@@ -22,6 +22,7 @@ import { Button } from "./ui";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { DiffView } from "./AiSqlDiff";
 import { AiSurface } from "./AiSurface";
 import { AiStreamProgress } from "./AiStreamProgress";
@@ -205,6 +206,7 @@ export function AiErrorExplain(props: AiErrorExplainProps) {
           <Section label={t("aiErrorExplainCause")}>{state.value.cause}</Section>
           {state.value.suggestedSql && (
             <SuggestedFix
+              driver={props.driver}
               original={props.sql}
               suggested={state.value.suggestedSql}
               masked={state.masked}
@@ -258,12 +260,14 @@ export function AiErrorExplain(props: AiErrorExplainProps) {
  * 個数と並びが合うときだけ元の値へ差し戻す)。自動実行はしない。
  */
 function SuggestedFix({
+  driver,
   original,
   suggested,
   masked,
   applied,
   onApply,
 }: {
+  driver: string;
   original: string;
   suggested: string;
   masked: boolean;
@@ -287,11 +291,9 @@ function SuggestedFix({
         </Callout>
       )}
       {showFull ? (
-        <CodePreview wrap maxH="160px" data-testid="ai-error-fix-full">
-          {fix.sql}
-        </CodePreview>
+        <SqlPreview sql={fix.sql} driver={driver} wrap maxH="160px" data-testid="ai-error-fix-full" />
       ) : fix.changed ? (
-        <DiffView lines={fix.lines} />
+        <DiffView lines={fix.lines} driver={driver} />
       ) : (
         <Callout tone="info" role="status">
           {t("aiSqlNoChange")}

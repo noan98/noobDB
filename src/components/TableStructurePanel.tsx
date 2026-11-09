@@ -23,7 +23,8 @@ import { kindOfDataType, TypeGlyph } from "./TypeGlyph";
 import { Button } from "./ui";
 import { CopyButton } from "./CopyButton";
 import { AttachPartitionModal } from "./AttachPartitionModal";
-import { CodePreview, FieldError } from "./modalForm";
+import { FieldError } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { useCopyFeedback } from "./useCopyFeedback";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import {
@@ -751,9 +752,12 @@ export function TableStructurePanel({
                               <summary style={{ cursor: "pointer" }}>
                                 {t("structureTriggerShowDefinition")}
                               </summary>
-                              <CodePreview maxH="160px" aria-label={tr.name}>
-                                {tr.definition}
-                              </CodePreview>
+                              <SqlPreview
+                                sql={tr.definition}
+                                driver={driver}
+                                maxH="160px"
+                                aria-label={tr.name}
+                              />
                             </details>
                           )}
                         </chakra.td>
@@ -943,9 +947,7 @@ export function TableStructurePanel({
                 )}
                 {ddl.kind === "ready" && (
                   <>
-                    <CodePreview maxH="320px" aria-label={t("structureDdl")}>
-                      {ddl.ddl}
-                    </CodePreview>
+                    <SqlPreview sql={ddl.ddl} driver={driver} maxH="320px" aria-label={t("structureDdl")} />
                     {isSynthesizedTableDdl(driver) && (
                       <chakra.div textStyle="caption">{t("tableDdlSynthesizedHint")}</chakra.div>
                     )}

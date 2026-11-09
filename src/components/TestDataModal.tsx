@@ -43,6 +43,7 @@ import { Spinner } from "./Spinner";
 import { LoadingButton } from "./LoadingButton";
 import { Callout } from "./Callout";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { useToast } from "./Toast";
 import { useConfirm } from "./ConfirmDialog";
 import { Tooltip } from "./Tooltip";
@@ -919,7 +920,7 @@ export function TestDataModal({
         {createNew && ddl && (
           <FormSection>
             <FieldLabel as="div">{t("importNewTableDdl")}</FieldLabel>
-            <CodePreview maxH="160px">{ddl}</CodePreview>
+            <SqlPreview sql={ddl} driver={driver} maxH="160px" />
           </FormSection>
         )}
 

@@ -27,7 +27,7 @@ import { AiAdvisorExplain } from "./AiAdvisorExplain";
 import { SeverityBadge } from "./severityBadge";
 import { Callout } from "./Callout";
 import { formatBytes } from "./tableSize";
-import { CodePreview } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -448,6 +448,7 @@ export function AdvisorPanel({
                   </chakra.span>
                 </chakra.div>
                 <FixDdlBlock
+                  driver={report?.driver}
                   ddl={p.ddl}
                   label={p.ddl_online ? t("advisorFixStandard") : null}
                   note={p.ddl_online ? t("advisorFixStandardNote") : null}
@@ -456,6 +457,7 @@ export function AdvisorPanel({
                 />
                 {p.ddl_online && (
                   <FixDdlBlock
+                    driver={report?.driver}
                     ddl={p.ddl_online}
                     label={t("advisorFixOnline")}
                     note={
@@ -532,6 +534,7 @@ export function AdvisorPanel({
                         )}
                         {f.fix_ddl && (
                           <FixDdlBlock
+                            driver={report?.driver}
                             ddl={f.fix_ddl}
                             label={f.fix_ddl_online ? t("advisorFixStandard") : null}
                             note={f.fix_ddl_online ? t("advisorFixStandardNote") : null}
@@ -541,6 +544,7 @@ export function AdvisorPanel({
                         )}
                         {f.fix_ddl_online && (
                           <FixDdlBlock
+                            driver={report?.driver}
                             ddl={f.fix_ddl_online}
                             label={t("advisorFixOnline")}
                             note={
@@ -660,12 +664,14 @@ export function AdvisorPanel({
 /** 修正 DDL 1 本ぶんの表示 (コードプレビュー + エディタへ挿入 / コピー)。通常版とオンライン版
  *  (#1534) を並べるときは `label` / `note` で違いを説明する。 */
 function FixDdlBlock({
+  driver,
   ddl,
   label,
   note,
   onInsert,
   onCopy,
 }: {
+  driver?: string;
   ddl: string;
   label: string | null;
   note: string | null;
@@ -680,7 +686,7 @@ function FixDdlBlock({
           {label}
         </chakra.div>
       )}
-      <CodePreview wrap>{ddl}</CodePreview>
+      <SqlPreview sql={ddl} driver={driver} wrap />
       {note && (
         <chakra.div fontSize="var(--text-xs)" color="app.textMuted" marginTop="1" lineHeight={1.5}>
           {note}

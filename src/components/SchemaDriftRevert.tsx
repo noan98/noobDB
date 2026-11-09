@@ -6,7 +6,8 @@ import { useT } from "../i18n";
 import { Callout } from "./Callout";
 import { CopyButton } from "./CopyButton";
 import { Icon, ICON_SIZES } from "./Icon";
-import { CodePreview, ErrorNote } from "./modalForm";
+import { ErrorNote } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { Spinner } from "./Spinner";
 import { Button, Switch } from "./ui";
 import { useCopyFeedback } from "./useCopyFeedback";
@@ -124,9 +125,7 @@ export function SchemaDriftRevert({
                   {t("schemaDriftRevertDestructiveNote")}
                 </Callout>
               )}
-              <CodePreview maxH="220px" data-testid="schema-drift-revert-sql">
-                {sql}
-              </CodePreview>
+              <SqlPreview sql={sql} maxH="220px" data-testid="schema-drift-revert-sql" />
               <Flex gap="2" justify="flex-end">
                 <CopyButton
                   copied={copied}

@@ -42,6 +42,7 @@ import { Tooltip } from "./Tooltip";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
 import { DiffView } from "./AiSqlDiff";
 import { AiSurface } from "./AiSurface";
@@ -440,9 +441,7 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
       )}
       <Flex direction="column" gap="1">
         <FieldLabel as="div">{request.range ? t("aiSqlSourceSelection") : t("aiSqlSourceAll")}</FieldLabel>
-        <CodePreview wrap maxH="120px">
-          {request.sql}
-        </CodePreview>
+        <SqlPreview sql={request.sql} driver={props.driver} wrap maxH="120px" />
       </Flex>
       {state.kind === "explain" && <ExplainResult value={state.value} />}
       {state.kind === "rewrite" && (

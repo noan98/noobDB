@@ -34,11 +34,11 @@ describe("SchemaObjectDiff (#1879)", () => {
         ])}
       />,
     );
-    expect(screen.getByText("v_orders")).toBeInTheDocument();
+    expect(screen.getAllByText("v_orders").length).toBeGreaterThan(0);
     expect(screen.getByText("trg_a")).toBeInTheDocument();
     expect(screen.queryByText("v_same")).not.toBeInTheDocument();
-    expect(screen.getByText("CREATE VIEW v_orders AS select 1")).toBeInTheDocument();
-    expect(screen.getByText("CREATE VIEW v_orders AS select 2")).toBeInTheDocument();
+    expect(screen.getAllByTestId("sql-preview")[0]).toHaveTextContent("CREATE VIEW v_orders AS select 1");
+    expect(screen.getAllByTestId("sql-preview")[1]).toHaveTextContent("CREATE VIEW v_orders AS select 2");
   });
 
   it("開閉できる行は aria-expanded で畳める", async () => {
@@ -59,7 +59,7 @@ describe("SchemaObjectDiff (#1879)", () => {
     );
     const row = screen.getByRole("button", { expanded: false });
     await user.click(row);
-    expect(screen.getByText("CREATE SEQUENCE seq")).toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent("CREATE SEQUENCE seq");
   });
 
   it("SQLite では存在しない種別を理由付きで「対象外」と表示する", () => {

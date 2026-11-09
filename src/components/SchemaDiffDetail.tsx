@@ -19,7 +19,7 @@ import type {
 import { useLocale, useT } from "../i18n";
 import { transitions, variants } from "../motion";
 import { statusColors } from "./diffStatusColors";
-import { CodePreview } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { prefersStaticMotion } from "./revealOrigin";
 import { RevealTbody } from "./RevealTbody";
 import { SkeletonTableRows } from "./Skeleton";
@@ -808,9 +808,7 @@ export const TableDiffDetail = memo(function TableDiffDetail({
                       {t("schemaCompareTableSqlDestructive", { count: destructive })}
                     </chakra.p>
                   )}
-                  <CodePreview wrap fontSize="xs" maxH="240px">
-                    {statements.map((s) => s.sql).join("\n")}
-                  </CodePreview>
+                  <SqlPreview sql={statements.map((s) => s.sql).join("\n")} wrap fontSize="xs" maxH="240px" />
                 </>
               )}
             </MotionDiv>

@@ -13,7 +13,8 @@ import {
 } from "./resultsToTable";
 import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { FieldError, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { isPlainEnterKey } from "./modalKeys";
 import { Button, Input, PressableButton } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
@@ -245,7 +246,7 @@ export function SaveAsTableModal({
 
         <FormSection>
           <FieldLabel as="div">{t("saveAsTablePreview")}</FieldLabel>
-          <CodePreview minH="60px">{sql || t("saveAsTablePreviewEmpty")}</CodePreview>
+          <SqlPreview sql={sql} driver={driver} empty={t("saveAsTablePreviewEmpty")} minH="60px" />
         </FormSection>
       </ModalBody>
       <ModalFooter>

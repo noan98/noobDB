@@ -22,6 +22,7 @@ import { copyToClipboard } from "./clipboard";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { CodePreview } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { clockTime, FilterChip, LogToolbar } from "./SeverityLog";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
@@ -240,9 +241,7 @@ function OutputRow({
       </chakra.button>
       {expanded && (
         <Flex id={detailsId} direction="column" gap="2" px="2.5" pb="2.5" pl="8">
-          <CodePreview wrap maxH="200px">
-            {entry.sql}
-          </CodePreview>
+          <SqlPreview sql={entry.sql} wrap maxH="200px" />
           {truncated && (
             <chakra.span textStyle="caption">
               {t("outputSqlTruncated", { kept: entry.sql.length, total: entry.sqlLength })}

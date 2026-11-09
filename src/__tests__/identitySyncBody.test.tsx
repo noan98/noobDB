@@ -15,9 +15,9 @@ describe("IdentitySyncBody (#1602)", () => {
         onLowerChange={(l) => seen.push(l)}
       />,
     );
-    expect(screen.getByText("KEEP SQL")).toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent("KEEP SQL");
     fireEvent.click(screen.getByRole("switch"));
-    expect(screen.getByText("LOWER SQL")).toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent("LOWER SQL");
     expect(seen).toEqual([true]);
   });
 

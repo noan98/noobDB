@@ -28,7 +28,8 @@ import { ListboxSelect } from "./ListboxSelect";
 import { ImportColumnMapping } from "./ImportColumnMapping";
 import { Spinner } from "./Spinner";
 import { LoadingButton } from "./LoadingButton";
-import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection, PathRow } from "./modalForm";
+import { ErrorNote, FieldError, FieldLabel, FormSection, PathRow } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { buildImportTemplate, templateSettings, templateToMapping } from "./importTemplate";
 import { defaultKeyColumns, pruneKeyColumns, toggleKeyColumn, validateConflictKeys } from "./importConflict";
 import {
@@ -1290,11 +1291,7 @@ export function ImportModal({
         {createNew && (ddl || ddlError) && (
           <FormSection>
             <FieldLabel as="div">{t("importNewTableDdl")}</FieldLabel>
-            {ddl && (
-              <CodePreview maxH="160px" data-testid="import-new-table-ddl">
-                {ddl}
-              </CodePreview>
-            )}
+            {ddl && <SqlPreview sql={ddl} driver={driver} maxH="160px" data-testid="import-new-table-ddl" />}
             {ddlError && <ErrorNote>{ddlError}</ErrorNote>}
             {errorMode === "abort" && (
               <chakra.div textStyle="caption">{t("importNewTableAbortHint")}</chakra.div>

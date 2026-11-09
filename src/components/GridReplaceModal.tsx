@@ -13,7 +13,8 @@ import {
 } from "./columnReplace";
 import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { FieldError, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { buildServerFilterClause, type ServerFilter } from "./serverBrowse";
 import { Button, Checkbox, Input, Radio } from "./ui";
 import { useCountPreviews } from "../useCountPreviews";
@@ -332,9 +333,14 @@ export function GridReplaceModal({
             )}
             <FormSection>
               <FieldLabel as="div">{t("gridReplacePreview")}</FieldLabel>
-              <CodePreview minH="60px" maxH="160px" wrap>
-                {columnSql?.ok ? columnSql.sql : t("gridReplacePreviewEmpty")}
-              </CodePreview>
+              <SqlPreview
+                sql={columnSql?.ok ? columnSql.sql : ""}
+                driver={driver}
+                empty={t("gridReplacePreviewEmpty")}
+                minH="60px"
+                maxH="160px"
+                wrap
+              />
             </FormSection>
             {countSql && runCount && textColumn && (
               <Callout

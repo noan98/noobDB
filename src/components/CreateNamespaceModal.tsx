@@ -10,7 +10,8 @@ import {
   type NamespaceKind,
 } from "./databaseMaintenance";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { FieldError, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { Button, Input, PressableButton } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
 
@@ -135,7 +136,7 @@ export function CreateNamespaceModal({
         )}
         <FormSection>
           <FieldLabel as="div">{t("createTablePreview")}</FieldLabel>
-          <CodePreview minH="48px">{sql || t("createNamespacePreviewEmpty")}</CodePreview>
+          <SqlPreview sql={sql} driver={driver} empty={t("createNamespacePreviewEmpty")} minH="48px" />
         </FormSection>
         {readOnly && <FieldError>{t("createTableReadOnly")}</FieldError>}
       </ModalBody>

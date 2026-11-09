@@ -46,7 +46,8 @@ import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import { LoadingButton } from "./LoadingButton";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
-import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection, PathRow } from "./modalForm";
+import { ErrorNote, FieldError, FieldLabel, FormSection, PathRow } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { TaskMaintenanceKindPicker } from "./TaskMaintenanceKindPicker";
 import {
   buildTaskMaintenanceStatements,
@@ -1465,9 +1466,12 @@ function TaskForm({
           {"sql" in maintenanceBuild && (
             <FormSection>
               <FieldLabel as="div">{t("taskMaintPreviewLabel")}</FieldLabel>
-              <CodePreview maxH="48" data-testid="task-maint-preview">
-                {maintenanceBuild.sql.join("\n")}
-              </CodePreview>
+              <SqlPreview
+                sql={maintenanceBuild.sql.join("\n")}
+                driver={selectedProfile?.driver}
+                maxH="48"
+                data-testid="task-maint-preview"
+              />
             </FormSection>
           )}
         </>

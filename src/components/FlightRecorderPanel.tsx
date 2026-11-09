@@ -8,7 +8,7 @@ import { useT } from "../i18n";
 import { EmptyState } from "./EmptyState";
 import { NoResultsIllustration } from "./illustrations";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { Button, PressableButton } from "./ui";
 import { useConfirm } from "./ConfirmDialog";
 import { useToast } from "./Toast";
@@ -230,9 +230,13 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
               table: entry.table,
             })}
           </chakra.p>
-          <CodePreview wrap mt="2" maxH="160px">
-            {preview.statements.join(";\n") || t("flightRecorderNoStatements")}
-          </CodePreview>
+          <SqlPreview
+            sql={preview.statements.join(";\n")}
+            empty={t("flightRecorderNoStatements")}
+            wrap
+            mt="2"
+            maxH="160px"
+          />
           {preview.conflicts.length > 0 && (
             <>
               <chakra.p m={0} mt="2" color="app.textError" fontWeight={600}>
@@ -389,9 +393,13 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
                 count: preview.recordIds.length || count,
               })}
             </chakra.p>
-            <CodePreview wrap mt="2" maxH="160px">
-              {preview.statements.join(";\n") || t("flightRecorderNoStatements")}
-            </CodePreview>
+            <SqlPreview
+              sql={preview.statements.join(";\n")}
+              empty={t("flightRecorderNoStatements")}
+              wrap
+              mt="2"
+              maxH="160px"
+            />
             {!redo && batchUndoIsPartial(batchId, preview.recordIds.length) && (
               <chakra.p m={0} mt="2" color="app.textWarning" textStyle="caption">
                 {t("flightRecorderBatchPartialNote")}

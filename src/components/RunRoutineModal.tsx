@@ -9,7 +9,8 @@ import {
   validateRoutineInput,
 } from "./routineCall";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { isPlainEnterKey } from "./modalKeys";
 import { Button, Input, PressableButton } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
@@ -227,9 +228,7 @@ export function RunRoutineModal({
             {call && (
               <FormSection>
                 <FieldLabel as="div">{t("runRoutinePreviewLabel")}</FieldLabel>
-                <CodePreview wrap maxH="200px">
-                  {call.sql}
-                </CodePreview>
+                <SqlPreview sql={call.sql} driver={driver} wrap maxH="200px" />
                 <chakra.span fontSize="xs" color="app.textMuted">
                   {t("runRoutineEscapeNote")}
                 </chakra.span>

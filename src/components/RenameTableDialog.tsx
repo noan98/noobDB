@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
 import { useT } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { FieldError, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { isPlainEnterKey } from "./modalKeys";
 import { tableNameCollides } from "./resultsToTable";
 import { Button, Input, PressableButton } from "./ui";
@@ -69,7 +70,9 @@ export function RenameTableDialog({ table, existingTables, driver, buildSql, onC
             <FieldError tone="warning">{t("renameTableCaseOnlyExists", { table: trimmed })}</FieldError>
           )}
         </FormSection>
-        {valid && <CodePreview aria-label={t("renameTableSqlPreview")}>{buildSql(trimmed)}</CodePreview>}
+        {valid && (
+          <SqlPreview sql={buildSql(trimmed)} driver={driver} aria-label={t("renameTableSqlPreview")} />
+        )}
       </ModalBody>
       <ModalFooter>
         <div style={{ flex: 1 }} />
