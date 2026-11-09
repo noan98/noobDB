@@ -121,6 +121,7 @@ const KIND_KEYS = {
   sequence: "schemaCompareObjectKindSequence",
   event: "schemaCompareObjectKindEvent",
   type: "schemaCompareObjectKindType",
+  policy: "schemaCompareObjectKindPolicy",
 } as const;
 
 export function objectKindLabel(kind: string, t: ReturnType<typeof useT>): string {

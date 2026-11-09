@@ -1,0 +1,489 @@
+{
+ "note": "SQLite の ATTACH 設定の検証 (#2153)。Rust の db::sqlite の is_valid_attach_alias / attachment_settings_problem と、フロント components/sqliteAttach.ts の isValidAttachAlias / attachmentsProblem を両側のテストが読んで固定する。attachments は trim・空行除去の済んだ行。problem は最初に見つかる問題 (件数 → 行ごとに 別名の形式 → 重複 → パス) で、null は問題なし。",
+ "maxAttached": 10,
+ "aliases": [
+  {
+   "name": "英字",
+   "alias": "ext",
+   "valid": true
+  },
+  {
+   "name": "先頭アンダースコア",
+   "alias": "_x",
+   "valid": true
+  },
+  {
+   "name": "英数字",
+   "alias": "a1",
+   "valid": true
+  },
+  {
+   "name": "大文字と数字",
+   "alias": "Archive_2",
+   "valid": true
+  },
+  {
+   "name": "1 文字",
+   "alias": "a",
+   "valid": true
+  },
+  {
+   "name": "長さ 64 (上限ちょうど)",
+   "alias": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "valid": true
+  },
+  {
+   "name": "長さ 64 (先頭 _)",
+   "alias": "________________________________________________________________",
+   "valid": true
+  },
+  {
+   "name": "長さ 65 (上限超過)",
+   "alias": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "valid": false
+  },
+  {
+   "name": "main を含むが main ではない",
+   "alias": "mainx",
+   "valid": true
+  },
+  {
+   "name": "temp を含むが temp ではない",
+   "alias": "temp1",
+   "valid": true
+  },
+  {
+   "name": "空",
+   "alias": "",
+   "valid": false
+  },
+  {
+   "name": "先頭が数字",
+   "alias": "1a",
+   "valid": false
+  },
+  {
+   "name": "数字だけ",
+   "alias": "123",
+   "valid": false
+  },
+  {
+   "name": "空白を含む",
+   "alias": "a b",
+   "valid": false
+  },
+  {
+   "name": "前後の空白",
+   "alias": "ext ",
+   "valid": false
+  },
+  {
+   "name": "先頭の空白",
+   "alias": " ext",
+   "valid": false
+  },
+  {
+   "name": "二重引用符",
+   "alias": "a\"b",
+   "valid": false
+  },
+  {
+   "name": "ハイフン",
+   "alias": "a-b",
+   "valid": false
+  },
+  {
+   "name": "ドット",
+   "alias": "a.b",
+   "valid": false
+  },
+  {
+   "name": "main (小文字)",
+   "alias": "main",
+   "valid": false
+  },
+  {
+   "name": "main (大文字)",
+   "alias": "MAIN",
+   "valid": false
+  },
+  {
+   "name": "main (混在)",
+   "alias": "Main",
+   "valid": false
+  },
+  {
+   "name": "temp (小文字)",
+   "alias": "temp",
+   "valid": false
+  },
+  {
+   "name": "temp (大文字)",
+   "alias": "TEMP",
+   "valid": false
+  },
+  {
+   "name": "temp (混在)",
+   "alias": "Temp",
+   "valid": false
+  },
+  {
+   "name": "非 ASCII (ひらがな)",
+   "alias": "あ",
+   "valid": false
+  },
+  {
+   "name": "非 ASCII (漢字)",
+   "alias": "日本語",
+   "valid": false
+  },
+  {
+   "name": "非 ASCII (全角英字)",
+   "alias": "ａｂｃ",
+   "valid": false
+  },
+  {
+   "name": "非 ASCII (アクセント付き)",
+   "alias": "café",
+   "valid": false
+  },
+  {
+   "name": "非 ASCII を末尾に持つ 64 文字未満",
+   "alias": "aaaaaaaaaaé",
+   "valid": false
+  },
+  {
+   "name": "末尾の改行",
+   "alias": "ext\n",
+   "valid": false
+  },
+  {
+   "name": "NUL を含む",
+   "alias": "a\u0000b",
+   "valid": false
+  }
+ ],
+ "sets": [
+  {
+   "name": "空の一覧",
+   "attachments": [],
+   "problem": null
+  },
+  {
+   "name": "1 件",
+   "attachments": [
+    {
+     "path": "/data/x.db",
+     "alias": "ext"
+    }
+   ],
+   "problem": null
+  },
+  {
+   "name": "10 件 (上限ちょうど)",
+   "attachments": [
+    {
+     "path": "/d/0.db",
+     "alias": "a0"
+    },
+    {
+     "path": "/d/1.db",
+     "alias": "a1"
+    },
+    {
+     "path": "/d/2.db",
+     "alias": "a2"
+    },
+    {
+     "path": "/d/3.db",
+     "alias": "a3"
+    },
+    {
+     "path": "/d/4.db",
+     "alias": "a4"
+    },
+    {
+     "path": "/d/5.db",
+     "alias": "a5"
+    },
+    {
+     "path": "/d/6.db",
+     "alias": "a6"
+    },
+    {
+     "path": "/d/7.db",
+     "alias": "a7"
+    },
+    {
+     "path": "/d/8.db",
+     "alias": "a8"
+    },
+    {
+     "path": "/d/9.db",
+     "alias": "a9"
+    }
+   ],
+   "problem": null
+  },
+  {
+   "name": "11 件 (上限超過)",
+   "attachments": [
+    {
+     "path": "/d/0.db",
+     "alias": "a0"
+    },
+    {
+     "path": "/d/1.db",
+     "alias": "a1"
+    },
+    {
+     "path": "/d/2.db",
+     "alias": "a2"
+    },
+    {
+     "path": "/d/3.db",
+     "alias": "a3"
+    },
+    {
+     "path": "/d/4.db",
+     "alias": "a4"
+    },
+    {
+     "path": "/d/5.db",
+     "alias": "a5"
+    },
+    {
+     "path": "/d/6.db",
+     "alias": "a6"
+    },
+    {
+     "path": "/d/7.db",
+     "alias": "a7"
+    },
+    {
+     "path": "/d/8.db",
+     "alias": "a8"
+    },
+    {
+     "path": "/d/9.db",
+     "alias": "a9"
+    },
+    {
+     "path": "/d/10.db",
+     "alias": "a10"
+    }
+   ],
+   "problem": "tooMany"
+  },
+  {
+   "name": "11 件のうち 1 件が不正でも、件数が先に判定される",
+   "attachments": [
+    {
+     "path": "/data/x.db",
+     "alias": "1x"
+    },
+    {
+     "path": "/d/0.db",
+     "alias": "a0"
+    },
+    {
+     "path": "/d/1.db",
+     "alias": "a1"
+    },
+    {
+     "path": "/d/2.db",
+     "alias": "a2"
+    },
+    {
+     "path": "/d/3.db",
+     "alias": "a3"
+    },
+    {
+     "path": "/d/4.db",
+     "alias": "a4"
+    },
+    {
+     "path": "/d/5.db",
+     "alias": "a5"
+    },
+    {
+     "path": "/d/6.db",
+     "alias": "a6"
+    },
+    {
+     "path": "/d/7.db",
+     "alias": "a7"
+    },
+    {
+     "path": "/d/8.db",
+     "alias": "a8"
+    },
+    {
+     "path": "/d/9.db",
+     "alias": "a9"
+    }
+   ],
+   "problem": "tooMany"
+  },
+  {
+   "name": "別名が空 (パスだけ)",
+   "attachments": [
+    {
+     "path": "/data/x.db",
+     "alias": ""
+    }
+   ],
+   "problem": "invalidAlias"
+  },
+  {
+   "name": "別名が main",
+   "attachments": [
+    {
+     "path": "/data/x.db",
+     "alias": "main"
+    }
+   ],
+   "problem": "invalidAlias"
+  },
+  {
+   "name": "別名が先頭数字",
+   "attachments": [
+    {
+     "path": "/data/x.db",
+     "alias": "1abc"
+    }
+   ],
+   "problem": "invalidAlias"
+  },
+  {
+   "name": "別名が 65 文字",
+   "attachments": [
+    {
+     "path": "/data/x.db",
+     "alias": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+   ],
+   "problem": "invalidAlias"
+  },
+  {
+   "name": "別名が 64 文字",
+   "attachments": [
+    {
+     "path": "/data/x.db",
+     "alias": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+   ],
+   "problem": null
+  },
+  {
+   "name": "別名の重複 (完全一致)",
+   "attachments": [
+    {
+     "path": "/data/x.db",
+     "alias": "ext"
+    },
+    {
+     "path": "/y.db",
+     "alias": "ext"
+    }
+   ],
+   "problem": "duplicateAlias"
+  },
+  {
+   "name": "別名の重複 (大文字小文字違い)",
+   "attachments": [
+    {
+     "path": "/data/x.db",
+     "alias": "ext"
+    },
+    {
+     "path": "/y.db",
+     "alias": "EXT"
+    }
+   ],
+   "problem": "duplicateAlias"
+  },
+  {
+   "name": "別名が違えば同じパスでもよい",
+   "attachments": [
+    {
+     "path": "/same.db",
+     "alias": "a"
+    },
+    {
+     "path": "/same.db",
+     "alias": "b"
+    }
+   ],
+   "problem": null
+  },
+  {
+   "name": "パスが空",
+   "attachments": [
+    {
+     "path": "",
+     "alias": "ext"
+    }
+   ],
+   "problem": "pathRequired"
+  },
+  {
+   "name": "パスが空白だけ",
+   "attachments": [
+    {
+     "path": "   ",
+     "alias": "ext"
+    }
+   ],
+   "problem": "pathRequired"
+  },
+  {
+   "name": "パスに NUL",
+   "attachments": [
+    {
+     "path": "/a\u0000b.db",
+     "alias": "ext"
+    }
+   ],
+   "problem": "pathRequired"
+  },
+  {
+   "name": "別名の形式はパスより先に判定される",
+   "attachments": [
+    {
+     "path": "",
+     "alias": "1x"
+    }
+   ],
+   "problem": "invalidAlias"
+  },
+  {
+   "name": "重複はパスの有無より先に判定される",
+   "attachments": [
+    {
+     "path": "/data/x.db",
+     "alias": "ext"
+    },
+    {
+     "path": "",
+     "alias": "ext"
+    }
+   ],
+   "problem": "duplicateAlias"
+  },
+  {
+   "name": "2 行目の問題も見つかる",
+   "attachments": [
+    {
+     "path": "/data/x.db",
+     "alias": "ok"
+    },
+    {
+     "path": "/y.db",
+     "alias": "main"
+    }
+   ],
+   "problem": "invalidAlias"
+  }
+ ]
+}

@@ -215,6 +215,14 @@ export const tableTrigger = z.object({
 });
 export const tableTriggerArray = z.array(tableTrigger);
 
+/** `list_rls_tables` の 1 件: RLS が有効 / FORCE の表 (#2159)。 */
+export const rlsTable = z.object({
+  table: z.string(),
+  enabled: z.boolean(),
+  forced: z.boolean(),
+});
+export const rlsTableArray = z.array(rlsTable);
+
 /** `list_extensions` の結果 (#2160)。 */
 export const extensionInfo = z.object({
   name: z.string(),

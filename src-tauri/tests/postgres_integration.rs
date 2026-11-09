@@ -5153,6 +5153,226 @@ async fn postgres_create_table_wizard_options_ddl_runs() {
     conn.close().await;
 }
 
+/// 行レベルセキュリティ (RLS) ポリシー (#2159): 一覧 (対象表・RLS の有効 / FORCE)、
+/// 定義表示 (`CREATE POLICY` の再構成)、スキーマ比較の差分検出、同期 SQL (作成 / 置換 / 削除)。
+#[tokio::test]
+async fn postgres_rls_policies_are_listed_compared_and_synced() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let (a, b) = ("nb2159_a", "nb2159_b");
+    for s in [a, b] {
+        let _ = conn
+            .execute(&format!("DROP SCHEMA IF EXISTS {s} CASCADE"), None)
+            .await;
+        conn.execute(&format!("CREATE SCHEMA {s}"), None)
+            .await
+            .expect("create schema");
+    }
+    for r in ["nb2159_app", "nb2159_reader"] {
+        let _ = conn
+            .execute(&format!("DROP ROLE IF EXISTS {r}"), None)
+            .await;
+        conn.execute(&format!("CREATE ROLE {r}"), None)
+            .await
+            .expect("create role");
+    }
+    for ddl in [
+        format!("CREATE TABLE {a}.docs (id integer PRIMARY KEY, owner_name text, body text)"),
+        format!("CREATE TABLE {a}.plain (id integer PRIMARY KEY)"),
+        format!("CREATE TABLE {a}.empty_rls (id integer)"),
+        format!("ALTER TABLE {a}.docs ENABLE ROW LEVEL SECURITY"),
+        format!("ALTER TABLE {a}.docs FORCE ROW LEVEL SECURITY"),
+        format!("ALTER TABLE {a}.empty_rls ENABLE ROW LEVEL SECURITY"),
+        // 全コマンド / PUBLIC / USING のみ。
+        format!("CREATE POLICY \"own rows\" ON {a}.docs USING (owner_name = current_user)"),
+        // コマンド指定 / ロール指定 / RESTRICTIVE / USING + WITH CHECK。
+        format!(
+            "CREATE POLICY no_secret ON {a}.docs AS RESTRICTIVE FOR UPDATE TO nb2159_app, nb2159_reader \
+             USING (body <> 'secret') WITH CHECK (body <> 'secret')"
+        ),
+        format!("CREATE POLICY ins_only ON {a}.docs FOR INSERT WITH CHECK (id > 0)"),
+        // 同名のポリシーが別の表にもある (名前は表ごとに一意)。
+        format!("CREATE POLICY \"own rows\" ON {a}.plain USING (true)"),
+        // target: 「own rows」(docs) は式が違う。plain 側は無い。target だけの古いポリシー。
+        format!("CREATE TABLE {b}.docs (id integer PRIMARY KEY, owner_name text, body text)"),
+        format!("CREATE TABLE {b}.plain (id integer PRIMARY KEY)"),
+        format!("CREATE TABLE {b}.empty_rls (id integer)"),
+        format!("ALTER TABLE {b}.docs ENABLE ROW LEVEL SECURITY"),
+        format!("CREATE POLICY \"own rows\" ON {b}.docs USING (owner_name = 'someone')"),
+        format!("CREATE POLICY legacy ON {b}.docs FOR DELETE USING (false)"),
+    ] {
+        conn.execute(&ddl, None)
+            .await
+            .unwrap_or_else(|e| panic!("{ddl}: {e}"));
+    }
+
+    // 一覧: 4 件のポリシーが対象表つきで出る。
+    let objects = conn.schema_objects(a).await.expect("schema_objects");
+    let mut policies: Vec<(String, Option<String>)> = objects
+        .iter()
+        .filter(|o| o.kind == "policy")
+        .map(|o| (o.name.clone(), o.detail.clone()))
+        .collect();
+    policies.sort();
+    assert_eq!(
+        policies,
+        vec![
+            ("ins_only".to_string(), Some("docs".to_string())),
+            ("no_secret".to_string(), Some("docs".to_string())),
+            ("own rows".to_string(), Some("docs".to_string())),
+            ("own rows".to_string(), Some("plain".to_string())),
+        ]
+    );
+    assert!(objects
+        .iter()
+        .filter(|o| o.kind == "policy")
+        .all(|o| o.id.is_some()));
+
+    // RLS の有効 / FORCE の表: ポリシーが無い表 (empty_rls) も出る。無効の表は出ない。
+    let rls = conn.rls_tables(a).await.expect("rls_tables");
+    let rls_of = |n: &str| rls.iter().find(|r| r.table == n).cloned();
+    assert_eq!(
+        rls_of("docs").map(|r| (r.enabled, r.forced)),
+        Some((true, true))
+    );
+    assert_eq!(
+        rls_of("empty_rls").map(|r| (r.enabled, r.forced)),
+        Some((true, false))
+    );
+    assert!(rls_of("plain").is_none(), "{rls:?}");
+
+    // 定義表示: そのまま実行できる CREATE POLICY (id で同名の 2 件を区別する)。
+    let def_by = |name: &str, table: &str| {
+        let o = objects
+            .iter()
+            .find(|o| o.kind == "policy" && o.name == name && o.detail.as_deref() == Some(table))
+            .cloned()
+            .expect("policy listed");
+        let conn = &conn;
+        async move {
+            conn.object_definition(a, "policy", &o.name, o.id.as_deref())
+                .await
+                .expect("policy definition")
+        }
+    };
+    let own_docs = def_by("own rows", "docs").await;
+    assert!(
+        own_docs.starts_with(
+            "CREATE POLICY \"own rows\" ON nb2159_a.docs AS PERMISSIVE FOR ALL TO PUBLIC USING ("
+        ),
+        "{own_docs}"
+    );
+    let own_plain = def_by("own rows", "plain").await;
+    assert!(own_plain.contains("ON nb2159_a.plain"), "{own_plain}");
+    let restrictive = def_by("no_secret", "docs").await;
+    assert!(
+        restrictive.contains("AS RESTRICTIVE FOR UPDATE TO nb2159_app, nb2159_reader USING ("),
+        "{restrictive}"
+    );
+    assert!(restrictive.contains(" WITH CHECK ("), "{restrictive}");
+    let insert = def_by("ins_only", "docs").await;
+    assert!(
+        insert.contains("FOR INSERT TO PUBLIC WITH CHECK ("),
+        "{insert}"
+    );
+    assert!(!insert.contains("USING"), "{insert}");
+
+    // 比較: own rows(docs) は Different、ins_only / no_secret / own rows(plain) は SourceOnly、legacy は TargetOnly。
+    let diff = t::compare_schema_via_core(&conn, a, &conn, b)
+        .await
+        .expect("compare");
+    let status_of = |d: &t::SchemaDiff, n: &str, table: &str| {
+        d.objects
+            .items
+            .iter()
+            .find(|i| i.kind == "policy" && i.name == n && i.table.as_deref() == Some(table))
+            .map(|i| i.status)
+    };
+    assert_eq!(
+        status_of(&diff, "own rows", "docs"),
+        Some(t::DiffStatus::Different)
+    );
+    assert_eq!(
+        status_of(&diff, "own rows", "plain"),
+        Some(t::DiffStatus::SourceOnly)
+    );
+    assert_eq!(
+        status_of(&diff, "no_secret", "docs"),
+        Some(t::DiffStatus::SourceOnly)
+    );
+    assert_eq!(
+        status_of(&diff, "ins_only", "docs"),
+        Some(t::DiffStatus::SourceOnly)
+    );
+    assert_eq!(
+        status_of(&diff, "legacy", "docs"),
+        Some(t::DiffStatus::TargetOnly)
+    );
+
+    // 同期 (破壊的な操作を許可): 作成・置換・削除が通り、再比較で一致する。
+    let plan = t::generate_sync_sql(&diff, true);
+    let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
+    assert!(
+        sqls.iter()
+            .any(|s| s.contains("DROP POLICY \"legacy\" ON \"docs\"")),
+        "{sqls:?}"
+    );
+    assert!(
+        plan.warnings
+            .iter()
+            .any(|w| w.contains("ROW LEVEL SECURITY")),
+        "{:?}",
+        plan.warnings
+    );
+    conn.execute_sync_transaction(&sqls, Some(b))
+        .await
+        .unwrap_or_else(|e| panic!("sync failed: {e}\n{sqls:#?}"));
+    let after = t::compare_schema_via_core(&conn, a, &conn, b)
+        .await
+        .expect("re-compare");
+    let leftovers: Vec<_> = after
+        .objects
+        .items
+        .iter()
+        .filter(|i| i.kind == "policy" && i.status != t::DiffStatus::Same)
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+
+    // 破壊的な操作を許可しなければ DROP POLICY は出ない。
+    conn.execute(
+        &format!("CREATE POLICY target_only ON {b}.plain USING (true)"),
+        None,
+    )
+    .await
+    .expect("target only policy");
+    let diff = t::compare_schema_via_core(&conn, a, &conn, b)
+        .await
+        .expect("compare target-only");
+    let plan = t::generate_sync_sql(&diff, false);
+    assert!(
+        !plan
+            .statements
+            .iter()
+            .any(|s| s.sql.contains("DROP POLICY")),
+        "{:?}",
+        plan.statements
+    );
+
+    for s in [a, b] {
+        let _ = conn
+            .execute(&format!("DROP SCHEMA IF EXISTS {s} CASCADE"), None)
+            .await;
+    }
+    for r in ["nb2159_app", "nb2159_reader"] {
+        let _ = conn
+            .execute(&format!("DROP ROLE IF EXISTS {r}"), None)
+            .await;
+    }
+}
+
 /// 拡張機能 (#2160): 一覧 (導入済み / 提供できるもの / 更新の可否)、導入・更新・削除の SQL が通ること、
 /// read_only セッションではバックエンドが拒否すること。contrib の無い環境では導入の確認だけ飛ばす。
 #[tokio::test]

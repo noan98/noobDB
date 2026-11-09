@@ -344,6 +344,21 @@ fn save_profile_inner(id: String, req: SaveProfileRequest) -> Result<ConnectionP
     validate_profile_name(&req.name)?;
     let ssm = normalize_ssm(req.ssm.as_ref(), req.ssh.is_some(), &req.driver)?;
     let is_sqlite = req.driver == "sqlite";
+    // ATTACH 設定は保存時に検証する (#2153)。形式・重複・件数が不正なまま保存すると、
+    // 以後そのプロファイル (とそれを使う定期タスク) が接続のたびに失敗する。ファイルの存在は接続時に見る。
+    let sqlite_attachments: Vec<crate::db::SqliteAttachment> = if is_sqlite {
+        req.sqlite_attachments
+            .iter()
+            .map(|a| crate::db::SqliteAttachment {
+                path: a.path.trim().to_string(),
+                alias: a.alias.trim().to_string(),
+            })
+            .filter(|a| !a.path.is_empty() || !a.alias.is_empty())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    crate::db::sqlite::validate_attachment_settings(&sqlite_attachments)?;
     let req_secrets = ProfileSecretUpdates {
         db_password: req.db_password.clone(),
         ssh_passphrase: req.ssh_passphrase.clone(),
@@ -391,18 +406,7 @@ fn save_profile_inner(id: String, req: SaveProfileRequest) -> Result<ConnectionP
                 .filter(|p| !p.is_empty()),
         }),
         ssm,
-        sqlite_attachments: if is_sqlite {
-            req.sqlite_attachments
-                .into_iter()
-                .map(|a| crate::db::SqliteAttachment {
-                    path: a.path.trim().to_string(),
-                    alias: a.alias.trim().to_string(),
-                })
-                .filter(|a| !a.path.is_empty() || !a.alias.is_empty())
-                .collect()
-        } else {
-            Vec::new()
-        },
+        sqlite_attachments,
     };
     // 秘密を先に書き、すべて成功してから本体を upsert する。秘密の書き込みが途中で失敗しても
     // それまでに書いた秘密は元の値へ戻し (既存プロファイル)、新規プロファイルなら孤立
@@ -939,6 +943,47 @@ mod tests {
             target: target.into(),
             region: " ap-northeast-1 ".into(),
             profile: profile.map(str::to_string),
+        }
+    }
+
+    /// ATTACH 設定が不正なら、保存 (IPC を直接叩く経路) は I/O の前に `InvalidInput` で拒否する (#2153)。
+    #[test]
+    fn save_profile_rejects_invalid_sqlite_attachments_before_any_io() {
+        let rows = |n: usize, alias: &str| -> serde_json::Value {
+            serde_json::Value::Array(
+                (0..n)
+                    .map(|i| serde_json::json!({"path": format!("/tmp/{i}.db"), "alias": alias}))
+                    .collect(),
+            )
+        };
+        let req = |attachments: serde_json::Value| -> SaveProfileRequest {
+            serde_json::from_value(serde_json::json!({
+                "name": "p", "driver": "sqlite", "file_path": "/tmp/main.db",
+                "sqlite_attachments": attachments,
+            }))
+            .unwrap()
+        };
+        let many = serde_json::Value::Array(
+            (0..11)
+                .map(|i| serde_json::json!({"path": format!("/tmp/{i}.db"), "alias": format!("a{i}")}))
+                .collect(),
+        );
+        for (name, attachments) in [
+            (
+                "別名が空",
+                serde_json::json!([{"path": "/tmp/a.db", "alias": ""}]),
+            ),
+            ("別名が予約語", rows(1, "main")),
+            ("別名が数字始まり", rows(1, "1abc")),
+            ("別名が重複", rows(2, "ext")),
+            (
+                "パスが空",
+                serde_json::json!([{"path": "", "alias": "ext"}]),
+            ),
+            ("11 件", many),
+        ] {
+            let err = save_profile_inner("abcd2345".into(), req(attachments)).unwrap_err();
+            assert!(matches!(err, AppError::InvalidInput(_)), "{name}: {err:?}");
         }
     }
 

@@ -166,6 +166,7 @@ DB に触れず実行もしない (UI のプレビュー専用)。両環境の�
 - `list_table_partitions` (パーティション表の子パーティション・境界・サイズ、SQLite は非対応、#1868)
 - `schema_overview`
 - `foreign_keys`
+- `list_rls_tables` (行レベルセキュリティ (RLS) が有効 / FORCE の表の一覧。PostgreSQL 専用で他ドライバは `InvalidInput`。ツリーの「RLS」バッジ用、#2159)
 - `list_extensions` (PostgreSQL の拡張機能: 導入済み (バージョン / スキーマ) とサーバが提供できるもの (既定のバージョン / 更新の可否) + `shared_preload_libraries`。PostgreSQL 専用で他ドライバは `InvalidInput`、#2160)
 - `list_schema_objects`
 - `get_object_definition`
@@ -254,6 +255,14 @@ MySQL のみ `kind = "event"` (イベントスケジューラの EVENT, #2100) �
 (`ENABLED · EVERY 1 DAY`) を載せる。`get_object_definition` は `SHOW CREATE EVENT` の本文を返す。PostgreSQL / SQLite は event を返さず
 (スキーマ比較の「対象外」一覧にも出さない)、スキーマ比較 (`ObjectDiff`) の比較・同期の対象は MySQL の event のみ。
 イベントもツリー専用の種別で、Where-used の走査対象には入らない。
+
+PostgreSQL のみ `kind = "policy"` (行レベルセキュリティのポリシー, #2159) も返し、`SchemaObject.id` にポリシーの oid、`SchemaObject.detail` に
+対象表名を載せる (ポリシー名は表ごとにしか一意でないので `get_object_definition` は `id` で引く)。拡張に属するポリシーは出さない。
+`get_object_definition` は実行できる `CREATE POLICY ... AS PERMISSIVE|RESTRICTIVE FOR <cmd> TO <roles> [USING (...)] [WITH CHECK (...)]` を返す
+(`types::PG_POLICY_DEFINITION_EXPR`)。MySQL / SQLite は policy を返さず (比較の「対象外」一覧にも出さない)、スキーマ比較・同期の対象は
+PostgreSQL の policy のみ (トリガーと同じく (名前, 対象表) で対応づけ、置換は DROP + CREATE、表の ENABLE / FORCE ROW LEVEL SECURITY は同期しない)。
+ポリシーもツリー専用の種別で Where-used の走査対象には入らない。作成は新しい IPC を足さず、UI (`PolicyModal` / `policySql.ts`) が組み立てた
+`CREATE POLICY` (と任意の `ALTER TABLE ... ENABLE / FORCE ROW LEVEL SECURITY`) を `run_query_transaction` で流す (read_only の拒否はバックエンド)。
 
 拡張機能の導入・更新・削除は新しい IPC を足さず、UI (`ExtensionsModal` / `extensionSql.ts`) が組み立てた `CREATE EXTENSION [IF NOT EXISTS] ... [SCHEMA ...] [CASCADE]` /
 `ALTER EXTENSION ... UPDATE` / `DROP EXTENSION [CASCADE]` を `run_query` で流す (read_only の拒否はバックエンド。権限不足は `errorHints` の

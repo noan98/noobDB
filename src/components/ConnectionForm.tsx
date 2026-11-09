@@ -15,7 +15,13 @@ import {
   SslMode,
 } from "../api/tauri";
 import { LiveRow, LiveRowsPresence } from "./LiveRows";
-import { attachAliasProblem, suggestAttachAlias } from "./sqliteAttach";
+import {
+  attachmentsProblem,
+  attachRowProblem,
+  cleanAttachments as cleanAttachmentRows,
+  MAX_ATTACHED,
+  suggestAttachAlias,
+} from "./sqliteAttach";
 import { useT } from "../i18n";
 import { CopyButton } from "./CopyButton";
 import { useCopyFeedback } from "./useCopyFeedback";
@@ -287,6 +293,14 @@ function defaultUserFor(driver: DriverKind): string {
   }
 }
 
+/** ATTACH 行の問題 → FieldError の文言キー (#2153)。 */
+const ATTACH_PROBLEM_KEYS = {
+  invalid: "formSqliteAttachAliasInvalid",
+  duplicate: "formSqliteAttachAliasDuplicate",
+  aliasRequired: "formSqliteAttachAliasRequired",
+  pathRequired: "formSqliteAttachPathRequired",
+} as const;
+
 const DRIVER_CHOICES: readonly DriverKind[] = ["mysql", "postgres", "sqlite"];
 
 // ドライバカードの横並び行 (stagger 入場の親)。入場だけを `motion.div` に任せ、
@@ -461,6 +475,8 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [password, setPassword] = useState("");
   const [filePath, setFilePath] = useState(initial?.file_path ?? "");
   const [attachments, setAttachments] = useState<SqliteAttachment[]>(initial?.sqlite_attachments ?? []);
+  // 保存 / 接続テストを一度試したら、未入力の別名・パスも行のエラーに出す (入力途中は責めない, #2153)。
+  const [attachChecked, setAttachChecked] = useState(false);
   // 添付行の出入りをアニメーションするための安定キー (attachments と同じ並び, #2154)。
   const attachKeySeq = useRef(attachments.length);
   const [attachKeys, setAttachKeys] = useState<string[]>(() => attachments.map((_, i) => `att${i}`));
@@ -812,10 +828,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const updateAttachment = (index: number, patch: Partial<SqliteAttachment>) =>
     setAttachments((prev) => prev.map((a, i) => (i === index ? { ...a, ...patch } : a)));
   // 空の行は保存・接続に含めない。
-  const cleanAttachments = () =>
-    attachments
-      .map((a) => ({ path: a.path.trim(), alias: a.alias.trim() }))
-      .filter((a) => a.path !== "" || a.alias !== "");
+  const cleanAttachments = () => cleanAttachmentRows(attachments);
 
   const buildRequest = () => {
     if (isFileBacked) {
@@ -907,7 +920,14 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     setSshLocalPortError(null);
     setSsmTargetError(null);
     setSsmRegionError(null);
-    if (isFileBacked) return true;
+    if (isFileBacked) {
+      // ATTACH 設定の不備 (別名の空・不正・重複、11 件以上) は保存も接続テストも止める (#2153)。
+      // バックエンドも同じ規則で拒否する (`save_profile` / 接続時) が、先に FieldError で示す。
+      setAttachChecked(true);
+      const problem = attachmentsProblem(cleanAttachments());
+      if (problem === "tooMany") setError(t("formSqliteAttachTooMany", { max: MAX_ATTACHED }));
+      return problem === null;
+    }
     let ok = true;
     if (useSsm && !isValidSsmTarget(ssmTarget.trim())) {
       setSsmTargetError(t("formInvalidSsmTarget"));
@@ -1183,7 +1203,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             <FieldLabel as="div">{t("formSqliteAttachLegend")}</FieldLabel>
             <LiveRowsPresence>
               {attachments.map((a, i) => {
-                const aliasProblem = attachAliasProblem(attachments, i);
+                const aliasProblem = attachRowProblem(attachments, i, attachChecked);
                 return (
                   <LiveRow key={attachKeys[i] ?? `att-fallback-${i}`}>
                     <Box>
@@ -1191,6 +1211,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                         <Input
                           aria-label={t("formSqliteAttachPath")}
                           value={a.path}
+                          aria-invalid={aliasProblem === "pathRequired" ? true : undefined}
                           onChange={(e) => updateAttachment(i, { path: e.target.value })}
                           placeholder={t("formSqliteFilePathPlaceholder")}
                         />
@@ -1204,7 +1225,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                           flexShrink={0}
                           fontFamily="mono"
                           value={a.alias}
-                          aria-invalid={aliasProblem ? true : undefined}
+                          aria-invalid={aliasProblem && aliasProblem !== "pathRequired" ? true : undefined}
                           onChange={(e) => updateAttachment(i, { alias: e.target.value })}
                         />
                         <Button type="button" onClick={() => removeAttachment(i)}>
@@ -1213,11 +1234,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                       </Flex>
                       {aliasProblem && (
                         <FieldError display="block" mt="1">
-                          {t(
-                            aliasProblem === "invalid"
-                              ? "formSqliteAttachAliasInvalid"
-                              : "formSqliteAttachAliasDuplicate",
-                          )}
+                          {t(ATTACH_PROBLEM_KEYS[aliasProblem])}
                         </FieldError>
                       )}
                     </Box>
@@ -1225,7 +1242,12 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                 );
               })}
             </LiveRowsPresence>
-            <Button type="button" onClick={addAttachment} mt="2">
+            <Button
+              type="button"
+              disabled={attachments.length >= MAX_ATTACHED}
+              onClick={addAttachment}
+              mt="2"
+            >
               {t("formSqliteAttachAdd")}
             </Button>
             <Text textStyle="caption" color="app.textMuted" mt="1" mb="0">

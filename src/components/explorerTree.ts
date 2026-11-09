@@ -22,8 +22,20 @@
  * 同じオブジェクトが別物に見える状態だった。ここで 1 箇所へ振り分ける。
  */
 
-import type { IndexInfo, SchemaObject, SchemaObjectKind, TableColumnInfo } from "../api/tauri";
+import type { IndexInfo, RlsTable, SchemaObject, SchemaObjectKind, TableColumnInfo } from "../api/tauri";
 import type { TableRef } from "../tableQuickAccess";
+
+/**
+ * 表の行レベルセキュリティ (RLS) の状態 (PostgreSQL のみ, #2159)。`enabled` = 有効、`forced` = 有効かつ
+ * FORCE (所有者にも適用)、`forcedOnly` = FORCE だけ設定されていて有効ではない (効果なし)。
+ */
+export type RlsState = "enabled" | "forced" | "forcedOnly";
+
+/** `list_rls_tables` の 1 件を表示用の状態にする。 */
+export function rlsStateOf(r: RlsTable): RlsState {
+  if (r.enabled) return r.forced ? "forced" : "enabled";
+  return "forcedOnly";
+}
 
 /** ビューとして扱う (= テーブル一覧から外して「ビュー」グループへ置く) 種別。 */
 const VIEW_KINDS: ReadonlySet<SchemaObjectKind> = new Set(["view", "materialized_view"]);
@@ -36,6 +48,7 @@ const ROUTINE_ORDER: readonly SchemaObjectKind[] = [
   "sequence",
   "event",
   "type",
+  "policy",
 ];
 
 /** 「ビュー」グループに並ぶノード。列の展開・データを開く導線はテーブルと共通。 */
@@ -269,6 +282,8 @@ export type ExplorerRow = ExplorerRowBase &
         open: boolean;
         rowEst: number | null | undefined;
         comment: string | undefined;
+        /** 行レベルセキュリティの状態 (PostgreSQL のみ。無効な表は undefined, #2159)。 */
+        rls: RlsState | undefined;
         isActive: boolean;
       }
     | { kind: "column"; db: string; tbl: string; col: TableColumnInfo }
@@ -328,6 +343,8 @@ export interface ExplorerRowsInput {
   recent: readonly TableRef[];
   rowEstimate: (db: string, tbl: string) => number | null | undefined;
   comment: (db: string, tbl: string) => string | undefined;
+  /** 表の行レベルセキュリティの状態 (PostgreSQL のみ。省略可)。 */
+  rls?: (db: string, tbl: string) => RlsState | undefined;
   isActiveTable: (db: string, tbl: string) => boolean;
 }
 
@@ -340,6 +357,7 @@ const OBJECT_GROUP_ORDER: readonly SchemaObjectKind[] = [
   "sequence",
   "event",
   "type",
+  "policy",
 ];
 
 /**
@@ -534,6 +552,7 @@ function pushTable(
     open,
     rowEst: input.rowEstimate(db, tbl),
     comment: input.comment(db, tbl),
+    rls: input.rls?.(db, tbl),
     isActive: input.isActiveTable(db, tbl),
   });
   if (!open) return;

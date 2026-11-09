@@ -552,6 +552,7 @@ safe(
   "list_table_triggers",
   "list_table_partitions",
   "list_schema_objects",
+  "list_rls_tables",
   "list_extensions",
   "list_table_comments",
   "list_tables",
@@ -709,6 +710,8 @@ const CONNECTION_READ_METHODS = new Set([
   "reject_if_attached_sqlite",
   // 列のユーザー定義型を pg_catalog から引くだけ (#2127)
   "user_type_columns",
+  // RLS が有効な表を pg_class から引くだけ (#2159)
+  "rls_tables",
   // 拡張機能の一覧を pg_extension / pg_available_extensions から引くだけ (#2160)
   "list_extensions",
   "table_is_transactional",
