@@ -110,6 +110,7 @@ const COVERED: Record<string, string> = {
   SchemaObject: "schemaObject",
   SchemaTree: "schemaTree",
   ServerInfo: "serverInfo",
+  ReplicationStatus: "replicationStatus",
   ServerMetrics: "serverMetrics",
   SqliteMaintenanceResult: "sqliteMaintenanceResult",
   IndexOverlap: "indexOverlap",

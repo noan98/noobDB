@@ -366,6 +366,7 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 - `sample_statement_delta` (#1259。baseline 差分と N+1 目安を Rust 側で集計)
 - `server_info`
 - `server_metrics`
+- `get_replication_status`
 - `sqlite_maintenance`
 
 ## 列データプロファイル (`commands/profile.rs`)

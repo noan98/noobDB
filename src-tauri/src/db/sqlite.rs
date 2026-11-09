@@ -1183,6 +1183,14 @@ impl SqliteConn {
         ))
     }
 
+    /// レプリケーションの概念が無い (ファイル DB) ので未対応。UI はタブを無効にし、
+    /// 直接 IPC を叩いた場合のためにエラーで明示する (`list_processes` と同じ規約, #2180)。
+    pub async fn replication_status(&self) -> Result<super::replication::ReplicationStatus> {
+        Err(AppError::InvalidInput(
+            "replication status is not supported for SQLite (file-backed, no replication)".into(),
+        ))
+    }
+
     pub async fn list_processes(&self) -> Result<Vec<ProcessInfo>> {
         Err(AppError::InvalidInput(
             "process list is not supported for SQLite (file-backed, no server processes)".into(),

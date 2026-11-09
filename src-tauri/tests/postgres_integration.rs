@@ -809,6 +809,59 @@ async fn postgres_new_schema_apis_and_transaction_when_env_set() {
     conn.close().await;
 }
 
+/// レプリケーション監視 (#2180)。レプリカ構成のない環境では「単独」と返ること、
+/// 使われていない物理スロットがあれば非アクティブとして一覧に出る (= プライマリ扱い) ことを確認する。
+/// スロットの作成には REPLICATION 権限が要るので、作れない環境では後半を省く。
+#[tokio::test]
+async fn postgres_replication_status_standalone_and_slot() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    let status = conn.replication_status().await.expect("replication_status");
+    // 他のテストが物理スロットを残していても壊れないよう、構成なしの断定はスロットが無いときだけ行う。
+    if status.slots.is_empty() {
+        assert_eq!(status.role, t::ReplicationRole::Standalone);
+        assert!(status.links.is_empty(), "no walsender expected: {status:?}");
+    }
+
+    let slot = "noobdb_test_repl_status_slot";
+    let _ = conn
+        .execute(
+            &format!(
+                "SELECT pg_drop_replication_slot('{slot}') \
+                 FROM pg_replication_slots WHERE slot_name = '{slot}'"
+            ),
+            None,
+        )
+        .await;
+    let created = conn
+        .execute(
+            &format!("SELECT pg_create_physical_replication_slot('{slot}')"),
+            None,
+        )
+        .await;
+    if created.is_ok() {
+        let status = conn.replication_status().await.expect("replication_status");
+        let found = status.slots.iter().find(|s| s.name == slot);
+        assert!(found.is_some(), "created slot must be listed: {status:?}");
+        let found = found.expect("checked above");
+        assert!(!found.active, "an unused slot is inactive");
+        assert_eq!(found.slot_type, "physical");
+        assert!(
+            found.retained_bytes.is_none_or(|b| b >= 0),
+            "retained bytes must never be negative: {found:?}"
+        );
+        assert_eq!(status.role, t::ReplicationRole::Primary);
+        let _ = conn
+            .execute(&format!("SELECT pg_drop_replication_slot('{slot}')"), None)
+            .await;
+    }
+    conn.close().await;
+}
+
 /// プロセス監視パネル (list_processes / kill_processes) の PostgreSQL 経路。
 /// pg_stat_activity のクライアントバックエンドが一覧に現れること、別接続を
 /// pg_terminate_backend で終了させると一覧から消えることを確認する。
