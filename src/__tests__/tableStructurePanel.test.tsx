@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
 import { t } from "../i18n";
 
 /**
@@ -138,8 +138,9 @@ describe("TableStructurePanel (#1112)", () => {
     ]);
     renderPanel();
     expect(await screen.findByText("trg_audit")).toBeInTheDocument();
-    expect(screen.getAllByText("AFTER").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("UPDATE").length).toBeGreaterThan(0);
+    const cells = within(screen.getByText("trg_audit").closest("tr") as HTMLElement).getAllByRole("cell");
+    expect(cells[1]).toHaveTextContent("AFTER");
+    expect(cells[2]).toHaveTextContent("UPDATE");
     expect(screen.getByText(t("structureTriggerNote"))).toBeInTheDocument();
     expect(screen.getByText(t("structureTriggerDisabled"))).toBeInTheDocument();
   });
@@ -224,7 +225,7 @@ describe("TableStructurePanel (#1112)", () => {
     );
     resolveA("CREATE TABLE `orders` (`id` int)");
     await new Promise((r) => setTimeout(r, 20));
-    expect(screen.queryByText("CREATE TABLE `orders` (`id` int)")).not.toBeInTheDocument();
+    expect(screen.getByTestId("sql-preview")).not.toHaveTextContent("orders");
     expect(screen.getByTestId("sql-preview")).toHaveTextContent("CREATE TABLE `items` (`id` int)");
   });
 

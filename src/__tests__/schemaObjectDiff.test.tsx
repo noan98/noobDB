@@ -34,7 +34,7 @@ describe("SchemaObjectDiff (#1879)", () => {
         ])}
       />,
     );
-    expect(screen.getAllByText("v_orders").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /v_orders/ })).toBeInTheDocument();
     expect(screen.getByText("trg_a")).toBeInTheDocument();
     expect(screen.queryByText("v_same")).not.toBeInTheDocument();
     expect(screen.getAllByTestId("sql-preview")[0]).toHaveTextContent("CREATE VIEW v_orders AS select 1");

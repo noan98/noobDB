@@ -17,7 +17,7 @@ describe("RenameTableDialog (#1615)", () => {
         onCancel={() => {}}
       />,
     );
-    expect(screen.queryByText("ALTER TABLE users RENAME TO users;")).toBeNull();
+    expect(screen.queryByTestId("sql-preview")).toBeNull();
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "people" } });
     expect(screen.getByTestId("sql-preview")).toHaveTextContent("ALTER TABLE users RENAME TO people;");
   });

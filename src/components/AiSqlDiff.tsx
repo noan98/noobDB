@@ -3,7 +3,7 @@ import { chakra } from "@chakra-ui/react";
 import type { DiffLine } from "../ai/sqlAssist";
 import { useT } from "../i18n";
 import { semanticColorToken } from "../semanticColors";
-import { SQL_TOKEN_STYLE, sqlHighlightLines } from "./sqlHighlight";
+import { SQL_TOKEN_STYLE, sqlHighlightLines, type SqlHighlightSegment } from "./sqlHighlight";
 
 // 行単位 diff の表示 (SQL アシストのリライトと、エラー解説の修正案で共有)。
 
@@ -21,14 +21,27 @@ const DIFF_MARK: Record<DiffLine["type"], string> = { same: " ", add: "+", del: 
  */
 export function DiffView({ lines, driver }: { lines: readonly DiffLine[]; driver?: string }) {
   const t = useT();
-  const highlighted = useMemo(
-    () =>
-      sqlHighlightLines(
-        lines.map((l) => l.text),
+  // 旧側 (same + del) と新側 (same + add) を別々に解析し、各行を元の位置へ戻す。1 本につなげて解析すると、
+  // 削除行の閉じていない引用符やコメントが後ろの追加行へ流れ込んで色が崩れる。
+  const highlighted = useMemo(() => {
+    const oldSide = lines.map((l, i) => ({ l, i })).filter(({ l }) => l.type !== "add");
+    const newSide = lines.map((l, i) => ({ l, i })).filter(({ l }) => l.type !== "del");
+    const perLine: (SqlHighlightSegment[] | null)[] = lines.map(() => null);
+    let any = false;
+    // 旧側 → 新側の順に埋める。same 行は新側の解析が優先され、新側が単色なら旧側の色を使う。
+    for (const side of [oldSide, newSide]) {
+      const segs = sqlHighlightLines(
+        side.map(({ l }) => l.text),
         driver ?? "",
-      ),
-    [lines, driver],
-  );
+      );
+      if (!segs) continue;
+      any = true;
+      side.forEach(({ i }, k) => {
+        perLine[i] = segs[k] ?? null;
+      });
+    }
+    return any ? perLine : null;
+  }, [lines, driver]);
   return (
     <chakra.div
       role="group"
@@ -57,7 +70,7 @@ export function DiffView({ lines, driver }: { lines: readonly DiffLine[]; driver
             {DIFF_MARK[l.type]}
           </chakra.span>
           <chakra.span whiteSpace="pre-wrap" wordBreak="break-word" minW="0">
-            {highlighted
+            {highlighted?.[i]
               ? (highlighted[i] ?? []).map((seg, j) =>
                   seg.kind ? (
                     <span key={j} style={SQL_TOKEN_STYLE[seg.kind]}>

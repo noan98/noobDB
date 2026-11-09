@@ -232,6 +232,7 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
           </chakra.p>
           <SqlPreview
             sql={preview.statements.join(";\n")}
+            driver={entry.driver}
             empty={t("flightRecorderNoStatements")}
             wrap
             mt="2"
@@ -395,6 +396,7 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
             </chakra.p>
             <SqlPreview
               sql={preview.statements.join(";\n")}
+              driver={entries.find((e) => e.batch_id === batchId)?.driver}
               empty={t("flightRecorderNoStatements")}
               wrap
               mt="2"

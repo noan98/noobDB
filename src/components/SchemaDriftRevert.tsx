@@ -19,12 +19,15 @@ import { useCopyFeedback } from "./useCopyFeedback";
  */
 export function SchemaDriftRevert({
   profileId,
+  driver,
   fromId,
   toId,
   onInsertSql,
   onClose,
 }: {
   profileId: string;
+  /** 巻き戻し DDL を色分けする方言。 */
+  driver?: string;
   fromId: string;
   toId: string;
   /** 指定されると「エディタに挿入」を出す。 */
@@ -125,7 +128,7 @@ export function SchemaDriftRevert({
                   {t("schemaDriftRevertDestructiveNote")}
                 </Callout>
               )}
-              <SqlPreview sql={sql} maxH="220px" data-testid="schema-drift-revert-sql" />
+              <SqlPreview sql={sql} driver={driver} maxH="220px" data-testid="schema-drift-revert-sql" />
               <Flex gap="2" justify="flex-end">
                 <CopyButton
                   copied={copied}

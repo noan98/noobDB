@@ -446,6 +446,7 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
       {state.kind === "explain" && <ExplainResult value={state.value} />}
       {state.kind === "rewrite" && (
         <RewriteResult
+          driver={props.driver}
           value={state.value}
           original={state.original}
           proposal={state.proposal}
@@ -575,6 +576,7 @@ function ExplainResult({ value }: { value: SqlExplainResponse }) {
 }
 
 function RewriteResult({
+  driver,
   value,
   original,
   proposal,
@@ -584,6 +586,7 @@ function RewriteResult({
   openedInNewTab,
   onOpenInNewTab,
 }: {
+  driver: string;
   value: SqlRewriteResponse;
   original: string;
   proposal: string;
@@ -614,7 +617,7 @@ function RewriteResult({
       <Flex direction="column" gap="1">
         <FieldLabel as="div">{t("aiSqlDiff")}</FieldLabel>
         {changed ? (
-          <DiffView lines={lines} />
+          <DiffView lines={lines} driver={driver} />
         ) : (
           <Callout tone="info" role="status">
             {t("aiSqlNoChange")}

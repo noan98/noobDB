@@ -480,6 +480,7 @@ export function SchemaDriftPanel({
                   {revertOpen && (
                     <SchemaDriftRevert
                       profileId={profile.id}
+                      driver={profile.driver}
                       fromId={genA.id}
                       toId={genB.id}
                       onInsertSql={onInsertSql}

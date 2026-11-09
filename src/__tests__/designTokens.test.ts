@@ -236,21 +236,49 @@ describe("design tokens: 等幅数字 (#1072)", () => {
 });
 
 describe("design tokens: SQL のプレビューは SqlPreview (#2178)", () => {
-  // `CodePreview` の子に sql / statements / ddl を含む式を渡している箇所のベースライン。SQL は
-  // エディタと同じ配色で色分けする `SqlPreview` に渡す (SQL 以外 — CSV / JSON / シェルコマンド /
-  // フィンガープリント — は CodePreview のまま)。ここに残るのは移行待ちの箇所だけ。増やすのは禁止、
-  // 減らしたらベースラインも下げる。
-  const SQL_IN_CODE_PREVIEW_BASELINE = new Map<string, number>([["../components/ExtensionsModal.tsx", 1]]);
+  // `CodePreview` は SQL 以外 (AI の生応答 / エラー文 / メッセージ / シェルコマンド / エクスポート内容 /
+  // ファイル名など) 専用。SQL (DDL / DML) はエディタと同じ配色で色分けする `SqlPreview` に渡す。
+  // 子の式が下の「既知の非 SQL」に当たらない `CodePreview` を SQL とみなして数え、ここに載っている
+  // ファイルの件数を超えたら fail、減ったらベースラインを下げる。ここに残るのは移行待ちの箇所と、
+  // 非 SQL だが名前で見分けられない箇所だけ。
+  const SQL_IN_CODE_PREVIEW_BASELINE = new Map<string, number>([
+    ["../components/ActivityDetailView.tsx", 1], // IPC 診断テキスト (SQL ではない)
+    ["../components/ExtensionsModal.tsx", 1], // 移行待ち
+    ["../components/SqlPreview.tsx", 1], // SqlPreview 自身の単色フォールバック
+  ]);
+  const NON_SQL_CHILD =
+    /\b(raw|error|message|messages|command|doc|previewContent|fileNames|lines|nodes)\b|\bblock\.text\b/;
 
-  const CODE_PREVIEW = /<CodePreview\b(?:[^>=]|=(?!>))*>([\s\S]*?)<\/CodePreview>/g;
-  function countSqlInCodePreview(content: string): number {
-    let n = 0;
-    for (const m of content.matchAll(CODE_PREVIEW)) {
-      // 文字列リテラル (i18n キーなど) は式ではないので除いてから判定する。
-      const expr = (m[1] ?? "").replace(/"[^"]*"|'[^']*'/g, "");
-      if (/sql|statements|ddl/i.test(expr)) n += 1;
+  /** `<CodePreview ...>children</CodePreview>` の children を取り出す。開始タグの属性内の `>` / `=>` で誤作動しない。 */
+  function codePreviewChildren(content: string): string[] {
+    const out: string[] = [];
+    for (let at = content.indexOf("<CodePreview"); at !== -1; at = content.indexOf("<CodePreview", at + 1)) {
+      let i = at + "<CodePreview".length;
+      if (!/[\s>/]/.test(content[i] ?? "")) continue; // `<CodePreviewX` など別の名前
+      let depth = 0;
+      let quote = "";
+      for (; i < content.length; i++) {
+        const c = content[i];
+        if (quote) {
+          if (c === quote) quote = "";
+        } else if (c === '"' || c === "'" || (c === "`" && depth > 0)) quote = c;
+        else if (c === "{") depth++;
+        else if (c === "}") depth--;
+        else if (c === ">" && depth === 0) break;
+      }
+      if (content[i - 1] === "/") continue; // 自己閉じ (子なし)
+      const end = content.indexOf("</CodePreview>", i);
+      if (end === -1) continue;
+      out.push(content.slice(i + 1, end));
     }
-    return n;
+    return out;
+  }
+
+  function countSqlInCodePreview(content: string): number {
+    // 文字列リテラル (i18n キーなど) は式ではないので除いてから判定する。
+    return codePreviewChildren(content).filter(
+      (child) => !NON_SQL_CHILD.test(child.replace(/"[^"]*"|'[^']*'/g, "")),
+    ).length;
   }
 
   it("CodePreview に SQL を渡す箇所を増やさず、減ったらベースラインも下げる", () => {
@@ -274,7 +302,7 @@ describe("design tokens: SQL のプレビューは SqlPreview (#2178)", () => {
     expect(
       offenders,
       "SQL (DDL / DML) は CodePreview ではなく SqlPreview (sql と driver を渡す) で表示する。" +
-        "SQL 以外のコードだけ CodePreview。移行したらベースラインも下げる。",
+        "SQL 以外のコード (生応答 / エラー / メッセージ / コマンドなど) だけ CodePreview。移行したらベースラインも下げる。",
     ).toEqual([]);
   });
 });
