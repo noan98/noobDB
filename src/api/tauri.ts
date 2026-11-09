@@ -1432,6 +1432,57 @@ export interface ServerMetrics {
   max_connections?: number | null;
 }
 
+/** レプリケーション上の役割 (#2180)。 */
+export type ReplicationRole = "primary" | "replica" | "standalone";
+
+/** 自分から見たレプリケーション接続の向き。downstream は複製の送り先、upstream は受信元。 */
+export type ReplicationDirection = "downstream" | "upstream";
+
+/**
+ * 接続先 1 件分のレプリケーション状態 (#2180)。PostgreSQL は `pg_stat_replication` /
+ * `pg_stat_wal_receiver`、MySQL は `SHOW REPLICA STATUS` / `SHOW REPLICAS`。
+ * エンジンが報告しない項目は `null`。
+ */
+export interface ReplicationLink {
+  direction: ReplicationDirection;
+  name: string;
+  address: string | null;
+  /** PostgreSQL の `state`、MySQL は `running` / `io_stopped` / `sql_stopped` の要約。 */
+  state: string | null;
+  sync_state: string | null;
+  /** 反映の遅れ (秒)。 */
+  lag_secs: number | null;
+  write_lag_secs: number | null;
+  flush_lag_secs: number | null;
+  /** 送信済み WAL と反映済み WAL の差 (バイト)。PostgreSQL の送信側のみ。 */
+  lag_bytes: number | null;
+  io_running: boolean | null;
+  sql_running: boolean | null;
+  last_error: string | null;
+}
+
+/** レプリケーションスロット (PostgreSQL, #2180)。 */
+export interface ReplicationSlot {
+  name: string;
+  slot_type: string;
+  plugin: string | null;
+  active: boolean;
+  /** スロットが保持している WAL の量 (バイト)。 */
+  retained_bytes: number | null;
+  wal_status: string | null;
+}
+
+/**
+ * `get_replication_status` の応答 (#2180)。権限不足はエラーでなく `missing_privilege`
+ * (必要な権限名) として返る。SQLite は非対応でコマンドがエラーを返す (UI は導線を無効にする)。
+ */
+export interface ReplicationStatus {
+  role: ReplicationRole;
+  missing_privilege: string | null;
+  links: ReplicationLink[];
+  slots: ReplicationSlot[];
+}
+
 /** One trusted SSH host from known_hosts (`host:port` + fingerprint). #682. */
 export interface KnownHost {
   host: string;

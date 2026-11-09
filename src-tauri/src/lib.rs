@@ -38,6 +38,7 @@ mod profiles;
 mod sandboxes;
 mod schema_drift;
 mod snippets;
+mod sql_credentials;
 mod ssh;
 mod ssm;
 mod state;
@@ -91,6 +92,9 @@ pub mod __test_api {
     pub use crate::db::refresh_diff::{
         PatchPayload, PatchRun, RefreshBuilder, RefreshOutcome, RefreshSnapshot,
         RefreshSnapshotStore,
+    };
+    pub use crate::db::replication::{
+        ReplicationDirection, ReplicationLink, ReplicationRole, ReplicationSlot, ReplicationStatus,
     };
     pub use crate::db::result_ops::{
         column_stats, duplicate_keys, find, sort_filter, ColumnStatsOut, DuplicateKeysOut,
@@ -180,6 +184,17 @@ pub mod __test_api {
         crate::db::mask_for_driver(driver, &chars)
             .into_iter()
             .collect()
+    }
+
+    /// 資格情報リテラルの伏せ字化 (#2174)。共有ゴールデン
+    /// (`tests/credential_redact_golden.rs`) が `&str -> String` で突き合わせる。
+    pub fn redact_credentials(driver: DriverKind, sql: &str) -> String {
+        crate::sql_credentials::redact_credentials(sql, driver).into_owned()
+    }
+
+    /// サーバのエラー文からの資格情報の伏せ字化 (#2174)。
+    pub fn redact_error_text(driver: DriverKind, error: &str, sql: &str) -> String {
+        crate::sql_credentials::redact_error_text(error, sql, driver)
     }
 
     /// バックエンドの stacked 文検出 (#852)。文境界ゴールデン (#1074、
@@ -591,7 +606,8 @@ pub mod __test_api {
     pub use crate::commands::process::{get_process_query_inner, list_processes_inner};
     pub use crate::commands::profile::{profile_column_inner, profile_table_inner};
     pub use crate::commands::server::{
-        server_info_inner, server_metrics_inner, sqlite_maintenance_inner,
+        get_replication_status_inner, server_info_inner, server_metrics_inner,
+        sqlite_maintenance_inner,
     };
 
     /// スキーマ比較の本体 (インデックス・外部キーの差分、SQLite の再作成コンテキスト込み)。
@@ -1958,6 +1974,7 @@ pub fn run() {
             commands::schema::column_dependencies,
             commands::server::server_info,
             commands::server::server_metrics,
+            commands::server::get_replication_status,
             commands::server::sqlite_maintenance,
             commands::process::list_processes,
             commands::process::get_process_query,

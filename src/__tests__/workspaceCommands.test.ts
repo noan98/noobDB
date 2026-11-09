@@ -50,6 +50,7 @@ describe("workspaceCommandItems", () => {
       "nav:advisor",
       "nav:inspector",
       "nav:processes",
+      "nav:replication",
       "nav:pgListen",
       "nav:assertions",
       "nav:connectionHealth",
@@ -124,6 +125,7 @@ describe("workspaceCommandItems", () => {
     const got = ids({ ...base, driver: "sqlite" });
     expect(got).not.toContain("nav:inspector");
     expect(got).not.toContain("nav:processes");
+    expect(got).not.toContain("nav:replication");
   });
 
   it("対象 DB が決まらないとアドバイザを出さない", () => {

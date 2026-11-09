@@ -159,11 +159,13 @@ function OutputRow({
   // 再実行できない理由 (#1541)。記録時と別の接続へは流さない (別環境への誤実行を防ぐ)。
   const rerunBlock = truncated
     ? t("outputOpenTruncatedDisabled")
-    : !canRun
-      ? t("outputNeedsConnection")
-      : entry.connectionId === null || entry.connectionId !== currentConnectionId
-        ? t("outputRerunOtherConnection", { name: entry.connection ?? "?" })
-        : null;
+    : entry.credentialsRedacted
+      ? t("outputRerunRedacted")
+      : !canRun
+        ? t("outputNeedsConnection")
+        : entry.connectionId === null || entry.connectionId !== currentConnectionId
+          ? t("outputRerunOtherConnection", { name: entry.connection ?? "?" })
+          : null;
   const errorLine = entry.outcome === "error" ? parseErrorLine(entry.error, entry.sql) : null;
   const serverMessages = entry.serverMessages ?? [];
   const worstServer = worstServerSeverity(serverMessages);
@@ -284,7 +286,13 @@ function OutputRow({
           <Flex gap="2">
             {/* 切り詰めた断片を開くと、欠けた DML をそのまま実行できてしまうので無効にする。 */}
             <Tooltip
-              label={truncated ? t("outputOpenTruncatedDisabled") : undefined}
+              label={
+                truncated
+                  ? t("outputOpenTruncatedDisabled")
+                  : entry.credentialsRedacted
+                    ? t("outputOpenRedactedNote")
+                    : undefined
+              }
               focusableWrapper={truncated}
             >
               <Button
@@ -299,7 +307,13 @@ function OutputRow({
             </Tooltip>
             {onInsertSql && (
               <Tooltip
-                label={truncated ? t("outputOpenTruncatedDisabled") : undefined}
+                label={
+                  truncated
+                    ? t("outputOpenTruncatedDisabled")
+                    : entry.credentialsRedacted
+                      ? t("outputOpenRedactedNote")
+                      : undefined
+                }
                 focusableWrapper={truncated}
               >
                 <Button

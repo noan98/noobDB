@@ -396,6 +396,9 @@ const PinnedComparisonView = lazy(() =>
 const ProcessListPanel = lazy(() =>
   import("./components/ProcessListPanel").then((m) => ({ default: m.ProcessListPanel })),
 );
+const ReplicationPanel = lazy(() =>
+  import("./components/ReplicationPanel").then((m) => ({ default: m.ReplicationPanel })),
+);
 const PgListenPanel = lazy(() =>
   import("./components/PgListenPanel").then((m) => ({ default: m.PgListenPanel })),
 );
@@ -641,6 +644,7 @@ import {
   reverseRowsForPrev,
 } from "./keysetPagination";
 import { isMultiStatement, type BatchStatementResult, toBatchOutputInput, toBatchResult } from "./sqlScript";
+import { redactCredentials } from "./sqlCredentials";
 import {
   EMPTY_QUICK_ACCESS,
   loadQuickAccess,
@@ -1252,6 +1256,8 @@ type OutputCtx = {
   connectionId: string | null;
   connectionName: string | null;
   defaultDatabase: string | null;
+  /** SQL の資格情報を伏せるときの方言 (#2174)。分からなければ undefined (両方言の規則を当てる)。 */
+  driver?: string;
 };
 
 function makeQueryTab(): Tab {
@@ -3286,7 +3292,10 @@ export default function App() {
   // (履歴を記録しない接続 `skip_history` を除く) ので、それと同じ内容を JS 側で足す。
   const pushQueryHistory = useCallback((sql: string) => {
     if (selectedProfileRef.current?.skip_history) return;
-    setQueryHistory((prev) => pushHistoryEntry(prev, sql));
+    // バックエンドは履歴に伏せ字化した SQL を保存する (#2174) ので、同じ内容を積む。
+    setQueryHistory((prev) =>
+      pushHistoryEntry(prev, redactCredentials(sql, selectedProfileRef.current?.driver)),
+    );
   }, []);
 
   // クイックアクセス: アクティブ接続が変わったら、そのプロファイルの
@@ -4792,6 +4801,7 @@ export default function App() {
     defaultDatabase: null,
   });
   outputProfileRef.current = {
+    driver: selectedProfile?.driver,
     connectionId: selectedProfile?.id ?? null,
     connectionName: selectedProfile?.name ?? null,
     defaultDatabase: selectedProfile?.database ?? null,
@@ -4800,7 +4810,14 @@ export default function App() {
   // 出力の記録が新しい接続へずれないよう、各実行の冒頭で 1 回だけ呼んで recordOutput に渡す。
   const outputCtxFor = useCallback((sid: string | null | undefined): OutputCtx => {
     const p = sid ? openConnectionsRef.current.find((c) => c.sessionId === sid)?.profile : undefined;
-    if (p) return { connectionId: p.id, connectionName: p.name, defaultDatabase: p.database ?? null };
+    if (p) {
+      return {
+        connectionId: p.id,
+        connectionName: p.name,
+        defaultDatabase: p.database ?? null,
+        driver: p.driver,
+      };
+    }
     return { ...outputProfileRef.current };
   }, []);
   // `execDatabase` は実行に使った DB (タブの database のみ。既定へのフォールバックはしない)。
@@ -4810,13 +4827,16 @@ export default function App() {
       execDatabase: string | null | undefined,
       ctx: OutputCtx = outputProfileRef.current,
     ) => {
-      pushOutput({
-        ...input,
-        connection: ctx.connectionName,
-        connectionId: ctx.connectionId,
-        database: execDatabase ?? ctx.defaultDatabase,
-        execDatabase: execDatabase ?? null,
-      });
+      pushOutput(
+        {
+          ...input,
+          connection: ctx.connectionName,
+          connectionId: ctx.connectionId,
+          database: execDatabase ?? ctx.defaultDatabase,
+          execDatabase: execDatabase ?? null,
+        },
+        ctx.driver,
+      );
     },
     [],
   );
@@ -8428,7 +8448,11 @@ export default function App() {
   const runGuardedDdl = useCallback(
     async (
       sql: string,
-      opts?: { destructiveTargets?: readonly string[]; alreadyConfirmed?: boolean },
+      opts?: {
+        destructiveTargets?: readonly string[];
+        alreadyConfirmed?: boolean;
+        forceTypedConfirm?: boolean;
+      },
     ): Promise<boolean> => {
       if (opts?.alreadyConfirmed) return true;
       const gate = evaluateDdlGate({
@@ -8440,6 +8464,7 @@ export default function App() {
         emergencyMode,
         confirmDangerousQueries: settings.confirmDangerousQueries,
         destructiveTargets: opts?.destructiveTargets,
+        forceTypedConfirm: opts?.forceTypedConfirm,
       });
       if (!gate) return true;
       return new Promise<boolean>((resolve) => {
@@ -8512,6 +8537,25 @@ export default function App() {
       }
     },
     [sessionId, runGuardedDdl, invalidateSchemaCache, noteSchemaDdl, toast],
+  );
+
+  // レプリケーションスロットの削除 (#2180)。パネルが SQL プレビュー付きの確認を済ませたあとに呼ぶ。
+  // 共通ゲート (#2176) を通し、本番では書き込み承認とスロット名の型入力を求める。キャンセル / 失敗は false。
+  // read_only 接続は `pg_drop_replication_slot` を拒否リストで弾くバックエンドが止める (パネルも無効にする)。
+  const handleDropReplicationSlot = useCallback(
+    async (name: string, sql: string): Promise<boolean> => {
+      if (!sessionId) return false;
+      if (!(await runGuardedDdl(sql, { destructiveTargets: [name], forceTypedConfirm: true }))) return false;
+      try {
+        await api.runQuery(sessionId, sql, null);
+        toast.success(translate("replicationDropDone", { name }));
+        return true;
+      } catch (e) {
+        toast.error(translate("statusQueryError", { error: String(e) }));
+        return false;
+      }
+    },
+    [sessionId, runGuardedDdl, toast],
   );
 
   const handleCopyTableName = useCallback(
@@ -12683,7 +12727,9 @@ export default function App() {
     reason === "sqliteUnsupported"
       ? tab === "inspector"
         ? t("appQueryInspectorUnsupported")
-        : t("appProcessesUnsupported")
+        : tab === "replication"
+          ? t("replicationUnsupported")
+          : t("appProcessesUnsupported")
       : reason === "needsDatabase"
         ? t("appAdvisorUnsupported")
         : t("appToolsNeedsSession");
@@ -12711,17 +12757,19 @@ export default function App() {
                       ? t("sqliteMaintTitle")
                       : tab === "pgListen"
                         ? t("pgListenTitle")
-                        : tab === "profile"
-                          ? t("profileTitle")
-                          : tab === "structure"
-                            ? t("structureTitle")
-                            : tab === "timelapse"
-                              ? t("timelapseTitle")
-                              : tab === "aiSql"
-                                ? t("aiSqlTitle")
-                                : tab === "aiResultSummary"
-                                  ? t("aiResultSummaryTitle")
-                                  : t("processTitle");
+                        : tab === "replication"
+                          ? t("replicationTitle")
+                          : tab === "profile"
+                            ? t("profileTitle")
+                            : tab === "structure"
+                              ? t("structureTitle")
+                              : tab === "timelapse"
+                                ? t("timelapseTitle")
+                                : tab === "aiSql"
+                                  ? t("aiSqlTitle")
+                                  : tab === "aiResultSummary"
+                                    ? t("aiResultSummaryTitle")
+                                    : t("processTitle");
 
   // ConnectionList (memo) へ渡すハンドラの束。`tabs` / `activeTab` / `settings` に依存する
   // ハンドラが多く、そのまま渡すと打鍵・ストリーミング・タブ切替のたびに参照が変わって
@@ -13380,6 +13428,14 @@ export default function App() {
                         key={sessionId}
                         sessionId={sessionId}
                         driver={selectedProfile?.driver ?? "mysql"}
+                      />
+                    ) : activeBottomPanelTab === "replication" ? (
+                      <ReplicationPanel
+                        key={sessionId}
+                        sessionId={sessionId}
+                        driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                        readOnly={selectedProfile?.read_only ?? false}
+                        onDropSlot={handleDropReplicationSlot}
                       />
                     ) : activeBottomPanelTab === "processes" ? (
                       <ProcessListPanel
@@ -15239,6 +15295,18 @@ export default function App() {
                   ? t("appToolsNeedsSession")
                   : selectedProfile?.driver === "sqlite"
                     ? t("appProcessesUnsupported")
+                    : undefined,
+              },
+              {
+                label: t("replicationTitle"),
+                icon: "server",
+                onSelect: () => toggleBottomPanel("replication"),
+                // SQLite はレプリケーションの概念が無く非対応 (#2180)。
+                disabled: !sessionId || selectedProfile?.driver === "sqlite",
+                title: !sessionId
+                  ? t("appToolsNeedsSession")
+                  : selectedProfile?.driver === "sqlite"
+                    ? t("replicationUnsupported")
                     : undefined,
               },
               {

@@ -6,6 +6,11 @@ use sqlx::pool::PoolConnection;
 use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef};
 
 use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
+use super::replication::{
+    first_present_column, mysql_link_state, mysql_replica_status_sql, mysql_replicas_sql,
+    mysql_required_privilege, non_blank, ReplicationDirection, ReplicationLink, ReplicationRole,
+    ReplicationStatus,
+};
 use super::tx_options::TxOptions;
 use super::types::{non_empty_comment, TableComment};
 use super::types::{
@@ -4585,6 +4590,170 @@ async fn restore_max_execution_time(conn: &mut sqlx::MySqlConnection, orig: u64)
             false
         }
     }
+}
+
+impl MySqlConn {
+    /// レプリケーションの状態 (#2180)。`SHOW REPLICA STATUS` (8.0.22 未満・MariaDB は
+    /// `SHOW SLAVE STATUS`) の各チャンネルを上流として、`SHOW REPLICAS` を下流として返す。
+    /// 参照のみ。`REPLICATION CLIENT` (または `SUPER`) が無いと状態を読めないため、
+    /// エラーにせず `missing_privilege` に権限名を入れて返す。下流の一覧は
+    /// `REPLICATION SLAVE` が要るので、読めなくても黙って省く。
+    pub async fn replication_status(&self) -> Result<ReplicationStatus> {
+        let version = self.server_version().await.unwrap_or_default();
+        let result = if version.trim().is_empty() {
+            // バージョンが取れないときは新しい構文から試し、構文エラーなら旧構文へ。
+            match sqlx::query("SHOW REPLICA STATUS")
+                .fetch_all(&self.pool)
+                .await
+            {
+                Err(e) if !is_privilege_error(&e) => {
+                    sqlx::query("SHOW SLAVE STATUS").fetch_all(&self.pool).await
+                }
+                other => other,
+            }
+        } else {
+            sqlx::query(mysql_replica_status_sql(&version))
+                .fetch_all(&self.pool)
+                .await
+        };
+        // 複数ソース (マルチソースレプリケーション) は行ごとのチャンネルとして上流に並べる。
+        let rows = match result {
+            Ok(rows) => rows,
+            Err(e) if is_privilege_error(&e) => {
+                return Ok(ReplicationStatus {
+                    role: ReplicationRole::Standalone,
+                    missing_privilege: Some(mysql_required_privilege(&version).into()),
+                    links: Vec::new(),
+                    slots: Vec::new(),
+                });
+            }
+            Err(e) => return Err(e.into()),
+        };
+        let mut links: Vec<ReplicationLink> = rows
+            .iter()
+            .map(|r| {
+                let host = my_text(r, &["Source_Host", "Master_Host"]);
+                let port = my_text(r, &["Source_Port", "Master_Port"]);
+                let channel = my_text(r, &["Channel_Name"]).filter(|c| !c.is_empty());
+                let address = host.map(|h| match port {
+                    Some(p) => format!("{h}:{p}"),
+                    None => h,
+                });
+                let base = address.clone().unwrap_or_else(|| "source".into());
+                let io = my_text(r, &["Replica_IO_Running", "Slave_IO_Running"])
+                    .map(|v| v.eq_ignore_ascii_case("yes"));
+                let sql = my_text(r, &["Replica_SQL_Running", "Slave_SQL_Running"])
+                    .map(|v| v.eq_ignore_ascii_case("yes"));
+                // 停止中は Seconds_Behind_* が NULL になる。
+                let lag = my_text(r, &["Seconds_Behind_Source", "Seconds_Behind_Master"])
+                    .and_then(|v| v.parse::<f64>().ok())
+                    // どちらかのスレッドが止まっている間の遅延は意味を持たない (0 と出ることもある)。
+                    .filter(|_| io == Some(true) && sql == Some(true));
+                let last_error = non_blank(my_text(r, &["Last_IO_Error"]))
+                    .or_else(|| non_blank(my_text(r, &["Last_SQL_Error"])))
+                    .or_else(|| non_blank(my_text(r, &["Last_Error"])));
+                ReplicationLink {
+                    direction: ReplicationDirection::Upstream,
+                    name: match &channel {
+                        Some(c) => format!("{base} ({c})"),
+                        None => base,
+                    },
+                    address,
+                    state: mysql_link_state(io, sql),
+                    sync_state: None,
+                    lag_secs: lag,
+                    write_lag_secs: None,
+                    flush_lag_secs: None,
+                    lag_bytes: None,
+                    io_running: io,
+                    sql_running: sql,
+                    last_error,
+                }
+            })
+            .collect();
+        let is_replica = !links.is_empty();
+
+        // 下流 (このサーバから複製を受けているレプリカ)。権限不足・未対応は無視する。
+        if let Ok(replicas) = sqlx::query(mysql_replicas_sql(&version))
+            .fetch_all(&self.pool)
+            .await
+        {
+            for r in &replicas {
+                let host = my_text(r, &["Host"]).filter(|h| !h.is_empty());
+                let port = my_text(r, &["Port"]);
+                let server_id = my_text(r, &["Server_Id"]);
+                let address = host.map(|h| match port {
+                    Some(p) => format!("{h}:{p}"),
+                    None => h,
+                });
+                links.push(ReplicationLink {
+                    direction: ReplicationDirection::Downstream,
+                    name: address
+                        .clone()
+                        .or_else(|| server_id.map(|id| format!("server_id {id}")))
+                        .unwrap_or_else(|| "replica".into()),
+                    address,
+                    state: None,
+                    sync_state: None,
+                    lag_secs: None,
+                    write_lag_secs: None,
+                    flush_lag_secs: None,
+                    lag_bytes: None,
+                    io_running: None,
+                    sql_running: None,
+                    last_error: None,
+                });
+            }
+        }
+
+        let role = if is_replica {
+            ReplicationRole::Replica
+        } else if !links.is_empty() {
+            ReplicationRole::Primary
+        } else {
+            ReplicationRole::Standalone
+        };
+        Ok(ReplicationStatus {
+            role,
+            missing_privilege: None,
+            links,
+            slots: Vec::new(),
+        })
+    }
+}
+
+/// 権限不足 (ER_DBACCESS_DENIED 1044 / ER_ACCESS_DENIED 1045 / ER_TABLEACCESS_DENIED 1142 /
+/// ER_SPECIFIC_ACCESS_DENIED 1227) か。`SHOW REPLICA STATUS` は `REPLICATION CLIENT` が無いと 1227。
+fn is_privilege_code(number: u16) -> bool {
+    matches!(number, 1044 | 1045 | 1142 | 1227)
+}
+
+fn is_privilege_error(err: &sqlx::Error) -> bool {
+    err.as_database_error()
+        .and_then(|d| d.try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>())
+        .is_some_and(|d| is_privilege_code(d.number()))
+}
+
+/// `SHOW ...` の行から、最初に見つかった列名 (大文字小文字を区別しない) の値を文字列で取る。
+/// 列の型 (文字列 / 整数) はサーバ版で違うので、文字列 → 符号付き → 符号なしの順に試す。
+/// NULL と該当列なしは `None`。
+fn my_text(row: &MySqlRow, names: &[&str]) -> Option<String> {
+    let columns: Vec<&str> = row.columns().iter().map(|c| c.name()).collect();
+    let idx = first_present_column(&columns, names)?;
+    if let Ok(v) = row.try_get::<Option<String>, _>(idx) {
+        return v;
+    }
+    if let Ok(v) = row.try_get::<Option<i64>, _>(idx) {
+        return v.map(|n| n.to_string());
+    }
+    if let Ok(v) = row.try_get::<Option<u64>, _>(idx) {
+        return v.map(|n| n.to_string());
+    }
+    // 文字コードの都合で String として読めない列は UTF-8 として緩く読む。
+    if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(idx) {
+        return v.map(|b| String::from_utf8_lossy(&b).into_owned());
+    }
+    None
 }
 
 #[cfg(test)]

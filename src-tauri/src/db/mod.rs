@@ -37,6 +37,8 @@ pub mod privileges;
 pub mod profile;
 /// 自動リフレッシュの差分パッチ (#1257)。
 pub mod refresh_diff;
+/// レプリケーション監視 (#2180) の共通型と純ロジック。
+pub mod replication;
 pub mod result_ops;
 pub mod result_store;
 pub mod sandbox;
@@ -1952,6 +1954,16 @@ impl Connection {
             Connection::MySql(c) => c.list_processes().await,
             Connection::Postgres(c) => c.list_processes().await,
             Connection::Sqlite(c) => c.list_processes().await,
+        }
+    }
+
+    /// レプリケーションの状態 (役割・接続先ごとの遅延・スロット, #2180)。カタログの読み取りのみで
+    /// read_only でも動く。権限不足はエラーでなく `missing_privilege` として返す。SQLite は未対応エラー。
+    pub async fn replication_status(&self) -> Result<replication::ReplicationStatus> {
+        match self {
+            Connection::MySql(c) => c.replication_status().await,
+            Connection::Postgres(c) => c.replication_status().await,
+            Connection::Sqlite(c) => c.replication_status().await,
         }
     }
 

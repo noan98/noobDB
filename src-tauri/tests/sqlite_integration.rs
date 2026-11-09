@@ -315,6 +315,28 @@ async fn sqlite_server_metrics_is_unsupported() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// レプリケーション監視 (#2180)。SQLite にレプリケーションの概念は無いので、空の状態ではなく
+/// 「非対応」のエラーで返す (UI は導線を無効にし、直接 IPC を叩いた場合の備えがこのエラー)。
+#[tokio::test]
+async fn sqlite_replication_status_is_unsupported() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_repl_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    let result = conn.replication_status().await;
+    assert!(
+        result.is_err(),
+        "SQLite replication_status must error (unsupported), got: {result:?}"
+    );
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
 #[tokio::test]
 async fn sqlite_foreign_keys_are_introspected_for_er_diagram() {
     // The ER diagram is fed by `foreign_keys`: it must surface every FK in the

@@ -19,6 +19,7 @@ import { EmptyState } from "./EmptyState";
 import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
 import { CodePreview, FieldLabel, FormSection } from "./modalForm";
+import { SqlPreview } from "./SqlPreview";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { useToast } from "./Toast";
@@ -728,9 +729,7 @@ export function UsersPanel({
       message: (
         <>
           <chakra.p margin={0}>{t("usersCreateConfirmMessage")}</chakra.p>
-          <CodePreview wrap mt="2" maxH="260px">
-            {sql}
-          </CodePreview>
+          <SqlPreview sql={sql} driver={driver} maskCredentials wrap mt="2" maxH="260px" />
         </>
       ),
       confirmLabel: t("usersCreateConfirmOk"),
@@ -798,9 +797,7 @@ export function UsersPanel({
       message: (
         <>
           <chakra.p margin={0}>{t("usersPasswordConfirmMessage", { name: selected.name })}</chakra.p>
-          <CodePreview wrap mt="2" maxH="260px">
-            {sql}
-          </CodePreview>
+          <SqlPreview sql={sql} driver={driver} maskCredentials wrap mt="2" maxH="260px" />
         </>
       ),
       confirmLabel: t("usersPasswordConfirmOk"),

@@ -98,6 +98,7 @@ describe("availableBottomPanelTabs", () => {
         ...LOG_TABS,
         "inspector",
         "processes",
+        "replication",
         "assertions",
         "pgListen",
         "health",
@@ -408,6 +409,7 @@ describe("bottomPanelStripTabs (折りたたみ時のパネルバー)", () => {
       "advisor",
       "inspector",
       "processes",
+      "replication",
       "assertions",
       "health",
     ]);
@@ -459,6 +461,8 @@ describe("bottomPanelStripTabs (折りたたみ時のパネルバー)", () => {
     expect(disabledTabs({ ...connected, driver: "sqlite" })).toEqual([
       { tab: "inspector", enabled: false, reason: "sqliteUnsupported" },
       { tab: "processes", enabled: false, reason: "sqliteUnsupported" },
+      // レプリケーション監視 (#2180) も SQLite には概念が無く、理由つきで無効にする。
+      { tab: "replication", enabled: false, reason: "sqliteUnsupported" },
     ]);
     expect(disabledTabs({ ...connected, driver: "mysql" })).toEqual([]);
   });
