@@ -8412,31 +8412,6 @@ export default function App() {
   // 1 文ならクエリタブで実行して結果を見せる。複数文 (PostgreSQL の親 + 最初の子パーティション) は
   // 拡張プロトコルが 1 回に 1 文しか受け付けないので、既存の `run_query_transaction` (read_only
   // ガード付き) に文の配列で渡す (#2161)。新しい書き込み経路は増やさない。
-  const handleCreateTableRun = useCallback(
-    (sql: string, statements: string[]) => {
-      const database = createTableDb;
-      setCreateTableDb(null);
-      if (statements.length <= 1 || !sessionId) {
-        openAndRunQuery(sql);
-        return;
-      }
-      void (async () => {
-        try {
-          await api.runQueryTransaction(sessionId, statements, database || null);
-          invalidateSchemaCache(database || null);
-          noteSchemaDdl(statements.join(";\n"), database || null);
-          connectionListRef.current?.refreshSchema();
-          toast.success(translate("createTableCreated"));
-        } catch (e) {
-          invalidateSchemaCache(database || null);
-          connectionListRef.current?.refreshSchema();
-          toast.error(translate("statusQueryError", { error: String(e) }));
-        }
-      })();
-    },
-    [createTableDb, sessionId, openAndRunQuery, invalidateSchemaCache, noteSchemaDdl, toast],
-  );
-
   const handleCreateTableToEditor = useCallback(
     (sql: string) => {
       setCreateTableDb(null);
@@ -8483,6 +8458,33 @@ export default function App() {
       emergencyMode,
       settings.confirmDangerousQueries,
     ],
+  );
+
+  const handleCreateTableRun = useCallback(
+    (sql: string, statements: string[]) => {
+      const database = createTableDb;
+      setCreateTableDb(null);
+      if (statements.length <= 1 || !sessionId) {
+        openAndRunQuery(sql);
+        return;
+      }
+      void (async () => {
+        // 複数文はトランザクションで直接実行するため、エディタと同じ実行ゲートを通す (#2176)。
+        if (!(await runGuardedDdl(statements.join(";\n")))) return;
+        try {
+          await api.runQueryTransaction(sessionId, statements, database || null);
+          invalidateSchemaCache(database || null);
+          noteSchemaDdl(statements.join(";\n"), database || null);
+          connectionListRef.current?.refreshSchema();
+          toast.success(translate("createTableCreated"));
+        } catch (e) {
+          invalidateSchemaCache(database || null);
+          connectionListRef.current?.refreshSchema();
+          toast.error(translate("statusQueryError", { error: String(e) }));
+        }
+      })();
+    },
+    [createTableDb, sessionId, openAndRunQuery, invalidateSchemaCache, noteSchemaDdl, toast, runGuardedDdl],
   );
 
   // テーブル保守操作: DDL を実行し、スキーマキャッシュとツリーを更新する。
