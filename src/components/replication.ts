@@ -23,6 +23,11 @@ export function slotsHoldingWal(
     .sort((a, b) => (b.retained_bytes ?? 0) - (a.retained_bytes ?? 0) || a.name.localeCompare(b.name));
 }
 
+/** `wal_status = 'lost'` のスロット (必要な WAL が失われ、もう使えない)。 */
+export function slotsLost(slots: readonly ReplicationSlot[]): ReplicationSlot[] {
+  return slots.filter((s) => s.wal_status === "lost");
+}
+
 /** 遅延 (秒) をメーターの位置 (0〜100%) にする。`null` / 負値 / 非有限値は 0。 */
 export function lagMeterPercent(secs: number | null | undefined): number {
   if (secs == null || !Number.isFinite(secs) || secs <= 0) return 0;

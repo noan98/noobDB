@@ -31,6 +31,7 @@ import {
   LAG_WARN_SECS,
   linkNeedsAttention,
   slotsHoldingWal,
+  slotsLost,
   SLOT_WAL_WARN_BYTES,
   sortLinks,
 } from "./replication";
@@ -249,6 +250,7 @@ export function ReplicationPanel({ sessionId, driver }: { sessionId: string; dri
   useRefreshOnReactivate(active && !unsupported, load);
 
   const stuckSlots = useMemo(() => (status ? slotsHoldingWal(status.slots) : []), [status]);
+  const lostSlots = useMemo(() => (status ? slotsLost(status.slots) : []), [status]);
   const downstream = useMemo(
     () => sortLinks(status?.links.filter((l) => l.direction === "downstream") ?? []),
     [status],
@@ -347,8 +349,14 @@ export function ReplicationPanel({ sessionId, driver }: { sessionId: string; dri
             </Callout>
           )}
 
+          {lostSlots.length > 0 && (
+            <Callout tone="warning" role="status" data-testid="replication-slot-lost">
+              {t("replicationSlotLost", { names: lostSlots.map((s) => s.name).join(", ") })}
+            </Callout>
+          )}
+
           {stuckSlots.length > 0 && (
-            <Callout tone="warning" role="alert" data-testid="replication-slot-warning">
+            <Callout tone="warning" role="status" data-testid="replication-slot-warning">
               {t("replicationSlotWarn", {
                 count: stuckSlots.length,
                 threshold: formatBytes(SLOT_WAL_WARN_BYTES),
@@ -374,8 +382,8 @@ export function ReplicationPanel({ sessionId, driver }: { sessionId: string; dri
           {downstream.length > 0 && (
             <Flex direction="column" gap="2" data-testid="replication-downstream">
               <Heading as="h3">{t("replicationSectionDownstream")}</Heading>
-              {downstream.map((l) => (
-                <LinkCard key={`d:${l.name}:${l.address ?? ""}`} link={l} />
+              {downstream.map((l, i) => (
+                <LinkCard key={`d:${i}:${l.name}:${l.address ?? ""}`} link={l} />
               ))}
             </Flex>
           )}
@@ -383,8 +391,8 @@ export function ReplicationPanel({ sessionId, driver }: { sessionId: string; dri
           {upstream.length > 0 && (
             <Flex direction="column" gap="2" data-testid="replication-upstream">
               <Heading as="h3">{t("replicationSectionUpstream")}</Heading>
-              {upstream.map((l) => (
-                <LinkCard key={`u:${l.name}:${l.address ?? ""}`} link={l} />
+              {upstream.map((l, i) => (
+                <LinkCard key={`u:${i}:${l.name}:${l.address ?? ""}`} link={l} />
               ))}
             </Flex>
           )}
@@ -406,7 +414,7 @@ export function ReplicationPanel({ sessionId, driver }: { sessionId: string; dri
                   </thead>
                   <tbody>
                     {status.slots.map((s) => {
-                      const stuck = stuckSlots.some((x) => x.name === s.name);
+                      const stuck = s.wal_status === "lost" || stuckSlots.some((x) => x.name === s.name);
                       return (
                         <tr key={s.name} data-testid="replication-slot" data-stuck={stuck ? "true" : "false"}>
                           <chakra.td css={tdCss}>{s.name}</chakra.td>

@@ -7,8 +7,9 @@ use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef}
 
 use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
 use super::replication::{
-    mysql_link_state, mysql_replica_status_sql, mysql_replicas_sql, non_blank,
-    ReplicationDirection, ReplicationLink, ReplicationRole, ReplicationStatus,
+    first_present_column, mysql_link_state, mysql_replica_status_sql, mysql_replicas_sql,
+    mysql_required_privilege, non_blank, ReplicationDirection, ReplicationLink, ReplicationRole,
+    ReplicationStatus,
 };
 use super::tx_options::TxOptions;
 use super::types::{non_empty_comment, TableComment};
@@ -4599,15 +4600,29 @@ impl MySqlConn {
     /// `REPLICATION SLAVE` が要るので、読めなくても黙って省く。
     pub async fn replication_status(&self) -> Result<ReplicationStatus> {
         let version = self.server_version().await.unwrap_or_default();
-        let rows = match sqlx::query(mysql_replica_status_sql(&version))
-            .fetch_all(&self.pool)
-            .await
-        {
+        let result = if version.trim().is_empty() {
+            // バージョンが取れないときは新しい構文から試し、構文エラーなら旧構文へ。
+            match sqlx::query("SHOW REPLICA STATUS")
+                .fetch_all(&self.pool)
+                .await
+            {
+                Err(e) if !is_privilege_error(&e) => {
+                    sqlx::query("SHOW SLAVE STATUS").fetch_all(&self.pool).await
+                }
+                other => other,
+            }
+        } else {
+            sqlx::query(mysql_replica_status_sql(&version))
+                .fetch_all(&self.pool)
+                .await
+        };
+        // 複数ソース (マルチソースレプリケーション) は行ごとのチャンネルとして上流に並べる。
+        let rows = match result {
             Ok(rows) => rows,
             Err(e) if is_privilege_error(&e) => {
                 return Ok(ReplicationStatus {
                     role: ReplicationRole::Standalone,
-                    missing_privilege: Some("REPLICATION CLIENT".into()),
+                    missing_privilege: Some(mysql_required_privilege(&version).into()),
                     links: Vec::new(),
                     slots: Vec::new(),
                 });
@@ -4723,23 +4738,20 @@ fn is_privilege_error(err: &sqlx::Error) -> bool {
 /// 列の型 (文字列 / 整数) はサーバ版で違うので、文字列 → 符号付き → 符号なしの順に試す。
 /// NULL と該当列なしは `None`。
 fn my_text(row: &MySqlRow, names: &[&str]) -> Option<String> {
-    for name in names {
-        let Some(idx) = row
-            .columns()
-            .iter()
-            .position(|c| c.name().eq_ignore_ascii_case(name))
-        else {
-            continue;
-        };
-        if let Ok(v) = row.try_get::<Option<String>, _>(idx) {
-            return v;
-        }
-        if let Ok(v) = row.try_get::<Option<i64>, _>(idx) {
-            return v.map(|n| n.to_string());
-        }
-        if let Ok(v) = row.try_get::<Option<u64>, _>(idx) {
-            return v.map(|n| n.to_string());
-        }
+    let columns: Vec<&str> = row.columns().iter().map(|c| c.name()).collect();
+    let idx = first_present_column(&columns, names)?;
+    if let Ok(v) = row.try_get::<Option<String>, _>(idx) {
+        return v;
+    }
+    if let Ok(v) = row.try_get::<Option<i64>, _>(idx) {
+        return v.map(|n| n.to_string());
+    }
+    if let Ok(v) = row.try_get::<Option<u64>, _>(idx) {
+        return v.map(|n| n.to_string());
+    }
+    // 文字コードの都合で String として読めない列は UTF-8 として緩く読む。
+    if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(idx) {
+        return v.map(|b| String::from_utf8_lossy(&b).into_owned());
     }
     None
 }

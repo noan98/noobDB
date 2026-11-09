@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, waitFor } from "./testUtils";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { renderWithProviders, screen, waitFor, act } from "./testUtils";
 import { t } from "../i18n";
 import type { ReplicationStatus } from "../api/tauri";
 
@@ -138,5 +138,66 @@ describe("ReplicationPanel (#2180)", () => {
     renderWithProviders(<ReplicationPanel sessionId="s1" driver="sqlite" />);
     expect(await screen.findByTestId("replication-unsupported")).toBeInTheDocument();
     await waitFor(() => expect(api.getReplicationStatus).not.toHaveBeenCalled());
+  });
+});
+
+describe("ReplicationPanel polling (#2180)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.mocked(api.getReplicationStatus).mockResolvedValue(status({}));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const flush = async (ms: number) => {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  };
+
+  it("自動更新オンでは一定間隔で再取得する", async () => {
+    renderWithProviders(<ReplicationPanel sessionId="s1" driver="postgres" />);
+    await flush(0);
+    const first = vi.mocked(api.getReplicationStatus).mock.calls.length;
+    expect(first).toBeGreaterThanOrEqual(1);
+    await flush(5_000);
+    expect(vi.mocked(api.getReplicationStatus).mock.calls.length).toBeGreaterThan(first);
+  });
+
+  it("自動更新をオフにすると呼び出し回数が増えない", async () => {
+    renderWithProviders(<ReplicationPanel sessionId="s1" driver="postgres" />);
+    await flush(0);
+    await act(async () => {
+      screen.getByRole("checkbox", { name: t("autoRefreshAria") }).click();
+    });
+    const n = vi.mocked(api.getReplicationStatus).mock.calls.length;
+    await flush(30_000);
+    expect(vi.mocked(api.getReplicationStatus).mock.calls.length).toBe(n);
+  });
+
+  it("アンマウント後は呼び出し回数が増えない", async () => {
+    const { unmount } = renderWithProviders(<ReplicationPanel sessionId="s1" driver="postgres" />);
+    await flush(0);
+    unmount();
+    const n = vi.mocked(api.getReplicationStatus).mock.calls.length;
+    await flush(30_000);
+    expect(vi.mocked(api.getReplicationStatus).mock.calls.length).toBe(n);
+  });
+
+  it("keep-alive で非アクティブの間は呼び出し回数が増えない", async () => {
+    const { KeepAlive } = await import("../components/KeepAlive");
+    const panel = (key: string | null) => (
+      <KeepAlive activeKey={key} limit={2}>
+        <ReplicationPanel sessionId="s1" driver="postgres" />
+      </KeepAlive>
+    );
+    const { rerender } = renderWithProviders(panel("a"));
+    await flush(0);
+    rerender(panel(null));
+    await flush(0);
+    const n = vi.mocked(api.getReplicationStatus).mock.calls.length;
+    await flush(30_000);
+    expect(vi.mocked(api.getReplicationStatus).mock.calls.length).toBe(n);
   });
 });

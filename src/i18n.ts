@@ -5804,6 +5804,8 @@ const en = {
     "Missing privilege: {privilege} is required to read the replication status. Only what can be read without it is shown.",
   replicationSlotWarn:
     "{count} inactive slot(s) are holding {threshold} or more of WAL ({names}). The disk can fill up while they stay unused.",
+  replicationSlotLost:
+    "WAL needed by slot(s) has been removed and they can no longer be used: {names}. Drop and recreate them.",
   replicationSectionDownstream: "Replicas (outgoing)",
   replicationSectionUpstream: "Replication source (incoming)",
   replicationSectionSlots: "Replication slots",
@@ -13467,6 +13469,8 @@ const ja: Dict = {
     "権限が足りません: レプリケーションの状態を読むには {privilege} が必要です。権限なしで読める範囲だけを表示しています。",
   replicationSlotWarn:
     "使われていないスロットが {threshold} 以上の WAL を溜めています ({count} 件: {names})。このままではディスクが埋まるおそれがあります。",
+  replicationSlotLost:
+    "スロットが必要とする WAL が失われ、使えなくなっています: {names}。削除して作り直してください。",
   replicationSectionDownstream: "レプリカ (送信先)",
   replicationSectionUpstream: "複製元 (受信元)",
   replicationSectionSlots: "レプリケーションスロット",

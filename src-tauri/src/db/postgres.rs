@@ -5078,25 +5078,32 @@ impl PostgresConn {
         .unwrap_or(true);
 
         let mut links: Vec<ReplicationLink> = Vec::new();
-        if privileged {
+        {
             if in_recovery {
-                // 受信側。遅延は「最後に反映したトランザクションからの経過」。送信側が静かだと
-                // 遅延しているように見えるが、PostgreSQL にはそれ以上の指標が無い。
+                // 受信側。遅延は「最後に反映したトランザクションからの経過」だが、受信済み WAL を
+                // すべて反映済みなら 0 とする (静かなプライマリで遅れて見えないように)。
+                // 権限が無くても読める関数だけなので、遅延は privileged に関わらず返す。
                 let lag: Option<f64> = sqlx::query_scalar(
-                    "SELECT EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp()))::float8",
+                    "SELECT (CASE WHEN pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn() THEN 0 \
+                                  ELSE EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp())) END)::float8",
                 )
                 .fetch_one(&self.pool)
                 .await
                 .unwrap_or(None);
-                // sender_host / sender_port は PostgreSQL 11+。無い版では取れずに縮退する。
-                let receiver = sqlx::query(
-                    "SELECT status::text, sender_host::text, sender_port::int4 \
-                     FROM pg_catalog.pg_stat_wal_receiver LIMIT 1",
-                )
-                .fetch_optional(&self.pool)
-                .await
-                .ok()
-                .flatten();
+                // pg_stat_wal_receiver は権限が無いと見えない。sender_host / sender_port は
+                // PostgreSQL 11+ で、PostgreSQL 10 では列が無く取れずに縮退する (接続元は不明のまま)。
+                let receiver = if privileged {
+                    sqlx::query(
+                        "SELECT status::text, sender_host::text, sender_port::int4 \
+                         FROM pg_catalog.pg_stat_wal_receiver LIMIT 1",
+                    )
+                    .fetch_optional(&self.pool)
+                    .await
+                    .ok()
+                    .flatten()
+                } else {
+                    None
+                };
                 let (state, host, port) = match &receiver {
                     Some(r) => (
                         r.try_get::<Option<String>, _>(0).ok().flatten(),
@@ -5113,7 +5120,9 @@ impl PostgresConn {
                     direction: ReplicationDirection::Upstream,
                     name: address.clone().unwrap_or_else(|| "primary".into()),
                     address,
-                    state: state.or_else(|| receiver.is_none().then(|| "no_receiver".into())),
+                    state: state.or_else(|| {
+                        (privileged && receiver.is_none()).then(|| "no_receiver".into())
+                    }),
                     sync_state: None,
                     lag_secs: lag.map(|v| v.max(0.0)),
                     write_lag_secs: None,
@@ -5123,7 +5132,7 @@ impl PostgresConn {
                     sql_running: None,
                     last_error: None,
                 });
-            } else {
+            } else if privileged {
                 let rows: Vec<PgRow> = sqlx::query(
                     "SELECT COALESCE(NULLIF(application_name, ''), host(client_addr), 'unknown'), \
                             host(client_addr), state, sync_state, \

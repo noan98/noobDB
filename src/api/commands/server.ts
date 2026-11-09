@@ -22,15 +22,15 @@ export const serverCommands = {
    * 読み取り操作なので read_only セッションでも許可される。SQLite は非対応で
    * エラーを返す (呼び出し側で catch して導線ごと非表示にする)。
    */
+  serverMetrics: (sessionId: string) =>
+    invoke<ServerMetrics>("server_metrics", { sessionId }).then((r) =>
+      parseResponse(schemas.serverMetrics, r, "server_metrics"),
+    ),
   /** レプリケーションの状態 (役割・接続先ごとの遅延・スロット, #2180)。読み取りのみで read_only でも動く。
    *  権限不足はエラーでなく `missing_privilege` で返る。SQLite は非対応エラー。 */
   getReplicationStatus: (sessionId: string) =>
     invoke<ReplicationStatus>("get_replication_status", { sessionId }).then((r) =>
       parseResponse(schemas.replicationStatus, r, "get_replication_status"),
-    ),
-  serverMetrics: (sessionId: string) =>
-    invoke<ServerMetrics>("server_metrics", { sessionId }).then((r) =>
-      parseResponse(schemas.serverMetrics, r, "server_metrics"),
     ),
   /**
    * SQLite のメンテナンスを実行する (#1625): `integrity_check` / `foreign_key_check` は

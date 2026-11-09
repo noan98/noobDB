@@ -10,6 +10,7 @@ import {
   linkNeedsAttention,
   SLOT_WAL_WARN_BYTES,
   slotsHoldingWal,
+  slotsLost,
   sortLinks,
 } from "../components/replication";
 
@@ -106,5 +107,16 @@ describe("接続先の注意判定と並び", () => {
   it("注意が要る行を先頭に、あとは名前順", () => {
     const got = sortLinks([link({ name: "b" }), link({ name: "z", last_error: "x" }), link({ name: "a" })]);
     expect(got.map((l) => l.name)).toEqual(["z", "a", "b"]);
+  });
+});
+
+describe("slotsLost", () => {
+  it("wal_status が lost のスロットだけを返す", () => {
+    const got = slotsLost([
+      slot({ name: "a", wal_status: "lost" }),
+      slot({ name: "b", wal_status: "reserved" }),
+      slot({ name: "c", wal_status: null }),
+    ]);
+    expect(got.map((x) => x.name)).toEqual(["a"]);
   });
 });

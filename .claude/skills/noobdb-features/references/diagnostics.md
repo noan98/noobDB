@@ -114,12 +114,12 @@ PostgreSQL の pub/sub を観測するボトムパネル (`pgListen` タブ、�
   スロットは `pg_replication_slots` (`pg_wal_lsn_diff` = 保持している WAL)。`pg_monitor` / `pg_read_all_stats` /
   スーパーユーザが無いと他ユーザの行が NULL になるので、`missing_privilege = "pg_monitor"` を返しスロットだけ返す。
 - MySQL: 8.0.22 以上は `SHOW REPLICA STATUS` / `SHOW REPLICAS`、未満と MariaDB は `SHOW SLAVE STATUS` /
-  `SHOW SLAVE HOSTS` (`mysql_replica_status_sql`)。`REPLICATION CLIENT` が無い (1227 など) ときは
-  エラーにせず `missing_privilege = "REPLICATION CLIENT"`。スロットの概念は無く空。
+  `SHOW SLAVE HOSTS` (`mysql_replica_status_sql`)。`REPLICATION CLIENT` (MariaDB 10.5.9+ は `SLAVE MONITOR`) が無い (1227 など) ときは
+  エラーにせず `missing_privilege` に権限名を入れる。マルチソースは行ごとのチャンネルとして上流に並ぶ。スロットの概念は無く空。
 - SQLite は未対応エラー。UI はパネルバー・ツールメニューを `aria-disabled` + 理由にし、コマンドパレットには出さない。
 - フロント: `components/ReplicationPanel.tsx` (表示中だけポーリング、履歴に残さない)、純ロジックは
   `components/replication.ts` (非アクティブスロットが 1 GiB 以上の WAL を溜めたら先頭で警告、遅延メーターの閾値 30 秒)。
-- スロットの削除 UI は未実装 (書き込み確認ゲートの共通化 #2176 待ち)。
+- スロットの削除 UI は未実装 (書き込み確認ゲートを PR #2184 (Issue #2176) で導入中。マージ後に対応する)。
 
 ## サーバ情報 / メトリクス (#563)
 

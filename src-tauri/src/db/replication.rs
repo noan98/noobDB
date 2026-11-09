@@ -107,6 +107,35 @@ pub fn mysql_replica_status_sql(version: &str) -> &'static str {
     }
 }
 
+/// 状態を読むのに必要な権限名。MariaDB 10.5.9 以降は `SLAVE MONITOR` (別名 `REPLICA MONITOR`)、
+/// それ以外 (MySQL・旧 MariaDB) は `REPLICATION CLIENT`。
+pub fn mysql_required_privilege(version: &str) -> &'static str {
+    if version.to_ascii_lowercase().contains("mariadb") {
+        let mut nums = version
+            .split(|c: char| !c.is_ascii_digit())
+            .filter(|s| !s.is_empty())
+            .take(3)
+            .map(|s| s.parse::<u32>().unwrap_or(0));
+        let v = (
+            nums.next().unwrap_or(0),
+            nums.next().unwrap_or(0),
+            nums.next().unwrap_or(0),
+        );
+        if v >= (10, 5, 9) {
+            return "SLAVE MONITOR";
+        }
+    }
+    "REPLICATION CLIENT"
+}
+
+/// `names` の候補のうち、`columns` に (大文字小文字を区別せず) 最初に見つかったものの列位置。
+/// `Source_*` / `Master_*` のように版で列名が違う `SHOW ... STATUS` の読み分けに使う。
+pub fn first_present_column(columns: &[&str], names: &[&str]) -> Option<usize> {
+    names
+        .iter()
+        .find_map(|n| columns.iter().position(|c| c.eq_ignore_ascii_case(n)))
+}
+
 /// 接続中のレプリカ一覧の問い合わせ文 (`SHOW REPLICAS` は 8.0.22+、旧名は `SHOW SLAVE HOSTS`)。
 pub fn mysql_replicas_sql(version: &str) -> &'static str {
     if mysql_supports_replica_syntax(version) {
@@ -173,6 +202,44 @@ mod tests {
         assert_eq!(mysql_replica_status_sql(""), "SHOW SLAVE STATUS");
         assert_eq!(mysql_replicas_sql("8.0.30"), "SHOW REPLICAS");
         assert_eq!(mysql_replicas_sql("5.7.1"), "SHOW SLAVE HOSTS");
+    }
+
+    #[test]
+    fn column_fallback_prefers_first_present_name() {
+        let new_cols = ["Replica_IO_State", "Source_Host", "Seconds_Behind_Source"];
+        let old_cols = ["Slave_IO_State", "Master_Host", "Seconds_Behind_Master"];
+        assert_eq!(
+            first_present_column(&new_cols, &["Source_Host", "Master_Host"]),
+            Some(1)
+        );
+        assert_eq!(
+            first_present_column(&old_cols, &["Source_Host", "Master_Host"]),
+            Some(1)
+        );
+        assert_eq!(
+            first_present_column(
+                &old_cols,
+                &["Seconds_Behind_Source", "Seconds_Behind_Master"]
+            ),
+            Some(2)
+        );
+        assert_eq!(first_present_column(&new_cols, &["source_host"]), Some(1));
+        assert_eq!(first_present_column(&new_cols, &["Channel_Name"]), None);
+    }
+
+    #[test]
+    fn required_privilege_depends_on_flavor() {
+        assert_eq!(mysql_required_privilege("8.0.36"), "REPLICATION CLIENT");
+        assert_eq!(
+            mysql_required_privilege("10.5.8-MariaDB"),
+            "REPLICATION CLIENT"
+        );
+        assert_eq!(mysql_required_privilege("10.5.9-MariaDB"), "SLAVE MONITOR");
+        assert_eq!(
+            mysql_required_privilege("11.4.2-MariaDB-log"),
+            "SLAVE MONITOR"
+        );
+        assert_eq!(mysql_required_privilege(""), "REPLICATION CLIENT");
     }
 
     #[test]
