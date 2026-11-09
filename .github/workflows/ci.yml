@@ -373,6 +373,20 @@ jobs:
           VITE_RUN_VISUAL: "1"
         run: pnpm test:browser
 
+      # ビジュアル回帰が落ちたときの実際のスクリーンショットと差分画像を成果物に残す (#2195)。
+      # `toMatchScreenshot` は `.vitest/attachments/` に actual / diff を書くが、ランナーと一緒に
+      # 消えるため、ときどき落ちる差分 (何が違うのか) を後から確認できなかった。失敗時だけ上げる。
+      - name: Upload visual regression diffs (#2195)
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: visual-diffs
+          path: .vitest/attachments/
+          # 先頭が `.` のディレクトリは既定で除外されるので明示的に含める。
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: ignore
+
       # ジョブ所要時間とキャッシュヒット有無を Job Summary へ出力する (#565)。
       # バンドルサイズ (#443) / カバレッジ (#482) と同じく可視化のみで fail
       # させない。ビルド時間退行 (キャッシュミス・依存増) の早期発見が目的。
