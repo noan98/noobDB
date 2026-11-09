@@ -29,8 +29,11 @@ import { Button, Checkbox, Input, PressableButton } from "./ui";
 interface Props {
   sessionId: string;
   readOnly: boolean;
-  /** SQL を実行する。失敗は throw する (このダイアログがエラーとヒントを表示する)。 */
-  onExecute: (sql: string, action: ExtensionAction, name: string) => Promise<void>;
+  /**
+   * SQL を実行する。失敗は throw する (このダイアログがエラーとヒントを表示する)。
+   * 実行前の確認 (本番の書き込み承認・型入力など) がキャンセルされて実行しなかったときは "cancelled" を返す。
+   */
+  onExecute: (sql: string, action: ExtensionAction, name: string) => Promise<void | "cancelled">;
   onClose: () => void;
 }
 
@@ -50,6 +53,7 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
   const [cascade, setCascade] = useState(false);
   const [busy, setBusy] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  const [cancelled, setCancelled] = useState(false);
   const mountedRef = useRef(true);
   const searchRef = useRef<HTMLInputElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -96,11 +100,13 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
     setSchema("");
     setCascade(false);
     setRunError(null);
+    setCancelled(false);
   };
   const back = () => {
     if (busy) return;
     setStep(null);
     setRunError(null);
+    setCancelled(false);
   };
 
   const sql = step
@@ -113,8 +119,14 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
     // 実行中は確定できない (二重送信で同じ DDL が 2 回走るのを防ぐ)。
     setBusy(true);
     setRunError(null);
+    setCancelled(false);
     void onExecute(sql, step.action, step.ext.name)
-      .then(async () => {
+      .then(async (result) => {
+        if (result === "cancelled") {
+          // 確認でキャンセルされた: 何も実行していないので、手順の画面に残して知らせる。
+          if (mountedRef.current) setCancelled(true);
+          return;
+        }
         await load();
         if (mountedRef.current) setStep(null);
       })
@@ -267,6 +279,8 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
                 {`${sql};`}
               </CodePreview>
             </FormSection>
+
+            {cancelled && !runError && <Callout tone="info">{t("extensionsNotExecuted")}</Callout>}
 
             {runError && (
               <ErrorNote>

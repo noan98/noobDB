@@ -45,7 +45,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
 
 import { ExtensionsModal } from "../components/ExtensionsModal";
 
-function setup(over: { readOnly?: boolean; onExecute?: () => Promise<void> } = {}) {
+function setup(over: { readOnly?: boolean; onExecute?: () => Promise<void | "cancelled"> } = {}) {
   const onExecute = vi.fn(over.onExecute ?? (() => Promise.resolve()));
   renderWithProviders(
     <ExtensionsModal
@@ -134,6 +134,17 @@ describe("ExtensionsModal", () => {
     await user.keyboard("{Control>}{Enter}{/Control}");
     await user.keyboard("{Meta>}{Enter}{/Meta}");
     expect(onExecute).not.toHaveBeenCalled();
+  });
+
+  it("実行前の確認がキャンセルされたら「実行していない」ことを示し、手順は閉じない (#2176)", async () => {
+    const user = userEvent.setup();
+    const { onExecute } = setup({ onExecute: () => Promise.resolve("cancelled") });
+    await screen.findByText("pg_trgm");
+    await user.click(screen.getByRole("button", { name: t("extensionsDrop") }));
+    await user.click(screen.getAllByRole("button", { name: t("extensionsDrop") }).at(-1) as HTMLElement);
+    expect(onExecute).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText(t("extensionsNotExecuted"))).toBeInTheDocument();
+    expect(screen.getByText('DROP EXTENSION "pg_trgm";')).toBeInTheDocument();
   });
 
   it("実行に失敗したら理由と権限不足のヒントを出し、手順は閉じない", async () => {
