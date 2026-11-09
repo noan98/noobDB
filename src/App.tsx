@@ -30,6 +30,7 @@ import { buildConnectionPath, CONNECTED_PHASE, pathInputFromProfile } from "./co
 import { AnimatePresence, motion } from "motion/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { QUERY_HISTORY_LIMIT, dedupeAdjacentHistory, pushHistoryEntry } from "./components/queryHistoryNav";
+import { shouldSuggestPublication } from "./components/publicationSuggest";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import {
@@ -4862,7 +4863,13 @@ export default function App() {
       // "no such table" になる事故があった。渡されたものをクロージャより優先する。
       // `forceReadOnly` は EXPLAIN 実測モード (#1164) 用: バックエンドにも読み取り専用を
       // 強制させる (プロファイルの read_only に関わらず、書き込み文は拒否される)。
-      override?: { sessionId?: string; tab?: Tab; forceReadOnly?: boolean },
+      override?: {
+        sessionId?: string;
+        tab?: Tab;
+        forceReadOnly?: boolean;
+        // 実行の終了点 (完了 / エラー / 起動失敗) で 1 回呼ぶ。ok は成功したか (#2190)。自動リフレッシュでは呼ばない。
+        onSettled?: (ok: boolean) => void;
+      },
     ) => {
       const sid = override?.sessionId ?? sessionId;
       if (!sid) {
@@ -5069,6 +5076,7 @@ export default function App() {
             elapsedMs,
           });
           flusher.flushNow(); // 貯めていた行を先に反映してから完了状態へ進める (#1317)
+          if (!autoRefresh) override?.onSettled?.(!serverMessages?.some((m) => m.severity === "error"));
           patchTab(tabId, (tt) => {
             if (!hasColumns) {
               return {
@@ -5200,6 +5208,7 @@ export default function App() {
         },
         onError: ({ error, timedOut, connectionLost, deliveredRows }) => {
           flusher.flushNow();
+          if (!autoRefresh) override?.onSettled?.(false);
           patchTab(tabId, (tt) => ({
             ...tt,
             streaming: false,
@@ -5292,6 +5301,7 @@ export default function App() {
         });
       } catch (e) {
         flusher.flushNow();
+        if (!autoRefresh) override?.onSettled?.(false);
         patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
         setStatus({
           kind: "key",
@@ -8267,7 +8277,7 @@ export default function App() {
   // Open a fresh query tab holding `sql` and run it immediately. Shared by the
   // schema-tree table context-menu actions (run SELECT, show definition).
   const openAndRunQuery = useCallback(
-    (sql: string, title?: string) => {
+    (sql: string, title?: string, opts?: { onSettled?: (ok: boolean) => void }) => {
       if (!sessionId) return;
       const tab: Tab = { ...makeQueryTab(), sql, lastExecutedSql: sql };
       if (title) {
@@ -8275,7 +8285,14 @@ export default function App() {
         tab.titleManual = true;
       }
       addTab(tab);
-      void runQueryInTab(tab.id, sql);
+      void runQueryInTab(
+        tab.id,
+        sql,
+        null,
+        null,
+        false,
+        opts?.onSettled ? { onSettled: opts.onSettled } : undefined,
+      );
     },
     [sessionId, runQueryInTab, addTab],
   );
@@ -8500,22 +8517,59 @@ export default function App() {
   );
 
   const handleCreateTableRun = useCallback(
-    (sql: string, statements: string[]) => {
+    (sql: string, statements: string[], table: string, unlogged: boolean) => {
       const database = createTableDb;
       setCreateTableDb(null);
-      if (statements.length <= 1 || !sessionId) {
-        openAndRunQuery(sql);
-        return;
-      }
+      if (!sessionId) return;
+      const createdSid = sessionId;
+      // 作成に成功したら、追加できるパブリケーションがあるときだけ提案トーストを出す (#2190)。
+      // 取得失敗は提案しないだけ。接続を切り替えたあとに押されたら別接続で開かない。
+      const suggestPublication = async (message: string): Promise<boolean> => {
+        const schema = database || "";
+        const ok = await shouldSuggestPublication(
+          { driver: selectedProfile?.driver ?? "", readOnly, schema, table, unlogged },
+          () => api.listPublications(createdSid),
+        );
+        if (!ok) return false;
+        toast.notify({
+          message,
+          tone: "success",
+          action: {
+            label: translate("createTablePublicationAction"),
+            onAction: () => {
+              if (sessionIdRef.current !== createdSid) {
+                toast.info(translate("createTablePublicationStale"));
+                return;
+              }
+              setPublicationEditor({ database: schema, table });
+            },
+          },
+        });
+        return true;
+      };
       void (async () => {
-        // 複数文はトランザクションで直接実行するため、エディタと同じ実行ゲートを通す (#2176)。
+        // 単文・複数文とも、実行前に共通の実行ゲートを通す (#2176)。
         if (!(await runGuardedDdl(statements.join(";\n")))) return;
+        // 確認ダイアログの間に接続を切り替えたら、古い接続では実行しない。
+        if (sessionIdRef.current !== createdSid) {
+          toast.info(translate("createTableSessionChanged"));
+          return;
+        }
+        if (statements.length <= 1) {
+          openAndRunQuery(sql, undefined, {
+            onSettled: (ok) => {
+              if (ok) void suggestPublication(translate("createTableCreatedSingle"));
+            },
+          });
+          return;
+        }
         try {
-          await api.runQueryTransaction(sessionId, statements, database || null);
+          await api.runQueryTransaction(createdSid, statements, database || null);
           invalidateSchemaCache(database || null);
           noteSchemaDdl(statements.join(";\n"), database || null);
           connectionListRef.current?.refreshSchema();
-          toast.success(translate("createTableCreated"));
+          const created = translate("createTableCreated");
+          if (!(await suggestPublication(created))) toast.success(created);
         } catch (e) {
           invalidateSchemaCache(database || null);
           connectionListRef.current?.refreshSchema();
@@ -8523,7 +8577,17 @@ export default function App() {
         }
       })();
     },
-    [createTableDb, sessionId, openAndRunQuery, invalidateSchemaCache, noteSchemaDdl, toast, runGuardedDdl],
+    [
+      createTableDb,
+      sessionId,
+      selectedProfile?.driver,
+      readOnly,
+      openAndRunQuery,
+      invalidateSchemaCache,
+      noteSchemaDdl,
+      toast,
+      runGuardedDdl,
+    ],
   );
 
   // テーブル保守操作: DDL を実行し、スキーマキャッシュとツリーを更新する。

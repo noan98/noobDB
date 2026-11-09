@@ -2509,6 +2509,11 @@ const en = {
   cloneTableConfirm: "Duplicate",
   cloneTableSuccess: 'Duplicated "{source}" as "{table}".',
   createTableCreated: "Created the table (including its first partition).",
+  createTableCreatedSingle: "Created the table.",
+  createTablePublicationAction: "Add to a publication...",
+  createTablePublicationStale:
+    "The connection has changed, so the publication dialog was not opened. Use the table's context menu instead.",
+  createTableSessionChanged: "The connection changed while confirming, so the table was not created.",
   cloneTableMetaError: "Couldn't read column / foreign key metadata: {error}",
   cloneTableNotTable: "Only tables can be duplicated (this object is a view or another kind).",
   cloneTableRewriteError:
@@ -10324,6 +10329,11 @@ const ja: Dict = {
   cloneTableConfirm: "複製",
   cloneTableSuccess: "「{source}」を「{table}」として複製しました。",
   createTableCreated: "テーブルを作成しました (最初のパーティションを含む)。",
+  createTableCreatedSingle: "テーブルを作成しました。",
+  createTablePublicationAction: "パブリケーションに追加...",
+  createTablePublicationStale:
+    "接続が切り替わったため、パブリケーションの画面は開きませんでした。表の右クリックメニューから操作してください。",
+  createTableSessionChanged: "確認中に接続が切り替わったため、テーブルは作成していません。",
   cloneTableMetaError: "列・外部キーのメタデータを取得できませんでした: {error}",
   cloneTableNotTable: "テーブル以外 (ビューなど) は複製できません。",
   cloneTableRewriteError:
