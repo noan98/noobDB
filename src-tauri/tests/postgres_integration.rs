@@ -5597,6 +5597,8 @@ async fn postgres_extension_dependents_list_columns_functions_and_views() {
         "CREATE TABLE nb2177.users (id int, e nb2177.email)",
         "CREATE VIEW nb2177.v_cast AS SELECT id, tags::text AS t FROM nb2177.places",
         "CREATE TABLE nb2177.gen (a text, g text GENERATED ALWAYS AS (lower(a::citext::text)) STORED)",
+        "CREATE VIEW nb2177.v_gen AS SELECT g FROM nb2177.gen",
+        "CREATE INDEX nb2177_gen_g_idx ON nb2177.gen (g)",
         "CREATE TYPE nb2177.cirange AS RANGE (subtype = citext)",
         "CREATE MATERIALIZED VIEW nb2177.mv_big AS SELECT id, tags FROM nb2177.places",
         "CREATE FUNCTION nb2177.f_dep() RETURNS int LANGUAGE sql AS 'SELECT 1'",
@@ -5631,6 +5633,17 @@ async fn postgres_extension_dependents_list_columns_functions_and_views() {
     assert!(has("function", "f_dep()", None), "{deps:?}");
     // 生成列は 'default' ではなく列ごと消える。range 型は型 1 件で、付属物 (multirange・コンストラクタ) は出ない。
     assert!(has("column", "g", Some("gen")), "{deps:?}");
+    // 生成列が消えると、その列を使うビュー・索引も消える (式ではなく列に依存している)。
+    assert!(has("view", "v_gen", None), "{deps:?}");
+    assert!(has("index", "nb2177_gen_g_idx", Some("gen")), "{deps:?}");
+    // 生成列は 1 件だけ (式と列で二重に出ない)。
+    assert_eq!(
+        deps.iter()
+            .filter(|d| d.kind == "column" && d.name == "g")
+            .count(),
+        1,
+        "{deps:?}"
+    );
     assert!(!deps.iter().any(|d| d.kind == "default"), "{deps:?}");
     assert!(has("type", "cirange", None), "{deps:?}");
     assert!(

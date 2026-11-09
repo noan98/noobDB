@@ -4613,6 +4613,14 @@ WITH RECURSIVE members AS (
        WHERE c.classid = 'pg_rewrite'::regclass AND crw.oid = c.objid AND crw.rulename = '_RETURN'
          AND d.deptype IN ('n', 'a', 'i')
       UNION ALL
+      -- 生成列の式 (`pg_attrdef`) からは持ち主の列へ (CASCADE では列ごと消え、その列を使う
+      -- ビュー・索引・制約も消える。それらは式ではなく列に依存しているので、列を閉包に入れる)
+      SELECT 'pg_class'::regclass::oid, gad.adrelid, gad.adnum::int
+        FROM pg_attrdef gad
+        JOIN pg_attribute ga ON ga.attrelid = gad.adrelid AND ga.attnum = gad.adnum
+       WHERE c.classid = 'pg_attrdef'::regclass AND gad.oid = c.objid
+         AND COALESCE(to_jsonb(ga)->>'attgenerated', '') <> ''
+      UNION ALL
       -- 拡張ノードからは、その拡張のメンバー全部へ (その拡張を消すと、メンバーの利用者も消える)
       SELECT d.classid, d.objid, d.objsubid
         FROM pg_depend d
@@ -4669,7 +4677,8 @@ SELECT DISTINCT x.kind, n.nspname::text AS schema_name, x.name, x.tbl
           ELSE 'rule' END
         WHEN co.oid IS NOT NULL THEN 'constraint'
         WHEN tg.oid IS NOT NULL THEN 'trigger'
-        WHEN ad.oid IS NOT NULL AND ada.attgenerated <> '' THEN 'column'
+        -- attgenerated は PG12+ の列。to_jsonb 経由なら無い版でも NULL になり SQL エラーにならない
+        WHEN ad.oid IS NOT NULL AND COALESCE(to_jsonb(ada)->>'attgenerated', '') <> '' THEN 'column'
         WHEN ad.oid IS NOT NULL THEN 'default'
         WHEN pol.oid IS NOT NULL THEN 'policy'
         WHEN se.oid IS NOT NULL THEN 'statistic'
