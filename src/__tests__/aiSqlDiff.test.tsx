@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DiffLine } from "../ai/sqlAssist";
 import { DiffView } from "../components/AiSqlDiff";
+import { SQL_HIGHLIGHT_MAX_CHARS } from "../components/sqlHighlight";
 import { renderWithProviders, screen } from "./testUtils";
 
 const lines: DiffLine[] = [
@@ -29,7 +30,9 @@ describe("DiffView (#2178)", () => {
   });
 
   it("大きすぎる SQL は単色 (data-sql-highlight=off)", () => {
-    const big: DiffLine[] = Array.from({ length: 10_001 }, () => ({ type: "same", text: "x" }));
+    // 行数の上限 (10,001 行) で作ると jsdom の描画だけで 5 秒近くかかり、CI でタイムアウトした。
+    // 文字数の上限を 1 行で超えて、DOM を 1 行に抑える (行数の境界は sqlPreview.test.tsx で見る)。
+    const big: DiffLine[] = [{ type: "same", text: "x".repeat(SQL_HIGHLIGHT_MAX_CHARS + 1) }];
     renderWithProviders(<DiffView lines={big} driver="mysql" />);
     expect(screen.getByTestId("ai-sql-diff")).toHaveAttribute("data-sql-highlight", "off");
   });
