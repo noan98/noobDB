@@ -12,6 +12,8 @@ vi.mock("../api/tauri", async (importOriginal) => {
       listDbUsers: vi.fn(),
       listUserPrivileges: vi.fn(),
       generatePrivilegeDiffSql: vi.fn(),
+      generateCreateUserSql: vi.fn(),
+      generateAlterPasswordSql: vi.fn(),
       generateRoleMembershipSql: vi.fn(),
       applyPrivilegeSql: vi.fn(),
     },
@@ -416,5 +418,34 @@ describe("UsersPanel: 全権限を外した行の退場 (#1890)", () => {
     } finally {
       document.documentElement.removeAttribute("data-motion");
     }
+  });
+});
+
+describe("UsersPanel: 確認ダイアログのパスワード伏せ字 (#2175)", () => {
+  it("ユーザー作成の確認では既定で伏せ字、「表示」で平文、実行する SQL は変わらない", async () => {
+    const sql = "CREATE USER 'bob'@'%' IDENTIFIED BY 'S3cret!'";
+    vi.mocked(api.listDbUsers).mockResolvedValue([]);
+    vi.mocked(api.generateCreateUserSql).mockResolvedValue(sql);
+    vi.mocked(api.applyPrivilegeSql).mockResolvedValue(1);
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver="mysql" database="app" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: t("usersNewUser") }));
+    fireEvent.change(screen.getByLabelText(t("usersCreateNameLabel")), { target: { value: "bob" } });
+    fireEvent.change(screen.getByLabelText(t("usersCreatePasswordLabel")), { target: { value: "S3cret!" } });
+    fireEvent.click(screen.getByRole("button", { name: t("usersCreateSubmit") }));
+    const preview = await screen.findByTestId("sql-preview");
+    expect(preview).toHaveTextContent("IDENTIFIED BY '••••••••'");
+    expect(preview.textContent).not.toContain("S3cret!");
+    fireEvent.click(screen.getByRole("button", { name: t("formPasswordShow") }));
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent(sql);
+    fireEvent.click(screen.getByRole("button", { name: t("usersCreateConfirmOk") }));
+    await waitFor(() =>
+      expect(api.applyPrivilegeSql).toHaveBeenCalledWith({
+        sessionId: "s1",
+        database: "app",
+        statements: [sql],
+      }),
+    );
   });
 });

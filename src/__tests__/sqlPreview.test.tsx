@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { renderWithProviders, screen } from "./testUtils";
+import { renderWithProviders, screen, fireEvent } from "./testUtils";
+import { t } from "../i18n";
 import { SqlPreview } from "../components/SqlPreview";
 import {
   SQL_HIGHLIGHT_MAX_CHARS,
@@ -57,5 +58,59 @@ describe("SqlPreview", () => {
     expect(pre).toHaveAttribute("data-sql-highlight", "off");
     expect(pre.querySelector("span")).toBeNull();
     expect(pre.textContent).toBe(big);
+  });
+});
+
+describe("SqlPreview maskCredentials (#2175)", () => {
+  const SQL = "ALTER USER 'app'@'%' IDENTIFIED BY 'S3cret!'";
+
+  it("既定は伏せ字で、平文は DOM に出ない", () => {
+    renderWithProviders(<SqlPreview sql={SQL} driver="mysql" maskCredentials />);
+    const pre = screen.getByTestId("sql-preview");
+    expect(pre).toHaveTextContent("ALTER USER 'app'@'%' IDENTIFIED BY '••••••••'");
+    expect(pre.textContent).not.toContain("S3cret!");
+    expect(screen.getByRole("button", { name: t("formPasswordShow") })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("「表示」で平文になり、もう一度押すと伏せ字に戻る", () => {
+    renderWithProviders(<SqlPreview sql={SQL} driver="mysql" maskCredentials />);
+    fireEvent.click(screen.getByRole("button", { name: t("formPasswordShow") }));
+    expect(screen.getByTestId("sql-preview").textContent).toBe(SQL);
+    const hide = screen.getByRole("button", { name: t("formPasswordHide") });
+    expect(hide).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(hide);
+    expect(screen.getByTestId("sql-preview").textContent).not.toContain("S3cret!");
+  });
+
+  it("資格情報が無い SQL や maskCredentials なしでは切り替えを出さず、そのまま表示する", () => {
+    renderWithProviders(<SqlPreview sql="SELECT 1" driver="mysql" maskCredentials />);
+    expect(screen.queryByTestId("sql-preview-reveal")).toBeNull();
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent("SELECT 1");
+  });
+
+  it("色分けしても全文・複数箇所の資格情報を伏せる", () => {
+    const sql = "CREATE USER 'a'@'%' IDENTIFIED BY 'one'; ALTER USER 'b'@'%' IDENTIFIED BY 'two'";
+    renderWithProviders(<SqlPreview sql={sql} driver="mysql" maskCredentials />);
+    const pre = screen.getByTestId("sql-preview");
+    expect(pre).toHaveAttribute("data-sql-highlight", "on");
+    expect(pre.querySelectorAll("[data-credential=masked]")).toHaveLength(2);
+    expect(pre.textContent).not.toMatch(/one|two/);
+    fireEvent.click(screen.getByTestId("sql-preview-reveal"));
+    expect(screen.getByTestId("sql-preview").textContent).toBe(sql);
+  });
+
+  it("大きな SQL の単色フォールバックでも伏せる", () => {
+    const big = `${Array(SQL_HIGHLIGHT_MAX_LINES + 1)
+      .fill("SELECT 1;")
+      .join("\n")}\n${SQL}`;
+    renderWithProviders(<SqlPreview sql={big} driver="mysql" maskCredentials />);
+    const pre = screen.getByTestId("sql-preview");
+    expect(pre).toHaveAttribute("data-sql-highlight", "off");
+    expect(pre.textContent).not.toContain("S3cret!");
+    fireEvent.click(screen.getByTestId("sql-preview-reveal"));
+    expect(screen.getByTestId("sql-preview").textContent).toBe(big);
   });
 });
