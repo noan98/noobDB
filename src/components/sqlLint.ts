@@ -224,6 +224,9 @@ export function diagnosticsFromTree(
   tree.iterate({
     enter(node) {
       if (node.type.isError) {
+        // PostgreSQL の位置パラメータ `$1` / `$12` (#2193)。Lezer の SQL 文法は `$<数字>` を解釈できず `$` を
+        // エラーにするが、正しい SQL で、エディタもパラメータとしてチップ表示している。`$` 単体や `$a` は従来どおり。
+        if (doc.slice(node.from, node.to) === "$" && /[0-9]/.test(doc.charAt(node.to))) return;
         errorRanges.push({ from: node.from, to: node.to });
         return;
       }
