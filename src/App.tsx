@@ -30,6 +30,7 @@ import { buildConnectionPath, CONNECTED_PHASE, pathInputFromProfile } from "./co
 import { AnimatePresence, motion } from "motion/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { QUERY_HISTORY_LIMIT, dedupeAdjacentHistory, pushHistoryEntry } from "./components/queryHistoryNav";
+import { shouldSuggestPublication } from "./components/publicationSuggest";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import {
@@ -8500,14 +8501,25 @@ export default function App() {
   );
 
   const handleCreateTableRun = useCallback(
-    (sql: string, statements: string[]) => {
+    (sql: string, statements: string[], table: string) => {
       const database = createTableDb;
       setCreateTableDb(null);
-      if (statements.length <= 1 || !sessionId) {
+      if (!sessionId) {
         openAndRunQuery(sql);
         return;
       }
       void (async () => {
+        const schema = database || "public";
+        // PostgreSQL では、追加できるパブリケーションがあるときだけ直接実行して成功トーストに
+        // 「パブリケーションに追加…」を付ける (#2190)。それ以外は従来どおり (単文はエディタタブで実行)。
+        const suggest = await shouldSuggestPublication(
+          { driver: selectedProfile?.driver ?? "mysql", readOnly, schema, table },
+          () => api.listPublications(sessionId),
+        );
+        if (statements.length <= 1 && !suggest) {
+          openAndRunQuery(sql);
+          return;
+        }
         // 複数文はトランザクションで直接実行するため、エディタと同じ実行ゲートを通す (#2176)。
         if (!(await runGuardedDdl(statements.join(";\n")))) return;
         try {
@@ -8515,7 +8527,21 @@ export default function App() {
           invalidateSchemaCache(database || null);
           noteSchemaDdl(statements.join(";\n"), database || null);
           connectionListRef.current?.refreshSchema();
-          toast.success(translate("createTableCreated"));
+          const message = translate(
+            statements.length > 1 ? "createTableCreated" : "createTableCreatedSingle",
+          );
+          if (suggest) {
+            toast.notify({
+              message,
+              tone: "success",
+              action: {
+                label: translate("createTablePublicationAction"),
+                onAction: () => setPublicationEditor({ database: schema, table }),
+              },
+            });
+          } else {
+            toast.success(message);
+          }
         } catch (e) {
           invalidateSchemaCache(database || null);
           connectionListRef.current?.refreshSchema();
@@ -8523,7 +8549,17 @@ export default function App() {
         }
       })();
     },
-    [createTableDb, sessionId, openAndRunQuery, invalidateSchemaCache, noteSchemaDdl, toast, runGuardedDdl],
+    [
+      createTableDb,
+      sessionId,
+      selectedProfile?.driver,
+      readOnly,
+      openAndRunQuery,
+      invalidateSchemaCache,
+      noteSchemaDdl,
+      toast,
+      runGuardedDdl,
+    ],
   );
 
   // テーブル保守操作: DDL を実行し、スキーマキャッシュとツリーを更新する。

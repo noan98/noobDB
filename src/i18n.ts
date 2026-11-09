@@ -2509,6 +2509,8 @@ const en = {
   cloneTableConfirm: "Duplicate",
   cloneTableSuccess: 'Duplicated "{source}" as "{table}".',
   createTableCreated: "Created the table (including its first partition).",
+  createTableCreatedSingle: "Created the table.",
+  createTablePublicationAction: "Add to a publication…",
   cloneTableMetaError: "Couldn't read column / foreign key metadata: {error}",
   cloneTableNotTable: "Only tables can be duplicated (this object is a view or another kind).",
   cloneTableRewriteError:
@@ -10324,6 +10326,8 @@ const ja: Dict = {
   cloneTableConfirm: "複製",
   cloneTableSuccess: "「{source}」を「{table}」として複製しました。",
   createTableCreated: "テーブルを作成しました (最初のパーティションを含む)。",
+  createTableCreatedSingle: "テーブルを作成しました。",
+  createTablePublicationAction: "パブリケーションに追加…",
   cloneTableMetaError: "列・外部キーのメタデータを取得できませんでした: {error}",
   cloneTableNotTable: "テーブル以外 (ビューなど) は複製できません。",
   cloneTableRewriteError:

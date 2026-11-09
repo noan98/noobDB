@@ -48,7 +48,7 @@ interface Props {
   database: string | null;
   readOnly: boolean;
   /** `statements` は文ごとの配列。複数文のときは呼び出し側がトランザクションで流す (#2161)。 */
-  onRun: (sql: string, statements: string[]) => void;
+  onRun: (sql: string, statements: string[], table: string) => void;
   onSendToEditor: (sql: string) => void;
   onClose: () => void;
 }
@@ -281,7 +281,7 @@ export function CreateTableModal({
 
   return (
     <Modal
-      onSubmit={() => onRun(sql, statements)}
+      onSubmit={() => onRun(sql, statements, table.trim())}
       submitDisabled={!valid || readOnly}
       width="820px"
       onClose={onClose}
@@ -560,7 +560,7 @@ export function CreateTableModal({
           type="button"
           variant="primary"
           disabled={!valid || readOnly}
-          onClick={() => onRun(sql, statements)}
+          onClick={() => onRun(sql, statements, table.trim())}
         >
           {t("createTableRun")}
         </PressableButton>
