@@ -3,7 +3,7 @@ import { chakra, Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { api, type DriverKind } from "../api/tauri";
 import {
-  buildCreateTableSql,
+  buildCreateTableStatements,
   columnDefsFromTableInfo,
   generatedColumnProblems,
   supportsVirtualGenerated,
@@ -23,6 +23,17 @@ import { LiveRow, LiveRowsPresence } from "./LiveRows";
 import { Tooltip } from "./Tooltip";
 import { TableConstraintEditor, type CheckRow, type FkRow } from "./TableConstraintEditor";
 import { isCompleteCheck, isCompleteForeignKey, isPartialForeignKey } from "./tableConstraints";
+import {
+  emptyPartitionSpec,
+  emptyTableOptions,
+  hasTableOptions,
+  partitionMethods,
+  tableOptionProblems,
+  type PartitionMethod,
+  type PartitionSpec,
+  type TableOptionProblem,
+  type TableOptions,
+} from "./tableOptions";
 
 /**
  * CREATE TABLE ウィザード。カラム定義をフォームで組み立て、方言に応じた
@@ -36,7 +47,8 @@ interface Props {
   driver: DriverKind;
   database: string | null;
   readOnly: boolean;
-  onRun: (sql: string) => void;
+  /** `statements` は文ごとの配列。複数文のときは呼び出し側がトランザクションで流す (#2161)。 */
+  onRun: (sql: string, statements: string[]) => void;
   onSendToEditor: (sql: string) => void;
   onClose: () => void;
 }
@@ -112,6 +124,8 @@ export function CreateTableModal({
 
   const [foreignKeys, setForeignKeys] = useState<FkRow[]>([]);
   const [checks, setChecks] = useState<CheckRow[]>([]);
+  // テーブルオプション (#2161): ENGINE / UNLOGGED / STRICT / パーティションなど。
+  const [options, setOptions] = useState<TableOptions>(emptyTableOptions);
   const [tableNames, setTableNames] = useState<string[]>([]);
   const rowIdCounter = useRef(0);
   const nextRowId = () => `row${++rowIdCounter.current}`;
@@ -229,16 +243,22 @@ export function CreateTableModal({
       .filter((p) => p === "emptyExpression" || p === "invalidExpression" || p === "virtualUnsupported")
       .map((p) => ({ index: i, problem: p, name: c.name.trim() || `#${i + 1}` })),
   );
+  // テーブルオプションの不備。列名が空の列はキー・型の検査から外れるので、列名の不備と同時に直せる。
+  const optionProblems = useMemo(
+    () => tableOptionProblems(driver, columns, options, foreignKeys.filter(isCompleteForeignKey)),
+    [driver, columns, options, foreignKeys],
+  );
   const valid =
     table.trim().length > 0 &&
     columns.length > 0 &&
     columns.every((c) => c.name.trim().length > 0) &&
     !hasPartialForeignKey &&
-    generatedErrors.length === 0;
-  const sql = useMemo(
+    generatedErrors.length === 0 &&
+    optionProblems.length === 0;
+  const statements = useMemo(
     () =>
       valid
-        ? buildCreateTableSql(driver, {
+        ? buildCreateTableStatements(driver, {
             database,
             table: table.trim(),
             // 列名の前後空白は検証側 (trim 済み) と制約エディタ候補に合わせて落とす。
@@ -246,10 +266,12 @@ export function CreateTableModal({
             // id は React key 専用のローカル state なので純ロジックへ渡す前に落とす。
             foreignKeys: foreignKeys.filter(isCompleteForeignKey).map(({ id: _id, ...fk }) => fk),
             checks: checks.filter(isCompleteCheck).map(({ id: _id, ...ck }) => ck),
+            options,
           })
-        : "",
-    [valid, driver, database, table, columns, foreignKeys, checks],
+        : [],
+    [valid, driver, database, table, columns, foreignKeys, checks, options],
   );
+  const sql = statements.join("\n");
   const columnNames = useMemo(
     () => [...new Set(columns.map((c) => c.name.trim()).filter((n) => n.length > 0))],
     [columns],
@@ -258,7 +280,12 @@ export function CreateTableModal({
   const dataListId = "create-table-types";
 
   return (
-    <Modal onSubmit={() => onRun(sql)} submitDisabled={!valid || readOnly} width="820px" onClose={onClose}>
+    <Modal
+      onSubmit={() => onRun(sql, statements)}
+      submitDisabled={!valid || readOnly}
+      width="820px"
+      onClose={onClose}
+    >
       <ModalHeader onClose={onClose} closeLabel={t("createTableClose")}>
         {t("createTableTitle")}
       </ModalHeader>
@@ -496,6 +523,13 @@ export function CreateTableModal({
           nextId={nextRowId}
         />
 
+        <TableOptionsSection
+          driver={driver}
+          options={options}
+          onChange={setOptions}
+          problems={optionProblems}
+        />
+
         <FormSection>
           <FieldLabel as="div">{t("createTablePreview")}</FieldLabel>
           <SqlPreview sql={sql} driver={driver} empty={t("createTablePreviewEmpty")} minH="60px" />
@@ -526,12 +560,330 @@ export function CreateTableModal({
           type="button"
           variant="primary"
           disabled={!valid || readOnly}
-          onClick={() => onRun(sql)}
+          onClick={() => onRun(sql, statements)}
         >
           {t("createTableRun")}
         </PressableButton>
       </ModalFooter>
       {confirmDialog}
     </Modal>
+  );
+}
+
+/** MySQL の ENGINE / CHARSET のサジェスト (自由入力も可)。 */
+const MYSQL_ENGINES = ["InnoDB", "MyISAM", "MEMORY", "ARCHIVE", "CSV"];
+const MYSQL_CHARSETS = ["utf8mb4", "utf8mb3", "latin1", "ascii", "binary"];
+
+/** 入力の不備を画面の文言にする。 */
+function optionProblemText(p: TableOptionProblem, t: ReturnType<typeof useT>): string {
+  switch (p.code) {
+    case "token":
+      return t("createTableOptErrToken", { field: p.field.toUpperCase() });
+    case "collationMismatch":
+      return t("createTableOptErrCollation");
+    case "strictType":
+      return t("createTableOptErrStrictType", { columns: p.columns.join(", ") });
+    case "withoutRowidNoPrimaryKey":
+      return t("createTableOptErrWithoutRowidPk");
+    case "withoutRowidAutoIncrement":
+      return t("createTableOptErrWithoutRowidAuto");
+    case "partitionKeyEmpty":
+      return t("createTableOptErrKeyEmpty");
+    case "partitionKeyUnknown":
+      return t("createTableOptErrKeyUnknown", { columns: p.columns.join(", ") });
+    case "partitionKeyUnique":
+      return t("createTableOptErrKeyUnique", { columns: p.columns.join(", ") });
+    case "partitionNeedsFirst":
+      return t("createTableOptErrNeedsFirst");
+    case "partitionCount":
+      return t("createTableOptErrCount");
+    case "partitionForeignKey":
+      return t("createTableOptErrForeignKey");
+    case "partitionBound":
+      switch (p.error) {
+        case "rangeEmpty":
+          return t("createTableOptErrRange");
+        case "listEmpty":
+          return t("createTableOptErrList");
+        case "hashModulus":
+          return t("createTableOptErrModulus");
+        case "hashRemainder":
+          return t("createTableOptErrRemainder");
+      }
+  }
+}
+
+/**
+ * 「テーブルオプション」節 (#2161)。折りたたみで、既定は閉じる。ドライバごとに出す項目が違う:
+ * MySQL は ENGINE / CHARSET / COLLATE、PostgreSQL は UNLOGGED、SQLite は STRICT / WITHOUT ROWID。
+ * MySQL と PostgreSQL はパーティション表 (方式・キー・最初のパーティション) も選べる。
+ */
+function TableOptionsSection({
+  driver,
+  options,
+  onChange,
+  problems,
+}: {
+  driver: DriverKind;
+  options: TableOptions;
+  onChange: (next: TableOptions) => void;
+  problems: TableOptionProblem[];
+}) {
+  const t = useT();
+  const set = (patch: Partial<TableOptions>) => onChange({ ...options, ...patch });
+  const methods = partitionMethods(driver);
+  const p = options.partition;
+  const setPartition = (patch: Partial<PartitionSpec>) => {
+    if (p) set({ partition: { ...p, ...patch } });
+  };
+  const methodLabel = (m: PartitionMethod) => m;
+  const isMysql = driver === "mysql";
+  const active = hasTableOptions(driver, options);
+  return (
+    <chakra.details>
+      <chakra.summary
+        cursor="pointer"
+        textStyle="overline"
+        color={problems.length > 0 ? "app.textError" : undefined}
+      >
+        {t("createTableOptions")}
+        {active ? ` (${t("createTableOptionsActive")})` : ""}
+        {problems.length > 0 ? ` [!${problems.length}]` : ""}
+      </chakra.summary>
+      <chakra.div display="flex" flexDirection="column" gap="3" marginTop="2">
+        {isMysql && (
+          <chakra.div display="grid" gridTemplateColumns="repeat(3, minmax(0, 1fr))" gap="3">
+            <FormSection>
+              <FieldLabel htmlFor="create-table-engine">ENGINE</FieldLabel>
+              <Input
+                id="create-table-engine"
+                list="create-table-engines"
+                value={options.engine}
+                placeholder="InnoDB"
+                onChange={(e) => set({ engine: e.target.value })}
+              />
+              <datalist id="create-table-engines">
+                {MYSQL_ENGINES.map((v) => (
+                  <option key={v} value={v} />
+                ))}
+              </datalist>
+            </FormSection>
+            <FormSection>
+              <FieldLabel htmlFor="create-table-charset">CHARSET</FieldLabel>
+              <Input
+                id="create-table-charset"
+                list="create-table-charsets"
+                value={options.charset}
+                placeholder="utf8mb4"
+                onChange={(e) => set({ charset: e.target.value })}
+              />
+              <datalist id="create-table-charsets">
+                {MYSQL_CHARSETS.map((v) => (
+                  <option key={v} value={v} />
+                ))}
+              </datalist>
+            </FormSection>
+            <FormSection>
+              <FieldLabel htmlFor="create-table-collation">COLLATE</FieldLabel>
+              <Input
+                id="create-table-collation"
+                value={options.collation}
+                placeholder="utf8mb4_0900_ai_ci"
+                onChange={(e) => set({ collation: e.target.value })}
+              />
+            </FormSection>
+          </chakra.div>
+        )}
+
+        {driver === "postgres" && (
+          <chakra.label display="flex" alignItems="center" gap="2" textStyle="body">
+            <Switch
+              checked={options.unlogged && !p}
+              disabled={!!p}
+              onChange={() => set({ unlogged: !options.unlogged })}
+              aria-label="UNLOGGED"
+            />
+            <span>UNLOGGED</span>
+            <chakra.span textStyle="caption" color="app.textMuted">
+              {p ? t("createTableOptUnloggedPartitioned") : t("createTableOptUnloggedHelp")}
+            </chakra.span>
+          </chakra.label>
+        )}
+
+        {driver === "sqlite" && (
+          <>
+            <chakra.label display="flex" alignItems="center" gap="2" textStyle="body">
+              <Switch
+                checked={options.strict}
+                onChange={() => set({ strict: !options.strict })}
+                aria-label="STRICT"
+              />
+              <span>STRICT</span>
+              <chakra.span textStyle="caption" color="app.textMuted">
+                {t("createTableOptStrictHelp")}
+              </chakra.span>
+            </chakra.label>
+            <chakra.label display="flex" alignItems="center" gap="2" textStyle="body">
+              <Switch
+                checked={options.withoutRowid}
+                onChange={() => set({ withoutRowid: !options.withoutRowid })}
+                aria-label="WITHOUT ROWID"
+              />
+              <span>WITHOUT ROWID</span>
+              <chakra.span textStyle="caption" color="app.textMuted">
+                {t("createTableOptWithoutRowidHelp")}
+              </chakra.span>
+            </chakra.label>
+          </>
+        )}
+
+        {methods.length > 0 && (
+          <>
+            <chakra.label display="flex" alignItems="center" gap="2" textStyle="body">
+              <Switch
+                checked={!!p}
+                onChange={() => set({ partition: p ? null : emptyPartitionSpec(driver) })}
+                aria-label={t("createTableOptPartition")}
+              />
+              <span>{t("createTableOptPartition")}</span>
+            </chakra.label>
+            {p && (
+              <chakra.div display="flex" flexDirection="column" gap="3" paddingLeft="2">
+                <chakra.div display="grid" gridTemplateColumns="minmax(0, 1fr) minmax(0, 2fr)" gap="3">
+                  <FormSection>
+                    <FieldLabel as="div">{t("createTableOptPartitionMethod")}</FieldLabel>
+                    <ListboxSelect
+                      ariaLabel={t("createTableOptPartitionMethod")}
+                      value={p.method}
+                      options={methods.map((m) => ({ value: m, label: methodLabel(m) }))}
+                      onChange={(v) => setPartition({ method: v as PartitionMethod })}
+                      css={{ width: "100%" }}
+                    />
+                  </FormSection>
+                  <FormSection>
+                    <FieldLabel htmlFor="create-table-part-key">{t("createTableOptPartitionKey")}</FieldLabel>
+                    <Input
+                      id="create-table-part-key"
+                      fontFamily="mono"
+                      value={p.key}
+                      placeholder={t("createTableOptPartitionKeyPlaceholder")}
+                      onChange={(e) => setPartition({ key: e.target.value })}
+                    />
+                  </FormSection>
+                </chakra.div>
+                <chakra.div textStyle="caption" color="app.textMuted">
+                  {t("createTableOptPartitionKeyHelp")}
+                </chakra.div>
+
+                {(p.method === "HASH" || p.method === "KEY") && isMysql ? (
+                  <FormSection>
+                    <FieldLabel htmlFor="create-table-part-count">
+                      {t("createTableOptPartitionCount")}
+                    </FieldLabel>
+                    <Input
+                      id="create-table-part-count"
+                      fontFamily="mono"
+                      value={p.modulus}
+                      onChange={(e) => setPartition({ modulus: e.target.value })}
+                    />
+                  </FormSection>
+                ) : (
+                  <>
+                    <FormSection>
+                      <FieldLabel htmlFor="create-table-part-first">
+                        {isMysql
+                          ? t("createTableOptPartitionFirstRequired")
+                          : t("createTableOptPartitionFirst")}
+                      </FieldLabel>
+                      <Input
+                        id="create-table-part-first"
+                        fontFamily="mono"
+                        value={p.firstName}
+                        onChange={(e) => setPartition({ firstName: e.target.value })}
+                      />
+                    </FormSection>
+                    {(isMysql || p.firstName.trim() !== "") && (
+                      <chakra.div display="grid" gridTemplateColumns="repeat(2, minmax(0, 1fr))" gap="3">
+                        {p.method === "RANGE" && !isMysql && (
+                          <FormSection>
+                            <FieldLabel htmlFor="create-table-part-from">
+                              {t("createTableOptPartitionFrom")}
+                            </FieldLabel>
+                            <Input
+                              id="create-table-part-from"
+                              fontFamily="mono"
+                              value={p.from}
+                              onChange={(e) => setPartition({ from: e.target.value })}
+                            />
+                          </FormSection>
+                        )}
+                        {p.method === "RANGE" && (
+                          <FormSection>
+                            <FieldLabel htmlFor="create-table-part-to">
+                              {isMysql
+                                ? t("createTableOptPartitionLessThan")
+                                : t("createTableOptPartitionTo")}
+                            </FieldLabel>
+                            <Input
+                              id="create-table-part-to"
+                              fontFamily="mono"
+                              value={p.to}
+                              onChange={(e) => setPartition({ to: e.target.value })}
+                            />
+                          </FormSection>
+                        )}
+                        {p.method === "LIST" && (
+                          <FormSection>
+                            <FieldLabel htmlFor="create-table-part-values">
+                              {t("createTableOptPartitionValues")}
+                            </FieldLabel>
+                            <Input
+                              id="create-table-part-values"
+                              fontFamily="mono"
+                              value={p.values}
+                              placeholder="a, b, c"
+                              onChange={(e) => setPartition({ values: e.target.value })}
+                            />
+                          </FormSection>
+                        )}
+                        {p.method === "HASH" && !isMysql && (
+                          <>
+                            <FormSection>
+                              <FieldLabel htmlFor="create-table-part-modulus">MODULUS</FieldLabel>
+                              <Input
+                                id="create-table-part-modulus"
+                                fontFamily="mono"
+                                value={p.modulus}
+                                onChange={(e) => setPartition({ modulus: e.target.value })}
+                              />
+                            </FormSection>
+                            <FormSection>
+                              <FieldLabel htmlFor="create-table-part-remainder">REMAINDER</FieldLabel>
+                              <Input
+                                id="create-table-part-remainder"
+                                fontFamily="mono"
+                                value={p.remainder}
+                                onChange={(e) => setPartition({ remainder: e.target.value })}
+                              />
+                            </FormSection>
+                          </>
+                        )}
+                      </chakra.div>
+                    )}
+                    <chakra.div textStyle="caption" color="app.textMuted">
+                      {isMysql ? t("createTableOptBoundHelpMysql") : t("createTableOptBoundHelpPg")}
+                    </chakra.div>
+                  </>
+                )}
+              </chakra.div>
+            )}
+          </>
+        )}
+
+        {problems.map((pr, i) => (
+          <FieldError key={`${pr.code}:${i}`}>{optionProblemText(pr, t)}</FieldError>
+        ))}
+      </chakra.div>
+    </chakra.details>
   );
 }
