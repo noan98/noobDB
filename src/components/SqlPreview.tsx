@@ -35,7 +35,7 @@ export function SqlPreview({
   driver,
   empty,
   maskCredentials = false,
-  ...rest
+  ...props
 }: Omit<ComponentProps<typeof CodePreview>, "children"> & {
   sql: string;
   /** `mysql` / `postgres` / `sqlite`。方言ごとにキーワード・引用規則が違う。 */
@@ -46,6 +46,8 @@ export function SqlPreview({
   maskCredentials?: boolean;
 }) {
   const t = useT();
+  // 外側の配置 (余白・flex・幅) はラッパーへ、見た目 (wrap / minH / maxH など) は <pre> へ渡す。
+  const [layoutProps, rest] = splitLayoutProps(props, maskCredentials);
   const [revealed, setRevealed] = useState(false);
   // 一度でも切り替えたあとだけクロスフェードする (初回表示では光らせない)。
   const [toggled, setToggled] = useState(false);
@@ -105,9 +107,10 @@ export function SqlPreview({
   );
   if (ranges.length === 0) return pre;
 
-  const label = revealed ? t("formPasswordHide") : t("formPasswordShow");
+  // 名前は固定し、状態は aria-pressed だけで伝える。
+  const label = t("formPasswordShow");
   return (
-    <chakra.div display="flex" flexDirection="column" gap="1" minW="0">
+    <chakra.div display="flex" flexDirection="column" gap="1" minW="0" {...layoutProps}>
       <chakra.div display="flex" justifyContent="flex-end">
         <Tooltip label={label}>
           <chakra.button
@@ -136,6 +139,18 @@ export function SqlPreview({
       {pre}
     </chakra.div>
   );
+}
+
+const LAYOUT_PROP =
+  /^(m|mt|mb|ml|mr|mx|my|margin\w*|flex|flexGrow|flexShrink|flexBasis|alignSelf|gridColumn|w|width|minW|maxW)$/;
+
+/** `maskCredentials` のときだけ、配置系 props をラッパー用に分ける (無いときは全部 `<pre>` のまま)。 */
+function splitLayoutProps<T extends object>(props: T, split: boolean): [Record<string, unknown>, T] {
+  if (!split) return [{}, props];
+  const layout: Record<string, unknown> = {};
+  const rest: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(props)) (LAYOUT_PROP.test(k) ? layout : rest)[k] = v;
+  return [layout, rest as T];
 }
 
 interface Seg {
@@ -210,6 +225,7 @@ function CredentialLiteral({
   animate: boolean;
   children: ReactNode;
 }) {
+  const t = useT();
   return (
     <motion.span
       key={revealed ? "plain" : "masked"}
@@ -221,7 +237,14 @@ function CredentialLiteral({
       {revealed ? (
         children
       ) : (
-        <chakra.span bg="app.hover" borderRadius="sm" px="1" color="app.textMuted">
+        <chakra.span
+          role="img"
+          aria-label={t("sqlPreviewMaskedCredential")}
+          bg="app.hover"
+          borderRadius="sm"
+          px="1"
+          color="app.textMuted"
+        >
           {"'••••••••'"}
         </chakra.span>
       )}

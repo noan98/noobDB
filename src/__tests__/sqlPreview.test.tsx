@@ -69,6 +69,7 @@ describe("SqlPreview maskCredentials (#2175)", () => {
     const pre = screen.getByTestId("sql-preview");
     expect(pre).toHaveTextContent("ALTER USER 'app'@'%' IDENTIFIED BY '••••••••'");
     expect(pre.textContent).not.toContain("S3cret!");
+    expect(screen.getByRole("img", { name: t("sqlPreviewMaskedCredential") })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("formPasswordShow") })).toHaveAttribute(
       "aria-pressed",
       "false",
@@ -79,8 +80,9 @@ describe("SqlPreview maskCredentials (#2175)", () => {
     renderWithProviders(<SqlPreview sql={SQL} driver="mysql" maskCredentials />);
     fireEvent.click(screen.getByRole("button", { name: t("formPasswordShow") }));
     expect(screen.getByTestId("sql-preview").textContent).toBe(SQL);
-    const hide = screen.getByRole("button", { name: t("formPasswordHide") });
+    const hide = screen.getByRole("button", { name: t("formPasswordShow") });
     expect(hide).toHaveAttribute("aria-pressed", "true");
+    expect(hide).toHaveAccessibleName(t("formPasswordShow"));
     fireEvent.click(hide);
     expect(screen.getByTestId("sql-preview").textContent).not.toContain("S3cret!");
   });
@@ -112,5 +114,22 @@ describe("SqlPreview maskCredentials (#2175)", () => {
     expect(pre.textContent).not.toContain("S3cret!");
     fireEvent.click(screen.getByTestId("sql-preview-reveal"));
     expect(screen.getByTestId("sql-preview").textContent).toBe(big);
+  });
+});
+
+describe("SqlPreview maskCredentials のレイアウト props (#2175)", () => {
+  const SQL = "ALTER USER 'a'@'%' IDENTIFIED BY 'x'";
+  const preClass = (props: object) => {
+    const { unmount } = renderWithProviders(
+      <SqlPreview sql={SQL} driver="mysql" maskCredentials {...props} />,
+    );
+    const c = screen.getByTestId("sql-preview").className;
+    unmount();
+    return c;
+  };
+
+  it("余白 (mt) は <pre> に載らず、wrap は <pre> に載る", () => {
+    expect(preClass({ mt: "2" })).toBe(preClass({}));
+    expect(preClass({ wrap: true })).not.toBe(preClass({}));
   });
 });

@@ -421,6 +421,9 @@ describe("UsersPanel: 全権限を外した行の退場 (#1890)", () => {
   });
 });
 
+// 入力欄の value には平文が入るので、確認ダイアログ内だけを見る。
+const dialogHtml = () => document.querySelector("[role=dialog]")?.innerHTML ?? "";
+
 describe("UsersPanel: 確認ダイアログのパスワード伏せ字 (#2175)", () => {
   it("ユーザー作成の確認では既定で伏せ字、「表示」で平文、実行する SQL は変わらない", async () => {
     const sql = "CREATE USER 'bob'@'%' IDENTIFIED BY 'S3cret!'";
@@ -436,7 +439,7 @@ describe("UsersPanel: 確認ダイアログのパスワード伏せ字 (#2175)",
     fireEvent.click(screen.getByRole("button", { name: t("usersCreateSubmit") }));
     const preview = await screen.findByTestId("sql-preview");
     expect(preview).toHaveTextContent("IDENTIFIED BY '••••••••'");
-    expect(preview.textContent).not.toContain("S3cret!");
+    expect(dialogHtml()).not.toContain("S3cret!");
     fireEvent.click(screen.getByRole("button", { name: t("formPasswordShow") }));
     expect(screen.getByTestId("sql-preview")).toHaveTextContent(sql);
     fireEvent.click(screen.getByRole("button", { name: t("usersCreateConfirmOk") }));
@@ -447,5 +450,57 @@ describe("UsersPanel: 確認ダイアログのパスワード伏せ字 (#2175)",
         statements: [sql],
       }),
     );
+  });
+
+  it("パスワード変更の確認も伏せ字で、表示→キャンセル→再度開くと伏せ字に戻る。実行する SQL は変わらない", async () => {
+    const sql = "ALTER USER 'app'@'%' IDENTIFIED BY 'S3cret!'";
+    vi.mocked(api.listDbUsers).mockResolvedValue([{ ...user("app"), host: "%" }]);
+    vi.mocked(api.listUserPrivileges).mockResolvedValue({ global: null, tables: [] });
+    vi.mocked(api.generateAlterPasswordSql).mockResolvedValue(sql);
+    vi.mocked(api.applyPrivilegeSql).mockResolvedValue(1);
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver="mysql" database="app" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
+    fireEvent.click(await screen.findByRole("button", { name: t("usersChangePassword") }));
+    fireEvent.change(screen.getByLabelText(t("usersPasswordLabel")), { target: { value: "S3cret!" } });
+    const open = async () => {
+      fireEvent.click(screen.getByRole("button", { name: t("usersPasswordSubmit") }));
+      return screen.findByTestId("sql-preview");
+    };
+    let preview = await open();
+    expect(preview).toHaveTextContent("IDENTIFIED BY '••••••••'");
+    expect(dialogHtml()).not.toContain("S3cret!");
+    fireEvent.click(screen.getByRole("button", { name: t("formPasswordShow") }));
+    expect(screen.getByTestId("sql-preview")).toHaveTextContent(sql);
+    fireEvent.click(screen.getAllByRole("button", { name: t("confirmDefaultCancel") }).at(-1) as HTMLElement);
+    await waitFor(() => expect(screen.queryByTestId("sql-preview")).toBeNull());
+    preview = await open();
+    expect(preview).toHaveTextContent("IDENTIFIED BY '••••••••'");
+    expect(dialogHtml()).not.toContain("S3cret!");
+    fireEvent.click(screen.getByRole("button", { name: t("usersPasswordConfirmOk") }));
+    await waitFor(() =>
+      expect(api.applyPrivilegeSql).toHaveBeenCalledWith({
+        sessionId: "s1",
+        database: "app",
+        statements: [sql],
+      }),
+    );
+  });
+
+  it("PostgreSQL の CREATE ROLE … PASSWORD も伏せる", async () => {
+    const sql = `CREATE ROLE "bob" LOGIN PASSWORD 'S3cret!'`;
+    vi.mocked(api.listDbUsers).mockResolvedValue([]);
+    vi.mocked(api.generateCreateUserSql).mockResolvedValue(sql);
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver="postgres" database="public" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: t("usersNewUser") }));
+    fireEvent.change(screen.getByLabelText(t("usersCreateNameLabel")), { target: { value: "bob" } });
+    fireEvent.change(screen.getByLabelText(t("usersCreatePasswordLabel")), { target: { value: "S3cret!" } });
+    fireEvent.click(screen.getByRole("button", { name: t("usersCreateSubmit") }));
+    const preview = await screen.findByTestId("sql-preview");
+    expect(preview).toHaveTextContent(`LOGIN PASSWORD '••••••••'`);
+    expect(dialogHtml()).not.toContain("S3cret!");
   });
 });
