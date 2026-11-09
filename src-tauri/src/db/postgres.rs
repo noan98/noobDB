@@ -2220,14 +2220,15 @@ impl PostgresConn {
             .collect())
     }
 
-    /// サーバのバージョン番号 (`server_version_num`、例: 160002)。取れなければ 0。
-    async fn server_version_num(&self) -> i32 {
-        sqlx::query_scalar::<_, String>("SHOW server_version_num")
+    /// サーバのバージョン番号 (`server_version_num`、例: 160002)。取れなければ `Err`
+    /// (0 扱いにすると、15 以降でも列リスト・行フィルタ・`TABLES IN SCHEMA` を黙って落とすため)。
+    async fn server_version_num(&self) -> Result<i32> {
+        let v: String = sqlx::query_scalar("SHOW server_version_num")
             .fetch_one(&self.pool)
-            .await
-            .ok()
-            .and_then(|v| v.trim().parse().ok())
-            .unwrap_or(0)
+            .await?;
+        v.trim()
+            .parse()
+            .map_err(|_| AppError::InvalidInput(format!("unexpected server_version_num: {v}")))
     }
 
     /// 論理レプリケーションのパブリケーションの一覧 (#2181)。データベース全体 (スキーマをまたぐ) で、
@@ -2235,7 +2236,7 @@ impl PostgresConn {
     /// `FOR ALL TABLES` は表を展開しない。pg_publication 系は誰でも読める。
     pub async fn list_publications(&self) -> Result<Vec<super::types::PublicationInfo>> {
         use super::types::{PublicationInfo, PublicationTable};
-        let v15 = self.server_version_num().await >= 150_000;
+        let v15 = self.server_version_num().await? >= 150_000;
         // 列リスト (prattrs) と行フィルタ (prqual) は 15 以降の列。13 / 14 には無いので別の問い合わせにする。
         let tables_sql = if v15 {
             "SELECT p.pubname::text, n.nspname::text, c.relname::text, \
@@ -2364,9 +2365,12 @@ impl PostgresConn {
                     .filter(|t| t.schema == schema)
                     .cloned()
                     .collect();
+                // `TABLES IN SCHEMA` 由来 (明示メンバーではない) の表。定義に印を付け、同期が DROP TABLE を出さないようにする。
+                let mut via_schema: Vec<String> = Vec::new();
                 if p.schemas.iter().any(|s| s == schema) {
                     for (_, table) in expanded.iter().filter(|(n, _)| *n == p.name) {
                         if !tables.iter().any(|t| t.table == *table) {
+                            via_schema.push(table.clone());
                             tables.push(PublicationTable {
                                 schema: schema.to_string(),
                                 table: table.clone(),
@@ -2379,7 +2383,7 @@ impl PostgresConn {
                 tables.sort_by(|a, b| a.table.cmp(&b.table));
                 (
                     p.name.clone(),
-                    super::publication::compare_definition(p, &tables),
+                    super::publication::compare_definition(p, &tables, &via_schema),
                 )
             })
             .collect())
@@ -4797,9 +4801,6 @@ fn split_outside_quotes(s: &str, sep: char) -> Option<(String, String)> {
     None
 }
 
-/// Double-quotes a single identifier, doubling any embedded double quotes.
-/// 実装は方言共通の `sync::quote_ident` に一本化している (`fn(&str) -> String`
-/// のシグネチャは `pk_order_clause` 等へ関数ポインタとして渡すため維持)。
 /// SQLSTATE 42501 (insufficient_privilege) か。権限が足りないだけのときに、機能を空にして続けるために使う。
 fn is_insufficient_privilege(e: &sqlx::Error) -> bool {
     e.as_database_error()
@@ -4807,6 +4808,9 @@ fn is_insufficient_privilege(e: &sqlx::Error) -> bool {
         .is_some_and(|c| c == "42501")
 }
 
+/// Double-quotes a single identifier, doubling any embedded double quotes.
+/// 実装は方言共通の `sync::quote_ident` に一本化している (`fn(&str) -> String`
+/// のシグネチャは `pk_order_clause` 等へ関数ポインタとして渡すため維持)。
 fn pg_quote_ident(name: &str) -> String {
     super::sync::quote_ident(super::DriverKind::Postgres, name)
 }

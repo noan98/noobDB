@@ -5512,6 +5512,7 @@ async fn postgres_logical_replication_is_listed_compared_and_synced() {
             "DROP PUBLICATION IF EXISTS nb2181_all",
             "DROP PUBLICATION IF EXISTS nb2181_empty",
             "DROP PUBLICATION IF EXISTS nb2181_schema",
+            "DROP PUBLICATION IF EXISTS nb2181_rev",
             "DROP SCHEMA IF EXISTS nb2181_a CASCADE",
             "DROP SCHEMA IF EXISTS nb2181_b CASCADE",
         ] {
@@ -5825,6 +5826,33 @@ async fn postgres_logical_replication_is_listed_compared_and_synced() {
             status_of(&after, "nb2181_schema"),
             Some(t::DiffStatus::Same)
         );
+
+        // 逆方向: target 側が TABLES IN SCHEMA で公開している表は DROP TABLE できない (PG が拒否する)。
+        // source に無い表があっても同期 SQL に DROP を出さず、実行が成功する。
+        conn.execute(
+            &format!("CREATE PUBLICATION nb2181_rev FOR TABLE {a}.orders, TABLES IN SCHEMA {b}"),
+            None,
+        )
+        .await
+        .expect("create rev publication");
+        let diff = t::compare_schema_via_core(&conn, a, &conn, b)
+            .await
+            .expect("compare rev");
+        let plan = t::generate_sync_sql(&diff, true);
+        let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
+        assert!(
+            !sqls
+                .iter()
+                .any(|s| s.contains("DROP TABLE \"nb2181_b\"") && s.contains("nb2181_rev")),
+            "{sqls:?}"
+        );
+        assert!(
+            !sqls.iter().any(|s| s.starts_with("DROP PUBLICATION")),
+            "{sqls:?}"
+        );
+        conn.execute_sync_transaction(&sqls, Some(b))
+            .await
+            .unwrap_or_else(|e| panic!("rev sync failed: {e}\n{sqls:#?}"));
     }
 
     cleanup(&conn).await;

@@ -180,7 +180,16 @@ fn prepare(driver: DriverKind, from_db: &str, to_db: &str, def: &ObjectDefinitio
     // 同期に使う本文: 自スキーマの修飾は消さず、target のスキーマ名へ置き換える。
     let mut portable = portable_definition(driver, from_db, to_db, raw_body);
     // 比較用: 自スキーマの修飾を (両側とも) 取り除いてから空白を畳む。
-    let mut normalized = normalize_definition(driver, from_db, raw_body);
+    // パブリケーションの `TABLES IN SCHEMA` 由来の印 (#2181) は比較に含めない (表の集合が同じなら同じ定義)。
+    let mut normalized = if def.kind == "publication" {
+        normalize_definition(
+            driver,
+            from_db,
+            &raw_body.replace(super::publication::VIA_SCHEMA, ""),
+        )
+    } else {
+        normalize_definition(driver, from_db, raw_body)
+    };
     if driver == DriverKind::Mysql && def.kind == "event" {
         normalized = normalize_event(&normalized);
     }

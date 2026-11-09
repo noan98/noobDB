@@ -558,6 +558,31 @@ pub(crate) fn redact_conninfo(conninfo: &str) -> String {
     out
 }
 
+/// URI のクエリのキーのパーセントデコード (`pass%77ord` → `password`)。不正な `%` はそのまま残す。
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let hex = |c: u8| (c as char).to_digit(16);
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match (
+            b[i],
+            b.get(i + 1).and_then(|c| hex(*c)),
+            b.get(i + 2).and_then(|c| hex(*c)),
+        ) {
+            (b'%', Some(h), Some(l)) => {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+            }
+            _ => {
+                out.push(b[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// [`redact_conninfo`] の URI 形式: `user:パスワード@` と `?password=...` / `&sslpassword=...` を伏せる。
 fn redact_conninfo_uri(uri: &str) -> String {
     let (head, query) = match uri.split_once('?') {
@@ -586,7 +611,8 @@ fn redact_conninfo_uri(uri: &str) -> String {
                 .split('&')
                 .map(|kv| match kv.split_once('=') {
                     Some((k, _))
-                        if CONNINFO_SECRET_KEYS.contains(&k.to_ascii_lowercase().as_str()) =>
+                        if CONNINFO_SECRET_KEYS
+                            .contains(&percent_decode(k).to_ascii_lowercase().as_str()) =>
                     {
                         format!("{k}=********")
                     }
@@ -664,6 +690,11 @@ mod tests {
         assert_eq!(
             redact_conninfo("postgresql://repl:s3cret@db:5432/app?sslmode=require&password=zzz"),
             "postgresql://repl:********@db:5432/app?sslmode=require&password=********"
+        );
+        // クエリのキーがパーセントエンコードされていても伏せる。
+        assert_eq!(
+            redact_conninfo("postgresql://h/app?pass%77ord=zzz&SSLPASS%57ORD=yy&x=1"),
+            "postgresql://h/app?pass%77ord=********&SSLPASS%57ORD=********&x=1"
         );
         assert_eq!(
             redact_conninfo("postgres://repl@db/app"),

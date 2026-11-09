@@ -123,7 +123,12 @@ export function PublicationModal({ sessionId, database, table, readOnly, onConfi
   };
 
   return (
-    <Modal onSubmit={submit} submitDisabled={!ready || busy} width="600px" onClose={onClose}>
+    <Modal
+      onSubmit={hasDrop ? undefined : submit}
+      submitDisabled={!ready || busy}
+      width="600px"
+      onClose={onClose}
+    >
       <ModalHeader onClose={onClose} closeLabel={t("publicationCancel")}>
         {t("publicationTitle")}
       </ModalHeader>
@@ -191,13 +196,28 @@ export function PublicationModal({ sessionId, database, table, readOnly, onConfi
         </FormSection>
       </ModalBody>
       <ModalFooter>
-        <div style={{ flex: 1 }} />
-        <Button type="button" variant="secondary" onClick={onClose}>
-          {t("publicationCancel")}
-        </Button>
-        <PressableButton type="button" variant="primary" disabled={!ready || busy} onClick={submit}>
-          {t("publicationConfirm")}
-        </PressableButton>
+        {hasDrop ? (
+          // 表を外す操作を含むときは破壊的パターン: 実行 (dangerOutline) → spacer → キャンセル (primary)。操作の途中で切り替わるので、フォーカスは動かさない。
+          <>
+            <Button type="button" variant="dangerOutline" disabled={!ready || busy} onClick={submit}>
+              {t("publicationConfirm")}
+            </Button>
+            <div style={{ flex: 1 }} />
+            <Button type="button" variant="primary" onClick={onClose}>
+              {t("publicationCancel")}
+            </Button>
+          </>
+        ) : (
+          <>
+            <div style={{ flex: 1 }} />
+            <Button type="button" variant="secondary" onClick={onClose}>
+              {t("publicationCancel")}
+            </Button>
+            <PressableButton type="button" variant="primary" disabled={!ready || busy} onClick={submit}>
+              {t("publicationConfirm")}
+            </PressableButton>
+          </>
+        )}
       </ModalFooter>
     </Modal>
   );

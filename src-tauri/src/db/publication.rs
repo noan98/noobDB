@@ -21,6 +21,10 @@ use super::sync::quote_ident;
 use super::types::{PublicationInfo, PublicationTable};
 use super::DriverKind;
 
+/// `TABLES IN SCHEMA` 由来の表の `ADD TABLE` に付ける印 (ブロックコメントなので、付いたまま実行しても無害)。
+/// 比較では無視し、同期では `DROP TABLE` を出さない判断に使う。
+pub const VIA_SCHEMA: &str = " /* via schema */";
+
 fn q(name: &str) -> String {
     quote_ident(DriverKind::Postgres, name)
 }
@@ -75,7 +79,13 @@ pub fn display_definition(p: &PublicationInfo) -> String {
 
 /// スキーマ比較・同期用の定義 (`schema` に属する表だけ)。`schema_tables` は `schema` の表 (明示的に追加した表と、
 /// `TABLES IN SCHEMA` で公開される表を展開したもの) で、呼び出し側が表名順に渡す。`FOR ALL TABLES` は表を展開しない。
-pub fn compare_definition(p: &PublicationInfo, schema_tables: &[PublicationTable]) -> String {
+/// `via_schema` は `schema_tables` のうち `TABLES IN SCHEMA` 由来 (明示メンバーではない) の表名。これらの
+/// `ADD TABLE` には [`VIA_SCHEMA`] の印を付ける (target 側のこの表には `DROP TABLE` を出せないため)。
+pub fn compare_definition(
+    p: &PublicationInfo,
+    schema_tables: &[PublicationTable],
+    via_schema: &[String],
+) -> String {
     let mut parts: Vec<String> = Vec::new();
     let for_all = if p.all_tables { "FOR ALL TABLES " } else { "" };
     parts.push(format!(
@@ -85,8 +95,13 @@ pub fn compare_definition(p: &PublicationInfo, schema_tables: &[PublicationTable
     ));
     if !p.all_tables {
         for t in schema_tables {
+            let mark = if via_schema.contains(&t.table) {
+                VIA_SCHEMA
+            } else {
+                ""
+            };
             parts.push(format!(
-                "ALTER PUBLICATION {} ADD TABLE {};",
+                "ALTER PUBLICATION {} ADD TABLE {}{mark};",
                 q(&p.name),
                 table_spec(t)
             ));
@@ -105,8 +120,18 @@ struct ParsedPublication {
     publish: String,
     /// `publish_via_partition_root` の値 (`true` / `false`)。
     via_root: String,
-    /// (修飾名, 指定の残り (列リスト・行フィルタ)) の並び。
-    tables: Vec<(String, String)>,
+    /// 表の並び。
+    tables: Vec<ParsedTable>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ParsedTable {
+    /// 修飾名 (`"s"."t"`)。
+    key: String,
+    /// 指定の残り (列リスト・行フィルタ)。
+    rest: String,
+    /// `TABLES IN SCHEMA` 由来 (明示メンバーではない)。
+    via_schema: bool,
 }
 
 /// 引用符つき識別子 (`"a""b"`) を先頭から 1 つ読み、(そのまま (引用符つき), 残り) を返す。
@@ -155,7 +180,15 @@ fn parse_compare_definition(def: &str) -> Option<ParsedPublication> {
         let (schema, after) = take_quoted(spec)?;
         let after = after.strip_prefix('.')?;
         let (table, rest) = take_quoted(after)?;
-        tables.push((format!("{schema}.{table}"), rest.to_string()));
+        let (rest, via_schema) = match rest.trim_end().strip_suffix(VIA_SCHEMA.trim_start()) {
+            Some(r) => (r.trim_end(), true),
+            None => (rest, false),
+        };
+        tables.push(ParsedTable {
+            key: format!("{schema}.{table}"),
+            rest: rest.to_string(),
+            via_schema,
+        });
     }
     Some(ParsedPublication {
         name: name.to_string(),
@@ -173,14 +206,24 @@ pub struct ReplaceStatement {
     pub destructive: bool,
 }
 
+/// 同期の計画: 出す文と、出せなかった差分の警告 (パブリケーション名は呼び出し側が付ける)。
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ReplacePlan {
+    pub statements: Vec<ReplaceStatement>,
+    pub warnings: Vec<String>,
+}
+
+const UNDROPPABLE: &str = "は TABLES IN SCHEMA で公開されているため、個別に外せません (スキーマ単位の公開を手動で見直してください)";
+
 /// 定義が違うパブリケーションを target で揃える文 (#2181)。DROP + CREATE はできない (購読側の同期状態が
 /// 壊れる) ので、オプションの違いは `SET (...)`、表の差は `ADD TABLE` / `DROP TABLE` にする。行フィルタ・列リストが
-/// 違う表は `DROP TABLE` + `ADD TABLE`。`FOR ALL TABLES` の有無の違いと、読めない定義は `Err` で理由を返す
-/// (呼び出し側が警告にして文を出さない)。
+/// 違う表は `DROP TABLE` + `ADD TABLE`。target が `TABLES IN SCHEMA` で公開している表は `DROP TABLE` できない
+/// (明示メンバーではないと PostgreSQL が拒否する) ので、文を出さず警告にする。`FOR ALL TABLES` の有無の違いと、
+/// 読めない定義は `Err` で理由を返す (呼び出し側が警告にして文を出さない)。
 pub fn replace_statements(
     source_definition: &str,
     target_definition: &str,
-) -> Result<Vec<ReplaceStatement>, String> {
+) -> Result<ReplacePlan, String> {
     let (Some(src), Some(tgt)) = (
         parse_compare_definition(source_definition),
         parse_compare_definition(target_definition),
@@ -193,9 +236,9 @@ pub fn replace_statements(
     if src.all_tables != tgt.all_tables {
         return Err("FOR ALL TABLES の有無の違いは自動で同期できません (パブリケーションの作り直しが要り、購読側の同期状態に影響するため)。手動で対応してください".to_string());
     }
-    let mut out = Vec::new();
+    let mut plan = ReplacePlan::default();
     if src.publish != tgt.publish || src.via_root != tgt.via_root {
-        out.push(ReplaceStatement {
+        plan.statements.push(ReplaceStatement {
             sql: format!(
                 "ALTER PUBLICATION {} SET (publish = '{}', publish_via_partition_root = {})",
                 src.name, src.publish, src.via_root
@@ -203,40 +246,97 @@ pub fn replace_statements(
             destructive: false,
         });
     }
-    let tgt_map: std::collections::BTreeMap<&str, &str> = tgt
-        .tables
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    let src_map: std::collections::BTreeMap<&str, &str> = src
-        .tables
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    let add = |key: &str, rest: &str| ReplaceStatement {
-        sql: format!("ALTER PUBLICATION {} ADD TABLE {key}{rest}", src.name),
+    let find = |list: &'_ [ParsedTable], key: &str| -> Option<usize> {
+        list.iter().position(|t| t.key == key)
+    };
+    let add = |t: &ParsedTable| ReplaceStatement {
+        sql: format!(
+            "ALTER PUBLICATION {} ADD TABLE {}{}",
+            src.name, t.key, t.rest
+        ),
         destructive: false,
     };
-    let drop = |key: &str| ReplaceStatement {
-        sql: format!("ALTER PUBLICATION {} DROP TABLE {key}", src.name),
+    let drop = |t: &ParsedTable| ReplaceStatement {
+        sql: format!("ALTER PUBLICATION {} DROP TABLE {}", src.name, t.key),
         destructive: true,
     };
-    // 外す文は先に出す (指定が違う表の DROP → ADD が成り立つように)。
-    for (key, _) in &tgt.tables {
-        match src_map.get(key.as_str()) {
-            None => out.push(drop(key)),
-            Some(rest) if tgt_map.get(key.as_str()) != Some(rest) => out.push(drop(key)),
-            Some(_) => {}
+    // 外す文は先に出す (指定が違う表の DROP → ADD が成り立つように)。外した表を足し直せるかも合わせて決める。
+    let mut skip_add: Vec<&str> = Vec::new();
+    for t in &tgt.tables {
+        let differs = match find(&src.tables, &t.key) {
+            None => true,
+            Some(i) => src.tables[i].rest != t.rest,
+        };
+        if !differs {
+            continue;
+        }
+        if t.via_schema {
+            plan.warnings.push(format!("{} {UNDROPPABLE}", t.key));
+            skip_add.push(&t.key);
+        } else {
+            plan.statements.push(drop(t));
         }
     }
-    for (key, rest) in &src.tables {
-        match tgt_map.get(key.as_str()) {
-            None => out.push(add(key, rest)),
-            Some(t) if t != &rest.as_str() => out.push(add(key, rest)),
-            Some(_) => {}
+    for t in &src.tables {
+        if skip_add.contains(&t.key.as_str()) {
+            continue;
+        }
+        let differs = match find(&tgt.tables, &t.key) {
+            None => true,
+            Some(i) => tgt.tables[i].rest != t.rest,
+        };
+        if differs {
+            plan.statements.push(add(t));
         }
     }
-    Ok(out)
+    Ok(plan)
+}
+
+/// source に無く target にだけあるパブリケーションの扱い (#2181)。パブリケーションはデータベース全体に影響する
+/// ので `DROP PUBLICATION` は出さず、比較するスキーマの表を明示メンバーから `DROP TABLE` する差分に縮める
+/// (`TABLES IN SCHEMA` 由来の表と `FOR ALL TABLES` は触らず警告)。比較するスキーマの表が無ければ何も出さない。
+pub fn target_only_statements(target_definition: &str) -> Result<ReplacePlan, String> {
+    let Some(tgt) = parse_compare_definition(target_definition) else {
+        return Err(
+            "定義を解釈できないため同期できません。手動で ALTER PUBLICATION してください"
+                .to_string(),
+        );
+    };
+    let mut plan = ReplacePlan::default();
+    if tgt.all_tables {
+        plan.warnings.push(
+            "FOR ALL TABLES のパブリケーションは、データベース全体に影響するため触りません"
+                .to_string(),
+        );
+        return Ok(plan);
+    }
+    for t in &tgt.tables {
+        if t.via_schema {
+            plan.warnings.push(format!("{} {UNDROPPABLE}", t.key));
+        } else {
+            plan.statements.push(ReplaceStatement {
+                sql: format!("ALTER PUBLICATION {} DROP TABLE {}", tgt.name, t.key),
+                destructive: true,
+            });
+        }
+    }
+    Ok(plan)
+}
+
+/// source にだけあるパブリケーションを target で作る定義 (印を除いたもの) (#2181)。`FOR ALL TABLES` は
+/// データベース全体に影響する (スーパーユーザーが要る) ので作らず、理由を `Err` で返す。
+pub fn create_definition(source_definition: &str) -> Result<String, String> {
+    match parse_compare_definition(source_definition) {
+        Some(p) if p.all_tables => Err(
+            "FOR ALL TABLES のパブリケーションは、データベース全体に影響するため作成しません (手動で作成してください)"
+                .to_string(),
+        ),
+        Some(_) => Ok(source_definition.replace(VIA_SCHEMA, "")),
+        None => Err(
+            "定義を解釈できないため作成できません。手動で CREATE PUBLICATION してください"
+                .to_string(),
+        ),
+    }
 }
 
 /// [`subscription_definition`] の入力。
@@ -361,19 +461,24 @@ mod tests {
                 ..tbl("s", "b\"q")
             },
         ];
-        let def = compare_definition(&p, &tables);
+        let def = compare_definition(&p, &tables, &[]);
         assert!(def.contains(STMT_SPLIT));
         let parsed = parse_compare_definition(&def).expect("parse");
         assert_eq!(parsed.name, "\"we\"\"ird\"");
         assert!(!parsed.all_tables);
         assert_eq!(parsed.publish, "insert, truncate");
         assert_eq!(parsed.via_root, "true");
-        assert_eq!(parsed.tables[0], ("\"s\".\"a\"".to_string(), String::new()));
-        assert_eq!(parsed.tables[1].0, "\"s\".\"b\"\"q\"");
-        assert_eq!(parsed.tables[1].1, " (\"id\", \"n\") WHERE ((n <> 'x, y'))");
+        assert_eq!(parsed.tables[0].key, "\"s\".\"a\"");
+        assert_eq!(parsed.tables[0].rest, "");
+        assert_eq!(parsed.tables[1].key, "\"s\".\"b\"\"q\"");
+        assert_eq!(
+            parsed.tables[1].rest,
+            " (\"id\", \"n\") WHERE ((n <> 'x, y'))"
+        );
+        assert!(!parsed.tables[0].via_schema);
         // FOR ALL TABLES は表を展開しない。
         p.all_tables = true;
-        let def = compare_definition(&p, &tables);
+        let def = compare_definition(&p, &tables, &[]);
         assert!(!def.contains("ADD TABLE"), "{def}");
         assert!(parse_compare_definition(&def).is_some_and(|x| x.all_tables));
     }
@@ -383,6 +488,7 @@ mod tests {
             compare_definition(
                 &info("p"),
                 &names.iter().map(|n| tbl("t", n)).collect::<Vec<_>>(),
+                &[],
             )
         };
         (mk(src), mk(tgt))
@@ -391,7 +497,7 @@ mod tests {
     #[test]
     fn table_differences_become_add_and_drop_table() {
         let (s, t) = defs(&["a", "b"], &["b", "c"]);
-        let st = replace_statements(&s, &t).unwrap();
+        let st = replace_statements(&s, &t).unwrap().statements;
         let sqls: Vec<&str> = st.iter().map(|x| x.sql.as_str()).collect();
         assert_eq!(
             sqls,
@@ -411,15 +517,16 @@ mod tests {
             row_filter: Some("(id > 0)".into()),
             ..tbl("t", "a")
         };
-        let s = compare_definition(&p, std::slice::from_ref(&a));
+        let s = compare_definition(&p, std::slice::from_ref(&a), &[]);
         p.publish = vec!["insert".into()];
         let a2 = PublicationTable {
             row_filter: Some("(id > 10)".into()),
             ..tbl("t", "a")
         };
-        let t = compare_definition(&p, std::slice::from_ref(&a2));
+        let t = compare_definition(&p, std::slice::from_ref(&a2), &[]);
         let sqls: Vec<String> = replace_statements(&s, &t)
             .unwrap()
+            .statements
             .into_iter()
             .map(|x| x.sql)
             .collect();
@@ -432,15 +539,95 @@ mod tests {
             ]
         );
         // 同じ定義なら何も出さない。
-        assert!(replace_statements(&s, &s).unwrap().is_empty());
+        assert!(replace_statements(&s, &s).unwrap().statements.is_empty());
+    }
+
+    fn with_schema_marks(names: &[&str], via: &[&str]) -> String {
+        compare_definition(
+            &info("p"),
+            &names.iter().map(|n| tbl("t", n)).collect::<Vec<_>>(),
+            &via.iter().map(|v| v.to_string()).collect::<Vec<_>>(),
+        )
+    }
+
+    #[test]
+    fn tables_published_via_schema_are_never_dropped() {
+        // target が TABLES IN SCHEMA で公開している表 (c) は、source に無くても DROP TABLE を出さず警告にする。
+        let s = with_schema_marks(&["a"], &[]);
+        let t = with_schema_marks(&["a", "c"], &["c"]);
+        let plan = replace_statements(&s, &t).unwrap();
+        assert!(plan.statements.is_empty(), "{:?}", plan.statements);
+        assert_eq!(plan.warnings.len(), 1);
+        assert!(
+            plan.warnings[0].contains("TABLES IN SCHEMA"),
+            "{:?}",
+            plan.warnings
+        );
+        // 行フィルタの違いでも、スキーマ由来の表は DROP + ADD しない。
+        let a = PublicationTable {
+            row_filter: Some("(id > 0)".into()),
+            ..tbl("t", "a")
+        };
+        let s = compare_definition(&info("p"), std::slice::from_ref(&a), &[]);
+        let t = with_schema_marks(&["a"], &["a"]);
+        let plan = replace_statements(&s, &t).unwrap();
+        assert!(plan.statements.is_empty(), "{:?}", plan.statements);
+        assert_eq!(plan.warnings.len(), 1);
+        // 印の有無だけの違い (source がスキーマ由来、target が明示) は差分として扱わない。
+        let s = with_schema_marks(&["a"], &["a"]);
+        let t = with_schema_marks(&["a"], &[]);
+        let plan = replace_statements(&s, &t).unwrap();
+        assert!(plan.statements.is_empty() && plan.warnings.is_empty());
+        // source がスキーマ由来でも、足す文には印を付けない。
+        let s = with_schema_marks(&["a"], &["a"]);
+        let t = with_schema_marks(&[], &[]);
+        let plan = replace_statements(&s, &t).unwrap();
+        assert_eq!(
+            plan.statements[0].sql,
+            "ALTER PUBLICATION \"p\" ADD TABLE \"t\".\"a\""
+        );
+    }
+
+    #[test]
+    fn target_only_publication_only_drops_explicit_tables_of_the_schema() {
+        let t = with_schema_marks(&["x", "y"], &["y"]);
+        let plan = target_only_statements(&t).unwrap();
+        assert_eq!(plan.statements.len(), 1);
+        assert_eq!(
+            plan.statements[0].sql,
+            "ALTER PUBLICATION \"p\" DROP TABLE \"t\".\"x\""
+        );
+        assert!(plan.statements[0].destructive);
+        assert_eq!(plan.warnings.len(), 1);
+        // 比較するスキーマの表が無ければ何も出さない。
+        let plan = target_only_statements(&with_schema_marks(&[], &[])).unwrap();
+        assert!(plan.statements.is_empty() && plan.warnings.is_empty());
+        // FOR ALL TABLES は触らず警告。
+        let mut p = info("p");
+        p.all_tables = true;
+        let plan = target_only_statements(&compare_definition(&p, &[], &[])).unwrap();
+        assert!(plan.statements.is_empty());
+        assert_eq!(plan.warnings.len(), 1);
+        assert!(target_only_statements("nonsense").is_err());
+    }
+
+    #[test]
+    fn create_definition_strips_marks_and_refuses_all_tables() {
+        let d = create_definition(&with_schema_marks(&["a"], &["a"])).unwrap();
+        assert!(!d.contains("via schema"), "{d}");
+        assert!(d.contains("ADD TABLE \"t\".\"a\";"), "{d}");
+        let mut p = info("p");
+        p.all_tables = true;
+        assert!(create_definition(&compare_definition(&p, &[], &[])).is_err());
+        assert!(create_definition("nonsense").is_err());
     }
 
     #[test]
     fn all_tables_mismatch_and_garbage_are_refused() {
         let mut p = info("p");
-        let plain = compare_definition(&p, &[]);
+        let plain = compare_definition(&p, &[], &[]);
         p.all_tables = true;
-        let all = compare_definition(&p, &[]);
+        let all = compare_definition(&p, &[], &[]);
         assert!(replace_statements(&plain, &all).is_err());
         assert!(replace_statements("nonsense", &plain).is_err());
     }

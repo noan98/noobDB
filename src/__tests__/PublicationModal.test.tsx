@@ -94,13 +94,32 @@ describe("PublicationModal", () => {
     // 外す操作があれば配信が止まる旨、変更があれば REFRESH PUBLICATION の旨を出す。
     expect(screen.getByText(t("publicationDropWarn"))).toBeInTheDocument();
     expect(screen.getByText(t("publicationRefreshNote"))).toBeInTheDocument();
-    await user.click(confirm);
+    await user.click(screen.getByRole("button", { name: t("publicationConfirm") }));
     expect(onConfirm).toHaveBeenCalledWith(
       [
         'ALTER PUBLICATION "pub_member" DROP TABLE "public"."orders"',
         'ALTER PUBLICATION "pub_other" ADD TABLE "public"."orders"',
       ],
       ["pub_member", "pub_other"],
+    );
+  });
+
+  it("外す操作を含むと破壊的レイアウト (実行が dangerOutline で左、キャンセルが primary) になり、追加だけなら通常のまま", async () => {
+    const user = userEvent.setup();
+    setup();
+    await screen.findByText("pub_member");
+    const boxes = screen.getAllByRole("checkbox");
+    await user.click(boxes[1]);
+    const buttons = () =>
+      screen
+        .getAllByRole("button")
+        .filter((b) => [t("publicationConfirm"), t("publicationCancel")].includes(b.textContent ?? ""));
+    // 追加だけ: キャンセル → 適用 の順。
+    expect(buttons().map((b) => b.textContent)).toEqual([t("publicationCancel"), t("publicationConfirm")]);
+    await user.click(boxes[0]);
+    // 外す操作あり: 適用 → キャンセル の順。
+    await waitFor(() =>
+      expect(buttons().map((b) => b.textContent)).toEqual([t("publicationConfirm"), t("publicationCancel")]),
     );
   });
 

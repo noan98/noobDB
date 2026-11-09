@@ -303,7 +303,7 @@ fn object_statements(
         .collect();
     if !publications_changed.is_empty() {
         warnings.push(format!(
-            "publication {}: パブリケーションの表の変更は、購読側で ALTER SUBSCRIPTION ... REFRESH PUBLICATION を実行するまで反映されません (サブスクリプションは同期の対象外です)",
+            "publication {}: パブリケーションの表の変更は、購読側で ALTER SUBSCRIPTION ... REFRESH PUBLICATION を実行するまで反映されません (サブスクリプションは同期の対象外です)。スキーマ単位 (TABLES IN SCHEMA) の公開は表の列挙として同期されます。target にだけあるパブリケーションは DROP PUBLICATION せず、比較するスキーマの表を外すだけです",
             publications_changed.join(", ")
         ));
     }
@@ -311,9 +311,22 @@ fn object_statements(
         let Some(def) = o.source_definition.as_deref() else {
             continue;
         };
+        // パブリケーション (#2181) は比較するスキーマの表だけで作る。FOR ALL TABLES はデータベース全体に
+        // 影響するので作らず警告にとどめる。
+        let def = if o.kind == "publication" {
+            match super::publication::create_definition(def) {
+                Ok(d) => std::borrow::Cow::Owned(d),
+                Err(why) => {
+                    warnings.push(format!("publication {}: {why}", o.name));
+                    continue;
+                }
+            }
+        } else {
+            std::borrow::Cow::Borrowed(def)
+        };
         let stmt = mk(
             o,
-            create_object_sql(driver, def),
+            create_object_sql(driver, &def),
             SyncKind::CreateObject,
             false,
         );
@@ -342,9 +355,9 @@ fn object_statements(
                 continue;
             };
             match super::publication::replace_statements(src, tgt) {
-                Ok(stmts) => {
+                Ok(plan) => {
                     let mut skipped = false;
-                    for st in stmts {
+                    for st in plan.statements {
                         if st.destructive && !allow_destructive {
                             skipped = true;
                             continue;
@@ -356,6 +369,9 @@ fn object_statements(
                             "publication {}: 表を外す操作 (ALTER PUBLICATION ... DROP TABLE) は、破壊的な操作を許可しないと出力しません (外すと購読側への配信が止まります)",
                             o.name
                         ));
+                    }
+                    for w in plan.warnings {
+                        warnings.push(format!("publication {}: {w}", o.name));
                     }
                 }
                 Err(why) => warnings.push(format!("publication {}: {why}", o.name)),
@@ -403,6 +419,27 @@ fn object_statements(
         let mut drops = order_for_create(&pick(DiffStatus::TargetOnly));
         drops.reverse();
         for o in drops {
+            // target にだけあるパブリケーション (#2181) は、データベース全体に影響するので DROP PUBLICATION は
+            // 出さず、比較するスキーマの表を明示メンバーから外す差分に縮める。
+            if o.kind == "publication" {
+                match o
+                    .target_definition
+                    .as_deref()
+                    .map(super::publication::target_only_statements)
+                {
+                    Some(Ok(plan)) => {
+                        for st in plan.statements {
+                            late.push(mk(o, st.sql, SyncKind::DropObject, true));
+                        }
+                        for w in plan.warnings {
+                            warnings.push(format!("publication {}: {w}", o.name));
+                        }
+                    }
+                    Some(Err(why)) => warnings.push(format!("publication {}: {why}", o.name)),
+                    None => {}
+                }
+                continue;
+            }
             let stmt = mk(o, drop_object_sql(driver, o), SyncKind::DropObject, true);
             if o.kind == "type" {
                 last.push(stmt);
@@ -4234,14 +4271,12 @@ mod object_sync_tests {
             Some("CREATE PUBLICATION \"pub_old\" WITH (publish = 'insert', publish_via_partition_root = false);\n-- noobdb:split\nALTER PUBLICATION \"pub_old\" ADD TABLE \"p\".\"a\";"),
         );
         changed.target_definition = Some("CREATE PUBLICATION \"pub_old\" WITH (publish = 'insert', publish_via_partition_root = false);\n-- noobdb:split\nALTER PUBLICATION \"pub_old\" ADD TABLE \"p\".\"b\";".into());
+        let mut gone = obj("publication", "gone", DiffStatus::TargetOnly, None);
+        gone.target_definition = Some("CREATE PUBLICATION \"gone\" WITH (publish = 'insert', publish_via_partition_root = false);\n-- noobdb:split\nALTER PUBLICATION \"gone\" ADD TABLE \"p\".\"g\";\n-- noobdb:split\nALTER PUBLICATION \"gone\" ADD TABLE \"p\".\"h\" /* via schema */;".into());
         let d = diff(
             DriverKind::Postgres,
             vec![new_tbl],
-            vec![
-                created,
-                changed,
-                obj("publication", "gone", DiffStatus::TargetOnly, None),
-            ],
+            vec![created, changed, gone],
         );
         let plan = generate_sync_sql(&d, true);
         let sqls: Vec<&str> = plan.statements.iter().map(|s| s.sql.as_str()).collect();
@@ -4251,7 +4286,21 @@ mod object_sync_tests {
             pos("DROP TABLE \"p\".\"b\"") < pos("ADD TABLE \"p\".\"a\""),
             "{sqls:?}"
         );
-        assert!(sqls.contains(&"DROP PUBLICATION \"gone\""), "{sqls:?}");
+        // target にだけあるパブリケーションは DROP PUBLICATION せず、比較するスキーマの明示メンバーの表だけを外す。
+        assert!(
+            !sqls.iter().any(|s| s.contains("DROP PUBLICATION")),
+            "{sqls:?}"
+        );
+        assert!(
+            sqls.contains(&"ALTER PUBLICATION \"gone\" DROP TABLE \"p\".\"g\""),
+            "{sqls:?}"
+        );
+        assert!(!sqls.iter().any(|s| s.contains("\"p\".\"h\"")), "{sqls:?}");
+        assert!(
+            plan.warnings.iter().any(|w| w.contains("TABLES IN SCHEMA")),
+            "{:?}",
+            plan.warnings
+        );
         let drop_table = plan
             .statements
             .iter()
@@ -4272,7 +4321,8 @@ mod object_sync_tests {
         assert!(
             !sqls
                 .iter()
-                .any(|s| s.contains("DROP TABLE \"p\".\"b\"") || s.contains("DROP PUBLICATION")),
+                .any(|s| s.contains("DROP TABLE \"p\".\"b\"")
+                    || s.contains("DROP TABLE \"p\".\"g\"")),
             "{sqls:?}"
         );
         assert!(
@@ -4284,6 +4334,33 @@ mod object_sync_tests {
             "{:?}",
             plan.warnings
         );
+    }
+
+    #[test]
+    fn source_only_all_tables_publication_is_not_created() {
+        let p = obj(
+            "publication",
+            "pub_all",
+            DiffStatus::SourceOnly,
+            Some("CREATE PUBLICATION \"pub_all\" FOR ALL TABLES WITH (publish = 'insert', publish_via_partition_root = false);"),
+        );
+        let plan = generate_sync_sql(&diff(DriverKind::Postgres, vec![], vec![p]), true);
+        assert!(plan.statements.is_empty(), "{:?}", plan.statements);
+        assert!(
+            plan.warnings.iter().any(|w| w.contains("FOR ALL TABLES")),
+            "{:?}",
+            plan.warnings
+        );
+        // スキーマ由来の印は作成文に残さない。
+        let q = obj(
+            "publication",
+            "pub_s",
+            DiffStatus::SourceOnly,
+            Some("CREATE PUBLICATION \"pub_s\" WITH (publish = 'insert', publish_via_partition_root = false);\n-- noobdb:split\nALTER PUBLICATION \"pub_s\" ADD TABLE \"p\".\"a\" /* via schema */;"),
+        );
+        let plan = generate_sync_sql(&diff(DriverKind::Postgres, vec![], vec![q]), true);
+        assert!(plan.statements[0].sql.contains("ADD TABLE \"p\".\"a\""));
+        assert!(!plan.statements[0].sql.contains("via schema"));
     }
 
     #[test]
