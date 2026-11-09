@@ -253,7 +253,7 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
 /// 差し込み位置は、表の作成・列の追加と変更・索引・外部キーの後ろで、列と表の DROP の前
 /// (新しい列を使うビューは作成後に、消す列を使うビュー / トリガーは先に置き換える・消す)。
 /// シーケンスと型の作成は表の列・既定値から参照されるので先頭に置き、型の削除は表の削除より後の末尾に置く (#2127)。作成・置換は
-/// 関数 → プロシージャ → ビュー → マテビュー → トリガー → イベントの順 (ビュー同士は参照順)、削除は
+/// 関数 → プロシージャ → ビュー → マテビュー → トリガー → ポリシー → イベントの順 (ビュー同士は参照順)、削除は
 /// 逆順で、`allow_destructive` が無いと削除は出さない。
 fn object_statements(
     diff: &SchemaDiff,
@@ -281,6 +281,19 @@ fn object_statements(
 
     let mut early: Vec<SyncStatement> = Vec::new();
     let mut late: Vec<SyncStatement> = Vec::new();
+    // RLS ポリシー (#2159) は表の `ENABLE / FORCE ROW LEVEL SECURITY` を同期しない (表の属性で、
+    // ポリシー自体の定義ではない)。target の表で RLS が無効だとポリシーを作っても効かないので知らせる。
+    let policies_to_create: Vec<&str> = items
+        .iter()
+        .filter(|o| o.kind == "policy" && o.status == DiffStatus::SourceOnly)
+        .map(|o| o.name.as_str())
+        .collect();
+    if !policies_to_create.is_empty() {
+        warnings.push(format!(
+            "policy {}: ポリシーだけを作成します。表の ENABLE / FORCE ROW LEVEL SECURITY は同期されないので、target の表で RLS が無効なら別途有効にしてください (無効のままではポリシーは効きません)",
+            policies_to_create.join(", ")
+        ));
+    }
     for o in order_for_create(&pick(DiffStatus::SourceOnly)) {
         let Some(def) = o.source_definition.as_deref() else {
             continue;
@@ -4071,6 +4084,73 @@ mod object_sync_tests {
             "{:?}",
             plan.warnings
         );
+    }
+
+    #[test]
+    fn policies_are_created_after_tables_and_dropped_before_them() {
+        let new_tbl = TableDiff {
+            name: "new_t".into(),
+            status: DiffStatus::SourceOnly,
+            columns: vec![crate::db::diff::ColumnDiff {
+                name: "id".into(),
+                status: DiffStatus::SourceOnly,
+                source: Some(TableColumnInfo {
+                    name: "id".into(),
+                    data_type: "integer".into(),
+                    nullable: false,
+                    key: String::new(),
+                    default: None,
+                    extra: String::new(),
+                    referenced_table: None,
+                    referenced_column: None,
+                    comment: None,
+                }),
+                target: None,
+                changed_fields: vec![],
+            }],
+            ..Default::default()
+        };
+        let old_tbl = TableDiff {
+            name: "old_t".into(),
+            status: DiffStatus::TargetOnly,
+            ..Default::default()
+        };
+        let mut created = obj(
+            "policy",
+            "own",
+            DiffStatus::SourceOnly,
+            Some("CREATE POLICY \"own\" ON \"p\".\"new_t\" AS PERMISSIVE FOR ALL TO PUBLIC USING (true)"),
+        );
+        created.table = Some("new_t".into());
+        let mut dropped = obj("policy", "gone", DiffStatus::TargetOnly, None);
+        dropped.table = Some("old_t".into());
+        let d = diff(
+            DriverKind::Postgres,
+            vec![new_tbl, old_tbl],
+            vec![created, dropped],
+        );
+        let plan = generate_sync_sql(&d, true);
+        let sqls: Vec<&str> = plan.statements.iter().map(|s| s.sql.as_str()).collect();
+        let pos = |needle: &str| sqls.iter().position(|s| s.contains(needle)).unwrap();
+        assert!(pos("CREATE TABLE") < pos("CREATE POLICY"), "{sqls:?}");
+        assert!(
+            pos("DROP POLICY \"gone\" ON \"old_t\"") < pos("DROP TABLE"),
+            "{sqls:?}"
+        );
+        // 表の RLS 有効化は同期されない旨を警告する。
+        assert!(
+            plan.warnings
+                .iter()
+                .any(|w| w.contains("ROW LEVEL SECURITY")),
+            "{:?}",
+            plan.warnings
+        );
+        // 破壊的操作を許可しないと DROP は出ない。
+        let plan = generate_sync_sql(&d, false);
+        assert!(!plan
+            .statements
+            .iter()
+            .any(|s| s.sql.contains("DROP POLICY")));
     }
 
     #[test]

@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { attachAliasProblem, isValidAttachAlias, suggestAttachAlias } from "../components/sqliteAttach";
+import vectors from "./fixtures/sqliteAttachVectors.json";
+import {
+  attachAliasProblem,
+  attachmentsProblem,
+  attachRowProblem,
+  cleanAttachments,
+  isValidAttachAlias,
+  MAX_ATTACHED,
+  suggestAttachAlias,
+} from "../components/sqliteAttach";
 import { qualifiedTableName } from "../components/sqlDialect";
 import {
   buildCreateIndexSql,
@@ -23,6 +32,20 @@ describe("isValidAttachAlias", () => {
   });
 });
 
+describe("共有ゴールデン sqliteAttachVectors.json (#2153)", () => {
+  it("上限の件数が Rust の SQLITE_MAX_ATTACHED と一致する", () => {
+    expect(MAX_ATTACHED).toBe(vectors.maxAttached);
+  });
+  it("別名の判定が Rust の is_valid_attach_alias と一致する", () => {
+    expect(vectors.aliases.length).toBeGreaterThan(0);
+    for (const c of vectors.aliases) expect(isValidAttachAlias(c.alias), c.name).toBe(c.valid);
+  });
+  it("ATTACH 設定の検証が Rust の attachment_settings_problem と一致する", () => {
+    expect(vectors.sets.length).toBeGreaterThan(0);
+    for (const c of vectors.sets) expect(attachmentsProblem(c.attachments), c.name).toBe(c.problem);
+  });
+});
+
 describe("suggestAttachAlias", () => {
   it("ファイル名から別名を作り、重複は連番にする", () => {
     expect(suggestAttachAlias("/data/archive.sqlite", [])).toBe("archive");
@@ -33,6 +56,60 @@ describe("suggestAttachAlias", () => {
     expect(suggestAttachAlias("/d/main.db", [])).toBe("main_db");
     expect(suggestAttachAlias("/d/2024.db", [])).toBe("db_2024");
     expect(isValidAttachAlias(suggestAttachAlias("/d/.db", []))).toBe(true);
+  });
+});
+
+describe("suggestAttachAlias の長さ (#2153)", () => {
+  it("70 文字のファイル名でも有効な別名 (64 文字以内) になる", () => {
+    const name = suggestAttachAlias(`/d/${"x".repeat(70)}.db`, []);
+    expect(isValidAttachAlias(name)).toBe(true);
+    expect(name.length).toBeLessThanOrEqual(64);
+  });
+  it("接頭辞・接尾辞・連番を付けても 64 文字を超えない", () => {
+    for (const len of [58, 60, 61, 62, 63, 64, 65, 100]) {
+      const digits = suggestAttachAlias(`/d/${"1".repeat(len)}.db`, []);
+      expect(isValidAttachAlias(digits), `数字始まり ${len}`).toBe(true);
+      const long = "y".repeat(len);
+      const first = suggestAttachAlias(`/d/${long}.db`, []);
+      const second = suggestAttachAlias(`/e/${long}.db`, [{ path: "/d", alias: first }]);
+      expect(isValidAttachAlias(second), `連番 ${len}`).toBe(true);
+      expect(second).not.toBe(first);
+      expect(second.length).toBeLessThanOrEqual(64);
+    }
+  });
+  it("61 文字 (接頭辞・接尾辞の余白いっぱい) の語幹はそのまま使う", () => {
+    const stem = "z".repeat(61);
+    expect(suggestAttachAlias(`/d/${stem}.db`, [])).toBe(stem);
+  });
+  it("前後に空白のある既存の別名とも重ならない", () => {
+    expect(suggestAttachAlias("/d/ext.db", [{ path: "/a", alias: " EXT " }])).toBe("ext_2");
+  });
+});
+
+describe("attachRowProblem / cleanAttachments (#2153)", () => {
+  it("空の別名・パスは、保存を試した後だけ行の問題にする", () => {
+    const rows = [{ path: "/a", alias: "" }];
+    expect(attachRowProblem(rows, 0, false)).toBeNull();
+    expect(attachRowProblem(rows, 0, true)).toBe("aliasRequired");
+    const noPath = [{ path: "", alias: "ext" }];
+    expect(attachRowProblem(noPath, 0, false)).toBeNull();
+    expect(attachRowProblem(noPath, 0, true)).toBe("pathRequired");
+  });
+  it("形式の誤りと重複は常に返す", () => {
+    expect(attachRowProblem([{ path: "/a", alias: "main" }], 0, false)).toBe("invalid");
+    const dup = [
+      { path: "/a", alias: "x" },
+      { path: "/b", alias: "X" },
+    ];
+    expect(attachRowProblem(dup, 1, false)).toBe("duplicate");
+  });
+  it("パスも別名も空の行は検証にも保存にも含めない", () => {
+    const rows = [
+      { path: " /a ", alias: " ext " },
+      { path: " ", alias: "" },
+    ];
+    expect(cleanAttachments(rows)).toEqual([{ path: "/a", alias: "ext" }]);
+    expect(attachmentsProblem(cleanAttachments(rows))).toBeNull();
   });
 });
 

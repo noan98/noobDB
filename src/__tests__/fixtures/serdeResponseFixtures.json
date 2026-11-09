@@ -2449,6 +2449,11 @@
     "total": 1,
     "truncated": false
   },
+  "rlsTable": {
+    "enabled": true,
+    "forced": false,
+    "table": "docs"
+  },
   "routineSignature": {
     "kind": "function",
     "name": "calc_total",

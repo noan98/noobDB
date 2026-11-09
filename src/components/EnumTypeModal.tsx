@@ -9,9 +9,11 @@ import { ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Spinner } from "./Spinner";
 import { Button, Input, PressableButton } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
+import { EnumValueChips } from "./EnumValueChips";
 import {
   buildAddEnumValueSql,
   buildRenameEnumValueSql,
+  ghostInsertIndex,
   parseEnumLabels,
   validateEnumValue,
   type EnumValueError,
@@ -100,6 +102,26 @@ export function EnumTypeModal({ sessionId, database, name, mode, readOnly, onCon
     }
   }
 
+  // 追加では差し込み位置にゴーストチップを出す。位置は SQL と同じ `position` から計算するので、
+  // プレビューの BEFORE / AFTER と常に一致する (#2158)。
+  const ghost =
+    mode === "add" && !loading && !loadError
+      ? {
+          index: ghostInsertIndex(existing, position),
+          label: value !== "" ? value : t("enumTypeGhostPlaceholder"),
+        }
+      : null;
+  // チップのクリック / 矢印キーで基準値を選ぶ (Select と双方向に同期)。追加で「末尾」のときは、
+  // 選んだ値の後ろに置く指定へ切り替える。
+  const selectChip = (v: string) => {
+    if (mode === "rename") {
+      setTarget(v);
+      return;
+    }
+    if (positionKind === "end") setPositionKind("after");
+    setReference(v);
+  };
+
   const submit = () => {
     if (sql === "" || busy) return;
     // 実行中は確定できない (二重送信で同じ ALTER TYPE が 2 回走るのを防ぐ)。完了・失敗で解除する。
@@ -139,9 +161,26 @@ export function EnumTypeModal({ sessionId, database, name, mode, readOnly, onCon
           <FieldLabel as="div">{t("enumTypeCurrentValues")}</FieldLabel>
           {loading ? (
             <Spinner size={14} />
+          ) : existing.length > 0 || ghost ? (
+            <>
+              <EnumValueChips
+                ariaLabel={t("enumTypeCurrentValues")}
+                values={existing}
+                ghost={ghost}
+                renamed={mode === "rename" && renameFrom !== "" ? { from: renameFrom, to: value } : null}
+                selected={mode === "rename" ? renameFrom : positionKind === "end" ? null : ref}
+                onSelect={selectChip}
+                disabled={readOnly}
+              />
+              {!readOnly && (
+                <chakra.span textStyle="caption">
+                  {t(mode === "add" ? "enumTypeChipsHintAdd" : "enumTypeChipsHintRename")}
+                </chakra.span>
+              )}
+            </>
           ) : (
             <chakra.code textStyle="caption" wordBreak="break-word">
-              {existing.length > 0 ? existing.join(", ") : t("enumTypeNoValues")}
+              {t("enumTypeNoValues")}
             </chakra.code>
           )}
         </FormSection>

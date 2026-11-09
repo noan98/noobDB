@@ -755,6 +755,11 @@ fn build_fixtures() -> serde_json::Value {
             .into(),
         enabled: true,
     };
+    let rls_table = t::RlsTable {
+        table: "docs".into(),
+        enabled: true,
+        forced: false,
+    };
     let extensions_overview = t::ExtensionsOverview {
         extensions: vec![
             t::ExtensionInfo {
@@ -2625,6 +2630,7 @@ fn build_fixtures() -> serde_json::Value {
         "indexInfo": index_info,
         "tableExtrasInfo": table_extras_info,
         "tableTrigger": table_trigger,
+        "rlsTable": rls_table,
         "extensionsOverview": extensions_overview,
         "tablePartitions": table_partitions,
         "schemaObject": schema_object,

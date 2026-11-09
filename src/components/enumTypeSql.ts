@@ -101,3 +101,37 @@ export function buildAddEnumValueSql(
 export function buildRenameEnumValueSql(database: string, name: string, from: string, to: string): string {
   return `ALTER TYPE ${typeRef(database, name)} RENAME VALUE ${enumValueLiteral(from)} TO ${enumValueLiteral(to)};`;
 }
+
+/**
+ * 新しい値が並びのどこに入るか (`existing` の何番目の前か)。`ADD VALUE ... BEFORE / AFTER` の意味と同じで、
+ * 末尾は `existing.length`。基準値が見つからないときは末尾 (SQL は基準なしでは組み立てない)。
+ * ゴーストチップの位置とプレビュー SQL がずれないよう、同じ `position` から計算する (#2158)。
+ */
+export function ghostInsertIndex(existing: readonly string[], position: EnumValuePosition): number {
+  if (position.kind === "end") return existing.length;
+  const i = existing.indexOf(position.reference);
+  if (i < 0) return existing.length;
+  return position.kind === "before" ? i : i + 1;
+}
+
+/**
+ * 値チップ列 (radiogroup) の矢印キー移動。`count` 個のうち `current` 番目から `key` で動いた先を返す
+ * (端で止まる。対象外のキーは null)。
+ */
+export function stepChipIndex(count: number, current: number, key: string): number | null {
+  if (count <= 0) return null;
+  switch (key) {
+    case "ArrowRight":
+    case "ArrowDown":
+      return Math.min(count - 1, current + 1);
+    case "ArrowLeft":
+    case "ArrowUp":
+      return Math.max(0, current - 1);
+    case "Home":
+      return 0;
+    case "End":
+      return count - 1;
+    default:
+      return null;
+  }
+}
