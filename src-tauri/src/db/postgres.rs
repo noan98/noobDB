@@ -2328,6 +2328,36 @@ impl PostgresConn {
         })
     }
 
+    /// 拡張機能 `name` を `DROP EXTENSION ... CASCADE` したときに巻き添えで消える依存オブジェクト (#2177)。
+    /// 拡張が持つオブジェクト (`pg_depend.deptype = 'e'`) に依存するもののうち、拡張自身のメンバーと、
+    /// メンバーの表に付随する索引・制約などを除いたものを、種別・スキーマ・名前・(列なら) 表名で返す。
+    /// 未導入の拡張は空。`pg_catalog` を引くだけの読み取りで、read_only でも動く。
+    pub async fn list_extension_dependents(
+        &self,
+        name: &str,
+    ) -> Result<Vec<super::types::ExtensionDependent>> {
+        let rows: Vec<PgRow> = sqlx::query(EXTENSION_DEPENDENTS_SQL)
+            .bind(name)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let (Ok(kind), Ok(name)) = (r.try_get::<String, _>(0), r.try_get::<String, _>(2))
+                else {
+                    tracing::warn!("list_extension_dependents: 読めない行を捨てました");
+                    return None;
+                };
+                Some(super::types::ExtensionDependent {
+                    kind,
+                    schema: r.try_get(1).ok().flatten(),
+                    name,
+                    table: r.try_get(3).ok().flatten(),
+                })
+            })
+            .collect())
+    }
+
     /// 1 つの型 (ENUM / DOMAIN / 複合型 / 範囲型) の `CREATE TYPE` / `CREATE DOMAIN` (#2127)。
     /// スキーマツリーの定義表示とスキーマ比較・同期が共有する。該当する型が無ければ `None`。
     async fn type_definition(&self, schema: &str, name: &str) -> Result<Option<String>> {
@@ -4534,6 +4564,197 @@ fn split_outside_quotes(s: &str, sep: char) -> Option<(String, String)> {
 fn pg_quote_ident(name: &str) -> String {
     super::sync::quote_ident(super::DriverKind::Postgres, name)
 }
+
+/// `list_extension_dependents` (#2177) の問い合わせ。`$1` は拡張名。
+/// `members` = 拡張自身と、拡張が持つオブジェクト (`deptype = 'e'`)。`closure` = それらに依存する
+/// (`n` / `a` / `i`、`DEPENDS ON EXTENSION` の `x`) オブジェクトの閉包で、依存の連鎖 (型 → ドメイン → 列 →
+/// ビュー ...) をたどる。ビューは `_RETURN` ルールを経由して、そのビューに依存するものへ連鎖させる。
+/// 他の拡張のメンバーに着いたらそこで止め、その拡張 1 件 (`extension`) として出す。
+/// 各依存を種別ごとのカタログで名前に引き直し、拡張自身のメンバーと、メンバーに付随するもの、
+/// 親にまとめる部品 (演算子族の要素・RI の内部トリガー・配列型・行型・ドメインの制約) は除く。
+const EXTENSION_DEPENDENTS_SQL: &str = "\
+WITH RECURSIVE members AS (
+  SELECT 'pg_extension'::regclass::oid AS classid, e.oid AS objid
+    FROM pg_extension e WHERE e.extname = $1
+  UNION
+  SELECT d.classid, d.objid
+    FROM pg_depend d
+    JOIN pg_extension e ON e.oid = d.refobjid
+   WHERE d.refclassid = 'pg_extension'::regclass
+     AND e.extname = $1
+     AND d.deptype = 'e'
+), closure(classid, objid, objsubid, foreign_ext) AS (
+  SELECT d.classid, d.objid, d.objsubid,
+         (SELECT fe.refobjid FROM pg_depend fe
+           WHERE fe.classid = d.classid AND fe.objid = d.objid
+             AND fe.refclassid = 'pg_extension'::regclass AND fe.deptype = 'e' LIMIT 1)
+    FROM pg_depend d
+    JOIN members m ON m.classid = d.refclassid AND m.objid = d.refobjid
+   WHERE d.deptype IN ('n', 'a', 'i', 'x')
+     AND NOT EXISTS (SELECT 1 FROM members m2 WHERE m2.classid = d.classid AND m2.objid = d.objid)
+  UNION
+  SELECT r.classid, r.objid, r.objsubid,
+         (SELECT fe.refobjid FROM pg_depend fe
+           WHERE fe.classid = r.classid AND fe.objid = r.objid
+             AND fe.refclassid = 'pg_extension'::regclass AND fe.deptype = 'e' LIMIT 1)
+    FROM closure c
+    CROSS JOIN LATERAL (
+      -- 通常の依存の連鎖 (ビューは `_RETURN` ルールを経由して、そのビューに依存するものへ)
+      -- (OR で 1 本にまとめると pg_depend の索引が使えず全件走査になるので、2 本に分ける)
+      SELECT d.classid, d.objid, d.objsubid
+        FROM pg_depend d
+       WHERE d.deptype IN ('n', 'a', 'i')
+         AND d.refclassid = c.classid AND d.refobjid = c.objid
+         AND (c.objsubid = 0 OR d.refobjsubid = c.objsubid)
+      UNION ALL
+      SELECT d.classid, d.objid, d.objsubid
+        FROM pg_rewrite crw
+        JOIN pg_depend d ON d.refclassid = 'pg_class'::regclass AND d.refobjid = crw.ev_class
+       WHERE c.classid = 'pg_rewrite'::regclass AND crw.oid = c.objid AND crw.rulename = '_RETURN'
+         AND d.deptype IN ('n', 'a', 'i')
+      UNION ALL
+      -- 生成列の式 (`pg_attrdef`) からは持ち主の列へ (CASCADE では列ごと消え、その列を使う
+      -- ビュー・索引・制約も消える。それらは式ではなく列に依存しているので、列を閉包に入れる)
+      SELECT 'pg_class'::regclass::oid, gad.adrelid, gad.adnum::int
+        FROM pg_attrdef gad
+        JOIN pg_attribute ga ON ga.attrelid = gad.adrelid AND ga.attnum = gad.adnum
+       WHERE c.classid = 'pg_attrdef'::regclass AND gad.oid = c.objid
+         AND COALESCE(to_jsonb(ga)->>'attgenerated', '') <> ''
+      UNION ALL
+      -- 拡張ノードからは、その拡張のメンバー全部へ (その拡張を消すと、メンバーの利用者も消える)
+      SELECT d.classid, d.objid, d.objsubid
+        FROM pg_depend d
+       WHERE c.classid = 'pg_extension'::regclass
+         AND d.refclassid = 'pg_extension'::regclass AND d.refobjid = c.objid
+         AND d.deptype = 'e'
+      UNION ALL
+      -- 他の拡張のメンバーに着いたら、その拡張ノードを足す (必要とする側の拡張 1 件として出す)
+      SELECT 'pg_extension'::regclass::oid, c.foreign_ext, 0
+       WHERE c.foreign_ext IS NOT NULL
+    ) r
+   WHERE NOT EXISTS (SELECT 1 FROM members m2 WHERE m2.classid = r.classid AND m2.objid = r.objid)
+)
+SELECT kind, schema_name, name, tbl FROM (
+SELECT DISTINCT x.kind, n.nspname::text AS schema_name, x.name, x.tbl
+  FROM closure dp
+  LEFT JOIN pg_extension fex ON fex.oid = dp.foreign_ext
+  LEFT JOIN pg_class c ON dp.classid = 'pg_class'::regclass AND c.oid = dp.objid
+  LEFT JOIN pg_attribute ca ON ca.attrelid = c.oid AND ca.attnum = dp.objsubid AND dp.objsubid > 0
+  LEFT JOIN pg_index ix ON ix.indexrelid = c.oid
+  LEFT JOIN pg_class ixt ON ixt.oid = ix.indrelid
+  LEFT JOIN pg_proc p ON dp.classid = 'pg_proc'::regclass AND p.oid = dp.objid
+  LEFT JOIN pg_rewrite rw ON dp.classid = 'pg_rewrite'::regclass AND rw.oid = dp.objid
+  LEFT JOIN pg_class rc ON rc.oid = rw.ev_class
+  LEFT JOIN pg_constraint co ON dp.classid = 'pg_constraint'::regclass AND co.oid = dp.objid
+  LEFT JOIN pg_class cc ON cc.oid = co.conrelid
+  LEFT JOIN pg_trigger tg ON dp.classid = 'pg_trigger'::regclass AND tg.oid = dp.objid
+  LEFT JOIN pg_class tc ON tc.oid = tg.tgrelid
+  LEFT JOIN pg_attrdef ad ON dp.classid = 'pg_attrdef'::regclass AND ad.oid = dp.objid
+  LEFT JOIN pg_class adc ON adc.oid = ad.adrelid
+  LEFT JOIN pg_attribute ada ON ada.attrelid = ad.adrelid AND ada.attnum = ad.adnum
+  LEFT JOIN pg_policy pol ON dp.classid = 'pg_policy'::regclass AND pol.oid = dp.objid
+  LEFT JOIN pg_class polc ON polc.oid = pol.polrelid
+  LEFT JOIN pg_statistic_ext se ON dp.classid = 'pg_statistic_ext'::regclass AND se.oid = dp.objid
+  LEFT JOIN pg_class sec ON sec.oid = se.stxrelid
+  LEFT JOIN pg_type ty ON dp.classid = 'pg_type'::regclass AND ty.oid = dp.objid
+  LEFT JOIN pg_extension ex ON dp.classid = 'pg_extension'::regclass AND ex.oid = dp.objid
+  CROSS JOIN LATERAL (
+    SELECT
+      CASE
+        WHEN fex.oid IS NOT NULL THEN 'extension'
+        WHEN c.oid IS NOT NULL THEN CASE
+          WHEN c.relkind = 'v' THEN 'view'
+          WHEN c.relkind = 'm' THEN 'materialized_view'
+          WHEN c.relkind IN ('i', 'I') THEN 'index'
+          WHEN c.relkind = 'S' THEN 'sequence'
+          WHEN dp.objsubid > 0 THEN 'column'
+          WHEN c.relkind = 'c' THEN 'type'
+          ELSE 'table' END
+        WHEN p.oid IS NOT NULL THEN CASE p.prokind WHEN 'p' THEN 'procedure' ELSE 'function' END
+        WHEN rw.oid IS NOT NULL THEN CASE
+          WHEN rw.rulename = '_RETURN' AND rc.relkind = 'm' THEN 'materialized_view'
+          WHEN rw.rulename = '_RETURN' THEN 'view'
+          ELSE 'rule' END
+        WHEN co.oid IS NOT NULL THEN 'constraint'
+        WHEN tg.oid IS NOT NULL THEN 'trigger'
+        -- attgenerated は PG12+ の列。to_jsonb 経由なら無い版でも NULL になり SQL エラーにならない
+        WHEN ad.oid IS NOT NULL AND COALESCE(to_jsonb(ada)->>'attgenerated', '') <> '' THEN 'column'
+        WHEN ad.oid IS NOT NULL THEN 'default'
+        WHEN pol.oid IS NOT NULL THEN 'policy'
+        WHEN se.oid IS NOT NULL THEN 'statistic'
+        WHEN ty.oid IS NOT NULL THEN 'type'
+        WHEN ex.oid IS NOT NULL THEN 'extension'
+        ELSE 'other' END AS kind,
+      CASE
+        WHEN fex.oid IS NOT NULL THEN NULL
+        WHEN c.oid IS NOT NULL THEN c.relnamespace
+        WHEN p.oid IS NOT NULL THEN p.pronamespace
+        WHEN rw.oid IS NOT NULL THEN rc.relnamespace
+        WHEN co.oid IS NOT NULL THEN co.connamespace
+        WHEN tg.oid IS NOT NULL THEN tc.relnamespace
+        WHEN ad.oid IS NOT NULL THEN adc.relnamespace
+        WHEN pol.oid IS NOT NULL THEN polc.relnamespace
+        WHEN se.oid IS NOT NULL THEN se.stxnamespace
+        WHEN ty.oid IS NOT NULL THEN ty.typnamespace END AS nsp,
+      CASE
+        WHEN fex.oid IS NOT NULL THEN fex.extname::text
+        WHEN c.oid IS NOT NULL AND c.relkind IN ('r', 'p', 'f', 'c') AND dp.objsubid > 0 THEN ca.attname::text
+        WHEN c.oid IS NOT NULL THEN c.relname::text
+        WHEN p.oid IS NOT NULL THEN p.proname::text || '(' || pg_get_function_identity_arguments(p.oid) || ')'
+        WHEN rw.oid IS NOT NULL AND rw.rulename = '_RETURN' THEN rc.relname::text
+        WHEN rw.oid IS NOT NULL THEN rw.rulename::text
+        WHEN co.oid IS NOT NULL THEN co.conname::text
+        WHEN tg.oid IS NOT NULL THEN tg.tgname::text
+        WHEN ad.oid IS NOT NULL THEN ada.attname::text
+        WHEN pol.oid IS NOT NULL THEN pol.polname::text
+        WHEN se.oid IS NOT NULL THEN se.stxname::text
+        WHEN ty.oid IS NOT NULL THEN ty.typname::text
+        WHEN ex.oid IS NOT NULL THEN ex.extname::text
+        ELSE (pg_identify_object(dp.classid, dp.objid, dp.objsubid)).identity END AS name,
+      CASE
+        WHEN fex.oid IS NOT NULL THEN NULL
+        WHEN c.oid IS NOT NULL AND c.relkind IN ('r', 'p', 'f', 'c') AND dp.objsubid > 0 THEN c.relname::text
+        WHEN ix.indexrelid IS NOT NULL THEN ixt.relname::text
+        WHEN rw.oid IS NOT NULL AND rw.rulename <> '_RETURN' THEN rc.relname::text
+        WHEN co.oid IS NOT NULL THEN cc.relname::text
+        WHEN tg.oid IS NOT NULL THEN tc.relname::text
+        WHEN ad.oid IS NOT NULL THEN adc.relname::text
+        WHEN pol.oid IS NOT NULL THEN polc.relname::text
+        WHEN se.oid IS NOT NULL THEN sec.relname::text END AS tbl,
+      CASE
+        WHEN c.oid IS NOT NULL AND dp.objsubid > 0 THEN c.oid
+        WHEN ix.indexrelid IS NOT NULL THEN ix.indrelid
+        WHEN rw.oid IS NOT NULL THEN rc.oid
+        WHEN co.oid IS NOT NULL THEN co.conrelid
+        WHEN tg.oid IS NOT NULL THEN tg.tgrelid
+        WHEN ad.oid IS NOT NULL THEN ad.adrelid
+        WHEN pol.oid IS NOT NULL THEN pol.polrelid
+        WHEN se.oid IS NOT NULL THEN se.stxrelid END AS owner
+  ) x
+  LEFT JOIN pg_namespace n ON n.oid = x.nsp
+ WHERE x.name IS NOT NULL
+   AND dp.classid NOT IN ('pg_amop'::regclass, 'pg_amproc'::regclass)
+   AND NOT (tg.oid IS NOT NULL AND tg.tgisinternal)
+   AND NOT (co.oid IS NOT NULL AND co.contypid <> 0)
+   AND NOT (c.oid IS NOT NULL AND (c.relkind = 't' OR c.relnamespace = 'pg_toast'::regnamespace))
+   -- 相関しない NOT IN にしてハッシュ化させる (相関 NOT EXISTS は行ごとに閉包を走査して遅い)。
+   -- 列はすべて NOT NULL の oid / int なので NOT IN の NULL の落とし穴は無い。
+   AND (dp.classid, dp.objid, dp.objsubid) NOT IN (
+         SELECT d3.classid, d3.objid, d3.objsubid FROM pg_depend d3
+           JOIN closure cl ON cl.classid = d3.refclassid AND cl.objid = d3.refobjid
+          WHERE d3.deptype = 'i')
+   AND NOT (ty.oid IS NOT NULL AND (ty.typcategory = 'A' OR ty.typrelid <> 0))
+   AND NOT EXISTS (
+         SELECT 1 FROM members m
+          WHERE (m.classid = dp.classid AND m.objid = dp.objid)
+             OR (m.classid = 'pg_class'::regclass AND m.objid = x.owner))
+   AND NOT EXISTS (
+         SELECT 1 FROM pg_depend d2
+           JOIN members m ON m.classid = d2.refclassid AND m.objid = d2.refobjid
+          WHERE d2.classid = dp.classid AND d2.objid = dp.objid AND d2.objsubid = dp.objsubid
+            AND d2.deptype IN ('a', 'i'))
+) q
+ ORDER BY (kind <> 'column'), kind, schema_name, tbl, name";
 
 /// `shared_preload_libraries` の値 (カンマ区切り。各要素は引用符で囲まれうる) をライブラリ名の一覧にする (#2160)。
 fn parse_preload_libraries(raw: &str) -> Vec<String> {

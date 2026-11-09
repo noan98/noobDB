@@ -719,8 +719,8 @@
     "skip_history": false,
     "sqlite_attachments": [
       {
-        "path": "/data/archive.db",
-        "alias": "archive"
+        "alias": "archive",
+        "path": "/data/archive.db"
       }
     ],
     "ssh": {
@@ -772,8 +772,8 @@
       "skip_history": false,
       "sqlite_attachments": [
         {
-          "path": "/data/archive.db",
-          "alias": "archive"
+          "alias": "archive",
+          "path": "/data/archive.db"
         }
       ],
       "ssh": {
@@ -824,8 +824,8 @@
       "skip_history": false,
       "sqlite_attachments": [
         {
-          "path": "/data/archive.db",
-          "alias": "archive"
+          "alias": "archive",
+          "path": "/data/archive.db"
         }
       ],
       "ssh": {
@@ -876,8 +876,8 @@
       "skip_history": false,
       "sqlite_attachments": [
         {
-          "path": "/data/archive.db",
-          "alias": "archive"
+          "alias": "archive",
+          "path": "/data/archive.db"
         }
       ],
       "ssh": {
@@ -928,8 +928,8 @@
       "skip_history": false,
       "sqlite_attachments": [
         {
-          "path": "/data/archive.db",
-          "alias": "archive"
+          "alias": "archive",
+          "path": "/data/archive.db"
         }
       ],
       "ssh": {
@@ -980,8 +980,8 @@
       "skip_history": false,
       "sqlite_attachments": [
         {
-          "path": "/data/archive.db",
-          "alias": "archive"
+          "alias": "archive",
+          "path": "/data/archive.db"
         }
       ],
       "ssh": {
@@ -1032,8 +1032,8 @@
       "skip_history": false,
       "sqlite_attachments": [
         {
-          "path": "/data/archive.db",
-          "alias": "archive"
+          "alias": "archive",
+          "path": "/data/archive.db"
         }
       ],
       "ssh": {
@@ -1515,6 +1515,12 @@
     "message": "disk full",
     "rows": 200,
     "streamId": "strm0005"
+  },
+  "extensionDependent": {
+    "kind": "column",
+    "name": "tags",
+    "schema": "public",
+    "table": "places"
   },
   "extensionsOverview": {
     "extensions": [
