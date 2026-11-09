@@ -139,25 +139,14 @@ describe.runIf(RUN_VISUAL)("ビジュアル回帰 (実ブラウザ)", { retry: 0
         <DangerousQueryDialog findings={FINDINGS} isProduction onConfirm={() => {}} onCancel={() => {}} />,
       );
       const dialog = page.getByRole("dialog");
-      // ベースラインは「キャンセルにフォーカスリング (:focus-visible) が出ていて、ポインタはどのボタンにも
-      // 乗っていない」状態。初期フォーカスは開いた直後に非同期で当たり、リングが出るかどうかはブラウザの
-      // 直前の入力 (ポインタかキーボードか) で変わる。前のテストの操作次第でリングやホバーの有無が揺れ、
-      // 約 380 ピクセルの差で落ちることがあったので、両方をここで決める:
-      // ポインタはダイアログの見出し (ホバーの見た目が無い) へ寄せ、キーボード入力を挟んでから
-      // 初期フォーカスの要素にフォーカスし直す (キーボード操作の直後のフォーカスは :focus-visible になる)。
+      // 初期フォーカス (キャンセル) は開いた直後に非同期で当たる。当たる前に撮ると
+      // フォーカスリングの有無だけ (数百ピクセル) がベースラインとずれて落ちるので、
+      // ダイアログ内のボタンにフォーカスが着くのを待ってから撮る。
       await expect
         .poll(() => {
           const active = document.activeElement;
           return active?.tagName === "BUTTON" && active.closest('[role="dialog"]') !== null;
         })
-        .toBe(true);
-      const focused = document.activeElement as HTMLElement;
-      await userEvent.hover(dialog.getByRole("heading"));
-      await userEvent.keyboard("{Shift}");
-      focused.blur();
-      focused.focus();
-      await expect
-        .poll(() => document.activeElement === focused && focused.matches(":focus-visible"))
         .toBe(true);
       await expect(dialog).toMatchScreenshot(`dangerous-dialog-${theme}`);
     });
