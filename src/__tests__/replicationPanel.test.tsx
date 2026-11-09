@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderWithProviders, screen, waitFor, act } from "./testUtils";
+import { renderWithProviders, screen, waitFor, act, fireEvent } from "./testUtils";
 import { t } from "../i18n";
 import type { ReplicationStatus } from "../api/tauri";
 
@@ -199,5 +199,66 @@ describe("ReplicationPanel polling (#2180)", () => {
     const n = vi.mocked(api.getReplicationStatus).mock.calls.length;
     await flush(30_000);
     expect(vi.mocked(api.getReplicationStatus).mock.calls.length).toBe(n);
+  });
+});
+
+describe("ReplicationPanel slot drop (#2180)", () => {
+  const withSlots = () =>
+    status({
+      role: "primary",
+      slots: [
+        {
+          name: "idle'slot",
+          slot_type: "physical",
+          plugin: null,
+          active: false,
+          retained_bytes: 10,
+          wal_status: null,
+        },
+        {
+          name: "busy",
+          slot_type: "physical",
+          plugin: null,
+          active: true,
+          retained_bytes: 10,
+          wal_status: null,
+        },
+      ],
+    });
+
+  it("確認で SQL プレビューを見せ、承認すると引用符をエスケープした SQL で削除して再取得する", async () => {
+    vi.mocked(api.getReplicationStatus).mockResolvedValue(withSlots());
+    const onDropSlot = vi.fn().mockResolvedValue(true);
+    renderWithProviders(<ReplicationPanel sessionId="s1" driver="postgres" onDropSlot={onDropSlot} />);
+    const buttons = await screen.findAllByTestId("replication-slot-drop");
+    // 使用中のスロットは削除できない。
+    expect(buttons[1]).toBeDisabled();
+    expect(buttons[0]).not.toBeDisabled();
+    const before = vi.mocked(api.getReplicationStatus).mock.calls.length;
+    fireEvent.click(buttons[0]);
+    expect(await screen.findByText(/pg_drop_replication_slot/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("replicationDropConfirmOk") }));
+    await waitFor(() =>
+      expect(onDropSlot).toHaveBeenCalledWith("idle'slot", "SELECT pg_drop_replication_slot('idle''slot')"),
+    );
+    await waitFor(() =>
+      expect(vi.mocked(api.getReplicationStatus).mock.calls.length).toBeGreaterThan(before),
+    );
+  });
+
+  it("確認をキャンセルすれば削除しない", async () => {
+    vi.mocked(api.getReplicationStatus).mockResolvedValue(withSlots());
+    const onDropSlot = vi.fn().mockResolvedValue(true);
+    renderWithProviders(<ReplicationPanel sessionId="s1" driver="postgres" onDropSlot={onDropSlot} />);
+    fireEvent.click((await screen.findAllByTestId("replication-slot-drop"))[0]);
+    fireEvent.click((await screen.findAllByRole("button", { name: t("confirmDefaultCancel") }))[0]);
+    expect(onDropSlot).not.toHaveBeenCalled();
+  });
+
+  it("read_only 接続では削除ボタンを無効にする", async () => {
+    vi.mocked(api.getReplicationStatus).mockResolvedValue(withSlots());
+    renderWithProviders(<ReplicationPanel sessionId="s1" driver="postgres" readOnly onDropSlot={vi.fn()} />);
+    const buttons = await screen.findAllByTestId("replication-slot-drop");
+    for (const b of buttons) expect(b).toBeDisabled();
   });
 });

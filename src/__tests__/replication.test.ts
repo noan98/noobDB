@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ReplicationLink, ReplicationSlot } from "../api/tauri";
 import {
+  buildDropSlotSql,
+  dropSlotBlockedReason,
   formatLagSecs,
   isLagWarning,
   LAG_METER_MAX_SECS,
@@ -118,5 +120,25 @@ describe("slotsLost", () => {
       slot({ name: "c", wal_status: null }),
     ]);
     expect(got.map((x) => x.name)).toEqual(["a"]);
+  });
+});
+
+describe("buildDropSlotSql (#2180)", () => {
+  it("スロット名は文字列リテラルとして入り、' は '' に重ねる", () => {
+    expect(buildDropSlotSql("my_slot")).toBe("SELECT pg_drop_replication_slot('my_slot')");
+    expect(buildDropSlotSql("a'b")).toBe("SELECT pg_drop_replication_slot('a''b')");
+    // 注入を試みる名前も、1 つの文字列リテラルに閉じ込められる。
+    expect(buildDropSlotSql("x'); DROP TABLE t; --")).toBe(
+      "SELECT pg_drop_replication_slot('x''); DROP TABLE t; --')",
+    );
+    expect(buildDropSlotSql("''")).toBe(`SELECT pg_drop_replication_slot('${"'".repeat(4)}')`);
+  });
+});
+
+describe("dropSlotBlockedReason", () => {
+  it("読み取り専用 → 使用中 → 削除可の順に理由を返す", () => {
+    expect(dropSlotBlockedReason(slot({ active: false }), true)).toBe("readOnly");
+    expect(dropSlotBlockedReason(slot({ active: true }), false)).toBe("active");
+    expect(dropSlotBlockedReason(slot({ active: false }), false)).toBeNull();
   });
 });

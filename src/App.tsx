@@ -8431,7 +8431,11 @@ export default function App() {
   const runGuardedDdl = useCallback(
     async (
       sql: string,
-      opts?: { destructiveTargets?: readonly string[]; alreadyConfirmed?: boolean },
+      opts?: {
+        destructiveTargets?: readonly string[];
+        alreadyConfirmed?: boolean;
+        forceTypedConfirm?: boolean;
+      },
     ): Promise<boolean> => {
       if (opts?.alreadyConfirmed) return true;
       const gate = evaluateDdlGate({
@@ -8443,6 +8447,7 @@ export default function App() {
         emergencyMode,
         confirmDangerousQueries: settings.confirmDangerousQueries,
         destructiveTargets: opts?.destructiveTargets,
+        forceTypedConfirm: opts?.forceTypedConfirm,
       });
       if (!gate) return true;
       return new Promise<boolean>((resolve) => {
@@ -8515,6 +8520,25 @@ export default function App() {
       }
     },
     [sessionId, runGuardedDdl, invalidateSchemaCache, noteSchemaDdl, toast],
+  );
+
+  // レプリケーションスロットの削除 (#2180)。パネルが SQL プレビュー付きの確認を済ませたあとに呼ぶ。
+  // 共通ゲート (#2176) を通し、本番では書き込み承認とスロット名の型入力を求める。キャンセル / 失敗は false。
+  // read_only 接続は `pg_drop_replication_slot` を拒否リストで弾くバックエンドが止める (パネルも無効にする)。
+  const handleDropReplicationSlot = useCallback(
+    async (name: string, sql: string): Promise<boolean> => {
+      if (!sessionId) return false;
+      if (!(await runGuardedDdl(sql, { destructiveTargets: [name], forceTypedConfirm: true }))) return false;
+      try {
+        await api.runQuery(sessionId, sql, null);
+        toast.success(translate("replicationDropDone", { name }));
+        return true;
+      } catch (e) {
+        toast.error(translate("statusQueryError", { error: String(e) }));
+        return false;
+      }
+    },
+    [sessionId, runGuardedDdl, toast],
   );
 
   const handleCopyTableName = useCallback(
@@ -13393,6 +13417,8 @@ export default function App() {
                         key={sessionId}
                         sessionId={sessionId}
                         driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                        readOnly={selectedProfile?.read_only ?? false}
+                        onDropSlot={handleDropReplicationSlot}
                       />
                     ) : activeBottomPanelTab === "processes" ? (
                       <ProcessListPanel

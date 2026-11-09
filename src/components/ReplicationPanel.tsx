@@ -12,6 +12,8 @@ import { useT, type I18nKey } from "../i18n";
 import { AUTO_REFRESH_INTERVAL_OPTIONS } from "../settings";
 import { semanticColorToken } from "../semanticColors";
 import { Callout } from "./Callout";
+import { useConfirm } from "./ConfirmDialog";
+import { SqlPreview } from "./SqlPreview";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { useKeepAliveActive, useRefreshOnReactivate } from "./KeepAlive";
@@ -24,6 +26,8 @@ import { ErrorNote } from "./modalForm";
 import { Button, Checkbox, Heading } from "./ui";
 import { formatBytes } from "./tableSize";
 import {
+  buildDropSlotSql,
+  dropSlotBlockedReason,
   formatLagSecs,
   isLagWarning,
   lagMeterPercent,
@@ -193,8 +197,25 @@ function LinkCard({ link }: { link: ReplicationLink }) {
   );
 }
 
-export function ReplicationPanel({ sessionId, driver }: { sessionId: string; driver: DriverKind }) {
+export function ReplicationPanel({
+  sessionId,
+  driver,
+  readOnly = false,
+  onDropSlot,
+}: {
+  sessionId: string;
+  driver: DriverKind;
+  /** 読み取り専用の接続か。スロット削除を無効にする (バックエンドも拒否する)。 */
+  readOnly?: boolean;
+  /**
+   * スロットを削除する (App 側で共通の書き込みゲートを通して実行する)。承認されて成功したら true、
+   * キャンセル / 失敗なら false。未指定なら削除ボタンを出さない。
+   */
+  onDropSlot?: (name: string, sql: string) => Promise<boolean>;
+}) {
   const t = useT();
+  const { confirm, dialog } = useConfirm();
+  const [dropping, setDropping] = useState<string | null>(null);
   const unsupported = driver === "sqlite";
   const [status, setStatus] = useState<ReplicationStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -248,6 +269,29 @@ export function ReplicationPanel({ sessionId, driver }: { sessionId: string; dri
     return () => clearInterval(handle);
   }, [unsupported, autoRefresh, active, intervalSecs, load]);
   useRefreshOnReactivate(active && !unsupported, load);
+
+  const dropSlot = async (name: string) => {
+    if (!onDropSlot || dropping) return;
+    const sql = buildDropSlotSql(name);
+    const ok = await confirm({
+      title: t("replicationDropConfirmTitle"),
+      message: (
+        <Flex direction="column" gap="2">
+          <chakra.p margin={0}>{t("replicationDropConfirmBody", { name })}</chakra.p>
+          <SqlPreview sql={sql} driver="postgres" />
+        </Flex>
+      ),
+      confirmLabel: t("replicationDropConfirmOk"),
+      tone: "danger",
+    });
+    if (!ok) return;
+    setDropping(name);
+    try {
+      if (await onDropSlot(name, sql)) await load(true);
+    } finally {
+      setDropping(null);
+    }
+  };
 
   const stuckSlots = useMemo(() => (status ? slotsHoldingWal(status.slots) : []), [status]);
   const lostSlots = useMemo(() => (status ? slotsLost(status.slots) : []), [status]);
@@ -326,6 +370,7 @@ export function ReplicationPanel({ sessionId, driver }: { sessionId: string; dri
 
   return (
     <Box flex="1" overflowY="auto" py="5" px="6" display="flex" flexDirection="column" gap="3.5">
+      {dialog}
       {header}
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">
         {t("replicationDesc")}
@@ -410,6 +455,7 @@ export function ReplicationPanel({ sessionId, driver }: { sessionId: string; dri
                       <chakra.th css={thCss}>{t("replicationColActive")}</chakra.th>
                       <chakra.th css={thCss}>{t("replicationColRetained")}</chakra.th>
                       <chakra.th css={thCss}>{t("replicationColWalStatus")}</chakra.th>
+                      {onDropSlot && <chakra.th css={thCss}>{t("replicationColActions")}</chakra.th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -427,6 +473,37 @@ export function ReplicationPanel({ sessionId, driver }: { sessionId: string; dri
                             {formatBytes(s.retained_bytes)}
                           </chakra.td>
                           <chakra.td css={tdCss}>{s.wal_status ?? "—"}</chakra.td>
+                          {onDropSlot && (
+                            <chakra.td css={tdCss}>
+                              {(() => {
+                                const blocked = dropSlotBlockedReason(s, readOnly);
+                                return (
+                                  <Tooltip
+                                    label={
+                                      blocked === "readOnly"
+                                        ? t("replicationDropReadOnlyHint")
+                                        : blocked === "active"
+                                          ? t("replicationDropActiveHint")
+                                          : undefined
+                                    }
+                                    focusableWrapper={blocked !== null}
+                                  >
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="dangerOutline"
+                                      disabled={blocked !== null || dropping !== null}
+                                      aria-label={t("replicationDropSlotAria", { name: s.name })}
+                                      onClick={() => void dropSlot(s.name)}
+                                      data-testid="replication-slot-drop"
+                                    >
+                                      {t("replicationDropSlot")}
+                                    </Button>
+                                  </Tooltip>
+                                );
+                              })()}
+                            </chakra.td>
+                          )}
                         </tr>
                       );
                     })}

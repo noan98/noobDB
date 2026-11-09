@@ -5886,6 +5886,16 @@ const en = {
   replicationRefresh: "Refresh",
   replicationUpdatedAt: "Updated {time}",
   replicationLoadError: "Could not read the replication status: {error}",
+  replicationColActions: "Actions",
+  replicationDropSlot: "Drop",
+  replicationDropSlotAria: "Drop slot {name}",
+  replicationDropActiveHint: "An active slot is in use by a connection and cannot be dropped.",
+  replicationDropReadOnlyHint: "Read-only connections cannot drop replication slots.",
+  replicationDropConfirmTitle: "Drop replication slot",
+  replicationDropConfirmBody:
+    "Drop slot {name}? A consumer that still needs it can no longer resume and may need to be rebuilt. This cannot be undone.",
+  replicationDropConfirmOk: "Drop slot",
+  replicationDropDone: "Dropped slot {name}.",
   processTitle: "Process monitor",
   processDesc:
     "Server-side connections and their running statements (MySQL processlist / PostgreSQL pg_stat_activity). Listing reads in-memory server state only, so polling is cheap. Select processes and kill them to terminate the connection.",
@@ -13598,6 +13608,16 @@ const ja: Dict = {
   replicationRefresh: "更新",
   replicationUpdatedAt: "{time} 更新",
   replicationLoadError: "レプリケーションの状態を取得できませんでした: {error}",
+  replicationColActions: "操作",
+  replicationDropSlot: "削除",
+  replicationDropSlotAria: "スロット {name} を削除",
+  replicationDropActiveHint: "使用中のスロットは接続が使っているため削除できません。",
+  replicationDropReadOnlyHint: "読み取り専用の接続ではレプリケーションスロットを削除できません。",
+  replicationDropConfirmTitle: "レプリケーションスロットを削除",
+  replicationDropConfirmBody:
+    "スロット {name} を削除しますか? まだこのスロットを必要とする受信側は再開できなくなり、作り直しが必要になることがあります。この操作は元に戻せません。",
+  replicationDropConfirmOk: "スロットを削除",
+  replicationDropDone: "スロット {name} を削除しました。",
   processTitle: "プロセスモニタ",
   processDesc:
     "サーバ側の接続と実行中ステートメントの一覧です (MySQL processlist / PostgreSQL pg_stat_activity)。一覧の取得はサーバのメモリ上の状態を読むだけなので、ポーリングしても負荷はごく小さいです。プロセスを選択して kill すると接続を強制終了できます。",

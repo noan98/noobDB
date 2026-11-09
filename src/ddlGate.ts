@@ -22,6 +22,11 @@ export interface DdlGateInput {
   confirmDangerousQueries: boolean;
   /** 型入力確認の対象名を呼び出し側が確定しているときだけ渡す (省略時は検出結果の対象名)。 */
   destructiveTargets?: readonly string[];
+  /**
+   * 本番では、SQL が DROP 文として検出されなくても対象名の型入力確認と書き込み承認を求める。
+   * `SELECT pg_drop_replication_slot('x')` のような「関数呼び出しだが破壊的」な操作用 (`destructiveTargets` が対象名)。
+   */
+  forceTypedConfirm?: boolean;
 }
 
 export interface DdlGate {
@@ -40,11 +45,13 @@ export function evaluateDdlGate(input: DdlGateInput): DdlGate | null {
     ...(isProduction || input.confirmDangerousQueries ? analyzeDangerousSql(sql, driver) : []),
     ...analyzeSqliteAttach(sql, driver),
   ];
-  const writeApproval = (requireWriteApproval || input.emergencyMode) && !isReadOnlySql(sql, driver);
+  const forced = isProduction && !!input.forceTypedConfirm;
+  const writeApproval =
+    (requireWriteApproval || input.emergencyMode) && !isReadOnlySql(sql, driver) ? true : forced;
   if (findings.length === 0 && !writeApproval) return null;
   const destructive = findings.filter((f) => f.kind === "drop" || f.kind === "truncate");
   const targets = input.destructiveTargets ?? destructive.map((f) => f.target);
   const typedConfirmTarget =
-    isProduction && destructive.length > 0 ? resolveTypedConfirmTarget(targets) : null;
+    isProduction && (destructive.length > 0 || forced) ? resolveTypedConfirmTarget(targets) : null;
   return { findings, isProduction, writeApproval, typedConfirmTarget };
 }

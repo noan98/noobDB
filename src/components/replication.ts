@@ -71,3 +71,21 @@ export function sortLinks(links: readonly ReplicationLink[]): ReplicationLink[] 
     (a, b) => Number(linkNeedsAttention(b)) - Number(linkNeedsAttention(a)) || a.name.localeCompare(b.name),
   );
 }
+
+/**
+ * スロットを削除する SQL。スロット名は識別子ではなく**文字列リテラル**として渡る (`pg_drop_replication_slot(name)`)
+ * ので、識別子の引用ではなく `'` を `''` に重ねて埋め込む (PostgreSQL は標準準拠の文字列で `\` を特別扱いしない)。
+ */
+export function buildDropSlotSql(name: string): string {
+  return `SELECT pg_drop_replication_slot('${name.replace(/'/g, "''")}')`;
+}
+
+/** 削除ボタンを無効にする理由。削除できるなら `null`。 */
+export function dropSlotBlockedReason(
+  slot: ReplicationSlot,
+  readOnly: boolean,
+): "readOnly" | "active" | null {
+  if (readOnly) return "readOnly";
+  if (slot.active) return "active";
+  return null;
+}

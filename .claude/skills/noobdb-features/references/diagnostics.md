@@ -119,7 +119,10 @@ PostgreSQL の pub/sub を観測するボトムパネル (`pgListen` タブ、�
 - SQLite は未対応エラー。UI はパネルバー・ツールメニューを `aria-disabled` + 理由にし、コマンドパレットには出さない。
 - フロント: `components/ReplicationPanel.tsx` (表示中だけポーリング、履歴に残さない)、純ロジックは
   `components/replication.ts` (非アクティブスロットが 1 GiB 以上の WAL を溜めたら先頭で警告、遅延メーターの閾値 30 秒)。
-- スロットの削除 UI は未実装 (書き込み確認ゲートを PR #2184 (Issue #2176) で導入中。マージ後に対応する)。
+- スロット削除は実装済み: パネルが SQL プレビュー付きの確認を出したあと、App の `handleDropReplicationSlot` が
+  共通ゲート `runGuardedDdl` (#2176) を `forceTypedConfirm` 付きで通す (本番は書き込み承認 + スロット名の型入力)。
+  実行は通常の `run_query` で、`pg_drop_replication_slot` は拒否リストにあるので read_only はバックエンドが止める
+  (UI も無効 + 理由)。使用中のスロットは削除不可 (ボタン無効 + 理由)。スロット名は文字列リテラルなので `'` を `''` に重ねて埋め込む (`buildDropSlotSql`)。
 
 ## サーバ情報 / メトリクス (#563)
 
