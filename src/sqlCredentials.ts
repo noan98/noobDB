@@ -19,6 +19,8 @@ import { maskLiterals } from "./dangerousSql";
  *   `START REPLICA|SLAVE … PASSWORD = '…'`
  * - PostgreSQL: `CREATE|ALTER ROLE|USER|GROUP` 内の `[ENCRYPTED] PASSWORD '…'`
  *   (`USER MAPPING … OPTIONS (password '…')` を含む。`E'…'` とドル引用も)
+ *   と `CREATE|ALTER SUBSCRIPTION … CONNECTION '<接続文字列>'` (#2189。中身に `redactConninfo` が伏せる
+ *   `password` / `sslpassword` / URI のパスワードがあるときだけリテラル全体)
  * - SQLite: 対象なし
  *
  * リテラルの前置 (`E` / `U&` / `N` / `_utf8mb4`) は範囲に含めず残す。閉じていないリテラルは文末まで
@@ -50,9 +52,12 @@ const isAlnum = (c: string | undefined): boolean => c !== undefined && /[A-Za-z0
 
 class Scanner {
   readonly out: CredentialRange[] = [];
+  /** SUBSCRIPTION の接続文字列から取り出した秘密の値 (`secretsFor` 用)。 */
+  readonly secrets: string[] = [];
 
   constructor(
     private readonly m: string,
+    private readonly src: string,
     private readonly mysql: boolean,
     private readonly pg: boolean,
   ) {}
@@ -232,6 +237,71 @@ class Scanner {
     if (end !== null) this.replaceTail(end);
   }
 
+  /**
+   * `CONNECTION '…'` のリテラルが伏せ対象なら、その中の秘密の値 (エラー文の置換用。空もありうる) を返す。
+   * 対象外なら null。Rust 側 `conninfo_literal_secrets` と同じ規則 (安全側):
+   * `U&'…'` / 中身に `\` がある `E'…'` / エスケープを解いた中身に "password" を含む /
+   * `redactConninfo` や `conninfoSecretValues` が値を見つける / URI で最後の `@` の前に `:` がある (パスワードに `/` `?` が素で入っても漏らさない)。
+   */
+  private conninfoLiteralSecrets(lit: CredentialRange): string[] | null {
+    const { start: s, end: e } = lit;
+    let decoded = "";
+    let opaque = false;
+    if (this.m[s] === "$") {
+      const tagLen = this.dollarTagLen(s);
+      if (tagLen === null) return [];
+      const closed = e >= s + 2 * tagLen && this.m.slice(e - tagLen, e) === this.m.slice(s, s + tagLen);
+      const innerEnd = closed ? e - tagLen : e;
+      if (s + tagLen <= innerEnd) decoded = this.src.slice(s + tagLen, innerEnd);
+    } else {
+      if (s >= 2 && this.m[s - 1] === "&" && (this.m[s - 2] === "u" || this.m[s - 2] === "U")) return [];
+      const backslash = s >= 1 && (this.m[s - 1] === "e" || this.m[s - 1] === "E");
+      let i = s;
+      while (i < e) {
+        if (this.m[i] !== "'") {
+          i++;
+          continue;
+        }
+        // 連結文字列は各片の中身をつなげる。閉じていなければ文末まで。
+        let c = this.m.indexOf("'", i + 1);
+        if (c < 0 || c >= e) c = -1;
+        const innerEnd = c < 0 ? e : c;
+        const raw = this.src.slice(i + 1, innerEnd);
+        opaque ||= backslash && raw.includes("\\");
+        decoded += unescapeLiteral(raw, "'", backslash);
+        i = c < 0 ? e : c + 1;
+      }
+    }
+    const values = conninfoSecretValues(decoded);
+    const lower = asciiLower(decoded);
+    const t = trimStartLikeRust(lower);
+    const schemeAt = t.indexOf("://");
+    const atPos = schemeAt < 0 ? -1 : t.lastIndexOf("@");
+    const uriAt =
+      (t.startsWith("postgresql://") || t.startsWith("postgres://")) &&
+      atPos > schemeAt &&
+      t.slice(schemeAt + 3, atPos).includes(":");
+    const secret =
+      opaque ||
+      uriAt ||
+      lower.includes("password") ||
+      values.length > 0 ||
+      redactConninfo(decoded) !== decoded;
+    return secret ? values : null;
+  }
+
+  /** PostgreSQL の `CREATE|ALTER SUBSCRIPTION … CONNECTION '<接続文字列>'` (#2189)。パスワードがあるときだけリテラル全体。 */
+  private pgSubscriptionConnection(i: number, e: number): void {
+    const [a, b] = this.leadingWords(i);
+    if ((a !== "create" && a !== "alter") || b !== "subscription") return;
+    const lit = this.literalAt(this.skipWs(e));
+    if (!lit) return;
+    const values = this.conninfoLiteralSecrets(lit);
+    if (values === null) return;
+    this.push(lit);
+    this.secrets.push(...values);
+  }
+
   scan(): void {
     const n = this.m.length;
     let i = 0;
@@ -245,6 +315,8 @@ class Scanner {
       const w = this.m.slice(i, e).toLowerCase();
       if (w === "identified" && this.mysql) {
         this.mysqlIdentified(e);
+      } else if (w === "connection" && this.pg) {
+        this.pgSubscriptionConnection(i, e);
       } else if (w === "set" && this.mysql) {
         this.mysqlSetPassword(i, e);
       } else if ((w === "master_password" || w === "source_password") && this.mysql) {
@@ -293,11 +365,11 @@ function scanFor(sql: string, driver: "mysql" | "postgres"): CredentialRange[] {
 function scanWithMask(
   sql: string,
   driver: "mysql" | "postgres",
-): { ranges: CredentialRange[]; masked: string } {
+): { ranges: CredentialRange[]; masked: string; extra: string[] } {
   const masked = maskLiterals(sql, driver);
-  const scanner = new Scanner(masked, driver === "mysql", driver === "postgres");
+  const scanner = new Scanner(masked, sql, driver === "mysql", driver === "postgres");
   scanner.scan();
-  return { ranges: scanner.out, masked };
+  return { ranges: scanner.out, masked, extra: scanner.secrets };
 }
 
 /** 誤置換を避けるため、これより短い値はエラー文の置換対象にしない (UTF-16 コード単位ではなく文字数)。 */
@@ -319,9 +391,210 @@ function unescapeLiteral(raw: string, quote: string, backslash: boolean): string
   return out;
 }
 
+/** 接続文字列に含まれるパスワードとして伏せるキーワード (小文字)。パスファイルへの**パス** (`passfile`) は対象外。 */
+const CONNINFO_SECRET_KEYS = ["password", "sslpassword"];
+
+/** Rust の `str::trim_start` (Unicode の White_Space) と同じ空白定義。JS の `trimStart` は U+FEFF も除くので使わない。 */
+const trimStartLikeRust = (s: string): string =>
+  s.replace(/^[\t\n\u000b\u000c\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/, "");
+
+const asciiLower = (s: string): string => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
+
+/** URI のクエリのキーのパーセントデコード (`pass%77ord` → `password`)。不正な `%` はそのまま残す。 */
+function percentDecode(s: string): string {
+  const bytes: number[] = [];
+  const enc = new TextEncoder().encode(s);
+  for (let i = 0; i < enc.length; i++) {
+    const h = /^[0-9a-fA-F]{2}$/.test(String.fromCharCode(enc[i + 1] ?? 0, enc[i + 2] ?? 0));
+    if (enc[i] === 0x25 && h) {
+      bytes.push(Number.parseInt(String.fromCharCode(enc[i + 1], enc[i + 2]), 16));
+      i += 2;
+    } else {
+      bytes.push(enc[i]);
+    }
+  }
+  return new TextDecoder().decode(new Uint8Array(bytes));
+}
+
+/** `redactConninfo` の URI 形式: `user:パスワード@` と `?password=...` / `&sslpassword=...` を伏せる。 */
+function redactConninfoUri(uri: string): string {
+  const q = uri.indexOf("?");
+  let head = q < 0 ? uri : uri.slice(0, q);
+  const schemeEnd = head.indexOf("://") + 3;
+  if (schemeEnd >= 3) {
+    const slash = head.indexOf("/", schemeEnd);
+    const authorityEnd = slash < 0 ? head.length : slash;
+    // ユーザー情報の区切りは最後の `@`。
+    const at = head.slice(0, authorityEnd).lastIndexOf("@");
+    if (at >= schemeEnd) {
+      const colon = head.slice(0, at).indexOf(":", schemeEnd);
+      if (colon >= 0) head = `${head.slice(0, colon)}:********${head.slice(at)}`;
+    }
+  }
+  if (q < 0) return head;
+  const parts = uri
+    .slice(q + 1)
+    .split("&")
+    .map((kv) => {
+      const eq = kv.indexOf("=");
+      if (eq >= 0 && CONNINFO_SECRET_KEYS.includes(asciiLower(percentDecode(kv.slice(0, eq))))) {
+        return `${kv.slice(0, eq)}=********`;
+      }
+      return kv;
+    });
+  return `${head}?${parts.join("&")}`;
+}
+
+/**
+ * 接続文字列の中のパスワードの**値** (エラー文の置換用)。Rust 側 `conninfo_secret_values` と同じ規則:
+ * key=value の `password` / `sslpassword` の値 (引用符を外したもの・`\` を解いたもの、空白で切れた続きの語)、
+ * URI の `user:パスワード@` と、クエリの `password` / `sslpassword` の値 (生とパーセントデコード後)。
+ */
+function conninfoSecretValues(conninfo: string): string[] {
+  const t = trimStartLikeRust(conninfo);
+  const out: string[] = [];
+  const lower = asciiLower(t);
+  if (lower.startsWith("postgresql://") || lower.startsWith("postgres://")) {
+    const schemeAt = t.indexOf("://");
+    const rest = t.slice(schemeAt < 0 ? 0 : schemeAt + 3);
+    const at = rest.lastIndexOf("@");
+    if (at >= 0) {
+      const colon = rest.slice(0, at).indexOf(":");
+      if (colon >= 0) {
+        const pw = rest.slice(colon + 1, at);
+        // libpq は `/` の手前までで `@` を探すので、素の `/` を含むパスワードは前半が host:port として
+        // 引用される。`/` で分けた各片も秘密値にする。
+        for (const v of [pw, percentDecode(pw)]) out.push(...v.split("/"), v);
+      }
+    }
+    const q = rest.indexOf("?");
+    if (q >= 0) {
+      for (const kv of rest.slice(q + 1).split("&")) {
+        const eq = kv.indexOf("=");
+        if (eq >= 0 && CONNINFO_SECRET_KEYS.includes(asciiLower(percentDecode(kv.slice(0, eq))))) {
+          const v = kv.slice(eq + 1);
+          out.push(v, percentDecode(v));
+        }
+      }
+    }
+    return out;
+  }
+  const n = conninfo.length;
+  let i = 0;
+  while (i < n) {
+    if (isWs(conninfo[i])) {
+      i++;
+      continue;
+    }
+    const start = i;
+    while (i < n && conninfo[i] !== "=" && !isWs(conninfo[i])) i++;
+    const key = conninfo.slice(start, i);
+    let j = i;
+    while (j < n && isWs(conninfo[j])) j++;
+    if (conninfo[j] !== "=") break;
+    j++;
+    while (j < n && isWs(conninfo[j])) j++;
+    const quoted = conninfo[j] === "'";
+    let rawStart: number;
+    let rawEnd: number;
+    let end: number;
+    if (quoted) {
+      let e = j + 1;
+      let close = -1;
+      while (e < n) {
+        if (conninfo[e] === "\\") e += 2;
+        else if (conninfo[e] === "'") {
+          close = e;
+          e++;
+          break;
+        } else e++;
+      }
+      e = Math.min(e, n);
+      [rawStart, rawEnd, end] = [j + 1, close < 0 ? e : close, e];
+    } else {
+      let e = j;
+      while (e < n && !isWs(conninfo[e])) e += conninfo[e] === "\\" ? 2 : 1;
+      e = Math.min(e, n);
+      [rawStart, rawEnd, end] = [j, e, e];
+    }
+    i = end;
+    if (CONNINFO_SECRET_KEYS.includes(asciiLower(key))) {
+      const raw = conninfo.slice(rawStart, rawEnd);
+      out.push(raw, unescapeLiteral(raw, "'", true));
+      // 空白で切れた値の続き、または引用符が途中で閉じた値の残り (`'ab''cd'` など):
+      // 次の `key=` (または `key =`) が現れるまでの語。
+      for (;;) {
+        let a = i;
+        while (a < n && isWs(conninfo[a])) a++;
+        let b = a;
+        while (b < n && !isWs(conninfo[b])) b++;
+        let c = b;
+        while (c < n && isWs(conninfo[c])) c++;
+        if (a === b || conninfo.slice(a, b).includes("=") || conninfo[c] === "=") break;
+        out.push(conninfo.slice(a, b));
+        i = b;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * PostgreSQL の接続文字列 (libpq の `key=value ...` 形式、または `postgresql://` の URI) から
+ * パスワードを伏せる。バックエンドの `sql_credentials::redact_conninfo` (#2181) と同じ規則
+ * (`password` / `sslpassword` の値を `'********'`、URI は `********`。解釈できない残りに "password" が
+ * あれば残り全体を伏せる)。
+ */
+function redactConninfo(conninfo: string): string {
+  const lower = asciiLower(trimStartLikeRust(conninfo));
+  if (lower.startsWith("postgresql://") || lower.startsWith("postgres://"))
+    return redactConninfoUri(conninfo);
+  let out = "";
+  let i = 0;
+  while (i < conninfo.length) {
+    if (isWs(conninfo[i])) {
+      out += conninfo[i++];
+      continue;
+    }
+    const start = i;
+    while (i < conninfo.length && conninfo[i] !== "=" && !isWs(conninfo[i])) i++;
+    const key = conninfo.slice(start, i);
+    let j = i;
+    while (j < conninfo.length && isWs(conninfo[j])) j++;
+    if (conninfo[j] !== "=") {
+      // `key=value` の形でない。パスワードの語を含むなら残り全体を伏せる。
+      const rest = conninfo.slice(start);
+      return out + (asciiLower(rest).includes("password") ? CREDENTIAL_PLACEHOLDER : rest);
+    }
+    j++;
+    while (j < conninfo.length && isWs(conninfo[j])) j++;
+    // 値の範囲 [j, end)。
+    let end = j;
+    if (conninfo[j] === "'") {
+      end++;
+      while (end < conninfo.length) {
+        const c = conninfo[end];
+        if (c === "\\") end += 2;
+        else if (c === "'") {
+          end++;
+          break;
+        } else end++;
+      }
+    } else {
+      while (end < conninfo.length && !isWs(conninfo[end])) end += conninfo[end] === "\\" ? 2 : 1;
+    }
+    end = Math.min(end, conninfo.length);
+    out += CONNINFO_SECRET_KEYS.includes(asciiLower(key))
+      ? `${asciiLower(key)}=${CREDENTIAL_PLACEHOLDER}`
+      : conninfo.slice(start, end);
+    i = end;
+  }
+  return out;
+}
+
 function secretsFor(sql: string, driver: "mysql" | "postgres"): string[] {
-  const { ranges, masked: m } = scanWithMask(sql, driver);
-  const found: string[] = [];
+  const { ranges, masked: m, extra } = scanWithMask(sql, driver);
+  const found: string[] = [...extra];
   for (const { start: s, end: e } of ranges) {
     if (m[s] === "$") {
       const close = m.indexOf("$", s + 1);
