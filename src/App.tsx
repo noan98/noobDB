@@ -4863,7 +4863,13 @@ export default function App() {
       // "no such table" になる事故があった。渡されたものをクロージャより優先する。
       // `forceReadOnly` は EXPLAIN 実測モード (#1164) 用: バックエンドにも読み取り専用を
       // 強制させる (プロファイルの read_only に関わらず、書き込み文は拒否される)。
-      override?: { sessionId?: string; tab?: Tab; forceReadOnly?: boolean },
+      override?: {
+        sessionId?: string;
+        tab?: Tab;
+        forceReadOnly?: boolean;
+        // 実行の終了点 (完了 / エラー / 起動失敗) で 1 回呼ぶ。ok は成功したか (#2190)。自動リフレッシュでは呼ばない。
+        onSettled?: (ok: boolean) => void;
+      },
     ) => {
       const sid = override?.sessionId ?? sessionId;
       if (!sid) {
@@ -5070,6 +5076,7 @@ export default function App() {
             elapsedMs,
           });
           flusher.flushNow(); // 貯めていた行を先に反映してから完了状態へ進める (#1317)
+          if (!autoRefresh) override?.onSettled?.(!serverMessages?.some((m) => m.severity === "error"));
           patchTab(tabId, (tt) => {
             if (!hasColumns) {
               return {
@@ -5201,6 +5208,7 @@ export default function App() {
         },
         onError: ({ error, timedOut, connectionLost, deliveredRows }) => {
           flusher.flushNow();
+          if (!autoRefresh) override?.onSettled?.(false);
           patchTab(tabId, (tt) => ({
             ...tt,
             streaming: false,
@@ -5293,6 +5301,7 @@ export default function App() {
         });
       } catch (e) {
         flusher.flushNow();
+        if (!autoRefresh) override?.onSettled?.(false);
         patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
         setStatus({
           kind: "key",
@@ -8268,7 +8277,7 @@ export default function App() {
   // Open a fresh query tab holding `sql` and run it immediately. Shared by the
   // schema-tree table context-menu actions (run SELECT, show definition).
   const openAndRunQuery = useCallback(
-    (sql: string, title?: string) => {
+    (sql: string, title?: string, opts?: { onSettled?: (ok: boolean) => void }) => {
       if (!sessionId) return;
       const tab: Tab = { ...makeQueryTab(), sql, lastExecutedSql: sql };
       if (title) {
@@ -8276,7 +8285,14 @@ export default function App() {
         tab.titleManual = true;
       }
       addTab(tab);
-      void runQueryInTab(tab.id, sql);
+      void runQueryInTab(
+        tab.id,
+        sql,
+        null,
+        null,
+        false,
+        opts?.onSettled ? { onSettled: opts.onSettled } : undefined,
+      );
     },
     [sessionId, runQueryInTab, addTab],
   );
@@ -8501,47 +8517,54 @@ export default function App() {
   );
 
   const handleCreateTableRun = useCallback(
-    (sql: string, statements: string[], table: string) => {
+    (sql: string, statements: string[], table: string, unlogged: boolean) => {
       const database = createTableDb;
       setCreateTableDb(null);
-      if (!sessionId) {
-        openAndRunQuery(sql);
-        return;
-      }
-      void (async () => {
-        const schema = database || "public";
-        // PostgreSQL では、追加できるパブリケーションがあるときだけ直接実行して成功トーストに
-        // 「パブリケーションに追加…」を付ける (#2190)。それ以外は従来どおり (単文はエディタタブで実行)。
-        const suggest = await shouldSuggestPublication(
-          { driver: selectedProfile?.driver ?? "mysql", readOnly, schema, table },
-          () => api.listPublications(sessionId),
+      if (!sessionId) return;
+      const createdSid = sessionId;
+      // 作成に成功したら、追加できるパブリケーションがあるときだけ提案トーストを出す (#2190)。
+      // 取得失敗は提案しないだけ。接続を切り替えたあとに押されたら別接続で開かない。
+      const suggestPublication = async (message: string): Promise<boolean> => {
+        const schema = database || "";
+        const ok = await shouldSuggestPublication(
+          { driver: selectedProfile?.driver ?? "", readOnly, schema, table, unlogged },
+          () => api.listPublications(createdSid),
         );
-        if (statements.length <= 1 && !suggest) {
-          openAndRunQuery(sql);
+        if (!ok) return false;
+        toast.notify({
+          message,
+          tone: "success",
+          action: {
+            label: translate("createTablePublicationAction"),
+            onAction: () => {
+              if (sessionIdRef.current !== createdSid) {
+                toast.info(translate("createTablePublicationStale"));
+                return;
+              }
+              setPublicationEditor({ database: schema, table });
+            },
+          },
+        });
+        return true;
+      };
+      void (async () => {
+        // 単文・複数文とも、実行前に共通の実行ゲートを通す (#2176)。
+        if (!(await runGuardedDdl(statements.join(";\n")))) return;
+        if (statements.length <= 1) {
+          openAndRunQuery(sql, undefined, {
+            onSettled: (ok) => {
+              if (ok) void suggestPublication(translate("createTableCreatedSingle"));
+            },
+          });
           return;
         }
-        // 複数文はトランザクションで直接実行するため、エディタと同じ実行ゲートを通す (#2176)。
-        if (!(await runGuardedDdl(statements.join(";\n")))) return;
         try {
           await api.runQueryTransaction(sessionId, statements, database || null);
           invalidateSchemaCache(database || null);
           noteSchemaDdl(statements.join(";\n"), database || null);
           connectionListRef.current?.refreshSchema();
-          const message = translate(
-            statements.length > 1 ? "createTableCreated" : "createTableCreatedSingle",
-          );
-          if (suggest) {
-            toast.notify({
-              message,
-              tone: "success",
-              action: {
-                label: translate("createTablePublicationAction"),
-                onAction: () => setPublicationEditor({ database: schema, table }),
-              },
-            });
-          } else {
-            toast.success(message);
-          }
+          const created = translate("createTableCreated");
+          if (!(await suggestPublication(created))) toast.success(created);
         } catch (e) {
           invalidateSchemaCache(database || null);
           connectionListRef.current?.refreshSchema();

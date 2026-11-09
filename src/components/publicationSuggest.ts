@@ -16,14 +16,15 @@ export function hasAddablePublication(
 }
 
 /**
- * 提案を出すか。postgres 以外・read_only・対象なし・取得失敗では false (失敗はエラーにしない)。
+ * 提案を出すか。postgres 以外・read_only・UNLOGGED・スキーマ不明・対象なし・取得失敗では false (失敗はエラーにしない)。
  * `list` は `api.listPublications(sessionId)` を渡す。
  */
 export async function shouldSuggestPublication(
-  opts: { driver: string; readOnly: boolean; schema: string; table: string },
+  opts: { driver: string; readOnly: boolean; schema: string; table: string; unlogged?: boolean },
   list: () => Promise<PublicationInfo[]>,
 ): Promise<boolean> {
-  if (opts.driver !== "postgres" || opts.readOnly) return false;
+  // UNLOGGED 表は PostgreSQL がパブリケーションへの追加を拒否する。スキーマ不明も提案しない。
+  if (opts.driver !== "postgres" || opts.readOnly || opts.unlogged || !opts.schema) return false;
   try {
     return hasAddablePublication(await list(), opts.schema, opts.table);
   } catch {

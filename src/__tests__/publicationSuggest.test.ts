@@ -49,6 +49,10 @@ describe("shouldSuggestPublication", () => {
     expect(await shouldSuggestPublication({ ...base, readOnly: true }, list)).toBe(false);
     expect(list).not.toHaveBeenCalled();
   });
+  it("UNLOGGED 表・スキーマ不明は出さない", async () => {
+    expect(await shouldSuggestPublication({ ...base, unlogged: true }, async () => [pub()])).toBe(false);
+    expect(await shouldSuggestPublication({ ...base, schema: "" }, async () => [pub()])).toBe(false);
+  });
   it("パブリケーション無し / 取得失敗は false (例外にしない)", async () => {
     expect(await shouldSuggestPublication(base, async () => [])).toBe(false);
     expect(await shouldSuggestPublication(base, async () => Promise.reject(new Error("boom")))).toBe(false);
