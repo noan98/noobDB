@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import type { ServerMessage, ServerMessageSeverity } from "./api/tauri";
 import type { I18nKey } from "./i18n";
 import { matchesSearchTerms, searchTerms } from "./logSearch";
+import { redactCredentials, redactErrorText } from "./sqlCredentials";
 import type { SemanticRole } from "./semanticColors";
 
 /**
@@ -47,6 +48,11 @@ export interface OutputEntry {
   sql: string;
   /** 切り詰め前の SQL の長さ (UTF-16 コード単位)。`sql.length` より大きければ切り詰め済み。 */
   sqlLength: number;
+  /**
+   * `CREATE USER … IDENTIFIED BY` / `ALTER ROLE … PASSWORD` のパスワードを伏せ字にして保持した行 (#2174)。
+   * 伏せた SQL をそのまま流すとパスワードが `********` に変わってしまうので、再実行はできない。
+   */
+  credentialsRedacted?: boolean;
   outcome: OutputOutcome;
   /** `rows` / `affected` / 部分結果の行数。無い結末では null。 */
   rows: number | null;
@@ -327,13 +333,19 @@ function getOutput(): OutputEntry[] {
 }
 
 /** 実行結果を 1 件記録する。 */
-export function pushOutput(input: OutputInput): void {
+export function pushOutput(input: OutputInput, driver?: string): void {
+  // パスワードを実行ログに残さない (#2174)。実行する SQL は変えず、ここで保持する分だけ伏せる。
+  // `driver` が分からないときは MySQL / PostgreSQL 両方の規則を当てる (広い側に倒す)。
+  const sql = redactCredentials(input.sql, driver);
+  const error = input.error === null ? null : redactErrorText(input.error, input.sql, driver);
   const entry: OutputEntry = {
     ...input,
+    sql,
+    ...(sql !== input.sql ? { credentialsRedacted: true } : {}),
     id: nextId++,
     at: Date.now(),
-    sqlLength: input.sql.length,
-    error: input.error === null ? null : headChars(input.error, OUTPUT_ERROR_MAX_CHARS),
+    sqlLength: sql.length,
+    error: error === null ? null : headChars(error, OUTPUT_ERROR_MAX_CHARS),
   };
   current = compactOutputSql(appendOutput(current, entry)) as OutputEntry[];
   emit();

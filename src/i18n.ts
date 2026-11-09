@@ -93,6 +93,10 @@ const en = {
   outputGotoNotFound: "That statement was not found in the active editor",
   outputNeedsConnection: "Connect to a database first",
   outputRerunOtherConnection: 'This ran on "{name}". Switch to that connection to run it again.',
+  outputRerunRedacted:
+    "The password in this SQL is hidden in the log, so it cannot be run again from here. Write the statement again in the editor.",
+  outputOpenRedactedNote:
+    "The password in this SQL is hidden as '********'. Replace it with the real password before running it.",
   outputCopySql: "Copy SQL",
   outputCopied: "SQL copied",
   outputOpenTruncatedDisabled:
@@ -7801,6 +7805,10 @@ const ja: Dict = {
   outputNeedsConnection: "先にデータベースへ接続してください",
   outputRerunOtherConnection:
     "この文は「{name}」で実行されました。再実行するにはその接続へ切り替えてください。",
+  outputRerunRedacted:
+    "この SQL のパスワードは実行ログでは伏せているため、ここからは再実行できません。エディタで書き直して実行してください。",
+  outputOpenRedactedNote:
+    "この SQL のパスワードは '********' に伏せています。実行する前に本当のパスワードへ書き換えてください。",
   outputCopySql: "SQL をコピー",
   outputCopied: "SQL をコピーしました",
   outputOpenTruncatedDisabled:

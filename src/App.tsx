@@ -641,6 +641,7 @@ import {
   reverseRowsForPrev,
 } from "./keysetPagination";
 import { isMultiStatement, type BatchStatementResult, toBatchOutputInput, toBatchResult } from "./sqlScript";
+import { redactCredentials } from "./sqlCredentials";
 import {
   EMPTY_QUICK_ACCESS,
   loadQuickAccess,
@@ -1252,6 +1253,8 @@ type OutputCtx = {
   connectionId: string | null;
   connectionName: string | null;
   defaultDatabase: string | null;
+  /** SQL の資格情報を伏せるときの方言 (#2174)。分からなければ undefined (両方言の規則を当てる)。 */
+  driver?: string;
 };
 
 function makeQueryTab(): Tab {
@@ -3286,7 +3289,10 @@ export default function App() {
   // (履歴を記録しない接続 `skip_history` を除く) ので、それと同じ内容を JS 側で足す。
   const pushQueryHistory = useCallback((sql: string) => {
     if (selectedProfileRef.current?.skip_history) return;
-    setQueryHistory((prev) => pushHistoryEntry(prev, sql));
+    // バックエンドは履歴に伏せ字化した SQL を保存する (#2174) ので、同じ内容を積む。
+    setQueryHistory((prev) =>
+      pushHistoryEntry(prev, redactCredentials(sql, selectedProfileRef.current?.driver)),
+    );
   }, []);
 
   // クイックアクセス: アクティブ接続が変わったら、そのプロファイルの
@@ -4792,6 +4798,7 @@ export default function App() {
     defaultDatabase: null,
   });
   outputProfileRef.current = {
+    driver: selectedProfile?.driver,
     connectionId: selectedProfile?.id ?? null,
     connectionName: selectedProfile?.name ?? null,
     defaultDatabase: selectedProfile?.database ?? null,
@@ -4800,7 +4807,14 @@ export default function App() {
   // 出力の記録が新しい接続へずれないよう、各実行の冒頭で 1 回だけ呼んで recordOutput に渡す。
   const outputCtxFor = useCallback((sid: string | null | undefined): OutputCtx => {
     const p = sid ? openConnectionsRef.current.find((c) => c.sessionId === sid)?.profile : undefined;
-    if (p) return { connectionId: p.id, connectionName: p.name, defaultDatabase: p.database ?? null };
+    if (p) {
+      return {
+        connectionId: p.id,
+        connectionName: p.name,
+        defaultDatabase: p.database ?? null,
+        driver: p.driver,
+      };
+    }
     return { ...outputProfileRef.current };
   }, []);
   // `execDatabase` は実行に使った DB (タブの database のみ。既定へのフォールバックはしない)。
@@ -4810,13 +4824,16 @@ export default function App() {
       execDatabase: string | null | undefined,
       ctx: OutputCtx = outputProfileRef.current,
     ) => {
-      pushOutput({
-        ...input,
-        connection: ctx.connectionName,
-        connectionId: ctx.connectionId,
-        database: execDatabase ?? ctx.defaultDatabase,
-        execDatabase: execDatabase ?? null,
-      });
+      pushOutput(
+        {
+          ...input,
+          connection: ctx.connectionName,
+          connectionId: ctx.connectionId,
+          database: execDatabase ?? ctx.defaultDatabase,
+          execDatabase: execDatabase ?? null,
+        },
+        ctx.driver,
+      );
     },
     [],
   );
