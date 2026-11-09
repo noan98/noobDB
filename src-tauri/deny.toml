@@ -56,6 +56,14 @@ ignore = [
     "RUSTSEC-2026-0368",
     "RUSTSEC-2026-0369",
     "RUSTSEC-2026-0429",
+    # libsqlite3-sys が同梱する SQLite 本体の不具合 (RUSTSEC-2026-0459)。細工した
+    # DB ファイルと -wal ファイルの組を開くとメモリ破壊が起きうる。修正版は
+    # libsqlite3-sys >= 0.39.0 だが、sqlx-sqlite 0.9 が < 0.38 に固定しているため
+    # cargo update では 0.37 までしか上がらない。本アプリが開く SQLite ファイルは
+    # 利用者が自分で選んだローカルファイルだけで、外部から DB と -wal の組を
+    # 送り込まれる経路は無い。sqlx が libsqlite3-sys 0.39 以降を許可したら
+    # cargo update して、この 1 件を外す。
+    "RUSTSEC-2026-0459",
 ]
 
 [licenses]
