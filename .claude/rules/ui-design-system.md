@@ -351,7 +351,7 @@ Bottom Panel に足すときは:
 (`SettingsView` の `SettingsNumberRow` 等が `& label` でまとめてスタイルを持つ)。
 
 **モーダルの外 (接続フォーム・スニペットフォーム・Bottom Panel の各パネル) でも同じ
-プリミティブを使う** (#1114)。SQL の表示は `SqlPreview` (#2157 / #2178 でほぼ移行済み。残りは `ExtensionsModal.tsx` のみ段階移行中で、`designTokens.test.ts` が SQL を `CodePreview` に渡す箇所を増やさないよう固定している。差分表示 `DiffView` は `sqlHighlightLines` で行ごとに色分けして背景色に重ねる)、SQL 以外の生成コードは `CodePreview`、入力エラーは
+プリミティブを使う** (#1114)。SQL の表示は `SqlPreview` (#2157 / #2178 で移行済み。`designTokens.test.ts` が SQL を `CodePreview` に渡す箇所を増やさないよう固定している。差分表示 `DiffView` は `sqlHighlightLines` で行ごとに色分けして背景色に重ねる)、SQL 以外の生成コードは `CodePreview`、入力エラーは
 `FieldError`、操作を止めるエラーは `ErrorNote role="alert"`。`role="alert"` を
 `<Text>` / `<chakra.div>` に手書きしない。例外は値そのものを見せるビューア
 (`CellValueViewer` / `RowInspector` / `ExplainViewer` など) の `<pre>` と、結果グリッド

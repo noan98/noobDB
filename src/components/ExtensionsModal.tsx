@@ -16,8 +16,9 @@ import {
 } from "./extensionSql";
 import { ListboxSelect } from "./ListboxSelect";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
+import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { Spinner } from "./Spinner";
+import { SqlPreview } from "./SqlPreview";
 import { Button, Checkbox, Input, PressableButton } from "./ui";
 
 /**
@@ -314,9 +315,7 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
 
             <FormSection>
               <FieldLabel as="div">{t("extensionsPreview")}</FieldLabel>
-              <CodePreview minH="48px" wrap>
-                {`${sql};`}
-              </CodePreview>
+              <SqlPreview sql={`${sql};`} driver="postgres" minH="48px" wrap />
             </FormSection>
 
             {cancelled && !runError && <Callout tone="info">{t("extensionsNotExecuted")}</Callout>}

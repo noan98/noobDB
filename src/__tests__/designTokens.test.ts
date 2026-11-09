@@ -239,11 +239,10 @@ describe("design tokens: SQL のプレビューは SqlPreview (#2178)", () => {
   // `CodePreview` は SQL 以外 (AI の生応答 / エラー文 / メッセージ / シェルコマンド / エクスポート内容 /
   // ファイル名など) 専用。SQL (DDL / DML) はエディタと同じ配色で色分けする `SqlPreview` に渡す。
   // 子の式が下の「既知の非 SQL」に当たらない `CodePreview` を SQL とみなして数え、ここに載っている
-  // ファイルの件数を超えたら fail、減ったらベースラインを下げる。ここに残るのは移行待ちの箇所と、
+  // ファイルの件数を超えたら fail、減ったらベースラインを下げる。ここに残るのは、
   // 非 SQL だが名前で見分けられない箇所だけ。
   const SQL_IN_CODE_PREVIEW_BASELINE = new Map<string, number>([
     ["../components/ActivityDetailView.tsx", 1], // IPC 診断テキスト (SQL ではない)
-    ["../components/ExtensionsModal.tsx", 1], // 移行待ち
     ["../components/SqlPreview.tsx", 1], // SqlPreview 自身の単色フォールバック
   ]);
   const NON_SQL_CHILD =
