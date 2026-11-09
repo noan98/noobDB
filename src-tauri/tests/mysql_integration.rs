@@ -5332,3 +5332,57 @@ async fn mysql_event_time_zone_is_compared_and_synced() {
         let _ = t::mysql_exec_text(&opts, &format!("DROP DATABASE IF EXISTS `{s}`")).await;
     }
 }
+
+/// CREATE TABLE ウィザードのテーブルオプション (#2161) が生成する DDL (ENGINE / CHARSET /
+/// RANGE COLUMNS / 複数列 RANGE / LIST / HASH / KEY) が実際の MySQL で通ることを、共有ゴールデン
+/// (`createTableOptionVectors.json`) で確かめる。
+#[tokio::test]
+async fn mysql_create_table_wizard_options_ddl_runs() {
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let db = opts.database.as_deref();
+
+    for case in common::create_table_cases("mysql") {
+        let table = &case.form.table;
+        conn.execute(&format!("DROP TABLE IF EXISTS `{table}`"), db)
+            .await
+            .expect("drop");
+        // アプリは複数文を `run_query_transaction` と同じ `execute_transaction` で流す。
+        let run = conn.execute_transaction(&case.statements, db).await;
+        let partitioned = case.name.contains("range")
+            || case.name.contains("list")
+            || case.name.contains("hash")
+            || case.name.contains("key");
+        let count = if run.is_ok() && partitioned {
+            let res = conn
+                .execute(
+                    &format!(
+                        "SELECT COUNT(*) FROM information_schema.PARTITIONS \
+                         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{table}' \
+                         AND PARTITION_NAME IS NOT NULL"
+                    ),
+                    db,
+                )
+                .await
+                .expect("partitions");
+            match &res.rows[0][0] {
+                t::Value::Int(n) => *n,
+                other => panic!("{}: unexpected count {other:?}", case.name),
+            }
+        } else {
+            0
+        };
+        let _ = conn
+            .execute(&format!("DROP TABLE IF EXISTS `{table}`"), db)
+            .await;
+        run.unwrap_or_else(|e| panic!("{}: {e}\n{:?}", case.name, case.statements));
+        if partitioned {
+            assert!(count >= 1, "{}: no partitions created", case.name);
+        }
+    }
+
+    conn.close().await;
+}

@@ -2503,6 +2503,7 @@ const en = {
   cloneTablePreviewEmpty: "Enter a table name to preview the SQL.",
   cloneTableConfirm: "Duplicate",
   cloneTableSuccess: 'Duplicated "{source}" as "{table}".',
+  createTableCreated: "Created the table (including its first partition).",
   cloneTableMetaError: "Couldn't read column / foreign key metadata: {error}",
   cloneTableNotTable: "Only tables can be duplicated (this object is a view or another kind).",
   cloneTableRewriteError:
@@ -2709,6 +2710,7 @@ const en = {
   extensionsPreloadNote:
     "{name} also needs to be listed in shared_preload_libraries in postgresql.conf, followed by a server restart. CREATE EXTENSION alone is not enough.",
   extensionsDone: "Ran {action} on extension {name}",
+  extensionsNotExecuted: "The confirmation was cancelled, so nothing was run.",
   inspectorManageExtensions: "Manage extensions...",
   contextMenuCreateRoutineGroup: "New routine / trigger",
   contextMenuCreateProcedure: "New procedure...",
@@ -3341,6 +3343,52 @@ const en = {
   createTableColDefault: "Default",
   createTableAddCol: "Add column",
   createTableRemoveCol: "Remove column",
+  createTableOptions: "Table options",
+  createTableOptionsActive: "set",
+  createTableOptUnloggedHelp:
+    "Skips the write-ahead log: faster writes, but the table is emptied after a crash and is not replicated.",
+  createTableOptUnloggedPartitioned: "A partitioned table cannot be UNLOGGED.",
+  createTableOptStrictHelp:
+    "Enforces column types (INT, INTEGER, REAL, TEXT, BLOB, ANY). Needs SQLite 3.37 or later.",
+  createTableOptWithoutRowidHelp:
+    "Stores the table as a clustered primary-key index. Needs a PRIMARY KEY and no AUTOINCREMENT.",
+  createTableOptPartition: "Partitioned table",
+  createTableOptPartitionMethod: "Method",
+  createTableOptPartitionKey: "Partition key",
+  createTableOptPartitionKeyPlaceholder: "column name (several: a, b)",
+  createTableOptPartitionKeyHelp:
+    "A column or expression. Every PRIMARY KEY / UNIQUE constraint must include the key columns.",
+  createTableOptPartitionCount: "Number of partitions",
+  createTableOptPartitionFirst: "First partition (optional)",
+  createTableOptPartitionFirstRequired: "First partition name (required)",
+  createTableOptPartitionFrom: "FROM (inclusive)",
+  createTableOptPartitionTo: "TO (exclusive)",
+  createTableOptPartitionLessThan: "VALUES LESS THAN (or MAXVALUE)",
+  createTableOptPartitionValues: "IN values",
+  createTableOptBoundHelpPg:
+    "Creates the first partition right after the parent table. Leave the name empty to create only the parent and attach partitions later. Values are quoted as strings (MINVALUE / MAXVALUE / NULL stay keywords).",
+  createTableOptBoundHelpMysql:
+    "Values are written as SQL expressions (numbers, 'YYYY-MM-DD' strings, MAXVALUE). A string value switches to RANGE COLUMNS / LIST COLUMNS when the key is plain columns. Add more partitions later with ALTER TABLE.",
+  createTableOptErrToken: "{field} can only contain letters, digits and underscores.",
+  createTableOptErrCollation:
+    "The COLLATE does not belong to the CHARSET (it must start with the charset name).",
+  createTableOptErrStrictType:
+    "STRICT tables allow only INT, INTEGER, REAL, TEXT, BLOB and ANY. Change the type of: {columns}",
+  createTableOptErrWithoutRowidPk: "WITHOUT ROWID needs a PRIMARY KEY.",
+  createTableOptErrWithoutRowidAuto:
+    "WITHOUT ROWID cannot be combined with AUTOINCREMENT. Turn it off for the primary key.",
+  createTableOptErrKeyEmpty: "Enter the partition key.",
+  createTableOptErrKeyUnknown: "The partition key has no column with this name: {columns}",
+  createTableOptErrKeyUnique:
+    "Every PRIMARY KEY / UNIQUE constraint must include the partition key columns. Missing: {columns}",
+  createTableOptErrNeedsFirst: "MySQL needs at least one partition in RANGE / LIST. Enter its name.",
+  createTableOptErrCount: "Enter the number of partitions (1 or more).",
+  createTableOptErrForeignKey:
+    "MySQL (InnoDB) cannot put foreign keys on a partitioned table. Remove the foreign keys or the partitioning.",
+  createTableOptErrRange: "Enter FROM and TO / LESS THAN for every key column.",
+  createTableOptErrList: "Enter at least one value.",
+  createTableOptErrModulus: "MODULUS must be an integer of 1 or more.",
+  createTableOptErrRemainder: "REMAINDER must be an integer from 0 up to MODULUS - 1.",
   createTablePreview: "SQL preview",
   createTablePreviewEmpty: "Enter a table name and column names to preview the SQL.",
   createTableRun: "Create",
@@ -10200,6 +10248,7 @@ const ja: Dict = {
   cloneTablePreviewEmpty: "テーブル名を入力すると SQL がプレビューされます。",
   cloneTableConfirm: "複製",
   cloneTableSuccess: "「{source}」を「{table}」として複製しました。",
+  createTableCreated: "テーブルを作成しました (最初のパーティションを含む)。",
   cloneTableMetaError: "列・外部キーのメタデータを取得できませんでした: {error}",
   cloneTableNotTable: "テーブル以外 (ビューなど) は複製できません。",
   cloneTableRewriteError:
@@ -10406,6 +10455,7 @@ const ja: Dict = {
   extensionsPreloadNote:
     "{name} は、CREATE EXTENSION だけでは動きません。postgresql.conf の shared_preload_libraries に追記して、サーバを再起動してください",
   extensionsDone: "拡張機能 {name} の{action}を実行しました",
+  extensionsNotExecuted: "確認がキャンセルされたため、何も実行していません",
   inspectorManageExtensions: "拡張機能を管理...",
   contextMenuCreateRoutineGroup: "ルーチン / トリガーを新規作成",
   contextMenuCreateProcedure: "プロシージャを新規作成",
@@ -11036,6 +11086,51 @@ const ja: Dict = {
   createTableColDefault: "デフォルト",
   createTableAddCol: "カラムを追加",
   createTableRemoveCol: "カラムを削除",
+  createTableOptions: "テーブルオプション",
+  createTableOptionsActive: "設定あり",
+  createTableOptUnloggedHelp:
+    "WAL を書かないので書き込みが速くなりますが、クラッシュ後は空になり、レプリケーションもされません",
+  createTableOptUnloggedPartitioned: "パーティション表は UNLOGGED にできません",
+  createTableOptStrictHelp:
+    "列の型を強制します (INT / INTEGER / REAL / TEXT / BLOB / ANY のみ)。SQLite 3.37 以降が必要です",
+  createTableOptWithoutRowidHelp:
+    "主キーのインデックスに行を持つ形式で保存します。PRIMARY KEY が必要で、AUTOINCREMENT は使えません",
+  createTableOptPartition: "パーティション表にする",
+  createTableOptPartitionMethod: "方式",
+  createTableOptPartitionKey: "パーティションキー",
+  createTableOptPartitionKeyPlaceholder: "列名 (複数は a, b)",
+  createTableOptPartitionKeyHelp: "列名または式。主キー・UNIQUE 制約はすべて、キーの列を含める必要があります",
+  createTableOptPartitionCount: "パーティション数",
+  createTableOptPartitionFirst: "最初のパーティション (省略可)",
+  createTableOptPartitionFirstRequired: "最初のパーティションの名前 (必須)",
+  createTableOptPartitionFrom: "FROM (含む)",
+  createTableOptPartitionTo: "TO (含まない)",
+  createTableOptPartitionLessThan: "VALUES LESS THAN (MAXVALUE も可)",
+  createTableOptPartitionValues: "IN の値",
+  createTableOptBoundHelpPg:
+    "親表の直後に最初のパーティションも作ります。名前を空にすると親表だけを作り、パーティションは後から付けられます。値は文字列として引用されます (MINVALUE / MAXVALUE / NULL はキーワードのまま)",
+  createTableOptBoundHelpMysql:
+    "値は SQL の式として書きます (数値・'YYYY-MM-DD' の文字列・MAXVALUE)。キーが素の列名で値が文字列のときは RANGE COLUMNS / LIST COLUMNS に切り替えます。パーティションの追加は後で ALTER TABLE で行います",
+  createTableOptErrToken: "{field} には英数字とアンダースコアだけ使えます",
+  createTableOptErrCollation: "COLLATE が CHARSET に属していません (COLLATE は文字セット名で始まります)",
+  createTableOptErrStrictType:
+    "STRICT 表で使える型は INT / INTEGER / REAL / TEXT / BLOB / ANY だけです。型を直してください: {columns}",
+  createTableOptErrWithoutRowidPk: "WITHOUT ROWID には PRIMARY KEY が必要です",
+  createTableOptErrWithoutRowidAuto:
+    "WITHOUT ROWID は AUTOINCREMENT と併用できません。主キーの自動採番をオフにしてください",
+  createTableOptErrKeyEmpty: "パーティションキーを入力してください",
+  createTableOptErrKeyUnknown: "パーティションキーに該当する列がありません: {columns}",
+  createTableOptErrKeyUnique:
+    "主キー・UNIQUE 制約はすべて、パーティションキーの列を含める必要があります。不足: {columns}",
+  createTableOptErrNeedsFirst:
+    "MySQL の RANGE / LIST には、パーティションが 1 つ以上必要です。名前を入力してください",
+  createTableOptErrCount: "パーティション数 (1 以上) を入力してください",
+  createTableOptErrForeignKey:
+    "MySQL (InnoDB) はパーティション表に外部キーを付けられません。外部キーかパーティションのどちらかを外してください",
+  createTableOptErrRange: "キーの列ごとに FROM と TO (LESS THAN) を入力してください",
+  createTableOptErrList: "値を 1 つ以上入力してください",
+  createTableOptErrModulus: "MODULUS は 1 以上の整数にしてください",
+  createTableOptErrRemainder: "REMAINDER は 0 以上 MODULUS 未満の整数にしてください",
   createTablePreview: "SQL プレビュー",
   createTablePreviewEmpty: "テーブル名とカラム名を入力すると SQL がプレビューされます。",
   createTableRun: "作成",

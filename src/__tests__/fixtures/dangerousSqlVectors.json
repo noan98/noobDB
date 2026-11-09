@@ -72,6 +72,31 @@
       "note": "DROP TABLE"
     },
     {
+      "sql": "DROP EXTENSION \"postgis\" CASCADE",
+      "kind": "drop",
+      "note": "DROP EXTENSION ... CASCADE (依存する列・関数・ビューまで消える, #2176)"
+    },
+    {
+      "sql": "DROP EXTENSION IF EXISTS pg_trgm",
+      "kind": "drop",
+      "note": "DROP EXTENSION IF EXISTS"
+    },
+    {
+      "sql": "DROP TYPE mood",
+      "kind": "drop",
+      "note": "DROP TYPE (ENUM 型の削除, #2176)"
+    },
+    {
+      "sql": "DROP TYPE IF EXISTS public.mood CASCADE",
+      "kind": "drop",
+      "note": "DROP TYPE ... CASCADE"
+    },
+    {
+      "sql": "DROP SCHEMA app CASCADE",
+      "kind": "drop",
+      "note": "DROP SCHEMA ... CASCADE (#2176)"
+    },
+    {
       "sql": "drop database if exists d",
       "kind": "drop",
       "note": "DROP DATABASE IF EXISTS"

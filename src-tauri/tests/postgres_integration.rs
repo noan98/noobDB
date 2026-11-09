@@ -5129,6 +5129,83 @@ async fn postgres_user_defined_types_are_listed_compared_and_synced() {
     // 拡張は schema a に入れたものなので、上の DROP SCHEMA ... CASCADE で一緒に消える。
 }
 
+/// CREATE TABLE ウィザードのテーブルオプション (#2161) が生成する DDL (UNLOGGED /
+/// パーティション親 + `PARTITION OF` の子) が実際の PostgreSQL で通ることを、共有ゴールデン
+/// (`createTableOptionVectors.json`) で確かめる。アプリは複数文を `run_query_transaction` と同じ
+/// `execute_transaction` で流す。
+#[tokio::test]
+async fn postgres_create_table_wizard_options_ddl_runs() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    for case in common::create_table_cases("postgres") {
+        let table = &case.form.table;
+        conn.execute(&format!("DROP TABLE IF EXISTS \"{table}\" CASCADE"), None)
+            .await
+            .expect("drop");
+        let run = conn.execute_transaction(&case.statements, None).await;
+        let info = if run.is_ok() {
+            let res = conn
+                .execute(
+                    &format!(
+                        "SELECT c.relpersistence::text, c.relkind::text, \
+                         (SELECT COUNT(*) FROM pg_inherits i WHERE i.inhparent = c.oid) \
+                         FROM pg_class c WHERE c.oid = '\"{table}\"'::regclass"
+                    ),
+                    None,
+                )
+                .await
+                .expect("pg_class");
+            Some(res.rows[0].clone())
+        } else {
+            None
+        };
+        let _ = conn
+            .execute(&format!("DROP TABLE IF EXISTS \"{table}\" CASCADE"), None)
+            .await;
+        run.unwrap_or_else(|e| panic!("{}: {e}\n{:?}", case.name, case.statements));
+        let row = info.expect("info");
+        let text = |i: usize| match &row[i] {
+            t::Value::String(s) => s.clone(),
+            other => panic!("{}: unexpected cell {other:?}", case.name),
+        };
+        if case.name.contains("unlogged") {
+            assert_eq!(text(0), "u", "{}", case.name);
+        }
+        if case.name.contains("range") || case.name.contains("list") || case.name.contains("hash") {
+            assert_eq!(text(1), "p", "{}: not partitioned", case.name);
+            let children = if case.statements.len() > 1 { 1 } else { 0 };
+            assert!(
+                matches!(&row[2], t::Value::Int(n) if *n == children),
+                "{}: children {:?}",
+                case.name,
+                row[2]
+            );
+        }
+    }
+
+    // 複数文を 1 つの文字列にして単発実行 (拡張プロトコル) すると拒否される。ウィザードが文の配列を
+    // トランザクションで流す理由 (#2161)。
+    let multi = common::create_table_cases("postgres")
+        .into_iter()
+        .find(|c| c.statements.len() > 1)
+        .expect("multi-statement case");
+    let joined = multi.statements.join("\n");
+    let err = conn
+        .execute(&joined, None)
+        .await
+        .expect_err("multiple commands in one prepared statement must fail");
+    assert!(
+        err.to_string().contains("multiple commands"),
+        "unexpected error: {err}"
+    );
+
+    conn.close().await;
+}
+
 /// 行レベルセキュリティ (RLS) ポリシー (#2159): 一覧 (対象表・RLS の有効 / FORCE)、
 /// 定義表示 (`CREATE POLICY` の再構成)、スキーマ比較の差分検出、同期 SQL (作成 / 置換 / 削除)。
 #[tokio::test]
