@@ -286,7 +286,13 @@ function OutputRow({
           <Flex gap="2">
             {/* 切り詰めた断片を開くと、欠けた DML をそのまま実行できてしまうので無効にする。 */}
             <Tooltip
-              label={truncated ? t("outputOpenTruncatedDisabled") : undefined}
+              label={
+                truncated
+                  ? t("outputOpenTruncatedDisabled")
+                  : entry.credentialsRedacted
+                    ? t("outputOpenRedactedNote")
+                    : undefined
+              }
               focusableWrapper={truncated}
             >
               <Button
@@ -301,7 +307,13 @@ function OutputRow({
             </Tooltip>
             {onInsertSql && (
               <Tooltip
-                label={truncated ? t("outputOpenTruncatedDisabled") : undefined}
+                label={
+                  truncated
+                    ? t("outputOpenTruncatedDisabled")
+                    : entry.credentialsRedacted
+                      ? t("outputOpenRedactedNote")
+                      : undefined
+                }
                 focusableWrapper={truncated}
               >
                 <Button

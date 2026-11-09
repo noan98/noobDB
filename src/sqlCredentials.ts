@@ -15,13 +15,14 @@ import { maskLiterals } from "./dangerousSql";
  * - MySQL: `IDENTIFIED BY '…'` / `IDENTIFIED BY PASSWORD '…'` / `IDENTIFIED WITH <plugin> BY|AS '…'` /
  *   MariaDB の `IDENTIFIED VIA <plugin> USING …` / `… REPLACE '…'` (旧パスワード) /
  *   文頭の `SET PASSWORD [FOR …] = '…'` (`PASSWORD('…')` も) /
- *   `CREATE|ALTER SERVER … OPTIONS (PASSWORD '…')` / `MASTER_PASSWORD|SOURCE_PASSWORD = '…'`
+ *   `CREATE|ALTER SERVER … OPTIONS (PASSWORD '…')` / `MASTER_PASSWORD|SOURCE_PASSWORD = '…'` /
+ *   `START REPLICA|SLAVE … PASSWORD = '…'`
  * - PostgreSQL: `CREATE|ALTER ROLE|USER|GROUP` 内の `[ENCRYPTED] PASSWORD '…'`
  *   (`USER MAPPING … OPTIONS (password '…')` を含む。`E'…'` とドル引用も)
  * - SQLite: 対象なし
  *
  * リテラルの前置 (`E` / `U&` / `N` / `_utf8mb4`) は範囲に含めず残す。閉じていないリテラルは文末まで
- * (安全側)。`driver` を省略した場合は MySQL と PostgreSQL 両方の規則を当てる (取りこぼさない側)。
+ * (安全側)。`driver` を省略した場合は MySQL と PostgreSQL の規則を別々に走査して範囲を合わせる (広い側)。
  */
 
 /** 伏せたあとのリテラル。 */
@@ -160,6 +161,12 @@ class Scanner {
     return [a.w, b?.w ?? null];
   }
 
+  /** 文頭が `START REPLICA|SLAVE` (その `PASSWORD = '…'` はレプリケーションの資格情報)。 */
+  private startsReplica(i: number): boolean {
+    const [a, b] = this.leadingWords(i);
+    return a === "start" && (b === "replica" || b === "slave");
+  }
+
   private mysqlIdentified(e0: number): void {
     const head = this.wordAt(this.skipWs(e0));
     if (!head) return;
@@ -226,6 +233,12 @@ class Scanner {
           const lit = this.literalAt(this.skipWs(p + 1));
           if (lit) this.push(lit);
         }
+      } else if (w === "password" && this.mysql && this.startsReplica(i)) {
+        const p = this.skipWs(e);
+        if (this.m[p] === "=") {
+          const lit = this.literalAt(this.skipWs(p + 1));
+          if (lit) this.push(lit);
+        }
       } else if (w === "password") {
         const [a, b] = this.leadingWords(i);
         const inScope =
@@ -247,12 +260,27 @@ class Scanner {
  */
 export function findCredentialRanges(sql: string, driver?: string): CredentialRange[] {
   if (driver === "sqlite") return [];
-  const mysql = driver === undefined || driver === "mysql";
-  const pg = driver === undefined || driver === "postgres";
-  if (!mysql && !pg) return [];
-  const scanner = new Scanner(maskLiterals(sql, driver), mysql, pg);
+  if (driver === "mysql" || driver === "postgres") return scanFor(sql, driver);
+  // ドライバ不明: 文字列の終端の読み (`\'` を閉じ引用符とするか) が方言で違うので、方言ごとに
+  // 別々に走査して範囲の和集合 (重なる範囲は広い側にまとめる) を取る。パスワードの後半を残さない。
+  return mergeRanges([...scanFor(sql, "mysql"), ...scanFor(sql, "postgres")]);
+}
+
+function scanFor(sql: string, driver: "mysql" | "postgres"): CredentialRange[] {
+  const scanner = new Scanner(maskLiterals(sql, driver), driver === "mysql", driver === "postgres");
   scanner.scan();
   return scanner.out;
+}
+
+function mergeRanges(ranges: CredentialRange[]): CredentialRange[] {
+  const sorted = [...ranges].sort((a, b) => a.start - b.start || a.end - b.end);
+  const out: CredentialRange[] = [];
+  for (const r of sorted) {
+    const last = out[out.length - 1];
+    if (last && r.start < last.end) last.end = Math.max(last.end, r.end);
+    else out.push({ ...r });
+  }
+  return out;
 }
 
 /** 資格情報リテラルを {@link CREDENTIAL_PLACEHOLDER} に置き換えた SQL。対象がなければ入力をそのまま返す。 */

@@ -62,10 +62,18 @@ describe("redactCredentials", () => {
     expect(redactCredentials(sql, "mysql")).toBe(sql);
   });
 
-  it("ドライバ省略時は MySQL と PostgreSQL 両方の規則を当てる", () => {
+  it("ドライバ省略時は MySQL と PostgreSQL の規則を別々に当てた範囲の和集合 (バックスラッシュを含んでも後半を残さない)", () => {
     for (const c of cases) {
-      if (c.sql.includes("\\")) continue; // バックスラッシュの解釈はドライバ依存
       expect(redactCredentials(c.sql)).toBe(c.mysql ?? c.postgres ?? c.sql);
     }
+  });
+
+  it("ドライバ省略時に \\' を含むパスワードの後半が残らない", () => {
+    expect(redactCredentials("ALTER USER u IDENTIFIED BY 'p\\'ass word';")).toBe(
+      `ALTER USER u IDENTIFIED BY ${CREDENTIAL_PLACEHOLDER};`,
+    );
+    expect(redactCredentials("ALTER ROLE r PASSWORD E'a\\'b c'")).toBe(
+      `ALTER ROLE r PASSWORD E${CREDENTIAL_PLACEHOLDER}`,
+    );
   });
 });

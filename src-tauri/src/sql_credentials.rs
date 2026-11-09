@@ -14,7 +14,8 @@
 //! - MySQL: `IDENTIFIED BY '…'` / `IDENTIFIED BY PASSWORD '…'` /
 //!   `IDENTIFIED WITH <plugin> BY|AS '…'` / MariaDB の `IDENTIFIED VIA <plugin> USING …` /
 //!   `… REPLACE '…'` (旧パスワード) / 文頭の `SET PASSWORD [FOR …] = '…'` (`PASSWORD('…')` も) /
-//!   `CREATE|ALTER SERVER … OPTIONS (PASSWORD '…')` / `MASTER_PASSWORD|SOURCE_PASSWORD = '…'`
+//!   `CREATE|ALTER SERVER … OPTIONS (PASSWORD '…')` / `MASTER_PASSWORD|SOURCE_PASSWORD = '…'` /
+//!   `START REPLICA|SLAVE … PASSWORD = '…'`
 //! - PostgreSQL: `CREATE|ALTER ROLE|USER|GROUP` 内の `[ENCRYPTED] PASSWORD '…'`
 //!   (`USER MAPPING … OPTIONS (password '…')` を含む。`E'…'` とドル引用も)
 //! - SQLite: 対象なし
@@ -194,6 +195,12 @@ impl Scanner<'_> {
         (Some(a), b)
     }
 
+    /// 文頭が `START REPLICA|SLAVE` (その `PASSWORD = '…'` はレプリケーションの資格情報)。
+    fn starts_replica(&self, i: usize) -> bool {
+        let (a, b) = self.leading_words(i);
+        a.as_deref() == Some("start") && matches!(b.as_deref(), Some("replica") | Some("slave"))
+    }
+
     fn mysql_identified(&mut self, e: usize) {
         let p = self.skip_ws(e);
         let Some((w, e)) = self.word_at(p) else {
@@ -284,6 +291,15 @@ impl Scanner<'_> {
                 "identified" if self.mysql => self.mysql_identified(e),
                 "set" if self.mysql => self.mysql_set_password(i, e),
                 "master_password" | "source_password" if self.mysql => {
+                    let p = self.skip_ws(e);
+                    if self.m.get(p) == Some(&'=') {
+                        let p = self.skip_ws(p + 1);
+                        if let Some(lit) = self.literal_at(p) {
+                            self.push(lit);
+                        }
+                    }
+                }
+                "password" if self.mysql && self.starts_replica(i) => {
                     let p = self.skip_ws(e);
                     if self.m.get(p) == Some(&'=') {
                         let p = self.skip_ws(p + 1);

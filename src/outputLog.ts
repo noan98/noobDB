@@ -333,11 +333,11 @@ function getOutput(): OutputEntry[] {
 }
 
 /** 実行結果を 1 件記録する。 */
-export function pushOutput(input: OutputInput): void {
+export function pushOutput(input: OutputInput, driver?: string): void {
   // パスワードを実行ログに残さない (#2174)。実行する SQL は変えず、ここで保持する分だけ伏せる。
-  // 接続のドライバはここでは分からないので、MySQL / PostgreSQL 両方の規則を当てる。
-  const sql = redactCredentials(input.sql);
-  const error = input.error === null ? null : redactCredentials(input.error);
+  // `driver` が分からないときは MySQL / PostgreSQL 両方の規則を当てる (広い側に倒す)。
+  const sql = redactCredentials(input.sql, driver);
+  const error = input.error === null ? null : redactCredentials(input.error, driver);
   const entry: OutputEntry = {
     ...input,
     sql,
