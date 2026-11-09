@@ -347,6 +347,92 @@ export function substituteAllParams(
   );
 }
 
+/** 元 SQL 上のプレースホルダ 1 個の範囲 (エディタの装飾用)。 */
+export interface PlaceholderRange {
+  /** 入力モーダルの欄と同じキー (`{{name}}` は `name`、ネイティブは `?1` / `$1` / `:name`)。 */
+  key: string;
+  start: number;
+  end: number;
+  native: boolean;
+}
+
+/**
+ * `{{name}}` とネイティブプレースホルダの範囲を出現順に列挙する (エディタのチップ装飾用, #2155)。
+ * ネイティブは `scanNativePlaceholders` をそのまま使うので、文字列・コメント・引用識別子の中、
+ * `::cast`、jsonb の `?` 演算子は拾わない。`{{name}}` は置換が文字列の中でも効くため、常に拾う。
+ */
+export function findPlaceholderRanges(sql: string, driver?: string): PlaceholderRange[] {
+  const out: PlaceholderRange[] = [];
+  for (const m of sql.matchAll(paramRegex())) {
+    const start = m.index ?? 0;
+    out.push({ key: m[1], start, end: start + m[0].length, native: false });
+  }
+  for (const p of scanNativePlaceholders(sql, driver)) {
+    out.push({ key: p.key, start: p.start, end: p.end, native: true });
+  }
+  return out.sort((a, b) => a.start - b.start);
+}
+
+/** 展開後の SQL 上でプレースホルダ 1 個が占める範囲 `[start, end)`。 */
+export interface ParamSpan {
+  key: string;
+  start: number;
+  end: number;
+}
+
+/**
+ * `substituteAllParams` と同じ展開をしつつ、各プレースホルダが展開後の SQL のどこに入ったかも返す。
+ * 入力モーダルのプレビューで、入力行にフォーカスした欄に対応する箇所 (同じ名前の複数回・位置で決まる
+ * `?`) をハイライトするために使う (#2155)。値の無いプレースホルダは原文のまま残り、その範囲も返す。
+ */
+export function substituteAllParamsWithSpans(
+  sql: string,
+  driver: DriverKind,
+  values: Record<string, string>,
+  types: Record<string, ParamType>,
+): { sql: string; spans: ParamSpan[] } {
+  // 段 1: `{{name}}`
+  let stage1 = "";
+  let pos = 0;
+  const spans1: ParamSpan[] = [];
+  for (const m of sql.matchAll(paramRegex())) {
+    const start = m.index ?? 0;
+    stage1 += sql.slice(pos, start);
+    const name = m[1];
+    const text = name in values ? renderParamValue(driver, values[name], types[name] ?? "text") : m[0];
+    spans1.push({ key: name, start: stage1.length, end: stage1.length + text.length });
+    stage1 += text;
+    pos = start + m[0].length;
+  }
+  stage1 += sql.slice(pos);
+
+  // 段 2: ネイティブ。段 1 の範囲は、手前で起きた長さの増減ぶんだけずらす。
+  let out = "";
+  pos = 0;
+  const spans2: ParamSpan[] = [];
+  const edits: { oldEnd: number; delta: number }[] = [];
+  for (const p of scanNativePlaceholders(stage1, driver)) {
+    out += stage1.slice(pos, p.start);
+    let text = stage1.slice(p.start, p.end);
+    if (p.key in values) {
+      const rendered = renderParamValue(driver, values[p.key], types[p.key] ?? "text");
+      text = rendered.startsWith("-") ? `(${rendered})` : rendered;
+    }
+    spans2.push({ key: p.key, start: out.length, end: out.length + text.length });
+    edits.push({ oldEnd: p.end, delta: text.length - (p.end - p.start) });
+    out += text;
+    pos = p.end;
+  }
+  out += stage1.slice(pos);
+  const shift = (at: number) => {
+    let d = 0;
+    for (const e of edits) if (e.oldEnd <= at) d += e.delta;
+    return at + d;
+  };
+  const moved = spans1.map((sp) => ({ key: sp.key, start: shift(sp.start), end: shift(sp.end) }));
+  return { sql: out, spans: [...moved, ...spans2].sort((a, b) => a.start - b.start) };
+}
+
 /** 貼り付けた 1 個の値の解釈結果。 */
 export interface PastedValue {
   value: string;
