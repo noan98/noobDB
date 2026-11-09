@@ -344,6 +344,16 @@ describe("pushOutput のパスワード伏せ字 (#2174)", () => {
     expect(JSON.stringify(result.current)).not.toContain("S3cret");
   });
 
+  it("サーバのエラー文が引用した資格情報も伏せる", () => {
+    run({
+      sql: "ALTER USER u IDENTIFIED BY 'secret123'",
+      outcome: "error",
+      error: "syntax error near 'IDENTIFIED BY 'secret123'' at line 1",
+    });
+    const { result } = renderHook(() => useOutputLog());
+    expect(result.current[0].error).toBe("syntax error near 'IDENTIFIED BY '********'' at line 1");
+  });
+
   it("対象のない SQL はそのまま保持する", () => {
     run({ sql: "select 1" });
     const { result } = renderHook(() => useOutputLog());

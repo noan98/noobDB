@@ -72,6 +72,21 @@ class Scanner {
     return { w: this.m.slice(i, e).toLowerCase(), e };
   }
 
+  /** PostgreSQL の連結文字列: 改行を含む空白 (コメントも可) だけで隔てた次の `'…'` は同じ値の続き。 */
+  private pgContinue(from: number): number {
+    let end = from;
+    for (;;) {
+      let j = end;
+      let newline = false;
+      while (j < this.m.length && isWs(this.m[j])) {
+        newline ||= this.m[j] === "\n";
+        j++;
+      }
+      if (newline && this.m[j] === "'") end = this.quoteEnd(j);
+      else return end;
+    }
+  }
+
   /** 引用符 `q` で始まるリテラルの終端 (閉じ引用符の次)。閉じていなければ文末。 */
   private quoteEnd(q: number): number {
     const idx = this.m.indexOf(this.m[q], q + 1);
@@ -93,11 +108,16 @@ class Scanner {
     const c = this.m[p];
     if (c === undefined) return null;
     const next = this.m[p + 1];
-    if (c === "'" || (c === '"' && this.mysql)) return { start: p, end: this.quoteEnd(p) };
+    if (c === "'" || (c === '"' && this.mysql)) {
+      const end = this.quoteEnd(p);
+      return { start: p, end: this.pg && c === "'" ? this.pgContinue(end) : end };
+    }
     if (this.pg) {
-      if ((c === "e" || c === "E") && next === "'") return { start: p + 1, end: this.quoteEnd(p + 1) };
+      if ((c === "e" || c === "E") && next === "'") {
+        return { start: p + 1, end: this.pgContinue(this.quoteEnd(p + 1)) };
+      }
       if ((c === "u" || c === "U") && next === "&" && this.m[p + 2] === "'") {
-        return { start: p + 2, end: this.quoteEnd(p + 2) };
+        return { start: p + 2, end: this.pgContinue(this.quoteEnd(p + 2)) };
       }
       if (c === "$") {
         const tagLen = this.dollarTagLen(p);
@@ -267,9 +287,86 @@ export function findCredentialRanges(sql: string, driver?: string): CredentialRa
 }
 
 function scanFor(sql: string, driver: "mysql" | "postgres"): CredentialRange[] {
-  const scanner = new Scanner(maskLiterals(sql, driver), driver === "mysql", driver === "postgres");
+  return scanWithMask(sql, driver).ranges;
+}
+
+function scanWithMask(
+  sql: string,
+  driver: "mysql" | "postgres",
+): { ranges: CredentialRange[]; masked: string } {
+  const masked = maskLiterals(sql, driver);
+  const scanner = new Scanner(masked, driver === "mysql", driver === "postgres");
   scanner.scan();
-  return scanner.out;
+  return { ranges: scanner.out, masked };
+}
+
+/** 誤置換を避けるため、これより短い値はエラー文の置換対象にしない (UTF-16 コード単位ではなく文字数)。 */
+const MIN_SECRET_CHARS = 4;
+
+function unescapeLiteral(raw: string, quote: string, backslash: boolean): string {
+  let out = "";
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (backslash && c === "\\" && i + 1 < raw.length) {
+      out += raw[++i];
+    } else if (c === quote && raw[i + 1] === quote) {
+      out += quote;
+      i++;
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
+function secretsFor(sql: string, driver: "mysql" | "postgres"): string[] {
+  const { ranges, masked: m } = scanWithMask(sql, driver);
+  const found: string[] = [];
+  for (const { start: s, end: e } of ranges) {
+    if (m[s] === "$") {
+      const close = m.indexOf("$", s + 1);
+      const tagLen = close < 0 ? 1 : close - s + 1;
+      const closed = e >= s + 2 * tagLen && m.slice(e - tagLen, e) === m.slice(s, s + tagLen);
+      const innerEnd = closed ? e - tagLen : e;
+      if (s + tagLen <= innerEnd) found.push(sql.slice(s + tagLen, innerEnd));
+      continue;
+    }
+    const eString = driver === "postgres" && s >= 1 && (sql[s - 1] === "e" || sql[s - 1] === "E");
+    const backslash = driver === "mysql" || eString;
+    let i = s;
+    while (i < e) {
+      if (m[i] !== "'" && m[i] !== '"') {
+        i++;
+        continue;
+      }
+      const q = m[i];
+      let c = m.indexOf(q, i + 1);
+      if (c < 0 || c >= e) c = -1;
+      const innerEnd = c < 0 ? e : c;
+      const raw = sql.slice(i + 1, innerEnd);
+      found.push(raw, unescapeLiteral(raw, q, backslash));
+      i = c < 0 ? e : c + 1;
+    }
+  }
+  return found;
+}
+
+/**
+ * サーバのエラー文から資格情報を伏せる (#2174)。エラー文は SQL 断片を引用する
+ * (`near 'IDENTIFIED BY 'secret'' at line 1`) ので、キーワード走査では伏せられない。
+ * 元の SQL の資格情報リテラルの中身 (元の表記とエスケープを解いた値) がエラー文に現れたら、
+ * すべて `********` に置き換える。4 文字未満の値は、エラー文の別の箇所を潰さないよう対象外にする。
+ */
+export function redactErrorText(error: string, sql: string, driver?: string): string {
+  let secrets: string[] = [];
+  if (driver === "mysql" || driver === "postgres") secrets = secretsFor(sql, driver);
+  else if (driver !== "sqlite") secrets = [...secretsFor(sql, "mysql"), ...secretsFor(sql, "postgres")];
+  const uniq = [...new Set(secrets)]
+    .filter((v) => [...v].length >= MIN_SECRET_CHARS)
+    .sort((a, b) => [...b].length - [...a].length);
+  let out = error;
+  for (const v of uniq) out = out.split(v).join("********");
+  return redactCredentials(out, driver);
 }
 
 function mergeRanges(ranges: CredentialRange[]): CredentialRange[] {

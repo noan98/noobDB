@@ -46,6 +46,8 @@ vi.mock("../../api/tauri", async (importOriginal) => {
       // フェードイン中に axe が走ると color-contrast で落ちる (実行速度次第で再現する)。空一覧を返す。
       listKnownHosts: vi.fn(async () => []),
       listKnownHostsHistory: vi.fn(async () => []),
+      // 履歴の保持日数もマウント時に読む。同じ理由で失敗トーストを出さないよう 0 (無期限) を返す。
+      getHistoryRetentionDays: vi.fn(async () => 0),
     },
   };
 });

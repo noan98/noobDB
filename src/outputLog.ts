@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import type { ServerMessage, ServerMessageSeverity } from "./api/tauri";
 import type { I18nKey } from "./i18n";
 import { matchesSearchTerms, searchTerms } from "./logSearch";
-import { redactCredentials } from "./sqlCredentials";
+import { redactCredentials, redactErrorText } from "./sqlCredentials";
 import type { SemanticRole } from "./semanticColors";
 
 /**
@@ -337,7 +337,7 @@ export function pushOutput(input: OutputInput, driver?: string): void {
   // パスワードを実行ログに残さない (#2174)。実行する SQL は変えず、ここで保持する分だけ伏せる。
   // `driver` が分からないときは MySQL / PostgreSQL 両方の規則を当てる (広い側に倒す)。
   const sql = redactCredentials(input.sql, driver);
-  const error = input.error === null ? null : redactCredentials(input.error, driver);
+  const error = input.error === null ? null : redactErrorText(input.error, input.sql, driver);
   const entry: OutputEntry = {
     ...input,
     sql,

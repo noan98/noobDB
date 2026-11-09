@@ -17,6 +17,17 @@ struct Vectors {
     drivers: Vec<String>,
     placeholder: String,
     cases: Vec<VectorCase>,
+    #[serde(rename = "errorCases")]
+    error_cases: Vec<ErrorCase>,
+}
+
+#[derive(Deserialize)]
+struct ErrorCase {
+    note: String,
+    sql: String,
+    error: String,
+    mysql: String,
+    postgres: String,
 }
 
 #[derive(Deserialize)]
@@ -75,6 +86,35 @@ fn credential_redact_matches_shared_vectors() {
     assert!(
         failures.is_empty(),
         "redact_credentials diverged from the shared golden vectors (フロント redactCredentials とズレています):\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn credential_error_text_matches_shared_vectors() {
+    let vectors: Vectors =
+        serde_json::from_str(VECTORS_JSON).expect("shared credential vectors must be valid JSON");
+    assert!(vectors.error_cases.len() >= 5);
+    let mut failures = Vec::new();
+    for case in &vectors.error_cases {
+        let expected = [
+            (t::DriverKind::Mysql, case.mysql.as_str()),
+            (t::DriverKind::Postgres, case.postgres.as_str()),
+            (t::DriverKind::Sqlite, case.error.as_str()),
+        ];
+        for (driver, want) in expected {
+            let got = t::redact_error_text(driver, &case.error, &case.sql);
+            if got != want {
+                failures.push(format!(
+                    "  - {:?} (note: {}) [{driver:?}]: expected {:?}, got {:?}",
+                    case.error, case.note, want, got
+                ));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "redact_error_text diverged from the shared golden vectors:\n{}",
         failures.join("\n")
     );
 }

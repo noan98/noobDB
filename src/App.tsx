@@ -489,6 +489,7 @@ import {
   type ReadOnlyHint,
   type DangerFinding,
 } from "./dangerousSql";
+import { evaluateDdlGate, type DdlGate } from "./ddlGate";
 import { resolveTypedConfirmTarget } from "./typeToConfirm";
 import { extractNativeParams, extractQueryParams, substituteAllParams, type ParamType } from "./queryParams";
 import {
@@ -2488,6 +2489,11 @@ export default function App() {
     /** 影響行プレビュー (#1881) の材料。プリフライトが確定していて推定可能なときだけ入る。 */
     rowPreview?: { sampleSql: string; setColumns: string[] } | null;
   } | null>(null);
+  // GUI モーダル経由の DDL の実行ゲート (#2176)。`runGuardedDdl` が開き、承認 / キャンセルで
+  // `resolve` を呼んで待機中の呼び出しへ結果を返す。ダイアログはエディタの実行ゲートと同じ。
+  const [pendingDdlGate, setPendingDdlGate] = useState<
+    (DdlGate & { resolve: (approved: boolean) => void }) | null
+  >(null);
   // WHERE 付きの通常 DELETE を実行する前の子行影響の事前確認 (#1767)。定義は loadEditorDeleteImpacts の後ろ。
   const precheckingTabsRef = useRef<Set<string>>(new Set());
   const gateRunSeqRef = useRef<Map<string, number>>(new Map());
@@ -8423,6 +8429,54 @@ export default function App() {
   // 1 文ならクエリタブで実行して結果を見せる。複数文 (PostgreSQL の親 + 最初の子パーティション) は
   // 拡張プロトコルが 1 回に 1 文しか受け付けないので、既存の `run_query_transaction` (read_only
   // ガード付き) に文の配列で渡す (#2161)。新しい書き込み経路は増やさない。
+  const handleCreateTableToEditor = useCallback(
+    (sql: string) => {
+      setCreateTableDb(null);
+      openQueryInEditor(sql);
+    },
+    [openQueryInEditor],
+  );
+
+  // GUI モーダル経由の DDL 共通ゲート (#2176)。エディタの実行ゲート (runInTabWithGate) と同じ条件
+  // (本番 + confirm_writes / 緊急モードの書き込み承認、DROP 系の本番型入力確認) で
+  // `DangerousQueryDialog` を開き、承認なら true、キャンセルなら false を返す (例外にしない)。
+  // 呼び出し側が実行直前に独自の確認ダイアログを出し済みなら `alreadyConfirmed` で二重確認を避ける。
+  // `confirm_writes` / `is_production` は UI レベルの誤操作防止で、バックエンドは強制しない。
+  const runGuardedDdl = useCallback(
+    async (
+      sql: string,
+      opts?: { destructiveTargets?: readonly string[]; alreadyConfirmed?: boolean },
+    ): Promise<boolean> => {
+      if (opts?.alreadyConfirmed) return true;
+      const gate = evaluateDdlGate({
+        sql,
+        driver: selectedProfile?.driver,
+        isProduction: selectedProfile?.is_production ?? false,
+        confirmWrites: selectedProfile?.confirm_writes ?? false,
+        readOnly: selectedProfile?.read_only ?? false,
+        emergencyMode,
+        confirmDangerousQueries: settings.confirmDangerousQueries,
+        destructiveTargets: opts?.destructiveTargets,
+      });
+      if (!gate) return true;
+      return new Promise<boolean>((resolve) => {
+        // 既に待機中のゲートがあれば取り消し扱いで閉じる (二重に開かない)。
+        setPendingDdlGate((prev) => {
+          prev?.resolve(false);
+          return { ...gate, resolve };
+        });
+      });
+    },
+    [
+      selectedProfile?.driver,
+      selectedProfile?.is_production,
+      selectedProfile?.confirm_writes,
+      selectedProfile?.read_only,
+      emergencyMode,
+      settings.confirmDangerousQueries,
+    ],
+  );
+
   const handleCreateTableRun = useCallback(
     (sql: string, statements: string[]) => {
       const database = createTableDb;
@@ -8432,6 +8486,8 @@ export default function App() {
         return;
       }
       void (async () => {
+        // 複数文はトランザクションで直接実行するため、エディタと同じ実行ゲートを通す (#2176)。
+        if (!(await runGuardedDdl(statements.join(";\n")))) return;
         try {
           await api.runQueryTransaction(sessionId, statements, database || null);
           invalidateSchemaCache(database || null);
@@ -8445,23 +8501,22 @@ export default function App() {
         }
       })();
     },
-    [createTableDb, sessionId, openAndRunQuery, invalidateSchemaCache, noteSchemaDdl, toast],
-  );
-
-  const handleCreateTableToEditor = useCallback(
-    (sql: string) => {
-      setCreateTableDb(null);
-      openQueryInEditor(sql);
-    },
-    [openQueryInEditor],
+    [createTableDb, sessionId, openAndRunQuery, invalidateSchemaCache, noteSchemaDdl, toast, runGuardedDdl],
   );
 
   // テーブル保守操作: DDL を実行し、スキーマキャッシュとツリーを更新する。
+  // 実行前に `runGuardedDdl` を通る。キャンセルされたら false を返す (実行しない)。
   // `table` を渡すと (CREATE / DROP INDEX など対象が 1 テーブルと分かる DDL)、そのテーブルの
   // バックエンドキャッシュだけを捨てて再読込する (#1539)。
   const runMaintenanceDdl = useCallback(
-    async (sql: string, database: string, table?: string): Promise<boolean> => {
+    async (
+      sql: string,
+      database: string,
+      table?: string,
+      guard?: { alreadyConfirmed?: boolean },
+    ): Promise<boolean> => {
       if (!sessionId) return false;
+      if (!(await runGuardedDdl(sql, guard))) return false;
       try {
         await api.runQuery(sessionId, sql, database);
         invalidateSchemaCache(database);
@@ -8473,7 +8528,7 @@ export default function App() {
         return false;
       }
     },
-    [sessionId, invalidateSchemaCache, noteSchemaDdl, toast],
+    [sessionId, runGuardedDdl, invalidateSchemaCache, noteSchemaDdl, toast],
   );
 
   const handleCopyTableName = useCallback(
@@ -8807,7 +8862,9 @@ export default function App() {
       });
       if (!ok) return;
       const driver = selectedProfile?.driver ?? "mysql";
-      await runMaintenanceDdl(buildTruncateSql(driver, database, table), database);
+      await runMaintenanceDdl(buildTruncateSql(driver, database, table), database, undefined, {
+        alreadyConfirmed: true,
+      });
     },
     [
       confirm,
@@ -8859,7 +8916,12 @@ export default function App() {
       });
       if (!ok) return;
       const driver = selectedProfile?.driver ?? "mysql";
-      const success = await runMaintenanceDdl(buildDropTableSql(driver, database, table), database);
+      const success = await runMaintenanceDdl(
+        buildDropTableSql(driver, database, table),
+        database,
+        undefined,
+        { alreadyConfirmed: true },
+      );
       if (success) {
         // 開いている対象テーブルのタブは整合性が取れなくなるので閉じる。
         tabsRef.current
@@ -8891,7 +8953,9 @@ export default function App() {
       });
       if (!ok) return;
       const driver = selectedProfile?.driver ?? "mysql";
-      const success = await runMaintenanceDdl(buildDropViewSql(driver, database, name), database);
+      const success = await runMaintenanceDdl(buildDropViewSql(driver, database, name), database, undefined, {
+        alreadyConfirmed: true,
+      });
       if (success) {
         // 定義を編集中だった同名ビューのタブは整合性が取れなくなるので閉じる。
         tabsRef.current
@@ -8956,6 +9020,8 @@ export default function App() {
       setCloneTarget(null);
       if (!target || !sessionId) return;
       void (async () => {
+        // 共通の DDL ゲート (#2176)。キャンセルなら何も実行しない。
+        if (!(await runGuardedDdl(statements.join(";\n")))) return;
         try {
           await api.runQueryTransaction(sessionId, statements, target.database);
           invalidateSchemaCache(target.database);
@@ -8985,7 +9051,15 @@ export default function App() {
         }
       })();
     },
-    [cloneTarget, sessionId, selectedProfile?.driver, invalidateSchemaCache, noteSchemaDdl, toast],
+    [
+      cloneTarget,
+      sessionId,
+      selectedProfile?.driver,
+      runGuardedDdl,
+      invalidateSchemaCache,
+      noteSchemaDdl,
+      toast,
+    ],
   );
 
   // 分割一括 DELETE / UPDATE (#2020) の開始前確認。ループ自体はモーダルが持ち、1 バッチごとに
@@ -9111,8 +9185,9 @@ export default function App() {
   // `api.runQuery` (トランザクション無し) で流す。read_only はバックエンドが拒否する。
   // 対象 DB を持たない文なので `database` は null。成功したらツリーを再取得する。
   const runNamespaceDdl = useCallback(
-    async (sql: string): Promise<boolean> => {
+    async (sql: string, guard?: { alreadyConfirmed?: boolean }): Promise<boolean> => {
       if (!sessionId) return false;
+      if (!(await runGuardedDdl(sql, guard))) return false;
       try {
         await api.runQuery(sessionId, sql, null);
         invalidateSchemaCache();
@@ -9123,7 +9198,7 @@ export default function App() {
         return false;
       }
     },
-    [sessionId, invalidateSchemaCache, toast],
+    [sessionId, runGuardedDdl, invalidateSchemaCache, toast],
   );
 
   const namespaceKindLabel = useCallback(
@@ -9199,7 +9274,7 @@ export default function App() {
         typedConfirmation: name,
       });
       if (!ok) return;
-      const success = await runNamespaceDdl(sql);
+      const success = await runNamespaceDdl(sql, { alreadyConfirmed: true });
       if (success) {
         toast.success(translate("dropNamespaceSuccess", { kind: kindLabel, name }));
         // 削除したノード配下のテーブルタブは整合性が取れなくなるので閉じる。
@@ -9258,7 +9333,7 @@ export default function App() {
         typedConfirmation: selectedProfile?.is_production ? indexName : undefined,
       });
       if (!ok) return;
-      const success = await runMaintenanceDdl(sql, database, table);
+      const success = await runMaintenanceDdl(sql, database, table, { alreadyConfirmed: true });
       if (success) toast.success(translate("dropIndexSuccess", { index: indexName }));
     },
     [
@@ -9293,7 +9368,10 @@ export default function App() {
           });
           if (!ok) return;
         }
-        const success = await runMaintenanceDdl(ddl, req.database);
+        const success = await runMaintenanceDdl(ddl, req.database, undefined, {
+          // 追記は上で承認済み。それ以外 (新規作成) は共通ゲートを通す。
+          alreadyConfirmed: !!appendSql && appendNeedsApproval(selectedProfile),
+        });
         if (success)
           toast.success(
             translate(appendSql ? "saveAsTableAppendSuccess" : "saveAsTableSuccess", { table: newName }),
@@ -9319,19 +9397,15 @@ export default function App() {
       if (!req || !sessionId) return;
       const driver = selectedProfile?.driver ?? "mysql";
       void (async () => {
+        const replaceSql = replace ? buildReplaceViewSql(driver, req.database, newName, req.sql) : null;
+        const createSql = buildCreateViewSql(driver, req.database, newName, req.sql);
+        // 共通の DDL ゲート (#2176)。置換は DROP+CREATE を含むので全文を判定に渡す。
+        if (!(await runGuardedDdl(replaceSql ? replaceSql.join(";\n") : createSql))) return;
         try {
-          if (replace) {
-            await api.runQueryTransaction(
-              sessionId,
-              buildReplaceViewSql(driver, req.database, newName, req.sql),
-              req.database,
-            );
+          if (replaceSql) {
+            await api.runQueryTransaction(sessionId, replaceSql, req.database);
           } else {
-            await api.runQuery(
-              sessionId,
-              buildCreateViewSql(driver, req.database, newName, req.sql),
-              req.database,
-            );
+            await api.runQuery(sessionId, createSql, req.database);
           }
           invalidateSchemaCache(req.database);
           connectionListRef.current?.refreshSchema();
@@ -9343,7 +9417,7 @@ export default function App() {
         }
       })();
     },
-    [saveAsViewRequest, sessionId, selectedProfile?.driver, invalidateSchemaCache, toast],
+    [saveAsViewRequest, sessionId, selectedProfile?.driver, runGuardedDdl, invalidateSchemaCache, toast],
   );
 
   // ローカル横断クエリ (#740) ――――――――――――――――――――――――――――――――
@@ -9558,7 +9632,7 @@ export default function App() {
         confirmLabel: translate("maintenanceConfirmOk"),
       });
       if (!ok) return;
-      const success = await runMaintenanceDdl(command.sql, database);
+      const success = await runMaintenanceDdl(command.sql, database, undefined, { alreadyConfirmed: true });
       if (success) toast.success(translate("maintenanceDone", { target: table }));
     },
     [confirm, maintenanceMessage, runMaintenanceDdl, toast],
@@ -9591,7 +9665,7 @@ export default function App() {
         confirmLabel: translate("maintenanceConfirmOk"),
       });
       if (!ok) return false;
-      const success = await runMaintenanceDdl(command.sql, database);
+      const success = await runMaintenanceDdl(command.sql, database, undefined, { alreadyConfirmed: true });
       if (success) toast.success(translate("maintenanceDone", { target: label }));
       return success;
     },
@@ -9644,7 +9718,7 @@ export default function App() {
         typedConfirmation: selectedProfile?.is_production ? partition.name : undefined,
       });
       if (!ok) return false;
-      const success = await runMaintenanceDdl(sql, database);
+      const success = await runMaintenanceDdl(sql, database, undefined, { alreadyConfirmed: true });
       if (success) {
         toast.success(translate("partitionOpDone", { partition: partition.name }));
         // PostgreSQL の子パーティションは独立したテーブルとしてタブで開けるので、DROP したら閉じる。
@@ -9686,7 +9760,7 @@ export default function App() {
         confirmLabel: translate("attachPartitionConfirm"),
       });
       if (!ok) return false;
-      const success = await runMaintenanceDdl(sql, database);
+      const success = await runMaintenanceDdl(sql, database, undefined, { alreadyConfirmed: true });
       if (success) toast.success(translate("partitionOpDone", { partition: child }));
       return success;
     },
@@ -9807,7 +9881,7 @@ export default function App() {
           toast.error(translate("identitySyncCurrentUnknown", { table }));
           return;
         }
-        const success = await runMaintenanceDdl(runSql, database);
+        const success = await runMaintenanceDdl(runSql, database, undefined, { alreadyConfirmed: true });
         if (success) toast.success(translate("identitySyncDone", { table }));
       } catch (e) {
         toast.error(translate("statusQueryError", { error: String(e) }));
@@ -9837,7 +9911,7 @@ export default function App() {
         confirmLabel: translate("maintenanceConfirmOk"),
       });
       if (!ok) return;
-      const success = await runMaintenanceDdl(command.sql, database);
+      const success = await runMaintenanceDdl(command.sql, database, undefined, { alreadyConfirmed: true });
       if (success) toast.success(translate("maintenanceDone", { target: database }));
     },
     [confirm, maintenanceMessage, runMaintenanceDdl, toast],
@@ -14828,6 +14902,8 @@ export default function App() {
                   readOnly={readOnly}
                   onConfirm={async (statements, name) => {
                     const target = policyEditor;
+                    // 共通の DDL ゲート (#2176)。キャンセルなら実行せず、モーダルは開いたまま。
+                    if (!(await runGuardedDdl(statements.join(";\n")))) return;
                     // 実行は通常のトランザクション経路 (read_only の拒否はバックエンド)。成功時だけ閉じる。
                     try {
                       await api.runQueryTransaction(sessionId, statements, target.database);
@@ -14850,6 +14926,9 @@ export default function App() {
                   sessionId={sessionId}
                   readOnly={readOnly}
                   onExecute={async (sql, action, name) => {
+                    // 共通の実行ゲート (#2176): 本番 + confirm_writes / 緊急モードの承認、DROP は本番で対象名の型入力。
+                    // キャンセルは例外ではなく戻り値でモーダルへ伝える。
+                    if (!(await runGuardedDdl(sql, { destructiveTargets: [name] }))) return "cancelled";
                     // 実行は通常のクエリ経路 (read_only の拒否はバックエンド)。失敗はダイアログが理由とヒントを表示する。
                     await api.runQuery(sessionId, sql, null);
                     invalidateSchemaCache(null);
@@ -14982,6 +15061,22 @@ export default function App() {
                 onRun={handleRoutineRun}
                 onSendToEditor={handleRoutineToEditor}
                 onCancel={() => setRoutineTarget(null)}
+              />
+            )}
+            {pendingDdlGate && (
+              <DangerousQueryDialog
+                findings={pendingDdlGate.findings}
+                isProduction={pendingDdlGate.isProduction}
+                writeApproval={pendingDdlGate.writeApproval}
+                typedConfirmTarget={pendingDdlGate.typedConfirmTarget}
+                onConfirm={() => {
+                  pendingDdlGate.resolve(true);
+                  setPendingDdlGate(null);
+                }}
+                onCancel={() => {
+                  pendingDdlGate.resolve(false);
+                  setPendingDdlGate(null);
+                }}
               />
             )}
             {pendingDangerous && (

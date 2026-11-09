@@ -19,7 +19,7 @@ use crate::error::{AppError, Result};
 use crate::history::store as history_store;
 use crate::history::NewHistoryEntry;
 use crate::perf;
-use crate::sql_credentials::redact_credentials;
+use crate::sql_credentials::{redact_credentials, redact_error_text};
 use crate::state::{AppState, Session, StreamHandle, StreamKind};
 
 /// Returns `Err(AppError::ReadOnly)` when the session is RO and `sql` is not
@@ -1870,7 +1870,7 @@ pub(crate) async fn record_history(
             elapsed_ms: None,
             status: "error".to_string(),
             // サーバのエラー文は該当箇所の SQL 断片を含みうるので、同じ規則で伏せる。
-            error: Some(redact_credentials(&e.to_string(), driver_kind).into_owned()),
+            error: Some(redact_error_text(&e.to_string(), sql, driver_kind)),
             executed_at,
         },
     };
@@ -1898,8 +1898,8 @@ pub(crate) async fn record_write_history(
     let status = if error.is_some() { "error" } else { "ok" };
     let driver_kind = session.conn.driver_kind();
     // `record_history` と同じく、保存する SQL / エラー文の資格情報を伏せる (#2174)。
+    let error = error.map(|e| redact_error_text(&e, &sql, driver_kind));
     let sql = redact_credentials(&sql, driver_kind).into_owned();
-    let error = error.map(|e| redact_credentials(&e, driver_kind).into_owned());
     let entry = NewHistoryEntry {
         profile_id: session.profile_id.clone(),
         driver: driver_kind.as_str().to_string(),

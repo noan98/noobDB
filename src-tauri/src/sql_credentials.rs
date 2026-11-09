@@ -69,6 +69,24 @@ impl Scanner<'_> {
         Some((w, e))
     }
 
+    /// PostgreSQL の連結文字列: 改行を含む空白 (コメントも可) だけで隔てた次の `'…'` は同じ値の続き。
+    /// `end` (リテラルの終端) から続く限り範囲を延ばした終端を返す。
+    fn pg_continue(&self, mut end: usize) -> usize {
+        loop {
+            let mut j = end;
+            let mut newline = false;
+            while j < self.m.len() && is_ws(self.m[j]) {
+                newline |= self.m[j] == '\n';
+                j += 1;
+            }
+            if newline && self.m.get(j) == Some(&'\'') {
+                end = self.quote_end(j);
+            } else {
+                return end;
+            }
+        }
+    }
+
     /// 引用符 `q` で始まるリテラルの終端 (閉じ引用符の次)。閉じていなければ文末。
     fn quote_end(&self, q: usize) -> usize {
         let quote = self.m[q];
@@ -100,14 +118,22 @@ impl Scanner<'_> {
         let c = *self.m.get(p)?;
         let next = self.m.get(p + 1).copied();
         if c == '\'' || (c == '"' && self.mysql) {
-            return Some((p, self.quote_end(p)));
+            let end = self.quote_end(p);
+            return Some((
+                p,
+                if self.pg && c == '\'' {
+                    self.pg_continue(end)
+                } else {
+                    end
+                },
+            ));
         }
         if self.pg {
             if matches!(c, 'e' | 'E') && next == Some('\'') {
-                return Some((p + 1, self.quote_end(p + 1)));
+                return Some((p + 1, self.pg_continue(self.quote_end(p + 1))));
             }
             if matches!(c, 'u' | 'U') && next == Some('&') && self.m.get(p + 2) == Some(&'\'') {
-                return Some((p + 2, self.quote_end(p + 2)));
+                return Some((p + 2, self.pg_continue(self.quote_end(p + 2))));
             }
             if c == '$' {
                 let tag_len = self.dollar_tag_len(p)?;
@@ -329,11 +355,7 @@ impl Scanner<'_> {
     }
 }
 
-/// 資格情報リテラルの範囲 (文字オフセットの半開区間 `[開始, 終端)`、昇順・重なりなし)。
-pub(crate) fn find_credential_ranges(sql: &str, driver: DriverKind) -> Vec<(usize, usize)> {
-    if driver == DriverKind::Sqlite {
-        return Vec::new();
-    }
+fn scan_ranges(sql: &str, driver: DriverKind) -> (Vec<(usize, usize)>, Vec<char>) {
     let chars: Vec<char> = sql.chars().collect();
     let masked = mask_for_driver(driver, &chars);
     let mut sc = Scanner {
@@ -343,7 +365,99 @@ pub(crate) fn find_credential_ranges(sql: &str, driver: DriverKind) -> Vec<(usiz
         out: Vec::new(),
     };
     sc.scan();
-    sc.out
+    let out = sc.out;
+    (out, masked)
+}
+
+/// 資格情報リテラルの範囲 (文字オフセットの半開区間 `[開始, 終端)`、昇順・重なりなし)。
+pub(crate) fn find_credential_ranges(sql: &str, driver: DriverKind) -> Vec<(usize, usize)> {
+    if driver == DriverKind::Sqlite {
+        return Vec::new();
+    }
+    scan_ranges(sql, driver).0
+}
+
+/// 誤置換を避けるため、これより短い値はエラー文の置換対象にしない (文字数)。
+/// 1〜3 文字の値 (`a` など) を置換すると、エラー文の別の箇所まで潰れて原因が読めなくなる。
+const MIN_SECRET_CHARS: usize = 4;
+
+/// `raw` (引用符の内側) のエスケープを解いたもの。
+fn unescape_literal(raw: &[char], quote: char, backslash: bool) -> String {
+    let mut out = String::new();
+    let mut i = 0;
+    while i < raw.len() {
+        let c = raw[i];
+        if backslash && c == '\\' && i + 1 < raw.len() {
+            out.push(raw[i + 1]);
+            i += 2;
+        } else if c == quote && raw.get(i + 1) == Some(&quote) {
+            out.push(quote);
+            i += 2;
+        } else {
+            out.push(c);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// SQL 中の資格情報リテラルの**中身**。元の表記とエスケープを解いた値の両方 (長い順)。
+/// サーバのエラー文が SQL 断片を引用したときの置換に使う。
+pub(crate) fn credential_secrets(sql: &str, driver: DriverKind) -> Vec<String> {
+    if driver == DriverKind::Sqlite {
+        return Vec::new();
+    }
+    let (ranges, m) = scan_ranges(sql, driver);
+    let chars: Vec<char> = sql.chars().collect();
+    let mut found: Vec<String> = Vec::new();
+    for (s, e) in ranges {
+        if m[s] == '$' {
+            let tag_len = m[s + 1..]
+                .iter()
+                .position(|&c| c == '$')
+                .map_or(1, |o| o + 2);
+            let closed = e >= s + 2 * tag_len && m[e - tag_len..e] == m[s..s + tag_len];
+            let inner_end = if closed { e - tag_len } else { e };
+            if s + tag_len <= inner_end {
+                found.push(chars[s + tag_len..inner_end].iter().collect());
+            }
+            continue;
+        }
+        let e_string =
+            s >= 1 && matches!(chars[s - 1], 'e' | 'E') && driver == DriverKind::Postgres;
+        let backslash = driver == DriverKind::Mysql || e_string;
+        let mut i = s;
+        while i < e {
+            if m[i] != '\'' && m[i] != '"' {
+                i += 1;
+                continue;
+            }
+            let q = m[i];
+            let (inner_end, next) = match (i + 1..e).find(|&j| m[j] == q) {
+                Some(c) => (c, c + 1),
+                None => (e, e),
+            };
+            let raw = &chars[i + 1..inner_end];
+            found.push(raw.iter().collect());
+            found.push(unescape_literal(raw, q, backslash));
+            i = next;
+        }
+    }
+    found.retain(|v| v.chars().count() >= MIN_SECRET_CHARS);
+    found.sort_by_key(|v| std::cmp::Reverse(v.chars().count()));
+    found.dedup();
+    found
+}
+
+/// サーバのエラー文から資格情報を伏せる (#2174)。エラー文は SQL 断片を引用する
+/// (`near 'IDENTIFIED BY 'secret'' at line 1`) ので、キーワード走査では伏せられない。
+/// 元の SQL の資格情報リテラルの中身がエラー文に現れたら、すべて `********` に置き換える。
+pub(crate) fn redact_error_text(error: &str, sql: &str, driver: DriverKind) -> String {
+    let mut out = error.to_string();
+    for secret in credential_secrets(sql, driver) {
+        out = out.replace(&secret, "********");
+    }
+    redact_credentials(&out, driver).into_owned()
 }
 
 /// 資格情報リテラルを [`REDACTED_LITERAL`] に置き換えた SQL。対象がなければ入力を借用で返す。

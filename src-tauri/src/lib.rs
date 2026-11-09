@@ -188,6 +188,11 @@ pub mod __test_api {
         crate::sql_credentials::redact_credentials(sql, driver).into_owned()
     }
 
+    /// サーバのエラー文からの資格情報の伏せ字化 (#2174)。
+    pub fn redact_error_text(driver: DriverKind, error: &str, sql: &str) -> String {
+        crate::sql_credentials::redact_error_text(error, sql, driver)
+    }
+
     /// バックエンドの stacked 文検出 (#852)。文境界ゴールデン (#1074、
     /// `tests/statement_split_golden.rs`) が「フロントの文分割器が 2 文以上と見る
     /// 入力は、バックエンドも必ず stacked と判定する」ことを検証するために公開する。
