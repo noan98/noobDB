@@ -2339,10 +2339,15 @@ impl PostgresConn {
         Ok(rows
             .iter()
             .filter_map(|r| {
+                let (Ok(kind), Ok(name)) = (r.try_get::<String, _>(0), r.try_get::<String, _>(2))
+                else {
+                    tracing::warn!("list_extension_dependents: 読めない行を捨てました");
+                    return None;
+                };
                 Some(super::types::ExtensionDependent {
-                    kind: r.try_get::<String, _>(0).ok()?,
+                    kind,
                     schema: r.try_get(1).ok().flatten(),
-                    name: r.try_get::<String, _>(2).ok()?,
+                    name,
                     table: r.try_get(3).ok().flatten(),
                 })
             })
@@ -4557,26 +4562,52 @@ fn pg_quote_ident(name: &str) -> String {
 }
 
 /// `list_extension_dependents` (#2177) の問い合わせ。`$1` は拡張名。
-/// `members` = 拡張が持つオブジェクト。`deps` = それらに依存する (`n` / `a`) オブジェクト。
-/// 各依存を種別ごとのカタログ (列・索引・関数・ビューの rewrite ルール・制約・トリガー・既定値・型 ...) で名前に
-/// 引き直し、拡張自身のメンバーと、メンバーに付随するもの (所有する表が `owner`、演算子族の要素のように
-/// メンバーへ `a` / `i` で付くもの) は除く。
+/// `members` = 拡張自身と、拡張が持つオブジェクト (`deptype = 'e'`)。`closure` = それらに依存する
+/// (`n` / `a` / `i`、`DEPENDS ON EXTENSION` の `x`) オブジェクトの閉包で、依存の連鎖 (型 → ドメイン → 列 →
+/// ビュー ...) をたどる。ビューは `_RETURN` ルールを経由して、そのビューに依存するものへ連鎖させる。
+/// 他の拡張のメンバーに着いたらそこで止め、その拡張 1 件 (`extension`) として出す。
+/// 各依存を種別ごとのカタログで名前に引き直し、拡張自身のメンバーと、メンバーに付随するもの、
+/// 親にまとめる部品 (演算子族の要素・RI の内部トリガー・配列型・行型・ドメインの制約) は除く。
 const EXTENSION_DEPENDENTS_SQL: &str = "\
-WITH members AS (
+WITH RECURSIVE members AS (
+  SELECT 'pg_extension'::regclass::oid AS classid, e.oid AS objid
+    FROM pg_extension e WHERE e.extname = $1
+  UNION
   SELECT d.classid, d.objid
     FROM pg_depend d
     JOIN pg_extension e ON e.oid = d.refobjid
    WHERE d.refclassid = 'pg_extension'::regclass
      AND e.extname = $1
      AND d.deptype = 'e'
-), deps AS (
-  SELECT DISTINCT d.classid, d.objid, d.objsubid
+), closure(classid, objid, objsubid, foreign_ext) AS (
+  SELECT d.classid, d.objid, d.objsubid,
+         (SELECT fe.refobjid FROM pg_depend fe
+           WHERE fe.classid = d.classid AND fe.objid = d.objid
+             AND fe.refclassid = 'pg_extension'::regclass AND fe.deptype = 'e' LIMIT 1)
     FROM pg_depend d
     JOIN members m ON m.classid = d.refclassid AND m.objid = d.refobjid
-   WHERE d.deptype IN ('n', 'a')
+   WHERE d.deptype IN ('n', 'a', 'i', 'x')
+     AND NOT EXISTS (SELECT 1 FROM members m2 WHERE m2.classid = d.classid AND m2.objid = d.objid)
+  UNION
+  SELECT d.classid, d.objid, d.objsubid,
+         (SELECT fe.refobjid FROM pg_depend fe
+           WHERE fe.classid = d.classid AND fe.objid = d.objid
+             AND fe.refclassid = 'pg_extension'::regclass AND fe.deptype = 'e' LIMIT 1)
+    FROM closure c
+    LEFT JOIN pg_rewrite crw
+           ON c.classid = 'pg_rewrite'::regclass AND crw.oid = c.objid AND crw.rulename = '_RETURN'
+    JOIN pg_depend d
+      ON (d.refclassid = c.classid AND d.refobjid = c.objid
+          AND (c.objsubid = 0 OR d.refobjsubid = c.objsubid))
+      OR (crw.oid IS NOT NULL AND d.refclassid = 'pg_class'::regclass AND d.refobjid = crw.ev_class)
+   WHERE c.foreign_ext IS NULL
+     AND d.deptype IN ('n', 'a', 'i')
+     AND NOT EXISTS (SELECT 1 FROM members m2 WHERE m2.classid = d.classid AND m2.objid = d.objid)
 )
-SELECT x.kind, n.nspname::text, x.name, x.tbl
-  FROM deps dp
+SELECT kind, schema_name, name, tbl FROM (
+SELECT DISTINCT x.kind, n.nspname::text AS schema_name, x.name, x.tbl
+  FROM closure dp
+  LEFT JOIN pg_extension fex ON fex.oid = dp.foreign_ext
   LEFT JOIN pg_class c ON dp.classid = 'pg_class'::regclass AND c.oid = dp.objid
   LEFT JOIN pg_attribute ca ON ca.attrelid = c.oid AND ca.attnum = dp.objsubid AND dp.objsubid > 0
   LEFT JOIN pg_index ix ON ix.indexrelid = c.oid
@@ -4596,14 +4627,20 @@ SELECT x.kind, n.nspname::text, x.name, x.tbl
   CROSS JOIN LATERAL (
     SELECT
       CASE
-        WHEN c.oid IS NOT NULL AND dp.objsubid > 0 THEN 'column'
-        WHEN c.oid IS NOT NULL THEN CASE c.relkind
-          WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized_view'
-          WHEN 'i' THEN 'index' WHEN 'I' THEN 'index'
-          WHEN 'S' THEN 'sequence' WHEN 'c' THEN 'type' ELSE 'table' END
+        WHEN fex.oid IS NOT NULL THEN 'extension'
+        WHEN c.oid IS NOT NULL THEN CASE
+          WHEN c.relkind = 'v' THEN 'view'
+          WHEN c.relkind = 'm' THEN 'materialized_view'
+          WHEN c.relkind IN ('i', 'I') THEN 'index'
+          WHEN c.relkind = 'S' THEN 'sequence'
+          WHEN dp.objsubid > 0 THEN 'column'
+          WHEN c.relkind = 'c' THEN 'type'
+          ELSE 'table' END
         WHEN p.oid IS NOT NULL THEN CASE p.prokind WHEN 'p' THEN 'procedure' ELSE 'function' END
-        WHEN rw.oid IS NOT NULL THEN CASE rc.relkind
-          WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized_view' ELSE 'rule' END
+        WHEN rw.oid IS NOT NULL THEN CASE
+          WHEN rw.rulename = '_RETURN' AND rc.relkind = 'm' THEN 'materialized_view'
+          WHEN rw.rulename = '_RETURN' THEN 'view'
+          ELSE 'rule' END
         WHEN co.oid IS NOT NULL THEN 'constraint'
         WHEN tg.oid IS NOT NULL THEN 'trigger'
         WHEN ad.oid IS NOT NULL THEN 'default'
@@ -4611,6 +4648,7 @@ SELECT x.kind, n.nspname::text, x.name, x.tbl
         WHEN ex.oid IS NOT NULL THEN 'extension'
         ELSE 'other' END AS kind,
       CASE
+        WHEN fex.oid IS NOT NULL THEN NULL
         WHEN c.oid IS NOT NULL THEN c.relnamespace
         WHEN p.oid IS NOT NULL THEN p.pronamespace
         WHEN rw.oid IS NOT NULL THEN rc.relnamespace
@@ -4619,10 +4657,12 @@ SELECT x.kind, n.nspname::text, x.name, x.tbl
         WHEN ad.oid IS NOT NULL THEN adc.relnamespace
         WHEN ty.oid IS NOT NULL THEN ty.typnamespace END AS nsp,
       CASE
-        WHEN c.oid IS NOT NULL AND dp.objsubid > 0 THEN ca.attname::text
+        WHEN fex.oid IS NOT NULL THEN fex.extname::text
+        WHEN c.oid IS NOT NULL AND c.relkind IN ('r', 'p', 'f', 'c') AND dp.objsubid > 0 THEN ca.attname::text
         WHEN c.oid IS NOT NULL THEN c.relname::text
         WHEN p.oid IS NOT NULL THEN p.proname::text || '(' || pg_get_function_identity_arguments(p.oid) || ')'
-        WHEN rw.oid IS NOT NULL THEN rc.relname::text
+        WHEN rw.oid IS NOT NULL AND rw.rulename = '_RETURN' THEN rc.relname::text
+        WHEN rw.oid IS NOT NULL THEN rw.rulename::text
         WHEN co.oid IS NOT NULL THEN co.conname::text
         WHEN tg.oid IS NOT NULL THEN tg.tgname::text
         WHEN ad.oid IS NOT NULL THEN ada.attname::text
@@ -4630,8 +4670,10 @@ SELECT x.kind, n.nspname::text, x.name, x.tbl
         WHEN ex.oid IS NOT NULL THEN ex.extname::text
         ELSE (pg_identify_object(dp.classid, dp.objid, dp.objsubid)).identity END AS name,
       CASE
-        WHEN c.oid IS NOT NULL AND dp.objsubid > 0 THEN c.relname::text
+        WHEN fex.oid IS NOT NULL THEN NULL
+        WHEN c.oid IS NOT NULL AND c.relkind IN ('r', 'p', 'f', 'c') AND dp.objsubid > 0 THEN c.relname::text
         WHEN ix.indexrelid IS NOT NULL THEN ixt.relname::text
+        WHEN rw.oid IS NOT NULL AND rw.rulename <> '_RETURN' THEN rc.relname::text
         WHEN co.oid IS NOT NULL THEN cc.relname::text
         WHEN tg.oid IS NOT NULL THEN tc.relname::text
         WHEN ad.oid IS NOT NULL THEN adc.relname::text END AS tbl,
@@ -4645,7 +4687,10 @@ SELECT x.kind, n.nspname::text, x.name, x.tbl
   ) x
   LEFT JOIN pg_namespace n ON n.oid = x.nsp
  WHERE x.name IS NOT NULL
+   AND dp.classid NOT IN ('pg_amop'::regclass, 'pg_amproc'::regclass)
    AND NOT (tg.oid IS NOT NULL AND tg.tgisinternal)
+   AND NOT (co.oid IS NOT NULL AND co.contypid <> 0)
+   AND NOT (ty.oid IS NOT NULL AND (ty.typcategory = 'A' OR ty.typrelid <> 0))
    AND NOT EXISTS (
          SELECT 1 FROM members m
           WHERE (m.classid = dp.classid AND m.objid = dp.objid)
@@ -4655,7 +4700,8 @@ SELECT x.kind, n.nspname::text, x.name, x.tbl
            JOIN members m ON m.classid = d2.refclassid AND m.objid = d2.refobjid
           WHERE d2.classid = dp.classid AND d2.objid = dp.objid AND d2.objsubid = dp.objsubid
             AND d2.deptype IN ('a', 'i'))
- ORDER BY (x.kind <> 'column'), x.kind, n.nspname, x.tbl, x.name";
+) q
+ ORDER BY (kind <> 'column'), kind, schema_name, tbl, name";
 
 /// `shared_preload_libraries` の値 (カンマ区切り。各要素は引用符で囲まれうる) をライブラリ名の一覧にする (#2160)。
 fn parse_preload_libraries(raw: &str) -> Vec<String> {

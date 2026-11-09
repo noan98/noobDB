@@ -172,11 +172,11 @@ export function ExtensionDependents({ dependents, error, cascade }: Props) {
                       maxH="12rem"
                       overflowY="auto"
                     >
-                      {items.slice(0, LIST_MAX).map((d) => {
+                      {items.slice(0, LIST_MAX).map((d, i) => {
                         const label = formatExtensionDependent(d);
                         return (
                           <chakra.li
-                            key={`${d.schema ?? ""}.${d.table ?? ""}.${d.name}`}
+                            key={`${label}\u0000${i}`}
                             fontFamily="mono"
                             textStyle="caption"
                             color={destructive ? "app.textError" : "app.textSecondary"}

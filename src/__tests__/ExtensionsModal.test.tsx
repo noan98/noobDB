@@ -233,6 +233,31 @@ describe("ExtensionsModal", () => {
       expect(onExecute).toHaveBeenCalledWith('DROP EXTENSION "pg_trgm"', "drop", "pg_trgm");
     });
 
+    it("確認を開き直したとき、前の取得の遅い応答は捨てる", async () => {
+      let resolveFirst: (v: typeof DEPS) => void = () => {};
+      dependentsMock.mockImplementationOnce(
+        () =>
+          new Promise((r) => {
+            resolveFirst = r;
+          }),
+      );
+      const { user } = await openDrop();
+      await user.click(screen.getByRole("button", { name: t("extensionsCancel") }));
+      await user.click(screen.getByRole("button", { name: t("extensionsDrop") }));
+      expect(await screen.findByText(t("extensionsDepsNone"))).toBeInTheDocument();
+      resolveFirst(DEPS);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(screen.getByText(t("extensionsDepsNone"))).toBeInTheDocument();
+      expect(screen.queryByText(t("extensionsDepsWillFail", { count: 4 }))).not.toBeInTheDocument();
+    });
+
+    it("CASCADE なしで依存があるときは、危険帯を 1 つにまとめる", async () => {
+      dependentsMock.mockResolvedValue(DEPS);
+      await openDrop();
+      await screen.findByText(t("extensionsDepsWillFail", { count: 4 }));
+      expect(screen.queryByText(t("extensionsDropWarning"))).not.toBeInTheDocument();
+    });
+
     it("導入・更新では依存を取得しない", async () => {
       const user = userEvent.setup();
       setup();

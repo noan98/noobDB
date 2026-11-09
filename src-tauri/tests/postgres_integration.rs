@@ -5539,7 +5539,12 @@ async fn postgres_extension_dependents_list_columns_functions_and_views() {
 
     for sql in [
         "CREATE SCHEMA nb2177",
-        "CREATE TABLE nb2177.places (id int PRIMARY KEY, tags citext, note text)",
+        "CREATE TABLE nb2177.places (id int PRIMARY KEY, tags citext, arr citext[], note text)",
+        "CREATE DOMAIN nb2177.email AS citext",
+        "CREATE TABLE nb2177.users (id int, e nb2177.email)",
+        "CREATE VIEW nb2177.v_cast AS SELECT id, tags::text AS t FROM nb2177.places",
+        "CREATE FUNCTION nb2177.f_dep() RETURNS int LANGUAGE sql AS 'SELECT 1'",
+        "ALTER FUNCTION nb2177.f_dep() DEPENDS ON EXTENSION citext",
         "CREATE INDEX nb2177_tags_idx ON nb2177.places (tags)",
         "CREATE FUNCTION nb2177.tag_count(h citext) RETURNS int LANGUAGE sql AS 'SELECT length(h::text)'",
         "CREATE VIEW nb2177.v_keys AS SELECT id, tags = 'x' AS m FROM nb2177.places",
@@ -5562,6 +5567,23 @@ async fn postgres_extension_dependents_list_columns_functions_and_views() {
         })
     };
     assert!(has("column", "tags", Some("places")), "{deps:?}");
+    // 配列型・ドメインを経由する列、列にだけ依存するビュー、DEPENDS ON EXTENSION の関数も拾う。
+    assert!(has("column", "arr", Some("places")), "{deps:?}");
+    assert!(has("column", "e", Some("users")), "{deps:?}");
+    assert!(has("type", "email", None), "{deps:?}");
+    assert!(has("view", "v_cast", None), "{deps:?}");
+    assert!(has("function", "f_dep()", None), "{deps:?}");
+    // 部品 (配列型・演算子族の要素) や、ビューの列は別の行として出ない。
+    assert!(
+        !deps
+            .iter()
+            .any(|d| d.kind == "other" || d.name == "_citext"),
+        "{deps:?}"
+    );
+    assert!(
+        !deps.iter().any(|d| d.kind == "column" && d.name == "m"),
+        "{deps:?}"
+    );
     assert!(!has("column", "note", Some("places")), "{deps:?}");
     assert!(has("function", "tag_count(h citext)", None), "{deps:?}");
     assert!(has("view", "v_keys", None), "{deps:?}");
@@ -5596,4 +5618,40 @@ async fn postgres_extension_dependents_list_columns_functions_and_views() {
         .execute("DROP SCHEMA IF EXISTS nb2177 CASCADE", None)
         .await;
     let _ = conn.execute("DROP EXTENSION IF EXISTS citext", None).await;
+}
+
+/// 拡張が別の拡張に必要とされているとき (cube → earthdistance)、必要とする側は「拡張 1 件」として出て、
+/// その部品 (型・ドメイン制約・関数) がばらばらに並ばないこと (#2177)。contrib が無い環境では飛ばす。
+/// 他のテスト (4884 行付近) も cube / earthdistance を使い、入れたままにするので、ここでは消さない。
+#[tokio::test]
+async fn postgres_extension_dependents_show_requiring_extension_as_one_entry() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    if conn
+        .execute("CREATE EXTENSION IF NOT EXISTS cube", None)
+        .await
+        .is_err()
+        || conn
+            .execute("CREATE EXTENSION IF NOT EXISTS earthdistance", None)
+            .await
+            .is_err()
+    {
+        return;
+    }
+    let deps = conn
+        .list_extension_dependents("cube")
+        .await
+        .expect("list_extension_dependents");
+    let ext_entries: Vec<_> = deps.iter().filter(|d| d.kind == "extension").collect();
+    assert_eq!(ext_entries.len(), 1, "{deps:?}");
+    assert_eq!(ext_entries[0].name, "earthdistance", "{deps:?}");
+    // earthdistance の部品が、ばらばらの行として出ない。
+    assert!(
+        deps.iter()
+            .all(|d| d.kind == "extension" || d.name != "earth" && d.kind != "other"),
+        "{deps:?}"
+    );
 }
