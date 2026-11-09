@@ -3,7 +3,9 @@ import {
   buildAddEnumValueSql,
   buildRenameEnumValueSql,
   enumValueLiteral,
+  ghostInsertIndex,
   parseEnumLabels,
+  stepChipIndex,
   validateEnumValue,
 } from "../components/enumTypeSql";
 
@@ -76,5 +78,34 @@ describe("validateEnumValue", () => {
     // 3 バイト文字 21 個 = 63 バイトは可、22 個は不可。
     expect(validateEnumValue("あ".repeat(21), [])).toBeNull();
     expect(validateEnumValue("あ".repeat(22), [])).toBe("tooLong");
+  });
+});
+
+describe("ghostInsertIndex / stepChipIndex (#2158)", () => {
+  const vals = ["sad", "ok", "happy"];
+  it("差し込み位置は ADD VALUE の BEFORE / AFTER と同じ意味", () => {
+    expect(ghostInsertIndex(vals, { kind: "end" })).toBe(3);
+    expect(ghostInsertIndex(vals, { kind: "before", reference: "sad" })).toBe(0);
+    expect(ghostInsertIndex(vals, { kind: "before", reference: "happy" })).toBe(2);
+    expect(ghostInsertIndex(vals, { kind: "after", reference: "sad" })).toBe(1);
+    expect(ghostInsertIndex(vals, { kind: "after", reference: "happy" })).toBe(3);
+  });
+
+  it("基準値が無い・値が空の型では末尾 / 先頭になる", () => {
+    expect(ghostInsertIndex(vals, { kind: "after", reference: "nope" })).toBe(3);
+    expect(ghostInsertIndex([], { kind: "end" })).toBe(0);
+    expect(ghostInsertIndex([], { kind: "before", reference: "x" })).toBe(0);
+  });
+
+  it("矢印キーは端で止まり、Home / End は両端へ、他のキーは対象外", () => {
+    expect(stepChipIndex(3, 0, "ArrowRight")).toBe(1);
+    expect(stepChipIndex(3, 2, "ArrowRight")).toBe(2);
+    expect(stepChipIndex(3, 0, "ArrowLeft")).toBe(0);
+    expect(stepChipIndex(3, 1, "ArrowUp")).toBe(0);
+    expect(stepChipIndex(3, 1, "ArrowDown")).toBe(2);
+    expect(stepChipIndex(3, 1, "Home")).toBe(0);
+    expect(stepChipIndex(3, 1, "End")).toBe(2);
+    expect(stepChipIndex(3, 1, "a")).toBeNull();
+    expect(stepChipIndex(0, 0, "ArrowRight")).toBeNull();
   });
 });
