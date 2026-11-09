@@ -713,6 +713,15 @@ export interface TablePartitions {
   partitions: TablePartition[];
 }
 
+/** `list_rls_tables` の 1 件: 行レベルセキュリティが有効 / FORCE の表 (#2159)。PostgreSQL だけ。 */
+export interface RlsTable {
+  table: string;
+  /** `ENABLE ROW LEVEL SECURITY` 済み。 */
+  enabled: boolean;
+  /** `FORCE ROW LEVEL SECURITY` 済み (表の所有者にもポリシーが適用される)。 */
+  forced: boolean;
+}
+
 /** `list_extensions` の 1 件: PostgreSQL の拡張機能 (#2160)。 */
 export interface ExtensionInfo {
   name: string;
@@ -759,7 +768,9 @@ export type SchemaObjectKind =
   /** MySQL のイベントスケジューラの EVENT (#2100)。MySQL だけ。 */
   | "event"
   /** PostgreSQL のユーザー定義型 (ENUM / DOMAIN / 複合型 / 範囲型, #2127)。種類は `detail`。PostgreSQL だけ。 */
-  | "type";
+  | "type"
+  /** PostgreSQL の行レベルセキュリティ (RLS) ポリシー (#2159)。対象表名は `detail`。PostgreSQL だけ。 */
+  | "policy";
 
 /** 非テーブルのスキーマオブジェクト。 */
 export interface SchemaObject {
@@ -818,7 +829,7 @@ export interface WhereUsedMatch {
   lines: ReferenceLine[];
   source: "object" | "snippet";
   /** オブジェクト種別。スニペットは "snippet"。 */
-  kind: Exclude<SchemaObjectKind, "sequence" | "event" | "type"> | "snippet";
+  kind: Exclude<SchemaObjectKind, "sequence" | "event" | "type" | "policy"> | "snippet";
   name: string;
   /** スキーマオブジェクトの一意識別子 (`get_object_definition` へそのまま渡す)。 */
   id: string | null;
@@ -827,7 +838,7 @@ export interface WhereUsedMatch {
 }
 
 export interface WhereUsedFailure {
-  kind: Exclude<SchemaObjectKind, "sequence" | "event" | "type">;
+  kind: Exclude<SchemaObjectKind, "sequence" | "event" | "type" | "policy">;
   name: string;
   error: string;
 }
@@ -840,7 +851,10 @@ export interface WhereUsedReport {
   /** 定義の取得に失敗したオブジェクト (権限不足など)。 */
   failed: WhereUsedFailure[];
   /** 定義本文が空で返ったオブジェクト。 */
-  emptyDefinitions: { kind: Exclude<SchemaObjectKind, "sequence" | "event" | "type">; name: string }[];
+  emptyDefinitions: {
+    kind: Exclude<SchemaObjectKind, "sequence" | "event" | "type" | "policy">;
+    name: string;
+  }[];
   /** キャンセルされ、途中までの結果であること。 */
   cancelled: boolean;
 }

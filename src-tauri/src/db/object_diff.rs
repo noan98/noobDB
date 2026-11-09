@@ -24,7 +24,10 @@ use super::DriverKind;
 /// (`DEFAULT nextval('s'::regclass)` やユーザー関数を呼ぶ CHECK 制約) は、作成時点で参照先が
 /// まだ無く解決に失敗する (同期は失敗して全体がロールバックされる)。この場合は参照先を先に
 /// 手動で作成してから同期する。
-pub const OBJECT_KINDS: [&str; 8] = [
+/// PostgreSQL の行レベルセキュリティ (RLS) ポリシー (`policy`, #2159) は表に付き、`USING` /
+/// `WITH CHECK` が関数を呼べるので、表・関数の後 (トリガーの隣) に作る。削除は表の削除より前。
+/// 対象表ごとに名前が一意なので、トリガーと同じく (名前, 対象表) で対応づける。
+pub const OBJECT_KINDS: [&str; 9] = [
     "type",
     "sequence",
     "function",
@@ -32,16 +35,17 @@ pub const OBJECT_KINDS: [&str; 8] = [
     "view",
     "materialized_view",
     "trigger",
+    "policy",
     "event",
 ];
 
 /// このドライバがその種別を持ち、定義を比較できるか。`where_used::supports_kind` に
-/// シーケンスとユーザー定義型 (どちらも PostgreSQL のみ, #2127) と EVENT (MySQL のみ, #2100) を足したもの。
+/// シーケンス・ユーザー定義型・RLS ポリシー (いずれも PostgreSQL のみ, #2127 / #2159) と EVENT (MySQL のみ, #2100) を足したもの。
 /// PostgreSQL / SQLite に EVENT 相当の組み込み機能は無い (pg_cron などの拡張は対象外)。MySQL / SQLite に
 /// ユーザー定義型は無い。
 pub fn supports_object_kind(driver: DriverKind, kind: &str) -> bool {
     match kind {
-        "sequence" | "type" => return driver == DriverKind::Postgres,
+        "sequence" | "type" | "policy" => return driver == DriverKind::Postgres,
         "event" => {
             return match driver {
                 DriverKind::Mysql => true,
@@ -54,12 +58,12 @@ pub fn supports_object_kind(driver: DriverKind, kind: &str) -> bool {
 }
 
 /// このドライバが持たない (比較対象外の) 種別。UI が「対象外」と理由付きで表示する。
-/// MySQL だけの概念である `event` と、PostgreSQL だけの概念である `type` は、他ドライバでは
+/// MySQL だけの概念である `event` と、PostgreSQL だけの概念である `type` / `policy` は、他ドライバでは
 /// 「対象外」の行を増やすだけなので載せない。
 pub fn unsupported_object_kinds(driver: DriverKind) -> Vec<String> {
     OBJECT_KINDS
         .iter()
-        .filter(|k| !matches!(**k, "event" | "type") && !supports_object_kind(driver, k))
+        .filter(|k| !matches!(**k, "event" | "type" | "policy") && !supports_object_kind(driver, k))
         .map(|k| k.to_string())
         .collect()
 }
@@ -183,6 +187,9 @@ fn prepare(driver: DriverKind, from_db: &str, to_db: &str, def: &ObjectDefinitio
             .clone()
             .filter(|t| !t.is_empty())
             .or_else(|| trigger_table(&portable))
+    } else if def.kind == "policy" {
+        // ポリシーの対象表はカタログの値だけを使う (名前が空白入りの引用名だと定義の文字列から読めない)。
+        def.table.clone().filter(|t| !t.is_empty())
     } else {
         None
     };
@@ -191,7 +198,7 @@ fn prepare(driver: DriverKind, from_db: &str, to_db: &str, def: &ObjectDefinitio
             collapse_whitespace(def.signature.as_deref().unwrap_or_default())
         }
         // 対象表が分からないトリガーは、同名のものを 1 つに潰さないよう定義で区別する。
-        (DriverKind::Postgres, "trigger") => {
+        (DriverKind::Postgres, "trigger" | "policy") => {
             table.clone().unwrap_or_else(|| format!("?{normalized}"))
         }
         _ => String::new(),
@@ -657,6 +664,7 @@ fn drop_keyword(kind: &str) -> &'static str {
         "trigger" => "TRIGGER",
         "event" => "EVENT",
         "type" => "TYPE",
+        "policy" => "POLICY",
         _ => "SEQUENCE",
     }
 }
@@ -675,6 +683,10 @@ pub fn drop_object_sql(driver: DriverKind, d: &ObjectDiff) -> String {
         (DriverKind::Postgres, "trigger") => match &d.table {
             Some(t) => format!("DROP TRIGGER {name} ON {}", quote(driver, t)),
             None => format!("DROP TRIGGER {name}"),
+        },
+        (DriverKind::Postgres, "policy") => match &d.table {
+            Some(t) => format!("DROP POLICY {name} ON {}", quote(driver, t)),
+            None => format!("DROP POLICY {name}"),
         },
         _ => format!("DROP {kw} {name}"),
     }
@@ -1525,6 +1537,82 @@ mod tests {
             drop_object_sql(DriverKind::Postgres, &od("type", "mood", None, None)),
             "DROP TYPE \"mood\""
         );
+    }
+
+    fn policy_def(name: &str, table: &str, definition: &str) -> ObjectDefinition {
+        ObjectDefinition {
+            table: Some(table.to_string()),
+            ..def("policy", name, definition)
+        }
+    }
+
+    #[test]
+    fn policies_are_postgres_only_and_not_listed_as_unsupported() {
+        assert!(supports_object_kind(DriverKind::Postgres, "policy"));
+        assert!(!supports_object_kind(DriverKind::Mysql, "policy"));
+        assert!(!supports_object_kind(DriverKind::Sqlite, "policy"));
+        for d in [DriverKind::Mysql, DriverKind::Sqlite, DriverKind::Postgres] {
+            assert!(!unsupported_object_kinds(d).contains(&"policy".to_string()));
+        }
+        // 表・関数の後 (トリガーの隣) に作る。
+        assert!(kind_rank("function") < kind_rank("policy"));
+        assert!(kind_rank("trigger") < kind_rank("policy"));
+        assert_eq!(
+            drop_object_sql(
+                DriverKind::Postgres,
+                &od("policy", "own rows", Some("orders"), None)
+            ),
+            "DROP POLICY \"own rows\" ON \"orders\""
+        );
+    }
+
+    #[test]
+    fn same_named_policies_on_different_tables_are_distinct() {
+        let a =
+            "CREATE POLICY \"p\" ON \"stg\".\"a\" AS PERMISSIVE FOR ALL TO PUBLIC USING (true);";
+        let b =
+            "CREATE POLICY \"p\" ON \"stg\".\"b\" AS PERMISSIVE FOR ALL TO PUBLIC USING (true);";
+        let s = [policy_def("p", "a", a), policy_def("p", "b", b)];
+        let t = [policy_def(
+            "p",
+            "a",
+            "CREATE POLICY \"p\" ON \"prod\".\"a\" AS PERMISSIVE FOR ALL TO PUBLIC USING (true);",
+        )];
+        let d = diffs(DriverKind::Postgres, "stg", "prod", &s, &t);
+        assert_eq!(d.len(), 2);
+        assert_eq!(d[0].table.as_deref(), Some("a"));
+        assert_eq!(d[0].status, DiffStatus::Same);
+        assert_eq!(d[1].table.as_deref(), Some("b"));
+        assert_eq!(d[1].status, DiffStatus::SourceOnly);
+        // 同期に使う本文は target のスキーマに修飾される。
+        assert!(d[1]
+            .source_definition
+            .as_deref()
+            .is_some_and(|x| x.contains("\"prod\".\"b\"")));
+    }
+
+    #[test]
+    fn changed_policy_is_replaced_by_drop_and_create() {
+        let s = [policy_def(
+            "p",
+            "a",
+            "CREATE POLICY \"p\" ON \"s\".\"a\" AS PERMISSIVE FOR SELECT TO PUBLIC USING (owner = 1);",
+        )];
+        let t = [policy_def(
+            "p",
+            "a",
+            "CREATE POLICY \"p\" ON \"s\".\"a\" AS PERMISSIVE FOR SELECT TO PUBLIC USING (owner = 2);",
+        )];
+        let d = diffs(DriverKind::Postgres, "s", "s", &s, &t);
+        assert_eq!(d[0].status, DiffStatus::Different);
+        let sql = replace_object_sql(
+            DriverKind::Postgres,
+            &d[0],
+            d[0].source_definition.as_deref().unwrap(),
+        );
+        assert!(sql.contains("DROP POLICY \"p\" ON \"a\";"), "{sql}");
+        assert!(sql.contains("CREATE POLICY \"p\""), "{sql}");
+        assert!(!replace_is_destructive(DriverKind::Postgres, "policy"));
     }
 
     #[test]
