@@ -148,6 +148,14 @@ describe.runIf(RUN_VISUAL)("ビジュアル回帰 (実ブラウザ)", { retry: 0
           return active?.tagName === "BUTTON" && active.closest('[role="dialog"]') !== null;
         })
         .toBe(true);
+      // 開くアニメーション (フェード・拡大) の途中や直後は、Chromium がダイアログを合成レイヤに
+      // 載せて文字をグレースケールでアンチエイリアスする。終わった後はサブピクセル描画に戻るので、
+      // 撮るタイミング次第でタイトル文字だけ数百ピクセルずれて落ちていた (#2195、CI の差分画像で
+      // 確認)。アニメーションの完了と、レイヤが外れた後の 2 フレームを待ってから撮る。
+      await Promise.all(document.getAnimations().map((a) => a.finished.catch(() => undefined)));
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      );
       await expect(dialog).toMatchScreenshot(`dangerous-dialog-${theme}`);
     });
 
