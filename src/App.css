@@ -2595,6 +2595,19 @@ html, body, #root {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
+/* SQL エディタのプレースホルダ ({{name}} / ? / $n / :name) のチップ (#2155)。
+   実行時に値を入力する箇所だと分かるよう、関数色 (--syntax-function) の淡い地と枠にする。 */
+.cm-editor .cm-query-placeholder {
+  background: color-mix(in srgb, var(--syntax-function) 16%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--syntax-function) 40%, transparent);
+  border-radius: var(--radius-sm);
+}
+.cm-tooltip.cm-query-placeholder-tip,
+.cm-tooltip .cm-query-placeholder-tip {
+  padding: var(--space-0-75) var(--space-1-5);
+  font-size: var(--text-xs);
+}
+
 /* ---------- Keyframes ----------
    Chakra コンポーネントが `animation` prop から名前参照しているため、コンポーネント
    側にスコープした記述ができず、ここでグローバルに提供する。
