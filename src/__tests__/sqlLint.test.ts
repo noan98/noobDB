@@ -284,6 +284,23 @@ describe("diagnosticsFromTree — diagnostic shape", () => {
   });
 });
 
+describe("computeSqlDiagnostics — PostgreSQL の位置パラメータ (#2193)", () => {
+  it.each([
+    "SELECT * FROM t WHERE id = $1",
+    "SELECT * FROM t WHERE id = $1 AND name = $12",
+    "SELECT * FROM t WHERE id = $1::int",
+    "UPDATE t SET a = $2 WHERE id = $1",
+  ])("%s は構文エラーにしない", (sql) => {
+    expect(diags(sql, PostgreSQL).filter((d) => d.source === "sql-syntax")).toEqual([]);
+  });
+
+  it("$ 単体や $ の後が数字でないものは従来どおりエラーにする", () => {
+    expect(diags("SELECT * FROM t WHERE id = $", PostgreSQL).some((d) => d.source === "sql-syntax")).toBe(
+      true,
+    );
+  });
+});
+
 describe("computeSqlDiagnostics — dialect awareness", () => {
   it("accepts each driver's valid SQL without diagnostics", () => {
     expect(computeSqlDiagnostics('SELECT "c" FROM t', PostgreSQL, MSG)).toEqual([]);
