@@ -78,7 +78,8 @@ pub fn display_definition(p: &PublicationInfo) -> String {
     for t in &p.tables {
         out.push_str(&format!(
             "\n-- {}: REPLICA IDENTITY {}",
-            qualified(t),
+            // 表名の改行で `--` コメントが途切れて後ろが SQL として残らないよう、見える形に置き換える。
+            qualified(t).replace('\r', "\\r").replace('\n', "\\n"),
             replica_identity_label(&t.replica_identity, t.has_primary_key, t.is_partitioned)
         ));
     }
@@ -458,6 +459,23 @@ mod tests {
             tables: vec![],
             schemas: vec![],
         }
+    }
+
+    #[test]
+    fn replica_identity_comment_escapes_newlines_in_table_names() {
+        let mut p = info("pub_nl");
+        p.tables = vec![tbl("public", "a\nb\rc")];
+        let out = display_definition(&p);
+        let comment = out.lines().last().unwrap_or_default();
+        assert!(comment.starts_with("-- "), "{out}");
+        assert!(comment.contains("a\\nb\\rc"), "{out}");
+        // コメント行より後ろに SQL として残る行が無い。
+        assert!(
+            out.lines()
+                .filter(|l| l.contains("REPLICA IDENTITY"))
+                .all(|l| l.starts_with("-- ")),
+            "{out}"
+        );
     }
 
     #[test]
