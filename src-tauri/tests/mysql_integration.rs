@@ -1003,7 +1003,19 @@ async fn mysql_replication_status_standalone() {
     let conn = t::connect(&opts).await.expect("connect");
 
     let status = conn.replication_status().await.expect("replication_status");
+    // CI のソースにはレプリカ (#2209) がぶら下がるので、その場合は下の専用テストが検証する。
+    let has_replica = common::env_is_set("NOOBDB_TEST_MYSQL_REPLICA_URL");
     match status.missing_privilege.as_deref() {
+        None if has_replica => {
+            assert_eq!(status.role, t::ReplicationRole::Primary, "{status:?}");
+            assert!(
+                status
+                    .links
+                    .iter()
+                    .all(|l| l.direction == t::ReplicationDirection::Downstream),
+                "a source has no upstream: {status:?}"
+            );
+        }
         None => {
             assert_eq!(status.role, t::ReplicationRole::Standalone);
             assert!(
@@ -1015,6 +1027,84 @@ async fn mysql_replication_status_standalone() {
     }
     assert!(status.slots.is_empty(), "MySQL has no replication slots");
     conn.close().await;
+}
+
+/// レプリケーション監視 (#2209) のレプリカ経路。CI のセットアップ (scripts/ci-setup-plain-db.sh) が
+/// 立てるレプリカ (`CHANGE REPLICATION SOURCE TO` + `START REPLICA`) に対して、
+/// `SHOW REPLICA STATUS` の解釈 (列名のフォールバック・遅延 NULL) とソース側の `SHOW REPLICAS` を検証する。
+#[tokio::test]
+async fn mysql_replication_status_replica_and_source() {
+    let Some(source_url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
+        return;
+    };
+    let Some(replica_url) = common::require_env("NOOBDB_TEST_MYSQL_REPLICA_URL") else {
+        return;
+    };
+    let source = t::connect(&t::parse_mysql_url(&source_url).expect("valid url"))
+        .await
+        .expect("connect source");
+    let replica = t::connect(&t::parse_mysql_url(&replica_url).expect("valid url"))
+        .await
+        .expect("connect replica");
+
+    // ソース視点: 上流なし、レプリカ (report_host / report_port で登録) が下流に出る。
+    let st = source.replication_status().await.expect("source status");
+    assert_eq!(st.role, t::ReplicationRole::Primary, "{st:?}");
+    let replica_port = common::url_port(&replica_url);
+    let down = st
+        .links
+        .iter()
+        .find(|l| l.direction == t::ReplicationDirection::Downstream)
+        .unwrap_or_else(|| panic!("source must list its replica: {st:?}"));
+    assert_eq!(
+        down.address.as_deref(),
+        Some(format!("127.0.0.1:{replica_port}").as_str()),
+        "{st:?}"
+    );
+
+    // レプリカ視点: 上流 1 件 (Source_Host / Source_Port、旧名は Master_*)。両スレッドが動作中で遅延が取れる。
+    let st = replica.replication_status().await.expect("replica status");
+    assert_eq!(st.role, t::ReplicationRole::Replica, "{st:?}");
+    assert_eq!(st.missing_privilege, None, "{st:?}");
+    let up: Vec<_> = st
+        .links
+        .iter()
+        .filter(|l| l.direction == t::ReplicationDirection::Upstream)
+        .collect();
+    assert_eq!(up.len(), 1, "{st:?}");
+    let source_port = common::url_port(&source_url);
+    assert_eq!(
+        up[0].address.as_deref(),
+        Some(format!("127.0.0.1:{source_port}").as_str()),
+        "{st:?}"
+    );
+    assert_eq!(up[0].io_running, Some(true), "{st:?}");
+    assert_eq!(up[0].sql_running, Some(true), "{st:?}");
+    assert_eq!(up[0].state.as_deref(), Some("running"), "{st:?}");
+    assert!(up[0].lag_secs.is_some_and(|v| v >= 0.0), "{st:?}");
+    assert_eq!(up[0].last_error, None, "{st:?}");
+
+    // SQL スレッドを止めると遅延は意味を持たず None になる (Seconds_Behind_Source が NULL / 停止中)。
+    // 後続の検証が失敗してもレプリカを動作状態へ戻すため、結果は戻してからまとめて判定する。
+    replica
+        .execute("STOP REPLICA SQL_THREAD", None)
+        .await
+        .expect("stop replica sql thread");
+    let stopped = replica.replication_status().await;
+    let restart = replica.execute("START REPLICA SQL_THREAD", None).await;
+    restart.expect("restart replica sql thread");
+    let st = stopped.expect("stopped replica status");
+    let up = st
+        .links
+        .iter()
+        .find(|l| l.direction == t::ReplicationDirection::Upstream)
+        .unwrap_or_else(|| panic!("upstream link must remain: {st:?}"));
+    assert_eq!(up.sql_running, Some(false), "{st:?}");
+    assert_eq!(up.state.as_deref(), Some("sql_stopped"), "{st:?}");
+    assert_eq!(up.lag_secs, None, "{st:?}");
+
+    source.close().await;
+    replica.close().await;
 }
 
 /// プロセス監視パネル (list_processes / kill_processes) の MySQL 経路。一覧には
@@ -4666,6 +4756,97 @@ async fn mysql_list_table_triggers_when_env_set() {
         .await;
 }
 
+/// #2211: `ADD PARTITION` と、MAXVALUE があるときの `REORGANIZE PARTITION` が既存の `execute` 経路で通り、
+/// 追加した子へ行が振り分けられる (UI が組み立てる文と同じ形)。
+#[tokio::test]
+async fn mysql_add_partitions_routes_rows_when_env_set() {
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let Some(db) = opts.database.clone() else {
+        common::skip_external("URL has no database");
+        return;
+    };
+    let conn = t::connect(&opts).await.expect("connect");
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS noobdb_padd_t", Some(&db))
+        .await;
+    t::mysql_exec_text(
+        &opts,
+        "CREATE TABLE noobdb_padd_t (id INT NOT NULL, y INT NOT NULL) \
+         PARTITION BY RANGE (y) (PARTITION p2025 VALUES LESS THAN (2026), \
+         PARTITION p2026 VALUES LESS THAN (2027))",
+    )
+    .await
+    .expect("create partitioned");
+    // MAXVALUE が無いので末尾へ ADD PARTITION (2 件まとめて)。
+    conn.execute(
+        "ALTER TABLE `noobdb_padd_t` ADD PARTITION (PARTITION `p2027` VALUES LESS THAN (2028), PARTITION `p2028` VALUES LESS THAN (2029));",
+        Some(&db),
+    )
+    .await
+    .expect("add partition");
+    // 範囲外の境界 (最後より小さい) は DB でも失敗する (UI は実行前にエラーにする)。
+    assert!(conn
+        .execute(
+            "ALTER TABLE `noobdb_padd_t` ADD PARTITION (PARTITION `pbad` VALUES LESS THAN (2020));",
+            Some(&db),
+        )
+        .await
+        .is_err());
+    // MAXVALUE を足してから、REORGANIZE PARTITION で分割する。
+    conn.execute(
+        "ALTER TABLE `noobdb_padd_t` ADD PARTITION (PARTITION `pmax` VALUES LESS THAN MAXVALUE);",
+        Some(&db),
+    )
+    .await
+    .expect("add max");
+    assert!(conn
+        .execute(
+            "ALTER TABLE `noobdb_padd_t` ADD PARTITION (PARTITION `p2029` VALUES LESS THAN (2030));",
+            Some(&db),
+        )
+        .await
+        .is_err());
+    conn.execute(
+        "INSERT INTO noobdb_padd_t VALUES (1, 2025), (2, 2027), (3, 2029), (4, 2031)",
+        Some(&db),
+    )
+    .await
+    .expect("insert");
+    conn.execute(
+        "ALTER TABLE `noobdb_padd_t` REORGANIZE PARTITION `pmax` INTO (PARTITION `p2029` VALUES LESS THAN (2030), PARTITION `pmax` VALUES LESS THAN (MAXVALUE));",
+        Some(&db),
+    )
+    .await
+    .expect("reorganize");
+    let got = conn
+        .list_table_partitions(&db, "noobdb_padd_t")
+        .await
+        .expect("partitions")
+        .expect("is partitioned");
+    let names: Vec<&str> = got.partitions.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["p2025", "p2026", "p2027", "p2028", "p2029", "pmax"]
+    );
+    // 行の振り分け: 分割後の 2029 年は p2029 へ、2031 年は pmax に残る。
+    for (part, expected) in [("p2025", 1), ("p2027", 1), ("p2029", 1), ("pmax", 1)] {
+        let r = conn
+            .execute(
+                &format!("DELETE FROM noobdb_padd_t PARTITION (`{part}`)"),
+                Some(&db),
+            )
+            .await
+            .expect("delete partition");
+        assert_eq!(r.rows_affected, expected, "{part}");
+    }
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS noobdb_padd_t", Some(&db))
+        .await;
+}
+
 /// #1868: `list_table_partitions` が RANGE パーティション表の子 (境界・MAXVALUE) を返し、非分割表は `None`。
 /// パーティション単位の保守 / TRUNCATE / DROP の SQL がアプリの実行経路 (`execute`) でそのまま通る。
 #[tokio::test]
@@ -5525,4 +5706,83 @@ async fn mysql_advisor_sees_fresh_auto_increment_and_keeps_comment() {
         "BIGINT になる: {:?}",
         row[1]
     );
+}
+
+/// スクリプト / バッチ実行で文が失敗したとき、エラー文が引用する SQL 断片のパスワードが
+/// 失敗報告・停止メッセージ・バッチ結果に残らないこと (#2208)。
+#[tokio::test]
+async fn mysql_script_and_batch_failures_do_not_leak_credentials() {
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
+        return;
+    };
+    const SECRET: &str = "secret123";
+    const BAD: &str = "CREATE USR 'app'@'%' IDENTIFIED BY 'secret123';";
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let session = std::sync::Arc::new(t::make_session("mysql_script_redact", conn, opts, false));
+    let counter = || std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_script_redact_{}.sql", std::process::id()));
+    std::fs::write(&path, format!("{BAD}\nSELECT 1;")).expect("write script");
+    let path_s = path.to_string_lossy().to_string();
+
+    // 停止モード: message と failure の両方。
+    let stopped = t::run_sql_script_via_core(
+        session.clone(),
+        &path_s,
+        None,
+        t::ScriptOptions::default(),
+        counter(),
+        |_| {},
+    )
+    .await
+    .expect("script setup");
+    match stopped {
+        t::ScriptRun::Failed {
+            message, failure, ..
+        } => {
+            assert!(!message.contains(SECRET), "{message}");
+            let f = failure.expect("failure");
+            assert!(!f.error.contains(SECRET), "{}", f.error);
+            assert!(!f.sql.contains(SECRET), "{}", f.sql);
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
+
+    // continue_on_error: failures 一覧。
+    let continued = t::run_sql_script_via_core(
+        session.clone(),
+        &path_s,
+        None,
+        t::ScriptOptions {
+            continue_on_error: true,
+            ..t::ScriptOptions::default()
+        },
+        counter(),
+        |_| {},
+    )
+    .await
+    .expect("script setup");
+    let _ = std::fs::remove_file(&path);
+    match continued {
+        t::ScriptRun::Done { failures, .. } => {
+            assert_eq!(failures.len(), 1);
+            assert!(!failures[0].error.contains(SECRET), "{}", failures[0].error);
+            assert!(!failures[0].sql.contains(SECRET), "{}", failures[0].sql);
+        }
+        other => panic!("expected Done, got {other:?}"),
+    }
+
+    // バッチ実行: 各モードで文の error に秘密値が出ない。
+    for stop_on_error in [true, false] {
+        let (_, results) =
+            t::run_sql_batch_via_core(session.clone(), BAD, None, stop_on_error, 10, counter())
+                .await
+                .expect("batch setup");
+        let err = results
+            .iter()
+            .find_map(|r| r.error.clone())
+            .expect("a failed statement");
+        assert!(!err.contains(SECRET), "{err}");
+    }
 }

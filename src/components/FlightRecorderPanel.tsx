@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { markFeatureTried } from "../settings";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { Box, chakra, Flex } from "@chakra-ui/react";
@@ -276,6 +277,7 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
         ? await api.redoFlightRecord(sessionId, entry.id, force)
         : await api.undoFlightRecord(sessionId, entry.id, force);
       if (outcome.applied) {
+        markFeatureTried("helpFlightRecorderTitle");
         if (outcome.rowsAffected > 0) {
           toast.success(
             t(redo ? "flightRecorderRedoApplied" : "flightRecorderUndoApplied", {

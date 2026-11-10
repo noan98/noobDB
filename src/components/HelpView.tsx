@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion, useReducedMotionConfig } from "motion/react";
 import { directionalSlide, transitions } from "../motion";
@@ -11,9 +11,12 @@ import {
   SHORTCUT_CATEGORY_ORDER,
 } from "../shortcuts";
 import { formatCombo } from "../shortcutKeys";
-import { useSettings } from "../settings";
+import { markFeatureTried, useSettings } from "../settings";
+import { groupProgress, overallProgress, recommendNext, type MasteryFeatureId } from "../mastery";
 import { ActiveRowHighlight } from "./ActiveRowHighlight";
 import { Callout } from "./Callout";
+import { CountUp } from "./CountUp";
+import { MasteryRing } from "./MasteryRing";
 import { Icon, type IconName } from "./Icon";
 import { Kbd } from "./Kbd";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
@@ -37,17 +40,25 @@ type Impact = "yes" | "no";
 /** 『試す』ボタンの行き先 (#1631)。実際に開く処理は App が持つ (`onOpenFeature`)。 */
 type HelpTryTarget =
   | { kind: "newQuery" }
+  | { kind: "snippetForm" }
   | { kind: "settings"; section: string }
   | { kind: "view"; view: "compare" | "tasks" | "newConnection" };
 
 interface Feature {
-  titleKey: Key;
+  /** 項目タイトルの i18n キー。習熟マップ (`mastery.ts`) の項目 ID を兼ねる (#2216)。 */
+  titleKey: MasteryFeatureId;
   descKey: Key;
   impact?: Impact;
   stepKeys?: Key[];
   noteKey?: Key;
   /** 『試す』ボタンで開く画面 (#1631)。 */
   tryTarget?: HelpTryTarget;
+  /** 『試す』を出せない項目の理由 (#2216)。`tryTarget` が無い項目は必ずどちらかを持つ。 */
+  noTryKey?: Key;
+  /** 『試す』で画面を開いた時点で「試した」と記録する (設定画面・全画面の参照系の項目)。 */
+  markOnOpen?: boolean;
+  /** 詳細を表示した時点で「試した」と記録する (読むだけの手順の項目)。 */
+  markOnView?: boolean;
   /** 項目固有のグリフ。未指定なら節の `icon` (#1835)。 */
   icon?: IconName;
 }
@@ -99,6 +110,7 @@ const SECTIONS: Section[] = [
       },
       {
         titleKey: "helpSqlLintTitle",
+        markOnOpen: true,
         icon: "warning",
         tryTarget: { kind: "settings", section: "settings-sec-sql-lint" },
         descKey: "helpSqlLintDesc",
@@ -112,9 +124,16 @@ const SECTIONS: Section[] = [
         impact: "no",
         tryTarget: { kind: "newQuery" },
       },
-      { titleKey: "helpSnippetTitle", icon: "snippet", descKey: "helpSnippetDesc", impact: "no" },
+      {
+        titleKey: "helpSnippetTitle",
+        icon: "snippet",
+        descKey: "helpSnippetDesc",
+        impact: "no",
+        tryTarget: { kind: "snippetForm" },
+      },
       {
         titleKey: "helpHistoryTitle",
+        markOnOpen: true,
         icon: "clock",
         descKey: "helpHistoryDesc",
         impact: "no",
@@ -126,18 +145,50 @@ const SECTIONS: Section[] = [
     headerKey: "helpGroupResults",
     icon: "table",
     features: [
-      { titleKey: "helpPaginationTitle", icon: "list", descKey: "helpPaginationDesc", impact: "no" },
-      { titleKey: "helpCellEditTitle", icon: "table", descKey: "helpCellEditDesc", impact: "no" },
-      { titleKey: "helpDiscardTitle", icon: "undo", descKey: "helpDiscardDesc", impact: "no" },
+      {
+        titleKey: "helpPaginationTitle",
+        icon: "list",
+        descKey: "helpPaginationDesc",
+        impact: "no",
+        tryTarget: { kind: "settings", section: "settings-sec-result-grid" },
+        markOnOpen: true,
+      },
+      {
+        titleKey: "helpCellEditTitle",
+        icon: "table",
+        descKey: "helpCellEditDesc",
+        impact: "no",
+        noTryKey: "helpNoTryResultGrid",
+      },
+      {
+        titleKey: "helpDiscardTitle",
+        icon: "undo",
+        descKey: "helpDiscardDesc",
+        impact: "no",
+        noTryKey: "helpNoTryResultGrid",
+      },
       {
         titleKey: "helpApplyTitle",
+        noTryKey: "helpNoTryResultGrid",
         icon: "check",
         descKey: "helpApplyDesc",
         impact: "yes",
         noteKey: "helpApplyNote",
       },
-      { titleKey: "helpExportTitle", icon: "download", descKey: "helpExportDesc", impact: "no" },
-      { titleKey: "helpImportTitle", icon: "upload", descKey: "helpImportDesc", impact: "yes" },
+      {
+        titleKey: "helpExportTitle",
+        icon: "download",
+        descKey: "helpExportDesc",
+        impact: "no",
+        noTryKey: "helpNoTryResultGrid",
+      },
+      {
+        titleKey: "helpImportTitle",
+        icon: "upload",
+        descKey: "helpImportDesc",
+        impact: "yes",
+        noTryKey: "helpNoTryImport",
+      },
     ],
   },
   {
@@ -154,6 +205,7 @@ const SECTIONS: Section[] = [
       },
       {
         titleKey: "helpSandboxTitle",
+        noTryKey: "helpNoTrySandbox",
         icon: "flask",
         descKey: "helpSandboxDesc",
         impact: "no",
@@ -161,6 +213,7 @@ const SECTIONS: Section[] = [
       },
       {
         titleKey: "helpFlightRecorderTitle",
+        markOnOpen: true,
         icon: "broadcast",
         tryTarget: { kind: "settings", section: "settings-sec-flight-recorder" },
         descKey: "helpFlightRecorderDesc",
@@ -184,6 +237,7 @@ const SECTIONS: Section[] = [
       },
       {
         titleKey: "helpProfileBackupTitle",
+        markOnOpen: true,
         icon: "transfer",
         tryTarget: { kind: "settings", section: "settings-sec-backup" },
         descKey: "helpProfileBackupDesc",
@@ -197,11 +251,33 @@ const SECTIONS: Section[] = [
     headerKey: "helpSectionGuards",
     icon: "lock",
     features: [
-      { titleKey: "helpReadOnlyTitle", descKey: "helpReadOnlyDesc" },
-      { titleKey: "helpProductionTitle", icon: "production", descKey: "helpProductionDesc" },
-      { titleKey: "helpConfirmWritesTitle", descKey: "helpConfirmWritesDesc" },
-      { titleKey: "helpTypeToConfirmTitle", descKey: "helpTypeToConfirmDesc" },
-      { titleKey: "helpEmergencyModeTitle", icon: "alert-circle", descKey: "helpEmergencyModeDesc" },
+      {
+        titleKey: "helpReadOnlyTitle",
+        descKey: "helpReadOnlyDesc",
+        tryTarget: { kind: "view", view: "newConnection" },
+      },
+      {
+        titleKey: "helpProductionTitle",
+        icon: "production",
+        descKey: "helpProductionDesc",
+        tryTarget: { kind: "view", view: "newConnection" },
+      },
+      {
+        titleKey: "helpConfirmWritesTitle",
+        descKey: "helpConfirmWritesDesc",
+        tryTarget: { kind: "view", view: "newConnection" },
+      },
+      {
+        titleKey: "helpTypeToConfirmTitle",
+        descKey: "helpTypeToConfirmDesc",
+        noTryKey: "helpNoTryTypeToConfirm",
+      },
+      {
+        titleKey: "helpEmergencyModeTitle",
+        icon: "alert-circle",
+        descKey: "helpEmergencyModeDesc",
+        noTryKey: "helpNoTryEmergency",
+      },
     ],
   },
   {
@@ -228,6 +304,8 @@ const SECTIONS: Section[] = [
       },
       {
         titleKey: "helpSsmTroubleTitle",
+        noTryKey: "helpNoTryGuide",
+        markOnView: true,
         icon: "alert-circle",
         descKey: "helpSsmTroubleDesc",
         stepKeys: ["helpSsmTrouble1", "helpSsmTrouble2", "helpSsmTrouble3", "helpSsmTrouble4"],
@@ -241,18 +319,24 @@ const SECTIONS: Section[] = [
     features: [
       {
         titleKey: "helpAiPolicyTitle",
+        tryTarget: { kind: "settings", section: "settings-sec-ai" },
+        markOnOpen: true,
         descKey: "helpAiPolicyDesc",
         stepKeys: ["helpAiPolicySend", "helpAiPolicyNotSend", "helpAiPolicyKey", "helpAiPolicyRetention"],
         noteKey: "helpAiPolicyNote",
       },
       {
         titleKey: "helpAiImpactTitle",
+        tryTarget: { kind: "settings", section: "settings-sec-ai" },
+        markOnOpen: true,
         descKey: "helpAiImpactDesc",
         stepKeys: ["helpAiImpactStep1", "helpAiImpactStep2"],
         noteKey: "helpAiImpactNote",
       },
       {
         titleKey: "helpAiPricingTitle",
+        tryTarget: { kind: "settings", section: "settings-sec-ai" },
+        markOnOpen: true,
         icon: "chart",
         descKey: "helpAiPricingDesc",
         stepKeys: ["helpAiPriceOpus", "helpAiPriceSonnet", "helpAiPriceHaiku", "helpAiPriceFable"],
@@ -260,6 +344,12 @@ const SECTIONS: Section[] = [
     ],
   },
 ];
+
+const FEATURE_BY_ID = new Map<string, { feature: Feature; section: Section }>(
+  SECTIONS.flatMap((section) =>
+    section.features.map((feature) => [feature.titleKey, { feature, section }] as const),
+  ),
+);
 
 /** ショートカット表の擬似項目 id (目次の末尾に置く)。 */
 const SHORTCUTS_ID = "shortcuts";
@@ -291,6 +381,41 @@ function ImpactPill({ impact }: { impact: Impact }) {
     >
       <Icon name={writes ? "pencil" : "eye"} size="sm" />
       {t(writes ? "helpImpactWrites" : "helpImpactReadOnly")}
+    </chakra.span>
+  );
+}
+
+/** 「試した」の印 (詳細ペインのタイトル横)。 */
+function TriedPill() {
+  const t = useT();
+  return (
+    <chakra.span
+      display="inline-flex"
+      alignItems="center"
+      gap="1"
+      px="2"
+      py="0.5"
+      borderRadius="pill"
+      textStyle="overline"
+      whiteSpace="nowrap"
+      border="1px solid"
+      borderColor="app.borderSubtle"
+      color="app.textSuccess"
+      data-testid="mastery-tried-pill"
+    >
+      <Icon name="check" size="sm" />
+      {t("helpMasteryTried")}
+    </chakra.span>
+  );
+}
+
+/** グループ見出しの進捗リング + 「試した数 / 総数」(#2216)。 */
+function GroupProgressBadge({ done, total }: { done: number; total: number }) {
+  return (
+    <chakra.span display="inline-flex" alignItems="center" gap="1" textTransform="none">
+      <MasteryRing done={done} total={total} />
+      <CountUp value={done} />
+      <chakra.span aria-hidden="true">/{total}</chakra.span>
     </chakra.span>
   );
 }
@@ -368,6 +493,11 @@ interface HelpViewProps {
 export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature }: HelpViewProps) {
   const t = useT();
   const settings = useSettings();
+  // 習熟マップ (#2216)。記録がオフのときは印・リング・おすすめを出さない。
+  const tracking = settings.masteryTrackingEnabled;
+  const tried = settings.masteryTried;
+  const progressByGroup = new Map(groupProgress(tried).map((g) => [g.group as string, g]));
+  const overall = overallProgress(tried);
   const resolved = resolveShortcutBindings(settings.shortcutOverrides);
 
   const [query, setQuery] = useState("");
@@ -409,6 +539,20 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
   const current = orderedIds.includes(selected) ? selected : orderedIds[0];
   const currentIndex = current ? orderedIds.indexOf(current) : -1;
 
+  // 読むだけの項目は、詳細を表示した時点で「試した」とする。
+  useEffect(() => {
+    const entry = current ? FEATURE_BY_ID.get(current.replace(/^help-item-/, "")) : undefined;
+    if (entry?.feature.markOnView) markFeatureTried(entry.feature.titleKey);
+  }, [current]);
+
+  /** 「次のおすすめ」から飛ぶ。検索で絞られていて目次に無いときは絞り込みを解除する。 */
+  const jumpTo = (featureKey: string) => {
+    const id = `help-item-${featureKey}`;
+    if (!orderedIds.includes(id)) setQuery("");
+    setSlideDir(1);
+    setSelected(id);
+  };
+
   const select = (id: string, focus = false) => {
     const to = orderedIds.indexOf(id);
     if (to >= 0 && currentIndex >= 0 && to !== currentIndex) setSlideDir(to > currentIndex ? 1 : -1);
@@ -436,6 +580,8 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
 
   const renderFeature = (sec: (typeof visibleSections)[number], f: Feature) => {
     const title = t(f.titleKey);
+    const isTried = tried.includes(f.titleKey);
+    const next = tracking ? recommendNext(f.titleKey, tried) : [];
     return (
       <chakra.article display="flex" flexDirection="column" gap="4" aria-labelledby="help-detail-title">
         <chakra.div display="flex" flexDirection="column" gap="1.5">
@@ -451,6 +597,7 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
               {title}
             </chakra.h3>
             {f.impact && <ImpactPill impact={f.impact} />}
+            {tracking && isTried && <TriedPill />}
           </chakra.div>
         </chakra.div>
 
@@ -494,12 +641,41 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
               variant="primary"
               data-testid="help-try"
               aria-label={t("helpTryAria", { title })}
-              onClick={() => f.tryTarget && onOpenFeature(f.tryTarget)}
+              onClick={() => {
+                if (f.tryTarget) onOpenFeature(f.tryTarget);
+                if (f.markOnOpen) markFeatureTried(f.titleKey);
+              }}
             >
               <Icon name="external-link" size="sm" />
               {t("helpTry")}
             </Button>
           </chakra.div>
+        )}
+
+        {f.noTryKey && (
+          <Callout tone="info" title={t("helpNoTryTitle")}>
+            {t(f.noTryKey)}
+          </Callout>
+        )}
+
+        {next.length > 0 && (
+          <chakra.section data-testid="help-next-recommend">
+            <chakra.h4 m="0" mb="2" textStyle="subheading">
+              {t("helpRecommendTitle")}
+            </chakra.h4>
+            <chakra.div display="flex" flexWrap="wrap" gap="2">
+              {next.map((id) => {
+                const entry = FEATURE_BY_ID.get(id);
+                if (!entry) return null;
+                return (
+                  <Button key={id} size="sm" variant="secondary" onClick={() => jumpTo(id)}>
+                    <Icon name={entry.feature.icon ?? entry.section.icon} size="sm" />
+                    {t(entry.feature.titleKey)}
+                  </Button>
+                );
+              })}
+            </chakra.div>
+          </chakra.section>
         )}
       </chakra.article>
     );
@@ -590,6 +766,22 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
             borderColor="app.borderSubtle"
             minH="0"
           >
+            {tracking && (
+              <chakra.div
+                px="4"
+                pt="3"
+                textStyle="caption"
+                display="flex"
+                alignItems="center"
+                gap="1.5"
+                data-testid="mastery-overall"
+              >
+                <MasteryRing done={overall.done} total={overall.total} />
+                <chakra.span>
+                  {t("helpMasteryOverall", { done: String(overall.done), total: String(overall.total) })}
+                </chakra.span>
+              </chakra.div>
+            )}
             <chakra.div px="3" pt="3" pb="2">
               <Input
                 ref={searchRef}
@@ -635,10 +827,27 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
                 onKeyDown={handleNavKeyDown}
               >
                 {visibleSections.map((sec) => (
-                  <chakra.div key={sec.headerKey} role="group" aria-label={sec.header}>
+                  <chakra.div
+                    key={sec.headerKey}
+                    role="group"
+                    aria-label={
+                      tracking && progressByGroup.get(sec.headerKey)
+                        ? `${sec.header} (${t("helpMasteryGroupProgress", {
+                            done: String(progressByGroup.get(sec.headerKey)?.done ?? 0),
+                            total: String(progressByGroup.get(sec.headerKey)?.total ?? 0),
+                          })})`
+                        : sec.header
+                    }
+                  >
                     <NavGroupLabel aria-hidden="true">
                       <Icon name={sec.icon} size="sm" />
-                      {sec.header}
+                      <chakra.span flex="1">{sec.header}</chakra.span>
+                      {tracking && progressByGroup.get(sec.headerKey) && (
+                        <GroupProgressBadge
+                          done={progressByGroup.get(sec.headerKey)?.done ?? 0}
+                          total={progressByGroup.get(sec.headerKey)?.total ?? 0}
+                        />
+                      )}
                     </NavGroupLabel>
                     {sec.features.map((f) => {
                       const id = featureId(f);
@@ -655,6 +864,21 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
                           <chakra.span position="relative" zIndex={1} flex="1" minW="0">
                             {t(f.titleKey)}
                           </chakra.span>
+                          {tracking && tried.includes(f.titleKey) && (
+                            <>
+                              <chakra.span
+                                position="relative"
+                                zIndex={1}
+                                display="inline-flex"
+                                color="app.textSuccess"
+                                aria-hidden="true"
+                                data-testid="mastery-tried-mark"
+                              >
+                                <Icon name="check" size="sm" />
+                              </chakra.span>
+                              <chakra.span srOnly>{t("helpMasteryTried")}</chakra.span>
+                            </>
+                          )}
                           {f.impact === "yes" && (
                             <>
                               <WriteDot position="relative" zIndex={1} aria-hidden="true" />

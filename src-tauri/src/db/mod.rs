@@ -3545,7 +3545,8 @@ fn is_read_only_sql_masked(masked: &[char], idents_kept: &[char]) -> bool {
         // 関わらず全ドライバ共通で拒否する (fail-closed — 過検知のコストは低い一方、
         // 見逃しは任意書き込みに直結する)。
         // 副作用のある関数: 他セッションの強制切断・シーケンス更新・ラージオブジェクト
-        // 書き込み・通知送信・レプリケーションスロット操作・統計リセットなど。
+        // 書き込み・通知送信・レプリケーションスロット操作・レプリケーション起点・
+        // WAL リプレイの制御・バックアップ制御・統計リセットなど。
         // PostgreSQL 側には read_only セッション用のサーバ側読み取り専用設定が無く
         // このガードが唯一の防御 (fail-closed)。
         "openrowset",
@@ -3578,6 +3579,35 @@ fn is_read_only_sql_masked(masked: &[char], idents_kept: &[char]) -> bool {
         "pg_logical_emit_message",
         "pg_promote",
         "pg_stat_reset",
+        "pg_logical_slot_get_changes",
+        "pg_logical_slot_get_binary_changes",
+        "pg_replication_slot_advance",
+        "pg_copy_logical_replication_slot",
+        "pg_copy_physical_replication_slot",
+        "pg_stat_reset_shared",
+        "pg_stat_reset_single_table_counters",
+        "pg_stat_reset_single_function_counters",
+        "pg_stat_reset_replication_slot",
+        "pg_stat_reset_subscription_stats",
+        "pg_stat_reset_slru",
+        "pg_replication_origin_create",
+        "pg_replication_origin_drop",
+        "pg_replication_origin_advance",
+        "pg_replication_origin_session_setup",
+        "pg_replication_origin_session_reset",
+        "pg_replication_origin_xact_setup",
+        "pg_replication_origin_xact_reset",
+        "pg_wal_replay_pause",
+        "pg_wal_replay_resume",
+        "pg_stat_statements_reset",
+        "pg_stat_reset_backend_stats",
+        "pg_sync_replication_slots",
+        "pg_log_standby_snapshot",
+        "pg_backup_start",
+        "pg_backup_stop",
+        "pg_start_backup",
+        "pg_stop_backup",
+        "lo_creat",
     ] {
         if contains_word(body, kw) || contains_word(&idents_lower, kw) {
             return false;
@@ -4560,6 +4590,9 @@ fn mask_for_analysis_impl(
     let mut out: Vec<char> = Vec::with_capacity(src.len());
     let n = src.len();
     let mut i = 0;
+    // 直前の `E'…'` (連結片を含む) が閉じた位置。PostgreSQL では改行を含む空白だけで続く
+    // 次の `'…'` も同じ値の続きで E モードのまま (#2198)。
+    let mut e_literal_end: Option<usize> = None;
     while i < n {
         let c = src[i];
         // Line comment: `-- …` or (MySQL / driver-less only) `# …`, terminated
@@ -4666,12 +4699,32 @@ fn mask_for_analysis_impl(
             let quote = c;
             // PostgreSQL `E'…'` escape string: backslash escapes apply even
             // though ordinary `'…'` literals read `\` as a plain character.
-            let escapes = backslash_escapes
-                || (extras.e_strings
-                    && quote == '\''
-                    && i >= 1
-                    && matches!(src[i - 1], 'e' | 'E')
-                    && (i == 1 || !is_pg_ident_char(src[i - 2])));
+            let e_prefixed = extras.e_strings
+                && quote == '\''
+                && i >= 1
+                && matches!(src[i - 1], 'e' | 'E')
+                && (i == 1 || !is_pg_ident_char(src[i - 2]));
+            // 連結片: 直前の E リテラルの終端から、改行 (`\n` / `\r` 単独も PostgreSQL では
+            // 改行) を含む空白だけ (コメントは空白化済み) で隔てた `'` は E モードを引き継ぐ。
+            // 同じ行の空白だけでは連結にならない (PostgreSQL では構文エラー)。なお `/* */` を
+            // 挟んだ場合も空白化後は連結扱いになるが、PG では構文エラーで何も実行されないので
+            // 意図した過剰扱い (安全側)。
+            let e_continued = extras.e_strings
+                && quote == '\''
+                && e_literal_end.is_some_and(|end| {
+                    let gap = &out[end..];
+                    (gap.contains(&'\n') || gap.contains(&'\r'))
+                        && gap
+                            .iter()
+                            .all(|&g| matches!(g, ' ' | '\t' | '\n' | '\r' | '\u{b}' | '\u{c}'))
+                });
+            let escapes = backslash_escapes || e_prefixed || e_continued;
+            // E モードでないリテラル (や引用識別子) を挟んだ時点で、それより前の E リテラル
+            // とはもう連結しない。ここで状態を捨てないと、後続の `'` ごとに伸び続ける隙間を
+            // 毎回走査して二乗の計算量になる。フロントの `maskLiterals` と同じ。
+            if !e_prefixed && !e_continued {
+                e_literal_end = None;
+            }
             out.push(c);
             i += 1;
             while i < n {
@@ -4694,6 +4747,9 @@ fn mask_for_analysis_impl(
                     }
                     out.push(quote);
                     i += 1;
+                    if extras.e_strings && quote == '\'' && (e_prefixed || e_continued) {
+                        e_literal_end = Some(i);
+                    }
                     break;
                 }
                 let keep_body = match quote {

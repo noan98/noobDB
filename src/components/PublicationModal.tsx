@@ -3,6 +3,7 @@ import { chakra } from "@chakra-ui/react";
 import { api, type PublicationInfo } from "../api/tauri";
 import { useT } from "../i18n";
 import { Callout } from "./Callout";
+import { EmptyState } from "./EmptyState";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import {
@@ -13,7 +14,7 @@ import {
   type PublicationMembership,
   type PublicationPick,
 } from "./publicationSql";
-import { Spinner } from "./Spinner";
+import { SkeletonSearchRows } from "./Skeleton";
 import { SqlPreview } from "./SqlPreview";
 import { Button, Checkbox, PressableButton } from "./ui";
 
@@ -148,9 +149,25 @@ export function PublicationModal({ sessionId, database, table, readOnly, onConfi
         </chakra.p>
 
         {loading ? (
-          <Spinner size={14} />
+          <chakra.div
+            role="status"
+            aria-label={t("spinnerLoadingAria")}
+            borderWidth="1px"
+            borderColor="app.border"
+            borderRadius="md"
+            paddingY="1"
+          >
+            <SkeletonSearchRows rows={3} />
+          </chakra.div>
         ) : rows.length === 0 ? (
-          !loadError && <Callout tone="info">{t("publicationNone")}</Callout>
+          !loadError && (
+            <EmptyState
+              compact
+              icon="broadcast"
+              title={t("publicationNoneTitle")}
+              description={t("publicationNone")}
+            />
+          )
         ) : (
           <FormSection as="div" role="group" aria-label={t("objGroupPublications")}>
             {rows.map((r) => (

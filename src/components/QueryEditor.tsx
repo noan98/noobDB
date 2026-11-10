@@ -74,7 +74,7 @@ import { renderCompletionIcon } from "./completionIcons";
 import { snippetCompletionSource } from "./sqlSnippetCompletion";
 import { snippetHasFields, snippetToCodeMirrorTemplate } from "../snippetTemplate";
 import { t, useT } from "../i18n";
-import { useSettings } from "../settings";
+import { markFeatureTried, useSettings } from "../settings";
 import { springs } from "../motion";
 import { statementAtOffset, statementsFromOffset } from "../sqlScript";
 import { diagnosticsFromTree, type SqlLintMessages } from "./sqlLint";
@@ -451,6 +451,8 @@ function formatEditorContent(view: EditorView, driver: string, onError?: (messag
   if (text.trim().length === 0) return false;
   void formatSqlAsync(text, driver).then(
     (formatted) => {
+      // ショートカット・ツールバー・右クリック・コマンドの全経路がここを通る (#2216)。
+      markFeatureTried("helpFormatTitle");
       if (formatted === text) return;
       const current = view.state;
       // 整形中に文書が変わった場合は適用しない。同じ範囲の中身が変わっていなければ

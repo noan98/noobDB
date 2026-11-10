@@ -119,6 +119,8 @@ import {
   setQueryNotificationThresholdSecs,
   setAutoUpdateCheckEnabled,
   setPerfMeasureEnabled,
+  setMasteryTrackingEnabled,
+  resetMasteryProgress,
   setQueryTimeoutSecs,
   setConnectTimeoutSecs,
   DEFAULT_CONNECT_TIMEOUT_SECS,
@@ -149,6 +151,7 @@ import {
   setTabRestoreMode,
   useSettings,
 } from "../settings";
+import { overallProgress } from "../mastery";
 import { ACCENT_INPUT_FALLBACK, ACCENT_PRESETS } from "../accent";
 import { checkForAppUpdate, getCurrentAppVersion } from "../updater";
 import { displayVersion } from "../updaterFormat";
@@ -664,6 +667,7 @@ const SECTIONS: SettingsSectionMeta[] = [
   { id: "settings-sec-preview-highlight", icon: "select-all", titleKey: "settingsPreviewHighlight" },
   { id: "settings-sec-keybindings", icon: "hash", titleKey: "settingsShortcuts" },
   { id: "settings-sec-logs", icon: "list", titleKey: "settingsLogs" },
+  { id: "settings-sec-mastery", icon: "check", titleKey: "settingsMastery" },
   { id: "settings-sec-knownhosts", icon: "key", titleKey: "knownHostsTitle" },
   { id: "settings-sec-updates", icon: "refresh", titleKey: "settingsUpdates" },
   { id: "settings-sec-backup", icon: "transfer", titleKey: "settingsBackup" },
@@ -690,6 +694,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const settings = useSettings();
+  const masteryOverall = overallProgress(settings.masteryTried);
   // 編集対象は画面に実際に適用されている配色 (ダーク専用プリセットではトグル値ではなく
   // 実効テーマ) に揃える。
   const theme = effectiveTheme(settings.themePreset, toggleTheme);
@@ -2432,6 +2437,43 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     checked={settings.perfMeasureEnabled}
                     onChange={setPerfMeasureEnabled}
                   />
+                </SettingsToggleRow>
+              </SettingsSection>
+
+              <SettingsSection id="settings-sec-mastery" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <SettingsLabelWithInfo>
+                    <chakra.h3>{t("settingsMastery")}</chakra.h3>
+                    <SettingsInfo>{t("settingsMasteryHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                </SettingsSectionHeader>
+                <SettingsToggleRow>
+                  <SettingsToggleLabel htmlFor="settings-mastery-tracking">
+                    {t("settingsMasteryTracking")}
+                  </SettingsToggleLabel>
+                  <Switch
+                    id="settings-mastery-tracking"
+                    checked={settings.masteryTrackingEnabled}
+                    onChange={setMasteryTrackingEnabled}
+                  />
+                </SettingsToggleRow>
+                <SettingsToggleRow>
+                  <chakra.span>
+                    {t("settingsMasteryProgress", {
+                      done: String(masteryOverall.done),
+                      total: String(masteryOverall.total),
+                    })}
+                  </chakra.span>
+                  <SettingsReset
+                    type="button"
+                    disabled={settings.masteryTried.length === 0}
+                    onClick={() => {
+                      resetMasteryProgress();
+                      toast.success(t("settingsMasteryResetDone"));
+                    }}
+                  >
+                    {t("settingsMasteryReset")}
+                  </SettingsReset>
                 </SettingsToggleRow>
               </SettingsSection>
 

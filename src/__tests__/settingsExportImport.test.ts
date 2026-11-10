@@ -8,6 +8,7 @@ import {
   SETTINGS_EXPORT_KIND,
   SETTINGS_EXPORT_VERSION,
   deserializeSettingsImport,
+  normalizeSettings,
   serializeSettingsExport,
 } from "../settings";
 
@@ -178,5 +179,29 @@ describe("replaceAllSettings (#679)", () => {
     mod.replaceAllSettings({ ...mod.DEFAULT_SETTINGS, fontSizePx: 9999 });
 
     expect(mod.getSettings().fontSizePx).toBeLessThanOrEqual(mod.MAX_FONT_SIZE_PX);
+  });
+});
+
+describe("習熟マップの設定 (#2216)", () => {
+  it("normalizeSettings は壊れた masteryTried / masteryTrackingEnabled を既定へ戻す", () => {
+    expect(normalizeSettings({ masteryTried: "helpRunTitle" }).masteryTried).toEqual([]);
+    expect(
+      normalizeSettings({ masteryTried: ["helpRunTitle", "nope", 3, "helpRunTitle"] }).masteryTried,
+    ).toEqual(["helpRunTitle"]);
+    expect(normalizeSettings({ masteryTrackingEnabled: "no" }).masteryTrackingEnabled).toBe(
+      DEFAULT_SETTINGS.masteryTrackingEnabled,
+    );
+    expect(normalizeSettings({ masteryTrackingEnabled: false }).masteryTrackingEnabled).toBe(false);
+  });
+
+  it("エクスポート → インポートで往復する", () => {
+    const src = {
+      ...DEFAULT_SETTINGS,
+      masteryTrackingEnabled: false,
+      masteryTried: ["helpRunTitle", "helpAiPolicyTitle"],
+    };
+    const out = deserializeSettingsImport(serializeSettingsExport(src, "2026-01-01T00:00:00.000Z"));
+    expect(out.masteryTrackingEnabled).toBe(false);
+    expect(out.masteryTried).toEqual(["helpRunTitle", "helpAiPolicyTitle"]);
   });
 });

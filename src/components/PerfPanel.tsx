@@ -8,7 +8,9 @@ import { SurfaceRule } from "./SurfaceRule";
 import { Callout } from "./Callout";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
-import { formatPerfBytes, formatPerfMs, slowestSqlExecuteMs, toPerfRows } from "./perfSamples";
+import { useKeepAliveActive, useRefreshOnReactivate } from "./KeepAlive";
+import { LiveCell, LiveRowsPresence, LiveTr } from "./LiveRows";
+import { formatPerfBytes, formatPerfMs, perfRowKeys, slowestSqlExecuteMs, toPerfRows } from "./perfSamples";
 import { Button, Heading, Switch } from "./ui";
 import { useToast } from "./Toast";
 
@@ -34,9 +36,10 @@ const thCss: SystemStyleObject = {
   whiteSpace: "nowrap",
   textAlign: "right",
 };
+// セルは `LiveCell` (#1022) 経由。パディングは内側 (`cellInnerCss`) に置く。
+const cellInnerCss: SystemStyleObject = { padding: "var(--space-1-25) var(--space-2-5)" };
 const tdCss: SystemStyleObject = {
   borderBottom: "1px solid var(--border-subtle, var(--border))",
-  padding: "var(--space-1-25) var(--space-2-5)",
   fontSize: "var(--text-sm)",
   fontFamily: "var(--font-mono)",
   textStyle: "numeric",
@@ -59,11 +62,19 @@ export function PerfPanel() {
     }
   }, []);
 
+  // 初回の取得はマウント時に 1 度だけ。
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  // 別のタブへ移っている間 (keep-alive で非表示) はポーリングを止め、戻ったら即取り直す (#2213)。
+  const active = useKeepAliveActive();
+  useEffect(() => {
+    if (!active) return;
     const id = setInterval(() => void refresh(), REFRESH_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [refresh]);
+  }, [active, refresh]);
+  useRefreshOnReactivate(active, refresh);
 
   const clear = async () => {
     try {
@@ -75,6 +86,7 @@ export function PerfPanel() {
   };
 
   const rows = toPerfRows(status?.samples ?? []);
+  const rowKeys = perfRowKeys(rows);
   const slowest = slowestSqlExecuteMs(rows);
 
   return (
@@ -147,21 +159,41 @@ export function PerfPanel() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
-                  <tr key={`${r.atMs}-${r.kind}-${r.rows}-${r.sqlExecuteMs}`} data-testid="perf-row">
-                    <chakra.td css={{ ...tdCss, textAlign: "left" }}>
-                      {new Date(r.atMs).toLocaleTimeString()}
-                    </chakra.td>
-                    <chakra.td css={{ ...tdCss, textAlign: "left" }}>
-                      {r.kind === "stream" ? t("perfKindStream") : t("perfKindQuery")}
-                    </chakra.td>
-                    <chakra.td css={tdCss}>{formatPerfMs(r.sqlExecuteMs)}</chakra.td>
-                    <chakra.td css={tdCss}>{formatPerfMs(r.emitMs)}</chakra.td>
-                    <chakra.td css={tdCss}>{formatPerfBytes(r.payloadBytes)}</chakra.td>
-                    <chakra.td css={tdCss}>{r.rows}</chakra.td>
-                    <chakra.td css={tdCss}>{r.columns}</chakra.td>
-                  </tr>
-                ))}
+                <LiveRowsPresence>
+                  {rows.map((r, i) => (
+                    <LiveTr key={rowKeys[i]} testId="perf-row">
+                      <LiveCell
+                        css={{ ...tdCss, textAlign: "left" }}
+                        innerCss={cellInnerCss}
+                        collapse={false}
+                      >
+                        {new Date(r.atMs).toLocaleTimeString()}
+                      </LiveCell>
+                      <LiveCell
+                        css={{ ...tdCss, textAlign: "left" }}
+                        innerCss={cellInnerCss}
+                        collapse={false}
+                      >
+                        {r.kind === "stream" ? t("perfKindStream") : t("perfKindQuery")}
+                      </LiveCell>
+                      <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false}>
+                        {formatPerfMs(r.sqlExecuteMs)}
+                      </LiveCell>
+                      <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false}>
+                        {formatPerfMs(r.emitMs)}
+                      </LiveCell>
+                      <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false}>
+                        {formatPerfBytes(r.payloadBytes)}
+                      </LiveCell>
+                      <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false}>
+                        {r.rows}
+                      </LiveCell>
+                      <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false}>
+                        {r.columns}
+                      </LiveCell>
+                    </LiveTr>
+                  ))}
+                </LiveRowsPresence>
               </tbody>
             </chakra.table>
           </Box>

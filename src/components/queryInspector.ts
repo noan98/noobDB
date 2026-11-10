@@ -1,4 +1,5 @@
 import type { LiveQuery } from "../api/tauri";
+import type { LiveField } from "./liveDiff";
 
 /**
  * ライブクエリ・インスペクタ (#746) の純ロジック。N+1 判定・テールのマージ/
@@ -365,3 +366,19 @@ export function tailExplainBlockReason(query: string): "masked" | "unsupported" 
   if (/\$\d+/.test(body)) return "parameterized";
   return null;
 }
+
+/** 集計行の安定 key (#2213)。digest + データベース。並べ替え・ポーリングを跨いで同じ行は同じ key。 */
+export function statRowKey(r: { digest: string; database: string | null }): string {
+  return `${r.digest} ${r.database ?? ""}`;
+}
+
+export type StatLiveField = "calls" | "total" | "mean" | "max" | "rows";
+
+/** 集計行の値変化フラッシュ対象。 */
+export const STAT_LIVE_FIELDS: readonly LiveField<StatRowLike, StatLiveField>[] = [
+  { name: "calls", changed: (a, b) => a.calls !== b.calls },
+  { name: "total", changed: (a, b) => a.total_time_ms !== b.total_time_ms },
+  { name: "mean", changed: (a, b) => a.mean_time_ms !== b.mean_time_ms },
+  { name: "max", changed: (a, b) => a.max_time_ms !== b.max_time_ms },
+  { name: "rows", changed: (a, b) => a.rows !== b.rows },
+];

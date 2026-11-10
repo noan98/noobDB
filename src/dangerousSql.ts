@@ -134,6 +134,9 @@ function maskLiteralsUncached(
     }
   };
   let i = 0;
+  // 直前の `E'…'` (連結片を含む) が閉じた位置。PostgreSQL では改行を含む空白だけで続く
+  // 次の `'…'` も同じ値の続きで E モードのまま (#2198)。バックエンドの `e_literal_end` と対。
+  let eLiteralEnd = -1;
   while (i < n) {
     const c = sql[i];
     const c2 = sql[i + 1];
@@ -213,13 +216,26 @@ function maskLiteralsUncached(
       const quote = c;
       // PostgreSQL の E'…' (エスケープ文字列) だけは `\` がエスケープ。直前が単独の E/e の
       // ときに限る。バックエンドの `mask_for_analysis_impl` と同じ規則。
-      const escapes =
-        backslashEscapes ||
-        (driver === "postgres" &&
-          quote === "'" &&
-          i >= 1 &&
-          (sql[i - 1] === "e" || sql[i - 1] === "E") &&
-          (i === 1 || !isPgIdentChar(sql[i - 2])));
+      const ePrefixed =
+        driver === "postgres" &&
+        quote === "'" &&
+        i >= 1 &&
+        (sql[i - 1] === "e" || sql[i - 1] === "E") &&
+        (i === 1 || !isPgIdentChar(sql[i - 2]));
+      // 連結片: 直前の E リテラルの終端から、改行 (`\n` / `\r` 単独も PostgreSQL では改行) を
+      // 含む空白だけ (コメントは空白化済み) で隔てた `'` は E モードを引き継ぐ。同じ行の空白
+      // だけでは連結にならない。`/* */` を挟んだ場合も空白化後は連結扱いになるが、PG では構文
+      // エラーで何も実行されないので意図した過剰扱い (安全側)。
+      const eContinued =
+        driver === "postgres" &&
+        quote === "'" &&
+        eLiteralEnd >= 0 &&
+        /^[ \t\n\r\v\f]*[\n\r][ \t\n\r\v\f]*$/.test(out.slice(eLiteralEnd, i).join(""));
+      const escapes = backslashEscapes || ePrefixed || eContinued;
+      // E モードでないリテラル (や引用識別子) を挟んだ時点で、それより前の E リテラルとは
+      // もう連結しない。ここで状態を捨てないと、後続の `'` ごとに伸び続ける隙間を毎回
+      // 切り出して二乗の計算量になる (大きな VALUES で UI が固まる)。
+      if (!ePrefixed && !eContinued) eLiteralEnd = -1;
       let j = i + 1;
       let closed = false;
       while (j < n) {
@@ -257,6 +273,7 @@ function maskLiteralsUncached(
       // `"…"` は既定で文字列 (ANSI_QUOTES 無効) なので残さない。
       const keepContent = keepIdent && (quote === "`" || (quote === '"' && driver !== "mysql"));
       if (!keepContent) blank(i + 1, closed ? j - 1 : j);
+      if (closed && quote === "'" && (ePrefixed || eContinued)) eLiteralEnd = j;
       i = j;
       continue;
     }
@@ -594,7 +611,7 @@ const WRITE_KEYWORDS = [
  * 実際の書き込み SQL が引数の文字列リテラルに埋め込まれる (`OPENROWSET` /
  * `dblink_exec` / `load_extension`) か、関数自体に副作用がある (他セッションの強制切断・
  * シーケンス更新・ラージオブジェクト書き込み・通知送信・レプリケーションスロット操作・
- * 統計リセット) もの。バックの `is_read_only_sql_masked` (src-tauri/src/db/mod.rs) と
+ * レプリケーション起点・WAL リプレイの制御・バックアップ制御・統計リセット) もの。バックの `is_read_only_sql_masked` (src-tauri/src/db/mod.rs) と
  * 同じ一覧で、全ドライバ共通で拒否する (fail-closed)。引用符付き識別子
  * (`"nextval"(…)`) で素通りされないよう、中身を残したマスクでも照合する (#1517)。
  * 書き込みキーワードは対象外 (`"update"` という列名の誤検知を避ける)。
@@ -630,6 +647,35 @@ const DENIED_FUNCTIONS = [
   "pg_logical_emit_message",
   "pg_promote",
   "pg_stat_reset",
+  "pg_logical_slot_get_changes",
+  "pg_logical_slot_get_binary_changes",
+  "pg_replication_slot_advance",
+  "pg_copy_logical_replication_slot",
+  "pg_copy_physical_replication_slot",
+  "pg_stat_reset_shared",
+  "pg_stat_reset_single_table_counters",
+  "pg_stat_reset_single_function_counters",
+  "pg_stat_reset_replication_slot",
+  "pg_stat_reset_subscription_stats",
+  "pg_stat_reset_slru",
+  "pg_replication_origin_create",
+  "pg_replication_origin_drop",
+  "pg_replication_origin_advance",
+  "pg_replication_origin_session_setup",
+  "pg_replication_origin_session_reset",
+  "pg_replication_origin_xact_setup",
+  "pg_replication_origin_xact_reset",
+  "pg_wal_replay_pause",
+  "pg_wal_replay_resume",
+  "pg_stat_statements_reset",
+  "pg_stat_reset_backend_stats",
+  "pg_sync_replication_slots",
+  "pg_log_standby_snapshot",
+  "pg_backup_start",
+  "pg_backup_stop",
+  "pg_start_backup",
+  "pg_stop_backup",
+  "lo_creat",
 ];
 
 /**

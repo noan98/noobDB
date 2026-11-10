@@ -6,6 +6,7 @@ import { sql as sqlLang } from "@codemirror/lang-sql";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { api, type TableColumnInfo } from "../api/tauri";
+import { markFeatureTried } from "../settings";
 import { useT, type I18nKey } from "../i18n";
 import { codeMirrorSqlDialectFor, isSystemDatabase, quoteIdentFor } from "./sqlDialect";
 import { CopyButton } from "./CopyButton";
@@ -1174,6 +1175,7 @@ export function QueryBuilder({
     // 防御的ガード: 通常はボタンの disabled が押下自体を防ぐ (改善 2-1)。
     if (blockedReason || (!!readOnly && kind !== "SELECT")) return;
     onPersist?.(captureSnapshot());
+    markFeatureTried("helpQueryBuilderTitle");
     onExecute(sql);
     onClose();
   }, [sql, onExecute, onClose, onPersist, captureSnapshot, blockedReason, readOnly, kind]);

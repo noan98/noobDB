@@ -73,6 +73,12 @@ pub fn require_env(name: &str) -> Option<String> {
     }
 }
 
+/// 任意の構成 (レプリカなど) が env で与えられているかだけを見る。skip には使わない
+/// (skip は `require_env` を通す)。値が無くても断定の内容を切り替えるだけ。
+pub fn env_is_set(name: &str) -> bool {
+    std::env::var_os(name).is_some()
+}
+
 /// `tables` は `db` に実在する 4 件以上のテーブル (一括取得の経路も通すため)。
 pub async fn assert_tree_and_open_match_individual_ipcs(
     state: &t::AppState,
@@ -629,4 +635,12 @@ pub fn create_table_cases(driver: &str) -> Vec<CreateTableCase> {
         .collect();
     assert!(!cases.is_empty(), "no cases for driver {driver}");
     cases
+}
+
+/// `scheme://user:pw@host:port/db` の URL からポート部分を取り出す (レプリケーション監視の
+/// 接続元・接続先表示との突き合わせ用、#2209)。
+pub fn url_port(url: &str) -> String {
+    let after_at = url.rsplit('@').next().unwrap_or(url);
+    let host_port = after_at.split('/').next().unwrap_or(after_at);
+    host_port.rsplit(':').next().unwrap_or("").to_string()
 }

@@ -897,6 +897,8 @@ describe("共通コンポーネントの迂回", () => {
     "../components/LatencySparkline.tsx",
     // タイムラプスのスクラバー (#2095): 取得時刻・行数から算出した座標で描く行数スパークライン。
     "../components/TimelapseScrubber.tsx",
+    // 習熟マップの進捗リング (#2216): 試した数 / 総数から算出した弧を描くデータの図。
+    "../components/MasteryRing.tsx",
     // ブランドカラー定数と同様、noobDB ロゴそのもの (favicon / App.css と parity
     // 固定) を描く単一ソース。
     "../brand.tsx",

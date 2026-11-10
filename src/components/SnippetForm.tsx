@@ -1,4 +1,5 @@
 import { useId, useMemo, useState } from "react";
+import { markFeatureTried } from "../settings";
 import { Box, chakra } from "@chakra-ui/react";
 import { api, ConnectionProfile, Snippet, SnippetScope } from "../api/tauri";
 import { useT } from "../i18n";
@@ -90,6 +91,7 @@ export function SnippetForm({
     if (Object.keys(errors).length > 0) return;
     setSaving(true);
     try {
+      markFeatureTried("helpSnippetTitle");
       await api.saveSnippet({
         // 複製の下書きは id が空 (新規として保存する, #1631)。
         id: initial?.id || undefined,

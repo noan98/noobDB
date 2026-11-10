@@ -822,7 +822,18 @@ async fn postgres_replication_status_standalone_and_slot() {
 
     let status = conn.replication_status().await.expect("replication_status");
     // 他のテストが物理スロットを残していても壊れないよう、構成なしの断定はスロットが無いときだけ行う。
-    if status.slots.is_empty() {
+    // CI のプライマリにはスタンバイ (#2209) がぶら下がるので、その場合は下の専用テストが検証する。
+    if common::env_is_set("NOOBDB_TEST_POSTGRES_STANDBY_URL") {
+        assert_eq!(status.role, t::ReplicationRole::Primary, "{status:?}");
+        assert_eq!(status.missing_privilege, None, "{status:?}");
+        assert!(
+            status
+                .links
+                .iter()
+                .all(|l| l.direction == t::ReplicationDirection::Downstream),
+            "a primary has no upstream: {status:?}"
+        );
+    } else if status.slots.is_empty() {
         assert_eq!(status.role, t::ReplicationRole::Standalone);
         assert!(status.links.is_empty(), "no walsender expected: {status:?}");
     }
@@ -860,6 +871,103 @@ async fn postgres_replication_status_standalone_and_slot() {
             .await;
     }
     conn.close().await;
+}
+
+/// レプリケーション監視 (#2209) のレプリカ経路。CI のセットアップ (scripts/ci-setup-plain-db.sh) が
+/// 立てる primary → standby → cascade の 3 台に対して、各視点の `replication_status` を検証する。
+/// - primary: role = Primary、下流 (standby) が streaming で `lag_bytes` つき
+/// - standby: role = Replica、上流 1 件に加え、カスケード先 (cascade) が下流として見える
+/// - cascade: role = Replica、上流 (standby) だけで下流なし
+#[tokio::test]
+async fn postgres_replication_status_streaming_standby_and_cascade() {
+    let Some(primary_url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let Some(standby_url) = common::require_env("NOOBDB_TEST_POSTGRES_STANDBY_URL") else {
+        return;
+    };
+    let Some(cascade_url) = common::require_env("NOOBDB_TEST_POSTGRES_CASCADE_URL") else {
+        return;
+    };
+    let connect = |url: String| async move {
+        let opts = t::parse_postgres_url(&url).expect("valid url");
+        t::connect(&opts).await.expect("connect")
+    };
+    let primary = connect(primary_url.clone()).await;
+    let standby = connect(standby_url.clone()).await;
+    let cascade = connect(cascade_url.clone()).await;
+
+    // primary 視点: 直接の下流は standby の 1 本 (cascade は standby にぶら下がる)。
+    let st = primary.replication_status().await.expect("primary status");
+    assert_eq!(st.role, t::ReplicationRole::Primary, "{st:?}");
+    assert_eq!(st.missing_privilege, None, "{st:?}");
+    let down: Vec<_> = st
+        .links
+        .iter()
+        .filter(|l| l.direction == t::ReplicationDirection::Downstream)
+        .collect();
+    assert_eq!(down.len(), 1, "primary sees only the standby: {st:?}");
+    assert_eq!(down[0].state.as_deref(), Some("streaming"), "{st:?}");
+    assert_eq!(down[0].sync_state.as_deref(), Some("async"), "{st:?}");
+    assert_eq!(down[0].address.as_deref(), Some("127.0.0.1"), "{st:?}");
+    assert!(
+        down[0].lag_bytes.is_some_and(|b| b >= 0),
+        "lag_bytes must be a non-negative number on the sender side: {st:?}"
+    );
+
+    // standby 視点: Replica として上流 1 件 + カスケード先の下流 1 件 (#2209 の修正対象)。
+    let st = standby.replication_status().await.expect("standby status");
+    assert_eq!(st.role, t::ReplicationRole::Replica, "{st:?}");
+    let up: Vec<_> = st
+        .links
+        .iter()
+        .filter(|l| l.direction == t::ReplicationDirection::Upstream)
+        .collect();
+    assert_eq!(up.len(), 1, "{st:?}");
+    assert_eq!(up[0].state.as_deref(), Some("streaming"), "{st:?}");
+    let primary_port = common::url_port(&primary_url);
+    assert_eq!(
+        up[0].address.as_deref(),
+        Some(format!("127.0.0.1:{primary_port}").as_str()),
+        "{st:?}"
+    );
+    // 上流の遅延は直近のトランザクション replay 時刻から出るため、書き込みが無ければ None。
+    assert!(up[0].lag_secs.is_none_or(|v| v >= 0.0), "{st:?}");
+    let down: Vec<_> = st
+        .links
+        .iter()
+        .filter(|l| l.direction == t::ReplicationDirection::Downstream)
+        .collect();
+    assert_eq!(
+        down.len(),
+        1,
+        "cascade standby must appear downstream: {st:?}"
+    );
+    assert_eq!(down[0].state.as_deref(), Some("streaming"), "{st:?}");
+    assert!(
+        down[0].lag_bytes.is_some_and(|b| b >= 0),
+        "lag_bytes must be computed without pg_current_wal_lsn() in recovery: {st:?}"
+    );
+
+    // cascade 視点: 上流 (standby) だけ。
+    let st = cascade.replication_status().await.expect("cascade status");
+    assert_eq!(st.role, t::ReplicationRole::Replica, "{st:?}");
+    assert_eq!(st.links.len(), 1, "{st:?}");
+    assert_eq!(
+        st.links[0].direction,
+        t::ReplicationDirection::Upstream,
+        "{st:?}"
+    );
+    let standby_port = common::url_port(&standby_url);
+    assert_eq!(
+        st.links[0].address.as_deref(),
+        Some(format!("127.0.0.1:{standby_port}").as_str()),
+        "{st:?}"
+    );
+
+    primary.close().await;
+    standby.close().await;
+    cascade.close().await;
 }
 
 /// プロセス監視パネル (list_processes / kill_processes) の PostgreSQL 経路。
@@ -4322,6 +4430,66 @@ async fn postgres_list_table_partitions_when_env_set() {
             .execute(&format!("DROP TABLE IF EXISTS public.{tbl} CASCADE"), None)
             .await;
     }
+    conn.close().await;
+}
+
+/// #2211: パーティション追加 (`CREATE TABLE ... PARTITION OF`) が既存の `execute` 経路で通り、
+/// 追加した子へ行が振り分けられる。同じ幅で 2 件まとめて作る文 (UI が組み立てるもの) と同じ形。
+#[tokio::test]
+async fn postgres_add_partitions_routes_rows_when_env_set() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS public.noobdb_padd_t CASCADE", None)
+        .await;
+    for ddl in [
+        "CREATE TABLE public.noobdb_padd_t (id INT, ts DATE NOT NULL) PARTITION BY RANGE (ts)",
+        "CREATE TABLE \"public\".\"noobdb_padd_t_2026_01\" PARTITION OF \"public\".\"noobdb_padd_t\" FOR VALUES FROM ('2026-01-01') TO ('2026-02-01');",
+        // UI の初期値と同じ「同じ幅の次の期間」を 2 件。
+        "CREATE TABLE \"public\".\"noobdb_padd_t_2026_02\" PARTITION OF \"public\".\"noobdb_padd_t\" FOR VALUES FROM ('2026-02-01') TO ('2026-03-01');",
+        "CREATE TABLE \"public\".\"noobdb_padd_t_2026_03\" PARTITION OF \"public\".\"noobdb_padd_t\" FOR VALUES FROM ('2026-03-01') TO ('2026-04-01');",
+        "INSERT INTO public.noobdb_padd_t VALUES (1, '2026-01-15'), (2, '2026-02-10'), (3, '2026-02-11'), (4, '2026-03-31')",
+    ] {
+        conn.execute(ddl, None).await.expect(ddl);
+    }
+    let got = conn
+        .list_table_partitions("public", "noobdb_padd_t")
+        .await
+        .expect("partitions")
+        .expect("is partitioned");
+    let names: Vec<&str> = got.partitions.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec![
+            "noobdb_padd_t_2026_01",
+            "noobdb_padd_t_2026_02",
+            "noobdb_padd_t_2026_03"
+        ]
+    );
+    // 行の振り分け: 子ごとに削除した件数で確かめる (1 / 2 / 1)。
+    let mut counts = Vec::new();
+    for child in names {
+        let r = conn
+            .execute(&format!("DELETE FROM public.\"{child}\""), None)
+            .await
+            .expect("delete child");
+        counts.push(r.rows_affected);
+    }
+    assert_eq!(counts, vec![1, 2, 1]);
+    // 既存の境界と重なる追加は DB 側でも失敗する (UI は実行前にエラーにする)。
+    assert!(conn
+        .execute(
+            "CREATE TABLE \"public\".\"noobdb_padd_t_dup\" PARTITION OF \"public\".\"noobdb_padd_t\" FOR VALUES FROM ('2026-02-15') TO ('2026-03-15');",
+            None,
+        )
+        .await
+        .is_err());
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS public.noobdb_padd_t CASCADE", None)
+        .await;
     conn.close().await;
 }
 

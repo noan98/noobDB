@@ -600,6 +600,7 @@ import {
   resolveThemePreset,
   themePresetDataTheme,
   recordCommandPaletteUsage,
+  markFeatureTried,
   pruneCommandPaletteMru,
   setTableOpenQueryOverride,
   type TabRestoreMode,
@@ -2630,6 +2631,11 @@ export default function App() {
         });
         return;
       }
+      if (next) {
+        // 接続先名のタイプ確認を通って有効化した。
+        markFeatureTried("helpEmergencyModeTitle");
+        markFeatureTried("helpTypeToConfirmTitle");
+      }
       setEmergencySessions((cur) => {
         const nextSet = new Set(cur);
         if (next) nextSet.add(sid);
@@ -3177,6 +3183,7 @@ export default function App() {
 
   const handleBackupExportConfirm = useCallback(
     async (passphrase: string, keepGenerations: number | null) => {
+      markFeatureTried("helpProfileBackupTitle");
       try {
         const dest = await saveFileDialog({
           defaultPath: defaultBackupFileName(),
@@ -4365,6 +4372,7 @@ export default function App() {
   // 復元・エラーハンドリング) に乗せるため。
   const handleSandboxCreated = useCallback(
     async (res: SandboxCreateResponse) => {
+      markFeatureTried("helpSandboxTitle");
       api.disconnect(res.session_id).catch(() => {});
       setSandboxes((prev) => [...prev.filter((s) => s.id !== res.sandbox.id), res.sandbox]);
       setSandboxCreateTarget(null);
@@ -5787,6 +5795,7 @@ export default function App() {
       streamUnlistenRef.current.set(tabId, unlisten);
 
       try {
+        markFeatureTried("helpDryRunTitle");
         await api.previewQueryStream({
           sessionId,
           streamId,
@@ -5922,6 +5931,8 @@ export default function App() {
       if (!tab || tab.kind !== "table" || !tab.paginatable || tab.streaming || tab.loadingMore) {
         return;
       }
+      // 再取得 (force) は内部経路なので、ユーザーのページ移動・ページサイズ変更だけを数える。
+      if (!browseOverride?.force) markFeatureTried("helpPaginationTitle");
       const nextSort =
         browseOverride && "sort" in browseOverride ? (browseOverride.sort ?? null) : (tab.serverSort ?? null);
       const nextFilter =
@@ -6482,6 +6493,7 @@ export default function App() {
   const runExplainInTab = useCallback(
     async (tabId: string, sql: string, analyze: boolean, override?: { sessionId?: string; tab?: Tab }) => {
       const driver = selectedProfile?.driver;
+      markFeatureTried("helpExplainTitle");
       if (!analyze) {
         updateTab(tabId, { explainAnalyze: false, explainSourceSql: sql });
         void runQueryInTab(tabId, `${explainPrefixFor(driver)}${sql}`, null, null, false, override);
@@ -6670,6 +6682,8 @@ export default function App() {
   const handleConfirmDangerous = useCallback(() => {
     if (!pendingDangerous) return;
     const { tabId, sql, autoLimit, batch } = pendingDangerous;
+    // 型確認 (#2216) は確認を通過したときだけ「試した」にする (キャンセルでは記録しない)。
+    if (pendingDangerous.typedConfirmTarget) markFeatureTried("helpTypeToConfirmTitle");
     setPendingDangerous(null);
     if (batch) {
       void runBatchInTab(tabId, sql, true);
@@ -6807,6 +6821,10 @@ export default function App() {
       mode: "run" | "runNewTab" | "preview" | "explain",
       runOpts?: { newTab?: boolean },
     ) => {
+      // 習熟マップ (#2216): ユーザー起点の実行の入口。バッチ・トランザクション中の実行もここを通る。
+      // EXPLAIN タブの再実行は EXPLAIN なので数えない。
+      if ((mode === "run" || mode === "runNewTab") && tab.kind !== "explain")
+        markFeatureTried("helpRunTitle");
       if (mode === "preview") void previewQueryInTab(tab.id, sql);
       else if (mode === "explain") explainForTab(tab, sql);
       else if (mode === "runNewTab") runInTabWithGate(tab, sql, { newTab: true });
@@ -6930,6 +6948,7 @@ export default function App() {
   // holding the snippet when there is no active tab yet.
   const handleInsertSnippet = useCallback(
     (snippet: Snippet) => {
+      markFeatureTried("helpSnippetTitle");
       if (activeTab) {
         // `${1:...}` 記法を含むときはタブストップ付きで展開する (#1489)。含まなければ従来どおり。
         activeEditor()?.insertSnippet(snippet.sql);
@@ -6954,6 +6973,7 @@ export default function App() {
   const handleRunSnippet = useCallback(
     (snippet: Snippet) => {
       if (!sessionId) return;
+      markFeatureTried("helpSnippetTitle");
       // タブストップ記法 (#1489) は既定値に置き換えた平文で実行する。
       const plain = snippetPlainText(snippet.sql);
       const tab: Tab = {
@@ -6992,6 +7012,7 @@ export default function App() {
   // table tab's auto-generated SELECT.
   const handleRestoreHistory = useCallback(
     (sql: string) => {
+      markFeatureTried("helpHistoryTitle");
       if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
         activeEditor()?.setText(sql);
       } else if (sessionId) {
@@ -7180,6 +7201,7 @@ export default function App() {
   // Always open history SQL in a fresh query tab, never overwriting the editor.
   const handleOpenHistoryInNewTab = useCallback(
     (sql: string) => {
+      markFeatureTried("helpHistoryTitle");
       addTab({ ...makeQueryTab(), sql, lastExecutedSql: sql });
     },
     [addTab],
@@ -7363,6 +7385,7 @@ export default function App() {
 
   const setCellEditForTab = useCallback(
     (tabId: string, rowKey: string, colIdx: number, value: string | null) => {
+      markFeatureTried("helpCellEditTitle");
       patchTab(tabId, (tt) => {
         const next = { ...tt.pendingEdits };
         const row = { ...(next[rowKey] ?? {}) };
@@ -7389,6 +7412,7 @@ export default function App() {
   const setBulkCellEditsForTab = useCallback(
     (tabId: string, edits: BulkEditTarget[]) => {
       if (edits.length === 0) return;
+      markFeatureTried("helpCellEditTitle");
       patchTab(tabId, (tt) => {
         const next: PendingEdits = {};
         for (const k of Object.keys(tt.pendingEdits)) next[k] = { ...tt.pendingEdits[k] };
@@ -7437,6 +7461,7 @@ export default function App() {
   // cleared it.
   const discardEditsAndPreviewForTab = useCallback(
     (tabId: string) => {
+      markFeatureTried("helpDiscardTitle");
       void cancelStreamForTab(tabId);
       patchTab(tabId, (tt) => {
         const undoStack =
@@ -7541,6 +7566,7 @@ export default function App() {
       if (applyGuardRef.current.has(tab.id)) return false;
       const { result, tableColumns, database, table, paginatable, rowIdentity } = tab;
       if (!result || !tableColumns || !database || !table) return false;
+      markFeatureTried("helpApplyTitle");
       const scoped = rowScope !== undefined;
       const pendingEdits: PendingEdits = scoped ? rowScope : tab.pendingEdits;
       // 行スコープの適用では削除予定・新規行は送らず、保留のまま残す。
@@ -9893,6 +9919,30 @@ export default function App() {
     [confirm, maintenanceMessage, runMaintenanceDdl, toast],
   );
 
+  // パーティションの追加 (#2211)。モーダルで生成 SQL を確認済みなので、追加の確認ダイアログは挟まず、共通の
+  // DDL ゲート (#2176: confirm_writes / 緊急モード / 型入力確認) だけを通してから流す。PostgreSQL の複数の
+  // CREATE TABLE ... PARTITION OF は 1 トランザクションにまとめ、全件成功か全件失敗にする。キャンセルは false。
+  const handleAddPartitions = useCallback(
+    async (database: string, table: string, statements: string[], count: number): Promise<boolean> => {
+      if (!sessionId) return false;
+      const sql = statements.join("\n");
+      if (!(await runGuardedDdl(sql))) return false;
+      try {
+        if (statements.length === 1) await api.runQuery(sessionId, sql, database);
+        else await api.runQueryTransaction(sessionId, statements, database);
+        invalidateSchemaCache(database);
+        noteSchemaDdl(sql, database);
+        connectionListRef.current?.refreshSchema({ database, table });
+        toast.success(translate("partitionAddDone", { table, count }));
+        return true;
+      } catch (e) {
+        toast.error(translate("statusQueryError", { error: String(e) }));
+        return false;
+      }
+    },
+    [sessionId, runGuardedDdl, invalidateSchemaCache, noteSchemaDdl, toast],
+  );
+
   // 採番列の現在値を実データに同期 (#1240)。列メタから対象を判定し、生成 SQL を確認
   // ダイアログで提示して既存の保守実行経路 (`runMaintenanceDdl`) に流す。MySQL は
   // AUTO_INCREMENT にサブクエリを書けないので、MAX を読み取り専用の lookup で先に取る。
@@ -11928,6 +11978,9 @@ export default function App() {
       setShowServerInfo(false);
       setSizesTarget(null);
       setShowSnippetForm(false);
+      // 比較・タスクを開いたことの記録は、ヘルプ経由も直接も openFullView に集約する。
+      if (view === "tasks") markFeatureTried("helpTaskSchedulerTitle");
+      else if (view === "compare") markFeatureTried("helpSchemaCompareTitle");
       if (view === "settings") setShowSettings(true);
       else if (view === "tasks") setShowTasks(true);
       else if (view === "help") setShowHelp(true);
@@ -13569,6 +13622,7 @@ export default function App() {
                           onRunPartitionMaintenance={handleRunPartitionMaintenance}
                           onPartitionOp={handlePartitionOp}
                           onAttachPartition={handleAttachPartition}
+                          onAddPartitions={handleAddPartitions}
                         />
                       ) : null
                     ) : activeBottomPanelTab === "timelapse" ? (
@@ -15713,7 +15767,9 @@ export default function App() {
               }}
               onOpenFeature={(target) => {
                 setShowHelp(false);
-                if (target.kind === "newQuery") {
+                if (target.kind === "snippetForm") {
+                  handleOpenSnippetForm();
+                } else if (target.kind === "newQuery") {
                   if (sessionIdRef.current) handleNewTab();
                   else toast.info(translate("helpTryNeedsConnection"));
                 } else if (target.kind === "settings") {

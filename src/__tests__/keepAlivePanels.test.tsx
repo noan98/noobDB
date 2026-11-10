@@ -23,6 +23,9 @@ vi.mock("../api/tauri", async (importOriginal) => {
       } satisfies QueryStatsSupport),
       sampleLiveQueries: vi.fn().mockResolvedValue([]),
       listProcesses: vi.fn().mockResolvedValue([]),
+      getPerfStatus: vi
+        .fn()
+        .mockResolvedValue({ enabled: true, ui_enabled: true, env_enabled: false, samples: [] }),
     },
   };
 });
@@ -31,15 +34,18 @@ import { BottomPanel } from "../components/BottomPanel";
 import type { BottomPanelTab } from "../components/bottomPanelTabs";
 import { QueryInspectorPanel } from "../components/QueryInspectorPanel";
 import { ProcessListPanel } from "../components/ProcessListPanel";
+import { PerfPanel } from "../components/PerfPanel";
 import { api } from "../api/tauri";
 
-const TABS: BottomPanelTab[] = ["inspector", "processes"];
+const TABS: BottomPanelTab[] = ["inspector", "processes", "perf"];
 
 function Shell({ tab }: { tab: BottomPanelTab }) {
   return (
     <BottomPanel tab={tab} tabs={TABS} label={(k) => k} onSelect={() => {}} onClose={() => {}}>
       {tab === "inspector" ? (
         <QueryInspectorPanel sessionId="s1" driver="mysql" />
+      ) : tab === "perf" ? (
+        <PerfPanel />
       ) : (
         <ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />
       )}
@@ -99,5 +105,24 @@ describe("ボトムパネルの keep-alive (#1311)", () => {
 
     view.rerender(<Shell tab="processes" />);
     await waitFor(() => expect(vi.mocked(api.listProcesses).mock.calls.length).toBeGreaterThan(hidden));
+  });
+
+  it("パフォーマンス計測は非表示の間 IPC を呼ばず、戻ると 1 度取り直す (#2213)", async () => {
+    const view = renderWithProviders(<Shell tab="perf" />);
+    await waitFor(() => expect(api.getPerfStatus).toHaveBeenCalled());
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+
+    view.rerender(<Shell tab="inspector" />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    const hidden = vi.mocked(api.getPerfStatus).mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(vi.mocked(api.getPerfStatus).mock.calls.length).toBe(hidden);
+
+    view.rerender(<Shell tab="perf" />);
+    await waitFor(() => expect(vi.mocked(api.getPerfStatus).mock.calls.length).toBe(hidden + 1));
   });
 });
