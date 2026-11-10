@@ -898,16 +898,7 @@ pub(crate) fn conninfo_secret_values(conninfo: &str) -> Vec<String> {
         }
         let key: String = chars[start..i].iter().collect();
         if looks_like_userinfo(&key) {
-            out.push(key.clone());
-            if let Some(at) = key.rfind('@') {
-                for (c, _) in key[..at].match_indices(':') {
-                    let pw = &key[c + 1..at];
-                    for v in [pw.to_string(), percent_decode(pw)] {
-                        out.extend(v.split('/').filter(|p| !p.is_empty()).map(str::to_string));
-                        out.push(v);
-                    }
-                }
-            }
+            out.extend(userinfo_word_secrets(&chars[start..]));
             break;
         }
         let mut j = i;
@@ -1002,9 +993,46 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// 空白で区切った語が `user:パスワード@host…` の形か (最後の `@` の前に `:` がある)。
+/// key の位置にある語が URI 風 (`user:パスワード@host…`) か。libpq のキーワードは `:` を含まないので、
+/// key の位置 (`=` か空白まで) に `:` があれば URI の打ち間違いと見なす。パスワードに `=` や空白があっても
+/// `:` までは key 側に入るので取りこぼさない (安全側)。
 fn looks_like_userinfo(word: &str) -> bool {
-    word.rfind('@').is_some_and(|at| word[..at].contains(':'))
+    word.contains(':')
+}
+
+/// URI 風の語 (`rest` はその語の先頭から文末まで) をエラー文で引用されうる形の候補にする。
+/// 候補は語全体・残り全体・最初/最後の `:` 以降・最後の `:` から `@` まで (それぞれ生とパーセントデコード後、
+/// `/` 分割) と、残りの語 (上限あり) に絞る。`:` の数に比例して候補が増えると二乗時間になるので、数は定数。
+fn userinfo_word_secrets(rest: &[char]) -> Vec<String> {
+    const MAX_WORDS: usize = 32;
+    let text: String = rest.iter().collect();
+    let key_end = text
+        .find(|c: char| c == '=' || is_ws(c))
+        .unwrap_or(text.len());
+    let key = &text[..key_end];
+    let mut base: Vec<&str> = vec![key, text.trim_end_matches(is_ws)];
+    if let (Some(first), Some(last)) = (key.find(':'), key.rfind(':')) {
+        base.push(&key[first + 1..]);
+        base.push(&key[last + 1..]);
+        if let Some(at) = key.rfind('@').filter(|&at| at > last) {
+            base.push(&key[last + 1..at]);
+        }
+    }
+    base.extend(
+        text[key_end..]
+            .split(is_ws)
+            .filter(|w| !w.is_empty())
+            .take(MAX_WORDS),
+    );
+    let mut out: Vec<String> = Vec::new();
+    for v in base {
+        for v in [v.to_string(), percent_decode(v)] {
+            out.extend(v.split('/').filter(|p| !p.is_empty()).map(str::to_string));
+            out.push(v);
+        }
+    }
+    out.retain(|v| !v.is_empty());
+    out
 }
 
 /// [`redact_conninfo`] の URI 形式: `user:パスワード@` と `?password=...` / `&sslpassword=...` を伏せる。
@@ -1018,8 +1046,10 @@ fn redact_conninfo_uri(uri: &str) -> String {
     let mut prefix = uri[..scheme_end].to_string();
     let mut rest_start = scheme_end;
     // ユーザー情報の区切りは最後の `@` (パスワードの `@` は通常パーセントエンコードされるが念のため)。
+    // authority にユーザー情報がなくても、スキーム以降の最後の `@` の前に `:` があれば伏せる (`u:p/xyz@h` など、安全側)。
     if let Some(at) = uri[scheme_end..authority_end]
         .rfind('@')
+        .or_else(|| uri[scheme_end..].rfind('@'))
         .map(|p| p + scheme_end)
     {
         if let Some(colon) = uri[scheme_end..at].find(':').map(|p| p + scheme_end) {
@@ -1182,5 +1212,35 @@ mod tests {
         assert_eq!(decode_pg_u(&c("\\0061\\+000062\\\\"), '\\'), "ab\\");
         assert_eq!(decode_pg_u(&c("!0061!!"), '!'), "a!");
         assert_eq!(decode_pg_u(&c("\\D83D\\DE00"), '\\'), "\u{1F600}");
+    }
+
+    #[test]
+    fn userinfo_like_word_with_equals_or_space_in_password_is_redacted() {
+        for w in [
+            "postgresql:/u:pa55==@h",
+            "\u{feff}postgresql://u:ab=cd@h/db",
+            "postgresql:/u:my secret@h",
+        ] {
+            assert_eq!(redact_conninfo(w), "'********'", "{w}");
+        }
+        let v = conninfo_secret_values("postgresql:/u:pa55==@h");
+        assert!(v.iter().any(|s| s == "postgresql:/u:pa55"));
+        assert!(v.iter().any(|s| s == "pa55"));
+    }
+
+    #[test]
+    fn userinfo_word_candidates_do_not_grow_with_colons() {
+        let big = format!("host=a {}@h", ":".repeat(20000));
+        assert!(conninfo_secret_values(&big).len() <= 200);
+        let many_words = format!("x:y {}", "w ".repeat(5000));
+        assert!(conninfo_secret_values(&many_words).len() <= 200);
+    }
+
+    #[test]
+    fn conninfo_uri_slash_in_password_is_redacted() {
+        assert_eq!(
+            redact_conninfo("postgresql://u:p/xyz1@h/db"),
+            "postgresql://u:********@h/db"
+        );
     }
 }

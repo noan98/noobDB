@@ -572,10 +572,44 @@ function percentDecode(s: string): string {
   return new TextDecoder().decode(new Uint8Array(bytes));
 }
 
-/** 空白で区切った語が `user:パスワード@host…` の形か (最後の `@` の前に `:` がある)。 */
+/**
+ * key の位置にある語が URI 風 (`user:パスワード@host…`) か。libpq のキーワードは `:` を含まないので、
+ * key の位置 (`=` か空白まで) に `:` があれば URI の打ち間違いと見なす (安全側)。
+ */
 function looksLikeUserinfo(word: string): boolean {
-  const at = word.lastIndexOf("@");
-  return at >= 0 && word.slice(0, at).includes(":");
+  return word.includes(":");
+}
+
+/**
+ * URI 風の語 (`rest` はその語の先頭から文末まで) をエラー文で引用されうる形の候補にする。Rust 側
+ * `userinfo_word_secrets` と同じ規則。候補は定数個 (`:` の数に比例させると二乗時間になる)。
+ */
+function userinfoWordSecrets(rest: string): string[] {
+  const MAX_WORDS = 32;
+  const text = rest;
+  let keyEnd = text.search(/[=\t\n\r\u000b\u000c ]/);
+  if (keyEnd < 0) keyEnd = text.length;
+  const key = text.slice(0, keyEnd);
+  const base: string[] = [key, text.replace(/[\t\n\r\u000b\u000c ]+$/, "")];
+  const first = key.indexOf(":");
+  const last = key.lastIndexOf(":");
+  if (first >= 0) {
+    base.push(key.slice(first + 1), key.slice(last + 1));
+    const at = key.lastIndexOf("@");
+    if (at > last) base.push(key.slice(last + 1, at));
+  }
+  base.push(
+    ...text
+      .slice(keyEnd)
+      .split(/[\t\n\r\u000b\u000c ]+/)
+      .filter((w) => w !== "")
+      .slice(0, MAX_WORDS),
+  );
+  const out: string[] = [];
+  for (const b of base) {
+    for (const v of [b, percentDecode(b)]) out.push(...v.split("/").filter((x) => x !== ""), v);
+  }
+  return out.filter((v) => v !== "");
 }
 
 /**
@@ -591,7 +625,9 @@ function redactConninfoUri(uri: string): string {
   let prefix = uri.slice(0, schemeEnd);
   let restStart = schemeEnd;
   // ユーザー情報の区切りは最後の `@`。
-  const at = uri.slice(0, authorityEnd).lastIndexOf("@");
+  // authority にユーザー情報がなくても、スキーム以降の最後の `@` の前に `:` があれば伏せる (安全側)。
+  let at = uri.slice(0, authorityEnd).lastIndexOf("@");
+  if (at < schemeEnd) at = uri.lastIndexOf("@");
   if (at >= schemeEnd) {
     const colon = uri.slice(0, at).indexOf(":", schemeEnd);
     if (colon >= 0) {
@@ -661,12 +697,7 @@ function conninfoSecretValues(conninfo: string): string[] {
     while (i < n && conninfo[i] !== "=" && !isWs(conninfo[i])) i++;
     const key = conninfo.slice(start, i);
     if (looksLikeUserinfo(key)) {
-      out.push(key);
-      const at = key.lastIndexOf("@");
-      for (let c = key.indexOf(":"); c >= 0 && c < at; c = key.indexOf(":", c + 1)) {
-        const pw = key.slice(c + 1, at);
-        for (const v of [pw, percentDecode(pw)]) out.push(...v.split("/").filter((x) => x !== ""), v);
-      }
+      out.push(...userinfoWordSecrets(conninfo.slice(start)));
       break;
     }
     let j = i;
