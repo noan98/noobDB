@@ -1047,10 +1047,19 @@ fn redact_conninfo_uri(uri: &str) -> String {
     let mut rest_start = scheme_end;
     // ユーザー情報の区切りは最後の `@` (パスワードの `@` は通常パーセントエンコードされるが念のため)。
     // authority にユーザー情報がなくても、スキーム以降の最後の `@` の前に `:` があれば伏せる (`u:p/xyz@h` など、安全側)。
+    // ただしフォールバックでは、`h:5432/db?application_name=me@corp` のようにポート (数字だけ) の `:` は
+    // ユーザー情報の区切りと見なさない (正常な URI の表示を崩さない)。
+    let fallback_at = || {
+        let at = uri[scheme_end..].rfind('@')? + scheme_end;
+        let colon = uri[scheme_end..at].find(':')? + scheme_end;
+        let after = &uri[colon + 1..at];
+        let port = after.find(['/', '?']).map_or(after, |p| &after[..p]);
+        (port.is_empty() || !port.bytes().all(|b| b.is_ascii_digit())).then_some(at)
+    };
     if let Some(at) = uri[scheme_end..authority_end]
         .rfind('@')
-        .or_else(|| uri[scheme_end..].rfind('@'))
         .map(|p| p + scheme_end)
+        .or_else(fallback_at)
     {
         if let Some(colon) = uri[scheme_end..at].find(':').map(|p| p + scheme_end) {
             prefix = format!("{}:********", &uri[..colon]);
@@ -1241,6 +1250,15 @@ mod tests {
         assert_eq!(
             redact_conninfo("postgresql://u:p/xyz1@h/db"),
             "postgresql://u:********@h/db"
+        );
+    }
+
+    #[test]
+    fn conninfo_uri_port_colon_with_at_in_query_is_not_userinfo() {
+        // クエリの `@` とポートの `:` をユーザー情報と取り違えて表示を崩さない。
+        assert_eq!(
+            redact_conninfo("postgresql://h:5432/db?application_name=me@corp"),
+            "postgresql://h:5432/db?application_name=me@corp"
         );
     }
 }

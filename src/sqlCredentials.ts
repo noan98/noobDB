@@ -626,8 +626,21 @@ function redactConninfoUri(uri: string): string {
   let restStart = schemeEnd;
   // ユーザー情報の区切りは最後の `@`。
   // authority にユーザー情報がなくても、スキーム以降の最後の `@` の前に `:` があれば伏せる (安全側)。
+  // ただしフォールバックでは、`h:5432/db?application_name=me@corp` のようにポート (数字だけ) の `:` は
+  // ユーザー情報の区切りと見なさない (正常な URI の表示を崩さない)。Rust の `redact_conninfo_uri` と同じ。
   let at = uri.slice(0, authorityEnd).lastIndexOf("@");
-  if (at < schemeEnd) at = uri.lastIndexOf("@");
+  if (at < schemeEnd) {
+    at = uri.lastIndexOf("@");
+    if (at >= schemeEnd) {
+      const c = uri.slice(0, at).indexOf(":", schemeEnd);
+      if (c >= 0) {
+        const after = uri.slice(c + 1, at);
+        const cut = after.search(/[/?]/);
+        const port = cut < 0 ? after : after.slice(0, cut);
+        if (port !== "" && /^[0-9]+$/.test(port)) at = -1;
+      }
+    }
+  }
   if (at >= schemeEnd) {
     const colon = uri.slice(0, at).indexOf(":", schemeEnd);
     if (colon >= 0) {
