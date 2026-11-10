@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
-import { api, type PublicationInfo } from "../api/tauri";
+import { api, type PublicationInfo, type TableReplicaIdentity } from "../api/tauri";
 import { useT } from "../i18n";
 import { Callout } from "./Callout";
 import { EmptyState } from "./EmptyState";
@@ -11,6 +11,8 @@ import {
   formatPublicationPreview,
   publicationActionFor,
   publicationMembership,
+  replicaIdentityBlocksWrites,
+  replicaIdentityKind,
   type PublicationMembership,
   type PublicationPick,
 } from "./publicationSql";
@@ -43,9 +45,20 @@ const STATE_KEYS = {
   schema: "publicationStateSchema",
 } as const satisfies Record<PublicationMembership, string>;
 
+const REPLICA_KEYS = {
+  default: "publicationReplicaDefault",
+  defaultNoPk: "publicationReplicaDefaultNoPk",
+  nothing: "publicationReplicaNothing",
+  full: "publicationReplicaFull",
+  index: "publicationReplicaIndex",
+} as const;
+
 export function PublicationModal({ sessionId, database, table, readOnly, onConfirm, onClose }: Props) {
   const t = useT();
   const [publications, setPublications] = useState<PublicationInfo[] | null>(null);
+  // 表の REPLICA IDENTITY (#2212)。undefined は読み込み中、null は不明 (取得失敗・表が無い)。不明なら警告しない。
+  const [identity, setIdentity] = useState<TableReplicaIdentity | null | undefined>(undefined);
+  const [replicaFull, setReplicaFull] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -75,7 +88,22 @@ export function PublicationModal({ sessionId, database, table, readOnly, onConfi
     };
   }, [sessionId, t]);
 
-  const loading = publications === null;
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getTableReplicaIdentity(sessionId, database, table)
+      .then((r) => {
+        if (!cancelled) setIdentity(r);
+      })
+      .catch(() => {
+        if (!cancelled) setIdentity(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, database, table]);
+
+  const loading = publications === null || identity === undefined;
   const rows = useMemo(
     () =>
       (publications ?? []).map((p) => {
@@ -91,9 +119,20 @@ export function PublicationModal({ sessionId, database, table, readOnly, onConfi
       ),
     [rows, checked],
   );
+  // 追加先のうち、入れると UPDATE / DELETE が止まるもの (#2212)。
+  const riskyPubs = useMemo(
+    () =>
+      picks.flatMap((p) => {
+        const info = p.action === "add" ? publications?.find((x) => x.name === p.publication) : undefined;
+        return info && replicaIdentityBlocksWrites(info.publish, identity ?? null) ? [p.publication] : [];
+      }),
+    [picks, publications, identity],
+  );
+  const risky = riskyPubs.length > 0;
+  const useReplicaFull = risky && replicaFull;
   const statements = useMemo(
-    () => buildPublicationStatements(database, table, picks),
-    [database, table, picks],
+    () => buildPublicationStatements(database, table, picks, { replicaIdentityFull: useReplicaFull }),
+    [database, table, picks, useReplicaFull],
   );
   const hasDrop = picks.some((p) => p.action === "drop");
   const ready = !loading && !readOnly && statements.length > 0;
@@ -143,6 +182,12 @@ export function PublicationModal({ sessionId, database, table, readOnly, onConfi
             {database}.{table}
           </chakra.code>
         </FormSection>
+
+        {identity && (
+          <chakra.p margin={0} textStyle="caption" color="app.textMuted">
+            {t("publicationReplicaIdentityLabel")}: {t(REPLICA_KEYS[replicaIdentityKind(identity)])}
+          </chakra.p>
+        )}
 
         <chakra.p margin={0} textStyle="caption" color="app.textMuted">
           {t("publicationHint")}
@@ -198,6 +243,25 @@ export function PublicationModal({ sessionId, database, table, readOnly, onConfi
           </FormSection>
         )}
 
+        {risky && (
+          <Callout tone="warning" title={t("publicationReplicaWarnTitle", { names: riskyPubs.join(", ") })}>
+            <chakra.p margin={0}>{t("publicationReplicaWarnBody")}</chakra.p>
+            <chakra.ul margin={0} paddingLeft="5" marginTop="1">
+              <li>{t("publicationReplicaFixPk")}</li>
+              <li>{t("publicationReplicaFixFull")}</li>
+              <li>{t("publicationReplicaFixInsertOnly")}</li>
+            </chakra.ul>
+            <chakra.label display="flex" alignItems="center" gap="2" marginTop="2" textStyle="body">
+              <Checkbox checked={replicaFull} onChange={(e) => setReplicaFull(e.target.checked)} />
+              <span>{t("publicationReplicaFullOption")}</span>
+            </chakra.label>
+            {replicaFull && (
+              <chakra.p margin={0} marginTop="1" textStyle="caption">
+                {t("publicationReplicaFullWalNote")}
+              </chakra.p>
+            )}
+          </Callout>
+        )}
         {hasDrop && <Callout tone="warning">{t("publicationDropWarn")}</Callout>}
         {statements.length > 0 && <Callout tone="info">{t("publicationRefreshNote")}</Callout>}
 

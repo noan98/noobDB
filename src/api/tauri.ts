@@ -730,6 +730,17 @@ export interface PublicationTable {
   columns: string[] | null;
   /** 行フィルタ `WHERE (...)` の式 (PostgreSQL 15 以降)。指定が無い・13 / 14 は null。 */
   row_filter: string | null;
+  /** `pg_class.relreplident`: `d` 既定 (主キー) / `n` なし / `f` 全列 / `i` 指定の索引 (#2212)。 */
+  replica_identity: string;
+  /** 主キーがある (#2212)。`d` で無いと UPDATE / DELETE を配信できない。 */
+  has_primary_key: boolean;
+}
+
+/** `get_table_replica_identity` の結果: 表の REPLICA IDENTITY と主キーの有無 (#2212)。 */
+export interface TableReplicaIdentity {
+  /** `pg_class.relreplident` (`d` / `n` / `f` / `i`)。 */
+  replica_identity: string;
+  has_primary_key: boolean;
 }
 
 /** `list_publications` の 1 件: 論理レプリケーションのパブリケーション (#2181)。PostgreSQL だけ。 */

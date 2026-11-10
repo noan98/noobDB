@@ -74,7 +74,26 @@ pub fn display_definition(p: &PublicationInfo) -> String {
         }
     }
     out.push_str(&format!("\n  {};", with_options(p)));
+    // 各表の REPLICA IDENTITY (#2212)。UPDATE / DELETE を配信できるかの手掛かりで、比較・同期には使わない表示専用のコメント。
+    for t in &p.tables {
+        out.push_str(&format!(
+            "\n-- {}: REPLICA IDENTITY {}",
+            qualified(t),
+            replica_identity_label(&t.replica_identity, t.has_primary_key)
+        ));
+    }
     out
+}
+
+/// `relreplident` の表示名 (#2212)。`d` は主キーの有無を添える (主キーが無いと UPDATE / DELETE を配信できない)。
+fn replica_identity_label(ident: &str, has_primary_key: bool) -> String {
+    match ident {
+        "n" => "NOTHING".to_string(),
+        "f" => "FULL".to_string(),
+        "i" => "USING INDEX".to_string(),
+        _ if has_primary_key => "DEFAULT (primary key)".to_string(),
+        _ => "DEFAULT (no primary key)".to_string(),
+    }
 }
 
 /// スキーマ比較・同期用の定義 (`schema` に属する表だけ)。`schema_tables` は `schema` の表 (明示的に追加した表と、
@@ -415,6 +434,8 @@ mod tests {
             table: table.into(),
             columns: None,
             row_filter: None,
+            replica_identity: "d".into(),
+            has_primary_key: true,
         }
     }
 
@@ -449,6 +470,40 @@ mod tests {
         p.schemas = vec!["other".into()];
         let d = display_definition(&p);
         assert!(d.contains("FOR TABLE \"s\".\"plain\",\n    \"s\".\"orders\" (\"id\", \"we\"\"ird\") WHERE ((id > 0)),\n  TABLES IN SCHEMA \"other\""), "{d}");
+        // 各表の REPLICA IDENTITY を末尾のコメントに出す (#2212)。
+        assert!(
+            d.contains("\n-- \"s\".\"plain\": REPLICA IDENTITY DEFAULT (primary key)"),
+            "{d}"
+        );
+        let mut p2 = info("pub_c");
+        p2.tables = vec![
+            PublicationTable {
+                has_primary_key: false,
+                ..tbl("s", "nopk")
+            },
+            PublicationTable {
+                replica_identity: "n".into(),
+                ..tbl("s", "none")
+            },
+            PublicationTable {
+                replica_identity: "f".into(),
+                has_primary_key: false,
+                ..tbl("s", "full")
+            },
+            PublicationTable {
+                replica_identity: "i".into(),
+                ..tbl("s", "idx")
+            },
+        ];
+        let d2 = display_definition(&p2);
+        for expect in [
+            "\"s\".\"nopk\": REPLICA IDENTITY DEFAULT (no primary key)",
+            "\"s\".\"none\": REPLICA IDENTITY NOTHING",
+            "\"s\".\"full\": REPLICA IDENTITY FULL",
+            "\"s\".\"idx\": REPLICA IDENTITY USING INDEX",
+        ] {
+            assert!(d2.contains(expect), "{d2}");
+        }
         // 表も スキーマも無い (空の) パブリケーションは FOR 句なし。
         assert!(!display_definition(&info("empty")).contains("FOR"));
     }

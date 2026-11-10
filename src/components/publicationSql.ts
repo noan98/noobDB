@@ -1,4 +1,4 @@
-import type { PublicationInfo } from "../api/tauri";
+import type { PublicationInfo, TableReplicaIdentity } from "../api/tauri";
 import { quoteIdentFor } from "./sqlDialect";
 
 /**
@@ -42,17 +42,69 @@ export interface PublicationPick {
   action: PublicationAction;
 }
 
-/** 実行する文の一覧 (末尾の `;` なし)。選んだ順に並べる。 */
+/**
+ * 実行する文の一覧 (末尾の `;` なし)。選んだ順に並べる。`replicaIdentityFull` を立てると、先頭に
+ * `ALTER TABLE ... REPLICA IDENTITY FULL` を足す (主キーの無い表を UPDATE / DELETE を公開するパブリケーションへ入れる前の対処、#2212)。
+ */
 export function buildPublicationStatements(
   schema: string,
   table: string,
   picks: readonly PublicationPick[],
+  opts: { replicaIdentityFull?: boolean } = {},
 ): string[] {
   const q = (s: string) => quoteIdentFor("postgres", s);
   const target = `${q(schema)}.${q(table)}`;
-  return picks.map(
+  const alters = picks.map(
     (p) => `ALTER PUBLICATION ${q(p.publication)} ${p.action === "add" ? "ADD" : "DROP"} TABLE ${target}`,
   );
+  return opts.replicaIdentityFull && alters.length > 0
+    ? [`ALTER TABLE ${target} REPLICA IDENTITY FULL`, ...alters]
+    : alters;
+}
+
+/**
+ * REPLICA IDENTITY の確認 (#2212)。パブリケーションが `update` / `delete` を公開するとき、表に行を特定する手段
+ * (主キー・`FULL`・指定の索引) が無いと、その表への UPDATE / DELETE が
+ * `cannot update table "x" because it does not have a replica identity and publishes updates` で失敗する。
+ * `relreplident` は `d` (既定: 主キー) / `n` (なし) / `f` (全列) / `i` (指定の索引)。
+ */
+
+/** 公開する操作に UPDATE / DELETE が含まれるか (INSERT / TRUNCATE だけなら REPLICA IDENTITY は要らない)。 */
+export function publishesRowChanges(publish: readonly string[]): boolean {
+  return publish.includes("update") || publish.includes("delete");
+}
+
+/** 表に行を特定する手段が無いか: `n` (NOTHING)、または `d` (既定) で主キーが無い。`f` / `i` と、未知の値は問題なしとみなす。 */
+export function lacksReplicaIdentity(info: TableReplicaIdentity): boolean {
+  if (info.replica_identity === "n") return true;
+  return info.replica_identity === "d" && !info.has_primary_key;
+}
+
+/**
+ * その表をこのパブリケーションに入れると UPDATE / DELETE が止まるか。`info` が不明 (取得失敗・表が無い) は false
+ * (確かめられないものを警告しない)。
+ */
+export function replicaIdentityBlocksWrites(
+  publish: readonly string[],
+  info: TableReplicaIdentity | null,
+): boolean {
+  return info !== null && publishesRowChanges(publish) && lacksReplicaIdentity(info);
+}
+
+/** 表の REPLICA IDENTITY の表示キー (`relreplident` → i18n キーの接尾辞)。未知の値は `d` 扱い。 */
+export function replicaIdentityKind(
+  info: TableReplicaIdentity,
+): "default" | "defaultNoPk" | "nothing" | "full" | "index" {
+  switch (info.replica_identity) {
+    case "n":
+      return "nothing";
+    case "f":
+      return "full";
+    case "i":
+      return "index";
+    default:
+      return info.has_primary_key ? "default" : "defaultNoPk";
+  }
 }
 
 /** プレビュー用に 1 つの文字列へ連結する (各文の末尾に `;`)。 */

@@ -8526,14 +8526,18 @@ export default function App() {
       // 取得失敗は提案しないだけ。接続を切り替えたあとに押されたら別接続で開かない。
       const suggestPublication = async (message: string): Promise<boolean> => {
         const schema = database || "";
-        const ok = await shouldSuggestPublication(
+        const suggestion = await shouldSuggestPublication(
           { driver: selectedProfile?.driver ?? "", readOnly, schema, table, unlogged },
           () => api.listPublications(createdSid),
+          () => api.getTableReplicaIdentity(createdSid, schema, table),
         );
-        if (!ok) return false;
+        if (!suggestion) return false;
+        // 主キーの無い表を update / delete を公開するパブリケーションへ入れると書き込みが止まる (#2212)。提案は控えず、警告を添える。
         toast.notify({
-          message,
-          tone: "success",
+          message: suggestion.replicaIdentityRisk
+            ? `${message} ${translate("createTablePublicationReplicaWarn")}`
+            : message,
+          tone: suggestion.replicaIdentityRisk ? "warning" : "success",
           action: {
             label: translate("createTablePublicationAction"),
             onAction: () => {

@@ -814,15 +814,23 @@ fn build_fixtures() -> serde_json::Value {
                 table: "orders".into(),
                 columns: Some(vec!["id".into(), "status".into()]),
                 row_filter: Some("(status <> 'draft'::text)".into()),
+                replica_identity: "d".into(),
+                has_primary_key: true,
             },
             t::PublicationTable {
                 schema: "public".into(),
                 table: "items".into(),
                 columns: None,
                 row_filter: None,
+                replica_identity: "n".into(),
+                has_primary_key: false,
             },
         ],
         schemas: vec!["audit".into()],
+    };
+    let table_replica_identity = t::TableReplicaIdentity {
+        replica_identity: "f".into(),
+        has_primary_key: false,
     };
     let extensions_overview = t::ExtensionsOverview {
         extensions: vec![
@@ -2702,6 +2710,7 @@ fn build_fixtures() -> serde_json::Value {
         "tableTrigger": table_trigger,
         "rlsTable": rls_table,
         "publicationInfo": publication_info,
+        "tableReplicaIdentity": table_replica_identity,
         "extensionsOverview": extensions_overview,
         "extensionDependent": extension_dependent,
         "tablePartitions": table_partitions,

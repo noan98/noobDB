@@ -1666,6 +1666,19 @@ impl Connection {
         }
     }
 
+    /// 表の REPLICA IDENTITY と主キーの有無 (#2212)。PostgreSQL 専用で、MySQL / SQLite は `None`
+    /// (論理レプリケーションの PUBLICATION が無い)。読み取りのみ。
+    pub async fn table_replica_identity(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Option<types::TableReplicaIdentity>> {
+        match self {
+            Connection::Postgres(c) => c.table_replica_identity(schema, table).await,
+            Connection::MySql(_) | Connection::Sqlite(_) => Ok(None),
+        }
+    }
+
     /// スキーマ比較用: 全パブリケーションの (名前, `db` の表だけを含む定義) (#2181)。PostgreSQL 専用で、
     /// MySQL / SQLite は空。
     pub async fn publication_definitions(&self, db: &str) -> Result<Vec<(String, String)>> {

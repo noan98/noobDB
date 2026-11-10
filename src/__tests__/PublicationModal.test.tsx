@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor } from "./testUtils";
 import { setLocale, t } from "../i18n";
-import type { PublicationInfo } from "../api/tauri";
+import type { PublicationInfo, TableReplicaIdentity } from "../api/tauri";
 
 // 表をパブリケーションに追加 / から外すダイアログ (#2181)。
 
@@ -12,7 +12,16 @@ const publications: PublicationInfo[] = [
     all_tables: false,
     publish: ["insert"],
     via_root: false,
-    tables: [{ schema: "public", table: "orders", columns: null, row_filter: null }],
+    tables: [
+      {
+        schema: "public",
+        table: "orders",
+        columns: null,
+        row_filter: null,
+        replica_identity: "d",
+        has_primary_key: true,
+      },
+    ],
     schemas: [],
   },
   { name: "pub_other", all_tables: false, publish: ["insert"], via_root: false, tables: [], schemas: [] },
@@ -28,10 +37,18 @@ const publications: PublicationInfo[] = [
 ];
 
 const listPublications = vi.fn<() => Promise<PublicationInfo[]>>();
+const getTableReplicaIdentity = vi.fn<() => Promise<TableReplicaIdentity | null>>();
 
 vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();
-  return { ...actual, api: { ...actual.api, listPublications: () => listPublications() } };
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      listPublications: () => listPublications(),
+      getTableReplicaIdentity: () => getTableReplicaIdentity(),
+    },
+  };
 });
 
 import { PublicationModal } from "../components/PublicationModal";
@@ -56,6 +73,7 @@ describe("PublicationModal", () => {
     setLocale("en");
     vi.clearAllMocks();
     listPublications.mockResolvedValue(publications);
+    getTableReplicaIdentity.mockResolvedValue({ replica_identity: "d", has_primary_key: true });
   });
 
   it("所属を示し、ALL TABLES / TABLES IN SCHEMA のものは選べない", async () => {
@@ -183,5 +201,81 @@ describe("PublicationModal", () => {
     expect(onConfirm).toHaveBeenCalledTimes(1);
     finish();
     await waitFor(() => expect(confirm).toBeEnabled());
+  });
+
+  describe("REPLICA IDENTITY の警告 (#2212)", () => {
+    const updating: PublicationInfo[] = [
+      {
+        name: "pub_upd",
+        all_tables: false,
+        publish: ["insert", "update", "delete"],
+        via_root: false,
+        tables: [],
+        schemas: [],
+      },
+      { name: "pub_ins", all_tables: false, publish: ["insert"], via_root: false, tables: [], schemas: [] },
+    ];
+
+    it("主キーの無い表を update / delete を公開するパブリケーションへ追加しようとすると、実行前に警告と対処を出す", async () => {
+      const user = userEvent.setup();
+      listPublications.mockResolvedValue(updating);
+      getTableReplicaIdentity.mockResolvedValue({ replica_identity: "d", has_primary_key: false });
+      const { onConfirm } = setup();
+      await screen.findByText("pub_upd");
+      expect(screen.queryByText(t("publicationReplicaWarnBody"))).not.toBeInTheDocument();
+      await user.click(screen.getAllByRole("checkbox")[0]);
+      expect(await screen.findByText(t("publicationReplicaWarnBody"))).toBeInTheDocument();
+      expect(screen.getByText(t("publicationReplicaFixPk"))).toBeInTheDocument();
+      expect(screen.getByText(t("publicationReplicaFixInsertOnly"))).toBeInTheDocument();
+      // REPLICA IDENTITY FULL はチェックするとプレビューと実行文に加わり、WAL 増加の注記が出る。
+      expect(screen.getByTestId("sql-preview")).not.toHaveTextContent("REPLICA IDENTITY FULL");
+      await user.click(screen.getByRole("checkbox", { name: t("publicationReplicaFullOption") }));
+      await waitFor(() =>
+        expect(screen.getByTestId("sql-preview")).toHaveTextContent(
+          'ALTER TABLE "public"."orders" REPLICA IDENTITY FULL;',
+        ),
+      );
+      expect(screen.getByText(t("publicationReplicaFullWalNote"))).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: t("publicationConfirm") }));
+      expect(onConfirm).toHaveBeenCalledWith(
+        [
+          'ALTER TABLE "public"."orders" REPLICA IDENTITY FULL',
+          'ALTER PUBLICATION "pub_upd" ADD TABLE "public"."orders"',
+        ],
+        ["pub_upd"],
+      );
+    });
+
+    it("insert だけのパブリケーション・主キーがある表・identity 不明では警告しない", async () => {
+      const user = userEvent.setup();
+      listPublications.mockResolvedValue(updating);
+      getTableReplicaIdentity.mockResolvedValue({ replica_identity: "d", has_primary_key: false });
+      const view = setup();
+      await screen.findByText("pub_ins");
+      await user.click(screen.getAllByRole("checkbox")[1]);
+      await waitFor(() => expect(screen.getByTestId("sql-preview")).toHaveTextContent("pub_ins"));
+      expect(screen.queryByText(t("publicationReplicaWarnBody"))).not.toBeInTheDocument();
+      view.onConfirm.mockClear();
+    });
+
+    it("主キーがある表 / 取得失敗では警告しない", async () => {
+      const user = userEvent.setup();
+      listPublications.mockResolvedValue(updating);
+      getTableReplicaIdentity.mockRejectedValue(new Error("x"));
+      setup();
+      await screen.findByText("pub_upd");
+      await user.click(screen.getAllByRole("checkbox")[0]);
+      await waitFor(() => expect(screen.getByTestId("sql-preview")).toHaveTextContent("pub_upd"));
+      expect(screen.queryByText(t("publicationReplicaWarnBody"))).not.toBeInTheDocument();
+    });
+
+    it("表の replica identity を表示する", async () => {
+      getTableReplicaIdentity.mockResolvedValue({ replica_identity: "n", has_primary_key: true });
+      setup();
+      await screen.findByText("pub_member");
+      expect(
+        screen.getByText(`${t("publicationReplicaIdentityLabel")}: ${t("publicationReplicaNothing")}`),
+      ).toBeInTheDocument();
+    });
   });
 });

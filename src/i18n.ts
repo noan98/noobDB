@@ -2717,6 +2717,24 @@ const en = {
   publicationDropWarn: "Removing the table from a publication stops replicating it to subscribers.",
   publicationReadOnly: "This connection is read-only, so publications cannot be changed.",
   publicationCancel: "Cancel",
+  publicationReplicaIdentityLabel: "Replica identity",
+  publicationReplicaDefault: "DEFAULT (primary key)",
+  publicationReplicaDefaultNoPk: "DEFAULT (no primary key)",
+  publicationReplicaNothing: "NOTHING",
+  publicationReplicaFull: "FULL",
+  publicationReplicaIndex: "USING INDEX",
+  publicationReplicaWarnTitle: "UPDATE / DELETE on this table will fail once it is added to: {names}",
+  publicationReplicaWarnBody:
+    'The table has no primary key or other replica identity, but these publications publish updates or deletes. PostgreSQL then rejects every UPDATE / DELETE on the table with "cannot update table ... because it does not have a replica identity and publishes updates". Choose one of:',
+  publicationReplicaFixPk: "Add a primary key to the table (recommended).",
+  publicationReplicaFixFull:
+    "Run ALTER TABLE ... REPLICA IDENTITY FULL together with this change (tick the box below; it shows up in the SQL).",
+  publicationReplicaFixInsertOnly: "Pick a publication that publishes inserts only.",
+  publicationReplicaFullOption: "Also run ALTER TABLE ... REPLICA IDENTITY FULL",
+  publicationReplicaFullWalNote:
+    "FULL writes the whole old row to the WAL on every UPDATE / DELETE, so WAL volume and replication traffic grow. Prefer a primary key for large or busy tables.",
+  createTablePublicationReplicaWarn:
+    "It has no primary key, so adding it to a publication that publishes updates or deletes would block UPDATE / DELETE on it.",
   publicationConfirm: "Apply",
   publicationDone: "Updated publications: {names}",
   contextMenuExtensions: "Extensions...",
@@ -10540,6 +10558,25 @@ const ja: Dict = {
   publicationDropWarn: "パブリケーションから外すと、その表は購読側へ配信されなくなります。",
   publicationReadOnly: "この接続は読み取り専用のため、パブリケーションを変更できません。",
   publicationCancel: "キャンセル",
+  publicationReplicaIdentityLabel: "レプリカ識別",
+  publicationReplicaDefault: "DEFAULT (主キー)",
+  publicationReplicaDefaultNoPk: "DEFAULT (主キーなし)",
+  publicationReplicaNothing: "NOTHING",
+  publicationReplicaFull: "FULL",
+  publicationReplicaIndex: "USING INDEX",
+  publicationReplicaWarnTitle:
+    "次のパブリケーションへ追加すると、この表の UPDATE / DELETE が失敗します: {names}",
+  publicationReplicaWarnBody:
+    "この表には主キーなど行を特定する手段 (レプリカ識別) がありませんが、これらのパブリケーションは UPDATE / DELETE を公開します。追加すると、PostgreSQL がその表へのすべての UPDATE / DELETE を「cannot update table ... because it does not have a replica identity and publishes updates」で拒否し、書き込みが止まります。次のいずれかで対処してください。",
+  publicationReplicaFixPk: "表に主キーを追加する (推奨)。",
+  publicationReplicaFixFull:
+    "この変更と一緒に ALTER TABLE ... REPLICA IDENTITY FULL を実行する (下のチェックを入れると、実行する SQL に加わります)。",
+  publicationReplicaFixInsertOnly: "INSERT だけを公開するパブリケーションを選ぶ。",
+  publicationReplicaFullOption: "ALTER TABLE ... REPLICA IDENTITY FULL も一緒に実行する",
+  publicationReplicaFullWalNote:
+    "FULL は UPDATE / DELETE のたびに古い行の全列を WAL に書くため、WAL の量とレプリケーションの通信量が増えます。大きい表・更新の多い表では主キーの追加を優先してください。",
+  createTablePublicationReplicaWarn:
+    "主キーが無いため、UPDATE / DELETE を公開するパブリケーションへ追加すると、この表への UPDATE / DELETE が止まります。",
   publicationConfirm: "適用",
   publicationDone: "パブリケーションを更新しました: {names}",
   contextMenuExtensions: "拡張機能...",

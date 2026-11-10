@@ -682,6 +682,20 @@ pub struct PublicationTable {
     pub columns: Option<Vec<String>>,
     /// 行フィルタ (`WHERE (...)`、PostgreSQL 15 以降)。指定が無い・13 / 14 は `None`。
     pub row_filter: Option<String>,
+    /// `pg_class.relreplident` (`d` = 既定 (主キー) / `n` = なし / `f` = 全列 / `i` = 指定の索引、#2212)。
+    pub replica_identity: String,
+    /// 主キーがある (`pg_index.indisprimary`)。`d` のとき、これが無いと UPDATE / DELETE を配信できない (#2212)。
+    pub has_primary_key: bool,
+}
+
+/// 表の REPLICA IDENTITY (`get_table_replica_identity`、#2212)。PostgreSQL 専用。パブリケーションが
+/// `update` / `delete` を公開するとき、`n`、または `d` で主キーが無いと、その表への UPDATE / DELETE が失敗する。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TableReplicaIdentity {
+    /// `pg_class.relreplident` (`d` / `n` / `f` / `i`)。
+    pub replica_identity: String,
+    /// 主キーがある。
+    pub has_primary_key: bool,
 }
 
 /// 論理レプリケーションのパブリケーション 1 件 (`list_publications`、#2181)。PostgreSQL 専用。

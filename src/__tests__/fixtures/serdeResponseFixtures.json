@@ -2214,12 +2214,16 @@
           "id",
           "status"
         ],
+        "has_primary_key": true,
+        "replica_identity": "d",
         "row_filter": "(status <> 'draft'::text)",
         "schema": "public",
         "table": "orders"
       },
       {
         "columns": null,
+        "has_primary_key": false,
+        "replica_identity": "n",
         "row_filter": null,
         "schema": "public",
         "table": "items"
@@ -2424,6 +2428,50 @@
     "kind": "rows",
     "rows": [],
     "stats": null
+  },
+  "replicationStatus": {
+    "links": [
+      {
+        "address": "10.0.0.2",
+        "direction": "downstream",
+        "flush_lag_secs": 0.02,
+        "io_running": null,
+        "lag_bytes": 16384,
+        "lag_secs": 0.25,
+        "last_error": null,
+        "name": "replica-1",
+        "sql_running": null,
+        "state": "streaming",
+        "sync_state": "async",
+        "write_lag_secs": 0.01
+      },
+      {
+        "address": "db1:3306",
+        "direction": "upstream",
+        "flush_lag_secs": null,
+        "io_running": true,
+        "lag_bytes": null,
+        "lag_secs": null,
+        "last_error": "Duplicate entry '1' for key 'PRIMARY'",
+        "name": "db1:3306",
+        "sql_running": false,
+        "state": "sql_stopped",
+        "sync_state": null,
+        "write_lag_secs": null
+      }
+    ],
+    "missing_privilege": null,
+    "role": "primary",
+    "slots": [
+      {
+        "active": false,
+        "name": "slot_a",
+        "plugin": "pgoutput",
+        "retained_bytes": 2147483648,
+        "slot_type": "logical",
+        "wal_status": "reserved"
+      }
+    ]
   },
   "resolvedSshAlias": {
     "host_name": "db.internal",
@@ -6010,50 +6058,6 @@
     "questions": 1000000,
     "slow_queries": 12
   },
-  "replicationStatus": {
-    "links": [
-      {
-        "address": "10.0.0.2",
-        "direction": "downstream",
-        "flush_lag_secs": 0.02,
-        "io_running": null,
-        "lag_bytes": 16384,
-        "lag_secs": 0.25,
-        "last_error": null,
-        "name": "replica-1",
-        "sql_running": null,
-        "state": "streaming",
-        "sync_state": "async",
-        "write_lag_secs": 0.01
-      },
-      {
-        "address": "db1:3306",
-        "direction": "upstream",
-        "flush_lag_secs": null,
-        "io_running": true,
-        "lag_bytes": null,
-        "lag_secs": null,
-        "last_error": "Duplicate entry '1' for key 'PRIMARY'",
-        "name": "db1:3306",
-        "sql_running": false,
-        "state": "sql_stopped",
-        "sync_state": null,
-        "write_lag_secs": null
-      }
-    ],
-    "missing_privilege": null,
-    "role": "primary",
-    "slots": [
-      {
-        "active": false,
-        "name": "slot_a",
-        "plugin": "pgoutput",
-        "retained_bytes": 2147483648,
-        "slot_type": "logical",
-        "wal_status": "reserved"
-      }
-    ]
-  },
   "serverVariable": {
     "name": "max_connections",
     "source": "configuration file",
@@ -6463,6 +6467,10 @@
     "scans": 1,
     "table": "orders",
     "total_count": 100
+  },
+  "tableReplicaIdentity": {
+    "has_primary_key": false,
+    "replica_identity": "f"
   },
   "tableRowEstimate": {
     "estimate": 1234,

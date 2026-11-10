@@ -2247,14 +2247,18 @@ impl PostgresConn {
                     CASE WHEN pr.prattrs IS NULL THEN NULL \
                          ELSE (SELECT array_agg(a.attname::text ORDER BY a.attnum) FROM pg_attribute a \
                                 WHERE a.attrelid = pr.prrelid AND a.attnum = ANY (pr.prattrs)) END, \
-                    pg_get_expr(pr.prqual, pr.prrelid) \
+                    pg_get_expr(pr.prqual, pr.prrelid), \
+                    c.relreplident::text, \
+                    EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid AND i.indisprimary) \
                FROM pg_publication_rel pr \
                JOIN pg_publication p ON p.oid = pr.prpubid \
                JOIN pg_class c ON c.oid = pr.prrelid \
                JOIN pg_namespace n ON n.oid = c.relnamespace \
               ORDER BY 1, 2, 3"
         } else {
-            "SELECT p.pubname::text, n.nspname::text, c.relname::text, NULL::text[], NULL::text \
+            "SELECT p.pubname::text, n.nspname::text, c.relname::text, NULL::text[], NULL::text, \
+                    c.relreplident::text, \
+                    EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid AND i.indisprimary) \
                FROM pg_publication_rel pr \
                JOIN pg_publication p ON p.oid = pr.prpubid \
                JOIN pg_class c ON c.oid = pr.prrelid \
@@ -2310,6 +2314,8 @@ impl PostgresConn {
                     table: r.try_get(2).unwrap_or_default(),
                     columns: r.try_get::<Option<Vec<String>>, _>(3).ok().flatten(),
                     row_filter: r.try_get::<Option<String>, _>(4).ok().flatten(),
+                    replica_identity: r.try_get::<String, _>(5).unwrap_or_else(|_| "d".into()),
+                    has_primary_key: r.try_get::<bool, _>(6).unwrap_or(false),
                 });
             }
         }
@@ -2320,6 +2326,30 @@ impl PostgresConn {
             }
         }
         Ok(out)
+    }
+
+    /// 表の REPLICA IDENTITY (`relreplident`) と主キーの有無 (#2212)。表が無ければ `None`。
+    /// パブリケーションへ追加する前に、UPDATE / DELETE が止まらないかを確かめるのに使う。pg_class 系は誰でも読める。
+    pub async fn table_replica_identity(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Option<super::types::TableReplicaIdentity>> {
+        let row: Option<PgRow> = sqlx::query(
+            "SELECT c.relreplident::text, \
+                    EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid AND i.indisprimary) \
+               FROM pg_class c \
+               JOIN pg_namespace n ON n.oid = c.relnamespace \
+              WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind IN ('r', 'p')",
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| super::types::TableReplicaIdentity {
+            replica_identity: r.try_get::<String, _>(0).unwrap_or_else(|_| "d".into()),
+            has_primary_key: r.try_get::<bool, _>(1).unwrap_or(false),
+        }))
     }
 
     /// ツリーの定義表示: パブリケーション 1 件の `CREATE PUBLICATION` (#2181)。無ければ `None`。
@@ -2380,6 +2410,8 @@ impl PostgresConn {
                                 table: table.clone(),
                                 columns: None,
                                 row_filter: None,
+                                replica_identity: "d".into(),
+                                has_primary_key: false,
                             });
                         }
                     }

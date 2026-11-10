@@ -275,6 +275,23 @@ pub async fn list_publications(
     session.conn.list_publications().await
 }
 
+/// 表の REPLICA IDENTITY (`relreplident`) と主キーの有無を返す (#2212)。パブリケーションへ表を追加する前に、
+/// UPDATE / DELETE が止まらないかを UI が確かめるのに使う。読み取り専用の introspection なので read_only でも許可する。
+/// 表が無い・MySQL / SQLite は `None`。
+#[tauri::command]
+pub async fn get_table_replica_identity(
+    session_id: String,
+    database: String,
+    table: String,
+    state: State<'_, AppState>,
+) -> Result<Option<crate::db::types::TableReplicaIdentity>> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session.conn.table_replica_identity(&database, &table).await
+}
+
 /// PostgreSQL の拡張機能 (導入済み + サーバが提供できるもの) の一覧を返す (#2160)。読み取り専用の
 /// introspection なので read_only セッションでも許可する。導入・更新・削除の `CREATE / ALTER / DROP
 /// EXTENSION` は UI が組み立てて通常の `run_query` 経路で流す (read_only の拒否はそこで行う)。
