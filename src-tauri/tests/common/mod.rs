@@ -73,6 +73,12 @@ pub fn require_env(name: &str) -> Option<String> {
     }
 }
 
+/// 任意の構成 (レプリカなど) が env で与えられているかだけを見る。skip には使わない
+/// (skip は `require_env` を通す)。値が無くても断定の内容を切り替えるだけ。
+pub fn env_is_set(name: &str) -> bool {
+    std::env::var_os(name).is_some()
+}
+
 /// `tables` は `db` に実在する 4 件以上のテーブル (一括取得の経路も通すため)。
 pub async fn assert_tree_and_open_match_individual_ipcs(
     state: &t::AppState,

@@ -1004,7 +1004,7 @@ async fn mysql_replication_status_standalone() {
 
     let status = conn.replication_status().await.expect("replication_status");
     // CI のソースにはレプリカ (#2209) がぶら下がるので、その場合は下の専用テストが検証する。
-    let has_replica = std::env::var("NOOBDB_TEST_MYSQL_REPLICA_URL").is_ok();
+    let has_replica = common::env_is_set("NOOBDB_TEST_MYSQL_REPLICA_URL");
     match status.missing_privilege.as_deref() {
         None if has_replica => {
             assert_eq!(status.role, t::ReplicationRole::Primary, "{status:?}");

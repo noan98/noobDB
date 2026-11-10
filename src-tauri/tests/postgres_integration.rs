@@ -823,7 +823,7 @@ async fn postgres_replication_status_standalone_and_slot() {
     let status = conn.replication_status().await.expect("replication_status");
     // 他のテストが物理スロットを残していても壊れないよう、構成なしの断定はスロットが無いときだけ行う。
     // CI のプライマリにはスタンバイ (#2209) がぶら下がるので、その場合は下の専用テストが検証する。
-    if std::env::var("NOOBDB_TEST_POSTGRES_STANDBY_URL").is_ok() {
+    if common::env_is_set("NOOBDB_TEST_POSTGRES_STANDBY_URL") {
         assert_eq!(status.role, t::ReplicationRole::Primary, "{status:?}");
         assert_eq!(status.missing_privilege, None, "{status:?}");
         assert!(
