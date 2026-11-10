@@ -327,9 +327,8 @@ impl Scanner<'_> {
                 decoded.extend(&self.src[s + tag_len..inner_end]);
             }
         } else {
-            if s >= 2 && self.m[s - 1] == '&' && matches!(self.m[s - 2], 'u' | 'U') {
-                return Some(Vec::new());
-            }
+            let u_amp = s >= 2 && self.m[s - 1] == '&' && matches!(self.m[s - 2], 'u' | 'U');
+            let esc = uescape_char(self.m, self.src, e);
             let backslash = s >= 1 && matches!(self.m[s - 1], 'e' | 'E');
             let mut i = s;
             while i < e {
@@ -343,8 +342,9 @@ impl Scanner<'_> {
                     None => (e, e),
                 };
                 let raw = &self.src[i + 1..inner_end];
-                opaque |= backslash && raw.contains(&'\\');
-                decoded.push_str(&unescape_literal(raw, '\'', backslash));
+                // `U&'…'` は `\XXXX` でキー名を隠せるので、常に伏せ対象にする。
+                opaque |= u_amp || (backslash && raw.contains(&'\\'));
+                decoded.push_str(&decode_literal_piece(raw, u_amp, backslash, esc));
                 i = next;
             }
         }
@@ -487,6 +487,192 @@ fn unescape_literal(raw: &[char], quote: char, backslash: bool) -> String {
     out
 }
 
+/// 16 進 `n` 桁ちょうどを読む。
+fn hex_at(raw: &[char], start: usize, n: usize) -> Option<u32> {
+    let digits = raw.get(start..start.checked_add(n)?)?;
+    digits
+        .iter()
+        .try_fold(0u32, |acc, c| Some(acc * 16 + c.to_digit(16)?))
+}
+
+/// サロゲートペアの上位 `hi` と下位 `lo` を 1 文字にする。ペアでなければ `None`。
+fn combine_surrogates(hi: u32, lo: u32) -> Option<char> {
+    if (0xD800..0xDC00).contains(&hi) && (0xDC00..0xE000).contains(&lo) {
+        char::from_u32(0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00))
+    } else {
+        None
+    }
+}
+
+/// PostgreSQL の `E'…'` の中身 (引用符の内側) を、サーバ (libpq が受け取る文字列) と同じにデコードする。
+/// `\b \f \n \r \t`、8 進 `\o`〜`\ooo`、`\xh`〜`\xhh`、`\uXXXX` / `\UXXXXXXXX` (サロゲートペア可)、
+/// それ以外の `\c` は `c`。`''` は `'`。8 進・`\x` はバイト値で、全体を UTF-8 として読む (不正なバイトは U+FFFD)。
+fn decode_pg_e(raw: &[char]) -> String {
+    let mut out: Vec<u8> = Vec::new();
+    let push = |out: &mut Vec<u8>, c: char| {
+        let mut b = [0u8; 4];
+        out.extend_from_slice(c.encode_utf8(&mut b).as_bytes());
+    };
+    let mut i = 0;
+    while i < raw.len() {
+        let c = raw[i];
+        if c == '\'' && raw.get(i + 1) == Some(&'\'') {
+            out.push(b'\'');
+            i += 2;
+            continue;
+        }
+        if c != '\\' || i + 1 >= raw.len() {
+            push(&mut out, c);
+            i += 1;
+            continue;
+        }
+        let d = raw[i + 1];
+        i += 2;
+        match d {
+            'b' => out.push(8),
+            'f' => out.push(12),
+            'n' => out.push(b'\n'),
+            'r' => out.push(b'\r'),
+            't' => out.push(b'\t'),
+            '0'..='7' => {
+                let mut v = d.to_digit(8).unwrap_or(0);
+                let mut used = 1;
+                while used < 3 {
+                    match raw.get(i).and_then(|c| c.to_digit(8)) {
+                        Some(o) => {
+                            v = v * 8 + o;
+                            i += 1;
+                            used += 1;
+                        }
+                        None => break,
+                    }
+                }
+                out.push((v & 0xFF) as u8);
+            }
+            'x' => {
+                let mut v = 0u32;
+                let mut used = 0;
+                while used < 2 {
+                    match raw.get(i).and_then(|c| c.to_digit(16)) {
+                        Some(h) => {
+                            v = v * 16 + h;
+                            i += 1;
+                            used += 1;
+                        }
+                        None => break,
+                    }
+                }
+                if used == 0 {
+                    out.push(b'x');
+                } else {
+                    out.push(v as u8);
+                }
+            }
+            'u' | 'U' => {
+                let n = if d == 'u' { 4 } else { 8 };
+                let Some(code) = hex_at(raw, i, n) else {
+                    push(&mut out, d);
+                    continue;
+                };
+                i += n;
+                let mut ch = char::from_u32(code);
+                if ch.is_none() && d == 'u' {
+                    // 下位サロゲートが `\uXXXX` で続くペア。
+                    if raw.get(i) == Some(&'\\') && raw.get(i + 1) == Some(&'u') {
+                        if let Some(lo) = hex_at(raw, i + 2, 4) {
+                            ch = combine_surrogates(code, lo);
+                            if ch.is_some() {
+                                i += 6;
+                            }
+                        }
+                    }
+                }
+                push(&mut out, ch.unwrap_or('\u{FFFD}'));
+            }
+            other => push(&mut out, other),
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// PostgreSQL の `U&'…'` の中身 (`''` は解いたもの) を `esc` (既定 `\`、`UESCAPE` で変更) でデコードする。
+/// `esc` + 4 桁 16 進、`esc` + `+` + 6 桁 16 進 (サロゲートペア可)、`esc esc` は `esc` 自身。
+fn decode_pg_u(raw: &[char], esc: char) -> String {
+    let mut out = String::new();
+    let mut i = 0;
+    let read = |at: usize| -> Option<(u32, usize)> {
+        if raw.get(at) != Some(&esc) {
+            return None;
+        }
+        if raw.get(at + 1) == Some(&'+') {
+            hex_at(raw, at + 2, 6).map(|v| (v, at + 8))
+        } else {
+            hex_at(raw, at + 1, 4).map(|v| (v, at + 5))
+        }
+    };
+    while i < raw.len() {
+        if raw[i] == esc && raw.get(i + 1) == Some(&esc) {
+            out.push(esc);
+            i += 2;
+        } else if let Some((code, next)) = read(i) {
+            i = next;
+            let mut ch = char::from_u32(code);
+            if ch.is_none() {
+                if let Some((lo, n2)) = read(i) {
+                    ch = combine_surrogates(code, lo);
+                    if ch.is_some() {
+                        i = n2;
+                    }
+                }
+            }
+            out.push(ch.unwrap_or('\u{FFFD}'));
+        } else {
+            out.push(raw[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// リテラルの終端 `e` の後ろに `UESCAPE '<1 文字>'` があればその文字、なければ `\`。
+fn uescape_char(m: &[char], src: &[char], e: usize) -> char {
+    let skip = |mut i: usize| {
+        while i < m.len() && is_ws(m[i]) {
+            i += 1;
+        }
+        i
+    };
+    let p = skip(e);
+    let word_end = (p..m.len())
+        .find(|&j| !m[j].is_ascii_alphabetic())
+        .unwrap_or(m.len());
+    let word: String = m[p..word_end].iter().collect();
+    if !word.eq_ignore_ascii_case("uescape") {
+        return '\\';
+    }
+    let q = skip(word_end);
+    match (m.get(q), src.get(q + 1), m.get(q + 2)) {
+        (Some('\''), Some(&c), Some('\'')) => c,
+        _ => '\\',
+    }
+}
+
+/// 連結文字列の 1 片 `raw` (引用符の内側) をデコードする。`u_amp` は `U&'…'`、`backslash` は `E'…'` / MySQL。
+fn decode_literal_piece(raw: &[char], u_amp: bool, backslash: bool, esc: char) -> String {
+    if u_amp {
+        decode_pg_u(
+            &unescape_literal(raw, '\'', false)
+                .chars()
+                .collect::<Vec<_>>(),
+            esc,
+        )
+    } else if backslash {
+        decode_pg_e(raw)
+    } else {
+        unescape_literal(raw, '\'', false)
+    }
+}
+
 /// SQL 中の資格情報リテラルの**中身**。元の表記とエスケープを解いた値の両方 (長い順)。
 /// サーバのエラー文が SQL 断片を引用したときの置換に使う。
 pub(crate) fn credential_secrets(sql: &str, driver: DriverKind) -> Vec<String> {
@@ -526,6 +712,18 @@ pub(crate) fn credential_secrets(sql: &str, driver: DriverKind) -> Vec<String> {
             let raw = &chars[i + 1..inner_end];
             found.push(raw.iter().collect());
             found.push(unescape_literal(raw, q, backslash));
+            if driver == DriverKind::Postgres && q == '\'' {
+                if e_string {
+                    found.push(decode_pg_e(raw));
+                } else if s >= 2 && m[s - 1] == '&' && matches!(m[s - 2], 'u' | 'U') {
+                    found.push(decode_literal_piece(
+                        raw,
+                        true,
+                        false,
+                        uescape_char(&m, &chars, e),
+                    ));
+                }
+            }
             i = next;
         }
     }
@@ -593,6 +791,12 @@ pub(crate) fn redact_conninfo(conninfo: &str) -> String {
             i += 1;
         }
         let key: String = chars[start..i].iter().collect();
+        if looks_like_userinfo(&key) {
+            // `postgresql:/u:secret@h` や先頭が U+FEFF の URI は libpq が key=value として読み、エラー文は
+            // 全体を引用する。`user:パスワード@` のような語は残り全体を伏せる (安全側)。
+            out.push_str(REDACTED_LITERAL);
+            return out;
+        }
         let mut j = i;
         while j < chars.len() && is_ws(chars[j]) {
             j += 1;
@@ -693,6 +897,19 @@ pub(crate) fn conninfo_secret_values(conninfo: &str) -> Vec<String> {
             i += 1;
         }
         let key: String = chars[start..i].iter().collect();
+        if looks_like_userinfo(&key) {
+            out.push(key.clone());
+            if let Some(at) = key.rfind('@') {
+                for (c, _) in key[..at].match_indices(':') {
+                    let pw = &key[c + 1..at];
+                    for v in [pw.to_string(), percent_decode(pw)] {
+                        out.extend(v.split('/').filter(|p| !p.is_empty()).map(str::to_string));
+                        out.push(v);
+                    }
+                }
+            }
+            break;
+        }
         let mut j = i;
         while j < n && is_ws(chars[j]) {
             j += 1;
@@ -785,27 +1002,36 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// 空白で区切った語が `user:パスワード@host…` の形か (最後の `@` の前に `:` がある)。
+fn looks_like_userinfo(word: &str) -> bool {
+    word.rfind('@').is_some_and(|at| word[..at].contains(':'))
+}
+
 /// [`redact_conninfo`] の URI 形式: `user:パスワード@` と `?password=...` / `&sslpassword=...` を伏せる。
+/// ユーザー情報は「スキームの後の最初の `/` より前にある最後の `@`」で決め、その後で `?` のクエリを分ける
+/// (パスワードに素の `?` があっても取りこぼさない)。
 fn redact_conninfo_uri(uri: &str) -> String {
-    let (head, query) = match uri.split_once('?') {
-        Some((h, q)) => (h, Some(q)),
-        None => (uri, None),
-    };
-    let mut head = head.to_string();
-    if let Some(scheme_end) = head.find("://").map(|p| p + 3) {
-        let authority_end = head[scheme_end..]
-            .find('/')
-            .map_or(head.len(), |p| p + scheme_end);
-        // ユーザー情報の区切りは最後の `@` (パスワードの `@` は通常パーセントエンコードされるが念のため)。
-        if let Some(at) = head[scheme_end..authority_end]
-            .rfind('@')
-            .map(|p| p + scheme_end)
-        {
-            if let Some(colon) = head[scheme_end..at].find(':').map(|p| p + scheme_end) {
-                head = format!("{}:********{}", &head[..colon], &head[at..]);
-            }
+    let scheme_end = uri.find("://").map_or(0, |p| p + 3);
+    let authority_end = uri[scheme_end..]
+        .find('/')
+        .map_or(uri.len(), |p| p + scheme_end);
+    let mut prefix = uri[..scheme_end].to_string();
+    let mut rest_start = scheme_end;
+    // ユーザー情報の区切りは最後の `@` (パスワードの `@` は通常パーセントエンコードされるが念のため)。
+    if let Some(at) = uri[scheme_end..authority_end]
+        .rfind('@')
+        .map(|p| p + scheme_end)
+    {
+        if let Some(colon) = uri[scheme_end..at].find(':').map(|p| p + scheme_end) {
+            prefix = format!("{}:********", &uri[..colon]);
+            rest_start = at;
         }
     }
+    let (head, query) = match uri[rest_start..].split_once('?') {
+        Some((h, q)) => (h, Some(q)),
+        None => (&uri[rest_start..], None),
+    };
+    let head = format!("{prefix}{head}");
     match query {
         None => head,
         Some(q) => {
@@ -911,5 +1137,50 @@ mod tests {
         // 伏せたあとの再実行で変わらない。
         let once = redact_conninfo("host=h password=abc");
         assert_eq!(redact_conninfo(&once), once);
+    }
+
+    #[test]
+    fn conninfo_uri_password_with_question_mark_is_redacted() {
+        assert_eq!(
+            redact_conninfo("postgresql://u:p?x@h/db"),
+            "postgresql://u:********@h/db"
+        );
+        assert_eq!(
+            redact_conninfo("postgresql://u:p?x@h/db?sslmode=require&password=zz"),
+            "postgresql://u:********@h/db?sslmode=require&password=********"
+        );
+        assert_eq!(
+            redact_conninfo("postgresql://u:a@b?c@h"),
+            "postgresql://u:********@h"
+        );
+    }
+
+    #[test]
+    fn conninfo_userinfo_like_word_is_redacted() {
+        assert_eq!(
+            redact_conninfo("\u{feff}postgresql://u:secret1@h/db"),
+            "'********'"
+        );
+        assert_eq!(
+            redact_conninfo("host=a postgresql:/u:secret1@h"),
+            "host=a '********'"
+        );
+        assert_eq!(redact_conninfo("host=db user=repl"), "host=db user=repl");
+        let v = conninfo_secret_values("postgresql:/u:secret1@h");
+        assert!(v.iter().any(|s| s == "secret1"));
+    }
+
+    #[test]
+    fn pg_literal_decoders_match_the_server() {
+        let c = |s: &str| s.chars().collect::<Vec<_>>();
+        assert_eq!(
+            decode_pg_e(&c("a\\nb\\x41\\101\\u0042\\q''")),
+            "a\nbAAB".to_string() + "q'"
+        );
+        assert_eq!(decode_pg_e(&c("\\uD83D\\uDE00")), "\u{1F600}");
+        assert_eq!(decode_pg_e(&c("\\xC3\\xA9")), "\u{e9}");
+        assert_eq!(decode_pg_u(&c("\\0061\\+000062\\\\"), '\\'), "ab\\");
+        assert_eq!(decode_pg_u(&c("!0061!!"), '!'), "a!");
+        assert_eq!(decode_pg_u(&c("\\D83D\\DE00"), '\\'), "\u{1F600}");
     }
 }
