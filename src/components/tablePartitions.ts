@@ -268,3 +268,41 @@ export function existingHashModulus(info: Pick<TablePartitions, "partitions">): 
   }
   return null;
 }
+
+// ---- 既存の境界の解析 (パーティション追加 #2211 が次の境界を推定するのに使う) ----
+
+/**
+ * RANGE の境界をキー列ごとの値に分ける。PostgreSQL `FOR VALUES FROM (a) TO (b)` は from / to、
+ * MySQL `LESS THAN (x)` / `LESS THAN MAXVALUE` は to だけ (from は null)。読めない形式は null。
+ */
+export function parseRangeBound(bound: string): { from: string[] | null; to: string[] } | null {
+  const raw = bound.trim();
+  const body = raw.replace(/^FOR VALUES\s+/i, "");
+  const pg = /^FROM\s*(\(.*\))\s*TO\s*(\(.*\))$/is.exec(body);
+  if (pg) {
+    const from = parenBody(pg[1] as string);
+    const to = parenBody(pg[2] as string);
+    return from !== null && to !== null
+      ? { from: splitTopLevel(from).map(plainValue), to: splitTopLevel(to).map(plainValue) }
+      : null;
+  }
+  const my = /^LESS THAN\s*(\(.*\)|MAXVALUE)$/is.exec(raw);
+  if (!my) return null;
+  const arg = my[1] as string;
+  if (/^maxvalue$/i.test(arg)) return { from: null, to: ["MAXVALUE"] };
+  const inner = parenBody(arg);
+  return inner === null ? null : { from: null, to: splitTopLevel(inner).map(plainValue) };
+}
+
+/** LIST の境界 (`FOR VALUES IN (...)` / MySQL `IN (...)`) の値 (引用符・型キャストを外したもの)。 */
+export function parseListBound(bound: string): string[] | null {
+  const m = /^(?:FOR VALUES\s+)?IN\s*(\(.*\))$/is.exec(bound.trim());
+  const inner = m ? parenBody(m[1] as string) : null;
+  return inner === null ? null : splitTopLevel(inner).map(plainValue);
+}
+
+/** PostgreSQL の HASH 境界 `FOR VALUES WITH (modulus 4, remainder 1)`。 */
+export function parseHashBound(bound: string): { modulus: number; remainder: number } | null {
+  const m = /modulus\s+(\d+)\s*,\s*remainder\s+(\d+)/i.exec(bound);
+  return m ? { modulus: Number(m[1]), remainder: Number(m[2]) } : null;
+}

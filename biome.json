@@ -2,7 +2,7 @@
   "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
   "root": true,
   "vcs": { "enabled": false },
-  "files": { "includes": ["src/**/*.ts", "src/**/*.tsx"] },
+  "files": { "includes": ["src/**/*.ts", "src/**/*.tsx"], "maxSize": 2097152 },
   "formatter": {
     "enabled": true,
     "indentStyle": "space",

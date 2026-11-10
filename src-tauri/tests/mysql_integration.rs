@@ -4666,6 +4666,97 @@ async fn mysql_list_table_triggers_when_env_set() {
         .await;
 }
 
+/// #2211: `ADD PARTITION` と、MAXVALUE があるときの `REORGANIZE PARTITION` が既存の `execute` 経路で通り、
+/// 追加した子へ行が振り分けられる (UI が組み立てる文と同じ形)。
+#[tokio::test]
+async fn mysql_add_partitions_routes_rows_when_env_set() {
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let Some(db) = opts.database.clone() else {
+        common::skip_external("URL has no database");
+        return;
+    };
+    let conn = t::connect(&opts).await.expect("connect");
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS noobdb_padd_t", Some(&db))
+        .await;
+    t::mysql_exec_text(
+        &opts,
+        "CREATE TABLE noobdb_padd_t (id INT NOT NULL, y INT NOT NULL) \
+         PARTITION BY RANGE (y) (PARTITION p2025 VALUES LESS THAN (2026), \
+         PARTITION p2026 VALUES LESS THAN (2027))",
+    )
+    .await
+    .expect("create partitioned");
+    // MAXVALUE が無いので末尾へ ADD PARTITION (2 件まとめて)。
+    conn.execute(
+        "ALTER TABLE `noobdb_padd_t` ADD PARTITION (PARTITION `p2027` VALUES LESS THAN (2028), PARTITION `p2028` VALUES LESS THAN (2029));",
+        Some(&db),
+    )
+    .await
+    .expect("add partition");
+    // 範囲外の境界 (最後より小さい) は DB でも失敗する (UI は実行前にエラーにする)。
+    assert!(conn
+        .execute(
+            "ALTER TABLE `noobdb_padd_t` ADD PARTITION (PARTITION `pbad` VALUES LESS THAN (2020));",
+            Some(&db),
+        )
+        .await
+        .is_err());
+    // MAXVALUE を足してから、REORGANIZE PARTITION で分割する。
+    conn.execute(
+        "ALTER TABLE `noobdb_padd_t` ADD PARTITION (PARTITION `pmax` VALUES LESS THAN MAXVALUE);",
+        Some(&db),
+    )
+    .await
+    .expect("add max");
+    assert!(conn
+        .execute(
+            "ALTER TABLE `noobdb_padd_t` ADD PARTITION (PARTITION `p2029` VALUES LESS THAN (2030));",
+            Some(&db),
+        )
+        .await
+        .is_err());
+    conn.execute(
+        "INSERT INTO noobdb_padd_t VALUES (1, 2025), (2, 2027), (3, 2029), (4, 2031)",
+        Some(&db),
+    )
+    .await
+    .expect("insert");
+    conn.execute(
+        "ALTER TABLE `noobdb_padd_t` REORGANIZE PARTITION `pmax` INTO (PARTITION `p2029` VALUES LESS THAN (2030), PARTITION `pmax` VALUES LESS THAN (MAXVALUE));",
+        Some(&db),
+    )
+    .await
+    .expect("reorganize");
+    let got = conn
+        .list_table_partitions(&db, "noobdb_padd_t")
+        .await
+        .expect("partitions")
+        .expect("is partitioned");
+    let names: Vec<&str> = got.partitions.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["p2025", "p2026", "p2027", "p2028", "p2029", "pmax"]
+    );
+    // 行の振り分け: 分割後の 2029 年は p2029 へ、2031 年は pmax に残る。
+    for (part, expected) in [("p2025", 1), ("p2027", 1), ("p2029", 1), ("pmax", 1)] {
+        let r = conn
+            .execute(
+                &format!("DELETE FROM noobdb_padd_t PARTITION (`{part}`)"),
+                Some(&db),
+            )
+            .await
+            .expect("delete partition");
+        assert_eq!(r.rows_affected, expected, "{part}");
+    }
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS noobdb_padd_t", Some(&db))
+        .await;
+}
+
 /// #1868: `list_table_partitions` が RANGE パーティション表の子 (境界・MAXVALUE) を返し、非分割表は `None`。
 /// パーティション単位の保守 / TRUNCATE / DROP の SQL がアプリの実行経路 (`execute`) でそのまま通る。
 #[tokio::test]

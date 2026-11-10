@@ -4128,6 +4128,40 @@ const en = {
   partitionAttachConfirmTitle: "Attach {partition} to {table}?",
   partitionAttachConfirmBody:
     "{partition} becomes a partition of {table}. PostgreSQL takes an ACCESS EXCLUSIVE lock on {partition} while it checks that every row fits the bound (a matching CHECK constraint lets it skip the scan), so queries on it wait. If any row is outside the bound, the statement fails and nothing changes. If a DEFAULT partition exists, it is checked too, and the statement fails if it holds rows that belong to the new bound.",
+  partitionAddOpen: "Add partition...",
+  partitionAddMultiListUnsupported:
+    "Adding a partition to a multi-column LIST (tuple values) is not supported here. Write the ALTER TABLE statement in the editor.",
+  addPartitionTitle: "Add partitions to {table}",
+  addPartitionName: "Partition name",
+  addPartitionCount: "Number of partitions",
+  addPartitionCountHelp:
+    "Creates this many partitions of the same width in one go, continuing from the first one (RANGE with a single key column only).",
+  addPartitionBound: "Bound ({method} on {key})",
+  addPartitionSuggest:
+    "The initial values continue the last existing bound with the same width. Edit them if needed.",
+  addPartitionValueHelp:
+    "Separate values with commas. Numbers are written as is and everything else is quoted as a literal.",
+  addPartitionFromFixed: "Starts where the previous partition ends.",
+  addPartitionReorganize:
+    "{partition} holds the MAXVALUE bound, so a partition cannot simply be appended. This splits it with REORGANIZE PARTITION: its rows are copied into the new partitions and {partition} is rebuilt, which blocks writes to it and can take a while when it is large.",
+  addPartitionDefaultWarning:
+    "A DEFAULT partition exists. Creating a partition scans it under an ACCESS EXCLUSIVE lock, and the statement fails if it holds rows that belong to the new bound. Move such rows first.",
+  addPartitionHashNote:
+    "Adding a partition to a HASH / KEY partitioned table redistributes the existing rows across all partitions, which rebuilds the table.",
+  addPartitionErrName: "Enter a partition name.",
+  addPartitionErrNameDup: "A partition named {detail} already exists or is repeated.",
+  addPartitionErrRange: "Enter FROM and TO for every key column.",
+  addPartitionErrOrder: "FROM must be less than TO.",
+  addPartitionErrOverlap: "The bound overlaps the existing partition {detail}.",
+  addPartitionErrAscending: "The upper bound must be greater than the last one ({detail}).",
+  addPartitionErrListOverlap: "The value {detail} already belongs to another partition (or is repeated).",
+  addPartitionErrHashDup: "A partition with this MODULUS and REMAINDER already exists.",
+  addPartitionErrCount: "Enter a whole number from 1 to {max}.",
+  addPartitionErrCountUnsupported:
+    "The next bounds cannot be inferred from these values. Set the count to 1.",
+  addPartitionPreviewEmpty: "Fill in the fields to preview the SQL.",
+  addPartitionConfirm: "Add",
+  partitionAddDone: "Added {count} partition(s) to {table}",
   attachPartitionOpen: "Attach existing table...",
   attachPartitionTitle: "Attach a table to {table}",
   attachPartitionChild: "Table to attach",
@@ -11968,6 +12002,37 @@ const ja: Dict = {
   partitionAttachConfirmTitle: "{partition} を {table} に ATTACH しますか?",
   partitionAttachConfirmBody:
     "{partition} が {table} のパーティションになります。実行中は {partition} に強いロック (ACCESS EXCLUSIVE) がかかり、全行が境界に収まるか検査します (同じ条件の CHECK 制約があれば検査を省けます)。その間は {partition} への問い合わせが待たされます。境界外の行が 1 行でもあると失敗し、何も変わりません。DEFAULT パーティションがある場合はそちらも検査され、新しい境界に該当する行があると失敗します。",
+  partitionAddOpen: "パーティションを追加...",
+  partitionAddMultiListUnsupported:
+    "複数列の LIST (値がタプル) へのパーティション追加は未対応です。エディタで ALTER TABLE を書いてください。",
+  addPartitionTitle: "{table} にパーティションを追加",
+  addPartitionName: "パーティション名",
+  addPartitionCount: "作成する件数",
+  addPartitionCountHelp:
+    "最初の 1 件に続けて、同じ幅のパーティションをこの件数だけまとめて作ります (キー列が 1 つの RANGE のみ)。",
+  addPartitionBound: "境界 ({method} / {key})",
+  addPartitionSuggest: "初期値は、既存の最後の境界と同じ幅で続く次の期間です。必要なら直してください。",
+  addPartitionValueHelp: "値はカンマ区切りです。数値はそのまま、それ以外はリテラルとして引用します。",
+  addPartitionFromFixed: "直前のパーティションの終わりから始まります。",
+  addPartitionReorganize:
+    "{partition} が MAXVALUE の境界を持つため、末尾に追加できません。REORGANIZE PARTITION で分割します。{partition} の行は新しいパーティションへコピーされ {partition} が作り直されるため、その間は書き込みが待たされ、大きいと時間がかかります。",
+  addPartitionDefaultWarning:
+    "DEFAULT パーティションがあります。作成時にそちらを強いロック (ACCESS EXCLUSIVE) で検査し、新しい境界に該当する行があると失敗します。先にその行を移してください。",
+  addPartitionHashNote:
+    "HASH / KEY パーティションへの追加は、既存の行を全パーティションに振り直すため、テーブルの再構築になります。",
+  addPartitionErrName: "パーティション名を入力してください。",
+  addPartitionErrNameDup: "{detail} という名前のパーティションが既にあるか、重複しています。",
+  addPartitionErrRange: "すべてのキー列に FROM と TO を入力してください。",
+  addPartitionErrOrder: "FROM は TO より小さくしてください。",
+  addPartitionErrOverlap: "既存のパーティション {detail} と境界が重なっています。",
+  addPartitionErrAscending: "上限は最後の境界 ({detail}) より大きくしてください。",
+  addPartitionErrListOverlap: "値 {detail} は既に別のパーティションにあるか、重複しています。",
+  addPartitionErrHashDup: "同じ MODULUS / REMAINDER のパーティションが既にあります。",
+  addPartitionErrCount: "1 から {max} までの整数を入力してください。",
+  addPartitionErrCountUnsupported: "この値からは次の境界を推定できません。件数を 1 にしてください。",
+  addPartitionPreviewEmpty: "項目を入力すると SQL をプレビューします。",
+  addPartitionConfirm: "追加",
+  partitionAddDone: "{table} にパーティションを {count} 件追加しました",
   attachPartitionOpen: "既存のテーブルを付ける...",
   attachPartitionTitle: "{table} にテーブルを付ける",
   attachPartitionChild: "付けるテーブル",
