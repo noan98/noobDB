@@ -4678,6 +4678,12 @@ fn mask_for_analysis_impl(
                             .all(|&g| matches!(g, ' ' | '\t' | '\n' | '\r' | '\u{b}' | '\u{c}'))
                 });
             let escapes = backslash_escapes || e_prefixed || e_continued;
+            // E モードでないリテラル (や引用識別子) を挟んだ時点で、それより前の E リテラル
+            // とはもう連結しない。ここで状態を捨てないと、後続の `'` ごとに伸び続ける隙間を
+            // 毎回走査して二乗の計算量になる。フロントの `maskLiterals` と同じ。
+            if !e_prefixed && !e_continued {
+                e_literal_end = None;
+            }
             out.push(c);
             i += 1;
             while i < n {
