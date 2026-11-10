@@ -6593,7 +6593,6 @@ export default function App() {
           pf && pf.sql === sql && pf.status === "ready"
             ? { verb: pf.plan.verb, count: pf.count, allRows: pf.plan.allRows }
             : null;
-        if (typedConfirmTarget) markFeatureTried("helpTypeToConfirmTitle");
         setPendingDangerous({
           tabId: target.id,
           sql,
@@ -6683,6 +6682,8 @@ export default function App() {
   const handleConfirmDangerous = useCallback(() => {
     if (!pendingDangerous) return;
     const { tabId, sql, autoLimit, batch } = pendingDangerous;
+    // 型確認 (#2216) は確認を通過したときだけ「試した」にする (キャンセルでは記録しない)。
+    if (pendingDangerous.typedConfirmTarget) markFeatureTried("helpTypeToConfirmTitle");
     setPendingDangerous(null);
     if (batch) {
       void runBatchInTab(tabId, sql, true);
@@ -7300,7 +7301,6 @@ export default function App() {
   );
 
   const handleSaveSnippetFromEditor = useCallback((sql: string) => {
-    markFeatureTried("helpSnippetTitle");
     setEditingSnippet(null);
     setSnippetFormSql(sql);
     setShowForm(false);
