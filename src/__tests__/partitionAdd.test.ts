@@ -311,3 +311,100 @@ describe("MySQL", () => {
     ]);
   });
 });
+
+describe("レビュー指摘 (#2211)", () => {
+  it("MySQL のリテラルは引用済みに見える入力も必ず引用し直す (バックスラッシュで文を抜け出せない)", () => {
+    const list = info("LIST", "c", [part("a", "IN (1)")]);
+    const f = { ...initialAddForm("mysql", "t", list, "list"), name: "b" };
+    const evil = "'2027\\'' ) ; DROP TABLE x; -- '";
+    const sql = planAddPartitions("mysql", null, "t", list, "list", { ...f, values: evil })
+      .statements[0] as string;
+    // 先頭・末尾以外の単一引用符はすべて '' になり、バックスラッシュは \\ になる。
+    expect(sql).toBe(
+      "ALTER TABLE `t` ADD PARTITION (PARTITION `b` VALUES IN ('''2027\\\\'''' ) ; DROP TABLE x; -- '''));",
+    );
+    const r = mysqlRange("1000");
+    const rf = { ...initialAddForm("mysql", "t", r, "range"), name: "px", to: ["a\\"] };
+    expect(planAddPartitions("mysql", null, "t", r, "range", rf).statements[0]).toContain(
+      "LESS THAN ('a\\\\')",
+    );
+    expect(
+      planAddPartitions("mysql", null, "t", list, "list", { ...f, values: "null, 5" }).statements[0],
+    ).toContain("VALUES IN (NULL, 5)");
+  });
+
+  it("名前の接頭辞は MAXVALUE / DEFAULT の子から取らない", () => {
+    const m = info("RANGE", "id", [
+      part("p_2025", "LESS THAN (2026)"),
+      part("p_2026", "LESS THAN (2027)"),
+      part("pmax", "LESS THAN MAXVALUE"),
+    ]);
+    expect(initialAddForm("mysql", "t", m, "range").name).toBe("p_2027");
+    const pg = info("RANGE", "id", [
+      part("a_1", "FOR VALUES FROM (0) TO (10)"),
+      part("a_2", "FOR VALUES FROM (10) TO (20)"),
+      part("zz_default", "DEFAULT", { is_default: true }),
+    ]);
+    expect(initialAddForm("postgres", "t", pg, "range").name).toBe("a_20");
+  });
+
+  it("月末起点でも N 件が 1 件目の幅でずれずに進む", () => {
+    const i = info("RANGE", "d", [part("m_0", "FOR VALUES FROM ('2026-11-30') TO ('2026-12-31')")]);
+    const f = {
+      ...initialAddForm("postgres", "t", i, "range"),
+      from: ["2026-12-31"],
+      to: ["2027-01-31"],
+      count: "3",
+    };
+    const plan = planAddPartitions("postgres", null, "t", i, "range", f);
+    expect(plan.items.map((x) => [x.from[0], x.to[0]])).toEqual([
+      ["2026-12-31", "2027-01-31"],
+      ["2027-01-31", "2027-02-28"],
+      ["2027-02-28", "2027-03-31"],
+    ]);
+  });
+
+  it("式キーの MySQL RANGE は名前を空欄で始める", () => {
+    const i = info("RANGE", "to_days(`d`)", [part("p0", "LESS THAN (100)"), part("p1", "LESS THAN (200)")]);
+    expect(initialAddForm("mysql", "t", i, "range").name).toBe("");
+  });
+
+  // src-tauri/tests/{postgres,mysql}_integration.rs が手書きしている文と、生成器の出力を同一に保つ。
+  it("PostgreSQL 統合テストの文と生成器の出力が一致する", () => {
+    const i = info("RANGE", "ts", [
+      part("noobdb_padd_t_2026_01", "FOR VALUES FROM ('2026-01-01') TO ('2026-02-01')"),
+    ]);
+    const f = { ...initialAddForm("postgres", "noobdb_padd_t", i, "range"), count: "2" };
+    expect(planAddPartitions("postgres", "public", "noobdb_padd_t", i, "range", f).statements).toEqual([
+      `CREATE TABLE "public"."noobdb_padd_t_2026_02" PARTITION OF "public"."noobdb_padd_t" FOR VALUES FROM ('2026-02-01') TO ('2026-03-01');`,
+      `CREATE TABLE "public"."noobdb_padd_t_2026_03" PARTITION OF "public"."noobdb_padd_t" FOR VALUES FROM ('2026-03-01') TO ('2026-04-01');`,
+    ]);
+    const dup = planAddPartitions("postgres", "public", "noobdb_padd_t", i, "range", {
+      ...f,
+      name: "noobdb_padd_t_dup",
+      from: ["2026-01-15"],
+      to: ["2026-02-15"],
+    });
+    expect(dup.errors[0]?.code).toBe("rangeOverlap");
+  });
+
+  it("MySQL 統合テストの文と生成器の出力が一致する", () => {
+    const i = mysqlRange("2026", "2027");
+    const f = { ...initialAddForm("mysql", "noobdb_padd_t", i, "range"), count: "2" };
+    expect(planAddPartitions("mysql", "db", "noobdb_padd_t", i, "range", f).statements).toEqual([
+      "ALTER TABLE `db`.`noobdb_padd_t` ADD PARTITION (PARTITION `p2027` VALUES LESS THAN (2028), PARTITION `p2028` VALUES LESS THAN (2029));",
+    ]);
+    const m = info("RANGE", "y", [
+      part("p2025", "LESS THAN (2026)"),
+      part("p2026", "LESS THAN (2027)"),
+      part("p2027", "LESS THAN (2028)"),
+      part("p2028", "LESS THAN (2029)"),
+      part("pmax", "LESS THAN MAXVALUE"),
+    ]);
+    const mf = initialAddForm("mysql", "noobdb_padd_t", m, "range");
+    expect(mf.name).toBe("p2029");
+    expect(planAddPartitions("mysql", "db", "noobdb_padd_t", m, "range", mf).statements).toEqual([
+      "ALTER TABLE `db`.`noobdb_padd_t` REORGANIZE PARTITION `pmax` INTO (PARTITION `p2029` VALUES LESS THAN (2030), PARTITION `pmax` VALUES LESS THAN (MAXVALUE));",
+    ]);
+  });
+});

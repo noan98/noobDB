@@ -158,6 +158,17 @@ export function advanceRange(from: string, to: string): { from: string; to: stri
   return next === null ? null : { from: to.trim(), to: next };
 }
 
+/** 1 件目の幅 (`from` → `to`) を k 倍して `to` から進める。月末起点でも毎回 `to` から数えるのでずれない。 */
+function advanceByK(from: string, to: string, k: number): { from: string; to: string } | null {
+  const step = stepOf(from, to);
+  if (!step) return null;
+  const mul = (n: number): Step =>
+    step.type === "int" ? { type: "int", by: step.by * BigInt(n) } : { type: step.type, by: step.by * n };
+  const f = k === 1 ? to.trim() : applyStep(to, mul(k - 1));
+  const t = applyStep(to, mul(k));
+  return f === null || t === null ? null : { from: f, to: t };
+}
+
 /** 名前の末尾に付ける境界ラベル: 年単位 `2026` / 月単位 `2026_02` / 日付 `20260201` / 整数はそのまま。 */
 function boundLabel(from: string, to: string): string {
   const step = stepOf(from, to);
@@ -266,10 +277,18 @@ export function initialAddForm(
     remainder: "",
     count: "1",
   };
-  const prefixSource = topLevel(info).at(-1)?.name ?? "";
+  // 名前の接頭辞の元: MAXVALUE / DEFAULT の子は除く (`pmax_2026_02` にならないように)。
+  const finiteNames = topLevel(info).filter((p) => {
+    const b = parseRangeBound(p.bound);
+    return !(b && b.to.some((v) => isInfinite(v) === 1));
+  });
+  let prefixSource = finiteNames.at(-1)?.name ?? "";
+  // 式キー (`to_days(d)` など) の上限は数値で、名前に使える境界ラベルにならないので名前は空欄で始める。
+  const exprKey = driver === "mysql" && /^RANGE$/i.test(info.method.trim()) && info.key.includes("(");
   if (kind === "range") {
     const ranges = existingRanges(driver, info);
     const last = lastFiniteRange(ranges);
+    prefixSource = last?.name ?? prefixSource;
     if (last && last.to.length === 1) {
       const lastTo = last.to[0] as string;
       const lastFrom = last.from?.[0];
@@ -278,7 +297,7 @@ export function initialAddForm(
       form.from = [lastTo];
       if (next) {
         form.to = [next.to];
-        form.name = namePrefix(prefixSource, table) + boundLabel(next.from, next.to);
+        form.name = exprKey ? "" : namePrefix(prefixSource, table) + boundLabel(next.from, next.to);
       }
     } else if (last) {
       form.from = [...last.to];
@@ -349,13 +368,18 @@ export interface AddPartitionPlan {
 
 export const MAX_ADD_COUNT = 60;
 
-/** MySQL の LESS THAN / IN に書くリテラル: 整数・MAXVALUE・MINVALUE はそのまま、他は文字列として引用する。 */
+/**
+ * MySQL の LESS THAN / IN に書くリテラル: 整数・MAXVALUE・MINVALUE・NULL はそのまま、他は常に文字列として
+ * 引用し直す。MySQL では `\'` もエスケープなので、引用済みに見える入力を素通しすると文を抜け出せる。
+ */
 function mysqlLiteral(raw: string): string {
   const v = raw.trim();
   if (INT_RE.test(v)) return v;
-  if (isInfinite(v) !== 0) return v.toUpperCase();
-  if (/^'(?:[^']|'')*'$/.test(v)) return v;
-  return `'${v.replace(/\\/g, "\\\\").replace(/'/g, "''")}'`;
+  if (isInfinite(v) !== 0 || /^null$/i.test(v)) return v.toUpperCase();
+  // 内側に引用符もバックスラッシュも無い `'x'` だけは外側の引用符を外す (入力の癖を許す)。他は丸ごと文字列。
+  const plain = /^'([^'\\]*)'$/.exec(v);
+  const body = plain ? (plain[1] as string) : v;
+  return `'${body.replace(/\\/g, "\\\\").replace(/'/g, "''")}'`;
 }
 
 const nameKey = (driver: string, n: string) => (driver === "mysql" ? n.toLowerCase() : n);
@@ -477,10 +501,9 @@ export function planAddPartitions(
     const f0 = firstFrom[0] as string;
     const t0 = form.to[0] as string;
     const prefix = namePrefix(form.name.trim(), table);
-    let cur = { from: f0, to: t0 };
     const seen = new Set([nameKey(driver, form.name.trim())]);
     for (let i = 1; i < (count ?? 1); i++) {
-      const next = form.to.length === 1 ? advanceRange(cur.from, cur.to) : null;
+      const next = form.to.length === 1 ? advanceByK(f0, t0, i) : null;
       if (!next) {
         errors.push({ code: "countUnsupported" });
         break;
@@ -488,7 +511,6 @@ export function planAddPartitions(
       const name = prefix + boundLabel(next.from, next.to);
       checkName(name, seen);
       items.push({ name, from: [next.from], to: [next.to] });
-      cur = next;
     }
   }
   if (errors.length > 0) return emptyPlan(errors, maxPart ? "reorganize" : "add");
