@@ -232,6 +232,10 @@ function maskLiteralsUncached(
         eLiteralEnd >= 0 &&
         /^[ \t\n\r\v\f]*[\n\r][ \t\n\r\v\f]*$/.test(out.slice(eLiteralEnd, i).join(""));
       const escapes = backslashEscapes || ePrefixed || eContinued;
+      // E モードでないリテラル (や引用識別子) を挟んだ時点で、それより前の E リテラルとは
+      // もう連結しない。ここで状態を捨てないと、後続の `'` ごとに伸び続ける隙間を毎回
+      // 切り出して二乗の計算量になる (大きな VALUES で UI が固まる)。
+      if (!ePrefixed && !eContinued) eLiteralEnd = -1;
       let j = i + 1;
       let closed = false;
       while (j < n) {
