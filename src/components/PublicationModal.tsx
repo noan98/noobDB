@@ -12,6 +12,7 @@ import {
   publicationActionFor,
   publicationMembership,
   replicaIdentityBlocksWrites,
+  replicaIdentityFullApplies,
   replicaIdentityKind,
   type PublicationMembership,
   type PublicationPick,
@@ -51,6 +52,7 @@ const REPLICA_KEYS = {
   nothing: "publicationReplicaNothing",
   full: "publicationReplicaFull",
   index: "publicationReplicaIndex",
+  partitioned: "publicationReplicaPartitioned",
 } as const;
 
 export function PublicationModal({ sessionId, database, table, readOnly, onConfirm, onClose }: Props) {
@@ -129,7 +131,8 @@ export function PublicationModal({ sessionId, database, table, readOnly, onConfi
     [picks, publications, identity],
   );
   const risky = riskyPubs.length > 0;
-  const useReplicaFull = risky && replicaFull;
+  const fullApplies = replicaIdentityFullApplies(identity ?? null);
+  const useReplicaFull = risky && replicaFull && fullApplies;
   const statements = useMemo(
     () => buildPublicationStatements(database, table, picks, { replicaIdentityFull: useReplicaFull }),
     [database, table, picks, useReplicaFull],
@@ -244,7 +247,12 @@ export function PublicationModal({ sessionId, database, table, readOnly, onConfi
         )}
 
         {risky && (
-          <Callout tone="warning" title={t("publicationReplicaWarnTitle", { names: riskyPubs.join(", ") })}>
+          <Callout
+            tone={useReplicaFull ? "info" : "warning"}
+            title={t(useReplicaFull ? "publicationReplicaFullTitle" : "publicationReplicaWarnTitle", {
+              names: riskyPubs.join(", "),
+            })}
+          >
             <chakra.p margin={0}>{t("publicationReplicaWarnBody")}</chakra.p>
             <chakra.ul margin={0} paddingLeft="5" marginTop="1">
               <li>{t("publicationReplicaFixPk")}</li>
@@ -252,10 +260,19 @@ export function PublicationModal({ sessionId, database, table, readOnly, onConfi
               <li>{t("publicationReplicaFixInsertOnly")}</li>
             </chakra.ul>
             <chakra.label display="flex" alignItems="center" gap="2" marginTop="2" textStyle="body">
-              <Checkbox checked={replicaFull} onChange={(e) => setReplicaFull(e.target.checked)} />
+              <Checkbox
+                checked={replicaFull && fullApplies}
+                disabled={!fullApplies}
+                onChange={(e) => setReplicaFull(e.target.checked)}
+              />
               <span>{t("publicationReplicaFullOption")}</span>
             </chakra.label>
-            {replicaFull && (
+            {!fullApplies && (
+              <chakra.p margin={0} marginTop="1" textStyle="caption">
+                {t("publicationReplicaPartitionNote")}
+              </chakra.p>
+            )}
+            {useReplicaFull && (
               <chakra.p margin={0} marginTop="1" textStyle="caption">
                 {t("publicationReplicaFullWalNote")}
               </chakra.p>

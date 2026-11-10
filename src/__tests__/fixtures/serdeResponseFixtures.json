@@ -6470,6 +6470,7 @@
   },
   "tableReplicaIdentity": {
     "has_primary_key": false,
+    "is_partitioned": true,
     "replica_identity": "f"
   },
   "tableRowEstimate": {

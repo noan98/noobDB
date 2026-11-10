@@ -738,9 +738,12 @@ export interface PublicationTable {
 
 /** `get_table_replica_identity` の結果: 表の REPLICA IDENTITY と主キーの有無 (#2212)。 */
 export interface TableReplicaIdentity {
-  /** `pg_class.relreplident` (`d` / `n` / `f` / `i`)。 */
+  /** 実効の `relreplident` (`d` / `n` / `f` / `i`)。索引が DROP 済みの `i` は `n` に正規化済み。 */
   replica_identity: string;
+  /** 主キーがある (遅延可能・無効でない)。 */
   has_primary_key: boolean;
+  /** パーティション親表。識別子は末端の集計で、FULL はパーティションごとに設定が要る。 */
+  is_partitioned: boolean;
 }
 
 /** `list_publications` の 1 件: 論理レプリケーションのパブリケーション (#2181)。PostgreSQL だけ。 */

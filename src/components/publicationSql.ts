@@ -66,7 +66,8 @@ export function buildPublicationStatements(
  * REPLICA IDENTITY の確認 (#2212)。パブリケーションが `update` / `delete` を公開するとき、表に行を特定する手段
  * (主キー・`FULL`・指定の索引) が無いと、その表への UPDATE / DELETE が
  * `cannot update table "x" because it does not have a replica identity and publishes updates` で失敗する。
- * `relreplident` は `d` (既定: 主キー) / `n` (なし) / `f` (全列) / `i` (指定の索引)。
+ * `relreplident` は `d` (既定: 主キー) / `n` (なし) / `f` (全列) / `i` (指定の索引)。バックエンドが実効値に正規化して返す
+ * (索引が DROP 済みの `i` は `n`、遅延可能な主キーは主キー無し、パーティション親は末端の集計)。
  */
 
 /** 公開する操作に UPDATE / DELETE が含まれるか (INSERT / TRUNCATE だけなら REPLICA IDENTITY は要らない)。 */
@@ -91,10 +92,16 @@ export function replicaIdentityBlocksWrites(
   return info !== null && publishesRowChanges(publish) && lacksReplicaIdentity(info);
 }
 
+/** 親表の `ALTER TABLE ... REPLICA IDENTITY FULL` で解消できるか。パーティション親は子へ伝播しないので、パーティションごとの設定が要る。 */
+export function replicaIdentityFullApplies(info: TableReplicaIdentity | null): boolean {
+  return info !== null && !info.is_partitioned;
+}
+
 /** 表の REPLICA IDENTITY の表示キー (`relreplident` → i18n キーの接尾辞)。未知の値は `d` 扱い。 */
 export function replicaIdentityKind(
   info: TableReplicaIdentity,
-): "default" | "defaultNoPk" | "nothing" | "full" | "index" {
+): "default" | "defaultNoPk" | "nothing" | "full" | "index" | "partitioned" {
+  if (info.is_partitioned) return "partitioned";
   switch (info.replica_identity) {
     case "n":
       return "nothing";

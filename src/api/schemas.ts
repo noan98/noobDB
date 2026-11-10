@@ -247,6 +247,7 @@ export const publicationInfoArray = z.array(publicationInfo);
 export const tableReplicaIdentity = z.object({
   replica_identity: z.string(),
   has_primary_key: z.boolean(),
+  is_partitioned: z.boolean(),
 });
 export const tableReplicaIdentityOrNull = tableReplicaIdentity.nullable();
 

@@ -91,6 +91,7 @@ fn replica_identity_label(ident: &str, has_primary_key: bool) -> String {
         "n" => "NOTHING".to_string(),
         "f" => "FULL".to_string(),
         "i" => "USING INDEX".to_string(),
+        "?" => "UNKNOWN".to_string(),
         _ if has_primary_key => "DEFAULT (primary key)".to_string(),
         _ => "DEFAULT (no primary key)".to_string(),
     }

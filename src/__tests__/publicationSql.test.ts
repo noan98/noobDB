@@ -8,6 +8,7 @@ import {
   publicationMembership,
   publishesRowChanges,
   replicaIdentityBlocksWrites,
+  replicaIdentityFullApplies,
   replicaIdentityKind,
 } from "../components/publicationSql";
 
@@ -125,9 +126,10 @@ describe("REPLICA IDENTITY の判定 (#2212)", () => {
       ["?", false, false],
     ];
     for (const [ident, pk, lacks] of cases) {
-      expect(lacksReplicaIdentity({ replica_identity: ident, has_primary_key: pk }), `${ident}/${pk}`).toBe(
-        lacks,
-      );
+      expect(
+        lacksReplicaIdentity({ replica_identity: ident, has_primary_key: pk, is_partitioned: false }),
+        `${ident}/${pk}`,
+      ).toBe(lacks);
     }
   });
 
@@ -148,7 +150,11 @@ describe("REPLICA IDENTITY の判定 (#2212)", () => {
         for (const pk of [true, false]) {
           const lacks = ident === "n" || (ident === "d" && !pk);
           expect(
-            replicaIdentityBlocksWrites(publish, { replica_identity: ident, has_primary_key: pk }),
+            replicaIdentityBlocksWrites(publish, {
+              replica_identity: ident,
+              has_primary_key: pk,
+              is_partitioned: false,
+            }),
             `${publish.join(",")} / ${ident} / pk=${pk}`,
           ).toBe(rows && lacks);
         }
@@ -161,12 +167,38 @@ describe("REPLICA IDENTITY の判定 (#2212)", () => {
   });
 
   it("表示の種別", () => {
-    const k = (replica_identity: string, has_primary_key: boolean) =>
-      replicaIdentityKind({ replica_identity, has_primary_key });
+    const k = (replica_identity: string, has_primary_key: boolean, is_partitioned = false) =>
+      replicaIdentityKind({ replica_identity, has_primary_key, is_partitioned });
     expect(k("d", true)).toBe("default");
     expect(k("d", false)).toBe("defaultNoPk");
     expect(k("n", true)).toBe("nothing");
     expect(k("f", false)).toBe("full");
     expect(k("i", false)).toBe("index");
+    expect(k("n", false, true)).toBe("partitioned");
+  });
+
+  it("バックエンドが実効値へ正規化する: 索引 DROP 済みの i (= n)・遅延可能な主キー (= 主キー無し)・パーティション親の集計 (n) は危険、すべて識別子ありの親は安全", () => {
+    const base = { is_partitioned: false };
+    // 索引が DROP 済みの i は n で返る。
+    expect(lacksReplicaIdentity({ ...base, replica_identity: "n", has_primary_key: false })).toBe(true);
+    // 遅延可能な主キーだけの表は d + 主キー無し。
+    expect(lacksReplicaIdentity({ ...base, replica_identity: "d", has_primary_key: false })).toBe(true);
+    // パーティション親: 末端に 1 つでも識別子が無ければ n、すべてにあれば d + 主キーあり。
+    expect(
+      lacksReplicaIdentity({ replica_identity: "n", has_primary_key: false, is_partitioned: true }),
+    ).toBe(true);
+    expect(lacksReplicaIdentity({ replica_identity: "d", has_primary_key: true, is_partitioned: true })).toBe(
+      false,
+    );
+  });
+
+  it("FULL は親表では効かない (パーティション親・不明は対象外)", () => {
+    expect(
+      replicaIdentityFullApplies({ replica_identity: "d", has_primary_key: false, is_partitioned: false }),
+    ).toBe(true);
+    expect(
+      replicaIdentityFullApplies({ replica_identity: "n", has_primary_key: false, is_partitioned: true }),
+    ).toBe(false);
+    expect(replicaIdentityFullApplies(null)).toBe(false);
   });
 });

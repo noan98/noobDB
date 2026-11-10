@@ -831,6 +831,7 @@ fn build_fixtures() -> serde_json::Value {
     let table_replica_identity = t::TableReplicaIdentity {
         replica_identity: "f".into(),
         has_primary_key: false,
+        is_partitioned: true,
     };
     let extensions_overview = t::ExtensionsOverview {
         extensions: vec![

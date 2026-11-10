@@ -5941,7 +5941,24 @@ async fn postgres_table_replica_identity_reports_relreplident_and_primary_key() 
         "CREATE TABLE nb2212.by_index (id integer NOT NULL, v text)",
         "CREATE UNIQUE INDEX nb2212_by_index_id ON nb2212.by_index (id)",
         "ALTER TABLE nb2212.by_index REPLICA IDENTITY USING INDEX nb2212_by_index_id",
-        "CREATE PUBLICATION nb2212_pub FOR TABLE nb2212.no_pk, nb2212.nothing",
+        // 指定の索引を DROP すると relreplident は i のまま残るが、実際は識別子が無い (UPDATE が失敗する)。
+        "CREATE TABLE nb2212.idx_dropped (id integer NOT NULL, v text)",
+        "CREATE UNIQUE INDEX nb2212_idx_dropped_id ON nb2212.idx_dropped (id)",
+        "ALTER TABLE nb2212.idx_dropped REPLICA IDENTITY USING INDEX nb2212_idx_dropped_id",
+        "DROP INDEX nb2212.nb2212_idx_dropped_id",
+        // 遅延可能な主キーは識別子に使われない。
+        "CREATE TABLE nb2212.deferrable_pk (id integer PRIMARY KEY DEFERRABLE, v text)",
+        // パーティション親: REPLICA IDENTITY は子へ伝播しないので末端を集計する。
+        "CREATE TABLE nb2212.part_ok (id integer PRIMARY KEY, v text) PARTITION BY RANGE (id)",
+        "CREATE TABLE nb2212.part_ok_1 PARTITION OF nb2212.part_ok FOR VALUES FROM (0) TO (100)",
+        "CREATE TABLE nb2212.part_bad (id integer, v text) PARTITION BY RANGE (id)",
+        "CREATE TABLE nb2212.part_bad_1 PARTITION OF nb2212.part_bad FOR VALUES FROM (0) TO (100)",
+        "CREATE TABLE nb2212.part_bad_2 PARTITION OF nb2212.part_bad FOR VALUES FROM (100) TO (200)",
+        "ALTER TABLE nb2212.part_bad_1 REPLICA IDENTITY FULL",
+        "CREATE TABLE nb2212.part_full (id integer, v text) PARTITION BY RANGE (id)",
+        "CREATE TABLE nb2212.part_full_1 PARTITION OF nb2212.part_full FOR VALUES FROM (0) TO (100)",
+        "ALTER TABLE nb2212.part_full_1 REPLICA IDENTITY FULL",
+        "CREATE PUBLICATION nb2212_pub FOR TABLE nb2212.no_pk, nb2212.nothing, nb2212.idx_dropped, nb2212.part_bad",
     ] {
         conn.execute(sql, None).await.expect(sql);
     }
@@ -5953,18 +5970,29 @@ async fn postgres_table_replica_identity_reports_relreplident_and_primary_key() 
                 .expect("table_replica_identity")
         }
     };
-    for (table, expect_ident, expect_pk) in [
-        ("with_pk", "d", true),
-        ("no_pk", "d", false),
-        ("nothing", "n", true),
-        ("full_id", "f", false),
-        ("by_index", "i", false),
+    for (table, expect_ident, expect_pk, expect_part) in [
+        ("with_pk", "d", true, false),
+        ("no_pk", "d", false, false),
+        ("nothing", "n", true, false),
+        ("full_id", "f", false, false),
+        ("by_index", "i", false, false),
+        // 索引が DROP 済みの i は n に正規化される。
+        ("idx_dropped", "n", false, false),
+        // 遅延可能な主キーは使えない。
+        ("deferrable_pk", "d", false, false),
+        // パーティション親は末端の集計: 全て識別子あり → d + 主キーあり、1 つでも無ければ n。
+        ("part_ok", "d", true, true),
+        ("part_bad", "n", false, true),
+        ("part_full", "d", true, true),
     ] {
         let r = ident(table)
             .await
             .unwrap_or_else(|| panic!("{table} が見つからない"));
         assert_eq!(r.replica_identity, expect_ident, "{table}");
-        assert_eq!(r.has_primary_key, expect_pk, "{table}");
+        assert_eq!(r.is_partitioned, expect_part, "{table}");
+        if expect_ident != "n" || !expect_part {
+            assert_eq!(r.has_primary_key, expect_pk, "{table}");
+        }
     }
     assert!(ident("missing_table").await.is_none());
 
@@ -5984,6 +6012,8 @@ async fn postgres_table_replica_identity_reports_relreplident_and_primary_key() 
     assert!(!by_name("no_pk").has_primary_key);
     assert_eq!(by_name("nothing").replica_identity, "n");
     assert!(by_name("nothing").has_primary_key);
+    assert_eq!(by_name("idx_dropped").replica_identity, "n");
+    assert_eq!(by_name("part_bad").replica_identity, "n");
     // 定義表示にも各表の REPLICA IDENTITY が出る。
     let def = conn
         .object_definition("nb2212", "publication", "nb2212_pub", None)

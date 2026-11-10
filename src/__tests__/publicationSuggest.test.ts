@@ -15,8 +15,8 @@ const pub = (over: Partial<PublicationInfo> = {}): PublicationInfo =>
     ...over,
   }) as PublicationInfo;
 
-const noPk = { replica_identity: "d", has_primary_key: false };
-const withPk = { replica_identity: "d", has_primary_key: true };
+const noPk = { replica_identity: "d", has_primary_key: false, is_partitioned: false };
+const withPk = { replica_identity: "d", has_primary_key: true, is_partitioned: false };
 
 const base = { driver: "postgres", readOnly: false, schema: "public", table: "orders" };
 

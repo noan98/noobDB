@@ -692,10 +692,13 @@ pub struct PublicationTable {
 /// `update` / `delete` を公開するとき、`n`、または `d` で主キーが無いと、その表への UPDATE / DELETE が失敗する。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TableReplicaIdentity {
-    /// `pg_class.relreplident` (`d` / `n` / `f` / `i`)。
+    /// 実効の `relreplident` (`d` / `n` / `f` / `i`)。索引が DROP 済みの `i` は `n` に正規化済み。
     pub replica_identity: String,
-    /// 主キーがある。
+    /// 主キーがある (遅延可能・無効でない)。
     pub has_primary_key: bool,
+    /// パーティション親表。REPLICA IDENTITY は子に伝播しないので、`replica_identity` / `has_primary_key` は
+    /// 末端のパーティションすべてを集計した値 (1 つでも識別子が無ければ `n`)。`FULL` はパーティションごとに設定が要る。
+    pub is_partitioned: bool,
 }
 
 /// 論理レプリケーションのパブリケーション 1 件 (`list_publications`、#2181)。PostgreSQL 専用。

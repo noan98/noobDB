@@ -2723,6 +2723,10 @@ const en = {
   publicationReplicaNothing: "NOTHING",
   publicationReplicaFull: "FULL",
   publicationReplicaIndex: "USING INDEX",
+  publicationReplicaPartitioned: "Partitioned table (each partition needs its own replica identity)",
+  publicationReplicaFullTitle: "REPLICA IDENTITY FULL will be set before adding to: {names}",
+  publicationReplicaPartitionNote:
+    "This is a partitioned table: REPLICA IDENTITY is not propagated to partitions, so ALTER TABLE ... REPLICA IDENTITY FULL has to be run on each partition (or give each partition a primary key).",
   publicationReplicaWarnTitle: "UPDATE / DELETE on this table will fail once it is added to: {names}",
   publicationReplicaWarnBody:
     'The table has no primary key or other replica identity, but these publications publish updates or deletes. PostgreSQL then rejects every UPDATE / DELETE on the table with "cannot update table ... because it does not have a replica identity and publishes updates". Choose one of:',
@@ -2732,7 +2736,7 @@ const en = {
   publicationReplicaFixInsertOnly: "Pick a publication that publishes inserts only.",
   publicationReplicaFullOption: "Also run ALTER TABLE ... REPLICA IDENTITY FULL",
   publicationReplicaFullWalNote:
-    "FULL writes the whole old row to the WAL on every UPDATE / DELETE, so WAL volume and replication traffic grow. Prefer a primary key for large or busy tables.",
+    "FULL writes the whole old row to the WAL on every UPDATE / DELETE, so WAL volume and replication traffic grow. ALTER TABLE ... REPLICA IDENTITY FULL also takes an ACCESS EXCLUSIVE lock, so on a busy table it may wait for (and block) concurrent queries. Prefer a primary key for large or busy tables.",
   createTablePublicationReplicaWarn:
     "It has no primary key, so adding it to a publication that publishes updates or deletes would block UPDATE / DELETE on it.",
   publicationConfirm: "Apply",
@@ -10564,6 +10568,10 @@ const ja: Dict = {
   publicationReplicaNothing: "NOTHING",
   publicationReplicaFull: "FULL",
   publicationReplicaIndex: "USING INDEX",
+  publicationReplicaPartitioned: "パーティション親表 (識別子はパーティションごとに必要)",
+  publicationReplicaFullTitle: "次のパブリケーションへ追加する前に REPLICA IDENTITY FULL を設定します: {names}",
+  publicationReplicaPartitionNote:
+    "パーティション親表です。REPLICA IDENTITY はパーティションへ伝播しないため、ALTER TABLE ... REPLICA IDENTITY FULL はパーティションごとに実行する (または各パーティションに主キーを付ける) 必要があります。",
   publicationReplicaWarnTitle:
     "次のパブリケーションへ追加すると、この表の UPDATE / DELETE が失敗します: {names}",
   publicationReplicaWarnBody:
@@ -10574,7 +10582,7 @@ const ja: Dict = {
   publicationReplicaFixInsertOnly: "INSERT だけを公開するパブリケーションを選ぶ。",
   publicationReplicaFullOption: "ALTER TABLE ... REPLICA IDENTITY FULL も一緒に実行する",
   publicationReplicaFullWalNote:
-    "FULL は UPDATE / DELETE のたびに古い行の全列を WAL に書くため、WAL の量とレプリケーションの通信量が増えます。大きい表・更新の多い表では主キーの追加を優先してください。",
+    "FULL は UPDATE / DELETE のたびに古い行の全列を WAL に書くため、WAL の量とレプリケーションの通信量が増えます。また ALTER TABLE ... REPLICA IDENTITY FULL は ACCESS EXCLUSIVE ロックを取るので、更新の多い表ではロック待ちが起きる (後続のクエリも待たされる) ことがあります。大きい表・更新の多い表では主キーの追加を優先してください。",
   createTablePublicationReplicaWarn:
     "主キーが無いため、UPDATE / DELETE を公開するパブリケーションへ追加すると、この表への UPDATE / DELETE が止まります。",
   publicationConfirm: "適用",

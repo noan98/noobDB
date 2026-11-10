@@ -73,7 +73,11 @@ describe("PublicationModal", () => {
     setLocale("en");
     vi.clearAllMocks();
     listPublications.mockResolvedValue(publications);
-    getTableReplicaIdentity.mockResolvedValue({ replica_identity: "d", has_primary_key: true });
+    getTableReplicaIdentity.mockResolvedValue({
+      replica_identity: "d",
+      has_primary_key: true,
+      is_partitioned: false,
+    });
   });
 
   it("所属を示し、ALL TABLES / TABLES IN SCHEMA のものは選べない", async () => {
@@ -219,7 +223,11 @@ describe("PublicationModal", () => {
     it("主キーの無い表を update / delete を公開するパブリケーションへ追加しようとすると、実行前に警告と対処を出す", async () => {
       const user = userEvent.setup();
       listPublications.mockResolvedValue(updating);
-      getTableReplicaIdentity.mockResolvedValue({ replica_identity: "d", has_primary_key: false });
+      getTableReplicaIdentity.mockResolvedValue({
+        replica_identity: "d",
+        has_primary_key: false,
+        is_partitioned: false,
+      });
       const { onConfirm } = setup();
       await screen.findByText("pub_upd");
       expect(screen.queryByText(t("publicationReplicaWarnBody"))).not.toBeInTheDocument();
@@ -236,6 +244,11 @@ describe("PublicationModal", () => {
         ),
       );
       expect(screen.getByText(t("publicationReplicaFullWalNote"))).toBeInTheDocument();
+      // FULL にチェックすると、警告の見出しは「FULL を設定して追加します」に変わる。
+      expect(screen.getByText(t("publicationReplicaFullTitle", { names: "pub_upd" }))).toBeInTheDocument();
+      expect(
+        screen.queryByText(t("publicationReplicaWarnTitle", { names: "pub_upd" })),
+      ).not.toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: t("publicationConfirm") }));
       expect(onConfirm).toHaveBeenCalledWith(
         [
@@ -249,7 +262,11 @@ describe("PublicationModal", () => {
     it("insert だけのパブリケーション・主キーがある表・identity 不明では警告しない", async () => {
       const user = userEvent.setup();
       listPublications.mockResolvedValue(updating);
-      getTableReplicaIdentity.mockResolvedValue({ replica_identity: "d", has_primary_key: false });
+      getTableReplicaIdentity.mockResolvedValue({
+        replica_identity: "d",
+        has_primary_key: false,
+        is_partitioned: false,
+      });
       const view = setup();
       await screen.findByText("pub_ins");
       await user.click(screen.getAllByRole("checkbox")[1]);
@@ -269,8 +286,31 @@ describe("PublicationModal", () => {
       expect(screen.queryByText(t("publicationReplicaWarnBody"))).not.toBeInTheDocument();
     });
 
+    it("パーティション親表は FULL のチェックを無効にし、パーティションごとの設定が要る注記を出す", async () => {
+      const user = userEvent.setup();
+      listPublications.mockResolvedValue(updating);
+      getTableReplicaIdentity.mockResolvedValue({
+        replica_identity: "n",
+        has_primary_key: false,
+        is_partitioned: true,
+      });
+      setup();
+      await screen.findByText("pub_upd");
+      await user.click(screen.getAllByRole("checkbox")[0]);
+      expect(await screen.findByText(t("publicationReplicaWarnBody"))).toBeInTheDocument();
+      expect(screen.getByText(t("publicationReplicaPartitionNote"))).toBeInTheDocument();
+      const full = screen.getByRole("checkbox", { name: t("publicationReplicaFullOption") });
+      expect(full).toBeDisabled();
+      await user.click(full);
+      expect(screen.getByTestId("sql-preview")).not.toHaveTextContent("REPLICA IDENTITY FULL");
+    });
+
     it("表の replica identity を表示する", async () => {
-      getTableReplicaIdentity.mockResolvedValue({ replica_identity: "n", has_primary_key: true });
+      getTableReplicaIdentity.mockResolvedValue({
+        replica_identity: "n",
+        has_primary_key: true,
+        is_partitioned: false,
+      });
       setup();
       await screen.findByText("pub_member");
       expect(
