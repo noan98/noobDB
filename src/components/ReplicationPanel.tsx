@@ -13,6 +13,7 @@ import { AUTO_REFRESH_INTERVAL_OPTIONS } from "../settings";
 import { semanticColorToken } from "../semanticColors";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
+import { ReplicationTopology } from "./ReplicationTopology";
 import { SqlPreview } from "./SqlPreview";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -29,7 +30,12 @@ import { ErrorNote } from "./modalForm";
 import { Button, Checkbox, Heading } from "./ui";
 import { formatBytes } from "./tableSize";
 import {
+  appendReplicationHistory,
   buildDropSlotSql,
+  EMPTY_REPLICATION_HISTORY,
+  type ReplicationHistory,
+  sampleDelta,
+  summarizeReplication,
   dropSlotBlockedReason,
   formatLagSecs,
   isLagWarning,
@@ -207,7 +213,16 @@ function LinkCardSkeleton() {
   );
 }
 
-function LinkCard({ link, flash }: { link: ReplicationLink; flash: LinkFlash }) {
+function LinkCard({
+  link,
+  flash,
+  lagTrend,
+}: {
+  link: ReplicationLink;
+  flash: LinkFlash;
+  /** この接続先の遅延 (秒) の推移 (#2215)。 */
+  lagTrend?: readonly (number | null)[];
+}) {
   const t = useT();
   const attention = linkNeedsAttention(link);
   const stateLabel = link.state ? (STATE_KEY[link.state] ? t(STATE_KEY[link.state]) : link.state) : null;
@@ -246,6 +261,9 @@ function LinkCard({ link, flash }: { link: ReplicationLink; flash: LinkFlash }) 
             label={t("replicationLag")}
             value={link.lag_secs ?? t("replicationLagUnknown")}
             formatter={formatLagSecs}
+            trend={lagTrend}
+            delta={sampleDelta(lagTrend)}
+            goodWhen="down"
           />
         </FlashTile>
         {link.write_lag_secs != null && (
@@ -311,6 +329,8 @@ export function ReplicationPanel({
   const [status, setStatus] = useState<ReplicationStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // 表示中のポーリング値の推移 (#2215)。メモリのみ。セッションを切り替えるとリセットし、履歴 DB には残さない。
+  const [history, setHistory] = useState<ReplicationHistory>(EMPTY_REPLICATION_HISTORY);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [intervalSecs, setIntervalSecs] = useState<number>(AUTO_REFRESH_INTERVAL_OPTIONS[0]);
@@ -329,6 +349,7 @@ export function ReplicationPanel({
         const res = await api.getReplicationStatus(sessionId);
         if (seq !== seqRef.current) return;
         setStatus(res);
+        setHistory((h) => appendReplicationHistory(h, keyLinks(res.links), res.slots));
         setError(null);
         setUpdatedAt(new Date());
       } catch (e) {
@@ -346,6 +367,7 @@ export function ReplicationPanel({
 
   useEffect(() => {
     setStatus(null);
+    setHistory(EMPTY_REPLICATION_HISTORY);
     setError(null);
     void load(true);
   }, [load]);
@@ -384,6 +406,7 @@ export function ReplicationPanel({
     }
   };
 
+  const summary = useMemo(() => (status ? summarizeReplication(status.links, status.slots) : null), [status]);
   const stuckSlots = useMemo(() => (status ? slotsHoldingWal(status.slots) : []), [status]);
   const lostSlots = useMemo(() => (status ? slotsLost(status.slots) : []), [status]);
   // key は並べ替え前の一覧で振る (重複する接続先は出現順の連番で区別する)。描画と差分の両方で共有する。
@@ -409,6 +432,7 @@ export function ReplicationPanel({
             <LiveRow key={key} reorder>
               <LinkCard
                 link={l}
+                lagTrend={history.linkLag[key]}
                 flash={{
                   lag: linkLive.flashToken(key, "lag"),
                   lagWrite: linkLive.flashToken(key, "lagWrite"),
@@ -534,8 +558,33 @@ export function ReplicationPanel({
           {status && (
             <Flex gap="2" wrap="wrap">
               <StatTile label={t("replicationRole")} value={t(ROLE_KEY[status.role])} />
+              {summary && summary.maxLagSecs !== null && (
+                <StatTile
+                  label={t("replicationSummaryMaxLag")}
+                  value={summary.maxLagSecs}
+                  formatter={formatLagSecs}
+                  trend={history.maxLag}
+                  delta={sampleDelta(history.maxLag)}
+                  goodWhen="down"
+                />
+              )}
+              {summary && summary.retainedBytesTotal !== null && (
+                <StatTile
+                  label={t("replicationSummaryWalTotal")}
+                  value={summary.retainedBytesTotal}
+                  formatter={formatBytes}
+                  trend={history.retainedTotal}
+                  delta={sampleDelta(history.retainedTotal)}
+                  goodWhen="down"
+                />
+              )}
+              {summary && status.slots.length > 0 && (
+                <StatTile label={t("replicationSummaryInactiveSlots")} value={summary.inactiveSlots} />
+              )}
             </Flex>
           )}
+
+          {status && <ReplicationTopology links={allLinks} driver={driver} />}
 
           {status && status.role === "standalone" && !status.missing_privilege && (
             <EmptyState

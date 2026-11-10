@@ -2,7 +2,16 @@ import { describe, expect, it } from "vitest";
 import type { ReplicationLink, ReplicationSlot } from "../api/tauri";
 import { diffLiveRows } from "../components/liveDiff";
 import {
+  appendReplicationHistory,
   buildDropSlotSql,
+  EMPTY_REPLICATION_HISTORY,
+  edgeThickness,
+  layoutTopology,
+  pushSample,
+  sampleDelta,
+  summarizeReplication,
+  topologyLagLevel,
+  TOPOLOGY_MAX_PER_SIDE,
   dropSlotBlockedReason,
   formatLagSecs,
   isLagWarning,
@@ -216,5 +225,114 @@ describe("linkKeys (#2213)", () => {
     const sorted = sortLinks(keyed);
     // 異常のある dup1 (key は #1) が先頭へ移っても key は元のまま。
     expect(sorted.map((l) => l.key)).toEqual([`${linkKey(dup1)}#1`, linkKey(dup1)]);
+  });
+});
+
+describe("要約タイル (#2215)", () => {
+  it("最大遅延・WAL 保持量の合計・非アクティブなスロット数を数える", () => {
+    const sum = summarizeReplication(
+      [link({ lag_secs: 3 }), link({ lag_secs: 45 }), link({ lag_secs: null })],
+      [
+        slot({ name: "a", active: true, retained_bytes: 100 }),
+        slot({ name: "b", active: false, retained_bytes: 50 }),
+        slot({ name: "c", active: false, retained_bytes: null }),
+      ],
+    );
+    expect(sum).toEqual({ maxLagSecs: 45, retainedBytesTotal: 150, inactiveSlots: 2 });
+  });
+
+  it("値が無ければ null (0 と区別する)。非有限値は無視する", () => {
+    expect(summarizeReplication([], [])).toEqual({
+      maxLagSecs: null,
+      retainedBytesTotal: null,
+      inactiveSlots: 0,
+    });
+    expect(summarizeReplication([link({ lag_secs: Number.NaN })], []).maxLagSecs).toBeNull();
+    expect(summarizeReplication([link({ lag_secs: 0 })], []).maxLagSecs).toBe(0);
+    expect(summarizeReplication([], [slot({ retained_bytes: 0 })]).retainedBytesTotal).toBe(0);
+  });
+});
+
+describe("推移 (#2215)", () => {
+  it("pushSample は直近 max 点だけ残し、非有限値は欠測 (null) にする", () => {
+    expect(pushSample([1, 2, 3], 4, 3)).toEqual([2, 3, 4]);
+    expect(pushSample([], Number.NaN)).toEqual([null]);
+    expect(pushSample([1], null, 5)).toEqual([1, null]);
+  });
+
+  it("sampleDelta は末尾 2 点の差。欠測・2 点未満は null", () => {
+    expect(sampleDelta([1, 4])).toBe(3);
+    expect(sampleDelta([5, 2])).toBe(-3);
+    expect(sampleDelta([1])).toBeNull();
+    expect(sampleDelta(undefined)).toBeNull();
+    expect(sampleDelta([1, null])).toBeNull();
+    expect(sampleDelta([null, 1])).toBeNull();
+  });
+
+  it("appendReplicationHistory は要約・接続先ごとに積み、消えた接続先は捨てる", () => {
+    const a = keyLinks([link({ name: "a", lag_secs: 1 }), link({ name: "b", lag_secs: 2 })]);
+    const h1 = appendReplicationHistory(EMPTY_REPLICATION_HISTORY, a, [slot({ retained_bytes: 10 })]);
+    expect(h1.maxLag).toEqual([2]);
+    expect(h1.retainedTotal).toEqual([10]);
+    expect(h1.linkLag[a[0].key]).toEqual([1]);
+    const b = keyLinks([link({ name: "a", lag_secs: 5 }), link({ name: "c", lag_secs: 9 })]);
+    const h2 = appendReplicationHistory(h1, b, [slot({ retained_bytes: 30 })]);
+    expect(h2.maxLag).toEqual([2, 9]);
+    expect(h2.retainedTotal).toEqual([10, 30]);
+    expect(h2.linkLag[b[0].key]).toEqual([1, 5]);
+    expect(h2.linkLag[b[1].key]).toEqual([9]);
+    expect(Object.keys(h2.linkLag)).toHaveLength(2);
+  });
+
+  it("入力の履歴を書き換えない / 上限を守る", () => {
+    const l = keyLinks([link({ lag_secs: 1 })]);
+    let h = EMPTY_REPLICATION_HISTORY;
+    for (let i = 0; i < 5; i++) h = appendReplicationHistory(h, l, [], 3);
+    expect(h.maxLag).toHaveLength(3);
+    expect(EMPTY_REPLICATION_HISTORY.maxLag).toEqual([]);
+  });
+});
+
+describe("トポロジー図の配置 (#2215)", () => {
+  it("遅延の段階の境界 (5 秒 / 30 秒) と太さ", () => {
+    expect(topologyLagLevel(null)).toBe("unknown");
+    expect(topologyLagLevel(-1)).toBe("unknown");
+    expect(topologyLagLevel(0)).toBe("ok");
+    expect(topologyLagLevel(4.9)).toBe("ok");
+    expect(topologyLagLevel(5)).toBe("slow");
+    expect(topologyLagLevel(LAG_WARN_SECS - 0.1)).toBe("slow");
+    expect(topologyLagLevel(LAG_WARN_SECS)).toBe("warn");
+    expect(edgeThickness("unknown")).toBe(1);
+    expect(edgeThickness("ok")).toBe(1);
+    expect(edgeThickness("slow")).toBe(2);
+    expect(edgeThickness("warn")).toBe(3);
+  });
+
+  it("上流・下流に振り分け、異常のあるノードを先頭にする", () => {
+    const layout = layoutTopology(
+      keyLinks([
+        link({ name: "b", lag_secs: 1 }),
+        link({ name: "z", lag_secs: 40 }),
+        link({ name: "up", direction: "upstream", lag_secs: 2, io_running: false }),
+      ]),
+    );
+    expect(layout.downstream.map((p) => p.name)).toEqual(["z", "b"]);
+    expect(layout.downstream[0]).toMatchObject({ level: "warn", thickness: 3, attention: true });
+    expect(layout.downstream[1]).toMatchObject({ level: "ok", attention: false });
+    expect(layout.upstream.map((p) => p.name)).toEqual(["up"]);
+    expect(layout.upstream[0].attention).toBe(true);
+  });
+
+  it("接続先が無ければ両側とも空。上限を超えた分は件数にまとめる", () => {
+    expect(layoutTopology([])).toEqual({ upstream: [], downstream: [], upstreamMore: 0, downstreamMore: 0 });
+    const many = keyLinks(
+      Array.from({ length: TOPOLOGY_MAX_PER_SIDE + 3 }, (_, i) => link({ name: `r${i}` })),
+    );
+    const layout = layoutTopology(many);
+    expect(layout.downstream).toHaveLength(TOPOLOGY_MAX_PER_SIDE);
+    expect(layout.downstreamMore).toBe(3);
+    // 重複する接続先の key は一意のまま保たれる。
+    const dup = layoutTopology(keyLinks([link({ name: "w" }), link({ name: "w" })]));
+    expect(new Set(dup.downstream.map((p) => p.key)).size).toBe(2);
   });
 });
