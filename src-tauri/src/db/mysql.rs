@@ -5,7 +5,7 @@ use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow, My
 use sqlx::pool::PoolConnection;
 use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef};
 
-use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
+use super::advisor::{SequenceKind, SequenceUsage, UnusedIndexEntry, UnusedIndexStats};
 use super::replication::{
     first_present_column, mysql_link_state, mysql_replica_status_sql, mysql_replicas_sql,
     mysql_required_privilege, non_blank, ReplicationDirection, ReplicationLink, ReplicationRole,
@@ -1756,6 +1756,70 @@ impl MySqlConn {
             reason: None,
             entries,
         })
+    }
+
+    /// スキーマ健全性アドバイザ (#2210) の採番列の使用状況。`information_schema.TABLES.AUTO_INCREMENT`
+    /// (次に払い出す値) と列の型・コメント・EXTRA を読む。MySQL 8 は既定でこの統計を最大 24 時間
+    /// キャッシュする (`information_schema_stats_expiry`)。この変数は `SET_VAR` ヒントでは変えられない
+    /// (警告つきで無視される) ため、プールから 1 本取った接続で `SET SESSION` → SELECT → `DEFAULT` に戻す。
+    /// 戻し損ねても (途中で失敗しても) 影響はその接続の統計キャッシュ有効期間だけで、結果の正しさや
+    /// データには関わらない。変数を持たないサーバ (MariaDB など) では SET が失敗するので無視して続行する。
+    /// `AUTO_INCREMENT` は BIGINT UNSIGNED の上限まで取りうるので u64 で読む。読み取りのみ。
+    pub async fn sequence_usage(&self, db: &str) -> Result<Vec<SequenceUsage>> {
+        let mut conn = self.pool.acquire().await?;
+        let fresh = sqlx::query("SET SESSION information_schema_stats_expiry = 0")
+            .execute(&mut *conn)
+            .await
+            .is_ok();
+        let rows: std::result::Result<Vec<MySqlRow>, sqlx::Error> = sqlx::query(
+            "SELECT t.TABLE_NAME, c.COLUMN_NAME, c.COLUMN_TYPE, t.AUTO_INCREMENT,
+                    c.COLUMN_COMMENT, c.EXTRA
+               FROM information_schema.TABLES t
+               JOIN information_schema.COLUMNS c
+                 ON c.TABLE_SCHEMA = t.TABLE_SCHEMA AND c.TABLE_NAME = t.TABLE_NAME
+              WHERE t.TABLE_SCHEMA = ?
+                AND t.TABLE_TYPE = 'BASE TABLE'
+                AND t.AUTO_INCREMENT IS NOT NULL
+                AND LOWER(c.EXTRA) LIKE '%auto_increment%'
+              ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION",
+        )
+        .bind(db)
+        .fetch_all(&mut *conn)
+        .await;
+        if fresh {
+            // 元 (サーバ既定) に戻す。失敗しても上のとおり実害は小さい。
+            let _ = sqlx::query("SET SESSION information_schema_stats_expiry = DEFAULT")
+                .execute(&mut *conn)
+                .await;
+        }
+        let rows = rows?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let table = r.try_get::<String, _>(0).ok()?;
+                let column = r.try_get::<String, _>(1).ok()?;
+                let data_type = r.try_get::<String, _>(2).ok()?;
+                let next = r.try_get::<Option<u64>, _>(3).ok().flatten()?;
+                let comment = r.try_get::<Option<String>, _>(4).ok().flatten();
+                let extra = r.try_get::<Option<String>, _>(5).ok().flatten();
+                Some(SequenceUsage {
+                    column_comment: comment.filter(|c| !c.is_empty()),
+                    invisible: extra.is_some_and(|e| e.to_uppercase().contains("INVISIBLE")),
+                    domain_base_type: None,
+                    unreadable: false,
+                    table,
+                    column,
+                    data_type,
+                    kind: SequenceKind::AutoIncrement,
+                    sequence_name: None,
+                    sequence_type: None,
+                    // AUTO_INCREMENT は「次に払い出す値」。払い出し済みの最大値はその 1 つ手前。
+                    last_used: next.saturating_sub(1),
+                    sequence_max: None,
+                    cycle: false,
+                })
+            })
+            .collect())
     }
 
     /// ライブテール 1 サンプル: 実行中 (`events_statements_current`) と直近

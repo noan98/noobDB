@@ -6286,3 +6286,140 @@ async fn postgres_extension_dependents_show_requiring_extension_as_one_entry() {
         .execute("DROP SCHEMA IF EXISTS nb2177b CASCADE", None)
         .await;
 }
+
+/// スキーマ健全性アドバイザの採番枯渇 (#2210): serial (SMALLINT) / IDENTITY / シーケンスの MAXVALUE が
+/// 型より小さいケースを検出し、CYCLE 付きは警告しない。修正 DDL は実際に通り、実行後は指摘が消える。
+#[tokio::test]
+async fn postgres_advisor_flags_exhausted_sequences() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let tables = [
+        "noobdb_seq_small",
+        "noobdb_seq_ident",
+        "noobdb_seq_cap",
+        "noobdb_seq_cycle",
+        "noobdb_seq_ok",
+    ];
+    for tb in tables {
+        conn.execute(&format!("DROP TABLE IF EXISTS {tb}"), None)
+            .await
+            .expect("drop");
+    }
+    for sql in [
+        // smallserial: 上限 32767。30000 は 91.6% で High。
+        "CREATE TABLE noobdb_seq_small (id smallserial PRIMARY KEY)",
+        "SELECT setval('noobdb_seq_small_id_seq', 30000)",
+        // IDENTITY (integer): 払い出し済み 2,000,000,000 (93.1%)。
+        "CREATE TABLE noobdb_seq_ident (id integer GENERATED ALWAYS AS IDENTITY (START WITH 2000000000) PRIMARY KEY)",
+        "INSERT INTO noobdb_seq_ident DEFAULT VALUES",
+        // bigint 列だがシーケンスの MAXVALUE は 1000 (型より小さい)。900 で 90%。
+        "CREATE TABLE noobdb_seq_cap (id bigserial PRIMARY KEY)",
+        "ALTER SEQUENCE noobdb_seq_cap_id_seq MAXVALUE 1000",
+        "SELECT setval('noobdb_seq_cap_id_seq', 900)",
+        // CYCLE 付きは上限で先頭に戻るので指摘しない。
+        "CREATE TABLE noobdb_seq_cycle (id smallserial PRIMARY KEY)",
+        "ALTER SEQUENCE noobdb_seq_cycle_id_seq CYCLE",
+        "SELECT setval('noobdb_seq_cycle_id_seq', 32000)",
+        // 使用率が低い serial。
+        "CREATE TABLE noobdb_seq_ok (id serial PRIMARY KEY)",
+        "SELECT setval('noobdb_seq_ok_id_seq', 5000)",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    let find = |report: &t::SchemaHealthReport, table: &str| {
+        report
+            .findings
+            .iter()
+            .find(|f| f.rule == t::RuleId::SequenceExhaustion && f.table == table)
+            .cloned()
+    };
+    let report = t::analyze_schema_health(&conn, "public")
+        .await
+        .expect("analyze");
+    let small = find(&report, "noobdb_seq_small");
+    let ident = find(&report, "noobdb_seq_ident");
+    let cap = find(&report, "noobdb_seq_cap");
+    let cycle = find(&report, "noobdb_seq_cycle");
+    let ok = find(&report, "noobdb_seq_ok");
+    let skipped = report
+        .skipped
+        .iter()
+        .any(|s| s.rule == t::RuleId::SequenceExhaustion);
+
+    let small = small.expect("smallserial near the limit");
+    let ident = ident.expect("identity near the limit");
+    let cap = cap.expect("MAXVALUE below the column type");
+    assert!(!skipped);
+    assert!(cycle.is_none(), "CYCLE は指摘しない");
+    assert!(ok.is_none(), "使用率が低ければ指摘しない");
+    assert_eq!(small.severity, t::Severity::High);
+    assert_eq!(small.context[2], "32767");
+    assert_eq!(ident.severity, t::Severity::High);
+    assert_eq!(cap.context[2], "1000", "シーケンスの MAXVALUE が上限");
+    assert_eq!(cap.context[4], "sequence");
+
+    // 修正 DDL (1 行 1 文) をそのまま実行でき、実行後は指摘が消える。
+    for f in [&small, &ident, &cap] {
+        let ddl = f.fix_ddl.clone().expect("fix ddl");
+        for stmt in ddl.lines() {
+            conn.execute(stmt, None).await.expect(stmt);
+        }
+    }
+    let after = t::analyze_schema_health(&conn, "public")
+        .await
+        .expect("analyze");
+    let remaining: Vec<String> = ["noobdb_seq_small", "noobdb_seq_ident", "noobdb_seq_cap"]
+        .iter()
+        .filter(|tb| find(&after, tb).is_some())
+        .map(|s| s.to_string())
+        .collect();
+    for tb in tables {
+        conn.execute(&format!("DROP TABLE IF EXISTS {tb}"), None)
+            .await
+            .expect("drop");
+    }
+    assert!(remaining.is_empty(), "修正後も残っている: {remaining:?}");
+}
+
+/// 採番枯渇 (#2210): DOMAIN 型 (基底は smallint) の採番列も基底型の上限で判定する。
+#[tokio::test]
+async fn postgres_advisor_resolves_domain_sequence_columns() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    for sql in [
+        "DROP TABLE IF EXISTS noobdb_seq_dom",
+        "DROP DOMAIN IF EXISTS noobdb_small_id",
+        "CREATE DOMAIN noobdb_small_id AS smallint",
+        // IDENTITY は DOMAIN 型にできないので、手動で所有させた smallint シーケンスを使う。
+        "CREATE TABLE noobdb_seq_dom (id noobdb_small_id PRIMARY KEY)",
+        "CREATE SEQUENCE noobdb_seq_dom_seq AS smallint OWNED BY noobdb_seq_dom.id",
+        "ALTER TABLE noobdb_seq_dom ALTER COLUMN id SET DEFAULT nextval('noobdb_seq_dom_seq')",
+        "SELECT setval('noobdb_seq_dom_seq', 30000)",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    let report = t::analyze_schema_health(&conn, "public")
+        .await
+        .expect("analyze");
+    let found = report
+        .findings
+        .iter()
+        .find(|f| f.rule == t::RuleId::SequenceExhaustion && f.table == "noobdb_seq_dom")
+        .cloned();
+    for sql in [
+        "DROP TABLE IF EXISTS noobdb_seq_dom",
+        "DROP DOMAIN IF EXISTS noobdb_small_id",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    let f = found.expect("domain over smallint near the limit");
+    assert_eq!(f.context[2], "32767", "基底型 smallint の上限");
+    assert_eq!(f.context[0], "noobdb_small_id", "説明文の型名はドメイン名");
+    assert!(f.fix_ddl.is_none(), "ドメイン列には型変更 DDL を出さない");
+}

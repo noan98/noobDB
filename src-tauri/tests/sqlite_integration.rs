@@ -8213,3 +8213,62 @@ async fn sqlite_create_table_wizard_options_ddl_runs() {
     conn.close().await;
     let _ = std::fs::remove_file(&path);
 }
+
+/// スキーマ健全性アドバイザの採番枯渇 (#2210): `sqlite_sequence` (AUTOINCREMENT の表のみ) を読み、
+/// 64bit の上限に近い表だけを指摘する。外部サーバ不要で常時実走する。
+#[tokio::test]
+async fn sqlite_advisor_flags_exhausted_autoincrement() {
+    let mut p = std::env::temp_dir();
+    p.push(format!("noobdb_sqlite_seq_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&p);
+    std::fs::File::create(&p).expect("create temp sqlite file");
+    let opts = t::sqlite_options(p.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+
+    // AUTOINCREMENT の表が無い間は sqlite_sequence 自体が無い (空で縮退し、失敗しない)。
+    conn.execute("CREATE TABLE plain (id INTEGER PRIMARY KEY, v TEXT)", None)
+        .await
+        .expect("plain");
+    let report = t::analyze_schema_health(&conn, "main")
+        .await
+        .expect("analyze");
+    assert!(!report
+        .findings
+        .iter()
+        .any(|f| f.rule == t::RuleId::SequenceExhaustion));
+    assert!(!report
+        .skipped
+        .iter()
+        .any(|s| s.rule == t::RuleId::SequenceExhaustion));
+
+    for sql in [
+        "CREATE TABLE seq_hot (id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT)",
+        "CREATE TABLE seq_cold (id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT)",
+        "INSERT INTO seq_hot (v) VALUES ('a')",
+        "INSERT INTO seq_cold (v) VALUES ('a')",
+        // 9223372036854775807 の約 92% (JS の安全整数を超える値)。
+        "UPDATE sqlite_sequence SET seq = 8500000000000000000 WHERE name = 'seq_hot'",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    let report = t::analyze_schema_health(&conn, "main")
+        .await
+        .expect("analyze");
+    let hot = report
+        .findings
+        .iter()
+        .find(|f| f.rule == t::RuleId::SequenceExhaustion && f.table == "seq_hot")
+        .expect("seq_hot near the limit");
+    assert_eq!(hot.severity, t::Severity::High);
+    assert_eq!(hot.columns, vec!["id"]);
+    assert_eq!(hot.context[1], "8500000000000000000");
+    assert_eq!(hot.context[2], "9223372036854775807");
+    assert!(hot.fix_ddl.is_none(), "SQLite の INTEGER は既に 64bit");
+    assert!(!report
+        .findings
+        .iter()
+        .any(|f| f.rule == t::RuleId::SequenceExhaustion && f.table == "seq_cold"));
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&p);
+}

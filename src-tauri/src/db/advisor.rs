@@ -73,7 +73,21 @@ pub enum RuleId {
     /// `DECIMAL` / `NUMERIC` を推奨する。`columns = [列]`、`context = [宣言型]`。修正 DDL 無し
     /// (精度・小数桁の選定とデータ移行を伴うため生成しない)。
     FloatForMoney,
+    /// 採番 (AUTO_INCREMENT / シーケンス / IDENTITY / SQLite AUTOINCREMENT) が型の上限に近い (#2210)。
+    /// 上限に達すると INSERT がすべて失敗する。使用率 ([`SEQUENCE_WARN_PERCENT`] 以上で `Medium`、
+    /// [`SEQUENCE_ERROR_PERCENT`] 以上で `High`) は**バックエンドで整数演算**して返す (BIGINT UNSIGNED は
+    /// JS の安全整数を超えるため)。`columns = [採番列]`、
+    /// `context = [宣言型, 使用済みの最大値, 実効上限, 使用率 (% 小数 1 桁、切り捨て), 上限の出所]`。
+    /// 数値は 10 進文字列。上限の出所は `"type"` (列の型) か `"sequence"` (シーケンスの `MAXVALUE`
+    /// が型より小さい)。`CYCLE` 付きシーケンスは枯渇しないので指摘しない。修正 DDL = `BIGINT` への
+    /// 型変更 (表の書き換え・ロックを伴う)。既に最大幅なら生成しない。
+    SequenceExhaustion,
 }
+
+/// 採番の使用率がこの割合 (%) 以上で `Medium` (警告)。
+pub const SEQUENCE_WARN_PERCENT: u128 = 50;
+/// 採番の使用率がこの割合 (%) 以上で `High` (エラー)。
+pub const SEQUENCE_ERROR_PERCENT: u128 = 80;
 
 /// `VARCHAR` を「過大」と見なす長さの閾値 (これを**超える**と指摘)。
 pub const OVERSIZED_VARCHAR_THRESHOLD: u64 = 1000;
@@ -275,6 +289,52 @@ pub struct AdvisorInput {
     pub tables: Vec<TableMeta>,
     pub foreign_keys: Vec<ForeignKey>,
     pub unused: UnusedIndexStats,
+    /// 採番列の使用状況 (#2210)。ドライバが取得した生の事実で、使用率の判定は [`analyze`] が行う。
+    pub sequences: Vec<SequenceUsage>,
+}
+
+/// 採番の種別。修正 DDL の形 (シーケンスを別に直す要否) を決める。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SequenceKind {
+    /// MySQL の `AUTO_INCREMENT` 列。
+    AutoIncrement,
+    /// PostgreSQL の `serial` 系 (列の `DEFAULT nextval()` が所有するシーケンス)。
+    Serial,
+    /// PostgreSQL の `GENERATED ... AS IDENTITY` 列。
+    Identity,
+    /// SQLite の `AUTOINCREMENT` 表 (`sqlite_sequence`)。
+    SqliteAutoincrement,
+}
+
+/// 採番列 1 本の使用状況 (#2210)。ドライバが読んだ事実だけを持ち、上限・使用率は純ロジックが出す。
+#[derive(Debug, Clone)]
+pub struct SequenceUsage {
+    pub table: String,
+    pub column: String,
+    /// 列の宣言型 (MySQL `COLUMN_TYPE` 例 `int unsigned` / PostgreSQL `format_type` 例 `integer`)。
+    pub data_type: String,
+    pub kind: SequenceKind,
+    /// PostgreSQL のシーケンス名 (`Serial` / `Identity`)。
+    pub sequence_name: Option<String>,
+    /// PostgreSQL のシーケンスの型 (`pg_sequences.data_type`)。
+    pub sequence_type: Option<String>,
+    /// これまでに払い出した最大値 (MySQL は `AUTO_INCREMENT - 1`、PostgreSQL は `last_value`、
+    /// SQLite は `sqlite_sequence.seq`)。まだ一度も払い出していなければ 0。
+    pub last_used: u64,
+    /// シーケンス自身の最大値 (PostgreSQL の `max_value`)。それ以外は `None`。
+    pub sequence_max: Option<u64>,
+    /// `CYCLE` 付き (上限で先頭に戻るので枯渇しない)。
+    pub cycle: bool,
+    /// MySQL の列コメント。型変更の `MODIFY COLUMN` で消えないよう DDL に付け直す。
+    pub column_comment: Option<String>,
+    /// MySQL の `INVISIBLE` 列 (8.0.23+)。`MODIFY COLUMN` で可視に戻らないよう付け直す。
+    pub invisible: bool,
+    /// PostgreSQL の DOMAIN 型の列では、基底型 (`data_type` はドメイン名)。上限はこちらで判定し、
+    /// 型変更 DDL は列がドメインから外れ CHECK / NOT NULL が失われるので出さない。
+    pub domain_base_type: Option<String>,
+    /// 権限不足で使用状況を読めなかった (PostgreSQL の `pg_sequences.last_value` は SELECT / USAGE が
+    /// 無いと NULL)。判定には使わず、呼び出し側がスキップ理由を残す。
+    pub unreadable: bool,
 }
 
 /// スキーマメタデータを走査して健全性の指摘リストを組み立てる純関数。副作用なし・
@@ -299,6 +359,7 @@ pub fn analyze(input: &AdvisorInput) -> SchemaHealthReport {
     rule_fk_type_mismatch(input, &mut findings);
     rule_nullable_foreign_key(input, &mut findings);
     rule_unused_indexes(input, &mut findings, &mut skipped);
+    rule_sequence_exhaustion(input, &mut findings);
 
     // 決定的な出力順: テーブル名 → 重要度 (高い順) → ルール。
     findings.sort_by(|a, b| {
@@ -482,6 +543,7 @@ fn rule_rank(r: RuleId) -> u8 {
         RuleId::NullableForeignKey => 7,
         RuleId::OversizedVarchar => 8,
         RuleId::FloatForMoney => 9,
+        RuleId::SequenceExhaustion => 10,
     }
 }
 
@@ -1183,6 +1245,176 @@ fn rule_float_for_money(driver: DriverKind, table: &TableMeta, out: &mut Vec<Hea
     }
 }
 
+/// 整数型の最大値。MySQL は `UNSIGNED` を見分け、PostgreSQL は `smallint` / `integer` / `bigint`、
+/// SQLite は型名によらず 64bit 符号付き (rowid)。整数でない型 (numeric など) は `None`。
+fn integer_type_max(driver: DriverKind, data_type: &str) -> Option<u64> {
+    let lower = data_type.trim().to_lowercase();
+    let word: String = lower
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .collect();
+    match driver {
+        DriverKind::Sqlite => Some(i64::MAX as u64),
+        DriverKind::Mysql => {
+            let unsigned = lower.contains("unsigned");
+            let (signed, unsigned_max) = match word.as_str() {
+                "tinyint" => (127u64, 255u64),
+                "smallint" => (32_767, 65_535),
+                "mediumint" => (8_388_607, 16_777_215),
+                "int" | "integer" => (2_147_483_647, 4_294_967_295),
+                "bigint" => (i64::MAX as u64, u64::MAX),
+                _ => return None,
+            };
+            Some(if unsigned { unsigned_max } else { signed })
+        }
+        DriverKind::Postgres => match word.as_str() {
+            "smallint" | "int2" | "smallserial" => Some(32_767),
+            "integer" | "int" | "int4" | "serial" => Some(2_147_483_647),
+            "bigint" | "int8" | "bigserial" => Some(i64::MAX as u64),
+            _ => None,
+        },
+    }
+}
+
+/// 使用率 (‰、切り捨て)。`used * 1000` は u128 で計算し、u64 上限でも溢れない。
+fn permille(used: u64, max: u64) -> u128 {
+    if max == 0 {
+        return 0;
+    }
+    (used as u128) * 1000 / (max as u128)
+}
+
+/// 使用率の重要度。閾値は整数演算で境界 (ちょうど 50% / 80%) を正確に判定する。
+fn sequence_severity(used: u64, max: u64) -> Option<Severity> {
+    let (u, m) = (used as u128, max as u128);
+    if u * 100 >= m * SEQUENCE_ERROR_PERCENT {
+        Some(Severity::High)
+    } else if u * 100 >= m * SEQUENCE_WARN_PERCENT {
+        Some(Severity::Medium)
+    } else {
+        None
+    }
+}
+
+/// `BIGINT` への型変更 DDL (#2210)。実行はせずエディタ挿入まで。表の書き換え・ロックを伴うため、
+/// フロントが `alterCost` の注意を添えて見せる。既に最大幅で直すものが無ければ `None`。
+fn sequence_fix_ddl(driver: DriverKind, s: &SequenceUsage, type_max: u64) -> Option<String> {
+    let table = quote_ident(driver, &s.table);
+    let column = quote_ident(driver, &s.column);
+    if s.domain_base_type.is_some() {
+        return None;
+    }
+    match (driver, s.kind) {
+        (DriverKind::Mysql, SequenceKind::AutoIncrement) => {
+            if type_max >= i64::MAX as u64 {
+                return None;
+            }
+            let lower = s.data_type.to_lowercase();
+            // ZEROFILL は BIGINT へ付け直すと桁埋めの表示幅が変わるため、自動では出さない。
+            if lower.contains("zerofill") {
+                return None;
+            }
+            let unsigned = lower.contains("unsigned");
+            // MODIFY COLUMN は列定義を丸ごと置き換えるので、消えると困る属性 (INVISIBLE / COMMENT) を
+            // 付け直す。
+            let mut ddl = format!(
+                "ALTER TABLE {table} MODIFY COLUMN {column} BIGINT{} NOT NULL AUTO_INCREMENT",
+                if unsigned { " UNSIGNED" } else { "" }
+            );
+            if s.invisible {
+                ddl.push_str(" INVISIBLE");
+            }
+            if let Some(c) = s.column_comment.as_deref().filter(|c| !c.is_empty()) {
+                ddl.push_str(&format!(
+                    " COMMENT '{}'",
+                    c.replace('\\', "\\\\").replace('\'', "''")
+                ));
+            }
+            ddl.push(';');
+            Some(ddl)
+        }
+        (DriverKind::Postgres, SequenceKind::Serial | SequenceKind::Identity) => {
+            let mut lines = Vec::new();
+            let col_small = type_max < i64::MAX as u64;
+            if col_small {
+                lines.push(format!(
+                    "ALTER TABLE {table} ALTER COLUMN {column} TYPE bigint;"
+                ));
+            }
+            let seq_type_max = s
+                .sequence_type
+                .as_deref()
+                .and_then(|t| integer_type_max(driver, t))
+                .unwrap_or(i64::MAX as u64);
+            let seq_type_small = seq_type_max < i64::MAX as u64;
+            let custom_cap = s.sequence_max.is_some_and(|m| m < seq_type_max);
+            match s.kind {
+                SequenceKind::Serial => {
+                    if let Some(seq) = s.sequence_name.as_deref() {
+                        if seq_type_small || custom_cap {
+                            lines.push(format!(
+                                "ALTER SEQUENCE {} AS bigint NO MAXVALUE;",
+                                quote_ident(driver, seq)
+                            ));
+                        }
+                    }
+                }
+                // IDENTITY のシーケンスは列の型変更に追従する。残るのは MAXVALUE の上書きだけ。
+                _ => {
+                    if custom_cap {
+                        lines.push(format!(
+                            "ALTER TABLE {table} ALTER COLUMN {column} SET NO MAXVALUE;"
+                        ));
+                    }
+                }
+            }
+            (!lines.is_empty()).then(|| lines.join("\n"))
+        }
+        _ => None,
+    }
+}
+
+fn rule_sequence_exhaustion(input: &AdvisorInput, out: &mut Vec<HealthFinding>) {
+    let driver = input.driver;
+    for s in &input.sequences {
+        if s.cycle {
+            continue;
+        }
+        let limit_type = s.domain_base_type.as_deref().unwrap_or(&s.data_type);
+        let Some(type_max) = integer_type_max(driver, limit_type) else {
+            continue;
+        };
+        let (max, binding) = match s.sequence_max {
+            Some(m) if m < type_max => (m, "sequence"),
+            _ => (type_max, "type"),
+        };
+        if max == 0 {
+            continue;
+        }
+        let Some(severity) = sequence_severity(s.last_used, max) else {
+            continue;
+        };
+        let pm = permille(s.last_used, max);
+        out.push(HealthFinding {
+            rule: RuleId::SequenceExhaustion,
+            severity,
+            table: s.table.clone(),
+            columns: vec![s.column.clone()],
+            context: vec![
+                s.data_type.trim().to_string(),
+                s.last_used.to_string(),
+                max.to_string(),
+                format!("{}.{}", pm / 10, pm % 10),
+                binding.to_string(),
+            ],
+            fix_ddl: sequence_fix_ddl(driver, s, type_max),
+            fix_ddl_online: None,
+            statistical: false,
+            size_bytes: None,
+        });
+    }
+}
+
 /// FK 列に張るインデックスの (クオート済み名, クオート済み列リスト)。
 fn quoted_index_parts(driver: DriverKind, table: &str, columns: &[String]) -> (String, String) {
     let idx_name = fit_index_name(
@@ -1361,6 +1593,7 @@ mod tests {
             tables,
             foreign_keys: fks,
             unused: unused_off("unsupported_driver"),
+            sequences: Vec::new(),
         }
     }
 
@@ -2596,5 +2829,335 @@ mod tests {
         let report = analyze(&input(DriverKind::Postgres, vec![t], vec![]));
         let f = findings_for(&report, RuleId::FloatForMoney);
         assert_eq!(f[0].context, vec!["REAL"]);
+    }
+
+    // ---- 採番の枯渇 (#2210) ----
+
+    fn seq(
+        kind: SequenceKind,
+        data_type: &str,
+        last_used: u64,
+        sequence_max: Option<u64>,
+    ) -> SequenceUsage {
+        SequenceUsage {
+            table: "t".into(),
+            column: "id".into(),
+            data_type: data_type.into(),
+            kind,
+            sequence_name: (kind == SequenceKind::Serial || kind == SequenceKind::Identity)
+                .then(|| "t_id_seq".to_string()),
+            sequence_type: (kind == SequenceKind::Serial || kind == SequenceKind::Identity)
+                .then(|| data_type.to_string()),
+            last_used,
+            sequence_max,
+            cycle: false,
+            column_comment: None,
+            invisible: false,
+            domain_base_type: None,
+            unreadable: false,
+        }
+    }
+
+    fn seq_findings(driver: DriverKind, seqs: Vec<SequenceUsage>) -> Vec<HealthFinding> {
+        let mut i = input(driver, vec![], vec![]);
+        i.sequences = seqs;
+        let report = analyze(&i);
+        findings_for(&report, RuleId::SequenceExhaustion)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn sequence_thresholds_are_exact_at_50_and_80_percent() {
+        let mysql = |used| seq(SequenceKind::AutoIncrement, "int", used, None);
+        // int 上限 2147483647。50% ちょうどは ceil(max*0.5) = 1073741824 (以上で警告)。
+        assert!(seq_findings(DriverKind::Mysql, vec![mysql(1_073_741_823)]).is_empty());
+        let f = seq_findings(DriverKind::Mysql, vec![mysql(1_073_741_824)]);
+        assert_eq!(f[0].severity, Severity::Medium);
+        // 80% = 1717986918 (max*0.8 = 1717986917.6 → 1717986918 から)。
+        let f = seq_findings(DriverKind::Mysql, vec![mysql(1_717_986_917)]);
+        assert_eq!(f[0].severity, Severity::Medium);
+        let f = seq_findings(DriverKind::Mysql, vec![mysql(1_717_986_918)]);
+        assert_eq!(f[0].severity, Severity::High);
+        // 上限ちょうども指摘する。
+        let f = seq_findings(DriverKind::Mysql, vec![mysql(2_147_483_647)]);
+        assert_eq!(f[0].context[3], "100.0");
+    }
+
+    #[test]
+    fn sequence_mysql_distinguishes_unsigned_and_widths() {
+        let cases: &[(&str, u64, &str)] = &[
+            ("tinyint", 127, "127"),
+            ("tinyint unsigned", 255, "255"),
+            ("smallint(6)", 32_767, "32767"),
+            ("smallint unsigned", 65_535, "65535"),
+            ("mediumint", 8_388_607, "8388607"),
+            ("mediumint unsigned", 16_777_215, "16777215"),
+            ("int(11)", 2_147_483_647, "2147483647"),
+            ("int unsigned", 4_294_967_295, "4294967295"),
+            ("bigint(20) unsigned", u64::MAX, "18446744073709551615"),
+            ("bigint", i64::MAX as u64, "9223372036854775807"),
+        ];
+        for (ty, used, max) in cases {
+            let f = seq_findings(
+                DriverKind::Mysql,
+                vec![seq(SequenceKind::AutoIncrement, ty, *used, None)],
+            );
+            assert_eq!(f.len(), 1, "{ty}");
+            assert_eq!(f[0].context[2], *max, "{ty}");
+            assert_eq!(f[0].severity, Severity::High, "{ty}");
+        }
+        // signed int の 2^31 付近は UNSIGNED int ならまだ 50% 前後 → 指摘しない側の境界。
+        let f = seq_findings(
+            DriverKind::Mysql,
+            vec![seq(
+                SequenceKind::AutoIncrement,
+                "int unsigned",
+                2_000_000_000,
+                None,
+            )],
+        );
+        assert!(f.is_empty(), "unsigned int は 2e9 でも 46.5%");
+        // 浮動小数など整数でない AUTO_INCREMENT は対象外。
+        assert!(seq_findings(
+            DriverKind::Mysql,
+            vec![seq(SequenceKind::AutoIncrement, "double", u64::MAX, None)]
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn sequence_bigint_unsigned_ratio_is_exact_beyond_js_safe_integers() {
+        // 2^53 を超える値でも、文字列と使用率は正確 (f64 に丸めない)。
+        let used = u64::MAX / 2 + 1; // 50% を僅かに超える
+        let f = seq_findings(
+            DriverKind::Mysql,
+            vec![seq(
+                SequenceKind::AutoIncrement,
+                "bigint unsigned",
+                used,
+                None,
+            )],
+        );
+        assert_eq!(f[0].severity, Severity::Medium);
+        assert_eq!(f[0].context[1], "9223372036854775808");
+        assert_eq!(f[0].context[3], "50.0");
+        let f = seq_findings(
+            DriverKind::Mysql,
+            vec![seq(
+                SequenceKind::AutoIncrement,
+                "bigint unsigned",
+                u64::MAX / 2 - 1,
+                None,
+            )],
+        );
+        assert!(f.is_empty(), "50% 未満は指摘しない");
+    }
+
+    #[test]
+    fn sequence_postgres_smallint_serial_and_integer() {
+        let f = seq_findings(
+            DriverKind::Postgres,
+            vec![seq(SequenceKind::Serial, "smallint", 20_000, Some(32_767))],
+        );
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].severity, Severity::Medium, "20000/32767 = 61%");
+        assert_eq!(f[0].context[2], "32767");
+        assert_eq!(f[0].context[4], "type");
+        let f = seq_findings(
+            DriverKind::Postgres,
+            vec![seq(
+                SequenceKind::Serial,
+                "integer",
+                20_000,
+                Some(2_147_483_647),
+            )],
+        );
+        assert!(f.is_empty(), "integer なら 20000 は 0.0009%");
+    }
+
+    #[test]
+    fn sequence_max_value_smaller_than_the_column_type_is_the_limit() {
+        // bigint 列だがシーケンスの MAXVALUE が 1000。900 で 90% → High、上限の出所は sequence。
+        let f = seq_findings(
+            DriverKind::Postgres,
+            vec![seq(SequenceKind::Serial, "bigint", 900, Some(1000))],
+        );
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].severity, Severity::High);
+        assert_eq!(f[0].context[2], "1000");
+        assert_eq!(f[0].context[4], "sequence");
+        // 列が bigint でシーケンスも bigint の上限 → 型変更では直らず、MAXVALUE の解除だけ。
+        let ddl = f[0].fix_ddl.as_deref().expect("cap fix");
+        assert!(!ddl.contains("TYPE bigint"), "{ddl}");
+        assert!(
+            ddl.contains("ALTER SEQUENCE \"t_id_seq\" AS bigint NO MAXVALUE;"),
+            "{ddl}"
+        );
+        // シーケンスの MAXVALUE が型より大きい (型が上限) ならシーケンスは関係ない。
+        let f = seq_findings(
+            DriverKind::Postgres,
+            vec![seq(
+                SequenceKind::Serial,
+                "smallint",
+                30_000,
+                Some(i64::MAX as u64),
+            )],
+        );
+        assert_eq!(f[0].context[4], "type");
+    }
+
+    #[test]
+    fn sequence_cycle_is_not_flagged() {
+        let mut s = seq(
+            SequenceKind::Serial,
+            "integer",
+            2_147_483_000,
+            Some(2_147_483_647),
+        );
+        s.cycle = true;
+        assert!(seq_findings(DriverKind::Postgres, vec![s]).is_empty());
+    }
+
+    #[test]
+    fn sequence_sqlite_uses_i64_max_and_has_no_fix() {
+        let used = (i64::MAX as u64) / 10 * 9;
+        let f = seq_findings(
+            DriverKind::Sqlite,
+            vec![seq(
+                SequenceKind::SqliteAutoincrement,
+                "INTEGER",
+                used,
+                None,
+            )],
+        );
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].severity, Severity::High);
+        assert!(f[0].fix_ddl.is_none());
+        assert!(seq_findings(
+            DriverKind::Sqlite,
+            vec![seq(
+                SequenceKind::SqliteAutoincrement,
+                "INTEGER",
+                1_000_000,
+                None
+            )]
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn sequence_fix_ddl_widens_to_bigint_per_dialect() {
+        let f = seq_findings(
+            DriverKind::Mysql,
+            vec![seq(
+                SequenceKind::AutoIncrement,
+                "int unsigned",
+                4_000_000_000,
+                None,
+            )],
+        );
+        assert_eq!(
+            f[0].fix_ddl.as_deref(),
+            Some("ALTER TABLE `t` MODIFY COLUMN `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT;")
+        );
+        assert!(f[0].fix_ddl_online.is_none());
+        let f = seq_findings(
+            DriverKind::Mysql,
+            vec![seq(SequenceKind::AutoIncrement, "int", 2_000_000_000, None)],
+        );
+        assert_eq!(
+            f[0].fix_ddl.as_deref(),
+            Some("ALTER TABLE `t` MODIFY COLUMN `id` BIGINT NOT NULL AUTO_INCREMENT;")
+        );
+        // 既に BIGINT (UNSIGNED) なら直すものが無い。
+        let f = seq_findings(
+            DriverKind::Mysql,
+            vec![seq(
+                SequenceKind::AutoIncrement,
+                "bigint unsigned",
+                u64::MAX,
+                None,
+            )],
+        );
+        assert!(f[0].fix_ddl.is_none());
+
+        let f = seq_findings(
+            DriverKind::Postgres,
+            vec![seq(
+                SequenceKind::Serial,
+                "integer",
+                2_000_000_000,
+                Some(2_147_483_647),
+            )],
+        );
+        assert_eq!(
+            f[0].fix_ddl.as_deref(),
+            Some(
+                "ALTER TABLE \"t\" ALTER COLUMN \"id\" TYPE bigint;\nALTER SEQUENCE \"t_id_seq\" AS bigint NO MAXVALUE;"
+            )
+        );
+        // IDENTITY のシーケンスは列の型に追従するので ALTER SEQUENCE は要らない。
+        let f = seq_findings(
+            DriverKind::Postgres,
+            vec![seq(
+                SequenceKind::Identity,
+                "integer",
+                2_000_000_000,
+                Some(2_147_483_647),
+            )],
+        );
+        assert_eq!(
+            f[0].fix_ddl.as_deref(),
+            Some("ALTER TABLE \"t\" ALTER COLUMN \"id\" TYPE bigint;")
+        );
+    }
+
+    #[test]
+    fn sequence_findings_sort_after_other_rules_and_key_is_per_column() {
+        let f = seq_findings(
+            DriverKind::Mysql,
+            vec![seq(SequenceKind::AutoIncrement, "tinyint", 200, None)],
+        );
+        assert_eq!(f[0].key(), "sequence_exhaustion|t|id");
+    }
+
+    #[test]
+    fn sequence_postgres_domain_column_uses_base_type_limit_but_has_no_fix() {
+        let mut s = seq(SequenceKind::Serial, "small_id", 30_000, None);
+        s.domain_base_type = Some("smallint".into());
+        s.sequence_type = Some("smallint".into());
+        let f = seq_findings(DriverKind::Postgres, vec![s]);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].context[0], "small_id", "説明文の型名はドメイン名");
+        assert_eq!(f[0].context[2], "32767", "上限は基底型 smallint");
+        assert!(
+            f[0].fix_ddl.is_none(),
+            "ドメイン列には型変更 DDL を出さない"
+        );
+    }
+
+    #[test]
+    fn sequence_mysql_fix_keeps_comment_and_invisible_and_skips_zerofill() {
+        let mut s = seq(SequenceKind::AutoIncrement, "int", 2_000_000_000, None);
+        s.column_comment = Some("it's a \\ id".into());
+        s.invisible = true;
+        let f = seq_findings(DriverKind::Mysql, vec![s]);
+        assert_eq!(
+            f[0].fix_ddl.as_deref(),
+            Some(
+                "ALTER TABLE `t` MODIFY COLUMN `id` BIGINT NOT NULL AUTO_INCREMENT INVISIBLE COMMENT 'it''s a \\\\ id';"
+            )
+        );
+        let z = seq(
+            SequenceKind::AutoIncrement,
+            "int(10) unsigned zerofill",
+            4_000_000_000,
+            None,
+        );
+        let f = seq_findings(DriverKind::Mysql, vec![z]);
+        assert_eq!(f.len(), 1);
+        assert!(f[0].fix_ddl.is_none(), "ZEROFILL は自動 DDL を出さない");
     }
 }

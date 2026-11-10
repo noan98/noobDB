@@ -10,6 +10,7 @@ import {
   newFindingSet,
   reasonTextKey,
   reclaimableSummary,
+  sequenceFixAlterRisks,
   ruleTitleKey,
   severityLabelKey,
   severityRole,
@@ -64,6 +65,7 @@ describe("ruleTitleKey", () => {
       "nullable_foreign_key",
       "oversized_varchar",
       "float_for_money",
+      "sequence_exhaustion",
     ] as const;
     for (const r of rules) {
       expect(ruleTitleKey(r)).toMatch(/^advisorRule/);
@@ -110,6 +112,42 @@ describe("findingDescription", () => {
       key: "advisorRuleFloatForMoneySqliteDesc",
       params: { table: "t", column: "price", type: "REAL" },
     });
+  });
+
+  it("採番枯渇は使用率などを差し込み、MAXVALUE 起因なら専用の文言へ切り替える (#2210)", () => {
+    const base = {
+      rule: "sequence_exhaustion" as const,
+      table: "orders",
+      columns: ["id"],
+    };
+    expect(
+      findingDescription(
+        finding({
+          ...base,
+          context: ["int unsigned", "3500000000", "4294967295", "81.4", "type"],
+          fix_ddl: "ALTER TABLE orders MODIFY COLUMN id BIGINT;",
+        }),
+      ),
+    ).toEqual({
+      key: "advisorRuleSequenceExhaustionDesc",
+      params: {
+        table: "orders",
+        column: "id",
+        type: "int unsigned",
+        used: "3500000000",
+        max: "4294967295",
+        percent: "81.4",
+      },
+    });
+    expect(
+      findingDescription(finding({ ...base, context: ["bigint", "900", "1000", "90.0", "sequence"] })).key,
+    ).toBe("advisorRuleSequenceCapDesc");
+    // 修正 DDL が無い (最大幅など) ときは「BIGINT に広げる」を言わない文言。
+    expect(
+      findingDescription(
+        finding({ ...base, context: ["bigint", "900", "1000", "90.0", "type"], fix_ddl: null }),
+      ).key,
+    ).toBe("advisorRuleSequenceNoFixDesc");
   });
 
   it("FK 欠落は table/columns/ref を差し込む", () => {
@@ -188,6 +226,8 @@ describe("i18n キーが実在する", () => {
       ruleTitleKey("nullable_foreign_key"),
       ruleTitleKey("oversized_varchar"),
       ruleTitleKey("float_for_money"),
+      ruleTitleKey("sequence_exhaustion"),
+      reasonTextKey("sequences_unreadable"),
       reasonTextKey("unsupported_driver"),
       reasonTextKey("performance_schema_off"),
       reasonTextKey("stats_unreadable"),
@@ -370,5 +410,32 @@ describe("容量・前回比 (#1621)", () => {
     expect(set.has(a)).toBe(false);
     expect(set.size).toBe(1);
     expect(newFindingSet([a], null).size).toBe(0);
+  });
+});
+
+describe("sequenceFixAlterRisks (#2210)", () => {
+  const seq = (fix: string | null) =>
+    finding({ rule: "sequence_exhaustion", table: "t", columns: ["id"], fix_ddl: fix });
+  it("型変更を伴う修正は alterCost のリスク (MySQL は COPY、PostgreSQL は書き換え) になる", () => {
+    const my = sequenceFixAlterRisks(
+      seq("ALTER TABLE `t` MODIFY COLUMN `id` BIGINT NOT NULL AUTO_INCREMENT;"),
+      "mysql",
+    );
+    expect(my.map((r) => r.reason)).toEqual(["mysqlCopyType"]);
+    const pg = sequenceFixAlterRisks(seq('ALTER TABLE "t" ALTER COLUMN "id" TYPE bigint;'), "postgres");
+    expect(pg.map((r) => r.reason)).toEqual(["pgRewriteType"]);
+    expect(pg[0]?.subject).toBe("id");
+  });
+  it("MAXVALUE だけの修正・修正なし・他ルールは空", () => {
+    expect(
+      sequenceFixAlterRisks(seq('ALTER SEQUENCE "t_id_seq" AS bigint NO MAXVALUE;'), "postgres"),
+    ).toEqual([]);
+    expect(sequenceFixAlterRisks(seq(null), "mysql")).toEqual([]);
+    expect(
+      sequenceFixAlterRisks(
+        finding({ rule: "missing_primary_key", fix_ddl: "ALTER TABLE x MODIFY COLUMN y INT" }),
+        "mysql",
+      ),
+    ).toEqual([]);
   });
 });

@@ -8,6 +8,7 @@
 import type { AdvisorRuleId, AdvisorSeverity, HealthFinding } from "../api/tauri";
 import type { I18nKey } from "../i18n";
 import type { SemanticRole } from "../semanticColors";
+import type { AlterCostRisk } from "./alterCost";
 import { formatBytes } from "./tableSize";
 
 /** 重要度 → semantic 役割 (#664)。high=danger / medium=warning / low=info。 */
@@ -57,6 +58,8 @@ export function ruleTitleKey(rule: AdvisorRuleId): I18nKey {
       return "advisorRuleOversizedVarcharTitle";
     case "float_for_money":
       return "advisorRuleFloatForMoneyTitle";
+    case "sequence_exhaustion":
+      return "advisorRuleSequenceExhaustionTitle";
     default:
       // fail-closed (#1194): union に無い未知ルールは空描画にせず汎用見出しへ倒す。
       return "advisorRuleUnknownTitle";
@@ -152,6 +155,25 @@ export function findingDescription(finding: HealthFinding): {
           type: ctx[0] ?? "",
         },
       };
+    case "sequence_exhaustion":
+      return {
+        // 上限がシーケンスの MAXVALUE のときは、型ではなく MAXVALUE を直す文言へ。
+        key:
+          ctx[4] === "sequence"
+            ? "advisorRuleSequenceCapDesc"
+            : // 自動の修正 DDL が無い (既に最大幅・SQLite など) ときは「BIGINT に広げる」とは言わない。
+              finding.fix_ddl
+              ? "advisorRuleSequenceExhaustionDesc"
+              : "advisorRuleSequenceNoFixDesc",
+        params: {
+          table: finding.table,
+          column: finding.columns[0] ?? "",
+          type: ctx[0] ?? "",
+          used: ctx[1] ?? "",
+          max: ctx[2] ?? "",
+          percent: ctx[3] ?? "",
+        },
+      };
     default:
       // fail-closed (#1194): 未知ルールは `undefined` を返さず汎用説明へ倒す。
       return { key: "advisorRuleUnknownDesc", params: { table: finding.table } };
@@ -168,6 +190,8 @@ export function reasonTextKey(reason: string): I18nKey {
       return "advisorReasonPerformanceSchemaOff";
     case "stats_unreadable":
       return "advisorReasonStatsUnreadable";
+    case "sequences_unreadable":
+      return "advisorReasonSequencesUnreadable";
     default:
       return "advisorReasonUnknown";
   }
@@ -348,4 +372,26 @@ export function findingsToTable(
       f.size_bytes == null ? null : String(f.size_bytes),
     ]),
   };
+}
+
+/**
+ * 採番枯渇の修正 DDL (#2210) が列の型を変えるときの `alterCost` のリスク (#1771)。型変更は MySQL では
+ * COPY、PostgreSQL ではテーブル全体の書き換えになるので、`AlterCostNotice` で同じ注意を添える。
+ * シーケンスの `MAXVALUE` だけを直す DDL (型は変えない) や、修正 DDL が無い指摘は空。SQLite は ALTER が軽い。
+ */
+export function sequenceFixAlterRisks(finding: HealthFinding, driver: string | undefined): AlterCostRisk[] {
+  if (finding.rule !== "sequence_exhaustion" || !finding.fix_ddl) return [];
+  const mysql = driver === "mysql";
+  const changesType = mysql
+    ? /\bMODIFY COLUMN\b/i.test(finding.fix_ddl)
+    : /\bTYPE bigint\b/i.test(finding.fix_ddl);
+  if (!changesType) return [];
+  return [
+    {
+      id: `type:${finding.columns[0] ?? ""}`,
+      severity: "rewrite",
+      reason: mysql ? "mysqlCopyType" : "pgRewriteType",
+      subject: finding.columns[0] ?? "",
+    },
+  ];
 }

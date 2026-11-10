@@ -4,7 +4,7 @@ use futures_util::StreamExt;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions, SqliteRow};
 use sqlx::{Acquire, Row, TypeInfo, ValueRef};
 
-use super::advisor::UnusedIndexStats;
+use super::advisor::{SequenceKind, SequenceUsage, UnusedIndexStats};
 use super::tx_options::TxOptions;
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, KillProcessesResult, LiveQuery, LocalTableMeta,
@@ -1281,6 +1281,63 @@ impl SqliteConn {
             reason: Some("unsupported_driver".into()),
             entries: Vec::new(),
         })
+    }
+
+    /// スキーマ健全性アドバイザ (#2210) の採番列の使用状況。`AUTOINCREMENT` の表だけが
+    /// `sqlite_sequence` に載る (最後に払い出した rowid が `seq`)。採番列はその表の INTEGER PRIMARY KEY。
+    /// `sqlite_sequence` が無い (AUTOINCREMENT の表が無い) 接続は空を返す。読み取りのみ。
+    pub async fn sequence_usage(&self, db: &str) -> Result<Vec<SequenceUsage>> {
+        let sc = self.schema_ident(db);
+        let has: Option<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT 1 FROM {sc}.sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'"
+        )))
+        .fetch_optional(&self.pool)
+        .await?;
+        if has.is_none() {
+            return Ok(Vec::new());
+        }
+        let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT name, seq FROM {sc}.sqlite_sequence ORDER BY name"
+        )))
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = Vec::new();
+        for r in &rows {
+            let Ok(table) = r.try_get::<String, _>(0) else {
+                continue;
+            };
+            let seq = r.try_get::<Option<i64>, _>(1).ok().flatten().unwrap_or(0);
+            let Ok(last_used) = u64::try_from(seq) else {
+                continue;
+            };
+            // 採番列 = INTEGER PRIMARY KEY (AUTOINCREMENT は単一列の INTEGER PRIMARY KEY のみ)。
+            let col: Option<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(format!(
+                "SELECT name, type FROM pragma_table_info(?, {}) WHERE pk = 1",
+                self.schema_lit(db)
+            )))
+            .bind(&table)
+            .fetch_optional(&self.pool)
+            .await?;
+            let Some(col) = col else {
+                continue;
+            };
+            out.push(SequenceUsage {
+                table,
+                column: col.try_get::<String, _>(0).unwrap_or_default(),
+                data_type: col.try_get::<String, _>(1).unwrap_or_default(),
+                kind: SequenceKind::SqliteAutoincrement,
+                sequence_name: None,
+                sequence_type: None,
+                last_used,
+                sequence_max: None,
+                cycle: false,
+                column_comment: None,
+                invisible: false,
+                domain_base_type: None,
+                unreadable: false,
+            });
+        }
+        Ok(out)
     }
 
     pub async fn tables(&self, db: &str) -> Result<Vec<String>> {

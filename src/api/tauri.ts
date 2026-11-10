@@ -2018,7 +2018,8 @@ export type AdvisorRuleId =
   | "sqlite_integer_pk_hint"
   | "nullable_foreign_key"
   | "oversized_varchar"
-  | "float_for_money";
+  | "float_for_money"
+  | "sequence_exhaustion";
 
 /** 指摘の重要度。フロントで semantic トークンに色分けされる (#664)。 */
 export type AdvisorSeverity = "high" | "medium" | "low";
