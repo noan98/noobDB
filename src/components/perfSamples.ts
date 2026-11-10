@@ -49,3 +49,20 @@ export function slowestSqlExecuteMs(rows: readonly PerfRow[]): number | null {
   }
   return max;
 }
+
+/**
+ * 行の安定 key (#2213)。計測値の組で識別し、同じ組が複数あるときだけ出現順の連番を足して
+ * 一意にする (React の key 衝突で行の出入りが取り違えられないように)。新しい行が先頭に増えても
+ * 既存の行の key は変わらないよう、連番は古い方から数える。
+ */
+export function perfRowKeys(rows: readonly PerfRow[]): string[] {
+  const keys = rows.map((r) => `${r.atMs}-${r.kind}-${r.rows}-${r.columns}-${r.sqlExecuteMs}`);
+  const seen = new Map<string, number>();
+  const out = new Array<string>(keys.length);
+  for (let i = keys.length - 1; i >= 0; i--) {
+    const n = seen.get(keys[i]) ?? 0;
+    seen.set(keys[i], n + 1);
+    out[i] = n === 0 ? keys[i] : `${keys[i]}#${n}`;
+  }
+  return out;
+}

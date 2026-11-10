@@ -3,6 +3,7 @@
 // 閾値の判定・メーターの位置・並べ替えを描画から切り離し、Vitest で固定する。
 
 import type { ReplicationLink, ReplicationSlot } from "../api/tauri";
+import type { LiveField } from "./liveDiff";
 
 /** 使われていないスロットが WAL をこれ以上溜めたら先頭で警告する (1 GiB)。 */
 export const SLOT_WAL_WARN_BYTES = 1024 * 1024 * 1024;
@@ -89,3 +90,33 @@ export function dropSlotBlockedReason(
   if (slot.active) return "active";
   return null;
 }
+
+/**
+ * 接続先カードの安定 key (#2213)。`sortLinks` で並びが変わっても同じ接続先は同じ key を保ち、
+ * カードの DOM (と StatTile の CountUp) が作り直されない。配列の index は入れない。
+ */
+export function linkKey(link: ReplicationLink): string {
+  return `${link.direction}\u0000${link.name}\u0000${link.address ?? ""}`;
+}
+
+export type ReplicationLinkLiveField = "lag" | "lagWrite" | "lagFlush" | "lagBytes";
+
+/** 接続先の値変化フラッシュ対象 (遅延・WAL 差分)。 */
+export const REPLICATION_LINK_LIVE_FIELDS: readonly LiveField<ReplicationLink, ReplicationLinkLiveField>[] = [
+  { name: "lag", changed: (a, b) => a.lag_secs !== b.lag_secs },
+  { name: "lagWrite", changed: (a, b) => a.write_lag_secs !== b.write_lag_secs },
+  { name: "lagFlush", changed: (a, b) => a.flush_lag_secs !== b.flush_lag_secs },
+  { name: "lagBytes", changed: (a, b) => a.lag_bytes !== b.lag_bytes },
+];
+
+/** スロットの安定 key (スロット名はクラスタ内で一意)。 */
+export function slotKey(slot: ReplicationSlot): string {
+  return slot.name;
+}
+
+export type ReplicationSlotLiveField = "retained";
+
+/** スロットの値変化フラッシュ対象 (WAL 保持量)。 */
+export const REPLICATION_SLOT_LIVE_FIELDS: readonly LiveField<ReplicationSlot, ReplicationSlotLiveField>[] = [
+  { name: "retained", changed: (a, b) => a.retained_bytes !== b.retained_bytes },
+];

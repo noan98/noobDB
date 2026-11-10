@@ -199,6 +199,40 @@ describe("QueryInspectorPanel backend delta (#1259)", () => {
   });
 });
 
+describe("QueryInspectorPanel 集計行のライブ表示 (#2213)", () => {
+  const row = (over: Partial<StatementDeltaRow> = {}): StatementDeltaRow => ({
+    digest: "d1",
+    fingerprint: "select 1",
+    database: "shop",
+    calls: 4,
+    total_time_ms: 40,
+    mean_time_ms: 10,
+    max_time_ms: 15,
+    rows: 8,
+    n_plus_one: false,
+    ...over,
+  });
+
+  it("初回表示は光らず、値が変わったセルだけ apply-flash で光る", async () => {
+    vi.mocked(api.sampleLiveQueries).mockResolvedValue([]);
+    vi.mocked(api.sampleStatementDelta)
+      .mockResolvedValueOnce([row()])
+      .mockResolvedValue([row({ fingerprint: null, calls: 9 })]);
+    renderWithProviders(<QueryInspectorPanel sessionId="s1" driver="mysql" />);
+    await waitFor(() => expect(screen.getByText(t("inspectorStart"))).toBeInTheDocument());
+    fireEvent.click(screen.getByText(t("inspectorTabStats")));
+    fireEvent.click(screen.getByText(t("inspectorStart")));
+    await waitFor(() => expect(screen.getByText("select 1")).toBeInTheDocument());
+    expect(document.querySelector("[data-live-flash]")).toBeNull();
+
+    fireEvent.click(screen.getByLabelText(t("inspectorCumulativeLabel")));
+    await waitFor(() => expect(screen.getByText("9")).toBeInTheDocument());
+    const flashed = document.querySelectorAll("[data-live-flash]");
+    expect(flashed).toHaveLength(1);
+    expect(flashed[0].textContent).toBe("9");
+  });
+});
+
 describe("QueryInspectorPanel 記録開始の失敗 (#1594)", () => {
   it("基準の取得に失敗したら記録を始めず、ポーリングもしない", async () => {
     vi.mocked(api.startStatementRecording).mockRejectedValueOnce(new Error("stats unavailable"));

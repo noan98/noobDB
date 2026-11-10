@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import {
@@ -18,6 +18,9 @@ import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { useKeepAliveActive, useRefreshOnReactivate } from "./KeepAlive";
 import { ListboxSelect } from "./ListboxSelect";
+import { LiveCell, LiveFlash, LiveRow, LiveRowsPresence, useLiveChanges } from "./LiveRows";
+import { uniqueByKey } from "./liveDiff";
+import { Skeleton } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { StatTile } from "./StatTile";
 import { SurfaceRule } from "./SurfaceRule";
@@ -33,7 +36,11 @@ import {
   lagMeterPercent,
   lagWarnPercent,
   LAG_WARN_SECS,
+  linkKey,
   linkNeedsAttention,
+  REPLICATION_LINK_LIVE_FIELDS,
+  REPLICATION_SLOT_LIVE_FIELDS,
+  slotKey,
   slotsHoldingWal,
   slotsLost,
   SLOT_WAL_WARN_BYTES,
@@ -70,6 +77,8 @@ const tdCss: SystemStyleObject = {
   whiteSpace: "nowrap",
 };
 const tdNumCss: SystemStyleObject = { ...tdCss, textStyle: "numeric" };
+// `LiveCell` (#1022) の内側。フラッシュ層がパディングを持つので、`<td>` と同じ値をここへ置く。
+const slotCellInnerCss: SystemStyleObject = { padding: "var(--space-1-25) var(--space-2-5)" };
 
 const ROLE_KEY: Record<ReplicationRole, I18nKey> = {
   primary: "replicationRolePrimary",
@@ -132,7 +141,66 @@ function LagMeter({ secs }: { secs: number | null }) {
   );
 }
 
-function LinkCard({ link }: { link: ReplicationLink }) {
+/** `StatTile` を包むフラッシュ層。タイルと同じ flex 配分を持ち、並びを変えない。 */
+const flashTileCss: SystemStyleObject = {
+  display: "flex",
+  flex: "1",
+  minWidth: "120px",
+  borderRadius: "var(--radius-md)",
+};
+
+/** 値が変わったタイルだけ `apply-flash` を 1 回光らせる (#2213)。`flash` が null なら静止。 */
+function FlashTile({ flash, children }: { flash: number | null; children: ReactNode }) {
+  return (
+    <LiveFlash token={flash} css={flashTileCss}>
+      {children}
+    </LiveFlash>
+  );
+}
+
+/** 変化セルごとのフラッシュ再生キー (`useLiveChanges` が返す世代番号)。 */
+interface LinkFlash {
+  lag: number | null;
+  lagWrite: number | null;
+  lagFlush: number | null;
+  lagBytes: number | null;
+}
+
+/** 初回取得中のカード形スケルトン (#2213)。支援技術には隠す (読み込み中はヘッダのスピナーが伝える)。 */
+function LinkCardSkeleton() {
+  return (
+    <Flex
+      direction="column"
+      gap="2"
+      p="3"
+      borderRadius="md"
+      borderWidth="1px"
+      borderColor="app.border"
+      bg="app.surface"
+      aria-hidden
+      data-testid="replication-skeleton"
+    >
+      <Skeleton style={{ height: "var(--space-3-5)", width: "30%" }} />
+      <Flex gap="2" wrap="wrap">
+        {[0, 1, 2].map((i) => (
+          <Skeleton
+            key={i}
+            style={{
+              flex: 1,
+              minWidth: "120px",
+              height: "var(--space-12)",
+              borderRadius: "var(--radius-md)",
+              animationDelay: `${i * 0.05}s`,
+            }}
+          />
+        ))}
+      </Flex>
+      <Skeleton style={{ height: "var(--space-2)", width: "100%", animationDelay: "0.15s" }} />
+    </Flex>
+  );
+}
+
+function LinkCard({ link, flash }: { link: ReplicationLink; flash: LinkFlash }) {
   const t = useT();
   const attention = linkNeedsAttention(link);
   const stateLabel = link.state ? (STATE_KEY[link.state] ? t(STATE_KEY[link.state]) : link.state) : null;
@@ -166,19 +234,35 @@ function LinkCard({ link }: { link: ReplicationLink }) {
         )}
       </Flex>
       <Flex gap="2" wrap="wrap">
-        <StatTile
-          label={t("replicationLag")}
-          value={link.lag_secs ?? t("replicationLagUnknown")}
-          formatter={formatLagSecs}
-        />
+        <FlashTile flash={flash.lag}>
+          <StatTile
+            label={t("replicationLag")}
+            value={link.lag_secs ?? t("replicationLagUnknown")}
+            formatter={formatLagSecs}
+          />
+        </FlashTile>
         {link.write_lag_secs != null && (
-          <StatTile label={t("replicationLagWrite")} value={link.write_lag_secs} formatter={formatLagSecs} />
+          <FlashTile flash={flash.lagWrite}>
+            <StatTile
+              label={t("replicationLagWrite")}
+              value={link.write_lag_secs}
+              formatter={formatLagSecs}
+            />
+          </FlashTile>
         )}
         {link.flush_lag_secs != null && (
-          <StatTile label={t("replicationLagFlush")} value={link.flush_lag_secs} formatter={formatLagSecs} />
+          <FlashTile flash={flash.lagFlush}>
+            <StatTile
+              label={t("replicationLagFlush")}
+              value={link.flush_lag_secs}
+              formatter={formatLagSecs}
+            />
+          </FlashTile>
         )}
         {link.lag_bytes != null && (
-          <StatTile label={t("replicationLagBytes")} value={link.lag_bytes} formatter={formatBytes} />
+          <FlashTile flash={flash.lagBytes}>
+            <StatTile label={t("replicationLagBytes")} value={link.lag_bytes} formatter={formatBytes} />
+          </FlashTile>
         )}
         {link.io_running !== null && (
           <StatTile label={t("replicationIoThread")} value={thread(link.io_running)} />
@@ -304,6 +388,36 @@ export function ReplicationPanel({
     [status],
   );
 
+  // ポーリング結果の差分から、値が変わったセルだけ光らせる (#2213)。初回表示・セッション切替直後は
+  // 前回が空なので光らない。key は並びに依存しない `linkKey` / `slotKey`。
+  const allLinks = useMemo(() => uniqueByKey(status?.links ?? [], linkKey), [status]);
+  const allSlots = useMemo(() => uniqueByKey(status?.slots ?? [], slotKey), [status]);
+  const linkLive = useLiveChanges(allLinks, linkKey, REPLICATION_LINK_LIVE_FIELDS);
+  const slotLive = useLiveChanges(allSlots, slotKey, REPLICATION_SLOT_LIVE_FIELDS);
+  const renderLinks = (links: readonly ReplicationLink[]) => (
+    // 行間は各行の内側 padding が持つので、親の gap 分を負のマージンで相殺する。
+    <Flex direction="column" mt="-1.5">
+      <LiveRowsPresence>
+        {links.map((l) => {
+          const key = linkKey(l);
+          return (
+            <LiveRow key={key} reorder>
+              <LinkCard
+                link={l}
+                flash={{
+                  lag: linkLive.flashToken(key, "lag"),
+                  lagWrite: linkLive.flashToken(key, "lagWrite"),
+                  lagFlush: linkLive.flashToken(key, "lagFlush"),
+                  lagBytes: linkLive.flashToken(key, "lagBytes"),
+                }}
+              />
+            </LiveRow>
+          );
+        })}
+      </LiveRowsPresence>
+    </Flex>
+  );
+
   const header = (
     <chakra.header
       position="relative"
@@ -410,6 +524,8 @@ export function ReplicationPanel({
             </Callout>
           )}
 
+          {status === null && error === null && <LinkCardSkeleton />}
+
           {status && (
             <Flex gap="2" wrap="wrap">
               <StatTile label={t("replicationRole")} value={t(ROLE_KEY[status.role])} />
@@ -427,18 +543,14 @@ export function ReplicationPanel({
           {downstream.length > 0 && (
             <Flex direction="column" gap="2" data-testid="replication-downstream">
               <Heading as="h3">{t("replicationSectionDownstream")}</Heading>
-              {downstream.map((l, i) => (
-                <LinkCard key={`d:${i}:${l.name}:${l.address ?? ""}`} link={l} />
-              ))}
+              {renderLinks(downstream)}
             </Flex>
           )}
 
           {upstream.length > 0 && (
             <Flex direction="column" gap="2" data-testid="replication-upstream">
               <Heading as="h3">{t("replicationSectionUpstream")}</Heading>
-              {upstream.map((l, i) => (
-                <LinkCard key={`u:${i}:${l.name}:${l.address ?? ""}`} link={l} />
-              ))}
+              {renderLinks(upstream)}
             </Flex>
           )}
 
@@ -469,9 +581,15 @@ export function ReplicationPanel({
                           <chakra.td css={tdCss} color={stuck ? "app.textWarning" : undefined}>
                             {s.active ? t("replicationActiveYes") : t("replicationActiveNo")}
                           </chakra.td>
-                          <chakra.td css={tdNumCss} color={stuck ? "app.textWarning" : undefined}>
+                          <LiveCell
+                            css={tdNumCss}
+                            innerCss={slotCellInnerCss}
+                            collapse={false}
+                            flash={slotLive.flashToken(slotKey(s), "retained")}
+                            color={stuck ? "app.textWarning" : undefined}
+                          >
                             {formatBytes(s.retained_bytes)}
-                          </chakra.td>
+                          </LiveCell>
                           <chakra.td css={tdCss}>{s.wal_status ?? "—"}</chakra.td>
                           {onDropSlot && (
                             <chakra.td css={tdCss}>

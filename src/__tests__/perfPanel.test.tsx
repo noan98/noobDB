@@ -2,7 +2,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
 import { t } from "../i18n";
 import type { PerfStatus } from "../api/tauri";
-import { formatPerfBytes, formatPerfMs, slowestSqlExecuteMs, toPerfRows } from "../components/perfSamples";
+import {
+  formatPerfBytes,
+  formatPerfMs,
+  perfRowKeys,
+  slowestSqlExecuteMs,
+  toPerfRows,
+} from "../components/perfSamples";
 
 vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();
@@ -68,6 +74,18 @@ describe("perfPanel 純関数 (#1622)", () => {
     expect(slowestSqlExecuteMs([])).toBeNull();
     const rows = toPerfRows(status().samples);
     expect(slowestSqlExecuteMs(rows)).toBe(1500);
+  });
+});
+
+describe("perfRowKeys (#2213)", () => {
+  it("同じ計測値の組が複数あっても一意で、新しい行が先頭に増えても既存の key は変わらない", () => {
+    const sample = status().samples[1];
+    const old = toPerfRows([sample, sample]);
+    const before = perfRowKeys(old);
+    expect(new Set(before).size).toBe(2);
+    const fresh = toPerfRows([status().samples[0], sample, sample]);
+    const after = perfRowKeys(fresh);
+    expect(after.slice(1)).toEqual(before);
   });
 });
 
