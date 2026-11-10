@@ -35,6 +35,7 @@ describe("publicationMembership", () => {
           row_filter: null,
           replica_identity: "d",
           has_primary_key: true,
+          is_partitioned: false,
         },
       ],
     };
@@ -57,6 +58,7 @@ describe("publicationMembership", () => {
           row_filter: null,
           replica_identity: "d",
           has_primary_key: true,
+          is_partitioned: false,
         },
       ],
     };

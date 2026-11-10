@@ -2726,13 +2726,15 @@ const en = {
   publicationReplicaPartitioned: "Partitioned table (each partition needs its own replica identity)",
   publicationReplicaFullTitle: "REPLICA IDENTITY FULL will be set before adding to: {names}",
   publicationReplicaPartitionNote:
-    "This is a partitioned table: REPLICA IDENTITY is not propagated to partitions, so ALTER TABLE ... REPLICA IDENTITY FULL has to be run on each partition (or give each partition a primary key).",
+    "This is a partitioned table: REPLICA IDENTITY is not propagated to partitions, so ALTER TABLE ... REPLICA IDENTITY FULL has to be run on each partition (or give each partition a primary key). Partitions added later need the same setting.",
   publicationReplicaWarnTitle: "UPDATE / DELETE on this table will fail once it is added to: {names}",
   publicationReplicaWarnBody:
     'The table has no primary key or other replica identity, but these publications publish updates or deletes. PostgreSQL then rejects every UPDATE / DELETE on the table with "cannot update table ... because it does not have a replica identity and publishes updates". Choose one of:',
   publicationReplicaFixPk: "Add a primary key to the table (recommended).",
   publicationReplicaFixFull:
     "Run ALTER TABLE ... REPLICA IDENTITY FULL together with this change (tick the box below; it shows up in the SQL).",
+  publicationReplicaFixFullPartition:
+    "Run ALTER TABLE ... REPLICA IDENTITY FULL on each partition separately (it does not propagate from the parent).",
   publicationReplicaFixInsertOnly: "Pick a publication that publishes inserts only.",
   publicationReplicaFullOption: "Also run ALTER TABLE ... REPLICA IDENTITY FULL",
   publicationReplicaFullWalNote:
@@ -10571,7 +10573,7 @@ const ja: Dict = {
   publicationReplicaPartitioned: "パーティション親表 (識別子はパーティションごとに必要)",
   publicationReplicaFullTitle: "次のパブリケーションへ追加する前に REPLICA IDENTITY FULL を設定します: {names}",
   publicationReplicaPartitionNote:
-    "パーティション親表です。REPLICA IDENTITY はパーティションへ伝播しないため、ALTER TABLE ... REPLICA IDENTITY FULL はパーティションごとに実行する (または各パーティションに主キーを付ける) 必要があります。",
+    "パーティション親表です。REPLICA IDENTITY はパーティションへ伝播しないため、ALTER TABLE ... REPLICA IDENTITY FULL はパーティションごとに実行する (または各パーティションに主キーを付ける) 必要があります。今後追加するパーティションも同様の設定が必要です。",
   publicationReplicaWarnTitle:
     "次のパブリケーションへ追加すると、この表の UPDATE / DELETE が失敗します: {names}",
   publicationReplicaWarnBody:
@@ -10579,6 +10581,8 @@ const ja: Dict = {
   publicationReplicaFixPk: "表に主キーを追加する (推奨)。",
   publicationReplicaFixFull:
     "この変更と一緒に ALTER TABLE ... REPLICA IDENTITY FULL を実行する (下のチェックを入れると、実行する SQL に加わります)。",
+  publicationReplicaFixFullPartition:
+    "パーティションごとに ALTER TABLE ... REPLICA IDENTITY FULL を実行する (親表からは伝播しません)。",
   publicationReplicaFixInsertOnly: "INSERT だけを公開するパブリケーションを選ぶ。",
   publicationReplicaFullOption: "ALTER TABLE ... REPLICA IDENTITY FULL も一緒に実行する",
   publicationReplicaFullWalNote:

@@ -2215,6 +2215,7 @@
           "status"
         ],
         "has_primary_key": true,
+        "is_partitioned": false,
         "replica_identity": "d",
         "row_filter": "(status <> 'draft'::text)",
         "schema": "public",
@@ -2223,6 +2224,7 @@
       {
         "columns": null,
         "has_primary_key": false,
+        "is_partitioned": false,
         "replica_identity": "n",
         "row_filter": null,
         "schema": "public",

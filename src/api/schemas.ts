@@ -231,6 +231,7 @@ export const publicationTable = z.object({
   row_filter: z.string().nullable(),
   replica_identity: z.string(),
   has_primary_key: z.boolean(),
+  is_partitioned: z.boolean(),
 });
 /** `list_publications` の 1 件: 論理レプリケーションのパブリケーション (#2181)。 */
 export const publicationInfo = z.object({

@@ -256,7 +256,7 @@ export function PublicationModal({ sessionId, database, table, readOnly, onConfi
             <chakra.p margin={0}>{t("publicationReplicaWarnBody")}</chakra.p>
             <chakra.ul margin={0} paddingLeft="5" marginTop="1">
               <li>{t("publicationReplicaFixPk")}</li>
-              <li>{t("publicationReplicaFixFull")}</li>
+              <li>{t(fullApplies ? "publicationReplicaFixFull" : "publicationReplicaFixFullPartition")}</li>
               <li>{t("publicationReplicaFixInsertOnly")}</li>
             </chakra.ul>
             <chakra.label display="flex" alignItems="center" gap="2" marginTop="2" textStyle="body">

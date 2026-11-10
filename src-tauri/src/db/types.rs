@@ -686,6 +686,8 @@ pub struct PublicationTable {
     pub replica_identity: String,
     /// 主キーがある (`pg_index.indisprimary`)。`d` のとき、これが無いと UPDATE / DELETE を配信できない (#2212)。
     pub has_primary_key: bool,
+    /// パーティション親表。このとき上 2 つは末端のパーティションの集計値 (1 つでも識別子が無ければ `n`、すべてにあれば `d` + 主キーあり)。
+    pub is_partitioned: bool,
 }
 
 /// 表の REPLICA IDENTITY (`get_table_replica_identity`、#2212)。PostgreSQL 専用。パブリケーションが

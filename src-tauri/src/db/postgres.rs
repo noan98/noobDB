@@ -2318,6 +2318,7 @@ impl PostgresConn {
                     // 読めない (不明) ときは "?" と true: 警告も「主キーなし」の表示も出さない (#2212)。
                     replica_identity: r.try_get::<String, _>(5).unwrap_or_else(|_| "?".into()),
                     has_primary_key: r.try_get::<bool, _>(6).unwrap_or(true),
+                    is_partitioned: r.try_get::<bool, _>(7).unwrap_or(false),
                 });
             }
         }
@@ -2418,6 +2419,7 @@ impl PostgresConn {
                                 row_filter: None,
                                 replica_identity: "d".into(),
                                 has_primary_key: false,
+                                is_partitioned: false,
                             });
                         }
                     }
@@ -5760,11 +5762,13 @@ fn replica_lacks_sql(c: &str) -> String {
 
 /// `pg_class` 別名 `c` の表について、実効の REPLICA IDENTITY・主キーが使えるか・パーティション親か、の 3 列 (#2212)。
 /// 索引が DROP 済みの `i` は `n` に正規化する。パーティション親 (`relkind = 'p'`) は REPLICA IDENTITY が子へ伝播しないので、
-/// 末端の表 (`relkind = 'r'`) に 1 つでも識別子が無ければ `n` (危険)、すべてにあれば `d` + 主キーあり (安全) を返す。
+/// 末端の表 (pg_inherits を再帰でたどった `relkind = 'r'`。pg_partition_tree は PostgreSQL 12 以降なので使わない) に 1 つでも識別子が無ければ `n` (危険)、すべてにあれば `d` + 主キーあり (安全) を返す。
 fn replica_columns_sql() -> String {
     let leaf_lacks = format!(
-        "EXISTS (SELECT 1 FROM pg_partition_tree(c.oid) pt JOIN pg_class l ON l.oid = pt.relid \
-          WHERE pt.isleaf AND l.relkind = 'r' AND {})",
+        "EXISTS (WITH RECURSIVE tree(relid) AS (SELECT c.oid UNION ALL \
+                   SELECT inh.inhrelid FROM pg_inherits inh JOIN tree ON inh.inhparent = tree.relid) \
+          SELECT 1 FROM tree JOIN pg_class l ON l.oid = tree.relid \
+          WHERE l.relkind = 'r' AND {})",
         replica_lacks_sql("l")
     );
     format!(

@@ -5990,9 +5990,7 @@ async fn postgres_table_replica_identity_reports_relreplident_and_primary_key() 
             .unwrap_or_else(|| panic!("{table} が見つからない"));
         assert_eq!(r.replica_identity, expect_ident, "{table}");
         assert_eq!(r.is_partitioned, expect_part, "{table}");
-        if expect_ident != "n" || !expect_part {
-            assert_eq!(r.has_primary_key, expect_pk, "{table}");
-        }
+        assert_eq!(r.has_primary_key, expect_pk, "{table}");
     }
     assert!(ident("missing_table").await.is_none());
 
@@ -6014,6 +6012,8 @@ async fn postgres_table_replica_identity_reports_relreplident_and_primary_key() 
     assert!(by_name("nothing").has_primary_key);
     assert_eq!(by_name("idx_dropped").replica_identity, "n");
     assert_eq!(by_name("part_bad").replica_identity, "n");
+    assert!(by_name("part_bad").is_partitioned);
+    assert!(!by_name("no_pk").is_partitioned);
     // 定義表示にも各表の REPLICA IDENTITY が出る。
     let def = conn
         .object_definition("nb2212", "publication", "nb2212_pub", None)
@@ -6024,6 +6024,10 @@ async fn postgres_table_replica_identity_reports_relreplident_and_primary_key() 
         "{def}"
     );
     assert!(def.contains("REPLICA IDENTITY NOTHING"), "{def}");
+    assert!(
+        def.contains("REPLICA IDENTITY partitioned: some partitions lack identity"),
+        "{def}"
+    );
     cleanup(&conn).await;
 }
 

@@ -79,14 +79,22 @@ pub fn display_definition(p: &PublicationInfo) -> String {
         out.push_str(&format!(
             "\n-- {}: REPLICA IDENTITY {}",
             qualified(t),
-            replica_identity_label(&t.replica_identity, t.has_primary_key)
+            replica_identity_label(&t.replica_identity, t.has_primary_key, t.is_partitioned)
         ));
     }
     out
 }
 
 /// `relreplident` の表示名 (#2212)。`d` は主キーの有無を添える (主キーが無いと UPDATE / DELETE を配信できない)。
-fn replica_identity_label(ident: &str, has_primary_key: bool) -> String {
+fn replica_identity_label(ident: &str, has_primary_key: bool, is_partitioned: bool) -> String {
+    // パーティション親の値は末端の集計 (親自身の設定ではない)。
+    if is_partitioned {
+        return if ident == "n" {
+            "partitioned: some partitions lack identity".to_string()
+        } else {
+            "partitioned: all partitions OK".to_string()
+        };
+    }
     match ident {
         "n" => "NOTHING".to_string(),
         "f" => "FULL".to_string(),
@@ -437,6 +445,7 @@ mod tests {
             row_filter: None,
             replica_identity: "d".into(),
             has_primary_key: true,
+            is_partitioned: false,
         }
     }
 
@@ -480,6 +489,7 @@ mod tests {
         p2.tables = vec![
             PublicationTable {
                 has_primary_key: false,
+                is_partitioned: false,
                 ..tbl("s", "nopk")
             },
             PublicationTable {
@@ -489,6 +499,7 @@ mod tests {
             PublicationTable {
                 replica_identity: "f".into(),
                 has_primary_key: false,
+                is_partitioned: false,
                 ..tbl("s", "full")
             },
             PublicationTable {
@@ -738,5 +749,17 @@ mod tests {
             "{d}"
         );
         assert!(d.contains("-- 最終受信: なし"), "{d}");
+    }
+
+    #[test]
+    fn partitioned_label_reads_as_an_aggregate_not_the_parents_own_setting() {
+        assert_eq!(
+            replica_identity_label("n", false, true),
+            "partitioned: some partitions lack identity"
+        );
+        assert_eq!(
+            replica_identity_label("d", true, true),
+            "partitioned: all partitions OK"
+        );
     }
 }

@@ -734,6 +734,8 @@ export interface PublicationTable {
   replica_identity: string;
   /** 主キーがある (#2212)。`d` で無いと UPDATE / DELETE を配信できない。 */
   has_primary_key: boolean;
+  /** パーティション親表 (上の 2 つは末端の集計値)。 */
+  is_partitioned: boolean;
 }
 
 /** `get_table_replica_identity` の結果: 表の REPLICA IDENTITY と主キーの有無 (#2212)。 */

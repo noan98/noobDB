@@ -20,6 +20,7 @@ const publications: PublicationInfo[] = [
         row_filter: null,
         replica_identity: "d",
         has_primary_key: true,
+        is_partitioned: false,
       },
     ],
     schemas: [],
@@ -299,6 +300,9 @@ describe("PublicationModal", () => {
       await user.click(screen.getAllByRole("checkbox")[0]);
       expect(await screen.findByText(t("publicationReplicaWarnBody"))).toBeInTheDocument();
       expect(screen.getByText(t("publicationReplicaPartitionNote"))).toBeInTheDocument();
+      // 対処リストも「パーティションごとに実行する」案内に替わる (チェックを案内する文言は出ない)。
+      expect(screen.getByText(t("publicationReplicaFixFullPartition"))).toBeInTheDocument();
+      expect(screen.queryByText(t("publicationReplicaFixFull"))).not.toBeInTheDocument();
       const full = screen.getByRole("checkbox", { name: t("publicationReplicaFullOption") });
       expect(full).toBeDisabled();
       await user.click(full);

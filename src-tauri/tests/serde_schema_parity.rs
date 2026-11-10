@@ -816,6 +816,7 @@ fn build_fixtures() -> serde_json::Value {
                 row_filter: Some("(status <> 'draft'::text)".into()),
                 replica_identity: "d".into(),
                 has_primary_key: true,
+                is_partitioned: false,
             },
             t::PublicationTable {
                 schema: "public".into(),
@@ -824,6 +825,7 @@ fn build_fixtures() -> serde_json::Value {
                 row_filter: None,
                 replica_identity: "n".into(),
                 has_primary_key: false,
+                is_partitioned: false,
             },
         ],
         schemas: vec!["audit".into()],
