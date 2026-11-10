@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { userEvent } from "vitest/browser";
 import { renderInBrowser } from "./render";
 import { Tooltip } from "../../components/Tooltip";
 
@@ -9,6 +10,12 @@ const tooltipExists = () => document.querySelector('[role="tooltip"]') !== null;
 
 describe("Tooltip の遅延 Portal (実ブラウザ)", () => {
   it("開くまで吹き出しが無く、閉じて退場が終わると消え、再度開ける", async () => {
+    // Playwright のマウス位置は同じページで走る直前のテストファイルから持ち越される。
+    // 直前のテストがトリガーの描画位置 (左上) をホバーしたままだと、描画直後に Chromium が
+    // 合成する mousemove でツールチップが勝手に開き、下の「開くまで無い」が落ちる (#2202)。
+    // 合成 mousemove は少し遅れて来るので、負荷の高い CI (更新モード) でだけ顕在化していた。
+    // 先にポインタをビューポートの右下隅へ退避してから描画する。
+    await userEvent.hover(document.documentElement, { position: { x: 1270, y: 790 } });
     const screen = await renderInBrowser(
       <Tooltip label="ヒント" openDelay={0}>
         <button type="button">trigger</button>
