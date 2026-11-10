@@ -5386,3 +5386,82 @@ async fn mysql_create_table_wizard_options_ddl_runs() {
 
     conn.close().await;
 }
+
+/// スクリプト / バッチ実行で文が失敗したとき、エラー文が引用する SQL 断片のパスワードが
+/// 失敗報告・停止メッセージ・バッチ結果に残らないこと (#2208)。
+#[tokio::test]
+async fn mysql_script_and_batch_failures_do_not_leak_credentials() {
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
+        return;
+    };
+    const SECRET: &str = "secret123";
+    const BAD: &str = "CREATE USR 'app'@'%' IDENTIFIED BY 'secret123';";
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let session = std::sync::Arc::new(t::make_session("mysql_script_redact", conn, opts, false));
+    let counter = || std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_script_redact_{}.sql", std::process::id()));
+    std::fs::write(&path, format!("{BAD}\nSELECT 1;")).expect("write script");
+    let path_s = path.to_string_lossy().to_string();
+
+    // 停止モード: message と failure の両方。
+    let stopped = t::run_sql_script_via_core(
+        session.clone(),
+        &path_s,
+        None,
+        t::ScriptOptions::default(),
+        counter(),
+        |_| {},
+    )
+    .await
+    .expect("script setup");
+    match stopped {
+        t::ScriptRun::Failed {
+            message, failure, ..
+        } => {
+            assert!(!message.contains(SECRET), "{message}");
+            let f = failure.expect("failure");
+            assert!(!f.error.contains(SECRET), "{}", f.error);
+            assert!(!f.sql.contains(SECRET), "{}", f.sql);
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
+
+    // continue_on_error: failures 一覧。
+    let continued = t::run_sql_script_via_core(
+        session.clone(),
+        &path_s,
+        None,
+        t::ScriptOptions {
+            continue_on_error: true,
+            ..t::ScriptOptions::default()
+        },
+        counter(),
+        |_| {},
+    )
+    .await
+    .expect("script setup");
+    let _ = std::fs::remove_file(&path);
+    match continued {
+        t::ScriptRun::Done { failures, .. } => {
+            assert_eq!(failures.len(), 1);
+            assert!(!failures[0].error.contains(SECRET), "{}", failures[0].error);
+            assert!(!failures[0].sql.contains(SECRET), "{}", failures[0].sql);
+        }
+        other => panic!("expected Done, got {other:?}"),
+    }
+
+    // バッチ実行: 各モードで文の error に秘密値が出ない。
+    for stop_on_error in [true, false] {
+        let (_, results) =
+            t::run_sql_batch_via_core(session.clone(), BAD, None, stop_on_error, 10, counter())
+                .await
+                .expect("batch setup");
+        let err = results
+            .iter()
+            .find_map(|r| r.error.clone())
+            .expect("a failed statement");
+        assert!(!err.contains(SECRET), "{err}");
+    }
+}
