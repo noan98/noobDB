@@ -163,7 +163,7 @@ export function PublicationModal({ sessionId, database, table, readOnly, onConfi
           !loadError && (
             <EmptyState
               compact
-              icon="postgres"
+              icon="broadcast"
               title={t("publicationNoneTitle")}
               description={t("publicationNone")}
             />

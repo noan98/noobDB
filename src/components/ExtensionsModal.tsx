@@ -1,6 +1,7 @@
+import type { ComponentProps } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
-import { AnimatePresence, motion, useReducedMotionConfig } from "motion/react";
+import { AnimatePresence, motion, useIsPresent, useReducedMotionConfig } from "motion/react";
 import { api, type ExtensionDependent, type ExtensionInfo, type ExtensionsOverview } from "../api/tauri";
 import { resolveErrorHint } from "../errorHints";
 import { useT } from "../i18n";
@@ -55,6 +56,25 @@ const MotionUl = chakra(
 );
 const MotionLi = chakra(motion.li, {}, { forwardProps: ["variants"] });
 
+/** 退場中のペインは操作させない (退場アニメ中の二重クリック・誤クリック対策)。 */
+function SlidePane({ children, ...rest }: ComponentProps<typeof motion.div>) {
+  const present = useIsPresent();
+  return (
+    <motion.div
+      {...rest}
+      inert={!present}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "var(--space-4)",
+        pointerEvents: present ? undefined : "none",
+      }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
 export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Props) {
   const t = useT();
   const reducedMotion = useReducedMotionConfig() ?? false;
@@ -83,6 +103,8 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
   // マウントされるので、戻す処理は一覧の入場完了 (onAnimationComplete) で行う。
   const triggerRef = useRef<{ name: string; action: ExtensionAction } | null>(null);
   const restoreFocusRef = useRef(false);
+  // 戻ったあとに一覧へ触れた (クリック / キー入力) ら、フォーカスを奪わない。
+  const touchedRef = useRef(false);
   const prevStepRef = useRef<Step | null>(null);
   // 一覧の stagger 入場は初回の 1 回だけ (確認から戻るたびには再生しない)。
   const staggeredRef = useRef(false);
@@ -212,12 +234,16 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
   };
   const destructive = step ? isDestructiveExtensionAction(step.action) : false;
   useEffect(() => {
-    if (prevStepRef.current !== null && step === null) restoreFocusRef.current = true;
+    if (prevStepRef.current !== null && step === null) {
+      restoreFocusRef.current = true;
+      touchedRef.current = false;
+    }
     prevStepRef.current = step;
   }, [step]);
   const restoreFocus = () => {
     if (!restoreFocusRef.current) return;
     restoreFocusRef.current = false;
+    if (touchedRef.current) return;
     const root = listRef.current;
     const trig = triggerRef.current;
     if (!root || !trig) return;
@@ -257,8 +283,14 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
         {/* 一覧 ⇔ 確認は、確認へ進むとき右から・戻るとき左から入るスライド。退場を待ってから次を出す。 */}
         <AnimatePresence mode="wait" initial={false} custom={slideDir}>
           {step === null ? (
-            <motion.div
+            <SlidePane
               key="list"
+              onPointerDownCapture={() => {
+                touchedRef.current = true;
+              }}
+              onKeyDownCapture={() => {
+                touchedRef.current = true;
+              }}
               ref={listRef}
               custom={slideDir}
               variants={directionalSlide}
@@ -267,7 +299,6 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
               exit="exit"
               transition={slideTransition}
               onAnimationComplete={restoreFocus}
-              style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}
             >
               <chakra.div display="flex" gap="2" alignItems="center">
                 <Input
@@ -338,9 +369,9 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
                   ))}
                 </MotionUl>
               )}
-            </motion.div>
+            </SlidePane>
           ) : (
-            <motion.div
+            <SlidePane
               key="step"
               custom={slideDir}
               variants={directionalSlide}
@@ -348,7 +379,6 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
               animate="animate"
               exit="exit"
               transition={slideTransition}
-              style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}
             >
               <chakra.p margin={0} textStyle="caption" color="app.textSecondary">
                 {step.ext.comment ?? step.ext.name}
@@ -423,7 +453,7 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
                   )}
                 </ErrorNote>
               )}
-            </motion.div>
+            </SlidePane>
           )}
         </AnimatePresence>
       </ModalBody>

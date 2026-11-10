@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor } from "./testUtils";
+import { MotionConfig } from "motion/react";
 import { setLocale, t } from "../i18n";
 
 // PostgreSQL の拡張機能ダイアログ (#2160)。
@@ -95,6 +96,21 @@ describe("ExtensionsModal", () => {
     setup();
     expect(await screen.findByText(t("extensionsNone"))).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: t("extensionsClearFilters") })).not.toBeInTheDocument();
+  });
+
+  it("reduced-motion でも、確認画面への切替と、戻ったときのフォーカス復帰が通る", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <MotionConfig reducedMotion="always">
+        <ExtensionsModal sessionId="s1" readOnly={false} onExecute={vi.fn()} onClose={() => {}} />
+      </MotionConfig>,
+    );
+    await screen.findByText("pg_trgm");
+    await user.click(screen.getByRole("button", { name: t("extensionsUpdate") }));
+    expect(await screen.findByTestId("sql-preview")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: t("extensionsCancel") }));
+    const back = await screen.findByRole("button", { name: t("extensionsUpdate") });
+    await waitFor(() => expect(back).toHaveFocus());
   });
 
   it("確認から戻ると、操作を始めた行のボタンへフォーカスが戻る", async () => {

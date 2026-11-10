@@ -102,8 +102,10 @@ export function AttachPartitionModal({ sessionId, database, table, info, kind, o
   const loading = tables === null;
   const valid = !loading && sql !== "";
   // 読み込み中はセレクトが無く、初期フォーカス (モーダルを開いた瞬間の 1 回) が空振りするので、出た時点で寄せる。
+  // 読み込み中も境界値は入力できるので、まだどこにも触れていないときだけ寄せる。
+  const touchedRef = useRef(false);
   useEffect(() => {
-    if (!loading) selectRef.current?.focus();
+    if (!loading && !touchedRef.current) selectRef.current?.focus();
   }, [loading]);
 
   const submit = () => {
@@ -123,7 +125,17 @@ export function AttachPartitionModal({ sessionId, database, table, info, kind, o
       <ModalHeader onClose={onClose} closeLabel={t("attachPartitionCancel")}>
         {t("attachPartitionTitle", { table })}
       </ModalHeader>
-      <ModalBody display="flex" flexDirection="column" gap="4">
+      <ModalBody
+        display="flex"
+        flexDirection="column"
+        gap="4"
+        onPointerDownCapture={() => {
+          touchedRef.current = true;
+        }}
+        onKeyDownCapture={() => {
+          touchedRef.current = true;
+        }}
+      >
         <FormSection>
           <FieldLabel htmlFor="attach-partition-child">{t("attachPartitionChild")}</FieldLabel>
           <Flex align="center" gap="2">
@@ -145,7 +157,7 @@ export function AttachPartitionModal({ sessionId, database, table, info, kind, o
               />
             )}
           </Flex>
-          {!loading && candidates.length === 0 && (
+          {!loading && !listError && candidates.length === 0 && (
             <EmptyState compact icon="table" title={t("attachPartitionNoCandidates", { schema: database })} />
           )}
           {listError && <ErrorNote>{t("attachPartitionListError", { error: listError })}</ErrorNote>}
