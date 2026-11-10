@@ -1003,7 +1003,10 @@ async fn mysql_replication_status_standalone() {
     let conn = t::connect(&opts).await.expect("connect");
 
     let status = conn.replication_status().await.expect("replication_status");
+    // CI のソースにはレプリカ (#2209) がぶら下がるので、その場合は下の専用テストが検証する。
+    let has_replica = std::env::var("NOOBDB_TEST_MYSQL_REPLICA_URL").is_ok();
     match status.missing_privilege.as_deref() {
+        None if has_replica => {}
         None => {
             assert_eq!(status.role, t::ReplicationRole::Standalone);
             assert!(
@@ -1015,6 +1018,91 @@ async fn mysql_replication_status_standalone() {
     }
     assert!(status.slots.is_empty(), "MySQL has no replication slots");
     conn.close().await;
+}
+
+/// `mysql://user:pw@host:port/db` のポート部分。
+fn url_port(url: &str) -> String {
+    let after_at = url.rsplit('@').next().unwrap_or(url);
+    let host_port = after_at.split('/').next().unwrap_or(after_at);
+    host_port.rsplit(':').next().unwrap_or("").to_string()
+}
+
+/// レプリケーション監視 (#2209) のレプリカ経路。CI のセットアップ (scripts/ci-setup-plain-db.sh) が
+/// 立てるレプリカ (`CHANGE REPLICATION SOURCE TO` + `START REPLICA`) に対して、
+/// `SHOW REPLICA STATUS` の解釈 (列名のフォールバック・遅延 NULL) とソース側の `SHOW REPLICAS` を検証する。
+#[tokio::test]
+async fn mysql_replication_status_replica_and_source() {
+    let Some(source_url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
+        return;
+    };
+    let Some(replica_url) = common::require_env("NOOBDB_TEST_MYSQL_REPLICA_URL") else {
+        return;
+    };
+    let source = t::connect(&t::parse_mysql_url(&source_url).expect("valid url"))
+        .await
+        .expect("connect source");
+    let replica = t::connect(&t::parse_mysql_url(&replica_url).expect("valid url"))
+        .await
+        .expect("connect replica");
+
+    // ソース視点: 上流なし、レプリカ (report_host / report_port で登録) が下流に出る。
+    let st = source.replication_status().await.expect("source status");
+    assert_eq!(st.role, t::ReplicationRole::Primary, "{st:?}");
+    let replica_port = url_port(&replica_url);
+    let down = st
+        .links
+        .iter()
+        .find(|l| l.direction == t::ReplicationDirection::Downstream)
+        .unwrap_or_else(|| panic!("source must list its replica: {st:?}"));
+    assert_eq!(
+        down.address.as_deref(),
+        Some(format!("127.0.0.1:{replica_port}").as_str()),
+        "{st:?}"
+    );
+
+    // レプリカ視点: 上流 1 件 (Source_Host / Source_Port、旧名は Master_*)。両スレッドが動作中で遅延が取れる。
+    let st = replica.replication_status().await.expect("replica status");
+    assert_eq!(st.role, t::ReplicationRole::Replica, "{st:?}");
+    assert_eq!(st.missing_privilege, None, "{st:?}");
+    let up: Vec<_> = st
+        .links
+        .iter()
+        .filter(|l| l.direction == t::ReplicationDirection::Upstream)
+        .collect();
+    assert_eq!(up.len(), 1, "{st:?}");
+    let source_port = url_port(&source_url);
+    assert_eq!(
+        up[0].address.as_deref(),
+        Some(format!("127.0.0.1:{source_port}").as_str()),
+        "{st:?}"
+    );
+    assert_eq!(up[0].io_running, Some(true), "{st:?}");
+    assert_eq!(up[0].sql_running, Some(true), "{st:?}");
+    assert_eq!(up[0].state.as_deref(), Some("running"), "{st:?}");
+    assert!(up[0].lag_secs.is_some_and(|v| v >= 0.0), "{st:?}");
+    assert_eq!(up[0].last_error, None, "{st:?}");
+
+    // SQL スレッドを止めると遅延は意味を持たず None になる (Seconds_Behind_Source が NULL / 停止中)。
+    // 後続の検証が失敗してもレプリカを動作状態へ戻すため、結果は戻してからまとめて判定する。
+    replica
+        .execute("STOP REPLICA SQL_THREAD", None)
+        .await
+        .expect("stop replica sql thread");
+    let stopped = replica.replication_status().await;
+    let restart = replica.execute("START REPLICA SQL_THREAD", None).await;
+    restart.expect("restart replica sql thread");
+    let st = stopped.expect("stopped replica status");
+    let up = st
+        .links
+        .iter()
+        .find(|l| l.direction == t::ReplicationDirection::Upstream)
+        .unwrap_or_else(|| panic!("upstream link must remain: {st:?}"));
+    assert_eq!(up.sql_running, Some(false), "{st:?}");
+    assert_eq!(up.state.as_deref(), Some("sql_stopped"), "{st:?}");
+    assert_eq!(up.lag_secs, None, "{st:?}");
+
+    source.close().await;
+    replica.close().await;
 }
 
 /// プロセス監視パネル (list_processes / kill_processes) の MySQL 経路。一覧には

@@ -5637,15 +5637,18 @@ impl PostgresConn {
                     sql_running: None,
                     last_error: None,
                 });
-            } else if privileged {
+            }
+            // 下流 (送信側)。スタンバイでもカスケード先があれば見えるので、in_recovery でも読む。
+            if privileged {
                 let rows: Vec<PgRow> = sqlx::query(
                     "SELECT COALESCE(NULLIF(application_name, ''), host(client_addr), 'unknown'), \
                             host(client_addr), state, sync_state, \
                             EXTRACT(EPOCH FROM replay_lag)::float8, \
                             EXTRACT(EPOCH FROM write_lag)::float8, \
                             EXTRACT(EPOCH FROM flush_lag)::float8, \
-                            pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn)::bigint \
-                     FROM pg_catalog.pg_stat_replication ORDER BY application_name, client_addr",
+                            pg_wal_lsn_diff(CASE WHEN pg_is_in_recovery() THEN pg_last_wal_replay_lsn() \
+                                            ELSE pg_current_wal_lsn() END, replay_lsn)::bigint \
+                     FROM pg_catalog.pg_stat_replication ORDER BY application_name, client_addr, pid",
                 )
                 .fetch_all(&self.pool)
                 .await?;

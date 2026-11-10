@@ -822,7 +822,8 @@ async fn postgres_replication_status_standalone_and_slot() {
 
     let status = conn.replication_status().await.expect("replication_status");
     // 他のテストが物理スロットを残していても壊れないよう、構成なしの断定はスロットが無いときだけ行う。
-    if status.slots.is_empty() {
+    // CI のプライマリにはスタンバイ (#2209) がぶら下がるので、その場合は下の専用テストが検証する。
+    if status.slots.is_empty() && std::env::var("NOOBDB_TEST_POSTGRES_STANDBY_URL").is_err() {
         assert_eq!(status.role, t::ReplicationRole::Standalone);
         assert!(status.links.is_empty(), "no walsender expected: {status:?}");
     }
@@ -860,6 +861,109 @@ async fn postgres_replication_status_standalone_and_slot() {
             .await;
     }
     conn.close().await;
+}
+
+/// `postgres://user:pw@host:port/db` のポート部分 (レプリケーションの接続元表示との突き合わせ用)。
+fn url_port(url: &str) -> String {
+    let after_at = url.rsplit('@').next().unwrap_or(url);
+    let host_port = after_at.split('/').next().unwrap_or(after_at);
+    host_port.rsplit(':').next().unwrap_or("").to_string()
+}
+
+/// レプリケーション監視 (#2209) のレプリカ経路。CI のセットアップ (scripts/ci-setup-plain-db.sh) が
+/// 立てる primary → standby → cascade の 3 台に対して、各視点の `replication_status` を検証する。
+/// - primary: role = Primary、下流 (standby) が streaming で `lag_bytes` つき
+/// - standby: role = Replica、上流 1 件に加え、カスケード先 (cascade) が下流として見える
+/// - cascade: role = Replica、上流 (standby) だけで下流なし
+#[tokio::test]
+async fn postgres_replication_status_streaming_standby_and_cascade() {
+    let Some(primary_url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let Some(standby_url) = common::require_env("NOOBDB_TEST_POSTGRES_STANDBY_URL") else {
+        return;
+    };
+    let Some(cascade_url) = common::require_env("NOOBDB_TEST_POSTGRES_CASCADE_URL") else {
+        return;
+    };
+    let connect = |url: String| async move {
+        let opts = t::parse_postgres_url(&url).expect("valid url");
+        t::connect(&opts).await.expect("connect")
+    };
+    let primary = connect(primary_url.clone()).await;
+    let standby = connect(standby_url.clone()).await;
+    let cascade = connect(cascade_url.clone()).await;
+
+    // primary 視点: 直接の下流は standby の 1 本 (cascade は standby にぶら下がる)。
+    let st = primary.replication_status().await.expect("primary status");
+    assert_eq!(st.role, t::ReplicationRole::Primary, "{st:?}");
+    assert_eq!(st.missing_privilege, None, "{st:?}");
+    let down: Vec<_> = st
+        .links
+        .iter()
+        .filter(|l| l.direction == t::ReplicationDirection::Downstream)
+        .collect();
+    assert_eq!(down.len(), 1, "primary sees only the standby: {st:?}");
+    assert_eq!(down[0].state.as_deref(), Some("streaming"), "{st:?}");
+    assert_eq!(down[0].sync_state.as_deref(), Some("async"), "{st:?}");
+    assert_eq!(down[0].address.as_deref(), Some("127.0.0.1"), "{st:?}");
+    assert!(
+        down[0].lag_bytes.is_some_and(|b| b >= 0),
+        "lag_bytes must be a non-negative number on the sender side: {st:?}"
+    );
+
+    // standby 視点: Replica として上流 1 件 + カスケード先の下流 1 件 (#2209 の修正対象)。
+    let st = standby.replication_status().await.expect("standby status");
+    assert_eq!(st.role, t::ReplicationRole::Replica, "{st:?}");
+    let up: Vec<_> = st
+        .links
+        .iter()
+        .filter(|l| l.direction == t::ReplicationDirection::Upstream)
+        .collect();
+    assert_eq!(up.len(), 1, "{st:?}");
+    assert_eq!(up[0].state.as_deref(), Some("streaming"), "{st:?}");
+    let primary_port = url_port(&primary_url);
+    assert_eq!(
+        up[0].address.as_deref(),
+        Some(format!("127.0.0.1:{primary_port}").as_str()),
+        "{st:?}"
+    );
+    assert!(up[0].lag_secs.is_some_and(|v| v >= 0.0), "{st:?}");
+    let down: Vec<_> = st
+        .links
+        .iter()
+        .filter(|l| l.direction == t::ReplicationDirection::Downstream)
+        .collect();
+    assert_eq!(
+        down.len(),
+        1,
+        "cascade standby must appear downstream: {st:?}"
+    );
+    assert_eq!(down[0].state.as_deref(), Some("streaming"), "{st:?}");
+    assert!(
+        down[0].lag_bytes.is_some_and(|b| b >= 0),
+        "lag_bytes must be computed without pg_current_wal_lsn() in recovery: {st:?}"
+    );
+
+    // cascade 視点: 上流 (standby) だけ。
+    let st = cascade.replication_status().await.expect("cascade status");
+    assert_eq!(st.role, t::ReplicationRole::Replica, "{st:?}");
+    assert_eq!(st.links.len(), 1, "{st:?}");
+    assert_eq!(
+        st.links[0].direction,
+        t::ReplicationDirection::Upstream,
+        "{st:?}"
+    );
+    let standby_port = url_port(&standby_url);
+    assert_eq!(
+        st.links[0].address.as_deref(),
+        Some(format!("127.0.0.1:{standby_port}").as_str()),
+        "{st:?}"
+    );
+
+    primary.close().await;
+    standby.close().await;
+    cascade.close().await;
 }
 
 /// プロセス監視パネル (list_processes / kill_processes) の PostgreSQL 経路。

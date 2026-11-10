@@ -183,7 +183,10 @@
   トンネル統合テスト (#331) も実走します (サービスコンテナはイメージ pull が要るため
   使わず、apt 構成で再現性を確保)。平文の MySQL (3306) / PostgreSQL (5432) も同じ理由で
   サービスコンテナをやめ、ランナー同梱のサーバを `scripts/ci-setup-plain-db.sh` で
-  background 起動します (起動時の約 30 秒の待ちが消え、他のセットアップと重なる)。`rust (fmt)` が
+  background 起動します (起動時の約 30 秒の待ちが消え、他のセットアップと重なる)。同スクリプトは
+  レプリケーション監視 (#2209) 用に PostgreSQL のストリーミングスタンバイ 2 段 (5434 / 5435、`pg_basebackup -R`) と
+  MySQL レプリカ (3308、`CHANGE REPLICATION SOURCE TO`) も立て、`NOOBDB_TEST_POSTGRES_STANDBY_URL` /
+  `NOOBDB_TEST_POSTGRES_CASCADE_URL` / `NOOBDB_TEST_MYSQL_REPLICA_URL` を `$GITHUB_ENV` へ書きます。`rust (fmt)` が
   `cargo fmt --all -- --check` を、`rust (deny)` が
   `cargo deny --manifest-path src-tauri/Cargo.toml check` (依存ライセンスの許可
   リスト検査と RustSec Advisory DB による脆弱性チェック。設定は
