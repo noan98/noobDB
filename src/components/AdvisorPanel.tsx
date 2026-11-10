@@ -18,6 +18,7 @@ import {
   reclaimableSummary,
   ruleTitleKey,
   severityLabelKey,
+  sequenceFixAlterRisks,
   sortFindings,
   type AdvisorSort,
   type AdvisorSortKey,
@@ -25,6 +26,7 @@ import {
 import { copyToClipboard } from "./clipboard";
 import { AiAdvisorExplain } from "./AiAdvisorExplain";
 import { SeverityBadge } from "./severityBadge";
+import { AlterCostNotice } from "./AlterCostNotice";
 import { Callout } from "./Callout";
 import { formatBytes } from "./tableSize";
 import { SqlPreview } from "./SqlPreview";
@@ -556,6 +558,7 @@ export function AdvisorPanel({
                             onCopy={copyFix}
                           />
                         )}
+                        <SequenceFixCostNotice finding={f} driver={report?.driver} />
                         <Flex gap="1" marginTop="1.5" align="center" flexWrap="wrap">
                           <Tooltip label={t("advisorIgnoreTooltip")}>
                             <Button
@@ -657,6 +660,26 @@ export function AdvisorPanel({
           </Box>
         )}
       </Box>
+    </Box>
+  );
+}
+
+/** 採番枯渇の修正 (BIGINT への型変更) に添える、表の書き換え・ロックの注意 (#2210)。既存の `alterCost`
+ *  (#1771) の文言を再利用する。概算行数はここでは取らず「不明」と出す。型を変えない修正では何も出さない。 */
+function SequenceFixCostNotice({ finding, driver }: { finding: HealthFinding; driver?: string }) {
+  const risks = sequenceFixAlterRisks(finding, driver);
+  if (risks.length === 0) return null;
+  return (
+    <Box marginTop="2">
+      <AlterCostNotice
+        driver={driver ?? ""}
+        risks={risks}
+        rows={null}
+        rowsLoading={false}
+        showOnlineToggle={false}
+        onlineEnabled={false}
+        onOnlineChange={() => {}}
+      />
     </Box>
   );
 }

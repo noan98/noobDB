@@ -5,7 +5,7 @@ use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow, My
 use sqlx::pool::PoolConnection;
 use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef};
 
-use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
+use super::advisor::{SequenceKind, SequenceUsage, UnusedIndexEntry, UnusedIndexStats};
 use super::replication::{
     first_present_column, mysql_link_state, mysql_replica_status_sql, mysql_replicas_sql,
     mysql_required_privilege, non_blank, ReplicationDirection, ReplicationLink, ReplicationRole,
@@ -1756,6 +1756,50 @@ impl MySqlConn {
             reason: None,
             entries,
         })
+    }
+
+    /// スキーマ健全性アドバイザ (#2210) の採番列の使用状況。`information_schema.TABLES.AUTO_INCREMENT`
+    /// (次に払い出す値) と列の型を読む。MySQL 8 は既定でこの統計を最大 24 時間キャッシュするため、
+    /// オプティマイザヒント `SET_VAR(information_schema_stats_expiry=0)` でこの 1 問い合わせだけ
+    /// 最新値を読む (ヒントを解さないサーバではただのコメント)。`AUTO_INCREMENT` は BIGINT UNSIGNED の
+    /// 上限まで取りうるので u64 で読む。読み取りのみ。
+    pub async fn sequence_usage(&self, db: &str) -> Result<Vec<SequenceUsage>> {
+        let rows: Vec<MySqlRow> = sqlx::query(
+            "SELECT /*+ SET_VAR(information_schema_stats_expiry=0) */
+                    t.TABLE_NAME, c.COLUMN_NAME, c.COLUMN_TYPE, t.AUTO_INCREMENT
+               FROM information_schema.TABLES t
+               JOIN information_schema.COLUMNS c
+                 ON c.TABLE_SCHEMA = t.TABLE_SCHEMA AND c.TABLE_NAME = t.TABLE_NAME
+              WHERE t.TABLE_SCHEMA = ?
+                AND t.TABLE_TYPE = 'BASE TABLE'
+                AND t.AUTO_INCREMENT IS NOT NULL
+                AND LOWER(c.EXTRA) LIKE '%auto_increment%'
+              ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION",
+        )
+        .bind(db)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let table = r.try_get::<String, _>(0).ok()?;
+                let column = r.try_get::<String, _>(1).ok()?;
+                let data_type = r.try_get::<String, _>(2).ok()?;
+                let next = r.try_get::<Option<u64>, _>(3).ok().flatten()?;
+                Some(SequenceUsage {
+                    table,
+                    column,
+                    data_type,
+                    kind: SequenceKind::AutoIncrement,
+                    sequence_name: None,
+                    sequence_type: None,
+                    // AUTO_INCREMENT は「次に払い出す値」。払い出し済みの最大値はその 1 つ手前。
+                    last_used: next.saturating_sub(1),
+                    sequence_max: None,
+                    cycle: false,
+                })
+            })
+            .collect())
     }
 
     /// ライブテール 1 サンプル: 実行中 (`events_statements_current`) と直近

@@ -75,7 +75,7 @@ pub mod where_used;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, Result};
-use advisor::UnusedIndexStats;
+use advisor::{SequenceUsage, UnusedIndexStats};
 use types::{
     group_tables_by_database, Column, DatabaseTables, DbUserInfo, ForeignKey, IndexInfo,
     KillProcessesResult, LiveQuery, LocalTableMeta, PreviewResult, ProcessInfo, QueryResult,
@@ -2093,6 +2093,17 @@ impl Connection {
             Connection::MySql(c) => c.unused_indexes(db).await,
             Connection::Postgres(c) => c.unused_indexes(db).await,
             Connection::Sqlite(c) => c.unused_indexes(db).await,
+        }
+    }
+
+    /// スキーマ健全性アドバイザ (#2210) の採番列の使用状況 (MySQL `AUTO_INCREMENT` / PostgreSQL の
+    /// serial・IDENTITY / SQLite `AUTOINCREMENT`)。使用率の判定は純ロジック (`advisor::analyze`)。
+    /// 読み取りのみ。
+    pub async fn sequence_usage(&self, db: &str) -> Result<Vec<SequenceUsage>> {
+        match self {
+            Connection::MySql(c) => c.sequence_usage(db).await,
+            Connection::Postgres(c) => c.sequence_usage(db).await,
+            Connection::Sqlite(c) => c.sequence_usage(db).await,
         }
     }
 

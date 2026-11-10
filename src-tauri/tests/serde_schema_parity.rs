@@ -1574,7 +1574,7 @@ fn build_fixtures() -> serde_json::Value {
 
     let all_rules = variants!(RuleId [
         FkMissingIndex, DuplicateIndex, RedundantIndex, MissingPrimaryKey,
-        UnusedIndex, FkTypeMismatch, SqliteIntegerPkHint, NullableForeignKey, OversizedVarchar, FloatForMoney
+        UnusedIndex, FkTypeMismatch, SqliteIntegerPkHint, NullableForeignKey, OversizedVarchar, FloatForMoney, SequenceExhaustion
     ]);
     let all_severities = variants!(Severity [High, Medium, Low]);
     // ルール × 重要度を巡回させ、全ルールと全重要度を最低 1 回ずつ通す。

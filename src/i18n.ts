@@ -6765,6 +6765,7 @@ const en = {
   advisorRuleNullableForeignKeyTitle: "Nullable foreign key",
   advisorRuleOversizedVarcharTitle: "Oversized VARCHAR",
   advisorRuleFloatForMoneyTitle: "Floating-point type for money",
+  advisorRuleSequenceExhaustionTitle: "Auto-increment nearing its limit",
   // 未知のルール ID (バックエンドだけ新ルールを足したドリフト時) の汎用フォールバック
   advisorRuleUnknownTitle: "Other schema finding",
   advisorRuleUnknownDesc:
@@ -6792,6 +6793,12 @@ const en = {
     "{table}.{column} looks like a monetary value but uses the floating-point type {type}. Rounding errors can accumulate; use DECIMAL / NUMERIC (or integer minor units) instead.",
   advisorRuleFloatForMoneySqliteDesc:
     "{table}.{column} looks like a monetary value but uses the floating-point type {type}. Rounding errors can accumulate. In SQLite, DECIMAL / NUMERIC only gives NUMERIC affinity and values may still be stored as REAL, so store integer minor units (e.g. cents) in an INTEGER column instead.",
+  advisorRuleSequenceExhaustionDesc:
+    "{table}.{column} ({type}) has handed out up to {used} of its maximum {max} ({percent}% used). When it reaches the limit every INSERT fails. Widening the column to BIGINT is the usual fix; change foreign key columns that reference it as well.",
+  advisorRuleSequenceCapDesc:
+    "The sequence behind {table}.{column} ({type}) has handed out up to {used}, and its MAXVALUE is {max} ({percent}% used). When it reaches MAXVALUE every INSERT fails. Raise or remove the sequence's MAXVALUE (and widen the column type too if it is also small).",
+  advisorReasonSequencesUnreadable:
+    "the sequence / auto-increment state could not be read (insufficient privileges or an unsupported server version), so the sequence exhaustion rule is skipped.",
   // 未使用ルールのスキップ理由
   advisorReasonUnsupportedDriver:
     "this driver has no server-side index usage statistics (SQLite is file-backed), so the unused-index rule is skipped.",
@@ -14548,6 +14555,7 @@ const ja: Dict = {
   advisorRuleNullableForeignKeyTitle: "NULL を許す外部キー",
   advisorRuleOversizedVarcharTitle: "過大な VARCHAR",
   advisorRuleFloatForMoneyTitle: "金額に浮動小数型",
+  advisorRuleSequenceExhaustionTitle: "採番が上限に近い",
   // 未知のルール ID (バックエンドだけ新ルールを足したドリフト時) の汎用フォールバック
   advisorRuleUnknownTitle: "その他のスキーマ指摘",
   advisorRuleUnknownDesc:
@@ -14575,6 +14583,12 @@ const ja: Dict = {
     "{table}.{column} は金額を表す列に見えますが、浮動小数型 {type} です。丸め誤差が蓄積するため、DECIMAL / NUMERIC (または最小単位の整数) を使ってください。",
   advisorRuleFloatForMoneySqliteDesc:
     "{table}.{column} は金額を表す列に見えますが、浮動小数型 {type} です。丸め誤差が蓄積します。SQLite の DECIMAL / NUMERIC は NUMERIC 親和性になるだけで、値は REAL として保存されうるため、INTEGER 列に最小単位の整数 (円・セントなど) で保存してください。",
+  advisorRuleSequenceExhaustionDesc:
+    "{table}.{column} ({type}) は上限 {max} のうち {used} まで払い出し済みです (使用率 {percent}%)。上限に達するとすべての INSERT が失敗します。列を BIGINT に広げるのが定番の対処です。この列を参照する外部キー列も合わせて変更してください。",
+  advisorRuleSequenceCapDesc:
+    "{table}.{column} ({type}) のシーケンスは {used} まで払い出し済みで、MAXVALUE は {max} です (使用率 {percent}%)。MAXVALUE に達するとすべての INSERT が失敗します。シーケンスの MAXVALUE を引き上げるか解除してください (列の型も小さければ合わせて広げます)。",
+  advisorReasonSequencesUnreadable:
+    "採番 (AUTO_INCREMENT / シーケンス) の状態を読めなかった (権限不足・非対応バージョン) ため、採番の枯渇ルールはスキップされました。",
   // 未使用ルールのスキップ理由
   advisorReasonUnsupportedDriver:
     "このドライバはサーバ側のインデックス使用統計を持たない (SQLite はファイルベース) ため、未使用インデックスルールはスキップされます。",

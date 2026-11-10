@@ -6,7 +6,7 @@ use sqlx::postgres::{
 };
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
-use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
+use super::advisor::{SequenceKind, SequenceUsage, UnusedIndexEntry, UnusedIndexStats};
 use super::replication::{
     clamp_js_safe, ReplicationDirection, ReplicationLink, ReplicationRole, ReplicationSlot,
     ReplicationStatus,
@@ -1405,6 +1405,65 @@ impl PostgresConn {
             reason: None,
             entries,
         })
+    }
+
+    /// スキーマ健全性アドバイザ (#2210) の採番列の使用状況。`pg_sequences` (`last_value` / `max_value` /
+    /// `cycle`) を、それを所有する serial / IDENTITY 列 (`pg_depend` の `a` / `i`) と結び付けて読む。
+    /// `last_value` が NULL (一度も払い出していない・権限なし) と、降順のシーケンスは対象外。
+    /// 読み取りのみ。
+    pub async fn sequence_usage(&self, schema: &str) -> Result<Vec<SequenceUsage>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"SELECT cl.relname::text AS table_name,
+                      a.attname::text AS column_name,
+                      pg_catalog.format_type(a.atttypid, NULL) AS column_type,
+                      s.sequencename::text AS sequence_name,
+                      s.data_type::text AS sequence_type,
+                      s.last_value,
+                      s.max_value,
+                      s.cycle,
+                      (d.deptype = 'i') AS is_identity
+                 FROM pg_catalog.pg_depend d
+                 JOIN pg_catalog.pg_class seq ON seq.oid = d.objid AND seq.relkind = 'S'
+                 JOIN pg_catalog.pg_namespace sn ON sn.oid = seq.relnamespace
+                 JOIN pg_catalog.pg_sequences s
+                   ON s.schemaname = sn.nspname AND s.sequencename = seq.relname
+                 JOIN pg_catalog.pg_class cl ON cl.oid = d.refobjid AND cl.relkind IN ('r', 'p')
+                 JOIN pg_catalog.pg_namespace tn ON tn.oid = cl.relnamespace
+                 JOIN pg_catalog.pg_attribute a
+                   ON a.attrelid = cl.oid AND a.attnum = d.refobjsubid
+                WHERE d.classid = 'pg_catalog.pg_class'::regclass
+                  AND d.refclassid = 'pg_catalog.pg_class'::regclass
+                  AND d.deptype IN ('a', 'i')
+                  AND tn.nspname = $1
+                  AND s.increment_by > 0
+                ORDER BY cl.relname, a.attnum"#,
+        )
+        .bind(schema)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let last = r.try_get::<Option<i64>, _>("last_value").ok().flatten()?;
+                let max = r.try_get::<i64, _>("max_value").ok()?;
+                let identity = r.try_get::<bool, _>("is_identity").unwrap_or(false);
+                Some(SequenceUsage {
+                    table: r.try_get::<String, _>("table_name").ok()?,
+                    column: r.try_get::<String, _>("column_name").ok()?,
+                    data_type: r.try_get::<String, _>("column_type").ok()?,
+                    kind: if identity {
+                        SequenceKind::Identity
+                    } else {
+                        SequenceKind::Serial
+                    },
+                    sequence_name: r.try_get::<String, _>("sequence_name").ok(),
+                    sequence_type: r.try_get::<String, _>("sequence_type").ok(),
+                    last_used: u64::try_from(last).ok()?,
+                    sequence_max: u64::try_from(max).ok(),
+                    cycle: r.try_get::<bool, _>("cycle").unwrap_or(false),
+                })
+            })
+            .collect())
     }
 
     /// `pg_stat_statements` 拡張が入っているスキーマ名 (クオート済み) を返す。

@@ -17,9 +17,17 @@
   (`QueryStatsSupport` の理由コードと同じ発想)。
 - `RuleId`: `FkMissingIndex` / `DuplicateIndex` / `RedundantIndex` /
   `MissingPrimaryKey` / `UnusedIndex` / `FkTypeMismatch` / `SqliteIntegerPkHint` / `NullableForeignKey` /
-  `OversizedVarchar` (MySQL のみ・長さ 1000 超) / `FloatForMoney` (金額らしい列名 + FLOAT/DOUBLE/REAL)。
+  `OversizedVarchar` (MySQL のみ・長さ 1000 超) / `FloatForMoney` (金額らしい列名 + FLOAT/DOUBLE/REAL) /
+  `SequenceExhaustion` (#2210: AUTO_INCREMENT / serial / IDENTITY / SQLite AUTOINCREMENT が型の上限の 50% 以上で `Medium`、80% 以上で `High`)。
   重要度は `Severity` (`High` / `Medium` / `Low`) で、フロントで semantic トークン
   (#664) に色分けされます。
+- **採番の枯渇 (#2210)**: ドライバが `Connection::sequence_usage` で生の事実 (`SequenceUsage`: 払い出し済み最大値・
+  シーケンスの `max_value`・`cycle`) だけを返し、上限 (型 / シーケンスの小さい方) と使用率は純ロジックが
+  **u128 の整数演算**で出す (BIGINT UNSIGNED は JS の安全整数を超えるので `context` の数値は 10 進文字列)。
+  取得元は MySQL `information_schema.TABLES.AUTO_INCREMENT` (統計キャッシュを `SET_VAR` ヒントで避ける)、
+  PostgreSQL `pg_sequences` + `pg_depend` (serial / identity)、SQLite `sqlite_sequence`。`CYCLE` は対象外。
+  修正 DDL は `BIGINT` への型変更 (+ PostgreSQL は `ALTER SEQUENCE ... AS bigint NO MAXVALUE`) で、UI は
+  `AlterCostNotice` (#1771) の書き換え・ロック注意を添える。取得に失敗したら `sequences_unreadable` でスキップ表示。
 - **修正 DDL は安全で一意に定まるルールについてのみ生成し、実行はしません**
   (エディタ挿入まで)。
 - ビューは `schema_objects` の一覧で除外し、ベーステーブルのみを対象にします

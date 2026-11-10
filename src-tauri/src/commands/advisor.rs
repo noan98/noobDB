@@ -12,7 +12,7 @@ use tauri::State;
 use crate::advisor_ignore;
 use crate::db::advisor::{
     analyze, diff_findings, find_overlapping_indexes, AdvisorInput, HealthFinding, IndexOverlap,
-    SchemaHealthReport, TableMeta,
+    RuleId, SchemaHealthReport, SkippedRule, TableMeta,
 };
 use crate::db::types::{IndexInfo, TableColumnInfo};
 use crate::db::Connection;
@@ -184,12 +184,26 @@ pub(crate) async fn collect_and_analyze(
         });
     }
 
-    Ok(analyze(&AdvisorInput {
+    // 採番の使用状況 (#2210)。読めなくても他のルールは続行し、黙って 0 件にせずスキップ理由を残す。
+    let (sequences, sequences_unreadable) = match conn.sequence_usage(database).await {
+        Ok(v) => (v, false),
+        Err(_) => (Vec::new(), true),
+    };
+
+    let mut report = analyze(&AdvisorInput {
         driver,
         tables,
         foreign_keys,
         unused,
-    }))
+        sequences,
+    });
+    if sequences_unreadable {
+        report.skipped.push(SkippedRule {
+            rule: RuleId::SequenceExhaustion,
+            reason: "sequences_unreadable".into(),
+        });
+    }
+    Ok(report)
 }
 
 #[cfg(test)]

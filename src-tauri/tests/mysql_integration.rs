@@ -5386,3 +5386,63 @@ async fn mysql_create_table_wizard_options_ddl_runs() {
 
     conn.close().await;
 }
+
+/// スキーマ健全性アドバイザの採番枯渇 (#2210): 上限近くまで進んだ AUTO_INCREMENT を検出し、
+/// UNSIGNED / SMALLINT を見分け、修正 DDL (BIGINT への型変更) が実際に通って指摘が消える。
+#[tokio::test]
+async fn mysql_advisor_flags_exhausted_auto_increment() {
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = url.rsplit('/').next().expect("db name").to_string();
+    let conn = t::connect(&opts).await.expect("connect");
+    for sql in [
+        "DROP TABLE IF EXISTS noobdb_seq_uint",
+        "DROP TABLE IF EXISTS noobdb_seq_small",
+        "DROP TABLE IF EXISTS noobdb_seq_ok",
+        // INT UNSIGNED (上限 4294967295) の 81.5%。AUTO_INCREMENT は「次の値」。
+        "CREATE TABLE noobdb_seq_uint (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY) AUTO_INCREMENT=3500000000",
+        // SMALLINT (符号付き 32767) の 61%。
+        "CREATE TABLE noobdb_seq_small (id SMALLINT AUTO_INCREMENT PRIMARY KEY) AUTO_INCREMENT=20000",
+        // 同じ値でも INT UNSIGNED なら余裕がある (指摘しない)。
+        "CREATE TABLE noobdb_seq_ok (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY) AUTO_INCREMENT=20000",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    let report = t::analyze_schema_health(&conn, &db).await.expect("analyze");
+    let find = |report: &t::SchemaHealthReport, table: &str| {
+        report
+            .findings
+            .iter()
+            .find(|f| f.rule == t::RuleId::SequenceExhaustion && f.table == table)
+            .cloned()
+    };
+    let uint = find(&report, "noobdb_seq_uint");
+    let small = find(&report, "noobdb_seq_small");
+    let ok = find(&report, "noobdb_seq_ok");
+    let skipped = report
+        .skipped
+        .iter()
+        .any(|s| s.rule == t::RuleId::SequenceExhaustion);
+
+    let uint = uint.expect("INT UNSIGNED near the limit");
+    assert_eq!(uint.severity, t::Severity::High);
+    assert_eq!(uint.context[2], "4294967295", "UNSIGNED の上限");
+    assert_eq!(small.expect("SMALLINT").severity, t::Severity::Medium);
+    assert!(ok.is_none(), "INT UNSIGNED の 20000 は指摘しない");
+    assert!(!skipped);
+
+    // 修正 DDL をそのまま実行でき、実行後は指摘が消える。
+    let ddl = uint.fix_ddl.expect("fix ddl");
+    assert!(ddl.contains("BIGINT UNSIGNED"), "{ddl}");
+    conn.execute(&ddl, None).await.expect("apply fix");
+    let after = t::analyze_schema_health(&conn, &db).await.expect("analyze");
+    let still = find(&after, "noobdb_seq_uint");
+    for table in ["noobdb_seq_uint", "noobdb_seq_small", "noobdb_seq_ok"] {
+        conn.execute(&format!("DROP TABLE IF EXISTS {table}"), None)
+            .await
+            .expect("drop");
+    }
+    assert!(still.is_none(), "BIGINT UNSIGNED 化の後は指摘が消える");
+}

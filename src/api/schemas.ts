@@ -1276,6 +1276,7 @@ const advisorRuleId = z.enum([
   "nullable_foreign_key",
   "oversized_varchar",
   "float_for_money",
+  "sequence_exhaustion",
 ]);
 
 export const healthFinding = z.object({
