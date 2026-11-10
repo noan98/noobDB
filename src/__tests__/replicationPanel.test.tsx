@@ -407,4 +407,21 @@ describe("ReplicationPanel ライブ表示 (#2213)", () => {
     view.rerender(<ReplicationPanel sessionId="s2" driver="postgres" />);
     await waitFor(() => expect(screen.queryAllByTestId("stat-delta")).toHaveLength(0));
   });
+
+  it("切替前のセッションの遅延応答は捨てられ、推移も前回比も出ない (#2215)", async () => {
+    let resolveS1: (v: ReplicationStatus) => void = () => {};
+    vi.mocked(api.getReplicationStatus).mockImplementation((id: string) =>
+      id === "s1"
+        ? new Promise<ReplicationStatus>((r) => {
+            resolveS1 = r;
+          })
+        : Promise.resolve(status({ role: "primary", links: [mk("a", 1)] })),
+    );
+    const view = renderWithProviders(<ReplicationPanel sessionId="s1" driver="postgres" />);
+    view.rerender(<ReplicationPanel sessionId="s2" driver="postgres" />);
+    await screen.findByTestId("replication-link");
+    await act(async () => resolveS1(status({ role: "primary", links: [mk("a", 9)] })));
+    expect(screen.queryAllByTestId("stat-delta")).toHaveLength(0);
+    expect(screen.queryAllByTestId("neutral-sparkline")).toHaveLength(0);
+  });
 });

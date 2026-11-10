@@ -250,7 +250,7 @@ export function sampleDelta(samples: readonly ReplicationSample[] | undefined): 
 /** 図の 1 側に描く接続先の上限。これを超えた分は「ほか N 件」にまとめる。 */
 export const TOPOLOGY_MAX_PER_SIDE = 5;
 
-/** この秒数以上の遅延は「やや遅れ」(警告の手前)。 */
+/** この秒数以上の遅延は「やや遅れ」。警告 (`LAG_WARN_SECS` = 30 秒) の手前の目安。 */
 export const LAG_SLOW_SECS = 5;
 
 /**
@@ -298,7 +298,8 @@ function toPeer(l: KeyedLink): TopologyPeer {
     key: l.key,
     name: l.name,
     address: l.address,
-    lagSecs: finiteOrNull(l.lag_secs),
+    // 負値は段階 (`unknown`) と揃えて報告なし扱いにする。
+    lagSecs: level === "unknown" ? null : l.lag_secs,
     level,
     thickness: edgeThickness(level),
     attention: linkNeedsAttention(l),

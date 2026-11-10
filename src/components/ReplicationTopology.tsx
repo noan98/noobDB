@@ -99,7 +99,7 @@ function PeerNode({ peer }: { peer: TopologyPeer }) {
           flexShrink={0}
           aria-hidden
         >
-          <Icon name="server" size={ICON_SIZES.md} />
+          <Icon name={peer.attention ? "warning" : "server"} size={ICON_SIZES.md} />
         </chakra.span>
         <chakra.span
           fontFamily="var(--font-mono)"
@@ -170,19 +170,20 @@ export function ReplicationTopology({ links, driver }: { links: readonly KeyedLi
   const layout = layoutTopology(links);
   if (layout.upstream.length === 0 && layout.downstream.length === 0) return null;
 
-  const part = (peers: readonly TopologyPeer[]) =>
-    peers
-      .map(
-        (p) =>
-          `${p.name} (${p.lagSecs === null ? t("replicationTopologyLagUnknown") : formatLagSecs(p.lagSecs)})`,
-      )
-      .join(", ");
+  const part = (peers: readonly TopologyPeer[], more: number) =>
+    [
+      ...peers.map((p) => {
+        const lag = p.lagSecs === null ? t("replicationTopologyLagUnknown") : formatLagSecs(p.lagSecs);
+        return `${p.name} (${p.attention ? `${lag}, ${t("replicationTopologyAttention")}` : lag})`;
+      }),
+      ...(more > 0 ? [t("replicationTopologyMore", { count: more })] : []),
+    ].join(", ");
   const desc = [
     layout.upstream.length > 0
-      ? `${t("replicationTopologyUpstreamHeading")}: ${part(layout.upstream)}`
+      ? `${t("replicationTopologyUpstreamHeading")}: ${part(layout.upstream, layout.upstreamMore)}`
       : null,
     layout.downstream.length > 0
-      ? `${t("replicationTopologyDownstreamHeading")}: ${part(layout.downstream)}`
+      ? `${t("replicationTopologyDownstreamHeading")}: ${part(layout.downstream, layout.downstreamMore)}`
       : null,
   ]
     .filter(Boolean)
@@ -197,6 +198,7 @@ export function ReplicationTopology({ links, driver }: { links: readonly KeyedLi
       gap="2"
       p="3"
       overflowX="auto"
+      tabIndex={0}
       borderRadius="md"
       borderWidth="1px"
       borderColor="app.border"

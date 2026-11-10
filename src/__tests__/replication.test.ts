@@ -336,3 +336,10 @@ describe("トポロジー図の配置 (#2215)", () => {
     expect(new Set(dup.downstream.map((p) => p.key)).size).toBe(2);
   });
 });
+
+describe("トポロジー図の負の遅延 (#2215)", () => {
+  it("負の遅延は段階も lagSecs も報告なしに揃える", () => {
+    const p = layoutTopology(keyLinks([link({ lag_secs: -3 })])).downstream[0];
+    expect(p).toMatchObject({ level: "unknown", lagSecs: null });
+  });
+});
