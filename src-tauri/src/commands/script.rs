@@ -263,6 +263,18 @@ impl Drop for TxGuard {
     }
 }
 
+/// 失敗した 1 文の `(失敗一覧用 SQL プレビュー, エラー文)`。どちらも文ごとの SQL の
+/// 資格情報を伏せた値で、ログ・履歴・UI 通知はすべてこれを使う (#2208)。
+fn redacted_failure(
+    driver: crate::db::DriverKind,
+    stmt_sql: &str,
+    error: &AppError,
+) -> (String, String) {
+    let sql = crate::sql_credentials::redact_credentials(stmt_sql, driver);
+    let error = crate::sql_credentials::redact_error_text(&error.to_string(), stmt_sql, driver);
+    (preview_sql(&sql), error)
+}
+
 fn preview_sql(sql: &str) -> String {
     let one_line = sql.split_whitespace().collect::<Vec<_>>().join(" ");
     if one_line.chars().count() > FAILURE_SQL_PREVIEW_CHARS {
@@ -1192,16 +1204,17 @@ impl Runner {
         if self.batch.is_some() {
             return self.on_batch_failure(stmt, e).await;
         }
+        let (sql_preview, error_text) = redacted_failure(self.driver, &stmt.sql, &e);
         let failure = ScriptFailure {
             index: self.seen,
             line: stmt.line,
-            sql: preview_sql(&stmt.sql),
-            error: e.to_string(),
+            sql: sql_preview,
+            error: error_text.clone(),
         };
         tracing::warn!(
             session_id = %self.session.id,
             line = stmt.line,
-            error = %e,
+            error = %error_text,
             "script statement failed"
         );
         if self.options.continue_on_error {
@@ -1210,7 +1223,7 @@ impl Runner {
             }
             return None;
         }
-        let message = format!("line {}: {}", stmt.line, e);
+        let message = format!("line {}: {}", stmt.line, error_text);
         Some(self.abort_with(message, Some(failure)).await)
     }
 
@@ -1219,13 +1232,14 @@ impl Runner {
     /// 残さないようここで ROLLBACK する (`.sql` スクリプト実行の `abort_with` と同じ)。
     /// 常に `None` を返す — 打ち切りは `skipping` で表し、コアは最後まで文を読み進める。
     async fn on_batch_failure(&mut self, stmt: &ScriptStatement, e: AppError) -> Option<ScriptRun> {
+        let (_, error_text) = redacted_failure(self.driver, &stmt.sql, &e);
         tracing::warn!(
             session_id = %self.session.id,
             line = stmt.line,
-            error = %e,
+            error = %error_text,
             "batch statement failed"
         );
-        self.emit_batch(BatchStatementResult::error(stmt.sql.clone(), e.to_string()));
+        self.emit_batch(BatchStatementResult::error(stmt.sql.clone(), error_text));
         if !self.options.continue_on_error {
             if let Some(b) = self.batch.as_mut() {
                 b.skipping = true;
@@ -2102,6 +2116,25 @@ mod tests {
         assert!(p.chars().count() <= FAILURE_SQL_PREVIEW_CHARS + 1);
         assert!(p.ends_with('…'));
         assert_eq!(preview_sql("SELECT\n  1"), "SELECT 1");
+    }
+
+    #[test]
+    fn failure_redacts_secrets_from_error_and_sql() {
+        use crate::db::DriverKind;
+        let sql = "CREATE USR 'app'@'%' IDENTIFIED BY 'secret123'";
+        let err = AppError::Other(
+            "You have an error in your SQL syntax; near 'USR 'app'@'%' IDENTIFIED BY 'secret123'' at line 1"
+                .into(),
+        );
+        let (preview, text) = redacted_failure(DriverKind::Mysql, sql, &err);
+        assert!(!text.contains("secret123"), "{text}");
+        assert!(!preview.contains("secret123"), "{preview}");
+        assert!(text.contains("at line 1"));
+        // 資格情報のない文は何も変えない。
+        let plain = AppError::Other("Unknown column 'x'".into());
+        let (p, t) = redacted_failure(DriverKind::Mysql, "SELECT x FROM t", &plain);
+        assert_eq!(p, "SELECT x FROM t");
+        assert!(t.contains("Unknown column 'x'"));
     }
 
     #[tokio::test]
