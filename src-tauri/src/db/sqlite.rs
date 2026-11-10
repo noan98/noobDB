@@ -1333,6 +1333,7 @@ impl SqliteConn {
                 cycle: false,
                 column_comment: None,
                 invisible: false,
+                domain_base_type: None,
             });
         }
         Ok(out)

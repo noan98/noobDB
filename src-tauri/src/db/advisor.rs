@@ -329,6 +329,9 @@ pub struct SequenceUsage {
     pub column_comment: Option<String>,
     /// MySQL の `INVISIBLE` 列 (8.0.23+)。`MODIFY COLUMN` で可視に戻らないよう付け直す。
     pub invisible: bool,
+    /// PostgreSQL の DOMAIN 型の列では、基底型 (`data_type` はドメイン名)。上限はこちらで判定し、
+    /// 型変更 DDL は列がドメインから外れ CHECK / NOT NULL が失われるので出さない。
+    pub domain_base_type: Option<String>,
 }
 
 /// スキーマメタデータを走査して健全性の指摘リストを組み立てる純関数。副作用なし・
@@ -1295,6 +1298,9 @@ fn sequence_severity(used: u64, max: u64) -> Option<Severity> {
 fn sequence_fix_ddl(driver: DriverKind, s: &SequenceUsage, type_max: u64) -> Option<String> {
     let table = quote_ident(driver, &s.table);
     let column = quote_ident(driver, &s.column);
+    if s.domain_base_type.is_some() {
+        return None;
+    }
     match (driver, s.kind) {
         (DriverKind::Mysql, SequenceKind::AutoIncrement) => {
             if type_max >= i64::MAX as u64 {
@@ -1371,7 +1377,8 @@ fn rule_sequence_exhaustion(input: &AdvisorInput, out: &mut Vec<HealthFinding>) 
         if s.cycle {
             continue;
         }
-        let Some(type_max) = integer_type_max(driver, &s.data_type) else {
+        let limit_type = s.domain_base_type.as_deref().unwrap_or(&s.data_type);
+        let Some(type_max) = integer_type_max(driver, limit_type) else {
             continue;
         };
         let (max, binding) = match s.sequence_max {
@@ -2843,6 +2850,7 @@ mod tests {
             cycle: false,
             column_comment: None,
             invisible: false,
+            domain_base_type: None,
         }
     }
 
@@ -3109,6 +3117,21 @@ mod tests {
             vec![seq(SequenceKind::AutoIncrement, "tinyint", 200, None)],
         );
         assert_eq!(f[0].key(), "sequence_exhaustion|t|id");
+    }
+
+    #[test]
+    fn sequence_postgres_domain_column_uses_base_type_limit_but_has_no_fix() {
+        let mut s = seq(SequenceKind::Serial, "small_id", 30_000, None);
+        s.domain_base_type = Some("smallint".into());
+        s.sequence_type = Some("smallint".into());
+        let f = seq_findings(DriverKind::Postgres, vec![s]);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].context[0], "small_id", "説明文の型名はドメイン名");
+        assert_eq!(f[0].context[2], "32767", "上限は基底型 smallint");
+        assert!(
+            f[0].fix_ddl.is_none(),
+            "ドメイン列には型変更 DDL を出さない"
+        );
     }
 
     #[test]

@@ -1416,9 +1416,9 @@ impl PostgresConn {
             r#"SELECT cl.relname::text AS table_name,
                       a.attname::text AS column_name,
                       -- DOMAIN 型の列は基底型 (typbasetype) に解決して上限を判定する。
-                      pg_catalog.format_type(
-                        CASE WHEN ty.typtype = 'd' THEN ty.typbasetype ELSE a.atttypid END, NULL
-                      ) AS column_type,
+                      pg_catalog.format_type(a.atttypid, NULL) AS column_type,
+                      (ty.typtype = 'd') AS is_domain,
+                      pg_catalog.format_type(ty.typbasetype, NULL) AS base_type,
                       s.sequencename::text AS sequence_name,
                       s.data_type::text AS sequence_type,
                       s.last_value,
@@ -1467,6 +1467,11 @@ impl PostgresConn {
                     cycle: r.try_get::<bool, _>("cycle").unwrap_or(false),
                     column_comment: None,
                     invisible: false,
+                    domain_base_type: if r.try_get::<bool, _>("is_domain").unwrap_or(false) {
+                        r.try_get::<String, _>("base_type").ok()
+                    } else {
+                        None
+                    },
                 })
             })
             .collect())

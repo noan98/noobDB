@@ -6252,4 +6252,6 @@ async fn postgres_advisor_resolves_domain_sequence_columns() {
     }
     let f = found.expect("domain over smallint near the limit");
     assert_eq!(f.context[2], "32767", "基底型 smallint の上限");
+    assert_eq!(f.context[0], "noobdb_small_id", "説明文の型名はドメイン名");
+    assert!(f.fix_ddl.is_none(), "ドメイン列には型変更 DDL を出さない");
 }

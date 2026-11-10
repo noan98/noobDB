@@ -1805,6 +1805,7 @@ impl MySqlConn {
                 Some(SequenceUsage {
                     column_comment: comment.filter(|c| !c.is_empty()),
                     invisible: extra.is_some_and(|e| e.to_uppercase().contains("INVISIBLE")),
+                    domain_base_type: None,
                     table,
                     column,
                     data_type,

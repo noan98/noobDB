@@ -5485,11 +5485,44 @@ async fn mysql_advisor_sees_fresh_auto_increment_and_keeps_comment() {
     .expect("alter");
     let second = t::analyze_schema_health(&conn, &db).await.expect("analyze");
     let found = count(&second);
+    let f = found.first().expect("advanced AUTO_INCREMENT is detected");
+    assert_eq!(f.severity, t::Severity::High);
+    let ddl = f.fix_ddl.clone().expect("fix ddl");
+    assert!(ddl.contains("COMMENT 'it''s the key'"), "{ddl}");
+    // 修正 DDL を実際に実行しても列コメントが保たれる。
+    let applied = conn.execute(&ddl, Some(&db)).await;
+    let res = conn
+        .execute(
+            "SELECT COLUMN_COMMENT, DATA_TYPE FROM information_schema.COLUMNS \
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'noobdb_seq_fresh' AND COLUMN_NAME = 'id'",
+            Some(&db),
+        )
+        .await;
     conn.execute("DROP TABLE IF EXISTS noobdb_seq_fresh", None)
         .await
         .expect("drop");
-    let f = found.first().expect("advanced AUTO_INCREMENT is detected");
-    assert_eq!(f.severity, t::Severity::High);
-    let ddl = f.fix_ddl.as_deref().expect("fix ddl");
-    assert!(ddl.contains("COMMENT 'it''s the key'"), "{ddl}");
+    applied.expect("fix ddl runs");
+    let res = res.expect("select column");
+    let row = res.rows.first().expect("column row");
+    assert!(
+        match &row[0] {
+            t::Value::String(s) => s == "it's the key",
+            // information_schema の文字列列は Bytes で返ることがある。
+            // (16 進文字列。"it's the key" の UTF-8 バイト列)
+            t::Value::Bytes(h) => h == "6974277320746865206b6579",
+            _ => false,
+        },
+        "COMMENT が保たれる: {:?}",
+        row[0]
+    );
+    assert!(
+        match &row[1] {
+            t::Value::String(s) => s.eq_ignore_ascii_case("bigint"),
+            // "bigint" の 16 進表現。
+            t::Value::Bytes(h) => h == "626967696e74",
+            _ => false,
+        },
+        "BIGINT になる: {:?}",
+        row[1]
+    );
 }
