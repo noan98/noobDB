@@ -264,7 +264,7 @@ impl Drop for TxGuard {
 }
 
 /// 失敗した 1 文の `(失敗一覧用 SQL プレビュー, エラー文)`。どちらも文ごとの SQL の
-/// 資格情報を伏せた値で、ログ・履歴・UI 通知はすべてこれを使う (#2208)。
+/// 資格情報を伏せた値で、文の失敗に関するログ・履歴・UI 通知はすべてこれを使う (#2208)。
 fn redacted_failure(
     driver: crate::db::DriverKind,
     stmt_sql: &str,
