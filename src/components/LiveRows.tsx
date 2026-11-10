@@ -1,6 +1,13 @@
 import { useState, type ReactNode } from "react";
 import { chakra, type HTMLChakraProps, type SystemStyleObject } from "@chakra-ui/react";
-import { AnimatePresence, MotionConfig, motion, useIsPresent, useReducedMotion } from "motion/react";
+import {
+  AnimatePresence,
+  MotionConfig,
+  motion,
+  useIsPresent,
+  useReducedMotion,
+  useReducedMotionConfig,
+} from "motion/react";
 
 import { transitions, variants } from "../motion";
 import { diffLiveRows, type LiveChanges, type LiveField } from "./liveDiff";
@@ -115,7 +122,7 @@ export function LiveCollapse({
    */
   reorder?: boolean;
 }) {
-  const reduced = useReducedMotion() ?? false;
+  const reduced = useReducedMotionConfig() ?? false;
   return standalone ? (
     <MotionDiv
       variants={variants.collapse}
@@ -189,6 +196,29 @@ export function LiveFlash({
   );
 }
 
+/**
+ * 値変化フラッシュのオーバーレイ (#2213)。`LiveFlash` は子を token ごとに作り直すため、`CountUp` を持つ
+ * `StatTile` のように作り直したくない中身には使えない。そこで中身は包まず、`position: relative` の外枠の
+ * 子として兄弟に置く。`token` が数値のときだけ描画し、値ごとに作り直して `apply-flash` を 1 回再生する。
+ * 角丸は外枠から継承する。
+ */
+export function LiveFlashOverlay({ token }: { token: number | null }) {
+  if (token === null) return null;
+  return (
+    <chakra.span
+      key={`flash-${token}`}
+      aria-hidden
+      className="flash-ring"
+      data-live-flash=""
+      position="absolute"
+      inset="0"
+      pointerEvents="none"
+      borderRadius="inherit"
+      css={{ "&::after": { borderRadius: "inherit" } }}
+    />
+  );
+}
+
 /** `<td>` のシェル (パディング 0)。パディングは `innerCss` 側に書く。 */
 const cellShellCss: SystemStyleObject = { padding: 0 };
 
@@ -248,11 +278,15 @@ export function LiveCell({
  *
  * `tick` は差分を取り直すたびに増える世代番号で、`flashToken` がこれを
  * フラッシュの再生キーとして使う (同じ変化を 2 回光らせない)。
+ *
+ * `resetKey` は「行の意味が変わる切替」(表示モードなど) を表す。`rows` と同じ更新で値が変わった世代は、
+ * 前回が空だったものとして扱い、光らせない。
  */
 export function useLiveChanges<T, K, F extends string>(
   rows: readonly T[],
   keyOf: (row: T) => K,
   fields: readonly LiveField<T, F>[],
+  resetKey?: unknown,
 ): { flashToken: (key: K, field: F) => number | null } {
   // 「前回のレンダーの情報を保持する」React 公式パターン (render 中の setState)。
   // effect で差分を取ると 1 フレーム遅れて素の値が先に描画されてしまうため。
@@ -260,13 +294,15 @@ export function useLiveChanges<T, K, F extends string>(
     rows: readonly T[];
     tick: number;
     changes: LiveChanges<K, F>;
-  }>(() => ({ rows, tick: 0, changes: new Map() }));
+    resetKey: unknown;
+  }>(() => ({ rows, tick: 0, changes: new Map(), resetKey }));
   let current = snap;
-  if (snap.rows !== rows) {
+  if (snap.rows !== rows || !Object.is(snap.resetKey, resetKey)) {
     current = {
       rows,
       tick: snap.tick + 1,
-      changes: diffLiveRows(snap.rows, rows, keyOf, fields),
+      changes: Object.is(snap.resetKey, resetKey) ? diffLiveRows(snap.rows, rows, keyOf, fields) : new Map(),
+      resetKey,
     };
     setSnap(current);
   }

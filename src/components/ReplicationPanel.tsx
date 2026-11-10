@@ -18,11 +18,11 @@ import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { useKeepAliveActive, useRefreshOnReactivate } from "./KeepAlive";
 import { ListboxSelect } from "./ListboxSelect";
-import { LiveCell, LiveFlash, LiveRow, LiveRowsPresence, useLiveChanges } from "./LiveRows";
+import { LiveCell, LiveFlashOverlay, LiveRow, LiveRowsPresence, useLiveChanges } from "./LiveRows";
 import { uniqueByKey } from "./liveDiff";
 import { Skeleton } from "./Skeleton";
 import { Spinner } from "./Spinner";
-import { StatTile } from "./StatTile";
+import { StatTile, STAT_TILE_MIN_WIDTH } from "./StatTile";
 import { SurfaceRule } from "./SurfaceRule";
 import { Tooltip } from "./Tooltip";
 import { ErrorNote } from "./modalForm";
@@ -36,7 +36,9 @@ import {
   lagMeterPercent,
   lagWarnPercent,
   LAG_WARN_SECS,
-  linkKey,
+  keyedLinkKey,
+  keyLinks,
+  type KeyedLink,
   linkNeedsAttention,
   REPLICATION_LINK_LIVE_FIELDS,
   REPLICATION_SLOT_LIVE_FIELDS,
@@ -141,20 +143,25 @@ function LagMeter({ secs }: { secs: number | null }) {
   );
 }
 
-/** `StatTile` を包むフラッシュ層。タイルと同じ flex 配分を持ち、並びを変えない。 */
+/**
+ * `StatTile` の外枠 (#2213)。タイルと同じ flex 配分を持ち、並びを変えない。タイルは包み直さず、
+ * 値が変わったときだけ兄弟のオーバーレイが `apply-flash` を 1 回光らせる (タイルを作り直さないので
+ * `CountUp` が途切れない)。
+ */
 const flashTileCss: SystemStyleObject = {
+  position: "relative",
   display: "flex",
   flex: "1",
-  minWidth: "120px",
+  minWidth: STAT_TILE_MIN_WIDTH,
   borderRadius: "var(--radius-md)",
 };
 
-/** 値が変わったタイルだけ `apply-flash` を 1 回光らせる (#2213)。`flash` が null なら静止。 */
 function FlashTile({ flash, children }: { flash: number | null; children: ReactNode }) {
   return (
-    <LiveFlash token={flash} css={flashTileCss}>
+    <chakra.div css={flashTileCss}>
       {children}
-    </LiveFlash>
+      <LiveFlashOverlay token={flash} />
+    </chakra.div>
   );
 }
 
@@ -187,7 +194,7 @@ function LinkCardSkeleton() {
             key={i}
             style={{
               flex: 1,
-              minWidth: "120px",
+              minWidth: STAT_TILE_MIN_WIDTH,
               height: "var(--space-12)",
               borderRadius: "var(--radius-md)",
               animationDelay: `${i * 0.05}s`,
@@ -379,27 +386,25 @@ export function ReplicationPanel({
 
   const stuckSlots = useMemo(() => (status ? slotsHoldingWal(status.slots) : []), [status]);
   const lostSlots = useMemo(() => (status ? slotsLost(status.slots) : []), [status]);
+  // key は並べ替え前の一覧で振る (重複する接続先は出現順の連番で区別する)。描画と差分の両方で共有する。
+  const allLinks = useMemo(() => keyLinks(status?.links ?? []), [status]);
   const downstream = useMemo(
-    () => sortLinks(status?.links.filter((l) => l.direction === "downstream") ?? []),
-    [status],
+    () => sortLinks(allLinks.filter((l) => l.direction === "downstream")),
+    [allLinks],
   );
-  const upstream = useMemo(
-    () => sortLinks(status?.links.filter((l) => l.direction === "upstream") ?? []),
-    [status],
-  );
+  const upstream = useMemo(() => sortLinks(allLinks.filter((l) => l.direction === "upstream")), [allLinks]);
 
   // ポーリング結果の差分から、値が変わったセルだけ光らせる (#2213)。初回表示・セッション切替直後は
-  // 前回が空なので光らない。key は並びに依存しない `linkKey` / `slotKey`。
-  const allLinks = useMemo(() => uniqueByKey(status?.links ?? [], linkKey), [status]);
+  // 前回が空なので光らない。key は並びに依存しない `linkKeys` / `slotKey`。
   const allSlots = useMemo(() => uniqueByKey(status?.slots ?? [], slotKey), [status]);
-  const linkLive = useLiveChanges(allLinks, linkKey, REPLICATION_LINK_LIVE_FIELDS);
+  const linkLive = useLiveChanges(allLinks, keyedLinkKey, REPLICATION_LINK_LIVE_FIELDS);
   const slotLive = useLiveChanges(allSlots, slotKey, REPLICATION_SLOT_LIVE_FIELDS);
-  const renderLinks = (links: readonly ReplicationLink[]) => (
+  const renderLinks = (links: readonly KeyedLink[]) => (
     // 行間は各行の内側 padding が持つので、親の gap 分を負のマージンで相殺する。
     <Flex direction="column" mt="-1.5">
       <LiveRowsPresence>
         {links.map((l) => {
-          const key = linkKey(l);
+          const key = l.key;
           return (
             <LiveRow key={key} reorder>
               <LinkCard

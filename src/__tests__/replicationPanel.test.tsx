@@ -331,4 +331,33 @@ describe("ReplicationPanel ライブ表示 (#2213)", () => {
     await waitFor(() => expect(screen.getAllByTestId("replication-link")).toHaveLength(1));
     expect(screen.getByTestId("replication-link")).toBe(cardB);
   });
+
+  it("フラッシュの前後で StatTile の DOM が作り直されない (CountUp が途切れない)", async () => {
+    vi.mocked(api.getReplicationStatus).mockResolvedValue(status({ role: "primary", links: [mk("a", 1)] }));
+    renderWithProviders(<ReplicationPanel sessionId="s1" driver="postgres" />);
+    const card = await screen.findByTestId("replication-link");
+    const tile = screen.getByText(t("replicationLag")).parentElement;
+    expect(tile).not.toBeNull();
+    vi.mocked(api.getReplicationStatus).mockResolvedValue(status({ role: "primary", links: [mk("a", 5)] }));
+    refresh();
+    await waitFor(() => expect(card.querySelectorAll("[data-live-flash]")).toHaveLength(1));
+    expect(screen.getByText(t("replicationLag")).parentElement).toBe(tile);
+  });
+
+  it("同じ名前・アドレスの接続先が 2 本あっても、両方が描画され DOM が維持される", async () => {
+    const dup = (lag: number) => mk("walsender", lag, { address: null });
+    vi.mocked(api.getReplicationStatus).mockResolvedValue(
+      status({ role: "primary", links: [dup(1), dup(2)] }),
+    );
+    renderWithProviders(<ReplicationPanel sessionId="s1" driver="postgres" />);
+    await waitFor(() => expect(screen.getAllByTestId("replication-link")).toHaveLength(2));
+    const [c1, c2] = screen.getAllByTestId("replication-link");
+    // 2 本目が異常になり先頭へ移っても、どちらも残り同じ DOM を使う。
+    vi.mocked(api.getReplicationStatus).mockResolvedValue(
+      status({ role: "primary", links: [dup(1), dup(45)] }),
+    );
+    refresh();
+    await waitFor(() => expect(screen.getAllByTestId("replication-link")[0]).toBe(c2));
+    expect(screen.getAllByTestId("replication-link")[1]).toBe(c1);
+  });
 });

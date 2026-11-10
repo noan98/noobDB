@@ -67,7 +67,7 @@ export function linkNeedsAttention(link: ReplicationLink): boolean {
 }
 
 /** 一覧の並び: 異常のある行 → 名前順。 */
-export function sortLinks(links: readonly ReplicationLink[]): ReplicationLink[] {
+export function sortLinks<T extends ReplicationLink>(links: readonly T[]): T[] {
   return [...links].sort(
     (a, b) => Number(linkNeedsAttention(b)) - Number(linkNeedsAttention(a)) || a.name.localeCompare(b.name),
   );
@@ -97,6 +97,35 @@ export function dropSlotBlockedReason(
  */
 export function linkKey(link: ReplicationLink): string {
   return `${link.direction}\u0000${link.name}\u0000${link.address ?? ""}`;
+}
+
+/**
+ * 一覧全体の key 列 (#2213)。同じ向き・名前・アドレスの接続先は現実に複数ありうる (`pg_basebackup` の
+ * walsender が 2 本、Unix ソケット接続でアドレスが null など) ので、重複したときだけ出現順の連番を足して
+ * 一意にする。入力 (並べ替え前) の順で数えるので、`sortLinks` で並びが変わっても同じ接続先は同じ key を保つ。
+ * 重複を取り除くのではなく連番で区別する (接続先を消さない)。
+ */
+export function linkKeys(links: readonly ReplicationLink[]): string[] {
+  const seen = new Map<string, number>();
+  return links.map((l) => {
+    const base = linkKey(l);
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    return n === 0 ? base : `${base}#${n}`;
+  });
+}
+
+/** `linkKeys` の key を載せた接続先。描画と差分計算の両方がこの key を使う。 */
+export type KeyedLink = ReplicationLink & { key: string };
+
+export function keyLinks(links: readonly ReplicationLink[]): KeyedLink[] {
+  const keys = linkKeys(links);
+  return links.map((l, i) => ({ ...l, key: keys[i] }));
+}
+
+/** `KeyedLink` の行 ID。 */
+export function keyedLinkKey(l: KeyedLink): string {
+  return l.key;
 }
 
 export type ReplicationLinkLiveField = "lag" | "lagWrite" | "lagFlush" | "lagBytes";

@@ -352,6 +352,8 @@ export function QueryInspectorPanel({
   // バックエンドが返した差分行 (calls > 0、総時間降順)。SQL 本文は初出の digest にだけ載るため
   // `fingerprintCache` に溜めて行へ結び付ける。
   const [deltaRows, setDeltaRows] = useState<StatementDeltaRow[]>([]);
+  // `deltaRows` を組んだときの累積表示。切替直後の再計算で全セルが光らないよう、フラッシュの resetKey にする。
+  const [deltaCumulative, setDeltaCumulative] = useState(false);
   const fingerprintCache = useRef(new Map<string, string>());
   const [error, setError] = useState<string | null>(null);
   const [sampledAt, setSampledAt] = useState<Date | null>(null);
@@ -419,7 +421,10 @@ export function QueryInspectorPanel({
         fingerprintCache.current.set(`${r.digest} ${r.database ?? ""}`, r.fingerprint);
       }
     }
-    if (requestedCumulative === cumulativeRef.current) setDeltaRows(rows);
+    if (requestedCumulative === cumulativeRef.current) {
+      setDeltaRows(rows);
+      setDeltaCumulative(requestedCumulative);
+    }
   }, []);
 
   // ポーリング 1 ティック: ライブテール → digest スナップショットの順に取得する。
@@ -559,7 +564,12 @@ export function QueryInspectorPanel({
   // 行の出入りと値変化フラッシュ (#2213)。差分は並べ替え前の行で取るので、ソートでは光らない。
   // 記録の開始・セッション切替では `deltaRows` が空に戻るので、直後の最初の表示も光らない。
   const statRows = useMemo(() => uniqueByKey(deltaRows, statRowKey), [deltaRows]);
-  const { flashToken: statFlashToken } = useLiveChanges(statRows, statRowKey, STAT_LIVE_FIELDS);
+  const { flashToken: statFlashToken } = useLiveChanges(
+    statRows,
+    statRowKey,
+    STAT_LIVE_FIELDS,
+    deltaCumulative,
+  );
 
   // fingerprintCache は ref なので、deltaRows の更新に合わせて再計算する。
   // biome-ignore lint/correctness/useExhaustiveDependencies: fingerprintOf は ref を読むだけ
