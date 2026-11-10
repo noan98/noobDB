@@ -594,7 +594,7 @@ const WRITE_KEYWORDS = [
  * 実際の書き込み SQL が引数の文字列リテラルに埋め込まれる (`OPENROWSET` /
  * `dblink_exec` / `load_extension`) か、関数自体に副作用がある (他セッションの強制切断・
  * シーケンス更新・ラージオブジェクト書き込み・通知送信・レプリケーションスロット操作・
- * 統計リセット) もの。バックの `is_read_only_sql_masked` (src-tauri/src/db/mod.rs) と
+ * レプリケーション起点・WAL リプレイの制御・バックアップ制御・統計リセット) もの。バックの `is_read_only_sql_masked` (src-tauri/src/db/mod.rs) と
  * 同じ一覧で、全ドライバ共通で拒否する (fail-closed)。引用符付き識別子
  * (`"nextval"(…)`) で素通りされないよう、中身を残したマスクでも照合する (#1517)。
  * 書き込みキーワードは対象外 (`"update"` という列名の誤検知を避ける)。
@@ -650,6 +650,15 @@ const DENIED_FUNCTIONS = [
   "pg_replication_origin_xact_reset",
   "pg_wal_replay_pause",
   "pg_wal_replay_resume",
+  "pg_stat_statements_reset",
+  "pg_stat_reset_backend_stats",
+  "pg_sync_replication_slots",
+  "pg_log_standby_snapshot",
+  "pg_backup_start",
+  "pg_backup_stop",
+  "pg_start_backup",
+  "pg_stop_backup",
+  "lo_creat",
 ];
 
 /**
