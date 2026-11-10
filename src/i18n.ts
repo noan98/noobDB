@@ -2702,6 +2702,7 @@ const en = {
   publicationHint:
     "Choose the publications to change. A table that a publication lists explicitly can be removed from it; ALL TABLES and TABLES IN SCHEMA publications include it automatically.",
   publicationLoadError: "Could not read the publications: {error}",
+  publicationNoneTitle: "No publications",
   publicationNone: "There are no publications in this database. Create one with CREATE PUBLICATION first.",
   publicationStateMember: "Included",
   publicationStateNone: "Not included",
@@ -2729,6 +2730,8 @@ const en = {
   extensionsFilterAvailable: "Available (not installed)",
   extensionsFilterUpdatable: "Updatable",
   extensionsEmpty: "No extensions match.",
+  extensionsNone: "No extensions are available on this server.",
+  extensionsClearFilters: "Clear filters",
   extensionsInstall: "Install",
   extensionsUpdate: "Update",
   extensionsDrop: "Drop",
@@ -10522,6 +10525,7 @@ const ja: Dict = {
   publicationHint:
     "変更するパブリケーションを選んでください。明示的に表を列挙しているパブリケーションからは外せます。ALL TABLES / TABLES IN SCHEMA のパブリケーションには自動で含まれます。",
   publicationLoadError: "パブリケーションを読み込めませんでした: {error}",
+  publicationNoneTitle: "パブリケーションがありません",
   publicationNone:
     "このデータベースにはパブリケーションがありません。先に CREATE PUBLICATION で作成してください",
   publicationStateMember: "含まれている",
@@ -10550,6 +10554,8 @@ const ja: Dict = {
   extensionsFilterAvailable: "利用可能 (未導入)",
   extensionsFilterUpdatable: "更新あり",
   extensionsEmpty: "該当する拡張機能がありません",
+  extensionsNone: "このサーバで使える拡張機能がありません",
+  extensionsClearFilters: "条件を解除",
   extensionsInstall: "導入",
   extensionsUpdate: "更新",
   extensionsDrop: "削除",

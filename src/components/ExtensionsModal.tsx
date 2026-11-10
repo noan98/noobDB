@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
+import { AnimatePresence, motion, useReducedMotionConfig } from "motion/react";
 import { api, type ExtensionDependent, type ExtensionInfo, type ExtensionsOverview } from "../api/tauri";
 import { resolveErrorHint } from "../errorHints";
 import { useT } from "../i18n";
+import { directionalSlide, staggerContainer, transitions, variants } from "../motion";
 import { Callout } from "./Callout";
+import { EmptyState } from "./EmptyState";
 import { ExtensionDependents } from "./ExtensionDependents";
 import {
   buildExtensionSql,
@@ -17,7 +20,7 @@ import {
 import { ListboxSelect } from "./ListboxSelect";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
-import { Spinner } from "./Spinner";
+import { SkeletonSearchRows } from "./Skeleton";
 import { SqlPreview } from "./SqlPreview";
 import { Button, Checkbox, Input, PressableButton } from "./ui";
 
@@ -44,8 +47,17 @@ interface Step {
   ext: ExtensionInfo;
 }
 
+// stagger 入場する一覧。motion 用 props は Chakra のスタイルプロップに飲まれないよう forwardProps で素通しする。
+const MotionUl = chakra(
+  motion.ul,
+  {},
+  { forwardProps: ["variants", "initial", "animate", "onAnimationComplete"] },
+);
+const MotionLi = chakra(motion.li, {}, { forwardProps: ["variants"] });
+
 export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Props) {
   const t = useT();
+  const reducedMotion = useReducedMotionConfig() ?? false;
   const [overview, setOverview] = useState<ExtensionsOverview | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -66,6 +78,14 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
   const mountedRef = useRef(true);
   const searchRef = useRef<HTMLInputElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  // 確認から一覧へ戻ったとき、フォーカスを戻す先 (操作を始めた行のボタン)。一覧は退場を待ってから
+  // マウントされるので、戻す処理は一覧の入場完了 (onAnimationComplete) で行う。
+  const triggerRef = useRef<{ name: string; action: ExtensionAction } | null>(null);
+  const restoreFocusRef = useRef(false);
+  const prevStepRef = useRef<Step | null>(null);
+  // 一覧の stagger 入場は初回の 1 回だけ (確認から戻るたびには再生しない)。
+  const staggeredRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -127,7 +147,15 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
     [overview, filter, q],
   );
 
+  const filtering = q !== "" || filter !== "all";
+  const clearFilters = () => {
+    setQuery("");
+    setFilter("all");
+    searchRef.current?.focus();
+  };
+
   const begin = (action: ExtensionAction, ext: ExtensionInfo) => {
+    triggerRef.current = { name: ext.name, action };
     setStep({ action, ext });
     setSchema("");
     setCascade(false);
@@ -183,6 +211,25 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
     drop: t("extensionsDrop"),
   };
   const destructive = step ? isDestructiveExtensionAction(step.action) : false;
+  useEffect(() => {
+    if (prevStepRef.current !== null && step === null) restoreFocusRef.current = true;
+    prevStepRef.current = step;
+  }, [step]);
+  const restoreFocus = () => {
+    if (!restoreFocusRef.current) return;
+    restoreFocusRef.current = false;
+    const root = listRef.current;
+    const trig = triggerRef.current;
+    if (!root || !trig) return;
+    // 同じ操作のボタン → (導入後など、そのボタンが消えたとき) 同じ行の別のボタン → 検索欄。
+    const target =
+      root.querySelector<HTMLElement>(`[data-ext-trigger="${CSS.escape(`${trig.name}:${trig.action}`)}"]`) ??
+      root.querySelector<HTMLElement>(`[data-ext-row="${CSS.escape(trig.name)}"] button:not(:disabled)`) ??
+      searchRef.current;
+    target?.focus();
+  };
+  const slideDir = step ? 1 : -1;
+  const slideTransition = reducedMotion ? { duration: 0 } : transitions.enter;
   // 一覧から確認画面へ切り替わったとき、破壊的ならキャンセルへ初期フォーカスを移す
   // (initialFocusEl はモーダルを開いたときにしか評価されない)。
   useEffect(() => {
@@ -207,131 +254,178 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
         {readOnly && <Callout tone="warning">{t("extensionsReadOnly")}</Callout>}
         {loadError && <ErrorNote>{loadError}</ErrorNote>}
 
-        {step === null ? (
-          <>
-            <chakra.div display="flex" gap="2" alignItems="center">
-              <Input
-                ref={searchRef}
-                flex="1"
-                value={query}
-                placeholder={t("extensionsSearchPlaceholder")}
-                aria-label={t("extensionsSearchPlaceholder")}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-              <ListboxSelect
-                ariaLabel={t("extensionsFilterLabel")}
-                value={filter}
-                options={filterOptions}
-                onChange={(v) => setFilter(v as ExtensionFilter)}
-                css={{ minWidth: "10rem" }}
-              />
-            </chakra.div>
-            {loading ? (
-              <Spinner size={14} />
-            ) : visible.length === 0 ? (
-              <chakra.p margin={0} textStyle="caption" color="app.textMuted">
-                {t("extensionsEmpty")}
-              </chakra.p>
-            ) : (
-              <chakra.ul
-                listStyleType="none"
-                margin={0}
-                padding={0}
-                maxH="22rem"
-                overflowY="auto"
-                borderWidth="1px"
-                borderColor="app.border"
-                borderRadius="md"
-              >
-                {visible.map((e) => (
-                  <ExtensionRow
-                    key={e.name}
-                    ext={e}
-                    preloaded={isPreloaded(e.name, preload)}
-                    readOnly={readOnly}
-                    onAction={begin}
-                  />
-                ))}
-              </chakra.ul>
-            )}
-          </>
-        ) : (
-          <>
-            <chakra.p margin={0} textStyle="caption" color="app.textSecondary">
-              {step.ext.comment ?? step.ext.name}
-              {step.ext.installed_version
-                ? ` — ${t("extensionsInstalledVersion", { version: step.ext.installed_version })}`
-                : ""}
-              {step.ext.default_version
-                ? ` — ${t("extensionsDefaultVersion", { version: step.ext.default_version })}`
-                : ""}
-            </chakra.p>
-
-            {step.action === "install" && (
-              <FormSection>
-                <FieldLabel htmlFor="ext-schema">{t("extensionsSchema")}</FieldLabel>
+        {/* 一覧 ⇔ 確認は、確認へ進むとき右から・戻るとき左から入るスライド。退場を待ってから次を出す。 */}
+        <AnimatePresence mode="wait" initial={false} custom={slideDir}>
+          {step === null ? (
+            <motion.div
+              key="list"
+              ref={listRef}
+              custom={slideDir}
+              variants={directionalSlide}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={slideTransition}
+              onAnimationComplete={restoreFocus}
+              style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}
+            >
+              <chakra.div display="flex" gap="2" alignItems="center">
                 <Input
-                  id="ext-schema"
-                  fontFamily="mono"
-                  value={schema}
-                  placeholder={t("extensionsSchemaPlaceholder")}
-                  onChange={(e) => setSchema(e.target.value)}
-                  disabled={readOnly}
+                  ref={searchRef}
+                  flex="1"
+                  value={query}
+                  placeholder={t("extensionsSearchPlaceholder")}
+                  aria-label={t("extensionsSearchPlaceholder")}
+                  onChange={(e) => setQuery(e.target.value)}
                 />
-              </FormSection>
-            )}
-
-            {(step.action === "install" || step.action === "drop") && (
-              <FormSection>
-                <chakra.label display="flex" alignItems="center" gap="2" textStyle="body">
-                  <Checkbox
-                    checked={cascade}
-                    disabled={readOnly}
-                    onChange={(e) => setCascade(e.target.checked)}
+                <ListboxSelect
+                  ariaLabel={t("extensionsFilterLabel")}
+                  value={filter}
+                  options={filterOptions}
+                  onChange={(v) => setFilter(v as ExtensionFilter)}
+                  css={{ minWidth: "10rem" }}
+                />
+              </chakra.div>
+              {loading ? (
+                <chakra.div
+                  role="status"
+                  aria-label={t("spinnerLoadingAria")}
+                  borderWidth="1px"
+                  borderColor="app.border"
+                  borderRadius="md"
+                  paddingY="1"
+                >
+                  <SkeletonSearchRows rows={4} />
+                </chakra.div>
+              ) : visible.length === 0 ? (
+                // 読み込み失敗のときは「無い」とは言わない (上のエラー表示だけにする)。
+                !loadError &&
+                (filtering ? (
+                  <EmptyState
+                    compact
+                    icon="search"
+                    title={t("extensionsEmpty")}
+                    action={{ label: t("extensionsClearFilters"), onClick: clearFilters }}
                   />
-                  {step.action === "install" ? t("extensionsCascadeInstall") : t("extensionsCascadeDrop")}
-                </chakra.label>
-              </FormSection>
-            )}
+                ) : (
+                  <EmptyState compact icon="tools" title={t("extensionsNone")} />
+                ))
+              ) : (
+                <MotionUl
+                  variants={staggerContainer(reducedMotion)}
+                  initial={staggeredRef.current ? false : "initial"}
+                  animate="animate"
+                  onAnimationComplete={() => {
+                    staggeredRef.current = true;
+                  }}
+                  listStyleType="none"
+                  margin={0}
+                  padding={0}
+                  maxH="22rem"
+                  overflowY="auto"
+                  borderWidth="1px"
+                  borderColor="app.border"
+                  borderRadius="md"
+                >
+                  {visible.map((e) => (
+                    <ExtensionRow
+                      key={e.name}
+                      ext={e}
+                      preloaded={isPreloaded(e.name, preload)}
+                      readOnly={readOnly}
+                      onAction={begin}
+                    />
+                  ))}
+                </MotionUl>
+              )}
+            </motion.div>
+          ) : (
+            <motion.div
+              key="step"
+              custom={slideDir}
+              variants={directionalSlide}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={slideTransition}
+              style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}
+            >
+              <chakra.p margin={0} textStyle="caption" color="app.textSecondary">
+                {step.ext.comment ?? step.ext.name}
+                {step.ext.installed_version
+                  ? ` — ${t("extensionsInstalledVersion", { version: step.ext.installed_version })}`
+                  : ""}
+                {step.ext.default_version
+                  ? ` — ${t("extensionsDefaultVersion", { version: step.ext.default_version })}`
+                  : ""}
+              </chakra.p>
 
-            {step.action === "drop" && !failsWithoutCascade && (
-              <Callout tone="danger">
-                {cascade ? t("extensionsDropCascadeWarning") : t("extensionsDropWarning")}
-              </Callout>
-            )}
-            {step.action === "drop" && (
-              <ExtensionDependents
-                key={step.ext.name}
-                dependents={dependents}
-                error={dependentsError}
-                cascade={cascade}
-              />
-            )}
-            {step.action === "install" &&
-              needsPreload(step.ext.name) &&
-              !isPreloaded(step.ext.name, preload) && (
-                <Callout tone="warning">{t("extensionsPreloadNote", { name: step.ext.name })}</Callout>
+              {step.action === "install" && (
+                <FormSection>
+                  <FieldLabel htmlFor="ext-schema">{t("extensionsSchema")}</FieldLabel>
+                  <Input
+                    id="ext-schema"
+                    fontFamily="mono"
+                    value={schema}
+                    placeholder={t("extensionsSchemaPlaceholder")}
+                    onChange={(e) => setSchema(e.target.value)}
+                    disabled={readOnly}
+                  />
+                </FormSection>
               )}
 
-            <FormSection>
-              <FieldLabel as="div">{t("extensionsPreview")}</FieldLabel>
-              <SqlPreview sql={`${sql};`} driver="postgres" minH="48px" wrap />
-            </FormSection>
+              {(step.action === "install" || step.action === "drop") && (
+                <FormSection>
+                  <chakra.label display="flex" alignItems="center" gap="2" textStyle="body">
+                    <Checkbox
+                      checked={cascade}
+                      disabled={readOnly}
+                      onChange={(e) => setCascade(e.target.checked)}
+                    />
+                    {step.action === "install" ? t("extensionsCascadeInstall") : t("extensionsCascadeDrop")}
+                  </chakra.label>
+                </FormSection>
+              )}
 
-            {cancelled && !runError && <Callout tone="info">{t("extensionsNotExecuted")}</Callout>}
-
-            {runError && (
-              <ErrorNote>
-                {runError}
-                {hintKey && (
-                  <chakra.div marginTop="1" textStyle="caption">
-                    {t(hintKey)}
-                  </chakra.div>
+              {step.action === "drop" && !failsWithoutCascade && (
+                <Callout tone="danger">
+                  {cascade ? t("extensionsDropCascadeWarning") : t("extensionsDropWarning")}
+                </Callout>
+              )}
+              {step.action === "drop" && (
+                <ExtensionDependents
+                  key={step.ext.name}
+                  dependents={dependents}
+                  error={dependentsError}
+                  cascade={cascade}
+                />
+              )}
+              {step.action === "install" &&
+                needsPreload(step.ext.name) &&
+                !isPreloaded(step.ext.name, preload) && (
+                  <Callout tone="warning">{t("extensionsPreloadNote", { name: step.ext.name })}</Callout>
                 )}
-              </ErrorNote>
-            )}
-          </>
-        )}
+
+              <FormSection>
+                <FieldLabel as="div">{t("extensionsPreview")}</FieldLabel>
+                <SqlPreview sql={`${sql};`} driver="postgres" minH="48px" wrap />
+              </FormSection>
+
+              {cancelled && !runError && <Callout tone="info">{t("extensionsNotExecuted")}</Callout>}
+
+              {runError && (
+                <ErrorNote>
+                  {runError}
+                  {hintKey && (
+                    <chakra.div marginTop="1" textStyle="caption">
+                      {t(hintKey)}
+                    </chakra.div>
+                  )}
+                </ErrorNote>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </ModalBody>
       {step === null ? (
         <ModalFooter>
@@ -387,7 +481,9 @@ function ExtensionRow({
       : (ext.installed_version ?? "")
     : (ext.default_version ?? "");
   return (
-    <chakra.li
+    <MotionLi
+      variants={variants.staggerItem}
+      data-ext-row={ext.name}
       display="flex"
       gap="3"
       alignItems="center"
@@ -430,6 +526,7 @@ function ExtensionRow({
             size="sm"
             variant="secondary"
             disabled={readOnly}
+            data-ext-trigger={`${ext.name}:install`}
             onClick={() => onAction("install", ext)}
           >
             {t("extensionsInstall")}
@@ -441,6 +538,7 @@ function ExtensionRow({
             size="sm"
             variant="secondary"
             disabled={readOnly}
+            data-ext-trigger={`${ext.name}:update`}
             onClick={() => onAction("update", ext)}
           >
             {t("extensionsUpdate")}
@@ -452,12 +550,13 @@ function ExtensionRow({
             size="sm"
             variant="ghost"
             disabled={readOnly}
+            data-ext-trigger={`${ext.name}:drop`}
             onClick={() => onAction("drop", ext)}
           >
             {t("extensionsDrop")}
           </Button>
         )}
       </chakra.div>
-    </chakra.li>
+    </MotionLi>
   );
 }

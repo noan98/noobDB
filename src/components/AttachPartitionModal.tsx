@@ -6,7 +6,8 @@ import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { SqlPreview } from "./SqlPreview";
 import { ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
-import { Spinner } from "./Spinner";
+import { Skeleton } from "./Skeleton";
+import { EmptyState } from "./EmptyState";
 import { Button, Input, PressableButton, Switch } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
 import {
@@ -100,6 +101,10 @@ export function AttachPartitionModal({ sessionId, database, table, info, kind, o
   const sql = selected && !boundError ? buildAttachSql("postgres", database, table, selected, spec) : "";
   const loading = tables === null;
   const valid = !loading && sql !== "";
+  // 読み込み中はセレクトが無く、初期フォーカス (モーダルを開いた瞬間の 1 回) が空振りするので、出た時点で寄せる。
+  useEffect(() => {
+    if (!loading) selectRef.current?.focus();
+  }, [loading]);
 
   const submit = () => {
     if (valid) onConfirm(selected, sql);
@@ -122,19 +127,26 @@ export function AttachPartitionModal({ sessionId, database, table, info, kind, o
         <FormSection>
           <FieldLabel htmlFor="attach-partition-child">{t("attachPartitionChild")}</FieldLabel>
           <Flex align="center" gap="2">
-            <ListboxSelect
-              id="attach-partition-child"
-              triggerRef={selectRef}
-              value={selected}
-              disabled={candidates.length === 0}
-              options={candidates.map((n) => ({ value: n }))}
-              onChange={setChild}
-              css={{ flex: 1, minWidth: 0 }}
-            />
-            {loading && <Spinner size={14} />}
+            {loading ? (
+              <Skeleton
+                role="status"
+                aria-label={t("spinnerLoadingAria")}
+                style={{ flex: 1, height: "var(--space-8)", borderRadius: "var(--radius-md)" }}
+              />
+            ) : (
+              <ListboxSelect
+                id="attach-partition-child"
+                triggerRef={selectRef}
+                value={selected}
+                disabled={candidates.length === 0}
+                options={candidates.map((n) => ({ value: n }))}
+                onChange={setChild}
+                css={{ flex: 1, minWidth: 0 }}
+              />
+            )}
           </Flex>
           {!loading && candidates.length === 0 && (
-            <FieldError>{t("attachPartitionNoCandidates", { schema: database })}</FieldError>
+            <EmptyState compact icon="table" title={t("attachPartitionNoCandidates", { schema: database })} />
           )}
           {listError && <ErrorNote>{t("attachPartitionListError", { error: listError })}</ErrorNote>}
           <chakra.span textStyle="caption">{t("attachPartitionChildHelp", { schema: database })}</chakra.span>

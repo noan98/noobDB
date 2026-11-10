@@ -36,6 +36,7 @@ const OVERVIEW = {
 };
 
 const dependentsMock = vi.hoisted(() => vi.fn());
+const overviewMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();
@@ -43,7 +44,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
     ...actual,
     api: {
       ...actual.api,
-      listExtensions: () => Promise.resolve(OVERVIEW),
+      listExtensions: () => overviewMock(),
       listExtensionDependents: (...a: unknown[]) => dependentsMock(...a),
     },
   };
@@ -69,6 +70,41 @@ describe("ExtensionsModal", () => {
     setLocale("en");
     vi.clearAllMocks();
     dependentsMock.mockResolvedValue([]);
+    overviewMock.mockResolvedValue(OVERVIEW);
+  });
+
+  it("読み込み中は行の形のスケルトンを出す (素のスピナーだけにしない)", async () => {
+    overviewMock.mockReturnValue(new Promise(() => {}));
+    setup();
+    expect((await screen.findAllByTestId("search-skeleton-row")).length).toBeGreaterThan(0);
+  });
+
+  it("絞り込みで 0 件のときは「条件を解除」を出し、押すと一覧が戻る。本当に 0 件なら出さない", async () => {
+    const user = userEvent.setup();
+    setup();
+    await screen.findByText("pg_trgm");
+    await user.type(screen.getByPlaceholderText(t("extensionsSearchPlaceholder")), "zzz");
+    expect(await screen.findByText(t("extensionsEmpty"))).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: t("extensionsClearFilters") }));
+    expect(await screen.findByText("pg_trgm")).toBeInTheDocument();
+    expect(screen.queryByText(t("extensionsEmpty"))).not.toBeInTheDocument();
+  });
+
+  it("拡張機能がそもそも無いときは、条件解除ではなく別の文言を出す", async () => {
+    overviewMock.mockResolvedValue({ extensions: [], shared_preload_libraries: [] });
+    setup();
+    expect(await screen.findByText(t("extensionsNone"))).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("extensionsClearFilters") })).not.toBeInTheDocument();
+  });
+
+  it("確認から戻ると、操作を始めた行のボタンへフォーカスが戻る", async () => {
+    const user = userEvent.setup();
+    setup();
+    await screen.findByText("pg_trgm");
+    await user.click(screen.getByRole("button", { name: t("extensionsUpdate") }));
+    await user.click(screen.getByRole("button", { name: t("extensionsCancel") }));
+    const back = await screen.findByRole("button", { name: t("extensionsUpdate") });
+    await waitFor(() => expect(back).toHaveFocus());
   });
 
   it("導入済みと未導入を並べ、更新できるものに印を付ける。plpgsql は削除できない", async () => {
@@ -87,7 +123,8 @@ describe("ExtensionsModal", () => {
     const { onExecute } = setup();
     await screen.findByText("pg_stat_statements");
     await user.click(screen.getByRole("button", { name: t("extensionsInstall") }));
-    expect(screen.getByTestId("sql-preview")).toHaveTextContent(
+    // 確認画面は一覧の退場を待ってから入る。
+    expect(await screen.findByTestId("sql-preview")).toHaveTextContent(
       'CREATE EXTENSION IF NOT EXISTS "pg_stat_statements";',
     );
     expect(screen.getByText(t("extensionsPreloadNote", { name: "pg_stat_statements" }))).toBeInTheDocument();
@@ -110,7 +147,7 @@ describe("ExtensionsModal", () => {
     const { onExecute } = setup();
     await screen.findByText("pg_trgm");
     await user.click(screen.getByRole("button", { name: t("extensionsUpdate") }));
-    expect(screen.getByTestId("sql-preview")).toHaveTextContent(
+    expect(await screen.findByTestId("sql-preview")).toHaveTextContent(
       "ALTER EXTENSION \"pg_trgm\" UPDATE TO '1.6';",
     );
     await user.click(screen.getAllByRole("button", { name: t("extensionsUpdate") }).at(-1) as HTMLElement);
@@ -126,7 +163,7 @@ describe("ExtensionsModal", () => {
     const { onExecute } = setup();
     await screen.findByText("pg_trgm");
     await user.click(screen.getByRole("button", { name: t("extensionsDrop") }));
-    expect(screen.getByText(t("extensionsDropWarning"))).toBeInTheDocument();
+    expect(await screen.findByText(t("extensionsDropWarning"))).toBeInTheDocument();
     await user.click(screen.getByLabelText(t("extensionsCascadeDrop")));
     expect(screen.getByTestId("sql-preview")).toHaveTextContent('DROP EXTENSION "pg_trgm" CASCADE;');
     expect(screen.getByText(t("extensionsDropCascadeWarning"))).toBeInTheDocument();

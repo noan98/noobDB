@@ -6,7 +6,7 @@ import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { SqlPreview } from "./SqlPreview";
 import { ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
-import { Spinner } from "./Spinner";
+import { Skeleton } from "./Skeleton";
 import { Button, Input, PressableButton } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
 import { EnumValueChips } from "./EnumValueChips";
@@ -160,7 +160,25 @@ export function EnumTypeModal({ sessionId, database, name, mode, readOnly, onCon
         <FormSection>
           <FieldLabel as="div">{t("enumTypeCurrentValues")}</FieldLabel>
           {loading ? (
-            <Spinner size={14} />
+            <chakra.div
+              role="status"
+              aria-label={t("spinnerLoadingAria")}
+              display="flex"
+              gap="2"
+              flexWrap="wrap"
+            >
+              {[14, 18, 12, 16].map((w, i) => (
+                <Skeleton
+                  key={i}
+                  style={{
+                    width: `${w}%`,
+                    height: "var(--space-6)",
+                    borderRadius: "var(--radius-md)",
+                    animationDelay: `${i * 0.035}s`,
+                  }}
+                />
+              ))}
+            </chakra.div>
           ) : existing.length > 0 || ghost ? (
             <>
               <EnumValueChips

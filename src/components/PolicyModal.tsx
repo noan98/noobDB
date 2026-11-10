@@ -3,11 +3,12 @@ import { chakra } from "@chakra-ui/react";
 import { api } from "../api/tauri";
 import { useT } from "../i18n";
 import { Callout } from "./Callout";
+import { EmptyState } from "./EmptyState";
 import { ListboxSelect } from "./ListboxSelect";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { SqlPreview } from "./SqlPreview";
-import { Spinner } from "./Spinner";
+import { Skeleton } from "./Skeleton";
 import { Button, Checkbox, Input, PressableButton, Textarea } from "./ui";
 import {
   buildPolicyStatements,
@@ -184,13 +185,17 @@ export function PolicyModal({ sessionId, database, initialTable, readOnly, onCon
         {readOnly && <Callout tone="warning">{t("policyReadOnly")}</Callout>}
         {loadError && <ErrorNote>{loadError}</ErrorNote>}
         {!loading && !loadError && tableList.length === 0 && (
-          <Callout tone="info">{t("policyNoTables")}</Callout>
+          <EmptyState compact icon="table" title={t("policyNoTables")} />
         )}
 
         <FormSection>
           <FieldLabel htmlFor="policy-table">{t("policyTable")}</FieldLabel>
           {loading ? (
-            <Spinner size={14} />
+            <Skeleton
+              role="status"
+              aria-label={t("spinnerLoadingAria")}
+              style={{ height: "var(--space-8)", borderRadius: "var(--radius-md)" }}
+            />
           ) : (
             <ListboxSelect
               id="policy-table"
