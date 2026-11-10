@@ -1334,6 +1334,7 @@ impl SqliteConn {
                 column_comment: None,
                 invisible: false,
                 domain_base_type: None,
+                unreadable: false,
             });
         }
         Ok(out)

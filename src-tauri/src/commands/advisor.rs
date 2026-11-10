@@ -186,7 +186,12 @@ pub(crate) async fn collect_and_analyze(
 
     // 採番の使用状況 (#2210)。読めなくても他のルールは続行し、黙って 0 件にせずスキップ理由を残す。
     let (sequences, sequences_unreadable) = match conn.sequence_usage(database).await {
-        Ok(v) => (v, false),
+        Ok(mut v) => {
+            // 権限不足で読めない列が 1 本でもあれば、判定から外したうえで「確認できなかった」と残す。
+            let any_unreadable = v.iter().any(|s| s.unreadable);
+            v.retain(|s| !s.unreadable);
+            (v, any_unreadable)
+        }
         Err(e) => {
             // 原因はエラー種別だけ残す (秘密は含まれないが、接続先などの詳細は出さない)。
             tracing::warn!(kind = e.kind(), "advisor: could not read sequence state");

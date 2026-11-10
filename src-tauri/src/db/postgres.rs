@@ -1409,7 +1409,8 @@ impl PostgresConn {
 
     /// スキーマ健全性アドバイザ (#2210) の採番列の使用状況。`pg_sequences` (`last_value` / `max_value` /
     /// `cycle`) を、それを所有する serial / IDENTITY 列 (`pg_depend` の `a` / `i`) と結び付けて読む。
-    /// `last_value` が NULL (一度も払い出していない・権限なし) と、降順のシーケンスは対象外。
+    /// `last_value` が NULL (一度も払い出していない) と、降順のシーケンスは対象外。権限が無く読めない
+    /// シーケンスは `unreadable` で返す (呼び出し側がスキップ理由を残す)。
     /// 読み取りのみ。
     pub async fn sequence_usage(&self, schema: &str) -> Result<Vec<SequenceUsage>> {
         let rows: Vec<PgRow> = sqlx::query(
@@ -1424,7 +1425,9 @@ impl PostgresConn {
                       s.last_value,
                       s.max_value,
                       s.cycle,
-                      (d.deptype = 'i') AS is_identity
+                      (d.deptype = 'i') AS is_identity,
+                      -- last_value は SELECT / USAGE が無いと NULL になり「未使用」と区別できない。
+                      pg_catalog.has_sequence_privilege(seq.oid, 'SELECT, USAGE') AS readable
                  FROM pg_catalog.pg_depend d
                  JOIN pg_catalog.pg_class seq ON seq.oid = d.objid AND seq.relkind = 'S'
                  JOIN pg_catalog.pg_namespace sn ON sn.oid = seq.relnamespace
@@ -1448,7 +1451,13 @@ impl PostgresConn {
         Ok(rows
             .iter()
             .filter_map(|r| {
-                let last = r.try_get::<Option<i64>, _>("last_value").ok().flatten()?;
+                // 権限が無いシーケンスは、未使用 (NULL) と取り違えず「読めない」として返す。
+                let readable = r.try_get::<bool, _>("readable").unwrap_or(true);
+                let last = if readable {
+                    r.try_get::<Option<i64>, _>("last_value").ok().flatten()?
+                } else {
+                    0
+                };
                 let max = r.try_get::<i64, _>("max_value").ok()?;
                 let identity = r.try_get::<bool, _>("is_identity").unwrap_or(false);
                 Some(SequenceUsage {
@@ -1472,6 +1481,7 @@ impl PostgresConn {
                     } else {
                         None
                     },
+                    unreadable: !readable,
                 })
             })
             .collect())

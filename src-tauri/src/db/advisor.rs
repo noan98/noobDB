@@ -332,6 +332,9 @@ pub struct SequenceUsage {
     /// PostgreSQL の DOMAIN 型の列では、基底型 (`data_type` はドメイン名)。上限はこちらで判定し、
     /// 型変更 DDL は列がドメインから外れ CHECK / NOT NULL が失われるので出さない。
     pub domain_base_type: Option<String>,
+    /// 権限不足で使用状況を読めなかった (PostgreSQL の `pg_sequences.last_value` は SELECT / USAGE が
+    /// 無いと NULL)。判定には使わず、呼び出し側がスキップ理由を残す。
+    pub unreadable: bool,
 }
 
 /// スキーマメタデータを走査して健全性の指摘リストを組み立てる純関数。副作用なし・
@@ -2851,6 +2854,7 @@ mod tests {
             column_comment: None,
             invisible: false,
             domain_base_type: None,
+            unreadable: false,
         }
     }
 
