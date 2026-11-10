@@ -11,6 +11,7 @@ import type {
   TablePartitions,
   RlsTable,
   PublicationInfo,
+  TableReplicaIdentity,
   ExtensionDependent,
   ExtensionsOverview,
   TableTrigger,
@@ -159,6 +160,14 @@ export const schemaCommands = {
   listPublications: (sessionId: string) =>
     invoke<PublicationInfo[]>("list_publications", { sessionId }).then((r) =>
       parseResponse(schemas.publicationInfoArray, r, "list_publications"),
+    ),
+  /**
+   * 表の REPLICA IDENTITY (`relreplident`) と主キーの有無 (#2212)。パブリケーションへ追加する前に、UPDATE / DELETE が
+   * 止まらないかの確認に使う。表が無い・PostgreSQL 以外は null。読み取りのみ。
+   */
+  getTableReplicaIdentity: (sessionId: string, database: string, table: string) =>
+    invoke<TableReplicaIdentity | null>("get_table_replica_identity", { sessionId, database, table }).then(
+      (r) => parseResponse(schemas.tableReplicaIdentityOrNull, r, "get_table_replica_identity"),
     ),
   /**
    * PostgreSQL の拡張機能 (導入済み + サーバが提供できるもの) の一覧 (#2160)。PostgreSQL だけ (他ドライバはエラー)。

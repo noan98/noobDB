@@ -74,7 +74,36 @@ pub fn display_definition(p: &PublicationInfo) -> String {
         }
     }
     out.push_str(&format!("\n  {};", with_options(p)));
+    // 各表の REPLICA IDENTITY (#2212)。UPDATE / DELETE を配信できるかの手掛かりで、比較・同期には使わない表示専用のコメント。
+    for t in &p.tables {
+        out.push_str(&format!(
+            "\n-- {}: REPLICA IDENTITY {}",
+            // 表名の改行で `--` コメントが途切れて後ろが SQL として残らないよう、見える形に置き換える。
+            qualified(t).replace('\r', "\\r").replace('\n', "\\n"),
+            replica_identity_label(&t.replica_identity, t.has_primary_key, t.is_partitioned)
+        ));
+    }
     out
+}
+
+/// `relreplident` の表示名 (#2212)。`d` は主キーの有無を添える (主キーが無いと UPDATE / DELETE を配信できない)。
+fn replica_identity_label(ident: &str, has_primary_key: bool, is_partitioned: bool) -> String {
+    // パーティション親の値は末端の集計 (親自身の設定ではない)。
+    if is_partitioned {
+        return if ident == "n" {
+            "partitioned: some partitions lack identity".to_string()
+        } else {
+            "partitioned: all partitions OK".to_string()
+        };
+    }
+    match ident {
+        "n" => "NOTHING".to_string(),
+        "f" => "FULL".to_string(),
+        "i" => "USING INDEX".to_string(),
+        "?" => "UNKNOWN".to_string(),
+        _ if has_primary_key => "DEFAULT (primary key)".to_string(),
+        _ => "DEFAULT (no primary key)".to_string(),
+    }
 }
 
 /// スキーマ比較・同期用の定義 (`schema` に属する表だけ)。`schema_tables` は `schema` の表 (明示的に追加した表と、
@@ -415,6 +444,9 @@ mod tests {
             table: table.into(),
             columns: None,
             row_filter: None,
+            replica_identity: "d".into(),
+            has_primary_key: true,
+            is_partitioned: false,
         }
     }
 
@@ -427,6 +459,23 @@ mod tests {
             tables: vec![],
             schemas: vec![],
         }
+    }
+
+    #[test]
+    fn replica_identity_comment_escapes_newlines_in_table_names() {
+        let mut p = info("pub_nl");
+        p.tables = vec![tbl("public", "a\nb\rc")];
+        let out = display_definition(&p);
+        let comment = out.lines().last().unwrap_or_default();
+        assert!(comment.starts_with("-- "), "{out}");
+        assert!(comment.contains("a\\nb\\rc"), "{out}");
+        // コメント行より後ろに SQL として残る行が無い。
+        assert!(
+            out.lines()
+                .filter(|l| l.contains("REPLICA IDENTITY"))
+                .all(|l| l.starts_with("-- ")),
+            "{out}"
+        );
     }
 
     #[test]
@@ -449,6 +498,42 @@ mod tests {
         p.schemas = vec!["other".into()];
         let d = display_definition(&p);
         assert!(d.contains("FOR TABLE \"s\".\"plain\",\n    \"s\".\"orders\" (\"id\", \"we\"\"ird\") WHERE ((id > 0)),\n  TABLES IN SCHEMA \"other\""), "{d}");
+        // 各表の REPLICA IDENTITY を末尾のコメントに出す (#2212)。
+        assert!(
+            d.contains("\n-- \"s\".\"plain\": REPLICA IDENTITY DEFAULT (primary key)"),
+            "{d}"
+        );
+        let mut p2 = info("pub_c");
+        p2.tables = vec![
+            PublicationTable {
+                has_primary_key: false,
+                is_partitioned: false,
+                ..tbl("s", "nopk")
+            },
+            PublicationTable {
+                replica_identity: "n".into(),
+                ..tbl("s", "none")
+            },
+            PublicationTable {
+                replica_identity: "f".into(),
+                has_primary_key: false,
+                is_partitioned: false,
+                ..tbl("s", "full")
+            },
+            PublicationTable {
+                replica_identity: "i".into(),
+                ..tbl("s", "idx")
+            },
+        ];
+        let d2 = display_definition(&p2);
+        for expect in [
+            "\"s\".\"nopk\": REPLICA IDENTITY DEFAULT (no primary key)",
+            "\"s\".\"none\": REPLICA IDENTITY NOTHING",
+            "\"s\".\"full\": REPLICA IDENTITY FULL",
+            "\"s\".\"idx\": REPLICA IDENTITY USING INDEX",
+        ] {
+            assert!(d2.contains(expect), "{d2}");
+        }
         // 表も スキーマも無い (空の) パブリケーションは FOR 句なし。
         assert!(!display_definition(&info("empty")).contains("FOR"));
     }
@@ -682,5 +767,17 @@ mod tests {
             "{d}"
         );
         assert!(d.contains("-- 最終受信: なし"), "{d}");
+    }
+
+    #[test]
+    fn partitioned_label_reads_as_an_aggregate_not_the_parents_own_setting() {
+        assert_eq!(
+            replica_identity_label("n", false, true),
+            "partitioned: some partitions lack identity"
+        );
+        assert_eq!(
+            replica_identity_label("d", true, true),
+            "partitioned: all partitions OK"
+        );
     }
 }

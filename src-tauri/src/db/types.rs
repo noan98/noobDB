@@ -682,6 +682,25 @@ pub struct PublicationTable {
     pub columns: Option<Vec<String>>,
     /// 行フィルタ (`WHERE (...)`、PostgreSQL 15 以降)。指定が無い・13 / 14 は `None`。
     pub row_filter: Option<String>,
+    /// `pg_class.relreplident` (`d` = 既定 (主キー) / `n` = なし / `f` = 全列 / `i` = 指定の索引、#2212)。
+    pub replica_identity: String,
+    /// 主キーがある (`pg_index.indisprimary`)。`d` のとき、これが無いと UPDATE / DELETE を配信できない (#2212)。
+    pub has_primary_key: bool,
+    /// パーティション親表。このとき上 2 つは末端のパーティションの集計値 (1 つでも識別子が無ければ `n`、すべてにあれば `d` + 主キーあり)。
+    pub is_partitioned: bool,
+}
+
+/// 表の REPLICA IDENTITY (`get_table_replica_identity`、#2212)。PostgreSQL 専用。パブリケーションが
+/// `update` / `delete` を公開するとき、`n`、または `d` で主キーが無いと、その表への UPDATE / DELETE が失敗する。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TableReplicaIdentity {
+    /// 実効の `relreplident` (`d` / `n` / `f` / `i`)。索引が DROP 済みの `i` は `n` に正規化済み。
+    pub replica_identity: String,
+    /// 主キーがある (遅延可能・無効でない)。
+    pub has_primary_key: bool,
+    /// パーティション親表。REPLICA IDENTITY は子に伝播しないので、`replica_identity` / `has_primary_key` は
+    /// 末端のパーティションすべてを集計した値 (1 つでも識別子が無ければ `n`)。`FULL` はパーティションごとに設定が要る。
+    pub is_partitioned: bool,
 }
 
 /// 論理レプリケーションのパブリケーション 1 件 (`list_publications`、#2181)。PostgreSQL 専用。

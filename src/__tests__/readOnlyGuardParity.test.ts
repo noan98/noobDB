@@ -554,6 +554,7 @@ safe(
   "list_schema_objects",
   "list_rls_tables",
   "list_publications",
+  "get_table_replica_identity",
   "list_extensions",
   "list_extension_dependents",
   "list_table_comments",
@@ -718,6 +719,7 @@ const CONNECTION_READ_METHODS = new Set([
   // パブリケーションの一覧 / 比較用の定義を pg_publication 系から引くだけ (#2181)
   "list_publications",
   "publication_definitions",
+  "table_replica_identity",
   // 拡張機能の一覧を pg_extension / pg_available_extensions から引くだけ (#2160)
   "list_extensions",
   // 拡張機能の CASCADE 削除で巻き添えになるオブジェクトを pg_depend から引くだけ (#2177)

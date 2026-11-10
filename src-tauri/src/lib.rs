@@ -125,8 +125,8 @@ pub mod __test_api {
         ServerInfo, ServerMessage, ServerMessageSeverity, ServerMetrics, ServerVariable,
         SqliteFkViolation, SqliteMaintenanceAction, SqliteMaintenanceResult, StreamBatch,
         TableColumnInfo, TableComment, TableExtrasInfo, TablePartition, TablePartitions,
-        TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
-        TableTrigger, UserPrivileges, Value,
+        TablePrivilegeRow, TableReplicaIdentity, TableRowEstimate, TableRowIdentity, TableSchema,
+        TableSizeInfo, TableTrigger, UserPrivileges, Value,
     };
     pub use crate::db::upsert::{ConflictMode, ImportConflict};
     pub use crate::db::{
@@ -1945,6 +1945,7 @@ pub fn run() {
             commands::schema::list_table_triggers,
             commands::schema::list_rls_tables,
             commands::schema::list_publications,
+            commands::schema::get_table_replica_identity,
             commands::schema::list_extensions,
             commands::schema::list_extension_dependents,
             commands::schema::list_table_partitions,

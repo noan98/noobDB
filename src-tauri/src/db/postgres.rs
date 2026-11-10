@@ -2322,24 +2322,28 @@ impl PostgresConn {
         use super::types::{PublicationInfo, PublicationTable};
         let v15 = self.server_version_num().await? >= 150_000;
         // 列リスト (prattrs) と行フィルタ (prqual) は 15 以降の列。13 / 14 には無いので別の問い合わせにする。
-        let tables_sql = if v15 {
+        let tables_sql: String = if v15 {
             "SELECT p.pubname::text, n.nspname::text, c.relname::text, \
                     CASE WHEN pr.prattrs IS NULL THEN NULL \
                          ELSE (SELECT array_agg(a.attname::text ORDER BY a.attnum) FROM pg_attribute a \
                                 WHERE a.attrelid = pr.prrelid AND a.attnum = ANY (pr.prattrs)) END, \
-                    pg_get_expr(pr.prqual, pr.prrelid) \
+                    pg_get_expr(pr.prqual, pr.prrelid), \
+                    {replica_cols} \
                FROM pg_publication_rel pr \
                JOIN pg_publication p ON p.oid = pr.prpubid \
                JOIN pg_class c ON c.oid = pr.prrelid \
                JOIN pg_namespace n ON n.oid = c.relnamespace \
               ORDER BY 1, 2, 3"
+            .replace("{replica_cols}", &replica_columns_sql())
         } else {
-            "SELECT p.pubname::text, n.nspname::text, c.relname::text, NULL::text[], NULL::text \
+            "SELECT p.pubname::text, n.nspname::text, c.relname::text, NULL::text[], NULL::text, \
+                    {replica_cols} \
                FROM pg_publication_rel pr \
                JOIN pg_publication p ON p.oid = pr.prpubid \
                JOIN pg_class c ON c.oid = pr.prrelid \
                JOIN pg_namespace n ON n.oid = c.relnamespace \
               ORDER BY 1, 2, 3"
+                .replace("{replica_cols}", &replica_columns_sql())
         };
         // pubviaroot は 13 以降の列。jsonb 経由で読めば、無い版でも列参照エラーにならない。
         let pub_rows: Vec<PgRow> = sqlx::query(
@@ -2349,7 +2353,8 @@ impl PostgresConn {
         )
         .fetch_all(&self.pool)
         .await?;
-        let table_rows: Vec<PgRow> = sqlx::query(tables_sql).fetch_all(&self.pool).await?;
+        let table_rows: Vec<PgRow> = // 定数の断片だけで組み立てた SQL (外部入力なし)。
+        sqlx::query(sqlx::AssertSqlSafe(tables_sql)).fetch_all(&self.pool).await?;
         let schema_rows: Vec<PgRow> = if v15 {
             sqlx::query(
                 "SELECT p.pubname::text, n.nspname::text \
@@ -2390,6 +2395,10 @@ impl PostgresConn {
                     table: r.try_get(2).unwrap_or_default(),
                     columns: r.try_get::<Option<Vec<String>>, _>(3).ok().flatten(),
                     row_filter: r.try_get::<Option<String>, _>(4).ok().flatten(),
+                    // 読めない (不明) ときは "?" と true: 警告も「主キーなし」の表示も出さない (#2212)。
+                    replica_identity: r.try_get::<String, _>(5).unwrap_or_else(|_| "?".into()),
+                    has_primary_key: r.try_get::<bool, _>(6).unwrap_or(true),
+                    is_partitioned: r.try_get::<bool, _>(7).unwrap_or(false),
                 });
             }
         }
@@ -2400,6 +2409,34 @@ impl PostgresConn {
             }
         }
         Ok(out)
+    }
+
+    /// 表の REPLICA IDENTITY (`relreplident`) と主キーの有無 (#2212)。表が無ければ `None`。
+    /// パブリケーションへ追加する前に、UPDATE / DELETE が止まらないかを確かめるのに使う。pg_class 系は誰でも読める。
+    pub async fn table_replica_identity(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Option<super::types::TableReplicaIdentity>> {
+        let sql = "SELECT {replica_cols} \
+               FROM pg_class c \
+               JOIN pg_namespace n ON n.oid = c.relnamespace \
+              WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind IN ('r', 'p')"
+            .replace("{replica_cols}", &replica_columns_sql());
+        // 定数の断片だけで組み立てた SQL (表名は bind)。
+        let row: Option<PgRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(schema)
+            .bind(table)
+            .fetch_optional(&self.pool)
+            .await?;
+        // 読めない (型が合わない) ときは不明として `None` を返し、呼び出し側は警告しない (#2212)。
+        Ok(row.and_then(|r| {
+            Some(super::types::TableReplicaIdentity {
+                replica_identity: r.try_get::<String, _>(0).ok()?,
+                has_primary_key: r.try_get::<bool, _>(1).ok()?,
+                is_partitioned: r.try_get::<bool, _>(2).ok()?,
+            })
+        }))
     }
 
     /// ツリーの定義表示: パブリケーション 1 件の `CREATE PUBLICATION` (#2181)。無ければ `None`。
@@ -2460,6 +2497,9 @@ impl PostgresConn {
                                 table: table.clone(),
                                 columns: None,
                                 row_filter: None,
+                                replica_identity: "d".into(),
+                                has_primary_key: false,
+                                is_partitioned: false,
                             });
                         }
                     }
@@ -5794,6 +5834,41 @@ impl PostgresConn {
             slots,
         })
     }
+}
+
+/// 表 `c` が UPDATE / DELETE の行特定手段を持たない、の SQL 条件 (#2212)。`n`、`d` で主キーが使えない
+/// (主キーが無い・遅延可能・無効)、`i` で指定の索引が DROP 済み (`indisreplident` の索引が無い)。
+fn replica_lacks_sql(c: &str) -> String {
+    format!(
+        "({c}.relreplident = 'n' \
+          OR ({c}.relreplident = 'd' AND NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = {c}.oid \
+               AND i.indisprimary AND i.indimmediate AND i.indisvalid)) \
+          OR ({c}.relreplident = 'i' AND NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = {c}.oid \
+               AND i.indisreplident)))"
+    )
+}
+
+/// `pg_class` 別名 `c` の表について、実効の REPLICA IDENTITY・主キーが使えるか・パーティション親か、の 3 列 (#2212)。
+/// 索引が DROP 済みの `i` は `n` に正規化する。パーティション親 (`relkind = 'p'`) は REPLICA IDENTITY が子へ伝播しないので、
+/// 末端の表 (pg_inherits を再帰でたどった `relkind = 'r'`。pg_partition_tree は PostgreSQL 12 以降なので使わない) に 1 つでも識別子が無ければ `n` (危険)、すべてにあれば `d` + 主キーあり (安全) を返す。
+fn replica_columns_sql() -> String {
+    let leaf_lacks = format!(
+        "EXISTS (WITH RECURSIVE tree(relid) AS (SELECT c.oid UNION ALL \
+                   SELECT inh.inhrelid FROM pg_inherits inh JOIN tree ON inh.inhparent = tree.relid) \
+          SELECT 1 FROM tree JOIN pg_class l ON l.oid = tree.relid \
+          WHERE l.relkind = 'r' AND {})",
+        replica_lacks_sql("l")
+    );
+    format!(
+        "CASE WHEN c.relkind = 'p' THEN (CASE WHEN {leaf_lacks} THEN 'n' ELSE 'd' END) \
+              WHEN c.relreplident = 'i' AND NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid \
+                   AND i.indisreplident) THEN 'n' \
+              ELSE c.relreplident::text END, \
+         CASE WHEN c.relkind = 'p' THEN NOT {leaf_lacks} \
+              ELSE EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid \
+                   AND i.indisprimary AND i.indimmediate AND i.indisvalid) END, \
+         c.relkind = 'p'"
+    )
 }
 
 #[cfg(test)]

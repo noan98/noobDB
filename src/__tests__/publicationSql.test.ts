@@ -4,7 +4,12 @@ import {
   buildPublicationStatements,
   formatPublicationPreview,
   publicationActionFor,
+  lacksReplicaIdentity,
   publicationMembership,
+  publishesRowChanges,
+  replicaIdentityBlocksWrites,
+  replicaIdentityFullApplies,
+  replicaIdentityKind,
 } from "../components/publicationSql";
 
 // パブリケーションへの表の追加 / 除外 (`ALTER PUBLICATION ... ADD / DROP TABLE`) の組み立て (#2181)。
@@ -22,7 +27,17 @@ describe("publicationMembership", () => {
   it("明示的に入っている表は member、別スキーマの同名の表は入っていない", () => {
     const p: PublicationInfo = {
       ...base,
-      tables: [{ schema: "public", table: "orders", columns: null, row_filter: null }],
+      tables: [
+        {
+          schema: "public",
+          table: "orders",
+          columns: null,
+          row_filter: null,
+          replica_identity: "d",
+          has_primary_key: true,
+          is_partitioned: false,
+        },
+      ],
     };
     expect(publicationMembership(p, "public", "orders")).toBe("member");
     expect(publicationMembership(p, "audit", "orders")).toBe("none");
@@ -35,7 +50,17 @@ describe("publicationMembership", () => {
     const both: PublicationInfo = {
       ...base,
       schemas: ["public"],
-      tables: [{ schema: "public", table: "t", columns: null, row_filter: null }],
+      tables: [
+        {
+          schema: "public",
+          table: "t",
+          columns: null,
+          row_filter: null,
+          replica_identity: "d",
+          has_primary_key: true,
+          is_partitioned: false,
+        },
+      ],
     };
     expect(publicationMembership(both, "public", "t")).toBe("member");
   });
@@ -63,5 +88,119 @@ describe("buildPublicationStatements", () => {
 
   it("何も選ばなければ空", () => {
     expect(buildPublicationStatements("public", "t", [])).toEqual([]);
+  });
+});
+
+describe("buildPublicationStatements: REPLICA IDENTITY FULL (#2212)", () => {
+  const picks = [{ publication: "pub_a", action: "add" as const }];
+  it("指定すると先頭に ALTER TABLE ... REPLICA IDENTITY FULL を足す", () => {
+    expect(buildPublicationStatements("public", "orders", picks, { replicaIdentityFull: true })).toEqual([
+      'ALTER TABLE "public"."orders" REPLICA IDENTITY FULL',
+      'ALTER PUBLICATION "pub_a" ADD TABLE "public"."orders"',
+    ]);
+  });
+  it("指定が無ければ足さない。選択が空なら単独で出さない", () => {
+    expect(buildPublicationStatements("public", "orders", picks)).toHaveLength(1);
+    expect(buildPublicationStatements("public", "orders", [], { replicaIdentityFull: true })).toEqual([]);
+  });
+});
+
+describe("REPLICA IDENTITY の判定 (#2212)", () => {
+  it("UPDATE / DELETE を公開するときだけ対象 (INSERT / TRUNCATE だけなら不要)", () => {
+    expect(publishesRowChanges(["insert"])).toBe(false);
+    expect(publishesRowChanges(["insert", "truncate"])).toBe(false);
+    expect(publishesRowChanges([])).toBe(false);
+    expect(publishesRowChanges(["update"])).toBe(true);
+    expect(publishesRowChanges(["delete"])).toBe(true);
+    expect(publishesRowChanges(["insert", "update", "delete", "truncate"])).toBe(true);
+  });
+
+  it("n は常に、d は主キーが無いときだけ手段なし。f / i は主キーに関係なく問題なし", () => {
+    const cases: [string, boolean, boolean][] = [
+      ["d", true, false],
+      ["d", false, true],
+      ["n", true, true],
+      ["n", false, true],
+      ["f", true, false],
+      ["f", false, false],
+      ["i", true, false],
+      ["i", false, false],
+      ["?", false, false],
+    ];
+    for (const [ident, pk, lacks] of cases) {
+      expect(
+        lacksReplicaIdentity({ replica_identity: ident, has_primary_key: pk, is_partitioned: false }),
+        `${ident}/${pk}`,
+      ).toBe(lacks);
+    }
+  });
+
+  it("publish の組み合わせ × relreplident × 主キーの有無 の全組み合わせ", () => {
+    const publishes: [string[], boolean][] = [
+      [["insert"], false],
+      [["truncate"], false],
+      [["insert", "truncate"], false],
+      [["update"], true],
+      [["delete"], true],
+      [["insert", "update"], true],
+      [["insert", "delete"], true],
+      [["update", "delete"], true],
+      [["insert", "update", "delete", "truncate"], true],
+    ];
+    for (const [publish, rows] of publishes) {
+      for (const ident of ["d", "n", "f", "i"]) {
+        for (const pk of [true, false]) {
+          const lacks = ident === "n" || (ident === "d" && !pk);
+          expect(
+            replicaIdentityBlocksWrites(publish, {
+              replica_identity: ident,
+              has_primary_key: pk,
+              is_partitioned: false,
+            }),
+            `${publish.join(",")} / ${ident} / pk=${pk}`,
+          ).toBe(rows && lacks);
+        }
+      }
+    }
+  });
+
+  it("identity が不明 (null) なら警告しない", () => {
+    expect(replicaIdentityBlocksWrites(["update"], null)).toBe(false);
+  });
+
+  it("表示の種別", () => {
+    const k = (replica_identity: string, has_primary_key: boolean, is_partitioned = false) =>
+      replicaIdentityKind({ replica_identity, has_primary_key, is_partitioned });
+    expect(k("d", true)).toBe("default");
+    expect(k("d", false)).toBe("defaultNoPk");
+    expect(k("n", true)).toBe("nothing");
+    expect(k("f", false)).toBe("full");
+    expect(k("i", false)).toBe("index");
+    expect(k("n", false, true)).toBe("partitioned");
+  });
+
+  it("バックエンドが実効値へ正規化する: 索引 DROP 済みの i (= n)・遅延可能な主キー (= 主キー無し)・パーティション親の集計 (n) は危険、すべて識別子ありの親は安全", () => {
+    const base = { is_partitioned: false };
+    // 索引が DROP 済みの i は n で返る。
+    expect(lacksReplicaIdentity({ ...base, replica_identity: "n", has_primary_key: false })).toBe(true);
+    // 遅延可能な主キーだけの表は d + 主キー無し。
+    expect(lacksReplicaIdentity({ ...base, replica_identity: "d", has_primary_key: false })).toBe(true);
+    // パーティション親: 末端に 1 つでも識別子が無ければ n、すべてにあれば d + 主キーあり。
+    expect(
+      lacksReplicaIdentity({ replica_identity: "n", has_primary_key: false, is_partitioned: true }),
+    ).toBe(true);
+    expect(lacksReplicaIdentity({ replica_identity: "d", has_primary_key: true, is_partitioned: true })).toBe(
+      false,
+    );
+  });
+
+  it("FULL は親表では効かない (パーティション親・不明は対象外)", () => {
+    expect(
+      replicaIdentityFullApplies({ replica_identity: "d", has_primary_key: false, is_partitioned: false }),
+    ).toBe(true);
+    expect(
+      replicaIdentityFullApplies({ replica_identity: "n", has_primary_key: false, is_partitioned: true }),
+    ).toBe(false);
+    expect(replicaIdentityFullApplies(null)).toBe(false);
   });
 });

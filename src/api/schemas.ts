@@ -229,6 +229,9 @@ export const publicationTable = z.object({
   table: z.string(),
   columns: z.array(z.string()).nullable(),
   row_filter: z.string().nullable(),
+  replica_identity: z.string(),
+  has_primary_key: z.boolean(),
+  is_partitioned: z.boolean(),
 });
 /** `list_publications` の 1 件: 論理レプリケーションのパブリケーション (#2181)。 */
 export const publicationInfo = z.object({
@@ -240,6 +243,14 @@ export const publicationInfo = z.object({
   schemas: z.array(z.string()),
 });
 export const publicationInfoArray = z.array(publicationInfo);
+
+/** `get_table_replica_identity` の結果: 表の REPLICA IDENTITY と主キーの有無 (#2212)。表が無ければ null。 */
+export const tableReplicaIdentity = z.object({
+  replica_identity: z.string(),
+  has_primary_key: z.boolean(),
+  is_partitioned: z.boolean(),
+});
+export const tableReplicaIdentityOrNull = tableReplicaIdentity.nullable();
 
 /** `list_extensions` の結果 (#2160)。 */
 export const extensionInfo = z.object({

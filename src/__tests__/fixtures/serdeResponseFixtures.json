@@ -2227,12 +2227,18 @@
           "id",
           "status"
         ],
+        "has_primary_key": true,
+        "is_partitioned": false,
+        "replica_identity": "d",
         "row_filter": "(status <> 'draft'::text)",
         "schema": "public",
         "table": "orders"
       },
       {
         "columns": null,
+        "has_primary_key": false,
+        "is_partitioned": false,
+        "replica_identity": "n",
         "row_filter": null,
         "schema": "public",
         "table": "items"
@@ -6527,6 +6533,11 @@
     "scans": 1,
     "table": "orders",
     "total_count": 100
+  },
+  "tableReplicaIdentity": {
+    "has_primary_key": false,
+    "is_partitioned": true,
+    "replica_identity": "f"
   },
   "tableRowEstimate": {
     "estimate": 1234,

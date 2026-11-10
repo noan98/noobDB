@@ -6080,6 +6080,125 @@ async fn postgres_logical_replication_is_listed_compared_and_synced() {
     conn.close().await;
 }
 
+/// 表の REPLICA IDENTITY と主キーの有無 (#2212): `table_replica_identity` と、`list_publications` の表に付く値。
+/// 主キーあり (d) / 主キー無し (d) / NOTHING (n) / FULL (f) / 索引指定 (i) / 存在しない表 (None)。
+#[tokio::test]
+async fn postgres_table_replica_identity_reports_relreplident_and_primary_key() {
+    async fn cleanup(conn: &t::Connection) {
+        for sql in [
+            "DROP PUBLICATION IF EXISTS nb2212_pub",
+            "DROP SCHEMA IF EXISTS nb2212 CASCADE",
+        ] {
+            let _ = conn.execute(sql, None).await;
+        }
+    }
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    cleanup(&conn).await;
+    for sql in [
+        "CREATE SCHEMA nb2212",
+        "CREATE TABLE nb2212.with_pk (id integer PRIMARY KEY, v text)",
+        "CREATE TABLE nb2212.no_pk (id integer, v text)",
+        "CREATE TABLE nb2212.nothing (id integer PRIMARY KEY, v text)",
+        "ALTER TABLE nb2212.nothing REPLICA IDENTITY NOTHING",
+        "CREATE TABLE nb2212.full_id (id integer, v text)",
+        "ALTER TABLE nb2212.full_id REPLICA IDENTITY FULL",
+        "CREATE TABLE nb2212.by_index (id integer NOT NULL, v text)",
+        "CREATE UNIQUE INDEX nb2212_by_index_id ON nb2212.by_index (id)",
+        "ALTER TABLE nb2212.by_index REPLICA IDENTITY USING INDEX nb2212_by_index_id",
+        // 指定の索引を DROP すると relreplident は i のまま残るが、実際は識別子が無い (UPDATE が失敗する)。
+        "CREATE TABLE nb2212.idx_dropped (id integer NOT NULL, v text)",
+        "CREATE UNIQUE INDEX nb2212_idx_dropped_id ON nb2212.idx_dropped (id)",
+        "ALTER TABLE nb2212.idx_dropped REPLICA IDENTITY USING INDEX nb2212_idx_dropped_id",
+        "DROP INDEX nb2212.nb2212_idx_dropped_id",
+        // 遅延可能な主キーは識別子に使われない。
+        "CREATE TABLE nb2212.deferrable_pk (id integer PRIMARY KEY DEFERRABLE, v text)",
+        // パーティション親: REPLICA IDENTITY は子へ伝播しないので末端を集計する。
+        "CREATE TABLE nb2212.part_ok (id integer PRIMARY KEY, v text) PARTITION BY RANGE (id)",
+        "CREATE TABLE nb2212.part_ok_1 PARTITION OF nb2212.part_ok FOR VALUES FROM (0) TO (100)",
+        "CREATE TABLE nb2212.part_bad (id integer, v text) PARTITION BY RANGE (id)",
+        "CREATE TABLE nb2212.part_bad_1 PARTITION OF nb2212.part_bad FOR VALUES FROM (0) TO (100)",
+        "CREATE TABLE nb2212.part_bad_2 PARTITION OF nb2212.part_bad FOR VALUES FROM (100) TO (200)",
+        "ALTER TABLE nb2212.part_bad_1 REPLICA IDENTITY FULL",
+        "CREATE TABLE nb2212.part_full (id integer, v text) PARTITION BY RANGE (id)",
+        "CREATE TABLE nb2212.part_full_1 PARTITION OF nb2212.part_full FOR VALUES FROM (0) TO (100)",
+        "ALTER TABLE nb2212.part_full_1 REPLICA IDENTITY FULL",
+        "CREATE PUBLICATION nb2212_pub FOR TABLE nb2212.no_pk, nb2212.nothing, nb2212.idx_dropped, nb2212.part_bad",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    let ident = |table: &'static str| {
+        let conn = &conn;
+        async move {
+            conn.table_replica_identity("nb2212", table)
+                .await
+                .expect("table_replica_identity")
+        }
+    };
+    for (table, expect_ident, expect_pk, expect_part) in [
+        ("with_pk", "d", true, false),
+        ("no_pk", "d", false, false),
+        ("nothing", "n", true, false),
+        ("full_id", "f", false, false),
+        ("by_index", "i", false, false),
+        // 索引が DROP 済みの i は n に正規化される。
+        ("idx_dropped", "n", false, false),
+        // 遅延可能な主キーは使えない。
+        ("deferrable_pk", "d", false, false),
+        // パーティション親は末端の集計: 全て識別子あり → d + 主キーあり、1 つでも無ければ n。
+        ("part_ok", "d", true, true),
+        ("part_bad", "n", false, true),
+        ("part_full", "d", true, true),
+    ] {
+        let r = ident(table)
+            .await
+            .unwrap_or_else(|| panic!("{table} が見つからない"));
+        assert_eq!(r.replica_identity, expect_ident, "{table}");
+        assert_eq!(r.is_partitioned, expect_part, "{table}");
+        assert_eq!(r.has_primary_key, expect_pk, "{table}");
+    }
+    assert!(ident("missing_table").await.is_none());
+
+    // パブリケーションの表にも同じ値が付く。
+    let pubs = conn.list_publications().await.expect("list_publications");
+    let p = pubs
+        .iter()
+        .find(|p| p.name == "nb2212_pub")
+        .expect("publication listed");
+    let by_name = |name: &str| {
+        p.tables
+            .iter()
+            .find(|t| t.table == name)
+            .unwrap_or_else(|| panic!("{name} が無い"))
+    };
+    assert_eq!(by_name("no_pk").replica_identity, "d");
+    assert!(!by_name("no_pk").has_primary_key);
+    assert_eq!(by_name("nothing").replica_identity, "n");
+    assert!(by_name("nothing").has_primary_key);
+    assert_eq!(by_name("idx_dropped").replica_identity, "n");
+    assert_eq!(by_name("part_bad").replica_identity, "n");
+    assert!(by_name("part_bad").is_partitioned);
+    assert!(!by_name("no_pk").is_partitioned);
+    // 定義表示にも各表の REPLICA IDENTITY が出る。
+    let def = conn
+        .object_definition("nb2212", "publication", "nb2212_pub", None)
+        .await
+        .expect("publication definition");
+    assert!(
+        def.contains("REPLICA IDENTITY DEFAULT (no primary key)"),
+        "{def}"
+    );
+    assert!(def.contains("REPLICA IDENTITY NOTHING"), "{def}");
+    assert!(
+        def.contains("REPLICA IDENTITY partitioned: some partitions lack identity"),
+        "{def}"
+    );
+    cleanup(&conn).await;
+}
+
 /// 拡張機能の CASCADE 削除で巻き添えになる依存オブジェクトの一覧 (#2177): 拡張 (citext) の型を使う列・
 /// 関数・ビュー・索引が種別つきで出て、拡張自身のメンバーは出ないこと。read_only のセッションでも引けること。
 /// contrib の無い環境・`CREATE EXTENSION` の権限が無い環境では確認だけ飛ばす。
