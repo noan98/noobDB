@@ -45,6 +45,12 @@
   (`dangerousSql.ts` / `is_read_only_sql`) とは目的も経路も別物で判定
   ロジックを共有しない。`sqlLint.test.ts` が正常 SQL の非検出・未終端/括弧/文頭
   タイポの検出・方言差を固定する。
+- `mastery.ts` — 機能ガイドの「習熟マップ」(#2216) の純ロジック (30 項目の ID = ヘルプ項目
+  タイトルの i18n キー、グループ別進捗、`recommendNext`)。記録は設定ストアの
+  `masteryTried` / `masteryTrackingEnabled` (`markFeatureTried(id)` を既存の実行経路・
+  画面を開く地点から呼ぶだけ。外部送信なし。設定画面の「機能の習熟マップ」でオフ・リセット)。
+  項目を足すときは `MASTERY_GROUPS` と `HelpView.tsx` の `SECTIONS` を揃え、『試す』導線
+  (`tryTarget`) か「試せない理由」(`noTryKey`) を必ず付ける。
 - `i18n.ts` — 日本語/英語の文字列テーブルと `useT` フック。
 - `tabPersistence.ts` — プロファイルごとの開きタブを localStorage に保存/復元。
 - `errorHints.ts` — DB エラー文字列を人間向けのヒントに対応付け。

@@ -5031,6 +5031,30 @@ const en = {
   helpReplayTour: "Replay the tour",
   helpOpenCheatSheet: "Open shortcut cheat sheet",
   helpTry: "Open this feature",
+  helpMasteryTried: "Tried",
+  helpMasteryOverall: "Tried {done} of {total} features",
+  helpMasteryGroupProgress: "{done} of {total} tried",
+  helpRecommendTitle: "Try next",
+  helpNoTryTitle: "Why you can't open this from here",
+  helpNoTryResultGrid:
+    "This works on a result grid. Open a table to show its rows, then try it there; the guide can't open it without data.",
+  helpNoTryImport:
+    "Import needs a target table. Right-click a table in the schema tree and choose the import action.",
+  helpNoTrySandbox:
+    "A sandbox is created from a database. Right-click a database in the schema tree to create one while connected.",
+  helpNoTryTypeToConfirm:
+    "This confirmation appears only when you run a destructive operation on a production connection, so it is not opened from here on purpose.",
+  helpNoTryEmergency:
+    "Emergency mode is switched on from a live connection, after typing the connection name. It is not opened from here to avoid accidental use.",
+  helpNoTryGuide:
+    "This is a reference for when a connection fails. There is nothing to try; it counts as done once you read it.",
+  settingsMastery: "Feature mastery map",
+  settingsMasteryHelp:
+    "Marks the features you have tried in the guide and suggests what to try next. The record stays on this device and is never sent anywhere, but it is included when you export your settings.",
+  settingsMasteryTracking: "Record features I have tried",
+  settingsMasteryProgress: "Tried {done} of {total} features",
+  settingsMasteryReset: "Reset record",
+  settingsMasteryResetDone: "Cleared the record of tried features.",
   helpTryAria: "Open this feature: {title}",
   helpTryNeedsConnection: "Connect to a database first to try this.",
   helpImpactWrites: "Writes to DB",
@@ -12829,6 +12853,29 @@ const ja: Dict = {
   helpReplayTour: "ツアーをもう一度見る",
   helpOpenCheatSheet: "ショートカット一覧を開く",
   helpTry: "この機能を開く",
+  helpMasteryTried: "試した",
+  helpMasteryOverall: "{total} 機能中 {done} 機能を試しました",
+  helpMasteryGroupProgress: "{total} 件中 {done} 件を試しました",
+  helpRecommendTitle: "次に試すとよい機能",
+  helpNoTryTitle: "ここから開けない理由",
+  helpNoTryResultGrid:
+    "結果グリッドで使う機能です。テーブルを開いて行を表示し、その画面で試してください。データが無い状態ではガイドから開けません。",
+  helpNoTryImport:
+    "インポートは対象のテーブルが必要です。スキーマツリーでテーブルを右クリックし、インポートの操作を選んでください。",
+  helpNoTrySandbox:
+    "サンドボックスはデータベースから作ります。接続中にスキーマツリーでデータベースを右クリックして作成してください。",
+  helpNoTryTypeToConfirm:
+    "本番接続で破壊的な操作を実行したときだけ出る確認です。誤って起動しないよう、ガイドからは開きません。",
+  helpNoTryEmergency:
+    "緊急モードは接続中に、接続先名を入力して有効にします。誤操作を避けるため、ガイドからは開きません。",
+  helpNoTryGuide: "接続に失敗したときに読む手順です。試す操作はなく、読むと「試した」になります。",
+  settingsMastery: "機能の習熟マップ",
+  settingsMasteryHelp:
+    "機能ガイドで、試した機能に印を付けて次のおすすめを出します。記録はこの端末にだけ保存し、外部へは送りませんが、設定のエクスポートには含まれます。",
+  settingsMasteryTracking: "試した機能を記録する",
+  settingsMasteryProgress: "{total} 機能中 {done} 機能を試しました",
+  settingsMasteryReset: "記録をリセット",
+  settingsMasteryResetDone: "試した機能の記録を消しました。",
   helpTryAria: "この機能を開く: {title}",
   helpTryNeedsConnection: "試すにはデータベースへの接続が必要です。",
   helpImpactWrites: "DB に書き込む",
