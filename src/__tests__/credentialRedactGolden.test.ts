@@ -111,3 +111,11 @@ describe("redactCredentials", () => {
     );
   });
 });
+
+describe("redactErrorText の入力サイズ", () => {
+  it(": が大量にある接続文字列でも候補が増えず、短時間で伏せられる (#2199)", () => {
+    const sql = `CREATE SUBSCRIPTION sub CONNECTION 'host=a ${":".repeat(20000)}@h' PUBLICATION pub`;
+    const out = redactErrorText(`invalid connection option "${":".repeat(20000)}@h"`, sql, "postgres");
+    expect(out).not.toContain("::::");
+  });
+});

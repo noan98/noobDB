@@ -254,7 +254,8 @@ class Scanner {
       const innerEnd = closed ? e - tagLen : e;
       if (s + tagLen <= innerEnd) decoded = this.src.slice(s + tagLen, innerEnd);
     } else {
-      if (s >= 2 && this.m[s - 1] === "&" && (this.m[s - 2] === "u" || this.m[s - 2] === "U")) return [];
+      const uAmp = s >= 2 && this.m[s - 1] === "&" && (this.m[s - 2] === "u" || this.m[s - 2] === "U");
+      const esc = uescapeChar(this.m, this.src, e);
       const backslash = s >= 1 && (this.m[s - 1] === "e" || this.m[s - 1] === "E");
       let i = s;
       while (i < e) {
@@ -267,8 +268,9 @@ class Scanner {
         if (c < 0 || c >= e) c = -1;
         const innerEnd = c < 0 ? e : c;
         const raw = this.src.slice(i + 1, innerEnd);
-        opaque ||= backslash && raw.includes("\\");
-        decoded += unescapeLiteral(raw, "'", backslash);
+        // `U&'…'` は `\XXXX` でキー名を隠せるので、常に伏せ対象にする。
+        opaque ||= uAmp || (backslash && raw.includes("\\"));
+        decoded += decodeLiteralPiece(raw, uAmp, backslash, esc);
         i = c < 0 ? e : c + 1;
       }
     }
@@ -391,6 +393,160 @@ function unescapeLiteral(raw: string, quote: string, backslash: boolean): string
   return out;
 }
 
+/** 16 進 `n` 桁ちょうどを読む (配列 `a` の `start` から)。 */
+function hexAt(a: string[], start: number, n: number): number | null {
+  if (start + n > a.length) return null;
+  let v = 0;
+  for (let k = 0; k < n; k++) {
+    if (!/^[0-9a-fA-F]$/.test(a[start + k])) return null;
+    v = v * 16 + Number.parseInt(a[start + k], 16);
+  }
+  return v;
+}
+
+/** サロゲートペアの上位 `hi` と下位 `lo` を 1 文字にする。ペアでなければ null。 */
+function combineSurrogates(hi: number, lo: number): string | null {
+  if (hi >= 0xd800 && hi < 0xdc00 && lo >= 0xdc00 && lo < 0xe000) {
+    return String.fromCodePoint(0x10000 + ((hi - 0xd800) << 10) + (lo - 0xdc00));
+  }
+  return null;
+}
+
+const codePointString = (code: number): string | null =>
+  code <= 0x10ffff && !(code >= 0xd800 && code < 0xe000) ? String.fromCodePoint(code) : null;
+
+/**
+ * PostgreSQL の `E'…'` の中身 (引用符の内側) を、サーバ (libpq が受け取る文字列) と同じにデコードする。
+ * `\b \f \n \r \t`、8 進、`\x`、`\u` / `\U` (サロゲートペア可)、それ以外の `\c` は `c`、`''` は `'`。
+ * 8 進・`\x` はバイト値で、全体を UTF-8 として読む (不正なバイトは U+FFFD)。Rust 側 `decode_pg_e` と同じ。
+ */
+function decodePgE(rawText: string): string {
+  const raw = Array.from(rawText);
+  const enc = new TextEncoder();
+  const out: number[] = [];
+  const push = (c: string): void => {
+    out.push(...enc.encode(c));
+  };
+  const isOct = (c: string | undefined): boolean => c !== undefined && /^[0-7]$/.test(c);
+  const isHex = (c: string | undefined): boolean => c !== undefined && /^[0-9a-fA-F]$/.test(c);
+  let i = 0;
+  while (i < raw.length) {
+    const c = raw[i];
+    if (c === "'" && raw[i + 1] === "'") {
+      out.push(0x27);
+      i += 2;
+      continue;
+    }
+    if (c !== "\\" || i + 1 >= raw.length) {
+      push(c);
+      i++;
+      continue;
+    }
+    const d = raw[i + 1];
+    i += 2;
+    if (d === "b") out.push(8);
+    else if (d === "f") out.push(12);
+    else if (d === "n") out.push(10);
+    else if (d === "r") out.push(13);
+    else if (d === "t") out.push(9);
+    else if (isOct(d)) {
+      let v = Number.parseInt(d, 8);
+      for (let used = 1; used < 3 && isOct(raw[i]); used++) v = v * 8 + Number.parseInt(raw[i++], 8);
+      out.push(v & 0xff);
+    } else if (d === "x") {
+      let v = 0;
+      let used = 0;
+      while (used < 2 && isHex(raw[i])) {
+        v = v * 16 + Number.parseInt(raw[i++], 16);
+        used++;
+      }
+      out.push(used === 0 ? 0x78 : v);
+    } else if (d === "u" || d === "U") {
+      const n = d === "u" ? 4 : 8;
+      const code = hexAt(raw, i, n);
+      if (code === null) {
+        push(d);
+        continue;
+      }
+      i += n;
+      let ch = codePointString(code);
+      if (ch === null && d === "u" && raw[i] === "\\" && raw[i + 1] === "u") {
+        const lo = hexAt(raw, i + 2, 4);
+        if (lo !== null) {
+          ch = combineSurrogates(code, lo);
+          if (ch !== null) i += 6;
+        }
+      }
+      push(ch ?? "\ufffd");
+    } else push(d);
+  }
+  return new TextDecoder().decode(new Uint8Array(out));
+}
+
+/**
+ * PostgreSQL の `U&'…'` の中身 (`''` は解いたもの) を `esc` (既定 `\`、`UESCAPE` で変更) でデコードする。
+ * `esc` + 4 桁 16 進、`esc` + `+` + 6 桁 16 進 (サロゲートペア可)、`esc esc` は `esc` 自身。
+ */
+function decodePgU(rawText: string, esc: string): string {
+  const raw = Array.from(rawText);
+  const read = (at: number): [number, number] | null => {
+    if (raw[at] !== esc) return null;
+    if (raw[at + 1] === "+") {
+      const v = hexAt(raw, at + 2, 6);
+      return v === null ? null : [v, at + 8];
+    }
+    const v = hexAt(raw, at + 1, 4);
+    return v === null ? null : [v, at + 5];
+  };
+  let out = "";
+  let i = 0;
+  while (i < raw.length) {
+    const r = raw[i] === esc && raw[i + 1] === esc ? null : read(i);
+    if (raw[i] === esc && raw[i + 1] === esc) {
+      out += esc;
+      i += 2;
+    } else if (r) {
+      i = r[1];
+      let ch = codePointString(r[0]);
+      if (ch === null) {
+        const lo = read(i);
+        if (lo) {
+          ch = combineSurrogates(r[0], lo[0]);
+          if (ch !== null) i = lo[1];
+        }
+      }
+      out += ch ?? "\ufffd";
+    } else {
+      out += raw[i++];
+    }
+  }
+  return out;
+}
+
+/** リテラルの終端 `e` の後ろに `UESCAPE '<1 文字>'` があればその文字、なければ `\`。 */
+function uescapeChar(m: string, src: string, e: number): string {
+  const skip = (from: number): number => {
+    let i = from;
+    while (i < m.length && isWs(m[i])) i++;
+    return i;
+  };
+  const p = skip(e);
+  let wordEnd = p;
+  while (wordEnd < m.length && /[A-Za-z]/.test(m[wordEnd])) wordEnd++;
+  if (m.slice(p, wordEnd).toLowerCase() !== "uescape") return "\\";
+  const q = skip(wordEnd);
+  const c = src.codePointAt(q + 1);
+  if (m[q] !== "'" || c === undefined) return "\\";
+  const ch = String.fromCodePoint(c);
+  return m[q + 1 + ch.length] === "'" ? ch : "\\";
+}
+
+/** 連結文字列の 1 片 `raw` (引用符の内側) をデコードする。`uAmp` は `U&'…'`、`backslash` は `E'…'` / MySQL。 */
+function decodeLiteralPiece(raw: string, uAmp: boolean, backslash: boolean, esc: string): string {
+  if (uAmp) return decodePgU(unescapeLiteral(raw, "'", false), esc);
+  return backslash ? decodePgE(raw) : unescapeLiteral(raw, "'", false);
+}
+
 /** 接続文字列に含まれるパスワードとして伏せるキーワード (小文字)。パスファイルへの**パス** (`passfile`) は対象外。 */
 const CONNINFO_SECRET_KEYS = ["password", "sslpassword"];
 
@@ -416,33 +572,105 @@ function percentDecode(s: string): string {
   return new TextDecoder().decode(new Uint8Array(bytes));
 }
 
-/** `redactConninfo` の URI 形式: `user:パスワード@` と `?password=...` / `&sslpassword=...` を伏せる。 */
+/**
+ * key の位置にある語が URI 風 (`user:パスワード@host…`) か。libpq のキーワードは `:` を含まないので、
+ * key の位置 (`=` か空白まで) に `:` があれば URI の打ち間違いと見なす (安全側)。
+ */
+function looksLikeUserinfo(word: string): boolean {
+  return word.includes(":");
+}
+
+/**
+ * URI 風の語 (`rest` はその語の先頭から文末まで) をエラー文で引用されうる形の候補にする。Rust 側
+ * `userinfo_word_secrets` と同じ規則。候補は定数個 (`:` の数に比例させると二乗時間になる)。
+ */
+function userinfoWordSecrets(rest: string): string[] {
+  const MAX_WORDS = 32;
+  const text = rest;
+  let keyEnd = text.search(/[=\t\n\r\u000b\u000c ]/);
+  if (keyEnd < 0) keyEnd = text.length;
+  const key = text.slice(0, keyEnd);
+  const base: string[] = [key, text.replace(/[\t\n\r\u000b\u000c ]+$/, "")];
+  const first = key.indexOf(":");
+  const last = key.lastIndexOf(":");
+  if (first >= 0) {
+    base.push(key.slice(first + 1), key.slice(last + 1));
+    const at = key.lastIndexOf("@");
+    if (at > last) base.push(key.slice(last + 1, at));
+  }
+  base.push(
+    ...text
+      .slice(keyEnd)
+      .split(/[\t\n\r\u000b\u000c ]+/)
+      .filter((w) => w !== "")
+      .slice(0, MAX_WORDS),
+  );
+  const out: string[] = [];
+  for (const b of base) {
+    for (const v of [b, percentDecode(b)]) out.push(...v.split("/").filter((x) => x !== ""), v);
+  }
+  return out.filter((v) => v !== "");
+}
+
+/**
+ * `redactConninfo` の URI 形式: `user:パスワード@` と `?password=...` / `&sslpassword=...` を伏せる。
+ * ユーザー情報は「スキームの後の最初の `/` より前にある最後の `@`」で決め、その後で `?` のクエリを分ける
+ * (パスワードに素の `?` があっても取りこぼさない)。
+ */
 function redactConninfoUri(uri: string): string {
-  const q = uri.indexOf("?");
-  let head = q < 0 ? uri : uri.slice(0, q);
-  const schemeEnd = head.indexOf("://") + 3;
-  if (schemeEnd >= 3) {
-    const slash = head.indexOf("/", schemeEnd);
-    const authorityEnd = slash < 0 ? head.length : slash;
-    // ユーザー情報の区切りは最後の `@`。
-    const at = head.slice(0, authorityEnd).lastIndexOf("@");
+  const schemeAt = uri.indexOf("://");
+  const schemeEnd = schemeAt < 0 ? 0 : schemeAt + 3;
+  const slash = uri.indexOf("/", schemeEnd);
+  const authorityEnd = slash < 0 ? uri.length : slash;
+  let prefix = uri.slice(0, schemeEnd);
+  let restStart = schemeEnd;
+  // ユーザー情報の区切りは最後の `@`。
+  // authority にユーザー情報がなくても、スキーム以降の最後の `@` の前に `:` があれば伏せる (安全側)。
+  // ただしフォールバックでは、`h:5432/db?application_name=me@corp` のようにポート (数字だけ) の `:` は
+  // ユーザー情報の区切りと見なさない (正常な URI の表示を崩さない)。Rust の `redact_conninfo_uri` と同じ。
+  let at = uri.slice(0, authorityEnd).lastIndexOf("@");
+  if (at < schemeEnd) {
+    at = uri.lastIndexOf("@");
     if (at >= schemeEnd) {
-      const colon = head.slice(0, at).indexOf(":", schemeEnd);
-      if (colon >= 0) head = `${head.slice(0, colon)}:********${head.slice(at)}`;
+      const c = uri.slice(0, at).indexOf(":", schemeEnd);
+      if (c >= 0) {
+        const after = uri.slice(c + 1, at);
+        const cut = after.search(/[/?]/);
+        const port = cut < 0 ? after : after.slice(0, cut);
+        if (port !== "" && /^[0-9]+$/.test(port)) at = -1;
+      }
     }
   }
+  if (at >= schemeEnd) {
+    const colon = uri.slice(0, at).indexOf(":", schemeEnd);
+    if (colon >= 0) {
+      prefix = `${uri.slice(0, colon)}:********`;
+      restStart = at;
+    }
+  }
+  const redactParams = (q: string): string =>
+    q
+      .split("&")
+      .map((kv) => {
+        const eq = kv.indexOf("=");
+        if (eq >= 0 && CONNINFO_SECRET_KEYS.includes(asciiLower(percentDecode(kv.slice(0, eq))))) {
+          return `${kv.slice(0, eq)}=********`;
+        }
+        return kv;
+      })
+      .join("&");
+  const rest = uri.slice(restStart);
+  const q = rest.indexOf("?");
+  let head = q < 0 ? rest : rest.slice(0, q);
+  // クエリの値に `@` があって `?` が伏せ字に呑まれたときは、残りの `&` 以降もクエリとして伏せる
+  // (Rust の `redact_conninfo_uri` と同じ)。
+  const amp = head.indexOf("&");
+  if (uri.slice(schemeEnd, restStart).includes("?") && amp >= 0) {
+    head = `${head.slice(0, amp)}&${redactParams(head.slice(amp + 1))}`;
+  }
+  head = prefix + head;
   if (q < 0) return head;
-  const parts = uri
-    .slice(q + 1)
-    .split("&")
-    .map((kv) => {
-      const eq = kv.indexOf("=");
-      if (eq >= 0 && CONNINFO_SECRET_KEYS.includes(asciiLower(percentDecode(kv.slice(0, eq))))) {
-        return `${kv.slice(0, eq)}=********`;
-      }
-      return kv;
-    });
-  return `${head}?${parts.join("&")}`;
+  return `${head}?${redactParams(rest.slice(q + 1))}`;
 }
 
 /**
@@ -489,6 +717,10 @@ function conninfoSecretValues(conninfo: string): string[] {
     const start = i;
     while (i < n && conninfo[i] !== "=" && !isWs(conninfo[i])) i++;
     const key = conninfo.slice(start, i);
+    if (looksLikeUserinfo(key)) {
+      out.push(...userinfoWordSecrets(conninfo.slice(start)));
+      break;
+    }
     let j = i;
     while (j < n && isWs(conninfo[j])) j++;
     if (conninfo[j] !== "=") break;
@@ -559,6 +791,11 @@ function redactConninfo(conninfo: string): string {
     const start = i;
     while (i < conninfo.length && conninfo[i] !== "=" && !isWs(conninfo[i])) i++;
     const key = conninfo.slice(start, i);
+    if (looksLikeUserinfo(key)) {
+      // `postgresql:/u:secret@h` や先頭が U+FEFF の URI は libpq が key=value として読み、エラー文は全体を
+      // 引用する。`user:パスワード@` のような語は残り全体を伏せる (安全側)。
+      return out + CREDENTIAL_PLACEHOLDER;
+    }
     let j = i;
     while (j < conninfo.length && isWs(conninfo[j])) j++;
     if (conninfo[j] !== "=") {
@@ -618,6 +855,12 @@ function secretsFor(sql: string, driver: "mysql" | "postgres"): string[] {
       const innerEnd = c < 0 ? e : c;
       const raw = sql.slice(i + 1, innerEnd);
       found.push(raw, unescapeLiteral(raw, q, backslash));
+      if (driver === "postgres" && q === "'") {
+        if (eString) found.push(decodePgE(raw));
+        else if (s >= 2 && m[s - 1] === "&" && (m[s - 2] === "u" || m[s - 2] === "U")) {
+          found.push(decodeLiteralPiece(raw, true, false, uescapeChar(m, sql, e)));
+        }
+      }
       i = c < 0 ? e : c + 1;
     }
   }
