@@ -4325,6 +4325,66 @@ async fn postgres_list_table_partitions_when_env_set() {
     conn.close().await;
 }
 
+/// #2211: パーティション追加 (`CREATE TABLE ... PARTITION OF`) が既存の `execute` 経路で通り、
+/// 追加した子へ行が振り分けられる。同じ幅で 2 件まとめて作る文 (UI が組み立てるもの) と同じ形。
+#[tokio::test]
+async fn postgres_add_partitions_routes_rows_when_env_set() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS public.noobdb_padd_t CASCADE", None)
+        .await;
+    for ddl in [
+        "CREATE TABLE public.noobdb_padd_t (id INT, ts DATE NOT NULL) PARTITION BY RANGE (ts)",
+        "CREATE TABLE \"public\".\"noobdb_padd_t_2026_01\" PARTITION OF \"public\".\"noobdb_padd_t\" FOR VALUES FROM ('2026-01-01') TO ('2026-02-01');",
+        // UI の初期値と同じ「同じ幅の次の期間」を 2 件。
+        "CREATE TABLE \"public\".\"noobdb_padd_t_2026_02\" PARTITION OF \"public\".\"noobdb_padd_t\" FOR VALUES FROM ('2026-02-01') TO ('2026-03-01');",
+        "CREATE TABLE \"public\".\"noobdb_padd_t_2026_03\" PARTITION OF \"public\".\"noobdb_padd_t\" FOR VALUES FROM ('2026-03-01') TO ('2026-04-01');",
+        "INSERT INTO public.noobdb_padd_t VALUES (1, '2026-01-15'), (2, '2026-02-10'), (3, '2026-02-11'), (4, '2026-03-31')",
+    ] {
+        conn.execute(ddl, None).await.expect(ddl);
+    }
+    let got = conn
+        .list_table_partitions("public", "noobdb_padd_t")
+        .await
+        .expect("partitions")
+        .expect("is partitioned");
+    let names: Vec<&str> = got.partitions.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec![
+            "noobdb_padd_t_2026_01",
+            "noobdb_padd_t_2026_02",
+            "noobdb_padd_t_2026_03"
+        ]
+    );
+    // 行の振り分け: 子ごとに削除した件数で確かめる (1 / 2 / 1)。
+    let mut counts = Vec::new();
+    for child in names {
+        let r = conn
+            .execute(&format!("DELETE FROM public.\"{child}\""), None)
+            .await
+            .expect("delete child");
+        counts.push(r.rows_affected);
+    }
+    assert_eq!(counts, vec![1, 2, 1]);
+    // 既存の境界と重なる追加は DB 側でも失敗する (UI は実行前にエラーにする)。
+    assert!(conn
+        .execute(
+            "CREATE TABLE \"public\".\"noobdb_padd_t_dup\" PARTITION OF \"public\".\"noobdb_padd_t\" FOR VALUES FROM ('2026-02-15') TO ('2026-03-15');",
+            None,
+        )
+        .await
+        .is_err());
+    let _ = conn
+        .execute("DROP TABLE IF EXISTS public.noobdb_padd_t CASCADE", None)
+        .await;
+    conn.close().await;
+}
+
 /// #2018: `pg_database` から実データベース一覧を引け、接続中の DB が含まれること。
 /// さらに接続 URL の database だけを差し替えた接続 (別 DB を開く導線と同じ組み立て) が張れる。
 #[tokio::test]

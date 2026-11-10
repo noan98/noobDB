@@ -9893,6 +9893,30 @@ export default function App() {
     [confirm, maintenanceMessage, runMaintenanceDdl, toast],
   );
 
+  // パーティションの追加 (#2211)。モーダルで生成 SQL を確認済みなので、追加の確認ダイアログは挟まず、共通の
+  // DDL ゲート (#2176: confirm_writes / 緊急モード / 型入力確認) だけを通してから流す。PostgreSQL の複数の
+  // CREATE TABLE ... PARTITION OF は 1 トランザクションにまとめ、全件成功か全件失敗にする。キャンセルは false。
+  const handleAddPartitions = useCallback(
+    async (database: string, table: string, statements: string[], count: number): Promise<boolean> => {
+      if (!sessionId) return false;
+      const sql = statements.join("\n");
+      if (!(await runGuardedDdl(sql))) return false;
+      try {
+        if (statements.length === 1) await api.runQuery(sessionId, sql, database);
+        else await api.runQueryTransaction(sessionId, statements, database);
+        invalidateSchemaCache(database);
+        noteSchemaDdl(sql, database);
+        connectionListRef.current?.refreshSchema({ database, table });
+        toast.success(translate("partitionAddDone", { table, count }));
+        return true;
+      } catch (e) {
+        toast.error(translate("statusQueryError", { error: String(e) }));
+        return false;
+      }
+    },
+    [sessionId, runGuardedDdl, invalidateSchemaCache, noteSchemaDdl, toast],
+  );
+
   // 採番列の現在値を実データに同期 (#1240)。列メタから対象を判定し、生成 SQL を確認
   // ダイアログで提示して既存の保守実行経路 (`runMaintenanceDdl`) に流す。MySQL は
   // AUTO_INCREMENT にサブクエリを書けないので、MAX を読み取り専用の lookup で先に取る。
@@ -13569,6 +13593,7 @@ export default function App() {
                           onRunPartitionMaintenance={handleRunPartitionMaintenance}
                           onPartitionOp={handlePartitionOp}
                           onAttachPartition={handleAttachPartition}
+                          onAddPartitions={handleAddPartitions}
                         />
                       ) : null
                     ) : activeBottomPanelTab === "timelapse" ? (

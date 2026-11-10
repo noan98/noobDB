@@ -480,4 +480,83 @@ describe("TableStructurePanel 被参照の外部キー (#1628)", () => {
       expect(btns[0]).toBeDisabled();
     });
   });
+
+  describe("パーティションの追加 (#2211)", () => {
+    const range = (partitions: ReturnType<typeof part>[], method = "RANGE", key = "created_at") => ({
+      method,
+      key,
+      sub_method: null,
+      sub_key: null,
+      partitions,
+    });
+    const jan = part("ev_2026_01", { bound: "FOR VALUES FROM ('2026-01-01') TO ('2026-02-01')" });
+    const feb = part("ev_2026_02", { bound: "FOR VALUES FROM ('2026-02-01') TO ('2026-03-01')" });
+
+    beforeEach(() => {
+      vi.mocked(api.describeTable).mockResolvedValue([col("id")]);
+      vi.mocked(api.listIndexes).mockResolvedValue([]);
+    });
+
+    it("PostgreSQL: 次の月が初期値で、N 件まとめた SQL を渡す。既存と重なるとエラーで確定できない", async () => {
+      vi.mocked(api.listTablePartitions).mockResolvedValueOnce(range([jan, feb]));
+      const onAddPartitions = vi.fn().mockResolvedValue(false);
+      renderPanel({ onAddPartitions }, "postgres");
+      fireEvent.click(await screen.findByRole("button", { name: t("partitionAddOpen") }));
+      expect(await screen.findByLabelText(t("addPartitionName"))).toHaveValue("ev_2026_03");
+      expect(screen.getByLabelText(t("attachPartitionFrom", { column: "created_at" }))).toHaveValue(
+        "2026-03-01",
+      );
+      fireEvent.change(screen.getByLabelText(t("addPartitionCount")), { target: { value: "2" } });
+      expect(screen.getByTestId("sql-preview")).toHaveTextContent(
+        `CREATE TABLE "app"."ev_2026_04" PARTITION OF "app"."orders" FOR VALUES FROM ('2026-04-01') TO ('2026-05-01');`,
+      );
+      fireEvent.click(screen.getByRole("button", { name: t("addPartitionConfirm") }));
+      expect(onAddPartitions).toHaveBeenCalledTimes(1);
+      const [db, table, statements, count] = onAddPartitions.mock.calls[0] as [
+        string,
+        string,
+        string[],
+        number,
+      ];
+      expect([db, table, count]).toEqual(["app", "orders", 2]);
+      expect(statements).toHaveLength(2);
+    });
+
+    it("既存の境界と重なると実行前にエラーを出し、確定を無効にする", async () => {
+      vi.mocked(api.listTablePartitions).mockResolvedValueOnce(range([jan, feb]));
+      renderPanel({ onAddPartitions: vi.fn() }, "postgres");
+      fireEvent.click(await screen.findByRole("button", { name: t("partitionAddOpen") }));
+      fireEvent.change(await screen.findByLabelText(t("attachPartitionFrom", { column: "created_at" })), {
+        target: { value: "2026-02-15" },
+      });
+      expect(
+        await screen.findByText(t("addPartitionErrOverlap", { detail: "ev_2026_02" })),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: t("addPartitionConfirm") })).toBeDisabled();
+    });
+
+    it("MySQL: MAXVALUE があれば REORGANIZE の注意と SQL を出す", async () => {
+      vi.mocked(api.listTablePartitions).mockResolvedValueOnce(
+        range(
+          [
+            part("p0", { bound: "LESS THAN (1000)" }),
+            part("p1", { bound: "LESS THAN (2000)" }),
+            part("pmax", { bound: "LESS THAN MAXVALUE" }),
+          ],
+          "RANGE",
+          "id",
+        ),
+      );
+      renderPanel({ onAddPartitions: vi.fn() }, "mysql");
+      fireEvent.click(await screen.findByRole("button", { name: t("partitionAddOpen") }));
+      expect(await screen.findByText(t("addPartitionReorganize", { partition: "pmax" }))).toBeInTheDocument();
+      expect(screen.getByTestId("sql-preview")).toHaveTextContent("REORGANIZE PARTITION `pmax`");
+    });
+
+    it("read_only では無効にする", async () => {
+      vi.mocked(api.listTablePartitions).mockResolvedValueOnce(range([jan]));
+      renderPanel({ onAddPartitions: vi.fn(), readOnly: true }, "postgres");
+      expect(await screen.findByRole("button", { name: t("partitionAddOpen") })).toBeDisabled();
+    });
+  });
 });
