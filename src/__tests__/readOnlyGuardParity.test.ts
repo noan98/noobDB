@@ -770,6 +770,7 @@ const CONNECTION_READ_METHODS = new Set([
   "live_queries",
   "statement_stats",
   "unused_indexes",
+  "sequence_usage",
   "column_profile",
   "table_profile",
   "close",
