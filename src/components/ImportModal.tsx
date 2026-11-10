@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { markFeatureTried } from "../settings";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
@@ -690,6 +691,7 @@ export function ImportModal({
     unlistenRef.current = unlisten;
 
     try {
+      markFeatureTried("helpImportTitle");
       await api.importCsv({
         sessionId,
         streamId,

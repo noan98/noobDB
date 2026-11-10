@@ -40,7 +40,7 @@ import {
   type BundlePlan,
   type BundleSchemaTable,
 } from "./investigationBundle";
-import { setExportMaskPresets, useSettings } from "../settings";
+import { markFeatureTried, setExportMaskPresets, useSettings } from "../settings";
 import { ExportMaskingSection } from "./ExportMaskingSection";
 import {
   countMaskedColumns,
@@ -828,6 +828,7 @@ export function ExportModal({
       return;
     }
     const backendFormat: ExportFormat = format;
+    markFeatureTried("helpExportTitle");
     try {
       const result = await withHandle((useHandle) =>
         api.exportQueryResult({
@@ -889,6 +890,7 @@ export function ExportModal({
       return;
     }
     unlistenRef.current = unlisten;
+    markFeatureTried("helpExportTitle");
     try {
       await api.exportQueryStream({
         sessionId: ctx.sessionId,

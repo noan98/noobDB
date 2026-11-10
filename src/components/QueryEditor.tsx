@@ -74,7 +74,7 @@ import { renderCompletionIcon } from "./completionIcons";
 import { snippetCompletionSource } from "./sqlSnippetCompletion";
 import { snippetHasFields, snippetToCodeMirrorTemplate } from "../snippetTemplate";
 import { t, useT } from "../i18n";
-import { useSettings } from "../settings";
+import { markFeatureTried, useSettings } from "../settings";
 import { springs } from "../motion";
 import { statementAtOffset, statementsFromOffset } from "../sqlScript";
 import { diagnosticsFromTree, type SqlLintMessages } from "./sqlLint";
@@ -1701,7 +1701,10 @@ export const QueryEditor = memo(
         },
         formatSql: () => {
           const view = viewRef.current;
-          if (view) formatEditorContent(view, driverRef.current, onFormatErrorRef.current);
+          if (view) {
+            markFeatureTried("helpFormatTitle");
+            formatEditorContent(view, driverRef.current, onFormatErrorRef.current);
+          }
         },
         explain: () => {
           const view = viewRef.current;

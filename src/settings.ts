@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { sanitizeTried, withTried } from "./mastery";
 import { isDarkDataTheme } from "./colorScale";
 import { sanitizeCustomTheme } from "./customTheme";
 import { pruneMruIds, recordMruUsage, sanitizeMruIds } from "./components/commandPaletteSearch";
@@ -256,6 +257,13 @@ export interface Settings {
    * 安全判定ではない。誤検出が気になるユーザ向けにオフにできる。
    */
   sqlLintEnabled: boolean;
+  /**
+   * 機能ガイドの習熟マップ (#2216) で「試した機能」を記録するか。既定オン。記録は
+   * この端末の設定ストアにだけ置き、外部へは送らない。オフにすると新たに記録しない。
+   */
+  masteryTrackingEnabled: boolean;
+  /** 試した機能の ID (`mastery.ts` の `MASTERY_FEATURE_IDS` の部分集合)。 */
+  masteryTried: string[];
   /**
    * スキーマ認識のセマンティック lint (#1940)。既定オン。構文チェック (`sqlLintEnabled`) が
    * オンのときだけ働き、接続中スキーマに存在しないテーブル名・列名の参照を警告で示す
@@ -841,6 +849,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoUpdateCheckEnabled: DEFAULT_AUTO_UPDATE_CHECK_ENABLED,
   perfMeasureEnabled: DEFAULT_PERF_MEASURE_ENABLED,
   sqlLintEnabled: DEFAULT_SQL_LINT_ENABLED,
+  masteryTrackingEnabled: true,
+  masteryTried: [],
   sqlSemanticLintEnabled: DEFAULT_SQL_SEMANTIC_LINT_ENABLED,
   preflightImpactEnabled: DEFAULT_PREFLIGHT_IMPACT_ENABLED,
   scanPreflightEnabled: DEFAULT_SCAN_PREFLIGHT_ENABLED,
@@ -1088,6 +1098,8 @@ export function normalizeSettings(input: unknown): Settings {
     autoUpdateCheckEnabled?: unknown;
     perfMeasureEnabled?: unknown;
     sqlLintEnabled?: unknown;
+    masteryTrackingEnabled?: unknown;
+    masteryTried?: unknown;
     sqlSemanticLintEnabled?: unknown;
     preflightImpactEnabled?: unknown;
     scanPreflightEnabled?: unknown;
@@ -1214,6 +1226,9 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.perfMeasureEnabled === "boolean"
         ? parsed.perfMeasureEnabled
         : DEFAULT_PERF_MEASURE_ENABLED,
+    masteryTrackingEnabled:
+      typeof parsed.masteryTrackingEnabled === "boolean" ? parsed.masteryTrackingEnabled : true,
+    masteryTried: sanitizeTried(parsed.masteryTried),
     sqlLintEnabled:
       typeof parsed.sqlLintEnabled === "boolean" ? parsed.sqlLintEnabled : DEFAULT_SQL_LINT_ENABLED,
     sqlSemanticLintEnabled:
@@ -1790,6 +1805,34 @@ export function setPerfMeasureEnabled(value: boolean): void {
 export function setSqlLintEnabled(value: boolean): void {
   if (current.sqlLintEnabled === value) return;
   current = { ...current, sqlLintEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setMasteryTrackingEnabled(value: boolean): void {
+  if (current.masteryTrackingEnabled === value) return;
+  current = { ...current, masteryTrackingEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/**
+ * 機能を「試した」と記録する (#2216)。記録がオフ・既に記録済み・未知の ID のときは何もしない
+ * (ストアも通知も触らないので、実行経路から毎回呼んでも安い)。
+ */
+export function markFeatureTried(id: string): void {
+  if (!current.masteryTrackingEnabled) return;
+  const next = withTried(current.masteryTried, id);
+  if (next === current.masteryTried) return;
+  current = { ...current, masteryTried: [...next] };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/** 習熟マップの記録を消す。 */
+export function resetMasteryProgress(): void {
+  if (current.masteryTried.length === 0) return;
+  current = { ...current, masteryTried: [] };
   persist();
   listeners.forEach((cb) => cb());
 }

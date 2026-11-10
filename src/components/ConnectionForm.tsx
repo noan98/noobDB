@@ -48,6 +48,7 @@ import { ConnectionPathDiagram } from "./ConnectionPathDiagram";
 import { buildConnectionPath } from "./connectionPath";
 import { buildConnectionUrl, parseConnectionUrl } from "./connectionUrl";
 import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
+import { markFeatureTried } from "../settings";
 import {
   COLOR_INPUT_FALLBACK,
   DEFAULT_PRODUCTION_COLOR,
@@ -1068,6 +1069,12 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         // AWS IAM auth (#734): region + AWS profile name only (no AWS keys).
         aws_iam: awsIamConfig(),
       });
+      // 習熟マップ (#2216): 保存した接続が使う安全網・経路を「試した」に記録する。
+      if (readOnly) markFeatureTried("helpReadOnlyTitle");
+      if (isProduction) markFeatureTried("helpProductionTitle");
+      if (confirmWrites) markFeatureTried("helpConfirmWritesTitle");
+      if (authMethod === "aws_iam") markFeatureTried("helpAwsIamTitle");
+      if (route === "ssm") markFeatureTried("helpSsmTitle");
       onSaved();
     } catch (e) {
       setError(String(e));

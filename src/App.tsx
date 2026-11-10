@@ -600,6 +600,7 @@ import {
   resolveThemePreset,
   themePresetDataTheme,
   recordCommandPaletteUsage,
+  markFeatureTried,
   pruneCommandPaletteMru,
   setTableOpenQueryOverride,
   type TabRestoreMode,
@@ -2630,6 +2631,11 @@ export default function App() {
         });
         return;
       }
+      if (next) {
+        // 接続先名のタイプ確認を通って有効化した。
+        markFeatureTried("helpEmergencyModeTitle");
+        markFeatureTried("helpTypeToConfirmTitle");
+      }
       setEmergencySessions((cur) => {
         const nextSet = new Set(cur);
         if (next) nextSet.add(sid);
@@ -3177,6 +3183,7 @@ export default function App() {
 
   const handleBackupExportConfirm = useCallback(
     async (passphrase: string, keepGenerations: number | null) => {
+      markFeatureTried("helpProfileBackupTitle");
       try {
         const dest = await saveFileDialog({
           defaultPath: defaultBackupFileName(),
@@ -4365,6 +4372,7 @@ export default function App() {
   // 復元・エラーハンドリング) に乗せるため。
   const handleSandboxCreated = useCallback(
     async (res: SandboxCreateResponse) => {
+      markFeatureTried("helpSandboxTitle");
       api.disconnect(res.session_id).catch(() => {});
       setSandboxes((prev) => [...prev.filter((s) => s.id !== res.sandbox.id), res.sandbox]);
       setSandboxCreateTarget(null);
@@ -4876,6 +4884,7 @@ export default function App() {
         setStatus({ kind: "key", key: "statusNotConnected", error: true });
         return;
       }
+      if (!autoRefresh) markFeatureTried("helpRunTitle");
       // 自動再接続中は接続が無効。キューイングはせず明示的に弾く (#600)。
       if (connectionStatusRef.current === "reconnecting") {
         setStatus({ kind: "key", key: "statusReconnectBusy", error: true });
@@ -5787,6 +5796,7 @@ export default function App() {
       streamUnlistenRef.current.set(tabId, unlisten);
 
       try {
+        markFeatureTried("helpDryRunTitle");
         await api.previewQueryStream({
           sessionId,
           streamId,
@@ -6482,6 +6492,7 @@ export default function App() {
   const runExplainInTab = useCallback(
     async (tabId: string, sql: string, analyze: boolean, override?: { sessionId?: string; tab?: Tab }) => {
       const driver = selectedProfile?.driver;
+      markFeatureTried("helpExplainTitle");
       if (!analyze) {
         updateTab(tabId, { explainAnalyze: false, explainSourceSql: sql });
         void runQueryInTab(tabId, `${explainPrefixFor(driver)}${sql}`, null, null, false, override);
@@ -6581,6 +6592,7 @@ export default function App() {
           pf && pf.sql === sql && pf.status === "ready"
             ? { verb: pf.plan.verb, count: pf.count, allRows: pf.plan.allRows }
             : null;
+        if (typedConfirmTarget) markFeatureTried("helpTypeToConfirmTitle");
         setPendingDangerous({
           tabId: target.id,
           sql,
@@ -6930,6 +6942,7 @@ export default function App() {
   // holding the snippet when there is no active tab yet.
   const handleInsertSnippet = useCallback(
     (snippet: Snippet) => {
+      markFeatureTried("helpSnippetTitle");
       if (activeTab) {
         // `${1:...}` 記法を含むときはタブストップ付きで展開する (#1489)。含まなければ従来どおり。
         activeEditor()?.insertSnippet(snippet.sql);
@@ -6954,6 +6967,7 @@ export default function App() {
   const handleRunSnippet = useCallback(
     (snippet: Snippet) => {
       if (!sessionId) return;
+      markFeatureTried("helpSnippetTitle");
       // タブストップ記法 (#1489) は既定値に置き換えた平文で実行する。
       const plain = snippetPlainText(snippet.sql);
       const tab: Tab = {
@@ -6992,6 +7006,7 @@ export default function App() {
   // table tab's auto-generated SELECT.
   const handleRestoreHistory = useCallback(
     (sql: string) => {
+      markFeatureTried("helpHistoryTitle");
       if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
         activeEditor()?.setText(sql);
       } else if (sessionId) {
@@ -7180,6 +7195,7 @@ export default function App() {
   // Always open history SQL in a fresh query tab, never overwriting the editor.
   const handleOpenHistoryInNewTab = useCallback(
     (sql: string) => {
+      markFeatureTried("helpHistoryTitle");
       addTab({ ...makeQueryTab(), sql, lastExecutedSql: sql });
     },
     [addTab],
@@ -7279,6 +7295,7 @@ export default function App() {
   );
 
   const handleSaveSnippetFromEditor = useCallback((sql: string) => {
+    markFeatureTried("helpSnippetTitle");
     setEditingSnippet(null);
     setSnippetFormSql(sql);
     setShowForm(false);
@@ -7363,6 +7380,7 @@ export default function App() {
 
   const setCellEditForTab = useCallback(
     (tabId: string, rowKey: string, colIdx: number, value: string | null) => {
+      markFeatureTried("helpCellEditTitle");
       patchTab(tabId, (tt) => {
         const next = { ...tt.pendingEdits };
         const row = { ...(next[rowKey] ?? {}) };
@@ -7437,6 +7455,7 @@ export default function App() {
   // cleared it.
   const discardEditsAndPreviewForTab = useCallback(
     (tabId: string) => {
+      markFeatureTried("helpDiscardTitle");
       void cancelStreamForTab(tabId);
       patchTab(tabId, (tt) => {
         const undoStack =
@@ -7541,6 +7560,7 @@ export default function App() {
       if (applyGuardRef.current.has(tab.id)) return false;
       const { result, tableColumns, database, table, paginatable, rowIdentity } = tab;
       if (!result || !tableColumns || !database || !table) return false;
+      markFeatureTried("helpApplyTitle");
       const scoped = rowScope !== undefined;
       const pendingEdits: PendingEdits = scoped ? rowScope : tab.pendingEdits;
       // 行スコープの適用では削除予定・新規行は送らず、保留のまま残す。
@@ -11928,6 +11948,8 @@ export default function App() {
       setShowServerInfo(false);
       setSizesTarget(null);
       setShowSnippetForm(false);
+      if (view === "tasks") markFeatureTried("helpTaskSchedulerTitle");
+      else if (view === "compare") markFeatureTried("helpSchemaCompareTitle");
       if (view === "settings") setShowSettings(true);
       else if (view === "tasks") setShowTasks(true);
       else if (view === "help") setShowHelp(true);
