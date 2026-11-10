@@ -262,3 +262,102 @@ describe("ReplicationPanel slot drop (#2180)", () => {
     for (const b of buttons) expect(b).toBeDisabled();
   });
 });
+
+describe("ReplicationPanel ライブ表示 (#2213)", () => {
+  const mk = (name: string, lag: number | null, over: Partial<ReplicationStatus["links"][number]> = {}) => ({
+    direction: "downstream" as const,
+    name,
+    address: `10.0.0.${name.length}${name}`,
+    state: "streaming",
+    sync_state: "async",
+    lag_secs: lag,
+    write_lag_secs: null,
+    flush_lag_secs: null,
+    lag_bytes: null,
+    io_running: null,
+    sql_running: null,
+    last_error: null,
+    ...over,
+  });
+  const refresh = () => fireEvent.click(screen.getByRole("button", { name: t("replicationRefresh") }));
+
+  it("初回の取得中はカード形のスケルトンを出し、取得後に消える", async () => {
+    let resolve: (v: ReplicationStatus) => void = () => {};
+    vi.mocked(api.getReplicationStatus).mockReturnValue(
+      new Promise<ReplicationStatus>((r) => {
+        resolve = r;
+      }),
+    );
+    renderWithProviders(<ReplicationPanel sessionId="s1" driver="postgres" />);
+    expect(await screen.findByTestId("replication-skeleton")).toHaveAttribute("aria-hidden", "true");
+    await act(async () => resolve(status({ role: "primary", links: [mk("a", 1)] })));
+    await screen.findByTestId("replication-link");
+    expect(screen.queryByTestId("replication-skeleton")).toBeNull();
+  });
+
+  it("並べ替わっても同じ接続先のカードの DOM が維持され、初回は光らず変化したタイルだけ光る", async () => {
+    vi.mocked(api.getReplicationStatus).mockResolvedValue(
+      status({ role: "primary", links: [mk("a", 1), mk("b", 2)] }),
+    );
+    renderWithProviders(<ReplicationPanel sessionId="s1" driver="postgres" />);
+    await screen.findAllByTestId("replication-link");
+    const before = screen.getAllByTestId("replication-link");
+    const [cardA, cardB] = before;
+    expect(document.querySelector("[data-live-flash]")).toBeNull();
+
+    // b の遅延が閾値を超え、異常のある b が先頭へ移る。
+    vi.mocked(api.getReplicationStatus).mockResolvedValue(
+      status({ role: "primary", links: [mk("a", 1), mk("b", 45)] }),
+    );
+    refresh();
+    await waitFor(() => {
+      const now = screen.getAllByTestId("replication-link");
+      expect(now[0]).toBe(cardB);
+      expect(now[1]).toBe(cardA);
+    });
+    expect(cardB.querySelectorAll("[data-live-flash]")).toHaveLength(1);
+    expect(cardA.querySelector("[data-live-flash]")).toBeNull();
+  });
+
+  it("接続先が増減しても残る接続先の DOM は維持される", async () => {
+    vi.mocked(api.getReplicationStatus).mockResolvedValue(
+      status({ role: "primary", links: [mk("a", 1), mk("b", 2)] }),
+    );
+    renderWithProviders(<ReplicationPanel sessionId="s1" driver="postgres" />);
+    await screen.findAllByTestId("replication-link");
+    const cardB = screen.getAllByTestId("replication-link")[1];
+    vi.mocked(api.getReplicationStatus).mockResolvedValue(status({ role: "primary", links: [mk("b", 2)] }));
+    refresh();
+    await waitFor(() => expect(screen.getAllByTestId("replication-link")).toHaveLength(1));
+    expect(screen.getByTestId("replication-link")).toBe(cardB);
+  });
+
+  it("フラッシュの前後で StatTile の DOM が作り直されない (CountUp が途切れない)", async () => {
+    vi.mocked(api.getReplicationStatus).mockResolvedValue(status({ role: "primary", links: [mk("a", 1)] }));
+    renderWithProviders(<ReplicationPanel sessionId="s1" driver="postgres" />);
+    const card = await screen.findByTestId("replication-link");
+    const tile = screen.getByText(t("replicationLag")).parentElement;
+    expect(tile).not.toBeNull();
+    vi.mocked(api.getReplicationStatus).mockResolvedValue(status({ role: "primary", links: [mk("a", 5)] }));
+    refresh();
+    await waitFor(() => expect(card.querySelectorAll("[data-live-flash]")).toHaveLength(1));
+    expect(screen.getByText(t("replicationLag")).parentElement).toBe(tile);
+  });
+
+  it("同じ名前・アドレスの接続先が 2 本あっても、両方が描画され DOM が維持される", async () => {
+    const dup = (lag: number) => mk("walsender", lag, { address: null });
+    vi.mocked(api.getReplicationStatus).mockResolvedValue(
+      status({ role: "primary", links: [dup(1), dup(2)] }),
+    );
+    renderWithProviders(<ReplicationPanel sessionId="s1" driver="postgres" />);
+    await waitFor(() => expect(screen.getAllByTestId("replication-link")).toHaveLength(2));
+    const [c1, c2] = screen.getAllByTestId("replication-link");
+    // 2 本目が異常になり先頭へ移っても、どちらも残り同じ DOM を使う。
+    vi.mocked(api.getReplicationStatus).mockResolvedValue(
+      status({ role: "primary", links: [dup(1), dup(45)] }),
+    );
+    refresh();
+    await waitFor(() => expect(screen.getAllByTestId("replication-link")[0]).toBe(c2));
+    expect(screen.getAllByTestId("replication-link")[1]).toBe(c1);
+  });
+});

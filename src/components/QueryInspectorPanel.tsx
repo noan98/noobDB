@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, VisuallyHidden, type SystemStyleObject } from "@chakra-ui/react";
 
 import { api, type QueryStatsSupport, type StatementDeltaRow } from "../api/tauri";
@@ -24,14 +24,19 @@ import {
   mergeLiveTail,
   nextStatSort,
   sortStatRows,
+  STAT_LIVE_FIELDS,
+  statRowKey,
   statRowsToTable,
   supportReasonI18nKey,
   tailExplainBlockReason,
   type LiveTailEntry,
+  type StatLiveField,
   type StatSort,
   type StatSortKey,
   type NPlusOneOptions,
 } from "./queryInspector";
+import { LiveCell, LiveRowsPresence, LiveTr, useLiveChanges } from "./LiveRows";
+import { uniqueByKey } from "./liveDiff";
 import { Skeleton } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Button, Checkbox, Input } from "./ui";
@@ -87,6 +92,8 @@ const tdCss: SystemStyleObject = {
   verticalAlign: "top",
 };
 const numTdCss: SystemStyleObject = { ...tdCss, textAlign: "right" };
+// 集計行 (`StatRow`) の値セルは `LiveCell` (#1022) 経由。フラッシュ層がパディングを持つ。
+const statCellInnerCss: SystemStyleObject = { padding: "var(--space-1-25) var(--space-2-5)" };
 const queryTdCss: SystemStyleObject = {
   ...tdCss,
   whiteSpace: "normal",
@@ -256,20 +263,43 @@ export const StatRow = memo(function StatRow({
   fingerprint,
   nPlusOneWindowMs,
   onCopy,
+  flashCalls = null,
+  flashTotal = null,
+  flashMean = null,
+  flashMax = null,
+  flashRows = null,
 }: {
   row: StatementDeltaRow;
   fingerprint: string;
   nPlusOneWindowMs: number;
   onCopy: (sql: string) => void | Promise<void>;
+  /** 値が変わったセルのフラッシュ再生キー (#2213)。memo が効くよう個別のプリミティブで受ける。 */
+  flashCalls?: number | null;
+  flashTotal?: number | null;
+  flashMean?: number | null;
+  flashMax?: number | null;
+  flashRows?: number | null;
 }) {
   const t = useT();
+  const flash: Record<StatLiveField, number | null> = {
+    calls: flashCalls,
+    total: flashTotal,
+    mean: flashMean,
+    max: flashMax,
+    rows: flashRows,
+  };
+  const cell = (field: StatLiveField, children: ReactNode) => (
+    <LiveCell css={numTdCss} innerCss={statCellInnerCss} collapse={false} flash={flash[field]}>
+      {children}
+    </LiveCell>
+  );
   return (
-    <tr>
-      <chakra.td css={numTdCss}>{r.calls}</chakra.td>
-      <chakra.td css={numTdCss}>{formatMs(r.total_time_ms)}</chakra.td>
-      <chakra.td css={numTdCss}>{formatMs(r.mean_time_ms)}</chakra.td>
-      <chakra.td css={numTdCss}>{formatMs(r.max_time_ms)}</chakra.td>
-      <chakra.td css={numTdCss}>{r.rows ?? "–"}</chakra.td>
+    <LiveTr>
+      {cell("calls", r.calls)}
+      {cell("total", formatMs(r.total_time_ms))}
+      {cell("mean", formatMs(r.mean_time_ms))}
+      {cell("max", formatMs(r.max_time_ms))}
+      {cell("rows", r.rows ?? "–")}
       <chakra.td css={tdCss}>{r.database ?? "–"}</chakra.td>
       <Tooltip label={fingerprint}>
         <chakra.td css={queryTdCss}>
@@ -292,7 +322,7 @@ export const StatRow = memo(function StatRow({
           </Button>
         </Tooltip>
       </chakra.td>
-    </tr>
+    </LiveTr>
   );
 });
 
@@ -322,6 +352,8 @@ export function QueryInspectorPanel({
   // バックエンドが返した差分行 (calls > 0、総時間降順)。SQL 本文は初出の digest にだけ載るため
   // `fingerprintCache` に溜めて行へ結び付ける。
   const [deltaRows, setDeltaRows] = useState<StatementDeltaRow[]>([]);
+  // `deltaRows` を組んだときの累積表示。切替直後の再計算で全セルが光らないよう、フラッシュの resetKey にする。
+  const [deltaCumulative, setDeltaCumulative] = useState(false);
   const fingerprintCache = useRef(new Map<string, string>());
   const [error, setError] = useState<string | null>(null);
   const [sampledAt, setSampledAt] = useState<Date | null>(null);
@@ -389,7 +421,10 @@ export function QueryInspectorPanel({
         fingerprintCache.current.set(`${r.digest} ${r.database ?? ""}`, r.fingerprint);
       }
     }
-    if (requestedCumulative === cumulativeRef.current) setDeltaRows(rows);
+    if (requestedCumulative === cumulativeRef.current) {
+      setDeltaRows(rows);
+      setDeltaCumulative(requestedCumulative);
+    }
   }, []);
 
   // ポーリング 1 ティック: ライブテール → digest スナップショットの順に取得する。
@@ -526,9 +561,19 @@ export function QueryInspectorPanel({
   const fingerprintOf = (r: StatementDeltaRow) =>
     fingerprintCache.current.get(`${r.digest} ${r.database ?? ""}`) ?? "";
 
+  // 行の出入りと値変化フラッシュ (#2213)。差分は並べ替え前の行で取るので、ソートでは光らない。
+  // 記録の開始・セッション切替では `deltaRows` が空に戻るので、直後の最初の表示も光らない。
+  const statRows = useMemo(() => uniqueByKey(deltaRows, statRowKey), [deltaRows]);
+  const { flashToken: statFlashToken } = useLiveChanges(
+    statRows,
+    statRowKey,
+    STAT_LIVE_FIELDS,
+    deltaCumulative,
+  );
+
   // fingerprintCache は ref なので、deltaRows の更新に合わせて再計算する。
   // biome-ignore lint/correctness/useExhaustiveDependencies: fingerprintOf は ref を読むだけ
-  const sortedRows = useMemo(() => sortStatRows(deltaRows, statSort, fingerprintOf), [deltaRows, statSort]);
+  const sortedRows = useMemo(() => sortStatRows(statRows, statSort, fingerprintOf), [statRows, statSort]);
   const statExportFormats = [
     { id: "csv" as const, label: "CSV", build: () => buildStatText("csv") },
     { id: "tsv" as const, label: "TSV", build: () => buildStatText("tsv") },
@@ -875,18 +920,26 @@ export function QueryInspectorPanel({
                       </tr>
                     </thead>
                     <RevealTbody>
-                      {sortedRows.map((r) => {
-                        const fp = fingerprintOf(r);
-                        return (
-                          <StatRow
-                            key={`${r.digest} ${r.database ?? ""}`}
-                            row={r}
-                            fingerprint={fp}
-                            nPlusOneWindowMs={settings.inspectorNPlusOneWindowMs}
-                            onCopy={copySql}
-                          />
-                        );
-                      })}
+                      <LiveRowsPresence>
+                        {sortedRows.map((r) => {
+                          const fp = fingerprintOf(r);
+                          const key = statRowKey(r);
+                          return (
+                            <StatRow
+                              key={key}
+                              row={r}
+                              fingerprint={fp}
+                              nPlusOneWindowMs={settings.inspectorNPlusOneWindowMs}
+                              onCopy={copySql}
+                              flashCalls={statFlashToken(key, "calls")}
+                              flashTotal={statFlashToken(key, "total")}
+                              flashMean={statFlashToken(key, "mean")}
+                              flashMax={statFlashToken(key, "max")}
+                              flashRows={statFlashToken(key, "rows")}
+                            />
+                          );
+                        })}
+                      </LiveRowsPresence>
                     </RevealTbody>
                   </chakra.table>
                 </Box>

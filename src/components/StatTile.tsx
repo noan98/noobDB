@@ -64,6 +64,9 @@ function StatDelta({
  * で、色に加えて読み上げ文言でも増減と良悪を伝える。推移は既存 `LatencySparkline` (neutral)。
  * どちらも未指定なら従来と同じ見た目。
  */
+/** タイルの最小幅。フラッシュの外枠 (`ReplicationPanel`) など、タイルを包む側と共有する。 */
+export const STAT_TILE_MIN_WIDTH = "120px";
+
 export function StatTile({
   label,
   value,
@@ -92,7 +95,7 @@ export function StatTile({
   const showTrend = trend != null && trend.filter((v) => v != null && Number.isFinite(v)).length >= 2;
   return (
     <Box
-      minW="120px"
+      minW={STAT_TILE_MIN_WIDTH}
       flex="1"
       px="3"
       py="2"

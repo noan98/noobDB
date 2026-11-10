@@ -3,6 +3,7 @@
 // 閾値の判定・メーターの位置・並べ替えを描画から切り離し、Vitest で固定する。
 
 import type { ReplicationLink, ReplicationSlot } from "../api/tauri";
+import type { LiveField } from "./liveDiff";
 
 /** 使われていないスロットが WAL をこれ以上溜めたら先頭で警告する (1 GiB)。 */
 export const SLOT_WAL_WARN_BYTES = 1024 * 1024 * 1024;
@@ -66,7 +67,7 @@ export function linkNeedsAttention(link: ReplicationLink): boolean {
 }
 
 /** 一覧の並び: 異常のある行 → 名前順。 */
-export function sortLinks(links: readonly ReplicationLink[]): ReplicationLink[] {
+export function sortLinks<T extends ReplicationLink>(links: readonly T[]): T[] {
   return [...links].sort(
     (a, b) => Number(linkNeedsAttention(b)) - Number(linkNeedsAttention(a)) || a.name.localeCompare(b.name),
   );
@@ -89,3 +90,62 @@ export function dropSlotBlockedReason(
   if (slot.active) return "active";
   return null;
 }
+
+/**
+ * 接続先カードの安定 key (#2213)。`sortLinks` で並びが変わっても同じ接続先は同じ key を保ち、
+ * カードの DOM (と StatTile の CountUp) が作り直されない。配列の index は入れない。
+ */
+export function linkKey(link: ReplicationLink): string {
+  return `${link.direction}\u0000${link.name}\u0000${link.address ?? ""}`;
+}
+
+/**
+ * 一覧全体の key 列 (#2213)。同じ向き・名前・アドレスの接続先は現実に複数ありうる (`pg_basebackup` の
+ * walsender が 2 本、Unix ソケット接続でアドレスが null など) ので、重複したときだけ出現順の連番を足して
+ * 一意にする。入力 (並べ替え前) の順で数えるので、`sortLinks` で並びが変わっても同じ接続先は同じ key を保つ。
+ * 重複を取り除くのではなく連番で区別する (接続先を消さない)。
+ */
+export function linkKeys(links: readonly ReplicationLink[]): string[] {
+  const seen = new Map<string, number>();
+  return links.map((l) => {
+    const base = linkKey(l);
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    return n === 0 ? base : `${base}#${n}`;
+  });
+}
+
+/** `linkKeys` の key を載せた接続先。描画と差分計算の両方がこの key を使う。 */
+export type KeyedLink = ReplicationLink & { key: string };
+
+export function keyLinks(links: readonly ReplicationLink[]): KeyedLink[] {
+  const keys = linkKeys(links);
+  return links.map((l, i) => ({ ...l, key: keys[i] }));
+}
+
+/** `KeyedLink` の行 ID。 */
+export function keyedLinkKey(l: KeyedLink): string {
+  return l.key;
+}
+
+export type ReplicationLinkLiveField = "lag" | "lagWrite" | "lagFlush" | "lagBytes";
+
+/** 接続先の値変化フラッシュ対象 (遅延・WAL 差分)。 */
+export const REPLICATION_LINK_LIVE_FIELDS: readonly LiveField<ReplicationLink, ReplicationLinkLiveField>[] = [
+  { name: "lag", changed: (a, b) => a.lag_secs !== b.lag_secs },
+  { name: "lagWrite", changed: (a, b) => a.write_lag_secs !== b.write_lag_secs },
+  { name: "lagFlush", changed: (a, b) => a.flush_lag_secs !== b.flush_lag_secs },
+  { name: "lagBytes", changed: (a, b) => a.lag_bytes !== b.lag_bytes },
+];
+
+/** スロットの安定 key (スロット名はクラスタ内で一意)。 */
+export function slotKey(slot: ReplicationSlot): string {
+  return slot.name;
+}
+
+export type ReplicationSlotLiveField = "retained";
+
+/** スロットの値変化フラッシュ対象 (WAL 保持量)。 */
+export const REPLICATION_SLOT_LIVE_FIELDS: readonly LiveField<ReplicationSlot, ReplicationSlotLiveField>[] = [
+  { name: "retained", changed: (a, b) => a.retained_bytes !== b.retained_bytes },
+];

@@ -138,6 +138,10 @@ import type { Transition, Variants } from "motion/react";
  *   フラッシュは既存の `@keyframes apply-flash`、数値は `CountUp`) (#1022)。
  *   `height` / `opacity` の補間は `MotionConfig reducedMotion` では止まらないため、
  *   `LiveRowsPresence` が `useReducedMotion()` を見て transition を即時化する。
+ * - レプリケーション監視 / クエリインスペクタ集計 / パフォーマンス計測の行の出入りと値変化フラッシュ
+ *   (`ReplicationPanel` / `QueryInspectorPanel` / `PerfPanel` — `LiveRows.tsx` の部品を横展開、#2213)。
+ *   レプリケーションの接続先カードは `LiveRow reorder` (`layout="position"`) で並べ替えを滑らせ、
+ *   reduced-motion では静止する。
  * - クエリビルダーの WHERE 条件行の追加/削除 (`QueryBuilder` — `LiveRowsPresence` +
  *   `LiveCollapse` の `variants.collapse`、#1936)。行ごとに安定キーを持たせ、行間の gap は
  *   各行の内側 padding に移して畳み終わりに隙間が残らないようにする。

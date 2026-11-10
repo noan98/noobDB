@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, act } from "./testUtils";
 import { t } from "../i18n";
 import type { QueryStatsSupport, StatementDeltaRow } from "../api/tauri";
 
@@ -196,6 +196,61 @@ describe("QueryInspectorPanel backend delta (#1259)", () => {
     await waitFor(() => expect(screen.getByText("9")).toBeInTheDocument());
     expect(screen.getByText("select * from orders where id = ?")).toBeInTheDocument();
     expect(screen.getByText("N+1")).toBeInTheDocument();
+  });
+});
+
+describe("QueryInspectorPanel 集計行のライブ表示 (#2213)", () => {
+  const row = (over: Partial<StatementDeltaRow> = {}): StatementDeltaRow => ({
+    digest: "d1",
+    fingerprint: "select 1",
+    database: "shop",
+    calls: 4,
+    total_time_ms: 40,
+    mean_time_ms: 10,
+    max_time_ms: 15,
+    rows: 8,
+    n_plus_one: false,
+    ...over,
+  });
+
+  async function startStats() {
+    renderWithProviders(<QueryInspectorPanel sessionId="s1" driver="mysql" />);
+    await waitFor(() => expect(screen.getByText(t("inspectorStart"))).toBeInTheDocument());
+    fireEvent.click(screen.getByText(t("inspectorTabStats")));
+    fireEvent.click(screen.getByText(t("inspectorStart")));
+    await waitFor(() => expect(screen.getByText("select 1")).toBeInTheDocument());
+  }
+
+  it("初回表示は光らず、ポーリングで値が変わったセルだけ apply-flash で光る", async () => {
+    vi.mocked(api.sampleLiveQueries).mockResolvedValue([]);
+    vi.mocked(api.sampleStatementDelta)
+      .mockResolvedValueOnce([row()])
+      .mockResolvedValue([row({ fingerprint: null, calls: 9 })]);
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await startStats();
+      expect(document.querySelector("[data-live-flash]")).toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      await waitFor(() => expect(screen.getByText("9")).toBeInTheDocument());
+      const flashed = document.querySelectorAll("[data-live-flash]");
+      expect(flashed).toHaveLength(1);
+      expect(flashed[0].textContent).toBe("9");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("累積表示の切替による再計算では光らない", async () => {
+    vi.mocked(api.sampleLiveQueries).mockResolvedValue([]);
+    vi.mocked(api.sampleStatementDelta)
+      .mockResolvedValueOnce([row()])
+      .mockResolvedValue([row({ fingerprint: null, calls: 9 })]);
+    await startStats();
+    fireEvent.click(screen.getByLabelText(t("inspectorCumulativeLabel")));
+    await waitFor(() => expect(screen.getByText("9")).toBeInTheDocument());
+    expect(document.querySelector("[data-live-flash]")).toBeNull();
   });
 });
 

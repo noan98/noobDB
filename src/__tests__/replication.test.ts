@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ReplicationLink, ReplicationSlot } from "../api/tauri";
+import { diffLiveRows } from "../components/liveDiff";
 import {
   buildDropSlotSql,
   dropSlotBlockedReason,
@@ -9,7 +10,13 @@ import {
   LAG_WARN_SECS,
   lagMeterPercent,
   lagWarnPercent,
+  linkKey,
+  linkKeys,
+  keyLinks,
   linkNeedsAttention,
+  REPLICATION_LINK_LIVE_FIELDS,
+  REPLICATION_SLOT_LIVE_FIELDS,
+  slotKey,
   SLOT_WAL_WARN_BYTES,
   slotsHoldingWal,
   slotsLost,
@@ -140,5 +147,74 @@ describe("dropSlotBlockedReason", () => {
     expect(dropSlotBlockedReason(slot({ active: false }), true)).toBe("readOnly");
     expect(dropSlotBlockedReason(slot({ active: true }), false)).toBe("active");
     expect(dropSlotBlockedReason(slot({ active: false }), false)).toBeNull();
+  });
+});
+
+describe("linkKey / 値変化フラッシュ (#2213)", () => {
+  it("key は並び順に依存せず、向き・名前・アドレスで一意になる", () => {
+    const a = link({ name: "a", address: "10.0.0.1" });
+    const b = link({ name: "b", address: "10.0.0.2", lag_secs: 99 });
+    const before = [a, b].map(linkKey);
+    // 異常のある b が先頭へ並べ替わっても、同じ接続先の key は変わらない。
+    const after = sortLinks([a, b]).map(linkKey);
+    expect(after).toEqual([before[1], before[0]]);
+    expect(linkKey(link({ name: "a", address: "x", direction: "upstream" }))).not.toBe(
+      linkKey(link({ name: "a", address: "x", direction: "downstream" })),
+    );
+    expect(linkKey(link({ name: "a", address: null }))).not.toBe(
+      linkKey(link({ name: "a", address: "" + "z" })),
+    );
+    // 区切りが曖昧にならない (name に ":" を含んでも衝突しない)。
+    expect(linkKey(link({ name: "a:b", address: "c" }))).not.toBe(
+      linkKey(link({ name: "a", address: "b:c" })),
+    );
+  });
+
+  it("遅延と WAL 差分が変わった接続先だけ、変わったフィールドを返す", () => {
+    const prev = [link({ name: "a", lag_secs: 1, lag_bytes: 10 }), link({ name: "b", lag_secs: 2 })];
+    const next = [link({ name: "a", lag_secs: 3, lag_bytes: 10 }), link({ name: "b", lag_secs: 2 })];
+    const changes = diffLiveRows(keyLinks(prev), keyLinks(next), (l) => l.key, REPLICATION_LINK_LIVE_FIELDS);
+    expect([...changes.keys()]).toEqual([linkKey(next[0])]);
+    expect([...(changes.get(linkKey(next[0])) ?? [])]).toEqual(["lag"]);
+  });
+
+  it("null との行き来も変化とみなし、初回 (前回なし) は光らない", () => {
+    const a = link({ name: "a", write_lag_secs: null });
+    const b = link({ name: "a", write_lag_secs: 0 });
+    expect(diffLiveRows(keyLinks([a]), keyLinks([b]), (l) => l.key, REPLICATION_LINK_LIVE_FIELDS).size).toBe(
+      1,
+    );
+    expect(diffLiveRows(null, keyLinks([b]), (l) => l.key, REPLICATION_LINK_LIVE_FIELDS).size).toBe(0);
+    expect(diffLiveRows([], keyLinks([b]), (l) => l.key, REPLICATION_LINK_LIVE_FIELDS).size).toBe(0);
+  });
+
+  it("スロットは名前で突き合わせ、WAL 保持量の変化だけ返す", () => {
+    const prev = [slot({ name: "s1", retained_bytes: 1 }), slot({ name: "s2", retained_bytes: 5 })];
+    const next = [slot({ name: "s2", retained_bytes: 5 }), slot({ name: "s1", retained_bytes: 2 })];
+    const changes = diffLiveRows(prev, next, slotKey, REPLICATION_SLOT_LIVE_FIELDS);
+    expect([...changes.keys()]).toEqual(["s1"]);
+  });
+});
+
+describe("linkKeys (#2213)", () => {
+  it("重複しない一覧は linkKey のまま、重複したときだけ出現順の連番を足す", () => {
+    const a = link({ name: "walsender", address: null });
+    const b = link({ name: "other", address: "x" });
+    expect(linkKeys([a, b])).toEqual([linkKey(a), linkKey(b)]);
+    const keys = linkKeys([a, b, { ...a }, { ...a }]);
+    expect(new Set(keys).size).toBe(4);
+    expect(keys[0]).toBe(linkKey(a));
+    expect(keys[2]).toBe(`${linkKey(a)}#1`);
+    expect(keys[3]).toBe(`${linkKey(a)}#2`);
+  });
+
+  it("並べ替えても同じ接続先は同じ key を保ち、接続先は消えない", () => {
+    const dup1 = link({ name: "ws", lag_secs: 99 });
+    const dup2 = link({ name: "ws", lag_secs: 1 });
+    const keyed = keyLinks([dup2, dup1]);
+    expect(keyed).toHaveLength(2);
+    const sorted = sortLinks(keyed);
+    // 異常のある dup1 (key は #1) が先頭へ移っても key は元のまま。
+    expect(sorted.map((l) => l.key)).toEqual([`${linkKey(dup1)}#1`, linkKey(dup1)]);
   });
 });
