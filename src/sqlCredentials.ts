@@ -648,21 +648,29 @@ function redactConninfoUri(uri: string): string {
       restStart = at;
     }
   }
+  const redactParams = (q: string): string =>
+    q
+      .split("&")
+      .map((kv) => {
+        const eq = kv.indexOf("=");
+        if (eq >= 0 && CONNINFO_SECRET_KEYS.includes(asciiLower(percentDecode(kv.slice(0, eq))))) {
+          return `${kv.slice(0, eq)}=********`;
+        }
+        return kv;
+      })
+      .join("&");
   const rest = uri.slice(restStart);
   const q = rest.indexOf("?");
-  const head = prefix + (q < 0 ? rest : rest.slice(0, q));
+  let head = q < 0 ? rest : rest.slice(0, q);
+  // クエリの値に `@` があって `?` が伏せ字に呑まれたときは、残りの `&` 以降もクエリとして伏せる
+  // (Rust の `redact_conninfo_uri` と同じ)。
+  const amp = head.indexOf("&");
+  if (uri.slice(schemeEnd, restStart).includes("?") && amp >= 0) {
+    head = `${head.slice(0, amp)}&${redactParams(head.slice(amp + 1))}`;
+  }
+  head = prefix + head;
   if (q < 0) return head;
-  const parts = rest
-    .slice(q + 1)
-    .split("&")
-    .map((kv) => {
-      const eq = kv.indexOf("=");
-      if (eq >= 0 && CONNINFO_SECRET_KEYS.includes(asciiLower(percentDecode(kv.slice(0, eq))))) {
-        return `${kv.slice(0, eq)}=********`;
-      }
-      return kv;
-    });
-  return `${head}?${parts.join("&")}`;
+  return `${head}?${redactParams(rest.slice(q + 1))}`;
 }
 
 /**

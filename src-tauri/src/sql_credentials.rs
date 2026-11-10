@@ -1070,24 +1070,34 @@ fn redact_conninfo_uri(uri: &str) -> String {
         Some((h, q)) => (h, Some(q)),
         None => (&uri[rest_start..], None),
     };
-    let head = format!("{prefix}{head}");
+    let redact_params = |q: &str| -> String {
+        q.split('&')
+            .map(|kv| match kv.split_once('=') {
+                Some((k, _))
+                    if CONNINFO_SECRET_KEYS
+                        .contains(&percent_decode(k).to_ascii_lowercase().as_str()) =>
+                {
+                    format!("{k}=********")
+                }
+                _ => kv.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("&")
+    };
+    // クエリの値に `@` があると (`h?application_name=a@b&password=x`)、ユーザー情報の区切りが元の `?` より
+    // 後ろに来て `?` が伏せ字に呑まれる。そのときは残り (`@b&password=x`) もクエリの続きとして扱い、
+    // `&` の後ろの password / sslpassword を伏せる (安全側)。
+    let head = if uri[scheme_end..rest_start].contains('?') {
+        match head.split_once('&') {
+            Some((first, more)) => format!("{prefix}{first}&{}", redact_params(more)),
+            None => format!("{prefix}{head}"),
+        }
+    } else {
+        format!("{prefix}{head}")
+    };
     match query {
         None => head,
-        Some(q) => {
-            let parts: Vec<String> = q
-                .split('&')
-                .map(|kv| match kv.split_once('=') {
-                    Some((k, _))
-                        if CONNINFO_SECRET_KEYS
-                            .contains(&percent_decode(k).to_ascii_lowercase().as_str()) =>
-                    {
-                        format!("{k}=********")
-                    }
-                    _ => kv.to_string(),
-                })
-                .collect();
-            format!("{head}?{}", parts.join("&"))
-        }
+        Some(q) => format!("{head}?{}", redact_params(q)),
     }
 }
 
@@ -1259,6 +1269,21 @@ mod tests {
         assert_eq!(
             redact_conninfo("postgresql://h:5432/db?application_name=me@corp"),
             "postgresql://h:5432/db?application_name=me@corp"
+        );
+    }
+
+    #[test]
+    fn conninfo_uri_query_password_survives_at_in_earlier_query_value() {
+        // クエリの値の `@` でユーザー情報の区切りが `?` より後ろになっても、後ろの password を漏らさない。
+        assert_eq!(
+            redact_conninfo("postgresql://u:secret@host?application_name=a@b&password=topsecret"),
+            "postgresql://u:********@b&password=********"
+        );
+        assert_eq!(
+            redact_conninfo(
+                "postgresql://u:secret@host?application_name=a@b&sslpassword=k&x=1?password=p"
+            ),
+            "postgresql://u:********@b&sslpassword=********&x=1?password=********"
         );
     }
 }
