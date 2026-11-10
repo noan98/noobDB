@@ -325,6 +325,10 @@ pub struct SequenceUsage {
     pub sequence_max: Option<u64>,
     /// `CYCLE` 付き (上限で先頭に戻るので枯渇しない)。
     pub cycle: bool,
+    /// MySQL の列コメント。型変更の `MODIFY COLUMN` で消えないよう DDL に付け直す。
+    pub column_comment: Option<String>,
+    /// MySQL の `INVISIBLE` 列 (8.0.23+)。`MODIFY COLUMN` で可視に戻らないよう付け直す。
+    pub invisible: bool,
 }
 
 /// スキーマメタデータを走査して健全性の指摘リストを組み立てる純関数。副作用なし・
@@ -1296,11 +1300,29 @@ fn sequence_fix_ddl(driver: DriverKind, s: &SequenceUsage, type_max: u64) -> Opt
             if type_max >= i64::MAX as u64 {
                 return None;
             }
-            let unsigned = s.data_type.to_lowercase().contains("unsigned");
-            Some(format!(
-                "ALTER TABLE {table} MODIFY COLUMN {column} BIGINT{} NOT NULL AUTO_INCREMENT;",
+            let lower = s.data_type.to_lowercase();
+            // ZEROFILL は BIGINT へ付け直すと桁埋めの表示幅が変わるため、自動では出さない。
+            if lower.contains("zerofill") {
+                return None;
+            }
+            let unsigned = lower.contains("unsigned");
+            // MODIFY COLUMN は列定義を丸ごと置き換えるので、消えると困る属性 (INVISIBLE / COMMENT) を
+            // 付け直す。
+            let mut ddl = format!(
+                "ALTER TABLE {table} MODIFY COLUMN {column} BIGINT{} NOT NULL AUTO_INCREMENT",
                 if unsigned { " UNSIGNED" } else { "" }
-            ))
+            );
+            if s.invisible {
+                ddl.push_str(" INVISIBLE");
+            }
+            if let Some(c) = s.column_comment.as_deref().filter(|c| !c.is_empty()) {
+                ddl.push_str(&format!(
+                    " COMMENT '{}'",
+                    c.replace('\\', "\\\\").replace('\'', "''")
+                ));
+            }
+            ddl.push(';');
+            Some(ddl)
         }
         (DriverKind::Postgres, SequenceKind::Serial | SequenceKind::Identity) => {
             let mut lines = Vec::new();
@@ -2819,6 +2841,8 @@ mod tests {
             last_used,
             sequence_max,
             cycle: false,
+            column_comment: None,
+            invisible: false,
         }
     }
 
@@ -3085,5 +3109,28 @@ mod tests {
             vec![seq(SequenceKind::AutoIncrement, "tinyint", 200, None)],
         );
         assert_eq!(f[0].key(), "sequence_exhaustion|t|id");
+    }
+
+    #[test]
+    fn sequence_mysql_fix_keeps_comment_and_invisible_and_skips_zerofill() {
+        let mut s = seq(SequenceKind::AutoIncrement, "int", 2_000_000_000, None);
+        s.column_comment = Some("it's a \\ id".into());
+        s.invisible = true;
+        let f = seq_findings(DriverKind::Mysql, vec![s]);
+        assert_eq!(
+            f[0].fix_ddl.as_deref(),
+            Some(
+                "ALTER TABLE `t` MODIFY COLUMN `id` BIGINT NOT NULL AUTO_INCREMENT INVISIBLE COMMENT 'it''s a \\\\ id';"
+            )
+        );
+        let z = seq(
+            SequenceKind::AutoIncrement,
+            "int(10) unsigned zerofill",
+            4_000_000_000,
+            None,
+        );
+        let f = seq_findings(DriverKind::Mysql, vec![z]);
+        assert_eq!(f.len(), 1);
+        assert!(f[0].fix_ddl.is_none(), "ZEROFILL は自動 DDL を出さない");
     }
 }

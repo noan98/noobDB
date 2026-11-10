@@ -24,9 +24,9 @@
 - **採番の枯渇 (#2210)**: ドライバが `Connection::sequence_usage` で生の事実 (`SequenceUsage`: 払い出し済み最大値・
   シーケンスの `max_value`・`cycle`) だけを返し、上限 (型 / シーケンスの小さい方) と使用率は純ロジックが
   **u128 の整数演算**で出す (BIGINT UNSIGNED は JS の安全整数を超えるので `context` の数値は 10 進文字列)。
-  取得元は MySQL `information_schema.TABLES.AUTO_INCREMENT` (統計キャッシュを `SET_VAR` ヒントで避ける)、
+  取得元は MySQL `information_schema.TABLES.AUTO_INCREMENT` (統計キャッシュ `information_schema_stats_expiry` は `SET_VAR` が効かないので、プールから取った 1 接続で `SET SESSION` → SELECT → `DEFAULT` に戻す)、
   PostgreSQL `pg_sequences` + `pg_depend` (serial / identity)、SQLite `sqlite_sequence`。`CYCLE` は対象外。
-  修正 DDL は `BIGINT` への型変更 (+ PostgreSQL は `ALTER SEQUENCE ... AS bigint NO MAXVALUE`) で、UI は
+  修正 DDL は `BIGINT` への型変更 (MySQL は COMMENT / INVISIBLE を付け直し、ZEROFILL 列は出さない。PostgreSQL は `ALTER SEQUENCE ... AS bigint NO MAXVALUE`) で、UI は
   `AlterCostNotice` (#1771) の書き換え・ロック注意を添える。取得に失敗したら `sequences_unreadable` でスキップ表示。
 - **修正 DDL は安全で一意に定まるルールについてのみ生成し、実行はしません**
   (エディタ挿入まで)。

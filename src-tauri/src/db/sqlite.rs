@@ -1331,6 +1331,8 @@ impl SqliteConn {
                 last_used,
                 sequence_max: None,
                 cycle: false,
+                column_comment: None,
+                invisible: false,
             });
         }
         Ok(out)

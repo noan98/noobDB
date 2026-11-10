@@ -122,7 +122,11 @@ describe("findingDescription", () => {
     };
     expect(
       findingDescription(
-        finding({ ...base, context: ["int unsigned", "3500000000", "4294967295", "81.4", "type"] }),
+        finding({
+          ...base,
+          context: ["int unsigned", "3500000000", "4294967295", "81.4", "type"],
+          fix_ddl: "ALTER TABLE orders MODIFY COLUMN id BIGINT;",
+        }),
       ),
     ).toEqual({
       key: "advisorRuleSequenceExhaustionDesc",
@@ -138,6 +142,12 @@ describe("findingDescription", () => {
     expect(
       findingDescription(finding({ ...base, context: ["bigint", "900", "1000", "90.0", "sequence"] })).key,
     ).toBe("advisorRuleSequenceCapDesc");
+    // 修正 DDL が無い (最大幅など) ときは「BIGINT に広げる」を言わない文言。
+    expect(
+      findingDescription(
+        finding({ ...base, context: ["bigint", "900", "1000", "90.0", "type"], fix_ddl: null }),
+      ).key,
+    ).toBe("advisorRuleSequenceNoFixDesc");
   });
 
   it("FK 欠落は table/columns/ref を差し込む", () => {

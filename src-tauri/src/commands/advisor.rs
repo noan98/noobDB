@@ -187,7 +187,11 @@ pub(crate) async fn collect_and_analyze(
     // 採番の使用状況 (#2210)。読めなくても他のルールは続行し、黙って 0 件にせずスキップ理由を残す。
     let (sequences, sequences_unreadable) = match conn.sequence_usage(database).await {
         Ok(v) => (v, false),
-        Err(_) => (Vec::new(), true),
+        Err(e) => {
+            // 原因はエラー種別だけ残す (秘密は含まれないが、接続先などの詳細は出さない)。
+            tracing::warn!(kind = e.kind(), "advisor: could not read sequence state");
+            (Vec::new(), true)
+        }
     };
 
     let mut report = analyze(&AdvisorInput {

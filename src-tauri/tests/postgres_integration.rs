@@ -6215,3 +6215,41 @@ async fn postgres_advisor_flags_exhausted_sequences() {
     }
     assert!(remaining.is_empty(), "修正後も残っている: {remaining:?}");
 }
+
+/// 採番枯渇 (#2210): DOMAIN 型 (基底は smallint) の採番列も基底型の上限で判定する。
+#[tokio::test]
+async fn postgres_advisor_resolves_domain_sequence_columns() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    for sql in [
+        "DROP TABLE IF EXISTS noobdb_seq_dom",
+        "DROP DOMAIN IF EXISTS noobdb_small_id",
+        "CREATE DOMAIN noobdb_small_id AS smallint",
+        // IDENTITY は DOMAIN 型にできないので、手動で所有させた smallint シーケンスを使う。
+        "CREATE TABLE noobdb_seq_dom (id noobdb_small_id PRIMARY KEY)",
+        "CREATE SEQUENCE noobdb_seq_dom_seq AS smallint OWNED BY noobdb_seq_dom.id",
+        "ALTER TABLE noobdb_seq_dom ALTER COLUMN id SET DEFAULT nextval('noobdb_seq_dom_seq')",
+        "SELECT setval('noobdb_seq_dom_seq', 30000)",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    let report = t::analyze_schema_health(&conn, "public")
+        .await
+        .expect("analyze");
+    let found = report
+        .findings
+        .iter()
+        .find(|f| f.rule == t::RuleId::SequenceExhaustion && f.table == "noobdb_seq_dom")
+        .cloned();
+    for sql in [
+        "DROP TABLE IF EXISTS noobdb_seq_dom",
+        "DROP DOMAIN IF EXISTS noobdb_small_id",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    let f = found.expect("domain over smallint near the limit");
+    assert_eq!(f.context[2], "32767", "基底型 smallint の上限");
+}

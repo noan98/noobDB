@@ -5446,3 +5446,50 @@ async fn mysql_advisor_flags_exhausted_auto_increment() {
     }
     assert!(still.is_none(), "BIGINT UNSIGNED 化の後は指摘が消える");
 }
+
+/// 採番枯渇 (#2210): 統計キャッシュ (`information_schema_stats_expiry`) に邪魔されず、作成後に進めた
+/// AUTO_INCREMENT を直ちに検出できる。修正 DDL は列コメントと INVISIBLE を保つ。
+#[tokio::test]
+async fn mysql_advisor_sees_fresh_auto_increment_and_keeps_comment() {
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = url.rsplit('/').next().expect("db name").to_string();
+    let conn = t::connect(&opts).await.expect("connect");
+    for sql in [
+        "DROP TABLE IF EXISTS noobdb_seq_fresh",
+        "CREATE TABLE noobdb_seq_fresh (id INT AUTO_INCREMENT PRIMARY KEY COMMENT 'it''s the key') AUTO_INCREMENT=10",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    let count = |r: &t::SchemaHealthReport| {
+        r.findings
+            .iter()
+            .filter(|f| f.rule == t::RuleId::SequenceExhaustion && f.table == "noobdb_seq_fresh")
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    // 1 回目 (統計がキャッシュされうる) では指摘なし。
+    let first = t::analyze_schema_health(&conn, &db).await.expect("analyze");
+    assert!(count(&first).is_empty());
+    // INSERT と ALTER TABLE ... AUTO_INCREMENT= で値を進めても、再取得ですぐ検出する。
+    conn.execute("INSERT INTO noobdb_seq_fresh VALUES (NULL)", None)
+        .await
+        .expect("insert");
+    conn.execute(
+        "ALTER TABLE noobdb_seq_fresh AUTO_INCREMENT=2000000000",
+        None,
+    )
+    .await
+    .expect("alter");
+    let second = t::analyze_schema_health(&conn, &db).await.expect("analyze");
+    let found = count(&second);
+    conn.execute("DROP TABLE IF EXISTS noobdb_seq_fresh", None)
+        .await
+        .expect("drop");
+    let f = found.first().expect("advanced AUTO_INCREMENT is detected");
+    assert_eq!(f.severity, t::Severity::High);
+    let ddl = f.fix_ddl.as_deref().expect("fix ddl");
+    assert!(ddl.contains("COMMENT 'it''s the key'"), "{ddl}");
+}

@@ -158,7 +158,13 @@ export function findingDescription(finding: HealthFinding): {
     case "sequence_exhaustion":
       return {
         // 上限がシーケンスの MAXVALUE のときは、型ではなく MAXVALUE を直す文言へ。
-        key: ctx[4] === "sequence" ? "advisorRuleSequenceCapDesc" : "advisorRuleSequenceExhaustionDesc",
+        key:
+          ctx[4] === "sequence"
+            ? "advisorRuleSequenceCapDesc"
+            : // 自動の修正 DDL が無い (既に最大幅・SQLite など) ときは「BIGINT に広げる」とは言わない。
+              finding.fix_ddl
+              ? "advisorRuleSequenceExhaustionDesc"
+              : "advisorRuleSequenceNoFixDesc",
         params: {
           table: finding.table,
           column: finding.columns[0] ?? "",

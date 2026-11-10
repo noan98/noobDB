@@ -6794,7 +6794,9 @@ const en = {
   advisorRuleFloatForMoneySqliteDesc:
     "{table}.{column} looks like a monetary value but uses the floating-point type {type}. Rounding errors can accumulate. In SQLite, DECIMAL / NUMERIC only gives NUMERIC affinity and values may still be stored as REAL, so store integer minor units (e.g. cents) in an INTEGER column instead.",
   advisorRuleSequenceExhaustionDesc:
-    "{table}.{column} ({type}) has handed out up to {used} of its maximum {max} ({percent}% used). When it reaches the limit every INSERT fails. Widening the column to BIGINT is the usual fix; change foreign key columns that reference it as well.",
+    "{table}.{column} ({type}) has handed out up to {used} of its maximum {max} ({percent}% used). When it reaches the limit every INSERT fails. Widening the column to BIGINT is the usual fix; change foreign key columns that reference it as well. The change fails while foreign keys or views depend on the column, so check them first.",
+  advisorRuleSequenceNoFixDesc:
+    "{table}.{column} ({type}) has handed out up to {used} of its maximum {max} ({percent}% used). When it reaches the limit every INSERT fails. No automatic fix is offered (the type may already be the widest, or it cannot be rewritten safely): review how ids are allocated, or widen the type by hand after checking dependent foreign keys and views.",
   advisorRuleSequenceCapDesc:
     "The sequence behind {table}.{column} ({type}) has handed out up to {used}, and its MAXVALUE is {max} ({percent}% used). When it reaches MAXVALUE every INSERT fails. Raise or remove the sequence's MAXVALUE (and widen the column type too if it is also small).",
   advisorReasonSequencesUnreadable:
@@ -14584,7 +14586,9 @@ const ja: Dict = {
   advisorRuleFloatForMoneySqliteDesc:
     "{table}.{column} は金額を表す列に見えますが、浮動小数型 {type} です。丸め誤差が蓄積します。SQLite の DECIMAL / NUMERIC は NUMERIC 親和性になるだけで、値は REAL として保存されうるため、INTEGER 列に最小単位の整数 (円・セントなど) で保存してください。",
   advisorRuleSequenceExhaustionDesc:
-    "{table}.{column} ({type}) は上限 {max} のうち {used} まで払い出し済みです (使用率 {percent}%)。上限に達するとすべての INSERT が失敗します。列を BIGINT に広げるのが定番の対処です。この列を参照する外部キー列も合わせて変更してください。",
+    "{table}.{column} ({type}) は上限 {max} のうち {used} まで払い出し済みです (使用率 {percent}%)。上限に達するとすべての INSERT が失敗します。列を BIGINT に広げるのが定番の対処です。この列を参照する外部キー列も合わせて変更してください。外部キーやビューが依存している間は型変更が失敗するため、先に確認してください。",
+  advisorRuleSequenceNoFixDesc:
+    "{table}.{column} ({type}) は上限 {max} のうち {used} まで払い出し済みです (使用率 {percent}%)。上限に達するとすべての INSERT が失敗します。自動の修正 SQL は出しません (型がすでに最大幅、または安全に書き換えられないため)。ID の払い出し方を見直すか、依存する外部キーやビューを確認したうえで手作業で型を広げてください。",
   advisorRuleSequenceCapDesc:
     "{table}.{column} ({type}) のシーケンスは {used} まで払い出し済みで、MAXVALUE は {max} です (使用率 {percent}%)。MAXVALUE に達するとすべての INSERT が失敗します。シーケンスの MAXVALUE を引き上げるか解除してください (列の型も小さければ合わせて広げます)。",
   advisorReasonSequencesUnreadable:

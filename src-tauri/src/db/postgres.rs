@@ -1415,7 +1415,10 @@ impl PostgresConn {
         let rows: Vec<PgRow> = sqlx::query(
             r#"SELECT cl.relname::text AS table_name,
                       a.attname::text AS column_name,
-                      pg_catalog.format_type(a.atttypid, NULL) AS column_type,
+                      -- DOMAIN 型の列は基底型 (typbasetype) に解決して上限を判定する。
+                      pg_catalog.format_type(
+                        CASE WHEN ty.typtype = 'd' THEN ty.typbasetype ELSE a.atttypid END, NULL
+                      ) AS column_type,
                       s.sequencename::text AS sequence_name,
                       s.data_type::text AS sequence_type,
                       s.last_value,
@@ -1431,6 +1434,7 @@ impl PostgresConn {
                  JOIN pg_catalog.pg_namespace tn ON tn.oid = cl.relnamespace
                  JOIN pg_catalog.pg_attribute a
                    ON a.attrelid = cl.oid AND a.attnum = d.refobjsubid
+                 JOIN pg_catalog.pg_type ty ON ty.oid = a.atttypid
                 WHERE d.classid = 'pg_catalog.pg_class'::regclass
                   AND d.refclassid = 'pg_catalog.pg_class'::regclass
                   AND d.deptype IN ('a', 'i')
@@ -1461,6 +1465,8 @@ impl PostgresConn {
                     last_used: u64::try_from(last).ok()?,
                     sequence_max: u64::try_from(max).ok(),
                     cycle: r.try_get::<bool, _>("cycle").unwrap_or(false),
+                    column_comment: None,
+                    invisible: false,
                 })
             })
             .collect())
