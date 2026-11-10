@@ -5646,7 +5646,8 @@ impl PostgresConn {
                             EXTRACT(EPOCH FROM replay_lag)::float8, \
                             EXTRACT(EPOCH FROM write_lag)::float8, \
                             EXTRACT(EPOCH FROM flush_lag)::float8, \
-                            pg_wal_lsn_diff(CASE WHEN pg_is_in_recovery() THEN pg_last_wal_replay_lsn() \
+                            pg_wal_lsn_diff(CASE WHEN pg_is_in_recovery() \
+                                            THEN GREATEST(pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn()) \
                                             ELSE pg_current_wal_lsn() END, replay_lsn)::bigint \
                      FROM pg_catalog.pg_stat_replication ORDER BY application_name, client_addr, pid",
                 )
@@ -5662,7 +5663,11 @@ impl PostgresConn {
                         lag_secs: r.try_get::<Option<f64>, _>(4)?,
                         write_lag_secs: r.try_get::<Option<f64>, _>(5)?,
                         flush_lag_secs: r.try_get::<Option<f64>, _>(6)?,
-                        lag_bytes: r.try_get::<Option<i64>, _>(7)?.map(clamp_js_safe),
+                        // カスケード先は中間スタンバイの受信済み WAL まで送られるため、基準との差が
+                        // 一瞬負になりうる。負は 0 に丸める。
+                        lag_bytes: r
+                            .try_get::<Option<i64>, _>(7)?
+                            .map(|v| clamp_js_safe(v.max(0))),
                         io_running: None,
                         sql_running: None,
                         last_error: None,

@@ -823,7 +823,17 @@ async fn postgres_replication_status_standalone_and_slot() {
     let status = conn.replication_status().await.expect("replication_status");
     // 他のテストが物理スロットを残していても壊れないよう、構成なしの断定はスロットが無いときだけ行う。
     // CI のプライマリにはスタンバイ (#2209) がぶら下がるので、その場合は下の専用テストが検証する。
-    if status.slots.is_empty() && std::env::var("NOOBDB_TEST_POSTGRES_STANDBY_URL").is_err() {
+    if std::env::var("NOOBDB_TEST_POSTGRES_STANDBY_URL").is_ok() {
+        assert_eq!(status.role, t::ReplicationRole::Primary, "{status:?}");
+        assert_eq!(status.missing_privilege, None, "{status:?}");
+        assert!(
+            status
+                .links
+                .iter()
+                .all(|l| l.direction == t::ReplicationDirection::Downstream),
+            "a primary has no upstream: {status:?}"
+        );
+    } else if status.slots.is_empty() {
         assert_eq!(status.role, t::ReplicationRole::Standalone);
         assert!(status.links.is_empty(), "no walsender expected: {status:?}");
     }
@@ -861,13 +871,6 @@ async fn postgres_replication_status_standalone_and_slot() {
             .await;
     }
     conn.close().await;
-}
-
-/// `postgres://user:pw@host:port/db` のポート部分 (レプリケーションの接続元表示との突き合わせ用)。
-fn url_port(url: &str) -> String {
-    let after_at = url.rsplit('@').next().unwrap_or(url);
-    let host_port = after_at.split('/').next().unwrap_or(after_at);
-    host_port.rsplit(':').next().unwrap_or("").to_string()
 }
 
 /// レプリケーション監視 (#2209) のレプリカ経路。CI のセットアップ (scripts/ci-setup-plain-db.sh) が
@@ -922,13 +925,14 @@ async fn postgres_replication_status_streaming_standby_and_cascade() {
         .collect();
     assert_eq!(up.len(), 1, "{st:?}");
     assert_eq!(up[0].state.as_deref(), Some("streaming"), "{st:?}");
-    let primary_port = url_port(&primary_url);
+    let primary_port = common::url_port(&primary_url);
     assert_eq!(
         up[0].address.as_deref(),
         Some(format!("127.0.0.1:{primary_port}").as_str()),
         "{st:?}"
     );
-    assert!(up[0].lag_secs.is_some_and(|v| v >= 0.0), "{st:?}");
+    // 上流の遅延は直近のトランザクション replay 時刻から出るため、書き込みが無ければ None。
+    assert!(up[0].lag_secs.is_none_or(|v| v >= 0.0), "{st:?}");
     let down: Vec<_> = st
         .links
         .iter()
@@ -954,7 +958,7 @@ async fn postgres_replication_status_streaming_standby_and_cascade() {
         t::ReplicationDirection::Upstream,
         "{st:?}"
     );
-    let standby_port = url_port(&standby_url);
+    let standby_port = common::url_port(&standby_url);
     assert_eq!(
         st.links[0].address.as_deref(),
         Some(format!("127.0.0.1:{standby_port}").as_str()),

@@ -630,3 +630,11 @@ pub fn create_table_cases(driver: &str) -> Vec<CreateTableCase> {
     assert!(!cases.is_empty(), "no cases for driver {driver}");
     cases
 }
+
+/// `scheme://user:pw@host:port/db` の URL からポート部分を取り出す (レプリケーション監視の
+/// 接続元・接続先表示との突き合わせ用、#2209)。
+pub fn url_port(url: &str) -> String {
+    let after_at = url.rsplit('@').next().unwrap_or(url);
+    let host_port = after_at.split('/').next().unwrap_or(after_at);
+    host_port.rsplit(':').next().unwrap_or("").to_string()
+}

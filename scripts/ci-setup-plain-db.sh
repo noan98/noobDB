@@ -163,7 +163,9 @@ fi
 # ---- MySQL レプリカ (#2209) ----
 # ソースは MySQL 8.0 の既定 (binlog 有効・server_id=1) のまま。レプリカは現在位置から追従し、
 # 他の統合テストが書く testdb の DDL / DML でレプリカの SQL スレッドが止まらないよう、
-# 専用 DB (noobdb_repl_probe) だけを複製対象にする。
+# 専用 DB (noobdb_repl_probe) だけを複製対象にする。--replicate-do-db は文 (DDL・
+# PROCEDURE / EVENT・CREATE/DROP DATABASE) をデフォルト DB で、wild-do-table は行イベントを
+# テーブル単位で絞るため、両方を指定して取りこぼしを防ぐ。
 echo "==> mysqld レプリカを起動 (127.0.0.1:$MYSQL_REPLICA_PORT)"
 "$MYSQLD_BIN" --no-defaults \
   --datadir="$PLAIN_DIR/mysql-replica-data" \
@@ -177,6 +179,7 @@ echo "==> mysqld レプリカを起動 (127.0.0.1:$MYSQL_REPLICA_PORT)"
   --report-port="$MYSQL_REPLICA_PORT" \
   --skip-log-bin \
   --init-file="$PLAIN_DIR/mysql-init.sql" \
+  --replicate-do-db=noobdb_repl_probe \
   --replicate-wild-do-table='noobdb_repl_probe.%' \
   --log-error="$PLAIN_DIR/mysqld-replica.log" &
 disown

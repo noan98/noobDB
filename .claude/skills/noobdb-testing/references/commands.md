@@ -121,6 +121,15 @@ NOOBDB_TEST_POSTGRES_URL=postgres://postgres:postgres@127.0.0.1:5432/testdb \
   cargo test --test external postgres_integration::
 ```
 
+レプリケーション監視 (#2209) の統合テストは追加で `NOOBDB_TEST_POSTGRES_STANDBY_URL`
+(primary から `pg_basebackup -R` で作ったストリーミングスタンバイ)、
+`NOOBDB_TEST_POSTGRES_CASCADE_URL` (そのスタンバイにぶら下がるカスケード) と
+`NOOBDB_TEST_MYSQL_REPLICA_URL` (`CHANGE REPLICATION SOURCE TO` で繋いだ MySQL レプリカ) を要し、
+未設定ならその 1 件のみスキップします。CI では `scripts/ci-setup-plain-db.sh` が 3 台を立てて
+`$GITHUB_ENV` へ書きます。ローカルでは同スクリプトを (root 以外で) 実行し、出力された URL を
+export して `cargo test --test external replication` を実行します。env を渡さなければ、
+既存のスタンドアロン前提のテストだけが走ります。
+
 SSH トンネル統合テスト (`tests/ssh_integration.rs`、#331) は `NOOBDB_TEST_SSH_URL`
 (`ssh://user:password@host:port`) が設定されているときだけ実走します。鍵認証テストは
 追加で `NOOBDB_TEST_SSH_KEY` (秘密鍵パス) を要し、未設定ならその 1 件のみスキップ

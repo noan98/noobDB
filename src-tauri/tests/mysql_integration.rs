@@ -1006,7 +1006,16 @@ async fn mysql_replication_status_standalone() {
     // CI のソースにはレプリカ (#2209) がぶら下がるので、その場合は下の専用テストが検証する。
     let has_replica = std::env::var("NOOBDB_TEST_MYSQL_REPLICA_URL").is_ok();
     match status.missing_privilege.as_deref() {
-        None if has_replica => {}
+        None if has_replica => {
+            assert_eq!(status.role, t::ReplicationRole::Primary, "{status:?}");
+            assert!(
+                status
+                    .links
+                    .iter()
+                    .all(|l| l.direction == t::ReplicationDirection::Downstream),
+                "a source has no upstream: {status:?}"
+            );
+        }
         None => {
             assert_eq!(status.role, t::ReplicationRole::Standalone);
             assert!(
@@ -1018,13 +1027,6 @@ async fn mysql_replication_status_standalone() {
     }
     assert!(status.slots.is_empty(), "MySQL has no replication slots");
     conn.close().await;
-}
-
-/// `mysql://user:pw@host:port/db` のポート部分。
-fn url_port(url: &str) -> String {
-    let after_at = url.rsplit('@').next().unwrap_or(url);
-    let host_port = after_at.split('/').next().unwrap_or(after_at);
-    host_port.rsplit(':').next().unwrap_or("").to_string()
 }
 
 /// レプリケーション監視 (#2209) のレプリカ経路。CI のセットアップ (scripts/ci-setup-plain-db.sh) が
@@ -1048,7 +1050,7 @@ async fn mysql_replication_status_replica_and_source() {
     // ソース視点: 上流なし、レプリカ (report_host / report_port で登録) が下流に出る。
     let st = source.replication_status().await.expect("source status");
     assert_eq!(st.role, t::ReplicationRole::Primary, "{st:?}");
-    let replica_port = url_port(&replica_url);
+    let replica_port = common::url_port(&replica_url);
     let down = st
         .links
         .iter()
@@ -1070,7 +1072,7 @@ async fn mysql_replication_status_replica_and_source() {
         .filter(|l| l.direction == t::ReplicationDirection::Upstream)
         .collect();
     assert_eq!(up.len(), 1, "{st:?}");
-    let source_port = url_port(&source_url);
+    let source_port = common::url_port(&source_url);
     assert_eq!(
         up[0].address.as_deref(),
         Some(format!("127.0.0.1:{source_port}").as_str()),
