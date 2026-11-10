@@ -16,6 +16,7 @@ import {
 } from "@codemirror/autocomplete";
 import { syntaxTree } from "@codemirror/language";
 import type { SyntaxNode } from "@lezer/common";
+import { markFeatureTried } from "../settings";
 import type { Snippet } from "../api/tauri";
 import { snippetHasFields, snippetPlainText, snippetToCodeMirrorTemplate } from "../snippetTemplate";
 
@@ -82,6 +83,7 @@ export function snippetToCompletion(s: Snippet, detail: string, rank: SnippetMat
     // 先頭一致を他の補完ソース (キーワード等) より上、タグ一致は下に置く。
     boost: 5 - rank * 5,
     apply: (view, picked, from, to) => {
+      markFeatureTried("helpSnippetTitle");
       if (snippetHasFields(s.sql)) {
         snippet(snippetToCodeMirrorTemplate(s.sql))(view, picked, from, to);
         return;

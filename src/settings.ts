@@ -801,6 +801,9 @@ export const DEFAULT_FLIGHT_RECORDER_RETENTION_DAYS = 30;
 export const MIN_FLIGHT_RECORDER_RETENTION_DAYS = 0;
 export const MAX_FLIGHT_RECORDER_RETENTION_DAYS = 3_650;
 
+/** 習熟マップ (#2216) の記録の既定 (オン)。 */
+export const DEFAULT_MASTERY_TRACKING_ENABLED = true;
+
 export const DEFAULT_SETTINGS: Settings = {
   syntaxColors: {
     light: { ...DEFAULT_SYNTAX_COLORS.light },
@@ -849,7 +852,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoUpdateCheckEnabled: DEFAULT_AUTO_UPDATE_CHECK_ENABLED,
   perfMeasureEnabled: DEFAULT_PERF_MEASURE_ENABLED,
   sqlLintEnabled: DEFAULT_SQL_LINT_ENABLED,
-  masteryTrackingEnabled: true,
+  masteryTrackingEnabled: DEFAULT_MASTERY_TRACKING_ENABLED,
   masteryTried: [],
   sqlSemanticLintEnabled: DEFAULT_SQL_SEMANTIC_LINT_ENABLED,
   preflightImpactEnabled: DEFAULT_PREFLIGHT_IMPACT_ENABLED,
@@ -1227,7 +1230,9 @@ export function normalizeSettings(input: unknown): Settings {
         ? parsed.perfMeasureEnabled
         : DEFAULT_PERF_MEASURE_ENABLED,
     masteryTrackingEnabled:
-      typeof parsed.masteryTrackingEnabled === "boolean" ? parsed.masteryTrackingEnabled : true,
+      typeof parsed.masteryTrackingEnabled === "boolean"
+        ? parsed.masteryTrackingEnabled
+        : DEFAULT_MASTERY_TRACKING_ENABLED,
     masteryTried: sanitizeTried(parsed.masteryTried),
     sqlLintEnabled:
       typeof parsed.sqlLintEnabled === "boolean" ? parsed.sqlLintEnabled : DEFAULT_SQL_LINT_ENABLED,

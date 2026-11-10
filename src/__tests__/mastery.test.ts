@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   groupProgress,
@@ -72,5 +73,27 @@ describe("習熟マップの純ロジック (#2216)", () => {
         expect(isMasteryFeatureId(r)).toBe(true);
       }
     }
+  });
+});
+
+describe("「試した」の記録位置 (#2216)", () => {
+  const app = readFileSync("src/App.tsx", "utf8");
+  const body = (name: string, until: string) => {
+    const from = app.indexOf(`const ${name} = useCallback(`);
+    expect(from).toBeGreaterThan(0);
+    return app.slice(from, app.indexOf(until, from));
+  };
+
+  it("実行は runQueryInTab (復元・初回 SELECT・EXPLAIN・再取得も通る) ではなく、ユーザー起点の入口で記録する", () => {
+    const needle = 'markFeatureTried("helpRunTitle")';
+    expect(app.split(needle).length - 1).toBe(1);
+    expect(body("runQueryInTab", "const runQueryInTabRef")).not.toContain(needle);
+    // バッチ・トランザクションも dispatchEditorAction → runInTabWithGate を通るので、入口の記録で足りる。
+    expect(body("dispatchEditorAction", "const resolveParamsThen")).toContain(needle);
+  });
+
+  it("整形は 3 経路が共有する formatEditorContent の 1 か所で記録する", () => {
+    const qe = readFileSync("src/components/QueryEditor.tsx", "utf8");
+    expect(qe.split('markFeatureTried("helpFormatTitle")').length - 1).toBe(1);
   });
 });

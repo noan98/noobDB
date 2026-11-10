@@ -4884,7 +4884,6 @@ export default function App() {
         setStatus({ kind: "key", key: "statusNotConnected", error: true });
         return;
       }
-      if (!autoRefresh) markFeatureTried("helpRunTitle");
       // 自動再接続中は接続が無効。キューイングはせず明示的に弾く (#600)。
       if (connectionStatusRef.current === "reconnecting") {
         setStatus({ kind: "key", key: "statusReconnectBusy", error: true });
@@ -5932,6 +5931,8 @@ export default function App() {
       if (!tab || tab.kind !== "table" || !tab.paginatable || tab.streaming || tab.loadingMore) {
         return;
       }
+      // 再取得 (force) は内部経路なので、ユーザーのページ移動・ページサイズ変更だけを数える。
+      if (!browseOverride?.force) markFeatureTried("helpPaginationTitle");
       const nextSort =
         browseOverride && "sort" in browseOverride ? (browseOverride.sort ?? null) : (tab.serverSort ?? null);
       const nextFilter =
@@ -6819,6 +6820,10 @@ export default function App() {
       mode: "run" | "runNewTab" | "preview" | "explain",
       runOpts?: { newTab?: boolean },
     ) => {
+      // 習熟マップ (#2216): ユーザー起点の実行の入口。バッチ・トランザクション中の実行もここを通る。
+      // EXPLAIN タブの再実行は EXPLAIN なので数えない。
+      if ((mode === "run" || mode === "runNewTab") && tab.kind !== "explain")
+        markFeatureTried("helpRunTitle");
       if (mode === "preview") void previewQueryInTab(tab.id, sql);
       else if (mode === "explain") explainForTab(tab, sql);
       else if (mode === "runNewTab") runInTabWithGate(tab, sql, { newTab: true });
@@ -7407,6 +7412,7 @@ export default function App() {
   const setBulkCellEditsForTab = useCallback(
     (tabId: string, edits: BulkEditTarget[]) => {
       if (edits.length === 0) return;
+      markFeatureTried("helpCellEditTitle");
       patchTab(tabId, (tt) => {
         const next: PendingEdits = {};
         for (const k of Object.keys(tt.pendingEdits)) next[k] = { ...tt.pendingEdits[k] };
@@ -11948,6 +11954,7 @@ export default function App() {
       setShowServerInfo(false);
       setSizesTarget(null);
       setShowSnippetForm(false);
+      // 比較・タスクを開いたことの記録は、ヘルプ経由も直接も openFullView に集約する。
       if (view === "tasks") markFeatureTried("helpTaskSchedulerTitle");
       else if (view === "compare") markFeatureTried("helpSchemaCompareTitle");
       if (view === "settings") setShowSettings(true);
@@ -15735,7 +15742,9 @@ export default function App() {
               }}
               onOpenFeature={(target) => {
                 setShowHelp(false);
-                if (target.kind === "newQuery") {
+                if (target.kind === "snippetForm") {
+                  handleOpenSnippetForm();
+                } else if (target.kind === "newQuery") {
                   if (sessionIdRef.current) handleNewTab();
                   else toast.info(translate("helpTryNeedsConnection"));
                 } else if (target.kind === "settings") {

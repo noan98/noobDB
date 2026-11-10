@@ -5047,7 +5047,7 @@ const en = {
     "This is a reference for when a connection fails. There is nothing to try; it counts as done once you read it.",
   settingsMastery: "Feature mastery map",
   settingsMasteryHelp:
-    "Marks the features you have tried in the guide and suggests what to try next. The record stays on this device and is never sent anywhere.",
+    "Marks the features you have tried in the guide and suggests what to try next. The record stays on this device and is never sent anywhere, but it is included when you export your settings.",
   settingsMasteryTracking: "Record features I have tried",
   settingsMasteryProgress: "Tried {done} of {total} features",
   settingsMasteryReset: "Reset record",
@@ -12866,7 +12866,7 @@ const ja: Dict = {
   helpNoTryGuide: "接続に失敗したときに読む手順です。試す操作はなく、読むと「試した」になります。",
   settingsMastery: "機能の習熟マップ",
   settingsMasteryHelp:
-    "機能ガイドで、試した機能に印を付けて次のおすすめを出します。記録はこの端末にだけ保存し、外部へは送りません。",
+    "機能ガイドで、試した機能に印を付けて次のおすすめを出します。記録はこの端末にだけ保存し、外部へは送りませんが、設定のエクスポートには含まれます。",
   settingsMasteryTracking: "試した機能を記録する",
   settingsMasteryProgress: "{total} 機能中 {done} 機能を試しました",
   settingsMasteryReset: "記録をリセット",

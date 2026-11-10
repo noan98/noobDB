@@ -95,6 +95,18 @@ describe("HelpView の習熟マップ (#2216)", () => {
 
   it("markOnOpen の項目は『試す』で記録される", async () => {
     renderWithProviders(<HelpView onClose={() => {}} onOpenFeature={vi.fn()} />);
+    fireEvent.click(navItem(t("helpHistoryTitle")));
+    await waitFor(() =>
+      expect(within(screen.getByTestId("help-detail")).getByRole("heading", { level: 3 })).toHaveTextContent(
+        t("helpHistoryTitle"),
+      ),
+    );
+    fireEvent.click(screen.getByTestId("help-try"));
+    expect(getSettings().masteryTried).toContain("helpHistoryTitle");
+  });
+
+  it("比較・タスクは openFullView 側で記録するので、ヘルプの『試す』だけでは記録しない", async () => {
+    renderWithProviders(<HelpView onClose={() => {}} onOpenFeature={vi.fn()} />);
     fireEvent.click(navItem(t("helpSchemaCompareTitle")));
     await waitFor(() =>
       expect(within(screen.getByTestId("help-detail")).getByRole("heading", { level: 3 })).toHaveTextContent(
@@ -102,7 +114,21 @@ describe("HelpView の習熟マップ (#2216)", () => {
       ),
     );
     fireEvent.click(screen.getByTestId("help-try"));
-    expect(getSettings().masteryTried).toContain("helpSchemaCompareTitle");
+    expect(getSettings().masteryTried).not.toContain("helpSchemaCompareTitle");
+  });
+
+  it("7 グループすべてに進捗リングが出て、グループの aria-label に進捗が入る。全体進捗は aria-live にしない", () => {
+    markFeatureTried("helpRunTitle");
+    renderWithProviders(<HelpView onClose={() => {}} />);
+    expect(screen.getAllByTestId("mastery-ring").length).toBe(MASTERY_GROUPS.length + 1);
+    const nav = screen.getByRole("navigation", { name: t("helpTitle") });
+    const groups = within(nav).getAllByRole("group");
+    expect(groups).toHaveLength(MASTERY_GROUPS.length);
+    expect(groups[0]).toHaveAttribute(
+      "aria-label",
+      expect.stringContaining(t("helpMasteryGroupProgress", { done: "1", total: "8" })),
+    );
+    expect(screen.getByTestId("mastery-overall").querySelector("[aria-live]")).toBeNull();
   });
 });
 

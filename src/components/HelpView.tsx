@@ -40,6 +40,7 @@ type Impact = "yes" | "no";
 /** 『試す』ボタンの行き先 (#1631)。実際に開く処理は App が持つ (`onOpenFeature`)。 */
 type HelpTryTarget =
   | { kind: "newQuery" }
+  | { kind: "snippetForm" }
   | { kind: "settings"; section: string }
   | { kind: "view"; view: "compare" | "tasks" | "newConnection" };
 
@@ -128,7 +129,7 @@ const SECTIONS: Section[] = [
         icon: "snippet",
         descKey: "helpSnippetDesc",
         impact: "no",
-        tryTarget: { kind: "newQuery" },
+        tryTarget: { kind: "snippetForm" },
       },
       {
         titleKey: "helpHistoryTitle",
@@ -196,7 +197,6 @@ const SECTIONS: Section[] = [
     features: [
       {
         titleKey: "helpSchemaCompareTitle",
-        markOnOpen: true,
         icon: "diff",
         tryTarget: { kind: "view", view: "compare" },
         descKey: "helpSchemaCompareDesc",
@@ -229,7 +229,6 @@ const SECTIONS: Section[] = [
     features: [
       {
         titleKey: "helpTaskSchedulerTitle",
-        markOnOpen: true,
         icon: "calendar",
         tryTarget: { kind: "view", view: "tasks" },
         descKey: "helpTaskSchedulerDesc",
@@ -412,15 +411,11 @@ function TriedPill() {
 
 /** グループ見出しの進捗リング + 「試した数 / 総数」(#2216)。 */
 function GroupProgressBadge({ done, total }: { done: number; total: number }) {
-  const t = useT();
   return (
     <chakra.span display="inline-flex" alignItems="center" gap="1" textTransform="none">
       <MasteryRing done={done} total={total} />
       <CountUp value={done} />
       <chakra.span aria-hidden="true">/{total}</chakra.span>
-      <chakra.span srOnly>
-        {t("helpMasteryGroupProgress", { done: String(done), total: String(total) })}
-      </chakra.span>
     </chakra.span>
   );
 }
@@ -782,7 +777,7 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
                 data-testid="mastery-overall"
               >
                 <MasteryRing done={overall.done} total={overall.total} />
-                <chakra.span aria-live="polite">
+                <chakra.span>
                   {t("helpMasteryOverall", { done: String(overall.done), total: String(overall.total) })}
                 </chakra.span>
               </chakra.div>
@@ -832,7 +827,18 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature
                 onKeyDown={handleNavKeyDown}
               >
                 {visibleSections.map((sec) => (
-                  <chakra.div key={sec.headerKey} role="group" aria-label={sec.header}>
+                  <chakra.div
+                    key={sec.headerKey}
+                    role="group"
+                    aria-label={
+                      tracking && progressByGroup.get(sec.headerKey)
+                        ? `${sec.header} (${t("helpMasteryGroupProgress", {
+                            done: String(progressByGroup.get(sec.headerKey)?.done ?? 0),
+                            total: String(progressByGroup.get(sec.headerKey)?.total ?? 0),
+                          })})`
+                        : sec.header
+                    }
+                  >
                     <NavGroupLabel aria-hidden="true">
                       <Icon name={sec.icon} size="sm" />
                       <chakra.span flex="1">{sec.header}</chakra.span>

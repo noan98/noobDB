@@ -451,6 +451,8 @@ function formatEditorContent(view: EditorView, driver: string, onError?: (messag
   if (text.trim().length === 0) return false;
   void formatSqlAsync(text, driver).then(
     (formatted) => {
+      // ショートカット・ツールバー・右クリック・コマンドの全経路がここを通る (#2216)。
+      markFeatureTried("helpFormatTitle");
       if (formatted === text) return;
       const current = view.state;
       // 整形中に文書が変わった場合は適用しない。同じ範囲の中身が変わっていなければ
@@ -1701,10 +1703,7 @@ export const QueryEditor = memo(
         },
         formatSql: () => {
           const view = viewRef.current;
-          if (view) {
-            markFeatureTried("helpFormatTitle");
-            formatEditorContent(view, driverRef.current, onFormatErrorRef.current);
-          }
+          if (view) formatEditorContent(view, driverRef.current, onFormatErrorRef.current);
         },
         explain: () => {
           const view = viewRef.current;
