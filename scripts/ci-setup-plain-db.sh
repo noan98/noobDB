@@ -74,7 +74,7 @@ echo "==> mysqld を起動 (127.0.0.1:$MYSQL_PORT)"
   --log-error="$PLAIN_DIR/mysqld.log" &
 disown
 
-# レプリカ用 datadir の初期化 (数秒かかる) は、ソースの起動や PostgreSQL の準備と重ねる。
+# レプリカ用 datadir の初期化 (数秒かかる) は、裏で起動中のソース mysqld の立ち上がりと重ねる。
 echo "==> MySQL レプリカのデータディレクトリを初期化"
 mkdir -p "$PLAIN_DIR/mysql-replica-data"
 "$MYSQLD_BIN" --no-defaults --initialize-insecure \
