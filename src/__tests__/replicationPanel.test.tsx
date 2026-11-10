@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderWithProviders, screen, waitFor, act, fireEvent } from "./testUtils";
+import { renderWithProviders, screen, waitFor, act, fireEvent, within } from "./testUtils";
 import { t } from "../i18n";
 import type { ReplicationStatus } from "../api/tauri";
 
@@ -82,7 +82,7 @@ describe("ReplicationPanel (#2180)", () => {
     expect(warning).toHaveTextContent("stale_slot");
     expect(warning).not.toHaveTextContent("live_slot");
     expect(screen.getByTestId("replication-link")).toHaveAttribute("data-attention", "true");
-    expect(screen.getByText("replica-1")).toBeInTheDocument();
+    expect(within(screen.getByTestId("replication-link")).getByText("replica-1")).toBeInTheDocument();
     const rows = screen.getAllByTestId("replication-slot");
     expect(rows.map((r) => r.getAttribute("data-stuck"))).toEqual(["true", "false"]);
     expect(screen.getByRole("meter")).toBeInTheDocument();
@@ -359,5 +359,69 @@ describe("ReplicationPanel ライブ表示 (#2213)", () => {
     refresh();
     await waitFor(() => expect(screen.getAllByTestId("replication-link")[0]).toBe(c2));
     expect(screen.getAllByTestId("replication-link")[1]).toBe(c1);
+  });
+
+  it("トポロジー図と要約タイルを出し、遅延超過のノードは異常として印を付ける (#2215)", async () => {
+    vi.mocked(api.getReplicationStatus).mockResolvedValue(
+      status({
+        role: "primary",
+        links: [mk("ok", 1), mk("slow", 45)],
+        slots: [
+          {
+            name: "s1",
+            slot_type: "physical",
+            plugin: null,
+            active: false,
+            retained_bytes: 2048,
+            wal_status: null,
+          },
+        ],
+      }),
+    );
+    renderWithProviders(<ReplicationPanel sessionId="s1" driver="postgres" />);
+    expect(await screen.findByTestId("replication-topology")).toBeInTheDocument();
+    const peers = screen.getAllByTestId("topology-peer");
+    expect(peers).toHaveLength(2);
+    expect(peers[0]).toHaveAttribute("data-attention", "true");
+    expect(screen.getAllByTestId("topology-edge")[0]).toHaveAttribute("data-level", "warn");
+    expect(screen.getByText(t("replicationSummaryMaxLag"))).toBeInTheDocument();
+    expect(screen.getByText(t("replicationSummaryWalTotal"))).toBeInTheDocument();
+    expect(screen.getByText(t("replicationSummaryInactiveSlots"))).toBeInTheDocument();
+  });
+
+  it("単独構成ではトポロジー図を出さない (#2215)", async () => {
+    vi.mocked(api.getReplicationStatus).mockResolvedValue(status({}));
+    renderWithProviders(<ReplicationPanel sessionId="s1" driver="postgres" />);
+    await screen.findByText(t("replicationStandaloneTitle"));
+    expect(screen.queryByTestId("replication-topology")).toBeNull();
+  });
+
+  it("2 回ポーリングすると遅延の推移と前回比が出て、セッションを切り替えるとリセットされる (#2215)", async () => {
+    vi.mocked(api.getReplicationStatus).mockResolvedValue(status({ role: "primary", links: [mk("a", 1)] }));
+    const view = renderWithProviders(<ReplicationPanel sessionId="s1" driver="postgres" />);
+    await screen.findByTestId("replication-link");
+    expect(screen.queryAllByTestId("stat-delta")).toHaveLength(0);
+    vi.mocked(api.getReplicationStatus).mockResolvedValue(status({ role: "primary", links: [mk("a", 5)] }));
+    refresh();
+    await waitFor(() => expect(screen.getAllByTestId("stat-delta").length).toBeGreaterThan(0));
+    view.rerender(<ReplicationPanel sessionId="s2" driver="postgres" />);
+    await waitFor(() => expect(screen.queryAllByTestId("stat-delta")).toHaveLength(0));
+  });
+
+  it("切替前のセッションの遅延応答は捨てられ、推移も前回比も出ない (#2215)", async () => {
+    let resolveS1: (v: ReplicationStatus) => void = () => {};
+    vi.mocked(api.getReplicationStatus).mockImplementation((id: string) =>
+      id === "s1"
+        ? new Promise<ReplicationStatus>((r) => {
+            resolveS1 = r;
+          })
+        : Promise.resolve(status({ role: "primary", links: [mk("a", 1)] })),
+    );
+    const view = renderWithProviders(<ReplicationPanel sessionId="s1" driver="postgres" />);
+    view.rerender(<ReplicationPanel sessionId="s2" driver="postgres" />);
+    await screen.findByTestId("replication-link");
+    await act(async () => resolveS1(status({ role: "primary", links: [mk("a", 9)] })));
+    expect(screen.queryAllByTestId("stat-delta")).toHaveLength(0);
+    expect(screen.queryAllByTestId("neutral-sparkline")).toHaveLength(0);
   });
 });
