@@ -4663,14 +4663,16 @@ fn mask_for_analysis_impl(
                 && i >= 1
                 && matches!(src[i - 1], 'e' | 'E')
                 && (i == 1 || !is_pg_ident_char(src[i - 2]));
-            // 連結片: 直前の E リテラルの終端から、改行を含む空白だけ (コメントは
-            // 空白化済み) で隔てた `'` は E モードを引き継ぐ。同じ行の空白だけでは
-            // 連結にならない (PostgreSQL では構文エラー)。
+            // 連結片: 直前の E リテラルの終端から、改行 (`\n` / `\r` 単独も PostgreSQL では
+            // 改行) を含む空白だけ (コメントは空白化済み) で隔てた `'` は E モードを引き継ぐ。
+            // 同じ行の空白だけでは連結にならない (PostgreSQL では構文エラー)。なお `/* */` を
+            // 挟んだ場合も空白化後は連結扱いになるが、PG では構文エラーで何も実行されないので
+            // 意図した過剰扱い (安全側)。
             let e_continued = extras.e_strings
                 && quote == '\''
                 && e_literal_end.is_some_and(|end| {
                     let gap = &out[end..];
-                    gap.contains(&'\n')
+                    (gap.contains(&'\n') || gap.contains(&'\r'))
                         && gap
                             .iter()
                             .all(|&g| matches!(g, ' ' | '\t' | '\n' | '\r' | '\u{b}' | '\u{c}'))

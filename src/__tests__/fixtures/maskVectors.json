@@ -181,6 +181,12 @@
     {"sql": "SELECT E'a'\n'b'\n'\\'' ; DELETE FROM t;", "note": "#2198: 連結が複数続いても E モードを引き継ぐ", "masked": "SELECT E' '\n' '\n'                    ", "maskedPostgres": "SELECT E' '\n' '\n'  ' ; DELETE FROM t;", "maskedMysql": "SELECT E' '\n' '\n'  ' ; DELETE FROM t;"},
     {"sql": "SELECT E'a' -- c\n'\\'' ; DELETE FROM t;", "note": "#2198: 行コメントを挟んでも改行があれば連結 (E モード継続)", "masked": "SELECT E' '     \n'                    ", "maskedPostgres": "SELECT E' '     \n'  ' ; DELETE FROM t;", "maskedMysql": "SELECT E' '     \n'  ' ; DELETE FROM t;"},
     {"sql": "SELECT E'a' '\\' ; DELETE FROM t;", "note": "#2198: 同じ行の空白だけでは連結にならない (PostgreSQL では構文エラー)。続く '…' は標準文字列で、\\' で閉じる", "masked": "SELECT E' ' ' ' ; DELETE FROM t;", "maskedMysql": "SELECT E' ' '                   "},
-    {"sql": "SELECT 'a'\n'\\'' ; DELETE FROM t;", "note": "#2198: 標準文字列 '…' の連結片は標準のまま (E は引き継がない)", "masked": "SELECT ' '\n'                    ", "maskedMysql": "SELECT ' '\n'  ' ; DELETE FROM t;"}
+    {"sql": "SELECT 'a'\n'\\'' ; DELETE FROM t;", "note": "#2198: 標準文字列 '…' の連結片は標準のまま (E は引き継がない)", "masked": "SELECT ' '\n'                    ", "maskedMysql": "SELECT ' '\n'  ' ; DELETE FROM t;"},
+    {"sql": "SELECT E'a'\r\n'\\''", "note": "#2198: CRLF の隙間も改行 (E モード継続)", "masked": "SELECT E' '\r\n'   ", "maskedPostgres": "SELECT E' '\r\n'  '", "maskedMysql": "SELECT E' '\r\n'  '"},
+    {"sql": "SELECT E'a'\r'\\'' ; DELETE FROM t;", "note": "#2198: CR 単独も PostgreSQL では改行。連結片は E モードで DELETE が見える", "masked": "SELECT E' '\r'                    ", "maskedPostgres": "SELECT E' '\r'  ' ; DELETE FROM t;", "maskedMysql": "SELECT E' '\r'  ' ; DELETE FROM t;"},
+    {"sql": "SELECT E'a'\n-- c\n'\\''", "note": "#2198: 改行の後の行コメントを挟んでも連結", "masked": "SELECT E' '\n    \n'   ", "maskedPostgres": "SELECT E' '\n    \n'  '", "maskedMysql": "SELECT E' '\n    \n'  '"},
+    {"sql": "SELECT U&'a'\n'\\'' ; DELETE FROM t;", "note": "#2198: U& は E を引き継がない (pg は標準解釈)", "masked": "SELECT U&' '\n'                    ", "maskedMysql": "SELECT U&' '\n'  ' ; DELETE FROM t;"},
+    {"sql": "SELECT E'a' /* c */\n'\\'' ; DELETE FROM t;", "note": "#2198: /* */ を挟んでも連結扱い。PG では構文エラーで何も実行されないため意図した過剰扱いを仕様として固定", "masked": "SELECT E' '        \n'                    ", "maskedPostgres": "SELECT E' '        \n'  ' ; DELETE FROM t;", "maskedMysql": "SELECT E' '        \n'  ' ; DELETE FROM t;"},
+    {"sql": "SELECT E'abc ; DELETE FROM t;", "note": "#2198: 未閉じの E'… は末尾まで飲む (連結の判定に入らず、後続も残らない)", "masked": "SELECT E'                    ", "maskedPostgres": "SELECT E'                    ", "maskedMysql": "SELECT E'                    "}
   ]
 }

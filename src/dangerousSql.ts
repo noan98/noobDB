@@ -222,13 +222,15 @@ function maskLiteralsUncached(
         i >= 1 &&
         (sql[i - 1] === "e" || sql[i - 1] === "E") &&
         (i === 1 || !isPgIdentChar(sql[i - 2]));
-      // 連結片: 直前の E リテラルの終端から、改行を含む空白だけ (コメントは空白化済み) で
-      // 隔てた `'` は E モードを引き継ぐ。同じ行の空白だけでは連結にならない。
+      // 連結片: 直前の E リテラルの終端から、改行 (`\n` / `\r` 単独も PostgreSQL では改行) を
+      // 含む空白だけ (コメントは空白化済み) で隔てた `'` は E モードを引き継ぐ。同じ行の空白
+      // だけでは連結にならない。`/* */` を挟んだ場合も空白化後は連結扱いになるが、PG では構文
+      // エラーで何も実行されないので意図した過剰扱い (安全側)。
       const eContinued =
         driver === "postgres" &&
         quote === "'" &&
         eLiteralEnd >= 0 &&
-        /^[ \t\r\v\f]*\n[ \t\n\r\v\f]*$/.test(out.slice(eLiteralEnd, i).join(""));
+        /^[ \t\n\r\v\f]*[\n\r][ \t\n\r\v\f]*$/.test(out.slice(eLiteralEnd, i).join(""));
       const escapes = backslashEscapes || ePrefixed || eContinued;
       let j = i + 1;
       let closed = false;
