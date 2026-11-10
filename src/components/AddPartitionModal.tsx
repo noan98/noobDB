@@ -13,6 +13,7 @@ import {
   type AddPartitionKind,
   hasDefaultPartition,
   initialAddForm,
+  type KeyKind,
   MAX_ADD_COUNT,
   planAddPartitions,
   reorganizesMaxvalue,
@@ -33,6 +34,8 @@ interface Props {
   driver: string;
   info: TablePartitions;
   kind: AddPartitionKind;
+  /** RANGE のキー列ごとの型 (境界の比べ方)。分からない列は unknown。 */
+  keyKinds?: readonly KeyKind[];
   onConfirm: (statements: string[], count: number) => void;
   onClose: () => void;
 }
@@ -53,15 +56,26 @@ const ERROR_KEYS = {
   countUnsupported: "addPartitionErrCountUnsupported",
 } as const satisfies Record<AddPartitionErrorCode, string>;
 
-export function AddPartitionModal({ database, table, driver, info, kind, onConfirm, onClose }: Props) {
+export function AddPartitionModal({
+  database,
+  table,
+  driver,
+  info,
+  kind,
+  keyKinds,
+  onConfirm,
+  onClose,
+}: Props) {
   const t = useT();
-  const [form, setForm] = useState<AddPartitionForm>(() => initialAddForm(driver, table, info, kind));
+  const [form, setForm] = useState<AddPartitionForm>(() =>
+    initialAddForm(driver, table, info, kind, keyKinds),
+  );
   const nameRef = useRef<HTMLInputElement>(null);
   const countRef = useRef<HTMLInputElement>(null);
   const columns = useMemo(() => partitionKeyColumns(info.key), [info.key]);
   const plan = useMemo(
-    () => planAddPartitions(driver, database, table, info, kind, form),
-    [driver, database, table, info, kind, form],
+    () => planAddPartitions(driver, database, table, info, kind, form, keyKinds),
+    [driver, database, table, info, kind, form, keyKinds],
   );
   const maxPartition = reorganizesMaxvalue(driver, kind, info);
   const valid = plan.errors.length === 0 && plan.statements.length > 0;

@@ -523,6 +523,7 @@ describe("TableStructurePanel 被参照の外部キー (#1628)", () => {
     });
 
     it("既存の境界と重なると実行前にエラーを出し、確定を無効にする", async () => {
+      vi.mocked(api.describeTable).mockResolvedValue([col("created_at", { data_type: "timestamp" })]);
       vi.mocked(api.listTablePartitions).mockResolvedValueOnce(range([jan, feb]));
       renderPanel({ onAddPartitions: vi.fn() }, "postgres");
       fireEvent.click(await screen.findByRole("button", { name: t("partitionAddOpen") }));
@@ -551,6 +552,14 @@ describe("TableStructurePanel 被参照の外部キー (#1628)", () => {
       fireEvent.click(await screen.findByRole("button", { name: t("partitionAddOpen") }));
       expect(await screen.findByText(t("addPartitionReorganize", { partition: "pmax" }))).toBeInTheDocument();
       expect(screen.getByTestId("sql-preview")).toHaveTextContent("REORGANIZE PARTITION `pmax`");
+    });
+
+    it("複数列の LIST は追加ボタンを無効にして理由を出す", async () => {
+      vi.mocked(api.listTablePartitions).mockResolvedValueOnce(
+        range([part("p0", { bound: "VALUES IN ((1,2))" })], "LIST COLUMNS", "a, b"),
+      );
+      renderPanel({ onAddPartitions: vi.fn() }, "mysql");
+      expect(await screen.findByRole("button", { name: t("partitionAddOpen") })).toBeDisabled();
     });
 
     it("read_only では無効にする", async () => {

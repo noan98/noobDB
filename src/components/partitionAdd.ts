@@ -8,7 +8,7 @@
 // - SQLite: パーティション非対応 (導線なし)。
 // 識別子は sqlDialect.ts、PostgreSQL の境界リテラルは tablePartitions.ts の既存関数を流用する。
 
-import type { TablePartitions } from "../api/tauri";
+import type { TableColumnInfo, TablePartitions } from "../api/tauri";
 import {
   buildPartitionBoundClause,
   parseHashBound,
@@ -21,24 +21,74 @@ import { qualifiedTableName, quoteIdentFor } from "./sqlDialect";
 
 export type AddPartitionKind = "range" | "list" | "hash" | "hashCount";
 
-/** 追加できるか。PostgreSQL の RANGE / LIST / HASH、MySQL の RANGE / LIST / HASH / KEY (サブパーティション無し)。 */
+/**
+ * 追加できるか。PostgreSQL の RANGE / LIST / HASH、MySQL の RANGE / LIST / HASH / KEY (サブパーティション無し)。
+ * 複数列の LIST (MySQL の `LIST COLUMNS (a, b)`) は値がタプルになり入力欄では扱えないので対象外 (null)。
+ */
 export function addPartitionKind(
   driver: string,
-  info: Pick<TablePartitions, "method" | "sub_method">,
+  info: Pick<TablePartitions, "method" | "sub_method"> & Partial<Pick<TablePartitions, "key">>,
 ): AddPartitionKind | null {
   const m = info.method.trim().toUpperCase();
   if (driver === "postgres") {
+    if (m === "LIST" && isMultiColumnList(info)) return null;
     return m === "RANGE" ? "range" : m === "LIST" ? "list" : m === "HASH" ? "hash" : null;
   }
   if (driver === "mysql") {
     // サブパーティション付きは ADD PARTITION にサブ定義も要るので扱わない。
     if (info.sub_method) return null;
     if (m.startsWith("RANGE")) return "range";
-    if (m.startsWith("LIST")) return "list";
+    if (m.startsWith("LIST")) return isMultiColumnList(info) ? null : "list";
     if (/^(LINEAR )?(HASH|KEY)/.test(m)) return "hashCount";
   }
   return null;
 }
+
+/** 複数列キーの LIST か (追加の導線を出さず、理由を見せるために使う)。 */
+export function isMultiColumnList(
+  info: Pick<TablePartitions, "method"> & Partial<Pick<TablePartitions, "key">>,
+): boolean {
+  return /^LIST/i.test(info.method.trim()) && partitionKeyColumns(info.key ?? "").length > 1;
+}
+
+// ---- キー列の型 ----
+
+/** 境界の比べ方を決めるキー列の型。unknown は「判定不能」で、順序・重なりの検査をせず DB に任せる。 */
+export type KeyKind = "int" | "date" | "unknown";
+
+const INT_TYPE_RE =
+  /^(?:(?:tiny|small|medium|big)int|int[248]?|integer|serial[248]?|smallserial|bigserial)\b/i;
+const DATE_TYPE_RE = /^(?:date|datetime|timestamp(?:tz)?)\b/i;
+
+function typeKind(dataType: string): KeyKind {
+  const t = dataType.trim();
+  return INT_TYPE_RE.test(t) ? "int" : DATE_TYPE_RE.test(t) ? "date" : "unknown";
+}
+
+/**
+ * RANGE のキー列ごとの型。MySQL の `RANGE (式)` は整数式なので int。それ以外は列名でキーを引いて列の型から決め、
+ * 式や見つからない列は unknown (文字列キーを整数として比べて誤判定しないため)。
+ */
+export function rangeKeyKinds(
+  driver: string,
+  info: Pick<TablePartitions, "key" | "method">,
+  columns: readonly Pick<TableColumnInfo, "name" | "data_type">[] | null | undefined,
+): KeyKind[] {
+  const keys = partitionKeyColumns(info.key);
+  if (driver === "mysql" && /^(?:LINEAR )?RANGE$/i.test(info.method.trim())) return keys.map(() => "int");
+  const byName = new Map((columns ?? []).map((c) => [c.name.toLowerCase(), typeKind(c.data_type)]));
+  return keys.map(
+    (k) =>
+      byName.get(
+        k
+          .trim()
+          .replace(/^["`]|["`]$/g, "")
+          .toLowerCase(),
+      ) ?? "unknown",
+  );
+}
+
+const kindAt = (kinds: readonly KeyKind[] | undefined, i: number): KeyKind => kinds?.[i] ?? "unknown";
 
 // ---- 値の比較・加算 ----
 
@@ -94,29 +144,39 @@ function isInfinite(v: string): -1 | 1 | 0 {
   return u === "MINVALUE" ? -1 : u === "MAXVALUE" ? 1 : 0;
 }
 
-/** 2 つの境界値の大小。整数同士・日付同士・MINVALUE / MAXVALUE は比べられる。比べられなければ null。 */
-export function compareBoundValue(a: string, b: string): number | null {
+/**
+ * 2 つの境界値の大小。MINVALUE / MAXVALUE は常に比べられる。整数として比べるのはキーが整数型と分かっている
+ * (`int`) ときだけ、日付として比べるのは日付系と分かっている (`date`) ときだけ。文字列キーは照合順序で
+ * 並びが変わる (`10` と `2` など) ので、型が分からなければ (unknown) 同じ文字列以外は null (判定不能)。
+ */
+export function compareBoundValue(a: string, b: string, kind: KeyKind = "unknown"): number | null {
   const ia = isInfinite(a);
   const ib = isInfinite(b);
   if (ia !== 0 || ib !== 0) return Math.sign(ia - ib);
   const x = a.trim();
   const y = b.trim();
-  if (INT_RE.test(x) && INT_RE.test(y)) {
+  if (kind === "int" && INT_RE.test(x) && INT_RE.test(y)) {
     const bx = BigInt(x);
     const by = BigInt(y);
     return bx < by ? -1 : bx > by ? 1 : 0;
   }
-  const tx = parseTemporal(x);
-  const ty = parseTemporal(y);
-  if (tx && ty) return Math.sign(temporalMs(tx) - temporalMs(ty));
-  return null;
+  if (kind === "date") {
+    const tx = parseTemporal(x);
+    const ty = parseTemporal(y);
+    if (tx && ty) return Math.sign(temporalMs(tx) - temporalMs(ty));
+  }
+  return x === y ? 0 : null;
 }
 
 /** 複数キー列の境界を辞書順に比べる (PostgreSQL の RANGE と同じ)。判定できなければ null。 */
-export function compareBoundTuple(a: readonly string[], b: readonly string[]): number | null {
+export function compareBoundTuple(
+  a: readonly string[],
+  b: readonly string[],
+  kinds?: readonly KeyKind[],
+): number | null {
   if (a.length !== b.length) return null;
   for (let i = 0; i < a.length; i++) {
-    const c = compareBoundValue(a[i] as string, b[i] as string);
+    const c = compareBoundValue(a[i] as string, b[i] as string, kindAt(kinds, i));
     if (c === null) return null;
     if (c !== 0) return c;
   }
@@ -227,11 +287,11 @@ function mysqlMaxPartition(
 }
 
 /** 有限の上限を持つ最後の RANGE 区間 (比べられなければ一覧の後ろの方を採る)。 */
-function lastFiniteRange(ranges: readonly ExistingRange[]): ExistingRange | null {
+function lastFiniteRange(ranges: readonly ExistingRange[], kinds?: readonly KeyKind[]): ExistingRange | null {
   let last: ExistingRange | null = null;
   for (const r of ranges) {
     if (isMaxTuple(r.to) || r.to.some((v) => isInfinite(v) === 1)) continue;
-    if (!last || (compareBoundTuple(r.to, last.to) ?? 1) > 0) last = r;
+    if (!last || (compareBoundTuple(r.to, last.to, kinds) ?? 1) > 0) last = r;
   }
   return last;
 }
@@ -266,6 +326,7 @@ export function initialAddForm(
   table: string,
   info: Pick<TablePartitions, "key" | "method" | "partitions">,
   kind: AddPartitionKind,
+  keyKinds?: readonly KeyKind[],
 ): AddPartitionForm {
   const arity = rangeArity(info);
   const form: AddPartitionForm = {
@@ -287,7 +348,7 @@ export function initialAddForm(
   const exprKey = driver === "mysql" && /^RANGE$/i.test(info.method.trim()) && info.key.includes("(");
   if (kind === "range") {
     const ranges = existingRanges(driver, info);
-    const last = lastFiniteRange(ranges);
+    const last = lastFiniteRange(ranges, keyKinds);
     prefixSource = last?.name ?? prefixSource;
     if (last && last.to.length === 1) {
       const lastTo = last.to[0] as string;
@@ -416,6 +477,7 @@ export function planAddPartitions(
   info: Pick<TablePartitions, "key" | "method" | "sub_method" | "partitions">,
   kind: AddPartitionKind,
   form: AddPartitionForm,
+  keyKinds?: readonly KeyKind[],
 ): AddPartitionPlan {
   const errors: AddPartitionError[] = [];
   const existingNames = new Set(info.partitions.map((p) => nameKey(driver, p.name)));
@@ -488,7 +550,7 @@ export function planAddPartitions(
   if (count === null) errors.push({ code: "count" });
   const ranges = existingRanges(driver, info);
   const maxPart = driver === "mysql" ? mysqlMaxPartition(info) : null;
-  const last = driver === "mysql" ? lastFiniteRange(ranges) : null;
+  const last = driver === "mysql" ? lastFiniteRange(ranges, keyKinds) : null;
   // MySQL の下限は常に直前の上限 (最初の 1 件が先頭のパーティションなら下限なし)。
   const firstFrom = driver === "mysql" ? (last?.to ?? form.from.map(() => "MINVALUE")) : form.from;
   const filled = (a: readonly string[]) => a.length > 0 && a.every((v) => v.trim() !== "");
@@ -518,12 +580,12 @@ export function planAddPartitions(
   // 順序と重なり。
   for (const it of items) {
     if (driver === "mysql") {
-      const lowerCmp = compareBoundTuple(it.to, it.from);
+      const lowerCmp = compareBoundTuple(it.to, it.from, keyKinds);
       if (lowerCmp !== null && lowerCmp <= 0 && last) {
         errors.push({ code: "rangeNotAscending", detail: last.to.join(", ") });
         break;
       }
-    } else if ((compareBoundTuple(it.from, it.to) ?? -1) >= 0) {
+    } else if ((compareBoundTuple(it.from, it.to, keyKinds) ?? -1) >= 0) {
       errors.push({ code: "rangeOrder" });
       break;
     }
@@ -534,8 +596,8 @@ export function planAddPartitions(
       for (const other of items.slice(0, i)) {
         // 生成した件どうしの重なり (幅が不正でない限り起きないが念のため)。
         if (
-          (compareBoundTuple(it.from, other.to) ?? 1) < 0 &&
-          (compareBoundTuple(other.from, it.to) ?? 1) < 0
+          (compareBoundTuple(it.from, other.to, keyKinds) ?? 1) < 0 &&
+          (compareBoundTuple(other.from, it.to, keyKinds) ?? 1) < 0
         ) {
           errors.push({ code: "rangeOverlap", detail: other.name });
         }
@@ -543,7 +605,10 @@ export function planAddPartitions(
       if (driver === "postgres") {
         for (const ex of ranges) {
           if (!ex.from) continue;
-          if ((compareBoundTuple(it.from, ex.to) ?? 1) < 0 && (compareBoundTuple(ex.from, it.to) ?? 1) < 0) {
+          if (
+            (compareBoundTuple(it.from, ex.to, keyKinds) ?? 1) < 0 &&
+            (compareBoundTuple(ex.from, it.to, keyKinds) ?? 1) < 0
+          ) {
             errors.push({ code: "rangeOverlap", detail: ex.name });
             break;
           }

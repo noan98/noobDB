@@ -4126,6 +4126,8 @@ const en = {
   partitionAttachConfirmBody:
     "{partition} becomes a partition of {table}. PostgreSQL takes an ACCESS EXCLUSIVE lock on {partition} while it checks that every row fits the bound (a matching CHECK constraint lets it skip the scan), so queries on it wait. If any row is outside the bound, the statement fails and nothing changes. If a DEFAULT partition exists, it is checked too, and the statement fails if it holds rows that belong to the new bound.",
   partitionAddOpen: "Add partition...",
+  partitionAddMultiListUnsupported:
+    "Adding a partition to a multi-column LIST (tuple values) is not supported here. Write the ALTER TABLE statement in the editor.",
   addPartitionTitle: "Add partitions to {table}",
   addPartitionName: "Partition name",
   addPartitionCount: "Number of partitions",
@@ -11962,6 +11964,8 @@ const ja: Dict = {
   partitionAttachConfirmBody:
     "{partition} が {table} のパーティションになります。実行中は {partition} に強いロック (ACCESS EXCLUSIVE) がかかり、全行が境界に収まるか検査します (同じ条件の CHECK 制約があれば検査を省けます)。その間は {partition} への問い合わせが待たされます。境界外の行が 1 行でもあると失敗し、何も変わりません。DEFAULT パーティションがある場合はそちらも検査され、新しい境界に該当する行があると失敗します。",
   partitionAddOpen: "パーティションを追加...",
+  partitionAddMultiListUnsupported:
+    "複数列の LIST (値がタプル) へのパーティション追加は未対応です。エディタで ALTER TABLE を書いてください。",
   addPartitionTitle: "{table} にパーティションを追加",
   addPartitionName: "パーティション名",
   addPartitionCount: "作成する件数",

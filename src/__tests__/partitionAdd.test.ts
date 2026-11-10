@@ -7,7 +7,9 @@ import {
   compareBoundValue,
   hasDefaultPartition,
   initialAddForm,
+  isMultiColumnList,
   planAddPartitions,
+  rangeKeyKinds,
   reorganizesMaxvalue,
 } from "../components/partitionAdd";
 import { parseHashBound, parseListBound, parseRangeBound } from "../components/tablePartitions";
@@ -71,13 +73,13 @@ describe("境界の解析", () => {
 
 describe("compareBoundValue", () => {
   it("整数・日付・MINVALUE / MAXVALUE を比べ、型が違えば null", () => {
-    expect(compareBoundValue("9", "10")).toBe(-1);
-    expect(compareBoundValue("2026-02-01", "2026-01-31")).toBe(1);
-    expect(compareBoundValue("2026-02-01", "2026-02-01 00:00:00")).toBe(0);
+    expect(compareBoundValue("9", "10", "int")).toBe(-1);
+    expect(compareBoundValue("2026-02-01", "2026-01-31", "date")).toBe(1);
+    expect(compareBoundValue("2026-02-01", "2026-02-01 00:00:00", "date")).toBe(0);
     expect(compareBoundValue("MAXVALUE", "99999999999999999999")).toBe(1);
     expect(compareBoundValue("minvalue", "-5")).toBe(-1);
-    expect(compareBoundValue("abc", "abd")).toBeNull();
-    expect(compareBoundTuple(["1", "2"], ["1", "3"])).toBe(-1);
+    expect(compareBoundValue("abc", "abd", "int")).toBeNull();
+    expect(compareBoundTuple(["1", "2"], ["1", "3"], ["int", "int"])).toBe(-1);
     expect(compareBoundTuple(["1"], ["1", "3"])).toBeNull();
   });
 });
@@ -149,22 +151,39 @@ describe("PostgreSQL RANGE", () => {
   });
   it("既存と重なる / FROM >= TO / 名前重複 / 空はエラーで SQL を出さない", () => {
     const f = initialAddForm("postgres", "orders", i, "range");
-    const overlap = planAddPartitions("postgres", null, "orders", i, "range", {
-      ...f,
-      from: ["2026-02-15"],
-      to: ["2026-03-15"],
-    });
+    const D = ["date"] as const;
+    const overlap = planAddPartitions(
+      "postgres",
+      null,
+      "orders",
+      i,
+      "range",
+      {
+        ...f,
+        from: ["2026-02-15"],
+        to: ["2026-03-15"],
+      },
+      D,
+    );
     expect(overlap.errors).toEqual([{ code: "rangeOverlap", detail: "ev_1" }]);
     expect(overlap.sql).toBe("");
     // 隣接 (to == 既存の from) は重ならない。
-    const adj = planAddPartitions("postgres", null, "orders", i, "range", {
-      ...f,
-      from: ["2025-12-01"],
-      to: ["2026-01-01"],
-    });
+    const adj = planAddPartitions(
+      "postgres",
+      null,
+      "orders",
+      i,
+      "range",
+      {
+        ...f,
+        from: ["2025-12-01"],
+        to: ["2026-01-01"],
+      },
+      D,
+    );
     expect(adj.errors).toEqual([]);
     expect(
-      planAddPartitions("postgres", null, "orders", i, "range", { ...f, to: ["2026-02-01"] }).errors,
+      planAddPartitions("postgres", null, "orders", i, "range", { ...f, to: ["2026-02-01"] }, D).errors,
     ).toEqual([{ code: "rangeOrder" }]);
     expect(planAddPartitions("postgres", null, "orders", i, "range", { ...f, name: "ev_0" }).errors).toEqual([
       { code: "nameDuplicate", detail: "ev_0" },
@@ -272,10 +291,11 @@ describe("MySQL", () => {
   it("上限が既存より小さい / 等しいと実行前にエラー", () => {
     const i = mysqlRange("1000", "2000");
     const f = { ...initialAddForm("mysql", "t", i, "range"), name: "px" };
-    expect(planAddPartitions("mysql", null, "t", i, "range", { ...f, to: ["1500"] }).errors).toEqual([
+    const I = ["int"] as const;
+    expect(planAddPartitions("mysql", null, "t", i, "range", { ...f, to: ["1500"] }, I).errors).toEqual([
       { code: "rangeNotAscending", detail: "2000" },
     ]);
-    expect(planAddPartitions("mysql", null, "t", i, "range", { ...f, to: ["2000"] }).errors).toEqual([
+    expect(planAddPartitions("mysql", null, "t", i, "range", { ...f, to: ["2000"] }, I).errors).toEqual([
       { code: "rangeNotAscending", detail: "2000" },
     ]);
   });
@@ -379,12 +399,20 @@ describe("レビュー指摘 (#2211)", () => {
       `CREATE TABLE "public"."noobdb_padd_t_2026_02" PARTITION OF "public"."noobdb_padd_t" FOR VALUES FROM ('2026-02-01') TO ('2026-03-01');`,
       `CREATE TABLE "public"."noobdb_padd_t_2026_03" PARTITION OF "public"."noobdb_padd_t" FOR VALUES FROM ('2026-03-01') TO ('2026-04-01');`,
     ]);
-    const dup = planAddPartitions("postgres", "public", "noobdb_padd_t", i, "range", {
-      ...f,
-      name: "noobdb_padd_t_dup",
-      from: ["2026-01-15"],
-      to: ["2026-02-15"],
-    });
+    const dup = planAddPartitions(
+      "postgres",
+      "public",
+      "noobdb_padd_t",
+      i,
+      "range",
+      {
+        ...f,
+        name: "noobdb_padd_t_dup",
+        from: ["2026-01-15"],
+        to: ["2026-02-15"],
+      },
+      ["date"],
+    );
     expect(dup.errors[0]?.code).toBe("rangeOverlap");
   });
 
@@ -406,5 +434,55 @@ describe("レビュー指摘 (#2211)", () => {
     expect(planAddPartitions("mysql", "db", "noobdb_padd_t", m, "range", mf).statements).toEqual([
       "ALTER TABLE `db`.`noobdb_padd_t` REORGANIZE PARTITION `pmax` INTO (PARTITION `p2029` VALUES LESS THAN (2030), PARTITION `pmax` VALUES LESS THAN (MAXVALUE));",
     ]);
+  });
+});
+
+describe("キー型に応じた比較とパーティション追加の無効化 (#2211 Codex)", () => {
+  const textRange = () => info("RANGE", "code", [part("c_1", "FOR VALUES FROM ('1') TO ('10')")]);
+
+  it("型が分からない / 文字列キーでは数値に見える境界を整数として比べず、判定不能は確定を止めない", () => {
+    expect(compareBoundValue("10", "2")).toBeNull();
+    expect(compareBoundValue("10", "2", "date")).toBeNull();
+    expect(compareBoundValue("10", "2", "int")).toBe(1);
+    const i = textRange();
+    const f = { ...initialAddForm("postgres", "t", i, "range"), name: "c_2", from: ["10"], to: ["2"] };
+    // C 照合では '10' < '2' なので有効。型不明なら rangeOrder にしない。
+    const unknown = planAddPartitions("postgres", null, "t", i, "range", f);
+    expect(unknown.errors).toEqual([]);
+    expect(unknown.statements).toHaveLength(1);
+    expect(planAddPartitions("postgres", null, "t", i, "range", f, ["unknown"]).errors).toEqual([]);
+    // 整数と分かっていれば従来どおり拒否・重なり検出。
+    expect(planAddPartitions("postgres", null, "t", i, "range", f, ["int"]).errors).toEqual([
+      { code: "rangeOrder" },
+    ]);
+    const ov = { ...f, from: ["5"], to: ["15"] };
+    expect(planAddPartitions("postgres", null, "t", i, "range", ov, ["int"]).errors[0]?.code).toBe(
+      "rangeOverlap",
+    );
+    expect(planAddPartitions("postgres", null, "t", i, "range", ov).errors).toEqual([]);
+  });
+
+  it("キー列の型から比べ方を決める", () => {
+    const cols = [
+      { name: "id", data_type: "bigint" },
+      { name: "created_at", data_type: "timestamp with time zone" },
+      { name: "code", data_type: "text" },
+    ];
+    expect(rangeKeyKinds("postgres", { method: "RANGE", key: "id" }, cols)).toEqual(["int"]);
+    expect(rangeKeyKinds("postgres", { method: "RANGE", key: '"created_at"' }, cols)).toEqual(["date"]);
+    expect(rangeKeyKinds("postgres", { method: "RANGE", key: "code, id" }, cols)).toEqual(["unknown", "int"]);
+    expect(rangeKeyKinds("postgres", { method: "RANGE", key: "lower(code)" }, cols)).toEqual(["unknown"]);
+    expect(rangeKeyKinds("postgres", { method: "RANGE", key: "id" }, null)).toEqual(["unknown"]);
+    expect(rangeKeyKinds("mysql", { method: "RANGE", key: "to_days(d)" }, null)).toEqual(["int"]);
+    expect(rangeKeyKinds("mysql", { method: "RANGE COLUMNS", key: "code" }, cols)).toEqual(["unknown"]);
+  });
+
+  it("複数列の LIST は追加の導線を出さない (単一列は出す)", () => {
+    expect(addPartitionKind("mysql", { method: "LIST COLUMNS", key: "a, b", sub_method: null })).toBeNull();
+    expect(addPartitionKind("mysql", { method: "LIST COLUMNS", key: "a", sub_method: null })).toBe("list");
+    expect(addPartitionKind("postgres", { method: "LIST", key: "a, b", sub_method: null })).toBeNull();
+    expect(addPartitionKind("postgres", { method: "LIST", key: "a", sub_method: null })).toBe("list");
+    expect(isMultiColumnList({ method: "LIST COLUMNS", key: "`a`, `b`" })).toBe(true);
+    expect(isMultiColumnList({ method: "RANGE COLUMNS", key: "a, b" })).toBe(false);
   });
 });

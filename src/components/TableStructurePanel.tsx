@@ -23,7 +23,7 @@ import { kindOfDataType, TypeGlyph } from "./TypeGlyph";
 import { Button } from "./ui";
 import { CopyButton } from "./CopyButton";
 import { AddPartitionModal } from "./AddPartitionModal";
-import { addPartitionKind } from "./partitionAdd";
+import { addPartitionKind, isMultiColumnList, rangeKeyKinds } from "./partitionAdd";
 import { AttachPartitionModal } from "./AttachPartitionModal";
 import { FieldError } from "./modalForm";
 import { SqlPreview } from "./SqlPreview";
@@ -416,6 +416,14 @@ export function TableStructurePanel({
   const attachKind = partitions && onAttachPartition ? attachBoundKind(driver, partitions) : null;
   // 次のパーティションを追加できる分割方式か (PostgreSQL の RANGE / LIST / HASH、MySQL の RANGE / LIST / HASH / KEY, #2211)。
   const addKind = partitions && onAddPartitions ? addPartitionKind(driver, partitions) : null;
+  // 複数列の LIST はタプル入力に未対応なので、導線を無効にして理由を見せる。
+  const addMultiList =
+    addKind === null &&
+    !!partitions &&
+    !!onAddPartitions &&
+    (driver === "postgres" || (driver === "mysql" && !partitions.sub_method)) &&
+    isMultiColumnList(partitions);
+  const addKeyKinds = partitions ? rangeKeyKinds(driver, partitions, columns) : undefined;
 
   const partitionSummary = (info: TablePartitions) =>
     t("structurePartitionedBy", {
@@ -794,7 +802,10 @@ export function TableStructurePanel({
               )}
 
               {partitions &&
-                (partitions.partitions.length > 0 || attachKind !== null || addKind !== null) && (
+                (partitions.partitions.length > 0 ||
+                  attachKind !== null ||
+                  addKind !== null ||
+                  addMultiList) && (
                   <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
                     <SectionCaption label={t("structurePartitions")} count={partitions.partitions.length} />
                     <chakra.thead>
@@ -816,15 +827,22 @@ export function TableStructurePanel({
                       <chakra.tr>
                         <chakra.td
                           css={tdCss}
-                          colSpan={attachKind !== null || addKind !== null ? 4 : 5}
+                          colSpan={attachKind !== null || addKind !== null || addMultiList ? 4 : 5}
                           color="app.textMuted"
                           fontFamily="var(--font-mono)"
                         >
                           {partitionSummary(partitions)}
                         </chakra.td>
-                        {(attachKind !== null || addKind !== null) && (
+                        {(attachKind !== null || addKind !== null || addMultiList) && (
                           <chakra.td css={tdCss} textAlign="right">
                             <Flex justify="flex-end" gap="2">
+                              {addMultiList && (
+                                <Tooltip label={t("partitionAddMultiListUnsupported")} focusableWrapper>
+                                  <Button type="button" variant="secondary" size="sm" disabled>
+                                    {t("partitionAddOpen")}
+                                  </Button>
+                                </Tooltip>
+                              )}
                               {addKind !== null && (
                                 <Tooltip
                                   label={readOnly ? t("listReadOnlyTitle") : t("partitionAddOpen")}
@@ -1002,6 +1020,7 @@ export function TableStructurePanel({
           driver={driver}
           info={partitions}
           kind={addKind}
+          keyKinds={addKeyKinds}
           onClose={() => setAddOpen(false)}
           onConfirm={(statements, count) => {
             setAddOpen(false);
