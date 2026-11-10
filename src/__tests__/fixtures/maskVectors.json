@@ -176,7 +176,11 @@
     {"sql": "SELECT 1-- x\nFROM t", "note": "#1735: -- の直後が空白なら全ドライバでコメント", "masked": "SELECT 1    \nFROM t"},
     {"sql": "SELECT 1--\tx", "note": "#1735: -- の直後がタブでもコメント", "masked": "SELECT 1    "},
     {"sql": "SELECT 1--", "note": "#1735: 文末の -- はコメント (MySQL でも)", "masked": "SELECT 1  "},
-    {"sql": "SELECT 1--\u0001x", "note": "#1735: -- の直後が制御文字でもコメント (MySQL)", "masked": "SELECT 1    "}
-
+    {"sql": "SELECT 1--\u0001x", "note": "#1735: -- の直後が制御文字でもコメント (MySQL)", "masked": "SELECT 1    "},
+    {"sql": "SELECT E'a'\n'\\'' ; DELETE FROM t;", "note": "#2198: PostgreSQL の E'…' に改行で続く連結片も E モード。'\\'' は \\' で引用符を含んだまま閉じ、後続の DELETE が見える (標準解釈では連結片が \\' の手前で閉じ、残りを文字列に飲んで DELETE を隠す)", "masked": "SELECT E' '\n'                    ", "maskedPostgres": "SELECT E' '\n'  ' ; DELETE FROM t;", "maskedMysql": "SELECT E' '\n'  ' ; DELETE FROM t;"},
+    {"sql": "SELECT E'a'\n'b'\n'\\'' ; DELETE FROM t;", "note": "#2198: 連結が複数続いても E モードを引き継ぐ", "masked": "SELECT E' '\n' '\n'                    ", "maskedPostgres": "SELECT E' '\n' '\n'  ' ; DELETE FROM t;", "maskedMysql": "SELECT E' '\n' '\n'  ' ; DELETE FROM t;"},
+    {"sql": "SELECT E'a' -- c\n'\\'' ; DELETE FROM t;", "note": "#2198: 行コメントを挟んでも改行があれば連結 (E モード継続)", "masked": "SELECT E' '     \n'                    ", "maskedPostgres": "SELECT E' '     \n'  ' ; DELETE FROM t;", "maskedMysql": "SELECT E' '     \n'  ' ; DELETE FROM t;"},
+    {"sql": "SELECT E'a' '\\' ; DELETE FROM t;", "note": "#2198: 同じ行の空白だけでは連結にならない (PostgreSQL では構文エラー)。続く '…' は標準文字列で、\\' で閉じる", "masked": "SELECT E' ' ' ' ; DELETE FROM t;", "maskedMysql": "SELECT E' ' '                   "},
+    {"sql": "SELECT 'a'\n'\\'' ; DELETE FROM t;", "note": "#2198: 標準文字列 '…' の連結片は標準のまま (E は引き継がない)", "masked": "SELECT ' '\n'                    ", "maskedMysql": "SELECT ' '\n'  ' ; DELETE FROM t;"}
   ]
 }

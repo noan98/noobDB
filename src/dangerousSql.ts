@@ -134,6 +134,9 @@ function maskLiteralsUncached(
     }
   };
   let i = 0;
+  // 直前の `E'…'` (連結片を含む) が閉じた位置。PostgreSQL では改行を含む空白だけで続く
+  // 次の `'…'` も同じ値の続きで E モードのまま (#2198)。バックエンドの `e_literal_end` と対。
+  let eLiteralEnd = -1;
   while (i < n) {
     const c = sql[i];
     const c2 = sql[i + 1];
@@ -213,13 +216,20 @@ function maskLiteralsUncached(
       const quote = c;
       // PostgreSQL の E'…' (エスケープ文字列) だけは `\` がエスケープ。直前が単独の E/e の
       // ときに限る。バックエンドの `mask_for_analysis_impl` と同じ規則。
-      const escapes =
-        backslashEscapes ||
-        (driver === "postgres" &&
-          quote === "'" &&
-          i >= 1 &&
-          (sql[i - 1] === "e" || sql[i - 1] === "E") &&
-          (i === 1 || !isPgIdentChar(sql[i - 2])));
+      const ePrefixed =
+        driver === "postgres" &&
+        quote === "'" &&
+        i >= 1 &&
+        (sql[i - 1] === "e" || sql[i - 1] === "E") &&
+        (i === 1 || !isPgIdentChar(sql[i - 2]));
+      // 連結片: 直前の E リテラルの終端から、改行を含む空白だけ (コメントは空白化済み) で
+      // 隔てた `'` は E モードを引き継ぐ。同じ行の空白だけでは連結にならない。
+      const eContinued =
+        driver === "postgres" &&
+        quote === "'" &&
+        eLiteralEnd >= 0 &&
+        /^[ \t\r\v\f]*\n[ \t\n\r\v\f]*$/.test(out.slice(eLiteralEnd, i).join(""));
+      const escapes = backslashEscapes || ePrefixed || eContinued;
       let j = i + 1;
       let closed = false;
       while (j < n) {
@@ -257,6 +267,7 @@ function maskLiteralsUncached(
       // `"…"` は既定で文字列 (ANSI_QUOTES 無効) なので残さない。
       const keepContent = keepIdent && (quote === "`" || (quote === '"' && driver !== "mysql"));
       if (!keepContent) blank(i + 1, closed ? j - 1 : j);
+      if (closed && quote === "'" && (ePrefixed || eContinued)) eLiteralEnd = j;
       i = j;
       continue;
     }

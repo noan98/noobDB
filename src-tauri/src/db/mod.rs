@@ -4549,6 +4549,9 @@ fn mask_for_analysis_impl(
     let mut out: Vec<char> = Vec::with_capacity(src.len());
     let n = src.len();
     let mut i = 0;
+    // 直前の `E'…'` (連結片を含む) が閉じた位置。PostgreSQL では改行を含む空白だけで続く
+    // 次の `'…'` も同じ値の続きで E モードのまま (#2198)。
+    let mut e_literal_end: Option<usize> = None;
     while i < n {
         let c = src[i];
         // Line comment: `-- …` or (MySQL / driver-less only) `# …`, terminated
@@ -4655,12 +4658,24 @@ fn mask_for_analysis_impl(
             let quote = c;
             // PostgreSQL `E'…'` escape string: backslash escapes apply even
             // though ordinary `'…'` literals read `\` as a plain character.
-            let escapes = backslash_escapes
-                || (extras.e_strings
-                    && quote == '\''
-                    && i >= 1
-                    && matches!(src[i - 1], 'e' | 'E')
-                    && (i == 1 || !is_pg_ident_char(src[i - 2])));
+            let e_prefixed = extras.e_strings
+                && quote == '\''
+                && i >= 1
+                && matches!(src[i - 1], 'e' | 'E')
+                && (i == 1 || !is_pg_ident_char(src[i - 2]));
+            // 連結片: 直前の E リテラルの終端から、改行を含む空白だけ (コメントは
+            // 空白化済み) で隔てた `'` は E モードを引き継ぐ。同じ行の空白だけでは
+            // 連結にならない (PostgreSQL では構文エラー)。
+            let e_continued = extras.e_strings
+                && quote == '\''
+                && e_literal_end.is_some_and(|end| {
+                    let gap = &out[end..];
+                    gap.contains(&'\n')
+                        && gap
+                            .iter()
+                            .all(|&g| matches!(g, ' ' | '\t' | '\n' | '\r' | '\u{b}' | '\u{c}'))
+                });
+            let escapes = backslash_escapes || e_prefixed || e_continued;
             out.push(c);
             i += 1;
             while i < n {
@@ -4683,6 +4698,9 @@ fn mask_for_analysis_impl(
                     }
                     out.push(quote);
                     i += 1;
+                    if extras.e_strings && quote == '\'' && (e_prefixed || e_continued) {
+                        e_literal_end = Some(i);
+                    }
                     break;
                 }
                 let keep_body = match quote {
