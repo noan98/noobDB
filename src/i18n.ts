@@ -10571,7 +10571,8 @@ const ja: Dict = {
   publicationReplicaFull: "FULL",
   publicationReplicaIndex: "USING INDEX",
   publicationReplicaPartitioned: "パーティション親表 (識別子はパーティションごとに必要)",
-  publicationReplicaFullTitle: "次のパブリケーションへ追加する前に REPLICA IDENTITY FULL を設定します: {names}",
+  publicationReplicaFullTitle:
+    "次のパブリケーションへ追加する前に REPLICA IDENTITY FULL を設定します: {names}",
   publicationReplicaPartitionNote:
     "パーティション親表です。REPLICA IDENTITY はパーティションへ伝播しないため、ALTER TABLE ... REPLICA IDENTITY FULL はパーティションごとに実行する (または各パーティションに主キーを付ける) 必要があります。今後追加するパーティションも同様の設定が必要です。",
   publicationReplicaWarnTitle:
