@@ -96,6 +96,7 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["cellBlobProbe", schemas.cellBlobProbe],
   ["blobFolderSaveResult", schemas.blobFolderSaveResult],
   ["transferPreview", schemas.transferPreview],
+  ["subsetPreview", schemas.subsetPreview],
   ["connectResult", schemas.connectResult],
   ["localTableMeta", schemas.localTableMeta],
   ["profileImportResult", schemas.profileImportResult],

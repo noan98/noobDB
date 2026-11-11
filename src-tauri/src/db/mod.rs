@@ -58,6 +58,8 @@ pub mod sqlite;
 pub mod sqlite_rebuild;
 /// ストリーミング結果のバッチ合流と逐次統計 (#1257)。
 pub mod stream_batch;
+/// サブセット抽出 (#2241) の純粋層: 外部キーを行単位で辿る計画と取得 SQL。
+pub mod subset;
 pub mod sync;
 /// 既存テーブルの CREATE TABLE DDL をカタログ情報から再構成する純ロジック (#1001)。
 pub mod table_ddl;
@@ -1506,6 +1508,16 @@ impl Connection {
             Connection::MySql(c) => c.foreign_keys(db).await,
             Connection::Postgres(c) => c.foreign_keys(db).await,
             Connection::Sqlite(c) => c.foreign_keys(db).await,
+        }
+    }
+
+    /// 別のデータベースの表を指す外部キーの (参照元の表, 制約名) (#2241)。`foreign_keys` が
+    /// 参照先の表名しか返さない MySQL だけが該当する。PostgreSQL は `foreign_keys` が同一スキーマ
+    /// 内の参照だけを返し、SQLite は DB をまたげないので、どちらも空。
+    pub async fn cross_database_foreign_keys(&self, db: &str) -> Result<Vec<(String, String)>> {
+        match self {
+            Connection::MySql(c) => c.cross_database_foreign_keys(db).await,
+            Connection::Postgres(_) | Connection::Sqlite(_) => Ok(Vec::new()),
         }
     }
 

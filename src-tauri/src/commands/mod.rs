@@ -41,6 +41,7 @@ pub mod search;
 pub mod server;
 pub mod snippets;
 pub mod ssh;
+pub mod subset;
 pub mod sync;
 pub mod table_open;
 pub mod tasks;

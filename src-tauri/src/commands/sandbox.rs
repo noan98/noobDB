@@ -35,6 +35,7 @@
 
 use tauri::State;
 
+use crate::db::data_diff::key_signature;
 use crate::db::data_diff::{compute_data_diff, sql_literal, DataDiff, RowStatus};
 use crate::db::diff::{compute_schema_diff, SchemaDiff, TableColumns};
 use crate::db::sandbox::{
@@ -43,7 +44,11 @@ use crate::db::sandbox::{
     schema_conflict_tables, shadow_table_name, with_shadow_copies, SandboxConflict,
     SandboxTableSpec,
 };
-use crate::db::sync::{generate_sync_sql, quote_ident};
+use crate::db::subset::{
+    group_foreign_keys, resolve_edges, select_by_keys_sql, SubsetOptions, SubsetTable, SubsetWalk,
+    COMPOSITE_KEY_CHUNK, KEY_CHUNK, MAX_TOTAL_ROWS,
+};
+use crate::db::sync::{generate_sync_sql, quote_ident, table_ref_for};
 use crate::db::types::{generated_column_names, TableColumnInfo, Value};
 use crate::db::upsert::ImportConflict;
 use crate::db::{Connection, DbConnectOptions, DriverKind};
@@ -53,6 +58,7 @@ use crate::sandboxes::{SandboxRecord, SandboxRowFilter};
 use crate::state::{new_session_id, AppState, Session};
 
 use super::diff::{select_rows_sql, select_rows_where_sql, DEFAULT_DATA_ROWS, MAX_DATA_ROWS};
+use super::subset::run_walk;
 
 /// Row batch size used when importing the copied data into the sandbox file.
 const IMPORT_BATCH_SIZE: usize = 500;
@@ -197,9 +203,26 @@ pub(crate) async fn create_sandbox_inner(
     }
     selected.sort();
     selected.dedup();
+    let selected_names = selected.clone();
+    // 関連表を含めるときは、表単位の閉包で追加する表の集合を決めたうえで、行単位で親を辿る (#2241)。
+    let mut related_fks = None;
     let effective_tables = if include_related {
-        let fks = source.conn.foreign_keys(&db).await?;
-        fk_closure(&selected, &fks)
+        let mut fks = source.conn.foreign_keys(&db).await?;
+        // 別 DB の表を指す外部キーは、同名の表と取り違えないよう辿らない (#2241)。
+        let cross: std::collections::BTreeSet<(String, String)> = source
+            .conn
+            .cross_database_foreign_keys(&db)
+            .await?
+            .into_iter()
+            .collect();
+        fks.retain(|f| {
+            !f.constraint_name
+                .as_ref()
+                .is_some_and(|c| cross.contains(&(f.table.clone(), c.clone())))
+        });
+        let closure = fk_closure(&selected, &fks);
+        related_fks = Some(fks);
+        closure
     } else {
         selected
     };
@@ -244,6 +267,10 @@ pub(crate) async fn create_sandbox_inner(
             None => source.conn.columns(&db, t).await?,
         };
         if cols.is_empty() {
+            if include_related && !selected_names.contains(t) {
+                // 別スキーマ / 別 DB の表を指す外部キーで引き込まれた表は、取れないので除く。
+                continue;
+            }
             return Err(AppError::InvalidInput(format!(
                 "table '{t}' has no columns (does it exist on the source?)"
             )));
@@ -262,6 +289,17 @@ pub(crate) async fn create_sandbox_inner(
     let mut fetched: Vec<FetchedTable> = Vec::with_capacity(table_cols.len());
     for (t, cols) in &table_cols {
         let col_names: Vec<String> = cols.iter().map(|c| c.name.clone()).collect();
+        if include_related && !selected_names.contains(t) {
+            // 関連表として追加しただけの表は、選んだ行が参照している行だけを後で足す
+            // (主キー順の先頭 N 行を取ると、参照先が欠けて孤児行ができる, #2241)。
+            fetched.push(FetchedTable {
+                name: t.clone(),
+                columns: col_names,
+                rows: Vec::new(),
+                truncated: false,
+            });
+            continue;
+        }
         // Order by the primary key when there is one (stable, cheap). A table
         // without one is read unordered: rows are read once at creation time so
         // determinism is not needed, and ordering by every column fails for
@@ -280,7 +318,8 @@ pub(crate) async fn create_sandbox_inner(
             limit as usize + 1,
             filters.get(t).map(String::as_str),
         );
-        let res = source.conn.execute(&sql, Some(&db)).await?;
+        // 元 DB からの読み取りはサーバ側でも読み取り専用にする (#2243)。
+        let res = crate::db::read_only_scope::scope(source.conn.execute(&sql, Some(&db))).await?;
         let truncated = res.rows.len() > limit as usize;
         let rows: Vec<_> = res.rows.into_iter().take(limit as usize).collect();
         fetched.push(FetchedTable {
@@ -288,6 +327,74 @@ pub(crate) async fn create_sandbox_inner(
             columns: col_names,
             rows,
             truncated,
+        });
+    }
+
+    // 関連表を含めるときは、選んだ表の行 (起点) から外部キーを行単位で親へ辿り、必要な親の行を
+    // すべて足す。親の方向は常に最後まで辿る (子の方向は辿らない)。取得は読み取り専用。
+    if let Some(fks) = related_fks {
+        let metas: std::collections::BTreeMap<String, SubsetTable> = table_cols
+            .iter()
+            .map(|(name, cols)| {
+                (
+                    name.clone(),
+                    SubsetTable {
+                        name: name.clone(),
+                        columns: cols.iter().map(|c| c.name.clone()).collect(),
+                        column_types: cols.iter().map(|c| c.data_type.clone()).collect(),
+                        primary_key: cols
+                            .iter()
+                            .filter(|c| c.key.eq_ignore_ascii_case("PRI"))
+                            .map(|c| c.name.clone())
+                            .collect(),
+                    },
+                )
+            })
+            .collect();
+        let (edges, _) = resolve_edges(&group_foreign_keys(&fks), &metas);
+        let mut walk = SubsetWalk::new(
+            metas.clone(),
+            edges,
+            SubsetOptions {
+                child_depth: 0,
+                child_row_limit: limit,
+                max_total_rows: limit.saturating_mul(metas.len() as u64).max(MAX_TOTAL_ROWS),
+            },
+        );
+        for t in &fetched {
+            walk.add_root_rows(&t.name, t.rows.clone())?;
+        }
+        run_walk(&source, "", Some(&db), &metas, &mut walk, |_| {}).await?;
+        let result = walk.finish();
+        for t in fetched.iter_mut() {
+            if let Some(r) = result.tables.iter().find(|r| r.table == t.name) {
+                let has_pk = metas
+                    .get(&t.name)
+                    .is_some_and(|m| !m.primary_key.is_empty());
+                if has_pk || !selected_names.contains(&t.name) {
+                    t.rows = r.rows.clone();
+                } else {
+                    // 主キーの無い選択表は、走査側が同一行を 1 行にまとめてしまうので、
+                    // 元の行をそのまま残し、親として足された行だけを加える。
+                    let have: std::collections::HashSet<String> =
+                        t.rows.iter().map(|row| key_signature(row)).collect();
+                    let extra: Vec<Vec<Value>> = r
+                        .rows
+                        .iter()
+                        .filter(|row| !have.contains(&key_signature(row)))
+                        .cloned()
+                        .collect();
+                    t.rows.extend(extra);
+                }
+            }
+        }
+        // 取り込みは親の表が先の順にする (外部キーを強制する SQLite でも違反にならない)。
+        fetched.sort_by_key(|t| {
+            result
+                .tables
+                .iter()
+                .position(|r| r.table == t.name)
+                .unwrap_or(usize::MAX)
         });
     }
 
@@ -655,27 +762,66 @@ pub(crate) async fn sandbox_table_diff_inner(
     if let Some(source_session_id) = source_session_id {
         if let Some(source) = state.get(&source_session_id).await {
             let source_db = record.source_database.clone().unwrap_or_default();
-            // 抽出条件つきで作ったサンドボックスは、実 DB も同じ条件で読む (条件に合わない
-            // 行を「実 DB にだけある行」と誤判定して競合に見せない, #1625)。
-            // 保存済みの値も使う前に検査し直す (sandboxes.json は手で編集されうる)。
-            let row_filter = match record.row_filters.iter().find(|f| f.table == table) {
-                Some(f) => checked_row_filter(record.source_driver, &table, Some(&f.filter))
-                    .map_err(AppError::InvalidInput)?,
-                None => None,
+            // 実 DB は「ベースと現在の行のキー」で読み直す。主キー順の先頭 N 行で読むと、
+            // 関連表として足した親の行など先頭ページ外の行を「実 DB で削除」と誤判定し、
+            // 編集しただけで偽の競合が出る (#2241)。抽出条件で絞った表も、キーで読めば
+            // 条件に合わない行が「実 DB にだけある行」に見えることはない (#1625)。
+            let key_meta = SubsetTable {
+                name: table.clone(),
+                columns: columns.clone(),
+                column_types: column_types.clone(),
+                primary_key: primary_key.clone(),
             };
-            let sql = select_rows_where_sql(
-                record.source_driver,
-                "",
-                &table,
-                &columns,
-                &primary_key,
-                want + 1,
-                row_filter.as_deref(),
-            );
+            let mut seen_keys = std::collections::HashSet::new();
+            let mut keys: Vec<Vec<Value>> = Vec::new();
+            for row in base_rows.iter().chain(live_rows.iter()) {
+                let key: Vec<Value> = pk_idx.iter().filter_map(|&i| row.get(i).cloned()).collect();
+                if key.len() == pk_idx.len()
+                    && !key.iter().any(|v| matches!(v, Value::Null))
+                    && seen_keys.insert(key_signature(&key))
+                {
+                    keys.push(key);
+                }
+            }
+            let chunk_size = if primary_key.len() == 1 {
+                KEY_CHUNK
+            } else {
+                COMPOSITE_KEY_CHUNK
+            };
+            let mut fetched: Result<Vec<Vec<Value>>> = Ok(Vec::new());
+            for chunk in keys.chunks(chunk_size) {
+                let sql = select_by_keys_sql(
+                    record.source_driver,
+                    &table_ref_for(record.source_driver, &source_db, &table),
+                    &key_meta,
+                    &primary_key,
+                    chunk,
+                    None,
+                );
+                let res = match sql {
+                    Ok(sql) => {
+                        crate::db::read_only_scope::scope(
+                            source.conn.execute(&sql, Some(&source_db)),
+                        )
+                        .await
+                    }
+                    Err(e) => Err(e),
+                };
+                match res {
+                    Ok(r) => {
+                        if let Ok(all) = fetched.as_mut() {
+                            all.extend(r.rows);
+                        }
+                    }
+                    Err(e) => {
+                        fetched = Err(e);
+                        break;
+                    }
+                }
+            }
             // 実 DB 側の取得失敗 (テーブルの DROP/RENAME・一時的な接続不良) は
             // 競合検出ができなかった (`source_checked = false`) として扱い、
             // サンドボックス側の差分 (desired) の表示・書き戻しは妨げない。
-            let fetched = source.conn.execute(&sql, Some(&source_db)).await;
             if let Err(e) = &fetched {
                 // ログにはエラー種別だけを出す (メッセージに接続情報が混ざりうるため)。
                 tracing::warn!(
@@ -686,7 +832,7 @@ pub(crate) async fn sandbox_table_diff_inner(
             }
             if let Ok(current_res) = fetched {
                 source_owner = Some(source_session_id.clone());
-                let current_rows: Vec<_> = current_res.rows.into_iter().take(want).collect();
+                let current_rows: Vec<_> = current_res;
                 // 元 DB の DECIMAL (文字列) とサンドボックスから読み戻したベース (REAL) は
                 // 型が違うので、DECIMAL / NUMERIC 列を数値にそろえてから比べる。
                 let current_cmp = normalize_decimal_cells(&column_types, &current_rows);

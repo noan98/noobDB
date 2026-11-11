@@ -131,6 +131,7 @@ const COVERED: Record<string, string> = {
   TableWatch: "tableWatch",
   TaskDefinition: "taskDefinitionVariants",
   TaskRun: "taskRun",
+  SubsetPreview: "subsetPreview",
   TransferPreview: "transferPreview",
   ImportDryRunResult: "importDryRunResult",
   ImportTemplate: "importTemplate",

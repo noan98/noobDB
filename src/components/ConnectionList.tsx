@@ -372,6 +372,8 @@ interface Props {
   onImportTable: (database: string, table: string) => void;
   /** テーブルを別接続へスキーマ + データごとコピーする (#986)。読み取りなので read_only でも有効。 */
   onTransferTable?: (database: string, table: string) => void;
+  /** サブセット抽出 (#2241): 起点の表から外部キーを行単位で辿って一部の行だけを取り出す。 */
+  onExtractSubset?: (database: string, table: string) => void;
   /** ファイルから新規テーブルを作成してインポートする (#985)。read_only では無効化。 */
   onImportNewTable?: (database: string) => void;
   /** スキーマに基づくテストデータ生成ウィザードを開く (#602)。read_only では無効化。 */
@@ -2122,6 +2124,7 @@ export const ConnectionList = memo(
       onOpenStructure,
       onImportTable,
       onTransferTable,
+      onExtractSubset,
       onImportNewTable,
       onGenerateTestData,
       onConfigureOpenQuery,
@@ -3361,6 +3364,12 @@ export const ConnectionList = memo(
         items.push({
           label: t("contextMenuTransferTable"),
           onSelect: () => onTransferTable(db, tbl),
+        });
+      }
+      if (onExtractSubset) {
+        items.push({
+          label: t("contextMenuExtractSubset"),
+          onSelect: () => onExtractSubset(db, tbl),
         });
       }
       // テストデータ生成 (#602) も書き込みなので read_only では無効化する

@@ -254,6 +254,12 @@ pub mod __test_api {
         preview_transfer_inner, transfer_data_inner, TransferColumnInfo, TransferOutcome,
         TransferPreview, TransferRequest,
     };
+    // サブセット抽出 (#2241)。Tauri を介さずに統合テストから駆動するコア。
+    pub use crate::commands::subset::{
+        preview_subset_inner, run_subset_inner, ExistingRows, SubsetColumnInfo, SubsetColumnMask,
+        SubsetOutcome, SubsetOutput, SubsetPreview, SubsetRequest, SubsetTablePreview,
+    };
+    pub use crate::db::subset::SubsetWarning;
     pub use crate::db::transfer::{
         ColumnSpec, LossyConversion, LossyKind, OverrideKind, TransferMode, TypeOverride,
     };
@@ -2110,6 +2116,8 @@ pub fn run() {
             commands::script::run_sql_batch,
             commands::transfer::transfer_data,
             commands::transfer::preview_transfer,
+            commands::subset::preview_subset,
+            commands::subset::run_subset,
             commands::import::preview_create_table_ddl,
             commands::file::read_text_file,
             commands::file::read_sql_file,

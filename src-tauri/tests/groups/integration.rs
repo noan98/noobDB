@@ -34,6 +34,8 @@ mod sqlite_integration;
 mod sqlite_rebuild_integration;
 #[path = "../stream_batching_sqlite.rs"]
 mod stream_batching_sqlite;
+#[path = "../subset_integration.rs"]
+mod subset_integration;
 #[path = "../sync_apply_integration.rs"]
 mod sync_apply_integration;
 #[path = "../timeout_cancel_pool.rs"]

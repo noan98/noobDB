@@ -317,6 +317,9 @@ const ImportModal = lazy(() => import("./components/ImportModal").then((m) => ({
 const ImportSheetsModal = lazy(() =>
   import("./components/ImportSheetsModal").then((m) => ({ default: m.ImportSheetsModal })),
 );
+const SubsetExtractModal = lazy(() =>
+  import("./components/SubsetExtractModal").then((m) => ({ default: m.SubsetExtractModal })),
+);
 const DataTransferModal = lazy(() =>
   import("./components/DataTransferModal").then((m) => ({ default: m.DataTransferModal })),
 );
@@ -2353,6 +2356,8 @@ export default function App() {
   );
   // 接続間データ転送 (#986): 転送元。null で閉じる。
   const [transferSource, setTransferSource] = useState<TransferSource | null>(null);
+  // サブセット抽出 (#2241) の起点の表。
+  const [subsetTarget, setSubsetTarget] = useState<{ database: string; table: string } | null>(null);
   // 結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821): 対象。null で閉じる。
   const [saveAsTableRequest, setSaveAsTableRequest] = useState<{
     sql: string;
@@ -8571,6 +8576,11 @@ export default function App() {
     setTransferSource({ kind: "table", database, table });
   }, []);
 
+  // サブセット抽出 (#2241): 起点の表から外部キーを行単位で辿り、一部の行だけを取り出す。
+  const handleExtractSubset = useCallback((database: string, table: string) => {
+    setSubsetTarget({ database, table });
+  }, []);
+
   // ファイルから新規テーブルを作成してインポート (#985)。DB のコンテキスト
   // メニューから開く (対象テーブルが無いので ImportModal は作成モード固定)。
   const handleImportNewTable = useCallback((database: string) => {
@@ -13364,6 +13374,7 @@ export default function App() {
     onOpenStructure: handleOpenStructure,
     onImportTable: handleImportTable,
     onTransferTable: handleTransferTable,
+    onExtractSubset: handleExtractSubset,
     onImportNewTable: handleImportNewTable,
     onGenerateTestData: handleGenerateTestData,
     onConfigureOpenQuery: sessionId && selectedProfile ? handleConfigureOpenQuery : undefined,
@@ -15448,6 +15459,23 @@ export default function App() {
                   source={transferSource}
                   profiles={profiles}
                   onClose={() => setTransferSource(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {subsetTarget && sessionId && (
+              <Suspense fallback={null}>
+                <SubsetExtractModal
+                  key={`${subsetTarget.database}.${subsetTarget.table}`}
+                  sessionId={sessionId}
+                  sourceProfileId={selectedProfile?.id ?? null}
+                  database={subsetTarget.database}
+                  table={subsetTarget.table}
+                  profiles={profiles}
+                  onSandboxCreated={handleSandboxCreated}
+                  onClose={() => setSubsetTarget(null)}
                 />
               </Suspense>
             )}

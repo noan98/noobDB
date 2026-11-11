@@ -984,6 +984,7 @@ const EV_DUMP_CANCELLED: &str = "dump-stream:cancelled";
 const EV_IMPORT_CANCELLED: &str = "csv-import:cancelled";
 const EV_SCRIPT_CANCELLED: &str = "sql-script:cancelled";
 const EV_TRANSFER_CANCELLED: &str = "transfer-stream:cancelled";
+const EV_SUBSET_CANCELLED: &str = "subset-stream:cancelled";
 
 /// 自動リフレッシュの差分パッチ (#1257) を要求するパラメータ。
 #[derive(Debug, Clone, Deserialize)]
@@ -2287,6 +2288,9 @@ pub async fn cancel_stream(
                     // 後始末で DROP するため、`delivered_rows` (書き込み済み行数) が
                     // 永続化されて残るのは `append` のときだけ。
                     StreamKind::Transfer => Some(EV_TRANSFER_CANCELLED),
+                    // サブセット抽出 (#2241)。書き込み先へは親の表から順に入るので、途中で止めても
+                    // 入った行は参照整合性を保つ。
+                    StreamKind::Subset => Some(EV_SUBSET_CANCELLED),
                     // Query/Preview always register an `on_cancel` callback (see
                     // `run_query_stream` / `preview_query_stream`), so this arm is
                     // unreachable in practice; keep it exhaustive rather than

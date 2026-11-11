@@ -1,6 +1,6 @@
 import { Channel } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { ExportColumnMask } from "../components/exportMasking";
+import type { ExportColumnMask, ExportMaskRule } from "../components/exportMasking";
 import * as schemas from "./schemas";
 import { parseResponse } from "./schemas";
 import {
@@ -46,6 +46,7 @@ import { dumpToolsCommands } from "./commands/dumpTools";
 import { importCommands } from "./commands/import";
 import { importTemplatesCommands } from "./commands/importTemplates";
 import { scriptCommands } from "./commands/script";
+import { subsetCommands } from "./commands/subset";
 import { transferCommands } from "./commands/transfer";
 import { fileCommands } from "./commands/file";
 import { windowCommands } from "./commands/window";
@@ -2784,6 +2785,7 @@ export const api = {
   ...importCommands,
   ...importTemplatesCommands,
   ...scriptCommands,
+  ...subsetCommands,
   ...transferCommands,
   ...fileCommands,
   ...windowCommands,
@@ -3293,6 +3295,75 @@ export interface TransferStreamHandlers {
   onDone?: (event: TransferDoneEvent) => void;
   onError?: (event: TransferErrorEvent) => void;
   /** `cancelStream` が転送を中断したとき。`deliveredRows` は書き込み済み行数。 */
+  onCancelled?: (event: StreamCancelledEvent) => void;
+}
+
+// ── サブセット抽出 (#2241) ──
+export type SubsetWarning =
+  | { kind: "cycle"; tables: string[] }
+  | { kind: "unresolvedForeignKey"; table: string; constraint: string }
+  | { kind: "childTruncated"; table: string; limit: number }
+  | { kind: "rootTruncated"; table: string; limit: number };
+export interface SubsetRequest {
+  sourceSessionId: string;
+  sourceDatabase?: string | null;
+  /** 起点の表。 */
+  table: string;
+  /** 起点の行の条件 (`WHERE` の中身)。読み取り専用の条件だけ許される。 */
+  whereClause?: string | null;
+  rootRowLimit?: number | null;
+  /** 子の方向へ辿る段数 (0 / 省略は辿らない)。 */
+  childDepth?: number | null;
+  /** 子の方向で表ごとに足す行数の上限。 */
+  childRowLimit?: number | null;
+}
+/** 転送先に同じ主キーの行があるときの扱い。 */
+export type SubsetExisting = "skip" | "fail";
+export type SubsetOutput =
+  | { kind: "transfer"; targetSessionId: string; targetDatabase?: string | null; existing: SubsetExisting }
+  | { kind: "script"; path: string; existing: SubsetExisting };
+export interface SubsetColumnMask {
+  table: string;
+  column: string;
+  rule: ExportMaskRule;
+}
+export interface SubsetTablePreview {
+  table: string;
+  rows: number;
+  rootRows: number;
+  childRows: number;
+  parentRows: number;
+  columns: { name: string; key: boolean }[];
+}
+export interface SubsetPreview {
+  tables: SubsetTablePreview[];
+  totalRows: number;
+  cycles: string[][];
+  warnings: SubsetWarning[];
+}
+export interface SubsetProgressEvent {
+  streamId: string;
+  phase: "collect" | "write";
+  rows: number;
+}
+export interface SubsetDoneEvent {
+  streamId: string;
+  rows: number;
+  elapsedMs: number;
+  tables: { table: string; rows: number }[];
+  warnings: SubsetWarning[];
+  path: string | null;
+}
+export interface SubsetErrorEvent {
+  streamId: string;
+  message: string;
+  rows: number;
+}
+export interface SubsetStreamHandlers {
+  onProgress?: (event: SubsetProgressEvent) => void;
+  onDone?: (event: SubsetDoneEvent) => void;
+  onError?: (event: SubsetErrorEvent) => void;
+  /** `cancelStream` が抽出を中断したとき。`deliveredRows` は集めた / 書き込んだ行数。 */
   onCancelled?: (event: StreamCancelledEvent) => void;
 }
 
@@ -4316,6 +4387,32 @@ export async function listenTransferStream(
     listen<StreamCancelledEvent>(
       "transfer-stream:cancelled",
       filter(schemas.streamCancelledEvent, "transfer-stream:cancelled", handlers.onCancelled),
+    ),
+  ]);
+}
+
+/** サブセット抽出 (#2241) の進捗/完了/エラー/キャンセルイベントを購読する。 */
+export async function listenSubsetStream(
+  streamId: string,
+  handlers: SubsetStreamHandlers,
+): Promise<UnlistenFn> {
+  const filter = streamEventFilter(streamId);
+  return registerListeners([
+    listen<SubsetProgressEvent>(
+      "subset-stream:progress",
+      filter(schemas.subsetProgressEvent, "subset-stream:progress", handlers.onProgress),
+    ),
+    listen<SubsetDoneEvent>(
+      "subset-stream:done",
+      filter(schemas.subsetDoneEvent, "subset-stream:done", handlers.onDone),
+    ),
+    listen<SubsetErrorEvent>(
+      "subset-stream:error",
+      filter(schemas.subsetErrorEvent, "subset-stream:error", handlers.onError),
+    ),
+    listen<StreamCancelledEvent>(
+      "subset-stream:cancelled",
+      filter(schemas.streamCancelledEvent, "subset-stream:cancelled", handlers.onCancelled),
     ),
   ]);
 }

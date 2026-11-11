@@ -367,6 +367,10 @@ const WRITE_CAPABLE: Record<string, WriteCapable> = {
     /\bensure_transfer_target_writable\s*\(/,
     RO_IF_SESSION,
   ),
+  run_subset: wc(
+    "ensure_transfer_target_writable が書き込み先の session.read_only を拒否 (取得は読み取り専用文だけ)",
+    /\bensure_transfer_target_writable\s*\(/,
+  ),
   preview_transfer: wc(
     "転送元の SQL を ensure_allowed_for_session (転送先は書き込まないので read_only でも可)",
     /\bensure_allowed_for_session\s*\(\s*&source\b/,
@@ -632,7 +636,15 @@ safe(
   "analyze_sql_script",
 );
 
-safe(REASON.SELF_GUARDED, "run_lookup_query", "run_assertion", "suggest_accepted_values", "run_task_now");
+safe(
+  REASON.SELF_GUARDED,
+  "run_lookup_query",
+  "run_assertion",
+  "suggest_accepted_values",
+  "run_task_now",
+  // サブセット抽出のプレビュー: 組み立てた SELECT をすべて is_read_only_sql_for に通してから実行する。
+  "preview_subset",
+);
 
 safe(REASON.DRY_RUN, "preview_query_stream", "import_dry_run");
 
@@ -744,6 +756,7 @@ const CONNECTION_READ_METHODS = new Set([
   "foreign_keys",
   "cross_schema_incoming_foreign_keys",
   "foreign_keys_for_table",
+  "cross_database_foreign_keys",
   "schema_objects",
   "schema_objects_checked",
   "object_definition",
@@ -923,7 +936,8 @@ const SCRATCH_ALLOWED_CALLS: Record<string, string[]> = {
 // 空のメモリ内キャッシュを作るだけ (セッション構築で使う)
 const SESSION_CACHES = ["crate::cache::SchemaCache::default", "crate::cache::QueryResultCache::default"];
 const SCRATCH_ALLOWED_PATHS: Record<string, string[]> = {
-  create_sandbox: SESSION_CACHES,
+  // 元 DB の行読み取りをサーバ側の読み取り専用で包むだけ (書き込みを拒否する側の足場, #2241)。
+  create_sandbox: [...SESSION_CACHES, "crate::db::read_only_scope::scope"],
   create_local_session: SESSION_CACHES,
   // メモリ上の結果ハンドルから行を読み出すだけ (DB へは触れない)。
   register_local_table: ["crate::commands::result::resolve_rows"],
