@@ -332,6 +332,39 @@ describe("TableStructurePanel 被参照の外部キー (#1628)", () => {
     renderPanel();
     expect(await screen.findByText(t("structureNoIncomingForeignKeys"))).toBeInTheDocument();
   });
+  it("パーティション表では帯とインラインバーを出し、帯と行を相互にハイライトする (#2238)", async () => {
+    vi.mocked(api.describeTable).mockResolvedValue([col("id")]);
+    vi.mocked(api.listIndexes).mockResolvedValue([]);
+    vi.mocked(api.listTablePartitions).mockResolvedValueOnce({
+      method: "RANGE",
+      key: "y",
+      sub_method: null,
+      sub_key: null,
+      partitions: [
+        part("p2024", { bound: "LESS THAN (2025)", size_bytes: 100, row_estimate: 10 }),
+        part("p2025", { bound: "LESS THAN (2026)", size_bytes: 100, row_estimate: 10 }),
+        part("p2026", { bound: "LESS THAN (2027)", size_bytes: 1000, row_estimate: 10 }),
+        part("pmax", { bound: "LESS THAN MAXVALUE", size_bytes: 0, row_estimate: 0 }),
+      ],
+    });
+    renderPanel();
+    const ribbon = await screen.findByTestId("partition-ribbon");
+    expect(ribbon.querySelectorAll("[data-kind='maxvalue']")).toHaveLength(1);
+    expect(ribbon.querySelectorAll("[data-hot='true']")).toHaveLength(1);
+    expect(screen.getAllByTestId("partition-share-bar").length).toBeGreaterThan(0);
+    const seg = ribbon.querySelector("[data-segment-id='..p2025']") as HTMLElement;
+    fireEvent.focus(seg);
+    const row = document.querySelector("tr.pr-row[data-active='true']");
+    expect(row?.textContent).toContain("p2025");
+    fireEvent.blur(seg);
+    expect(document.querySelector("tr.pr-row[data-active='true']")).toBeNull();
+    const rowEl = screen
+      .getAllByText("p2026")
+      .map((e) => e.closest("tr.pr-row"))
+      .find(Boolean) as HTMLElement;
+    fireEvent.mouseEnter(rowEl);
+    expect(ribbon.querySelector("[data-segment-id='..p2026']")?.getAttribute("data-active")).toBe("true");
+  });
   it("パーティション表なら子パーティションを節に出し、メニューから保守 SQL を渡す (#1868)", async () => {
     vi.mocked(api.describeTable).mockResolvedValue([col("id")]);
     vi.mocked(api.listIndexes).mockResolvedValue([]);
@@ -348,7 +381,7 @@ describe("TableStructurePanel 被参照の外部キー (#1628)", () => {
     const onRunPartitionMaintenance = vi.fn().mockResolvedValue(false);
     const onPartitionOp = vi.fn().mockResolvedValue(false);
     renderPanel({ onRunPartitionMaintenance, onPartitionOp });
-    expect(await screen.findByText("p2025")).toBeInTheDocument();
+    expect((await screen.findAllByText("p2025")).length).toBeGreaterThan(0);
     expect(screen.getByText("LESS THAN (2026)")).toBeInTheDocument();
     expect(screen.getByText("2.0 KB")).toBeInTheDocument();
 
@@ -471,7 +504,7 @@ describe("TableStructurePanel 被参照の外部キー (#1628)", () => {
     it("MySQL では出さず、read_only では無効にする", async () => {
       vi.mocked(api.listTablePartitions).mockResolvedValueOnce(pgRange());
       renderPanel({ onAttachPartition: vi.fn() }, "mysql");
-      await screen.findByText("ev_2026_01");
+      await screen.findAllByText("ev_2026_01");
       expect(screen.queryByRole("button", { name: t("attachPartitionOpen") })).not.toBeInTheDocument();
 
       vi.mocked(api.listTablePartitions).mockResolvedValueOnce(pgRange([]));

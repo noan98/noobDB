@@ -409,6 +409,27 @@ export interface AddPartitionError {
   detail?: string;
 }
 
+/** 入力欄のグループ (未入力エラーを「触るまで出さない」ための単位)。 */
+export type AddPartitionField = "name" | "bound";
+
+/**
+ * 「未入力」系のエラーが属する入力欄のグループ。それ以外のエラー (重なり・順序など) は null。
+ * ダイアログは、その欄に一度も触れていないあいだ、これらのエラーを赤く出さない (開いた直後に怒られないため)。
+ */
+export function emptyErrorField(code: AddPartitionErrorCode): AddPartitionField | null {
+  switch (code) {
+    case "nameEmpty":
+      return "name";
+    case "rangeEmpty":
+    case "listEmpty":
+    case "hashModulus":
+    case "hashRemainder":
+      return "bound";
+    default:
+      return null;
+  }
+}
+
 export interface PlannedPartition {
   name: string;
   from: string[];

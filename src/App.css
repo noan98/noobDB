@@ -3304,3 +3304,161 @@ td.is-find-current::after {
 :root[data-theme="hc-dark"] .ai-stream-caret {
   animation: none;
 }
+
+/* パーティション構成の帯 (#2238)。色は意味色トークンのみ。濃さ (サイズ) はインラインの background-color、
+   種別 (DEFAULT / MAXVALUE / 隙間 / ゴースト) は色に頼らず模様・破線・文言でも区別する。 */
+.pr-ribbon {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-0-5);
+  overflow-x: auto;
+  padding: var(--space-1) 0;
+}
+.pr-ribbon-item {
+  flex: 1 1 0;
+  min-width: 56px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+}
+.pr-ribbon[data-compact="true"] .pr-ribbon-item {
+  min-width: 40px;
+}
+.pr-seg {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  flex: 1;
+  min-height: 40px;
+  padding: var(--space-1) var(--space-1-5);
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-muted);
+  color: var(--text);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  outline: none;
+}
+.pr-ribbon[data-compact="true"] .pr-seg {
+  min-height: 28px;
+  padding: var(--space-0-5) var(--space-1);
+}
+.pr-seg:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+.pr-seg[data-active="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.pr-seg-name,
+.pr-seg-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+.pr-seg-label {
+  font-size: var(--text-2xs);
+  opacity: 0.85;
+}
+.pr-seg[data-kind="default"] {
+  border-style: dashed;
+  background-image: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--text) 22%, transparent) 0 var(--space-0-5),
+    transparent var(--space-0-5) var(--space-1)
+  );
+}
+.pr-seg[data-kind="maxvalue"] {
+  border-right-width: 4px;
+  border-right-style: double;
+  background-image: linear-gradient(to right, transparent 55%, color-mix(in srgb, var(--accent) 35%, transparent));
+}
+.pr-seg[data-kind="hashEmpty"] {
+  border-style: dotted;
+  background-color: transparent;
+  color: var(--text-muted);
+}
+.pr-seg[data-note] {
+  border-color: var(--accent);
+  border-style: dashed;
+}
+.pr-seg-note {
+  font-size: var(--text-2xs);
+  color: var(--text);
+  font-weight: 600;
+}
+.pr-seg-hot {
+  position: absolute;
+  top: var(--space-0-5);
+  right: var(--space-0-5);
+  font-size: var(--text-2xs);
+  line-height: 1;
+  padding: var(--space-0-5);
+  border-radius: var(--radius-xs);
+  background: var(--warning-solid);
+  color: var(--on-solid);
+}
+.pr-gap {
+  flex: 0 0 auto;
+  width: var(--space-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--warning-text);
+  border-radius: var(--radius-sm);
+  color: var(--text-warning);
+  font-size: var(--text-xs);
+}
+.pr-ghost {
+  flex: 1;
+  min-height: 40px;
+  padding: var(--space-1) var(--space-1-5);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border: 1px dashed var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent-highlight);
+  color: var(--accent);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pr-ribbon[data-compact="true"] .pr-ghost {
+  min-height: 28px;
+}
+.pr-subs {
+  display: flex;
+  gap: var(--space-0-25);
+  height: var(--space-1-5);
+}
+.pr-sub {
+  flex: 1 1 0;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-strong);
+  background-color: var(--bg-muted);
+}
+.pr-sub[data-active="true"] {
+  border-color: var(--accent);
+}
+.pr-row[data-active="true"] > td {
+  background: var(--bg-hover);
+}
+.pr-bar {
+  height: var(--space-1);
+  border-radius: var(--radius-xs);
+  background: var(--bg-muted);
+  overflow: hidden;
+}
+.pr-bar-fill {
+  height: 100%;
+  background: var(--accent);
+}
+.pr-bar[data-hot="true"] .pr-bar-fill {
+  background: var(--warning-text);
+}

@@ -9,6 +9,8 @@ import { FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, Input, PressableButton } from "./ui";
 import {
   type AddPartitionErrorCode,
+  type AddPartitionField,
+  emptyErrorField,
   type AddPartitionForm,
   type AddPartitionKind,
   hasDefaultPartition,
@@ -18,6 +20,8 @@ import {
   planAddPartitions,
   reorganizesMaxvalue,
 } from "./partitionAdd";
+import { PartitionRibbon } from "./PartitionRibbon";
+import { buildRibbon, ghostForAdd } from "./partitionRibbon";
 import { partitionKeyColumns } from "./tablePartitions";
 
 /**
@@ -80,9 +84,26 @@ export function AddPartitionModal({
   const maxPartition = reorganizesMaxvalue(driver, kind, info);
   const valid = plan.errors.length === 0 && plan.statements.length > 0;
   const mysql = driver === "mysql";
-  const set = (patch: Partial<AddPartitionForm>) => setForm((f) => ({ ...f, ...patch }));
-  const setAt = (key: "from" | "to", i: number, v: string) =>
+  // 触れた入力欄のグループ。未入力のエラーは、その欄に触れるまで出さない (開いた直後に赤く怒らない)。
+  const [touched, setTouched] = useState<ReadonlySet<AddPartitionField>>(new Set());
+  const touch = (field: AddPartitionField) => setTouched((s) => (s.has(field) ? s : new Set(s).add(field)));
+  const set = (patch: Partial<AddPartitionForm>) => {
+    touch("name" in patch ? "name" : "bound");
+    setForm((f) => ({ ...f, ...patch }));
+  };
+  const setAt = (key: "from" | "to", i: number, v: string) => {
+    touch("bound");
     setForm((f) => ({ ...f, [key]: f[key].map((x, j) => (j === i ? v : x)) }));
+  };
+  const visibleErrors = plan.errors.filter((e) => {
+    const field = emptyErrorField(e.code);
+    return field === null || touched.has(field);
+  });
+  const ribbon = useMemo(() => buildRibbon(driver, info, keyKinds), [driver, info, keyKinds]);
+  const ghost = useMemo(
+    () => ghostForAdd(driver, kind, ribbon, form, plan, keyKinds),
+    [driver, kind, ribbon, form, plan, keyKinds],
+  );
   const count = plan.items.length > 0 ? plan.items.length : plan.statements.length;
 
   const submit = () => {
@@ -101,6 +122,15 @@ export function AddPartitionModal({
         {t("addPartitionTitle", { table })}
       </ModalHeader>
       <ModalBody display="flex" flexDirection="column" gap="4">
+        {ribbon.segments.length > 0 && (
+          <PartitionRibbon
+            ribbon={ribbon}
+            ghost={ghost}
+            compact
+            ariaLabel={t("partitionRibbonAria", { method: info.method })}
+          />
+        )}
+
         {kind !== "hashCount" && (
           <FormSection>
             <FieldLabel htmlFor="add-partition-name">{t("addPartitionName")}</FieldLabel>
@@ -209,7 +239,7 @@ export function AddPartitionModal({
           </FormSection>
         )}
 
-        {plan.errors.map((e) => (
+        {visibleErrors.map((e) => (
           <FieldError key={`${e.code}:${e.detail ?? ""}`}>
             {t(ERROR_KEYS[e.code], { detail: e.detail ?? "", max: MAX_ADD_COUNT })}
           </FieldError>
