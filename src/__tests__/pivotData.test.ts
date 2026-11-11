@@ -431,6 +431,8 @@ describe("pivotModelTable (#1956)", () => {
   const base: PivotModel = {
     rowKeys: ["a", "b"],
     colKeys: ["x", "y"],
+    rowKeyValues: ["a", "b"],
+    colKeyValues: ["x", "y"],
     cells: [
       [1, null],
       [3, 4],
