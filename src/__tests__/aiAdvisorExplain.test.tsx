@@ -325,4 +325,60 @@ describe("アドバイザの AI 解説 (#1468)", () => {
     fireEvent.click(chip);
     expect(screen.getByText("WHY_TEXT")).toBeTruthy();
   });
+
+  it("別のルールで絞り込んで行が外れても、その行の AI 解説は解除後に残る (#2239)", async () => {
+    analyzeSchemaHealth.mockResolvedValue({
+      driver: "mysql",
+      tables_analyzed: 2,
+      findings: [
+        {
+          rule: "unused_index",
+          severity: "low",
+          table: "orders",
+          columns: ["note"],
+          context: ["idx_note"],
+          fix_ddl: "DROP INDEX idx_note ON orders;",
+          fix_ddl_online: null,
+          statistical: true,
+          size_bytes: null,
+        },
+        {
+          rule: "missing_primary_key",
+          severity: "medium",
+          table: "other",
+          columns: [],
+          context: [],
+          fix_ddl: null,
+          fix_ddl_online: null,
+          statistical: false,
+          size_bytes: null,
+        },
+      ],
+      skipped: [],
+      table_plans: [],
+      ignored: [],
+      diff: null,
+    });
+    renderWithProviders(ui());
+    await runDiagnosis();
+    const row = screen.getAllByRole("row").find((r) => r.textContent?.includes("idx_note"));
+    if (!row) throw new Error("row not found");
+    fireEvent.click(await within(row).findByRole("button", { name: t("advisorAiButton") }));
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: result });
+      handlers?.onDone?.({} as never);
+    });
+    await screen.findByText("WHY_TEXT");
+
+    // 説明を出した行とは別のルールで絞り込む: 行は見えなくなるが、アンマウントはされない。
+    fireEvent.click(screen.getByTestId("advisor-rule-chip-missing_primary_key"));
+    expect(row.hasAttribute("hidden")).toBe(true);
+    expect(row.isConnected).toBe(true);
+    expect(cancelStream).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("advisor-rule-chip-missing_primary_key"));
+    expect(row.hasAttribute("hidden")).toBe(false);
+    expect(screen.getByText("WHY_TEXT")).toBeTruthy();
+  });
 });

@@ -211,27 +211,30 @@ export function AdvisorPanel({
   const rules = useMemo(() => ruleCounts(report?.findings ?? []), [report]);
   const activeRule = effectiveRuleFilter(ruleFilter, rules);
 
-  // 画面の表と書き出し (CSV / Markdown) の対象は、絞り込み後・並べ替え後の同じ配列。
-  const findings = useMemo(() => {
+  // 並べ替え済みの全件。絞り込みで外れた行も描画は残し (hidden)、行の AI 解説 (ローカル state・
+  // 実行中のストリーム) をアンマウントで失わないようにする。
+  const sortedAll = useMemo(() => {
     if (!report) return [];
-    return sortFindings(filterFindingsByRule(report.findings, activeRule), sort.key, sort.dir, (f, key) => {
+    return sortFindings(report.findings, sort.key, sort.dir, (f, key) => {
       if (key === "rule") return t(ruleTitleKey(f.rule));
       const desc = findingDescription(f);
       return t(desc.key, desc.params);
     });
-  }, [report, activeRule, sort, t]);
+  }, [report, sort, t]);
+  // 件数表示と書き出し (CSV / Markdown) の対象は、絞り込み後・並べ替え後の表示中の指摘。
+  const findings = useMemo(() => filterFindingsByRule(sortedAll, activeRule), [sortedAll, activeRule]);
 
   // 行の key は内容ベース (並べ替えで AiAdvisorExplain が作り直され、実行中の要求や結果が
   // 消えないようにする)。同一内容の重複だけ出現順の連番で区別する。
   const rowKeys = useMemo(() => {
     const seen = new Map<string, number>();
-    return findings.map((f) => {
+    return sortedAll.map((f) => {
       const base = `${f.rule}|${f.table}|${f.columns.join(",")}|${f.context.join(",")}`;
       const n = seen.get(base) ?? 0;
       seen.set(base, n + 1);
       return n === 0 ? base : `${base}#${n}`;
     });
-  }, [findings]);
+  }, [sortedAll]);
 
   // 各ソートヘッダ共通のプロパティ (クリック / Enter・Space / aria-sort)。
   // th はネイティブに columnheader ロールを持つので role は上書きしない。
@@ -576,10 +579,11 @@ export function AdvisorPanel({
                 </chakra.tr>
               </chakra.thead>
               <RevealTbody>
-                {findings.map((f, i) => {
+                {sortedAll.map((f, i) => {
                   const desc = findingDescription(f);
                   return (
-                    <chakra.tr key={rowKeys[i]}>
+                    // 絞り込みで外れた行は hidden (表示も読み上げも外す) で描画を残す。
+                    <chakra.tr key={rowKeys[i]} hidden={activeRule !== null && f.rule !== activeRule}>
                       <chakra.td css={tdCss}>
                         <SeverityBadge severity={f.severity} />
                       </chakra.td>

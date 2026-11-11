@@ -500,13 +500,13 @@ describe("AdvisorPanel 要約タイルとルール別ストリップ (#2239)", (
     const strip = screen.getByTestId("advisor-rule-strip");
     expect(within(strip).getAllByRole("button")).toHaveLength(3);
     expect(screen.queryByTestId("advisor-rule-chip-unused_index")).not.toBeInTheDocument();
-    expect(container.querySelectorAll("tbody > tr")).toHaveLength(4);
+    expect(container.querySelectorAll("tbody > tr:not([hidden])")).toHaveLength(4);
 
     const chip = screen.getByTestId("advisor-rule-chip-missing_primary_key");
     expect(chip).toHaveAttribute("aria-pressed", "false");
     fireEvent.click(chip);
     expect(chip).toHaveAttribute("aria-pressed", "true");
-    await waitFor(() => expect(container.querySelectorAll("tbody > tr")).toHaveLength(2));
+    await waitFor(() => expect(container.querySelectorAll("tbody > tr:not([hidden])")).toHaveLength(2));
     expect(screen.getByTestId("advisor-filter-note")).toBeInTheDocument();
     // タイルの件数は絞り込みで動かない (全件のまま)。
     expect(
@@ -515,7 +515,7 @@ describe("AdvisorPanel 要約タイルとルール別ストリップ (#2239)", (
 
     fireEvent.click(chip);
     expect(chip).toHaveAttribute("aria-pressed", "false");
-    await waitFor(() => expect(container.querySelectorAll("tbody > tr")).toHaveLength(4));
+    await waitFor(() => expect(container.querySelectorAll("tbody > tr:not([hidden])")).toHaveLength(4));
     expect(screen.queryByTestId("advisor-filter-note")).not.toBeInTheDocument();
   });
 
@@ -526,9 +526,9 @@ describe("AdvisorPanel 要約タイルとルール別ストリップ (#2239)", (
     expect(chip).toHaveFocus();
     // ネイティブ button なので Enter / Space は click として発火する (user-event を使わず click で代用)。
     fireEvent.click(chip);
-    await waitFor(() => expect(container.querySelectorAll("tbody > tr")).toHaveLength(1));
+    await waitFor(() => expect(container.querySelectorAll("tbody > tr:not([hidden])")).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: t("advisorFilterClear") }));
-    await waitFor(() => expect(container.querySelectorAll("tbody > tr")).toHaveLength(4));
+    await waitFor(() => expect(container.querySelectorAll("tbody > tr:not([hidden])")).toHaveLength(4));
   });
 
   it("採番枯渇の行に、閾値マーカー付きで使用率 (aria-valuenow) を持つメーターを出す", async () => {
