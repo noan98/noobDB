@@ -78,7 +78,11 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
   ピボット / チャートの 3 択排他で、`ResultGrid`・`PivotView`・`ChartView` の各
   ツールバー先頭に同じものを置き「今どれを見ているか」と往復導線を 1 か所に集約
   する。App 側の受け口は `setResultView` で、`showPivot`/`showChart` の 2 フラグを
-  常に同時に確定させる)、`TabBar`、`HistoryList`、`SnippetList`/`SnippetForm`、
+  常に同時に確定させる)、`DrillChip` / `drillFilter.ts` (ピボットの集計セル・チャートの
+  棒/点から、その集計キーで絞り込んだグリッドへ移る導線 #2236。条件の組み立て・
+  `ColumnFilter` 化・適用/取り消しは純関数の `drillFilter.ts`、グリッドへは
+  `ResultGrid` の `columnFilterRequest` prop / `applyColumnFilters` ハンドルで渡し、
+  `PaneView` がタブごとの絞り込み状態とチップ (`DrillChip`) を持つ)、`TabBar`、`HistoryList`、`SnippetList`/`SnippetForm`、
   `ExportModal`/`DumpModal`/`ImportModal`、`ExplainViewer`、`SettingsView`、
   `HelpView`、`DangerousQueryDialog`、`CellValueViewer`、`ERDiagramView`
   (`@xyflow/react` + `@dagrejs/dagre` による ER 図。レイアウト/グラフ構築の純ロジックは

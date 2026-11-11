@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCopyFlashRange,
+  collectAppliedFlashKeys,
   collectCopyFlashKeys,
   isCellInCopyFlashRange,
 } from "../components/gridCopyFlash";
@@ -51,5 +52,22 @@ describe("gridCopyFlash", () => {
   it("不正な形式のキーは無視する", () => {
     const range = buildCopyFlashRange([0], [0]);
     expect(collectCopyFlashKeys(["not-a-key", "0:0"], range)).toEqual(["0:0"]);
+  });
+});
+
+describe("collectAppliedFlashKeys (#2235)", () => {
+  const rowKeyOf = (r: number) => `k${r}`;
+
+  it("適用した編集と同じ (行, 列) の可視セルだけを返す", () => {
+    const keys = ["0:0", "0:1", "1:1", "2:1"];
+    expect(collectAppliedFlashKeys(keys, { k0: { 1: "x" }, k2: { 1: "y" } }, rowKeyOf)).toEqual([
+      "0:1",
+      "2:1",
+    ]);
+  });
+
+  it("編集が無い・可視セルに当たらないときは空", () => {
+    expect(collectAppliedFlashKeys(["0:0"], {}, rowKeyOf)).toEqual([]);
+    expect(collectAppliedFlashKeys(["0:0"], { k5: { 0: "x" } }, rowKeyOf)).toEqual([]);
   });
 });

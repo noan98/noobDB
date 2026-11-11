@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  changeSetStatementText,
   decideReplaceGuard,
   discardedEditsForUndo,
   pendingChangeCounts,
@@ -38,7 +39,7 @@ describe("pendingChangeCounts", () => {
         pendingDeletes: ["9"],
         pendingInserts: [{ 0: "x" }, { 0: "y" }],
       }),
-    ).toEqual({ edits: 3, deletes: 1, inserts: 2 });
+    ).toEqual({ edits: 3, editedRows: 3, deletes: 1, inserts: 2 });
   });
 });
 
@@ -66,7 +67,7 @@ describe("decideReplaceGuard", () => {
 
   it("件数を返す", () => {
     const g = decideReplaceGuard({ tab: tab({ pendingEdits: { "1": { 0: "a" } }, pendingDeletes: ["2"] }) });
-    expect(g).toEqual({ kind: "confirm", counts: { edits: 1, deletes: 1, inserts: 0 } });
+    expect(g).toEqual({ kind: "confirm", counts: { edits: 1, editedRows: 1, deletes: 1, inserts: 0 } });
   });
 
   it("skip (自動リフレッシュ / 確認済みの再入) なら変更があっても続行", () => {
@@ -97,5 +98,19 @@ describe("discardedEditsForUndo", () => {
     expect(discardedEditsForUndo(edits)).toBe(edits);
     expect(discardedEditsForUndo({})).toBeNull();
     expect(discardedEditsForUndo({ "1": {} })).toBeNull();
+  });
+});
+
+describe("changeSetStatementText", () => {
+  it("送る文の種類と件数を UPDATE / INSERT / DELETE の順で並べる", () => {
+    expect(changeSetStatementText({ editedRows: 3, inserts: 1, deletes: 2 })).toBe(
+      "UPDATE 3 / INSERT 1 / DELETE 2",
+    );
+  });
+
+  it("0 件の種類は省く", () => {
+    expect(changeSetStatementText({ editedRows: 0, inserts: 0, deletes: 2 })).toBe("DELETE 2");
+    expect(changeSetStatementText({ editedRows: 2, inserts: 0, deletes: 0 })).toBe("UPDATE 2");
+    expect(changeSetStatementText({ editedRows: 0, inserts: 0, deletes: 0 })).toBe("");
   });
 });

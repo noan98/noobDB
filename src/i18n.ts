@@ -634,6 +634,8 @@ const en = {
   shortcutHintGridCopyHeaders: "Copy with headers",
   shortcutHintGridUndo: "Undo edit",
   shortcutHintGridRedo: "Redo edit",
+  shortcutHintApplyChanges: "Apply changes",
+  shortcutHintDiscardChanges: "Discard changes",
   shortcutHintMaximizeResult: "Maximize results",
   shortcutHintNewTab: "New tab",
   shortcutHintCloseTab: "Close tab",
@@ -2135,14 +2137,19 @@ const en = {
   gridCharCount: "{count} chars",
   gridBlobBytes: "BLOB · {size}",
 
-  editPendingCount: "{cells} cells / {rows} rows edited",
+  editPendingCount: "Update {cells} cells ({rows} rows)",
+  changeSetAria: "Pending changes",
+  changeSetPillInsert: "Add {count}",
+  changeSetPillDelete: "Delete {count}",
+  changeSetApplyTitle: "Run {statements} in one transaction.",
+  changeSetDiscardTitle: "Discard all pending changes (cell edits, added rows, rows marked for deletion).",
   editPreviewButton: "Preview",
   editApplyButton: "Apply",
   editApplyButtonTitle: "Run the UPDATE(s) against the database, then refresh the view.",
   editApplyConfirmTitle: "Apply changes to a production connection?",
-  editApplyConfirmBody: "You are about to apply {count} change(s) to a production database. Continue?",
+  editApplyConfirmBody:
+    "You are about to run {statements} ({count} change(s)) on a production database. Continue?",
   editCancelButton: "Cancel",
-  editCancelButtonTitle: "Discard all pending edits.",
   editPreviewMultiRowTitle: "Preview supports one row at a time. Discard edits on other rows to enable.",
   editPreviewMultiRowBanner: "Preview unavailable (multi-row)",
   editPreviewMultiRowBannerTitle:
@@ -2184,12 +2191,10 @@ const en = {
   editInvalidTime: "Enter a time like 12:00:00 (or NULL).",
   editInvalidBoolean: "Enter true, false, 0 or 1 (or NULL).",
   editInvalidNotNull: "This column cannot be empty (NOT NULL).",
-  editToolbarAria: "Pending cell edits",
   editUndoTitle: "Undo last edit (Ctrl+Z)",
   editRedoTitle: "Redo edit (Ctrl+Shift+Z)",
-  editDiscardConfirmTitle: "Discard all pending edits?",
-  editDiscardConfirmBody:
-    "This will clear {cells} cell edit(s) across {rows} row(s). You can undo with Ctrl+Z afterwards.",
+  editDiscardConfirmTitle: "Discard all pending changes?",
+  editDiscardConfirmBody: "This will clear {detail}. You can undo with Ctrl+Z afterwards.",
   editDiscardConfirmOk: "Discard",
   editBlurTitle: "Commit edit?",
   editBlurMessage:
@@ -2523,6 +2528,19 @@ const en = {
   pivotTruncated:
     "Truncated to the first {rows} row groups / {cols} column groups; the rest were omitted from the table (totals still include them).",
   pivotNoData: "No data to pivot.",
+  // ピボット / チャートから絞り込んだグリッドへ (#2236)。
+  drillAriaCell: "{summary}: {value}. Press Enter to filter the grid to these rows.",
+  drillAriaHeader: "{summary}. Press Enter to filter the grid to these rows.",
+  chartDrillHint: "Press Enter on a selected point to filter the grid to its rows.",
+  chartDrillAnnounce: "Enter to filter the grid",
+  drillChipLabel: "Filtered from {source}: {summary}",
+  drillChipLabelRange: "Filtered from {source}: {summary} ({count} fetched rows)",
+  drillSourcePivot: "pivot",
+  drillSourceChart: "chart",
+  drillBackToPivot: "Back to pivot",
+  drillBackToChart: "Back to chart",
+  drillClear: "Clear filter",
+  drillChipAria: "Grid filtered from the {source}",
   // テーブル複製 (#1398)。
   cloneTableTitle: "Duplicate table",
   cloneTableClose: "Cancel",
@@ -4812,9 +4830,6 @@ const en = {
     "Suggests existing values of {target} (prefix search, up to {limit}). Free input is still allowed.",
   valuePickerTitleAllowed:
     "Suggests the values allowed by the column's type or CHECK constraint. Free input is still allowed.",
-  rowOpsBarSummary: "{inserts} to insert, {deletes} to delete",
-  rowOpsApply: "Apply rows",
-  rowOpsDiscard: "Discard row ops",
   gridFkJump: "Jump to: {table}",
   gridFkJumpTitle: "Open the referenced table filtered by this value",
   gridFkReverse: "Referencing rows: {table}.{column}",
@@ -7211,6 +7226,12 @@ const en = {
   shortcutGridPagePrevDesc: "Go to the previous page of a paginated table result.",
   shortcutGridRedoTitle: "Cmd/Ctrl+Shift+Z",
   shortcutGridRedoDesc: "Redo a previously undone pending inline cell edit (before Apply).",
+  shortcutApplyChangesTitle: "Cmd/Ctrl+S",
+  shortcutApplyChangesDesc:
+    "Apply the pending changes (cell edits, added rows, rows marked for deletion) in one transaction.",
+  shortcutDiscardChangesTitle: "Cmd/Ctrl+Shift+Backspace",
+  shortcutDiscardChangesDesc:
+    "Discard all pending changes (asks first). Undo with Ctrl+Z afterwards, including added rows and rows marked for deletion.",
 
   // Welcome screen / first-run onboarding (#599)
   welcomeTitle: "Welcome to noobDB",
@@ -8724,6 +8745,8 @@ const ja: Dict = {
   shortcutHintGridCopyHeaders: "ヘッダ付きコピー",
   shortcutHintGridUndo: "編集を元に戻す",
   shortcutHintGridRedo: "編集をやり直す",
+  shortcutHintApplyChanges: "変更を適用",
+  shortcutHintDiscardChanges: "変更を破棄",
   shortcutHintMaximizeResult: "結果を最大化",
   shortcutHintNewTab: "新しいタブ",
   shortcutHintCloseTab: "タブを閉じる",
@@ -10215,14 +10238,19 @@ const ja: Dict = {
   gridCharCount: "{count} 文字",
   gridBlobBytes: "BLOB · {size}",
 
-  editPendingCount: "{cells} セル / {rows} 行を編集中",
+  editPendingCount: "更新 {cells} セル ({rows} 行)",
+  changeSetAria: "未適用の変更",
+  changeSetPillInsert: "追加 {count}",
+  changeSetPillDelete: "削除 {count}",
+  changeSetApplyTitle: "{statements} を 1 トランザクションで実行します。",
+  changeSetDiscardTitle: "未適用の変更 (セル編集・追加行・削除予定) をすべて破棄します。",
   editPreviewButton: "プレビュー",
   editApplyButton: "適用",
   editApplyButtonTitle: "UPDATE 文を実行し、結果を再取得します。",
   editApplyConfirmTitle: "本番接続に変更を適用しますか？",
-  editApplyConfirmBody: "本番データベースに {count} 件の変更を適用しようとしています。続行しますか？",
+  editApplyConfirmBody:
+    "本番データベースで {statements} ({count} 件の変更) を実行しようとしています。続行しますか？",
   editCancelButton: "破棄",
-  editCancelButtonTitle: "未保存の編集をすべて破棄します。",
   editPreviewMultiRowTitle:
     "Preview は 1 行ずつのみ対応しています。他の行の編集を破棄するとボタンが有効になります。",
   editPreviewMultiRowBanner: "Preview 未対応 (複数行)",
@@ -10265,11 +10293,10 @@ const ja: Dict = {
   editInvalidTime: "時刻を入力してください（例: 12:00:00、または NULL）。",
   editInvalidBoolean: "true / false / 0 / 1 を入力してください（または NULL）。",
   editInvalidNotNull: "この列は空（NULL）にできません。",
-  editToolbarAria: "未保存のセル編集",
   editUndoTitle: "最後の編集を元に戻す (Ctrl+Z)",
   editRedoTitle: "編集をやり直す (Ctrl+Shift+Z)",
-  editDiscardConfirmTitle: "未保存の編集をすべて破棄しますか？",
-  editDiscardConfirmBody: "{rows} 行 {cells} セルの編集が失われます。破棄後は Ctrl+Z で元に戻せます。",
+  editDiscardConfirmTitle: "未適用の変更をすべて破棄しますか？",
+  editDiscardConfirmBody: "{detail}が失われます。破棄後は Ctrl+Z で元に戻せます。",
   editDiscardConfirmOk: "破棄",
   editBlurTitle: "編集を確定しますか？",
   editBlurMessage:
@@ -10604,6 +10631,19 @@ const ja: Dict = {
   pivotTruncated:
     "先頭の {rows} 行グループ / {cols} 列グループのみ表示しています (残りは表から省略しますが、総計には含まれます)。",
   pivotNoData: "ピボットするデータがありません。",
+  // ピボット / チャートから絞り込んだグリッドへ (#2236)。
+  drillAriaCell: "{summary}: {value}。Enter でこの組み合わせの行にグリッドを絞り込みます。",
+  drillAriaHeader: "{summary}。Enter でこの行にグリッドを絞り込みます。",
+  chartDrillHint: "選択中の点で Enter を押すと、その行にグリッドを絞り込みます。",
+  chartDrillAnnounce: "Enter でグリッドを絞り込み",
+  drillChipLabel: "{source}から絞り込み中: {summary}",
+  drillChipLabelRange: "{source}から絞り込み中: {summary} (取得済み {count} 行が対象)",
+  drillSourcePivot: "ピボット",
+  drillSourceChart: "チャート",
+  drillBackToPivot: "ピボットへ戻る",
+  drillBackToChart: "チャートへ戻る",
+  drillClear: "絞り込みを外す",
+  drillChipAria: "{source}から絞り込んだグリッド",
   // テーブル複製 (#1398)。
   cloneTableTitle: "テーブルを複製",
   cloneTableClose: "キャンセル",
@@ -12868,9 +12908,6 @@ const ja: Dict = {
   valuePickerCheck: "CHECK",
   valuePickerTitleFk: "{target} の既存値を候補に出します (前方一致・最大 {limit} 件)。自由入力もできます。",
   valuePickerTitleAllowed: "列の型または CHECK 制約が許す値を候補に出します。自由入力もできます。",
-  rowOpsBarSummary: "追加 {inserts} 件 / 削除 {deletes} 件",
-  rowOpsApply: "行操作を適用",
-  rowOpsDiscard: "行操作を破棄",
   gridFkJump: "参照先へジャンプ: {table}",
   gridFkJumpTitle: "この値で参照先テーブルを開く",
   gridFkReverse: "参照元を表示: {table}.{column}",
@@ -15252,6 +15289,11 @@ const ja: Dict = {
   shortcutGridPagePrevDesc: "ページングされたテーブル結果の前のページへ移動します。",
   shortcutGridRedoTitle: "Cmd/Ctrl+Shift+Z",
   shortcutGridRedoDesc: "取り消した未適用のインラインセル編集をやり直します (Apply 前)。",
+  shortcutApplyChangesTitle: "Cmd/Ctrl+S",
+  shortcutApplyChangesDesc: "未適用の変更 (セル編集・追加行・削除予定) を 1 トランザクションで適用します。",
+  shortcutDiscardChangesTitle: "Cmd/Ctrl+Shift+Backspace",
+  shortcutDiscardChangesDesc:
+    "未適用の変更をすべて破棄します (確認あり)。追加行・削除予定も含めて Ctrl+Z で戻せます。",
 
   // ウェルカム画面 / 初回起動オンボーディング (#599)
   welcomeTitle: "noobDB へようこそ",
