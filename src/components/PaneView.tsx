@@ -167,6 +167,8 @@ interface DrillEntry {
   cleared: boolean;
   /** 適用前に掛かっていた列フィルタ。「絞り込みを外す」で元に戻す。 */
   previous: ColumnFilterEntry[];
+  /** `previous` を前の drill から引き継いだ (適用時に控え直さない)。 */
+  inheritedPrevious?: boolean;
 }
 
 export interface PaneActions {
@@ -460,18 +462,25 @@ export const PaneView = memo(
     ) => {
       const result = target.result;
       if (!result) return;
-      setDrills((prev) => ({
-        ...prev,
-        [target.id]: {
-          source,
-          conditions: drill.conditions,
-          result,
-          scrollTop: drill.scrollTop,
-          request: { mode: "apply", conditions: drill.conditions },
-          cleared: false,
-          previous: [],
-        },
-      }));
+      setDrills((prev) => {
+        // 絞り込み中のまま別の集計キーへ drill し直したときは、最初の drill 前のフィルタを
+        // 引き継ぐ (前の drill のフィルタを「元の状態」として控えると、外しても戻らない)。
+        const before = prev[target.id];
+        const inherited = before && !before.cleared && before.result === result ? before.previous : null;
+        return {
+          ...prev,
+          [target.id]: {
+            source,
+            conditions: drill.conditions,
+            result,
+            scrollTop: drill.scrollTop,
+            request: { mode: "apply", conditions: drill.conditions },
+            cleared: false,
+            previous: inherited ?? [],
+            inheritedPrevious: inherited !== null,
+          },
+        };
+      });
       actions.setResultView(target.id, "grid");
     };
     // 絞り込みを外す: チップは畳み、グリッドへ「条件の列のフィルタを外す」要求を送る。
@@ -494,7 +503,14 @@ export const PaneView = memo(
         const e = prev[tabId];
         if (!e?.request) return prev;
         // 適用前のフィルタは apply のときだけ控える (clear の適用前は絞り込み後の状態)。
-        return { ...prev, [tabId]: { ...e, request: null, previous: e.cleared ? e.previous : previous } };
+        return {
+          ...prev,
+          [tabId]: {
+            ...e,
+            request: null,
+            previous: e.cleared || e.inheritedPrevious ? e.previous : previous,
+          },
+        };
       });
     // グリッド側でフィルタが変わった。条件の列のフィルタが drill の値と食い違ったら
     // (手動で外した・変えた) チップを畳む。要求の適用待ち・畳み済みのときは見ない。

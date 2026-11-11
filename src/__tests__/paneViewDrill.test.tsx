@@ -24,14 +24,24 @@ vi.mock("../components/PivotView", () => ({
   }) => {
     pivotProps.initialScrollTop = props.initialScrollTop;
     return (
-      <button
-        type="button"
-        onClick={() =>
-          props.onDrill?.({ conditions: [{ colIdx: 0, column: "region", value: "east" }], scrollTop: 77 })
-        }
-      >
-        drill-east
-      </button>
+      <>
+        <button
+          type="button"
+          onClick={() =>
+            props.onDrill?.({ conditions: [{ colIdx: 0, column: "region", value: "east" }], scrollTop: 77 })
+          }
+        >
+          drill-east
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            props.onDrill?.({ conditions: [{ colIdx: 0, column: "region", value: "west" }], scrollTop: 0 })
+          }
+        >
+          drill-west
+        </button>
+      </>
     );
   },
 }));
@@ -277,5 +287,57 @@ describe("ピボットから絞り込んだグリッド (#2236)", () => {
     await screen.findByTestId("drill-chip");
     act(() => store.setTabs((prev) => prev.map((x) => ({ ...x, result: { ...RESULT, rows: [...ROWS] } }))));
     await waitFor(() => expect(screen.queryByTestId("drill-chip")).toBeNull());
+  });
+
+  it("絞り込み中に別の集計キーへ drill し直しても、外すと最初の drill 前のフィルタに戻る", async () => {
+    const user = userEvent.setup();
+    const { rows, show, handle } = setup();
+    await screen.findByText("drill-east");
+    show("grid");
+    await waitFor(() => expect(handle.current).not.toBeNull());
+    act(() => handle.current?.applyColumnFilters({ ...amount5, conditions: [...amount5.conditions] }));
+    await waitFor(() => expect(rows()).toBe(2));
+    show("pivot");
+    await user.click(await screen.findByText("drill-east"));
+    await screen.findByTestId("drill-chip");
+    await waitFor(() => expect(rows()).toBe(2));
+    // 戻って別のキー (west) へ drill し直す。
+    await user.click(within(screen.getByTestId("drill-chip")).getByRole("button", { name: /Back to pivot/ }));
+    await user.click(await screen.findByText("drill-west"));
+    await waitFor(() => expect(screen.getByTestId("drill-chip")).toHaveTextContent("region=west"));
+    const body = () => document.querySelector("tbody")?.textContent ?? "";
+    await waitFor(() => expect(body()).not.toContain("east"));
+
+    await user.click(within(screen.getByTestId("drill-chip")).getByRole("button", { name: /Clear filter/ }));
+    await waitFor(() => expect(screen.queryByTestId("drill-chip")).toBeNull());
+    // 戻るのは最初の状態 (amount=5 → east / west の open)。east の drill 条件ではない。
+    await waitFor(() => expect(body()).toContain("west"));
+    expect(body()).toContain("east");
+    expect(rows()).toBe(2);
+  });
+
+  it("グリッドの検索語が残っていても drill で 0 行にならず、外すと検索語が戻る", async () => {
+    const user = userEvent.setup();
+    const { rows, show } = setup();
+    await screen.findByText("drill-east");
+    show("grid");
+    const input = await screen.findByLabelText(t("gridSearchAria"));
+    await user.type(input, "west");
+    await waitFor(() => expect(rows()).toBe(2));
+    show("pivot");
+    await user.click(await screen.findByText("drill-east"));
+    await screen.findByTestId("drill-chip");
+    await waitFor(() =>
+      expect((screen.getByLabelText(t("gridSearchAria")) as HTMLInputElement).value).toBe(""),
+    );
+    await waitFor(() => expect(rows()).toBe(2));
+    expect(document.querySelector("tbody")?.textContent).toContain("east");
+
+    await user.click(within(screen.getByTestId("drill-chip")).getByRole("button", { name: /Clear filter/ }));
+    await waitFor(() =>
+      expect((screen.getByLabelText(t("gridSearchAria")) as HTMLInputElement).value).toBe("west"),
+    );
+    await waitFor(() => expect(rows()).toBe(2));
+    expect(document.querySelector("tbody")?.textContent).toContain("west");
   });
 });

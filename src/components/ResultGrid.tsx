@@ -8907,8 +8907,24 @@ export const ResultGrid = memo(
     const [filterRequest, setFilterRequest] = useState<ColumnFilterRequest | null>(
       () => columnFilterRequest ?? null,
     );
+    // 絞り込み (apply) の間は、結果内の全体検索を一時的に空にする。残したままだと、集計キーと
+    // 無関係な検索語で 0 行になりうる。外す (clear) ときに元の検索語へ戻す。
+    const stashedSearchRef = useRef<string | null>(null);
+    const queueFilterRequest = (req: ColumnFilterRequest | null) => {
+      if (req?.mode === "apply" && stashedSearchRef.current === null && search !== "") {
+        stashedSearchRef.current = search;
+        setSearch("");
+      } else if (req?.mode === "clear" && stashedSearchRef.current !== null) {
+        setSearch(stashedSearchRef.current);
+        stashedSearchRef.current = null;
+      }
+      setFilterRequest(req);
+    };
+    const queueFilterRequestRef = useRef(queueFilterRequest);
+    queueFilterRequestRef.current = queueFilterRequest;
+    // biome-ignore lint/correctness/useExhaustiveDependencies: 要求 prop の変化だけを契機にする (queueFilterRequest は毎回作り直る)
     useEffect(() => {
-      setFilterRequest(columnFilterRequest ?? null);
+      queueFilterRequest(columnFilterRequest ?? null);
     }, [columnFilterRequest]);
     const findSeqRef = useRef(0);
     const findIdxRef = useRef(findIdx);
@@ -9126,7 +9142,7 @@ export const ResultGrid = memo(
           emitFindNav({ rowIdx: 0, colIdx }, true, true);
           return true;
         },
-        applyColumnFilters: (request) => setFilterRequest({ ...request }),
+        applyColumnFilters: (request) => queueFilterRequestRef.current({ ...request }),
       }),
       [emitFindNav],
     );

@@ -117,12 +117,15 @@ export function chartDrillConditions(
 }
 
 /**
- * 条件 1 件を `ColumnFilter` へ。数値列は `eq` (数値比較)、それ以外は大小区別の `equals`。
- * 空白だけの値は `in` で完全一致にする (上の「条件の意味論」)。
+ * 条件 1 件を `ColumnFilter` へ。文字列は大小区別の `equals`。数値列と空白だけの値は
+ * `in` で完全一致にする (上の「条件の意味論」)。
  */
 export function drillColumnFilter(value: string | null, numeric: boolean): ColumnFilter {
   if (value === null) return clientQuickFilter(null, "eq", numeric);
-  if (value.trim() === "") {
+  // 数値列も `in` (セルの文字列表現との完全一致) にする。数値 `eq` は小数を JS の Number に
+  // 落とすため、ピボットが別グループに分ける 9007199254740993.1 と .2 を区別できない。
+  // ピボットのキーはセルの文字列表現そのものなので、完全一致がグループ化と一致する。
+  if (numeric || value.trim() === "") {
     return { op: "in", value: "", value2: "", nullMode: "any", values: [value] };
   }
   return clientQuickFilter(value, "eq", numeric, true);
@@ -187,6 +190,6 @@ export function drillStillApplied(
     if (!f) return false;
     if (c.value === null) return f.nullMode === "only";
     if (f.nullMode !== "any") return false;
-    return c.value.trim() === "" ? f.op === "in" && f.values?.[0] === c.value : f.value === c.value;
+    return f.op === "in" ? f.values?.[0] === c.value : f.value === c.value;
   });
 }

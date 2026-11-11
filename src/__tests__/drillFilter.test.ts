@@ -126,18 +126,22 @@ describe("drillColumnFilter", () => {
     expect(columnFilterPasses("apple", f)).toBe(false);
   });
 
-  it("数値列は数値比較 (1 と 1.0 は同じキー)", () => {
+  it("数値列もセルの文字列表現との完全一致にする (ピボットのグループ化と同じ)", () => {
     const f = drillColumnFilter("1", true);
-    expect(f.op).toBe("eq");
+    expect(f.op).toBe("in");
     expect(columnFilterPasses(1, f)).toBe(true);
-    expect(columnFilterPasses("1.0", f)).toBe(true);
     expect(columnFilterPasses(2, f)).toBe(false);
+    // ピボットは "1" と "1.0" を別グループにするので、絞り込みでも混ぜない。
+    expect(columnFilterPasses("1.0", f)).toBe(false);
   });
 
-  it("2^53 を超える整数キーも丸めずに比較する", () => {
+  it("2^53 を超える整数・小数のキーも丸めずに区別する", () => {
     const f = drillColumnFilter("9007199254740993", true);
     expect(columnFilterPasses("9007199254740993", f)).toBe(true);
     expect(columnFilterPasses("9007199254740992", f)).toBe(false);
+    const d = drillColumnFilter("9007199254740993.1", true);
+    expect(columnFilterPasses("9007199254740993.1", d)).toBe(true);
+    expect(columnFilterPasses("9007199254740993.2", d)).toBe(false);
   });
 
   it("NULL は IS NULL 相当 (テキスト列・数値列とも)", () => {
@@ -213,7 +217,7 @@ describe("applyDrillRequest", () => {
       { mode: "apply", conditions: [{ colIdx: 2, column: "amount", value: "50" }] },
       (i) => i === 2,
     );
-    expect((next[0].value as { op: string }).op).toBe("eq");
+    expect((next[0].value as { op: string }).op).toBe("in");
   });
 });
 
