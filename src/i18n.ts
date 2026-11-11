@@ -6861,6 +6861,40 @@ const en = {
   advisorRuleOversizedVarcharTitle: "Oversized VARCHAR",
   advisorRuleFloatForMoneyTitle: "Floating-point type for money",
   advisorRuleSequenceExhaustionTitle: "Auto-increment nearing its limit",
+  // 要約タイル・ルール別の分布ストリップ・採番メーター (#2239)
+  advisorStatHigh: "High severity",
+  advisorStatMedium: "Medium severity",
+  advisorStatLow: "Low severity",
+  advisorStatTables: "Tables analyzed",
+  advisorRuleStripAria: "Findings by rule. Press a rule to filter the table; press it again to clear.",
+  advisorFilterActive:
+    'Showing only "{rule}": {shown} of {total} finding(s). CSV / Markdown export covers only the findings shown.',
+  advisorFilterClear: "Clear filter",
+  advisorSeqMeterAria: "Sequence usage (warning at {warn}%, danger at {danger}%)",
+  advisorSeqMeterValue: "{percent}% ({used} / {max})",
+  advisorRuleFkMissingIndexWhy:
+    "Joins and cascading deletes on a foreign key without an index scan the whole child table and can hold locks for a long time.",
+  advisorRuleDuplicateIndexWhy:
+    "Two identical indexes double the write cost and storage for no read benefit.",
+  advisorRuleRedundantIndexWhy:
+    "An index whose columns are a prefix of another index is already covered, yet it still slows every write and takes space.",
+  advisorRuleMissingPrimaryKeyWhy:
+    "Without a primary key rows cannot be identified reliably, so updates, replication and diffs become ambiguous or slow.",
+  advisorRuleUnusedIndexWhy:
+    "An index that is never read still costs time on every write and disk space (based on statistics since the server started).",
+  advisorRuleFkTypeMismatchWhy:
+    "When a foreign key and the column it references differ in type, the engine may convert values and skip the index, or reject some values.",
+  advisorRuleSqliteIntegerPkHintWhy:
+    "Only a column declared exactly INTEGER PRIMARY KEY becomes the rowid alias in SQLite; other integer types lose that speed and space benefit.",
+  advisorRuleNullableForeignKeyWhy:
+    "A nullable foreign key lets rows exist without a parent, which weakens the relationship and surprises joins.",
+  advisorRuleOversizedVarcharWhy:
+    "An oversized VARCHAR limit gives no real validation and can inflate memory used for sorting and temporary tables.",
+  advisorRuleFloatForMoneyWhy:
+    "Floating-point numbers cannot represent most decimal amounts exactly, so rounding errors accumulate in money columns.",
+  advisorRuleSequenceExhaustionWhy:
+    "When an auto-increment reaches its maximum, every INSERT fails at once, so it is the most urgent kind of finding.",
+  advisorRuleUnknownWhy: "A schema finding from a rule this version does not describe yet.",
   // 未知のルール ID (バックエンドだけ新ルールを足したドリフト時) の汎用フォールバック
   advisorRuleUnknownTitle: "Other schema finding",
   advisorRuleUnknownDesc:
@@ -14745,6 +14779,40 @@ const ja: Dict = {
   advisorRuleOversizedVarcharTitle: "過大な VARCHAR",
   advisorRuleFloatForMoneyTitle: "金額に浮動小数型",
   advisorRuleSequenceExhaustionTitle: "採番が上限に近い",
+  // 要約タイル・ルール別の分布ストリップ・採番メーター (#2239)
+  advisorStatHigh: "重要度: 高",
+  advisorStatMedium: "重要度: 中",
+  advisorStatLow: "重要度: 低",
+  advisorStatTables: "解析した表",
+  advisorRuleStripAria: "ルール別の指摘数。押すとそのルールで表を絞り込み、もう一度押すと解除します。",
+  advisorFilterActive:
+    "「{rule}」だけを表示中: {total} 件中 {shown} 件。CSV / Markdown の書き出しは表示中の指摘のみです。",
+  advisorFilterClear: "絞り込みを解除",
+  advisorSeqMeterAria: "採番の使用率 (警告 {warn}% / 危険 {danger}%)",
+  advisorSeqMeterValue: "{percent}% ({used} / {max})",
+  advisorRuleFkMissingIndexWhy:
+    "インデックスの無い外部キーは、結合や連鎖削除で子テーブルを全件走査し、長時間のロックを招きかねません。",
+  advisorRuleDuplicateIndexWhy:
+    "同じインデックスが 2 本あっても読み取りは速くならず、書き込みの負荷と容量だけが倍になります。",
+  advisorRuleRedundantIndexWhy:
+    "別のインデックスの先頭列と同じ構成なら既にカバーされていて、書き込みのたびのコストと容量だけが余分にかかります。",
+  advisorRuleMissingPrimaryKeyWhy:
+    "主キーが無いと行を確実に特定できず、更新・レプリケーション・差分比較が曖昧になったり遅くなったりします。",
+  advisorRuleUnusedIndexWhy:
+    "読まれないインデックスも、書き込みのたびに更新コストと容量を使います (サーバ起動後の統計に基づく判定です)。",
+  advisorRuleFkTypeMismatchWhy:
+    "外部キーと参照先で型が違うと、値の変換でインデックスが効かなかったり、一部の値が入らなかったりします。",
+  advisorRuleSqliteIntegerPkHintWhy:
+    "SQLite で rowid の別名になるのは INTEGER PRIMARY KEY と宣言した列だけで、他の整数型では速度と容量の利点を失います。",
+  advisorRuleNullableForeignKeyWhy:
+    "NULL を許す外部キーは親の無い行を作れてしまい、関係が弱まって結合の結果も意図とずれやすくなります。",
+  advisorRuleOversizedVarcharWhy:
+    "過大な VARCHAR の長さは実質的な検証にならず、ソートや一時テーブルのメモリ使用量を膨らませることがあります。",
+  advisorRuleFloatForMoneyWhy:
+    "浮動小数点数は多くの小数を正確に表せないため、金額の列では丸め誤差が積み重なります。",
+  advisorRuleSequenceExhaustionWhy:
+    "採番が上限に達すると INSERT がすべて失敗するため、障害の予兆として最も緊急性の高い指摘です。",
+  advisorRuleUnknownWhy: "このバージョンではまだ説明を持たないルールのスキーマ指摘です。",
   // 未知のルール ID (バックエンドだけ新ルールを足したドリフト時) の汎用フォールバック
   advisorRuleUnknownTitle: "その他のスキーマ指摘",
   advisorRuleUnknownDesc:

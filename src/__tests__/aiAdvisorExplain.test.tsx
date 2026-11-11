@@ -49,7 +49,8 @@ const ui = (isProduction = false) => (
 
 async function runDiagnosis() {
   fireEvent.click(screen.getByText(t("advisorRun")));
-  await screen.findByText(t("advisorRuleUnusedIndexTitle"));
+  // ルール名は分布ストリップのチップと表の行の両方に出る (#2239) ので、表が出るまで待つ。
+  await screen.findByRole("table");
 }
 const askBtn = () => screen.findByRole("button", { name: t("advisorAiButton") });
 

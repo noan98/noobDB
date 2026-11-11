@@ -2,27 +2,45 @@ import { useCallback, useMemo, useState, type KeyboardEvent as ReactKeyboardEven
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import { motion } from "motion/react";
 
-import { api, type HealthFinding, type SchemaHealthReport } from "../api/tauri";
+import { api, type AdvisorRuleId, type HealthFinding, type SchemaHealthReport } from "../api/tauri";
 import { useT } from "../i18n";
 import { useAiAvailable } from "../ai/useAiAvailable";
 import { semanticColorToken } from "../semanticColors";
 import {
+  ADVISOR_SEVERITIES,
   DEFAULT_ADVISOR_SORT,
+  effectiveRuleFilter,
+  filterFindingsByRule,
   findingDescription,
   findingSizeText,
   findingsToTable,
   findingTarget,
   newFindingSet,
   nextAdvisorSort,
+  previousSeverityCounts,
   reasonTextKey,
   reclaimableSummary,
+  ruleCounts,
   ruleTitleKey,
-  severityLabelKey,
+  ruleWhyKey,
+  SEQUENCE_METER_DANGER_PERCENT,
+  SEQUENCE_METER_WARN_PERCENT,
   sequenceFixAlterRisks,
+  sequenceMeterTone,
+  sequenceUsage,
+  severityCounts,
+  severityDeltas,
+  severityLabelKey,
+  severityRole,
   sortFindings,
+  toggleRuleFilter,
   type AdvisorSort,
   type AdvisorSortKey,
+  type SeverityCounts,
 } from "./advisor";
+import { CountUp } from "./CountUp";
+import { StatTile } from "./StatTile";
+import { ThresholdMeter } from "./ThresholdMeter";
 import { copyToClipboard } from "./clipboard";
 import { AiAdvisorExplain } from "./AiAdvisorExplain";
 import { SeverityBadge } from "./severityBadge";
@@ -128,6 +146,10 @@ export function AdvisorPanel({
   // 前回診断で無かった指摘 (参照の集合)。「対応しない」への移動で添字がずれないよう、取得時に参照へ直す。
   const [newFindings, setNewFindings] = useState<Set<HealthFinding>>(() => new Set());
   const [showIgnored, setShowIgnored] = useState(false);
+  // 診断直後に逆算した「前回診断時点の重要度別件数」(要約タイルのデルタ用)。初回診断は null。
+  const [previousCounts, setPreviousCounts] = useState<SeverityCounts | null>(null);
+  // ルール別ストリップで絞り込み中のルール (#2239)。null = 全件。
+  const [ruleFilter, setRuleFilter] = useState<AdvisorRuleId | null>(null);
 
   const run = useCallback(async () => {
     setRunning(true);
@@ -136,6 +158,8 @@ export function AdvisorPanel({
       const r = await api.analyzeSchemaHealth(sessionId, database);
       setReport(r);
       setNewFindings(newFindingSet(r.findings, r.diff));
+      setPreviousCounts(previousSeverityCounts(r.findings, r.diff));
+      setRuleFilter(null);
     } catch (e) {
       // 失敗した再実行の下に前回の診断結果が残ると、古い指摘が現在の結果として
       // 表示・書き出し (CSV / Markdown) されてしまうので破棄する。
@@ -180,14 +204,21 @@ export function AdvisorPanel({
 
   const reclaimable = useMemo(() => (report ? reclaimableSummary(report.findings) : null), [report]);
 
+  // 要約タイルとストリップは絞り込み前の全件 (本表の絞り込みで数字が動かないように) を数える。
+  const counts = useMemo(() => severityCounts(report?.findings ?? []), [report]);
+  const deltas = useMemo(() => severityDeltas(counts, previousCounts), [counts, previousCounts]);
+  const rules = useMemo(() => ruleCounts(report?.findings ?? []), [report]);
+  const activeRule = effectiveRuleFilter(ruleFilter, rules);
+
+  // 画面の表と書き出し (CSV / Markdown) の対象は、絞り込み後・並べ替え後の同じ配列。
   const findings = useMemo(() => {
     if (!report) return [];
-    return sortFindings(report.findings, sort.key, sort.dir, (f, key) => {
+    return sortFindings(filterFindingsByRule(report.findings, activeRule), sort.key, sort.dir, (f, key) => {
       if (key === "rule") return t(ruleTitleKey(f.rule));
       const desc = findingDescription(f);
       return t(desc.key, desc.params);
     });
-  }, [report, sort, t]);
+  }, [report, activeRule, sort, t]);
 
   // 行の key は内容ベース (並べ替えで AiAdvisorExplain が作り直され、実行中の要求や結果が
   // 消えないようにする)。同一内容の重複だけ出現順の連番で区別する。
@@ -285,7 +316,7 @@ export function AdvisorPanel({
           </Button>
           {report && !running && report.findings.length > 0 && (
             <TextExportButton
-              filenameBase={`schema-health-${database}`}
+              filenameBase={`schema-health-${database}${activeRule ? `-${activeRule}` : ""}`}
               formats={[
                 { id: "csv", label: "CSV", build: () => buildExport("csv") },
                 { id: "markdown", label: "Markdown", build: () => buildExport("markdown") },
@@ -314,6 +345,57 @@ export function AdvisorPanel({
       </Box>
 
       <Box flex="1" minH={0} overflowY="auto" px="4" pb="3.5" display="flex" flexDirection="column" gap="3.5">
+        {report && !running && report.findings.length > 0 && (
+          // 要約タイル + ルール別の分布ストリップ (#2239)。低い Bottom Panel でも潰れないよう縮めない。
+          <Box flexShrink={0} display="flex" flexDirection="column" gap="2.5" data-testid="advisor-overview">
+            <Flex gap="2" wrap="wrap" data-testid="advisor-stat-tiles">
+              {ADVISOR_SEVERITIES.map((sev) => (
+                <StatTile
+                  key={sev}
+                  label={t(STAT_LABEL_KEY[sev])}
+                  value={counts[sev]}
+                  tone={counts[sev] > 0 ? severityRole(sev) : undefined}
+                  delta={deltas[sev]}
+                  goodWhen="down"
+                />
+              ))}
+              <StatTile label={t("advisorStatTables")} value={report.tables_analyzed} />
+            </Flex>
+            <Flex
+              role="group"
+              aria-label={t("advisorRuleStripAria")}
+              gap="1.5"
+              wrap="wrap"
+              data-testid="advisor-rule-strip"
+            >
+              {rules.map((r) => (
+                <RuleChip
+                  key={r.rule}
+                  rule={r.rule}
+                  count={r.count}
+                  severity={r.severity}
+                  active={activeRule === r.rule}
+                  onToggle={() => setRuleFilter((cur) => toggleRuleFilter(cur, r.rule))}
+                />
+              ))}
+            </Flex>
+            {activeRule && (
+              <Flex align="center" gap="2" wrap="wrap" data-testid="advisor-filter-note">
+                <chakra.span textStyle="caption">
+                  {t("advisorFilterActive", {
+                    rule: t(ruleTitleKey(activeRule)),
+                    shown: String(findings.length),
+                    total: String(report.findings.length),
+                  })}
+                </chakra.span>
+                <Button type="button" size="sm" variant="ghost" onClick={() => setRuleFilter(null)}>
+                  {t("advisorFilterClear")}
+                </Button>
+              </Flex>
+            )}
+          </Box>
+        )}
+
         {report && !running && report.diff && (
           // 前回診断との差分 (#1621): 修正 DDL を適用した後にどれだけ改善したかをその場で確認できる。
           <Callout
@@ -492,7 +574,8 @@ export function AdvisorPanel({
                   {sortableTh("size", t("advisorColSize"))}
                 </chakra.tr>
               </chakra.thead>
-              <RevealTbody>
+              {/* 絞り込みの切り替えで作り直し、行の入場 (スタッガー) をもう一度見せる。 */}
+              <RevealTbody key={activeRule ?? "all"}>
                 {findings.map((f, i) => {
                   const desc = findingDescription(f);
                   return (
@@ -525,6 +608,7 @@ export function AdvisorPanel({
                         <chakra.div lineHeight={1.5} color="app.textMuted">
                           {t(desc.key, desc.params)}
                         </chakra.div>
+                        <SequenceMeter finding={f} />
                         {f.statistical && (
                           <chakra.div
                             marginTop="1.5"
@@ -660,6 +744,91 @@ export function AdvisorPanel({
           </Box>
         )}
       </Box>
+    </Box>
+  );
+}
+
+const STAT_LABEL_KEY = {
+  high: "advisorStatHigh",
+  medium: "advisorStatMedium",
+  low: "advisorStatLow",
+} as const;
+
+/** ルール別の分布ストリップのチップ (#2239)。重大度の意味色で塗り、押すとそのルールで絞り込み、
+ *  もう一度押すと解除する (`aria-pressed`)。ホバー / フォーカスで「なぜ問題か」を 1 文で出す。 */
+function RuleChip({
+  rule,
+  count,
+  severity,
+  active,
+  onToggle,
+}: {
+  rule: AdvisorRuleId;
+  count: number;
+  severity: HealthFinding["severity"];
+  active: boolean;
+  onToggle: () => void;
+}) {
+  const t = useT();
+  const role = severityRole(severity);
+  return (
+    <Tooltip label={t(ruleWhyKey(rule))} maxWidth="320px">
+      <chakra.button
+        type="button"
+        aria-pressed={active}
+        onClick={onToggle}
+        display="inline-flex"
+        alignItems="center"
+        gap="1.5"
+        px="2"
+        py="0.5"
+        fontSize="xs"
+        fontWeight={600}
+        borderRadius="pill"
+        border="1px solid"
+        whiteSpace="nowrap"
+        cursor="pointer"
+        flexShrink={0}
+        bg={semanticColorToken(role, active ? "solid" : "subtle")}
+        color={active ? "app.onSolid" : semanticColorToken(role, "text")}
+        borderColor={semanticColorToken(role, active ? "solid" : "border")}
+        _hover={{ borderColor: semanticColorToken(role, "solid") }}
+        _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
+        data-testid={`advisor-rule-chip-${rule}`}
+      >
+        {t(ruleTitleKey(rule))}
+        <chakra.span textStyle="numeric" fontWeight={500}>
+          <CountUp value={count} />
+        </chakra.span>
+      </chakra.button>
+    </Tooltip>
+  );
+}
+
+/** 採番枯渇の指摘の詳細列に出す使用率メーター (#2239)。警告 80% / 危険 95% のマーカー付き。 */
+function SequenceMeter({ finding }: { finding: HealthFinding }) {
+  const t = useT();
+  const usage = sequenceUsage(finding);
+  if (!usage) return null;
+  return (
+    <Box marginTop="2" maxW="320px" data-testid="advisor-sequence-meter">
+      <ThresholdMeter
+        percent={usage.percent}
+        tone={sequenceMeterTone(usage.percent)}
+        markers={[
+          { percent: SEQUENCE_METER_WARN_PERCENT, label: `${SEQUENCE_METER_WARN_PERCENT}%` },
+          { percent: SEQUENCE_METER_DANGER_PERCENT, label: `${SEQUENCE_METER_DANGER_PERCENT}%` },
+        ]}
+        ariaLabel={t("advisorSeqMeterAria", {
+          warn: SEQUENCE_METER_WARN_PERCENT,
+          danger: SEQUENCE_METER_DANGER_PERCENT,
+        })}
+        valueText={t("advisorSeqMeterValue", {
+          percent: String(usage.percent),
+          used: usage.used,
+          max: usage.max,
+        })}
+      />
     </Box>
   );
 }
