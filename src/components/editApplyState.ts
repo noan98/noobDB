@@ -84,6 +84,18 @@ function currentRowOps(tt: ChangeSetTab): RowOpsSnapshot {
 }
 
 /**
+ * 履歴の行操作へ戻す / やり直すとき、その後に足した削除予定・追加行を消さないよう和集合にする
+ * (同じ削除キー・同じ追加行の参照は重複させない)。
+ */
+function mergeRowOps(target: RowOpsSnapshot, tt: ChangeSetTab): RowOpsSnapshot {
+  const cur = currentRowOps(tt);
+  return {
+    pendingDeletes: [...new Set([...target.pendingDeletes, ...cur.pendingDeletes])],
+    pendingInserts: [...new Set([...target.pendingInserts, ...cur.pendingInserts])],
+  };
+}
+
+/**
  * 変更セット (セル編集・削除予定・追加行) をまとめて破棄する (#2235)。破棄した内容は Undo 履歴へ
  * 1 世代として積み、Ctrl+Z で 3 種とも戻せる。何も無いときは null (状態を変えない)。
  */
@@ -115,7 +127,7 @@ export function undoChangeSet(tt: ChangeSetTab, limit: number): Partial<ChangeSe
     : { edits: tt.pendingEdits };
   return {
     pendingEdits: prev.edits,
-    ...(prev.rowOps ?? {}),
+    ...(prev.rowOps ? mergeRowOps(prev.rowOps, tt) : {}),
     editUndoStack: stack.slice(0, -1),
     editRedoStack: pushEditHistory(tt.editRedoStack, redoEntry, limit),
   };

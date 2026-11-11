@@ -319,7 +319,7 @@ export function PreviewGrid({
               </Tooltip>
             )}
             {onDiscardEdits && (
-              <Tooltip label={t("editCancelButtonTitle")}>
+              <Tooltip label={t("changeSetDiscardTitle")}>
                 <Button variant="secondary" size="sm" px="2.5" onClick={onDiscardEdits}>
                   <Icon name="close" size={ICON_SIZES.md} /> {t("editCancelButton")}
                 </Button>

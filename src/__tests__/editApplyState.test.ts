@@ -345,6 +345,14 @@ describe("変更セットの破棄 / Undo / Redo (#2235)", () => {
     expect(patch?.editRedoStack).toEqual([{ edits: base.pendingEdits }]);
   });
 
+  it("Undo は、その後に足した削除予定・追加行を消さず和集合で戻す", () => {
+    const discarded = { ...base, ...discardChangeSet(base, LIMIT) };
+    const later = { ...discarded, pendingDeletes: ["d2"], pendingInserts: [{ 0: "m" }] };
+    const undone = { ...later, ...undoChangeSet(later, LIMIT) };
+    expect(undone.pendingDeletes).toEqual(["d1", "d2"]);
+    expect(undone.pendingInserts).toHaveLength(2);
+  });
+
   it("何も無いときの破棄・空の履歴の Undo / Redo は null", () => {
     expect(discardChangeSet({ pendingEdits: {}, pendingDeletes: [], pendingInserts: [] }, LIMIT)).toBeNull();
     expect(undoChangeSet(base, LIMIT)).toBeNull();

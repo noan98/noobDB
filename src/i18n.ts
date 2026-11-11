@@ -2150,7 +2150,6 @@ const en = {
   editApplyConfirmBody:
     "You are about to run {statements} ({count} change(s)) on a production database. Continue?",
   editCancelButton: "Cancel",
-  editCancelButtonTitle: "Discard all pending edits.",
   editPreviewMultiRowTitle: "Preview supports one row at a time. Discard edits on other rows to enable.",
   editPreviewMultiRowBanner: "Preview unavailable (multi-row)",
   editPreviewMultiRowBannerTitle:
@@ -10191,7 +10190,6 @@ const ja: Dict = {
   editApplyConfirmBody:
     "本番データベースで {statements} ({count} 件の変更) を実行しようとしています。続行しますか？",
   editCancelButton: "破棄",
-  editCancelButtonTitle: "未保存の編集をすべて破棄します。",
   editPreviewMultiRowTitle:
     "Preview は 1 行ずつのみ対応しています。他の行の編集を破棄するとボタンが有効になります。",
   editPreviewMultiRowBanner: "Preview 未対応 (複数行)",

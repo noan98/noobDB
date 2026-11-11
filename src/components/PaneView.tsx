@@ -1316,6 +1316,7 @@ export const PaneView = memo(
                                       : undefined
                                   }
                                   lastEditAppliedAt={tab.lastEditAppliedAt}
+                                  lastAppliedEdits={tab.lastAppliedEdits}
                                   maximized={maximized}
                                   onToggleMaximize={onToggleResultMaximize}
                                   onPinResult={gridStable.fn(`${tab.id}:pin`, () =>

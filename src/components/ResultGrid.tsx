@@ -1454,6 +1454,8 @@ interface Props {
    * success-flash animation on the grid container.
    */
   lastEditAppliedAt?: number;
+  /** 直近の適用で送ったセル編集 (光らせるセル、#2235)。 */
+  lastAppliedEdits?: PendingEdits;
   /**
    * Runs an ad-hoc SELECT for the column quick-stats popover's "aggregate all
    * rows" action (#524). App binds this to the active session; omit to offer
@@ -4406,6 +4408,8 @@ export const DataGrid = memo(function DataGrid({
       gridRedo: gridBindings?.gridRedo ?? DEFAULT_SHORTCUT_COMBOS.gridRedo,
       gridPageNext: gridBindings?.gridPageNext ?? DEFAULT_SHORTCUT_COMBOS.gridPageNext,
       gridPagePrev: gridBindings?.gridPagePrev ?? DEFAULT_SHORTCUT_COMBOS.gridPagePrev,
+      applyChanges: gridBindings?.applyChanges ?? DEFAULT_SHORTCUT_COMBOS.applyChanges,
+      discardChanges: gridBindings?.discardChanges ?? DEFAULT_SHORTCUT_COMBOS.discardChanges,
     }),
     [gridBindings],
   );
@@ -6798,6 +6802,14 @@ export const DataGrid = memo(function DataGrid({
     // が、リバインドで任意のキーになり得るため switch より先に単独で突き合わせる。
     // Redo は従来からの Ctrl/Cmd+Y も後方互換で残す (再割り当て対象外の別名)。
     const ne = e.nativeEvent;
+    // 変更セットの破棄 (Mod+Shift+Backspace 既定、#2235) は window ハンドラへ任せる。
+    // 下の Backspace / Delete のセル消去に先に取られないよう、ここで止める。
+    if (
+      comboMatchesEvent(effectiveGridBindings.applyChanges ?? DEFAULT_SHORTCUT_COMBOS.applyChanges, ne) ||
+      comboMatchesEvent(effectiveGridBindings.discardChanges ?? DEFAULT_SHORTCUT_COMBOS.discardChanges, ne)
+    ) {
+      return;
+    }
     if (comboMatchesEvent(effectiveGridBindings.gridInspector, ne)) {
       e.preventDefault();
       setInspectorOpen((o) => !o);
@@ -6957,7 +6969,14 @@ export const DataGrid = memo(function DataGrid({
         // 編集不可な列やアクティブセルが無い場合は `clearSelectedCells` 側で
         // 何もしない (early return) — その場合はブラウザ既定の挙動 (何もない)
         // に任せるため preventDefault しない。
-        if (editable && onBulkEdit && (selectionRect || activeCell)) {
+        if (
+          editable &&
+          onBulkEdit &&
+          (selectionRect || activeCell) &&
+          !e.ctrlKey &&
+          !e.metaKey &&
+          !e.altKey
+        ) {
           e.preventDefault();
           clearSelectedCells();
         }
@@ -8724,6 +8743,7 @@ export const ResultGrid = memo(
       fullExport,
       bundleContext,
       lastEditAppliedAt,
+      lastAppliedEdits,
       applyingEdits,
       onApplyRowEdits,
       onRunStatsQuery,
@@ -8857,17 +8877,12 @@ export const ResultGrid = memo(
     // lastEditAppliedAt の変化を検知して CSS animation クラスを一時的に追加し、
     // アニメーション完了後 (0.7s) に除去する。新しいタイムスタンプのときだけ発火させ、
     // 既に再生済み (タブ復帰時など) の時刻では何もしない。
-    // 直近に保留編集があったときのスナップショット。適用成功で pendingEdits が空になった後も、
-    // どのセルを光らせるか分かるように持つ (#2235)。
-    const lastPendingEditsRef = useRef<PendingEdits>({});
-    if (pendingEdits && countEditedCells(pendingEdits) > 0) lastPendingEditsRef.current = pendingEdits;
     const [applyFlash, setApplyFlash] = useState<{ seq: number; edits: PendingEdits } | null>(null);
     useEffect(() => {
       if (!lastEditAppliedAt) return;
       if (lastEditAppliedAt <= lastHandledApplyAtRef.current) return;
       lastHandledApplyAtRef.current = lastEditAppliedAt;
-      const edits = lastPendingEditsRef.current;
-      lastPendingEditsRef.current = {};
+      const edits = lastAppliedEdits ?? {};
       // セル編集を送ったときは変更のあったセルだけを光らせる。削除・追加だけの適用は、
       // 光らせるセルが無いので従来どおりグリッド全体を一瞬光らせる。
       if (countEditedCells(edits) > 0) {
@@ -8883,7 +8898,7 @@ export const ResultGrid = memo(
         window.clearTimeout(timer);
         el.classList.remove("is-apply-flash");
       };
-    }, [lastEditAppliedAt]);
+    }, [lastEditAppliedAt, lastAppliedEdits]);
 
     // ── 結果内検索 (Find in Results, #644) ──
     // 取得済み行を横断してヒットセルをハイライトし、Enter/Shift+Enter で前後の
@@ -9137,7 +9152,7 @@ export const ResultGrid = memo(
         },
         discardChanges: () => {
           const c = changeSetActionsRef.current;
-          if (!c.visible) return false;
+          if (!c.visible || c.applying) return false;
           setShowDiscardConfirm(true);
           return true;
         },

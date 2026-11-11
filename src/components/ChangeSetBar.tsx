@@ -54,15 +54,7 @@ const pillBase = {
   flexShrink: 0,
 } as const;
 
-function Pill({
-  pillKey,
-  tone,
-  children,
-}: {
-  pillKey: string;
-  tone: "update" | "insert" | "delete";
-  children: ReactNode;
-}) {
+function Pill({ tone, children }: { tone: "update" | "insert" | "delete"; children: ReactNode }) {
   const color =
     tone === "update"
       ? "var(--preview-highlight)"
@@ -71,7 +63,6 @@ function Pill({
         : "var(--text-error)";
   return (
     <motion.span
-      key={pillKey}
       layout
       data-change-pill={tone}
       initial={variants.fadeScale.initial}
@@ -142,23 +133,25 @@ export function ChangeSetBar(props: ChangeSetBarProps) {
             borderBottom="1px solid var(--border-subtle)"
             background="color-mix(in srgb, var(--preview-highlight) 8%, transparent)"
           >
-            <AnimatePresence initial={false}>
-              {editCells > 0 && (
-                <Pill pillKey="update" tone="update">
-                  {t("editPendingCount", { cells: editCells, rows: editRows })}
-                </Pill>
-              )}
-              {inserts > 0 && (
-                <Pill pillKey="insert" tone="insert">
-                  {t("changeSetPillInsert", { count: inserts })}
-                </Pill>
-              )}
-              {deletes > 0 && (
-                <Pill pillKey="delete" tone="delete">
-                  {t("changeSetPillDelete", { count: deletes })}
-                </Pill>
-              )}
-            </AnimatePresence>
+            <chakra.span display="contents" role="status" aria-live="polite">
+              <AnimatePresence initial={false}>
+                {editCells > 0 && (
+                  <Pill key="update" tone="update">
+                    {t("editPendingCount", { cells: editCells, rows: editRows })}
+                  </Pill>
+                )}
+                {inserts > 0 && (
+                  <Pill key="insert" tone="insert">
+                    {t("changeSetPillInsert", { count: inserts })}
+                  </Pill>
+                )}
+                {deletes > 0 && (
+                  <Pill key="delete" tone="delete">
+                    {t("changeSetPillDelete", { count: deletes })}
+                  </Pill>
+                )}
+              </AnimatePresence>
+            </chakra.span>
             {multiRowNote}
             <Tooltip label={t("editUndoTitle")}>
               <Button
@@ -184,11 +177,13 @@ export function ChangeSetBar(props: ChangeSetBarProps) {
                 <Icon name="redo" />
               </Button>
             </Tooltip>
-            <Tooltip focusableWrapper={!canPreview} label={previewTitle}>
-              <Button variant="warning" size="sm" px="2.5" onClick={onPreview} disabled={!canPreview}>
-                <Icon name="eye" size={ICON_SIZES.md} /> {t("editPreviewButton")}
-              </Button>
-            </Tooltip>
+            {editCells > 0 && (
+              <Tooltip focusableWrapper={!canPreview} label={previewTitle}>
+                <Button variant="warning" size="sm" px="2.5" onClick={onPreview} disabled={!canPreview}>
+                  <Icon name="eye" size={ICON_SIZES.md} /> {t("editPreviewButton")}
+                </Button>
+              </Tooltip>
+            )}
             <Tooltip
               focusableWrapper={!canApply}
               label={withKey(
@@ -208,7 +203,7 @@ export function ChangeSetBar(props: ChangeSetBarProps) {
               </LoadingButton>
             </Tooltip>
             <Tooltip label={withKey(t("changeSetDiscardTitle"), discardShortcut)}>
-              <Button variant="secondary" size="sm" px="2.5" onClick={onDiscard}>
+              <Button variant="secondary" size="sm" px="2.5" onClick={onDiscard} disabled={applying}>
                 <Icon name="close" size={ICON_SIZES.md} /> {t("editCancelButton")}
               </Button>
             </Tooltip>

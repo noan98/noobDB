@@ -1108,6 +1108,8 @@ export interface Tab {
    * Passed to `ResultGrid` to trigger a brief success-flash animation. In-memory only.
    */
   lastEditAppliedAt?: number;
+  /** 直近の適用で実際に送ったセル編集 (成功時のフラッシュ対象、#2235)。 */
+  lastAppliedEdits?: PendingEdits;
   /** True while the Apply Edits transaction is in flight for this tab. */
   applyingEdits?: boolean;
   /**
@@ -8162,7 +8164,12 @@ export default function App() {
         });
       }
       // 編集の適用で行数が変わりうる (削除・追加) ので、正確な件数 (#1627) は破棄する。
-      patchTab(tabId, (tt) => ({ ...tt, lastEditAppliedAt: Date.now(), exactRowCount: null }));
+      patchTab(tabId, (tt) => ({
+        ...tt,
+        lastEditAppliedAt: Date.now(),
+        lastAppliedEdits: pendingEdits,
+        exactRowCount: null,
+      }));
       // フライトレコーダーへ記録した (または辞退した) ことを知らせる (#2024)。記録は Undo 用の保険で、
       // 編集の成否には影響しない。
       if (captureNote && captureNote.recorded > 0) {
@@ -11698,6 +11705,8 @@ export default function App() {
       // は確定前の入力を取りこぼさないよう介入しない。
       const applyHit = comboMatchesEvent(bindingsRef.current.applyChanges, e);
       if (applyHit || comboMatchesEvent(bindingsRef.current.discardChanges, e)) {
+        // 確認ダイアログ (本番承認・破棄確認など) の最中と、キーの長押しリピートは無視する。
+        if (e.repeat || document.querySelector('[role="dialog"][aria-modal="true"]')) return;
         const el = e.target as HTMLElement | null;
         if (
           el &&
