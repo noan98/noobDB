@@ -98,9 +98,14 @@ import {
 import {
   applyWithRowCountGuard,
   appliedRowShortfall,
+  discardChangeSet,
   pendingEditsAfterApply,
+  pushEditHistory,
+  redoChangeSet,
   remainingAfterSent,
   tabStateAfterApply,
+  undoChangeSet,
+  type EditHistoryEntry,
 } from "./components/editApplyState";
 import { attachStreamStats } from "./components/streamStats";
 import { attachResultHandle, isResultGoneError, resultHandleFor } from "./components/resultHandle";
@@ -133,7 +138,13 @@ import {
   type ClosedTab,
 } from "./closedTabs";
 import { closeGuard, hasPendingChanges, isTabDirty, tabsWithPendingChanges } from "./tabDirty";
-import { decideReplaceGuard, discardedEditsForUndo, routeOfPageNav, type ReplaceRoute } from "./pendingGuard";
+import {
+  changeSetStatementText,
+  decideReplaceGuard,
+  discardedEditsForUndo,
+  routeOfPageNav,
+  type ReplaceRoute,
+} from "./pendingGuard";
 import { TabPaneStore } from "./tabPaneStore";
 import {
   PaneView,
@@ -1073,9 +1084,9 @@ export interface Tab {
    */
   pendingEdits: PendingEdits;
   /** Previous pendingEdits snapshots for Ctrl+Z undo. In-memory only (not persisted). */
-  editUndoStack: PendingEdits[];
+  editUndoStack: EditHistoryEntry[];
   /** Re-applicable snapshots for Ctrl+Shift+Z redo. Cleared when a new edit is made. */
-  editRedoStack: PendingEdits[];
+  editRedoStack: EditHistoryEntry[];
   /** 削除予定の行: rowEditKey のリスト。Apply で DELETE される。 */
   pendingDeletes?: string[];
   /** 追加予定の新規行: 各要素は colIdx→値。Apply で INSERT される。 */
@@ -1559,6 +1570,8 @@ export default function App() {
       gridInspector: shortcutBindings.gridInspector,
       gridUndo: shortcutBindings.gridUndo,
       gridRedo: shortcutBindings.gridRedo,
+      applyChanges: shortcutBindings.applyChanges,
+      discardChanges: shortcutBindings.discardChanges,
       gridPageNext: shortcutBindings.gridPageNext,
       gridPagePrev: shortcutBindings.gridPagePrev,
     }),
@@ -1568,6 +1581,8 @@ export default function App() {
       shortcutBindings.gridInspector,
       shortcutBindings.gridUndo,
       shortcutBindings.gridRedo,
+      shortcutBindings.applyChanges,
+      shortcutBindings.discardChanges,
       shortcutBindings.gridPageNext,
       shortcutBindings.gridPagePrev,
     ],
@@ -5132,7 +5147,7 @@ export default function App() {
         // 確認を省く内部の取り直し (Apply 後・再読込・取り込み後) は、送っていない削除予定・追加行を
         // 残す (Apply の往復中に増えた分を消さない)。確認を経た置き換えだけが 3 種を空にする。
         ...(override?.skipPendingGuard ? {} : { pendingDeletes: [], pendingInserts: [] }),
-        editUndoStack: pendingResolution.discarded ? [pendingResolution.discarded] : [],
+        editUndoStack: pendingResolution.discarded ? [{ edits: pendingResolution.discarded }] : [],
         editRedoStack: [],
         // A manual run of a non-read-only statement turns auto-refresh off so the
         // toggle never lingers "on" while silently skipping ticks. Read-only
@@ -6273,7 +6288,7 @@ export default function App() {
             pendingEdits: {},
             pendingDeletes: [],
             pendingInserts: [],
-            editUndoStack: pendingResolved.discarded ? [pendingResolved.discarded] : [],
+            editUndoStack: pendingResolved.discarded ? [{ edits: pendingResolved.discarded }] : [],
             editRedoStack: [],
             preview: null,
           };
@@ -6558,7 +6573,7 @@ export default function App() {
         pendingEdits: {},
         pendingDeletes: [],
         pendingInserts: [],
-        editUndoStack: pendingResolution.discarded ? [pendingResolution.discarded] : [],
+        editUndoStack: pendingResolution.discarded ? [{ edits: pendingResolution.discarded }] : [],
         editRedoStack: [],
       }));
       try {
@@ -7655,7 +7670,7 @@ export default function App() {
         } else {
           next[rowKey] = row;
         }
-        const undoStack = [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
+        const undoStack = pushEditHistory(tt.editUndoStack, { edits: tt.pendingEdits }, EDIT_UNDO_LIMIT);
         return { ...tt, pendingEdits: next, editUndoStack: undoStack, editRedoStack: [] };
       });
     },
@@ -7692,19 +7707,19 @@ export default function App() {
         // 解除対象がどこにも無かった場合は Undo スナップショットを積まない
         // (何も変わらないのに Undo が 1 手消費されるのを避ける)。
         if (!changed) return tt;
-        const undoStack = [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
+        const undoStack = pushEditHistory(tt.editUndoStack, { edits: tt.pendingEdits }, EDIT_UNDO_LIMIT);
         return { ...tt, pendingEdits: next, editUndoStack: undoStack, editRedoStack: [] };
       });
     },
     [patchTab],
   );
 
+  // 変更セット (セル編集・削除予定・追加行) を破棄する (#2235)。3 種とも Undo 履歴へ 1 世代として積む。
   const clearEditsForTab = useCallback(
     (tabId: string) => {
       patchTab(tabId, (tt) => {
-        if (Object.keys(tt.pendingEdits).length === 0) return tt;
-        const undoStack = [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
-        return { ...tt, pendingEdits: {}, editUndoStack: undoStack, editRedoStack: [] };
+        const patch = discardChangeSet(tt, EDIT_UNDO_LIMIT);
+        return patch ? { ...tt, ...patch } : tt;
       });
     },
     [patchTab],
@@ -7720,10 +7735,7 @@ export default function App() {
       markFeatureTried("helpDiscardTitle");
       void cancelStreamForTab(tabId);
       patchTab(tabId, (tt) => {
-        const undoStack =
-          Object.keys(tt.pendingEdits).length > 0
-            ? [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT)
-            : (tt.editUndoStack ?? []);
+        const discarded = discardChangeSet(tt, EDIT_UNDO_LIMIT) ?? {};
         // ストリーミング中に破棄した場合、previewQueryInTab の onDone/onError は
         // (リスナー detach 済みのため) 発火せず paginatable を復元できない。退避値
         // が残っていればここで復元する (#F3)。
@@ -7733,9 +7745,7 @@ export default function App() {
             : null;
         return {
           ...tt,
-          pendingEdits: {},
-          editUndoStack: undoStack,
-          editRedoStack: [],
+          ...discarded,
           preview: null,
           ...paginatableRestore,
         };
@@ -7747,11 +7757,8 @@ export default function App() {
   const undoCellEditForTab = useCallback(
     (tabId: string) => {
       patchTab(tabId, (tt) => {
-        const stack = tt.editUndoStack ?? [];
-        if (stack.length === 0) return tt;
-        const prev = stack[stack.length - 1];
-        const redoStack = [...(tt.editRedoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
-        return { ...tt, pendingEdits: prev, editUndoStack: stack.slice(0, -1), editRedoStack: redoStack };
+        const patch = undoChangeSet(tt, EDIT_UNDO_LIMIT);
+        return patch ? { ...tt, ...patch } : tt;
       });
     },
     [patchTab],
@@ -7762,11 +7769,8 @@ export default function App() {
   const redoCellEditForTab = useCallback(
     (tabId: string) => {
       patchTab(tabId, (tt) => {
-        const stack = tt.editRedoStack ?? [];
-        if (stack.length === 0) return tt;
-        const next = stack[stack.length - 1];
-        const undoStack = [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
-        return { ...tt, pendingEdits: next, editUndoStack: undoStack, editRedoStack: stack.slice(0, -1) };
+        const patch = redoChangeSet(tt, EDIT_UNDO_LIMIT);
+        return patch ? { ...tt, ...patch } : tt;
       });
     },
     [patchTab],
@@ -7907,7 +7911,14 @@ export default function App() {
       if (needsWriteApproval) {
         const ok = await confirm({
           title: translate("editApplyConfirmTitle"),
-          message: translate("editApplyConfirmBody", { count: opCount }),
+          message: translate("editApplyConfirmBody", {
+            count: opCount,
+            statements: changeSetStatementText({
+              editedRows: updateRowCount,
+              inserts: pendingInserts.length,
+              deletes: deletes.length,
+            }),
+          }),
           confirmLabel: translate("editApplyButton"),
           tone: "warning",
         });
@@ -8370,14 +8381,6 @@ export default function App() {
     (tabId: string, rows: PendingInsertRow[]) => {
       if (rows.length === 0) return;
       patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), ...rows] }));
-    },
-    [patchTab],
-  );
-
-  // 行操作 (追加/削除) の保留を破棄する。
-  const discardRowOpsForTab = useCallback(
-    (tabId: string) => {
-      patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [] }));
     },
     [patchTab],
   );
@@ -11689,6 +11692,27 @@ export default function App() {
         }
         return;
       }
+      // Cmd/Ctrl+S → フォーカス中ペインの変更セットバー (セル編集・追加行・削除予定) を適用、
+      // Cmd/Ctrl+Shift+Backspace → 破棄 (確認あり) (#2235)。バーが出ていない・適用できないときは
+      // グリッド側が false を返すので何もせず素通しする。テキスト入力中 (セル編集 input / エディタ)
+      // は確定前の入力を取りこぼさないよう介入しない。
+      const applyHit = comboMatchesEvent(bindingsRef.current.applyChanges, e);
+      if (applyHit || comboMatchesEvent(bindingsRef.current.discardChanges, e)) {
+        const el = e.target as HTMLElement | null;
+        if (
+          el &&
+          (el.tagName === "INPUT" ||
+            el.tagName === "TEXTAREA" ||
+            el.tagName === "SELECT" ||
+            el.isContentEditable ||
+            el.closest?.(".cm-editor"))
+        ) {
+          return;
+        }
+        const grid = resultGridRefs.current.get(activePaneIdRef.current ?? "");
+        if (grid && (applyHit ? grid.applyChanges() : grid.discardChanges())) e.preventDefault();
+        return;
+      }
       // Ctrl+Tab / Ctrl+Shift+Tab → next / previous tab within the focused pane
       // (wraps around). Uses Ctrl on every platform; Cmd+Tab is the macOS app
       // switcher.
@@ -12965,7 +12989,6 @@ export default function App() {
     clearEditsForTab,
     closePane,
     discardEditsAndPreviewForTab,
-    discardRowOpsForTab,
     explainForTab,
     fetchAllForTab,
     focusPane,

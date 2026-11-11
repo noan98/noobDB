@@ -52,3 +52,25 @@ export function collectCopyFlashKeys(cellKeys: Iterable<string>, range: CopyFlas
   }
   return out;
 }
+
+/**
+ * 変更セットの適用に成功したとき光らせるセル (#2235)。適用した保留編集 (rowEditKey → 列 →
+ * 値) と同じ (行, 列) にあたる、いま DOM にあるセルのキーだけを返す。`rowKeyOf` は行インデックス
+ * から `rowEditKey` を引く。削除した行は表示から消え、追加行は取り直しで入るので対象外。
+ */
+export function collectAppliedFlashKeys(
+  cellKeys: Iterable<string>,
+  applied: Readonly<Record<string, Readonly<Record<number, unknown>>>>,
+  rowKeyOf: (rowIdx: number) => string,
+): string[] {
+  const out: string[] = [];
+  for (const key of cellKeys) {
+    const sep = key.indexOf(":");
+    if (sep < 0) continue;
+    const rowIdx = Number(key.slice(0, sep));
+    const colIdx = Number(key.slice(sep + 1));
+    const row = applied[rowKeyOf(rowIdx)];
+    if (row && row[colIdx] !== undefined) out.push(key);
+  }
+  return out;
+}

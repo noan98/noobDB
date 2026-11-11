@@ -46,14 +46,105 @@ export function pendingEditsAfterApply(current: PendingEdits, applied: PendingEd
   return next;
 }
 
+/** 削除予定・追加行の保留 (変更セットの「行操作」側)。 */
+export interface RowOpsSnapshot {
+  pendingDeletes: string[];
+  pendingInserts: PendingInsertRow[];
+}
+
+/**
+ * Undo / Redo 履歴の 1 世代 (#2235)。セル編集の世代は `edits` だけ。変更セットの「破棄」は
+ * 削除予定・追加行も一緒に積む (`rowOps`)。`rowOps` がある世代へ戻る / やり直すときだけ
+ * 行操作も入れ替え、無い世代 (通常のセル編集) は行操作に触れない。
+ */
+export interface EditHistoryEntry {
+  edits: PendingEdits;
+  rowOps?: RowOpsSnapshot;
+}
+
+/** 履歴に 1 世代足し、上限を超えた古い世代を捨てる。 */
+export function pushEditHistory(
+  stack: readonly EditHistoryEntry[] | undefined,
+  entry: EditHistoryEntry,
+  limit: number,
+): EditHistoryEntry[] {
+  return [...(stack ?? []), entry].slice(-limit);
+}
+
+type ChangeSetTab = {
+  pendingEdits: PendingEdits;
+  pendingDeletes?: string[];
+  pendingInserts?: PendingInsertRow[];
+  editUndoStack?: EditHistoryEntry[];
+  editRedoStack?: EditHistoryEntry[];
+};
+
+function currentRowOps(tt: ChangeSetTab): RowOpsSnapshot {
+  return { pendingDeletes: tt.pendingDeletes ?? [], pendingInserts: tt.pendingInserts ?? [] };
+}
+
+/**
+ * 変更セット (セル編集・削除予定・追加行) をまとめて破棄する (#2235)。破棄した内容は Undo 履歴へ
+ * 1 世代として積み、Ctrl+Z で 3 種とも戻せる。何も無いときは null (状態を変えない)。
+ */
+export function discardChangeSet(tt: ChangeSetTab, limit: number): Partial<ChangeSetTab> | null {
+  const ops = currentRowOps(tt);
+  const hasEdits = Object.keys(tt.pendingEdits).length > 0;
+  const hasOps = ops.pendingDeletes.length > 0 || ops.pendingInserts.length > 0;
+  if (!hasEdits && !hasOps) return null;
+  return {
+    pendingEdits: {},
+    pendingDeletes: [],
+    pendingInserts: [],
+    editUndoStack: pushEditHistory(
+      tt.editUndoStack,
+      hasOps ? { edits: tt.pendingEdits, rowOps: ops } : { edits: tt.pendingEdits },
+      limit,
+    ),
+    editRedoStack: [],
+  };
+}
+
+/** Undo: 直前の世代へ戻す。履歴が空なら null。 */
+export function undoChangeSet(tt: ChangeSetTab, limit: number): Partial<ChangeSetTab> | null {
+  const stack = tt.editUndoStack ?? [];
+  const prev = stack[stack.length - 1];
+  if (!prev) return null;
+  const redoEntry: EditHistoryEntry = prev.rowOps
+    ? { edits: tt.pendingEdits, rowOps: currentRowOps(tt) }
+    : { edits: tt.pendingEdits };
+  return {
+    pendingEdits: prev.edits,
+    ...(prev.rowOps ?? {}),
+    editUndoStack: stack.slice(0, -1),
+    editRedoStack: pushEditHistory(tt.editRedoStack, redoEntry, limit),
+  };
+}
+
+/** Redo: やり直す。履歴が空なら null。 */
+export function redoChangeSet(tt: ChangeSetTab, limit: number): Partial<ChangeSetTab> | null {
+  const stack = tt.editRedoStack ?? [];
+  const next = stack[stack.length - 1];
+  if (!next) return null;
+  const undoEntry: EditHistoryEntry = next.rowOps
+    ? { edits: tt.pendingEdits, rowOps: currentRowOps(tt) }
+    : { edits: tt.pendingEdits };
+  return {
+    pendingEdits: next.edits,
+    ...(next.rowOps ?? {}),
+    editUndoStack: pushEditHistory(tt.editUndoStack, undoEntry, limit),
+    editRedoStack: stack.slice(0, -1),
+  };
+}
+
 /** 適用に関わるタブ状態の最小形。 */
 export interface ApplyTabState<R extends ApplyResultLike = ApplyResultLike> {
   result: R | null;
   pendingEdits: PendingEdits;
   pendingDeletes?: string[];
   pendingInserts?: PendingInsertRow[];
-  editUndoStack?: PendingEdits[];
-  editRedoStack?: PendingEdits[];
+  editUndoStack?: EditHistoryEntry[];
+  editRedoStack?: EditHistoryEntry[];
 }
 
 export interface ApplyTransition {
