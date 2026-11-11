@@ -4,8 +4,10 @@ import {
   memo,
   Suspense,
   useCallback,
+  useEffect,
   useMemo,
   useRef,
+  useState,
   useSyncExternalStore,
   type ComponentProps,
   type MutableRefObject,
@@ -38,6 +40,15 @@ import { Splitter } from "./Splitter";
 import { changeSetStatementText, pendingChangeCounts } from "../pendingGuard";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Button } from "./ui";
+import { DrillChip } from "./DrillChip";
+import {
+  drillStillApplied,
+  drillSummary,
+  type ColumnFilterEntry,
+  type ColumnFilterRequest,
+  type DrillCondition,
+  type DrillSource,
+} from "./drillFilter";
 import { buildTabsEmptyActions } from "./tabsEmptyActions";
 import { buildResultEmptyActions } from "./resultEmptyActions";
 import { readOnlyWithHint } from "../dangerousSql";
@@ -142,6 +153,24 @@ function sameTabs(a: Tab[], b: Tab[]): boolean {
  *   ハンドラへ委譲する。ペインはこれを経由して App の state を触る。
  * - ここに無い値を `App` のクロージャ越しに読まない (古い値を掴むため)。
  */
+/** ピボット / チャートから絞り込んで移ったグリッドの状態 (#2236)。 */
+interface DrillEntry {
+  source: DrillSource;
+  conditions: DrillCondition[];
+  /** 絞り込み元の結果。タブの結果が入れ替わったら (再実行など) 無効にする。 */
+  result: QueryResult;
+  /** 元ビューのスクロール位置 (戻ったときに復元する)。 */
+  scrollTop: number;
+  /** グリッドへまだ渡していない列フィルタ要求。適用されたら `null`。 */
+  request: ColumnFilterRequest | null;
+  /** 「絞り込みを外す」済み、またはグリッド側で外された (チップを出さない)。 */
+  cleared: boolean;
+  /** 適用前に掛かっていた列フィルタ。「絞り込みを外す」で元に戻す。 */
+  previous: ColumnFilterEntry[];
+  /** `previous` を前の drill から引き継いだ (適用時に控え直さない)。 */
+  inheritedPrevious?: boolean;
+}
+
 export interface PaneActions {
   applyEditsForTab: (tab: Tab, rowScope?: PendingEdits) => Promise<boolean>;
   clearEditsForTab: (tabId: string) => void;
@@ -422,8 +451,89 @@ export const PaneView = memo(
       tabBarItemsRef.current = next;
       return next;
     }, [paneTabs, dirtyTick, getTabSql, dirtyWatcher]);
+    // ピボット / チャートから絞り込んで移ったグリッドの状態 (#2236)。タブごとに 1 件。
+    // `result` は絞り込み元の結果で、再実行などで結果が入れ替わったら無効 (チップを出さない)。
+    const [drills, setDrills] = useState<Record<string, DrillEntry>>({});
+    const startDrill = (
+      target: Tab,
+      source: DrillSource,
+      drill: { conditions: DrillCondition[]; scrollTop: number },
+    ) => {
+      const result = target.result;
+      if (!result) return;
+      setDrills((prev) => {
+        // 絞り込み中のまま別の集計キーへ drill し直したときは、最初の drill 前のフィルタを
+        // 引き継ぐ (前の drill のフィルタを「元の状態」として控えると、外しても戻らない)。
+        const before = prev[target.id];
+        const inherited = before && !before.cleared && before.result === result ? before.previous : null;
+        return {
+          ...prev,
+          [target.id]: {
+            source,
+            conditions: drill.conditions,
+            result,
+            scrollTop: drill.scrollTop,
+            request: { mode: "apply", conditions: drill.conditions },
+            cleared: false,
+            previous: inherited ?? [],
+            inheritedPrevious: inherited !== null,
+          },
+        };
+      });
+      actions.setResultView(target.id, "grid");
+    };
+    // 絞り込みを外す: チップは畳み、グリッドへ「条件の列のフィルタを外す」要求を送る。
+    const clearDrill = (tabId: string) =>
+      setDrills((prev) => {
+        const e = prev[tabId];
+        if (!e) return prev;
+        return {
+          ...prev,
+          [tabId]: {
+            ...e,
+            cleared: true,
+            request: { mode: "clear", conditions: e.conditions, restore: e.previous },
+          },
+        };
+      });
+    // グリッドが要求を適用したら下げる (グリッドの再マウントで同じ要求を再適用しないため)。
+    const markDrillApplied = (tabId: string, previous: ColumnFilterEntry[]) =>
+      setDrills((prev) => {
+        const e = prev[tabId];
+        if (!e?.request) return prev;
+        // 適用前のフィルタは apply のときだけ控える (clear の適用前は絞り込み後の状態)。
+        return {
+          ...prev,
+          [tabId]: {
+            ...e,
+            request: null,
+            previous: e.cleared || e.inheritedPrevious ? e.previous : previous,
+          },
+        };
+      });
+    // グリッド側でフィルタが変わった。条件の列のフィルタが drill の値と食い違ったら
+    // (手動で外した・変えた) チップを畳む。要求の適用待ち・畳み済みのときは見ない。
+    const onDrillFiltersChange = (tabId: string, filters: ColumnFilterEntry[]) =>
+      setDrills((prev) => {
+        const e = prev[tabId];
+        if (!e || e.cleared || e.request || drillStillApplied(filters, e.conditions)) return prev;
+        return { ...prev, [tabId]: { ...e, cleared: true } };
+      });
+    // タブが閉じた・結果が入れ替わった (再実行など) ら、古い結果を持ち続けないよう捨てる。
+    useEffect(() => {
+      setDrills((prev) => {
+        let changed = false;
+        const next: Record<string, DrillEntry> = {};
+        for (const [id, e] of Object.entries(prev)) {
+          if (paneTabs.find((tt) => tt.id === id)?.result === e.result) next[id] = e;
+          else changed = true;
+        }
+        return changed ? next : prev;
+      });
+    }, [paneTabs]);
     if (!pane) return null;
     const tab = paneTabs.find((tt) => tt.id === pane.activeTabId) ?? null;
+    const drill = tab && tab.result && drills[tab.id]?.result === tab.result ? drills[tab.id] : null;
     const paneDatabase = tab?.database ?? selectedProfile?.database ?? null;
     const paneSchema = schemaForDatabase(paneDatabase);
     const summary = tab
@@ -833,6 +943,8 @@ export const PaneView = memo(
                                       : undefined
                                   }
                                   onChangeView={(v) => actions.setResultView(tab.id, v)}
+                                  onDrill={(d) => startDrill(tab, "chart", d)}
+                                  initialScrollTop={drill?.source === "chart" ? drill.scrollTop : undefined}
                                 />
                               ) : tab.showJson && tab.result && !tab.streaming ? (
                                 <ResultJsonView
@@ -850,6 +962,8 @@ export const PaneView = memo(
                                   sourceSql={tab.lastExecutedSql}
                                   onSendToEditor={actions.openQueryInEditor}
                                   onChangeView={(v) => actions.setResultView(tab.id, v)}
+                                  onDrill={(d) => startDrill(tab, "pivot", d)}
+                                  initialScrollTop={drill?.source === "pivot" ? drill.scrollTop : undefined}
                                 />
                               ) : tab.preview ? (
                                 <PreviewGrid
@@ -890,10 +1004,39 @@ export const PaneView = memo(
                       >
                         <ResultExplainContext.Provider value={explainCtxValue}>
                           <Flex direction="column" h="100%" minH={0} minW={0}>
+                            {/* ピボット / チャートから絞り込んで来たことを示す帯 (#2236)。出入りは springs.snappy。 */}
+                            <AnimatePresence initial={false}>
+                              {drill && !drill.cleared && (
+                                <DrillChip
+                                  key={tab.id}
+                                  source={drill.source}
+                                  summary={drillSummary(drill.conditions, "NULL")}
+                                  // table タブのサーバ側ページングは取得済みの 1 ページぶんだけが対象
+                                  // (ピボットの集計も取得済みの行に対するクライアント集計)。
+                                  count={
+                                    tab.kind === "table" && tab.paginatable
+                                      ? drill.result.rows.length
+                                      : undefined
+                                  }
+                                  onBack={() => actions.setResultView(tab.id, drill.source)}
+                                  onClear={() => clearDrill(tab.id)}
+                                />
+                              )}
+                            </AnimatePresence>
                             <ResultGridSlot register={getGridRefSetter(pane.id)}>
                               {(gridRef) => (
                                 <ResultGrid
                                   ref={gridRef}
+                                  columnFilterRequest={drill?.request ?? null}
+                                  onColumnFilterRequestApplied={gridStable.fn(
+                                    `${tab.id}:drillApplied`,
+                                    (info: { previous: ColumnFilterEntry[] }) =>
+                                      markDrillApplied(tab.id, info.previous),
+                                  )}
+                                  onColumnFiltersChange={gridStable.fn(
+                                    `${tab.id}:drillFilters`,
+                                    (filters: ColumnFilterEntry[]) => onDrillFiltersChange(tab.id, filters),
+                                  )}
                                   gridBindings={gridBindings}
                                   emptyActions={tab.kind === "query" ? resultEmptyActions : undefined}
                                   result={tab.result}
