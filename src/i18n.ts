@@ -3800,6 +3800,54 @@ const en = {
     "These statements permanently remove columns or constraints, and the data in them cannot be restored. Check the SQL below before applying.",
   alterTableConfirmTitle: "Apply these changes to {table}?",
   alterTableConfirmBody: "The following statements will run:",
+  ddlLockTimeoutLabel: "Limit how long to wait for locks",
+  ddlLockTimeoutSecs: "seconds",
+  ddlLockTimeoutHintPostgres:
+    "Runs SET LOCAL lock_timeout = '{secs}s' first. If another session holds a conflicting lock, the DDL fails instead of making every later query on the table queue behind it. Not applied to CONCURRENTLY steps. Change the default in Settings.",
+  ddlLockTimeoutHintMysql:
+    "Runs SET SESSION lock_wait_timeout = {secs} first (restored afterwards). If another session holds a metadata lock, the DDL fails instead of making every later query on the table queue behind it. It can also fail on the lock wait right before the DDL finishes, in which case the whole ALTER is rolled back. Off by default for MySQL; change it in Settings.",
+  ddlLockTimeoutOff: "No lock wait limit: the DDL waits as long as it takes for the lock.",
+  settingsDdlLockTimeout: "DDL lock wait limit, PostgreSQL (seconds)",
+  settingsDdlLockTimeoutMysql: "DDL lock wait limit, MySQL (seconds)",
+  settingsDdlLockTimeoutMysqlHelp:
+    "Off (0) by default so MySQL behavior stays as it was. Sets lock_wait_timeout for table alterations and index changes. It can also fail on the lock wait right before the DDL finishes, which rolls back the whole ALTER.",
+  settingsDdlLockTimeoutHelp:
+    "When altering a table or creating / dropping an index, give up if the lock cannot be acquired within this many seconds (PostgreSQL lock_timeout / MySQL lock_wait_timeout). 0 disables it.",
+  onlineStagedToggle: "Apply with the online procedure (NOT VALID then VALIDATE / CONCURRENTLY)",
+  onlineStagedHint:
+    "Runs in stages, each in its own transaction: constraints are added NOT VALID and validated afterwards (SHARE UPDATE EXCLUSIVE, reads and writes continue), SET NOT NULL goes through a temporary CHECK (PostgreSQL 12 or later avoids the full scan), and indexes are built with CONCURRENTLY outside a transaction. If a stage fails, earlier stages stay applied.",
+  ddlRunProgress: "Running stage {done}/{total}...",
+  ddlReportTitle: "Stopped at stage {stage}/{total} - {done} stage(s) were applied",
+  ddlReportTitleSingle: "The DDL failed",
+  ddlReportFailedStep: "Failed stage:",
+  ddlReportError: "Error: {error}",
+  ddlReportAppliedNote:
+    "The stages before it are already applied and were not rolled back. The failed stage itself was rolled back (except CONCURRENTLY, see below).",
+  ddlReportLockTimeout:
+    "The lock wait limit was exceeded. Another session probably holds a lock on this table (a long transaction, or a queued DDL). Check who is blocking in the process list wait chain, then retry.",
+  ddlReportOpenProcesses: "Open process list",
+  ddlReportInvalidLeft:
+    "An INVALID index was left behind by the failed CONCURRENTLY statement. It slows down writes and does not serve queries. Drop it with the statement below before retrying.",
+  ddlReportInvalidGone: "No INVALID index was left behind.",
+  ddlReportInvalidUnknown:
+    "Could not check whether an INVALID index was left behind. Look for indisvalid = false in pg_index, and drop it with the statement below if present.",
+  ddlReportCleanup: "To clean up what was left half-done",
+  ddlReportRemaining: "Remaining stages (from the failed one)",
+  ddlReportConcurrentlyNote:
+    "The remaining SQL contains CONCURRENTLY statements. In the editor, run them one statement at a time (they cannot run inside a transaction or as a multi-statement batch).",
+  ddlReportCleanupToEditor: "Cleanup SQL to editor",
+  ddlReportRemainingToEditor: "Remaining SQL to editor",
+  ddlReportFailedToast: "DDL failed: {error}",
+  ddlReportLockTimeoutToast: "DDL gave up waiting for a lock: {error}",
+  createIndexConcurrentlyToggle: "Create with CONCURRENTLY (does not block writes)",
+  createIndexConcurrentlyAuto: "Turned on by default because the table has about {rows} rows or more.",
+  createIndexConcurrentlyHint:
+    "Runs outside a transaction and takes longer, but writes continue during the build. If it fails (a duplicate value for UNIQUE, a cancel, a deadlock) an INVALID index is left behind; the app tells you and offers the DROP INDEX CONCURRENTLY to clean it up.",
+  alterTableConfirmBodyOnline:
+    "The statements run in the stages below, each in its own transaction. If a stage fails, the earlier stages stay applied and the screen shows how far it got. CONCURRENTLY failures can leave an INVALID index behind.",
+  contextMenuDropIndexConcurrently: "Drop index (CONCURRENTLY)...",
+  dropIndexConfirmBodyConcurrently:
+    "This removes the index {index} on {table} without blocking writes (DROP INDEX CONCURRENTLY, outside a transaction). This cannot be undone. If it fails, the index may be left INVALID; run it again to finish.",
   alterTableCtxItemChecks: "CHECK constraints",
   alterTableExistingChecks: "Existing CHECK constraints",
   alterTableDropCheck: "Drop CHECK constraint {name}",
@@ -11860,6 +11908,54 @@ const ja: Dict = {
     "列や制約を削除する文が含まれています。削除した列のデータは元に戻せません。適用前に下の SQL を確認してください。",
   alterTableConfirmTitle: "{table} にこの変更を適用しますか?",
   alterTableConfirmBody: "以下の文が実行されます:",
+  ddlLockTimeoutLabel: "ロック待ちの上限を付ける",
+  ddlLockTimeoutSecs: "秒",
+  ddlLockTimeoutHintPostgres:
+    "先頭に SET LOCAL lock_timeout = '{secs}s' を付けて実行します。ほかの接続が衝突するロックを持っているとき、DDL は待ち続けず失敗します (待っている間、後続のクエリが全部この表で並んで待たされる事故を防ぎます)。CONCURRENTLY の段階には付けません。既定値は設定画面で変えられます。",
+  ddlLockTimeoutHintMysql:
+    "先頭に SET SESSION lock_wait_timeout = {secs} を付けて実行します (実行後に元へ戻します)。ほかの接続がメタデータロックを持っているとき、DDL は待ち続けず失敗します (後続のクエリが全部この表で並んで待たされる事故を防ぎます)。DDL の完了直前のロック待ちでも失敗し、その場合は ALTER 全体がロールバックされます。MySQL の既定はオフです。設定画面で変えられます。",
+  ddlLockTimeoutOff: "ロック待ちの上限なし: ロックが取れるまで DDL は待ち続けます。",
+  settingsDdlLockTimeout: "DDL のロック待ち上限・PostgreSQL (秒)",
+  settingsDdlLockTimeoutMysql: "DDL のロック待ち上限・MySQL (秒)",
+  settingsDdlLockTimeoutMysqlHelp:
+    "既存の挙動を変えないため、MySQL の既定はオフ (0) です。テーブル変更・インデックス操作に lock_wait_timeout を付けます。DDL の完了直前のロック待ちでも失敗し、その場合は ALTER 全体がロールバックされます。",
+  settingsDdlLockTimeoutHelp:
+    "テーブルの変更・インデックスの作成 / 削除で、この秒数以内にロックが取れなければ待たずに失敗させます (PostgreSQL の lock_timeout / MySQL の lock_wait_timeout)。0 で付けません。",
+  onlineStagedToggle: "オンライン手順で適用 (NOT VALID → VALIDATE / CONCURRENTLY)",
+  onlineStagedHint:
+    "段階ごとに別のトランザクションで流します。制約は NOT VALID で追加してから VALIDATE (SHARE UPDATE EXCLUSIVE のため読み書きと並行して動く)、SET NOT NULL は一時的な CHECK を経由 (PostgreSQL 12 以降は全件走査を避けられる)、インデックスはトランザクション外で CONCURRENTLY 作成します。途中で失敗しても、それまでの段階は適用済みのまま残ります。",
+  ddlRunProgress: "段階 {done}/{total} を実行中...",
+  ddlReportTitle: "段階 {stage}/{total} で止まりました (適用済み: {done} 段階)",
+  ddlReportTitleSingle: "DDL に失敗しました",
+  ddlReportFailedStep: "失敗した段階:",
+  ddlReportError: "エラー: {error}",
+  ddlReportAppliedNote:
+    "それより前の段階は適用済みで、ロールバックされません。失敗した段階自体は取り消されています (CONCURRENTLY を除く。下記)。",
+  ddlReportLockTimeout:
+    "ロック待ちの上限を超えました。ほかの接続がこの表のロックを持っている可能性があります (長いトランザクションや、待機中の DDL など)。プロセス一覧の待機チェーンで誰が塞いでいるかを確認してから、やり直してください。",
+  ddlReportOpenProcesses: "プロセス一覧を開く",
+  ddlReportInvalidLeft:
+    "失敗した CONCURRENTLY の文が INVALID なインデックスを残しています。書き込みを遅くするだけで検索には使われません。やり直す前に、下の文で削除してください。",
+  ddlReportInvalidGone: "INVALID なインデックスは残っていません。",
+  ddlReportInvalidUnknown:
+    "INVALID なインデックスが残っているか確認できませんでした。pg_index の indisvalid = false を調べ、あれば下の文で削除してください。",
+  ddlReportCleanup: "中途半端に残ったものを片付ける SQL",
+  ddlReportRemaining: "残りの段階 (失敗した段階から)",
+  ddlReportConcurrentlyNote:
+    "残りの SQL に CONCURRENTLY の文が含まれます。エディタでは 1 文ずつ実行してください (トランザクション内や複数文の一括実行では動きません)。",
+  ddlReportCleanupToEditor: "片付けの SQL をエディタへ",
+  ddlReportRemainingToEditor: "残りの SQL をエディタへ",
+  ddlReportFailedToast: "DDL に失敗しました: {error}",
+  ddlReportLockTimeoutToast: "ロックが取れず DDL を中止しました: {error}",
+  createIndexConcurrentlyToggle: "CONCURRENTLY で作成 (書き込みを止めない)",
+  createIndexConcurrentlyAuto: "概算 {rows} 行以上の表なので、既定でオンにしています。",
+  createIndexConcurrentlyHint:
+    "トランザクション外で実行し、時間はかかりますが構築中も書き込みを止めません。失敗 (UNIQUE の重複値・キャンセル・デッドロックなど) すると INVALID なインデックスが残ります。その場合はこの画面でお知らせし、片付けの DROP INDEX CONCURRENTLY を示します。",
+  alterTableConfirmBodyOnline:
+    "次の段階に分け、段階ごとに別のトランザクションで実行します。途中で失敗すると、それまでの段階は適用済みのまま残り、どこまで進んだかを画面に表示します。CONCURRENTLY の失敗では INVALID なインデックスが残ることがあります。",
+  contextMenuDropIndexConcurrently: "インデックスを DROP (CONCURRENTLY)",
+  dropIndexConfirmBodyConcurrently:
+    "{table} のインデックス {index} を、書き込みを止めずに削除します (DROP INDEX CONCURRENTLY、トランザクション外で実行)。この操作は取り消せません。失敗するとインデックスが INVALID のまま残ることがあります。その場合はもう一度実行すると完了します。",
   alterTableCtxItemChecks: "CHECK 制約",
   alterTableExistingChecks: "既存の CHECK 制約",
   alterTableDropCheck: "CHECK 制約 {name} を削除",

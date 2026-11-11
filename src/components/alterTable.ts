@@ -39,7 +39,7 @@
 // 呼び出し側 (i18n) に任せる — このモジュールは表示に依存しない。
 
 import type { SqliteRebuildEdit } from "../api/tauri";
-import { qualifiedTableName, quoteIdentFor } from "./sqlDialect";
+import { fitPgName, qualifiedTableName, quoteIdentFor } from "./sqlDialect";
 import {
   activeGenerated,
   CURRENT_TIME_FN_RE,
@@ -185,6 +185,8 @@ export interface AlterTableForm {
   droppedForeignKeys?: string[];
   /** 削除する CHECK 制約の制約名 (#1191)。 */
   droppedChecks?: string[];
+  /** PostgreSQL のオンライン手順 (#2240): 既存の FK / CHECK の制約名。無名の制約の自動名が衝突しないよう照合する。 */
+  existingConstraintNames?: string[];
   /**
    * SQLite (#1888): 現状の外部キー。SQLite の FK は実在の制約名を持たない (合成名 `表:id`) ので、
    * `droppedForeignKeys` の名前から (列, 参照先) を引いて再作成に渡す。
@@ -208,11 +210,25 @@ export type AlterStatementKind =
   /** SQLite のテーブル再作成 (#1888)。`AlterPlan.rebuild` から呼び出し側が差し込む。 */
   | "rebuildTable";
 
+/**
+ * PostgreSQL の「ロックを長く持たない手順」(`onlineDdl.ts`, #2240) へ組み替えるための構造化ヒント。
+ * SQL 文字列を正規表現で解析し直さずに済むよう、文を作る側が付ける (PostgreSQL の文だけ)。
+ */
+export type OnlineHint =
+  /** FK / CHECK の追加。`clause` は `CONSTRAINT <name> ...` まで含む句 (無名のときは自動名を補う)。 */
+  | { type: "constraint"; table: string; name: string; clause: string }
+  /** `SET NOT NULL`。`table` / `column` は引用符つき識別子、`columnName` は素の列名。 */
+  | { type: "setNotNull"; table: string; column: string; columnName: string }
+  /** `CREATE [UNIQUE] INDEX`。`name` は素のインデックス名。 */
+  | { type: "index"; name: string };
+
 export interface AlterStatement {
   sql: string;
   kind: AlterStatementKind;
   /** true は `DROP COLUMN` — 呼び出し側の危険操作確認のゲートに使う。 */
   destructive: boolean;
+  /** PostgreSQL のオンライン手順へ組み替えられる文に付く (#2240)。 */
+  online?: OnlineHint;
 }
 
 /** 文にできなかった編集の理由コード (#1893)。文言は呼び出し側 (i18n) が組み立てる。 */
@@ -500,6 +516,9 @@ function planExistingColumn(
         sql: `ALTER TABLE ${tIdent} ALTER COLUMN ${newIdent} ${clause};`,
         kind: "modifyColumn",
         destructive: false,
+        ...(edit.notNull
+          ? { online: { type: "setNotNull", table: tIdent, column: newIdent, columnName: newName } as const }
+          : {}),
       });
     }
     if (defaultChanged) {
@@ -526,6 +545,24 @@ function planExistingColumn(
   pushColumnComment();
 }
 
+/**
+ * オンライン手順用の制約ヒント (#2240)。VALIDATE CONSTRAINT は制約名で対象を指すので、無名の制約には
+ * PostgreSQL の自動命名と同じ形 (`<表>_<列>_fkey` / `<表>_check`) の名前を補う。識別子は引用符つきなので
+ * 日本語の列名もそのまま使い、63 バイトは UTF-8 の文字境界で切る。同じ計画の中・既存の制約名とは連番で避ける。
+ * 名前を付けた版の句は `build` で作り直す。
+ */
+function onlineConstraintHint(
+  tIdent: string,
+  given: string,
+  auto: { stem: string; suffix: string },
+  taken: Set<string>,
+  build: (name: string) => string,
+): OnlineHint {
+  const name = given.trim() || fitPgName(auto.stem, auto.suffix, taken);
+  taken.add(name);
+  return { type: "constraint", table: tIdent, name, clause: build(name) };
+}
+
 /** FK / CHECK の追加・削除文を組み立てる (#1191)。SQLite は再作成で行うのでここへは来ない。 */
 function planConstraints(
   driver: string,
@@ -537,6 +574,14 @@ function planConstraints(
   const dropChecks = (form.droppedChecks ?? []).map((n) => n.trim()).filter((n) => n);
   const addFks = (form.addedForeignKeys ?? []).filter(isCompleteForeignKey);
   const addChecks = (form.addedChecks ?? []).filter(isCompleteCheck);
+  // 自動名の衝突を避けるための、既存・指定済みの制約名 (オンライン手順用、PostgreSQL)。
+  const taken = new Set<string>([
+    ...(form.existingConstraintNames ?? []),
+    ...addFks.map((f) => f.name.trim()).filter((n) => n),
+    ...addChecks.map((c) => c.name.trim()).filter((n) => n),
+  ]);
+  for (const n of dropFks) taken.delete(n);
+  for (const n of dropChecks) taken.delete(n);
 
   for (const n of dropFks) {
     statements.push({
@@ -553,17 +598,35 @@ function planConstraints(
     });
   }
   for (const fk of addFks) {
+    const online =
+      driver === "postgres"
+        ? onlineConstraintHint(
+            tIdent,
+            fk.name,
+            { stem: `${form.table}_${fk.columns.map((c) => c.trim()).join("_")}`, suffix: "_fkey" },
+            taken,
+            (name) => foreignKeyClause(driver, form.database, { ...fk, name }),
+          )
+        : undefined;
     statements.push({
       sql: `ALTER TABLE ${tIdent} ADD ${foreignKeyClause(driver, form.database, fk)};`,
       kind: "addForeignKey",
       destructive: false,
+      ...(online ? { online } : {}),
     });
   }
   for (const ck of addChecks) {
+    const online =
+      driver === "postgres"
+        ? onlineConstraintHint(tIdent, ck.name, { stem: form.table, suffix: "_check" }, taken, (name) =>
+            checkClause(driver, { ...ck, name }),
+          )
+        : undefined;
     statements.push({
       sql: `ALTER TABLE ${tIdent} ADD ${checkClause(driver, ck)};`,
       kind: "addCheck",
       destructive: false,
+      ...(online ? { online } : {}),
     });
   }
 }
@@ -667,6 +730,7 @@ function indexStatements(
       sql: `${head} (${colList});`,
       kind: "createIndex",
       destructive: false,
+      ...(driver === "postgres" ? { online: { type: "index", name } as const } : {}),
     });
   }
   return out;

@@ -4,6 +4,7 @@ import { useT } from "../i18n";
 import { api, type DriverKind, type IndexOverlap, type TableColumnInfo } from "../api/tauri";
 import {
   buildCreateIndexSql,
+  createIndexName,
   indexOptionSupport,
   normalizeIndexFragment,
   type IndexMethod,
@@ -19,6 +20,14 @@ import { COUNT_PREVIEW_TIMEOUT_SECS, useCountPreviews } from "../useCountPreview
 import { Icon } from "./Icon";
 import { Button, Checkbox, Input, PressableButton, Switch } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
+import { ddlLockTimeoutSecsFor, useSettings } from "../settings";
+import { useTableRowEstimate } from "../useTableRowEstimate";
+import { ALTER_COST_ROW_THRESHOLD } from "./alterCost";
+import { formatRowCount } from "./tableSize";
+import { buildIndexExecutionPlan, planNeedsRunner } from "./onlineDdl";
+import type { DdlRunOptions, DdlRunReport } from "./onlineDdlRunner";
+import { DdlLockTimeoutField } from "./DdlLockTimeoutField";
+import { DdlRunReportNotice } from "./DdlRunReportNotice";
 
 /**
  * インデックス作成の軽量モーダル (#850)。`describeTable` で列一覧を取得し、選択した
@@ -41,8 +50,14 @@ interface Props {
   database: string | null;
   table: string;
   readOnly: boolean;
-  onRun: (sql: string) => void;
+  /**
+   * CONCURRENTLY / ロック待ちの上限つきで流す指示 (`options`) は、それらが要るときだけ渡す (#2240)。
+   * 失敗したときは、INVALID なインデックスが残ったかなどの報告を返す (画面に出す)。
+   */
+  onRun: (sql: string, options?: DdlRunOptions) => void | Promise<DdlRunReport | undefined>;
   onSendToEditor: (sql: string) => void;
+  /** ロック待ちのタイムアウト時の案内先 (プロセス一覧の待機チェーン)。 */
+  onOpenProcessList?: () => void;
   onClose: () => void;
 }
 
@@ -54,9 +69,12 @@ export function CreateIndexModal({
   readOnly,
   onRun,
   onSendToEditor,
+  onOpenProcessList,
   onClose,
 }: Props) {
   const t = useT();
+  const settings = useSettings();
+  const ddlLockTimeoutSecs = ddlLockTimeoutSecsFor(settings, driver);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [columns, setColumns] = useState<string[]>([]);
@@ -70,6 +88,13 @@ export function CreateIndexModal({
   const [include, setInclude] = useState<string[]>([]);
   // 同じ列構成の既存インデックス (#1625)。判定はバックエンド (アドバイザの重複検出と同じ)。
   const [overlaps, setOverlaps] = useState<IndexOverlap[]>([]);
+  // CONCURRENTLY で作成 (PostgreSQL, #2240)。`null` は未操作で、概算行数が大きい表では既定でオン。
+  const [concurrentChoice, setConcurrentChoice] = useState<boolean | null>(null);
+  const [report, setReport] = useState<DdlRunReport | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const rowEstimate = useTableRowEstimate(sessionId, database ?? "", table, driver === "postgres");
+  const bigTable =
+    rowEstimate.status === "ok" && rowEstimate.rows !== null && rowEstimate.rows >= ALTER_COST_ROW_THRESHOLD;
 
   useEffect(() => {
     let cancelled = false;
@@ -142,6 +167,7 @@ export function CreateIndexModal({
   const keyCount = selected.length + exprCount;
   const tooManyKeys = support.singleColumn && keyCount > 1;
   const valid = keyCount > 0 && !whereBad && !exprBad && !tooManyKeys;
+  const effConcurrently = driver === "postgres" && (concurrentChoice ?? bigTable);
   const sql = useMemo(
     () =>
       valid
@@ -152,10 +178,74 @@ export function CreateIndexModal({
             method: method || undefined,
             where,
             include,
+            concurrently: effConcurrently,
           })
         : "",
-    [valid, driver, database, table, selected, name, unique, expressions, method, where, include],
+    [
+      valid,
+      driver,
+      database,
+      table,
+      selected,
+      name,
+      unique,
+      expressions,
+      method,
+      where,
+      include,
+      effConcurrently,
+    ],
   );
+  const runPlan = useMemo(() => {
+    if (!sql || driver === "sqlite") return null;
+    const indexName = createIndexName(driver, table, selected, {
+      name,
+      expressions,
+      method: method || undefined,
+    });
+    return buildIndexExecutionPlan(driver, sql, {
+      database,
+      indexName,
+      kind: "create",
+      concurrently: effConcurrently,
+      lockTimeoutSecs: ddlLockTimeoutSecs,
+    });
+  }, [
+    sql,
+    driver,
+    database,
+    table,
+    selected,
+    name,
+    expressions,
+    method,
+    effConcurrently,
+    ddlLockTimeoutSecs,
+  ]);
+  // 確認ダイアログの表示中も含め、実行を依頼してから結果が返るまで (進捗の表示は確認が済んでから)。
+  const [submitting, setSubmitting] = useState(false);
+  const running = submitting;
+  const run = () => {
+    if (running) return;
+    if (!runPlan || !planNeedsRunner(runPlan)) {
+      void onRun(sql);
+      return;
+    }
+    setReport(null);
+    setSubmitting(true);
+    void Promise.resolve(
+      onRun(sql, { plan: runPlan, onProgress: (done, total) => setProgress({ done, total }) }),
+    )
+      .then((r) => {
+        setSubmitting(false);
+        setProgress(null);
+        if (r) setReport(r);
+      })
+      .catch(() => {
+        setSubmitting(false);
+        setProgress(null);
+      });
+  };
   const reasonText = (r: IndexOptionReason | undefined) => (r ? t(`createIndexReason_${r}`) : null);
 
   // UNIQUE のときだけ、既存データに重複キーが無いかを読み取り専用 COUNT で事前検査する (#1757)。
@@ -182,7 +272,7 @@ export function CreateIndexModal({
   const precheckCounts = useCountPreviews(runCount, prechecks, !loading && !loadError);
 
   return (
-    <Modal onSubmit={() => onRun(sql)} submitDisabled={!valid || readOnly} width="600px" onClose={onClose}>
+    <Modal onSubmit={run} submitDisabled={!valid || readOnly || running} width="600px" onClose={onClose}>
       <ModalHeader onClose={onClose} closeLabel={t("createTableClose")}>
         {t("createIndexTitle", { table })}
       </ModalHeader>
@@ -427,6 +517,39 @@ export function CreateIndexModal({
                 </chakra.span>
               )}
             </FormSection>
+            {driver === "postgres" && (
+              <FormSection>
+                <Switch
+                  checked={effConcurrently}
+                  onChange={() => setConcurrentChoice(!effConcurrently)}
+                  label={t("createIndexConcurrentlyToggle")}
+                />
+                {effConcurrently && (
+                  <Callout tone="warning" data-testid="create-index-concurrently-note">
+                    {t("createIndexConcurrentlyHint")}
+                  </Callout>
+                )}
+                {concurrentChoice === null && bigTable && rowEstimate.status === "ok" && (
+                  <chakra.span textStyle="caption">
+                    {t("createIndexConcurrentlyAuto", { rows: formatRowCount(ALTER_COST_ROW_THRESHOLD) })}
+                  </chakra.span>
+                )}
+              </FormSection>
+            )}
+            {!effConcurrently && <DdlLockTimeoutField driver={driver} />}
+            {running && progress && (
+              <Callout tone="info" role="status" data-testid="ddl-run-progress">
+                {t("ddlRunProgress", { done: progress.done, total: progress.total })}
+              </Callout>
+            )}
+            {report && (
+              <DdlRunReportNotice
+                report={report}
+                driver={driver}
+                onSendToEditor={onSendToEditor}
+                onOpenProcessList={onOpenProcessList}
+              />
+            )}
             {readOnly && <FieldError>{t("createTableReadOnly")}</FieldError>}
           </>
         )}
@@ -442,8 +565,8 @@ export function CreateIndexModal({
         <PressableButton
           type="button"
           variant="primary"
-          disabled={!valid || readOnly}
-          onClick={() => onRun(sql)}
+          disabled={!valid || readOnly || running}
+          onClick={run}
         >
           {t("createIndexRun")}
         </PressableButton>

@@ -80,7 +80,7 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
 
 ## クエリ実行・トランザクション (`commands/query.rs`)
 
-- `run_query`
+- `run_query` (任意引数 `record_history`: true で成功・失敗を書き込み履歴へ残す。CONCURRENTLY のようにトランザクション外で流す DDL 用, #2240)
 - `run_query_transaction`
 - `run_query_stream`
 - `preview_query_stream`

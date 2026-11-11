@@ -265,6 +265,29 @@ export interface CreateIndexOptions {
   where?: string;
   /** カバリング列 (PostgreSQL のみ)。 */
   include?: string[];
+  /** `CREATE INDEX CONCURRENTLY` (PostgreSQL のみ。トランザクション外で実行する必要がある, #2240)。 */
+  concurrently?: boolean;
+}
+
+/**
+ * `buildCreateIndexSql` が使うインデックス名 (素の名前)。指定がなければ `idx_<表>_<列...>` を自動生成する。
+ * 実行計画 (`onlineDdl.ts`) が失敗後の INVALID 確認・後始末に使うので、SQL から逆解析せずこれを直接渡す (#2240)。
+ */
+export function createIndexName(
+  driver: string,
+  table: string,
+  columns: string[],
+  opts: CreateIndexOptions = {},
+): string {
+  const cols = columns.map((c) => c.trim()).filter((c) => c.length > 0);
+  const support = indexOptionSupport(driver, opts.method);
+  const exprs = support.expression
+    ? (opts.expressions ?? [])
+        .map((e) => normalizeIndexFragment(e).sql)
+        .filter((e): e is string => e !== null)
+    : [];
+  const rawName = opts.name?.trim() || `idx_${table}_${[...cols, ...exprs.map(exprNamePart)].join("_")}`;
+  return sanitizeIndexName(rawName);
 }
 
 /**
@@ -289,8 +312,7 @@ export function buildCreateIndexSql(
         .map((e) => normalizeIndexFragment(e).sql)
         .filter((e): e is string => e !== null)
     : [];
-  const rawName = opts.name?.trim() || `idx_${table}_${[...cols, ...exprs.map(exprNamePart)].join("_")}`;
-  const idxName = sanitizeIndexName(rawName);
+  const idxName = createIndexName(driver, table, columns, opts);
   const keyList = [...cols.map((c) => quoteIdentFor(driver, c)), ...exprs.map((e) => `(${e})`)].join(", ");
   const method = opts.method && support.methods.includes(opts.method) ? opts.method : undefined;
   const special = driver === "mysql" && (method === "fulltext" || method === "spatial");
@@ -299,11 +321,13 @@ export function buildCreateIndexSql(
     : opts.unique && support.unique
       ? "CREATE UNIQUE INDEX"
       : "CREATE INDEX";
+  const concurrently = driver === "postgres" && opts.concurrently === true && !special;
+  const head = concurrently ? `${keyword} CONCURRENTLY` : keyword;
   // SQLite は ON の表を修飾できず、アタッチ先のスキーマは索引名の側に付ける (`CREATE INDEX "別名"."idx" ON "t"`)。
   let sql =
     driver === "sqlite"
-      ? `${keyword} ${qualifiedTableName(driver, database, idxName)} ON ${quoteIdentFor(driver, table)}`
-      : `${keyword} ${quoteIdentFor(driver, idxName)} ON ${qualifiedTableName(driver, database, table)}`;
+      ? `${head} ${qualifiedTableName(driver, database, idxName)} ON ${quoteIdentFor(driver, table)}`
+      : `${head} ${quoteIdentFor(driver, idxName)} ON ${qualifiedTableName(driver, database, table)}`;
   if (driver === "postgres" && method) sql += ` USING ${method}`;
   sql += ` (${keyList})`;
   if (driver === "mysql" && (method === "btree" || method === "hash"))
@@ -327,11 +351,13 @@ export function buildDropIndexSql(
   database: string | null,
   table: string,
   indexName: string,
+  opts: { concurrently?: boolean } = {},
 ): string {
   if (driver === "mysql") {
     return `DROP INDEX ${quoteIdentFor(driver, indexName)} ON ${qualifiedTableName(driver, database, table)};`;
   }
   // SQLite のアタッチ先の索引は `DROP INDEX "別名"."idx"` (索引名はスキーマ内で一意)。
   if (driver === "sqlite") return `DROP INDEX ${qualifiedTableName(driver, database, indexName)};`;
-  return `DROP INDEX ${quoteIdentFor(driver, indexName)};`;
+  // PostgreSQL は CONCURRENTLY でテーブルへの書き込みを止めずに落とせる (トランザクション外で実行する, #2240)。
+  return `DROP INDEX ${opts.concurrently ? "CONCURRENTLY " : ""}${quoteIdentFor(driver, indexName)};`;
 }

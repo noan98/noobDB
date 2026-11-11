@@ -158,6 +158,14 @@ import {
 } from "./components/PaneView";
 import { useKeyedStable } from "./useKeyedStable";
 import { copyToClipboard } from "./components/clipboard";
+import {
+  buildIndexExecutionPlan,
+  planAllSql,
+  planPreviewSql,
+  supportsLockTimeout,
+  type DdlPlan,
+} from "./components/onlineDdl";
+import { runDdlPlan, stepComment, type DdlRunOptions, type DdlRunReport } from "./components/onlineDdlRunner";
 import { joinTableNames, type TableNameSeparator } from "./components/explorerTree";
 import { TABLE_DDL_KIND } from "./components/tableDdl";
 import { joinTableDdls, summarizeTableNames } from "./components/batchTables";
@@ -606,6 +614,7 @@ import type { ProfileTarget } from "./components/columnProfile";
 import {
   useSettings,
   getSettings,
+  ddlLockTimeoutSecsFor,
   setAutoRefreshDefaultSecs,
   BASE_FONT_SIZE_PX,
   monoFontStack,
@@ -8933,6 +8942,30 @@ export default function App() {
     [sessionId, runGuardedDdl, invalidateSchemaCache, noteSchemaDdl, toast],
   );
 
+  // ロック待ちのタイムアウト後の案内 (#2240): モーダルを閉じ、ボトムパネルのプロセス一覧 (待機チェーン) を開く。
+  const openProcessListFromDdl = useCallback(() => {
+    setAlterTableTarget(null);
+    setCreateIndexTarget(null);
+    setBottomPanelTab("processes");
+  }, []);
+
+  // 段階実行 / CONCURRENTLY / ロック待ちの上限つきの DDL 計画を流し (#2240)、1 段階でも進んだらスキーマキャッシュと
+  // ツリーを更新する。確認ゲートは呼び出し側が済ませる。失敗は例外にせず報告 (どこまで適用済みか) で返す。
+  const runDdlPlanTracked = useCallback(
+    async (plan: DdlPlan, table: string | undefined, opts?: DdlRunOptions): Promise<DdlRunReport> => {
+      if (!sessionId) throw new Error("no session");
+      const report = await runDdlPlan(api, sessionId, plan, opts?.onProgress);
+      if (report.completedSteps > 0 || report.failedStep?.invalidIndex) {
+        const database = plan.database ?? "";
+        invalidateSchemaCache(database);
+        noteSchemaDdl(planAllSql(plan), database);
+        connectionListRef.current?.refreshSchema(table ? { database, table } : undefined);
+      }
+      return report;
+    },
+    [sessionId, invalidateSchemaCache, noteSchemaDdl],
+  );
+
   // パブリケーションへの表の追加 / 除外 (#2181)。モーダルでプレビューを確認済みの `ALTER PUBLICATION ... ADD / DROP TABLE` を、
   // 共通の DDL ゲート (#2176) を通してから 1 つのトランザクションで流す。キャンセルなら false (モーダルは開いたまま)。
   const handlePublicationApply = useCallback(
@@ -9557,24 +9590,36 @@ export default function App() {
   // モーダルは実行成功後にのみ閉じる — 失敗時 (SQL エラー等) は開いたままにして
   // ユーザが編集内容を失わずに調整・再実行できるようにする。
   const handleAlterTableRun = useCallback(
-    async (statements: AlterStatement[]) => {
+    async (statements: AlterStatement[], runOptions?: DdlRunOptions): Promise<DdlRunReport | undefined> => {
       const target = alterTableTarget;
-      if (!target || !sessionId || statements.length === 0) return;
+      if (!target || !sessionId || statements.length === 0) return undefined;
       const destructive = statements.some((s) => s.destructive);
       // SQLite のテーブル再作成 (#1888): PRAGMA foreign_keys の退避とコミット前の外部キー検査を持つ
       // `apply_sqlite_table_rebuild` (`apply_sync_sql` と同じ経路 + 履歴記録) で流す (通常の `run_query_transaction` はトランザクション内の PRAGMA を
       // 効かせられず、旧表の DROP で子表の行が連鎖削除される)。read_only はバックエンドが拒否する。
       const rebuild = statements.some((s) => s.kind === "rebuildTable");
       const sqls = statements.map((s) => s.sql);
+      // 段階実行 (#2240): 段階の区切りを見せ、途中で失敗しうること (CONCURRENTLY は INVALID が残りうる) を明記する。
+      const stagedPlan = runOptions?.plan.staged ? runOptions.plan : null;
       const ok = await confirm({
         title: translate("alterTableConfirmTitle", { table: target.table }),
         message: maintenanceMessage(
           <>
-            {translate(rebuild ? "alterTableConfirmBodyRebuild" : "alterTableConfirmBody")}
+            {translate(
+              rebuild
+                ? "alterTableConfirmBodyRebuild"
+                : stagedPlan
+                  ? "alterTableConfirmBodyOnline"
+                  : "alterTableConfirmBody",
+            )}
             <br />
             <br />
             <SqlPreview
-              sql={sqls.join("\n")}
+              sql={
+                stagedPlan
+                  ? planPreviewSql(stagedPlan, (st, i) => stepComment(st, i, stagedPlan.steps.length))
+                  : sqls.join("\n")
+              }
               driver={selectedProfileRef.current?.driver ?? "mysql"}
               wrap
               maxH="40vh"
@@ -9587,15 +9632,19 @@ export default function App() {
         typedConfirmation:
           rebuild || (destructive && selectedProfile?.is_production) ? target.table : undefined,
       });
-      if (!ok) return;
+      if (!ok) return undefined;
       try {
         if (rebuild) {
           await api.applySqliteTableRebuild({ sessionId, database: target.database, statements: sqls });
+        } else if (runOptions) {
+          const report = await runDdlPlanTracked(runOptions.plan, target.table, runOptions);
+          if (!report.ok) return report;
         } else {
           await api.runQueryTransaction(sessionId, sqls, target.database);
         }
         invalidateSchemaCache(target.database);
-        noteSchemaDdl(sqls.join(";\n"), target.database);
+        // 計画経由 (#2240) は runDdlPlanTracked が記録済み。
+        if (!runOptions) noteSchemaDdl(sqls.join(";\n"), target.database);
         // 対象テーブルが分かっているので、そのテーブルのバックエンドキャッシュだけを捨てて再読込する (#1539)。
         connectionListRef.current?.refreshSchema({ database: target.database, table: target.table });
         toast.success(translate("alterTableSuccess", { table: target.table }));
@@ -9608,9 +9657,11 @@ export default function App() {
       } catch (e) {
         toast.error(translate("statusQueryError", { error: String(e) }));
       }
+      return undefined;
     },
     [
       alterTableTarget,
+      runDdlPlanTracked,
       sessionId,
       confirm,
       maintenanceMessage,
@@ -9740,16 +9791,32 @@ export default function App() {
   // インデックス作成の軽量モーダル (#850) の実行: 非破壊操作なので CreateTableModal と
   // 同じく確認ダイアログなしで直接実行する (destructive な DROP INDEX とは異なる)。
   const handleCreateIndexRun = useCallback(
-    async (sql: string) => {
+    async (sql: string, runOptions?: DdlRunOptions): Promise<DdlRunReport | undefined> => {
       const target = createIndexTarget;
-      if (!target) return;
+      if (!target) return undefined;
+      // CONCURRENTLY / ロック待ちの上限つき (#2240): 共通の DDL ゲートを通してから計画どおりに流す。
+      if (runOptions) {
+        if (!(await runGuardedDdl(planAllSql(runOptions.plan)))) return undefined;
+        try {
+          const report = await runDdlPlanTracked(runOptions.plan, target.table, runOptions);
+          if (report.ok) {
+            toast.success(translate("createIndexSuccess"));
+            setCreateIndexTarget(null);
+          }
+          return report;
+        } catch (e) {
+          toast.error(translate("statusQueryError", { error: String(e) }));
+          return undefined;
+        }
+      }
       const success = await runMaintenanceDdl(sql, target.database, target.table);
       if (success) {
         toast.success(translate("createIndexSuccess"));
         setCreateIndexTarget(null);
       }
+      return undefined;
     },
-    [createIndexTarget, runMaintenanceDdl, toast],
+    [createIndexTarget, runMaintenanceDdl, runGuardedDdl, runDdlPlanTracked, toast],
   );
 
   const handleCreateIndexToEditor = useCallback(
@@ -9764,21 +9831,61 @@ export default function App() {
   // 同じく不可逆 × 本番接続ではタイプ入力の強確認ゲート (#675) を追加する。
   // PK インデックスは `ConnectionList` 側で常に無効化しているのでここには来ない。
   const handleDropIndex = useCallback(
-    async (database: string, table: string, indexName: string) => {
+    async (database: string, table: string, indexName: string, opts?: { concurrently?: boolean }) => {
       const driver = selectedProfile?.driver ?? "mysql";
-      const sql = buildDropIndexSql(driver, database, table, indexName);
+      const concurrently = driver === "postgres" && opts?.concurrently === true;
+      const sql = buildDropIndexSql(driver, database, table, indexName, { concurrently });
       const ok = await confirm({
         title: translate("dropIndexConfirmTitle", { index: indexName }),
-        message: maintenanceMessage(translate("dropIndexConfirmBody", { index: indexName, table })),
+        message: maintenanceMessage(
+          translate(concurrently ? "dropIndexConfirmBodyConcurrently" : "dropIndexConfirmBody", {
+            index: indexName,
+            table,
+          }),
+        ),
         confirmLabel: translate("dropIndexConfirmOk"),
         tone: "danger",
         typedConfirmation: selectedProfile?.is_production ? indexName : undefined,
       });
       if (!ok) return;
+      // CONCURRENTLY / ロック待ちの上限つき (#2240): 計画どおりに流し、失敗はトーストで知らせる。
+      const lockSecs = ddlLockTimeoutSecsFor(getSettings(), driver);
+      if (concurrently || (supportsLockTimeout(driver) && lockSecs > 0)) {
+        const plan = buildIndexExecutionPlan(driver, sql, {
+          database,
+          indexName,
+          kind: "drop",
+          concurrently,
+          lockTimeoutSecs: lockSecs,
+        });
+        try {
+          const report = await runDdlPlanTracked(plan, table);
+          if (report.ok) {
+            toast.success(translate("dropIndexSuccess", { index: indexName }));
+          } else {
+            toast.notify({
+              message: translate(report.lockTimeout ? "ddlReportLockTimeoutToast" : "ddlReportFailedToast", {
+                error: report.error ?? "",
+              }),
+              tone: "error",
+              action: report.lockTimeout
+                ? {
+                    label: translate("ddlReportOpenProcesses"),
+                    onAction: () => setBottomPanelTab("processes"),
+                  }
+                : undefined,
+            });
+          }
+        } catch (e) {
+          toast.error(translate("statusQueryError", { error: String(e) }));
+        }
+        return;
+      }
       const success = await runMaintenanceDdl(sql, database, table, { alreadyConfirmed: true });
       if (success) toast.success(translate("dropIndexSuccess", { index: indexName }));
     },
     [
+      runDdlPlanTracked,
       confirm,
       maintenanceMessage,
       selectedProfile?.driver,
@@ -15292,6 +15399,7 @@ export default function App() {
                   readOnly={readOnly}
                   onRun={handleAlterTableRun}
                   onSendToEditor={handleAlterTableToEditor}
+                  onOpenProcessList={openProcessListFromDdl}
                   onClose={() => setAlterTableTarget(null)}
                 />
               </Suspense>
@@ -15324,6 +15432,7 @@ export default function App() {
                   readOnly={readOnly}
                   onRun={handleCreateIndexRun}
                   onSendToEditor={handleCreateIndexToEditor}
+                  onOpenProcessList={openProcessListFromDdl}
                   onClose={() => setCreateIndexTarget(null)}
                 />
               </Suspense>
