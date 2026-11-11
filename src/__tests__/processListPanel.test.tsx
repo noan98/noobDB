@@ -285,7 +285,9 @@ describe("ProcessListPanel blocking tree (#1417)", () => {
     expect(
       screen.queryByRole("button", { name: t("processBlockingKillAria", { id: 99 }) }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText(t("processBlockingDeadlock"))).toBeInTheDocument();
+    expect(screen.getAllByText(t("processBlockingDeadlock"))).toHaveLength(2);
+    expect(screen.getAllByTestId("blocking-node")).toHaveLength(4);
+    expect(screen.getAllByTestId("blocking-edge")).toHaveLength(3);
     const tree = screen.getByTestId("blocking-tree");
     expect(tree.textContent).toContain(t("processSelfBadge"));
     expect(screen.getByRole("button", { name: t("processBlockingKillAria", { id: 10 }) })).toBeEnabled();
