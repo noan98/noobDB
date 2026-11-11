@@ -20,7 +20,7 @@ import { COUNT_PREVIEW_TIMEOUT_SECS, useCountPreviews } from "../useCountPreview
 import { Icon } from "./Icon";
 import { Button, Checkbox, Input, PressableButton, Switch } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
-import { useSettings } from "../settings";
+import { ddlLockTimeoutSecsFor, useSettings } from "../settings";
 import { useTableRowEstimate } from "../useTableRowEstimate";
 import { ALTER_COST_ROW_THRESHOLD } from "./alterCost";
 import { formatRowCount } from "./tableSize";
@@ -73,7 +73,8 @@ export function CreateIndexModal({
   onClose,
 }: Props) {
   const t = useT();
-  const { ddlLockTimeoutSecs } = useSettings();
+  const settings = useSettings();
+  const ddlLockTimeoutSecs = ddlLockTimeoutSecsFor(settings, driver);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [columns, setColumns] = useState<string[]>([]);
@@ -206,7 +207,9 @@ export function CreateIndexModal({
       lockTimeoutSecs: ddlLockTimeoutSecs,
     });
   }, [sql, driver, database, effConcurrently, ddlLockTimeoutSecs]);
-  const running = progress !== null;
+  // 確認ダイアログの表示中も含め、実行を依頼してから結果が返るまで (進捗の表示は確認が済んでから)。
+  const [submitting, setSubmitting] = useState(false);
+  const running = submitting;
   const run = () => {
     if (running) return;
     if (!runPlan || !planNeedsRunner(runPlan)) {
@@ -214,15 +217,19 @@ export function CreateIndexModal({
       return;
     }
     setReport(null);
-    setProgress({ done: 0, total: runPlan.steps.length });
+    setSubmitting(true);
     void Promise.resolve(
       onRun(sql, { plan: runPlan, onProgress: (done, total) => setProgress({ done, total }) }),
     )
       .then((r) => {
+        setSubmitting(false);
         setProgress(null);
         if (r) setReport(r);
       })
-      .catch(() => setProgress(null));
+      .catch(() => {
+        setSubmitting(false);
+        setProgress(null);
+      });
   };
   const reasonText = (r: IndexOptionReason | undefined) => (r ? t(`createIndexReason_${r}`) : null);
 

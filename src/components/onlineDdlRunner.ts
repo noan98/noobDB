@@ -117,14 +117,15 @@ export async function runDdlPlan(
         lockTimeout: isLockTimeoutError(plan.driver, error),
         invalidIndexLeft,
         remainingSql: guide.remainingSql,
-        // INVALID なインデックスが残っていないと分かったときは、その DROP は案内しない。
+        // INVALID なインデックスが残っていると確認できたときだけ DROP を案内する。確認できなかった (null) ときや
+        // 残っていないときに案内すると、「同名のインデックスが既に存在」で失敗した場合に有効な既存インデックスを落としかねない。
         cleanupSql:
-          invalidIndexLeft === false
+          invalidIndexLeft === true
             ? guide.cleanupSql
+            : guide.cleanupSql
                 .split("\n")
                 .filter((l) => !/^DROP INDEX CONCURRENTLY IF EXISTS/i.test(l))
-                .join("\n")
-            : guide.cleanupSql,
+                .join("\n"),
       };
     }
     onProgress?.(i + 1, total);

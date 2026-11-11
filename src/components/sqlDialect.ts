@@ -124,3 +124,35 @@ export function insertFunctionSql(driver: string, fn: InsertFunctionId): string 
       return driver === "postgres" ? "gen_random_uuid()" : "UUID()";
   }
 }
+
+/** PostgreSQL の識別子の上限 (バイト)。 */
+export const PG_IDENT_MAX_BYTES = 63;
+
+/** UTF-8 で `maxBytes` バイトを超えない先頭部分を返す (文字の途中では切らない)。 */
+export function truncateUtf8(text: string, maxBytes: number): string {
+  const enc = new TextEncoder();
+  let out = "";
+  let used = 0;
+  for (const ch of text) {
+    const n = enc.encode(ch).length;
+    if (used + n > maxBytes) break;
+    out += ch;
+    used += n;
+  }
+  return out;
+}
+
+/**
+ * 自動命名した PostgreSQL の制約名 / インデックス名を 63 バイトに収める (#2240)。`suffix` (`_fkey` など) は必ず残し、
+ * 前半だけを UTF-8 の文字境界で切る。`taken` にある名前とは、PostgreSQL と同じく末尾に連番 (`_fkey1`) を付けて避ける。
+ */
+export function fitPgName(stem: string, suffix: string, taken: ReadonlySet<string>): string {
+  const room = (extra: string) =>
+    truncateUtf8(stem, PG_IDENT_MAX_BYTES - new TextEncoder().encode(suffix + extra).length);
+  const first = `${room("")}${suffix}`;
+  if (!taken.has(first)) return first;
+  for (let n = 1; ; n++) {
+    const cand = `${room(String(n))}${suffix}${n}`;
+    if (!taken.has(cand)) return cand;
+  }
+}

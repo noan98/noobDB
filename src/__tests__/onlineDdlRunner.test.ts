@@ -104,6 +104,9 @@ describe("runDdlPlan", () => {
       runQuery: vi.fn().mockRejectedValue(new Error("x")),
       runLookupQuery: vi.fn().mockRejectedValue(new Error("no")),
     });
-    expect((await runDdlPlan(unknown, "s1", plan)).invalidIndexLeft).toBeNull();
+    const ru = await runDdlPlan(unknown, "s1", plan);
+    expect(ru.invalidIndexLeft).toBeNull();
+    // 確認できなかったときは、有効な既存インデックスを落としかねない DROP を案内しない。
+    expect(ru.cleanupSql).toBe("");
   });
 });

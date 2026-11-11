@@ -3,8 +3,10 @@ import { chakra, Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import {
   DEFAULT_DDL_LOCK_TIMEOUT_SECS,
+  ddlLockTimeoutSecsFor,
   MAX_DDL_LOCK_TIMEOUT_SECS,
   setDdlLockTimeoutSecs,
+  setDdlLockWaitTimeoutSecsMysql,
   useSettings,
 } from "../settings";
 import { supportsLockTimeout } from "./onlineDdl";
@@ -16,22 +18,33 @@ import { Input, Switch } from "./ui";
  */
 export function DdlLockTimeoutField({ driver }: { driver: string }) {
   const t = useT();
-  const { ddlLockTimeoutSecs: secs } = useSettings();
+  const settings = useSettings();
+  const secs = ddlLockTimeoutSecsFor(settings, driver);
+  const setSecs = driver === "mysql" ? setDdlLockWaitTimeoutSecsMysql : setDdlLockTimeoutSecs;
   // オフにしたあと、オンへ戻したときに直前の秒数へ戻すための記憶。
   const [lastOn, setLastOn] = useState(secs > 0 ? secs : DEFAULT_DDL_LOCK_TIMEOUT_SECS);
+  // 入力中の下書き。空にしても打ち直せるよう、確定 (blur) まで設定へ反映しない。
+  const [draft, setDraft] = useState<string | null>(null);
   if (!supportsLockTimeout(driver)) return null;
   const enabled = secs > 0;
+  const commit = () => {
+    if (draft === null) return;
+    const n = Number.parseInt(draft, 10);
+    if (Number.isFinite(n) && n >= 1) setSecs(n);
+    setDraft(null);
+  };
   return (
     <chakra.div display="flex" flexDirection="column" gap="1" data-testid="ddl-lock-timeout">
       <Flex align="center" gap="3" wrap="wrap">
         <Switch
           checked={enabled}
           onChange={() => {
+            setDraft(null);
             if (enabled) {
               setLastOn(secs);
-              setDdlLockTimeoutSecs(0);
+              setSecs(0);
             } else {
-              setDdlLockTimeoutSecs(lastOn);
+              setSecs(lastOn);
             }
           }}
           label={t("ddlLockTimeoutLabel")}
@@ -42,10 +55,11 @@ export function DdlLockTimeoutField({ driver }: { driver: string }) {
           max={MAX_DDL_LOCK_TIMEOUT_SECS}
           aria-label={t("ddlLockTimeoutLabel")}
           disabled={!enabled}
-          value={enabled ? String(secs) : ""}
-          onChange={(e) => {
-            const n = Number.parseInt(e.target.value, 10);
-            if (Number.isFinite(n) && n >= 1) setDdlLockTimeoutSecs(n);
+          value={draft ?? (enabled ? String(secs) : "")}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
           }}
           width="20"
         />

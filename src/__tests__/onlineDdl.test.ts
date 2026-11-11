@@ -11,6 +11,7 @@ import {
   planNeedsRunner,
   planPreviewSql,
   stepStatementsToSend,
+  tempNotNullCheckName,
   withConcurrently,
 } from "../components/onlineDdl";
 import { buildCreateIndexSql, buildDropIndexSql, indexNameOfCreateSql } from "../components/tableMaintenance";
@@ -45,8 +46,8 @@ describe("lockTimeoutStatements", () => {
   });
   it("MySQL は SET SESSION lock_wait_timeout を付けて末尾で戻す", () => {
     expect(lockTimeoutStatements("mysql", 3)).toEqual({
-      before: ["SET SESSION lock_wait_timeout = 3;"],
-      after: ["SET SESSION lock_wait_timeout = @@GLOBAL.lock_wait_timeout;"],
+      before: ["SET @noobdb_prev_lwt = @@SESSION.lock_wait_timeout;", "SET SESSION lock_wait_timeout = 3;"],
+      after: ["SET SESSION lock_wait_timeout = IFNULL(@noobdb_prev_lwt, @@GLOBAL.lock_wait_timeout);"],
     });
   });
   it("0・SQLite・不正値は付けない", () => {
@@ -93,10 +94,10 @@ describe("buildAlterExecutionPlan", () => {
     expect(plan.staged).toBe(true);
     expect(plan.steps.map((s) => s.phase)).toEqual(["addNotValid", "validate"]);
     expect(plan.steps[0].statements).toEqual([
-      'ALTER TABLE "shop"."orders" ADD CONSTRAINT "fk_user_id" FOREIGN KEY ("user_id") REFERENCES "shop"."users" ("id") NOT VALID;',
+      'ALTER TABLE "shop"."orders" ADD CONSTRAINT "orders_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "shop"."users" ("id") NOT VALID;',
     ]);
     expect(plan.steps[1].statements).toEqual([
-      'ALTER TABLE "shop"."orders" VALIDATE CONSTRAINT "fk_user_id";',
+      'ALTER TABLE "shop"."orders" VALIDATE CONSTRAINT "orders_user_id_fkey";',
     ]);
     expect(plan.steps.every((s) => s.transactional)).toBe(true);
   });
@@ -188,7 +189,10 @@ describe("buildAlterExecutionPlan", () => {
     expect(canStage("mysql", my)).toBe(false);
     const plan = buildAlterExecutionPlan("mysql", my, { database: "shop", staged: true, lockTimeoutSecs: 2 });
     expect(plan.staged).toBe(false);
-    expect(stepStatementsToSend(plan, plan.steps[0])[0]).toBe("SET SESSION lock_wait_timeout = 2;");
+    expect(stepStatementsToSend(plan, plan.steps[0]).slice(0, 2)).toEqual([
+      "SET @noobdb_prev_lwt = @@SESSION.lock_wait_timeout;",
+      "SET SESSION lock_wait_timeout = 2;",
+    ]);
     const lite = buildAlterExecutionPlan("sqlite", [], { database: null, staged: true, lockTimeoutSecs: 5 });
     expect(lite.lockTimeoutSecs).toBe(0);
     expect(planNeedsRunner(lite)).toBe(false);
@@ -320,7 +324,7 @@ describe("buildFailureGuide", () => {
     const g = buildFailureGuide(plan, 1, label);
     expect(g.appliedSteps).toBe(1);
     expect(g.totalSteps).toBe(3);
-    expect(g.cleanupSql).toBe('ALTER TABLE "shop"."orders" DROP CONSTRAINT "fk_user_id";');
+    expect(g.cleanupSql).toBe('ALTER TABLE "shop"."orders" DROP CONSTRAINT "orders_user_id_fkey";');
     expect(g.remainingSql).toContain("-- s2");
     expect(g.remainingSql).toContain("VALIDATE CONSTRAINT");
     expect(g.remainingSql).toContain("CREATE INDEX CONCURRENTLY");
@@ -347,5 +351,60 @@ describe("エラー判定と補助 SQL", () => {
       "c.relname = 'idx''s' AND n.nspname = 'public'",
     );
     expect(invalidIndexLookupSql(null, "i")).toContain("current_schemas(false)");
+  });
+});
+
+describe("無名制約の自動名 (#2240)", () => {
+  const jfk = (col: string) => ({ ...fk, columns: [col] });
+  const names = (f: Partial<AlterTableForm>) =>
+    buildAlterPlan("postgres", form(f)).statements.flatMap((s) =>
+      s.online?.type === "constraint" ? [s.online.name] : [],
+    );
+
+  it("PostgreSQL の自動命名 <表>_<列>_fkey / <表>_check に寄せ、日本語の列名もそのまま使う", () => {
+    expect(names({ addedForeignKeys: [jfk("user_id")] })).toEqual(["orders_user_id_fkey"]);
+    expect(names({ addedForeignKeys: [jfk("顧客ID"), jfk("店舗ID")] })).toEqual([
+      "orders_顧客ID_fkey",
+      "orders_店舗ID_fkey",
+    ]);
+    expect(names({ addedChecks: [{ name: "", expression: "total > 0" }] })).toEqual(["orders_check"]);
+  });
+
+  it("計画内の重複と既存の制約名とは連番で避ける", () => {
+    expect(names({ addedForeignKeys: [jfk("a"), jfk("a")] })).toEqual(["orders_a_fkey", "orders_a_fkey1"]);
+    expect(names({ addedForeignKeys: [jfk("a")], existingConstraintNames: ["orders_a_fkey"] })).toEqual([
+      "orders_a_fkey1",
+    ]);
+    // 指定済みの名前とも衝突しない。
+    expect(names({ addedForeignKeys: [{ ...jfk("a"), name: "orders_a_fkey" }, jfk("a")] })).toEqual([
+      "orders_a_fkey",
+      "orders_a_fkey1",
+    ]);
+    // DROP する制約の名前は再利用できる。
+    expect(
+      names({
+        addedForeignKeys: [jfk("a")],
+        existingConstraintNames: ["orders_a_fkey"],
+        droppedForeignKeys: ["orders_a_fkey"],
+      }),
+    ).toEqual(["orders_a_fkey"]);
+  });
+
+  it("63 バイトを UTF-8 の文字境界で切り、接尾辞は残す", () => {
+    const [n1] = names({ addedForeignKeys: [jfk("あ".repeat(40))] });
+    expect(new TextEncoder().encode(n1 as string).length).toBeLessThanOrEqual(63);
+    expect(n1?.endsWith("_fkey")).toBe(true);
+    expect(n1).not.toContain("�");
+    const [a, b] = names({ addedForeignKeys: [jfk("x".repeat(80)), jfk("x".repeat(80))] });
+    expect((a as string).length).toBeLessThanOrEqual(63);
+    expect((b as string).length).toBeLessThanOrEqual(63);
+    expect(a).not.toBe(b);
+    expect(b?.endsWith("_fkey1")).toBe(true);
+  });
+
+  it("一時 CHECK の名前も日本語の列名で潰れず、63 バイトに収まる", () => {
+    expect(tempNotNullCheckName("氏名")).toBe("noobdb_nn_氏名");
+    expect(tempNotNullCheckName("氏名")).not.toBe(tempNotNullCheckName("住所"));
+    expect(new TextEncoder().encode(tempNotNullCheckName("あ".repeat(60))).length).toBeLessThanOrEqual(63);
   });
 });

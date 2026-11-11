@@ -1,5 +1,5 @@
 import type { AlterStatement, OnlineHint } from "./alterTable";
-import { qualifiedTableName } from "./sqlDialect";
+import { fitPgName, qualifiedTableName } from "./sqlDialect";
 import { quoteString } from "./cellEdit";
 
 /**
@@ -77,10 +77,14 @@ export function lockTimeoutStatements(driver: string, secs: number): { before: s
   if (!Number.isFinite(n) || n < 1) return { before: [], after: [] };
   if (driver === "postgres") return { before: [`SET LOCAL lock_timeout = '${n}s';`], after: [] };
   if (driver === "mysql") {
-    // プールの接続へ設定が残らないよう、成功時は末尾で戻す。失敗時はバックエンドが戻す。
+    // プールの接続へ設定が残らないよう、成功時は末尾で戻す。失敗時はバックエンドが戻す。元の値は
+    // プロファイルの初期化 SQL が設定したセッション値かもしれないので、先頭で退避して戻す (time_zone と同じ #2100)。
     return {
-      before: [`SET SESSION lock_wait_timeout = ${n};`],
-      after: ["SET SESSION lock_wait_timeout = @@GLOBAL.lock_wait_timeout;"],
+      before: [
+        "SET @noobdb_prev_lwt = @@SESSION.lock_wait_timeout;",
+        `SET SESSION lock_wait_timeout = ${n};`,
+      ],
+      after: ["SET SESSION lock_wait_timeout = IFNULL(@noobdb_prev_lwt, @@GLOBAL.lock_wait_timeout);"],
     };
   }
   return { before: [], after: [] };
@@ -117,13 +121,9 @@ function quoteIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
 
-/** PostgreSQL の識別子の上限 (バイト)。 */
-const PG_IDENT_MAX = 63;
-
-/** 一時的な CHECK の名前 (`SET NOT NULL` の前段)。63 文字に収める。 */
+/** 一時的な CHECK の名前 (`SET NOT NULL` の前段)。63 バイトに収める (引用符つきなので日本語の列名もそのまま)。 */
 export function tempNotNullCheckName(columnName: string): string {
-  const slug = columnName.replace(/[^A-Za-z0-9_]+/g, "_");
-  return `noobdb_nn_${slug}`.slice(0, PG_IDENT_MAX);
+  return fitPgName(`noobdb_nn_${columnName}`, "", new Set());
 }
 
 /** CONCURRENTLY で作成する 1 段階。失敗すると INVALID なインデックスが残りうるので後始末を持つ。 */

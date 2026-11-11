@@ -81,6 +81,9 @@ export function DdlRunReportNotice({
           <>
             <chakra.span fontSize="sm">{t("ddlReportRemaining")}</chakra.span>
             <SqlPreview sql={report.remainingSql} driver={driver} wrap maxH="20vh" />
+            {/CONCURRENTLY/i.test(report.remainingSql) && (
+              <chakra.span fontSize="sm">{t("ddlReportConcurrentlyNote")}</chakra.span>
+            )}
             <Flex>
               <Button type="button" variant="secondary" onClick={() => onSendToEditor(report.remainingSql)}>
                 {t("ddlReportRemainingToEditor")}

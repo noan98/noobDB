@@ -42,7 +42,7 @@ import { AlterPrecheckNotice } from "./AlterPrecheckNotice";
 import { AlterCostNotice } from "./AlterCostNotice";
 import { classifyAlterCost, hasMysqlCopyRisk, shouldWarnForRows, withMysqlOnlineClause } from "./alterCost";
 import { useTableRowEstimate } from "../useTableRowEstimate";
-import { useSettings } from "../settings";
+import { ddlLockTimeoutSecsFor, useSettings } from "../settings";
 import { buildAlterExecutionPlan, canStage, planNeedsRunner, planPreviewSql } from "./onlineDdl";
 import { stepComment, type DdlRunOptions, type DdlRunReport } from "./onlineDdlRunner";
 import { DdlLockTimeoutField } from "./DdlLockTimeoutField";
@@ -215,7 +215,8 @@ export function AlterTableModal({
   onClose,
 }: Props) {
   const t = useT();
-  const { ddlLockTimeoutSecs } = useSettings();
+  const settings = useSettings();
+  const ddlLockTimeoutSecs = ddlLockTimeoutSecsFor(settings, driver);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [baseline, setBaseline] = useState<ExistingColumnBaseline[]>([]);
@@ -407,6 +408,10 @@ export function AlterTableModal({
           refTable: f.refTable,
         })),
         droppedCheckDefinitions: droppedCheckDefs,
+        existingConstraintNames: [
+          ...existingFks.flatMap((f) => (f.name ? [f.name] : [])),
+          ...existingChecks.map((c) => c.name),
+        ],
       }),
     [
       driver,
@@ -422,6 +427,7 @@ export function AlterTableModal({
       droppedFks,
       droppedChecks,
       existingFks,
+      existingChecks,
       droppedCheckDefs,
     ],
   );
@@ -537,7 +543,9 @@ export function AlterTableModal({
     [driver, statements, database, staged, showStagedToggle, ddlLockTimeoutSecs],
   );
   const needsRunner = driver !== "sqlite" && planNeedsRunner(executionPlan);
-  const running = progress !== null;
+  // 確認ダイアログの表示中も含め、実行を依頼してから結果が返るまで (進捗の表示は確認が済んでから)。
+  const [submitting, setSubmitting] = useState(false);
+  const running = submitting;
   const tryRun = () => {
     if (hasIncompleteIndex) {
       setRunAttempted(true);
@@ -549,7 +557,7 @@ export function AlterTableModal({
       return;
     }
     setReport(null);
-    setProgress({ done: 0, total: executionPlan.steps.length });
+    setSubmitting(true);
     void Promise.resolve(
       onRun(statements, {
         plan: executionPlan,
@@ -557,10 +565,14 @@ export function AlterTableModal({
       }),
     )
       .then((r) => {
+        setSubmitting(false);
         setProgress(null);
         if (r) setReport(r);
       })
-      .catch(() => setProgress(null));
+      .catch(() => {
+        setSubmitting(false);
+        setProgress(null);
+      });
   };
 
   const sqlPreview = executionPlan.staged

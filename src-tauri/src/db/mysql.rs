@@ -1412,7 +1412,9 @@ impl MySqlConn {
             if lock_wait_set {
                 let _ = sqlx::Executor::execute(
                     &mut *conn,
-                    sqlx::raw_sql("SET SESSION lock_wait_timeout = @@GLOBAL.lock_wait_timeout"),
+                    sqlx::raw_sql(
+                        "SET SESSION lock_wait_timeout = IFNULL(@noobdb_prev_lwt, @@GLOBAL.lock_wait_timeout)",
+                    ),
                 )
                 .await;
             }

@@ -39,7 +39,7 @@
 // 呼び出し側 (i18n) に任せる — このモジュールは表示に依存しない。
 
 import type { SqliteRebuildEdit } from "../api/tauri";
-import { qualifiedTableName, quoteIdentFor } from "./sqlDialect";
+import { fitPgName, qualifiedTableName, quoteIdentFor } from "./sqlDialect";
 import {
   activeGenerated,
   CURRENT_TIME_FN_RE,
@@ -185,6 +185,8 @@ export interface AlterTableForm {
   droppedForeignKeys?: string[];
   /** 削除する CHECK 制約の制約名 (#1191)。 */
   droppedChecks?: string[];
+  /** PostgreSQL のオンライン手順 (#2240): 既存の FK / CHECK の制約名。無名の制約の自動名が衝突しないよう照合する。 */
+  existingConstraintNames?: string[];
   /**
    * SQLite (#1888): 現状の外部キー。SQLite の FK は実在の制約名を持たない (合成名 `表:id`) ので、
    * `droppedForeignKeys` の名前から (列, 参照先) を引いて再作成に渡す。
@@ -543,26 +545,21 @@ function planExistingColumn(
   pushColumnComment();
 }
 
-/** PostgreSQL の識別子の上限 (バイト)。 */
-const PG_IDENT_MAX = 63;
-
-function shortHash(text: string): string {
-  let h = 0;
-  for (const ch of text.trim()) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  return h.toString(16).padStart(8, "0");
-}
-
 /**
  * オンライン手順用の制約ヒント (#2240)。VALIDATE CONSTRAINT は制約名で対象を指すので、無名の制約には
- * 自動名 (`fallback` を英数字化して 63 バイトに収めたもの) を補う。名前を付けた版の句は `build` で作り直す。
+ * PostgreSQL の自動命名と同じ形 (`<表>_<列>_fkey` / `<表>_check`) の名前を補う。識別子は引用符つきなので
+ * 日本語の列名もそのまま使い、63 バイトは UTF-8 の文字境界で切る。同じ計画の中・既存の制約名とは連番で避ける。
+ * 名前を付けた版の句は `build` で作り直す。
  */
 function onlineConstraintHint(
   tIdent: string,
   given: string,
-  fallback: string,
+  auto: { stem: string; suffix: string },
+  taken: Set<string>,
   build: (name: string) => string,
 ): OnlineHint {
-  const name = given.trim() || fallback.replace(/[^A-Za-z0-9_]+/g, "_").slice(0, PG_IDENT_MAX);
+  const name = given.trim() || fitPgName(auto.stem, auto.suffix, taken);
+  taken.add(name);
   return { type: "constraint", table: tIdent, name, clause: build(name) };
 }
 
@@ -577,6 +574,14 @@ function planConstraints(
   const dropChecks = (form.droppedChecks ?? []).map((n) => n.trim()).filter((n) => n);
   const addFks = (form.addedForeignKeys ?? []).filter(isCompleteForeignKey);
   const addChecks = (form.addedChecks ?? []).filter(isCompleteCheck);
+  // 自動名の衝突を避けるための、既存・指定済みの制約名 (オンライン手順用、PostgreSQL)。
+  const taken = new Set<string>([
+    ...(form.existingConstraintNames ?? []),
+    ...addFks.map((f) => f.name.trim()).filter((n) => n),
+    ...addChecks.map((c) => c.name.trim()).filter((n) => n),
+  ]);
+  for (const n of dropFks) taken.delete(n);
+  for (const n of dropChecks) taken.delete(n);
 
   for (const n of dropFks) {
     statements.push({
@@ -595,8 +600,12 @@ function planConstraints(
   for (const fk of addFks) {
     const online =
       driver === "postgres"
-        ? onlineConstraintHint(tIdent, fk.name, `fk_${fk.columns.map((c) => c.trim()).join("_")}`, (name) =>
-            foreignKeyClause(driver, form.database, { ...fk, name }),
+        ? onlineConstraintHint(
+            tIdent,
+            fk.name,
+            { stem: `${form.table}_${fk.columns.map((c) => c.trim()).join("_")}`, suffix: "_fkey" },
+            taken,
+            (name) => foreignKeyClause(driver, form.database, { ...fk, name }),
           )
         : undefined;
     statements.push({
@@ -609,7 +618,7 @@ function planConstraints(
   for (const ck of addChecks) {
     const online =
       driver === "postgres"
-        ? onlineConstraintHint(tIdent, ck.name, `chk_${shortHash(ck.expression)}`, (name) =>
+        ? onlineConstraintHint(tIdent, ck.name, { stem: form.table, suffix: "_check" }, taken, (name) =>
             checkClause(driver, { ...ck, name }),
           )
         : undefined;

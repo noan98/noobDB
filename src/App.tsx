@@ -601,6 +601,7 @@ import type { ProfileTarget } from "./components/columnProfile";
 import {
   useSettings,
   getSettings,
+  ddlLockTimeoutSecsFor,
   setAutoRefreshDefaultSecs,
   BASE_FONT_SIZE_PX,
   monoFontStack,
@@ -9634,7 +9635,8 @@ export default function App() {
           await api.runQueryTransaction(sessionId, sqls, target.database);
         }
         invalidateSchemaCache(target.database);
-        noteSchemaDdl(sqls.join(";\n"), target.database);
+        // 計画経由 (#2240) は runDdlPlanTracked が記録済み。
+        if (!runOptions) noteSchemaDdl(sqls.join(";\n"), target.database);
         // 対象テーブルが分かっているので、そのテーブルのバックエンドキャッシュだけを捨てて再読込する (#1539)。
         connectionListRef.current?.refreshSchema({ database: target.database, table: target.table });
         toast.success(translate("alterTableSuccess", { table: target.table }));
@@ -9839,7 +9841,7 @@ export default function App() {
       });
       if (!ok) return;
       // CONCURRENTLY / ロック待ちの上限つき (#2240): 計画どおりに流し、失敗はトーストで知らせる。
-      const lockSecs = getSettings().ddlLockTimeoutSecs;
+      const lockSecs = ddlLockTimeoutSecsFor(getSettings(), driver);
       if (concurrently || (supportsLockTimeout(driver) && lockSecs > 0)) {
         const plan = buildIndexExecutionPlan(driver, sql, {
           database,

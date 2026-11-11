@@ -3787,9 +3787,12 @@ const en = {
   ddlLockTimeoutHintPostgres:
     "Runs SET LOCAL lock_timeout = '{secs}s' first. If another session holds a conflicting lock, the DDL fails instead of making every later query on the table queue behind it. Not applied to CONCURRENTLY steps. Change the default in Settings.",
   ddlLockTimeoutHintMysql:
-    "Runs SET SESSION lock_wait_timeout = {secs} first (restored afterwards). If another session holds a metadata lock, the DDL fails instead of making every later query on the table queue behind it. Change the default in Settings.",
+    "Runs SET SESSION lock_wait_timeout = {secs} first (restored afterwards). If another session holds a metadata lock, the DDL fails instead of making every later query on the table queue behind it. It can also fail on the lock wait right before the DDL finishes, in which case the whole ALTER is rolled back. Off by default for MySQL; change it in Settings.",
   ddlLockTimeoutOff: "No lock wait limit: the DDL waits as long as it takes for the lock.",
-  settingsDdlLockTimeout: "DDL lock wait limit (seconds)",
+  settingsDdlLockTimeout: "DDL lock wait limit, PostgreSQL (seconds)",
+  settingsDdlLockTimeoutMysql: "DDL lock wait limit, MySQL (seconds)",
+  settingsDdlLockTimeoutMysqlHelp:
+    "Off (0) by default so MySQL behavior stays as it was. Sets lock_wait_timeout for table alterations and index changes. It can also fail on the lock wait right before the DDL finishes, which rolls back the whole ALTER.",
   settingsDdlLockTimeoutHelp:
     "When altering a table or creating / dropping an index, give up if the lock cannot be acquired within this many seconds (PostgreSQL lock_timeout / MySQL lock_wait_timeout). 0 disables it.",
   onlineStagedToggle: "Apply with the online procedure (NOT VALID then VALIDATE / CONCURRENTLY)",
@@ -3812,6 +3815,8 @@ const en = {
     "Could not check whether an INVALID index was left behind. Look for indisvalid = false in pg_index, and drop it with the statement below if present.",
   ddlReportCleanup: "To clean up what was left half-done",
   ddlReportRemaining: "Remaining stages (from the failed one)",
+  ddlReportConcurrentlyNote:
+    "The remaining SQL contains CONCURRENTLY statements. In the editor, run them one statement at a time (they cannot run inside a transaction or as a multi-statement batch).",
   ddlReportCleanupToEditor: "Cleanup SQL to editor",
   ddlReportRemainingToEditor: "Remaining SQL to editor",
   ddlReportFailedToast: "DDL failed: {error}",
@@ -11857,9 +11862,12 @@ const ja: Dict = {
   ddlLockTimeoutHintPostgres:
     "先頭に SET LOCAL lock_timeout = '{secs}s' を付けて実行します。ほかの接続が衝突するロックを持っているとき、DDL は待ち続けず失敗します (待っている間、後続のクエリが全部この表で並んで待たされる事故を防ぎます)。CONCURRENTLY の段階には付けません。既定値は設定画面で変えられます。",
   ddlLockTimeoutHintMysql:
-    "先頭に SET SESSION lock_wait_timeout = {secs} を付けて実行します (実行後に元へ戻します)。ほかの接続がメタデータロックを持っているとき、DDL は待ち続けず失敗します (後続のクエリが全部この表で並んで待たされる事故を防ぎます)。既定値は設定画面で変えられます。",
+    "先頭に SET SESSION lock_wait_timeout = {secs} を付けて実行します (実行後に元へ戻します)。ほかの接続がメタデータロックを持っているとき、DDL は待ち続けず失敗します (後続のクエリが全部この表で並んで待たされる事故を防ぎます)。DDL の完了直前のロック待ちでも失敗し、その場合は ALTER 全体がロールバックされます。MySQL の既定はオフです。設定画面で変えられます。",
   ddlLockTimeoutOff: "ロック待ちの上限なし: ロックが取れるまで DDL は待ち続けます。",
-  settingsDdlLockTimeout: "DDL のロック待ち上限 (秒)",
+  settingsDdlLockTimeout: "DDL のロック待ち上限・PostgreSQL (秒)",
+  settingsDdlLockTimeoutMysql: "DDL のロック待ち上限・MySQL (秒)",
+  settingsDdlLockTimeoutMysqlHelp:
+    "既存の挙動を変えないため、MySQL の既定はオフ (0) です。テーブル変更・インデックス操作に lock_wait_timeout を付けます。DDL の完了直前のロック待ちでも失敗し、その場合は ALTER 全体がロールバックされます。",
   settingsDdlLockTimeoutHelp:
     "テーブルの変更・インデックスの作成 / 削除で、この秒数以内にロックが取れなければ待たずに失敗させます (PostgreSQL の lock_timeout / MySQL の lock_wait_timeout)。0 で付けません。",
   onlineStagedToggle: "オンライン手順で適用 (NOT VALID → VALIDATE / CONCURRENTLY)",
@@ -11882,6 +11890,8 @@ const ja: Dict = {
     "INVALID なインデックスが残っているか確認できませんでした。pg_index の indisvalid = false を調べ、あれば下の文で削除してください。",
   ddlReportCleanup: "中途半端に残ったものを片付ける SQL",
   ddlReportRemaining: "残りの段階 (失敗した段階から)",
+  ddlReportConcurrentlyNote:
+    "残りの SQL に CONCURRENTLY の文が含まれます。エディタでは 1 文ずつ実行してください (トランザクション内や複数文の一括実行では動きません)。",
   ddlReportCleanupToEditor: "片付けの SQL をエディタへ",
   ddlReportRemainingToEditor: "残りの SQL をエディタへ",
   ddlReportFailedToast: "DDL に失敗しました: {error}",

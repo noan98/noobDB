@@ -103,6 +103,11 @@ export interface Settings {
    */
   ddlLockTimeoutSecs: number;
   /**
+   * MySQL 用 (`SET SESSION lock_wait_timeout`)。既存の挙動を変えないため既定はオフ (0)。メタデータロックが
+   * 取れない場合だけでなく、DDL の完了直前の待ちでも失敗し、ALTER 全体がロールバックされうる。
+   */
+  ddlLockWaitTimeoutSecsMysql: number;
+  /**
    * Overall deadline (seconds) for a whole connection attempt — SSH tunnel
    * connect + auth and DB connect together (#684). Stops an unreachable host
    * from hanging on the OS TCP timeout. Backend clamps to [5, 300]; `0`/unset
@@ -710,6 +715,7 @@ export const DEFAULT_TAB_RESTORE_MODE: TabRestoreMode = "ask";
 export const DEFAULT_QUERY_TIMEOUT_SECS = 30;
 export const DEFAULT_DDL_LOCK_TIMEOUT_SECS = 5;
 export const MAX_DDL_LOCK_TIMEOUT_SECS = 3600;
+export const DEFAULT_DDL_LOCK_WAIT_TIMEOUT_SECS_MYSQL = 0;
 const MAX_QUERY_TIMEOUT_SECS = 86_400;
 
 /** Connect timeout defaults/bounds, mirroring the backend clamp (#684). */
@@ -831,6 +837,7 @@ export const DEFAULT_SETTINGS: Settings = {
   tabRestoreMode: DEFAULT_TAB_RESTORE_MODE,
   queryTimeoutSecs: DEFAULT_QUERY_TIMEOUT_SECS,
   ddlLockTimeoutSecs: DEFAULT_DDL_LOCK_TIMEOUT_SECS,
+  ddlLockWaitTimeoutSecsMysql: DEFAULT_DDL_LOCK_WAIT_TIMEOUT_SECS_MYSQL,
   connectTimeoutSecs: DEFAULT_CONNECT_TIMEOUT_SECS,
   fontSizePx: DEFAULT_FONT_SIZE_PX,
   accentColor: DEFAULT_ACCENT_COLOR,
@@ -1081,6 +1088,7 @@ export function normalizeSettings(input: unknown): Settings {
     tabRestoreMode?: unknown;
     queryTimeoutSecs?: unknown;
     ddlLockTimeoutSecs?: unknown;
+    ddlLockWaitTimeoutSecsMysql?: unknown;
     connectTimeoutSecs?: unknown;
     fontSizePx?: unknown;
     accentColor?: unknown;
@@ -1168,6 +1176,12 @@ export function normalizeSettings(input: unknown): Settings {
     ddlLockTimeoutSecs: sanitizeIntInRange(
       parsed.ddlLockTimeoutSecs,
       DEFAULT_DDL_LOCK_TIMEOUT_SECS,
+      0,
+      MAX_DDL_LOCK_TIMEOUT_SECS,
+    ),
+    ddlLockWaitTimeoutSecsMysql: sanitizeIntInRange(
+      parsed.ddlLockWaitTimeoutSecsMysql,
+      DEFAULT_DDL_LOCK_WAIT_TIMEOUT_SECS_MYSQL,
       0,
       MAX_DDL_LOCK_TIMEOUT_SECS,
     ),
@@ -1591,6 +1605,24 @@ export function setDdlLockTimeoutSecs(value: number): void {
   current = { ...current, ddlLockTimeoutSecs: next };
   persist();
   listeners.forEach((cb) => cb());
+}
+
+export function setDdlLockWaitTimeoutSecsMysql(value: number): void {
+  const next = sanitizeIntInRange(value, current.ddlLockWaitTimeoutSecsMysql, 0, MAX_DDL_LOCK_TIMEOUT_SECS);
+  if (current.ddlLockWaitTimeoutSecsMysql === next) return;
+  current = { ...current, ddlLockWaitTimeoutSecsMysql: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/** ドライバ別の DDL ロック待ち上限 (秒)。PostgreSQL / MySQL 以外は 0。 */
+export function ddlLockTimeoutSecsFor(
+  s: Pick<Settings, "ddlLockTimeoutSecs" | "ddlLockWaitTimeoutSecsMysql">,
+  driver: string,
+): number {
+  if (driver === "postgres") return s.ddlLockTimeoutSecs;
+  if (driver === "mysql") return s.ddlLockWaitTimeoutSecsMysql;
+  return 0;
 }
 
 export function setConnectTimeoutSecs(value: number): void {
