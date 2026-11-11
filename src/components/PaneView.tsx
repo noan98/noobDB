@@ -37,6 +37,7 @@ import { bundleExplainPrefix, bundlePlanSupported } from "./investigationBundle"
 import { explainAnalyzeSupported } from "./explainAnalyze";
 import { TabBar, sameTabInfo, type TabInfo } from "./TabBar";
 import { Splitter } from "./Splitter";
+import { changeSetStatementText, pendingChangeCounts } from "../pendingGuard";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Button } from "./ui";
 import { DrillChip } from "./DrillChip";
@@ -50,7 +51,6 @@ import {
 } from "./drillFilter";
 import { buildTabsEmptyActions } from "./tabsEmptyActions";
 import { buildResultEmptyActions } from "./resultEmptyActions";
-import { LoadingButton } from "./LoadingButton";
 import { readOnlyWithHint } from "../dangerousSql";
 import { useT } from "../i18n";
 import type { IncomingFk } from "../fkNavigation";
@@ -177,7 +177,6 @@ export interface PaneActions {
   closePane: (paneId: string) => void;
   countExactRowsInTab: (tabId: string) => void;
   discardEditsAndPreviewForTab: (tabId: string) => void;
-  discardRowOpsForTab: (tabId: string) => void;
   explainForTab: (tab: Tab, sql: string) => void;
   fetchAllForTab: (tab: Tab) => void;
   focusPane: (paneId: string) => void;
@@ -976,6 +975,7 @@ export const PaneView = memo(
                                   pendingEditsSummary={
                                     tab.kind === "table" && summary.cells > 0 ? summary : undefined
                                   }
+                                  applyStatements={changeSetStatementText(pendingChangeCounts(tab))}
                                   onApplyEdits={
                                     tab.kind === "table" && summary.cells > 0
                                       ? () => actions.applyEditsForTab(tab)
@@ -1004,49 +1004,6 @@ export const PaneView = memo(
                       >
                         <ResultExplainContext.Provider value={explainCtxValue}>
                           <Flex direction="column" h="100%" minH={0} minW={0}>
-                            {tab.kind === "table" &&
-                              !readOnly &&
-                              ((tab.pendingInserts?.length ?? 0) > 0 ||
-                                (tab.pendingDeletes?.length ?? 0) > 0) && (
-                                <Flex
-                                  align="center"
-                                  gap="2.5"
-                                  px="3"
-                                  py="1.5"
-                                  flex="none"
-                                  borderBottomWidth="1px"
-                                  borderBottomColor="app.border"
-                                  bg="color-mix(in srgb, var(--accent) 8%, transparent)"
-                                  fontSize="sm"
-                                >
-                                  <Icon name="table" size={ICON_SIZES.md} />
-                                  <chakra.span color="app.text">
-                                    {t("rowOpsBarSummary", {
-                                      inserts: tab.pendingInserts?.length ?? 0,
-                                      deletes: tab.pendingDeletes?.length ?? 0,
-                                    })}
-                                  </chakra.span>
-                                  <chakra.span flex="1" />
-                                  <Button
-                                    type="button"
-                                    variant="secondary"
-                                    size="sm"
-                                    onClick={() => actions.discardRowOpsForTab(tab.id)}
-                                    disabled={tab.applyingEdits}
-                                  >
-                                    <Icon name="close" size={ICON_SIZES.md} /> {t("rowOpsDiscard")}
-                                  </Button>
-                                  <LoadingButton
-                                    type="button"
-                                    variant="success"
-                                    size="sm"
-                                    loading={tab.applyingEdits}
-                                    onClick={() => actions.applyEditsForTab(tab)}
-                                  >
-                                    <Icon name="check" size={ICON_SIZES.md} /> {t("rowOpsApply")}
-                                  </LoadingButton>
-                                </Flex>
-                              )}
                             {/* ピボット / チャートから絞り込んで来たことを示す帯 (#2236)。出入りは springs.snappy。 */}
                             <AnimatePresence initial={false}>
                               {drill && !drill.cleared && (
@@ -1191,6 +1148,7 @@ export const PaneView = memo(
                                       : undefined
                                   }
                                   pendingEdits={tab.pendingEdits}
+                                  pendingInsertCount={tab.pendingInserts?.length ?? 0}
                                   canUndo={(tab.editUndoStack?.length ?? 0) > 0}
                                   canRedo={(tab.editRedoStack?.length ?? 0) > 0}
                                   onSetCellEdit={gridStable.fn(
@@ -1501,6 +1459,7 @@ export const PaneView = memo(
                                       : undefined
                                   }
                                   lastEditAppliedAt={tab.lastEditAppliedAt}
+                                  lastAppliedEdits={tab.lastAppliedEdits}
                                   maximized={maximized}
                                   onToggleMaximize={onToggleResultMaximize}
                                   onPinResult={gridStable.fn(`${tab.id}:pin`, () =>
