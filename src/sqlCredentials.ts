@@ -16,11 +16,14 @@ import { maskLiterals } from "./dangerousSql";
  *   MariaDB の `IDENTIFIED VIA <plugin> USING …` / `… REPLACE '…'` (旧パスワード) /
  *   文頭の `SET PASSWORD [FOR …] = '…'` (`PASSWORD('…')` も) /
  *   `CREATE|ALTER SERVER … OPTIONS (PASSWORD '…')` / `MASTER_PASSWORD|SOURCE_PASSWORD = '…'` /
- *   `START REPLICA|SLAVE … PASSWORD = '…'`
+ *   `START REPLICA|SLAVE|GROUP_REPLICATION … PASSWORD = '…'` (#2245)
  * - PostgreSQL: `CREATE|ALTER ROLE|USER|GROUP` 内の `[ENCRYPTED] PASSWORD '…'`
  *   (`USER MAPPING … OPTIONS (password '…')` を含む。`E'…'` とドル引用も)
  *   と `CREATE|ALTER SUBSCRIPTION … CONNECTION '<接続文字列>'` (#2189。中身に `redactConninfo` が伏せる
- *   `password` / `sslpassword` / URI のパスワードがあるときだけリテラル全体)
+ *   `password` / `sslpassword` / URI のパスワードがあるときだけリテラル全体)。
+ *   同じ規則で #2245: `dblink(…)` / `dblink_exec(…)` / `dblink_connect[_u](…)` の括弧内の文字列リテラルと、
+ *   `primary_conninfo [=|TO] '…'` (`ALTER SYSTEM SET` / `SET` / `ALTER DATABASE|ROLE … SET`)・
+ *   `set_config('primary_conninfo', '…', …)`
  * - SQLite: 対象なし
  *
  * リテラルの前置 (`E` / `U&` / `N` / `_utf8mb4`) は範囲に含めず残す。閉じていないリテラルは文末まで
@@ -242,8 +245,9 @@ class Scanner {
    * 対象外なら null。Rust 側 `conninfo_literal_secrets` と同じ規則 (安全側):
    * `U&'…'` / 中身に `\` がある `E'…'` / エスケープを解いた中身に "password" を含む /
    * `redactConninfo` や `conninfoSecretValues` が値を見つける / URI で最後の `@` の前に `:` がある (パスワードに `/` `?` が素で入っても漏らさない)。
+   * `strict` (問い合わせ SQL の引数など接続文字列と限らないリテラル用) は "password" の語と opaque を見ず、値が見つかるときだけ対象にする。
    */
-  private conninfoLiteralSecrets(lit: CredentialRange): string[] | null {
+  private conninfoLiteralSecrets(lit: CredentialRange, strict: boolean): string[] | null {
     const { start: s, end: e } = lit;
     let decoded = "";
     let opaque = false;
@@ -284,11 +288,11 @@ class Scanner {
       atPos > schemeAt &&
       t.slice(schemeAt + 3, atPos).includes(":");
     const secret =
-      opaque ||
+      (opaque && !strict) ||
       uriAt ||
-      lower.includes("password") ||
+      (!strict && lower.includes("password")) ||
       values.length > 0 ||
-      redactConninfo(decoded) !== decoded;
+      (!strict && redactConninfo(decoded) !== decoded);
     return secret ? values : null;
   }
 
@@ -297,44 +301,50 @@ class Scanner {
     const [a, b] = this.leadingWords(i);
     if ((a !== "create" && a !== "alter") || b !== "subscription") return;
     const lit = this.literalAt(this.skipWs(e));
-    if (!lit) return;
-    const values = this.conninfoLiteralSecrets(lit);
-    if (values === null) return;
-    this.push(lit);
-    this.secrets.push(...values);
+    if (lit) this.pushConninfo(lit, false);
   }
 
   /** リテラルが接続文字列で秘密を含むなら伏せ対象にして、秘密の値を集める。 */
-  private pushConninfo(lit: CredentialRange): void {
-    const values = this.conninfoLiteralSecrets(lit);
+  private pushConninfo(lit: CredentialRange, strict: boolean): void {
+    const values = this.conninfoLiteralSecrets(lit, strict);
     if (values === null) return;
     this.push(lit);
     this.secrets.push(...values);
   }
 
-  /** dblink 関数の接続文字列リテラル (`dblink_connect[_u]` は接続名つきなら第 2 引数、他は第 1 引数)。`e` は関数名の終端。 */
+  /**
+   * dblink 関数 (`dblink` / `dblink_exec` / `dblink_connect[_u]`) の括弧内のリテラルをすべて接続文字列として検査する
+   * (`'host=h ' || 'password=…'`・`CAST('…' AS text)`・名前付き引数・第 1 引数が変数でも拾う)。`dblink` / `dblink_exec` は
+   * 第 2 引数以降 (問い合わせ SQL) を strict にし、password を含む接続文字列と判定できたものだけ伏せる。`e` は関数名の終端。
+   */
   private pgDblinkCall(w: string, e: number): void {
     const p = this.skipWs(e);
     if (this.m[p] !== "(") return;
-    const first = this.literalAt(this.skipWs(p + 1));
-    if (!first) return;
-    if (w.startsWith("dblink_connect")) {
-      const q = this.skipWs(first.end);
-      if (this.m[q] === ",") {
-        const second = this.literalAt(this.skipWs(q + 1));
-        if (second) {
-          this.pushConninfo(second);
-          return;
+    const connect = w.startsWith("dblink_connect");
+    let depth = 0;
+    let commas = 0;
+    let j = p;
+    while (j < this.m.length) {
+      const c = this.m[j];
+      if (c === "(") depth++;
+      else if (c === ")") {
+        depth--;
+        if (depth === 0) return;
+      } else if (c === "," && depth === 1) commas++;
+      if ("'\"$eEuU".includes(c) && (j === 0 || !isWord(this.m[j - 1]))) {
+        const lit = this.literalAt(j);
+        if (lit) {
+          this.pushConninfo(lit, !connect && commas > 0);
+          j = lit.end;
+          continue;
         }
       }
+      j++;
     }
-    this.pushConninfo(first);
   }
 
-  /** `ALTER SYSTEM SET primary_conninfo [=|TO] '<接続文字列>'`。`e` は設定名の終端。 */
-  private pgPrimaryConninfo(i: number, e: number): void {
-    const [a, b] = this.leadingWords(i);
-    if (a !== "alter" || b !== "system") return;
+  /** `primary_conninfo [=|TO] '<接続文字列>'` (`ALTER SYSTEM SET` / `SET` / `ALTER DATABASE|ROLE … SET`)。`e` は設定名の終端。 */
+  private pgPrimaryConninfo(e: number): void {
     let p = this.skipWs(e);
     if (this.m[p] === "=") {
       p++;
@@ -344,7 +354,21 @@ class Scanner {
       p = t.e;
     }
     const lit = this.literalAt(this.skipWs(p));
-    if (lit) this.pushConninfo(lit);
+    if (lit) this.pushConninfo(lit, false);
+  }
+
+  /** `set_config('primary_conninfo', '<接続文字列>', …)`。`e` は関数名の終端。 */
+  private pgSetConfig(e: number): void {
+    const p = this.skipWs(e);
+    if (this.m[p] !== "(") return;
+    const name = this.literalAt(this.skipWs(p + 1));
+    if (!name || this.m[name.start] !== "'") return;
+    const inner = this.src.slice(name.start + 1, Math.max(name.end - 1, name.start + 1));
+    if (inner.toLowerCase() !== "primary_conninfo") return;
+    const q = this.skipWs(name.end);
+    if (this.m[q] !== ",") return;
+    const lit = this.literalAt(this.skipWs(q + 1));
+    if (lit) this.pushConninfo(lit, false);
   }
 
   scan(): void {
@@ -363,6 +387,10 @@ class Scanner {
             name === "dblink_connect_u"
           ) {
             this.pgDblinkCall(name, close + 1);
+          } else if (name === "primary_conninfo") {
+            this.pgPrimaryConninfo(close + 1);
+          } else if (name === "set_config") {
+            this.pgSetConfig(close + 1);
           }
           i = close + 1;
           continue;
@@ -385,7 +413,9 @@ class Scanner {
       ) {
         this.pgDblinkCall(w, e);
       } else if (w === "primary_conninfo" && this.pg) {
-        this.pgPrimaryConninfo(i, e);
+        this.pgPrimaryConninfo(e);
+      } else if (w === "set_config" && this.pg) {
+        this.pgSetConfig(e);
       } else if (w === "set" && this.mysql) {
         this.mysqlSetPassword(i, e);
       } else if ((w === "master_password" || w === "source_password") && this.mysql) {
