@@ -4,6 +4,26 @@
 
 ## 読み取り専用ガードと自動 LIMIT
 
+### 字句ガードの外側: サーバ側の READ ONLY (#2243)
+
+字句ガードは SQL の文字列しか見ないので、書き込みを行うユーザー定義関数 (`SELECT purge()`) や
+拒否リストにない副作用関数は通る。そこで**読み取り専用を強制する経路**は、字句ガードを残したまま
+`db/read_only_scope.rs` (`task_local`) でサーバ側も読み取り専用にして二重に守る。
+
+- 強制する経路: read_only セッションの通常実行 (`run_query` / `run_query_stream` / スクリプト /
+  明示トランザクションの開始) ・自動更新・ブロードキャスト・EXPLAIN ANALYZE (`force_read_only`)・
+  書き出し (`run_export_to_file` / ワークブック。スケジューラの書き出しも同じ)・値検索の走査。
+  緊急クエリ実行モード中の read_only セッションは強制しない (`server_read_only_enforced`)。
+- ドライバ別: PostgreSQL は `BEGIN READ ONLY` … `ROLLBACK`、MySQL は
+  `START TRANSACTION READ ONLY` … `ROLLBACK`、SQLite は文の間だけ `PRAGMA query_only = ON` → `OFF`。
+  接続のセッション設定 (`default_transaction_read_only`) にしないのは、プールへ戻る接続に残って
+  書き込み経路へ漏れるのと、`set_config` で外せてしまうのを避けるため。戻せなかった・future が
+  drop された接続は `ReleaseGuard` がプールへ戻さず閉じる。
+- 書き込みプレビュー (dry-run) と内部の参照系 (アドバイザ・メタデータ取得・`SET search_path` など) は
+  この文脈の外で動くので従来どおり。新しい「読み取り専用を強制する」経路を足すときは、
+  字句ガードに加えて `read_only_scope::scope` で包む。
+- 検証は `tests/read_only_server_integration.rs` (PostgreSQL / MySQL は環境変数ゲート、SQLite は常時)。
+
 `db/mod.rs` の `is_read_only_sql` は、読み取り専用プロファイルで許可してよい文かを
 判定する**ベストエフォートの安全網** (パーサではない) です。許可リストは `SELECT` /
 `SHOW` / `DESCRIBE` / `DESC` / `EXPLAIN` / `WITH`。コメントと文字列リテラルをマスク

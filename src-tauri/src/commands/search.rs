@@ -731,7 +731,10 @@ async fn scan_one_table(
     let Ok(_permit) = permits.acquire().await else {
         return skipped("error", Some("scan was shut down".to_string()));
     };
-    match session.conn.execute(&scan.sql, Some(&req.database)).await {
+    // 走査 SQL は SELECT だけなので、サーバ側でも常に読み取り専用で実行する (#2243)。
+    match crate::db::read_only_scope::scope(session.conn.execute(&scan.sql, Some(&req.database)))
+        .await
+    {
         Ok(result) => {
             let row = result.rows.first().map(Vec::as_slice).unwrap_or(&[]);
             let hits = parse_scan_row(&scan.columns, row);

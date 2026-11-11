@@ -157,8 +157,16 @@ impl SqliteConn {
     }
 
     pub async fn execute(&self, sql: &str, _database: Option<&str>) -> Result<QueryResult> {
-        let mut conn = self.pool.acquire().await?;
-        run_sql_on(&mut conn, sql).await
+        let mut guard = super::server_stop::ReleaseGuard::new(self.pool.acquire().await?);
+        let enforce = super::read_only_scope::enforced();
+        if enforce {
+            guard.arm();
+        }
+        let (result, clean) = run_sql_read_only_aware(&mut guard.conn, sql, enforce).await;
+        if clean {
+            guard.keep();
+        }
+        result
     }
 
     /// EXPLAIN 用の実行。SQLite は EXPLAIN / EXPLAIN QUERY PLAN の準備時には読み取り
@@ -171,12 +179,20 @@ impl SqliteConn {
     /// キャッシュを捨ててから実行し、必ず現在のスキーマで準備し直させる。
     pub async fn execute_explain(&self, sql: &str) -> Result<QueryResult> {
         use sqlx::Connection;
-        let mut conn = self.pool.acquire().await?;
-        conn.clear_cached_statements().await?;
+        let mut guard = super::server_stop::ReleaseGuard::new(self.pool.acquire().await?);
+        let enforce = super::read_only_scope::enforced();
+        if enforce {
+            guard.arm();
+        }
+        guard.conn.clear_cached_statements().await?;
         sqlx::query("SELECT 1 FROM sqlite_master LIMIT 1")
-            .fetch_optional(&mut *conn)
+            .fetch_optional(&mut *guard.conn)
             .await?;
-        run_sql_on(&mut conn, sql).await
+        let (result, clean) = run_sql_read_only_aware(&mut guard.conn, sql, enforce).await;
+        if clean {
+            guard.keep();
+        }
+        result
     }
 
     // ── 明示トランザクション ──
@@ -261,19 +277,46 @@ impl SqliteConn {
         _database: Option<&str>,
         initial_batch: usize,
         chunk_size: usize,
-        mut on_batch: F,
+        on_batch: F,
     ) -> Result<QueryResult>
     where
         F: FnMut(StreamBatch) -> Result<()>,
     {
+        // サーバ側の読み取り専用 (#2243): 強制する経路では文の間だけ query_only を立てる。
+        // 戻せなかった・future が drop された接続は、プールへ戻さず閉じる。
+        let enforce = super::read_only_scope::enforced();
+        let mut guard = super::server_stop::ReleaseGuard::new(self.pool.acquire().await?);
+        if enforce {
+            guard.arm();
+            set_query_only(&mut guard.conn, true).await?;
+        }
+        let result = stream_on(&mut guard.conn, sql, initial_batch, chunk_size, on_batch).await;
+        if !enforce || set_query_only(&mut guard.conn, false).await.is_ok() {
+            guard.keep();
+        }
+        result
+    }
+}
+
+/// `execute_stream` の本体 (接続取得・読み取り専用の設定より後)。
+async fn stream_on<F>(
+    conn: &mut sqlx::SqliteConnection,
+    sql: &str,
+    initial_batch: usize,
+    chunk_size: usize,
+    mut on_batch: F,
+) -> Result<QueryResult>
+where
+    F: FnMut(StreamBatch) -> Result<()>,
+{
+    {
         let started = Instant::now();
         let is_query = is_query_shape(sql);
 
-        let mut conn = self.pool.acquire().await?;
         // サーバ側停止 (#2023): progress handler で期限・キャンセルを見て文を中断する。
         let stop_ctx = super::server_stop::current();
         if let Some(ctx) = &stop_ctx {
-            install_interrupt_handler(&mut conn, ctx).await;
+            install_interrupt_handler(conn, ctx).await;
         }
 
         if !is_query {
@@ -329,7 +372,9 @@ impl SqliteConn {
             server_messages: Vec::new(),
         })
     }
+}
 
+impl SqliteConn {
     pub async fn preview_execute_with_limit(
         &self,
         sql: &str,
@@ -2357,6 +2402,36 @@ async fn install_interrupt_handler(
 /// Run one statement on a specific connection (pool-acquired or the held tx
 /// connection) and decode it into a [`QueryResult`]. Shared by `execute` and
 /// `tx_execute`.
+/// `PRAGMA query_only` を切り替える (#2243)。アプリは他ではこの PRAGMA を使わない
+/// (明示トランザクションの READ ONLY は `tx_begin` / `tx_finish` が同じ値で出し入れする)。
+async fn set_query_only(conn: &mut sqlx::SqliteConnection, on: bool) -> Result<()> {
+    let sql = if on {
+        "PRAGMA query_only = ON"
+    } else {
+        "PRAGMA query_only = OFF"
+    };
+    sqlx::query(sql).execute(&mut *conn).await?;
+    Ok(())
+}
+
+/// 1 文を実行する。`enforce` のときは文の間だけ `query_only` を立てる (#2243)。戻り値の bool は
+/// 「接続をプールへ戻してよいか」(OFF に戻せたか)。
+async fn run_sql_read_only_aware(
+    conn: &mut sqlx::SqliteConnection,
+    sql: &str,
+    enforce: bool,
+) -> (Result<QueryResult>, bool) {
+    if !enforce {
+        return (run_sql_on(conn, sql).await, true);
+    }
+    if let Err(e) = set_query_only(conn, true).await {
+        return (Err(e), false);
+    }
+    let result = run_sql_on(conn, sql).await;
+    let clean = set_query_only(conn, false).await.is_ok();
+    (result, clean)
+}
+
 async fn run_sql_on(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<QueryResult> {
     let started = Instant::now();
     if is_query_shape(sql) {

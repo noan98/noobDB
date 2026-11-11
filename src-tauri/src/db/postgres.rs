@@ -168,19 +168,37 @@ impl PostgresConn {
     }
 
     pub async fn execute(&self, sql: &str, database: Option<&str>) -> Result<QueryResult> {
-        let mut conn = self.pool.acquire().await?;
-        apply_search_path(&mut conn, database, &self.search_path).await?;
+        // サーバ側の読み取り専用 (#2243): 強制する経路では BEGIN READ ONLY で囲んで必ず戻す。
+        // 戻せなかった・future が drop された接続は、プールへ戻さず閉じる。
+        let enforce = super::read_only_scope::enforced();
+        let mut guard = super::server_stop::ReleaseGuard::new(self.pool.acquire().await?);
+        if enforce {
+            guard.arm();
+        }
+        apply_search_path(&mut guard.conn, database, &self.search_path).await?;
+        let mut clean = true;
         // NOTICE / WARNING を捕捉して結果へ載せる (#1165)。
-        let (result, messages) = capture(run_sql_on(&mut conn, sql)).await;
-        // 同じ接続で表を作り直す (DROP → CREATE、ダンプ復元など) と、接続にキャッシュされた
-        // プリペアド文の結果型が変わり、PostgreSQL は実行前の再検証で 0A000 を返す。
-        // 文はまだ実行されていないので、キャッシュを捨てて 1 回だけやり直す。
-        if let Err(e) = &result {
-            if is_stale_cached_plan(e) {
-                sqlx::Connection::clear_cached_statements(&mut *conn).await?;
-                let (result, messages) = capture(run_sql_on(&mut conn, sql)).await;
-                return Ok(result?.with_server_messages(messages));
+        let (result, messages) = capture(async {
+            let (mut result, ok) = run_sql_read_only_aware(&mut guard.conn, sql, enforce).await;
+            clean = ok;
+            // 同じ接続で表を作り直す (DROP → CREATE、ダンプ復元など) と、接続にキャッシュされた
+            // プリペアド文の結果型が変わり、PostgreSQL は実行前の再検証で 0A000 を返す。
+            // 文はまだ実行されていないので、キャッシュを捨てて 1 回だけやり直す。
+            if clean {
+                if let Err(e) = &result {
+                    if is_stale_cached_plan(e) {
+                        sqlx::Connection::clear_cached_statements(&mut *guard.conn).await?;
+                        let (r, ok) = run_sql_read_only_aware(&mut guard.conn, sql, enforce).await;
+                        result = r;
+                        clean = ok;
+                    }
+                }
             }
+            result
+        })
+        .await;
+        if clean {
+            guard.keep();
         }
         Ok(result?.with_server_messages(messages))
     }
@@ -310,6 +328,17 @@ impl PostgresConn {
             }
             None => None,
         };
+        // サーバ側の読み取り専用 (#2243): BEGIN READ ONLY で囲んで必ず戻す。
+        let enforce = super::read_only_scope::enforced();
+        if enforce {
+            guard.arm();
+            if let Err(e) = sqlx::query("BEGIN READ ONLY")
+                .execute(&mut *guard.conn)
+                .await
+            {
+                return Err(e.into());
+            }
+        }
         // アプリ側の理由 (結果の送信失敗など) で打ち切られたときは、サーバで文が走ったままの
         // 可能性があるので、設定の復元は省き、接続は閉じる (keep しない)。
         let app_failed = std::sync::atomic::AtomicBool::new(false);
@@ -333,16 +362,42 @@ impl PostgresConn {
         if app_failed.load(std::sync::atomic::Ordering::SeqCst) {
             return result;
         }
+        // 読み取り専用のトランザクションは結果に関わらず戻す (#2243)。戻せなければ接続は閉じる。
+        let rolled_back = !enforce
+            || sqlx::query("ROLLBACK")
+                .execute(&mut *guard.conn)
+                .await
+                .is_ok();
         // 設定を元に戻せたときだけ接続をプールへ戻す (戻せなければ drop で閉じる)。
-        let restored = match restore {
-            Some(orig) => restore_statement_timeout(&mut guard.conn, &orig).await,
-            None => true,
-        };
+        let restored = rolled_back
+            && match restore {
+                Some(orig) => restore_statement_timeout(&mut guard.conn, &orig).await,
+                None => true,
+            };
         if restored {
             guard.keep();
         }
         result
     }
+}
+
+/// 1 文を実行する。`enforce` のときはサーバ側の読み取り専用トランザクションで囲み
+/// (`BEGIN READ ONLY` … `ROLLBACK`、#2243)、戻り値の bool は「接続をプールへ戻してよいか」
+/// (ROLLBACK まで済んだか)。
+async fn run_sql_read_only_aware(
+    conn: &mut sqlx::PgConnection,
+    sql: &str,
+    enforce: bool,
+) -> (Result<QueryResult>, bool) {
+    if !enforce {
+        return (run_sql_on(conn, sql).await, true);
+    }
+    if let Err(e) = sqlx::query("BEGIN READ ONLY").execute(&mut *conn).await {
+        return (Err(e.into()), false);
+    }
+    let result = run_sql_on(conn, sql).await;
+    let clean = sqlx::query("ROLLBACK").execute(&mut *conn).await.is_ok();
+    (result, clean)
 }
 
 /// `execute_stream_inner` の本体 (接続取得・サーバ側停止の準備より後)。
