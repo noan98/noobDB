@@ -279,6 +279,7 @@ const NAME_MAP: Record<string, string> = {
   AdvisorRuleId: "RuleId",
   AdvisorSeverity: "Severity",
   ImportConflictMode: "ConflictMode",
+  SubsetExisting: "ExistingRows",
   ProfileImportStrategy: "ImportStrategy",
   ProfileSecretKind: "SecretKind",
   QueryStreamPatchRun: "PatchRun",

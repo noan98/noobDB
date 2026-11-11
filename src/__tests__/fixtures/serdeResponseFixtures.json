@@ -6319,6 +6319,54 @@
     "deliveredRows": 5,
     "streamId": "strm0001"
   },
+  "subsetPreview": {
+    "cycles": [
+      [
+        "a",
+        "b"
+      ]
+    ],
+    "tables": [
+      {
+        "childRows": 1,
+        "columns": [
+          {
+            "key": true,
+            "name": "id"
+          }
+        ],
+        "parentRows": 1,
+        "rootRows": 1,
+        "rows": 3,
+        "table": "orders"
+      }
+    ],
+    "totalRows": 3,
+    "warnings": [
+      {
+        "kind": "cycle",
+        "tables": [
+          "a",
+          "b"
+        ]
+      },
+      {
+        "constraint": "fk_orders",
+        "kind": "unresolvedForeignKey",
+        "table": "orders"
+      },
+      {
+        "kind": "childTruncated",
+        "limit": 1000,
+        "table": "orders"
+      },
+      {
+        "kind": "rootTruncated",
+        "limit": 1000,
+        "table": "orders"
+      }
+    ]
+  },
   "syncPlan": {
     "statements": [
       {

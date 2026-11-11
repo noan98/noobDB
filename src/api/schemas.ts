@@ -2544,6 +2544,51 @@ export const transferErrorEvent = z.object({
   rows: z.number(),
 });
 
+// サブセット抽出 (#2241)。
+export const subsetWarning = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("cycle"), tables: z.array(z.string()) }),
+  z.object({ kind: z.literal("unresolvedForeignKey"), table: z.string(), constraint: z.string() }),
+  z.object({ kind: z.literal("childTruncated"), table: z.string(), limit: z.number() }),
+  z.object({ kind: z.literal("rootTruncated"), table: z.string(), limit: z.number() }),
+]);
+
+export const subsetPreview = z.object({
+  tables: z.array(
+    z.object({
+      table: z.string(),
+      rows: z.number(),
+      rootRows: z.number(),
+      childRows: z.number(),
+      parentRows: z.number(),
+      columns: z.array(z.object({ name: z.string(), key: z.boolean() })),
+    }),
+  ),
+  totalRows: z.number(),
+  cycles: z.array(z.array(z.string())),
+  warnings: z.array(subsetWarning),
+});
+
+export const subsetProgressEvent = z.object({
+  streamId: z.string(),
+  phase: z.enum(["collect", "write"]),
+  rows: z.number(),
+});
+
+export const subsetDoneEvent = z.object({
+  streamId: z.string(),
+  rows: z.number(),
+  elapsedMs: z.number(),
+  tables: z.array(z.object({ table: z.string(), rows: z.number() })),
+  warnings: z.array(subsetWarning),
+  path: z.string().nullable(),
+});
+
+export const subsetErrorEvent = z.object({
+  streamId: z.string(),
+  message: z.string(),
+  rows: z.number(),
+});
+
 /** DEV ビルドでのみ詳細なバリデーションエラーをコンソールへ出す。 */
 const DEV = import.meta.env.DEV;
 

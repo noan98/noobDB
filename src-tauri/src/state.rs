@@ -48,6 +48,8 @@ pub enum StreamKind {
     /// PostgreSQL の `LISTEN` / `NOTIFY` 監視 (#2019)。`delivered_rows` は流した通知の件数。
     /// キャンセルは Channel の `Cancelled` で通知する。
     Listen,
+    /// サブセット抽出 (#2241)。`delivered_rows` は集めた / 書き込んだ行数。
+    Subset,
 }
 
 /// A running streaming task tracked by [`AppState`]. Besides the `AbortHandle`

@@ -43,6 +43,9 @@ use crate::db::sandbox::{
     schema_conflict_tables, shadow_table_name, with_shadow_copies, SandboxConflict,
     SandboxTableSpec,
 };
+use crate::db::subset::{
+    group_foreign_keys, resolve_edges, SubsetOptions, SubsetTable, SubsetWalk, MAX_TOTAL_ROWS,
+};
 use crate::db::sync::{generate_sync_sql, quote_ident};
 use crate::db::types::{generated_column_names, TableColumnInfo, Value};
 use crate::db::upsert::ImportConflict;
@@ -53,6 +56,7 @@ use crate::sandboxes::{SandboxRecord, SandboxRowFilter};
 use crate::state::{new_session_id, AppState, Session};
 
 use super::diff::{select_rows_sql, select_rows_where_sql, DEFAULT_DATA_ROWS, MAX_DATA_ROWS};
+use super::subset::run_walk;
 
 /// Row batch size used when importing the copied data into the sandbox file.
 const IMPORT_BATCH_SIZE: usize = 500;
@@ -197,9 +201,14 @@ pub(crate) async fn create_sandbox_inner(
     }
     selected.sort();
     selected.dedup();
+    let selected_names = selected.clone();
+    // 関連表を含めるときは、表単位の閉包で追加する表の集合を決めたうえで、行単位で親を辿る (#2241)。
+    let mut related_fks = None;
     let effective_tables = if include_related {
         let fks = source.conn.foreign_keys(&db).await?;
-        fk_closure(&selected, &fks)
+        let closure = fk_closure(&selected, &fks);
+        related_fks = Some(fks);
+        closure
     } else {
         selected
     };
@@ -262,6 +271,17 @@ pub(crate) async fn create_sandbox_inner(
     let mut fetched: Vec<FetchedTable> = Vec::with_capacity(table_cols.len());
     for (t, cols) in &table_cols {
         let col_names: Vec<String> = cols.iter().map(|c| c.name.clone()).collect();
+        if include_related && !selected_names.contains(t) {
+            // 関連表として追加しただけの表は、選んだ行が参照している行だけを後で足す
+            // (主キー順の先頭 N 行を取ると、参照先が欠けて孤児行ができる, #2241)。
+            fetched.push(FetchedTable {
+                name: t.clone(),
+                columns: col_names,
+                rows: Vec::new(),
+                truncated: false,
+            });
+            continue;
+        }
         // Order by the primary key when there is one (stable, cheap). A table
         // without one is read unordered: rows are read once at creation time so
         // determinism is not needed, and ordering by every column fails for
@@ -288,6 +308,57 @@ pub(crate) async fn create_sandbox_inner(
             columns: col_names,
             rows,
             truncated,
+        });
+    }
+
+    // 関連表を含めるときは、選んだ表の行 (起点) から外部キーを行単位で親へ辿り、必要な親の行を
+    // すべて足す。親の方向は常に最後まで辿る (子の方向は辿らない)。取得は読み取り専用。
+    if let Some(fks) = related_fks {
+        let metas: std::collections::BTreeMap<String, SubsetTable> = table_cols
+            .iter()
+            .map(|(name, cols)| {
+                (
+                    name.clone(),
+                    SubsetTable {
+                        name: name.clone(),
+                        columns: cols.iter().map(|c| c.name.clone()).collect(),
+                        column_types: cols.iter().map(|c| c.data_type.clone()).collect(),
+                        primary_key: cols
+                            .iter()
+                            .filter(|c| c.key.eq_ignore_ascii_case("PRI"))
+                            .map(|c| c.name.clone())
+                            .collect(),
+                    },
+                )
+            })
+            .collect();
+        let (edges, _) = resolve_edges(&group_foreign_keys(&fks), &metas);
+        let mut walk = SubsetWalk::new(
+            metas.clone(),
+            edges,
+            SubsetOptions {
+                child_depth: 0,
+                child_row_limit: limit,
+                max_total_rows: limit.saturating_mul(metas.len() as u64).max(MAX_TOTAL_ROWS),
+            },
+        );
+        for t in &fetched {
+            walk.add_root_rows(&t.name, t.rows.clone())?;
+        }
+        run_walk(&source, "", Some(&db), &metas, &mut walk, |_| {}).await?;
+        let result = walk.finish();
+        for t in fetched.iter_mut() {
+            if let Some(r) = result.tables.iter().find(|r| r.table == t.name) {
+                t.rows = r.rows.clone();
+            }
+        }
+        // 取り込みは親の表が先の順にする (外部キーを強制する SQLite でも違反にならない)。
+        fetched.sort_by_key(|t| {
+            result
+                .tables
+                .iter()
+                .position(|r| r.table == t.name)
+                .unwrap_or(usize::MAX)
         });
     }
 

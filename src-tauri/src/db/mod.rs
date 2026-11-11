@@ -57,6 +57,8 @@ pub mod sqlite;
 pub mod sqlite_rebuild;
 /// ストリーミング結果のバッチ合流と逐次統計 (#1257)。
 pub mod stream_batch;
+/// サブセット抽出 (#2241) の純粋層: 外部キーを行単位で辿る計画と取得 SQL。
+pub mod subset;
 pub mod sync;
 /// 既存テーブルの CREATE TABLE DDL をカタログ情報から再構成する純ロジック (#1001)。
 pub mod table_ddl;

@@ -1480,6 +1480,40 @@ fn build_fixtures() -> serde_json::Value {
         rows: 200,
     };
 
+    // #2241: サブセット抽出のプレビュー (`preview_subset`)。
+    let subset_preview = t::SubsetPreview {
+        tables: vec![t::SubsetTablePreview {
+            table: "orders".into(),
+            rows: 3,
+            root_rows: 1,
+            child_rows: 1,
+            parent_rows: 1,
+            columns: vec![t::SubsetColumnInfo {
+                name: "id".into(),
+                key: true,
+            }],
+        }],
+        total_rows: 3,
+        cycles: vec![vec!["a".into(), "b".into()]],
+        warnings: vec![
+            t::SubsetWarning::Cycle {
+                tables: vec!["a".into(), "b".into()],
+            },
+            t::SubsetWarning::UnresolvedForeignKey {
+                table: "orders".into(),
+                constraint: "fk_orders".into(),
+            },
+            t::SubsetWarning::ChildTruncated {
+                table: "orders".into(),
+                limit: 1000,
+            },
+            t::SubsetWarning::RootTruncated {
+                table: "orders".into(),
+                limit: 1000,
+            },
+        ],
+    };
+
     // #1532: 転送前プレビュー (`preview_transfer`)。
     let transfer_preview = t::TransferPreview {
         columns: vec![t::TransferColumnInfo {
@@ -2817,6 +2851,7 @@ fn build_fixtures() -> serde_json::Value {
         "cellBlobProbe": cell_blob_probe,
         "blobFolderSaveResult": blob_folder_save_result,
         "transferPreview": transfer_preview,
+        "subsetPreview": subset_preview,
         "importErrorEvent": import_error_event,
         "dumpProgressEvent": dump_progress_event,
         "dumpDoneEvent": dump_done_event,

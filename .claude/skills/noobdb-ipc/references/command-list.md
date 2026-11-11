@@ -720,6 +720,21 @@ DELETE をフライトレコーダに 1 文ずつ記録し (`run_captured_write`
 列定義と、値や型が縮退する列 (`lossy`: decimal の桁丸め・TIMESTAMPTZ の縮退など) を返す。
 書き込み・DDL はしない。
 
+## サブセット抽出 (`commands/subset.rs`, #2241)
+
+外部キーを行単位で辿り、参照整合性を保ったまま一部の行だけを抽出する。計画 (親の方向は常に最後まで・
+子の方向は段数と表ごとの件数の上限つき・NULL の FK / 自己参照 / 複合キー / 循環) は純粋層
+`db/subset.rs` の状態機械 `SubsetWalk` が持ち、コマンド層は実 DB で駆動するだけ。取得 SQL はすべて
+`is_read_only_sql_for` を通し、起点の条件は `checked_row_filter` で検査する。サンドボックスの
+「関連表も含める」(`create_sandbox`) も同じ `SubsetWalk` で親の行を行単位に辿る。
+
+- `preview_subset` — 実行前プレビュー。表ごとの抽出件数 (起点 / 子 / 親の内訳、親が先の順)・循環・上限超過
+  (`warnings`: `cycle` / `unresolvedForeignKey` / `childTruncated` / `rootTruncated`) と、マスク可否 (`key`) つきの列を返す。何も書かない。
+- `run_subset` — 抽出して出力するストリーミングコマンド。出力先は別接続 (`transfer`。既存の表へ
+  `import_rows_with_binary` で親の表から順に書く。`read_only` の転送先はバックエンドで拒否) か
+  INSERT スクリプトのファイル (`script`。エクスポートの SQL レンダラを再利用)。`masks` は出力にだけ
+  掛け、キー列はマスクできない。進捗は `subset-stream:*` イベント、`cancel_stream` で中断。
+
 ## Schema Cache (`commands/schema.rs`, #1097)
 
 `refresh_schema_cache` — セッション単位の Schema Cache (`cache::SchemaCache`) を

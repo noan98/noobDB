@@ -367,6 +367,10 @@ const WRITE_CAPABLE: Record<string, WriteCapable> = {
     /\bensure_transfer_target_writable\s*\(/,
     RO_IF_SESSION,
   ),
+  run_subset: wc(
+    "ensure_transfer_target_writable が書き込み先の session.read_only を拒否 (取得は読み取り専用文だけ)",
+    /\bensure_transfer_target_writable\s*\(/,
+  ),
   preview_transfer: wc(
     "転送元の SQL を ensure_allowed_for_session (転送先は書き込まないので read_only でも可)",
     /\bensure_allowed_for_session\s*\(\s*&source\b/,
@@ -632,7 +636,15 @@ safe(
   "analyze_sql_script",
 );
 
-safe(REASON.SELF_GUARDED, "run_lookup_query", "run_assertion", "suggest_accepted_values", "run_task_now");
+safe(
+  REASON.SELF_GUARDED,
+  "run_lookup_query",
+  "run_assertion",
+  "suggest_accepted_values",
+  "run_task_now",
+  // サブセット抽出のプレビュー: 組み立てた SELECT をすべて is_read_only_sql_for に通してから実行する。
+  "preview_subset",
+);
 
 safe(REASON.DRY_RUN, "preview_query_stream", "import_dry_run");
 
