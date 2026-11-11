@@ -36,6 +36,8 @@ pub struct PostgresConn {
     /// 明示トランザクションで確保した専用接続。BEGIN〜COMMIT/ROLLBACK の間、
     /// すべての文をこの 1 本で実行して同一トランザクションに乗せる。
     tx: tokio::sync::Mutex<Option<sqlx::pool::PoolConnection<sqlx::Postgres>>>,
+    /// 開いている明示トランザクションが READ ONLY か (#2243)。
+    pub(super) tx_read_only: std::sync::atomic::AtomicBool,
     /// AWS IAM 認証 (#734) 時、プールの新規接続用トークンを定期的に作り直す
     /// タスク。ドロップで停止する。パスワード認証では `None`。
     _iam_refresh: Option<super::aws_iam::TokenRefreshGuard>,
@@ -158,6 +160,7 @@ impl PostgresConn {
         Ok(Self {
             pool,
             tx: tokio::sync::Mutex::new(None),
+            tx_read_only: Default::default(),
             _iam_refresh: iam_refresh,
             search_path,
         })
@@ -219,6 +222,8 @@ impl PostgresConn {
         sqlx::query(sqlx::AssertSqlSafe(begin))
             .execute(&mut *conn)
             .await?;
+        self.tx_read_only
+            .store(opts.read_only, std::sync::atomic::Ordering::SeqCst);
         *guard = Some(conn);
         Ok(())
     }
@@ -234,6 +239,8 @@ impl PostgresConn {
 
     pub async fn tx_finish(&self, commit: bool) -> Result<()> {
         let mut guard = self.tx.lock().await;
+        self.tx_read_only
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         let mut conn = guard
             .take()
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
@@ -360,6 +367,17 @@ impl PostgresConn {
         )
         .await;
         if app_failed.load(std::sync::atomic::Ordering::SeqCst) {
+            // サーバ側停止の文脈が無い (プレビューの行数打ち切りなど) 読み取り専用の実行は、
+            // トランザクションを戻せれば接続を使い回す (#2243)。文脈があるときは従来どおり閉じる。
+            if enforce
+                && super::server_stop::current().is_none()
+                && sqlx::query("ROLLBACK")
+                    .execute(&mut *guard.conn)
+                    .await
+                    .is_ok()
+            {
+                guard.keep();
+            }
             return result;
         }
         // 読み取り専用のトランザクションは結果に関わらず戻す (#2243)。戻せなければ接続は閉じる。
@@ -1021,6 +1039,12 @@ impl PostgresConn {
         let mut conn = self.pool.acquire().await?;
         apply_search_path(&mut conn, database, &self.search_path).await?;
         let mut tx = conn.begin().await?;
+        // サーバ側の読み取り専用 (#2243): 最初の文として READ ONLY にする (戻すのは COMMIT / ROLLBACK)。
+        if super::read_only_scope::enforced() {
+            sqlx::query("SET TRANSACTION READ ONLY")
+                .execute(&mut *tx)
+                .await?;
+        }
         let mut counts: Vec<u64> = Vec::with_capacity(statements.len());
         for st in statements {
             let result = sqlx::query(sqlx::AssertSqlSafe(st.sql))

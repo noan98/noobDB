@@ -33,6 +33,8 @@ pub struct SqliteConn {
     /// で解放する。トランザクション中の文はこの 1 本の接続で実行され、確実に同一
     /// トランザクションに乗る (プールの別接続に散らばらない)。
     tx: tokio::sync::Mutex<Option<sqlx::pool::PoolConnection<sqlx::Sqlite>>>,
+    /// 開いている明示トランザクションが READ ONLY か (#2243)。
+    pub(super) tx_read_only: std::sync::atomic::AtomicBool,
 }
 
 impl SqliteConn {
@@ -108,6 +110,7 @@ impl SqliteConn {
             pool,
             attached,
             tx: tokio::sync::Mutex::new(None),
+            tx_read_only: Default::default(),
         })
     }
 
@@ -223,6 +226,8 @@ impl SqliteConn {
             }
             return Err(e.into());
         }
+        self.tx_read_only
+            .store(opts.read_only, std::sync::atomic::Ordering::SeqCst);
         *guard = Some(conn);
         Ok(())
     }
@@ -237,6 +242,8 @@ impl SqliteConn {
 
     pub async fn tx_finish(&self, commit: bool) -> Result<()> {
         let mut guard = self.tx.lock().await;
+        self.tx_read_only
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         let mut conn = guard
             .take()
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
@@ -285,13 +292,15 @@ impl SqliteConn {
         // サーバ側の読み取り専用 (#2243): 強制する経路では文の間だけ query_only を立てる。
         // 戻せなかった・future が drop された接続は、プールへ戻さず閉じる。
         let enforce = super::read_only_scope::enforced();
+        let mut prior = false;
         let mut guard = super::server_stop::ReleaseGuard::new(self.pool.acquire().await?);
         if enforce {
             guard.arm();
+            prior = get_query_only(&mut guard.conn).await;
             set_query_only(&mut guard.conn, true).await?;
         }
         let result = stream_on(&mut guard.conn, sql, initial_batch, chunk_size, on_batch).await;
-        if !enforce || set_query_only(&mut guard.conn, false).await.is_ok() {
+        if !enforce || set_query_only(&mut guard.conn, prior).await.is_ok() {
             guard.keep();
         }
         result
@@ -875,8 +884,20 @@ impl SqliteConn {
         if statements.is_empty() {
             return Ok(GuardedTxOutcome::Committed(0));
         }
-        let mut conn = self.pool.acquire().await?;
-        run_batch_guarded(&mut conn, statements).await
+        // サーバ側の読み取り専用 (#2243): バッチの間だけ query_only を立てる。
+        let enforce = super::read_only_scope::enforced();
+        let mut guard = super::server_stop::ReleaseGuard::new(self.pool.acquire().await?);
+        let mut prior = false;
+        if enforce {
+            guard.arm();
+            prior = get_query_only(&mut guard.conn).await;
+            set_query_only(&mut guard.conn, true).await?;
+        }
+        let result = run_batch_guarded(&mut guard.conn, statements).await;
+        if !enforce || set_query_only(&mut guard.conn, prior).await.is_ok() {
+            guard.keep();
+        }
+        result
     }
 
     /// スキーマ同期の適用用 ([`Self::execute_transaction`] との違いはテーブル再作成の扱いだけ)。
@@ -2402,6 +2423,16 @@ async fn install_interrupt_handler(
 /// Run one statement on a specific connection (pool-acquired or the held tx
 /// connection) and decode it into a [`QueryResult`]. Shared by `execute` and
 /// `tx_execute`.
+/// 現在の `PRAGMA query_only` (読めなければ OFF 扱い)。強制の後に元の値へ戻すために使う。
+async fn get_query_only(conn: &mut sqlx::SqliteConnection) -> bool {
+    sqlx::query("PRAGMA query_only")
+        .fetch_one(&mut *conn)
+        .await
+        .ok()
+        .and_then(|r| sqlx::Row::try_get::<i64, _>(&r, 0).ok())
+        == Some(1)
+}
+
 /// `PRAGMA query_only` を切り替える (#2243)。アプリは他ではこの PRAGMA を使わない
 /// (明示トランザクションの READ ONLY は `tx_begin` / `tx_finish` が同じ値で出し入れする)。
 async fn set_query_only(conn: &mut sqlx::SqliteConnection, on: bool) -> Result<()> {
@@ -2424,11 +2455,12 @@ async fn run_sql_read_only_aware(
     if !enforce {
         return (run_sql_on(conn, sql).await, true);
     }
+    let prior = get_query_only(conn).await;
     if let Err(e) = set_query_only(conn, true).await {
         return (Err(e), false);
     }
     let result = run_sql_on(conn, sql).await;
-    let clean = set_query_only(conn, false).await.is_ok();
+    let clean = set_query_only(conn, prior).await.is_ok();
     (result, clean)
 }
 
@@ -3314,6 +3346,7 @@ mod tests {
             attached: Vec::new(),
             pool,
             tx: tokio::sync::Mutex::new(None),
+            tx_read_only: Default::default(),
         };
         // 文脈つきで短い文を完了させ、その後に停止要求を出す。
         let ctx = ServerStopCtx::new(None);
@@ -3503,6 +3536,7 @@ mod tests {
             attached: Vec::new(),
             pool,
             tx: tokio::sync::Mutex::new(None),
+            tx_read_only: Default::default(),
         };
         // 行上限 5 の窓 (id 1..=5) の外にある id=40 を更新する。
         let r = conn

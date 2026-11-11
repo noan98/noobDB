@@ -110,6 +110,33 @@ async fn assert_enforced_blocks_writing_function(
     assert!(is_read_only_rejection(&e), "unexpected error: {e}");
     assert_eq!(count(conn, table).await, 2, "コマンド経路でも行が残る");
 
+    // 複数文の明示バッチ (run_query_transaction) も、READ ONLY のトランザクションで止まる。
+    let e = t::run_query_transaction_via_command(&state, &sid, vec![func_call.to_string()], None)
+        .await
+        .expect_err("read_only transaction must be rejected by the server");
+    assert!(is_read_only_rejection(&e), "unexpected error: {e}");
+    assert_eq!(
+        count(conn, table).await,
+        2,
+        "トランザクション経路でも行が残る"
+    );
+
+    // 値の参照 (run_lookup_query。アサーション・スケジューラ経由も同じ) は、書き込み可能な
+    // セッションでも常にサーバ側で読み取り専用。
+    let rw_sid = state
+        .insert(t::make_session(
+            "rw_srv",
+            t::connect(opts).await.expect("connect rw session"),
+            opts.clone(),
+            false,
+        ))
+        .await;
+    let e = t::run_lookup_query_via_command(&state, &rw_sid, func_call, None, None, None)
+        .await
+        .expect_err("lookup must be rejected by the server");
+    assert!(is_read_only_rejection(&e), "unexpected error: {e}");
+    assert_eq!(count(conn, table).await, 2, "lookup 経路でも行が残る");
+
     // 強制の外 (プールへ戻った接続) は書き込める = READ ONLY が漏れ出していない。
     for _ in 0..6 {
         conn.execute(&format!("INSERT INTO {table} (id) VALUES (100)"), None)
@@ -215,7 +242,7 @@ async fn mysql_read_only_is_enforced_server_side() {
     if let Err(e) = conn
         .execute_maintenance(
             &format!(
-                "CREATE FUNCTION {func}() RETURNS INT MODIFIES SQL DATA BEGIN DELETE FROM {table}; RETURN 1; END"
+                "CREATE FUNCTION {func}() RETURNS INT DETERMINISTIC MODIFIES SQL DATA BEGIN DELETE FROM {table}; RETURN 1; END"
             ),
             None,
         )
@@ -316,6 +343,48 @@ async fn sqlite_read_only_is_enforced_server_side() {
         .await
         .expect("read_only select");
     assert_eq!(r.rows.len(), 2);
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+/// タイムアウトで future が drop された (キャンセル相当) あとも、同じプールで書き込める
+/// (query_only が接続に残って書き込み経路へ漏れない)。強制の外の読み取りも通る。
+#[tokio::test(flavor = "multi_thread")]
+async fn sqlite_read_only_does_not_leak_after_timeout() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_ro_srv_leak_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create");
+
+    let slow =
+        "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 10000000) \
+                SELECT count(*) FROM c";
+    for _ in 0..3 {
+        let timed_out = tokio::time::timeout(
+            std::time::Duration::from_millis(20),
+            t::read_only_scope(async { conn.execute(slow, None).await.map(|_| ()) }),
+        )
+        .await;
+        assert!(timed_out.is_err(), "the slow statement must time out");
+        let timed_out = tokio::time::timeout(
+            std::time::Duration::from_millis(20),
+            stream_enforced(&conn, slow),
+        )
+        .await;
+        assert!(timed_out.is_err(), "the slow stream must time out");
+    }
+    for i in 0..8 {
+        conn.execute(&format!("INSERT INTO t (id) VALUES ({i})"), None)
+            .await
+            .expect("write after dropped enforced futures must work");
+    }
+    assert_eq!(count(&conn, "t").await, 8);
 
     conn.close().await;
     let _ = std::fs::remove_file(&path);

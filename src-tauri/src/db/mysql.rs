@@ -34,6 +34,8 @@ pub struct MySqlConn {
     /// 明示トランザクションで確保した専用接続。BEGIN〜COMMIT/ROLLBACK の間、
     /// すべての文をこの 1 本で実行して同一トランザクションに乗せる。
     tx: tokio::sync::Mutex<Option<sqlx::pool::PoolConnection<sqlx::MySql>>>,
+    /// 開いている明示トランザクションが READ ONLY か (#2243)。
+    pub(super) tx_read_only: std::sync::atomic::AtomicBool,
     /// AWS IAM 認証 (#734) 時、プールの新規接続用トークンを定期的に作り直す
     /// タスク。ドロップで停止する。パスワード認証では `None`。
     _iam_refresh: Option<super::aws_iam::TokenRefreshGuard>,
@@ -111,6 +113,7 @@ impl MySqlConn {
         Ok(Self {
             pool,
             tx: tokio::sync::Mutex::new(None),
+            tx_read_only: Default::default(),
             _iam_refresh: iam_refresh,
             innodb_lock_waits_missing: std::sync::atomic::AtomicBool::new(false),
         })
@@ -187,6 +190,8 @@ impl MySqlConn {
             sqlx::raw_sql(sqlx::AssertSqlSafe(opts.mysql_begin_sql())),
         )
         .await?;
+        self.tx_read_only
+            .store(opts.read_only, std::sync::atomic::Ordering::SeqCst);
         *guard = Some(conn);
         Ok(())
     }
@@ -216,6 +221,8 @@ impl MySqlConn {
 
     pub async fn tx_finish(&self, commit: bool) -> Result<()> {
         let mut guard = self.tx.lock().await;
+        self.tx_read_only
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         let mut conn = guard
             .take()
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
@@ -311,6 +318,14 @@ impl MySqlConn {
         )
         .await;
         if app_failed.load(std::sync::atomic::Ordering::SeqCst) {
+            // サーバ側停止の文脈が無い (プレビューの行数打ち切りなど) 読み取り専用の実行は、
+            // トランザクションを戻せれば接続を使い回す (#2243)。文脈があるときは従来どおり閉じる。
+            if enforce
+                && super::server_stop::current().is_none()
+                && mysql_read_only_end(&mut guard.conn).await
+            {
+                guard.keep();
+            }
             return result;
         }
         // 読み取り専用のトランザクションは結果に関わらず戻す (#2243)。戻せなければ接続は閉じる。
@@ -1416,6 +1431,15 @@ impl MySqlConn {
         }
         let mut conn = self.pool.acquire().await?;
         apply_use_database(&mut conn, database).await?;
+        // サーバ側の読み取り専用 (#2243): 次のトランザクションだけ READ ONLY にする (BEGIN の前に流す。
+        // 1 回のトランザクションで消費されるので、プールへ戻る接続には残らない)。
+        if super::read_only_scope::enforced() {
+            sqlx::Executor::execute(
+                &mut *conn,
+                sqlx::raw_sql(sqlx::AssertSqlSafe("SET TRANSACTION READ ONLY")),
+            )
+            .await?;
+        }
         let mut tx = conn.begin().await?;
         let mut counts: Vec<u64> = Vec::with_capacity(statements.len());
         // EVENT の同期は作成中だけ time_zone を差し替える (#2100)。途中で失敗しても、プールへ戻る接続に

@@ -368,15 +368,19 @@ pub(crate) async fn run_lookup_query_inner(
     let limited = apply_auto_limit_for(driver, sql, cap);
     let effective_sql = limited.as_deref().unwrap_or(sql);
     let exec = session.conn.execute(effective_sql, database);
-    let mut result = match query_timeout_secs {
-        Some(secs) if secs > 0 => {
-            match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
-                Ok(res) => res?,
-                Err(_) => return Err(AppError::Timeout(secs)),
+    // 値の参照はアサーション・スケジューラ経由も含め、常にサーバ側でも読み取り専用 (#2243)。
+    let mut result = crate::db::read_only_scope::scope(async {
+        match query_timeout_secs {
+            Some(secs) if secs > 0 => {
+                match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
+                    Ok(res) => res,
+                    Err(_) => Err(AppError::Timeout(secs)),
+                }
             }
+            _ => exec.await,
         }
-        _ => exec.await?,
-    };
+    })
+    .await?;
     // 利用者が既に LIMIT を書いていて自動 LIMIT が挿入されなかった場合でも、
     // 返す行数は必ず上限で切る (フロントの SQL 生成に不備があっても UI を
     // 大量行で埋めない二重の安全網)。
@@ -486,10 +490,14 @@ pub(crate) async fn run_query_transaction_guarded_inner(
             expect: expects.get(i).copied().unwrap_or(RowExpectation::NONE),
         })
         .collect();
-    let outcome = session
-        .conn
-        .execute_transaction_guarded(&guarded, database.as_deref())
-        .await;
+    // read_only セッションは、サーバ側でも READ ONLY のトランザクションで実行する (#2243)。
+    let outcome = crate::db::read_only_scope::scope_if(
+        server_read_only_enforced(&session),
+        session
+            .conn
+            .execute_transaction_guarded(&guarded, database.as_deref()),
+    )
+    .await;
     let elapsed_ms = started.elapsed().as_millis() as u64;
     // ロールバックした (できなかった) 場合の内訳。`incomplete` なら書き込み済み扱い。
     let (violation, incomplete) = match &outcome {
@@ -660,6 +668,17 @@ pub(crate) async fn run_in_transaction_inner(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
     ensure_allowed_for_session(&session, sql)?;
+    // 緊急モード中に READ WRITE で開いたトランザクションが、解除後も書き込めてしまわないように、
+    // 強制すべきセッションでは READ ONLY でないトランザクションでの実行を拒否する (#2243)。
+    if server_read_only_enforced(&session)
+        && session.conn.transaction_active().await
+        && !session.conn.transaction_read_only()
+    {
+        return Err(AppError::ReadOnly(
+            "このトランザクションは緊急モードで読み書き可能として開始されました。読み取り専用に戻ったため、いったん終了して開き直してください (the transaction was opened read-write in emergency mode)"
+                .into(),
+        ));
+    }
     let result = session.conn.execute_in_transaction(sql).await;
     if result.is_ok() {
         let driver = session.conn.driver_kind();

@@ -764,6 +764,16 @@ impl Connection {
         }
     }
 
+    /// 開いている明示トランザクションがサーバ側 READ ONLY か (#2243)。トランザクションが無ければ偽。
+    pub fn transaction_read_only(&self) -> bool {
+        use std::sync::atomic::Ordering::SeqCst;
+        match self {
+            Connection::MySql(c) => c.tx_read_only.load(SeqCst),
+            Connection::Postgres(c) => c.tx_read_only.load(SeqCst),
+            Connection::Sqlite(c) => c.tx_read_only.load(SeqCst),
+        }
+    }
+
     /// Run one statement inside the active explicit transaction. Errs if
     /// no transaction is active.
     pub async fn execute_in_transaction(&self, sql: &str) -> Result<QueryResult> {

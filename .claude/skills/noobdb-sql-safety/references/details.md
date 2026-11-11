@@ -12,10 +12,17 @@
 
 - 強制する経路: read_only セッションの通常実行 (`run_query` / `run_query_stream` / スクリプト /
   明示トランザクションの開始) ・自動更新・ブロードキャスト・EXPLAIN ANALYZE (`force_read_only`)・
-  書き出し (`run_export_to_file` / ワークブック。スケジューラの書き出しも同じ)・値検索の走査。
+  書き出し (`run_export_to_file` / ワークブック。スケジューラの書き出しも同じ)・値検索の走査・
+  値の参照 (`run_lookup_query`。アサーション・スケジューラのアサーションも通る)・データ転送の
+  読み出し元 (`transfer.rs`。`tokio::spawn` は task_local を引き継がないので spawn する future の
+  内側で scope を張る)・read_only セッションの `run_query_transaction` (各ドライバの
+  `execute_transaction_guarded` が `enforced()` を見て READ ONLY で開始する。PostgreSQL は最初の
+  `SET TRANSACTION READ ONLY`、MySQL は BEGIN の前の `SET TRANSACTION READ ONLY`、SQLite は query_only)。
+  緊急モードで READ WRITE として開いた明示トランザクションは、モード解除後に `run_in_transaction` で
+  実行しようとすると拒否する (`Connection::transaction_read_only`)。
   緊急クエリ実行モード中の read_only セッションは強制しない (`server_read_only_enforced`)。
 - ドライバ別: PostgreSQL は `BEGIN READ ONLY` … `ROLLBACK`、MySQL は
-  `START TRANSACTION READ ONLY` … `ROLLBACK`、SQLite は文の間だけ `PRAGMA query_only = ON` → `OFF`。
+  `START TRANSACTION READ ONLY` … `ROLLBACK`、SQLite は文の間だけ `PRAGMA query_only = ON` → 元の値へ戻す。
   接続のセッション設定 (`default_transaction_read_only`) にしないのは、プールへ戻る接続に残って
   書き込み経路へ漏れるのと、`set_config` で外せてしまうのを避けるため。戻せなかった・future が
   drop された接続は `ReleaseGuard` がプールへ戻さず閉じる。
