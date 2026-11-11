@@ -1,5 +1,5 @@
 import { Box, chakra, Flex, VisuallyHidden } from "@chakra-ui/react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 
 import type { ProcessInfo } from "../api/tauri";
 import { useT } from "../i18n";
@@ -80,7 +80,7 @@ function Tile({
   const t = useT();
   const { process: p } = node;
   const danger = node.isRoot || node.inCycle;
-  const canKill = !node.external && node.victims > 0;
+  const canKill = !node.external && node.victims > 0 && (node.isRoot || node.inCycle);
   const status = node.inCycle
     ? t("processBlockingDeadlock")
     : node.external
@@ -174,7 +174,7 @@ function Tile({
             {status}
           </chakra.span>
         )}
-        {canKill && node.isRoot && (
+        {canKill && (
           <Box ml="auto" flexShrink={0}>
             <Tooltip label={readOnly ? t("processReadOnlyHint") : undefined} focusableWrapper={readOnly}>
               <Button
@@ -209,7 +209,7 @@ export function BlockingGraph({
   const t = useT();
   const lit = useDrawIn();
   const markerId = useId();
-  const layout = layoutBlockingGraph(processes);
+  const layout = useMemo(() => layoutBlockingGraph(processes), [processes]);
   if (layout.nodes.length === 0) return null;
 
   const idLabel = (id: number) => `#${id}`;
@@ -222,7 +222,7 @@ export function BlockingGraph({
       <Box
         flexShrink={0}
         overflow="auto"
-        maxH="28rem"
+        maxH={units(112)}
         p="1"
         tabIndex={0}
         role="group"
@@ -275,6 +275,7 @@ export function BlockingGraph({
                 fill="none"
                 strokeWidth={STROKE_UNITS[e.thickness]}
                 strokeLinecap="round"
+                strokeLinejoin="round"
                 style={{ stroke: edgeColor(e.level, e.cycle) }}
                 markerEnd={`url(#${markerId}-${markerKey(e)})`}
               />

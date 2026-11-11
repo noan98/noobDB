@@ -69,6 +69,11 @@ export interface BlockingGraphNode {
   blockers: number[];
 }
 
+export interface BlockingGraphPoint {
+  x: number;
+  y: number;
+}
+
 export interface BlockingGraphEdge {
   key: string;
   /** ブロッカー側。 */
@@ -85,6 +90,8 @@ export interface BlockingGraphEdge {
   back: boolean;
   /** SVG の path `d` (ユニット座標)。 */
   path: string;
+  /** 経路の折れ点 (始点・終点を含む)。列をまたぐ辺・循環の辺はタイルを避ける折れ線。 */
+  points: BlockingGraphPoint[];
 }
 
 export interface BlockingGraphLayout {
@@ -204,8 +211,14 @@ export function layoutBlockingGraph(processes: readonly ProcessInfo[]): Blocking
     };
   });
 
+  const rowStep = tileH + gapY;
+  // 全行の最下端 (末尾の行間を含む)。循環の弧はこれより下を通す。
+  const bottomAll = pad + maxRows * rowStep;
   let height = pad * 2 + maxRows * tileH + (maxRows - 1) * gapY;
+  let backIndex = 0;
   const edges: BlockingGraphEdge[] = [];
+  const fmt = (pts: BlockingGraphPoint[]) =>
+    pts.map((q, i) => `${i === 0 ? "M" : "L"} ${q.x} ${q.y}`).join(" ");
   for (const id of ids) {
     for (const from of blockersOf.get(id) ?? []) {
       const a = pos(from);
@@ -213,20 +226,51 @@ export function layoutBlockingGraph(processes: readonly ProcessInfo[]): Blocking
       const isBack = back.has(edgeKey(from, id));
       const waitSecs = info.get(id)?.row.process.time_secs ?? null;
       const level = waitLevel(waitSecs);
+      const x1 = a.x + tileW;
+      const y1 = a.y + tileH / 2;
+      const x2 = b.x;
+      const y2 = b.y + tileH / 2;
       let path: string;
+      let points: BlockingGraphPoint[];
+      const span = (layer.get(id) ?? 0) - (layer.get(from) ?? 0);
       if (isBack) {
-        const bottom = Math.max(a.y, b.y) + tileH;
-        const ctrl = bottom + arcDepth * (4 / 3);
-        const x1 = a.x + tileW / 2;
-        const x2 = b.x + tileW / 2;
-        path = `M ${x1} ${a.y + tileH} C ${x1} ${ctrl}, ${x2} ${ctrl}, ${x2} ${b.y + tileH}`;
-        height = Math.max(height, bottom + arcDepth + pad);
+        // 列の間の溝を降り、全行の最下端より下を戻り、ブロックされた側の左の溝から入る。
+        const lane = bottomAll + arcDepth / 2 + backIndex * 1.5;
+        backIndex += 1;
+        const xa = x1 + gapX / 2;
+        const xb = x2 - gapX / 2;
+        points = [
+          { x: x1, y: y1 },
+          { x: xa, y: y1 },
+          { x: xa, y: lane },
+          { x: xb, y: lane },
+          { x: xb, y: y2 },
+          { x: x2, y: y2 },
+        ];
+        path = fmt(points);
+        height = Math.max(height, lane + pad);
+      } else if (span > 1) {
+        // 列をまたぐ辺は、中間のタイルを避けて行間の溝 (下側の行の直下) を通す。
+        const lowRow = Math.max(rowOf.get(from) ?? 0, rowOf.get(id) ?? 0);
+        const lane = pad + (lowRow + 1) * rowStep - gapY / 2;
+        const xa = x1 + gapX / 2;
+        const xb = x2 - gapX / 2;
+        points = [
+          { x: x1, y: y1 },
+          { x: xa, y: y1 },
+          { x: xa, y: lane },
+          { x: xb, y: lane },
+          { x: xb, y: y2 },
+          { x: x2, y: y2 },
+        ];
+        path = fmt(points);
+        height = Math.max(height, lane + pad);
       } else {
-        const x1 = a.x + tileW;
-        const y1 = a.y + tileH / 2;
-        const x2 = b.x;
-        const y2 = b.y + tileH / 2;
         const mx = (x1 + x2) / 2;
+        points = [
+          { x: x1, y: y1 },
+          { x: x2, y: y2 },
+        ];
         path = `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
       }
       edges.push({
@@ -239,6 +283,7 @@ export function layoutBlockingGraph(processes: readonly ProcessInfo[]): Blocking
         cycle: reach.get(id)?.has(from) ?? false,
         back: isBack,
         path,
+        points,
       });
     }
   }

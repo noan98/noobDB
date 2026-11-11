@@ -2939,11 +2939,10 @@ td.is-find-current::after {
 
 /* ---------- ロック待機グラフ (#2237) ----------
    `BlockingGraph`: ノードは入場でふわっと現れ、矢印は左 (ブロッカー側) から描き入れる。
-   ポーリングで位置が変わるときは left / top の transition で滑らせる。
+   位置は即時に動かす (transition すると SVG の矢印と離れて見えるため)。
    reduced-motion は下の全体規則が 0.01ms 化し、hc-* は即時 (静止) にする。 */
 .lock-graph-node {
   animation: flow-node-in var(--dur-med) var(--ease-out) backwards;
-  transition: left var(--dur-med) var(--ease-out), top var(--dur-med) var(--ease-out);
 }
 .lock-graph-edge {
   stroke-dasharray: 1;
@@ -2954,7 +2953,6 @@ td.is-find-current::after {
 :root[data-theme="hc-light"] .lock-graph-node,
 :root[data-theme="hc-dark"] .lock-graph-node {
   animation: none;
-  transition: none;
 }
 :root[data-theme="hc-light"] .lock-graph-edge,
 :root[data-theme="hc-dark"] .lock-graph-edge {

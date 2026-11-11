@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { ProcessInfo } from "../api/tauri";
-import { layoutBlockingGraph, waitLevel, waitThickness } from "../components/blockingGraph";
+import {
+  BLOCKING_GRAPH_UNITS,
+  layoutBlockingGraph,
+  waitLevel,
+  waitThickness,
+} from "../components/blockingGraph";
 
 const base: ProcessInfo = {
   id: 1,
@@ -109,6 +114,47 @@ describe("layoutBlockingGraph (#2237)", () => {
     expect(new Set(ys).size).toBe(3);
     expect(l.height).toBeGreaterThan(0);
     expect(l.width).toBeGreaterThan(0);
+  });
+});
+
+describe("経路がタイルと重ならない (#2237)", () => {
+  const { tileW, tileH } = BLOCKING_GRAPH_UNITS;
+  const hitsTile = (l: ReturnType<typeof layoutBlockingGraph>, pts: { x: number; y: number }[]) => {
+    for (let i = 0; i < pts.length - 1; i++) {
+      for (let k = 1; k < 40; k++) {
+        const t = k / 40;
+        const x = pts[i].x + (pts[i + 1].x - pts[i].x) * t;
+        const y = pts[i].y + (pts[i + 1].y - pts[i].y) * t;
+        for (const n of l.nodes) {
+          if (x > n.x + 0.01 && x < n.x + tileW - 0.01 && y > n.y + 0.01 && y < n.y + tileH - 0.01)
+            return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  it("列をまたぐ辺 (1→2→3 と 1→3) は中間タイルを避ける", () => {
+    const l = layoutBlockingGraph([p(1), p(2, [1]), p(3, [1, 2])]);
+    expect(l.nodes.every((n) => n.row === 0)).toBe(true);
+    const long = l.edges.find((e) => e.key === "1>3");
+    expect(long?.points.length).toBeGreaterThan(2);
+    for (const e of l.edges) expect(hitsTile(l, e.points)).toBe(false);
+    const lane = long?.points[2].y ?? 0;
+    expect(lane).toBeGreaterThan(l.nodes[0].y + tileH);
+    expect(l.height).toBeGreaterThan(lane);
+  });
+
+  it("循環の閉じる辺は全行の最下端より下を通り、タイルに潜らない", () => {
+    const l = layoutBlockingGraph([p(1), p(2, [1, 3]), p(3, [2]), p(4, [1]), p(5, [1])]);
+    const back = l.edges.find((e) => e.back);
+    expect(back).toBeDefined();
+    const { pad, gapY } = BLOCKING_GRAPH_UNITS;
+    const rows = Math.max(...l.nodes.map((n) => n.row)) + 1;
+    const bottomAll = pad + rows * (tileH + gapY);
+    expect(back?.points[2].y).toBeGreaterThan(bottomAll);
+    expect(l.height).toBeGreaterThan(back?.points[2].y ?? 0);
+    for (const e of l.edges) expect(hitsTile(l, e.points)).toBe(false);
   });
 });
 
