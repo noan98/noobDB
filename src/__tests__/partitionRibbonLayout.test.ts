@@ -12,7 +12,7 @@ import {
   partitionId,
   partitionShares,
   ribbonKindOf,
-} from "../components/partitionRibbon";
+} from "../components/partitionRibbonLayout";
 
 const part = (name: string, bound: string, over: Partial<TablePartition> = {}): TablePartition => ({
   name,

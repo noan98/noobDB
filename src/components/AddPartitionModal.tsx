@@ -21,7 +21,7 @@ import {
   reorganizesMaxvalue,
 } from "./partitionAdd";
 import { PartitionRibbon } from "./PartitionRibbon";
-import { buildRibbon, ghostForAdd } from "./partitionRibbon";
+import { buildRibbon, ghostForAdd } from "./partitionRibbonLayout";
 import { partitionKeyColumns } from "./tablePartitions";
 
 /**

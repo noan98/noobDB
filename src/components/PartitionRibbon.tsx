@@ -10,7 +10,7 @@ import {
   type RibbonGhost,
   type RibbonSegment,
   HOT_FACTOR,
-} from "./partitionRibbon";
+} from "./partitionRibbonLayout";
 import { formatBytes, formatRowCount } from "./tableSize";
 import { Tooltip } from "./Tooltip";
 

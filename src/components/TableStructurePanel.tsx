@@ -32,7 +32,7 @@ import {
   partitionId,
   partitionShares,
   type PartitionShare,
-} from "./partitionRibbon";
+} from "./partitionRibbonLayout";
 import { FieldError } from "./modalForm";
 import { SqlPreview } from "./SqlPreview";
 import { useCopyFeedback } from "./useCopyFeedback";
