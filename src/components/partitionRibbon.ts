@@ -68,6 +68,8 @@ export interface PartitionRibbon {
   segments: RibbonSegment[];
 }
 
+const parentKey = (schema: string | null, name: string) => `${schema ?? ""}.${name}`;
+
 /** 一覧の行と帯のセグメントを結ぶ ID。 */
 export function partitionId(p: Pick<TablePartition, "schema" | "parent" | "name">): string {
   return `${p.schema ?? ""}.${p.parent ?? ""}.${p.name}`;
@@ -202,9 +204,11 @@ export function buildRibbon(
   const subsOf = new Map<string, TablePartition[]>();
   for (const p of info.partitions) {
     if (p.depth === 0 || p.parent === null) continue;
-    const g = subsOf.get(p.parent);
+    // 別スキーマに同名の親があっても混ざらないよう、(スキーマ, 名前) を鍵にする。
+    const key = parentKey(p.parent_schema, p.parent);
+    const g = subsOf.get(key);
     if (g) g.push(p);
-    else subsOf.set(p.parent, [p]);
+    else subsOf.set(key, [p]);
   }
 
   // 並び: 有限の範囲 → MAXVALUE → DEFAULT (入力順は保つ)。
@@ -222,7 +226,7 @@ export function buildRibbon(
   let prevRangeTo: string[] | null = null;
   for (const d of ordered) {
     const sh = shares.get(partitionId(d.p));
-    const subList = subsOf.get(d.p.name) ?? [];
+    const subList = subsOf.get(parentKey(d.p.schema, d.p.name)) ?? [];
     const subSizes = subList.map((s) => s.size_bytes);
     let gapBefore = false;
     if (driver === "postgres" && (d.kind === "range" || d.kind === "maxvalue")) {

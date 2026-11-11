@@ -160,6 +160,50 @@ describe("buildRibbon: RANGE", () => {
   });
 });
 
+describe("buildRibbon: 別スキーマの同名の親", () => {
+  it("サブパーティションを (スキーマ, 親名) ごとにまとめ、偏りも兄弟ごとに計算する", () => {
+    const r = buildRibbon(
+      "postgres",
+      info("LIST", "k", [
+        part("p", "FOR VALUES IN ('a')", { schema: "a" }),
+        part("p", "FOR VALUES IN ('b')", { schema: "b" }),
+        part("x1", "FOR VALUES IN ('1')", {
+          schema: "a",
+          depth: 1,
+          parent: "p",
+          parent_schema: "a",
+          size_bytes: 5,
+        }),
+        part("y1", "FOR VALUES IN ('2')", {
+          schema: "b",
+          depth: 1,
+          parent: "p",
+          parent_schema: "b",
+          size_bytes: 7,
+        }),
+        part("y2", "FOR VALUES IN ('3')", {
+          schema: "b",
+          depth: 1,
+          parent: "p",
+          parent_schema: "b",
+          size_bytes: 7,
+        }),
+      ]),
+    );
+    expect(r.segments.map((s) => s.subs.map((x) => x.name))).toEqual([["x1"], ["y1", "y2"]]);
+  });
+
+  it("partitionShares の兄弟は (スキーマ, 親) 単位", () => {
+    const ps = [
+      part("x1", "", { schema: "a", depth: 1, parent: "p", parent_schema: "a", size_bytes: 5 }),
+      part("y1", "", { schema: "b", depth: 1, parent: "p", parent_schema: "b", size_bytes: 7 }),
+    ];
+    const m = partitionShares(ps);
+    expect(m.get(partitionId(ps[0] as TablePartition))?.sizeShare).toBe(1);
+    expect(m.get(partitionId(ps[1] as TablePartition))?.sizeShare).toBe(1);
+  });
+});
+
 describe("buildRibbon: LIST / HASH", () => {
   it("LIST は値ごとのタイル", () => {
     const r = buildRibbon(
