@@ -200,6 +200,7 @@ import {
 import { bulkEditSamples, planBulkCellEdit, type BulkEditTarget } from "./bulkEdit";
 import { detectPasteHeader, parseClipboardGrid, planPasteEdit, planPasteInsertRows } from "./pasteEdit";
 import { quickSetOptions, resolveDynamicValue } from "./quickSetValues";
+import { applyDrillRequest, type ColumnFilterRequest } from "./drillFilter";
 import {
   clientQuickFilter,
   isNullCell,
@@ -1400,6 +1401,15 @@ interface Props {
    */
   onChangeView?: (view: ResultViewKind) => void;
   /**
+   * 外から列フィルタを入れる宣言的な要求 (#2236)。ピボット / チャートの集計キーから
+   * 絞り込んで移るときに、グリッドが作られた (または要求が差し替わった) 時点で 1 回だけ
+   * 適用する。同じ要求をもう一度適用したくないとき (再マウントなど) は
+   * `onColumnFilterRequestApplied` で呼び出し側が要求を下げる。
+   */
+  columnFilterRequest?: ColumnFilterRequest | null;
+  /** `columnFilterRequest` を適用した直後に呼ばれる。 */
+  onColumnFilterRequestApplied?: () => void;
+  /**
    * 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。App が
    * セッション・対象クエリ・データベースを確定させたときだけ渡す — 読み取り専用
    * セッション、対象クエリが単一の SELECT/WITH でない、データベース文脈が無いなど
@@ -1528,6 +1538,11 @@ export interface ResultGridHandle {
    * (オブジェクト検索の列ヒットから開いたとき、#1629)。列が無い・行が無いときは false。
    */
   revealColumn: (column: string) => boolean;
+  /**
+   * 外から列フィルタを入れる / 外す (#2236)。`apply` は条件の列だけにフィルタを置き換え、
+   * `clear` は条件の列のフィルタだけ外す。要求は次の描画で結果グリッドへ届く。
+   */
+  applyColumnFilters: (request: ColumnFilterRequest) => void;
 }
 
 /**
@@ -4115,6 +4130,8 @@ export const DataGrid = memo(function DataGrid({
   findHits,
   findCurrentKey,
   findNav,
+  columnFilterRequest,
+  onColumnFilterRequestApplied,
   gridBindings,
   serverSort,
   serverFilter,
@@ -4324,6 +4341,10 @@ export const DataGrid = memo(function DataGrid({
   findCurrentKey?: string | null;
   /** 現在ヒットへのスクロール/選択/フォーカス移動の要求 (seq で再発火)。 */
   findNav?: GridFindNav | null;
+  /** 外から入れる列フィルタ要求 (#2236)。参照が変わるたびに 1 回適用する。 */
+  columnFilterRequest?: ColumnFilterRequest | null;
+  /** 要求を適用した直後に呼ぶ。 */
+  onColumnFilterRequestApplied?: () => void;
   /**
    * コピー/コピー+ヘッダ/行インスペクタ/Undo/Redo/ページ送りの解決済みバインド
    * (#681)。省略時は今日の既定キーのまま (`DEFAULT_SHORTCUT_COMBOS`)。
@@ -4544,6 +4565,20 @@ export const DataGrid = memo(function DataGrid({
     setColumnFilters([]);
     writeStoredGridView(gridViewKey, { masks: maskOverridesRef.current });
   }, [gridViewKey]);
+  // 外から入れる列フィルタ要求 (#2236)。要求オブジェクトの参照が変わるたびに 1 回だけ
+  // 現在のフィルタへ適用し (永続化は通常のフィルタ操作と同じ)、適用済みを呼び出し側へ知らせる。
+  const onColumnFilterRequestAppliedRef = useRef(onColumnFilterRequestApplied);
+  onColumnFilterRequestAppliedRef.current = onColumnFilterRequestApplied;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 要求の参照 (columnFilterRequest) だけを契機にする。列の種類・現在のフィルタは発火時点の最新値を読めばよい
+  useEffect(() => {
+    if (!columnFilterRequest) return;
+    handleColumnFiltersChange(
+      applyDrillRequest(columnFiltersRef.current, columnFilterRequest, (i) =>
+        isNumericFilterKind(columnKinds[i] ?? "string"),
+      ),
+    );
+    onColumnFilterRequestAppliedRef.current?.();
+  }, [columnFilterRequest]);
   const clearSorting = useCallback(() => {
     setSorting([]);
     writeStoredGridView(
@@ -8676,6 +8711,8 @@ export const ResultGrid = memo(
       diffHighlightEnabled,
       onToggleDiffHighlight,
       onChangeView,
+      columnFilterRequest,
+      onColumnFilterRequestApplied,
       onSaveAsTable,
       onSaveAsView,
       onRegisterLocalTable,
@@ -8852,6 +8889,14 @@ export const ResultGrid = memo(
     }, [result?.rows]);
     const [findIdx, setFindIdx] = useState<number | null>(null);
     const [findNav, setFindNav] = useState<GridFindNav | null>(null);
+    // 外から入れる列フィルタ要求 (#2236)。宣言的な prop と命令型ハンドルの両方から来る。
+    // 同じ参照は DataGrid が 1 回しか適用しないので、新しい要求は必ず新しいオブジェクトにする。
+    const [filterRequest, setFilterRequest] = useState<ColumnFilterRequest | null>(
+      () => columnFilterRequest ?? null,
+    );
+    useEffect(() => {
+      setFilterRequest(columnFilterRequest ?? null);
+    }, [columnFilterRequest]);
     const findSeqRef = useRef(0);
     const findIdxRef = useRef(findIdx);
     findIdxRef.current = findIdx;
@@ -9068,6 +9113,7 @@ export const ResultGrid = memo(
           emitFindNav({ rowIdx: 0, colIdx }, true, true);
           return true;
         },
+        applyColumnFilters: (request) => setFilterRequest({ ...request }),
       }),
       [emitFindNav],
     );
@@ -10605,6 +10651,8 @@ export const ResultGrid = memo(
             findHits={findHits}
             findCurrentKey={findCurrentMatch ? findMatchKey(findCurrentMatch) : null}
             findNav={findNav}
+            columnFilterRequest={filterRequest}
+            onColumnFilterRequestApplied={onColumnFilterRequestApplied}
             gridBindings={gridBindings}
             serverSort={serverSort}
             serverFilter={serverFilter}

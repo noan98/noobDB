@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex, VisuallyHidden } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
 import type { QueryResult } from "../api/tauri";
@@ -15,6 +15,7 @@ import { elementToPngBlob, elementToSvgBytes } from "./imageExport";
 import { EmptyState } from "./EmptyState";
 import { NoResultsIllustration } from "./illustrations";
 import { ChartSkeleton } from "./Skeleton";
+import { chartDrillConditions, type DrillCondition } from "./drillFilter";
 import {
   CHART_PALETTES,
   DEFAULT_CHART_PALETTE,
@@ -112,6 +113,14 @@ interface Props {
    * 選べる。取得済みの行ではなく元クエリ全件に対する GROUP BY になる。
    */
   onRunQuery?: (sql: string) => Promise<QueryResult>;
+  /**
+   * 棒・点・円のスライスから、その X 値で絞り込んだグリッドへ移る (#2236)。渡されたときだけ、
+   * クリックと、矢印キーで選んだ点への Enter で操作できる。DB 側集計や散布図・ヒストグラムは
+   * X 値と元の行が 1 対 1 に対応しないため対象外。`scrollTop` は戻ってきたときの復元用。
+   */
+  onDrill?: (drill: { conditions: DrillCondition[]; scrollTop: number }) => void;
+  /** チャート領域のスクロール位置の復元 (グリッドから戻ってきたとき、#2236)。 */
+  initialScrollTop?: number;
 }
 
 // 系列の出現アニメーションを行う要素数の上限。これを超えると数百〜数千の要素を
@@ -121,7 +130,15 @@ const ANIM_MAX_ELEMENTS = 200;
 /** DB 側集計待ちの骨格を出し始めるまでの猶予 (ms)。 */
 const CHART_SKELETON_DELAY_MS = 180;
 
-export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery }: Props) {
+export function ChartView({
+  result,
+  sourceSql,
+  onChangeView,
+  driver,
+  onRunQuery,
+  onDrill,
+  initialScrollTop,
+}: Props) {
   const t = useT();
   // ダークテーマでは系列色 (`categorical`) をコントラスト確保版へ、連続/発散
   // ランプは「暗→明」の向きへ切り替える (#1187)。
@@ -241,6 +258,10 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
 
   // 描画中の SVG を画像エクスポート (#643) で捕捉するためのコンテナ参照。
   const chartRef = useRef<HTMLDivElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 復元はマウント時の 1 回だけ (initialScrollTop は戻ってきた時点の値)
+  useLayoutEffect(() => {
+    if (initialScrollTop && chartRef.current) chartRef.current.scrollTop = initialScrollTop;
+  }, []);
   const getSvgForExport = (): SVGSVGElement => {
     const svg = chartRef.current?.querySelector("svg[data-chart-svg]");
     if (!svg) throw new Error("chart is not rendered");
@@ -250,6 +271,29 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
     const vb = svg.viewBox.baseVal;
     return vb && vb.width > 0 ? { width: vb.width, height: vb.height } : {};
   };
+
+  // 棒・点・スライスのインデックス → X 値での絞り込み (#2236)。DB 側集計 (X が日付バケットなど
+  // 元の値と一致しない) と、X が行に対応しない散布図・ヒストグラムは対象外。
+  const canDrill =
+    !!onDrill &&
+    !!config &&
+    !!model &&
+    !remoteForSql?.model &&
+    config.type !== "scatter" &&
+    config.type !== "histogram";
+  const drillAt =
+    canDrill && config && model
+      ? (index: number) => {
+          const conditions = chartDrillConditions(
+            result.rows,
+            result.columns,
+            config.xCol,
+            model.labels[index],
+          );
+          if (conditions.length === 0) return;
+          onDrill?.({ conditions, scrollTop: chartRef.current?.scrollTop ?? 0 });
+        }
+      : undefined;
 
   if (!config || !model) {
     // 数値列が無い空状態でも設定バーの位置に切替セグメントを残す。ここへ落ちる
@@ -658,6 +702,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
             palette={config.palette ?? DEFAULT_CHART_PALETTE}
             isDark={isDark}
             donut={isDonut(config)}
+            onDrillIndex={drillAt}
           />
         ) : (
           <CartesianChart
@@ -667,6 +712,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
             colors={seriesColors}
             valueColors={valueColors}
             lineName={comboLineName}
+            onDrillIndex={drillAt}
           />
         )}
       </chakra.div>
@@ -716,9 +762,12 @@ export function CartesianChart({
   colors,
   valueColors,
   lineName,
+  onDrillIndex,
 }: {
   model: ChartModel;
   type: ChartType;
+  /** 棒・点の選択 (クリック / Enter) で、その X 値の絞り込みへ移る (#2236)。 */
+  onDrillIndex?: (index: number) => void;
   xName: string;
   /** 複合 (棒 + 折れ線) で折れ線にする系列名 (#1941)。第 2 軸で描く。複合以外では未使用。 */
   lineName?: string;
@@ -850,34 +899,50 @@ export function CartesianChart({
   // 内容が縮小・水平方向にレターボックスされる。getBoundingClientRect().width は
   // 余白を含む要素幅で実際の描画幅と一致しないため、CTM の逆変換でスクリーン座標を
   // SVG ユーザ座標へ写し、スケール/オフセットを正しく吸収する。
-  const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
+  const bandIndexAt = (e: React.MouseEvent<SVGSVGElement>): number | null => {
     const svg = e.currentTarget;
     const ctm = svg.getScreenCTM();
-    if (!ctm) return;
+    if (!ctm) return null;
     const pt = svg.createSVGPoint();
     pt.x = e.clientX;
     pt.y = e.clientY;
     const svgX = pt.matrixTransform(ctm.inverse()).x;
     const idx = Math.floor((svgX - PAD.left) / bandW);
-    setHover(idx >= 0 && idx < n ? idx : null);
+    return idx >= 0 && idx < n ? idx : null;
+  };
+  const onMove = (e: React.MouseEvent<SVGSVGElement>) => setHover(bandIndexAt(e));
+  const onClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!onDrillIndex) return;
+    const idx = bandIndexAt(e);
+    if (idx !== null) onDrillIndex(idx);
   };
 
   const summary = useMemo(() => chartSummary(model, type), [model, type]);
-  const ariaLabel = t("chartAriaSummary", {
-    series: summary.series,
-    points: summary.points,
-    max: summary.max === null ? "-" : formatValue(summary.max),
-    min: summary.min === null ? "-" : formatValue(summary.min),
-  });
+  const ariaLabel = [
+    t("chartAriaSummary", {
+      series: summary.series,
+      points: summary.points,
+      max: summary.max === null ? "-" : formatValue(summary.max),
+      min: summary.min === null ? "-" : formatValue(summary.min),
+    }),
+    onDrillIndex ? t("chartDrillHint") : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   // 左右 / Home / End で点を動かし、HoverTooltip と同じ内容 (X ラベル + 各系列の値) を読み上げる。
+  // 絞り込めるチャートでは Enter で選択中の点の X 値の絞り込みへ移る (#2236)。
   const onKey = (e: React.KeyboardEvent<SVGSVGElement>) => {
+    if (e.key === "Enter" && onDrillIndex && hover != null && hover < n) {
+      e.preventDefault();
+      onDrillIndex(hover);
+      return;
+    }
     const next = stepChartIndex(hover, e.key, n);
     if (next === null) return;
     e.preventDefault();
     setHover(next);
-    setAnnounce(
-      `${model.labels[next]}: ${model.series.map((s) => `${s.name} ${formatValue(s.values[next])}`).join(", ")}`,
-    );
+    const values = model.series.map((s) => `${s.name} ${formatValue(s.values[next])}`).join(", ");
+    setAnnounce(`${model.labels[next]}: ${values}${onDrillIndex ? ` — ${t("chartDrillAnnounce")}` : ""}`);
   };
 
   return (
@@ -885,14 +950,16 @@ export function CartesianChart({
       <chakra.svg
         viewBox={`0 0 ${W} ${H}`}
         width="100%"
-        style={{ maxHeight: "100%" }}
         role="group"
         aria-roledescription={t("chartAriaRoleDescription")}
         aria-label={ariaLabel}
         tabIndex={0}
         css={CHART_FOCUS_CSS}
         data-chart-svg=""
+        data-drill={onDrillIndex ? "" : undefined}
+        style={{ maxHeight: "100%", cursor: onDrillIndex ? "pointer" : undefined }}
         onMouseMove={onMove}
+        onClick={onClick}
         onMouseLeave={() => setHover(null)}
         onKeyDown={onKey}
         onBlur={() => setHover(null)}
@@ -1235,12 +1302,15 @@ function PieChart({
   palette,
   isDark,
   donut,
+  onDrillIndex,
 }: {
   model: ChartModel;
   palette: string;
   isDark: boolean;
   /** 中央に穴を開けるドーナツ表示 (#1215)。 */
   donut: boolean;
+  /** スライスの選択 (クリック / Enter) で、そのラベルの絞り込みへ移る (#2236)。 */
+  onDrillIndex?: (index: number) => void;
 }) {
   const t = useT();
   // 円グラフは先頭系列のみ。負値は 0 にクランプ。
@@ -1265,19 +1335,31 @@ function PieChart({
   const labelR = donut ? (r + rInner) / 2 : r * 0.62;
   let angle = -Math.PI / 2;
   const summary = chartSummary(model, "pie");
-  const ariaLabel = t("chartAriaSummary", {
-    series: summary.series,
-    points: summary.points,
-    max: summary.max === null ? "-" : formatValue(summary.max),
-    min: summary.min === null ? "-" : formatValue(summary.min),
-  });
+  const ariaLabel = [
+    t("chartAriaSummary", {
+      series: summary.series,
+      points: summary.points,
+      max: summary.max === null ? "-" : formatValue(summary.max),
+      min: summary.min === null ? "-" : formatValue(summary.min),
+    }),
+    onDrillIndex ? t("chartDrillHint") : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   const onKey = (e: React.KeyboardEvent<SVGSVGElement>) => {
+    if (e.key === "Enter" && onDrillIndex && hover != null && hover < values.length) {
+      e.preventDefault();
+      onDrillIndex(hover);
+      return;
+    }
     const next = stepChartIndex(hover, e.key, values.length);
     if (next === null) return;
     e.preventDefault();
     setHover(next);
     const pct = total > 0 ? (values[next] / total) * 100 : 0;
-    setAnnounce(`${model.labels[next]}: ${formatValue(values[next])} (${pct.toFixed(1)}%)`);
+    setAnnounce(
+      `${model.labels[next]}: ${formatValue(values[next])} (${pct.toFixed(1)}%)${onDrillIndex ? ` — ${t("chartDrillAnnounce")}` : ""}`,
+    );
   };
   return (
     <>
@@ -1327,7 +1409,8 @@ function PieChart({
                 key={i}
                 onMouseEnter={() => setHover(i)}
                 onMouseLeave={() => setHover(null)}
-                style={{ cursor: "default" }}
+                onClick={onDrillIndex ? () => onDrillIndex(i) : undefined}
+                style={{ cursor: onDrillIndex ? "pointer" : "default" }}
               >
                 <motion.path
                   d={donutSlicePath(cx + ox, cy + oy, r, rInner, start, end)}

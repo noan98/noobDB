@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import type { QueryResult } from "../api/tauri";
@@ -28,6 +28,12 @@ import {
   type PivotConfig,
   type PivotModel,
 } from "./pivotData";
+import {
+  drillSummary,
+  pivotDrillConditions,
+  type DrillCondition,
+  type PivotDrillTarget,
+} from "./drillFilter";
 
 /**
  * 結果グリッドのピボット / クロス集計ビュー (#661)。取得済みの結果セットを、行/列/値
@@ -56,6 +62,14 @@ interface Props {
    * `ResultViewSwitch` と、集計できるデータが無いときの空状態から呼ばれる。
    */
   onChangeView: (view: ResultViewKind) => void;
+  /**
+   * 集計セル・行見出し・列見出し・合計から、その組み合わせで絞り込んだグリッドへ移る (#2236)。
+   * 渡されたときだけ、セルがクリック / フォーカス + Enter で操作できる。`scrollTop` は
+   * 表のスクロール位置で、戻ってきたとき `initialScrollTop` に入れて復元する。
+   */
+  onDrill?: (drill: { conditions: DrillCondition[]; scrollTop: number }) => void;
+  /** 表のスクロール位置の復元 (グリッドから戻ってきたとき、#2236)。 */
+  initialScrollTop?: number;
 }
 
 const AGGS: PivotAgg[] = ["sum", "avg", "count", "min", "max"];
@@ -101,6 +115,12 @@ const rowHeadCss: SystemStyleObject = {
   fontWeight: 600,
   color: "var(--text)",
 };
+// 絞り込みへ移れるセル (#2236)。ホバーはアクセント色の内枠、キーボードフォーカスは共通のフォーカスリング。
+const drillCss: SystemStyleObject = {
+  cursor: "pointer",
+  "&:hover": { boxShadow: "inset 0 0 0 1px var(--accent)" },
+  "&:focus-visible": { outline: "none", boxShadow: "var(--focus-ring)" },
+};
 const totalCss: SystemStyleObject = {
   ...cellCss,
   fontWeight: 600,
@@ -108,7 +128,15 @@ const totalCss: SystemStyleObject = {
   borderTop: "2px solid var(--border)",
 };
 
-export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeView }: Props) {
+export function PivotView({
+  result,
+  driver,
+  sourceSql,
+  onSendToEditor,
+  onChangeView,
+  onDrill,
+  initialScrollTop,
+}: Props) {
   const t = useT();
   // ダークテーマでは「暗→明」の向きへ切り替える (#1187)。
   const isDark = useIsDarkTheme();
@@ -142,6 +170,12 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
   // 画像エクスポート (#1956) で捕捉する <table> への参照。
   const tableRef = useRef<HTMLTableElement>(null);
+  // 表のスクロール領域。絞り込みへ移るときに位置を控え、戻ってきたときに復元する (#2236)。
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 復元はマウント時の 1 回だけ (initialScrollTop は戻ってきた時点の値)
+  useLayoutEffect(() => {
+    if (initialScrollTop && scrollRef.current) scrollRef.current.scrollTop = initialScrollTop;
+  }, []);
   const fadeKeys = useMemo(
     () => ({ sort: JSON.stringify([config, heatmap]), filter: "" }),
     [config, heatmap],
@@ -257,6 +291,34 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
       formatValue(v)
     );
 
+  // 絞り込みへ移れるセルの属性 (#2236)。条件が空 (総計・列軸の無い列見出し) や
+  // データの無い空セルは操作対象にしない。Tab で巡回でき、Enter / Space でクリックと同じ。
+  const drillProps = (
+    baseCss: SystemStyleObject,
+    target: PivotDrillTarget,
+    value: number | null | undefined = undefined,
+  ) => {
+    if (!onDrill || value === null) return { css: baseCss };
+    const conditions = pivotDrillConditions(model, result.columns, config, target);
+    if (conditions.length === 0) return { css: baseCss };
+    const go = () => onDrill({ conditions, scrollTop: scrollRef.current?.scrollTop ?? 0 });
+    const summary = drillSummary(conditions);
+    return {
+      css: { ...baseCss, ...drillCss },
+      tabIndex: 0,
+      "aria-label":
+        value === undefined
+          ? t("drillAriaHeader", { summary })
+          : t("drillAriaCell", { summary, value: formatValue(value) }),
+      onClick: go,
+      onKeyDown: (e: KeyboardEvent) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        go();
+      },
+    };
+  };
+
   return (
     <Flex direction="column" h="100%" minH={0} minW={0}>
       {/* 設定バー */}
@@ -369,7 +431,7 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
         )}
       </chakra.p>
 
-      <Box flex="1" overflow="auto" px="3" py="2">
+      <Box ref={scrollRef} flex="1" overflow="auto" px="3" py="2">
         <chakra.table ref={tableRef} css={{ borderCollapse: "collapse" }}>
           <thead>
             <tr>
@@ -378,7 +440,7 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
                 {model.colFieldName ? `${model.rowFieldName} \\ ${model.colFieldName}` : model.rowFieldName}
               </chakra.th>
               {effectiveColKeys.map((ck, ci) => (
-                <chakra.th key={ci} css={headCss}>
+                <chakra.th key={ci} {...drillProps(headCss, { row: null, col: ci })}>
                   {ck}
                 </chakra.th>
               ))}
@@ -390,13 +452,23 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
           <tbody ref={tbodyRef}>
             {model.rowKeys.map((rk, ri) => (
               <tr key={ri}>
-                <chakra.td css={rowHeadCss}>{rk}</chakra.td>
+                <chakra.td {...drillProps(rowHeadCss, { row: ri, col: null })}>{rk}</chakra.td>
                 {model.cells[ri].map((v, ci) => (
-                  <chakra.td key={ci} css={heatCellCss} style={{ background: cellBg(v) }}>
+                  <chakra.td
+                    key={ci}
+                    {...drillProps(heatCellCss, { row: ri, col: ci }, v)}
+                    style={{ background: cellBg(v) }}
+                  >
                     {renderValue(v, `${rk}\u0000${effectiveColKeys[ci]}`)}
                   </chakra.td>
                 ))}
-                <chakra.td css={{ ...cellCss, fontWeight: 600, borderLeft: "2px solid var(--border)" }}>
+                <chakra.td
+                  {...drillProps(
+                    { ...cellCss, fontWeight: 600, borderLeft: "2px solid var(--border)" },
+                    { row: ri, col: null },
+                    model.rowTotals[ri],
+                  )}
+                >
                   {renderValue(model.rowTotals[ri], `${rk}\u0000total`)}
                 </chakra.td>
               </tr>
@@ -406,7 +478,7 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
             <tr>
               <chakra.td css={{ ...totalCss, textAlign: "left" }}>{t("pivotTotal")}</chakra.td>
               {model.colTotals.map((v, ci) => (
-                <chakra.td key={ci} css={totalCss}>
+                <chakra.td key={ci} {...drillProps(totalCss, { row: null, col: ci }, v)}>
                   {renderValue(v, `total\u0000${effectiveColKeys[ci]}`)}
                 </chakra.td>
               ))}

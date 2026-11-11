@@ -2489,6 +2489,19 @@ const en = {
   pivotTruncated:
     "Truncated to the first {rows} row groups / {cols} column groups; the rest were omitted from the table (totals still include them).",
   pivotNoData: "No data to pivot.",
+  // ピボット / チャートから絞り込んだグリッドへ (#2236)。
+  drillAriaCell: "{summary}: {value}. Press Enter to filter the grid to these rows.",
+  drillAriaHeader: "{summary}. Press Enter to filter the grid to these rows.",
+  chartDrillHint: "Press Enter on a selected point to filter the grid to its rows.",
+  chartDrillAnnounce: "Enter to filter the grid",
+  drillChipLabel: "Filtered from {source}: {summary}",
+  drillChipLabelRange: "Filtered from {source}: {summary} ({count} fetched rows)",
+  drillSourcePivot: "pivot",
+  drillSourceChart: "chart",
+  drillBackToPivot: "Back to pivot",
+  drillBackToChart: "Back to chart",
+  drillClear: "Clear filter",
+  drillChipAria: "Grid filtered from the {source}",
   // テーブル複製 (#1398)。
   cloneTableTitle: "Duplicate table",
   cloneTableClose: "Cancel",
@@ -10467,6 +10480,19 @@ const ja: Dict = {
   pivotTruncated:
     "先頭の {rows} 行グループ / {cols} 列グループのみ表示しています (残りは表から省略しますが、総計には含まれます)。",
   pivotNoData: "ピボットするデータがありません。",
+  // ピボット / チャートから絞り込んだグリッドへ (#2236)。
+  drillAriaCell: "{summary}: {value}。Enter でこの組み合わせの行にグリッドを絞り込みます。",
+  drillAriaHeader: "{summary}。Enter でこの行にグリッドを絞り込みます。",
+  chartDrillHint: "選択中の点で Enter を押すと、その行にグリッドを絞り込みます。",
+  chartDrillAnnounce: "Enter でグリッドを絞り込み",
+  drillChipLabel: "{source}から絞り込み中: {summary}",
+  drillChipLabelRange: "{source}から絞り込み中: {summary} (取得済み {count} 行が対象)",
+  drillSourcePivot: "ピボット",
+  drillSourceChart: "チャート",
+  drillBackToPivot: "ピボットへ戻る",
+  drillBackToChart: "チャートへ戻る",
+  drillClear: "絞り込みを外す",
+  drillChipAria: "{source}から絞り込んだグリッド",
   // テーブル複製 (#1398)。
   cloneTableTitle: "テーブルを複製",
   cloneTableClose: "キャンセル",
