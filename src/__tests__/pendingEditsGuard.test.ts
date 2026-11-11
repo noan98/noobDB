@@ -97,7 +97,9 @@ describe("結果を置き換える手動操作の入口 (#2234)", () => {
     const b = body("resolvePendingBeforeReplace");
     expect(b).toContain("chooseDiscard(");
     expect(b).toContain('if (choice === "cancel") return null;');
-    expect(b.indexOf("applyEditsForTabRef.current?.(tab)")).toBeGreaterThan(-1);
+    expect(
+      b.indexOf("applyEditsForTabRef.current?.(latest, undefined, { skipReload: true })"),
+    ).toBeGreaterThan(-1);
     expect(b).toContain("if (!ok) return null;");
   });
 

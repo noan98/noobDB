@@ -4275,7 +4275,14 @@ const en = {
   tabCloseApplying: "Edits are being applied to this tab. Try closing it again once that finishes.",
   pendingReplaceTitle: "Unapplied changes",
   pendingReplaceBody:
-    "This tab has unapplied changes (cell edits: {edits}, rows to delete: {deletes}, rows to add: {inserts}). {action} replaces the displayed rows.\nApply them first, or discard them and continue?",
+    "This tab has unapplied changes ({detail}). {action} replaces the displayed rows.\nApply them first, or discard them and continue?",
+  pendingReplaceDetailEdits: "{count} cell edit(s)",
+  pendingReplaceDetailDeletes: "{count} row(s) to delete",
+  pendingReplaceDetailInserts: "{count} row(s) to add",
+  pendingReplaceDetailSeparator: ", ",
+  pendingReplaceIrreversible: "Discarded row deletions and added rows cannot be restored with Undo.",
+  editApplyNothingToSend:
+    "Nothing could be sent: the edited rows are not in the displayed rows (they may be on another page, or hidden by a sort or filter).",
   pendingReplaceApply: "Apply and continue",
   pendingReplaceDiscard: "Discard and continue",
   pendingReplaceCancel: "Cancel",
@@ -12196,7 +12203,14 @@ const ja: Dict = {
   tabCloseApplying: "このタブは編集を適用中です。完了してからもう一度閉じてください。",
   pendingReplaceTitle: "未適用の変更があります",
   pendingReplaceBody:
-    "このタブには未適用の変更があります (セル編集 {edits} 件・削除予定 {deletes} 行・追加行 {inserts} 行)。{action}と、表示中の行が置き換わります。\n先に適用しますか。それとも破棄して続けますか。",
+    "このタブには未適用の変更があります ({detail})。{action}と、表示中の行が置き換わります。\n先に適用しますか。それとも破棄して続けますか。",
+  pendingReplaceDetailEdits: "セル編集 {count} 件",
+  pendingReplaceDetailDeletes: "削除予定 {count} 行",
+  pendingReplaceDetailInserts: "追加行 {count} 行",
+  pendingReplaceDetailSeparator: "・",
+  pendingReplaceIrreversible: "破棄した削除予定と追加行は「元に戻す」では戻せません。",
+  editApplyNothingToSend:
+    "送るものがありません。編集した行が表示中の行にありません (別のページにあるか、ソート・フィルタで表示されていない可能性があります)。",
   pendingReplaceApply: "適用して続行",
   pendingReplaceDiscard: "破棄して続行",
   pendingReplaceCancel: "キャンセル",

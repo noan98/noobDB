@@ -81,9 +81,6 @@ export function decideReplaceGuard(input: ReplaceGuardInput): ReplaceGuard {
   return { kind: "confirm", counts: pendingChangeCounts(tab) };
 }
 
-/** 確認での選択。 */
-export type ReplaceChoice = "apply" | "discard" | "cancel";
-
 /**
  * 「破棄して続行」で Undo 履歴へ積むセル編集。空なら積まない (`null`)。
  * `discardEditsAndPreviewForTab` と同じく、直前の編集 1 世代をスタックの末尾に載せる。

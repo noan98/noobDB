@@ -777,6 +777,16 @@ describe("シナリオ: 削除前の参照行数の確認 (#1506)", () => {
       { timeout: 5000 },
     );
     await page.elementLocator(insertFields[1] ?? insertFields[0]).fill("cherry");
+    // name 欄に値を入れる (空の行は送る文が無いため)。
+    const nameInput = await vi.waitFor(
+      () => {
+        const els = document.querySelectorAll<HTMLInputElement>("input[data-insert-field]");
+        if (els.length < 2) throw new Error("insert form not open");
+        return els[1];
+      },
+      { timeout: 5000 },
+    );
+    await page.elementLocator(nameInput).fill("cherry");
     await screen.getByRole("button", { name: t("rowOpsInsertAdd") }).click();
 
     // Apply ボタンの React onClick (= PaneView が組む onApplyEdits) を直接 2 回起動する。
@@ -1705,6 +1715,66 @@ describe("シナリオ: 未適用の変更があるタブで結果を置き換�
     await vi.waitFor(() => expect(order).toEqual(["apply", "run"]), { timeout: 5000 });
     await expect
       .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
+      .not.toBeInTheDocument();
+  });
+});
+
+describe("シナリオ: 追加行がある状態で「適用して続行」(#2234)", () => {
+  it("追加行を適用してからページサイズ変更が反映され、同じ確認が二度出ない", async () => {
+    registerAutoStream();
+    const calls: string[] = [];
+    onCommand("bulk_update_cells", () => {
+      calls.push("apply");
+      return { status: "applied", result: { columns: [], rows: [], rows_affected: 1, elapsed_ms: 2 } };
+    });
+    onCommand("run_query", (args) => {
+      calls.push(`page:${String((args as { sql?: unknown }).sql)}`);
+      return { columns: FRUIT_COLUMNS, rows: fruitsRows, rows_affected: 0, elapsed_ms: 1 };
+    });
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await openFruitsTable(screen);
+    await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
+    await vi.waitFor(
+      () => {
+        const cell = screen.getByRole("gridcell", { name: "3", exact: true }).query();
+        if (!cell?.classList.contains("is-editable-cell")) throw new Error("qty cell is not editable yet");
+      },
+      { timeout: 5000 },
+    );
+    // 右クリック → 行を追加 → 保留に追加。
+    await screen.getByRole("gridcell", { name: "banana", exact: true }).click({ button: "right" });
+    await screen.getByRole("menuitem", { name: t("gridAddRow") }).click();
+    // name 欄に値を入れる (空の行は送る文が無いため)。
+    const nameInput = await vi.waitFor(
+      () => {
+        const els = document.querySelectorAll<HTMLInputElement>("input[data-insert-field]");
+        if (els.length < 2) throw new Error("insert form not open");
+        return els[1];
+      },
+      { timeout: 5000 },
+    );
+    await page.elementLocator(nameInput).fill("cherry");
+    await screen.getByRole("button", { name: t("rowOpsInsertAdd") }).click();
+    // ページサイズを変えようとすると確認が出る (1 ページ目でも取り直す)。
+    await screen.getByRole("combobox", { name: t("pageSizeLabel") }).click();
+    await screen.getByRole("option", { name: "50", exact: true }).click();
+    await expect.element(screen.getByRole("heading", { name: t("pendingReplaceTitle") })).toBeVisible();
+    await screen.getByRole("button", { name: t("pendingReplaceApply"), exact: true }).click();
+    await vi.waitFor(
+      () =>
+        expect(
+          calls.filter((c) => c.startsWith("page:") && c.includes("LIMIT 50")),
+          JSON.stringify(calls),
+        ).toHaveLength(1),
+      {
+        timeout: 5000,
+      },
+    );
+    // 適用は 1 回だけ。確認はもう出ない。
+    expect(calls.filter((c) => c === "apply").length).toBe(1);
+    await expect
+      .element(screen.getByRole("heading", { name: t("pendingReplaceTitle") }))
       .not.toBeInTheDocument();
   });
 });
