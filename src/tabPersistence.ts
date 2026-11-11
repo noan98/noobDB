@@ -1,4 +1,5 @@
 import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
+import { isAggregateFn } from "./components/queryBuilderJoin";
 
 const STORAGE_PREFIX = "noobdb.tabs.";
 
@@ -54,6 +55,8 @@ function isWhereCondition(v: unknown): v is { column: string; operator: string; 
   const o = v as Record<string, unknown>;
   // `value2` (BETWEEN の上端) は後から足したので省略可 (#1627)。
   if (o.value2 !== undefined && typeof o.value2 !== "string") return false;
+  // `table` (結合の別名) は #2242 で足した。旧データは持たない。
+  if (o.table !== undefined && typeof o.table !== "string") return false;
   return typeof o.column === "string" && typeof o.operator === "string" && typeof o.value === "string";
 }
 
@@ -61,10 +64,62 @@ function isStringArray(v: unknown): v is string[] {
   return Array.isArray(v) && v.every((x) => typeof x === "string");
 }
 
+function isOptionalString(v: unknown): boolean {
+  return v === undefined || typeof v === "string";
+}
+
 function isOrderByItem(v: unknown): v is { column: string; direction: "ASC" | "DESC" } {
   if (!v || typeof v !== "object") return false;
   const o = v as Record<string, unknown>;
+  // `table` / `agg` は結合・集計 (#2242) で足した。旧データは持たない。
+  if (!isOptionalString(o.table) || (o.agg !== undefined && !isAggregateFn(o.agg))) return false;
   return typeof o.column === "string" && (o.direction === "ASC" || o.direction === "DESC");
+}
+
+/** 結合 / 集計 / HAVING (#2242) の保存形。旧データには無いので、あるときだけ型を確かめる。 */
+function isSelectItem(v: unknown): boolean {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.column === "string" &&
+    isOptionalString(o.table) &&
+    isOptionalString(o.as) &&
+    (o.agg === undefined || isAggregateFn(o.agg))
+  );
+}
+
+function isHavingItem(v: unknown): boolean {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.column === "string" &&
+    isOptionalString(o.table) &&
+    isAggregateFn(o.agg) &&
+    typeof o.operator === "string" &&
+    typeof o.value === "string"
+  );
+}
+
+function isJoinItem(v: unknown): boolean {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.table === "string" &&
+    typeof o.alias === "string" &&
+    (o.type === "INNER" || o.type === "LEFT") &&
+    Array.isArray(o.on) &&
+    o.on.every((x) => {
+      if (!x || typeof x !== "object") return false;
+      const p = x as Record<string, unknown>;
+      return (
+        typeof p.leftColumn === "string" && typeof p.rightColumn === "string" && isOptionalString(p.leftTable)
+      );
+    })
+  );
+}
+
+function isOptionalArrayOf(v: unknown, check: (x: unknown) => boolean): boolean {
+  return v === undefined || (Array.isArray(v) && v.every(check));
 }
 
 function isValidBuilderSnapshot(v: unknown): v is QueryBuilderSnapshot {
@@ -90,6 +145,10 @@ function isValidBuilderSnapshot(v: unknown): v is QueryBuilderSnapshot {
     return false;
   }
   if (!isStringArray(o.selectColumns)) return false;
+  if (!isOptionalArrayOf(o.selectItems, isSelectItem)) return false;
+  if (!isOptionalArrayOf(o.aggColumns, isSelectItem)) return false;
+  if (!isOptionalArrayOf(o.joins, isJoinItem)) return false;
+  if (!isOptionalArrayOf(o.having, isHavingItem)) return false;
   if (!Array.isArray(o.whereConditions) || !o.whereConditions.every(isWhereCondition)) return false;
   if (!Array.isArray(o.setPairs) || !o.setPairs.every(isStringPair)) return false;
   if (!Array.isArray(o.insertPairs) || !o.insertPairs.every(isStringPair)) return false;
