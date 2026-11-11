@@ -133,6 +133,7 @@ import {
   type ClosedTab,
 } from "./closedTabs";
 import { closeGuard, hasPendingChanges, isTabDirty, tabsWithPendingChanges } from "./tabDirty";
+import { decideReplaceGuard, discardedEditsForUndo, routeOfPageNav, type ReplaceRoute } from "./pendingGuard";
 import { TabPaneStore } from "./tabPaneStore";
 import {
   PaneView,
@@ -1431,6 +1432,34 @@ function makeLocalProfile(name: string): ConnectionProfile {
   };
 }
 
+// 未適用の変更の確認 (#2234) に出す「何をしようとしたか」。キー参照を静的に残すため表で持つ。
+const REPLACE_ROUTE_LABEL_KEYS = {
+  run: "pendingReplaceRoute_run",
+  tx: "pendingReplaceRoute_tx",
+  page: "pendingReplaceRoute_page",
+  pageSize: "pendingReplaceRoute_pageSize",
+  sort: "pendingReplaceRoute_sort",
+  filter: "pendingReplaceRoute_filter",
+} as const satisfies Record<ReplaceRoute, string>;
+
+/** 置き換え前の表示位置 (ページ・サイズ・サーバ側ソート/フィルタ)。破棄の Undo で元へ戻すのに使う (#2234)。 */
+interface PendingReplaceView {
+  page: number;
+  pageSize: number;
+  sort: ServerSort | null;
+  filter: ServerFilter | null;
+}
+
+/** `resolvePendingBeforeReplace` の結果。呼び出し側は置き換えの成功後に `notifyDiscardedEdits` を呼ぶ。 */
+interface PendingResolution {
+  /** 破棄したセル編集 (Undo 履歴へ積むもの)。 */
+  discarded: PendingEdits | null;
+  /** 確認を出したか。 */
+  asked: boolean;
+  /** ページ・ソート・フィルタ経路だけ。Undo で元の表示へ戻すための位置。 */
+  restore: PendingReplaceView | null;
+}
+
 export default function App() {
   const t = useT();
   // `t` 自体は識別子が安定なので、ロケール切替でコマンドパレット候補の文言メモが
@@ -1458,6 +1487,18 @@ export default function App() {
       }
     },
     [confirm],
+  );
+  // 3 択版 (#2234)。表示中は `confirmDiscard` と同じく Alt+←→ などのグローバルショートカットを止める。
+  const chooseDiscard = useCallback(
+    async (opts: Parameters<typeof choose>[0]) => {
+      discardConfirmBusyRef.current += 1;
+      try {
+        return await choose(opts);
+      } finally {
+        discardConfirmBusyRef.current -= 1;
+      }
+    },
+    [choose],
   );
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
   const settings = useSettings();
@@ -4862,6 +4903,123 @@ export default function App() {
     [],
   );
 
+  // 結果を置き換える手動操作 (ページ送り・ソート・フィルタ・再実行・TX 内実行) の入口 (#2234)。
+  // 未適用の変更 (セル編集 / 削除予定 / 追加行) があれば「適用して続行 / 破棄して続行 /
+  // キャンセル」を出す。戻り値が null なら中断 (何も変えない)。続行してよいときは
+  // `{ discarded }` を返し、呼び出し側は置き換えの patch でセル編集・削除予定・追加行を空に
+  // して、`discarded` (破棄したセル編集) を Undo 履歴へ積む。適用は成功してから続行する。
+  // 適用・取り消しは後方で定義されるので ref 越しに呼ぶ。
+  const applyEditsForTabRef = useRef<
+    ((tab: Tab, rowScope?: PendingEdits, opts?: { skipReload?: boolean }) => Promise<boolean>) | null
+  >(null);
+  const undoCellEditForTabRef = useRef<((tabId: string) => void) | null>(null);
+  const resolvePendingBeforeReplace = useCallback(
+    async (tabId: string, route: ReplaceRoute, skip: boolean): Promise<PendingResolution | null> => {
+      let asked = false;
+      for (;;) {
+        const tab = tabsRef.current.find((tt) => tt.id === tabId);
+        const guard = decideReplaceGuard({ tab, skip });
+        if (guard.kind === "proceed" || !tab) return { discarded: null, asked, restore: null };
+        if (guard.kind === "applying") {
+          toast.info(translate("pendingReplaceApplying"));
+          return null;
+        }
+        const { edits, deletes, inserts } = guard.counts;
+        // 0 件の内訳は省く。削除予定・追加行は Undo で戻せないので、あるときだけ一言添える。
+        const detail = [
+          edits > 0 ? translate("pendingReplaceDetailEdits", { count: edits }) : null,
+          deletes > 0 ? translate("pendingReplaceDetailDeletes", { count: deletes }) : null,
+          inserts > 0 ? translate("pendingReplaceDetailInserts", { count: inserts }) : null,
+        ]
+          .filter((x): x is string => x !== null)
+          .join(translate("pendingReplaceDetailSeparator"));
+        asked = true;
+        const choice = await chooseDiscard({
+          title: translate("pendingReplaceTitle"),
+          message: (
+            <chakra.p m={0} whiteSpace="pre-line">
+              {translate("pendingReplaceBody", {
+                action: translate(REPLACE_ROUTE_LABEL_KEYS[route]),
+                detail,
+              }) + (deletes + inserts > 0 ? `\n${translate("pendingReplaceIrreversible")}` : "")}
+            </chakra.p>
+          ),
+          confirmLabel: translate("pendingReplaceApply"),
+          altLabel: translate("pendingReplaceDiscard"),
+          cancelLabel: translate("pendingReplaceCancel"),
+          tone: "primary",
+        });
+        if (choice === "cancel") return null;
+        // 確認を開いている間に状態が動いたかもしれないので、最新のタブを読み直す。
+        const latest = tabsRef.current.find((tt) => tt.id === tabId) ?? tab;
+        if (choice === "alt") {
+          const isNav = route === "page" || route === "pageSize" || route === "sort" || route === "filter";
+          const restore: PendingReplaceView | null =
+            isNav && latest.kind === "table" && latest.paginatable
+              ? {
+                  page: latest.page ?? 1,
+                  pageSize: Math.max(1, latest.pageSize ?? latest.previewRowLimit),
+                  sort: latest.serverSort ?? null,
+                  filter: latest.serverFilter ?? null,
+                }
+              : null;
+          return { discarded: discardedEditsForUndo(latest.pendingEdits), asked, restore };
+        }
+        // 適用して続行: Apply が成功したときだけ先へ進む (失敗・取消・送るものが無いときは中断)。
+        // 続く置き換えが取り直すので、Apply 側の取り直しは省く。Apply 内の確認中も
+        // Alt+←→ などを止める。
+        discardConfirmBusyRef.current += 1;
+        let ok = false;
+        try {
+          ok = (await applyEditsForTabRef.current?.(latest, undefined, { skipReload: true })) ?? false;
+        } finally {
+          discardConfirmBusyRef.current -= 1;
+        }
+        if (!ok) return null;
+        // 適用の往復中に増えた編集があれば、もう一度確認する。
+      }
+    },
+    [chooseDiscard, tabsRef, toast],
+  );
+
+  // 破棄して続行した置き換えが成功した後に呼ぶ (#2234)。「元に戻す」で、ページ・ソート・
+  // フィルタ経路では元の表示へ戻してからセル編集を戻す (別ページの主キーを指す編集が
+  // 現在のページに残って適用できなくなるのを避ける)。
+  const notifyDiscardedEdits = useCallback(
+    (tabId: string, resolution: PendingResolution) => {
+      if (!resolution.discarded) return;
+      const { restore } = resolution;
+      toast.notify({
+        message: translate("pendingReplaceDiscardedToast"),
+        action: {
+          label: translate("toastUndo"),
+          onAction: () => {
+            void (async () => {
+              if (restore) {
+                // 移動先で新しく編集・削除予定・追加行を作っていたら、元の表示へ戻る取得でそれらが
+                // 確認なしに消える。戻らず、先に適用 / 破棄してもらう。
+                const current = tabsRef.current.find((tt) => tt.id === tabId);
+                if (current && hasPendingChanges(current)) {
+                  toast.info(translate("pendingReplaceUndoBlocked"));
+                  return;
+                }
+                await goToPageInTabRef.current?.(tabId, restore.page, restore.pageSize, {
+                  sort: restore.sort,
+                  filter: restore.filter,
+                  force: true,
+                  // 取り直しで Undo 履歴を空にされないよう、同じ編集を積み直させる。
+                  pendingResolved: { discarded: resolution.discarded, asked: true, restore: null },
+                });
+              }
+              undoCellEditForTabRef.current?.(tabId);
+            })();
+          },
+        },
+      });
+    },
+    [toast, tabsRef],
+  );
+
   const runQueryInTab = useCallback(
     async (
       tabId: string,
@@ -4882,6 +5040,8 @@ export default function App() {
         forceReadOnly?: boolean;
         // 実行の終了点 (完了 / エラー / 起動失敗) で 1 回呼ぶ。ok は成功したか (#2190)。自動リフレッシュでは呼ばない。
         onSettled?: (ok: boolean) => void;
+        // 未適用の変更の確認 (#2234) を省く。Apply 後の取り直しや、破棄を明示済みの再読込用。
+        skipPendingGuard?: boolean;
       },
     ) => {
       const sid = override?.sessionId ?? sessionId;
@@ -4897,6 +5057,17 @@ export default function App() {
       // バッチ実行中のタブで単文を始めると、cancelStreamForTab がバッチを黙って取り消してしまう。
       if ((override?.tab ?? tabsRef.current.find((tt) => tt.id === tabId))?.batchRunning) {
         setStatus({ kind: "key", key: "statusBatchBusy", error: true });
+        return;
+      }
+      // 未適用の変更があれば、結果を置き換える前に確認する (#2234)。自動リフレッシュは
+      // 呼び出し側 (タイマー) が見送るので対象外。
+      const pendingResolution = await resolvePendingBeforeReplace(
+        tabId,
+        "run",
+        autoRefresh || !!override?.skipPendingGuard,
+      );
+      if (!pendingResolution) {
+        override?.onSettled?.(false);
         return;
       }
       const tab = override?.tab ?? tabs.find((tt) => tt.id === tabId);
@@ -4960,8 +5131,13 @@ export default function App() {
         partialResult: null,
         // Drop any in-flight cell edits: their row indices reference the
         // previous result set and would no longer line up with the new rows.
+        // 削除予定・追加行も同じく空にする (見えない行の削除予定が Apply で走らないよう、
+        // 3 種を揃える #2234)。確認で破棄を選んだセル編集は Undo 履歴へ積む。
         pendingEdits: {},
-        editUndoStack: [],
+        // 確認を省く内部の取り直し (Apply 後・再読込・取り込み後) は、送っていない削除予定・追加行を
+        // 残す (Apply の往復中に増えた分を消さない)。確認を経た置き換えだけが 3 種を空にする。
+        ...(override?.skipPendingGuard ? {} : { pendingDeletes: [], pendingInserts: [] }),
+        editUndoStack: pendingResolution.discarded ? [pendingResolution.discarded] : [],
         editRedoStack: [],
         // A manual run of a non-read-only statement turns auto-refresh off so the
         // toggle never lingers "on" while silently skipping ticks. Read-only
@@ -5090,6 +5266,8 @@ export default function App() {
           });
           flusher.flushNow(); // 貯めていた行を先に反映してから完了状態へ進める (#1317)
           if (!autoRefresh) override?.onSettled?.(!serverMessages?.some((m) => m.severity === "error"));
+          // 破棄して続行した実行が成功したら、「元に戻す」付きで知らせる (#2234)。
+          if (!autoRefresh) notifyDiscardedEdits(tabId, pendingResolution);
           patchTab(tabId, (tt) => {
             if (!hasColumns) {
               return {
@@ -5358,6 +5536,8 @@ export default function App() {
       settings.queryTimeoutSecs,
       panesRef,
       tabsRef,
+      resolvePendingBeforeReplace,
+      notifyDiscardedEdits,
     ],
   );
 
@@ -5386,7 +5566,18 @@ export default function App() {
   // always calls the current closure without being torn down on every render.
   const runQueryInTabRef = useRef(runQueryInTab);
   const goToPageInTabRef = useRef<
-    ((tabId: string, page: number, size?: number, browse?: { force?: boolean }) => Promise<void>) | null
+    | ((
+        tabId: string,
+        page: number,
+        size?: number,
+        browse?: {
+          sort?: ServerSort | null;
+          filter?: ServerFilter | null;
+          force?: boolean;
+          pendingResolved?: PendingResolution;
+        },
+      ) => Promise<void>)
+    | null
   >(null);
   const focusExplorerRef = useRef<(() => void) | null>(null);
   runQueryInTabRef.current = runQueryInTab;
@@ -5929,7 +6120,13 @@ export default function App() {
       tabId: string,
       page: number,
       sizeOverride?: number,
-      browseOverride?: { sort?: ServerSort | null; filter?: ServerFilter | null; force?: boolean },
+      browseOverride?: {
+        sort?: ServerSort | null;
+        filter?: ServerFilter | null;
+        force?: boolean;
+        // 未適用の変更の確認 (#2234) を済ませた再入。確認を二重に出さない。
+        pendingResolved?: PendingResolution;
+      },
     ) => {
       if (!sessionId) return;
       const tab = tabsRef.current.find((tt) => tt.id === tabId);
@@ -5963,7 +6160,29 @@ export default function App() {
         totalIsExact,
       );
       const target = clampPage(page, total);
-      if (!browseOverride?.force && target === (tab.page ?? 1) && tab.result) return;
+      // ページ番号もサイズも変わらないときだけ no-op (1 ページ目でのサイズ変更は取り直す)。
+      const sameSize = pageSize === Math.max(1, tab.pageSize ?? tab.previewRowLimit);
+      if (!browseOverride?.force && target === (tab.page ?? 1) && sameSize && tab.result) return;
+      // 結果を置き換えると分かった時点で、未適用の変更 (セル編集 / 削除予定 / 追加行) を確認する (#2234)。
+      // 自動リフレッシュ (force) は呼び出し側が編集中を見送る。適用・破棄の後は最新のタブで取り直す。
+      let resolved = browseOverride?.pendingResolved ?? null;
+      if (!resolved) {
+        const resolution = await resolvePendingBeforeReplace(
+          tabId,
+          routeOfPageNav(sizeOverride, browseOverride),
+          false,
+        );
+        if (!resolution) return;
+        if (resolution.asked) {
+          // 確認を経た (適用 / 破棄) ので、最新のタブ状態で同じ移動をやり直す。
+          return goToPageInTabRef.current?.(tabId, page, sizeOverride, {
+            ...browseOverride,
+            pendingResolved: resolution,
+          });
+        }
+        resolved = resolution;
+      }
+      const pendingResolved = resolved;
       const driver = selectedProfile?.driver ?? "mysql";
       const effectiveBase = applyServerBrowse(
         tab.paginatable,
@@ -6015,6 +6234,15 @@ export default function App() {
           if (kres.rows.length > 0) keysetRes = { ...kres, rows: reverseRowsForPrev(kres.rows, keysetMove) };
         }
         const res = keysetRes ?? (await api.runQuery(sessionId, sql, tab.database ?? null));
+        // 置き換えが実際に反映される (古いリクエストや別クエリで捨てられない) か。下の patch と同じ判定。
+        const latestTab = tabsRef.current.find((tt) => tt.id === tabId);
+        const willReplace =
+          pageReqRef.current.get(tabId) === reqToken &&
+          !!latestTab &&
+          latestTab.result === tab.result &&
+          !latestTab.streaming &&
+          latestTab.paginatable === tab.paginatable &&
+          latestTab.lastExecutedSql === tab.lastExecutedSql;
         patchTab(tabId, (tt) => {
           if (pageReqRef.current.get(tabId) !== reqToken) return tt;
           // 待機中に同じタブで別クエリが実行された場合は、古いページで結果を
@@ -6044,13 +6272,18 @@ export default function App() {
             // スナップショット (#597) を無効化し、旧ページとの誤比較を防ぐ。
             prevResultRows: null,
             prevResultSql: null,
-            // 別ページに切り替えたら旧ページ由来の保留編集は孤立するため破棄する。
+            // 別ページに切り替えたら旧ページ由来の保留編集は孤立するため破棄する。確認 (#2234) を
+            // 経ているので、削除予定・追加行も同時に空にして 3 種を揃える (別ページの行の削除予定が
+            // 見えないまま残って Apply で走るのを防ぐ)。破棄したセル編集は Undo 履歴へ積む。
             pendingEdits: {},
-            editUndoStack: [],
+            pendingDeletes: [],
+            pendingInserts: [],
+            editUndoStack: pendingResolved.discarded ? [pendingResolved.discarded] : [],
             editRedoStack: [],
             preview: null,
           };
         });
+        if (willReplace) notifyDiscardedEdits(tabId, pendingResolved);
         setStatus({
           kind: "key",
           key: "statusStreamingDone",
@@ -6068,7 +6301,15 @@ export default function App() {
         });
       }
     },
-    [sessionId, patchTab, selectedProfile?.driver, tabsRef, nextPageReq],
+    [
+      sessionId,
+      patchTab,
+      selectedProfile?.driver,
+      tabsRef,
+      nextPageReq,
+      resolvePendingBeforeReplace,
+      notifyDiscardedEdits,
+    ],
   );
   goToPageInTabRef.current = goToPageInTab;
 
@@ -6303,6 +6544,9 @@ export default function App() {
   const runTxInTab = useCallback(
     async (tabId: string, sql: string) => {
       if (!sessionId) return;
+      // 未適用の変更があれば結果を置き換える前に確認する (#2234)。
+      const pendingResolution = await resolvePendingBeforeReplace(tabId, "tx", false);
+      if (!pendingResolution) return;
       const outCtx = outputCtxFor(sessionId);
       patchTab(tabId, (tt) => ({
         ...tt,
@@ -6314,9 +6558,12 @@ export default function App() {
         showJson: false,
         batchResults: undefined,
         preview: null,
-        // 結果を置き換えるので、旧結果由来の保留編集は破棄して整合を保つ。
+        // 結果を置き換えるので、旧結果由来の保留編集は破棄して整合を保つ。削除予定・追加行も
+        // 空にして 3 種を揃え (#2234)、破棄したセル編集は Undo 履歴へ積む。
         pendingEdits: {},
-        editUndoStack: [],
+        pendingDeletes: [],
+        pendingInserts: [],
+        editUndoStack: pendingResolution.discarded ? [pendingResolution.discarded] : [],
         editRedoStack: [],
       }));
       try {
@@ -6332,6 +6579,7 @@ export default function App() {
           autoLimitSkip: null,
           autoLimitSql: null,
         }));
+        notifyDiscardedEdits(tabId, pendingResolution);
         setStatus({
           kind: "key",
           key: "statusStreamingDone",
@@ -6371,7 +6619,15 @@ export default function App() {
         );
       }
     },
-    [sessionId, patchTab, recordOutput, outputCtxFor, tabsRef],
+    [
+      sessionId,
+      patchTab,
+      recordOutput,
+      outputCtxFor,
+      tabsRef,
+      resolvePendingBeforeReplace,
+      notifyDiscardedEdits,
+    ],
   );
 
   // トランザクション制御。開始/確定/破棄。
@@ -7506,6 +7762,8 @@ export default function App() {
     [patchTab],
   );
 
+  undoCellEditForTabRef.current = undoCellEditForTab;
+
   const redoCellEditForTab = useCallback(
     (tabId: string) => {
       patchTab(tabId, (tt) => {
@@ -7565,7 +7823,10 @@ export default function App() {
    * 失敗した・送るものが無いときは false)。
    */
   const applyEditsForTab = useCallback(
-    async (tab: Tab, rowScope?: PendingEdits): Promise<boolean> => {
+    // `skipReload`: 未適用の変更の確認 (#2234) から「適用して続行」で呼ぶときに true。追加行が
+    // あっても 1 ページ目の取り直しをせず、送った 3 種の変更を同期的に消費するだけにする
+    // (続く置き換え操作が取り直すので、二重取得や続きの操作の取りこぼしを避ける)。
+    async (tab: Tab, rowScope?: PendingEdits, opts?: { skipReload?: boolean }): Promise<boolean> => {
       if (!sessionId) return false;
       // 参照の確認 (#1506) 中の二重 Apply を防ぐ (bulkUpdateCells が 2 回走ると INSERT が重複しうる)。
       if (applyGuardRef.current.has(tab.id)) return false;
@@ -7622,7 +7883,11 @@ export default function App() {
       const extraStatements = [...deletes, ...inserts];
       // 行ごとの操作数 (編集行 + 削除 + 新規)。確認文とステータスの件数表示に使う。
       const opCount = updateRowCount + extraStatements.length;
-      if (opCount === 0) return false;
+      if (opCount === 0) {
+        // 例: 別ページの主キーを指す編集だけが残っている (表示中の行に当たらない)。黙って失敗しない。
+        toast.info(translate("editApplyNothingToSend"));
+        return false;
+      }
       // 主キーが無く全列一致で行を識別しているとき (#849) は一意性を保証できない
       // ため、Apply 前に必ず警告する — 本番/confirm_writes の設定に関わらず、常に
       // このテーブル特有の安全網として機能する。表示中の行に実際に重複がある
@@ -7806,11 +8071,20 @@ export default function App() {
             const limit = Math.max(1, latest.previewRowLimit || settings.defaultDisplayCount);
             // 生の base SQL の 1 ページ目に戻すので、サーバ側ソート/フィルタの表示 (#792) も解除する。
             patchTab(tabId, (tt) => ({ ...tt, serverSort: null, serverFilter: null }));
-            void runQueryInTab(tabId, `${latest.paginatable} LIMIT ${limit}`, latest.paginatable);
+            void runQueryInTab(
+              tabId,
+              `${latest.paginatable} LIMIT ${limit}`,
+              latest.paginatable,
+              null,
+              false,
+              {
+                skipPendingGuard: true,
+              },
+            );
           } else if (latest.lastExecutedSql && isReadOnlySql(latest.lastExecutedSql, driver)) {
             // エディタの現在の SQL ではなく、直近に実行した読み取り専用 SQL だけを取り直す
             // (自動リフレッシュと同じ防御)。
-            void runQueryInTab(tabId, latest.lastExecutedSql, null, null);
+            void runQueryInTab(tabId, latest.lastExecutedSql, null, null, false, { skipPendingGuard: true });
           } else {
             setStatus({ kind: "key", key: "statusEditConflictReloadSkipped", error: true });
           }
@@ -7844,7 +8118,7 @@ export default function App() {
       // 「さらに読み込む」で表示した行を編集すると、Apply 後に表示が先頭ページへ戻り、
       // 編集対象の行が消えたり編集前の値に見えたりしていた。
       const hasInserts = pendingInserts.length > 0;
-      if (hasInserts && paginatable) {
+      if (hasInserts && paginatable && !opts?.skipReload) {
         // 新規行はサーバが採番する PK (AUTO_INCREMENT など) を取り込む必要があるため、
         // ここだけは再取得して反映する。
         const limit = Math.max(1, settings.defaultDisplayCount);
@@ -7859,7 +8133,9 @@ export default function App() {
           serverSort: null,
           serverFilter: null,
         }));
-        void runQueryInTab(tabId, `${paginatable} LIMIT ${limit}`, paginatable);
+        void runQueryInTab(tabId, `${paginatable} LIMIT ${limit}`, paginatable, null, false, {
+          skipPendingGuard: true,
+        });
       } else {
         patchTab(tabId, (tt) => {
           // Apply 実行中 (await 中) に追加/上書きされた編集は DB へ送信されていない
@@ -7935,6 +8211,8 @@ export default function App() {
       confirm,
     ],
   );
+
+  applyEditsForTabRef.current = applyEditsForTab;
 
   // 列全体の「検索して置換」(#1242)。`GridReplaceModal` が組み立てた
   // `UPDATE ... SET c = REPLACE(c, ...) WHERE ...` を、実行前に必ず確認して 1 トランザクション
@@ -10876,7 +11154,10 @@ export default function App() {
       );
       if (tab && tab.paginatable) {
         const limit = Math.max(1, tab.previewRowLimit || settings.defaultDisplayCount);
-        void runQueryInTab(tab.id, `${tab.paginatable} LIMIT ${limit}`, tab.paginatable);
+        // 取り込み後の取り直しは確認しない (編集中の変更は従来どおり置き換わる)。
+        void runQueryInTab(tab.id, `${tab.paginatable} LIMIT ${limit}`, tab.paginatable, null, false, {
+          skipPendingGuard: true,
+        });
         // 生の base SQL (WHERE/ORDER BY なし) で 1 ページ目に戻すため、アクティブな
         // サーバ側ソート/フィルタの表示 (#792) を state 側でも解除しておく — SQL は
         // 未適用なのに「適用中」バッジが残るのを防ぐ。
