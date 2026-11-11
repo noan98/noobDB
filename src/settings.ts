@@ -97,6 +97,12 @@ export interface Settings {
    */
   queryTimeoutSecs: number;
   /**
+   * DDL (ALTER / CREATE INDEX / DROP INDEX) を適用するとき、ロックの取得を待つ上限 (秒, #2240)。
+   * PostgreSQL は `SET LOCAL lock_timeout`、MySQL は `SET SESSION lock_wait_timeout` として段階の先頭に付く。
+   * `0` は付けない。ロックキューの詰まり (DDL が待つ間に後続の SELECT まで待たされる) を防ぐ。
+   */
+  ddlLockTimeoutSecs: number;
+  /**
    * Overall deadline (seconds) for a whole connection attempt — SSH tunnel
    * connect + auth and DB connect together (#684). Stops an unreachable host
    * from hanging on the OS TCP timeout. Backend clamps to [5, 300]; `0`/unset
@@ -702,6 +708,8 @@ export const DEFAULT_OPTIMISTIC_CELL_EDIT_LOCK = true;
 export const DEFAULT_TAB_RESTORE_MODE: TabRestoreMode = "ask";
 
 export const DEFAULT_QUERY_TIMEOUT_SECS = 30;
+export const DEFAULT_DDL_LOCK_TIMEOUT_SECS = 5;
+export const MAX_DDL_LOCK_TIMEOUT_SECS = 3600;
 const MAX_QUERY_TIMEOUT_SECS = 86_400;
 
 /** Connect timeout defaults/bounds, mirroring the backend clamp (#684). */
@@ -822,6 +830,7 @@ export const DEFAULT_SETTINGS: Settings = {
   resultsInNewTab: false,
   tabRestoreMode: DEFAULT_TAB_RESTORE_MODE,
   queryTimeoutSecs: DEFAULT_QUERY_TIMEOUT_SECS,
+  ddlLockTimeoutSecs: DEFAULT_DDL_LOCK_TIMEOUT_SECS,
   connectTimeoutSecs: DEFAULT_CONNECT_TIMEOUT_SECS,
   fontSizePx: DEFAULT_FONT_SIZE_PX,
   accentColor: DEFAULT_ACCENT_COLOR,
@@ -1071,6 +1080,7 @@ export function normalizeSettings(input: unknown): Settings {
     resultsInNewTab?: unknown;
     tabRestoreMode?: unknown;
     queryTimeoutSecs?: unknown;
+    ddlLockTimeoutSecs?: unknown;
     connectTimeoutSecs?: unknown;
     fontSizePx?: unknown;
     accentColor?: unknown;
@@ -1155,6 +1165,12 @@ export function normalizeSettings(input: unknown): Settings {
     resultsInNewTab: typeof parsed.resultsInNewTab === "boolean" ? parsed.resultsInNewTab : false,
     tabRestoreMode: sanitizeTabRestoreMode(parsed.tabRestoreMode, DEFAULT_TAB_RESTORE_MODE),
     queryTimeoutSecs: sanitizeTimeout(parsed.queryTimeoutSecs, DEFAULT_QUERY_TIMEOUT_SECS),
+    ddlLockTimeoutSecs: sanitizeIntInRange(
+      parsed.ddlLockTimeoutSecs,
+      DEFAULT_DDL_LOCK_TIMEOUT_SECS,
+      0,
+      MAX_DDL_LOCK_TIMEOUT_SECS,
+    ),
     connectTimeoutSecs: sanitizeConnectTimeout(parsed.connectTimeoutSecs),
     fontSizePx: sanitizeFontSizePx(parsed.fontSizePx, DEFAULT_FONT_SIZE_PX),
     accentColor: sanitizeAccentColor(parsed.accentColor, DEFAULT_ACCENT_COLOR),
@@ -1565,6 +1581,14 @@ export function setQueryTimeoutSecs(value: number): void {
   const next = sanitizeTimeout(value, current.queryTimeoutSecs);
   if (current.queryTimeoutSecs === next) return;
   current = { ...current, queryTimeoutSecs: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setDdlLockTimeoutSecs(value: number): void {
+  const next = sanitizeIntInRange(value, current.ddlLockTimeoutSecs, 0, MAX_DDL_LOCK_TIMEOUT_SECS);
+  if (current.ddlLockTimeoutSecs === next) return;
+  current = { ...current, ddlLockTimeoutSecs: next };
   persist();
   listeners.forEach((cb) => cb());
 }

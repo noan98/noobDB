@@ -208,11 +208,25 @@ export type AlterStatementKind =
   /** SQLite のテーブル再作成 (#1888)。`AlterPlan.rebuild` から呼び出し側が差し込む。 */
   | "rebuildTable";
 
+/**
+ * PostgreSQL の「ロックを長く持たない手順」(`onlineDdl.ts`, #2240) へ組み替えるための構造化ヒント。
+ * SQL 文字列を正規表現で解析し直さずに済むよう、文を作る側が付ける (PostgreSQL の文だけ)。
+ */
+export type OnlineHint =
+  /** FK / CHECK の追加。`clause` は `CONSTRAINT <name> ...` まで含む句 (無名のときは自動名を補う)。 */
+  | { type: "constraint"; table: string; name: string; clause: string }
+  /** `SET NOT NULL`。`table` / `column` は引用符つき識別子、`columnName` は素の列名。 */
+  | { type: "setNotNull"; table: string; column: string; columnName: string }
+  /** `CREATE [UNIQUE] INDEX`。`name` は素のインデックス名。 */
+  | { type: "index"; name: string };
+
 export interface AlterStatement {
   sql: string;
   kind: AlterStatementKind;
   /** true は `DROP COLUMN` — 呼び出し側の危険操作確認のゲートに使う。 */
   destructive: boolean;
+  /** PostgreSQL のオンライン手順へ組み替えられる文に付く (#2240)。 */
+  online?: OnlineHint;
 }
 
 /** 文にできなかった編集の理由コード (#1893)。文言は呼び出し側 (i18n) が組み立てる。 */
@@ -500,6 +514,9 @@ function planExistingColumn(
         sql: `ALTER TABLE ${tIdent} ALTER COLUMN ${newIdent} ${clause};`,
         kind: "modifyColumn",
         destructive: false,
+        ...(edit.notNull
+          ? { online: { type: "setNotNull", table: tIdent, column: newIdent, columnName: newName } as const }
+          : {}),
       });
     }
     if (defaultChanged) {
@@ -524,6 +541,29 @@ function planExistingColumn(
     });
   }
   pushColumnComment();
+}
+
+/** PostgreSQL の識別子の上限 (バイト)。 */
+const PG_IDENT_MAX = 63;
+
+function shortHash(text: string): string {
+  let h = 0;
+  for (const ch of text.trim()) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return h.toString(16).padStart(8, "0");
+}
+
+/**
+ * オンライン手順用の制約ヒント (#2240)。VALIDATE CONSTRAINT は制約名で対象を指すので、無名の制約には
+ * 自動名 (`fallback` を英数字化して 63 バイトに収めたもの) を補う。名前を付けた版の句は `build` で作り直す。
+ */
+function onlineConstraintHint(
+  tIdent: string,
+  given: string,
+  fallback: string,
+  build: (name: string) => string,
+): OnlineHint {
+  const name = given.trim() || fallback.replace(/[^A-Za-z0-9_]+/g, "_").slice(0, PG_IDENT_MAX);
+  return { type: "constraint", table: tIdent, name, clause: build(name) };
 }
 
 /** FK / CHECK の追加・削除文を組み立てる (#1191)。SQLite は再作成で行うのでここへは来ない。 */
@@ -553,17 +593,31 @@ function planConstraints(
     });
   }
   for (const fk of addFks) {
+    const online =
+      driver === "postgres"
+        ? onlineConstraintHint(tIdent, fk.name, `fk_${fk.columns.map((c) => c.trim()).join("_")}`, (name) =>
+            foreignKeyClause(driver, form.database, { ...fk, name }),
+          )
+        : undefined;
     statements.push({
       sql: `ALTER TABLE ${tIdent} ADD ${foreignKeyClause(driver, form.database, fk)};`,
       kind: "addForeignKey",
       destructive: false,
+      ...(online ? { online } : {}),
     });
   }
   for (const ck of addChecks) {
+    const online =
+      driver === "postgres"
+        ? onlineConstraintHint(tIdent, ck.name, `chk_${shortHash(ck.expression)}`, (name) =>
+            checkClause(driver, { ...ck, name }),
+          )
+        : undefined;
     statements.push({
       sql: `ALTER TABLE ${tIdent} ADD ${checkClause(driver, ck)};`,
       kind: "addCheck",
       destructive: false,
+      ...(online ? { online } : {}),
     });
   }
 }
@@ -667,6 +721,7 @@ function indexStatements(
       sql: `${head} (${colList});`,
       kind: "createIndex",
       destructive: false,
+      ...(driver === "postgres" ? { online: { type: "index", name } as const } : {}),
     });
   }
   return out;

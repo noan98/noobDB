@@ -265,6 +265,8 @@ export interface CreateIndexOptions {
   where?: string;
   /** カバリング列 (PostgreSQL のみ)。 */
   include?: string[];
+  /** `CREATE INDEX CONCURRENTLY` (PostgreSQL のみ。トランザクション外で実行する必要がある, #2240)。 */
+  concurrently?: boolean;
 }
 
 /**
@@ -299,11 +301,13 @@ export function buildCreateIndexSql(
     : opts.unique && support.unique
       ? "CREATE UNIQUE INDEX"
       : "CREATE INDEX";
+  const concurrently = driver === "postgres" && opts.concurrently === true && !special;
+  const head = concurrently ? `${keyword} CONCURRENTLY` : keyword;
   // SQLite は ON の表を修飾できず、アタッチ先のスキーマは索引名の側に付ける (`CREATE INDEX "別名"."idx" ON "t"`)。
   let sql =
     driver === "sqlite"
-      ? `${keyword} ${qualifiedTableName(driver, database, idxName)} ON ${quoteIdentFor(driver, table)}`
-      : `${keyword} ${quoteIdentFor(driver, idxName)} ON ${qualifiedTableName(driver, database, table)}`;
+      ? `${head} ${qualifiedTableName(driver, database, idxName)} ON ${quoteIdentFor(driver, table)}`
+      : `${head} ${quoteIdentFor(driver, idxName)} ON ${qualifiedTableName(driver, database, table)}`;
   if (driver === "postgres" && method) sql += ` USING ${method}`;
   sql += ` (${keyList})`;
   if (driver === "mysql" && (method === "btree" || method === "hash"))
@@ -327,11 +331,25 @@ export function buildDropIndexSql(
   database: string | null,
   table: string,
   indexName: string,
+  opts: { concurrently?: boolean } = {},
 ): string {
   if (driver === "mysql") {
     return `DROP INDEX ${quoteIdentFor(driver, indexName)} ON ${qualifiedTableName(driver, database, table)};`;
   }
   // SQLite のアタッチ先の索引は `DROP INDEX "別名"."idx"` (索引名はスキーマ内で一意)。
   if (driver === "sqlite") return `DROP INDEX ${qualifiedTableName(driver, database, indexName)};`;
-  return `DROP INDEX ${quoteIdentFor(driver, indexName)};`;
+  // PostgreSQL は CONCURRENTLY でテーブルへの書き込みを止めずに落とせる (トランザクション外で実行する, #2240)。
+  return `DROP INDEX ${opts.concurrently ? "CONCURRENTLY " : ""}${quoteIdentFor(driver, indexName)};`;
+}
+
+/**
+ * `buildCreateIndexSql` が作った文からインデックス名 (素の名前) を取り出す (#2240)。実行計画が
+ * 失敗後の INVALID 確認・後始末に名前を使うため。取り出せなければ null。
+ */
+export function indexNameOfCreateSql(sql: string): string | null {
+  const m =
+    /^\s*CREATE\s+(?:UNIQUE\s+|FULLTEXT\s+|SPATIAL\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:"(?:[^"]|"")+"\.)?"((?:[^"]|"")+)"/i.exec(
+      sql,
+    );
+  return m ? m[1].replace(/""/g, '"') : null;
 }

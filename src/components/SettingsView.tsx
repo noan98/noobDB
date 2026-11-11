@@ -58,6 +58,7 @@ import {
   MAX_TIMELAPSE_MAX_GENERATIONS,
   DEFAULT_FONT_SIZE_PX,
   DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS,
+  DEFAULT_DDL_LOCK_TIMEOUT_SECS,
   DEFAULT_QUERY_TIMEOUT_SECS,
   DEFAULT_STREAM_PREFETCH_SIZE,
   MAX_AUTO_RECONNECT_RETRIES,
@@ -123,6 +124,7 @@ import {
   resetMasteryProgress,
   setQueryTimeoutSecs,
   setConnectTimeoutSecs,
+  setDdlLockTimeoutSecs,
   DEFAULT_CONNECT_TIMEOUT_SECS,
   setPreviewHighlight,
   setCellEditOnBlur,
@@ -760,6 +762,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
   const [prefetchInput, setPrefetchInput] = useState(String(settings.streamPrefetchSize));
   const [autoLimitInput, setAutoLimitInput] = useState(String(settings.autoLimitCount));
   const [timeoutInput, setTimeoutInput] = useState(String(settings.queryTimeoutSecs));
+  const [ddlLockInput, setDdlLockInput] = useState(String(settings.ddlLockTimeoutSecs));
   // 機微カラムマスクのパターン (#1069)。入力中は素の文字列で持ち、blur/Enter で確定。
   const [maskPatternsInput, setMaskPatternsInput] = useState(formatMaskPatterns(settings.columnMaskPatterns));
   useEffect(() => {
@@ -859,6 +862,11 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
     const n = Number.parseInt(timeoutInput, 10);
     if (Number.isFinite(n) && n >= 0) setQueryTimeoutSecs(n);
     setTimeoutInput(String(getSettings().queryTimeoutSecs));
+  };
+  const commitDdlLock = () => {
+    const n = Number.parseInt(ddlLockInput, 10);
+    if (Number.isFinite(n) && n >= 0) setDdlLockTimeoutSecs(n);
+    setDdlLockInput(String(getSettings().ddlLockTimeoutSecs));
   };
   const commitConnectTimeout = () => {
     const n = Number.parseInt(connectTimeoutInput, 10);
@@ -2143,6 +2151,27 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     placeholder={String(DEFAULT_QUERY_TIMEOUT_SECS)}
                     onChange={(e) => setTimeoutInput(e.target.value)}
                     onBlur={commitTimeout}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    }}
+                  />
+                </SettingsNumberRow>
+                <SettingsNumberRow>
+                  <SettingsLabelWithInfo>
+                    <chakra.label htmlFor="settings-ddl-lock-timeout">
+                      {t("settingsDdlLockTimeout")}
+                    </chakra.label>
+                    <SettingsInfo>{t("settingsDdlLockTimeoutHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Input
+                    id="settings-ddl-lock-timeout"
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={ddlLockInput}
+                    placeholder={String(DEFAULT_DDL_LOCK_TIMEOUT_SECS)}
+                    onChange={(e) => setDdlLockInput(e.target.value)}
+                    onBlur={commitDdlLock}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") (e.target as HTMLInputElement).blur();
                     }}

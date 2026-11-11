@@ -424,7 +424,12 @@ interface Props {
   /** インデックスノード右クリックからの DROP INDEX (#850)。方言別 SQL の生成は
    *  `tableMaintenance.ts::buildDropIndexSql` (`db/advisor.rs::drop_index_ddl` の移植)。
    *  read_only では無効化、PK インデックスはツリー側で対象外にする。 */
-  onDropIndex?: (database: string, table: string, indexName: string) => void;
+  onDropIndex?: (
+    database: string,
+    table: string,
+    indexName: string,
+    opts?: { concurrently?: boolean },
+  ) => void;
   /** テーブル保守コマンド (ANALYZE / OPTIMIZE / VACUUM / REINDEX 等)。#561。
    *  生成済み SQL を渡し、確認 + 実行は呼び出し側 (App) が担う。read_only では無効化。 */
   onRunTableMaintenance?: (database: string, table: string, command: MaintenanceCommand) => void;
@@ -3727,6 +3732,16 @@ export const ConnectionList = memo(
           danger: true,
         },
       ];
+      // PostgreSQL: 書き込みを止めずに落とす DROP INDEX CONCURRENTLY (#2240)。
+      if (activeDriver === "postgres") {
+        items.push({
+          label: t("contextMenuDropIndexConcurrently"),
+          onSelect: () => onDropIndex(db, tbl, idx.name, { concurrently: true }),
+          disabled,
+          title,
+          danger: true,
+        });
+      }
       setMenu({ x: e.clientX, y: e.clientY, items });
     };
 

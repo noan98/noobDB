@@ -34,6 +34,9 @@ export function AlterCostNotice({
   showOnlineToggle,
   onlineEnabled,
   onOnlineChange,
+  showStagedToggle = false,
+  stagedEnabled = false,
+  onStagedChange,
 }: {
   driver: string;
   risks: AlterCostRisk[];
@@ -43,6 +46,10 @@ export function AlterCostNotice({
   showOnlineToggle: boolean;
   onlineEnabled: boolean;
   onOnlineChange: (v: boolean) => void;
+  /** PostgreSQL: NOT VALID → VALIDATE / CONCURRENTLY の段階実行を選べるか (#2240)。 */
+  showStagedToggle?: boolean;
+  stagedEnabled?: boolean;
+  onStagedChange?: (v: boolean) => void;
 }) {
   const t = useT();
   if (risks.length === 0) return null;
@@ -79,6 +86,18 @@ export function AlterCostNotice({
         {showOnlineToggle && (
           <chakra.span textStyle="caption" color="app.textMuted">
             {t("alterCostOnlineHint")}
+          </chakra.span>
+        )}
+        {showStagedToggle && (
+          <Switch
+            checked={stagedEnabled}
+            onChange={() => onStagedChange?.(!stagedEnabled)}
+            label={t("onlineStagedToggle")}
+          />
+        )}
+        {showStagedToggle && (
+          <chakra.span textStyle="caption" color="app.textMuted">
+            {t("onlineStagedHint")}
           </chakra.span>
         )}
       </chakra.div>

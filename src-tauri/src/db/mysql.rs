@@ -1369,6 +1369,11 @@ impl MySqlConn {
         let tz_swapped = statements
             .iter()
             .any(|s| super::object_diff::swaps_session_time_zone(s.sql));
+        // DDL の適用前にロック待ちの上限 (`SET SESSION lock_wait_timeout`) を付ける段階 (#2240) では、
+        // 途中で失敗しても、プールへ戻る接続に上限が残らないよう失敗時にここで元に戻す。
+        let lock_wait_set = statements
+            .iter()
+            .any(|s| sets_session_lock_wait_timeout(s.sql));
         let run: Result<()> = async {
             for st in statements {
                 // ルーチン・トリガーの CREATE / DROP と、区切り行で連ねた複数文 (スキーマ同期の
@@ -1401,6 +1406,13 @@ impl MySqlConn {
                 let _ = sqlx::Executor::execute(
                     &mut *conn,
                     sqlx::raw_sql("SET time_zone = IFNULL(@noobdb_prev_tz, @@global.time_zone)"),
+                )
+                .await;
+            }
+            if lock_wait_set {
+                let _ = sqlx::Executor::execute(
+                    &mut *conn,
+                    sqlx::raw_sql("SET SESSION lock_wait_timeout = @@GLOBAL.lock_wait_timeout"),
                 )
                 .await;
             }
@@ -4818,6 +4830,40 @@ fn my_text(row: &MySqlRow, names: &[&str]) -> Option<String> {
         return v.map(|b| String::from_utf8_lossy(&b).into_owned());
     }
     None
+}
+
+/// `SET SESSION lock_wait_timeout = ...` で始まる文か (#2240)。フロントが DDL の段階の先頭に付ける
+/// ロック待ちの上限の文を、トランザクションの失敗時に元へ戻すかの判定に使う。
+fn sets_session_lock_wait_timeout(sql: &str) -> bool {
+    let mut words = sql.split_whitespace().map(str::to_ascii_lowercase);
+    matches!(
+        (words.next().as_deref(), words.next().as_deref(), words.next().as_deref()),
+        (Some("set"), Some("session"), Some(var)) if var.starts_with("lock_wait_timeout")
+    )
+}
+
+#[cfg(test)]
+mod lock_wait_timeout_tests {
+    use super::sets_session_lock_wait_timeout;
+
+    #[test]
+    fn detects_the_session_lock_wait_timeout_statement() {
+        assert!(sets_session_lock_wait_timeout(
+            "SET SESSION lock_wait_timeout = 5;"
+        ));
+        assert!(sets_session_lock_wait_timeout(
+            "  set session lock_wait_timeout=5"
+        ));
+    }
+
+    #[test]
+    fn ignores_other_statements() {
+        assert!(!sets_session_lock_wait_timeout(
+            "ALTER TABLE t ADD COLUMN c int"
+        ));
+        assert!(!sets_session_lock_wait_timeout("SET SESSION sql_mode = ''"));
+        assert!(!sets_session_lock_wait_timeout("SET lock_wait_timeout = 5"));
+    }
 }
 
 #[cfg(test)]
