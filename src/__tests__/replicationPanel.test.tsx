@@ -116,6 +116,35 @@ describe("ReplicationPanel (#2180)", () => {
     expect(screen.getByText(t("replicationThreadStopped"))).toBeInTheDocument();
   });
 
+  it("PostgreSQL のスタンバイで WAL 受信が止まったら、遅延 0 でも訳した状態で異常表示にする (#2244)", async () => {
+    vi.mocked(api.getReplicationStatus).mockResolvedValue(
+      status({
+        role: "replica",
+        links: [
+          {
+            direction: "upstream",
+            name: "primary",
+            address: null,
+            state: "no_receiver",
+            sync_state: null,
+            lag_secs: 0,
+            write_lag_secs: null,
+            flush_lag_secs: null,
+            lag_bytes: null,
+            io_running: false,
+            sql_running: null,
+            last_error: null,
+          },
+        ],
+      }),
+    );
+    renderWithProviders(<ReplicationPanel sessionId="s1" driver="postgres" />);
+    const card = await screen.findByTestId("replication-link");
+    expect(card).toHaveAttribute("data-attention", "true");
+    expect(within(card).getByText(new RegExp(t("replicationStateNoReceiver")))).toBeInTheDocument();
+    expect(screen.getByText(t("replicationSummaryAttention"))).toBeInTheDocument();
+  });
+
   it("権限不足は必要な権限名つきの警告で、エラー表示にはしない", async () => {
     vi.mocked(api.getReplicationStatus).mockResolvedValue(
       status({ missing_privilege: "REPLICATION CLIENT" }),

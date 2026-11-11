@@ -5705,17 +5705,7 @@ impl PostgresConn {
         let mut links: Vec<ReplicationLink> = Vec::new();
         {
             if in_recovery {
-                // 受信側。遅延は「最後に反映したトランザクションからの経過」だが、受信済み WAL を
-                // すべて反映済みなら 0 とする (静かなプライマリで遅れて見えないように)。
-                // 権限が無くても読める関数だけなので、遅延は privileged に関わらず返す。
-                let lag: Option<f64> = sqlx::query_scalar(
-                    "SELECT (CASE WHEN pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn() THEN 0 \
-                                  ELSE EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp())) END)::float8",
-                )
-                .fetch_one(&self.pool)
-                .await
-                .unwrap_or(None);
-                // pg_stat_wal_receiver は権限が無いと見えない。sender_host / sender_port は
+                // 受信側。pg_stat_wal_receiver は権限が無いと見えない。sender_host / sender_port は
                 // PostgreSQL 11+ で、PostgreSQL 10 では列が無く取れずに縮退する (接続元は不明のまま)。
                 let receiver = if privileged {
                     sqlx::query(
@@ -5729,6 +5719,24 @@ impl PostgresConn {
                 } else {
                     None
                 };
+                let receiver_status: Option<String> = receiver
+                    .as_ref()
+                    .and_then(|r| r.try_get::<Option<String>, _>(0).ok().flatten());
+                // 遅延は「最後に反映したトランザクションからの経過」。受信済み WAL をすべて反映済みなら
+                // 0 とする (静かなプライマリで遅れて見えないように) が、これは walreceiver が生きている
+                // (streaming) か、権限が無く判定できないときに限る。受信が止まっているのに 0 と見せると、
+                // プライマリの書き込みが進んでも正常に見える偽陰性になる (#2244)。
+                // 権限が無くても読める関数だけなので、遅延は privileged に関わらず返す。
+                let lag_sql = if receiver_lag_may_be_zero(privileged, receiver_status.as_deref()) {
+                    "SELECT (CASE WHEN pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn() THEN 0 \
+                                  ELSE EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp())) END)::float8"
+                } else {
+                    "SELECT EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp()))::float8"
+                };
+                let lag: Option<f64> = sqlx::query_scalar(lag_sql)
+                    .fetch_one(&self.pool)
+                    .await
+                    .unwrap_or(None);
                 let (state, host, port) = match &receiver {
                     Some(r) => (
                         r.try_get::<Option<String>, _>(0).ok().flatten(),
@@ -5753,7 +5761,7 @@ impl PostgresConn {
                     write_lag_secs: None,
                     flush_lag_secs: None,
                     lag_bytes: None,
-                    io_running: None,
+                    io_running: wal_receiver_io_running(privileged, receiver_status.as_deref()),
                     sql_running: None,
                     last_error: None,
                 });
@@ -6504,4 +6512,54 @@ pub struct PgViewExtras {
     pub options: std::collections::HashMap<String, Vec<String>>,
     /// マテビュー名 -> 索引の `CREATE INDEX` 文。
     pub indexes: std::collections::HashMap<String, Vec<String>>,
+}
+
+/// walreceiver の状態から、受信済み LSN = 反映済み LSN のときに遅延を 0 とみなしてよいか (#2244)。
+/// `pg_last_wal_receive_lsn()` は walreceiver が止まった後も最後の位置を返し続けるので、0 とみなすのは
+/// 受信が生きている (`streaming`) とき、または権限が無く状態を判定できないときだけ。
+fn receiver_lag_may_be_zero(privileged: bool, status: Option<&str>) -> bool {
+    !privileged || status == Some("streaming")
+}
+
+/// walreceiver の状態から受信側の `io_running` を決める (#2244)。`streaming` なら true、行なし
+/// (`None`)・`stopping`・`waiting` なら false。権限が無く判定できないとき、および途中の状態
+/// (`starting` / `startup` / `catchup` / `restarting`) は `None`。
+fn wal_receiver_io_running(privileged: bool, status: Option<&str>) -> Option<bool> {
+    if !privileged {
+        return None;
+    }
+    match status {
+        Some("streaming") => Some(true),
+        None | Some("stopping") | Some("waiting") => Some(false),
+        Some(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod wal_receiver_tests {
+    use super::{receiver_lag_may_be_zero, wal_receiver_io_running};
+
+    #[test]
+    fn lag_zero_only_while_streaming_or_unknown() {
+        assert!(receiver_lag_may_be_zero(true, Some("streaming")));
+        // 権限が無く状態を判定できないときは従来どおり。
+        assert!(receiver_lag_may_be_zero(false, None));
+        // 受信が止まっている・行が無いときは 0 とみなさない。
+        assert!(!receiver_lag_may_be_zero(true, None));
+        assert!(!receiver_lag_may_be_zero(true, Some("stopping")));
+        assert!(!receiver_lag_may_be_zero(true, Some("waiting")));
+        assert!(!receiver_lag_may_be_zero(true, Some("catchup")));
+    }
+
+    #[test]
+    fn io_running_follows_receiver_status() {
+        assert_eq!(wal_receiver_io_running(true, Some("streaming")), Some(true));
+        assert_eq!(wal_receiver_io_running(true, None), Some(false));
+        assert_eq!(wal_receiver_io_running(true, Some("stopping")), Some(false));
+        assert_eq!(wal_receiver_io_running(true, Some("waiting")), Some(false));
+        assert_eq!(wal_receiver_io_running(true, Some("catchup")), None);
+        assert_eq!(wal_receiver_io_running(true, Some("startup")), None);
+        assert_eq!(wal_receiver_io_running(false, None), None);
+        assert_eq!(wal_receiver_io_running(false, Some("streaming")), None);
+    }
 }

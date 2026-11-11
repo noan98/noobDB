@@ -965,6 +965,72 @@ async fn postgres_replication_status_streaming_standby_and_cascade() {
         "{st:?}"
     );
 
+    // 異常系 (#2244): cascade の walreceiver を止める。`primary_conninfo` を到達できない値へ変えて
+    // reload すると (PostgreSQL 13+)、walreceiver は再起動して接続に失敗し続ける。受信が止まったら、
+    // 受信済み WAL を反映し終えていても io_running = Some(false) になり、遅延も 0 のままにならない。
+    // 他のテストは cascade を使わないので、同じテストの末尾で順番に行い、必ず元へ戻す。
+    let original = cascade
+        .execute("SELECT current_setting('primary_conninfo')", None)
+        .await
+        .expect("read primary_conninfo");
+    let original = match &original.rows[0][0] {
+        t::Value::String(s) => s.clone(),
+        other => panic!("unexpected primary_conninfo value: {other:?}"),
+    };
+    let broken = "host=127.0.0.1 port=1 user=postgres connect_timeout=2";
+    let set_conninfo = |v: String| {
+        let cascade = &cascade;
+        async move {
+            let v = v.replace('\'', "''");
+            cascade
+                .execute(&format!("ALTER SYSTEM SET primary_conninfo = '{v}'"), None)
+                .await
+                .expect("alter system");
+            cascade
+                .execute("SELECT pg_reload_conf()", None)
+                .await
+                .expect("reload");
+        }
+    };
+    let upstream_of = |st: &t::ReplicationStatus| {
+        st.links
+            .iter()
+            .find(|l| l.direction == t::ReplicationDirection::Upstream)
+            .cloned()
+    };
+    set_conninfo(broken.to_string()).await;
+    let mut stopped = None;
+    for _ in 0..60 {
+        let st = cascade.replication_status().await.expect("cascade status");
+        if let Some(l) = upstream_of(&st) {
+            if l.io_running == Some(false) {
+                stopped = Some(l);
+                break;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    set_conninfo(original).await;
+    let mut resumed = None;
+    for _ in 0..60 {
+        let st = cascade.replication_status().await.expect("cascade status");
+        if let Some(l) = upstream_of(&st) {
+            if l.io_running == Some(true) {
+                resumed = Some(l);
+                break;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    let stopped = stopped.expect("stopped walreceiver must report io_running = Some(false)");
+    assert_ne!(
+        stopped.lag_secs,
+        Some(0.0),
+        "lag must not be 0 while the receiver is down: {stopped:?}"
+    );
+    let resumed = resumed.expect("restored walreceiver must report io_running = Some(true)");
+    assert_eq!(resumed.state.as_deref(), Some("streaming"), "{resumed:?}");
+
     primary.close().await;
     standby.close().await;
     cascade.close().await;
