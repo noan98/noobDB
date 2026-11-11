@@ -5,6 +5,7 @@ import { useT } from "../i18n";
 import { springs } from "../motion";
 import type { DrillSource } from "./drillFilter";
 import { Icon, ICON_SIZES } from "./Icon";
+import { prefersStaticMotion } from "./revealOrigin";
 import { Button } from "./ui";
 
 /**
@@ -40,7 +41,8 @@ export function DrillChip({
       initial={{ opacity: 0, y: -6 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -6 }}
-      transition={springs.snappy}
+      // ハイコントラスト / forced-colors では滑らせず瞬時に切り替える (reduced-motion は MotionConfig)。
+      transition={prefersStaticMotion() ? { duration: 0 } : springs.snappy}
       style={{ flex: "none" }}
     >
       <Flex

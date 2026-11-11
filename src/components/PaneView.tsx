@@ -4,6 +4,7 @@ import {
   memo,
   Suspense,
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -39,7 +40,14 @@ import { Splitter } from "./Splitter";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Button } from "./ui";
 import { DrillChip } from "./DrillChip";
-import { drillSummary, type ColumnFilterRequest, type DrillCondition, type DrillSource } from "./drillFilter";
+import {
+  drillStillApplied,
+  drillSummary,
+  type ColumnFilterEntry,
+  type ColumnFilterRequest,
+  type DrillCondition,
+  type DrillSource,
+} from "./drillFilter";
 import { buildTabsEmptyActions } from "./tabsEmptyActions";
 import { buildResultEmptyActions } from "./resultEmptyActions";
 import { LoadingButton } from "./LoadingButton";
@@ -155,8 +163,10 @@ interface DrillEntry {
   scrollTop: number;
   /** グリッドへまだ渡していない列フィルタ要求。適用されたら `null`。 */
   request: ColumnFilterRequest | null;
-  /** 「絞り込みを外す」済み (チップを出さない)。 */
+  /** 「絞り込みを外す」済み、またはグリッド側で外された (チップを出さない)。 */
   cleared: boolean;
+  /** 適用前に掛かっていた列フィルタ。「絞り込みを外す」で元に戻す。 */
+  previous: ColumnFilterEntry[];
 }
 
 export interface PaneActions {
@@ -459,6 +469,7 @@ export const PaneView = memo(
           scrollTop: drill.scrollTop,
           request: { mode: "apply", conditions: drill.conditions },
           cleared: false,
+          previous: [],
         },
       }));
       actions.setResultView(target.id, "grid");
@@ -470,16 +481,41 @@ export const PaneView = memo(
         if (!e) return prev;
         return {
           ...prev,
-          [tabId]: { ...e, cleared: true, request: { mode: "clear", conditions: e.conditions } },
+          [tabId]: {
+            ...e,
+            cleared: true,
+            request: { mode: "clear", conditions: e.conditions, restore: e.previous },
+          },
         };
       });
     // グリッドが要求を適用したら下げる (グリッドの再マウントで同じ要求を再適用しないため)。
-    const markDrillApplied = (tabId: string) =>
+    const markDrillApplied = (tabId: string, previous: ColumnFilterEntry[]) =>
       setDrills((prev) => {
         const e = prev[tabId];
         if (!e?.request) return prev;
-        return { ...prev, [tabId]: { ...e, request: null } };
+        // 適用前のフィルタは apply のときだけ控える (clear の適用前は絞り込み後の状態)。
+        return { ...prev, [tabId]: { ...e, request: null, previous: e.cleared ? e.previous : previous } };
       });
+    // グリッド側でフィルタが変わった。条件の列のフィルタが drill の値と食い違ったら
+    // (手動で外した・変えた) チップを畳む。要求の適用待ち・畳み済みのときは見ない。
+    const onDrillFiltersChange = (tabId: string, filters: ColumnFilterEntry[]) =>
+      setDrills((prev) => {
+        const e = prev[tabId];
+        if (!e || e.cleared || e.request || drillStillApplied(filters, e.conditions)) return prev;
+        return { ...prev, [tabId]: { ...e, cleared: true } };
+      });
+    // タブが閉じた・結果が入れ替わった (再実行など) ら、古い結果を持ち続けないよう捨てる。
+    useEffect(() => {
+      setDrills((prev) => {
+        let changed = false;
+        const next: Record<string, DrillEntry> = {};
+        for (const [id, e] of Object.entries(prev)) {
+          if (paneTabs.find((tt) => tt.id === id)?.result === e.result) next[id] = e;
+          else changed = true;
+        }
+        return changed ? next : prev;
+      });
+    }, [paneTabs]);
     if (!pane) return null;
     const tab = paneTabs.find((tt) => tt.id === pane.activeTabId) ?? null;
     const drill = tab && tab.result && drills[tab.id]?.result === tab.result ? drills[tab.id] : null;
@@ -1019,8 +1055,14 @@ export const PaneView = memo(
                                 <ResultGrid
                                   ref={gridRef}
                                   columnFilterRequest={drill?.request ?? null}
-                                  onColumnFilterRequestApplied={gridStable.fn(`${tab.id}:drillApplied`, () =>
-                                    markDrillApplied(tab.id),
+                                  onColumnFilterRequestApplied={gridStable.fn(
+                                    `${tab.id}:drillApplied`,
+                                    (info: { previous: ColumnFilterEntry[] }) =>
+                                      markDrillApplied(tab.id, info.previous),
+                                  )}
+                                  onColumnFiltersChange={gridStable.fn(
+                                    `${tab.id}:drillFilters`,
+                                    (filters: ColumnFilterEntry[]) => onDrillFiltersChange(tab.id, filters),
                                   )}
                                   gridBindings={gridBindings}
                                   emptyActions={tab.kind === "query" ? resultEmptyActions : undefined}

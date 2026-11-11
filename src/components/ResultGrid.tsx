@@ -200,7 +200,7 @@ import {
 import { bulkEditSamples, planBulkCellEdit, type BulkEditTarget } from "./bulkEdit";
 import { detectPasteHeader, parseClipboardGrid, planPasteEdit, planPasteInsertRows } from "./pasteEdit";
 import { quickSetOptions, resolveDynamicValue } from "./quickSetValues";
-import { applyDrillRequest, type ColumnFilterRequest } from "./drillFilter";
+import { applyDrillRequest, type ColumnFilterEntry, type ColumnFilterRequest } from "./drillFilter";
 import {
   clientQuickFilter,
   isNullCell,
@@ -1407,8 +1407,10 @@ interface Props {
    * `onColumnFilterRequestApplied` で呼び出し側が要求を下げる。
    */
   columnFilterRequest?: ColumnFilterRequest | null;
-  /** `columnFilterRequest` を適用した直後に呼ばれる。 */
-  onColumnFilterRequestApplied?: () => void;
+  /** `columnFilterRequest` を適用した直後に呼ばれる。`previous` は適用前の列フィルタ。 */
+  onColumnFilterRequestApplied?: (info: { previous: ColumnFilterEntry[] }) => void;
+  /** 列フィルタが変わるたび (マウント直後を含む) に、現在の列フィルタを知らせる (#2236)。 */
+  onColumnFiltersChange?: (filters: ColumnFilterEntry[]) => void;
   /**
    * 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。App が
    * セッション・対象クエリ・データベースを確定させたときだけ渡す — 読み取り専用
@@ -4132,6 +4134,7 @@ export const DataGrid = memo(function DataGrid({
   findNav,
   columnFilterRequest,
   onColumnFilterRequestApplied,
+  onColumnFiltersChange,
   gridBindings,
   serverSort,
   serverFilter,
@@ -4344,7 +4347,8 @@ export const DataGrid = memo(function DataGrid({
   /** 外から入れる列フィルタ要求 (#2236)。参照が変わるたびに 1 回適用する。 */
   columnFilterRequest?: ColumnFilterRequest | null;
   /** 要求を適用した直後に呼ぶ。 */
-  onColumnFilterRequestApplied?: () => void;
+  onColumnFilterRequestApplied?: (info: { previous: ColumnFilterEntry[] }) => void;
+  onColumnFiltersChange?: (filters: ColumnFilterEntry[]) => void;
   /**
    * コピー/コピー+ヘッダ/行インスペクタ/Undo/Redo/ページ送りの解決済みバインド
    * (#681)。省略時は今日の既定キーのまま (`DEFAULT_SHORTCUT_COMBOS`)。
@@ -4565,6 +4569,13 @@ export const DataGrid = memo(function DataGrid({
     setColumnFilters([]);
     writeStoredGridView(gridViewKey, { masks: maskOverridesRef.current });
   }, [gridViewKey]);
+  // 列フィルタの変化を呼び出し側へ知らせる (絞り込みチップが、手動で外されたことに気づくため)。マウント直後の通知は
+  // 下の要求の適用より先に出す (適用前の状態が、適用後の通知として遅れて届かないように)。
+  const onColumnFiltersChangeRef = useRef(onColumnFiltersChange);
+  onColumnFiltersChangeRef.current = onColumnFiltersChange;
+  useEffect(() => {
+    onColumnFiltersChangeRef.current?.(columnFilters);
+  }, [columnFilters]);
   // 外から入れる列フィルタ要求 (#2236)。要求オブジェクトの参照が変わるたびに 1 回だけ
   // 現在のフィルタへ適用し (永続化は通常のフィルタ操作と同じ)、適用済みを呼び出し側へ知らせる。
   const onColumnFilterRequestAppliedRef = useRef(onColumnFilterRequestApplied);
@@ -4572,12 +4583,13 @@ export const DataGrid = memo(function DataGrid({
   // biome-ignore lint/correctness/useExhaustiveDependencies: 要求の参照 (columnFilterRequest) だけを契機にする。列の種類・現在のフィルタは発火時点の最新値を読めばよい
   useEffect(() => {
     if (!columnFilterRequest) return;
+    const previous = columnFiltersRef.current;
     handleColumnFiltersChange(
-      applyDrillRequest(columnFiltersRef.current, columnFilterRequest, (i) =>
+      applyDrillRequest(previous, columnFilterRequest, (i) =>
         isNumericFilterKind(columnKinds[i] ?? "string"),
       ),
     );
-    onColumnFilterRequestAppliedRef.current?.();
+    onColumnFilterRequestAppliedRef.current?.({ previous });
   }, [columnFilterRequest]);
   const clearSorting = useCallback(() => {
     setSorting([]);
@@ -8713,6 +8725,7 @@ export const ResultGrid = memo(
       onChangeView,
       columnFilterRequest,
       onColumnFilterRequestApplied,
+      onColumnFiltersChange,
       onSaveAsTable,
       onSaveAsView,
       onRegisterLocalTable,
@@ -10653,6 +10666,7 @@ export const ResultGrid = memo(
             findNav={findNav}
             columnFilterRequest={filterRequest}
             onColumnFilterRequestApplied={onColumnFilterRequestApplied}
+            onColumnFiltersChange={onColumnFiltersChange}
             gridBindings={gridBindings}
             serverSort={serverSort}
             serverFilter={serverFilter}

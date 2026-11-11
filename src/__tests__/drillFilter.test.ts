@@ -4,6 +4,7 @@ import {
   applyDrillRequest,
   chartDrillConditions,
   drillColumnFilter,
+  drillStillApplied,
   drillSummary,
   pivotDrillConditions,
   type ColumnFilterEntry,
@@ -233,5 +234,48 @@ describe("drillSummary", () => {
     expect(drillSummary([{ colIdx: 0, column: "r", value: "x".repeat(40) }], "NULL", 10)).toBe(
       `r=${"x".repeat(9)}…`,
     );
+  });
+});
+
+describe("clear の restore と drillStillApplied", () => {
+  const conds: DrillCondition[] = [{ colIdx: 0, column: "region", value: "東京" }];
+  const prev: ColumnFilterEntry = { id: "2", value: { op: "gt", value: "10", value2: "", nullMode: "any" } };
+
+  it("clear + restore は適用前のフィルタを戻すが、いま掛かっている列は上書きしない", () => {
+    const applied = applyDrillRequest([prev], { mode: "apply", conditions: conds }, () => false);
+    expect(applied.map((f) => f.id)).toEqual(["0"]);
+    const restored = applyDrillRequest(
+      applied,
+      { mode: "clear", conditions: conds, restore: [prev] },
+      () => false,
+    );
+    expect(restored).toEqual([prev]);
+    const newer: ColumnFilterEntry = {
+      id: "2",
+      value: { op: "lt", value: "3", value2: "", nullMode: "any" },
+    };
+    const keepNewer = applyDrillRequest(
+      [...applied, newer],
+      { mode: "clear", conditions: conds, restore: [prev] },
+      () => false,
+    );
+    expect(keepNewer).toEqual([newer]);
+  });
+
+  it("条件どおりのフィルタが掛かっている間だけ true", () => {
+    const applied = applyDrillRequest([], { mode: "apply", conditions: conds }, () => false);
+    expect(drillStillApplied(applied, conds)).toBe(true);
+    expect(drillStillApplied([], conds)).toBe(false);
+    const changed = [{ id: "0", value: drillColumnFilter("大阪", false) }];
+    expect(drillStillApplied(changed, conds)).toBe(false);
+  });
+
+  it("NULL・空文字の条件も判定できる", () => {
+    for (const value of [null, "", " "]) {
+      const c: DrillCondition[] = [{ colIdx: 1, column: "k", value }];
+      const applied = applyDrillRequest([], { mode: "apply", conditions: c }, () => false);
+      expect(drillStillApplied(applied, c)).toBe(true);
+      expect(drillStillApplied([{ id: "1", value: drillColumnFilter("x", false) }], c)).toBe(false);
+    }
   });
 });

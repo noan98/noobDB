@@ -154,6 +154,8 @@ export function PivotView({
     writeStoredPivotConfig(persistKey, next);
   };
   const [heatmap, setHeatmap] = useState(true);
+  // roving tabindex の Tab 停止セル (#2236)。モデルが作り直されたら無効 (先頭へ戻る)。
+  const [activeDrill, setActiveDrill] = useState<{ model: PivotModel; key: string } | null>(null);
   const numericFieldIdx = useMemo(
     () => firstNumericColumnIndex(result.columns, result.rows),
     [result.columns, result.rows],
@@ -292,26 +294,73 @@ export function PivotView({
     );
 
   // 絞り込みへ移れるセルの属性 (#2236)。条件が空 (総計・列軸の無い列見出し) や
-  // データの無い空セルは操作対象にしない。Tab で巡回でき、Enter / Space でクリックと同じ。
+  // データの無い空セルは操作対象にしない。キーボードは roving tabindex: Tab 停止は
+  // 表全体で 1 つ (最後にフォーカスしたセル、無ければ先頭の操作可能セル)、矢印 / Home / End で
+  // 操作可能なセルへ移り、Enter / Space でクリックと同じ。`pos` は表内の座標 (見出し行 = 0、
+  // 本体 = 行 + 1、合計行 = 行数 + 1 / 行見出し列 = 0、セル = 列 + 1、行の合計 = 列数 + 1)。
+  const lastRow = model.rowKeys.length + 1;
+  const lastCol = effectiveColKeys.length + 1;
+  const defaultKey = config.colField != null && model.colKeyValues.length > 0 ? "0:1" : "1:0";
+  const tabStopKey = activeDrill && activeDrill.model === model ? activeDrill.key : defaultKey;
+  const moveDrillFocus = (e: KeyboardEvent, r: number, c: number) => {
+    const step: Record<string, [number, number]> = {
+      ArrowUp: [-1, 0],
+      ArrowDown: [1, 0],
+      ArrowLeft: [0, -1],
+      ArrowRight: [0, 1],
+    };
+    let dr = 0;
+    let dc = 0;
+    if (e.key === "Home") {
+      c = -1;
+      dc = 1;
+    } else if (e.key === "End") {
+      c = lastCol + 1;
+      dc = -1;
+    } else if (step[e.key]) {
+      [dr, dc] = step[e.key];
+    } else {
+      return false;
+    }
+    e.preventDefault();
+    // 操作できないセル (空セル・総計・見出しだけの角) は飛ばして次の操作可能セルへ。
+    for (
+      let nr = r + dr, nc = c + dc;
+      nr >= 0 && nr <= lastRow && nc >= 0 && nc <= lastCol;
+      nr += dr, nc += dc
+    ) {
+      const el = tableRef.current?.querySelector<HTMLElement>(`[data-drill-pos="${nr}:${nc}"]`);
+      if (el) {
+        el.focus();
+        break;
+      }
+    }
+    return true;
+  };
   const drillProps = (
     baseCss: SystemStyleObject,
     target: PivotDrillTarget,
-    value: number | null | undefined = undefined,
+    value: number | null | undefined,
+    pos: [number, number],
   ) => {
     if (!onDrill || value === null) return { css: baseCss };
     const conditions = pivotDrillConditions(model, result.columns, config, target);
     if (conditions.length === 0) return { css: baseCss };
     const go = () => onDrill({ conditions, scrollTop: scrollRef.current?.scrollTop ?? 0 });
     const summary = drillSummary(conditions);
+    const key = `${pos[0]}:${pos[1]}`;
     return {
       css: { ...baseCss, ...drillCss },
-      tabIndex: 0,
+      tabIndex: key === tabStopKey ? 0 : -1,
+      "data-drill-pos": key,
+      onFocus: () => setActiveDrill({ model, key }),
       "aria-label":
         value === undefined
           ? t("drillAriaHeader", { summary })
           : t("drillAriaCell", { summary, value: formatValue(value) }),
       onClick: go,
       onKeyDown: (e: KeyboardEvent) => {
+        if (moveDrillFocus(e, pos[0], pos[1])) return;
         if (e.key !== "Enter" && e.key !== " ") return;
         e.preventDefault();
         go();
@@ -440,7 +489,7 @@ export function PivotView({
                 {model.colFieldName ? `${model.rowFieldName} \\ ${model.colFieldName}` : model.rowFieldName}
               </chakra.th>
               {effectiveColKeys.map((ck, ci) => (
-                <chakra.th key={ci} {...drillProps(headCss, { row: null, col: ci })}>
+                <chakra.th key={ci} {...drillProps(headCss, { row: null, col: ci }, undefined, [0, ci + 1])}>
                   {ck}
                 </chakra.th>
               ))}
@@ -452,11 +501,13 @@ export function PivotView({
           <tbody ref={tbodyRef}>
             {model.rowKeys.map((rk, ri) => (
               <tr key={ri}>
-                <chakra.td {...drillProps(rowHeadCss, { row: ri, col: null })}>{rk}</chakra.td>
+                <chakra.td {...drillProps(rowHeadCss, { row: ri, col: null }, undefined, [ri + 1, 0])}>
+                  {rk}
+                </chakra.td>
                 {model.cells[ri].map((v, ci) => (
                   <chakra.td
                     key={ci}
-                    {...drillProps(heatCellCss, { row: ri, col: ci }, v)}
+                    {...drillProps(heatCellCss, { row: ri, col: ci }, v, [ri + 1, ci + 1])}
                     style={{ background: cellBg(v) }}
                   >
                     {renderValue(v, `${rk}\u0000${effectiveColKeys[ci]}`)}
@@ -467,6 +518,7 @@ export function PivotView({
                     { ...cellCss, fontWeight: 600, borderLeft: "2px solid var(--border)" },
                     { row: ri, col: null },
                     model.rowTotals[ri],
+                    [ri + 1, lastCol],
                   )}
                 >
                   {renderValue(model.rowTotals[ri], `${rk}\u0000total`)}
@@ -478,7 +530,7 @@ export function PivotView({
             <tr>
               <chakra.td css={{ ...totalCss, textAlign: "left" }}>{t("pivotTotal")}</chakra.td>
               {model.colTotals.map((v, ci) => (
-                <chakra.td key={ci} {...drillProps(totalCss, { row: null, col: ci }, v)}>
+                <chakra.td key={ci} {...drillProps(totalCss, { row: null, col: ci }, v, [lastRow, ci + 1])}>
                   {renderValue(v, `total\u0000${effectiveColKeys[ci]}`)}
                 </chakra.td>
               ))}

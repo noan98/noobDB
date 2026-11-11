@@ -63,11 +63,36 @@ describe("PivotView の絞り込み導線", () => {
     const onDrill = vi.fn();
     render(onDrill);
     const cell = screen.getByRole("cell", { name: /region=west × status=paid: 20/ });
-    expect(cell).toHaveAttribute("tabindex", "0");
     fireEvent.keyDown(cell, { key: "Enter" });
     fireEvent.keyDown(cell, { key: " " });
     fireEvent.keyDown(cell, { key: "a" });
     expect(onDrill).toHaveBeenCalledTimes(2);
+  });
+
+  it("Tab 停止は表全体で 1 つ。矢印キーで操作できるセルへ移り、空セルは飛ばす", () => {
+    const { container } = render();
+    const stops = () => container.querySelectorAll("[data-drill-pos][tabindex='0']");
+    expect(stops()).toHaveLength(1);
+    // 先頭の操作可能セルは先頭の列見出し。
+    const first = stops()[0] as HTMLElement;
+    expect(first.getAttribute("data-drill-pos")).toBe("0:1");
+    first.focus();
+    fireEvent.keyDown(first, { key: "ArrowDown" });
+    // 見出しの下は east 行の先頭セル (r=1, c=1)。
+    expect(document.activeElement).toHaveAttribute("data-drill-pos", "1:1");
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "ArrowRight" });
+    expect(document.activeElement).toHaveAttribute("data-drill-pos", "1:2");
+    // フォーカスしたセルが新しい Tab 停止になる。
+    expect(stops()).toHaveLength(1);
+    expect(stops()[0]).toBe(document.activeElement);
+    // End は行末 (行の合計、c = 列数 + 1) へ。
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "End" });
+    expect(document.activeElement).toHaveAttribute("data-drill-pos", "1:3");
+    // 下へ: west × open は空セルだが、行の合計 (1 列右端) は操作できる。空セルを踏まず移れる。
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "ArrowDown" });
+    expect(document.activeElement).toHaveAttribute("data-drill-pos", "2:3");
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "ArrowLeft" });
+    expect(document.activeElement).toHaveAttribute("data-drill-pos", "2:1");
   });
 
   it("行見出しは行軸だけ、NULL の行は NULL 条件で絞る", () => {

@@ -47,6 +47,12 @@ export type DrillSource = "pivot" | "chart";
 export interface ColumnFilterRequest {
   mode: "apply" | "clear";
   conditions: DrillCondition[];
+  /**
+   * `clear` のとき、絞り込み前に掛かっていたフィルタ。外したあとに戻す (`apply` で
+   * 置き換えられて失われた列のフィルタを復元するため)。現在すでに別のフィルタが
+   * 掛かっている列は上書きしない。
+   */
+  restore?: readonly ColumnFilterEntry[];
 }
 
 /** ピボット上のクリック対象。`null` は「その軸では絞らない」。 */
@@ -139,7 +145,12 @@ export function applyDrillRequest(
   isNumeric: (colIdx: number) => boolean,
 ): ColumnFilterEntry[] {
   const ids = new Set(request.conditions.map((c) => String(c.colIdx)));
-  if (request.mode === "clear") return current.filter((f) => !ids.has(f.id));
+  if (request.mode === "clear") {
+    const kept = current.filter((f) => !ids.has(f.id));
+    if (!request.restore) return kept;
+    const keptIds = new Set(kept.map((f) => f.id));
+    return [...kept, ...request.restore.filter((f) => !keptIds.has(f.id))];
+  }
   const byId = new Map<string, ColumnFilterEntry>();
   for (const c of request.conditions) {
     byId.set(String(c.colIdx), {
@@ -161,4 +172,21 @@ function conditionValueText(v: string | null, nullLabel: string, max: number): s
 /** チップ・読み上げ用の要約 (例: `region=東京 × status=paid`)。 */
 export function drillSummary(conditions: readonly DrillCondition[], nullLabel = "NULL", max = 24): string {
   return conditions.map((c) => `${c.column}=${conditionValueText(c.value, nullLabel, max)}`).join(" × ");
+}
+
+/**
+ * 現在の列フィルタが、まだ条件どおりに掛かっているか (グリッド側で手動で外す・変えると
+ * `false`)。数値列か文字列列かには依らず、列ごとの値と NULL の扱いだけを見る。
+ */
+export function drillStillApplied(
+  filters: readonly ColumnFilterEntry[],
+  conditions: readonly DrillCondition[],
+): boolean {
+  return conditions.every((c) => {
+    const f = filters.find((x) => x.id === String(c.colIdx))?.value as ColumnFilter | undefined;
+    if (!f) return false;
+    if (c.value === null) return f.nullMode === "only";
+    if (f.nullMode !== "any") return false;
+    return c.value.trim() === "" ? f.op === "in" && f.values?.[0] === c.value : f.value === c.value;
+  });
 }
