@@ -37,6 +37,7 @@ pub mod privileges;
 pub mod profile;
 /// PostgreSQL 論理レプリケーションのパブリケーションの定義の組み立てと比較・同期の差分 (#2181)。
 pub mod publication;
+pub mod read_only_scope;
 /// 自動リフレッシュの差分パッチ (#1257)。
 pub mod refresh_diff;
 /// レプリケーション監視 (#2180) の共通型と純ロジック。
@@ -762,6 +763,16 @@ impl Connection {
             Connection::MySql(c) => c.tx_begin(database, opts).await,
             Connection::Postgres(c) => c.tx_begin(database, opts).await,
             Connection::Sqlite(c) => c.tx_begin(database, opts).await,
+        }
+    }
+
+    /// 開いている明示トランザクションがサーバ側 READ ONLY か (#2243)。トランザクションが無ければ偽。
+    pub fn transaction_read_only(&self) -> bool {
+        use std::sync::atomic::Ordering::SeqCst;
+        match self {
+            Connection::MySql(c) => c.tx_read_only.load(SeqCst),
+            Connection::Postgres(c) => c.tx_read_only.load(SeqCst),
+            Connection::Sqlite(c) => c.tx_read_only.load(SeqCst),
         }
     }
 
@@ -3572,8 +3583,10 @@ fn is_read_only_sql_masked(masked: &[char], idents_kept: &[char]) -> bool {
         // 副作用のある関数: 他セッションの強制切断・シーケンス更新・ラージオブジェクト
         // 書き込み・通知送信・レプリケーションスロット操作・レプリケーション起点・
         // WAL リプレイの制御・バックアップ制御・統計リセットなど。
-        // PostgreSQL 側には read_only セッション用のサーバ側読み取り専用設定が無く
-        // このガードが唯一の防御 (fail-closed)。
+        // この拒否リストは字句ガードの一段目にすぎない (fail-closed)。ユーザー定義関数の
+        // 中身は字句では見えないので、読み取り専用を強制する経路 (read_only セッション・
+        // 自動更新・ブロードキャスト・EXPLAIN ANALYZE・スケジューラ) は、実行時にサーバ側の
+        // 読み取り専用 (`read_only_scope`: BEGIN READ ONLY / query_only) でも守る (#2243)。
         "openrowset",
         "openquery",
         "opendatasource",

@@ -47,11 +47,16 @@ export const queryCommands = {
   setEmergencyMode: (sessionId: string, enabled: boolean) =>
     invoke<void>("set_emergency_mode", { sessionId, enabled }),
 
-  runQuery: (sessionId: string, sql: string, database?: string | null) =>
+  /**
+   * `recordHistory: true` で成功・失敗とも書き込み履歴に残す (#2240)。既定では残さない。トランザクション外で流す
+   * `CREATE INDEX CONCURRENTLY` など、`runQueryTransaction` の履歴記録を通らない DDL 用。
+   */
+  runQuery: (sessionId: string, sql: string, database?: string | null, recordHistory?: boolean) =>
     invoke<QueryResult>("run_query", {
       sessionId,
       sql,
       database: database ?? null,
+      recordHistory: recordHistory ?? null,
     }).then((r) => parseResponse(schemas.queryResultLite, r, "run_query")),
   /**
    * スマート値ピッカー (#1067) の候補取得。FK 参照先の DISTINCT 値や ENUM /

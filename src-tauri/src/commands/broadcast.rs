@@ -125,15 +125,20 @@ async fn run_env(
             Ok(())
         },
     );
-    let result: Result<QueryResult> = match query_timeout_secs {
-        Some(secs) if secs > 0 => {
-            match tokio::time::timeout(Duration::from_secs(secs), exec).await {
-                Ok(r) => r,
-                Err(_) => Err(AppError::Timeout(secs)),
+    // ブロードキャストは常にサーバ側でも読み取り専用 (#2243)。書き込みを行うユーザー定義関数を
+    // 字句ガードが通しても、本番を含む全環境でサーバが拒否する。
+    let result: Result<QueryResult> = crate::db::read_only_scope::scope(async {
+        match query_timeout_secs {
+            Some(secs) if secs > 0 => {
+                match tokio::time::timeout(Duration::from_secs(secs), exec).await {
+                    Ok(r) => r,
+                    Err(_) => Err(AppError::Timeout(secs)),
+                }
             }
+            _ => exec.await,
         }
-        _ => exec.await,
-    };
+    })
+    .await;
     record_history(&session, &sql, None, &result).await;
     match result {
         Ok(res) => EnvRun {

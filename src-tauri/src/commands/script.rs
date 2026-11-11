@@ -433,9 +433,16 @@ where
     };
 
     if runner.options.wrap_in_transaction {
+        // read_only セッションは、サーバ側でも READ ONLY のトランザクションで開く (#2243)。
         session
             .conn
-            .begin_transaction(runner.database.as_deref())
+            .begin_transaction_with(
+                runner.database.as_deref(),
+                crate::db::tx_options::TxOptions {
+                    read_only: super::query::server_read_only_enforced(&session),
+                    ..Default::default()
+                },
+            )
             .await?;
         runner.guard.active = true;
     }
@@ -970,10 +977,13 @@ impl Runner {
                         let r = self
                             .session
                             .conn
-                            .begin_transaction_with(
-                                self.database.as_deref(),
-                                tx_opts.unwrap_or_default(),
-                            )
+                            .begin_transaction_with(self.database.as_deref(), {
+                                let mut o = tx_opts.unwrap_or_default();
+                                // read_only セッションは常にサーバ側でも READ ONLY (#2243)。
+                                o.read_only |=
+                                    super::query::server_read_only_enforced(&self.session);
+                                o
+                            })
                             .await;
                         if r.is_ok() {
                             self.guard.active = true;
@@ -1037,48 +1047,53 @@ impl Runner {
         if let Err(e) = ensure_allowed_for_session(&self.session, &stmt.sql) {
             return self.on_failure(&stmt, e).await;
         }
+        // read_only セッションはサーバ側でも読み取り専用で実行する (#2243)。
+        let server_ro = super::query::server_read_only_enforced(&self.session);
         let result: Result<(QueryResult, Option<PreviewCut>)> =
-            if let Some(preview_rows) = self.batch.as_ref().map(|b| b.preview_rows) {
-                if self.guard.active || external_tx {
-                    // トランザクション経路は結果を全件受け取ってから切り詰める (総行数が分かる)。
+            crate::db::read_only_scope::scope_if(server_ro, async {
+                if let Some(preview_rows) = self.batch.as_ref().map(|b| b.preview_rows) {
+                    if self.guard.active || external_tx {
+                        // トランザクション経路は結果を全件受け取ってから切り詰める (総行数が分かる)。
+                        self.session
+                            .conn
+                            .execute_in_transaction(&stmt.sql)
+                            .await
+                            .map(|mut r| {
+                                let total = r.rows.len();
+                                let is_query = !r.columns.is_empty();
+                                r.rows.truncate(preview_rows);
+                                let cut = is_query.then_some(PreviewCut {
+                                    truncated: total > preview_rows,
+                                    total_rows: Some(total as u64),
+                                });
+                                (r, cut)
+                            })
+                    } else if let Some(cap) = self.batch_capture_for(&stmt.sql) {
+                        self.run_captured_statement(&stmt.sql, &cap).await
+                    } else {
+                        execute_preview(
+                            &self.session.conn,
+                            &stmt.sql,
+                            self.database.as_deref(),
+                            preview_rows,
+                        )
+                        .await
+                    }
+                } else if self.guard.active {
                     self.session
                         .conn
                         .execute_in_transaction(&stmt.sql)
                         .await
-                        .map(|mut r| {
-                            let total = r.rows.len();
-                            let is_query = !r.columns.is_empty();
-                            r.rows.truncate(preview_rows);
-                            let cut = is_query.then_some(PreviewCut {
-                                truncated: total > preview_rows,
-                                total_rows: Some(total as u64),
-                            });
-                            (r, cut)
-                        })
-                } else if let Some(cap) = self.batch_capture_for(&stmt.sql) {
-                    self.run_captured_statement(&stmt.sql, &cap).await
+                        .map(|r| (r, None))
                 } else {
-                    execute_preview(
-                        &self.session.conn,
-                        &stmt.sql,
-                        self.database.as_deref(),
-                        preview_rows,
-                    )
-                    .await
+                    self.session
+                        .conn
+                        .execute(&stmt.sql, self.database.as_deref())
+                        .await
+                        .map(|r| (r, None))
                 }
-            } else if self.guard.active {
-                self.session
-                    .conn
-                    .execute_in_transaction(&stmt.sql)
-                    .await
-                    .map(|r| (r, None))
-            } else {
-                self.session
-                    .conn
-                    .execute(&stmt.sql, self.database.as_deref())
-                    .await
-                    .map(|r| (r, None))
-            };
+            })
+            .await;
         match result {
             Ok((r, cut)) => {
                 self.succeeded += 1;

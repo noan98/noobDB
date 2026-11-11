@@ -1315,15 +1315,20 @@ pub(crate) async fn run_export_to_file(
                 Ok(())
             });
 
-    let result = match query_timeout_secs {
-        Some(secs) if secs > 0 => {
-            match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
-                Ok(res) => res,
-                Err(_) => Err(AppError::Timeout(secs)),
+    // 書き出しは常にサーバ側でも読み取り専用 (#2243): 書き込みを行うユーザー定義関数を
+    // 字句ガードが通しても、サーバが拒否する (スケジューラ・一括書き出しの経路も同じ)。
+    let result = crate::db::read_only_scope::scope(async {
+        match query_timeout_secs {
+            Some(secs) if secs > 0 => {
+                match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
+                    Ok(res) => res,
+                    Err(_) => Err(AppError::Timeout(secs)),
+                }
             }
+            _ => exec.await,
         }
-        _ => exec.await,
-    };
+    })
+    .await;
 
     match result {
         Ok(_) => {
@@ -1644,29 +1649,28 @@ pub(crate) async fn run_export_workbook(
         book.begin_sheet(&xlsx_sheet_name(&sheet.name, &mut used))?;
         let mut plan: Option<MaskPlan> = None;
         let mut xlsx_columns: Vec<Column> = Vec::new();
-        session
-            .conn
-            .execute_stream(
-                &sheet.sql,
-                database,
-                initial_batch,
-                chunk_size,
-                |batch| match batch {
-                    StreamBatch::Columns(columns) => {
-                        plan = sheet.mask_spec.as_ref().map(|s| s.plan(&columns));
-                        xlsx_columns = mask_columns(plan.as_ref(), &columns).into_owned();
-                        book.write_header(&columns)
-                    }
-                    StreamBatch::Rows(rows) => {
-                        let masked = mask_rows(plan.as_ref(), &rows);
-                        book.write_rows(&xlsx_columns, &masked)?;
-                        total_rows += rows.len() as u64;
-                        on_progress(total_rows);
-                        Ok(())
-                    }
-                },
-            )
-            .await?;
+        // 書き出しは常にサーバ側でも読み取り専用 (#2243)。
+        crate::db::read_only_scope::scope(session.conn.execute_stream(
+            &sheet.sql,
+            database,
+            initial_batch,
+            chunk_size,
+            |batch| match batch {
+                StreamBatch::Columns(columns) => {
+                    plan = sheet.mask_spec.as_ref().map(|s| s.plan(&columns));
+                    xlsx_columns = mask_columns(plan.as_ref(), &columns).into_owned();
+                    book.write_header(&columns)
+                }
+                StreamBatch::Rows(rows) => {
+                    let masked = mask_rows(plan.as_ref(), &rows);
+                    book.write_rows(&xlsx_columns, &masked)?;
+                    total_rows += rows.len() as u64;
+                    on_progress(total_rows);
+                    Ok(())
+                }
+            },
+        ))
+        .await?;
     }
     let mut writer = BufWriter::new(tmp_file);
     let truncation = book.save_to(&mut writer)?;

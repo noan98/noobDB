@@ -6,9 +6,9 @@
 // あれば「適用して続行 / 破棄して続行 / キャンセル」を選ばせる。
 // 切断・タブを閉じる (#1391) は `tabDirty.ts` の `closeGuard`。ここは同じタブ内の置き換え用。
 // 確認を出すかの判定はここに集め、App は結果 (`ReplaceGuard`) に従って確認・適用・破棄する。
-// #2235 (変更セットバー統合) も `pendingChangeCounts` / `decideReplaceGuard` を再利用できる。
+// #2235 の変更セットバーも `pendingChangeCounts` を件数の単一ソースとして再利用する。
 
-import type { PendingEdits } from "./components/cellEdit";
+import { countEditedRows, type PendingEdits } from "./components/cellEdit";
 import { hasPendingChanges, type DirtyTabLike } from "./tabDirty";
 
 /** 結果を置き換える操作の経路。確認文言の「何をしようとしたか」に使う。 */
@@ -41,6 +41,8 @@ export function routeOfPageNav(
 export interface PendingChangeCounts {
   /** 編集中のセル数 (空の行エントリは数えない)。 */
   edits: number;
+  /** セル編集のある行数 (UPDATE の対象行)。 */
+  editedRows: number;
   deletes: number;
   inserts: number;
 }
@@ -50,7 +52,12 @@ export function pendingChangeCounts(
 ): PendingChangeCounts {
   let edits = 0;
   for (const row of Object.values(tab.pendingEdits ?? {})) edits += Object.keys(row).length;
-  return { edits, deletes: tab.pendingDeletes?.length ?? 0, inserts: tab.pendingInserts?.length ?? 0 };
+  return {
+    edits,
+    editedRows: countEditedRows(tab.pendingEdits ?? {}),
+    deletes: tab.pendingDeletes?.length ?? 0,
+    inserts: tab.pendingInserts?.length ?? 0,
+  };
 }
 
 /** 入口での判定結果。 */
@@ -90,4 +97,19 @@ export function discardedEditsForUndo(pendingEdits: PendingEdits): PendingEdits 
     if (Object.keys(row).length > 0) return pendingEdits;
   }
   return null;
+}
+
+/**
+ * 変更セットを適用するときに送る文の内訳。「UPDATE 3 / INSERT 1 / DELETE 2」の形 (0 件の種類は省く)。
+ * 件数は行単位 (UPDATE は編集した行数)。適用ボタンのツールチップ・確認文で、実際に送る文の種類と
+ * 件数をラベルと一致させるために使う (#2235)。
+ */
+export function changeSetStatementText(
+  counts: Pick<PendingChangeCounts, "editedRows" | "inserts" | "deletes">,
+): string {
+  const parts: string[] = [];
+  if (counts.editedRows > 0) parts.push(`UPDATE ${counts.editedRows}`);
+  if (counts.inserts > 0) parts.push(`INSERT ${counts.inserts}`);
+  if (counts.deletes > 0) parts.push(`DELETE ${counts.deletes}`);
+  return parts.join(" / ");
 }

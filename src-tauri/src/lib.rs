@@ -89,6 +89,7 @@ pub mod __test_api {
         ColumnOverview, ColumnProfile, ProfileHistogramBucket, ProfileValueCount,
         TableProfileOverview,
     };
+    pub use crate::db::read_only_scope::scope as read_only_scope;
     pub use crate::db::refresh_diff::{
         PatchPayload, PatchRun, RefreshBuilder, RefreshOutcome, RefreshSnapshot,
         RefreshSnapshotStore,

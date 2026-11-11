@@ -718,6 +718,7 @@ const CONNECTION_READ_METHODS = new Set([
   "driver_kind",
   "connect",
   "transaction_active",
+  "transaction_read_only",
   "health_check",
   "resolve_database",
   "check_upsert_keys",

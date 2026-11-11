@@ -56,7 +56,11 @@ export function formatLagSecs(secs: number): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m ${s}s`;
 }
 
-/** 接続先に異常があるか (停止中のスレッド・エラー・遅延超過)。行の強調に使う。 */
+/**
+ * 接続先に異常があるか (停止中のスレッド・エラー・遅延超過)。行の強調に使う。
+ * PostgreSQL の受信停止 (walreceiver が無い / `stopping` / `waiting`) はバックエンドが `io_running = false`
+ * にして返すので、ここで拾える (#2244)。
+ */
 export function linkNeedsAttention(link: ReplicationLink): boolean {
   return (
     link.io_running === false ||
@@ -160,6 +164,8 @@ export interface ReplicationSummary {
   retainedBytesTotal: number | null;
   /** 非アクティブなスロットの数。 */
   inactiveSlots: number;
+  /** 異常のある接続先の数 (`linkNeedsAttention`。受信停止・エラー・遅延超過)。受信停止で遅延が出ない場合の見落とし防止 (#2244)。 */
+  attentionLinks: number;
 }
 
 const finiteOrNull = (v: number | null | undefined): number | null =>
@@ -171,7 +177,9 @@ export function summarizeReplication(
   slots: readonly ReplicationSlot[],
 ): ReplicationSummary {
   let maxLagSecs: number | null = null;
+  let attentionLinks = 0;
   for (const l of links) {
+    if (linkNeedsAttention(l)) attentionLinks += 1;
     const v = finiteOrNull(l.lag_secs);
     if (v !== null && (maxLagSecs === null || v > maxLagSecs)) maxLagSecs = v;
   }
@@ -182,7 +190,7 @@ export function summarizeReplication(
     if (v !== null) retainedBytesTotal = (retainedBytesTotal ?? 0) + v;
     if (!s.active) inactiveSlots += 1;
   }
-  return { maxLagSecs, retainedBytesTotal, inactiveSlots };
+  return { maxLagSecs, retainedBytesTotal, inactiveSlots, attentionLinks };
 }
 
 // ---- 推移 (#2215) ----

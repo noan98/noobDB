@@ -20,6 +20,10 @@
 //!   (`USER MAPPING … OPTIONS (password '…')` を含む。`E'…'` とドル引用も)
 //!   と `CREATE|ALTER SUBSCRIPTION … CONNECTION '<接続文字列>'` (#2189。中身に
 //!   [`redact_conninfo`] が伏せる `password` / `sslpassword` / URI のパスワードがあるときだけリテラル全体)
+//!   加えて接続文字列を取る `dblink(…)` / `dblink_exec(…)` / `dblink_connect[_u](…)` の文字列引数と
+//!   `primary_conninfo [=|TO] '…'` (`ALTER SYSTEM SET` / `SET` / `ALTER DATABASE|ROLE … SET`) と
+//!   `set_config('primary_conninfo', '…', …)` (#2245。同じ規則でリテラル全体を伏せる)
+//! - MySQL の `START GROUP_REPLICATION … PASSWORD = '…'` も `START REPLICA` と同じ (#2245)
 //! - SQLite: 対象なし
 //!
 //! リテラルの前置 (`E` / `U&` / `N` / `_utf8mb4`) は残し、引用符から終端までを
@@ -50,7 +54,7 @@ struct Scanner<'a> {
     mysql: bool,
     pg: bool,
     out: Vec<(usize, usize)>,
-    /// SUBSCRIPTION の接続文字列から取り出した秘密の値 ([`credential_secrets`] 用)。
+    /// SUBSCRIPTION / dblink / primary_conninfo の接続文字列から取り出した秘密の値 ([`credential_secrets`] 用)。
     secrets: Vec<String>,
 }
 
@@ -228,10 +232,14 @@ impl Scanner<'_> {
         (Some(a), b)
     }
 
-    /// 文頭が `START REPLICA|SLAVE` (その `PASSWORD = '…'` はレプリケーションの資格情報)。
+    /// 文頭が `START REPLICA|SLAVE|GROUP_REPLICATION` (その `PASSWORD = '…'` はレプリケーションの資格情報)。
     fn starts_replica(&self, i: usize) -> bool {
         let (a, b) = self.leading_words(i);
-        a.as_deref() == Some("start") && matches!(b.as_deref(), Some("replica") | Some("slave"))
+        a.as_deref() == Some("start")
+            && matches!(
+                b.as_deref(),
+                Some("replica") | Some("slave") | Some("group_replication")
+            )
     }
 
     fn mysql_identified(&mut self, e: usize) {
@@ -307,20 +315,14 @@ impl Scanner<'_> {
         }
     }
 
-    /// `CONNECTION '…'` のリテラル `lit` が伏せ対象なら、その中の秘密の値 (エラー文の置換用。空もありうる) を返す。
-    /// 対象外なら `None`。次のどれかで対象にする (安全側):
-    /// - `U&'…'` (`\XXXX` でキー名を隠せる) / `E'…'` で中身に `\` がある (`\n` や `\167` でキーを隠せる)
-    /// - エスケープを解いた中身に "password" を含む (大文字小文字を問わない)
-    /// - [`redact_conninfo`] が値を伏せる / [`conninfo_secret_values`] が値を返す
-    /// - URI で最後の `@` の前に `:` がある (パスワードに `/` や `?` が素で入っても漏らさない)
-    fn conninfo_literal_secrets(&self, lit: (usize, usize)) -> Option<Vec<String>> {
+    /// リテラル (連結片をつなげたもの) のエスケープを解いた中身と、キー名を隠せる表記 (opaque) か。
+    /// タグの壊れたドル引用は `None`。
+    fn decoded_literal(&self, lit: (usize, usize)) -> Option<(String, bool)> {
         let (s, e) = lit;
         let mut decoded = String::new();
         let mut opaque = false;
         if self.m[s] == '$' {
-            let Some(tag_len) = self.dollar_tag_len(s) else {
-                return Some(Vec::new());
-            };
+            let tag_len = self.dollar_tag_len(s)?;
             let closed = e >= s + 2 * tag_len && self.m[e - tag_len..e] == self.m[s..s + tag_len];
             let inner_end = if closed { e - tag_len } else { e };
             if s + tag_len <= inner_end {
@@ -348,6 +350,23 @@ impl Scanner<'_> {
                 i = next;
             }
         }
+        Some((decoded, opaque))
+    }
+
+    /// `CONNECTION '…'` のリテラル `lit` が伏せ対象なら、その中の秘密の値 (エラー文の置換用。空もありうる) を返す。
+    /// 対象外なら `None`。次のどれかで対象にする (安全側):
+    /// - `U&'…'` (`\XXXX` でキー名を隠せる) / `E'…'` で中身に `\` がある (`\n` や `\167` でキーを隠せる)
+    /// - エスケープを解いた中身に "password" を含む (大文字小文字を問わない)
+    /// - [`redact_conninfo`] が値を伏せる / [`conninfo_secret_values`] が値を返す
+    /// - URI で最後の `@` の前に `:` がある (パスワードに `/` や `?` が素で入っても漏らさない)
+    ///
+    /// `strict` は問い合わせ SQL の引数など、接続文字列とは限らないリテラル用。"password" の語だけでは
+    /// 伏せず、`opaque` も見ず、値が実際に見つかるとき (`redact_conninfo` / `conninfo_secret_values` /
+    /// URI のパスワード) だけ対象にする。
+    fn conninfo_literal_secrets(&self, lit: (usize, usize), strict: bool) -> Option<Vec<String>> {
+        let Some((decoded, opaque)) = self.decoded_literal(lit) else {
+            return Some(Vec::new());
+        };
         let values = conninfo_secret_values(&decoded);
         let lower = decoded.to_ascii_lowercase();
         let t = lower.trim_start();
@@ -356,11 +375,11 @@ impl Scanner<'_> {
                 t.rfind('@')
                     .is_some_and(|at| at > p && t[p + 3..at].contains(':'))
             });
-        let secret = opaque
+        let secret = (opaque && !strict)
             || uri_at
-            || lower.contains("password")
+            || (!strict && lower.contains("password"))
             || !values.is_empty()
-            || redact_conninfo(&decoded) != decoded;
+            || (!strict && redact_conninfo(&decoded) != decoded);
         secret.then_some(values)
     }
 
@@ -376,10 +395,118 @@ impl Scanner<'_> {
         }
         let p = self.skip_ws(e);
         if let Some(lit) = self.literal_at(p) {
-            if let Some(values) = self.conninfo_literal_secrets(lit) {
-                self.push(lit);
-                self.secrets.extend(values);
+            self.push_conninfo(lit, false);
+        }
+    }
+
+    /// リテラル `lit` が接続文字列で秘密を含むなら伏せ対象にして、秘密の値を集める。
+    fn push_conninfo(&mut self, lit: (usize, usize), strict: bool) {
+        if let Some(values) = self.conninfo_literal_secrets(lit, strict) {
+            self.push(lit);
+            self.secrets.extend(values);
+        }
+    }
+
+    /// PostgreSQL の dblink 関数 (`dblink` / `dblink_exec` / `dblink_connect[_u]`) の括弧内のリテラルをすべて
+    /// 接続文字列として検査する (`'host=h ' || 'password=…'`・`CAST('…' AS text)`・名前付き引数・
+    /// 第 1 引数が変数でも拾う)。`dblink` / `dblink_exec` は第 2 引数以降 (問い合わせ SQL) を `strict`
+    /// にし、password を含む接続文字列と判定できたものだけ伏せる。`e` は関数名の終端。
+    fn pg_dblink_call(&mut self, w: &str, e: usize) {
+        let p = self.skip_ws(e);
+        if self.m.get(p) != Some(&'(') {
+            return;
+        }
+        let connect = w.starts_with("dblink_connect");
+        let mut depth = 0usize;
+        let mut commas = 0usize;
+        // 直前の片が `password=` や URI の `user:` で終わり値が次の片に分かれている間は、その次の片を伏せる。
+        let mut pending: Option<usize> = None;
+        let mut j = p;
+        while j < self.m.len() {
+            let c = self.m[j];
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return;
+                    }
+                    if pending.is_some_and(|d| depth < d) {
+                        pending = None;
+                    }
+                }
+                ',' if depth == 1 => {
+                    commas += 1;
+                    pending = None;
+                }
+                _ => {}
             }
+            let starts_literal = matches!(c, '\'' | '"' | '$' | 'e' | 'E' | 'u' | 'U')
+                && (j == 0 || !is_word(self.m[j - 1]));
+            if starts_literal {
+                if let Some(lit) = self.literal_at(j) {
+                    if pending.take().is_some() {
+                        if let Some((decoded, _)) = self.decoded_literal(lit) {
+                            self.push(lit);
+                            self.secrets.push(decoded);
+                        }
+                    } else {
+                        self.push_conninfo(lit, !connect && commas > 0);
+                        if self
+                            .decoded_literal(lit)
+                            .is_some_and(|(d, _)| ends_with_open_secret(&d))
+                        {
+                            pending = Some(depth);
+                        }
+                    }
+                    j = lit.1;
+                    continue;
+                }
+            }
+            j += 1;
+        }
+    }
+
+    /// PostgreSQL の `primary_conninfo [=|TO] '<接続文字列>'` (`ALTER SYSTEM SET` / `SET` /
+    /// `ALTER DATABASE|ROLE … SET`)。`e` は設定名の終端。
+    fn pg_primary_conninfo(&mut self, e: usize) {
+        let mut p = self.skip_ws(e);
+        if self.m.get(p) == Some(&'=') {
+            p += 1;
+        } else if let Some((w, e2)) = self.word_at(p) {
+            if w != "to" {
+                return;
+            }
+            p = e2;
+        } else {
+            return;
+        }
+        if let Some(lit) = self.literal_at(self.skip_ws(p)) {
+            self.push_conninfo(lit, false);
+        }
+    }
+
+    /// `set_config('primary_conninfo', '<接続文字列>', …)`。`e` は関数名の終端。
+    fn pg_set_config(&mut self, e: usize) {
+        let p = self.skip_ws(e);
+        if self.m.get(p) != Some(&'(') {
+            return;
+        }
+        let Some(name) = self.literal_at(self.skip_ws(p + 1)) else {
+            return;
+        };
+        let inner: String = self.src[name.0 + 1..name.1.saturating_sub(1).max(name.0 + 1)]
+            .iter()
+            .collect();
+        if self.m[name.0] != '\'' || !inner.eq_ignore_ascii_case("primary_conninfo") {
+            return;
+        }
+        let q = self.skip_ws(name.1);
+        if self.m.get(q) != Some(&',') {
+            return;
+        }
+        if let Some(lit) = self.literal_at(self.skip_ws(q + 1)) {
+            self.push_conninfo(lit, false);
         }
     }
 
@@ -387,6 +514,23 @@ impl Scanner<'_> {
         let n = self.m.len();
         let mut i = 0;
         while i < n {
+            if self.pg && self.m[i] == '"' {
+                // 引用符つきの関数名 (`"dblink_connect"(…)`)。解析用マスクは中身を空白にするので元の SQL から読む。
+                if let Some(off) = self.m[i + 1..].iter().position(|&c| c == '"') {
+                    let close = i + 1 + off;
+                    let name: String = self.src[i + 1..close].iter().collect();
+                    match name.as_str() {
+                        "dblink" | "dblink_exec" | "dblink_connect" | "dblink_connect_u" => {
+                            self.pg_dblink_call(&name, close + 1)
+                        }
+                        "primary_conninfo" => self.pg_primary_conninfo(close + 1),
+                        "set_config" => self.pg_set_config(close + 1),
+                        _ => {}
+                    }
+                    i = close + 1;
+                    continue;
+                }
+            }
             if !is_word(self.m[i]) {
                 i += 1;
                 continue;
@@ -399,6 +543,11 @@ impl Scanner<'_> {
             match w.as_str() {
                 "identified" if self.mysql => self.mysql_identified(e),
                 "connection" if self.pg => self.pg_subscription_connection(i, e),
+                "dblink" | "dblink_exec" | "dblink_connect" | "dblink_connect_u" if self.pg => {
+                    self.pg_dblink_call(&w, e)
+                }
+                "primary_conninfo" if self.pg => self.pg_primary_conninfo(e),
+                "set_config" if self.pg => self.pg_set_config(e),
                 "set" if self.mysql => self.mysql_set_password(i, e),
                 "master_password" | "source_password" if self.mysql => {
                     let p = self.skip_ws(e);
@@ -461,6 +610,21 @@ pub(crate) fn find_credential_ranges(sql: &str, driver: DriverKind) -> Vec<(usiz
         return Vec::new();
     }
     scan_ranges(sql, driver).0
+}
+
+/// 接続文字列の断片 `decoded` が、値の手前 (`password =` / `password = '` / URI の `user:`) で終わっているか。
+/// 値が次の文字列リテラルに分かれる (`'host=h password=' || 'secret'`) ときの検出に使う。
+fn ends_with_open_secret(decoded: &str) -> bool {
+    let lower = decoded.to_ascii_lowercase();
+    let t = lower.trim();
+    let u = t.strip_suffix(['\'', '"']).unwrap_or(t).trim_end();
+    if let Some(key) = u.strip_suffix('=') {
+        return key.trim_end().ends_with("password");
+    }
+    (t.starts_with("postgresql://") || t.starts_with("postgres://"))
+        && t.ends_with(':')
+        && t.find("://")
+            .is_some_and(|p| !t[p + 3..].contains(['@', '/', '?']))
 }
 
 /// 誤置換を避けるため、これより短い値はエラー文の置換対象にしない (文字数)。
@@ -1284,6 +1448,40 @@ mod tests {
                 "postgresql://u:secret@host?application_name=a@b&sslpassword=k&x=1?password=p"
             ),
             "postgresql://u:********@b&sslpassword=********&x=1?password=********"
+        );
+    }
+    #[test]
+    fn dblink_split_password_value_is_redacted() {
+        let pg = DriverKind::Postgres;
+        assert_eq!(
+            redact_credentials("SELECT dblink_connect('host=h password=' || 'S3cret!')", pg),
+            "SELECT dblink_connect('********' || '********')"
+        );
+        assert_eq!(
+            redact_credentials(
+                "SELECT dblink_connect('c1', concat('host=h password=', 'S3cret!'))",
+                pg
+            ),
+            "SELECT dblink_connect('c1', concat('********', '********'))"
+        );
+        assert_eq!(
+            redact_credentials(
+                "SELECT dblink_connect('postgresql://u:' || 'S3cret!' || '@h/db')",
+                pg
+            ),
+            "SELECT dblink_connect('postgresql://u:' || '********' || '@h/db')"
+        );
+        // password を含まない連結は伏せない。
+        let plain = "SELECT dblink_connect('host=h ' || 'dbname=x')";
+        assert_eq!(redact_credentials(plain, pg), plain);
+        // エラー文に引用された値も伏せる。
+        assert_eq!(
+            redact_error_text(
+                "rejected (S3cret!)",
+                "SELECT dblink_connect('host=h password=' || 'S3cret!')",
+                pg
+            ),
+            "rejected (********)"
         );
     }
 }

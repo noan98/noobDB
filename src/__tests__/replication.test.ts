@@ -122,6 +122,29 @@ describe("接続先の注意判定と並び", () => {
     expect(linkNeedsAttention(link({ lag_secs: LAG_WARN_SECS }))).toBe(true);
   });
 
+  it("PostgreSQL の受信停止 (io_running = false・遅延は 0 のまま) を注意にする (#2244)", () => {
+    const stopped = link({
+      direction: "upstream",
+      state: "no_receiver",
+      lag_secs: 0,
+      io_running: false,
+    });
+    expect(linkNeedsAttention(stopped)).toBe(true);
+    // 権限不足 (io_running = null) で遅延 0 は従来どおり正常。
+    expect(linkNeedsAttention(link({ direction: "upstream", lag_secs: 0, io_running: null }))).toBe(false);
+    // 平常時 (streaming・遅延 0) は正常のまま。
+    expect(
+      linkNeedsAttention(link({ direction: "upstream", state: "streaming", lag_secs: 0, io_running: true })),
+    ).toBe(false);
+  });
+
+  it("要約は受信停止の接続先を数え、トポロジーは注意ノードにする (#2244)", () => {
+    const stopped = link({ direction: "upstream", name: "p", lag_secs: 0, io_running: false });
+    expect(summarizeReplication([stopped], []).attentionLinks).toBe(1);
+    const layout = layoutTopology(keyLinks([stopped]));
+    expect(layout.upstream[0].attention).toBe(true);
+  });
+
   it("注意が要る行を先頭に、あとは名前順", () => {
     const got = sortLinks([link({ name: "b" }), link({ name: "z", last_error: "x" }), link({ name: "a" })]);
     expect(got.map((l) => l.name)).toEqual(["z", "a", "b"]);
@@ -238,7 +261,12 @@ describe("要約タイル (#2215)", () => {
         slot({ name: "c", active: false, retained_bytes: null }),
       ],
     );
-    expect(sum).toEqual({ maxLagSecs: 45, retainedBytesTotal: 150, inactiveSlots: 2 });
+    expect(sum).toEqual({
+      maxLagSecs: 45,
+      retainedBytesTotal: 150,
+      inactiveSlots: 2,
+      attentionLinks: 1,
+    });
   });
 
   it("値が無ければ null (0 と区別する)。非有限値は無視する", () => {
@@ -246,6 +274,7 @@ describe("要約タイル (#2215)", () => {
       maxLagSecs: null,
       retainedBytesTotal: null,
       inactiveSlots: 0,
+      attentionLinks: 0,
     });
     expect(summarizeReplication([link({ lag_secs: Number.NaN })], []).maxLagSecs).toBeNull();
     expect(summarizeReplication([link({ lag_secs: 0 })], []).maxLagSecs).toBe(0);

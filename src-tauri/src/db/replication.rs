@@ -44,7 +44,8 @@ pub struct ReplicationLink {
     /// PostgreSQL の `sync_state` (`async` / `sync` / `quorum` / `potential`)。
     pub sync_state: Option<String>,
     /// 反映の遅れ (秒)。PostgreSQL は `replay_lag`、MySQL は `Seconds_Behind_Source`、
-    /// PostgreSQL のレプリカ側は `now() - pg_last_xact_replay_timestamp()`。
+    /// PostgreSQL のレプリカ側は `now() - pg_last_xact_replay_timestamp()` (受信済み WAL をすべて反映済みで、
+    /// かつ walreceiver が `streaming` のときだけ 0)。
     pub lag_secs: Option<f64>,
     /// PostgreSQL の `write_lag` (秒)。
     pub write_lag_secs: Option<f64>,
@@ -52,7 +53,9 @@ pub struct ReplicationLink {
     pub flush_lag_secs: Option<f64>,
     /// 送信済み WAL と反映済み WAL の差 (バイト)。PostgreSQL の送信側のみ。
     pub lag_bytes: Option<i64>,
-    /// MySQL の IO スレッド (`Replica_IO_Running`)。他は `None`。
+    /// MySQL の IO スレッド (`Replica_IO_Running`)。PostgreSQL の受信側は walreceiver の状態から
+    /// (`streaming` なら true、行なし・`stopping`・`waiting` なら false。権限不足・途中の状態は `None`)。
+    /// 他は `None`。
     pub io_running: Option<bool>,
     /// MySQL の SQL スレッド (`Replica_SQL_Running`)。他は `None`。
     pub sql_running: Option<bool>,

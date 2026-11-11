@@ -50,6 +50,13 @@ pub(crate) fn ensure_allowed_for_session(session: &Session, sql: &str) -> Result
     Ok(())
 }
 
+/// このセッションの実行を、サーバ側の読み取り専用 (`db::read_only_scope`, #2243) でも守るか。
+/// `read_only` セッションは字句ガードに加えてサーバが拒否する (書き込みを行うユーザー定義関数を
+/// `SELECT f()` で呼ぶ抜け道を塞ぐ)。緊急クエリ実行モード中は、書き込みを許可しているので強制しない。
+pub(crate) fn server_read_only_enforced(session: &Session) -> bool {
+    session.read_only && !session.emergency_write_active()
+}
+
 /// 読み取り専用セッションの「緊急クエリ実行モード」を切り替える (#emergency-mode)。
 ///
 /// 有効な間は `ensure_allowed_for_session` が書き込み文を通すため、緊急対応の
@@ -167,9 +174,33 @@ pub async fn run_query(
     session_id: String,
     sql: String,
     database: Option<String>,
+    // true のとき、成功・失敗とも書き込み履歴 (クエリ履歴) に残す (#2240)。`run_query` は既定では履歴に
+    // 残さない (ストリーミング経路だけが残す)。CONCURRENTLY の DDL はトランザクション外で流すため
+    // `run_query_transaction` の履歴記録を通らず、この指定で残す。
+    record_history: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult> {
-    run_query_inner(state.inner(), &session_id, &sql, database.as_deref()).await
+    let started = std::time::Instant::now();
+    let result = run_query_inner(state.inner(), &session_id, &sql, database.as_deref()).await;
+    if record_history == Some(true) {
+        if let Some(session) = state.get(&session_id).await {
+            let (affected, error) = match &result {
+                Ok(r) => (Some(r.rows_affected as i64), None),
+                Err(e) => (None, Some(e.to_string())),
+            };
+            let elapsed = started.elapsed().as_millis() as i64;
+            record_write_history(
+                &session,
+                sql,
+                database.as_deref(),
+                affected,
+                Some(elapsed),
+                error,
+            )
+            .await;
+        }
+    }
+    result
 }
 
 /// Core of [`run_query`] decoupled from Tauri's `State` wrapper so integration
@@ -194,12 +225,14 @@ pub(crate) async fn run_query_inner(
     // Query Result Cache (#1097): 読み取り専用と判定できる SQL だけがキャッシュを
     // consult する (`QueryResultCache::get_or_fetch` 内部の判定)。書き込み文は
     // 素通しでそのまま実行される — 対象・キー設計はモジュールドキュメント参照。
-    let result = session
-        .query_cache
-        .get_or_fetch(driver, database, sql, || {
+    // read_only セッションはサーバ側でも読み取り専用で実行する (#2243)。
+    let result = crate::db::read_only_scope::scope_if(
+        server_read_only_enforced(&session),
+        session.query_cache.get_or_fetch(driver, database, sql, || {
             session.conn.execute(sql, database)
-        })
-        .await;
+        }),
+    )
+    .await;
     if let Ok(r) = &result {
         perf::log_query_execute(
             &session.id,
@@ -359,15 +392,19 @@ pub(crate) async fn run_lookup_query_inner(
     let limited = apply_auto_limit_for(driver, sql, cap);
     let effective_sql = limited.as_deref().unwrap_or(sql);
     let exec = session.conn.execute(effective_sql, database);
-    let mut result = match query_timeout_secs {
-        Some(secs) if secs > 0 => {
-            match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
-                Ok(res) => res?,
-                Err(_) => return Err(AppError::Timeout(secs)),
+    // 値の参照はアサーション・スケジューラ経由も含め、常にサーバ側でも読み取り専用 (#2243)。
+    let mut result = crate::db::read_only_scope::scope(async {
+        match query_timeout_secs {
+            Some(secs) if secs > 0 => {
+                match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
+                    Ok(res) => res,
+                    Err(_) => Err(AppError::Timeout(secs)),
+                }
             }
+            _ => exec.await,
         }
-        _ => exec.await?,
-    };
+    })
+    .await?;
     // 利用者が既に LIMIT を書いていて自動 LIMIT が挿入されなかった場合でも、
     // 返す行数は必ず上限で切る (フロントの SQL 生成に不備があっても UI を
     // 大量行で埋めない二重の安全網)。
@@ -477,10 +514,14 @@ pub(crate) async fn run_query_transaction_guarded_inner(
             expect: expects.get(i).copied().unwrap_or(RowExpectation::NONE),
         })
         .collect();
-    let outcome = session
-        .conn
-        .execute_transaction_guarded(&guarded, database.as_deref())
-        .await;
+    // read_only セッションは、サーバ側でも READ ONLY のトランザクションで実行する (#2243)。
+    let outcome = crate::db::read_only_scope::scope_if(
+        server_read_only_enforced(&session),
+        session
+            .conn
+            .execute_transaction_guarded(&guarded, database.as_deref()),
+    )
+    .await;
     let elapsed_ms = started.elapsed().as_millis() as u64;
     // ロールバックした (できなかった) 場合の内訳。`incomplete` なら書き込み済み扱い。
     let (violation, incomplete) = match &outcome {
@@ -614,9 +655,10 @@ pub async fn begin_transaction(
         .get(&session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    // read_only セッションの明示トランザクションは、サーバ側でも READ ONLY で開く (#2243)。
     let opts = TxOptions {
         isolation,
-        read_only: read_only.unwrap_or(false),
+        read_only: read_only.unwrap_or(false) || server_read_only_enforced(&session),
     };
     session
         .conn
@@ -650,6 +692,17 @@ pub(crate) async fn run_in_transaction_inner(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
     ensure_allowed_for_session(&session, sql)?;
+    // 緊急モード中に READ WRITE で開いたトランザクションが、解除後も書き込めてしまわないように、
+    // 強制すべきセッションでは READ ONLY でないトランザクションでの実行を拒否する (#2243)。
+    if server_read_only_enforced(&session)
+        && session.conn.transaction_active().await
+        && !session.conn.transaction_read_only()
+    {
+        return Err(AppError::ReadOnly(
+            "このトランザクションは緊急モードで読み書き可能として開始されました。読み取り専用に戻ったため、いったん終了して開き直してください (the transaction was opened read-write in emergency mode)"
+                .into(),
+        ));
+    }
     let result = session.conn.execute_in_transaction(sql).await;
     if result.is_ok() {
         let driver = session.conn.driver_kind();
@@ -993,9 +1046,13 @@ pub async fn run_query_stream(
     }
     // Cross-environment broadcast execution (#738) is read-only no matter the
     // session, mirroring the auto-refresh guard above.
-    if force_read_only.unwrap_or(false) {
+    let force_read_only = force_read_only.unwrap_or(false);
+    if force_read_only {
         ensure_broadcast_read_only(session.conn.driver_kind(), &sql)?;
     }
+    // 字句ガードに加えて、サーバ側でも読み取り専用で実行する (#2243): read_only セッション・
+    // 自動更新・EXPLAIN ANALYZE / ブロードキャスト (force_read_only)。
+    let server_read_only = server_read_only_enforced(&session) || auto_refresh || force_read_only;
     // `register_stream` をタスク本体の実行より前に完了させるためのゲート。
     // `tokio::spawn` は返り値の `JoinHandle` からしか `AbortHandle` を得られないため
     // 文字通り「spawn より前に register」することはできないが、タスク本体を
@@ -1068,6 +1125,7 @@ pub async fn run_query_stream(
             auto_limit,
             query_timeout_secs,
             auto_refresh,
+            server_read_only,
             refresh_diff.filter(|_| auto_refresh),
             retain_result.unwrap_or(false),
             delivered_rows_for_task,
@@ -1114,6 +1172,7 @@ async fn spawn_query_stream(
     auto_limit: Option<usize>,
     query_timeout_secs: Option<u64>,
     auto_refresh: bool,
+    server_read_only: bool,
     refresh_diff: Option<RefreshDiffRequest>,
     retain_result: bool,
     delivered_rows: Arc<AtomicU64>,
@@ -1285,17 +1344,20 @@ async fn spawn_query_stream(
     // 次に走る別の文を止めないため)。サーバ側タイムアウトも同じ文脈から設定される。
     let stop_ctx = crate::db::server_stop::ServerStopCtx::new(query_timeout_secs);
     let mut stop_guard = crate::db::server_stop::StopGuard::new(stop_ctx.clone(), session.clone());
-    let run = crate::db::server_stop::scope(stop_ctx, async {
-        match query_timeout_secs {
-            Some(secs) if secs > 0 => {
-                match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
-                    Ok(res) => res,
-                    Err(_) => Err(AppError::Timeout(secs)),
+    let run = crate::db::server_stop::scope(
+        stop_ctx,
+        crate::db::read_only_scope::scope_if(server_read_only, async {
+            match query_timeout_secs {
+                Some(secs) if secs > 0 => {
+                    match tokio::time::timeout(std::time::Duration::from_secs(secs), exec).await {
+                        Ok(res) => res,
+                        Err(_) => Err(AppError::Timeout(secs)),
+                    }
                 }
+                _ => exec.await,
             }
-            _ => exec.await,
-        }
-    });
+        }),
+    );
     // 合流バッチの時間フラッシュ: `StreamBatcher::push` はドライバのバッチが届いたとき
     // にしか時間判定しないので、低速なクエリで行が溜まったまま止まらないよう、
     // 一定間隔で期限切れの分を送る。`run` と同じタスクで交互に polling されるため、

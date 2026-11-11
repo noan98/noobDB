@@ -42,6 +42,11 @@ import { AlterPrecheckNotice } from "./AlterPrecheckNotice";
 import { AlterCostNotice } from "./AlterCostNotice";
 import { classifyAlterCost, hasMysqlCopyRisk, shouldWarnForRows, withMysqlOnlineClause } from "./alterCost";
 import { useTableRowEstimate } from "../useTableRowEstimate";
+import { ddlLockTimeoutSecsFor, useSettings } from "../settings";
+import { buildAlterExecutionPlan, canStage, planNeedsRunner, planPreviewSql } from "./onlineDdl";
+import { stepComment, type DdlRunOptions, type DdlRunReport } from "./onlineDdlRunner";
+import { DdlLockTimeoutField } from "./DdlLockTimeoutField";
+import { DdlRunReportNotice } from "./DdlRunReportNotice";
 import { useSqliteRebuildPlan } from "../useSqliteRebuildPlan";
 import { DropColumnDependencies } from "./DropColumnDependencies";
 import { useColumnDependencies } from "../useColumnDependencies";
@@ -64,8 +69,14 @@ interface Props {
   database: string;
   table: string;
   readOnly: boolean;
-  onRun: (statements: AlterStatement[]) => void;
+  /**
+   * 段階実行 / ロック待ちの上限つきで流す指示 (`options`) は、PostgreSQL / MySQL でそれらが要るときだけ渡す (#2240)。
+   * 段階の途中で失敗したときは、どこまで適用済みかの報告を返す (画面に出す)。
+   */
+  onRun: (statements: AlterStatement[], options?: DdlRunOptions) => void | Promise<DdlRunReport | undefined>;
   onSendToEditor: (sql: string) => void;
+  /** ロック待ちのタイムアウト時の案内先 (プロセス一覧の待機チェーン)。 */
+  onOpenProcessList?: () => void;
   onClose: () => void;
 }
 
@@ -200,9 +211,12 @@ export function AlterTableModal({
   readOnly,
   onRun,
   onSendToEditor,
+  onOpenProcessList,
   onClose,
 }: Props) {
   const t = useT();
+  const settings = useSettings();
+  const ddlLockTimeoutSecs = ddlLockTimeoutSecsFor(settings, driver);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [baseline, setBaseline] = useState<ExistingColumnBaseline[]>([]);
@@ -394,6 +408,10 @@ export function AlterTableModal({
           refTable: f.refTable,
         })),
         droppedCheckDefinitions: droppedCheckDefs,
+        existingConstraintNames: [
+          ...existingFks.flatMap((f) => (f.name ? [f.name] : [])),
+          ...existingChecks.map((c) => c.name),
+        ],
       }),
     [
       driver,
@@ -409,6 +427,7 @@ export function AlterTableModal({
       droppedFks,
       droppedChecks,
       existingFks,
+      existingChecks,
       droppedCheckDefs,
     ],
   );
@@ -438,6 +457,10 @@ export function AlterTableModal({
   const [onlineClause, setOnlineClause] = useState(false);
   const showOnlineToggle = showCost && driver === "mysql" && hasMysqlCopyRisk(costRisks);
   const applyOnline = onlineClause && showOnlineToggle;
+  // PostgreSQL: NOT VALID → VALIDATE / CONCURRENTLY の段階実行 (#2240)。トランザクションを分けて流す。
+  const [staged, setStaged] = useState(false);
+  const [report, setReport] = useState<DdlRunReport | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   // SQLite の型 / NOT NULL / DEFAULT 変更・FK / CHECK の変更は、バックエンドがスキーマ同期と同じ
   // テーブル再作成 SQL を組み立てる (#1888)。生成中・失敗中は実行できない。
   // アタッチ DB の表は再作成できない (バックエンドが拒否する, #2154)。計画を問い合わせる前に理由を出す。
@@ -508,15 +531,53 @@ export function AlterTableModal({
     !rebuildPending &&
     generatedErrors.length === 0;
   // 不完全な行があるときは実行せず、理由を出す (空の新規行のエラーは触る/実行を試すまで伏せる)。
+  const showStagedToggle = showCost && canStage(driver, statements);
+  // 実行計画 (#2240): 段階の分け方とロック待ちの上限。SQLite はどちらも無く、従来どおり文をそのまま流す。
+  const executionPlan = useMemo(
+    () =>
+      buildAlterExecutionPlan(driver, statements, {
+        database,
+        staged: staged && showStagedToggle,
+        lockTimeoutSecs: ddlLockTimeoutSecs,
+      }),
+    [driver, statements, database, staged, showStagedToggle, ddlLockTimeoutSecs],
+  );
+  const needsRunner = driver !== "sqlite" && planNeedsRunner(executionPlan);
+  // 確認ダイアログの表示中も含め、実行を依頼してから結果が返るまで (進捗の表示は確認が済んでから)。
+  const [submitting, setSubmitting] = useState(false);
+  const running = submitting;
   const tryRun = () => {
     if (hasIncompleteIndex) {
       setRunAttempted(true);
       return;
     }
-    onRun(statements);
+    if (running) return;
+    if (!needsRunner) {
+      void onRun(statements);
+      return;
+    }
+    setReport(null);
+    setSubmitting(true);
+    void Promise.resolve(
+      onRun(statements, {
+        plan: executionPlan,
+        onProgress: (done, total) => setProgress({ done, total }),
+      }),
+    )
+      .then((r) => {
+        setSubmitting(false);
+        setProgress(null);
+        if (r) setReport(r);
+      })
+      .catch(() => {
+        setSubmitting(false);
+        setProgress(null);
+      });
   };
 
-  const sqlPreview = statements.map((s: AlterStatement) => s.sql).join("\n");
+  const sqlPreview = executionPlan.staged
+    ? planPreviewSql(executionPlan, (st, i) => stepComment(st, i, executionPlan.steps.length))
+    : statements.map((s: AlterStatement) => s.sql).join("\n");
   // 型の縮小・NOT NULL 追加で既存行が収まらないかの事前検査 (#1536)。読み取り専用の COUNT を
   // デバウンスして発行するので、read_only 接続でも動く。
   // FK / UNIQUE / CHECK の追加で既存データが違反しないかも同じ枠で検査する (#1757)。
@@ -602,7 +663,7 @@ export function AlterTableModal({
   return (
     <Modal
       onSubmit={hasDestructive ? undefined : tryRun}
-      submitDisabled={!valid || readOnly}
+      submitDisabled={!valid || readOnly || running}
       width="880px"
       onClose={onClose}
     >
@@ -1283,6 +1344,23 @@ export function AlterTableModal({
                   showOnlineToggle={showOnlineToggle}
                   onlineEnabled={onlineClause}
                   onOnlineChange={setOnlineClause}
+                  showStagedToggle={showStagedToggle}
+                  stagedEnabled={staged}
+                  onStagedChange={setStaged}
+                />
+              )}
+              {statements.length > 0 && <DdlLockTimeoutField driver={driver} />}
+              {running && progress && (
+                <Callout tone="info" role="status" data-testid="ddl-run-progress">
+                  {t("ddlRunProgress", { done: progress.done, total: progress.total })}
+                </Callout>
+              )}
+              {report && (
+                <DdlRunReportNotice
+                  report={report}
+                  driver={driver}
+                  onSendToEditor={onSendToEditor}
+                  onOpenProcessList={onOpenProcessList}
                 />
               )}
               <DropColumnDependencies state={columnDeps} />
@@ -1315,7 +1393,12 @@ export function AlterTableModal({
             >
               {t("createTableToEditor")}
             </Button>
-            <Button type="button" variant="dangerOutline" disabled={!valid || readOnly} onClick={tryRun}>
+            <Button
+              type="button"
+              variant="dangerOutline"
+              disabled={!valid || readOnly || running}
+              onClick={tryRun}
+            >
               {t("alterTableRun")}
             </Button>
             <div style={{ flex: 1 }} />
@@ -1337,7 +1420,12 @@ export function AlterTableModal({
             <Button type="button" variant="secondary" onClick={onClose}>
               {t("createTableClose")}
             </Button>
-            <PressableButton type="button" variant="primary" disabled={!valid || readOnly} onClick={tryRun}>
+            <PressableButton
+              type="button"
+              variant="primary"
+              disabled={!valid || readOnly || running}
+              onClick={tryRun}
+            >
               {t("alterTableRun")}
             </PressableButton>
           </>

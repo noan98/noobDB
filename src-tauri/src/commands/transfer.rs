@@ -865,23 +865,27 @@ pub(crate) async fn run_transfer(
     let source = prepared.source.clone();
     let sql = prepared.source_sql.clone();
     let source_db = request.source_database.clone().filter(|d| !d.is_empty());
-    let mut reader = AbortOnDrop(tokio::spawn(async move {
-        source
-            .conn
-            .execute_stream(
-                &sql,
-                source_db.as_deref(),
-                batch_size,
-                batch_size,
-                move |batch| {
-                    let rt = tokio::runtime::Handle::current();
-                    tokio::task::block_in_place(|| rt.block_on(tx.send(batch)))
-                        .map_err(|_| AppError::Other("transfer writer stopped".into()))
-                },
-            )
-            .await
-            .map(|_| ())
-    }));
+    // 転送元の読み出しは常にサーバ側でも読み取り専用 (#2243)。`tokio::spawn` は task_local を
+    // 引き継がないので、spawn する future の内側で scope を張る。
+    let mut reader = AbortOnDrop(tokio::spawn(crate::db::read_only_scope::scope(
+        async move {
+            source
+                .conn
+                .execute_stream(
+                    &sql,
+                    source_db.as_deref(),
+                    batch_size,
+                    batch_size,
+                    move |batch| {
+                        let rt = tokio::runtime::Handle::current();
+                        tokio::task::block_in_place(|| rt.block_on(tx.send(batch)))
+                            .map_err(|_| AppError::Other("transfer writer stopped".into()))
+                    },
+                )
+                .await
+                .map(|_| ())
+        },
+    )));
 
     let mut guard: Option<CreatedTableGuard> = None;
     let body = async {
@@ -1112,28 +1116,26 @@ pub async fn preview_transfer_inner(
     let limited_sql =
         crate::db::apply_auto_limit_for(source_driver, &prepared.source_sql, PREVIEW_SAMPLE_ROWS)
             .unwrap_or_else(|| prepared.source_sql.clone());
-    let res = prepared
-        .source
-        .conn
-        .execute_stream(
-            &limited_sql,
-            source_db.as_deref(),
-            PREVIEW_SAMPLE_ROWS,
-            PREVIEW_SAMPLE_ROWS,
-            |batch| match batch {
-                StreamBatch::Columns(c) => {
-                    columns = Some(c);
-                    Ok(())
-                }
-                StreamBatch::Rows(rows) => {
-                    sample = rows;
-                    stopped = true;
-                    // 型推定に必要な先頭バッチだけで十分。残りは読まずに打ち切る。
-                    Err(AppError::Other(PREVIEW_STOP.into()))
-                }
-            },
-        )
-        .await;
+    // 転送元の読み出しは常にサーバ側でも読み取り専用 (#2243)。
+    let res = crate::db::read_only_scope::scope(prepared.source.conn.execute_stream(
+        &limited_sql,
+        source_db.as_deref(),
+        PREVIEW_SAMPLE_ROWS,
+        PREVIEW_SAMPLE_ROWS,
+        |batch| match batch {
+            StreamBatch::Columns(c) => {
+                columns = Some(c);
+                Ok(())
+            }
+            StreamBatch::Rows(rows) => {
+                sample = rows;
+                stopped = true;
+                // 型推定に必要な先頭バッチだけで十分。残りは読まずに打ち切る。
+                Err(AppError::Other(PREVIEW_STOP.into()))
+            }
+        },
+    ))
+    .await;
     if let Err(e) = res {
         if !stopped {
             return Err(e);
