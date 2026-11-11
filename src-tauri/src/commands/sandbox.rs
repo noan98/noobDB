@@ -318,7 +318,8 @@ pub(crate) async fn create_sandbox_inner(
             limit as usize + 1,
             filters.get(t).map(String::as_str),
         );
-        let res = source.conn.execute(&sql, Some(&db)).await?;
+        // 元 DB からの読み取りはサーバ側でも読み取り専用にする (#2243)。
+        let res = crate::db::read_only_scope::scope(source.conn.execute(&sql, Some(&db))).await?;
         let truncated = res.rows.len() > limit as usize;
         let rows: Vec<_> = res.rows.into_iter().take(limit as usize).collect();
         fetched.push(FetchedTable {
@@ -798,7 +799,12 @@ pub(crate) async fn sandbox_table_diff_inner(
                     None,
                 );
                 let res = match sql {
-                    Ok(sql) => source.conn.execute(&sql, Some(&source_db)).await,
+                    Ok(sql) => {
+                        crate::db::read_only_scope::scope(
+                            source.conn.execute(&sql, Some(&source_db)),
+                        )
+                        .await
+                    }
                     Err(e) => Err(e),
                 };
                 match res {

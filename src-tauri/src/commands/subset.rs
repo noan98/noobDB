@@ -268,7 +268,8 @@ pub(crate) async fn run_walk(
                 "subset extraction only issues read-only statements".into(),
             ));
         }
-        let res = conn.execute(&sql, exec_db).await?;
+        // 元 DB からの読み取りは、サーバ側でも読み取り専用にして二重に守る (#2243)。
+        let res = crate::db::read_only_scope::scope(conn.execute(&sql, exec_db)).await?;
         walk.supply(&req, res.rows)?;
         on_rows(walk.total_rows());
     }
@@ -300,7 +301,8 @@ pub(crate) async fn fetch_root_rows(
             "the start condition must keep the statement read-only".into(),
         ));
     }
-    let res = conn.execute(&sql, exec_db).await?;
+    // 起点の行の取得もサーバ側の読み取り専用で包む (#2243)。
+    let res = crate::db::read_only_scope::scope(conn.execute(&sql, exec_db)).await?;
     let truncated = res.rows.len() as u64 > limit;
     let rows = res.rows.into_iter().take(limit as usize).collect();
     Ok((rows, truncated))
