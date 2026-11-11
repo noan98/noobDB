@@ -52,7 +52,7 @@ const isAlnum = (c: string | undefined): boolean => c !== undefined && /[A-Za-z0
 
 class Scanner {
   readonly out: CredentialRange[] = [];
-  /** SUBSCRIPTION の接続文字列から取り出した秘密の値 (`secretsFor` 用)。 */
+  /** SUBSCRIPTION / dblink / primary_conninfo の接続文字列から取り出した秘密の値 (`secretsFor` 用)。 */
   readonly secrets: string[] = [];
 
   constructor(
@@ -186,10 +186,10 @@ class Scanner {
     return [a.w, b?.w ?? null];
   }
 
-  /** 文頭が `START REPLICA|SLAVE` (その `PASSWORD = '…'` はレプリケーションの資格情報)。 */
+  /** 文頭が `START REPLICA|SLAVE|GROUP_REPLICATION` (その `PASSWORD = '…'` はレプリケーションの資格情報)。 */
   private startsReplica(i: number): boolean {
     const [a, b] = this.leadingWords(i);
-    return a === "start" && (b === "replica" || b === "slave");
+    return a === "start" && (b === "replica" || b === "slave" || b === "group_replication");
   }
 
   private mysqlIdentified(e0: number): void {
@@ -304,10 +304,70 @@ class Scanner {
     this.secrets.push(...values);
   }
 
+  /** リテラルが接続文字列で秘密を含むなら伏せ対象にして、秘密の値を集める。 */
+  private pushConninfo(lit: CredentialRange): void {
+    const values = this.conninfoLiteralSecrets(lit);
+    if (values === null) return;
+    this.push(lit);
+    this.secrets.push(...values);
+  }
+
+  /** dblink 関数の接続文字列リテラル (`dblink_connect[_u]` は接続名つきなら第 2 引数、他は第 1 引数)。`e` は関数名の終端。 */
+  private pgDblinkCall(w: string, e: number): void {
+    const p = this.skipWs(e);
+    if (this.m[p] !== "(") return;
+    const first = this.literalAt(this.skipWs(p + 1));
+    if (!first) return;
+    if (w.startsWith("dblink_connect")) {
+      const q = this.skipWs(first.end);
+      if (this.m[q] === ",") {
+        const second = this.literalAt(this.skipWs(q + 1));
+        if (second) {
+          this.pushConninfo(second);
+          return;
+        }
+      }
+    }
+    this.pushConninfo(first);
+  }
+
+  /** `ALTER SYSTEM SET primary_conninfo [=|TO] '<接続文字列>'`。`e` は設定名の終端。 */
+  private pgPrimaryConninfo(i: number, e: number): void {
+    const [a, b] = this.leadingWords(i);
+    if (a !== "alter" || b !== "system") return;
+    let p = this.skipWs(e);
+    if (this.m[p] === "=") {
+      p++;
+    } else {
+      const t = this.wordAt(p);
+      if (!t || t.w !== "to") return;
+      p = t.e;
+    }
+    const lit = this.literalAt(this.skipWs(p));
+    if (lit) this.pushConninfo(lit);
+  }
+
   scan(): void {
     const n = this.m.length;
     let i = 0;
     while (i < n) {
+      if (this.pg && this.m[i] === '"') {
+        // 引用符つきの関数名 (`"dblink_connect"(…)`)。解析用マスクは中身を空白にするので元の SQL から読む。
+        const close = this.m.indexOf('"', i + 1);
+        if (close >= 0) {
+          const name = this.src.slice(i + 1, close);
+          if (
+            name === "dblink" ||
+            name === "dblink_exec" ||
+            name === "dblink_connect" ||
+            name === "dblink_connect_u"
+          ) {
+            this.pgDblinkCall(name, close + 1);
+          }
+          i = close + 1;
+          continue;
+        }
+      }
       if (!isWord(this.m[i])) {
         i++;
         continue;
@@ -319,6 +379,13 @@ class Scanner {
         this.mysqlIdentified(e);
       } else if (w === "connection" && this.pg) {
         this.pgSubscriptionConnection(i, e);
+      } else if (
+        (w === "dblink" || w === "dblink_exec" || w === "dblink_connect" || w === "dblink_connect_u") &&
+        this.pg
+      ) {
+        this.pgDblinkCall(w, e);
+      } else if (w === "primary_conninfo" && this.pg) {
+        this.pgPrimaryConninfo(i, e);
       } else if (w === "set" && this.mysql) {
         this.mysqlSetPassword(i, e);
       } else if ((w === "master_password" || w === "source_password") && this.mysql) {

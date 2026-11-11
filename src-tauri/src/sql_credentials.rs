@@ -20,6 +20,9 @@
 //!   (`USER MAPPING … OPTIONS (password '…')` を含む。`E'…'` とドル引用も)
 //!   と `CREATE|ALTER SUBSCRIPTION … CONNECTION '<接続文字列>'` (#2189。中身に
 //!   [`redact_conninfo`] が伏せる `password` / `sslpassword` / URI のパスワードがあるときだけリテラル全体)
+//!   加えて接続文字列を取る `dblink(…)` / `dblink_exec(…)` / `dblink_connect[_u](…)` の文字列引数と
+//!   `ALTER SYSTEM SET primary_conninfo [=|TO] '…'` (#2245。同じ規則でリテラル全体を伏せる)
+//! - MySQL の `START GROUP_REPLICATION … PASSWORD = '…'` も `START REPLICA` と同じ (#2245)
 //! - SQLite: 対象なし
 //!
 //! リテラルの前置 (`E` / `U&` / `N` / `_utf8mb4`) は残し、引用符から終端までを
@@ -50,7 +53,7 @@ struct Scanner<'a> {
     mysql: bool,
     pg: bool,
     out: Vec<(usize, usize)>,
-    /// SUBSCRIPTION の接続文字列から取り出した秘密の値 ([`credential_secrets`] 用)。
+    /// SUBSCRIPTION / dblink / primary_conninfo の接続文字列から取り出した秘密の値 ([`credential_secrets`] 用)。
     secrets: Vec<String>,
 }
 
@@ -228,10 +231,14 @@ impl Scanner<'_> {
         (Some(a), b)
     }
 
-    /// 文頭が `START REPLICA|SLAVE` (その `PASSWORD = '…'` はレプリケーションの資格情報)。
+    /// 文頭が `START REPLICA|SLAVE|GROUP_REPLICATION` (その `PASSWORD = '…'` はレプリケーションの資格情報)。
     fn starts_replica(&self, i: usize) -> bool {
         let (a, b) = self.leading_words(i);
-        a.as_deref() == Some("start") && matches!(b.as_deref(), Some("replica") | Some("slave"))
+        a.as_deref() == Some("start")
+            && matches!(
+                b.as_deref(),
+                Some("replica") | Some("slave") | Some("group_replication")
+            )
     }
 
     fn mysql_identified(&mut self, e: usize) {
@@ -383,10 +390,78 @@ impl Scanner<'_> {
         }
     }
 
+    /// リテラル `lit` が接続文字列で秘密を含むなら伏せ対象にして、秘密の値を集める。
+    fn push_conninfo(&mut self, lit: (usize, usize)) {
+        if let Some(values) = self.conninfo_literal_secrets(lit) {
+            self.push(lit);
+            self.secrets.extend(values);
+        }
+    }
+
+    /// PostgreSQL の dblink 関数 (`dblink` / `dblink_exec` は第 1 引数、`dblink_connect[_u]` は
+    /// 接続名つきなら第 2 引数、なければ第 1 引数) の接続文字列リテラル。`e` は関数名の終端。
+    fn pg_dblink_call(&mut self, w: &str, e: usize) {
+        let p = self.skip_ws(e);
+        if self.m.get(p) != Some(&'(') {
+            return;
+        }
+        let p = self.skip_ws(p + 1);
+        let Some(first) = self.literal_at(p) else {
+            return;
+        };
+        if w.starts_with("dblink_connect") {
+            let q = self.skip_ws(first.1);
+            if self.m.get(q) == Some(&',') {
+                if let Some(second) = self.literal_at(self.skip_ws(q + 1)) {
+                    self.push_conninfo(second);
+                    return;
+                }
+            }
+        }
+        self.push_conninfo(first);
+    }
+
+    /// PostgreSQL の `ALTER SYSTEM SET primary_conninfo [=|TO] '<接続文字列>'`。`e` は設定名の終端。
+    fn pg_primary_conninfo(&mut self, i: usize, e: usize) {
+        let (a, b) = self.leading_words(i);
+        if a.as_deref() != Some("alter") || b.as_deref() != Some("system") {
+            return;
+        }
+        let mut p = self.skip_ws(e);
+        if self.m.get(p) == Some(&'=') {
+            p += 1;
+        } else if let Some((w, e2)) = self.word_at(p) {
+            if w != "to" {
+                return;
+            }
+            p = e2;
+        } else {
+            return;
+        }
+        if let Some(lit) = self.literal_at(self.skip_ws(p)) {
+            self.push_conninfo(lit);
+        }
+    }
+
     fn scan(&mut self) {
         let n = self.m.len();
         let mut i = 0;
         while i < n {
+            if self.pg && self.m[i] == '"' {
+                // 引用符つきの関数名 (`"dblink_connect"(…)`)。解析用マスクは中身を空白にするので元の SQL から読む。
+                if let Some(off) = self.m[i + 1..].iter().position(|&c| c == '"') {
+                    let close = i + 1 + off;
+                    let name: String = self.src[i + 1..close].iter().collect();
+                    if matches!(
+                        name.as_str(),
+                        "dblink" | "dblink_exec" | "dblink_connect" | "dblink_connect_u"
+                    ) {
+                        self.pg_dblink_call(&name, close + 1);
+                    }
+                    i = close + 1;
+                    continue;
+                }
+            }
             if !is_word(self.m[i]) {
                 i += 1;
                 continue;
@@ -399,6 +474,10 @@ impl Scanner<'_> {
             match w.as_str() {
                 "identified" if self.mysql => self.mysql_identified(e),
                 "connection" if self.pg => self.pg_subscription_connection(i, e),
+                "dblink" | "dblink_exec" | "dblink_connect" | "dblink_connect_u" if self.pg => {
+                    self.pg_dblink_call(&w, e)
+                }
+                "primary_conninfo" if self.pg => self.pg_primary_conninfo(i, e),
                 "set" if self.mysql => self.mysql_set_password(i, e),
                 "master_password" | "source_password" if self.mysql => {
                     let p = self.skip_ws(e);
