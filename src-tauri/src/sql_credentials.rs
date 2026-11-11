@@ -315,24 +315,14 @@ impl Scanner<'_> {
         }
     }
 
-    /// `CONNECTION '…'` のリテラル `lit` が伏せ対象なら、その中の秘密の値 (エラー文の置換用。空もありうる) を返す。
-    /// 対象外なら `None`。次のどれかで対象にする (安全側):
-    /// - `U&'…'` (`\XXXX` でキー名を隠せる) / `E'…'` で中身に `\` がある (`\n` や `\167` でキーを隠せる)
-    /// - エスケープを解いた中身に "password" を含む (大文字小文字を問わない)
-    /// - [`redact_conninfo`] が値を伏せる / [`conninfo_secret_values`] が値を返す
-    /// - URI で最後の `@` の前に `:` がある (パスワードに `/` や `?` が素で入っても漏らさない)
-    ///
-    /// `strict` は問い合わせ SQL の引数など、接続文字列とは限らないリテラル用。"password" の語だけでは
-    /// 伏せず、`opaque` も見ず、値が実際に見つかるとき (`redact_conninfo` / `conninfo_secret_values` /
-    /// URI のパスワード) だけ対象にする。
-    fn conninfo_literal_secrets(&self, lit: (usize, usize), strict: bool) -> Option<Vec<String>> {
+    /// リテラル (連結片をつなげたもの) のエスケープを解いた中身と、キー名を隠せる表記 (opaque) か。
+    /// タグの壊れたドル引用は `None`。
+    fn decoded_literal(&self, lit: (usize, usize)) -> Option<(String, bool)> {
         let (s, e) = lit;
         let mut decoded = String::new();
         let mut opaque = false;
         if self.m[s] == '$' {
-            let Some(tag_len) = self.dollar_tag_len(s) else {
-                return Some(Vec::new());
-            };
+            let tag_len = self.dollar_tag_len(s)?;
             let closed = e >= s + 2 * tag_len && self.m[e - tag_len..e] == self.m[s..s + tag_len];
             let inner_end = if closed { e - tag_len } else { e };
             if s + tag_len <= inner_end {
@@ -360,6 +350,23 @@ impl Scanner<'_> {
                 i = next;
             }
         }
+        Some((decoded, opaque))
+    }
+
+    /// `CONNECTION '…'` のリテラル `lit` が伏せ対象なら、その中の秘密の値 (エラー文の置換用。空もありうる) を返す。
+    /// 対象外なら `None`。次のどれかで対象にする (安全側):
+    /// - `U&'…'` (`\XXXX` でキー名を隠せる) / `E'…'` で中身に `\` がある (`\n` や `\167` でキーを隠せる)
+    /// - エスケープを解いた中身に "password" を含む (大文字小文字を問わない)
+    /// - [`redact_conninfo`] が値を伏せる / [`conninfo_secret_values`] が値を返す
+    /// - URI で最後の `@` の前に `:` がある (パスワードに `/` や `?` が素で入っても漏らさない)
+    ///
+    /// `strict` は問い合わせ SQL の引数など、接続文字列とは限らないリテラル用。"password" の語だけでは
+    /// 伏せず、`opaque` も見ず、値が実際に見つかるとき (`redact_conninfo` / `conninfo_secret_values` /
+    /// URI のパスワード) だけ対象にする。
+    fn conninfo_literal_secrets(&self, lit: (usize, usize), strict: bool) -> Option<Vec<String>> {
+        let Some((decoded, opaque)) = self.decoded_literal(lit) else {
+            return Some(Vec::new());
+        };
         let values = conninfo_secret_values(&decoded);
         let lower = decoded.to_ascii_lowercase();
         let t = lower.trim_start();
@@ -412,6 +419,8 @@ impl Scanner<'_> {
         let connect = w.starts_with("dblink_connect");
         let mut depth = 0usize;
         let mut commas = 0usize;
+        // 直前の片が `password=` や URI の `user:` で終わり値が次の片に分かれている間は、その次の片を伏せる。
+        let mut pending: Option<usize> = None;
         let mut j = p;
         while j < self.m.len() {
             let c = self.m[j];
@@ -422,15 +431,34 @@ impl Scanner<'_> {
                     if depth == 0 {
                         return;
                     }
+                    if pending.is_some_and(|d| depth < d) {
+                        pending = None;
+                    }
                 }
-                ',' if depth == 1 => commas += 1,
+                ',' if depth == 1 => {
+                    commas += 1;
+                    pending = None;
+                }
                 _ => {}
             }
             let starts_literal = matches!(c, '\'' | '"' | '$' | 'e' | 'E' | 'u' | 'U')
                 && (j == 0 || !is_word(self.m[j - 1]));
             if starts_literal {
                 if let Some(lit) = self.literal_at(j) {
-                    self.push_conninfo(lit, !connect && commas > 0);
+                    if pending.take().is_some() {
+                        if let Some((decoded, _)) = self.decoded_literal(lit) {
+                            self.push(lit);
+                            self.secrets.push(decoded);
+                        }
+                    } else {
+                        self.push_conninfo(lit, !connect && commas > 0);
+                        if self
+                            .decoded_literal(lit)
+                            .is_some_and(|(d, _)| ends_with_open_secret(&d))
+                        {
+                            pending = Some(depth);
+                        }
+                    }
                     j = lit.1;
                     continue;
                 }
@@ -582,6 +610,21 @@ pub(crate) fn find_credential_ranges(sql: &str, driver: DriverKind) -> Vec<(usiz
         return Vec::new();
     }
     scan_ranges(sql, driver).0
+}
+
+/// 接続文字列の断片 `decoded` が、値の手前 (`password =` / `password = '` / URI の `user:`) で終わっているか。
+/// 値が次の文字列リテラルに分かれる (`'host=h password=' || 'secret'`) ときの検出に使う。
+fn ends_with_open_secret(decoded: &str) -> bool {
+    let lower = decoded.to_ascii_lowercase();
+    let t = lower.trim();
+    let u = t.strip_suffix(['\'', '"']).unwrap_or(t).trim_end();
+    if let Some(key) = u.strip_suffix('=') {
+        return key.trim_end().ends_with("password");
+    }
+    (t.starts_with("postgresql://") || t.starts_with("postgres://"))
+        && t.ends_with(':')
+        && t.find("://")
+            .is_some_and(|p| !t[p + 3..].contains(['@', '/', '?']))
 }
 
 /// 誤置換を避けるため、これより短い値はエラー文の置換対象にしない (文字数)。
@@ -1405,6 +1448,40 @@ mod tests {
                 "postgresql://u:secret@host?application_name=a@b&sslpassword=k&x=1?password=p"
             ),
             "postgresql://u:********@b&sslpassword=********&x=1?password=********"
+        );
+    }
+    #[test]
+    fn dblink_split_password_value_is_redacted() {
+        let pg = DriverKind::Postgres;
+        assert_eq!(
+            redact_credentials("SELECT dblink_connect('host=h password=' || 'S3cret!')", pg),
+            "SELECT dblink_connect('********' || '********')"
+        );
+        assert_eq!(
+            redact_credentials(
+                "SELECT dblink_connect('c1', concat('host=h password=', 'S3cret!'))",
+                pg
+            ),
+            "SELECT dblink_connect('c1', concat('********', '********'))"
+        );
+        assert_eq!(
+            redact_credentials(
+                "SELECT dblink_connect('postgresql://u:' || 'S3cret!' || '@h/db')",
+                pg
+            ),
+            "SELECT dblink_connect('postgresql://u:' || '********' || '@h/db')"
+        );
+        // password を含まない連結は伏せない。
+        let plain = "SELECT dblink_connect('host=h ' || 'dbname=x')";
+        assert_eq!(redact_credentials(plain, pg), plain);
+        // エラー文に引用された値も伏せる。
+        assert_eq!(
+            redact_error_text(
+                "rejected (S3cret!)",
+                "SELECT dblink_connect('host=h password=' || 'S3cret!')",
+                pg
+            ),
+            "rejected (********)"
         );
     }
 }

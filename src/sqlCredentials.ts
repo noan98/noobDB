@@ -240,20 +240,14 @@ class Scanner {
     if (end !== null) this.replaceTail(end);
   }
 
-  /**
-   * `CONNECTION '…'` のリテラルが伏せ対象なら、その中の秘密の値 (エラー文の置換用。空もありうる) を返す。
-   * 対象外なら null。Rust 側 `conninfo_literal_secrets` と同じ規則 (安全側):
-   * `U&'…'` / 中身に `\` がある `E'…'` / エスケープを解いた中身に "password" を含む /
-   * `redactConninfo` や `conninfoSecretValues` が値を見つける / URI で最後の `@` の前に `:` がある (パスワードに `/` `?` が素で入っても漏らさない)。
-   * `strict` (問い合わせ SQL の引数など接続文字列と限らないリテラル用) は "password" の語と opaque を見ず、値が見つかるときだけ対象にする。
-   */
-  private conninfoLiteralSecrets(lit: CredentialRange, strict: boolean): string[] | null {
+  /** リテラル (連結片をつなげたもの) のエスケープを解いた中身と、キー名を隠せる表記 (opaque) か。タグの壊れたドル引用は null。 */
+  private decodedLiteral(lit: CredentialRange): { decoded: string; opaque: boolean } | null {
     const { start: s, end: e } = lit;
     let decoded = "";
     let opaque = false;
     if (this.m[s] === "$") {
       const tagLen = this.dollarTagLen(s);
-      if (tagLen === null) return [];
+      if (tagLen === null) return null;
       const closed = e >= s + 2 * tagLen && this.m.slice(e - tagLen, e) === this.m.slice(s, s + tagLen);
       const innerEnd = closed ? e - tagLen : e;
       if (s + tagLen <= innerEnd) decoded = this.src.slice(s + tagLen, innerEnd);
@@ -278,6 +272,20 @@ class Scanner {
         i = c < 0 ? e : c + 1;
       }
     }
+    return { decoded, opaque };
+  }
+
+  /**
+   * `CONNECTION '…'` のリテラルが伏せ対象なら、その中の秘密の値 (エラー文の置換用。空もありうる) を返す。
+   * 対象外なら null。Rust 側 `conninfo_literal_secrets` と同じ規則 (安全側):
+   * `U&'…'` / 中身に `\` がある `E'…'` / エスケープを解いた中身に "password" を含む /
+   * `redactConninfo` や `conninfoSecretValues` が値を見つける / URI で最後の `@` の前に `:` がある (パスワードに `/` `?` が素で入っても漏らさない)。
+   * `strict` (問い合わせ SQL の引数など接続文字列と限らないリテラル用) は "password" の語と opaque を見ず、値が見つかるときだけ対象にする。
+   */
+  private conninfoLiteralSecrets(lit: CredentialRange, strict: boolean): string[] | null {
+    const dl = this.decodedLiteral(lit);
+    if (dl === null) return [];
+    const { decoded, opaque } = dl;
     const values = conninfoSecretValues(decoded);
     const lower = asciiLower(decoded);
     const t = trimStartLikeRust(lower);
@@ -323,6 +331,8 @@ class Scanner {
     const connect = w.startsWith("dblink_connect");
     let depth = 0;
     let commas = 0;
+    // 直前の片が `password=` や URI の `user:` で終わり値が次の片に分かれている間は、その次の片を伏せる。
+    let pending: number | null = null;
     let j = p;
     while (j < this.m.length) {
       const c = this.m[j];
@@ -330,11 +340,26 @@ class Scanner {
       else if (c === ")") {
         depth--;
         if (depth === 0) return;
-      } else if (c === "," && depth === 1) commas++;
+        if (pending !== null && depth < pending) pending = null;
+      } else if (c === "," && depth === 1) {
+        commas++;
+        pending = null;
+      }
       if ("'\"$eEuU".includes(c) && (j === 0 || !isWord(this.m[j - 1]))) {
         const lit = this.literalAt(j);
         if (lit) {
-          this.pushConninfo(lit, !connect && commas > 0);
+          if (pending !== null) {
+            pending = null;
+            const dl = this.decodedLiteral(lit);
+            if (dl) {
+              this.push(lit);
+              this.secrets.push(dl.decoded);
+            }
+          } else {
+            this.pushConninfo(lit, !connect && commas > 0);
+            const dl = this.decodedLiteral(lit);
+            if (dl && endsWithOpenSecret(dl.decoded)) pending = depth;
+          }
           j = lit.end;
           continue;
         }
@@ -443,6 +468,18 @@ class Scanner {
       i = e;
     }
   }
+}
+
+/** 接続文字列の断片が、値の手前 (`password =` / `password = '` / URI の `user:`) で終わっているか。Rust の `ends_with_open_secret` と同じ。 */
+function endsWithOpenSecret(decoded: string): boolean {
+  const t = asciiLower(decoded).trim();
+  let u = t;
+  if (u.endsWith("'") || u.endsWith('"')) u = u.slice(0, -1);
+  u = u.trimEnd();
+  if (u.endsWith("=")) return u.slice(0, -1).trimEnd().endsWith("password");
+  if (!(t.startsWith("postgresql://") || t.startsWith("postgres://")) || !t.endsWith(":")) return false;
+  const schemeAt = t.indexOf("://");
+  return !/[@/?]/.test(t.slice(schemeAt + 3));
 }
 
 /**
