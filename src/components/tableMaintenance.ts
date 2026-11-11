@@ -270,6 +270,27 @@ export interface CreateIndexOptions {
 }
 
 /**
+ * `buildCreateIndexSql` が使うインデックス名 (素の名前)。指定がなければ `idx_<表>_<列...>` を自動生成する。
+ * 実行計画 (`onlineDdl.ts`) が失敗後の INVALID 確認・後始末に使うので、SQL から逆解析せずこれを直接渡す (#2240)。
+ */
+export function createIndexName(
+  driver: string,
+  table: string,
+  columns: string[],
+  opts: CreateIndexOptions = {},
+): string {
+  const cols = columns.map((c) => c.trim()).filter((c) => c.length > 0);
+  const support = indexOptionSupport(driver, opts.method);
+  const exprs = support.expression
+    ? (opts.expressions ?? [])
+        .map((e) => normalizeIndexFragment(e).sql)
+        .filter((e): e is string => e !== null)
+    : [];
+  const rawName = opts.name?.trim() || `idx_${table}_${[...cols, ...exprs.map(exprNamePart)].join("_")}`;
+  return sanitizeIndexName(rawName);
+}
+
+/**
  * `CREATE [UNIQUE|FULLTEXT|SPATIAL] INDEX` 文を生成する (#850, #1892)。方言差は
  * `db/advisor.rs::create_index_ddl` の移植 + 拡張。インデックス名を指定しなければ
  * `idx_<table>_<col1>_<col2>...` を自動生成する。空の列名は無視する。
@@ -291,8 +312,7 @@ export function buildCreateIndexSql(
         .map((e) => normalizeIndexFragment(e).sql)
         .filter((e): e is string => e !== null)
     : [];
-  const rawName = opts.name?.trim() || `idx_${table}_${[...cols, ...exprs.map(exprNamePart)].join("_")}`;
-  const idxName = sanitizeIndexName(rawName);
+  const idxName = createIndexName(driver, table, columns, opts);
   const keyList = [...cols.map((c) => quoteIdentFor(driver, c)), ...exprs.map((e) => `(${e})`)].join(", ");
   const method = opts.method && support.methods.includes(opts.method) ? opts.method : undefined;
   const special = driver === "mysql" && (method === "fulltext" || method === "spatial");
@@ -340,16 +360,4 @@ export function buildDropIndexSql(
   if (driver === "sqlite") return `DROP INDEX ${qualifiedTableName(driver, database, indexName)};`;
   // PostgreSQL は CONCURRENTLY でテーブルへの書き込みを止めずに落とせる (トランザクション外で実行する, #2240)。
   return `DROP INDEX ${opts.concurrently ? "CONCURRENTLY " : ""}${quoteIdentFor(driver, indexName)};`;
-}
-
-/**
- * `buildCreateIndexSql` が作った文からインデックス名 (素の名前) を取り出す (#2240)。実行計画が
- * 失敗後の INVALID 確認・後始末に名前を使うため。取り出せなければ null。
- */
-export function indexNameOfCreateSql(sql: string): string | null {
-  const m =
-    /^\s*CREATE\s+(?:UNIQUE\s+|FULLTEXT\s+|SPATIAL\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:"(?:[^"]|"")+"\.)?"((?:[^"]|"")+)"/i.exec(
-      sql,
-    );
-  return m ? m[1].replace(/""/g, '"') : null;
 }

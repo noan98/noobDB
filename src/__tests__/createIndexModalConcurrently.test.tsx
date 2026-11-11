@@ -93,6 +93,19 @@ describe("CreateIndexModal CONCURRENTLY (#2240)", () => {
     expect(options.plan.steps[0].transactional).toBe(true);
   });
 
+  it("MySQL (バッククォート) でもロック待ちの上限つきの計画で実行する", async () => {
+    const onRun = open("mysql");
+    fireEvent.click(await screen.findByLabelText("a"));
+    await waitFor(() => expect(screen.getByRole("button", { name: t("createIndexRun") })).not.toBeDisabled());
+    // MySQL は既定オフなので、先にオンにする。
+    fireEvent.click(screen.getByRole("switch", { name: t("ddlLockTimeoutLabel") }));
+    fireEvent.click(screen.getByRole("button", { name: t("createIndexRun") }));
+    const [sql, options] = onRun.mock.calls[0];
+    expect(sql).toContain("`idx_t_a`");
+    expect(options.plan.lockTimeoutSecs).toBeGreaterThan(0);
+    expect(options.plan.steps[0].subject).toBe("idx_t_a");
+  });
+
   it("SQLite は従来どおり SQL だけで実行する", async () => {
     const onRun = open("sqlite");
     fireEvent.click(await screen.findByLabelText("a"));

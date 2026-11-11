@@ -4,7 +4,7 @@ import { useT } from "../i18n";
 import { api, type DriverKind, type IndexOverlap, type TableColumnInfo } from "../api/tauri";
 import {
   buildCreateIndexSql,
-  indexNameOfCreateSql,
+  createIndexName,
   indexOptionSupport,
   normalizeIndexFragment,
   type IndexMethod,
@@ -197,8 +197,12 @@ export function CreateIndexModal({
     ],
   );
   const runPlan = useMemo(() => {
-    const indexName = sql ? indexNameOfCreateSql(sql) : null;
-    if (!sql || !indexName || driver === "sqlite") return null;
+    if (!sql || driver === "sqlite") return null;
+    const indexName = createIndexName(driver, table, selected, {
+      name,
+      expressions,
+      method: method || undefined,
+    });
     return buildIndexExecutionPlan(driver, sql, {
       database,
       indexName,
@@ -206,7 +210,18 @@ export function CreateIndexModal({
       concurrently: effConcurrently,
       lockTimeoutSecs: ddlLockTimeoutSecs,
     });
-  }, [sql, driver, database, effConcurrently, ddlLockTimeoutSecs]);
+  }, [
+    sql,
+    driver,
+    database,
+    table,
+    selected,
+    name,
+    expressions,
+    method,
+    effConcurrently,
+    ddlLockTimeoutSecs,
+  ]);
   // 確認ダイアログの表示中も含め、実行を依頼してから結果が返るまで (進捗の表示は確認が済んでから)。
   const [submitting, setSubmitting] = useState(false);
   const running = submitting;

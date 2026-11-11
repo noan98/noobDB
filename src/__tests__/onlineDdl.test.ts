@@ -14,7 +14,7 @@ import {
   tempNotNullCheckName,
   withConcurrently,
 } from "../components/onlineDdl";
-import { buildCreateIndexSql, buildDropIndexSql, indexNameOfCreateSql } from "../components/tableMaintenance";
+import { buildCreateIndexSql, buildDropIndexSql, createIndexName } from "../components/tableMaintenance";
 
 function form(over: Partial<AlterTableForm>): AlterTableForm {
   return {
@@ -247,7 +247,8 @@ describe("buildIndexExecutionPlan", () => {
     expect(buildCreateIndexSql("sqlite", null, "o", ["a"], { name: "i", concurrently: true })).toBe(
       'CREATE INDEX "i" ON "o" ("a");',
     );
-    expect(indexNameOfCreateSql(sql)).toBe("idx_t");
+    expect(createIndexName("postgres", "orders", ["total"], { name: "idx_t" })).toBe("idx_t");
+    expect(createIndexName("mysql", "orders", ["a", "b"])).toBe("idx_orders_a_b");
   });
   it("CONCURRENTLY はトランザクション外で、失敗時の後始末と INVALID 確認を持つ", () => {
     const plan = buildIndexExecutionPlan("postgres", sql, {

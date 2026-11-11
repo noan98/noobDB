@@ -40,6 +40,8 @@ describe("runDdlPlan", () => {
     expect(vi.mocked(api.runQueryTransaction).mock.calls[0][1][0]).toBe("SET LOCAL lock_timeout = '5s';");
     expect(api.runQuery).toHaveBeenCalledTimes(1);
     expect(vi.mocked(api.runQuery).mock.calls[0][1]).toContain("CONCURRENTLY");
+    // トランザクション外の文は run_query_transaction の履歴記録を通らないので、履歴へ残す指定を付ける。
+    expect(vi.mocked(api.runQuery).mock.calls[0][3]).toBe(true);
     expect(progress).toEqual([0, 1, 2, 3]);
   });
 

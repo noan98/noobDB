@@ -167,9 +167,33 @@ pub async fn run_query(
     session_id: String,
     sql: String,
     database: Option<String>,
+    // true のとき、成功・失敗とも書き込み履歴 (クエリ履歴) に残す (#2240)。`run_query` は既定では履歴に
+    // 残さない (ストリーミング経路だけが残す)。CONCURRENTLY の DDL はトランザクション外で流すため
+    // `run_query_transaction` の履歴記録を通らず、この指定で残す。
+    record_history: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<QueryResult> {
-    run_query_inner(state.inner(), &session_id, &sql, database.as_deref()).await
+    let started = std::time::Instant::now();
+    let result = run_query_inner(state.inner(), &session_id, &sql, database.as_deref()).await;
+    if record_history == Some(true) {
+        if let Some(session) = state.get(&session_id).await {
+            let (affected, error) = match &result {
+                Ok(r) => (Some(r.rows_affected as i64), None),
+                Err(e) => (None, Some(e.to_string())),
+            };
+            let elapsed = started.elapsed().as_millis() as i64;
+            record_write_history(
+                &session,
+                sql,
+                database.as_deref(),
+                affected,
+                Some(elapsed),
+                error,
+            )
+            .await;
+        }
+    }
+    result
 }
 
 /// Core of [`run_query`] decoupled from Tauri's `State` wrapper so integration

@@ -15,7 +15,12 @@ import {
  * 確認ダイアログ (`confirm_writes` / 本番の確認) は呼び出し側が実行前に済ませる。
  */
 export interface DdlRunnerApi {
-  runQuery: (sessionId: string, sql: string, database?: string | null) => Promise<QueryResult>;
+  runQuery: (
+    sessionId: string,
+    sql: string,
+    database?: string | null,
+    recordHistory?: boolean,
+  ) => Promise<QueryResult>;
   runQueryTransaction: (
     sessionId: string,
     statements: string[],
@@ -89,7 +94,7 @@ export async function runDdlPlan(
         await api.runQueryTransaction(sessionId, stepStatementsToSend(plan, step), plan.database);
       } else {
         // CONCURRENTLY はトランザクション内では実行できない。1 文ずつ単独で流す。
-        for (const sql of step.statements) await api.runQuery(sessionId, sql, plan.database);
+        for (const sql of step.statements) await api.runQuery(sessionId, sql, plan.database, true);
       }
     } catch (e) {
       const error = messageOf(e);
