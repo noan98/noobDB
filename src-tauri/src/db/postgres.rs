@@ -5705,31 +5705,46 @@ impl PostgresConn {
         let mut links: Vec<ReplicationLink> = Vec::new();
         {
             if in_recovery {
-                // 受信側。遅延は「最後に反映したトランザクションからの経過」だが、受信済み WAL を
-                // すべて反映済みなら 0 とする (静かなプライマリで遅れて見えないように)。
-                // 権限が無くても読める関数だけなので、遅延は privileged に関わらず返す。
-                let lag: Option<f64> = sqlx::query_scalar(
-                    "SELECT (CASE WHEN pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn() THEN 0 \
-                                  ELSE EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp())) END)::float8",
-                )
-                .fetch_one(&self.pool)
-                .await
-                .unwrap_or(None);
-                // pg_stat_wal_receiver は権限が無いと見えない。sender_host / sender_port は
-                // PostgreSQL 11+ で、PostgreSQL 10 では列が無く取れずに縮退する (接続元は不明のまま)。
-                let receiver = if privileged {
+                // 受信側。pg_stat_wal_receiver は権限が無いと見えない。sender_host / sender_port は
+                // PostgreSQL 11+ なので、to_jsonb 経由で読み、列が無い版 (10) でも失敗せず NULL にする。
+                // クエリの失敗 (一時エラーなど) は「行なし」と区別し、判定不能 (`Unknown`) として扱う。
+                let receiver_row = if privileged {
                     sqlx::query(
-                        "SELECT status::text, sender_host::text, sender_port::int4 \
-                         FROM pg_catalog.pg_stat_wal_receiver LIMIT 1",
+                        "SELECT status::text, to_jsonb(r) ->> 'sender_host', \
+                                (to_jsonb(r) ->> 'sender_port')::int4 \
+                         FROM pg_catalog.pg_stat_wal_receiver r LIMIT 1",
                     )
                     .fetch_optional(&self.pool)
                     .await
                     .ok()
-                    .flatten()
                 } else {
                     None
                 };
-                let (state, host, port) = match &receiver {
+                let receiver = match &receiver_row {
+                    None => WalReceiver::Unknown,
+                    Some(None) => WalReceiver::Absent,
+                    Some(Some(r)) => match r.try_get::<Option<String>, _>(0).ok().flatten() {
+                        Some(st) => WalReceiver::Running(st),
+                        None => WalReceiver::Unknown,
+                    },
+                };
+                let receiver_row = receiver_row.flatten();
+                // 遅延は「最後に反映したトランザクションからの経過」。受信済み WAL をすべて反映済みなら
+                // 0 とする (静かなプライマリで遅れて見えないように) が、これは walreceiver が生きている
+                // (streaming) か、権限が無く判定できないときに限る。受信が止まっているのに 0 と見せると、
+                // プライマリの書き込みが進んでも正常に見える偽陰性になる (#2244)。
+                // 権限が無くても読める関数だけなので、遅延は privileged に関わらず返す。
+                let lag_sql = if receiver_lag_may_be_zero(&receiver) {
+                    "SELECT (CASE WHEN pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn() THEN 0 \
+                                  ELSE EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp())) END)::float8"
+                } else {
+                    "SELECT EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp()))::float8"
+                };
+                let lag: Option<f64> = sqlx::query_scalar(lag_sql)
+                    .fetch_one(&self.pool)
+                    .await
+                    .unwrap_or(None);
+                let (state, host, port) = match &receiver_row {
                     Some(r) => (
                         r.try_get::<Option<String>, _>(0).ok().flatten(),
                         r.try_get::<Option<String>, _>(1).ok().flatten(),
@@ -5746,14 +5761,14 @@ impl PostgresConn {
                     name: address.clone().unwrap_or_else(|| "primary".into()),
                     address,
                     state: state.or_else(|| {
-                        (privileged && receiver.is_none()).then(|| "no_receiver".into())
+                        (receiver == WalReceiver::Absent).then(|| "no_receiver".into())
                     }),
                     sync_state: None,
                     lag_secs: lag.map(|v| v.max(0.0)),
                     write_lag_secs: None,
                     flush_lag_secs: None,
                     lag_bytes: None,
-                    io_running: None,
+                    io_running: wal_receiver_io_running(&receiver),
                     sql_running: None,
                     last_error: None,
                 });
@@ -6504,4 +6519,77 @@ pub struct PgViewExtras {
     pub options: std::collections::HashMap<String, Vec<String>>,
     /// マテビュー名 -> 索引の `CREATE INDEX` 文。
     pub indexes: std::collections::HashMap<String, Vec<String>>,
+}
+
+/// `pg_stat_wal_receiver` の読み取り結果 (#2244)。クエリの失敗・権限不足は「行なし」と区別する。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum WalReceiver {
+    /// 権限が無い・クエリが失敗した・状態が NULL で、判定できない。
+    Unknown,
+    /// 行が無い (walreceiver が動いていない)。
+    Absent,
+    /// 行がある。`status` の値 (`streaming` / `catchup` / `stopping` など)。
+    Running(String),
+}
+
+/// 受信済み LSN = 反映済み LSN のときに遅延を 0 とみなしてよいか (#2244)。
+/// `pg_last_wal_receive_lsn()` は walreceiver が止まった後も最後の位置を返し続けるので、受信が
+/// 止まっている (行なし・`stopping`・`waiting`) ときは 0 とみなさない。判定不能と、再接続中の
+/// 途中の状態 (`starting` / `startup` / `catchup` / `restarting`) は従来の式のまま (一瞬巨大な遅延を出さない)。
+fn receiver_lag_may_be_zero(r: &WalReceiver) -> bool {
+    !wal_receiver_stopped(r)
+}
+
+fn wal_receiver_stopped(r: &WalReceiver) -> bool {
+    match r {
+        WalReceiver::Absent => true,
+        WalReceiver::Running(s) => s == "stopping" || s == "waiting",
+        WalReceiver::Unknown => false,
+    }
+}
+
+/// 受信側の `io_running` (#2244)。`streaming` なら true、行なし・`stopping`・`waiting` なら false。
+/// 判定不能と途中の状態は `None`。
+fn wal_receiver_io_running(r: &WalReceiver) -> Option<bool> {
+    match r {
+        WalReceiver::Running(s) if s == "streaming" => Some(true),
+        _ if wal_receiver_stopped(r) => Some(false),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod wal_receiver_tests {
+    use super::{receiver_lag_may_be_zero, wal_receiver_io_running, WalReceiver};
+
+    fn running(s: &str) -> WalReceiver {
+        WalReceiver::Running(s.into())
+    }
+
+    #[test]
+    fn lag_zero_unless_receiver_stopped() {
+        assert!(receiver_lag_may_be_zero(&running("streaming")));
+        // 判定不能 (権限不足・クエリ失敗) と再接続中の途中の状態は従来どおり。
+        assert!(receiver_lag_may_be_zero(&WalReceiver::Unknown));
+        for s in ["starting", "startup", "catchup", "restarting"] {
+            assert!(receiver_lag_may_be_zero(&running(s)), "{s}");
+        }
+        // 受信が止まっている・行が無いときは 0 とみなさない。
+        assert!(!receiver_lag_may_be_zero(&WalReceiver::Absent));
+        assert!(!receiver_lag_may_be_zero(&running("stopping")));
+        assert!(!receiver_lag_may_be_zero(&running("waiting")));
+    }
+
+    #[test]
+    fn io_running_follows_receiver_status() {
+        assert_eq!(wal_receiver_io_running(&running("streaming")), Some(true));
+        assert_eq!(wal_receiver_io_running(&WalReceiver::Absent), Some(false));
+        assert_eq!(wal_receiver_io_running(&running("stopping")), Some(false));
+        assert_eq!(wal_receiver_io_running(&running("waiting")), Some(false));
+        for s in ["catchup", "startup", "starting", "restarting"] {
+            assert_eq!(wal_receiver_io_running(&running(s)), None, "{s}");
+        }
+        // クエリ失敗・権限不足は「受信停止」と誤判定しない。
+        assert_eq!(wal_receiver_io_running(&WalReceiver::Unknown), None);
+    }
 }

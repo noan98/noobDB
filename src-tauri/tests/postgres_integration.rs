@@ -965,6 +965,85 @@ async fn postgres_replication_status_streaming_standby_and_cascade() {
         "{st:?}"
     );
 
+    // 異常系 (#2244): cascade の walreceiver を止める。`primary_conninfo` を到達できない値へ変えて
+    // reload すると (PostgreSQL 13+)、walreceiver は再起動して接続に失敗し続ける。受信が止まったら、
+    // 受信済み WAL を反映し終えていても io_running = Some(false) になり、遅延も 0 のままにならない。
+    // 他のテストは cascade を使わないので、同じテストの末尾で順番に行い、必ず元へ戻す。
+    let original = cascade
+        .execute("SELECT current_setting('primary_conninfo')", None)
+        .await
+        .expect("read primary_conninfo");
+    let original = match &original.rows[0][0] {
+        t::Value::String(s) => s.clone(),
+        other => panic!("unexpected primary_conninfo value: {other:?}"),
+    };
+    let broken = "host=127.0.0.1 port=1 user=postgres connect_timeout=2";
+    // 前回の実行が壊れた値のまま終わっていたら、それを「元の値」として上書きしない (まだ何も変えていない)。
+    assert!(
+        !original.contains("port=1 "),
+        "cascade primary_conninfo is already broken (left over from an earlier run); fix it first: {original}"
+    );
+    // 以降は、元へ戻すまで panic しない (エラーは値として持ち回り、戻したあとで assert する)。
+    let set_conninfo = |v: String| {
+        let cascade = &cascade;
+        async move {
+            let v = v.replace('\'', "''");
+            cascade
+                .execute(&format!("ALTER SYSTEM SET primary_conninfo = '{v}'"), None)
+                .await
+                .map_err(|e| format!("alter system: {e:?}"))?;
+            cascade
+                .execute("SELECT pg_reload_conf()", None)
+                .await
+                .map_err(|e| format!("reload: {e:?}"))?;
+            Ok::<(), String>(())
+        }
+    };
+    let poll_upstream = |want: bool| {
+        let cascade = &cascade;
+        async move {
+            for _ in 0..60 {
+                // 一時的なエラーは握って次の周回で再試行する。
+                if let Ok(st) = cascade.replication_status().await {
+                    if let Some(l) = st
+                        .links
+                        .iter()
+                        .find(|l| l.direction == t::ReplicationDirection::Upstream)
+                    {
+                        if l.io_running == Some(want) {
+                            return Some(l.clone());
+                        }
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+            None
+        }
+    };
+    let broke = set_conninfo(broken.to_string()).await;
+    let stopped = if broke.is_ok() {
+        poll_upstream(false).await
+    } else {
+        None
+    };
+    // 結果に関わらず、assert の前に必ず元の値へ戻す。
+    let restored = set_conninfo(original).await;
+    let resumed = if restored.is_ok() {
+        poll_upstream(true).await
+    } else {
+        None
+    };
+    broke.expect("break primary_conninfo");
+    restored.expect("restore primary_conninfo");
+    let stopped = stopped.expect("stopped walreceiver must report io_running = Some(false)");
+    assert_ne!(
+        stopped.lag_secs,
+        Some(0.0),
+        "lag must not be 0 while the receiver is down: {stopped:?}"
+    );
+    let resumed = resumed.expect("restored walreceiver must report io_running = Some(true)");
+    assert_eq!(resumed.state.as_deref(), Some("streaming"), "{resumed:?}");
+
     primary.close().await;
     standby.close().await;
     cascade.close().await;

@@ -99,6 +99,16 @@ const STATE_KEY: Record<string, I18nKey> = {
   io_stopped: "replicationStateIoStopped",
   sql_stopped: "replicationStateSqlStopped",
   "io_stopped+sql_stopped": "replicationStateBothStopped",
+  // PostgreSQL (#2244)。受信側 (`pg_stat_wal_receiver`) と送信側 (`pg_stat_replication`) の状態。
+  streaming: "replicationStateStreaming",
+  catchup: "replicationStateCatchup",
+  startup: "replicationStateStartup",
+  starting: "replicationStateStarting",
+  restarting: "replicationStateRestarting",
+  waiting: "replicationStateWaiting",
+  stopping: "replicationStateStopping",
+  backup: "replicationStateBackup",
+  no_receiver: "replicationStateNoReceiver",
 };
 
 /** 遅延メーター。警告の閾値の位置にマーカーを置く (0〜目盛り上限)。 */
@@ -217,8 +227,10 @@ function LinkCard({
   link,
   flash,
   lagTrend,
+  driver,
 }: {
   link: ReplicationLink;
+  driver: DriverKind;
   flash: LinkFlash;
   /** この接続先の遅延 (秒) の推移 (#2215)。 */
   lagTrend?: readonly (number | null)[];
@@ -290,7 +302,10 @@ function LinkCard({
           </FlashTile>
         )}
         {link.io_running !== null && (
-          <StatTile label={t("replicationIoThread")} value={thread(link.io_running)} />
+          <StatTile
+            label={driver === "postgres" ? t("replicationWalReceiver") : t("replicationIoThread")}
+            value={thread(link.io_running)}
+          />
         )}
         {link.sql_running !== null && (
           <StatTile label={t("replicationSqlThread")} value={thread(link.sql_running)} />
@@ -432,6 +447,7 @@ export function ReplicationPanel({
             <LiveRow key={key} reorder>
               <LinkCard
                 link={l}
+                driver={driver}
                 lagTrend={history.linkLag[key]}
                 flash={{
                   lag: linkLive.flashToken(key, "lag"),
@@ -558,6 +574,13 @@ export function ReplicationPanel({
           {status && (
             <Flex gap="2" wrap="wrap">
               <StatTile label={t("replicationRole")} value={t(ROLE_KEY[status.role])} />
+              {summary && summary.attentionLinks > 0 && (
+                <StatTile
+                  label={t("replicationSummaryAttention")}
+                  value={summary.attentionLinks}
+                  goodWhen="down"
+                />
+              )}
               {summary && summary.maxLagSecs !== null && (
                 <StatTile
                   label={t("replicationSummaryMaxLag")}
