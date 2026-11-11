@@ -978,6 +978,12 @@ async fn postgres_replication_status_streaming_standby_and_cascade() {
         other => panic!("unexpected primary_conninfo value: {other:?}"),
     };
     let broken = "host=127.0.0.1 port=1 user=postgres connect_timeout=2";
+    // 前回の実行が壊れた値のまま終わっていたら、それを「元の値」として上書きしない (まだ何も変えていない)。
+    assert!(
+        !original.contains("port=1 "),
+        "cascade primary_conninfo is already broken (left over from an earlier run); fix it first: {original}"
+    );
+    // 以降は、元へ戻すまで panic しない (エラーは値として持ち回り、戻したあとで assert する)。
     let set_conninfo = |v: String| {
         let cascade = &cascade;
         async move {
@@ -985,43 +991,50 @@ async fn postgres_replication_status_streaming_standby_and_cascade() {
             cascade
                 .execute(&format!("ALTER SYSTEM SET primary_conninfo = '{v}'"), None)
                 .await
-                .expect("alter system");
+                .map_err(|e| format!("alter system: {e:?}"))?;
             cascade
                 .execute("SELECT pg_reload_conf()", None)
                 .await
-                .expect("reload");
+                .map_err(|e| format!("reload: {e:?}"))?;
+            Ok::<(), String>(())
         }
     };
-    let upstream_of = |st: &t::ReplicationStatus| {
-        st.links
-            .iter()
-            .find(|l| l.direction == t::ReplicationDirection::Upstream)
-            .cloned()
+    let poll_upstream = |want: bool| {
+        let cascade = &cascade;
+        async move {
+            for _ in 0..60 {
+                // 一時的なエラーは握って次の周回で再試行する。
+                if let Ok(st) = cascade.replication_status().await {
+                    if let Some(l) = st
+                        .links
+                        .iter()
+                        .find(|l| l.direction == t::ReplicationDirection::Upstream)
+                    {
+                        if l.io_running == Some(want) {
+                            return Some(l.clone());
+                        }
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+            None
+        }
     };
-    set_conninfo(broken.to_string()).await;
-    let mut stopped = None;
-    for _ in 0..60 {
-        let st = cascade.replication_status().await.expect("cascade status");
-        if let Some(l) = upstream_of(&st) {
-            if l.io_running == Some(false) {
-                stopped = Some(l);
-                break;
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    }
-    set_conninfo(original).await;
-    let mut resumed = None;
-    for _ in 0..60 {
-        let st = cascade.replication_status().await.expect("cascade status");
-        if let Some(l) = upstream_of(&st) {
-            if l.io_running == Some(true) {
-                resumed = Some(l);
-                break;
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    }
+    let broke = set_conninfo(broken.to_string()).await;
+    let stopped = if broke.is_ok() {
+        poll_upstream(false).await
+    } else {
+        None
+    };
+    // 結果に関わらず、assert の前に必ず元の値へ戻す。
+    let restored = set_conninfo(original).await;
+    let resumed = if restored.is_ok() {
+        poll_upstream(true).await
+    } else {
+        None
+    };
+    broke.expect("break primary_conninfo");
+    restored.expect("restore primary_conninfo");
     let stopped = stopped.expect("stopped walreceiver must report io_running = Some(false)");
     assert_ne!(
         stopped.lag_secs,

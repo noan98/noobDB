@@ -227,8 +227,10 @@ function LinkCard({
   link,
   flash,
   lagTrend,
+  driver,
 }: {
   link: ReplicationLink;
+  driver: DriverKind;
   flash: LinkFlash;
   /** この接続先の遅延 (秒) の推移 (#2215)。 */
   lagTrend?: readonly (number | null)[];
@@ -300,7 +302,10 @@ function LinkCard({
           </FlashTile>
         )}
         {link.io_running !== null && (
-          <StatTile label={t("replicationIoThread")} value={thread(link.io_running)} />
+          <StatTile
+            label={driver === "postgres" ? t("replicationWalReceiver") : t("replicationIoThread")}
+            value={thread(link.io_running)}
+          />
         )}
         {link.sql_running !== null && (
           <StatTile label={t("replicationSqlThread")} value={thread(link.sql_running)} />
@@ -442,6 +447,7 @@ export function ReplicationPanel({
             <LiveRow key={key} reorder>
               <LinkCard
                 link={l}
+                driver={driver}
                 lagTrend={history.linkLag[key]}
                 flash={{
                   lag: linkLive.flashToken(key, "lag"),
