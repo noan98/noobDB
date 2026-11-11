@@ -1,7 +1,18 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { configure, getConfig } from "@testing-library/react";
+import { describe, expect, it, vi, beforeEach, beforeAll, afterAll } from "vitest";
 import { chooseListboxOption, renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
 import { t } from "../i18n";
 import type { TableColumnInfo } from "../api/tauri";
+
+// CI のシャード実行では waitFor の既定 1 秒が不安定になるので、このファイルだけ待ちを延ばす。
+let prevAsyncTimeout = 1000;
+beforeAll(() => {
+  prevAsyncTimeout = getConfig().asyncUtilTimeout;
+  configure({ asyncUtilTimeout: 5000 });
+});
+afterAll(() => {
+  configure({ asyncUtilTimeout: prevAsyncTimeout });
+});
 
 /**
  * Query Builder の JOIN / 集計の描画テスト (#2242)。外部キーから表を足し、集計を付けて
@@ -124,5 +135,23 @@ describe("QueryBuilder JOIN / 集計", () => {
     const manual = await screen.findByLabelText(t("qbAddManualTable"));
     chooseListboxOption(manual, "customers");
     await waitFor(() => expect(screen.getByRole("button", { name: t("qbExecute") })).toBeDisabled());
+  });
+
+  it("結合先の条件のまま DELETE に切り替えると止まり、列を選び直すと実行できる", async () => {
+    const onExecute = vi.fn();
+    renderWithProviders(
+      <QueryBuilder sessionId="s1" driver="mysql" onExecute={onExecute} onClose={() => {}} />,
+    );
+    await addCustomersByFk();
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("qbAddCondition")) }));
+    fireEvent.change(screen.getByPlaceholderText(t("qbColumn")), { target: { value: "customers.name" } });
+    fireEvent.change(screen.getByPlaceholderText(t("qbValue")), { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: "DELETE" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: t("qbExecute") })).toBeDisabled());
+    fireEvent.change(screen.getByPlaceholderText(t("qbColumn")), { target: { value: "id" } });
+    fireEvent.change(screen.getByPlaceholderText(t("qbValue")), { target: { value: "1" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: t("qbExecute") })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: t("qbExecute") }));
+    expect(onExecute).toHaveBeenCalledWith("DELETE FROM `shop`.`orders` WHERE `id` = 1;");
   });
 });

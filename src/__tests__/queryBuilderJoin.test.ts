@@ -680,3 +680,53 @@ describe("スナップショットの後方互換", () => {
     ).toBeUndefined();
   });
 });
+
+describe("データ破壊の防止 (#2242 レビュー)", () => {
+  const base = {
+    table: "orders",
+    whereEnabled: true,
+    setPairs: [{ column: "status", value: "y" }],
+    insertPairs: [],
+    selectAll: true,
+    selectColumns: [] as string[],
+  };
+  const conds: WhereCondition[] = [
+    { column: "status", operator: "=", value: "x" },
+    { table: "customers", column: "country", operator: "=", value: "JP", connector: "AND" },
+  ];
+
+  it("基点の条件 + 結合先の条件のまま DELETE / UPDATE に切り替えるとブロックされる", () => {
+    for (const kind of ["DELETE", "UPDATE"] as const) {
+      expect(computeBuilderBlockedReason({ ...base, kind, whereConditions: conds })).toBe(
+        "qbValidationWhereForeignTable",
+      );
+    }
+    // SELECT では結合先の条件は有効。
+    expect(
+      computeBuilderBlockedReason({
+        ...base,
+        kind: "SELECT",
+        whereConditions: conds,
+        advanced: adv({ joins: [toCustomers] }),
+      }),
+    ).toBeNull();
+    // 基点の表の条件だけなら通る。
+    expect(computeBuilderBlockedReason({ ...base, kind: "DELETE", whereConditions: [conds[0]] })).toBeNull();
+  });
+
+  it("HAVING の COUNT / SUM / AVG は数値以外を止める (MIN / MAX は止めない)", () => {
+    const sel = { ...base, kind: "SELECT" as const, whereEnabled: false, whereConditions: [] };
+    const h = (agg: "COUNT" | "MIN", value: string) =>
+      computeBuilderBlockedReason({
+        ...sel,
+        advanced: adv({
+          aggColumns: [{ column: "status", agg }],
+          having: [{ column: "status", agg, operator: ">", value }],
+        }),
+        selectAll: false,
+      });
+    expect(h("COUNT", "abc")).toBe("qbValidationHavingNotNumber");
+    expect(h("COUNT", "3")).toBeNull();
+    expect(h("MIN", "abc")).toBeNull();
+  });
+});

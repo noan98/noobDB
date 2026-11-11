@@ -1027,7 +1027,7 @@ export function buildSql(
           : selectColumns.map((c) => quoteIdentFor(driver, c)).join(", ");
       const orderByClause = renderOrderByClause(
         driver,
-        orderBy.filter((o) => !o.table || o.table === table),
+        orderBy.filter((o) => !o.agg && (!o.table || o.table === table)),
       );
       const limitClause = renderLimitClause(limitEnabled, limit, offset);
       return `SELECT ${cols} FROM ${ref}${where}${orderByClause}${limitClause};`;
@@ -1107,6 +1107,14 @@ export function computeBuilderBlockedReason(input: BuilderValidationInput): I18n
     adv ? adv.joins.map((j) => j.alias) : [],
   );
   if (!table.trim()) return "qbValidationNoTable";
+  // 結合先の条件を持ったまま UPDATE / DELETE に切り替えると、その条件が黙って落ちて対象行が広がる。
+  if (
+    (kind === "UPDATE" || kind === "DELETE") &&
+    whereEnabled &&
+    input.whereConditions.some((c) => c.column && c.table && c.table !== table)
+  ) {
+    return "qbValidationWhereForeignTable";
+  }
   const model = adv ? advancedModel(table, adv, input.selectAll !== false) : null;
   // 「すべての列」を外して 1 列も選ばないと buildSql は `*` にフォールバックする。
   // 画面は「列が選ばれていません」と出しているので、意図しない全列取得を実行させない。
@@ -1123,6 +1131,18 @@ export function computeBuilderBlockedReason(input: BuilderValidationInput): I18n
     if (adv.joins.some(isJoinIncomplete)) return "qbValidationJoinOn";
     if (adv.aggColumns.some((i) => i.column === "*" && i.agg !== "COUNT")) return "qbValidationAggStar";
     if (adv.having.some((h) => h.column === "*" && h.agg !== "COUNT")) return "qbValidationAggStar";
+    // COUNT / SUM / AVG は数値なので、数値でない値は DB のエラーになる。
+    if (
+      model.having.some(
+        (h) =>
+          h.value.trim() !== "" &&
+          h.agg !== "MIN" &&
+          h.agg !== "MAX" &&
+          !/^-?\d+(\.\d+)?(e[+-]?\d+)?$/i.test(h.value.trim()),
+      )
+    ) {
+      return "qbValidationHavingNotNumber";
+    }
     if (model.having.some((h) => h.value.trim() === "")) return "qbValidationNoHavingValue";
     // 「すべての列」のまま HAVING だけあると、集計しない列が GROUP BY に入らず DB が拒否する。
     if (model.useAll && model.having.length > 0) return "qbValidationHavingSelectAll";
@@ -1608,7 +1628,10 @@ export function QueryBuilder({
   // のは「テーブル未選択」で、これは `<table>` という無意味なプレースホルダしか
   // 生成できず、挿入先として提示する価値がないため。
   // 列 0 件の SELECT は `*` にフォールバックして画面の表示と食い違うので、エディタへも入れない。
-  const insertToEditorDisabled = !table.trim() || blockedReason === "qbValidationNoSelectColumns";
+  const insertToEditorDisabled =
+    !table.trim() ||
+    blockedReason === "qbValidationNoSelectColumns" ||
+    blockedReason === "qbValidationWhereForeignTable";
   const handleInsertToEditor = useCallback(() => {
     if (!onInsertToEditor || insertToEditorDisabled) return;
     onPersist?.(captureSnapshot());
@@ -1642,6 +1665,11 @@ export function QueryBuilder({
     setSelectItems((prev) => prev.filter((i) => !i.table));
     setAggColumns((prev) => prev.filter((i) => !i.table));
     setHaving((prev) => prev.filter((i) => !i.table));
+    // 結合先を指していた条件・並べ替えも外す (基点の表名が旧別名と同じだと再び有効になるため)。
+    setWhereRows((prev) =>
+      prev.map((r) => (r.cond.table ? { ...r, cond: { ...r.cond, column: "", table: undefined } } : r)),
+    );
+    setOrderBy((prev) => prev.filter((o) => !o.table));
   };
   const updateJoin = (idx: number, patch: Partial<QbJoin>) =>
     setJoins((prev) => prev.map((j, i) => (i === idx ? { ...j, ...patch } : j)));
@@ -2500,7 +2528,8 @@ export function QueryBuilder({
                                 }
                                 options={kind === "SELECT" ? refColumns.options : columnComboOptions}
                                 onChange={(v) => {
-                                  if (kind !== "SELECT") return updateCondition(rowKey, { column: v });
+                                  if (kind !== "SELECT")
+                                    return updateCondition(rowKey, { column: v, table: undefined });
                                   const ref = parseColumnRef(v);
                                   updateCondition(rowKey, { column: ref.column, table: ref.table });
                                 }}
@@ -2731,7 +2760,7 @@ export function QueryBuilder({
                 _hover={{ color: "app.text", bg: "app.hover" }}
                 _focusVisible={{ outline: "none", borderColor: "app.accent", boxShadow: "var(--focus-ring)" }}
               />
-              <SqlPreview sql={sql} driver={driver} />
+              <SqlPreview sql={sql} driver={driver} wrap pr="10" />
             </Box>
           </chakra.section>
         </Box>

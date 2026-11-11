@@ -2101,6 +2101,9 @@ const en = {
   qbValidationNoHavingValue: "A HAVING condition needs a value — fill it in or remove the condition.",
   qbValidationHavingSelectAll:
     "HAVING needs the columns to be chosen — uncheck all columns and pick columns or aggregates.",
+  qbValidationWhereForeignTable:
+    "A WHERE condition refers to a joined table, which UPDATE / DELETE cannot use — remove the condition or switch back to SELECT.",
+  qbValidationHavingNotNumber: "COUNT / SUM / AVG compare with a number — enter a numeric value.",
   qbValidationOrderNotGrouped:
     "With aggregates, ORDER BY can only use grouped columns or aggregates (and an aggregate sort needs a grouped query).",
   qbAddAllColumns: "Add all columns",
@@ -10053,6 +10056,9 @@ const ja: Dict = {
   qbValidationNoHavingValue: "HAVING 条件には値が必要です。値を入力するか条件を削除してください。",
   qbValidationHavingSelectAll:
     "HAVING を使うには列の指定が必要です。「すべての列」を外して、列か集計を選んでください。",
+  qbValidationWhereForeignTable:
+    "WHERE に結合先の表の条件があります。UPDATE / DELETE では使えないため、条件を削除するか SELECT に戻してください。",
+  qbValidationHavingNotNumber: "COUNT / SUM / AVG の HAVING は数値で比較します。数値を入力してください。",
   qbValidationOrderNotGrouped:
     "集計があるとき、ORDER BY はグループ化した列か集計しか使えません (集計での並べ替えには集計が必要です)。",
   qbAddAllColumns: "全カラムを追加",
