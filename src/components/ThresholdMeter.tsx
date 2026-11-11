@@ -15,8 +15,8 @@ const FILL_BG: Record<ThresholdMeterTone, string> = {
   danger: "app.dangerBg",
 };
 
-/** 右端に近いマーカーのラベルは、右端を合わせて親の外へはみ出さないようにする。 */
-const LABEL_FLIP_PERCENT = 85;
+/** 右半分のマーカーのラベルは右端をマーカーにそろえる (狭い幅でも隣のラベルと重ならず、はみ出さない)。 */
+const LABEL_FLIP_PERCENT = 50;
 
 /**
  * 閾値マーカー付きの使用率メーター (#2239)。SQLite メンテナンスの空きページ率 (閾値 1 本) と、

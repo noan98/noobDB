@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
+import { act, cleanup, fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
 import { t } from "../i18n";
 
 const hasAiApiKey = vi.fn().mockResolvedValue(true);
@@ -272,5 +272,57 @@ describe("アドバイザの AI 解説 (#1468)", () => {
     unmount();
     expect(cancelStream).toHaveBeenCalledWith(streamId);
     expect(unlisten).toHaveBeenCalled();
+  });
+
+  it("ルールの絞り込み・解除をしても、行の AI 解説は消えない (#2239)", async () => {
+    analyzeSchemaHealth.mockResolvedValue({
+      driver: "mysql",
+      tables_analyzed: 2,
+      findings: [
+        {
+          rule: "unused_index",
+          severity: "low",
+          table: "orders",
+          columns: ["note"],
+          context: ["idx_note"],
+          fix_ddl: "DROP INDEX idx_note ON orders;",
+          fix_ddl_online: null,
+          statistical: true,
+          size_bytes: null,
+        },
+        {
+          rule: "missing_primary_key",
+          severity: "medium",
+          table: "other",
+          columns: [],
+          context: [],
+          fix_ddl: null,
+          fix_ddl_online: null,
+          statistical: false,
+          size_bytes: null,
+        },
+      ],
+      skipped: [],
+      table_plans: [],
+      ignored: [],
+      diff: null,
+    });
+    renderWithProviders(ui());
+    await runDiagnosis();
+    const row = screen.getAllByRole("row").find((r) => r.textContent?.includes("idx_note"));
+    if (!row) throw new Error("row not found");
+    fireEvent.click(await within(row).findByRole("button", { name: t("advisorAiButton") }));
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: result });
+      handlers?.onDone?.({} as never);
+    });
+    await screen.findByText("WHY_TEXT");
+
+    const chip = screen.getByTestId("advisor-rule-chip-unused_index");
+    fireEvent.click(chip);
+    expect(screen.getByText("WHY_TEXT")).toBeTruthy();
+    fireEvent.click(chip);
+    expect(screen.getByText("WHY_TEXT")).toBeTruthy();
   });
 });

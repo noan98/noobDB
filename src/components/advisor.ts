@@ -413,19 +413,20 @@ export function severityCounts(findings: readonly HealthFinding[]): SeverityCoun
 
 /**
  * 前回診断時点の重要度別件数 (#2239)。前回 = 「今回も続く指摘」+「解消された指摘」なので、
- * 今回の件数から新規ぶんを引き、解消ぶんを足して逆算する。差分が無い (初回の) 診断は `null`。
- * `findings` は診断直後の (添字が `diff.new_indexes` と対応する) 並びで渡す。
+ * 表示中の指摘から新規 (`isNew`) を除き、解消ぶんを足して求める。差分が無い (初回の) 診断は `null`。
+ *
+ * 母集団は本表 (`findings`、「対応しない」を除く) とそろえるので、指摘を「対応しない」にしても
+ * 今回・前回が同じだけ動き、再診断した結果と食い違わない。
+ * 限界: 前回から続く指摘の重要度が変わった (例: 採番の使用率が上がって中 → 高) ときは、前回も今回の
+ * 重要度だったものとして数える (差分は指摘の同一性しか持たないため)。この上昇は delta に出ない。
  */
 export function previousSeverityCounts(
   findings: readonly HealthFinding[],
+  isNew: ReadonlySet<HealthFinding>,
   diff: AdvisorDiff | null,
 ): SeverityCounts | null {
   if (!diff) return null;
-  const out = severityCounts(findings);
-  for (const i of diff.new_indexes) {
-    const f = findings[i];
-    if (f) out[f.severity] -= 1;
-  }
+  const out = severityCounts(findings.filter((f) => !isNew.has(f)));
   for (const f of diff.resolved) out[f.severity] += 1;
   return out;
 }
@@ -523,14 +524,18 @@ export function ruleWhyKey(rule: AdvisorRuleId): I18nKey {
   }
 }
 
-/** 採番メーターの閾値 (使用率 %)。警告 80% / 危険 95%。 */
-export const SEQUENCE_METER_WARN_PERCENT = 80;
-export const SEQUENCE_METER_DANGER_PERCENT = 95;
+/**
+ * 採番メーターの閾値マーカー (使用率 %)。バックエンド `db::advisor` の `SEQUENCE_WARN_PERCENT` (50 以上で
+ * 中) / `SEQUENCE_ERROR_PERCENT` (80 以上で高) = `sequence_severity` と同じ値。重要度バッジと食い違わない
+ * よう、メーターの色は使用率ではなく指摘の重要度から決める。
+ */
+export const SEQUENCE_METER_WARN_PERCENT = 50;
+export const SEQUENCE_METER_DANGER_PERCENT = 80;
 
-/** 使用率に応じたメーターの色調。 */
-export function sequenceMeterTone(percent: number): "accent" | "warning" | "danger" {
-  if (percent >= SEQUENCE_METER_DANGER_PERCENT) return "danger";
-  if (percent >= SEQUENCE_METER_WARN_PERCENT) return "warning";
+/** 指摘の重要度に応じたメーターの色調 (高 = danger / 中 = warning / それ以外 = accent)。 */
+export function sequenceMeterTone(severity: AdvisorSeverity): "accent" | "warning" | "danger" {
+  if (severity === "high") return "danger";
+  if (severity === "medium") return "warning";
   return "accent";
 }
 

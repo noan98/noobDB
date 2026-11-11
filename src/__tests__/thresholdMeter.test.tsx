@@ -19,8 +19,8 @@ describe("ThresholdMeter (#2239)", () => {
         percent={50}
         tone="accent"
         markers={[
+          { percent: 50, label: "50%" },
           { percent: 80, label: "80%" },
-          { percent: 95, label: "95%" },
         ]}
         ariaLabel="m"
         testIdPrefix="m"
@@ -28,7 +28,7 @@ describe("ThresholdMeter (#2239)", () => {
     );
     expect(screen.getAllByTestId("m-threshold")).toHaveLength(2);
     expect(screen.getByTestId("m-fill")).toHaveAttribute("data-tone", "accent");
-    expect(screen.getByText("80%").style.left).toBe("80%");
-    expect(screen.getByText("95%").style.right).toBe("5%");
+    expect(screen.getByText("50%").style.left).toBe("50%");
+    expect(screen.getByText("80%").style.right).toBe("20%");
   });
 });

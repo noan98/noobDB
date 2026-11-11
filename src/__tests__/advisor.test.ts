@@ -464,25 +464,34 @@ describe("要約タイル・ルール別の分布 (#2239)", () => {
     expect(severityCounts([])).toEqual({ high: 0, medium: 0, low: 0 });
   });
 
-  it("previousSeverityCounts は新規を引き解消を足して前回の件数を逆算し、初回は null", () => {
-    expect(previousSeverityCounts(fs, null)).toBeNull();
+  it("previousSeverityCounts は新規を除き解消を足して前回の件数を求め、初回は null", () => {
+    expect(previousSeverityCounts(fs, new Set(), null)).toBeNull();
     const diff = {
       previous_at: "2026-01-01T00:00:00Z",
-      new_indexes: [1, 3], // high 1 件と low 1 件が新規
+      new_indexes: [1, 3],
       resolved: [
         finding({ rule: "duplicate_index", severity: "medium" }),
         finding({ rule: "unused_index", severity: "low" }),
       ],
       unchanged: 3,
     };
-    // 今回 {2,2,1} - 新規 {1,0,1} + 解消 {0,1,1} = {1,3,1}
-    expect(previousSeverityCounts(fs, diff)).toEqual({ high: 1, medium: 3, low: 1 });
-    // 範囲外の添字は無視する
-    expect(previousSeverityCounts(fs, { ...diff, new_indexes: [99], resolved: [] })).toEqual({
-      high: 2,
-      medium: 2,
-      low: 1,
-    });
+    // 今回 {2,2,1} - 新規 (high 1, low 1) + 解消 (medium 1, low 1) = {1,3,1}
+    expect(previousSeverityCounts(fs, new Set([fs[1], fs[3]]), diff)).toEqual({ high: 1, medium: 3, low: 1 });
+  });
+
+  it("「対応しない」で続く指摘が本表から消えても、今回・前回が同じだけ動き delta は変わらない", () => {
+    const diff = { previous_at: "x", new_indexes: [], resolved: [], unchanged: 5 };
+    const before = severityDeltas(severityCounts(fs), previousSeverityCounts(fs, new Set(), diff));
+    const rest = fs.filter((f) => f.table !== "b");
+    const after = severityDeltas(severityCounts(rest), previousSeverityCounts(rest, new Set(), diff));
+    expect(after).toEqual(before);
+  });
+
+  it("限界: 続く指摘の重要度が上がっても delta には出ない", () => {
+    const cur = [finding({ rule: "sequence_exhaustion", severity: "high", table: "x" })];
+    const diff = { previous_at: "x", new_indexes: [], resolved: [], unchanged: 1 };
+    const d = severityDeltas(severityCounts(cur), previousSeverityCounts(cur, new Set(), diff));
+    expect(d).toEqual({ high: 0, medium: 0, low: 0 });
   });
 
   it("severityDeltas は前回が無ければ null、あれば今回 − 前回", () => {
@@ -543,12 +552,10 @@ describe("要約タイル・ルール別の分布 (#2239)", () => {
     expect(ruleWhyKey("something_new" as AdvisorRuleId)).toBe("advisorRuleUnknownWhy");
   });
 
-  it("sequenceMeterTone は 80% / 95% ちょうどで切り替わる", () => {
-    expect(sequenceMeterTone(79.9)).toBe("accent");
-    expect(sequenceMeterTone(80)).toBe("warning");
-    expect(sequenceMeterTone(94.9)).toBe("warning");
-    expect(sequenceMeterTone(95)).toBe("danger");
-    expect(sequenceMeterTone(100)).toBe("danger");
+  it("sequenceMeterTone は重要度から決める (バッジと食い違わない)", () => {
+    expect(sequenceMeterTone("high")).toBe("danger");
+    expect(sequenceMeterTone("medium")).toBe("warning");
+    expect(sequenceMeterTone("low")).toBe("accent");
   });
 
   it("sequenceUsage は採番枯渇の context から使用量を読み、それ以外は null", () => {

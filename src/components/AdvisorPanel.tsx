@@ -36,7 +36,6 @@ import {
   toggleRuleFilter,
   type AdvisorSort,
   type AdvisorSortKey,
-  type SeverityCounts,
 } from "./advisor";
 import { CountUp } from "./CountUp";
 import { StatTile } from "./StatTile";
@@ -146,8 +145,6 @@ export function AdvisorPanel({
   // 前回診断で無かった指摘 (参照の集合)。「対応しない」への移動で添字がずれないよう、取得時に参照へ直す。
   const [newFindings, setNewFindings] = useState<Set<HealthFinding>>(() => new Set());
   const [showIgnored, setShowIgnored] = useState(false);
-  // 診断直後に逆算した「前回診断時点の重要度別件数」(要約タイルのデルタ用)。初回診断は null。
-  const [previousCounts, setPreviousCounts] = useState<SeverityCounts | null>(null);
   // ルール別ストリップで絞り込み中のルール (#2239)。null = 全件。
   const [ruleFilter, setRuleFilter] = useState<AdvisorRuleId | null>(null);
 
@@ -158,7 +155,6 @@ export function AdvisorPanel({
       const r = await api.analyzeSchemaHealth(sessionId, database);
       setReport(r);
       setNewFindings(newFindingSet(r.findings, r.diff));
-      setPreviousCounts(previousSeverityCounts(r.findings, r.diff));
       setRuleFilter(null);
     } catch (e) {
       // 失敗した再実行の下に前回の診断結果が残ると、古い指摘が現在の結果として
@@ -206,6 +202,11 @@ export function AdvisorPanel({
 
   // 要約タイルとストリップは絞り込み前の全件 (本表の絞り込みで数字が動かないように) を数える。
   const counts = useMemo(() => severityCounts(report?.findings ?? []), [report]);
+  // 前回の件数は表示中の指摘から導く (「対応しない」で今回だけ減って delta が嘘にならないように)。
+  const previousCounts = useMemo(
+    () => (report ? previousSeverityCounts(report.findings, newFindings, report.diff) : null),
+    [report, newFindings],
+  );
   const deltas = useMemo(() => severityDeltas(counts, previousCounts), [counts, previousCounts]);
   const rules = useMemo(() => ruleCounts(report?.findings ?? []), [report]);
   const activeRule = effectiveRuleFilter(ruleFilter, rules);
@@ -574,8 +575,7 @@ export function AdvisorPanel({
                   {sortableTh("size", t("advisorColSize"))}
                 </chakra.tr>
               </chakra.thead>
-              {/* 絞り込みの切り替えで作り直し、行の入場 (スタッガー) をもう一度見せる。 */}
-              <RevealTbody key={activeRule ?? "all"}>
+              <RevealTbody>
                 {findings.map((f, i) => {
                   const desc = findingDescription(f);
                   return (
@@ -814,7 +814,7 @@ function SequenceMeter({ finding }: { finding: HealthFinding }) {
     <Box marginTop="2" maxW="320px" data-testid="advisor-sequence-meter">
       <ThresholdMeter
         percent={usage.percent}
-        tone={sequenceMeterTone(usage.percent)}
+        tone={sequenceMeterTone(finding.severity)}
         markers={[
           { percent: SEQUENCE_METER_WARN_PERCENT, label: `${SEQUENCE_METER_WARN_PERCENT}%` },
           { percent: SEQUENCE_METER_DANGER_PERCENT, label: `${SEQUENCE_METER_DANGER_PERCENT}%` },

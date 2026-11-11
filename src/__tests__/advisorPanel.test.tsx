@@ -14,11 +14,15 @@ vi.mock("../api/tauri", async (importOriginal) => {
     api: {
       ...actual.api,
       analyzeSchemaHealth: vi.fn(),
+      writeTextFile: vi.fn(),
       ignoreAdvisorFinding: vi.fn(),
       unignoreAdvisorFinding: vi.fn(),
     },
   };
 });
+
+const dialog = vi.hoisted(() => ({ save: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save: dialog.save }));
 
 import { AdvisorPanel } from "../components/AdvisorPanel";
 import { api } from "../api/tauri";
@@ -531,9 +535,11 @@ describe("AdvisorPanel 要約タイルとルール別ストリップ (#2239)", (
     await runPanel(report());
     const meter = within(screen.getByTestId("advisor-sequence-meter")).getByRole("meter");
     expect(meter).toHaveAttribute("aria-valuenow", "98");
+    // 色は同じ行の重要度 (high) に合わせる。
+    expect(screen.getByTestId("advisor-sequence-meter").querySelector('[data-tone="danger"]')).not.toBeNull();
     expect(meter).toHaveAttribute("aria-valuemin", "0");
     expect(meter).toHaveAttribute("aria-valuemax", "100");
-    expect(within(screen.getByTestId("advisor-sequence-meter")).getAllByText(/^(80|95)%$/)).toHaveLength(2);
+    expect(within(screen.getByTestId("advisor-sequence-meter")).getAllByText(/^(50|80)%$/)).toHaveLength(2);
     // 他のルールの行にはメーターを出さない。
     expect(screen.getAllByTestId("advisor-sequence-meter")).toHaveLength(1);
   });
@@ -545,5 +551,22 @@ describe("AdvisorPanel 要約タイルとルール別ストリップ (#2239)", (
     expect(note.textContent).toContain(
       t("advisorFilterActive", { rule: t("advisorRuleMissingPrimaryKeyTitle"), shown: "2", total: "4" }),
     );
+  });
+
+  it("絞り込み中の書き出しは絞り込み後の行だけになり、ファイル名にルール ID が付く", async () => {
+    await runPanel(report());
+    fireEvent.click(screen.getByTestId("advisor-rule-chip-missing_primary_key"));
+    await waitFor(() => expect(screen.getByTestId("advisor-filter-note")).toBeInTheDocument());
+    dialog.save.mockResolvedValueOnce("/tmp/out.csv");
+    fireEvent.click(screen.getByRole("button", { name: t("textExportButton") }));
+    fireEvent.click(await screen.findByText(t("textExportSaveAs", { format: "CSV" })));
+    await waitFor(() => expect(api.writeTextFile).toHaveBeenCalledTimes(1));
+    const [, text] = vi.mocked(api.writeTextFile).mock.calls[0];
+    expect(text).toContain("t_pk1");
+    expect(text).toContain("t_pk2");
+    expect(text).not.toContain("t_fk");
+    expect(text).not.toContain("t_seq");
+    const opts = dialog.save.mock.calls[0][0] as { defaultPath: string };
+    expect(opts.defaultPath).toContain("schema-health-testdb-missing_primary_key.csv");
   });
 });
