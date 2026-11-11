@@ -1,7 +1,18 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { configure, getConfig } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from "vitest";
 import { chooseListboxOption, renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
 import { t } from "../i18n";
 import type { TableColumnInfo } from "../api/tauri";
+
+// CI のシャード実行では waitFor の既定 1 秒が不安定になるので、このファイルだけ待ちを延ばす。
+let prevAsyncTimeout = 1000;
+beforeAll(() => {
+  prevAsyncTimeout = getConfig().asyncUtilTimeout;
+  configure({ asyncUtilTimeout: 5000 });
+});
+afterAll(() => {
+  configure({ asyncUtilTimeout: prevAsyncTimeout });
+});
 
 /**
  * Query Builder のフォーム改修 (改善 1〜3) の描画テスト。

@@ -45,6 +45,8 @@ interface Props {
    * App for table tabs whose `pendingEdits` map is non-empty.
    */
   pendingEditsSummary?: { cells: number; rows: number };
+  /** 適用で実際に送る文の内訳 (「UPDATE 3 / DELETE 2」)。変更セット (#2235) では行操作も一緒に適用される。 */
+  applyStatements?: string;
   onApplyEdits?: () => void;
   onDiscardEdits?: () => void;
   /** True while the Apply transaction is in flight — shows an inline spinner. */
@@ -164,6 +166,7 @@ export function PreviewGrid({
   streaming,
   onStop,
   pendingEditsSummary,
+  applyStatements,
   onApplyEdits,
   onDiscardEdits,
   applyingEdits,
@@ -295,7 +298,14 @@ export function PreviewGrid({
               })}
             </chakra.span>
             {onApplyEdits && (
-              <Tooltip label={t("editApplyButtonTitle")} focusableWrapper={streaming || applyingEdits}>
+              <Tooltip
+                label={
+                  applyStatements
+                    ? t("changeSetApplyTitle", { statements: applyStatements })
+                    : t("editApplyButtonTitle")
+                }
+                focusableWrapper={streaming || applyingEdits}
+              >
                 <LoadingButton
                   variant="success"
                   size="sm"
@@ -309,7 +319,7 @@ export function PreviewGrid({
               </Tooltip>
             )}
             {onDiscardEdits && (
-              <Tooltip label={t("editCancelButtonTitle")}>
+              <Tooltip label={t("changeSetDiscardTitle")}>
                 <Button variant="secondary" size="sm" px="2.5" onClick={onDiscardEdits}>
                   <Icon name="close" size={ICON_SIZES.md} /> {t("editCancelButton")}
                 </Button>
