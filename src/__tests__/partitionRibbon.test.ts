@@ -83,6 +83,31 @@ describe("buildRibbon: RANGE", () => {
     expect(r.segments.map((s) => s.gapBefore)).toEqual([false, true]);
   });
 
+  it("名前順と境界順が食い違う PostgreSQL の RANGE でも、境界順に並べて偽の隙間を出さない", () => {
+    const r = buildRibbon(
+      "postgres",
+      info("RANGE", "n", [
+        part("p_1", "FOR VALUES FROM ('1') TO ('2')"),
+        part("p_10", "FOR VALUES FROM ('10') TO ('11')"),
+        part("p_2", "FOR VALUES FROM ('2') TO ('3')"),
+      ]),
+      ["int"],
+    );
+    expect(r.segments.map((s) => s.name)).toEqual(["p_1", "p_2", "p_10"]);
+    expect(r.segments.map((s) => s.gapBefore)).toEqual([false, false, true]);
+    const r2 = buildRibbon(
+      "postgres",
+      info("RANGE", "n", [
+        part("p_1", "FOR VALUES FROM ('1') TO ('2')"),
+        part("p_10", "FOR VALUES FROM ('3') TO ('4')"),
+        part("p_2", "FOR VALUES FROM ('2') TO ('3')"),
+      ]),
+      ["int"],
+    );
+    expect(r2.segments.map((s) => s.name)).toEqual(["p_1", "p_2", "p_10"]);
+    expect(r2.segments.some((s) => s.gapBefore)).toBe(false);
+  });
+
   it("キーの型が分からないと隙間は判定しない", () => {
     const r = buildRibbon("postgres", info("RANGE", "d", [pgRange("p1", "a", "b"), pgRange("p3", "c", "d")]));
     expect(r.segments.map((s) => s.gapBefore)).toEqual([false, false]);
@@ -196,6 +221,18 @@ describe("partitionShares", () => {
       rowHot: false,
     });
     expect(m.get(partitionId(ps[1] as TablePartition))?.sizeHot).toBe(false);
+  });
+
+  it("先に空で作ったパーティションが多くても、過去分すべてを偏りにしない", () => {
+    const ps = [
+      ...Array.from({ length: 12 }, (_, i) => part(`e${i}`, "", { size_bytes: 0, row_estimate: 0 })),
+      part("a", "", { size_bytes: 100, row_estimate: 10 }),
+      part("b", "", { size_bytes: 100, row_estimate: 10 }),
+      part("c", "", { size_bytes: 100, row_estimate: 10 }),
+    ];
+    const m = partitionShares(ps);
+    expect(ps.some((p) => m.get(partitionId(p))?.sizeHot || m.get(partitionId(p))?.rowHot)).toBe(false);
+    expect(m.get(partitionId(ps[0] as TablePartition))?.sizeShare).toBe(0);
   });
 
   it("2 件以下・合計 0・不明は偏りにしない", () => {

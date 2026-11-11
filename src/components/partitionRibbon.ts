@@ -97,9 +97,11 @@ export interface PartitionShare {
 }
 
 function shareOf(values: readonly (number | null)[], v: number | null) {
-  const known = values.filter((x): x is number => x !== null);
+  // 平均と件数は 0 より大きい値だけで数える (空のパーティションを先に作る構成で、他すべてが偏りにならないように)。
+  const known = values.filter((x): x is number => x !== null && x > 0);
   const total = known.reduce((a, b) => a + b, 0);
   if (v === null || total <= 0 || known.length === 0) return { share: null, ratio: null, hot: false };
+  if (v <= 0) return { share: 0, ratio: 0, hot: false };
   const share = v / total;
   const ratio = share * known.length;
   return { share, ratio, hot: known.length >= HOT_MIN_COUNT && ratio >= HOT_FACTOR };
@@ -213,7 +215,7 @@ export function buildRibbon(
     return d;
   });
   const rank = (k: SegmentKind) => (k === "default" ? 2 : k === "maxvalue" ? 1 : 0);
-  const ordered = kind === "range" ? [...drafts].sort((a, b) => rank(a.kind) - rank(b.kind)) : drafts;
+  const ordered = kind === "range" ? orderRange(drafts, rank, keyKinds) : drafts;
 
   const sizes = top.map((p) => p.size_bytes);
   const segments: RibbonSegment[] = [];
@@ -257,6 +259,28 @@ export function buildRibbon(
 
   if (kind === "hash") return { kind, segments: withHashSlots(segments, top) };
   return { kind, segments };
+}
+
+/**
+ * RANGE の並び: 有限の範囲 → MAXVALUE → DEFAULT。有限の範囲は上限の境界順に安定ソートする
+ * (PostgreSQL の一覧は名前順なので `p2026_10` が `p2026_2` の前に来る)。1 組でも比べられなければ入力順のまま。
+ */
+function orderRange(
+  drafts: Draft[],
+  rank: (k: SegmentKind) => number,
+  keyKinds?: readonly KeyKind[],
+): Draft[] {
+  const byRank = [...drafts].sort((a, b) => rank(a.kind) - rank(b.kind));
+  const finite = byRank.filter((d) => d.kind === "range" && d.to !== null);
+  if (finite.length !== byRank.filter((d) => d.kind === "range").length) return byRank;
+  for (let i = 0; i < finite.length; i++) {
+    for (let j = i + 1; j < finite.length; j++) {
+      if (compareBoundTuple(finite[i]?.to ?? [], finite[j]?.to ?? [], keyKinds) === null) return byRank;
+    }
+  }
+  const sorted = [...finite].sort((a, b) => compareBoundTuple(a.to ?? [], b.to ?? [], keyKinds) ?? 0);
+  let k = 0;
+  return byRank.map((d) => (d.kind === "range" ? (sorted[k++] as Draft) : d));
 }
 
 /** PostgreSQL の HASH で MODULUS が揃っていれば、剰余 0..MODULUS-1 のスロットに並べ直し、未使用の剰余を空きスロットにする。 */

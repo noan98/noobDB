@@ -65,7 +65,7 @@ export function PartitionRibbon({
         : null;
 
   const describe = (seg: RibbonSegment): string => {
-    const parts = [seg.name || t("partitionRibbonEmptySlot"), seg.label];
+    const parts = [seg.name || t("partitionRibbonEmptySlot"), seg.label].filter((x) => x !== "");
     if (seg.sizeBytes !== null) parts.push(formatBytes(seg.sizeBytes));
     if (seg.rows !== null) parts.push(`${formatRowCount(seg.rows)} ${t("structurePartitionRows")}`);
     if (seg.sizeShare !== null)
@@ -162,15 +162,17 @@ export function PartitionRibbon({
     if (ghost && ghost.index === i) children.push(...ghostEls);
     if (seg.gapBefore) {
       children.push(
-        <chakra.span
-          key={`gap:${seg.id}`}
-          className="pr-gap"
-          role="listitem"
-          aria-label={t("partitionRibbonGapAria")}
-          data-testid="partition-ribbon-gap"
-        >
-          <Icon name="warning" size={ICON_SIZES.sm} />
-        </chakra.span>,
+        <Tooltip key={`gap:${seg.id}`} label={t("partitionRibbonGapAria")}>
+          <chakra.span
+            tabIndex={0}
+            className="pr-gap"
+            role="listitem"
+            aria-label={t("partitionRibbonGapAria")}
+            data-testid="partition-ribbon-gap"
+          >
+            <Icon name="warning" size={ICON_SIZES.sm} />
+          </chakra.span>
+        </Tooltip>,
       );
     }
     if (ghost?.replaces !== seg.id) children.push(segmentEl(seg));

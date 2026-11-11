@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, VisuallyHidden, type SystemStyleObject } from "@chakra-ui/react";
 
 import {
@@ -190,12 +190,9 @@ function ShareBar({ share, hot, ratio }: { share: number | null; hot: boolean; r
     <Flex align="center" gap="1" justify="flex-end" data-testid="partition-share-bar">
       {hot && (
         <Tooltip label={t("partitionBarHot", { factor: HOT_FACTOR })}>
-          <chakra.span
-            color="app.textWarning"
-            textStyle="caption"
-            aria-label={t("partitionBarHot", { factor: HOT_FACTOR })}
-          >
-            ▲{ratio !== null ? ` ${ratio.toFixed(1)}x` : ""}
+          <chakra.span color="app.textWarning" textStyle="caption">
+            <VisuallyHidden>{t("partitionBarHot", { factor: HOT_FACTOR })}</VisuallyHidden>
+            <span aria-hidden="true">▲{ratio !== null ? ` ${ratio.toFixed(1)}x` : ""}</span>
           </chakra.span>
         </Tooltip>
       )}
@@ -462,15 +459,21 @@ export function TableStructurePanel({
     !!onAddPartitions &&
     (driver === "postgres" || (driver === "mysql" && !partitions.sub_method)) &&
     isMultiColumnList(partitions);
-  const addKeyKinds = partitions ? rangeKeyKinds(driver, partitions, columns) : undefined;
-
-  const ribbon =
-    partitions && partitions.partitions.length > 0 && partitions.method !== ""
-      ? buildRibbon(driver, partitions, addKeyKinds)
-      : null;
-  const shares: Map<string, PartitionShare> = partitions
-    ? partitionShares(partitions.partitions)
-    : new Map<string, PartitionShare>();
+  const addKeyKinds = useMemo(
+    () => (partitions ? rangeKeyKinds(driver, partitions, columns) : undefined),
+    [driver, partitions, columns],
+  );
+  const ribbon = useMemo(
+    () =>
+      partitions && partitions.partitions.length > 0 && partitions.method !== ""
+        ? buildRibbon(driver, partitions, addKeyKinds)
+        : null,
+    [driver, partitions, addKeyKinds],
+  );
+  const shares = useMemo(
+    () => (partitions ? partitionShares(partitions.partitions) : new Map<string, PartitionShare>()),
+    [partitions],
+  );
 
   const partitionSummary = (info: TablePartitions) =>
     t("structurePartitionedBy", {
@@ -935,63 +938,67 @@ export function TableStructurePanel({
                             </chakra.td>
                           )}
                         </chakra.tr>
-                        {partitions.partitions.map((p) => (
-                          <chakra.tr
-                            key={partitionId(p)}
-                            className="pr-row"
-                            data-active={activePartition === partitionId(p)}
-                            onMouseEnter={() => setActivePartition(partitionId(p))}
-                            onMouseLeave={() => setActivePartition(null)}
-                            onFocus={() => setActivePartition(partitionId(p))}
-                            onBlur={() => setActivePartition(null)}
-                          >
-                            <chakra.td
-                              css={tdCss}
-                              fontFamily="var(--font-mono)"
-                              paddingLeft={`calc(var(--space-2) + ${p.depth} * var(--space-4))`}
+                        {partitions.partitions.map((p) => {
+                          const pid = partitionId(p);
+                          const sh = shares.get(pid);
+                          return (
+                            <chakra.tr
+                              key={pid}
+                              className="pr-row"
+                              data-active={activePartition === pid}
+                              onMouseEnter={() => setActivePartition(pid)}
+                              onMouseLeave={() => setActivePartition(null)}
+                              onFocus={() => setActivePartition(pid)}
+                              onBlur={() => setActivePartition(null)}
                             >
-                              {p.name}
-                              {p.is_default && (
-                                <chakra.span color="app.textMuted">
-                                  {" "}
-                                  {t("structurePartitionDefault")}
-                                </chakra.span>
-                              )}
-                              {p.sub_partition_key && (
-                                <chakra.span color="app.textMuted"> [{p.sub_partition_key}]</chakra.span>
-                              )}
-                            </chakra.td>
-                            <chakra.td css={tdCss} fontFamily="var(--font-mono)" color="app.textSecondary">
-                              {formatPartitionBound(p.bound)}
-                            </chakra.td>
-                            <chakra.td css={tdCss} textStyle="numeric" textAlign="right">
-                              {formatBytes(p.size_bytes)}
-                              <ShareBar
-                                share={shares.get(partitionId(p))?.sizeShare ?? null}
-                                hot={shares.get(partitionId(p))?.sizeHot ?? false}
-                                ratio={shares.get(partitionId(p))?.sizeRatio ?? null}
-                              />
-                            </chakra.td>
-                            <chakra.td css={tdCss} textStyle="numeric" textAlign="right">
-                              {formatRowCount(p.row_estimate)}
-                              <ShareBar
-                                share={shares.get(partitionId(p))?.rowShare ?? null}
-                                hot={shares.get(partitionId(p))?.rowHot ?? false}
-                                ratio={shares.get(partitionId(p))?.rowRatio ?? null}
-                              />
-                            </chakra.td>
-                            <chakra.td css={tdCss} textAlign="right">
-                              {(onRunPartitionMaintenance || onPartitionOp) &&
-                                partitionMenuItems(p).length > 0 && (
-                                  <PartitionActions
-                                    label={t("structurePartitionActionsFor", { partition: p.name })}
-                                    items={partitionMenuItems(p)}
-                                    disabledTitle={readOnly ? t("listReadOnlyTitle") : undefined}
-                                  />
+                              <chakra.td
+                                css={tdCss}
+                                fontFamily="var(--font-mono)"
+                                paddingLeft={`calc(var(--space-2) + ${p.depth} * var(--space-4))`}
+                              >
+                                {p.name}
+                                {p.is_default && (
+                                  <chakra.span color="app.textMuted">
+                                    {" "}
+                                    {t("structurePartitionDefault")}
+                                  </chakra.span>
                                 )}
-                            </chakra.td>
-                          </chakra.tr>
-                        ))}
+                                {p.sub_partition_key && (
+                                  <chakra.span color="app.textMuted"> [{p.sub_partition_key}]</chakra.span>
+                                )}
+                              </chakra.td>
+                              <chakra.td css={tdCss} fontFamily="var(--font-mono)" color="app.textSecondary">
+                                {formatPartitionBound(p.bound)}
+                              </chakra.td>
+                              <chakra.td css={tdCss} textStyle="numeric" textAlign="right">
+                                {formatBytes(p.size_bytes)}
+                                <ShareBar
+                                  share={sh?.sizeShare ?? null}
+                                  hot={sh?.sizeHot ?? false}
+                                  ratio={sh?.sizeRatio ?? null}
+                                />
+                              </chakra.td>
+                              <chakra.td css={tdCss} textStyle="numeric" textAlign="right">
+                                {formatRowCount(p.row_estimate)}
+                                <ShareBar
+                                  share={sh?.rowShare ?? null}
+                                  hot={sh?.rowHot ?? false}
+                                  ratio={sh?.rowRatio ?? null}
+                                />
+                              </chakra.td>
+                              <chakra.td css={tdCss} textAlign="right">
+                                {(onRunPartitionMaintenance || onPartitionOp) &&
+                                  partitionMenuItems(p).length > 0 && (
+                                    <PartitionActions
+                                      label={t("structurePartitionActionsFor", { partition: p.name })}
+                                      items={partitionMenuItems(p)}
+                                      disabledTitle={readOnly ? t("listReadOnlyTitle") : undefined}
+                                    />
+                                  )}
+                              </chakra.td>
+                            </chakra.tr>
+                          );
+                        })}
                       </chakra.tbody>
                     </chakra.table>
                   </>

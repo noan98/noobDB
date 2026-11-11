@@ -114,6 +114,7 @@ export function AddPartitionModal({
     <Modal
       onSubmit={submit}
       submitDisabled={!valid}
+      onSubmitRejected={() => setTouched(new Set<AddPartitionField>(["name", "bound"]))}
       width="600px"
       onClose={onClose}
       initialFocusEl={() => (kind === "hashCount" ? countRef.current : nameRef.current)}

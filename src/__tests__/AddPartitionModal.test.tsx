@@ -58,4 +58,11 @@ describe("AddPartitionModal (#2238)", () => {
     fireEvent.change(screen.getByLabelText(t("attachPartitionValues")), { target: { value: "us" } });
     expect(screen.getByTestId("partition-ribbon-ghost")).toHaveTextContent("us");
   });
+
+  it("未入力のまま Cmd/Ctrl+Enter で実行しようとすると、理由のエラーを出す", () => {
+    open();
+    expect(screen.queryByText(t("attachPartitionErrList"))).not.toBeInTheDocument();
+    fireEvent.keyDown(screen.getByLabelText(t("attachPartitionValues")), { key: "Enter", ctrlKey: true });
+    expect(screen.getByText(t("attachPartitionErrList"))).toBeInTheDocument();
+  });
 });
