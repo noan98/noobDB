@@ -207,7 +207,19 @@ pub(crate) async fn create_sandbox_inner(
     // 関連表を含めるときは、表単位の閉包で追加する表の集合を決めたうえで、行単位で親を辿る (#2241)。
     let mut related_fks = None;
     let effective_tables = if include_related {
-        let fks = source.conn.foreign_keys(&db).await?;
+        let mut fks = source.conn.foreign_keys(&db).await?;
+        // 別 DB の表を指す外部キーは、同名の表と取り違えないよう辿らない (#2241)。
+        let cross: std::collections::BTreeSet<(String, String)> = source
+            .conn
+            .cross_database_foreign_keys(&db)
+            .await?
+            .into_iter()
+            .collect();
+        fks.retain(|f| {
+            !f.constraint_name
+                .as_ref()
+                .is_some_and(|c| cross.contains(&(f.table.clone(), c.clone())))
+        });
         let closure = fk_closure(&selected, &fks);
         related_fks = Some(fks);
         closure

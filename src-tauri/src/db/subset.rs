@@ -353,6 +353,40 @@ pub fn table_order(tables: &BTreeSet<String>, edges: &[SubsetEdge]) -> TableOrde
     TableOrder { order, cycles }
 }
 
+/// 文字列を小文字化し末尾の空白を除いた、照合順序の差を吸収するシグネチャ。
+fn loose_signature(key: &[Value]) -> String {
+    let norm: Vec<Value> = key
+        .iter()
+        .map(|v| match v {
+            Value::String(s) => Value::String(s.trim_end().to_lowercase()),
+            other => other.clone(),
+        })
+        .collect();
+    key_signature(&norm)
+}
+
+/// 他のデータベースの表を指す外部キー ((参照元の表, 制約名) の組) を、辿る対象から外す。
+/// 外した制約は辿れなかった外部キーの警告にする。MySQL の外部キー一覧は参照先の表名しか
+/// 持たないので、同名の表が手元の DB にあると無関係な表として辿ってしまうのを防ぐ。
+pub fn exclude_cross_database_groups(
+    groups: Vec<FkGroup>,
+    cross: &BTreeSet<(String, String)>,
+) -> (Vec<FkGroup>, Vec<SubsetWarning>) {
+    let mut kept = Vec::with_capacity(groups.len());
+    let mut warnings = Vec::new();
+    for g in groups {
+        if cross.contains(&(g.child.clone(), g.constraint.clone())) {
+            warnings.push(SubsetWarning::UnresolvedForeignKey {
+                table: g.child,
+                constraint: g.constraint,
+            });
+        } else {
+            kept.push(g);
+        }
+    }
+    (kept, warnings)
+}
+
 /// 自己参照の外部キーを持つ表の行を、「参照される行が先」の順に並べ直す。
 /// 取り込み先で行ごとに FK が検査される場合に、親の行が先に入るようにするため。
 /// 循環している行は元の相対順のまま。
@@ -369,7 +403,10 @@ pub fn order_self_referencing(
         return rows;
     }
     // 辺ごとに「参照先キー → 行番号」を作る。
+    // 完全一致 (key_signature) の表と、大文字小文字・末尾空白を無視した表 (MySQL の既定の照合順序では
+    // 'boss' が 'BOSS' を参照できる) の 2 つを持つ。
     let mut by_parent_key: Vec<HashMap<String, usize>> = Vec::new();
+    let mut by_parent_loose: Vec<HashMap<String, usize>> = Vec::new();
     for e in &self_edges {
         let idx: Vec<usize> = e
             .parent_cols
@@ -377,13 +414,16 @@ pub fn order_self_referencing(
             .filter_map(|c| table.col_index(c))
             .collect();
         let mut m = HashMap::new();
+        let mut loose = HashMap::new();
         for (i, r) in rows.iter().enumerate() {
             let key: Vec<Value> = idx.iter().filter_map(|&k| r.get(k).cloned()).collect();
             if key.len() == idx.len() {
                 m.entry(key_signature(&key)).or_insert(i);
+                loose.entry(loose_signature(&key)).or_insert(i);
             }
         }
         by_parent_key.push(m);
+        by_parent_loose.push(loose);
     }
     let mut deps: Vec<Vec<usize>> = vec![Vec::new(); rows.len()];
     for (ei, e) in self_edges.iter().enumerate() {
@@ -397,7 +437,10 @@ pub fn order_self_referencing(
             if key.len() != idx.len() || key.iter().any(|v| matches!(v, Value::Null)) {
                 continue;
             }
-            if let Some(&p) = by_parent_key[ei].get(&key_signature(&key)) {
+            let found = by_parent_key[ei]
+                .get(&key_signature(&key))
+                .or_else(|| by_parent_loose[ei].get(&loose_signature(&key)));
+            if let Some(&p) = found {
                 if p != i {
                     deps[i].push(p);
                 }
@@ -1753,5 +1796,103 @@ mod tests {
         assert_eq!(clamp_child_row_limit(Some(5)), 5);
         assert_eq!(clamp_child_depth(None), 0);
         assert_eq!(clamp_child_depth(Some(99)), MAX_CHILD_DEPTH);
+    }
+
+    fn groups_for_cross_test() -> Vec<FkGroup> {
+        vec![
+            FkGroup {
+                constraint: s("fk_local"),
+                child: s("orders"),
+                child_cols: vec![s("customer_id")],
+                parent: s("customers"),
+                parent_cols: Some(vec![s("id")]),
+            },
+            FkGroup {
+                constraint: s("fk_other_db"),
+                child: s("orders"),
+                child_cols: vec![s("region_id")],
+                parent: s("regions"),
+                parent_cols: Some(vec![s("id")]),
+            },
+        ]
+    }
+
+    #[test]
+    fn cross_database_groups_are_dropped_with_a_warning() {
+        let mut cross = BTreeSet::new();
+        cross.insert((s("orders"), s("fk_other_db")));
+        let (kept, warnings) = exclude_cross_database_groups(groups_for_cross_test(), &cross);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].constraint, "fk_local");
+        assert_eq!(
+            warnings,
+            vec![SubsetWarning::UnresolvedForeignKey {
+                table: s("orders"),
+                constraint: s("fk_other_db"),
+            }]
+        );
+        // 同じ制約名でも別の表のものは外さない。
+        let mut other = BTreeSet::new();
+        other.insert((s("items"), s("fk_other_db")));
+        let (kept, warnings) = exclude_cross_database_groups(groups_for_cross_test(), &other);
+        assert_eq!(kept.len(), 2);
+        assert!(warnings.is_empty());
+    }
+
+    fn ids_after_ordering(rows: Vec<Vec<Value>>) -> Vec<Value> {
+        let t = table("emp", &["id", "boss"], &["id"]);
+        let edges = vec![edge("emp", &["boss"], "emp", &["id"])];
+        order_self_referencing(rows, &t, &edges)
+            .iter()
+            .map(|r| r[0].clone())
+            .collect()
+    }
+
+    fn st(x: &str) -> Value {
+        Value::String(x.to_string())
+    }
+
+    #[test]
+    fn self_reference_order_ignores_case_and_trailing_spaces() {
+        // 子 (boss='boss') が先に並んでいても、'BOSS' の行が先に出る。
+        let rows = vec![vec![st("kid"), st("boss")], vec![st("BOSS"), Value::Null]];
+        assert_eq!(ids_after_ordering(rows), vec![st("BOSS"), st("kid")]);
+        // 末尾の空白の違い (PAD SPACE 照合)。
+        let rows = vec![vec![st("kid"), st("boss ")], vec![st("boss"), Value::Null]];
+        assert_eq!(ids_after_ordering(rows), vec![st("boss"), st("kid")]);
+        // 完全一致があればそちらを優先する。
+        let rows = vec![
+            vec![st("kid"), st("Boss")],
+            vec![st("boss"), Value::Null],
+            vec![st("Boss"), Value::Null],
+        ];
+        assert_eq!(
+            ids_after_ordering(rows),
+            vec![st("Boss"), st("kid"), st("boss")]
+        );
+    }
+
+    #[test]
+    fn self_reference_order_loose_match_skips_null_and_handles_composite_keys() {
+        // NULL の参照は依存にしない (元の順のまま)。
+        let rows = vec![vec![st("a"), Value::Null], vec![st("B"), Value::Null]];
+        assert_eq!(ids_after_ordering(rows), vec![st("a"), st("B")]);
+        // 複合キー: 全列を緩い一致で比べる。
+        let t = SubsetTable {
+            name: s("n"),
+            columns: vec![s("a"), s("b"), s("pa"), s("pb")],
+            column_types: vec![s("varchar"); 4],
+            primary_key: vec![s("a"), s("b")],
+        };
+        let edges = vec![edge("n", &["pa", "pb"], "n", &["a", "b"])];
+        let rows = vec![
+            vec![st("k"), st("1"), st("ROOT"), st("x")],
+            vec![st("root"), st("X"), Value::Null, Value::Null],
+        ];
+        let out: Vec<Value> = order_self_referencing(rows, &t, &edges)
+            .iter()
+            .map(|r| r[0].clone())
+            .collect();
+        assert_eq!(out, vec![st("root"), st("k")]);
     }
 }

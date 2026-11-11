@@ -2607,6 +2607,30 @@ impl MySqlConn {
             .collect())
     }
 
+    /// 別のデータベースの表を指す外部キーの (参照元の表, 制約名)。`foreign_keys` は参照先の
+    /// 表名しか返さないので、サブセット抽出が同名の表と取り違えないために使う。
+    pub async fn cross_database_foreign_keys(&self, db: &str) -> Result<Vec<(String, String)>> {
+        let rows: Vec<MySqlRow> = sqlx::query(
+            r#"SELECT DISTINCT k.TABLE_NAME, k.CONSTRAINT_NAME
+               FROM information_schema.KEY_COLUMN_USAGE k
+               WHERE k.TABLE_SCHEMA = ?
+                 AND k.REFERENCED_TABLE_NAME IS NOT NULL
+                 AND k.REFERENCED_TABLE_SCHEMA <> k.TABLE_SCHEMA"#,
+        )
+        .bind(db)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    decode_text_col(&r, 0).unwrap_or_default(),
+                    decode_text_col(&r, 1).unwrap_or_default(),
+                )
+            })
+            .collect())
+    }
+
     pub async fn schema_objects(&self, db: &str) -> Result<Vec<SchemaObject>> {
         Ok(self.schema_objects_checked(db).await?.0)
     }

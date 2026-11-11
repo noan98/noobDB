@@ -16,7 +16,7 @@
 //!   外部キー / 主キーの列は参照が壊れるのでマスクできない (`check_mask_targets`)。
 //! - 進捗は `subset-stream:*` イベント、`cancel_stream` で中断できる。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -35,8 +35,9 @@ use crate::db::masking::{ColumnMask, MaskPlan, MaskRule};
 use crate::db::sandbox::checked_row_filter;
 use crate::db::subset::{
     check_mask_targets, clamp_child_depth, clamp_child_row_limit, clamp_root_row_limit,
-    group_foreign_keys, reachable_tables, resolve_edges, select_by_keys_sql, SubsetEdge,
-    SubsetOptions, SubsetResult, SubsetTable, SubsetWalk, SubsetWarning, MAX_TOTAL_ROWS,
+    exclude_cross_database_groups, group_foreign_keys, reachable_tables, resolve_edges,
+    select_by_keys_sql, SubsetEdge, SubsetOptions, SubsetResult, SubsetTable, SubsetWalk,
+    SubsetWarning, MAX_TOTAL_ROWS,
 };
 use crate::db::sync::{quote_ident, table_ref_for};
 use crate::db::transfer::{
@@ -329,10 +330,18 @@ pub(crate) async fn collect_subset(
     let db = catalog_db(&source.conn, req.source_database.as_deref()).await;
 
     let fks = source.conn.foreign_keys(&db).await?;
-    let groups = group_foreign_keys(&fks);
+    let cross: BTreeSet<(String, String)> = source
+        .conn
+        .cross_database_foreign_keys(&db)
+        .await?
+        .into_iter()
+        .collect();
+    // 別 DB の表を指す外部キーは、同名の表があっても辿らない (警告にする)。
+    let (groups, cross_warnings) = exclude_cross_database_groups(group_foreign_keys(&fks), &cross);
     let names = reachable_tables(std::slice::from_ref(&table), &groups, child_depth);
     let (tables, missing) = load_subset_tables(&source.conn, &db, names, &table).await?;
     let (edges, mut edge_warnings) = resolve_edges(&groups, &tables);
+    edge_warnings.extend(cross_warnings);
     // 別スキーマ / 別 DB の表を指す外部キーは辿れない。全体を失敗させず警告にして続ける。
     for g in &groups {
         let touches_missing = (missing.contains(&g.parent) && tables.contains_key(&g.child))

@@ -1500,6 +1500,16 @@ impl Connection {
         }
     }
 
+    /// 別のデータベースの表を指す外部キーの (参照元の表, 制約名) (#2241)。`foreign_keys` が
+    /// 参照先の表名しか返さない MySQL だけが該当する。PostgreSQL は `foreign_keys` が同一スキーマ
+    /// 内の参照だけを返し、SQLite は DB をまたげないので、どちらも空。
+    pub async fn cross_database_foreign_keys(&self, db: &str) -> Result<Vec<(String, String)>> {
+        match self {
+            Connection::MySql(c) => c.cross_database_foreign_keys(db).await,
+            Connection::Postgres(_) | Connection::Sqlite(_) => Ok(Vec::new()),
+        }
+    }
+
     /// 別スキーマの子テーブルから `db.table` を参照する外部キー (#1786)。PostgreSQL 専用で、
     /// MySQL の DB をまたぐ FK は対象外 (#1786 は PostgreSQL のみ)、SQLite は DB をまたげないため、
     /// どちらも `foreign_keys` だけで賄い常に空 (挙動は変えない)。
