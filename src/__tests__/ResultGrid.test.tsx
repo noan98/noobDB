@@ -1963,6 +1963,25 @@ describe("セル値のクイックセット", () => {
     ]);
   });
 
+  it("Backspace はセルを消去するが、Mod+Shift+Backspace (変更の破棄) では消去しない (#2235)", () => {
+    const onBulkEdit = vi.fn();
+    const { container } = renderWithProviders(
+      <ResultGrid
+        result={makeResult(columns, [[1, "banana", 5]])}
+        editable
+        tableColumns={tableColumns}
+        onSetCellEdit={vi.fn()}
+        onBulkEdit={onBulkEdit}
+      />,
+    );
+    const cell = dataCells(container)[0][1];
+    fireEvent.focus(cell);
+    fireEvent.keyDown(cell, { key: "Backspace", ctrlKey: true, shiftKey: true });
+    expect(onBulkEdit).not.toHaveBeenCalled();
+    fireEvent.keyDown(cell, { key: "Backspace" });
+    expect(onBulkEdit).toHaveBeenCalledTimes(1);
+  });
+
   // BIT はドライバで意味が変わるので、グリッドが driver を渡していることを見る
   // (どう出し分けるかの判定自体は quickSetValues.test.ts が固定する)。
   it("BIT 列の候補はセッションのドライバで変わる", async () => {

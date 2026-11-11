@@ -67,3 +67,60 @@ export function fkJoinSnippets(opts: {
   });
   return out;
 }
+
+/**
+ * `table` と外部キーでつながる表を、列の組つきで構造化して返す (#2242)。クエリビルダの
+ * 「表を追加」の候補と、ON 句の自動生成に使う。`fkJoinSnippets` と同じ規則で、同じ制約名の
+ * 列を 1 組にまとめ、列対応を復元できない (参照先列が無い・列が重複する) 制約は出さない。
+ *
+ * - `outgoing`: `table` が参照する側。`own` は `table` の列、`other` は参照先 (`otherTable`) の列。
+ * - `incoming`: `table` が参照される側。`own` は `table` の列 (参照先)、`other` は参照元
+ *   (`otherTable`) の列。自己参照は両方向を返す (上司 / 部下のように使い分けられる)。
+ */
+export interface FkRelation {
+  direction: "outgoing" | "incoming";
+  otherTable: string;
+  pairs: { own: string; other: string }[];
+}
+
+export function fkRelations(table: string, fks: readonly ForeignKey[]): FkRelation[] {
+  const groups = new Map<string, ForeignKey[]>();
+  fks.forEach((fk, idx) => {
+    if (!eq(fk.table, table) && !eq(fk.referenced_table, table)) return;
+    const name = fk.constraint_name;
+    const id = name !== null && name !== "" ? `c:${fk.table.toLowerCase()}|${name}` : `i:${idx}`;
+    const g = groups.get(id);
+    if (g) g.push(fk);
+    else groups.set(id, [fk]);
+  });
+  const out: FkRelation[] = [];
+  const seen = new Set<string>();
+  const push = (r: FkRelation) => {
+    const key = `${r.direction}|${r.otherTable}|${r.pairs.map((p) => `${p.own}=${p.other}`).join(",")}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(r);
+  };
+  for (const group of groups.values()) {
+    if (group.some((x) => x.referenced_column === null)) continue;
+    const cols = group.map((x) => x.column.toLowerCase());
+    const refs = group.map((x) => (x.referenced_column ?? "").toLowerCase());
+    if (new Set(cols).size !== cols.length || new Set(refs).size !== refs.length) continue;
+    const first = group[0];
+    if (eq(first.table, table)) {
+      push({
+        direction: "outgoing",
+        otherTable: first.referenced_table,
+        pairs: group.map((x) => ({ own: x.column, other: x.referenced_column ?? "" })),
+      });
+    }
+    if (eq(first.referenced_table, table)) {
+      push({
+        direction: "incoming",
+        otherTable: first.table,
+        pairs: group.map((x) => ({ own: x.referenced_column ?? "", other: x.column })),
+      });
+    }
+  }
+  return out;
+}

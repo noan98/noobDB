@@ -23,7 +23,7 @@ import { useKeepAliveActive } from "./KeepAlive";
 import { useStableCallbacks } from "../useStableCallbacks";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { transitions, variants } from "../motion";
+import { reducedMotionActive, transitions, variants } from "../motion";
 // 開発用パフォーマンス計測 (#1094)。既定 OFF — フックの差し込みのみ。
 import { markGridCommit } from "../perf";
 import { measureElement as defaultMeasureElement, useVirtualizer } from "@tanstack/react-virtual";
@@ -163,7 +163,7 @@ import { COUNT_UP_TOKEN, formatCountUpPlainInt, splitAroundCountUpToken } from "
 import { ExportModal, type FullExportContext } from "./ExportModal";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { buildGridCopyInsert, buildGridCopyText, type GridCopyFormat } from "./gridCopyFormats";
-import { buildCopyFlashRange, collectCopyFlashKeys } from "./gridCopyFlash";
+import { buildCopyFlashRange, collectAppliedFlashKeys, collectCopyFlashKeys } from "./gridCopyFlash";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { DuplicateKeysModal } from "./DuplicateKeysModal";
 import { GridReplaceModal } from "./GridReplaceModal";
@@ -175,6 +175,8 @@ import { deriveQueryPhase, formatElapsed } from "../queryRunState";
 import { useToast } from "./Toast";
 import { Button, Input } from "./ui";
 import { FieldLabel, FormSection } from "./modalForm";
+import { ChangeSetBar } from "./ChangeSetBar";
+import { prefersStaticMotion } from "./revealOrigin";
 import { LoadingButton } from "./LoadingButton";
 import { Tooltip, TooltipBubble, useDelegatedTooltip } from "./Tooltip";
 import { qualifiedTableName } from "./sqlDialect";
@@ -200,6 +202,7 @@ import {
 import { bulkEditSamples, planBulkCellEdit, type BulkEditTarget } from "./bulkEdit";
 import { detectPasteHeader, parseClipboardGrid, planPasteEdit, planPasteInsertRows } from "./pasteEdit";
 import { quickSetOptions, resolveDynamicValue } from "./quickSetValues";
+import { applyDrillRequest, type ColumnFilterEntry, type ColumnFilterRequest } from "./drillFilter";
 import {
   clientQuickFilter,
   isNullCell,
@@ -1223,6 +1226,9 @@ export interface GridBindings {
    *  ハンドラが処理する)。 */
   gridPageNext: string;
   gridPagePrev: string;
+  /** 変更セットバーの適用 / 破棄 (#2235)。App の window ハンドラが処理する。ツールチップ表記用。 */
+  applyChanges?: string;
+  discardChanges?: string;
 }
 
 interface Props {
@@ -1354,6 +1360,8 @@ interface Props {
   onRunRelatedQuery?: (sql: string) => Promise<QueryResult>;
   /** 削除予定の行: rowEditKey の集合。 */
   pendingDeleteKeys?: Set<string>;
+  /** 追加予定の新規行の数 (変更セットバーの「追加」ピル、#2235)。 */
+  pendingInsertCount?: number;
   /** 行を削除予定にトグルする。 */
   onToggleRowDelete?: (rowKey: string) => void;
   /** 新規行追加を要求する。 */
@@ -1399,6 +1407,17 @@ interface Props {
    * 対になっていて、行が無い / ストリーミング中は Export と同じ条件で隠す。
    */
   onChangeView?: (view: ResultViewKind) => void;
+  /**
+   * 外から列フィルタを入れる宣言的な要求 (#2236)。ピボット / チャートの集計キーから
+   * 絞り込んで移るときに、グリッドが作られた (または要求が差し替わった) 時点で 1 回だけ
+   * 適用する。同じ要求をもう一度適用したくないとき (再マウントなど) は
+   * `onColumnFilterRequestApplied` で呼び出し側が要求を下げる。
+   */
+  columnFilterRequest?: ColumnFilterRequest | null;
+  /** `columnFilterRequest` を適用した直後に呼ばれる。`previous` は適用前の列フィルタ。 */
+  onColumnFilterRequestApplied?: (info: { previous: ColumnFilterEntry[] }) => void;
+  /** 列フィルタが変わるたび (マウント直後を含む) に、現在の列フィルタを知らせる (#2236)。 */
+  onColumnFiltersChange?: (filters: ColumnFilterEntry[]) => void;
   /**
    * 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。App が
    * セッション・対象クエリ・データベースを確定させたときだけ渡す — 読み取り専用
@@ -1447,6 +1466,8 @@ interface Props {
    * success-flash animation on the grid container.
    */
   lastEditAppliedAt?: number;
+  /** 直近の適用で送ったセル編集 (光らせるセル、#2235)。 */
+  lastAppliedEdits?: PendingEdits;
   /**
    * Runs an ad-hoc SELECT for the column quick-stats popover's "aggregate all
    * rows" action (#524). App binds this to the active session; omit to offer
@@ -1528,6 +1549,18 @@ export interface ResultGridHandle {
    * (オブジェクト検索の列ヒットから開いたとき、#1629)。列が無い・行が無いときは false。
    */
   revealColumn: (column: string) => boolean;
+  /**
+   * 変更セットバーの「適用」を押す (適用ショートカット、#2235)。バーが出ていない・適用できない
+   * (不正な入力・読み込み中・適用中) ときは何もせず false (キーを素通しする)。
+   */
+  applyChanges: () => boolean;
+  /** 変更セットバーの「破棄」(確認ダイアログを開く)。バーが出ていないときは false。 */
+  discardChanges: () => boolean;
+  /**
+   * 外から列フィルタを入れる / 外す (#2236)。`apply` は条件の列だけにフィルタを置き換え、
+   * `clear` は条件の列のフィルタだけ外す。要求は次の描画で結果グリッドへ届く。
+   */
+  applyColumnFilters: (request: ColumnFilterRequest) => void;
 }
 
 /**
@@ -4072,6 +4105,7 @@ export const DataGrid = memo(function DataGrid({
   editableColumns,
   pkIndices,
   pendingEdits,
+  applyFlash,
   onSetCellEdit,
   onBulkEdit,
   onReplaceColumn,
@@ -4115,6 +4149,9 @@ export const DataGrid = memo(function DataGrid({
   findHits,
   findCurrentKey,
   findNav,
+  columnFilterRequest,
+  onColumnFilterRequestApplied,
+  onColumnFiltersChange,
   gridBindings,
   serverSort,
   serverFilter,
@@ -4164,6 +4201,11 @@ export const DataGrid = memo(function DataGrid({
   /** 行 identity の戦略。一時 reveal が行の移動に追従してよいのは `primary_key` のときだけ。 */
   rowIdentityStrategy?: RowIdentityKind;
   pendingEdits?: PendingEdits;
+  /**
+   * 適用成功で光らせるセル (#2235)。`seq` が変わるたびに、`edits` と同じ (行, 列) の可視セルを
+   * 1 回光らせる。reduced-motion / ハイコントラストでは光らせない。
+   */
+  applyFlash?: { seq: number; edits: PendingEdits } | null;
   onSetCellEdit?: (rowKey: string, colIdx: number, value: string | null) => void;
   /**
    * Apply a single value (or NULL) to every cell of the current rectangular
@@ -4324,6 +4366,11 @@ export const DataGrid = memo(function DataGrid({
   findCurrentKey?: string | null;
   /** 現在ヒットへのスクロール/選択/フォーカス移動の要求 (seq で再発火)。 */
   findNav?: GridFindNav | null;
+  /** 外から入れる列フィルタ要求 (#2236)。参照が変わるたびに 1 回適用する。 */
+  columnFilterRequest?: ColumnFilterRequest | null;
+  /** 要求を適用した直後に呼ぶ。 */
+  onColumnFilterRequestApplied?: (info: { previous: ColumnFilterEntry[] }) => void;
+  onColumnFiltersChange?: (filters: ColumnFilterEntry[]) => void;
   /**
    * コピー/コピー+ヘッダ/行インスペクタ/Undo/Redo/ページ送りの解決済みバインド
    * (#681)。省略時は今日の既定キーのまま (`DEFAULT_SHORTCUT_COMBOS`)。
@@ -4386,6 +4433,8 @@ export const DataGrid = memo(function DataGrid({
       gridRedo: gridBindings?.gridRedo ?? DEFAULT_SHORTCUT_COMBOS.gridRedo,
       gridPageNext: gridBindings?.gridPageNext ?? DEFAULT_SHORTCUT_COMBOS.gridPageNext,
       gridPagePrev: gridBindings?.gridPagePrev ?? DEFAULT_SHORTCUT_COMBOS.gridPagePrev,
+      applyChanges: gridBindings?.applyChanges ?? DEFAULT_SHORTCUT_COMBOS.applyChanges,
+      discardChanges: gridBindings?.discardChanges ?? DEFAULT_SHORTCUT_COMBOS.discardChanges,
     }),
     [gridBindings],
   );
@@ -4544,6 +4593,28 @@ export const DataGrid = memo(function DataGrid({
     setColumnFilters([]);
     writeStoredGridView(gridViewKey, { masks: maskOverridesRef.current });
   }, [gridViewKey]);
+  // 列フィルタの変化を呼び出し側へ知らせる (絞り込みチップが、手動で外されたことに気づくため)。マウント直後の通知は
+  // 下の要求の適用より先に出す (適用前の状態が、適用後の通知として遅れて届かないように)。
+  const onColumnFiltersChangeRef = useRef(onColumnFiltersChange);
+  onColumnFiltersChangeRef.current = onColumnFiltersChange;
+  useEffect(() => {
+    onColumnFiltersChangeRef.current?.(columnFilters);
+  }, [columnFilters]);
+  // 外から入れる列フィルタ要求 (#2236)。要求オブジェクトの参照が変わるたびに 1 回だけ
+  // 現在のフィルタへ適用し (永続化は通常のフィルタ操作と同じ)、適用済みを呼び出し側へ知らせる。
+  const onColumnFilterRequestAppliedRef = useRef(onColumnFilterRequestApplied);
+  onColumnFilterRequestAppliedRef.current = onColumnFilterRequestApplied;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 要求の参照 (columnFilterRequest) だけを契機にする。列の種類・現在のフィルタは発火時点の最新値を読めばよい
+  useEffect(() => {
+    if (!columnFilterRequest) return;
+    const previous = columnFiltersRef.current;
+    handleColumnFiltersChange(
+      applyDrillRequest(previous, columnFilterRequest, (i) =>
+        isNumericFilterKind(columnKinds[i] ?? "string"),
+      ),
+    );
+    onColumnFilterRequestAppliedRef.current?.({ previous });
+  }, [columnFilterRequest]);
   const clearSorting = useCallback(() => {
     setSorting([]);
     writeStoredGridView(
@@ -5509,11 +5580,13 @@ export const DataGrid = memo(function DataGrid({
   // biome-ignore lint/correctness/useExhaustiveDependencies: clearCopyFlash は ref だけを触る毎レンダー再生成の関数。アンマウント時に最後の ref を掃除するだけなので依存は空で良い
   useEffect(() => clearCopyFlash, []);
   const flashCopyRange = (rowIndices: readonly number[], colIndices: readonly number[]) => {
+    const range = buildCopyFlashRange(rowIndices, colIndices);
+    flashCellKeys(collectCopyFlashKeys(cellRefs.current.keys(), range));
+  };
+  const flashCellKeys = (keys: readonly string[]) => {
     // 直前のフラッシュが再生中なら止め、同じセルへ再度当たっても最初から
     // 再生し直す (連続コピーでも毎回光る)。
     clearCopyFlash();
-    const range = buildCopyFlashRange(rowIndices, colIndices);
-    const keys = collectCopyFlashKeys(cellRefs.current.keys(), range);
     const els = keys.map((key) => cellRefs.current.get(key)).filter((el): el is HTMLTableCellElement => !!el);
     if (els.length === 0) return;
     for (const el of els) {
@@ -5529,6 +5602,23 @@ export const DataGrid = memo(function DataGrid({
       copyFlashTimerRef.current = null;
     }, 700);
   };
+
+  // 変更セットの適用に成功したとき、変更のあったセルを一瞬光らせる (#2235)。コピーと同じ
+  // `is-copy-flash` (apply-flash と同じキーフレーム) を可視セルだけに付ける。
+  const handledApplyFlashRef = useRef(0);
+  const applyFlashSeq = applyFlash?.seq ?? 0;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: seq が変わった 1 回だけ再生する。edits / rows / pks は再生の契機にしない
+  useEffect(() => {
+    if (!applyFlash || applyFlashSeq <= handledApplyFlashRef.current) return;
+    handledApplyFlashRef.current = applyFlashSeq;
+    if (reducedMotionActive() || prefersStaticMotion()) return;
+    const pks = pkIndices ?? [];
+    flashCellKeys(
+      collectAppliedFlashKeys(cellRefs.current.keys(), applyFlash.edits, (r) =>
+        rowEditKey(rows[r] ?? [], pks, r),
+      ),
+    );
+  }, [applyFlashSeq]);
 
   // Full-value viewer target (original row index + display column index).
   const [viewer, setViewer] = useState<{ rowIdx: number; colIdx: number } | null>(null);
@@ -6759,6 +6849,14 @@ export const DataGrid = memo(function DataGrid({
     // が、リバインドで任意のキーになり得るため switch より先に単独で突き合わせる。
     // Redo は従来からの Ctrl/Cmd+Y も後方互換で残す (再割り当て対象外の別名)。
     const ne = e.nativeEvent;
+    // 変更セットの破棄 (Mod+Shift+Backspace 既定、#2235) は window ハンドラへ任せる。
+    // 下の Backspace / Delete のセル消去に先に取られないよう、ここで止める。
+    if (
+      comboMatchesEvent(effectiveGridBindings.applyChanges ?? DEFAULT_SHORTCUT_COMBOS.applyChanges, ne) ||
+      comboMatchesEvent(effectiveGridBindings.discardChanges ?? DEFAULT_SHORTCUT_COMBOS.discardChanges, ne)
+    ) {
+      return;
+    }
     if (comboMatchesEvent(effectiveGridBindings.gridInspector, ne)) {
       e.preventDefault();
       setInspectorOpen((o) => !o);
@@ -6918,7 +7016,14 @@ export const DataGrid = memo(function DataGrid({
         // 編集不可な列やアクティブセルが無い場合は `clearSelectedCells` 側で
         // 何もしない (early return) — その場合はブラウザ既定の挙動 (何もない)
         // に任せるため preventDefault しない。
-        if (editable && onBulkEdit && (selectionRect || activeCell)) {
+        if (
+          editable &&
+          onBulkEdit &&
+          (selectionRect || activeCell) &&
+          !e.ctrlKey &&
+          !e.metaKey &&
+          !e.altKey
+        ) {
           e.preventDefault();
           clearSelectedCells();
         }
@@ -8665,6 +8770,7 @@ export const ResultGrid = memo(
       incomingFks,
       onRunRelatedQuery,
       pendingDeleteKeys,
+      pendingInsertCount,
       onToggleRowDelete,
       onRequestInsertRow,
       onDuplicateRow,
@@ -8676,6 +8782,9 @@ export const ResultGrid = memo(
       diffHighlightEnabled,
       onToggleDiffHighlight,
       onChangeView,
+      columnFilterRequest,
+      onColumnFilterRequestApplied,
+      onColumnFiltersChange,
       onSaveAsTable,
       onSaveAsView,
       onRegisterLocalTable,
@@ -8684,6 +8793,7 @@ export const ResultGrid = memo(
       fullExport,
       bundleContext,
       lastEditAppliedAt,
+      lastAppliedEdits,
       applyingEdits,
       onApplyRowEdits,
       onRunStatsQuery,
@@ -8794,6 +8904,13 @@ export const ResultGrid = memo(
       if (autoRefreshSecs != null) setIntervalChoice(autoRefreshSecs);
     }, [autoRefreshSecs]);
     const containerRef = useRef<HTMLDivElement>(null);
+    // 適用 / 破棄ショートカットが読む最新の変更セット状態 (ハンドルは安定参照のため ref 越し)。
+    const changeSetActionsRef = useRef<{
+      visible: boolean;
+      canApply: boolean;
+      applying: boolean;
+      onApply?: () => void;
+    }>({ visible: false, canApply: false, applying: false });
     const searchInputRef = useRef<HTMLInputElement>(null);
     // Scroll position capture/restore for tab persistence (#678). `onScrollRef`
     // keeps the callback fresh without re-binding the listener; `scrollRestoredRef`
@@ -8810,10 +8927,19 @@ export const ResultGrid = memo(
     // lastEditAppliedAt の変化を検知して CSS animation クラスを一時的に追加し、
     // アニメーション完了後 (0.7s) に除去する。新しいタイムスタンプのときだけ発火させ、
     // 既に再生済み (タブ復帰時など) の時刻では何もしない。
+    const [applyFlash, setApplyFlash] = useState<{ seq: number; edits: PendingEdits } | null>(null);
     useEffect(() => {
       if (!lastEditAppliedAt) return;
       if (lastEditAppliedAt <= lastHandledApplyAtRef.current) return;
       lastHandledApplyAtRef.current = lastEditAppliedAt;
+      const edits = lastAppliedEdits ?? {};
+      // セル編集を送ったときは変更のあったセルだけを光らせる。削除・追加だけの適用は、
+      // 光らせるセルが無いので従来どおりグリッド全体を一瞬光らせる。
+      if (countEditedCells(edits) > 0) {
+        setApplyFlash({ seq: lastEditAppliedAt, edits });
+        return;
+      }
+      if (reducedMotionActive() || prefersStaticMotion()) return;
       const el = containerRef.current;
       if (!el) return;
       el.classList.add("is-apply-flash");
@@ -8822,7 +8948,7 @@ export const ResultGrid = memo(
         window.clearTimeout(timer);
         el.classList.remove("is-apply-flash");
       };
-    }, [lastEditAppliedAt]);
+    }, [lastEditAppliedAt, lastAppliedEdits]);
 
     // ── 結果内検索 (Find in Results, #644) ──
     // 取得済み行を横断してヒットセルをハイライトし、Enter/Shift+Enter で前後の
@@ -8852,6 +8978,30 @@ export const ResultGrid = memo(
     }, [result?.rows]);
     const [findIdx, setFindIdx] = useState<number | null>(null);
     const [findNav, setFindNav] = useState<GridFindNav | null>(null);
+    // 外から入れる列フィルタ要求 (#2236)。宣言的な prop と命令型ハンドルの両方から来る。
+    // 同じ参照は DataGrid が 1 回しか適用しないので、新しい要求は必ず新しいオブジェクトにする。
+    const [filterRequest, setFilterRequest] = useState<ColumnFilterRequest | null>(
+      () => columnFilterRequest ?? null,
+    );
+    // 絞り込み (apply) の間は、結果内の全体検索を一時的に空にする。残したままだと、集計キーと
+    // 無関係な検索語で 0 行になりうる。外す (clear) ときに元の検索語へ戻す。
+    const stashedSearchRef = useRef<string | null>(null);
+    const queueFilterRequest = (req: ColumnFilterRequest | null) => {
+      if (req?.mode === "apply" && stashedSearchRef.current === null && search !== "") {
+        stashedSearchRef.current = search;
+        setSearch("");
+      } else if (req?.mode === "clear" && stashedSearchRef.current !== null) {
+        setSearch(stashedSearchRef.current);
+        stashedSearchRef.current = null;
+      }
+      setFilterRequest(req);
+    };
+    const queueFilterRequestRef = useRef(queueFilterRequest);
+    queueFilterRequestRef.current = queueFilterRequest;
+    // biome-ignore lint/correctness/useExhaustiveDependencies: 要求 prop の変化だけを契機にする (queueFilterRequest は毎回作り直る)
+    useEffect(() => {
+      queueFilterRequest(columnFilterRequest ?? null);
+    }, [columnFilterRequest]);
     const findSeqRef = useRef(0);
     const findIdxRef = useRef(findIdx);
     findIdxRef.current = findIdx;
@@ -9068,6 +9218,19 @@ export const ResultGrid = memo(
           emitFindNav({ rowIdx: 0, colIdx }, true, true);
           return true;
         },
+        applyChanges: () => {
+          const c = changeSetActionsRef.current;
+          if (!c.visible || !c.canApply || c.applying) return false;
+          c.onApply?.();
+          return true;
+        },
+        discardChanges: () => {
+          const c = changeSetActionsRef.current;
+          if (!c.visible || c.applying) return false;
+          setShowDiscardConfirm(true);
+          return true;
+        },
+        applyColumnFilters: (request) => queueFilterRequestRef.current({ ...request }),
       }),
       [emitFindNav],
     );
@@ -9542,6 +9705,10 @@ export const ResultGrid = memo(
     const editsCount = pendingEdits ? countEditedCells(pendingEdits) : 0;
     const editedRowCount = pendingEdits ? countEditedRows(pendingEdits) : 0;
     const hasPendingEdits = editsCount > 0;
+    const deleteCount = pendingDeleteKeys?.size ?? 0;
+    const insertCount = pendingInsertCount ?? 0;
+    // 変更セット = セル編集 + 削除予定 + 追加行 (#2235)。適用はこの 3 種をまとめて送る。
+    const hasChangeSet = hasPendingEdits || deleteCount > 0 || insertCount > 0;
     const editableActive = !!editable && pkIndices.length > 0;
     const autoRefreshOn = autoRefreshSecs != null && autoRefreshSecs > 0;
 
@@ -9549,7 +9716,14 @@ export const ResultGrid = memo(
     // multi-statement preview path that doesn't exist yet, so the button is
     // disabled (with a tooltip) until the user trims their edits to one row.
     const canPreview = hasPendingEdits && editedRowCount === 1 && !streaming && !hasInvalidEdit;
-    const canApply = hasPendingEdits && !streaming && !hasInvalidEdit;
+    const canApply = hasChangeSet && !streaming && !hasInvalidEdit;
+
+    changeSetActionsRef.current = {
+      visible: editableActive && hasChangeSet,
+      canApply,
+      applying: !!applyingEdits,
+      onApply: onApplyEdits,
+    };
 
     // `resultStatusBar` は "{rows} 件 · {ms} ms" 形式の 1 文を `t()` で組み立てるため、
     // 件数だけをアニメーションさせるには展開済み文字列からプレースホルダの前後を
@@ -10000,8 +10174,13 @@ export const ResultGrid = memo(
                 </ModalHeader>
                 <ModalBody>
                   {t("editDiscardConfirmBody", {
-                    cells: String(countEditedCells(pendingEdits ?? {})),
-                    rows: String(countEditedRows(pendingEdits ?? {})),
+                    detail: [
+                      editsCount > 0 ? t("pendingReplaceDetailEdits", { count: editsCount }) : null,
+                      deleteCount > 0 ? t("pendingReplaceDetailDeletes", { count: deleteCount }) : null,
+                      insertCount > 0 ? t("pendingReplaceDetailInserts", { count: insertCount }) : null,
+                    ]
+                      .filter((x): x is string => x !== null)
+                      .join(t("pendingReplaceDetailSeparator")),
                   })}
                 </ModalBody>
                 <ModalFooter>
@@ -10193,157 +10372,56 @@ export const ResultGrid = memo(
           )}
         </Box>
         {editableActive && (
-          // 未確定変更が 1 件以上のとき、pending 変更レビューバーを Motion で
-          // 出現/退出させる (#659)。reduced-motion は MotionConfig が自動抑制する。
-          // ツールバー (幅が足りないと横スクロール) の中に置くと、狭いウィンドウで
-          // 「適用」「キャンセル」が右端の外へ押し出されて見えなくなるため、
-          // ツールバー直下の独立した行に置き、足りなければ折り返す。
-          <AnimatePresence>
-            {hasPendingEdits && (
-              <motion.div
-                key="edit-review-bar"
-                initial={{ opacity: 0, y: 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 4 }}
-                transition={transitions.enter}
-                style={{ flexShrink: 0 }}
-              >
-                <Box
-                  role="group"
-                  aria-label={t("editToolbarAria")}
-                  display="flex"
-                  alignItems="center"
-                  flexWrap="wrap"
-                  gap="1.5"
-                  py="1"
-                  px="2"
-                  borderBottom="1px solid var(--border-subtle)"
-                  background="color-mix(in srgb, var(--preview-highlight) 8%, transparent)"
-                >
-                  {/* 件数バッジ: 未確定の編集セル数を丸ピルで示す (#659)。 */}
+          // 未適用の変更 (セル編集・追加行・削除予定) を 1 本にまとめたバー (#2235, 旧 #659)。
+          <ChangeSetBar
+            editCells={editsCount}
+            editRows={editedRowCount}
+            inserts={insertCount}
+            deletes={deleteCount}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            onUndo={onUndoEdit}
+            onRedo={onRedoEdit}
+            canPreview={canPreview}
+            previewTitle={
+              hasInvalidEdit
+                ? t("editApplyDisabledInvalid")
+                : editedRowCount > 1
+                  ? t("editPreviewMultiRowTitle")
+                  : streaming
+                    ? t("editDisabledStreaming")
+                    : t("editorPreviewTitle")
+            }
+            onPreview={onPreviewEdits}
+            applyBlockedReason={
+              hasInvalidEdit ? t("editApplyDisabledInvalid") : streaming ? t("editDisabledStreaming") : null
+            }
+            applying={applyingEdits}
+            onApply={onApplyEdits}
+            onDiscard={() => setShowDiscardConfirm(true)}
+            applyShortcut={formatCombo(gridBindings?.applyChanges ?? DEFAULT_SHORTCUT_COMBOS.applyChanges)}
+            discardShortcut={formatCombo(
+              gridBindings?.discardChanges ?? DEFAULT_SHORTCUT_COMBOS.discardChanges,
+            )}
+            multiRowNote={
+              editedRowCount > 1 && !hasInvalidEdit ? (
+                // Preview only handles one row at a time; surface that
+                // limitation explicitly so users don't assume Apply has been
+                // dry-run-validated for every edited row.
+                <Tooltip label={t("editPreviewMultiRowBannerTitle")}>
                   <chakra.span
-                    display="inline-flex"
-                    alignItems="center"
-                    justifyContent="center"
-                    minW="18px"
-                    height="18px"
-                    px="1.5"
-                    borderRadius="full"
-                    fontSize="2xs"
-                    fontWeight={700}
-                    lineHeight="1"
-                    color="var(--preview-highlight)"
-                    background="color-mix(in srgb, var(--preview-highlight) 20%, transparent)"
-                    flexShrink={0}
-                    aria-hidden
-                  >
-                    {editsCount}
-                  </chakra.span>
-                  <chakra.span
+                    role="note"
                     fontSize="xs"
-                    color="var(--preview-highlight)"
-                    fontWeight={500}
+                    color="app.textMuted"
+                    fontStyle="italic"
                     whiteSpace="nowrap"
                   >
-                    {t("editPendingCount", { cells: editsCount, rows: editedRowCount })}
+                    {t("editPreviewMultiRowBanner")}
                   </chakra.span>
-                  {editedRowCount > 1 && !hasInvalidEdit && (
-                    // Preview only handles one row at a time; surface that
-                    // limitation explicitly so users don't assume Apply has been
-                    // dry-run-validated for every edited row.
-                    <Tooltip label={t("editPreviewMultiRowBannerTitle")}>
-                      <chakra.span
-                        role="note"
-                        fontSize="xs"
-                        color="app.textMuted"
-                        fontStyle="italic"
-                        whiteSpace="nowrap"
-                      >
-                        {t("editPreviewMultiRowBanner")}
-                      </chakra.span>
-                    </Tooltip>
-                  )}
-                  <Tooltip label={t("editUndoTitle")}>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      px="1.5"
-                      onClick={onUndoEdit}
-                      disabled={!canUndo}
-                      aria-label={t("editUndoTitle")}
-                    >
-                      <Icon name="undo" />
-                    </Button>
-                  </Tooltip>
-                  <Tooltip label={t("editRedoTitle")}>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      px="1.5"
-                      onClick={onRedoEdit}
-                      disabled={!canRedo}
-                      aria-label={t("editRedoTitle")}
-                    >
-                      <Icon name="redo" />
-                    </Button>
-                  </Tooltip>
-                  <Tooltip
-                    focusableWrapper={!canPreview}
-                    label={
-                      hasInvalidEdit
-                        ? t("editApplyDisabledInvalid")
-                        : editedRowCount > 1
-                          ? t("editPreviewMultiRowTitle")
-                          : streaming
-                            ? t("editDisabledStreaming")
-                            : t("editorPreviewTitle")
-                    }
-                  >
-                    <Button
-                      variant="warning"
-                      size="sm"
-                      px="2.5"
-                      onClick={onPreviewEdits}
-                      disabled={!canPreview}
-                    >
-                      <Icon name="eye" size={ICON_SIZES.md} /> {t("editPreviewButton")}
-                    </Button>
-                  </Tooltip>
-                  <Tooltip
-                    focusableWrapper={!canApply}
-                    label={
-                      hasInvalidEdit
-                        ? t("editApplyDisabledInvalid")
-                        : streaming
-                          ? t("editDisabledStreaming")
-                          : t("editApplyButtonTitle")
-                    }
-                  >
-                    <LoadingButton
-                      variant="success"
-                      size="sm"
-                      px="2.5"
-                      loading={applyingEdits}
-                      onClick={onApplyEdits}
-                      disabled={!canApply}
-                    >
-                      <Icon name="check" size={ICON_SIZES.md} /> {t("editApplyButton")}
-                    </LoadingButton>
-                  </Tooltip>
-                  <Tooltip label={t("editCancelButtonTitle")}>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      px="2.5"
-                      onClick={() => setShowDiscardConfirm(true)}
-                    >
-                      <Icon name="close" size={ICON_SIZES.md} /> {t("editCancelButton")}
-                    </Button>
-                  </Tooltip>
-                </Box>
-              </motion.div>
-            )}
-          </AnimatePresence>
+                </Tooltip>
+              ) : null
+            }
+          />
         )}
         <AnimatePresence initial={false}>
           {findOpen && (
@@ -10552,6 +10630,7 @@ export const ResultGrid = memo(
             rows={result.rows}
             onMaskConfigChange={setMaskConfig}
             scrollContainerRef={containerRef}
+            applyFlash={applyFlash}
             pageTurnPage={pageTurnPage}
             pageTurnScope={pageTurnScope}
             globalFilter={deferredSearch}
@@ -10605,6 +10684,9 @@ export const ResultGrid = memo(
             findHits={findHits}
             findCurrentKey={findCurrentMatch ? findMatchKey(findCurrentMatch) : null}
             findNav={findNav}
+            columnFilterRequest={filterRequest}
+            onColumnFilterRequestApplied={onColumnFilterRequestApplied}
+            onColumnFiltersChange={onColumnFiltersChange}
             gridBindings={gridBindings}
             serverSort={serverSort}
             serverFilter={serverFilter}

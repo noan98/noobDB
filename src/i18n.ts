@@ -634,6 +634,8 @@ const en = {
   shortcutHintGridCopyHeaders: "Copy with headers",
   shortcutHintGridUndo: "Undo edit",
   shortcutHintGridRedo: "Redo edit",
+  shortcutHintApplyChanges: "Apply changes",
+  shortcutHintDiscardChanges: "Discard changes",
   shortcutHintMaximizeResult: "Maximize results",
   shortcutHintNewTab: "New tab",
   shortcutHintCloseTab: "Close tab",
@@ -2072,6 +2074,40 @@ const en = {
   qbOrderBy: "ORDER BY",
   qbAddOrderBy: "Add sort",
   qbNoOrderBy: "No sort order set. Rows are returned in the database's default order.",
+  qbJoins: "JOIN",
+  qbAddJoinTable: "Add table",
+  qbNoJoins: "Single table. Add a table to join it (tables linked by a foreign key are suggested).",
+  qbJoinType: "Join type",
+  qbJoinLeftColumn: "Column (existing table)",
+  qbJoinRightColumn: "Column (joined table)",
+  qbAddJoinOn: "Add column pair",
+  qbAddFkTable: "Add a table linked by foreign key…",
+  qbAddManualTable: "Add any table (no foreign key)…",
+  qbNoFkCandidates:
+    "No tables are linked by a foreign key. Pick any table on the right and set the ON columns yourself.",
+  qbAggregates: "Aggregates / aliases",
+  qbAddAggregate: "Add aggregate",
+  qbNoAggregates: "No aggregate columns. Add COUNT / SUM / AVG / MIN / MAX, or give a column an alias.",
+  qbAggFunction: "Aggregate function",
+  qbAggNone: "— (no aggregate)",
+  qbAggColumn: "Column for aggregate",
+  qbAggAlias: "Alias (AS)",
+  qbGroupByNote: "Columns that are not aggregated are added to GROUP BY automatically.",
+  qbAddHaving: "Add HAVING condition",
+  qbHavingOperator: "HAVING operator",
+  qbHavingValue: "HAVING value",
+  qbOrderByAggregate: "aggregate",
+  qbValidationJoinOn:
+    "A joined table has no complete ON column pair — pick both columns or remove the table.",
+  qbValidationAggStar: "`*` can only be used with COUNT — pick a column or switch to COUNT.",
+  qbValidationNoHavingValue: "A HAVING condition needs a value — fill it in or remove the condition.",
+  qbValidationHavingSelectAll:
+    "HAVING needs the columns to be chosen — uncheck all columns and pick columns or aggregates.",
+  qbValidationWhereForeignTable:
+    "A WHERE condition refers to a joined table, which UPDATE / DELETE cannot use — remove the condition or switch back to SELECT.",
+  qbValidationHavingNotNumber: "COUNT / SUM / AVG compare with a number — enter a numeric value.",
+  qbValidationOrderNotGrouped:
+    "With aggregates, ORDER BY can only use grouped columns or aggregates (and an aggregate sort needs a grouped query).",
   qbAddAllColumns: "Add all columns",
   qbRequiredColumn: "Required — NOT NULL with no default value.",
   qbBadgeNotNull: "NOT NULL",
@@ -2101,14 +2137,19 @@ const en = {
   gridCharCount: "{count} chars",
   gridBlobBytes: "BLOB · {size}",
 
-  editPendingCount: "{cells} cells / {rows} rows edited",
+  editPendingCount: "Update {cells} cells ({rows} rows)",
+  changeSetAria: "Pending changes",
+  changeSetPillInsert: "Add {count}",
+  changeSetPillDelete: "Delete {count}",
+  changeSetApplyTitle: "Run {statements} in one transaction.",
+  changeSetDiscardTitle: "Discard all pending changes (cell edits, added rows, rows marked for deletion).",
   editPreviewButton: "Preview",
   editApplyButton: "Apply",
   editApplyButtonTitle: "Run the UPDATE(s) against the database, then refresh the view.",
   editApplyConfirmTitle: "Apply changes to a production connection?",
-  editApplyConfirmBody: "You are about to apply {count} change(s) to a production database. Continue?",
+  editApplyConfirmBody:
+    "You are about to run {statements} ({count} change(s)) on a production database. Continue?",
   editCancelButton: "Cancel",
-  editCancelButtonTitle: "Discard all pending edits.",
   editPreviewMultiRowTitle: "Preview supports one row at a time. Discard edits on other rows to enable.",
   editPreviewMultiRowBanner: "Preview unavailable (multi-row)",
   editPreviewMultiRowBannerTitle:
@@ -2150,12 +2191,10 @@ const en = {
   editInvalidTime: "Enter a time like 12:00:00 (or NULL).",
   editInvalidBoolean: "Enter true, false, 0 or 1 (or NULL).",
   editInvalidNotNull: "This column cannot be empty (NOT NULL).",
-  editToolbarAria: "Pending cell edits",
   editUndoTitle: "Undo last edit (Ctrl+Z)",
   editRedoTitle: "Redo edit (Ctrl+Shift+Z)",
-  editDiscardConfirmTitle: "Discard all pending edits?",
-  editDiscardConfirmBody:
-    "This will clear {cells} cell edit(s) across {rows} row(s). You can undo with Ctrl+Z afterwards.",
+  editDiscardConfirmTitle: "Discard all pending changes?",
+  editDiscardConfirmBody: "This will clear {detail}. You can undo with Ctrl+Z afterwards.",
   editDiscardConfirmOk: "Discard",
   editBlurTitle: "Commit edit?",
   editBlurMessage:
@@ -2489,6 +2528,19 @@ const en = {
   pivotTruncated:
     "Truncated to the first {rows} row groups / {cols} column groups; the rest were omitted from the table (totals still include them).",
   pivotNoData: "No data to pivot.",
+  // ピボット / チャートから絞り込んだグリッドへ (#2236)。
+  drillAriaCell: "{summary}: {value}. Press Enter to filter the grid to these rows.",
+  drillAriaHeader: "{summary}. Press Enter to filter the grid to these rows.",
+  chartDrillHint: "Press Enter on a selected point to filter the grid to its rows.",
+  chartDrillAnnounce: "Enter to filter the grid",
+  drillChipLabel: "Filtered from {source}: {summary}",
+  drillChipLabelRange: "Filtered from {source}: {summary} ({count} fetched rows)",
+  drillSourcePivot: "pivot",
+  drillSourceChart: "chart",
+  drillBackToPivot: "Back to pivot",
+  drillBackToChart: "Back to chart",
+  drillClear: "Clear filter",
+  drillChipAria: "Grid filtered from the {source}",
   // テーブル複製 (#1398)。
   cloneTableTitle: "Duplicate table",
   cloneTableClose: "Cancel",
@@ -4136,6 +4188,20 @@ const en = {
   structurePartitionedBy: "Partitioned by {method} ({key})",
   structurePartitionDefault: "(default)",
   structurePartitionsFailed: "Could not load partitions.",
+  partitionRibbonAria: "Partition layout ({method})",
+  partitionRibbonLegend:
+    "Darker = larger. Striped dashed = DEFAULT, double edge = MAXVALUE, dashed marker = gap in the range, \u25B2 = skewed (above average).",
+  partitionRibbonGapAria: "Gap: the range is not continuous here",
+  partitionRibbonShare: "{percent}% of the total size",
+  partitionRibbonHotTip: "Skewed: {factor}x the average or more",
+  partitionRibbonSubs: "Sub-partitions of {partition}",
+  partitionRibbonEmptySlot: "Unused remainder",
+  partitionRibbonGhost: "New partition",
+  partitionRibbonGhostAria: "Partition to be added: {label}",
+  partitionRibbonReorganize: "Split by REORGANIZE",
+  partitionRibbonScan: "Scanned on add",
+  partitionBarShare: "{percent}% of the total",
+  partitionBarHot: "Skewed: {factor}x the average or more",
   partitionOpTruncate: "Truncate partition",
   partitionOpDetach: "Detach partition",
   partitionOpDrop: "Drop partition",
@@ -4273,6 +4339,29 @@ const en = {
   connDiscardBody:
     "{count} tab(s) have unapplied edits. Those unapplied edits are not saved and will be discarded.",
   tabCloseApplying: "Edits are being applied to this tab. Try closing it again once that finishes.",
+  pendingReplaceTitle: "Unapplied changes",
+  pendingReplaceBody:
+    "This tab has unapplied changes ({detail}). {action} replaces the displayed rows.\nApply them first, or discard them and continue?",
+  pendingReplaceDetailEdits: "{count} cell edit(s)",
+  pendingReplaceDetailDeletes: "{count} row(s) to delete",
+  pendingReplaceDetailInserts: "{count} row(s) to add",
+  pendingReplaceDetailSeparator: ", ",
+  pendingReplaceIrreversible: "Discarded row deletions and added rows cannot be restored with Undo.",
+  editApplyNothingToSend:
+    "Nothing could be sent: the edited rows are not in the displayed rows (they may be on another page, or hidden by a sort or filter).",
+  pendingReplaceApply: "Apply and continue",
+  pendingReplaceDiscard: "Discard and continue",
+  pendingReplaceCancel: "Cancel",
+  pendingReplaceApplying: "Changes are being applied to this tab. Try again once that finishes.",
+  pendingReplaceDiscardedToast: "Discarded the unapplied cell edits.",
+  pendingReplaceUndoBlocked:
+    "There are new unapplied changes, so the view was not restored. Apply or discard them first, then try Undo again.",
+  pendingReplaceRoute_run: "Running the query",
+  pendingReplaceRoute_tx: "Running in the transaction",
+  pendingReplaceRoute_page: "Changing the page",
+  pendingReplaceRoute_pageSize: "Changing the page size",
+  pendingReplaceRoute_sort: "Sorting on the server",
+  pendingReplaceRoute_filter: "Filtering on the server",
   toastPendingEditsLost: "The connection was lost, so unapplied edits in {count} tab(s) were discarded.",
   connDiscardAction: "Discard and continue",
   connTxOpenTitle: "A transaction is still open",
@@ -4693,9 +4782,6 @@ const en = {
     "Suggests existing values of {target} (prefix search, up to {limit}). Free input is still allowed.",
   valuePickerTitleAllowed:
     "Suggests the values allowed by the column's type or CHECK constraint. Free input is still allowed.",
-  rowOpsBarSummary: "{inserts} to insert, {deletes} to delete",
-  rowOpsApply: "Apply rows",
-  rowOpsDiscard: "Discard row ops",
   gridFkJump: "Jump to: {table}",
   gridFkJumpTitle: "Open the referenced table filtered by this value",
   gridFkReverse: "Referencing rows: {table}.{column}",
@@ -6089,13 +6175,19 @@ const en = {
   processEmpty: "No processes to show.",
   processBlockingTitle: "Blocking chains",
   processBlockingDesc:
-    "Processes waiting on locks, shown under the process that blocks them. Killing a root blocker releases the whole chain.",
+    "Processes waiting on locks, drawn as a graph from the blocker to each process it makes wait. Killing a root blocker releases the whole chain.",
   processBlockingRoot: "Root blocker ({count} waiting)",
-  processBlockingRepeated: "(already shown)",
   processBlockingDeadlock: "Deadlock (circular wait)",
   processBlockingExternal: "Blocker outside the list #{id} ({count} waiting)",
   processBlockingKill: "Kill",
   processBlockingKillAria: "Kill blocker {id}",
+  processBlockingLegend:
+    "Arrow = blocker to the process it makes wait. Thicker / redder = longer elapsed time of the waiting query. Red ring = deadlock. Dashed = blocker outside the list (cannot be killed).",
+  processBlockingGraphAria: "Lock wait graph",
+  processBlockingSrWaits: "{id} waits for {blockers}",
+  processBlockingSrRoot: "{id} is a root blocker with {count} waiting",
+  processBlockingSrExternal: "{id} is a blocker outside the list with {count} waiting",
+  processBlockingSrDeadlock: "(part of a deadlock)",
   processTruncated: "Showing the first {shown} of {total} processes.",
   processCancelSelected: "Stop statement ({count})",
   processCancelSelectedHint:
@@ -6861,6 +6953,40 @@ const en = {
   advisorRuleOversizedVarcharTitle: "Oversized VARCHAR",
   advisorRuleFloatForMoneyTitle: "Floating-point type for money",
   advisorRuleSequenceExhaustionTitle: "Auto-increment nearing its limit",
+  // 要約タイル・ルール別の分布ストリップ・採番メーター (#2239)
+  advisorStatHigh: "High severity",
+  advisorStatMedium: "Medium severity",
+  advisorStatLow: "Low severity",
+  advisorStatTables: "Tables analyzed",
+  advisorRuleStripAria: "Findings by rule. Press a rule to filter the table; press it again to clear.",
+  advisorFilterActive:
+    'Showing only "{rule}": {shown} of {total} finding(s). CSV / Markdown export covers only the findings shown.',
+  advisorFilterClear: "Clear filter",
+  advisorSeqMeterAria: "Sequence usage (warning at {warn}%, danger at {danger}%)",
+  advisorSeqMeterValue: "{percent}% ({used} / {max})",
+  advisorRuleFkMissingIndexWhy:
+    "Joins and cascading deletes on a foreign key without an index scan the whole child table and can hold locks for a long time.",
+  advisorRuleDuplicateIndexWhy:
+    "Two identical indexes double the write cost and storage for no read benefit.",
+  advisorRuleRedundantIndexWhy:
+    "An index whose columns are a prefix of another index is already covered, yet it still slows every write and takes space.",
+  advisorRuleMissingPrimaryKeyWhy:
+    "Without a primary key rows cannot be identified reliably, so updates, replication and diffs become ambiguous or slow.",
+  advisorRuleUnusedIndexWhy:
+    "An index that is never read still costs time on every write and disk space (based on statistics since the server started).",
+  advisorRuleFkTypeMismatchWhy:
+    "When a foreign key and the column it references differ in type, the engine may convert values and skip the index, or reject some values.",
+  advisorRuleSqliteIntegerPkHintWhy:
+    "Only a column declared exactly INTEGER PRIMARY KEY becomes the rowid alias in SQLite; other integer types lose that speed and space benefit.",
+  advisorRuleNullableForeignKeyWhy:
+    "A nullable foreign key lets rows exist without a parent, which weakens the relationship and surprises joins.",
+  advisorRuleOversizedVarcharWhy:
+    "An oversized VARCHAR limit gives no real validation and can inflate memory used for sorting and temporary tables.",
+  advisorRuleFloatForMoneyWhy:
+    "Floating-point numbers cannot represent most decimal amounts exactly, so rounding errors accumulate in money columns.",
+  advisorRuleSequenceExhaustionWhy:
+    "When an auto-increment reaches its maximum, every INSERT fails at once, so it is the most urgent kind of finding.",
+  advisorRuleUnknownWhy: "A schema finding from a rule this version does not describe yet.",
   // 未知のルール ID (バックエンドだけ新ルールを足したドリフト時) の汎用フォールバック
   advisorRuleUnknownTitle: "Other schema finding",
   advisorRuleUnknownDesc:
@@ -7052,6 +7178,12 @@ const en = {
   shortcutGridPagePrevDesc: "Go to the previous page of a paginated table result.",
   shortcutGridRedoTitle: "Cmd/Ctrl+Shift+Z",
   shortcutGridRedoDesc: "Redo a previously undone pending inline cell edit (before Apply).",
+  shortcutApplyChangesTitle: "Cmd/Ctrl+S",
+  shortcutApplyChangesDesc:
+    "Apply the pending changes (cell edits, added rows, rows marked for deletion) in one transaction.",
+  shortcutDiscardChangesTitle: "Cmd/Ctrl+Shift+Backspace",
+  shortcutDiscardChangesDesc:
+    "Discard all pending changes (asks first). Undo with Ctrl+Z afterwards, including added rows and rows marked for deletion.",
 
   // Welcome screen / first-run onboarding (#599)
   welcomeTitle: "Welcome to noobDB",
@@ -8565,6 +8697,8 @@ const ja: Dict = {
   shortcutHintGridCopyHeaders: "ヘッダ付きコピー",
   shortcutHintGridUndo: "編集を元に戻す",
   shortcutHintGridRedo: "編集をやり直す",
+  shortcutHintApplyChanges: "変更を適用",
+  shortcutHintDiscardChanges: "変更を破棄",
   shortcutHintMaximizeResult: "結果を最大化",
   shortcutHintNewTab: "新しいタブ",
   shortcutHintCloseTab: "タブを閉じる",
@@ -9995,6 +10129,38 @@ const ja: Dict = {
   qbOrderBy: "ORDER BY",
   qbAddOrderBy: "並び替えを追加",
   qbNoOrderBy: "並び替えは未設定です。データベースの既定の順序で返されます。",
+  qbJoins: "JOIN (表の結合)",
+  qbAddJoinTable: "表を追加",
+  qbNoJoins: "単一の表です。表を追加すると結合できます (外部キーでつながる表を候補に出します)。",
+  qbJoinType: "結合の種類",
+  qbJoinLeftColumn: "列 (結合済みの表)",
+  qbJoinRightColumn: "列 (追加する表)",
+  qbAddJoinOn: "列の組を追加",
+  qbAddFkTable: "外部キーでつながる表を追加…",
+  qbAddManualTable: "外部キーなしで表を追加…",
+  qbNoFkCandidates: "外部キーでつながる表はありません。右から任意の表を選び、ON の列を指定してください。",
+  qbAggregates: "集計・別名",
+  qbAddAggregate: "集計を追加",
+  qbNoAggregates: "集計列はありません。COUNT / SUM / AVG / MIN / MAX を追加するか、列に別名を付けられます。",
+  qbAggFunction: "集計関数",
+  qbAggNone: "— (集計しない)",
+  qbAggColumn: "集計する列",
+  qbAggAlias: "別名 (AS)",
+  qbGroupByNote: "集計しない列は自動で GROUP BY に入ります。",
+  qbAddHaving: "HAVING 条件を追加",
+  qbHavingOperator: "HAVING の演算子",
+  qbHavingValue: "HAVING の値",
+  qbOrderByAggregate: "集計",
+  qbValidationJoinOn: "結合した表の ON の列の組が未完成です。両方の列を選ぶか、表を外してください。",
+  qbValidationAggStar: "「*」は COUNT でのみ使えます。列を選ぶか COUNT に切り替えてください。",
+  qbValidationNoHavingValue: "HAVING 条件には値が必要です。値を入力するか条件を削除してください。",
+  qbValidationHavingSelectAll:
+    "HAVING を使うには列の指定が必要です。「すべての列」を外して、列か集計を選んでください。",
+  qbValidationWhereForeignTable:
+    "WHERE に結合先の表の条件があります。UPDATE / DELETE では使えないため、条件を削除するか SELECT に戻してください。",
+  qbValidationHavingNotNumber: "COUNT / SUM / AVG の HAVING は数値で比較します。数値を入力してください。",
+  qbValidationOrderNotGrouped:
+    "集計があるとき、ORDER BY はグループ化した列か集計しか使えません (集計での並べ替えには集計が必要です)。",
   qbAddAllColumns: "全カラムを追加",
   qbRequiredColumn: "必須 — NOT NULL かつデフォルト値がありません。",
   qbBadgeNotNull: "NOT NULL",
@@ -10024,14 +10190,19 @@ const ja: Dict = {
   gridCharCount: "{count} 文字",
   gridBlobBytes: "BLOB · {size}",
 
-  editPendingCount: "{cells} セル / {rows} 行を編集中",
+  editPendingCount: "更新 {cells} セル ({rows} 行)",
+  changeSetAria: "未適用の変更",
+  changeSetPillInsert: "追加 {count}",
+  changeSetPillDelete: "削除 {count}",
+  changeSetApplyTitle: "{statements} を 1 トランザクションで実行します。",
+  changeSetDiscardTitle: "未適用の変更 (セル編集・追加行・削除予定) をすべて破棄します。",
   editPreviewButton: "プレビュー",
   editApplyButton: "適用",
   editApplyButtonTitle: "UPDATE 文を実行し、結果を再取得します。",
   editApplyConfirmTitle: "本番接続に変更を適用しますか？",
-  editApplyConfirmBody: "本番データベースに {count} 件の変更を適用しようとしています。続行しますか？",
+  editApplyConfirmBody:
+    "本番データベースで {statements} ({count} 件の変更) を実行しようとしています。続行しますか？",
   editCancelButton: "破棄",
-  editCancelButtonTitle: "未保存の編集をすべて破棄します。",
   editPreviewMultiRowTitle:
     "Preview は 1 行ずつのみ対応しています。他の行の編集を破棄するとボタンが有効になります。",
   editPreviewMultiRowBanner: "Preview 未対応 (複数行)",
@@ -10074,11 +10245,10 @@ const ja: Dict = {
   editInvalidTime: "時刻を入力してください（例: 12:00:00、または NULL）。",
   editInvalidBoolean: "true / false / 0 / 1 を入力してください（または NULL）。",
   editInvalidNotNull: "この列は空（NULL）にできません。",
-  editToolbarAria: "未保存のセル編集",
   editUndoTitle: "最後の編集を元に戻す (Ctrl+Z)",
   editRedoTitle: "編集をやり直す (Ctrl+Shift+Z)",
-  editDiscardConfirmTitle: "未保存の編集をすべて破棄しますか？",
-  editDiscardConfirmBody: "{rows} 行 {cells} セルの編集が失われます。破棄後は Ctrl+Z で元に戻せます。",
+  editDiscardConfirmTitle: "未適用の変更をすべて破棄しますか？",
+  editDiscardConfirmBody: "{detail}が失われます。破棄後は Ctrl+Z で元に戻せます。",
   editDiscardConfirmOk: "破棄",
   editBlurTitle: "編集を確定しますか？",
   editBlurMessage:
@@ -10413,6 +10583,19 @@ const ja: Dict = {
   pivotTruncated:
     "先頭の {rows} 行グループ / {cols} 列グループのみ表示しています (残りは表から省略しますが、総計には含まれます)。",
   pivotNoData: "ピボットするデータがありません。",
+  // ピボット / チャートから絞り込んだグリッドへ (#2236)。
+  drillAriaCell: "{summary}: {value}。Enter でこの組み合わせの行にグリッドを絞り込みます。",
+  drillAriaHeader: "{summary}。Enter でこの行にグリッドを絞り込みます。",
+  chartDrillHint: "選択中の点で Enter を押すと、その行にグリッドを絞り込みます。",
+  chartDrillAnnounce: "Enter でグリッドを絞り込み",
+  drillChipLabel: "{source}から絞り込み中: {summary}",
+  drillChipLabelRange: "{source}から絞り込み中: {summary} (取得済み {count} 行が対象)",
+  drillSourcePivot: "ピボット",
+  drillSourceChart: "チャート",
+  drillBackToPivot: "ピボットへ戻る",
+  drillBackToChart: "チャートへ戻る",
+  drillClear: "絞り込みを外す",
+  drillChipAria: "{source}から絞り込んだグリッド",
   // テーブル複製 (#1398)。
   cloneTableTitle: "テーブルを複製",
   cloneTableClose: "キャンセル",
@@ -12045,6 +12228,20 @@ const ja: Dict = {
   structurePartitionedBy: "{method} ({key}) で分割",
   structurePartitionDefault: "(既定)",
   structurePartitionsFailed: "パーティションを取得できませんでした。",
+  partitionRibbonAria: "パーティションの構成 ({method})",
+  partitionRibbonLegend:
+    "濃いほどサイズが大きい。斜線の破線 = DEFAULT、二重線の端 = MAXVALUE、破線の印 = 範囲の隙間、\u25B2 = 偏り (平均を大きく超える)。",
+  partitionRibbonGapAria: "隙間: ここで範囲が連続していません",
+  partitionRibbonShare: "サイズの合計の {percent}%",
+  partitionRibbonHotTip: "偏り: 平均の {factor} 倍以上",
+  partitionRibbonSubs: "{partition} のサブパーティション",
+  partitionRibbonEmptySlot: "未使用の剰余",
+  partitionRibbonGhost: "新しいパーティション",
+  partitionRibbonGhostAria: "追加予定のパーティション: {label}",
+  partitionRibbonReorganize: "REORGANIZE で分割",
+  partitionRibbonScan: "追加時にスキャン",
+  partitionBarShare: "全体の {percent}%",
+  partitionBarHot: "偏り: 平均の {factor} 倍以上",
   partitionOpTruncate: "パーティションを TRUNCATE",
   partitionOpDetach: "パーティションを DETACH",
   partitionOpDrop: "パーティションを削除",
@@ -12180,6 +12377,29 @@ const ja: Dict = {
   connDiscardBody:
     "Apply していない編集を持つタブが {count} 個あります。Apply していない編集内容は保存されず破棄されます。",
   tabCloseApplying: "このタブは編集を適用中です。完了してからもう一度閉じてください。",
+  pendingReplaceTitle: "未適用の変更があります",
+  pendingReplaceBody:
+    "このタブには未適用の変更があります ({detail})。{action}と、表示中の行が置き換わります。\n先に適用しますか。それとも破棄して続けますか。",
+  pendingReplaceDetailEdits: "セル編集 {count} 件",
+  pendingReplaceDetailDeletes: "削除予定 {count} 行",
+  pendingReplaceDetailInserts: "追加行 {count} 行",
+  pendingReplaceDetailSeparator: "・",
+  pendingReplaceIrreversible: "破棄した削除予定と追加行は「元に戻す」では戻せません。",
+  editApplyNothingToSend:
+    "送るものがありません。編集した行が表示中の行にありません (別のページにあるか、ソート・フィルタで表示されていない可能性があります)。",
+  pendingReplaceApply: "適用して続行",
+  pendingReplaceDiscard: "破棄して続行",
+  pendingReplaceCancel: "キャンセル",
+  pendingReplaceApplying: "このタブは変更を適用中です。完了してからもう一度操作してください。",
+  pendingReplaceDiscardedToast: "未適用のセル編集を破棄しました。",
+  pendingReplaceUndoBlocked:
+    "新しい未適用の変更があるため、元の表示へは戻しませんでした。先に適用または破棄してから、もう一度「元に戻す」を押してください。",
+  pendingReplaceRoute_run: "クエリを実行する",
+  pendingReplaceRoute_tx: "トランザクション内で実行する",
+  pendingReplaceRoute_page: "ページを移動する",
+  pendingReplaceRoute_pageSize: "ページサイズを変える",
+  pendingReplaceRoute_sort: "サーバ側でソートする",
+  pendingReplaceRoute_filter: "サーバ側で絞り込む",
   toastPendingEditsLost: "接続が切れたため、{count} 個のタブの Apply していない編集が破棄されました。",
   connDiscardAction: "破棄して続行",
   connTxOpenTitle: "トランザクションが開いたままです",
@@ -12592,9 +12812,6 @@ const ja: Dict = {
   valuePickerCheck: "CHECK",
   valuePickerTitleFk: "{target} の既存値を候補に出します (前方一致・最大 {limit} 件)。自由入力もできます。",
   valuePickerTitleAllowed: "列の型または CHECK 制約が許す値を候補に出します。自由入力もできます。",
-  rowOpsBarSummary: "追加 {inserts} 件 / 削除 {deletes} 件",
-  rowOpsApply: "行操作を適用",
-  rowOpsDiscard: "行操作を破棄",
   gridFkJump: "参照先へジャンプ: {table}",
   gridFkJumpTitle: "この値で参照先テーブルを開く",
   gridFkReverse: "参照元を表示: {table}.{column}",
@@ -13977,13 +14194,19 @@ const ja: Dict = {
   processEmpty: "表示するプロセスがありません。",
   processBlockingTitle: "ロック待ちの連鎖",
   processBlockingDesc:
-    "ロック待ちのプロセスを、待たせているプロセスの下に表示します。根のブロッカーを強制終了すると連鎖全体が解消します。",
+    "ロック待ちのプロセスを、待たせているプロセスから伸びる矢印のグラフで表示します。根のブロッカーを強制終了すると連鎖全体が解消します。",
   processBlockingRoot: "根のブロッカー ({count} 件が待機中)",
-  processBlockingRepeated: "(表示済み)",
   processBlockingDeadlock: "デッドロック (循環待ち)",
   processBlockingExternal: "一覧外のブロッカー #{id} ({count} 件が待機中)",
   processBlockingKill: "強制終了",
   processBlockingKillAria: "ブロッカー {id} を強制終了",
+  processBlockingLegend:
+    "矢印 = ブロッカーから待たされているプロセスへ。太く赤いほど待たされているクエリの経過時間が長い。赤い輪 = デッドロック。点線 = 一覧にないブロッカー (強制終了できない)。",
+  processBlockingGraphAria: "ロック待機グラフ",
+  processBlockingSrWaits: "{id} は {blockers} を待っている",
+  processBlockingSrRoot: "{id} は根のブロッカーで {count} 件が待機中",
+  processBlockingSrExternal: "{id} は一覧外のブロッカーで {count} 件が待機中",
+  processBlockingSrDeadlock: "(デッドロックの一部)",
   processTruncated: "{total} 件中、先頭の {shown} 件のみ表示しています。",
   processCancelSelected: "選択の文を停止 ({count})",
   processCancelSelectedHint:
@@ -14745,6 +14968,40 @@ const ja: Dict = {
   advisorRuleOversizedVarcharTitle: "過大な VARCHAR",
   advisorRuleFloatForMoneyTitle: "金額に浮動小数型",
   advisorRuleSequenceExhaustionTitle: "採番が上限に近い",
+  // 要約タイル・ルール別の分布ストリップ・採番メーター (#2239)
+  advisorStatHigh: "重要度: 高",
+  advisorStatMedium: "重要度: 中",
+  advisorStatLow: "重要度: 低",
+  advisorStatTables: "解析した表",
+  advisorRuleStripAria: "ルール別の指摘数。押すとそのルールで表を絞り込み、もう一度押すと解除します。",
+  advisorFilterActive:
+    "「{rule}」だけを表示中: {total} 件中 {shown} 件。CSV / Markdown の書き出しは表示中の指摘のみです。",
+  advisorFilterClear: "絞り込みを解除",
+  advisorSeqMeterAria: "採番の使用率 (警告 {warn}% / 危険 {danger}%)",
+  advisorSeqMeterValue: "{percent}% ({used} / {max})",
+  advisorRuleFkMissingIndexWhy:
+    "インデックスの無い外部キーは、結合や連鎖削除で子テーブルを全件走査し、長時間のロックを招きかねません。",
+  advisorRuleDuplicateIndexWhy:
+    "同じインデックスが 2 本あっても読み取りは速くならず、書き込みの負荷と容量だけが倍になります。",
+  advisorRuleRedundantIndexWhy:
+    "別のインデックスの先頭列と同じ構成なら既にカバーされていて、書き込みのたびのコストと容量だけが余分にかかります。",
+  advisorRuleMissingPrimaryKeyWhy:
+    "主キーが無いと行を確実に特定できず、更新・レプリケーション・差分比較が曖昧になったり遅くなったりします。",
+  advisorRuleUnusedIndexWhy:
+    "読まれないインデックスも、書き込みのたびに更新コストと容量を使います (サーバ起動後の統計に基づく判定です)。",
+  advisorRuleFkTypeMismatchWhy:
+    "外部キーと参照先で型が違うと、値の変換でインデックスが効かなかったり、一部の値が入らなかったりします。",
+  advisorRuleSqliteIntegerPkHintWhy:
+    "SQLite で rowid の別名になるのは INTEGER PRIMARY KEY と宣言した列だけで、他の整数型では速度と容量の利点を失います。",
+  advisorRuleNullableForeignKeyWhy:
+    "NULL を許す外部キーは親の無い行を作れてしまい、関係が弱まって結合の結果も意図とずれやすくなります。",
+  advisorRuleOversizedVarcharWhy:
+    "過大な VARCHAR の長さは実質的な検証にならず、ソートや一時テーブルのメモリ使用量を膨らませることがあります。",
+  advisorRuleFloatForMoneyWhy:
+    "浮動小数点数は多くの小数を正確に表せないため、金額の列では丸め誤差が積み重なります。",
+  advisorRuleSequenceExhaustionWhy:
+    "採番が上限に達すると INSERT がすべて失敗するため、障害の予兆として最も緊急性の高い指摘です。",
+  advisorRuleUnknownWhy: "このバージョンではまだ説明を持たないルールのスキーマ指摘です。",
   // 未知のルール ID (バックエンドだけ新ルールを足したドリフト時) の汎用フォールバック
   advisorRuleUnknownTitle: "その他のスキーマ指摘",
   advisorRuleUnknownDesc:
@@ -14936,6 +15193,11 @@ const ja: Dict = {
   shortcutGridPagePrevDesc: "ページングされたテーブル結果の前のページへ移動します。",
   shortcutGridRedoTitle: "Cmd/Ctrl+Shift+Z",
   shortcutGridRedoDesc: "取り消した未適用のインラインセル編集をやり直します (Apply 前)。",
+  shortcutApplyChangesTitle: "Cmd/Ctrl+S",
+  shortcutApplyChangesDesc: "未適用の変更 (セル編集・追加行・削除予定) を 1 トランザクションで適用します。",
+  shortcutDiscardChangesTitle: "Cmd/Ctrl+Shift+Backspace",
+  shortcutDiscardChangesDesc:
+    "未適用の変更をすべて破棄します (確認あり)。追加行・削除予定も含めて Ctrl+Z で戻せます。",
 
   // ウェルカム画面 / 初回起動オンボーディング (#599)
   welcomeTitle: "noobDB へようこそ",

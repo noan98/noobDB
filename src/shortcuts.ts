@@ -55,7 +55,9 @@ export type ShortcutId =
   | "gridCopyHeaders"
   | "gridInspector"
   | "gridUndo"
-  | "gridRedo";
+  | "gridRedo"
+  | "applyChanges"
+  | "discardChanges";
 
 /**
  * 衝突検出のスコープ = どのキーリスナが捌くか。`global` は window レベルの
@@ -341,6 +343,26 @@ export const SHORTCUTS: ShortcutDef[] = [
     hintKey: "shortcutHintGridRedo",
     scope: "grid",
     defaultCombo: "Mod+Shift+Z",
+  },
+  // 変更セットバー (#2235) の適用 / 破棄。App の window ハンドラが、フォーカス中ペインの結果グリッドへ
+  // 橋渡しする (バーが出ていないときは何もしない)。
+  {
+    keysKey: "shortcutApplyChangesTitle",
+    descKey: "shortcutApplyChangesDesc",
+    category: "grid",
+    id: "applyChanges",
+    hintKey: "shortcutHintApplyChanges",
+    scope: "global",
+    defaultCombo: "Mod+S",
+  },
+  {
+    keysKey: "shortcutDiscardChangesTitle",
+    descKey: "shortcutDiscardChangesDesc",
+    category: "grid",
+    id: "discardChanges",
+    hintKey: "shortcutHintDiscardChanges",
+    scope: "global",
+    defaultCombo: "Mod+Shift+Backspace",
   },
   {
     keysKey: "shortcutGridPageNextTitle",
