@@ -39,7 +39,7 @@ import {
   SUBSET_DEFAULT_ROOT_LIMIT,
   SUBSET_MAX_CHILD_DEPTH,
   SUBSET_MAX_CHILD_LIMIT,
-  SUBSET_MAX_ROOT_LIMIT,
+  subsetRootMax,
   subsetWarningMessage,
 } from "./subsetExtract";
 import { useToast } from "./Toast";
@@ -160,13 +160,14 @@ export function SubsetExtractModal({
         childrenEnabled: childrenEnabled && output !== "sandbox",
         childDepth,
         childLimit,
+        sandbox: output === "sandbox",
       }),
     [sessionId, database, table, whereClause, rootLimit, childrenEnabled, output, childDepth, childLimit],
   );
   const previewFresh = previewMatches(previewKey, request);
   const visiblePreview = previewFresh ? preview : null;
 
-  const rootLimitInvalid = parseBoundedInt(rootLimit, 1, SUBSET_MAX_ROOT_LIMIT) === null;
+  const rootLimitInvalid = parseBoundedInt(rootLimit, 1, subsetRootMax(output === "sandbox")) === null;
   const childDepthInvalid =
     childrenEnabled &&
     output !== "sandbox" &&
@@ -412,7 +413,9 @@ export function SubsetExtractModal({
             disabled={busy}
           />
           {rootLimitInvalid && (
-            <FieldError>{t("subsetInvalidNumber", { min: 1, max: SUBSET_MAX_ROOT_LIMIT })}</FieldError>
+            <FieldError>
+              {t("subsetInvalidNumber", { min: 1, max: subsetRootMax(output === "sandbox") })}
+            </FieldError>
           )}
         </FormSection>
 

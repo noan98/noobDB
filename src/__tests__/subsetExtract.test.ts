@@ -132,3 +132,11 @@ describe("misc", () => {
     expect(needsWriteConfirm({ is_production: false, confirm_writes: true })).toBe(true);
   });
 });
+
+describe("サンドボックス出力の起点行数の上限", () => {
+  it("サンドボックスでは 5000 行まで、それ以外は 10 万行まで", () => {
+    expect(buildSubsetRequest({ ...base, rootLimit: "5000", sandbox: true })?.rootRowLimit).toBe(5000);
+    expect(buildSubsetRequest({ ...base, rootLimit: "5001", sandbox: true })).toBeNull();
+    expect(buildSubsetRequest({ ...base, rootLimit: "5001" })?.rootRowLimit).toBe(5001);
+  });
+});

@@ -504,6 +504,133 @@ async fn sqlite_sandbox_include_related_follows_parent_rows() {
     cleanup(&p1);
 }
 
+/// 関連表として足した親の行が実 DB の先頭ページの外にあっても、編集して競合検査をしたときに
+/// 偽の競合 (実 DB で削除) が出ない。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sqlite_sandbox_conflict_check_reads_related_rows_by_key() {
+    let state = Arc::new(t::AppState::default());
+    let (src, p1) = sqlite_side(&state, "sbx_conf_src", false).await;
+    exec(
+        &state,
+        &src,
+        "CREATE TABLE parent (id INTEGER PRIMARY KEY, name TEXT)",
+    )
+    .await;
+    exec(
+        &state,
+        &src,
+        "CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent(id))",
+    )
+    .await;
+    exec(
+        &state,
+        &src,
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 300) \
+         INSERT INTO parent SELECT i, 'p' || i FROM n",
+    )
+    .await;
+    exec(&state, &src, "INSERT INTO child VALUES (1, 299)").await;
+    let specs = vec![t::SandboxTableSpec {
+        name: "child".into(),
+        filter: Some("id = 1".into()),
+    }];
+    let res = t::create_sandbox_with_filters_via_command(
+        &state,
+        &src.id,
+        None,
+        "subset conflict test",
+        specs,
+        true,
+        Some(10),
+    )
+    .await
+    .expect("create sandbox");
+    let sb_id = res.session_id.clone();
+    let sess = state.get(&sb_id).await.expect("sandbox session");
+    sess.conn
+        .execute("UPDATE parent SET name = 'edited' WHERE id = 299", None)
+        .await
+        .expect("edit parent");
+    // 1 行ずつしか読まない設定でも、実 DB はキーで読むので 299 が見つかる。
+    let diff = t::sandbox_table_diff_via_command(
+        &state,
+        &res.sandbox.id,
+        &sb_id,
+        "parent",
+        Some(&src.id),
+        Some(1),
+    )
+    .await
+    .expect("diff");
+    assert!(diff.source_checked);
+    assert_eq!(diff.desired.rows.len(), 1);
+    assert!(
+        diff.conflicts.is_empty(),
+        "conflicts: {:?}",
+        diff.conflicts.len()
+    );
+
+    let _ = t::discard_sandbox_via_command(&state, &res.sandbox.id, Some(&sb_id)).await;
+    cleanup(&p1);
+}
+
+/// 主キーの無い選択表の同一行は、関連表を含めても 1 行にまとまらない。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sqlite_sandbox_keeps_duplicate_rows_of_keyless_table() {
+    let state = Arc::new(t::AppState::default());
+    let (src, p1) = sqlite_side(&state, "sbx_dup_src", false).await;
+    exec(
+        &state,
+        &src,
+        "CREATE TABLE parent (id INTEGER PRIMARY KEY, name TEXT)",
+    )
+    .await;
+    exec(
+        &state,
+        &src,
+        "CREATE TABLE log (parent_id INTEGER REFERENCES parent(id), msg TEXT)",
+    )
+    .await;
+    exec(&state, &src, "INSERT INTO parent VALUES (1, 'a'), (2, 'b')").await;
+    exec(
+        &state,
+        &src,
+        "INSERT INTO log VALUES (1, 'x'), (1, 'x'), (2, 'y')",
+    )
+    .await;
+    let specs = vec![t::SandboxTableSpec {
+        name: "log".into(),
+        filter: None,
+    }];
+    let res = t::create_sandbox_with_filters_via_command(
+        &state,
+        &src.id,
+        None,
+        "subset dup test",
+        specs,
+        true,
+        Some(100),
+    )
+    .await
+    .expect("create sandbox");
+    let sb_id = res.session_id.clone();
+    let sess = state.get(&sb_id).await.expect("sandbox session");
+    let n = sess
+        .conn
+        .execute("SELECT COUNT(*) FROM log", None)
+        .await
+        .expect("count");
+    assert_eq!(int(&n.rows[0][0]), 3);
+    let p = sess
+        .conn
+        .execute("SELECT COUNT(*) FROM parent", None)
+        .await
+        .expect("count");
+    assert_eq!(int(&p.rows[0][0]), 2);
+    let _ = t::discard_sandbox_via_command(&state, &res.sandbox.id, Some(&sb_id)).await;
+    cleanup(&p1);
+}
+
 // ---------------------------------------------------------------------------
 // MySQL / PostgreSQL (環境変数ゲート)。同じサーバの別 DB / スキーマを転送元・先にする。
 // ---------------------------------------------------------------------------

@@ -9,6 +9,8 @@ import { effectiveMaskRule, type ExportMaskOverrides } from "./exportMasking";
 /** バックエンド (`db::subset`) の上限・既定値と揃える。 */
 export const SUBSET_DEFAULT_ROOT_LIMIT = 1000;
 export const SUBSET_MAX_ROOT_LIMIT = 100_000;
+/** サンドボックスの差分表示が 1 表で扱える行数 (`commands::diff::MAX_DATA_ROWS`)。 */
+export const SUBSET_MAX_SANDBOX_ROOT_LIMIT = 5000;
 export const SUBSET_DEFAULT_CHILD_LIMIT = 1000;
 export const SUBSET_MAX_CHILD_LIMIT = 100_000;
 export const SUBSET_DEFAULT_CHILD_DEPTH = 1;
@@ -37,11 +39,18 @@ export interface SubsetInputs {
   childrenEnabled: boolean;
   childDepth: string;
   childLimit: string;
+  /** サンドボックスへ出すときは起点行数の上限が下がる。 */
+  sandbox?: boolean;
+}
+
+/** 出力先に応じた起点行数の上限。 */
+export function subsetRootMax(sandbox: boolean): number {
+  return sandbox ? SUBSET_MAX_SANDBOX_ROOT_LIMIT : SUBSET_MAX_ROOT_LIMIT;
 }
 
 /** 入力から抽出の指定を作る。数値が不正なら `null`。子を辿らないときは段数 0。 */
 export function buildSubsetRequest(i: SubsetInputs): SubsetRequest | null {
-  const rootRowLimit = parseBoundedInt(i.rootLimit, 1, SUBSET_MAX_ROOT_LIMIT);
+  const rootRowLimit = parseBoundedInt(i.rootLimit, 1, subsetRootMax(i.sandbox === true));
   if (rootRowLimit === null) return null;
   let childDepth = 0;
   let childRowLimit: number | null = null;

@@ -3418,7 +3418,7 @@ const en = {
   subsetPreviewTotal: "{rows} rows in {tables} tables, in parent-first order",
   subsetPreviewEmpty: "No rows match the start condition.",
   subsetWarnCycle:
-    "Foreign keys form a cycle among {tables}. No insert order satisfies every key, so FK checks must be deferred while loading.",
+    "Foreign keys form a cycle among {tables}. No insert order satisfies every key, so FK checks must be deferred while loading. A transfer to a connection does not disable FK checks and can fail partway; the script output is recommended.",
   subsetWarnUnresolved:
     "The foreign key {constraint} on {table} could not be followed (its referenced columns are unknown).",
   subsetWarnChildTruncated: "Child rows of {table} were cut off at {limit} rows.",
@@ -11510,7 +11510,7 @@ const ja: Dict = {
   subsetPreviewTotal: "{tables} 表・計 {rows} 行 (親の表が先の順)",
   subsetPreviewEmpty: "起点の条件に合う行がありません。",
   subsetWarnCycle:
-    "{tables} の外部キーが循環しています。すべてのキーを満たす挿入順は決まらないため、読み込み中は FK 検査を遅延させる必要があります。",
+    "{tables} の外部キーが循環しています。すべてのキーを満たす挿入順は決まらないため、読み込み中は FK 検査を遅延させる必要があります。接続への転送は FK 検査を外さないため途中で失敗しうるので、スクリプト出力を推奨します。",
   subsetWarnUnresolved: "{table} の外部キー {constraint} は参照先の列が分からず、辿れませんでした。",
   subsetWarnChildTruncated: "{table} の子の行は {limit} 行で打ち切りました。",
   subsetWarnRootTruncated: "{table} の起点の行は {limit} 行で打ち切りました。",

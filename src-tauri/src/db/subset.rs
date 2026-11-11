@@ -592,8 +592,14 @@ impl SubsetWalk {
             return Ok(None);
         }
         if total >= max {
+            // 子の方向を辿らない走査 (サンドボックスなど) では「段数を減らす」案内を出さない。
+            let hint = if self.options.child_depth > 0 {
+                "narrow the start condition or reduce the child depth"
+            } else {
+                "narrow the start condition"
+            };
             return Err(AppError::InvalidInput(format!(
-                "the subset exceeds {max} rows; narrow the start condition or reduce the child depth"
+                "the subset exceeds {max} rows; {hint}"
             )));
         }
         st.seen.insert(sig);

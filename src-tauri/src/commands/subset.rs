@@ -197,15 +197,23 @@ async fn catalog_db(conn: &Connection, database: Option<&str>) -> String {
     conn.resolve_database(database).await
 }
 
-/// 抽出対象の表のメタデータ (生成列は取得・出力から外す)。
+/// 抽出対象の表のメタデータ (生成列は取得・出力から外す)。`required` の表に列が無ければ
+/// エラー。それ以外 (外部キーで辿り着いた別スキーマ / 別 DB の表など) は取れないだけなので、
+/// 戻りの 2 つ目に名前を返して続行する。
 pub(crate) async fn load_subset_tables(
     conn: &Connection,
     db: &str,
     names: impl IntoIterator<Item = String>,
-) -> Result<BTreeMap<String, SubsetTable>> {
+    required: &str,
+) -> Result<(BTreeMap<String, SubsetTable>, Vec<String>)> {
     let mut out = BTreeMap::new();
+    let mut missing = Vec::new();
     for name in names {
         let cols = conn.columns(db, &name).await?;
+        if cols.is_empty() && name != required {
+            missing.push(name);
+            continue;
+        }
         if cols.is_empty() {
             return Err(AppError::InvalidInput(format!(
                 "table '{name}' has no columns (does it exist on the source?)"
@@ -227,7 +235,7 @@ pub(crate) async fn load_subset_tables(
             },
         );
     }
-    Ok(out)
+    Ok((out, missing))
 }
 
 /// 計画を最後まで実行する (取得は読み取り専用)。`on_rows` へ集めた行の総数を通知する。
@@ -323,8 +331,19 @@ pub(crate) async fn collect_subset(
     let fks = source.conn.foreign_keys(&db).await?;
     let groups = group_foreign_keys(&fks);
     let names = reachable_tables(std::slice::from_ref(&table), &groups, child_depth);
-    let tables = load_subset_tables(&source.conn, &db, names).await?;
-    let (edges, edge_warnings) = resolve_edges(&groups, &tables);
+    let (tables, missing) = load_subset_tables(&source.conn, &db, names, &table).await?;
+    let (edges, mut edge_warnings) = resolve_edges(&groups, &tables);
+    // 別スキーマ / 別 DB の表を指す外部キーは辿れない。全体を失敗させず警告にして続ける。
+    for g in &groups {
+        let touches_missing = (missing.contains(&g.parent) && tables.contains_key(&g.child))
+            || (missing.contains(&g.child) && tables.contains_key(&g.parent));
+        if touches_missing {
+            edge_warnings.push(SubsetWarning::UnresolvedForeignKey {
+                table: g.child.clone(),
+                constraint: g.constraint.clone(),
+            });
+        }
+    }
 
     let mut walk = SubsetWalk::new(
         tables.clone(),
@@ -487,13 +506,21 @@ fn render_script(
     let mut out = String::new();
     out.push_str("-- noobDB subset extract\n");
     for t in &collected.result.tables {
-        out.push_str(&format!("-- {}: {} row(s)\n", t.table, t.rows.len()));
+        out.push_str(&format!(
+            "-- {}: {} row(s)\n",
+            comment_safe(&t.table),
+            t.rows.len()
+        ));
     }
     for w in &collected.result.warnings {
         if let SubsetWarning::Cycle { tables } = w {
             out.push_str(&format!(
                 "-- WARNING: foreign keys form a cycle among: {}\n",
-                tables.join(", ")
+                tables
+                    .iter()
+                    .map(|t| comment_safe(t))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
     }
@@ -521,7 +548,10 @@ fn render_script(
         };
         let opts =
             SqlExportOpts::build(Some(driver), Some(t.table.clone()), None).with_conflict(conflict);
-        out.push_str(&format!("-- {}\n", quote_ident(driver, &t.table)));
+        out.push_str(&format!(
+            "-- {}\n",
+            comment_safe(&quote_ident(driver, &t.table))
+        ));
         let mut buf: Vec<u8> = Vec::new();
         write_export_to(
             &mut buf,
@@ -545,10 +575,54 @@ fn render_script(
     Ok(out)
 }
 
+/// 転送元と転送先が同じデータベースかどうか。セッション ID が違っても、同じプロファイル
+/// (または同じ接続先) の同じデータベースなら同一とみなす (自分自身への書き込みを防ぐ)。
+fn same_database(
+    a: (
+        &str,
+        Option<&str>,
+        &crate::db::DbConnectOptions,
+        Option<&str>,
+    ),
+    b: (
+        &str,
+        Option<&str>,
+        &crate::db::DbConnectOptions,
+        Option<&str>,
+    ),
+) -> bool {
+    let (a_id, a_profile, a_opts, a_db) = a;
+    let (b_id, b_profile, b_opts, b_db) = b;
+    let same_endpoint = a_id == b_id
+        || matches!((a_profile, b_profile), (Some(x), Some(y)) if x == y)
+        || (a_opts.driver == b_opts.driver
+            && a_opts.host == b_opts.host
+            && a_opts.port == b_opts.port
+            && a_opts.user == b_opts.user
+            && a_opts.file_path == b_opts.file_path);
+    if !same_endpoint {
+        return false;
+    }
+    let eff = |db: Option<&str>, o: &crate::db::DbConnectOptions| -> String {
+        db.filter(|d| !d.is_empty())
+            .map(str::to_string)
+            .or_else(|| o.database.clone())
+            .unwrap_or_default()
+    };
+    eff(a_db, a_opts) == eff(b_db, b_opts)
+}
+
+/// SQL コメント (`-- ...`) に出す名前から制御文字を取り除く。改行を含む表名でコメントを
+/// 抜け出して任意の文を差し込まれないようにする。
+fn comment_safe(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
+}
+
 /// 別の接続へ書き込む。書き込み前に、転送先の表・列がすべて揃っていることを確かめる。
 async fn write_to_target(
     target: &Session,
-    req: &SubsetRequest,
     target_database: Option<&str>,
     existing: ExistingRows,
     collected: &Collected,
@@ -557,13 +631,6 @@ async fn write_to_target(
 ) -> Result<u64> {
     ensure_transfer_target_writable(target)?;
     let tdb = target_database.filter(|d| !d.is_empty());
-    if req.source_session_id == target.id
-        && req.source_database.as_deref().unwrap_or("") == tdb.unwrap_or("")
-    {
-        return Err(AppError::InvalidInput(
-            "source and target are the same database".into(),
-        ));
-    }
     let driver = target.conn.driver_kind();
     let cdb = {
         let r = target.conn.resolve_database(tdb).await;
@@ -720,10 +787,28 @@ pub async fn run_subset_inner(
             let Some(target) = target else {
                 return Err(AppError::Other("target session missing".into()));
             };
+            ensure_transfer_target_writable(&target)?;
+            if same_database(
+                (
+                    &source.id,
+                    source.profile_id.as_deref(),
+                    &source.connect_options,
+                    req.source_database.as_deref(),
+                ),
+                (
+                    &target.id,
+                    target.profile_id.as_deref(),
+                    &target.connect_options,
+                    target_database.as_deref().filter(|d| !d.is_empty()),
+                ),
+            ) {
+                return Err(AppError::InvalidInput(
+                    "source and target are the same database".into(),
+                ));
+            }
             let started = Instant::now();
             let result = write_to_target(
                 &target,
-                &req,
                 target_database.as_deref(),
                 existing,
                 &collected,
@@ -740,7 +825,7 @@ pub async fn run_subset_inner(
             let summary = format!(
                 "-- subset transfer from session {} (table {}, {} tables)",
                 req.source_session_id,
-                req.table,
+                comment_safe(&req.table),
                 counts.len()
             );
             let elapsed = started.elapsed().as_millis() as i64;
@@ -912,4 +997,63 @@ pub async fn run_subset(
         .await;
     let _ = ready_tx.send(token);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::DbConnectOptions;
+
+    fn opts(host: &str, db: Option<&str>) -> DbConnectOptions {
+        DbConnectOptions {
+            host: host.into(),
+            port: 3306,
+            user: "u".into(),
+            password: String::new(),
+            database: db.map(str::to_string),
+            driver: DriverKind::Mysql,
+            file_path: None,
+            ssl_mode: None,
+            ssl_root_cert: None,
+            ssl_client_cert: None,
+            ssl_client_key: None,
+            init_sql: None,
+            aws_iam: None,
+            sqlite_attachments: Vec::new(),
+            read_only: false,
+        }
+    }
+
+    #[test]
+    fn comment_safe_replaces_line_breaks() {
+        let name = "t\nDROP TABLE x; --\r";
+        let safe = comment_safe(name);
+        assert!(!safe.contains('\n') && !safe.contains('\r'));
+        assert!(safe.contains("DROP TABLE x"));
+    }
+
+    #[test]
+    fn same_database_detects_other_session_of_same_profile() {
+        let o = opts("h1", Some("a"));
+        assert!(same_database(
+            ("s1", Some("p"), &o, None),
+            ("s2", Some("p"), &o, None)
+        ));
+        // 同じ接続先でもデータベースが違えば別。
+        assert!(!same_database(
+            ("s1", Some("p"), &o, None),
+            ("s2", Some("p"), &o, Some("b"))
+        ));
+        // 別プロファイル・別ホストは別。
+        let o2 = opts("h2", Some("a"));
+        assert!(!same_database(
+            ("s1", Some("p"), &o, None),
+            ("s2", Some("q"), &o2, None)
+        ));
+        // プロファイルが違っても同じ接続先の同じ DB なら同一。
+        assert!(same_database(
+            ("s1", Some("p"), &o, None),
+            ("s2", Some("q"), &o, Some("a"))
+        ));
+    }
 }
