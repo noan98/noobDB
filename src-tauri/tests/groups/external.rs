@@ -22,6 +22,8 @@ mod mysql_integration;
 mod pg_listen_integration;
 #[path = "../postgres_integration.rs"]
 mod postgres_integration;
+#[path = "../read_only_server_integration.rs"]
+mod read_only_server_integration;
 #[path = "../ssh_integration.rs"]
 mod ssh_integration;
 #[path = "../tls_integration.rs"]

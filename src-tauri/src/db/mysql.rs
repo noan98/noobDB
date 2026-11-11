@@ -34,6 +34,8 @@ pub struct MySqlConn {
     /// 明示トランザクションで確保した専用接続。BEGIN〜COMMIT/ROLLBACK の間、
     /// すべての文をこの 1 本で実行して同一トランザクションに乗せる。
     tx: tokio::sync::Mutex<Option<sqlx::pool::PoolConnection<sqlx::MySql>>>,
+    /// 開いている明示トランザクションが READ ONLY か (#2243)。
+    pub(super) tx_read_only: std::sync::atomic::AtomicBool,
     /// AWS IAM 認証 (#734) 時、プールの新規接続用トークンを定期的に作り直す
     /// タスク。ドロップで停止する。パスワード認証では `None`。
     _iam_refresh: Option<super::aws_iam::TokenRefreshGuard>,
@@ -111,6 +113,7 @@ impl MySqlConn {
         Ok(Self {
             pool,
             tx: tokio::sync::Mutex::new(None),
+            tx_read_only: Default::default(),
             _iam_refresh: iam_refresh,
             innodb_lock_waits_missing: std::sync::atomic::AtomicBool::new(false),
         })
@@ -121,9 +124,19 @@ impl MySqlConn {
     }
 
     pub async fn execute(&self, sql: &str, database: Option<&str>) -> Result<QueryResult> {
-        let mut conn = self.pool.acquire().await?;
-        apply_use_database(&mut conn, database).await?;
-        run_sql_on(&mut conn, sql).await
+        // サーバ側の読み取り専用 (#2243): 強制する経路では START TRANSACTION READ ONLY で囲んで
+        // 必ず戻す。戻せなかった・future が drop された接続は、プールへ戻さず閉じる。
+        let enforce = super::read_only_scope::enforced();
+        let mut guard = super::server_stop::ReleaseGuard::new(self.pool.acquire().await?);
+        if enforce {
+            guard.arm();
+        }
+        apply_use_database(&mut guard.conn, database).await?;
+        let (result, clean) = run_sql_read_only_aware(&mut guard.conn, sql, enforce).await;
+        if clean {
+            guard.keep();
+        }
+        result
     }
 
     /// `ANALYZE TABLE` / `OPTIMIZE TABLE` を実行して結果行 (Table / Op / Msg_type / Msg_text) を
@@ -177,6 +190,8 @@ impl MySqlConn {
             sqlx::raw_sql(sqlx::AssertSqlSafe(opts.mysql_begin_sql())),
         )
         .await?;
+        self.tx_read_only
+            .store(opts.read_only, std::sync::atomic::Ordering::SeqCst);
         *guard = Some(conn);
         Ok(())
     }
@@ -206,6 +221,8 @@ impl MySqlConn {
 
     pub async fn tx_finish(&self, commit: bool) -> Result<()> {
         let mut guard = self.tx.lock().await;
+        self.tx_read_only
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         let mut conn = guard
             .take()
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
@@ -275,6 +292,12 @@ impl MySqlConn {
             }
             None => None,
         };
+        // サーバ側の読み取り専用 (#2243): START TRANSACTION READ ONLY で囲んで必ず戻す。
+        let enforce = super::read_only_scope::enforced();
+        if enforce {
+            guard.arm();
+            mysql_read_only_begin(&mut guard.conn).await?;
+        }
         // アプリ側の理由 (結果の送信失敗など) で打ち切られたときは、サーバで文が走ったままの
         // 可能性があるので、設定の復元は省き、接続は閉じる (keep しない)。
         let app_failed = std::sync::atomic::AtomicBool::new(false);
@@ -295,18 +318,64 @@ impl MySqlConn {
         )
         .await;
         if app_failed.load(std::sync::atomic::Ordering::SeqCst) {
+            // サーバ側停止の文脈が無い (プレビューの行数打ち切りなど) 読み取り専用の実行は、
+            // トランザクションを戻せれば接続を使い回す (#2243)。文脈があるときは従来どおり閉じる。
+            if enforce
+                && super::server_stop::current().is_none()
+                && mysql_read_only_end(&mut guard.conn).await
+            {
+                guard.keep();
+            }
             return result;
         }
+        // 読み取り専用のトランザクションは結果に関わらず戻す (#2243)。戻せなければ接続は閉じる。
+        let rolled_back = !enforce || mysql_read_only_end(&mut guard.conn).await;
         // 設定を元に戻せたときだけ接続をプールへ戻す (戻せなければ drop で閉じる)。
-        let restored = match restore {
-            Some(orig) => restore_max_execution_time(&mut guard.conn, orig).await,
-            None => true,
-        };
+        let restored = rolled_back
+            && match restore {
+                Some(orig) => restore_max_execution_time(&mut guard.conn, orig).await,
+                None => true,
+            };
         if restored {
             guard.keep();
         }
         result
     }
+}
+
+/// サーバ側の読み取り専用トランザクションを開く (#2243)。USE と同じくテキストプロトコルで流す。
+async fn mysql_read_only_begin(conn: &mut sqlx::MySqlConnection) -> Result<()> {
+    sqlx::Executor::execute(
+        &mut *conn,
+        sqlx::raw_sql(sqlx::AssertSqlSafe("START TRANSACTION READ ONLY")),
+    )
+    .await?;
+    Ok(())
+}
+
+/// [`mysql_read_only_begin`] で開いたトランザクションを戻す。戻せたか。
+async fn mysql_read_only_end(conn: &mut sqlx::MySqlConnection) -> bool {
+    sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(sqlx::AssertSqlSafe("ROLLBACK")))
+        .await
+        .is_ok()
+}
+
+/// 1 文を実行する。`enforce` のときはサーバ側の読み取り専用トランザクションで囲み (#2243)、
+/// 戻り値の bool は「接続をプールへ戻してよいか」(ROLLBACK まで済んだか)。
+async fn run_sql_read_only_aware(
+    conn: &mut sqlx::MySqlConnection,
+    sql: &str,
+    enforce: bool,
+) -> (Result<QueryResult>, bool) {
+    if !enforce {
+        return (run_sql_on(conn, sql).await, true);
+    }
+    if let Err(e) = mysql_read_only_begin(conn).await {
+        return (Err(e), false);
+    }
+    let result = run_sql_on(conn, sql).await;
+    let clean = mysql_read_only_end(conn).await;
+    (result, clean)
 }
 
 /// `execute_stream` の本体 (接続取得・サーバ側停止の準備より後)。
@@ -1362,6 +1431,15 @@ impl MySqlConn {
         }
         let mut conn = self.pool.acquire().await?;
         apply_use_database(&mut conn, database).await?;
+        // サーバ側の読み取り専用 (#2243): 次のトランザクションだけ READ ONLY にする (BEGIN の前に流す。
+        // 1 回のトランザクションで消費されるので、プールへ戻る接続には残らない)。
+        if super::read_only_scope::enforced() {
+            sqlx::Executor::execute(
+                &mut *conn,
+                sqlx::raw_sql(sqlx::AssertSqlSafe("SET TRANSACTION READ ONLY")),
+            )
+            .await?;
+        }
         let mut tx = conn.begin().await?;
         let mut counts: Vec<u64> = Vec::with_capacity(statements.len());
         // EVENT の同期は作成中だけ time_zone を差し替える (#2100)。途中で失敗しても、プールへ戻る接続に
