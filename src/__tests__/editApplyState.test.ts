@@ -5,7 +5,9 @@ import type { BulkWriteOptions, BulkWriteOutcome } from "../api/tauri";
 import {
   appliedRowShortfall,
   applyWithRowCountGuard,
+  addInsertsInTab,
   discardChangeSet,
+  toggleDeleteInTab,
   redoChangeSet,
   undoChangeSet,
   MAX_OVERSHOOT_CONFIRMATIONS,
@@ -351,6 +353,18 @@ describe("変更セットの破棄 / Undo / Redo (#2235)", () => {
     const undone = { ...later, ...undoChangeSet(later, LIMIT) };
     expect(undone.pendingDeletes).toEqual(["d1", "d2"]);
     expect(undone.pendingInserts).toHaveLength(2);
+  });
+
+  it("Undo 後に行操作を足したら Redo 履歴を捨て、Redo で足した行が消えない", () => {
+    const discarded = { ...base, ...discardChangeSet(base, LIMIT) };
+    const undone = { ...discarded, ...undoChangeSet(discarded, LIMIT) };
+    expect(undone.editRedoStack).toHaveLength(1);
+    const added = { ...undone, ...addInsertsInTab(undone, [{ 0: "z" }]) };
+    expect(added.editRedoStack).toEqual([]);
+    expect(redoChangeSet(added, LIMIT)).toBeNull();
+    const toggled = { ...undone, ...toggleDeleteInTab(undone, "d9") };
+    expect(toggled.pendingDeletes).toEqual(["d1", "d9"]);
+    expect(toggled.editRedoStack).toEqual([]);
   });
 
   it("何も無いときの破棄・空の履歴の Undo / Redo は null", () => {

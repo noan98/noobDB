@@ -97,6 +97,7 @@ import {
 } from "./components/cellEdit";
 import {
   applyWithRowCountGuard,
+  addInsertsInTab,
   appliedRowShortfall,
   discardChangeSet,
   pendingEditsAfterApply,
@@ -104,6 +105,7 @@ import {
   redoChangeSet,
   remainingAfterSent,
   tabStateAfterApply,
+  toggleDeleteInTab,
   undoChangeSet,
   type EditHistoryEntry,
 } from "./components/editApplyState";
@@ -8343,11 +8345,7 @@ export default function App() {
   // 行を削除予定にトグルする。
   const toggleRowDeleteForTab = useCallback(
     (tabId: string, rowKey: string) => {
-      patchTab(tabId, (tt) => {
-        const cur = tt.pendingDeletes ?? [];
-        const next = cur.includes(rowKey) ? cur.filter((k) => k !== rowKey) : [...cur, rowKey];
-        return { ...tt, pendingDeletes: next };
-      });
+      patchTab(tabId, (tt) => ({ ...tt, ...toggleDeleteInTab(tt, rowKey) }));
     },
     [patchTab],
   );
@@ -8369,7 +8367,7 @@ export default function App() {
     (tabId: string, row: PendingInsertRow) => {
       setRowInsertTabId(null);
       setRowInsertSeed(null);
-      patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), row] }));
+      patchTab(tabId, (tt) => ({ ...tt, ...addInsertsInTab(tt, [row]) }));
     },
     [patchTab],
   );
@@ -8377,7 +8375,7 @@ export default function App() {
   // 行追加モーダルの連続追加モード (#1628): モーダルは閉じず、保留の追加行へ 1 行足すだけ。
   const addInsertRowKeepOpenForTab = useCallback(
     (tabId: string, row: PendingInsertRow) => {
-      patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), row] }));
+      patchTab(tabId, (tt) => ({ ...tt, ...addInsertsInTab(tt, [row]) }));
     },
     [patchTab],
   );
@@ -8387,7 +8385,7 @@ export default function App() {
   const addInsertRowsForTab = useCallback(
     (tabId: string, rows: PendingInsertRow[]) => {
       if (rows.length === 0) return;
-      patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), ...rows] }));
+      patchTab(tabId, (tt) => ({ ...tt, ...addInsertsInTab(tt, rows) }));
     },
     [patchTab],
   );

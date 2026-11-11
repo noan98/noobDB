@@ -117,6 +117,20 @@ export function discardChangeSet(tt: ChangeSetTab, limit: number): Partial<Chang
   };
 }
 
+/**
+ * 行操作 (削除予定のトグル・追加行) を積む (#2235)。セル編集と同じく、新しい操作をしたら Redo 履歴を
+ * 捨てる (捨てないと、Undo 後に足した行操作を後の Redo が丸ごと置き換えて消してしまう)。
+ */
+export function toggleDeleteInTab(tt: ChangeSetTab, rowKey: string): Partial<ChangeSetTab> {
+  const cur = tt.pendingDeletes ?? [];
+  const next = cur.includes(rowKey) ? cur.filter((k) => k !== rowKey) : [...cur, rowKey];
+  return { pendingDeletes: next, editRedoStack: [] };
+}
+
+export function addInsertsInTab(tt: ChangeSetTab, rows: PendingInsertRow[]): Partial<ChangeSetTab> {
+  return { pendingInserts: [...(tt.pendingInserts ?? []), ...rows], editRedoStack: [] };
+}
+
 /** Undo: 直前の世代へ戻す。履歴が空なら null。 */
 export function undoChangeSet(tt: ChangeSetTab, limit: number): Partial<ChangeSetTab> | null {
   const stack = tt.editUndoStack ?? [];
