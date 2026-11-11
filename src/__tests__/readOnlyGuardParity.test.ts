@@ -936,7 +936,8 @@ const SCRATCH_ALLOWED_CALLS: Record<string, string[]> = {
 // 空のメモリ内キャッシュを作るだけ (セッション構築で使う)
 const SESSION_CACHES = ["crate::cache::SchemaCache::default", "crate::cache::QueryResultCache::default"];
 const SCRATCH_ALLOWED_PATHS: Record<string, string[]> = {
-  create_sandbox: SESSION_CACHES,
+  // 元 DB の行読み取りをサーバ側の読み取り専用で包むだけ (書き込みを拒否する側の足場, #2241)。
+  create_sandbox: [...SESSION_CACHES, "crate::db::read_only_scope::scope"],
   create_local_session: SESSION_CACHES,
   // メモリ上の結果ハンドルから行を読み出すだけ (DB へは触れない)。
   register_local_table: ["crate::commands::result::resolve_rows"],

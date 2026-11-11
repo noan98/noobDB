@@ -38,7 +38,6 @@ use tauri::State;
 use crate::db::data_diff::key_signature;
 use crate::db::data_diff::{compute_data_diff, sql_literal, DataDiff, RowStatus};
 use crate::db::diff::{compute_schema_diff, SchemaDiff, TableColumns};
-use crate::db::read_only_scope::scope as server_read_only;
 use crate::db::sandbox::{
     checked_row_filter, clamp_row_limit, detect_conflicts, filter_out_keys, fk_closure,
     is_shadow_table_name, normalize_columns_for_sqlite_base, normalize_decimal_cells, row_to_cells,
@@ -320,7 +319,7 @@ pub(crate) async fn create_sandbox_inner(
             filters.get(t).map(String::as_str),
         );
         // 元 DB からの読み取りはサーバ側でも読み取り専用にする (#2243)。
-        let res = server_read_only(source.conn.execute(&sql, Some(&db))).await?;
+        let res = crate::db::read_only_scope::scope(source.conn.execute(&sql, Some(&db))).await?;
         let truncated = res.rows.len() > limit as usize;
         let rows: Vec<_> = res.rows.into_iter().take(limit as usize).collect();
         fetched.push(FetchedTable {
@@ -800,7 +799,12 @@ pub(crate) async fn sandbox_table_diff_inner(
                     None,
                 );
                 let res = match sql {
-                    Ok(sql) => server_read_only(source.conn.execute(&sql, Some(&source_db))).await,
+                    Ok(sql) => {
+                        crate::db::read_only_scope::scope(
+                            source.conn.execute(&sql, Some(&source_db)),
+                        )
+                        .await
+                    }
                     Err(e) => Err(e),
                 };
                 match res {
