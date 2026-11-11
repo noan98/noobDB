@@ -6,6 +6,7 @@ import { useT, type I18nKey } from "../i18n";
 import { SurfaceRule } from "./SurfaceRule";
 import { Callout } from "./Callout";
 import { EmptyState } from "./EmptyState";
+import { ThresholdMeter } from "./ThresholdMeter";
 import { StatTile } from "./StatTile";
 import { RunQueryIllustration } from "./illustrations";
 import {
@@ -53,47 +54,17 @@ const tdNumCss: SystemStyleObject = { ...tdCss, textStyle: "numeric" };
 /** 空き率メーター。VACUUM を提案する閾値の位置にマーカーを置く (0〜100% の目盛り)。 */
 function FreelistMeter({ ratio, over }: { ratio: number; over: boolean }) {
   const t = useT();
-  const pct = Math.min(100, Math.max(0, ratio * 100));
   const thresholdPct = VACUUM_HINT_RATIO * 100;
   return (
-    <Box data-testid="sqlite-maint-meter">
-      <Box
-        role="meter"
-        aria-label={t("sqliteMaintMeterAria", { threshold: thresholdPct })}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.round(pct)}
-        aria-valuetext={`${Math.round(pct)}%`}
-        position="relative"
-        h="2"
-        borderRadius="sm"
-        bg="app.surfaceMuted"
-        overflow="visible"
-      >
-        <Box
-          h="100%"
-          borderRadius="sm"
-          bg={over ? "app.warningBg" : "app.accent"}
-          style={{ width: `${pct}%` }}
-          data-testid="sqlite-maint-meter-fill"
-        />
-        <Box
-          aria-hidden
-          position="absolute"
-          top="-1"
-          bottom="-1"
-          w="0.5"
-          bg="app.text"
-          style={{ left: `${thresholdPct}%` }}
-          data-testid="sqlite-maint-meter-threshold"
-        />
-      </Box>
-      <chakra.div position="relative" h="4" mt="1" textStyle="caption" color="app.textMuted" aria-hidden>
-        <chakra.span position="absolute" textStyle="numeric" style={{ left: `${thresholdPct}%` }}>
-          {t("sqliteMaintMeterThreshold", { threshold: thresholdPct })}
-        </chakra.span>
-      </chakra.div>
-    </Box>
+    <ThresholdMeter
+      percent={ratio * 100}
+      tone={over ? "warning" : "accent"}
+      markers={[
+        { percent: thresholdPct, label: t("sqliteMaintMeterThreshold", { threshold: thresholdPct }) },
+      ]}
+      ariaLabel={t("sqliteMaintMeterAria", { threshold: thresholdPct })}
+      testIdPrefix="sqlite-maint-meter"
+    />
   );
 }
 

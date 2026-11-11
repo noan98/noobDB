@@ -5,6 +5,7 @@ import { useT, type I18nKey } from "../i18n";
 import { CountUp } from "./CountUp";
 import type { LatencySample } from "./connectionHealth";
 import { LatencySparkline } from "./LatencySparkline";
+import { semanticColorToken, type SemanticRole } from "../semanticColors";
 
 /** デルタの「良い向き」。`neutral` は良悪を付けず、向きだけを無彩色で示す。 */
 export type StatDeltaGood = "up" | "down" | "neutral";
@@ -76,6 +77,7 @@ export function StatTile({
   deltaFormatter,
   goodWhen = "neutral",
   trend,
+  tone,
 }: {
   label: string;
   value: number | string | ReactNode;
@@ -90,6 +92,8 @@ export function StatTile({
   goodWhen?: StatDeltaGood;
   /** 直近の推移 (古い順)。2 点未満では出さない。 */
   trend?: readonly LatencySample[];
+  /** 値の文字色を意味色にする (重大度の件数など)。未指定なら通常の文字色。 */
+  tone?: SemanticRole;
 }) {
   const showDelta = delta != null && Number.isFinite(delta);
   const showTrend = trend != null && trend.filter((v) => v != null && Number.isFinite(v)).length >= 2;
@@ -113,6 +117,7 @@ export function StatTile({
         fontWeight={600}
         fontFamily="var(--font-mono)"
         textStyle="numeric"
+        color={tone ? semanticColorToken(tone, "text") : undefined}
         overflow="hidden"
         textOverflow="ellipsis"
         whiteSpace="nowrap"
