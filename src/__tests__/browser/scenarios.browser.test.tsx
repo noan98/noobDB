@@ -1626,6 +1626,89 @@ describe("シナリオ: 未確定のセル編集があるタブを閉じる (#13
   });
 });
 
+describe("シナリオ: 未適用の変更があるタブで結果を置き換える操作 (#2234)", () => {
+  /** banana の qty を 42 に編集して保留にし、Run で再実行しようとする。 */
+  async function editQtyThenRerun(screen: Screen) {
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await openFruitsTable(screen);
+    await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
+    await vi.waitFor(
+      () => {
+        const cell = screen.getByRole("gridcell", { name: "3", exact: true }).query();
+        if (!cell?.classList.contains("is-editable-cell")) throw new Error("qty cell is not editable yet");
+      },
+      { timeout: 5000 },
+    );
+    await screen.getByRole("gridcell", { name: "3", exact: true }).dblClick();
+    const input = await vi.waitFor(
+      () => {
+        const el = document.querySelector<HTMLInputElement>("input.cell-edit-input");
+        if (!el) throw new Error("cell edit input not open");
+        return el;
+      },
+      { timeout: 5000 },
+    );
+    await page.elementLocator(input).fill("42");
+    await userEvent.keyboard("{Enter}");
+    await expect.element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 }))).toBeVisible();
+    await screen.getByRole("button", { name: t("editorRun"), exact: true }).click();
+    await expect.element(screen.getByRole("heading", { name: t("pendingReplaceTitle") })).toBeVisible();
+  }
+
+  const streamRuns = () => invocationsOf("run_query_stream").length;
+
+  it("Esc (キャンセル) では何も変わらず、再実行もしない", async () => {
+    registerAutoStream();
+    const screen = await renderInBrowser(<App />);
+    await editQtyThenRerun(screen);
+    const before = streamRuns();
+    // Esc はキャンセルと同じ (編集バーにも「キャンセル」ボタンがあるのでキー操作で閉じる)。
+    await userEvent.keyboard("{Escape}");
+    await expect
+      .element(screen.getByRole("heading", { name: t("pendingReplaceTitle") }))
+      .not.toBeInTheDocument();
+    await expect.element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 }))).toBeVisible();
+    expect(streamRuns()).toBe(before);
+  });
+
+  it("破棄して続行すると編集が消え、取り直しが走って「元に戻す」が出る", async () => {
+    registerAutoStream();
+    const screen = await renderInBrowser(<App />);
+    await editQtyThenRerun(screen);
+    const before = streamRuns();
+    await screen.getByRole("button", { name: t("pendingReplaceDiscard"), exact: true }).click();
+    await expect
+      .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
+      .not.toBeInTheDocument();
+    await vi.waitFor(() => expect(streamRuns()).toBe(before + 1), { timeout: 5000 });
+    await expect.element(screen.getByRole("button", { name: t("toastUndo"), exact: true })).toBeVisible();
+  });
+
+  it("適用して続行すると Apply が成功してから実行する", async () => {
+    const order: string[] = [];
+    let armed = false;
+    onCommand("bulk_update_cells", () => {
+      order.push("apply");
+      fruitsRows = fruitsRows.map((r) => (r[0] === 2 ? [2, "banana", 42] : r));
+      return { status: "applied", result: { columns: [], rows: [], rows_affected: 1, elapsed_ms: 2 } };
+    });
+    onCommand("run_query_stream", (args) => {
+      // 初回の表示 (テーブルを開く) は数えず、Run で再実行した分だけを順序に積む。
+      if (armed) order.push("run");
+      window.setTimeout(() => emitQueryStreamResult(args.onEvent as ChannelLike, fruitsRows), 0);
+      return null;
+    });
+    const screen = await renderInBrowser(<App />);
+    await editQtyThenRerun(screen);
+    armed = true;
+    await screen.getByRole("button", { name: t("pendingReplaceApply"), exact: true }).click();
+    await vi.waitFor(() => expect(order).toEqual(["apply", "run"]), { timeout: 5000 });
+    await expect
+      .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
+      .not.toBeInTheDocument();
+  });
+});
+
 describe("シナリオ: DDL 後のスキーマドリフト自動取得と SSH トンネル監視 (#1537, 実ブラウザ)", () => {
   /** DDL (ALTER) だけ schemaMayChange を立てて返す自動応答。 */
   function registerDdlStream() {

@@ -79,3 +79,29 @@ describe("接続の切断 / 削除 / サンドボックス破棄", () => {
     expect(b.indexOf("return;")).toBeLessThan(b.indexOf("api.discardSandbox"));
   });
 });
+
+describe("結果を置き換える手動操作の入口 (#2234)", () => {
+  it("runQueryInTab / goToPageInTab / runTxInTab は破棄の前に resolvePendingBeforeReplace を通り、キャンセルで中断する", () => {
+    for (const name of ["runQueryInTab", "goToPageInTab", "runTxInTab"]) {
+      const b = body(name);
+      const at = b.indexOf("resolvePendingBeforeReplace(");
+      expect(at, `${name} が確認を呼んでいない`).toBeGreaterThan(-1);
+      expect(b.indexOf("pendingEdits: {}")).toBeGreaterThan(at);
+      // 3 種 (セル編集 / 削除予定 / 追加行) を同じ patch で空にして揃える。
+      expect(b).toContain("pendingDeletes: []");
+      expect(b).toContain("pendingInserts: []");
+    }
+  });
+
+  it("確認は 3 択 (適用 / 破棄 / キャンセル) で、適用の成功後にだけ続行する", () => {
+    const b = body("resolvePendingBeforeReplace");
+    expect(b).toContain("chooseDiscard(");
+    expect(b).toContain('if (choice === "cancel") return null;');
+    expect(b.indexOf("applyEditsForTabRef.current?.(tab)")).toBeGreaterThan(-1);
+    expect(b).toContain("if (!ok) return null;");
+  });
+
+  it("Apply 後の取り直しと再読込は確認を省く", () => {
+    expect(appSource.match(/skipPendingGuard: true/g)?.length).toBeGreaterThanOrEqual(3);
+  });
+});
