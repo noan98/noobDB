@@ -83,8 +83,7 @@ jobs:
       # ミラーを本家に差し替えてから apt-get update でリストを最新化する。
       - name: Use canonical apt archive + refresh indexes (stale runner lists cause 404)
         run: |
-          printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
-          sudo apt-get update
+          bash scripts/ci-apt-refresh.sh
 
       # clang + mold はビルド高速化用 (src-tauri/.cargo/config.toml の Linux 設定)。
       # Tauri のシステム依存は tauri-build の build.rs で必要。
@@ -93,6 +92,12 @@ jobs:
         with:
           packages: libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libxdo-dev libayatana-appindicator3-dev build-essential curl wget file libssl-dev clang mold
           version: tauri-2-mutants
+
+      # cache-apt-pkgs-action は install 失敗や空キャッシュ復元でも成功扱いになるため、
+      # 実際に必要なものがそろったかを確かめ、欠けていれば直接 install する
+      # (scripts/ci-apt-ensure.sh。正常時は何もしない)。
+      - name: Verify apt deps (fallback install)
+        run: bash scripts/ci-apt-ensure.sh libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libxdo-dev libayatana-appindicator3-dev build-essential curl wget file libssl-dev clang mold
 
       # cargo-mutants は rust ジョブと同じ Rust テストスイートを変異下で回すだけで、
       # webview も run() も起動せず実フロント資産を必要としない。

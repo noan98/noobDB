@@ -304,8 +304,7 @@ jobs:
           DEPS_CACHE_HIT: ${{ steps.pw-deps-cache.outputs.cache-hit }}
         run: |
           LIST_FILE="$HOME/.cache/noobdb-playwright-deps/packages.txt"
-          printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
-          sudo apt-get update
+          bash scripts/ci-apt-refresh.sh
           if [ "$DEPS_CACHE_HIT" = "true" ] && [ -s "$LIST_FILE" ]; then
             PKGS=$(cat "$LIST_FILE")
             echo "Playwright system deps (cache hit): ${PKGS}"
@@ -785,8 +784,7 @@ jobs:
       # インストール経路だけで、キャッシュヒット時の所要時間には影響しない。
       - name: Use canonical apt archive + refresh indexes (stale runner lists cause 404)
         run: |
-          printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
-          sudo apt-get update
+          bash scripts/ci-apt-refresh.sh
 
       - name: System deps (Tauri 2 prerequisites)
         id: apt
@@ -797,7 +795,8 @@ jobs:
           # version はキャッシュキーの一部。上記 404 の間に action が「0 パッケージの
           # 空キャッシュ」を保存してしまった場合、同じキーでの再実行は空キャッシュを
           # 復元して失敗し続けるため、キーを進めて無効化する
-          # (tauri-2 〜 tauri-4 は 2026-07-23 に汚染)。
+          # (tauri-2 〜 tauri-4 は 2026-07-23 に汚染)。2026-11-12 以降は空キャッシュが
+          # 復元されても下の Verify apt deps が直接 install で救うので、キーは据え置く。
           version: tauri-5
 
       # Rust の単体 / 統合テストは __test_api 経由で db::Connection を駆動するだけで
@@ -841,6 +840,12 @@ jobs:
       # apt が失敗した場合はこの wait でジョブが fail する (公式仕様)。
       - name: Wait for background setup (apt)
         wait: [apt]
+
+      # cache-apt-pkgs-action は install 失敗や空キャッシュ復元でも成功扱いになるため、
+      # 実際に必要なものがそろったかを確かめ、欠けていれば直接 install する
+      # (scripts/ci-apt-ensure.sh。正常時は何もしない)。
+      - name: Verify apt deps (fallback install)
+        run: bash scripts/ci-apt-ensure.sh libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libxdo-dev libayatana-appindicator3-dev build-essential curl wget file libssl-dev clang mold
 
       # clippy は rustc ドライバなので型チェック (cargo check 相当) を内包する。
       # 別途 cargo check を走らせると、共有されないコンパイルがほぼ二重に走るため
@@ -980,8 +985,7 @@ jobs:
       # update)。詳細はそちらのコメントを参照。
       - name: Use canonical apt archive + refresh indexes (stale runner lists cause 404)
         run: |
-          printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
-          sudo apt-get update
+          bash scripts/ci-apt-refresh.sh
 
       - name: System deps (Tauri 2 prerequisites)
         id: apt
@@ -1035,6 +1039,12 @@ jobs:
       # 待ってから起動する。
       - name: Wait for apt (openssh-server needed by sshd)
         wait: [apt]
+
+      # cache-apt-pkgs-action は install 失敗や空キャッシュ復元でも成功扱いになるため、
+      # 実際に必要なものがそろったかを確かめ、欠けていれば直接 install する
+      # (scripts/ci-apt-ensure.sh。正常時は何もしない)。
+      - name: Verify apt deps (fallback install)
+        run: bash scripts/ci-apt-ensure.sh libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libxdo-dev libayatana-appindicator3-dev build-essential curl wget file libssl-dev clang mold openssh-server
 
       # SSH トンネル統合テスト (#331) 用の sshd を起動し、接続情報を $GITHUB_ENV へ。
       # apt (openssh-server) 完了後に background: true で非同期起動し、下の
@@ -1231,8 +1241,7 @@ jobs:
       # update)。詳細はそちらのコメントを参照。
       - name: Use canonical apt archive + refresh indexes (stale runner lists cause 404)
         run: |
-          printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
-          sudo apt-get update
+          bash scripts/ci-apt-refresh.sh
 
       - name: System deps (Tauri 2 prerequisites)
         id: apt
@@ -1289,6 +1298,12 @@ jobs:
       # 待ってから起動する。
       - name: Wait for apt (openssh-server needed by sshd)
         wait: [apt]
+
+      # cache-apt-pkgs-action は install 失敗や空キャッシュ復元でも成功扱いになるため、
+      # 実際に必要なものがそろったかを確かめ、欠けていれば直接 install する
+      # (scripts/ci-apt-ensure.sh。正常時は何もしない)。
+      - name: Verify apt deps (fallback install)
+        run: bash scripts/ci-apt-ensure.sh libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libxdo-dev libayatana-appindicator3-dev build-essential curl wget file libssl-dev clang mold openssh-server
 
       # SSH トンネル統合テスト (#331) 用の sshd を起動し、接続情報を $GITHUB_ENV へ。
       # apt (openssh-server) 完了後に background: true で非同期起動し、下の
