@@ -4991,6 +4991,13 @@ export default function App() {
           onAction: () => {
             void (async () => {
               if (restore) {
+                // 移動先で新しく編集・削除予定・追加行を作っていたら、元の表示へ戻る取得でそれらが
+                // 確認なしに消える。戻らず、先に適用 / 破棄してもらう。
+                const current = tabsRef.current.find((tt) => tt.id === tabId);
+                if (current && hasPendingChanges(current)) {
+                  toast.info(translate("pendingReplaceUndoBlocked"));
+                  return;
+                }
                 await goToPageInTabRef.current?.(tabId, restore.page, restore.pageSize, {
                   sort: restore.sort,
                   filter: restore.filter,
@@ -5005,7 +5012,7 @@ export default function App() {
         },
       });
     },
-    [toast],
+    [toast, tabsRef],
   );
 
   const runQueryInTab = useCallback(
@@ -5122,8 +5129,9 @@ export default function App() {
         // 削除予定・追加行も同じく空にする (見えない行の削除予定が Apply で走らないよう、
         // 3 種を揃える #2234)。確認で破棄を選んだセル編集は Undo 履歴へ積む。
         pendingEdits: {},
-        pendingDeletes: [],
-        pendingInserts: [],
+        // 確認を省く内部の取り直し (Apply 後・再読込・取り込み後) は、送っていない削除予定・追加行を
+        // 残す (Apply の往復中に増えた分を消さない)。確認を経た置き換えだけが 3 種を空にする。
+        ...(override?.skipPendingGuard ? {} : { pendingDeletes: [], pendingInserts: [] }),
         editUndoStack: pendingResolution.discarded ? [pendingResolution.discarded] : [],
         editRedoStack: [],
         // A manual run of a non-read-only statement turns auto-refresh off so the

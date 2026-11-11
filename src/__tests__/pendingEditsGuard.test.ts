@@ -106,4 +106,17 @@ describe("結果を置き換える手動操作の入口 (#2234)", () => {
   it("Apply 後の取り直しと再読込は確認を省く", () => {
     expect(appSource.match(/skipPendingGuard: true/g)?.length).toBeGreaterThanOrEqual(3);
   });
+
+  it("破棄トーストの「元に戻す」は、現在の保留変更があれば元の表示へ戻る取得をしない", () => {
+    const b = body("notifyDiscardedEdits");
+    const guardAt = b.indexOf("hasPendingChanges(current)");
+    expect(guardAt).toBeGreaterThan(-1);
+    expect(guardAt).toBeLessThan(b.indexOf("goToPageInTabRef.current"));
+    expect(b).toContain("pendingReplaceUndoBlocked");
+  });
+
+  it("確認を省く内部の取り直し (skipPendingGuard) は削除予定・追加行を消さない", () => {
+    const b = body("runQueryInTab");
+    expect(b).toContain("override?.skipPendingGuard ? {} : { pendingDeletes: [], pendingInserts: [] }");
+  });
 });

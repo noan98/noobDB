@@ -4302,6 +4302,8 @@ const en = {
   pendingReplaceCancel: "Cancel",
   pendingReplaceApplying: "Changes are being applied to this tab. Try again once that finishes.",
   pendingReplaceDiscardedToast: "Discarded the unapplied cell edits.",
+  pendingReplaceUndoBlocked:
+    "There are new unapplied changes, so the view was not restored. Apply or discard them first, then try Undo again.",
   pendingReplaceRoute_run: "Running the query",
   pendingReplaceRoute_tx: "Running in the transaction",
   pendingReplaceRoute_page: "Changing the page",
@@ -12284,6 +12286,8 @@ const ja: Dict = {
   pendingReplaceCancel: "キャンセル",
   pendingReplaceApplying: "このタブは変更を適用中です。完了してからもう一度操作してください。",
   pendingReplaceDiscardedToast: "未適用のセル編集を破棄しました。",
+  pendingReplaceUndoBlocked:
+    "新しい未適用の変更があるため、元の表示へは戻しませんでした。先に適用または破棄してから、もう一度「元に戻す」を押してください。",
   pendingReplaceRoute_run: "クエリを実行する",
   pendingReplaceRoute_tx: "トランザクション内で実行する",
   pendingReplaceRoute_page: "ページを移動する",
