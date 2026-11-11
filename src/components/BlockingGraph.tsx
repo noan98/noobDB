@@ -10,14 +10,14 @@ import {
   type BlockingGraphEdge,
   type BlockingGraphNode,
   type WaitLevel,
-} from "./blockingGraph";
+} from "./blockingGraphLayout";
 import { formatProcessTime } from "./processList";
 import { Tooltip } from "./Tooltip";
 import { Button } from "./ui";
 
 /**
  * ロック待機グラフ (#2237)。根のブロッカー → 待たされているプロセスを、左から右へのノード + 矢印で描く。
- * 配置は `layoutBlockingGraph` (純関数)、ここは描画だけ。矢印の色と太さは待ち時間の段階、
+ * 配置は `layoutBlockingGraph` (純関数)、ここは描画だけ。矢印の色と太さは経過時間の段階、
  * デッドロックの循環は danger の弧、一覧にないブロッカーは点線の枠。
  * 座標はユニット (`--space-1`) で、タイルは絶対配置・矢印は 1 枚の SVG (viewBox = ユニット) で重ねる。
  * 線は描き入れる (`.lock-graph-edge`)。reduced-motion / hc-* は `App.css` 側で即時。

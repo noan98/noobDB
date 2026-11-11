@@ -6096,7 +6096,7 @@ const en = {
   processBlockingKill: "Kill",
   processBlockingKillAria: "Kill blocker {id}",
   processBlockingLegend:
-    "Arrow = blocker to the process it makes wait. Thicker / redder = longer wait. Red ring = deadlock. Dashed = blocker outside the list (cannot be killed).",
+    "Arrow = blocker to the process it makes wait. Thicker / redder = longer elapsed time of the waiting query. Red ring = deadlock. Dashed = blocker outside the list (cannot be killed).",
   processBlockingGraphAria: "Lock wait graph",
   processBlockingSrWaits: "{id} waits for {blockers}",
   processBlockingSrRoot: "{id} is a root blocker with {count} waiting",
@@ -13990,7 +13990,7 @@ const ja: Dict = {
   processBlockingKill: "強制終了",
   processBlockingKillAria: "ブロッカー {id} を強制終了",
   processBlockingLegend:
-    "矢印 = ブロッカーから待たされているプロセスへ。太く赤いほど待ち時間が長い。赤い輪 = デッドロック。点線 = 一覧にないブロッカー (強制終了できない)。",
+    "矢印 = ブロッカーから待たされているプロセスへ。太く赤いほど待たされているクエリの経過時間が長い。赤い輪 = デッドロック。点線 = 一覧にないブロッカー (強制終了できない)。",
   processBlockingGraphAria: "ロック待機グラフ",
   processBlockingSrWaits: "{id} は {blockers} を待っている",
   processBlockingSrRoot: "{id} は根のブロッカーで {count} 件が待機中",

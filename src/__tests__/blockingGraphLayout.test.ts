@@ -5,7 +5,7 @@ import {
   layoutBlockingGraph,
   waitLevel,
   waitThickness,
-} from "../components/blockingGraph";
+} from "../components/blockingGraphLayout";
 
 const base: ProcessInfo = {
   id: 1,
@@ -98,7 +98,7 @@ describe("layoutBlockingGraph (#2237)", () => {
     expect(layoutBlockingGraph([p(1, [1])]).nodes).toEqual([]);
   });
 
-  it("矢印の段階と太さは待機者の待ち時間で決まる", () => {
+  it("矢印の段階と太さは待機者の経過時間で決まる", () => {
     const l = layoutBlockingGraph([p(1), p(2, [1], 1), p(3, [1], 10), p(4, [1], 60), p(5, [1], null)]);
     const lv = (to: number) => l.edges.find((e) => e.to === to);
     expect(lv(2)?.level).toBe("short");
@@ -155,6 +155,29 @@ describe("経路がタイルと重ならない (#2237)", () => {
     expect(back?.points[2].y).toBeGreaterThan(bottomAll);
     expect(l.height).toBeGreaterThan(back?.points[2].y ?? 0);
     for (const e of l.edges) expect(hitsTile(l, e.points)).toBe(false);
+  });
+});
+
+describe("全経路が描画領域に収まる (#2237)", () => {
+  it.each([
+    ["2 プロセスのデッドロック", [p(10, [11]), p(11, [10])]],
+    ["根から辿れる循環", [p(1), p(2, [1, 3]), p(3, [2])]],
+    ["一覧外から入る循環", [p(2, [99, 3]), p(3, [2])]],
+    ["長い辺", [p(1), p(2, [1]), p(3, [1, 2])]],
+  ])("%s", (_name, procs) => {
+    const l = layoutBlockingGraph(procs);
+    for (const e of l.edges) {
+      for (const q of e.points) {
+        expect(q.x).toBeGreaterThanOrEqual(0);
+        expect(q.x).toBeLessThanOrEqual(l.width);
+        expect(q.y).toBeGreaterThanOrEqual(0);
+        expect(q.y).toBeLessThanOrEqual(l.height);
+      }
+    }
+    for (const n of l.nodes) {
+      expect(n.x).toBeGreaterThanOrEqual(0);
+      expect(n.x + BLOCKING_GRAPH_UNITS.tileW).toBeLessThanOrEqual(l.width);
+    }
   });
 });
 

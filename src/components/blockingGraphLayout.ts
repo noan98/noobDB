@@ -21,7 +21,7 @@ export const BLOCKING_GRAPH_UNITS = {
   arcDepth: 8,
 } as const;
 
-/** 待ち時間の段階。 */
+/** 経過時間 (`time_secs`: PostgreSQL はクエリの経過時間、MySQL は現状態の継続時間。ロック経過時間そのものではない) の段階。 */
 export type WaitLevel = "unknown" | "short" | "medium" | "long";
 
 /** この秒数以上で `medium` / `long`。 */
@@ -80,7 +80,7 @@ export interface BlockingGraphEdge {
   from: number;
   /** 待っている側。矢印はブロッカー (from) → 待機者 (to) に引く。 */
   to: number;
-  /** 待っている側の待ち時間。 */
+  /** 待っている側の経過時間 (`time_secs`)。 */
   waitSecs: number | null;
   level: WaitLevel;
   thickness: 1 | 2 | 3;
@@ -188,8 +188,10 @@ export function layoutBlockingGraph(processes: readonly ProcessInfo[]): Blocking
   }
   const maxRows = Math.max(...byColumn.map((c) => c.length));
 
+  // 循環の戻り辺は列の外側の溝を通るので、左右に余白を確保してノードをずらす。
+  const padX = back.size > 0 ? Math.max(pad, gapX / 2 + 1) : pad;
   const pos = (id: number) => ({
-    x: pad + (layer.get(id) ?? 0) * (tileW + gapX),
+    x: padX + (layer.get(id) ?? 0) * (tileW + gapX),
     y: pad + (rowOf.get(id) ?? 0) * (tileH + gapY),
   });
 
@@ -292,7 +294,7 @@ export function layoutBlockingGraph(processes: readonly ProcessInfo[]): Blocking
     nodes,
     edges,
     columns,
-    width: pad * 2 + columns * tileW + (columns - 1) * gapX,
+    width: padX * 2 + columns * tileW + (columns - 1) * gapX,
     height,
   };
 }
