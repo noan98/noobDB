@@ -171,7 +171,10 @@ function setup() {
 
 const originalResizeObserver = (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
 const originalScrollIntoView = Element.prototype.scrollIntoView;
-beforeAll(() => {
+beforeAll(async () => {
+  // PaneView は ResultGrid を lazy import する。巨大なモジュールの初回の読み込みと変換が
+  // waitFor の既定 (1 秒) を超えうるので、先に読み込んでおく (最初のテストだけ落ちていた)。
+  await import("../components/ResultGrid");
   Element.prototype.scrollIntoView = () => {};
   (globalThis as { ResizeObserver?: unknown }).ResizeObserver = class {
     observe() {}
