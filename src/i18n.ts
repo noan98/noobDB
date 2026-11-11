@@ -6089,13 +6089,19 @@ const en = {
   processEmpty: "No processes to show.",
   processBlockingTitle: "Blocking chains",
   processBlockingDesc:
-    "Processes waiting on locks, shown under the process that blocks them. Killing a root blocker releases the whole chain.",
+    "Processes waiting on locks, drawn as a graph from the blocker to each process it makes wait. Killing a root blocker releases the whole chain.",
   processBlockingRoot: "Root blocker ({count} waiting)",
-  processBlockingRepeated: "(already shown)",
   processBlockingDeadlock: "Deadlock (circular wait)",
   processBlockingExternal: "Blocker outside the list #{id} ({count} waiting)",
   processBlockingKill: "Kill",
   processBlockingKillAria: "Kill blocker {id}",
+  processBlockingLegend:
+    "Arrow = blocker to the process it makes wait. Thicker / redder = longer elapsed time of the waiting query. Red ring = deadlock. Dashed = blocker outside the list (cannot be killed).",
+  processBlockingGraphAria: "Lock wait graph",
+  processBlockingSrWaits: "{id} waits for {blockers}",
+  processBlockingSrRoot: "{id} is a root blocker with {count} waiting",
+  processBlockingSrExternal: "{id} is a blocker outside the list with {count} waiting",
+  processBlockingSrDeadlock: "(part of a deadlock)",
   processTruncated: "Showing the first {shown} of {total} processes.",
   processCancelSelected: "Stop statement ({count})",
   processCancelSelectedHint:
@@ -13977,13 +13983,19 @@ const ja: Dict = {
   processEmpty: "表示するプロセスがありません。",
   processBlockingTitle: "ロック待ちの連鎖",
   processBlockingDesc:
-    "ロック待ちのプロセスを、待たせているプロセスの下に表示します。根のブロッカーを強制終了すると連鎖全体が解消します。",
+    "ロック待ちのプロセスを、待たせているプロセスから伸びる矢印のグラフで表示します。根のブロッカーを強制終了すると連鎖全体が解消します。",
   processBlockingRoot: "根のブロッカー ({count} 件が待機中)",
-  processBlockingRepeated: "(表示済み)",
   processBlockingDeadlock: "デッドロック (循環待ち)",
   processBlockingExternal: "一覧外のブロッカー #{id} ({count} 件が待機中)",
   processBlockingKill: "強制終了",
   processBlockingKillAria: "ブロッカー {id} を強制終了",
+  processBlockingLegend:
+    "矢印 = ブロッカーから待たされているプロセスへ。太く赤いほど待たされているクエリの経過時間が長い。赤い輪 = デッドロック。点線 = 一覧にないブロッカー (強制終了できない)。",
+  processBlockingGraphAria: "ロック待機グラフ",
+  processBlockingSrWaits: "{id} は {blockers} を待っている",
+  processBlockingSrRoot: "{id} は根のブロッカーで {count} 件が待機中",
+  processBlockingSrExternal: "{id} は一覧外のブロッカーで {count} 件が待機中",
+  processBlockingSrDeadlock: "(デッドロックの一部)",
   processTruncated: "{total} 件中、先頭の {shown} 件のみ表示しています。",
   processCancelSelected: "選択の文を停止 ({count})",
   processCancelSelectedHint:

@@ -2937,6 +2937,29 @@ td.is-find-current::after {
   animation: none;
 }
 
+/* ---------- ロック待機グラフ (#2237) ----------
+   `BlockingGraph`: ノードは入場でふわっと現れ、矢印は左 (ブロッカー側) から描き入れる。
+   位置は即時に動かす (transition すると SVG の矢印と離れて見えるため)。
+   reduced-motion は下の全体規則が 0.01ms 化し、hc-* は即時 (静止) にする。 */
+.lock-graph-node {
+  animation: flow-node-in var(--dur-med) var(--ease-out) backwards;
+}
+.lock-graph-edge {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  transition: stroke-dashoffset var(--dur-med) var(--ease-out);
+}
+.lock-graph-edge[data-lit="true"] { stroke-dashoffset: 0; }
+:root[data-theme="hc-light"] .lock-graph-node,
+:root[data-theme="hc-dark"] .lock-graph-node {
+  animation: none;
+}
+:root[data-theme="hc-light"] .lock-graph-edge,
+:root[data-theme="hc-dark"] .lock-graph-edge {
+  stroke-dashoffset: 0;
+  transition: none;
+}
+
 /* reduced-motion では入場の遅延も外す (duration だけ潰すと遅延ぶん非表示のまま待つ, #1861) */
 @media (prefers-reduced-motion: reduce) {
   :root:not([data-motion="full"]) .flow-node-enter,
