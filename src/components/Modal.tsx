@@ -100,6 +100,8 @@ interface ModalProps {
    * (`data-submit-rejected` + `submit-reject-shake`、#1831) を一度だけ返す。
    */
   submitDisabled?: boolean;
+  /** 主アクションが無効のまま実行を試みた (Cmd/Ctrl+Enter・無効な主ボタンの押下) ときに呼ぶ。理由の表示用。 */
+  onSubmitRejected?: () => void;
   /**
    * 処理中 (保存中・実行中など) で無効なときは true。拒否は「入力が足りない」ことを伝える
    * 演出なので、処理中は揺らさずスクロールもしない (キー操作は握り潰すだけ)。
@@ -134,6 +136,7 @@ export function Modal({
   initialFocusEl,
   onSubmit,
   submitDisabled = false,
+  onSubmitRejected,
   submitBusy = false,
   children,
 }: ModalProps) {
@@ -150,7 +153,10 @@ export function Modal({
         e.preventDefault();
         // 主アクションが無効なときは実行せず、拒否を一度だけ視覚で返す (#1831)。
         if (submitDisabled) {
-          if (!submitBusy) rejectSubmit(e.currentTarget);
+          if (!submitBusy) {
+            rejectSubmit(e.currentTarget);
+            onSubmitRejected?.();
+          }
           return;
         }
         onSubmit();
@@ -172,6 +178,7 @@ export function Modal({
           const buttons = footer.querySelectorAll("button");
           if (buttons[buttons.length - 1] !== btn) return;
           rejectSubmit(e.currentTarget);
+          onSubmitRejected?.();
         }
       : undefined;
   return (

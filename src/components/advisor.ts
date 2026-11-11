@@ -5,7 +5,7 @@
 // キー + パラメータへ変換する (`QueryStatsSupport` の理由コードと同じ発想)。UI 依存を
 // 持たない純関数として切り出し、`advisor.test.ts` が対応を固定する。
 
-import type { AdvisorRuleId, AdvisorSeverity, HealthFinding } from "../api/tauri";
+import type { AdvisorDiff, AdvisorRuleId, AdvisorSeverity, HealthFinding } from "../api/tauri";
 import type { I18nKey } from "../i18n";
 import type { SemanticRole } from "../semanticColors";
 import type { AlterCostRisk } from "./alterCost";
@@ -394,4 +394,160 @@ export function sequenceFixAlterRisks(finding: HealthFinding, driver: string | u
       subject: finding.columns[0] ?? "",
     },
   ];
+}
+
+// ── 要約タイル・ルール別の分布・採番メーター (#2239) ─────────────────────────
+
+/** 重要度の表示順 (重い方から)。 */
+export const ADVISOR_SEVERITIES: readonly AdvisorSeverity[] = ["high", "medium", "low"];
+
+/** 重要度ごとの件数。 */
+export type SeverityCounts = Record<AdvisorSeverity, number>;
+
+/** 指摘を重要度別に数える。 */
+export function severityCounts(findings: readonly HealthFinding[]): SeverityCounts {
+  const out: SeverityCounts = { high: 0, medium: 0, low: 0 };
+  for (const f of findings) out[f.severity] += 1;
+  return out;
+}
+
+/**
+ * 前回診断時点の重要度別件数 (#2239)。前回 = 「今回も続く指摘」+「解消された指摘」なので、
+ * 表示中の指摘から新規 (`isNew`) を除き、解消ぶんを足して求める。差分が無い (初回の) 診断は `null`。
+ *
+ * 母集団は本表 (`findings`、「対応しない」を除く) とそろえるので、指摘を「対応しない」にしても
+ * 今回・前回が同じだけ動き、再診断した結果と食い違わない。
+ * 限界: 前回から続く指摘の重要度が変わった (例: 採番の使用率が上がって中 → 高) ときは、前回も今回の
+ * 重要度だったものとして数える (差分は指摘の同一性しか持たないため)。この上昇は delta に出ない。
+ */
+export function previousSeverityCounts(
+  findings: readonly HealthFinding[],
+  isNew: ReadonlySet<HealthFinding>,
+  diff: AdvisorDiff | null,
+): SeverityCounts | null {
+  if (!diff) return null;
+  const out = severityCounts(findings.filter((f) => !isNew.has(f)));
+  for (const f of diff.resolved) out[f.severity] += 1;
+  return out;
+}
+
+/** 重要度別の増減 (今回 − 前回)。前回が無ければ全部 `null` (デルタを出さない)。 */
+export function severityDeltas(
+  current: SeverityCounts,
+  previous: SeverityCounts | null,
+): Record<AdvisorSeverity, number | null> {
+  return {
+    high: previous ? current.high - previous.high : null,
+    medium: previous ? current.medium - previous.medium : null,
+    low: previous ? current.low - previous.low : null,
+  };
+}
+
+/** ルール別の分布 1 件。`severity` はそのルールの指摘のうち最も重いもの (チップの色)。 */
+export interface RuleCount {
+  rule: AdvisorRuleId;
+  count: number;
+  severity: AdvisorSeverity;
+}
+
+/**
+ * ルール別の指摘数。件数 0 のルールは含めない。並びは重い順 → 件数の多い順 → 初出の順
+ * (同条件で入力順を保つ安定ソート)。
+ */
+export function ruleCounts(findings: readonly HealthFinding[]): RuleCount[] {
+  const map = new Map<AdvisorRuleId, RuleCount>();
+  for (const f of findings) {
+    const cur = map.get(f.rule);
+    if (!cur) map.set(f.rule, { rule: f.rule, count: 1, severity: f.severity });
+    else {
+      cur.count += 1;
+      if (SEVERITY_ORDER[f.severity] < SEVERITY_ORDER[cur.severity]) cur.severity = f.severity;
+    }
+  }
+  return [...map.values()]
+    .map((c, i) => ({ c, i }))
+    .sort(
+      (a, b) =>
+        SEVERITY_ORDER[a.c.severity] - SEVERITY_ORDER[b.c.severity] || b.c.count - a.c.count || a.i - b.i,
+    )
+    .map((x) => x.c);
+}
+
+/** ルールで絞り込む。`rule` が `null` なら全件 (同じ配列を返す)。 */
+export function filterFindingsByRule(
+  findings: readonly HealthFinding[],
+  rule: AdvisorRuleId | null,
+): readonly HealthFinding[] {
+  return rule === null ? findings : findings.filter((f) => f.rule === rule);
+}
+
+/** チップのクリックで切り替えるフィルタ。同じルールをもう一度押すと解除 (`null`)。 */
+export function toggleRuleFilter(current: AdvisorRuleId | null, rule: AdvisorRuleId): AdvisorRuleId | null {
+  return current === rule ? null : rule;
+}
+
+/** 絞り込み中のルールの指摘が (「対応しない」への移動などで) 0 件になったら解除扱いにする。 */
+export function effectiveRuleFilter(
+  filter: AdvisorRuleId | null,
+  counts: readonly RuleCount[],
+): AdvisorRuleId | null {
+  return filter !== null && counts.some((c) => c.rule === filter) ? filter : null;
+}
+
+/** ルール → 「なぜ問題か」を 1 文で説明する文言の i18n キー (チップのツールチップ)。 */
+export function ruleWhyKey(rule: AdvisorRuleId): I18nKey {
+  switch (rule) {
+    case "fk_missing_index":
+      return "advisorRuleFkMissingIndexWhy";
+    case "duplicate_index":
+      return "advisorRuleDuplicateIndexWhy";
+    case "redundant_index":
+      return "advisorRuleRedundantIndexWhy";
+    case "missing_primary_key":
+      return "advisorRuleMissingPrimaryKeyWhy";
+    case "unused_index":
+      return "advisorRuleUnusedIndexWhy";
+    case "fk_type_mismatch":
+      return "advisorRuleFkTypeMismatchWhy";
+    case "sqlite_integer_pk_hint":
+      return "advisorRuleSqliteIntegerPkHintWhy";
+    case "nullable_foreign_key":
+      return "advisorRuleNullableForeignKeyWhy";
+    case "oversized_varchar":
+      return "advisorRuleOversizedVarcharWhy";
+    case "float_for_money":
+      return "advisorRuleFloatForMoneyWhy";
+    case "sequence_exhaustion":
+      return "advisorRuleSequenceExhaustionWhy";
+    default:
+      return "advisorRuleUnknownWhy";
+  }
+}
+
+/**
+ * 採番メーターの閾値マーカー (使用率 %)。バックエンド `db::advisor` の `SEQUENCE_WARN_PERCENT` (50 以上で
+ * 中) / `SEQUENCE_ERROR_PERCENT` (80 以上で高) = `sequence_severity` と同じ値。重要度バッジと食い違わない
+ * よう、メーターの色は使用率ではなく指摘の重要度から決める。
+ */
+export const SEQUENCE_METER_WARN_PERCENT = 50;
+export const SEQUENCE_METER_DANGER_PERCENT = 80;
+
+/** 指摘の重要度に応じたメーターの色調 (高 = danger / 中 = warning / それ以外 = accent)。 */
+export function sequenceMeterTone(severity: AdvisorSeverity): "accent" | "warning" | "danger" {
+  if (severity === "high") return "danger";
+  if (severity === "medium") return "warning";
+  return "accent";
+}
+
+/**
+ * 採番枯渇の指摘から、メーターに出す使用量を取り出す (`context = [型, 使用済み, 上限, 使用率, 出所]`)。
+ * 他のルール・使用率が数として読めない指摘は `null`。
+ */
+export function sequenceUsage(finding: HealthFinding): { percent: number; used: string; max: string } | null {
+  if (finding.rule !== "sequence_exhaustion") return null;
+  const raw = finding.context[3];
+  if (raw === undefined || raw.trim() === "") return null;
+  const percent = Number(raw);
+  if (!Number.isFinite(percent) || percent < 0) return null;
+  return { percent, used: finding.context[1] ?? "", max: finding.context[2] ?? "" };
 }

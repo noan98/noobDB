@@ -2,13 +2,23 @@ import { describe, expect, it } from "vitest";
 
 import type { AdvisorRuleId, HealthFinding } from "../api/tauri";
 import {
+  effectiveRuleFilter,
+  filterFindingsByRule,
   findingDescription,
   findingsToTable,
   findingTarget,
   DEFAULT_ADVISOR_SORT,
   nextAdvisorSort,
   newFindingSet,
+  previousSeverityCounts,
   reasonTextKey,
+  ruleCounts,
+  ruleWhyKey,
+  sequenceMeterTone,
+  sequenceUsage,
+  severityCounts,
+  severityDeltas,
+  toggleRuleFilter,
   reclaimableSummary,
   sequenceFixAlterRisks,
   ruleTitleKey,
@@ -437,5 +447,128 @@ describe("sequenceFixAlterRisks (#2210)", () => {
         "mysql",
       ),
     ).toEqual([]);
+  });
+});
+
+describe("要約タイル・ルール別の分布 (#2239)", () => {
+  const fs = [
+    finding({ rule: "missing_primary_key", severity: "medium", table: "a" }),
+    finding({ rule: "fk_missing_index", severity: "high", table: "b" }),
+    finding({ rule: "missing_primary_key", severity: "medium", table: "c" }),
+    finding({ rule: "unused_index", severity: "low", table: "d" }),
+    finding({ rule: "missing_primary_key", severity: "high", table: "e" }),
+  ];
+
+  it("severityCounts は重要度別に数える", () => {
+    expect(severityCounts(fs)).toEqual({ high: 2, medium: 2, low: 1 });
+    expect(severityCounts([])).toEqual({ high: 0, medium: 0, low: 0 });
+  });
+
+  it("previousSeverityCounts は新規を除き解消を足して前回の件数を求め、初回は null", () => {
+    expect(previousSeverityCounts(fs, new Set(), null)).toBeNull();
+    const diff = {
+      previous_at: "2026-01-01T00:00:00Z",
+      new_indexes: [1, 3],
+      resolved: [
+        finding({ rule: "duplicate_index", severity: "medium" }),
+        finding({ rule: "unused_index", severity: "low" }),
+      ],
+      unchanged: 3,
+    };
+    // 今回 {2,2,1} - 新規 (high 1, low 1) + 解消 (medium 1, low 1) = {1,3,1}
+    expect(previousSeverityCounts(fs, new Set([fs[1], fs[3]]), diff)).toEqual({ high: 1, medium: 3, low: 1 });
+  });
+
+  it("「対応しない」で続く指摘が本表から消えても、今回・前回が同じだけ動き delta は変わらない", () => {
+    const diff = { previous_at: "x", new_indexes: [], resolved: [], unchanged: 5 };
+    const before = severityDeltas(severityCounts(fs), previousSeverityCounts(fs, new Set(), diff));
+    const rest = fs.filter((f) => f.table !== "b");
+    const after = severityDeltas(severityCounts(rest), previousSeverityCounts(rest, new Set(), diff));
+    expect(after).toEqual(before);
+  });
+
+  it("限界: 続く指摘の重要度が上がっても delta には出ない", () => {
+    const cur = [finding({ rule: "sequence_exhaustion", severity: "high", table: "x" })];
+    const diff = { previous_at: "x", new_indexes: [], resolved: [], unchanged: 1 };
+    const d = severityDeltas(severityCounts(cur), previousSeverityCounts(cur, new Set(), diff));
+    expect(d).toEqual({ high: 0, medium: 0, low: 0 });
+  });
+
+  it("severityDeltas は前回が無ければ null、あれば今回 − 前回", () => {
+    const cur = { high: 2, medium: 2, low: 1 };
+    expect(severityDeltas(cur, null)).toEqual({ high: null, medium: null, low: null });
+    expect(severityDeltas(cur, { high: 3, medium: 2, low: 0 })).toEqual({ high: -1, medium: 0, low: 1 });
+  });
+
+  it("ruleCounts は 0 件を出さず、重い順 → 件数順 → 初出順に並べ、最も重い重要度を持つ", () => {
+    expect(ruleCounts([])).toEqual([]);
+    expect(ruleCounts(fs)).toEqual([
+      { rule: "missing_primary_key", count: 3, severity: "high" },
+      { rule: "fk_missing_index", count: 1, severity: "high" },
+      { rule: "unused_index", count: 1, severity: "low" },
+    ]);
+    // 同重要度・同件数は入力順を保つ
+    const tie = [
+      finding({ rule: "duplicate_index", severity: "low" }),
+      finding({ rule: "unused_index", severity: "low" }),
+    ];
+    expect(ruleCounts(tie).map((c) => c.rule)).toEqual(["duplicate_index", "unused_index"]);
+  });
+
+  it("filterFindingsByRule / toggleRuleFilter / effectiveRuleFilter", () => {
+    expect(filterFindingsByRule(fs, null)).toBe(fs);
+    expect(filterFindingsByRule(fs, "missing_primary_key").map((f) => f.table)).toEqual(["a", "c", "e"]);
+    expect(filterFindingsByRule(fs, "float_for_money")).toEqual([]);
+    expect(toggleRuleFilter(null, "unused_index")).toBe("unused_index");
+    expect(toggleRuleFilter("unused_index", "unused_index")).toBeNull();
+    expect(toggleRuleFilter("unused_index", "fk_missing_index")).toBe("fk_missing_index");
+    const counts = ruleCounts(fs);
+    expect(effectiveRuleFilter("unused_index", counts)).toBe("unused_index");
+    expect(effectiveRuleFilter("float_for_money", counts)).toBeNull();
+    expect(effectiveRuleFilter(null, counts)).toBeNull();
+  });
+
+  it("ruleWhyKey は全ルールで実在する日英の文言を返し、未知ルールは汎用へ倒す", () => {
+    const rules: AdvisorRuleId[] = [
+      "fk_missing_index",
+      "duplicate_index",
+      "redundant_index",
+      "missing_primary_key",
+      "unused_index",
+      "fk_type_mismatch",
+      "sqlite_integer_pk_hint",
+      "nullable_foreign_key",
+      "oversized_varchar",
+      "float_for_money",
+      "sequence_exhaustion",
+    ];
+    const keys = new Set(rules.map((r) => ruleWhyKey(r)));
+    expect(keys.size).toBe(rules.length);
+    for (const r of rules) {
+      const key = ruleWhyKey(r);
+      expect(dictionaries.en[key]).toBeTruthy();
+      expect(dictionaries.ja[key]).toBeTruthy();
+    }
+    expect(ruleWhyKey("something_new" as AdvisorRuleId)).toBe("advisorRuleUnknownWhy");
+  });
+
+  it("sequenceMeterTone は重要度から決める (バッジと食い違わない)", () => {
+    expect(sequenceMeterTone("high")).toBe("danger");
+    expect(sequenceMeterTone("medium")).toBe("warning");
+    expect(sequenceMeterTone("low")).toBe("accent");
+  });
+
+  it("sequenceUsage は採番枯渇の context から使用量を読み、それ以外は null", () => {
+    const seq = finding({
+      rule: "sequence_exhaustion",
+      context: ["int unsigned", "3500000000", "4294967295", "81.4", "type"],
+    });
+    expect(sequenceUsage(seq)).toEqual({ percent: 81.4, used: "3500000000", max: "4294967295" });
+    expect(sequenceUsage(finding({ rule: "unused_index", context: ["x", "1", "2", "50"] }))).toBeNull();
+    expect(sequenceUsage(finding({ rule: "sequence_exhaustion", context: [] }))).toBeNull();
+    expect(
+      sequenceUsage(finding({ rule: "sequence_exhaustion", context: ["t", "1", "2", "abc"] })),
+    ).toBeNull();
+    expect(sequenceUsage(finding({ rule: "sequence_exhaustion", context: ["t", "1", "2", ""] }))).toBeNull();
   });
 });
