@@ -5,6 +5,11 @@ import type { BulkWriteOptions, BulkWriteOutcome } from "../api/tauri";
 import {
   appliedRowShortfall,
   applyWithRowCountGuard,
+  addInsertsInTab,
+  discardChangeSet,
+  toggleDeleteInTab,
+  redoChangeSet,
+  undoChangeSet,
   MAX_OVERSHOOT_CONFIRMATIONS,
   tabStateAfterApply,
   type ApplyTabState,
@@ -41,8 +46,8 @@ function baseTab(over: Partial<TestTab> = {}): TestTab {
     pendingEdits,
     pendingDeletes: [key3],
     pendingInserts: [{ 1: "dave" }],
-    editUndoStack: [{ [key2]: { 1: "x" } }],
-    editRedoStack: [{ [key3]: { 1: "y" } }],
+    editUndoStack: [{ edits: { [key2]: { 1: "x" } } }],
+    editRedoStack: [{ edits: { [key3]: { 1: "y" } } }],
     ...over,
   };
 }
@@ -289,5 +294,82 @@ describe("applyWithRowCountGuard", () => {
     expect(res).toEqual({ kind: "rollback_incomplete", expected: 1, actual: 2 });
     expect(run).toHaveBeenCalledTimes(1);
     expect(confirmExceeded).not.toHaveBeenCalled();
+  });
+});
+
+describe("変更セットの破棄 / Undo / Redo (#2235)", () => {
+  const LIMIT = 50;
+  const base = {
+    pendingEdits: { a: { 1: "x" } } as PendingEdits,
+    pendingDeletes: ["d1"],
+    pendingInserts: [{ 0: "n" }],
+    editUndoStack: [],
+    editRedoStack: [],
+  };
+
+  it("破棄は 3 種を空にして、行操作ごと 1 世代として履歴に積む", () => {
+    const patch = discardChangeSet(base, LIMIT);
+    expect(patch).toMatchObject({
+      pendingEdits: {},
+      pendingDeletes: [],
+      pendingInserts: [],
+      editRedoStack: [],
+    });
+    expect(patch?.editUndoStack).toEqual([
+      { edits: base.pendingEdits, rowOps: { pendingDeletes: ["d1"], pendingInserts: [{ 0: "n" }] } },
+    ]);
+  });
+
+  it("行操作だけの破棄も Undo で戻せる (セル編集は空のまま)", () => {
+    const tt = { ...base, pendingEdits: {} };
+    const discarded = { ...tt, ...discardChangeSet(tt, LIMIT) };
+    expect(discarded.pendingDeletes).toEqual([]);
+    const undone = { ...discarded, ...undoChangeSet(discarded, LIMIT) };
+    expect(undone.pendingDeletes).toEqual(["d1"]);
+    expect(undone.pendingInserts).toEqual([{ 0: "n" }]);
+    expect(undone.editUndoStack).toEqual([]);
+  });
+
+  it("Undo の後に Redo すると再び破棄された状態になる", () => {
+    const discarded = { ...base, ...discardChangeSet(base, LIMIT) };
+    const undone = { ...discarded, ...undoChangeSet(discarded, LIMIT) };
+    expect(undone.pendingEdits).toEqual(base.pendingEdits);
+    const redone = { ...undone, ...redoChangeSet(undone, LIMIT) };
+    expect(redone.pendingEdits).toEqual({});
+    expect(redone.pendingDeletes).toEqual([]);
+    expect(redone.pendingInserts).toEqual([]);
+  });
+
+  it("行操作を含まない世代の Undo は削除予定・追加行に触れない", () => {
+    const tt = { ...base, editUndoStack: [{ edits: {} as PendingEdits }] };
+    const patch = undoChangeSet(tt, LIMIT);
+    expect(patch).not.toHaveProperty("pendingDeletes");
+    expect(patch?.editRedoStack).toEqual([{ edits: base.pendingEdits }]);
+  });
+
+  it("Undo は、その後に足した削除予定・追加行を消さず和集合で戻す", () => {
+    const discarded = { ...base, ...discardChangeSet(base, LIMIT) };
+    const later = { ...discarded, pendingDeletes: ["d2"], pendingInserts: [{ 0: "m" }] };
+    const undone = { ...later, ...undoChangeSet(later, LIMIT) };
+    expect(undone.pendingDeletes).toEqual(["d1", "d2"]);
+    expect(undone.pendingInserts).toHaveLength(2);
+  });
+
+  it("Undo 後に行操作を足したら Redo 履歴を捨て、Redo で足した行が消えない", () => {
+    const discarded = { ...base, ...discardChangeSet(base, LIMIT) };
+    const undone = { ...discarded, ...undoChangeSet(discarded, LIMIT) };
+    expect(undone.editRedoStack).toHaveLength(1);
+    const added = { ...undone, ...addInsertsInTab(undone, [{ 0: "z" }]) };
+    expect(added.editRedoStack).toEqual([]);
+    expect(redoChangeSet(added, LIMIT)).toBeNull();
+    const toggled = { ...undone, ...toggleDeleteInTab(undone, "d9") };
+    expect(toggled.pendingDeletes).toEqual(["d1", "d9"]);
+    expect(toggled.editRedoStack).toEqual([]);
+  });
+
+  it("何も無いときの破棄・空の履歴の Undo / Redo は null", () => {
+    expect(discardChangeSet({ pendingEdits: {}, pendingDeletes: [], pendingInserts: [] }, LIMIT)).toBeNull();
+    expect(undoChangeSet(base, LIMIT)).toBeNull();
+    expect(redoChangeSet(base, LIMIT)).toBeNull();
   });
 });
