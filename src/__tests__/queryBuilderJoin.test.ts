@@ -730,3 +730,40 @@ describe("データ破壊の防止 (#2242 レビュー)", () => {
     expect(h("MIN", "abc")).toBeNull();
   });
 });
+
+describe("ON の片側だけの組と HAVING の指数表記 (Codex 指摘)", () => {
+  const sel = {
+    kind: "SELECT" as const,
+    table: "orders",
+    whereEnabled: false,
+    whereConditions: [],
+    setPairs: [],
+    insertPairs: [],
+    selectAll: true,
+    selectColumns: [] as string[],
+  };
+
+  it("複合 FK の片側だけ消した ON はブロックし、両側とも空の行は無視する", () => {
+    const join = (on: QbJoin["on"]): QbJoin => ({ ...toCustomers, on });
+    const reason = (on: QbJoin["on"]) =>
+      computeBuilderBlockedReason({ ...sel, advanced: adv({ joins: [join(on)] }) });
+    const full = { leftColumn: "tenant_id", rightColumn: "tenant_id" };
+    expect(reason([full, { leftColumn: "customer_id", rightColumn: "" }])).toBe("qbValidationJoinOn");
+    expect(reason([full, { leftColumn: "", rightColumn: "id" }])).toBe("qbValidationJoinOn");
+    expect(reason([full, { leftColumn: "", rightColumn: "" }])).toBeNull();
+    expect(reason([full, { leftColumn: "customer_id", rightColumn: "id" }])).toBeNull();
+  });
+
+  it.each([
+    ["mysql", "SUM(`orders`.`total`) > 1e0"],
+    ["postgres", 'SUM("orders"."total") > 1e0'],
+    ["sqlite", 'SUM("orders"."total") > 1e0'],
+  ])("COUNT / SUM / AVG の HAVING は指数表記も数値リテラルで出す (%s)", (driver, expected) => {
+    const a = adv({
+      aggColumns: [{ column: "total", agg: "SUM" }],
+      having: [{ column: "total", agg: "SUM", operator: ">", value: " 1e0 " }],
+    });
+    expect(select(driver, a)).toContain(expected);
+    expect(computeBuilderBlockedReason({ ...sel, selectAll: false, advanced: a })).toBeNull();
+  });
+});

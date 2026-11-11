@@ -145,9 +145,18 @@ export function completeOn(j: QbJoin): QbJoinOn[] {
   return j.on.filter((o) => o.leftColumn.trim() !== "" && o.rightColumn.trim() !== "");
 }
 
-/** 結合として未完成か (表が空・完成した ON の組が 0)。 */
+/**
+ * 結合として未完成か (表が空・完成した ON の組が 0・片側だけ入力された組がある)。
+ * 両側とも空の組は無視するが、片側だけの組を黙って落とすと複合 FK が弱い結合になるので止める。
+ */
 export function isJoinIncomplete(j: QbJoin): boolean {
-  return j.table.trim() === "" || completeOn(j).length === 0;
+  if (j.table.trim() === "" || completeOn(j).length === 0) return true;
+  return j.on.some((o) => (o.leftColumn.trim() === "") !== (o.rightColumn.trim() === ""));
+}
+
+/** HAVING (COUNT / SUM / AVG) の値として受け付ける数値の文法。検証と SQL 生成で共有する。 */
+export function isHavingNumber(raw: string): boolean {
+  return /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i.test(raw.trim());
 }
 
 /** 集計の SQL 式に使う関数名と DISTINCT の有無。 */

@@ -19,6 +19,7 @@ import {
   aggregateParts,
   completeOn,
   fkJoinCandidates,
+  isHavingNumber,
   isJoinIncomplete,
   joinFromCandidate,
   knownAliases,
@@ -864,7 +865,8 @@ function renderHaving(driver: string, base: string, adv: AdvancedSelectInput, h:
       h.agg === "MIN" || h.agg === "MAX"
         ? resolveColumnInfo(adv.infoByAlias[h.table || base] ?? [], h.column)
         : undefined;
-    literal = info ? quoteValueForColumn(driver, h.value, info) : quoteValue(driver, h.value);
+    if (h.agg !== "MIN" && h.agg !== "MAX" && isHavingNumber(h.value)) literal = h.value.trim();
+    else literal = info ? quoteValueForColumn(driver, h.value, info) : quoteValue(driver, h.value);
   }
   return `${expr} ${op} ${literal}`;
 }
@@ -1134,11 +1136,7 @@ export function computeBuilderBlockedReason(input: BuilderValidationInput): I18n
     // COUNT / SUM / AVG は数値なので、数値でない値は DB のエラーになる。
     if (
       model.having.some(
-        (h) =>
-          h.value.trim() !== "" &&
-          h.agg !== "MIN" &&
-          h.agg !== "MAX" &&
-          !/^-?\d+(\.\d+)?(e[+-]?\d+)?$/i.test(h.value.trim()),
+        (h) => h.value.trim() !== "" && h.agg !== "MIN" && h.agg !== "MAX" && !isHavingNumber(h.value),
       )
     ) {
       return "qbValidationHavingNotNumber";
