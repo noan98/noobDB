@@ -14,11 +14,15 @@ vi.mock("../api/tauri", async (importOriginal) => {
     api: {
       ...actual.api,
       analyzeSchemaHealth: vi.fn(),
+      writeTextFile: vi.fn(),
       ignoreAdvisorFinding: vi.fn(),
       unignoreAdvisorFinding: vi.fn(),
     },
   };
 });
+
+const dialog = vi.hoisted(() => ({ save: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save: dialog.save }));
 
 import { AdvisorPanel } from "../components/AdvisorPanel";
 import { api } from "../api/tauri";
@@ -416,5 +420,153 @@ describe("AdvisorPanel 前回比・対応しない・容量 (#1621)", () => {
     await screen.findByText(t("advisorIgnoreError", { error: "Error: disk full" }));
     expect(screen.queryByTestId("advisor-ignored")).toBeNull();
     expect(screen.getAllByRole("row")).toHaveLength(2);
+  });
+});
+
+describe("AdvisorPanel 要約タイルとルール別ストリップ (#2239)", () => {
+  const mk = (
+    rule: "missing_primary_key" | "fk_missing_index" | "sequence_exhaustion",
+    severity: "high" | "medium" | "low",
+    table: string,
+    extra: Partial<{ context: string[]; columns: string[] }> = {},
+  ) => ({
+    rule,
+    severity,
+    table,
+    columns: extra.columns ?? [],
+    context: extra.context ?? [],
+    statistical: false,
+    size_bytes: null,
+    fix_ddl: null,
+    fix_ddl_online: null,
+  });
+
+  const report = (diff: Awaited<ReturnType<typeof api.analyzeSchemaHealth>>["diff"] = null) => ({
+    driver: "mysql" as const,
+    tables_analyzed: 7,
+    findings: [
+      mk("missing_primary_key", "medium", "t_pk1"),
+      mk("fk_missing_index", "high", "t_fk", { columns: ["uid"], context: ["users"] }),
+      mk("missing_primary_key", "medium", "t_pk2"),
+      mk("sequence_exhaustion", "high", "t_seq", {
+        columns: ["id"],
+        context: ["int unsigned", "4200000000", "4294967295", "97.8", "type"],
+      }),
+    ],
+    skipped: [],
+    table_plans: [],
+    ignored: [],
+    diff,
+  });
+
+  async function runPanel(r: ReturnType<typeof report>) {
+    vi.mocked(api.analyzeSchemaHealth).mockResolvedValueOnce(r);
+    const view = renderWithProviders(
+      <AdvisorPanel sessionId="s1" database="testdb" onInsertSql={() => {}} />,
+    );
+    fireEvent.click(screen.getByText(t("advisorRun")));
+    await screen.findByTestId("advisor-stat-tiles");
+    return view;
+  }
+
+  it("重要度別の StatTile と解析した表の数を出し、初回診断ではデルタを出さない", async () => {
+    await runPanel(report());
+    const tiles = screen.getByTestId("advisor-stat-tiles");
+    expect(within(tiles).getByText(t("advisorStatHigh"))).toBeInTheDocument();
+    expect(within(tiles).getByText(t("advisorStatMedium"))).toBeInTheDocument();
+    expect(within(tiles).getByText(t("advisorStatLow"))).toBeInTheDocument();
+    expect(within(tiles).getByText(t("advisorStatTables"))).toBeInTheDocument();
+    expect(within(tiles).queryAllByTestId("stat-delta")).toHaveLength(0);
+  });
+
+  it("前回診断との差分があれば、減った件数を good のデルタで示す", async () => {
+    const r = report({
+      previous_at: "2026-01-01T00:00:00Z",
+      new_indexes: [],
+      resolved: [mk("fk_missing_index", "high", "gone1"), mk("fk_missing_index", "high", "gone2")],
+      unchanged: 4,
+    });
+    await runPanel(r);
+    const deltas = within(screen.getByTestId("advisor-stat-tiles")).getAllByTestId("stat-delta");
+    // 高: 前回 4 → 今回 2 (減少 = good)、中: 変化なし、低: 変化なし
+    expect(deltas).toHaveLength(3);
+    expect(deltas[0].getAttribute("data-direction")).toBe("down");
+    expect(deltas[0].getAttribute("data-verdict")).toBe("good");
+    expect(deltas[1].getAttribute("data-direction")).toBe("flat");
+  });
+
+  it("ルール別のチップは件数 0 のルールを出さず、クリックで絞り込み、もう一度で解除する", async () => {
+    const { container } = await runPanel(report());
+    const strip = screen.getByTestId("advisor-rule-strip");
+    expect(within(strip).getAllByRole("button")).toHaveLength(3);
+    expect(screen.queryByTestId("advisor-rule-chip-unused_index")).not.toBeInTheDocument();
+    expect(container.querySelectorAll("tbody > tr:not([hidden])")).toHaveLength(4);
+
+    const chip = screen.getByTestId("advisor-rule-chip-missing_primary_key");
+    expect(chip).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(chip);
+    expect(chip).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(container.querySelectorAll("tbody > tr:not([hidden])")).toHaveLength(2));
+    expect(screen.getByTestId("advisor-filter-note")).toBeInTheDocument();
+    // タイルの件数は絞り込みで動かない (全件のまま)。
+    expect(
+      within(screen.getByTestId("advisor-stat-tiles")).getByText(t("advisorStatHigh")),
+    ).toBeInTheDocument();
+
+    fireEvent.click(chip);
+    expect(chip).toHaveAttribute("aria-pressed", "false");
+    await waitFor(() => expect(container.querySelectorAll("tbody > tr:not([hidden])")).toHaveLength(4));
+    expect(screen.queryByTestId("advisor-filter-note")).not.toBeInTheDocument();
+  });
+
+  it("チップはキーボード (Enter / Space) で操作でき、絞り込み解除ボタンでも戻せる", async () => {
+    const { container } = await runPanel(report());
+    const chip = screen.getByTestId("advisor-rule-chip-fk_missing_index");
+    chip.focus();
+    expect(chip).toHaveFocus();
+    // ネイティブ button なので Enter / Space は click として発火する (user-event を使わず click で代用)。
+    fireEvent.click(chip);
+    await waitFor(() => expect(container.querySelectorAll("tbody > tr:not([hidden])")).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: t("advisorFilterClear") }));
+    await waitFor(() => expect(container.querySelectorAll("tbody > tr:not([hidden])")).toHaveLength(4));
+  });
+
+  it("採番枯渇の行に、閾値マーカー付きで使用率 (aria-valuenow) を持つメーターを出す", async () => {
+    await runPanel(report());
+    const meter = within(screen.getByTestId("advisor-sequence-meter")).getByRole("meter");
+    expect(meter).toHaveAttribute("aria-valuenow", "98");
+    // 色は同じ行の重要度 (high) に合わせる。
+    expect(screen.getByTestId("advisor-sequence-meter").querySelector('[data-tone="danger"]')).not.toBeNull();
+    expect(meter).toHaveAttribute("aria-valuemin", "0");
+    expect(meter).toHaveAttribute("aria-valuemax", "100");
+    expect(within(screen.getByTestId("advisor-sequence-meter")).getAllByText(/^(50|80)%$/)).toHaveLength(2);
+    // 他のルールの行にはメーターを出さない。
+    expect(screen.getAllByTestId("advisor-sequence-meter")).toHaveLength(1);
+  });
+
+  it("絞り込み中の書き出しは表示中の指摘だけを対象にする旨を示す", async () => {
+    await runPanel(report());
+    fireEvent.click(screen.getByTestId("advisor-rule-chip-missing_primary_key"));
+    const note = await screen.findByTestId("advisor-filter-note");
+    expect(note.textContent).toContain(
+      t("advisorFilterActive", { rule: t("advisorRuleMissingPrimaryKeyTitle"), shown: "2", total: "4" }),
+    );
+  });
+
+  it("絞り込み中の書き出しは絞り込み後の行だけになり、ファイル名にルール ID が付く", async () => {
+    await runPanel(report());
+    fireEvent.click(screen.getByTestId("advisor-rule-chip-missing_primary_key"));
+    await waitFor(() => expect(screen.getByTestId("advisor-filter-note")).toBeInTheDocument());
+    dialog.save.mockResolvedValueOnce("/tmp/out.csv");
+    fireEvent.click(screen.getByRole("button", { name: t("textExportButton") }));
+    fireEvent.click(await screen.findByText(t("textExportSaveAs", { format: "CSV" })));
+    await waitFor(() => expect(api.writeTextFile).toHaveBeenCalledTimes(1));
+    const [, text] = vi.mocked(api.writeTextFile).mock.calls[0];
+    expect(text).toContain("t_pk1");
+    expect(text).toContain("t_pk2");
+    expect(text).not.toContain("t_fk");
+    expect(text).not.toContain("t_seq");
+    const opts = dialog.save.mock.calls[0][0] as { defaultPath: string };
+    expect(opts.defaultPath).toContain("schema-health-testdb-missing_primary_key.csv");
   });
 });

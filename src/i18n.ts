@@ -4136,6 +4136,20 @@ const en = {
   structurePartitionedBy: "Partitioned by {method} ({key})",
   structurePartitionDefault: "(default)",
   structurePartitionsFailed: "Could not load partitions.",
+  partitionRibbonAria: "Partition layout ({method})",
+  partitionRibbonLegend:
+    "Darker = larger. Striped dashed = DEFAULT, double edge = MAXVALUE, dashed marker = gap in the range, \u25B2 = skewed (above average).",
+  partitionRibbonGapAria: "Gap: the range is not continuous here",
+  partitionRibbonShare: "{percent}% of the total size",
+  partitionRibbonHotTip: "Skewed: {factor}x the average or more",
+  partitionRibbonSubs: "Sub-partitions of {partition}",
+  partitionRibbonEmptySlot: "Unused remainder",
+  partitionRibbonGhost: "New partition",
+  partitionRibbonGhostAria: "Partition to be added: {label}",
+  partitionRibbonReorganize: "Split by REORGANIZE",
+  partitionRibbonScan: "Scanned on add",
+  partitionBarShare: "{percent}% of the total",
+  partitionBarHot: "Skewed: {factor}x the average or more",
   partitionOpTruncate: "Truncate partition",
   partitionOpDetach: "Detach partition",
   partitionOpDrop: "Drop partition",
@@ -6110,13 +6124,19 @@ const en = {
   processEmpty: "No processes to show.",
   processBlockingTitle: "Blocking chains",
   processBlockingDesc:
-    "Processes waiting on locks, shown under the process that blocks them. Killing a root blocker releases the whole chain.",
+    "Processes waiting on locks, drawn as a graph from the blocker to each process it makes wait. Killing a root blocker releases the whole chain.",
   processBlockingRoot: "Root blocker ({count} waiting)",
-  processBlockingRepeated: "(already shown)",
   processBlockingDeadlock: "Deadlock (circular wait)",
   processBlockingExternal: "Blocker outside the list #{id} ({count} waiting)",
   processBlockingKill: "Kill",
   processBlockingKillAria: "Kill blocker {id}",
+  processBlockingLegend:
+    "Arrow = blocker to the process it makes wait. Thicker / redder = longer elapsed time of the waiting query. Red ring = deadlock. Dashed = blocker outside the list (cannot be killed).",
+  processBlockingGraphAria: "Lock wait graph",
+  processBlockingSrWaits: "{id} waits for {blockers}",
+  processBlockingSrRoot: "{id} is a root blocker with {count} waiting",
+  processBlockingSrExternal: "{id} is a blocker outside the list with {count} waiting",
+  processBlockingSrDeadlock: "(part of a deadlock)",
   processTruncated: "Showing the first {shown} of {total} processes.",
   processCancelSelected: "Stop statement ({count})",
   processCancelSelectedHint:
@@ -6882,6 +6902,40 @@ const en = {
   advisorRuleOversizedVarcharTitle: "Oversized VARCHAR",
   advisorRuleFloatForMoneyTitle: "Floating-point type for money",
   advisorRuleSequenceExhaustionTitle: "Auto-increment nearing its limit",
+  // 要約タイル・ルール別の分布ストリップ・採番メーター (#2239)
+  advisorStatHigh: "High severity",
+  advisorStatMedium: "Medium severity",
+  advisorStatLow: "Low severity",
+  advisorStatTables: "Tables analyzed",
+  advisorRuleStripAria: "Findings by rule. Press a rule to filter the table; press it again to clear.",
+  advisorFilterActive:
+    'Showing only "{rule}": {shown} of {total} finding(s). CSV / Markdown export covers only the findings shown.',
+  advisorFilterClear: "Clear filter",
+  advisorSeqMeterAria: "Sequence usage (warning at {warn}%, danger at {danger}%)",
+  advisorSeqMeterValue: "{percent}% ({used} / {max})",
+  advisorRuleFkMissingIndexWhy:
+    "Joins and cascading deletes on a foreign key without an index scan the whole child table and can hold locks for a long time.",
+  advisorRuleDuplicateIndexWhy:
+    "Two identical indexes double the write cost and storage for no read benefit.",
+  advisorRuleRedundantIndexWhy:
+    "An index whose columns are a prefix of another index is already covered, yet it still slows every write and takes space.",
+  advisorRuleMissingPrimaryKeyWhy:
+    "Without a primary key rows cannot be identified reliably, so updates, replication and diffs become ambiguous or slow.",
+  advisorRuleUnusedIndexWhy:
+    "An index that is never read still costs time on every write and disk space (based on statistics since the server started).",
+  advisorRuleFkTypeMismatchWhy:
+    "When a foreign key and the column it references differ in type, the engine may convert values and skip the index, or reject some values.",
+  advisorRuleSqliteIntegerPkHintWhy:
+    "Only a column declared exactly INTEGER PRIMARY KEY becomes the rowid alias in SQLite; other integer types lose that speed and space benefit.",
+  advisorRuleNullableForeignKeyWhy:
+    "A nullable foreign key lets rows exist without a parent, which weakens the relationship and surprises joins.",
+  advisorRuleOversizedVarcharWhy:
+    "An oversized VARCHAR limit gives no real validation and can inflate memory used for sorting and temporary tables.",
+  advisorRuleFloatForMoneyWhy:
+    "Floating-point numbers cannot represent most decimal amounts exactly, so rounding errors accumulate in money columns.",
+  advisorRuleSequenceExhaustionWhy:
+    "When an auto-increment reaches its maximum, every INSERT fails at once, so it is the most urgent kind of finding.",
+  advisorRuleUnknownWhy: "A schema finding from a rule this version does not describe yet.",
   // 未知のルール ID (バックエンドだけ新ルールを足したドリフト時) の汎用フォールバック
   advisorRuleUnknownTitle: "Other schema finding",
   advisorRuleUnknownDesc:
@@ -12066,6 +12120,20 @@ const ja: Dict = {
   structurePartitionedBy: "{method} ({key}) で分割",
   structurePartitionDefault: "(既定)",
   structurePartitionsFailed: "パーティションを取得できませんでした。",
+  partitionRibbonAria: "パーティションの構成 ({method})",
+  partitionRibbonLegend:
+    "濃いほどサイズが大きい。斜線の破線 = DEFAULT、二重線の端 = MAXVALUE、破線の印 = 範囲の隙間、\u25B2 = 偏り (平均を大きく超える)。",
+  partitionRibbonGapAria: "隙間: ここで範囲が連続していません",
+  partitionRibbonShare: "サイズの合計の {percent}%",
+  partitionRibbonHotTip: "偏り: 平均の {factor} 倍以上",
+  partitionRibbonSubs: "{partition} のサブパーティション",
+  partitionRibbonEmptySlot: "未使用の剰余",
+  partitionRibbonGhost: "新しいパーティション",
+  partitionRibbonGhostAria: "追加予定のパーティション: {label}",
+  partitionRibbonReorganize: "REORGANIZE で分割",
+  partitionRibbonScan: "追加時にスキャン",
+  partitionBarShare: "全体の {percent}%",
+  partitionBarHot: "偏り: 平均の {factor} 倍以上",
   partitionOpTruncate: "パーティションを TRUNCATE",
   partitionOpDetach: "パーティションを DETACH",
   partitionOpDrop: "パーティションを削除",
@@ -14019,13 +14087,19 @@ const ja: Dict = {
   processEmpty: "表示するプロセスがありません。",
   processBlockingTitle: "ロック待ちの連鎖",
   processBlockingDesc:
-    "ロック待ちのプロセスを、待たせているプロセスの下に表示します。根のブロッカーを強制終了すると連鎖全体が解消します。",
+    "ロック待ちのプロセスを、待たせているプロセスから伸びる矢印のグラフで表示します。根のブロッカーを強制終了すると連鎖全体が解消します。",
   processBlockingRoot: "根のブロッカー ({count} 件が待機中)",
-  processBlockingRepeated: "(表示済み)",
   processBlockingDeadlock: "デッドロック (循環待ち)",
   processBlockingExternal: "一覧外のブロッカー #{id} ({count} 件が待機中)",
   processBlockingKill: "強制終了",
   processBlockingKillAria: "ブロッカー {id} を強制終了",
+  processBlockingLegend:
+    "矢印 = ブロッカーから待たされているプロセスへ。太く赤いほど待たされているクエリの経過時間が長い。赤い輪 = デッドロック。点線 = 一覧にないブロッカー (強制終了できない)。",
+  processBlockingGraphAria: "ロック待機グラフ",
+  processBlockingSrWaits: "{id} は {blockers} を待っている",
+  processBlockingSrRoot: "{id} は根のブロッカーで {count} 件が待機中",
+  processBlockingSrExternal: "{id} は一覧外のブロッカーで {count} 件が待機中",
+  processBlockingSrDeadlock: "(デッドロックの一部)",
   processTruncated: "{total} 件中、先頭の {shown} 件のみ表示しています。",
   processCancelSelected: "選択の文を停止 ({count})",
   processCancelSelectedHint:
@@ -14787,6 +14861,40 @@ const ja: Dict = {
   advisorRuleOversizedVarcharTitle: "過大な VARCHAR",
   advisorRuleFloatForMoneyTitle: "金額に浮動小数型",
   advisorRuleSequenceExhaustionTitle: "採番が上限に近い",
+  // 要約タイル・ルール別の分布ストリップ・採番メーター (#2239)
+  advisorStatHigh: "重要度: 高",
+  advisorStatMedium: "重要度: 中",
+  advisorStatLow: "重要度: 低",
+  advisorStatTables: "解析した表",
+  advisorRuleStripAria: "ルール別の指摘数。押すとそのルールで表を絞り込み、もう一度押すと解除します。",
+  advisorFilterActive:
+    "「{rule}」だけを表示中: {total} 件中 {shown} 件。CSV / Markdown の書き出しは表示中の指摘のみです。",
+  advisorFilterClear: "絞り込みを解除",
+  advisorSeqMeterAria: "採番の使用率 (警告 {warn}% / 危険 {danger}%)",
+  advisorSeqMeterValue: "{percent}% ({used} / {max})",
+  advisorRuleFkMissingIndexWhy:
+    "インデックスの無い外部キーは、結合や連鎖削除で子テーブルを全件走査し、長時間のロックを招きかねません。",
+  advisorRuleDuplicateIndexWhy:
+    "同じインデックスが 2 本あっても読み取りは速くならず、書き込みの負荷と容量だけが倍になります。",
+  advisorRuleRedundantIndexWhy:
+    "別のインデックスの先頭列と同じ構成なら既にカバーされていて、書き込みのたびのコストと容量だけが余分にかかります。",
+  advisorRuleMissingPrimaryKeyWhy:
+    "主キーが無いと行を確実に特定できず、更新・レプリケーション・差分比較が曖昧になったり遅くなったりします。",
+  advisorRuleUnusedIndexWhy:
+    "読まれないインデックスも、書き込みのたびに更新コストと容量を使います (サーバ起動後の統計に基づく判定です)。",
+  advisorRuleFkTypeMismatchWhy:
+    "外部キーと参照先で型が違うと、値の変換でインデックスが効かなかったり、一部の値が入らなかったりします。",
+  advisorRuleSqliteIntegerPkHintWhy:
+    "SQLite で rowid の別名になるのは INTEGER PRIMARY KEY と宣言した列だけで、他の整数型では速度と容量の利点を失います。",
+  advisorRuleNullableForeignKeyWhy:
+    "NULL を許す外部キーは親の無い行を作れてしまい、関係が弱まって結合の結果も意図とずれやすくなります。",
+  advisorRuleOversizedVarcharWhy:
+    "過大な VARCHAR の長さは実質的な検証にならず、ソートや一時テーブルのメモリ使用量を膨らませることがあります。",
+  advisorRuleFloatForMoneyWhy:
+    "浮動小数点数は多くの小数を正確に表せないため、金額の列では丸め誤差が積み重なります。",
+  advisorRuleSequenceExhaustionWhy:
+    "採番が上限に達すると INSERT がすべて失敗するため、障害の予兆として最も緊急性の高い指摘です。",
+  advisorRuleUnknownWhy: "このバージョンではまだ説明を持たないルールのスキーマ指摘です。",
   // 未知のルール ID (バックエンドだけ新ルールを足したドリフト時) の汎用フォールバック
   advisorRuleUnknownTitle: "その他のスキーマ指摘",
   advisorRuleUnknownDesc:
