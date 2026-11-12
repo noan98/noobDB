@@ -345,6 +345,51 @@ describe("SandboxReviewModal の適用ボタンの並び (#1615)", () => {
   });
 });
 
+/** アタッチ DB 由来のサンドボックスは書き戻しをバックエンドが拒否するので、実行前に無効にして理由を示す (#2271)。 */
+describe("SandboxReviewModal のアタッチ DB 由来の書き戻し (#2271)", () => {
+  const profile = { id: "p1", name: "src", driver: "sqlite" } as unknown as ConnectionProfile;
+
+  async function generateFor(sandbox: SandboxRecord) {
+    vi.mocked(api.sandboxTableDiff).mockResolvedValue({
+      ...TABLE_DIFF,
+      desired: {
+        ...TABLE_DIFF.desired,
+        rows: [{ status: "source_only" as const, key: [1], source: [1], target: null, changed_columns: [] }],
+      },
+    });
+    vi.mocked(api.generateDataSyncSql).mockResolvedValue({
+      statements: [
+        { sql: "INSERT INTO users VALUES (1)", table: "users", kind: "insert", destructive: false },
+      ],
+      warnings: [],
+    } as never);
+    renderWithProviders(
+      <SandboxReviewModal
+        sandbox={sandbox}
+        sandboxSessionId="s1"
+        openConnections={[{ sessionId: "live", profile }]}
+        onClose={() => {}}
+      />,
+    );
+    const generate = await screen.findByText(t("sandboxReviewGenerate"));
+    await waitFor(() => expect(generate.closest("button")).not.toBeDisabled());
+    fireEvent.click(generate);
+    return (await screen.findByText(t("sandboxApplyTitle", { count: 1 }))).closest("button") as HTMLElement;
+  }
+
+  it("アタッチした別名由来だと適用ボタンが無効になり、理由が出る", async () => {
+    const apply = await generateFor({ ...SANDBOX, source_database: "archive" });
+    expect(apply).toBeDisabled();
+    expect(screen.getByText(t("sandboxApplyAttachedUnsupported"))).toBeInTheDocument();
+  });
+
+  it("main 由来なら適用ボタンは有効で、理由は出ない", async () => {
+    const apply = await generateFor({ ...SANDBOX, source_database: "main" });
+    expect(apply).not.toBeDisabled();
+    expect(screen.queryByText(t("sandboxApplyAttachedUnsupported"))).not.toBeInTheDocument();
+  });
+});
+
 /** 競合の一括解決 (#1625)。全体・表単位で適用でき、未解決数と連動し、個別の選び直しも残る。 */
 describe("SandboxReviewModal の競合一括解決 (#1625)", () => {
   const profile = { id: "p1", name: "src", driver: "sqlite" } as unknown as ConnectionProfile;
