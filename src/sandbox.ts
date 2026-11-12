@@ -101,7 +101,7 @@ export function clampSandboxRowLimit(limit: number | null | undefined): number {
  * (`db::sandbox::key_signature` そのもの) が行う。
  */
 export function sandboxKeySignature(key: CellValue[]): string {
-  return key.map((v) => `${typeof v}:${JSON.stringify(v)}`).join("");
+  return key.map((v) => `${typeof v}:${JSON.stringify(v)}`).join("\u001F");
 }
 
 /**
