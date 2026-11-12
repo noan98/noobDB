@@ -960,18 +960,43 @@ pub struct ProcessInfo {
     /// PostgreSQL は `pg_blocking_pids()`、MySQL 8 は `performance_schema.data_lock_waits`。
     /// 取得できない (権限不足・古い版) / 待っていないときは空。
     pub blocked_by: Vec<i64>,
-    /// 長時間メンテナンス (VACUUM / CREATE INDEX) の進捗 (#1622)。PostgreSQL の
-    /// `pg_stat_progress_*` から取れたときだけ入る。MySQL / 取得不能は `None`。
+    /// 長時間メンテナンス (VACUUM / CREATE INDEX / ALTER TABLE / CLUSTER / ANALYZE / COPY) の進捗
+    /// (#1622 / #2269)。PostgreSQL の `pg_stat_progress_*`、MySQL の `events_stages_current` から
+    /// 取れたときだけ入る。取得不能は `None`。
     #[serde(default)]
     pub progress: Option<ProcessProgress>,
+    /// MySQL で `performance_schema` の stage 計測器 (`events_stages_current` コンシューマ)
+    /// が無効だと判別できたとき true (#2269)。進捗が空な理由をパネルが案内するための印で、
+    /// 全行に同じ値が入る。判別できない (権限不足・`performance_schema` 自体が OFF)・
+    /// PostgreSQL は false。
+    #[serde(default)]
+    pub progress_disabled: bool,
+}
+
+/// メンテナンス作業の種別 (#1622 / #2269)。フロントの `ProcessProgressKind` union と
+/// `enumParity.test.ts` が完全一致を検査する。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProcessProgressKind {
+    /// PostgreSQL `pg_stat_progress_vacuum`。
+    Vacuum,
+    /// PostgreSQL `pg_stat_progress_create_index`。
+    CreateIndex,
+    /// MySQL `events_stages_current` の `stage/innodb/alter table*` (OPTIMIZE TABLE を含む)。
+    AlterTable,
+    /// PostgreSQL `pg_stat_progress_cluster` (12+。VACUUM FULL / CLUSTER)。
+    Cluster,
+    /// PostgreSQL `pg_stat_progress_analyze` (13+)。
+    Analyze,
+    /// PostgreSQL `pg_stat_progress_copy` (14+)。
+    Copy,
 }
 
 /// プロセスのメンテナンス作業の進捗 (#1622)。`done` / `total` はブロック数 (または行数)。
 /// `total` が 0 のフェーズ (索引作成の待機・ソートなど) は割合が出せないので、フェーズ名だけを示す。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProcessProgress {
-    /// `"vacuum"` / `"create_index"`。
-    pub kind: String,
+    pub kind: ProcessProgressKind,
     /// サーバが報告するフェーズ名 (例: `scanning heap`)。
     pub phase: String,
     pub done: i64,
@@ -1002,8 +1027,11 @@ pub struct ProcessListItem {
     pub is_self: bool,
     /// ブロッカー (待たされている相手) の id 一覧 (#1417)。待機チェーンのツリー化はフロントで行う。
     pub blocked_by: Vec<i64>,
-    /// VACUUM / CREATE INDEX の進捗 (#1622)。
+    /// VACUUM / CREATE INDEX / ALTER TABLE / CLUSTER / ANALYZE / COPY の進捗 (#1622 / #2269)。
     pub progress: Option<ProcessProgress>,
+    /// MySQL の stage 計測器が無効で進捗が取れない (#2269)。案内の表示に使う。
+    #[serde(default)]
+    pub progress_disabled: bool,
 }
 
 /// クエリ本文を 1 行要約にする。空白の畳み込みは `split_whitespace` (Unicode 空白)、
@@ -1042,6 +1070,7 @@ impl From<ProcessInfo> for ProcessListItem {
             is_self: p.is_self,
             blocked_by: p.blocked_by,
             progress: p.progress,
+            progress_disabled: p.progress_disabled,
         }
     }
 }

@@ -522,4 +522,43 @@ describe("ProcessListPanel per-process results / same-query select / progress (#
     expect(badge).toHaveTextContent("40%");
     expect(badge).toHaveTextContent("scanning heap");
   });
+
+  it("ALTER TABLE の進捗をラベル付きで出す", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([
+      { ...base, progress: { kind: "alter_table", phase: "read PK and internal sort", done: 1, total: 4 } },
+    ]);
+    renderWithProviders(<ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />);
+    const badge = await screen.findByTestId("process-progress");
+    expect(badge).toHaveTextContent("ALTER TABLE");
+    expect(badge).toHaveTextContent("25%");
+  });
+
+  it("stage 計測器が無効な MySQL では案内と有効化 SQL を出す (実行はしない)", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([{ ...base, progress_disabled: true }]);
+    renderWithProviders(<ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />);
+    expect(await screen.findByText(t("processProgressDisabledTitle"))).toBeInTheDocument();
+    expect(screen.getByText(/setup_consumers/)).toBeInTheDocument();
+  });
+
+  it("計測器が有効 / 判別できないときは案内を出さない", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([base]);
+    renderWithProviders(<ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />);
+    await screen.findByText("7");
+    expect(screen.queryByText(t("processProgressDisabledTitle"))).not.toBeInTheDocument();
+  });
+
+  it("COPY の総量不明は行数で出し、案内は閉じられる", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([
+      {
+        ...base,
+        progress: { kind: "copy", phase: "COPY FROM", done: 1234, total: 0 },
+        progress_disabled: true,
+      },
+    ]);
+    renderWithProviders(<ProcessListPanel sessionId="s-dismiss" driver="mysql" readOnly={false} />);
+    const badge = await screen.findByTestId("process-progress");
+    expect(badge).toHaveTextContent("COPY FROM (1234");
+    fireEvent.click(screen.getByRole("button", { name: t("processProgressDisabledDismiss") }));
+    expect(screen.queryByText(t("processProgressDisabledTitle"))).not.toBeInTheDocument();
+  });
 });

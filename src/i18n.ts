@@ -6353,6 +6353,10 @@ const en = {
   processKillFailedRow: "Could not stop this process: {error}",
   processProgressVacuum: "VACUUM",
   processProgressCreateIndex: "CREATE INDEX",
+  processProgressAlterTable: "ALTER TABLE",
+  processProgressCluster: "VACUUM FULL / CLUSTER",
+  processProgressAnalyze: "ANALYZE",
+  processProgressCopy: "COPY",
   processProgressPercent: "{kind}: {phase} {percent}%",
   processProgressPhase: "{kind}: {phase}",
   processProgressAria: "{kind} progress",
@@ -6404,6 +6408,12 @@ const en = {
   processSortTimeDesc: "Longest running first",
   processSortTimeAsc: "Shortest running first",
   processSortId: "By id",
+  processSortProgress: "Most progress first", // (#2269)
+  processProgressCopyRows: "{phase} ({rows} rows)", // (#2269)
+  processProgressDisabledDismiss: "Dismiss", // (#2269)
+  processProgressDisabledTitle: "Progress for ALTER TABLE is not being collected",
+  processProgressDisabledBody:
+    "MySQL's performance_schema stage instrumentation is off, so ALTER TABLE progress cannot be shown. You can enable it with the SQL below (run it yourself; it is not executed automatically). The setting reverts when the server restarts.",
   processFilterCount: "{shown} of {total} match",
   processFilterClear: "Clear filters",
   processFilterNoMatch: "No processes match the filters.",
@@ -14554,6 +14564,10 @@ const ja: Dict = {
   processKillFailedRow: "このプロセスを停止できませんでした: {error}",
   processProgressVacuum: "VACUUM",
   processProgressCreateIndex: "索引作成",
+  processProgressAlterTable: "ALTER TABLE",
+  processProgressCluster: "VACUUM FULL / CLUSTER",
+  processProgressAnalyze: "ANALYZE",
+  processProgressCopy: "COPY",
   processProgressPercent: "{kind}: {phase} {percent}%",
   processProgressPhase: "{kind}: {phase}",
   processProgressAria: "{kind} の進捗",
@@ -14605,6 +14619,12 @@ const ja: Dict = {
   processSortTimeDesc: "実行時間が長い順",
   processSortTimeAsc: "実行時間が短い順",
   processSortId: "id 順",
+  processSortProgress: "進捗が進んでいる順", // (#2269)
+  processProgressCopyRows: "{phase} ({rows} 行)", // (#2269)
+  processProgressDisabledDismiss: "閉じる", // (#2269)
+  processProgressDisabledTitle: "ALTER TABLE の進捗を収集していません",
+  processProgressDisabledBody:
+    "MySQL の performance_schema の stage 計測器が無効なため、ALTER TABLE の進捗を表示できません。下の SQL で有効にできます (自動では実行しません。ご自身で実行してください)。設定はサーバの再起動で元に戻ります。",
   processFilterCount: "{total} 件中 {shown} 件が一致",
   processFilterClear: "絞り込みを解除",
   processFilterNoMatch: "条件に一致するプロセスがありません。",
