@@ -37,12 +37,7 @@ const allSources = import.meta.glob("../**/*.{ts,tsx}", {
  * 追加するときは「なぜどこからも参照されないのに残すのか」を必ず併記すること。
  * 「いつか使うかも」は理由にならない — その場合は消して、使うときに復活させる。
  */
-const INTENTIONALLY_UNREFERENCED: Record<string, string> = {
-  emitTauriEvent:
-    "ブラウザモード用フェイク Tauri ランタイム (tauriMock.ts) の公開契約。Channel へ移行していない" +
-    "名前付きイベント (csv-import:* / export-stream:* / dump-stream:*) を注入する唯一の口で、" +
-    "`listen` のモック実装と対になる。",
-};
+const INTENTIONALLY_UNREFERENCED: Record<string, string> = {};
 
 /** `// …` と `/* … *\/` を除去する (文字列内の `//` まで厳密には扱わない簡易版)。 */
 function stripComments(src: string): string {
