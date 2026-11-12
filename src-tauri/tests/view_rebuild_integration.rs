@@ -36,6 +36,11 @@ async fn snapshot(conn: &t::Connection, schema: &str) -> Vec<Vec<String>> {
                     COALESCE((SELECT string_agg(attname || '=' || col_description(c.oid, attnum), ',' ORDER BY attnum) \
                                FROM pg_attribute WHERE attrelid = c.oid AND attnum > 0 \
                                 AND col_description(c.oid, attnum) IS NOT NULL), ''), \
+                    COALESCE((SELECT string_agg(attname || ':' || attacl::text, ',' ORDER BY attnum) \
+                               FROM pg_attribute WHERE attrelid = c.oid AND attnum > 0 AND attacl IS NOT NULL), ''), \
+                    COALESCE((SELECT string_agg(attname || ':' || pg_get_expr(adbin, adrelid), ',' ORDER BY adnum) \
+                               FROM pg_attrdef d JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum \
+                              WHERE d.adrelid = c.oid), ''), \
                     COALESCE((SELECT string_agg(regexp_replace(pg_get_indexdef(indexrelid), '^.* ON ', ''), ';' ORDER BY indexrelid) \
                                FROM pg_index WHERE indrelid = c.oid), '') \
                FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
@@ -56,6 +61,7 @@ async fn postgres_rebuilds_three_level_dependents_in_one_transaction() {
     let conn = t::connect(&opts).await.expect("connect");
     for sql in [
         format!("DROP SCHEMA IF EXISTS {PG_SCHEMA} CASCADE"),
+        format!("DROP SCHEMA IF EXISTS {PG_SCHEMA}_x CASCADE"),
         "DROP ROLE IF EXISTS nb2268_reader".to_string(),
         "DROP ROLE IF EXISTS nb2268_owner".to_string(),
         "CREATE ROLE nb2268_reader".to_string(),
@@ -80,6 +86,12 @@ async fn postgres_rebuilds_three_level_dependents_in_one_transaction() {
         format!("COMMENT ON VIEW {PG_SCHEMA}.v1 IS 'it''s v1'"),
         format!("COMMENT ON COLUMN {PG_SCHEMA}.v2.dbl IS 'double price'"),
         format!("COMMENT ON MATERIALIZED VIEW {PG_SCHEMA}.mv3 IS 'matview'"),
+        format!("GRANT SELECT (id) ON {PG_SCHEMA}.v1 TO nb2268_reader"),
+        format!("ALTER VIEW {PG_SCHEMA}.v1 ALTER COLUMN id SET DEFAULT 7"),
+        // スキーマをまたぐビュー: 同名の表が自スキーマにもあり、search_path 次第で修飾が省かれる形。
+        format!("CREATE SCHEMA {PG_SCHEMA}_x"),
+        format!("CREATE TABLE {PG_SCHEMA}_x.base (id int, price int)"),
+        format!("CREATE VIEW {PG_SCHEMA}_x.xv AS SELECT b.id, b.price FROM {PG_SCHEMA}.base b JOIN {PG_SCHEMA}_x.base x ON x.id = b.id"),
         format!("INSERT INTO {PG_SCHEMA}.base VALUES (1, 10, 'a'), (2, 20, 'b')"),
     ] {
         conn.execute(&sql, None).await.expect("ddl");
@@ -94,7 +106,9 @@ async fn postgres_rebuilds_three_level_dependents_in_one_transaction() {
         .expect("plan");
     assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
     let names: Vec<&str> = plan.views.iter().map(|v| v.name.as_str()).collect();
-    assert_eq!(names, vec!["v1", "v2", "mv3"]);
+    assert_eq!(names.len(), 4);
+    let pos = |n: &str| names.iter().position(|x| *x == n);
+    assert!(pos("v1") < pos("v2") && pos("v2") < pos("mv3"));
     // 依存の無い列では空 (従来どおり)。
     let none = t::view_rebuild_plan_core(
         session.clone(),
@@ -106,12 +120,28 @@ async fn postgres_rebuilds_three_level_dependents_in_one_transaction() {
     .await
     .expect("plan");
     assert_eq!(none.views.len(), 1);
+    assert!(none.referenced_columns.contains(&"note".to_string()));
     let nothing = t::view_rebuild_plan_core(session.clone(), PG_SCHEMA, "base", &[], true)
         .await
         .expect("plan");
     assert!(nothing.views.is_empty() && nothing.drop_statements.is_empty());
 
+    // スキーマをまたぐビューも対象で、定義は常に完全修飾で取れている。
+    let xv = plan
+        .views
+        .iter()
+        .find(|v| v.name == "xv")
+        .map(|v| v.schema.clone());
+    assert_eq!(xv.as_deref(), Some("nb2268_rebuild_x"));
+    assert!(
+        plan.create_statements
+            .iter()
+            .any(|c| c.contains("nb2268_rebuild.base") && c.contains("nb2268_rebuild_x.base")),
+        "{:?}",
+        plan.create_statements
+    );
     let before = snapshot(conn, PG_SCHEMA).await;
+    let before_x = snapshot(conn, "nb2268_rebuild_x").await;
     let alter = format!("ALTER TABLE {PG_SCHEMA}.base ALTER COLUMN price TYPE bigint;");
 
     // 計画なしの ALTER は失敗する (これが Issue の症状)。
@@ -142,6 +172,7 @@ async fn postgres_rebuilds_three_level_dependents_in_one_transaction() {
         .await
         .expect("rebuild transaction");
     assert_eq!(snapshot(conn, PG_SCHEMA).await, before);
+    assert_eq!(snapshot(conn, "nb2268_rebuild_x").await, before_x);
     let ty = rows(
         conn,
         &format!(
@@ -159,7 +190,10 @@ async fn postgres_rebuilds_three_level_dependents_in_one_transaction() {
     let plan_nd = t::view_rebuild_plan_core(session.clone(), PG_SCHEMA, "base", &cols, false)
         .await
         .expect("plan");
-    assert!(plan_nd.create_statements[2].ends_with("WITH NO DATA;"));
+    assert!(plan_nd
+        .create_statements
+        .iter()
+        .any(|c| c.ends_with("WITH NO DATA;")));
 
     // RLS ポリシーが参照する列は作り直しを止める。
     for sql in [
@@ -177,7 +211,48 @@ async fn postgres_rebuilds_three_level_dependents_in_one_transaction() {
         blocked.blockers
     );
 
+    // FK で参照され CHECK も付いた列でも、依存ビューが無ければ止める依存を返さない (ALTER が自分で作り直す)。
+    for sql in [
+        format!("DROP SCHEMA {PG_SCHEMA} CASCADE"),
+        format!("CREATE SCHEMA {PG_SCHEMA}"),
+        format!("CREATE TABLE {PG_SCHEMA}.p (id int PRIMARY KEY, v int CHECK (v > 0))"),
+        format!("CREATE TABLE {PG_SCHEMA}.c (id int, pid int REFERENCES {PG_SCHEMA}.p(id))"),
+        format!("CREATE INDEX p_v ON {PG_SCHEMA}.p (v)"),
+    ] {
+        conn.execute(&sql, None).await.expect("ddl");
+    }
+    for col in ["id", "v"] {
+        let p =
+            t::view_rebuild_plan_core(session.clone(), PG_SCHEMA, "p", &[col.to_string()], true)
+                .await
+                .expect("plan");
+        assert!(
+            p.views.is_empty() && p.blockers.is_empty(),
+            "{col}: {:?}",
+            p.blockers
+        );
+    }
+    // 依存ビューがあっても、FK / CHECK / インデックスは blocker にならない。
+    conn.execute(
+        &format!("CREATE VIEW {PG_SCHEMA}.pv AS SELECT id, v FROM {PG_SCHEMA}.p"),
+        None,
+    )
+    .await
+    .expect("ddl");
+    let p = t::view_rebuild_plan_core(session.clone(), PG_SCHEMA, "p", &["id".to_string()], true)
+        .await
+        .expect("plan");
+    assert_eq!(p.views.len(), 1);
+    assert!(p.blockers.is_empty(), "{:?}", p.blockers);
+    assert_eq!(
+        p.referenced_columns,
+        vec!["id".to_string(), "v".to_string()]
+    );
+
     conn.execute(&format!("DROP SCHEMA {PG_SCHEMA} CASCADE"), None)
+        .await
+        .expect("cleanup");
+    conn.execute(&format!("DROP SCHEMA {PG_SCHEMA}_x CASCADE"), None)
         .await
         .expect("cleanup");
     for r in ["nb2268_reader", "nb2268_owner"] {

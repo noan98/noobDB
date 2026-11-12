@@ -2159,6 +2159,7 @@ fn build_fixtures() -> serde_json::Value {
             kind: "policy".into(),
             description: "policy p on table t".into(),
         }],
+        referenced_columns: vec!["price".into()],
     };
     let table_statistic = t::TableStatistic {
         name: "users".into(),

@@ -1598,6 +1598,7 @@ export const viewRebuildPlan = z.object({
   create_statements: z.array(z.string()),
   restore_statements: z.array(z.string()),
   blockers: z.array(z.object({ kind: z.enum(["policy", "rule", "other"]), description: z.string() })),
+  referenced_columns: z.array(z.string()),
 });
 
 /** 配列を返すコマンド用のラッパースキーマ。 */

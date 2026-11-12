@@ -2044,6 +2044,12 @@ impl PostgresConn {
             return Ok(out);
         }
         let cols: Vec<String> = columns.to_vec();
+        // 定義の文字列 (`pg_get_viewdef` など) は search_path で修飾の有無が変わる。実行時は
+        // `SET search_path TO "<スキーマ>"` なので、pg_catalog だけにして常に完全修飾で取る (読み取りのみ。最後に戻す)。
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET LOCAL search_path = pg_catalog")
+            .execute(&mut *tx)
+            .await?;
         let rows: Vec<PgRow> = sqlx::query(
             r#"WITH RECURSIVE tbl AS (
                  SELECT c.oid FROM pg_catalog.pg_class c
@@ -2071,7 +2077,7 @@ impl PostgresConn {
                   WHERE rw.ev_class <> v.rel
                )
                SELECT c.oid::int8, n.nspname::text, c.relname::text, c.relkind::text,
-                      pg_catalog.pg_get_viewdef(c.oid, true),
+                      pg_catalog.pg_get_viewdef(c.oid, false),
                       c.reloptions,
                       pg_catalog.pg_get_userbyid(c.relowner)::text,
                       c.relacl IS NOT NULL,
@@ -2087,7 +2093,7 @@ impl PostgresConn {
         .bind(schema)
         .bind(table)
         .bind(&cols)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await?;
         let mut views: Vec<ViewInfo> = Vec::new();
         for r in &rows {
@@ -2107,6 +2113,8 @@ impl PostgresConn {
                 has_acl: r.try_get(7)?,
                 comment: r.try_get(8)?,
                 column_comments: Vec::new(),
+                column_acl: Vec::new(),
+                column_defaults: Vec::new(),
                 indexes: Vec::new(),
                 triggers: Vec::new(),
                 depends_on: Vec::new(),
@@ -2128,7 +2136,49 @@ impl PostgresConn {
                     ORDER BY 1, 2, 3"#,
             )
             .bind(&oids)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *tx)
+            .await?;
+            let col_acl_rows: Vec<PgRow> = sqlx::query(
+                r#"SELECT a.attrelid::int8, a.attname::text,
+                          CASE WHEN x.grantee = 0 THEN '' ELSE pg_catalog.pg_get_userbyid(x.grantee) END::text,
+                          x.privilege_type::text, x.is_grantable
+                     FROM pg_catalog.pg_attribute a
+                     JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+                    CROSS JOIN LATERAL pg_catalog.aclexplode(a.attacl) x
+                    WHERE a.attrelid IN (SELECT unnest($1::int8[])::oid)
+                      AND a.attacl IS NOT NULL AND NOT a.attisdropped AND x.grantee <> c.relowner
+                    ORDER BY a.attrelid, a.attnum, 3, 4"#,
+            )
+            .bind(&oids)
+            .fetch_all(&mut *tx)
+            .await?;
+            let default_rows: Vec<PgRow> = sqlx::query(
+                r#"SELECT d.adrelid::int8, a.attname::text, pg_catalog.pg_get_expr(d.adbin, d.adrelid)
+                     FROM pg_catalog.pg_attrdef d
+                     JOIN pg_catalog.pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+                    WHERE d.adrelid IN (SELECT unnest($1::int8[])::oid) AND NOT a.attisdropped
+                    ORDER BY d.adrelid, d.adnum"#,
+            )
+            .bind(&oids)
+            .fetch_all(&mut *tx)
+            .await?;
+            let ref_rows: Vec<PgRow> = sqlx::query(
+                r#"SELECT DISTINCT a.attname::text
+                     FROM pg_catalog.pg_depend d
+                     JOIN pg_catalog.pg_rewrite rw
+                       ON d.classid = 'pg_catalog.pg_rewrite'::regclass AND rw.oid = d.objid
+                     JOIN pg_catalog.pg_class t ON t.oid = d.refobjid
+                     JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+                     JOIN pg_catalog.pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
+                    WHERE d.refclassid = 'pg_catalog.pg_class'::regclass AND rw.rulename = '_RETURN'
+                      AND rw.ev_class IN (SELECT unnest($1::int8[])::oid)
+                      AND n.nspname = $2 AND t.relname = $3 AND d.refobjsubid > 0
+                    ORDER BY 1"#,
+            )
+            .bind(&oids)
+            .bind(schema)
+            .bind(table)
+            .fetch_all(&mut *tx)
             .await?;
             let col_rows: Vec<PgRow> = sqlx::query(
                 r#"SELECT a.attrelid::int8, a.attname::text, pg_catalog.col_description(a.attrelid, a.attnum)
@@ -2139,7 +2189,7 @@ impl PostgresConn {
                     ORDER BY a.attrelid, a.attnum"#,
             )
             .bind(&oids)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *tx)
             .await?;
             let idx_rows: Vec<PgRow> = sqlx::query(
                 r#"SELECT i.indrelid::int8, pg_catalog.pg_get_indexdef(i.indexrelid)
@@ -2148,7 +2198,7 @@ impl PostgresConn {
                     ORDER BY i.indrelid, i.indexrelid"#,
             )
             .bind(&oids)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *tx)
             .await?;
             let trg_rows: Vec<PgRow> = sqlx::query(
                 r#"SELECT t.tgrelid::int8, pg_catalog.pg_get_triggerdef(t.oid, true)
@@ -2157,7 +2207,7 @@ impl PostgresConn {
                     ORDER BY t.tgrelid, t.tgname"#,
             )
             .bind(&oids)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *tx)
             .await?;
             let edge_rows: Vec<PgRow> = sqlx::query(
                 r#"SELECT DISTINCT rw.ev_class::int8, d.refobjid::int8
@@ -2171,7 +2221,7 @@ impl PostgresConn {
                       AND d.refobjid <> rw.ev_class"#,
             )
             .bind(&oids)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *tx)
             .await?;
             for r in &acl_rows {
                 let oid: i64 = r.try_get(0)?;
@@ -2182,6 +2232,28 @@ impl PostgresConn {
                         grantable: r.try_get(3)?,
                     });
                 }
+            }
+            for r in &col_acl_rows {
+                let oid: i64 = r.try_get(0)?;
+                if let Some(v) = views.iter_mut().find(|v| v.oid == oid) {
+                    v.column_acl.push((
+                        r.try_get(1)?,
+                        AclEntry {
+                            grantee: r.try_get(2)?,
+                            privilege: r.try_get(3)?,
+                            grantable: r.try_get(4)?,
+                        },
+                    ));
+                }
+            }
+            for r in &default_rows {
+                let oid: i64 = r.try_get(0)?;
+                if let Some(v) = views.iter_mut().find(|v| v.oid == oid) {
+                    v.column_defaults.push((r.try_get(1)?, r.try_get(2)?));
+                }
+            }
+            for r in &ref_rows {
+                out.referenced_columns.push(r.try_get(0)?);
             }
             for r in &col_rows {
                 let oid: i64 = r.try_get(0)?;
@@ -2209,8 +2281,9 @@ impl PostgresConn {
             }
         }
 
-        // 作り直せない依存: 対象の列やビューを (ビューの _RETURN ルール以外で) 参照する通常依存
-        // (RLS ポリシー・トリガーの `UPDATE OF`・関数の本体など) と、ビュー自身の追加ルール。
+        // 作り直せない依存 (許可リスト方式): 対象の列やビューを参照する RLS ポリシー・トリガー
+        // (`UPDATE OF`)・関数・ビュー以外のルールと、ビューの行型に依存する関数、ビュー自身の追加ルール。
+        // 外部キー・CHECK 制約・インデックス・既定値・拡張統計は ALTER TYPE が自分で作り直すので含めない。
         let blocker_rows: Vec<PgRow> = sqlx::query(
             r#"WITH tbl AS (
                  SELECT c.oid FROM pg_catalog.pg_class c
@@ -2226,10 +2299,19 @@ impl PostgresConn {
                  LEFT JOIN pg_catalog.pg_rewrite rw
                    ON d.classid = 'pg_catalog.pg_rewrite'::regclass AND rw.oid = d.objid
                 WHERE d.refclassid = 'pg_catalog.pg_class'::regclass AND d.deptype = 'n'
+                  AND d.classid IN ('pg_catalog.pg_policy'::regclass, 'pg_catalog.pg_trigger'::regclass,
+                                    'pg_catalog.pg_proc'::regclass, 'pg_catalog.pg_rewrite'::regclass)
                   AND ((d.refobjid = (SELECT oid FROM tbl)
                         AND d.refobjsubid IN (SELECT attnum FROM cols))
                        OR d.refobjid IN (SELECT oid FROM vs))
                   AND NOT COALESCE(rw.rulename = '_RETURN' AND rw.ev_class IN (SELECT oid FROM vs), false)
+               UNION
+               SELECT 'pg_proc',
+                      pg_catalog.pg_describe_object(d.classid, d.objid, d.objsubid)
+                 FROM pg_catalog.pg_depend d
+                WHERE d.refclassid = 'pg_catalog.pg_type'::regclass AND d.deptype = 'n'
+                  AND d.classid = 'pg_catalog.pg_proc'::regclass
+                  AND d.refobjid IN (SELECT c.reltype FROM pg_catalog.pg_class c WHERE c.oid IN (SELECT oid FROM vs))
                UNION
                SELECT 'pg_rewrite',
                       pg_catalog.pg_describe_object('pg_catalog.pg_rewrite'::regclass, rw.oid, 0)
@@ -2241,8 +2323,14 @@ impl PostgresConn {
         .bind(table)
         .bind(&cols)
         .bind(&oids)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await?;
+        // 依存ビューが無ければ ALTER は通常どおり通るので、止める理由は返さない。
+        let blocker_rows: Vec<PgRow> = if views.is_empty() {
+            Vec::new()
+        } else {
+            blocker_rows
+        };
         for r in &blocker_rows {
             let class: String = r.try_get(0)?;
             out.blockers.push(RebuildBlocker {
@@ -2255,6 +2343,7 @@ impl PostgresConn {
                 description: r.try_get(1)?,
             });
         }
+        tx.rollback().await?;
         out.views = views;
         Ok(out)
     }

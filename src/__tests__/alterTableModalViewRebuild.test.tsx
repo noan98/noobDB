@@ -54,6 +54,7 @@ const withViews = (over: Partial<ViewRebuildPlan> = {}): ViewRebuildPlan => ({
   ],
   restore_statements: ['GRANT SELECT ON "public"."v1" TO "reader";'],
   blockers: [],
+  referenced_columns: ["age"],
   ...over,
 });
 
@@ -90,6 +91,7 @@ describe("AlterTableModal 依存ビューの作り直し (#2268)", () => {
       create_statements: [],
       restore_statements: [],
       blockers: [],
+      referenced_columns: [],
     });
     renderModal();
     await changeType("bigint");
@@ -134,6 +136,35 @@ describe("AlterTableModal 依存ビューの作り直し (#2268)", () => {
     await changeType("bigint");
     const box = await screen.findByTestId("view-rebuild-blocked", undefined, { timeout: 3000 });
     expect(box).toHaveTextContent("policy p on table t");
+    await waitFor(() => expect(screen.getByRole("button", { name: t("alterTableRun") })).toBeDisabled());
+  });
+
+  it("依存ビューが無ければ、止める依存があっても適用を止めない (FK / CHECK 付き列の退行防止)", async () => {
+    planFn.mockResolvedValue({
+      views: [],
+      drop_statements: [],
+      create_statements: [],
+      restore_statements: [],
+      blockers: [{ kind: "other", description: "constraint c on table t" }],
+      referenced_columns: [],
+    });
+    renderModal();
+    await changeType("bigint");
+    await waitFor(() => expect(planFn).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByRole("button", { name: t("alterTableRun") })).toBeEnabled());
+    expect(screen.queryByTestId("view-rebuild-blocked")).toBeNull();
+  });
+
+  it("作り直すビューが参照する列を同じ ALTER でリネームすると衝突として止める", async () => {
+    planFn.mockResolvedValue(withViews());
+    renderModal();
+    await changeType("bigint");
+    await screen.findByTestId("view-rebuild", undefined, { timeout: 3000 });
+    fireEvent.click(screen.getByLabelText(t("viewRebuildToggle", { count: 2 })));
+    fireEvent.change(screen.getByLabelText(`${t("alterTableNewName")}: age`), {
+      target: { value: "age2" },
+    });
+    expect(await screen.findByTestId("view-rebuild-rename")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: t("alterTableRun") })).toBeDisabled());
   });
 });

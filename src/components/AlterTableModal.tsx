@@ -53,7 +53,7 @@ import { useSqliteRebuildPlan } from "../useSqliteRebuildPlan";
 import { DropColumnDependencies } from "./DropColumnDependencies";
 import { useColumnDependencies } from "../useColumnDependencies";
 import { useViewRebuildPlan } from "../useViewRebuildPlan";
-import { applyViewRebuild, canRebuildViews, typeChangedColumns } from "../viewRebuild";
+import { applyViewRebuild, canRebuildViews, renameDropConflicts, typeChangedColumns } from "../viewRebuild";
 import { ViewRebuildNotice } from "./ViewRebuildNotice";
 import { COUNT_PREVIEW_TIMEOUT_SECS, useCountPreviews } from "../useCountPreviews";
 
@@ -498,11 +498,14 @@ export function AlterTableModal({
     !loading && !loadError,
   );
   const viewRebuildPlan = viewRebuild.status === "ok" ? viewRebuild.plan : null;
-  const viewRebuildBlocked = viewRebuildPlan !== null && viewRebuildPlan.blockers.length > 0;
-  const viewRebuildRenameConflict = changedTypeColumns.some((c) =>
-    existing.some((e) => e.original === c && e.name.trim() !== "" && e.name.trim() !== c),
-  );
-  const viewRebuildActive = rebuildViews && canRebuildViews(viewRebuildPlan) && !viewRebuildRenameConflict;
+  const viewRebuildBlocked =
+    viewRebuildPlan !== null && viewRebuildPlan.views.length > 0 && viewRebuildPlan.blockers.length > 0;
+  // 作り直すビューが参照する列を同じ ALTER でリネーム / 削除している (CREATE は旧い列名を参照するので通らない)。
+  const viewRebuildConflicts = renameDropConflicts(viewRebuildPlan, existing);
+  const viewRebuildConflict = viewRebuildConflicts.length > 0;
+  const viewRebuildActive = rebuildViews && canRebuildViews(viewRebuildPlan) && !viewRebuildConflict;
+  // 選んだ後に計画を取り直している間は、古い計画のまま適用しない。
+  const viewRebuildStale = rebuildViews && viewRebuild.status === "loading";
   const statements = useMemo(() => {
     const base = applyOnline ? withMysqlOnlineClause(driver, plan.statements) : plan.statements;
     if (plan.rebuild === null || rebuildState.status !== "ok") {
@@ -562,7 +565,8 @@ export function AlterTableModal({
     !rebuildPending &&
     generatedErrors.length === 0 &&
     !viewRebuildBlocked &&
-    !(rebuildViews && viewRebuildRenameConflict);
+    !viewRebuildStale &&
+    !(rebuildViews && viewRebuildConflict);
   // 不完全な行があるときは実行せず、理由を出す (空の新規行のエラーは触る/実行を試すまで伏せる)。
   // 依存ビューの作り直しは DROP から復元までを 1 トランザクションに保つので、段階実行 (トランザクション分割) とは併用しない。
   const showStagedToggle = showCost && canStage(driver, statements) && !viewRebuildActive;
@@ -1415,7 +1419,7 @@ export function AlterTableModal({
                 onEnabledChange={setRebuildViews}
                 withData={matviewWithData}
                 onWithDataChange={setMatviewWithData}
-                renameConflict={viewRebuildRenameConflict}
+                conflictColumns={viewRebuildConflicts}
               />
               {hasIncompleteIndex && (
                 <Callout tone="warning">{t("alterTableIndexIncompleteBlocked")}</Callout>

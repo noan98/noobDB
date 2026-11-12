@@ -18,8 +18,8 @@ interface Props {
   /** マテリアライズドビューを `WITH DATA` で作る (偽なら `WITH NO DATA`)。 */
   withData: boolean;
   onWithDataChange: (next: boolean) => void;
-  /** 型を変える列が同じ ALTER でリネームされている (作り直しの SQL は旧い列名を参照するので止める)。 */
-  renameConflict: boolean;
+  /** 作り直すビューが参照する列で、同じ ALTER でリネーム / 削除されるもの (作り直しの SQL は旧い列名を参照するので止める)。 */
+  conflictColumns: string[];
 }
 
 /**
@@ -34,7 +34,7 @@ export function ViewRebuildNotice({
   onEnabledChange,
   withData,
   onWithDataChange,
-  renameConflict,
+  conflictColumns,
 }: Props) {
   const t = useT();
   if (state.status === "idle") return null;
@@ -53,8 +53,8 @@ export function ViewRebuildNotice({
     );
   }
   const { plan } = state;
-  if (plan.views.length === 0 && plan.blockers.length === 0) return null;
-  if (plan.blockers.length > 0) {
+  if (plan.views.length === 0) return null;
+  if (plan.views.length > 0 && plan.blockers.length > 0) {
     return (
       <ErrorNote role="alert" title={t("viewRebuildBlockedTitle")} data-testid="view-rebuild-blocked">
         <chakra.p m={0}>{t("viewRebuildBlockedBody")}</chakra.p>
@@ -95,9 +95,9 @@ export function ViewRebuildNotice({
           </Box>
         )}
       </Box>
-      {renameConflict && (
+      {conflictColumns.length > 0 && (
         <chakra.p m={0} mt="1" data-testid="view-rebuild-rename">
-          {t("viewRebuildRenameConflict")}
+          {t("viewRebuildRenameConflict", { columns: conflictColumns.join(", ") })}
         </chakra.p>
       )}
       <chakra.div display="flex" flexDirection="column" gap="1" mt="2">

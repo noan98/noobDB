@@ -25,6 +25,23 @@ export function typeChangedColumns(
   return out;
 }
 
+/**
+ * 作り直すビューが参照している列を、同じ ALTER でリネーム / 削除していれば、その列名 (変更前) を返す。
+ * 作り直しの CREATE は旧い列名で書かれているので、この場合は適用できない。型を変えない列も対象。
+ */
+export function renameDropConflicts(
+  plan: ViewRebuildPlan | null,
+  existing: readonly ExistingColumnEdit[],
+): string[] {
+  if (plan === null || plan.views.length === 0) return [];
+  const referenced = new Set(plan.referenced_columns);
+  return existing
+    .filter(
+      (e) => referenced.has(e.original) && (e.drop || (e.name.trim() !== "" && e.name.trim() !== e.original)),
+    )
+    .map((e) => e.original);
+}
+
 /** 作り直しの対象があり、止める依存が無い (= 作り直して適用できる) か。 */
 export function canRebuildViews(plan: ViewRebuildPlan | null): boolean {
   return plan !== null && plan.views.length > 0 && plan.blockers.length === 0;

@@ -7330,6 +7330,9 @@
     "drop_statements": [
       "DROP VIEW \"public\".\"v1\";"
     ],
+    "referenced_columns": [
+      "price"
+    ],
     "restore_statements": [
       "GRANT SELECT ON \"public\".\"v1\" TO PUBLIC;"
     ],

@@ -4111,7 +4111,7 @@ const en = {
   viewRebuildNoData:
     "Create materialized views WITH NO DATA (run REFRESH MATERIALIZED VIEW yourself afterwards)",
   viewRebuildRenameConflict:
-    "A column whose type changes is also renamed. The recreated views refer to the old name, so apply the rename and the type change separately.",
+    "Columns used by these views are renamed or dropped in the same ALTER ({columns}). The recreated views refer to the old names, so apply the rename / drop separately.",
   viewRebuildBlockedTitle: "Dependent views cannot be recreated automatically",
   viewRebuildBlockedBody:
     "These objects also depend on the columns (or on the views). Recreating the views would break or lose them, so applying is blocked. Handle them by hand first:",
@@ -12321,7 +12321,7 @@ const ja: Dict = {
   viewRebuildNoData:
     "マテリアライズドビューを WITH NO DATA で作る (あとで REFRESH MATERIALIZED VIEW を自分で実行)",
   viewRebuildRenameConflict:
-    "型を変える列が同じ ALTER でリネームされています。作り直すビューは旧い列名を参照するため、リネームと型の変更は分けて適用してください。",
+    "これらのビューが参照する列が、同じ ALTER でリネーム / 削除されています ({columns})。作り直すビューは旧い列名を参照するため、リネーム・削除は分けて適用してください。",
   viewRebuildBlockedTitle: "依存ビューを自動では作り直せません",
   viewRebuildBlockedBody:
     "次のオブジェクトも、この列 (またはビュー) に依存しています。ビューを作り直すと壊れる・失われるため、適用を止めました。先に手で対処してください:",

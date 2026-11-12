@@ -1,7 +1,13 @@
 import { describe, it, expect } from "vitest";
 import type { ViewRebuildPlan } from "../api/tauri";
 import type { AlterStatement, ExistingColumnBaseline, ExistingColumnEdit } from "../components/alterTable";
-import { applyViewRebuild, canRebuildViews, materializedViews, typeChangedColumns } from "../viewRebuild";
+import {
+  applyViewRebuild,
+  canRebuildViews,
+  materializedViews,
+  renameDropConflicts,
+  typeChangedColumns,
+} from "../viewRebuild";
 
 const base = (name: string, type: string): ExistingColumnBaseline => ({
   name,
@@ -37,6 +43,7 @@ const plan = (over: Partial<ViewRebuildPlan> = {}): ViewRebuildPlan => ({
   ],
   restore_statements: ['GRANT SELECT ON "s"."v1" TO PUBLIC;'],
   blockers: [],
+  referenced_columns: ["a"],
   ...over,
 });
 
@@ -93,5 +100,23 @@ describe("applyViewRebuild", () => {
     expect(canRebuildViews(null)).toBe(false);
     expect(canRebuildViews(plan())).toBe(true);
     expect(materializedViews(plan()).map((v) => v.name)).toEqual(["mv"]);
+  });
+});
+
+describe("renameDropConflicts", () => {
+  it("ビューが参照する列のリネーム / 削除だけを衝突として返す (型を変えない列も含む)", () => {
+    const p = plan({ referenced_columns: ["a", "b"] });
+    expect(
+      renameDropConflicts(p, [
+        edit("a", "integer", { name: "a2" }),
+        edit("b", "text", { drop: true }),
+        edit("c", "text", { name: "c2" }),
+      ]),
+    ).toEqual(["a", "b"]);
+    expect(renameDropConflicts(p, [edit("a", "bigint")])).toEqual([]);
+  });
+  it("依存ビューが無い・計画が無いときは衝突なし", () => {
+    expect(renameDropConflicts(null, [edit("a", "x", { drop: true })])).toEqual([]);
+    expect(renameDropConflicts(plan({ views: [] }), [edit("a", "x", { drop: true })])).toEqual([]);
   });
 });

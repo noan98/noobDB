@@ -58,6 +58,10 @@ pub struct ViewInfo {
     pub comment: Option<String>,
     /// 列コメント (列名, コメント)。
     pub column_comments: Vec<(String, String)>,
+    /// 列単位の権限 (`pg_attribute.attacl`)。(列名, 権限)。オーナー自身は含めない。
+    pub column_acl: Vec<(String, AclEntry)>,
+    /// ビューの列の DEFAULT (`pg_attrdef`)。(列名, `pg_get_expr` の式)。
+    pub column_defaults: Vec<(String, String)>,
     /// `pg_get_indexdef` (マテリアライズドビューのインデックス)。
     pub indexes: Vec<String>,
     /// `pg_get_triggerdef` (INSTEAD OF トリガーなど。内部トリガーは含めない)。
@@ -85,6 +89,8 @@ pub struct RebuildBlocker {
 pub struct DependentViews {
     pub views: Vec<ViewInfo>,
     pub blockers: Vec<RebuildBlocker>,
+    /// 作り直すビューが直接参照している、元テーブルの列名。同じ ALTER でのリネーム / 削除との衝突判定用。
+    pub referenced_columns: Vec<String>,
 }
 
 /// 組み立てた手順。`drop` → (ALTER) → `create` → `restore` の順に流す。
@@ -170,7 +176,8 @@ fn create_statement(v: &ViewInfo, with_data: bool) -> String {
     match v.kind {
         ViewKind::View => format!("CREATE VIEW {target}{options} AS\n{body};"),
         ViewKind::MaterializedView => {
-            let data = if with_data {
+            // 元から未投入 (`WITH NO DATA` のまま) のマテビューは、作り直しで勝手に全件を計算しない。
+            let data = if with_data && v.populated {
                 "WITH DATA"
             } else {
                 "WITH NO DATA"
@@ -214,6 +221,30 @@ fn restore_statements(v: &ViewInfo) -> Vec<String> {
             ));
         }
     }
+    // 列単位の権限 (同じ (列, 付与先, GRANT OPTION) は 1 文にまとめる)。
+    let mut col_groups: BTreeMap<(String, String, bool), Vec<&str>> = BTreeMap::new();
+    for (col, a) in &v.column_acl {
+        col_groups
+            .entry((col.clone(), a.grantee.clone(), a.grantable))
+            .or_default()
+            .push(a.privilege.as_str());
+    }
+    for ((col, grantee, grantable), mut privs) in col_groups {
+        privs.sort_unstable();
+        privs.dedup();
+        let who = if grantee.is_empty() {
+            "PUBLIC".to_string()
+        } else {
+            q(&grantee)
+        };
+        let opt = if grantable { " WITH GRANT OPTION" } else { "" };
+        let list = privs
+            .iter()
+            .map(|p| format!("{p} ({})", q(&col)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push(format!("GRANT {list} ON {target} TO {who}{opt};"));
+    }
     if let Some(c) = &v.comment {
         out.push(format!("COMMENT ON {kw} {target} IS {};", qs(c)));
     }
@@ -223,6 +254,14 @@ fn restore_statements(v: &ViewInfo) -> Vec<String> {
             q(col),
             qs(c)
         ));
+    }
+    if v.kind == ViewKind::View {
+        for (col, expr) in &v.column_defaults {
+            out.push(format!(
+                "ALTER VIEW {target} ALTER COLUMN {} SET DEFAULT {expr};",
+                q(col)
+            ));
+        }
     }
     for idx in &v.indexes {
         out.push(format!("{};", idx.trim().trim_end_matches(';')));
@@ -282,6 +321,8 @@ pub struct ViewRebuildPlan {
     /// CREATE の後に流す オーナー / 権限 / コメント / インデックス / トリガーの復元。
     pub restore_statements: Vec<String>,
     pub blockers: Vec<RebuildBlocker>,
+    /// 作り直すビューが直接参照している元テーブルの列名。
+    pub referenced_columns: Vec<String>,
 }
 
 /// 調査結果から IPC 用の計画を作る。
@@ -306,6 +347,7 @@ pub fn build_plan(found: &DependentViews, with_data: bool) -> Result<ViewRebuild
         create_statements: sql.create,
         restore_statements: sql.restore,
         blockers: found.blockers.clone(),
+        referenced_columns: found.referenced_columns.clone(),
     })
 }
 
@@ -326,6 +368,8 @@ mod tests {
             has_acl: false,
             comment: None,
             column_comments: vec![],
+            column_acl: vec![],
+            column_defaults: vec![],
             indexes: vec![],
             triggers: vec![],
             depends_on: deps.to_vec(),
@@ -350,6 +394,7 @@ mod tests {
                 kind: "policy".into(),
                 description: "policy p on table t".into(),
             }],
+            referenced_columns: vec!["price".into()],
         };
         let plan = build_plan(&found, false).unwrap();
         let order: Vec<&str> = plan.views.iter().map(|v| v.name.as_str()).collect();
@@ -357,6 +402,7 @@ mod tests {
         assert_eq!(plan.drop_statements.len(), 2);
         assert!(plan.create_statements[1].ends_with("WITH NO DATA;"));
         assert_eq!(plan.blockers.len(), 1);
+        assert_eq!(plan.referenced_columns, vec!["price".to_string()]);
         assert_eq!(
             build_plan(&DependentViews::default(), true).unwrap(),
             ViewRebuildPlan::default()
@@ -514,6 +560,56 @@ mod tests {
                 "GRANT SELECT ON \"s\".\"v\" TO PUBLIC;",
                 "GRANT SELECT, UPDATE ON \"s\".\"v\" TO \"admin\" WITH GRANT OPTION;",
                 "GRANT SELECT, TRIGGER ON \"s\".\"v\" TO \"reader\";",
+            ]
+        );
+    }
+
+    #[test]
+    fn unpopulated_materialized_view_stays_without_data() {
+        let mut v = view(1, "s", "mv", ViewKind::MaterializedView, &[]);
+        v.populated = false;
+        let s = build_rebuild_sql(&[v], true).unwrap();
+        assert!(s.create[0].ends_with("WITH NO DATA;"));
+    }
+
+    #[test]
+    fn column_acl_and_defaults_are_restored() {
+        let mut v = view(1, "s", "v", ViewKind::View, &[]);
+        v.column_acl = vec![
+            (
+                "id".into(),
+                AclEntry {
+                    grantee: "r".into(),
+                    privilege: "SELECT".into(),
+                    grantable: false,
+                },
+            ),
+            (
+                "id".into(),
+                AclEntry {
+                    grantee: "r".into(),
+                    privilege: "UPDATE".into(),
+                    grantable: false,
+                },
+            ),
+            (
+                "a\"b".into(),
+                AclEntry {
+                    grantee: String::new(),
+                    privilege: "SELECT".into(),
+                    grantable: true,
+                },
+            ),
+        ];
+        v.column_defaults = vec![("id".into(), "0".into())];
+        let r = build_rebuild_sql(&[v], true).unwrap().restore;
+        assert_eq!(
+            r,
+            vec![
+                "ALTER VIEW \"s\".\"v\" OWNER TO \"app\";",
+                "GRANT SELECT (\"a\"\"b\") ON \"s\".\"v\" TO PUBLIC WITH GRANT OPTION;",
+                "GRANT SELECT (\"id\"), UPDATE (\"id\") ON \"s\".\"v\" TO \"r\";",
+                "ALTER VIEW \"s\".\"v\" ALTER COLUMN \"id\" SET DEFAULT 0;",
             ]
         );
     }

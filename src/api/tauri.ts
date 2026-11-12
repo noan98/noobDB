@@ -1224,6 +1224,8 @@ export interface ViewRebuildPlan {
   /** CREATE の後に流す オーナー / 権限 / コメント / インデックス / トリガーの復元。 */
   restore_statements: string[];
   blockers: RebuildBlocker[];
+  /** 作り直すビューが直接参照している元テーブルの列名 (同じ ALTER のリネーム / 削除との衝突判定用)。 */
+  referenced_columns: string[];
 }
 
 /** テーブルを開いた結果 (`open_table` / `open_tables`、#1263)。 */
