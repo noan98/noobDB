@@ -75,9 +75,10 @@ async function addCustomersByFk() {
   await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
   fireEvent.click(screen.getByRole("button", { name: new RegExp(t("qbAddJoinTable")) }));
   await waitFor(() => expect(api.foreignKeys).toHaveBeenCalledWith("s1", "shop"));
-  const trigger = await screen.findByLabelText(t("qbAddFkTable"));
-  await waitFor(() => expect(trigger.textContent).toContain(t("qbAddFkTable")));
-  chooseListboxOption(trigger, "|customers|customer_id=id");
+  const cards = await screen.findAllByTestId("qb-fk-candidate");
+  const card = cards.find((c) => c.textContent?.includes("customers"));
+  if (!card) throw new Error("customers の FK 候補カードがありません");
+  fireEvent.click(card);
   await waitFor(() => expect(screen.getAllByTestId("qb-join")).toHaveLength(1));
   await waitFor(() => expect(api.describeTable).toHaveBeenCalledWith("s1", "shop", "customers"));
 }
@@ -124,6 +125,22 @@ describe("QueryBuilder JOIN / 集計", () => {
     const join = screen.getByTestId("qb-join");
     fireEvent.click(join.querySelectorAll<HTMLButtonElement>(`button[aria-label="${t("qbRemove")}"]`)[0]);
     await waitFor(() => expect(screen.queryByTestId("qb-join")).toBeNull());
+  });
+
+  it("結合種別はベン図付きのセグメントで切り替わり、チェーン図にも反映される (#2267)", async () => {
+    const onExecute = vi.fn();
+    renderWithProviders(
+      <QueryBuilder sessionId="s1" driver="mysql" onExecute={onExecute} onClose={() => {}} />,
+    );
+    await addCustomersByFk();
+    expect(screen.getByTestId("qb-join-chain")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "LEFT JOIN" }));
+    await waitFor(() => expect(screen.getByRole("radio", { name: "LEFT JOIN" })).toBeChecked());
+    fireEvent.click(screen.getByRole("button", { name: t("qbExecute") }));
+    expect(onExecute.mock.calls[0][0]).toContain("LEFT JOIN `shop`.`customers`");
+    // チェーン図のチップから該当カードへフォーカスが移る。
+    fireEvent.click(screen.getByRole("button", { name: t("qbJoinChainGo", { table: "customers" }) }));
+    expect(document.activeElement).toBe(screen.getByTestId("qb-join"));
   });
 
   it("ON が未完成の手動結合は Run をブロックする", async () => {
