@@ -156,3 +156,50 @@ describe("サブセット抽出: サンドボックス出力の登録 (実ブラ
     await expect.element(screen.getByRole("button", { name: t("subsetOpenSandbox") })).toBeVisible();
   });
 });
+
+describe("プレビューの FK 辿り図 (#2266)", () => {
+  it("起点・親・子を別レーンに描き、打ち切りと循環をバッジで示し、古くなると淡色になる", async () => {
+    onCommand("preview_subset", () => ({
+      tables: [
+        { table: "customers", rows: 3, rootRows: 3, childRows: 0, parentRows: 0, columns: [] },
+        { table: "regions", rows: 2, rootRows: 0, childRows: 0, parentRows: 2, columns: [] },
+        { table: "orders", rows: 7, rootRows: 0, childRows: 7, parentRows: 0, columns: [] },
+      ],
+      totalRows: 12,
+      cycles: [["orders", "customers"]],
+      warnings: [{ kind: "childTruncated", table: "orders", limit: 7 }],
+    }));
+    onCommand("foreign_keys", () => [
+      {
+        table: "customers",
+        column: "region_id",
+        referenced_table: "regions",
+        referenced_column: "id",
+        constraint_name: "fk1",
+      },
+      {
+        table: "orders",
+        column: "customer_id",
+        referenced_table: "customers",
+        referenced_column: "id",
+        constraint_name: "fk2",
+      },
+    ]);
+    const screen = await render();
+    await screen.getByRole("button", { name: t("subsetPreviewButton") }).click();
+    await expect.element(screen.getByTestId("subset-preview")).toBeVisible();
+    const lane = (table: string) =>
+      document
+        .querySelector(`[data-testid="subset-preview-node"][data-table="${table}"]`)
+        ?.getAttribute("data-lane");
+    expect(lane("customers")).toBe("root");
+    expect(lane("regions")).toBe("parent");
+    expect(lane("orders")).toBe("child");
+    expect(document.querySelectorAll('[data-testid="subset-preview-edges"] path')).toHaveLength(2);
+    await expect.element(screen.getByText(t("subsetBadgeTruncated", { limit: 7 }))).toBeVisible();
+    await expect.element(screen.getByText(t("subsetBadgeCycle"), { exact: true }).first()).toBeVisible();
+    await expect.element(screen.getByTestId("subset-preview")).toHaveAttribute("data-stale", "false");
+    await screen.getByLabelText(t("subsetWhereLabel")).fill("id = 1");
+    await expect.element(screen.getByTestId("subset-preview")).toHaveAttribute("data-stale", "true");
+  });
+});
