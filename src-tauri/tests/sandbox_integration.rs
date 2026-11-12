@@ -1184,6 +1184,7 @@ async fn create_sandbox_from_attached_database_copies_alias_rows_not_main() {
         .await;
 
     for include_related in [false, true] {
+        // include_related = true は SubsetExtractModal の「サンドボックスへ出力」と同じ引数の形。
         let create = t::create_sandbox_with_filters_via_command(
             &state,
             &source_session_id,
@@ -1253,6 +1254,22 @@ async fn create_sandbox_from_attached_database_copies_alias_rows_not_main() {
         assert!(diff.source_checked, "{:?}", diff.source_error);
         assert!(diff.desired.rows.is_empty());
         assert!(diff.conflicts.is_empty());
+
+        if include_related {
+            let parent_diff = t::sandbox_table_diff_via_command(
+                &state,
+                &create.sandbox.id,
+                &create.session_id,
+                "customers",
+                Some(&source_session_id),
+                None,
+            )
+            .await
+            .expect("sandbox_table_diff for parent table");
+            assert!(parent_diff.source_checked, "{:?}", parent_diff.source_error);
+            assert!(parent_diff.desired.rows.is_empty());
+            assert!(parent_diff.conflicts.is_empty());
+        }
 
         guard.discard().await;
     }

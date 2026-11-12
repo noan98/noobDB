@@ -7380,6 +7380,9 @@ const en = {
   sandboxCreateSubmit: "Create sandbox",
   sandboxReviewClose: "Close",
   sandboxReviewTitle: 'Review changes — "{name}"',
+  // (#2271)
+  sandboxApplyAttachedUnsupported:
+    "A sandbox created from an attached SQLite database can't be written back. Copy the SQL generated above and run it on a connection opened directly on that file.",
   sandboxReviewLimitationNote:
     "The sandbox is a local SQLite approximation of the original database's dialect. Review the generated SQL carefully before applying it back — especially schema changes, whose column types come from the sandbox's SQLite copy.",
   sandboxReviewTarget: "Write back to:",
@@ -15513,6 +15516,9 @@ const ja: Dict = {
   sandboxCreateSubmit: "サンドボックスを作成",
   sandboxReviewClose: "閉じる",
   sandboxReviewTitle: "変更を確認 — 「{name}」",
+  // (#2271)
+  sandboxApplyAttachedUnsupported:
+    "アタッチした SQLite DB から作ったサンドボックスは書き戻せません。上の SQL をコピーし、そのファイルを直接開いた接続で実行してください。",
   sandboxReviewLimitationNote:
     "サンドボックスは元データベースの方言を近似したローカル SQLite です。書き戻す前に、生成された SQL — 特にスキーマ変更 (列の型はサンドボックスの SQLite コピー由来です) — を必ず確認してください。",
   sandboxReviewTarget: "書き戻し先:",

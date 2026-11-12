@@ -456,8 +456,8 @@ export function SandboxReviewModal({
           {t("sandboxReviewLimitationNote")}
         </Callout>
         {applyUnsupportedReason && (
-          <Callout tone="warning" role="status" fontSize="xs">
-            {t(applyUnsupportedReason)}
+          <Callout id="sandbox-apply-unsupported" tone="warning" role="status" fontSize="xs">
+            {t("sandboxApplyAttachedUnsupported")}
           </Callout>
         )}
 
@@ -792,7 +792,7 @@ export function SandboxReviewModal({
               loading={applying}
               onClick={apply}
               disabled={applyDisabled}
-              title={applyUnsupportedReason ? t(applyUnsupportedReason) : undefined}
+              aria-describedby={applyUnsupportedReason ? "sandbox-apply-unsupported" : undefined}
             >
               {applyLabel}
             </LoadingButton>
@@ -813,7 +813,7 @@ export function SandboxReviewModal({
               loading={applying}
               onClick={apply}
               disabled={applyDisabled}
-              title={applyUnsupportedReason ? t(applyUnsupportedReason) : undefined}
+              aria-describedby={applyUnsupportedReason ? "sandbox-apply-unsupported" : undefined}
             >
               {applyLabel}
             </LoadingButton>

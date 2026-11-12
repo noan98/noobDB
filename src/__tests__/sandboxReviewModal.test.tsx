@@ -380,13 +380,13 @@ describe("SandboxReviewModal のアタッチ DB 由来の書き戻し (#2271)", 
   it("アタッチした別名由来だと適用ボタンが無効になり、理由が出る", async () => {
     const apply = await generateFor({ ...SANDBOX, source_database: "archive" });
     expect(apply).toBeDisabled();
-    expect(screen.getByText(t("schemaCompareApplyAttachedUnsupported"))).toBeInTheDocument();
+    expect(screen.getByText(t("sandboxApplyAttachedUnsupported"))).toBeInTheDocument();
   });
 
   it("main 由来なら適用ボタンは有効で、理由は出ない", async () => {
     const apply = await generateFor({ ...SANDBOX, source_database: "main" });
     expect(apply).not.toBeDisabled();
-    expect(screen.queryByText(t("schemaCompareApplyAttachedUnsupported"))).not.toBeInTheDocument();
+    expect(screen.queryByText(t("sandboxApplyAttachedUnsupported"))).not.toBeInTheDocument();
   });
 });
 
