@@ -54,6 +54,10 @@ struct SearchPathState {
     default: std::sync::OnceLock<String>,
     /// 一度でもスキーマを指定して `SET search_path` したか。
     dirty: std::sync::atomic::AtomicBool,
+    /// COPY FROM STDIN が使えないと分かった取り込み先 (`database` と表名) (#2270)。同じ
+    /// セッションの間は最初から INSERT 経路を使い、バッチごとに COPY を試して警告を出し続けない。
+    /// これは「COPY 不可の表」のキャッシュで、権限があとから付与されても再接続するまで INSERT のまま。
+    copy_unavailable: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 /// 接続オプション (プールが新しい物理接続を張るときに使う) を組み立てる。
@@ -876,26 +880,78 @@ impl PostgresConn {
         }
         let batch = batch_size.clamp(1, 1000);
 
-        let mut conn = self.pool.acquire().await?;
-        apply_search_path(&mut conn, database, &self.search_path).await?;
+        // COPY を試すあいだは、正常に終わるまで接続をプールへ戻さない。取り込みのキャンセルは
+        // タスクの abort (future の drop) なので、ここまで戻ってこない経路でも drop で閉じる
+        // (`finish()` の待機中に drop されると COPY の応答が読み残され、プロトコルがずれうる)。
+        let mut guard = super::server_stop::ReleaseGuard::new(self.pool.acquire().await?);
+        let conn = &mut guard.conn;
+        apply_search_path(conn, database, &self.search_path).await?;
         sqlx::Executor::execute(
-            &mut *conn,
+            &mut **conn,
             sqlx::raw_sql("SET standard_conforming_strings = on"),
         )
         .await?;
-        let numeric_columns = numeric_key_columns(&mut conn, table, conflict).await;
-        let mut tx = conn.begin().await?;
-        let mut inserted: u64 = 0;
-        for chunk in rows.chunks(batch) {
-            let sql = build_pg_upsert(table, columns, chunk, conflict, &numeric_columns);
-            sqlx::query(sqlx::AssertSqlSafe(sql))
-                .execute(&mut *tx)
-                .await?;
-            inserted += chunk.len() as u64;
-            on_progress(inserted)?;
+        let numeric_columns = numeric_key_columns(conn, table, conflict).await;
+        // 素の INSERT (中断モード) は COPY FROM STDIN で流し込む (#2270)。ただし COPY は
+        // ルール (CREATE RULE) を発火せずビューにも書けないので、対象表を調べて、使えない表・
+        // 過去に拒否された表は最初から INSERT にする。
+        let copy_key = format!("{}\0{}", database.unwrap_or(""), table);
+        let try_copy = super::pg_copy::use_copy(conflict)
+            && !self.search_path.copy_is_unavailable(&copy_key)
+            && relation_allows_copy(conn, table).await;
+        if try_copy {
+            guard.arm();
         }
-        tx.commit().await?;
-        Ok(inserted)
+        let conn = &mut guard.conn;
+        // COPY の拒否理由がプロトコル違反 (プーラ由来) だったか。INSERT で成功しても接続を捨てる。
+        let mut copy_protocol_error = false;
+        let outcome: Result<u64> = async {
+            let mut tx = conn.begin().await?;
+            // COPY が許可リストの SQLSTATE (権限・ビューなど) かプーラのプロトコルエラーで拒否された
+            // ときだけ警告 (コードとテーブル名のみ。値を含みうる本文は出さない) を出して INSERT へ切り替える。
+            // データエラーとキャンセルは切り替えず、そのまま Err (トランザクションは破棄でロールバック)。
+            let mut reported: u64 = 0;
+            if try_copy {
+                let mut cb = |p: u64| {
+                    reported = p;
+                    on_progress(p)
+                };
+                match copy_rows_in_tx(&mut tx, table, columns, rows, batch, &mut cb).await? {
+                    CopyAttempt::Done(n) => {
+                        tx.commit().await?;
+                        return Ok(n);
+                    }
+                    CopyAttempt::Unavailable(reason, protocol) => {
+                        copy_protocol_error = protocol;
+                        self.search_path.mark_copy_unavailable(copy_key.clone());
+                        tracing::warn!("{}", super::pg_copy::fallback_warning(table, &reason));
+                    }
+                }
+            }
+            let mut inserted: u64 = 0;
+            for chunk in rows.chunks(batch) {
+                let sql = build_pg_upsert(table, columns, chunk, conflict, &numeric_columns);
+                sqlx::query(sqlx::AssertSqlSafe(sql))
+                    .execute(&mut *tx)
+                    .await?;
+                inserted += chunk.len() as u64;
+                // COPY で報告済みの件数より進捗を戻さない。
+                if inserted > reported {
+                    on_progress(inserted)?;
+                }
+            }
+            tx.commit().await?;
+            Ok(inserted)
+        }
+        .await;
+        // COPY を試した接続は、正常に終わったときだけプールへ戻す。エラーで終わった接続や
+        // プロトコル違反のあとの接続 (応答の同期が保証されない) は、サーバから溜まった応答が
+        // 残ってプロトコルがずれうる (abort が ErrorResponse / ReadyForQuery を読み残す) ので、
+        // arm したままの guard の drop で捨てる。
+        if outcome.is_ok() && !copy_protocol_error {
+            guard.keep();
+        }
+        outcome
     }
 
     /// Auto-commit insert of one chunk (no wrapping transaction). See
@@ -5417,6 +5473,124 @@ fn build_pg_insert(table: &str, columns: &[String], rows: &[Vec<Option<String>>]
         sql.push(')');
     }
     sql
+}
+
+/// COPY 経路の結果 (#2270)。
+enum CopyAttempt {
+    /// 全行を流し込んだ (行数)。コミットは呼び出し側。
+    Done(u64),
+    /// COPY を拒否された。理由と、プロトコル違反だったかを添えて INSERT 経路へ切り替える。
+    Unavailable(String, bool),
+}
+
+/// `tx` の中で `COPY ... FROM STDIN (FORMAT text)` により `rows` を流し込む。
+/// 開始・送信・終了のどこかでサーバに拒否されたら SAVEPOINT まで巻き戻して `Unavailable` を返す
+/// (PostgreSQL は失敗した文でトランザクションが中断状態になり、そのままでは INSERT へ切り替えられ
+/// ないため)。`on_progress` の Err (キャンセル) は COPY を `abort` して Err で返し、切り替えない。
+/// 進捗は INSERT と同じく `batch` 行ごとの累計。
+async fn copy_rows_in_tx<F>(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    table: &str,
+    columns: &[String],
+    rows: &[Vec<Option<String>>],
+    batch: usize,
+    on_progress: &mut F,
+) -> Result<CopyAttempt>
+where
+    F: FnMut(u64) -> Result<()>,
+{
+    let idents: Vec<String> = columns.iter().map(|c| pg_quote_ident(c)).collect();
+    let stmt = super::pg_copy::copy_statement(&pg_quote_ident(table), &idents);
+    let mut sp = tx.begin().await?;
+    let attempt = copy_on_conn(&mut sp, &stmt, columns.len(), rows, batch, on_progress).await?;
+    match &attempt {
+        CopyAttempt::Done(_) => sp.commit().await?,
+        CopyAttempt::Unavailable(..) => sp.rollback().await?,
+    }
+    Ok(attempt)
+}
+
+/// COPY のエラーを、INSERT へ切り替えてよい拒否 (`Unavailable`、理由は SQLSTATE のみ) と、
+/// そのまま返すエラー (データエラー・IO エラーなど) に振り分ける。
+fn copy_rejection(e: sqlx::Error) -> Result<CopyAttempt> {
+    let code = e
+        .as_database_error()
+        .and_then(|d| d.code().map(|c| c.into_owned()));
+    let protocol = matches!(e, sqlx::Error::Protocol(_));
+    match super::pg_copy::fallback_reason(code.as_deref(), protocol) {
+        Some(reason) => Ok(CopyAttempt::Unavailable(reason, protocol)),
+        None => Err(e.into()),
+    }
+}
+
+/// 取り込み先が COPY で書いてよい表か (#2270)。ビュー・外部表・マテビューと、ルールを持つ表は
+/// COPY がルールを発火しない / 書けないので INSERT にする。調べられなければ COPY を試す。
+async fn relation_allows_copy(conn: &mut sqlx::PgConnection, table: &str) -> bool {
+    let row: std::result::Result<Option<(String, bool)>, _> = sqlx::query_as(
+        "SELECT c.relkind::text, c.relhasrules FROM pg_class c WHERE c.oid = to_regclass($1)",
+    )
+    .bind(pg_quote_ident(table))
+    .fetch_optional(&mut *conn)
+    .await;
+    match row {
+        Ok(Some((kind, has_rules))) => super::pg_copy::relation_supports_copy(&kind, has_rules),
+        _ => true,
+    }
+}
+
+impl SearchPathState {
+    fn copy_is_unavailable(&self, key: &str) -> bool {
+        self.copy_unavailable
+            .lock()
+            .map(|g| g.contains(key))
+            .unwrap_or(false)
+    }
+
+    fn mark_copy_unavailable(&self, key: String) {
+        if let Ok(mut g) = self.copy_unavailable.lock() {
+            g.insert(key);
+        }
+    }
+}
+
+/// [`copy_rows_in_tx`] の本体。COPY を開始し、`rows` を `batch` 行ごとに送って終える。
+/// 借用の都合で SAVEPOINT の確定 / 巻き戻しは呼び出し側が行う。
+async fn copy_on_conn<F>(
+    conn: &mut sqlx::PgConnection,
+    stmt: &str,
+    ncols: usize,
+    rows: &[Vec<Option<String>>],
+    batch: usize,
+    on_progress: &mut F,
+) -> Result<CopyAttempt>
+where
+    F: FnMut(u64) -> Result<()>,
+{
+    let mut copy = match conn.copy_in_raw(stmt).await {
+        Ok(c) => c,
+        Err(e) => return copy_rejection(e),
+    };
+    let mut sent: u64 = 0;
+    for chunk in rows.chunks(batch) {
+        let buf = super::pg_copy::encode_copy_rows(chunk, ncols);
+        if let Err(e) = copy.send(buf).await {
+            // サーバが拒否済みの COPY に abort を送ると応答が読み残されるので、abort しない
+            // (接続は呼び出し側が捨てる)。
+            return copy_rejection(e);
+        }
+        sent += chunk.len() as u64;
+        if let Err(e) = on_progress(sent) {
+            let _ = copy.abort("canceled").await;
+            return Err(e);
+        }
+    }
+    // 「ビューへの COPY 不可」などはサーバが開始直後ではなくデータ受信後に拒否するため、
+    // 送信・終了時のサーバエラーも INSERT への切り替え対象にする (値の型エラーなら INSERT でも
+    // 失敗し、行単位の詳しいエラーが返る)。
+    match copy.finish().await {
+        Ok(_) => Ok(CopyAttempt::Done(sent)),
+        Err(e) => copy_rejection(e),
+    }
 }
 
 /// UPSERT のキー列のうち、表記ゆれを正規化できる型 (整数型・数値型 =

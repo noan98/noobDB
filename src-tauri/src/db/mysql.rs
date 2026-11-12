@@ -902,6 +902,10 @@ impl MySqlConn {
     /// wrapped in one transaction. Cells are bound as text (`NULL` for `None`)
     /// and MySQL coerces them to the destination column type, so a CSV column
     /// of `"42"` lands in an INT column without us having to know the schema.
+    ///
+    /// PostgreSQL の COPY 経路 (#2270) に相当するものは持たない: sqlx が
+    /// `LOAD DATA LOCAL INFILE` に対応しておらず、サーバ側の `local_infile` も必要なため、
+    /// 従来の複数行 INSERT のままにしている。
     #[allow(clippy::too_many_arguments)]
     pub async fn import_rows<F>(
         &self,

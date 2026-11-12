@@ -6629,3 +6629,259 @@ async fn postgres_advisor_resolves_domain_sequence_columns() {
     assert_eq!(f.context[0], "noobdb_small_id", "説明文の型名はドメイン名");
     assert!(f.fix_ddl.is_none(), "ドメイン列には型変更 DDL を出さない");
 }
+
+/// COPY 経路 (#2270): 10 万行 (特殊文字・NULL・bytea・64bit 整数・日本語を含む) を取り込み、
+/// 件数と値が往復で一致する。進捗は batch 行ごと。COPY が使えない対象 (ビュー) では INSERT に
+/// 切り替わって取り込める。途中キャンセルは 0 行に戻る。
+#[tokio::test]
+async fn postgres_copy_import_when_env_set() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    for sql in [
+        "DROP VIEW IF EXISTS public.noobdb_copy_v",
+        "DROP TABLE IF EXISTS public.noobdb_copy_t",
+        "CREATE TABLE public.noobdb_copy_t (id BIGINT PRIMARY KEY, s TEXT, b BYTEA, d TIMESTAMPTZ)",
+        "CREATE VIEW public.noobdb_copy_v AS SELECT id, s, b, d FROM public.noobdb_copy_t",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    let columns: Vec<String> = ["id", "s", "b", "d"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let special = [
+        Some(String::new()),
+        None,
+        Some("\\N".to_string()),
+        Some("a\tb\nc\rd\\e".to_string()),
+        Some("日本語".to_string()),
+    ];
+    let n_rows: i64 = 100_000;
+    let rows: Vec<Vec<Option<String>>> = (0..n_rows)
+        .map(|i| {
+            vec![
+                Some((9_000_000_000_000_000_000 + i).to_string()),
+                special[(i as usize) % special.len()].clone(),
+                Some(format!("\\x{:04x}5c", i % 65536)),
+                Some("2024-02-29 23:59:59.123456+00".to_string()),
+            ]
+        })
+        .collect();
+    let conflict = t::ImportConflict::insert_only();
+    let mut progress = Vec::new();
+    let n = conn
+        .import_rows(
+            None,
+            "noobdb_copy_t",
+            &columns,
+            &rows,
+            10_000,
+            &conflict,
+            |p| {
+                progress.push(p);
+                Ok(())
+            },
+        )
+        .await
+        .expect("copy import");
+    assert_eq!(n, n_rows as u64);
+    // batch は INSERT 経路と同じく 1000 行に丸められ、その粒度で進捗が届く。
+    assert_eq!(progress.len(), 100);
+    assert_eq!(progress.first().copied(), Some(1000));
+    assert_eq!(progress.last().copied(), Some(n_rows as u64));
+
+    let r = conn
+        .execute(
+            "SELECT count(*), \
+                    count(*) FILTER (WHERE s IS NULL), \
+                    count(*) FILTER (WHERE s = ''), \
+                    count(*) FILTER (WHERE s = E'\\\\N'), \
+                    count(*) FILTER (WHERE s = E'a\\tb\\nc\\rd\\\\e'), \
+                    count(*) FILTER (WHERE s = '日本語'), \
+                    count(*) FILTER (WHERE encode(b, 'hex') = lpad(to_hex((id - 9000000000000000000) % 65536), 4, '0') || '5c'), \
+                    max(id), \
+                    count(*) FILTER (WHERE d = '2024-02-29 23:59:59.123456+00') \
+             FROM public.noobdb_copy_t",
+            None,
+        )
+        .await
+        .expect("verify");
+    let cells: Vec<String> = r.rows[0].iter().map(|v| format!("{v:?}")).collect();
+    for (i, expected) in [100_000, 20_000, 20_000, 20_000, 20_000, 20_000, 100_000]
+        .iter()
+        .enumerate()
+    {
+        assert_eq!(cells[i], format!("Int({expected})"), "col {i}: {cells:?}");
+    }
+    // 64bit の最大 id と日時 (マイクロ秒) も往復で一致する。
+    assert!(cells[7].contains("9000000000000099999"), "{cells:?}");
+    assert_eq!(cells[8], "Int(100000)", "{cells:?}");
+
+    // 途中キャンセル: ロールバックされて 0 行に戻る。
+    conn.execute("TRUNCATE public.noobdb_copy_t", None)
+        .await
+        .expect("truncate");
+    let mut calls = 0;
+    let res = conn
+        .import_rows(
+            None,
+            "noobdb_copy_t",
+            &columns,
+            &rows,
+            10_000,
+            &conflict,
+            |_| {
+                calls += 1;
+                if calls >= 3 {
+                    Err(t::AppError::InvalidInput("canceled".into()))
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .await;
+    assert!(res.is_err());
+    let r = conn
+        .execute("SELECT count(*) FROM public.noobdb_copy_t", None)
+        .await
+        .expect("count");
+    assert!(matches!(&r.rows[0][0], t::Value::Int(0)), "{:?}", r.rows[0]);
+
+    let count_t = || async {
+        let r = conn
+            .execute("SELECT count(*) FROM public.noobdb_copy_t", None)
+            .await
+            .expect("count");
+        format!("{:?}", r.rows[0][0])
+    };
+
+    // データエラー (不正な整数) は INSERT へ切り替えず Err。0 件のまま・重複なし。
+    let mut data_error_progress = 0;
+    let mut bad_rows = rows[..3000].to_vec();
+    bad_rows[1500][0] = Some("not-a-number".to_string());
+    let res = conn
+        .import_rows(
+            None,
+            "noobdb_copy_t",
+            &columns,
+            &bad_rows,
+            1000,
+            &conflict,
+            |_| {
+                data_error_progress += 1;
+                Ok(())
+            },
+        )
+        .await;
+    assert!(res.is_err(), "data error must surface");
+    // INSERT への切り替えで 2 周目が走っていない (進捗は 1 周分の回数を超えない)。
+    assert!(data_error_progress <= 3, "{data_error_progress}");
+    assert_eq!(count_t().await, "Int(0)");
+
+    // 先頭行が不正なデータ + 途中キャンセル。続く別クエリが壊れた接続を踏まない。
+    let mut bad_first = rows[..5000].to_vec();
+    bad_first[0][0] = Some("not-a-number".to_string());
+    let res = conn
+        .import_rows(
+            None,
+            "noobdb_copy_t",
+            &columns,
+            &bad_first,
+            1000,
+            &conflict,
+            |_| Err(t::AppError::InvalidInput("canceled".into())),
+        )
+        .await;
+    assert!(res.is_err());
+    for _ in 0..8 {
+        let r = conn
+            .execute("SELECT 1", None)
+            .await
+            .expect("select after cancel");
+        assert!(matches!(&r.rows[0][0], t::Value::Int(1)));
+    }
+    assert_eq!(count_t().await, "Int(0)");
+
+    // UI のキャンセルはタスクの abort (future の drop) で、エラーとしては戻ってこない。
+    // COPY の途中で future を落としても、続くクエリが応答のずれた接続を踏まない。
+    for ms in [5u64, 30, 120] {
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_millis(ms),
+            conn.import_rows(
+                None,
+                "noobdb_copy_t",
+                &columns,
+                &rows,
+                1000,
+                &conflict,
+                |_| Ok(()),
+            ),
+        )
+        .await;
+        for _ in 0..8 {
+            let r = conn
+                .execute("SELECT 1", None)
+                .await
+                .expect("select after dropped import");
+            assert!(matches!(&r.rows[0][0], t::Value::Int(1)));
+        }
+        conn.execute("TRUNCATE public.noobdb_copy_t", None)
+            .await
+            .expect("truncate");
+    }
+
+    // ビューには COPY が使えないので、最初から INSERT で取り込める。
+    let few = &rows[..5];
+    let n = conn
+        .import_rows(None, "noobdb_copy_v", &columns, few, 2, &conflict, |_| {
+            Ok(())
+        })
+        .await
+        .expect("import into a view");
+    assert_eq!(n, 5);
+    assert_eq!(count_t().await, "Int(5)");
+
+    // ON INSERT DO INSTEAD ルールを持つ表は COPY だとルールが発火しないので INSERT を使う。
+    conn.execute("DROP TABLE IF EXISTS public.noobdb_copy_rule", None)
+        .await
+        .expect("drop rule table");
+    for sql in [
+        "CREATE TABLE public.noobdb_copy_rule (id BIGINT, s TEXT, b BYTEA, d TIMESTAMPTZ)",
+        "CREATE RULE noobdb_copy_redirect AS ON INSERT TO public.noobdb_copy_rule DO INSTEAD INSERT INTO public.noobdb_copy_t VALUES (NEW.id, NEW.s, NEW.b, NEW.d)",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    let n = conn
+        .import_rows(
+            None,
+            "noobdb_copy_rule",
+            &columns,
+            &rows[5..8],
+            2,
+            &conflict,
+            |_| Ok(()),
+        )
+        .await
+        .expect("import into a table with rules");
+    assert_eq!(n, 3);
+    assert_eq!(count_t().await, "Int(8)");
+    let r = conn
+        .execute("SELECT count(*) FROM public.noobdb_copy_rule", None)
+        .await
+        .expect("count rule table");
+    assert!(matches!(&r.rows[0][0], t::Value::Int(0)), "{:?}", r.rows[0]);
+    conn.execute("DROP TABLE public.noobdb_copy_rule", None)
+        .await
+        .expect("drop rule table");
+
+    for sql in [
+        "DROP VIEW IF EXISTS public.noobdb_copy_v",
+        "DROP TABLE IF EXISTS public.noobdb_copy_t",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    conn.close().await;
+}

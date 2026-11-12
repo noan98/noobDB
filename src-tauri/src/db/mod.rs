@@ -27,6 +27,7 @@ pub mod mysql;
 pub mod object_diff;
 /// グローバルオブジェクト検索の索引とスコアリング (#1261)。
 pub mod object_search;
+pub mod pg_copy;
 pub mod pg_listen;
 pub mod postgres;
 /// ドライラン (プレビュー) のスナップショット取得を組み立てる共有ロジック。
