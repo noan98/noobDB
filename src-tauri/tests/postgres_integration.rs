@@ -6805,6 +6805,34 @@ async fn postgres_copy_import_when_env_set() {
     }
     assert_eq!(count_t().await, "Int(0)");
 
+    // UI のキャンセルはタスクの abort (future の drop) で、エラーとしては戻ってこない。
+    // COPY の途中で future を落としても、続くクエリが応答のずれた接続を踏まない。
+    for ms in [5u64, 30, 120] {
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_millis(ms),
+            conn.import_rows(
+                None,
+                "noobdb_copy_t",
+                &columns,
+                &rows,
+                1000,
+                &conflict,
+                |_| Ok(()),
+            ),
+        )
+        .await;
+        for _ in 0..8 {
+            let r = conn
+                .execute("SELECT 1", None)
+                .await
+                .expect("select after dropped import");
+            assert!(matches!(&r.rows[0][0], t::Value::Int(1)));
+        }
+        conn.execute("TRUNCATE public.noobdb_copy_t", None)
+            .await
+            .expect("truncate");
+    }
+
     // ビューには COPY が使えないので、最初から INSERT で取り込める。
     let few = &rows[..5];
     let n = conn

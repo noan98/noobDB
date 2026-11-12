@@ -880,22 +880,29 @@ impl PostgresConn {
         }
         let batch = batch_size.clamp(1, 1000);
 
-        let mut conn = self.pool.acquire().await?;
-        apply_search_path(&mut conn, database, &self.search_path).await?;
+        // COPY を試すあいだは、正常に終わるまで接続をプールへ戻さない。取り込みのキャンセルは
+        // タスクの abort (future の drop) なので、ここまで戻ってこない経路でも drop で閉じる
+        // (`finish()` の待機中に drop されると COPY の応答が読み残され、プロトコルがずれうる)。
+        let mut guard = super::server_stop::ReleaseGuard::new(self.pool.acquire().await?);
+        let conn = &mut guard.conn;
+        apply_search_path(conn, database, &self.search_path).await?;
         sqlx::Executor::execute(
-            &mut *conn,
+            &mut **conn,
             sqlx::raw_sql("SET standard_conforming_strings = on"),
         )
         .await?;
-        let numeric_columns = numeric_key_columns(&mut conn, table, conflict).await;
+        let numeric_columns = numeric_key_columns(conn, table, conflict).await;
         // 素の INSERT (中断モード) は COPY FROM STDIN で流し込む (#2270)。ただし COPY は
         // ルール (CREATE RULE) を発火せずビューにも書けないので、対象表を調べて、使えない表・
         // 過去に拒否された表は最初から INSERT にする。
         let copy_key = format!("{}\0{}", database.unwrap_or(""), table);
         let try_copy = super::pg_copy::use_copy(conflict)
             && !self.search_path.copy_is_unavailable(&copy_key)
-            && relation_allows_copy(&mut conn, table).await;
-        let mut copy_started = false;
+            && relation_allows_copy(conn, table).await;
+        if try_copy {
+            guard.arm();
+        }
+        let conn = &mut guard.conn;
         // COPY の拒否理由がプロトコル違反 (プーラ由来) だったか。INSERT で成功しても接続を捨てる。
         let mut copy_protocol_error = false;
         let outcome: Result<u64> = async {
@@ -905,7 +912,6 @@ impl PostgresConn {
             // データエラーとキャンセルは切り替えず、そのまま Err (トランザクションは破棄でロールバック)。
             let mut reported: u64 = 0;
             if try_copy {
-                copy_started = true;
                 let mut cb = |p: u64| {
                     reported = p;
                     on_progress(p)
@@ -938,10 +944,12 @@ impl PostgresConn {
             Ok(inserted)
         }
         .await;
-        // COPY 中にエラーで終わった接続 (とプロトコル違反のあとの接続: 応答の同期が保証されない) は、サーバから溜まった応答が残ってプロトコルがずれうる
-        // (abort が ErrorResponse / ReadyForQuery を読み残す) ので、プールへ戻さず捨てる。
-        if copy_started && (outcome.is_err() || copy_protocol_error) {
-            conn.close_on_drop();
+        // COPY を試した接続は、正常に終わったときだけプールへ戻す。エラーで終わった接続や
+        // プロトコル違反のあとの接続 (応答の同期が保証されない) は、サーバから溜まった応答が
+        // 残ってプロトコルがずれうる (abort が ErrorResponse / ReadyForQuery を読み残す) ので、
+        // arm したままの guard の drop で捨てる。
+        if outcome.is_ok() && !copy_protocol_error {
+            guard.keep();
         }
         outcome
     }
