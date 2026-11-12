@@ -99,4 +99,16 @@ describe("Segmented", () => {
     expect(banana.querySelector("[aria-hidden]")).toBeTruthy();
     expect(apple.querySelector("[aria-hidden]")).toBeFalsy();
   });
+
+  it("keeps arrow-key selection working when options carry a tooltip", () => {
+    const onChange = vi.fn();
+    const withTips = OPTIONS.map((o) => ({ ...o, tooltip: `${o.label} tip` }));
+    renderWithProviders(<Segmented value="apple" options={withTips} onChange={onChange} ariaLabel="Fruit" />);
+
+    expect(screen.getAllByRole("radio").map((r) => r.textContent)).toEqual(["Apple", "Banana", "Cherry"]);
+    const apple = screen.getByRole("radio", { name: "Apple" });
+    apple.focus();
+    fireEvent.keyDown(apple, { key: "ArrowRight" });
+    expect(onChange).toHaveBeenCalledWith("banana");
+  });
 });

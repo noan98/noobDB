@@ -2,8 +2,17 @@
 // 抽出計画そのもの (どの行を辿るか) はバックエンド (`db/subset.rs`) が持ち、ここは入力の検証と
 // 表示用の整形だけを担う。
 
-import type { SubsetColumnMask, SubsetPreview, SubsetRequest, SubsetWarning } from "../api/tauri";
+import type {
+  CellValue,
+  Column,
+  SubsetColumnMask,
+  SubsetPreview,
+  SubsetRequest,
+  SubsetWarning,
+} from "../api/tauri";
 import type { I18nKey } from "../i18n";
+import { buildRowWhere, isSinglePrecisionFloat, rowPkEqualityLiterals } from "./cellEdit";
+import { quoteIdentFor } from "./sqlDialect";
 import { effectiveMaskRule, type ExportMaskOverrides } from "./exportMasking";
 
 /** バックエンド (`db::subset`) の上限・既定値と揃える。 */
@@ -135,4 +144,107 @@ export function defaultSubsetScriptName(table: string): string {
 /** 転送先への書き込み前に確認が要るか (本番・書き込み確認ありの接続)。 */
 export function needsWriteConfirm(target: { is_production: boolean; confirm_writes: boolean }): boolean {
   return target.is_production || target.confirm_writes;
+}
+
+/** バックエンド `db::sandbox::MAX_ROW_FILTER_LEN` (表ごとの抽出条件の最大文字数) と揃える。 */
+export const SUBSET_MAX_WHERE_LEN = 2000;
+
+export type SubsetPkConditionResult =
+  | { ok: true; condition: string; rootLimit: number }
+  | { ok: false; reason: "noPk" | "noRows" | "tooLong" | "inexactKey" };
+
+/**
+ * 結果グリッドで選んだ行を起点にするための、主キー条件 (`pk IN (...)`) を作る。
+ *
+ * - 単一キー: `"id" IN (1, 2, 3)`。
+ * - 複合キー: `("a", "b") IN ((1, 'x'), (2, 'y'))`。SQLite は行値比較を使わず
+ *   `("a" = 1 AND "b" = 'x') OR (...)` の連結にする。
+ * - NULL・真偽値を含むキーは `IN` で一致しないので、「UPDATE / DELETE としてコピー」と同じ
+ *   述語 (`buildRowWhere`) を OR で足す。
+ * - 単精度 float (FLOAT4 / REAL / FLOAT) を含むキーは `inexactKey` で失敗する。編集用の述語は
+ *   許容誤差つきで、近い値の別の行 (1.0 と 1.0000001 など) まで拾い、起点の件数上限と合わせると
+ *   選んでいない行に入れ替わり得るため。
+ * - リテラルは `rowValueLiteral` 経由なので、2^53 を超える整数は文字列のまま欠けずに入る。
+ *
+ * 結果は `checked_row_filter` (読み取り専用条件の検査) を通る形 (`;` やコメントを含まない)。
+ * 長さが上限を超えるとき (`tooLong`) はメニューを無効にする。
+ * `rootLimit` は重複を除いた選択件数 (起点の最大行数の既定をそれに合わせる)。
+ */
+export function buildSubsetPkCondition(input: {
+  driver: string;
+  columns: Column[];
+  rows: CellValue[][];
+  pkIndices: number[];
+}): SubsetPkConditionResult {
+  const { driver, columns, rows, pkIndices } = input;
+  if (pkIndices.length === 0 || pkIndices.some((i) => !columns[i])) return { ok: false, reason: "noPk" };
+  if (rows.length === 0) return { ok: false, reason: "noRows" };
+  if (pkIndices.some((i) => isSinglePrecisionFloat(driver, columns[i] as Column))) {
+    return { ok: false, reason: "inexactKey" };
+  }
+
+  const simple = new Set<string>();
+  const simpleList: string[] = [];
+  const fallbackTerms: string[] = [];
+  const composite = pkIndices.length > 1;
+  const useRowValues = composite && driver !== "sqlite";
+  const seen = new Set<string>();
+  // 各項の長さの合計が上限を超えた時点で打ち切る (全体の長さは合計以上になる)。
+  let approxLen = 0;
+  for (const row of rows) {
+    const where = buildRowWhere(driver, columns, row, pkIndices);
+    if (where === null || seen.has(where)) continue;
+    seen.add(where);
+    const lits = rowPkEqualityLiterals(driver, columns, row, pkIndices);
+    if (lits && (!composite || useRowValues)) {
+      const tuple = composite ? `(${lits.join(", ")})` : (lits[0] ?? "");
+      if (!simple.has(tuple)) {
+        simple.add(tuple);
+        simpleList.push(tuple);
+        approxLen += tuple.length + 2;
+      }
+    } else {
+      const term = composite ? `(${where})` : where;
+      fallbackTerms.push(term);
+      approxLen += term.length + 4;
+    }
+    if (approxLen > SUBSET_MAX_WHERE_LEN) return { ok: false, reason: "tooLong" };
+  }
+  if (seen.size === 0) return { ok: false, reason: "noRows" };
+
+  const terms: string[] = [];
+  if (simpleList.length > 0) {
+    const cols = pkIndices.map((i) => quoteIdentFor(driver, columns[i]?.name ?? "")).join(", ");
+    const lhs = composite ? `(${cols})` : cols;
+    terms.push(`${lhs} IN (${simpleList.join(", ")})`);
+  }
+  terms.push(...fallbackTerms);
+  const condition = terms.join(" OR ");
+  if (condition.length > SUBSET_MAX_WHERE_LEN) return { ok: false, reason: "tooLong" };
+  return { ok: true, condition, rootLimit: seen.size };
+}
+
+/**
+ * 「選択した行を起点にサブセット抽出」メニューを無効にする理由の文言キー。出せるなら null。
+ * 行の識別キーは unique_key / rowid / ctid / all_columns へフォールバックし得るので、
+ * `pkIndices` が空でなくても、strategy が primary_key / unique_key でなければ「主キーなし」
+ * として扱う (主キーで IN 条件を作れる表だけを対象にする)。
+ */
+export function subsetMenuDisabledReason(input: {
+  hasTable: boolean;
+  identityStrategy: string | undefined;
+  pkMasked: boolean;
+  built: SubsetPkConditionResult;
+}): I18nKey | null {
+  const { hasTable, identityStrategy, pkMasked, built } = input;
+  if (!hasTable) return "gridExtractSubsetNoTable";
+  if (identityStrategy !== "primary_key" && identityStrategy !== "unique_key") return "gridExtractSubsetNoPk";
+  if (!built.ok && built.reason === "noPk") return "gridExtractSubsetNoPk";
+  if (pkMasked) return "gridExtractSubsetMasked";
+  if (!built.ok) {
+    if (built.reason === "noRows") return "gridExtractSubsetNoRows";
+    if (built.reason === "inexactKey") return "gridExtractSubsetInexactKey";
+    return "gridExtractSubsetTooMany";
+  }
+  return null;
 }
