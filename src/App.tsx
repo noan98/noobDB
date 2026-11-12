@@ -4456,6 +4456,19 @@ export default function App() {
     [handleConnect, toast],
   );
 
+  // サブセット抽出の転送先の表を開く (#2264): 転送先の接続へ切り替え、接続が済んだら表を開く。
+  const [pendingSubsetOpen, setPendingSubsetOpen] = useState<{
+    profileId: string;
+    database: string | null;
+    table: string;
+  } | null>(null);
+  const handleOpenSubsetTarget = useCallback(
+    (profile: ConnectionProfile, database: string | null, table: string) => {
+      setPendingSubsetOpen({ profileId: profile.id, database, table });
+      void handleConnect(profile);
+    },
+    [handleConnect],
+  );
   const handleDiscardSandbox = useCallback(
     async (record: SandboxRecord) => {
       // 未確定の編集の破棄をキャンセルされたら、サンドボックス破棄も中断する (#1391)。
@@ -8539,6 +8552,12 @@ export default function App() {
       patchTab,
     ],
   );
+
+  useEffect(() => {
+    if (!pendingSubsetOpen || !sessionId || selectedProfile?.id !== pendingSubsetOpen.profileId) return;
+    setPendingSubsetOpen(null);
+    if (pendingSubsetOpen.database) handleOpenTable(pendingSubsetOpen.database, pendingSubsetOpen.table);
+  }, [pendingSubsetOpen, sessionId, selectedProfile?.id, handleOpenTable]);
 
   // 保留中の列移動を、対象テーブルのタブがアクティブになり最初の行が届いた時点で実行する (#1629)。
   // 行が 0 件のまま完了したとき・15 秒たっても条件が揃わないときは諦める。
@@ -15475,6 +15494,7 @@ export default function App() {
                   table={subsetTarget.table}
                   profiles={profiles}
                   onSandboxCreated={handleSandboxCreated}
+                  onOpenTransferTarget={handleOpenSubsetTarget}
                   onClose={() => setSubsetTarget(null)}
                 />
               </Suspense>
