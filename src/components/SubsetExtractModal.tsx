@@ -133,6 +133,8 @@ export function SubsetExtractModal({
   // 実行開始時のプレビュー総行数 (確定進捗の分母)。サンドボックスは進捗イベントが無いので使わない。
   const [runTotal, setRunTotal] = useState<number | null>(null);
   const runStartRef = useRef(0);
+  // 実行ごとに増やす番号。遅れて返った中断応答が次の実行の結果を上書きしないように使う。
+  const runSeqRef = useRef(0);
   const reduced = useReducedMotion() ?? false;
 
   const [maskEnabled, setMaskEnabled] = useState(false);
@@ -311,6 +313,7 @@ export function SubsetExtractModal({
 
   const runSandbox = async () => {
     if (!request) return;
+    runSeqRef.current += 1;
     setStatus({ kind: "running", phase: "write", rows: 0 });
     setOutcome(null);
     setRunTotal(null);
@@ -379,6 +382,7 @@ export function SubsetExtractModal({
 
     const streamId = makeSubsetStreamId();
     streamIdRef.current = streamId;
+    runSeqRef.current += 1;
     setOutcome(null);
     setRunTotal(visiblePreview?.totalRows ?? null);
     runStartRef.current = Date.now();
@@ -431,15 +435,19 @@ export function SubsetExtractModal({
     const streamId = streamIdRef.current;
     if (!streamId) return;
     const rows = status.kind === "running" ? status.rows : 0;
+    const seq = runSeqRef.current;
+    const startedAt = runStartRef.current;
+    const total = runTotal;
     cleanupStream();
     setStatus({ kind: "idle" });
     const res = await api.cancelStream(streamId).catch(() => null);
-    if (unmountedRef.current) return;
+    // 応答を待つ間に次の実行が始まっていたら、古い中断結果は捨てる。
+    if (unmountedRef.current || runSeqRef.current !== seq) return;
     setOutcome({
       kind: "cancelled",
       rows: res?.deliveredRows ?? rows,
-      elapsedMs: Date.now() - runStartRef.current,
-      total: runTotal,
+      elapsedMs: Date.now() - startedAt,
+      total,
     });
   };
 

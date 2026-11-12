@@ -92,6 +92,38 @@ describe("サブセット抽出の進捗と完了 (実ブラウザ)", () => {
     await expect.element(screen.getByTestId("subset-outcome")).toBeVisible();
     await expect.element(screen.getByText(t("subsetCancelled", { rows: 4 }))).toBeVisible();
   });
+
+  it("中断の応答が遅れても、その間に始めた次の実行の結果を上書きしない", async () => {
+    let releaseCancel: () => void = () => {};
+    onCommand(
+      "cancel_stream",
+      () =>
+        new Promise((resolve) => {
+          const id = streamId;
+          releaseCancel = () => resolve({ streamId: id, cancelled: true, deliveredRows: 4 });
+        }),
+    );
+    const screen = await render();
+    await startRun(screen);
+    await screen.getByRole("button", { name: t("subsetCancelRun") }).click();
+    // 中断の応答を待たずに次の実行を始め、完了させる。
+    await screen.getByRole("button", { name: t("subsetExecute") }).click();
+    await vi.waitFor(() => expect(invocationsOf("run_subset").length).toBe(2));
+    emitTauriEvent("subset-stream:done", {
+      streamId,
+      rows: 10,
+      elapsedMs: 900,
+      tables: PREVIEW.tables.map((x) => ({ table: x.table, rows: x.rows })),
+      warnings: [],
+      path: "/tmp/out.sql",
+    });
+    await expect.element(screen.getByRole("button", { name: t("subsetOpenScriptDir") })).toBeVisible();
+    // 古い中断応答が今になって返っても、完了表示のまま。
+    releaseCancel();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByText(t("subsetCancelled", { rows: 4 })).elements().length).toBe(0);
+    await expect.element(screen.getByRole("button", { name: t("subsetOpenScriptDir") })).toBeVisible();
+  });
 });
 
 describe("サブセット抽出: サンドボックス出力の登録 (実ブラウザ)", () => {
