@@ -3,8 +3,14 @@ import type { ViewRebuildPlan } from "../api/tauri";
 import type { AlterStatement, ExistingColumnBaseline, ExistingColumnEdit } from "../components/alterTable";
 import { applyViewRebuild, canRebuildViews, materializedViews, typeChangedColumns } from "../viewRebuild";
 
-const base = (name: string, type: string): ExistingColumnBaseline =>
-  ({ name, type, notNull: false, defaultValue: null, extra: "", comment: "" }) as ExistingColumnBaseline;
+const base = (name: string, type: string): ExistingColumnBaseline => ({
+  name,
+  type,
+  notNull: false,
+  defaultValue: "",
+  extra: "",
+  comment: "",
+});
 const edit = (
   original: string,
   type: string,

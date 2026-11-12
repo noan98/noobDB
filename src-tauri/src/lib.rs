@@ -290,7 +290,9 @@ pub mod __test_api {
     pub use crate::db::sandbox::SandboxConflict;
     pub use crate::db::schema_insight::{IncomingForeignKey, TableStatPrevious, TableStatistic};
     pub use crate::db::types::DatabaseTables;
-    pub use crate::db::view_rebuild::{RebuildBlocker, RebuildViewSummary, ViewKind, ViewRebuildPlan};
+    pub use crate::db::view_rebuild::{
+        RebuildBlocker, RebuildViewSummary, ViewKind, ViewRebuildPlan,
+    };
     pub use crate::plan_watch::store::{PlanGeneration, WatchEntry};
     pub use crate::schema_drift::{
         GenerationMeta as DriftGenerationMeta, TableChangeStatus, TableChangeSummary,

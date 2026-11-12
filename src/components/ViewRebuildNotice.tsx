@@ -3,6 +3,7 @@ import { useT } from "../i18n";
 import { materializedViews } from "../viewRebuild";
 import type { ViewRebuildState } from "../useViewRebuildPlan";
 import { Callout } from "./Callout";
+import { ErrorNote } from "./modalForm";
 import { formatBytes, formatRowCount } from "./tableSize";
 import { Switch } from "./ui";
 
@@ -55,12 +56,7 @@ export function ViewRebuildNotice({
   if (plan.views.length === 0 && plan.blockers.length === 0) return null;
   if (plan.blockers.length > 0) {
     return (
-      <Callout
-        tone="danger"
-        role="alert"
-        title={t("viewRebuildBlockedTitle")}
-        data-testid="view-rebuild-blocked"
-      >
+      <ErrorNote role="alert" title={t("viewRebuildBlockedTitle")} data-testid="view-rebuild-blocked">
         <chakra.p m={0}>{t("viewRebuildBlockedBody")}</chakra.p>
         <Box as="ul" m={0} mt="1" pl="5" fontSize="sm">
           {plan.blockers.map((b) => (
@@ -69,7 +65,7 @@ export function ViewRebuildNotice({
             </Box>
           ))}
         </Box>
-      </Callout>
+      </ErrorNote>
     );
   }
   const shown = plan.views.slice(0, MAX_LINES);

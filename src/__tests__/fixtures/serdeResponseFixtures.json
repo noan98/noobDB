@@ -7317,6 +7317,39 @@
       }
     ]
   },
+  "viewRebuildPlan": {
+    "blockers": [
+      {
+        "description": "policy p on table t",
+        "kind": "policy"
+      }
+    ],
+    "create_statements": [
+      "CREATE VIEW \"public\".\"v1\" AS\nSELECT 1;"
+    ],
+    "drop_statements": [
+      "DROP VIEW \"public\".\"v1\";"
+    ],
+    "restore_statements": [
+      "GRANT SELECT ON \"public\".\"v1\" TO PUBLIC;"
+    ],
+    "views": [
+      {
+        "est_rows": null,
+        "kind": "view",
+        "name": "v1",
+        "schema": "public",
+        "size_bytes": null
+      },
+      {
+        "est_rows": 100,
+        "kind": "materialized_view",
+        "name": "mv2",
+        "schema": "public",
+        "size_bytes": 8192
+      }
+    ]
+  },
   "whereUsedCancelledMessage": {
     "kind": "cancelled",
     "report": {

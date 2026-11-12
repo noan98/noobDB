@@ -2229,7 +2229,7 @@ impl PostgresConn {
                   AND ((d.refobjid = (SELECT oid FROM tbl)
                         AND d.refobjsubid IN (SELECT attnum FROM cols))
                        OR d.refobjid IN (SELECT oid FROM vs))
-                  AND NOT (rw.rulename = '_RETURN' AND rw.ev_class IN (SELECT oid FROM vs))
+                  AND NOT COALESCE(rw.rulename = '_RETURN' AND rw.ev_class IN (SELECT oid FROM vs), false)
                UNION
                SELECT 'pg_rewrite',
                       pg_catalog.pg_describe_object('pg_catalog.pg_rewrite'::regclass, rw.oid, 0)

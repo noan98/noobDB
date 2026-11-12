@@ -107,7 +107,7 @@ describe("AlterTableModal 依存ビューの作り直し (#2268)", () => {
 
   it("選ぶと DROP → ALTER → CREATE → 復元がプレビューと実行に並ぶ", async () => {
     planFn.mockResolvedValue(withViews());
-    const onRun = renderModal();
+    renderModal();
     await changeType("bigint");
     expect(await screen.findByTestId("view-rebuild", undefined, { timeout: 3000 })).toBeInTheDocument();
     expect(planFn).toHaveBeenCalledWith("s1", "public", "t", ["age"], true);
