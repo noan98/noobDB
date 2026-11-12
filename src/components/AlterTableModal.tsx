@@ -47,6 +47,8 @@ import { buildAlterExecutionPlan, canStage, planNeedsRunner, planPreviewSql } fr
 import { stepComment, type DdlRunOptions, type DdlRunReport } from "./onlineDdlRunner";
 import { DdlLockTimeoutField } from "./DdlLockTimeoutField";
 import { DdlRunReportNotice } from "./DdlRunReportNotice";
+import { DdlStageTrack } from "./DdlStageTrack";
+import type { DdlStep } from "./onlineDdl";
 import { useSqliteRebuildPlan } from "../useSqliteRebuildPlan";
 import { DropColumnDependencies } from "./DropColumnDependencies";
 import { useColumnDependencies } from "../useColumnDependencies";
@@ -461,6 +463,8 @@ export function AlterTableModal({
   const [staged, setStaged] = useState(false);
   const [report, setReport] = useState<DdlRunReport | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  // 実行した計画の段階 (失敗後に計画が編集されても、トラックは実行時の段階で描く)。
+  const [runSteps, setRunSteps] = useState<readonly DdlStep[] | null>(null);
   // SQLite の型 / NOT NULL / DEFAULT 変更・FK / CHECK の変更は、バックエンドがスキーマ同期と同じ
   // テーブル再作成 SQL を組み立てる (#1888)。生成中・失敗中は実行できない。
   // アタッチ DB の表は再作成できない (バックエンドが拒否する, #2154)。計画を問い合わせる前に理由を出す。
@@ -557,6 +561,7 @@ export function AlterTableModal({
       return;
     }
     setReport(null);
+    setRunSteps(executionPlan.steps);
     setSubmitting(true);
     void Promise.resolve(
       onRun(statements, {
@@ -1350,6 +1355,12 @@ export function AlterTableModal({
                 />
               )}
               {statements.length > 0 && <DdlLockTimeoutField driver={driver} />}
+              {!running && !report && executionPlan.staged && (
+                <DdlStageTrack steps={executionPlan.steps} state={{ kind: "plan" }} />
+              )}
+              {running && progress && runSteps && (
+                <DdlStageTrack steps={runSteps} state={{ kind: "running", done: progress.done }} />
+              )}
               {running && progress && (
                 <Callout tone="info" role="status" data-testid="ddl-run-progress">
                   {t("ddlRunProgress", { done: progress.done, total: progress.total })}
@@ -1359,6 +1370,7 @@ export function AlterTableModal({
                 <DdlRunReportNotice
                   report={report}
                   driver={driver}
+                  steps={runSteps ?? undefined}
                   onSendToEditor={onSendToEditor}
                   onOpenProcessList={onOpenProcessList}
                 />

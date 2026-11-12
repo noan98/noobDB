@@ -5,6 +5,9 @@ import { stepComment } from "./onlineDdlRunner";
 import { ErrorNote } from "./modalForm";
 import { SqlPreview } from "./SqlPreview";
 import { Button } from "./ui";
+import { DdlStageTrack } from "./DdlStageTrack";
+import { failedTrackState } from "./ddlStageTrack";
+import type { DdlStep } from "./onlineDdl";
 
 /**
  * 段階実行 / CONCURRENTLY が途中で失敗したときの案内 (#2240)。どこまで適用済みか、失敗した段階とエラー、
@@ -14,17 +17,21 @@ import { Button } from "./ui";
 export function DdlRunReportNotice({
   report,
   driver,
+  steps,
   onSendToEditor,
   onOpenProcessList,
 }: {
   report: DdlRunReport;
   driver: string;
+  /** 実行した計画の段階 (段階トラックの描画用)。省略時はトラックを出さない。 */
+  steps?: readonly DdlStep[];
   onSendToEditor: (sql: string) => void;
   onOpenProcessList?: () => void;
 }) {
   const t = useT();
   if (report.ok || !report.failedStep || report.failedIndex === null) return null;
   const staged = report.totalSteps > 1;
+  const trackState = failedTrackState(report);
   const title = staged
     ? t("ddlReportTitle", {
         stage: report.failedIndex + 1,
@@ -35,6 +42,7 @@ export function DdlRunReportNotice({
   return (
     <ErrorNote role="alert" title={title} data-testid="ddl-run-report">
       <chakra.div display="flex" flexDirection="column" gap="2">
+        {steps && trackState && <DdlStageTrack steps={steps} state={trackState} />}
         <chakra.span fontSize="sm">
           {t("ddlReportFailedStep")}{" "}
           <chakra.code fontFamily="mono">
