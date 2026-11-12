@@ -138,6 +138,12 @@ const joinCardCss: SystemStyleObject = {
   border: "1px solid var(--border)",
   borderRadius: "var(--radius-md)",
   background: "var(--bg-muted)",
+  // チェーン図のチップから移ってきたことが分かるよう、フォーカス中は枠とリングを出す。
+  "&:focus-visible, &:focus": {
+    outline: "none",
+    borderColor: "var(--accent)",
+    boxShadow: "var(--focus-ring)",
+  },
 };
 // 結合チェーン図 (#2267): 基点 → 結合表のチップを矢印でつなぐ。
 const chainCss: SystemStyleObject = {
@@ -188,6 +194,14 @@ const fkCardCss: SystemStyleObject = {
   cursor: "pointer",
   "&:hover": { borderColor: "var(--accent)", background: "var(--bg-hover)" },
   "&:focus-visible": { outline: "none", boxShadow: "var(--focus-ring)" },
+};
+// 候補が多いスキーマでは一覧の中だけをスクロールさせる。
+const fkListCss: SystemStyleObject = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "var(--space-1)",
+  maxHeight: "calc(var(--qb-field-w-lg) * 2)",
+  overflowY: "auto",
 };
 const fkCardBodyCss: SystemStyleObject = {
   display: "flex",
@@ -2100,7 +2114,9 @@ export function QueryBuilder({
                         <chakra.button
                           type="button"
                           css={chainChipCss}
-                          aria-label={t("qbJoinChainGo", { table: j.table })}
+                          aria-label={t("qbJoinChainGo", {
+                            table: j.alias !== j.table ? `${j.table} AS ${j.alias}` : j.table,
+                          })}
                           onClick={() => focusJoinCard(j.alias)}
                         >
                           {j.alias !== j.table ? `${j.table} AS ${j.alias}` : j.table}
@@ -2233,13 +2249,7 @@ export function QueryBuilder({
                     </chakra.span>
                   )}
                   {fkCandidates.length > 0 && (
-                    <Box
-                      display="flex"
-                      flexDirection="column"
-                      gap="1"
-                      role="group"
-                      aria-label={t("qbAddFkTable")}
-                    >
+                    <Box css={fkListCss} role="group" aria-label={t("qbAddFkTable")}>
                       {fkCandidates.map((c) => {
                         const outgoing = c.direction === "outgoing";
                         const from = c.fromAlias ?? table;

@@ -68,6 +68,13 @@ beforeEach(() => {
       referenced_column: "id",
       constraint_name: "fk_oc",
     },
+    {
+      table: "payments",
+      column: "order_id",
+      referenced_table: "orders",
+      referenced_column: "id",
+      constraint_name: "fk_po",
+    },
   ]);
 });
 
@@ -141,6 +148,21 @@ describe("QueryBuilder JOIN / 集計", () => {
     // チェーン図のチップから該当カードへフォーカスが移る。
     fireEvent.click(screen.getByRole("button", { name: t("qbJoinChainGo", { table: "customers" }) }));
     expect(document.activeElement).toBe(screen.getByTestId("qb-join"));
+  });
+
+  it("FK 候補は参照先 (親) と参照元 (子) の向きをバッジと data-direction で示す (#2267)", async () => {
+    renderWithProviders(
+      <QueryBuilder sessionId="s1" driver="mysql" onExecute={() => {}} onClose={() => {}} />,
+    );
+    await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("qbAddJoinTable")) }));
+    const cards = await screen.findAllByTestId("qb-fk-candidate");
+    const parent = cards.find((c) => c.textContent?.includes("customers"));
+    const child = cards.find((c) => c.textContent?.includes("payments"));
+    expect(parent?.getAttribute("data-direction")).toBe("outgoing");
+    expect(parent?.textContent).toContain(t("qbFkParent"));
+    expect(child?.getAttribute("data-direction")).toBe("incoming");
+    expect(child?.textContent).toContain(t("qbFkChild"));
   });
 
   it("ON が未完成の手動結合は Run をブロックする", async () => {
