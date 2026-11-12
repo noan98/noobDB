@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { SubsetPreview } from "../api/tauri";
+import type { Column, SubsetPreview } from "../api/tauri";
 import {
+  buildSubsetPkCondition,
   buildSubsetRequest,
   defaultSubsetScriptName,
   maskableColumns,
@@ -138,5 +139,135 @@ describe("サンドボックス出力の起点行数の上限", () => {
     expect(buildSubsetRequest({ ...base, rootLimit: "5000", sandbox: true })?.rootRowLimit).toBe(5000);
     expect(buildSubsetRequest({ ...base, rootLimit: "5001", sandbox: true })).toBeNull();
     expect(buildSubsetRequest({ ...base, rootLimit: "5001" })?.rootRowLimit).toBe(5001);
+  });
+});
+
+describe("buildSubsetPkCondition (#2265)", () => {
+  const col = (name: string, type_name = "INT"): Column => ({ name, type_name }) as Column;
+  const cols = [col("id", "BIGINT"), col("code", "VARCHAR"), col("note", "TEXT")];
+
+  it("単一キーは IN で 3 方言のクォートに従う", () => {
+    const rows = [
+      [1, "a", "x"],
+      [2, "b", "y"],
+    ];
+    const f = (driver: string) => buildSubsetPkCondition({ driver, columns: cols, rows, pkIndices: [0] });
+    expect(f("mysql")).toEqual({ ok: true, condition: "`id` IN (1, 2)", rootLimit: 2 });
+    expect(f("postgres")).toEqual({ ok: true, condition: '"id" IN (1, 2)', rootLimit: 2 });
+    expect(f("sqlite")).toEqual({ ok: true, condition: '"id" IN (1, 2)', rootLimit: 2 });
+  });
+
+  it("文字列キーはエスケープされ、MySQL だけバックスラッシュを二重にする", () => {
+    const rows = [["O'Re\\x"]];
+    const my = buildSubsetPkCondition({
+      driver: "mysql",
+      columns: [col("code", "VARCHAR")],
+      rows,
+      pkIndices: [0],
+    });
+    const pg = buildSubsetPkCondition({
+      driver: "postgres",
+      columns: [col("code", "VARCHAR")],
+      rows,
+      pkIndices: [0],
+    });
+    expect(my).toMatchObject({ condition: "`code` IN ('O''Re\\\\x')" });
+    expect(pg).toMatchObject({ condition: "\"code\" IN ('O''Re\\x')" });
+  });
+
+  it("2^53 を超える整数キーは文字列のまま欠けずに入る", () => {
+    const r = buildSubsetPkCondition({
+      driver: "postgres",
+      columns: cols,
+      rows: [
+        ["9007199254740993", "a", ""],
+        ["9223372036854775807", "b", ""],
+      ],
+      pkIndices: [0],
+    });
+    expect(r).toMatchObject({ ok: true, condition: '"id" IN (9007199254740993, 9223372036854775807)' });
+  });
+
+  it("複合キーは行値 IN、SQLite は OR の連結", () => {
+    const rows = [
+      [1, "a", ""],
+      [2, "b", ""],
+    ];
+    const pg = buildSubsetPkCondition({ driver: "postgres", columns: cols, rows, pkIndices: [0, 1] });
+    expect(pg).toMatchObject({ condition: "(\"id\", \"code\") IN ((1, 'a'), (2, 'b'))", rootLimit: 2 });
+    const my = buildSubsetPkCondition({ driver: "mysql", columns: cols, rows, pkIndices: [0, 1] });
+    expect(my).toMatchObject({ condition: "(`id`, `code`) IN ((1, 'a'), (2, 'b'))" });
+    const lite = buildSubsetPkCondition({ driver: "sqlite", columns: cols, rows, pkIndices: [0, 1] });
+    expect(lite).toMatchObject({
+      condition: '("id" = 1 AND "code" = \'a\') OR ("id" = 2 AND "code" = \'b\')',
+    });
+  });
+
+  it("NULL を含むキーは IS NULL の述語を OR で足す (IN に入れない)", () => {
+    const single = buildSubsetPkCondition({
+      driver: "mysql",
+      columns: cols,
+      rows: [
+        [1, "a", ""],
+        [null, "b", ""],
+      ],
+      pkIndices: [0],
+    });
+    expect(single).toMatchObject({ condition: "`id` IN (1) OR `id` IS NULL", rootLimit: 2 });
+    const comp = buildSubsetPkCondition({
+      driver: "postgres",
+      columns: cols,
+      rows: [
+        [1, "a", ""],
+        [2, null, ""],
+      ],
+      pkIndices: [0, 1],
+    });
+    expect(comp).toMatchObject({
+      condition: '("id", "code") IN ((1, \'a\')) OR ("id" = 2 AND "code" IS NULL)',
+    });
+  });
+
+  it("同じキーの行は 1 件にまとめ、件数も重複を除く", () => {
+    const r = buildSubsetPkCondition({
+      driver: "sqlite",
+      columns: cols,
+      rows: [
+        [1, "a", "x"],
+        [1, "a", "y"],
+      ],
+      pkIndices: [0],
+    });
+    expect(r).toEqual({ ok: true, condition: '"id" IN (1)', rootLimit: 1 });
+  });
+
+  it("主キーなし・行なし・長すぎる条件は理由つきで失敗する", () => {
+    expect(
+      buildSubsetPkCondition({ driver: "mysql", columns: cols, rows: [[1, "a", ""]], pkIndices: [] }),
+    ).toEqual({
+      ok: false,
+      reason: "noPk",
+    });
+    expect(buildSubsetPkCondition({ driver: "mysql", columns: cols, rows: [], pkIndices: [0] })).toEqual({
+      ok: false,
+      reason: "noRows",
+    });
+    const many = Array.from({ length: 400 }, (_, i) => [1_000_000_000 + i, "a", ""]);
+    expect(buildSubsetPkCondition({ driver: "mysql", columns: cols, rows: many, pkIndices: [0] })).toEqual({
+      ok: false,
+      reason: "tooLong",
+    });
+  });
+
+  it("結果はセミコロン・コメントを含まない (checked_row_filter を通る形)", () => {
+    const r = buildSubsetPkCondition({
+      driver: "mysql",
+      columns: cols,
+      rows: [[1, "a;b -- c", ""]],
+      pkIndices: [0, 1],
+    });
+    // 文字列リテラル内の `;` / `--` は引用符の中なので許される。引用符の外には出ない。
+    expect(r).toMatchObject({ ok: true });
+    if (r.ok) expect(r.condition.replace(/'[^']*'/g, "")).not.toMatch(/;|--|\/\*/);
   });
 });

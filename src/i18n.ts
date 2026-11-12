@@ -4769,6 +4769,13 @@ const en = {
   gridMarkDelete: "Mark row for deletion",
   gridUnmarkDelete: "Unmark deletion",
   // 選択範囲のエクスポート/コピー (#917)
+  gridExtractSubset: "Extract subset from {count} selected rows...",
+  gridExtractSubsetTitle:
+    "Open subset extraction with the selected rows (matched by primary key) as the start rows",
+  gridExtractSubsetNoTable: "The source table can't be determined for this result",
+  gridExtractSubsetNoPk: "Subset extraction needs a primary key",
+  gridExtractSubsetMasked: "Primary key columns are masked",
+  gridExtractSubsetTooMany: "Too many rows are selected to build the condition",
   gridExportSelection: "Export {count} selected cells...",
   gridExportSelectionTitle:
     "Save the selected rectangle to a file or copy it as CSV / JSON / Markdown / etc.",
@@ -12922,6 +12929,12 @@ const ja: Dict = {
   gridMarkDelete: "行を削除予定にする",
   gridUnmarkDelete: "削除予定を解除",
   // 選択範囲のエクスポート/コピー (#917)
+  gridExtractSubset: "選択した {count} 行を起点にサブセット抽出...",
+  gridExtractSubsetTitle: "選んだ行 (主キーで特定) を起点の行にして、サブセット抽出を開きます",
+  gridExtractSubsetNoTable: "この結果は元の表を特定できません",
+  gridExtractSubsetNoPk: "サブセット抽出には主キーが必要です",
+  gridExtractSubsetMasked: "主キーの列がマスクされています",
+  gridExtractSubsetTooMany: "選択した行が多すぎて条件を作れません",
   gridExportSelection: "選択した {count} セルをエクスポート",
   gridExportSelectionTitle: "選択範囲だけを CSV / JSON / Markdown などでファイル保存またはコピーします",
   // 一括セル編集 (#596)

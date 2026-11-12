@@ -1092,6 +1092,30 @@ function rowWhereParts(driver: string, columns: Column[], row: CellValue[], pkIn
 }
 
 /**
+ * 主キーの各列が「`col = <リテラル>`」の素直な形で比較できる行だけ、そのリテラル列を返す。
+ * NULL (`IS NULL`)・真偽値・単精度 float (許容差つき比較) は `IN` に載せられないので null
+ * (呼び出し側は `buildRowWhere` の述語にフォールバックする)。リテラルは UPDATE / DELETE の
+ * コピーと同じ `rowValueLiteral` を通す (64bit 整数・BLOB も同じ規則)。
+ */
+export function rowPkEqualityLiterals(
+  driver: string,
+  columns: Column[],
+  row: CellValue[],
+  pkIndices: number[],
+): string[] | null {
+  if (pkIndices.length === 0) return null;
+  const lits: string[] = [];
+  for (const i of pkIndices) {
+    const v = row[i];
+    const col = columns[i];
+    if (!col || v === null || v === undefined || typeof v === "boolean") return null;
+    if (singleFloatWhere(driver, col, v)) return null;
+    lits.push(rowValueLiteral(driver, v, col));
+  }
+  return lits;
+}
+
+/**
  * 1 行を主キーで特定する WHERE 述語 (`"id" = 1 AND ...`)。`UPDATE` / `DELETE` のコピーと
  * 同じ規則 (NULL は `IS NULL`、64bit 整数・BLOB は `CellValue` から生成)。主キーが解決できない
  * (`pkIndices` が空) ときは null (#1541)。

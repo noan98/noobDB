@@ -162,6 +162,7 @@ import { CountUp } from "./CountUp";
 import { COUNT_UP_TOKEN, formatCountUpPlainInt, splitAroundCountUpToken } from "../useCountUp";
 import { ExportModal, type FullExportContext } from "./ExportModal";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
+import { buildSubsetPkCondition } from "./subsetExtract";
 import { buildGridCopyInsert, buildGridCopyText, type GridCopyFormat } from "./gridCopyFormats";
 import { buildCopyFlashRange, collectAppliedFlashKeys, collectCopyFlashKeys } from "./gridCopyFlash";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
@@ -1485,6 +1486,16 @@ interface Props {
    * 特定できる結果の列クイック統計にだけ導線を出す。
    */
   onExploreColumn?: (target: { database: string | null; table: string; column: string }) => void;
+  /**
+   * 選んだ行を起点にサブセット抽出 (#2241) を開く (#2265)。対象テーブルが特定できる
+   * テーブルタブの、主キーのある行にだけ導線を出す。条件は主キーの IN 条件。
+   */
+  onExtractSubset?: (target: {
+    database: string | null;
+    table: string;
+    whereClause: string;
+    rootLimit: number;
+  }) => void;
   /**
    * 結果パネルの全画面モーダル表示の現在状態。`onToggleMaximize` が渡されたときだけ
    * ツールバーに最大化/復元トグルを出し、`maximized` でアイコンとツールチップを切り替える。
@@ -4146,6 +4157,7 @@ export const DataGrid = memo(function DataGrid({
   onRunStatsQuery,
   valuePicker,
   onExploreColumn,
+  onExtractSubset,
   findHits,
   findCurrentKey,
   findNav,
@@ -4357,6 +4369,16 @@ export const DataGrid = memo(function DataGrid({
    * 特定できる結果の列クイック統計にだけ導線を出す。
    */
   onExploreColumn?: (target: { database: string | null; table: string; column: string }) => void;
+  /**
+   * 選んだ行を起点にサブセット抽出 (#2241) を開く (#2265)。対象テーブルが特定できる
+   * テーブルタブの、主キーのある行にだけ導線を出す。条件は主キーの IN 条件。
+   */
+  onExtractSubset?: (target: {
+    database: string | null;
+    table: string;
+    whereClause: string;
+    rootLimit: number;
+  }) => void;
   /**
    * 結果内検索 (#644) のヒットセル ("row:col" キー) の集合。該当セルに
    * ハイライトクラスを付ける。省略時 (検索バーが閉じている/プレビュー) は無印。
@@ -7659,6 +7681,49 @@ export const DataGrid = memo(function DataGrid({
                   },
                 ]
               : []),
+            // 選んだ行を起点にサブセット抽出 (#2265)。主キーの IN 条件を作って渡す。
+            // 表が特定できない / 主キーなし / 主キー列がマスク中は、理由つきで無効にする。
+            ...(onExtractSubset
+              ? (() => {
+                  const target = copyTargetFor(copyMenu.rowIdx, copyMenu.colIdx);
+                  const pks = pkIndices ?? [];
+                  const picked = target.rowIndices.flatMap((ri) => (rows[ri] ? [rows[ri]] : []));
+                  const pkMasked = target.rowIndices.some((ri) => pks.some((ci) => cellMaskedNow(ri, ci)));
+                  const built = buildSubsetPkCondition({
+                    driver: rowSqlDriver ?? "mysql",
+                    columns,
+                    rows: picked,
+                    pkIndices: pks,
+                  });
+                  const reason = !rowSqlTable
+                    ? t("gridExtractSubsetNoTable")
+                    : !rowSqlHasPk
+                      ? t("gridExtractSubsetNoPk")
+                      : pkMasked
+                        ? t("gridExtractSubsetMasked")
+                        : !built.ok
+                          ? t("gridExtractSubsetTooMany")
+                          : null;
+                  const count = built.ok ? built.rootLimit : target.rowIndices.length;
+                  return [
+                    {
+                      label: t("gridExtractSubset", { count }),
+                      title: reason ?? t("gridExtractSubsetTitle"),
+                      disabled: reason !== null,
+                      onSelect: () => {
+                        if (!built.ok || !rowSqlTable) return;
+                        setCopyMenu(null);
+                        onExtractSubset({
+                          database: rowSqlDatabase ?? null,
+                          table: rowSqlTable,
+                          whereClause: built.condition,
+                          rootLimit: built.rootLimit,
+                        });
+                      },
+                    },
+                  ];
+                })()
+              : []),
             // セル値のクイックフィルタ (#914)。探索で最頻用の「この値で絞る」を
             // 右クリック 1 手にする。新しいフィルタモデルは作らず、既存の 2 経路
             // (table タブのサーバ側 WHERE / クエリ結果のクライアント側
@@ -8799,6 +8864,7 @@ export const ResultGrid = memo(
       onRunStatsQuery,
       onLookupQuery,
       onExploreColumn,
+      onExtractSubset,
       maximized,
       onToggleMaximize,
       onPinResult,
@@ -10679,6 +10745,7 @@ export const ResultGrid = memo(
             onRunStatsQuery={onRunStatsQuery}
             valuePicker={editableActive ? valuePicker : undefined}
             onExploreColumn={onExploreColumn}
+            onExtractSubset={onExtractSubset}
             paginationState={paginateMode ? pagination : undefined}
             onPaginationChange={paginateMode ? setPagination : undefined}
             findHits={findHits}
