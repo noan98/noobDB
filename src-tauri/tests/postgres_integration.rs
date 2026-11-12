@@ -6751,6 +6751,7 @@ async fn postgres_copy_import_when_env_set() {
     };
 
     // データエラー (不正な整数) は INSERT へ切り替えず Err。0 件のまま・重複なし。
+    let mut data_error_progress = 0;
     let mut bad_rows = rows[..3000].to_vec();
     bad_rows[1500][0] = Some("not-a-number".to_string());
     let res = conn
@@ -6761,10 +6762,15 @@ async fn postgres_copy_import_when_env_set() {
             &bad_rows,
             1000,
             &conflict,
-            |_| Ok(()),
+            |_| {
+                data_error_progress += 1;
+                Ok(())
+            },
         )
         .await;
     assert!(res.is_err(), "data error must surface");
+    // INSERT への切り替えで 2 周目が走っていない (進捗は 1 周分の回数を超えない)。
+    assert!(data_error_progress <= 3, "{data_error_progress}");
     assert_eq!(count_t().await, "Int(0)");
 
     // 先頭行が不正なデータ + 途中キャンセル。続く別クエリが壊れた接続を踏まない。

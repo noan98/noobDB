@@ -56,6 +56,7 @@ struct SearchPathState {
     dirty: std::sync::atomic::AtomicBool,
     /// COPY FROM STDIN が使えないと分かった取り込み先 (`database` と表名) (#2270)。同じ
     /// セッションの間は最初から INSERT 経路を使い、バッチごとに COPY を試して警告を出し続けない。
+    /// これは「COPY 不可の表」のキャッシュで、権限があとから付与されても再接続するまで INSERT のまま。
     copy_unavailable: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
@@ -895,6 +896,8 @@ impl PostgresConn {
             && !self.search_path.copy_is_unavailable(&copy_key)
             && relation_allows_copy(&mut conn, table).await;
         let mut copy_started = false;
+        // COPY の拒否理由がプロトコル違反 (プーラ由来) だったか。INSERT で成功しても接続を捨てる。
+        let mut copy_protocol_error = false;
         let outcome: Result<u64> = async {
             let mut tx = conn.begin().await?;
             // COPY が許可リストの SQLSTATE (権限・ビューなど) かプーラのプロトコルエラーで拒否された
@@ -912,7 +915,8 @@ impl PostgresConn {
                         tx.commit().await?;
                         return Ok(n);
                     }
-                    CopyAttempt::Unavailable(reason) => {
+                    CopyAttempt::Unavailable(reason, protocol) => {
+                        copy_protocol_error = protocol;
                         self.search_path.mark_copy_unavailable(copy_key.clone());
                         tracing::warn!("{}", super::pg_copy::fallback_warning(table, &reason));
                     }
@@ -934,9 +938,9 @@ impl PostgresConn {
             Ok(inserted)
         }
         .await;
-        // COPY 中にエラーで終わった接続は、サーバから溜まった応答が残ってプロトコルがずれうる
+        // COPY 中にエラーで終わった接続 (とプロトコル違反のあとの接続: 応答の同期が保証されない) は、サーバから溜まった応答が残ってプロトコルがずれうる
         // (abort が ErrorResponse / ReadyForQuery を読み残す) ので、プールへ戻さず捨てる。
-        if outcome.is_err() && copy_started {
+        if copy_started && (outcome.is_err() || copy_protocol_error) {
             conn.close_on_drop();
         }
         outcome
@@ -5390,8 +5394,8 @@ fn build_pg_insert(table: &str, columns: &[String], rows: &[Vec<Option<String>>]
 enum CopyAttempt {
     /// 全行を流し込んだ (行数)。コミットは呼び出し側。
     Done(u64),
-    /// COPY を始められなかった。理由つきで INSERT 経路へ切り替える。
-    Unavailable(String),
+    /// COPY を拒否された。理由と、プロトコル違反だったかを添えて INSERT 経路へ切り替える。
+    Unavailable(String, bool),
 }
 
 /// `tx` の中で `COPY ... FROM STDIN (FORMAT text)` により `rows` を流し込む。
@@ -5416,7 +5420,7 @@ where
     let attempt = copy_on_conn(&mut sp, &stmt, columns.len(), rows, batch, on_progress).await?;
     match &attempt {
         CopyAttempt::Done(_) => sp.commit().await?,
-        CopyAttempt::Unavailable(_) => sp.rollback().await?,
+        CopyAttempt::Unavailable(..) => sp.rollback().await?,
     }
     Ok(attempt)
 }
@@ -5429,7 +5433,7 @@ fn copy_rejection(e: sqlx::Error) -> Result<CopyAttempt> {
         .and_then(|d| d.code().map(|c| c.into_owned()));
     let protocol = matches!(e, sqlx::Error::Protocol(_));
     match super::pg_copy::fallback_reason(code.as_deref(), protocol) {
-        Some(reason) => Ok(CopyAttempt::Unavailable(reason)),
+        Some(reason) => Ok(CopyAttempt::Unavailable(reason, protocol)),
         None => Err(e.into()),
     }
 }
