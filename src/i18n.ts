@@ -4130,11 +4130,11 @@ const en = {
   viewRebuildToggle: "Recreate {count} dependent view(s) and apply",
   viewRebuildOffHint: "Without this, applying fails on the server and nothing is changed.",
   viewRebuildOnHint:
-    "The preview shows DROP, then ALTER, then CREATE, then the restore of owner, GRANT, COMMENT, indexes and triggers. Everything runs in one transaction and rolls back if any step fails.",
+    "The preview shows DROP, then ALTER, then CREATE, then the restore of owner, GRANT, COMMENT, indexes and triggers, and finally REFRESH of materialized views (run with the owner's privileges). Everything runs in one transaction and rolls back if any step fails.",
   viewRebuildMatviewWarning:
     "Recreating {count} materialized view(s) recomputes all rows (about {size}, {rows} rows) and holds locks while it runs.",
   viewRebuildNoData:
-    "Create materialized views WITH NO DATA (run REFRESH MATERIALIZED VIEW yourself afterwards)",
+    "Leave materialized views empty (WITH NO DATA, no REFRESH; run REFRESH MATERIALIZED VIEW yourself afterwards)",
   viewRebuildRenameConflict:
     "Columns used by these views are renamed or dropped in the same ALTER ({columns}). The recreated views refer to the old names, so apply the rename / drop separately.",
   viewRebuildBlockedTitle: "Dependent views cannot be recreated automatically",
@@ -12388,11 +12388,11 @@ const ja: Dict = {
   viewRebuildToggle: "依存ビュー {count} 件を作り直して適用",
   viewRebuildOffHint: "選ばないまま適用すると、サーバ側で失敗し、何も変更されません。",
   viewRebuildOnHint:
-    "プレビューには DROP → ALTER → CREATE → オーナー・GRANT・COMMENT・インデックス・トリガーの復元が並びます。すべて 1 トランザクションで流し、途中で失敗すれば全体を元に戻します。",
+    "プレビューには DROP → ALTER → CREATE → オーナー・GRANT・COMMENT・インデックス・トリガーの復元 → マテリアライズドビューの REFRESH (オーナーの権限で実行) が並びます。すべて 1 トランザクションで流し、途中で失敗すれば全体を元に戻します。",
   viewRebuildMatviewWarning:
     "マテリアライズドビュー {count} 件の再作成で全件を再計算します (概算 {size}・{rows} 行)。実行中はロックを持ちます。",
   viewRebuildNoData:
-    "マテリアライズドビューを WITH NO DATA で作る (あとで REFRESH MATERIALIZED VIEW を自分で実行)",
+    "マテリアライズドビューを空のままにする (WITH NO DATA・REFRESH なし。あとで REFRESH MATERIALIZED VIEW を自分で実行)",
   viewRebuildRenameConflict:
     "これらのビューが参照する列が、同じ ALTER でリネーム / 削除されています ({columns})。作り直すビューは旧い列名を参照するため、リネーム・削除は分けて適用してください。",
   viewRebuildBlockedTitle: "依存ビューを自動では作り直せません",

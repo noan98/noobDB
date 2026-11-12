@@ -39,7 +39,7 @@ const plan = (over: Partial<ViewRebuildPlan> = {}): ViewRebuildPlan => ({
   drop_statements: ['DROP MATERIALIZED VIEW "s"."mv";', 'DROP VIEW "s"."v1";'],
   create_statements: [
     'CREATE VIEW "s"."v1" AS\nSELECT 1;',
-    'CREATE MATERIALIZED VIEW "s"."mv" AS\nSELECT 1\nWITH DATA;',
+    'CREATE MATERIALIZED VIEW "s"."mv" AS\nSELECT 1\nWITH NO DATA;',
   ],
   restore_statements: ['GRANT SELECT ON "s"."v1" TO PUBLIC;'],
   blockers: [],

@@ -160,7 +160,7 @@ pub fn creation_order(views: &[ViewInfo]) -> Result<Vec<usize>, String> {
     Ok(order)
 }
 
-fn create_statement(v: &ViewInfo, with_data: bool) -> String {
+fn create_statement(v: &ViewInfo) -> String {
     let body = v
         .definition
         .trim()
@@ -176,12 +176,10 @@ fn create_statement(v: &ViewInfo, with_data: bool) -> String {
     match v.kind {
         ViewKind::View => format!("CREATE VIEW {target}{options} AS\n{body};"),
         ViewKind::MaterializedView => {
-            // 元から未投入 (`WITH NO DATA` のまま) のマテビューは、作り直しで勝手に全件を計算しない。
-            let data = if with_data && v.populated {
-                "WITH DATA"
-            } else {
-                "WITH NO DATA"
-            };
+            // 常に `WITH NO DATA` で作る。`WITH DATA` だと CREATE を流した接続ユーザーの権限で中身が
+            // 計算され (RLS で元のオーナーに見えない行も入る)、後から OWNER を戻しても行は直らない。
+            // 再計算が要るものは、OWNER / 権限を復元した後に `REFRESH` する (`build_rebuild_sql`)。
+            let data = "WITH NO DATA";
             format!("CREATE MATERIALIZED VIEW {target}{options} AS\n{body}\n{data};")
         }
     }
@@ -275,9 +273,10 @@ fn restore_statements(v: &ViewInfo) -> Vec<String> {
 /// 依存ビューを作り直す SQL を組み立てる。
 ///
 /// - `drop`: 依存の逆順 (依存する側が先) に `DROP`。CASCADE は使わない (想定外の巻き添えを出さない)。
-/// - `create`: 依存の順に `CREATE`。マテリアライズドビューは `with_data` が偽なら `WITH NO DATA`
-///   (呼び出し側が後から `REFRESH MATERIALIZED VIEW` する)。
-/// - `restore`: 作成順に オーナー / 権限 / コメント / インデックス / トリガーを復元。
+/// - `create`: 依存の順に `CREATE`。マテリアライズドビューは常に `WITH NO DATA`
+///   (作成者の権限で中身を計算しない)。
+/// - `restore`: 作成順に オーナー / 権限 / コメント / インデックス / トリガーを復元し、最後に
+///   `with_data` かつ元が投入済みのマテビューだけを依存順に `REFRESH MATERIALIZED VIEW`。
 ///
 /// 依存が無い (`views` が空) ときはすべて空。
 pub fn build_rebuild_sql(views: &[ViewInfo], with_data: bool) -> Result<RebuildSql, String> {
@@ -293,8 +292,21 @@ pub fn build_rebuild_sql(views: &[ViewInfo], with_data: bool) -> Result<RebuildS
     }
     for &i in &order {
         let v = &views[i];
-        out.create.push(create_statement(v, with_data));
+        out.create.push(create_statement(v));
         out.restore.extend(restore_statements(v));
+    }
+    // 全ビューのオーナー・権限を戻した後に、元が投入済みで再計算を選んだマテビューだけを依存順に REFRESH する
+    // (REFRESH はマテビューのオーナーの権限で実行される)。
+    if with_data {
+        for &i in &order {
+            let v = &views[i];
+            if v.kind == ViewKind::MaterializedView && v.populated {
+                out.restore.push(format!(
+                    "REFRESH MATERIALIZED VIEW {};",
+                    qualified(&v.schema, &v.name)
+                ));
+            }
+        }
     }
     Ok(out)
 }
@@ -401,6 +413,10 @@ mod tests {
         assert_eq!(order, vec!["base", "top"]);
         assert_eq!(plan.drop_statements.len(), 2);
         assert!(plan.create_statements[1].ends_with("WITH NO DATA;"));
+        assert!(!plan
+            .restore_statements
+            .iter()
+            .any(|x| x.starts_with("REFRESH")));
         assert_eq!(plan.blockers.len(), 1);
         assert_eq!(plan.referenced_columns, vec!["price".to_string()]);
         assert_eq!(
@@ -511,7 +527,11 @@ mod tests {
         let mut v = view(1, "s", "mv", ViewKind::MaterializedView, &[]);
         v.indexes = vec!["CREATE UNIQUE INDEX mv_id ON s.mv USING btree (id)".into()];
         let with = build_rebuild_sql(std::slice::from_ref(&v), true).unwrap();
-        assert!(with.create[0].ends_with("WITH DATA;"));
+        assert!(with.create[0].ends_with("WITH NO DATA;"));
+        assert_eq!(
+            with.restore.last().map(String::as_str),
+            Some("REFRESH MATERIALIZED VIEW \"s\".\"mv\";")
+        );
         let without = build_rebuild_sql(&[v], false).unwrap();
         assert!(without.create[0].ends_with("WITH NO DATA;"));
         assert_eq!(
@@ -560,6 +580,7 @@ mod tests {
                 "GRANT SELECT ON \"s\".\"v\" TO PUBLIC;",
                 "GRANT SELECT, UPDATE ON \"s\".\"v\" TO \"admin\" WITH GRANT OPTION;",
                 "GRANT SELECT, TRIGGER ON \"s\".\"v\" TO \"reader\";",
+                "REFRESH MATERIALIZED VIEW \"s\".\"v\";",
             ]
         );
     }
@@ -570,6 +591,37 @@ mod tests {
         v.populated = false;
         let s = build_rebuild_sql(&[v], true).unwrap();
         assert!(s.create[0].ends_with("WITH NO DATA;"));
+        assert!(!s.restore.iter().any(|x| x.starts_with("REFRESH")));
+    }
+
+    #[test]
+    fn refresh_comes_after_owner_and_grants_of_all_views_in_dependency_order() {
+        let mut mv1 = view(1, "s", "mv1", ViewKind::MaterializedView, &[]);
+        mv1.has_acl = true;
+        mv1.acl = vec![AclEntry {
+            grantee: "r".into(),
+            privilege: "SELECT".into(),
+            grantable: false,
+        }];
+        let mv2 = view(2, "s", "mv2", ViewKind::MaterializedView, &[1]);
+        let v3 = view(3, "s", "v3", ViewKind::View, &[2]);
+        let s = build_rebuild_sql(&[v3, mv2, mv1], true).unwrap();
+        assert!(s
+            .create
+            .iter()
+            .filter(|c| c.starts_with("CREATE MATERIALIZED"))
+            .all(|c| c.ends_with("WITH NO DATA;")));
+        let pos = |needle: &str| s.restore.iter().position(|x| x.contains(needle));
+        let last_owner = s
+            .restore
+            .iter()
+            .rposition(|x| x.contains("OWNER TO"))
+            .unwrap();
+        let grant = pos("GRANT SELECT").unwrap();
+        let r1 = pos("REFRESH MATERIALIZED VIEW \"s\".\"mv1\"").unwrap();
+        let r2 = pos("REFRESH MATERIALIZED VIEW \"s\".\"mv2\"").unwrap();
+        assert!(last_owner < r1 && grant < r1 && r1 < r2);
+        assert_eq!(r2, s.restore.len() - 1);
     }
 
     #[test]

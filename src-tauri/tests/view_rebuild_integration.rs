@@ -31,7 +31,7 @@ async fn snapshot(conn: &t::Connection, schema: &str) -> Vec<Vec<String>> {
         &format!(
             "SELECT c.relname::text, c.relkind::text, \
                     regexp_replace(pg_get_viewdef(c.oid, true), '\\s+', ' ', 'g'), \
-                    pg_get_userbyid(c.relowner)::text, COALESCE(c.relacl::text, ''), \
+                    pg_get_userbyid(c.relowner)::text, COALESCE((SELECT string_agg(x::text, ',' ORDER BY x::text) FROM unnest(c.relacl) x), ''), \
                     COALESCE(c.reloptions::text, ''), COALESCE(obj_description(c.oid, 'pg_class'), ''), \
                     COALESCE((SELECT string_agg(attname || '=' || col_description(c.oid, attnum), ',' ORDER BY attnum) \
                                FROM pg_attribute WHERE attrelid = c.oid AND attnum > 0 \
@@ -81,6 +81,8 @@ async fn postgres_rebuilds_three_level_dependents_in_one_transaction() {
         format!("CREATE VIEW {PG_SCHEMA}.unrelated AS SELECT id, note FROM {PG_SCHEMA}.base"),
         format!("ALTER VIEW {PG_SCHEMA}.v2 OWNER TO nb2268_owner"),
         format!("GRANT SELECT ON {PG_SCHEMA}.v1 TO nb2268_reader"),
+        // v2 のオーナーが v1 を読めないと、オーナー権限の REFRESH (mv3) が元から通らない。
+        format!("GRANT SELECT ON {PG_SCHEMA}.v1 TO nb2268_owner"),
         format!("GRANT SELECT, UPDATE ON {PG_SCHEMA}.v2 TO nb2268_reader WITH GRANT OPTION"),
         format!("GRANT SELECT ON {PG_SCHEMA}.mv3 TO PUBLIC"),
         format!("COMMENT ON VIEW {PG_SCHEMA}.v1 IS 'it''s v1'"),
@@ -182,11 +184,11 @@ async fn postgres_rebuilds_three_level_dependents_in_one_transaction() {
     )
     .await;
     assert!(format!("{ty:?}").contains("bigint"), "{ty:?}");
-    // マテビューは WITH DATA で再計算済み。
+    // マテビューは作成後に REFRESH で再計算済み。
     let n = rows(conn, &format!("SELECT count(*) FROM {PG_SCHEMA}.mv3")).await;
     assert!(format!("{n:?}").contains('2'), "{n:?}");
 
-    // WITH NO DATA を選ぶとマテビューは未投入で作られる。
+    // 再計算を選ばないと REFRESH は出ず、マテビューは未投入のまま作られる。
     let plan_nd = t::view_rebuild_plan_core(session.clone(), PG_SCHEMA, "base", &cols, false)
         .await
         .expect("plan");
@@ -194,6 +196,14 @@ async fn postgres_rebuilds_three_level_dependents_in_one_transaction() {
         .create_statements
         .iter()
         .any(|c| c.ends_with("WITH NO DATA;")));
+    assert!(!plan_nd
+        .restore_statements
+        .iter()
+        .any(|x| x.starts_with("REFRESH")));
+    assert!(plan
+        .restore_statements
+        .iter()
+        .any(|x| x.starts_with("REFRESH MATERIALIZED VIEW")));
 
     // RLS ポリシーが参照する列は作り直しを止める。
     for sql in [
@@ -282,4 +292,76 @@ async fn sqlite_and_empty_inputs_need_no_view_rebuild() {
         .expect("plan");
     assert!(plan.views.is_empty() && plan.create_statements.is_empty() && plan.blockers.is_empty());
     let _ = std::fs::remove_file(&path);
+}
+
+/// 管理者が別ロール所有のマテビューを作り直しても、中身は管理者の権限で計算されない (REFRESH はオーナーの権限)。
+/// RLS で元のオーナーには見えない行が、管理者の権限で作られたマテビューに永続化されないことを確かめる。
+#[tokio::test]
+async fn postgres_rebuild_does_not_materialize_rows_hidden_from_owner() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let schema = "nb2268_rls";
+    for sql in [
+        format!("DROP SCHEMA IF EXISTS {schema} CASCADE"),
+        "DROP ROLE IF EXISTS nb2268_adm".to_string(),
+        "DROP ROLE IF EXISTS nb2268_own".to_string(),
+        "CREATE ROLE nb2268_own".to_string(),
+        "CREATE ROLE nb2268_adm".to_string(),
+        "GRANT nb2268_own TO nb2268_adm".to_string(),
+        format!("CREATE SCHEMA {schema}"),
+        format!("GRANT ALL ON SCHEMA {schema} TO nb2268_own, nb2268_adm"),
+        format!("CREATE TABLE {schema}.t (id int, v int)"),
+        format!("INSERT INTO {schema}.t VALUES (1, 10), (2, 20)"),
+        format!("GRANT ALL ON {schema}.t TO nb2268_adm"),
+        format!("ALTER TABLE {schema}.t OWNER TO nb2268_own"),
+        format!("ALTER TABLE {schema}.t ENABLE ROW LEVEL SECURITY"),
+        format!("ALTER TABLE {schema}.t FORCE ROW LEVEL SECURITY"),
+        // 元のオーナーには 1 行も見えず、管理者にだけ見える。
+        format!("CREATE POLICY p ON {schema}.t USING (current_user <> 'nb2268_own')"),
+        format!("CREATE MATERIALIZED VIEW {schema}.mv AS SELECT id, v FROM {schema}.t"),
+        format!("ALTER MATERIALIZED VIEW {schema}.mv OWNER TO nb2268_own"),
+    ] {
+        conn.execute(&sql, None).await.expect("ddl");
+    }
+    let session = session_for("viewrebuild_rls", conn, opts).await;
+    let conn = &session.conn;
+    let plan = t::view_rebuild_plan_core(session.clone(), schema, "t", &["v".to_string()], true)
+        .await
+        .expect("plan");
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    assert_eq!(plan.views.len(), 1);
+    // 管理者 (スーパーユーザーではない) として流す。
+    let mut all = vec!["SET LOCAL ROLE nb2268_adm;".to_string()];
+    all.extend(plan.drop_statements.clone());
+    all.push(format!(
+        "ALTER TABLE {schema}.t ALTER COLUMN v TYPE bigint;"
+    ));
+    all.extend(plan.create_statements.clone());
+    all.extend(plan.restore_statements.clone());
+    conn.execute_transaction(&all, Some(schema))
+        .await
+        .expect("rebuild transaction");
+    let n = rows(conn, &format!("SELECT count(*) FROM {schema}.mv")).await;
+    assert!(
+        format!("{n:?}").contains('0'),
+        "owner に見えない行が入った: {n:?}"
+    );
+    let owner = rows(
+        conn,
+        &format!("SELECT pg_get_userbyid(relowner)::text FROM pg_class WHERE oid = '{schema}.mv'::regclass"),
+    )
+    .await;
+    assert!(format!("{owner:?}").contains("nb2268_own"), "{owner:?}");
+
+    conn.execute(&format!("DROP SCHEMA {schema} CASCADE"), None)
+        .await
+        .expect("cleanup");
+    for r in ["nb2268_adm", "nb2268_own"] {
+        conn.execute(&format!("DROP ROLE {r}"), None)
+            .await
+            .expect("drop role");
+    }
 }

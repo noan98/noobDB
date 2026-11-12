@@ -15,7 +15,7 @@ interface Props {
   /** 「依存ビューを作り直して適用」を選んでいるか。 */
   enabled: boolean;
   onEnabledChange: (next: boolean) => void;
-  /** マテリアライズドビューを `WITH DATA` で作る (偽なら `WITH NO DATA`)。 */
+  /** マテリアライズドビューを作り直し後に `REFRESH` して再計算する (偽なら空のまま)。 */
   withData: boolean;
   onWithDataChange: (next: boolean) => void;
   /** 作り直すビューが参照する列で、同じ ALTER でリネーム / 削除されるもの (作り直しの SQL は旧い列名を参照するので止める)。 */
