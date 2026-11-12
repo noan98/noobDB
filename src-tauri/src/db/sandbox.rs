@@ -851,6 +851,36 @@ mod tests {
         assert!(!select_rows(&ok, None, None).rows[0].key_unreliable);
     }
 
+    // 結果グリッドの「選択行を起点にサブセット抽出」(#2265) が作る条件
+    // (`subsetExtract.ts` の `buildSubsetPkCondition`) が、検査を通ること。
+    #[test]
+    fn row_filter_accepts_grid_generated_pk_conditions() {
+        let all = [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite];
+        let common = [
+            "id IN (9007199254740993, 9223372036854775807)",
+            "(a, b) IN ((1, 'x'), (2, 'y'))",
+            "(a = 1 AND b = 'x') OR (a = 2 AND b = 'y')",
+            "id IN (1) OR id IS NULL",
+            "ABS(x - (1.5)) <= ABS((1.5)) * 0.000001",
+            "id IN ('2026-01-02 03:04:05')",
+        ];
+        for d in all {
+            for c in common {
+                assert!(checked_row_filter(d, "t", Some(c)).is_ok(), "{d:?}: {c}");
+            }
+        }
+        // MySQL: バックスラッシュと NUL (`\0`) のエスケープ。
+        assert!(checked_row_filter(DriverKind::Mysql, "t", Some(r"`c` IN ('O''Re\\x')")).is_ok());
+        assert!(checked_row_filter(DriverKind::Mysql, "t", Some(r"`c` IN ('a\0b')")).is_ok());
+        assert!(checked_row_filter(DriverKind::Mysql, "t", Some("`b` IN (0xdead)")).is_ok());
+        // PostgreSQL: bytea の 16 進リテラル。
+        assert!(
+            checked_row_filter(DriverKind::Postgres, "t", Some(r#""b" IN ('\xdead')"#)).is_ok()
+        );
+        // SQLite: BLOB リテラル。
+        assert!(checked_row_filter(DriverKind::Sqlite, "t", Some(r#""b" IN (X'dead')"#)).is_ok());
+    }
+
     #[test]
     fn row_filter_accepts_plain_read_only_conditions() {
         for d in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {

@@ -105,6 +105,10 @@
   --space-8: calc(32px * var(--font-scale));
   --space-10: calc(40px * var(--font-scale));
   --space-12: calc(48px * var(--font-scale));
+  /* クエリビルダの行内フィールド幅 (#2267): フォント拡大に追従する固定幅。 */
+  --qb-field-w-lg: calc(132px * var(--font-scale));
+  --qb-field-w-md: calc(120px * var(--font-scale));
+  --qb-field-w-sm: calc(76px * var(--font-scale));
 
   /* Display density (#410, #620, #1188). An axis independent of the font scale: it
      tunes the result grid's cell padding / row height so the same font can be

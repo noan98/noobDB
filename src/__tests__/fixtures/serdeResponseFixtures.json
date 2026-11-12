@@ -2199,6 +2199,7 @@
       "phase": "scanning heap",
       "total": 100
     },
+    "progress_disabled": false,
     "query_summary": "SELECT 1",
     "query_truncated": false,
     "state": "executing",

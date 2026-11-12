@@ -2357,7 +2357,12 @@ export default function App() {
   // 接続間データ転送 (#986): 転送元。null で閉じる。
   const [transferSource, setTransferSource] = useState<TransferSource | null>(null);
   // サブセット抽出 (#2241) の起点の表。
-  const [subsetTarget, setSubsetTarget] = useState<{ database: string; table: string } | null>(null);
+  const [subsetTarget, setSubsetTarget] = useState<{
+    database: string;
+    table: string;
+    initialWhere?: string;
+    initialRootLimit?: number;
+  } | null>(null);
   // 結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821): 対象。null で閉じる。
   const [saveAsTableRequest, setSaveAsTableRequest] = useState<{
     sql: string;
@@ -4454,6 +4459,32 @@ export default function App() {
       toast.success(translate("toastSandboxCreated", { name: res.sandbox.name }));
     },
     [handleConnect, toast],
+  );
+
+  // サブセット抽出の転送先の表を開く (#2264): 転送先の接続へ切り替え、接続が済んだら表を開く。
+  const [pendingSubsetOpen, setPendingSubsetOpen] = useState<{
+    profileId: string;
+    database: string | null;
+    table: string;
+  } | null>(null);
+  const handleOpenSubsetTarget = useCallback(
+    async (profile: ConnectionProfile, database: string | null, table: string) => {
+      // 接続が済んでから保留をセットする (失敗・キャンセル時に古い保留が残らないように)。
+      await handleConnect(profile);
+      setPendingSubsetOpen({ profileId: profile.id, database, table });
+    },
+    [handleConnect],
+  );
+  // サブセット抽出がサンドボックスを作った直後の登録 (#2264)。接続は開かず、作成用セッションの
+  // 切断・一覧への追加・トーストだけ行う (開くのは完了表示のボタンから)。
+  const handleSandboxRegistered = useCallback(
+    (res: SandboxCreateResponse) => {
+      markFeatureTried("helpSandboxTitle");
+      api.disconnect(res.session_id).catch(() => {});
+      setSandboxes((prev) => [...prev.filter((s) => s.id !== res.sandbox.id), res.sandbox]);
+      toast.success(translate("toastSandboxCreated", { name: res.sandbox.name }));
+    },
+    [toast],
   );
 
   const handleDiscardSandbox = useCallback(
@@ -8540,6 +8571,17 @@ export default function App() {
     ],
   );
 
+  useEffect(() => {
+    if (!pendingSubsetOpen) return;
+    // 別の接続になっていたら (接続失敗・キャンセル・切り替え) 保留を捨てる。
+    if (!sessionId || selectedProfile?.id !== pendingSubsetOpen.profileId) {
+      setPendingSubsetOpen(null);
+      return;
+    }
+    setPendingSubsetOpen(null);
+    if (pendingSubsetOpen.database) handleOpenTable(pendingSubsetOpen.database, pendingSubsetOpen.table);
+  }, [pendingSubsetOpen, sessionId, selectedProfile?.id, handleOpenTable]);
+
   // 保留中の列移動を、対象テーブルのタブがアクティブになり最初の行が届いた時点で実行する (#1629)。
   // 行が 0 件のまま完了したとき・15 秒たっても条件が揃わないときは諦める。
   useEffect(() => {
@@ -8580,6 +8622,19 @@ export default function App() {
   const handleExtractSubset = useCallback((database: string, table: string) => {
     setSubsetTarget({ database, table });
   }, []);
+
+  // 結果グリッドで選んだ行を起点にしたサブセット抽出 (#2265): 主キーの IN 条件を入れた状態で開く。
+  const handleExtractSubsetFromRows = useCallback(
+    (target: { database: string | null; table: string; whereClause: string; rootLimit: number }) => {
+      setSubsetTarget({
+        database: target.database ?? "",
+        table: target.table,
+        initialWhere: target.whereClause,
+        initialRootLimit: target.rootLimit,
+      });
+    },
+    [],
+  );
 
   // ファイルから新規テーブルを作成してインポート (#985)。DB のコンテキスト
   // メニューから開く (対象テーブルが無いので ImportModal は作成モード固定)。
@@ -13123,6 +13178,7 @@ export default function App() {
     handleRevealSchemaObject,
     handleAiResultSummary,
     handleExploreColumns,
+    handleExtractSubsetFromRows,
     handleNewTab,
     handleOpenAiSql,
     handleOpenSqlFile,
@@ -15473,8 +15529,12 @@ export default function App() {
                   sourceProfileId={selectedProfile?.id ?? null}
                   database={subsetTarget.database}
                   table={subsetTarget.table}
+                  initialWhere={subsetTarget.initialWhere}
+                  initialRootLimit={subsetTarget.initialRootLimit}
                   profiles={profiles}
-                  onSandboxCreated={handleSandboxCreated}
+                  onSandboxRegistered={handleSandboxRegistered}
+                  onOpenSandbox={(sandbox) => void handleConnect(sandboxToProfile(sandbox))}
+                  onOpenTransferTarget={handleOpenSubsetTarget}
                   onClose={() => setSubsetTarget(null)}
                 />
               </Suspense>

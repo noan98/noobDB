@@ -17,6 +17,8 @@ import {
   groupProcessesByQuery,
   isProcessFilterActive,
   processKey,
+  MYSQL_ENABLE_STAGE_INSTRUMENTATION_SQL,
+  PROCESS_PROGRESS_LABEL_KEYS,
   processProgressPercent,
   PROCESS_LIVE_FIELDS,
   PROCESS_MIN_SECS_OPTIONS,
@@ -26,6 +28,7 @@ import {
   type ProcessFilter,
   type ProcessSortKey,
 } from "./processList";
+import { Callout } from "./Callout";
 import { CountUp } from "./CountUp";
 import { LiveCell, LiveRowsPresence, LiveTr, useLiveChanges } from "./LiveRows";
 import { uniqueByKey } from "./liveDiff";
@@ -38,6 +41,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
+import { SqlPreview } from "./SqlPreview";
 import { Button, Checkbox, Input } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
 import { useToast } from "./Toast";
@@ -164,6 +168,9 @@ export function ProcessListPanel({
   const filterActive = isProcessFilterActive(filter);
   // 同じクエリを実行している行のグループ (#1622)。絞り込み前の全件から作る。
   const queryGroups = useMemo(() => groupProcessesByQuery(rows), [rows]);
+  const [, setDismissTick] = useState(0); // 閉じたとき再描画するための合図
+  const progressDisabled =
+    rows.some((p) => p.progress_disabled === true) && !DISMISSED_PROGRESS_HINT.has(sessionId);
   const processedRows = useMemo(
     () => sortProcesses(filterProcesses(rows, filter), sortKey),
     [rows, filter, sortKey],
@@ -584,6 +591,7 @@ export function ProcessListPanel({
                   { value: "timeDesc", label: t("processSortTimeDesc") },
                   { value: "timeAsc", label: t("processSortTimeAsc") },
                   { value: "id", label: t("processSortId") },
+                  { value: "progress", label: t("processSortProgress") },
                 ]}
                 onChange={(v) => setSortKey(v as ProcessSortKey)}
               />
@@ -623,6 +631,36 @@ export function ProcessListPanel({
                 </>
               )}
             </Flex>
+          )}
+
+          {/* MySQL の stage 計測器が無効で ALTER TABLE の進捗が空のときの案内 (#2269)。SQL は示すだけで実行しない。 */}
+          {!error && progressDisabled && (
+            <Callout
+              tone="info"
+              role="status"
+              title={t("processProgressDisabledTitle")}
+              flexShrink={0}
+              action={
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    DISMISSED_PROGRESS_HINT.add(sessionId);
+                    setDismissTick((n) => n + 1);
+                  }}
+                >
+                  {t("processProgressDisabledDismiss")}
+                </Button>
+              }
+            >
+              <chakra.p margin={0}>{t("processProgressDisabledBody")}</chakra.p>
+              <SqlPreview
+                sql={MYSQL_ENABLE_STAGE_INSTRUMENTATION_SQL}
+                driver={driver}
+                minH="64px"
+                wrap
+                data-testid="process-progress-enable-sql"
+              />
+            </Callout>
           )}
 
           {/* AI 解説 (#1478)。AI 無効 / SQLite では何も描かない。KILL は下の既存ボタンで行う。 */}
@@ -896,11 +934,16 @@ const ProcessRow = memo(
     sameProcess(a.process, b.process),
 );
 
-/** VACUUM / CREATE INDEX の進捗 (#1622)。割合が出せるフェーズは `<progress>`、出せないときはフェーズ名だけ。 */
+/** メンテナンスの進捗 (#1622 / #2269)。割合が出せるフェーズは `<progress>`、出せないときはフェーズ名だけ。 */
 function ProcessProgressBadge({ progress }: { progress: NonNullable<ProcessInfo["progress"]> }) {
   const t = useT();
   const pct = processProgressPercent(progress);
-  const kind = t(progress.kind === "vacuum" ? "processProgressVacuum" : "processProgressCreateIndex");
+  const kind = t(PROCESS_PROGRESS_LABEL_KEYS[progress.kind]);
+  // COPY は総量不明 (STDIN など) だと割合を出せず、done が処理済み行数 (#2269)。
+  const phase =
+    progress.kind === "copy" && progress.total === 0
+      ? t("processProgressCopyRows", { phase: progress.phase, rows: progress.done })
+      : progress.phase;
   return (
     <chakra.div
       fontFamily="var(--font-sans)"
@@ -909,10 +952,10 @@ function ProcessProgressBadge({ progress }: { progress: NonNullable<ProcessInfo[
       data-testid="process-progress"
     >
       {pct === null ? (
-        t("processProgressPhase", { kind, phase: progress.phase })
+        t("processProgressPhase", { kind, phase })
       ) : (
         <>
-          <span>{t("processProgressPercent", { kind, phase: progress.phase, percent: pct })}</span>
+          <span>{t("processProgressPercent", { kind, phase, percent: pct })}</span>
           <progress
             max={100}
             value={pct}
@@ -924,6 +967,9 @@ function ProcessProgressBadge({ progress }: { progress: NonNullable<ProcessInfo[
     </chakra.div>
   );
 }
+
+/** 「stage 計測器が無効」の案内を閉じたセッション (#2269)。アプリ起動中は接続ごとに覚える。 */
+const DISMISSED_PROGRESS_HINT = new Set<string>();
 
 /** ホバーしてから全文を取りに行くまでの待ち時間 (ms)。通過しただけの行では取得しない。 */
 const PROCESS_QUERY_HOVER_DELAY_MS = 250;

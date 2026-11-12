@@ -15,10 +15,10 @@ use super::tx_options::TxOptions;
 use super::types::{non_empty_comment, TableComment};
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, KillProcessesResult, LiveQuery, PreviewResult,
-    ProcessInfo, QueryResult, QueryStatsSupport, RoutineParameter, RoutineSignature, SchemaObject,
-    ServerInfo, ServerMetrics, ServerVariable, StatementStat, StreamBatch, TableColumnInfo,
-    TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
-    UserPrivileges, Value,
+    ProcessInfo, ProcessProgress, ProcessProgressKind, QueryResult, QueryStatsSupport,
+    RoutineParameter, RoutineSignature, SchemaObject, ServerInfo, ServerMetrics, ServerVariable,
+    StatementStat, StreamBatch, TableColumnInfo, TablePrivilegeRow, TableRowEstimate,
+    TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use super::types::{ServerMessage, ServerMessageSeverity};
 use super::upsert::{conflict_clause, ImportConflict};
@@ -42,7 +42,13 @@ pub struct MySqlConn {
     /// `information_schema.INNODB_LOCK_WAITS` が無いと分かったら立てる (#1417)。MySQL 8.0 で
     /// 削除済みなので、`performance_schema` が使えない 8.x で毎ポーリング失敗する照会を投げない。
     innodb_lock_waits_missing: std::sync::atomic::AtomicBool,
+    /// stage 計測器が無効かの判定結果と取得時刻 (#2269)。ポーリングごとに設定照会を投げないよう
+    /// [`STAGE_CHECK_TTL`] の間は使い回す。
+    stage_check: std::sync::Mutex<Option<(std::time::Instant, bool)>>,
 }
+
+/// stage 計測器の有効 / 無効判定を使い回す時間 (#2269)。
+const STAGE_CHECK_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// 接続オプション (プールが新しい物理接続を張るときに使う) を組み立てる。
 /// `password` は保存済みパスワード、または AWS IAM 認証トークン。
@@ -116,6 +122,7 @@ impl MySqlConn {
             tx_read_only: Default::default(),
             _iam_refresh: iam_refresh,
             innodb_lock_waits_missing: std::sync::atomic::AtomicBool::new(false),
+            stage_check: std::sync::Mutex::new(None),
         })
     }
 
@@ -1575,6 +1582,14 @@ impl MySqlConn {
         } else {
             std::collections::HashMap::new()
         };
+        // ALTER TABLE / OPTIMIZE TABLE の進捗 (#2269)。`events_stages_current` は 5.7.6 以降にあり、
+        // 無い・権限不足の失敗は空に縮退するので常に引く。1 件のクエリ本文を引くだけの経路
+        // (`with_locks = false`) では省く。
+        let (progress, progress_disabled) = if with_locks {
+            self.alter_table_progress().await
+        } else {
+            (std::collections::HashMap::new(), false)
+        };
         Ok(rows
             .into_iter()
             .map(|r| ProcessInfo {
@@ -1602,12 +1617,98 @@ impl MySqlConn {
                     .unwrap_or(false),
                 blocked_by: Vec::new(),
                 progress: None,
+                progress_disabled,
             })
             .map(|mut p| {
                 p.blocked_by = blockers.get(&p.id).cloned().unwrap_or_default();
+                p.progress = progress.get(&p.id).cloned();
                 p
             })
             .collect())
+    }
+
+    /// `performance_schema.events_stages_current` から ALTER TABLE 系 (`stage/innodb/alter table*`)
+    /// の進捗を processlist id で引けるようにする (#2269)。戻り値の bool は「stage 計測器
+    /// (`events_stages_current` コンシューマ、または alter 系インストゥルメント) が無効と判別できた」。
+    /// ビューが無い・権限がない・照会に失敗した場合は、エラーにせず `(空, false)` とする
+    /// (無効かどうか判別できないので案内も出さない)。
+    async fn alter_table_progress(
+        &self,
+    ) -> (std::collections::HashMap<i64, ProcessProgress>, bool) {
+        let mut out = std::collections::HashMap::new();
+        let rows = match sqlx::query(
+            "SELECT t.PROCESSLIST_ID, s.EVENT_NAME, s.WORK_COMPLETED, s.WORK_ESTIMATED \
+             FROM performance_schema.events_stages_current s \
+             JOIN performance_schema.threads t ON t.THREAD_ID = s.THREAD_ID \
+             WHERE t.PROCESSLIST_ID IS NOT NULL AND s.EVENT_NAME LIKE 'stage/innodb/alter table%'",
+        )
+        .fetch_all(&self.pool)
+        .await
+        {
+            Ok(rows) => rows,
+            Err(_) => return (out, false),
+        };
+        let get = |r: &MySqlRow, i: usize| -> i64 {
+            r.try_get::<Option<u64>, _>(i)
+                .ok()
+                .flatten()
+                .map(|v| i64::try_from(v).unwrap_or(i64::MAX))
+                .or_else(|| r.try_get::<Option<i64>, _>(i).ok().flatten())
+                .unwrap_or_default()
+        };
+        for r in &rows {
+            let Some(pid) = r
+                .try_get::<Option<u64>, _>(0)
+                .ok()
+                .flatten()
+                .and_then(|v| i64::try_from(v).ok())
+            else {
+                continue;
+            };
+            let event = r.try_get::<String, _>(1).unwrap_or_default();
+            if let Some(p) = alter_stage_progress(&event, get(r, 2), get(r, 3)) {
+                out.insert(pid, p);
+            }
+        }
+        if !out.is_empty() {
+            return (out, false);
+        }
+        // 進捗が 1 件も無いときだけ、計測器が無効かを確認する。結果は接続単位で
+        // [`STAGE_CHECK_TTL`] だけ使い回す (毎ポーリングの設定照会を避ける)。
+        let cached = self
+            .stage_check
+            .lock()
+            .ok()
+            .and_then(|g| *g)
+            .filter(|(at, _)| at.elapsed() < STAGE_CHECK_TTL)
+            .map(|(_, v)| v);
+        if let Some(disabled) = cached {
+            return (out, disabled);
+        }
+        let state = sqlx::query(
+            "SELECT \
+               (SELECT ENABLED FROM performance_schema.setup_consumers \
+                 WHERE NAME = 'events_stages_current'), \
+               (SELECT COUNT(*) FROM performance_schema.setup_instruments \
+                 WHERE NAME LIKE 'stage/innodb/alter table%' AND ENABLED = 'YES')",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .ok()
+        .and_then(|r| {
+            let consumer = r.try_get::<Option<String>, _>(0).ok().flatten()?;
+            let enabled = r
+                .try_get::<i64, _>(1)
+                .or_else(|_| r.try_get::<u64, _>(1).map(|v| v as i64))
+                .ok()?;
+            Some((consumer, enabled))
+        });
+        let disabled = state
+            .is_some_and(|(consumer, enabled)| stage_instrumentation_disabled(&consumer, enabled));
+        if let Ok(mut g) = self.stage_check.lock() {
+            *g = Some((std::time::Instant::now(), disabled));
+        }
+        (out, disabled)
     }
 
     /// `(待たされている processlist id, ブロッカーの processlist id)` の組を集める (#1417)。
@@ -3563,6 +3664,42 @@ fn blocked_by_map(pairs: Vec<(i64, i64)>) -> std::collections::HashMap<i64, Vec<
     map
 }
 
+/// `stage/innodb/alter table (read PK and internal sort)` のような stage 名を、フェーズ名
+/// (`read PK and internal sort`) と合わせて ALTER TABLE の進捗にする (#2269)。
+/// `alter table` 系以外は `None`。`WORK_ESTIMATED` が 0 のステージは割合を出せない (`total = 0`)。
+fn alter_stage_progress(
+    event_name: &str,
+    completed: i64,
+    estimated: i64,
+) -> Option<ProcessProgress> {
+    let rest = event_name.strip_prefix("stage/innodb/alter table")?;
+    // `alter tablespace (...)` など別のステージを拾わない。
+    if !rest.is_empty() && !rest.starts_with(' ') {
+        return None;
+    }
+    let phase = rest
+        .trim()
+        .trim_start_matches('(')
+        .trim_end_matches(')')
+        .trim();
+    Some(ProcessProgress {
+        kind: ProcessProgressKind::AlterTable,
+        phase: if phase.is_empty() {
+            "alter table".to_string()
+        } else {
+            phase.to_string()
+        },
+        done: completed.max(0),
+        total: estimated.max(0),
+    })
+}
+
+/// stage 計測器が「無効」と判別できるか (#2269)。`events_stages_current` コンシューマが
+/// `YES` 以外、または `alter table` 系インストゥルメントが 1 つも有効でない。
+fn stage_instrumentation_disabled(consumer_enabled: &str, enabled_alter_instruments: i64) -> bool {
+    !consumer_enabled.eq_ignore_ascii_case("YES") || enabled_alter_instruments <= 0
+}
+
 /// Decides whether `list_processes` must fall back from
 /// `performance_schema.processlist` to `information_schema.PROCESSLIST`
 /// (#587). A query error (table missing on pre-8.0.22 / MariaDB) always
@@ -4976,6 +5113,35 @@ mod lock_wait_timeout_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn alter_stage_progress_maps_phase_and_totals() {
+        use crate::db::types::ProcessProgressKind;
+        let p = super::alter_stage_progress(
+            "stage/innodb/alter table (read PK and internal sort)",
+            30,
+            120,
+        )
+        .expect("alter stage");
+        assert_eq!(p.kind, ProcessProgressKind::AlterTable);
+        assert_eq!(p.phase, "read PK and internal sort");
+        assert_eq!((p.done, p.total), (30, 120));
+        let bare = super::alter_stage_progress("stage/innodb/alter table", 0, 0).expect("bare");
+        assert_eq!(bare.phase, "alter table");
+        assert_eq!(bare.total, 0);
+        assert!(super::alter_stage_progress("stage/sql/statistics", 1, 2).is_none());
+        assert!(
+            super::alter_stage_progress("stage/innodb/alter tablespace (encryption)", 1, 2)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn stage_instrumentation_disabled_detects_consumer_or_instruments() {
+        assert!(!super::stage_instrumentation_disabled("YES", 6));
+        assert!(super::stage_instrumentation_disabled("NO", 6));
+        assert!(super::stage_instrumentation_disabled("YES", 0));
+    }
+
     #[test]
     fn variable_source_normalizes_compiled_to_default() {
         assert_eq!(super::mysql_variable_source("COMPILED"), "default");

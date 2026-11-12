@@ -175,6 +175,9 @@ pub(crate) async fn create_sandbox_inner(
         .ok_or_else(|| AppError::SessionNotFound(source_session_id.clone()))?;
     let db = source_database.clone().unwrap_or_default();
     let source_driver = source.conn.driver_kind();
+    // SQLite のアタッチ DB の表は `"別名"."表"` に修飾して読む。修飾しないと temp → main → アタッチの
+    // 順で解決され、main の同名表の行がコピーされる (#2271)。サブセット抽出・差分取得と同じ解決。
+    let attached_db = source.conn.resolve_attached_database(&db);
 
     if let Some(t) = tables
         .iter()
@@ -311,7 +314,7 @@ pub(crate) async fn create_sandbox_inner(
             .collect();
         let sql = select_rows_where_sql(
             source_driver,
-            "",
+            &attached_db,
             t,
             &col_names,
             &order_cols,
@@ -364,7 +367,7 @@ pub(crate) async fn create_sandbox_inner(
         for t in &fetched {
             walk.add_root_rows(&t.name, t.rows.clone())?;
         }
-        run_walk(&source, "", Some(&db), &metas, &mut walk, |_| {}).await?;
+        run_walk(&source, &attached_db, Some(&db), &metas, &mut walk, |_| {}).await?;
         let result = walk.finish();
         for t in fetched.iter_mut() {
             if let Some(r) = result.tables.iter().find(|r| r.table == t.name) {

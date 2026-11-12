@@ -277,11 +277,12 @@ fn build_fixtures() -> serde_json::Value {
         is_self: true,
         blocked_by: vec![41],
         progress: Some(t::ProcessProgress {
-            kind: "vacuum".into(),
+            kind: t::ProcessProgressKind::Vacuum,
             phase: "scanning heap".into(),
             done: 40,
             total: 100,
         }),
+        progress_disabled: false,
     };
     let query_stats_support = QueryStatsSupport {
         live_tail: true,
