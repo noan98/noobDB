@@ -1121,6 +1121,13 @@ async fn mysql_process_list_and_kill() {
     // The listing query itself runs on one of our pooled connections, so the
     // result can never be empty.
     let processes = conn.list_processes().await.expect("list_processes");
+    assert!(!processes.is_empty());
+    // 進捗 (#2269): 計測器・ビューが無くてもエラーにならず、全行が同じ bool を持つ。
+    let disabled = processes[0].progress_disabled;
+    assert!(
+        processes.iter().all(|p| p.progress_disabled == disabled),
+        "progress_disabled must be uniform across rows: {processes:?}"
+    );
     assert!(
         !processes.is_empty(),
         "process list must at least contain this client's own connection"

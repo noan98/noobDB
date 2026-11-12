@@ -546,4 +546,19 @@ describe("ProcessListPanel per-process results / same-query select / progress (#
     await screen.findByText("7");
     expect(screen.queryByText(t("processProgressDisabledTitle"))).not.toBeInTheDocument();
   });
+
+  it("COPY の総量不明は行数で出し、案内は閉じられる", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([
+      {
+        ...base,
+        progress: { kind: "copy", phase: "COPY FROM", done: 1234, total: 0 },
+        progress_disabled: true,
+      },
+    ]);
+    renderWithProviders(<ProcessListPanel sessionId="s-dismiss" driver="mysql" readOnly={false} />);
+    const badge = await screen.findByTestId("process-progress");
+    expect(badge).toHaveTextContent("COPY FROM (1234");
+    fireEvent.click(screen.getByRole("button", { name: t("processProgressDisabledDismiss") }));
+    expect(screen.queryByText(t("processProgressDisabledTitle"))).not.toBeInTheDocument();
+  });
 });

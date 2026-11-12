@@ -386,7 +386,7 @@ export const PROCESS_PROGRESS_LABEL_KEYS: Record<ProcessProgressKind, I18nKey> =
  */
 export const MYSQL_ENABLE_STAGE_INSTRUMENTATION_SQL = [
   "UPDATE performance_schema.setup_instruments SET ENABLED = 'YES', TIMED = 'YES'",
-  " WHERE NAME LIKE 'stage/innodb/%';",
+  " WHERE NAME LIKE 'stage/innodb/alter%';",
   "UPDATE performance_schema.setup_consumers SET ENABLED = 'YES'",
-  " WHERE NAME LIKE 'events_stages_%';",
+  " WHERE NAME = 'events_stages_current';",
 ].join("\n");

@@ -42,7 +42,13 @@ pub struct MySqlConn {
     /// `information_schema.INNODB_LOCK_WAITS` が無いと分かったら立てる (#1417)。MySQL 8.0 で
     /// 削除済みなので、`performance_schema` が使えない 8.x で毎ポーリング失敗する照会を投げない。
     innodb_lock_waits_missing: std::sync::atomic::AtomicBool,
+    /// stage 計測器が無効かの判定結果と取得時刻 (#2269)。ポーリングごとに設定照会を投げないよう
+    /// [`STAGE_CHECK_TTL`] の間は使い回す。
+    stage_check: std::sync::Mutex<Option<(std::time::Instant, bool)>>,
 }
+
+/// stage 計測器の有効 / 無効判定を使い回す時間 (#2269)。
+const STAGE_CHECK_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// 接続オプション (プールが新しい物理接続を張るときに使う) を組み立てる。
 /// `password` は保存済みパスワード、または AWS IAM 認証トークン。
@@ -116,6 +122,7 @@ impl MySqlConn {
             tx_read_only: Default::default(),
             _iam_refresh: iam_refresh,
             innodb_lock_waits_missing: std::sync::atomic::AtomicBool::new(false),
+            stage_check: std::sync::Mutex::new(None),
         })
     }
 
@@ -1571,11 +1578,13 @@ impl MySqlConn {
         } else {
             std::collections::HashMap::new()
         };
-        // ALTER TABLE / OPTIMIZE TABLE の進捗 (#2269)。`performance_schema` が使えるときだけ引く。
-        let (progress, progress_disabled) = if used_fallback {
-            (std::collections::HashMap::new(), false)
-        } else {
+        // ALTER TABLE / OPTIMIZE TABLE の進捗 (#2269)。`events_stages_current` は 5.7.6 以降にあり、
+        // 無い・権限不足の失敗は空に縮退するので常に引く。1 件のクエリ本文を引くだけの経路
+        // (`with_locks = false`) では省く。
+        let (progress, progress_disabled) = if with_locks {
             self.alter_table_progress().await
+        } else {
+            (std::collections::HashMap::new(), false)
         };
         Ok(rows
             .into_iter()
@@ -1660,7 +1669,18 @@ impl MySqlConn {
         if !out.is_empty() {
             return (out, false);
         }
-        // 進捗が 1 件も無いときだけ、計測器が無効かを確認する (毎ポーリングの負荷を抑える)。
+        // 進捗が 1 件も無いときだけ、計測器が無効かを確認する。結果は接続単位で
+        // [`STAGE_CHECK_TTL`] だけ使い回す (毎ポーリングの設定照会を避ける)。
+        let cached = self
+            .stage_check
+            .lock()
+            .ok()
+            .and_then(|g| *g)
+            .filter(|(at, _)| at.elapsed() < STAGE_CHECK_TTL)
+            .map(|(_, v)| v);
+        if let Some(disabled) = cached {
+            return (out, disabled);
+        }
         let state = sqlx::query(
             "SELECT \
                (SELECT ENABLED FROM performance_schema.setup_consumers \
@@ -1681,6 +1701,9 @@ impl MySqlConn {
         });
         let disabled = state
             .is_some_and(|(consumer, enabled)| stage_instrumentation_disabled(&consumer, enabled));
+        if let Ok(mut g) = self.stage_check.lock() {
+            *g = Some((std::time::Instant::now(), disabled));
+        }
         (out, disabled)
     }
 

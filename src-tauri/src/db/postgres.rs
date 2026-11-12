@@ -1153,7 +1153,9 @@ impl PostgresConn {
         Ok(list)
     }
 
-    /// `pg_stat_progress_vacuum` / `pg_stat_progress_create_index` を pid で引けるようにする (#1622)。
+    /// `pg_stat_progress_vacuum` / `pg_stat_progress_create_index` に加え、新しい版のビュー
+    /// `pg_stat_progress_cluster` (12 以降。VACUUM FULL / CLUSTER)・`pg_stat_progress_analyze`
+    /// (13 以降)・`pg_stat_progress_copy` (14 以降) を pid で引けるようにする (#1622 / #2269)。
     /// 一覧の取得を壊さないよう、各ビューの失敗 (PostgreSQL 12 未満の `create_index` など) は
     /// 空として扱う。進捗は VACUUM が走査済みヒープブロック / 総ブロック、索引作成が
     /// 処理済みブロック / 総ブロック (総ブロックが 0 のフェーズは行数、それも無ければ割合なし)。
@@ -6042,7 +6044,7 @@ fn replica_columns_sql() -> String {
 
 /// `pg_stat_progress_copy` の 1 行を `(フェーズ名, done, total)` にする (#2269)。
 /// 総バイトが分かれば処理済みバイト / 総バイト。0 (STDIN / PROGRAM など総量不明) のときは
-/// 割合を出せないので、フェーズ名に処理済み行数を載せて `total = 0` にする。
+/// `done = 処理済み行数`・`total = 0` を返し、行数の整形 (i18n) はフロントが行う。
 fn copy_progress(
     command: &str,
     bytes_done: i64,
@@ -6052,7 +6054,7 @@ fn copy_progress(
     if bytes_total > 0 {
         (command.to_string(), bytes_done, bytes_total)
     } else {
-        (format!("{command} ({tuples} tuples)"), tuples, 0)
+        (command.to_string(), tuples, 0)
     }
 }
 
@@ -6066,7 +6068,7 @@ mod tests {
         );
         assert_eq!(
             super::copy_progress("COPY TO", 0, 0, 1234),
-            ("COPY TO (1234 tuples)".to_string(), 1234, 0)
+            ("COPY TO".to_string(), 1234, 0)
         );
     }
 

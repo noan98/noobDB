@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 
 import type { ProcessInfo } from "../api/tauri";
 import {
@@ -235,6 +235,8 @@ describe("groupProcessesByQuery / processProgressPercent / failedKillReasons (#1
 });
 
 describe("進捗の kind ラベル / 進捗順の並べ替え (#2269)", () => {
+  afterEach(() => setLocale("en"));
+
   it("全 kind が en / ja の文言を持つ", () => {
     const kinds = ["vacuum", "create_index", "alter_table", "cluster", "analyze", "copy"];
     expect(Object.keys(PROCESS_PROGRESS_LABEL_KEYS).sort()).toEqual([...kinds].sort());
@@ -245,7 +247,6 @@ describe("進捗の kind ラベル / 進捗順の並べ替え (#2269)", () => {
         expect(t(key)).not.toBe(key);
       }
     }
-    setLocale("en");
   });
 
   it("進捗率の高い順、割合なし・進捗なしは末尾", () => {
