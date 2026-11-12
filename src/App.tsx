@@ -4456,6 +4456,32 @@ export default function App() {
     [handleConnect, toast],
   );
 
+  // サブセット抽出の転送先の表を開く (#2264): 転送先の接続へ切り替え、接続が済んだら表を開く。
+  const [pendingSubsetOpen, setPendingSubsetOpen] = useState<{
+    profileId: string;
+    database: string | null;
+    table: string;
+  } | null>(null);
+  const handleOpenSubsetTarget = useCallback(
+    async (profile: ConnectionProfile, database: string | null, table: string) => {
+      // 接続が済んでから保留をセットする (失敗・キャンセル時に古い保留が残らないように)。
+      await handleConnect(profile);
+      setPendingSubsetOpen({ profileId: profile.id, database, table });
+    },
+    [handleConnect],
+  );
+  // サブセット抽出がサンドボックスを作った直後の登録 (#2264)。接続は開かず、作成用セッションの
+  // 切断・一覧への追加・トーストだけ行う (開くのは完了表示のボタンから)。
+  const handleSandboxRegistered = useCallback(
+    (res: SandboxCreateResponse) => {
+      markFeatureTried("helpSandboxTitle");
+      api.disconnect(res.session_id).catch(() => {});
+      setSandboxes((prev) => [...prev.filter((s) => s.id !== res.sandbox.id), res.sandbox]);
+      toast.success(translate("toastSandboxCreated", { name: res.sandbox.name }));
+    },
+    [toast],
+  );
+
   const handleDiscardSandbox = useCallback(
     async (record: SandboxRecord) => {
       // 未確定の編集の破棄をキャンセルされたら、サンドボックス破棄も中断する (#1391)。
@@ -8539,6 +8565,17 @@ export default function App() {
       patchTab,
     ],
   );
+
+  useEffect(() => {
+    if (!pendingSubsetOpen) return;
+    // 別の接続になっていたら (接続失敗・キャンセル・切り替え) 保留を捨てる。
+    if (!sessionId || selectedProfile?.id !== pendingSubsetOpen.profileId) {
+      setPendingSubsetOpen(null);
+      return;
+    }
+    setPendingSubsetOpen(null);
+    if (pendingSubsetOpen.database) handleOpenTable(pendingSubsetOpen.database, pendingSubsetOpen.table);
+  }, [pendingSubsetOpen, sessionId, selectedProfile?.id, handleOpenTable]);
 
   // 保留中の列移動を、対象テーブルのタブがアクティブになり最初の行が届いた時点で実行する (#1629)。
   // 行が 0 件のまま完了したとき・15 秒たっても条件が揃わないときは諦める。
@@ -15474,7 +15511,9 @@ export default function App() {
                   database={subsetTarget.database}
                   table={subsetTarget.table}
                   profiles={profiles}
-                  onSandboxCreated={handleSandboxCreated}
+                  onSandboxRegistered={handleSandboxRegistered}
+                  onOpenSandbox={(sandbox) => void handleConnect(sandboxToProfile(sandbox))}
+                  onOpenTransferTarget={handleOpenSubsetTarget}
                   onClose={() => setSubsetTarget(null)}
                 />
               </Suspense>

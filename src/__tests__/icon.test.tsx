@@ -21,6 +21,10 @@ describe("icon lexicon (#489)", () => {
     "format",
     "more",
     "trash",
+    "join-inner",
+    "join-left",
+    "fk-parent",
+    "fk-child",
   ];
 
   it.each(semantic)("renders an SVG for the %s glyph", (name) => {
