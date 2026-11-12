@@ -77,10 +77,34 @@ pub(crate) fn copy_statement(table_ident: &str, column_idents: &[String]) -> Str
     )
 }
 
-/// COPY が使えず INSERT に切り替えるときのログ文言。
+/// INSERT へ切り替えてよい COPY 拒否の SQLSTATE: `0A000` (機能未対応)、`42501` (権限不足)、
+/// `42809` (ビューなど COPY できない対象。データ受信後の finish 時に返る)。クラス 22 / 23 などの
+/// データエラーは INSERT でも同じく失敗するので含めない。
+const FALLBACK_SQLSTATES: [&str; 3] = ["0A000", "42501", "42809"];
+
+/// COPY のエラーが INSERT への切り替え対象なら、ログに出す理由 (SQLSTATE かプロトコルエラーの
+/// 旨だけ。メッセージ本文には行の値が入りうるので載せない) を返す。`protocol` はプーラなどによる
+/// プロトコル違反 (`sqlx::Error::Protocol`)。
+pub(crate) fn fallback_reason(sqlstate: Option<&str>, protocol: bool) -> Option<String> {
+    match sqlstate {
+        Some(code) if FALLBACK_SQLSTATES.contains(&code) => Some(format!("SQLSTATE {code}")),
+        Some(_) => None,
+        None if protocol => Some("protocol error".to_string()),
+        None => None,
+    }
+}
+
+/// COPY で書いてよい対象か。通常表 (`r`) とパーティション親 (`p`) だけで、ルールを持つ表は
+/// COPY がルールを発火しないので INSERT にする (ビュー `v`・マテビュー `m`・外部表 `f` も INSERT)。
+pub(crate) fn relation_supports_copy(relkind: &str, has_rules: bool) -> bool {
+    matches!(relkind, "r" | "p") && !has_rules
+}
+
+/// COPY が使えず INSERT に切り替えるときのログ文言。`reason` は [`fallback_reason`] の値で、
+/// 行の値を含まない。
 pub(crate) fn fallback_warning(table: &str, reason: &str) -> String {
     format!(
-        "COPY FROM STDIN が使えないため、INSERT 経路に切り替えて取り込みます (table={table}): {reason}"
+        "COPY FROM STDIN が使えないため、INSERT 経路に切り替えて取り込みます (table={table}, {reason})"
     )
 }
 
@@ -223,7 +247,46 @@ mod tests {
 
     #[test]
     fn fallback_warning_mentions_table_and_reason() {
-        let w = fallback_warning("t", "permission denied");
-        assert!(w.contains("t") && w.contains("permission denied") && w.contains("INSERT"));
+        let w = fallback_warning("t", "SQLSTATE 42501");
+        assert!(w.contains("table=t") && w.contains("SQLSTATE 42501") && w.contains("INSERT"));
+    }
+
+    #[test]
+    fn fallback_only_for_allow_listed_sqlstates() {
+        for code in ["0A000", "42501", "42809"] {
+            assert_eq!(
+                fallback_reason(Some(code), false),
+                Some(format!("SQLSTATE {code}"))
+            );
+        }
+        // データエラー (クラス 22 / 23) や存在しない表は切り替えない。
+        for code in [
+            "22P02", "22003", "23505", "23502", "42P01", "57014", "08006",
+        ] {
+            assert_eq!(fallback_reason(Some(code), false), None, "{code}");
+        }
+        assert_eq!(
+            fallback_reason(None, true),
+            Some("protocol error".to_string())
+        );
+        assert_eq!(fallback_reason(None, false), None);
+        // コード付きなら protocol 扱いにしない。
+        assert_eq!(fallback_reason(Some("22P02"), true), None);
+    }
+
+    #[test]
+    fn fallback_reason_never_carries_message_text() {
+        let r = fallback_reason(Some("42809"), false).unwrap_or_default();
+        assert_eq!(r, "SQLSTATE 42809");
+    }
+
+    #[test]
+    fn only_plain_tables_without_rules_use_copy() {
+        assert!(relation_supports_copy("r", false));
+        assert!(relation_supports_copy("p", false));
+        assert!(!relation_supports_copy("r", true));
+        for k in ["v", "m", "f", "S", "i"] {
+            assert!(!relation_supports_copy(k, false), "{k}");
+        }
     }
 }
