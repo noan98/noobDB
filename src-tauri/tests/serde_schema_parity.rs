@@ -2136,6 +2136,32 @@ fn build_fixtures() -> serde_json::Value {
         ],
         warnings: vec!["definitions".into()],
     };
+    let view_rebuild_plan = t::ViewRebuildPlan {
+        views: vec![
+            t::RebuildViewSummary {
+                schema: "public".into(),
+                name: "v1".into(),
+                kind: t::ViewKind::View,
+                size_bytes: None,
+                est_rows: None,
+            },
+            t::RebuildViewSummary {
+                schema: "public".into(),
+                name: "mv2".into(),
+                kind: t::ViewKind::MaterializedView,
+                size_bytes: Some(8192),
+                est_rows: Some(100),
+            },
+        ],
+        drop_statements: vec!["DROP VIEW \"public\".\"v1\";".into()],
+        create_statements: vec!["CREATE VIEW \"public\".\"v1\" AS\nSELECT 1;".into()],
+        restore_statements: vec!["GRANT SELECT ON \"public\".\"v1\" TO PUBLIC;".into()],
+        blockers: vec![t::RebuildBlocker {
+            kind: "policy".into(),
+            description: "policy p on table t".into(),
+        }],
+        referenced_columns: vec!["price".into()],
+    };
     let table_statistic = t::TableStatistic {
         name: "users".into(),
         row_estimate: Some(1234),
@@ -2899,6 +2925,7 @@ fn build_fixtures() -> serde_json::Value {
         "healthProbeItemVariants": health_probe_item_variants,
         "incomingForeignKey": incoming_foreign_key,
         "columnDependencyReport": column_dependency_report,
+        "viewRebuildPlan": view_rebuild_plan,
         "tableStatistic": table_statistic,
         "insertRowsResult": insert_rows_result,
         "chunkedDmlBatchResult": chunked_dml_batch_result,

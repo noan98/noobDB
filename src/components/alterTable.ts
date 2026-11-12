@@ -208,7 +208,11 @@ export type AlterStatementKind =
   | "dropForeignKey"
   | "dropCheck"
   /** SQLite のテーブル再作成 (#1888)。`AlterPlan.rebuild` から呼び出し側が差し込む。 */
-  | "rebuildTable";
+  | "rebuildTable"
+  /** PostgreSQL: 型変更のため依存ビューを DROP する (#2268)。`applyViewRebuild` が先頭へ差し込む。 */
+  | "dropDependentView"
+  /** PostgreSQL: DROP した依存ビューの CREATE と、権限・コメント等の復元 (#2268)。末尾へ差し込む。 */
+  | "recreateDependentView";
 
 /**
  * PostgreSQL の「ロックを長く持たない手順」(`onlineDdl.ts`, #2240) へ組み替えるための構造化ヒント。
@@ -634,6 +638,8 @@ function planConstraints(
 const STATEMENT_ORDER: Record<AlterStatementKind, number> = {
   // SQLite の再作成 (#1888) はモーダルが先頭に差し込む。他の文と混ざって並べ替えられることは無い。
   rebuildTable: -1,
+  dropDependentView: -2,
+  recreateDependentView: 5,
   addColumn: 0,
   renameColumn: 1,
   modifyColumn: 1,

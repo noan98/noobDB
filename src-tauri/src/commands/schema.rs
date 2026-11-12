@@ -19,6 +19,7 @@ use crate::db::types::{
     SchemaObject, TableColumnInfo, TableComment, TableExtrasInfo, TableIndexes, TablePartitions,
     TableRowEstimate, TableSchema, TableTrigger,
 };
+use crate::db::view_rebuild::{build_plan as build_view_rebuild_plan, ViewRebuildPlan};
 use crate::db::where_used::WhereUsedTarget;
 use crate::db::DriverKind;
 use crate::error::{AppError, Result};
@@ -683,6 +684,43 @@ pub async fn incoming_foreign_keys(
         }
     }
     Ok(incoming)
+}
+
+/// 列の型変更の前に、その列に依存するビュー / マテリアライズドビューを作り直す手順を組み立てる
+/// (#2268、PostgreSQL のみ)。`columns` は型を変える列 (変更前の名前)。返った DROP / CREATE / 復元の
+/// 文は、呼び出し側が ALTER 文と一緒に 1 トランザクションで流す。MySQL / SQLite は常に空
+/// (MySQL のビューは参照時に解決され、SQLite はテーブル再作成がビューも作り直す)。
+/// 読み取りのみなので `read_only` でも動く (実行は通常の DDL と同じくバックエンドの
+/// `read_only` ガードを通る)。`matview_with_data` が偽ならマテリアライズドビューは `WITH NO DATA`。
+#[tauri::command]
+pub async fn view_rebuild_plan(
+    session_id: String,
+    database: String,
+    table: String,
+    columns: Vec<String>,
+    matview_with_data: bool,
+    state: State<'_, AppState>,
+) -> Result<ViewRebuildPlan> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    view_rebuild_plan_core(session, &database, &table, &columns, matview_with_data).await
+}
+
+/// [`view_rebuild_plan`] の本体 (Tauri 無しで統合テストから駆動する)。
+pub async fn view_rebuild_plan_core(
+    session: Arc<Session>,
+    database: &str,
+    table: &str,
+    columns: &[String],
+    matview_with_data: bool,
+) -> Result<ViewRebuildPlan> {
+    let found = session
+        .conn
+        .dependent_views(database, table, columns)
+        .await?;
+    build_view_rebuild_plan(&found, matview_with_data).map_err(AppError::Other)
 }
 
 /// `column_dependencies` の結果 (#1758)。

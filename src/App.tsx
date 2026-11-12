@@ -9694,8 +9694,13 @@ export default function App() {
         confirmLabel: translate("alterTableConfirmOk"),
         tone: destructive ? "danger" : "primary",
         // 再作成は旧表を DROP して作り直すので、本番でなくてもテーブル名の入力を求める (#1888)。
+        // 依存ビューの作り直し (#2268) も、DROP を含むので本番では名前の入力を求める。
         typedConfirmation:
-          rebuild || (destructive && selectedProfile?.is_production) ? target.table : undefined,
+          rebuild ||
+          ((destructive || statements.some((s) => s.kind === "dropDependentView")) &&
+            selectedProfile?.is_production)
+            ? target.table
+            : undefined,
       });
       if (!ok) return undefined;
       try {

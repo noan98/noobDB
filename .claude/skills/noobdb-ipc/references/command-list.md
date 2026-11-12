@@ -183,6 +183,7 @@ DB に触れず実行もしない (UI のプレビュー専用)。両環境の�
 - `plan_sqlite_table_rebuild` (SQLite 構造エディタのテーブル再作成 SQL を生成、読み取りのみ。適用は `apply_sync_sql`、#1888)
 - `incoming_foreign_keys` (#1255)
 - `column_dependencies` (DROP COLUMN 前の依存列挙 — ビュー / トリガー / 生成列 / インデックス / FK、#1758)
+- `view_rebuild_plan` (PostgreSQL の列の型変更で作り直す依存ビューの DROP / CREATE / 復元 SQL を組み立てる、#2268。MySQL / SQLite は空)
 
 #1255 の 148 コマンドは N+1 の IPC を 1 回に畳む一括取得。いずれも読み取り専用。
 `table_statistics` はサイズ・行数に列数・インデックス数・PK 有無・FK 数を合成して返す

@@ -24,6 +24,7 @@ import type {
   TableStatistic,
   AlterTableContext,
   ColumnDependencyReport,
+  ViewRebuildPlan,
   SchemaSnapshotTable,
   SqliteRebuildEdit,
   SqliteRebuildPlan,
@@ -127,6 +128,25 @@ export const schemaCommands = {
       table,
       columns,
     }).then((r) => parseResponse(schemas.columnDependencyReport, r, "column_dependencies")),
+  /**
+   * PostgreSQL: `columns` の型を変えるときに作り直す依存ビュー (ビューの上のビューを含む) と、
+   * DROP → ALTER → CREATE → 復元の SQL を組み立てる (#2268)。読み取りのみ。
+   * MySQL / SQLite は常に空。`matviewWithData` が偽ならマテリアライズドビューは `WITH NO DATA`。
+   */
+  viewRebuildPlan: (
+    sessionId: string,
+    database: string,
+    table: string,
+    columns: string[],
+    matviewWithData: boolean,
+  ) =>
+    invoke<ViewRebuildPlan>("view_rebuild_plan", {
+      sessionId,
+      database,
+      table,
+      columns,
+      matviewWithData,
+    }).then((r) => parseResponse(schemas.viewRebuildPlan, r, "view_rebuild_plan")),
   /** テーブルのインデックス一覧を取得する。 */
   listIndexes: (sessionId: string, database: string, table: string) =>
     invoke<IndexInfo[]>("list_indexes", { sessionId, database, table }).then((r) =>

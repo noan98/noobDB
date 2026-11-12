@@ -42,3 +42,5 @@ mod sync_apply_integration;
 mod timeout_cancel_pool;
 #[path = "../transfer_integration.rs"]
 mod transfer_integration;
+#[path = "../view_rebuild_integration.rs"]
+mod view_rebuild_integration;
