@@ -183,6 +183,8 @@ export function buildSubsetPkCondition(input: {
   const composite = pkIndices.length > 1;
   const useRowValues = composite && driver !== "sqlite";
   const seen = new Set<string>();
+  // 各項の長さの合計が上限を超えた時点で打ち切る (全体の長さは合計以上になる)。
+  let approxLen = 0;
   for (const row of rows) {
     const where = buildRowWhere(driver, columns, row, pkIndices);
     if (where === null || seen.has(where)) continue;
@@ -193,10 +195,14 @@ export function buildSubsetPkCondition(input: {
       if (!simple.has(tuple)) {
         simple.add(tuple);
         simpleList.push(tuple);
+        approxLen += tuple.length + 2;
       }
     } else {
-      fallbackTerms.push(composite ? `(${where})` : where);
+      const term = composite ? `(${where})` : where;
+      fallbackTerms.push(term);
+      approxLen += term.length + 4;
     }
+    if (approxLen > SUBSET_MAX_WHERE_LEN) return { ok: false, reason: "tooLong" };
   }
   if (seen.size === 0) return { ok: false, reason: "noRows" };
 
@@ -210,4 +216,25 @@ export function buildSubsetPkCondition(input: {
   const condition = terms.join(" OR ");
   if (condition.length > SUBSET_MAX_WHERE_LEN) return { ok: false, reason: "tooLong" };
   return { ok: true, condition, rootLimit: seen.size };
+}
+
+/**
+ * 「選択した行を起点にサブセット抽出」メニューを無効にする理由の文言キー。出せるなら null。
+ * 行の識別キーは unique_key / rowid / ctid / all_columns へフォールバックし得るので、
+ * `pkIndices` が空でなくても、strategy が primary_key / unique_key でなければ「主キーなし」
+ * として扱う (主キーで IN 条件を作れる表だけを対象にする)。
+ */
+export function subsetMenuDisabledReason(input: {
+  hasTable: boolean;
+  identityStrategy: string | undefined;
+  pkMasked: boolean;
+  built: SubsetPkConditionResult;
+}): I18nKey | null {
+  const { hasTable, identityStrategy, pkMasked, built } = input;
+  if (!hasTable) return "gridExtractSubsetNoTable";
+  if (identityStrategy !== "primary_key" && identityStrategy !== "unique_key") return "gridExtractSubsetNoPk";
+  if (!built.ok && built.reason === "noPk") return "gridExtractSubsetNoPk";
+  if (pkMasked) return "gridExtractSubsetMasked";
+  if (!built.ok) return built.reason === "noRows" ? "gridExtractSubsetNoRows" : "gridExtractSubsetTooMany";
+  return null;
 }

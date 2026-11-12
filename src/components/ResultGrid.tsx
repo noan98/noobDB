@@ -162,7 +162,7 @@ import { CountUp } from "./CountUp";
 import { COUNT_UP_TOKEN, formatCountUpPlainInt, splitAroundCountUpToken } from "../useCountUp";
 import { ExportModal, type FullExportContext } from "./ExportModal";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
-import { buildSubsetPkCondition } from "./subsetExtract";
+import { buildSubsetPkCondition, subsetMenuDisabledReason } from "./subsetExtract";
 import { buildGridCopyInsert, buildGridCopyText, type GridCopyFormat } from "./gridCopyFormats";
 import { buildCopyFlashRange, collectAppliedFlashKeys, collectCopyFlashKeys } from "./gridCopyFlash";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
@@ -7695,15 +7695,13 @@ export const DataGrid = memo(function DataGrid({
                     rows: picked,
                     pkIndices: pks,
                   });
-                  const reason = !rowSqlTable
-                    ? t("gridExtractSubsetNoTable")
-                    : !rowSqlHasPk
-                      ? t("gridExtractSubsetNoPk")
-                      : pkMasked
-                        ? t("gridExtractSubsetMasked")
-                        : !built.ok
-                          ? t("gridExtractSubsetTooMany")
-                          : null;
+                  const reasonKey = subsetMenuDisabledReason({
+                    hasTable: !!rowSqlTable,
+                    identityStrategy: rowIdentityStrategy,
+                    pkMasked,
+                    built,
+                  });
+                  const reason = reasonKey ? t(reasonKey) : null;
                   const count = built.ok ? built.rootLimit : target.rowIndices.length;
                   return [
                     {

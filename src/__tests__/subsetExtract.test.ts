@@ -9,6 +9,7 @@ import {
   parseBoundedInt,
   previewMatches,
   resolveSubsetMasks,
+  subsetMenuDisabledReason,
   subsetWarningMessage,
 } from "../components/subsetExtract";
 
@@ -257,6 +258,56 @@ describe("buildSubsetPkCondition (#2265)", () => {
       ok: false,
       reason: "tooLong",
     });
+  });
+
+  it("真偽値・単精度 float・バイナリ・日時文字列のキー", () => {
+    const f = (driver: string, c: Column, v: unknown) =>
+      buildSubsetPkCondition({ driver, columns: [c], rows: [[v as never]], pkIndices: [0] });
+    // 真偽値は IN に載せず、述語 (PG は = TRUE、他は <> 0) を使う。
+    expect(f("postgres", col("flag", "BOOLEAN"), true)).toMatchObject({ condition: '"flag" = TRUE' });
+    expect(f("mysql", col("flag", "TINYINT"), false)).toMatchObject({ condition: "`flag` = 0" });
+    // 単精度 float は許容差つきの比較。
+    const fl = f("postgres", col("x", "float4"), 1.5);
+    expect(fl).toMatchObject({ ok: true });
+    if (fl.ok) expect(fl.condition).toMatch(/^ABS\("x" - \(1\.5\)\)/);
+    // バイナリは 3 方言のリテラル。
+    expect(f("mysql", col("b", "BINARY"), "dead")).toMatchObject({ condition: "`b` IN (0xdead)" });
+    expect(f("postgres", col("b", "BYTEA"), "dead")).toMatchObject({ condition: "\"b\" IN ('\\xdead')" });
+    expect(f("sqlite", col("b", "BLOB"), "dead")).toMatchObject({ condition: "\"b\" IN (X'dead')" });
+    // 日時文字列は引用符つきの文字列。
+    expect(f("mysql", col("at", "DATETIME"), "2026-01-02 03:04:05")).toMatchObject({
+      condition: "`at` IN ('2026-01-02 03:04:05')",
+    });
+  });
+
+  it("打ち切り: 上限を超える選択は tooLong", () => {
+    const rows = Array.from({ length: 5000 }, (_, i) => [i, "a", ""]);
+    expect(buildSubsetPkCondition({ driver: "sqlite", columns: cols, rows, pkIndices: [0, 1] })).toEqual({
+      ok: false,
+      reason: "tooLong",
+    });
+  });
+
+  it("無効理由は識別キーの種類と結果で振り分ける", () => {
+    const ok = { ok: true, condition: "x", rootLimit: 1 } as const;
+    const r = (over: Partial<Parameters<typeof subsetMenuDisabledReason>[0]>) =>
+      subsetMenuDisabledReason({
+        hasTable: true,
+        identityStrategy: "primary_key",
+        pkMasked: false,
+        built: ok,
+        ...over,
+      });
+    expect(r({})).toBeNull();
+    expect(r({ identityStrategy: "unique_key" })).toBeNull();
+    for (const s of ["rowid", "ctid", "all_columns", "none", undefined]) {
+      expect(r({ identityStrategy: s })).toBe("gridExtractSubsetNoPk");
+    }
+    expect(r({ hasTable: false })).toBe("gridExtractSubsetNoTable");
+    expect(r({ pkMasked: true })).toBe("gridExtractSubsetMasked");
+    expect(r({ built: { ok: false, reason: "noPk" } })).toBe("gridExtractSubsetNoPk");
+    expect(r({ built: { ok: false, reason: "noRows" } })).toBe("gridExtractSubsetNoRows");
+    expect(r({ built: { ok: false, reason: "tooLong" } })).toBe("gridExtractSubsetTooMany");
   });
 
   it("結果はセミコロン・コメントを含まない (checked_row_filter を通る形)", () => {
