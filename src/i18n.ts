@@ -4065,6 +4065,25 @@ const en = {
   dropReferencedBySqlite:
     "These tables still reference the table(s) being dropped. SQLite may let the DROP through depending on PRAGMA foreign_keys and leave orphaned child rows. Parent.column ← child.column:",
   dropReferencedByMore: "and {count} more",
+  // 型変更で依存ビューを作り直す (#2268)。
+  viewRebuildLoading: "Checking views that depend on the columns whose type changes…",
+  viewRebuildError: "Could not check dependent views: {error}",
+  viewRebuildTitle: "{count} view(s) depend on the columns whose type changes",
+  viewRebuildBody:
+    "PostgreSQL refuses to change the type of a column used by a view (cannot alter type of a column used by a view or rule). The views below (including views built on top of them) must be dropped and created again.",
+  viewRebuildToggle: "Recreate {count} dependent view(s) and apply",
+  viewRebuildOffHint: "Without this, applying fails on the server and nothing is changed.",
+  viewRebuildOnHint:
+    "The preview shows DROP, then ALTER, then CREATE, then the restore of owner, GRANT, COMMENT, indexes and triggers. Everything runs in one transaction and rolls back if any step fails.",
+  viewRebuildMatviewWarning:
+    "Recreating {count} materialized view(s) recomputes all rows (about {size}, {rows} rows) and holds locks while it runs.",
+  viewRebuildNoData:
+    "Create materialized views WITH NO DATA (run REFRESH MATERIALIZED VIEW yourself afterwards)",
+  viewRebuildRenameConflict:
+    "A column whose type changes is also renamed. The recreated views refer to the old name, so apply the rename and the type change separately.",
+  viewRebuildBlockedTitle: "Dependent views cannot be recreated automatically",
+  viewRebuildBlockedBody:
+    "These objects also depend on the columns (or on the views). Recreating the views would break or lose them, so applying is blocked. Handle them by hand first:",
   // DROP COLUMN の依存オブジェクト警告 (#1758)。
   dropColumnDepsLoading: "Checking objects that depend on the dropped columns…",
   dropColumnDepsError: "Could not check dependent objects: {error}",
@@ -12225,6 +12244,25 @@ const ja: Dict = {
   dropReferencedBySqlite:
     "次のテーブルがここで削除するテーブルを参照しています。SQLite は PRAGMA foreign_keys の設定次第で DROP が通り、子の行が孤立することがあります。親.列 ← 子.列:",
   dropReferencedByMore: "ほか {count} 件",
+  // 型変更で依存ビューを作り直す (#2268)。
+  viewRebuildLoading: "型を変える列に依存するビューを調べています…",
+  viewRebuildError: "依存ビューを調べられませんでした: {error}",
+  viewRebuildTitle: "型を変える列に依存するビューがあります ({count} 件)",
+  viewRebuildBody:
+    "PostgreSQL は、ビューが参照する列の型を変えられません (cannot alter type of a column used by a view or rule)。次のビュー (その上のビューを含む) を DROP して作り直す必要があります。",
+  viewRebuildToggle: "依存ビュー {count} 件を作り直して適用",
+  viewRebuildOffHint: "選ばないまま適用すると、サーバ側で失敗し、何も変更されません。",
+  viewRebuildOnHint:
+    "プレビューには DROP → ALTER → CREATE → オーナー・GRANT・COMMENT・インデックス・トリガーの復元が並びます。すべて 1 トランザクションで流し、途中で失敗すれば全体を元に戻します。",
+  viewRebuildMatviewWarning:
+    "マテリアライズドビュー {count} 件の再作成で全件を再計算します (概算 {size}・{rows} 行)。実行中はロックを持ちます。",
+  viewRebuildNoData:
+    "マテリアライズドビューを WITH NO DATA で作る (あとで REFRESH MATERIALIZED VIEW を自分で実行)",
+  viewRebuildRenameConflict:
+    "型を変える列が同じ ALTER でリネームされています。作り直すビューは旧い列名を参照するため、リネームと型の変更は分けて適用してください。",
+  viewRebuildBlockedTitle: "依存ビューを自動では作り直せません",
+  viewRebuildBlockedBody:
+    "次のオブジェクトも、この列 (またはビュー) に依存しています。ビューを作り直すと壊れる・失われるため、適用を止めました。先に手で対処してください:",
   // DROP COLUMN の依存オブジェクト警告 (#1758)。
   dropColumnDepsLoading: "削除する列に依存するオブジェクトを調べています…",
   dropColumnDepsError: "依存オブジェクトを調べられませんでした: {error}",

@@ -278,7 +278,8 @@ pub mod __test_api {
     pub use crate::commands::plan_watch::{PlanWatchRefresh, PlanWatchRefreshError};
     pub use crate::commands::profile_backup::{EncryptedExportResult, EncryptedImportResult};
     pub use crate::commands::schema::{
-        column_dependencies_core, AlterTableContext, ColumnDependencyReport, SchemaCacheTime,
+        column_dependencies_core, view_rebuild_plan_core, AlterTableContext,
+        ColumnDependencyReport, SchemaCacheTime,
     };
     pub use crate::commands::schema_drift::{RevertSql, SchemaDriftCapture};
     pub use crate::commands::ssh::ResolvedSshAlias;
@@ -289,6 +290,7 @@ pub mod __test_api {
     pub use crate::db::sandbox::SandboxConflict;
     pub use crate::db::schema_insight::{IncomingForeignKey, TableStatPrevious, TableStatistic};
     pub use crate::db::types::DatabaseTables;
+    pub use crate::db::view_rebuild::{RebuildBlocker, RebuildViewSummary, ViewKind, ViewRebuildPlan};
     pub use crate::plan_watch::store::{PlanGeneration, WatchEntry};
     pub use crate::schema_drift::{
         GenerationMeta as DriftGenerationMeta, TableChangeStatus, TableChangeSummary,
@@ -1981,6 +1983,7 @@ pub fn run() {
             commands::schema::plan_sqlite_table_rebuild,
             commands::schema::incoming_foreign_keys,
             commands::schema::column_dependencies,
+            commands::schema::view_rebuild_plan,
             commands::server::server_info,
             commands::server::server_metrics,
             commands::server::get_replication_status,

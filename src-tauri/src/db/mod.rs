@@ -72,6 +72,7 @@ pub mod types;
 /// インポートの競合モード (UPSERT) の方言別 SQL 生成 (#972)。
 pub mod upsert;
 pub(crate) mod upsert_capture;
+pub mod view_rebuild;
 /// オブジェクト依存検索 (Where-used) の参照検出 (#1027 / #1261)。
 pub mod where_used;
 
@@ -1935,6 +1936,23 @@ impl Connection {
             Connection::MySql(c) => c.generated_column_exprs(db, table).await,
             Connection::Postgres(c) => c.generated_column_exprs(db, table).await,
             Connection::Sqlite(c) => c.generated_column_exprs(db, table).await,
+        }
+    }
+
+    /// 列の型変更で作り直す必要のある依存ビューを調べる (#2268)。PostgreSQL だけが
+    /// 「参照列の型を変えるとビューが邪魔をする」ので値を返す。MySQL (ビューは参照時に解決される) と
+    /// SQLite (テーブル再作成でビューも作り直す, `sqlite_rebuild.rs`) は常に空。
+    pub async fn dependent_views(
+        &self,
+        db: &str,
+        table: &str,
+        columns: &[String],
+    ) -> Result<view_rebuild::DependentViews> {
+        match self {
+            Connection::MySql(_) | Connection::Sqlite(_) => {
+                Ok(view_rebuild::DependentViews::default())
+            }
+            Connection::Postgres(c) => c.dependent_views(db, table, columns).await,
         }
     }
 

@@ -66,6 +66,7 @@ const COVERED: Record<string, string> = {
   HistoryEntry: "historyEntry",
   ImportResult: "profileImportResult",
   ColumnDependencyReport: "columnDependencyReport",
+  ViewRebuildPlan: "viewRebuildPlan",
   IncomingForeignKey: "incomingForeignKey",
   IndexInfo: "indexInfo",
   TableExtrasInfo: "tableExtrasInfo",

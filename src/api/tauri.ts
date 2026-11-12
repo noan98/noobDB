@@ -1199,6 +1199,33 @@ export interface ColumnDependencyReport {
   warnings: string[];
 }
 
+/** 作り直す依存ビュー 1 件 (`view_rebuild_plan`、#2268)。作成順 (依存される側が先)。 */
+export interface RebuildViewSummary {
+  schema: string;
+  name: string;
+  kind: "view" | "materialized_view";
+  size_bytes: number | null;
+  est_rows: number | null;
+}
+
+/** 作り直しを止める依存 (RLS ポリシー・ビュー以外のルール・トリガー・関数など)。 */
+export interface RebuildBlocker {
+  kind: "policy" | "rule" | "other";
+  description: string;
+}
+
+/** 型変更で依存ビューを作り直す手順 (`view_rebuild_plan`、#2268)。PostgreSQL 以外は常に空。 */
+export interface ViewRebuildPlan {
+  views: RebuildViewSummary[];
+  /** ALTER の前に流す DROP (依存の逆順)。 */
+  drop_statements: string[];
+  /** ALTER の後に流す CREATE (依存の順)。 */
+  create_statements: string[];
+  /** CREATE の後に流す オーナー / 権限 / コメント / インデックス / トリガーの復元。 */
+  restore_statements: string[];
+  blockers: RebuildBlocker[];
+}
+
 /** テーブルを開いた結果 (`open_table` / `open_tables`、#1263)。 */
 export interface OpenTableResult {
   /** ページネーションの土台 (`SELECT *[, rowid|ctid] FROM ...`、LIMIT なし)。 */

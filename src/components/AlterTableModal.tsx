@@ -50,6 +50,9 @@ import { DdlRunReportNotice } from "./DdlRunReportNotice";
 import { useSqliteRebuildPlan } from "../useSqliteRebuildPlan";
 import { DropColumnDependencies } from "./DropColumnDependencies";
 import { useColumnDependencies } from "../useColumnDependencies";
+import { useViewRebuildPlan } from "../useViewRebuildPlan";
+import { applyViewRebuild, canRebuildViews, typeChangedColumns } from "../viewRebuild";
+import { ViewRebuildNotice } from "./ViewRebuildNotice";
 import { COUNT_PREVIEW_TIMEOUT_SECS, useCountPreviews } from "../useCountPreviews";
 
 /**
@@ -474,16 +477,40 @@ export function AlterTableModal({
     !loading && !loadError && attachedRebuildReason === null,
   );
   const rebuildPending = plan.rebuild !== null && rebuildState.status !== "ok";
+  // PostgreSQL: 型を変える列に依存するビューの作り直し (#2268)。選んだときだけ、DROP を先頭・CREATE と
+  // 復元を末尾へ差し込み、全体を 1 トランザクションで流す。依存が無ければ従来の文のまま。
+  const changedTypeColumns = useMemo(
+    () => typeChangedColumns(driver, baseline, existing),
+    [driver, baseline, existing],
+  );
+  const [rebuildViews, setRebuildViews] = useState(false);
+  const [matviewWithData, setMatviewWithData] = useState(true);
+  const viewRebuild = useViewRebuildPlan(
+    sessionId,
+    database,
+    table,
+    changedTypeColumns,
+    matviewWithData,
+    !loading && !loadError,
+  );
+  const viewRebuildPlan = viewRebuild.status === "ok" ? viewRebuild.plan : null;
+  const viewRebuildBlocked = viewRebuildPlan !== null && viewRebuildPlan.blockers.length > 0;
+  const viewRebuildRenameConflict = changedTypeColumns.some((c) =>
+    existing.some((e) => e.original === c && e.name.trim() !== "" && e.name.trim() !== c),
+  );
+  const viewRebuildActive = rebuildViews && canRebuildViews(viewRebuildPlan) && !viewRebuildRenameConflict;
   const statements = useMemo(() => {
     const base = applyOnline ? withMysqlOnlineClause(driver, plan.statements) : plan.statements;
-    if (plan.rebuild === null || rebuildState.status !== "ok") return base;
+    if (plan.rebuild === null || rebuildState.status !== "ok") {
+      return viewRebuildActive && viewRebuildPlan ? applyViewRebuild(base, viewRebuildPlan) : base;
+    }
     const rebuildStatement: AlterStatement = {
       sql: rebuildState.plan.sql,
       kind: "rebuildTable",
       destructive: true,
     };
     return [rebuildStatement, ...base];
-  }, [driver, applyOnline, plan.statements, plan.rebuild, rebuildState]);
+  }, [driver, applyOnline, plan.statements, plan.rebuild, rebuildState, viewRebuildActive, viewRebuildPlan]);
   const hasRebuild = plan.rebuild !== null;
   // 再作成では再現できず、適用すると失われる構文 (STRICT / COLLATE など)。
   const lostSyntax =
@@ -529,9 +556,12 @@ export function AlterTableModal({
     duplicateNames.length === 0 &&
     collisionNames.length === 0 &&
     !rebuildPending &&
-    generatedErrors.length === 0;
+    generatedErrors.length === 0 &&
+    !viewRebuildBlocked &&
+    !(rebuildViews && viewRebuildRenameConflict);
   // 不完全な行があるときは実行せず、理由を出す (空の新規行のエラーは触る/実行を試すまで伏せる)。
-  const showStagedToggle = showCost && canStage(driver, statements);
+  // 依存ビューの作り直しは DROP から復元までを 1 トランザクションに保つので、段階実行 (トランザクション分割) とは併用しない。
+  const showStagedToggle = showCost && canStage(driver, statements) && !viewRebuildActive;
   // 実行計画 (#2240): 段階の分け方とロック待ちの上限。SQLite はどちらも無く、従来どおり文をそのまま流す。
   const executionPlan = useMemo(
     () =>
@@ -1364,6 +1394,14 @@ export function AlterTableModal({
                 />
               )}
               <DropColumnDependencies state={columnDeps} />
+              <ViewRebuildNotice
+                state={viewRebuild}
+                enabled={rebuildViews}
+                onEnabledChange={setRebuildViews}
+                withData={matviewWithData}
+                onWithDataChange={setMatviewWithData}
+                renameConflict={viewRebuildRenameConflict}
+              />
               {hasIncompleteIndex && (
                 <Callout tone="warning">{t("alterTableIndexIncompleteBlocked")}</Callout>
               )}

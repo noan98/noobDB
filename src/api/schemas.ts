@@ -1583,6 +1583,23 @@ export const columnDependencyReport = z.object({
   warnings: z.array(z.string()),
 });
 
+/** 型変更で作り直す依存ビューの計画 (`view_rebuild_plan`、#2268)。 */
+export const viewRebuildPlan = z.object({
+  views: z.array(
+    z.object({
+      schema: z.string(),
+      name: z.string(),
+      kind: z.enum(["view", "materialized_view"]),
+      size_bytes: z.number().nullable(),
+      est_rows: z.number().nullable(),
+    }),
+  ),
+  drop_statements: z.array(z.string()),
+  create_statements: z.array(z.string()),
+  restore_statements: z.array(z.string()),
+  blockers: z.array(z.object({ kind: z.enum(["policy", "rule", "other"]), description: z.string() })),
+});
+
 /** 配列を返すコマンド用のラッパースキーマ。 */
 export const tableStatisticArray = z.array(tableStatistic);
 export const schemaSnapshotTableArray = z.array(schemaSnapshotTable);
