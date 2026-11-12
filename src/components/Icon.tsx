@@ -4,6 +4,8 @@ import {
   IconAlertTriangle,
   IconAlignLeft,
   IconArrowBackUp,
+  IconArrowDownLeft,
+  IconArrowUpRight,
   IconPencil,
   IconArrowForwardUp,
   IconArrowsExchange,
@@ -240,7 +242,11 @@ export type IconName =
   | "more"
   | "send"
   | "external-link"
-  | "trash";
+  | "trash"
+  | "join-inner"
+  | "join-left"
+  | "fk-parent"
+  | "fk-child";
 
 /**
  * アイコンのサイズトークン。値は `App.css` の `--text-*` / `--space-*` と同じ
@@ -284,6 +290,34 @@ const BRAND_GLYPHS: Record<BrandIconName, ReactNode> = {
 };
 
 /**
+ * JOIN 種別のベン図 (#2267)。Tabler に集合演算の絵が無いため自前で描く。ブランドと
+ * 違い線画 (stroke) の glyph で、2 つの円 (左 = 基点の表 / 右 = 結合する表) のうち
+ * **結果に残る領域**を `currentColor` で塗りつぶす。INNER は重なりだけ、LEFT は左の円
+ * 全体。色は周囲のテキスト色に追従し、線幅は `strokeWidth` で他のアイコンと揃える。
+ */
+type VennIconName = "join-inner" | "join-left";
+
+const VENN_GLYPHS: Record<VennIconName, ReactNode> = {
+  "join-inner": (
+    <>
+      <path d="M12 6.804A6 6 0 0 0 12 17.196A6 6 0 0 0 12 6.804Z" fill="currentColor" />
+      <circle cx="9" cy="12" r="6" />
+      <circle cx="15" cy="12" r="6" />
+    </>
+  ),
+  "join-left": (
+    <>
+      <circle cx="9" cy="12" r="6" fill="currentColor" />
+      <circle cx="15" cy="12" r="6" />
+    </>
+  ),
+};
+
+function isVennIcon(name: IconName): name is VennIconName {
+  return name in VENN_GLYPHS;
+}
+
+/**
  * `name` がブランドロゴかどうかの型ガード。これで分岐すると、以降のコードで
  * `GLYPHS` (= ブランドを除いた全 `IconName` を網羅する) をキャスト無しで引ける。
  */
@@ -295,7 +329,7 @@ function isBrandIcon(name: IconName): name is BrandIconName {
  * 意味 (`IconName`) から Tabler のグリフへの束縛。**「意味 → グリフ」の唯一の
  * 情報源**で、名前が素直に対応しないものだけ選定理由をコメントで残す。
  */
-const GLYPHS: Record<Exclude<IconName, BrandIconName>, TablerIcon> = {
+const GLYPHS: Record<Exclude<IconName, BrandIconName | VennIconName>, TablerIcon> = {
   sun: IconSun,
   moon: IconMoon,
   help: IconHelp,
@@ -403,6 +437,9 @@ const GLYPHS: Record<Exclude<IconName, BrandIconName>, TablerIcon> = {
   // 削除 (行・項目を消す破壊的操作): ゴミ箱。閉じる/解除の `close` (×) と区別し、
   // 取り消せない削除であることを形で伝える。危険色と組み合わせて使う。
   trash: IconTrash,
+  // 外部キーの向き (#2267): 参照先 (親) へ向かう右上向き / 参照元 (子) から戻る左下向き。
+  "fk-parent": IconArrowUpRight,
+  "fk-child": IconArrowDownLeft,
 };
 
 interface IconProps {
@@ -446,6 +483,24 @@ export function Icon({ name, size = "1em", strokeWidth = ICON_STROKE.regular }: 
         style={style}
       >
         {BRAND_GLYPHS[name]}
+      </svg>
+    );
+  }
+
+  if (isVennIcon(name)) {
+    return (
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        focusable="false"
+        style={style}
+      >
+        {VENN_GLYPHS[name]}
       </svg>
     );
   }

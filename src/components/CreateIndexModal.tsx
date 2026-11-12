@@ -28,6 +28,8 @@ import { buildIndexExecutionPlan, planNeedsRunner } from "./onlineDdl";
 import type { DdlRunOptions, DdlRunReport } from "./onlineDdlRunner";
 import { DdlLockTimeoutField } from "./DdlLockTimeoutField";
 import { DdlRunReportNotice } from "./DdlRunReportNotice";
+import { DdlStageTrack } from "./DdlStageTrack";
+import type { DdlStep } from "./onlineDdl";
 
 /**
  * インデックス作成の軽量モーダル (#850)。`describeTable` で列一覧を取得し、選択した
@@ -92,6 +94,8 @@ export function CreateIndexModal({
   const [concurrentChoice, setConcurrentChoice] = useState<boolean | null>(null);
   const [report, setReport] = useState<DdlRunReport | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  // 実行した計画の段階 (失敗後に計画が編集されても、トラックは実行時の段階で描く)。
+  const [runSteps, setRunSteps] = useState<readonly DdlStep[] | null>(null);
   const rowEstimate = useTableRowEstimate(sessionId, database ?? "", table, driver === "postgres");
   const bigTable =
     rowEstimate.status === "ok" && rowEstimate.rows !== null && rowEstimate.rows >= ALTER_COST_ROW_THRESHOLD;
@@ -232,6 +236,7 @@ export function CreateIndexModal({
       return;
     }
     setReport(null);
+    setRunSteps(runPlan.steps);
     setSubmitting(true);
     void Promise.resolve(
       onRun(sql, { plan: runPlan, onProgress: (done, total) => setProgress({ done, total }) }),
@@ -537,15 +542,25 @@ export function CreateIndexModal({
               </FormSection>
             )}
             {!effConcurrently && <DdlLockTimeoutField driver={driver} />}
+            {(!running || !progress) && !report && runPlan && (
+              <DdlStageTrack steps={runPlan.steps} state={{ kind: "plan" }} />
+            )}
+            {running && progress && runSteps && (
+              <DdlStageTrack steps={runSteps} state={{ kind: "running", done: progress.done }} />
+            )}
             {running && progress && (
               <Callout tone="info" role="status" data-testid="ddl-run-progress">
-                {t("ddlRunProgress", { done: progress.done, total: progress.total })}
+                {t("ddlRunProgress", {
+                  done: Math.min(progress.done + 1, progress.total),
+                  total: progress.total,
+                })}
               </Callout>
             )}
             {report && (
               <DdlRunReportNotice
                 report={report}
                 driver={driver}
+                steps={runSteps ?? undefined}
                 onSendToEditor={onSendToEditor}
                 onOpenProcessList={onOpenProcessList}
               />

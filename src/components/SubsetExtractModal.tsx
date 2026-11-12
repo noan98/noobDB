@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
+import { motion, useReducedMotion } from "motion/react";
 import { save } from "@tauri-apps/plugin-dialog";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { connectRequestFromProfile } from "../connectRequest";
@@ -8,21 +9,25 @@ import {
   listenSubsetStream,
   type ConnectionProfile,
   type SandboxCreateResponse,
+  type SandboxRecord,
+  type SubsetDoneEvent,
+  type SubsetWarning,
   type SubsetExisting,
   type SubsetOutput,
   type SubsetPreview,
 } from "../api/tauri";
 import { useT } from "../i18n";
+import { staggerContainer, variants } from "../motion";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { pickDefaultDatabase } from "./dataTransfer";
 import { ExportMaskingSection } from "./ExportMaskingSection";
 import type { ExportMaskOverrides } from "./exportMasking";
-import { JobPresence, JobProgressDetail, useJobClock } from "./JobProgress";
+import { JobOutcome, JobPresence, JobProgressDetail, useJobClock } from "./JobProgress";
 import { ListboxSelect } from "./ListboxSelect";
 import { LoadingButton } from "./LoadingButton";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { ErrorNote, FieldError, FieldLabel, FormSection, PathRow } from "./modalForm";
+import { FieldError, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { Spinner } from "./Spinner";
 import { StreamProgressBar } from "./StreamProgressBar";
 import {
@@ -64,7 +69,11 @@ interface Props {
   initialRootLimit?: number;
   profiles: ConnectionProfile[];
   /** サンドボックスを出力先にしたとき、作成後の接続を開く。 */
-  onSandboxCreated: (res: SandboxCreateResponse) => void;
+  onSandboxRegistered: (res: SandboxCreateResponse) => void;
+  /** 作成済みのサンドボックスへ接続して開く (完了表示のボタンから)。 */
+  onOpenSandbox: (sandbox: SandboxRecord) => void;
+  /** 転送先の接続へ切り替えて、その表を開く (転送出力の完了表示から)。 */
+  onOpenTransferTarget?: (profile: ConnectionProfile, database: string | null, table: string) => void;
   onClose: () => void;
 }
 
@@ -73,8 +82,31 @@ type OutputKind = SubsetOutput["kind"] | "sandbox";
 type Status =
   | { kind: "idle" }
   | { kind: "previewing" }
-  | { kind: "running"; phase: "collect" | "write"; rows: number }
-  | { kind: "error"; message: string };
+  | { kind: "running"; phase: "collect" | "write"; rows: number };
+
+/** 実行の結末。モーダルは自動で閉じず、完了・中断・失敗のどれでもここに残す (#2264)。 */
+type Outcome =
+  | {
+      kind: "done";
+      output: OutputKind;
+      rows: number | null;
+      elapsedMs: number;
+      tables: { table: string; rows: number | null }[];
+      warnings: SubsetWarning[];
+      /** 完了メッセージ用 (スクリプト出力のときだけ)。 */
+      path: string | null;
+      sandbox: SandboxRecord | null;
+      /** 実行時点の転送先 (完了後にフォームを触っても変わらない)。 */
+      transfer: { profile: ConnectionProfile; database: string | null } | null;
+      truncatedTables: string[];
+    }
+  | { kind: "cancelled"; rows: number; elapsedMs: number; total: number | null }
+  | { kind: "error"; message: string; rows: number; elapsedMs: number; total: number | null };
+
+/** 表別の内訳の先頭何件まで順次入場させるか (多い一覧を全件遅延させない)。 */
+const STAGGER_CAP = 20;
+
+const MotionDiv = chakra(motion.div, {}, { forwardProps: ["variants", "initial", "animate"] });
 
 export function SubsetExtractModal({
   sessionId,
@@ -84,7 +116,9 @@ export function SubsetExtractModal({
   initialWhere,
   initialRootLimit,
   profiles,
-  onSandboxCreated,
+  onSandboxRegistered,
+  onOpenSandbox,
+  onOpenTransferTarget,
   onClose,
 }: Props) {
   const t = useT();
@@ -101,6 +135,13 @@ export function SubsetExtractModal({
   const [previewKey, setPreviewKey] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
+  // 実行開始時のプレビュー総行数 (確定進捗の分母)。サンドボックスは進捗イベントが無いので使わない。
+  const [runTotal, setRunTotal] = useState<number | null>(null);
+  const runStartRef = useRef(0);
+  // 実行ごとに増やす番号。遅れて返った中断応答が次の実行の結果を上書きしないように使う。
+  const runSeqRef = useRef(0);
+  const reduced = useReducedMotion() ?? false;
 
   const [maskEnabled, setMaskEnabled] = useState(false);
   const [maskOverrides, setMaskOverrides] = useState<ExportMaskOverrides>({});
@@ -278,7 +319,11 @@ export function SubsetExtractModal({
 
   const runSandbox = async () => {
     if (!request) return;
+    runSeqRef.current += 1;
     setStatus({ kind: "running", phase: "write", rows: 0 });
+    setOutcome(null);
+    setRunTotal(null);
+    runStartRef.current = Date.now();
     try {
       const res = await api.createSandbox({
         sourceSessionId: sessionId,
@@ -289,12 +334,33 @@ export function SubsetExtractModal({
         includeRelated: true,
         rowLimit: request.rootRowLimit ?? null,
       });
+      // 登録 (一覧への追加・作成用セッションの切断・トースト) は完了時に必ず行う。
+      // 完了表示のボタンを押さずに閉じても、セッションがリークしないように。
+      onSandboxRegistered(res);
       if (unmountedRef.current) return;
       setStatus({ kind: "idle" });
-      onSandboxCreated(res);
-      onClose();
+      setOutcome({
+        kind: "done",
+        output: "sandbox",
+        rows: null,
+        elapsedMs: Date.now() - runStartRef.current,
+        tables: res.sandbox.tables.map((name) => ({ table: name, rows: null })),
+        warnings: [],
+        path: null,
+        sandbox: res.sandbox,
+        transfer: null,
+        truncatedTables: res.sandbox.truncated_tables,
+      });
     } catch (e) {
-      if (!unmountedRef.current) setStatus({ kind: "error", message: String(e) });
+      if (unmountedRef.current) return;
+      setStatus({ kind: "idle" });
+      setOutcome({
+        kind: "error",
+        message: String(e),
+        rows: 0,
+        elapsedMs: Date.now() - runStartRef.current,
+        total: null,
+      });
     }
   };
 
@@ -322,43 +388,227 @@ export function SubsetExtractModal({
 
     const streamId = makeSubsetStreamId();
     streamIdRef.current = streamId;
+    runSeqRef.current += 1;
+    setOutcome(null);
+    setRunTotal(visiblePreview?.totalRows ?? null);
+    runStartRef.current = Date.now();
     setStatus({ kind: "running", phase: "collect", rows: 0 });
+    const runTotalNow = visiblePreview?.totalRows ?? null;
+    const failWith = (message: string, rows: number) => {
+      cleanupStream();
+      setStatus({ kind: "idle" });
+      setOutcome({
+        kind: "error",
+        message,
+        rows,
+        elapsedMs: Date.now() - runStartRef.current,
+        total: runTotalNow,
+      });
+    };
     try {
       unlistenRef.current = await listenSubsetStream(streamId, {
         onProgress: (e) => setStatus({ kind: "running", phase: e.phase, rows: e.rows }),
-        onDone: (e) => {
+        onDone: (e: SubsetDoneEvent) => {
           cleanupStream();
           setStatus({ kind: "idle" });
-          toast.success(
-            e.path
-              ? t("subsetDoneScript", { rows: e.rows, tables: e.tables.length, path: e.path })
-              : t("subsetDone", { rows: e.rows, tables: e.tables.length }),
-          );
-          onClose();
+          setOutcome({
+            kind: "done",
+            output,
+            rows: e.rows,
+            elapsedMs: e.elapsedMs,
+            tables: e.tables,
+            warnings: e.warnings,
+            path: e.path,
+            sandbox: null,
+            transfer:
+              output === "transfer" && targetProfile
+                ? { profile: targetProfile, database: targetDatabase }
+                : null,
+            truncatedTables: [],
+          });
         },
-        onError: (e) => {
-          cleanupStream();
-          setStatus({ kind: "error", message: e.message });
-        },
-        onCancelled: () => {
-          cleanupStream();
-          setStatus({ kind: "idle" });
-        },
+        onError: (e) => failWith(e.message, e.rows),
+        // 中断の完了表示は cancelRun が cancel_stream の応答で出す (ここで二重に出さない)。
+        onCancelled: () => {},
       });
       await api.runSubset(streamId, request, subsetOutput, masks);
     } catch (e) {
-      cleanupStream();
-      setStatus({ kind: "error", message: String(e) });
+      failWith(String(e), 0);
     }
   };
 
   const cancelRun = async () => {
     const streamId = streamIdRef.current;
     if (!streamId) return;
+    const rows = status.kind === "running" ? status.rows : 0;
+    const seq = runSeqRef.current;
+    const startedAt = runStartRef.current;
+    const total = runTotal;
     cleanupStream();
     setStatus({ kind: "idle" });
     const res = await api.cancelStream(streamId).catch(() => null);
-    toast.info(t("subsetCancelled", { rows: res?.deliveredRows ?? 0 }));
+    // 応答を待つ間に次の実行が始まっていたら、古い中断結果は捨てる。
+    if (unmountedRef.current || runSeqRef.current !== seq) return;
+    setOutcome({
+      kind: "cancelled",
+      rows: res?.deliveredRows ?? rows,
+      elapsedMs: Date.now() - startedAt,
+      total,
+    });
+  };
+
+  const openScriptDir = (path: string) => {
+    api.revealInFileManager(path).catch((e) => toast.error(t("subsetOpenFailed", { error: String(e) })));
+  };
+
+  const renderOutcome = () => {
+    if (!outcome) return null;
+    if (outcome.kind === "cancelled") {
+      return (
+        <JobOutcome
+          kind="cancelled"
+          testId="subset-outcome"
+          detail={{
+            done: outcome.rows,
+            total: outcome.total,
+            elapsedMs: outcome.elapsedMs,
+            stats: [{ label: t("jobStatRows"), value: outcome.rows }],
+          }}
+          message={t("subsetCancelled", { rows: outcome.rows })}
+        />
+      );
+    }
+    if (outcome.kind === "error") {
+      return (
+        <JobOutcome
+          kind="error"
+          testId="subset-outcome"
+          detail={{
+            done: outcome.rows,
+            total: outcome.total,
+            elapsedMs: outcome.elapsedMs,
+            stats: [{ label: t("jobStatRows"), value: outcome.rows }],
+          }}
+          message={t("subsetError", { error: outcome.message })}
+        />
+      );
+    }
+    const rowsKnown = outcome.rows !== null;
+    const message = outcome.sandbox
+      ? t("subsetDoneSandbox", { name: outcome.sandbox.name, tables: outcome.tables.length })
+      : outcome.path
+        ? t("subsetDoneScript", {
+            rows: outcome.rows ?? 0,
+            tables: outcome.tables.length,
+            path: outcome.path,
+          })
+        : t("subsetDone", { rows: outcome.rows ?? 0, tables: outcome.tables.length });
+    const { path, sandbox } = outcome;
+    const transfer = outcome.transfer;
+    return (
+      <JobOutcome
+        kind="done"
+        testId="subset-outcome"
+        tone={outcome.warnings.length > 0 || outcome.truncatedTables.length > 0 ? "warning" : "success"}
+        detail={{
+          done: outcome.rows ?? 0,
+          total: rowsKnown ? outcome.rows : null,
+          elapsedMs: outcome.elapsedMs,
+          stats: [
+            ...(rowsKnown ? [{ label: t("jobStatRows"), value: outcome.rows as number }] : []),
+            { label: t("jobStatTables"), value: outcome.tables.length },
+          ],
+          rate: rowsKnown ? { label: t("jobStatRowsPerSec"), count: outcome.rows as number } : undefined,
+        }}
+        message={message}
+      >
+        {outcome.tables.length > 0 && (
+          <MotionDiv
+            data-testid="subset-outcome-tables"
+            variants={staggerContainer(reduced)}
+            initial="initial"
+            animate="animate"
+            display="flex"
+            flexDirection="column"
+            border="1px solid"
+            borderColor="app.border"
+            borderRadius="md"
+            overflow="hidden"
+          >
+            {outcome.tables.map((row, i) => (
+              <MotionDiv
+                key={row.table}
+                data-testid="subset-outcome-row"
+                variants={i < STAGGER_CAP ? variants.staggerItem : undefined}
+                display="flex"
+                alignItems="baseline"
+                gap="3"
+                px="3"
+                py="1.5"
+                borderBottom="1px solid"
+                borderColor="app.border"
+                fontSize="sm"
+              >
+                <chakra.span flex="1" minW="0" fontFamily="mono" wordBreak="break-all">
+                  {row.table}
+                </chakra.span>
+                {row.rows !== null && (
+                  <chakra.span fontFamily="mono" minW="64px" textAlign="right">
+                    {row.rows}
+                  </chakra.span>
+                )}
+              </MotionDiv>
+            ))}
+          </MotionDiv>
+        )}
+        {outcome.warnings.map((w) => {
+          const m = subsetWarningMessage(w);
+          return (
+            <Callout key={JSON.stringify(w)} tone="warning" role="status">
+              {t(m.key, m.params)}
+            </Callout>
+          );
+        })}
+        {outcome.truncatedTables.length > 0 && (
+          <Callout tone="warning" role="status">
+            {t("subsetSandboxTruncated", { tables: outcome.truncatedTables.join(", ") })}
+          </Callout>
+        )}
+        {(path || sandbox || (transfer && onOpenTransferTarget)) && (
+          <Flex gap="2" justify="flex-end">
+            {path && (
+              <Button type="button" variant="secondary" onClick={() => openScriptDir(path)}>
+                {t("subsetOpenScriptDir")}
+              </Button>
+            )}
+            {sandbox && (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  onOpenSandbox(sandbox);
+                  onClose();
+                }}
+              >
+                {t("subsetOpenSandbox")}
+              </Button>
+            )}
+            {transfer && onOpenTransferTarget && (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  onOpenTransferTarget(transfer.profile, transfer.database, table);
+                  onClose();
+                }}
+              >
+                {t("subsetOpenTransferTarget")}
+              </Button>
+            )}
+          </Flex>
+        )}
+      </JobOutcome>
+    );
   };
 
   const maskLabels = useMemo(() => maskTargets.map((m) => m.label), [maskTargets]);
@@ -680,11 +930,12 @@ export function SubsetExtractModal({
               <chakra.div aria-live="off">
                 <JobProgressDetail
                   done={status.rows}
-                  total={null}
+                  total={status.phase === "write" ? runTotal : null}
                   elapsedMs={jobElapsedMs}
                   running
                   rate={{ label: t("jobStatRowsPerSec"), count: status.rows }}
                   stats={[{ label: t("jobStatRows"), value: status.rows }]}
+                  barTestId="subset-progress-bar"
                 />
               </chakra.div>
               <chakra.div role="status" aria-live="polite" fontSize="sm" color="app.text">
@@ -693,7 +944,7 @@ export function SubsetExtractModal({
             </chakra.div>
           )}
         </JobPresence>
-        {status.kind === "error" && <ErrorNote>{t("subsetError", { error: status.message })}</ErrorNote>}
+        {outcome && renderOutcome()}
       </ModalBody>
       <ModalFooter>
         <Button
