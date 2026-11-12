@@ -6,7 +6,7 @@ import { ErrorNote } from "./modalForm";
 import { SqlPreview } from "./SqlPreview";
 import { Button } from "./ui";
 import { DdlStageTrack } from "./DdlStageTrack";
-import { failedTrackState } from "./ddlStageTrack";
+import { failedTrackState } from "./ddlStageTrackModel";
 import type { DdlStep } from "./onlineDdl";
 
 /**

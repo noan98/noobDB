@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { failedTrackState, stageLock, stageStatuses } from "../components/ddlStageTrack";
+import { failedTrackState, stageLock, stageStatuses } from "../components/ddlStageTrackModel";
 import type { DdlStep } from "../components/onlineDdl";
 import type { DdlRunReport } from "../components/onlineDdlRunner";
 

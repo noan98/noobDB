@@ -4,7 +4,7 @@ import { useT } from "../i18n";
 import { transitions } from "../motion";
 import { Icon, ICON_SIZES } from "./Icon";
 import type { DdlStep } from "./onlineDdl";
-import { stageLock, stageStatuses, type StageStatus, type StageTrackState } from "./ddlStageTrack";
+import { stageLock, stageStatuses, type StageStatus, type StageTrackState } from "./ddlStageTrackModel";
 
 /**
  * オンライン DDL の段階実行を、段階ごとのノードと段階間のコネクタで見せる部品 (#2263)。
