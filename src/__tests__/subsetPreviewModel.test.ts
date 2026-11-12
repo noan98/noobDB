@@ -125,6 +125,15 @@ describe("buildSubsetGraph: 子経由の親・辿れない外部キー", () => {
     expect(g.parentDepth).toBe(2);
     expect(by.order_items.references).toEqual(["orders", "products"]);
   });
+  it("親と子の両方の行を持つ中継の表 (親レーン) を通っても子の段数が切れない", () => {
+    // root → A → C と root → B。B が親として A の行を余分に取り込み、A は親レーンに置かれる。
+    const p = preview([tp("root", 2, 0, 0), tp("A", 0, 2, 3), tp("B", 0, 4, 0), tp("C", 0, 6, 0)]);
+    const g = buildSubsetGraph(p, [fk("A", "root"), fk("B", "root"), fk("B", "A"), fk("C", "A")]);
+    const by = Object.fromEntries(g.nodes.map((n) => [n.table, n]));
+    expect(by.A.lane).toBe("parent");
+    expect(by.C.depth).toBe(2);
+    expect(g.childDepth).toBe(2);
+  });
   it("辿れなかった外部キー (unresolvedForeignKey) はエッジにしない", () => {
     const p = preview([tp("a", 1, 0, 0), tp("b", 0, 0, 1)], {
       warnings: [{ kind: "unresolvedForeignKey", table: "a", constraint: "fk_a_b" }],

@@ -137,9 +137,16 @@ export function buildSubsetGraph(preview: SubsetPreview, foreignKeys: readonly F
 
   const lanes = new Map(preview.tables.map((t) => [t.table, assignLane(t)] as const));
   const rootIds = preview.tables.filter((t) => lanes.get(t.table) === "root").map((t) => t.table);
-  const childDist = bfsDepth(rootIds, down, (id) => lanes.get(id) !== "parent");
-  // 親は「親レーン以外のすべての表 (起点 + 子)」から辿る (子経由で取り込まれた親も段数を持つ)。
-  const parentStarts = preview.tables.filter((t) => lanes.get(t.table) !== "parent").map((t) => t.table);
+  // 辿れるかどうかは表示レーンではなく行の役割で決める。親と子の両方の行を持つ表は
+  // 親レーンに置かれることがあるが、子の経路の中継点でもあるので子の BFS から外さない。
+  const byTable = new Map(preview.tables.map((t) => [t.table, t] as const));
+  const hasChildRole = (id: string) => {
+    const t = byTable.get(id);
+    return !!t && (t.childRows > 0 || t.rootRows > 0);
+  };
+  const childDist = bfsDepth(rootIds, down, hasChildRole);
+  // 親は「起点か子の行を持つすべての表」から辿る (子経由で取り込まれた親も段数を持つ)。
+  const parentStarts = preview.tables.filter((t) => hasChildRole(t.table)).map((t) => t.table);
   const parentDist = bfsDepth(parentStarts, up, () => true);
 
   const nodes: SubsetNode[] = preview.tables.map((t) => {
