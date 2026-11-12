@@ -437,7 +437,7 @@ function singleFloatWhere(driver: string, col: Column, v: CellValue): string | n
 /** f32 の相対精度 (約 6e-8) より大きく、別の値と取り違えない程度の許容差。 */
 const FLOAT4_WHERE_REL_TOLERANCE = "0.000001";
 
-function isSinglePrecisionFloat(driver: string, col: Column): boolean {
+export function isSinglePrecisionFloat(driver: string, col: Column): boolean {
   // SQLite の REAL は常に f64 (最短表記でも厳密に往復する)。
   if (driver === "sqlite") return false;
   const t = col.type_name.toUpperCase();

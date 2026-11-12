@@ -266,10 +266,12 @@ describe("buildSubsetPkCondition (#2265)", () => {
     // 真偽値は IN に載せず、述語 (PG は = TRUE、他は <> 0) を使う。
     expect(f("postgres", col("flag", "BOOLEAN"), true)).toMatchObject({ condition: '"flag" = TRUE' });
     expect(f("mysql", col("flag", "TINYINT"), false)).toMatchObject({ condition: "`flag` = 0" });
-    // 単精度 float は許容差つきの比較。
-    const fl = f("postgres", col("x", "float4"), 1.5);
-    expect(fl).toMatchObject({ ok: true });
-    if (fl.ok) expect(fl.condition).toMatch(/^ABS\("x" - \(1\.5\)\)/);
+    // 単精度 float のキーは許容差つきの比較しか作れず、近い値の別の行を拾うので対象外。
+    expect(f("postgres", col("x", "float4"), 1.0000001)).toEqual({ ok: false, reason: "inexactKey" });
+    expect(f("postgres", col("x", "REAL"), 1.5)).toEqual({ ok: false, reason: "inexactKey" });
+    expect(f("mysql", col("x", "FLOAT"), 1.5)).toEqual({ ok: false, reason: "inexactKey" });
+    // SQLite の REAL は倍精度で厳密に往復するので IN に載せてよい。
+    expect(f("sqlite", col("x", "REAL"), 1.5)).toMatchObject({ ok: true, condition: '"x" IN (1.5)' });
     // バイナリは 3 方言のリテラル。
     expect(f("mysql", col("b", "BINARY"), "dead")).toMatchObject({ condition: "`b` IN (0xdead)" });
     expect(f("postgres", col("b", "BYTEA"), "dead")).toMatchObject({ condition: "\"b\" IN ('\\xdead')" });
@@ -307,6 +309,7 @@ describe("buildSubsetPkCondition (#2265)", () => {
     expect(r({ pkMasked: true })).toBe("gridExtractSubsetMasked");
     expect(r({ built: { ok: false, reason: "noPk" } })).toBe("gridExtractSubsetNoPk");
     expect(r({ built: { ok: false, reason: "noRows" } })).toBe("gridExtractSubsetNoRows");
+    expect(r({ built: { ok: false, reason: "inexactKey" } })).toBe("gridExtractSubsetInexactKey");
     expect(r({ built: { ok: false, reason: "tooLong" } })).toBe("gridExtractSubsetTooMany");
   });
 

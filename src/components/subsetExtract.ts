@@ -11,7 +11,7 @@ import type {
   SubsetWarning,
 } from "../api/tauri";
 import type { I18nKey } from "../i18n";
-import { buildRowWhere, rowPkEqualityLiterals } from "./cellEdit";
+import { buildRowWhere, isSinglePrecisionFloat, rowPkEqualityLiterals } from "./cellEdit";
 import { quoteIdentFor } from "./sqlDialect";
 import { effectiveMaskRule, type ExportMaskOverrides } from "./exportMasking";
 
@@ -151,7 +151,7 @@ export const SUBSET_MAX_WHERE_LEN = 2000;
 
 export type SubsetPkConditionResult =
   | { ok: true; condition: string; rootLimit: number }
-  | { ok: false; reason: "noPk" | "noRows" | "tooLong" };
+  | { ok: false; reason: "noPk" | "noRows" | "tooLong" | "inexactKey" };
 
 /**
  * 結果グリッドで選んだ行を起点にするための、主キー条件 (`pk IN (...)`) を作る。
@@ -159,8 +159,11 @@ export type SubsetPkConditionResult =
  * - 単一キー: `"id" IN (1, 2, 3)`。
  * - 複合キー: `("a", "b") IN ((1, 'x'), (2, 'y'))`。SQLite は行値比較を使わず
  *   `("a" = 1 AND "b" = 'x') OR (...)` の連結にする。
- * - NULL・真偽値・単精度 float を含むキーは `IN` で一致しない / 取り違えるので、「UPDATE / DELETE
- *   としてコピー」と同じ述語 (`buildRowWhere`) を OR で足す。
+ * - NULL・真偽値を含むキーは `IN` で一致しないので、「UPDATE / DELETE としてコピー」と同じ
+ *   述語 (`buildRowWhere`) を OR で足す。
+ * - 単精度 float (FLOAT4 / REAL / FLOAT) を含むキーは `inexactKey` で失敗する。編集用の述語は
+ *   許容誤差つきで、近い値の別の行 (1.0 と 1.0000001 など) まで拾い、起点の件数上限と合わせると
+ *   選んでいない行に入れ替わり得るため。
  * - リテラルは `rowValueLiteral` 経由なので、2^53 を超える整数は文字列のまま欠けずに入る。
  *
  * 結果は `checked_row_filter` (読み取り専用条件の検査) を通る形 (`;` やコメントを含まない)。
@@ -176,6 +179,9 @@ export function buildSubsetPkCondition(input: {
   const { driver, columns, rows, pkIndices } = input;
   if (pkIndices.length === 0 || pkIndices.some((i) => !columns[i])) return { ok: false, reason: "noPk" };
   if (rows.length === 0) return { ok: false, reason: "noRows" };
+  if (pkIndices.some((i) => isSinglePrecisionFloat(driver, columns[i] as Column))) {
+    return { ok: false, reason: "inexactKey" };
+  }
 
   const simple = new Set<string>();
   const simpleList: string[] = [];
@@ -235,6 +241,10 @@ export function subsetMenuDisabledReason(input: {
   if (identityStrategy !== "primary_key" && identityStrategy !== "unique_key") return "gridExtractSubsetNoPk";
   if (!built.ok && built.reason === "noPk") return "gridExtractSubsetNoPk";
   if (pkMasked) return "gridExtractSubsetMasked";
-  if (!built.ok) return built.reason === "noRows" ? "gridExtractSubsetNoRows" : "gridExtractSubsetTooMany";
+  if (!built.ok) {
+    if (built.reason === "noRows") return "gridExtractSubsetNoRows";
+    if (built.reason === "inexactKey") return "gridExtractSubsetInexactKey";
+    return "gridExtractSubsetTooMany";
+  }
   return null;
 }

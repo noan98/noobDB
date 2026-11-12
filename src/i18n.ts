@@ -4809,6 +4809,8 @@ const en = {
   gridExtractSubsetMasked: "Primary key columns are masked",
   gridExtractSubsetNoRows: "No rows are selected",
   gridExtractSubsetTooMany: "Too many rows are selected to build the condition",
+  gridExtractSubsetInexactKey:
+    "The primary key is a single-precision float, so rows cannot be matched exactly",
   gridExportSelection: "Export {count} selected cells...",
   gridExportSelectionTitle:
     "Save the selected rectangle to a file or copy it as CSV / JSON / Markdown / etc.",
@@ -13001,6 +13003,7 @@ const ja: Dict = {
   gridExtractSubsetMasked: "主キーの列がマスクされています",
   gridExtractSubsetNoRows: "行が選択されていません",
   gridExtractSubsetTooMany: "選択した行が多すぎて条件を作れません",
+  gridExtractSubsetInexactKey: "主キーが単精度の浮動小数点数のため、行を正確に特定できません",
   gridExportSelection: "選択した {count} セルをエクスポート",
   gridExportSelectionTitle: "選択範囲だけを CSV / JSON / Markdown などでファイル保存またはコピーします",
   // 一括セル編集 (#596)
