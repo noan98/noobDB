@@ -115,9 +115,8 @@ export function onCommand(cmd: string, handler: CommandHandler): void {
  * `listen` ハンドラに `{ event, id, payload }` として渡る (本物と同じ形)。
  * `csv-import:*` / `export-stream:*` / `dump-stream:*` など、#1096 で
  * Channel へ移行していない名前付きイベント用のフェイクランタイム API
- * (query/preview は `emitChannelMessage` を使う)。今のところどの
- * `*.browser.test.tsx` もそれらのイベントを直接注入していないため knip 上は
- * 未使用に見えるが、`tauriMock.ts` の公開契約として意図的に維持している。
+ * (query/preview は `emitChannelMessage` を使う)。`subset-stream:*` の注入に
+ * `subsetOutcome.browser.test.tsx` が使っている。
  * @public
  */
 export function emitTauriEvent(event: string, payload: unknown): void {

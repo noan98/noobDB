@@ -5,6 +5,7 @@ import { motion } from "motion/react";
 import { springs } from "../motion";
 import { useRovingFocus } from "../keyboardNav";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
+import { Tooltip } from "./Tooltip";
 
 // motion 要素を Chakra style props で装飾できるようにラップする。`TabBar` の
 // `MotionIndicator` と同じパターン (motion の `transition` プロップは Chakra の
@@ -19,6 +20,8 @@ export interface SegmentedOption<T extends string> {
   label: string;
   /** ラベルの前に表示する任意のアイコン。 */
   icon?: IconName;
+  /** 任意の 1 行説明。ホバー / フォーカスのツールチップで出す。 */
+  tooltip?: string;
 }
 
 interface Props<T extends string> {
@@ -92,7 +95,7 @@ export function Segmented<T extends string>({ value, options, onChange, ariaLabe
     >
       {options.map((opt) => {
         const active = opt.value === value;
-        return (
+        const button = (
           <chakra.button
             key={opt.value}
             type="button"
@@ -144,6 +147,13 @@ export function Segmented<T extends string>({ value, options, onChange, ariaLabe
               {opt.label}
             </chakra.span>
           </chakra.button>
+        );
+        return opt.tooltip ? (
+          <Tooltip key={opt.value} label={opt.tooltip}>
+            {button}
+          </Tooltip>
+        ) : (
+          button
         );
       })}
     </chakra.div>

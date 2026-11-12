@@ -1,5 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
+import { Segmented, type SegmentedOption } from "./Segmented";
+import { variants } from "../motion";
 import { api, type ForeignKey, type TableColumnInfo } from "../api/tauri";
 import { markFeatureTried } from "../settings";
 import { useT, type I18nKey } from "../i18n";
@@ -35,7 +37,7 @@ import { Icon, ICON_SIZES, ICON_STROKE } from "./Icon";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox } from "./ui";
 import { Tooltip } from "./Tooltip";
-import { useIsPresent } from "motion/react";
+import { motion, useIsPresent } from "motion/react";
 import { LiveCollapse, LiveRowsPresence } from "./LiveRows";
 import { ErrorNote } from "./modalForm";
 import { buildLikeClause, type LikeMode } from "./serverBrowse";
@@ -117,15 +119,11 @@ const checkboxLabelCss: SystemStyleObject = {
 const rowCss: SystemStyleObject = { display: "flex", gap: "1.5", alignItems: "center" };
 // 行内の入力は伸縮させる。
 const rowInputCss: SystemStyleObject = { flex: 1, minWidth: 0 };
-const opCss: SystemStyleObject = { width: "132px", flexShrink: 0 };
+const opCss: SystemStyleObject = { width: "var(--qb-field-w-lg)", flexShrink: 0 };
 // WHERE 行の先頭にある AND/OR 選択と括弧グループのトグル (#1540)。先頭行は
 // 結合相手がないので、同じ幅の空きを置いて列を揃える。
 const CONNECTOR_OPTIONS = [{ value: "AND" }, { value: "OR" }];
 const DIRECTION_OPTIONS = [{ value: "ASC" }, { value: "DESC" }];
-const JOIN_TYPE_OPTIONS = [
-  { value: "INNER", label: "INNER JOIN" },
-  { value: "LEFT", label: "LEFT JOIN" },
-];
 const AGG_FN_OPTIONS = AGGREGATE_FNS.map((fn) => ({
   value: fn,
   label: fn === "COUNT_DISTINCT" ? "COUNT DISTINCT" : fn,
@@ -140,8 +138,95 @@ const joinCardCss: SystemStyleObject = {
   border: "1px solid var(--border)",
   borderRadius: "var(--radius-md)",
   background: "var(--bg-muted)",
+  // チェーン図のチップから移ってきたことが分かるよう、フォーカス中は枠とリングを出す。
+  "&:focus-visible, &:focus": {
+    outline: "none",
+    borderColor: "var(--accent)",
+    boxShadow: "var(--focus-ring)",
+  },
 };
-const aliasInputCss: SystemStyleObject = { width: "132px", flexShrink: 0 };
+// 結合チェーン図 (#2267): 基点 → 結合表のチップを矢印でつなぐ。
+const chainCss: SystemStyleObject = {
+  display: "flex",
+  flexWrap: "wrap",
+  alignItems: "center",
+  gap: "var(--space-1)",
+};
+const chainChipCss: SystemStyleObject = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "var(--space-1)",
+  padding: "var(--space-0-5) var(--space-2)",
+  fontFamily: "var(--font-mono)",
+  fontSize: "var(--text-sm)",
+  color: "var(--text)",
+  background: "var(--bg-elevated)",
+  border: "1px solid var(--border-strong)",
+  borderRadius: "var(--radius-pill)",
+  cursor: "pointer",
+  "&:hover": { borderColor: "var(--accent)" },
+  "&:focus-visible": { outline: "none", boxShadow: "var(--focus-ring)" },
+};
+const chainBaseChipCss: SystemStyleObject = {
+  ...chainChipCss,
+  cursor: "default",
+  color: "var(--text-muted)",
+  "&:hover": {},
+};
+const chainLinkCss: SystemStyleObject = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "var(--space-0-5)",
+  color: "var(--text-muted)",
+};
+// FK 候補カード (#2267): 参照先 (親) / 参照元 (子) を方向アイコンで見分ける。
+const fkCardCss: SystemStyleObject = {
+  display: "flex",
+  alignItems: "center",
+  gap: "var(--space-2)",
+  width: "100%",
+  textAlign: "left",
+  padding: "var(--space-1-5) var(--space-2)",
+  color: "var(--text)",
+  background: "var(--bg-elevated)",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius-md)",
+  cursor: "pointer",
+  "&:hover": { borderColor: "var(--accent)", background: "var(--bg-hover)" },
+  "&:focus-visible": { outline: "none", boxShadow: "var(--focus-ring)" },
+};
+// 候補が多いスキーマでは一覧の中だけをスクロールさせる。
+const fkListCss: SystemStyleObject = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "var(--space-1)",
+  maxHeight: "calc(var(--qb-field-w-lg) * 2)",
+  overflowY: "auto",
+};
+const fkCardBodyCss: SystemStyleObject = {
+  display: "flex",
+  flexDirection: "column",
+  minWidth: 0,
+  flex: 1,
+};
+const fkCardTitleCss: SystemStyleObject = {
+  fontFamily: "var(--font-mono)",
+  fontSize: "var(--text-sm)",
+};
+const fkCardDetailCss: SystemStyleObject = {
+  fontFamily: "var(--font-mono)",
+  fontSize: "var(--text-xs)",
+  color: "var(--text-muted)",
+};
+const fkDirBadgeCss: SystemStyleObject = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "var(--space-1)",
+  flexShrink: 0,
+  fontSize: "var(--text-xs)",
+  color: "var(--text-muted)",
+};
+const aliasInputCss: SystemStyleObject = { width: "var(--qb-field-w-lg)", flexShrink: 0 };
 const joinNameCss: SystemStyleObject = {
   flex: 1,
   minWidth: 0,
@@ -149,9 +234,9 @@ const joinNameCss: SystemStyleObject = {
   fontSize: "var(--text-sm)",
   color: "var(--text)",
 };
-const connectorCss: SystemStyleObject = { width: "76px", flexShrink: 0 };
+const connectorCss: SystemStyleObject = { width: "var(--qb-field-w-sm)", flexShrink: 0 };
 const connectorSpacerCss: SystemStyleObject = {
-  width: "76px",
+  width: "var(--qb-field-w-sm)",
   flexShrink: 0,
   textAlign: "center",
   fontSize: "var(--text-xs)",
@@ -248,7 +333,7 @@ const limitSectionCss: SystemStyleObject = {
   alignItems: "center",
   gap: "3",
 };
-const limitInputCss: SystemStyleObject = { maxWidth: "120px" };
+const limitInputCss: SystemStyleObject = { maxWidth: "var(--qb-field-w-md)" };
 // WHERE / SET / INSERT の 1 行 (カラム・演算子・値・削除ボタン) + その下に出る
 // 任意の 1 行 (NOT NULL 警告) をまとめる縦並びラッパー。行そのもの (`rowCss`) の
 // 高さ・整列は変えず、警告テキストだけを別行として追加できるようにする。
@@ -660,6 +745,30 @@ function removeWhereRow<K extends { cond: WhereCondition }>(rows: K[], idx: numb
 }
 
 /**
+ * 行配列に対する安定キー (#2267)。HAVING 行のように ID を持たない配列でも、出入りの
+ * アニメーション (`AnimatePresence`) が正しい行を畳めるようにする。長さが同じなら
+ * 位置対応 (中身の編集)、変わったら要素の同一性 (filter は参照を保つ) で引き継ぐ。
+ */
+function useStableKeys<T>(items: T[]): number[] {
+  const seq = useRef(items.length);
+  const prev = useRef<{ items: T[]; keys: number[] }>({
+    items,
+    keys: items.map((_, i) => i),
+  });
+  if (prev.current.items === items) return prev.current.keys;
+  const before = prev.current;
+  const keys =
+    items.length === before.items.length
+      ? before.keys
+      : items.map((it) => {
+          const at = before.items.indexOf(it);
+          return at >= 0 ? before.keys[at] : seq.current++;
+        });
+  prev.current = { items, keys };
+  return keys;
+}
+
+/**
  * WHERE 条件行の外枠 (#1936)。退場アニメ中の行は古い props のまま残るため、操作を
  * 受け付けないよう `inert` + `pointer-events: none` にする (消えかけの行の × が
  * 見えている別の行を消す事故を防ぐ)。行間の gap は内側 padding で持つ。
@@ -672,6 +781,12 @@ function PresenceGuard({ css, children }: { css: SystemStyleObject; children: Re
     </Box>
   );
 }
+
+const MotionChip = chakra(
+  motion.span,
+  {},
+  { forwardProps: ["variants", "initial", "animate", "exit", "transition"] },
+);
 
 /** 結合 / 集計つきの SELECT では列を「別名.列」に修飾し、型情報も別名ごとに引く (#2242)。 */
 interface WhereQualifier {
@@ -1813,6 +1928,21 @@ export function QueryBuilder({
     () => (fks ? fkJoinCandidates({ baseTable: table, joins, fks }) : []),
     [fks, table, joins],
   );
+  const havingKeys = useStableKeys(having);
+  const joinCardRefs = useRef(new Map<string, HTMLElement>());
+  const joinOptions = useMemo<SegmentedOption<"INNER" | "LEFT">[]>(
+    () => [
+      { value: "INNER", label: "INNER JOIN", icon: "join-inner", tooltip: t("qbJoinInnerTip") },
+      { value: "LEFT", label: "LEFT JOIN", icon: "join-left", tooltip: t("qbJoinLeftTip") },
+    ],
+    [t],
+  );
+  const focusJoinCard = (alias: string) => {
+    const el = joinCardRefs.current.get(alias);
+    if (!el) return;
+    el.focus();
+    el.scrollIntoView?.({ block: "nearest" });
+  };
   const showLimit = kind === "SELECT";
   const showSet = kind === "UPDATE";
   const showInsertValues = kind === "INSERT";
@@ -1964,133 +2094,197 @@ export function QueryBuilder({
                   {t("qbNoJoins")}
                 </chakra.span>
               )}
-              {joins.map((j, ji) => {
-                // ON の左は、この結合より前の表 (基点 + 先に結合した表) の列から選ぶ。
-                const leftOptions: ComboSelectOption[] = [];
-                const leftMap = new Map<string, string | undefined>();
-                for (const a of knownAliases(table, joins.slice(0, ji))) {
-                  for (const c of infoByAlias[a] ?? []) {
-                    const value = `${a}.${c.name}`;
-                    leftOptions.push({ value, detail: c.data_type });
-                    leftMap.set(value, a === table ? undefined : a);
-                  }
-                }
-                const rightOptions: ComboSelectOption[] = (infoByAlias[j.alias] ?? []).map((c) => ({
-                  value: c.name,
-                  detail: c.data_type,
-                }));
-                return (
-                  <Box css={joinCardCss} key={`join-${ji}`} data-testid="qb-join">
-                    <Box css={rowCss}>
-                      <ListboxSelect
-                        css={opCss}
-                        value={j.type}
-                        ariaLabel={t("qbJoinType")}
-                        options={JOIN_TYPE_OPTIONS}
-                        onChange={(v) => updateJoin(ji, { type: v === "LEFT" ? "LEFT" : "INNER" })}
-                      />
-                      <chakra.span css={joinNameCss}>
-                        {j.table}
-                        {j.alias !== j.table ? ` AS ${j.alias}` : ""}
-                      </chakra.span>
-                      <Tooltip label={t("qbRemove")}>
+              {joins.length > 0 && (
+                <Box css={chainCss} data-testid="qb-join-chain" aria-label={t("qbJoinChain")} role="group">
+                  <chakra.span css={chainBaseChipCss}>
+                    <Icon name="table" size={ICON_SIZES.sm} />
+                    {table}
+                  </chakra.span>
+                  <LiveRowsPresence>
+                    {joins.map((j) => (
+                      <MotionChip
+                        key={`chain-${j.alias}`}
+                        variants={variants.fadeScaleX}
+                        initial="initial"
+                        animate="animate"
+                        exit="exit"
+                        css={chainLinkCss}
+                      >
+                        <Icon name={j.type === "LEFT" ? "join-left" : "join-inner"} size={ICON_SIZES.md} />
                         <chakra.button
                           type="button"
-                          css={iconBtnCss}
-                          onClick={() => removeJoin(ji)}
-                          aria-label={t("qbRemove")}
+                          css={chainChipCss}
+                          aria-label={t("qbJoinChainGo", {
+                            table: j.alias !== j.table ? `${j.table} AS ${j.alias}` : j.table,
+                          })}
+                          onClick={() => focusJoinCard(j.alias)}
                         >
-                          <Icon name="close" size={ICON_SIZES.sm} />
+                          {j.alias !== j.table ? `${j.table} AS ${j.alias}` : j.table}
                         </chakra.button>
-                      </Tooltip>
-                    </Box>
-                    {j.on.map((o, oi) => (
-                      <Box css={rowCss} key={`on-${ji}-${oi}`}>
-                        <chakra.span css={connectorSpacerCss}>ON</chakra.span>
-                        <ComboSelect
-                          css={rowInputCss}
-                          value={o.leftColumn ? `${o.leftTable || table}.${o.leftColumn}` : ""}
-                          options={leftOptions}
-                          placeholder={t("qbJoinLeftColumn")}
-                          onChange={(v) => {
-                            const known = leftMap.has(v);
-                            if (known) {
-                              const alias = v.slice(0, v.indexOf("."));
-                              updateJoinOn(ji, oi, {
-                                leftTable: leftMap.get(v),
-                                leftColumn: v.slice(alias.length + 1),
-                              });
-                            } else {
-                              updateJoinOn(ji, oi, { leftTable: undefined, leftColumn: v });
-                            }
-                          }}
-                          emptyText={t("qbComboNoMatches")}
-                          showMoreText={(count) => t("qbComboShowMore", { count })}
-                        />
-                        <chakra.span css={eqCss}>=</chakra.span>
-                        <ComboSelect
-                          css={rowInputCss}
-                          value={o.rightColumn}
-                          options={rightOptions}
-                          placeholder={t("qbJoinRightColumn")}
-                          onChange={(v) => updateJoinOn(ji, oi, { rightColumn: v })}
-                          emptyText={t("qbComboNoMatches")}
-                          showMoreText={(count) => t("qbComboShowMore", { count })}
-                        />
-                        <Tooltip label={t("qbRemove")} focusableWrapper={j.on.length <= 1}>
-                          <chakra.button
-                            type="button"
-                            css={iconBtnCss}
-                            onClick={() => updateJoin(ji, { on: j.on.filter((_, k) => k !== oi) })}
-                            aria-label={t("qbRemove")}
-                            disabled={j.on.length <= 1}
-                          >
-                            <Icon name="close" size={ICON_SIZES.sm} />
-                          </chakra.button>
-                        </Tooltip>
-                      </Box>
+                      </MotionChip>
                     ))}
-                    <Box css={rowCss}>
-                      <chakra.button
-                        type="button"
-                        css={smallBtnCss}
-                        onClick={() => updateJoin(ji, { on: [...j.on, { leftColumn: "", rightColumn: "" }] })}
-                      >
-                        + {t("qbAddJoinOn")}
-                      </chakra.button>
-                    </Box>
-                  </Box>
-                );
-              })}
+                  </LiveRowsPresence>
+                </Box>
+              )}
+              <Box mt="-1.5">
+                <LiveRowsPresence>
+                  {joins.map((j, ji) => {
+                    // ON の左は、この結合より前の表 (基点 + 先に結合した表) の列から選ぶ。
+                    const leftOptions: ComboSelectOption[] = [];
+                    const leftMap = new Map<string, string | undefined>();
+                    for (const a of knownAliases(table, joins.slice(0, ji))) {
+                      for (const c of infoByAlias[a] ?? []) {
+                        const value = `${a}.${c.name}`;
+                        leftOptions.push({ value, detail: c.data_type });
+                        leftMap.set(value, a === table ? undefined : a);
+                      }
+                    }
+                    const rightOptions: ComboSelectOption[] = (infoByAlias[j.alias] ?? []).map((c) => ({
+                      value: c.name,
+                      detail: c.data_type,
+                    }));
+                    return (
+                      <LiveCollapse standalone key={`join-${j.alias}`}>
+                        <PresenceGuard css={{}}>
+                          <Box
+                            css={joinCardCss}
+                            data-testid="qb-join"
+                            tabIndex={-1}
+                            ref={(el: HTMLElement | null) => {
+                              if (el) joinCardRefs.current.set(j.alias, el);
+                              else joinCardRefs.current.delete(j.alias);
+                            }}
+                          >
+                            <Box css={rowCss}>
+                              <Segmented
+                                value={j.type}
+                                ariaLabel={t("qbJoinType")}
+                                options={joinOptions}
+                                onChange={(v) => updateJoin(ji, { type: v })}
+                              />
+                              <chakra.span css={joinNameCss}>
+                                {j.table}
+                                {j.alias !== j.table ? ` AS ${j.alias}` : ""}
+                              </chakra.span>
+                              <Tooltip label={t("qbRemove")}>
+                                <chakra.button
+                                  type="button"
+                                  css={iconBtnCss}
+                                  onClick={() => removeJoin(ji)}
+                                  aria-label={t("qbRemove")}
+                                >
+                                  <Icon name="close" size={ICON_SIZES.sm} />
+                                </chakra.button>
+                              </Tooltip>
+                            </Box>
+                            {j.on.map((o, oi) => (
+                              <Box css={rowCss} key={`on-${ji}-${oi}`}>
+                                <chakra.span css={connectorSpacerCss}>ON</chakra.span>
+                                <ComboSelect
+                                  css={rowInputCss}
+                                  value={o.leftColumn ? `${o.leftTable || table}.${o.leftColumn}` : ""}
+                                  options={leftOptions}
+                                  placeholder={t("qbJoinLeftColumn")}
+                                  onChange={(v) => {
+                                    const known = leftMap.has(v);
+                                    if (known) {
+                                      const alias = v.slice(0, v.indexOf("."));
+                                      updateJoinOn(ji, oi, {
+                                        leftTable: leftMap.get(v),
+                                        leftColumn: v.slice(alias.length + 1),
+                                      });
+                                    } else {
+                                      updateJoinOn(ji, oi, { leftTable: undefined, leftColumn: v });
+                                    }
+                                  }}
+                                  emptyText={t("qbComboNoMatches")}
+                                  showMoreText={(count) => t("qbComboShowMore", { count })}
+                                />
+                                <chakra.span css={eqCss}>=</chakra.span>
+                                <ComboSelect
+                                  css={rowInputCss}
+                                  value={o.rightColumn}
+                                  options={rightOptions}
+                                  placeholder={t("qbJoinRightColumn")}
+                                  onChange={(v) => updateJoinOn(ji, oi, { rightColumn: v })}
+                                  emptyText={t("qbComboNoMatches")}
+                                  showMoreText={(count) => t("qbComboShowMore", { count })}
+                                />
+                                <Tooltip label={t("qbRemove")} focusableWrapper={j.on.length <= 1}>
+                                  <chakra.button
+                                    type="button"
+                                    css={iconBtnCss}
+                                    onClick={() => updateJoin(ji, { on: j.on.filter((_, k) => k !== oi) })}
+                                    aria-label={t("qbRemove")}
+                                    disabled={j.on.length <= 1}
+                                  >
+                                    <Icon name="close" size={ICON_SIZES.sm} />
+                                  </chakra.button>
+                                </Tooltip>
+                              </Box>
+                            ))}
+                            <Box css={rowCss}>
+                              <chakra.button
+                                type="button"
+                                css={smallBtnCss}
+                                onClick={() =>
+                                  updateJoin(ji, { on: [...j.on, { leftColumn: "", rightColumn: "" }] })
+                                }
+                              >
+                                + {t("qbAddJoinOn")}
+                              </chakra.button>
+                            </Box>
+                          </Box>
+                        </PresenceGuard>
+                      </LiveCollapse>
+                    );
+                  })}
+                </LiveRowsPresence>
+              </Box>
               {addingJoin && (
                 <Box css={joinCardCss} data-testid="qb-join-add">
+                  {fks === null && (
+                    <chakra.span color="app.textMuted" fontSize="sm">
+                      {t("qbLoading")}
+                    </chakra.span>
+                  )}
+                  {fkCandidates.length > 0 && (
+                    <Box css={fkListCss} role="group" aria-label={t("qbAddFkTable")}>
+                      {fkCandidates.map((c) => {
+                        const outgoing = c.direction === "outgoing";
+                        const from = c.fromAlias ?? table;
+                        const leftCols = c.on.map((o) => o.leftColumn).join(",");
+                        const rightCols = c.on.map((o) => o.rightColumn).join(",");
+                        return (
+                          <chakra.button
+                            key={c.key}
+                            type="button"
+                            css={fkCardCss}
+                            data-testid="qb-fk-candidate"
+                            data-direction={c.direction}
+                            onClick={() => {
+                              setJoins((prev) => [...prev, joinFromCandidate(table, prev, c)]);
+                              setAddingJoin(false);
+                            }}
+                          >
+                            <Icon name={outgoing ? "fk-parent" : "fk-child"} size={ICON_SIZES.md} />
+                            <chakra.span css={fkCardBodyCss}>
+                              <chakra.span css={fkCardTitleCss}>{c.table}</chakra.span>
+                              <chakra.span css={fkCardDetailCss}>
+                                {outgoing
+                                  ? `${from}.${leftCols} → ${c.table}.${rightCols}`
+                                  : `${c.table}.${rightCols} → ${from}.${leftCols}`}
+                              </chakra.span>
+                            </chakra.span>
+                            <chakra.span css={fkDirBadgeCss}>
+                              {outgoing ? t("qbFkParent") : t("qbFkChild")}
+                            </chakra.span>
+                          </chakra.button>
+                        );
+                      })}
+                    </Box>
+                  )}
                   <Box css={rowCss}>
-                    <ListboxSelect
-                      css={rowInputCss}
-                      value=""
-                      ariaLabel={t("qbAddFkTable")}
-                      options={[
-                        {
-                          value: "",
-                          label: fks === null ? t("qbLoading") : t("qbAddFkTable"),
-                        },
-                        ...fkCandidates.map((c) => ({
-                          value: c.key,
-                          label: `${c.table}  (${
-                            c.direction === "outgoing"
-                              ? `${c.fromAlias ?? table}.${c.on.map((o) => o.leftColumn).join(",")} → ${c.table}.${c.on.map((o) => o.rightColumn).join(",")}`
-                              : `${c.table}.${c.on.map((o) => o.rightColumn).join(",")} → ${c.fromAlias ?? table}.${c.on.map((o) => o.leftColumn).join(",")}`
-                          })`,
-                          searchText: c.table,
-                        })),
-                      ]}
-                      onChange={(key) => {
-                        const cand = fkCandidates.find((c) => c.key === key);
-                        if (!cand) return;
-                        setJoins((prev) => [...prev, joinFromCandidate(table, prev, cand)]);
-                        setAddingJoin(false);
-                      }}
-                    />
                     <ListboxSelect
                       css={rowInputCss}
                       value=""
@@ -2261,54 +2455,62 @@ export function QueryBuilder({
                   + {t("qbAddHaving")}
                 </chakra.button>
               </Box>
-              {having.map((h, i) => (
-                <Box css={rowCss} key={`having-${i}`} data-testid="qb-having-row">
-                  <ListboxSelect
-                    css={opCss}
-                    value={h.agg}
-                    ariaLabel={t("qbAggFunction")}
-                    options={AGG_FN_OPTIONS}
-                    onChange={(v) => updateHaving(i, { agg: v as AggregateFn })}
-                  />
-                  <ComboSelect
-                    css={rowInputCss}
-                    value={h.column === "*" ? "*" : h.column ? columnRefValue(h.table, h.column) : ""}
-                    options={[...refColumns.options, { value: "*", detail: "COUNT(*)" }]}
-                    placeholder={t("qbAggColumn")}
-                    onChange={(v) => {
-                      if (v === "*") return updateHaving(i, { column: "*", table: undefined });
-                      const ref = parseColumnRef(v);
-                      updateHaving(i, { column: ref.column, table: ref.table });
-                    }}
-                    emptyText={t("qbComboNoMatches")}
-                    showMoreText={(count) => t("qbComboShowMore", { count })}
-                  />
-                  <ListboxSelect
-                    css={connectorCss}
-                    value={h.operator}
-                    ariaLabel={t("qbHavingOperator")}
-                    options={HAVING_OPERATOR_OPTIONS}
-                    onChange={(v) => updateHaving(i, { operator: v })}
-                  />
-                  <chakra.input
-                    css={aliasInputCss}
-                    value={h.value}
-                    placeholder={t("qbValue")}
-                    aria-label={t("qbHavingValue")}
-                    onChange={(e) => updateHaving(i, { value: e.target.value })}
-                  />
-                  <Tooltip label={t("qbRemove")}>
-                    <chakra.button
-                      type="button"
-                      css={iconBtnCss}
-                      onClick={() => setHaving((prev) => prev.filter((_, k) => k !== i))}
-                      aria-label={t("qbRemove")}
-                    >
-                      <Icon name="close" size={ICON_SIZES.sm} />
-                    </chakra.button>
-                  </Tooltip>
-                </Box>
-              ))}
+              <Box mt="-1.5">
+                <LiveRowsPresence>
+                  {having.map((h, i) => (
+                    <LiveCollapse standalone key={`having-${havingKeys[i]}`}>
+                      <PresenceGuard css={{}}>
+                        <Box css={rowCss} data-testid="qb-having-row">
+                          <ListboxSelect
+                            css={opCss}
+                            value={h.agg}
+                            ariaLabel={t("qbAggFunction")}
+                            options={AGG_FN_OPTIONS}
+                            onChange={(v) => updateHaving(i, { agg: v as AggregateFn })}
+                          />
+                          <ComboSelect
+                            css={rowInputCss}
+                            value={h.column === "*" ? "*" : h.column ? columnRefValue(h.table, h.column) : ""}
+                            options={[...refColumns.options, { value: "*", detail: "COUNT(*)" }]}
+                            placeholder={t("qbAggColumn")}
+                            onChange={(v) => {
+                              if (v === "*") return updateHaving(i, { column: "*", table: undefined });
+                              const ref = parseColumnRef(v);
+                              updateHaving(i, { column: ref.column, table: ref.table });
+                            }}
+                            emptyText={t("qbComboNoMatches")}
+                            showMoreText={(count) => t("qbComboShowMore", { count })}
+                          />
+                          <ListboxSelect
+                            css={connectorCss}
+                            value={h.operator}
+                            ariaLabel={t("qbHavingOperator")}
+                            options={HAVING_OPERATOR_OPTIONS}
+                            onChange={(v) => updateHaving(i, { operator: v })}
+                          />
+                          <chakra.input
+                            css={aliasInputCss}
+                            value={h.value}
+                            placeholder={t("qbValue")}
+                            aria-label={t("qbHavingValue")}
+                            onChange={(e) => updateHaving(i, { value: e.target.value })}
+                          />
+                          <Tooltip label={t("qbRemove")}>
+                            <chakra.button
+                              type="button"
+                              css={iconBtnCss}
+                              onClick={() => setHaving((prev) => prev.filter((_, k) => k !== i))}
+                              aria-label={t("qbRemove")}
+                            >
+                              <Icon name="close" size={ICON_SIZES.sm} />
+                            </chakra.button>
+                          </Tooltip>
+                        </Box>
+                      </PresenceGuard>
+                    </LiveCollapse>
+                  ))}
+                </LiveRowsPresence>
+              </Box>
             </chakra.section>
           )}
 
