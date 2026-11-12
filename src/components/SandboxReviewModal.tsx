@@ -23,6 +23,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { LoadingButton } from "./LoadingButton";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Callout } from "./Callout";
+import { attachedUnsupportedReason } from "./sqliteAttachSupport";
 import { ErrorNote, FieldLabel } from "./modalForm";
 import { TableDiffDetail } from "./SchemaDiffDetail";
 import { Tooltip } from "./Tooltip";
@@ -309,7 +310,15 @@ export function SandboxReviewModal({
     !!combined &&
     combined.statements.length > 0 &&
     (allowDelete || combined.statements.some((s) => s.destructive));
-  const applyDisabled = !combined || combined.statements.length === 0 || !targetSessionId;
+  // アタッチした SQLite の別名から作ったサンドボックスは、実 DB への書き戻し (sync apply) をバックエンドが
+  // 拒否する (#2129)。押してから失敗させず、実行前に無効にして理由を示す (#2271)。
+  const applyUnsupportedReason = attachedUnsupportedReason(
+    sandbox.source_driver,
+    sandbox.source_database,
+    "syncApply",
+  );
+  const applyDisabled =
+    !combined || combined.statements.length === 0 || !targetSessionId || applyUnsupportedReason !== null;
   const applyLabel = t("sandboxApplyTitle", { count: combined?.statements.length ?? 0 });
 
   const apply = useCallback(async () => {
@@ -446,6 +455,11 @@ export function SandboxReviewModal({
         <Callout tone="info" role="note" fontSize="xs">
           {t("sandboxReviewLimitationNote")}
         </Callout>
+        {applyUnsupportedReason && (
+          <Callout tone="warning" role="status" fontSize="xs">
+            {t(applyUnsupportedReason)}
+          </Callout>
+        )}
 
         <chakra.div display="flex" alignItems="center" gap="2.5" flexWrap="wrap">
           <FieldLabel htmlFor="sandbox-review-target">{t("sandboxReviewTarget")}</FieldLabel>
@@ -778,6 +792,7 @@ export function SandboxReviewModal({
               loading={applying}
               onClick={apply}
               disabled={applyDisabled}
+              title={applyUnsupportedReason ? t(applyUnsupportedReason) : undefined}
             >
               {applyLabel}
             </LoadingButton>
@@ -798,6 +813,7 @@ export function SandboxReviewModal({
               loading={applying}
               onClick={apply}
               disabled={applyDisabled}
+              title={applyUnsupportedReason ? t(applyUnsupportedReason) : undefined}
             >
               {applyLabel}
             </LoadingButton>

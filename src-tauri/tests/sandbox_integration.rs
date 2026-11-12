@@ -1131,3 +1131,132 @@ async fn read_only_source_session_can_sandbox_but_source_is_never_written() {
         .await;
     let _ = std::fs::remove_file(&source_path);
 }
+
+/// #2271: アタッチ DB の表からサンドボックスを作るとき、元の行は `"別名"."表"` に修飾して読む。
+/// 修飾しないと SQLite は main の同名表に解決し、別のデータをコピーしてしまう。
+/// main と archive に同名の表 (`orders` / `customers`) があり、中の行が異なる状況で、
+///   - 起点の表の行が archive 側のものになる
+///   - 関連表を含めたとき、親 (`customers`) の行も archive 側から辿られる
+///   - 作成直後のレビュー (差分 + 実 DB との競合検出) が 0 件になる
+/// ことを固定する。
+#[tokio::test]
+async fn create_sandbox_from_attached_database_copies_alias_rows_not_main() {
+    let main_path = temp_db_path("attach_main");
+    let archive_path = temp_db_path("attach_archive");
+    for (p, rows) in [
+        (
+            &main_path,
+            "INSERT INTO customers VALUES (1, 'main-cust'); \
+             INSERT INTO orders VALUES (1, 1, 'main-order-1'), (2, 1, 'main-order-2'), (3, 1, 'main-order-3')",
+        ),
+        (
+            &archive_path,
+            "INSERT INTO customers VALUES (7, 'archive-cust'); \
+             INSERT INTO orders VALUES (10, 7, 'archive-order-10'), (11, 7, 'archive-order-11')",
+        ),
+    ] {
+        let _ = std::fs::remove_file(p);
+        std::fs::File::create(p).expect("create temp sqlite file");
+        let conn = t::connect(&t::sqlite_options(p.to_str().expect("utf8 path")))
+            .await
+            .expect("connect");
+        for stmt in [
+            "CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+            "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customers(id), note TEXT NOT NULL)",
+        ] {
+            conn.execute(stmt, None).await.expect("create table");
+        }
+        for stmt in rows.split(';') {
+            conn.execute(stmt, None).await.expect("seed");
+        }
+        conn.close().await;
+    }
+
+    let mut opts = t::sqlite_options(main_path.to_str().expect("utf8 path"));
+    opts.sqlite_attachments = vec![t::SqliteAttachment {
+        path: archive_path.to_str().expect("utf8 path").to_string(),
+        alias: "archive".to_string(),
+    }];
+    let conn = t::connect(&opts).await.expect("connect with attachment");
+    let state = std::sync::Arc::new(t::AppState::default());
+    let source_session_id = state
+        .insert(t::make_session("sbx_attach_source", conn, opts, false))
+        .await;
+
+    for include_related in [false, true] {
+        let create = t::create_sandbox_with_filters_via_command(
+            &state,
+            &source_session_id,
+            Some("archive"),
+            "from-archive",
+            vec![t::SandboxTableSpec {
+                name: "orders".into(),
+                filter: Some("id < 100".into()),
+            }],
+            include_related,
+            Some(100),
+        )
+        .await
+        .expect("create_sandbox from attached database");
+        let guard = DiscardGuard {
+            state: state.clone(),
+            sandbox_id: Some(create.sandbox.id.clone()),
+            session_id: Some(create.session_id.clone()),
+        };
+        let sandbox_session = state
+            .get(&create.session_id)
+            .await
+            .expect("sandbox session registered");
+
+        let orders = sandbox_session
+            .conn
+            .execute("SELECT note FROM orders ORDER BY id", None)
+            .await
+            .expect("select orders from sandbox");
+        let notes: Vec<String> = orders.rows.iter().map(|r| format!("{:?}", r[0])).collect();
+        assert_eq!(
+            notes.len(),
+            2,
+            "include_related={include_related}: {notes:?}"
+        );
+        assert!(
+            notes.iter().all(|n| n.contains("archive-order")),
+            "include_related={include_related}: {notes:?}"
+        );
+
+        if include_related {
+            let customers = sandbox_session
+                .conn
+                .execute("SELECT name FROM customers ORDER BY id", None)
+                .await
+                .expect("select customers from sandbox");
+            let names: Vec<String> = customers
+                .rows
+                .iter()
+                .map(|r| format!("{:?}", r[0]))
+                .collect();
+            assert_eq!(names.len(), 1, "{names:?}");
+            assert!(names[0].contains("archive-cust"), "{names:?}");
+        }
+
+        // 作成直後のレビューは、別名側の表と比べて差分 0 件・競合 0 件。
+        let diff = t::sandbox_table_diff_via_command(
+            &state,
+            &create.sandbox.id,
+            &create.session_id,
+            "orders",
+            Some(&source_session_id),
+            None,
+        )
+        .await
+        .expect("sandbox_table_diff");
+        assert!(diff.source_checked, "{:?}", diff.source_error);
+        assert!(diff.desired.rows.is_empty());
+        assert!(diff.conflicts.is_empty());
+
+        guard.discard().await;
+    }
+
+    let _ = std::fs::remove_file(&main_path);
+    let _ = std::fs::remove_file(&archive_path);
+}
