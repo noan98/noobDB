@@ -30,7 +30,7 @@ describe("DdlStageTrack (実ブラウザ)", () => {
     const locks = Array.from(root.element().querySelectorAll("[data-testid=ddl-stage-lock]")).map((e) =>
       e.getAttribute("data-lock"),
     );
-    expect(locks).toEqual(["exclusive", "concurrent", "outsideTx"]);
+    expect(locks).toEqual(["shortExclusive", "concurrent", "outsideTx"]);
     expect(root.element().querySelector("[aria-current=step]")).toBeNull();
   });
 

@@ -1355,7 +1355,7 @@ export function AlterTableModal({
                 />
               )}
               {statements.length > 0 && <DdlLockTimeoutField driver={driver} />}
-              {!running && !report && executionPlan.staged && (
+              {(!running || !progress) && !report && executionPlan.staged && (
                 <DdlStageTrack steps={executionPlan.steps} state={{ kind: "plan" }} />
               )}
               {running && progress && runSteps && (
@@ -1363,7 +1363,10 @@ export function AlterTableModal({
               )}
               {running && progress && (
                 <Callout tone="info" role="status" data-testid="ddl-run-progress">
-                  {t("ddlRunProgress", { done: progress.done, total: progress.total })}
+                  {t("ddlRunProgress", {
+                    done: Math.min(progress.done + 1, progress.total),
+                    total: progress.total,
+                  })}
                 </Callout>
               )}
               {report && (

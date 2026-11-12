@@ -28,8 +28,10 @@ describe("stageStatuses (#2263)", () => {
 });
 
 describe("stageLock / failedTrackState (#2263)", () => {
-  it("ロック強度を 3 種類に分ける", () => {
-    expect(stageLock(mk("addNotValid"))).toBe("exclusive");
+  it("ロック強度を 4 種類に分ける", () => {
+    expect(stageLock(mk("addNotValid"))).toBe("shortExclusive");
+    expect(stageLock(mk("setNotNull"))).toBe("shortExclusive");
+    expect(stageLock(mk("alter"))).toBe("exclusive");
     expect(stageLock(mk("validate"))).toBe("concurrent");
     expect(stageLock(mk("createIndexConcurrently", false))).toBe("outsideTx");
   });

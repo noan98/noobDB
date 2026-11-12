@@ -155,7 +155,7 @@ export function DdlStageTrack({ steps, state }: { steps: readonly DdlStep[]; sta
             >
               <Box display="flex" alignItems="flex-start" gap="2" minW="0">
                 <Marker status={status} index={i} />
-                <Box display="flex" flexDirection="column" gap="0.5" minW="0">
+                <Box display="flex" flexDirection="column" gap="0.5" minW="0" aria-hidden="true">
                   <chakra.span fontSize="sm" color={status === "pending" ? "app.textMuted" : "app.text"}>
                     {label}
                   </chakra.span>
@@ -177,15 +177,21 @@ export function DdlStageTrack({ steps, state }: { steps: readonly DdlStep[]; sta
                       {t("ddlTrackAppliedUpTo")}
                     </chakra.span>
                   )}
-                  <VisuallyHidden>
-                    {t("ddlTrackStage", {
+                </Box>
+                <VisuallyHidden>
+                  {[
+                    t("ddlTrackStage", {
                       n: i + 1,
                       total: steps.length,
                       label: step.subject ? `${label} (${step.subject})` : label,
                       status: t(`ddlTrackStatus_${status}`),
-                    })}
-                  </VisuallyHidden>
-                </Box>
+                    }),
+                    t(`ddlTrackLock_${stageLock(step)}`),
+                    i === appliedUpTo ? t("ddlTrackAppliedUpTo") : null,
+                  ]
+                    .filter(Boolean)
+                    .join(". ")}
+                </VisuallyHidden>
               </Box>
               {i < steps.length - 1 && <Connector filled={status === "done"} />}
             </chakra.li>

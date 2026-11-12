@@ -542,7 +542,7 @@ export function CreateIndexModal({
               </FormSection>
             )}
             {!effConcurrently && <DdlLockTimeoutField driver={driver} />}
-            {!running && !report && runPlan && (
+            {(!running || !progress) && !report && runPlan && (
               <DdlStageTrack steps={runPlan.steps} state={{ kind: "plan" }} />
             )}
             {running && progress && runSteps && (
@@ -550,7 +550,10 @@ export function CreateIndexModal({
             )}
             {running && progress && (
               <Callout tone="info" role="status" data-testid="ddl-run-progress">
-                {t("ddlRunProgress", { done: progress.done, total: progress.total })}
+                {t("ddlRunProgress", {
+                  done: Math.min(progress.done + 1, progress.total),
+                  total: progress.total,
+                })}
               </Callout>
             )}
             {report && (
