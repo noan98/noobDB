@@ -17,10 +17,10 @@ use super::tx_options::TxOptions;
 use super::types::{non_empty_comment, TableComment};
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, KillProcessesResult, LiveQuery, PreviewResult,
-    ProcessInfo, ProcessProgress, QueryResult, QueryStatsSupport, RoutineParameter,
-    RoutineSignature, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
-    StreamBatch, TableColumnInfo, TablePrivilegeRow, TableRowEstimate, TableRowIdentity,
-    TableSchema, TableSizeInfo, UserPrivileges, Value,
+    ProcessInfo, ProcessProgress, ProcessProgressKind, QueryResult, QueryStatsSupport,
+    RoutineParameter, RoutineSignature, SchemaObject, ServerInfo, ServerMetrics, ServerVariable,
+    StatementStat, StreamBatch, TableColumnInfo, TablePrivilegeRow, TableRowEstimate,
+    TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use super::upsert::{conflict_clause, ImportConflict, KeyKind};
 use super::view_rebuild::{AclEntry, DependentViews, RebuildBlocker, ViewInfo, ViewKind};
@@ -1141,9 +1141,10 @@ impl PostgresConn {
                     .map(|v| v.into_iter().map(i64::from).collect())
                     .unwrap_or_default(),
                 progress: None,
+                progress_disabled: false,
             })
             .collect();
-        // VACUUM / CREATE INDEX の進捗 (#1622)。ビューが無い古い版・権限不足は無視して None のまま。
+        // VACUUM / CREATE INDEX / CLUSTER / ANALYZE / COPY の進捗 (#1622 / #2269)。ビューが無い古い版・権限不足は無視して None のまま。
         let progress = self.maintenance_progress().await;
         if !progress.is_empty() {
             for p in &mut list {
@@ -1153,7 +1154,9 @@ impl PostgresConn {
         Ok(list)
     }
 
-    /// `pg_stat_progress_vacuum` / `pg_stat_progress_create_index` を pid で引けるようにする (#1622)。
+    /// `pg_stat_progress_vacuum` / `pg_stat_progress_create_index` に加え、新しい版のビュー
+    /// `pg_stat_progress_cluster` (12 以降。VACUUM FULL / CLUSTER)・`pg_stat_progress_analyze`
+    /// (13 以降)・`pg_stat_progress_copy` (14 以降) を pid で引けるようにする (#1622 / #2269)。
     /// 一覧の取得を壊さないよう、各ビューの失敗 (PostgreSQL 12 未満の `create_index` など) は
     /// 空として扱う。進捗は VACUUM が走査済みヒープブロック / 総ブロック、索引作成が
     /// 処理済みブロック / 総ブロック (総ブロックが 0 のフェーズは行数、それも無ければ割合なし)。
@@ -1172,7 +1175,7 @@ impl PostgresConn {
                 out.insert(
                     pid,
                     ProcessProgress {
-                        kind: "vacuum".into(),
+                        kind: ProcessProgressKind::Vacuum,
                         phase: r.try_get::<String, _>(1).unwrap_or_default(),
                         done: r.try_get::<i64, _>(2).unwrap_or_default(),
                         total: r.try_get::<i64, _>(3).unwrap_or_default(),
@@ -1194,10 +1197,84 @@ impl PostgresConn {
                 out.insert(
                     pid,
                     ProcessProgress {
-                        kind: "create_index".into(),
+                        kind: ProcessProgressKind::CreateIndex,
                         phase: r.try_get::<String, _>(1).unwrap_or_default(),
                         done: r.try_get::<i64, _>(2).unwrap_or_default(),
                         total: r.try_get::<i64, _>(3).unwrap_or_default(),
+                    },
+                );
+            }
+        }
+        // 以下は新しい版で追加されたビュー。無い版・権限不足は失敗を無視して空として扱う (#2269)。
+        // VACUUM FULL / CLUSTER (PostgreSQL 12+): 走査済みヒープブロック / 総ブロック。
+        if let Ok(rows) = sqlx::query(
+            "SELECT pid, phase, COALESCE(heap_blks_scanned, 0)::bigint, \
+                    COALESCE(heap_blks_total, 0)::bigint \
+             FROM pg_catalog.pg_stat_progress_cluster",
+        )
+        .fetch_all(&self.pool)
+        .await
+        {
+            for r in rows {
+                let pid = i64::from(r.try_get::<i32, _>(0).unwrap_or_default());
+                out.insert(
+                    pid,
+                    ProcessProgress {
+                        kind: ProcessProgressKind::Cluster,
+                        phase: r.try_get::<String, _>(1).unwrap_or_default(),
+                        done: r.try_get::<i64, _>(2).unwrap_or_default(),
+                        total: r.try_get::<i64, _>(3).unwrap_or_default(),
+                    },
+                );
+            }
+        }
+        // ANALYZE (PostgreSQL 13+): サンプリング済みブロック / 総ブロック。
+        if let Ok(rows) = sqlx::query(
+            "SELECT pid, phase, COALESCE(sample_blks_scanned, 0)::bigint, \
+                    COALESCE(sample_blks_total, 0)::bigint \
+             FROM pg_catalog.pg_stat_progress_analyze",
+        )
+        .fetch_all(&self.pool)
+        .await
+        {
+            for r in rows {
+                let pid = i64::from(r.try_get::<i32, _>(0).unwrap_or_default());
+                out.insert(
+                    pid,
+                    ProcessProgress {
+                        kind: ProcessProgressKind::Analyze,
+                        phase: r.try_get::<String, _>(1).unwrap_or_default(),
+                        done: r.try_get::<i64, _>(2).unwrap_or_default(),
+                        total: r.try_get::<i64, _>(3).unwrap_or_default(),
+                    },
+                );
+            }
+        }
+        // COPY (PostgreSQL 14+): 処理済みバイト / 総バイト。総バイトが 0 (STDIN など) のときは
+        // 割合を出せないので処理済み行数をフェーズ名に載せる。
+        if let Ok(rows) = sqlx::query(
+            "SELECT pid, command, COALESCE(bytes_processed, 0)::bigint, \
+                    COALESCE(bytes_total, 0)::bigint, COALESCE(tuples_processed, 0)::bigint \
+             FROM pg_catalog.pg_stat_progress_copy",
+        )
+        .fetch_all(&self.pool)
+        .await
+        {
+            for r in rows {
+                let pid = i64::from(r.try_get::<i32, _>(0).unwrap_or_default());
+                let (phase, done, total) = copy_progress(
+                    &r.try_get::<String, _>(1).unwrap_or_default(),
+                    r.try_get::<i64, _>(2).unwrap_or_default(),
+                    r.try_get::<i64, _>(3).unwrap_or_default(),
+                    r.try_get::<i64, _>(4).unwrap_or_default(),
+                );
+                out.insert(
+                    pid,
+                    ProcessProgress {
+                        kind: ProcessProgressKind::Copy,
+                        phase,
+                        done,
+                        total,
                     },
                 );
             }
@@ -6285,8 +6362,36 @@ fn replica_columns_sql() -> String {
     )
 }
 
+/// `pg_stat_progress_copy` の 1 行を `(フェーズ名, done, total)` にする (#2269)。
+/// 総バイトが分かれば処理済みバイト / 総バイト。0 (STDIN / PROGRAM など総量不明) のときは
+/// `done = 処理済み行数`・`total = 0` を返し、行数の整形 (i18n) はフロントが行う。
+fn copy_progress(
+    command: &str,
+    bytes_done: i64,
+    bytes_total: i64,
+    tuples: i64,
+) -> (String, i64, i64) {
+    if bytes_total > 0 {
+        (command.to_string(), bytes_done, bytes_total)
+    } else {
+        (command.to_string(), tuples, 0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn copy_progress_uses_bytes_or_falls_back_to_tuples() {
+        assert_eq!(
+            super::copy_progress("COPY FROM", 50, 200, 7),
+            ("COPY FROM".to_string(), 50, 200)
+        );
+        assert_eq!(
+            super::copy_progress("COPY TO", 0, 0, 1234),
+            ("COPY TO".to_string(), 1234, 0)
+        );
+    }
+
     use super::*;
 
     #[test]

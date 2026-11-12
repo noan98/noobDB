@@ -288,15 +288,17 @@ export const processInfo = z.object({
   query_truncated: z.boolean(),
   is_self: z.boolean(),
   blocked_by: z.array(z.number()),
-  // VACUUM / CREATE INDEX の進捗 (#1622)。PostgreSQL のみ。
+  // 長時間メンテナンスの進捗 (#1622 / #2269)。
   progress: z
     .object({
-      kind: z.enum(["vacuum", "create_index"]),
+      kind: z.enum(["vacuum", "create_index", "alter_table", "cluster", "analyze", "copy"]),
       phase: z.string(),
       done: z.number(),
       total: z.number(),
     })
     .nullish(),
+  // MySQL の stage 計測器が無効 (#2269)。
+  progress_disabled: z.boolean().optional(),
 });
 
 /** `run_chunked_dml_batch` の結果 (#2020)。 */

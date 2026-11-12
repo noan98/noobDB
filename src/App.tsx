@@ -2357,7 +2357,12 @@ export default function App() {
   // 接続間データ転送 (#986): 転送元。null で閉じる。
   const [transferSource, setTransferSource] = useState<TransferSource | null>(null);
   // サブセット抽出 (#2241) の起点の表。
-  const [subsetTarget, setSubsetTarget] = useState<{ database: string; table: string } | null>(null);
+  const [subsetTarget, setSubsetTarget] = useState<{
+    database: string;
+    table: string;
+    initialWhere?: string;
+    initialRootLimit?: number;
+  } | null>(null);
   // 結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821): 対象。null で閉じる。
   const [saveAsTableRequest, setSaveAsTableRequest] = useState<{
     sql: string;
@@ -8618,6 +8623,19 @@ export default function App() {
     setSubsetTarget({ database, table });
   }, []);
 
+  // 結果グリッドで選んだ行を起点にしたサブセット抽出 (#2265): 主キーの IN 条件を入れた状態で開く。
+  const handleExtractSubsetFromRows = useCallback(
+    (target: { database: string | null; table: string; whereClause: string; rootLimit: number }) => {
+      setSubsetTarget({
+        database: target.database ?? "",
+        table: target.table,
+        initialWhere: target.whereClause,
+        initialRootLimit: target.rootLimit,
+      });
+    },
+    [],
+  );
+
   // ファイルから新規テーブルを作成してインポート (#985)。DB のコンテキスト
   // メニューから開く (対象テーブルが無いので ImportModal は作成モード固定)。
   const handleImportNewTable = useCallback((database: string) => {
@@ -13165,6 +13183,7 @@ export default function App() {
     handleRevealSchemaObject,
     handleAiResultSummary,
     handleExploreColumns,
+    handleExtractSubsetFromRows,
     handleNewTab,
     handleOpenAiSql,
     handleOpenSqlFile,
@@ -15515,6 +15534,8 @@ export default function App() {
                   sourceProfileId={selectedProfile?.id ?? null}
                   database={subsetTarget.database}
                   table={subsetTarget.table}
+                  initialWhere={subsetTarget.initialWhere}
+                  initialRootLimit={subsetTarget.initialRootLimit}
                   profiles={profiles}
                   onSandboxRegistered={handleSandboxRegistered}
                   onOpenSandbox={(sandbox) => void handleConnect(sandboxToProfile(sandbox))}

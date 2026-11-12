@@ -1,4 +1,5 @@
-import type { ProcessInfo } from "../api/tauri";
+import type { ProcessInfo, ProcessProgressKind } from "../api/tauri";
+import type { I18nKey } from "../i18n";
 import type { LiveField } from "./liveDiff";
 
 /** 値変化フラッシュ (#1022) の対象列。 */
@@ -271,7 +272,7 @@ export function filterProcesses(rows: readonly ProcessInfo[], filter: ProcessFil
 }
 
 /** 並べ替えキー。`default` はサーバが返した順のまま。 */
-export type ProcessSortKey = "default" | "timeDesc" | "timeAsc" | "id";
+export type ProcessSortKey = "default" | "timeDesc" | "timeAsc" | "id" | "progress";
 
 /**
  * 一覧を並べ替える (#1538)。入力は変更しない。経過秒が不明 (null / 負) のプロセスは
@@ -282,6 +283,14 @@ export function sortProcesses(rows: readonly ProcessInfo[], key: ProcessSortKey)
   if (key === "default") return rows;
   const copy = [...rows];
   if (key === "id") return copy.sort((a, b) => a.id - b.id);
+  if (key === "progress") {
+    // 進捗率の高い順 (#2269)。割合が出せない進捗 (total=0) は進捗ありの末尾、進捗なしはその後ろ。
+    const rank = (p: ProcessInfo): number => {
+      if (!p.progress) return -2;
+      return processProgressPercent(p.progress) ?? -1;
+    };
+    return copy.sort((a, b) => rank(b) - rank(a) || a.id - b.id);
+  }
   const known = (p: ProcessInfo) => p.time_secs != null && p.time_secs >= 0;
   const dir = key === "timeDesc" ? -1 : 1;
   return copy.sort((a, b) => {
@@ -360,3 +369,24 @@ export function failedKillReasons(
   for (const o of outcomes) if (o.status === "failed") out.set(o.id, o.error ?? "");
   return out;
 }
+
+/** 進捗の種別 → 表示ラベルの i18n キー (#2269)。`Record` なので kind を足すと網羅漏れが型エラーになる。 */
+export const PROCESS_PROGRESS_LABEL_KEYS: Record<ProcessProgressKind, I18nKey> = {
+  vacuum: "processProgressVacuum",
+  create_index: "processProgressCreateIndex",
+  alter_table: "processProgressAlterTable",
+  cluster: "processProgressCluster",
+  analyze: "processProgressAnalyze",
+  copy: "processProgressCopy",
+};
+
+/**
+ * MySQL の stage 計測器を有効にする SQL (#2269)。パネルは `SqlPreview` で示すだけで実行しない。
+ * `setup_instruments` / `setup_consumers` の変更はサーバ再起動で元に戻る。
+ */
+export const MYSQL_ENABLE_STAGE_INSTRUMENTATION_SQL = [
+  "UPDATE performance_schema.setup_instruments SET ENABLED = 'YES', TIMED = 'YES'",
+  " WHERE NAME LIKE 'stage/innodb/alter%';",
+  "UPDATE performance_schema.setup_consumers SET ENABLED = 'YES'",
+  " WHERE NAME = 'events_stages_current';",
+].join("\n");

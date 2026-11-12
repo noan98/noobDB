@@ -1395,13 +1395,18 @@ export interface ProcessInfo {
    * できない (権限不足・SQLite) ときは空。待機チェーンのツリー化はフロント側で行う。
    */
   blocked_by: number[];
-  /** VACUUM / CREATE INDEX の進捗 (#1622)。PostgreSQL のみ・走っているときだけ。 */
+  /** 長時間メンテナンスの進捗 (#1622 / #2269)。走っていて取得できるときだけ。 */
   progress?: ProcessProgress | null;
+  /** MySQL の stage 計測器が無効で進捗が取れないと判別できた (#2269)。案内の表示に使う。 */
+  progress_disabled?: boolean;
 }
+
+/** メンテナンス作業の種別 (#2269)。Rust の `ProcessProgressKind` と `enumParity.test.ts` で照合する。 */
+export type ProcessProgressKind = "vacuum" | "create_index" | "alter_table" | "cluster" | "analyze" | "copy";
 
 /** プロセスのメンテナンス作業の進捗 (#1622)。`total` が 0 のフェーズは割合を出せない。 */
 export interface ProcessProgress {
-  kind: "vacuum" | "create_index";
+  kind: ProcessProgressKind;
   phase: string;
   done: number;
   total: number;

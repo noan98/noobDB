@@ -121,13 +121,13 @@ pub mod __test_api {
         CheckConstraintInfo, Column, DbUserInfo, ExtensionDependent, ExtensionInfo,
         ExtensionsOverview, ForeignKey, GeneratedColumnInfo, IndexInfo, KillOutcomeStatus,
         KillProcessOutcome, KillProcessesResult, LiveQuery, LocalTableMeta, PreviewResult,
-        ProcessInfo, ProcessListItem, ProcessProgress, PublicationInfo, PublicationTable,
-        QueryResult, QueryStatsSupport, RlsTable, RoutineParameter, RoutineSignature, SchemaObject,
-        ServerInfo, ServerMessage, ServerMessageSeverity, ServerMetrics, ServerVariable,
-        SqliteFkViolation, SqliteMaintenanceAction, SqliteMaintenanceResult, StreamBatch,
-        TableColumnInfo, TableComment, TableExtrasInfo, TablePartition, TablePartitions,
-        TablePrivilegeRow, TableReplicaIdentity, TableRowEstimate, TableRowIdentity, TableSchema,
-        TableSizeInfo, TableTrigger, UserPrivileges, Value,
+        ProcessInfo, ProcessListItem, ProcessProgress, ProcessProgressKind, PublicationInfo,
+        PublicationTable, QueryResult, QueryStatsSupport, RlsTable, RoutineParameter,
+        RoutineSignature, SchemaObject, ServerInfo, ServerMessage, ServerMessageSeverity,
+        ServerMetrics, ServerVariable, SqliteFkViolation, SqliteMaintenanceAction,
+        SqliteMaintenanceResult, StreamBatch, TableColumnInfo, TableComment, TableExtrasInfo,
+        TablePartition, TablePartitions, TablePrivilegeRow, TableReplicaIdentity, TableRowEstimate,
+        TableRowIdentity, TableSchema, TableSizeInfo, TableTrigger, UserPrivileges, Value,
     };
     pub use crate::db::upsert::{ConflictMode, ImportConflict};
     pub use crate::db::{

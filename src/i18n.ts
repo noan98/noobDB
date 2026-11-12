@@ -3439,7 +3439,32 @@ const en = {
   subsetPreviewNeeded: "Check the plan first to see how many rows each table gives.",
   subsetPreviewError: "Could not build the plan: {error}",
   subsetPreviewRoles: "start {root} / child {child} / parent {parent}",
-  subsetPreviewTotal: "{rows} rows in {tables} tables, in parent-first order",
+  subsetGraphAria:
+    "Foreign key map of the rows to extract: parents on the left, the start table in the middle, children on the right",
+  subsetGraphHint:
+    "Lines join a table with the foreign key (right side) to the table it references (left side). Loaded parent-first.",
+  subsetLaneParent: "Parents",
+  subsetLaneRoot: "Start",
+  subsetLaneChild: "Children",
+  subsetStatRows: "Total rows",
+  subsetStatTables: "Tables",
+  subsetStatDepth: "Deepest",
+  subsetStatDepthSub: "parent {parent} / child {child}",
+  subsetNodeAria: "{table}: {rows} rows ({roles})",
+  subsetNodeDepth: "level {depth}",
+  subsetBadgeTruncated: "Cut off at {limit}",
+  subsetBadgeCycle: "Cycle",
+  subsetBadgeCycleTip: "Part of a foreign key cycle: {tables}",
+  subsetBadgeTruncatedRootTip: "Start rows were cut off at {limit} rows.",
+  subsetBadgeTruncatedChildTip: "Child rows were cut off at {limit} rows.",
+  subsetNodeRefs: "references {tables}",
+  subsetMoreLabel: "+{count} tables",
+  subsetMoreAria: "+{count} tables: show them ({rows} rows)",
+  subsetMoreCollapse: "Show fewer",
+  subsetSummaryCycles:
+    "{count} foreign key cycle(s). FK checks must be deferred while loading, so a transfer to a connection can fail partway; the script output is recommended.",
+  subsetSummaryTruncated: "{count} table(s) hit a row limit.",
+  subsetSummaryHint: "The affected tables carry a badge in the map.",
   subsetPreviewEmpty: "No rows match the start condition.",
   subsetWarnCycle:
     "Foreign keys form a cycle among {tables}. No insert order satisfies every key, so FK checks must be deferred while loading. A transfer to a connection does not disable FK checks and can fail partway; the script output is recommended.",
@@ -4819,6 +4844,17 @@ const en = {
   gridMarkDelete: "Mark row for deletion",
   gridUnmarkDelete: "Unmark deletion",
   // 選択範囲のエクスポート/コピー (#917)
+  // サブセット抽出の起点 (#2265)
+  gridExtractSubset: "Extract subset from {count} selected rows...",
+  gridExtractSubsetTitle:
+    "Open subset extraction with the selected rows (matched by primary key) as the start rows",
+  gridExtractSubsetNoTable: "The source table can't be determined for this result",
+  gridExtractSubsetNoPk: "Subset extraction needs a primary key",
+  gridExtractSubsetMasked: "Primary key columns are masked",
+  gridExtractSubsetNoRows: "No rows are selected",
+  gridExtractSubsetTooMany: "Too many rows are selected to build the condition",
+  gridExtractSubsetInexactKey:
+    "The primary key is a single-precision float, so rows cannot be matched exactly",
   gridExportSelection: "Export {count} selected cells...",
   gridExportSelectionTitle:
     "Save the selected rectangle to a file or copy it as CSV / JSON / Markdown / etc.",
@@ -6336,6 +6372,10 @@ const en = {
   processKillFailedRow: "Could not stop this process: {error}",
   processProgressVacuum: "VACUUM",
   processProgressCreateIndex: "CREATE INDEX",
+  processProgressAlterTable: "ALTER TABLE",
+  processProgressCluster: "VACUUM FULL / CLUSTER",
+  processProgressAnalyze: "ANALYZE",
+  processProgressCopy: "COPY",
   processProgressPercent: "{kind}: {phase} {percent}%",
   processProgressPhase: "{kind}: {phase}",
   processProgressAria: "{kind} progress",
@@ -6387,6 +6427,12 @@ const en = {
   processSortTimeDesc: "Longest running first",
   processSortTimeAsc: "Shortest running first",
   processSortId: "By id",
+  processSortProgress: "Most progress first", // (#2269)
+  processProgressCopyRows: "{phase} ({rows} rows)", // (#2269)
+  processProgressDisabledDismiss: "Dismiss", // (#2269)
+  processProgressDisabledTitle: "Progress for ALTER TABLE is not being collected",
+  processProgressDisabledBody:
+    "MySQL's performance_schema stage instrumentation is off, so ALTER TABLE progress cannot be shown. You can enable it with the SQL below (run it yourself; it is not executed automatically). The setting reverts when the server restarts.",
   processFilterCount: "{shown} of {total} match",
   processFilterClear: "Clear filters",
   processFilterNoMatch: "No processes match the filters.",
@@ -7430,6 +7476,9 @@ const en = {
   sandboxCreateSubmit: "Create sandbox",
   sandboxReviewClose: "Close",
   sandboxReviewTitle: 'Review changes — "{name}"',
+  // (#2271)
+  sandboxApplyAttachedUnsupported:
+    "A sandbox created from an attached SQLite database can't be written back. Copy the SQL generated above and run it on a connection opened directly on that file.",
   sandboxReviewLimitationNote:
     "The sandbox is a local SQLite approximation of the original database's dialect. Review the generated SQL carefully before applying it back — especially schema changes, whose column types come from the sandbox's SQLite copy.",
   sandboxReviewTarget: "Write back to:",
@@ -11662,7 +11711,31 @@ const ja: Dict = {
   subsetPreviewNeeded: "先に「計画を確認」で、表ごとの件数を確かめてください。",
   subsetPreviewError: "計画を作れませんでした: {error}",
   subsetPreviewRoles: "起点 {root} / 子 {child} / 親 {parent}",
-  subsetPreviewTotal: "{tables} 表・計 {rows} 行 (親の表が先の順)",
+  subsetGraphAria: "取り出す行の外部キーの辿り図 (左が親、中央が起点、右が子)",
+  subsetGraphHint:
+    "線は、外部キーを持つ表 (右側) と、その参照先の表 (左側) を結びます。読み込みは親の表が先です。",
+  subsetLaneParent: "親の方向",
+  subsetLaneRoot: "起点",
+  subsetLaneChild: "子の方向",
+  subsetStatRows: "総行数",
+  subsetStatTables: "表の数",
+  subsetStatDepth: "最大の深さ",
+  subsetStatDepthSub: "親 {parent} / 子 {child}",
+  subsetNodeAria: "{table}: {rows} 行 ({roles})",
+  subsetNodeDepth: "{depth} 段目",
+  subsetBadgeTruncated: "上限 {limit} で打ち切り",
+  subsetBadgeCycle: "循環",
+  subsetBadgeCycleTip: "外部キーの循環に含まれます: {tables}",
+  subsetBadgeTruncatedRootTip: "起点の行が {limit} 行で打ち切られました。",
+  subsetBadgeTruncatedChildTip: "子の行が {limit} 行で打ち切られました。",
+  subsetNodeRefs: "参照先: {tables}",
+  subsetMoreLabel: "ほか {count} 表",
+  subsetMoreAria: "ほか {count} 表 ({rows} 行) を表示",
+  subsetMoreCollapse: "折りたたむ",
+  subsetSummaryCycles:
+    "外部キーの循環が {count} 件あります。読み込み中は FK 検査の遅延が必要で、接続への転送は途中で失敗しうるため、スクリプト出力を推奨します。",
+  subsetSummaryTruncated: "{count} 表が行数の上限で打ち切られました。",
+  subsetSummaryHint: "該当の表には図の中にバッジを付けています。",
   subsetPreviewEmpty: "起点の条件に合う行がありません。",
   subsetWarnCycle:
     "{tables} の外部キーが循環しています。すべてのキーを満たす挿入順は決まらないため、読み込み中は FK 検査を遅延させる必要があります。接続への転送は FK 検査を外さないため途中で失敗しうるので、スクリプト出力を推奨します。",
@@ -13022,6 +13095,15 @@ const ja: Dict = {
   gridMarkDelete: "行を削除予定にする",
   gridUnmarkDelete: "削除予定を解除",
   // 選択範囲のエクスポート/コピー (#917)
+  // サブセット抽出の起点 (#2265)
+  gridExtractSubset: "選択した {count} 行を起点にサブセット抽出...",
+  gridExtractSubsetTitle: "選んだ行 (主キーで特定) を起点の行にして、サブセット抽出を開きます",
+  gridExtractSubsetNoTable: "この結果は元の表を特定できません",
+  gridExtractSubsetNoPk: "サブセット抽出には主キーが必要です",
+  gridExtractSubsetMasked: "主キーの列がマスクされています",
+  gridExtractSubsetNoRows: "行が選択されていません",
+  gridExtractSubsetTooMany: "選択した行が多すぎて条件を作れません",
+  gridExtractSubsetInexactKey: "主キーが単精度の浮動小数点数のため、行を正確に特定できません",
   gridExportSelection: "選択した {count} セルをエクスポート",
   gridExportSelectionTitle: "選択範囲だけを CSV / JSON / Markdown などでファイル保存またはコピーします",
   // 一括セル編集 (#596)
@@ -14523,6 +14605,10 @@ const ja: Dict = {
   processKillFailedRow: "このプロセスを停止できませんでした: {error}",
   processProgressVacuum: "VACUUM",
   processProgressCreateIndex: "索引作成",
+  processProgressAlterTable: "ALTER TABLE",
+  processProgressCluster: "VACUUM FULL / CLUSTER",
+  processProgressAnalyze: "ANALYZE",
+  processProgressCopy: "COPY",
   processProgressPercent: "{kind}: {phase} {percent}%",
   processProgressPhase: "{kind}: {phase}",
   processProgressAria: "{kind} の進捗",
@@ -14574,6 +14660,12 @@ const ja: Dict = {
   processSortTimeDesc: "実行時間が長い順",
   processSortTimeAsc: "実行時間が短い順",
   processSortId: "id 順",
+  processSortProgress: "進捗が進んでいる順", // (#2269)
+  processProgressCopyRows: "{phase} ({rows} 行)", // (#2269)
+  processProgressDisabledDismiss: "閉じる", // (#2269)
+  processProgressDisabledTitle: "ALTER TABLE の進捗を収集していません",
+  processProgressDisabledBody:
+    "MySQL の performance_schema の stage 計測器が無効なため、ALTER TABLE の進捗を表示できません。下の SQL で有効にできます (自動では実行しません。ご自身で実行してください)。設定はサーバの再起動で元に戻ります。",
   processFilterCount: "{total} 件中 {shown} 件が一致",
   processFilterClear: "絞り込みを解除",
   processFilterNoMatch: "条件に一致するプロセスがありません。",
@@ -15613,6 +15705,9 @@ const ja: Dict = {
   sandboxCreateSubmit: "サンドボックスを作成",
   sandboxReviewClose: "閉じる",
   sandboxReviewTitle: "変更を確認 — 「{name}」",
+  // (#2271)
+  sandboxApplyAttachedUnsupported:
+    "アタッチした SQLite DB から作ったサンドボックスは書き戻せません。上の SQL をコピーし、そのファイルを直接開いた接続で実行してください。",
   sandboxReviewLimitationNote:
     "サンドボックスは元データベースの方言を近似したローカル SQLite です。書き戻す前に、生成された SQL — 特にスキーマ変更 (列の型はサンドボックスの SQLite コピー由来です) — を必ず確認してください。",
   sandboxReviewTarget: "書き戻し先:",

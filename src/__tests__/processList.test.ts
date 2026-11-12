@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 
 import type { ProcessInfo } from "../api/tauri";
 import {
@@ -166,7 +166,13 @@ describe("filterProcesses / sortProcesses (#1538)", () => {
   });
 });
 
-import { failedKillReasons, groupProcessesByQuery, processProgressPercent } from "../components/processList";
+import {
+  failedKillReasons,
+  groupProcessesByQuery,
+  PROCESS_PROGRESS_LABEL_KEYS,
+  processProgressPercent,
+} from "../components/processList";
+import { setLocale, t } from "../i18n";
 
 describe("groupProcessesByQuery / processProgressPercent / failedKillReasons (#1622)", () => {
   const p = (id: number, query_summary: string | null, is_self = false): ProcessInfo => ({
@@ -225,5 +231,45 @@ describe("groupProcessesByQuery / processProgressPercent / failedKillReasons (#1
       [2, "permission denied"],
       [4, ""],
     ]);
+  });
+});
+
+describe("進捗の kind ラベル / 進捗順の並べ替え (#2269)", () => {
+  afterEach(() => setLocale("en"));
+
+  it("全 kind が en / ja の文言を持つ", () => {
+    const kinds = ["vacuum", "create_index", "alter_table", "cluster", "analyze", "copy"];
+    expect(Object.keys(PROCESS_PROGRESS_LABEL_KEYS).sort()).toEqual([...kinds].sort());
+    for (const loc of ["en", "ja"] as const) {
+      setLocale(loc);
+      for (const key of Object.values(PROCESS_PROGRESS_LABEL_KEYS)) {
+        expect(t(key)).toBeTruthy();
+        expect(t(key)).not.toBe(key);
+      }
+    }
+  });
+
+  it("進捗率の高い順、割合なし・進捗なしは末尾", () => {
+    const mk = (id: number, progress: ProcessInfo["progress"]): ProcessInfo => ({
+      id,
+      user: null,
+      host: null,
+      database: null,
+      command: null,
+      state: null,
+      time_secs: 1,
+      query_summary: null,
+      query_truncated: false,
+      is_self: false,
+      blocked_by: [],
+      progress,
+    });
+    const rows = [
+      mk(1, null),
+      mk(2, { kind: "alter_table", phase: "x", done: 10, total: 100 }),
+      mk(3, { kind: "copy", phase: "COPY FROM (5 tuples)", done: 5, total: 0 }),
+      mk(4, { kind: "cluster", phase: "y", done: 90, total: 100 }),
+    ];
+    expect(sortProcesses(rows, "progress").map((r) => r.id)).toEqual([4, 2, 3, 1]);
   });
 });

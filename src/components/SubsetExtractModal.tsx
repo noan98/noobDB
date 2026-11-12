@@ -8,6 +8,7 @@ import {
   api,
   listenSubsetStream,
   type ConnectionProfile,
+  type ForeignKey,
   type SandboxCreateResponse,
   type SandboxRecord,
   type SubsetDoneEvent,
@@ -29,6 +30,7 @@ import { LoadingButton } from "./LoadingButton";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { FieldError, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { Spinner } from "./Spinner";
+import { SubsetPreviewGraph } from "./SubsetPreviewGraph";
 import { StreamProgressBar } from "./StreamProgressBar";
 import {
   buildSubsetRequest,
@@ -63,6 +65,10 @@ interface Props {
   sourceProfileId: string | null;
   database: string | null;
   table: string;
+  /** 結果グリッドで選んだ行から開くときの起点条件 (主キーの IN 条件)。空欄なら従来どおり。 */
+  initialWhere?: string;
+  /** `initialWhere` とあわせて渡す、起点の最大行数の初期値 (選んだ件数)。 */
+  initialRootLimit?: number;
   profiles: ConnectionProfile[];
   /** サンドボックスを出力先にしたとき、作成後の接続を開く。 */
   onSandboxRegistered: (res: SandboxCreateResponse) => void;
@@ -109,6 +115,8 @@ export function SubsetExtractModal({
   sourceProfileId,
   database,
   table,
+  initialWhere,
+  initialRootLimit,
   profiles,
   onSandboxRegistered,
   onOpenSandbox,
@@ -119,14 +127,18 @@ export function SubsetExtractModal({
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
 
-  const [whereClause, setWhereClause] = useState("");
-  const [rootLimit, setRootLimit] = useState(String(SUBSET_DEFAULT_ROOT_LIMIT));
+  const [whereClause, setWhereClause] = useState(initialWhere ?? "");
+  const [rootLimit, setRootLimit] = useState(String(initialRootLimit ?? SUBSET_DEFAULT_ROOT_LIMIT));
   const [childrenEnabled, setChildrenEnabled] = useState(false);
   const [childDepth, setChildDepth] = useState(String(SUBSET_DEFAULT_CHILD_DEPTH));
   const [childLimit, setChildLimit] = useState(String(SUBSET_DEFAULT_CHILD_LIMIT));
 
   const [preview, setPreview] = useState<SubsetPreview | null>(null);
   const [previewKey, setPreviewKey] = useState<string | null>(null);
+  // 図のエッジに使う外部キー (取得できなければ空 = エッジなしでレーンだけ出す)。
+  const [previewFks, setPreviewFks] = useState<ForeignKey[]>([]);
+  // プレビューを取り直すたびに増やす (図の入場アニメーションをやり直す印)。
+  const [previewRun, setPreviewRun] = useState(0);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -233,9 +245,17 @@ export function SubsetExtractModal({
     setStatus({ kind: "previewing" });
     setPreviewError(null);
     try {
-      const p = await api.previewSubset(request);
+      const [p, fks] = await Promise.all([
+        api.previewSubset(request),
+        // 外部キーは図のエッジにしか使わないので、取れなくてもプレビュー自体は出す。
+        database
+          ? api.foreignKeys(sessionId, database).catch(() => [] as ForeignKey[])
+          : Promise.resolve([] as ForeignKey[]),
+      ]);
       if (unmountedRef.current || seq !== previewSeqRef.current) return;
       setPreview(p);
+      setPreviewFks(fks);
+      setPreviewRun((n) => n + 1);
       setPreviewKey(JSON.stringify(request));
       setStatus({ kind: "idle" });
     } catch (e) {
@@ -739,62 +759,14 @@ export function SubsetExtractModal({
               {t("subsetPreviewEmpty")}
             </Callout>
           )}
-          {visiblePreview && visiblePreview.totalRows > 0 && (
-            <>
-              <chakra.div
-                data-testid="subset-preview"
-                display="flex"
-                flexDirection="column"
-                border="1px solid"
-                borderColor="app.border"
-                borderRadius="md"
-                overflow="hidden"
-              >
-                {visiblePreview.tables.map((row) => (
-                  <chakra.div
-                    key={row.table}
-                    data-testid="subset-preview-row"
-                    display="flex"
-                    alignItems="baseline"
-                    gap="3"
-                    px="3"
-                    py="1.5"
-                    borderBottom="1px solid"
-                    borderColor="app.border"
-                    fontSize="sm"
-                  >
-                    <chakra.span flex="1" minW="0" fontFamily="mono" wordBreak="break-all">
-                      {row.table}
-                    </chakra.span>
-                    <chakra.span textStyle="caption" color="app.textMuted">
-                      {t("subsetPreviewRoles", {
-                        root: row.rootRows,
-                        child: row.childRows,
-                        parent: row.parentRows,
-                      })}
-                    </chakra.span>
-                    <chakra.span fontFamily="mono" minW="64px" textAlign="right">
-                      {row.rows}
-                    </chakra.span>
-                  </chakra.div>
-                ))}
-              </chakra.div>
-              <chakra.span textStyle="caption" color="app.textMuted">
-                {t("subsetPreviewTotal", {
-                  rows: visiblePreview.totalRows,
-                  tables: visiblePreview.tables.length,
-                })}
-              </chakra.span>
-            </>
+          {preview && preview.totalRows > 0 && (
+            <SubsetPreviewGraph
+              preview={preview}
+              foreignKeys={previewFks}
+              stale={!previewFresh}
+              runKey={String(previewRun)}
+            />
           )}
-          {visiblePreview?.warnings.map((w) => {
-            const m = subsetWarningMessage(w);
-            return (
-              <Callout key={JSON.stringify(w)} tone="warning" role="status">
-                {t(m.key, m.params)}
-              </Callout>
-            );
-          })}
         </FormSection>
 
         <FormSection>
