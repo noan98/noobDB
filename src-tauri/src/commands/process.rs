@@ -179,6 +179,7 @@ mod tests {
             is_self: false,
             blocked_by: vec![],
             progress: None,
+            progress_disabled: false,
         }
     }
 
