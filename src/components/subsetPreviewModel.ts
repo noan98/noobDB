@@ -35,6 +35,10 @@ export interface SubsetNode {
   share: number;
   truncations: SubsetTruncation[];
   cycle: boolean;
+  /** 含まれる循環の表名 (循環でなければ空)。 */
+  cycleTables: string[];
+  /** この表が外部キーで参照している表 (図に出ているものだけ)。 */
+  references: string[];
 }
 
 export interface SubsetEdge {
@@ -107,11 +111,18 @@ export function buildSubsetGraph(preview: SubsetPreview, foreignKeys: readonly F
   }
 
   // エッジ: プレビューに含まれる表どうしの外部キー (自己参照・重複は除く)。
+  // 参照先の列が分からず辿れなかった外部キーはエッジにしない。
+  const unresolved = new Set(
+    preview.warnings.flatMap((w) =>
+      w.kind === "unresolvedForeignKey" ? [`${w.table}\u0000${w.constraint}`] : [],
+    ),
+  );
   const edgeKeys = new Set<string>();
   const edges: SubsetEdge[] = [];
   for (const fk of foreignKeys) {
     if (fk.table === fk.referenced_table) continue;
     if (!known.has(fk.table) || !known.has(fk.referenced_table)) continue;
+    if (fk.constraint_name !== null && unresolved.has(`${fk.table}\u0000${fk.constraint_name}`)) continue;
     const key = `${fk.table}\u0000${fk.referenced_table}`;
     if (edgeKeys.has(key)) continue;
     edgeKeys.add(key);
@@ -127,7 +138,9 @@ export function buildSubsetGraph(preview: SubsetPreview, foreignKeys: readonly F
   const lanes = new Map(preview.tables.map((t) => [t.table, assignLane(t)] as const));
   const rootIds = preview.tables.filter((t) => lanes.get(t.table) === "root").map((t) => t.table);
   const childDist = bfsDepth(rootIds, down, (id) => lanes.get(id) !== "parent");
-  const parentDist = bfsDepth(rootIds, up, () => true);
+  // 親は「親レーン以外のすべての表 (起点 + 子)」から辿る (子経由で取り込まれた親も段数を持つ)。
+  const parentStarts = preview.tables.filter((t) => lanes.get(t.table) !== "parent").map((t) => t.table);
+  const parentDist = bfsDepth(parentStarts, up, () => true);
 
   const nodes: SubsetNode[] = preview.tables.map((t) => {
     const lane = lanes.get(t.table) ?? "root";
@@ -144,6 +157,8 @@ export function buildSubsetGraph(preview: SubsetPreview, foreignKeys: readonly F
       share: maxRows > 0 ? t.rows / maxRows : 0,
       truncations: truncations.get(t.table) ?? [],
       cycle: cycleTables.has(t.table),
+      cycleTables: preview.cycles.find((c) => c.includes(t.table)) ?? [],
+      references: up.get(t.table) ?? [],
     };
   });
 

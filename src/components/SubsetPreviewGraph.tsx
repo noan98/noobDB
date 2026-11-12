@@ -46,6 +46,9 @@ const LANE_LABEL: Record<SubsetLane, I18nKey> = {
 };
 const LANE_ICON = { parent: "fk-parent", root: "table", child: "fk-child" } as const;
 
+/** エッジの線幅 (SVG の viewBox 非依存。`vectorEffect` で拡縮しない)。 */
+const EDGE_STROKE = 1.5;
+
 const GRID_COLUMNS = `${GEOMETRY.laneWidth}fr ${GEOMETRY.gutter}fr ${GEOMETRY.laneWidth}fr ${GEOMETRY.gutter}fr ${GEOMETRY.laneWidth}fr`;
 /** 行の高さ (名前 + バー + バッジの 3 段が収まる)。エッジの縦座標が「1 行 = 1」なので全行で揃える。 */
 const ROW_HEIGHT = "calc(var(--space-12) + var(--space-4))";
@@ -115,7 +118,12 @@ function GraphNode({
     >
       <chakra.div
         role="group"
-        aria-label={t("subsetNodeAria", { table: node.table, rows: node.rows, roles })}
+        aria-label={
+          t("subsetNodeAria", { table: node.table, rows: node.rows, roles }) +
+          (node.references.length > 0
+            ? ` / ${t("subsetNodeRefs", { tables: node.references.join(", ") })}`
+            : "")
+        }
         h="100%"
         px="2"
         py="1"
@@ -154,12 +162,18 @@ function GraphNode({
             </chakra.span>
           )}
           {node.truncations.map((tr) => (
-            <Badge key={tr.kind} icon="cut">
+            <Badge
+              key={tr.kind}
+              icon="cut"
+              title={t(tr.kind === "root" ? "subsetBadgeTruncatedRootTip" : "subsetBadgeTruncatedChildTip", {
+                limit: tr.limit,
+              })}
+            >
               {t("subsetBadgeTruncated", { limit: tr.limit })}
             </Badge>
           ))}
           {node.cycle && (
-            <Badge icon="refresh" title={t("subsetBadgeCycleTip")}>
+            <Badge icon="refresh" title={t("subsetBadgeCycleTip", { tables: node.cycleTables.join(" → ") })}>
               {t("subsetBadgeCycle")}
             </Badge>
           )}
@@ -251,6 +265,8 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
                     textStyle="caption"
                     color="app.accent"
                     cursor="pointer"
+                    aria-expanded="true"
+                    aria-label={`${t("subsetMoreCollapse")}: ${t(LANE_LABEL[lane])}`}
                     onClick={() => toggle(lane)}
                   >
                     {t("subsetMoreCollapse")}
@@ -279,7 +295,7 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
                   d={e.d}
                   fill="none"
                   stroke="currentColor"
-                  strokeWidth={1.5}
+                  strokeWidth={EDGE_STROKE}
                   strokeOpacity={0.6}
                   vectorEffect="non-scaling-stroke"
                   data-from={e.from}
@@ -338,6 +354,7 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
                           gap="2"
                           fontSize="sm"
                           data-testid="subset-preview-more"
+                          aria-expanded="false"
                           aria-label={t("subsetMoreAria", { count: item.count, rows: item.rows })}
                           onClick={() => toggle(lane)}
                         >
@@ -357,24 +374,23 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
         <chakra.span textStyle="caption" color="app.textMuted">
           {t("subsetGraphHint")}
         </chakra.span>
+        {(cycleCount > 0 || truncatedTables > 0) && (
+          <Callout tone="warning" role="status" data-testid="subset-preview-summary">
+            {[
+              cycleCount > 0 ? t("subsetSummaryCycles", { count: cycleCount }) : null,
+              truncatedTables > 0 ? t("subsetSummaryTruncated", { count: truncatedTables }) : null,
+              t("subsetSummaryHint"),
+            ]
+              .filter((s) => s !== null)
+              .join(" ")}
+          </Callout>
+        )}
+        {unresolved.map((w) => (
+          <Callout key={JSON.stringify(w)} tone="warning" role="status">
+            {t(subsetWarningMessage(w).key, subsetWarningMessage(w).params)}
+          </Callout>
+        ))}
       </chakra.div>
-
-      {(cycleCount > 0 || truncatedTables > 0) && (
-        <Callout tone="warning" role="status" data-testid="subset-preview-summary">
-          {[
-            cycleCount > 0 ? t("subsetSummaryCycles", { count: cycleCount }) : null,
-            truncatedTables > 0 ? t("subsetSummaryTruncated", { count: truncatedTables }) : null,
-            t("subsetSummaryHint"),
-          ]
-            .filter((s) => s !== null)
-            .join(" ")}
-        </Callout>
-      )}
-      {unresolved.map((w) => (
-        <Callout key={JSON.stringify(w)} tone="warning" role="status">
-          {t(subsetWarningMessage(w).key, subsetWarningMessage(w).params)}
-        </Callout>
-      ))}
     </chakra.div>
   );
 }

@@ -106,6 +106,38 @@ describe("buildSubsetGraph", () => {
   });
 });
 
+describe("buildSubsetGraph: 子経由の親・辿れない外部キー", () => {
+  it("子の親・その親は 1 段目・2 段目になる", () => {
+    const p = preview([
+      tp("orders", 5, 0, 0),
+      tp("order_items", 0, 8, 0),
+      tp("products", 0, 0, 3),
+      tp("categories", 0, 0, 2),
+    ]);
+    const g = buildSubsetGraph(p, [
+      fk("order_items", "orders"),
+      fk("order_items", "products"),
+      fk("products", "categories"),
+    ]);
+    const by = Object.fromEntries(g.nodes.map((n) => [n.table, n]));
+    expect(by.products.depth).toBe(1);
+    expect(by.categories.depth).toBe(2);
+    expect(g.parentDepth).toBe(2);
+    expect(by.order_items.references).toEqual(["orders", "products"]);
+  });
+  it("辿れなかった外部キー (unresolvedForeignKey) はエッジにしない", () => {
+    const p = preview([tp("a", 1, 0, 0), tp("b", 0, 0, 1)], {
+      warnings: [{ kind: "unresolvedForeignKey", table: "a", constraint: "fk_a_b" }],
+    });
+    const g = buildSubsetGraph(p, [{ ...fk("a", "b"), constraint_name: "fk_a_b" }]);
+    expect(g.edges).toEqual([]);
+  });
+  it("循環の表名を持つ", () => {
+    const p = preview([tp("a", 1, 0, 0), tp("b", 0, 0, 1)], { cycles: [["a", "b"]] });
+    expect(buildSubsetGraph(p, []).nodes[0].cycleTables).toEqual(["a", "b"]);
+  });
+});
+
 describe("collapseLanes", () => {
   const mk = (i: number, extra: Partial<SubsetNode> = {}): SubsetNode => ({
     id: `c${i}`,
@@ -119,6 +151,8 @@ describe("collapseLanes", () => {
     share: 0.5,
     truncations: [],
     cycle: false,
+    cycleTables: [],
+    references: [],
     ...extra,
   });
   const root = mk(99, { lane: "root", table: "r", id: "r", depth: 0 });
