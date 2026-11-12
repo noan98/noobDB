@@ -9,6 +9,7 @@ import {
   listenSubsetStream,
   type ConnectionProfile,
   type SandboxCreateResponse,
+  type SandboxRecord,
   type SubsetDoneEvent,
   type SubsetWarning,
   type SubsetExisting,
@@ -64,7 +65,9 @@ interface Props {
   table: string;
   profiles: ConnectionProfile[];
   /** サンドボックスを出力先にしたとき、作成後の接続を開く。 */
-  onSandboxCreated: (res: SandboxCreateResponse) => void;
+  onSandboxRegistered: (res: SandboxCreateResponse) => void;
+  /** 作成済みのサンドボックスへ接続して開く (完了表示のボタンから)。 */
+  onOpenSandbox: (sandbox: SandboxRecord) => void;
   /** 転送先の接続へ切り替えて、その表を開く (転送出力の完了表示から)。 */
   onOpenTransferTarget?: (profile: ConnectionProfile, database: string | null, table: string) => void;
   onClose: () => void;
@@ -88,11 +91,13 @@ type Outcome =
       warnings: SubsetWarning[];
       /** 完了メッセージ用 (スクリプト出力のときだけ)。 */
       path: string | null;
-      sandbox: SandboxCreateResponse | null;
+      sandbox: SandboxRecord | null;
+      /** 実行時点の転送先 (完了後にフォームを触っても変わらない)。 */
+      transfer: { profile: ConnectionProfile; database: string | null } | null;
       truncatedTables: string[];
     }
-  | { kind: "cancelled"; rows: number; elapsedMs: number; total: number }
-  | { kind: "error"; message: string; rows: number; elapsedMs: number };
+  | { kind: "cancelled"; rows: number; elapsedMs: number; total: number | null }
+  | { kind: "error"; message: string; rows: number; elapsedMs: number; total: number | null };
 
 /** 表別の内訳の先頭何件まで順次入場させるか (多い一覧を全件遅延させない)。 */
 const STAGGER_CAP = 20;
@@ -105,7 +110,8 @@ export function SubsetExtractModal({
   database,
   table,
   profiles,
-  onSandboxCreated,
+  onSandboxRegistered,
+  onOpenSandbox,
   onOpenTransferTarget,
   onClose,
 }: Props) {
@@ -319,6 +325,9 @@ export function SubsetExtractModal({
         includeRelated: true,
         rowLimit: request.rootRowLimit ?? null,
       });
+      // 登録 (一覧への追加・作成用セッションの切断・トースト) は完了時に必ず行う。
+      // 完了表示のボタンを押さずに閉じても、セッションがリークしないように。
+      onSandboxRegistered(res);
       if (unmountedRef.current) return;
       setStatus({ kind: "idle" });
       setOutcome({
@@ -329,13 +338,20 @@ export function SubsetExtractModal({
         tables: res.sandbox.tables.map((name) => ({ table: name, rows: null })),
         warnings: [],
         path: null,
-        sandbox: res,
+        sandbox: res.sandbox,
+        transfer: null,
         truncatedTables: res.sandbox.truncated_tables,
       });
     } catch (e) {
       if (unmountedRef.current) return;
       setStatus({ kind: "idle" });
-      setOutcome({ kind: "error", message: String(e), rows: 0, elapsedMs: Date.now() - runStartRef.current });
+      setOutcome({
+        kind: "error",
+        message: String(e),
+        rows: 0,
+        elapsedMs: Date.now() - runStartRef.current,
+        total: null,
+      });
     }
   };
 
@@ -367,10 +383,17 @@ export function SubsetExtractModal({
     setRunTotal(visiblePreview?.totalRows ?? null);
     runStartRef.current = Date.now();
     setStatus({ kind: "running", phase: "collect", rows: 0 });
+    const runTotalNow = visiblePreview?.totalRows ?? null;
     const failWith = (message: string, rows: number) => {
       cleanupStream();
       setStatus({ kind: "idle" });
-      setOutcome({ kind: "error", message, rows, elapsedMs: Date.now() - runStartRef.current });
+      setOutcome({
+        kind: "error",
+        message,
+        rows,
+        elapsedMs: Date.now() - runStartRef.current,
+        total: runTotalNow,
+      });
     };
     try {
       unlistenRef.current = await listenSubsetStream(streamId, {
@@ -387,10 +410,15 @@ export function SubsetExtractModal({
             warnings: e.warnings,
             path: e.path,
             sandbox: null,
+            transfer:
+              output === "transfer" && targetProfile
+                ? { profile: targetProfile, database: targetDatabase }
+                : null,
             truncatedTables: [],
           });
         },
         onError: (e) => failWith(e.message, e.rows),
+        // 中断の完了表示は cancelRun が cancel_stream の応答で出す (ここで二重に出さない)。
         onCancelled: () => {},
       });
       await api.runSubset(streamId, request, subsetOutput, masks);
@@ -411,7 +439,7 @@ export function SubsetExtractModal({
       kind: "cancelled",
       rows: res?.deliveredRows ?? rows,
       elapsedMs: Date.now() - runStartRef.current,
-      total: runTotal ?? 0,
+      total: runTotal,
     });
   };
 
@@ -428,7 +456,7 @@ export function SubsetExtractModal({
           testId="subset-outcome"
           detail={{
             done: outcome.rows,
-            total: outcome.total > 0 ? outcome.total : null,
+            total: outcome.total,
             elapsedMs: outcome.elapsedMs,
             stats: [{ label: t("jobStatRows"), value: outcome.rows }],
           }}
@@ -443,7 +471,7 @@ export function SubsetExtractModal({
           testId="subset-outcome"
           detail={{
             done: outcome.rows,
-            total: runTotal,
+            total: outcome.total,
             elapsedMs: outcome.elapsedMs,
             stats: [{ label: t("jobStatRows"), value: outcome.rows }],
           }}
@@ -453,7 +481,7 @@ export function SubsetExtractModal({
     }
     const rowsKnown = outcome.rows !== null;
     const message = outcome.sandbox
-      ? t("subsetDoneSandbox", { name: outcome.sandbox.sandbox.name, tables: outcome.tables.length })
+      ? t("subsetDoneSandbox", { name: outcome.sandbox.name, tables: outcome.tables.length })
       : outcome.path
         ? t("subsetDoneScript", {
             rows: outcome.rows ?? 0,
@@ -462,7 +490,7 @@ export function SubsetExtractModal({
           })
         : t("subsetDone", { rows: outcome.rows ?? 0, tables: outcome.tables.length });
     const { path, sandbox } = outcome;
-    const transferProfile = outcome.output === "transfer" ? targetProfile : null;
+    const transfer = outcome.transfer;
     return (
       <JobOutcome
         kind="done"
@@ -532,7 +560,7 @@ export function SubsetExtractModal({
             {t("subsetSandboxTruncated", { tables: outcome.truncatedTables.join(", ") })}
           </Callout>
         )}
-        {(path || sandbox || (transferProfile && onOpenTransferTarget)) && (
+        {(path || sandbox || (transfer && onOpenTransferTarget)) && (
           <Flex gap="2" justify="flex-end">
             {path && (
               <Button type="button" variant="secondary" onClick={() => openScriptDir(path)}>
@@ -542,21 +570,21 @@ export function SubsetExtractModal({
             {sandbox && (
               <Button
                 type="button"
-                variant="primary"
+                variant="secondary"
                 onClick={() => {
-                  onSandboxCreated(sandbox);
+                  onOpenSandbox(sandbox);
                   onClose();
                 }}
               >
                 {t("subsetOpenSandbox")}
               </Button>
             )}
-            {transferProfile && onOpenTransferTarget && (
+            {transfer && onOpenTransferTarget && (
               <Button
                 type="button"
-                variant="primary"
+                variant="secondary"
                 onClick={() => {
-                  onOpenTransferTarget(transferProfile, targetDatabase, table);
+                  onOpenTransferTarget(transfer.profile, transfer.database, table);
                   onClose();
                 }}
               >
@@ -888,7 +916,7 @@ export function SubsetExtractModal({
               <chakra.div aria-live="off">
                 <JobProgressDetail
                   done={status.rows}
-                  total={runTotal}
+                  total={status.phase === "write" ? runTotal : null}
                   elapsedMs={jobElapsedMs}
                   running
                   rate={{ label: t("jobStatRowsPerSec"), count: status.rows }}

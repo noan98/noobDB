@@ -43,7 +43,7 @@ async function startRun(screen: Awaited<ReturnType<typeof renderInBrowser>>) {
   await vi.waitFor(() => expect(invocationsOf("run_subset").length).toBe(1));
 }
 
-function render() {
+function render(onSandboxRegistered: () => void = () => {}) {
   return renderInBrowser(
     <SubsetExtractModal
       sessionId="s1"
@@ -51,7 +51,8 @@ function render() {
       database="app"
       table="customers"
       profiles={[]}
-      onSandboxCreated={() => {}}
+      onSandboxRegistered={onSandboxRegistered}
+      onOpenSandbox={() => {}}
       onClose={() => {}}
     />,
   );
@@ -61,7 +62,11 @@ describe("サブセット抽出の進捗と完了 (実ブラウザ)", () => {
   it("プレビュー済みなら確定進捗バーを出し、完了後も JobOutcome と表別の内訳が残る", async () => {
     const screen = await render();
     await startRun(screen);
-    emitTauriEvent("subset-stream:progress", { streamId, phase: "collect", rows: 5 });
+    // collect 中は分母を出さない (不定表示)。write で確定進捗になり、0% に戻らない。
+    emitTauriEvent("subset-stream:progress", { streamId, phase: "collect", rows: 10 });
+    await expect.element(screen.getByText(t("subsetRunningCollect"))).toBeVisible();
+    expect(screen.getByTestId("subset-progress-bar").elements().length).toBe(0);
+    emitTauriEvent("subset-stream:progress", { streamId, phase: "write", rows: 5 });
     await expect.element(screen.getByTestId("subset-progress-bar")).toBeVisible();
     emitTauriEvent("subset-stream:done", {
       streamId,
@@ -86,5 +91,36 @@ describe("サブセット抽出の進捗と完了 (実ブラウザ)", () => {
     await screen.getByRole("button", { name: t("subsetCancelRun") }).click();
     await expect.element(screen.getByTestId("subset-outcome")).toBeVisible();
     await expect.element(screen.getByText(t("subsetCancelled", { rows: 4 }))).toBeVisible();
+  });
+});
+
+describe("サブセット抽出: サンドボックス出力の登録 (実ブラウザ)", () => {
+  it("完了表示のボタンを押さなくても、完了時に登録 (切断・一覧追加) が呼ばれる", async () => {
+    const record = {
+      id: "sb1",
+      name: "customers (subset)",
+      source_profile_id: "p1",
+      source_driver: "sqlite",
+      source_database: "app",
+      tables: ["customers"],
+      row_limit: 1000,
+      file_path: "/tmp/sb1.sqlite",
+      created_at: "2026-01-01T00:00:00Z",
+      truncated_tables: [],
+      row_filters: [],
+    };
+    onCommand("create_sandbox", () => ({ sandbox: record, session_id: "sess-sb" }));
+    const registered = vi.fn();
+    const screen = await render(registered);
+    await screen.getByRole("button", { name: t("subsetPreviewButton") }).click();
+    await expect.element(screen.getByTestId("subset-preview")).toBeVisible();
+    await screen.getByRole("combobox", { name: t("subsetOutputLabel") }).click();
+    await screen.getByRole("option", { name: t("subsetOutputSandbox") }).click();
+    await screen.getByRole("button", { name: t("subsetPreviewButton") }).click();
+    await expect.element(screen.getByTestId("subset-preview")).toBeVisible();
+    await screen.getByRole("button", { name: t("subsetExecute") }).click();
+    await expect.element(screen.getByTestId("subset-outcome")).toBeVisible();
+    expect(registered).toHaveBeenCalledTimes(1);
+    await expect.element(screen.getByRole("button", { name: t("subsetOpenSandbox") })).toBeVisible();
   });
 });
