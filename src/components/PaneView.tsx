@@ -184,6 +184,13 @@ export interface PaneActions {
   handleCloseTab: (id: string) => void;
   handleEditorDocChange: (tabId: string, doc: { toString(): string }) => void;
   handleExploreColumns: (database: string, table: string, column?: string | null) => void;
+  /** 結果グリッドで選んだ行を起点にサブセット抽出を開く (#2265)。 */
+  handleExtractSubsetFromRows: (target: {
+    database: string | null;
+    table: string;
+    whereClause: string;
+    rootLimit: number;
+  }) => void;
   handleNewTab: (paneId?: string) => void;
   handleOpenAiSql: (sql: string, database: string | null) => void;
   handleAiSqlAction: (action: AiSqlEditorAction) => void;
@@ -1330,6 +1337,19 @@ export const PaneView = memo(
                                     sessionId && tab.result
                                       ? gridStable.fn(`${tab.id}:aiSummary`, () =>
                                           actions.handleAiResultSummary(tab),
+                                        )
+                                      : undefined
+                                  }
+                                  onExtractSubset={
+                                    sessionId
+                                      ? gridStable.fn(
+                                          `${tab.id}:extractSubset`,
+                                          (target: {
+                                            database: string | null;
+                                            table: string;
+                                            whereClause: string;
+                                            rootLimit: number;
+                                          }) => actions.handleExtractSubsetFromRows(target),
                                         )
                                       : undefined
                                   }

@@ -437,7 +437,7 @@ function singleFloatWhere(driver: string, col: Column, v: CellValue): string | n
 /** f32 の相対精度 (約 6e-8) より大きく、別の値と取り違えない程度の許容差。 */
 const FLOAT4_WHERE_REL_TOLERANCE = "0.000001";
 
-function isSinglePrecisionFloat(driver: string, col: Column): boolean {
+export function isSinglePrecisionFloat(driver: string, col: Column): boolean {
   // SQLite の REAL は常に f64 (最短表記でも厳密に往復する)。
   if (driver === "sqlite") return false;
   const t = col.type_name.toUpperCase();
@@ -1089,6 +1089,30 @@ function rowWhereParts(driver: string, columns: Column[], row: CellValue[], pkIn
     if (approx) return approx;
     return `${quoted} = ${rowValueLiteral(driver, v, columns[i])}`;
   });
+}
+
+/**
+ * 主キーの各列が「`col = <リテラル>`」の素直な形で比較できる行だけ、そのリテラル列を返す。
+ * NULL (`IS NULL`)・真偽値・単精度 float (許容差つき比較) は `IN` に載せられないので null
+ * (呼び出し側は `buildRowWhere` の述語にフォールバックする)。リテラルは UPDATE / DELETE の
+ * コピーと同じ `rowValueLiteral` を通す (64bit 整数・BLOB も同じ規則)。
+ */
+export function rowPkEqualityLiterals(
+  driver: string,
+  columns: Column[],
+  row: CellValue[],
+  pkIndices: number[],
+): string[] | null {
+  if (pkIndices.length === 0) return null;
+  const lits: string[] = [];
+  for (const i of pkIndices) {
+    const v = row[i];
+    const col = columns[i];
+    if (!col || v === null || v === undefined || typeof v === "boolean") return null;
+    if (singleFloatWhere(driver, col, v)) return null;
+    lits.push(rowValueLiteral(driver, v, col));
+  }
+  return lits;
 }
 
 /**

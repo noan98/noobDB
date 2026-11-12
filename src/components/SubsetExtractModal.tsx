@@ -65,6 +65,10 @@ interface Props {
   sourceProfileId: string | null;
   database: string | null;
   table: string;
+  /** 結果グリッドで選んだ行から開くときの起点条件 (主キーの IN 条件)。空欄なら従来どおり。 */
+  initialWhere?: string;
+  /** `initialWhere` とあわせて渡す、起点の最大行数の初期値 (選んだ件数)。 */
+  initialRootLimit?: number;
   profiles: ConnectionProfile[];
   /** サンドボックスを出力先にしたとき、作成後の接続を開く。 */
   onSandboxRegistered: (res: SandboxCreateResponse) => void;
@@ -111,6 +115,8 @@ export function SubsetExtractModal({
   sourceProfileId,
   database,
   table,
+  initialWhere,
+  initialRootLimit,
   profiles,
   onSandboxRegistered,
   onOpenSandbox,
@@ -121,8 +127,8 @@ export function SubsetExtractModal({
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
 
-  const [whereClause, setWhereClause] = useState("");
-  const [rootLimit, setRootLimit] = useState(String(SUBSET_DEFAULT_ROOT_LIMIT));
+  const [whereClause, setWhereClause] = useState(initialWhere ?? "");
+  const [rootLimit, setRootLimit] = useState(String(initialRootLimit ?? SUBSET_DEFAULT_ROOT_LIMIT));
   const [childrenEnabled, setChildrenEnabled] = useState(false);
   const [childDepth, setChildDepth] = useState(String(SUBSET_DEFAULT_CHILD_DEPTH));
   const [childLimit, setChildLimit] = useState(String(SUBSET_DEFAULT_CHILD_LIMIT));
