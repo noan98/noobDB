@@ -6450,6 +6450,10 @@ const en = {
   processSortId: "By id",
   processSortProgress: "Most progress first", // (#2269)
   processProgressCopyRows: "{phase} ({rows} rows)", // (#2269)
+  processProgressEta: "about {minutes} min left", // (#2291)
+  processProgressEtaUnderMinute: "under 1 min left", // (#2291)
+  processProgressEtaPending: "Estimating time left…", // (#2291)
+  processProgressRate: "{rate} rows/s", // (#2291)
   processProgressDisabledDismiss: "Dismiss", // (#2269)
   processProgressDisabledTitle: "Progress for ALTER TABLE is not being collected",
   processProgressDisabledBody:
@@ -14703,6 +14707,10 @@ const ja: Dict = {
   processSortId: "id 順",
   processSortProgress: "進捗が進んでいる順", // (#2269)
   processProgressCopyRows: "{phase} ({rows} 行)", // (#2269)
+  processProgressEta: "残り約 {minutes} 分", // (#2291)
+  processProgressEtaUnderMinute: "残り 1 分未満", // (#2291)
+  processProgressEtaPending: "残り時間を算出中…", // (#2291)
+  processProgressRate: "{rate} 行/秒", // (#2291)
   processProgressDisabledDismiss: "閉じる", // (#2269)
   processProgressDisabledTitle: "ALTER TABLE の進捗を収集していません",
   processProgressDisabledBody:
