@@ -8,6 +8,7 @@ import { semanticColorVar } from "../semanticColors";
 import type { DiffStatus } from "../api/tauri";
 import { Button, Checkbox, Input } from "./ui";
 import { statusColors } from "./diffStatusColors";
+import { Tooltip } from "./Tooltip";
 import { ActionMark, statusLabel, useStillMotion } from "./SchemaDiffDetail";
 import {
   buildCompareMatrix,
@@ -168,38 +169,39 @@ function BreakdownStrip({
 function DriftMeter({ row, t }: { row: MatrixRow; t: ReturnType<typeof useT> }) {
   const ratio = row.compared === 0 ? 0 : row.drift / row.compared;
   return (
-    <chakra.span
-      data-testid="matrix-drift"
-      display="inline-flex"
-      alignItems="center"
-      gap="1.5"
-      ml="2.5"
-      role="img"
-      aria-label={t("schemaCompareMatrixDrift", { drift: row.drift, total: row.compared })}
-      title={t("schemaCompareMatrixDrift", { drift: row.drift, total: row.compared })}
-    >
+    <Tooltip label={t("schemaCompareMatrixDrift", { drift: row.drift, total: row.compared })}>
       <chakra.span
-        aria-hidden
-        w="var(--space-8)"
-        h="var(--space-1)"
-        borderRadius="pill"
-        bg="app.surfaceMuted"
-        overflow="hidden"
-        display="inline-block"
+        data-testid="matrix-drift"
+        display="inline-flex"
+        alignItems="center"
+        gap="1.5"
+        ml="2.5"
+        role="img"
+        aria-label={t("schemaCompareMatrixDrift", { drift: row.drift, total: row.compared })}
       >
         <chakra.span
-          display="block"
-          h="100%"
-          style={{
-            width: `${ratio * 100}%`,
-            background: row.drift === 0 ? "transparent" : semanticColorVar("warning", "solid"),
-          }}
-        />
+          aria-hidden
+          w="var(--space-8)"
+          h="var(--space-1)"
+          borderRadius="pill"
+          bg="app.surfaceMuted"
+          overflow="hidden"
+          display="inline-block"
+        >
+          <chakra.span
+            display="block"
+            h="100%"
+            style={{
+              width: `${ratio * 100}%`,
+              background: row.drift === 0 ? "transparent" : semanticColorVar("warning", "solid"),
+            }}
+          />
+        </chakra.span>
+        <chakra.span fontSize="xs" textStyle="numeric" color={row.drift === 0 ? "app.textMuted" : "app.text"}>
+          {row.drift}/{row.compared}
+        </chakra.span>
       </chakra.span>
-      <chakra.span fontSize="xs" textStyle="numeric" color={row.drift === 0 ? "app.textMuted" : "app.text"}>
-        {row.drift}/{row.compared}
-      </chakra.span>
-    </chakra.span>
+    </Tooltip>
   );
 }
 
@@ -352,16 +354,17 @@ export function SchemaCompareMatrix({
               <tr key={row.name}>
                 <th scope="row">
                   <Flex align="center" justify="space-between" gap="2">
-                    <chakra.span
-                      fontFamily="var(--font-mono)"
-                      fontWeight={400}
-                      maxW="var(--matrix-label-max)"
-                      overflow="hidden"
-                      textOverflow="ellipsis"
-                      title={row.name}
-                    >
-                      {row.name}
-                    </chakra.span>
+                    <Tooltip label={row.name}>
+                      <chakra.span
+                        fontFamily="var(--font-mono)"
+                        fontWeight={400}
+                        maxW="var(--matrix-label-max)"
+                        overflow="hidden"
+                        textOverflow="ellipsis"
+                      >
+                        {row.name}
+                      </chakra.span>
+                    </Tooltip>
                     <DriftMeter row={row} t={t} />
                   </Flex>
                 </th>
