@@ -296,11 +296,9 @@
   単一ジョブへ統合した経緯があり、壁時計と引き換えに計算量が増えるため採らない。再検討は clippy が
   合計の半分を超える、または Windows が他ジョブより明確に遅れ続けるときに、ジョブ別の
   `sccache --show-stats` を取ってから行う。
-  Windows ジョブは rust-cache (`save-if`) と sccache (`actions/cache/restore` +
-  `actions/cache/save`) の**保存を main の push だけ**にしています (保存が約 1 分かかり、
+  Windows ジョブは rust-cache (`save-if`) の**保存を main の push だけ**にしています (保存が約 1 分かかり、
   PR のキャッシュは他 PR から参照できないため。PR は main スコープを復元するだけ)。
-  さらに `rust (clippy)` / `rust (test)` / `rust (coverage)` /
-  `rust (windows)` の各コンパイルジョブは
+  さらに `rust (clippy)` / `rust (test)` / `rust (coverage)` の各コンパイルジョブは
   **sccache** を `RUSTC_WRAPPER` として有効化し (`taiki-e/install-action` で導入)、
   `SCCACHE_DIR` を `actions/cache` で永続化してブランチ跨ぎでコンパイル単位を再利用
   します (#417)。rust-cache が `target` ディレクトリをキャッシュするのに対し sccache
@@ -308,8 +306,12 @@
   `sccache-<os>-<job>-<Cargo.lock ハッシュ>` で分離します。`config.toml` の sccache
   設定はコメントアウトのままで、CI 限定で環境変数により有効化しています。なお
   `rust (coverage)` のカバレッジ計装ビルド (`-C instrument-coverage`) は sccache が
-  キャッシュ対象外として素通しするため、sccache の効果は主に clippy / test / windows
+  キャッシュ対象外として素通しするため、sccache の効果は主に clippy / test
   ジョブと依存クレートのコンパイルに現れます。
+  **`rust (windows)` は sccache を使いません** (2026-11-14 JST)。Rust 1.100 の cargo は依存ごとに
+  `-L dependency=target/debug/build/<crate>/<hash>/out` を渡すため rustc のコマンドラインが
+  4 万文字を超え、sccache が argfile を展開して rustc を起動すると Windows の上限 (32,767 文字) で
+  `os error 206` になります。sccache が応答ファイルで rustc を起動するようになったら戻します。
   **必須チェックを設定する場合は `rust (check + clippy + test)` や旧
   `rust (windows)` ではなく `rust (clippy)` と `rust (test)` (必要なら
   `rust (deny)` / `rust (windows)`) を
