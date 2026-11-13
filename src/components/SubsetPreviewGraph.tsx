@@ -474,8 +474,9 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
                 color="app.text"
                 fontFamily="mono"
                 textStyle="caption"
-                whiteSpace="nowrap"
-                truncate
+                textAlign="center"
+                whiteSpace="normal"
+                wordBreak="break-all"
                 pointerEvents="none"
                 zIndex={1}
                 data-testid="subset-preview-edge-label"

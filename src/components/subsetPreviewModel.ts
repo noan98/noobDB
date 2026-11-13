@@ -407,7 +407,7 @@ export interface EdgeLabelBox {
 
 /**
  * 列名ラベルの置き場所を決める。ラベルは曲線の中点に最も近い溝の中央に、溝の幅いっぱいで置く。
- * 溝にはノードが無いので、行数や表名とは重ならない (長い文言は呼び出し側で省略表示する)。
+ * 溝にはノードが無いので、行数や表名とは重ならない (長い文言は溝の幅で折り返して全文を見せる)。
  * 縦は表の行の範囲 (0..rowCount) に収める。
  */
 export function edgeLabelBox(mid: { x: number; y: number }, rowCount: number): EdgeLabelBox {
