@@ -2131,6 +2131,42 @@
   color-scheme: dark;
 }
 
+/* スキーマ比較マトリクス (#2296): マスの状態色。意味色の太い段を淡く薄めた面で、記号と併記する
+   (色だけに頼らない)。テーマ切替は --success-solid 等の差し替えに追従する。 */
+:root {
+  --matrix-cell-source-only: color-mix(in srgb, var(--success-solid) 16%, transparent);
+  --matrix-cell-target-only: color-mix(in srgb, var(--error-solid) 16%, transparent);
+  --matrix-cell-different: color-mix(in srgb, var(--warning-solid) 18%, transparent);
+  --matrix-cell-error: color-mix(in srgb, var(--text-muted) 10%, transparent);
+  --matrix-cell-active: color-mix(in srgb, var(--accent) 9%, transparent);
+  --matrix-search-w: 220px;
+  --matrix-search-min: 120px;
+  --matrix-label-max: 220px;
+  --matrix-hatch: color-mix(in srgb, var(--text-muted) 22%, transparent);
+}
+.compare-matrix-cell {
+  transition: background-color var(--dur-med) var(--ease-out);
+  box-shadow: none;
+}
+.compare-matrix-cell[data-active="true"] { box-shadow: inset 0 0 0 999px var(--matrix-cell-active); }
+.compare-matrix-cell[data-status="source_only"] { background-color: var(--matrix-cell-source-only); }
+.compare-matrix-cell[data-status="target_only"] { background-color: var(--matrix-cell-target-only); }
+.compare-matrix-cell[data-status="different"] { background-color: var(--matrix-cell-different); }
+.compare-matrix-cell[data-status="error"] { background-color: var(--matrix-cell-error); }
+.compare-matrix-cell[data-status="absent"] {
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--matrix-hatch) 0,
+    var(--matrix-hatch) var(--space-0-5),
+    transparent var(--space-0-5),
+    transparent var(--space-1)
+  );
+}
+:root[data-motion="reduced"] .compare-matrix-cell { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .compare-matrix-cell { transition: none; }
+}
+
 /* Density overrides (#410, #620). The grid-facing tokens and the control
    padding multiplier (--density-control-scale) shift together so the same
    preset tunes the grid *and* every form / button / field; horizontal padding

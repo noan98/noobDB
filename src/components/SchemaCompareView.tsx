@@ -665,6 +665,17 @@ export function SchemaCompareView({
     [multi, activeTarget, comparing],
   );
 
+  /** マトリクスの内訳ストリップから: その比較先の詳細を、その状態のテーブルだけに絞る。 */
+  const focusTargetStatus = useCallback(
+    (index: number, status: DiffStatus) => {
+      if (comparing) return;
+      activateTarget(index);
+      setFilters({ different: false, source_only: false, target_only: false, same: false, [status]: true });
+      setTableQuery("");
+    },
+    [comparing, activateTarget],
+  );
+
   const sourceDriver = useMemo(
     () => profiles.find((p) => p.id === source.profileId)?.driver ?? null,
     [profiles, source.profileId],
@@ -1699,6 +1710,7 @@ export function SchemaCompareView({
                 columns={multi.map((col, i) => ({ ...col, label: targetSideLabel(targets[i]) }))}
                 active={activeTarget}
                 onSelect={activateTarget}
+                onFilterStatus={focusTargetStatus}
                 t={t}
               />
               {multi.map((col, i) =>
