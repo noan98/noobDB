@@ -4909,7 +4909,7 @@ const en = {
   cloneRowsUndoHint:
     "Recorded {recorded} table(s) in the flight recorder. Undo them as one batch from there.",
   cloneRowsNoUndo:
-    "These rows could not be recorded in the flight recorder, so they cannot be undone from there.",
+    "These tables could not be recorded in the flight recorder and cannot be undone from there: {tables}",
   cloneRowsUndoPartial:
     "Recorded {recorded} table(s) in the flight recorder. These tables could not be recorded and cannot be undone: {tables}",
   cloneRowsCaptureOff:
