@@ -11,6 +11,7 @@ import {
   resolveSubsetMasks,
   subsetMenuDisabledReason,
   subsetWarningMessage,
+  SUBSET_MAX_WHERE_LEN,
 } from "../components/subsetExtract";
 
 const base = {
@@ -280,6 +281,24 @@ describe("buildSubsetPkCondition (#2265)", () => {
     expect(f("mysql", col("at", "DATETIME"), "2026-01-02 03:04:05")).toMatchObject({
       condition: "`at` IN ('2026-01-02 03:04:05')",
     });
+  });
+
+  it("長さの上限はコードポイント数で数える (絵文字は 1 文字。Rust の chars().count() と一致, #2301)", () => {
+    const f = (n: number) =>
+      buildSubsetPkCondition({
+        driver: "sqlite",
+        columns: cols,
+        rows: [[1, "\u{1F600}".repeat(n), ""]],
+        pkIndices: [1],
+      });
+    // `"code" IN ('` (12 文字) + n + `')` (2 文字) = 14 + n コードポイント。UTF-16 では 14 + 2n。
+    const ok = f(SUBSET_MAX_WHERE_LEN - 14);
+    expect(ok).toMatchObject({ ok: true });
+    if (ok.ok) {
+      expect(Array.from(ok.condition).length).toBe(SUBSET_MAX_WHERE_LEN);
+      expect(ok.condition.length).toBeGreaterThan(SUBSET_MAX_WHERE_LEN);
+    }
+    expect(f(SUBSET_MAX_WHERE_LEN - 13)).toEqual({ ok: false, reason: "tooLong" });
   });
 
   it("打ち切り: 上限を超える選択は tooLong", () => {
