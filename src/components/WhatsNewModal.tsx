@@ -5,7 +5,7 @@ import { useT } from "../i18n";
 import { staggerContainer, variants } from "../motion";
 import { displayVersion, parseReleaseNotes, type ReleaseNoteBlock } from "../updaterFormat";
 import { Callout } from "./Callout";
-import { Icon } from "./Icon";
+import { VersionPill } from "./VersionPill";
 import { CodePreview } from "./modalForm";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { prefersStaticMotion } from "./revealOrigin";
@@ -60,23 +60,7 @@ export function WhatsNewModal({ version, currentVersion, notes, onClose }: Props
         >
           <BrandLockup markSize={44} wordSize="var(--text-xl)" gap="3" animate={!still} />
           <Flex align="center" gap="2" wrap="wrap" justify="center">
-            <chakra.span
-              data-testid="whats-new-version"
-              textStyle="numeric"
-              display="inline-flex"
-              alignItems="center"
-              gap="1"
-              py="0.5"
-              px="2"
-              borderRadius="pill"
-              fontSize="sm"
-              fontWeight="semibold"
-              // ベタ塗り + app.onSolid は themeContrast.test が全テーマで AA を保証する組み合わせ。
-              bg="app.info.solid"
-              color="app.onSolid"
-            >
-              <Icon name="sparkles" />v{shown}
-            </chakra.span>
+            <VersionPill version={shown} testId="whats-new-version" />
             {currentVersion && (
               <chakra.span fontSize="sm" color="app.textMuted">
                 {t("whatsNewFrom", { current: displayVersion(currentVersion) })}
@@ -128,7 +112,7 @@ export function WhatsNewModal({ version, currentVersion, notes, onClose }: Props
   );
 }
 
-function NoteBlock({ block }: { block: ReleaseNoteBlock }) {
+export function NoteBlock({ block }: { block: ReleaseNoteBlock }) {
   switch (block.kind) {
     case "heading":
       return (

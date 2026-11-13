@@ -963,8 +963,6 @@ const en = {
   updateUpToDate: "You're on the latest version ({version}).",
   updateCheckFailed: "Couldn't check for updates. Check your connection and try again.",
   updateAvailableTitle: "Update available",
-  updateAvailableMessage:
-    "A new version {version} is available (you have {current}). Download it and restart to update now?",
   updateViewWhatsNew: "See what's new",
   whatsNewTitle: "What's new",
   whatsNewClose: "Close",
@@ -978,6 +976,10 @@ const en = {
   updateDownloadingProgress: "Downloading the update… {percent}% ({downloaded} / {total})",
   updateDownloadingStarted: "Downloading the update… the app will restart automatically when it's ready.",
   updateFailed: "Update failed: {error}",
+  updateHighlights: "Highlights",
+  updateInBackground: "Continue in background",
+  updateRetry: "Retry",
+  updateApplying: "Applying the update… the app will restart in a moment.",
 
   settingsBackup: "Backup & reset",
   settingsBackupHelp:
@@ -3442,7 +3444,7 @@ const en = {
   subsetGraphAria:
     "Foreign key map of the rows to extract: parents on the left, the start table in the middle, children on the right",
   subsetGraphHint:
-    "Lines join a table with the foreign key (right side) to the table it references (left side). Loaded parent-first.",
+    "Lines join a table with the foreign key (right side) to the table it references (left side). Loaded parent-first. Hover or focus a table to highlight its path to the start.",
   subsetLaneParent: "Parents",
   subsetLaneRoot: "Start",
   subsetLaneChild: "Children",
@@ -5962,6 +5964,9 @@ const en = {
   schemaCompareMatrixAllSame: "Every target has the same table definitions as the source.",
   schemaCompareMatrixComparedSame:
     "Every target that could be compared has the same table definitions as the source.",
+  schemaCompareMatrixSortDrift: "Most drifted first",
+  schemaCompareMatrixDrift: "{drift} of {total} differ",
+  schemaCompareMatrixStripLabel: "{target}: {status} {count}. Show only these below",
   schemaCompareDataProgress: "{rows} rows read",
   schemaCompareDataCancel: "Cancel comparison",
   schemaCompareDataCancelled: "The data comparison was cancelled.",
@@ -6455,6 +6460,10 @@ const en = {
   processSortId: "By id",
   processSortProgress: "Most progress first", // (#2269)
   processProgressCopyRows: "{phase} ({rows} rows)", // (#2269)
+  processProgressEta: "about {minutes} min left", // (#2291)
+  processProgressEtaUnderMinute: "under 1 min left", // (#2291)
+  processProgressEtaPending: "Estimating time left…", // (#2291)
+  processProgressRate: "{rate} rows/s", // (#2291)
   processProgressDisabledDismiss: "Dismiss", // (#2269)
   processProgressDisabledTitle: "Progress for ALTER TABLE is not being collected",
   processProgressDisabledBody:
@@ -9341,8 +9350,6 @@ const ja: Dict = {
   updateUpToDate: "最新バージョンです ({version})。",
   updateCheckFailed: "更新を確認できませんでした。接続を確認してもう一度お試しください。",
   updateAvailableTitle: "更新があります",
-  updateAvailableMessage:
-    "新しいバージョン {version} があります (現在 {current})。今すぐダウンロードして再起動し、更新しますか？",
   updateViewWhatsNew: "更新内容を見る",
   whatsNewTitle: "新機能ハイライト",
   whatsNewClose: "閉じる",
@@ -9356,6 +9363,10 @@ const ja: Dict = {
   updateDownloadingProgress: "更新をダウンロードしています… {percent}% ({downloaded} / {total})",
   updateDownloadingStarted: "更新をダウンロードしています… 準備ができると自動的に再起動します。",
   updateFailed: "更新に失敗しました: {error}",
+  updateHighlights: "主な変更",
+  updateInBackground: "バックグラウンドで続行",
+  updateRetry: "再試行",
+  updateApplying: "更新を適用しています… まもなくアプリが再起動します。",
 
   settingsBackup: "バックアップとリセット",
   settingsBackupHelp:
@@ -11812,7 +11823,7 @@ const ja: Dict = {
   subsetPreviewRoles: "起点 {root} / 子 {child} / 親 {parent}",
   subsetGraphAria: "取り出す行の外部キーの辿り図 (左が親、中央が起点、右が子)",
   subsetGraphHint:
-    "線は、外部キーを持つ表 (右側) と、その参照先の表 (左側) を結びます。読み込みは親の表が先です。",
+    "線は、外部キーを持つ表 (右側) と、その参照先の表 (左側) を結びます。読み込みは親の表が先です。表にホバー / フォーカスすると、起点までの経路を強調します。",
   subsetLaneParent: "親の方向",
   subsetLaneRoot: "起点",
   subsetLaneChild: "子の方向",
@@ -14297,6 +14308,9 @@ const ja: Dict = {
   schemaCompareMatrixActive: "下に表示中",
   schemaCompareMatrixAllSame: "すべての比較先で、テーブル定義が基準と同じです。",
   schemaCompareMatrixComparedSame: "比較できた比較先では、テーブル定義が基準と同じです。",
+  schemaCompareMatrixSortDrift: "ずれている環境が多い順",
+  schemaCompareMatrixDrift: "{total} 環境中 {drift} 環境でずれ",
+  schemaCompareMatrixStripLabel: "{target}: {status} {count} 件。下の詳細をこれだけに絞る",
   schemaCompareDataProgress: "{rows} 行を読み込み済み",
   schemaCompareDataCancel: "比較を中止",
   schemaCompareDataCancelled: "データ比較を中止しました。",
@@ -14786,6 +14800,10 @@ const ja: Dict = {
   processSortId: "id 順",
   processSortProgress: "進捗が進んでいる順", // (#2269)
   processProgressCopyRows: "{phase} ({rows} 行)", // (#2269)
+  processProgressEta: "残り約 {minutes} 分", // (#2291)
+  processProgressEtaUnderMinute: "残り 1 分未満", // (#2291)
+  processProgressEtaPending: "残り時間を算出中…", // (#2291)
+  processProgressRate: "{rate} 行/秒", // (#2291)
   processProgressDisabledDismiss: "閉じる", // (#2269)
   processProgressDisabledTitle: "ALTER TABLE の進捗を収集していません",
   processProgressDisabledBody:

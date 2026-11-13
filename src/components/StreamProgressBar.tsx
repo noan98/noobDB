@@ -62,11 +62,26 @@ export function StreamProgressBar({ active }: { active: boolean }) {
  * 進捗の文言は呼び出し側が併記し、バー自体は装飾 (`aria-hidden`)。
  * `tone` を渡すと終了状態を意味色 (success / warning / danger) で止める (#2092)。
  */
-export function DeterminateProgressBar({ value, tone }: { value: number; tone?: SemanticRole }) {
+export function DeterminateProgressBar({
+  value,
+  tone,
+  slim,
+}: {
+  value: number;
+  tone?: SemanticRole;
+  /** 表の行内など高さを増やしたくない場所向けの細身 (トークン指定の高さ、#2291)。 */
+  slim?: boolean;
+}) {
   const reduced = useReducedMotion() ?? false;
   const ratio = Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0;
   return (
-    <chakra.div aria-hidden h="8px" borderRadius="sm" bg="app.surfaceMuted" overflow="hidden">
+    <chakra.div
+      aria-hidden
+      h={slim ? "1" : "8px"}
+      borderRadius={slim ? "full" : "sm"}
+      bg="app.surfaceMuted"
+      overflow="hidden"
+    >
       <motion.div
         style={{ height: "100%", background: tone ? semanticColorVar(tone, "solid") : "var(--accent)" }}
         animate={{ width: `${ratio * 100}%` }}

@@ -947,6 +947,19 @@ mod tests {
         assert!(checked_row_filter(DriverKind::Sqlite, "t", Some(&long)).is_err());
     }
 
+    #[test]
+    fn row_filter_length_counts_code_points() {
+        // 長さはコードポイント数 (フロントの `codePointLength` と一致, #2301)。
+        // `a = '` (5) + 絵文字 n + `'` (1) = 6 + n コードポイント。UTF-8 / UTF-16 では上限を超える。
+        let filter = |n: usize| format!("a = '{}'", "\u{1F600}".repeat(n));
+        let exact = filter(MAX_ROW_FILTER_LEN - 6);
+        assert_eq!(exact.chars().count(), MAX_ROW_FILTER_LEN);
+        assert!(exact.len() > MAX_ROW_FILTER_LEN);
+        assert!(checked_row_filter(DriverKind::Sqlite, "t", Some(&exact)).is_ok());
+        let over = filter(MAX_ROW_FILTER_LEN - 5);
+        assert!(checked_row_filter(DriverKind::Sqlite, "t", Some(&over)).is_err());
+    }
+
     fn table_diff(name: &str, status: DiffStatus) -> TableDiff {
         TableDiff {
             name: name.to_string(),

@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useEffect, useRef } from "react";
 import { AnimatePresence, motion, useReducedMotionConfig } from "motion/react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
@@ -280,6 +280,8 @@ const listItemCss: SystemStyleObject = {
   font: "inherit",
   color: "inherit",
   cursor: "pointer",
+  // マトリクスから飛んできたときのフラッシュ (`.table-diff-flash::after`) の基準位置。
+  position: "relative",
   _hover: { background: "var(--bg-hover)" },
   _focusVisible: { outline: "none", boxShadow: "inset var(--focus-ring)" },
   "&[aria-current='true']": {
@@ -307,7 +309,7 @@ const COLLAPSE_LIST_MAX = 100;
 const INSTANT = { duration: 0 } as const;
 
 /** reduced-motion (アプリ設定 / OS) とハイコントラストでは出入りを即時にする。height の補間は MotionConfig では止まらない。 */
-function useStillMotion(): boolean {
+export function useStillMotion(): boolean {
   const reduced = useReducedMotionConfig() ?? false;
   return reduced || prefersStaticMotion();
 }
@@ -351,16 +353,36 @@ export function TableDiffList({
   groups,
   selected,
   onSelect,
+  reveal,
   t,
 }: {
   groups: TableGroup[];
   selected: string | null;
   onSelect: (name: string) => void;
+  /**
+   * マトリクスのマスを押したとき、その行を見える位置へ送って 1 回光らせる要求 (#2292)。
+   * `seq` が変わるたびに有効で、行がまだ描かれていなければ現れた時点で実行する。
+   */
+  reveal?: { name: string; seq: number } | null;
   t: ReturnType<typeof useT>;
 }) {
   const still = useStillMotion();
+  const navRef = useRef<HTMLElement>(null);
+  const doneSeqRef = useRef(0);
+  // 絞り込みの解除やページ送りで行が後から現れることがあるので、groups の変化でも再試行する。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: groups の変化も契機にする (行が現れるまで待つ)。
+  useEffect(() => {
+    if (!reveal || reveal.seq === doneSeqRef.current) return;
+    const btn = Array.from(navRef.current?.querySelectorAll<HTMLElement>("[data-table-name]") ?? []).find(
+      (el) => el.dataset.tableName === reveal.name,
+    );
+    if (!btn) return;
+    doneSeqRef.current = reveal.seq;
+    // jsdom など scrollIntoView を持たない環境では何もしない。
+    btn.scrollIntoView?.({ block: "nearest", behavior: still ? "auto" : "smooth" });
+  }, [reveal, groups, still]);
   return (
-    <chakra.nav aria-label={t("schemaCompareTableListLabel")}>
+    <chakra.nav ref={navRef} aria-label={t("schemaCompareTableListLabel")}>
       {groups.map((g) => (
         <Box key={g.status}>
           <chakra.div
@@ -395,7 +417,13 @@ export function TableDiffList({
                   <Li key={tbl.name} borderBottom="1px solid" borderColor="app.borderSubtle" {...motionProps}>
                     <chakra.button
                       type="button"
-                      css={listItemCss}
+                      css={{ ...listItemCss, "--flash-color": statusColors(tbl.status).color }}
+                      data-table-name={tbl.name}
+                      className={
+                        reveal && reveal.name === tbl.name
+                          ? `table-diff-flash${reveal.seq % 2 === 0 ? " table-diff-flash-alt" : ""}`
+                          : undefined
+                      }
                       aria-current={tbl.name === selected ? "true" : undefined}
                       onClick={() => onSelect(tbl.name)}
                     >

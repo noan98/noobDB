@@ -30,40 +30,32 @@ describe("WhatsNewModal (#1864)", () => {
   });
 });
 
-describe("確認ダイアログ → 更新内容を見る → Esc (#1864)", () => {
-  it("Esc で Modal だけ閉じ、確認は未解決のまま残る", async () => {
-    const { confirmAndInstallUpdate } = await import("../components/updatePrompt");
-    const { useConfirm } = await import("../components/ConfirmDialog");
+describe("更新モーダル → 更新内容を見る → Esc (#1864 / #2297)", () => {
+  it("Esc で WhatsNewModal だけ閉じ、更新モーダルは残る", async () => {
+    const { confirmAndInstallUpdate, UpdatePromptHost } = await import("../components/updatePrompt");
     const resolved = vi.fn();
-    function Host() {
-      const { confirm, dialog } = useConfirm();
-      return (
-        <>
-          <button
-            type="button"
-            onClick={() =>
-              void confirmAndInstallUpdate(
-                { version: "2.0.0", currentVersion: "1.0.0", body: "- x項目" } as never,
-                {
-                  t: ((k: string) => t(k as never)) as never,
-                  toast: { info: vi.fn(), error: vi.fn(), dismiss: vi.fn(), update: vi.fn() } as never,
-                  confirm: (o) => confirm({ ...o }).then((v) => (resolved(v), v)),
-                },
-              )
-            }
-          >
-            go
-          </button>
-          {dialog}
-        </>
-      );
-    }
-    renderWithProviders(<Host />);
+    renderWithProviders(
+      <>
+        <button
+          type="button"
+          onClick={() =>
+            void confirmAndInstallUpdate({
+              version: "2.0.0",
+              currentVersion: "1.0.0",
+              body: "- x項目",
+            } as never).then(resolved)
+          }
+        >
+          go
+        </button>
+        <UpdatePromptHost />
+      </>,
+    );
     fireEvent.click(screen.getByText("go"));
     fireEvent.click(await screen.findByText(t("updateViewWhatsNew")));
-    expect(await screen.findByText("x項目")).toBeTruthy();
+    expect(await screen.findByText(t("whatsNewTitle"))).toBeTruthy();
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByText("x項目")).toBeNull());
+    await waitFor(() => expect(screen.queryByText(t("whatsNewTitle"))).toBeNull());
     expect(screen.getByText(t("updateAvailableTitle"))).toBeTruthy();
     expect(resolved).not.toHaveBeenCalled();
   });

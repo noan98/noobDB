@@ -202,4 +202,57 @@ describe("プレビューの FK 辿り図 (#2266)", () => {
     await screen.getByLabelText(t("subsetWhereLabel")).fill("id = 1");
     await expect.element(screen.getByTestId("subset-preview")).toHaveAttribute("data-stale", "true");
   });
+
+  it("ノードへフォーカスすると起点までの経路と FK の列名が強調され、他は減光し、外すと戻る (#2293)", async () => {
+    onCommand("preview_subset", () => ({
+      tables: [
+        { table: "customers", rows: 3, rootRows: 3, childRows: 0, parentRows: 0, columns: [] },
+        { table: "regions", rows: 2, rootRows: 0, childRows: 0, parentRows: 2, columns: [] },
+        { table: "orders", rows: 7, rootRows: 0, childRows: 7, parentRows: 0, columns: [] },
+      ],
+      totalRows: 12,
+      cycles: [["orders", "customers"]],
+      warnings: [{ kind: "childTruncated", table: "orders", limit: 7 }],
+    }));
+    onCommand("foreign_keys", () => [
+      {
+        table: "customers",
+        column: "region_id",
+        referenced_table: "regions",
+        referenced_column: "id",
+        constraint_name: "fk1",
+      },
+      {
+        table: "orders",
+        column: "customer_id",
+        referenced_table: "customers",
+        referenced_column: "id",
+        constraint_name: "fk2",
+      },
+    ]);
+    const screen = await render();
+    await screen.getByRole("button", { name: t("subsetPreviewButton") }).click();
+    await expect.element(screen.getByTestId("subset-preview")).toBeVisible();
+    const node = (table: string) =>
+      document.querySelector<HTMLElement>(`[data-testid="subset-preview-node"][data-table="${table}"]`);
+    const dim = (table: string) => node(table)?.getAttribute("data-dim");
+    // 打ち切り・循環の両バッジが同じ行に入っても切れない (#2293)。
+    const cycleBadge = [...document.querySelectorAll("[data-table='orders'] span")].find(
+      (e) => e.textContent === t("subsetBadgeCycle"),
+    ) as HTMLElement;
+    expect(cycleBadge.scrollWidth).toBeLessThanOrEqual(cycleBadge.clientWidth);
+
+    node("orders")?.querySelector<HTMLElement>("[role='group']")?.focus();
+    await expect.poll(() => dim("regions")).toBe("true");
+    expect(dim("orders")).toBe("false");
+    expect(dim("customers")).toBe("false");
+    const lit = document.querySelectorAll('[data-testid="subset-preview-edges"] path[data-hl="true"]');
+    expect(lit).toHaveLength(1);
+    expect(lit[0].getAttribute("data-from")).toBe("orders");
+    await expect.element(screen.getByText("orders.customer_id → customers.id")).toBeVisible();
+
+    node("orders")?.querySelector<HTMLElement>("[role='group']")?.blur();
+    await expect.poll(() => dim("regions")).toBe("false");
+    expect(document.querySelectorAll('[data-testid="subset-preview-edge-label"]')).toHaveLength(0);
+  });
 });
