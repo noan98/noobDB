@@ -3,6 +3,7 @@ import aiRs from "../../src-tauri/src/commands/ai.rs?raw";
 import cellBlobRs from "../../src-tauri/src/commands/cell_blob.rs?raw";
 import connectionRs from "../../src-tauri/src/commands/connection.rs?raw";
 import diffRs from "../../src-tauri/src/commands/diff.rs?raw";
+import cloneRowsRs from "../../src-tauri/src/db/clone_rows.rs?raw";
 import maskingRs from "../../src-tauri/src/db/masking.rs?raw";
 import sandboxRs from "../../src-tauri/src/db/sandbox.rs?raw";
 import subsetRs from "../../src-tauri/src/db/subset.rs?raw";
@@ -12,6 +13,7 @@ import timelapseRs from "../../src-tauri/src/timelapse/mod.rs?raw";
 import conversationTs from "../ai/conversation.ts?raw";
 import schemaDocTs from "../ai/schemaDoc.ts?raw";
 import blobIoTs from "../components/blobIo.ts?raw";
+import cloneRowsTs from "../components/cloneRows.ts?raw";
 import exportMaskingTs from "../components/exportMasking.ts?raw";
 import profileBackupTs from "../components/profileBackup.ts?raw";
 import subsetExtractTs from "../components/subsetExtract.ts?raw";
@@ -49,9 +51,12 @@ const AI_RS = src("commands/ai.rs", aiRs);
 const BACKUP_RS = src("profiles/backup.rs", backupRs);
 const BLOB_RS = src("commands/cell_blob.rs", cellBlobRs);
 const MASKING_RS = src("db/masking.rs", maskingRs);
+const CLONE_ROWS_TS = src("components/cloneRows.ts", cloneRowsTs);
+const CLONE_ROWS_RS = src("db/clone_rows.rs", cloneRowsRs);
 
 /** 対応表: [TS の定数名, Rust の定数名]。名前が違うものもあるので明示する。 */
 const PAIRS: { ts: Src; rs: Src; names: [string, string][] }[] = [
+  { ts: CLONE_ROWS_TS, rs: CLONE_ROWS_RS, names: [["CLONE_MAX_ROWS", "MAX_CLONE_ROWS"]] },
   {
     ts: SUBSET_TS,
     rs: SUBSET_RS,
