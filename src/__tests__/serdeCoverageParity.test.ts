@@ -133,6 +133,8 @@ const COVERED: Record<string, string> = {
   TaskDefinition: "taskDefinitionVariants",
   TaskRun: "taskRun",
   SubsetPreview: "subsetPreview",
+  CloneRowsPreview: "cloneRowsPreview",
+  CloneRowsOutcome: "cloneRowsOutcome",
   TransferPreview: "transferPreview",
   ImportDryRunResult: "importDryRunResult",
   ImportTemplate: "importTemplate",

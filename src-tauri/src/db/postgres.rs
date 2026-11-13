@@ -242,6 +242,28 @@ impl PostgresConn {
         Ok(result?.with_server_messages(messages))
     }
 
+    /// 保持接続のトランザクションで文を流し、`RETURNING` のように行を返す書き込み文でも
+    /// 行を読み出す (#2304)。`tx_execute` は `SELECT` の形でない文の行を捨てる。
+    pub async fn tx_fetch(&self, sql: &str) -> Result<QueryResult> {
+        let mut guard = self.tx.lock().await;
+        let conn = guard
+            .as_mut()
+            .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
+        let started = Instant::now();
+        let rows: Vec<PgRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .fetch_all(&mut **conn)
+            .await?;
+        let columns = columns_of(&rows);
+        let rows_out = rows.iter().map(row_to_values).collect();
+        Ok(QueryResult {
+            columns,
+            rows: rows_out,
+            rows_affected: 0,
+            elapsed_ms: started.elapsed().as_millis() as u64,
+            server_messages: Vec::new(),
+        })
+    }
+
     pub async fn tx_finish(&self, commit: bool) -> Result<()> {
         let mut guard = self.tx.lock().await;
         self.tx_read_only

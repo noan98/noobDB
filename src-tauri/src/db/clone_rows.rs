@@ -1,0 +1,759 @@
+//! 行を子レコードごと同じ DB 内に複製する (#2304) の純粋層。
+//!
+//! 行の収集は `db::subset::SubsetWalk` を子の方向だけで動かす (親は辿らない)。ここは、集めた行を
+//! 新しいキーで INSERT するための判断だけを持ち、I/O は持たない。実 DB での駆動は
+//! `commands::clone_rows`。
+//!
+//! ## 複製の規則
+//!
+//! - **複製した行どうしの参照だけを新しいキーへ張り替える。** 子の行の外部キーが、複製した親の行を
+//!   指していれば新しい親のキーに替え、複製に含まれない行 (外部への参照。例: `product_id`) は
+//!   元の値のまま残す。中間表・自己参照・複合キーも同じ規則 ([`FkRemap`])。
+//! - **キーの生成方針は列ごと。** 主キーの列は、自動採番 (既定) / SQL の式 / 上書き値のどれか
+//!   ([`KeyRule`])。どれでもなく、参照の張り替えも無い主キーは複製しても元の行と衝突するので、
+//!   実行前にエラーにする ([`TableReport::needs_policy`])。
+//! - **UNIQUE の衝突は実行前に見つける** ([`UniqueConflict`])。元の値のまま複製される列だけで
+//!   できた UNIQUE インデックスは、必ず元の行と衝突する。式の結果 (実行しないと分からない) と
+//!   張り替えで値が変わる列を含むインデックスは検査しない (実行時に DB が検出する)。
+
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+use serde::{Deserialize, Serialize};
+
+use super::data_diff::key_signature;
+use super::subset::{key_literal, SubsetEdge, SubsetTable};
+use super::sync::quote_ident;
+use super::types::Value;
+use super::DriverKind;
+use crate::error::{AppError, Result};
+
+/// 複製する行数の上限 (1 行ごとに DB へ往復するため、抽出より低い)。
+pub const MAX_CLONE_ROWS: u64 = 10_000;
+/// 式の最大文字数。
+pub const MAX_EXPRESSION_LEN: usize = 500;
+/// 式の中で元の値のリテラルに置き換えられる記号。
+pub const OLD_PLACEHOLDER: &str = "{old}";
+
+/// 列の値の作り方 (自動採番以外)。
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum KeyRule {
+    /// SQL の式 (`gen_random_uuid()` / `UUID()` / `lower(hex(randomblob(16)))` など)。行ごとに
+    /// `SELECT (式)` で評価した値を INSERT する。式の中の `{old}` は元の値のリテラルに置き換わる
+    /// (例: `{old} || '-copy'`)。
+    Expression { sql: String },
+    /// すべての複製行にこの文字列を入れる (`null` は NULL)。
+    Literal { value: Option<String> },
+}
+
+/// 表の列 1 つへの方針。
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloneColumnRule {
+    pub table: String,
+    pub column: String,
+    pub rule: KeyRule,
+}
+
+/// 式を実行してよい形か検査する。評価は `SELECT (式)` の 1 文に限り、文の区切りは許さない。
+pub fn validate_expression(sql: &str) -> Result<()> {
+    let t = sql.trim();
+    if t.is_empty() {
+        return Err(AppError::InvalidInput(
+            "the key expression must not be empty".into(),
+        ));
+    }
+    if t.chars().count() > MAX_EXPRESSION_LEN {
+        return Err(AppError::InvalidInput(format!(
+            "the key expression exceeds {MAX_EXPRESSION_LEN} characters"
+        )));
+    }
+    if t.contains(';') {
+        return Err(AppError::InvalidInput(
+            "the key expression must be a single expression (no ';')".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// 式の `{old}` を元の値のリテラルに置き換えて、評価用の `SELECT` を作る。
+pub fn expression_select(driver: DriverKind, sql: &str, column_type: &str, old: &Value) -> String {
+    let lit = key_literal(driver, column_type, old);
+    format!("SELECT ({})", sql.trim().replace(OLD_PLACEHOLDER, &lit))
+}
+
+/// 複製する表のメタデータ。
+#[derive(Debug, Clone)]
+pub struct CloneTable {
+    pub meta: SubsetTable,
+    /// 主キーの列のうち、DB が採番する列 (AUTO_INCREMENT / IDENTITY / serial / rowid)。
+    pub auto_columns: Vec<String>,
+    /// 主キー以外の UNIQUE インデックス (名前, 列)。
+    pub unique_indexes: Vec<(String, Vec<String>)>,
+}
+
+/// 主キーの列が複製でどう決まるか。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum KeyStatus {
+    /// DB の採番 (INSERT に含めず、採番された値を受け取る)。
+    Auto,
+    /// 式 / 上書き値の指定。
+    Rule,
+    /// 複製した親の行を指す外部キー (新しい親のキーに張り替わる)。
+    Remapped,
+    /// 何も起きない (元の値のまま)。
+    Unchanged,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyColumnReport {
+    pub name: String,
+    pub status: KeyStatus,
+}
+
+/// 実行前に見つかった UNIQUE の衝突。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UniqueConflict {
+    pub index: String,
+    pub columns: Vec<String>,
+    /// 衝突する複製行の数。
+    pub rows: u64,
+}
+
+/// 表ごとの方針の検査結果。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TableReport {
+    pub table: String,
+    pub key_columns: Vec<KeyColumnReport>,
+    /// 主キーのすべての列が元の値のまま = 方針の指定が要る (指定なしでは実行できない)。
+    pub needs_policy: bool,
+    pub conflicts: Vec<UniqueConflict>,
+}
+
+impl TableReport {
+    /// 実行を止める問題があるか。
+    pub fn blocked(&self) -> bool {
+        self.needs_policy || !self.conflicts.is_empty()
+    }
+}
+
+/// 表ごとの方針の検査に渡す、集めた行。
+pub struct CloneInput<'a> {
+    pub table: &'a CloneTable,
+    pub rows: &'a [Vec<Value>],
+}
+
+/// 複製した行どうしの外部キーのうち、`table` の子の側の列 (張り替わりうる列)。
+fn remappable_columns(
+    table: &str,
+    edges: &[SubsetEdge],
+    cloned: &BTreeSet<&str>,
+) -> BTreeSet<String> {
+    edges
+        .iter()
+        .filter(|e| e.child == table && cloned.contains(e.parent.as_str()))
+        .flat_map(|e| e.child_cols.iter().cloned())
+        .collect()
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum ColumnFate<'r> {
+    Rule(&'r KeyRule),
+    Remapped,
+    Auto,
+    Unchanged,
+}
+
+fn rule_for<'r>(rules: &'r [CloneColumnRule], table: &str, column: &str) -> Option<&'r KeyRule> {
+    rules
+        .iter()
+        .find(|r| r.table == table && r.column == column)
+        .map(|r| &r.rule)
+}
+
+/// 方針を検査する (主キーの決まり方・方針の要否・UNIQUE の衝突)。
+pub fn analyze(
+    inputs: &[CloneInput<'_>],
+    edges: &[SubsetEdge],
+    rules: &[CloneColumnRule],
+) -> Vec<TableReport> {
+    let cloned: BTreeSet<&str> = inputs.iter().map(|i| i.table.meta.name.as_str()).collect();
+    inputs
+        .iter()
+        .map(|input| {
+            let t = input.table;
+            let name = t.meta.name.as_str();
+            let remap = remappable_columns(name, edges, &cloned);
+            let fate = |col: &str| -> ColumnFate<'_> {
+                if let Some(r) = rule_for(rules, name, col) {
+                    ColumnFate::Rule(r)
+                } else if remap.contains(col) {
+                    ColumnFate::Remapped
+                } else if t.auto_columns.iter().any(|a| a == col) {
+                    ColumnFate::Auto
+                } else {
+                    ColumnFate::Unchanged
+                }
+            };
+            let key_columns: Vec<KeyColumnReport> = t
+                .meta
+                .primary_key
+                .iter()
+                .map(|c| KeyColumnReport {
+                    name: c.clone(),
+                    status: match fate(c) {
+                        ColumnFate::Rule(_) => KeyStatus::Rule,
+                        ColumnFate::Remapped => KeyStatus::Remapped,
+                        ColumnFate::Auto => KeyStatus::Auto,
+                        ColumnFate::Unchanged => KeyStatus::Unchanged,
+                    },
+                })
+                .collect();
+            let needs_policy = !key_columns.is_empty()
+                && key_columns.iter().all(|k| k.status == KeyStatus::Unchanged);
+            let conflicts = unique_conflicts(t, input.rows, &fate);
+            TableReport {
+                table: name.to_string(),
+                key_columns,
+                needs_policy,
+                conflicts,
+            }
+        })
+        .collect()
+}
+
+/// 元の値のまま (または上書き値) になる列だけでできた UNIQUE インデックスの衝突を数える。
+fn unique_conflicts<'r>(
+    t: &CloneTable,
+    rows: &[Vec<Value>],
+    fate: &dyn Fn(&str) -> ColumnFate<'r>,
+) -> Vec<UniqueConflict> {
+    let mut out = Vec::new();
+    for (index, cols) in &t.unique_indexes {
+        let fates: Vec<ColumnFate<'_>> = cols.iter().map(|c| fate(c)).collect();
+        // 式・張り替え・採番を含むインデックスは、新しい値を実行前に知れない。
+        if fates.iter().any(|f| {
+            matches!(
+                f,
+                ColumnFate::Remapped
+                    | ColumnFate::Auto
+                    | ColumnFate::Rule(KeyRule::Expression { .. })
+            )
+        }) {
+            continue;
+        }
+        let idx: Vec<usize> = cols
+            .iter()
+            .filter_map(|c| t.meta.columns.iter().position(|x| x == c))
+            .collect();
+        if idx.len() != cols.len() {
+            continue;
+        }
+        let mut seen: HashMap<String, u64> = HashMap::new();
+        let mut conflicting = 0u64;
+        for row in rows {
+            let mut old_key: Vec<Value> = Vec::with_capacity(idx.len());
+            let mut new_key: Vec<Value> = Vec::with_capacity(idx.len());
+            for (f, &i) in fates.iter().zip(idx.iter()) {
+                let old = row.get(i).cloned().unwrap_or(Value::Null);
+                let new = match f {
+                    ColumnFate::Rule(KeyRule::Literal { value: Some(s) }) => {
+                        Value::String(s.clone())
+                    }
+                    ColumnFate::Rule(KeyRule::Literal { value: None }) => Value::Null,
+                    _ => old.clone(),
+                };
+                old_key.push(old);
+                new_key.push(new);
+            }
+            // NULL を含むキーは UNIQUE で衝突しない (3 ドライバ共通)。
+            if new_key.iter().any(|v| matches!(v, Value::Null)) {
+                continue;
+            }
+            let sig = key_signature(&new_key);
+            let same_as_original = sig == key_signature(&old_key);
+            let count = seen.entry(sig).or_insert(0);
+            *count += 1;
+            if same_as_original || *count > 1 {
+                conflicting += 1;
+            }
+        }
+        if conflicting > 0 {
+            out.push(UniqueConflict {
+                index: index.clone(),
+                columns: cols.clone(),
+                rows: conflicting,
+            });
+        }
+    }
+    out
+}
+
+/// 複製した行の外部キーの張り替え表。辺ごとに「元の参照先キー → 新しい参照先キー」を持つ。
+#[derive(Debug, Default)]
+pub struct FkRemap {
+    edges: Vec<SubsetEdge>,
+    maps: Vec<HashMap<String, Vec<Value>>>,
+}
+
+impl FkRemap {
+    pub fn new(edges: &[SubsetEdge]) -> Self {
+        Self {
+            edges: edges.to_vec(),
+            maps: vec![HashMap::new(); edges.len()],
+        }
+    }
+
+    /// 複製した行 (`old_row` → `new_row`) を、その表を参照先とする辺に登録する。
+    pub fn register(&mut self, meta: &SubsetTable, old_row: &[Value], new_row: &[Value]) {
+        for (e, map) in self.edges.iter().zip(self.maps.iter_mut()) {
+            if e.parent != meta.name {
+                continue;
+            }
+            let pick = |row: &[Value]| -> Option<Vec<Value>> {
+                e.parent_cols
+                    .iter()
+                    .map(|c| {
+                        meta.columns
+                            .iter()
+                            .position(|x| x == c)
+                            .and_then(|i| row.get(i).cloned())
+                    })
+                    .collect()
+            };
+            if let (Some(old), Some(new)) = (pick(old_row), pick(new_row)) {
+                map.insert(key_signature(&old), new);
+            }
+        }
+    }
+
+    /// `row` (元の行) の外部キーのうち、複製済みの行を指すものを新しいキーに替える。
+    /// 替えた列の位置を返す。NULL を含む外部キーと、複製していない行への参照はそのまま。
+    pub fn remap(&self, meta: &SubsetTable, row: &mut [Value]) -> BTreeSet<usize> {
+        let mut changed = BTreeSet::new();
+        for (e, map) in self.edges.iter().zip(self.maps.iter()) {
+            if e.child != meta.name {
+                continue;
+            }
+            let idx: Option<Vec<usize>> = e
+                .child_cols
+                .iter()
+                .map(|c| meta.columns.iter().position(|x| x == c))
+                .collect();
+            let Some(idx) = idx else { continue };
+            let key: Vec<Value> = idx.iter().filter_map(|&i| row.get(i).cloned()).collect();
+            if key.len() != idx.len() || key.iter().any(|v| matches!(v, Value::Null)) {
+                continue;
+            }
+            if let Some(new) = map.get(&key_signature(&key)) {
+                for (&i, v) in idx.iter().zip(new.iter()) {
+                    if let Some(slot) = row.get_mut(i) {
+                        *slot = v.clone();
+                        changed.insert(i);
+                    }
+                }
+            }
+        }
+        changed
+    }
+}
+
+/// 複製した行 1 件分の `INSERT`。`values` は `columns` と同じ並びのリテラル。
+/// `returning` は採番された値を受け取る列 (PostgreSQL / SQLite の `RETURNING`。MySQL は
+/// `LAST_INSERT_ID()` で別に取るので呼び出し側が空にする)。
+pub fn insert_sql(
+    driver: DriverKind,
+    table_ref: &str,
+    columns: &[String],
+    values: &[String],
+    returning: &[String],
+) -> String {
+    let mut sql = if columns.is_empty() {
+        match driver {
+            DriverKind::Mysql => format!("INSERT INTO {table_ref} () VALUES ()"),
+            DriverKind::Postgres | DriverKind::Sqlite => {
+                format!("INSERT INTO {table_ref} DEFAULT VALUES")
+            }
+        }
+    } else {
+        let cols: Vec<String> = columns.iter().map(|c| quote_ident(driver, c)).collect();
+        format!(
+            "INSERT INTO {table_ref} ({}) VALUES ({})",
+            cols.join(", "),
+            values.join(", ")
+        )
+    };
+    if !returning.is_empty() && driver != DriverKind::Mysql {
+        let cols: Vec<String> = returning.iter().map(|c| quote_ident(driver, c)).collect();
+        sql.push_str(&format!(" RETURNING {}", cols.join(", ")));
+    }
+    sql
+}
+
+/// 主キーの列の値 (列の並び順)。主キーが無い表は `None`。
+pub fn key_of(meta: &SubsetTable, row: &[Value]) -> Option<Vec<Value>> {
+    if meta.primary_key.is_empty() {
+        return None;
+    }
+    meta.primary_key
+        .iter()
+        .map(|c| {
+            meta.columns
+                .iter()
+                .position(|x| x == c)
+                .and_then(|i| row.get(i).cloned())
+        })
+        .collect()
+}
+
+/// 主キーの列のうち DB が採番する列を判定する。
+/// - MySQL: `AUTO_INCREMENT`。
+/// - PostgreSQL: IDENTITY / serial (`nextval(...)` の既定値) / その他の既定値 (`RETURNING` で受け取れる)。
+/// - SQLite: 単一列の `INTEGER PRIMARY KEY` (rowid の別名) / 既定値のある列。
+pub fn auto_columns(
+    driver: DriverKind,
+    columns: &[super::types::TableColumnInfo],
+    primary_key: &[String],
+) -> Vec<String> {
+    columns
+        .iter()
+        .filter(|c| primary_key.iter().any(|p| p == &c.name))
+        .filter(|c| {
+            let extra = c.extra.to_ascii_lowercase();
+            let has_default = c.default.as_ref().is_some_and(|d| !d.trim().is_empty());
+            match driver {
+                DriverKind::Mysql => extra.contains("auto_increment"),
+                DriverKind::Postgres => extra.contains("identity") || has_default,
+                DriverKind::Sqlite => {
+                    has_default
+                        || (primary_key.len() == 1 && c.data_type.eq_ignore_ascii_case("integer"))
+                }
+            }
+        })
+        .map(|c| c.name.clone())
+        .collect()
+}
+
+/// 方針の指定を表ごとの列名の集合にまとめる (存在しない列の検査用)。
+pub fn rule_columns(rules: &[CloneColumnRule]) -> BTreeMap<&str, BTreeSet<&str>> {
+    let mut m: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for r in rules {
+        m.entry(r.table.as_str())
+            .or_default()
+            .insert(r.column.as_str());
+    }
+    m
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn meta(name: &str, cols: &[&str], pk: &[&str]) -> SubsetTable {
+        SubsetTable {
+            name: name.into(),
+            columns: cols.iter().map(|c| c.to_string()).collect(),
+            column_types: cols.iter().map(|_| "int".to_string()).collect(),
+            primary_key: pk.iter().map(|c| c.to_string()).collect(),
+        }
+    }
+
+    fn table(name: &str, cols: &[&str], pk: &[&str], auto: &[&str]) -> CloneTable {
+        CloneTable {
+            meta: meta(name, cols, pk),
+            auto_columns: auto.iter().map(|c| c.to_string()).collect(),
+            unique_indexes: Vec::new(),
+        }
+    }
+
+    fn edge(child: &str, cc: &[&str], parent: &str, pc: &[&str]) -> SubsetEdge {
+        SubsetEdge {
+            constraint: format!("fk_{child}_{parent}"),
+            child: child.into(),
+            child_cols: cc.iter().map(|c| c.to_string()).collect(),
+            parent: parent.into(),
+            parent_cols: pc.iter().map(|c| c.to_string()).collect(),
+        }
+    }
+
+    fn ints(v: &[i64]) -> Vec<Value> {
+        v.iter().map(|&i| Value::Int(i)).collect()
+    }
+
+    #[test]
+    fn auto_key_needs_no_policy_but_plain_key_does() {
+        let orders = table("orders", &["id", "no"], &["id"], &["id"]);
+        let tags = table("tags", &["code", "name"], &["code"], &[]);
+        let rows: Vec<Vec<Value>> = vec![ints(&[1, 5])];
+        let r = analyze(
+            &[
+                CloneInput {
+                    table: &orders,
+                    rows: &rows,
+                },
+                CloneInput {
+                    table: &tags,
+                    rows: &rows,
+                },
+            ],
+            &[],
+            &[],
+        );
+        assert_eq!(r[0].key_columns[0].status, KeyStatus::Auto);
+        assert!(!r[0].needs_policy);
+        assert_eq!(r[1].key_columns[0].status, KeyStatus::Unchanged);
+        assert!(r[1].needs_policy);
+        // 式を指定すれば方針は足りる。
+        let rules = [CloneColumnRule {
+            table: "tags".into(),
+            column: "code".into(),
+            rule: KeyRule::Expression {
+                sql: "UUID()".into(),
+            },
+        }];
+        let r = analyze(
+            &[CloneInput {
+                table: &tags,
+                rows: &rows,
+            }],
+            &[],
+            &rules,
+        );
+        assert_eq!(r[0].key_columns[0].status, KeyStatus::Rule);
+        assert!(!r[0].needs_policy);
+    }
+
+    #[test]
+    fn remapped_composite_key_is_enough() {
+        // 中間表: 主キー (order_id, product_id)。order_id だけ複製した親を指す。
+        let orders = table("orders", &["id"], &["id"], &["id"]);
+        let link = table(
+            "link",
+            &["order_id", "product_id"],
+            &["order_id", "product_id"],
+            &[],
+        );
+        let rows: Vec<Vec<Value>> = vec![ints(&[1, 9])];
+        let edges = [edge("link", &["order_id"], "orders", &["id"])];
+        let r = analyze(
+            &[
+                CloneInput {
+                    table: &orders,
+                    rows: &rows,
+                },
+                CloneInput {
+                    table: &link,
+                    rows: &rows,
+                },
+            ],
+            &edges,
+            &[],
+        );
+        assert_eq!(r[1].key_columns[0].status, KeyStatus::Remapped);
+        assert_eq!(r[1].key_columns[1].status, KeyStatus::Unchanged);
+        assert!(!r[1].needs_policy);
+        // 親が複製に含まれなければ張り替えは起きないので方針が要る。
+        let r = analyze(
+            &[CloneInput {
+                table: &link,
+                rows: &rows,
+            }],
+            &edges,
+            &[],
+        );
+        assert!(r[0].needs_policy);
+    }
+
+    #[test]
+    fn unchanged_unique_index_is_a_conflict_unless_overridden() {
+        let mut orders = table("orders", &["id", "order_no"], &["id"], &["id"]);
+        orders.unique_indexes = vec![("uq_no".into(), vec!["order_no".into()])];
+        let rows: Vec<Vec<Value>> = vec![
+            vec![Value::Int(1), Value::String("A-1".into())],
+            vec![Value::Int(2), Value::Null],
+        ];
+        let r = analyze(
+            &[CloneInput {
+                table: &orders,
+                rows: &rows,
+            }],
+            &[],
+            &[],
+        );
+        // NULL の行は衝突しない。
+        assert_eq!(
+            r[0].conflicts,
+            vec![UniqueConflict {
+                index: "uq_no".into(),
+                columns: vec!["order_no".into()],
+                rows: 1
+            }]
+        );
+        assert!(r[0].blocked());
+        // 式で上書きすれば検査の対象外。
+        let rules = [CloneColumnRule {
+            table: "orders".into(),
+            column: "order_no".into(),
+            rule: KeyRule::Expression {
+                sql: "{old} || '-copy'".into(),
+            },
+        }];
+        let r = analyze(
+            &[CloneInput {
+                table: &orders,
+                rows: &rows,
+            }],
+            &[],
+            &rules,
+        );
+        assert!(r[0].conflicts.is_empty());
+        // 同じ上書き値を複数行に入れると複製どうしで衝突する。
+        let rows2: Vec<Vec<Value>> = vec![
+            vec![Value::Int(1), Value::String("A-1".into())],
+            vec![Value::Int(2), Value::String("A-2".into())],
+        ];
+        let rules = [CloneColumnRule {
+            table: "orders".into(),
+            column: "order_no".into(),
+            rule: KeyRule::Literal {
+                value: Some("X".into()),
+            },
+        }];
+        let r = analyze(
+            &[CloneInput {
+                table: &orders,
+                rows: &rows2,
+            }],
+            &[],
+            &rules,
+        );
+        assert_eq!(r[0].conflicts[0].rows, 1);
+    }
+
+    #[test]
+    fn remap_replaces_only_cloned_references() {
+        let orders = meta("orders", &["id", "customer_id"], &["id"]);
+        let items = meta("items", &["id", "order_id", "product_id"], &["id"]);
+        let edges = [
+            edge("items", &["order_id"], "orders", &["id"]),
+            edge("orders", &["customer_id"], "customers", &["id"]),
+        ];
+        let mut m = FkRemap::new(&edges);
+        m.register(&orders, &ints(&[1, 7]), &ints(&[100, 7]));
+        let mut row = ints(&[10, 1, 55]);
+        let changed = m.remap(&items, &mut row);
+        assert_eq!(row, ints(&[10, 100, 55]));
+        assert_eq!(changed, BTreeSet::from([1]));
+        // 複製していない親への参照は変わらない。
+        let mut other = ints(&[11, 2, 55]);
+        assert!(m.remap(&items, &mut other).is_empty());
+        assert_eq!(other, ints(&[11, 2, 55]));
+        // NULL の外部キーはそのまま。
+        let mut nul = vec![Value::Int(12), Value::Null, Value::Int(1)];
+        assert!(m.remap(&items, &mut nul).is_empty());
+    }
+
+    #[test]
+    fn self_reference_is_remapped_through_the_same_table() {
+        let cat = meta("cat", &["id", "parent_id"], &["id"]);
+        let edges = [edge("cat", &["parent_id"], "cat", &["id"])];
+        let mut m = FkRemap::new(&edges);
+        m.register(
+            &cat,
+            &[Value::Int(1), Value::Null],
+            &[Value::Int(10), Value::Null],
+        );
+        let mut child = ints(&[2, 1]);
+        m.remap(&cat, &mut child);
+        assert_eq!(child, ints(&[2, 10]));
+    }
+
+    #[test]
+    fn insert_sql_per_driver() {
+        let cols = vec!["a".to_string(), "b".to_string()];
+        let vals = vec!["1".to_string(), "'x'".to_string()];
+        let ret = vec!["id".to_string()];
+        assert_eq!(
+            insert_sql(DriverKind::Postgres, "\"t\"", &cols, &vals, &ret),
+            "INSERT INTO \"t\" (\"a\", \"b\") VALUES (1, 'x') RETURNING \"id\""
+        );
+        assert_eq!(
+            insert_sql(DriverKind::Mysql, "`t`", &cols, &vals, &ret),
+            "INSERT INTO `t` (`a`, `b`) VALUES (1, 'x')"
+        );
+        assert_eq!(
+            insert_sql(DriverKind::Sqlite, "\"t\"", &[], &[], &ret),
+            "INSERT INTO \"t\" DEFAULT VALUES RETURNING \"id\""
+        );
+        assert_eq!(
+            insert_sql(DriverKind::Mysql, "`t`", &[], &[], &[]),
+            "INSERT INTO `t` () VALUES ()"
+        );
+    }
+
+    #[test]
+    fn expression_validation_and_substitution() {
+        assert!(validate_expression("UUID()").is_ok());
+        assert!(validate_expression("  ").is_err());
+        assert!(validate_expression("1; DROP TABLE t").is_err());
+        let sql = expression_select(
+            DriverKind::Sqlite,
+            "{old} || '-copy'",
+            "text",
+            &Value::String("A".into()),
+        );
+        assert_eq!(sql, "SELECT ('A' || '-copy')");
+    }
+
+    #[test]
+    fn auto_columns_per_driver() {
+        use super::super::types::TableColumnInfo;
+        let col = |name: &str, ty: &str, extra: &str, default: Option<&str>| TableColumnInfo {
+            name: name.into(),
+            data_type: ty.into(),
+            nullable: false,
+            key: "PRI".into(),
+            default: default.map(str::to_string),
+            extra: extra.into(),
+            referenced_table: None,
+            referenced_column: None,
+            comment: None,
+        };
+        let pk = vec!["id".to_string()];
+        assert_eq!(
+            auto_columns(
+                DriverKind::Mysql,
+                &[col("id", "int", "auto_increment", None)],
+                &pk
+            ),
+            pk
+        );
+        assert!(auto_columns(DriverKind::Mysql, &[col("id", "char", "", None)], &pk).is_empty());
+        assert_eq!(
+            auto_columns(
+                DriverKind::Postgres,
+                &[col("id", "integer", "IDENTITY", None)],
+                &pk
+            ),
+            pk
+        );
+        assert_eq!(
+            auto_columns(
+                DriverKind::Postgres,
+                &[col("id", "integer", "", Some("nextval('s'::regclass)"))],
+                &pk
+            ),
+            pk
+        );
+        assert!(auto_columns(DriverKind::Postgres, &[col("id", "text", "", None)], &pk).is_empty());
+        assert_eq!(
+            auto_columns(DriverKind::Sqlite, &[col("id", "INTEGER", "", None)], &pk),
+            pk
+        );
+        assert!(auto_columns(DriverKind::Sqlite, &[col("id", "TEXT", "", None)], &pk).is_empty());
+    }
+}

@@ -97,6 +97,8 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["blobFolderSaveResult", schemas.blobFolderSaveResult],
   ["transferPreview", schemas.transferPreview],
   ["subsetPreview", schemas.subsetPreview],
+  ["cloneRowsPreview", schemas.cloneRowsPreview],
+  ["cloneRowsOutcome", schemas.cloneRowsOutcome],
   ["connectResult", schemas.connectResult],
   ["localTableMeta", schemas.localTableMeta],
   ["profileImportResult", schemas.profileImportResult],

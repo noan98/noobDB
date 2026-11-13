@@ -2588,6 +2588,49 @@ export const subsetPreview = z.object({
   warnings: z.array(subsetWarning),
 });
 
+// 行を子レコードごと複製 (#2304)。
+export const cloneRowsPreview = z.object({
+  tables: z.array(
+    z.object({
+      table: z.string(),
+      rows: z.number(),
+      rootRows: z.number(),
+      childRows: z.number(),
+      columns: z.array(z.object({ name: z.string(), key: z.boolean() })),
+      keyColumns: z.array(
+        z.object({ name: z.string(), status: z.enum(["auto", "rule", "remapped", "unchanged"]) }),
+      ),
+      needsPolicy: z.boolean(),
+      conflicts: z.array(z.object({ index: z.string(), columns: z.array(z.string()), rows: z.number() })),
+    }),
+  ),
+  totalRows: z.number(),
+  cycles: z.array(z.array(z.string())),
+  warnings: z.array(subsetWarning),
+  ready: z.boolean(),
+});
+
+export const cloneRowsOutcome = z.object({
+  tables: z.array(
+    z.object({
+      table: z.string(),
+      rows: z.number(),
+      keyColumns: z.array(z.string()),
+      mappings: z.array(
+        z.object({ oldKey: z.array(cellValue), newKey: z.array(cellValue), root: z.boolean() }),
+      ),
+    }),
+  ),
+  totalRows: z.number(),
+  rootTable: z.string(),
+  rootKeyColumns: z.array(z.string()),
+  rootNewKeys: z.array(z.array(cellValue)),
+  recorded: z.number(),
+  declined: z.number(),
+  batchId: z.string().nullable(),
+  warnings: z.array(subsetWarning),
+});
+
 export const subsetProgressEvent = z.object({
   streamId: z.string(),
   phase: z.enum(["collect", "write"]),

@@ -1481,6 +1481,57 @@ fn build_fixtures() -> serde_json::Value {
         rows: 200,
     };
 
+    // #2304: 行の子レコードごとの複製 (`preview_clone_rows` / `clone_rows`)。
+    let clone_rows_preview = t::CloneRowsPreview {
+        tables: vec![t::CloneTablePreview {
+            table: "orders".into(),
+            rows: 2,
+            root_rows: 1,
+            child_rows: 1,
+            columns: vec![t::SubsetColumnInfo {
+                name: "id".into(),
+                key: true,
+            }],
+            key_columns: vec![t::KeyColumnReport {
+                name: "id".into(),
+                status: t::KeyStatus::Auto,
+            }],
+            needs_policy: false,
+            conflicts: vec![t::UniqueConflict {
+                index: "uq_no".into(),
+                columns: vec!["order_no".into()],
+                rows: 1,
+            }],
+        }],
+        total_rows: 2,
+        cycles: vec![],
+        warnings: vec![t::SubsetWarning::RootTruncated {
+            table: "orders".into(),
+            limit: 10,
+        }],
+        ready: false,
+    };
+    let clone_rows_outcome = t::CloneRowsOutcome {
+        tables: vec![t::CloneTableOutcome {
+            table: "orders".into(),
+            rows: 1,
+            key_columns: vec!["id".into()],
+            mappings: vec![t::CloneKeyMapping {
+                old_key: vec![Value::Int(1)],
+                new_key: vec![Value::Int(3)],
+                root: true,
+            }],
+        }],
+        total_rows: 1,
+        root_table: "orders".into(),
+        root_key_columns: vec!["id".into()],
+        root_new_keys: vec![vec![Value::Int(3)]],
+        recorded: 1,
+        declined: 0,
+        batch_id: Some("b1-abc".into()),
+        warnings: vec![],
+    };
+
     // #2241: サブセット抽出のプレビュー (`preview_subset`)。
     let subset_preview = t::SubsetPreview {
         tables: vec![t::SubsetTablePreview {
@@ -2879,6 +2930,8 @@ fn build_fixtures() -> serde_json::Value {
         "blobFolderSaveResult": blob_folder_save_result,
         "transferPreview": transfer_preview,
         "subsetPreview": subset_preview,
+        "cloneRowsPreview": clone_rows_preview,
+        "cloneRowsOutcome": clone_rows_outcome,
         "importErrorEvent": import_error_event,
         "dumpProgressEvent": dump_progress_event,
         "dumpDoneEvent": dump_done_event,

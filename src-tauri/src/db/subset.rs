@@ -556,6 +556,8 @@ pub struct SubsetWalk {
     child_added: HashMap<String, u64>,
     total_rows: u64,
     warnings: Vec<SubsetWarning>,
+    /// 親の方向を辿るか。行の複製 (#2304) は外部への参照をそのまま残すので辿らない。
+    follow_parents: bool,
 }
 
 impl SubsetWalk {
@@ -598,7 +600,14 @@ impl SubsetWalk {
             child_added: HashMap::new(),
             total_rows: 0,
             warnings: Vec::new(),
+            follow_parents: true,
         }
+    }
+
+    /// 親の方向を辿らない走査にする (行の複製 #2304)。起点と子の方向の行だけが集まる。
+    pub fn children_only(mut self) -> Self {
+        self.follow_parents = false;
+        self
     }
 
     /// いま集まっている行の総数 (進捗表示用)。
@@ -694,7 +703,11 @@ impl SubsetWalk {
                         self.level_started = false;
                     }
                     if self.level >= self.options.child_depth || self.frontier.is_empty() {
-                        self.phase = Phase::Parents;
+                        self.phase = if self.follow_parents {
+                            Phase::Parents
+                        } else {
+                            Phase::Done
+                        };
                         continue;
                     }
                     self.enqueue_child_requests();
@@ -984,7 +997,7 @@ impl SubsetResult {
 /// キーのリテラル。2^53 を超える整数は `Value::String` で来るので、整数型の列では引用符なしの
 /// 数値で書く (MySQL は文字列定数と整数列を倍精度で比較し、下位桁が丸まるため)。
 /// バイナリ列は 16 進の文字列を `Bytes` に戻して書く。
-fn key_literal(driver: DriverKind, column_type: &str, value: &Value) -> String {
+pub(crate) fn key_literal(driver: DriverKind, column_type: &str, value: &Value) -> String {
     match value {
         Value::String(s) if is_binary_type(column_type) && is_hex_wire(s) => {
             sql_literal(driver, &Value::Bytes(s.clone()))

@@ -632,6 +632,84 @@
     "recorded": false,
     "rows_affected": 1000
   },
+  "cloneRowsOutcome": {
+    "batchId": "b1-abc",
+    "declined": 0,
+    "recorded": 1,
+    "rootKeyColumns": [
+      "id"
+    ],
+    "rootNewKeys": [
+      [
+        3
+      ]
+    ],
+    "rootTable": "orders",
+    "tables": [
+      {
+        "keyColumns": [
+          "id"
+        ],
+        "mappings": [
+          {
+            "newKey": [
+              3
+            ],
+            "oldKey": [
+              1
+            ],
+            "root": true
+          }
+        ],
+        "rows": 1,
+        "table": "orders"
+      }
+    ],
+    "totalRows": 1,
+    "warnings": []
+  },
+  "cloneRowsPreview": {
+    "cycles": [],
+    "ready": false,
+    "tables": [
+      {
+        "childRows": 1,
+        "columns": [
+          {
+            "key": true,
+            "name": "id"
+          }
+        ],
+        "conflicts": [
+          {
+            "columns": [
+              "order_no"
+            ],
+            "index": "uq_no",
+            "rows": 1
+          }
+        ],
+        "keyColumns": [
+          {
+            "name": "id",
+            "status": "auto"
+          }
+        ],
+        "needsPolicy": false,
+        "rootRows": 1,
+        "rows": 2,
+        "table": "orders"
+      }
+    ],
+    "totalRows": 2,
+    "warnings": [
+      {
+        "kind": "rootTruncated",
+        "limit": 10,
+        "table": "orders"
+      }
+    ]
+  },
   "column": {
     "name": "id",
     "type_name": "INTEGER"

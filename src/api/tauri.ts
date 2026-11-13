@@ -46,6 +46,7 @@ import { dumpToolsCommands } from "./commands/dumpTools";
 import { importCommands } from "./commands/import";
 import { importTemplatesCommands } from "./commands/importTemplates";
 import { scriptCommands } from "./commands/script";
+import { cloneRowsCommands } from "./commands/cloneRows";
 import { subsetCommands } from "./commands/subset";
 import { transferCommands } from "./commands/transfer";
 import { fileCommands } from "./commands/file";
@@ -2820,6 +2821,7 @@ export const api = {
   ...importTemplatesCommands,
   ...scriptCommands,
   ...subsetCommands,
+  ...cloneRowsCommands,
   ...transferCommands,
   ...fileCommands,
   ...windowCommands,
@@ -3373,6 +3375,58 @@ export interface SubsetPreview {
   tables: SubsetTablePreview[];
   totalRows: number;
   cycles: string[][];
+  warnings: SubsetWarning[];
+}
+// ── 行を子レコードごと複製 (#2304) ──
+/** 列の値の作り方。式の中の `{old}` は元の値のリテラルに置き換わる。`literal` の `null` は NULL。 */
+export type CloneKeyRule = { kind: "expression"; sql: string } | { kind: "literal"; value: string | null };
+export interface CloneColumnRule {
+  table: string;
+  column: string;
+  rule: CloneKeyRule;
+}
+/** 主キーの列が複製でどう決まるか。 */
+export type CloneKeyStatus = "auto" | "rule" | "remapped" | "unchanged";
+export interface CloneTablePreview {
+  table: string;
+  rows: number;
+  rootRows: number;
+  childRows: number;
+  columns: { name: string; key: boolean }[];
+  keyColumns: { name: string; status: CloneKeyStatus }[];
+  /** 主キーがすべて元の値のまま = 方針の指定が要る。 */
+  needsPolicy: boolean;
+  conflicts: { index: string; columns: string[]; rows: number }[];
+}
+export interface CloneRowsPreview {
+  /** 挿入順 (親が先)。 */
+  tables: CloneTablePreview[];
+  totalRows: number;
+  cycles: string[][];
+  warnings: SubsetWarning[];
+  ready: boolean;
+}
+export interface CloneKeyMapping {
+  oldKey: CellValue[];
+  newKey: CellValue[];
+  root: boolean;
+}
+export interface CloneTableOutcome {
+  table: string;
+  rows: number;
+  keyColumns: string[];
+  mappings: CloneKeyMapping[];
+}
+export interface CloneRowsOutcome {
+  tables: CloneTableOutcome[];
+  totalRows: number;
+  rootTable: string;
+  rootKeyColumns: string[];
+  rootNewKeys: CellValue[][];
+  /** Undo 用に保存した記録の件数と、記録できなかった表の数。 */
+  recorded: number;
+  declined: number;
+  batchId: string | null;
   warnings: SubsetWarning[];
 }
 export interface SubsetProgressEvent {

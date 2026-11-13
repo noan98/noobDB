@@ -736,6 +736,19 @@ DELETE をフライトレコーダに 1 文ずつ記録し (`run_captured_write`
   INSERT スクリプトのファイル (`script`。エクスポートの SQL レンダラを再利用)。`masks` は出力にだけ
   掛け、キー列はマスクできない。進捗は `subset-stream:*` イベント、`cancel_stream` で中断。
 
+## 行を子レコードごと複製 (`commands/clone_rows.rs`, #2304)
+
+行を子レコードごと同じ DB 内に複製する。行の収集は `SubsetWalk` を子の方向だけで動かす (親は辿らない =
+外部への参照は元のまま)。複製した行どうしの外部キー (中間表・自己参照・複合キーを含む) だけを新しいキーへ
+張り替える。キーの方針は列ごと (自動採番 / 式 / 上書き値) で、判断は純粋層 `db/clone_rows.rs`。
+
+- `preview_clone_rows` — 実行前プレビュー。挿入順の表ごとの件数・主キーの決まり方 (`auto` / `rule` /
+  `remapped` / `unchanged`)・方針が足りない表 (`needsPolicy`)・UNIQUE の衝突・循環を返す。何も書かない。
+- `clone_rows` — 1 トランザクションで複製 (失敗したら全部ロールバック)。`read_only` 接続はバックエンドで拒否
+  (緊急書き込みモードでも)。`is_production` / `confirm_writes` は UI の確認。方針不足・衝突・循環は書く前に
+  `InvalidInput`。旧キー → 新キーの対応表と新しい親行のキーを返し、新しい行は表ごとの `Insert` として
+  同じ `batch_id` でフライトレコーダーに記録する (`apply_flight_batch` で取り消せる。主キーの無い表は記録なし)。
+
 ## Schema Cache (`commands/schema.rs`, #1097)
 
 `refresh_schema_cache` — セッション単位の Schema Cache (`cache::SchemaCache`) を

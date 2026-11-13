@@ -6,6 +6,8 @@ pub mod broadcast_diff;
 /// 大規模 DML のチャンク分割実行の SQL 生成 (#2020)。
 pub mod chunked_dml;
 /// DROP COLUMN の依存オブジェクト検出 (#1758)。
+/// 行の子レコードごとの複製 (#2304) の純粋層。
+pub mod clone_rows;
 pub mod column_deps;
 pub mod column_mapping;
 /// ファイルから新規テーブルを作るときの方言別 CREATE TABLE 生成 (#985)。
@@ -785,6 +787,16 @@ impl Connection {
             Connection::MySql(c) => c.tx_execute(sql).await,
             Connection::Postgres(c) => c.tx_execute(sql).await,
             Connection::Sqlite(c) => c.tx_execute(sql).await,
+        }
+    }
+
+    /// [`Self::execute_in_transaction`] の、`RETURNING` を持つ書き込み文でも行を読み出す版 (#2304)。
+    /// MySQL は `RETURNING` を持たない (INSERT の行は返らない) ので通常の実行と同じ。
+    pub async fn fetch_in_transaction(&self, sql: &str) -> Result<QueryResult> {
+        match self {
+            Connection::MySql(c) => c.tx_execute(sql).await,
+            Connection::Postgres(c) => c.tx_fetch(sql).await,
+            Connection::Sqlite(c) => c.tx_fetch(sql).await,
         }
     }
 

@@ -163,6 +163,7 @@ import { COUNT_UP_TOKEN, formatCountUpPlainInt, splitAroundCountUpToken } from "
 import { ExportModal, type FullExportContext } from "./ExportModal";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { buildSubsetPkCondition, subsetMenuDisabledReason } from "./subsetExtract";
+import { cloneMenuDisabledReason } from "./cloneRows";
 import { buildGridCopyInsert, buildGridCopyText, type GridCopyFormat } from "./gridCopyFormats";
 import { buildCopyFlashRange, collectAppliedFlashKeys, collectCopyFlashKeys } from "./gridCopyFlash";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
@@ -1491,6 +1492,16 @@ interface Props {
    * テーブルタブの、主キーのある行にだけ導線を出す。条件は主キーの IN 条件。
    */
   onExtractSubset?: (target: {
+    database: string | null;
+    table: string;
+    whereClause: string;
+    rootLimit: number;
+  }) => void;
+  /**
+   * 選んだ行を子レコードごと同じ DB 内に複製するモーダルを開く (#2304)。対象テーブルが特定できる
+   * テーブルタブの、主キーのある行にだけ導線を出す (読み取り専用の接続では渡さない)。
+   */
+  onCloneRows?: (target: {
     database: string | null;
     table: string;
     whereClause: string;
@@ -4158,6 +4169,7 @@ export const DataGrid = memo(function DataGrid({
   valuePicker,
   onExploreColumn,
   onExtractSubset,
+  onCloneRows,
   findHits,
   findCurrentKey,
   findNav,
@@ -4374,6 +4386,16 @@ export const DataGrid = memo(function DataGrid({
    * テーブルタブの、主キーのある行にだけ導線を出す。条件は主キーの IN 条件。
    */
   onExtractSubset?: (target: {
+    database: string | null;
+    table: string;
+    whereClause: string;
+    rootLimit: number;
+  }) => void;
+  /**
+   * 選んだ行を子レコードごと同じ DB 内に複製するモーダルを開く (#2304)。対象テーブルが特定できる
+   * テーブルタブの、主キーのある行にだけ導線を出す (読み取り専用の接続では渡さない)。
+   */
+  onCloneRows?: (target: {
     database: string | null;
     table: string;
     whereClause: string;
@@ -7722,6 +7744,47 @@ export const DataGrid = memo(function DataGrid({
                   ];
                 })()
               : []),
+            // 選んだ行を子行ごと複製 (#2304)。サブセット抽出と同じく主キーの IN 条件を作って渡す。
+            // 表が特定できない / 主キーなし / 主キー列がマスク中は、理由つきで無効にする。
+            ...(onCloneRows
+              ? (() => {
+                  const target = copyTargetFor(copyMenu.rowIdx, copyMenu.colIdx);
+                  const pks = pkIndices ?? [];
+                  const picked = target.rowIndices.flatMap((ri) => (rows[ri] ? [rows[ri]] : []));
+                  const pkMasked = target.rowIndices.some((ri) => pks.some((ci) => cellMaskedNow(ri, ci)));
+                  const built = buildSubsetPkCondition({
+                    driver: rowSqlDriver ?? "mysql",
+                    columns,
+                    rows: picked,
+                    pkIndices: pks,
+                  });
+                  const reasonKey = cloneMenuDisabledReason({
+                    hasTable: !!rowSqlTable,
+                    identityStrategy: rowIdentityStrategy,
+                    pkMasked,
+                    built,
+                  });
+                  const reason = reasonKey ? t(reasonKey) : null;
+                  const count = built.ok ? built.rootLimit : target.rowIndices.length;
+                  return [
+                    {
+                      label: t("gridCloneRows", { count }),
+                      title: reason ?? t("gridCloneRowsTitle"),
+                      disabled: reason !== null,
+                      onSelect: () => {
+                        if (!built.ok || !rowSqlTable) return;
+                        setCopyMenu(null);
+                        onCloneRows({
+                          database: rowSqlDatabase ?? null,
+                          table: rowSqlTable,
+                          whereClause: built.condition,
+                          rootLimit: built.rootLimit,
+                        });
+                      },
+                    },
+                  ];
+                })()
+              : []),
             // セル値のクイックフィルタ (#914)。探索で最頻用の「この値で絞る」を
             // 右クリック 1 手にする。新しいフィルタモデルは作らず、既存の 2 経路
             // (table タブのサーバ側 WHERE / クエリ結果のクライアント側
@@ -8863,6 +8926,7 @@ export const ResultGrid = memo(
       onLookupQuery,
       onExploreColumn,
       onExtractSubset,
+      onCloneRows,
       maximized,
       onToggleMaximize,
       onPinResult,
@@ -10744,6 +10808,7 @@ export const ResultGrid = memo(
             valuePicker={editableActive ? valuePicker : undefined}
             onExploreColumn={onExploreColumn}
             onExtractSubset={onExtractSubset}
+            onCloneRows={onCloneRows}
             paginationState={paginateMode ? pagination : undefined}
             onPaginationChange={paginateMode ? setPagination : undefined}
             findHits={findHits}
