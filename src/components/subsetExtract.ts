@@ -149,6 +149,11 @@ export function needsWriteConfirm(target: { is_production: boolean; confirm_writ
 /** バックエンド `db::sandbox::MAX_ROW_FILTER_LEN` (表ごとの抽出条件の最大文字数) と揃える。 */
 export const SUBSET_MAX_WHERE_LEN = 2000;
 
+/** コードポイント数 (サロゲートペアを 1 文字と数える)。Rust の `chars().count()` と一致させる (#2301)。 */
+function codePointLength(s: string): number {
+  return Array.from(s).length;
+}
+
 export type SubsetPkConditionResult =
   | { ok: true; condition: string; rootLimit: number }
   | { ok: false; reason: "noPk" | "noRows" | "tooLong" | "inexactKey" };
@@ -201,12 +206,12 @@ export function buildSubsetPkCondition(input: {
       if (!simple.has(tuple)) {
         simple.add(tuple);
         simpleList.push(tuple);
-        approxLen += tuple.length + 2;
+        approxLen += codePointLength(tuple) + 2;
       }
     } else {
       const term = composite ? `(${where})` : where;
       fallbackTerms.push(term);
-      approxLen += term.length + 4;
+      approxLen += codePointLength(term) + 4;
     }
     if (approxLen > SUBSET_MAX_WHERE_LEN) return { ok: false, reason: "tooLong" };
   }
@@ -220,7 +225,7 @@ export function buildSubsetPkCondition(input: {
   }
   terms.push(...fallbackTerms);
   const condition = terms.join(" OR ");
-  if (condition.length > SUBSET_MAX_WHERE_LEN) return { ok: false, reason: "tooLong" };
+  if (codePointLength(condition) > SUBSET_MAX_WHERE_LEN) return { ok: false, reason: "tooLong" };
   return { ok: true, condition, rootLimit: seen.size };
 }
 
