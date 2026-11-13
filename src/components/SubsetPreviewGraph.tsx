@@ -362,7 +362,7 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
         ? edges.flatMap((e) => {
             const labels = e.keys.filter((k) => litKeys.has(k)).flatMap((k) => e.labels[k] ?? []);
             return labels.length > 0
-              ? [{ id: `${e.from}>${e.to}`, mid: e.mid, text: labels.join(", ") }]
+              ? [{ id: `${e.from}>${e.to}`, box: e.labelBox, text: labels.join(", ") }]
               : [];
           })
         : [],
@@ -462,10 +462,10 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
               <chakra.span
                 key={l.id}
                 position="absolute"
-                left={`${(l.mid.x / GEOMETRY.width) * 100}%`}
-                top={`${(l.mid.y / rowCount) * 100}%`}
+                left={`${(l.box.x / GEOMETRY.width) * 100}%`}
+                top={`${(l.box.y / rowCount) * 100}%`}
+                w={`${(l.box.width / GEOMETRY.width) * 100}%`}
                 transform="translate(-50%, -50%)"
-                maxW="40%"
                 px="1"
                 borderRadius="sm"
                 borderWidth="1px"
@@ -479,6 +479,7 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
                 pointerEvents="none"
                 zIndex={1}
                 data-testid="subset-preview-edge-label"
+                data-full-text={l.text}
               >
                 {l.text}
               </chakra.span>

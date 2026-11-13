@@ -384,6 +384,8 @@ export interface PlacedEdge {
   keys: string[];
   /** 列名ラベルを置く位置 (曲線の中点、`GEOMETRY` の単位)。 */
   mid: { x: number; y: number };
+  /** 強調時の列名ラベルの置き場所 (`edgeLabelBox`)。常にレーン間の溝に収まり、ノードの矩形と交わらない。 */
+  labelBox: EdgeLabelBox;
   /** この曲線がまとめている辺の列名 (`子.列 → 親.列`)。 */
   labels: Record<string, string[]>;
 }
@@ -395,6 +397,29 @@ export const GEOMETRY = {
   /** viewBox の幅。 */
   width: 11,
 } as const;
+
+/** 列名ラベルの矩形 (`GEOMETRY` の単位)。`x` は中心、`width` は溝の幅に等しい。 */
+export interface EdgeLabelBox {
+  x: number;
+  y: number;
+  width: number;
+}
+
+/**
+ * 列名ラベルの置き場所を決める。ラベルは曲線の中点に最も近い溝の中央に、溝の幅いっぱいで置く。
+ * 溝にはノードが無いので、行数や表名とは重ならない (長い文言は呼び出し側で省略表示する)。
+ * 縦は表の行の範囲 (0..rowCount) に収める。
+ */
+export function edgeLabelBox(mid: { x: number; y: number }, rowCount: number): EdgeLabelBox {
+  const pitch = GEOMETRY.laneWidth + GEOMETRY.gutter;
+  const maxIndex = SUBSET_LANES.length - 2;
+  const index = Math.min(
+    maxIndex,
+    Math.max(0, Math.round((mid.x - GEOMETRY.laneWidth - GEOMETRY.gutter / 2) / pitch)),
+  );
+  const x = GEOMETRY.laneWidth + GEOMETRY.gutter / 2 + index * pitch;
+  return { x, y: Math.min(Math.max(mid.y, 0), Math.max(rowCount, 0)), width: GEOMETRY.gutter };
+}
 
 function laneLeft(lane: SubsetLane): number {
   return SUBSET_LANES.indexOf(lane) * (GEOMETRY.laneWidth + GEOMETRY.gutter);
@@ -416,6 +441,7 @@ export function layoutEdges(
       else for (const t of item.tables) pos.set(t, { lane, row, id: item.id });
     });
   }
+  const rowCount = Math.max(1, ...SUBSET_LANES.map((l) => lanes[l].length));
   const seen = new Map<string, PlacedEdge>();
   const out: PlacedEdge[] = [];
   for (const e of edges) {
@@ -450,7 +476,15 @@ export function layoutEdges(
       mid = { x: mx, y: (y1 + y2) / 2 };
     }
     const k = edgeKey(e.from, e.to);
-    const placed: PlacedEdge = { from: e.from, to: e.to, d, keys: [k], mid, labels: { [k]: e.labels } };
+    const placed: PlacedEdge = {
+      from: e.from,
+      to: e.to,
+      d,
+      keys: [k],
+      mid,
+      labelBox: edgeLabelBox(mid, rowCount),
+      labels: { [k]: e.labels },
+    };
     seen.set(key, placed);
     out.push(placed);
   }
