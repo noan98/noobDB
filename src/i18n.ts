@@ -8292,6 +8292,91 @@ const en = {
   profileSampleNote:
     "Sampled about {percent}% of the rows. Counts, distinct values, top values and the histogram describe the sample only (distinct is a lower bound of the true value). Each query draws its own sample, so the figures may differ slightly from each other.",
   profileNoteSampled: "Computed from a sample",
+  rowMergeTitle: "Merge duplicate rows in {table}",
+  rowMergeIntro:
+    "Pick the row to keep and, per column, which row's value to keep. Child tables are re-pointed to the kept row, then the other rows are deleted, all in one transaction.",
+  rowMergeClose: "Close",
+  rowMergeCancel: "Cancel",
+  rowMergeRun: "Merge rows",
+  rowMergeRunning: "Merging…",
+  rowMergeLoading: "Planning the merge…",
+  rowMergeReadOnly: "This connection is read-only. You can review the plan, but the merge cannot run.",
+  rowMergeColumns: "Value to keep per column",
+  rowMergeColumn: "Column",
+  rowMergeLocked: "(fixed)",
+  rowMergeRowN: "Row {n}",
+  rowMergeKeep: "keep",
+  rowMergeDuplicate: "duplicate {n}",
+  rowMergePickSurvivor: "Keep row {n}",
+  rowMergeChildren: "Child tables re-pointed to the kept row",
+  rowMergeNoChildren: "No child table references these rows.",
+  rowMergeChildRows: "{count} row(s) re-pointed",
+  rowMergeChildSkipped: "{count} skipped",
+  rowMergeChildDeleted: "{count} deleted",
+  rowMergeChildSelf: "self-reference",
+  rowMergeConflictTitle: "Unique keys would collide after re-pointing",
+  rowMergeConflictLine: "{table} ({index}): {groups} colliding key(s), {rows} overlapping row(s)",
+  rowMergePolicy: "When child rows collide",
+  rowMergePolicyAbort: "Stop (default)",
+  rowMergePolicyDelete: "Delete colliding rows",
+  rowMergePolicySkip: "Skip re-pointing",
+  rowMergeFkOff:
+    "PRAGMA foreign_keys is OFF on this SQLite connection. References are still re-pointed based on the declared foreign keys.",
+  rowMergeWarnCrossDb:
+    "{table} in another database references this table and was not checked. A remaining reference makes the delete fail and rolls everything back.",
+  rowMergeWarnUnchecked:
+    "Unique index {index} on {table} cannot be checked beforehand (partial / expression). If the database rejects it, everything is rolled back.",
+  rowMergeUndoOff: "The flight recorder is off, so this merge cannot be undone.",
+  rowMergeUndoChildNoKey: "Undo is not recorded: {table} has no primary / unique key to identify its rows.",
+  rowMergeUndoTooMany: "Undo is not recorded: more than {limit} rows would change.",
+  rowMergeUndoCrossSchema: "Undo is not recorded: {table} is in another schema.",
+  rowMergeUndoChildKeyReferenced:
+    "Undo is not recorded: {referencing} references {table} with ON UPDATE CASCADE / SET NULL / SET DEFAULT, so re-pointing changes its rows and Undo could not restore them.",
+  rowMergeSql: "SQL to run (in order)",
+  rowMergeBlockedTitle: "The merge cannot run",
+  rowMergeBlockNoKey: "The selected columns are not the table's primary key or a NOT NULL unique key.",
+  rowMergeBlockTooManyRows: "You can merge up to {max} rows at once.",
+  rowMergeBlockDuplicate: "The same row is selected more than once.",
+  rowMergeBlockRowNotFound: "Row {n} no longer exists. Reload the result and select again.",
+  rowMergeBlockEngine:
+    "The table engine ({engine}) has no transactions, so a failed merge could not be rolled back.",
+  rowMergeBlockNullRef:
+    "{table}.{column}: the kept row's referenced value is NULL, so child rows cannot be re-pointed.",
+  rowMergeBlockSelfRef: "{table}.{column} would point at a row that is being merged away.",
+  rowMergeBlockConflict:
+    "{table} ({index}): re-pointing collides with {groups} existing key(s). Choose how to handle them.",
+  rowMergeBlockTooManyConflicts: "{table} ({index}): too many collisions to handle here.",
+  rowMergeBlockSkipUnsafe:
+    "{table}: skipped rows would block deleting the duplicates (ON DELETE is not CASCADE / SET NULL).",
+  rowMergeBlockPick: "Column {column} cannot take its value from another row.",
+  rowMergeBlockUnresolvedFk: "{table}: the referenced columns of {constraint} could not be resolved.",
+  rowMergeBlockChildUnreadable: "{table}: its columns could not be read.",
+  rowMergeBlockCrossChildrenUnreadable:
+    "{table}: the tables in other schemas / databases that reference it could not be read.",
+  rowMergeChangedStatements:
+    "The data changed after the preview (the statements to run differ). Nothing was written. The preview was reloaded: review it and run again.",
+  rowMergeBlockCrossDb:
+    "{table} (another database) references this table with ON DELETE CASCADE / SET NULL / SET DEFAULT. It cannot be re-pointed here, so deleting the duplicates would silently change it.",
+  rowMergeBlockGrandchild:
+    "Rows of {table} that would be deleted are referenced by {referencing} with ON DELETE CASCADE / SET NULL / SET DEFAULT, which would silently delete or change those rows (and Undo could not restore them).",
+  rowMergeBlockSkipNoFk:
+    "{table}: foreign key enforcement is off, so skipping the re-pointing would leave orphan rows when the duplicates are deleted.",
+  rowMergeChanged:
+    "The data changed after the preview (child rows {expected} -> {actual}). Nothing was written. The preview was reloaded: review it and run again.",
+  rowMergeRollbackIncomplete:
+    "The merge was rolled back, but a non-transactional table kept part of it. Reload and check the data.",
+  rowMergeDone: "Merged: {repointed} child row(s) re-pointed, {deleted} row(s) deleted.",
+  rowMergeDoneUndo:
+    "Merged: {repointed} child row(s) re-pointed, {deleted} row(s) deleted. Undo it from the flight recorder.",
+  gridMergeRows: "Merge rows… ({count})",
+  gridMergeRowsTitle: "Keep one row, re-point child tables to it, and delete the others in one transaction",
+  gridMergeRowsNoTable: "Open the table to merge its rows",
+  gridMergeRowsNoPk: "Rows can only be merged in a table with a primary key",
+  gridMergeRowsMasked: "Primary key values are masked",
+  gridMergeRowsTooFew: "Select two or more rows",
+  gridMergeRowsTooMany: "Select 50 rows or fewer",
+  dupKeysMergeGroup: "Merge this group",
+  dupKeysMergeGroupTitle: "Merge the rows of this group into one",
   dupKeysTitle: "Find duplicate keys",
   dupKeysClose: "Close",
   dupKeysColumns: "Key columns",
@@ -16586,6 +16671,90 @@ const ja: Dict = {
   profileSampleNote:
     "約 {percent}% の標本で集計しています。件数・DISTINCT・上位値・ヒストグラムは標本の値です (DISTINCT は真の値の下限)。集計ごとに別々に抽出するため、値の間で多少ずれることがあります。",
   profileNoteSampled: "標本から集計しました",
+  rowMergeTitle: "{table} の重複レコードをマージ",
+  rowMergeIntro:
+    "残す行と、列ごとにどの行の値を残すかを選びます。子テーブルの参照を残す行へ付け替えてから、ほかの行を削除します (すべて 1 トランザクション)。",
+  rowMergeClose: "閉じる",
+  rowMergeCancel: "キャンセル",
+  rowMergeRun: "マージを実行",
+  rowMergeRunning: "マージ中…",
+  rowMergeLoading: "マージの計画を立てています…",
+  rowMergeReadOnly: "この接続は読み取り専用です。計画の確認はできますが、マージは実行できません。",
+  rowMergeColumns: "列ごとに残す値",
+  rowMergeColumn: "列",
+  rowMergeLocked: "(固定)",
+  rowMergeRowN: "行 {n}",
+  rowMergeKeep: "残す",
+  rowMergeDuplicate: "重複 {n}",
+  rowMergePickSurvivor: "行 {n} を残す",
+  rowMergeChildren: "残す行へ付け替える子テーブル",
+  rowMergeNoChildren: "これらの行を参照している子テーブルはありません。",
+  rowMergeChildRows: "{count} 件を付け替え",
+  rowMergeChildSkipped: "{count} 件は飛ばす",
+  rowMergeChildDeleted: "{count} 件は削除",
+  rowMergeChildSelf: "自己参照",
+  rowMergeConflictTitle: "付け替えると一意キーが重なります",
+  rowMergeConflictLine: "{table} ({index}): 衝突するキー {groups} 件・重なる行 {rows} 件",
+  rowMergePolicy: "子の行が重なるときの扱い",
+  rowMergePolicyAbort: "中止 (既定)",
+  rowMergePolicyDelete: "重なる子行を削除",
+  rowMergePolicySkip: "付け替えを飛ばす",
+  rowMergeFkOff:
+    "この SQLite 接続は PRAGMA foreign_keys が OFF です。宣言済みの外部キーを根拠に参照を付け替えます。",
+  rowMergeWarnCrossDb:
+    "別のデータベースの {table} がこの表を参照している場合は確認できません。参照が残っていると削除が失敗し、全体がロールバックされます。",
+  rowMergeWarnUnchecked:
+    "{table} の一意インデックス {index} は事前に衝突を検出できません (部分・式インデックス)。DB が拒否すれば全体をロールバックします。",
+  rowMergeUndoOff: "フライトレコーダーが無効なため、このマージは取り消せません。",
+  rowMergeUndoChildNoKey: "Undo は記録されません: {table} に行を特定できる主キー / UNIQUE キーがありません。",
+  rowMergeUndoTooMany: "Undo は記録されません: 変更される行が {limit} 件を超えます。",
+  rowMergeUndoCrossSchema: "Undo は記録されません: {table} は別スキーマの表です。",
+  rowMergeUndoChildKeyReferenced:
+    "Undo は記録されません: {referencing} が {table} を ON UPDATE CASCADE / SET NULL / SET DEFAULT で参照しており、付け替えでその行も変わって Undo では戻せません。",
+  rowMergeSql: "実行する SQL (この順)",
+  rowMergeBlockedTitle: "マージを実行できません",
+  rowMergeBlockNoKey: "選んだ列が、表の主キーでも NOT NULL の UNIQUE キーでもありません。",
+  rowMergeBlockTooManyRows: "一度にマージできるのは {max} 行までです。",
+  rowMergeBlockDuplicate: "同じ行を重複して選んでいます。",
+  rowMergeBlockRowNotFound: "行 {n} はもう存在しません。結果を再読込して選び直してください。",
+  rowMergeBlockEngine:
+    "この表のエンジン ({engine}) はトランザクションを持たず、失敗してもロールバックできません。",
+  rowMergeBlockNullRef: "{table}.{column}: 残す行の参照先の値が NULL のため、子の行を付け替えられません。",
+  rowMergeBlockSelfRef: "{table}.{column} が、マージで消える行を指してしまいます。",
+  rowMergeBlockConflict:
+    "{table} ({index}): 付け替えると既存のキー {groups} 件と重なります。扱いを選んでください。",
+  rowMergeBlockTooManyConflicts: "{table} ({index}): 衝突が多すぎて、ここでは扱えません。",
+  rowMergeBlockSkipUnsafe:
+    "{table}: 飛ばした行が重複行の削除を妨げます (ON DELETE が CASCADE / SET NULL ではありません)。",
+  rowMergeBlockPick: "列 {column} は別の行の値を選べません。",
+  rowMergeBlockUnresolvedFk: "{table}: {constraint} の参照先の列を決められません。",
+  rowMergeBlockChildUnreadable: "{table}: 列の情報を取得できません。",
+  rowMergeBlockCrossChildrenUnreadable:
+    "{table}: 別のスキーマ / データベースからこの表を参照する表を取得できません。",
+  rowMergeChangedStatements:
+    "プレビュー後にデータが変わりました (実行する文が変わっています)。何も書き込んでいません。プレビューを読み込み直したので、内容を確認してからもう一度実行してください。",
+  rowMergeBlockCrossDb:
+    "{table} (別のデータベース) が ON DELETE CASCADE / SET NULL / SET DEFAULT でこの表を参照しています。ここでは付け替えられず、重複行を消すと黙って変更されるので止めました。",
+  rowMergeBlockGrandchild:
+    "削除される {table} の行を、{referencing} が ON DELETE CASCADE / SET NULL / SET DEFAULT で参照しています。孫の行が黙って消える / 変わり、Undo でも戻せないので止めました。",
+  rowMergeBlockSkipNoFk:
+    "{table}: 外部キー検査が無効なので、付け替えを飛ばすと重複行の削除で孤児行が残ります。",
+  rowMergeChanged:
+    "プレビュー後にデータが変わりました (子の行 {expected} 件 → {actual} 件)。何も書き込んでいません。プレビューを読み込み直したので、内容を確認してからもう一度実行してください。",
+  rowMergeRollbackIncomplete:
+    "マージをロールバックしましたが、トランザクション非対応の表に一部が残りました。再読込して確認してください。",
+  rowMergeDone: "マージしました: 子の行 {repointed} 件を付け替え、{deleted} 行を削除。",
+  rowMergeDoneUndo:
+    "マージしました: 子の行 {repointed} 件を付け替え、{deleted} 行を削除。フライトレコーダーから取り消せます。",
+  gridMergeRows: "行をマージ… ({count} 行)",
+  gridMergeRowsTitle: "1 行を残し、子テーブルの参照を付け替えて、ほかの行を 1 トランザクションで削除します",
+  gridMergeRowsNoTable: "テーブルを開いて行をマージしてください",
+  gridMergeRowsNoPk: "主キーのある表の行だけマージできます",
+  gridMergeRowsMasked: "主キーの値がマスクされています",
+  gridMergeRowsTooFew: "2 行以上を選んでください",
+  gridMergeRowsTooMany: "50 行以下で選んでください",
+  dupKeysMergeGroup: "このグループをマージ",
+  dupKeysMergeGroupTitle: "このグループの行を 1 件にまとめます",
   dupKeysTitle: "重複キーを検出",
   dupKeysClose: "閉じる",
   dupKeysColumns: "キー列",

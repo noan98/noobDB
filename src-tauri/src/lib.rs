@@ -258,9 +258,17 @@ pub mod __test_api {
     pub use crate::commands::audit_trigger::{generate_audit_ddl_core, get_audit_status_core};
     pub use crate::db::audit_trigger::{AuditDdl, AuditOptions, AuditStatus};
     // サブセット抽出 (#2241)。Tauri を介さずに統合テストから駆動するコア。
+    pub use crate::commands::row_merge::{
+        apply_row_merge_inner, preview_row_merge_inner, RowMergeCaptureOutcome, RowMergeChild,
+        RowMergeColumn, RowMergeConflict, RowMergeOptions, RowMergeOutcome, RowMergePreview,
+    };
     pub use crate::commands::subset::{
         preview_subset_inner, run_subset_inner, ExistingRows, SubsetColumnInfo, SubsetColumnMask,
         SubsetOutcome, SubsetOutput, SubsetPreview, SubsetRequest, SubsetTablePreview,
+    };
+    pub use crate::db::row_merge::{
+        ConflictPolicy, MergeBlocker, MergeWarning, RowMergeExpected, RowMergePick,
+        RowMergeRequest, UndoDecline,
     };
     pub use crate::db::subset::SubsetWarning;
     pub use crate::db::transfer::{
@@ -2110,6 +2118,8 @@ pub fn run() {
             commands::result::result_duplicate_keys,
             commands::result::release_result,
             commands::result::render_export_text,
+            commands::row_merge::preview_row_merge,
+            commands::row_merge::apply_row_merge,
             commands::dump::dump_database,
             commands::dump_tools::dump_tool_status,
             commands::dump_tools::install_dump_tool,

@@ -46,6 +46,7 @@ import { dumpToolsCommands } from "./commands/dumpTools";
 import { importCommands } from "./commands/import";
 import { importTemplatesCommands } from "./commands/importTemplates";
 import { scriptCommands } from "./commands/script";
+import { rowMergeCommands } from "./commands/rowMerge";
 import { auditTriggerCommands } from "./commands/auditTrigger";
 import { subsetCommands } from "./commands/subset";
 import { transferCommands } from "./commands/transfer";
@@ -2862,6 +2863,7 @@ export const api = {
   ...importCommands,
   ...importTemplatesCommands,
   ...scriptCommands,
+  ...rowMergeCommands,
   ...auditTriggerCommands,
   ...subsetCommands,
   ...transferCommands,
@@ -3375,6 +3377,92 @@ export interface TransferStreamHandlers {
   /** `cancelStream` が転送を中断したとき。`deliveredRows` は書き込み済み行数。 */
   onCancelled?: (event: StreamCancelledEvent) => void;
 }
+
+// ── 重複レコードのマージ (#2303) ──
+export type RowMergeConflictPolicy = "abort" | "delete_colliding" | "skip_repoint";
+export interface RowMergeRequest {
+  keyColumns: string[];
+  /** 残す行のキー値 (`keyColumns` と同順)。 */
+  survivor: CellValue[];
+  losers: CellValue[][];
+  /** 列ごとの採用元 (`[残す行, 重複行…]` の添字)。省略で提案値。 */
+  picks?: { column: string; fromRow: number }[] | null;
+  conflictPolicy?: RowMergeConflictPolicy;
+  /** プレビューで見せた計画。実行の直前に立て直した計画と食い違えば、何も書かずに `changed` が返る。 */
+  expected?: { statements: string[]; childRows: number[] } | null;
+}
+export type RowMergeBlocker =
+  | { kind: "noKey" }
+  | { kind: "tooManyRows"; max: number }
+  | { kind: "duplicateSelection" }
+  | { kind: "rowNotFound"; index: number }
+  | { kind: "unsupportedEngine"; engine: string }
+  | { kind: "nullReference"; table: string; column: string }
+  | { kind: "selfReference"; table: string; column: string }
+  | { kind: "uniqueConflict"; table: string; index: string; groups: number }
+  | { kind: "tooManyConflicts"; table: string; index: string }
+  | { kind: "skipUnsafe"; table: string }
+  | { kind: "lockedPick"; column: string }
+  | { kind: "invalidPick"; column: string }
+  | { kind: "unresolvedForeignKey"; table: string; constraint: string }
+  | { kind: "childUnreadable"; table: string }
+  | { kind: "crossChildrenUnreadable"; table: string }
+  | { kind: "crossDatabaseCascade"; schema: string; table: string }
+  | { kind: "deletedChildReferenced"; table: string; referencing: string }
+  | { kind: "skipWithoutForeignKeys"; table: string };
+export type RowMergeWarning =
+  | { kind: "crossDatabaseChild"; table: string }
+  | { kind: "uncheckedIndex"; table: string; index: string };
+export type RowMergeUndoDecline =
+  | { kind: "childWithoutKey"; table: string }
+  | { kind: "tooManyRows"; limit: number }
+  | { kind: "crossSchemaChild"; table: string }
+  | { kind: "childKeyReferenced"; table: string; referencing: string };
+export interface RowMergeChild {
+  schema: string | null;
+  table: string;
+  constraint: string;
+  columns: string[];
+  parentColumns: string[];
+  onDelete: string | null;
+  rows: number;
+  skipped: number;
+  deleted: number;
+  selfReference: boolean;
+}
+export interface RowMergeConflict {
+  table: string;
+  index: string;
+  columns: string[];
+  groups: number;
+  rows: number;
+  sample: string[][];
+}
+export interface RowMergePreview {
+  columns: { name: string; typeName: string; locked: boolean }[];
+  rows: CellValue[][];
+  picks: number[];
+  keyColumns: string[];
+  children: RowMergeChild[];
+  conflicts: RowMergeConflict[];
+  statements: string[];
+  blockers: RowMergeBlocker[];
+  warnings: RowMergeWarning[];
+  fkEnforced: boolean | null;
+  repointedRows: number;
+  deletedRows: number;
+  undoDecline: RowMergeUndoDecline | null;
+}
+export type RowMergeOutcome =
+  | {
+      status: "applied";
+      repointedRows: number;
+      deletedRows: number;
+      capture: { recorded: number; declined: number; batchId: string | null };
+    }
+  | { status: "blocked"; blockers: RowMergeBlocker[] }
+  | { status: "changed"; expectedRows: number; actualRows: number; statementsChanged: boolean }
+  | { status: "rollback_incomplete"; expectedRows: number; actualRows: number };
 
 // ── サブセット抽出 (#2241) ──
 export type SubsetWarning =

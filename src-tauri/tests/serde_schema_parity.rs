@@ -1543,6 +1543,129 @@ fn build_fixtures() -> serde_json::Value {
         ],
     };
 
+    // #2303: 重複レコードのマージのプレビュー / 結果 (`preview_row_merge` / `apply_row_merge`)。
+    let row_merge_preview = t::RowMergePreview {
+        columns: vec![t::RowMergeColumn {
+            name: "id".into(),
+            type_name: "int".into(),
+            locked: true,
+        }],
+        rows: vec![vec![t::Value::Int(1)], vec![t::Value::Int(2)]],
+        picks: vec![0],
+        key_columns: vec!["id".into()],
+        children: vec![t::RowMergeChild {
+            schema: Some("other".into()),
+            table: "orders".into(),
+            constraint: "fk_orders".into(),
+            columns: vec!["customer_id".into()],
+            parent_columns: vec!["id".into()],
+            on_delete: Some("CASCADE".into()),
+            rows: 2,
+            skipped: 1,
+            deleted: 0,
+            self_reference: false,
+        }],
+        conflicts: vec![t::RowMergeConflict {
+            table: "coupon_uses".into(),
+            index: "PRIMARY".into(),
+            columns: vec!["customer_id".into(), "coupon_id".into()],
+            groups: 1,
+            rows: 1,
+            sample: vec![vec!["100".into()]],
+        }],
+        statements: vec!["DELETE FROM customers WHERE id = 2".into()],
+        blockers: vec![
+            t::MergeBlocker::NoKey,
+            t::MergeBlocker::TooManyRows { max: 50 },
+            t::MergeBlocker::DuplicateSelection,
+            t::MergeBlocker::RowNotFound { index: 1 },
+            t::MergeBlocker::UnsupportedEngine {
+                engine: "MyISAM".into(),
+            },
+            t::MergeBlocker::NullReference {
+                table: "orders".into(),
+                column: "customer_id".into(),
+            },
+            t::MergeBlocker::SelfReference {
+                table: "customers".into(),
+                column: "referrer_id".into(),
+            },
+            t::MergeBlocker::UniqueConflict {
+                table: "coupon_uses".into(),
+                index: "PRIMARY".into(),
+                groups: 1,
+            },
+            t::MergeBlocker::TooManyConflicts {
+                table: "coupon_uses".into(),
+                index: "PRIMARY".into(),
+            },
+            t::MergeBlocker::SkipUnsafe {
+                table: "coupon_uses".into(),
+            },
+            t::MergeBlocker::LockedPick {
+                column: "id".into(),
+            },
+            t::MergeBlocker::InvalidPick {
+                column: "nope".into(),
+            },
+            t::MergeBlocker::UnresolvedForeignKey {
+                table: "orders".into(),
+                constraint: "fk".into(),
+            },
+            t::MergeBlocker::ChildUnreadable {
+                table: "orders".into(),
+            },
+            t::MergeBlocker::CrossDatabaseCascade {
+                schema: "other".into(),
+                table: "orders".into(),
+            },
+            t::MergeBlocker::DeletedChildReferenced {
+                table: "orders".into(),
+                referencing: "items".into(),
+            },
+            t::MergeBlocker::CrossChildrenUnreadable {
+                table: "orders".into(),
+            },
+            t::MergeBlocker::SkipWithoutForeignKeys {
+                table: "orders".into(),
+            },
+        ],
+        warnings: vec![
+            t::MergeWarning::CrossDatabaseChild { table: "x".into() },
+            t::MergeWarning::UncheckedIndex {
+                table: "x".into(),
+                index: "i".into(),
+            },
+        ],
+        fk_enforced: Some(false),
+        repointed_rows: 2,
+        deleted_rows: 1,
+        undo_decline: Some(t::UndoDecline::ChildWithoutKey {
+            table: "log".into(),
+        }),
+    };
+    let row_merge_outcome_applied = t::RowMergeOutcome::Applied {
+        repointed_rows: 2,
+        deleted_rows: 1,
+        capture: t::RowMergeCaptureOutcome {
+            recorded: 3,
+            declined: 0,
+            batch_id: Some("batch-1".into()),
+        },
+    };
+    let row_merge_outcome_blocked = t::RowMergeOutcome::Blocked {
+        blockers: vec![t::MergeBlocker::NoKey],
+    };
+    let row_merge_outcome_changed = t::RowMergeOutcome::Changed {
+        expected_rows: 2,
+        actual_rows: 3,
+        statements_changed: true,
+    };
+    let row_merge_outcome_incomplete = t::RowMergeOutcome::RollbackIncomplete {
+        expected_rows: 2,
+        actual_rows: 3,
+    };
+
     // #1532: 転送前プレビュー (`preview_transfer`)。
     let transfer_preview = t::TransferPreview {
         columns: vec![t::TransferColumnInfo {
@@ -2909,6 +3032,11 @@ fn build_fixtures() -> serde_json::Value {
         "blobFolderSaveResult": blob_folder_save_result,
         "transferPreview": transfer_preview,
         "subsetPreview": subset_preview,
+        "rowMergePreview": row_merge_preview,
+        "rowMergeOutcomeApplied": row_merge_outcome_applied,
+        "rowMergeOutcomeBlocked": row_merge_outcome_blocked,
+        "rowMergeOutcomeChanged": row_merge_outcome_changed,
+        "rowMergeOutcomeIncomplete": row_merge_outcome_incomplete,
         "importErrorEvent": import_error_event,
         "dumpProgressEvent": dump_progress_event,
         "dumpDoneEvent": dump_done_event,

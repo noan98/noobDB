@@ -738,6 +738,19 @@ DELETE をフライトレコーダに 1 文ずつ記録し (`run_captured_write`
   INSERT スクリプトのファイル (`script`。エクスポートの SQL レンダラを再利用)。`masks` は出力にだけ
   掛け、キー列はマスクできない。進捗は `subset-stream:*` イベント、`cancel_stream` で中断。
 
+## 重複レコードのマージ (`commands/row_merge.rs`, #2303)
+
+残す行を決め、子テーブルの参照を付け替えてから重複行を消す。計画 (`build_plan`) は読み取りだけで、プレビューも
+実行も同じ計画を使う。純粋層 (条件式・SQL 生成・衝突の振り分け) は `db/row_merge.rs`。文の順は
+「子の付け替え → 重複行の DELETE → 残す行の UPDATE」。衝突 (子側の UNIQUE / PK) は実行前に検出し、
+扱い (`conflictPolicy`: `abort` 既定 / `delete_colliding` / `skip_repoint`) に従う。
+
+- `preview_row_merge` — 選んだ行を DB から読み直し、子テーブルごとの付け替え件数・衝突・実行する SQL・
+  実行できない理由 (`blockers`)・Undo を残せない理由 (`undoDecline`) を返す。読み取りのみ (read_only でも動く)。
+- `apply_row_merge` — 実行直前に計画を立て直し、衝突があれば何も書かずに `blocked`。付け替え・DELETE・UPDATE を
+  `run_query_transaction_guarded_inner` の 1 トランザクション (文ごとの影響行数の検算つき) で実行する。
+  `read_only` 接続はバックエンドが拒否。`options.capture` でフライトレコーダーへ 1 バッチ記録 (Undo 可能)。
+
 ## Schema Cache (`commands/schema.rs`, #1097)
 
 `refresh_schema_cache` — セッション単位の Schema Cache (`cache::SchemaCache`) を

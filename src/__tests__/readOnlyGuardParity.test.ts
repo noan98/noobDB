@@ -334,6 +334,10 @@ const WRITE_CAPABLE: Record<string, WriteCapable> = {
   ),
   // --- 経由ヘルパのガード ---
   bulk_update_cells: VIA_TX,
+  apply_row_merge: wc(
+    "apply_row_merge_inner が ensure_allowed_for_session + guarded トランザクション",
+    ESA_SESSION,
+  ),
   run_chunked_dml_batch: VIA_TX,
   undo_flight_record: wc(
     "flight_recorder.rs の apply_flight_plan が run_query_transaction_inner 経由",
@@ -651,6 +655,9 @@ safe(
 
 safe(REASON.DRY_RUN, "preview_query_stream", "import_dry_run");
 
+// 重複レコードのマージのプレビュー: 計画のための SELECT / メタデータ取得だけで、何も書かない。
+safe(REASON.SESSION_READ, "preview_row_merge");
+
 safe(
   REASON.TX_CONTROL,
   "begin_transaction",
@@ -695,6 +702,8 @@ const EXECUTE_CALL_RE = /\.\s*execute(?:_[a-z_]+)?\s*\(/;
  * 実行しない)。ここに無いコマンドが `execute` に到達したら、読み取りのつもりでも要レビュー。
  */
 const SESSION_READ_EXECUTES_SELECT = new Set([
+  // 重複レコードのマージのプレビュー: 内部で組み立てた SELECT とメタデータ取得だけ (#2303)。
+  "preview_row_merge",
   "fetch_cell_bytes",
   "probe_cell_blob",
   "save_cell_to_file",
