@@ -458,6 +458,51 @@ fn unique_conflicts<'r>(
     out
 }
 
+/// 自己参照の外部キーで、自分自身か挿入順で後ろにある行を指す行があるか。
+/// [`FkRemap`] は挿入済みの行しか張り替えられないので、そのまま複製すると新しい行が元の行を
+/// 指したまま残る (例: `(id=1, parent_id=1)` が `(id=2, parent_id=1)` になる)。行どうしの循環も同じ。
+/// `rows` は挿入順。照合は張り替えと同じ完全一致 (`key_signature`)。
+pub fn has_unresolvable_self_reference(
+    meta: &SubsetTable,
+    rows: &[Vec<Value>],
+    edges: &[SubsetEdge],
+) -> bool {
+    let pick = |row: &[Value], cols: &[String]| -> Option<Vec<Value>> {
+        cols.iter()
+            .map(|c| {
+                meta.columns
+                    .iter()
+                    .position(|x| x == c)
+                    .and_then(|i| row.get(i).cloned())
+            })
+            .collect()
+    };
+    for e in edges
+        .iter()
+        .filter(|e| e.child == meta.name && e.parent == meta.name)
+    {
+        // 参照先キー → その行が最初に現れる挿入位置。
+        let mut first_at: HashMap<String, usize> = HashMap::new();
+        for (i, r) in rows.iter().enumerate() {
+            if let Some(k) = pick(r, &e.parent_cols) {
+                first_at.entry(key_signature(&k)).or_insert(i);
+            }
+        }
+        for (i, r) in rows.iter().enumerate() {
+            let Some(k) = pick(r, &e.child_cols) else {
+                continue;
+            };
+            if k.iter().any(|v| matches!(v, Value::Null)) {
+                continue;
+            }
+            if first_at.get(&key_signature(&k)).is_some_and(|&p| p >= i) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// 複製した行の外部キーの張り替え表。辺ごとに「元の参照先キー → 新しい参照先キー」を持つ。
 #[derive(Debug, Default)]
 pub struct FkRemap {
@@ -846,6 +891,36 @@ mod tests {
         // NULL の外部キーはそのまま。
         let mut nul = vec![Value::Int(12), Value::Null, Value::Int(1)];
         assert!(m.remap(&items, &mut nul).is_empty());
+    }
+
+    #[test]
+    fn self_reference_to_itself_or_a_later_row_is_unresolvable() {
+        let cat = meta("cat", &["id", "parent_id"], &["id"]);
+        let edges = [edge("cat", &["parent_id"], "cat", &["id"])];
+        // 親が先: 張り替えられる。
+        assert!(!has_unresolvable_self_reference(
+            &cat,
+            &[vec![Value::Int(1), Value::Null], ints(&[2, 1])],
+            &edges
+        ));
+        // 複製しない行への参照はそのまま残してよい。
+        assert!(!has_unresolvable_self_reference(
+            &cat,
+            &[ints(&[2, 99])],
+            &edges
+        ));
+        // 自分自身を指す行。
+        assert!(has_unresolvable_self_reference(
+            &cat,
+            &[ints(&[1, 1])],
+            &edges
+        ));
+        // 行どうしの循環 (1 → 2 → 1)。
+        assert!(has_unresolvable_self_reference(
+            &cat,
+            &[ints(&[1, 2]), ints(&[2, 1])],
+            &edges
+        ));
     }
 
     #[test]

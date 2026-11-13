@@ -25,9 +25,9 @@ use crate::commands::bulk_capture::BulkCaptureConfig;
 use crate::commands::query::record_write_history;
 use crate::commands::subset::{collect_subset_with, CollectMode, SubsetColumnInfo, SubsetRequest};
 use crate::db::clone_rows::{
-    analyze, auto_columns, expression_select, insert_sql, key_of, rule_columns,
-    validate_expression, CloneColumnRule, CloneInput, CloneTable, FkRemap, KeyColumnReport,
-    KeyRule, TableReport, UniqueConflict, MAX_CLONE_ROWS,
+    analyze, auto_columns, expression_select, has_unresolvable_self_reference, insert_sql, key_of,
+    rule_columns, validate_expression, CloneColumnRule, CloneInput, CloneTable, FkRemap,
+    KeyColumnReport, KeyRule, TableReport, UniqueConflict, MAX_CLONE_ROWS,
 };
 use crate::db::data_diff::key_signature;
 use crate::db::subset::{
@@ -262,7 +262,7 @@ fn preview_of(p: &Prepared) -> CloneRowsPreview {
             }
         })
         .collect();
-    let cycles = p.collected.result.cycles.clone();
+    let cycles = blocking_cycles(p);
     CloneRowsPreview {
         tables,
         total_rows: p.collected.result.total_rows(),
@@ -274,12 +274,26 @@ fn preview_of(p: &Prepared) -> CloneRowsPreview {
     }
 }
 
+/// 実行を止める循環。表どうしの循環に加え、自己参照で自分自身か後ろの行を指す行がある表
+/// (張り替える前に新しいキーが決まらない) も 1 表の循環として数える。
+fn blocking_cycles(p: &Prepared) -> Vec<Vec<String>> {
+    let mut cycles = p.collected.result.cycles.clone();
+    for (ct, data) in p.tables.iter().zip(p.collected.result.tables.iter()) {
+        if has_unresolvable_self_reference(&ct.meta, &data.rows, &p.collected.edges)
+            && !cycles.iter().any(|c| c.contains(&ct.meta.name))
+        {
+            cycles.push(vec![ct.meta.name.clone()]);
+        }
+    }
+    cycles
+}
+
 /// 実行前の検査。1 つでも問題があれば何も書かずにエラーにする。
 fn ensure_ready(p: &Prepared) -> Result<()> {
     if p.collected.result.total_rows() == 0 {
         return Err(AppError::InvalidInput("there are no rows to clone".into()));
     }
-    if let Some(c) = p.collected.result.cycles.first() {
+    if let Some(c) = blocking_cycles(p).first() {
         return Err(AppError::InvalidInput(format!(
             "foreign keys form a cycle among: {}; rows cannot be cloned in a valid order",
             c.join(", ")
