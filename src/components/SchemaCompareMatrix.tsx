@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
-import { motion, useReducedMotion } from "motion/react";
+import { motion } from "motion/react";
 
 import type { useT } from "../i18n";
 import { transitions } from "../motion";
@@ -8,7 +8,7 @@ import { semanticColorVar } from "../semanticColors";
 import type { DiffStatus } from "../api/tauri";
 import { Button, Checkbox, Input } from "./ui";
 import { statusColors } from "./diffStatusColors";
-import { ActionMark, statusLabel } from "./SchemaDiffDetail";
+import { ActionMark, statusLabel, useStillMotion } from "./SchemaDiffDetail";
 import {
   buildCompareMatrix,
   type ColumnBreakdown,
@@ -124,7 +124,7 @@ function BreakdownStrip({
   onPick: (status: DiffStatus) => void;
   t: ReturnType<typeof useT>;
 }) {
-  const reduced = useReducedMotion() ?? false;
+  const reduced = useStillMotion();
   const total = breakdown.source_only + breakdown.different + breakdown.target_only;
   return (
     <chakra.span display="flex" flexDirection="column" alignItems="stretch" gap="0.5" w="100%">
@@ -133,7 +133,7 @@ function BreakdownStrip({
           <motion.span
             key={status}
             data-testid={`matrix-strip-${status}`}
-            onClick={() => onPick(status)}
+            onClick={() => breakdown[status] > 0 && onPick(status)}
             style={{ height: "100%", background: statusColors(status).color, cursor: "pointer" }}
             initial={false}
             animate={{ width: total === 0 ? "0%" : `${(breakdown[status] / total) * 100}%` }}
@@ -146,7 +146,8 @@ function BreakdownStrip({
           <chakra.button
             key={status}
             type="button"
-            css={{ ...chipCss, ...(breakdown[status] === 0 ? { opacity: 0.5 } : null) }}
+            disabled={breakdown[status] === 0}
+            css={{ ...chipCss, ...(breakdown[status] === 0 ? { opacity: 0.5, cursor: "default" } : null) }}
             aria-label={t("schemaCompareMatrixStripLabel", {
               target,
               status: statusLabel(status, t),
@@ -351,7 +352,14 @@ export function SchemaCompareMatrix({
               <tr key={row.name}>
                 <th scope="row">
                   <Flex align="center" justify="space-between" gap="2">
-                    <chakra.span fontFamily="var(--font-mono)" fontWeight={400}>
+                    <chakra.span
+                      fontFamily="var(--font-mono)"
+                      fontWeight={400}
+                      maxW="var(--matrix-label-max)"
+                      overflow="hidden"
+                      textOverflow="ellipsis"
+                      title={row.name}
+                    >
                       {row.name}
                     </chakra.span>
                     <DriftMeter row={row} t={t} />

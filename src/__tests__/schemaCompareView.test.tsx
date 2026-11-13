@@ -526,6 +526,9 @@ describe("SchemaCompareView の複数比較先", () => {
         }),
       }),
     );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Gamma \/ db1/, pressed: true })).toBeInTheDocument(),
+    );
     const change = await screen.findByRole("button", {
       name: new RegExp(t("schemaCompareOpChange")),
       pressed: false,
