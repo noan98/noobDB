@@ -1,15 +1,19 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useKeepAliveActive, useRefreshOnReactivate } from "./KeepAlive";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
+import { AnimatePresence, motion, useReducedMotionConfig } from "motion/react";
+import { transitions, variants } from "../motion";
+import { formatDuration } from "../progressEta";
 
 import { api, type DriverKind, type ProcessInfo } from "../api/tauri";
 import { useT } from "../i18n";
 import { semanticColorToken } from "../semanticColors";
 import { AUTO_REFRESH_INTERVAL_OPTIONS } from "../settings";
-import { COUNT_UP_TOKEN, splitAroundCountUpToken } from "../useCountUp";
+import { COUNT_UP_TOKEN, formatCountUpPlainInt, splitAroundCountUpToken } from "../useCountUp";
 import {
   buildBlockingTree,
   distinctProcessValues,
+  estimateProcessProgress,
   EMPTY_PROCESS_FILTER,
   failedKillReasons,
   filterProcesses,
@@ -25,10 +29,14 @@ import {
   pruneSelection,
   reconcileKillTargets,
   sortProcesses,
+  trackProgress,
   type ProcessFilter,
+  type ProgressObservation,
   type ProcessSortKey,
 } from "./processList";
 import { Callout } from "./Callout";
+import { DeterminateProgressBar } from "./StreamProgressBar";
+import { prefersStaticMotion } from "./revealOrigin";
 import { CountUp } from "./CountUp";
 import { LiveCell, LiveRowsPresence, LiveTr, useLiveChanges } from "./LiveRows";
 import { uniqueByKey } from "./liveDiff";
@@ -168,6 +176,21 @@ export function ProcessListPanel({
   const filterActive = isProcessFilterActive(filter);
   // 同じクエリを実行している行のグループ (#1622)。絞り込み前の全件から作る。
   const queryGroups = useMemo(() => groupProcessesByQuery(rows), [rows]);
+  // 進捗の観測記録 (#2291)。ETA / 行毎秒の起点を pid ごとに持つ。セッションが変わったら捨てる。
+  // 冪等な更新 (同じ rows を 2 回渡しても起点は動かない) なので StrictMode の二重実行でも安全。
+  const progressRef = useRef<{ sessionId: string; map: ReadonlyMap<number, ProgressObservation> }>({
+    sessionId,
+    map: new Map(),
+  });
+  const progressObs = useMemo(() => {
+    const prev = progressRef.current.sessionId === sessionId ? progressRef.current.map : new Map();
+    const map = trackProgress(prev, rows, Date.now());
+    progressRef.current = { sessionId, map };
+    return map;
+  }, [rows, sessionId]);
+  // reduced-motion とハイコントラストでは height / opacity の補間を即時にする (TaskManager と同じ)。
+  const reducedMotion = useReducedMotionConfig() ?? false;
+  const still = reducedMotion || prefersStaticMotion();
   const [, setDismissTick] = useState(0); // 閉じたとき再描画するための合図
   const progressDisabled =
     rows.some((p) => p.progress_disabled === true) && !DISMISSED_PROGRESS_HINT.has(sessionId);
@@ -634,34 +657,45 @@ export function ProcessListPanel({
           )}
 
           {/* MySQL の stage 計測器が無効で ALTER TABLE の進捗が空のときの案内 (#2269)。SQL は示すだけで実行しない。 */}
-          {!error && progressDisabled && (
-            <Callout
-              tone="info"
-              role="status"
-              title={t("processProgressDisabledTitle")}
-              flexShrink={0}
-              action={
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    DISMISSED_PROGRESS_HINT.add(sessionId);
-                    setDismissTick((n) => n + 1);
-                  }}
+          <AnimatePresence initial={false}>
+            {!error && progressDisabled && (
+              <MotionDiv
+                key="progress-disabled-hint"
+                variants={variants.collapse}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                transition={still ? INSTANT : transitions.enter}
+                flexShrink={0}
+              >
+                <Callout
+                  tone="info"
+                  role="status"
+                  title={t("processProgressDisabledTitle")}
+                  action={
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        DISMISSED_PROGRESS_HINT.add(sessionId);
+                        setDismissTick((n) => n + 1);
+                      }}
+                    >
+                      {t("processProgressDisabledDismiss")}
+                    </Button>
+                  }
                 >
-                  {t("processProgressDisabledDismiss")}
-                </Button>
-              }
-            >
-              <chakra.p margin={0}>{t("processProgressDisabledBody")}</chakra.p>
-              <SqlPreview
-                sql={MYSQL_ENABLE_STAGE_INSTRUMENTATION_SQL}
-                driver={driver}
-                minH="64px"
-                wrap
-                data-testid="process-progress-enable-sql"
-              />
-            </Callout>
-          )}
+                  <chakra.p margin={0}>{t("processProgressDisabledBody")}</chakra.p>
+                  <SqlPreview
+                    sql={MYSQL_ENABLE_STAGE_INSTRUMENTATION_SQL}
+                    driver={driver}
+                    minH="64px"
+                    wrap
+                    data-testid="process-progress-enable-sql"
+                  />
+                </Callout>
+              </MotionDiv>
+            )}
+          </AnimatePresence>
 
           {/* AI 解説 (#1478)。AI 無効 / SQLite では何も描かない。KILL は下の既存ボタンで行う。 */}
           {!error && (
@@ -758,6 +792,8 @@ export function ProcessListPanel({
                           selected={selected.has(p.id)}
                           highlighted={p.id === highlightId}
                           killFailure={killFailures.get(p.id) ?? null}
+                          progressObs={progressObs.get(p.id)}
+                          still={still}
                           onToggle={toggleOne}
                           flashCommand={flashToken(p.id, "command")}
                           flashState={flashToken(p.id, "state")}
@@ -829,6 +865,8 @@ const ProcessRow = memo(
     selected,
     highlighted,
     killFailure,
+    progressObs,
+    still,
     onToggle,
     flashCommand,
     flashState,
@@ -841,6 +879,10 @@ const ProcessRow = memo(
     highlighted: boolean;
     /** 直近の停止で失敗したときの理由 (#1622)。 */
     killFailure: string | null;
+    /** 進捗の観測記録 (#2291)。ETA / 行毎秒の算出に使う。 */
+    progressObs: ProgressObservation | undefined;
+    /** 動きを止めるか (reduced-motion / ハイコントラスト、#2291)。 */
+    still: boolean;
     onToggle: (id: number) => void;
     flashCommand: number | null;
     flashState: number | null;
@@ -906,7 +948,7 @@ const ProcessRow = memo(
         </LiveCell>
         <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false} flash={flashState}>
           {p.state ?? "–"}
-          {p.progress && <ProcessProgressBadge progress={p.progress} />}
+          {p.progress && <ProcessProgressBadge progress={p.progress} obs={progressObs} still={still} />}
         </LiveCell>
         <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false} flash={flashTime}>
           {/* 単調な増加は CountUp の補間で「進んでいる」ことを示し、
@@ -926,6 +968,8 @@ const ProcessRow = memo(
     a.selected === b.selected &&
     a.highlighted === b.highlighted &&
     a.killFailure === b.killFailure &&
+    a.progressObs === b.progressObs &&
+    a.still === b.still &&
     a.onToggle === b.onToggle &&
     a.flashCommand === b.flashCommand &&
     a.flashState === b.flashState &&
@@ -934,16 +978,65 @@ const ProcessRow = memo(
     sameProcess(a.process, b.process),
 );
 
-/** メンテナンスの進捗 (#1622 / #2269)。割合が出せるフェーズは `<progress>`、出せないときはフェーズ名だけ。 */
-function ProcessProgressBadge({ progress }: { progress: NonNullable<ProcessInfo["progress"]> }) {
+/** 動きを即時にした transition (reduced-motion / ハイコントラスト時)。 */
+const INSTANT = { duration: 0 } as const;
+
+const MotionDiv = chakra(
+  motion.div,
+  {},
+  { forwardProps: ["variants", "initial", "animate", "exit", "transition", "layout"] },
+);
+const MotionSpan = chakra(
+  motion.span,
+  {},
+  { forwardProps: ["variants", "initial", "animate", "exit", "transition"] },
+);
+
+/**
+ * メンテナンスの進捗 (#1622 / #2269 / #2291)。割合が出せるフェーズは確定進捗バー + ETA、
+ * 出せないとき (総量不明の COPY) は行数 (CountUp) と行/秒。フェーズが変わるとラベルを
+ * クロスフェードする。
+ */
+function ProcessProgressBadge({
+  progress,
+  obs,
+  still,
+}: {
+  progress: NonNullable<ProcessInfo["progress"]>;
+  obs: ProgressObservation | undefined;
+  still: boolean;
+}) {
   const t = useT();
   const pct = processProgressPercent(progress);
   const kind = t(PROCESS_PROGRESS_LABEL_KEYS[progress.kind]);
+  const estimate = obs ? estimateProcessProgress(obs) : { kind: "pending" as const };
   // COPY は総量不明 (STDIN など) だと割合を出せず、done が処理済み行数 (#2269)。
-  const phase =
-    progress.kind === "copy" && progress.total === 0
-      ? t("processProgressCopyRows", { phase: progress.phase, rows: progress.done })
-      : progress.phase;
+  const unknownTotal = progress.kind === "copy" && progress.total === 0;
+  let label: ReactNode;
+  if (unknownTotal) {
+    const [pre, post] = splitAroundCountUpToken(
+      t("processProgressCopyRows", { phase: progress.phase, rows: COUNT_UP_TOKEN }),
+    );
+    label = (
+      <>
+        {t("processProgressPhase", { kind, phase: pre })}
+        <CountUp value={progress.done} formatter={formatCountUpPlainInt} />
+        {post}
+      </>
+    );
+  } else if (pct === null) {
+    label = t("processProgressPhase", { kind, phase: progress.phase });
+  } else {
+    label = t("processProgressPercent", { kind, phase: progress.phase, percent: pct });
+  }
+  let detail: string | null = null;
+  if (estimate.kind === "pending") {
+    detail = t("processProgressEtaPending");
+  } else if (estimate.kind === "rate") {
+    detail = t("processProgressRate", { rate: formatCountUpPlainInt(Math.round(estimate.perSec)) });
+  } else if (estimate.etaMs > 0) {
+    detail = t("processProgressEta", { duration: formatDuration(estimate.etaMs) });
+  }
   return (
     <chakra.div
       fontFamily="var(--font-sans)"
@@ -951,19 +1044,34 @@ function ProcessProgressBadge({ progress }: { progress: NonNullable<ProcessInfo[
       color="app.textSecondary"
       data-testid="process-progress"
     >
-      {pct === null ? (
-        t("processProgressPhase", { kind, phase })
-      ) : (
-        <>
-          <span>{t("processProgressPercent", { kind, phase, percent: pct })}</span>
-          <progress
-            max={100}
-            value={pct}
-            aria-label={t("processProgressAria", { kind })}
-            style={{ display: "block", width: "100%" }}
-          />
-        </>
+      {/* フェーズが変わったらラベルをクロスフェード。退場側は popLayout で抜き出して高さを揺らさない。 */}
+      <chakra.span position="relative" display="block">
+        <AnimatePresence initial={false} mode="popLayout">
+          <MotionSpan
+            key={`${progress.kind}:${progress.phase}`}
+            variants={variants.fade}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            transition={still ? INSTANT : transitions.crossfade}
+            display="block"
+          >
+            {label}
+          </MotionSpan>
+        </AnimatePresence>
+      </chakra.span>
+      {pct !== null && (
+        <chakra.div
+          role="progressbar"
+          aria-label={t("processProgressAria", { kind })}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={pct}
+        >
+          <DeterminateProgressBar value={pct / 100} slim />
+        </chakra.div>
       )}
+      {detail && <chakra.div data-testid="process-progress-detail">{detail}</chakra.div>}
     </chakra.div>
   );
 }

@@ -521,6 +521,9 @@ describe("ProcessListPanel per-process results / same-query select / progress (#
     const badge = await screen.findByTestId("process-progress");
     expect(badge).toHaveTextContent("40%");
     expect(badge).toHaveTextContent("scanning heap");
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "40");
+    expect(document.querySelector("progress")).toBeNull();
+    expect(badge).toHaveTextContent(t("processProgressEtaPending"));
   });
 
   it("ALTER TABLE の進捗をラベル付きで出す", async () => {
@@ -558,7 +561,12 @@ describe("ProcessListPanel per-process results / same-query select / progress (#
     renderWithProviders(<ProcessListPanel sessionId="s-dismiss" driver="mysql" readOnly={false} />);
     const badge = await screen.findByTestId("process-progress");
     expect(badge).toHaveTextContent("COPY FROM (1234");
+    // 割合がないので進捗バーは出さず、1 回目は算出待ち。
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(badge).toHaveTextContent(t("processProgressEtaPending"));
     fireEvent.click(screen.getByRole("button", { name: t("processProgressDisabledDismiss") }));
-    expect(screen.queryByText(t("processProgressDisabledTitle"))).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByText(t("processProgressDisabledTitle"))).not.toBeInTheDocument(),
+    );
   });
 });

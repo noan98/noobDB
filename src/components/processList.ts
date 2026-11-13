@@ -1,5 +1,6 @@
 import type { ProcessInfo, ProcessProgressKind } from "../api/tauri";
 import type { I18nKey } from "../i18n";
+import { estimateEtaMs, ratePerSecond } from "../progressEta";
 import type { LiveField } from "./liveDiff";
 
 /** 値変化フラッシュ (#1022) の対象列。 */
@@ -359,6 +360,78 @@ export function processProgressPercent(
   if (!progress || !(progress.total > 0)) return null;
   const pct = Math.round((progress.done / progress.total) * 100);
   return Math.min(100, Math.max(0, pct));
+}
+
+/**
+ * 1 つの pid の進捗の観測記録 (#2291)。ETA / 行毎秒はポーリングごとの
+ * 「最初に観測した時点」からの変化量で出す。
+ */
+export interface ProgressObservation {
+  kind: ProcessProgressKind;
+  phase: string;
+  /** その pid の (このフェーズの) 進捗を最初に観測した時刻 (ms)。 */
+  firstAt: number;
+  /** 最初に観測したときの done。 */
+  firstDone: number;
+  done: number;
+  total: number;
+  /** 直近のポーリングで観測した時刻 (ms)。 */
+  lastAt: number;
+}
+
+/**
+ * ポーリング結果から観測記録を更新する純関数 (#2291)。前回の記録 `prev` は変更しない。
+ * - 進捗のない行・一覧から消えた pid の記録は捨てる (pid の再利用で古い起点を引きずらない)。
+ * - 種別・フェーズが変わったとき、または done が巻き戻ったとき (同じ pid で新しい処理が
+ *   始まった) は起点を取り直す。VACUUM などはフェーズごとに done が 0 から数え直される。
+ */
+export function trackProgress(
+  prev: ReadonlyMap<number, ProgressObservation>,
+  rows: readonly ProcessInfo[],
+  now: number,
+): Map<number, ProgressObservation> {
+  const next = new Map<number, ProgressObservation>();
+  for (const p of rows) {
+    const pr = p.progress;
+    if (!pr) continue;
+    const key = processKey(p);
+    const old = prev.get(key);
+    const continues =
+      old !== undefined && old.kind === pr.kind && old.phase === pr.phase && pr.done >= old.done;
+    next.set(key, {
+      kind: pr.kind,
+      phase: pr.phase,
+      firstAt: continues ? old.firstAt : now,
+      firstDone: continues ? old.firstDone : pr.done,
+      done: pr.done,
+      total: pr.total,
+      lastAt: now,
+    });
+  }
+  return next;
+}
+
+/** 進捗から出す見積り (#2291)。`pending` は算出待ち (観測が足りない)。 */
+export type ProgressEstimate =
+  | { kind: "pending" }
+  | { kind: "eta"; etaMs: number }
+  | { kind: "rate"; perSec: number };
+
+/**
+ * 観測記録から ETA (割合が出せる処理) または行毎秒 (総量不明の COPY) を求める純関数。
+ * 観測期間内に done が進んでいなければ算出待ち。完了済み (done >= total) は `eta` 0。
+ */
+export function estimateProcessProgress(obs: ProgressObservation): ProgressEstimate {
+  const elapsed = obs.lastAt - obs.firstAt;
+  const advanced = obs.done - obs.firstDone;
+  if (obs.total > 0) {
+    if (obs.done >= obs.total) return { kind: "eta", etaMs: 0 };
+    // 起点からの増分で速度を測るため、起点を 0 に平行移動して estimateEtaMs に渡す。
+    const eta = estimateEtaMs(advanced, obs.total - obs.firstDone, elapsed);
+    return eta === null ? { kind: "pending" } : { kind: "eta", etaMs: eta };
+  }
+  const rate = ratePerSecond(advanced, elapsed);
+  return rate === null || rate <= 0 ? { kind: "pending" } : { kind: "rate", perSec: rate };
 }
 
 /** 停止結果のうち失敗した id → エラー文のマップ (#1622)。一覧の該当行に理由を出す。 */
