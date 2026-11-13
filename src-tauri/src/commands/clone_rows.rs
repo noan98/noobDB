@@ -128,6 +128,7 @@ struct Prepared {
     attached: String,
     exec_db: Option<String>,
     root_table: String,
+    driver: DriverKind,
 }
 
 /// 方針の指定を検査する (存在しない列・不正な式はエラー。行の無い表への指定は無視する)。
@@ -225,6 +226,7 @@ async fn prepare(
         attached,
         exec_db,
         root_table: req.table.trim().to_string(),
+        driver,
     })
 }
 
@@ -279,7 +281,7 @@ fn preview_of(p: &Prepared) -> CloneRowsPreview {
 fn blocking_cycles(p: &Prepared) -> Vec<Vec<String>> {
     let mut cycles = p.collected.result.cycles.clone();
     for (ct, data) in p.tables.iter().zip(p.collected.result.tables.iter()) {
-        if has_unresolvable_self_reference(&ct.meta, &data.rows, &p.collected.edges)
+        if has_unresolvable_self_reference(p.driver, &ct.meta, &data.rows, &p.collected.edges)
             && !cycles.iter().any(|c| c.contains(&ct.meta.name))
         {
             cycles.push(vec![ct.meta.name.clone()]);
@@ -386,7 +388,7 @@ async fn apply(
                 .collect()
         })
         .unwrap_or_default();
-    let mut remap = FkRemap::new(&p.collected.edges);
+    let mut remap = FkRemap::new(driver, &p.collected.edges);
     let mut out = Vec::with_capacity(p.tables.len());
     for (ct, data) in p.tables.iter().zip(p.collected.result.tables.iter()) {
         let meta = &ct.meta;

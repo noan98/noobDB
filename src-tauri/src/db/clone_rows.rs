@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use serde::{Deserialize, Serialize};
 
 use super::data_diff::{is_binary_type, is_hex_wire, is_numeric_literal, key_signature};
-use super::subset::{is_integer_type, SubsetEdge, SubsetTable};
+use super::subset::{is_integer_type, loose_signature, SubsetEdge, SubsetTable};
 use super::sync::quote_ident;
 use super::types::Value;
 use super::DriverKind;
@@ -461,8 +461,10 @@ fn unique_conflicts<'r>(
 /// 自己参照の外部キーで、自分自身か挿入順で後ろにある行を指す行があるか。
 /// [`FkRemap`] は挿入済みの行しか張り替えられないので、そのまま複製すると新しい行が元の行を
 /// 指したまま残る (例: `(id=1, parent_id=1)` が `(id=2, parent_id=1)` になる)。行どうしの循環も同じ。
-/// `rows` は挿入順。照合は張り替えと同じ完全一致 (`key_signature`)。
+/// `rows` は挿入順。照合は張り替えと同じ ([`FkRemap`] 参照: 完全一致を先に、無ければ [`loosens_collation`] な
+/// ドライバだけ大文字小文字・末尾空白を無視して引く)。
 pub fn has_unresolvable_self_reference(
+    driver: DriverKind,
     meta: &SubsetTable,
     rows: &[Vec<Value>],
     edges: &[SubsetEdge],
@@ -483,9 +485,11 @@ pub fn has_unresolvable_self_reference(
     {
         // 参照先キー → その行が最初に現れる挿入位置。
         let mut first_at: HashMap<String, usize> = HashMap::new();
+        let mut first_loose: HashMap<String, usize> = HashMap::new();
         for (i, r) in rows.iter().enumerate() {
             if let Some(k) = pick(r, &e.parent_cols) {
                 first_at.entry(key_signature(&k)).or_insert(i);
+                first_loose.entry(loose_signature(&k)).or_insert(i);
             }
         }
         for (i, r) in rows.iter().enumerate() {
@@ -495,7 +499,12 @@ pub fn has_unresolvable_self_reference(
             if k.iter().any(|v| matches!(v, Value::Null)) {
                 continue;
             }
-            if first_at.get(&key_signature(&k)).is_some_and(|&p| p >= i) {
+            let found = first_at.get(&key_signature(&k)).or_else(|| {
+                loosens_collation(driver)
+                    .then(|| first_loose.get(&loose_signature(&k)))
+                    .flatten()
+            });
+            if found.is_some_and(|&p| p >= i) {
                 return true;
             }
         }
@@ -503,24 +512,43 @@ pub fn has_unresolvable_self_reference(
     false
 }
 
+/// 外部キーの照合で、大文字小文字・末尾空白の差を無視してよいドライバか。
+/// MySQL は既定の照合順序が区別せず ('abc' が 'ABC' を参照できる)、SQLite も列に `NOCASE` を付けると
+/// 区別しない。PostgreSQL の既定は区別するので、緩く引くと別の行を取り違える (子 'abc' が、複製していない
+/// 親 'abc' ではなく複製した親 'ABC' へ張り替わる) ため完全一致だけにする。
+fn loosens_collation(driver: DriverKind) -> bool {
+    !matches!(driver, DriverKind::Postgres)
+}
+
 /// 複製した行の外部キーの張り替え表。辺ごとに「元の参照先キー → 新しい参照先キー」を持つ。
-#[derive(Debug, Default)]
+/// 引くときは完全一致 (`key_signature`) を先に、無ければ (照合を区別しないドライバだけ)
+/// 大文字小文字・末尾空白を無視した表 (`loose_signature`) で引く。
+#[derive(Debug)]
 pub struct FkRemap {
+    driver: DriverKind,
     edges: Vec<SubsetEdge>,
     maps: Vec<HashMap<String, Vec<Value>>>,
+    loose_maps: Vec<HashMap<String, Vec<Value>>>,
 }
 
 impl FkRemap {
-    pub fn new(edges: &[SubsetEdge]) -> Self {
+    pub fn new(driver: DriverKind, edges: &[SubsetEdge]) -> Self {
         Self {
+            driver,
             edges: edges.to_vec(),
             maps: vec![HashMap::new(); edges.len()],
+            loose_maps: vec![HashMap::new(); edges.len()],
         }
     }
 
     /// 複製した行 (`old_row` → `new_row`) を、その表を参照先とする辺に登録する。
     pub fn register(&mut self, meta: &SubsetTable, old_row: &[Value], new_row: &[Value]) {
-        for (e, map) in self.edges.iter().zip(self.maps.iter_mut()) {
+        for ((e, map), loose) in self
+            .edges
+            .iter()
+            .zip(self.maps.iter_mut())
+            .zip(self.loose_maps.iter_mut())
+        {
             if e.parent != meta.name {
                 continue;
             }
@@ -536,6 +564,9 @@ impl FkRemap {
                     .collect()
             };
             if let (Some(old), Some(new)) = (pick(old_row), pick(new_row)) {
+                loose
+                    .entry(loose_signature(&old))
+                    .or_insert_with(|| new.clone());
                 map.insert(key_signature(&old), new);
             }
         }
@@ -544,8 +575,15 @@ impl FkRemap {
     /// `row` (元の行) の外部キーのうち、複製済みの行を指すものを新しいキーに替える。
     /// 替えた列の位置を返す。NULL を含む外部キーと、複製していない行への参照はそのまま。
     pub fn remap(&self, meta: &SubsetTable, row: &mut [Value]) -> BTreeSet<usize> {
-        let mut changed = BTreeSet::new();
-        for (e, map) in self.edges.iter().zip(self.maps.iter()) {
+        // 引くキーは必ず元の行から全部計算してから値を適用する。列を共有する外部キーがあると、
+        // 先の張り替えで書き換わった値で後の外部キーを引いてしまうため。
+        let mut updates: Vec<(usize, Value)> = Vec::new();
+        for ((e, map), loose) in self
+            .edges
+            .iter()
+            .zip(self.maps.iter())
+            .zip(self.loose_maps.iter())
+        {
             if e.child != meta.name {
                 continue;
             }
@@ -559,13 +597,20 @@ impl FkRemap {
             if key.len() != idx.len() || key.iter().any(|v| matches!(v, Value::Null)) {
                 continue;
             }
-            if let Some(new) = map.get(&key_signature(&key)) {
-                for (&i, v) in idx.iter().zip(new.iter()) {
-                    if let Some(slot) = row.get_mut(i) {
-                        *slot = v.clone();
-                        changed.insert(i);
-                    }
-                }
+            let found = map.get(&key_signature(&key)).or_else(|| {
+                loosens_collation(self.driver)
+                    .then(|| loose.get(&loose_signature(&key)))
+                    .flatten()
+            });
+            if let Some(new) = found {
+                updates.extend(idx.iter().copied().zip(new.iter().cloned()));
+            }
+        }
+        let mut changed = BTreeSet::new();
+        for (i, v) in updates {
+            if let Some(slot) = row.get_mut(i) {
+                *slot = v;
+                changed.insert(i);
             }
         }
         changed
@@ -878,7 +923,7 @@ mod tests {
             edge("items", &["order_id"], "orders", &["id"]),
             edge("orders", &["customer_id"], "customers", &["id"]),
         ];
-        let mut m = FkRemap::new(&edges);
+        let mut m = FkRemap::new(DriverKind::Sqlite, &edges);
         m.register(&orders, &ints(&[1, 7]), &ints(&[100, 7]));
         let mut row = ints(&[10, 1, 55]);
         let changed = m.remap(&items, &mut row);
@@ -899,26 +944,118 @@ mod tests {
         let edges = [edge("cat", &["parent_id"], "cat", &["id"])];
         // 親が先: 張り替えられる。
         assert!(!has_unresolvable_self_reference(
+            DriverKind::Sqlite,
             &cat,
             &[vec![Value::Int(1), Value::Null], ints(&[2, 1])],
             &edges
         ));
         // 複製しない行への参照はそのまま残してよい。
         assert!(!has_unresolvable_self_reference(
+            DriverKind::Sqlite,
             &cat,
             &[ints(&[2, 99])],
             &edges
         ));
         // 自分自身を指す行。
         assert!(has_unresolvable_self_reference(
+            DriverKind::Sqlite,
             &cat,
             &[ints(&[1, 1])],
             &edges
         ));
         // 行どうしの循環 (1 → 2 → 1)。
         assert!(has_unresolvable_self_reference(
+            DriverKind::Sqlite,
             &cat,
             &[ints(&[1, 2]), ints(&[2, 1])],
+            &edges
+        ));
+    }
+
+    #[test]
+    fn overlapping_foreign_keys_are_looked_up_with_the_original_row() {
+        // C(a_id) -> A(id) と C(a_id, b_id) -> B(a_id, id)。A: 1→2、B: (1,10)→(2,20)。
+        let a = meta("a", &["id"], &["id"]);
+        let b = meta("b", &["a_id", "id"], &["a_id", "id"]);
+        let c = meta("c", &["id", "a_id", "b_id"], &["id"]);
+        let edges = [
+            edge("c", &["a_id"], "a", &["id"]),
+            edge("c", &["a_id", "b_id"], "b", &["a_id", "id"]),
+        ];
+        let mut m = FkRemap::new(DriverKind::Sqlite, &edges);
+        m.register(&a, &ints(&[1]), &ints(&[2]));
+        m.register(&b, &ints(&[1, 10]), &ints(&[2, 20]));
+        let mut row = ints(&[5, 1, 10]);
+        let changed = m.remap(&c, &mut row);
+        assert_eq!(row, ints(&[5, 2, 20]));
+        assert_eq!(changed, BTreeSet::from([1, 2]));
+    }
+
+    fn text(s: &str) -> Value {
+        Value::String(s.to_string())
+    }
+
+    #[test]
+    fn collation_insensitive_drivers_remap_a_case_differing_reference() {
+        let cat = meta("cat", &["id", "parent_id"], &["id"]);
+        let edges = [edge("cat", &["parent_id"], "cat", &["id"])];
+        let rows = [
+            vec![text("ABC"), Value::Null],
+            vec![text("child"), text("abc ")],
+        ];
+        for driver in [DriverKind::Mysql, DriverKind::Sqlite] {
+            let mut m = FkRemap::new(driver, &edges);
+            m.register(&cat, &rows[0], &[text("NEW"), Value::Null]);
+            let mut child = rows[1].clone();
+            m.remap(&cat, &mut child);
+            assert_eq!(child[1], text("NEW"), "{driver:?}");
+            // 親が先なら解決できる。親が子より後ろにある場合は、大文字小文字が違っても止める。
+            assert!(!has_unresolvable_self_reference(
+                driver, &cat, &rows, &edges
+            ));
+            let reversed = [rows[1].clone(), rows[0].clone()];
+            assert!(has_unresolvable_self_reference(
+                driver, &cat, &reversed, &edges
+            ));
+        }
+        // 完全一致があればそちらを優先する。
+        let mut m = FkRemap::new(DriverKind::Mysql, &edges);
+        m.register(
+            &cat,
+            &[text("ABC"), Value::Null],
+            &[text("UP"), Value::Null],
+        );
+        m.register(
+            &cat,
+            &[text("abc"), Value::Null],
+            &[text("LOW"), Value::Null],
+        );
+        let mut child = vec![text("x"), text("abc")];
+        m.remap(&cat, &mut child);
+        assert_eq!(child[1], text("LOW"));
+    }
+
+    #[test]
+    fn postgres_keeps_case_sensitive_matching() {
+        let cat = meta("cat", &["id", "parent_id"], &["id"]);
+        let edges = [edge("cat", &["parent_id"], "cat", &["id"])];
+        let mut m = FkRemap::new(DriverKind::Postgres, &edges);
+        m.register(
+            &cat,
+            &[text("ABC"), Value::Null],
+            &[text("NEW"), Value::Null],
+        );
+        let mut child = vec![text("child"), text("abc")];
+        assert!(m.remap(&cat, &mut child).is_empty());
+        assert_eq!(child[1], text("abc"));
+        let rows = [
+            vec![text("child"), text("abc")],
+            vec![text("ABC"), Value::Null],
+        ];
+        assert!(!has_unresolvable_self_reference(
+            DriverKind::Postgres,
+            &cat,
+            &rows,
             &edges
         ));
     }
@@ -927,7 +1064,7 @@ mod tests {
     fn self_reference_is_remapped_through_the_same_table() {
         let cat = meta("cat", &["id", "parent_id"], &["id"]);
         let edges = [edge("cat", &["parent_id"], "cat", &["id"])];
-        let mut m = FkRemap::new(&edges);
+        let mut m = FkRemap::new(DriverKind::Sqlite, &edges);
         m.register(
             &cat,
             &[Value::Int(1), Value::Null],

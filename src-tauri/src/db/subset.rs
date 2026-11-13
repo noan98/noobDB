@@ -354,7 +354,7 @@ pub fn table_order(tables: &BTreeSet<String>, edges: &[SubsetEdge]) -> TableOrde
 }
 
 /// 文字列を小文字化し末尾の空白を除いた、照合順序の差を吸収するシグネチャ。
-fn loose_signature(key: &[Value]) -> String {
+pub(crate) fn loose_signature(key: &[Value]) -> String {
     let norm: Vec<Value> = key
         .iter()
         .map(|v| match v {
