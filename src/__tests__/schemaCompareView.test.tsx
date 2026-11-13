@@ -489,6 +489,73 @@ describe("SchemaCompareView の複数比較先", () => {
     );
   });
 
+  it("マスを押すと、アクティブ列と反映先バッジが移り、詳細一覧の該当行が見える位置へ送られて光る (#2292)", async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    try {
+      vi.mocked(api.connect).mockImplementation(
+        async (req) => ({ session_id: `s-${req.profile_id}` }) as never,
+      );
+      vi.mocked(api.compareSchema).mockImplementation(
+        async (p) => diffFor(p.targetSessionId === "s-p-b" ? "same" : "different") as never,
+      );
+      renderWithProviders(<SchemaCompareView profiles={THREE} onClose={() => {}} />);
+      const boxes = () => screen.getAllByRole("combobox") as HTMLElement[];
+      chooseListboxOption(boxes()[0], "p-a");
+      await waitFor(() => expect(boxes()[1]).toHaveTextContent("db1"));
+      chooseListboxOption(boxes()[2], "p-b");
+      await waitFor(() => expect(boxes()[3]).toHaveTextContent("db1"));
+      fireEvent.click(
+        screen.getByRole("button", { name: t("schemaCompareAddTarget", { count: 1, max: 4 }) }),
+      );
+      chooseListboxOption(boxes()[4], "p-c");
+      await waitFor(() => expect(boxes()[5]).toHaveTextContent("db1"));
+      fireEvent.click(screen.getByText(t("schemaCompareCompare")));
+      const matrix = await screen.findByTestId("schema-compare-matrix");
+
+      // 反映先は 1 つ目の比較先 (Beta)。ハイライトとバッジは 1 つずつ。
+      // 列見出しのボタンは aria-pressed を持つ (マスのボタンは持たない)。
+      const header = (name: RegExp) =>
+        within(matrix)
+          .getAllByRole("button", { name })
+          .find((b) => b.hasAttribute("aria-pressed")) as HTMLElement;
+      expect(within(header(/Beta \/ db1/)).getByTestId("matrix-active-col")).toBeInTheDocument();
+      expect(screen.getAllByTestId("schema-compare-active-badge")).toHaveLength(1);
+
+      fireEvent.click(
+        screen.getByRole("button", { name: `users / Gamma / db1: ${t("schemaCompareOpChange")}` }),
+      );
+      await waitFor(() =>
+        expect(within(header(/Gamma \/ db1/)).getByTestId("matrix-active-col")).toBeInTheDocument(),
+      );
+      expect(within(header(/Beta \/ db1/)).queryByTestId("matrix-active-col")).toBeNull();
+      expect(screen.getAllByTestId("matrix-active-col")).toHaveLength(1);
+      expect(screen.getAllByTestId("schema-compare-active-badge")).toHaveLength(1);
+      // 後ろの比較先へ移ったので、詳細は右から入る。
+      await waitFor(() =>
+        expect(screen.getByTestId("schema-compare-detail-pane")).toHaveAttribute("data-slide-dir", "1"),
+      );
+      // 該当テーブルの行を見える位置へ送り、1 回光らせる (行の状態色 + CSS アニメ)。
+      await waitFor(() =>
+        expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: "nearest" })),
+      );
+      const row = document.querySelector('[data-table-name="users"]');
+      expect(row).toHaveClass("table-diff-flash");
+    } finally {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
+  it("比較先を外すとカードが折りたたまれて消える (#2292)", async () => {
+    renderWithProviders(<SchemaCompareView profiles={THREE} onClose={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: t("schemaCompareAddTarget", { count: 1, max: 4 }) }));
+    expect(screen.getAllByTestId("schema-compare-target-card")).toHaveLength(2);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: t("schemaCompareRemoveTarget") })[0] as HTMLElement,
+    );
+    await waitFor(() => expect(screen.getAllByTestId("schema-compare-target-card")).toHaveLength(1));
+  });
+
   it("列見出しの内訳ストリップの件数を押すと、その比較先をその状態だけに絞り込み、行にドリフト度が出る", async () => {
     vi.mocked(api.connect).mockImplementation(
       async (req) => ({ session_id: `s-${req.profile_id}` }) as never,

@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
 
 import type { useT } from "../i18n";
 import { transitions } from "../motion";
+import { prefersStaticMotion } from "./revealOrigin";
 import { semanticColorVar } from "../semanticColors";
 import type { DiffStatus } from "../api/tauri";
 import { Button, Checkbox, Input } from "./ui";
@@ -27,6 +28,9 @@ export interface MatrixColumn extends MatrixColumnInput {
   /** 列見出し (「接続名 / DB 名」)。 */
   label: string;
 }
+
+// motion 用 props の `transition` は Chakra のスタイルプロップ名と衝突するため明示的に転送する。
+const MotionActiveCol = chakra(motion.span, {}, { forwardProps: ["transition"] });
 
 const wrapCss: SystemStyleObject = {
   border: "1px solid var(--border)",
@@ -226,6 +230,10 @@ export function SchemaCompareMatrix({
   const [query, setQuery] = useState("");
   const [driftFirst, setDriftFirst] = useState(false);
   const [limit, setLimit] = useState(MATRIX_PAGE);
+  // アクティブ列の滑るハイライト。画面に複数あっても衝突しないよう名前空間を分ける。
+  const activeColId = `schema-compare-active-col-${useId()}`;
+  // reduced-motion (アプリ設定 / OS) は MotionConfig が layout を即時化する。ハイコントラストは明示的に 0 秒。
+  const activeColTransition = prefersStaticMotion() ? { duration: 0 } : transitions.emphasized;
   const matrix = useMemo(() => buildCompareMatrix(columns), [columns]);
   const breakdowns = useMemo(() => columns.map((c) => columnBreakdown(c.diff)), [columns]);
   const rows = useMemo(
@@ -299,14 +307,32 @@ export function SchemaCompareMatrix({
                       py="1"
                       borderRadius="md"
                       border="1px solid"
-                      borderColor={isActive ? semanticColorVar("warning", "text") : "app.border"}
-                      bg={isActive ? "app.hover" : "transparent"}
+                      borderColor="app.border"
+                      position="relative"
+                      bg="transparent"
                       color="app.text"
                       cursor={col.diff === null ? "default" : "pointer"}
                       _hover={{ bg: "app.hover" }}
                       _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
                     >
+                      {isActive && (
+                        // 同じ layoutId の要素が列間を移ると、Motion が前の列から滑らせる。
+                        <MotionActiveCol
+                          layoutId={activeColId}
+                          transition={activeColTransition}
+                          data-testid="matrix-active-col"
+                          position="absolute"
+                          inset="0"
+                          borderRadius="inherit"
+                          border="1px solid"
+                          bg="app.hover"
+                          pointerEvents="none"
+                          aria-hidden
+                          css={{ borderColor: semanticColorVar("warning", "text") }}
+                        />
+                      )}
                       <chakra.span
+                        position="relative"
                         fontWeight={600}
                         maxW="var(--matrix-label-max)"
                         overflow="hidden"
@@ -315,18 +341,22 @@ export function SchemaCompareMatrix({
                         {col.label}
                       </chakra.span>
                       {col.diff === null ? (
-                        <chakra.span fontSize="xs" color="app.textError">
+                        <chakra.span position="relative" fontSize="xs" color="app.textError">
                           {t("schemaCompareMatrixError")}
                         </chakra.span>
                       ) : (
-                        <chakra.span textStyle="caption">
+                        <chakra.span position="relative" textStyle="caption">
                           {count === 0
                             ? t("schemaCompareMatrixNoDiff")
                             : t("schemaCompareMatrixDiffCount", { count: count ?? 0 })}
                         </chakra.span>
                       )}
                       {isActive && (
-                        <chakra.span fontSize="2xs" css={{ color: semanticColorVar("warning", "text") }}>
+                        <chakra.span
+                          position="relative"
+                          fontSize="2xs"
+                          css={{ color: semanticColorVar("warning", "text") }}
+                        >
                           {t("schemaCompareMatrixActive")}
                         </chakra.span>
                       )}

@@ -2145,8 +2145,11 @@
   --matrix-hatch: color-mix(in srgb, var(--text-muted) 22%, transparent);
 }
 .compare-matrix-cell {
-  transition: background-color var(--dur-med) var(--ease-out);
-  box-shadow: none;
+  /* アクティブ列の淡色は box-shadow で重ね、列を移るときに補間する (見出しは layoutId で滑る, #2292)。 */
+  transition:
+    background-color var(--dur-med) var(--ease-out),
+    box-shadow var(--dur-med) var(--ease-out);
+  box-shadow: inset 0 0 0 999px transparent;
 }
 .compare-matrix-cell[data-active="true"] { box-shadow: inset 0 0 0 999px var(--matrix-cell-active); }
 .compare-matrix-cell[data-status="source_only"] { background-color: var(--matrix-cell-source-only); }
@@ -2165,6 +2168,24 @@
 :root[data-motion="reduced"] .compare-matrix-cell { transition: none; }
 @media (prefers-reduced-motion: reduce) {
   :root:not([data-motion="full"]) .compare-matrix-cell { transition: none; }
+}
+
+/* マトリクスのマスから詳細一覧の該当行へ飛んだとき、その行を 1 回だけ光らせる (#2292)。
+   色は行の状態色 (--flash-color)。opacity だけを動かす (#1322 と同じ)。同じ行を続けて押しても
+   再生し直せるよう、世代の偶奇で animation-name を切り替える。 */
+.table-diff-flash::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--flash-color) 30%, transparent);
+  opacity: 0;
+  animation: apply-flash 0.9s ease-out;
+}
+.table-diff-flash.table-diff-flash-alt::after { animation-name: apply-flash-alt; }
+:root[data-motion="reduced"] .table-diff-flash::after { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .table-diff-flash::after { animation: none; }
 }
 
 /* Density overrides (#410, #620). The grid-facing tokens and the control
