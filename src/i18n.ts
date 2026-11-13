@@ -963,8 +963,6 @@ const en = {
   updateUpToDate: "You're on the latest version ({version}).",
   updateCheckFailed: "Couldn't check for updates. Check your connection and try again.",
   updateAvailableTitle: "Update available",
-  updateAvailableMessage:
-    "A new version {version} is available (you have {current}). Download it and restart to update now?",
   updateViewWhatsNew: "See what's new",
   whatsNewTitle: "What's new",
   whatsNewClose: "Close",
@@ -978,6 +976,10 @@ const en = {
   updateDownloadingProgress: "Downloading the update… {percent}% ({downloaded} / {total})",
   updateDownloadingStarted: "Downloading the update… the app will restart automatically when it's ready.",
   updateFailed: "Update failed: {error}",
+  updateHighlights: "Highlights",
+  updateInBackground: "Continue in background",
+  updateRetry: "Retry",
+  updateApplying: "Applying the update… the app will restart in a moment.",
 
   settingsBackup: "Backup & reset",
   settingsBackupHelp:
@@ -9260,8 +9262,6 @@ const ja: Dict = {
   updateUpToDate: "最新バージョンです ({version})。",
   updateCheckFailed: "更新を確認できませんでした。接続を確認してもう一度お試しください。",
   updateAvailableTitle: "更新があります",
-  updateAvailableMessage:
-    "新しいバージョン {version} があります (現在 {current})。今すぐダウンロードして再起動し、更新しますか？",
   updateViewWhatsNew: "更新内容を見る",
   whatsNewTitle: "新機能ハイライト",
   whatsNewClose: "閉じる",
@@ -9275,6 +9275,10 @@ const ja: Dict = {
   updateDownloadingProgress: "更新をダウンロードしています… {percent}% ({downloaded} / {total})",
   updateDownloadingStarted: "更新をダウンロードしています… 準備ができると自動的に再起動します。",
   updateFailed: "更新に失敗しました: {error}",
+  updateHighlights: "主な変更",
+  updateInBackground: "バックグラウンドで続行",
+  updateRetry: "再試行",
+  updateApplying: "更新を適用しています… まもなくアプリが再起動します。",
 
   settingsBackup: "バックアップとリセット",
   settingsBackupHelp:
