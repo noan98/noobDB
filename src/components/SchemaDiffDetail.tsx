@@ -309,7 +309,7 @@ const COLLAPSE_LIST_MAX = 100;
 const INSTANT = { duration: 0 } as const;
 
 /** reduced-motion (アプリ設定 / OS) とハイコントラストでは出入りを即時にする。height の補間は MotionConfig では止まらない。 */
-function useStillMotion(): boolean {
+export function useStillMotion(): boolean {
   const reduced = useReducedMotionConfig() ?? false;
   return reduced || prefersStaticMotion();
 }

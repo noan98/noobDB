@@ -2139,9 +2139,9 @@
   --matrix-cell-different: color-mix(in srgb, var(--warning-solid) 18%, transparent);
   --matrix-cell-error: color-mix(in srgb, var(--text-muted) 10%, transparent);
   --matrix-cell-active: color-mix(in srgb, var(--accent) 9%, transparent);
-  --matrix-search-w: 220px;
-  --matrix-search-min: 120px;
-  --matrix-label-max: 220px;
+  --matrix-search-w: calc(220px * var(--font-scale));
+  --matrix-search-min: calc(120px * var(--font-scale));
+  --matrix-label-max: calc(220px * var(--font-scale));
   --matrix-hatch: color-mix(in srgb, var(--text-muted) 22%, transparent);
 }
 .compare-matrix-cell {

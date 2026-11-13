@@ -706,6 +706,7 @@ export function SchemaCompareView({
       activateTarget(index);
       setFilters({ different: false, source_only: false, target_only: false, same: false, [status]: true });
       setTableQuery("");
+      setSelectedName(null);
     },
     [comparing, activateTarget],
   );
