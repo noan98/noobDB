@@ -1,24 +1,21 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { chakra } from "@chakra-ui/react";
-import { AnimatePresence, motion, useReducedMotionConfig } from "motion/react";
 import type { ExtensionDependent } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
-import { transitions, variants } from "../motion";
 import { Callout } from "./Callout";
 import {
   formatExtensionDependent,
   groupExtensionDependents,
   type ExtensionDependentKind,
 } from "./extensionSql";
-import { Icon } from "./Icon";
+import { ImpactTree, type ImpactKind } from "./ImpactTree";
 import { ErrorNote } from "./modalForm";
-import { prefersStaticMotion } from "./revealOrigin";
 import { Spinner } from "./Spinner";
 
 /**
  * 拡張機能の削除確認で出す「依存するオブジェクト」の一覧 (#2177)。`DROP EXTENSION ... CASCADE` で一緒に
- * 消えるもの (その拡張の型を使う列・関数・ビューなど) を、実行前に種別ごとの件数見出し + 展開で見せる。
- * 列は消すとデータが失われるので、危険色で先頭に置く。CASCADE なしで依存があるときは「このままでは失敗する」
+ * 消えるもの (その拡張の型を使う列・関数・ビューなど) を、実行前に起点 (拡張機能) のチップから影響ツリー
+ * (#2295) で見せる。種別ごとにまとめ、列は消すとデータが失われるので先頭に置く。CASCADE なしで依存があるときは「このままでは失敗する」
  * ことを事前に示す。取得に失敗しても削除自体は妨げない (呼び出し側はボタンを止めない)。
  */
 interface Props {
@@ -27,14 +24,9 @@ interface Props {
   /** 取得に失敗したときのメッセージ。 */
   error: string | null;
   cascade: boolean;
+  /** 起点チップに出す拡張機能名。 */
+  extension?: string;
 }
-
-// motion.* に chakra のスタイル props を渡す (Callout と同じ forwardProps パターン)。
-const MotionDiv = chakra(
-  motion.div,
-  {},
-  { forwardProps: ["layout", "variants", "initial", "animate", "exit", "transition"] },
-);
 
 const KIND_LABEL: Record<ExtensionDependentKind, I18nKey> = {
   column: "extensionsDepsKind_column",
@@ -59,16 +51,48 @@ const KIND_LABEL: Record<ExtensionDependentKind, I18nKey> = {
 /** この件数を超える一覧は表示を打ち切る (数千件で DOM を膨らませない)。 */
 const LIST_MAX = 200;
 
-const INSTANT = { duration: 0 } as const;
+/** 一覧に出す依存の最大行数。超えた分は「ほか N 件」に畳み、押すと展開する。 */
+const MAX_LINES = 12;
 
-export function ExtensionDependents({ dependents, error, cascade }: Props) {
+/** 依存の種別 → 影響ツリーのグリフ。 */
+const KIND_GLYPH: Record<ExtensionDependentKind, ImpactKind> = {
+  column: "column",
+  table: "table",
+  view: "view",
+  materialized_view: "matview",
+  function: "function",
+  procedure: "function",
+  index: "index",
+  constraint: "foreign_key",
+  trigger: "trigger",
+  default: "column",
+  policy: "other",
+  statistic: "other",
+  sequence: "other",
+  type: "other",
+  rule: "other",
+  extension: "other",
+  other: "other",
+};
+
+export function ExtensionDependents({ dependents, error, cascade, extension }: Props) {
   const t = useT();
-  const reduced = useReducedMotionConfig() ?? false;
-  // reduced-motion (アプリ設定 / OS) とハイコントラストでは開閉を即時にする。height の補間は MotionConfig では止まらない。
-  const still = reduced || prefersStaticMotion();
-  const groups = useMemo(() => groupExtensionDependents(dependents ?? []), [dependents]);
-  // 列 (データが消える) の見出しだけ最初から開いておく。
-  const [open, setOpen] = useState<ReadonlySet<ExtensionDependentKind>>(new Set(["column"]));
+  const nodes = useMemo(
+    () =>
+      groupExtensionDependents(dependents ?? [])
+        .flatMap(({ kind, items }) => items.map((d) => ({ kind, label: formatExtensionDependent(d) })))
+        .slice(0, LIST_MAX)
+        .map(({ kind, label }, i) => ({
+          key: `${kind}\u0000${label}\u0000${i}`,
+          kind: KIND_GLYPH[kind],
+          kindLabel: t(KIND_LABEL[kind]),
+          name: label,
+          // CASCADE なら一緒に消える。なしなら依存が DROP を止める。列は消えるとデータも失われる。
+          outcome: cascade ? ("cascade" as const) : ("block" as const),
+          meta: kind === "column" && cascade ? t("extensionsDepsDataLoss") : undefined,
+        })),
+    [dependents, cascade, t],
+  );
 
   if (error) return <ErrorNote>{t("extensionsDepsError", { error })}</ErrorNote>;
   if (dependents === null) {
@@ -87,13 +111,6 @@ export function ExtensionDependents({ dependents, error, cascade }: Props) {
     );
   }
 
-  const toggle = (kind: ExtensionDependentKind) =>
-    setOpen((prev) => {
-      const next = new Set(prev);
-      if (!next.delete(kind)) next.add(kind);
-      return next;
-    });
-
   return (
     <chakra.div display="flex" flexDirection="column" gap="2">
       {cascade ? (
@@ -105,102 +122,22 @@ export function ExtensionDependents({ dependents, error, cascade }: Props) {
           {t("extensionsDepsWillFail", { count: dependents.length })}
         </Callout>
       )}
-      <MotionDiv
-        layout={!still}
-        transition={still ? INSTANT : transitions.layout}
-        borderWidth="1px"
-        borderColor="app.border"
-        borderRadius="md"
-        overflow="hidden"
-      >
-        {groups.map(({ kind, items }) => {
-          const isOpen = open.has(kind);
-          const destructive = kind === "column";
-          const panelId = `ext-deps-${kind}`;
-          return (
-            <MotionDiv
-              key={kind}
-              layout={!still}
-              transition={still ? INSTANT : transitions.layout}
-              borderBottomWidth="1px"
-              borderColor="app.border"
-              _last={{ borderBottomWidth: 0 }}
-            >
-              <chakra.button
-                type="button"
-                aria-expanded={isOpen}
-                aria-controls={panelId}
-                onClick={() => toggle(kind)}
-                display="flex"
-                alignItems="center"
-                gap="2"
-                width="100%"
-                paddingX="3"
-                paddingY="2"
-                textAlign="left"
-                textStyle="body"
-                fontWeight={600}
-                color={destructive ? "app.textError" : "app.text"}
-                background="transparent"
-                cursor="pointer"
-                _hover={{ bg: "app.hover" }}
-              >
-                <Icon name={isOpen ? "chevron-down" : "chevron-right"} size="sm" />
-                <span>
-                  {t(KIND_LABEL[kind])} ({items.length})
-                </span>
-                {destructive && (
-                  <chakra.span textStyle="caption" fontWeight={400}>
-                    {t("extensionsDepsDataLoss")}
-                  </chakra.span>
-                )}
-              </chakra.button>
-              <AnimatePresence initial={false}>
-                {isOpen && (
-                  <MotionDiv
-                    key="list"
-                    id={panelId}
-                    variants={variants.collapse}
-                    initial="initial"
-                    animate="animate"
-                    exit="exit"
-                    transition={still ? INSTANT : transitions.enter}
-                  >
-                    <chakra.ul
-                      listStyleType="none"
-                      margin={0}
-                      paddingX="3"
-                      paddingBottom="2"
-                      maxH="12rem"
-                      overflowY="auto"
-                    >
-                      {items.slice(0, LIST_MAX).map((d, i) => {
-                        const label = formatExtensionDependent(d);
-                        return (
-                          <chakra.li
-                            key={`${label}\u0000${i}`}
-                            fontFamily="mono"
-                            textStyle="caption"
-                            color={destructive ? "app.textError" : "app.textSecondary"}
-                            overflowWrap="anywhere"
-                          >
-                            {label}
-                          </chakra.li>
-                        );
-                      })}
-                      {items.length > LIST_MAX && (
-                        <chakra.li textStyle="caption" color="app.textMuted">
-                          … +{items.length - LIST_MAX}
-                        </chakra.li>
-                      )}
-                    </chakra.ul>
-                  </MotionDiv>
-                )}
-              </AnimatePresence>
-            </MotionDiv>
-          );
-        })}
-      </MotionDiv>
+      <ImpactTree
+        groups={[
+          {
+            key: "dependents",
+            origin: extension ? { kind: "other", name: extension } : undefined,
+            nodes,
+          },
+        ]}
+        maxVisible={MAX_LINES}
+        testId="extension-dependents"
+      />
+      {dependents.length > LIST_MAX && (
+        <chakra.p margin={0} textStyle="caption" color="app.textMuted">
+          … +{dependents.length - LIST_MAX}
+        </chakra.p>
+      )}
     </chakra.div>
   );
 }

@@ -1,16 +1,18 @@
-import { Box, chakra } from "@chakra-ui/react";
+import { chakra } from "@chakra-ui/react";
 import { Callout } from "./Callout";
+import { ImpactTree, type ImpactGroup, type ImpactOutcome } from "./ImpactTree";
 import { Button } from "./ui";
 import { useT } from "../i18n";
 import { incomingFkTableName } from "../fkNavigation";
 import { blocksDelete, type RefImpact } from "../refImpact";
 
-/** 一覧に出す子テーブルの最大行数。超えた分は「ほか N 件」に畳む。 */
+/** 一覧に出す子テーブルの最大行数。超えた分は「ほか N 件」に畳み、押すと展開する。 */
 const MAX_LINES = 8;
 
 /**
  * 行削除 / TRUNCATE の確認ダイアログに添える「子テーブルの参照行数」(#1506)。
- * `子.列 ← 親.列  N 行 · ON DELETE …` を並べ、各行に「子行を開く」を付ける。
+ * 起点 (参照される親.列) のチップから、子テーブル.列を結果バッジ (連鎖削除 / ブロック / NULL 化) つきの
+ * 影響ツリーで並べ (#2295)、各行に「子行を開く」を付ける。行数・ON DELETE は補足行に出す。
  * 参照が無ければ何も描かない。`mode` で文言を分ける:
  * - rows: 選択した行の削除。ON DELETE ごとの結果 (ブロック / 連鎖削除 / NULL 化) を示す。
  * - truncate: テーブル全体の TRUNCATE。MySQL / PostgreSQL は参照されたままだと失敗する。
@@ -60,11 +62,11 @@ export function RefImpactList({
     );
   const partial = partialProp || impacts.some((i) => i.capped);
   const total = impacts.reduce((sum, i) => sum + i.count, 0);
-  const shown = impacts.slice(0, MAX_LINES);
   // MySQL / PostgreSQL の TRUNCATE は ON DELETE に関係なく、参照されていれば失敗する。
   const truncateRefuses = mode === "truncate" && !sqlite;
   const blocked = !truncateRefuses && impacts.some((i) => blocksDelete(i.onDelete));
   const cascading = !truncateRefuses && impacts.some((i) => i.onDelete === "CASCADE");
+  const groups = groupByParent(impacts, { mode, truncateRefuses, onOpen, t });
   return (
     <>
       <Callout
@@ -84,37 +86,7 @@ export function RefImpactList({
           {cascading && ` ${t("refImpactCascading")}`}
           {sqlite && ` ${t("refImpactSqlite")}`}
         </chakra.p>
-        <Box as="ul" m={0} mt="2" p={0} listStyleType="none" display="flex" flexDirection="column" gap="1">
-          {shown.map((imp) => (
-            <Box
-              as="li"
-              key={`${imp.parentTable ?? ""}\0${incomingFkTableName(imp)}\0${imp.column}`}
-              display="flex"
-              alignItems="center"
-              gap="2"
-              data-testid="ref-impact-row"
-            >
-              <Box flex="1" minW="0" fontFamily="mono" fontSize="sm" wordBreak="break-all">
-                {`${incomingFkTableName(imp)}.${imp.column} ← ${imp.parentTable ? `${imp.parentTable}.` : ""}${imp.referencedColumn}`}
-                <chakra.span display="block" fontFamily="body" color="app.textMuted">
-                  {mode === "rows"
-                    ? t(actionKey(imp.onDelete), { count: imp.count })
-                    : t(imp.capped ? "refImpactRowCountCapped" : "refImpactRowCount", { count: imp.count })}
-                  {(imp.depth ?? 1) > 1 && ` · ${t("refImpactDepth", { depth: imp.depth ?? 1 })}`} · ON DELETE{" "}
-                  {imp.onDelete}
-                </chakra.span>
-              </Box>
-              {onOpen && (imp.depth ?? 1) === 1 && (
-                <Button type="button" variant="secondary" size="sm" onClick={() => onOpen(imp)}>
-                  {t("refImpactOpen")}
-                </Button>
-              )}
-            </Box>
-          ))}
-          {impacts.length > shown.length && (
-            <Box as="li">{t("refImpactMore", { count: impacts.length - shown.length })}</Box>
-          )}
-        </Box>
+        <ImpactTree groups={groups} maxVisible={MAX_LINES} />
       </Callout>
       {moreCascadeNote}
       {unverifiedNote}
@@ -133,5 +105,61 @@ function actionKey(rule: RefImpact["onDelete"]) {
       return "refImpactActSetDefault";
     default:
       return "refImpactActBlock";
+  }
+}
+
+/** 親.列ごとの塊にする (起点チップ = 参照される側)。連鎖の 2 段目以降は、その子テーブルが親の塊になる。 */
+function groupByParent(
+  impacts: RefImpact[],
+  opts: {
+    mode: "rows" | "truncate";
+    truncateRefuses: boolean;
+    onOpen?: (impact: RefImpact) => void;
+    t: ReturnType<typeof useT>;
+  },
+): ImpactGroup[] {
+  const { mode, truncateRefuses, onOpen, t } = opts;
+  const groups = new Map<string, ImpactGroup>();
+  for (const imp of impacts) {
+    const origin = `${imp.parentTable ? `${imp.parentTable}.` : ""}${imp.referencedColumn}`;
+    let g = groups.get(origin);
+    if (!g) {
+      g = { key: origin, origin: { kind: "column", name: origin }, nodes: [] };
+      groups.set(origin, g);
+    }
+    const count =
+      mode === "rows"
+        ? t(actionKey(imp.onDelete), { count: imp.count })
+        : t(imp.capped ? "refImpactRowCountCapped" : "refImpactRowCount", { count: imp.count });
+    const depth = imp.depth ?? 1;
+    g.nodes.push({
+      key: `${imp.parentTable ?? ""}\0${incomingFkTableName(imp)}\0${imp.column}`,
+      kind: "table",
+      name: `${incomingFkTableName(imp)}.${imp.column}`,
+      outcome: truncateRefuses ? "block" : outcomeOf(imp.onDelete),
+      meta: `${count}${depth > 1 ? ` · ${t("refImpactDepth", { depth })}` : ""} · ON DELETE ${imp.onDelete}`,
+      action:
+        onOpen && depth === 1 ? (
+          <Button type="button" variant="secondary" size="sm" onClick={() => onOpen(imp)}>
+            {t("refImpactOpen")}
+          </Button>
+        ) : undefined,
+      testId: "ref-impact-row",
+    });
+  }
+  return [...groups.values()];
+}
+
+/** ON DELETE → 結果バッジ。CASCADE / SET NULL / SET DEFAULT 以外 (RESTRICT / NO ACTION) は DELETE を止める。 */
+function outcomeOf(rule: RefImpact["onDelete"]): ImpactOutcome {
+  switch (rule) {
+    case "CASCADE":
+      return "cascade";
+    case "SET NULL":
+      return "setNull";
+    case "SET DEFAULT":
+      return "setDefault";
+    default:
+      return "block";
   }
 }

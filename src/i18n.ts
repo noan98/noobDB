@@ -4117,10 +4117,18 @@ const en = {
   dropConfirmBody: "This permanently removes the table {table} and all its data. This cannot be undone.",
   dropReferencedByTitle: "Referenced by foreign keys ({count})",
   dropReferencedByServer:
-    "These tables still reference the table(s) being dropped, so the DROP will fail with a foreign key error (unless it cascades). Parent.column ← child.column:",
+    "These tables still reference the table(s) being dropped, so the DROP will fail with a foreign key error (unless it cascades).",
   dropReferencedBySqlite:
-    "These tables still reference the table(s) being dropped. SQLite may let the DROP through depending on PRAGMA foreign_keys and leave orphaned child rows. Parent.column ← child.column:",
+    "These tables still reference the table(s) being dropped. SQLite may let the DROP through depending on PRAGMA foreign_keys and leave orphaned child rows.",
   dropReferencedByMore: "and {count} more",
+  impactTreeLess: "Show fewer",
+  impactOutcomeCascade: "Cascade delete",
+  impactOutcomeBlock: "Blocks",
+  impactOutcomeSetNull: "Set NULL",
+  impactOutcomeSetDefault: "Set default",
+  impactOutcomeRebuild: "Rebuild",
+  impactOutcomeBreak: "Breaks",
+  impactOutcomeChange: "Altered",
   // 型変更で依存ビューを作り直す (#2268)。
   viewRebuildLoading: "Checking views that depend on the columns whose type changes…",
   viewRebuildError: "Could not check dependent views: {error}",
@@ -4146,7 +4154,7 @@ const en = {
   dropColumnDepsTitle: "Objects depend on the columns being dropped ({count})",
   dropColumnDepsIncompleteTitle: "Dependent-object check is incomplete",
   dropColumnDepsBody:
-    "Dropping these columns can fail or silently break the objects below (views and triggers stop working, indexes shrink or disappear, foreign keys and generated columns block the DROP). Column ← dependent object:",
+    "Dropping these columns can fail or silently break the objects below (views and triggers stop working, indexes shrink or disappear, foreign keys and generated columns block the DROP).",
   dropColumnDepsIncomplete:
     "Some dependencies could not be checked ({kinds}), so the list above may be incomplete.",
   dropColumnDepView: "view",
@@ -4199,7 +4207,6 @@ const en = {
   refImpactOpen: "Open child rows",
   refImpactDeleteTitle: "Delete rows still referenced from child tables of {table}?",
   refImpactDeleteOk: "Delete anyway",
-  refImpactMore: "and {count} more",
   dropConfirmOk: "Drop table",
   // インデックス削除 (#850)。ツリーのインデックスノード右クリックから。
   dropIndexConfirmTitle: "Drop index {index}?",
@@ -12393,10 +12400,18 @@ const ja: Dict = {
   dropConfirmBody: "テーブル {table} とそのデータをすべて完全に削除します。この操作は取り消せません。",
   dropReferencedByTitle: "外部キーで参照されています ({count} 件)",
   dropReferencedByServer:
-    "次のテーブルがここで削除するテーブルを参照しているため、CASCADE でない限り DROP は外部キーエラーで失敗します。親.列 ← 子.列:",
+    "次のテーブルがここで削除するテーブルを参照しているため、CASCADE でない限り DROP は外部キーエラーで失敗します。",
   dropReferencedBySqlite:
-    "次のテーブルがここで削除するテーブルを参照しています。SQLite は PRAGMA foreign_keys の設定次第で DROP が通り、子の行が孤立することがあります。親.列 ← 子.列:",
+    "次のテーブルがここで削除するテーブルを参照しています。SQLite は PRAGMA foreign_keys の設定次第で DROP が通り、子の行が孤立することがあります。",
   dropReferencedByMore: "ほか {count} 件",
+  impactTreeLess: "折りたたむ",
+  impactOutcomeCascade: "連鎖削除",
+  impactOutcomeBlock: "ブロック",
+  impactOutcomeSetNull: "NULL 化",
+  impactOutcomeSetDefault: "既定値化",
+  impactOutcomeRebuild: "作り直し",
+  impactOutcomeBreak: "動作不能",
+  impactOutcomeChange: "変更",
   // 型変更で依存ビューを作り直す (#2268)。
   viewRebuildLoading: "型を変える列に依存するビューを調べています…",
   viewRebuildError: "依存ビューを調べられませんでした: {error}",
@@ -12422,7 +12437,7 @@ const ja: Dict = {
   dropColumnDepsTitle: "削除する列に依存するオブジェクトがあります ({count} 件)",
   dropColumnDepsIncompleteTitle: "依存オブジェクトの検査が不完全です",
   dropColumnDepsBody:
-    "これらの列を DROP すると、次のオブジェクトでエラーになるか、黙って壊れる可能性があります (ビュー・トリガーは動かなくなり、インデックスは縮小または消え、外部キー・生成列は DROP を妨げます)。列 ← 依存オブジェクト:",
+    "これらの列を DROP すると、次のオブジェクトでエラーになるか、黙って壊れる可能性があります (ビュー・トリガーは動かなくなり、インデックスは縮小または消え、外部キー・生成列は DROP を妨げます)。",
   dropColumnDepsIncomplete:
     "一部の依存を調べられなかったため ({kinds})、上の一覧は不完全な可能性があります。",
   dropColumnDepView: "ビュー",
@@ -12474,7 +12489,6 @@ const ja: Dict = {
   refImpactOpen: "子行を開く",
   refImpactDeleteTitle: "{table} の子テーブルから参照されている行を削除しますか?",
   refImpactDeleteOk: "削除する",
-  refImpactMore: "ほか {count} 件",
   dropConfirmOk: "DROP TABLE",
   // インデックス削除 (#850)。ツリーのインデックスノード右クリックから。
   dropIndexConfirmTitle: "インデックス {index} を DROP しますか?",

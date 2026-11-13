@@ -37,10 +37,31 @@ describe("RefImpactList (#1506)", () => {
     renderWithProviders(<RefImpactList impacts={impacts} mode="rows" driver="mysql" />);
     expect(screen.getByTestId("ref-impact-list")).toHaveTextContent("5 child rows in 2 table(s)");
     const rows = screen.getAllByTestId("ref-impact-row");
-    expect(rows[0]).toHaveTextContent("orders.user_id ← users.id");
+    expect(rows[0]).toHaveTextContent("orders.user_id");
+    // 起点 (参照される親.列) はチップ、巻き込まれ方は結果バッジ。
+    expect(screen.getByTestId("impact-origin")).toHaveTextContent("users.id");
+    expect(rows[0]).toHaveTextContent("Cascade delete");
+    expect(rows[1]).toHaveTextContent("Blocks");
     expect(rows[0]).toHaveTextContent("3 rows will be cascade-deleted");
     expect(rows[0]).toHaveTextContent("ON DELETE CASCADE");
     expect(rows[1]).toHaveTextContent("ON DELETE RESTRICT");
+  });
+
+  it("子テーブルが 8 件を超えたら「ほか N 件」に畳み、押すと全件を展開する", async () => {
+    const many: RefImpact[] = Array.from({ length: 10 }, (_, i) => ({
+      parentTable: "users",
+      table: `child_${i}`,
+      column: "user_id",
+      referencedColumn: "id",
+      onDelete: "SET NULL",
+      count: 1,
+    }));
+    const user = userEvent.setup();
+    renderWithProviders(<RefImpactList impacts={many} mode="rows" driver="mysql" />);
+    expect(screen.getAllByTestId("ref-impact-row")).toHaveLength(8);
+    expect(screen.getAllByText("Set NULL")).toHaveLength(8);
+    await user.click(screen.getByRole("button", { name: "and 2 more" }));
+    expect(await screen.findAllByTestId("ref-impact-row")).toHaveLength(10);
   });
 
   it("SQLite では PRAGMA foreign_keys の注意書きを足す / partial は下限表示", () => {
