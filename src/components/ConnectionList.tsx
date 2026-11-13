@@ -509,6 +509,8 @@ interface Props {
    * PostgreSQL 以外・read_only では項目を出さない / 無効化する。未指定ならメニュー項目を出さない。
    */
   onCreatePolicy?: (database: string, table: string) => void;
+  /** 表の変更履歴 (監査) テーブルとトリガーを生成するウィザードを開く (#2305)。 */
+  onAuditTrigger?: (database: string, table: string) => void;
   /**
    * 論理レプリケーションのパブリケーションへの表の追加 / 除外ダイアログ (#2181)。テーブルの右クリックメニューから呼ぶ。
    * PostgreSQL 以外では項目を出さない。read_only では項目を無効化する。未指定ならメニュー項目を出さない。
@@ -2176,6 +2178,7 @@ export const ConnectionList = memo(
       onEditRoutine,
       onEditEnumType,
       onCreatePolicy,
+      onAuditTrigger,
       onManagePublication,
       onManageExtensions,
       onCreateRoutine,
@@ -3440,6 +3443,15 @@ export const ConnectionList = memo(
           items.push({
             label: t("contextMenuCreateIndex"),
             onSelect: () => onCreateIndex(db, tbl),
+            disabled: activeReadOnly,
+            title: roTitle,
+          });
+        }
+        // 変更履歴 (監査) テーブルとトリガーの生成 (#2305)。3 ドライバ共通。
+        if (onAuditTrigger) {
+          items.push({
+            label: t("contextMenuAuditTrigger"),
+            onSelect: () => onAuditTrigger(db, tbl),
             disabled: activeReadOnly,
             title: roTitle,
           });

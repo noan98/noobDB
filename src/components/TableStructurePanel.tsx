@@ -3,6 +3,7 @@ import { Box, chakra, Flex, VisuallyHidden, type SystemStyleObject } from "@chak
 
 import {
   api,
+  type AuditStatus,
   type IndexInfo,
   type TableColumnInfo,
   type TableExtrasInfo,
@@ -13,6 +14,7 @@ import {
 import { type I18nKey, useT } from "../i18n";
 import { type IncomingFk, incomingFkTableName } from "../fkNavigation";
 import { foreignKeysOf, foreignKeyTargetLabel, type ExplorerForeignKey } from "./explorerTree";
+import { Callout } from "./Callout";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -276,6 +278,8 @@ export function TableStructurePanel({
   onPartitionOp,
   onAttachPartition,
   onAddPartitions,
+  onManageAudit,
+  auditTick = 0,
 }: {
   sessionId: string;
   driver: string;
@@ -313,8 +317,14 @@ export function TableStructurePanel({
     statements: string[],
     count: number,
   ) => Promise<boolean>;
+  /** 変更履歴 (監査) トリガーの再生成 / 管理ウィザードを開く (#2305)。 */
+  onManageAudit?: (database: string, table: string, mode: "create" | "regenerate") => void;
+  /** 監査 DDL の実行後に進める。変更履歴の状態を読み直す。 */
+  auditTick?: number;
 }) {
   const t = useT();
+  // 変更履歴 (監査) トリガーの状態 (#2305)。ベストエフォート: 取れなければ節を出さない。
+  const [audit, setAudit] = useState<AuditStatus | null>(null);
   const [columns, setColumns] = useState<TableColumnInfo[] | null>(null);
   const [indexes, setIndexes] = useState<IndexInfo[] | null>(null);
   // CHECK 制約と生成列の式 (#1837)。ベストエフォート: 取れなければ節ごと出さない。
@@ -342,6 +352,23 @@ export function TableStructurePanel({
   const ddlSeq = useRef(0);
 
   const { database, table } = target;
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reloadKey / auditTick は再読み込みのトリガー
+  useEffect(() => {
+    let cancelled = false;
+    setAudit(null);
+    Promise.resolve()
+      .then(() => api.getAuditStatus(sessionId, database, table))
+      .then((st) => {
+        if (!cancelled) setAudit(st);
+      })
+      .catch(() => {
+        if (!cancelled) setAudit(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, database, table, reloadKey, auditTick]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reloadKey は本体では使わず、再読み込みボタンで同じテーブルを取り直すためのトリガー
   useEffect(() => {
@@ -843,6 +870,33 @@ export function TableStructurePanel({
                     </chakra.tr>
                   </chakra.tfoot>
                 </chakra.table>
+              )}
+
+              {audit?.present && (
+                <Callout
+                  tone={audit.needs_regeneration ? "warning" : "info"}
+                  title={t("structureAuditTitle")}
+                  action={
+                    onManageAudit && !readOnly ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() =>
+                          onManageAudit(database, table, audit.needs_regeneration ? "regenerate" : "create")
+                        }
+                      >
+                        {audit.needs_regeneration ? t("structureAuditRegenerate") : t("structureAuditManage")}
+                      </Button>
+                    ) : undefined
+                  }
+                >
+                  {audit.needs_regeneration
+                    ? t("structureAuditStale", {
+                        added: audit.added_columns.join(", ") || "-",
+                        removed: audit.removed_columns.join(", ") || "-",
+                      })
+                    : t("structureAuditRecording", { table: audit.options?.audit_table ?? `${table}_audit` })}
+                </Callout>
               )}
 
               {triggersFailed && (

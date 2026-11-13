@@ -3081,6 +3081,42 @@ impl MySqlConn {
         Ok(out)
     }
 
+    /// 監査トリガー生成 (#2305) の事前警告。`log_bin` / `log_bin_trust_function_creators` と
+    /// `SHOW GRANTS` を読み、純層 (`audit_trigger::mysql_audit_warnings`) が判定する。
+    pub async fn audit_trigger_preflight(&self) -> Result<Vec<String>> {
+        let vars: Vec<MySqlRow> = sqlx::query(
+            "SHOW VARIABLES WHERE Variable_name IN ('log_bin', 'log_bin_trust_function_creators')",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let (mut log_bin, mut trust) = (false, false);
+        for r in &vars {
+            let name = text_or_bytes(r, 0).unwrap_or_default();
+            let on = matches!(
+                text_or_bytes(r, 1)
+                    .unwrap_or_default()
+                    .to_ascii_uppercase()
+                    .as_str(),
+                "ON" | "1"
+            );
+            match name.as_str() {
+                "log_bin" => log_bin = on,
+                "log_bin_trust_function_creators" => trust = on,
+                _ => {}
+            }
+        }
+        let grants: Vec<MySqlRow> = sqlx::query("SHOW GRANTS FOR CURRENT_USER()")
+            .fetch_all(&self.pool)
+            .await?;
+        let lines: Vec<String> = grants
+            .iter()
+            .map(|r| text_or_bytes(r, 0).unwrap_or_default())
+            .collect();
+        Ok(super::audit_trigger::mysql_audit_warnings(
+            log_bin, trust, &lines,
+        ))
+    }
+
     /// `table` がパーティション表なら子パーティション一覧 (#1868)。`information_schema.PARTITIONS` を
     /// 読み、サブパーティションの入れ子への畳み込みは純層 (`table_partitions`) が行う。非分割表は
     /// `PARTITION_NAME` が NULL の 1 行だけなので除いて `None`。
