@@ -3416,7 +3416,8 @@ export type RowMergeWarning =
 export type RowMergeUndoDecline =
   | { kind: "childWithoutKey"; table: string }
   | { kind: "tooManyRows"; limit: number }
-  | { kind: "crossSchemaChild"; table: string };
+  | { kind: "crossSchemaChild"; table: string }
+  | { kind: "childKeyReferenced"; table: string; referencing: string };
 export interface RowMergeChild {
   schema: string | null;
   table: string;

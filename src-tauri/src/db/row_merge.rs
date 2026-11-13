@@ -169,6 +169,10 @@ pub enum UndoDecline {
     /// 別スキーマの子テーブルがある (1 つの記録バッチは 1 スキーマに限られる)。
     #[serde(rename_all = "camelCase")]
     CrossSchemaChild { table: String },
+    /// 付け替える子の表を、さらに別の表が `ON UPDATE CASCADE / SET NULL / SET DEFAULT` で参照している。
+    /// 子のキーの変更が孫へ伝わり、Undo では孫が戻らない。
+    #[serde(rename_all = "camelCase")]
+    ChildKeyReferenced { table: String, referencing: String },
 }
 
 /// 子テーブル側の外部キー 1 本 (複合キーは列を並べて 1 本)。

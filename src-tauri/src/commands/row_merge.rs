@@ -227,6 +227,7 @@ struct CrossSchemaFk {
     column: String,
     referenced_column: String,
     on_delete: Option<String>,
+    on_update: Option<String>,
 }
 
 fn pg_action(code: &str) -> Option<String> {
@@ -253,7 +254,7 @@ async fn pg_cross_schema_incoming(
                   WHERE a.attrelid = con.conrelid AND a.attnum = con.conkey[1]), \
                 (SELECT fa.attname::text FROM pg_catalog.pg_attribute fa \
                   WHERE fa.attrelid = con.confrelid AND fa.attnum = con.confkey[1]), \
-                con.confdeltype::text \
+                con.confdeltype::text, con.confupdtype::text \
            FROM pg_catalog.pg_constraint con \
            JOIN pg_catalog.pg_class cl ON cl.oid = con.conrelid \
            JOIN pg_catalog.pg_namespace n ON n.oid = cl.relnamespace \
@@ -281,21 +282,22 @@ async fn pg_cross_schema_incoming(
                 column: text(4),
                 referenced_column: text(5),
                 on_delete: pg_action(&text(6)),
+                on_update: pg_action(&text(7)),
             }
         })
         .collect())
 }
 
-/// MySQL: 別のデータベースの表から `db.table` を参照する外部キーの (データベース, 表, `DELETE_RULE`)。
+/// MySQL: 別のデータベースの表から `db.table` を参照する外部キーの (データベース, 表, `DELETE_RULE`, `UPDATE_RULE`)。
 async fn mysql_cross_database_incoming(
     conn: &Connection,
     db: &str,
     table: &str,
-) -> Result<Vec<(String, String, String)>> {
+) -> Result<Vec<(String, String, String, String)>> {
     let d = DriverKind::Mysql;
     let lit_db = sql_literal(d, &Value::String(db.to_string()));
     let sql = format!(
-        "SELECT DISTINCT k.TABLE_SCHEMA, k.TABLE_NAME, r.DELETE_RULE \
+        "SELECT DISTINCT k.TABLE_SCHEMA, k.TABLE_NAME, r.DELETE_RULE, r.UPDATE_RULE \
            FROM information_schema.KEY_COLUMN_USAGE k \
            JOIN information_schema.REFERENTIAL_CONSTRAINTS r \
              ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA \
@@ -311,9 +313,67 @@ async fn mysql_cross_database_incoming(
         .iter()
         .map(|row| {
             let text = |i: usize| row.get(i).map(norm_sig).unwrap_or_default();
-            (text(0), text(1), text(2))
+            (text(0), text(1), text(2), text(3))
         })
         .collect())
+}
+
+/// `db.table` を参照する外部キーの参照元 1 本。
+struct Referrer {
+    /// 表示名 (別スキーマ / DB は `schema.table`)。
+    name: String,
+    on_delete: Option<String>,
+    on_update: Option<String>,
+}
+
+/// `db.table` を参照する表を、同じスキーマ / DB・別スキーマ (PostgreSQL)・別データベース (MySQL) から集める。
+/// `home` はマージ対象のスキーマ / DB (表示名の付け方に使う)。取得に失敗したら `Err`。
+async fn referrers_of(
+    conn: &Connection,
+    driver: DriverKind,
+    home: &str,
+    db: &str,
+    table: &str,
+) -> Result<Vec<Referrer>> {
+    let mut out = Vec::new();
+    let prefix = |schema: &str, t: &str| {
+        if schema == home {
+            t.to_string()
+        } else {
+            format!("{schema}.{t}")
+        }
+    };
+    for f in conn.foreign_keys(db).await? {
+        if same_name(driver, &f.referenced_table, table) {
+            out.push(Referrer {
+                name: prefix(db, &f.table),
+                on_delete: f.on_delete.clone(),
+                on_update: f.on_update.clone(),
+            });
+        }
+    }
+    match driver {
+        DriverKind::Postgres => {
+            for e in pg_cross_schema_incoming(conn, db, table).await? {
+                out.push(Referrer {
+                    name: prefix(&e.schema, &e.table),
+                    on_delete: e.on_delete,
+                    on_update: e.on_update,
+                });
+            }
+        }
+        DriverKind::Mysql => {
+            for (schema, tbl, del, upd) in mysql_cross_database_incoming(conn, db, table).await? {
+                out.push(Referrer {
+                    name: prefix(&schema, &tbl),
+                    on_delete: Some(del),
+                    on_update: Some(upd),
+                });
+            }
+        }
+        DriverKind::Sqlite => {}
+    }
+    Ok(out)
 }
 
 fn child_row_counts(children: &[RowMergeChild]) -> Vec<u64> {
@@ -571,7 +631,7 @@ async fn build_plan(
     if driver == DriverKind::Mysql {
         match mysql_cross_database_incoming(conn, &db, table).await {
             Ok(list) => {
-                for (schema, tbl, rule) in list {
+                for (schema, tbl, rule, _) in list {
                     if on_delete_touches_rows(Some(&rule)) {
                         blockers.push(MergeBlocker::CrossDatabaseCascade { schema, table: tbl });
                     } else {
@@ -666,7 +726,7 @@ async fn build_plan(
     let mut repointed_total = 0u64;
 
     for edge in &edges {
-        let self_ref = edge.child_db == database && edge.child.eq_ignore_ascii_case(table);
+        let self_ref = edge.child_db == database && same_name(driver, &edge.child, table);
         let loser_refs_all: Vec<Option<Vec<Value>>> = rows[1..]
             .iter()
             .map(|r| pick_values(&pcol_names, r, &edge.parent_cols))
@@ -951,59 +1011,48 @@ async fn build_plan(
                         == Some("CASCADE")
                 }
             };
-        if removes_child_rows {
-            let mut referencing: Vec<String> = Vec::new();
-            // 同じスキーマ / DB の表からの参照 (別スキーマの子の場合は、その外部キーは `fks` に無いので除く)。
-            if edge.child_db == database {
-                for f in fks.iter().filter(|f| {
-                    same_name(driver, &f.referenced_table, &edge.child)
-                        && on_delete_touches_rows(f.on_delete.as_deref())
-                }) {
-                    if !referencing.contains(&f.table) {
-                        referencing.push(f.table.clone());
-                    }
-                }
-            }
-            // 別スキーマ (PostgreSQL) / 別データベース (MySQL) の表からの参照も調べる。取得失敗は "*" で止める。
-            match driver {
-                DriverKind::Postgres => {
-                    match pg_cross_schema_incoming(conn, &edge.child_db, &edge.child).await {
-                        Ok(list) => {
-                            for e in list
-                                .iter()
-                                .filter(|e| on_delete_touches_rows(e.on_delete.as_deref()))
-                            {
-                                let name = format!("{}.{}", e.schema, e.table);
-                                if !referencing.contains(&name) {
-                                    referencing.push(name);
-                                }
+        // 子の表を参照する表 (子のスキーマ / DB 自身の外部キーも含む)。必要なときだけ調べる。
+        let repoint_est = count.saturating_sub(deleted + skipped);
+        if removes_child_rows || repoint_est > 0 {
+            let refs = referrers_of(conn, driver, database, &edge.child_db, &edge.child).await;
+            if removes_child_rows {
+                let mut referencing: Vec<String> = Vec::new();
+                match &refs {
+                    Ok(list) => {
+                        for r in list
+                            .iter()
+                            .filter(|r| on_delete_touches_rows(r.on_delete.as_deref()))
+                        {
+                            if !referencing.contains(&r.name) {
+                                referencing.push(r.name.clone());
                             }
                         }
-                        Err(_) => referencing.push("*".to_string()),
                     }
+                    Err(_) => referencing.push("*".to_string()),
                 }
-                DriverKind::Mysql => {
-                    match mysql_cross_database_incoming(conn, &edge.child_db, &edge.child).await {
-                        Ok(list) => {
-                            for (schema, tbl, rule) in list {
-                                if on_delete_touches_rows(Some(&rule)) {
-                                    let name = format!("{schema}.{tbl}");
-                                    if !referencing.contains(&name) {
-                                        referencing.push(name);
-                                    }
-                                }
-                            }
-                        }
-                        Err(_) => referencing.push("*".to_string()),
-                    }
+                for r in referencing {
+                    blockers.push(MergeBlocker::DeletedChildReferenced {
+                        table: edge.child.clone(),
+                        referencing: r,
+                    });
                 }
-                DriverKind::Sqlite => {}
             }
-            for r in referencing {
-                blockers.push(MergeBlocker::DeletedChildReferenced {
-                    table: edge.child.clone(),
-                    referencing: r,
-                });
+            // 付け替えで子のキーが変わると、`ON UPDATE CASCADE` などで孫にも伝わる。記録は子の更新を
+            // DELETE + INSERT で表すので、Undo で孫が消える / 戻らない。該当すれば Undo の記録を辞退する。
+            if repoint_est > 0 {
+                let hit = match &refs {
+                    Ok(list) => list
+                        .iter()
+                        .find(|r| on_delete_touches_rows(r.on_update.as_deref()))
+                        .map(|r| r.name.clone()),
+                    Err(_) => Some("*".to_string()),
+                };
+                if let Some(referencing) = hit {
+                    undo_decline.get_or_insert(UndoDecline::ChildKeyReferenced {
+                        table: edge.child.clone(),
+                        referencing,
+                    });
+                }
             }
         }
         let repoint_rows = count.saturating_sub(deleted + skipped);

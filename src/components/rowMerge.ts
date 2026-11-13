@@ -149,6 +149,11 @@ export function undoDeclineMessage(d: RowMergeUndoDecline): {
       return { key: "rowMergeUndoChildNoKey", params: { table: d.table } };
     case "tooManyRows":
       return { key: "rowMergeUndoTooMany", params: { limit: d.limit } };
+    case "childKeyReferenced":
+      return {
+        key: "rowMergeUndoChildKeyReferenced",
+        params: { table: d.table, referencing: d.referencing === "*" ? "?" : d.referencing },
+      };
     case "crossSchemaChild":
       return { key: "rowMergeUndoCrossSchema", params: { table: d.table } };
   }

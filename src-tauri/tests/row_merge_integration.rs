@@ -425,6 +425,25 @@ async fn skip_flow(state: &t::AppState, side: &Side) {
         p.blockers
     );
     exec(state, side, "DROP TABLE grand").await;
+
+    // 付け替える子 (orders) を別の表が ON UPDATE CASCADE で参照していると、Undo の記録は辞退する。
+    exec(
+        state,
+        side,
+        "CREATE TABLE grand (id INT NOT NULL PRIMARY KEY, oid INT, \
+         FOREIGN KEY (oid) REFERENCES orders(id) ON UPDATE CASCADE)",
+    )
+    .await;
+    let p = preview(state, side, &request(t::ConflictPolicy::Abort, None)).await;
+    assert!(
+        matches!(
+            &p.undo_decline,
+            Some(t::UndoDecline::ChildKeyReferenced { table, .. }) if table == "orders"
+        ),
+        "{:?}",
+        p.undo_decline
+    );
+    exec(state, side, "DROP TABLE grand").await;
 }
 
 /// プレビューの後でデータが変わったら、何も書かずに `changed` を返す。
@@ -668,6 +687,39 @@ async fn cross_schema_flow(state: &t::AppState, side: &Side) {
             b,
             t::MergeBlocker::DeletedChildReferenced { table, referencing }
                 if table == "coupon_uses" && referencing == "nb2303_rm2.og"
+        )),
+        "{:?}",
+        p.blockers
+    );
+    exec(state, side, "DROP TABLE nb2303_rm2.og").await;
+
+    // 子のスキーマ自身の外部キー: nb2303_rm2.cc が customers を参照し、同じスキーマの gg が cc を連鎖で参照する。
+    exec(
+        state,
+        side,
+        "CREATE TABLE nb2303_rm2.cc (id INT PRIMARY KEY, cid INT, tag INT, UNIQUE (cid, tag), \
+         FOREIGN KEY (cid) REFERENCES nb2303_rm.customers(id))",
+    )
+    .await;
+    exec(
+        state,
+        side,
+        "CREATE TABLE nb2303_rm2.gg (id INT PRIMARY KEY, ccid INT, \
+         FOREIGN KEY (ccid) REFERENCES nb2303_rm2.cc(id) ON DELETE CASCADE)",
+    )
+    .await;
+    exec(
+        state,
+        side,
+        "INSERT INTO nb2303_rm2.cc VALUES (1, 1, 7), (2, 2, 7)",
+    )
+    .await;
+    let p = preview(state, side, &req).await;
+    assert!(
+        p.blockers.iter().any(|b| matches!(
+            b,
+            t::MergeBlocker::DeletedChildReferenced { table, referencing }
+                if table == "cc" && referencing == "nb2303_rm2.gg"
         )),
         "{:?}",
         p.blockers

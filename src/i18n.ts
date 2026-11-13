@@ -8330,6 +8330,8 @@ const en = {
   rowMergeUndoChildNoKey: "Undo is not recorded: {table} has no primary / unique key to identify its rows.",
   rowMergeUndoTooMany: "Undo is not recorded: more than {limit} rows would change.",
   rowMergeUndoCrossSchema: "Undo is not recorded: {table} is in another schema.",
+  rowMergeUndoChildKeyReferenced:
+    "Undo is not recorded: {referencing} references {table} with ON UPDATE CASCADE / SET NULL / SET DEFAULT, so re-pointing changes its rows and Undo could not restore them.",
   rowMergeSql: "SQL to run (in order)",
   rowMergeBlockedTitle: "The merge cannot run",
   rowMergeBlockNoKey: "The selected columns are not the table's primary key or a NOT NULL unique key.",
@@ -16707,6 +16709,8 @@ const ja: Dict = {
   rowMergeUndoChildNoKey: "Undo は記録されません: {table} に行を特定できる主キー / UNIQUE キーがありません。",
   rowMergeUndoTooMany: "Undo は記録されません: 変更される行が {limit} 件を超えます。",
   rowMergeUndoCrossSchema: "Undo は記録されません: {table} は別スキーマの表です。",
+  rowMergeUndoChildKeyReferenced:
+    "Undo は記録されません: {referencing} が {table} を ON UPDATE CASCADE / SET NULL / SET DEFAULT で参照しており、付け替えでその行も変わって Undo では戻せません。",
   rowMergeSql: "実行する SQL (この順)",
   rowMergeBlockedTitle: "マージを実行できません",
   rowMergeBlockNoKey: "選んだ列が、表の主キーでも NOT NULL の UNIQUE キーでもありません。",

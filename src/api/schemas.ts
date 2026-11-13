@@ -418,6 +418,7 @@ const rowMergeUndoDecline = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("childWithoutKey"), table: z.string() }),
   z.object({ kind: z.literal("tooManyRows"), limit: z.number() }),
   z.object({ kind: z.literal("crossSchemaChild"), table: z.string() }),
+  z.object({ kind: z.literal("childKeyReferenced"), table: z.string(), referencing: z.string() }),
 ]);
 export const rowMergePreview = z.object({
   columns: z.array(z.object({ name: z.string(), typeName: z.string(), locked: z.boolean() })),
