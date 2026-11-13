@@ -12,6 +12,8 @@ mod common;
 
 #[path = "../clone_rows_integration.rs"]
 mod clone_rows_integration;
+#[path = "../audit_trigger_integration.rs"]
+mod audit_trigger_integration;
 #[path = "../column_deps_integration.rs"]
 mod column_deps_integration;
 #[path = "../local_query_integration.rs"]

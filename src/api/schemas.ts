@@ -215,6 +215,40 @@ export const tableTrigger = z.object({
 });
 export const tableTriggerArray = z.array(tableTrigger);
 
+/** 変更履歴 (監査) トリガーのオプション (#2305)。 */
+export const auditOptions = z.object({
+  insert: z.boolean(),
+  update: z.boolean(),
+  delete: z.boolean(),
+  exclude_columns: z.array(z.string()),
+  skip_unchanged_update: z.boolean(),
+  audit_table: z.string(),
+  audit_schema: z.string().nullable(),
+});
+
+/** `generate_audit_ddl` の結果 (#2305)。 */
+export const auditDdl = z.object({
+  audit_table: z.string(),
+  audit_schema: z.string(),
+  create: z.array(z.string()),
+  drop_triggers: z.array(z.string()),
+  drop_table: z.string(),
+  recorded_columns: z.array(z.string()),
+  trigger_names: z.array(z.string()),
+  warnings: z.array(z.string()),
+});
+
+/** `get_audit_status` の結果 (#2305)。 */
+export const auditStatus = z.object({
+  present: z.boolean(),
+  options: auditOptions.nullable(),
+  recorded_columns: z.array(z.string()),
+  added_columns: z.array(z.string()),
+  removed_columns: z.array(z.string()),
+  pk_changed: z.boolean(),
+  needs_regeneration: z.boolean(),
+});
+
 /** `list_rls_tables` の 1 件: RLS が有効 / FORCE の表 (#2159)。 */
 export const rlsTable = z.object({
   table: z.string(),

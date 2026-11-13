@@ -502,6 +502,9 @@ const ParameterInputModal = lazy(() =>
 const EnumTypeModal = lazy(() =>
   import("./components/EnumTypeModal").then((m) => ({ default: m.EnumTypeModal })),
 );
+const AuditTriggerModal = lazy(() =>
+  import("./components/AuditTriggerModal").then((m) => ({ default: m.AuditTriggerModal })),
+);
 const PolicyModal = lazy(() => import("./components/PolicyModal").then((m) => ({ default: m.PolicyModal })));
 const PublicationModal = lazy(() =>
   import("./components/PublicationModal").then((m) => ({ default: m.PublicationModal })),
@@ -2442,6 +2445,14 @@ export default function App() {
     name: string;
     mode: "add" | "rename";
   } | null>(null);
+  // 変更履歴 (監査) テーブルとトリガーの生成ウィザード (#2305) の対象。
+  const [auditEditor, setAuditEditor] = useState<{
+    database: string;
+    table: string;
+    mode: "create" | "regenerate";
+  } | null>(null);
+  // 監査 DDL を実行するたびに進め、構造パネルの変更履歴の状態を読み直す。
+  const [auditTick, setAuditTick] = useState(0);
   // PostgreSQL の RLS ポリシー作成ダイアログ (#2159) の対象。
   const [policyEditor, setPolicyEditor] = useState<{ database: string; table: string } | null>(null);
   // 論理レプリケーションのパブリケーションへの表の追加 / 除外ダイアログ (#2181) の対象。
@@ -8787,6 +8798,13 @@ export default function App() {
     },
     [sessionId],
   );
+  const handleAuditTrigger = useCallback(
+    (database: string, table: string, mode: "create" | "regenerate" = "create") => {
+      if (!sessionId) return;
+      setAuditEditor({ database, table, mode });
+    },
+    [sessionId],
+  );
   const handleCreatePolicy = useCallback(
     (database: string, table: string) => {
       if (!sessionId) return;
@@ -13510,6 +13528,7 @@ export default function App() {
     onEditRoutine: handleEditRoutine,
     onEditEnumType: handleEditEnumType,
     onCreatePolicy: handleCreatePolicy,
+    onAuditTrigger: handleAuditTrigger,
     onManagePublication: handleManagePublication,
     onManageExtensions: handleManageExtensions,
     onCreateRoutine: handleCreateRoutine,
@@ -14142,6 +14161,8 @@ export default function App() {
                           onPartitionOp={handlePartitionOp}
                           onAttachPartition={handleAttachPartition}
                           onAddPartitions={handleAddPartitions}
+                          onManageAudit={handleAuditTrigger}
+                          auditTick={auditTick}
                         />
                       ) : null
                     ) : activeBottomPanelTab === "timelapse" ? (
@@ -15650,6 +15671,59 @@ export default function App() {
                     }
                   }}
                   onClose={() => setEnumTypeEditor(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {auditEditor && sessionId && (
+              <Suspense fallback={null}>
+                <AuditTriggerModal
+                  sessionId={sessionId}
+                  database={auditEditor.database}
+                  table={auditEditor.table}
+                  driver={selectedProfile?.driver}
+                  readOnly={readOnly}
+                  maskPatterns={settings.columnMaskEnabled ? settings.columnMaskPatterns : null}
+                  initialMode={auditEditor.mode}
+                  onConfirm={async (statements, info) => {
+                    const target = auditEditor;
+                    // 共通の DDL ゲート (#2176)。キャンセルなら実行せず、モーダルは開いたまま。
+                    const sql = statements.join(";\n");
+                    if (
+                      !(await runGuardedDdl(
+                        sql,
+                        info.dropsTable ? { destructiveTargets: [info.auditTable] } : undefined,
+                      ))
+                    )
+                      return;
+                    // 実行は通常のトランザクション経路 (read_only の拒否はバックエンド)。成功時だけ閉じる。
+                    try {
+                      await api.runQueryTransaction(sessionId, statements, target.database);
+                      invalidateSchemaCache(target.database);
+                      noteSchemaDdl(sql, target.database);
+                      connectionListRef.current?.refreshSchema({
+                        database: target.database,
+                        table: target.table,
+                      });
+                      setAuditTick((n) => n + 1);
+                      toast.success(
+                        translate(info.mode === "remove" ? "auditRemoved" : "auditDone", {
+                          table: target.table,
+                        }),
+                      );
+                      setAuditEditor(null);
+                    } catch (e) {
+                      // MySQL は DDL が暗黙コミットされるので、再生成・削除の途中失敗でトリガーが外れたままになりうる。
+                      const note =
+                        selectedProfile?.driver === "mysql" && info.mode !== "create"
+                          ? ` ${translate("auditMysqlPartialNote")}`
+                          : "";
+                      toast.error(translate("statusQueryError", { error: String(e) }) + note);
+                    }
+                  }}
+                  onClose={() => setAuditEditor(null)}
                 />
               </Suspense>
             )}

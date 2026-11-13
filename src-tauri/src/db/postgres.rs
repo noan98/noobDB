@@ -3864,6 +3864,22 @@ impl PostgresConn {
             .unwrap_or_default())
     }
 
+    /// 監査トリガー (#2305) の関数本体 (`pg_proc.prosrc`)。無ければ `None`。
+    pub async fn audit_function_source(&self, schema: &str, name: &str) -> Result<Option<String>> {
+        let row: Option<PgRow> = sqlx::query(
+            r#"SELECT p.prosrc::text
+                 FROM pg_proc p
+                 JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = $1 AND p.proname = $2 AND p.pronargs = 0
+                LIMIT 1"#,
+        )
+        .bind(schema)
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.and_then(|r| r.try_get::<String, _>(0).ok()))
+    }
+
     /// `table` のトリガー一覧 (#1867)。`pg_trigger` を `tgtype` のビットでタイミング・イベントに
     /// 分解し、定義は `pg_get_triggerdef`。制約トリガーなどの内部トリガー (`tgisinternal`) は除く。
     pub async fn list_table_triggers(

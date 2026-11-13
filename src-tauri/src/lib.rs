@@ -254,6 +254,9 @@ pub mod __test_api {
         preview_transfer_inner, transfer_data_inner, TransferColumnInfo, TransferOutcome,
         TransferPreview, TransferRequest,
     };
+    // 変更履歴 (監査) トリガー生成 (#2305)。統合テストから駆動するコア。
+    pub use crate::commands::audit_trigger::{generate_audit_ddl_core, get_audit_status_core};
+    pub use crate::db::audit_trigger::{AuditDdl, AuditOptions, AuditStatus};
     // サブセット抽出 (#2241)。Tauri を介さずに統合テストから駆動するコア。
     pub use crate::commands::subset::{
         preview_subset_inner, run_subset_inner, ExistingRows, SubsetColumnInfo, SubsetColumnMask,
@@ -1962,6 +1965,8 @@ pub fn run() {
             commands::schema::describe_table,
             commands::schema::describe_table_extras,
             commands::schema::list_table_triggers,
+            commands::audit_trigger::generate_audit_ddl,
+            commands::audit_trigger::get_audit_status,
             commands::schema::list_rls_tables,
             commands::schema::list_publications,
             commands::schema::get_table_replica_identity,

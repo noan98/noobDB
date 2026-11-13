@@ -1,6 +1,7 @@
 pub mod advisor;
 pub mod ai;
 pub mod assertions;
+pub mod audit_trigger;
 pub mod broadcast;
 pub mod bulk_capture;
 pub mod bulk_write;

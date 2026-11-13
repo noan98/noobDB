@@ -47,6 +47,7 @@ import { importCommands } from "./commands/import";
 import { importTemplatesCommands } from "./commands/importTemplates";
 import { scriptCommands } from "./commands/script";
 import { cloneRowsCommands } from "./commands/cloneRows";
+import { auditTriggerCommands } from "./commands/auditTrigger";
 import { subsetCommands } from "./commands/subset";
 import { transferCommands } from "./commands/transfer";
 import { fileCommands } from "./commands/file";
@@ -810,6 +811,48 @@ export interface TableTrigger {
   definition: string;
   /** false は無効化されたトリガー (PostgreSQL のみ)。 */
   enabled: boolean;
+}
+
+/** 変更履歴 (監査) トリガーのオプション (#2305)。 */
+export interface AuditOptions {
+  insert: boolean;
+  update: boolean;
+  delete: boolean;
+  /** 記録しない列。 */
+  exclude_columns: string[];
+  /** 値が変わらない UPDATE は記録しない。 */
+  skip_unchanged_update: boolean;
+  /** 監査表の名前 (空なら `<表>_audit`)。 */
+  audit_table: string;
+  /** 監査表のスキーマ / DB。null は対象表と同じ。 */
+  audit_schema: string | null;
+}
+
+/** `generate_audit_ddl` の結果 (#2305)。 */
+export interface AuditDdl {
+  audit_table: string;
+  audit_schema: string;
+  /** 実行する文 (1 文ずつ)。再生成ならトリガーの DROP から始まり監査表は作らない。 */
+  create: string[];
+  drop_triggers: string[];
+  drop_table: string;
+  recorded_columns: string[];
+  trigger_names: string[];
+  /** 事前警告のコード (`no_primary_key` / `blob_columns` / `mysql_trigger_privilege` / `mysql_binlog_trust`)。 */
+  warnings: string[];
+}
+
+/** `get_audit_status` の結果 (#2305)。 */
+export interface AuditStatus {
+  present: boolean;
+  /** トリガーから読み戻したオプション (PostgreSQL は汎用関数なので null)。 */
+  options: AuditOptions | null;
+  recorded_columns: string[];
+  added_columns: string[];
+  removed_columns: string[];
+  /** 主キー列が生成時から変わった (PostgreSQL でも再生成が要る)。 */
+  pk_changed: boolean;
+  needs_regeneration: boolean;
 }
 
 /** 非テーブルのスキーマオブジェクト種別。 */
@@ -2820,6 +2863,7 @@ export const api = {
   ...importCommands,
   ...importTemplatesCommands,
   ...scriptCommands,
+  ...auditTriggerCommands,
   ...subsetCommands,
   ...cloneRowsCommands,
   ...transferCommands,
