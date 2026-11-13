@@ -2691,6 +2691,194 @@
     "return_type": "numeric",
     "returns_set": false
   },
+  "rowMergeOutcomeApplied": {
+    "capture": {
+      "batchId": "batch-1",
+      "declined": 0,
+      "recorded": 3
+    },
+    "deletedRows": 1,
+    "repointedRows": 2,
+    "status": "applied"
+  },
+  "rowMergeOutcomeBlocked": {
+    "blockers": [
+      {
+        "kind": "noKey"
+      }
+    ],
+    "status": "blocked"
+  },
+  "rowMergeOutcomeChanged": {
+    "actualRows": 3,
+    "expectedRows": 2,
+    "statementsChanged": true,
+    "status": "changed"
+  },
+  "rowMergeOutcomeIncomplete": {
+    "actualRows": 3,
+    "expectedRows": 2,
+    "status": "rollback_incomplete"
+  },
+  "rowMergePreview": {
+    "blockers": [
+      {
+        "kind": "noKey"
+      },
+      {
+        "kind": "tooManyRows",
+        "max": 50
+      },
+      {
+        "kind": "duplicateSelection"
+      },
+      {
+        "index": 1,
+        "kind": "rowNotFound"
+      },
+      {
+        "engine": "MyISAM",
+        "kind": "unsupportedEngine"
+      },
+      {
+        "column": "customer_id",
+        "kind": "nullReference",
+        "table": "orders"
+      },
+      {
+        "column": "referrer_id",
+        "kind": "selfReference",
+        "table": "customers"
+      },
+      {
+        "groups": 1,
+        "index": "PRIMARY",
+        "kind": "uniqueConflict",
+        "table": "coupon_uses"
+      },
+      {
+        "index": "PRIMARY",
+        "kind": "tooManyConflicts",
+        "table": "coupon_uses"
+      },
+      {
+        "kind": "skipUnsafe",
+        "table": "coupon_uses"
+      },
+      {
+        "column": "id",
+        "kind": "lockedPick"
+      },
+      {
+        "column": "nope",
+        "kind": "invalidPick"
+      },
+      {
+        "constraint": "fk",
+        "kind": "unresolvedForeignKey",
+        "table": "orders"
+      },
+      {
+        "kind": "childUnreadable",
+        "table": "orders"
+      },
+      {
+        "kind": "crossDatabaseCascade",
+        "schema": "other",
+        "table": "orders"
+      },
+      {
+        "kind": "deletedChildReferenced",
+        "referencing": "items",
+        "table": "orders"
+      },
+      {
+        "kind": "crossChildrenUnreadable",
+        "table": "orders"
+      },
+      {
+        "kind": "skipWithoutForeignKeys",
+        "table": "orders"
+      }
+    ],
+    "children": [
+      {
+        "columns": [
+          "customer_id"
+        ],
+        "constraint": "fk_orders",
+        "deleted": 0,
+        "onDelete": "CASCADE",
+        "parentColumns": [
+          "id"
+        ],
+        "rows": 2,
+        "schema": "other",
+        "selfReference": false,
+        "skipped": 1,
+        "table": "orders"
+      }
+    ],
+    "columns": [
+      {
+        "locked": true,
+        "name": "id",
+        "typeName": "int"
+      }
+    ],
+    "conflicts": [
+      {
+        "columns": [
+          "customer_id",
+          "coupon_id"
+        ],
+        "groups": 1,
+        "index": "PRIMARY",
+        "rows": 1,
+        "sample": [
+          [
+            "100"
+          ]
+        ],
+        "table": "coupon_uses"
+      }
+    ],
+    "deletedRows": 1,
+    "fkEnforced": false,
+    "keyColumns": [
+      "id"
+    ],
+    "picks": [
+      0
+    ],
+    "repointedRows": 2,
+    "rows": [
+      [
+        1
+      ],
+      [
+        2
+      ]
+    ],
+    "statements": [
+      "DELETE FROM customers WHERE id = 2"
+    ],
+    "undoDecline": {
+      "kind": "childWithoutKey",
+      "table": "log"
+    },
+    "warnings": [
+      {
+        "kind": "crossDatabaseChild",
+        "table": "x"
+      },
+      {
+        "index": "i",
+        "kind": "uncheckedIndex",
+        "table": "x"
+      }
+    ]
+  },
   "sandboxCreateResponse": {
     "sandbox": {
       "created_at": "2026-01-01T00:00:00Z",

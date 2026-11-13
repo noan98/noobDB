@@ -168,6 +168,12 @@ import { buildGridCopyInsert, buildGridCopyText, type GridCopyFormat } from "./g
 import { buildCopyFlashRange, collectAppliedFlashKeys, collectCopyFlashKeys } from "./gridCopyFlash";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { DuplicateKeysModal } from "./DuplicateKeysModal";
+import {
+  buildRowMergeTarget,
+  duplicateGroupRowIndices,
+  rowMergeMenuDisabledReason,
+  type RowMergeTarget,
+} from "./rowMerge";
 import { GridReplaceModal } from "./GridReplaceModal";
 import { Spinner } from "./Spinner";
 import { shimmerAfterCss, shimmerContainerCss } from "./Skeleton";
@@ -1507,6 +1513,11 @@ interface Props {
     whereClause: string;
     rootLimit: number;
   }) => void;
+  /**
+   * 選んだ行 (または重複グループ) を 1 件にマージする (#2303)。対象テーブルが特定できるテーブルタブの、
+   * 主キーのある 2 行以上にだけ導線を出す。
+   */
+  onMergeRows?: (target: RowMergeTarget) => void;
   /**
    * 結果パネルの全画面モーダル表示の現在状態。`onToggleMaximize` が渡されたときだけ
    * ツールバーに最大化/復元トグルを出し、`maximized` でアイコンとツールチップを切り替える。
@@ -4170,6 +4181,7 @@ export const DataGrid = memo(function DataGrid({
   onExploreColumn,
   onExtractSubset,
   onCloneRows,
+  onMergeRows,
   findHits,
   findCurrentKey,
   findNav,
@@ -4401,6 +4413,11 @@ export const DataGrid = memo(function DataGrid({
     whereClause: string;
     rootLimit: number;
   }) => void;
+  /**
+   * 選んだ行 (または重複グループ) を 1 件にマージする (#2303)。対象テーブルが特定できるテーブルタブの、
+   * 主キーのある 2 行以上にだけ導線を出す。
+   */
+  onMergeRows?: (target: RowMergeTarget) => void;
   /**
    * 結果内検索 (#644) のヒットセル ("row:col" キー) の集合。該当セルに
    * ハイライトクラスを付ける。省略時 (検索バーが閉じている/プレビュー) は無印。
@@ -7785,6 +7802,45 @@ export const DataGrid = memo(function DataGrid({
                   ];
                 })()
               : []),
+            // 選んだ行を 1 件にマージ (#2303)。表が特定できる・主キーがある・2 行以上のときだけ有効にする。
+            ...(onMergeRows
+              ? (() => {
+                  const target = copyTargetFor(copyMenu.rowIdx, copyMenu.colIdx);
+                  const pks = pkIndices ?? [];
+                  const pkMasked = target.rowIndices.some((ri) => pks.some((ci) => cellMaskedNow(ri, ci)));
+                  const built = buildRowMergeTarget({
+                    columns,
+                    rows,
+                    rowIndices: target.rowIndices,
+                    pkIndices: pks,
+                  });
+                  const reasonKey = rowMergeMenuDisabledReason({
+                    hasTable: !!rowSqlTable,
+                    identityStrategy: rowIdentityStrategy,
+                    pkMasked,
+                    built,
+                  });
+                  const reason = reasonKey ? t(reasonKey) : null;
+                  return [
+                    {
+                      label: t("gridMergeRows", {
+                        count: built.ok ? built.target.keys.length : target.rowIndices.length,
+                      }),
+                      title: reason ?? t("gridMergeRowsTitle"),
+                      disabled: reason !== null,
+                      onSelect: () => {
+                        if (!built.ok || !rowSqlTable) return;
+                        setCopyMenu(null);
+                        onMergeRows({
+                          database: rowSqlDatabase ?? null,
+                          table: rowSqlTable,
+                          ...built.target,
+                        });
+                      },
+                    },
+                  ];
+                })()
+              : []),
             // セル値のクイックフィルタ (#914)。探索で最頻用の「この値で絞る」を
             // 右クリック 1 手にする。新しいフィルタモデルは作らず、既存の 2 経路
             // (table タブのサーバ側 WHERE / クエリ結果のクライアント側
@@ -8927,6 +8983,7 @@ export const ResultGrid = memo(
       onExploreColumn,
       onExtractSubset,
       onCloneRows,
+      onMergeRows,
       maximized,
       onToggleMaximize,
       onPinResult,
@@ -9097,6 +9154,11 @@ export const ResultGrid = memo(
     // 重複キー検出 (#1628): ダイアログの対象列と、重複行だけに絞り込む行インデックス。
     const [dupColIdx, setDupColIdx] = useState<number | null>(null);
     const [dupRowAllow, setDupRowAllow] = useState<ReadonlySet<number> | null>(null);
+    // 重複グループごとの行インデックス。行データと列の組ごとに 1 回だけ計算する (グループ数 × 行数の走査を避ける)。
+    const dupGroupCache = useMemo(() => {
+      void result?.rows; // 行データが変わったら作り直す
+      return new Map<string, number[]>();
+    }, [result?.rows]);
     // 結果の行が入れ替わったら (再実行・編集適用・load-more) 古いインデックスの絞り込みは捨てる。
     // biome-ignore lint/correctness/useExhaustiveDependencies: result?.rows の同一性が変わったことのトリガ依存
     useEffect(() => {
@@ -10740,6 +10802,38 @@ export const ResultGrid = memo(
               filterActive={dupRowAllow !== null}
               onShowDuplicates={(idx) => setDupRowAllow(new Set(idx))}
               onClearFilter={() => setDupRowAllow(null)}
+              onMergeGroup={
+                onMergeRows &&
+                table &&
+                (identityStrategy === "primary_key" || identityStrategy === "unique_key")
+                  ? (cols, firstRow) => {
+                      const cacheKey = `${cols.join(",")}:${firstRow}`;
+                      let rowIndices = dupGroupCache.get(cacheKey);
+                      if (!rowIndices) {
+                        rowIndices = duplicateGroupRowIndices(result.rows, cols, firstRow);
+                        dupGroupCache.set(cacheKey, rowIndices);
+                      }
+                      // 右クリックメニューと同じく、主キー列がマスク中なら出さない (モーダル内に表示解除は無い)。
+                      const maskedNow = resolveMaskedColumns(
+                        result.columns.map((c) => c.name),
+                        maskConfig ?? {
+                          enabled: settings.columnMaskEnabled,
+                          patterns: settings.columnMaskPatterns,
+                        },
+                      );
+                      if ((pkIndices ?? []).some((ci) => maskedNow?.[ci])) return null;
+                      const built = buildRowMergeTarget({
+                        columns: result.columns,
+                        rows: result.rows,
+                        rowIndices,
+                        pkIndices,
+                      });
+                      return built.ok
+                        ? () => onMergeRows({ database: database ?? null, table, ...built.target })
+                        : null;
+                    }
+                  : undefined
+              }
               onClose={() => setDupColIdx(null)}
             />
           )}
@@ -10809,6 +10903,7 @@ export const ResultGrid = memo(
             onExploreColumn={onExploreColumn}
             onExtractSubset={onExtractSubset}
             onCloneRows={onCloneRows}
+            onMergeRows={onMergeRows}
             paginationState={paginateMode ? pagination : undefined}
             onPaginationChange={paginateMode ? setPagination : undefined}
             findHits={findHits}

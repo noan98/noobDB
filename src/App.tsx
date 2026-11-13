@@ -1,3 +1,4 @@
+import type { RowMergeTarget } from "./components/rowMerge";
 import {
   forwardRef,
   lazy,
@@ -386,6 +387,9 @@ const CreateNamespaceModal = lazy(() =>
 );
 const CreateIndexModal = lazy(() =>
   import("./components/CreateIndexModal").then((m) => ({ default: m.CreateIndexModal })),
+);
+const RowMergeModal = lazy(() =>
+  import("./components/RowMergeModal").then((m) => ({ default: m.RowMergeModal })),
 );
 const TableChunkedDmlModal = lazy(() =>
   import("./components/TableChunkedDmlModal").then((m) => ({ default: m.TableChunkedDmlModal })),
@@ -2351,6 +2355,8 @@ export default function App() {
   const [renameExistingTables, setRenameExistingTables] = useState<string[]>([]);
   const [cloneTarget, setCloneTarget] = useState<{ database: string; table: string } | null>(null);
   // 分割一括 DELETE / UPDATE ダイアログの対象 (#2020)。
+  // 重複レコードのマージ (#2303)。
+  const [rowMergeTarget, setRowMergeTarget] = useState<RowMergeTarget | null>(null);
   const [chunkedDmlTarget, setChunkedDmlTarget] = useState<{ database: string; table: string } | null>(null);
   // スキーマツリーで複数選択したテーブルの一括エクスポート / ダンプ (#1399): 対象。null で閉じる。
   const [exportTablesTarget, setExportTablesTarget] = useState<{ database: string; tables: string[] } | null>(
@@ -8645,6 +8651,8 @@ export default function App() {
     setTransferSource({ kind: "table", database, table });
   }, []);
 
+  const handleMergeRows = useCallback((target: RowMergeTarget) => setRowMergeTarget(target), []);
+
   // サブセット抽出 (#2241): 起点の表から外部キーを行単位で辿り、一部の行だけを取り出す。
   const handleExtractSubset = useCallback((database: string, table: string) => {
     setSubsetTarget({ database, table });
@@ -13227,6 +13235,7 @@ export default function App() {
     handleExploreColumns,
     handleExtractSubsetFromRows,
     handleCloneRowsFromRows,
+    handleMergeRows,
     handleNewTab,
     handleOpenAiSql,
     handleOpenSqlFile,
@@ -15479,6 +15488,40 @@ export default function App() {
                   sourceTable={cloneTarget.table}
                   onConfirm={handleCloneTableConfirm}
                   onClose={() => setCloneTarget(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {rowMergeTarget && sessionId && (
+              <Suspense fallback={null}>
+                <RowMergeModal
+                  sessionId={sessionId}
+                  driver={selectedProfile?.driver ?? "mysql"}
+                  database={rowMergeTarget.database ?? ""}
+                  table={rowMergeTarget.table}
+                  target={rowMergeTarget}
+                  readOnly={selectedProfile?.read_only ?? false}
+                  capture={
+                    settings.flightRecorderEnabled
+                      ? {
+                          rowCap: settings.flightRecorderRowCap,
+                          retentionDays: settings.flightRecorderRetentionDays,
+                        }
+                      : null
+                  }
+                  onConfirm={(sql) => runGuardedDdl(sql)}
+                  onApplied={(out) => {
+                    invalidateSchemaCache(rowMergeTarget.database);
+                    toast.success(
+                      translate(out.capture.recorded > 0 ? "rowMergeDoneUndo" : "rowMergeDone", {
+                        repointed: out.repointedRows,
+                        deleted: out.deletedRows,
+                      }),
+                    );
+                  }}
+                  onClose={() => setRowMergeTarget(null)}
                 />
               </Suspense>
             )}

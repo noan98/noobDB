@@ -301,6 +301,10 @@ const READ_ONLY_FILES: &[(&str, &str)] = &[
         "privileges.rs",
         "ユーザ/権限のみ変更し、スキーマ構造にもテーブルの行にも影響しない (本体のコメント参照)",
     ),
+    (
+        "row_merge.rs",
+        "プレビュー用の SELECT のみ (書き込みと invalidate は run_query_transaction_guarded_inner 経由)",
+    ),
     ("search.rs", "検索 (SELECT) のみ"),
     ("timelapse.rs", "履歴の SELECT のみ"),
 ];

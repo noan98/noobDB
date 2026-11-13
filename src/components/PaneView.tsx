@@ -1,3 +1,4 @@
+import type { RowMergeTarget } from "./rowMerge";
 import type { SchemaJumpTarget } from "./identifierJump";
 import {
   lazy,
@@ -198,6 +199,8 @@ export interface PaneActions {
     whereClause: string;
     rootLimit: number;
   }) => void;
+  /** 結果グリッドで選んだ行 (または重複グループ) のマージを開く (#2303)。 */
+  handleMergeRows: (target: RowMergeTarget) => void;
   handleNewTab: (paneId?: string) => void;
   handleOpenAiSql: (sql: string, database: string | null) => void;
   handleAiSqlAction: (action: AiSqlEditorAction) => void;
@@ -1370,6 +1373,13 @@ export const PaneView = memo(
                                             whereClause: string;
                                             rootLimit: number;
                                           }) => actions.handleCloneRowsFromRows(target),
+                                        )
+                                      : undefined
+                                  }
+                                  onMergeRows={
+                                    sessionId
+                                      ? gridStable.fn(`${tab.id}:mergeRows`, (target: RowMergeTarget) =>
+                                          actions.handleMergeRows(target),
                                         )
                                       : undefined
                                   }

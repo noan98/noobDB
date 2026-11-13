@@ -137,6 +137,8 @@ const COVERED: Record<string, string> = {
   SubsetPreview: "subsetPreview",
   CloneRowsPreview: "cloneRowsPreview",
   CloneRowsOutcome: "cloneRowsOutcome",
+  RowMergePreview: "rowMergePreview",
+  RowMergeOutcome: "rowMergeOutcomeApplied",
   TransferPreview: "transferPreview",
   ImportDryRunResult: "importDryRunResult",
   ImportTemplate: "importTemplate",
