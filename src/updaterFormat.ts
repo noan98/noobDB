@@ -148,6 +148,18 @@ export function parseReleaseNotes(body: string | undefined, maxLen = 2000): Rele
 }
 
 /**
+ * 更新の確認モーダルに載せるハイライト抜粋。見出しとコードは除き、本文系の先頭 `max` 項目を返す。
+ * `hasMore` は抜粋に入らなかった本文系のブロックが残っているか (続きは「更新内容を見る」へ)。
+ */
+export function releaseNoteHighlights(
+  body: string | undefined,
+  max = 3,
+): { blocks: ReleaseNoteBlock[]; hasMore: boolean } {
+  const body_ = parseReleaseNotes(body).filter((b) => b.kind !== "heading" && b.kind !== "code");
+  return { blocks: body_.slice(0, max), hasMore: body_.length > max };
+}
+
+/**
  * バージョン文字列を表示用に整える。updater が返す `version` には稀に先頭 `v` が
  * 付くことがあるため取り除き、前後空白も落とす。空なら `?` にフォールバックして
  * UI 側の undefined 表示を防ぐ。

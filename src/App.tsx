@@ -546,7 +546,11 @@ import { checkForAppUpdate, dismissUpdate, getCurrentAppVersion } from "./update
 import { applyCustomThemeVars } from "./customTheme";
 import { usePrefersMoreContrast } from "./prefersContrast";
 import { loadSkippedUpdateVersion, shouldSkipStartupNotice } from "./updateSkip";
-import { confirmAndInstallUpdate } from "./components/updatePrompt";
+import {
+  confirmAndInstallUpdate,
+  isUpdateInstallInProgress,
+  UpdatePromptHost,
+} from "./components/updatePrompt";
 import { WhatsNewModal } from "./components/WhatsNewModal";
 import { consumePendingWhatsNew, type WhatsNewEntry } from "./whatsNewStore";
 import {
@@ -1897,7 +1901,6 @@ export default function App() {
   // ブロックしない。更新があればユーザ承認制の確認ダイアログを出し、承認された
   // ときだけダウンロード・適用・再起動する (勝手には再起動しない)。
   const [startupUpdateDone, setStartupUpdateDone] = useState(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 起動時に一度だけ実行する。t/toast/confirm は初回の値で足りるので依存に含めない (再実行すると更新確認が重複する)
   useEffect(() => {
     if (!getSettings().autoUpdateCheckEnabled) {
       setStartupUpdateDone(true);
@@ -1913,7 +1916,7 @@ export default function App() {
           void dismissUpdate(update);
           return;
         }
-        await confirmAndInstallUpdate(update, { t, toast, confirm, choose, rememberSkip: true });
+        await confirmAndInstallUpdate(update, { rememberSkip: true });
       } catch {
         // ベストエフォート: 起動時チェックの失敗は静かに無視する。
       } finally {
@@ -1924,7 +1927,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-    // 起動時に一度だけ。t/toast/confirm はレンダー間で安定なので依存に含めない。
+    // 起動時に一度だけ実行する。
   }, []);
 
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
@@ -1962,6 +1965,9 @@ export default function App() {
         return;
       }
       whatsNewChecked.current = true;
+      // 「バックグラウンドで続行」でダウンロード中なら、まだ旧版で動いている。ここで消費すると
+      // 保存したばかりの新版の pending を捨ててしまうので、再起動後の起動に任せる。
+      if (isUpdateInstallInProgress()) return;
       const entry = consumePendingWhatsNew(await getCurrentAppVersion());
       // pending は消費済みなので、途中でエフェクトが再実行されても表示は捨てない。
       // 版の取得を待つ間にモーダルが開いたら、閉じるのを待ってから出す。
@@ -16304,6 +16310,7 @@ export default function App() {
           は不要 — 閉じる際はアンマウントで即座に消える。 */}
       {showTour && <OnboardingTour onClose={handleCloseTour} />}
       {confirmDialogElement}
+      <UpdatePromptHost />
       {/* ファイルのドラッグ&ドロップ時のオーバーレイ。受理/拒否を視覚的に
           示す。pointerEvents none で実際のドロップは webview のネイティブ経路に任せ、
           このレイヤはフィードバック表示専用。 */}
