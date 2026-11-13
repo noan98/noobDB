@@ -549,6 +549,7 @@ describe("SchemaCompareView の複数比較先", () => {
     await waitFor(() => expect(api.connect).toHaveBeenCalled());
     resolveA({ session_id: "s-a" });
     await waitFor(() => expect(boxes()[5]).toHaveTextContent("db1"));
+    await waitFor(() => expect(boxes()[1]).toHaveTextContent("db1"));
     expect(api.connect).toHaveBeenCalledTimes(1);
   });
 
