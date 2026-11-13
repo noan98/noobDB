@@ -4,6 +4,7 @@ import {
   buildCloneRequest,
   buildCloneRule,
   cloneBlockers,
+  cloneExpressionError,
   cloneKey,
   cloneMenuDisabledReason,
   describeRule,
@@ -121,6 +122,8 @@ describe("mappingsToTsv", () => {
       rootNewKeys: [[3]],
       recorded: 2,
       declined: 0,
+      declinedTables: [],
+      captureEnabled: true,
       batchId: "b",
       warnings: [],
     };
@@ -150,5 +153,22 @@ describe("cloneMenuDisabledReason", () => {
         built: ok,
       }),
     ).toBeNull();
+  });
+});
+
+describe("cloneExpressionError", () => {
+  it("accepts plain expressions and ';' / {old} only outside quotes", () => {
+    expect(cloneExpressionError("")).toBeNull();
+    expect(cloneExpressionError("UUID()")).toBeNull();
+    expect(cloneExpressionError("{old} || '-copy'")).toBeNull();
+    expect(cloneExpressionError("{old} || ';'")).toBeNull();
+    expect(cloneExpressionError("'it''s' || {old}")).toBeNull();
+  });
+  it("rejects a statement separator and {old} inside quotes or comments", () => {
+    expect(cloneExpressionError("1; DROP TABLE t")).toBe("cloneRowsErrSemicolon");
+    expect(cloneExpressionError("'{old}-copy'")).toBe("cloneRowsErrOldInQuote");
+    expect(cloneExpressionError('"{old}"')).toBe("cloneRowsErrOldInQuote");
+    expect(cloneExpressionError("1 /* {old} */")).toBe("cloneRowsErrOldInQuote");
+    expect(cloneExpressionError("1 -- {old}")).toBe("cloneRowsErrOldInQuote");
   });
 });

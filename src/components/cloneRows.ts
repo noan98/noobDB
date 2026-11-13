@@ -67,6 +67,47 @@ export function buildCloneRule(
   return { table, column, rule: { kind: "expression", sql } };
 }
 
+/**
+ * 式の入力の誤りを文言キーで返す (バックエンド `db::clone_rows::validate_expression` と同じ字句検査)。
+ * `;` と `{old}` は、文字列リテラル・引用識別子・コメントの外にだけ置ける。空欄は誤りではない。
+ */
+export function cloneExpressionError(text: string): I18nKey | null {
+  if (text.trim() === "") return null;
+  let quote: string | null = null;
+  let comment: "line" | "block" | null = null;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i] ?? "";
+    const next = text[i + 1] ?? "";
+    if (comment !== null && text.startsWith("{old}", i)) return "cloneRowsErrOldInQuote";
+    if (comment === "line") {
+      if (c === "\n") comment = null;
+      continue;
+    }
+    if (comment === "block") {
+      if (c === "*" && next === "/") {
+        comment = null;
+        i++;
+      }
+      continue;
+    }
+    if (quote) {
+      if (text.startsWith("{old}", i)) return "cloneRowsErrOldInQuote";
+      if (c === quote) {
+        // 引用符の重ね書き ('') は閉じない。
+        if (next === quote) i++;
+        else quote = null;
+      }
+      continue;
+    }
+    if (c === "'" || c === '"' || c === "`") quote = c;
+    else if (c === "-" && next === "-") comment = "line";
+    else if (c === "/" && next === "*") comment = "block";
+    else if (c === ";") return "cloneRowsErrSemicolon";
+    else if (text.startsWith("{old}", i)) i += 4;
+  }
+  return null;
+}
+
 /** 同じ表・列の方針は後勝ち (置き換え) で足す。 */
 export function upsertRule(rules: CloneColumnRule[], next: CloneColumnRule): CloneColumnRule[] {
   return [...rules.filter((r) => !(r.table === next.table && r.column === next.column)), next];

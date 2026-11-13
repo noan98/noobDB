@@ -60,6 +60,8 @@ beforeEach(() => {
     rootNewKeys: [[3]],
     recorded: 2,
     declined: 0,
+    declinedTables: [],
+    captureEnabled: true,
     batchId: "b1",
     warnings: [],
   }));
@@ -74,6 +76,7 @@ function render() {
       whereClause="id IN (1)"
       rootLimit={1}
       profile={null}
+      capture={{ rowCap: 10000, retentionDays: 30 }}
       onOpenTable={() => {}}
       onClose={() => {}}
     />,

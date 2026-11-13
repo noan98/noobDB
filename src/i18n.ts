@@ -4910,6 +4910,13 @@ const en = {
     "Recorded {recorded} table(s) in the flight recorder. Undo them as one batch from there.",
   cloneRowsNoUndo:
     "These rows could not be recorded in the flight recorder, so they cannot be undone from there.",
+  cloneRowsUndoPartial:
+    "Recorded {recorded} table(s) in the flight recorder. These tables could not be recorded and cannot be undone: {tables}",
+  cloneRowsCaptureOff:
+    "The flight recorder is off, so this clone was not recorded and cannot be undone from there.",
+  cloneRowsPreviewNoUndo: "No primary key: {tables} cannot be recorded for undo (the rows are still cloned).",
+  cloneRowsErrSemicolon: "An expression must be a single expression (no ';' outside a string literal).",
+  cloneRowsErrOldInQuote: "Write {old} without quotes; it must not be inside a string literal or comment.",
   cloneRowsMappingTitle: "Old key → new key (* = the cloned start row)",
   cloneRowsNoKeyMapping: "No primary key, so there is no key mapping.",
   cloneRowsCopyMapping: "Copy mapping",
@@ -13232,7 +13239,14 @@ const ja: Dict = {
   cloneRowsRunError: "複製に失敗しました (何も書き込まれていません): {error}",
   cloneRowsDone: "{tables} 表・{rows} 行を複製しました。",
   cloneRowsUndoHint: "{recorded} 表分をフライトレコーダーに記録しました。そこから 1 バッチで取り消せます。",
-  cloneRowsNoUndo: "フライトレコーダーに記録できなかったため、そこからは取り消せません。",
+  cloneRowsNoUndo: "フライトレコーダーに記録できなかったため、そこからは取り消せません: {tables}",
+  cloneRowsUndoPartial:
+    "{recorded} 表分をフライトレコーダーに記録しました。次の表は記録できず取り消せません: {tables}",
+  cloneRowsCaptureOff:
+    "フライトレコーダーがオフのため、この複製は記録されておらず、そこからは取り消せません。",
+  cloneRowsPreviewNoUndo: "主キーなし: {tables} は Undo の記録ができません (複製自体は行われます)。",
+  cloneRowsErrSemicolon: "式は 1 つの式だけにしてください (文字列リテラルの外に ';' は置けません)。",
+  cloneRowsErrOldInQuote: "{old} は引用符で囲まず、文字列リテラルやコメントの外に書いてください。",
   cloneRowsMappingTitle: "旧キー → 新キー (* = 複製した起点の行)",
   cloneRowsNoKeyMapping: "主キーがないため、キーの対応表はありません。",
   cloneRowsCopyMapping: "対応表をコピー",

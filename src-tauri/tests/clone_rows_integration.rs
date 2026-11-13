@@ -103,6 +103,10 @@ fn request(side: &Side, table: &str, where_clause: &str, depth: u32) -> t::Subse
     }
 }
 
+fn cap() -> Option<t::BulkCaptureConfig> {
+    Some(t::BulkCaptureConfig::default())
+}
+
 fn expr(table: &str, column: &str, sql: &str) -> t::CloneColumnRule {
     t::CloneColumnRule {
         table: table.into(),
@@ -162,7 +166,7 @@ async fn scenario(state: &t::AppState, side: &Side, random_expr: &str) {
     assert!(!p.tables[pos("orders")].needs_policy);
 
     // --- 方針が足りない (UNIQUE の衝突) 実行は、何も書かずにエラー。
-    let err = t::clone_rows_inner(state, req.clone(), vec![])
+    let err = t::clone_rows_inner(state, req.clone(), vec![], cap())
         .await
         .expect_err("must fail before writing");
     assert!(matches!(err, t::AppError::InvalidInput(_)), "{err}");
@@ -173,7 +177,7 @@ async fn scenario(state: &t::AppState, side: &Side, random_expr: &str) {
         expr("orders", "order_no", random_expr),
         lit("item_notes", "body", None),
     ];
-    let err = t::clone_rows_inner(state, req.clone(), bad)
+    let err = t::clone_rows_inner(state, req.clone(), bad, cap())
         .await
         .expect_err("NOT NULL violation");
     assert!(!matches!(err, t::AppError::ReadOnly(_)), "{err}");
@@ -199,7 +203,7 @@ async fn scenario(state: &t::AppState, side: &Side, random_expr: &str) {
         .await
         .expect("preview with rules");
     assert!(p.ready, "{p:?}");
-    let out = t::clone_rows_inner(state, req.clone(), rules)
+    let out = t::clone_rows_inner(state, req.clone(), rules, cap())
         .await
         .expect("clone");
     assert_eq!(out.total_rows, 1 + 2 + 2 + 2);
@@ -340,14 +344,19 @@ async fn scenario(state: &t::AppState, side: &Side, random_expr: &str) {
             .needs_policy
     );
     assert!(!p.ready);
-    let err = t::clone_rows_inner(state, req.clone(), vec![])
+    let err = t::clone_rows_inner(state, req.clone(), vec![], cap())
         .await
         .expect_err("no key policy");
     assert!(matches!(err, t::AppError::InvalidInput(_)), "{err}");
     assert_eq!(count(state, side, "products").await, 2);
-    let out = t::clone_rows_inner(state, req, vec![lit("products", "id", Some("70"))])
-        .await
-        .expect("clone product");
+    let out = t::clone_rows_inner(
+        state,
+        req.clone(),
+        vec![lit("products", "id", Some("70"))],
+        cap(),
+    )
+    .await
+    .expect("clone product");
     assert_eq!(
         ints(state, side, "SELECT id FROM products ORDER BY id").await,
         vec![7, 8, 70]
@@ -367,11 +376,44 @@ async fn scenario(state: &t::AppState, side: &Side, random_expr: &str) {
     // 複製した明細 1 の子 (item_notes 2 行) も付いてくる。
     assert_eq!(count(state, side, "item_notes").await, 3 + 3);
     assert_eq!(out.root_new_keys.len(), 1);
+    assert!(
+        out.capture_enabled && out.declined_tables.is_empty(),
+        "{out:?}"
+    );
+
+    // --- 記録の設定がオフ (capture なし): 複製はできるが Undo の記録は残さない。
+    let out = t::clone_rows_inner(state, req, vec![lit("products", "id", Some("71"))], None)
+        .await
+        .expect("clone without capture");
+    assert!(!out.capture_enabled);
+    assert_eq!((out.recorded, out.declined), (0, 0));
+    assert!(out.batch_id.is_none());
+    assert_eq!(
+        ints(state, side, "SELECT id FROM products ORDER BY id").await,
+        vec![7, 8, 70, 71]
+    );
+    // 上限 (行数 1) を超える複製は、一部だけを記録せず全体を辞退する。
+    let tiny = t::BulkCaptureConfig {
+        row_cap: Some(1),
+        retention_days: None,
+    };
+    let out = t::clone_rows_inner(
+        state,
+        request(side, "products", "id = 8", 3),
+        vec![lit("products", "id", Some("80"))],
+        Some(tiny),
+    )
+    .await
+    .expect("clone over the capture cap");
+    assert!(out.total_rows > 1);
+    assert_eq!(out.recorded, 0);
+    assert_eq!(out.declined_tables.len(), out.tables.len());
+    assert!(out.batch_id.is_none());
 }
 
 /// `read_only` 接続はバックエンドが拒否し、何も書かない。
 async fn scenario_read_only(state: &t::AppState, side: &Side) {
-    let err = t::clone_rows_inner(state, request(side, "orders", "id = 1", 1), vec![])
+    let err = t::clone_rows_inner(state, request(side, "orders", "id = 1", 1), vec![], cap())
         .await
         .expect_err("read-only must be rejected");
     assert!(matches!(err, t::AppError::ReadOnly(_)), "{err}");

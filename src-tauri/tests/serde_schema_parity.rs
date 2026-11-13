@@ -1527,7 +1527,9 @@ fn build_fixtures() -> serde_json::Value {
         root_key_columns: vec!["id".into()],
         root_new_keys: vec![vec![Value::Int(3)]],
         recorded: 1,
-        declined: 0,
+        declined: 1,
+        declined_tables: vec!["audit".into()],
+        capture_enabled: true,
         batch_id: Some("b1-abc".into()),
         warnings: vec![],
     };

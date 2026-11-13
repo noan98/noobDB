@@ -3417,15 +3417,23 @@ export interface CloneTableOutcome {
   keyColumns: string[];
   mappings: CloneKeyMapping[];
 }
+/** 行の複製の Undo 記録オプション。省略 / null は記録しない。 */
+export interface CloneCaptureOptions {
+  rowCap?: number | null;
+  retentionDays?: number | null;
+}
 export interface CloneRowsOutcome {
   tables: CloneTableOutcome[];
   totalRows: number;
   rootTable: string;
   rootKeyColumns: string[];
   rootNewKeys: CellValue[][];
-  /** Undo 用に保存した記録の件数と、記録できなかった表の数。 */
+  /** Undo 用に保存した記録の件数と、記録できなかった表の数・表名。 */
   recorded: number;
   declined: number;
+  declinedTables: string[];
+  /** フライトレコーダーへの記録を試みたか (設定がオフ・履歴を残さない接続では false)。 */
+  captureEnabled: boolean;
   batchId: string | null;
   warnings: SubsetWarning[];
 }

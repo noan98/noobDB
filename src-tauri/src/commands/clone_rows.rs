@@ -21,6 +21,7 @@ use std::time::Instant;
 use serde::Serialize;
 use tauri::State;
 
+use crate::commands::bulk_capture::BulkCaptureConfig;
 use crate::commands::query::record_write_history;
 use crate::commands::subset::{collect_subset_with, CollectMode, SubsetColumnInfo, SubsetRequest};
 use crate::db::clone_rows::{
@@ -41,6 +42,18 @@ use crate::state::{AppState, Session};
 
 /// 履歴に残す `INSERT` 文の最大数 (それ以上は省略する)。
 const HISTORY_STATEMENTS: usize = 200;
+/// 履歴に残す SQL テキストの最大文字数 (超えたら末尾を省略する)。
+const HISTORY_MAX_CHARS: usize = 20_000;
+
+fn history_text(statements: &[String]) -> String {
+    let joined = statements.join(";\n");
+    if joined.chars().count() <= HISTORY_MAX_CHARS {
+        return joined;
+    }
+    let mut cut: String = joined.chars().take(HISTORY_MAX_CHARS).collect();
+    cut.push_str("\n-- (truncated)");
+    cut
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -99,6 +112,10 @@ pub struct CloneRowsOutcome {
     /// Undo 用に保存した記録の件数と、記録できなかった表の数 (主キーが無い等)。
     pub recorded: u32,
     pub declined: u32,
+    /// 記録できなかった表 (主キーが無い・読み戻せない・行数の上限超過・保存の失敗)。
+    pub declined_tables: Vec<String>,
+    /// フライトレコーダーへの記録を試みたか (設定がオフ・履歴を残さない接続では偽)。
+    pub capture_enabled: bool,
     /// 記録に共通のバッチ id (保存できなければ `None`)。
     pub batch_id: Option<String>,
     pub warnings: Vec<SubsetWarning>,
@@ -114,7 +131,11 @@ struct Prepared {
 }
 
 /// 方針の指定を検査する (存在しない列・不正な式はエラー。行の無い表への指定は無視する)。
-fn validate_rules(prepared: &[CloneTable], rules: &[CloneColumnRule]) -> Result<()> {
+fn validate_rules(
+    driver: DriverKind,
+    prepared: &[CloneTable],
+    rules: &[CloneColumnRule],
+) -> Result<()> {
     for (table, cols) in rule_columns(rules) {
         let Some(t) = prepared.iter().find(|t| t.meta.name == table) else {
             continue;
@@ -129,7 +150,7 @@ fn validate_rules(prepared: &[CloneTable], rules: &[CloneColumnRule]) -> Result<
     }
     for r in rules {
         if let KeyRule::Expression { sql } = &r.rule {
-            validate_expression(sql)?;
+            validate_expression(driver, sql)?;
         }
     }
     Ok(())
@@ -175,7 +196,7 @@ async fn prepare(
             unique_indexes,
         });
     }
-    validate_rules(&tables, rules)?;
+    validate_rules(driver, &tables, rules)?;
     let inputs: Vec<CloneInput<'_>> = tables
         .iter()
         .zip(collected.result.tables.iter())
@@ -370,7 +391,7 @@ async fn apply(
                     },
                     KeyRule::Expression { sql } => {
                         let select =
-                            expression_select(driver, sql, ty, old.get(i).unwrap_or(&Value::Null));
+                            expression_select(driver, sql, ty, old.get(i).unwrap_or(&Value::Null))?;
                         let res = conn.execute_in_transaction(&select).await?;
                         first_cell(&res, "the key expression")?
                     }
@@ -524,6 +545,7 @@ pub async fn clone_rows_inner(
     state: &AppState,
     request: SubsetRequest,
     rules: Vec<CloneColumnRule>,
+    capture: Option<BulkCaptureConfig>,
 ) -> Result<CloneRowsOutcome> {
     let session = state
         .get(&request.source_session_id)
@@ -554,7 +576,7 @@ pub async fn clone_rows_inner(
             }
             record_write_history(
                 &session,
-                statements.join(";\n"),
+                history_text(&statements),
                 prepared.exec_db.as_deref(),
                 None,
                 None,
@@ -568,7 +590,7 @@ pub async fn clone_rows_inner(
     let total: u64 = applied.iter().map(|a| a.rows).sum();
     record_write_history(
         &session,
-        statements.join(";\n"),
+        history_text(&statements),
         prepared.exec_db.as_deref(),
         Some(total as i64),
         Some(started.elapsed().as_millis() as i64),
@@ -577,48 +599,66 @@ pub async fn clone_rows_inner(
     .await;
     session.query_cache.invalidate_all().await;
 
-    // Undo の記録 (親が先の順で保存するので、バッチの取り消しは子から消える)。
+    // Undo の記録 (親が先の順で保存するので、バッチの取り消しは子から消える)。フライトレコーダーの
+    // 設定がオフ (`capture` なし) か履歴を残さない接続なら記録しない。行数が上限を超えるときは
+    // 一部だけを記録すると取り消しが不完全になるので、全体を辞退する。
+    let capture_cfg = capture.filter(|_| !session.skip_history);
+    let capture_enabled = capture_cfg.is_some();
     let batch_id = new_batch_id();
-    let (mut recorded, mut declined) = (0u32, 0u32);
-    for (ct, a) in prepared.tables.iter().zip(applied.iter()) {
-        let Some(after) = &a.after_rows else {
-            declined += 1;
-            continue;
-        };
-        let capture = WriteCapture {
-            kind: WriteKind::Insert,
-            capturable: true,
-            reason: None,
-            table: Some(ct.meta.name.clone()),
-            primary_key: ct.meta.primary_key.clone(),
-            columns: ct.meta.columns.clone(),
-            column_types: ct.meta.column_types.clone(),
-            before_rows: Vec::new(),
-            after_rows: after.clone(),
-            rows_affected: after.len() as u64,
-            companion: None,
-        };
-        let saved = persist_capture(
-            session.skip_history,
-            session.profile_id.clone(),
-            session.conn.driver_kind(),
-            prepared.exec_db.clone(),
-            format!(
-                "-- clone rows (#2304): {} ({} row(s))",
-                ct.meta.name,
-                after.len()
-            ),
-            &capture,
-            None,
-            Some(batch_id.clone()),
-        )
-        .await;
-        if saved.is_some() {
-            recorded += 1;
+    let (mut recorded, mut declined_tables) = (0u32, Vec::<String>::new());
+    if let Some(cfg) = &capture_cfg {
+        let row_cap = cfg
+            .row_cap
+            .map_or(crate::db::DEFAULT_CAPTURE_ROW_CAP as u64, u64::from);
+        if total > row_cap {
+            declined_tables = prepared
+                .tables
+                .iter()
+                .map(|t| t.meta.name.clone())
+                .collect();
         } else {
-            declined += 1;
+            for (ct, a) in prepared.tables.iter().zip(applied.iter()) {
+                let Some(after) = &a.after_rows else {
+                    declined_tables.push(ct.meta.name.clone());
+                    continue;
+                };
+                let capture = WriteCapture {
+                    kind: WriteKind::Insert,
+                    capturable: true,
+                    reason: None,
+                    table: Some(ct.meta.name.clone()),
+                    primary_key: ct.meta.primary_key.clone(),
+                    columns: ct.meta.columns.clone(),
+                    column_types: ct.meta.column_types.clone(),
+                    before_rows: Vec::new(),
+                    after_rows: after.clone(),
+                    rows_affected: after.len() as u64,
+                    companion: None,
+                };
+                let saved = persist_capture(
+                    session.skip_history,
+                    session.profile_id.clone(),
+                    session.conn.driver_kind(),
+                    prepared.exec_db.clone(),
+                    format!(
+                        "-- clone rows (#2304): {} ({} row(s))",
+                        ct.meta.name,
+                        after.len()
+                    ),
+                    &capture,
+                    cfg.retention_days.map(i64::from),
+                    Some(batch_id.clone()),
+                )
+                .await;
+                if saved.is_some() {
+                    recorded += 1;
+                } else {
+                    declined_tables.push(ct.meta.name.clone());
+                }
+            }
         }
     }
+    let declined = declined_tables.len() as u32;
 
     let root_table = prepared.root_table.clone();
     let root_applied = prepared
@@ -657,6 +697,8 @@ pub async fn clone_rows_inner(
         root_new_keys,
         recorded,
         declined,
+        declined_tables,
+        capture_enabled,
         batch_id: (recorded > 0).then_some(batch_id),
         warnings: prepared.collected.result.warnings.clone(),
     })
@@ -668,7 +710,8 @@ pub async fn clone_rows_inner(
 pub async fn clone_rows(
     request: SubsetRequest,
     rules: Vec<CloneColumnRule>,
+    capture: Option<BulkCaptureConfig>,
     state: State<'_, AppState>,
 ) -> Result<CloneRowsOutcome> {
-    clone_rows_inner(&state, request, rules).await
+    clone_rows_inner(&state, request, rules, capture).await
 }

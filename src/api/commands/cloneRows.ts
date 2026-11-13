@@ -2,7 +2,13 @@
 import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
-import type { CloneColumnRule, CloneRowsOutcome, CloneRowsPreview, SubsetRequest } from "../tauri";
+import type {
+  CloneCaptureOptions,
+  CloneColumnRule,
+  CloneRowsOutcome,
+  CloneRowsPreview,
+  SubsetRequest,
+} from "../tauri";
 
 export const cloneRowsCommands = {
   /**
@@ -17,10 +23,15 @@ export const cloneRowsCommands = {
   /**
    * 行を子レコードごと同じ DB 内に複製する (#2304)。1 トランザクションで、失敗したら全部ロールバック。
    * 読み取り専用の接続はバックエンドが拒否する。旧キー → 新キーの対応表を返し、新しい行は
-   * `batchId` のバッチとしてフライトレコーダーから取り消せる。
+   * `batchId` のバッチとしてフライトレコーダーから取り消せる (`capture` を渡したときだけ記録する。
+   * 行数が `rowCap` を超えるときは全体を記録しない)。
    */
-  cloneRows: (request: SubsetRequest, rules: CloneColumnRule[]) =>
-    invoke<CloneRowsOutcome>("clone_rows", { request, rules }).then((r) =>
-      parseResponse(schemas.cloneRowsOutcome, r, "clone_rows"),
-    ),
+  cloneRows: (request: SubsetRequest, rules: CloneColumnRule[], capture: CloneCaptureOptions | null) =>
+    invoke<CloneRowsOutcome>("clone_rows", {
+      request,
+      rules,
+      capture: capture
+        ? { row_cap: capture.rowCap ?? null, retention_days: capture.retentionDays ?? null }
+        : null,
+    }).then((r) => parseResponse(schemas.cloneRowsOutcome, r, "clone_rows")),
 };

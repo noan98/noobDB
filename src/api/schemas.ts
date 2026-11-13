@@ -2627,6 +2627,8 @@ export const cloneRowsOutcome = z.object({
   rootNewKeys: z.array(z.array(cellValue)),
   recorded: z.number(),
   declined: z.number(),
+  declinedTables: z.array(z.string()),
+  captureEnabled: z.boolean(),
   batchId: z.string().nullable(),
   warnings: z.array(subsetWarning),
 });

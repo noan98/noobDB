@@ -55,8 +55,17 @@ pub struct CloneColumnRule {
     pub rule: KeyRule,
 }
 
-/// 式を実行してよい形か検査する。評価は `SELECT (式)` の 1 文に限り、文の区切りは許さない。
-pub fn validate_expression(sql: &str) -> Result<()> {
+/// 文字列リテラル・引用識別子・コメントの中身を伏せた SQL (`db::mask_for_driver`)。
+fn masked(driver: DriverKind, sql: &str) -> Vec<char> {
+    let chars: Vec<char> = sql.chars().collect();
+    super::mask_for_driver(driver, &chars)
+}
+
+/// 式を実行してよい形か検査する。評価は `SELECT (式)` の 1 文に限る。
+/// - 文の区切り `;` は、文字列リテラル・引用識別子・コメントの外に置けない。
+/// - `{old}` (元の値のリテラルに置き換わる) も、それらの外にだけ置ける。引用符の中に書くと
+///   リテラルの引用が食い違い、行データが SQL として実行されてしまう (`{old}` は引用符で囲まない)。
+pub fn validate_expression(driver: DriverKind, sql: &str) -> Result<()> {
     let t = sql.trim();
     if t.is_empty() {
         return Err(AppError::InvalidInput(
@@ -68,18 +77,53 @@ pub fn validate_expression(sql: &str) -> Result<()> {
             "the key expression exceeds {MAX_EXPRESSION_LEN} characters"
         )));
     }
-    if t.contains(';') {
+    let src: Vec<char> = t.chars().collect();
+    let m = masked(driver, t);
+    if m.len() != src.len() {
         return Err(AppError::InvalidInput(
-            "the key expression must be a single expression (no ';')".into(),
+            "the key expression could not be analyzed".into(),
         ));
+    }
+    if m.contains(&';') {
+        return Err(AppError::InvalidInput(
+            "the key expression must be a single expression (no ';' outside a string literal)"
+                .into(),
+        ));
+    }
+    let ph: Vec<char> = OLD_PLACEHOLDER.chars().collect();
+    let mut i = 0;
+    while i + ph.len() <= src.len() {
+        if src[i..i + ph.len()] == ph[..] {
+            if m[i..i + ph.len()] != ph[..] {
+                return Err(AppError::InvalidInput(
+                    "{old} must not be inside a string literal, quoted identifier or comment; write it without quotes".into(),
+                ));
+            }
+            i += ph.len();
+        } else {
+            i += 1;
+        }
     }
     Ok(())
 }
 
-/// 式の `{old}` を元の値のリテラルに置き換えて、評価用の `SELECT` を作る。
-pub fn expression_select(driver: DriverKind, sql: &str, column_type: &str, old: &Value) -> String {
+/// 式の `{old}` を元の値のリテラルに置き換えて、評価用の `SELECT` を作る。置き換えた後の SQL にも
+/// 文の区切りが現れていないことを再検査する (元の値に `;` や引用符があっても 1 文のまま)。
+pub fn expression_select(
+    driver: DriverKind,
+    sql: &str,
+    column_type: &str,
+    old: &Value,
+) -> Result<String> {
+    validate_expression(driver, sql)?;
     let lit = key_literal(driver, column_type, old);
-    format!("SELECT ({})", sql.trim().replace(OLD_PLACEHOLDER, &lit))
+    let out = format!("SELECT ({})", sql.trim().replace(OLD_PLACEHOLDER, &lit));
+    if masked(driver, &out).contains(&';') {
+        return Err(AppError::InvalidInput(
+            "the key expression produced more than one statement".into(),
+        ));
+    }
+    Ok(out)
 }
 
 /// 複製する表のメタデータ。
@@ -410,27 +454,54 @@ pub fn key_of(meta: &SubsetTable, row: &[Value]) -> Option<Vec<Value>> {
         .collect()
 }
 
-/// 主キーの列のうち DB が採番する列を判定する。
+/// 既定値の式が「行ごとに値が変わる」もの (採番・乱数・UUID) か。定数・`CURRENT_TIMESTAMP` 以外の
+/// 固定の既定値 (例: `tenant_id DEFAULT 1`) を採番扱いにすると、複製が静かに別の値へ変わる。
+fn is_generating_default(default: &str) -> bool {
+    let d = default.to_ascii_lowercase();
+    [
+        "nextval(",
+        "gen_random_uuid",
+        "uuid_generate_",
+        "uuid_generate",
+        "randomblob(",
+        "random()",
+    ]
+    .iter()
+    .any(|k| d.contains(k))
+}
+
+/// 主キーの列のうち DB が採番する列を判定する。それ以外の主キー列は元の値のまま (`Unchanged`)。
 /// - MySQL: `AUTO_INCREMENT`。
-/// - PostgreSQL: IDENTITY / serial (`nextval(...)` の既定値) / その他の既定値 (`RETURNING` で受け取れる)。
-/// - SQLite: 単一列の `INTEGER PRIMARY KEY` (rowid の別名) / 既定値のある列。
+/// - PostgreSQL: IDENTITY / `nextval(` / 揮発する既定値 (`gen_random_uuid()` など。`RETURNING` で受け取れる)。
+///   単一列の主キーなら、どんな既定値でも採番扱い。
+/// - SQLite: 単一列の `INTEGER PRIMARY KEY` (rowid の別名) / 揮発する既定値 (`randomblob` など)。
+///   単一列の主キーなら既定値のある列も採番扱い。
 pub fn auto_columns(
     driver: DriverKind,
     columns: &[super::types::TableColumnInfo],
     primary_key: &[String],
 ) -> Vec<String> {
+    let single = primary_key.len() == 1;
     columns
         .iter()
         .filter(|c| primary_key.iter().any(|p| p == &c.name))
         .filter(|c| {
             let extra = c.extra.to_ascii_lowercase();
-            let has_default = c.default.as_ref().is_some_and(|d| !d.trim().is_empty());
+            let default = c
+                .default
+                .as_deref()
+                .map(str::trim)
+                .filter(|d| !d.is_empty());
+            let generating = default.is_some_and(is_generating_default);
             match driver {
                 DriverKind::Mysql => extra.contains("auto_increment"),
-                DriverKind::Postgres => extra.contains("identity") || has_default,
+                DriverKind::Postgres => {
+                    extra.contains("identity") || generating || (single && default.is_some())
+                }
                 DriverKind::Sqlite => {
-                    has_default
-                        || (primary_key.len() == 1 && c.data_type.eq_ignore_ascii_case("integer"))
+                    generating
+                        || (single
+                            && (default.is_some() || c.data_type.eq_ignore_ascii_case("integer")))
                 }
             }
         })
@@ -697,20 +768,38 @@ mod tests {
 
     #[test]
     fn expression_validation_and_substitution() {
-        assert!(validate_expression("UUID()").is_ok());
-        assert!(validate_expression("  ").is_err());
-        assert!(validate_expression("1; DROP TABLE t").is_err());
-        let sql = expression_select(
-            DriverKind::Sqlite,
-            "{old} || '-copy'",
-            "text",
-            &Value::String("A".into()),
-        );
-        assert_eq!(sql, "SELECT ('A' || '-copy')");
+        let d = DriverKind::Sqlite;
+        assert!(validate_expression(d, "UUID()").is_ok());
+        assert!(validate_expression(d, "  ").is_err());
+        assert!(validate_expression(d, "1; DROP TABLE t").is_err());
+        // 文字列リテラルの中の ';' は式の一部。
+        assert!(validate_expression(d, "{old} || ';'").is_ok());
+        let sql = expression_select(d, "{old} || '-copy'", "text", &Value::String("A".into()));
+        assert_eq!(sql.expect("select"), "SELECT ('A' || '-copy')");
+    }
+
+    #[test]
+    fn old_placeholder_must_stay_outside_quotes() {
+        for d in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
+            // 引用符の中・引用識別子・コメントの中は拒否。
+            assert!(validate_expression(d, "'{old}-copy'").is_err(), "{d:?}");
+            assert!(validate_expression(d, "'x' || '{old}'").is_err(), "{d:?}");
+            assert!(validate_expression(d, "1 /* {old} */").is_err(), "{d:?}");
+            assert!(validate_expression(d, "1 -- {old}").is_err(), "{d:?}");
+            // 外なら可。
+            assert!(validate_expression(d, "{old} + 1").is_ok(), "{d:?}");
+            // 元の値に ' や ; が入っていても、置換後は 1 文の引用符つきリテラルのまま。
+            let old = Value::String("a'; DROP TABLE t; --".into());
+            let sql = expression_select(d, "{old}", "text", &old).expect("select");
+            let m: String = masked(d, &sql).into_iter().collect();
+            assert!(!m.contains(';'), "{d:?}: {sql}");
+        }
+        assert!(validate_expression(DriverKind::Postgres, "\"{old}\"").is_err());
     }
 
     #[test]
     fn auto_columns_per_driver() {
+        let cpk_with = |c: &str| vec!["tenant_id".to_string(), c.to_string()];
         use super::super::types::TableColumnInfo;
         let col = |name: &str, ty: &str, extra: &str, default: Option<&str>| TableColumnInfo {
             name: name.into(),
@@ -750,6 +839,38 @@ mod tests {
             pk
         );
         assert!(auto_columns(DriverKind::Postgres, &[col("id", "text", "", None)], &pk).is_empty());
+        // 複合主キーの既定値つき列 (tenant_id DEFAULT 1) は採番扱いにしない。揮発する既定値は採番扱い。
+        let cpk = vec!["tenant_id".to_string(), "id".to_string()];
+        for d in [DriverKind::Postgres, DriverKind::Sqlite] {
+            assert!(
+                auto_columns(d, &[col("tenant_id", "integer", "", Some("1"))], &cpk).is_empty()
+            );
+            assert!(auto_columns(d, &[col("tenant_id", "INTEGER", "", None)], &cpk).is_empty());
+        }
+        assert_eq!(
+            auto_columns(
+                DriverKind::Postgres,
+                &[col("id", "uuid", "", Some("gen_random_uuid()"))],
+                &["id".to_string()]
+            ),
+            vec!["id".to_string()]
+        );
+        assert_eq!(
+            auto_columns(
+                DriverKind::Postgres,
+                &[col("id", "uuid", "", Some("gen_random_uuid()"))],
+                &cpk_with("id")
+            ),
+            vec!["id".to_string()]
+        );
+        assert_eq!(
+            auto_columns(
+                DriverKind::Sqlite,
+                &[col("id", "blob", "", Some("(randomblob(16))"))],
+                &cpk_with("id")
+            ),
+            vec!["id".to_string()]
+        );
         assert_eq!(
             auto_columns(DriverKind::Sqlite, &[col("id", "INTEGER", "", None)], &pk),
             pk

@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
-import { api, type CloneColumnRule, type CloneRowsOutcome, type CloneRowsPreview } from "../api/tauri";
+import {
+  api,
+  type CloneCaptureOptions,
+  type CloneColumnRule,
+  type CloneRowsOutcome,
+  type CloneRowsPreview,
+} from "../api/tauri";
 import { useT } from "../i18n";
 import { Callout } from "./Callout";
 import { copyToClipboard } from "./clipboard";
@@ -13,6 +19,7 @@ import {
   CLONE_MAX_CHILD_DEPTH,
   CLONE_MAX_CHILD_LIMIT,
   cloneBlockers,
+  cloneExpressionError,
   cloneKey,
   describeRule,
   keyStatusLabelKey,
@@ -47,6 +54,8 @@ interface Props {
   rootLimit: number;
   /** 書き込み前の確認 (本番・書き込み確認ありの接続) に使う。 */
   profile: { name: string; is_production: boolean; confirm_writes: boolean } | null;
+  /** フライトレコーダーの記録設定 (Undo 用)。null ならオフで、記録しない。 */
+  capture: CloneCaptureOptions | null;
   /** 新しい親の行がある表を開く。 */
   onOpenTable: (database: string | null, table: string) => void;
   onClose: () => void;
@@ -61,6 +70,7 @@ export function CloneRowsModal({
   whereClause,
   rootLimit,
   profile,
+  capture,
   onOpenTable,
   onClose,
 }: Props) {
@@ -147,7 +157,7 @@ export function CloneRowsModal({
     setStatus("running");
     setRunError(null);
     try {
-      const res = await api.cloneRows(request, rules);
+      const res = await api.cloneRows(request, rules, capture);
       if (unmountedRef.current || seq !== seqRef.current) return;
       setOutcome(res);
     } catch (e) {
@@ -160,6 +170,7 @@ export function CloneRowsModal({
 
   const ruleTableInfo = preview?.tables.find((x) => x.table === ruleTable) ?? null;
   const newRule = buildCloneRule(ruleTable, ruleColumn, ruleKind, ruleText);
+  const ruleError = ruleKind === "expression" ? cloneExpressionError(ruleText) : null;
   const addRule = () => {
     if (!newRule) return;
     setRules((rs) => upsertRule(rs, newRule));
@@ -312,6 +323,16 @@ export function CloneRowsModal({
                     : t("subsetWarnCycle", { tables: w.tables.join(", ") })}
             </Callout>
           ))}
+          {preview && preview.tables.some((x) => x.keyColumns.length === 0) && (
+            <Callout tone="warning" role="status">
+              {t("cloneRowsPreviewNoUndo", {
+                tables: preview.tables
+                  .filter((x) => x.keyColumns.length === 0)
+                  .map((x) => x.table)
+                  .join(", "),
+              })}
+            </Callout>
+          )}
           {previewFresh &&
             blockers.map((b) => <FieldError key={JSON.stringify(b)}>{blockerText(b)}</FieldError>)}
         </FormSection>
@@ -373,6 +394,7 @@ export function CloneRowsModal({
                 {t("cloneRowsRuleAdd")}
               </Button>
             </Flex>
+            {ruleError && <FieldError>{t(ruleError)}</FieldError>}
             {rules.map((r) => (
               <Flex
                 key={`${r.table}.${r.column}`}
@@ -406,11 +428,22 @@ export function CloneRowsModal({
             <Callout tone="success" role="status">
               {t("cloneRowsDone", { rows: outcome.totalRows, tables: outcome.tables.length })}
             </Callout>
-            <Callout tone={outcome.recorded > 0 ? "info" : "warning"} role="status">
-              {outcome.recorded > 0
-                ? t("cloneRowsUndoHint", { recorded: outcome.recorded })
-                : t("cloneRowsNoUndo")}
-            </Callout>
+            {!outcome.captureEnabled ? (
+              <Callout tone="warning" role="status">
+                {t("cloneRowsCaptureOff")}
+              </Callout>
+            ) : outcome.declinedTables.length > 0 ? (
+              <Callout tone="warning" role="status">
+                {t(outcome.recorded > 0 ? "cloneRowsUndoPartial" : "cloneRowsNoUndo", {
+                  recorded: outcome.recorded,
+                  tables: outcome.declinedTables.join(", "),
+                })}
+              </Callout>
+            ) : (
+              <Callout tone="info" role="status">
+                {t("cloneRowsUndoHint", { recorded: outcome.recorded })}
+              </Callout>
+            )}
             <FieldLabel as="div">{t("cloneRowsMappingTitle")}</FieldLabel>
             <chakra.div
               maxH="240px"

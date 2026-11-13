@@ -15555,6 +15555,14 @@ export default function App() {
                   whereClause={cloneRowsTarget.whereClause}
                   rootLimit={cloneRowsTarget.rootLimit}
                   profile={selectedProfile ?? null}
+                  capture={
+                    settings.flightRecorderEnabled
+                      ? {
+                          rowCap: settings.flightRecorderRowCap,
+                          retentionDays: settings.flightRecorderRetentionDays,
+                        }
+                      : null
+                  }
                   onOpenTable={(database, table) => {
                     if (database) handleOpenTable(database, table);
                   }}

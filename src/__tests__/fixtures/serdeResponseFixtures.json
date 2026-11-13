@@ -634,7 +634,11 @@
   },
   "cloneRowsOutcome": {
     "batchId": "b1-abc",
-    "declined": 0,
+    "captureEnabled": true,
+    "declined": 1,
+    "declinedTables": [
+      "audit"
+    ],
     "recorded": 1,
     "rootKeyColumns": [
       "id"
