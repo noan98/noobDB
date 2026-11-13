@@ -1,3 +1,4 @@
+import { createSessionPool, type SessionPool } from "../sessionPool";
 import { connectRequestFromProfile } from "../connectRequest";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
@@ -538,29 +539,27 @@ export function SchemaCompareView({
   }, [diff, releaseHeldDiff]);
 
   // Sessions this view opened, keyed by profile id so the same profile chosen
-  // on both sides reuses one connection. Disconnected on unmount.
-  const ownedRef = useRef<Map<string, string>>(new Map());
+  // on several sides shares one connection (even while it is still connecting).
+  // Disconnected on unmount; a connection finishing after unmount is dropped too (#2300).
+  const poolRef = useRef<SessionPool | null>(null);
+  if (poolRef.current === null) poolRef.current = createSessionPool((id) => api.disconnect(id));
 
   useEffect(() => {
-    const owned = ownedRef.current;
-    return () => {
-      for (const sessionId of owned.values()) {
-        api.disconnect(sessionId).catch(() => {});
-      }
-      owned.clear();
-    };
+    const pool = poolRef.current;
+    return () => pool?.release();
   }, []);
 
-  const ensureSession = useCallback(async (profile: ConnectionProfile): Promise<string> => {
-    const existing = ownedRef.current.get(profile.id);
-    if (existing) return existing;
-    const res = await api.connect(
-      // Comparison only introspects; force read-only and keep it out of history.
-      connectRequestFromProfile(profile, { read_only: true, skip_history: true }),
-    );
-    ownedRef.current.set(profile.id, res.session_id);
-    return res.session_id;
-  }, []);
+  const ensureSession = useCallback(
+    (profile: ConnectionProfile): Promise<string> =>
+      (poolRef.current as SessionPool).acquire(profile.id, async () => {
+        const res = await api.connect(
+          // Comparison only introspects; force read-only and keep it out of history.
+          connectRequestFromProfile(profile, { read_only: true, skip_history: true }),
+        );
+        return res.session_id;
+      }),
+    [],
+  );
 
   // 各側の接続選択の最新要求番号 (古い応答の破棄用)。キーは基準が "source"、比較先が `t<uid>`。
   const selectSeqRef = useRef<Record<string, number>>({});
