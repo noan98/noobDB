@@ -64,7 +64,8 @@ function finishWithoutInstall(): void {
 
 async function startInstall(): Promise<void> {
   const cur = session;
-  if (!cur) return;
+  // キーリピートなどで二重に呼ばれても、ダウンロードを重ねて走らせない。
+  if (!cur || cur.phase === "downloading" || cur.phase === "applying") return;
   // 適用後の起動で「新機能ハイライト」を出すため、再起動の前に版とノートを覚えておく (#1864)。
   savePendingWhatsNew(cur.update);
   setSession({ ...cur, phase: "downloading", progress: null, error: null, hidden: false });
@@ -75,6 +76,7 @@ async function startInstall(): Promise<void> {
     });
   } catch (e) {
     clearPendingWhatsNew();
+    if (session?.update !== cur.update) return;
     // 失敗はモーダル内に出す。バックグラウンドで続行中だった場合も再び前面に出す。
     patch({ phase: "failed", error: e instanceof Error ? e.message : String(e), hidden: false });
   }
@@ -107,6 +109,8 @@ function skipSession(): void {
 export function confirmAndInstallUpdate(update: AvailableUpdate, deps: UpdatePromptDeps = {}): Promise<void> {
   if (session) {
     // すでに別の更新モーダルが開いている。重ねず、確保したリソースだけ解放する。
+    // バックグラウンドで続行中なら、黙って終わらずに既存のモーダルを前面に戻す。
+    if (session.hidden) patch({ hidden: false });
     void dismissUpdate(update);
     return Promise.resolve();
   }

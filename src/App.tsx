@@ -1923,7 +1923,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-    // 起動時に一度だけ。t/toast/confirm はレンダー間で安定なので依存に含めない。
+    // 起動時に一度だけ実行する。
   }, []);
 
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
