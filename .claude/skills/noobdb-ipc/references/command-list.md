@@ -163,6 +163,8 @@ DB に触れず実行もしない (UI のプレビュー専用)。両環境の�
 - `describe_table`
 - `describe_table_extras` (CHECK 制約と生成列の式、#1837)
 - `list_table_triggers` (テーブルで発火するトリガー一覧、#1867)
+- `generate_audit_ddl` (変更履歴の監査表と INSERT/UPDATE/DELETE トリガーの DDL 生成。読み取りのみ、実行は通常の DDL 経路、#2305)
+- `get_audit_status` (監査トリガーの有無と記録中の列・現在の列との差 = 再生成の要否、#2305)
 - `list_table_partitions` (パーティション表の子パーティション・境界・サイズ、SQLite は非対応、#1868)
 - `schema_overview`
 - `foreign_keys`

@@ -1,5 +1,7 @@
 pub mod advisor;
 pub mod assertions;
+/// 変更履歴 (監査) テーブルとトリガーの DDL 生成 (#2305)。
+pub mod audit_trigger;
 pub mod aws_iam;
 /// 環境横断ブロードキャストの結果比較 (#1257)。
 pub mod broadcast_diff;
@@ -1681,6 +1683,24 @@ impl Connection {
             Connection::MySql(c) => c.list_table_triggers(db, table).await,
             Connection::Postgres(c) => c.list_table_triggers(db, table).await,
             Connection::Sqlite(c) => c.list_table_triggers(db, table).await,
+        }
+    }
+
+    /// 監査トリガー生成 (#2305) の事前警告コード。MySQL だけ TRIGGER 権限と、バイナリログ有効時の
+    /// `log_bin_trust_function_creators` / SUPER 不足を調べる (PostgreSQL / SQLite は常に空)。読み取りのみ。
+    pub async fn audit_trigger_preflight(&self) -> Result<Vec<String>> {
+        match self {
+            Connection::MySql(c) => c.audit_trigger_preflight().await,
+            Connection::Postgres(_) | Connection::Sqlite(_) => Ok(Vec::new()),
+        }
+    }
+
+    /// 監査トリガー (#2305) の PostgreSQL 関数の本体。オプションの印を読み戻すのに使う。
+    /// PostgreSQL 以外は常に `None`。読み取りのみ。
+    pub async fn audit_function_source(&self, schema: &str, name: &str) -> Result<Option<String>> {
+        match self {
+            Connection::Postgres(c) => c.audit_function_source(schema, name).await,
+            Connection::MySql(_) | Connection::Sqlite(_) => Ok(None),
         }
     }
 

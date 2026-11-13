@@ -558,6 +558,8 @@ safe(
   "list_server_databases",
   "list_indexes",
   "list_table_triggers",
+  "generate_audit_ddl",
+  "get_audit_status",
   "list_table_partitions",
   "list_schema_objects",
   "list_rls_tables",
@@ -775,6 +777,9 @@ const CONNECTION_READ_METHODS = new Set([
   "routine_signature",
   "list_indexes",
   "list_table_triggers",
+  // 監査トリガー生成 (#2305) の事前警告 (SHOW VARIABLES / SHOW GRANTS) と関数本体の読み取り
+  "audit_trigger_preflight",
+  "audit_function_source",
   "list_table_partitions",
   "resolve_row_key",
   "table_row_estimates",

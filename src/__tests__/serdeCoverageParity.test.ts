@@ -71,6 +71,8 @@ const COVERED: Record<string, string> = {
   IndexInfo: "indexInfo",
   TableExtrasInfo: "tableExtrasInfo",
   TableTrigger: "tableTrigger",
+  AuditDdl: "auditDdl",
+  AuditStatus: "auditStatus",
   RlsTable: "rlsTable",
   PublicationInfo: "publicationInfo",
   TableReplicaIdentity: "tableReplicaIdentity",

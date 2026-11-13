@@ -10,6 +10,8 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+#[path = "../audit_trigger_integration.rs"]
+mod audit_trigger_integration;
 #[path = "../column_deps_integration.rs"]
 mod column_deps_integration;
 #[path = "../local_query_integration.rs"]

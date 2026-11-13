@@ -60,6 +60,8 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["indexInfo", schemas.indexInfo],
   ["tableExtrasInfo", schemas.tableExtrasInfo],
   ["tableTrigger", schemas.tableTrigger],
+  ["auditDdl", schemas.auditDdl],
+  ["auditStatus", schemas.auditStatus],
   ["rlsTable", schemas.rlsTable],
   ["publicationInfo", schemas.publicationInfo],
   ["tableReplicaIdentity", schemas.tableReplicaIdentity],

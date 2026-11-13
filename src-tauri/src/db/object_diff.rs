@@ -761,6 +761,31 @@ pub fn needs_text_protocol(sql: &str) -> bool {
     false
 }
 
+/// MySQL の 1 文をどのプロトコルで流すか ([`text_protocol_mode`])。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextProtocolMode {
+    /// 通常 (prepared protocol)。
+    Prepared,
+    /// 区切り行 ([`STMT_SPLIT`]) で 1 文ずつ分けてテキストプロトコル (スキーマ同期の適用だけ)。
+    Split,
+    /// 文全体を 1 文としてテキストプロトコル (ユーザー SQL / GUI の DDL に含まれるルーチン・トリガー等の
+    /// CREATE / DROP。区切り行は解釈しないので、read_only の判定を迂回できない)。
+    Whole,
+}
+
+/// MySQL の文の実行プロトコルを決める。`allow_split` はスキーマ同期の適用 (`generate_sync_sql` 由来) だけが真。
+pub fn text_protocol_mode(allow_split: bool, sql: &str) -> TextProtocolMode {
+    if !needs_text_protocol(sql) {
+        TextProtocolMode::Prepared
+    } else if allow_split {
+        TextProtocolMode::Split
+    } else if contains_split_marker(sql) {
+        TextProtocolMode::Prepared
+    } else {
+        TextProtocolMode::Whole
+    }
+}
+
 /// 定義の `$tag$ ... $tag$` (関数本文) の中に自スキーマ名の修飾 (`db.` / `"db".`) が残っているか。
 /// 本文は書き換えないので、別名のスキーマへ適用すると参照先が変わらない (PostgreSQL のみ)。
 pub fn body_mentions_schema(driver: DriverKind, db: &str, definition: &str) -> bool {
@@ -1932,7 +1957,10 @@ mod tests {
                 .count(),
             1
         );
-        assert!(src.contains("if allow_text_protocol && super::object_diff::needs_text_protocol"));
+        // 実行経路は `text_protocol_mode(allow_text_protocol, ..)` で決め、分割 (Split) は allow のときだけ。
+        assert!(src.contains("text_protocol_mode(allow_text_protocol, st.sql)"));
+        let marker = format!("CREATE TRIGGER t x\n{STMT_SPLIT}\nDROP TABLE y");
+        assert_ne!(text_protocol_mode(false, &marker), TextProtocolMode::Split);
     }
 
     #[test]
