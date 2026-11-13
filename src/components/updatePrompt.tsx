@@ -100,6 +100,14 @@ function skipSession(): void {
 }
 
 /**
+ * ダウンロード・適用が進行中か (バックグラウンド続行中も含む)。起動時の「新機能ハイライト」判定が、
+ * 適用前の旧版のまま pending を消費して捨ててしまわないように使う。
+ */
+export function isUpdateInstallInProgress(): boolean {
+  return session?.phase === "downloading" || session?.phase === "applying";
+}
+
+/**
  * 更新がある状態から、専用モーダルでユーザ承認を得て、ダウンロード・適用・再起動まで進める。
  *   - 承認されなければ確保したリソースを解放して何もしない。
  *   - 承認されたら同じモーダル内で進捗を出し、`installUpdateAndRestart` を呼ぶ (成功時は

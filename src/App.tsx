@@ -546,7 +546,11 @@ import { checkForAppUpdate, dismissUpdate, getCurrentAppVersion } from "./update
 import { applyCustomThemeVars } from "./customTheme";
 import { usePrefersMoreContrast } from "./prefersContrast";
 import { loadSkippedUpdateVersion, shouldSkipStartupNotice } from "./updateSkip";
-import { confirmAndInstallUpdate, UpdatePromptHost } from "./components/updatePrompt";
+import {
+  confirmAndInstallUpdate,
+  isUpdateInstallInProgress,
+  UpdatePromptHost,
+} from "./components/updatePrompt";
 import { WhatsNewModal } from "./components/WhatsNewModal";
 import { consumePendingWhatsNew, type WhatsNewEntry } from "./whatsNewStore";
 import {
@@ -1961,6 +1965,9 @@ export default function App() {
         return;
       }
       whatsNewChecked.current = true;
+      // 「バックグラウンドで続行」でダウンロード中なら、まだ旧版で動いている。ここで消費すると
+      // 保存したばかりの新版の pending を捨ててしまうので、再起動後の起動に任せる。
+      if (isUpdateInstallInProgress()) return;
       const entry = consumePendingWhatsNew(await getCurrentAppVersion());
       // pending は消費済みなので、途中でエフェクトが再実行されても表示は捨てない。
       // 版の取得を待つ間にモーダルが開いたら、閉じるのを待ってから出す。

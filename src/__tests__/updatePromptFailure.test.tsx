@@ -109,6 +109,17 @@ describe("承認後の進捗と失敗 (#1534 / #2297)", () => {
     fireEvent.click(await screen.findByText(t("updateInBackground")));
     await waitFor(() => expect(resolved).toHaveBeenCalled());
     expect(dismissUpdate).not.toHaveBeenCalled();
+    // 起動時の新機能ハイライト判定が、旧版のまま pending を消費しないための目印。
+    const { isUpdateInstallInProgress } = await import("../components/updatePrompt");
+    expect(isUpdateInstallInProgress()).toBe(true);
+  });
+
+  it("失敗したら進行中の扱いを外す", async () => {
+    install.mockRejectedValue(new Error("boom"));
+    await setup();
+    fireEvent.click(await screen.findByText(t("updateDownloadAndRestart")));
+    const { isUpdateInstallInProgress } = await import("../components/updatePrompt");
+    await waitFor(() => expect(isUpdateInstallInProgress()).toBe(false));
   });
 });
 
