@@ -811,6 +811,7 @@ const CONNECTION_WRITE_METHODS = new Set([
   "begin_transaction_with",
   "execute_in_transaction",
   "fetch_in_transaction",
+  "fetch_in_transaction_bound",
   "execute_tx_control",
   "finish_transaction",
   "preview_execute_with_limit",

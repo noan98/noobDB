@@ -69,27 +69,15 @@ export function buildCloneRule(
 
 /**
  * 式の入力の誤りを文言キーで返す (バックエンド `db::clone_rows::validate_expression` と同じ字句検査)。
- * `;` と `{old}` は、文字列リテラル・引用識別子・コメントの外にだけ置ける。空欄は誤りではない。
+ * コメント (行コメントとブロックコメント。MySQL の `#` と実行コメントはバックエンドが拒否) は丸ごと禁止。`;` と `{old}` は、
+ * 文字列リテラル・引用識別子の外にだけ置ける。空欄は誤りではない。
  */
 export function cloneExpressionError(text: string): I18nKey | null {
   if (text.trim() === "") return null;
   let quote: string | null = null;
-  let comment: "line" | "block" | null = null;
   for (let i = 0; i < text.length; i++) {
     const c = text[i] ?? "";
     const next = text[i + 1] ?? "";
-    if (comment !== null && text.startsWith("{old}", i)) return "cloneRowsErrOldInQuote";
-    if (comment === "line") {
-      if (c === "\n") comment = null;
-      continue;
-    }
-    if (comment === "block") {
-      if (c === "*" && next === "/") {
-        comment = null;
-        i++;
-      }
-      continue;
-    }
     if (quote) {
       if (text.startsWith("{old}", i)) return "cloneRowsErrOldInQuote";
       if (c === quote) {
@@ -100,8 +88,7 @@ export function cloneExpressionError(text: string): I18nKey | null {
       continue;
     }
     if (c === "'" || c === '"' || c === "`") quote = c;
-    else if (c === "-" && next === "-") comment = "line";
-    else if (c === "/" && next === "*") comment = "block";
+    else if ((c === "-" && next === "-") || (c === "/" && next === "*")) return "cloneRowsErrComment";
     else if (c === ";") return "cloneRowsErrSemicolon";
     else if (text.startsWith("{old}", i)) i += 4;
   }

@@ -323,7 +323,7 @@ export function CloneRowsModal({
                     : t("subsetWarnCycle", { tables: w.tables.join(", ") })}
             </Callout>
           ))}
-          {preview && preview.tables.some((x) => x.keyColumns.length === 0) && (
+          {capture !== null && preview && preview.tables.some((x) => x.keyColumns.length === 0) && (
             <Callout tone="warning" role="status">
               {t("cloneRowsPreviewNoUndo", {
                 tables: preview.tables
@@ -390,7 +390,12 @@ export function CloneRowsModal({
                 aria-label={t("cloneRowsRuleValue")}
                 fontFamily="mono"
               />
-              <Button type="button" variant="secondary" onClick={addRule} disabled={busy || newRule === null}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={addRule}
+                disabled={busy || newRule === null || ruleError !== null}
+              >
                 {t("cloneRowsRuleAdd")}
               </Button>
             </Flex>

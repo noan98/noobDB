@@ -747,7 +747,12 @@ DELETE をフライトレコーダに 1 文ずつ記録し (`run_captured_write`
 - `clone_rows` — 1 トランザクションで複製 (失敗したら全部ロールバック)。`read_only` 接続はバックエンドで拒否
   (緊急書き込みモードでも)。`is_production` / `confirm_writes` は UI の確認。方針不足・衝突・循環は書く前に
   `InvalidInput`。旧キー → 新キーの対応表と新しい親行のキーを返し、新しい行は表ごとの `Insert` として
-  同じ `batch_id` でフライトレコーダーに記録する (`apply_flight_batch` で取り消せる。主キーの無い表は記録なし)。
+  同じ `batch_id` でフライトレコーダーに記録する (`apply_flight_batch` で取り消せる)。
+  引数 `capture` (`BulkCaptureConfig`: `rowCap` / `retentionDays`) はフロントの設定から渡し、`null` なら記録しない
+  (`captureEnabled: false`)。行数が `rowCap` を超える・主キーの無い表がある・履歴を残さない接続のときは、
+  部分的な Undo を作らないようバッチ全体を辞退し、辞退した表名を `declinedTables` で返す。
+  式の方針 (`{old}` を使える) は `SELECT (式)` を行ごとに評価する。式の中のコメントは禁止で、`{old}` は SQL に
+  埋め込まずバインドパラメータ (PG `$1` / MySQL・SQLite `?`) で渡す。
 
 ## Schema Cache (`commands/schema.rs`, #1097)
 

@@ -1009,7 +1009,7 @@ pub(crate) fn key_literal(driver: DriverKind, column_type: &str, value: &Value) 
     }
 }
 
-fn is_integer_type(column_type: &str) -> bool {
+pub(crate) fn is_integer_type(column_type: &str) -> bool {
     let t = column_type.to_ascii_lowercase();
     t.contains("int") || t.contains("serial")
 }

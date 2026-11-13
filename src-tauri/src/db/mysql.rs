@@ -211,6 +211,42 @@ impl MySqlConn {
         run_sql_on(conn, sql).await
     }
 
+    /// バインドパラメータ付きの `SELECT` を保持接続のトランザクションで流して行を読む (#2304)。
+    /// 行データ由来の値を SQL 文字列へ埋め込まないための経路。
+    pub async fn tx_fetch_bound(
+        &self,
+        sql: &str,
+        binds: &[super::clone_rows::SqlBind],
+    ) -> Result<QueryResult> {
+        use super::clone_rows::SqlBind;
+        let mut guard = self.tx.lock().await;
+        let conn = guard
+            .as_mut()
+            .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
+        let started = Instant::now();
+        let mut q = sqlx::query::<sqlx::MySql>(sqlx::AssertSqlSafe(sql));
+        for b in binds {
+            q = match b {
+                SqlBind::Int(v) => q.bind(*v),
+                SqlBind::UInt(v) => q.bind(*v),
+                SqlBind::Float(v) => q.bind(*v),
+                SqlBind::Bool(v) => q.bind(*v),
+                SqlBind::Text(v) => q.bind(v.clone()),
+                SqlBind::Bytes(v) => q.bind(v.clone()),
+            };
+        }
+        let rows: Vec<MySqlRow> = q.fetch_all(&mut **conn).await?;
+        let columns = columns_of(&rows);
+        let rows_out = rows.iter().map(row_to_values).collect();
+        Ok(QueryResult {
+            columns,
+            rows: rows_out,
+            rows_affected: 0,
+            elapsed_ms: started.elapsed().as_millis() as u64,
+            server_messages: Vec::new(),
+        })
+    }
+
     /// SAVEPOINT 等の制御文を保持接続のテキストプロトコルで実行する (#1418, 1295 回避)。
     /// `sql` は `db::savepoint` が検証済みの名前から組み立てたものだけを渡すこと。
     pub async fn tx_control(&self, sql: &str) -> Result<()> {

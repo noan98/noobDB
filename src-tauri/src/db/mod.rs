@@ -800,6 +800,20 @@ impl Connection {
         }
     }
 
+    /// バインドパラメータ付きの `SELECT` を明示トランザクションで流して行を読む (#2304)。
+    /// 行データ由来の値を SQL 文字列に埋め込まずに評価するための経路。
+    pub async fn fetch_in_transaction_bound(
+        &self,
+        sql: &str,
+        binds: &[clone_rows::SqlBind],
+    ) -> Result<QueryResult> {
+        match self {
+            Connection::MySql(c) => c.tx_fetch_bound(sql, binds).await,
+            Connection::Postgres(c) => c.tx_fetch_bound(sql, binds).await,
+            Connection::Sqlite(c) => c.tx_fetch_bound(sql, binds).await,
+        }
+    }
+
     /// 明示トランザクション内でトランザクション制御文 (SAVEPOINT 系, #1418) を流す。
     /// MySQL はプリペアド文プロトコルが SAVEPOINT 等を受け付けない (1295) ため
     /// テキストプロトコル (`raw_sql`) で実行する。PostgreSQL / SQLite は通常の

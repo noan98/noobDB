@@ -168,7 +168,12 @@ describe("cloneExpressionError", () => {
     expect(cloneExpressionError("1; DROP TABLE t")).toBe("cloneRowsErrSemicolon");
     expect(cloneExpressionError("'{old}-copy'")).toBe("cloneRowsErrOldInQuote");
     expect(cloneExpressionError('"{old}"')).toBe("cloneRowsErrOldInQuote");
-    expect(cloneExpressionError("1 /* {old} */")).toBe("cloneRowsErrOldInQuote");
-    expect(cloneExpressionError("1 -- {old}")).toBe("cloneRowsErrOldInQuote");
+  });
+  it("rejects comments outright, but not comment markers inside quotes", () => {
+    expect(cloneExpressionError("1 /* {old} */")).toBe("cloneRowsErrComment");
+    expect(cloneExpressionError("/* /* */ {old} */ 1")).toBe("cloneRowsErrComment");
+    expect(cloneExpressionError("/*!99999 {old} */")).toBe("cloneRowsErrComment");
+    expect(cloneExpressionError("1 -- {old}")).toBe("cloneRowsErrComment");
+    expect(cloneExpressionError("'a -- b /* c */'")).toBeNull();
   });
 });

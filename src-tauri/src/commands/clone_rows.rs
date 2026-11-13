@@ -35,7 +35,7 @@ use crate::db::subset::{
 };
 use crate::db::sync::table_ref_for;
 use crate::db::types::Value;
-use crate::db::{DriverKind, WriteCapture, WriteKind};
+use crate::db::{Connection, DriverKind, WriteCapture, WriteKind};
 use crate::error::{AppError, Result};
 use crate::flight_recorder::{new_batch_id, persist_capture};
 use crate::state::{AppState, Session};
@@ -180,7 +180,12 @@ async fn prepare(
             continue;
         };
         let cols = conn.columns(&db, &t.table).await?;
-        let auto = auto_columns(driver, &cols, &meta.primary_key);
+        // SQLite の INTEGER 主キーが採番されるのは rowid 表だけ (WITHOUT ROWID 表は採番されない)。
+        let rowid_alias = match conn {
+            Connection::Sqlite(c) => c.is_rowid_table(&db, &t.table).await?,
+            Connection::MySql(_) | Connection::Postgres(_) => true,
+        };
+        let auto = auto_columns(driver, &cols, &meta.primary_key, rowid_alias);
         let unique_indexes = conn
             .list_indexes(&db, &t.table)
             .await?
@@ -392,7 +397,9 @@ async fn apply(
                     KeyRule::Expression { sql } => {
                         let select =
                             expression_select(driver, sql, ty, old.get(i).unwrap_or(&Value::Null))?;
-                        let res = conn.execute_in_transaction(&select).await?;
+                        let res = conn
+                            .fetch_in_transaction_bound(&select.sql, &select.binds)
+                            .await?;
                         first_cell(&res, "the key expression")?
                     }
                 };
@@ -610,7 +617,8 @@ pub async fn clone_rows_inner(
         let row_cap = cfg
             .row_cap
             .map_or(crate::db::DEFAULT_CAPTURE_ROW_CAP as u64, u64::from);
-        if total > row_cap {
+        // 主キーのない表が 1 つでもあれば、一部の表だけの Undo は不完全なので全体を辞退する。
+        if total > row_cap || applied.iter().any(|a| a.after_rows.is_none()) {
             declined_tables = prepared
                 .tables
                 .iter()

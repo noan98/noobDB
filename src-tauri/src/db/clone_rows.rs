@@ -20,8 +20,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use serde::{Deserialize, Serialize};
 
-use super::data_diff::key_signature;
-use super::subset::{key_literal, SubsetEdge, SubsetTable};
+use super::data_diff::{is_binary_type, is_hex_wire, is_numeric_literal, key_signature};
+use super::subset::{is_integer_type, SubsetEdge, SubsetTable};
 use super::sync::quote_ident;
 use super::types::Value;
 use super::DriverKind;
@@ -39,7 +39,7 @@ pub const OLD_PLACEHOLDER: &str = "{old}";
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum KeyRule {
     /// SQL の式 (`gen_random_uuid()` / `UUID()` / `lower(hex(randomblob(16)))` など)。行ごとに
-    /// `SELECT (式)` で評価した値を INSERT する。式の中の `{old}` は元の値のリテラルに置き換わる
+    /// `SELECT (式)` で評価した値を INSERT する。式の中の `{old}` は元の値 (バインドパラメータ) に置き換わる
     /// (例: `{old} || '-copy'`)。
     Expression { sql: String },
     /// すべての複製行にこの文字列を入れる (`null` は NULL)。
@@ -62,9 +62,11 @@ fn masked(driver: DriverKind, sql: &str) -> Vec<char> {
 }
 
 /// 式を実行してよい形か検査する。評価は `SELECT (式)` の 1 文に限る。
-/// - 文の区切り `;` は、文字列リテラル・引用識別子・コメントの外に置けない。
-/// - `{old}` (元の値のリテラルに置き換わる) も、それらの外にだけ置ける。引用符の中に書くと
-///   リテラルの引用が食い違い、行データが SQL として実行されてしまう (`{old}` は引用符で囲まない)。
+/// - コメントは (MySQL の `/*!...*/` も含めて) 丸ごと禁止する。入れ子・ドライバ差で解釈が割れる。
+/// - 文の区切り `;` は、文字列リテラル・引用識別子の外に置けない。
+/// - `{old}` は引用符の外にだけ置ける。値は SQL に埋め込まずバインドパラメータで渡すので、引用符の
+///   中に書いても値にはならない (書いた人の意図と食い違う)。
+/// - バインド記号 (PostgreSQL の `$1`、MySQL / SQLite の `?`) を式に直接書くことはできない。
 pub fn validate_expression(driver: DriverKind, sql: &str) -> Result<()> {
     let t = sql.trim();
     if t.is_empty() {
@@ -77,6 +79,11 @@ pub fn validate_expression(driver: DriverKind, sql: &str) -> Result<()> {
             "the key expression exceeds {MAX_EXPRESSION_LEN} characters"
         )));
     }
+    if super::strip_sql_comments(t, super::sql_flavor_of(driver)) != t {
+        return Err(AppError::InvalidInput(
+            "the key expression must not contain comments".into(),
+        ));
+    }
     let src: Vec<char> = t.chars().collect();
     let m = masked(driver, t);
     if m.len() != src.len() {
@@ -88,6 +95,15 @@ pub fn validate_expression(driver: DriverKind, sql: &str) -> Result<()> {
         return Err(AppError::InvalidInput(
             "the key expression must be a single expression (no ';' outside a string literal)"
                 .into(),
+        ));
+    }
+    let own_bind = match driver {
+        DriverKind::Postgres => m.windows(2).any(|w| w[0] == '$' && w[1].is_ascii_digit()),
+        _ => m.contains(&'?'),
+    };
+    if own_bind {
+        return Err(AppError::InvalidInput(
+            "the key expression must not contain bind placeholders ($1 / ?)".into(),
         ));
     }
     let ph: Vec<char> = OLD_PLACEHOLDER.chars().collect();
@@ -107,23 +123,128 @@ pub fn validate_expression(driver: DriverKind, sql: &str) -> Result<()> {
     Ok(())
 }
 
-/// 式の `{old}` を元の値のリテラルに置き換えて、評価用の `SELECT` を作る。置き換えた後の SQL にも
-/// 文の区切りが現れていないことを再検査する (元の値に `;` や引用符があっても 1 文のまま)。
+/// バインドする値 (ドライバへ渡す型付きの値)。元の値は SQL の文字列にしない。
+#[derive(Debug, Clone, PartialEq)]
+pub enum SqlBind {
+    Int(i64),
+    UInt(u64),
+    Float(f64),
+    Bool(bool),
+    Text(String),
+    Bytes(Vec<u8>),
+}
+
+/// バインドパラメータ付きの評価用 `SELECT`。
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoundSelect {
+    pub sql: String,
+    pub binds: Vec<SqlBind>,
+}
+
+fn decode_hex(s: &str) -> Option<Vec<u8>> {
+    let b = s.as_bytes();
+    if b.len() % 2 != 0 {
+        return None;
+    }
+    b.chunks(2)
+        .map(|p| {
+            let h = (p[0] as char).to_digit(16)?;
+            let l = (p[1] as char).to_digit(16)?;
+            Some((h * 16 + l) as u8)
+        })
+        .collect()
+}
+
+/// 元の値を、桁を丸めずにバインドできる型へ直す。`None` は NULL。
+/// 整数列の数字の文字列 (JS の安全整数を超える値) は整数のまま、バイナリ列の 16 進文字列は
+/// バイト列にする (`db::subset::key_literal` と同じ解釈)。
+pub fn bind_of(column_type: &str, value: &Value) -> Option<SqlBind> {
+    match value {
+        Value::Null => None,
+        Value::Bool(b) => Some(SqlBind::Bool(*b)),
+        Value::Int(i) => Some(SqlBind::Int(*i)),
+        Value::UInt(u) => Some(SqlBind::UInt(*u)),
+        Value::Float(f) => Some(SqlBind::Float(*f)),
+        Value::Bytes(h) => Some(match decode_hex(h) {
+            Some(b) => SqlBind::Bytes(b),
+            None => SqlBind::Text(h.clone()),
+        }),
+        Value::String(s) => {
+            let t = s.trim();
+            if is_binary_type(column_type) && is_hex_wire(s) {
+                if let Some(b) = decode_hex(s) {
+                    return Some(SqlBind::Bytes(b));
+                }
+            }
+            if is_integer_type(column_type) && is_numeric_literal(t) {
+                if let Ok(i) = t.parse::<i64>() {
+                    return Some(SqlBind::Int(i));
+                }
+                if let Ok(u) = t.parse::<u64>() {
+                    return Some(SqlBind::UInt(u));
+                }
+            }
+            Some(SqlBind::Text(s.clone()))
+        }
+    }
+}
+
+/// 式の `{old}` を、元の値のバインドパラメータに置き換えた評価用の `SELECT` を作る。値は SQL の
+/// 文字列に埋め込まない (PostgreSQL は `$1::型`、MySQL / SQLite は出現ごとに `?`)。NULL だけは
+/// `NULL` と直接書く。置き換えた後の SQL にも文の区切りが現れていないことを再検査する。
 pub fn expression_select(
     driver: DriverKind,
     sql: &str,
     column_type: &str,
     old: &Value,
-) -> Result<String> {
+) -> Result<BoundSelect> {
     validate_expression(driver, sql)?;
-    let lit = key_literal(driver, column_type, old);
-    let out = format!("SELECT ({})", sql.trim().replace(OLD_PLACEHOLDER, &lit));
+    let t = sql.trim();
+    let bind = bind_of(column_type, old);
+    let mut binds = Vec::new();
+    let body = match (&bind, driver) {
+        (None, _) => t.replace(OLD_PLACEHOLDER, "NULL"),
+        (Some(b), DriverKind::Postgres) => {
+            if !t.contains(OLD_PLACEHOLDER) {
+                t.to_string()
+            } else {
+                let (slot, value) = match b {
+                    SqlBind::Int(_) => ("$1::int8", b.clone()),
+                    SqlBind::Float(_) => ("$1::float8", b.clone()),
+                    SqlBind::Bool(_) => ("$1::bool", b.clone()),
+                    SqlBind::Bytes(_) => ("$1::bytea", b.clone()),
+                    SqlBind::Text(_) => ("$1::text", b.clone()),
+                    // u64 は int8 に収まらないので numeric として受ける
+                    SqlBind::UInt(u) => match i64::try_from(*u) {
+                        Ok(i) => ("$1::int8", SqlBind::Int(i)),
+                        Err(_) => ("CAST($1::text AS numeric)", SqlBind::Text(u.to_string())),
+                    },
+                };
+                binds.push(value);
+                t.replace(OLD_PLACEHOLDER, slot)
+            }
+        }
+        (Some(b), _) => {
+            let n = t.matches(OLD_PLACEHOLDER).count();
+            let value = match (b, driver) {
+                // SQLite の整数は符号付き 64 ビット
+                (SqlBind::UInt(u), DriverKind::Sqlite) => match i64::try_from(*u) {
+                    Ok(i) => SqlBind::Int(i),
+                    Err(_) => SqlBind::Text(u.to_string()),
+                },
+                _ => b.clone(),
+            };
+            binds.extend(std::iter::repeat(value).take(n));
+            t.replace(OLD_PLACEHOLDER, "?")
+        }
+    };
+    let out = format!("SELECT ({body})");
     if masked(driver, &out).contains(&';') {
         return Err(AppError::InvalidInput(
             "the key expression produced more than one statement".into(),
         ));
     }
-    Ok(out)
+    Ok(BoundSelect { sql: out, binds })
 }
 
 /// 複製する表のメタデータ。
@@ -473,13 +594,15 @@ fn is_generating_default(default: &str) -> bool {
 /// 主キーの列のうち DB が採番する列を判定する。それ以外の主キー列は元の値のまま (`Unchanged`)。
 /// - MySQL: `AUTO_INCREMENT`。
 /// - PostgreSQL: IDENTITY / `nextval(` / 揮発する既定値 (`gen_random_uuid()` など。`RETURNING` で受け取れる)。
-///   単一列の主キーなら、どんな既定値でも採番扱い。
-/// - SQLite: 単一列の `INTEGER PRIMARY KEY` (rowid の別名) / 揮発する既定値 (`randomblob` など)。
-///   単一列の主キーなら既定値のある列も採番扱い。
+/// - SQLite: rowid の別名になる単一列の `INTEGER PRIMARY KEY` / 揮発する既定値 (`randomblob` など)。
+///   `rowid_alias` は表が rowid 表かどうか (WITHOUT ROWID 表の INTEGER 主キーは採番されない)。
+///
+/// 定数の既定値 (`DEFAULT 1`) は、INSERT から外しても元の行と同じ値になり衝突するので採番扱いにしない。
 pub fn auto_columns(
     driver: DriverKind,
     columns: &[super::types::TableColumnInfo],
     primary_key: &[String],
+    rowid_alias: bool,
 ) -> Vec<String> {
     let single = primary_key.len() == 1;
     columns
@@ -495,13 +618,10 @@ pub fn auto_columns(
             let generating = default.is_some_and(is_generating_default);
             match driver {
                 DriverKind::Mysql => extra.contains("auto_increment"),
-                DriverKind::Postgres => {
-                    extra.contains("identity") || generating || (single && default.is_some())
-                }
+                DriverKind::Postgres => extra.contains("identity") || generating,
                 DriverKind::Sqlite => {
                     generating
-                        || (single
-                            && (default.is_some() || c.data_type.eq_ignore_ascii_case("integer")))
+                        || (single && rowid_alias && c.data_type.eq_ignore_ascii_case("integer"))
                 }
             }
         })
@@ -774,8 +894,22 @@ mod tests {
         assert!(validate_expression(d, "1; DROP TABLE t").is_err());
         // 文字列リテラルの中の ';' は式の一部。
         assert!(validate_expression(d, "{old} || ';'").is_ok());
-        let sql = expression_select(d, "{old} || '-copy'", "text", &Value::String("A".into()));
-        assert_eq!(sql.expect("select"), "SELECT ('A' || '-copy')");
+        let b = expression_select(d, "{old} || '-copy'", "text", &Value::String("A".into()))
+            .expect("select");
+        assert_eq!(b.sql, "SELECT (? || '-copy')");
+        assert_eq!(b.binds, vec![SqlBind::Text("A".into())]);
+        let b = expression_select(
+            DriverKind::Postgres,
+            "{old} || {old}",
+            "bigint",
+            &Value::String("9007199254740993".into()),
+        )
+        .expect("select");
+        assert_eq!(b.sql, "SELECT ($1::int8 || $1::int8)");
+        assert_eq!(b.binds, vec![SqlBind::Int(9007199254740993)]);
+        let b = expression_select(d, "{old} + {old}", "int", &Value::Null).expect("select");
+        assert_eq!(b.sql, "SELECT (NULL + NULL)");
+        assert!(b.binds.is_empty());
     }
 
     #[test]
@@ -788,13 +922,92 @@ mod tests {
             assert!(validate_expression(d, "1 -- {old}").is_err(), "{d:?}");
             // 外なら可。
             assert!(validate_expression(d, "{old} + 1").is_ok(), "{d:?}");
-            // 元の値に ' や ; が入っていても、置換後は 1 文の引用符つきリテラルのまま。
-            let old = Value::String("a'; DROP TABLE t; --".into());
-            let sql = expression_select(d, "{old}", "text", &old).expect("select");
-            let m: String = masked(d, &sql).into_iter().collect();
-            assert!(!m.contains(';'), "{d:?}: {sql}");
         }
         assert!(validate_expression(DriverKind::Postgres, "\"{old}\"").is_err());
+    }
+
+    /// 元の値は SQL の文字列に埋め込まれない。敵対的な式 + 値でも、拒否されるか、値の文字列が
+    /// 生成 SQL に現れない (バインドで渡る) ことを確かめる。
+    #[test]
+    fn old_value_is_never_embedded_in_sql() {
+        let hostile = [
+            "x*/ (SELECT 1)) --",
+            "\\'), (SELECT 1) --",
+            "a'; DROP TABLE t; --",
+            "$$ ; SELECT 1 $$",
+        ];
+        let exprs: [(DriverKind, &str); 12] = [
+            // (a) PostgreSQL の入れ子ブロックコメント
+            (DriverKind::Postgres, "/* /* */ {old} */ 1"),
+            // (b) E'..' の連結 (バックスラッシュエスケープ)
+            (DriverKind::Postgres, "E'x'\n{old}"),
+            // (c) MySQL の実行コメント
+            (DriverKind::Mysql, "/*!99999 {old} */"),
+            (DriverKind::Mysql, "1 /*!50000 + {old} */"),
+            // ドル引用
+            (DriverKind::Postgres, "$$ {old} $$"),
+            (DriverKind::Postgres, "$t$ {old} $t$ || {old}"),
+            // MySQL のバックスラッシュ境界
+            (DriverKind::Mysql, "'\\' {old} '"),
+            (DriverKind::Mysql, "'\\' || {old}"),
+            (DriverKind::Sqlite, "'a' || {old}"),
+            (DriverKind::Mysql, "CONCAT({old}, 'x')"),
+            (DriverKind::Postgres, "{old}::text"),
+            (DriverKind::Sqlite, "{old} -- x"),
+        ];
+        for (d, e) in exprs {
+            for h in hostile {
+                match expression_select(d, e, "text", &Value::String(h.into())) {
+                    Err(_) => {}
+                    Ok(b) => {
+                        assert!(!b.sql.contains(h), "{d:?} {e:?} {h:?}: {}", b.sql);
+                        let m: String = masked(d, &b.sql).into_iter().collect();
+                        assert!(!m.contains(';'), "{d:?} {e:?}: {}", b.sql);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn comments_are_rejected_in_expressions() {
+        for d in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
+            assert!(validate_expression(d, "1 /* c */").is_err(), "{d:?}");
+            assert!(validate_expression(d, "{old} -- c").is_err(), "{d:?}");
+            // 文字列の中のコメント記号は式の一部。
+            assert!(validate_expression(d, "'a -- b /* c */'").is_ok(), "{d:?}");
+        }
+        assert!(validate_expression(DriverKind::Mysql, "/*!99999 {old} */").is_err());
+        assert!(validate_expression(DriverKind::Mysql, "1 # c").is_err());
+        assert!(validate_expression(DriverKind::Postgres, "/* /* */ {old} */ 1").is_err());
+        // バインド記号を式に直接書けない。
+        assert!(validate_expression(DriverKind::Postgres, "$1").is_err());
+        assert!(validate_expression(DriverKind::Sqlite, "?").is_err());
+        assert!(validate_expression(DriverKind::Postgres, "'?'").is_ok());
+    }
+
+    #[test]
+    fn bind_of_keeps_exact_types() {
+        assert_eq!(bind_of("int", &Value::Null), None);
+        assert_eq!(
+            bind_of("bigint", &Value::String("9223372036854775807".into())),
+            Some(SqlBind::Int(i64::MAX))
+        );
+        assert_eq!(
+            bind_of(
+                "bigint unsigned",
+                &Value::String("18446744073709551615".into())
+            ),
+            Some(SqlBind::UInt(u64::MAX))
+        );
+        assert_eq!(
+            bind_of("text", &Value::String("123".into())),
+            Some(SqlBind::Text("123".into()))
+        );
+        assert_eq!(
+            bind_of("blob", &Value::Bytes("00ff".into())),
+            Some(SqlBind::Bytes(vec![0, 255]))
+        );
     }
 
     #[test]
@@ -812,6 +1025,9 @@ mod tests {
             referenced_column: None,
             comment: None,
         };
+        fn auto_columns(d: DriverKind, c: &[TableColumnInfo], p: &[String]) -> Vec<String> {
+            super::auto_columns(d, c, p, true)
+        }
         let pk = vec!["id".to_string()];
         assert_eq!(
             auto_columns(
@@ -876,5 +1092,17 @@ mod tests {
             pk
         );
         assert!(auto_columns(DriverKind::Sqlite, &[col("id", "TEXT", "", None)], &pk).is_empty());
+        // WITHOUT ROWID 表の INTEGER 主キーは採番されない。
+        assert!(super::auto_columns(
+            DriverKind::Sqlite,
+            &[col("id", "INTEGER", "", None)],
+            &pk,
+            false
+        )
+        .is_empty());
+        // 単一列でも定数の既定値は採番扱いにしない (外すと元の行と同じ値になる)。
+        for d in [DriverKind::Postgres, DriverKind::Sqlite] {
+            assert!(auto_columns(d, &[col("id", "text", "", Some("'fixed'"))], &pk).is_empty());
+        }
     }
 }
