@@ -1,10 +1,10 @@
-import { useMemo, useState } from "react";
+import { type CSSProperties, useEffect, useMemo, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
 import type { ForeignKey, SubsetPreview } from "../api/tauri";
 import { rampStops, sampleRamp, SEQUENTIAL_RAMPS, useIsDarkTheme } from "../colorScale";
 import { type I18nKey, useT } from "../i18n";
-import { staggerContainer, variants } from "../motion";
+import { staggerContainer, staggerTiming, variants } from "../motion";
 import { semanticColorToken } from "../semanticColors";
 import { Callout } from "./Callout";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -13,11 +13,14 @@ import {
   barPercent,
   buildSubsetGraph,
   collapseLanes,
+  edgeKey,
   GEOMETRY,
   layoutEdges,
+  type PlacedEdge,
   type SubsetLane,
   type SubsetNode,
   SUBSET_LANES,
+  tracePathToRoot,
 } from "./subsetPreviewModel";
 import { subsetWarningMessage } from "./subsetExtract";
 import { Tooltip } from "./Tooltip";
@@ -29,6 +32,10 @@ import { Tooltip } from "./Tooltip";
  * - 3 レーン (親の方向 / 起点 / 子の方向) の各ノードに、行数に比例するバー (`colorScale` の sequential ランプ) と数値。
  * - 外部キーのエッジは SVG の曲線 (レーン・行は等間隔のグリッドなので、`subsetPreviewModel.ts` の単位座標で足りる)。
  * - 打ち切り・循環はノード上のバッジ (アイコン + 文言)。警告の帯は要約 1 つに縮める。
+ * - エッジは `pathLength={1}` で描き入れる (`.subset-edge`)。遅れは終点ノードの stagger 順 (`staggerTiming`) に合わせ、
+ *   ノードの入場と同期する。reduced-motion / hc-* は `App.css` 側で最初から描かれる。
+ * - ノードへのホバー / フォーカスで起点までの経路 (`tracePathToRoot`) を強調し、経路上のエッジに FK の列名を出す。
+ *   経路外は減光 (opacity の transition。reduced-motion は瞬時)。
  * - 条件を変えた後の古いプレビューは図ごと淡色。再プレビューのたびにノードを stagger で入場させる
  *   (`runKey` で作り直す。reduced-motion では即時)。
  * - 表が多いとき (`COLLAPSE_THRESHOLD` 以上) はレーンの中を `+N` へ折りたたみ、押すと広げる。
@@ -48,6 +55,12 @@ const LANE_ICON = { parent: "fk-parent", root: "table", child: "fk-child" } as c
 
 /** エッジの線幅 (SVG の viewBox 非依存。`vectorEffect` で拡縮しない)。 */
 const EDGE_STROKE = 1.5;
+const EDGE_STROKE_LIT = 2.5;
+const EDGE_OPACITY = 0.6;
+const EDGE_OPACITY_LIT = 1;
+/** 経路強調中、経路外のノード・エッジの不透明度。 */
+const DIM_OPACITY = 0.35;
+const EDGE_OPACITY_DIM = 0.15;
 
 const GRID_COLUMNS = `${GEOMETRY.laneWidth}fr ${GEOMETRY.gutter}fr ${GEOMETRY.laneWidth}fr ${GEOMETRY.gutter}fr ${GEOMETRY.laneWidth}fr`;
 /** 行の高さ (名前 + バー + バッジの 3 段が収まる)。エッジの縦座標が「1 行 = 1」なので全行で揃える。 */
@@ -66,12 +79,28 @@ function laneColumn(lane: SubsetLane): number {
   return SUBSET_LANES.indexOf(lane) * 2 + 1;
 }
 
-function Badge({ icon, children, title }: { icon: "cut" | "refresh"; children: string; title?: string }) {
+/**
+ * ノード下段の印。行は 1 本で折り返さないので、打ち切りの文言 (長い) は省略表示に縮み、
+ * 循環 (短い) は縮まず、どちらも切れない (`shrink`)。詳細はツールチップ。
+ */
+function Badge({
+  icon,
+  children,
+  title,
+  shrink = false,
+}: {
+  icon: "cut" | "refresh";
+  children: string;
+  title?: string;
+  shrink?: boolean;
+}) {
   const el = (
     <chakra.span
       display="inline-flex"
       alignItems="center"
       gap="1"
+      minW="0"
+      flexShrink={shrink ? 1 : 0}
       px="1.5"
       borderRadius="sm"
       borderWidth="1px"
@@ -82,7 +111,9 @@ function Badge({ icon, children, title }: { icon: "cut" | "refresh"; children: s
       whiteSpace="nowrap"
     >
       <Icon name={icon} size={ICON_SIZES.sm} />
-      {children}
+      <chakra.span minW="0" truncate>
+        {children}
+      </chakra.span>
     </chakra.span>
   );
   return title ? <Tooltip label={title}>{el}</Tooltip> : el;
@@ -93,11 +124,17 @@ function GraphNode({
   row,
   barColor,
   index,
+  dim,
+  onActive,
 }: {
   node: SubsetNode;
   row: number;
   barColor: string;
   index: number;
+  /** 経路強調中で、この表は経路の外 (減光する)。 */
+  dim: boolean;
+  /** ホバー / フォーカスの出入り (離れたら null)。 */
+  onActive: (table: string | null) => void;
 }) {
   const t = useT();
   const roles = t("subsetPreviewRoles", {
@@ -115,9 +152,18 @@ function GraphNode({
       data-testid="subset-preview-node"
       data-lane={node.lane}
       data-table={node.table}
+      data-dim={dim ? "true" : "false"}
+      onPointerEnter={() => onActive(node.table)}
+      onPointerLeave={() => onActive(null)}
+      onFocus={() => onActive(node.table)}
+      onBlur={() => onActive(null)}
     >
       <chakra.div
         role="group"
+        tabIndex={0}
+        opacity={dim ? DIM_OPACITY : 1}
+        transition="opacity var(--dur-fast) var(--ease)"
+        _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
         aria-label={
           t("subsetNodeAria", { table: node.table, rows: node.rows, roles }) +
           (node.references.length > 0
@@ -165,6 +211,7 @@ function GraphNode({
             <Badge
               key={tr.kind}
               icon="cut"
+              shrink
               title={t(tr.kind === "root" ? "subsetBadgeTruncatedRootTip" : "subsetBadgeTruncatedChildTip", {
                 limit: tr.limit,
               })}
@@ -173,13 +220,90 @@ function GraphNode({
             </Badge>
           ))}
           {node.cycle && (
-            <Badge icon="refresh" title={t("subsetBadgeCycleTip", { tables: node.cycleTables.join(" → ") })}>
+            <Badge
+              shrink={false}
+              icon="refresh"
+              title={t("subsetBadgeCycleTip", { tables: node.cycleTables.join(" → ") })}
+            >
               {t("subsetBadgeCycle")}
             </Badge>
           )}
         </Flex>
       </chakra.div>
     </MotionDiv>
+  );
+}
+
+/** 辺の描き入れ: マウント直後の 1 フレーム後に `data-lit` を立てて dashoffset を動かす。 */
+function useDrawIn(): boolean {
+  const [lit, setLit] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setLit(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+  return lit;
+}
+
+/** 辺の描き入れの遅れ (秒)。終点ノード (遅いほう) の stagger 順に合わせる。 */
+function edgeDelay(index: number, reduced: boolean): number {
+  if (reduced || index >= STAGGER_CAP) return 0;
+  return staggerTiming.delay + index * staggerTiming.each;
+}
+
+/** SVG のエッジ。`runKey` で作り直されるたびに描き入れる。 */
+function EdgeLayer({
+  edges,
+  delays,
+  litKeys,
+  active,
+  rowCount,
+}: {
+  edges: readonly PlacedEdge[];
+  delays: ReadonlyMap<string, number>;
+  litKeys: ReadonlySet<string> | null;
+  active: boolean;
+  rowCount: number;
+}) {
+  const lit = useDrawIn();
+  return (
+    <chakra.svg
+      position="absolute"
+      inset="0"
+      w="100%"
+      h="100%"
+      color="app.textMuted"
+      pointerEvents="none"
+      viewBox={`0 0 ${GEOMETRY.width} ${rowCount}`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+      data-testid="subset-preview-edges"
+    >
+      {edges.map((e) => {
+        const on = litKeys !== null && e.keys.some((k) => litKeys.has(k));
+        return (
+          <path
+            key={`${e.from}>${e.to}`}
+            className="subset-edge"
+            d={e.d}
+            pathLength={1}
+            fill="none"
+            stroke="currentColor"
+            vectorEffect="non-scaling-stroke"
+            data-from={e.from}
+            data-to={e.to}
+            data-lit={lit ? "true" : "false"}
+            data-hl={on ? "true" : "false"}
+            style={
+              {
+                strokeWidth: on ? EDGE_STROKE_LIT : EDGE_STROKE,
+                strokeOpacity: on ? EDGE_OPACITY_LIT : active ? EDGE_OPACITY_DIM : EDGE_OPACITY,
+                "--edge-delay": `${delays.get(`${e.from}>${e.to}`) ?? 0}s`,
+              } as CSSProperties
+            }
+          />
+        );
+      })}
+    </chakra.svg>
   );
 }
 
@@ -195,6 +319,50 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
   const collapsible = useMemo(() => collapseLanes(graph.nodes), [graph.nodes]);
   const edges = useMemo(() => layoutEdges(lanes, graph.edges), [lanes, graph.edges]);
   const rowCount = Math.max(1, ...SUBSET_LANES.map((l) => lanes[l].length));
+
+  // ホバー / フォーカス中の表と、そこから起点までの経路。再プレビューで表が消えたら強調しない。
+  const [activeTable, setActiveTable] = useState<string | null>(null);
+  const path = useMemo(
+    () =>
+      activeTable !== null && graph.nodes.some((n) => n.table === activeTable)
+        ? tracePathToRoot(graph, activeTable)
+        : null,
+    [graph, activeTable],
+  );
+  const litKeys = useMemo(
+    () => (path ? new Set(path.edges.map((e) => edgeKey(e.from, e.to))) : null),
+    [path],
+  );
+  // 表示項目 (折りたたみ含む) の入場順。辺は「遅いほうの端」のノードと同期して描き入れる。
+  const delays = useMemo(() => {
+    const order = new Map<string, number>();
+    let i = 0;
+    for (const lane of SUBSET_LANES) {
+      for (const item of lanes[lane]) {
+        if (item.kind === "node") order.set(item.node.table, i);
+        else for (const tb of item.tables) order.set(tb, i);
+        i++;
+      }
+    }
+    const out = new Map<string, number>();
+    for (const e of edges) {
+      const idx = Math.max(order.get(e.from) ?? 0, order.get(e.to) ?? 0);
+      out.set(`${e.from}>${e.to}`, edgeDelay(idx, reduced));
+    }
+    return out;
+  }, [lanes, edges, reduced]);
+  const litLabels = useMemo(
+    () =>
+      litKeys
+        ? edges.flatMap((e) => {
+            const labels = e.keys.filter((k) => litKeys.has(k)).flatMap((k) => e.labels[k] ?? []);
+            return labels.length > 0
+              ? [{ id: `${e.from}>${e.to}`, mid: e.mid, text: labels.join(", ") }]
+              : [];
+          })
+        : [],
+    [litKeys, edges],
+  );
 
   const toggle = (lane: SubsetLane) =>
     setExpanded((prev) => {
@@ -223,7 +391,7 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
         flexDirection="column"
         gap="2"
         opacity={stale ? 0.5 : 1}
-        transition="opacity 0.2s ease"
+        transition="opacity var(--dur-med) var(--ease)"
       >
         <Flex gap="2" wrap="wrap">
           <StatTile label={t("subsetStatRows")} value={preview.totalRows} />
@@ -277,32 +445,39 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
           </chakra.div>
 
           <chakra.div position="relative">
-            <chakra.svg
-              position="absolute"
-              inset="0"
-              w="100%"
-              h="100%"
-              color="app.textMuted"
-              pointerEvents="none"
-              viewBox={`0 0 ${GEOMETRY.width} ${rowCount}`}
-              preserveAspectRatio="none"
-              aria-hidden="true"
-              data-testid="subset-preview-edges"
-            >
-              {edges.map((e) => (
-                <path
-                  key={`${e.from}>${e.to}`}
-                  d={e.d}
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={EDGE_STROKE}
-                  strokeOpacity={0.6}
-                  vectorEffect="non-scaling-stroke"
-                  data-from={e.from}
-                  data-to={e.to}
-                />
-              ))}
-            </chakra.svg>
+            <EdgeLayer
+              key={runKey ?? "none"}
+              edges={edges}
+              delays={delays}
+              litKeys={litKeys}
+              active={path !== null}
+              rowCount={rowCount}
+            />
+            {litLabels.map((l) => (
+              <chakra.span
+                key={l.id}
+                position="absolute"
+                left={`${(l.mid.x / GEOMETRY.width) * 100}%`}
+                top={`${(l.mid.y / rowCount) * 100}%`}
+                transform="translate(-50%, -50%)"
+                maxW="40%"
+                px="1"
+                borderRadius="sm"
+                borderWidth="1px"
+                borderColor="app.border"
+                bg="app.surface"
+                color="app.text"
+                fontFamily="mono"
+                textStyle="caption"
+                whiteSpace="nowrap"
+                truncate
+                pointerEvents="none"
+                zIndex={1}
+                data-testid="subset-preview-edge-label"
+              >
+                {l.text}
+              </chakra.span>
+            ))}
             <MotionDiv
               key={runKey ?? "none"}
               variants={staggerContainer(reduced)}
@@ -324,6 +499,8 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
                         row={row}
                         barColor={barColor}
                         index={nodeIndex++}
+                        dim={path !== null && !path.tables.has(item.node.table)}
+                        onActive={setActiveTable}
                       />
                     );
                   }
@@ -353,6 +530,10 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
                           justifyContent="space-between"
                           gap="2"
                           fontSize="sm"
+                          opacity={
+                            path !== null && !item.tables.some((tb) => path.tables.has(tb)) ? DIM_OPACITY : 1
+                          }
+                          transition="opacity var(--dur-fast) var(--ease)"
                           data-testid="subset-preview-more"
                           aria-expanded="false"
                           aria-label={t("subsetMoreAria", { count: item.count, rows: item.rows })}
