@@ -209,15 +209,15 @@ pub fn expression_select(
                 t.to_string()
             } else {
                 let (slot, value) = match b {
-                    SqlBind::Int(_) => ("$1::int8", b.clone()),
-                    SqlBind::Float(_) => ("$1::float8", b.clone()),
-                    SqlBind::Bool(_) => ("$1::bool", b.clone()),
-                    SqlBind::Bytes(_) => ("$1::bytea", b.clone()),
-                    SqlBind::Text(_) => ("$1::text", b.clone()),
+                    SqlBind::Int(_) => ("($1::int8)", b.clone()),
+                    SqlBind::Float(_) => ("($1::float8)", b.clone()),
+                    SqlBind::Bool(_) => ("($1::bool)", b.clone()),
+                    SqlBind::Bytes(_) => ("($1::bytea)", b.clone()),
+                    SqlBind::Text(_) => ("($1::text)", b.clone()),
                     // u64 は int8 に収まらないので numeric として受ける
                     SqlBind::UInt(u) => match i64::try_from(*u) {
-                        Ok(i) => ("$1::int8", SqlBind::Int(i)),
-                        Err(_) => ("CAST($1::text AS numeric)", SqlBind::Text(u.to_string())),
+                        Ok(i) => ("($1::int8)", SqlBind::Int(i)),
+                        Err(_) => ("(CAST($1::text AS numeric))", SqlBind::Text(u.to_string())),
                     },
                 };
                 binds.push(value);
@@ -905,11 +905,26 @@ mod tests {
             &Value::String("9007199254740993".into()),
         )
         .expect("select");
-        assert_eq!(b.sql, "SELECT ($1::int8 || $1::int8)");
+        assert_eq!(b.sql, "SELECT (($1::int8) || ($1::int8))");
         assert_eq!(b.binds, vec![SqlBind::Int(9007199254740993)]);
         let b = expression_select(d, "{old} + {old}", "int", &Value::Null).expect("select");
         assert_eq!(b.sql, "SELECT (NULL + NULL)");
         assert!(b.binds.is_empty());
+        // `?` の数 == binds の数 (`{old}` が複数回出ても食い違わない)
+        for d in [DriverKind::Mysql, DriverKind::Sqlite] {
+            let b = expression_select(
+                d,
+                "CONCAT({old}, '?', {old})",
+                "text",
+                &Value::String("A".into()),
+            )
+            .expect("select");
+            assert_eq!(
+                masked(d, &b.sql).iter().filter(|c| **c == '?').count(),
+                b.binds.len()
+            );
+            assert_eq!(b.binds.len(), 2);
+        }
     }
 
     #[test]

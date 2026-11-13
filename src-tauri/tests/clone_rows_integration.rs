@@ -125,6 +125,31 @@ fn lit(table: &str, column: &str, value: Option<&str>) -> t::CloneColumnRule {
     }
 }
 
+/// 敵対的な文字列を元の値にして、`{old}` を 2 回含む式 (バインド経路) で複製する。値が SQL として
+/// 解釈されず連結済みの文字列のまま入ること、表が無事なことを確かめる。`concat_expr` は
+/// ドライバごとの `{old}` + '-' + `{old}` の書き方。
+async fn old_placeholder_scenario(state: &t::AppState, side: &Side, concat_expr: &str) {
+    let hostile = "'); DROP TABLE o;--";
+    exec(
+        state,
+        side,
+        &format!(
+            "UPDATE orders SET order_no = '{}' WHERE id = 2",
+            hostile.replace('\'', "''")
+        ),
+    )
+    .await;
+    let before = count(state, side, "orders").await;
+    let rules = vec![expr("orders", "order_no", concat_expr)];
+    t::clone_rows_inner(state, request(side, "orders", "id = 2", 0), rules, cap())
+        .await
+        .expect("clone with {old} expression");
+    assert_eq!(count(state, side, "orders").await, before + 1);
+    let want = format!("{hostile}-{hostile}").replace('\'', "''");
+    let hit = count(state, side, &format!("orders WHERE order_no = '{want}'")).await;
+    assert_eq!(hit, 1, "連結済みの値がそのまま入る");
+}
+
 /// 全シナリオ。`random_expr` は式の方針 (`order_no` に入れる乱数文字列) のドライバごとの書き方。
 async fn scenario(state: &t::AppState, side: &Side, random_expr: &str) {
     // --- プレビュー: 親 → 子 → 孫が挿入順に並び、UNIQUE の衝突を事前に検出する。
@@ -451,6 +476,7 @@ async fn sqlite_clone_rows_with_children() {
     let (side, path) = sqlite_session(&state, "cr_sqlite", false).await;
     seed(&state, &side, "INTEGER PRIMARY KEY AUTOINCREMENT").await;
     scenario(&state, &side, "lower(hex(randomblob(8)))").await;
+    old_placeholder_scenario(&state, &side, "{old} || '-' || {old}").await;
     let _ = std::fs::remove_file(&path);
 }
 
@@ -512,6 +538,7 @@ async fn mysql_clone_rows_when_env_set() {
     .await;
     seed(&state, &side, "INT AUTO_INCREMENT PRIMARY KEY").await;
     scenario(&state, &side, "SUBSTR(UUID(), 1, 8)").await;
+    old_placeholder_scenario(&state, &side, "CONCAT({old}, '-', {old})").await;
     let ro_conn = t::connect(&opts).await.expect("connect");
     state
         .insert(t::make_session("cr_mysql_ro", ro_conn, opts.clone(), true))
@@ -554,6 +581,7 @@ async fn postgres_clone_rows_when_env_set() {
     )
     .await;
     scenario(&state, &side, "substr(md5(random()::text), 1, 8)").await;
+    old_placeholder_scenario(&state, &side, "{old} || '-' || {old}").await;
     let ro_conn = t::connect(&opts).await.expect("connect");
     state
         .insert(t::make_session("cr_pg_ro", ro_conn, opts.clone(), true))

@@ -618,7 +618,7 @@ pub async fn clone_rows_inner(
             .row_cap
             .map_or(crate::db::DEFAULT_CAPTURE_ROW_CAP as u64, u64::from);
         // 主キーのない表が 1 つでもあれば、一部の表だけの Undo は不完全なので全体を辞退する。
-        if total > row_cap || applied.iter().any(|a| a.after_rows.is_none()) {
+        if total > row_cap || applied.iter().any(|a| a.rows > 0 && a.after_rows.is_none()) {
             declined_tables = prepared
                 .tables
                 .iter()

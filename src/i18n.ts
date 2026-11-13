@@ -4899,7 +4899,7 @@ const en = {
     "{table}: unique index {index} ({columns}) would conflict for {rows} row(s). Override these columns below.",
   cloneRowsRulesTitle: "Column overrides",
   cloneRowsRulesHint:
-    "Set an SQL expression (e.g. gen_random_uuid(), UUID(), {old} || '-copy') or a fixed value for a column. {old} is replaced by the original value.",
+    "Set an SQL expression (e.g. gen_random_uuid(), UUID(), {old} || '-copy') or a fixed value for a column. {old} is replaced by the original value (on PostgreSQL, write {old}::type for non-text columns, e.g. {old}::int + 1).",
   cloneRowsRuleTable: "Table",
   cloneRowsRuleColumn: "Column",
   cloneRowsRuleKind: "Kind",
@@ -4924,7 +4924,8 @@ const en = {
     "Recorded {recorded} table(s) in the flight recorder. These tables could not be recorded and cannot be undone: {tables}",
   cloneRowsCaptureOff:
     "The flight recorder is off, so this clone was not recorded and cannot be undone from there.",
-  cloneRowsPreviewNoUndo: "No primary key: {tables} cannot be recorded for undo (the rows are still cloned).",
+  cloneRowsPreviewNoUndo:
+    "{tables} has no primary key, so this whole clone cannot be undone (the rows are still cloned).",
   cloneRowsErrSemicolon: "An expression must be a single expression (no ';' outside a string literal).",
   cloneRowsErrOldInQuote: "Write {old} without quotes; it must not be inside a string literal.",
   cloneRowsErrComment: "Comments (-- and /* */) are not allowed in an expression.",
@@ -13249,7 +13250,7 @@ const ja: Dict = {
     "{table}: UNIQUE インデックス {index} ({columns}) が {rows} 行で衝突します。下でこれらの列を上書きしてください。",
   cloneRowsRulesTitle: "列ごとの上書き",
   cloneRowsRulesHint:
-    "列に SQL の式 (例: gen_random_uuid()、UUID()、{old} || '-copy') か固定値を指定します。{old} は元の値に置き換わります。",
+    "列に SQL の式 (例: gen_random_uuid()、UUID()、{old} || '-copy') か固定値を指定します。{old} は元の値に置き換わります (PostgreSQL で文字列以外の列は {old}::int + 1 のように {old}::型 と書きます)。",
   cloneRowsRuleTable: "表",
   cloneRowsRuleColumn: "列",
   cloneRowsRuleKind: "種類",
@@ -13272,7 +13273,8 @@ const ja: Dict = {
     "{recorded} 表分をフライトレコーダーに記録しました。次の表は記録できず取り消せません: {tables}",
   cloneRowsCaptureOff:
     "フライトレコーダーがオフのため、この複製は記録されておらず、そこからは取り消せません。",
-  cloneRowsPreviewNoUndo: "主キーなし: {tables} は Undo の記録ができません (複製自体は行われます)。",
+  cloneRowsPreviewNoUndo:
+    "主キーのない表 ({tables}) があるため、この複製全体を Undo できません (複製自体は行われます)。",
   cloneRowsErrSemicolon: "式は 1 つの式だけにしてください (文字列リテラルの外に ';' は置けません)。",
   cloneRowsErrOldInQuote: "{old} は引用符で囲まず、文字列リテラルの外に書いてください。",
   cloneRowsErrComment: "式の中にコメント (-- や /* */) は書けません。",
