@@ -48,8 +48,14 @@ const KIND_LABEL: Record<ExtensionDependentKind, I18nKey> = {
   other: "extensionsDepsKind_other",
 };
 
-/** この件数を超える一覧は表示を打ち切る (数千件で DOM を膨らませない)。 */
-const LIST_MAX = 200;
+/**
+ * 1 種別あたりこの件数を超える一覧は表示を打ち切る (数千件で DOM を膨らませない)。
+ * 全体の通し数にすると列が多いときに他の種別が 1 件も出なくなるので、種別ごとに数える。
+ */
+const LIST_MAX_PER_KIND = 50;
+
+/** 展開時に木の高さをこの値で頭打ちにしてスクロールさせる。 */
+const EXPANDED_MAX_H = "12rem";
 
 /** 一覧に出す依存の最大行数。超えた分は「ほか N 件」に畳み、押すと展開する。 */
 const MAX_LINES = 12;
@@ -77,11 +83,18 @@ const KIND_GLYPH: Record<ExtensionDependentKind, ImpactKind> = {
 
 export function ExtensionDependents({ dependents, error, cascade, extension }: Props) {
   const t = useT();
+  const grouped = useMemo(() => groupExtensionDependents(dependents ?? []), [dependents]);
+  // 種別ごとの件数 (表示は種別ごとに頭打ちするので、全体の件数はここで見せる)。
+  const kindSummary = grouped
+    .map(({ kind, items }) => `${t(KIND_LABEL[kind])} (${items.length})`)
+    .join(" / ");
+  const hiddenTotal = grouped.reduce((n, g) => n + Math.max(g.items.length - LIST_MAX_PER_KIND, 0), 0);
   const nodes = useMemo(
     () =>
-      groupExtensionDependents(dependents ?? [])
-        .flatMap(({ kind, items }) => items.map((d) => ({ kind, label: formatExtensionDependent(d) })))
-        .slice(0, LIST_MAX)
+      grouped
+        .flatMap(({ kind, items }) =>
+          items.slice(0, LIST_MAX_PER_KIND).map((d) => ({ kind, label: formatExtensionDependent(d) })),
+        )
         .map(({ kind, label }, i) => ({
           key: `${kind}\u0000${label}\u0000${i}`,
           kind: KIND_GLYPH[kind],
@@ -91,7 +104,7 @@ export function ExtensionDependents({ dependents, error, cascade, extension }: P
           outcome: cascade ? ("cascade" as const) : ("block" as const),
           meta: kind === "column" && cascade ? t("extensionsDepsDataLoss") : undefined,
         })),
-    [dependents, cascade, t],
+    [grouped, cascade, t],
   );
 
   if (error) return <ErrorNote>{t("extensionsDepsError", { error })}</ErrorNote>;
@@ -122,6 +135,9 @@ export function ExtensionDependents({ dependents, error, cascade, extension }: P
           {t("extensionsDepsWillFail", { count: dependents.length })}
         </Callout>
       )}
+      <chakra.p margin={0} textStyle="caption" color="app.textMuted" data-testid="extension-dependents-kinds">
+        {kindSummary}
+      </chakra.p>
       <ImpactTree
         groups={[
           {
@@ -131,11 +147,12 @@ export function ExtensionDependents({ dependents, error, cascade, extension }: P
           },
         ]}
         maxVisible={MAX_LINES}
+        expandedMaxH={EXPANDED_MAX_H}
         testId="extension-dependents"
       />
-      {dependents.length > LIST_MAX && (
+      {hiddenTotal > 0 && (
         <chakra.p margin={0} textStyle="caption" color="app.textMuted">
-          … +{dependents.length - LIST_MAX}
+          … +{hiddenTotal}
         </chakra.p>
       )}
     </chakra.div>

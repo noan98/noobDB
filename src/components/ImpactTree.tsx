@@ -1,6 +1,6 @@
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { chakra } from "@chakra-ui/react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotionConfig } from "motion/react";
 import { useT, type I18nKey } from "../i18n";
 import { staggerContainer, transitions, variants } from "../motion";
 import { semanticColorToken, type SemanticRole } from "../semanticColors";
@@ -93,6 +93,8 @@ interface Props {
   groups: ImpactGroup[];
   /** 畳まずに出すトップレベルの依存先の数 (起点をまたいだ通し数)。既定 8。 */
   maxVisible?: number;
+  /** 展開時に木の高さをこの値で頭打ちにしてスクロールさせる (例: "12rem")。省略時は伸びるだけ。 */
+  expandedMaxH?: string;
   testId?: string;
 }
 
@@ -110,9 +112,10 @@ const MotionCollapse = chakra(
   { forwardProps: ["variants", "initial", "animate", "exit", "transition"] },
 );
 
-export function ImpactTree({ groups, maxVisible = DEFAULT_MAX_VISIBLE, testId }: Props) {
+export function ImpactTree({ groups, maxVisible = DEFAULT_MAX_VISIBLE, expandedMaxH, testId }: Props) {
   const t = useT();
-  const reducedConfig = useReducedMotion() ?? false;
+  const listId = useId();
+  const reducedConfig = useReducedMotionConfig() ?? false;
   // MotionConfig の reduced-motion は stagger の遅延と height 補間を止めないので、ハイコントラストも含めて明示的に止める。
   const still = reducedConfig || prefersStaticMotion();
   const [expanded, setExpanded] = useState(false);
@@ -129,61 +132,73 @@ export function ImpactTree({ groups, maxVisible = DEFAULT_MAX_VISIBLE, testId }:
   let step = 0;
   return (
     <chakra.div display="flex" flexDirection="column" gap="2" mt="2" data-testid={testId}>
-      {split.map(({ group, head, rest }) => {
-        const hasRest = rest.length > 0;
-        return (
-          <chakra.div key={group.key} display="flex" alignItems="flex-start" gap="2">
-            {group.origin && <OriginChip origin={group.origin} />}
-            <chakra.div flex="1" minW={0} display="flex" flexDirection="column">
-              <MotionList
-                variants={staggerContainer(still)}
-                initial="initial"
-                animate="animate"
-                m={0}
-                p={0}
-                listStyleType="none"
-                display="flex"
-                flexDirection="column"
-              >
-                {head.map((node, i) => (
-                  // 段数に上限を付ける: 超えた分は variants を渡さず (= 親の伝播を受けず) 即表示する。
-                  <MotionItem
-                    key={node.key}
-                    variants={step++ < IMPACT_TREE_MAX_STAGGER_STEPS ? variants.staggerItem : undefined}
-                    listStyleType="none"
-                  >
-                    <NodeRow node={node} last={!hasRest && i === head.length - 1} />
-                  </MotionItem>
-                ))}
-              </MotionList>
-              <AnimatePresence initial={false}>
-                {expanded && hasRest && (
-                  <MotionCollapse
-                    key="rest"
-                    variants={variants.collapse}
-                    initial="initial"
-                    animate="animate"
-                    exit="exit"
-                    transition={still ? INSTANT : transitions.enter}
-                  >
-                    <chakra.ul m={0} p={0} listStyleType="none" display="flex" flexDirection="column">
-                      {rest.map((node, i) => (
-                        <chakra.li key={node.key} listStyleType="none">
-                          <NodeRow node={node} last={i === rest.length - 1} />
-                        </chakra.li>
-                      ))}
-                    </chakra.ul>
-                  </MotionCollapse>
-                )}
-              </AnimatePresence>
+      <chakra.div
+        id={listId}
+        display="flex"
+        flexDirection="column"
+        gap="2"
+        maxH={expanded ? expandedMaxH : undefined}
+        overflowY={expanded && expandedMaxH ? "auto" : undefined}
+      >
+        {split.map(({ group, head, rest }) => {
+          const hasRest = rest.length > 0;
+          // 通し数の上限で全件が畳まれた起点は、チップだけが残って「影響なし」に見えるので展開するまで描かない。
+          if (!expanded && head.length === 0) return null;
+          return (
+            <chakra.div key={group.key} display="flex" alignItems="flex-start" gap="2">
+              {group.origin && <OriginChip origin={group.origin} />}
+              <chakra.div flex="1" minW={0} display="flex" flexDirection="column">
+                <MotionList
+                  variants={staggerContainer(still)}
+                  initial="initial"
+                  animate="animate"
+                  m={0}
+                  p={0}
+                  listStyleType="none"
+                  display="flex"
+                  flexDirection="column"
+                >
+                  {head.map((node, i) => (
+                    // 段数に上限を付ける: 超えた分は variants を渡さず (= 親の伝播を受けず) 即表示する。
+                    <MotionItem
+                      key={node.key}
+                      variants={step++ < IMPACT_TREE_MAX_STAGGER_STEPS ? variants.staggerItem : undefined}
+                      listStyleType="none"
+                    >
+                      <NodeRow node={node} last={!hasRest && i === head.length - 1} />
+                    </MotionItem>
+                  ))}
+                </MotionList>
+                <AnimatePresence initial={false}>
+                  {expanded && hasRest && (
+                    <MotionCollapse
+                      key="rest"
+                      variants={variants.collapse}
+                      initial="initial"
+                      animate="animate"
+                      exit="exit"
+                      transition={still ? INSTANT : transitions.enter}
+                    >
+                      <chakra.ul m={0} p={0} listStyleType="none" display="flex" flexDirection="column">
+                        {rest.map((node, i) => (
+                          <chakra.li key={node.key} listStyleType="none">
+                            <NodeRow node={node} last={i === rest.length - 1} />
+                          </chakra.li>
+                        ))}
+                      </chakra.ul>
+                    </MotionCollapse>
+                  )}
+                </AnimatePresence>
+              </chakra.div>
             </chakra.div>
-          </chakra.div>
-        );
-      })}
+          );
+        })}
+      </chakra.div>
       {hiddenCount > 0 && (
         <chakra.button
           type="button"
           aria-expanded={expanded}
+          aria-controls={listId}
           onClick={() => setExpanded((v) => !v)}
           alignSelf="flex-start"
           display="inline-flex"

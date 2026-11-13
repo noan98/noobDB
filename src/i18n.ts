@@ -4121,6 +4121,7 @@ const en = {
   dropReferencedBySqlite:
     "These tables still reference the table(s) being dropped. SQLite may let the DROP through depending on PRAGMA foreign_keys and leave orphaned child rows.",
   dropReferencedByMore: "and {count} more",
+  dropReferencedByRefers: "References: {column}",
   impactTreeLess: "Show fewer",
   impactOutcomeCascade: "Cascade delete",
   impactOutcomeBlock: "Blocks",
@@ -12404,6 +12405,7 @@ const ja: Dict = {
   dropReferencedBySqlite:
     "次のテーブルがここで削除するテーブルを参照しています。SQLite は PRAGMA foreign_keys の設定次第で DROP が通り、子の行が孤立することがあります。",
   dropReferencedByMore: "ほか {count} 件",
+  dropReferencedByRefers: "参照先: {column}",
   impactTreeLess: "折りたたむ",
   impactOutcomeCascade: "連鎖削除",
   impactOutcomeBlock: "ブロック",

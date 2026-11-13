@@ -24,7 +24,7 @@ export function DropReferencedBy({ impacts, sqlite }: { impacts: DropImpact[]; s
       key: `${incomingFkTableName(fk)}\0${fk.column}`,
       kind: "table",
       name: `${incomingFkTableName(fk)}.${fk.column}`,
-      meta: `→ ${imp.table}.${fk.referencedColumn}`,
+      meta: t("dropReferencedByRefers", { column: fk.referencedColumn }),
       outcome: sqlite ? undefined : "block",
     })),
   }));

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { MotionConfig } from "motion/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, within } from "./testUtils";
 import { ImpactTree, type ImpactGroup, type ImpactNode } from "../components/ImpactTree";
@@ -92,5 +93,44 @@ describe("ImpactTree (#2295)", () => {
   it("上限以内なら展開ボタンを出さない", () => {
     renderWithProviders(<ImpactTree groups={[{ key: "g", nodes: nodes(3) }]} maxVisible={3} />);
     expect(screen.queryByTestId("impact-tree-toggle")).toBeNull();
+  });
+
+  it("通し数の上限で全件が畳まれた起点は、展開するまで描かない (チップだけ残して「影響なし」に見せない)", async () => {
+    const user = userEvent.setup();
+    const groups: ImpactGroup[] = [
+      { key: "a", origin: { kind: "table", name: "origin_a" }, nodes: nodes(2, { testId: "row" }) },
+      {
+        key: "b",
+        origin: { kind: "table", name: "origin_b" },
+        nodes: nodes(1, { testId: "row" }).map((n) => ({ ...n, key: `b${n.key}` })),
+      },
+    ];
+    renderWithProviders(<ImpactTree groups={groups} maxVisible={2} />);
+    expect(screen.getAllByTestId("impact-origin")).toHaveLength(1);
+    expect(screen.queryByText("origin_b")).toBeNull();
+    await user.click(screen.getByTestId("impact-tree-toggle"));
+    expect(await screen.findByText("origin_b")).toBeInTheDocument();
+    expect(screen.getAllByTestId("row")).toHaveLength(3);
+  });
+
+  it("トグルは aria-controls で木を指す", () => {
+    renderWithProviders(<ImpactTree groups={[{ key: "g", nodes: nodes(3) }]} maxVisible={1} />);
+    const id = screen.getByTestId("impact-tree-toggle").getAttribute("aria-controls");
+    expect(id).toBeTruthy();
+    expect(document.getElementById(id as string)).not.toBeNull();
+  });
+
+  it("アプリ設定の「動きを減らす」(MotionConfig) では折りたたみが即時になる", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <MotionConfig reducedMotion="always">
+        <ImpactTree groups={[{ key: "g", nodes: nodes(5, { testId: "row" }) }]} maxVisible={2} />
+      </MotionConfig>,
+    );
+    await user.click(screen.getByTestId("impact-tree-toggle"));
+    expect(await screen.findAllByTestId("row")).toHaveLength(5);
+    await user.click(screen.getByTestId("impact-tree-toggle"));
+    // exit アニメーションを待たずに、その場で畳まれている。
+    expect(screen.getAllByTestId("row")).toHaveLength(2);
   });
 });
