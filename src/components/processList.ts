@@ -397,7 +397,12 @@ export function trackProgress(
     const key = processKey(p);
     const old = prev.get(key);
     const continues =
-      old !== undefined && old.kind === pr.kind && old.phase === pr.phase && pr.done >= old.done;
+      old !== undefined &&
+      old.kind === pr.kind &&
+      // MySQL の ALTER は stage が変わっても done / total が ALTER 全体の累積値なので、
+      // フェーズ違いでは起点を取り直さない。PostgreSQL はフェーズごとに数え直す。
+      (pr.kind === "alter_table" || old.phase === pr.phase) &&
+      pr.done >= old.done;
     next.set(key, {
       kind: pr.kind,
       phase: pr.phase,
@@ -414,6 +419,8 @@ export function trackProgress(
 /** 進捗から出す見積り (#2291)。`pending` は算出待ち (観測が足りない)。 */
 export type ProgressEstimate =
   | { kind: "pending" }
+  /** 見積りを出さない (総量不明の COPY 以外で total が無い待機・ソート中など)。 */
+  | { kind: "none" }
   | { kind: "eta"; etaMs: number }
   | { kind: "rate"; perSec: number };
 
@@ -430,6 +437,7 @@ export function estimateProcessProgress(obs: ProgressObservation): ProgressEstim
     const eta = estimateEtaMs(advanced, obs.total - obs.firstDone, elapsed);
     return eta === null ? { kind: "pending" } : { kind: "eta", etaMs: eta };
   }
+  if (obs.kind !== "copy") return { kind: "none" };
   const rate = ratePerSecond(advanced, elapsed);
   return rate === null || rate <= 0 ? { kind: "pending" } : { kind: "rate", perSec: rate };
 }

@@ -1,6 +1,6 @@
 import { afterEach, describe, it, expect } from "vitest";
 
-import type { ProcessInfo } from "../api/tauri";
+import type { ProcessInfo, ProcessProgressKind } from "../api/tauri";
 import {
   distinctProcessValues,
   estimateProcessProgress,
@@ -278,7 +278,7 @@ describe("進捗の kind ラベル / 進捗順の並べ替え (#2269)", () => {
 });
 
 describe("進捗の観測記録と ETA (#2291)", () => {
-  const withProgress = (id: number, kind: "vacuum" | "copy", phase: string, done: number, total: number) =>
+  const withProgress = (id: number, kind: ProcessProgressKind, phase: string, done: number, total: number) =>
     proc(id, { progress: { kind, phase, done, total } });
 
   it("初回観測は起点になり、算出待ちになる", () => {
@@ -331,5 +331,23 @@ describe("進捗の観測記録と ETA (#2291)", () => {
     expect(estimateProcessProgress(short.get(2) as ProgressObservation)).toEqual({ kind: "pending" });
     const m2 = trackProgress(m1, [withProgress(2, "copy", "COPY FROM", 5000, 0)], 2000);
     expect(estimateProcessProgress(m2.get(2) as ProgressObservation)).toEqual({ kind: "rate", perSec: 2500 });
+  });
+
+  it("COPY 以外で total が無いとき (CREATE INDEX の待機など) は行/秒を出さない", () => {
+    const m1 = trackProgress(new Map(), [withProgress(3, "create_index", "sorting", 0, 0)], 0);
+    const m2 = trackProgress(m1, [withProgress(3, "create_index", "sorting", 5000, 0)], 5000);
+    expect(estimateProcessProgress(m2.get(3) as ProgressObservation)).toEqual({ kind: "none" });
+  });
+
+  it("alter_table は phase だけ変わっても起点を維持し、PG はフェーズごとに取り直す", () => {
+    const alter = (phase: string, done: number) =>
+      proc(4, { progress: { kind: "alter_table", phase, done, total: 100 } });
+    const m1 = trackProgress(new Map(), [alter("stage/innodb/alter table (read PK)", 10)], 0);
+    const m2 = trackProgress(m1, [alter("stage/innodb/alter table (merge sort)", 30)], 5000);
+    expect(m2.get(4)).toMatchObject({ firstAt: 0, firstDone: 10 });
+    expect(estimateProcessProgress(m2.get(4) as ProgressObservation)).toEqual({ kind: "eta", etaMs: 17_500 });
+    // kind が変われば取り直す。
+    const m3 = trackProgress(m2, [withProgress(4, "vacuum", "x", 40, 100)], 6000);
+    expect(m3.get(4)).toMatchObject({ firstAt: 6000 });
   });
 });

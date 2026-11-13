@@ -3,7 +3,6 @@ import { useKeepAliveActive, useRefreshOnReactivate } from "./KeepAlive";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import { AnimatePresence, motion, useReducedMotionConfig } from "motion/react";
 import { transitions, variants } from "../motion";
-import { formatDuration } from "../progressEta";
 
 import { api, type DriverKind, type ProcessInfo } from "../api/tauri";
 import { useT } from "../i18n";
@@ -1032,10 +1031,15 @@ function ProcessProgressBadge({
   let detail: string | null = null;
   if (estimate.kind === "pending") {
     detail = t("processProgressEtaPending");
+  } else if (estimate.kind === "none") {
+    detail = null;
   } else if (estimate.kind === "rate") {
     detail = t("processProgressRate", { rate: formatCountUpPlainInt(Math.round(estimate.perSec)) });
   } else if (estimate.etaMs > 0) {
-    detail = t("processProgressEta", { duration: formatDuration(estimate.etaMs) });
+    detail =
+      estimate.etaMs < 60_000
+        ? t("processProgressEtaUnderMinute")
+        : t("processProgressEta", { minutes: Math.ceil(estimate.etaMs / 60_000) });
   }
   return (
     <chakra.div

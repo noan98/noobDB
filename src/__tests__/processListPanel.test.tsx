@@ -569,4 +569,26 @@ describe("ProcessListPanel per-process results / same-query select / progress (#
       expect(screen.queryByText(t("processProgressDisabledTitle"))).not.toBeInTheDocument(),
     );
   });
+
+  it("2 回目のポーリングで進みが見えたら残り時間を出す", async () => {
+    const mk = (done: number): ProcessInfo => ({
+      ...base,
+      progress: { kind: "vacuum", phase: "scanning heap", done, total: 100 },
+    });
+    let now = 1_000_000;
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => now);
+    vi.mocked(api.listProcesses).mockResolvedValue([mk(10)]);
+    renderWithProviders(<ProcessListPanel sessionId="s-eta" driver="postgres" readOnly={false} />);
+    const badge = await screen.findByTestId("process-progress");
+    expect(badge).toHaveTextContent(t("processProgressEtaPending"));
+    now += 60_000;
+    vi.mocked(api.listProcesses).mockResolvedValue([mk(20)]);
+    fireEvent.click(screen.getByRole("button", { name: t("processRefresh") }));
+    // 60 秒で 10 進む → 残り 80 は 480 秒 = 8 分。
+    await waitFor(() => expect(screen.getByTestId("process-progress").textContent).toContain("8"));
+    expect(screen.getByTestId("process-progress-detail")).toHaveTextContent(
+      t("processProgressEta", { minutes: 8 }),
+    );
+    spy.mockRestore();
+  });
 });
