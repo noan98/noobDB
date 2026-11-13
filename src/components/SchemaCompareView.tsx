@@ -417,9 +417,15 @@ export function SchemaCompareView({
     return () => window.clearTimeout(id);
   }, [reveal]);
   // 反映先の比較先が変わった向き。詳細ペインの方向付きクロスフェードに使う。
-  const [targetSlide, setTargetSlide] = useState({ prev: 0, dir: 0 });
-  if (targetSlide.prev !== activeTarget) {
-    setTargetSlide({ prev: activeTarget, dir: Math.sign(activeTarget - targetSlide.prev) });
+  // 比較先の同一性は uid で見る (前のカードを外して番号が繰り上がっただけなら、中身は同じなので滑らせない)。
+  const activeUid = targets[activeTarget]?.uid ?? null;
+  const [targetSlide, setTargetSlide] = useState({ uid: activeUid, idx: activeTarget, dir: 0 });
+  if (targetSlide.uid !== activeUid || targetSlide.idx !== activeTarget) {
+    setTargetSlide({
+      uid: activeUid,
+      idx: activeTarget,
+      dir: targetSlide.uid !== activeUid ? Math.sign(activeTarget - targetSlide.idx) : targetSlide.dir,
+    });
   }
   const reducedMotion = useReducedMotionConfig() ?? false;
   // 「反映先」バッジがカード間を滑る layoutId。画面ごとに名前空間を分ける。
@@ -1688,7 +1694,8 @@ export function SchemaCompareView({
                       variants={variants.collapse}
                       initial="initial"
                       animate="animate"
-                      exit="exit"
+                      // 退場中のカードは「外す」「反映先にする」を押せないようにする。
+                      exit={{ ...variants.collapse.exit, pointerEvents: "none" }}
                       transition={still ? INSTANT : transitions.enter}
                       data-testid="schema-compare-target-card"
                       // 行間は gap ではなく下余白で取る (高さ補間と一緒に詰まるように)
@@ -1853,7 +1860,7 @@ export function SchemaCompareView({
                         作り直さないのでスクロール位置は保たれる。 */}
                     <AnimatePresence mode="wait" initial={false} custom={targetSlide.dir}>
                       <motion.div
-                        key={activeTarget}
+                        key={activeUid ?? "none"}
                         custom={targetSlide.dir}
                         variants={directionalSlide}
                         initial="initial"

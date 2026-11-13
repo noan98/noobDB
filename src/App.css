@@ -2180,10 +2180,15 @@
   pointer-events: none;
   background: color-mix(in srgb, var(--flash-color) 30%, transparent);
   opacity: 0;
-  animation: apply-flash 0.9s ease-out;
+  animation: apply-flash calc(var(--dur-med) * 4) var(--ease-out);
 }
 .table-diff-flash.table-diff-flash-alt::after { animation-name: apply-flash-alt; }
-:root[data-motion="reduced"] .table-diff-flash::after { animation: none; }
+:root[data-motion="reduced"] .table-diff-flash::after,
+:root[data-theme="hc-light"] .table-diff-flash::after,
+:root[data-theme="hc-dark"] .table-diff-flash::after { animation: none; }
+@media (forced-colors: active) {
+  .table-diff-flash::after { animation: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   :root:not([data-motion="full"]) .table-diff-flash::after { animation: none; }
 }

@@ -6,6 +6,13 @@ import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 import { api } from "../api/tauri";
 
+// reduced-motion (アプリ設定 / OS) の再現。MotionConfig を介さず useReducedMotionConfig の戻り値だけ差し替える。
+const reducedRef = vi.hoisted(() => ({ value: false }));
+vi.mock("motion/react", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("motion/react")>();
+  return { ...mod, useReducedMotionConfig: () => reducedRef.value };
+});
+
 // 比較結果の描画 (2 接続 + 比較 + データ比較フォーム) は CI の混んだ shard で既定の
 // 1 秒を超えることがあり、findBy* が時々落ちていた。このファイルだけ待ちを延ばす。
 let prevAsyncTimeout = 1000;
@@ -489,30 +496,49 @@ describe("SchemaCompareView の複数比較先", () => {
     );
   });
 
-  it("マスを押すと、アクティブ列と反映先バッジが移り、詳細一覧の該当行が見える位置へ送られて光る (#2292)", async () => {
-    const scrollIntoView = vi.fn();
-    Element.prototype.scrollIntoView = scrollIntoView;
-    try {
-      vi.mocked(api.connect).mockImplementation(
-        async (req) => ({ session_id: `s-${req.profile_id}` }) as never,
-      );
-      vi.mocked(api.compareSchema).mockImplementation(
-        async (p) => diffFor(p.targetSessionId === "s-p-b" ? "same" : "different") as never,
-      );
-      renderWithProviders(<SchemaCompareView profiles={THREE} onClose={() => {}} />);
-      const boxes = () => screen.getAllByRole("combobox") as HTMLElement[];
-      chooseListboxOption(boxes()[0], "p-a");
-      await waitFor(() => expect(boxes()[1]).toHaveTextContent("db1"));
-      chooseListboxOption(boxes()[2], "p-b");
-      await waitFor(() => expect(boxes()[3]).toHaveTextContent("db1"));
-      fireEvent.click(
-        screen.getByRole("button", { name: t("schemaCompareAddTarget", { count: 1, max: 4 }) }),
-      );
-      chooseListboxOption(boxes()[4], "p-c");
-      await waitFor(() => expect(boxes()[5]).toHaveTextContent("db1"));
-      fireEvent.click(screen.getByText(t("schemaCompareCompare")));
-      const matrix = await screen.findByTestId("schema-compare-matrix");
+  /** 3 接続のうち Beta (同一) と Gamma (差分あり) を比較先にして比較し、マトリクスを返す。 */
+  async function compareBetaGamma() {
+    vi.mocked(api.connect).mockImplementation(
+      async (req) => ({ session_id: `s-${req.profile_id}` }) as never,
+    );
+    vi.mocked(api.compareSchema).mockImplementation(
+      async (p) => diffFor(p.targetSessionId === "s-p-b" ? "same" : "different") as never,
+    );
+    renderWithProviders(<SchemaCompareView profiles={THREE} onClose={() => {}} />);
+    const boxes = () => screen.getAllByRole("combobox") as HTMLElement[];
+    chooseListboxOption(boxes()[0], "p-a");
+    await waitFor(() => expect(boxes()[1]).toHaveTextContent("db1"));
+    chooseListboxOption(boxes()[2], "p-b");
+    await waitFor(() => expect(boxes()[3]).toHaveTextContent("db1"));
+    fireEvent.click(screen.getByRole("button", { name: t("schemaCompareAddTarget", { count: 1, max: 4 }) }));
+    chooseListboxOption(boxes()[4], "p-c");
+    await waitFor(() => expect(boxes()[5]).toHaveTextContent("db1"));
+    fireEvent.click(screen.getByText(t("schemaCompareCompare")));
+    return screen.findByTestId("schema-compare-matrix");
+  }
 
+  /** scrollIntoView を差し替えて callback を走らせ、後始末する (jsdom には元々無いメソッド)。 */
+  async function withScrollSpy(run: (spy: ReturnType<typeof vi.fn>) => Promise<void>) {
+    const spy = vi.fn();
+    Element.prototype.scrollIntoView = spy;
+    try {
+      await run(spy);
+    } finally {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+      reducedRef.value = false;
+    }
+  }
+
+  const clickGammaCell = () =>
+    fireEvent.click(
+      screen.getByRole("button", { name: `users / Gamma / db1: ${t("schemaCompareOpChange")}` }),
+    );
+  const scrolledRows = (spy: ReturnType<typeof vi.fn>) =>
+    spy.mock.contexts.filter((el) => (el as HTMLElement).dataset?.tableName === "users");
+
+  it("マスを押すと、アクティブ列と反映先バッジが移り、詳細一覧の該当行が見える位置へ送られて光る (#2292)", async () => {
+    await withScrollSpy(async (scrollIntoView) => {
+      const matrix = await compareBetaGamma();
       // 反映先は 1 つ目の比較先 (Beta)。ハイライトとバッジは 1 つずつ。
       // 列見出しのボタンは aria-pressed を持つ (マスのボタンは持たない)。
       const header = (name: RegExp) =>
@@ -522,9 +548,9 @@ describe("SchemaCompareView の複数比較先", () => {
       expect(within(header(/Beta \/ db1/)).getByTestId("matrix-active-col")).toBeInTheDocument();
       expect(screen.getAllByTestId("schema-compare-active-badge")).toHaveLength(1);
 
-      fireEvent.click(
-        screen.getByRole("button", { name: `users / Gamma / db1: ${t("schemaCompareOpChange")}` }),
-      );
+      // Beta は差分なしで一覧が空 (= 詳細一覧は未マウント) の状態から押す。
+      scrollIntoView.mockClear();
+      clickGammaCell();
       await waitFor(() =>
         expect(within(header(/Gamma \/ db1/)).getByTestId("matrix-active-col")).toBeInTheDocument(),
       );
@@ -535,15 +561,22 @@ describe("SchemaCompareView の複数比較先", () => {
       await waitFor(() =>
         expect(screen.getByTestId("schema-compare-detail-pane")).toHaveAttribute("data-slide-dir", "1"),
       );
-      // 該当テーブルの行を見える位置へ送り、1 回光らせる (行の状態色 + CSS アニメ)。
-      await waitFor(() =>
-        expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: "nearest" })),
-      );
-      const row = document.querySelector('[data-table-name="users"]');
-      expect(row).toHaveClass("table-diff-flash");
-    } finally {
-      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
-    }
+      // 該当テーブルの行そのものを、見える位置へ送って 1 回光らせる。
+      await waitFor(() => expect(scrolledRows(scrollIntoView)).toHaveLength(1));
+      expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: "nearest" }));
+      expect(document.querySelector('[data-table-name="users"]')).toHaveClass("table-diff-flash");
+    });
+  });
+
+  it("reduced-motion では、行へ送るスクロールが即時 (behavior: auto) になる (#2292)", async () => {
+    await withScrollSpy(async (scrollIntoView) => {
+      reducedRef.value = true;
+      await compareBetaGamma();
+      scrollIntoView.mockClear();
+      clickGammaCell();
+      await waitFor(() => expect(scrolledRows(scrollIntoView)).toHaveLength(1));
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest", behavior: "auto" });
+    });
   });
 
   it("比較先を外すとカードが折りたたまれて消える (#2292)", async () => {

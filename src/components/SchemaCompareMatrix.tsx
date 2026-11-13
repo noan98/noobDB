@@ -310,7 +310,7 @@ export function SchemaCompareMatrix({
                       py="1"
                       borderRadius="md"
                       border="1px solid"
-                      borderColor="app.border"
+                      borderColor={isActive ? "transparent" : "app.border"}
                       position="relative"
                       bg="transparent"
                       color="app.text"

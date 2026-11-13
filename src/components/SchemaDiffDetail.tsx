@@ -368,7 +368,7 @@ export function TableDiffList({
 }) {
   const still = useStillMotion();
   const navRef = useRef<HTMLElement>(null);
-  const doneSeqRef = useRef(reveal?.seq ?? 0);
+  const doneSeqRef = useRef(0);
   // 絞り込みの解除やページ送りで行が後から現れることがあるので、groups の変化でも再試行する。
   // biome-ignore lint/correctness/useExhaustiveDependencies: groups の変化も契機にする (行が現れるまで待つ)。
   useEffect(() => {
