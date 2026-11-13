@@ -799,6 +799,34 @@ fn build_fixtures() -> serde_json::Value {
             .into(),
         enabled: true,
     };
+    let audit_options = t::AuditOptions {
+        insert: true,
+        update: true,
+        delete: false,
+        exclude_columns: vec!["secret".into()],
+        skip_unchanged_update: true,
+        audit_table: "users_audit".into(),
+        audit_schema: Some("main".into()),
+    };
+    let audit_ddl = t::AuditDdl {
+        audit_table: "users_audit".into(),
+        audit_schema: "main".into(),
+        create: vec!["CREATE TABLE users_audit (id INT)".into()],
+        drop_triggers: vec!["DROP TRIGGER IF EXISTS users_audit_ins".into()],
+        drop_table: "DROP TABLE IF EXISTS users_audit".into(),
+        recorded_columns: vec!["id".into()],
+        trigger_names: vec!["users_audit_ins".into()],
+        warnings: vec!["no_primary_key".into()],
+    };
+    let audit_status = t::AuditStatus {
+        present: true,
+        options: Some(audit_options),
+        recorded_columns: vec!["id".into()],
+        added_columns: vec!["email".into()],
+        removed_columns: Vec::new(),
+        pk_changed: false,
+        needs_regeneration: true,
+    };
     let rls_table = t::RlsTable {
         table: "docs".into(),
         enabled: true,
@@ -2772,6 +2800,8 @@ fn build_fixtures() -> serde_json::Value {
         "indexInfo": index_info,
         "tableExtrasInfo": table_extras_info,
         "tableTrigger": table_trigger,
+        "auditDdl": audit_ddl,
+        "auditStatus": audit_status,
         "rlsTable": rls_table,
         "publicationInfo": publication_info,
         "tableReplicaIdentity": table_replica_identity,

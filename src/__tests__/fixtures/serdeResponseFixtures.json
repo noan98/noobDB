@@ -328,6 +328,49 @@
       "table": "users"
     }
   ],
+  "auditDdl": {
+    "audit_schema": "main",
+    "audit_table": "users_audit",
+    "create": [
+      "CREATE TABLE users_audit (id INT)"
+    ],
+    "drop_table": "DROP TABLE IF EXISTS users_audit",
+    "drop_triggers": [
+      "DROP TRIGGER IF EXISTS users_audit_ins"
+    ],
+    "recorded_columns": [
+      "id"
+    ],
+    "trigger_names": [
+      "users_audit_ins"
+    ],
+    "warnings": [
+      "no_primary_key"
+    ]
+  },
+  "auditStatus": {
+    "added_columns": [
+      "email"
+    ],
+    "needs_regeneration": true,
+    "options": {
+      "audit_schema": "main",
+      "audit_table": "users_audit",
+      "delete": false,
+      "exclude_columns": [
+        "secret"
+      ],
+      "insert": true,
+      "skip_unchanged_update": true,
+      "update": true
+    },
+    "pk_changed": false,
+    "present": true,
+    "recorded_columns": [
+      "id"
+    ],
+    "removed_columns": []
+  },
   "batchStreamCancelledMessage": {
     "deliveredStatements": 2,
     "kind": "cancelled"
