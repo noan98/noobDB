@@ -8300,6 +8300,10 @@ const en = {
   rowMergeBlockPick: "Column {column} cannot take its value from another row.",
   rowMergeBlockUnresolvedFk: "{table}: the referenced columns of {constraint} could not be resolved.",
   rowMergeBlockChildUnreadable: "{table}: its columns could not be read.",
+  rowMergeBlockCrossChildrenUnreadable:
+    "{table}: the tables in other schemas / databases that reference it could not be read.",
+  rowMergeChangedStatements:
+    "The data changed after the preview (the statements to run differ). Nothing was written. The preview was reloaded: review it and run again.",
   rowMergeBlockCrossDb:
     "{table} (another database) references this table with ON DELETE CASCADE / SET NULL / SET DEFAULT. It cannot be re-pointed here, so deleting the duplicates would silently change it.",
   rowMergeBlockGrandchild:
@@ -16626,6 +16630,10 @@ const ja: Dict = {
   rowMergeBlockPick: "列 {column} は別の行の値を選べません。",
   rowMergeBlockUnresolvedFk: "{table}: {constraint} の参照先の列を決められません。",
   rowMergeBlockChildUnreadable: "{table}: 列の情報を取得できません。",
+  rowMergeBlockCrossChildrenUnreadable:
+    "{table}: 別のスキーマ / データベースからこの表を参照する表を取得できません。",
+  rowMergeChangedStatements:
+    "プレビュー後にデータが変わりました (実行する文が変わっています)。何も書き込んでいません。プレビューを読み込み直したので、内容を確認してからもう一度実行してください。",
   rowMergeBlockCrossDb:
     "{table} (別のデータベース) が ON DELETE CASCADE / SET NULL / SET DEFAULT でこの表を参照しています。ここでは付け替えられず、重複行を消すと黙って変更されるので止めました。",
   rowMergeBlockGrandchild:

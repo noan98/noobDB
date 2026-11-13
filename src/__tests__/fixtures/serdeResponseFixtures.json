@@ -2587,6 +2587,7 @@
   "rowMergeOutcomeChanged": {
     "actualRows": 3,
     "expectedRows": 2,
+    "statementsChanged": true,
     "status": "changed"
   },
   "rowMergeOutcomeIncomplete": {
@@ -2664,6 +2665,10 @@
       {
         "kind": "deletedChildReferenced",
         "referencing": "items",
+        "table": "orders"
+      },
+      {
+        "kind": "crossChildrenUnreadable",
         "table": "orders"
       },
       {

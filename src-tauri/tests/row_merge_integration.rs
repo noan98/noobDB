@@ -651,5 +651,26 @@ async fn cross_schema_flow(state: &t::AppState, side: &Side) {
         "{:?}",
         p.blockers
     );
+    exec(state, side, "DROP TABLE nb2303_rm2.xc").await;
+
+    // 別スキーマの孫: 削除される子行 (coupon_uses の衝突行) を、別スキーマの表が連鎖で参照していれば止める。
+    exec(
+        state,
+        side,
+        "CREATE TABLE nb2303_rm2.og (id INT PRIMARY KEY, cid INT, kid INT, \
+         FOREIGN KEY (cid, kid) REFERENCES nb2303_rm.coupon_uses(customer_id, coupon_id) ON DELETE CASCADE)",
+    )
+    .await;
+    exec(state, side, "DROP TABLE nb2303_rm2.xo").await;
+    let p = preview(state, side, &req).await;
+    assert!(
+        p.blockers.iter().any(|b| matches!(
+            b,
+            t::MergeBlocker::DeletedChildReferenced { table, referencing }
+                if table == "coupon_uses" && referencing == "nb2303_rm2.og"
+        )),
+        "{:?}",
+        p.blockers
+    );
     exec(state, side, "DROP SCHEMA nb2303_rm2 CASCADE").await;
 }

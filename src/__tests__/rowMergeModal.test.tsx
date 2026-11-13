@@ -109,6 +109,7 @@ describe("RowMergeModal (#2303)", () => {
       status: "changed",
       expectedRows: 2,
       actualRows: 3,
+      statementsChanged: false,
     });
     const props = mount();
     await screen.findByTestId("row-merge-tree");

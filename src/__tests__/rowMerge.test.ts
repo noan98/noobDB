@@ -86,6 +86,9 @@ describe("rowMerge (#2303)", () => {
     expect(blockerMessage({ kind: "deletedChildReferenced", table: "a", referencing: "b" }).key).toBe(
       "rowMergeBlockGrandchild",
     );
+    expect(blockerMessage({ kind: "crossChildrenUnreadable", table: "a" }).key).toBe(
+      "rowMergeBlockCrossChildrenUnreadable",
+    );
     expect(blockerMessage({ kind: "skipWithoutForeignKeys", table: "a" }).key).toBe("rowMergeBlockSkipNoFk");
   });
 });

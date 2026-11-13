@@ -125,6 +125,8 @@ export function blockerMessage(b: RowMergeBlocker): {
       return { key: "rowMergeBlockUnresolvedFk", params: { table: b.table, constraint: b.constraint } };
     case "childUnreadable":
       return { key: "rowMergeBlockChildUnreadable", params: { table: b.table } };
+    case "crossChildrenUnreadable":
+      return { key: "rowMergeBlockCrossChildrenUnreadable", params: { table: b.table } };
     case "crossDatabaseCascade":
       return { key: "rowMergeBlockCrossDb", params: { table: `${b.schema}.${b.table}` } };
     case "deletedChildReferenced":

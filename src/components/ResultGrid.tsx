@@ -9090,6 +9090,11 @@ export const ResultGrid = memo(
     // 重複キー検出 (#1628): ダイアログの対象列と、重複行だけに絞り込む行インデックス。
     const [dupColIdx, setDupColIdx] = useState<number | null>(null);
     const [dupRowAllow, setDupRowAllow] = useState<ReadonlySet<number> | null>(null);
+    // 重複グループごとの行インデックス。行データと列の組ごとに 1 回だけ計算する (グループ数 × 行数の走査を避ける)。
+    const dupGroupCache = useMemo(() => {
+      void result?.rows; // 行データが変わったら作り直す
+      return new Map<string, number[]>();
+    }, [result?.rows]);
     // 結果の行が入れ替わったら (再実行・編集適用・load-more) 古いインデックスの絞り込みは捨てる。
     // biome-ignore lint/correctness/useExhaustiveDependencies: result?.rows の同一性が変わったことのトリガ依存
     useEffect(() => {
@@ -10738,10 +10743,25 @@ export const ResultGrid = memo(
                 table &&
                 (identityStrategy === "primary_key" || identityStrategy === "unique_key")
                   ? (cols, firstRow) => {
+                      const cacheKey = `${cols.join(",")}:${firstRow}`;
+                      let rowIndices = dupGroupCache.get(cacheKey);
+                      if (!rowIndices) {
+                        rowIndices = duplicateGroupRowIndices(result.rows, cols, firstRow);
+                        dupGroupCache.set(cacheKey, rowIndices);
+                      }
+                      // 右クリックメニューと同じく、主キー列がマスク中なら出さない (モーダル内に表示解除は無い)。
+                      const maskedNow = resolveMaskedColumns(
+                        result.columns.map((c) => c.name),
+                        maskConfig ?? {
+                          enabled: settings.columnMaskEnabled,
+                          patterns: settings.columnMaskPatterns,
+                        },
+                      );
+                      if ((pkIndices ?? []).some((ci) => maskedNow?.[ci])) return null;
                       const built = buildRowMergeTarget({
                         columns: result.columns,
                         rows: result.rows,
-                        rowIndices: duplicateGroupRowIndices(result.rows, cols, firstRow),
+                        rowIndices,
                         pkIndices,
                       });
                       return built.ok

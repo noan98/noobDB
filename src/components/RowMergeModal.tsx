@@ -164,7 +164,11 @@ export function RowMergeModal({
       else if (out.status === "changed") {
         // 先に読み直しを始める (読み込み開始時にエラー表示を消すため)。メッセージはその後に出す。
         void load();
-        setError(t("rowMergeChanged", { expected: out.expectedRows, actual: out.actualRows }));
+        setError(
+          out.statementsChanged && out.expectedRows === out.actualRows
+            ? t("rowMergeChangedStatements")
+            : t("rowMergeChanged", { expected: out.expectedRows, actual: out.actualRows }),
+        );
       } else setError(t("rowMergeRollbackIncomplete"));
     } catch (e) {
       setError(String(e));

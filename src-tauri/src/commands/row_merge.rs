@@ -131,6 +131,8 @@ pub enum RowMergeOutcome {
     Changed {
         expected_rows: u64,
         actual_rows: u64,
+        /// 実行する文が変わっている (件数が同じでも食い違う)。
+        statements_changed: bool,
     },
     /// ロールバックしたが、トランザクション非対応の表のため一部が戻らなかった。
     #[serde(rename_all = "camelCase")]
@@ -552,14 +554,14 @@ async fn build_plan(
                     edges.push(ChildEdge {
                         child_db: e.schema,
                         child: e.table.clone(),
-                        constraint: format!("{}.{}.{}", e.table, e.column, e.referenced_column),
+                        constraint: e.constraint.clone(),
                         child_cols: vec![e.column],
                         parent_cols: vec![e.referenced_column],
                         on_delete: e.on_delete,
                     });
                 }
             }
-            Err(_) => blockers.push(MergeBlocker::ChildUnreadable {
+            Err(_) => blockers.push(MergeBlocker::CrossChildrenUnreadable {
                 table: table.to_string(),
             }),
         }
@@ -579,7 +581,7 @@ async fn build_plan(
                     }
                 }
             }
-            Err(_) => blockers.push(MergeBlocker::ChildUnreadable {
+            Err(_) => blockers.push(MergeBlocker::CrossChildrenUnreadable {
                 table: table.to_string(),
             }),
         }
@@ -951,10 +953,8 @@ async fn build_plan(
             };
         if removes_child_rows {
             let mut referencing: Vec<String> = Vec::new();
-            if edge.child_db != database {
-                // 別スキーマの子を参照する表は、このスキーマの外部キー一覧からは分からない。
-                referencing.push("*".to_string());
-            } else {
+            // 同じスキーマ / DB の表からの参照 (別スキーマの子の場合は、その外部キーは `fks` に無いので除く)。
+            if edge.child_db == database {
                 for f in fks.iter().filter(|f| {
                     same_name(driver, &f.referenced_table, &edge.child)
                         && on_delete_touches_rows(f.on_delete.as_deref())
@@ -963,6 +963,41 @@ async fn build_plan(
                         referencing.push(f.table.clone());
                     }
                 }
+            }
+            // 別スキーマ (PostgreSQL) / 別データベース (MySQL) の表からの参照も調べる。取得失敗は "*" で止める。
+            match driver {
+                DriverKind::Postgres => {
+                    match pg_cross_schema_incoming(conn, &edge.child_db, &edge.child).await {
+                        Ok(list) => {
+                            for e in list
+                                .iter()
+                                .filter(|e| on_delete_touches_rows(e.on_delete.as_deref()))
+                            {
+                                let name = format!("{}.{}", e.schema, e.table);
+                                if !referencing.contains(&name) {
+                                    referencing.push(name);
+                                }
+                            }
+                        }
+                        Err(_) => referencing.push("*".to_string()),
+                    }
+                }
+                DriverKind::Mysql => {
+                    match mysql_cross_database_incoming(conn, &edge.child_db, &edge.child).await {
+                        Ok(list) => {
+                            for (schema, tbl, rule) in list {
+                                if on_delete_touches_rows(Some(&rule)) {
+                                    let name = format!("{schema}.{tbl}");
+                                    if !referencing.contains(&name) {
+                                        referencing.push(name);
+                                    }
+                                }
+                            }
+                        }
+                        Err(_) => referencing.push("*".to_string()),
+                    }
+                }
+                DriverKind::Sqlite => {}
             }
             for r in referencing {
                 blockers.push(MergeBlocker::DeletedChildReferenced {
@@ -1181,6 +1216,7 @@ pub async fn apply_row_merge_inner(
             return Ok(RowMergeOutcome::Changed {
                 expected_rows: exp.child_rows.iter().sum(),
                 actual_rows: actual.iter().sum(),
+                statements_changed: exp.statements != plan.preview.statements,
             });
         }
     }
@@ -1230,6 +1266,7 @@ pub async fn apply_row_merge_inner(
         TransactionRun::RolledBack(v) => RowMergeOutcome::Changed {
             expected_rows: v.expected,
             actual_rows: v.actual,
+            statements_changed: false,
         },
         TransactionRun::RollbackIncomplete(v) => RowMergeOutcome::RollbackIncomplete {
             expected_rows: v.expected,

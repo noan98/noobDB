@@ -1595,6 +1595,9 @@ fn build_fixtures() -> serde_json::Value {
                 table: "orders".into(),
                 referencing: "items".into(),
             },
+            t::MergeBlocker::CrossChildrenUnreadable {
+                table: "orders".into(),
+            },
             t::MergeBlocker::SkipWithoutForeignKeys {
                 table: "orders".into(),
             },
@@ -1628,6 +1631,7 @@ fn build_fixtures() -> serde_json::Value {
     let row_merge_outcome_changed = t::RowMergeOutcome::Changed {
         expected_rows: 2,
         actual_rows: 3,
+        statements_changed: true,
     };
     let row_merge_outcome_incomplete = t::RowMergeOutcome::RollbackIncomplete {
         expected_rows: 2,

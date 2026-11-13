@@ -3362,6 +3362,7 @@ export type RowMergeBlocker =
   | { kind: "invalidPick"; column: string }
   | { kind: "unresolvedForeignKey"; table: string; constraint: string }
   | { kind: "childUnreadable"; table: string }
+  | { kind: "crossChildrenUnreadable"; table: string }
   | { kind: "crossDatabaseCascade"; schema: string; table: string }
   | { kind: "deletedChildReferenced"; table: string; referencing: string }
   | { kind: "skipWithoutForeignKeys"; table: string };
@@ -3415,7 +3416,7 @@ export type RowMergeOutcome =
       capture: { recorded: number; declined: number; batchId: string | null };
     }
   | { status: "blocked"; blockers: RowMergeBlocker[] }
-  | { status: "changed"; expectedRows: number; actualRows: number }
+  | { status: "changed"; expectedRows: number; actualRows: number; statementsChanged: boolean }
   | { status: "rollback_incomplete"; expectedRows: number; actualRows: number };
 
 // ── サブセット抽出 (#2241) ──

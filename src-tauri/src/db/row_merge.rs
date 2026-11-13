@@ -127,6 +127,9 @@ pub enum MergeBlocker {
     /// 子テーブルの列メタデータを取得できない。
     #[serde(rename_all = "camelCase")]
     ChildUnreadable { table: String },
+    /// 別スキーマ (PostgreSQL) / 別データベース (MySQL) の子テーブルの一覧を取得できない。
+    #[serde(rename_all = "camelCase")]
+    CrossChildrenUnreadable { table: String },
     /// 別のデータベースの子テーブルが `ON DELETE CASCADE / SET NULL / SET DEFAULT` で参照している (MySQL)。
     /// 辿れないので、重複行の DELETE で黙って消える / NULL になるのを防ぐために止める。
     #[serde(rename_all = "camelCase")]
