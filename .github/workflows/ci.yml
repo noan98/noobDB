@@ -1501,8 +1501,12 @@ jobs:
     timeout-minutes: 45
     env:
       CARGO_INCREMENTAL: "0"
-      RUSTC_WRAPPER: sccache
-      SCCACHE_DIR: ${{ github.workspace }}/.sccache
+      # Windows では sccache を使わない。Rust 1.100 の cargo は依存ごとに
+      # `-L dependency=target/debug/build/<crate>/<hash>/out` を渡すようになり、rustc の
+      # コマンドラインが 4 万文字を超える。cargo 自身は長すぎると @argfile へ逃がすが、
+      # sccache は argfile を展開してから rustc を起動するので、Windows の上限
+      # (32,767 文字) で `os error 206` になる。sccache が応答ファイルで rustc を
+      # 起動するようになったら戻す。Linux は上限が大きいので sccache のまま。
       # CI のテストビルドだけデバッグ情報を出さない。MSVC は統合テストのバイナリごとに
       # PDB を書き出すため、リンクの時間とキャッシュの容量が大きく減る。Cargo.toml の
       # `[profile.dev] debug = "line-tables-only"` はローカル開発用にそのまま残す
@@ -1528,13 +1532,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      # RUSTC_WRAPPER=sccache を有効にしているため、rustc を呼ぶ後続ステップより
-      # 前に sccache 本体を導入する。
-      - name: Install sccache
-        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
-        with:
-          tool: sccache
 
       # Rust の単体 / 統合テストは __test_api 経由で db::Connection を駆動するだけで
       # webview も run() も起動せず、実フロント資産を必要としない。tauri::generate_context!
@@ -1565,17 +1562,6 @@ jobs:
           # PR 実行で保存したキャッシュは他の PR から参照できないため、保存は main
           # の push だけに絞る (PR は main スコープのキャッシュを復元するだけ)。
           save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      # sccache は復元だけをここで行い、保存は下の「Save sccache (main only)」で
-      # main の push に限る (rust-cache の save-if と同じ理由)。
-      - name: Cache sccache
-        id: sccache-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ github.workspace }}/.sccache
-          key: sccache-${{ runner.os }}-windows-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: |
-            sccache-${{ runner.os }}-windows-
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
@@ -1640,16 +1626,7 @@ jobs:
           path: ~/.cargo/registry/index
           key: cargo-index-${{ runner.os }}-windows-${{ hashFiles('src-tauri/Cargo.lock') }}
 
-      # main の push のときだけ sccache を保存する。復元時に完全一致した場合は
-      # 内容が変わらないので保存しない (従来の actions/cache と同じ挙動)。
-      - name: Save sccache (main only)
-        if: always() && github.ref == 'refs/heads/main' && steps.sccache-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ github.workspace }}/.sccache
-          key: sccache-${{ runner.os }}-windows-${{ hashFiles('src-tauri/Cargo.lock') }}
-
-      # ジョブ所要時間・rust-cache ヒット・sccache ヒット率を Job Summary へ
+      # ジョブ所要時間・rust-cache ヒットを Job Summary へ
       # 出力する (#565)。#417 の sccache stats (ログ出力) を Job Summary 可視化へ
       # 拡張し、バンドルサイズ (#443) / カバレッジ (#482) と同じく可視化のみで
       # fail はさせない。
@@ -1665,13 +1642,5 @@ jobs:
             echo "| --- | --- |"
             echo "| 所要時間 | ${ELAPSED} 秒 |"
             echo "| rust-cache (target) ヒット | ${{ steps.rust-cache.outputs.cache-hit }} |"
-            echo ""
-            echo '<details><summary>sccache --show-stats</summary>'
-            echo ''
-            echo '```'
-            sccache --show-stats
-            echo '```'
-            echo ''
-            echo '</details>'
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
