@@ -143,7 +143,8 @@ export function ImpactTree({ groups, maxVisible = DEFAULT_MAX_VISIBLE, expandedM
         {split.map(({ group, head, rest }) => {
           const hasRest = rest.length > 0;
           // 通し数の上限で全件が畳まれた起点は、チップだけが残って「影響なし」に見えるので展開するまで描かない。
-          if (!expanded && head.length === 0) return null;
+          // 依存が 0 件の起点はそもそも畳まれていないので描く (呼び出し元が渡した場合でも消さない)。
+          if (!expanded && head.length === 0 && hasRest) return null;
           return (
             <chakra.div key={group.key} display="flex" alignItems="flex-start" gap="2">
               {group.origin && <OriginChip origin={group.origin} />}
