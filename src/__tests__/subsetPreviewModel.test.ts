@@ -8,6 +8,7 @@ import {
   COLLAPSE_THRESHOLD,
   LANE_VISIBLE,
   layoutEdges,
+  tracePathToRoot,
   type SubsetNode,
 } from "../components/subsetPreviewModel";
 
@@ -98,10 +99,10 @@ describe("buildSubsetGraph", () => {
   });
   it("エッジは重複・自己参照・プレビュー外を除く", () => {
     expect(g.edges).toEqual([
-      { from: "orders", to: "customers" },
-      { from: "customers", to: "regions" },
-      { from: "items", to: "orders" },
-      { from: "item_notes", to: "items" },
+      { from: "orders", to: "customers", labels: ["orders.x → customers.id"] },
+      { from: "customers", to: "regions", labels: ["customers.x → regions.id"] },
+      { from: "items", to: "orders", labels: ["items.x → orders.id"] },
+      { from: "item_notes", to: "items", labels: ["item_notes.x → items.id"] },
     ]);
   });
 });
@@ -247,5 +248,96 @@ describe("barPercent", () => {
     expect(barPercent(0.5)).toBe(50);
     expect(barPercent(0.001)).toBe(4);
     expect(barPercent(Number.NaN)).toBe(0);
+  });
+});
+
+describe("tracePathToRoot (#2293)", () => {
+  const p = preview([
+    tp("orders", 5, 0, 0),
+    tp("customers", 0, 0, 2),
+    tp("regions", 0, 0, 1),
+    tp("items", 0, 3, 0),
+    tp("item_notes", 0, 2, 0),
+    tp("lonely", 0, 1, 0),
+  ]);
+  const g = buildSubsetGraph(p, [
+    fk("orders", "customers"),
+    fk("customers", "regions"),
+    fk("items", "orders"),
+    fk("item_notes", "items"),
+  ]);
+  const edgeNames = (path: ReturnType<typeof tracePathToRoot>) =>
+    path.edges.map((e) => `${e.from}>${e.to}`).sort();
+
+  it("子レーンの表は親の方向へ辿って起点まで", () => {
+    const path = tracePathToRoot(g, "item_notes");
+    expect([...path.tables].sort()).toEqual(["item_notes", "items", "orders"]);
+    expect(edgeNames(path)).toEqual(["item_notes>items", "items>orders"]);
+    expect(path.edges[0].labels.length).toBeGreaterThan(0);
+  });
+  it("親レーンの表は子の方向へ辿って起点まで", () => {
+    const path = tracePathToRoot(g, "regions");
+    expect([...path.tables].sort()).toEqual(["customers", "orders", "regions"]);
+    expect(edgeNames(path)).toEqual(["customers>regions", "orders>customers"]);
+  });
+  it("起点自身・起点へ着かない表はその表だけ", () => {
+    expect([...tracePathToRoot(g, "orders").tables]).toEqual(["orders"]);
+    expect(tracePathToRoot(g, "orders").edges).toEqual([]);
+    expect(tracePathToRoot(g, "lonely").edges).toEqual([]);
+    expect([...tracePathToRoot(g, "unknown").tables]).toEqual(["unknown"]);
+  });
+  it("循環があっても停止し、起点へ着かなければ自身だけ", () => {
+    const cp = preview([tp("root", 1, 0, 0), tp("a", 0, 1, 0), tp("b", 0, 1, 0)], {
+      cycles: [["a", "b"]],
+    });
+    // a ⇄ b の循環で、root とは無関係
+    const cg = buildSubsetGraph(cp, [fk("a", "b"), fk("b", "a")]);
+    const path = tracePathToRoot(cg, "a");
+    expect([...path.tables]).toEqual(["a"]);
+    expect(path.edges).toEqual([]);
+  });
+  it("循環が起点へつながっていれば最短の経路が出る", () => {
+    const cp = preview([tp("root", 1, 0, 0), tp("a", 0, 1, 0), tp("b", 0, 1, 0)], {
+      cycles: [["a", "b"]],
+    });
+    const cg = buildSubsetGraph(cp, [fk("a", "root"), fk("a", "b"), fk("b", "a")]);
+    const path = tracePathToRoot(cg, "b");
+    expect(path.edges.map((e) => `${e.from}>${e.to}`).sort()).toEqual(["a>root", "b>a"]);
+  });
+  it("複数の外部キーの列名は辺にまとまる", () => {
+    const mg = buildSubsetGraph(preview([tp("o", 1, 0, 0), tp("c", 0, 0, 1)]), [
+      { ...fk("o", "c"), column: "billing_id" },
+      { ...fk("o", "c"), column: "shipping_id" },
+    ]);
+    expect(mg.edges).toHaveLength(1);
+    expect(mg.edges[0].labels).toEqual(["o.billing_id → c.id", "o.shipping_id → c.id"]);
+  });
+  it("子の親 (子経由で取り込まれた表) も、子を通って起点まで辿れる", () => {
+    const pg = buildSubsetGraph(
+      preview([tp("orders", 5, 0, 0), tp("items", 0, 3, 0), tp("products", 0, 0, 2)]),
+      [fk("items", "orders"), fk("items", "products")],
+    );
+    const path = tracePathToRoot(pg, "products");
+    expect([...path.tables].sort()).toEqual(["items", "orders", "products"]);
+    expect(edgeNames(path)).toEqual(["items>orders", "items>products"]);
+  });
+  it("親子両方の行を持つ表も、子の方向と親の方向の両方から探す", () => {
+    const pg = buildSubsetGraph(preview([tp("orders", 5, 0, 0), tp("items", 0, 3, 0), tp("both", 0, 1, 2)]), [
+      fk("both", "orders"),
+      fk("items", "both"),
+    ]);
+    expect(pg.nodes.find((n) => n.table === "both")?.lane).toBe("parent");
+    const path = tracePathToRoot(pg, "both");
+    expect(edgeNames(path)).toEqual(["both>orders"]);
+  });
+  it("子の局面では親だけの表を中継しない", () => {
+    // items → products (親だけ) → orders: products 経由では起点へ着かない。
+    const pg = buildSubsetGraph(
+      preview([tp("orders", 5, 0, 0), tp("items", 0, 3, 0), tp("products", 0, 0, 2)]),
+      [fk("items", "products"), fk("products", "orders")],
+    );
+    const path = tracePathToRoot(pg, "items");
+    expect([...path.tables]).toEqual(["items"]);
+    expect(path.edges).toEqual([]);
   });
 });

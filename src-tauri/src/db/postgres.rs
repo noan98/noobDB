@@ -921,7 +921,7 @@ impl PostgresConn {
         let copy_key = format!("{}\0{}", database.unwrap_or(""), table);
         let try_copy = super::pg_copy::use_copy(conflict)
             && !self.search_path.copy_is_unavailable(&copy_key)
-            && relation_allows_copy(conn, table).await;
+            && relation_allows_copy(conn, table, columns).await;
         if try_copy {
             guard.arm();
         }
@@ -5866,16 +5866,29 @@ fn copy_rejection(e: sqlx::Error) -> Result<CopyAttempt> {
 }
 
 /// 取り込み先が COPY で書いてよい表か (#2270)。ビュー・外部表・マテビューと、ルールを持つ表は
-/// COPY がルールを発火しない / 書けないので INSERT にする。調べられなければ COPY を試す。
-async fn relation_allows_copy(conn: &mut sqlx::PgConnection, table: &str) -> bool {
-    let row: std::result::Result<Option<(String, bool)>, _> = sqlx::query_as(
-        "SELECT c.relkind::text, c.relhasrules FROM pg_class c WHERE c.oid = to_regclass($1)",
+/// COPY がルールを発火しない / 書けないので INSERT にする。取り込む列に GENERATED ALWAYS
+/// identity 列があるときも、COPY は INSERT の 428C9 検査を通らず値が入ってしまうので INSERT にする
+/// (#2299)。調べられなければ COPY を試す。
+async fn relation_allows_copy(
+    conn: &mut sqlx::PgConnection,
+    table: &str,
+    columns: &[String],
+) -> bool {
+    let row: std::result::Result<Option<(String, bool, bool)>, _> = sqlx::query_as(
+        "SELECT c.relkind::text, c.relhasrules, \
+                EXISTS (SELECT 1 FROM pg_attribute a \
+                        WHERE a.attrelid = c.oid AND a.attidentity = 'a' \
+                          AND NOT a.attisdropped AND a.attname::text = ANY($2)) \
+         FROM pg_class c WHERE c.oid = to_regclass($1)",
     )
     .bind(pg_quote_ident(table))
+    .bind(columns)
     .fetch_optional(&mut *conn)
     .await;
     match row {
-        Ok(Some((kind, has_rules))) => super::pg_copy::relation_supports_copy(&kind, has_rules),
+        Ok(Some((kind, has_rules, always_identity))) => {
+            super::pg_copy::relation_supports_copy(&kind, has_rules, always_identity)
+        }
         _ => true,
     }
 }

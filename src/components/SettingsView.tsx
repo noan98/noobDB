@@ -1012,7 +1012,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
       return;
     }
     try {
-      await confirmAndInstallUpdate(update, { t, toast, confirm });
+      await confirmAndInstallUpdate(update);
     } catch {
       toast.error(t("updateCheckFailed"));
     }

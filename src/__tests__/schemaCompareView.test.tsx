@@ -6,6 +6,13 @@ import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 import { api } from "../api/tauri";
 
+// reduced-motion (アプリ設定 / OS) の再現。MotionConfig を介さず useReducedMotionConfig の戻り値だけ差し替える。
+const reducedRef = vi.hoisted(() => ({ value: false }));
+vi.mock("motion/react", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("motion/react")>();
+  return { ...mod, useReducedMotionConfig: () => reducedRef.value };
+});
+
 // 比較結果の描画 (2 接続 + 比較 + データ比較フォーム) は CI の混んだ shard で既定の
 // 1 秒を超えることがあり、findBy* が時々落ちていた。このファイルだけ待ちを延ばす。
 let prevAsyncTimeout = 1000;
@@ -489,6 +496,149 @@ describe("SchemaCompareView の複数比較先", () => {
     );
   });
 
+  /** 3 接続のうち Beta (同一) と Gamma (差分あり) を比較先にして比較し、マトリクスを返す。 */
+  async function compareBetaGamma() {
+    vi.mocked(api.connect).mockImplementation(
+      async (req) => ({ session_id: `s-${req.profile_id}` }) as never,
+    );
+    vi.mocked(api.compareSchema).mockImplementation(
+      async (p) => diffFor(p.targetSessionId === "s-p-b" ? "same" : "different") as never,
+    );
+    renderWithProviders(<SchemaCompareView profiles={THREE} onClose={() => {}} />);
+    const boxes = () => screen.getAllByRole("combobox") as HTMLElement[];
+    chooseListboxOption(boxes()[0], "p-a");
+    await waitFor(() => expect(boxes()[1]).toHaveTextContent("db1"));
+    chooseListboxOption(boxes()[2], "p-b");
+    await waitFor(() => expect(boxes()[3]).toHaveTextContent("db1"));
+    fireEvent.click(screen.getByRole("button", { name: t("schemaCompareAddTarget", { count: 1, max: 4 }) }));
+    chooseListboxOption(boxes()[4], "p-c");
+    await waitFor(() => expect(boxes()[5]).toHaveTextContent("db1"));
+    fireEvent.click(screen.getByText(t("schemaCompareCompare")));
+    return screen.findByTestId("schema-compare-matrix");
+  }
+
+  /** scrollIntoView を差し替えて callback を走らせ、後始末する (jsdom には元々無いメソッド)。 */
+  async function withScrollSpy(run: (spy: ReturnType<typeof vi.fn>) => Promise<void>) {
+    const spy = vi.fn();
+    Element.prototype.scrollIntoView = spy;
+    try {
+      await run(spy);
+    } finally {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+      reducedRef.value = false;
+    }
+  }
+
+  const clickGammaCell = () =>
+    fireEvent.click(
+      screen.getByRole("button", { name: `users / Gamma / db1: ${t("schemaCompareOpChange")}` }),
+    );
+  const scrolledRows = (spy: ReturnType<typeof vi.fn>) =>
+    spy.mock.contexts.filter((el) => (el as HTMLElement).dataset?.tableName === "users");
+
+  it("マスを押すと、アクティブ列と反映先バッジが移り、詳細一覧の該当行が見える位置へ送られて光る (#2292)", async () => {
+    await withScrollSpy(async (scrollIntoView) => {
+      const matrix = await compareBetaGamma();
+      // 反映先は 1 つ目の比較先 (Beta)。ハイライトとバッジは 1 つずつ。
+      // 列見出しのボタンは aria-pressed を持つ (マスのボタンは持たない)。
+      const header = (name: RegExp) =>
+        within(matrix)
+          .getAllByRole("button", { name })
+          .find((b) => b.hasAttribute("aria-pressed")) as HTMLElement;
+      expect(within(header(/Beta \/ db1/)).getByTestId("matrix-active-col")).toBeInTheDocument();
+      expect(screen.getAllByTestId("schema-compare-active-badge")).toHaveLength(1);
+
+      // Beta は差分なしで一覧が空 (= 詳細一覧は未マウント) の状態から押す。
+      scrollIntoView.mockClear();
+      clickGammaCell();
+      await waitFor(() =>
+        expect(within(header(/Gamma \/ db1/)).getByTestId("matrix-active-col")).toBeInTheDocument(),
+      );
+      expect(within(header(/Beta \/ db1/)).queryByTestId("matrix-active-col")).toBeNull();
+      expect(screen.getAllByTestId("matrix-active-col")).toHaveLength(1);
+      expect(screen.getAllByTestId("schema-compare-active-badge")).toHaveLength(1);
+      // 後ろの比較先へ移ったので、詳細は右から入る。
+      await waitFor(() =>
+        expect(screen.getByTestId("schema-compare-detail-pane")).toHaveAttribute("data-slide-dir", "1"),
+      );
+      // 該当テーブルの行そのものを、見える位置へ送って 1 回光らせる。
+      await waitFor(() => expect(scrolledRows(scrollIntoView)).toHaveLength(1));
+      expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: "nearest" }));
+      expect(document.querySelector('[data-table-name="users"]')).toHaveClass("table-diff-flash");
+    });
+  });
+
+  it("reduced-motion では、行へ送るスクロールが即時 (behavior: auto) になる (#2292)", async () => {
+    await withScrollSpy(async (scrollIntoView) => {
+      reducedRef.value = true;
+      await compareBetaGamma();
+      scrollIntoView.mockClear();
+      clickGammaCell();
+      await waitFor(() => expect(scrolledRows(scrollIntoView)).toHaveLength(1));
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest", behavior: "auto" });
+    });
+  });
+
+  it("比較先を外すとカードが折りたたまれて消える (#2292)", async () => {
+    renderWithProviders(<SchemaCompareView profiles={THREE} onClose={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: t("schemaCompareAddTarget", { count: 1, max: 4 }) }));
+    expect(screen.getAllByTestId("schema-compare-target-card")).toHaveLength(2);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: t("schemaCompareRemoveTarget") })[0] as HTMLElement,
+    );
+    await waitFor(() => expect(screen.getAllByTestId("schema-compare-target-card")).toHaveLength(1));
+  });
+
+  it("列見出しの内訳ストリップの件数を押すと、その比較先をその状態だけに絞り込み、行にドリフト度が出る", async () => {
+    vi.mocked(api.connect).mockImplementation(
+      async (req) => ({ session_id: `s-${req.profile_id}` }) as never,
+    );
+    vi.mocked(api.compareSchema).mockImplementation(
+      async () =>
+        ({
+          source_driver: "mysql",
+          target_driver: "mysql",
+          tables: [
+            { name: "users", status: "different", columns: [], foreign_keys: [] },
+            { name: "logs", status: "target_only", columns: [], foreign_keys: [] },
+          ],
+        }) as never,
+    );
+    renderWithProviders(<SchemaCompareView profiles={THREE} onClose={() => {}} />);
+    const boxes = () => screen.getAllByRole("combobox") as HTMLElement[];
+    chooseListboxOption(boxes()[0], "p-a");
+    await waitFor(() => expect(boxes()[1]).toHaveTextContent("db1"));
+    chooseListboxOption(boxes()[2], "p-b");
+    await waitFor(() => expect(boxes()[3]).toHaveTextContent("db1"));
+    fireEvent.click(screen.getByRole("button", { name: t("schemaCompareAddTarget", { count: 1, max: 4 }) }));
+    chooseListboxOption(boxes()[4], "p-c");
+    await waitFor(() => expect(boxes()[5]).toHaveTextContent("db1"));
+    fireEvent.click(screen.getByText(t("schemaCompareCompare")));
+
+    const matrix = await screen.findByTestId("schema-compare-matrix");
+    expect(within(matrix).getAllByTestId("matrix-drift")[0]).toHaveTextContent("2/2");
+    fireEvent.click(
+      within(matrix).getByRole("button", {
+        name: t("schemaCompareMatrixStripLabel", {
+          target: "Gamma / db1",
+          status: t("schemaCompareOpDrop"),
+          count: 1,
+        }),
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Gamma \/ db1/, pressed: true })).toBeInTheDocument(),
+    );
+    const change = await screen.findByRole("button", {
+      name: new RegExp(t("schemaCompareOpChange")),
+      pressed: false,
+    });
+    expect(change).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: new RegExp(t("schemaCompareOpDrop")), pressed: true }),
+    ).toBeInTheDocument();
+  });
+
   it("反映先のドライバが違っても、他の比較先は比較してその列だけ失敗にする", async () => {
     const MIXED = [...PROFILES, makeProfile({ id: "p-pg", name: "Pg", driver: "postgres" })];
     vi.mocked(api.connect).mockImplementation(
@@ -532,6 +682,56 @@ describe("SchemaCompareView の複数比較先", () => {
     );
     resolveC({ session_id: "s-p-c" });
     await waitFor(() => expect(boxes()[3]).toHaveTextContent("db1"));
+  });
+
+  it("同じプロファイルを接続中に複数ピッカーで選んでも connect は 1 回 (#2300)", async () => {
+    let resolveA: (v: { session_id: string }) => void = () => {};
+    vi.mocked(api.connect).mockReturnValue(
+      new Promise((r) => {
+        resolveA = r as typeof resolveA;
+      }) as never,
+    );
+    renderWithProviders(<SchemaCompareView profiles={THREE} onClose={() => {}} />);
+    const boxes = () => screen.getAllByRole("combobox") as HTMLElement[];
+    fireEvent.click(screen.getByRole("button", { name: t("schemaCompareAddTarget", { count: 1, max: 4 }) }));
+    chooseListboxOption(boxes()[0], "p-a");
+    chooseListboxOption(boxes()[4], "p-a");
+    await waitFor(() => expect(api.connect).toHaveBeenCalled());
+    resolveA({ session_id: "s-a" });
+    await waitFor(() => expect(boxes()[5]).toHaveTextContent("db1"));
+    await waitFor(() => expect(boxes()[1]).toHaveTextContent("db1"));
+    expect(api.connect).toHaveBeenCalledTimes(1);
+  });
+
+  it("接続中にアンマウントしても、完了したセッションは切断される (#2300)", async () => {
+    let resolveA: (v: { session_id: string }) => void = () => {};
+    vi.mocked(api.connect).mockReturnValue(
+      new Promise((r) => {
+        resolveA = r as typeof resolveA;
+      }) as never,
+    );
+    const { unmount } = renderWithProviders(<SchemaCompareView profiles={THREE} onClose={() => {}} />);
+    chooseListboxOption((screen.getAllByRole("combobox") as HTMLElement[])[0], "p-a");
+    await waitFor(() => expect(api.connect).toHaveBeenCalled());
+    unmount();
+    expect(api.disconnect).not.toHaveBeenCalled();
+    resolveA({ session_id: "s-late" });
+    await waitFor(() => expect(api.disconnect).toHaveBeenCalledWith("s-late"));
+  });
+
+  it("接続に失敗したプロファイルを選び直すと再接続する (#2300)", async () => {
+    vi.mocked(api.connect)
+      .mockRejectedValueOnce(new Error("boom") as never)
+      .mockResolvedValueOnce({ session_id: "s-a" } as never);
+    renderWithProviders(<SchemaCompareView profiles={THREE} onClose={() => {}} />);
+    const boxes = () => screen.getAllByRole("combobox") as HTMLElement[];
+    chooseListboxOption(boxes()[0], "p-a");
+    await waitFor(() => expect(api.connect).toHaveBeenCalledTimes(1));
+    chooseListboxOption(boxes()[0], "p-b");
+    chooseListboxOption(boxes()[0], "p-a");
+    await waitFor(() => expect(boxes()[1]).toHaveTextContent("db1"));
+    expect(api.connect).toHaveBeenCalledWith(expect.objectContaining({ profile_id: "p-a" }));
+    expect(vi.mocked(api.connect).mock.calls.filter(([r]) => r.profile_id === "p-a").length).toBe(2);
   });
 
   it("比較先は 4 つまでしか追加できない", () => {

@@ -1,13 +1,14 @@
-import { Box, chakra } from "@chakra-ui/react";
+import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { materializedViews } from "../viewRebuild";
 import type { ViewRebuildState } from "../useViewRebuildPlan";
 import { Callout } from "./Callout";
+import { ImpactTree, type ImpactGroup } from "./ImpactTree";
 import { ErrorNote } from "./modalForm";
 import { formatBytes, formatRowCount } from "./tableSize";
 import { Switch } from "./ui";
 
-/** 一覧に出す依存ビューの最大行数。超えた分は「ほか N 件」に畳む。 */
+/** 一覧に出す依存ビューの最大行数。超えた分は「ほか N 件」に畳み、押すと展開する。 */
 const MAX_LINES = 12;
 
 interface Props {
@@ -20,6 +21,8 @@ interface Props {
   onWithDataChange: (next: boolean) => void;
   /** 作り直すビューが参照する列で、同じ ALTER でリネーム / 削除されるもの (作り直しの SQL は旧い列名を参照するので止める)。 */
   conflictColumns: string[];
+  /** 型を変える列 (起点チップに出す)。省略すると起点なしの木になる。 */
+  changedColumns?: string[];
 }
 
 /**
@@ -27,6 +30,8 @@ interface Props {
  * 依存が無ければ何も描かない (従来どおり)。作り直せない依存 (RLS ポリシーなど) があるときは理由を出して
  * 適用を止め、作り直せるときは「依存ビュー N 件を作り直して適用」を明示的に選ばせる。
  * 実際の SQL は呼び出し側のプレビューに DROP / CREATE / 復元として現れる。
+ * 依存ビューは起点の列チップから影響ツリー (#2295) で並べる。バックエンドは依存の親子関係を返さない
+ * (作り直す順の平坦な一覧) ので、字下げは使わず平坦に表示する。
  */
 export function ViewRebuildNotice({
   state,
@@ -35,6 +40,7 @@ export function ViewRebuildNotice({
   withData,
   onWithDataChange,
   conflictColumns,
+  changedColumns,
 }: Props) {
   const t = useT();
   if (state.status === "idle") return null;
@@ -58,17 +64,39 @@ export function ViewRebuildNotice({
     return (
       <ErrorNote role="alert" title={t("viewRebuildBlockedTitle")} data-testid="view-rebuild-blocked">
         <chakra.p m={0}>{t("viewRebuildBlockedBody")}</chakra.p>
-        <Box as="ul" m={0} mt="1" pl="5" fontSize="sm">
-          {plan.blockers.map((b) => (
-            <Box as="li" key={`${b.kind}\0${b.description}`} wordBreak="break-all" fontFamily="mono">
-              {b.description}
-            </Box>
-          ))}
-        </Box>
+        <ImpactTree
+          groups={[
+            {
+              key: "blockers",
+              nodes: plan.blockers.map((b) => ({
+                key: `${b.kind}\0${b.description}`,
+                kind: "other",
+                name: b.description,
+                outcome: "block",
+              })),
+            },
+          ]}
+          maxVisible={MAX_LINES}
+        />
       </ErrorNote>
     );
   }
-  const shown = plan.views.slice(0, MAX_LINES);
+  const groups: ImpactGroup[] = [
+    {
+      key: "views",
+      origin:
+        changedColumns && changedColumns.length > 0
+          ? { kind: "column", name: changedColumns.join(", ") }
+          : undefined,
+      nodes: plan.views.map((v) => ({
+        key: `${v.schema}.${v.name}`,
+        kind: v.kind === "view" ? "view" : "matview",
+        kindLabel: t(v.kind === "view" ? "dropColumnDepView" : "dropColumnDepMatView"),
+        name: `${v.schema}.${v.name}`,
+        outcome: "rebuild",
+      })),
+    },
+  ];
   const matviews = materializedViews(plan);
   const totalBytes = matviews.reduce((n, v) => n + (v.size_bytes ?? 0), 0);
   const totalRows = matviews.reduce((n, v) => n + Math.max(v.est_rows ?? 0, 0), 0);
@@ -80,21 +108,7 @@ export function ViewRebuildNotice({
       data-testid="view-rebuild"
     >
       <chakra.p m={0}>{t("viewRebuildBody")}</chakra.p>
-      <Box as="ul" m={0} mt="1" pl="5" fontSize="sm">
-        {shown.map((v) => (
-          <Box as="li" key={`${v.schema}.${v.name}`} wordBreak="break-all">
-            {t(v.kind === "view" ? "dropColumnDepView" : "dropColumnDepMatView")}{" "}
-            <chakra.span fontFamily="mono">
-              {v.schema}.{v.name}
-            </chakra.span>
-          </Box>
-        ))}
-        {plan.views.length > shown.length && (
-          <Box as="li" listStyleType="none" ml="-5">
-            {t("dropReferencedByMore", { count: plan.views.length - shown.length })}
-          </Box>
-        )}
-      </Box>
+      <ImpactTree groups={groups} maxVisible={MAX_LINES} />
       {conflictColumns.length > 0 && (
         <chakra.p m={0} mt="1" data-testid="view-rebuild-rename">
           {t("viewRebuildRenameConflict", { columns: conflictColumns.join(", ") })}

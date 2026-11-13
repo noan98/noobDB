@@ -521,6 +521,9 @@ describe("ProcessListPanel per-process results / same-query select / progress (#
     const badge = await screen.findByTestId("process-progress");
     expect(badge).toHaveTextContent("40%");
     expect(badge).toHaveTextContent("scanning heap");
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "40");
+    expect(document.querySelector("progress")).toBeNull();
+    expect(badge).toHaveTextContent(t("processProgressEtaPending"));
   });
 
   it("ALTER TABLE の進捗をラベル付きで出す", async () => {
@@ -558,7 +561,34 @@ describe("ProcessListPanel per-process results / same-query select / progress (#
     renderWithProviders(<ProcessListPanel sessionId="s-dismiss" driver="mysql" readOnly={false} />);
     const badge = await screen.findByTestId("process-progress");
     expect(badge).toHaveTextContent("COPY FROM (1234");
+    // 割合がないので進捗バーは出さず、1 回目は算出待ち。
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(badge).toHaveTextContent(t("processProgressEtaPending"));
     fireEvent.click(screen.getByRole("button", { name: t("processProgressDisabledDismiss") }));
-    expect(screen.queryByText(t("processProgressDisabledTitle"))).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByText(t("processProgressDisabledTitle"))).not.toBeInTheDocument(),
+    );
+  });
+
+  it("2 回目のポーリングで進みが見えたら残り時間を出す", async () => {
+    const mk = (done: number): ProcessInfo => ({
+      ...base,
+      progress: { kind: "vacuum", phase: "scanning heap", done, total: 100 },
+    });
+    let now = 1_000_000;
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => now);
+    vi.mocked(api.listProcesses).mockResolvedValue([mk(10)]);
+    renderWithProviders(<ProcessListPanel sessionId="s-eta" driver="postgres" readOnly={false} />);
+    const badge = await screen.findByTestId("process-progress");
+    expect(badge).toHaveTextContent(t("processProgressEtaPending"));
+    now += 60_000;
+    vi.mocked(api.listProcesses).mockResolvedValue([mk(20)]);
+    fireEvent.click(screen.getByRole("button", { name: t("processRefresh") }));
+    // 60 秒で 10 進む → 残り 80 は 480 秒 = 8 分。
+    await waitFor(() => expect(screen.getByTestId("process-progress").textContent).toContain("8"));
+    expect(screen.getByTestId("process-progress-detail")).toHaveTextContent(
+      t("processProgressEta", { minutes: 8 }),
+    );
+    spy.mockRestore();
   });
 });
