@@ -119,16 +119,16 @@ const PAIRS: { ts: Src; rs: Src; names: [string, string][] }[] = [
   },
 ];
 
-/** 式 (数値リテラル・`_` 区切り・文字列・`+ - * /` と括弧・`<<`) を評価する。評価できなければ投げる。 */
+/** 式 (数値リテラル・`_` 区切り・文字列・`+ - *` と括弧・`<<`) を評価する。評価できなければ投げる。 */
 function evalConstExpr(raw: string): number | string {
   const expr = raw.replace(/\/\/.*$/gm, "").trim();
   const str = /^b?"((?:[^"\\]|\\.)*)"$/.exec(expr);
   if (str) return str[1];
   // 許可する文字を絞ってから評価する (ソースは自リポジトリのものだが、念のため)。
   const cleaned = expr.replace(/(\d)_(?=\d)/g, "$1").replace(/(?<=\d)(u8|u16|u32|u64|usize|i32|i64)\b/g, "");
-  if (!/^[\d\s+\-*/()<]+$/.test(cleaned)) throw new Error(`評価できない式: ${raw}`);
+  if (!/^[\d\s+\-*()<]+$/.test(cleaned)) throw new Error(`評価できない式: ${raw}`);
   const v = new Function(`return (${cleaned});`)();
-  if (typeof v !== "number" || !Number.isFinite(v)) throw new Error(`数値にならない式: ${raw}`);
+  if (typeof v !== "number" || !Number.isSafeInteger(v)) throw new Error(`数値にならない式: ${raw}`);
   return v;
 }
 
@@ -187,14 +187,21 @@ describe("Rust ⇔ TS 定数パリティ (#2301): 対応表", () => {
   }
 });
 
-// 対応表に無い「バックエンドと揃える」定数の追加を検出する。コメントを grep して、そうしたコメントを
-// 持つファイルが上の対応表に載っているかを確認する。載せられない (定数でない / 別の仕組みで固定
-// している) ものだけ、理由つきで EXEMPT に足す。
+// 対応表に無い「バックエンドと揃える」定数の追加を検出する。コメントを grep し、マーカーのコメント行から
+// 次の空行までに宣言された `const NAME` を集めて、各 NAME が対応表 (PAIRS) の TS 名か、定数単位の
+// EXEMPT にあることを確かめる (すでに対応表にあるファイルへ後から足した定数も検出できる)。
 const COMMENT_MARKER =
-  /(?:バックエンド|Rust)[^\n]*(?:と揃える|と同じ値)|mirroring the backend (?:clamp|limit|bounds)/i;
+  /(?:バックエンド|Rust)[^\n]*と(?:揃える|同じ値)|mirroring the backend (?:clamp|limit|bounds)/i;
 
-/** 対応表の外で固定しているファイル (ファイルパス → 理由)。 */
-const EXEMPT: Record<string, string> = {};
+/** 対応表の外にある定数 ("ファイルパス:定数名" → 理由)。固定の仕組みが別にあるものだけ。 */
+const EXEMPT: Record<string, string> = {
+  "components/subsetExtract.ts:SUBSET_DEFAULT_CHILD_DEPTH":
+    "UI の既定 (1 段) は意図的に Rust の未指定時の既定 (clamp_child_depth の 0) と違う。上限 SUBSET_MAX_CHILD_DEPTH は対応表で固定",
+  "components/TaskManager.tsx:DEFAULT_PAUSE_AFTER_FAILURES":
+    "新規タスクの UI 既定値で、Rust には対応する既定の定数が無い (Rust の既定は 0 = 無効)。上限は対応表で固定",
+  "settings.ts:MIN_TIMELAPSE_MAX_GENERATIONS":
+    "Rust は timelapse::clamp_max_generations で clamp(1, ..) とリテラルで書いていて定数が無い",
+};
 
 const sources = import.meta.glob(["../**/*.ts", "../**/*.tsx", "!../__tests__/**", "!../**/*.test.*"], {
   query: "?raw",
@@ -202,34 +209,45 @@ const sources = import.meta.glob(["../**/*.ts", "../**/*.tsx", "!../__tests__/**
   eager: true,
 }) as Record<string, string>;
 
+/** マーカーのコメント行から次の空行までに宣言された const 名を "ファイル:NAME" で集める。 */
+function markedConsts(files: Record<string, string>): string[] {
+  const out: string[] = [];
+  for (const [path, text] of Object.entries(files)) {
+    const file = path.replace(/^\.\.\//, "");
+    const lines = text.split("\n");
+    lines.forEach((line, i) => {
+      if (!(/^\s*(?:\/\/|\/?\*)/.test(line) && COMMENT_MARKER.test(line))) return;
+      for (let j = i + 1; j < lines.length && lines[j].trim() !== ""; j++) {
+        const m = /^(?:export\s+)?const\s+([A-Z][A-Z0-9_]*)\b/.exec(lines[j]);
+        if (m) out.push(`${file}:${m[1]}`);
+      }
+    });
+  }
+  return [...new Set(out)];
+}
+
 describe("Rust ⇔ TS 定数パリティ (#2301): コメントの網羅チェック", () => {
-  const covered = new Set(PAIRS.map((p) => p.ts.name));
-  const marked = Object.entries(sources)
-    .filter(([, text]) =>
-      text.split("\n").some((l) => /^\s*(?:\/\/|\/?\*)/.test(l) && COMMENT_MARKER.test(l)),
-    )
-    .map(([path]) => path.replace(/^\.\.\//, ""));
+  const covered = new Set(PAIRS.flatMap((p) => p.names.map(([t]) => `${p.ts.name}:${t}`)));
+  const marked = markedConsts(sources);
 
-  it("検出ロジックが既知のコメントを拾えている (空振り防止)", () => {
-    expect(marked).toContain("components/subsetExtract.ts");
-    expect(marked).toContain("components/TaskManager.tsx");
+  it("検出ロジックが既知の定数を拾えている (空振り防止)", () => {
+    expect(marked).toContain("components/subsetExtract.ts:SUBSET_MAX_ROOT_LIMIT");
+    expect(marked).toContain("components/TaskManager.tsx:MAX_PAUSE_AFTER_FAILURES");
+    expect(marked).toContain("settings.ts:MAX_TIMELAPSE_MAX_GENERATIONS");
   });
 
-  it("「バックエンドと揃える」コメントを持つファイルは対応表か EXEMPT にある", () => {
-    const base = (f: string) => f.split("/").pop() ?? f;
-    const missing = marked.filter((f) => !covered.has(f) && !(base(f) in EXEMPT));
-    expect(
-      missing,
-      `対応表 (PAIRS) に定数を追加するか、EXEMPT に理由つきで追加: ${missing.join(", ")}`,
-    ).toEqual([]);
+  it("「バックエンドと揃える」コメント直下の定数は対応表か EXEMPT にある", () => {
+    const missing = marked.filter((c) => !covered.has(c) && !(c in EXEMPT));
+    expect(missing, `対応表 (PAIRS) に追加するか、EXEMPT に理由つきで追加: ${missing.join(", ")}`).toEqual(
+      [],
+    );
   });
 
-  it("EXEMPT に古いエントリが残っていない", () => {
-    for (const f of Object.keys(EXEMPT)) {
-      expect(
-        Object.keys(sources).some((p) => p.endsWith(`/${f}`)),
-        `${f} が存在しない`,
-      ).toBe(true);
+  it("EXEMPT は実在の定数で、対応表と重複せず、理由がある", () => {
+    for (const [key, reason] of Object.entries(EXEMPT)) {
+      expect(marked, `${key} がマーカー直下に無い`).toContain(key);
+      expect(covered.has(key), `${key} は対応表にもある`).toBe(false);
+      expect(reason.length).toBeGreaterThan(0);
     }
   });
 });
