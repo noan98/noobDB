@@ -489,6 +489,56 @@ describe("SchemaCompareView の複数比較先", () => {
     );
   });
 
+  it("列見出しの内訳ストリップの件数を押すと、その比較先をその状態だけに絞り込み、行にドリフト度が出る", async () => {
+    vi.mocked(api.connect).mockImplementation(
+      async (req) => ({ session_id: `s-${req.profile_id}` }) as never,
+    );
+    vi.mocked(api.compareSchema).mockImplementation(
+      async () =>
+        ({
+          source_driver: "mysql",
+          target_driver: "mysql",
+          tables: [
+            { name: "users", status: "different", columns: [], foreign_keys: [] },
+            { name: "logs", status: "target_only", columns: [], foreign_keys: [] },
+          ],
+        }) as never,
+    );
+    renderWithProviders(<SchemaCompareView profiles={THREE} onClose={() => {}} />);
+    const boxes = () => screen.getAllByRole("combobox") as HTMLElement[];
+    chooseListboxOption(boxes()[0], "p-a");
+    await waitFor(() => expect(boxes()[1]).toHaveTextContent("db1"));
+    chooseListboxOption(boxes()[2], "p-b");
+    await waitFor(() => expect(boxes()[3]).toHaveTextContent("db1"));
+    fireEvent.click(screen.getByRole("button", { name: t("schemaCompareAddTarget", { count: 1, max: 4 }) }));
+    chooseListboxOption(boxes()[4], "p-c");
+    await waitFor(() => expect(boxes()[5]).toHaveTextContent("db1"));
+    fireEvent.click(screen.getByText(t("schemaCompareCompare")));
+
+    const matrix = await screen.findByTestId("schema-compare-matrix");
+    expect(within(matrix).getAllByTestId("matrix-drift")[0]).toHaveTextContent("2/2");
+    fireEvent.click(
+      within(matrix).getByRole("button", {
+        name: t("schemaCompareMatrixStripLabel", {
+          target: "Gamma / db1",
+          status: t("schemaCompareOpDrop"),
+          count: 1,
+        }),
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Gamma \/ db1/, pressed: true })).toBeInTheDocument(),
+    );
+    const change = await screen.findByRole("button", {
+      name: new RegExp(t("schemaCompareOpChange")),
+      pressed: false,
+    });
+    expect(change).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: new RegExp(t("schemaCompareOpDrop")), pressed: true }),
+    ).toBeInTheDocument();
+  });
+
   it("反映先のドライバが違っても、他の比較先は比較してその列だけ失敗にする", async () => {
     const MIXED = [...PROFILES, makeProfile({ id: "p-pg", name: "Pg", driver: "postgres" })];
     vi.mocked(api.connect).mockImplementation(
