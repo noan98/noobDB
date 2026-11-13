@@ -210,7 +210,9 @@ function ConfirmDialog({
   return (
     <Modal
       // no-submit: 確認ダイアログ。破壊的トーンではキャンセルが既定で、誤爆で実行させない
-      width="440px"
+      // 第 3 の選択肢 (altLabel) があるとフッターのボタンが 3 つ並ぶため広げる
+      // (440px だと「このバージョンは見送る」が見切れていた)。
+      width={altLabel ? "540px" : "440px"}
       placement="center"
       onClose={onCancel}
       initialFocusEl={() => (requiresTyped ? typedInputRef.current : cancelRef.current)}
