@@ -59,6 +59,13 @@ import type { Transition, Variants } from "motion/react";
  *   (再マウントしない)。reduced-motion では x 移動が止まり、opacity の短いフェードは残る。
  * - ヘルプ (`HelpView`、#2156) の目次の滑るインジケータ (`ActiveRowHighlight` の layoutId) と、詳細ペインの方向付きクロスフェード
  *   (`AnimatePresence mode="wait"` + `directionalSlide`)。後ろの項目へは右から、前へは左から入る。reduced-motion では即時に切り替える。
+ * - 複数 DB スキーマ比較 (`SchemaCompareView` / `SchemaCompareMatrix`、#2292)。マトリクスのアクティブ列見出しの滑る下地と、
+ *   比較先カードの「反映先」バッジ (それぞれ別の `layoutId`、バッジは `springs.snappy`)。カードの追加・削除は
+ *   `AnimatePresence initial={false}` + `variants.collapse` + `layout="position"`、反映先を変えたときの詳細ペインは
+ *   `AnimatePresence mode="wait"` + `directionalSlide` (ペインの親は作り直さずスクロール位置を保つ)。マスを押すと
+ *   詳細一覧の該当行へ `scrollIntoView({ block: "nearest" })` し、`.table-diff-flash` (App.css) で 1 回光らせる。
+ *   height の補間と scroll の `behavior` は `useReducedMotionConfig()` / `prefersStaticMotion()` で即時 / `"auto"`、
+ *   フラッシュは reduced-motion の CSS で静止する。
  * - モーダル/ダイアログの開閉 (`Modal` — `variants.dialog` / `fade`)。
  * - タブの追加/削除とアクティブインジケータ (`TabBar` — `layout` / `layoutId`)。
  * - トースト通知の出入り (`Toast` — `transitions.emphasized`)。
