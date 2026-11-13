@@ -72,7 +72,8 @@ export function AuditTriggerModal({
   const [mode, setMode] = useState<Mode>(initialMode);
   const [options, setOptions] = useState<AuditOptions>(EMPTY_OPTIONS);
   const [dropTable, setDropTable] = useState(false);
-  const [ddl, setDdl] = useState<AuditDdl | null>(null);
+  // 生成結果。どのオプションに対する結果かを `key` で持ち、現在の入力と一致するものだけを使う。
+  const [ddlState, setDdlState] = useState<{ key: string; ddl: AuditDdl } | null>(null);
   const [ddlError, setDdlError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const mountedRef = useRef(true);
@@ -140,10 +141,13 @@ export function AuditTriggerModal({
   // 削除は読み戻したオプション (無ければ入力中の値) で DDL を作る。
   const effective = mode === "remove" ? (status?.options ?? options) : options;
   const effectiveKey = JSON.stringify(effective);
+  const requestKey = `${mode}|${effectiveKey}`;
+  // オプションを変えた直後は、前のオプションの結果を使わない (古い SQL を確定させない)。
+  const ddl = ddlState?.key === requestKey ? ddlState.ddl : null;
   // biome-ignore lint/correctness/useExhaustiveDependencies: effective は effectiveKey で値比較する (毎回新しいオブジェクトになるため)
   useEffect(() => {
     if (loading || loadError || (mode !== "remove" && optionError)) {
-      setDdl(null);
+      setDdlState(null);
       setDdlError(null);
       return;
     }
@@ -152,18 +156,18 @@ export function AuditTriggerModal({
       .generateAuditDdl(sessionId, database, table, effective, mode === "regenerate")
       .then((d) => {
         if (cancelled) return;
-        setDdl(d);
+        setDdlState({ key: requestKey, ddl: d });
         setDdlError(null);
       })
       .catch((e) => {
         if (cancelled) return;
-        setDdl(null);
+        setDdlState(null);
         setDdlError(String(e));
       });
     return () => {
       cancelled = true;
     };
-  }, [sessionId, database, table, mode, effectiveKey, loading, loadError, optionError]);
+  }, [sessionId, database, table, mode, effectiveKey, requestKey, loading, loadError, optionError]);
 
   const statements = useMemo(() => {
     if (!ddl) return [];
@@ -228,10 +232,12 @@ export function AuditTriggerModal({
         {loadError && <ErrorNote>{loadError}</ErrorNote>}
         {status?.needs_regeneration && mode === "regenerate" && (
           <Callout tone="warning">
-            {t("auditNeedsRegeneration", {
-              added: status.added_columns.join(", ") || "-",
-              removed: status.removed_columns.join(", ") || "-",
-            })}
+            {status.pk_changed
+              ? t("structureAuditPkChanged")
+              : t("auditNeedsRegeneration", {
+                  added: status.added_columns.join(", ") || "-",
+                  removed: status.removed_columns.join(", ") || "-",
+                })}
           </Callout>
         )}
         {status?.present && driver === "postgres" && <Callout tone="info">{t("auditPgGeneric")}</Callout>}

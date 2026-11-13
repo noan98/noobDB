@@ -849,6 +849,8 @@ export interface AuditStatus {
   recorded_columns: string[];
   added_columns: string[];
   removed_columns: string[];
+  /** 主キー列が生成時から変わった (PostgreSQL でも再生成が要る)。 */
+  pk_changed: boolean;
   needs_regeneration: boolean;
 }
 

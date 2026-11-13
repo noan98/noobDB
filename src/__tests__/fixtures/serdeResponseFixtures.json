@@ -364,6 +364,7 @@
       "skip_unchanged_update": true,
       "update": true
     },
+    "pk_changed": false,
     "present": true,
     "recorded_columns": [
       "id"

@@ -33,6 +33,7 @@ const NO_AUDIT = {
   recorded_columns: [],
   added_columns: [],
   removed_columns: [],
+  pk_changed: false,
   needs_regeneration: false,
 };
 
@@ -113,6 +114,7 @@ describe("AuditTriggerModal", () => {
       recorded_columns: ["id"],
       added_columns: ["email"],
       removed_columns: [],
+      pk_changed: false,
       needs_regeneration: true,
     });
     setup();
@@ -130,5 +132,17 @@ describe("AuditTriggerModal", () => {
     // 初期モードは作成のまま (勝手に再生成・削除しない)。表名は編集できる。
     expect(screen.getByLabelText(t("auditTableName"))).toBeEnabled();
     expect(screen.getByRole("button", { name: t("auditConfirmCreate") })).toBeInTheDocument();
+  });
+
+  it("オプションを変えた直後は、前の結果を確定できない (再生成の結果が来るまで無効)", async () => {
+    const user = userEvent.setup();
+    const { onConfirm } = setup();
+    await waitFor(() => expect(screen.getByRole("button", { name: t("auditConfirmCreate") })).toBeEnabled());
+    // 次の生成を保留にして、除外列 (email) を外す。
+    generate.mockImplementation(() => new Promise(() => {}));
+    await user.click(screen.getByRole("checkbox", { name: "email" }));
+    expect(screen.getByRole("button", { name: t("auditConfirmCreate") })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: t("auditConfirmCreate") }));
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 });

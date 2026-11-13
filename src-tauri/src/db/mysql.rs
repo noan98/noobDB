@@ -1468,7 +1468,19 @@ impl MySqlConn {
                 // ルーチン・トリガーの CREATE / DROP と、区切り行で連ねた複数文 (スキーマ同期の
                 // オブジェクト置換, #1879) は prepared protocol だとエラー 1295 / 構文エラーに
                 // なるので、1 文ずつテキストプロトコル (`raw_sql`) で流す。
-                if allow_text_protocol && super::object_diff::needs_text_protocol(st.sql) {
+                let mode = super::object_diff::text_protocol_mode(allow_text_protocol, st.sql);
+                if mode == super::object_diff::TextProtocolMode::Whole {
+                    // GUI / ユーザー SQL のトリガー等の CREATE / DROP (監査トリガー #2305 など)。区切り行は
+                    // 解釈せず、文全体を 1 文として流す (read_only の検査は呼び出し前に済んでいる)。
+                    let r = sqlx::Executor::execute(
+                        &mut *tx,
+                        sqlx::raw_sql(sqlx::AssertSqlSafe(st.sql.to_string())),
+                    )
+                    .await?;
+                    counts.push(r.rows_affected());
+                    continue;
+                }
+                if mode == super::object_diff::TextProtocolMode::Split {
                     let mut affected = 0u64;
                     for part in super::object_diff::split_statements(st.sql) {
                         let r = sqlx::Executor::execute(

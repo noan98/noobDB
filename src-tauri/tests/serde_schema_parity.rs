@@ -824,6 +824,7 @@ fn build_fixtures() -> serde_json::Value {
         recorded_columns: vec!["id".into()],
         added_columns: vec!["email".into()],
         removed_columns: Vec::new(),
+        pk_changed: false,
         needs_regeneration: true,
     };
     let rls_table = t::RlsTable {

@@ -245,6 +245,7 @@ export const auditStatus = z.object({
   recorded_columns: z.array(z.string()),
   added_columns: z.array(z.string()),
   removed_columns: z.array(z.string()),
+  pk_changed: z.boolean(),
   needs_regeneration: z.boolean(),
 });
 

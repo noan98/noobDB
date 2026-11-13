@@ -890,12 +890,16 @@ export function TableStructurePanel({
                     ) : undefined
                   }
                 >
-                  {audit.needs_regeneration
-                    ? t("structureAuditStale", {
-                        added: audit.added_columns.join(", ") || "-",
-                        removed: audit.removed_columns.join(", ") || "-",
-                      })
-                    : t("structureAuditRecording", { table: audit.options?.audit_table ?? `${table}_audit` })}
+                  {audit.pk_changed
+                    ? t("structureAuditPkChanged")
+                    : audit.needs_regeneration
+                      ? t("structureAuditStale", {
+                          added: audit.added_columns.join(", ") || "-",
+                          removed: audit.removed_columns.join(", ") || "-",
+                        })
+                      : t("structureAuditRecording", {
+                          table: audit.options?.audit_table ?? `${table}_audit`,
+                        })}
                 </Callout>
               )}
 

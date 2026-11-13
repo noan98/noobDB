@@ -2753,6 +2753,8 @@ const en = {
   auditRemoved: "Audit triggers removed from {table}.",
   structureAuditTitle: "Change history",
   structureAuditRecording: "Recording to {table}",
+  structureAuditPkChanged:
+    "The primary key columns changed since the audit triggers were generated, so writes can fail. Regenerate the audit triggers.",
   structureAuditStale:
     "Columns changed (added: {added} / removed: {removed}). Regenerate the audit triggers.",
   structureAuditRegenerate: "Regenerate",
@@ -11109,6 +11111,8 @@ const ja: Dict = {
   auditRemoved: "{table} の監査トリガーを外しました。",
   structureAuditTitle: "変更履歴",
   structureAuditRecording: "{table} に記録中",
+  structureAuditPkChanged:
+    "監査トリガーの生成後に主キー列が変わったため、書き込みが失敗することがあります。再生成してください。",
   structureAuditStale: "列が変わりました (追加: {added} / 削除: {removed})。監査トリガーの再生成が必要です。",
   structureAuditRegenerate: "再生成",
   structureAuditManage: "管理...",

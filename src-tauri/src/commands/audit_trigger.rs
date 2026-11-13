@@ -60,11 +60,12 @@ pub async fn get_audit_status_core(
     table: &str,
 ) -> Result<AuditStatus> {
     let triggers = conn.list_table_triggers(database, table).await?;
-    let current: Vec<String> = conn
-        .columns(database, table)
-        .await?
-        .into_iter()
-        .map(|c| c.name)
+    let cols = conn.columns(database, table).await?;
+    let current: Vec<String> = cols.iter().map(|c| c.name.clone()).collect();
+    let pk: Vec<String> = cols
+        .iter()
+        .filter(|c| c.key == "PRI")
+        .map(|c| c.name.clone())
         .collect();
     // PostgreSQL は汎用関数の本体に埋めた印からオプションを読み戻す (MySQL / SQLite は常に None)。
     let source = conn
@@ -77,6 +78,7 @@ pub async fn get_audit_status_core(
         table,
         &triggers,
         &current,
+        &pk,
         source.as_deref(),
     ))
 }

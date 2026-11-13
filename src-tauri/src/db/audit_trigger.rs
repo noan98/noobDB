@@ -85,7 +85,9 @@ pub struct AuditStatus {
     pub added_columns: Vec<String>,
     /// 記録しているが表から無くなった列。
     pub removed_columns: Vec<String>,
-    /// 再生成が必要か (`added_columns` か `removed_columns` がある。PostgreSQL は常に false)。
+    /// 主キー列が生成時から変わった (トリガー / 関数に主キー列名を埋め込んでいるので PostgreSQL でも再生成が要る)。
+    pub pk_changed: bool,
+    /// 再生成が必要か (列の増減 (PostgreSQL を除く) か主キー列の変化)。
     pub needs_regeneration: bool,
 }
 
@@ -98,6 +100,9 @@ struct Marker {
     exclude: Vec<String>,
     skip_unchanged: bool,
     columns: Vec<String>,
+    /// 生成時の主キー列 (`pk` に埋め込んでいる)。古い印には無い。
+    #[serde(default)]
+    pk: Option<Vec<String>>,
 }
 
 fn invalid<T>(msg: &str) -> Result<T> {
@@ -323,6 +328,7 @@ pub fn build_audit_ddl(
         exclude: opts.exclude_columns.clone(),
         skip_unchanged: opts.skip_unchanged_update,
         columns: recorded.iter().map(|c| c.name.clone()).collect(),
+        pk: Some(pk.iter().map(|c| c.name.clone()).collect()),
     };
     let audit_ref = audit_table_ref(driver, &schema, &audit);
     let table_q = quote_ident(driver, table);
@@ -472,7 +478,8 @@ fn mysql_triggers(
                 .iter()
                 .map(|c| {
                     let q = quote_ident(d, &c.name);
-                    format!("OLD.{q} <=> NEW.{q}")
+                    // 照合順序に依存しない厳密比較 (alice → ALICE も変更として扱う)。
+                    format!("CAST(OLD.{q} AS BINARY) <=> CAST(NEW.{q} AS BINARY)")
                 })
                 .collect();
             format!(
@@ -670,6 +677,7 @@ pub fn audit_status(
     table: &str,
     triggers: &[TableTrigger],
     current_columns: &[String],
+    current_pk: &[String],
     pg_function_source: Option<&str>,
 ) -> AuditStatus {
     let none = AuditStatus {
@@ -678,6 +686,7 @@ pub fn audit_status(
         recorded_columns: Vec::new(),
         added_columns: Vec::new(),
         removed_columns: Vec::new(),
+        pk_changed: false,
         needs_regeneration: false,
     };
     let marker = if driver == DriverKind::Postgres {
@@ -702,6 +711,7 @@ pub fn audit_status(
         }
     };
     let is_pg = driver == DriverKind::Postgres;
+    let pk_changed = marker.pk.as_ref().is_some_and(|p| p != current_pk);
     let added: Vec<String> = current_columns
         .iter()
         .filter(|c| !marker.columns.contains(c) && !marker.exclude.contains(c))
@@ -722,8 +732,9 @@ pub fn audit_status(
         .collect();
     AuditStatus {
         present: true,
-        // PostgreSQL は汎用関数なので列が増減しても作り直し不要。
-        needs_regeneration: !is_pg && (!added.is_empty() || !removed.is_empty()),
+        pk_changed,
+        // PostgreSQL は汎用関数なので列の増減では作り直し不要 (主キー列の変化だけが対象)。
+        needs_regeneration: pk_changed || (!is_pg && (!added.is_empty() || !removed.is_empty())),
         options: Some(AuditOptions {
             insert: marker.ops.iter().any(|o| o == "INSERT"),
             update: marker.ops.iter().any(|o| o == "UPDATE"),
@@ -787,6 +798,10 @@ mod tests {
         }
     }
 
+    fn pk() -> Vec<String> {
+        vec!["id".into()]
+    }
+
     fn cols() -> Vec<AuditColumn> {
         vec![
             col("id", "int", true),
@@ -825,7 +840,9 @@ mod tests {
             ins.contains(", USER(),") && !ins.contains("CURRENT_USER()") && ins.contains("NOW(6)")
         );
         let upd = &d.create[2];
-        assert!(upd.contains("IF NOT (OLD.`id` <=> NEW.`id` AND OLD.`name` <=> NEW.`name`) THEN"));
+        assert!(upd.contains(
+            "IF NOT (CAST(OLD.`id` AS BINARY) <=> CAST(NEW.`id` AS BINARY) AND CAST(OLD.`name` AS BINARY) <=> CAST(NEW.`name` AS BINARY)) THEN"
+        ));
         assert!(d.create[3].contains("pk, old_row, new_row") && d.create[3].contains("OLD.`id`"));
         assert_eq!(d.recorded_columns, vec!["id", "name"]);
         assert_eq!(d.trigger_names.len(), 3);
@@ -1036,7 +1053,7 @@ mod tests {
                 .map(|s| trig("users_audit_ins", s))
                 .collect();
             let cur: Vec<String> = ["id", "name", "secret"].map(String::from).to_vec();
-            let s = audit_status(driver, "users", &triggers, &cur, None);
+            let s = audit_status(driver, "users", &triggers, &cur, &pk(), None);
             assert!(s.present && !s.needs_regeneration, "{driver:?}");
             assert_eq!(s.recorded_columns, vec!["id", "name"]);
             let o = s.options.unwrap();
@@ -1044,12 +1061,12 @@ mod tests {
             assert!(o.skip_unchanged_update && o.insert && o.update && o.delete);
             // 列が増えた
             let cur: Vec<String> = ["id", "name", "secret", "email"].map(String::from).to_vec();
-            let s = audit_status(driver, "users", &triggers, &cur, None);
+            let s = audit_status(driver, "users", &triggers, &cur, &pk(), None);
             assert!(s.needs_regeneration);
             assert_eq!(s.added_columns, vec!["email"]);
             // 列が減った
             let cur: Vec<String> = ["id", "secret"].map(String::from).to_vec();
-            let s = audit_status(driver, "users", &triggers, &cur, None);
+            let s = audit_status(driver, "users", &triggers, &cur, &pk(), None);
             assert_eq!(s.removed_columns, vec!["name"]);
             assert!(s.needs_regeneration);
         }
@@ -1063,6 +1080,7 @@ mod tests {
             "t",
             &[trig("other", "CREATE TRIGGER x")],
             &cur,
+            &pk(),
             None,
         );
         assert!(!s.present);
@@ -1071,10 +1089,11 @@ mod tests {
             "t",
             &[trig("t_audit_trg", "")],
             &cur,
+            &pk(),
             None,
         );
         assert!(s.present && !s.needs_regeneration && s.options.is_none());
-        let s = audit_status(DriverKind::Postgres, "t", &[], &cur, None);
+        let s = audit_status(DriverKind::Postgres, "t", &[], &cur, &pk(), None);
         assert!(!s.present);
     }
 
@@ -1088,7 +1107,7 @@ mod tests {
         let src = &d.create[1];
         let cur: Vec<String> = ["id", "name", "secret", "email"].map(String::from).to_vec();
         let trg = [trig("users_audit_trg", "")];
-        let st = audit_status(DriverKind::Postgres, "users", &trg, &cur, Some(src));
+        let st = audit_status(DriverKind::Postgres, "users", &trg, &cur, &pk(), Some(src));
         let got = st.options.expect("options");
         assert_eq!(got.audit_table, "history");
         assert_eq!(got.audit_schema.as_deref(), Some("audit"));
@@ -1096,8 +1115,93 @@ mod tests {
         // 汎用関数なので、列が増えても再生成は要らない。
         assert!(st.present && !st.needs_regeneration);
         // 読み戻せなければ options は None (呼び出し側が表名を編集可能にする)。
-        let st = audit_status(DriverKind::Postgres, "users", &trg, &cur, Some("BEGIN END"));
+        let st = audit_status(
+            DriverKind::Postgres,
+            "users",
+            &trg,
+            &cur,
+            &pk(),
+            Some("BEGIN END"),
+        );
         assert!(st.present && st.options.is_none());
+    }
+
+    #[test]
+    fn pk_change_requires_regeneration_even_on_postgres() {
+        // 関数 / トリガーは主キー列名を埋め込むので、主キー列の削除・リネームで書き込みが失敗する。
+        let cur: Vec<String> = ["id", "name", "secret"].map(String::from).to_vec();
+        let pg = build_audit_ddl(
+            DriverKind::Postgres,
+            "public",
+            "users",
+            &cols(),
+            &opts(),
+            false,
+        )
+        .unwrap();
+        let trg = [trig("users_audit_trg", "")];
+        let renamed = vec!["uid".to_string()];
+        let st = audit_status(
+            DriverKind::Postgres,
+            "users",
+            &trg,
+            &cur,
+            &renamed,
+            Some(&pg.create[1]),
+        );
+        assert!(st.pk_changed && st.needs_regeneration);
+        let st = audit_status(
+            DriverKind::Postgres,
+            "users",
+            &trg,
+            &cur,
+            &pk(),
+            Some(&pg.create[1]),
+        );
+        assert!(!st.pk_changed && !st.needs_regeneration);
+        let my = build_audit_ddl(DriverKind::Mysql, "d", "users", &cols(), &opts(), false).unwrap();
+        let t2 = [trig("users_audit_ins", &my.create[1])];
+        let st = audit_status(DriverKind::Mysql, "users", &t2, &cur, &renamed, None);
+        assert!(st.pk_changed && st.needs_regeneration);
+    }
+
+    #[test]
+    fn mysql_audit_statements_use_text_protocol_but_table_does_not() {
+        use crate::db::object_diff::{text_protocol_mode, TextProtocolMode};
+        // 実行経路 (ユーザー SQL / GUI の DDL = allow_split が偽) で、トリガーの CREATE / DROP はテキスト
+        // プロトコル (prepared では MySQL エラー 1295)、CREATE TABLE は通常のまま。
+        let d = build_audit_ddl(DriverKind::Mysql, "d", "users", &cols(), &opts(), false).unwrap();
+        assert_eq!(
+            text_protocol_mode(false, &d.create[0]),
+            TextProtocolMode::Prepared
+        );
+        for st in &d.create[1..] {
+            assert_eq!(
+                text_protocol_mode(false, st),
+                TextProtocolMode::Whole,
+                "{st}"
+            );
+        }
+        for st in &d.drop_triggers {
+            assert_eq!(
+                text_protocol_mode(false, st),
+                TextProtocolMode::Whole,
+                "{st}"
+            );
+        }
+        assert_eq!(
+            text_protocol_mode(false, &d.drop_table),
+            TextProtocolMode::Prepared
+        );
+        // 区切り行 (スキーマ同期専用) をユーザー SQL に混ぜても分割しない。
+        assert_eq!(
+            text_protocol_mode(false, "CREATE TRIGGER t ...\n-- noobdb:split\nDROP TABLE x"),
+            TextProtocolMode::Prepared
+        );
+        assert_eq!(
+            text_protocol_mode(true, "CREATE TRIGGER t ...\n-- noobdb:split\nDROP TABLE x"),
+            TextProtocolMode::Split
+        );
     }
 
     #[test]
@@ -1106,7 +1210,7 @@ mod tests {
         let triggers = [trig("users_audit_ins", &d.create[1])];
         // 除外していた secret 列が表から無くなった。
         let cur: Vec<String> = ["id", "name"].map(String::from).to_vec();
-        let st = audit_status(DriverKind::Mysql, "users", &triggers, &cur, None);
+        let st = audit_status(DriverKind::Mysql, "users", &triggers, &cur, &pk(), None);
         let o = st.options.expect("options");
         assert!(o.exclude_columns.is_empty());
         // そのまま再生成・削除用の DDL を作れる。
