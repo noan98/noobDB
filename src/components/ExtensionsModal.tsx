@@ -428,6 +428,7 @@ export function ExtensionsModal({ sessionId, readOnly, onExecute, onClose }: Pro
                   dependents={dependents}
                   error={dependentsError}
                   cascade={cascade}
+                  extension={step.ext.name}
                 />
               )}
               {step.action === "install" &&
