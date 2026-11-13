@@ -45,6 +45,8 @@ pub mod refresh_diff;
 pub mod replication;
 pub mod result_ops;
 pub mod result_store;
+/// 重複レコードのマージ (#2303) の純粋層。
+pub mod row_merge;
 pub mod sandbox;
 pub mod savepoint;
 /// 一括取得したスキーマ情報の画面向け結合 (テーブル統計・逆方向 FK、#1255)。

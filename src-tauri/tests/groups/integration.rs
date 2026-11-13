@@ -18,6 +18,8 @@ mod local_query_integration;
 mod query_result_cache_integration;
 #[path = "../result_handle_sqlite.rs"]
 mod result_handle_sqlite;
+#[path = "../row_merge_integration.rs"]
+mod row_merge_integration;
 #[path = "../sandbox_integration.rs"]
 mod sandbox_integration;
 #[path = "../schema_cache_integration.rs"]

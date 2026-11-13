@@ -984,7 +984,7 @@ impl SubsetResult {
 /// キーのリテラル。2^53 を超える整数は `Value::String` で来るので、整数型の列では引用符なしの
 /// 数値で書く (MySQL は文字列定数と整数列を倍精度で比較し、下位桁が丸まるため)。
 /// バイナリ列は 16 進の文字列を `Bytes` に戻して書く。
-fn key_literal(driver: DriverKind, column_type: &str, value: &Value) -> String {
+pub(crate) fn key_literal(driver: DriverKind, column_type: &str, value: &Value) -> String {
     match value {
         Value::String(s) if is_binary_type(column_type) && is_hex_wire(s) => {
             sql_literal(driver, &Value::Bytes(s.clone()))

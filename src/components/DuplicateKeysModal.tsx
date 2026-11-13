@@ -32,6 +32,10 @@ interface Props {
   /** 重複行のインデックスで絞り込む。 */
   onShowDuplicates: (rowIndices: number[]) => void;
   onClearFilter: () => void;
+  /**
+   * グループ (選んだ列の値と先頭行) をマージする入口を返す。マージできないグループは null。未指定なら出さない (#2303)。
+   */
+  onMergeGroup?: (cols: number[], firstRow: number) => (() => void) | null;
   onClose: () => void;
 }
 
@@ -44,6 +48,7 @@ export function DuplicateKeysModal({
   filterActive,
   onShowDuplicates,
   onClearFilter,
+  onMergeGroup,
   onClose,
 }: Props) {
   const t = useT();
@@ -183,6 +188,23 @@ export function DuplicateKeysModal({
                       <chakra.span flexShrink={0} color="app.textMuted">
                         {t("dupKeysCount", { count: g.count.toLocaleString() })}
                       </chakra.span>
+                      {(() => {
+                        const merge = onMergeGroup?.(selected, g.firstRow);
+                        if (!merge) return null;
+                        return (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            title={t("dupKeysMergeGroupTitle")}
+                            onClick={() => {
+                              merge();
+                              onClose();
+                            }}
+                          >
+                            {t("dupKeysMergeGroup")}
+                          </Button>
+                        );
+                      })()}
                     </chakra.li>
                   ))}
                 </chakra.ul>

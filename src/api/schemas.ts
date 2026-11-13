@@ -355,6 +355,90 @@ export const bulkWriteOutcome = z.discriminatedUnion("status", [
   bulkWriteOutcomeRollbackIncomplete,
 ]);
 
+/** `preview_row_merge` / `apply_row_merge` の結果 (#2303)。 */
+const rowMergeBlocker = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("noKey") }),
+  z.object({ kind: z.literal("tooManyRows"), max: z.number() }),
+  z.object({ kind: z.literal("duplicateSelection") }),
+  z.object({ kind: z.literal("rowNotFound"), index: z.number() }),
+  z.object({ kind: z.literal("unsupportedEngine"), engine: z.string() }),
+  z.object({ kind: z.literal("nullReference"), table: z.string(), column: z.string() }),
+  z.object({ kind: z.literal("selfReference"), table: z.string(), column: z.string() }),
+  z.object({ kind: z.literal("uniqueConflict"), table: z.string(), index: z.string(), groups: z.number() }),
+  z.object({ kind: z.literal("tooManyConflicts"), table: z.string(), index: z.string() }),
+  z.object({ kind: z.literal("skipUnsafe"), table: z.string() }),
+  z.object({ kind: z.literal("lockedPick"), column: z.string() }),
+  z.object({ kind: z.literal("invalidPick"), column: z.string() }),
+  z.object({ kind: z.literal("unresolvedForeignKey"), table: z.string(), constraint: z.string() }),
+  z.object({ kind: z.literal("childUnreadable"), table: z.string() }),
+]);
+const rowMergeWarning = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("crossDatabaseChild"), table: z.string() }),
+  z.object({ kind: z.literal("uncheckedIndex"), table: z.string(), index: z.string() }),
+]);
+const rowMergeUndoDecline = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("childWithoutKey"), table: z.string() }),
+  z.object({ kind: z.literal("tooManyRows"), limit: z.number() }),
+  z.object({ kind: z.literal("crossSchemaChild"), table: z.string() }),
+]);
+export const rowMergePreview = z.object({
+  columns: z.array(z.object({ name: z.string(), typeName: z.string(), locked: z.boolean() })),
+  rows: z.array(z.array(z.unknown())),
+  picks: z.array(z.number()),
+  keyColumns: z.array(z.string()),
+  children: z.array(
+    z.object({
+      schema: z.string().nullable(),
+      table: z.string(),
+      constraint: z.string(),
+      columns: z.array(z.string()),
+      parentColumns: z.array(z.string()),
+      onDelete: z.string().nullable(),
+      rows: z.number(),
+      skipped: z.number(),
+      deleted: z.number(),
+      selfReference: z.boolean(),
+    }),
+  ),
+  conflicts: z.array(
+    z.object({
+      table: z.string(),
+      index: z.string(),
+      columns: z.array(z.string()),
+      groups: z.number(),
+      rows: z.number(),
+      sample: z.array(z.array(z.string())),
+    }),
+  ),
+  statements: z.array(z.string()),
+  blockers: z.array(rowMergeBlocker),
+  warnings: z.array(rowMergeWarning),
+  fkEnforced: z.boolean().nullable(),
+  repointedRows: z.number(),
+  deletedRows: z.number(),
+  undoDecline: rowMergeUndoDecline.nullable(),
+});
+export const rowMergeOutcomeApplied = z.object({
+  status: z.literal("applied"),
+  repointedRows: z.number(),
+  deletedRows: z.number(),
+  capture: z.object({ recorded: z.number(), declined: z.number(), batchId: z.string().nullable() }),
+});
+export const rowMergeOutcomeBlocked = z.object({
+  status: z.literal("blocked"),
+  blockers: z.array(rowMergeBlocker),
+});
+export const rowMergeOutcomeChanged = z.object({
+  status: z.literal("changed"),
+  expectedRows: z.number(),
+  actualRows: z.number(),
+});
+export const rowMergeOutcomeIncomplete = z.object({
+  status: z.literal("rollback_incomplete"),
+  expectedRows: z.number(),
+  actualRows: z.number(),
+});
+
 /** `kill_processes` の結果 (#1259)。 */
 export const killProcessesResult = z.object({
   killed: z.number(),
