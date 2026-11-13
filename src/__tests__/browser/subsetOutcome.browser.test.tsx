@@ -253,7 +253,9 @@ describe("プレビューの FK 辿り図 (#2266)", () => {
     // 列名ラベルはどのノードの矩形とも重ならない (#2316)。
     const overlaps = (a: DOMRect, b: DOMRect) =>
       a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
-    for (const label of document.querySelectorAll('[data-testid="subset-preview-edge-label"]')) {
+    const edgeLabels = document.querySelectorAll('[data-testid="subset-preview-edge-label"]');
+    expect(edgeLabels.length).toBeGreaterThan(0);
+    for (const label of edgeLabels) {
       const lr = label.getBoundingClientRect();
       for (const n of document.querySelectorAll('[data-testid="subset-preview-node"]')) {
         expect(overlaps(lr, n.getBoundingClientRect())).toBe(false);

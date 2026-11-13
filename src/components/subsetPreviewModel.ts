@@ -382,8 +382,6 @@ export interface PlacedEdge {
   d: string;
   /** この曲線がまとめている辺の識別子 (`edgeKey`)。折りたたみで複数の辺が 1 本になることがある。 */
   keys: string[];
-  /** 列名ラベルを置く位置 (曲線の中点、`GEOMETRY` の単位)。 */
-  mid: { x: number; y: number };
   /** この曲線がまとめている辺の列名 (`子.列 → 親.列`)。 */
   labels: Record<string, string[]>;
 }
@@ -434,23 +432,20 @@ export function layoutEdges(
     const li = SUBSET_LANES.indexOf(a.lane);
     const lj = SUBSET_LANES.indexOf(b.lane);
     let d: string;
-    let mid: { x: number; y: number };
     if (li === lj) {
       // 同じレーン: 起点側 (parent/root は右、child は左) の縁から溝へ張り出す。
       const edgeX = a.lane === "child" ? laneLeft(a.lane) : laneLeft(a.lane) + GEOMETRY.laneWidth;
       const bulge = a.lane === "child" ? -GEOMETRY.gutter * 0.8 : GEOMETRY.gutter * 0.8;
       d = `M ${edgeX} ${y1} C ${edgeX + bulge} ${y1}, ${edgeX + bulge} ${y2}, ${edgeX} ${y2}`;
-      mid = { x: edgeX + bulge * 0.75, y: (y1 + y2) / 2 };
     } else {
       // from が右 (li > lj) なら from の左縁 → to の右縁。逆なら from の右縁 → to の左縁。
       const x1 = li > lj ? laneLeft(a.lane) : laneLeft(a.lane) + GEOMETRY.laneWidth;
       const x2 = li > lj ? laneLeft(b.lane) + GEOMETRY.laneWidth : laneLeft(b.lane);
       const mx = (x1 + x2) / 2;
       d = `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
-      mid = { x: mx, y: (y1 + y2) / 2 };
     }
     const k = edgeKey(e.from, e.to);
-    const placed: PlacedEdge = { from: e.from, to: e.to, d, keys: [k], mid, labels: { [k]: e.labels } };
+    const placed: PlacedEdge = { from: e.from, to: e.to, d, keys: [k], labels: { [k]: e.labels } };
     seen.set(key, placed);
     out.push(placed);
   }
