@@ -1,8 +1,11 @@
 import { afterEach, describe, it, expect } from "vitest";
 
-import type { ProcessInfo } from "../api/tauri";
+import type { ProcessInfo, ProcessProgressKind } from "../api/tauri";
 import {
   distinctProcessValues,
+  estimateProcessProgress,
+  trackProgress,
+  type ProgressObservation,
   EMPTY_PROCESS_FILTER,
   filterProcesses,
   formatProcessTime,
@@ -271,5 +274,80 @@ describe("進捗の kind ラベル / 進捗順の並べ替え (#2269)", () => {
       mk(4, { kind: "cluster", phase: "y", done: 90, total: 100 }),
     ];
     expect(sortProcesses(rows, "progress").map((r) => r.id)).toEqual([4, 2, 3, 1]);
+  });
+});
+
+describe("進捗の観測記録と ETA (#2291)", () => {
+  const withProgress = (id: number, kind: ProcessProgressKind, phase: string, done: number, total: number) =>
+    proc(id, { progress: { kind, phase, done, total } });
+
+  it("初回観測は起点になり、算出待ちになる", () => {
+    const m = trackProgress(new Map(), [withProgress(1, "vacuum", "scanning heap", 10, 100)], 1000);
+    const o = m.get(1) as ProgressObservation;
+    expect(o).toMatchObject({ firstAt: 1000, firstDone: 10, lastAt: 1000 });
+    expect(estimateProcessProgress(o)).toEqual({ kind: "pending" });
+  });
+
+  it("2 回目の観測で起点からの速度から ETA を出す", () => {
+    const r1 = [withProgress(1, "vacuum", "scanning heap", 10, 100)];
+    const m1 = trackProgress(new Map(), r1, 0);
+    const m2 = trackProgress(m1, [withProgress(1, "vacuum", "scanning heap", 30, 100)], 10_000);
+    const o = m2.get(1) as ProgressObservation;
+    expect(o.firstAt).toBe(0);
+    expect(o.firstDone).toBe(10);
+    // 10 秒で 20 進んだ → 残り 70 は 35 秒。
+    expect(estimateProcessProgress(o)).toEqual({ kind: "eta", etaMs: 35_000 });
+  });
+
+  it("進みがないと算出待ち、完了済みは ETA 0", () => {
+    const m1 = trackProgress(new Map(), [withProgress(1, "vacuum", "a", 10, 100)], 0);
+    const m2 = trackProgress(m1, [withProgress(1, "vacuum", "a", 10, 100)], 5000);
+    expect(estimateProcessProgress(m2.get(1) as ProgressObservation)).toEqual({ kind: "pending" });
+    const m3 = trackProgress(m2, [withProgress(1, "vacuum", "a", 100, 100)], 9000);
+    expect(estimateProcessProgress(m3.get(1) as ProgressObservation)).toEqual({ kind: "eta", etaMs: 0 });
+  });
+
+  it("フェーズ変化・done の巻き戻りでは起点を取り直す", () => {
+    const m1 = trackProgress(new Map(), [withProgress(1, "vacuum", "scanning heap", 50, 100)], 0);
+    const phase = trackProgress(m1, [withProgress(1, "vacuum", "vacuuming indexes", 60, 100)], 4000);
+    expect(phase.get(1)).toMatchObject({ firstAt: 4000, firstDone: 60 });
+    const back = trackProgress(m1, [withProgress(1, "vacuum", "scanning heap", 5, 100)], 4000);
+    expect(back.get(1)).toMatchObject({ firstAt: 4000, firstDone: 5 });
+  });
+
+  it("一覧から消えた pid・進捗のない行は捨て、戻ってきたら新規扱い", () => {
+    const m1 = trackProgress(new Map(), [withProgress(1, "vacuum", "a", 10, 100)], 0);
+    const gone = trackProgress(m1, [proc(1)], 1000);
+    expect(gone.size).toBe(0);
+    const back = trackProgress(gone, [withProgress(1, "vacuum", "a", 20, 100)], 2000);
+    expect(back.get(1)).toMatchObject({ firstAt: 2000, firstDone: 20 });
+    // 入力は変更しない。
+    expect(m1.get(1)).toMatchObject({ firstAt: 0 });
+  });
+
+  it("総量不明の COPY は行/秒、1 秒未満は算出待ち", () => {
+    const m1 = trackProgress(new Map(), [withProgress(2, "copy", "COPY FROM", 0, 0)], 0);
+    const short = trackProgress(m1, [withProgress(2, "copy", "COPY FROM", 500, 0)], 500);
+    expect(estimateProcessProgress(short.get(2) as ProgressObservation)).toEqual({ kind: "pending" });
+    const m2 = trackProgress(m1, [withProgress(2, "copy", "COPY FROM", 5000, 0)], 2000);
+    expect(estimateProcessProgress(m2.get(2) as ProgressObservation)).toEqual({ kind: "rate", perSec: 2500 });
+  });
+
+  it("COPY 以外で total が無いとき (CREATE INDEX の待機など) は行/秒を出さない", () => {
+    const m1 = trackProgress(new Map(), [withProgress(3, "create_index", "sorting", 0, 0)], 0);
+    const m2 = trackProgress(m1, [withProgress(3, "create_index", "sorting", 5000, 0)], 5000);
+    expect(estimateProcessProgress(m2.get(3) as ProgressObservation)).toEqual({ kind: "none" });
+  });
+
+  it("alter_table は phase だけ変わっても起点を維持し、PG はフェーズごとに取り直す", () => {
+    const alter = (phase: string, done: number) =>
+      proc(4, { progress: { kind: "alter_table", phase, done, total: 100 } });
+    const m1 = trackProgress(new Map(), [alter("stage/innodb/alter table (read PK)", 10)], 0);
+    const m2 = trackProgress(m1, [alter("stage/innodb/alter table (merge sort)", 30)], 5000);
+    expect(m2.get(4)).toMatchObject({ firstAt: 0, firstDone: 10 });
+    expect(estimateProcessProgress(m2.get(4) as ProgressObservation)).toEqual({ kind: "eta", etaMs: 17_500 });
+    // kind が変われば取り直す。
+    const m3 = trackProgress(m2, [withProgress(4, "vacuum", "x", 40, 100)], 6000);
+    expect(m3.get(4)).toMatchObject({ firstAt: 6000 });
   });
 });

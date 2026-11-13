@@ -46,6 +46,13 @@ export interface SubsetEdge {
   from: string;
   /** 参照される側 (親)。 */
   to: string;
+  /** この辺をなす外部キーの列名 (`子.列 → 親.列`)。同じ表どうしの複数の外部キーはまとめる (#2293)。 */
+  labels: string[];
+}
+
+/** 辺の識別子 (子 → 親)。 */
+export function edgeKey(from: string, to: string): string {
+  return `${from}\u0000${to}`;
 }
 
 export interface SubsetGraph {
@@ -117,16 +124,22 @@ export function buildSubsetGraph(preview: SubsetPreview, foreignKeys: readonly F
       w.kind === "unresolvedForeignKey" ? [`${w.table}\u0000${w.constraint}`] : [],
     ),
   );
-  const edgeKeys = new Set<string>();
+  const edgeByKey = new Map<string, SubsetEdge>();
   const edges: SubsetEdge[] = [];
   for (const fk of foreignKeys) {
     if (fk.table === fk.referenced_table) continue;
     if (!known.has(fk.table) || !known.has(fk.referenced_table)) continue;
     if (fk.constraint_name !== null && unresolved.has(`${fk.table}\u0000${fk.constraint_name}`)) continue;
-    const key = `${fk.table}\u0000${fk.referenced_table}`;
-    if (edgeKeys.has(key)) continue;
-    edgeKeys.add(key);
-    edges.push({ from: fk.table, to: fk.referenced_table });
+    const label = `${fk.table}.${fk.column} → ${fk.referenced_table}.${fk.referenced_column ?? "?"}`;
+    const key = edgeKey(fk.table, fk.referenced_table);
+    const existing = edgeByKey.get(key);
+    if (existing) {
+      if (!existing.labels.includes(label)) existing.labels.push(label);
+      continue;
+    }
+    const edge: SubsetEdge = { from: fk.table, to: fk.referenced_table, labels: [label] };
+    edgeByKey.set(key, edge);
+    edges.push(edge);
   }
   const up = new Map<string, string[]>();
   const down = new Map<string, string[]>();
@@ -172,6 +185,114 @@ export function buildSubsetGraph(preview: SubsetPreview, foreignKeys: readonly F
   const maxDepthOf = (lane: SubsetLane) =>
     nodes.reduce((m, n) => (n.lane === lane ? Math.max(m, n.depth) : m), 0);
   return { nodes, edges, parentDepth: maxDepthOf("parent"), childDepth: maxDepthOf("child") };
+}
+
+export interface SubsetPath {
+  /** 経路上の表 (起点の表自身と、たどり着いた起点レーンの表を含む)。 */
+  tables: Set<string>;
+  /** 経路上の辺。 */
+  edges: SubsetEdge[];
+}
+
+/**
+ * `table` から起点 (起点レーンの表) までの外部キーの経路 (#2293)。
+ * `buildSubsetGraph` の段数 (`parentDist` / `childDist`) と同じ意味で、2 局面の幅優先で辿る。
+ * - 局面「親」: 子の方向 (参照している側) へ進む。子の行か起点の行を持つ表 (`hasChildRole`) に着いたら、局面「子」へも移れる。
+ * - 局面「子」: 親の方向へ進む。子の行か起点の行を持つ表の中だけを通る (親だけの表は中継しない)。
+ * 子レーンの表は局面「子」から、親レーンの表は局面「親」から (子の行も持つなら局面「子」からも) 始める。
+ * 最も近い起点までの最短経路の辺をすべて返す。訪問済みは (表, 局面) 単位なので循環があっても停止する。
+ * 起点自身・起点へ着かない表は、その表だけを含む空の経路。
+ */
+export function tracePathToRoot(graph: Pick<SubsetGraph, "nodes" | "edges">, table: string): SubsetPath {
+  const self: SubsetPath = { tables: new Set([table]), edges: [] };
+  const byTable = new Map(graph.nodes.map((n) => [n.table, n] as const));
+  const start = byTable.get(table);
+  if (!start || start.lane === "root") return self;
+  const hasChildRole = (id: string) => {
+    const n = byTable.get(id);
+    return !!n && (n.childRows > 0 || n.rootRows > 0);
+  };
+  type Phase = "parent" | "child";
+  const key = (t: string, ph: Phase) => `${t}\u0000${ph}`;
+  const split = (k: string) => k.split("\u0000")[0];
+  const up = new Map<string, SubsetEdge[]>(); // 子 → 親へ (e.from === cur)
+  const down = new Map<string, SubsetEdge[]>(); // 親 → 子へ (e.to === cur)
+  for (const e of graph.edges) {
+    const u = up.get(e.from);
+    if (u) u.push(e);
+    else up.set(e.from, [e]);
+    const d = down.get(e.to);
+    if (d) d.push(e);
+    else down.set(e.to, [e]);
+  }
+
+  const dist = new Map<string, number>();
+  const preds = new Map<string, { state: string; edge: SubsetEdge }[]>();
+  const queue: { t: string; ph: Phase }[] = [];
+  const enqueue = (t: string, ph: Phase, d: number) => {
+    dist.set(key(t, ph), d);
+    queue.push({ t, ph });
+  };
+  if (start.lane === "child") enqueue(table, "child", 0);
+  else {
+    enqueue(table, "parent", 0);
+    if (hasChildRole(table)) enqueue(table, "child", 0);
+  }
+
+  let rootDist = Number.POSITIVE_INFINITY;
+  const rootStates: string[] = [];
+  const reach = (t: string, ph: Phase, d: number, from: string, edge: SubsetEdge) => {
+    const k = key(t, ph);
+    const nd = dist.get(k);
+    if (nd === undefined) {
+      dist.set(k, d);
+      preds.set(k, [{ state: from, edge }]);
+      if (byTable.get(t)?.lane === "root") {
+        if (d <= rootDist) {
+          rootDist = d;
+          rootStates.push(k);
+        }
+      } else {
+        queue.push({ t, ph });
+      }
+    } else if (nd === d) {
+      preds.get(k)?.push({ state: from, edge });
+    }
+  };
+  for (let head = 0; head < queue.length; head++) {
+    const { t, ph } = queue[head];
+    const from = key(t, ph);
+    const d = (dist.get(from) ?? 0) + 1;
+    if (d > rootDist) break;
+    if (ph === "parent") {
+      for (const e of down.get(t) ?? []) {
+        reach(e.from, "parent", d, from, e);
+        if (hasChildRole(e.from)) reach(e.from, "child", d, from, e);
+      }
+    } else {
+      for (const e of up.get(t) ?? []) {
+        if (hasChildRole(e.to)) reach(e.to, "child", d, from, e);
+      }
+    }
+  }
+  const roots = rootStates.filter((k) => dist.get(k) === rootDist);
+  if (roots.length === 0) return self;
+  const tables = new Set<string>([table]);
+  const edgeSet = new Set<SubsetEdge>();
+  const seen = new Set<string>(roots);
+  const stack = [...roots];
+  while (stack.length > 0) {
+    const cur = stack.pop() as string;
+    tables.add(split(cur));
+    for (const pr of preds.get(cur) ?? []) {
+      edgeSet.add(pr.edge);
+      if (!seen.has(pr.state)) {
+        seen.add(pr.state);
+        stack.push(pr.state);
+      }
+    }
+  }
+  return { tables, edges: [...edgeSet] };
 }
 
 /** レーン内の並び: 起点に近い (段数が小さい) 順 → 行数の多い順 → 表名。 */
@@ -259,6 +380,12 @@ export interface PlacedEdge {
   to: string;
   /** SVG の path (`d`)。座標は `GEOMETRY` の単位 (レーン幅 3・溝 1) で、縦は 1 行 = 1。 */
   d: string;
+  /** この曲線がまとめている辺の識別子 (`edgeKey`)。折りたたみで複数の辺が 1 本になることがある。 */
+  keys: string[];
+  /** 列名ラベルを置く位置 (曲線の中点、`GEOMETRY` の単位)。 */
+  mid: { x: number; y: number };
+  /** この曲線がまとめている辺の列名 (`子.列 → 親.列`)。 */
+  labels: Record<string, string[]>;
 }
 
 /** 図の幾何 (SVG の viewBox の単位)。レーン幅 3・溝 1 の「レーン 溝 レーン 溝 レーン」。 */
@@ -289,33 +416,43 @@ export function layoutEdges(
       else for (const t of item.tables) pos.set(t, { lane, row, id: item.id });
     });
   }
-  const seen = new Set<string>();
+  const seen = new Map<string, PlacedEdge>();
   const out: PlacedEdge[] = [];
   for (const e of edges) {
     const a = pos.get(e.from);
     const b = pos.get(e.to);
     if (!a || !b || a.id === b.id) continue;
     const key = `${a.id}\u0000${b.id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const dup = seen.get(key);
+    if (dup) {
+      dup.keys.push(edgeKey(e.from, e.to));
+      dup.labels[edgeKey(e.from, e.to)] = e.labels;
+      continue;
+    }
     const y1 = a.row + 0.5;
     const y2 = b.row + 0.5;
     const li = SUBSET_LANES.indexOf(a.lane);
     const lj = SUBSET_LANES.indexOf(b.lane);
     let d: string;
+    let mid: { x: number; y: number };
     if (li === lj) {
       // 同じレーン: 起点側 (parent/root は右、child は左) の縁から溝へ張り出す。
       const edgeX = a.lane === "child" ? laneLeft(a.lane) : laneLeft(a.lane) + GEOMETRY.laneWidth;
       const bulge = a.lane === "child" ? -GEOMETRY.gutter * 0.8 : GEOMETRY.gutter * 0.8;
       d = `M ${edgeX} ${y1} C ${edgeX + bulge} ${y1}, ${edgeX + bulge} ${y2}, ${edgeX} ${y2}`;
+      mid = { x: edgeX + bulge * 0.75, y: (y1 + y2) / 2 };
     } else {
       // from が右 (li > lj) なら from の左縁 → to の右縁。逆なら from の右縁 → to の左縁。
       const x1 = li > lj ? laneLeft(a.lane) : laneLeft(a.lane) + GEOMETRY.laneWidth;
       const x2 = li > lj ? laneLeft(b.lane) + GEOMETRY.laneWidth : laneLeft(b.lane);
-      const mid = (x1 + x2) / 2;
-      d = `M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`;
+      const mx = (x1 + x2) / 2;
+      d = `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
+      mid = { x: mx, y: (y1 + y2) / 2 };
     }
-    out.push({ from: e.from, to: e.to, d });
+    const k = edgeKey(e.from, e.to);
+    const placed: PlacedEdge = { from: e.from, to: e.to, d, keys: [k], mid, labels: { [k]: e.labels } };
+    seen.set(key, placed);
+    out.push(placed);
   }
   return out;
 }
