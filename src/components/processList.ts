@@ -384,6 +384,7 @@ export interface ProgressObservation {
  * - 進捗のない行・一覧から消えた pid の記録は捨てる (pid の再利用で古い起点を引きずらない)。
  * - 種別・フェーズが変わったとき、または done が巻き戻ったとき (同じ pid で新しい処理が
  *   始まった) は起点を取り直す。VACUUM などはフェーズごとに done が 0 から数え直される。
+ * - 例外として alter_table (MySQL のみ) は、フェーズが変わっても起点を取り直さない。
  */
 export function trackProgress(
   prev: ReadonlyMap<number, ProgressObservation>,
@@ -400,7 +401,7 @@ export function trackProgress(
       old !== undefined &&
       old.kind === pr.kind &&
       // MySQL の ALTER は stage が変わっても done / total が ALTER 全体の累積値なので、
-      // フェーズ違いでは起点を取り直さない。PostgreSQL はフェーズごとに数え直す。
+      // フェーズ違いでは起点を取り直さない。alter_table 以外 (PG の VACUUM など) はフェーズごとに数え直す。
       (pr.kind === "alter_table" || old.phase === pr.phase) &&
       pr.done >= old.done;
     next.set(key, {
