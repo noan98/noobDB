@@ -361,6 +361,8 @@ type ModalFooterProps = ComponentProps<typeof Dialog.Footer>;
  *    優位にしない。例: DangerousQueryDialog / ConfirmDialog (tone: danger・warning) /
  *    HostKeyMismatchDialog。
  *
+ * 幅が足りないときはボタンを折り返す (右寄せ)。はみ出して見切れることはない。
+ *
  * どちらのパターンでも**閉じる / キャンセルは spacer より右**に来る (#1114 で、
  * キャンセルが左端・主アクションが右端に離れていたモーダルを揃えた)。
  * フッターに solid の `danger` ボタンは置かない (破壊的操作は左の dangerOutline)。
@@ -376,6 +378,11 @@ export function ModalFooter({ children, ...rest }: ModalFooterProps) {
       css={{
         display: "flex",
         alignItems: "center",
+        // 幅が足りないとき (ボタン 3 つ + 長い日本語ラベル・フォント拡大設定など) に
+        // ボタンが左へはみ出して見切れないよう、折り返して右寄せにする。収まる幅では
+        // 1 行のままで見た目は変わらない。
+        flexWrap: "wrap",
+        justifyContent: "flex-end",
         gap: "2",
         py: "2.5",
         px: "4",
