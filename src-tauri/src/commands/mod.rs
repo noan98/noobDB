@@ -6,6 +6,7 @@ pub mod broadcast;
 pub mod bulk_capture;
 pub mod bulk_write;
 pub mod cell_blob;
+pub mod clone_rows;
 pub mod connection;
 pub mod diff;
 pub mod dump;

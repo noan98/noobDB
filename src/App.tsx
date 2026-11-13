@@ -318,6 +318,9 @@ const ImportModal = lazy(() => import("./components/ImportModal").then((m) => ({
 const ImportSheetsModal = lazy(() =>
   import("./components/ImportSheetsModal").then((m) => ({ default: m.ImportSheetsModal })),
 );
+const CloneRowsModal = lazy(() =>
+  import("./components/CloneRowsModal").then((m) => ({ default: m.CloneRowsModal })),
+);
 const SubsetExtractModal = lazy(() =>
   import("./components/SubsetExtractModal").then((m) => ({ default: m.SubsetExtractModal })),
 );
@@ -2377,6 +2380,13 @@ export default function App() {
     table: string;
     initialWhere?: string;
     initialRootLimit?: number;
+  } | null>(null);
+  // 行を子レコードごと複製 (#2304) の起点の行。null で閉じる。
+  const [cloneRowsTarget, setCloneRowsTarget] = useState<{
+    database: string | null;
+    table: string;
+    whereClause: string;
+    rootLimit: number;
   } | null>(null);
   // 結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821): 対象。null で閉じる。
   const [saveAsTableRequest, setSaveAsTableRequest] = useState<{
@@ -8661,6 +8671,14 @@ export default function App() {
     [],
   );
 
+  // 結果グリッドで選んだ行を子レコードごと複製 (#2304)。
+  const handleCloneRowsFromRows = useCallback(
+    (target: { database: string | null; table: string; whereClause: string; rootLimit: number }) => {
+      setCloneRowsTarget(target);
+    },
+    [],
+  );
+
   // ファイルから新規テーブルを作成してインポート (#985)。DB のコンテキスト
   // メニューから開く (対象テーブルが無いので ImportModal は作成モード固定)。
   const handleImportNewTable = useCallback((database: string) => {
@@ -13216,6 +13234,7 @@ export default function App() {
     handleAiResultSummary,
     handleExploreColumns,
     handleExtractSubsetFromRows,
+    handleCloneRowsFromRows,
     handleMergeRows,
     handleNewTab,
     handleOpenAiSql,
@@ -15590,6 +15609,34 @@ export default function App() {
                   source={transferSource}
                   profiles={profiles}
                   onClose={() => setTransferSource(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {cloneRowsTarget && sessionId && (
+              <Suspense fallback={null}>
+                <CloneRowsModal
+                  key={`${cloneRowsTarget.database}.${cloneRowsTarget.table}.${cloneRowsTarget.whereClause}`}
+                  sessionId={sessionId}
+                  database={cloneRowsTarget.database}
+                  table={cloneRowsTarget.table}
+                  whereClause={cloneRowsTarget.whereClause}
+                  rootLimit={cloneRowsTarget.rootLimit}
+                  profile={selectedProfile ?? null}
+                  capture={
+                    settings.flightRecorderEnabled
+                      ? {
+                          rowCap: settings.flightRecorderRowCap,
+                          retentionDays: settings.flightRecorderRetentionDays,
+                        }
+                      : null
+                  }
+                  onOpenTable={(database, table) => {
+                    if (database) handleOpenTable(database, table);
+                  }}
+                  onClose={() => setCloneRowsTarget(null)}
                 />
               </Suspense>
             )}

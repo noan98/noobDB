@@ -280,6 +280,8 @@ const NAME_MAP: Record<string, string> = {
   AdvisorSeverity: "Severity",
   ImportConflictMode: "ConflictMode",
   SubsetExisting: "ExistingRows",
+  CloneKeyRule: "KeyRule",
+  CloneKeyStatus: "KeyStatus",
   RowMergeConflictPolicy: "ConflictPolicy",
   RowMergeBlocker: "MergeBlocker",
   RowMergeWarning: "MergeWarning",

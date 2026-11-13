@@ -354,7 +354,7 @@ pub fn table_order(tables: &BTreeSet<String>, edges: &[SubsetEdge]) -> TableOrde
 }
 
 /// 文字列を小文字化し末尾の空白を除いた、照合順序の差を吸収するシグネチャ。
-fn loose_signature(key: &[Value]) -> String {
+pub(crate) fn loose_signature(key: &[Value]) -> String {
     let norm: Vec<Value> = key
         .iter()
         .map(|v| match v {
@@ -556,6 +556,8 @@ pub struct SubsetWalk {
     child_added: HashMap<String, u64>,
     total_rows: u64,
     warnings: Vec<SubsetWarning>,
+    /// 親の方向を辿るか。行の複製 (#2304) は外部への参照をそのまま残すので辿らない。
+    follow_parents: bool,
 }
 
 impl SubsetWalk {
@@ -598,7 +600,14 @@ impl SubsetWalk {
             child_added: HashMap::new(),
             total_rows: 0,
             warnings: Vec::new(),
+            follow_parents: true,
         }
+    }
+
+    /// 親の方向を辿らない走査にする (行の複製 #2304)。起点と子の方向の行だけが集まる。
+    pub fn children_only(mut self) -> Self {
+        self.follow_parents = false;
+        self
     }
 
     /// いま集まっている行の総数 (進捗表示用)。
@@ -694,7 +703,11 @@ impl SubsetWalk {
                         self.level_started = false;
                     }
                     if self.level >= self.options.child_depth || self.frontier.is_empty() {
-                        self.phase = Phase::Parents;
+                        self.phase = if self.follow_parents {
+                            Phase::Parents
+                        } else {
+                            Phase::Done
+                        };
                         continue;
                     }
                     self.enqueue_child_requests();
@@ -996,7 +1009,7 @@ pub(crate) fn key_literal(driver: DriverKind, column_type: &str, value: &Value) 
     }
 }
 
-fn is_integer_type(column_type: &str) -> bool {
+pub(crate) fn is_integer_type(column_type: &str) -> bool {
     let t = column_type.to_ascii_lowercase();
     t.contains("int") || t.contains("serial")
 }

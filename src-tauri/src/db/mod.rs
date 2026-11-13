@@ -7,6 +7,8 @@ pub mod aws_iam;
 pub mod broadcast_diff;
 /// 大規模 DML のチャンク分割実行の SQL 生成 (#2020)。
 pub mod chunked_dml;
+/// 行の子レコードごとの複製 (#2304) の純粋層。
+pub mod clone_rows;
 /// DROP COLUMN の依存オブジェクト検出 (#1758)。
 pub mod column_deps;
 pub mod column_mapping;
@@ -789,6 +791,30 @@ impl Connection {
             Connection::MySql(c) => c.tx_execute(sql).await,
             Connection::Postgres(c) => c.tx_execute(sql).await,
             Connection::Sqlite(c) => c.tx_execute(sql).await,
+        }
+    }
+
+    /// [`Self::execute_in_transaction`] の、`RETURNING` を持つ書き込み文でも行を読み出す版 (#2304)。
+    /// MySQL は `RETURNING` を持たない (INSERT の行は返らない) ので通常の実行と同じ。
+    pub async fn fetch_in_transaction(&self, sql: &str) -> Result<QueryResult> {
+        match self {
+            Connection::MySql(c) => c.tx_execute(sql).await,
+            Connection::Postgres(c) => c.tx_fetch(sql).await,
+            Connection::Sqlite(c) => c.tx_fetch(sql).await,
+        }
+    }
+
+    /// バインドパラメータ付きの `SELECT` を明示トランザクションで流して行を読む (#2304)。
+    /// 行データ由来の値を SQL 文字列に埋め込まずに評価するための経路。
+    pub async fn fetch_in_transaction_bound(
+        &self,
+        sql: &str,
+        binds: &[clone_rows::SqlBind],
+    ) -> Result<QueryResult> {
+        match self {
+            Connection::MySql(c) => c.tx_fetch_bound(sql, binds).await,
+            Connection::Postgres(c) => c.tx_fetch_bound(sql, binds).await,
+            Connection::Sqlite(c) => c.tx_fetch_bound(sql, binds).await,
         }
     }
 

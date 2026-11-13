@@ -375,6 +375,10 @@ const WRITE_CAPABLE: Record<string, WriteCapable> = {
     "ensure_transfer_target_writable が書き込み先の session.read_only を拒否 (取得は読み取り専用文だけ)",
     /\bensure_transfer_target_writable\s*\(/,
   ),
+  clone_rows: wc(
+    "session.read_only を (緊急書き込みでも) 拒否。式の評価も書き込みと同じトランザクションの中だけ",
+    RO_IF_SESSION,
+  ),
   preview_transfer: wc(
     "転送元の SQL を ensure_allowed_for_session (転送先は書き込まないので read_only でも可)",
     /\bensure_allowed_for_session\s*\(\s*&source\b/,
@@ -544,6 +548,9 @@ safe(
 
 safe(
   REASON.SESSION_READ,
+  // 行の複製のプレビュー (#2304): 行の収集 (サブセット抽出と同じ読み取り専用の SELECT) とメタデータの
+  // 取得だけで、何も書かない。
+  "preview_clone_rows",
   // スキーマ / メタデータ
   "alter_table_context",
   "describe_database",
@@ -817,6 +824,8 @@ const CONNECTION_WRITE_METHODS = new Set([
   "begin_transaction",
   "begin_transaction_with",
   "execute_in_transaction",
+  "fetch_in_transaction",
+  "fetch_in_transaction_bound",
   "execute_tx_control",
   "finish_transaction",
   "preview_execute_with_limit",

@@ -191,6 +191,26 @@ pub(crate) struct Collected {
     pub result: SubsetResult,
     pub tables: BTreeMap<String, SubsetTable>,
     pub edges: Vec<SubsetEdge>,
+    /// 起点の表から読んだ起点の行 (列は `tables[table]` の並び)。行の複製 (#2304) が新しい親行を
+    /// 特定するのに使う。
+    pub roots: Vec<Vec<Value>>,
+}
+
+/// 行の集め方の差。サブセット抽出は既定 (親も辿る・[`MAX_TOTAL_ROWS`])、行の複製 (#2304) は
+/// 親を辿らず、行数の上限が低い。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CollectMode {
+    pub follow_parents: bool,
+    pub max_total_rows: u64,
+}
+
+impl Default for CollectMode {
+    fn default() -> Self {
+        Self {
+            follow_parents: true,
+            max_total_rows: MAX_TOTAL_ROWS,
+        }
+    }
 }
 
 /// カタログの照会に使う DB 名 (SQLite は空 = main)。
@@ -314,6 +334,16 @@ pub(crate) async fn collect_subset(
     req: &SubsetRequest,
     on_rows: impl FnMut(u64),
 ) -> Result<Collected> {
+    collect_subset_with(source, req, CollectMode::default(), on_rows).await
+}
+
+/// [`collect_subset`] の本体。`mode` で親の方向を辿るかと行数の上限を変える。
+pub(crate) async fn collect_subset_with(
+    source: &Session,
+    req: &SubsetRequest,
+    mode: CollectMode,
+    on_rows: impl FnMut(u64),
+) -> Result<Collected> {
     let driver = source.conn.driver_kind();
     let table = req.table.trim().to_string();
     if table.is_empty() {
@@ -362,9 +392,12 @@ pub(crate) async fn collect_subset(
         SubsetOptions {
             child_depth,
             child_row_limit: child_limit,
-            max_total_rows: MAX_TOTAL_ROWS,
+            max_total_rows: mode.max_total_rows,
         },
     );
+    if !mode.follow_parents {
+        walk = walk.children_only();
+    }
     for w in edge_warnings {
         walk.push_warning(w);
     }
@@ -386,12 +419,14 @@ pub(crate) async fn collect_subset(
             limit: root_limit,
         });
     }
+    let roots = rows.clone();
     walk.add_root_rows(&table, rows)?;
     run_walk(source, &attached, exec_db, &tables, &mut walk, on_rows).await?;
     Ok(Collected {
         result: walk.finish(),
         tables,
         edges,
+        roots,
     })
 }
 

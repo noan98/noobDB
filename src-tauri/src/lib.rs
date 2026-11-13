@@ -271,6 +271,14 @@ pub mod __test_api {
         RowMergeRequest, UndoDecline,
     };
     pub use crate::db::subset::SubsetWarning;
+    // 行の子レコードごとの複製 (#2304)。
+    pub use crate::commands::clone_rows::{
+        clone_rows_inner, preview_clone_rows_inner, CloneKeyMapping, CloneRowsOutcome,
+        CloneRowsPreview, CloneTableOutcome, CloneTablePreview,
+    };
+    pub use crate::db::clone_rows::{
+        CloneColumnRule, KeyColumnReport, KeyRule, KeyStatus, UniqueConflict,
+    };
     pub use crate::db::transfer::{
         ColumnSpec, LossyConversion, LossyKind, OverrideKind, TransferMode, TypeOverride,
     };
@@ -2138,6 +2146,8 @@ pub fn run() {
             commands::transfer::preview_transfer,
             commands::subset::preview_subset,
             commands::subset::run_subset,
+            commands::clone_rows::preview_clone_rows,
+            commands::clone_rows::clone_rows,
             commands::import::preview_create_table_ddl,
             commands::file::read_text_file,
             commands::file::read_sql_file,

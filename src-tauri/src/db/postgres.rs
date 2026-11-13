@@ -242,6 +242,65 @@ impl PostgresConn {
         Ok(result?.with_server_messages(messages))
     }
 
+    /// 保持接続のトランザクションで文を流し、`RETURNING` のように行を返す書き込み文でも
+    /// 行を読み出す (#2304)。`tx_execute` は `SELECT` の形でない文の行を捨てる。
+    pub async fn tx_fetch(&self, sql: &str) -> Result<QueryResult> {
+        let mut guard = self.tx.lock().await;
+        let conn = guard
+            .as_mut()
+            .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
+        let started = Instant::now();
+        let rows: Vec<PgRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .fetch_all(&mut **conn)
+            .await?;
+        let columns = columns_of(&rows);
+        let rows_out = rows.iter().map(row_to_values).collect();
+        Ok(QueryResult {
+            columns,
+            rows: rows_out,
+            rows_affected: 0,
+            elapsed_ms: started.elapsed().as_millis() as u64,
+            server_messages: Vec::new(),
+        })
+    }
+
+    /// バインドパラメータ付きの `SELECT` を保持接続のトランザクションで流して行を読む (#2304)。
+    /// 行データ由来の値を SQL 文字列へ埋め込まないための経路。
+    pub async fn tx_fetch_bound(
+        &self,
+        sql: &str,
+        binds: &[super::clone_rows::SqlBind],
+    ) -> Result<QueryResult> {
+        use super::clone_rows::SqlBind;
+        let mut guard = self.tx.lock().await;
+        let conn = guard
+            .as_mut()
+            .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
+        let started = Instant::now();
+        let mut q = sqlx::query::<sqlx::Postgres>(sqlx::AssertSqlSafe(sql));
+        for b in binds {
+            q = match b {
+                SqlBind::Int(v) => q.bind(*v),
+                // 呼び出し側 (`expression_select`) が整数か文字列に直す
+                SqlBind::UInt(v) => q.bind(v.to_string()),
+                SqlBind::Float(v) => q.bind(*v),
+                SqlBind::Bool(v) => q.bind(*v),
+                SqlBind::Text(v) => q.bind(v.clone()),
+                SqlBind::Bytes(v) => q.bind(v.clone()),
+            };
+        }
+        let rows: Vec<PgRow> = q.fetch_all(&mut **conn).await?;
+        let columns = columns_of(&rows);
+        let rows_out = rows.iter().map(row_to_values).collect();
+        Ok(QueryResult {
+            columns,
+            rows: rows_out,
+            rows_affected: 0,
+            elapsed_ms: started.elapsed().as_millis() as u64,
+            server_messages: Vec::new(),
+        })
+    }
+
     pub async fn tx_finish(&self, commit: bool) -> Result<()> {
         let mut guard = self.tx.lock().await;
         self.tx_read_only

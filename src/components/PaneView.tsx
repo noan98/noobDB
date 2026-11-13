@@ -192,6 +192,13 @@ export interface PaneActions {
     whereClause: string;
     rootLimit: number;
   }) => void;
+  /** 結果グリッドで選んだ行を子レコードごと複製するモーダルを開く (#2304)。 */
+  handleCloneRowsFromRows: (target: {
+    database: string | null;
+    table: string;
+    whereClause: string;
+    rootLimit: number;
+  }) => void;
   /** 結果グリッドで選んだ行 (または重複グループ) のマージを開く (#2303)。 */
   handleMergeRows: (target: RowMergeTarget) => void;
   handleNewTab: (paneId?: string) => void;
@@ -1353,6 +1360,19 @@ export const PaneView = memo(
                                             whereClause: string;
                                             rootLimit: number;
                                           }) => actions.handleExtractSubsetFromRows(target),
+                                        )
+                                      : undefined
+                                  }
+                                  onCloneRows={
+                                    sessionId && !readOnly
+                                      ? gridStable.fn(
+                                          `${tab.id}:cloneRows`,
+                                          (target: {
+                                            database: string | null;
+                                            table: string;
+                                            whereClause: string;
+                                            rootLimit: number;
+                                          }) => actions.handleCloneRowsFromRows(target),
                                         )
                                       : undefined
                                   }

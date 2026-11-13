@@ -738,6 +738,24 @@ DELETE をフライトレコーダに 1 文ずつ記録し (`run_captured_write`
   INSERT スクリプトのファイル (`script`。エクスポートの SQL レンダラを再利用)。`masks` は出力にだけ
   掛け、キー列はマスクできない。進捗は `subset-stream:*` イベント、`cancel_stream` で中断。
 
+## 行を子レコードごと複製 (`commands/clone_rows.rs`, #2304)
+
+行を子レコードごと同じ DB 内に複製する。行の収集は `SubsetWalk` を子の方向だけで動かす (親は辿らない =
+外部への参照は元のまま)。複製した行どうしの外部キー (中間表・自己参照・複合キーを含む) だけを新しいキーへ
+張り替える。キーの方針は列ごと (自動採番 / 式 / 上書き値) で、判断は純粋層 `db/clone_rows.rs`。
+
+- `preview_clone_rows` — 実行前プレビュー。挿入順の表ごとの件数・主キーの決まり方 (`auto` / `rule` /
+  `remapped` / `unchanged`)・方針が足りない表 (`needsPolicy`)・UNIQUE の衝突・循環を返す。何も書かない。
+- `clone_rows` — 1 トランザクションで複製 (失敗したら全部ロールバック)。`read_only` 接続はバックエンドで拒否
+  (緊急書き込みモードでも)。`is_production` / `confirm_writes` は UI の確認。方針不足・衝突・循環は書く前に
+  `InvalidInput`。旧キー → 新キーの対応表と新しい親行のキーを返し、新しい行は表ごとの `Insert` として
+  同じ `batch_id` でフライトレコーダーに記録する (`apply_flight_batch` で取り消せる)。
+  引数 `capture` (`BulkCaptureConfig`: `rowCap` / `retentionDays`) はフロントの設定から渡し、`null` なら記録しない
+  (`captureEnabled: false`)。行数が `rowCap` を超える・主キーの無い表がある・履歴を残さない接続のときは、
+  部分的な Undo を作らないようバッチ全体を辞退し、辞退した表名を `declinedTables` で返す。
+  式の方針 (`{old}` を使える) は `SELECT (式)` を行ごとに評価する。式の中のコメントは禁止で、`{old}` は SQL に
+  埋め込まずバインドパラメータ (PG `$1` / MySQL・SQLite `?`) で渡す。
+
 ## 重複レコードのマージ (`commands/row_merge.rs`, #2303)
 
 残す行を決め、子テーブルの参照を付け替えてから重複行を消す。計画 (`build_plan`) は読み取りだけで、プレビューも
