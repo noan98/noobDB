@@ -250,6 +250,17 @@ describe("プレビューの FK 辿り図 (#2266)", () => {
     expect(lit).toHaveLength(1);
     expect(lit[0].getAttribute("data-from")).toBe("orders");
     await expect.element(screen.getByText("orders.customer_id → customers.id")).toBeVisible();
+    // 列名ラベルはどのノードの矩形とも重ならない (#2316)。
+    const overlaps = (a: DOMRect, b: DOMRect) =>
+      a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    const edgeLabels = document.querySelectorAll('[data-testid="subset-preview-edge-label"]');
+    expect(edgeLabels.length).toBeGreaterThan(0);
+    for (const label of edgeLabels) {
+      const lr = label.getBoundingClientRect();
+      for (const n of document.querySelectorAll('[data-testid="subset-preview-node"]')) {
+        expect(overlaps(lr, n.getBoundingClientRect())).toBe(false);
+      }
+    }
 
     node("orders")?.querySelector<HTMLElement>("[role='group']")?.blur();
     await expect.poll(() => dim("regions")).toBe("false");
