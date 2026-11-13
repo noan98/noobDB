@@ -125,7 +125,8 @@ function GraphNode({
   barColor,
   index,
   dim,
-  onActive,
+  onHover,
+  onFocusNode,
 }: {
   node: SubsetNode;
   row: number;
@@ -134,7 +135,8 @@ function GraphNode({
   /** 経路強調中で、この表は経路の外 (減光する)。 */
   dim: boolean;
   /** ホバー / フォーカスの出入り (離れたら null)。 */
-  onActive: (table: string | null) => void;
+  onHover: (table: string | null) => void;
+  onFocusNode: (table: string | null) => void;
 }) {
   const t = useT();
   const roles = t("subsetPreviewRoles", {
@@ -153,10 +155,10 @@ function GraphNode({
       data-lane={node.lane}
       data-table={node.table}
       data-dim={dim ? "true" : "false"}
-      onPointerEnter={() => onActive(node.table)}
-      onPointerLeave={() => onActive(null)}
-      onFocus={() => onActive(node.table)}
-      onBlur={() => onActive(null)}
+      onPointerEnter={() => onHover(node.table)}
+      onPointerLeave={() => onHover(null)}
+      onFocus={() => onFocusNode(node.table)}
+      onBlur={() => onFocusNode(null)}
     >
       <chakra.div
         role="group"
@@ -321,7 +323,10 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
   const rowCount = Math.max(1, ...SUBSET_LANES.map((l) => lanes[l].length));
 
   // ホバー / フォーカス中の表と、そこから起点までの経路。再プレビューで表が消えたら強調しない。
-  const [activeTable, setActiveTable] = useState<string | null>(null);
+  // ホバーとフォーカスは別々に持ち (互いに消し合わない)、ホバーを優先する。
+  const [hoverTable, setHoverTable] = useState<string | null>(null);
+  const [focusTable, setFocusTable] = useState<string | null>(null);
+  const activeTable = hoverTable ?? focusTable;
   const path = useMemo(
     () =>
       activeTable !== null && graph.nodes.some((n) => n.table === activeTable)
@@ -500,7 +505,8 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
                         barColor={barColor}
                         index={nodeIndex++}
                         dim={path !== null && !path.tables.has(item.node.table)}
-                        onActive={setActiveTable}
+                        onHover={setHoverTable}
+                        onFocusNode={setFocusTable}
                       />
                     );
                   }

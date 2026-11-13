@@ -312,4 +312,32 @@ describe("tracePathToRoot (#2293)", () => {
     expect(mg.edges).toHaveLength(1);
     expect(mg.edges[0].labels).toEqual(["o.billing_id → c.id", "o.shipping_id → c.id"]);
   });
+  it("子の親 (子経由で取り込まれた表) も、子を通って起点まで辿れる", () => {
+    const pg = buildSubsetGraph(
+      preview([tp("orders", 5, 0, 0), tp("items", 0, 3, 0), tp("products", 0, 0, 2)]),
+      [fk("items", "orders"), fk("items", "products")],
+    );
+    const path = tracePathToRoot(pg, "products");
+    expect([...path.tables].sort()).toEqual(["items", "orders", "products"]);
+    expect(edgeNames(path)).toEqual(["items>orders", "items>products"]);
+  });
+  it("親子両方の行を持つ表も、子の方向と親の方向の両方から探す", () => {
+    const pg = buildSubsetGraph(preview([tp("orders", 5, 0, 0), tp("items", 0, 3, 0), tp("both", 0, 1, 2)]), [
+      fk("both", "orders"),
+      fk("items", "both"),
+    ]);
+    expect(pg.nodes.find((n) => n.table === "both")?.lane).toBe("parent");
+    const path = tracePathToRoot(pg, "both");
+    expect(edgeNames(path)).toEqual(["both>orders"]);
+  });
+  it("子の局面では親だけの表を中継しない", () => {
+    // items → products (親だけ) → orders: products 経由では起点へ着かない。
+    const pg = buildSubsetGraph(
+      preview([tp("orders", 5, 0, 0), tp("items", 0, 3, 0), tp("products", 0, 0, 2)]),
+      [fk("items", "products"), fk("products", "orders")],
+    );
+    const path = tracePathToRoot(pg, "items");
+    expect([...path.tables]).toEqual(["items"]);
+    expect(path.edges).toEqual([]);
+  });
 });

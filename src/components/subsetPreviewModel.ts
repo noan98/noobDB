@@ -196,65 +196,102 @@ export interface SubsetPath {
 
 /**
  * `table` から起点 (起点レーンの表) までの外部キーの経路 (#2293)。
- * 親レーンの表は子の方向 (参照している側) へ、子レーンの表は親の方向 (参照している側から先) へ辿り、
- * 最も近い起点までの最短経路の辺をすべて返す。幅優先 + 訪問済み管理なので循環があっても停止する。
+ * `buildSubsetGraph` の段数 (`parentDist` / `childDist`) と同じ意味で、2 局面の幅優先で辿る。
+ * - 局面「親」: 子の方向 (参照している側) へ進む。子の行か起点の行を持つ表 (`hasChildRole`) に着いたら、局面「子」へも移れる。
+ * - 局面「子」: 親の方向へ進む。子の行か起点の行を持つ表の中だけを通る (親だけの表は中継しない)。
+ * 子レーンの表は局面「子」から、親レーンの表は局面「親」から (子の行も持つなら局面「子」からも) 始める。
+ * 最も近い起点までの最短経路の辺をすべて返す。訪問済みは (表, 局面) 単位なので循環があっても停止する。
  * 起点自身・起点へ着かない表は、その表だけを含む空の経路。
  */
 export function tracePathToRoot(graph: Pick<SubsetGraph, "nodes" | "edges">, table: string): SubsetPath {
   const self: SubsetPath = { tables: new Set([table]), edges: [] };
-  const start = graph.nodes.find((n) => n.table === table);
+  const byTable = new Map(graph.nodes.map((n) => [n.table, n] as const));
+  const start = byTable.get(table);
   if (!start || start.lane === "root") return self;
-  const laneOf = new Map(graph.nodes.map((n) => [n.table, n.lane] as const));
-  const upward = start.lane === "child";
-  // next: 今の表 → [次の表, その間の辺]
-  const next = new Map<string, { table: string; edge: SubsetEdge }[]>();
+  const hasChildRole = (id: string) => {
+    const n = byTable.get(id);
+    return !!n && (n.childRows > 0 || n.rootRows > 0);
+  };
+  type Phase = "parent" | "child";
+  const key = (t: string, ph: Phase) => `${t}\u0000${ph}`;
+  const split = (k: string) => k.split("\u0000")[0];
+  const up = new Map<string, SubsetEdge[]>(); // 子 → 親へ (e.from === cur)
+  const down = new Map<string, SubsetEdge[]>(); // 親 → 子へ (e.to === cur)
   for (const e of graph.edges) {
-    const [a, b] = upward ? [e.from, e.to] : [e.to, e.from];
-    const list = next.get(a);
-    const item = { table: b, edge: e };
-    if (list) list.push(item);
-    else next.set(a, [item]);
+    const u = up.get(e.from);
+    if (u) u.push(e);
+    else up.set(e.from, [e]);
+    const d = down.get(e.to);
+    if (d) d.push(e);
+    else down.set(e.to, [e]);
   }
-  const dist = new Map<string, number>([[table, 0]]);
-  const preds = new Map<string, { table: string; edge: SubsetEdge }[]>();
-  const queue = [table];
+
+  const dist = new Map<string, number>();
+  const preds = new Map<string, { state: string; edge: SubsetEdge }[]>();
+  const queue: { t: string; ph: Phase }[] = [];
+  const enqueue = (t: string, ph: Phase, d: number) => {
+    dist.set(key(t, ph), d);
+    queue.push({ t, ph });
+  };
+  if (start.lane === "child") enqueue(table, "child", 0);
+  else {
+    enqueue(table, "parent", 0);
+    if (hasChildRole(table)) enqueue(table, "child", 0);
+  }
+
   let rootDist = Number.POSITIVE_INFINITY;
-  const roots: string[] = [];
-  for (let head = 0; head < queue.length; head++) {
-    const cur = queue[head];
-    const d = dist.get(cur) ?? 0;
-    if (d >= rootDist) continue;
-    for (const n of next.get(cur) ?? []) {
-      const nd = dist.get(n.table);
-      if (nd === undefined) {
-        dist.set(n.table, d + 1);
-        preds.set(n.table, [{ table: cur, edge: n.edge }]);
-        if (laneOf.get(n.table) === "root") {
-          rootDist = d + 1;
-          roots.push(n.table);
-        } else {
-          queue.push(n.table);
+  const rootStates: string[] = [];
+  const reach = (t: string, ph: Phase, d: number, from: string, edge: SubsetEdge) => {
+    const k = key(t, ph);
+    const nd = dist.get(k);
+    if (nd === undefined) {
+      dist.set(k, d);
+      preds.set(k, [{ state: from, edge }]);
+      if (byTable.get(t)?.lane === "root") {
+        if (d <= rootDist) {
+          rootDist = d;
+          rootStates.push(k);
         }
-      } else if (nd === d + 1) {
-        preds.get(n.table)?.push({ table: cur, edge: n.edge });
+      } else {
+        queue.push({ t, ph });
+      }
+    } else if (nd === d) {
+      preds.get(k)?.push({ state: from, edge });
+    }
+  };
+  for (let head = 0; head < queue.length; head++) {
+    const { t, ph } = queue[head];
+    const from = key(t, ph);
+    const d = (dist.get(from) ?? 0) + 1;
+    if (d > rootDist) break;
+    if (ph === "parent") {
+      for (const e of down.get(t) ?? []) {
+        reach(e.from, "parent", d, from, e);
+        if (hasChildRole(e.from)) reach(e.from, "child", d, from, e);
+      }
+    } else {
+      for (const e of up.get(t) ?? []) {
+        if (hasChildRole(e.to)) reach(e.to, "child", d, from, e);
       }
     }
   }
+  const roots = rootStates.filter((k) => dist.get(k) === rootDist);
   if (roots.length === 0) return self;
-  const tables = new Set<string>(roots);
+  const tables = new Set<string>([table]);
   const edgeSet = new Set<SubsetEdge>();
+  const seen = new Set<string>(roots);
   const stack = [...roots];
   while (stack.length > 0) {
     const cur = stack.pop() as string;
-    for (const p of preds.get(cur) ?? []) {
-      edgeSet.add(p.edge);
-      if (!tables.has(p.table)) {
-        tables.add(p.table);
-        stack.push(p.table);
+    tables.add(split(cur));
+    for (const pr of preds.get(cur) ?? []) {
+      edgeSet.add(pr.edge);
+      if (!seen.has(pr.state)) {
+        seen.add(pr.state);
+        stack.push(pr.state);
       }
     }
   }
-  tables.add(table);
   return { tables, edges: [...edgeSet] };
 }
 
