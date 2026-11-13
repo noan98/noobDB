@@ -3811,7 +3811,7 @@ impl PostgresConn {
             r#"SELECT p.prosrc::text
                  FROM pg_proc p
                  JOIN pg_namespace n ON n.oid = p.pronamespace
-                WHERE n.nspname = $1 AND p.proname = $2
+                WHERE n.nspname = $1 AND p.proname = $2 AND p.pronargs = 0
                 LIMIT 1"#,
         )
         .bind(schema)
