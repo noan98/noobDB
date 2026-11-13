@@ -361,9 +361,7 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
       litKeys
         ? edges.flatMap((e) => {
             const labels = e.keys.filter((k) => litKeys.has(k)).flatMap((k) => e.labels[k] ?? []);
-            return labels.length > 0
-              ? [{ id: `${e.from}>${e.to}`, text: labels.join(", ") }]
-              : [];
+            return labels.length > 0 ? [{ id: `${e.from}>${e.to}`, text: labels.join(", ") }] : [];
           })
         : [],
     [litKeys, edges],
