@@ -3000,6 +3000,31 @@ td.is-find-current::after {
   transition: none;
 }
 
+/* ---------- サブセット抽出の FK 辿り図 (#2293) ----------
+   `SubsetPreviewGraph` のエッジはノードの入場に合わせて描き入れる (`--edge-delay` は終点ノードの stagger 順)。
+   強調 / 減光の stroke-opacity・stroke-width も同じ transition。reduced-motion / hc-* は最初から描き、瞬時に切り替える。 */
+.subset-edge {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  transition:
+    stroke-dashoffset var(--dur-med) var(--ease-out) var(--edge-delay, 0s),
+    stroke-opacity var(--dur-fast) var(--ease),
+    stroke-width var(--dur-fast) var(--ease);
+}
+.subset-edge[data-lit="true"] { stroke-dashoffset: 0; }
+:root[data-theme="hc-light"] .subset-edge,
+:root[data-theme="hc-dark"] .subset-edge,
+:root[data-motion="reduced"] .subset-edge {
+  stroke-dashoffset: 0;
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .subset-edge {
+    stroke-dashoffset: 0;
+    transition: none;
+  }
+}
+
 /* reduced-motion では入場の遅延も外す (duration だけ潰すと遅延ぶん非表示のまま待つ, #1861) */
 @media (prefers-reduced-motion: reduce) {
   :root:not([data-motion="full"]) .flow-node-enter,

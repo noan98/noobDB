@@ -3444,7 +3444,7 @@ const en = {
   subsetGraphAria:
     "Foreign key map of the rows to extract: parents on the left, the start table in the middle, children on the right",
   subsetGraphHint:
-    "Lines join a table with the foreign key (right side) to the table it references (left side). Loaded parent-first.",
+    "Lines join a table with the foreign key (right side) to the table it references (left side). Loaded parent-first. Hover or focus a table to highlight its path to the start.",
   subsetLaneParent: "Parents",
   subsetLaneRoot: "Start",
   subsetLaneChild: "Children",
@@ -11742,7 +11742,7 @@ const ja: Dict = {
   subsetPreviewRoles: "起点 {root} / 子 {child} / 親 {parent}",
   subsetGraphAria: "取り出す行の外部キーの辿り図 (左が親、中央が起点、右が子)",
   subsetGraphHint:
-    "線は、外部キーを持つ表 (右側) と、その参照先の表 (左側) を結びます。読み込みは親の表が先です。",
+    "線は、外部キーを持つ表 (右側) と、その参照先の表 (左側) を結びます。読み込みは親の表が先です。表にホバー / フォーカスすると、起点までの経路を強調します。",
   subsetLaneParent: "親の方向",
   subsetLaneRoot: "起点",
   subsetLaneChild: "子の方向",
