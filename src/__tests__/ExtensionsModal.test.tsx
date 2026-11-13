@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor } from "./testUtils";
+import { renderWithProviders, screen, waitFor, within } from "./testUtils";
 import { MotionConfig } from "motion/react";
 import { setLocale, t } from "../i18n";
 
@@ -257,18 +257,14 @@ describe("ExtensionsModal", () => {
       await screen.findByText(t("extensionsDepsWillFail", { count: 4 }));
       await user.click(screen.getByLabelText(t("extensionsCascadeDrop")));
       expect(screen.getByText(t("extensionsDepsCascadeTitle", { count: 4 }))).toBeInTheDocument();
-      const headings = screen
-        .getAllByRole("button")
-        .filter((b) => b.hasAttribute("aria-expanded"))
-        .map((b) => b.textContent);
-      expect(headings[0]).toContain(`${t("extensionsDepsKind_column")} (2)`);
-      expect(headings[1]).toContain(`${t("extensionsDepsKind_view")} (1)`);
-      expect(headings[2]).toContain(`${t("extensionsDepsKind_function")} (1)`);
-      // 列は開いていて、表と列が見える。関数は閉じている。
-      expect(screen.getByText("public.places.geom")).toBeInTheDocument();
-      expect(screen.queryByText("public.near(geometry)")).not.toBeInTheDocument();
-      await user.click(screen.getByRole("button", { name: new RegExp(t("extensionsDepsKind_function")) }));
-      expect(await screen.findByText("public.near(geometry)")).toBeInTheDocument();
+      // 起点 (拡張機能) のチップから、列を先頭に種別ラベルつきで並ぶ。CASCADE なので結果は「連鎖削除」。
+      expect(screen.getByTestId("impact-origin")).toHaveTextContent("pg_trgm");
+      const rows = within(screen.getByTestId("extension-dependents")).getAllByRole("listitem");
+      expect(rows[0]).toHaveTextContent("public.places.geom");
+      expect(rows[0]).toHaveTextContent(t("extensionsDepsKind_column"));
+      expect(rows[0]).toHaveTextContent(t("impactOutcomeCascade"));
+      expect(rows[2]).toHaveTextContent("public.v_places");
+      expect(rows[3]).toHaveTextContent("public.near(geometry)");
     });
 
     it("CASCADE なしで依存があれば「このままでは失敗します」を実行前に出す", async () => {

@@ -2131,6 +2131,68 @@
   color-scheme: dark;
 }
 
+/* スキーマ比較マトリクス (#2296): マスの状態色。意味色の太い段を淡く薄めた面で、記号と併記する
+   (色だけに頼らない)。テーマ切替は --success-solid 等の差し替えに追従する。 */
+:root {
+  --matrix-cell-source-only: color-mix(in srgb, var(--success-solid) 16%, transparent);
+  --matrix-cell-target-only: color-mix(in srgb, var(--error-solid) 16%, transparent);
+  --matrix-cell-different: color-mix(in srgb, var(--warning-solid) 18%, transparent);
+  --matrix-cell-error: color-mix(in srgb, var(--text-muted) 10%, transparent);
+  --matrix-cell-active: color-mix(in srgb, var(--accent) 9%, transparent);
+  --matrix-search-w: calc(220px * var(--font-scale));
+  --matrix-search-min: calc(120px * var(--font-scale));
+  --matrix-label-max: calc(220px * var(--font-scale));
+  --matrix-hatch: color-mix(in srgb, var(--text-muted) 22%, transparent);
+}
+.compare-matrix-cell {
+  /* アクティブ列の淡色は box-shadow で重ね、列を移るときに補間する (見出しは layoutId で滑る, #2292)。 */
+  transition:
+    background-color var(--dur-med) var(--ease-out),
+    box-shadow var(--dur-med) var(--ease-out);
+  box-shadow: inset 0 0 0 999px transparent;
+}
+.compare-matrix-cell[data-active="true"] { box-shadow: inset 0 0 0 999px var(--matrix-cell-active); }
+.compare-matrix-cell[data-status="source_only"] { background-color: var(--matrix-cell-source-only); }
+.compare-matrix-cell[data-status="target_only"] { background-color: var(--matrix-cell-target-only); }
+.compare-matrix-cell[data-status="different"] { background-color: var(--matrix-cell-different); }
+.compare-matrix-cell[data-status="error"] { background-color: var(--matrix-cell-error); }
+.compare-matrix-cell[data-status="absent"] {
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--matrix-hatch) 0,
+    var(--matrix-hatch) var(--space-0-5),
+    transparent var(--space-0-5),
+    transparent var(--space-1)
+  );
+}
+:root[data-motion="reduced"] .compare-matrix-cell { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .compare-matrix-cell { transition: none; }
+}
+
+/* マトリクスのマスから詳細一覧の該当行へ飛んだとき、その行を 1 回だけ光らせる (#2292)。
+   色は行の状態色 (--flash-color)。opacity だけを動かす (#1322 と同じ)。同じ行を続けて押しても
+   再生し直せるよう、世代の偶奇で animation-name を切り替える。 */
+.table-diff-flash::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--flash-color) 30%, transparent);
+  opacity: 0;
+  animation: apply-flash calc(var(--dur-med) * 4) var(--ease-out);
+}
+.table-diff-flash.table-diff-flash-alt::after { animation-name: apply-flash-alt; }
+:root[data-motion="reduced"] .table-diff-flash::after,
+:root[data-theme="hc-light"] .table-diff-flash::after,
+:root[data-theme="hc-dark"] .table-diff-flash::after { animation: none; }
+@media (forced-colors: active) {
+  .table-diff-flash::after { animation: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .table-diff-flash::after { animation: none; }
+}
+
 /* Density overrides (#410, #620). The grid-facing tokens and the control
    padding multiplier (--density-control-scale) shift together so the same
    preset tunes the grid *and* every form / button / field; horizontal padding
@@ -2962,6 +3024,31 @@ td.is-find-current::after {
 :root[data-theme="hc-dark"] .lock-graph-edge {
   stroke-dashoffset: 0;
   transition: none;
+}
+
+/* ---------- サブセット抽出の FK 辿り図 (#2293) ----------
+   `SubsetPreviewGraph` のエッジはノードの入場に合わせて描き入れる (`--edge-delay` は終点ノードの stagger 順)。
+   強調 / 減光の stroke-opacity・stroke-width も同じ transition。reduced-motion / hc-* は最初から描き、瞬時に切り替える。 */
+.subset-edge {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  transition:
+    stroke-dashoffset var(--dur-med) var(--ease-out) var(--edge-delay, 0s),
+    stroke-opacity var(--dur-fast) var(--ease),
+    stroke-width var(--dur-fast) var(--ease);
+}
+.subset-edge[data-lit="true"] { stroke-dashoffset: 0; }
+:root[data-theme="hc-light"] .subset-edge,
+:root[data-theme="hc-dark"] .subset-edge,
+:root[data-motion="reduced"] .subset-edge {
+  stroke-dashoffset: 0;
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .subset-edge {
+    stroke-dashoffset: 0;
+    transition: none;
+  }
 }
 
 /* reduced-motion では入場の遅延も外す (duration だけ潰すと遅延ぶん非表示のまま待つ, #1861) */

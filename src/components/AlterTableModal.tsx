@@ -1420,6 +1420,7 @@ export function AlterTableModal({
                 withData={matviewWithData}
                 onWithDataChange={setMatviewWithData}
                 conflictColumns={viewRebuildConflicts}
+                changedColumns={changedTypeColumns}
               />
               {hasIncompleteIndex && (
                 <Callout tone="warning">{t("alterTableIndexIncompleteBlocked")}</Callout>

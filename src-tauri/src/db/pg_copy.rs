@@ -96,8 +96,15 @@ pub(crate) fn fallback_reason(sqlstate: Option<&str>, protocol: bool) -> Option<
 
 /// COPY で書いてよい対象か。通常表 (`r`) とパーティション親 (`p`) だけで、ルールを持つ表は
 /// COPY がルールを発火しないので INSERT にする (ビュー `v`・マテビュー `m`・外部表 `f` も INSERT)。
-pub(crate) fn relation_supports_copy(relkind: &str, has_rules: bool) -> bool {
-    matches!(relkind, "r" | "p") && !has_rules
+/// 取り込む列に GENERATED ALWAYS identity 列 (`attidentity = 'a'`) があるときも INSERT にする:
+/// INSERT は 428C9 で拒否するが COPY はこの検査を通らず値が入り、シーケンスが進まないため。
+/// (BY DEFAULT identity と serial は COPY のままでよい。)
+pub(crate) fn relation_supports_copy(
+    relkind: &str,
+    has_rules: bool,
+    has_always_identity: bool,
+) -> bool {
+    matches!(relkind, "r" | "p") && !has_rules && !has_always_identity
 }
 
 /// COPY が使えず INSERT に切り替えるときのログ文言。`reason` は [`fallback_reason`] の値で、
@@ -282,11 +289,17 @@ mod tests {
 
     #[test]
     fn only_plain_tables_without_rules_use_copy() {
-        assert!(relation_supports_copy("r", false));
-        assert!(relation_supports_copy("p", false));
-        assert!(!relation_supports_copy("r", true));
+        assert!(relation_supports_copy("r", false, false));
+        assert!(relation_supports_copy("p", false, false));
+        assert!(!relation_supports_copy("r", true, false));
         for k in ["v", "m", "f", "S", "i"] {
-            assert!(!relation_supports_copy(k, false), "{k}");
+            assert!(!relation_supports_copy(k, false, false), "{k}");
         }
+    }
+
+    #[test]
+    fn always_identity_column_disables_copy() {
+        assert!(!relation_supports_copy("r", false, true));
+        assert!(!relation_supports_copy("p", false, true));
     }
 }

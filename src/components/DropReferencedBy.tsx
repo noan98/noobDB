@@ -1,48 +1,44 @@
-import { Box, chakra } from "@chakra-ui/react";
+import { chakra } from "@chakra-ui/react";
 import { Callout } from "./Callout";
+import { ImpactTree, type ImpactGroup } from "./ImpactTree";
 import type { DropImpact } from "../dropImpact";
 import { incomingFkTableName } from "../fkNavigation";
 import { useT } from "../i18n";
 
-/** 一覧に出す FK の最大行数。超えた分は「ほか N 件」に畳む。 */
+/** 一覧に出す FK の最大行数。超えた分は「ほか N 件」に畳み、押すと展開する。 */
 const MAX_LINES = 8;
 
 /**
  * DROP TABLE の確認ダイアログに添える「外部キーで参照されている」警告 (#1536)。
- * 参照元の子テーブル・列を `親.列 ← 子.列` の形で並べる。参照が無ければ何も描かない。
- * `sqlite` は FK 違反でも DROP が通りうる (`PRAGMA foreign_keys` 次第) ので文言を分ける。
+ * 起点 (DROP するテーブル) のチップから、参照元の子テーブル・列を影響ツリーで並べる (#2295)。
+ * 参照が無ければ何も描かない。
+ * `sqlite` は FK 違反でも DROP が通りうる (`PRAGMA foreign_keys` 次第) ので文言を分け、結果バッジも出さない。
  */
 export function DropReferencedBy({ impacts, sqlite }: { impacts: DropImpact[]; sqlite: boolean }) {
   const t = useT();
   if (impacts.length === 0) return null;
-  const lines = impacts.flatMap((imp) =>
-    imp.refs.map((fk) => ({
-      key: `${imp.table}\0${incomingFkTableName(fk)}\0${fk.column}`,
-      text: `${imp.table}.${fk.referencedColumn} ← ${incomingFkTableName(fk)}.${fk.column}`,
+  const groups: ImpactGroup[] = impacts.map((imp) => ({
+    key: imp.table,
+    origin: { kind: "table", name: imp.table },
+    nodes: imp.refs.map((fk) => ({
+      key: `${incomingFkTableName(fk)}\0${fk.column}`,
+      kind: "table",
+      name: `${incomingFkTableName(fk)}.${fk.column}`,
+      meta: t("dropReferencedByRefers", { column: fk.referencedColumn }),
+      outcome: sqlite ? undefined : "block",
     })),
-  );
-  const shown = lines.slice(0, MAX_LINES);
+  }));
+  const count = groups.reduce((n, g) => n + g.nodes.length, 0);
   return (
     <Callout
       tone="warning"
       role="status"
       mt="3"
-      title={t("dropReferencedByTitle", { count: lines.length })}
+      title={t("dropReferencedByTitle", { count })}
       data-testid="drop-referenced-by"
     >
       <chakra.p m={0}>{t(sqlite ? "dropReferencedBySqlite" : "dropReferencedByServer")}</chakra.p>
-      <Box as="ul" m={0} mt="1" pl="5" fontFamily="mono" fontSize="sm">
-        {shown.map((l) => (
-          <Box as="li" key={l.key} wordBreak="break-all">
-            {l.text}
-          </Box>
-        ))}
-        {lines.length > shown.length && (
-          <Box as="li" listStyleType="none" ml="-5">
-            {t("dropReferencedByMore", { count: lines.length - shown.length })}
-          </Box>
-        )}
-      </Box>
+      <ImpactTree groups={groups} maxVisible={MAX_LINES} />
     </Callout>
   );
 }

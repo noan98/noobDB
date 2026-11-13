@@ -963,8 +963,6 @@ const en = {
   updateUpToDate: "You're on the latest version ({version}).",
   updateCheckFailed: "Couldn't check for updates. Check your connection and try again.",
   updateAvailableTitle: "Update available",
-  updateAvailableMessage:
-    "A new version {version} is available (you have {current}). Download it and restart to update now?",
   updateViewWhatsNew: "See what's new",
   whatsNewTitle: "What's new",
   whatsNewClose: "Close",
@@ -978,6 +976,10 @@ const en = {
   updateDownloadingProgress: "Downloading the update… {percent}% ({downloaded} / {total})",
   updateDownloadingStarted: "Downloading the update… the app will restart automatically when it's ready.",
   updateFailed: "Update failed: {error}",
+  updateHighlights: "Highlights",
+  updateInBackground: "Continue in background",
+  updateRetry: "Retry",
+  updateApplying: "Applying the update… the app will restart in a moment.",
 
   settingsBackup: "Backup & reset",
   settingsBackupHelp:
@@ -3489,7 +3491,7 @@ const en = {
   subsetGraphAria:
     "Foreign key map of the rows to extract: parents on the left, the start table in the middle, children on the right",
   subsetGraphHint:
-    "Lines join a table with the foreign key (right side) to the table it references (left side). Loaded parent-first.",
+    "Lines join a table with the foreign key (right side) to the table it references (left side). Loaded parent-first. Hover or focus a table to highlight its path to the start.",
   subsetLaneParent: "Parents",
   subsetLaneRoot: "Start",
   subsetLaneChild: "Children",
@@ -4164,10 +4166,19 @@ const en = {
   dropConfirmBody: "This permanently removes the table {table} and all its data. This cannot be undone.",
   dropReferencedByTitle: "Referenced by foreign keys ({count})",
   dropReferencedByServer:
-    "These tables still reference the table(s) being dropped, so the DROP will fail with a foreign key error (unless it cascades). Parent.column ← child.column:",
+    "These tables still reference the table(s) being dropped, so the DROP will fail with a foreign key error (unless it cascades).",
   dropReferencedBySqlite:
-    "These tables still reference the table(s) being dropped. SQLite may let the DROP through depending on PRAGMA foreign_keys and leave orphaned child rows. Parent.column ← child.column:",
+    "These tables still reference the table(s) being dropped. SQLite may let the DROP through depending on PRAGMA foreign_keys and leave orphaned child rows.",
   dropReferencedByMore: "and {count} more",
+  dropReferencedByRefers: "References: {column}",
+  impactTreeLess: "Show fewer",
+  impactOutcomeCascade: "Cascade delete",
+  impactOutcomeBlock: "Blocks",
+  impactOutcomeSetNull: "Set NULL",
+  impactOutcomeSetDefault: "Set default",
+  impactOutcomeRebuild: "Rebuild",
+  impactOutcomeBreak: "Breaks",
+  impactOutcomeChange: "Altered",
   // 型変更で依存ビューを作り直す (#2268)。
   viewRebuildLoading: "Checking views that depend on the columns whose type changes…",
   viewRebuildError: "Could not check dependent views: {error}",
@@ -4193,7 +4204,7 @@ const en = {
   dropColumnDepsTitle: "Objects depend on the columns being dropped ({count})",
   dropColumnDepsIncompleteTitle: "Dependent-object check is incomplete",
   dropColumnDepsBody:
-    "Dropping these columns can fail or silently break the objects below (views and triggers stop working, indexes shrink or disappear, foreign keys and generated columns block the DROP). Column ← dependent object:",
+    "Dropping these columns can fail or silently break the objects below (views and triggers stop working, indexes shrink or disappear, foreign keys and generated columns block the DROP).",
   dropColumnDepsIncomplete:
     "Some dependencies could not be checked ({kinds}), so the list above may be incomplete.",
   dropColumnDepView: "view",
@@ -4246,7 +4257,6 @@ const en = {
   refImpactOpen: "Open child rows",
   refImpactDeleteTitle: "Delete rows still referenced from child tables of {table}?",
   refImpactDeleteOk: "Delete anyway",
-  refImpactMore: "and {count} more",
   dropConfirmOk: "Drop table",
   // インデックス削除 (#850)。ツリーのインデックスノード右クリックから。
   dropIndexConfirmTitle: "Drop index {index}?",
@@ -6001,6 +6011,9 @@ const en = {
   schemaCompareMatrixAllSame: "Every target has the same table definitions as the source.",
   schemaCompareMatrixComparedSame:
     "Every target that could be compared has the same table definitions as the source.",
+  schemaCompareMatrixSortDrift: "Most drifted first",
+  schemaCompareMatrixDrift: "{drift} of {total} differ",
+  schemaCompareMatrixStripLabel: "{target}: {status} {count}. Show only these below",
   schemaCompareDataProgress: "{rows} rows read",
   schemaCompareDataCancel: "Cancel comparison",
   schemaCompareDataCancelled: "The data comparison was cancelled.",
@@ -6494,6 +6507,10 @@ const en = {
   processSortId: "By id",
   processSortProgress: "Most progress first", // (#2269)
   processProgressCopyRows: "{phase} ({rows} rows)", // (#2269)
+  processProgressEta: "about {minutes} min left", // (#2291)
+  processProgressEtaUnderMinute: "under 1 min left", // (#2291)
+  processProgressEtaPending: "Estimating time left…", // (#2291)
+  processProgressRate: "{rate} rows/s", // (#2291)
   processProgressDisabledDismiss: "Dismiss", // (#2269)
   processProgressDisabledTitle: "Progress for ALTER TABLE is not being collected",
   processProgressDisabledBody:
@@ -9307,8 +9324,6 @@ const ja: Dict = {
   updateUpToDate: "最新バージョンです ({version})。",
   updateCheckFailed: "更新を確認できませんでした。接続を確認してもう一度お試しください。",
   updateAvailableTitle: "更新があります",
-  updateAvailableMessage:
-    "新しいバージョン {version} があります (現在 {current})。今すぐダウンロードして再起動し、更新しますか？",
   updateViewWhatsNew: "更新内容を見る",
   whatsNewTitle: "新機能ハイライト",
   whatsNewClose: "閉じる",
@@ -9322,6 +9337,10 @@ const ja: Dict = {
   updateDownloadingProgress: "更新をダウンロードしています… {percent}% ({downloaded} / {total})",
   updateDownloadingStarted: "更新をダウンロードしています… 準備ができると自動的に再起動します。",
   updateFailed: "更新に失敗しました: {error}",
+  updateHighlights: "主な変更",
+  updateInBackground: "バックグラウンドで続行",
+  updateRetry: "再試行",
+  updateApplying: "更新を適用しています… まもなくアプリが再起動します。",
 
   settingsBackup: "バックアップとリセット",
   settingsBackupHelp:
@@ -11822,7 +11841,7 @@ const ja: Dict = {
   subsetPreviewRoles: "起点 {root} / 子 {child} / 親 {parent}",
   subsetGraphAria: "取り出す行の外部キーの辿り図 (左が親、中央が起点、右が子)",
   subsetGraphHint:
-    "線は、外部キーを持つ表 (右側) と、その参照先の表 (左側) を結びます。読み込みは親の表が先です。",
+    "線は、外部キーを持つ表 (右側) と、その参照先の表 (左側) を結びます。読み込みは親の表が先です。表にホバー / フォーカスすると、起点までの経路を強調します。",
   subsetLaneParent: "親の方向",
   subsetLaneRoot: "起点",
   subsetLaneChild: "子の方向",
@@ -12484,10 +12503,19 @@ const ja: Dict = {
   dropConfirmBody: "テーブル {table} とそのデータをすべて完全に削除します。この操作は取り消せません。",
   dropReferencedByTitle: "外部キーで参照されています ({count} 件)",
   dropReferencedByServer:
-    "次のテーブルがここで削除するテーブルを参照しているため、CASCADE でない限り DROP は外部キーエラーで失敗します。親.列 ← 子.列:",
+    "次のテーブルがここで削除するテーブルを参照しているため、CASCADE でない限り DROP は外部キーエラーで失敗します。",
   dropReferencedBySqlite:
-    "次のテーブルがここで削除するテーブルを参照しています。SQLite は PRAGMA foreign_keys の設定次第で DROP が通り、子の行が孤立することがあります。親.列 ← 子.列:",
+    "次のテーブルがここで削除するテーブルを参照しています。SQLite は PRAGMA foreign_keys の設定次第で DROP が通り、子の行が孤立することがあります。",
   dropReferencedByMore: "ほか {count} 件",
+  dropReferencedByRefers: "参照先: {column}",
+  impactTreeLess: "折りたたむ",
+  impactOutcomeCascade: "連鎖削除",
+  impactOutcomeBlock: "ブロック",
+  impactOutcomeSetNull: "NULL 化",
+  impactOutcomeSetDefault: "既定値化",
+  impactOutcomeRebuild: "作り直し",
+  impactOutcomeBreak: "動作不能",
+  impactOutcomeChange: "変更",
   // 型変更で依存ビューを作り直す (#2268)。
   viewRebuildLoading: "型を変える列に依存するビューを調べています…",
   viewRebuildError: "依存ビューを調べられませんでした: {error}",
@@ -12513,7 +12541,7 @@ const ja: Dict = {
   dropColumnDepsTitle: "削除する列に依存するオブジェクトがあります ({count} 件)",
   dropColumnDepsIncompleteTitle: "依存オブジェクトの検査が不完全です",
   dropColumnDepsBody:
-    "これらの列を DROP すると、次のオブジェクトでエラーになるか、黙って壊れる可能性があります (ビュー・トリガーは動かなくなり、インデックスは縮小または消え、外部キー・生成列は DROP を妨げます)。列 ← 依存オブジェクト:",
+    "これらの列を DROP すると、次のオブジェクトでエラーになるか、黙って壊れる可能性があります (ビュー・トリガーは動かなくなり、インデックスは縮小または消え、外部キー・生成列は DROP を妨げます)。",
   dropColumnDepsIncomplete:
     "一部の依存を調べられなかったため ({kinds})、上の一覧は不完全な可能性があります。",
   dropColumnDepView: "ビュー",
@@ -12565,7 +12593,6 @@ const ja: Dict = {
   refImpactOpen: "子行を開く",
   refImpactDeleteTitle: "{table} の子テーブルから参照されている行を削除しますか?",
   refImpactDeleteOk: "削除する",
-  refImpactMore: "ほか {count} 件",
   dropConfirmOk: "DROP TABLE",
   // インデックス削除 (#850)。ツリーのインデックスノード右クリックから。
   dropIndexConfirmTitle: "インデックス {index} を DROP しますか?",
@@ -14299,6 +14326,9 @@ const ja: Dict = {
   schemaCompareMatrixActive: "下に表示中",
   schemaCompareMatrixAllSame: "すべての比較先で、テーブル定義が基準と同じです。",
   schemaCompareMatrixComparedSame: "比較できた比較先では、テーブル定義が基準と同じです。",
+  schemaCompareMatrixSortDrift: "ずれている環境が多い順",
+  schemaCompareMatrixDrift: "{total} 環境中 {drift} 環境でずれ",
+  schemaCompareMatrixStripLabel: "{target}: {status} {count} 件。下の詳細をこれだけに絞る",
   schemaCompareDataProgress: "{rows} 行を読み込み済み",
   schemaCompareDataCancel: "比較を中止",
   schemaCompareDataCancelled: "データ比較を中止しました。",
@@ -14788,6 +14818,10 @@ const ja: Dict = {
   processSortId: "id 順",
   processSortProgress: "進捗が進んでいる順", // (#2269)
   processProgressCopyRows: "{phase} ({rows} 行)", // (#2269)
+  processProgressEta: "残り約 {minutes} 分", // (#2291)
+  processProgressEtaUnderMinute: "残り 1 分未満", // (#2291)
+  processProgressEtaPending: "残り時間を算出中…", // (#2291)
+  processProgressRate: "{rate} 行/秒", // (#2291)
   processProgressDisabledDismiss: "閉じる", // (#2269)
   processProgressDisabledTitle: "ALTER TABLE の進捗を収集していません",
   processProgressDisabledBody:

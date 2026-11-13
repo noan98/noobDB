@@ -1,7 +1,9 @@
+import { createSessionPool, type SessionPool } from "../sessionPool";
 import { connectRequestFromProfile } from "../connectRequest";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
+import { AnimatePresence, motion, useReducedMotionConfig } from "motion/react";
 
 import {
   api,
@@ -19,8 +21,10 @@ import {
 import { countDmlStatements, type SyncRiskItem } from "../ai/syncRisk";
 import { useT } from "../i18n";
 import { rowKeyNote } from "../rowKey";
+import { directionalSlide, springs, transitions, variants } from "../motion";
 import { semanticColorVar } from "../semanticColors";
 import { useSettings } from "../settings";
+import { prefersStaticMotion } from "./revealOrigin";
 import { SurfaceRule } from "./SurfaceRule";
 import { CrossDriverNotice, CrossDriverResult, crossDriverErrorKey } from "./CrossDriverVerify";
 import { Callout } from "./Callout";
@@ -73,6 +77,16 @@ const sidesCss: SystemStyleObject = {
   margin: "var(--space-4) 0",
   flexWrap: "wrap",
 };
+// motion.* に chakra の style props を渡せるようにする (variants 等は forwardProps で素通し)。
+const MotionDiv = chakra(
+  motion.div,
+  {},
+  { forwardProps: ["variants", "initial", "animate", "exit", "transition", "layout", "custom"] },
+);
+const MotionBadge = chakra(motion.span, {}, { forwardProps: ["transition", "layout", "layoutId"] });
+/** 即時化した transition (reduced-motion / ハイコントラスト時)。 */
+const INSTANT = { duration: 0 } as const;
+
 const sideCss: SystemStyleObject = {
   display: "flex",
   flexDirection: "column",
@@ -394,6 +408,31 @@ export function SchemaCompareView({
   const [filters, setFilters] = useState<DiffFilters>(DEFAULT_DIFF_FILTERS);
   const [tableQuery, setTableQuery] = useState("");
   const [selectedName, setSelectedName] = useState<string | null>(null);
+  // マトリクスのマスを押した要求。詳細一覧の該当行へ送って 1 回光らせる (#2292)。
+  const [reveal, setReveal] = useState<{ name: string; seq: number } | null>(null);
+  const revealSeqRef = useRef(0);
+  // 光らせ終わったら要求を下げる (絞り込みの切替などで行が作り直されても再点灯しない)。
+  useEffect(() => {
+    if (!reveal) return;
+    const id = window.setTimeout(() => setReveal(null), 1500);
+    return () => window.clearTimeout(id);
+  }, [reveal]);
+  // 反映先の比較先が変わった向き。詳細ペインの方向付きクロスフェードに使う。
+  // 比較先の同一性は uid で見る (前のカードを外して番号が繰り上がっただけなら、中身は同じなので滑らせない)。
+  const activeUid = targets[activeTarget]?.uid ?? null;
+  const [targetSlide, setTargetSlide] = useState({ uid: activeUid, idx: activeTarget, dir: 0 });
+  if (targetSlide.uid !== activeUid || targetSlide.idx !== activeTarget) {
+    setTargetSlide({
+      uid: activeUid,
+      idx: activeTarget,
+      dir: targetSlide.uid !== activeUid ? Math.sign(activeTarget - targetSlide.idx) : targetSlide.dir,
+    });
+  }
+  const reducedMotion = useReducedMotionConfig() ?? false;
+  // 「反映先」バッジがカード間を滑る layoutId。画面ごとに名前空間を分ける。
+  const activeBadgeId = `schema-compare-active-target-${useId()}`;
+  // height の補間は MotionConfig では止まらないので、reduced-motion とハイコントラストは明示的に即時化する。
+  const still = reducedMotion || prefersStaticMotion();
   const toggleFilter = useCallback((status: DiffStatus) => {
     setFilters((prev) => ({ ...prev, [status]: !prev[status] }));
   }, []);
@@ -500,29 +539,27 @@ export function SchemaCompareView({
   }, [diff, releaseHeldDiff]);
 
   // Sessions this view opened, keyed by profile id so the same profile chosen
-  // on both sides reuses one connection. Disconnected on unmount.
-  const ownedRef = useRef<Map<string, string>>(new Map());
+  // on several sides shares one connection (even while it is still connecting).
+  // Disconnected on unmount; a connection finishing after unmount is dropped too (#2300).
+  const poolRef = useRef<SessionPool | null>(null);
+  if (poolRef.current === null) poolRef.current = createSessionPool((id) => api.disconnect(id));
 
   useEffect(() => {
-    const owned = ownedRef.current;
-    return () => {
-      for (const sessionId of owned.values()) {
-        api.disconnect(sessionId).catch(() => {});
-      }
-      owned.clear();
-    };
+    const pool = poolRef.current;
+    return () => pool?.release();
   }, []);
 
-  const ensureSession = useCallback(async (profile: ConnectionProfile): Promise<string> => {
-    const existing = ownedRef.current.get(profile.id);
-    if (existing) return existing;
-    const res = await api.connect(
-      // Comparison only introspects; force read-only and keep it out of history.
-      connectRequestFromProfile(profile, { read_only: true, skip_history: true }),
-    );
-    ownedRef.current.set(profile.id, res.session_id);
-    return res.session_id;
-  }, []);
+  const ensureSession = useCallback(
+    (profile: ConnectionProfile): Promise<string> =>
+      (poolRef.current as SessionPool).acquire(profile.id, async () => {
+        const res = await api.connect(
+          // Comparison only introspects; force read-only and keep it out of history.
+          connectRequestFromProfile(profile, { read_only: true, skip_history: true }),
+        );
+        return res.session_id;
+      }),
+    [],
+  );
 
   // 各側の接続選択の最新要求番号 (古い応答の破棄用)。キーは基準が "source"、比較先が `t<uid>`。
   const selectSeqRef = useRef<Record<string, number>>({});
@@ -660,9 +697,23 @@ export function SchemaCompareView({
         if (status) setFilters((f) => (f[status] ? f : { ...f, [status]: true }));
         setTableQuery("");
         setSelectedName(table);
+        revealSeqRef.current += 1;
+        setReveal({ name: table, seq: revealSeqRef.current });
       }
     },
     [multi, activeTarget, comparing],
+  );
+
+  /** マトリクスの内訳ストリップから: その比較先の詳細を、その状態のテーブルだけに絞る。 */
+  const focusTargetStatus = useCallback(
+    (index: number, status: DiffStatus) => {
+      if (comparing) return;
+      activateTarget(index);
+      setFilters({ different: false, source_only: false, target_only: false, same: false, [status]: true });
+      setTableQuery("");
+      setSelectedName(null);
+    },
+    [comparing, activateTarget],
   );
 
   const sourceDriver = useMemo(
@@ -1630,27 +1681,44 @@ export function SchemaCompareView({
                 </Button>
               </Tooltip>
             </Flex>
-            <Box display="grid" gap="2" flex="1 1 240px" minWidth="200px">
-              {targets.map((tg, i) => {
-                const isActive = i === activeTarget;
-                const multiple = targets.length > 1;
-                return (
-                  <SidePicker
-                    key={tg.uid}
-                    label={multiple ? t("schemaCompareTargetN", { n: i + 1 }) : t("schemaCompareTarget")}
-                    hint={isActive ? t("schemaCompareTargetHint") : t("schemaCompareTargetCompareOnly")}
-                    changes={isActive}
-                    side={i}
-                    state={tg}
-                    profiles={profiles}
-                    onSelectProfile={selectProfile}
-                    onSelectDatabase={setDatabase}
-                    onActivate={multiple && !isActive && !comparing ? () => activateTarget(i) : undefined}
-                    onRemove={multiple && !comparing ? () => removeTarget(i) : undefined}
-                    t={t}
-                  />
-                );
-              })}
+            <Box display="grid" flex="1 1 240px" minWidth="200px">
+              <AnimatePresence initial={false}>
+                {targets.map((tg, i) => {
+                  const isActive = i === activeTarget;
+                  const multiple = targets.length > 1;
+                  return (
+                    <MotionDiv
+                      key={tg.uid}
+                      layout={still ? false : "position"}
+                      variants={variants.collapse}
+                      initial="initial"
+                      animate="animate"
+                      // 退場中のカードは「外す」「反映先にする」を押せないようにする。
+                      exit={{ ...variants.collapse.exit, pointerEvents: "none" }}
+                      transition={still ? INSTANT : transitions.enter}
+                      data-testid="schema-compare-target-card"
+                      // 行間は gap ではなく下余白で取る (高さ補間と一緒に詰まるように)
+                      paddingBottom="2"
+                    >
+                      <SidePicker
+                        label={multiple ? t("schemaCompareTargetN", { n: i + 1 }) : t("schemaCompareTarget")}
+                        hint={isActive ? t("schemaCompareTargetHint") : t("schemaCompareTargetCompareOnly")}
+                        changes={isActive}
+                        side={i}
+                        state={tg}
+                        profiles={profiles}
+                        onSelectProfile={selectProfile}
+                        onSelectDatabase={setDatabase}
+                        onActivate={multiple && !isActive && !comparing ? () => activateTarget(i) : undefined}
+                        onRemove={multiple && !comparing ? () => removeTarget(i) : undefined}
+                        badgeId={multiple ? activeBadgeId : undefined}
+                        still={still}
+                        t={t}
+                      />
+                    </MotionDiv>
+                  );
+                })}
+              </AnimatePresence>
               <Box>
                 <Button
                   type="button"
@@ -1699,6 +1767,7 @@ export function SchemaCompareView({
                 columns={multi.map((col, i) => ({ ...col, label: targetSideLabel(targets[i]) }))}
                 active={activeTarget}
                 onSelect={activateTarget}
+                onFilterStatus={focusTargetStatus}
                 t={t}
               />
               {multi.map((col, i) =>
@@ -1766,6 +1835,7 @@ export function SchemaCompareView({
                       groups={tableGroups}
                       selected={selectedTable?.name ?? null}
                       onSelect={setSelectedName}
+                      reveal={reveal}
                       t={t}
                     />
                     {visibleTables.length > tableLimit && (
@@ -1785,20 +1855,36 @@ export function SchemaCompareView({
                     )}
                   </Box>
                   <Box css={paneCss} p="3.5">
-                    {selectedTable ? (
-                      <TableDiffDetail
-                        key={selectedTable.name}
-                        table={selectedTable}
-                        sourceName={sourceLabel ?? ""}
-                        targetName={targetLabel ?? ""}
-                        statements={selectedStatements}
-                        planReady={planKind === "schema" && plan !== null}
-                        driver={targetDriver ?? undefined}
-                        t={t}
-                      />
-                    ) : (
-                      <chakra.p css={emptyCss}>{t("schemaCompareSelectTablePrompt")}</chakra.p>
-                    )}
+                    {/* 反映先 (比較先) が変わると、列番号の増減に合わせて左右から入れ替える。ペイン自体は
+                        作り直さないのでスクロール位置は保たれる。 */}
+                    <AnimatePresence mode="wait" initial={false} custom={targetSlide.dir}>
+                      <motion.div
+                        key={activeUid ?? "none"}
+                        custom={targetSlide.dir}
+                        variants={directionalSlide}
+                        initial="initial"
+                        animate="animate"
+                        exit="exit"
+                        transition={still ? INSTANT : transitions.enter}
+                        data-testid="schema-compare-detail-pane"
+                        data-slide-dir={targetSlide.dir}
+                      >
+                        {selectedTable ? (
+                          <TableDiffDetail
+                            key={selectedTable.name}
+                            table={selectedTable}
+                            sourceName={sourceLabel ?? ""}
+                            targetName={targetLabel ?? ""}
+                            statements={selectedStatements}
+                            planReady={planKind === "schema" && plan !== null}
+                            driver={targetDriver ?? undefined}
+                            t={t}
+                          />
+                        ) : (
+                          <chakra.p css={emptyCss}>{t("schemaCompareSelectTablePrompt")}</chakra.p>
+                        )}
+                      </motion.div>
+                    </AnimatePresence>
                   </Box>
                 </Box>
               )}
@@ -1995,6 +2081,8 @@ function SidePicker({
   onSelectDatabase,
   onActivate,
   onRemove,
+  badgeId,
+  still,
   t,
 }: {
   label: string;
@@ -2010,6 +2098,10 @@ function SidePicker({
   onActivate?: () => void;
   /** 比較先が複数のとき、この比較先を外す。 */
   onRemove?: () => void;
+  /** 比較先が複数のとき、反映先のバッジをカード間で滑らせる layoutId。 */
+  badgeId?: string;
+  /** reduced-motion / ハイコントラスト (バッジの移動を即時にする)。 */
+  still?: boolean;
   t: ReturnType<typeof useT>;
 }) {
   const hintColor = changes ? semanticColorVar("warning", "text") : "var(--text-muted)";
@@ -2024,16 +2116,33 @@ function SidePicker({
     >
       <Flex align="center" gap="2">
         <chakra.span css={sideLabelCss}>{label}</chakra.span>
-        <chakra.span
-          fontSize="2xs"
-          px="1.5"
-          py="0.25"
-          borderRadius="pill"
-          border="1px solid"
-          css={{ color: hintColor, borderColor: hintColor }}
-        >
-          {hint}
-        </chakra.span>
+        {changes && badgeId ? (
+          // 反映先のバッジ。反映先が移ると、同じ layoutId のまま隣のカードへ滑る。
+          <MotionBadge
+            layoutId={badgeId}
+            transition={still ? INSTANT : springs.snappy}
+            data-testid="schema-compare-active-badge"
+            fontSize="2xs"
+            px="1.5"
+            py="0.25"
+            borderRadius="pill"
+            border="1px solid"
+            css={{ color: hintColor, borderColor: hintColor }}
+          >
+            {hint}
+          </MotionBadge>
+        ) : (
+          <chakra.span
+            fontSize="2xs"
+            px="1.5"
+            py="0.25"
+            borderRadius="pill"
+            border="1px solid"
+            css={{ color: hintColor, borderColor: hintColor }}
+          >
+            {hint}
+          </chakra.span>
+        )}
         {(onActivate || onRemove) && (
           <Flex marginLeft="auto" align="center" gap="1">
             {onActivate && (

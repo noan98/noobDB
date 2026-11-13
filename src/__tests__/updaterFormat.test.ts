@@ -4,6 +4,7 @@ import {
   downloadProgressPercent,
   formatDownloadProgress,
   parseReleaseNotes,
+  releaseNoteHighlights,
   truncateReleaseNotes,
 } from "../updaterFormat";
 
@@ -130,5 +131,17 @@ describe("parseReleaseNotes (#1864)", () => {
     const blocks = parseReleaseNotes("あ".repeat(50), 10);
     expect(blocks).toHaveLength(1);
     expect(blocks[0]?.text.endsWith("…")).toBe(true);
+  });
+});
+
+describe("releaseNoteHighlights (#2297)", () => {
+  it("見出しとコードを除き本文系の先頭 N 項目だけ返し、残りがあれば hasMore", () => {
+    const r = releaseNoteHighlights("## 見出し\n- a\n- b\n```\ncode\n```\n- c\n- d", 3);
+    expect(r.blocks.map((b) => b.kind)).toEqual(["bullet", "bullet", "bullet"]);
+    expect(r.hasMore).toBe(true);
+  });
+  it("空 / 未指定は空", () => {
+    expect(releaseNoteHighlights(undefined)).toEqual({ blocks: [], hasMore: false });
+    expect(releaseNoteHighlights("- a").hasMore).toBe(false);
   });
 });
