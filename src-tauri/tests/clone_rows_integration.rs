@@ -438,11 +438,14 @@ async fn scenario(state: &t::AppState, side: &Side, random_expr: &str) {
 
 /// `read_only` 接続はバックエンドが拒否し、何も書かない。
 async fn scenario_read_only(state: &t::AppState, side: &Side) {
+    // 先行シナリオ (MySQL / PostgreSQL は同じ DB を使い回す) が行を足していても成り立つよう、
+    // 固定値ではなく拒否の前後の件数を比べる。
+    let before = count(state, side, "orders").await;
     let err = t::clone_rows_inner(state, request(side, "orders", "id = 1", 1), vec![], cap())
         .await
         .expect_err("read-only must be rejected");
     assert!(matches!(err, t::AppError::ReadOnly(_)), "{err}");
-    assert_eq!(count(state, side, "orders").await, 2);
+    assert_eq!(count(state, side, "orders").await, before);
 }
 
 fn temp_path(label: &str) -> PathBuf {
