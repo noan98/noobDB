@@ -489,6 +489,51 @@ describe("SchemaCompareView の複数比較先", () => {
     );
   });
 
+  it("反映先のドライバが違っても、他の比較先は比較してその列だけ失敗にする", async () => {
+    const MIXED = [...PROFILES, makeProfile({ id: "p-pg", name: "Pg", driver: "postgres" })];
+    vi.mocked(api.connect).mockImplementation(
+      async (req) => ({ session_id: `s-${req.profile_id}` }) as never,
+    );
+    vi.mocked(api.compareSchema).mockImplementation(async () => diffFor("different") as never);
+    renderWithProviders(<SchemaCompareView profiles={MIXED} onClose={() => {}} />);
+    const boxes = () => screen.getAllByRole("combobox") as HTMLElement[];
+    chooseListboxOption(boxes()[0], "p-a");
+    await waitFor(() => expect(boxes()[1]).toHaveTextContent("db1"));
+    chooseListboxOption(boxes()[2], "p-pg");
+    await waitFor(() => expect(boxes()[3]).toHaveTextContent("db1"));
+    fireEvent.click(screen.getByRole("button", { name: t("schemaCompareAddTarget", { count: 1, max: 4 }) }));
+    chooseListboxOption(boxes()[4], "p-b");
+    await waitFor(() => expect(boxes()[5]).toHaveTextContent("db1"));
+    fireEvent.click(screen.getByText(t("schemaCompareCompare")));
+    const matrix = await screen.findByTestId("schema-compare-matrix");
+    expect(api.compareSchema).toHaveBeenCalledTimes(1);
+    expect(within(matrix).getByText(t("schemaCompareMatrixError"))).toBeInTheDocument();
+    expect(within(matrix).getByText(t("schemaCompareMatrixDiffCount", { count: 1 }))).toBeInTheDocument();
+  });
+
+  it("比較先を外しても、残る比較先の接続中の応答は届く", async () => {
+    let resolveC: (v: { session_id: string }) => void = () => {};
+    vi.mocked(api.connect).mockImplementation(async (req) => {
+      if (req.profile_id === "p-c") {
+        return new Promise((r) => {
+          resolveC = r as typeof resolveC;
+        }) as never;
+      }
+      return { session_id: `s-${req.profile_id}` } as never;
+    });
+    renderWithProviders(<SchemaCompareView profiles={THREE} onClose={() => {}} />);
+    const boxes = () => screen.getAllByRole("combobox") as HTMLElement[];
+    fireEvent.click(screen.getByRole("button", { name: t("schemaCompareAddTarget", { count: 1, max: 4 }) }));
+    chooseListboxOption(boxes()[4], "p-c");
+    await waitFor(() => expect(api.connect).toHaveBeenCalled());
+    // 1 つ目の比較先を外すと、接続中の比較先 (p-c) が 1 番目に繰り上がる。
+    fireEvent.click(
+      screen.getAllByRole("button", { name: t("schemaCompareRemoveTarget") })[0] as HTMLElement,
+    );
+    resolveC({ session_id: "s-p-c" });
+    await waitFor(() => expect(boxes()[3]).toHaveTextContent("db1"));
+  });
+
   it("比較先は 4 つまでしか追加できない", () => {
     renderWithProviders(<SchemaCompareView profiles={THREE} onClose={() => {}} />);
     for (let n = 1; n < 4; n++) {

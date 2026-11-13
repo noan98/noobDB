@@ -334,6 +334,9 @@ interface SideState {
   error: string | null;
 }
 
+/** 比較先 1 つぶんの選択。`uid` は追加順に振る不変の識別子。 */
+type TargetState = SideState & { uid: number };
+
 const EMPTY_SIDE: SideState = {
   profileId: null,
   sessionId: null,
@@ -373,8 +376,14 @@ export function SchemaCompareView({
 
   const [source, setSource] = useState<SideState>(EMPTY_SIDE);
   // 比較先 (更新先) の一覧 。`activeTarget` が下の詳細・反映 SQL の対象 (= 従来の更新先)。
-  const [targets, setTargets] = useState<SideState[]>([EMPTY_SIDE]);
+  // `uid` は並べ替え・削除で変わらない識別子 (接続中の応答を正しい比較先へ届けるため)。
+  const [targets, setTargets] = useState<TargetState[]>(() => [{ ...EMPTY_SIDE, uid: 0 }]);
+  const nextTargetUidRef = useRef(1);
+  const targetsRef = useRef(targets);
+  targetsRef.current = targets;
   const [activeTarget, setActiveTarget] = useState(0);
+  // 比較の世代番号。比較中に選択や反映先が変わったら、遅れて届いた結果を捨てる。
+  const compareSeqRef = useRef(0);
   const target = targets[activeTarget] ?? EMPTY_SIDE;
   // 比較先が 2 つ以上のときの、比較先ごとの結果 (`targets` と同じ順)。
   const [multi, setMulti] = useState<MatrixColumnInput[] | null>(null);
@@ -515,22 +524,34 @@ export function SchemaCompareView({
     return res.session_id;
   }, []);
 
-  // 各側の接続選択の最新要求番号 (古い応答の破棄用)。キーは `String(side)`。
+  // 各側の接続選択の最新要求番号 (古い応答の破棄用)。キーは基準が "source"、比較先が `t<uid>`。
   const selectSeqRef = useRef<Record<string, number>>({});
 
-  // 基準 / 比較先のどちらかの選択を差し替える。
-  const updateSide = useCallback((side: Side, next: SideState | ((prev: SideState) => SideState)) => {
-    if (side === "source") {
-      setSource(next);
-      return;
-    }
-    setTargets((prev) =>
-      prev.map((s, i) => (i === side ? (typeof next === "function" ? next(s) : next) : s)),
-    );
-  }, []);
+  /** 基準か比較先 (`uid` で指す) の選択を差し替える。消えた比較先への更新は何もしない。 */
+  const updateSideByKey = useCallback(
+    (key: "source" | number, next: SideState | ((prev: SideState) => SideState)) => {
+      if (key === "source") {
+        setSource(next);
+        return;
+      }
+      setTargets((prev) =>
+        prev.map((s) =>
+          s.uid === key ? { ...(typeof next === "function" ? next(s) : next), uid: s.uid } : s,
+        ),
+      );
+    },
+    [],
+  );
+  /** 画面上の位置 (`Side`) を不変のキーへ直す。 */
+  const sideKey = useCallback(
+    (side: Side): "source" | number | null =>
+      side === "source" ? "source" : (targetsRef.current[side]?.uid ?? null),
+    [],
+  );
 
-  // 接続・DB の選択が変わったら、前回の比較結果をすべて捨てる。
+  // 接続・DB の選択が変わったら、前回の比較結果をすべて捨てる (比較中の結果も届かせない)。
   const invalidateResults = useCallback(() => {
+    compareSeqRef.current += 1;
     setDiff(null);
     setMulti(null);
     setCompareError(null);
@@ -538,9 +559,11 @@ export function SchemaCompareView({
 
   const selectProfile = useCallback(
     async (side: Side, profileId: string) => {
-      const setSide = (next: SideState) => updateSide(side, next);
+      const sk = sideKey(side);
+      if (sk === null) return;
+      const setSide = (next: SideState) => updateSideByKey(sk, next);
       // この要求が最新か (遅れて届いた古い接続結果で選択を巻き戻さない)。
-      const key = String(side);
+      const key = sk === "source" ? "source" : `t${sk}`;
       const seq = (selectSeqRef.current[key] = (selectSeqRef.current[key] ?? 0) + 1);
       const isCurrent = () => selectSeqRef.current[key] === seq;
       invalidateResults();
@@ -575,36 +598,40 @@ export function SchemaCompareView({
         setSide({ ...EMPTY_SIDE, profileId, error: String(e) });
       }
     },
-    [profiles, ensureSession, updateSide, invalidateResults],
+    [profiles, ensureSession, sideKey, updateSideByKey, invalidateResults],
   );
 
   const setDatabase = useCallback(
     (side: Side, database: string) => {
-      updateSide(side, (prev) => ({ ...prev, database }));
+      const sk = sideKey(side);
+      if (sk === null) return;
+      updateSideByKey(sk, (prev) => ({ ...prev, database }));
       invalidateResults();
     },
-    [updateSide, invalidateResults],
+    [sideKey, updateSideByKey, invalidateResults],
   );
 
   const swap = useCallback(() => {
+    const sk = sideKey(activeTarget);
+    if (sk === null) return;
     setSource(target);
-    updateSide(activeTarget, source);
+    updateSideByKey(sk, source);
     invalidateResults();
-  }, [source, target, activeTarget, updateSide, invalidateResults]);
+  }, [source, target, activeTarget, sideKey, updateSideByKey, invalidateResults]);
 
   const addTarget = useCallback(() => {
-    setTargets((prev) => (prev.length >= MAX_COMPARE_TARGETS ? prev : [...prev, EMPTY_SIDE]));
+    const uid = nextTargetUidRef.current++;
+    setTargets((prev) => (prev.length >= MAX_COMPARE_TARGETS ? prev : [...prev, { ...EMPTY_SIDE, uid }]));
+    compareSeqRef.current += 1;
     setMulti(null);
   }, []);
 
   const removeTarget = useCallback(
     (index: number) => {
-      if (targets.length <= 1) return;
-      // 添字がずれるので、接続中の比較先の応答はすべて破棄する。
-      for (const key of Object.keys(selectSeqRef.current)) {
-        if (key !== "source") selectSeqRef.current[key] = (selectSeqRef.current[key] ?? 0) + 1;
-      }
+      if (targets.length <= 1 || comparing) return;
+      // 残る比較先の接続中の要求は uid で届くので、そのまま生かす。
       setTargets((prev) => prev.filter((_, i) => i !== index));
+      compareSeqRef.current += 1;
       setMulti(null);
       if (index === activeTarget) {
         setActiveTarget(0);
@@ -613,12 +640,14 @@ export function SchemaCompareView({
         setActiveTarget(activeTarget - 1);
       }
     },
-    [targets.length, activeTarget, invalidateResults],
+    [targets.length, activeTarget, comparing, invalidateResults],
   );
 
   /** 比較先 `index` を下の詳細・反映 SQL の対象にする。比較済みならその結果へ切り替える。 */
   const activateTarget = useCallback(
     (index: number, table: string | null = null) => {
+      // 比較中に反映先を変えると、届いた結果と反映先が食い違うので受け付けない。
+      if (comparing) return;
       const col = multi?.[index];
       if (index !== activeTarget) {
         setActiveTarget(index);
@@ -633,7 +662,7 @@ export function SchemaCompareView({
         setSelectedName(table);
       }
     },
-    [multi, activeTarget],
+    [multi, activeTarget, comparing],
   );
 
   const sourceDriver = useMemo(
@@ -693,15 +722,24 @@ export function SchemaCompareView({
     !!target.sessionId &&
     !!target.database &&
     targetsComplete &&
-    !driverMismatch &&
+    // 比較先が複数なら、ドライバの違う比較先はその列だけ「比較できませんでした」にする。
+    (targets.length > 1 || !driverMismatch) &&
     !comparing;
 
   const runCompare = useCallback(async (): Promise<SchemaDiff | null> => {
-    if (!source.sessionId || !source.database || !target.sessionId || !target.database || driverMismatch) {
+    if (
+      !source.sessionId ||
+      !source.database ||
+      !target.sessionId ||
+      !target.database ||
+      (targets.length <= 1 && driverMismatch)
+    ) {
       return null;
     }
     const sourceSessionId = source.sessionId;
     const sourceDatabase = source.database;
+    const seq = ++compareSeqRef.current;
+    const isCurrent = () => compareSeqRef.current === seq;
     setComparing(true);
     setCompareError(null);
     setDiff(null);
@@ -714,6 +752,7 @@ export function SchemaCompareView({
           targetSessionId: target.sessionId,
           targetDatabase: target.database,
         });
+        if (!isCurrent()) return null;
         setDiff(result);
         return result;
       }
@@ -738,6 +777,8 @@ export function SchemaCompareView({
           }
         }),
       );
+      // 比較中に選択が変わっていたら、古い組み合わせの結果を出さない。
+      if (!isCurrent()) return null;
       setMulti(results);
       // 失敗した比較先の理由は表の下に比較先ごとに出すので、ここでは重ねて出さない。
       const active = results[activeTarget];
@@ -745,7 +786,7 @@ export function SchemaCompareView({
       setDiff(active.diff);
       return active.diff;
     } catch (e) {
-      setCompareError(String(e));
+      if (isCurrent()) setCompareError(String(e));
       return null;
     } finally {
       setComparing(false);
@@ -767,6 +808,16 @@ export function SchemaCompareView({
   useEffect(() => {
     setTableLimit(TABLE_DIFF_PAGE);
   }, [diff, filters, tableQuery]);
+
+  // 比較先ごとの表から選んだテーブルが 2 ページ目以降にあるときは、そこまで広げて見せる。
+  // (上の「先頭ページへ戻す」より後に宣言し、同じ描画で後から上書きする。)
+  useEffect(() => {
+    if (!selectedName) return;
+    const idx = visibleTables.findIndex((tbl) => tbl.name === selectedName);
+    if (idx >= 0) {
+      setTableLimit((n) => (idx < n ? n : Math.ceil((idx + 1) / TABLE_DIFF_PAGE) * TABLE_DIFF_PAGE));
+    }
+  }, [selectedName, visibleTables]);
 
   // 左ペインに描くぶん (#1612 のページング) と、そのうち選ばれているテーブル。
   const shownTables = useMemo(() => visibleTables.slice(0, tableLimit), [visibleTables, tableLimit]);
@@ -1585,7 +1636,7 @@ export function SchemaCompareView({
                 const multiple = targets.length > 1;
                 return (
                   <SidePicker
-                    key={i}
+                    key={tg.uid}
                     label={multiple ? t("schemaCompareTargetN", { n: i + 1 }) : t("schemaCompareTarget")}
                     hint={isActive ? t("schemaCompareTargetHint") : t("schemaCompareTargetCompareOnly")}
                     changes={isActive}
@@ -1594,8 +1645,8 @@ export function SchemaCompareView({
                     profiles={profiles}
                     onSelectProfile={selectProfile}
                     onSelectDatabase={setDatabase}
-                    onActivate={multiple && !isActive ? () => activateTarget(i) : undefined}
-                    onRemove={multiple ? () => removeTarget(i) : undefined}
+                    onActivate={multiple && !isActive && !comparing ? () => activateTarget(i) : undefined}
+                    onRemove={multiple && !comparing ? () => removeTarget(i) : undefined}
                     t={t}
                   />
                 );
@@ -1606,7 +1657,7 @@ export function SchemaCompareView({
                   variant="secondary"
                   size="sm"
                   onClick={addTarget}
-                  disabled={targets.length >= MAX_COMPARE_TARGETS}
+                  disabled={targets.length >= MAX_COMPARE_TARGETS || comparing}
                 >
                   <Icon name="plus" size={ICON_SIZES.sm} />
                   {t("schemaCompareAddTarget", { count: targets.length, max: MAX_COMPARE_TARGETS })}
