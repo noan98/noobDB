@@ -26,8 +26,9 @@ use crate::commands::query::record_write_history;
 use crate::commands::subset::{collect_subset_with, CollectMode, SubsetColumnInfo, SubsetRequest};
 use crate::db::clone_rows::{
     analyze, auto_columns, expression_select, has_unresolvable_self_reference, insert_sql, key_of,
-    rule_columns, validate_expression, CloneColumnRule, CloneInput, CloneTable, FkRemap,
-    KeyColumnReport, KeyRule, TableReport, UniqueConflict, MAX_CLONE_ROWS,
+    loose_sig, rule_columns, self_reference_generations, validate_expression, CloneColumnRule,
+    CloneInput, CloneTable, FkRemap, KeyColumnReport, KeyRule, TableReport, UniqueConflict,
+    MAX_CLONE_ROWS,
 };
 use crate::db::data_diff::key_signature;
 use crate::db::subset::{
@@ -507,20 +508,6 @@ async fn apply(
     Ok(out)
 }
 
-/// 採番値 (MySQL の `LAST_INSERT_ID()` は符号なし) と読み戻した行で整数の型が違っても同じ行と
-/// 見なす署名。
-fn loose_sig(key: &[Value]) -> String {
-    key.iter()
-        .map(|v| match v {
-            Value::Int(i) => i.to_string(),
-            Value::UInt(u) => u.to_string(),
-            Value::String(s) => s.clone(),
-            other => format!("{other:?}"),
-        })
-        .collect::<Vec<_>>()
-        .join("\u{1f}")
-}
-
 /// 挿入した行の全列をコミット前に読み戻す (Undo の記録用)。主キーが無い・読めない・件数が合わない
 /// ときは `None` (記録を辞退するだけで複製は妨げない)。
 async fn read_back(
@@ -549,15 +536,14 @@ async fn read_back(
     if rows.len() != expected {
         return None;
     }
-    // 挿入と逆の順 (子が先) に並べる。Undo の DELETE は記録の行順に出るので、自己参照の表でも
-    // 子から消えて外部キー違反にならない。
+    // 挿入した順 (親が先) に並べる。自己参照の表は、記録時に深さごとの記録へ分ける
+    // ([`self_reference_generations`])。
     let mut by_key: std::collections::HashMap<String, Vec<Value>> = rows
         .into_iter()
         .filter_map(|r| key_of(meta, &r).map(|k| (loose_sig(&k), r)))
         .collect();
     let ordered: Vec<Vec<Value>> = new_keys
         .iter()
-        .rev()
         .filter_map(|k| by_key.remove(&loose_sig(k)))
         .collect();
     (ordered.len() == expected).then_some(ordered)
@@ -622,7 +608,8 @@ pub async fn clone_rows_inner(
     .await;
     session.query_cache.invalidate_all().await;
 
-    // Undo の記録 (親が先の順で保存するので、バッチの取り消しは子から消える)。フライトレコーダーの
+    // Undo の記録 (親が先の順で保存する。バッチの取り消しは記録の新しい順 = 子から、やり直しは古い順 =
+    // 親からなので、どちらも外部キー違反にならない。自己参照の表は深さごとに記録を分ける)。フライトレコーダーの
     // 設定がオフ (`capture` なし) か履歴を残さない接続なら記録しない。行数が上限を超えるときは
     // 一部だけを記録すると取り消しが不完全になるので、全体を辞退する。
     let capture_cfg = capture.filter(|_| !session.skip_history);
@@ -646,35 +633,43 @@ pub async fn clone_rows_inner(
                     declined_tables.push(ct.meta.name.clone());
                     continue;
                 };
-                let capture = WriteCapture {
-                    kind: WriteKind::Insert,
-                    capturable: true,
-                    reason: None,
-                    table: Some(ct.meta.name.clone()),
-                    primary_key: ct.meta.primary_key.clone(),
-                    columns: ct.meta.columns.clone(),
-                    column_types: ct.meta.column_types.clone(),
-                    before_rows: Vec::new(),
-                    after_rows: after.clone(),
-                    rows_affected: after.len() as u64,
-                    companion: None,
-                };
-                let saved = persist_capture(
-                    session.skip_history,
-                    session.profile_id.clone(),
-                    session.conn.driver_kind(),
-                    prepared.exec_db.clone(),
-                    format!(
-                        "-- clone rows (#2304): {} ({} row(s))",
-                        ct.meta.name,
-                        after.len()
-                    ),
-                    &capture,
-                    cfg.retention_days.map(i64::from),
-                    Some(batch_id.clone()),
-                )
-                .await;
-                if saved.is_some() {
+                // 自己参照の表は、同じ表の親を指す行が子になる深さごとに別の記録にする。1 つの記録の
+                // 中では行が記録の順に DELETE / INSERT されるので、Undo (子から) と Redo (親から)
+                // の両方を満たす順が無いため。
+                let groups = self_reference_generations(&ct.meta, after, &prepared.collected.edges);
+                let mut all_saved = true;
+                for group in groups {
+                    let capture = WriteCapture {
+                        kind: WriteKind::Insert,
+                        capturable: true,
+                        reason: None,
+                        table: Some(ct.meta.name.clone()),
+                        primary_key: ct.meta.primary_key.clone(),
+                        columns: ct.meta.columns.clone(),
+                        column_types: ct.meta.column_types.clone(),
+                        before_rows: Vec::new(),
+                        rows_affected: group.len() as u64,
+                        after_rows: group,
+                        companion: None,
+                    };
+                    let saved = persist_capture(
+                        session.skip_history,
+                        session.profile_id.clone(),
+                        session.conn.driver_kind(),
+                        prepared.exec_db.clone(),
+                        format!(
+                            "-- clone rows (#2304): {} ({} row(s))",
+                            ct.meta.name,
+                            after.len()
+                        ),
+                        &capture,
+                        cfg.retention_days.map(i64::from),
+                        Some(batch_id.clone()),
+                    )
+                    .await;
+                    all_saved &= saved.is_some();
+                }
+                if all_saved {
                     recorded += 1;
                 } else {
                     declined_tables.push(ct.meta.name.clone());

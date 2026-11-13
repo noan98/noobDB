@@ -343,6 +343,11 @@ async fn scenario(state: &t::AppState, side: &Side, random_expr: &str) {
     // --- Undo: バッチ 1 件で、新しい行がすべて消える (子から消すので FK 違反にならない)。
     assert_eq!(out.recorded, 4, "{out:?}");
     let batch = out.batch_id.clone().expect("batch id");
+    let tables = ["orders", "order_items", "item_notes", "order_tags"];
+    let mut after_clone = Vec::new();
+    for table in tables {
+        after_clone.push(count(state, side, table).await);
+    }
     let undone = t::apply_flight_batch_via_command(state, &side.id, &batch, false, false)
         .await
         .expect("undo");
@@ -355,6 +360,20 @@ async fn scenario(state: &t::AppState, side: &Side, random_expr: &str) {
     ] {
         assert_eq!(count(state, side, table).await, n, "{table} after undo");
     }
+    // --- Redo: 自己参照の表 (order_items) も親が先に入り、外部キー違反にならずに元へ戻る。
+    // Undo はもう一度流せる (子から消える)。
+    let redone = t::apply_flight_batch_via_command(state, &side.id, &batch, false, true)
+        .await
+        .expect("redo");
+    assert!(redone.applied, "{redone:?}");
+    for (table, n) in tables.iter().zip(&after_clone) {
+        assert_eq!(count(state, side, table).await, *n, "{table} after redo");
+    }
+    let undone = t::apply_flight_batch_via_command(state, &side.id, &batch, false, false)
+        .await
+        .expect("undo again");
+    assert!(undone.applied, "{undone:?}");
+    assert_eq!(count(state, side, "order_items").await, 3);
 
     // --- 主キーが採番されない表 (products): 方針なしはエラー、上書き値 (70) を指定すれば複製できる。
     let req = request(side, "products", "id = 7", 3);

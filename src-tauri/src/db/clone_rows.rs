@@ -617,6 +617,77 @@ impl FkRemap {
     }
 }
 
+/// 採番値 (MySQL の `LAST_INSERT_ID()` は符号なし) と読み戻した行で整数の型が違っても同じ行と
+/// 見なす署名。
+pub fn loose_sig(key: &[Value]) -> String {
+    key.iter()
+        .map(|v| match v {
+            Value::Int(i) => i.to_string(),
+            Value::UInt(u) => u.to_string(),
+            Value::String(s) => s.clone(),
+            other => format!("{other:?}"),
+        })
+        .collect::<Vec<_>>()
+        .join("\u{1f}")
+}
+
+/// 複製した行 (`rows`、挿入順 = 親が先) を、自己参照の外部キーの深さごとの組に分ける。
+/// 深さ 0 は同じ表の行を指さない行、深さ n は深さ n-1 までの行を指す行。自己参照が無い表は 1 組。
+/// 各組は挿入順を保ち、組は深さの浅い順に並ぶ。Undo のバッチは記録の新しい順 (深い組から DELETE)、
+/// Redo は古い順 (浅い組から INSERT) に流れるので、組ごとに別の記録にすれば両方が外部キー違反にならない。
+/// 参照先の行が `rows` に無い (複製していない) ときと NULL は深さ 0 として扱う。
+pub fn self_reference_generations(
+    meta: &SubsetTable,
+    rows: &[Vec<Value>],
+    edges: &[SubsetEdge],
+) -> Vec<Vec<Vec<Value>>> {
+    let pick = |row: &[Value], cols: &[String]| -> Option<Vec<Value>> {
+        cols.iter()
+            .map(|c| {
+                meta.columns
+                    .iter()
+                    .position(|x| x == c)
+                    .and_then(|i| row.get(i).cloned())
+            })
+            .collect()
+    };
+    let self_edges: Vec<&SubsetEdge> = edges
+        .iter()
+        .filter(|e| e.child == meta.name && e.parent == meta.name)
+        .collect();
+    if self_edges.is_empty() {
+        return vec![rows.to_vec()];
+    }
+    // 辺ごとの「参照先キー → 行の深さ」。親は子より前にあるので、挿入順に 1 回なめれば足りる。
+    let mut depth_by_key: Vec<HashMap<String, usize>> = vec![HashMap::new(); self_edges.len()];
+    let mut groups: Vec<Vec<Vec<Value>>> = Vec::new();
+    for row in rows {
+        let mut depth = 0;
+        for (e, map) in self_edges.iter().zip(depth_by_key.iter()) {
+            let Some(k) = pick(row, &e.child_cols) else {
+                continue;
+            };
+            if k.iter().any(|v| matches!(v, Value::Null)) {
+                continue;
+            }
+            if let Some(&d) = map.get(&loose_sig(&k)) {
+                depth = depth.max(d + 1);
+            }
+        }
+        for (e, map) in self_edges.iter().zip(depth_by_key.iter_mut()) {
+            if let Some(k) = pick(row, &e.parent_cols) {
+                map.entry(loose_sig(&k)).or_insert(depth);
+            }
+        }
+        if groups.len() <= depth {
+            groups.resize_with(depth + 1, Vec::new);
+        }
+        groups[depth].push(row.clone());
+    }
+    groups.retain(|g| !g.is_empty());
+    groups
+}
+
 /// 複製した行 1 件分の `INSERT`。`values` は `columns` と同じ並びのリテラル。
 /// `returning` は採番された値を受け取る列 (PostgreSQL / SQLite の `RETURNING`。MySQL は
 /// `LAST_INSERT_ID()` で別に取るので呼び出し側が空にする)。
@@ -1058,6 +1129,38 @@ mod tests {
             &rows,
             &edges
         ));
+    }
+
+    #[test]
+    fn self_reference_generations_split_parent_first() {
+        let cat = meta("cat", &["id", "parent_id"], &["id"]);
+        let edges = [edge("cat", &["parent_id"], "cat", &["id"])];
+        // 1 (根) / 2 → 1 / 3 → 2 / 4 (根) / 5 → 1 / 6 → 99 (複製していない親)。
+        let n = || Value::Null;
+        let rows = vec![
+            vec![Value::Int(1), n()],
+            ints(&[2, 1]),
+            ints(&[3, 2]),
+            vec![Value::Int(4), n()],
+            ints(&[5, 1]),
+            ints(&[6, 99]),
+        ];
+        let g = self_reference_generations(&cat, &rows, &edges);
+        let ids: Vec<Vec<i64>> = g
+            .iter()
+            .map(|grp| {
+                grp.iter()
+                    .map(|r| match r[0] {
+                        Value::Int(i) => i,
+                        _ => -1,
+                    })
+                    .collect()
+            })
+            .collect();
+        assert_eq!(ids, vec![vec![1, 4, 6], vec![2, 5], vec![3]]);
+        // 自己参照が無ければ 1 組のまま。
+        let flat = self_reference_generations(&cat, &rows, &[]);
+        assert_eq!(flat, vec![rows]);
     }
 
     #[test]
