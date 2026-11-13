@@ -7,9 +7,6 @@ import {
   collapseLanes,
   COLLAPSE_THRESHOLD,
   LANE_VISIBLE,
-  SUBSET_LANES,
-  edgeLabelBox,
-  GEOMETRY,
   layoutEdges,
   tracePathToRoot,
   type SubsetNode,
@@ -342,42 +339,5 @@ describe("tracePathToRoot (#2293)", () => {
     const path = tracePathToRoot(pg, "items");
     expect([...path.tables]).toEqual(["items"]);
     expect(path.edges).toEqual([]);
-  });
-});
-
-describe("edgeLabelBox (#2316)", () => {
-  const laneRanges = SUBSET_LANES.map((_, i) => {
-    const left = i * (GEOMETRY.laneWidth + GEOMETRY.gutter);
-    return { left, right: left + GEOMETRY.laneWidth };
-  });
-  const overlapsLane = (b: { x: number; width: number }) =>
-    laneRanges.some((r) => b.x - b.width / 2 < r.right && b.x + b.width / 2 > r.left);
-
-  it("どの中点でも、ラベルはどのレーン (ノード) とも重ならない溝に置く", () => {
-    for (const x of [0, 1, 3, 3.5, 3.8, 4, 5.5, 7, 7.5, 7.2, 8, 11]) {
-      expect(overlapsLane(edgeLabelBox({ x, y: 1.5 }, 3))).toBe(false);
-    }
-  });
-  it("中点に近い溝を選び、縦は行の範囲に収める", () => {
-    expect(edgeLabelBox({ x: 3.5, y: 0.5 }, 2).x).toBe(3.5);
-    expect(edgeLabelBox({ x: 7.4, y: 0.5 }, 2).x).toBe(7.5);
-    expect(edgeLabelBox({ x: 3.5, y: -1 }, 2).y).toBe(0);
-    expect(edgeLabelBox({ x: 3.5, y: 9 }, 2).y).toBe(2);
-  });
-  it("layoutEdges が付けるラベル位置は、同じレーン内の辺でもレーンと重ならない", () => {
-    const p = preview([
-      tp("orders", 5, 0, 0),
-      tp("customers", 0, 0, 2),
-      tp("items", 0, 3, 0),
-      tp("regions", 0, 0, 1),
-    ]);
-    const g = buildSubsetGraph(p, [
-      fk("orders", "customers"),
-      fk("items", "orders"),
-      fk("customers", "regions"),
-    ]);
-    const placed = layoutEdges(collapseLanes(g.nodes), g.edges);
-    expect(placed.length).toBeGreaterThan(0);
-    for (const e of placed) expect(overlapsLane(e.labelBox)).toBe(false);
   });
 });

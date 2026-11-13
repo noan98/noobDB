@@ -362,7 +362,7 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
         ? edges.flatMap((e) => {
             const labels = e.keys.filter((k) => litKeys.has(k)).flatMap((k) => e.labels[k] ?? []);
             return labels.length > 0
-              ? [{ id: `${e.from}>${e.to}`, box: e.labelBox, text: labels.join(", ") }]
+              ? [{ id: `${e.from}>${e.to}`, text: labels.join(", ") }]
               : [];
           })
         : [],
@@ -458,33 +458,6 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
               active={path !== null}
               rowCount={rowCount}
             />
-            {litLabels.map((l) => (
-              <chakra.span
-                key={l.id}
-                position="absolute"
-                left={`${(l.box.x / GEOMETRY.width) * 100}%`}
-                top={`${(l.box.y / rowCount) * 100}%`}
-                w={`${(l.box.width / GEOMETRY.width) * 100}%`}
-                transform="translate(-50%, -50%)"
-                px="1"
-                borderRadius="sm"
-                borderWidth="1px"
-                borderColor="app.border"
-                bg="app.surface"
-                color="app.text"
-                fontFamily="mono"
-                textStyle="caption"
-                textAlign="center"
-                whiteSpace="normal"
-                wordBreak="break-all"
-                pointerEvents="none"
-                zIndex={1}
-                data-testid="subset-preview-edge-label"
-                data-full-text={l.text}
-              >
-                {l.text}
-              </chakra.span>
-            ))}
             <MotionDiv
               key={runKey ?? "none"}
               variants={staggerContainer(reduced)}
@@ -559,6 +532,33 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
               )}
             </MotionDiv>
           </chakra.div>
+          {/* 強調中の辺の FK 列名は図の上に重ねず、図の下の帯に並べる (ノードの名前・行数と重ならない, #2316)。 */}
+          <Flex
+            minH="1.75em"
+            mt="1.5"
+            flexWrap="wrap"
+            alignItems="center"
+            gap="1.5"
+            data-testid="subset-preview-edge-labels"
+          >
+            {litLabels.map((l) => (
+              <chakra.span
+                key={l.id}
+                px="1"
+                borderRadius="sm"
+                borderWidth="1px"
+                borderColor="app.border"
+                bg="app.surface"
+                color="app.text"
+                fontFamily="mono"
+                textStyle="caption"
+                wordBreak="break-all"
+                data-testid="subset-preview-edge-label"
+              >
+                {l.text}
+              </chakra.span>
+            ))}
+          </Flex>
         </chakra.div>
         <chakra.span textStyle="caption" color="app.textMuted">
           {t("subsetGraphHint")}
