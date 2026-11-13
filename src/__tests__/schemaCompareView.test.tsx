@@ -534,6 +534,55 @@ describe("SchemaCompareView の複数比較先", () => {
     await waitFor(() => expect(boxes()[3]).toHaveTextContent("db1"));
   });
 
+  it("同じプロファイルを接続中に複数ピッカーで選んでも connect は 1 回 (#2300)", async () => {
+    let resolveA: (v: { session_id: string }) => void = () => {};
+    vi.mocked(api.connect).mockReturnValue(
+      new Promise((r) => {
+        resolveA = r as typeof resolveA;
+      }) as never,
+    );
+    renderWithProviders(<SchemaCompareView profiles={THREE} onClose={() => {}} />);
+    const boxes = () => screen.getAllByRole("combobox") as HTMLElement[];
+    fireEvent.click(screen.getByRole("button", { name: t("schemaCompareAddTarget", { count: 1, max: 4 }) }));
+    chooseListboxOption(boxes()[0], "p-a");
+    chooseListboxOption(boxes()[4], "p-a");
+    await waitFor(() => expect(api.connect).toHaveBeenCalled());
+    resolveA({ session_id: "s-a" });
+    await waitFor(() => expect(boxes()[5]).toHaveTextContent("db1"));
+    expect(api.connect).toHaveBeenCalledTimes(1);
+  });
+
+  it("接続中にアンマウントしても、完了したセッションは切断される (#2300)", async () => {
+    let resolveA: (v: { session_id: string }) => void = () => {};
+    vi.mocked(api.connect).mockReturnValue(
+      new Promise((r) => {
+        resolveA = r as typeof resolveA;
+      }) as never,
+    );
+    const { unmount } = renderWithProviders(<SchemaCompareView profiles={THREE} onClose={() => {}} />);
+    chooseListboxOption((screen.getAllByRole("combobox") as HTMLElement[])[0], "p-a");
+    await waitFor(() => expect(api.connect).toHaveBeenCalled());
+    unmount();
+    expect(api.disconnect).not.toHaveBeenCalled();
+    resolveA({ session_id: "s-late" });
+    await waitFor(() => expect(api.disconnect).toHaveBeenCalledWith("s-late"));
+  });
+
+  it("接続に失敗したプロファイルを選び直すと再接続する (#2300)", async () => {
+    vi.mocked(api.connect)
+      .mockRejectedValueOnce(new Error("boom") as never)
+      .mockResolvedValueOnce({ session_id: "s-a" } as never);
+    renderWithProviders(<SchemaCompareView profiles={THREE} onClose={() => {}} />);
+    const boxes = () => screen.getAllByRole("combobox") as HTMLElement[];
+    chooseListboxOption(boxes()[0], "p-a");
+    await waitFor(() => expect(api.connect).toHaveBeenCalledTimes(1));
+    chooseListboxOption(boxes()[0], "p-b");
+    chooseListboxOption(boxes()[0], "p-a");
+    await waitFor(() => expect(boxes()[1]).toHaveTextContent("db1"));
+    expect(api.connect).toHaveBeenCalledWith(expect.objectContaining({ profile_id: "p-a" }));
+    expect(vi.mocked(api.connect).mock.calls.filter(([r]) => r.profile_id === "p-a").length).toBe(2);
+  });
+
   it("比較先は 4 つまでしか追加できない", () => {
     renderWithProviders(<SchemaCompareView profiles={THREE} onClose={() => {}} />);
     for (let n = 1; n < 4; n++) {
