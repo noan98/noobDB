@@ -88,6 +88,7 @@ describe("AuditTriggerModal", () => {
     expect(onConfirm).toHaveBeenCalledWith(["CREATE TABLE a (x int)", "CREATE TRIGGER t"], {
       mode: "create",
       auditTable: "users_audit",
+      dropsTable: false,
     });
   });
 
@@ -117,7 +118,17 @@ describe("AuditTriggerModal", () => {
     setup();
     await waitFor(() => expect(generate).toHaveBeenCalled());
     expect(generate.mock.calls[0][4]).toBe(true);
-    expect(generate.mock.calls[0][3]).toMatchObject({ delete: false });
+    // 再生成で増えたマスク対象の列 (email) は既定で除外される。
+    expect(generate.mock.calls[0][3]).toMatchObject({ delete: false, exclude_columns: ["email"] });
     expect(await screen.findByRole("button", { name: t("auditConfirmRegenerate") })).toBeEnabled();
+  });
+
+  it("作成時のオプションを読み戻せない既存の監査は、自動で再生成にせず表名を編集できる", async () => {
+    statusMock.mockResolvedValue({ ...NO_AUDIT, present: true });
+    setup();
+    expect(await screen.findByText(t("auditLegacy"))).toBeInTheDocument();
+    // 初期モードは作成のまま (勝手に再生成・削除しない)。表名は編集できる。
+    expect(screen.getByLabelText(t("auditTableName"))).toBeEnabled();
+    expect(screen.getByRole("button", { name: t("auditConfirmCreate") })).toBeInTheDocument();
   });
 });

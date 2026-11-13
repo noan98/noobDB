@@ -5,7 +5,8 @@
 use tauri::State;
 
 use crate::db::audit_trigger::{
-    audit_status, build_audit_ddl, AuditColumn, AuditDdl, AuditOptions, AuditStatus,
+    audit_status, build_audit_ddl, pg_function_name, AuditColumn, AuditDdl, AuditOptions,
+    AuditStatus,
 };
 use crate::db::Connection;
 use crate::error::{AppError, Result};
@@ -65,7 +66,19 @@ pub async fn get_audit_status_core(
         .into_iter()
         .map(|c| c.name)
         .collect();
-    Ok(audit_status(conn.driver_kind(), table, &triggers, &current))
+    // PostgreSQL は汎用関数の本体に埋めた印からオプションを読み戻す (MySQL / SQLite は常に None)。
+    let source = conn
+        .audit_function_source(database, &pg_function_name(table))
+        .await
+        .ok()
+        .flatten();
+    Ok(audit_status(
+        conn.driver_kind(),
+        table,
+        &triggers,
+        &current,
+        source.as_deref(),
+    ))
 }
 
 /// 変更履歴 (監査) の DDL を生成する (#2305)。読み取り専用なので read_only セッションでも許可する。

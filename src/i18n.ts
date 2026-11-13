@@ -2739,7 +2739,10 @@ const en = {
   auditPgGeneric:
     "On PostgreSQL the trigger function is generic, so new columns are recorded without regenerating.",
   auditWarnNoPk: "The table has no primary key, so the pk column will be NULL.",
-  auditWarnBlob: "BLOB columns are recorded as hex strings.",
+  auditLegacy:
+    "The options this audit was created with could not be read back. Enter the audit table name (and schema) yourself before regenerating or removing.",
+  auditMysqlPartialNote:
+    "MySQL commits DDL implicitly, so some triggers may already have been dropped; open this dialog again to regenerate them.",
   auditWarnMysqlPrivilege:
     "The current user may lack the TRIGGER privilege, so creating the triggers can fail.",
   auditWarnMysqlBinlog:
@@ -11075,7 +11078,10 @@ const ja: Dict = {
     "トリガーの生成後に列が変わりました (追加: {added} / 削除: {removed})。再生成すると反映されます。",
   auditPgGeneric: "PostgreSQL のトリガー関数は汎用なので、列が増えても再生成せずに記録されます。",
   auditWarnNoPk: "表に主キーが無いため、pk 列は NULL になります。",
-  auditWarnBlob: "BLOB 列は 16 進文字列で記録されます。",
+  auditLegacy:
+    "この監査の作成時のオプションを読み戻せませんでした。再生成・削除の前に、監査表の名前 (とスキーマ) を自分で入力してください。",
+  auditMysqlPartialNote:
+    "MySQL は DDL が暗黙コミットされるため、一部のトリガーが外れたままの可能性があります。このダイアログをもう一度開いて再生成してください。",
   auditWarnMysqlPrivilege:
     "現在のユーザーに TRIGGER 権限が無い可能性があり、トリガーの作成に失敗することがあります。",
   auditWarnMysqlBinlog:

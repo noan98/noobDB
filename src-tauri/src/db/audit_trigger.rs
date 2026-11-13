@@ -69,7 +69,7 @@ pub struct AuditDdl {
     pub recorded_columns: Vec<String>,
     /// 作る / 外すトリガーの名前。
     pub trigger_names: Vec<String>,
-    /// 事前警告のコード (`no_primary_key` / `blob_columns` ほか。UI が文言に直す)。
+    /// 事前警告のコード (`no_primary_key` / `mysql_*`。UI が文言に直す)。
     pub warnings: Vec<String>,
 }
 
@@ -127,10 +127,6 @@ fn lit(driver: DriverKind, s: &str) -> String {
     }
 }
 
-fn is_blob(data_type: &str) -> bool {
-    data_type.to_ascii_uppercase().contains("BLOB")
-}
-
 /// トリガー名。PostgreSQL は `[0]` 1 本だけ、MySQL / SQLite は INSERT / UPDATE / DELETE の順。
 pub fn trigger_names(driver: DriverKind, table: &str) -> Vec<String> {
     match driver {
@@ -142,7 +138,7 @@ pub fn trigger_names(driver: DriverKind, table: &str) -> Vec<String> {
     }
 }
 
-fn pg_function_name(table: &str) -> String {
+pub fn pg_function_name(table: &str) -> String {
     format!("{table}_audit_fn")
 }
 
@@ -174,7 +170,7 @@ fn object_ref(driver: DriverKind, database: &str, name: &str) -> String {
 fn audit_table_ddl(driver: DriverKind, target: &str) -> String {
     match driver {
         DriverKind::Mysql => format!(
-            "CREATE TABLE {target} (\n  audit_id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,\n  op VARCHAR(6) NOT NULL,\n  changed_at DATETIME(6) NOT NULL,\n  changed_by VARCHAR(255) NULL,\n  pk JSON NULL,\n  old_row JSON NULL,\n  new_row JSON NULL\n)"
+            "CREATE TABLE {target} (\n  audit_id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,\n  op VARCHAR(6) NOT NULL,\n  changed_at DATETIME(6) NOT NULL,\n  changed_by VARCHAR(288) NULL,\n  pk JSON NULL,\n  old_row JSON NULL,\n  new_row JSON NULL\n)"
         ),
         DriverKind::Postgres => format!(
             "CREATE TABLE {target} (\n  audit_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  op TEXT NOT NULL,\n  changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),\n  changed_by TEXT NULL,\n  pk JSONB NULL,\n  old_row JSONB NULL,\n  new_row JSONB NULL\n)"
@@ -191,9 +187,10 @@ fn json_object_expr(driver: DriverKind, rec: &str, cols: &[&AuditColumn]) -> Str
         .iter()
         .map(|c| {
             let value = format!("{rec}.{}", quote_ident(driver, &c.name));
-            let value = if driver == DriverKind::Sqlite && is_blob(&c.data_type) {
-                // json_object は BLOB を受け付けないので 16 進文字列にする。
-                format!("CASE WHEN {value} IS NULL THEN NULL ELSE hex({value}) END")
+            let value = if driver == DriverKind::Sqlite {
+                // json_object は BLOB 値を受け付けない。宣言型が BLOB でない列にも BLOB 値は入りうるので、
+                // 全列を値の型で判定して 16 進文字列にする。
+                format!("CASE WHEN typeof({value}) = 'blob' THEN hex({value}) ELSE {value} END")
             } else {
                 value
             };
@@ -278,7 +275,13 @@ pub fn build_audit_ddl(
         .iter()
         .chain(std::iter::once(&fn_name))
         .chain(std::iter::once(&audit))
-        .any(|n| n.len() > max)
+        .any(|n| {
+            if driver == DriverKind::Mysql {
+                n.chars().count() > max
+            } else {
+                n.len() > max
+            }
+        })
     {
         return invalid("名前が長すぎます (監査表・トリガー名がドライバの上限を超えます)");
     }
@@ -301,9 +304,6 @@ pub fn build_audit_ddl(
     let mut warnings = Vec::new();
     if pk.is_empty() {
         warnings.push("no_primary_key".to_string());
-    }
-    if driver == DriverKind::Sqlite && recorded.iter().any(|c| is_blob(&c.data_type)) {
-        warnings.push("blob_columns".to_string());
     }
 
     let ops: Vec<String> = [
@@ -389,7 +389,16 @@ pub fn build_audit_ddl(
             &marker_text,
         )),
         DriverKind::Postgres => create.extend(pg_statements(
-            database, &table_ref, &audit_ref, &tnames[0], &fn_name, &recorded, &pk, &ops, opts,
+            &marker_text,
+            database,
+            &table_ref,
+            &audit_ref,
+            &tnames[0],
+            &fn_name,
+            &recorded,
+            &pk,
+            &ops,
+            opts,
         )),
     }
 
@@ -455,7 +464,7 @@ fn mysql_triggers(
             ),
         };
         let insert = format!(
-            "INSERT INTO {audit_ref} (op, changed_at, changed_by, pk, old_row, new_row) VALUES ({}, NOW(6), CURRENT_USER(), {pk_json}, {old}, {new});",
+            "INSERT INTO {audit_ref} (op, changed_at, changed_by, pk, old_row, new_row) VALUES ({}, NOW(6), USER(), {pk_json}, {old}, {new});",
             lit(d, op)
         );
         let body = if op == "UPDATE" && opts.skip_unchanged_update {
@@ -566,6 +575,7 @@ fn audit_ref_local(audit_ref: &str) -> String {
 
 #[allow(clippy::too_many_arguments)]
 fn pg_statements(
+    marker: &str,
     database: &str,
     table_ref: &str,
     audit_ref: &str,
@@ -632,8 +642,16 @@ fn pg_statements(
     if let Some(rest) = body.strip_prefix("ELSIF ") {
         body = format!("IF {rest}");
     }
+    let inner = format!("BEGIN\n  {marker}\n  {body}\n  END IF;\n  RETURN NULL;\nEND;\n");
+    // 本体 (識別子の中身を含む) に同じ区切りが現れたら閉じてしまうので、衝突しない区切りを選ぶ。
+    let mut tag = "$noobdb_audit$".to_string();
+    let mut n = 0;
+    while inner.contains(&tag) {
+        n += 1;
+        tag = format!("$noobdb_audit{n}$");
+    }
     let function = format!(
-        "CREATE OR REPLACE FUNCTION {}() RETURNS trigger LANGUAGE plpgsql AS $noobdb_audit$\nBEGIN\n  {body}\n  END IF;\n  RETURN NULL;\nEND;\n$noobdb_audit$",
+        "CREATE OR REPLACE FUNCTION {}() RETURNS trigger LANGUAGE plpgsql AS {tag}\n{inner}{tag}",
         object_ref(d, database, fn_name)
     );
     let events: Vec<&str> = ops.iter().map(|o| op_event(o)).collect();
@@ -652,6 +670,7 @@ pub fn audit_status(
     table: &str,
     triggers: &[TableTrigger],
     current_columns: &[String],
+    pg_function_source: Option<&str>,
 ) -> AuditStatus {
     let none = AuditStatus {
         present: false,
@@ -661,16 +680,28 @@ pub fn audit_status(
         removed_columns: Vec::new(),
         needs_regeneration: false,
     };
-    if driver == DriverKind::Postgres {
+    let marker = if driver == DriverKind::Postgres {
         let name = trigger_names(driver, table).remove(0);
-        return AuditStatus {
-            present: triggers.iter().any(|t| t.name == name),
-            ..none
-        };
-    }
-    let Some(marker) = triggers.iter().find_map(|t| parse_marker(&t.definition)) else {
-        return none;
+        if !triggers.iter().any(|t| t.name == name) {
+            return none;
+        }
+        // PostgreSQL は汎用関数なので、関数本体の印からオプションを読み戻す (読めなければ `options: None`)。
+        match pg_function_source.and_then(parse_marker) {
+            Some(m) => m,
+            None => {
+                return AuditStatus {
+                    present: true,
+                    ..none
+                }
+            }
+        }
+    } else {
+        match triggers.iter().find_map(|t| parse_marker(&t.definition)) {
+            Some(m) => m,
+            None => return none,
+        }
     };
+    let is_pg = driver == DriverKind::Postgres;
     let added: Vec<String> = current_columns
         .iter()
         .filter(|c| !marker.columns.contains(c) && !marker.exclude.contains(c))
@@ -682,14 +713,22 @@ pub fn audit_status(
         .filter(|c| !current_columns.contains(c))
         .cloned()
         .collect();
+    // 表から無くなった除外列は落とす (残すと再生成・削除の入力検証で弾かれる)。
+    let exclude: Vec<String> = marker
+        .exclude
+        .iter()
+        .filter(|c| current_columns.contains(c))
+        .cloned()
+        .collect();
     AuditStatus {
         present: true,
-        needs_regeneration: !added.is_empty() || !removed.is_empty(),
+        // PostgreSQL は汎用関数なので列が増減しても作り直し不要。
+        needs_regeneration: !is_pg && (!added.is_empty() || !removed.is_empty()),
         options: Some(AuditOptions {
             insert: marker.ops.iter().any(|o| o == "INSERT"),
             update: marker.ops.iter().any(|o| o == "UPDATE"),
             delete: marker.ops.iter().any(|o| o == "DELETE"),
-            exclude_columns: marker.exclude.clone(),
+            exclude_columns: exclude,
             skip_unchanged_update: marker.skip_unchanged,
             audit_table: marker.audit_table.clone(),
             audit_schema: Some(marker.audit_schema.clone()),
@@ -782,7 +821,9 @@ mod tests {
         );
         assert!(ins.contains("JSON_OBJECT('id', NEW.`id`, 'name', NEW.`name`)"));
         assert!(!ins.contains("secret` ,") && !ins.contains("NEW.`secret`"));
-        assert!(ins.contains("CURRENT_USER()") && ins.contains("NOW(6)"));
+        assert!(
+            ins.contains(", USER(),") && !ins.contains("CURRENT_USER()") && ins.contains("NOW(6)")
+        );
         let upd = &d.create[2];
         assert!(upd.contains("IF NOT (OLD.`id` <=> NEW.`id` AND OLD.`name` <=> NEW.`name`) THEN"));
         assert!(d.create[3].contains("pk, old_row, new_row") && d.create[3].contains("OLD.`id`"));
@@ -811,7 +852,8 @@ mod tests {
         );
         assert!(upd.contains("INSERT INTO \"users_audit\""));
         assert!(upd.contains("strftime('%Y-%m-%dT%H:%M:%f', 'now'), NULL"));
-        assert!(upd.contains("json_object('id', NEW.\"id\", 'name', NEW.\"name\")"));
+        assert!(upd.contains("json_object('id', CASE WHEN typeof(NEW.\"id\") = 'blob'"));
+        assert!(upd.contains("'name', CASE WHEN typeof(NEW.\"name\") = 'blob'"));
     }
 
     #[test]
@@ -826,13 +868,16 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_blob_columns_are_hex_encoded_with_warning() {
-        let cs = vec![col("id", "INTEGER", true), col("img", "BLOB", false)];
+    fn sqlite_wraps_every_column_in_blob_guard() {
+        // 宣言型が BLOB でない列にも BLOB 値は入りうるので、型名に依らず全列を包む。
+        let cs = vec![col("id", "INTEGER", true), col("img", "TEXT", false)];
         let mut o = opts();
         o.exclude_columns.clear();
         let d = build_audit_ddl(DriverKind::Sqlite, "main", "t", &cs, &o, false).unwrap();
-        assert!(d.create[1].contains("hex(NEW.\"img\")"));
-        assert!(d.warnings.contains(&"blob_columns".to_string()));
+        assert!(d.create[1].contains(
+            "CASE WHEN typeof(NEW.\"img\") = 'blob' THEN hex(NEW.\"img\") ELSE NEW.\"img\" END"
+        ));
+        assert!(d.create[1].contains("typeof(NEW.\"id\") = 'blob'"));
     }
 
     #[test]
@@ -958,7 +1003,7 @@ mod tests {
         o.exclude_columns.clear();
         let d = build_audit_ddl(DriverKind::Mysql, "d", "t", &cs, &o, false).unwrap();
         assert!(d.warnings.contains(&"no_primary_key".to_string()));
-        assert!(d.create[1].contains("CURRENT_USER(), NULL, NULL,"));
+        assert!(d.create[1].contains("USER(), NULL, NULL,"));
     }
 
     #[test]
@@ -991,7 +1036,7 @@ mod tests {
                 .map(|s| trig("users_audit_ins", s))
                 .collect();
             let cur: Vec<String> = ["id", "name", "secret"].map(String::from).to_vec();
-            let s = audit_status(driver, "users", &triggers, &cur);
+            let s = audit_status(driver, "users", &triggers, &cur, None);
             assert!(s.present && !s.needs_regeneration, "{driver:?}");
             assert_eq!(s.recorded_columns, vec!["id", "name"]);
             let o = s.options.unwrap();
@@ -999,12 +1044,12 @@ mod tests {
             assert!(o.skip_unchanged_update && o.insert && o.update && o.delete);
             // 列が増えた
             let cur: Vec<String> = ["id", "name", "secret", "email"].map(String::from).to_vec();
-            let s = audit_status(driver, "users", &triggers, &cur);
+            let s = audit_status(driver, "users", &triggers, &cur, None);
             assert!(s.needs_regeneration);
             assert_eq!(s.added_columns, vec!["email"]);
             // 列が減った
             let cur: Vec<String> = ["id", "secret"].map(String::from).to_vec();
-            let s = audit_status(driver, "users", &triggers, &cur);
+            let s = audit_status(driver, "users", &triggers, &cur, None);
             assert_eq!(s.removed_columns, vec!["name"]);
             assert!(s.needs_regeneration);
         }
@@ -1018,12 +1063,68 @@ mod tests {
             "t",
             &[trig("other", "CREATE TRIGGER x")],
             &cur,
+            None,
         );
         assert!(!s.present);
-        let s = audit_status(DriverKind::Postgres, "t", &[trig("t_audit_trg", "")], &cur);
+        let s = audit_status(
+            DriverKind::Postgres,
+            "t",
+            &[trig("t_audit_trg", "")],
+            &cur,
+            None,
+        );
         assert!(s.present && !s.needs_regeneration && s.options.is_none());
-        let s = audit_status(DriverKind::Postgres, "t", &[], &cur);
+        let s = audit_status(DriverKind::Postgres, "t", &[], &cur, None);
         assert!(!s.present);
+    }
+
+    #[test]
+    fn postgres_status_reads_options_back_from_function_source() {
+        let mut o = opts();
+        o.audit_table = "history".into();
+        o.audit_schema = Some("audit".into());
+        let d =
+            build_audit_ddl(DriverKind::Postgres, "public", "users", &cols(), &o, false).unwrap();
+        let src = &d.create[1];
+        let cur: Vec<String> = ["id", "name", "secret", "email"].map(String::from).to_vec();
+        let trg = [trig("users_audit_trg", "")];
+        let st = audit_status(DriverKind::Postgres, "users", &trg, &cur, Some(src));
+        let got = st.options.expect("options");
+        assert_eq!(got.audit_table, "history");
+        assert_eq!(got.audit_schema.as_deref(), Some("audit"));
+        assert_eq!(got.exclude_columns, vec!["secret"]);
+        // 汎用関数なので、列が増えても再生成は要らない。
+        assert!(st.present && !st.needs_regeneration);
+        // 読み戻せなければ options は None (呼び出し側が表名を編集可能にする)。
+        let st = audit_status(DriverKind::Postgres, "users", &trg, &cur, Some("BEGIN END"));
+        assert!(st.present && st.options.is_none());
+    }
+
+    #[test]
+    fn status_drops_excluded_columns_removed_from_table() {
+        let d = build_audit_ddl(DriverKind::Mysql, "d", "users", &cols(), &opts(), false).unwrap();
+        let triggers = [trig("users_audit_ins", &d.create[1])];
+        // 除外していた secret 列が表から無くなった。
+        let cur: Vec<String> = ["id", "name"].map(String::from).to_vec();
+        let st = audit_status(DriverKind::Mysql, "users", &triggers, &cur, None);
+        let o = st.options.expect("options");
+        assert!(o.exclude_columns.is_empty());
+        // そのまま再生成・削除用の DDL を作れる。
+        let cs = vec![col("id", "int", true), col("name", "text", false)];
+        assert!(build_audit_ddl(DriverKind::Mysql, "d", "users", &cs, &o, true).is_ok());
+    }
+
+    #[test]
+    fn postgres_dollar_quote_tag_avoids_collision_with_identifiers() {
+        let cs = vec![col("a$noobdb_audit$b", "int", true)];
+        let mut o = opts();
+        o.exclude_columns.clear();
+        let d = build_audit_ddl(DriverKind::Postgres, "public", "t", &cs, &o, false).unwrap();
+        let f = &d.create[1];
+        assert!(f.contains("AS $noobdb_audit1$\n"), "{f}");
+        assert!(f.trim_end().ends_with("$noobdb_audit1$"));
+        // 本体に現れる `$noobdb_audit$` は区切りとして使わない。
+        assert_eq!(f.matches("$noobdb_audit1$").count(), 2);
     }
 
     #[test]

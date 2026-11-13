@@ -15641,7 +15641,7 @@ export default function App() {
                     if (
                       !(await runGuardedDdl(
                         sql,
-                        info.mode === "remove" ? { destructiveTargets: [info.auditTable] } : undefined,
+                        info.dropsTable ? { destructiveTargets: [info.auditTable] } : undefined,
                       ))
                     )
                       return;
@@ -15662,7 +15662,12 @@ export default function App() {
                       );
                       setAuditEditor(null);
                     } catch (e) {
-                      toast.error(translate("statusQueryError", { error: String(e) }));
+                      // MySQL は DDL が暗黙コミットされるので、再生成・削除の途中失敗でトリガーが外れたままになりうる。
+                      const note =
+                        selectedProfile?.driver === "mysql" && info.mode !== "create"
+                          ? ` ${translate("auditMysqlPartialNote")}`
+                          : "";
+                      toast.error(translate("statusQueryError", { error: String(e) }) + note);
                     }
                   }}
                   onClose={() => setAuditEditor(null)}

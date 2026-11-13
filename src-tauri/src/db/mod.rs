@@ -1693,6 +1693,15 @@ impl Connection {
         }
     }
 
+    /// 監査トリガー (#2305) の PostgreSQL 関数の本体。オプションの印を読み戻すのに使う。
+    /// PostgreSQL 以外は常に `None`。読み取りのみ。
+    pub async fn audit_function_source(&self, schema: &str, name: &str) -> Result<Option<String>> {
+        match self {
+            Connection::Postgres(c) => c.audit_function_source(schema, name).await,
+            Connection::MySql(_) | Connection::Sqlite(_) => Ok(None),
+        }
+    }
+
     /// 論理レプリケーションのパブリケーションの一覧 (#2181)。PostgreSQL 専用で、MySQL / SQLite には
     /// 論理レプリケーションの PUBLICATION が無いので空。読み取りのみ。
     pub async fn list_publications(&self) -> Result<Vec<types::PublicationInfo>> {

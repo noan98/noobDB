@@ -129,7 +129,12 @@ async fn scenario(state: &t::AppState, side: &Side) {
     let ddl = generate(state, side, &opts, false).await;
     assert_eq!(ddl.recorded_columns, vec!["id", "name"]);
     run_ddl(state, side, ddl.create.clone()).await;
-    assert!(status(state, side).await.present);
+    let st = status(state, side).await;
+    assert!(st.present);
+    // PostgreSQL も含め、作成時のオプション (監査表名・除外列) を読み戻せる。
+    let read = st.options.expect("options");
+    assert_eq!(read.audit_table, "users_audit");
+    assert_eq!(read.exclude_columns, vec!["secret"]);
 
     exec(state, side, "INSERT INTO users VALUES (1, 'alice', 's1')").await;
     exec(state, side, "UPDATE users SET name = 'alice2' WHERE id = 1").await;

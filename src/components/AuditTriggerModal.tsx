@@ -29,7 +29,10 @@ interface Props {
   maskPatterns: readonly string[] | null;
   /** 構造パネルの「再生成」から開くときは `regenerate`。 */
   initialMode: "create" | "regenerate";
-  onConfirm: (statements: string[], info: { mode: Mode; auditTable: string }) => void | Promise<void>;
+  onConfirm: (
+    statements: string[],
+    info: { mode: Mode; auditTable: string; dropsTable: boolean },
+  ) => void | Promise<void>;
   onClose: () => void;
 }
 
@@ -37,7 +40,6 @@ type Mode = "create" | "regenerate" | "remove";
 
 const WARNING_KEYS: Record<string, string> = {
   no_primary_key: "auditWarnNoPk",
-  blob_columns: "auditWarnBlob",
   mysql_trigger_privilege: "auditWarnMysqlPrivilege",
   mysql_binlog_trust: "auditWarnMysqlBinlog",
 };
@@ -69,12 +71,13 @@ export function AuditTriggerModal({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>(initialMode);
   const [options, setOptions] = useState<AuditOptions>(EMPTY_OPTIONS);
-  const [dropTable, setDropTable] = useState(true);
+  const [dropTable, setDropTable] = useState(false);
   const [ddl, setDdl] = useState<AuditDdl | null>(null);
   const [ddlError, setDdlError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const mountedRef = useRef(true);
   const nameRef = useRef<HTMLInputElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -95,14 +98,18 @@ export function AuditTriggerModal({
         const names = cols.map((c) => c.name);
         setColumns(names);
         setStatus(st);
+        const masked = (list: readonly string[]) =>
+          maskPatterns ? list.filter((n) => matchesMaskPattern(n, maskPatterns)) : [];
         if (st.options) {
-          setOptions(st.options);
+          // 再生成では、新しく増えたマスク対象の列も既定で除外する (機微な値を黙って記録しない)。
+          const extra = masked(st.added_columns).filter((c) => !st.options?.exclude_columns.includes(c));
+          setOptions({ ...st.options, exclude_columns: [...st.options.exclude_columns, ...extra] });
         } else {
-          const masked = maskPatterns ? names.filter((n) => matchesMaskPattern(n, maskPatterns)) : [];
-          setOptions({ ...EMPTY_OPTIONS, exclude_columns: masked });
+          setOptions({ ...EMPTY_OPTIONS, exclude_columns: masked(names) });
         }
-        // 既に監査がある表を「新規作成」では開けない (再生成か削除)。
-        setMode((m) => (st.present && m === "create" ? "regenerate" : !st.present ? "create" : m));
+        // 既に監査がある表を「新規作成」では開けない。オプションを読み戻せたときだけ再生成にする
+        // (読み戻せない既存の監査は、監査表名を指定して自分で操作を選ぶ)。
+        setMode((m) => (!st.present ? "create" : st.options && m === "create" ? "regenerate" : m));
       })
       .catch((e) => {
         if (cancelled) return;
@@ -116,6 +123,8 @@ export function AuditTriggerModal({
 
   const loading = columns === null;
   const isSqlite = driver === "sqlite";
+  // 既存の監査があるのに作成時のオプションを読み戻せない (印の無い古い監査など)。
+  const legacy = !!status?.present && !status.options;
   const noOps = !options.insert && !options.update && !options.delete;
   const allExcluded =
     columns !== null && columns.length > 0 && columns.every((c) => options.exclude_columns.includes(c));
@@ -168,7 +177,13 @@ export function AuditTriggerModal({
     // 実行中は確定できない (二重送信で同じ DDL が 2 回走るのを防ぐ)。
     setBusy(true);
     void Promise.resolve()
-      .then(() => onConfirm(statements, { mode, auditTable: ddl.audit_table }))
+      .then(() =>
+        onConfirm(statements, {
+          mode,
+          auditTable: ddl.audit_table,
+          dropsTable: mode === "remove" && dropTable,
+        }),
+      )
       .catch(() => {})
       .finally(() => {
         if (mountedRef.current) setBusy(false);
@@ -187,6 +202,7 @@ export function AuditTriggerModal({
     ? [
         { value: "regenerate", label: t("auditModeRegenerate") },
         { value: "remove", label: t("auditModeRemove") },
+        ...(legacy ? [{ value: "create" as Mode, label: t("auditModeCreate") }] : []),
       ]
     : [{ value: "create", label: t("auditModeCreate") }];
   const removing = mode === "remove";
@@ -202,7 +218,7 @@ export function AuditTriggerModal({
       submitDisabled={!ready || busy}
       width="680px"
       onClose={onClose}
-      initialFocusEl={() => nameRef.current}
+      initialFocusEl={() => (removing ? cancelRef.current : nameRef.current)}
     >
       <ModalHeader onClose={onClose} closeLabel={t("auditCancel")}>
         {t("auditTitle", { table })}
@@ -219,6 +235,7 @@ export function AuditTriggerModal({
           </Callout>
         )}
         {status?.present && driver === "postgres" && <Callout tone="info">{t("auditPgGeneric")}</Callout>}
+        {legacy && <Callout tone="warning">{t("auditLegacy")}</Callout>}
         {ddl?.warnings.map((w) =>
           WARNING_KEYS[w] ? (
             <Callout key={w} tone="warning">
@@ -248,8 +265,8 @@ export function AuditTriggerModal({
             style={{ height: "var(--space-8)", borderRadius: "var(--radius-md)" }}
           />
         ) : (
-          !removing && (
-            <>
+          <>
+            {!removing && (
               <FormSection>
                 <FieldLabel as="div">{t("auditOps")}</FieldLabel>
                 <chakra.div display="flex" gap="4" flexWrap="wrap">
@@ -274,7 +291,9 @@ export function AuditTriggerModal({
                   {t("auditSkipUnchanged")}
                 </chakra.label>
               </FormSection>
+            )}
 
+            {(!removing || legacy) && (
               <chakra.div display="grid" gridTemplateColumns={isSqlite ? "1fr" : "1fr 1fr"} gap="3">
                 <FormSection>
                   <FieldLabel htmlFor="audit-table">{t("auditTableName")}</FieldLabel>
@@ -286,7 +305,7 @@ export function AuditTriggerModal({
                     placeholder={`${table}_audit`}
                     onChange={(e) => set({ audit_table: e.target.value })}
                     aria-invalid={sameTable ? true : undefined}
-                    disabled={readOnly || mode === "regenerate"}
+                    disabled={readOnly || (mode === "regenerate" && !legacy)}
                   />
                   {sameTable && <FieldError>{t("auditErrSameTable")}</FieldError>}
                 </FormSection>
@@ -299,12 +318,14 @@ export function AuditTriggerModal({
                       value={options.audit_schema ?? ""}
                       placeholder={database}
                       onChange={(e) => set({ audit_schema: e.target.value === "" ? null : e.target.value })}
-                      disabled={readOnly || mode === "regenerate"}
+                      disabled={readOnly || (mode === "regenerate" && !legacy)}
                     />
                   </FormSection>
                 )}
               </chakra.div>
+            )}
 
+            {!removing && (
               <FormSection>
                 <FieldLabel as="div">{t("auditExcludeColumns")}</FieldLabel>
                 <chakra.div display="flex" columnGap="4" rowGap="2" flexWrap="wrap">
@@ -324,8 +345,8 @@ export function AuditTriggerModal({
                 </chakra.span>
                 {allExcluded && <FieldError>{t("auditErrAllExcluded")}</FieldError>}
               </FormSection>
-            </>
-          )
+            )}
+          </>
         )}
 
         {removing && (
@@ -358,7 +379,7 @@ export function AuditTriggerModal({
               {confirmLabel}
             </Button>
             <div style={{ flex: 1 }} />
-            <Button type="button" variant="primary" onClick={onClose}>
+            <Button ref={cancelRef} type="button" variant="primary" onClick={onClose}>
               {t("auditCancel")}
             </Button>
           </>
