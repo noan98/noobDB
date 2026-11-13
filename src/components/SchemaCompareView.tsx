@@ -54,6 +54,8 @@ import {
   TableDiffList,
 } from "./SchemaDiffDetail";
 import { DataRowDiffTable } from "./DataRowDiffTable";
+import { SchemaCompareMatrix } from "./SchemaCompareMatrix";
+import { MAX_COMPARE_TARGETS, type MatrixColumnInput } from "./schemaCompareMatrixModel";
 import { DataColumnMapping } from "./DataColumnMapping";
 import type { ColumnMapping } from "./columnMapping";
 
@@ -66,7 +68,7 @@ import type { ColumnMapping } from "./columnMapping";
  */
 const sidesCss: SystemStyleObject = {
   display: "flex",
-  alignItems: "flex-end",
+  alignItems: "flex-start",
   gap: "3",
   margin: "var(--space-4) 0",
   flexWrap: "wrap",
@@ -289,7 +291,8 @@ function statementCss(destructive: boolean): SystemStyleObject {
   return destructive ? { ...base, borderColor: semanticColorVar("danger", "text") } : base;
 }
 
-type Side = "source" | "target";
+/** 基準 (`"source"`) か、比較先の番号 (`targets` の添字)。 */
+type Side = "source" | number;
 
 /** `ConnectionProfile.driver` (プレーンな `string`) を `DriverKind` へ絞り込む。
  *  `MigrationExportModal` (#744) もヘッダのメタ情報生成で共有する。 */
@@ -369,7 +372,12 @@ export function SchemaCompareView({
   const { confirm: confirmTyped, dialog: typedConfirmDialog } = useConfirm();
 
   const [source, setSource] = useState<SideState>(EMPTY_SIDE);
-  const [target, setTarget] = useState<SideState>(EMPTY_SIDE);
+  // 比較先 (更新先) の一覧 。`activeTarget` が下の詳細・反映 SQL の対象 (= 従来の更新先)。
+  const [targets, setTargets] = useState<SideState[]>([EMPTY_SIDE]);
+  const [activeTarget, setActiveTarget] = useState(0);
+  const target = targets[activeTarget] ?? EMPTY_SIDE;
+  // 比較先が 2 つ以上のときの、比較先ごとの結果 (`targets` と同じ順)。
+  const [multi, setMulti] = useState<MatrixColumnInput[] | null>(null);
   const [comparing, setComparing] = useState(false);
   const [compareError, setCompareError] = useState<string | null>(null);
   const [diff, setDiff] = useState<SchemaDiff | null>(null);
@@ -507,17 +515,35 @@ export function SchemaCompareView({
     return res.session_id;
   }, []);
 
-  // 各側の接続選択の最新要求番号 (古い応答の破棄用)。
-  const selectSeqRef = useRef<Record<Side, number>>({ source: 0, target: 0 });
+  // 各側の接続選択の最新要求番号 (古い応答の破棄用)。キーは `String(side)`。
+  const selectSeqRef = useRef<Record<string, number>>({});
+
+  // 基準 / 比較先のどちらかの選択を差し替える。
+  const updateSide = useCallback((side: Side, next: SideState | ((prev: SideState) => SideState)) => {
+    if (side === "source") {
+      setSource(next);
+      return;
+    }
+    setTargets((prev) =>
+      prev.map((s, i) => (i === side ? (typeof next === "function" ? next(s) : next) : s)),
+    );
+  }, []);
+
+  // 接続・DB の選択が変わったら、前回の比較結果をすべて捨てる。
+  const invalidateResults = useCallback(() => {
+    setDiff(null);
+    setMulti(null);
+    setCompareError(null);
+  }, []);
 
   const selectProfile = useCallback(
     async (side: Side, profileId: string) => {
-      const setSide = side === "source" ? setSource : setTarget;
+      const setSide = (next: SideState) => updateSide(side, next);
       // この要求が最新か (遅れて届いた古い接続結果で選択を巻き戻さない)。
-      const seq = (selectSeqRef.current[side] += 1);
-      const isCurrent = () => selectSeqRef.current[side] === seq;
-      setDiff(null);
-      setCompareError(null);
+      const key = String(side);
+      const seq = (selectSeqRef.current[key] = (selectSeqRef.current[key] ?? 0) + 1);
+      const isCurrent = () => selectSeqRef.current[key] === seq;
+      invalidateResults();
       if (!profileId) {
         setSide(EMPTY_SIDE);
         return;
@@ -549,22 +575,66 @@ export function SchemaCompareView({
         setSide({ ...EMPTY_SIDE, profileId, error: String(e) });
       }
     },
-    [profiles, ensureSession],
+    [profiles, ensureSession, updateSide, invalidateResults],
   );
 
-  const setDatabase = useCallback((side: Side, database: string) => {
-    const setSide = side === "source" ? setSource : setTarget;
-    setSide((prev) => ({ ...prev, database }));
-    setDiff(null);
-    setCompareError(null);
-  }, []);
+  const setDatabase = useCallback(
+    (side: Side, database: string) => {
+      updateSide(side, (prev) => ({ ...prev, database }));
+      invalidateResults();
+    },
+    [updateSide, invalidateResults],
+  );
 
   const swap = useCallback(() => {
     setSource(target);
-    setTarget(source);
-    setDiff(null);
-    setCompareError(null);
-  }, [source, target]);
+    updateSide(activeTarget, source);
+    invalidateResults();
+  }, [source, target, activeTarget, updateSide, invalidateResults]);
+
+  const addTarget = useCallback(() => {
+    setTargets((prev) => (prev.length >= MAX_COMPARE_TARGETS ? prev : [...prev, EMPTY_SIDE]));
+    setMulti(null);
+  }, []);
+
+  const removeTarget = useCallback(
+    (index: number) => {
+      if (targets.length <= 1) return;
+      // 添字がずれるので、接続中の比較先の応答はすべて破棄する。
+      for (const key of Object.keys(selectSeqRef.current)) {
+        if (key !== "source") selectSeqRef.current[key] = (selectSeqRef.current[key] ?? 0) + 1;
+      }
+      setTargets((prev) => prev.filter((_, i) => i !== index));
+      setMulti(null);
+      if (index === activeTarget) {
+        setActiveTarget(0);
+        invalidateResults();
+      } else if (index < activeTarget) {
+        setActiveTarget(activeTarget - 1);
+      }
+    },
+    [targets.length, activeTarget, invalidateResults],
+  );
+
+  /** 比較先 `index` を下の詳細・反映 SQL の対象にする。比較済みならその結果へ切り替える。 */
+  const activateTarget = useCallback(
+    (index: number, table: string | null = null) => {
+      const col = multi?.[index];
+      if (index !== activeTarget) {
+        setActiveTarget(index);
+        setCompareError(null);
+        setDiff(col?.diff ?? null);
+      }
+      if (table && col?.diff) {
+        // 選んだテーブルが絞り込みで隠れていたら見えるようにする。
+        const status = col.diff.tables.find((tbl) => tbl.name === table)?.status;
+        if (status) setFilters((f) => (f[status] ? f : { ...f, [status]: true }));
+        setTableQuery("");
+        setSelectedName(table);
+      }
+    },
+    [multi, activeTarget],
+  );
 
   const sourceDriver = useMemo(
     () => profiles.find((p) => p.id === source.profileId)?.driver ?? null,
@@ -616,11 +686,13 @@ export function SchemaCompareView({
     };
   }, [driverMismatch, source.sessionId, source.database, target.sessionId, target.database]);
 
+  const targetsComplete = targets.every((tg) => !!tg.sessionId && !!tg.database);
   const canCompare =
     !!source.sessionId &&
     !!source.database &&
     !!target.sessionId &&
     !!target.database &&
+    targetsComplete &&
     !driverMismatch &&
     !comparing;
 
@@ -628,25 +700,57 @@ export function SchemaCompareView({
     if (!source.sessionId || !source.database || !target.sessionId || !target.database || driverMismatch) {
       return null;
     }
+    const sourceSessionId = source.sessionId;
+    const sourceDatabase = source.database;
     setComparing(true);
     setCompareError(null);
     setDiff(null);
+    setMulti(null);
     try {
-      const result = await api.compareSchema({
-        sourceSessionId: source.sessionId,
-        sourceDatabase: source.database,
-        targetSessionId: target.sessionId,
-        targetDatabase: target.database,
-      });
-      setDiff(result);
-      return result;
+      if (targets.length <= 1) {
+        const result = await api.compareSchema({
+          sourceSessionId,
+          sourceDatabase,
+          targetSessionId: target.sessionId,
+          targetDatabase: target.database,
+        });
+        setDiff(result);
+        return result;
+      }
+      // 比較先が複数: 既存の 2 者比較を比較先ごとに並列で呼ぶ。1 つの失敗で全体を止めず、
+      // その比較先の列だけ「比較できませんでした」にする。
+      const results = await Promise.all(
+        targets.map(async (tg): Promise<MatrixColumnInput> => {
+          if (!tg.sessionId || !tg.database)
+            return { diff: null, error: t("schemaCompareTargetsIncomplete") };
+          const driver = profiles.find((p) => p.id === tg.profileId)?.driver ?? null;
+          if (driver !== sourceDriver) return { diff: null, error: t("schemaCompareDriverMismatch") };
+          try {
+            const d = await api.compareSchema({
+              sourceSessionId,
+              sourceDatabase,
+              targetSessionId: tg.sessionId,
+              targetDatabase: tg.database,
+            });
+            return { diff: d, error: null };
+          } catch (e) {
+            return { diff: null, error: String(e) };
+          }
+        }),
+      );
+      setMulti(results);
+      // 失敗した比較先の理由は表の下に比較先ごとに出すので、ここでは重ねて出さない。
+      const active = results[activeTarget];
+      if (!active?.diff) return null;
+      setDiff(active.diff);
+      return active.diff;
     } catch (e) {
       setCompareError(String(e));
       return null;
     } finally {
       setComparing(false);
     }
-  }, [source, target, driverMismatch]);
+  }, [t, profiles, source, sourceDriver, target, targets, activeTarget, driverMismatch]);
 
   const counts = useMemo(() => {
     const c = { source_only: 0, target_only: 0, different: 0, same: 0 };
@@ -1081,6 +1185,12 @@ export function SchemaCompareView({
 
   const selectedCount = selected.size;
 
+  // 比較先の「接続名 / DB 名」(比較先ごとの表の列見出し)。
+  const targetSideLabel = (s: SideState | undefined): string => {
+    const name = profiles.find((p) => p.id === s?.profileId)?.name ?? "";
+    return `${name} / ${s?.database ?? ""}`;
+  };
+
   // 「接続名 / DB 名」。比較の向きの一文と詳細の表の見出しに使う。
   const sourceLabel = sourceProfile && source.database ? `${sourceProfile.name} / ${source.database}` : null;
   const targetLabel = targetProfile && target.database ? `${targetProfile.name} / ${target.database}` : null;
@@ -1469,17 +1579,40 @@ export function SchemaCompareView({
                 </Button>
               </Tooltip>
             </Flex>
-            <SidePicker
-              label={t("schemaCompareTarget")}
-              hint={t("schemaCompareTargetHint")}
-              changes
-              side="target"
-              state={target}
-              profiles={profiles}
-              onSelectProfile={selectProfile}
-              onSelectDatabase={setDatabase}
-              t={t}
-            />
+            <Box display="grid" gap="2" flex="1 1 240px" minWidth="200px">
+              {targets.map((tg, i) => {
+                const isActive = i === activeTarget;
+                const multiple = targets.length > 1;
+                return (
+                  <SidePicker
+                    key={i}
+                    label={multiple ? t("schemaCompareTargetN", { n: i + 1 }) : t("schemaCompareTarget")}
+                    hint={isActive ? t("schemaCompareTargetHint") : t("schemaCompareTargetCompareOnly")}
+                    changes={isActive}
+                    side={i}
+                    state={tg}
+                    profiles={profiles}
+                    onSelectProfile={selectProfile}
+                    onSelectDatabase={setDatabase}
+                    onActivate={multiple && !isActive ? () => activateTarget(i) : undefined}
+                    onRemove={multiple ? () => removeTarget(i) : undefined}
+                    t={t}
+                  />
+                );
+              })}
+              <Box>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={addTarget}
+                  disabled={targets.length >= MAX_COMPARE_TARGETS}
+                >
+                  <Icon name="plus" size={ICON_SIZES.sm} />
+                  {t("schemaCompareAddTarget", { count: targets.length, max: MAX_COMPARE_TARGETS })}
+                </Button>
+              </Box>
+            </Box>
           </Box>
 
           {driverMismatch && <chakra.p css={warningCss}>{t("schemaCompareDriverMismatch")}</chakra.p>}
@@ -1501,7 +1634,31 @@ export function SchemaCompareView({
             )}
           </Flex>
 
+          {!targetsComplete && targets.length > 1 && (
+            <chakra.p m={0} textStyle="caption">
+              {t("schemaCompareTargetsIncomplete")}
+            </chakra.p>
+          )}
+
           {compareError && <chakra.p css={warningCss}>{compareError}</chakra.p>}
+
+          {multi && multi.length > 1 && (
+            <>
+              <SchemaCompareMatrix
+                columns={multi.map((col, i) => ({ ...col, label: targetSideLabel(targets[i]) }))}
+                active={activeTarget}
+                onSelect={activateTarget}
+                t={t}
+              />
+              {multi.map((col, i) =>
+                col.error ? (
+                  <chakra.p key={i} css={warningCss}>
+                    {`${targetSideLabel(targets[i])}: ${col.error}`}
+                  </chakra.p>
+                ) : null,
+              )}
+            </>
+          )}
 
           {comparing && !diff && (
             <DiffTableSkeleton
@@ -1785,6 +1942,8 @@ function SidePicker({
   profiles,
   onSelectProfile,
   onSelectDatabase,
+  onActivate,
+  onRemove,
   t,
 }: {
   label: string;
@@ -1796,6 +1955,10 @@ function SidePicker({
   profiles: ConnectionProfile[];
   onSelectProfile: (side: Side, profileId: string) => void;
   onSelectDatabase: (side: Side, database: string) => void;
+  /** 比較先が複数のとき、この比較先を反映先 (下の詳細の対象) にする。 */
+  onActivate?: () => void;
+  /** 比較先が複数のとき、この比較先を外す。 */
+  onRemove?: () => void;
   t: ReturnType<typeof useT>;
 }) {
   const hintColor = changes ? semanticColorVar("warning", "text") : "var(--text-muted)";
@@ -1820,6 +1983,28 @@ function SidePicker({
         >
           {hint}
         </chakra.span>
+        {(onActivate || onRemove) && (
+          <Flex marginLeft="auto" align="center" gap="1">
+            {onActivate && (
+              <Button type="button" variant="ghost" size="sm" onClick={onActivate}>
+                {t("schemaCompareMakeActive")}
+              </Button>
+            )}
+            {onRemove && (
+              <Tooltip label={t("schemaCompareRemoveTarget")}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={onRemove}
+                  aria-label={t("schemaCompareRemoveTarget")}
+                >
+                  <Icon name="close" size={ICON_SIZES.sm} />
+                </Button>
+              </Tooltip>
+            )}
+          </Flex>
+        )}
       </Flex>
       <ListboxSelect
         ariaLabel={label}
