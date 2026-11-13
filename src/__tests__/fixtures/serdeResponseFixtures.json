@@ -2655,6 +2655,20 @@
       {
         "kind": "childUnreadable",
         "table": "orders"
+      },
+      {
+        "kind": "crossDatabaseCascade",
+        "schema": "other",
+        "table": "orders"
+      },
+      {
+        "kind": "deletedChildReferenced",
+        "referencing": "items",
+        "table": "orders"
+      },
+      {
+        "kind": "skipWithoutForeignKeys",
+        "table": "orders"
       }
     ],
     "children": [

@@ -79,5 +79,13 @@ describe("rowMerge (#2303)", () => {
     expect(blockerMessage({ kind: "uniqueConflict", table: "t", index: "i", groups: 3 }).key).toBe(
       "rowMergeBlockConflict",
     );
+    expect(blockerMessage({ kind: "crossDatabaseCascade", schema: "d", table: "t" })).toEqual({
+      key: "rowMergeBlockCrossDb",
+      params: { table: "d.t" },
+    });
+    expect(blockerMessage({ kind: "deletedChildReferenced", table: "a", referencing: "b" }).key).toBe(
+      "rowMergeBlockGrandchild",
+    );
+    expect(blockerMessage({ kind: "skipWithoutForeignKeys", table: "a" }).key).toBe("rowMergeBlockSkipNoFk");
   });
 });

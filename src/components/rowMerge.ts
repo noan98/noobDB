@@ -125,6 +125,15 @@ export function blockerMessage(b: RowMergeBlocker): {
       return { key: "rowMergeBlockUnresolvedFk", params: { table: b.table, constraint: b.constraint } };
     case "childUnreadable":
       return { key: "rowMergeBlockChildUnreadable", params: { table: b.table } };
+    case "crossDatabaseCascade":
+      return { key: "rowMergeBlockCrossDb", params: { table: `${b.schema}.${b.table}` } };
+    case "deletedChildReferenced":
+      return {
+        key: "rowMergeBlockGrandchild",
+        params: { table: b.table, referencing: b.referencing === "*" ? "?" : b.referencing },
+      };
+    case "skipWithoutForeignKeys":
+      return { key: "rowMergeBlockSkipNoFk", params: { table: b.table } };
   }
 }
 

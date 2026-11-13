@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use noobdb_lib::__test_api as t;
 
-const DDL: [&str; 4] = [
+const DDL: [&str; 6] = [
     "CREATE TABLE customers (id INT NOT NULL PRIMARY KEY, name VARCHAR(30) NOT NULL, email VARCHAR(40), \
      phone VARCHAR(30), score INT, referrer_id INT, UNIQUE (email), UNIQUE (id, name), \
      CHECK (NOT (phone IS NOT NULL AND score = 5)), FOREIGN KEY (referrer_id) REFERENCES customers(id))",
@@ -20,6 +20,12 @@ const DDL: [&str; 4] = [
      PRIMARY KEY (customer_id, coupon_id), FOREIGN KEY (customer_id) REFERENCES customers(id))",
     "CREATE TABLE tickets (id INT NOT NULL PRIMARY KEY, c_id INT, c_name VARCHAR(30), \
      FOREIGN KEY (c_id, c_name) REFERENCES customers(id, name))",
+    "CREATE TABLE skip_cascade (customer_id INT NOT NULL, coupon_id INT NOT NULL, \
+     PRIMARY KEY (customer_id, coupon_id), \
+     FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE)",
+    "CREATE TABLE skip_null (id INT NOT NULL PRIMARY KEY, customer_id INT, tag INT, \
+     UNIQUE (customer_id, tag), \
+     FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL)",
 ];
 
 const SEED: [&str; 5] = [
@@ -63,7 +69,15 @@ async fn ints(state: &t::AppState, side: &Side, sql: &str) -> Vec<i64> {
 
 async fn setup(state: &t::AppState, side: &Side) {
     // 同じスキーマを flow と read_only_flow で使い回すので、先に作り直す。
-    for table in ["tickets", "coupon_uses", "orders", "customers"] {
+    for table in [
+        "grand",
+        "skip_null",
+        "skip_cascade",
+        "tickets",
+        "coupon_uses",
+        "orders",
+        "customers",
+    ] {
         exec(state, side, &format!("DROP TABLE IF EXISTS {table}")).await;
     }
     for ddl in DDL {
@@ -82,6 +96,7 @@ fn request(policy: t::ConflictPolicy, picks: Option<Vec<t::RowMergePick>>) -> t:
         losers: vec![vec![t::Value::Int(2)]],
         picks,
         conflict_policy: policy,
+        expected: None,
     }
 }
 
@@ -220,12 +235,14 @@ async fn flow(state: &t::AppState, side: &Side) {
 
     // ── 重なる子行を削除 + 記録 → 期待どおりの最終状態 ──
     // score だけを重複行から採る (phone は残す行の NULL のまま)。
+    // email (UNIQUE) も重複行から採る: Undo が「重複行の復元」より先に残す行の email を戻さないと UNIQUE 違反になる。
+    let pick = |column: &str| t::RowMergePick {
+        column: column.into(),
+        from_row: 1,
+    };
     let req = request(
         t::ConflictPolicy::DeleteColliding,
-        Some(vec![t::RowMergePick {
-            column: "score".into(),
-            from_row: 1,
-        }]),
+        Some(vec![pick("score"), pick("email")]),
     );
     let out = apply(state, side, &req, true).await.expect("apply");
     let t::RowMergeOutcome::Applied {
@@ -269,6 +286,15 @@ async fn flow(state: &t::AppState, side: &Side) {
         ints(state, side, "SELECT score FROM customers WHERE id = 1").await,
         vec![1]
     );
+    assert_eq!(
+        ints(
+            state,
+            side,
+            "SELECT COUNT(*) FROM customers WHERE id = 1 AND email = 'b@x'"
+        )
+        .await,
+        vec![1]
+    );
 
     // ── Undo: 元の行と参照に戻る ──
     assert!(capture.recorded >= 4, "{capture:?}");
@@ -282,6 +308,160 @@ async fn flow(state: &t::AppState, side: &Side) {
         ints(state, side, "SELECT score FROM customers WHERE id = 1").await,
         vec![5]
     );
+    assert_eq!(
+        ints(
+            state,
+            side,
+            "SELECT COUNT(*) FROM customers WHERE id = 1 AND email = 'a@x'"
+        )
+        .await,
+        vec![1]
+    );
+
+    skip_flow(state, side).await;
+}
+
+/// 「付け替えを飛ばす」: ON DELETE CASCADE / SET NULL の子では、飛ばした行が連鎖で消える / NULL になり、
+/// Undo で元に戻る。孫の表が連鎖で参照しているときは止める。
+async fn skip_flow(state: &t::AppState, side: &Side) {
+    setup(state, side).await;
+    // coupon_uses (ON DELETE が NO ACTION) の衝突は、この場面では要らない。
+    exec(
+        state,
+        side,
+        "DELETE FROM coupon_uses WHERE customer_id = 2 AND coupon_id = 100",
+    )
+    .await;
+    exec(
+        state,
+        side,
+        "INSERT INTO skip_cascade VALUES (1, 100), (2, 100), (2, 200)",
+    )
+    .await;
+    exec(
+        state,
+        side,
+        "INSERT INTO skip_null VALUES (1, 1, 7), (2, 2, 7), (3, 2, 8)",
+    )
+    .await;
+    let req = request(t::ConflictPolicy::SkipRepoint, Some(vec![]));
+    let p = preview(state, side, &req).await;
+    assert!(p.blockers.is_empty(), "{:?}", p.blockers);
+    let out = apply(state, side, &req, true).await.expect("apply skip");
+    let t::RowMergeOutcome::Applied { capture, .. } = out else {
+        panic!("expected applied: {out:?}");
+    };
+    assert_eq!(
+        ints(
+            state,
+            side,
+            "SELECT customer_id * 1000 + coupon_id FROM skip_cascade ORDER BY 1"
+        )
+        .await,
+        vec![1100, 1200]
+    );
+    assert_eq!(
+        ints(
+            state,
+            side,
+            "SELECT COUNT(*) FROM skip_null WHERE customer_id IS NULL"
+        )
+        .await,
+        vec![1]
+    );
+    assert_eq!(
+        ints(
+            state,
+            side,
+            "SELECT customer_id FROM skip_null WHERE id = 3"
+        )
+        .await,
+        vec![1]
+    );
+    let batch = capture.batch_id.expect("batch id");
+    let undone = t::apply_flight_batch_via_command(state, &side.id, &batch, false, false)
+        .await
+        .expect("undo");
+    assert!(undone.applied, "{:?}", undone.conflicts);
+    assert_eq!(
+        ints(
+            state,
+            side,
+            "SELECT customer_id * 1000 + coupon_id FROM skip_cascade ORDER BY 1"
+        )
+        .await,
+        vec![1100, 2100, 2200]
+    );
+    assert_eq!(
+        ints(state, side, "SELECT customer_id FROM skip_null ORDER BY id").await,
+        vec![1, 2, 2]
+    );
+    assert_eq!(
+        ints(state, side, "SELECT id FROM customers ORDER BY id").await,
+        vec![1, 2, 3]
+    );
+
+    // 孫: 衝突で削除する子行 (skip_cascade) を、さらに別の表が連鎖で参照していれば止める。
+    exec(
+        state,
+        side,
+        "CREATE TABLE grand (id INT NOT NULL PRIMARY KEY, c_id INT, k_id INT, \
+         FOREIGN KEY (c_id, k_id) REFERENCES skip_cascade(customer_id, coupon_id) ON DELETE CASCADE)",
+    )
+    .await;
+    let p = preview(
+        state,
+        side,
+        &request(t::ConflictPolicy::DeleteColliding, Some(vec![])),
+    )
+    .await;
+    assert!(
+        p.blockers.iter().any(|b| matches!(
+            b,
+            t::MergeBlocker::DeletedChildReferenced { table, referencing }
+                if table == "skip_cascade" && referencing == "grand"
+        )),
+        "{:?}",
+        p.blockers
+    );
+    exec(state, side, "DROP TABLE grand").await;
+}
+
+/// プレビューの後でデータが変わったら、何も書かずに `changed` を返す。
+async fn stale_flow(state: &t::AppState, side: &Side) {
+    setup(state, side).await;
+    let req = request(t::ConflictPolicy::DeleteColliding, Some(vec![]));
+    let p = preview(state, side, &req).await;
+    let mut stale = req.clone();
+    stale.expected = Some(t::RowMergeExpected {
+        statements: p.statements.clone(),
+        child_rows: p
+            .children
+            .iter()
+            .map(|c| c.rows + c.skipped + c.deleted)
+            .collect(),
+    });
+    // プレビューの後に子行が増える。
+    exec(state, side, "INSERT INTO orders VALUES (13, 2)").await;
+    let out = apply(state, side, &stale, false).await.expect("apply");
+    assert!(matches!(out, t::RowMergeOutcome::Changed { .. }), "{out:?}");
+    assert_eq!(
+        ints(state, side, "SELECT id FROM customers ORDER BY id").await,
+        vec![1, 2, 3]
+    );
+    // 変わっていなければ通る (プレビューを取り直した計画)。
+    let p2 = preview(state, side, &req).await;
+    let mut fresh = req.clone();
+    fresh.expected = Some(t::RowMergeExpected {
+        statements: p2.statements.clone(),
+        child_rows: p2
+            .children
+            .iter()
+            .map(|c| c.rows + c.skipped + c.deleted)
+            .collect(),
+    });
+    let out = apply(state, side, &fresh, false).await.expect("apply");
+    assert!(matches!(out, t::RowMergeOutcome::Applied { .. }), "{out:?}");
 }
 
 /// read_only 接続は、実行をバックエンドが拒否する (プレビューは読み取りだけなので通る)。
@@ -326,6 +506,7 @@ async fn sqlite_row_merge_flow() {
     let _ = std::fs::remove_file(&path);
     let side = sqlite_side(&state, "rm_flow", false, &path).await;
     flow(&state, &side).await;
+    stale_flow(&state, &side).await;
     let _ = std::fs::remove_file(&path);
 }
 
@@ -414,8 +595,61 @@ async fn postgres_row_merge_when_env_set() {
     flow(&state, &side).await;
     let ro = server_side(&state, &opts, "rm_pg_ro", name, true, "", "").await;
     read_only_flow(&state, &side, &ro).await;
+    cross_schema_flow(&state, &side).await;
     let admin = t::connect(&opts).await.expect("connect");
     let _ = admin
         .execute(&format!("DROP SCHEMA IF EXISTS {name} CASCADE"), None)
         .await;
+    let _ = admin
+        .execute("DROP SCHEMA IF EXISTS nb2303_rm2 CASCADE", None)
+        .await;
+}
+
+/// PostgreSQL: 別スキーマの子 (単一列) は付け替え対象 (Undo は不可)、複合 FK は止める。
+async fn cross_schema_flow(state: &t::AppState, side: &Side) {
+    exec(state, side, "DROP SCHEMA IF EXISTS nb2303_rm2 CASCADE").await;
+    setup(state, side).await;
+    exec(state, side, "CREATE SCHEMA nb2303_rm2").await;
+    exec(
+        state,
+        side,
+        "CREATE TABLE nb2303_rm2.xo (id INT PRIMARY KEY, cid INT, \
+         FOREIGN KEY (cid) REFERENCES nb2303_rm.customers(id) ON DELETE CASCADE)",
+    )
+    .await;
+    exec(state, side, "INSERT INTO nb2303_rm2.xo VALUES (1, 2)").await;
+    let req = request(t::ConflictPolicy::DeleteColliding, Some(vec![]));
+    let p = preview(state, side, &req).await;
+    let c = p
+        .children
+        .iter()
+        .find(|c| c.table == "xo")
+        .unwrap_or_else(|| panic!("{:?}", p.children));
+    assert_eq!(c.schema.as_deref(), Some("nb2303_rm2"));
+    assert_eq!(c.rows, 1);
+    assert!(
+        matches!(
+            p.undo_decline,
+            Some(t::UndoDecline::CrossSchemaChild { .. })
+        ),
+        "{:?}",
+        p.undo_decline
+    );
+    exec(
+        state,
+        side,
+        "CREATE TABLE nb2303_rm2.xc (id INT PRIMARY KEY, a INT, b VARCHAR(30), \
+         FOREIGN KEY (a, b) REFERENCES nb2303_rm.customers(id, name))",
+    )
+    .await;
+    let p = preview(state, side, &req).await;
+    assert!(
+        p.blockers.iter().any(|b| matches!(
+            b,
+            t::MergeBlocker::UnresolvedForeignKey { table, .. } if table == "nb2303_rm2.xc"
+        )),
+        "{:?}",
+        p.blockers
+    );
+    exec(state, side, "DROP SCHEMA nb2303_rm2 CASCADE").await;
 }

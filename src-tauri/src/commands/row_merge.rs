@@ -8,8 +8,9 @@
 //!
 //! フライトレコーダー (#735) へは `bulk_capture` と同じ方式 (実行の直前に before、コミット直後に after を
 //! 別接続で読む) で 1 バッチとして記録する。ベストエフォートで、記録できなくてもマージは通る
-//! (理由は `undo_decline` として事前に示す)。Undo の順序は記録の順の逆なので、「子 → 残す行 → 重複行」の順に
-//! 保存し、取り消しでは重複行が先に復元される。
+//! (理由は `undo_decline` として事前に示す)。Undo の順序は記録の順の逆なので、実行順と同じ
+//! 「子 → 重複行の DELETE → 残す行の UPDATE」の順に保存する。取り消しでは残す行の列値が先に戻ってから重複行が
+//! 復元されるので、重複行から採った UNIQUE 列 (email など) があっても UNIQUE 違反にならない。
 
 use std::collections::{HashMap, HashSet};
 
@@ -21,11 +22,11 @@ use crate::commands::bulk_write::qualified_ref;
 use crate::commands::query::{run_query_transaction_guarded_inner, TransactionRun};
 use crate::db::data_diff::sql_literal;
 use crate::db::row_merge::{
-    classify_collision_group, collision_groups_sql, collision_members_sql, delete_survives_skip,
-    delete_where_sql, eq_cond, index_key_columns, is_row_key, loser_match_cond, norm_sig, or_conds,
-    pick_values, repoint_sql, row_key_of, sig, suggest_picks, survivor_update_sql,
+    classify_collision_group, collision_groups_sql, collision_members_sql, delete_where_sql,
+    eq_cond, index_key_columns, is_row_key, loser_match_cond, norm_sig, or_conds, pick_values,
+    repoint_sql, row_key_of, sig, skip_blocker, suggest_picks, survivor_update_sql,
     usable_unique_index, value_to_u64, ChildEdge, ConflictPolicy, MergeBlocker, MergeWarning,
-    RowMergeRequest, UndoDecline, MAX_CONFLICT_GROUPS, MAX_MERGE_ROWS,
+    RowMergeRequest, SkipBlock, UndoDecline, MAX_CONFLICT_GROUPS, MAX_MERGE_ROWS,
 };
 use crate::db::subset::{exclude_cross_database_groups, group_foreign_keys};
 use crate::db::types::{Column, IndexInfo, TableColumnInfo, Value};
@@ -195,6 +196,129 @@ async fn query(
     sql: &str,
 ) -> Result<crate::db::types::QueryResult> {
     conn.execute(sql, db_opt(database)).await
+}
+
+/// 表名の照合。PostgreSQL は大文字小文字を区別し、MySQL / SQLite は区別しない。
+fn same_name(driver: DriverKind, a: &str, b: &str) -> bool {
+    if driver == DriverKind::Postgres {
+        a == b
+    } else {
+        a.eq_ignore_ascii_case(b)
+    }
+}
+
+/// `ON DELETE` が子行を消す / 書き換える動作か。
+fn on_delete_touches_rows(action: Option<&str>) -> bool {
+    matches!(
+        action.map(str::to_ascii_uppercase).as_deref(),
+        Some("CASCADE" | "SET NULL" | "SET DEFAULT")
+    )
+}
+
+/// 別スキーマ (PostgreSQL) の子テーブルから、この表を参照する外部キー 1 本。
+struct CrossSchemaFk {
+    schema: String,
+    table: String,
+    constraint: String,
+    /// 外部キーの列数 (複合なら 2 以上)。
+    width: u64,
+    column: String,
+    referenced_column: String,
+    on_delete: Option<String>,
+}
+
+fn pg_action(code: &str) -> Option<String> {
+    match code {
+        "c" => Some("CASCADE".into()),
+        "n" => Some("SET NULL".into()),
+        "d" => Some("SET DEFAULT".into()),
+        "r" => Some("RESTRICT".into()),
+        _ => None,
+    }
+}
+
+/// PostgreSQL: 別スキーマから `schema.table` を参照する外部キー (複合も含む)。取得できなければエラー。
+async fn pg_cross_schema_incoming(
+    conn: &Connection,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<CrossSchemaFk>> {
+    let d = DriverKind::Postgres;
+    let sql = format!(
+        "SELECT n.nspname::text, cl.relname::text, con.conname::text, \
+                array_length(con.conkey, 1)::int8, \
+                (SELECT a.attname::text FROM pg_catalog.pg_attribute a \
+                  WHERE a.attrelid = con.conrelid AND a.attnum = con.conkey[1]), \
+                (SELECT fa.attname::text FROM pg_catalog.pg_attribute fa \
+                  WHERE fa.attrelid = con.confrelid AND fa.attnum = con.confkey[1]), \
+                con.confdeltype::text \
+           FROM pg_catalog.pg_constraint con \
+           JOIN pg_catalog.pg_class cl ON cl.oid = con.conrelid \
+           JOIN pg_catalog.pg_namespace n ON n.oid = cl.relnamespace \
+           JOIN pg_catalog.pg_class fcl ON fcl.oid = con.confrelid \
+           JOIN pg_catalog.pg_namespace fn ON fn.oid = fcl.relnamespace \
+          WHERE con.contype = 'f' \
+            AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint p \
+                             WHERE p.oid = con.conparentid AND p.conrelid = con.conrelid) \
+            AND fcl.relnamespace <> cl.relnamespace \
+            AND fn.nspname = {} AND fcl.relname::text = {} \
+          ORDER BY n.nspname, cl.relname, con.conname",
+        sql_literal(d, &Value::String(schema.to_string())),
+        sql_literal(d, &Value::String(table.to_string())),
+    );
+    let r = query(conn, schema, &sql).await?;
+    Ok(r.rows
+        .iter()
+        .map(|row| {
+            let text = |i: usize| row.get(i).map(norm_sig).unwrap_or_default();
+            CrossSchemaFk {
+                schema: text(0),
+                table: text(1),
+                constraint: text(2),
+                width: row.get(3).map_or(0, value_to_u64),
+                column: text(4),
+                referenced_column: text(5),
+                on_delete: pg_action(&text(6)),
+            }
+        })
+        .collect())
+}
+
+/// MySQL: 別のデータベースの表から `db.table` を参照する外部キーの (データベース, 表, `DELETE_RULE`)。
+async fn mysql_cross_database_incoming(
+    conn: &Connection,
+    db: &str,
+    table: &str,
+) -> Result<Vec<(String, String, String)>> {
+    let d = DriverKind::Mysql;
+    let lit_db = sql_literal(d, &Value::String(db.to_string()));
+    let sql = format!(
+        "SELECT DISTINCT k.TABLE_SCHEMA, k.TABLE_NAME, r.DELETE_RULE \
+           FROM information_schema.KEY_COLUMN_USAGE k \
+           JOIN information_schema.REFERENTIAL_CONSTRAINTS r \
+             ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA \
+            AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME \
+            AND r.TABLE_NAME = k.TABLE_NAME \
+          WHERE k.REFERENCED_TABLE_SCHEMA = {lit_db} \
+            AND k.REFERENCED_TABLE_NAME = {} \
+            AND k.TABLE_SCHEMA <> {lit_db}",
+        sql_literal(d, &Value::String(table.to_string())),
+    );
+    let r = query(conn, db, &sql).await?;
+    Ok(r.rows
+        .iter()
+        .map(|row| {
+            let text = |i: usize| row.get(i).map(norm_sig).unwrap_or_default();
+            (text(0), text(1), text(2))
+        })
+        .collect())
+}
+
+fn child_row_counts(children: &[RowMergeChild]) -> Vec<u64> {
+    children
+        .iter()
+        .map(|c| c.rows + c.skipped + c.deleted)
+        .collect()
 }
 
 fn col_pos(columns: &[Column], name: &str) -> Option<usize> {
@@ -379,7 +503,7 @@ async fn build_plan(
     let mut edges: Vec<ChildEdge> = Vec::new();
     for g in groups
         .iter()
-        .filter(|g| g.parent.eq_ignore_ascii_case(table))
+        .filter(|g| same_name(driver, &g.parent, table))
     {
         let parent_cols = match &g.parent_cols {
             Some(c) => c.clone(),
@@ -392,12 +516,16 @@ async fn build_plan(
             });
             continue;
         }
+        // 制約名で照合する (同じ列が別の制約にも入っていても取り違えない)。名前が無いドライバは先頭列で探す。
         let on_delete = fks
             .iter()
             .find(|f| {
                 f.table == g.child
-                    && f.referenced_table.eq_ignore_ascii_case(table)
-                    && g.child_cols.first() == Some(&f.column)
+                    && same_name(driver, &f.referenced_table, table)
+                    && match &f.constraint_name {
+                        Some(n) => *n == g.constraint,
+                        None => g.child_cols.first() == Some(&f.column),
+                    }
             })
             .and_then(|f| f.on_delete.clone());
         edges.push(ChildEdge {
@@ -409,32 +537,64 @@ async fn build_plan(
             on_delete,
         });
     }
-    // PostgreSQL: 別スキーマの子 (単一列)。
-    if let Ok(extra) = conn
-        .cross_schema_incoming_foreign_keys(database, table)
-        .await
-    {
-        for e in extra {
-            if let Some(schema) = e.schema {
-                edges.push(ChildEdge {
-                    child_db: schema,
-                    child: e.table.clone(),
-                    constraint: format!("{}.{}.{}", e.table, e.column, e.referenced_column),
-                    child_cols: vec![e.column],
-                    parent_cols: vec![e.referenced_column],
-                    on_delete: e.on_delete,
-                });
+    // PostgreSQL: 別スキーマの子。取得に失敗したら子を取りこぼすので止める。複合 FK は付け替えず止める。
+    if driver == DriverKind::Postgres {
+        match pg_cross_schema_incoming(conn, database, table).await {
+            Ok(extra) => {
+                for e in extra {
+                    if e.width >= 2 {
+                        blockers.push(MergeBlocker::UnresolvedForeignKey {
+                            table: format!("{}.{}", e.schema, e.table),
+                            constraint: e.constraint,
+                        });
+                        continue;
+                    }
+                    edges.push(ChildEdge {
+                        child_db: e.schema,
+                        child: e.table.clone(),
+                        constraint: format!("{}.{}.{}", e.table, e.column, e.referenced_column),
+                        child_cols: vec![e.column],
+                        parent_cols: vec![e.referenced_column],
+                        on_delete: e.on_delete,
+                    });
+                }
             }
+            Err(_) => blockers.push(MergeBlocker::ChildUnreadable {
+                table: table.to_string(),
+            }),
         }
     }
-    for g in groups
-        .iter()
-        .filter(|g| cross.contains(&(g.child.clone(), g.constraint.clone())))
-    {
-        warnings.push(MergeWarning::CrossDatabaseChild {
-            table: g.child.clone(),
-        });
+    // MySQL: 別データベースの子は辿れない。連鎖 / NULL 化する参照があれば黙って壊れるので止め、
+    // RESTRICT (参照が残れば DELETE が失敗して全体ロールバック) なら警告にとどめる。
+    if driver == DriverKind::Mysql {
+        match mysql_cross_database_incoming(conn, &db, table).await {
+            Ok(list) => {
+                for (schema, tbl, rule) in list {
+                    if on_delete_touches_rows(Some(&rule)) {
+                        blockers.push(MergeBlocker::CrossDatabaseCascade { schema, table: tbl });
+                    } else {
+                        warnings.push(MergeWarning::CrossDatabaseChild {
+                            table: format!("{schema}.{tbl}"),
+                        });
+                    }
+                }
+            }
+            Err(_) => blockers.push(MergeBlocker::ChildUnreadable {
+                table: table.to_string(),
+            }),
+        }
     }
+
+    // SQLite の `PRAGMA foreign_keys` (他のドライバは `None`)。辺のループより前に読む。
+    let fk_enforced = if driver == DriverKind::Sqlite {
+        query(conn, database, "PRAGMA foreign_keys")
+            .await
+            .ok()
+            .and_then(|r| r.rows.first().and_then(|r| r.first()).map(value_to_u64))
+            .map(|n| n != 0)
+    } else {
+        None
+    };
 
     // 列ごとの「採用元を選べない」判定と採用元。
     let mut locked: Vec<bool> = pcol_names
@@ -505,13 +665,22 @@ async fn build_plan(
 
     for edge in &edges {
         let self_ref = edge.child_db == database && edge.child.eq_ignore_ascii_case(table);
-        let loser_refs: Vec<Vec<Value>> = rows[1..]
+        let loser_refs_all: Vec<Option<Vec<Value>>> = rows[1..]
             .iter()
-            .filter_map(|r| pick_values(&pcol_names, r, &edge.parent_cols))
+            .map(|r| pick_values(&pcol_names, r, &edge.parent_cols))
             .collect();
-        let Some(survivor_ref) = pick_values(&pcol_names, &rows[0], &edge.parent_cols) else {
+        let survivor_ref_opt = pick_values(&pcol_names, &rows[0], &edge.parent_cols);
+        // 参照先の列が親の列に見つからない辺は、黙って飛ばさず止める (子が取りこぼされる)。
+        let (Some(survivor_ref), true) =
+            (survivor_ref_opt, loser_refs_all.iter().all(Option::is_some))
+        else {
+            blockers.push(MergeBlocker::UnresolvedForeignKey {
+                table: edge.child.clone(),
+                constraint: edge.constraint.clone(),
+            });
             continue;
         };
+        let loser_refs: Vec<Vec<Value>> = loser_refs_all.into_iter().flatten().collect();
         // 自己参照: 残す行の最終値が消える行 (または自分自身) を指してはいけない。
         if self_ref {
             let merged: HashSet<String> = loser_refs
@@ -734,6 +903,7 @@ async fn build_plan(
                 sample,
             });
         }
+        drops.sort();
         let dropped = drops.len() as u64;
         let (mut skipped, mut deleted) = (0u64, 0u64);
         let mut exclude: Vec<String> = Vec::new();
@@ -750,12 +920,55 @@ async fn build_plan(
             }
             ConflictPolicy::SkipRepoint => {
                 skipped = dropped;
-                if dropped > 0 && !delete_survives_skip(edge.on_delete.as_deref()) {
-                    blockers.push(MergeBlocker::SkipUnsafe {
+                match skip_blocker(edge.on_delete.as_deref(), fk_enforced, dropped) {
+                    Some(SkipBlock::Unsafe) => blockers.push(MergeBlocker::SkipUnsafe {
                         table: edge.child.clone(),
-                    });
+                    }),
+                    // 外部キー検査が無効だと、重複行の DELETE で連鎖が働かず孤児行が残る。
+                    Some(SkipBlock::NoForeignKeys) => {
+                        blockers.push(MergeBlocker::SkipWithoutForeignKeys {
+                            table: edge.child.clone(),
+                        })
+                    }
+                    None => {}
                 }
                 exclude = drops.clone();
+            }
+        }
+        // 消える子行 (衝突で削除する行・飛ばして連鎖で消える行) を、さらに別の表が連鎖 / NULL 化で参照していると
+        // 孫の行が黙って消え、Undo にも残らない。見つかれば止める。
+        let removes_child_rows = dropped > 0
+            && match policy {
+                ConflictPolicy::Abort => false,
+                ConflictPolicy::DeleteColliding => true,
+                ConflictPolicy::SkipRepoint => {
+                    edge.on_delete
+                        .as_deref()
+                        .map(str::to_ascii_uppercase)
+                        .as_deref()
+                        == Some("CASCADE")
+                }
+            };
+        if removes_child_rows {
+            let mut referencing: Vec<String> = Vec::new();
+            if edge.child_db != database {
+                // 別スキーマの子を参照する表は、このスキーマの外部キー一覧からは分からない。
+                referencing.push("*".to_string());
+            } else {
+                for f in fks.iter().filter(|f| {
+                    same_name(driver, &f.referenced_table, &edge.child)
+                        && on_delete_touches_rows(f.on_delete.as_deref())
+                }) {
+                    if !referencing.contains(&f.table) {
+                        referencing.push(f.table.clone());
+                    }
+                }
+            }
+            for r in referencing {
+                blockers.push(MergeBlocker::DeletedChildReferenced {
+                    table: edge.child.clone(),
+                    referencing: r,
+                });
             }
         }
         let repoint_rows = count.saturating_sub(deleted + skipped);
@@ -831,15 +1044,6 @@ async fn build_plan(
         });
     }
 
-    let fk_enforced = if driver == DriverKind::Sqlite {
-        query(conn, database, "PRAGMA foreign_keys")
-            .await
-            .ok()
-            .and_then(|r| r.rows.first().and_then(|r| r.first()).map(value_to_u64))
-            .map(|n| n != 0)
-    } else {
-        None
-    };
     let touched = total_child_rows + rows.len() as u64;
     if undo_decline.is_none() && touched > row_cap as u64 {
         undo_decline = Some(UndoDecline::TooManyRows {
@@ -970,6 +1174,16 @@ pub async fn apply_row_merge_inner(
     let cap_cfg = options.capture.clone().filter(|_| !session.skip_history);
     let row_cap = row_cap_of(cap_cfg.as_ref().and_then(|c| c.row_cap));
     let plan = build_plan(&session, database, table, request, row_cap).await?;
+    // プレビューの後でデータが変わっていれば、何も書かずに止める (利用者はプレビューを見直す)。
+    if let Some(exp) = &request.expected {
+        let actual = child_row_counts(&plan.preview.children);
+        if exp.statements != plan.preview.statements || exp.child_rows != actual {
+            return Ok(RowMergeOutcome::Changed {
+                expected_rows: exp.child_rows.iter().sum(),
+                actual_rows: actual.iter().sum(),
+            });
+        }
+    }
     if !plan.preview.blockers.is_empty() {
         return Ok(RowMergeOutcome::Blocked {
             blockers: plan.preview.blockers,
@@ -1336,6 +1550,15 @@ async fn capture_after(
         .filter(|(i, &pk)| pk != 0 && norm_sig(&p.rows[pk][*i]) != norm_sig(&p.rows[0][*i]))
         .map(|(i, _)| i)
         .collect();
+    // 実行順 (重複行の DELETE → 残す行の UPDATE) のとおりに保存する。Undo は逆順なので、残す行の列値が先に戻る。
+    captures.push(build_capture(
+        WriteKind::Delete,
+        table,
+        &req.key_columns,
+        &cols,
+        p.rows[1..].to_vec(),
+        vec![],
+    ));
     if !set_idx.is_empty() {
         let kidx: Option<Vec<usize>> = parent_fetch
             .as_ref()
@@ -1363,14 +1586,6 @@ async fn capture_after(
             None => declined += 1,
         }
     }
-    captures.push(build_capture(
-        WriteKind::Delete,
-        table,
-        &req.key_columns,
-        &cols,
-        p.rows[1..].to_vec(),
-        vec![],
-    ));
 
     let mut out = RowMergeCaptureOutcome {
         recorded: 0,

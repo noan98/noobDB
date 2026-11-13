@@ -8,6 +8,7 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { Spinner } from "./Spinner";
 import { Button, Checkbox } from "./ui";
+import { Tooltip } from "./Tooltip";
 
 /**
  * 結果の重複キー検出ダイアログ (#1628)。選んだ列の組み合わせで同じ値を持つ行の
@@ -192,17 +193,18 @@ export function DuplicateKeysModal({
                         const merge = onMergeGroup?.(selected, g.firstRow);
                         if (!merge) return null;
                         return (
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            title={t("dupKeysMergeGroupTitle")}
-                            onClick={() => {
-                              merge();
-                              onClose();
-                            }}
-                          >
-                            {t("dupKeysMergeGroup")}
-                          </Button>
+                          <Tooltip label={t("dupKeysMergeGroupTitle")}>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              onClick={() => {
+                                merge();
+                                onClose();
+                              }}
+                            >
+                              {t("dupKeysMergeGroup")}
+                            </Button>
+                          </Tooltip>
                         );
                       })()}
                     </chakra.li>

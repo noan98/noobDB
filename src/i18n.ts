@@ -8300,8 +8300,14 @@ const en = {
   rowMergeBlockPick: "Column {column} cannot take its value from another row.",
   rowMergeBlockUnresolvedFk: "{table}: the referenced columns of {constraint} could not be resolved.",
   rowMergeBlockChildUnreadable: "{table}: its columns could not be read.",
+  rowMergeBlockCrossDb:
+    "{table} (another database) references this table with ON DELETE CASCADE / SET NULL / SET DEFAULT. It cannot be re-pointed here, so deleting the duplicates would silently change it.",
+  rowMergeBlockGrandchild:
+    "Rows of {table} that would be deleted are referenced by {referencing} with ON DELETE CASCADE / SET NULL / SET DEFAULT, which would silently delete or change those rows (and Undo could not restore them).",
+  rowMergeBlockSkipNoFk:
+    "{table}: foreign key enforcement is off, so skipping the re-pointing would leave orphan rows when the duplicates are deleted.",
   rowMergeChanged:
-    "The data changed after the preview (expected {expected} rows, matched {actual}). Nothing was written. Review the plan again.",
+    "The data changed after the preview (child rows {expected} -> {actual}). Nothing was written. The preview was reloaded: review it and run again.",
   rowMergeRollbackIncomplete:
     "The merge was rolled back, but a non-transactional table kept part of it. Reload and check the data.",
   rowMergeDone: "Merged: {repointed} child row(s) re-pointed, {deleted} row(s) deleted.",
@@ -16620,8 +16626,14 @@ const ja: Dict = {
   rowMergeBlockPick: "列 {column} は別の行の値を選べません。",
   rowMergeBlockUnresolvedFk: "{table}: {constraint} の参照先の列を決められません。",
   rowMergeBlockChildUnreadable: "{table}: 列の情報を取得できません。",
+  rowMergeBlockCrossDb:
+    "{table} (別のデータベース) が ON DELETE CASCADE / SET NULL / SET DEFAULT でこの表を参照しています。ここでは付け替えられず、重複行を消すと黙って変更されるので止めました。",
+  rowMergeBlockGrandchild:
+    "削除される {table} の行を、{referencing} が ON DELETE CASCADE / SET NULL / SET DEFAULT で参照しています。孫の行が黙って消える / 変わり、Undo でも戻せないので止めました。",
+  rowMergeBlockSkipNoFk:
+    "{table}: 外部キー検査が無効なので、付け替えを飛ばすと重複行の削除で孤児行が残ります。",
   rowMergeChanged:
-    "プレビュー後にデータが変わりました (想定 {expected} 件に対し {actual} 件)。何も書き込んでいません。計画を確認し直してください。",
+    "プレビュー後にデータが変わりました (子の行 {expected} 件 → {actual} 件)。何も書き込んでいません。プレビューを読み込み直したので、内容を確認してからもう一度実行してください。",
   rowMergeRollbackIncomplete:
     "マージをロールバックしましたが、トランザクション非対応の表に一部が残りました。再読込して確認してください。",
   rowMergeDone: "マージしました: 子の行 {repointed} 件を付け替え、{deleted} 行を削除。",

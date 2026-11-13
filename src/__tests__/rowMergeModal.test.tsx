@@ -97,6 +97,27 @@ describe("RowMergeModal (#2303)", () => {
     expect(vi.mocked(api.applyRowMerge).mock.calls[0][0].request.picks).toEqual([
       { column: "phone", fromRow: 1 },
     ]);
+    // プレビューで見せた計画 (文と子ごとの件数) を添える。
+    expect(vi.mocked(api.applyRowMerge).mock.calls[0][0].request.expected).toEqual({
+      statements: preview.statements,
+      childRows: [2],
+    });
+  });
+
+  it("プレビュー後にデータが変わっていたら、プレビューを読み直して理由を示す", async () => {
+    vi.mocked(api.applyRowMerge).mockResolvedValue({
+      status: "changed",
+      expectedRows: 2,
+      actualRows: 3,
+    });
+    const props = mount();
+    await screen.findByTestId("row-merge-tree");
+    expect(vi.mocked(api.previewRowMerge)).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: t("rowMergeRun") }));
+    await waitFor(() => expect(vi.mocked(api.previewRowMerge)).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/データが変わりました|data changed/)).toBeInTheDocument();
+    expect(props.onApplied).not.toHaveBeenCalled();
+    expect(props.onClose).not.toHaveBeenCalled();
   });
 
   it("確認で断ったら実行しない。衝突などの blockers があれば実行を無効にする", async () => {

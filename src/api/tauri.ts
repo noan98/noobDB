@@ -3344,6 +3344,8 @@ export interface RowMergeRequest {
   /** 列ごとの採用元 (`[残す行, 重複行…]` の添字)。省略で提案値。 */
   picks?: { column: string; fromRow: number }[] | null;
   conflictPolicy?: RowMergeConflictPolicy;
+  /** プレビューで見せた計画。実行の直前に立て直した計画と食い違えば、何も書かずに `changed` が返る。 */
+  expected?: { statements: string[]; childRows: number[] } | null;
 }
 export type RowMergeBlocker =
   | { kind: "noKey" }
@@ -3359,7 +3361,10 @@ export type RowMergeBlocker =
   | { kind: "lockedPick"; column: string }
   | { kind: "invalidPick"; column: string }
   | { kind: "unresolvedForeignKey"; table: string; constraint: string }
-  | { kind: "childUnreadable"; table: string };
+  | { kind: "childUnreadable"; table: string }
+  | { kind: "crossDatabaseCascade"; schema: string; table: string }
+  | { kind: "deletedChildReferenced"; table: string; referencing: string }
+  | { kind: "skipWithoutForeignKeys"; table: string };
 export type RowMergeWarning =
   | { kind: "crossDatabaseChild"; table: string }
   | { kind: "uncheckedIndex"; table: string; index: string };

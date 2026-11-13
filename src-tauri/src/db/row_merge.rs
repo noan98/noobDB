@@ -64,6 +64,20 @@ pub struct RowMergeRequest {
     pub picks: Option<Vec<RowMergePick>>,
     #[serde(default)]
     pub conflict_policy: ConflictPolicy,
+    /// プレビューで見せた計画。実行の直前に立て直した計画と食い違えば、何も書かずに `changed` を返す。
+    /// プレビューには使わない。
+    #[serde(default)]
+    pub expected: Option<RowMergeExpected>,
+}
+
+/// プレビューで利用者に見せた計画 (実行時の照合用)。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RowMergeExpected {
+    /// 実行する文 (順番どおり)。
+    pub statements: Vec<String>,
+    /// 子の外部キーごとの (付け替え + 飛ばす + 削除) 行数。`children` と同じ順。
+    pub child_rows: Vec<u64>,
 }
 
 /// マージを実行できない理由。UI が翻訳して表示する。
@@ -113,6 +127,18 @@ pub enum MergeBlocker {
     /// 子テーブルの列メタデータを取得できない。
     #[serde(rename_all = "camelCase")]
     ChildUnreadable { table: String },
+    /// 別のデータベースの子テーブルが `ON DELETE CASCADE / SET NULL / SET DEFAULT` で参照している (MySQL)。
+    /// 辿れないので、重複行の DELETE で黙って消える / NULL になるのを防ぐために止める。
+    #[serde(rename_all = "camelCase")]
+    CrossDatabaseCascade { schema: String, table: String },
+    /// 削除する子行 (衝突で消す行・付け替えを飛ばして連鎖で消える行) を、さらに別の表が
+    /// `ON DELETE CASCADE / SET NULL / SET DEFAULT` で参照している。孫の行が黙って消え、Undo にも残らない。
+    #[serde(rename_all = "camelCase")]
+    DeletedChildReferenced { table: String, referencing: String },
+    /// 外部キー検査が無効 (SQLite の `PRAGMA foreign_keys = OFF`) なので、付け替えを飛ばすと
+    /// 重複行の DELETE で連鎖が働かず孤児行が残る。
+    #[serde(rename_all = "camelCase")]
+    SkipWithoutForeignKeys { table: String },
 }
 
 /// マージは実行できるが注意が要ること。
@@ -412,6 +438,32 @@ pub fn delete_survives_skip(on_delete: Option<&str>) -> bool {
     )
 }
 
+/// 「付け替えを飛ばす」を止める理由。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkipBlock {
+    /// `ON DELETE` が連鎖でも NULL 化でもなく、飛ばした行が重複行の DELETE を妨げる。
+    Unsafe,
+    /// 外部キー検査が無効 (SQLite の `PRAGMA foreign_keys = OFF`) で、DELETE の連鎖が働かず孤児行が残る。
+    NoForeignKeys,
+}
+
+/// 付け替えを飛ばす行 (`skipped`) があるとき、その扱いを止めるべきか。
+pub fn skip_blocker(
+    on_delete: Option<&str>,
+    fk_enforced: Option<bool>,
+    skipped: u64,
+) -> Option<SkipBlock> {
+    if skipped == 0 {
+        None
+    } else if !delete_survives_skip(on_delete) {
+        Some(SkipBlock::Unsafe)
+    } else if fk_enforced == Some(false) {
+        Some(SkipBlock::NoForeignKeys)
+    } else {
+        None
+    }
+}
+
 /// `Value` を件数として読む (`COUNT(*)` の戻り)。
 pub fn value_to_u64(v: &Value) -> u64 {
     match v {
@@ -637,6 +689,19 @@ mod tests {
             sql,
             "SELECT * FROM (SELECT COUNT(*) AS n FROM t WHERE (a = 1)) AS merge_groups WHERE n > 1 LIMIT 5"
         );
+    }
+
+    #[test]
+    fn skip_blocker_covers_unsafe_actions_and_disabled_foreign_keys() {
+        assert_eq!(skip_blocker(Some("CASCADE"), Some(true), 0), None);
+        assert_eq!(skip_blocker(Some("CASCADE"), None, 2), None);
+        assert_eq!(skip_blocker(None, Some(true), 1), Some(SkipBlock::Unsafe));
+        // 外部キー検査が無効なら、連鎖の子でも孤児行ができるので止める。
+        assert_eq!(
+            skip_blocker(Some("SET NULL"), Some(false), 1),
+            Some(SkipBlock::NoForeignKeys)
+        );
+        assert_eq!(skip_blocker(Some("SET NULL"), Some(false), 0), None);
     }
 
     #[test]

@@ -264,7 +264,8 @@ pub mod __test_api {
         SubsetOutcome, SubsetOutput, SubsetPreview, SubsetRequest, SubsetTablePreview,
     };
     pub use crate::db::row_merge::{
-        ConflictPolicy, MergeBlocker, MergeWarning, RowMergePick, RowMergeRequest, UndoDecline,
+        ConflictPolicy, MergeBlocker, MergeWarning, RowMergeExpected, RowMergePick,
+        RowMergeRequest, UndoDecline,
     };
     pub use crate::db::subset::SubsetWarning;
     pub use crate::db::transfer::{

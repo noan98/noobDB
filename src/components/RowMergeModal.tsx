@@ -5,6 +5,7 @@ import {
   type CellValue,
   type RowMergeBlocker,
   type RowMergeConflictPolicy,
+  type RowMergeRequest,
   type RowMergeOutcome,
   type RowMergePreview,
 } from "../api/tauri";
@@ -82,12 +83,16 @@ export function RowMergeModal({
   );
 
   const request = useCallback(
-    (picks: { column: string; fromRow: number }[] | null) => ({
+    (
+      picks: { column: string; fromRow: number }[] | null,
+      expected: RowMergeRequest["expected"] = null,
+    ): RowMergeRequest => ({
       keyColumns: target.keyColumns,
       survivor: target.keys[order[0] ?? 0] ?? [],
       losers: order.slice(1).map((i) => target.keys[i] ?? []),
       picks,
       conflictPolicy: policy,
+      expected,
     }),
     [target, order, policy],
   );
@@ -143,7 +148,11 @@ export function RowMergeModal({
         sessionId,
         database,
         table,
-        request: request(picksToRequest(preview)),
+        // プレビューで見せた計画を添える。実行の直前に DB が変わっていれば、何も書かれずに `changed` が返る。
+        request: request(picksToRequest(preview), {
+          statements: preview.statements,
+          childRows: preview.children.map((c) => c.rows + c.skipped + c.deleted),
+        }),
         capture: capture ? { rowCap: capture.rowCap, retentionDays: capture.retentionDays } : null,
       });
       if (out.status === "applied") {
@@ -153,8 +162,9 @@ export function RowMergeModal({
       }
       if (out.status === "blocked") setBlocked(out.blockers);
       else if (out.status === "changed") {
-        setError(t("rowMergeChanged", { expected: out.expectedRows, actual: out.actualRows }));
+        // 先に読み直しを始める (読み込み開始時にエラー表示を消すため)。メッセージはその後に出す。
         void load();
+        setError(t("rowMergeChanged", { expected: out.expectedRows, actual: out.actualRows }));
       } else setError(t("rowMergeRollbackIncomplete"));
     } catch (e) {
       setError(String(e));
@@ -356,7 +366,7 @@ export function RowMergeModal({
               </Callout>
             ))}
             {capture && preview.undoDecline && (
-              <Callout tone="info" data-testid="row-merge-undo-decline">
+              <Callout tone="warning" data-testid="row-merge-undo-decline">
                 {(() => {
                   const m = undoDeclineMessage(preview.undoDecline);
                   return t(m.key, m.params);

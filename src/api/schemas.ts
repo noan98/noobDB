@@ -371,6 +371,9 @@ const rowMergeBlocker = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("invalidPick"), column: z.string() }),
   z.object({ kind: z.literal("unresolvedForeignKey"), table: z.string(), constraint: z.string() }),
   z.object({ kind: z.literal("childUnreadable"), table: z.string() }),
+  z.object({ kind: z.literal("crossDatabaseCascade"), schema: z.string(), table: z.string() }),
+  z.object({ kind: z.literal("deletedChildReferenced"), table: z.string(), referencing: z.string() }),
+  z.object({ kind: z.literal("skipWithoutForeignKeys"), table: z.string() }),
 ]);
 const rowMergeWarning = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("crossDatabaseChild"), table: z.string() }),

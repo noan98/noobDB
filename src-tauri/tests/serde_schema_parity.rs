@@ -1587,6 +1587,17 @@ fn build_fixtures() -> serde_json::Value {
             t::MergeBlocker::ChildUnreadable {
                 table: "orders".into(),
             },
+            t::MergeBlocker::CrossDatabaseCascade {
+                schema: "other".into(),
+                table: "orders".into(),
+            },
+            t::MergeBlocker::DeletedChildReferenced {
+                table: "orders".into(),
+                referencing: "items".into(),
+            },
+            t::MergeBlocker::SkipWithoutForeignKeys {
+                table: "orders".into(),
+            },
         ],
         warnings: vec![
             t::MergeWarning::CrossDatabaseChild { table: "x".into() },
