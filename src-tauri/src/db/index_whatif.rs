@@ -653,12 +653,19 @@ pub(crate) fn mysql_ignore_index_sql(
     index: &str,
 ) -> Option<(String, usize, usize)> {
     let toks = tokenize_mysql(sql);
-    // 表名に当たる語の数 (コメント・文字列は字句に分ける時点で除かれている)。
-    let mentioned = toks
+    // 表名に当たる語の数 (コメント・文字列は字句に分ける時点で除かれている)。後ろが `.` の語
+    // (列の修飾子 `users.id`) と前が `.` の語 (列名・別 DB 修飾の参照) は表参照ではないので数えない。
+    // `db.users` のように修飾した表参照は差し込み件数側で拾い、最後に大きい方を採る。
+    let mentioned_words = toks
         .iter()
-        .filter(|t| match &t.tok {
-            Tok::Word(w) | Tok::Quoted(w) => w.eq_ignore_ascii_case(table),
-            _ => false,
+        .enumerate()
+        .filter(|(n, t)| {
+            let dot = |t: Option<&Token>| matches!(t.map(|t| &t.tok), Some(Tok::Punct('.')));
+            let is_name = match &t.tok {
+                Tok::Word(w) | Tok::Quoted(w) => w.eq_ignore_ascii_case(table),
+                _ => false,
+            };
+            is_name && !dot(toks.get(n + 1)) && !dot(n.checked_sub(1).and_then(|m| toks.get(m)))
         })
         .count();
     let mut stack = vec![Frame {
@@ -740,7 +747,8 @@ pub(crate) fn mysql_ignore_index_sql(
     for at in inserts.iter().rev() {
         out.insert_str(*at, &hint);
     }
-    Some((out, inserts.len(), mentioned))
+    let applied = inserts.len();
+    Some((out, applied, mentioned_words.max(applied)))
 }
 
 #[cfg(test)]
@@ -896,8 +904,8 @@ mod tests {
     }
 
     #[test]
-    fn mentions_count_flags_unmatched_references() {
-        // 表名が 3 回出るが、表参照は 1 つだけ (列名・別の修飾子)。差し込み件数 < 言及数になる。
+    fn mentions_ignore_column_qualifiers() {
+        // 列の修飾子 (`users.id`) は表参照ではないので、警告 (差し込み < 言及) の材料にしない。
         let (_, applied, mentioned) = mysql_ignore_index_sql(
             "SELECT users.id FROM users WHERE users.id = 1",
             None,
@@ -905,7 +913,27 @@ mod tests {
             "i",
         )
         .expect("rewritten");
-        assert_eq!((applied, mentioned), (1, 3));
+        assert_eq!((applied, mentioned), (1, 1));
+    }
+
+    #[test]
+    fn mentions_count_unmatched_parenthesized_join() {
+        // 括弧で囲んだ結合は表参照として拾えず、差し込めない (0, 1)。
+        let r = mysql_ignore_index_sql(
+            "SELECT 1 FROM (users JOIN o ON o.u = users.id)",
+            None,
+            "users",
+            "i",
+        );
+        assert!(r.is_none());
+        let (_, applied, mentioned) = mysql_ignore_index_sql(
+            "SELECT 1 FROM (users JOIN o ON o.u = users.id) JOIN users u2 ON 1",
+            None,
+            "users",
+            "i",
+        )
+        .expect("rewritten");
+        assert_eq!((applied, mentioned), (1, 2));
     }
 
     #[test]

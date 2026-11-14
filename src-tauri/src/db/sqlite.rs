@@ -3342,10 +3342,15 @@ impl SqliteConn {
             run_sql_on(&mut guard.conn, &plan.explain_before).await
         }
         .await;
-        let rolled_back = sqlx::raw_sql("ROLLBACK")
-            .execute(&mut *guard.conn)
-            .await
-            .is_ok();
+        // 割り込み (SQLITE_INTERRUPT) では SQLite が自動でロールバック済みのことがあり、その場合
+        // ROLLBACK は "no transaction is active" で失敗する。戻っているので成功とみなす。
+        let rolled_back = match sqlx::raw_sql("ROLLBACK").execute(&mut *guard.conn).await {
+            Ok(_) => true,
+            Err(e) => e
+                .to_string()
+                .to_ascii_lowercase()
+                .contains("no transaction is active"),
+        };
         // DDL 後のスキーマで準備された文を、あとで同じ接続が再利用しないようにする。
         let cleared = guard.conn.clear_cached_statements().await.is_ok();
         if rolled_back && cleared {
