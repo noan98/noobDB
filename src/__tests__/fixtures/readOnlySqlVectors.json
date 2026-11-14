@@ -245,7 +245,16 @@
     {"sql": "SELECT [load_extension]('x')", "readOnly": false, "note": "#1735: SQLite の [角括弧] で囲んだ拒否関数名も検出 (識別子の中身を残したマスクで照合)"},
     {"sql": "SELECT [load_extension]('x') -- c", "readOnly": false, "note": "#1735: 角括弧の関数名 + 行コメント"},
     {"sql": "SELECT [nextval]('s')", "readOnly": false, "note": "#1735: 角括弧の nextval も検出"},
-    {"sql": "SELECT [name] FROM [load_extension_log]", "readOnly": true, "note": "#1735: 拒否関数名を部分文字列に含むだけの角括弧識別子は誤検知しない"}
+    {"sql": "SELECT [name] FROM [load_extension_log]", "readOnly": true, "note": "#1735: 拒否関数名を部分文字列に含むだけの角括弧識別子は誤検知しない"},
+    { "sql": "ANALYZE TABLE t", "readOnly": false, "note": "#2327 統計の手当て。PG はサーバ側 READ ONLY でも ANALYZE を通すので字句ガードが唯一の防御" },
+    { "sql": "ANALYZE \"s\".\"t\" (\"a\",\"b\")", "readOnly": false, "note": "#2327 統計の手当て。PG はサーバ側 READ ONLY でも ANALYZE を通すので字句ガードが唯一の防御" },
+    { "sql": "ANALYZE TABLE t UPDATE HISTOGRAM ON a WITH 100 BUCKETS", "readOnly": false, "note": "#2327 統計の手当て。PG はサーバ側 READ ONLY でも ANALYZE を通すので字句ガードが唯一の防御" },
+    { "sql": "ANALYZE TABLE t DROP HISTOGRAM ON a", "readOnly": false, "note": "#2327 統計の手当て。PG はサーバ側 READ ONLY でも ANALYZE を通すので字句ガードが唯一の防御" },
+    { "sql": "CREATE STATISTICS \"s\".\"n\" (dependencies, ndistinct) ON \"a\", \"b\" FROM \"s\".\"t\"", "readOnly": false, "note": "#2327 統計の手当て。PG はサーバ側 READ ONLY でも ANALYZE を通すので字句ガードが唯一の防御" },
+    { "sql": "DROP STATISTICS \"s\".\"n\"", "readOnly": false, "note": "#2327 統計の手当て。PG はサーバ側 READ ONLY でも ANALYZE を通すので字句ガードが唯一の防御" },
+    { "sql": "ALTER TABLE \"s\".\"t\" ALTER COLUMN \"a\" SET STATISTICS 1000", "readOnly": false, "note": "#2327 統計の手当て。PG はサーバ側 READ ONLY でも ANALYZE を通すので字句ガードが唯一の防御" },
+    { "sql": "PRAGMA optimize", "readOnly": false, "note": "#2327 統計の手当て。PG はサーバ側 READ ONLY でも ANALYZE を通すので字句ガードが唯一の防御" },
+    { "sql": "ANALYZE \"t\"", "readOnly": false, "note": "#2327 統計の手当て。PG はサーバ側 READ ONLY でも ANALYZE を通すので字句ガードが唯一の防御" }
 
   ]
 }

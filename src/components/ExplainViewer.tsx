@@ -17,6 +17,10 @@ import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
 import { Skeleton } from "./Skeleton";
 import { PlanPinControls } from "./PlanPinControls";
+import { ReexplainCompare } from "./ReexplainCompare";
+import { StatsAdvisorPanel, type StatsAdvisorConfig } from "./StatsAdvisorPanel";
+import { showsStatsSection } from "./statsAdvisor";
+import { getExplainPin, pinExplainPlan } from "../explainPins";
 import { AiExplainInterpret, type AiExplainInterpretProps } from "./AiExplainInterpret";
 import { staggerContainer, variants } from "../motion";
 import { EXPLAIN_SKELETON_ROWS, staggerPlanIds } from "./explainSkeleton";
@@ -455,6 +459,12 @@ interface Props {
    * 未指定なら固定 / 比較の操作を出さない。
    */
   pin?: { scope: string; sql: string | null };
+  /**
+   * 推定ズレのノードの詳細に出す「統計」の欄 (#2327)。統計の鮮度・ANALYZE・拡張統計 / ヒストグラムの
+   * 作成と削除を、SQL プレビューと既存の確認経路つきで流せる。未指定なら欄を出さない。
+   * 打ち手の実行前に計画を自動で固定し (未固定のとき)、実行後は再 EXPLAIN して固定した計画と比較できる。
+   */
+  stats?: StatsAdvisorConfig;
 }
 
 interface NodeRowProps {
@@ -744,7 +754,7 @@ function AnalyzeBar({
   );
 }
 
-export function ExplainViewer({ result, driver, streaming, analyze, ai, pin }: Props) {
+export function ExplainViewer({ result, driver, streaming, analyze, ai, pin, stats }: Props) {
   const t = useT();
   const locale = useLocale();
   // 計画のパースはここで 1 回だけ行い、Body と AI 解釈で共有する。補助ラベルは
@@ -754,7 +764,32 @@ export function ExplainViewer({ result, driver, streaming, analyze, ai, pin }: P
   // AI 解釈に渡す計画の生テキスト。ストリーミング中は確定していないので渡さない。
   const hasAi = !!ai;
   const plan = hasAi && !streaming ? parsed.raw : null;
-  if (!analyze && !ai && !pin) return <ExplainViewerBody parsed={parsed} streaming={streaming} />;
+  const [compareRequest, setCompareRequest] = useState(0);
+  const analyzeActive = !!analyze?.active && analyze.supported;
+  const statsCtl: StatsControl | undefined =
+    stats && pin
+      ? {
+          config: stats,
+          // 変更の前の計画を固定しておく (すでに固定があれば、それを比較の基準として残す)。
+          onBeforeRun: () => {
+            if (result && !getExplainPin(pin.scope)) {
+              pinExplainPlan(pin.scope, {
+                result,
+                driver,
+                pinnedAt: Date.now(),
+                sql: pin.sql,
+                analyze: analyzeActive,
+              });
+            }
+          },
+          onReexplainCompare: () => {
+            // 実行しなかった (別の EXPLAIN が流れている) ときは、比較の待機を始めない。
+            if (stats.onReexplain()) setCompareRequest((n) => n + 1);
+          },
+        }
+      : undefined;
+  if (!analyze && !ai && !pin)
+    return <ExplainViewerBody parsed={parsed} streaming={streaming} driver={driver} />;
   return (
     <Box flex="1 1 auto" minHeight={0} minWidth={0} display="flex" flexDirection="column" overflow="hidden">
       {(analyze || pin) && (
@@ -785,17 +820,37 @@ export function ExplainViewer({ result, driver, streaming, analyze, ai, pin }: P
           analyze={!!analyze?.active && analyze.supported}
         />
       )}
-      <ExplainViewerBody parsed={parsed} streaming={streaming} />
+      <ExplainViewerBody parsed={parsed} streaming={streaming} driver={driver} stats={statsCtl} />
+      {pin && (
+        <ReexplainCompare
+          requestId={compareRequest}
+          scope={pin.scope}
+          driver={driver}
+          result={result}
+          streaming={!!streaming}
+          analyze={analyzeActive}
+        />
+      )}
     </Box>
   );
+}
+
+interface StatsControl {
+  config: StatsAdvisorConfig;
+  onBeforeRun: () => void;
+  onReexplainCompare: () => void;
 }
 
 function ExplainViewerBody({
   parsed,
   streaming,
+  driver,
+  stats,
 }: {
   parsed: ReturnType<typeof parseExplainForDriver>;
   streaming?: boolean;
+  driver: string;
+  stats?: StatsControl;
 }) {
   const t = useT();
   const { raw, root, error } = parsed;
@@ -1149,6 +1204,15 @@ function ExplainViewerBody({
                   </chakra.li>
                 ))}
               </chakra.ul>
+            )}
+            {stats && showsStatsSection(selected, driver) && (
+              <StatsAdvisorPanel
+                node={selected}
+                driver={driver}
+                config={stats.config}
+                onBeforeRun={stats.onBeforeRun}
+                onReexplainCompare={stats.onReexplainCompare}
+              />
             )}
             {selected.attrs.length === 0 ? (
               <chakra.p css={detailHintCss}>{t("explainNoAttrs")}</chakra.p>
