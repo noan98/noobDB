@@ -45,6 +45,8 @@ pub struct RowMergeColumn {
     pub type_name: String,
     /// 採用元を選べない列 (キー列・他の表から参照されている列・生成列)。
     pub locked: bool,
+    /// 生成列。DB が再計算するので、プレビューの値はマージ後の値ではない。
+    pub generated: bool,
 }
 
 /// 付け替え対象の子テーブルの外部キー 1 本。
@@ -1142,6 +1144,10 @@ async fn build_plan(
             name: c.name.clone(),
             type_name: parent_types[i].clone(),
             locked: locked[i],
+            generated: tcols
+                .iter()
+                .find(|t| t.name.eq_ignore_ascii_case(&c.name))
+                .is_some_and(TableColumnInfo::is_generated),
         })
         .collect();
     let preview = RowMergePreview {

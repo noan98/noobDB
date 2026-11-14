@@ -160,6 +160,9 @@ import type { Transition, Variants } from "motion/react";
  * - 破壊的 DDL / DML の影響ツリー (`ImpactTree` — `staggerContainer` + `variants.staggerItem` で入場 (12 段で頭打ち)、
  *   「ほか N 件」の展開は `AnimatePresence initial={false}` + `variants.collapse`、#2295)。DROP TABLE / DROP COLUMN /
  *   型変更の依存ビュー / 行削除 / 拡張機能削除の確認が共有する。reduced-motion・ハイコントラストでは入場も展開も即時。
+ * - 重複レコードのマージ表 (`RowMergeMatrix`、#2322)。列ごとの選択枠を `layoutId` (`springs.snappy`) で選び直した値へ滑らせ、
+ *   「マージ後の行」の列のセルは `AnimatePresence mode="wait"` + opacity で値の変化をクロスフェードする。
+ *   reduced-motion・ハイコントラストは `useStillMotion()` で transition を 0 秒にして即時に切り替える。
  * - CREATE TABLE ウィザードの列 / 外部キー / CHECK 行の追加/削除 (`CreateTableModal` /
  *   `TableConstraintEditor` — `LiveRowsPresence` + `LiveRow`、#2014)。QueryBuilder と同じ
  *   `variants.collapse` で、消えかけの行は `inert` にして二重押下を防ぐ。
