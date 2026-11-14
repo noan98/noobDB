@@ -14,8 +14,8 @@ import { api } from "../api/tauri";
 
 const preview: RowMergePreview = {
   columns: [
-    { name: "id", typeName: "int", locked: true },
-    { name: "phone", typeName: "text", locked: false },
+    { name: "id", typeName: "int", locked: true, generated: false },
+    { name: "phone", typeName: "text", locked: false, generated: false },
   ],
   rows: [
     [1, null],
@@ -154,10 +154,27 @@ describe("RowMergeModal (#2303)", () => {
     );
   });
 
+  it("生成列はマージ後の行で古い値ではなく「再計算」と出す (#2322)", async () => {
+    vi.mocked(api.previewRowMerge).mockResolvedValue({
+      ...preview,
+      columns: [...preview.columns, { name: "total", typeName: "int", locked: true, generated: true }],
+      rows: [
+        [1, null, 10],
+        [2, "555", 20],
+      ],
+      picks: [0, 1, 0],
+    });
+    mount();
+    await screen.findByTestId("row-merge-row-total");
+    expect(screen.getByTestId("row-merge-recomputed-total")).toHaveTextContent(t("rowMergeRecomputed"));
+    expect(screen.getByTestId("row-merge-result-total")).not.toHaveTextContent("10");
+    expect(screen.queryByTestId("row-merge-recomputed-phone")).toBeNull();
+  });
+
   it("同じ値の列を折りたためる (#2322)", async () => {
     vi.mocked(api.previewRowMerge).mockResolvedValue({
       ...preview,
-      columns: [...preview.columns, { name: "country", typeName: "text", locked: false }],
+      columns: [...preview.columns, { name: "country", typeName: "text", locked: false, generated: false }],
       rows: [
         [1, null, "JP"],
         [2, "555", "JP"],

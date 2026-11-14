@@ -2821,6 +2821,7 @@
     ],
     "columns": [
       {
+        "generated": false,
         "locked": true,
         "name": "id",
         "typeName": "int"

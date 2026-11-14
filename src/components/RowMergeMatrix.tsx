@@ -273,30 +273,46 @@ export function RowMergeMatrix({ preview, order, applying, loading = false, onPi
                     fontFamily="mono"
                     data-testid={`row-merge-result-${c.name}`}
                   >
-                    <AnimatePresence initial={false} mode="wait">
-                      <motion.span
-                        key={`${pickedPos}:${resultText}`}
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        transition={fade}
-                        style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-1)" }}
-                      >
-                        <chakra.span color={pickedRow?.[ci] === null ? "app.textMuted" : "app.text"}>
-                          {resultText}
-                        </chakra.span>
+                    {c.generated ? (
+                      <Tooltip label={t("rowMergeRecomputedHint")}>
                         <chakra.span
                           textStyle="caption"
+                          fontFamily="body"
                           px="1"
                           borderRadius="sm"
                           bg="app.surfaceMuted"
                           color="app.textSecondary"
-                          data-testid={`row-merge-source-${c.name}`}
+                          data-testid={`row-merge-recomputed-${c.name}`}
                         >
-                          {order[pickedPos] !== undefined ? (order[pickedPos] ?? 0) + 1 : ""}
+                          {t("rowMergeRecomputed")}
                         </chakra.span>
-                      </motion.span>
-                    </AnimatePresence>
+                      </Tooltip>
+                    ) : (
+                      <AnimatePresence initial={false} mode="wait">
+                        <motion.span
+                          key={`${pickedPos}:${resultText}`}
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={fade}
+                          style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-1)" }}
+                        >
+                          <chakra.span color={pickedRow?.[ci] === null ? "app.textMuted" : "app.text"}>
+                            {resultText}
+                          </chakra.span>
+                          <chakra.span
+                            textStyle="caption"
+                            px="1"
+                            borderRadius="sm"
+                            bg="app.surfaceMuted"
+                            color="app.textSecondary"
+                            data-testid={`row-merge-source-${c.name}`}
+                          >
+                            {order[pickedPos] !== undefined ? (order[pickedPos] ?? 0) + 1 : ""}
+                          </chakra.span>
+                        </motion.span>
+                      </AnimatePresence>
+                    )}
                   </chakra.td>
                 </tr>
               );
