@@ -618,7 +618,7 @@ import { OutputPanel } from "./components/OutputPanel";
 import { statusLogClass, statusTone, type Status } from "./statusMessage";
 import { pushMessage } from "./messageLog";
 import { joinDroppedSql, physicalToCssPoint } from "./dropInsert";
-import { lineRangeOf, pushOutput, type OutputInput } from "./outputLog";
+import { lineRangeOf, locateErrorRange, pushOutput, type OutputInput } from "./outputLog";
 import {
   availableBottomPanelTabs,
   bottomPanelStripTabs,
@@ -6691,7 +6691,9 @@ export default function App() {
           outCtx,
         );
       } catch (e) {
-        patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
+        // 失敗した文を記録しておく。エラー位置の波線・「エラー位置へ」が直前に成功した別の文を
+        // 指さないように、通常の実行経路と同じく試みた SQL を lastExecutedSql に残す (#2330)。
+        patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e), lastExecutedSql: sql }));
         setStatus({
           kind: "key",
           key: "statusQueryError",
@@ -7591,7 +7593,7 @@ export default function App() {
   // エラー本文の行番号 (無ければ文の先頭) の行を選択する。エディタが書き換わって文が
   // 見つからないときは通知だけ出す。
   const handleOutputGotoError = useCallback(
-    (sql: string, line: number | null) => {
+    (sql: string, line: number | null, error: string | null) => {
       const editor =
         activeTab && (activeTab.kind === "query" || activeTab.kind === "explain") ? activeEditor() : null;
       const text = editor?.getText() ?? "";
@@ -7600,10 +7602,23 @@ export default function App() {
         toast.info(t("outputGotoNotFound"));
         return;
       }
-      const r = lineRangeOf(sql, line ?? 1);
+      // 位置 (PostgreSQL の position / MySQL の near 断片 / SQLite のトークン) まで絞れたらその範囲、
+      // 絞れなければ従来どおり行番号の行 (行も無ければ文の先頭行)。
+      const located = locateErrorRange(error, sql, selectedProfile?.driver);
+      const r = located?.precise ? located : lineRangeOf(sql, line ?? 1);
       editor.selectRange(at + r.from, at + r.to);
     },
-    [activeTab, activeEditor, toast, t],
+    [activeTab, activeEditor, toast, t, selectedProfile?.driver],
+  );
+
+  // 結果グリッドのエラー空状態の「エラー位置へ」(#2330)。エディタに残した波線の範囲へスクロールして
+  // 一瞬ハイライトする。波線が編集で消えていたら、実行した文とエラー本文から位置を求め直す。
+  const revealQueryError = useCallback(
+    (paneId: string, sql: string, error: string | null) => {
+      const ok = editorRefs.current.get(paneId)?.revealRuntimeError({ sql, error }) ?? false;
+      if (!ok) toast.info(t("outputGotoNotFound"));
+    },
+    [toast, t],
   );
 
   // 出力タブの「再実行」(#1541)。記録時と同じ DB のタブで流す (`database` が無ければ接続の既定)。
@@ -13225,6 +13240,7 @@ export default function App() {
     discardEditsAndPreviewForTab,
     explainForTab,
     fetchAllForTab,
+    revealQueryError,
     focusPane,
     goToPageInTab,
     handleCloseTab: requestCloseTab,
