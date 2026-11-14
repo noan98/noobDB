@@ -1,11 +1,11 @@
 //! ライブクエリ・インスペクタ (#746) のドライバ非依存ロジック (#1259 で JS から移管)。
 //!
-//! - [`normalize_sql_fingerprint`]: ライブテール用のリテラル非依存フィンガープリント。
+//! - [`normalize_sql_fingerprint`][]: ライブテール用のリテラル非依存フィンガープリント。
 //!   旧 `queryInspector.ts` の正規表現実装をそのまま手書きスキャナへ移したもので、
 //!   `src/__tests__/fixtures/sqlFingerprintVectors.json` (旧 JS 実装を oracle に生成した
 //!   ゴールデンベクタ) で出力の一致を固定する。正規表現クレートを増やさず、先読みや
 //!   バックトラックの癖 (`'a'' from t` → `?' from t` など) も含めて再現している。
-//! - [`InspectorState`]: セッションごとに baseline と直前スナップショットを保持して
+//! - [`InspectorState`][]: セッションごとに baseline と直前スナップショットを保持して
 //!   digest 差分 (calls > 0 の行) を返す。**サーバ側カウンタをリセットしない**設計
 //!   (権限不要) は従来どおり — 累積値の引き算をクライアントではなくここで行うだけ。
 //!   SQL 本文 (fingerprint) は digest の初出時のみ返し、以降は省く。

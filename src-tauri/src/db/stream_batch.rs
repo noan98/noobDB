@@ -5,10 +5,10 @@
 //! メッセージ・フロントの state 更新・`ResultGrid` の全行メモ再計算が走る。
 //! ここではドライバ非依存 (= `StreamBatch::Rows` を受けるだけ) に次の 2 つを提供する。
 //!
-//! - [`StreamBatcher`]: 初回バッチは即送信 (最初の行が出るまでの時間を悪化させない)
+//! - [`StreamBatcher`][]: 初回バッチは即送信 (最初の行が出るまでの時間を悪化させない)
 //!   しつつ、以降は「前回送信から一定時間経過」か「溜まった行数がサイズ上限に到達」の
 //!   どちらかで合流して送る。サイズ上限は送信のたびに倍々で伸びる。
-//! - [`StreamStats`]: 列ごとの NULL 数・数値列 min/max・行ハッシュ重複フラグを
+//! - [`StreamStats`][]: 列ごとの NULL 数・数値列 min/max・行ハッシュ重複フラグを
 //!   バッチごとに逐次更新する。フロントは全行を舐め直さずに済む。数値判定は
 //!   `cellConditionalFormat.toNumber` (JS の `Number()`) と同じ基準
 //!   (`src/__tests__/fixtures/streamStatsVectors.json` で固定)。

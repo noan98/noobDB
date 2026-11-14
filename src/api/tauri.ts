@@ -47,7 +47,7 @@ import { importCommands } from "./commands/import";
 import { importTemplatesCommands } from "./commands/importTemplates";
 import { scriptCommands } from "./commands/script";
 import { cloneRowsCommands } from "./commands/cloneRows";
-import { indexWhatIfCommands } from "./commands/indexWhatIf";
+import { indexWhatIfCommands } from "./commands/indexWhatif";
 import { rowMergeCommands } from "./commands/rowMerge";
 import { auditTriggerCommands } from "./commands/auditTrigger";
 import { subsetCommands } from "./commands/subset";
