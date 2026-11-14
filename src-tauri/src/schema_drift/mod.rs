@@ -424,6 +424,16 @@ pub fn schema_diff_between(prev: &SnapshotPayload, next: &SnapshotPayload) -> Sc
                 .iter()
                 .any(|c| c.extra.to_ascii_uppercase().contains("IDENTITY"))
         });
+    // さらに後から ALWAYS / BY DEFAULT を `IDENTITY ALWAYS` / `IDENTITY` に分けて出すようになった (#2336)。
+    // 旧世代に `IDENTITY ALWAYS` が 1 つも無いときは、両側の `IDENTITY ALWAYS` を `IDENTITY` に寄せて比べる
+    // (旧世代に既にあれば、ALWAYS と BY DEFAULT の切り替えは通常どおり差分として拾う)。
+    let fold_always = prev.driver == DriverKind::Postgres
+        && next.driver == DriverKind::Postgres
+        && !prev.tables.iter().any(|t| {
+            t.columns
+                .iter()
+                .any(|c| c.extra.to_ascii_uppercase().contains("IDENTITY ALWAYS"))
+        });
     let to_columns = |p: &SnapshotPayload| -> Vec<TableColumns> {
         p.tables
             .iter()
@@ -434,10 +444,11 @@ pub fn schema_diff_between(prev: &SnapshotPayload, next: &SnapshotPayload) -> Sc
                     .iter()
                     .map(|c| {
                         let mut c = c.clone();
-                        if ignore_extra
-                            || (strip_identity && c.extra.eq_ignore_ascii_case("IDENTITY"))
-                        {
+                        let identity = c.extra.to_ascii_uppercase().contains("IDENTITY");
+                        if ignore_extra || (strip_identity && identity) {
                             c.extra.clear();
+                        } else if fold_always && c.extra.eq_ignore_ascii_case("IDENTITY ALWAYS") {
+                            c.extra = "IDENTITY".to_string();
                         }
                         c
                     })
@@ -778,5 +789,30 @@ mod tests {
         let old2 = mk(vec![id_new, gen.clone()]);
         let new2 = mk(vec![col("id", "bigint"), gen]);
         assert!(!summarize_payloads(&old2, &new2).tables.is_empty());
+    }
+
+    #[test]
+    fn identity_always_split_is_not_drift_after_upgrade() {
+        let mk = |extra: &str| {
+            let mut id = col("id", "bigint");
+            id.extra = extra.to_string();
+            SnapshotPayload {
+                driver: DriverKind::Postgres,
+                database: "d".to_string(),
+                tables: vec![table("t", vec![id], vec![])],
+            }
+        };
+        // 旧 "IDENTITY" と新 "IDENTITY ALWAYS" は差分にしない。
+        assert!(summarize_payloads(&mk("IDENTITY"), &mk("IDENTITY ALWAYS"))
+            .tables
+            .is_empty());
+        // 旧世代が identity を出していない (extra 空) 場合も同様。
+        assert!(summarize_payloads(&mk(""), &mk("IDENTITY ALWAYS"))
+            .tables
+            .is_empty());
+        // 旧世代に "IDENTITY ALWAYS" が既にあれば、ALWAYS と BY DEFAULT の切り替えは差分。
+        assert!(!summarize_payloads(&mk("IDENTITY ALWAYS"), &mk("IDENTITY"))
+            .tables
+            .is_empty());
     }
 }

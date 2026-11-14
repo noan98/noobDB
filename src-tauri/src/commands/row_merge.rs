@@ -672,7 +672,8 @@ async fn build_plan(
                 || tcols
                     .iter()
                     .find(|c| c.name.eq_ignore_ascii_case(&pcol_names[i]))
-                    .is_some_and(TableColumnInfo::is_generated)
+                    // 生成列と GENERATED ALWAYS identity 列は UPDATE で値を入れられない (#2336)。
+                    .is_some_and(|c| c.is_generated() || c.is_always_identity())
         })
         .collect();
     let mut picks = match &req.picks {
