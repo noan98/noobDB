@@ -232,6 +232,8 @@ export interface PaneActions {
   resolveParamsThen: (tab: Tab, sql: string, mode: "run" | "runNewTab" | "preview" | "explain") => void;
   runBatchInTab: (tabId: string, sql: string, stopOnError: boolean, tabOverride?: Tab) => unknown;
   runExplainInTab: (tabId: string, sql: string, analyze: boolean) => unknown;
+  /** 統計の手当て (ANALYZE / 拡張統計 / ヒストグラム) の SQL を、確認ゲートを通して順に流す (#2327)。 */
+  runStatsStatements: (statements: string[], database: string | null) => Promise<boolean>;
   runInTabWithGate: (tab: Tab, sql: string, opts?: { newTab?: boolean; fresh?: boolean }) => void;
   runQueryInTab: (tabId: string, sql: string, paginatableBase?: string | null) => unknown;
   selectTab: (paneId: string, tabId: string) => void;
@@ -906,6 +908,28 @@ export const PaneView = memo(
                                   driver={selectedProfile?.driver ?? "mysql"}
                                   streaming={tab.streaming}
                                   pin={{ scope: tab.id, sql: tab.explainSourceSql ?? getTabSql(tab) }}
+                                  stats={
+                                    sessionId && selectedProfile
+                                      ? {
+                                          sessionId,
+                                          database: tab.database ?? selectedProfile.database ?? null,
+                                          readOnly,
+                                          runStatements: (statements) =>
+                                            actions.runStatsStatements(
+                                              statements,
+                                              tab.database ?? selectedProfile.database ?? null,
+                                            ),
+                                          onReexplain: () => {
+                                            if (tab.streaming) return;
+                                            void actions.runExplainInTab(
+                                              tab.id,
+                                              getTabSql(tab),
+                                              !!tab.explainAnalyze,
+                                            );
+                                          },
+                                        }
+                                      : undefined
+                                  }
                                   ai={
                                     sessionId && selectedProfile
                                       ? {

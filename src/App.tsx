@@ -10307,6 +10307,25 @@ export default function App() {
     [confirm, maintenanceMessage, runMaintenanceDdl, toast],
   );
 
+  // 実行計画の「統計」欄からの手当て (#2327)。パネルが SQL プレビューを見せたあと、共通の DDL ゲート
+  // (本番 + confirm_writes の承認・危険文の確認) を 1 回だけ通し、文を順に流す。read_only 接続は
+  // バックエンドが拒否する (エラーはトーストで報告)。キャンセル / 失敗は false。
+  const runStatsStatements = useCallback(
+    async (statements: string[], database: string | null): Promise<boolean> => {
+      if (!sessionId) return false;
+      if (!(await runGuardedDdl(statements.join("\n")))) return false;
+      try {
+        for (const sql of statements) await api.runQuery(sessionId, sql, database);
+        toast.success(translate("statsAdvRanToast"));
+        return true;
+      } catch (e) {
+        toast.error(translate("statusQueryError", { error: String(e) }));
+        return false;
+      }
+    },
+    [sessionId, runGuardedDdl, toast],
+  );
+
   // パーティション単位の保守 (#1868)。確認ダイアログで生成 SQL を見せ、既存の保守経路で流す。
   const handleRunPartitionMaintenance = useCallback(
     async (
@@ -13263,6 +13282,7 @@ export default function App() {
     resolveParamsThen,
     runBatchInTab,
     runExplainInTab,
+    runStatsStatements,
     runInTabWithGate,
     runQueryInTab,
     selectTab,
