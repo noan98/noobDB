@@ -102,6 +102,23 @@ describe("AuditTriggerModal", () => {
     await waitFor(() => expect(screen.getByText(t("auditWarnMysqlReused"))).toBeInTheDocument());
   });
 
+  it("操作の選択に合わせて流れの図と見本が変わり、除外列は打ち消し線で示す (#2324)", async () => {
+    const user = userEvent.setup();
+    setup();
+    await waitFor(() => expect(screen.getByTestId("audit-sample")).toBeInTheDocument());
+    expect(screen.getByTestId("audit-flow-diagram")).toBeInTheDocument();
+    expect(screen.getAllByTestId("audit-op-chip-insert")[0]).toHaveAttribute("data-tone", "success");
+    expect(screen.getByTestId("audit-sample-card-update")).toBeInTheDocument();
+    expect(screen.getByTestId("audit-sample-skip-badge")).toBeInTheDocument();
+    // email はマスク対象で既定除外。
+    expect(screen.getAllByTestId("audit-sample-cell-email")[0]).toHaveAttribute("data-excluded", "true");
+    expect(screen.getAllByTestId("audit-sample-cell-id")[0]).toHaveAttribute("data-excluded", "false");
+    await user.click(screen.getByRole("checkbox", { name: "DELETE" }));
+    await waitFor(() => expect(screen.queryByTestId("audit-sample-card-delete")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("checkbox", { name: t("auditSkipUnchanged") }));
+    expect(screen.queryByTestId("audit-sample-skip-badge")).not.toBeInTheDocument();
+  });
+
   it("read_only では確定できない", async () => {
     setup(true);
     await waitFor(() => expect(generate).toHaveBeenCalled());

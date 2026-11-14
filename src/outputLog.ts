@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import type { ServerMessage, ServerMessageSeverity } from "./api/tauri";
 import type { I18nKey } from "./i18n";
 import { matchesSearchTerms, searchTerms } from "./logSearch";
+import { maskLiterals } from "./dangerousSql";
 import { redactCredentials, redactErrorText } from "./sqlCredentials";
 import type { SemanticRole } from "./semanticColors";
 
@@ -308,6 +309,206 @@ export function lineRangeOf(sql: string, line: number): { from: number; to: numb
     from = m.index + m[0].length;
   }
   return { from, to: sql.length };
+}
+
+/** エラー位置として線を引く範囲。`from` / `to` は `sql` の UTF-16 オフセット (`[from, to)`)。 */
+export interface ErrorRange {
+  from: number;
+  to: number;
+  /** 位置 / トークンまで絞れたか。false は「文の先頭行に落とした」ベストエフォート。 */
+  precise: boolean;
+}
+
+const WORD_CHAR = /[\p{L}\p{N}_$]/u;
+
+/** `at` から始まるトークンの終端 (UTF-16)。語は語文字の連続、引用は閉じ引用まで、それ以外は 1 コードポイント。 */
+function tokenEnd(sql: string, at: number): number {
+  const first = String.fromCodePoint(sql.codePointAt(at) ?? 0x20);
+  if (first === '"' || first === "'" || first === "`") {
+    let i = at + 1;
+    while (i < sql.length) {
+      if (sql[i] === first) {
+        if (sql[i + 1] === first) {
+          i += 2;
+          continue;
+        }
+        return i + 1;
+      }
+      i += 1;
+    }
+    return sql.length;
+  }
+  if (!WORD_CHAR.test(first)) return at + first.length;
+  let i = at;
+  while (i < sql.length) {
+    const cp = String.fromCodePoint(sql.codePointAt(i) ?? 0x20);
+    if (!WORD_CHAR.test(cp)) break;
+    i += cp.length;
+  }
+  return i;
+}
+
+/** コードポイント単位の 1 始まりオフセット `offset` を UTF-16 オフセットへ。範囲外は null。 */
+function utf16IndexOfCodePoint(sql: string, offset: number): number | null {
+  let i = 0;
+  let n = 1;
+  while (i < sql.length) {
+    if (n === offset) return i;
+    const cp = sql.codePointAt(i) ?? 0;
+    i += cp > 0xffff ? 2 : 1;
+    n += 1;
+  }
+  return null;
+}
+
+/** 空白だけの先頭を飛ばした、文の最初の行の範囲 (末尾の空白は除く)。 */
+function firstStatementLine(sql: string): { from: number; to: number } {
+  const from = sql.length - sql.trimStart().length;
+  const nl = /\r\n|\r|\n/.exec(sql.slice(from));
+  const end = nl ? from + nl.index : sql.length;
+  return { from, to: Math.max(from, from + sql.slice(from, end).trimEnd().length) };
+}
+
+function tokenRangeAt(sql: string, at: number): ErrorRange {
+  return { from: at, to: tokenEnd(sql, at), precise: true };
+}
+
+/** `[from, to)` の中の、空白でない最後のトークン。全部空白なら null。 */
+function lastTokenIn(sql: string, from: number, to: number): ErrorRange | null {
+  let end = to;
+  while (end > from && /\s/.test(sql[end - 1])) end -= 1;
+  if (end <= from) return null;
+  let start = end - 1;
+  if (WORD_CHAR.test(sql[start])) {
+    while (start > from && WORD_CHAR.test(sql[start - 1])) start -= 1;
+  } else if (start > from && /[\uDC00-\uDFFF]/.test(sql[start])) {
+    start -= 1;
+  }
+  return { from: start, to: end, precise: true };
+}
+
+/**
+ * `name` の出現位置を探す。リテラル・コメントの中 (マスクで消える部分) と、前後が語文字の
+ * 出現 (`id` に対する `uid`) は採らない。大文字小文字は、まず一致するもの、無ければ無視して探す。
+ */
+function findNamed(sql: string, name: string, driver: string): ErrorRange | null {
+  if (name.length === 0) return null;
+  let masked = sql;
+  try {
+    masked = maskLiterals(sql, driver, { keepQuotedIdentifiers: true, cache: false });
+  } catch {
+    masked = sql;
+  }
+  if (masked.length !== sql.length) masked = sql;
+  const scan = (hay: string, needle: string): number => {
+    const leftWord = WORD_CHAR.test(needle[0]);
+    const rightWord = WORD_CHAR.test(needle[needle.length - 1]);
+    for (let i = hay.indexOf(needle); i >= 0; i = hay.indexOf(needle, i + 1)) {
+      if (leftWord && i > 0 && WORD_CHAR.test(hay[i - 1])) continue;
+      const e = i + needle.length;
+      if (rightWord && e < hay.length && WORD_CHAR.test(hay[e])) continue;
+      return i;
+    }
+    return -1;
+  };
+  let idx = scan(masked, name);
+  if (idx < 0) idx = scan(masked.toLowerCase(), name.toLowerCase());
+  return idx < 0 ? null : { from: idx, to: idx + name.length, precise: true };
+}
+
+function locatePostgres(error: string, sql: string): ErrorRange | null {
+  const m = /\(position (\d+)\)\s*$/.exec(error);
+  if (!m) return null;
+  const offset = Number(m[1]);
+  if (!Number.isSafeInteger(offset) || offset < 1) return null;
+  const at = utf16IndexOfCodePoint(sql, offset);
+  // 位置が文の末尾を越える (at end of input / バックエンドが足した LIMIT の部分) ときは最後のトークン。
+  return at === null ? lastTokenIn(sql, 0, sql.length) : tokenRangeAt(sql, at);
+}
+
+/** 自動 LIMIT (バックエンドが末尾に足す) を断片から外す。 */
+const AUTO_LIMIT_TAIL = /\s+LIMIT\s+\d+\s*;?\s*$/i;
+/** MySQL の near 断片の最大長 (これ以上は切り詰められている)。 */
+const MYSQL_NEAR_MAX = 80;
+
+function locateMysql(error: string, sql: string): ErrorRange | null {
+  const near = /\bnear '([\s\S]*)' at line (\d+)\b/i.exec(error);
+  if (near) {
+    const line = Math.max(1, Number(near[2]));
+    const lineRange = lineRangeOf(sql, line);
+    const rawFragment = near[1].trimEnd();
+    const fragment = sql.trimEnd().endsWith(rawFragment)
+      ? rawFragment
+      : rawFragment.replace(AUTO_LIMIT_TAIL, "");
+    if (fragment.length > 0) {
+      const body = sql.trimEnd();
+      let hit = -1;
+      if (fragment.length < MYSQL_NEAR_MAX && body.endsWith(fragment)) {
+        // 断片は文の残り全部。末尾と一致する位置が正しい。
+        hit = body.length - fragment.length;
+      } else {
+        // 切り詰められた断片は、報告された行の中で最後に一致する位置、無ければ行以降の最初。
+        const last = body.lastIndexOf(fragment, lineRange.to);
+        hit = last >= lineRange.from ? last : body.indexOf(fragment, lineRange.from);
+        if (hit < 0) hit = body.indexOf(fragment);
+      }
+      if (hit >= 0) return tokenRangeAt(sql, hit);
+    } else {
+      const last = lastTokenIn(sql, lineRange.from, lineRange.to);
+      if (last) return last;
+    }
+    return { ...lineRange, precise: false };
+  }
+  const col = /Unknown column '([^']+)'/i.exec(error);
+  if (col) {
+    const full = col[1];
+    const r = findNamed(sql, full, "mysql") ?? findNamed(sql, full.split(".").pop() ?? full, "mysql");
+    if (r) return r;
+  }
+  const line = /\bat line (\d+)\b/i.exec(error);
+  if (line) return { ...lineRangeOf(sql, Math.max(1, Number(line[1]))), precise: false };
+  return null;
+}
+
+function locateSqlite(error: string, sql: string): ErrorRange | null {
+  const named =
+    /\bnear "([^"]+)"/.exec(error) ??
+    /\bnear '([^']+)'/.exec(error) ??
+    /no such (?:column|table|function|index|view): ([^\s,()]+)/i.exec(error);
+  if (!named) return null;
+  const tok = named[1];
+  return findNamed(sql, tok, "sqlite") ?? findNamed(sql, tok.split(".").pop() ?? tok, "sqlite");
+}
+
+/**
+ * 実行時エラーの本文から、エラー位置として線を引く範囲を求める (#2330)。`sql` は実行した文そのもの
+ * (複数文の途中の文でも、その文の先頭が 0)。
+ * - PostgreSQL: ` (position n)` (コードポイント単位の 1 始まり) の位置から始まるトークン。
+ * - MySQL / MariaDB: `near '...' at line N` の断片の最初の出現 (行 N から探す) のトークン。
+ *   `Unknown column 'x'` は `x` の出現位置。
+ * - SQLite: `near "tok"` / `no such column: x` のトークンを文の中から探す (ベストエフォート)。
+ * どれでも決まらなければ文の先頭行 (`precise: false`)。`sql` が空なら null。
+ * `driver` は先に試す方言のヒント。分からなくても、本文の形でどの方言かは判別できる。
+ */
+export function locateErrorRange(
+  error: string | null | undefined,
+  sql: string,
+  driver?: string | null,
+): ErrorRange | null {
+  if (sql.trim().length === 0) return null;
+  if (error) {
+    const order: Array<(e: string, s: string) => ErrorRange | null> =
+      driver === "mysql"
+        ? [locateMysql, locatePostgres, locateSqlite]
+        : driver === "sqlite"
+          ? [locateSqlite, locatePostgres, locateMysql]
+          : [locatePostgres, locateMysql, locateSqlite];
+    for (const f of order) {
+      const r = f(error, sql);
+      if (r) return r;
+    }
+  }
+  return { ...firstStatementLine(sql), precise: false };
 }
 
 function firstLine(s: string): string {

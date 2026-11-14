@@ -297,6 +297,17 @@ impl TableColumnInfo {
         .iter()
         .any(|m| up.contains(m))
     }
+
+    /// PostgreSQL の `GENERATED ALWAYS AS IDENTITY` 列 (`extra` = `IDENTITY ALWAYS`)。
+    /// `OVERRIDING SYSTEM VALUE` なしでは値を明示した INSERT (428C9) も `UPDATE` (DEFAULT 以外) もできない (#2336)。
+    pub fn is_always_identity(&self) -> bool {
+        self.extra.to_ascii_uppercase().contains("IDENTITY ALWAYS")
+    }
+
+    /// PostgreSQL の identity 列 (`GENERATED ALWAYS` / `BY DEFAULT` のどちらも)。
+    pub fn is_identity(&self) -> bool {
+        self.extra.to_ascii_uppercase().contains("IDENTITY")
+    }
 }
 
 /// 生成列の列名一覧 (データ同期・サンドボックス書き戻しの書き込み対象から外す用)。
@@ -2254,5 +2265,37 @@ mod schema_object_kind_tests {
                 "{key}: supports_kind で絞った kind とゴールデンの drivers が不一致"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    fn col(extra: &str) -> TableColumnInfo {
+        TableColumnInfo {
+            name: "c".into(),
+            data_type: "int".into(),
+            nullable: false,
+            key: String::new(),
+            default: None,
+            extra: extra.into(),
+            referenced_table: None,
+            referenced_column: None,
+            comment: None,
+        }
+    }
+
+    /// ALWAYS / BY DEFAULT / identity でない列 / 生成列の境界 (#2336)。
+    #[test]
+    fn always_identity_is_distinguished_from_by_default() {
+        assert!(col("IDENTITY ALWAYS").is_always_identity());
+        assert!(col("IDENTITY ALWAYS").is_identity());
+        assert!(!col("IDENTITY").is_always_identity());
+        assert!(col("IDENTITY").is_identity());
+        assert!(!col("").is_identity());
+        assert!(!col("auto_increment").is_identity());
+        assert!(!col("STORED GENERATED").is_identity());
+        assert!(!col("STORED GENERATED").is_always_identity());
     }
 }

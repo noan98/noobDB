@@ -25,10 +25,10 @@ use crate::commands::bulk_capture::BulkCaptureConfig;
 use crate::commands::query::record_write_history;
 use crate::commands::subset::{collect_subset_with, CollectMode, SubsetColumnInfo, SubsetRequest};
 use crate::db::clone_rows::{
-    analyze, auto_columns, expression_select, has_unresolvable_self_reference, insert_sql, key_of,
-    loose_sig, rule_columns, self_reference_generations, validate_expression, CloneColumnRule,
-    CloneInput, CloneTable, FkRemap, KeyColumnReport, KeyRule, TableReport, UniqueConflict,
-    MAX_CLONE_ROWS,
+    analyze, auto_columns, expression_select, has_unresolvable_self_reference, identity_columns,
+    insert_sql, key_of, loose_sig, rule_columns, self_reference_generations, validate_expression,
+    CloneColumnRule, CloneInput, CloneTable, FkRemap, KeyColumnReport, KeyRule, TableReport,
+    UniqueConflict, MAX_CLONE_ROWS,
 };
 use crate::db::data_diff::key_signature;
 use crate::db::subset::{
@@ -188,6 +188,7 @@ async fn prepare(
             Connection::MySql(_) | Connection::Postgres(_) => true,
         };
         let auto = auto_columns(driver, &cols, &meta.primary_key, rowid_alias);
+        let (identity, always) = identity_columns(driver, &cols, &meta.primary_key);
         let unique_indexes = conn
             .list_indexes(&db, &t.table)
             .await?
@@ -200,6 +201,8 @@ async fn prepare(
         tables.push(CloneTable {
             meta: meta.clone(),
             auto_columns: auto,
+            identity_columns: identity,
+            always_columns: always,
             unique_indexes,
         });
     }
@@ -429,6 +432,7 @@ async fn apply(
             let omitted: Vec<usize> = ct
                 .auto_columns
                 .iter()
+                .chain(ct.identity_columns.iter())
                 .filter_map(|c| meta.columns.iter().position(|x| x == c))
                 .filter(|i| !changed.contains(i))
                 .collect();
@@ -446,7 +450,9 @@ async fn apply(
                 .iter()
                 .filter_map(|&i| meta.columns.get(i).cloned())
                 .collect();
-            let sql = insert_sql(driver, &table_ref, &cols, &lits, &returning);
+            // 値を明示して入れる ALWAYS identity 列 (主キーへの上書き方針など) には OVERRIDING SYSTEM VALUE が要る。
+            let overriding = cols.iter().any(|c| ct.always_columns.contains(c));
+            let sql = insert_sql(driver, &table_ref, &cols, &lits, &returning, overriding);
             if returning.is_empty() {
                 conn.execute_in_transaction(&sql).await?;
             } else if driver == DriverKind::Mysql {
