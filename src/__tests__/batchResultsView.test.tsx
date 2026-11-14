@@ -132,11 +132,13 @@ describe("BatchResultsView のエディタ連携 (#2331)", () => {
       />,
     );
     const user = userEvent.setup();
-    const cards = screen.getAllByRole("button", { name: t("batchCardGoto", { n: 1 }) });
+    const cards = screen.getAllByRole("button", { name: new RegExp(`^${t("batchCardGoto", { n: 1 })}`) });
     await user.click(cards[0] as HTMLElement);
     expect(onSelect).toHaveBeenLastCalledWith(0);
     expect(screen.getAllByTestId("batch-selection-frame")).toHaveLength(1);
-    (screen.getByRole("button", { name: t("batchCardGoto", { n: 2 }) }) as HTMLElement).focus();
+    (
+      screen.getByRole("button", { name: new RegExp(`^${t("batchCardGoto", { n: 2 })}`) }) as HTMLElement
+    ).focus();
     await user.keyboard("{Enter}");
     expect(onSelect).toHaveBeenLastCalledWith(1);
     expect(screen.getAllByTestId("batch-card").filter((c) => c.dataset.selected === "true")).toHaveLength(1);

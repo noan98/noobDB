@@ -1580,6 +1580,7 @@ export default function App() {
       preview: shortcutBindings.preview,
       format: shortcutBindings.format,
       explain: shortcutBindings.explain,
+      showBatchResult: shortcutBindings.showBatchResult,
     }),
     [
       shortcutBindings.run,
@@ -1587,6 +1588,7 @@ export default function App() {
       shortcutBindings.preview,
       shortcutBindings.format,
       shortcutBindings.explain,
+      shortcutBindings.showBatchResult,
     ],
   );
   // グリッド系ショートカット (コピー/コピー+ヘッダ/行インスペクタ/Undo/Redo/

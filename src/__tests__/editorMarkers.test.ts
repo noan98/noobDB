@@ -47,6 +47,12 @@ describe("editorMarkers (#2330)", () => {
     const once = mapMarkers([mk(10, 13)], ins(11, "x"), "stale");
     expect(mapMarkers(once, ins(0, "z"), "stale")[0]?.stale).toBe(true);
   });
+  it("onEdit: stale は端への純粋な挿入では古い扱いにしない (drop は従来どおり触った扱い)", () => {
+    expect(mapMarkers([mk(10, 13)], ins(10, "x"), "stale")).toEqual([{ from: 11, to: 14, kind: "error" }]);
+    expect(mapMarkers([mk(10, 13)], ins(13, "x"), "stale")).toEqual([{ from: 10, to: 13, kind: "error" }]);
+    expect(mapMarkers([mk(10, 13)], ins(10, "x"), "drop")).toEqual([]);
+    expect(mapMarkers([mk(10, 13)], del(12, 14), "stale")[0]?.stale).toBe(true);
+  });
   it("onEdit: keep は触っても stale を立てない", () => {
     expect(mapMarkers([mk(10, 13)], ins(11, "xy"), "keep")).toEqual([{ from: 10, to: 15, kind: "error" }]);
   });

@@ -51,8 +51,8 @@ export type EditMode = "drop" | "stale" | "keep";
 
 /**
  * 文書の変更 `changes` に合わせてマーカーの位置を追従させる。範囲と重なる編集 (範囲の端・内側への挿入を
- * 含む) を受けたマーカーは、`"drop"` なら捨て、`"stale"` なら `stale: true` にして残す。手前 / 後ろの編集では
- * どちらでも何もしない。`mode` の boolean は旧呼び出し (#2330) との互換で、true = `"drop"`、false = `"keep"`。
+ * 含む) を受けたマーカーは `"drop"` なら捨てる。`"stale"` は範囲の内側に食い込む編集 (端への純粋な挿入は除く)
+ * を受けたものを `stale: true` にして残す。手前 / 後ろの編集ではどちらでも何もしない。`mode` の boolean は旧呼び出し (#2330) との互換で、true = `"drop"`、false = `"keep"`。
  */
 export function mapMarkers<D>(
   markers: readonly EditorMarker<D>[],
@@ -62,13 +62,26 @@ export function mapMarkers<D>(
   const m0: EditMode = mode === true ? "drop" : mode === false ? "keep" : mode;
   const out: EditorMarker<D>[] = [];
   for (const m of markers) {
-    const touched = m0 !== "keep" && rangeTouched(m.from, m.to, changes);
+    // `"stale"` は端への純粋な挿入 (直前の改行や直後の文の追加) では古い扱いにしない。`"drop"` は従来どおり端も含める。
+    const touched =
+      m0 === "drop"
+        ? rangeTouched(m.from, m.to, changes)
+        : m0 === "stale" && rangeInvaded(m.from, m.to, changes);
     if (touched && m0 === "drop") continue;
     const from = changes.mapPos(m.from, 1);
     const to = Math.max(from, changes.mapPos(m.to, -1));
     out.push(touched ? { ...m, from, to, stale: true } : { ...m, from, to });
   }
   return out;
+}
+
+/** `[from, to)` の内側に食い込む編集があるか (端への純粋な挿入は含めない。`stale` 判定用)。 */
+function rangeInvaded(from: number, to: number, changes: ChangeDesc): boolean {
+  let hit = false;
+  changes.iterChangedRanges((fromA, toA) => {
+    if (fromA === toA ? fromA > from && fromA < to : fromA < to && toA > from) hit = true;
+  });
+  return hit;
 }
 
 /** `[from, to)` と重なる編集があるか (範囲の端・内側への挿入も含む)。 */
@@ -107,6 +120,10 @@ export interface MarkerLayerOptions<D> {
    * (`${gutterClass}-glyph` / `-glyph-${kind}`、`stale` なら `-glyph-stale` も)。
    */
   renderGutter?: (markers: readonly EditorMarker<D>[], view: EditorView) => HTMLElement;
+  /** ガターに出すマーカーかどうか。省略時はすべて出す (波線やホバーには影響しない)。 */
+  showInGutter?: (marker: EditorMarker<D>) => boolean;
+  /** ガター列の幅を決めるダミー要素。省略時は丸印の大きさ。表示内容が変わっても列の幅を動かしたくないときに使う。 */
+  renderSpacer?: () => HTMLElement;
   /** `data` の比較。省略時は浅い比較。差がなければガター要素を作り直さない。 */
   dataEq?: (a: D | undefined, b: D | undefined) => boolean;
   /**
@@ -176,6 +193,9 @@ class GroupMarker<D> extends GutterMarker {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = `${opts.gutterClass}-btn`;
+    // CodeMirror は `.cm-gutters` を aria-hidden にするので、ボタンはマウス専用 (Tab 順に並べない)。
+    // キーボードの操作はショートカット (カーソル位置の文の結果を表示) が受け持つ。
+    btn.tabIndex = -1;
     const label = opts.gutterLabel?.(group);
     if (label) btn.setAttribute("aria-label", label);
     btn.append(el);
@@ -188,13 +208,22 @@ class GroupMarker<D> extends GutterMarker {
 }
 
 class SpacerMarker extends GutterMarker {
-  constructor(private readonly cls: string) {
+  constructor(
+    private readonly cls: string,
+    private readonly render?: () => HTMLElement,
+  ) {
     super();
   }
   eq(other: GutterMarker): boolean {
-    return other instanceof SpacerMarker && other.cls === this.cls;
+    return other instanceof SpacerMarker && other.cls === this.cls && other.render === this.render;
   }
   toDOM(): HTMLElement {
+    if (this.render) {
+      const dummy = this.render();
+      dummy.classList.add(`${this.cls}-spacer`);
+      dummy.setAttribute("aria-hidden", "true");
+      return dummy;
+    }
     const el = document.createElement("span");
     el.className = `${this.cls}-glyph ${this.cls}-glyph-spacer`;
     el.setAttribute("aria-hidden", "true");
@@ -251,6 +280,7 @@ export function createMarkerLayer<D = unknown>(opts: MarkerLayerOptions<D>): Mar
             const groups: EditorMarker<D>[][] = [];
             let lastLine = -1;
             for (const m of view.state.field(field)) {
+              if (opts.showInGutter && !opts.showInGutter(m)) continue;
               const line = view.state.doc.lineAt(m.from);
               if (line.from === lastLine) groups[groups.length - 1]?.push(m);
               else {
@@ -264,7 +294,7 @@ export function createMarkerLayer<D = unknown>(opts: MarkerLayerOptions<D>): Mar
             }
             return builder.finish();
           },
-          initialSpacer: () => new SpacerMarker(opts.gutterClass),
+          initialSpacer: () => new SpacerMarker(opts.gutterClass, opts.renderSpacer),
         });
 
   const hover = opts.renderTooltip

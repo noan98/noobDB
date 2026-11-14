@@ -243,8 +243,14 @@ function StatementCard({
       <Flex
         role="button"
         tabIndex={0}
-        aria-label={t("batchCardGoto", { n: index })}
-        aria-pressed={selected}
+        aria-label={`${t("batchCardGoto", { n: index })} (${t(
+          result.status === "ok"
+            ? "editorBatchStatusOk"
+            : result.status === "error"
+              ? "editorBatchStatusError"
+              : "editorBatchStatusSkipped",
+        )})`}
+        aria-current={selected ? "true" : undefined}
         onClick={onSelect}
         onKeyDown={(e: KeyboardEvent) => {
           if (e.key === "Enter" || e.key === " ") {

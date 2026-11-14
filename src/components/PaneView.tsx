@@ -722,15 +722,9 @@ export const PaneView = memo(
                         )}
                         runtimeError={tab.queryError ?? (tab.streaming ? undefined : null)}
                         runtimeErrorSql={tab.lastExecutedSql}
-                        batch={
-                          tab.batchResults && tab.batchScript
-                            ? {
-                                script: tab.batchScript,
-                                results: tab.batchResults,
-                                running: !!tab.batchRunning,
-                              }
-                            : null
-                        }
+                        batchScript={tab.batchScript}
+                        batchResults={tab.batchResults}
+                        batchRunning={!!tab.batchRunning}
                         onBatchMarkerClick={gridStable.fn(`${tab.id}:ed:batchMarker`, (index: number) =>
                           setBatchFocus((f) => ({ tabId: tab.id, index, seq: (f?.seq ?? 0) + 1 })),
                         )}

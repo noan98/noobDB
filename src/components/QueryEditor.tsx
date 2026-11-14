@@ -78,10 +78,11 @@ import { markFeatureTried, useSettings } from "../settings";
 import { springs } from "../motion";
 import { statementAtOffset, statementsFromOffset } from "../sqlScript";
 import { diagnosticsFromTree, type SqlLintMessages } from "./sqlLint";
-import { createMarkerLayer, type EditorMarker } from "./editorMarkers";
+import { createMarkerLayer, markerAt, type EditorMarker } from "./editorMarkers";
 import {
   batchRanges,
   batchStatuses,
+  codeStart,
   composeBatchGroup,
   formatElapsed,
   locateScript,
@@ -273,6 +274,8 @@ const BATCH_STATUS_KEY = {
   ok: "editorBatchStatusOk",
   error: "editorBatchStatusError",
   skipped: "editorBatchStatusSkipped",
+  interrupted: "editorBatchStatusInterrupted",
+  none: "editorBatchStatusSkipped",
 } as const satisfies Record<BatchMarkerStatus, string>;
 
 /** バッチのガターマーカー (状態の丸印 + 所要時間)。同じ行に複数の文があれば最も重い状態で代表させる。 */
@@ -293,13 +296,17 @@ function renderBatchGutter(group: readonly EditorMarker<BatchMarkerData>[]): HTM
   return root;
 }
 
-/** 実行後に編集された文のホバー。古い印であること・再実行で更新できることを伝える。 */
-function renderBatchStaleTip(m: EditorMarker<BatchMarkerData>): HTMLElement | null {
-  if (!m.stale) return null;
-  const el = document.createElement("div");
-  el.className = "cm-runtime-error-tip";
-  el.textContent = t("editorBatchStaleTip");
-  return el;
+/** ガター列の幅を決めるダミー (最長の所要時間表記ぶん)。状態が変わっても列の幅が動かない。 */
+function renderBatchSpacer(): HTMLElement {
+  const root = document.createElement("span");
+  root.className = "cm-batch-gutter-cell";
+  const glyph = document.createElement("span");
+  glyph.className = "cm-batch-gutter-glyph";
+  const ms = document.createElement("span");
+  ms.className = "cm-batch-gutter-ms";
+  ms.textContent = "000ms";
+  root.append(glyph, ms);
+  return root;
 }
 
 function batchGutterLabel(group: readonly EditorMarker<BatchMarkerData>[]): string {
@@ -323,6 +330,8 @@ export interface EditorKeyBindings {
   format: string;
   /** EXPLAIN (#1113)。未指定なら既定へフォールバック。 */
   explain: string;
+  /** カーソル位置の文のバッチ結果カードを表示 (#2331)。未指定なら既定へフォールバック。 */
+  showBatchResult: string;
 }
 
 export interface SchemaTable {
@@ -493,11 +502,14 @@ interface Props {
   /** `runtimeError` を起こした SQL (実行した文そのもの)。 */
   runtimeErrorSql?: string;
   /**
-   * 複数文のバッチ実行 (#2331)。あれば、実行したスクリプト `script` の各文の先頭行に、待機 / 実行中 / 成功 /
+   * 複数文のバッチ実行 (#2331)。`batchScript` と `batchResults` があれば、実行したスクリプトの各文の先頭行に、待機 / 実行中 / 成功 /
    * 失敗 / 未実行のマーカーと所要時間をガターへ出す (範囲は本文から探す。選択範囲だけの実行も位置がずれない)。
-   * 失敗した文はエラー位置に波線も引く。編集するとマーカーは「古い」表示で残る。null / undefined で全て消す。
+   * 失敗した文はエラー位置に波線も引く。編集するとマーカーは「古い」表示で残る。どちらかが undefined で全て消す。
    */
-  batch?: { script: string; results: readonly BatchEditorResult[]; running: boolean } | null;
+  batchScript?: string;
+  /** `batchScript` の各文の結果 (届いた分)。 */
+  batchResults?: readonly BatchEditorResult[];
+  batchRunning?: boolean;
   /** ガターのバッチマーカーが押された (クリック / Enter / Space)。`index` は結果カードの 0 始まりの番号。 */
   onBatchMarkerClick?: (index: number) => void;
 }
@@ -826,7 +838,9 @@ export const QueryEditor = memo(
       onRevealSchemaObject,
       runtimeError,
       runtimeErrorSql,
-      batch,
+      batchScript,
+      batchResults,
+      batchRunning,
       onBatchMarkerClick,
     }: Props,
     ref,
@@ -868,7 +882,8 @@ export const QueryEditor = memo(
             const d = composeBatchGroup(group).data;
             if (d) onBatchMarkerClickRef.current?.(d.index);
           },
-          renderTooltip: renderBatchStaleTip,
+          showInGutter: (m) => m.data?.status !== "none",
+          renderSpacer: renderBatchSpacer,
         }),
       [],
     );
@@ -965,12 +980,14 @@ export const QueryEditor = memo(
     const previewCombo = editorBindings?.preview ?? DEFAULT_SHORTCUT_COMBOS.preview;
     const formatCombo = editorBindings?.format ?? DEFAULT_SHORTCUT_COMBOS.format;
     const explainCombo = editorBindings?.explain ?? DEFAULT_SHORTCUT_COMBOS.explain;
+    const showBatchResultCombo = editorBindings?.showBatchResult ?? DEFAULT_SHORTCUT_COMBOS.showBatchResult;
     const bindingsRef = useRef<EditorKeyBindings>({
       run: runCombo,
       runStatement: runStatementCombo,
       preview: previewCombo,
       format: formatCombo,
       explain: explainCombo,
+      showBatchResult: showBatchResultCombo,
     });
     bindingsRef.current = {
       run: runCombo,
@@ -978,6 +995,7 @@ export const QueryEditor = memo(
       preview: previewCombo,
       format: formatCombo,
       explain: explainCombo,
+      showBatchResult: showBatchResultCombo,
     };
     // いま props が求めている compartment 設定 (補完・構文チェック・アクションキーマップ)。
     // view / state 側に入っている設定 (`appliedConfigRef`) と食い違ったときだけ
@@ -1022,7 +1040,14 @@ export const QueryEditor = memo(
         lintMessages.missingBy,
         lintMessages.incompleteStatement,
       ].join("\u0000"),
-      keymap: [runCombo, runStatementCombo, previewCombo, formatCombo, explainCombo].join("\u0000"),
+      keymap: [
+        runCombo,
+        runStatementCombo,
+        previewCombo,
+        formatCombo,
+        explainCombo,
+        showBatchResultCombo,
+      ].join("\u0000"),
     };
     const desiredConfigRef = useRef(desiredConfig);
     desiredConfigRef.current = desiredConfig;
@@ -1330,6 +1355,21 @@ export const QueryEditor = memo(
           if (!explain) return false;
           const text = selectionOrAllText(v);
           if (text !== null) explain(text);
+          return true;
+        },
+      },
+      {
+        // カーソル位置の文のバッチ結果カードを表示 (#2331)。ガターのボタンはマウス専用なので、
+        // キーボードはこの経路。バッチのマーカーが無い / カーソルがどの文にも無いときは素通しする。
+        key: comboToCodeMirror(bindings.showBatchResult),
+        preventDefault: true,
+        run: (v: EditorView) => {
+          const click = onBatchMarkerClickRef.current;
+          if (!click) return false;
+          const head = v.state.selection.main.head;
+          const hit = markerAt(batchLayer.get(v.state), head, -1);
+          if (!hit?.data) return false;
+          click(hit.data.index);
           return true;
         },
       },
@@ -1702,25 +1742,30 @@ export const QueryEditor = memo(
       const view = viewRef.current;
       if (!view) return;
       const has = batchLayer.get(view.state).length > 0;
-      if (!batch) {
+      if (batchScript === undefined || batchResults === undefined) {
         const effects = [];
         if (has) effects.push(batchLayer.set([]));
         if (batchErrorLayer.get(view.state).length > 0) effects.push(batchErrorLayer.set([]));
         if (effects.length > 0) view.dispatch({ effects });
         return;
       }
-      const fresh = batch.results.length === 0;
-      let current = batchLayer.get(view.state);
-      if (fresh || current.length === 0) {
+      const running = !!batchRunning;
+      const fresh = batchResults.length === 0;
+      if (fresh || !has) {
         const sel = view.state.selection.main;
-        const at = locateScript(view.state.doc.toString(), batch.script, { from: sel.from, to: sel.to });
-        const ranges = at >= 0 ? batchRanges(batch.script, at, driverRef.current) : [];
-        const statuses = batchStatuses(ranges.length, batch.results, batch.running);
+        const at = locateScript(view.state.doc.toString(), batchScript, { from: sel.from, to: sel.to });
+        const ranges = at >= 0 ? batchRanges(batchScript, at, driverRef.current) : [];
+        const statuses = batchStatuses(
+          ranges.map((r) => r.text),
+          batchResults,
+          running,
+        );
         view.dispatch({
           effects: [
             batchLayer.set(
               ranges.map((r, i) => ({
-                ...r,
+                from: r.from,
+                to: r.to,
                 kind: (statuses[i] as BatchMarkerData).status,
                 squiggle: false,
                 data: statuses[i],
@@ -1729,38 +1774,43 @@ export const QueryEditor = memo(
             batchErrorLayer.set([]),
           ],
         });
-        current = batchLayer.get(view.state);
       } else {
-        const statuses = batchStatuses(current.length, batch.results, batch.running);
         view.dispatch({
-          effects: batchLayer.update((list) =>
-            list.map((m, i) => {
+          effects: batchLayer.update((list) => {
+            const statuses = batchStatuses(
+              list.map((m) => m.data?.text ?? ""),
+              batchResults,
+              running,
+            );
+            return list.map((m, i) => {
               const d = statuses[i];
               return d ? { ...m, kind: d.status, data: d } : m;
-            }),
-          ),
+            });
+          }),
         });
-        current = batchLayer.get(view.state);
       }
       // 失敗した文のエラー位置。既に波線のある文は触らない (編集後に付け直さない)。
       const doc = view.state.doc;
+      const current = batchLayer.get(view.state);
       const errs = batchErrorLayer.get(view.state);
       const added: EditorMarker<{ error: string }>[] = [];
-      batch.results.forEach((r, i) => {
-        const m = current[i];
-        if (r.status !== "error" || !r.error || !m || m.stale) return;
-        if (errs.some((e) => e.from >= m.from && e.from <= m.to)) return;
+      batchResults.forEach((r, i) => {
+        const m = current.find((x) => x.data?.index === i && x.data.status === "error");
+        if (r.status !== "error" || !r.error || !m?.data || m.stale) return;
+        if (errs.some((x) => x.from >= m.from && x.from <= m.to)) return;
         if (m.to > doc.length) return;
-        const text = doc.sliceString(m.from, m.to);
-        const loc = locateErrorRange(r.error, text, driverRef.current);
-        const from = m.from + (loc?.from ?? 0);
-        const to = m.from + (loc?.to ?? text.length);
-        added.push({ from, to, kind: "error", data: { error: r.error } });
+        // エラー位置は結果の SQL (文頭のコメントを含む全文) に対するものなので、そこで求めてから
+        // コメントを飛ばした分 (`m.from` は最初のコード位置) だけ戻す。
+        const cs = codeStart(m.data.text);
+        const loc = locateErrorRange(r.error, m.data.text, driverRef.current);
+        const from = m.from + Math.max(0, (loc?.from ?? cs) - cs);
+        const to = Math.max(from, m.from + ((loc?.to ?? m.data.text.length) - cs));
+        added.push({ from, to: Math.min(to, doc.length), kind: "error", data: { error: r.error } });
       });
       if (added.length > 0) {
         view.dispatch({ effects: batchErrorLayer.update((list) => [...list, ...added]) });
       }
-    }, [batch?.script, batch?.results, batch?.running, batch === null || batch === undefined, tabId]);
+    }, [batchScript, batchResults, batchRunning, tabId]);
 
     // compartment の設定が実際に変わったときだけ reconfigure する (#1308)。初回マウントや、
     // 設定が同じタブ同士の切替では何もしない。以前は補完・構文チェック・キーマップの

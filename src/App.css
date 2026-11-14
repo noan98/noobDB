@@ -2721,10 +2721,9 @@ html, body, #root {
 .cm-runtime-error-tip-ai { color: var(--text-muted); font-size: var(--text-xs); }
 
 /* バッチ実行の各文の状態 (#2331)。各文の先頭行のガターに、状態の丸印と所要時間を出す。
-   実行中は輪が回り、確定すると成否色へ crossfade する (.cm-batch-gutter-glyph の transition)。
-   色は意味色 (--success-* / --error-* / --accent) 経由。成否は色だけでなく記号 (✓ ✕ –) でも区別する。
+   実行中は輪が回り、状態が変わると (ガターの要素が作り直されるので) 丸印が keyframe で成否色へ
+   crossfade する。色は意味色 (--success-* / --error-* / --accent) 経由。成否は色だけでなく記号 (✓ ✕ – ?) でも区別する。
    動きは reduced-motion / ハイコントラスト (hc-* / forced-colors) で止める (他の keyframe と同じ抑制ルール)。 */
-.cm-editor .cm-batch-gutter { min-width: 1.4em; }
 .cm-editor .cm-batch-gutter .cm-gutterElement { padding: 0 var(--space-1); }
 .cm-editor .cm-batch-gutter-btn {
   display: inline-flex;
@@ -2744,14 +2743,16 @@ html, body, #root {
   gap: var(--space-1);
   font-size: var(--text-3xs);
   color: var(--text-muted);
-  transition: opacity var(--dur-med) var(--ease, ease);
 }
 .cm-editor .cm-batch-gutter-cell-stale { opacity: 0.45; }
+.cm-editor .cm-batch-gutter-ms { min-width: 5ch; text-align: right; }
+.cm-editor .cm-batch-gutter-spacer { visibility: hidden; }
 .cm-editor .cm-batch-gutter-glyph {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
+  flex: none;
   width: 1.1em;
   height: 1.1em;
   border-radius: 50%;
@@ -2759,11 +2760,17 @@ html, body, #root {
   line-height: 1;
   border: 1px solid var(--text-muted);
   color: var(--on-solid);
-  transition: background-color var(--dur-med) var(--ease, ease), border-color var(--dur-med) var(--ease, ease);
+  animation: cm-batch-glyph-in var(--dur-med) var(--ease, ease) both;
+}
+@keyframes cm-batch-glyph-in {
+  from { opacity: 0.3; }
+  to { opacity: 1; }
 }
 .cm-editor .cm-batch-gutter-glyph-pending { background: transparent; }
 .cm-editor .cm-batch-gutter-glyph-skipped { background: transparent; color: var(--text-muted); }
 .cm-editor .cm-batch-gutter-glyph-skipped::before { content: "\2013"; }
+.cm-editor .cm-batch-gutter-glyph-interrupted { background: transparent; color: var(--text-warning); border-color: var(--warning-solid); }
+.cm-editor .cm-batch-gutter-glyph-interrupted::before { content: "?"; }
 .cm-editor .cm-batch-gutter-glyph-running {
   border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   border-top-color: var(--accent);
@@ -2776,23 +2783,13 @@ html, body, #root {
 .cm-editor .cm-batch-gutter-glyph-spacer { visibility: hidden; }
 .cm-editor .cm-batch-gutter-cell-error .cm-batch-gutter-ms { color: var(--text-error); }
 @media (prefers-reduced-motion: reduce) {
-  :root:not([data-motion="full"]) .cm-editor .cm-batch-gutter-glyph-running { animation: none; }
-  :root:not([data-motion="full"]) .cm-editor .cm-batch-gutter-glyph,
-  :root:not([data-motion="full"]) .cm-editor .cm-batch-gutter-cell { transition: none; }
+  :root:not([data-motion="full"]) .cm-editor .cm-batch-gutter-glyph { animation: none; }
 }
-:root[data-motion="reduced"] .cm-editor .cm-batch-gutter-glyph-running,
-:root[data-theme="hc-light"] .cm-editor .cm-batch-gutter-glyph-running,
-:root[data-theme="hc-dark"] .cm-editor .cm-batch-gutter-glyph-running { animation: none; }
 :root[data-motion="reduced"] .cm-editor .cm-batch-gutter-glyph,
-:root[data-motion="reduced"] .cm-editor .cm-batch-gutter-cell,
 :root[data-theme="hc-light"] .cm-editor .cm-batch-gutter-glyph,
-:root[data-theme="hc-dark"] .cm-editor .cm-batch-gutter-glyph,
-:root[data-theme="hc-light"] .cm-editor .cm-batch-gutter-cell,
-:root[data-theme="hc-dark"] .cm-editor .cm-batch-gutter-cell { transition: none; }
+:root[data-theme="hc-dark"] .cm-editor .cm-batch-gutter-glyph { animation: none; }
 @media (forced-colors: active) {
-  .cm-editor .cm-batch-gutter-glyph-running { animation: none; }
-  .cm-editor .cm-batch-gutter-glyph,
-  .cm-editor .cm-batch-gutter-cell { transition: none; }
+  .cm-editor .cm-batch-gutter-glyph { animation: none; }
 }
 /* `onEdit: "stale"` の層の波線に付く `-stale` (今は波線を引く stale 層は無いが、共通部品の既定として薄くする)。 */
 .cm-editor .cm-runtime-error-stale { opacity: 0.6; }
