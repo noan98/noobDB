@@ -22,6 +22,7 @@ pub mod import;
 pub mod import_decode;
 pub mod import_templates;
 pub mod import_xlsx;
+pub mod index_whatif;
 pub mod inspector;
 pub mod listen;
 pub mod local;

@@ -1,6 +1,6 @@
 //! 構造化入力を受ける一括書き込みコマンド (#1259)。
 //!
-//! - [`bulk_update_cells`]: 結果グリッドのセル編集 Apply。従来は JS が 1 行 1 `UPDATE`
+//! - [`bulk_update_cells`][]: 結果グリッドのセル編集 Apply。従来は JS が 1 行 1 `UPDATE`
 //!   (リテラル埋め込み) を組み立てて `run_query_transaction` へ送っていた。ここでは
 //!   「同じ (列, 値) の組」ごとにまとめた構造化入力 (テーブル・PK 列・グループ) を受け、
 //!   Rust 側で `UPDATE t SET c = v WHERE pk IN (…)` をチャンク化して組み立て、
@@ -8,7 +8,7 @@
 //!   含む)・クエリ履歴・スキーマ/結果キャッシュの invalidate は従来と完全に同じ経路を
 //!   通る。`options.capture` を指定したときだけ、コミットした編集をフライトレコーダーへ
 //!   1 バッチで記録する (#2024、`commands::bulk_capture`)。
-//! - [`insert_generated_rows`]: テストデータ生成 (#602) の投入。従来は 100 行ずつの
+//! - [`insert_generated_rows`][]: テストデータ生成 (#602) の投入。従来は 100 行ずつの
 //!   リテラル `INSERT` 文を `run_query_transaction` へ送っていたのを、生成行を
 //!   `Connection::import_rows` (1 トランザクション・all-or-nothing) に直接渡す。
 //!

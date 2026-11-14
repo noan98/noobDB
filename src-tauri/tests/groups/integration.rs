@@ -16,6 +16,8 @@ mod audit_trigger_integration;
 mod clone_rows_integration;
 #[path = "../column_deps_integration.rs"]
 mod column_deps_integration;
+#[path = "../index_whatif_integration.rs"]
+mod index_whatif_integration;
 #[path = "../local_query_integration.rs"]
 mod local_query_integration;
 #[path = "../query_result_cache_integration.rs"]

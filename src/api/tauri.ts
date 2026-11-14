@@ -48,6 +48,7 @@ import { importCommands } from "./commands/import";
 import { importTemplatesCommands } from "./commands/importTemplates";
 import { scriptCommands } from "./commands/script";
 import { cloneRowsCommands } from "./commands/cloneRows";
+import { indexWhatIfCommands } from "./commands/indexWhatif";
 import { rowMergeCommands } from "./commands/rowMerge";
 import { auditTriggerCommands } from "./commands/auditTrigger";
 import { subsetCommands } from "./commands/subset";
@@ -2962,6 +2963,7 @@ export const api = {
   ...auditTriggerCommands,
   ...subsetCommands,
   ...cloneRowsCommands,
+  ...indexWhatIfCommands,
   ...transferCommands,
   ...fileCommands,
   ...windowCommands,
@@ -3662,6 +3664,47 @@ export interface CloneRowsOutcome {
   captureEnabled: boolean;
   batchId: string | null;
   warnings: SubsetWarning[];
+}
+/** インデックス試算 (#2326) の種類・方法・使えない理由。 */
+export type IndexWhatIfAction = "disable" | "add";
+export type IndexWhatIfMethod = "hypopg" | "ignoreIndex" | "rollbackDdl";
+export type IndexWhatIfUnavailable = "readOnly" | "needsHypopg" | "noVirtualIndex";
+export interface IndexWhatIfModeSupport {
+  method: IndexWhatIfMethod | null;
+  unavailable: IndexWhatIfUnavailable | null;
+  /** 実行中に表 (SQLite はデータベース) のロックを取る。確認のうえ `confirmLocking` が要る。 */
+  locksTable: boolean;
+  /** ロールバック前提でインデックスを実際に構築する (大きな表では時間がかかる)。 */
+  buildsIndex: boolean;
+}
+export interface IndexWhatIfSupport {
+  hypopgVersion: string | null;
+  disable: IndexWhatIfModeSupport;
+  add: IndexWhatIfModeSupport;
+}
+export interface IndexWhatIfRequest {
+  /** インデックスの対象の表がある名前空間 (PostgreSQL ではスキーマ / MySQL では DB)。 */
+  database: string | null;
+  /** SQL を流す本来の文脈。修飾なしの表がここで解決される。省略時は `database`。 */
+  queryDatabase?: string | null;
+  table: string;
+  /** 試算の対象の SELECT (EXPLAIN を付けない)。 */
+  sql: string;
+  action: IndexWhatIfAction;
+  index?: string | null;
+  columns?: string[];
+  confirmLocking?: boolean;
+  lockTimeoutSecs?: number | null;
+}
+export interface IndexWhatIfOutcome {
+  before: QueryResult;
+  after: QueryResult;
+  method: IndexWhatIfMethod;
+  statements: string[];
+  /** MySQL の IGNORE INDEX: 差し込めた表参照の数と、SQL 中で表名に当たる語の数 (他は null)。 */
+  refsApplied: number | null;
+  refsMentioned: number | null;
+  elapsedMs: number;
 }
 export interface SubsetProgressEvent {
   streamId: string;

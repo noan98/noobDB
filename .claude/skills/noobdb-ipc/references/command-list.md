@@ -740,6 +740,23 @@ DELETE をフライトレコーダに 1 文ずつ記録し (`run_captured_write`
   INSERT スクリプトのファイル (`script`。エクスポートの SQL レンダラを再利用)。`masks` は出力にだけ
   掛け、キー列はマスクできない。進捗は `subset-stream:*` イベント、`cancel_stream` で中断。
 
+## 実行計画のインデックス試算 (`commands/index_whatif.rs`, #2326)
+
+「このインデックスが無かったら / あったら」の計画を、本番の構造を変えずに取る。純粋層・方法の選択は
+`db/index_whatif.rs` (`compute_support`)。どちらも ANALYZE なしの推定 EXPLAIN を、同じ接続で before / after
+続けて取る。実 DB に残る変更はしない。
+
+- `get_index_whatif_support` — この接続で使える方法と、使えない理由 (`readOnly` / `needsHypopg` /
+  `noVirtualIndex`)・ロックを取るか (`locksTable`)・インデックスを実際に構築するか (`buildsIndex`) を返す。
+  PostgreSQL は hypopg の有無とバージョンを見る。読み取りだけなので `read_only` でも許可。
+- `run_index_whatif` — 試算を実行して `{ before, after, method, statements }` を返す。対象 SQL は読み取り専用の
+  単独 SELECT (EXPLAIN 付きは拒否)。PostgreSQL: hypopg (`hypopg_hide_index` / `hypopg_create_index`、セッション内のみ)、
+  無ければ `BEGIN; SET LOCAL lock_timeout; DROP INDEX; EXPLAIN; ROLLBACK` (ACCESS EXCLUSIVE ロック。無効化のみ)。
+  MySQL: 対象の表参照に `IGNORE INDEX` を差し込む (無効化のみ。「追加」は仮想インデックスが無く DDL も
+  ロールバックできないので非対応)。SQLite: `BEGIN; DROP|CREATE INDEX; EXPLAIN QUERY PLAN; ROLLBACK`。
+  **`read_only` 接続で DDL を使う経路 (PostgreSQL の DDL 代替・SQLite) はバックエンドが拒否**し、ロックを取る
+  経路は `confirmLocking` が無いと実行しない。全体 60 秒で中断 (SQLite は progress handler で割り込み。future を落とすと接続ごと閉じる)。
+
 ## 行を子レコードごと複製 (`commands/clone_rows.rs`, #2304)
 
 行を子レコードごと同じ DB 内に複製する。行の収集は `SubsetWalk` を子の方向だけで動かす (親は辿らない =

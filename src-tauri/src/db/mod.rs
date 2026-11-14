@@ -24,6 +24,8 @@ pub mod deadlock;
 pub mod diff;
 pub mod format;
 /// ライブクエリ・インスペクタ (#746) のフィンガープリント正規化と digest 差分集計 (#1259)。
+/// 実行計画のインデックス試算 (#2326)。
+pub mod index_whatif;
 pub mod inspector;
 /// エクスポート時のデータマスキング (#733)。出力時だけの変換で DB には触れない。
 pub mod js_compat;

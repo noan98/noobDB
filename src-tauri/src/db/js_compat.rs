@@ -5,9 +5,9 @@
 //! `Intl.Collator`) と**同じ結果**を返さなければならない。この層は値の型変換だけを担い、
 //! 判定ロジックは `result_ops` に置く。
 //!
-//! - [`value_str`]: `String(v)` (NULL は `None` = JS の `null`)
-//! - [`js_to_number`]: `Number(str)` (`NaN` を含む。空文字列は 0)
-//! - [`collation_key`]: `new Intl.Collator(undefined, { numeric: true })` の近似キー
+//! - [`value_str`][]: `String(v)` (NULL は `None` = JS の `null`)
+//! - [`js_to_number`][]: `Number(str)` (`NaN` を含む。空文字列は 0)
+//! - [`collation_key`][]: `new Intl.Collator(undefined, { numeric: true })` の近似キー
 //!
 //! **照合順序は完全一致ではない。** ICU の照合 (ロケール依存・Unicode 全域) を再現する
 //! 代わりに、ASCII (句読点 < 数字 < 英字、大小は無視して同順位 → 同値なら小文字が先)、

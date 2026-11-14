@@ -45,6 +45,7 @@ import { AiAdvisorExplain } from "./AiAdvisorExplain";
 import { SeverityBadge } from "./severityBadge";
 import { AlterCostNotice } from "./AlterCostNotice";
 import { Callout } from "./Callout";
+import { IndexWhatIfButton } from "./IndexWhatIfButton";
 import { formatBytes } from "./tableSize";
 import { SqlPreview } from "./SqlPreview";
 import { EmptyState } from "./EmptyState";
@@ -658,6 +659,17 @@ export function AdvisorPanel({
                               {t("advisorIgnore")}
                             </Button>
                           </Tooltip>
+                          {f.rule === "unused_index" && f.context[0] && report && (
+                            <IndexWhatIfButton
+                              sessionId={sessionId}
+                              driver={report.driver}
+                              sql={null}
+                              database={database}
+                              disabled={false}
+                              initial={{ table: f.table, index: f.context[0] }}
+                              editableSql
+                            />
+                          )}
                         </Flex>
                         {aiAvailable && report && (
                           <AiAdvisorExplain
