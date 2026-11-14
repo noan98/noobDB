@@ -63,8 +63,8 @@ describe("rowMerge (#2303)", () => {
     expect(
       picksToRequest({
         columns: [
-          { name: "id", typeName: "int", locked: true },
-          { name: "phone", typeName: "text", locked: false },
+          { name: "id", typeName: "int", locked: true, generated: false },
+          { name: "phone", typeName: "text", locked: false, generated: false },
         ],
         picks: [0, 1],
       }),
