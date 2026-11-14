@@ -2745,6 +2745,8 @@ const en = {
     "The options this audit was created with could not be read back. Enter the audit table name (and schema) yourself before regenerating or removing.",
   auditMysqlPartialNote:
     "MySQL commits DDL implicitly, so some triggers may already have been dropped; open this dialog again to regenerate them.",
+  auditMysqlPartialCreateNote:
+    "MySQL commits DDL implicitly, so the audit table may already exist without triggers; open this dialog again and run Create to reuse it.",
   auditWarnMysqlPrivilege:
     "The current user may lack the TRIGGER privilege, so creating the triggers can fail.",
   auditWarnMysqlBinlog:
@@ -11258,6 +11260,8 @@ const ja: Dict = {
     "この監査の作成時のオプションを読み戻せませんでした。再生成・削除の前に、監査表の名前 (とスキーマ) を自分で入力してください。",
   auditMysqlPartialNote:
     "MySQL は DDL が暗黙コミットされるため、一部のトリガーが外れたままの可能性があります。このダイアログをもう一度開いて再生成してください。",
+  auditMysqlPartialCreateNote:
+    "MySQL は DDL が暗黙コミットされるため、監査表だけが作られてトリガーが無い状態の可能性があります。このダイアログをもう一度開いて「作成」を実行すると、既存の監査表を再利用します。",
   auditWarnMysqlPrivilege:
     "現在のユーザーに TRIGGER 権限が無い可能性があり、トリガーの作成に失敗することがあります。",
   auditWarnMysqlBinlog:

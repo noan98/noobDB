@@ -177,7 +177,9 @@ fn object_ref(driver: DriverKind, database: &str, name: &str) -> String {
 fn audit_table_ddl(driver: DriverKind, target: &str) -> String {
     match driver {
         DriverKind::Mysql => format!(
-            "CREATE TABLE {target} (\n  audit_id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,\n  op VARCHAR(6) NOT NULL,\n  changed_at DATETIME(6) NOT NULL,\n  changed_by VARCHAR(288) NULL,\n  pk JSON NULL,\n  old_row JSON NULL,\n  new_row JSON NULL\n)"
+            // MySQL は DDL が暗黙コミットされ、後続の CREATE TRIGGER が失敗すると監査表だけが残る (#2335)。
+            // 再実行で 1050 (Table already exists) にならないよう IF NOT EXISTS にする。
+            "CREATE TABLE IF NOT EXISTS {target} (\n  audit_id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,\n  op VARCHAR(6) NOT NULL,\n  changed_at DATETIME(6) NOT NULL,\n  changed_by VARCHAR(288) NULL,\n  pk JSON NULL,\n  old_row JSON NULL,\n  new_row JSON NULL\n)"
         ),
         DriverKind::Postgres => format!(
             "CREATE TABLE {target} (\n  audit_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  op TEXT NOT NULL,\n  changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),\n  changed_by TEXT NULL,\n  pk JSONB NULL,\n  old_row JSONB NULL,\n  new_row JSONB NULL\n)"
@@ -838,12 +840,25 @@ mod tests {
     }
 
     #[test]
+    fn mysql_create_table_is_rerunnable_after_partial_failure() {
+        // 監査表だけが残った状態 (#2335) から再実行しても CREATE TABLE で止まらない。
+        let d =
+            build_audit_ddl(DriverKind::Mysql, "shop", "users", &cols(), &opts(), false).unwrap();
+        assert!(d.create[0].starts_with("CREATE TABLE IF NOT EXISTS "));
+        // 暗黙コミットのない PostgreSQL / SQLite は従来どおり (既存表との衝突は検出したい)。
+        for driver in [DriverKind::Postgres, DriverKind::Sqlite] {
+            let d = build_audit_ddl(driver, "main", "users", &cols(), &opts(), false).unwrap();
+            assert!(!d.create[0].contains("IF NOT EXISTS"), "{driver:?}");
+        }
+    }
+
+    #[test]
     fn mysql_generates_three_column_explicit_triggers() {
         let d =
             build_audit_ddl(DriverKind::Mysql, "shop", "users", &cols(), &opts(), false).unwrap();
         assert_eq!(d.audit_table, "users_audit");
         assert_eq!(d.create.len(), 4);
-        assert!(d.create[0].starts_with("CREATE TABLE `shop`.`users_audit`"));
+        assert!(d.create[0].starts_with("CREATE TABLE IF NOT EXISTS `shop`.`users_audit`"));
         assert!(d.create[0].contains("DATETIME(6)"));
         let ins = &d.create[1];
         assert!(

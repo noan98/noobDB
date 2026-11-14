@@ -376,6 +376,49 @@ async fn mysql_audit_trigger_when_env_set() {
         .await;
 }
 
+/// 新規作成が途中で失敗して監査表だけが残った状態 (#2335) から、ウィザードの経路 (生成 → 実行) で復旧できる。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mysql_audit_recovers_from_orphan_audit_table_when_env_set() {
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let state = t::AppState::default();
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("DROP DATABASE IF EXISTS nb2335_orphan", None)
+        .await
+        .expect("drop");
+    conn.execute("CREATE DATABASE nb2335_orphan", None)
+        .await
+        .expect("create");
+    state
+        .insert(t::make_session("audit_orphan", conn, opts.clone(), false))
+        .await;
+    let side = Side {
+        id: "audit_orphan".into(),
+        database: Some("nb2335_orphan".into()),
+        driver: "mysql",
+    };
+    exec(
+        &state,
+        &side,
+        "CREATE TABLE users (id INT NOT NULL PRIMARY KEY, name VARCHAR(30), secret VARCHAR(30))",
+    )
+    .await;
+    // 1 回目: 監査表の CREATE だけ通り、トリガーは失敗した状態を再現する (暗黙コミットで表が残る)。
+    let first = generate(&state, &side, &options(), false).await;
+    run_ddl(&state, &side, vec![first.create[0].clone()]).await;
+    assert!(!status(&state, &side).await.present);
+    // 2 回目: 同じ生成物をそのまま実行しても 1050 にならず、トリガーまで作られる。
+    let again = generate(&state, &side, &options(), false).await;
+    run_ddl(&state, &side, again.create).await;
+    assert!(status(&state, &side).await.present);
+    let admin = t::connect(&opts).await.expect("connect");
+    let _ = admin
+        .execute("DROP DATABASE IF EXISTS nb2335_orphan", None)
+        .await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn postgres_audit_trigger_when_env_set() {
     let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
