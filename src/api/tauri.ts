@@ -3589,7 +3589,10 @@ export interface IndexWhatIfSupport {
   add: IndexWhatIfModeSupport;
 }
 export interface IndexWhatIfRequest {
+  /** インデックスの対象の表がある名前空間 (PostgreSQL ではスキーマ / MySQL では DB)。 */
   database: string | null;
+  /** SQL を流す本来の文脈。修飾なしの表がここで解決される。省略時は `database`。 */
+  queryDatabase?: string | null;
   table: string;
   /** 試算の対象の SELECT (EXPLAIN を付けない)。 */
   sql: string;

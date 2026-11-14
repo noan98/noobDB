@@ -66,6 +66,12 @@ pub async fn run_index_whatif_inner(
     let driver = conn.driver_kind();
     let sql = validate_target_sql(driver, &request.sql)?;
     let database = request.database.as_deref().filter(|d| !d.is_empty());
+    // 未指定なら対象の名前空間と同じ (従来の動作)。
+    let query_database = request
+        .query_database
+        .as_deref()
+        .filter(|d| !d.is_empty())
+        .or(database);
 
     let hypopg = conn.index_whatif_hypopg().await?;
     let support = compute_support(driver, session.read_only, hypopg.as_ref());
@@ -117,6 +123,7 @@ pub async fn run_index_whatif_inner(
         .clamp(1, MAX_LOCK_TIMEOUT_SECS);
     let plan = WhatIfPlan {
         database,
+        query_database,
         table: &request.table,
         explain_before: format!("{}{}", explain_prefix(driver), sql),
         sql: &sql,

@@ -134,6 +134,7 @@ export function IndexWhatIfModal({
   const mode = whatIfModeSupport(support, action);
   const form: WhatIfFormState = {
     database: targetDb,
+    queryDatabase: database,
     table: targetTable,
     sql,
     action,

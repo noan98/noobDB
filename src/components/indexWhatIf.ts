@@ -34,7 +34,10 @@ export function toggleWhatIfColumn(selected: readonly string[], column: string):
 }
 
 export interface WhatIfFormState {
+  /** インデックスの対象の表の名前空間。 */
   database: string | null;
+  /** SQL 本来の文脈 (タブの DB / スキーマ)。 */
+  queryDatabase: string | null;
   table: string;
   sql: string;
   action: IndexWhatIfAction;
@@ -56,6 +59,7 @@ export function canRunWhatIf(form: WhatIfFormState, mode: IndexWhatIfModeSupport
 export function buildWhatIfRequest(form: WhatIfFormState, mode: IndexWhatIfModeSupport): IndexWhatIfRequest {
   return {
     database: form.database,
+    queryDatabase: form.queryDatabase,
     table: form.table,
     sql: form.sql,
     action: form.action,

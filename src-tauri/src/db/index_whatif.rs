@@ -182,6 +182,10 @@ pub fn compute_support(
 pub struct IndexWhatIfRequest {
     /// PostgreSQL ではスキーマ、MySQL ではデータベース。SQLite は `main` のみ対応。
     pub database: Option<String>,
+    /// SQL を実行する側の本来のスキーマ / データベース (タブの文脈)。`database` (インデックスの対象の
+    /// 名前空間) と分けて運び、修飾なしの表が対象側へ解決し直されないようにする。省略時は `database`。
+    #[serde(default)]
+    pub query_database: Option<String>,
     pub table: String,
     /// 試算の対象の SQL (EXPLAIN を付けない読み取り専用の文)。
     pub sql: String,
@@ -219,7 +223,10 @@ pub struct IndexWhatIfOutcome {
 
 /// ドライバ層へ渡す、検証済みの試算の指示。
 pub(crate) struct WhatIfPlan<'a> {
+    /// インデックスの対象の表がある名前空間。
     pub database: Option<&'a str>,
+    /// EXPLAIN を流すときの文脈 (search_path / 既定 DB)。修飾なしの表はこちらで解決される。
+    pub query_database: Option<&'a str>,
     pub table: &'a str,
     /// EXPLAIN 前置きを付けた元の SQL。
     pub explain_before: String,
@@ -360,16 +367,20 @@ impl Connection {
         let Some(index) = plan.index else {
             return Err(AppError::InvalidInput("what-if: index is required".into()));
         };
-        let Some((rewritten, applied, mentioned)) =
-            mysql_ignore_index_sql(plan.sql, plan.database, plan.table, index)
-        else {
+        let Some((rewritten, applied, mentioned)) = mysql_ignore_index_sql_in(
+            plan.sql,
+            plan.database,
+            plan.query_database.or(plan.database),
+            plan.table,
+            index,
+        ) else {
             return Err(AppError::InvalidInput(format!(
                 "what-if: table {} is not referenced in the SQL",
                 plan.table
             )));
         };
         let after_sql = format!("{}{}", explain_prefix(DriverKind::Mysql), rewritten);
-        let database = plan.database;
+        let database = plan.query_database.or(plan.database);
         super::read_only_scope::scope(async {
             let before = self.execute(&plan.explain_before, database).await?;
             let after = self.execute(&after_sql, database).await?;
@@ -646,9 +657,22 @@ fn read_table_ref(toks: &[Token], j: usize) -> Option<(usize, Option<String>, St
 /// 直後 (エイリアスの後) に ` IGNORE INDEX (<index>)` を差し込んだ SQL・差し込んだ件数・SQL 中で表名に当たる語の数を返す。
 /// 表が 1 度も参照されていなければ `None`。表名は大文字小文字を区別せず、`db.table` の修飾が
 /// `database` と違う参照は対象にしない。
+#[cfg(test)]
 pub(crate) fn mysql_ignore_index_sql(
     sql: &str,
     database: Option<&str>,
+    table: &str,
+    index: &str,
+) -> Option<(String, usize, usize)> {
+    mysql_ignore_index_sql_in(sql, database, database, table, index)
+}
+
+/// [`mysql_ignore_index_sql`] の本体。`database` は対象の表の DB、`query_database` は SQL を流す DB
+/// (修飾なしの表参照が解決される先)。両者が違うとき、修飾なしの参照は対象ではない。
+pub(crate) fn mysql_ignore_index_sql_in(
+    sql: &str,
+    database: Option<&str>,
+    query_database: Option<&str>,
     table: &str,
     index: &str,
 ) -> Option<(String, usize, usize)> {
@@ -676,8 +700,13 @@ pub(crate) fn mysql_ignore_index_sql(
     let mut i = 0;
     let consider = |inserts: &mut Vec<usize>, r: &(usize, Option<String>, String, usize)| {
         let (_, qualifier, name, end) = r;
-        let db_ok = match (qualifier, database.filter(|d| !d.is_empty())) {
+        let target = database.filter(|d| !d.is_empty());
+        let db_ok = match (qualifier, target) {
             (Some(q), Some(d)) => q.eq_ignore_ascii_case(d),
+            // 修飾なしは SQL を流す DB で解決される。対象の DB と違うなら別の表。
+            (None, Some(d)) => query_database
+                .filter(|q| !q.is_empty())
+                .is_none_or(|q| q.eq_ignore_ascii_case(d)),
             _ => true,
         };
         if db_ok && name.eq_ignore_ascii_case(table) {
@@ -937,6 +966,22 @@ mod tests {
     }
 
     #[test]
+    fn unqualified_refs_follow_the_query_database() {
+        // タブは shop、対象は archive.users: 修飾なしの users は shop.users なので差し込まない。
+        let (out, applied, _) = mysql_ignore_index_sql_in(
+            "SELECT * FROM users u JOIN archive.users a ON u.id = a.id",
+            Some("archive"),
+            Some("shop"),
+            "users",
+            "i",
+        )
+        .expect("rewritten");
+        assert_eq!(applied, 1);
+        assert!(out.contains("archive.users a IGNORE INDEX"));
+        assert!(!out.contains("users u IGNORE"));
+    }
+
+    #[test]
     fn target_sql_validation() {
         let pg = DriverKind::Postgres;
         assert_eq!(
@@ -961,6 +1006,7 @@ mod tests {
     fn req(action: IndexWhatIfAction, index: Option<&str>, columns: &[&str]) -> IndexWhatIfRequest {
         IndexWhatIfRequest {
             database: None,
+            query_database: None,
             table: "t".into(),
             sql: "SELECT 1".into(),
             action,

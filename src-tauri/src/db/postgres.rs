@@ -6682,7 +6682,13 @@ impl PostgresConn {
         use super::index_whatif::IndexWhatIfMethod;
         let mut guard = super::server_stop::ReleaseGuard::new(self.pool.acquire().await?);
         guard.arm();
-        apply_search_path(&mut guard.conn, plan.database, &self.search_path).await?;
+        // EXPLAIN は SQL 本来の文脈 (search_path) で流す。対象の表のスキーマは、下で修飾して指す。
+        apply_search_path(
+            &mut guard.conn,
+            plan.query_database.or(plan.database),
+            &self.search_path,
+        )
+        .await?;
         let schema = match plan.database.filter(|s| !s.is_empty()) {
             Some(s) => s.to_string(),
             None => {

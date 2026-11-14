@@ -25,6 +25,7 @@ const no = (unavailable: IndexWhatIfModeSupport["unavailable"]): IndexWhatIfMode
 });
 const form = (over: Partial<WhatIfFormState> = {}): WhatIfFormState => ({
   database: "public",
+  queryDatabase: "public",
   table: "t",
   sql: "SELECT 1",
   action: "disable",

@@ -55,6 +55,7 @@ fn request(
 ) -> t::IndexWhatIfRequest {
     t::IndexWhatIfRequest {
         database: side.database.clone(),
+        query_database: None,
         table: "t".into(),
         sql: sql.into(),
         action,
