@@ -44,6 +44,7 @@ beforeEach(() => {
       ? preview(false, [{ index: "uq_no", columns: ["order_no"], rows: 1 }])
       : preview(true, []);
   });
+  onCommand("foreign_keys", () => []);
   onCommand("clone_rows", () => ({
     tables: [
       { table: "orders", rows: 1, keyColumns: ["id"], mappings: [{ oldKey: [1], newKey: [3], root: true }] },
@@ -109,7 +110,10 @@ describe("CloneRowsModal", () => {
 
     await screen.getByRole("button", { name: t("cloneRowsExecute") }).click();
     await expect.element(screen.getByTestId("clone-outcome")).toBeVisible();
-    await expect.element(screen.getByText("1 → 3 *")).toBeVisible();
+    await expect.element(screen.getByTestId("clone-mapping")).toBeVisible();
+    expect(document.querySelectorAll('[data-testid="clone-mapping-table"]').length).toBe(2);
+    expect(document.querySelectorAll('[data-testid="clone-mapping-row"][data-root="true"]').length).toBe(1);
+    expect(document.querySelector('[data-root="true"]')?.textContent).toContain(t("cloneRowsMappingRoot"));
     expect(invocationsOf("clone_rows").length).toBe(1);
   });
 });

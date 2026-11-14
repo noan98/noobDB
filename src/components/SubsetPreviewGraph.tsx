@@ -19,11 +19,13 @@ import {
   type PlacedEdge,
   type SubsetLane,
   type SubsetNode,
+  type SubsetNodeExtra,
   SUBSET_LANES,
   tracePathToRoot,
 } from "./subsetPreviewModel";
 import { subsetWarningMessage } from "./subsetExtract";
 import { Tooltip } from "./Tooltip";
+import { ToneChip } from "./ToneChip";
 
 /**
  * サブセット抽出のプレビューを「親 ← 起点 → 子」の FK 辿り図で見せる (#2266)。
@@ -73,6 +75,8 @@ interface Props {
   stale: boolean;
   /** プレビューを取り直すたびに変わる値 (入場アニメーションをやり直す)。 */
   runKey: string | null;
+  /** 表名 → ノードに足すチップ・強調 (子行の複製で主キーの状態を載せる)。省略するとサブセット抽出そのまま。 */
+  nodeExtras?: ReadonlyMap<string, SubsetNodeExtra>;
 }
 
 function laneColumn(lane: SubsetLane): number {
@@ -127,7 +131,9 @@ function GraphNode({
   dim,
   onHover,
   onFocusNode,
+  extra,
 }: {
+  extra?: SubsetNodeExtra;
   node: SubsetNode;
   row: number;
   barColor: string;
@@ -176,8 +182,15 @@ function GraphNode({
         px="2"
         py="1"
         borderRadius="md"
-        borderWidth="1px"
-        borderColor={node.lane === "root" ? "app.accent" : "app.border"}
+        borderColor={
+          extra?.emphasize
+            ? semanticColorToken("warning", "solid")
+            : node.lane === "root"
+              ? "app.accent"
+              : "app.border"
+        }
+        borderWidth={extra?.emphasize ? "2px" : "1px"}
+        data-emphasis={extra?.emphasize ? "true" : undefined}
         bg="app.surface"
         display="flex"
         flexDirection="column"
@@ -209,6 +222,11 @@ function GraphNode({
               {t("subsetNodeDepth", { depth: node.depth })}
             </chakra.span>
           )}
+          {extra?.chips.map((c) => (
+            <ToneChip key={c.key} tone={c.tone} shrink testId="subset-preview-chip">
+              {c.label}
+            </ToneChip>
+          ))}
           {node.truncations.map((tr) => (
             <Badge
               key={tr.kind}
@@ -309,7 +327,7 @@ function EdgeLayer({
   );
 }
 
-export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Props) {
+export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey, nodeExtras }: Props) {
   const t = useT();
   const reduced = useReducedMotion() ?? false;
   const isDark = useIsDarkTheme();
@@ -477,6 +495,7 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
                         row={row}
                         barColor={barColor}
                         index={nodeIndex++}
+                        extra={nodeExtras?.get(item.node.table)}
                         dim={path !== null && !path.tables.has(item.node.table)}
                         onHover={setHoverTable}
                         onFocusNode={setFocusTable}

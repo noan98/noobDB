@@ -41,6 +41,13 @@ export interface SubsetNode {
   references: string[];
 }
 
+/** ノードへ足す表示 (子行の複製 #2323 が主キーの状態チップと「方針が要る」強調を載せる)。 */
+export interface SubsetNodeExtra {
+  chips: { key: string; tone: "success" | "info" | "accent" | "warning"; label: string }[];
+  /** 輪郭を warning にして目立たせる。 */
+  emphasize: boolean;
+}
+
 export interface SubsetEdge {
   /** 外部キーを持つ側 (子)。 */
   from: string;
