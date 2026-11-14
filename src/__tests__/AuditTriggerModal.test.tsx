@@ -93,6 +93,15 @@ describe("AuditTriggerModal", () => {
     });
   });
 
+  it("既存の監査表を再利用する警告を出す", async () => {
+    generate.mockResolvedValue({
+      ...ddl(["CREATE TABLE a (x int)"]),
+      warnings: ["mysql_audit_table_reused"],
+    });
+    setup();
+    await waitFor(() => expect(screen.getByText(t("auditWarnMysqlReused"))).toBeInTheDocument());
+  });
+
   it("read_only では確定できない", async () => {
     setup(true);
     await waitFor(() => expect(generate).toHaveBeenCalled());

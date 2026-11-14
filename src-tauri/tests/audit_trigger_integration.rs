@@ -484,11 +484,62 @@ async fn mysql_audit_recovers_from_orphan_audit_table_when_env_set() {
     assert!(!status(&state, &side).await.present);
     // 2 回目: 同じ生成物をそのまま実行しても 1050 にならず、トリガーまで作られる。
     let again = generate(&state, &side, &options(), false).await;
+    let again_warnings = again.warnings.clone();
     run_ddl(&state, &side, again.create).await;
+    assert!(again_warnings.contains(&"mysql_audit_table_reused".to_string()));
     assert!(status(&state, &side).await.present);
+    // 復旧後の書き込みが監査表に 1 行入る。
+    exec(&state, &side, "INSERT INTO users VALUES (1, 'a', 's')").await;
+    assert_eq!(audit_rows(&state, &side).await.len(), 1);
     let admin = t::connect(&opts).await.expect("connect");
     let _ = admin
         .execute("DROP DATABASE IF EXISTS nb2335_orphan", None)
+        .await;
+}
+
+/// 監査表と同名で列構成の違う表 (業務表など) がある場合は、黙って流用せず生成を拒否する (#2335)。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mysql_audit_rejects_same_name_table_with_other_columns_when_env_set() {
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let state = t::AppState::default();
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("DROP DATABASE IF EXISTS nb2335_clash", None)
+        .await
+        .expect("drop");
+    conn.execute("CREATE DATABASE nb2335_clash", None)
+        .await
+        .expect("create");
+    state
+        .insert(t::make_session("audit_clash", conn, opts.clone(), false))
+        .await;
+    let side = Side {
+        id: "audit_clash".into(),
+        database: Some("nb2335_clash".into()),
+        driver: "mysql",
+    };
+    exec(
+        &state,
+        &side,
+        "CREATE TABLE users (id INT NOT NULL PRIMARY KEY, name VARCHAR(30), secret VARCHAR(30))",
+    )
+    .await;
+    exec(
+        &state,
+        &side,
+        "CREATE TABLE users_audit (id INT NOT NULL PRIMARY KEY, memo VARCHAR(30))",
+    )
+    .await;
+    let s = state.get(&side.id).await.expect("session");
+    let err = t::generate_audit_ddl_core(&s.conn, "nb2335_clash", "users", &options(), false)
+        .await
+        .expect_err("same-name table with other columns must be rejected");
+    assert!(matches!(err, t::AppError::InvalidInput(_)), "{err}");
+    let admin = t::connect(&opts).await.expect("connect");
+    let _ = admin
+        .execute("DROP DATABASE IF EXISTS nb2335_clash", None)
         .await;
 }
 

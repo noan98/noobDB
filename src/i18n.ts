@@ -2746,11 +2746,13 @@ const en = {
   auditMysqlPartialNote:
     "MySQL commits DDL implicitly, so some triggers may already have been dropped; open this dialog again to regenerate them.",
   auditMysqlPartialCreateNote:
-    "MySQL commits DDL implicitly, so the audit table may already exist without triggers; open this dialog again and run Create to reuse it.",
+    "MySQL commits DDL implicitly, so the audit table may already exist without triggers; open this dialog again and run Create to reuse it (when its columns match).",
   auditWarnMysqlPrivilege:
     "The current user may lack the TRIGGER privilege, so creating the triggers can fail.",
   auditWarnMysqlBinlog:
     "The binary log is on and log_bin_trust_function_creators is off; without SUPER, creating triggers can fail (error 1419).",
+  auditWarnMysqlReused:
+    "An audit table with this name already exists and its columns match, so it will be reused.",
   auditDone: "Audit triggers updated for {table}.",
   auditRemoved: "Audit triggers removed from {table}.",
   structureAuditTitle: "Change history",
@@ -11261,11 +11263,12 @@ const ja: Dict = {
   auditMysqlPartialNote:
     "MySQL は DDL が暗黙コミットされるため、一部のトリガーが外れたままの可能性があります。このダイアログをもう一度開いて再生成してください。",
   auditMysqlPartialCreateNote:
-    "MySQL は DDL が暗黙コミットされるため、監査表だけが作られてトリガーが無い状態の可能性があります。このダイアログをもう一度開いて「作成」を実行すると、既存の監査表を再利用します。",
+    "MySQL は DDL が暗黙コミットされるため、監査表だけが作られてトリガーが無い状態の可能性があります。このダイアログをもう一度開いて「作成」を実行すると、列の構成が合う既存の監査表を再利用します。",
   auditWarnMysqlPrivilege:
     "現在のユーザーに TRIGGER 権限が無い可能性があり、トリガーの作成に失敗することがあります。",
   auditWarnMysqlBinlog:
     "バイナリログが有効で log_bin_trust_function_creators が無効です。SUPER 権限が無いとトリガーの作成に失敗することがあります (エラー 1419)。",
+  auditWarnMysqlReused: "同名の監査表が既にあり、列の構成も一致しているので、既存の監査表を再利用します。",
   auditDone: "{table} の監査トリガーを更新しました。",
   auditRemoved: "{table} の監査トリガーを外しました。",
   structureAuditTitle: "変更履歴",

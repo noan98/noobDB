@@ -839,7 +839,7 @@ export interface AuditDdl {
   drop_table: string;
   recorded_columns: string[];
   trigger_names: string[];
-  /** 事前警告のコード (`no_primary_key` / `blob_columns` / `mysql_trigger_privilege` / `mysql_binlog_trust`)。 */
+  /** 事前警告のコード (`no_primary_key` / `blob_columns` / `mysql_trigger_privilege` / `mysql_binlog_trust` / `mysql_audit_table_reused`)。 */
   warnings: string[];
 }
 
