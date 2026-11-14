@@ -1300,7 +1300,7 @@ export const PaneView = memo(
                                   )}
                                   queryError={tab.queryError ?? null}
                                   onGotoErrorPosition={
-                                    tab.kind !== "table" && tab.lastExecutedSql
+                                    tab.kind === "query" && tab.lastExecutedSql
                                       ? gridStable.fn(`${tab.id}:gotoError`, () =>
                                           actions.revealQueryError(
                                             pane.id,

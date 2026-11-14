@@ -10047,7 +10047,7 @@ const ja: Dict = {
   gridQueryError: "クエリが失敗しました",
   gridRetry: "再試行",
   gridGotoErrorPosition: "エラー位置へ",
-  editorRuntimeErrorAiHint: "画面下のステータスバーの「AI に解説してもらう」で解説を読めます",
+  editorRuntimeErrorAiHint: "ステータスバーに表示されている場合は「AI に解説してもらう」で解説を読めます",
   listSearchPlaceholder: "接続・テーブル・カラムを検索",
   treeKindFilterLabel: "オブジェクトの種別で絞り込む",
   treeKindFilter_all: "すべて",

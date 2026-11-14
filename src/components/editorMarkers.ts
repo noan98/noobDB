@@ -21,6 +21,14 @@ import { Decoration, EditorView, GutterMarker, gutter, hoverTooltip, type Toolti
  * - 範囲は文書の変更に追従する。`dropOnEdit` なら、範囲を編集した時点でそのマーカーを捨てる
  *   (波線が指している箇所を直したら消える、という実行エラーの挙動)。
  * - 見た目は CSS クラスだけで決める (`markClass` / `gutterClass` と `-<kind>` 接尾辞)。
+ *
+ * #2331 (バッチ実行の各文の成否をガターに積む) で再利用するときの拡張点 (今は未実装):
+ * - `renderGutter`: ガターのマーカー DOM を呼び出し側が描く (成功 / 失敗 / 所要時間のバッジ)。
+ * - `eq` でのデータ比較: `data` が変わったときだけガター要素を作り直す。
+ * - クリック: ガターのマーカーのクリックハンドラ (その文の結果へ移動など)。
+ * - `onEdit` を `"drop" | "stale" | "keep"` にする: 編集で捨てる / 古い印にして残す / そのまま追従。
+ * - 同じ行の合成: 同じ行に複数のマーカーがあるとき、先頭 1 件ではなく合成して描く。
+ * - `gutter: false`: 波線とホバーだけを使い、ガターを出さない層。
  */
 
 /** 層に載せるマーカー 1 件。`D` は呼び出し側がツールチップなどに使う付随データ。 */
@@ -37,8 +45,7 @@ export interface EditorMarker<D = unknown> {
 
 /**
  * 文書の変更 `changes` に合わせてマーカーの位置を追従させる。`dropOnEdit` のときは、
- * 範囲と重なる編集 (範囲の内側への挿入を含む) を受けたマーカーを捨てる。範囲の両端での
- * 挿入や、手前 / 後ろの編集では捨てない。
+ * 範囲と重なる編集 (範囲の端・内側への挿入を含む) を受けたマーカーを捨てる。手前 / 後ろの編集では捨てない。
  */
 export function mapMarkers<D>(
   markers: readonly EditorMarker<D>[],
@@ -55,18 +62,26 @@ export function mapMarkers<D>(
   return out;
 }
 
-/** `[from, to)` と重なる編集があるか (範囲内への挿入も含む。両端での挿入は含まない)。 */
+/** `[from, to)` と重なる編集があるか (範囲の端・内側への挿入も含む)。 */
 export function rangeTouched(from: number, to: number, changes: ChangeDesc): boolean {
   let touched = false;
   changes.iterChangedRanges((fromA, toA) => {
-    if (fromA === toA ? fromA > from && fromA < to : fromA < to && toA > from) touched = true;
+    if (fromA === toA ? fromA >= from && fromA <= to : fromA < to && toA > from) touched = true;
   });
   return touched;
 }
 
-/** `pos` を覆うマーカー (`from <= pos < to`。空範囲は `pos === from`)。複数なら先頭のもの。 */
-export function markerAt<D>(markers: readonly EditorMarker<D>[], pos: number): EditorMarker<D> | null {
-  return markers.find((m) => (m.from === m.to ? pos === m.from : pos >= m.from && pos < m.to)) ?? null;
+/** `pos` を覆うマーカー (`from <= pos < to`。空範囲は `pos === from`。`side < 0` の末端 `pos === to` も含む)。複数なら先頭のもの。 */
+export function markerAt<D>(
+  markers: readonly EditorMarker<D>[],
+  pos: number,
+  side = 0,
+): EditorMarker<D> | null {
+  return (
+    markers.find((m) =>
+      m.from === m.to ? pos === m.from : pos >= m.from && (pos < m.to || (side < 0 && pos === m.to)),
+    ) ?? null
+  );
 }
 
 export interface MarkerLayerOptions<D> {
@@ -159,8 +174,8 @@ export function createMarkerLayer<D = unknown>(opts: MarkerLayerOptions<D>): Mar
 
   const hover = opts.renderTooltip
     ? hoverTooltip(
-        (view, pos): Tooltip | null => {
-          const m = markerAt(view.state.field(field), pos);
+        (view, pos, side): Tooltip | null => {
+          const m = markerAt(view.state.field(field), pos, side);
           if (!m) return null;
           const dom = opts.renderTooltip?.(m, view);
           if (!dom) return null;

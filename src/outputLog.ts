@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import type { ServerMessage, ServerMessageSeverity } from "./api/tauri";
 import type { I18nKey } from "./i18n";
 import { matchesSearchTerms, searchTerms } from "./logSearch";
+import { maskLiterals } from "./dangerousSql";
 import { redactCredentials, redactErrorText } from "./sqlCredentials";
 import type { SemanticRole } from "./semanticColors";
 
@@ -372,37 +373,97 @@ function tokenRangeAt(sql: string, at: number): ErrorRange {
   return { from: at, to: tokenEnd(sql, at), precise: true };
 }
 
+/** `[from, to)` の中の、空白でない最後のトークン。全部空白なら null。 */
+function lastTokenIn(sql: string, from: number, to: number): ErrorRange | null {
+  let end = to;
+  while (end > from && /\s/.test(sql[end - 1])) end -= 1;
+  if (end <= from) return null;
+  let start = end - 1;
+  if (WORD_CHAR.test(sql[start])) {
+    while (start > from && WORD_CHAR.test(sql[start - 1])) start -= 1;
+  } else if (start > from && /[\uDC00-\uDFFF]/.test(sql[start])) {
+    start -= 1;
+  }
+  return { from: start, to: end, precise: true };
+}
+
+/**
+ * `name` の出現位置を探す。リテラル・コメントの中 (マスクで消える部分) と、前後が語文字の
+ * 出現 (`id` に対する `uid`) は採らない。大文字小文字は、まず一致するもの、無ければ無視して探す。
+ */
+function findNamed(sql: string, name: string, driver: string): ErrorRange | null {
+  if (name.length === 0) return null;
+  let masked = sql;
+  try {
+    masked = maskLiterals(sql, driver, { keepQuotedIdentifiers: true, cache: false });
+  } catch {
+    masked = sql;
+  }
+  if (masked.length !== sql.length) masked = sql;
+  const scan = (hay: string, needle: string): number => {
+    const leftWord = WORD_CHAR.test(needle[0]);
+    const rightWord = WORD_CHAR.test(needle[needle.length - 1]);
+    for (let i = hay.indexOf(needle); i >= 0; i = hay.indexOf(needle, i + 1)) {
+      if (leftWord && i > 0 && WORD_CHAR.test(hay[i - 1])) continue;
+      const e = i + needle.length;
+      if (rightWord && e < hay.length && WORD_CHAR.test(hay[e])) continue;
+      return i;
+    }
+    return -1;
+  };
+  let idx = scan(masked, name);
+  if (idx < 0) idx = scan(masked.toLowerCase(), name.toLowerCase());
+  return idx < 0 ? null : { from: idx, to: idx + name.length, precise: true };
+}
+
 function locatePostgres(error: string, sql: string): ErrorRange | null {
   const m = /\(position (\d+)\)\s*$/.exec(error);
   if (!m) return null;
   const offset = Number(m[1]);
   if (!Number.isSafeInteger(offset) || offset < 1) return null;
   const at = utf16IndexOfCodePoint(sql, offset);
-  return at === null ? null : tokenRangeAt(sql, at);
+  // 位置が文の末尾を越える (at end of input / バックエンドが足した LIMIT の部分) ときは最後のトークン。
+  return at === null ? lastTokenIn(sql, 0, sql.length) : tokenRangeAt(sql, at);
 }
+
+/** 自動 LIMIT (バックエンドが末尾に足す) を断片から外す。 */
+const AUTO_LIMIT_TAIL = /\s+LIMIT\s+\d+\s*;?\s*$/i;
+/** MySQL の near 断片の最大長 (これ以上は切り詰められている)。 */
+const MYSQL_NEAR_MAX = 80;
 
 function locateMysql(error: string, sql: string): ErrorRange | null {
   const near = /\bnear '([\s\S]*)' at line (\d+)\b/i.exec(error);
   if (near) {
     const line = Math.max(1, Number(near[2]));
     const lineRange = lineRangeOf(sql, line);
-    const fragment = near[1].trimEnd();
+    const rawFragment = near[1].trimEnd();
+    const fragment = sql.trimEnd().endsWith(rawFragment)
+      ? rawFragment
+      : rawFragment.replace(AUTO_LIMIT_TAIL, "");
     if (fragment.length > 0) {
-      // 断片は誤りのトークンから始まる。報告された行から探し、無ければ文頭から探す。
-      const idx = sql.indexOf(fragment, lineRange.from);
-      const hit = idx >= 0 ? idx : sql.indexOf(fragment);
+      const body = sql.trimEnd();
+      let hit = -1;
+      if (fragment.length < MYSQL_NEAR_MAX && body.endsWith(fragment)) {
+        // 断片は文の残り全部。末尾と一致する位置が正しい。
+        hit = body.length - fragment.length;
+      } else {
+        // 切り詰められた断片は、報告された行の中で最後に一致する位置、無ければ行以降の最初。
+        const last = body.lastIndexOf(fragment, lineRange.to);
+        hit = last >= lineRange.from ? last : body.indexOf(fragment, lineRange.from);
+        if (hit < 0) hit = body.indexOf(fragment);
+      }
       if (hit >= 0) return tokenRangeAt(sql, hit);
+    } else {
+      const last = lastTokenIn(sql, lineRange.from, lineRange.to);
+      if (last) return last;
     }
     return { ...lineRange, precise: false };
   }
   const col = /Unknown column '([^']+)'/i.exec(error);
   if (col) {
     const full = col[1];
-    const name = full.split(".").pop() ?? full;
-    const idx = sql.indexOf(full);
-    if (idx >= 0) return { from: idx, to: idx + full.length, precise: true };
-    const idx2 = sql.indexOf(name);
-    if (idx2 >= 0) return { from: idx2, to: idx2 + name.length, precise: true };
+    const r = findNamed(sql, full, "mysql") ?? findNamed(sql, full.split(".").pop() ?? full, "mysql");
+    if (r) return r;
   }
   const line = /\bat line (\d+)\b/i.exec(error);
   if (line) return { ...lineRangeOf(sql, Math.max(1, Number(line[1]))), precise: false };
@@ -416,10 +477,7 @@ function locateSqlite(error: string, sql: string): ErrorRange | null {
     /no such (?:column|table|function|index|view): ([^\s,()]+)/i.exec(error);
   if (!named) return null;
   const tok = named[1];
-  let idx = sql.indexOf(tok);
-  if (idx < 0) idx = sql.toLowerCase().indexOf(tok.toLowerCase());
-  if (idx < 0) return null;
-  return { from: idx, to: idx + tok.length, precise: true };
+  return findNamed(sql, tok, "sqlite") ?? findNamed(sql, tok.split(".").pop() ?? tok, "sqlite");
 }
 
 /**

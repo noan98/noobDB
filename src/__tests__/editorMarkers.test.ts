@@ -16,9 +16,11 @@ describe("editorMarkers (#2330)", () => {
     expect(mapMarkers([mk(10, 13)], del(11, 12), true)).toEqual([]);
     expect(mapMarkers([mk(10, 13)], del(9, 11), true)).toEqual([]);
   });
-  it("両端での挿入や後ろの編集では消えない", () => {
-    expect(mapMarkers([mk(10, 13)], ins(10, "x"), true)).toHaveLength(1);
-    expect(mapMarkers([mk(10, 13)], ins(13, "x"), true)).toHaveLength(1);
+  it("端への挿入は触ったと扱い、手前・後ろの編集では消えない", () => {
+    expect(mapMarkers([mk(10, 13)], ins(10, "x"), true)).toHaveLength(0);
+    expect(mapMarkers([mk(10, 13)], ins(13, "x"), true)).toHaveLength(0);
+    expect(mapMarkers([mk(10, 13)], ins(9, "x"), true)).toHaveLength(1);
+    expect(mapMarkers([mk(10, 13)], ins(14, "x"), true)).toHaveLength(1);
     expect(mapMarkers([mk(10, 13)], ins(15, "x"), true)).toEqual([{ from: 10, to: 13, kind: "error" }]);
   });
   it("dropOnEdit=false なら範囲内の編集でも残る", () => {
@@ -32,6 +34,7 @@ describe("editorMarkers (#2330)", () => {
     const list = [mk(2, 4), mk(8, 8)];
     expect(markerAt(list, 3)).toBe(list[0]);
     expect(markerAt(list, 4)).toBeNull();
+    expect(markerAt(list, 4, -1)).toBe(list[0]);
     expect(markerAt(list, 8)).toBe(list[1]);
   });
 });
