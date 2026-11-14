@@ -2674,6 +2674,52 @@ html, body, #root {
   font-size: var(--text-xs);
 }
 
+/* 実行時エラーの位置 (#2330)。波線 (`.cm-runtime-error`)・ガターのマーカー・ホバーの本文。
+   手元の構文チェック (`.cm-lintRange`) とは別系統。色は意味色 (--error-*) 経由。
+   ガターの pop は `.cm-stmt-flash` と同じ抑制ルール (reduced-motion / data-motion) に揃える。 */
+.cm-editor .cm-runtime-error {
+  text-decoration: underline wavy var(--error-solid);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  background: color-mix(in srgb, var(--error-solid) 12%, transparent);
+  border-radius: var(--radius-sm);
+}
+.cm-editor .cm-runtime-error-gutter { min-width: 1.2em; }
+.cm-editor .cm-runtime-error-gutter .cm-gutterElement { padding: 0 var(--space-1); }
+.cm-editor .cm-runtime-error-gutter-glyph {
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  border-radius: 50%;
+  vertical-align: middle;
+  background: var(--error-solid);
+  animation: cm-runtime-error-pop 0.35s var(--ease, ease) both;
+}
+.cm-editor .cm-runtime-error-gutter-glyph-spacer { visibility: hidden; animation: none; }
+@keyframes cm-runtime-error-pop {
+  from { transform: scale(0.3); opacity: 0; }
+  60% { transform: scale(1.2); opacity: 1; }
+  to { transform: scale(1); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .cm-editor .cm-runtime-error-gutter-glyph { animation: none; }
+}
+:root[data-motion="reduced"] .cm-editor .cm-runtime-error-gutter-glyph { animation: none; }
+.cm-runtime-error-tip {
+  max-width: 32em;
+  padding: var(--space-1-5) var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.cm-runtime-error-tip-body {
+  color: var(--text-error);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.cm-runtime-error-tip-hint { color: var(--text); }
+.cm-runtime-error-tip-ai { color: var(--text-muted); font-size: var(--text-xs); }
+
 /* ---------- Keyframes ----------
    Chakra コンポーネントが `animation` prop から名前参照しているため、コンポーネント
    側にスコープした記述ができず、ここでグローバルに提供する。

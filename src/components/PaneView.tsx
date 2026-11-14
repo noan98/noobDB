@@ -180,6 +180,8 @@ export interface PaneActions {
   discardEditsAndPreviewForTab: (tabId: string) => void;
   explainForTab: (tab: Tab, sql: string) => void;
   fetchAllForTab: (tab: Tab) => void;
+  /** 結果グリッドのエラー空状態から、エディタのエラー位置へスクロールしてハイライトする (#2330)。 */
+  revealQueryError: (paneId: string, sql: string, error: string | null) => void;
   focusPane: (paneId: string) => void;
   goToPageInTab: (tabId: string, page: number, sizeOverride?: number) => unknown;
   handleCloseTab: (id: string) => void;
@@ -708,6 +710,8 @@ export const PaneView = memo(
                           (sel: { anchor: number; head: number }) =>
                             editorSelectionRef.current.set(tab.id, sel),
                         )}
+                        runtimeError={tab.queryError ?? (tab.streaming ? undefined : null)}
+                        runtimeErrorSql={tab.lastExecutedSql}
                         running={tab.streaming && !tab.previewStreaming}
                         previewRunning={tab.previewStreaming}
                         onRun={gridStable.fn(`${tab.id}:ed:run`, (sql: string) =>
@@ -1295,6 +1299,17 @@ export const PaneView = memo(
                                     (secs: number | null) => actions.setAutoRefreshForTab(tab.id, secs),
                                   )}
                                   queryError={tab.queryError ?? null}
+                                  onGotoErrorPosition={
+                                    tab.kind !== "table" && tab.lastExecutedSql
+                                      ? gridStable.fn(`${tab.id}:gotoError`, () =>
+                                          actions.revealQueryError(
+                                            pane.id,
+                                            tab.lastExecutedSql,
+                                            tab.queryError ?? null,
+                                          ),
+                                        )
+                                      : undefined
+                                  }
                                   onRetry={
                                     tab.lastExecutedSql
                                       ? gridStable.fn(`${tab.id}:retry`, () => {

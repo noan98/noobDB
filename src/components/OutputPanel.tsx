@@ -51,7 +51,7 @@ export function OutputPanel({
   /** 新しいタブで再実行する (#1541)。実行は通常の実行経路 (安全網つき) に委ねる。省略時は出さない。 */
   onRunSql?: (sql: string, execDatabase: string | null) => void;
   /** 失敗した文のエラー行へエディタ上で移動する (#1627)。`line` はエラー本文の行番号 (無ければ null = 文の先頭)。 */
-  onGotoError?: (sql: string, line: number | null) => void;
+  onGotoError?: (sql: string, line: number | null, error: string | null) => void;
   /** 接続中か。再実行に必要 (挿入は未接続でも使える)。 */
   canRun?: boolean;
   /** いま接続しているプロファイル id。記録時の接続 (id) と違う行、id を持たない行は再実行を無効にする。 */
@@ -145,7 +145,7 @@ function OutputRow({
   onOpenSql: (sql: string) => void;
   onInsertSql?: (sql: string) => void;
   onRunSql?: (sql: string, execDatabase: string | null) => void;
-  onGotoError?: (sql: string, line: number | null) => void;
+  onGotoError?: (sql: string, line: number | null, error: string | null) => void;
   canRun: boolean;
   currentConnectionId: string | null;
 }) {
@@ -332,7 +332,7 @@ function OutputRow({
                   type="button"
                   size="sm"
                   variant="secondary"
-                  onClick={() => onGotoError(entry.sql, errorLine)}
+                  onClick={() => onGotoError(entry.sql, errorLine, entry.error)}
                 >
                   <Icon name="chevron-right" size={ICON_SIZES.md} />
                   {errorLine === null

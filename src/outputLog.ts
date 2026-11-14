@@ -310,6 +310,149 @@ export function lineRangeOf(sql: string, line: number): { from: number; to: numb
   return { from, to: sql.length };
 }
 
+/** エラー位置として線を引く範囲。`from` / `to` は `sql` の UTF-16 オフセット (`[from, to)`)。 */
+export interface ErrorRange {
+  from: number;
+  to: number;
+  /** 位置 / トークンまで絞れたか。false は「文の先頭行に落とした」ベストエフォート。 */
+  precise: boolean;
+}
+
+const WORD_CHAR = /[\p{L}\p{N}_$]/u;
+
+/** `at` から始まるトークンの終端 (UTF-16)。語は語文字の連続、引用は閉じ引用まで、それ以外は 1 コードポイント。 */
+function tokenEnd(sql: string, at: number): number {
+  const first = String.fromCodePoint(sql.codePointAt(at) ?? 0x20);
+  if (first === '"' || first === "'" || first === "`") {
+    let i = at + 1;
+    while (i < sql.length) {
+      if (sql[i] === first) {
+        if (sql[i + 1] === first) {
+          i += 2;
+          continue;
+        }
+        return i + 1;
+      }
+      i += 1;
+    }
+    return sql.length;
+  }
+  if (!WORD_CHAR.test(first)) return at + first.length;
+  let i = at;
+  while (i < sql.length) {
+    const cp = String.fromCodePoint(sql.codePointAt(i) ?? 0x20);
+    if (!WORD_CHAR.test(cp)) break;
+    i += cp.length;
+  }
+  return i;
+}
+
+/** コードポイント単位の 1 始まりオフセット `offset` を UTF-16 オフセットへ。範囲外は null。 */
+function utf16IndexOfCodePoint(sql: string, offset: number): number | null {
+  let i = 0;
+  let n = 1;
+  while (i < sql.length) {
+    if (n === offset) return i;
+    const cp = sql.codePointAt(i) ?? 0;
+    i += cp > 0xffff ? 2 : 1;
+    n += 1;
+  }
+  return null;
+}
+
+/** 空白だけの先頭を飛ばした、文の最初の行の範囲 (末尾の空白は除く)。 */
+function firstStatementLine(sql: string): { from: number; to: number } {
+  const from = sql.length - sql.trimStart().length;
+  const nl = /\r\n|\r|\n/.exec(sql.slice(from));
+  const end = nl ? from + nl.index : sql.length;
+  return { from, to: Math.max(from, from + sql.slice(from, end).trimEnd().length) };
+}
+
+function tokenRangeAt(sql: string, at: number): ErrorRange {
+  return { from: at, to: tokenEnd(sql, at), precise: true };
+}
+
+function locatePostgres(error: string, sql: string): ErrorRange | null {
+  const m = /\(position (\d+)\)\s*$/.exec(error);
+  if (!m) return null;
+  const offset = Number(m[1]);
+  if (!Number.isSafeInteger(offset) || offset < 1) return null;
+  const at = utf16IndexOfCodePoint(sql, offset);
+  return at === null ? null : tokenRangeAt(sql, at);
+}
+
+function locateMysql(error: string, sql: string): ErrorRange | null {
+  const near = /\bnear '([\s\S]*)' at line (\d+)\b/i.exec(error);
+  if (near) {
+    const line = Math.max(1, Number(near[2]));
+    const lineRange = lineRangeOf(sql, line);
+    const fragment = near[1].trimEnd();
+    if (fragment.length > 0) {
+      // 断片は誤りのトークンから始まる。報告された行から探し、無ければ文頭から探す。
+      const idx = sql.indexOf(fragment, lineRange.from);
+      const hit = idx >= 0 ? idx : sql.indexOf(fragment);
+      if (hit >= 0) return tokenRangeAt(sql, hit);
+    }
+    return { ...lineRange, precise: false };
+  }
+  const col = /Unknown column '([^']+)'/i.exec(error);
+  if (col) {
+    const full = col[1];
+    const name = full.split(".").pop() ?? full;
+    const idx = sql.indexOf(full);
+    if (idx >= 0) return { from: idx, to: idx + full.length, precise: true };
+    const idx2 = sql.indexOf(name);
+    if (idx2 >= 0) return { from: idx2, to: idx2 + name.length, precise: true };
+  }
+  const line = /\bat line (\d+)\b/i.exec(error);
+  if (line) return { ...lineRangeOf(sql, Math.max(1, Number(line[1]))), precise: false };
+  return null;
+}
+
+function locateSqlite(error: string, sql: string): ErrorRange | null {
+  const named =
+    /\bnear "([^"]+)"/.exec(error) ??
+    /\bnear '([^']+)'/.exec(error) ??
+    /no such (?:column|table|function|index|view): ([^\s,()]+)/i.exec(error);
+  if (!named) return null;
+  const tok = named[1];
+  let idx = sql.indexOf(tok);
+  if (idx < 0) idx = sql.toLowerCase().indexOf(tok.toLowerCase());
+  if (idx < 0) return null;
+  return { from: idx, to: idx + tok.length, precise: true };
+}
+
+/**
+ * 実行時エラーの本文から、エラー位置として線を引く範囲を求める (#2330)。`sql` は実行した文そのもの
+ * (複数文の途中の文でも、その文の先頭が 0)。
+ * - PostgreSQL: ` (position n)` (コードポイント単位の 1 始まり) の位置から始まるトークン。
+ * - MySQL / MariaDB: `near '...' at line N` の断片の最初の出現 (行 N から探す) のトークン。
+ *   `Unknown column 'x'` は `x` の出現位置。
+ * - SQLite: `near "tok"` / `no such column: x` のトークンを文の中から探す (ベストエフォート)。
+ * どれでも決まらなければ文の先頭行 (`precise: false`)。`sql` が空なら null。
+ * `driver` は先に試す方言のヒント。分からなくても、本文の形でどの方言かは判別できる。
+ */
+export function locateErrorRange(
+  error: string | null | undefined,
+  sql: string,
+  driver?: string | null,
+): ErrorRange | null {
+  if (sql.trim().length === 0) return null;
+  if (error) {
+    const order: Array<(e: string, s: string) => ErrorRange | null> =
+      driver === "mysql"
+        ? [locateMysql, locatePostgres, locateSqlite]
+        : driver === "sqlite"
+          ? [locateSqlite, locatePostgres, locateMysql]
+          : [locatePostgres, locateMysql, locateSqlite];
+    for (const f of order) {
+      const r = f(error, sql);
+      if (r) return r;
+    }
+  }
+  return { ...firstStatementLine(sql), precise: false };
+}
+
 function firstLine(s: string): string {
   const line = s.split(/\r?\n/, 1)[0] ?? "";
   return line.trim();

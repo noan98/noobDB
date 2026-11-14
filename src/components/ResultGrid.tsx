@@ -1349,6 +1349,8 @@ interface Props {
   queryError?: string | null;
   /** Called when the user clicks "Retry" in the error EmptyState. */
   onRetry?: () => void;
+  /** エラー空状態の「エラー位置へ」(#2330)。エディタの該当範囲へ移動してハイライトする。 */
+  onGotoErrorPosition?: () => void;
   /**
    * When provided, a "Jump to …" item appears in the right-click menu for
    * cells belonging to a foreign-key column (from `tableColumns`). The
@@ -8948,6 +8950,7 @@ export const ResultGrid = memo(
       onSetAutoRefresh,
       queryError,
       onRetry,
+      onGotoErrorPosition,
       onFkJump,
       incomingFks,
       onRunRelatedQuery,
@@ -9797,6 +9800,11 @@ export const ResultGrid = memo(
             title={t("gridQueryError")}
             description={queryError}
             action={onRetry ? { label: t("gridRetry"), onClick: onRetry } : undefined}
+            secondaryActions={
+              onGotoErrorPosition
+                ? [{ label: t("gridGotoErrorPosition"), icon: "chevron-right", onClick: onGotoErrorPosition }]
+                : undefined
+            }
           />
         ) : (
           <EmptyState
@@ -9807,7 +9815,7 @@ export const ResultGrid = memo(
             description={t("gridZeroRowsHint", { ms: resultElapsedMs ?? 0 })}
           />
         ),
-      [streaming, queryError, onRetry, resultElapsedMs, locale],
+      [streaming, queryError, onRetry, onGotoErrorPosition, resultElapsedMs, locale],
     );
 
     if (!result) {

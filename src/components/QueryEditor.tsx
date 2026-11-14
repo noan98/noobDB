@@ -78,6 +78,9 @@ import { markFeatureTried, useSettings } from "../settings";
 import { springs } from "../motion";
 import { statementAtOffset, statementsFromOffset } from "../sqlScript";
 import { diagnosticsFromTree, type SqlLintMessages } from "./sqlLint";
+import { createMarkerLayer } from "./editorMarkers";
+import { locateErrorRange } from "../outputLog";
+import { matchErrorHint } from "../errorHints";
 import {
   buildSemanticSchema,
   semanticDiagnostics,
@@ -222,6 +225,37 @@ const treeDropMarkerField = StateField.define<DecorationSet>({
   },
   provide: (f) => EditorView.decorations.from(f),
 });
+
+/** エラー本文のツールチップに出す最大文字数 (巨大な本文でツールチップが画面を覆わないように)。 */
+const RUNTIME_ERROR_TIP_MAX_CHARS = 600;
+
+/**
+ * 実行時エラーの波線のホバーに出す本文 (#2330)。エラー本文・静的なヒント (`errorHints`)・AI 有効時の
+ * 解説への導線。面・縁・文字色は `.cm-tooltip.cm-tooltip-hover` と同じトークンで、意味色は CSS 側。
+ */
+function renderRuntimeErrorTip(error: string, aiAvailable: boolean): HTMLElement {
+  const root = document.createElement("div");
+  root.className = "cm-runtime-error-tip";
+  const body = document.createElement("div");
+  body.className = "cm-runtime-error-tip-body";
+  body.textContent =
+    error.length > RUNTIME_ERROR_TIP_MAX_CHARS ? `${error.slice(0, RUNTIME_ERROR_TIP_MAX_CHARS)}…` : error;
+  root.append(body);
+  const hintKey = matchErrorHint(error);
+  if (hintKey) {
+    const hint = document.createElement("div");
+    hint.className = "cm-runtime-error-tip-hint";
+    hint.textContent = t(hintKey);
+    root.append(hint);
+  }
+  if (aiAvailable) {
+    const ai = document.createElement("div");
+    ai.className = "cm-runtime-error-tip-ai";
+    ai.textContent = t("editorRuntimeErrorAiHint");
+    root.append(ai);
+  }
+  return root;
+}
 
 // リアルタイム構文チェック (#704) のデバウンス遅延 (ms)。大きなスクリプトでも
 // 入力を阻害しないよう、タイプが落ち着いてから lint を走らせる。
@@ -396,6 +430,14 @@ interface Props {
    * スキーマツリーで選択させる (#1629)。一致しないクリックでは呼ばれず、通常のクリックとして扱う。
    */
   onRevealSchemaObject?: (target: SchemaJumpTarget) => void;
+  /**
+   * 直近の実行がエラーで終わったときの本文 (#2330)。エディタが `runtimeErrorSql` の位置を本文から探し、
+   * エラー位置に波線とガターマーカーを出す。null = エラーなし (マーカーを消す)、undefined = 実行中など
+   * 状態を変えない。範囲を編集するとマーカーは消える。
+   */
+  runtimeError?: string | null;
+  /** `runtimeError` を起こした SQL (実行した文そのもの)。 */
+  runtimeErrorSql?: string;
 }
 
 export interface QueryEditorHandle {
@@ -414,6 +456,11 @@ export interface QueryEditorHandle {
   containsPoint: (x: number, y: number) => boolean;
   /** `[from, to)` を選択してスクロールし、エディタへフォーカスを移す (出力タブのエラー行ジャンプ、#1627)。 */
   selectRange: (from: number, to: number) => void;
+  /**
+   * 実行時エラーの範囲 (波線) へスクロールして一瞬ハイライトする (#2330)。波線が消えていたら (編集済み)
+   * `fallback` の SQL とエラー本文から位置を求め直す。どちらでも見つからなければ false。
+   */
+  revealRuntimeError: (fallback?: { sql: string; error: string | null }) => boolean;
   /** `[from, to)` だけを置き換える。undo 履歴に載る (#692)。 */
   replaceRange: (from: number, to: number, text: string) => void;
   /** キーボードフォーカスをエディタへ移す (ペインフォーカス循環 #681)。 */
@@ -705,6 +752,8 @@ export const QueryEditor = memo(
       scanPreflightPaused,
       onAiSqlAction,
       onRevealSchemaObject,
+      runtimeError,
+      runtimeErrorSql,
     }: Props,
     ref,
   ) {
@@ -716,6 +765,18 @@ export const QueryEditor = memo(
     const actionKeymapCompartment = useMemo(() => new Compartment(), []);
     const lintCompartment = useMemo(() => new Compartment(), []);
     const placeholderCompartment = useMemo(() => new Compartment(), []);
+    // 実行時エラーの波線 + ガターマーカー + ホバー (#2330)。手元の構文チェック (linter) とは別系統。
+    const aiTipRef = useRef(false);
+    const runtimeErrorLayer = useMemo(
+      () =>
+        createMarkerLayer<{ error: string }>({
+          markClass: "cm-runtime-error",
+          gutterClass: "cm-runtime-error-gutter",
+          dropOnEdit: true,
+          renderTooltip: (m) => renderRuntimeErrorTip(m.data?.error ?? "", aiTipRef.current),
+        }),
+      [],
+    );
 
     // リアルタイム構文チェック (#704)。設定でオン/オフでき、診断メッセージは i18n
     // 経由で日英対応。linter は `syntaxTree(state)` の (lang-sql が既に構築した)
@@ -969,6 +1030,7 @@ export const QueryEditor = memo(
     const [showBuilder, setShowBuilder] = useState(false);
     const [showAiQuery, setShowAiQuery] = useState(false);
     const aiAvailable = useAiAvailable();
+    aiTipRef.current = aiAvailable;
     // AI インライン補完 (#1479) の送信可否と送信元。拡張は state に一度だけ載せ、送信の直前に
     // この ref から最新の設定を読む (オフにした直後・本番接続への切替直後に送らないため)。
     const inlineGateRef = useRef({ settings: settings.ai, aiAvailable, isProduction: !!isProduction });
@@ -1236,6 +1298,7 @@ export const QueryEditor = memo(
             search({ top: true }),
             highlightSelectionMatches(),
             stmtFlashField,
+            runtimeErrorLayer.extension,
             // `{{name}}` / `?` / `$n` / `:name` のチップ装飾とホバーのヒント (#2155)。
             placeholderDecorations(
               () => driverRef.current,
@@ -1498,6 +1561,31 @@ export const QueryEditor = memo(
       setPreflightSql(pfText);
     }, [tabId]);
 
+    // 実行エラーの位置を波線で示す (#2330)。`runtimeErrorSql` を本文から探し (パラメータ展開などで見つから
+    // なければ出さない)、エラー本文から範囲を求める。依存は文字列だけなので、波線が編集で消えたあとに
+    // 再描画されても付け直さない。タブ切替では保存済み state のマーカーが戻るので、同じ内容なら上書きするだけ。
+    // biome-ignore lint/correctness/useExhaustiveDependencies: runtimeErrorLayer は固定、driverRef は ref。エラー本文・SQL・タブの変化だけをトリガーにする
+    useEffect(() => {
+      const view = viewRef.current;
+      if (!view || runtimeError === undefined) return;
+      const has = runtimeErrorLayer.get(view.state).length > 0;
+      if (runtimeError === null || !runtimeErrorSql) {
+        if (has) view.dispatch({ effects: runtimeErrorLayer.set([]) });
+        return;
+      }
+      const at = view.state.doc.toString().indexOf(runtimeErrorSql);
+      const r = at >= 0 ? locateErrorRange(runtimeError, runtimeErrorSql, driverRef.current) : null;
+      if (!r) {
+        if (has) view.dispatch({ effects: runtimeErrorLayer.set([]) });
+        return;
+      }
+      view.dispatch({
+        effects: runtimeErrorLayer.set([
+          { from: at + r.from, to: at + r.to, kind: "error", data: { error: runtimeError } },
+        ]),
+      });
+    }, [runtimeError, runtimeErrorSql, tabId]);
+
     // compartment の設定が実際に変わったときだけ reconfigure する (#1308)。初回マウントや、
     // 設定が同じタブ同士の切替では何もしない。以前は補完・構文チェック・キーマップの
     // 3 つをマウントのたびに作り直していた。
@@ -1669,6 +1757,27 @@ export const QueryEditor = memo(
             scrollIntoView: true,
           });
           view.focus();
+        },
+        revealRuntimeError: (fallback) => {
+          const view = viewRef.current;
+          if (!view) return false;
+          let range: { from: number; to: number } | null = runtimeErrorLayer.get(view.state)[0] ?? null;
+          if (!range && fallback && fallback.sql.length > 0) {
+            const at = view.state.doc.toString().indexOf(fallback.sql);
+            const r = at >= 0 ? locateErrorRange(fallback.error, fallback.sql, driverRef.current) : null;
+            if (r) range = { from: at + r.from, to: at + r.to };
+          }
+          if (!range) return false;
+          const len = view.state.doc.length;
+          const from = Math.min(range.from, len);
+          const to = Math.min(Math.max(range.to, from), len);
+          view.dispatch({ effects: EditorView.scrollIntoView(from, { y: "center" }) });
+          // 範囲が空 (行末など) のときは同じ行の本文全体を光らせる。
+          const line = view.state.doc.lineAt(from);
+          if (to > from) flashStatement(view, from, to);
+          else if (line.to > line.from) flashStatement(view, line.from, line.to);
+          view.focus();
+          return true;
         },
         replaceRange: (from: number, to: number, text: string) => {
           const view = viewRef.current;
