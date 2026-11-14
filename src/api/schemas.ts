@@ -2757,6 +2757,28 @@ export const cloneRowsOutcome = z.object({
   warnings: z.array(subsetWarning),
 });
 
+// インデックス試算 (#2326)。
+const indexWhatIfModeSupport = z.object({
+  method: z.enum(["hypopg", "ignoreIndex", "rollbackDdl"]).nullable(),
+  unavailable: z.enum(["readOnly", "needsHypopg", "noVirtualIndex"]).nullable(),
+  locksTable: z.boolean(),
+  buildsIndex: z.boolean(),
+});
+
+export const indexWhatIfSupport = z.object({
+  hypopgVersion: z.string().nullable(),
+  disable: indexWhatIfModeSupport,
+  add: indexWhatIfModeSupport,
+});
+
+export const indexWhatIfOutcome = z.object({
+  before: queryResultLite,
+  after: queryResultLite,
+  method: z.enum(["hypopg", "ignoreIndex", "rollbackDdl"]),
+  statements: z.array(z.string()),
+  elapsedMs: z.number(),
+});
+
 export const subsetProgressEvent = z.object({
   streamId: z.string(),
   phase: z.enum(["collect", "write"]),

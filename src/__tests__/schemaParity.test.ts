@@ -101,6 +101,8 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["subsetPreview", schemas.subsetPreview],
   ["cloneRowsPreview", schemas.cloneRowsPreview],
   ["cloneRowsOutcome", schemas.cloneRowsOutcome],
+  ["indexWhatIfSupport", schemas.indexWhatIfSupport],
+  ["indexWhatIfOutcome", schemas.indexWhatIfOutcome],
   ["connectResult", schemas.connectResult],
   ["localTableMeta", schemas.localTableMeta],
   ["profileImportResult", schemas.profileImportResult],

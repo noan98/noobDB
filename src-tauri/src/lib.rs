@@ -271,6 +271,14 @@ pub mod __test_api {
         RowMergeRequest, UndoDecline,
     };
     pub use crate::db::subset::SubsetWarning;
+    // 実行計画のインデックス試算 (#2326)。
+    pub use crate::commands::index_whatif::{
+        get_index_whatif_support_inner, run_index_whatif_inner,
+    };
+    pub use crate::db::index_whatif::{
+        IndexWhatIfAction, IndexWhatIfMethod, IndexWhatIfModeSupport, IndexWhatIfOutcome,
+        IndexWhatIfRequest, IndexWhatIfSupport, IndexWhatIfUnavailable,
+    };
     // 行の子レコードごとの複製 (#2304)。
     pub use crate::commands::clone_rows::{
         clone_rows_inner, preview_clone_rows_inner, CloneKeyMapping, CloneRowsOutcome,
@@ -2148,6 +2156,8 @@ pub fn run() {
             commands::subset::run_subset,
             commands::clone_rows::preview_clone_rows,
             commands::clone_rows::clone_rows,
+            commands::index_whatif::get_index_whatif_support,
+            commands::index_whatif::run_index_whatif,
             commands::import::preview_create_table_ddl,
             commands::file::read_text_file,
             commands::file::read_sql_file,

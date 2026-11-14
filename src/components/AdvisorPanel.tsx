@@ -1,3 +1,4 @@
+import { IndexWhatIfButton } from "./IndexWhatIfButton";
 import { useCallback, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import { motion } from "motion/react";
@@ -658,6 +659,17 @@ export function AdvisorPanel({
                               {t("advisorIgnore")}
                             </Button>
                           </Tooltip>
+                          {f.rule === "unused_index" && f.context[0] && report && (
+                            <IndexWhatIfButton
+                              sessionId={sessionId}
+                              driver={report.driver}
+                              sql={null}
+                              database={database}
+                              disabled={false}
+                              initial={{ table: f.table, index: f.context[0] }}
+                              editableSql
+                            />
+                          )}
                         </Flex>
                         {aiAvailable && report && (
                           <AiAdvisorExplain

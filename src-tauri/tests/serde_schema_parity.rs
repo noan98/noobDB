@@ -1509,6 +1509,30 @@ fn build_fixtures() -> serde_json::Value {
         rows: 200,
     };
 
+    // #2326: 実行計画のインデックス試算 (`get_index_whatif_support` / `run_index_whatif`)。
+    let index_whatif_support = t::IndexWhatIfSupport {
+        hypopg_version: Some("1.4.1".into()),
+        disable: t::IndexWhatIfModeSupport {
+            method: Some(t::IndexWhatIfMethod::Hypopg),
+            unavailable: None,
+            locks_table: false,
+            builds_index: false,
+        },
+        add: t::IndexWhatIfModeSupport {
+            method: None,
+            unavailable: Some(t::IndexWhatIfUnavailable::ReadOnly),
+            locks_table: true,
+            builds_index: true,
+        },
+    };
+    let index_whatif_outcome = t::IndexWhatIfOutcome {
+        before: query_result.clone(),
+        after: query_result.clone(),
+        method: t::IndexWhatIfMethod::RollbackDdl,
+        statements: vec!["BEGIN; DROP INDEX x; ...; ROLLBACK".into()],
+        elapsed_ms: 12,
+    };
+
     // #2304: 行の子レコードごとの複製 (`preview_clone_rows` / `clone_rows`)。
     let clone_rows_preview = t::CloneRowsPreview {
         tables: vec![t::CloneTablePreview {
@@ -3087,6 +3111,8 @@ fn build_fixtures() -> serde_json::Value {
         "subsetPreview": subset_preview,
         "cloneRowsPreview": clone_rows_preview,
         "cloneRowsOutcome": clone_rows_outcome,
+        "indexWhatIfSupport": index_whatif_support,
+        "indexWhatIfOutcome": index_whatif_outcome,
         "rowMergePreview": row_merge_preview,
         "rowMergeOutcomeApplied": row_merge_outcome_applied,
         "rowMergeOutcomeBlocked": row_merge_outcome_blocked,

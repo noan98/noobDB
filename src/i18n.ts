@@ -8524,6 +8524,56 @@ const en = {
     "This is large. Narrow the tables, or turn off FK-related tables, before pasting into an AI so the reply is not cut off.",
   schemaExportTokensDanger: "This may exceed the AI context limit. Reduce the selection before pasting.",
   schemaExportTokensFkExpanded: "FK expansion added {added} table(s) (about {tokens} tokens in total).",
+  indexWhatIfOpen: "Index what-if",
+  indexWhatIfOpenTip:
+    "Compare the current plan with the plan when an index is disabled or added, without changing the real schema",
+  indexWhatIfTitle: "Index what-if",
+  indexWhatIfIntro:
+    "Gets the estimated plan (EXPLAIN without ANALYZE) as if an index were disabled or added, and compares it with the current plan. The query is not executed and nothing is left in the schema.",
+  indexWhatIfTable: "Table",
+  indexWhatIfModeDisable: "If this index did not exist",
+  indexWhatIfModeAdd: "If this index existed",
+  indexWhatIfIndexLabel: "Index",
+  indexWhatIfIndexPlaceholder: "Choose an index",
+  indexWhatIfNoIndexes: "This table has no index that can be disabled (the primary key is excluded).",
+  indexWhatIfColumnsLabel: "Columns of the index (in the order selected)",
+  indexWhatIfColumnsHint:
+    "The numbers show the key order. Click the columns in the order they should appear in the index.",
+  indexWhatIfNoTables: "No table was found in this SQL.",
+  indexWhatIfUnavailableReadOnly:
+    "This what-if needs a temporary DDL (rolled back right after), so it cannot be used on a read-only connection.",
+  indexWhatIfUnavailableNeedsHypopg:
+    "Adding an index can only be simulated with the hypopg extension, which is not installed here. Install hypopg from the Extensions screen (CREATE EXTENSION hypopg) to use it. Disabling an index is still available.",
+  indexWhatIfUnavailableNoVirtualIndex:
+    "MySQL has no virtual indexes and DDL cannot be rolled back (it commits implicitly), so adding an index cannot be simulated without creating it. Create it on a copy or in the sandbox to check.",
+  indexWhatIfMethodHypopg:
+    "Uses the hypopg extension: the index is hidden or created virtually for this session only. Nothing is created and no lock is taken.",
+  indexWhatIfMethodIgnoreIndex:
+    "Adds IGNORE INDEX to the table in the query and runs EXPLAIN. Nothing is changed on the server and other sessions are not affected.",
+  indexWhatIfMethodRollbackDdl:
+    "Runs the DDL in a transaction, takes the plan, and rolls back right after. The schema is restored.",
+  indexWhatIfLockWarningPostgres:
+    "DROP INDEX takes an ACCESS EXCLUSIVE lock on the table. Until the rollback (a few moments), reads and writes to the table wait, and they also queue behind this lock. If the lock cannot be taken within the timeout, nothing happens.",
+  indexWhatIfLockWarningSqlite:
+    "The DDL takes the database's write lock until the rollback, so other connections cannot write for that time.",
+  indexWhatIfLockConfirm: "I understand the lock and want to run this",
+  indexWhatIfBuildNote:
+    "The index is actually built before it is rolled back, so this can take a long time on a large table (it stops after 60 seconds).",
+  indexWhatIfRun: "Run what-if",
+  indexWhatIfRunning: "Running...",
+  indexWhatIfClose: "Close",
+  indexWhatIfLoadError: "Could not load the information: {error}",
+  indexWhatIfRunError: "The what-if failed: {error}",
+  indexWhatIfCompareDisable: "Plan without the index",
+  indexWhatIfCompareAdd: "Plan with the added index",
+  indexWhatIfColBefore: "Current",
+  indexWhatIfColDisable: "Without {name}",
+  indexWhatIfColAdd: "With ({name})",
+  indexWhatIfPaneBefore: "Current plan (estimated)",
+  indexWhatIfPaneDisable: "Without index {name} (estimated)",
+  indexWhatIfPaneAdd: "With an index on {table} ({name}) (estimated)",
+  indexWhatIfSqlLabel: "Query to analyze",
+  indexWhatIfSqlPlaceholder: "Paste a SELECT that reads this table (without EXPLAIN)",
 };
 
 export type I18nKey = keyof typeof en;
@@ -16968,6 +17018,55 @@ const ja: Dict = {
     "AI のコンテキスト上限を超える可能性があります。貼り付け前に選択を減らしてください。",
   schemaExportTokensFkExpanded:
     "FK 展開で {added} 件のテーブルが加わっています (合計で概算 {tokens} トークン)。",
+  indexWhatIfOpen: "インデックス試算",
+  indexWhatIfOpenTip:
+    "実際のスキーマを変えずに、インデックスを無効化 / 追加した場合の計画を今の計画と比べます",
+  indexWhatIfTitle: "インデックス試算",
+  indexWhatIfIntro:
+    "インデックスを無効化 / 追加した場合の見積もりの計画 (ANALYZE なしの EXPLAIN) を取り、今の計画と比べます。クエリは実行せず、スキーマには何も残りません。",
+  indexWhatIfTable: "テーブル",
+  indexWhatIfModeDisable: "このインデックスが無かったら",
+  indexWhatIfModeAdd: "このインデックスがあったら",
+  indexWhatIfIndexLabel: "インデックス",
+  indexWhatIfIndexPlaceholder: "インデックスを選択",
+  indexWhatIfNoIndexes: "無効化できるインデックスがありません (主キーは対象外です)。",
+  indexWhatIfColumnsLabel: "インデックスの列 (選んだ順)",
+  indexWhatIfColumnsHint: "数字はキーの順番です。インデックスに並べたい順に列をクリックしてください。",
+  indexWhatIfNoTables: "この SQL からテーブルを見つけられませんでした。",
+  indexWhatIfUnavailableReadOnly:
+    "この試算は一時的な DDL (直後にロールバック) が必要なため、読み取り専用の接続では使えません。",
+  indexWhatIfUnavailableNeedsHypopg:
+    "インデックスの追加は hypopg 拡張があるときだけ試算できますが、ここには入っていません。拡張機能の画面から hypopg を導入すると (CREATE EXTENSION hypopg) 使えます。無効化の試算はそのまま使えます。",
+  indexWhatIfUnavailableNoVirtualIndex:
+    "MySQL には仮想インデックスの仕組みが無く、DDL もロールバックできない (暗黙コミットされる) ため、実際に作らずに追加の効果を試算することはできません。コピーしたデータやサンドボックスで作って確かめてください。",
+  indexWhatIfMethodHypopg:
+    "hypopg 拡張を使い、このセッションの中だけでインデックスを隠す / 仮想的に作ります。実体は作らず、ロックも取りません。",
+  indexWhatIfMethodIgnoreIndex:
+    "クエリの対象テーブルに IGNORE INDEX を付けて EXPLAIN します。サーバには何も変更せず、他のセッションにも影響しません。",
+  indexWhatIfMethodRollbackDdl:
+    "トランザクション内で DDL を実行して計画を取り、すぐにロールバックします。スキーマは元に戻ります。",
+  indexWhatIfLockWarningPostgres:
+    "DROP INDEX はテーブルに ACCESS EXCLUSIVE ロックを取ります。ロールバックまでの一瞬、そのテーブルの読み書きは待たされ、このロックの後ろにも待ちが並びます。タイムアウトまでにロックを取れなければ何も起きずに失敗します。",
+  indexWhatIfLockWarningSqlite:
+    "ロールバックまでの間、DDL がデータベースの書き込みロックを取るため、他の接続はその間書き込めません。",
+  indexWhatIfLockConfirm: "ロックを取ることを理解したうえで実行する",
+  indexWhatIfBuildNote:
+    "ロールバックする前にインデックスを実際に構築するため、大きな表では時間がかかります (60 秒で中断します)。",
+  indexWhatIfRun: "試算する",
+  indexWhatIfRunning: "試算中...",
+  indexWhatIfClose: "閉じる",
+  indexWhatIfLoadError: "情報を読み込めませんでした: {error}",
+  indexWhatIfRunError: "試算に失敗しました: {error}",
+  indexWhatIfCompareDisable: "インデックスを無効化した場合の計画",
+  indexWhatIfCompareAdd: "インデックスを追加した場合の計画",
+  indexWhatIfColBefore: "現在",
+  indexWhatIfColDisable: "{name} なし",
+  indexWhatIfColAdd: "追加 ({name})",
+  indexWhatIfPaneBefore: "現在の計画 (見積もり)",
+  indexWhatIfPaneDisable: "インデックス {name} なし (見積もり)",
+  indexWhatIfPaneAdd: "{table} に ({name}) のインデックスを追加 (見積もり)",
+  indexWhatIfSqlLabel: "試算するクエリ",
+  indexWhatIfSqlPlaceholder: "このテーブルを読む SELECT を貼り付け (EXPLAIN は付けない)",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

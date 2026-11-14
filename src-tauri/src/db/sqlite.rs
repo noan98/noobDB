@@ -3270,6 +3270,77 @@ async fn run_batch_checked(
     Ok(affected)
 }
 
+// ── インデックスの試算 (#2326) ──
+
+impl SqliteConn {
+    /// 試算: `BEGIN; DROP INDEX / CREATE INDEX; EXPLAIN QUERY PLAN; ROLLBACK`。DDL は必ず
+    /// ロールバックし、できなかった・future が drop された接続はプールへ戻さず閉じる
+    /// (閉じれば未コミットの変更は残らない)。
+    pub(super) async fn index_whatif(
+        &self,
+        plan: &super::index_whatif::WhatIfPlan<'_>,
+    ) -> Result<super::index_whatif::WhatIfRaw> {
+        use super::index_whatif::{IndexWhatIfAction, SQLITE_TEMP_INDEX};
+        use sqlx::Connection;
+        if !super::sync::sqlite_is_main(self.resolve_db(plan.database.unwrap_or(""))) {
+            return Err(AppError::InvalidInput(
+                "what-if: tables in an attached database are not supported".into(),
+            ));
+        }
+        let ddl = match plan.action {
+            IndexWhatIfAction::Disable => {
+                let index = plan
+                    .index
+                    .ok_or_else(|| AppError::InvalidInput("what-if: index is required".into()))?;
+                format!("DROP INDEX {}", quote_ident(index))
+            }
+            IndexWhatIfAction::Add => {
+                let cols: Vec<String> = plan.columns.iter().map(|c| quote_ident(c)).collect();
+                format!(
+                    "CREATE INDEX {} ON {} ({})",
+                    quote_ident(SQLITE_TEMP_INDEX),
+                    quote_ident(plan.table),
+                    cols.join(", ")
+                )
+            }
+        };
+        let mut guard = super::server_stop::ReleaseGuard::new(self.pool.acquire().await?);
+        guard.arm();
+        // 古いスキーマで準備された文を使わないよう、キャッシュを捨ててスキーマを再検証する。
+        guard.conn.clear_cached_statements().await?;
+        sqlx::query("SELECT 1 FROM sqlite_master LIMIT 1")
+            .fetch_optional(&mut *guard.conn)
+            .await?;
+        let before = run_sql_on(&mut guard.conn, &plan.explain_before).await?;
+        sqlx::raw_sql("BEGIN").execute(&mut *guard.conn).await?;
+        let body = async {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(ddl.clone()))
+                .execute(&mut *guard.conn)
+                .await?;
+            // EXPLAIN は準備時に計画が決まるので、DDL 前に準備した同じ文のキャッシュを使うと
+            // DDL が反映されない。捨てて、変更後のスキーマで準備し直させる。
+            guard.conn.clear_cached_statements().await?;
+            run_sql_on(&mut guard.conn, &plan.explain_before).await
+        }
+        .await;
+        let rolled_back = sqlx::raw_sql("ROLLBACK")
+            .execute(&mut *guard.conn)
+            .await
+            .is_ok();
+        // DDL 後のスキーマで準備された文を、あとで同じ接続が再利用しないようにする。
+        let cleared = guard.conn.clear_cached_statements().await.is_ok();
+        if rolled_back && cleared {
+            guard.keep();
+        }
+        let after = body?;
+        Ok(super::index_whatif::WhatIfRaw {
+            before,
+            after,
+            statements: vec![format!("BEGIN; {ddl}; ...; ROLLBACK")],
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

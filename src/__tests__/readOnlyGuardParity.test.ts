@@ -375,6 +375,10 @@ const WRITE_CAPABLE: Record<string, WriteCapable> = {
     "ensure_transfer_target_writable が書き込み先の session.read_only を拒否 (取得は読み取り専用文だけ)",
     /\bensure_transfer_target_writable\s*\(/,
   ),
+  run_index_whatif: wc(
+    "DDL を使う試算 (PostgreSQL の DROP INDEX 代替・SQLite) は session.read_only を拒否。hypopg / IGNORE INDEX は DB に書かず対象も単独 SELECT のみ",
+    RO_IF_SESSION,
+  ),
   clone_rows: wc(
     "session.read_only を (緊急書き込みでも) 拒否。式の評価も書き込みと同じトランザクションの中だけ",
     RO_IF_SESSION,
@@ -598,6 +602,7 @@ safe(
   // 診断 / 統計 / 監視
   "analyze_schema_health",
   "check_duplicate_index",
+  "get_index_whatif_support",
   "profile_column",
   "profile_table",
   "server_info",
@@ -734,6 +739,7 @@ const SESSION_READ_EXECUTES_SELECT = new Set([
  * 解析は同一ファイル内で辿れる関数に限る (他モジュールの関数の中身は見ない)。
  */
 const CONNECTION_READ_METHODS = new Set([
+  "index_whatif_hypopg_version",
   "driver_kind",
   "connect",
   "transaction_active",
@@ -818,6 +824,7 @@ const CONNECTION_READ_METHODS = new Set([
 ]);
 /** 書き込み / SQL 実行 / 状態変更を行う `impl Connection` のメソッド (許可リストに無ければ到達不可)。 */
 const CONNECTION_WRITE_METHODS = new Set([
+  "index_whatif_run",
   "execute",
   "execute_explain",
   "create_table_from_columns",

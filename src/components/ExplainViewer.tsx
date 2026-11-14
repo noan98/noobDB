@@ -17,6 +17,7 @@ import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
 import { Skeleton } from "./Skeleton";
 import { PlanPinControls } from "./PlanPinControls";
+import { IndexWhatIfButton } from "./IndexWhatIfButton";
 import { AiExplainInterpret, type AiExplainInterpretProps } from "./AiExplainInterpret";
 import { staggerContainer, variants } from "../motion";
 import { EXPLAIN_SKELETON_ROWS, staggerPlanIds } from "./explainSkeleton";
@@ -455,6 +456,11 @@ interface Props {
    * 未指定なら固定 / 比較の操作を出さない。
    */
   pin?: { scope: string; sql: string | null };
+  /**
+   * インデックス試算 (#2326)。「無かったら / あったら」の計画を本番の構造を変えずに取り、今の計画と
+   * 比べる。`sql` は EXPLAIN を付けない元の SELECT。未指定なら入口を出さない。
+   */
+  whatIf?: { sessionId: string; sql: string | null; database: string | null };
 }
 
 interface NodeRowProps {
@@ -744,7 +750,7 @@ function AnalyzeBar({
   );
 }
 
-export function ExplainViewer({ result, driver, streaming, analyze, ai, pin }: Props) {
+export function ExplainViewer({ result, driver, streaming, analyze, ai, pin, whatIf }: Props) {
   const t = useT();
   const locale = useLocale();
   // 計画のパースはここで 1 回だけ行い、Body と AI 解釈で共有する。補助ラベルは
@@ -754,22 +760,35 @@ export function ExplainViewer({ result, driver, streaming, analyze, ai, pin }: P
   // AI 解釈に渡す計画の生テキスト。ストリーミング中は確定していないので渡さない。
   const hasAi = !!ai;
   const plan = hasAi && !streaming ? parsed.raw : null;
-  if (!analyze && !ai && !pin) return <ExplainViewerBody parsed={parsed} streaming={streaming} />;
+  if (!analyze && !ai && !pin && !whatIf) return <ExplainViewerBody parsed={parsed} streaming={streaming} />;
   return (
     <Box flex="1 1 auto" minHeight={0} minWidth={0} display="flex" flexDirection="column" overflow="hidden">
-      {(analyze || pin) && (
+      {(analyze || pin || whatIf) && (
         <AnalyzeBar
           analyze={analyze}
           pinControls={
-            pin && (
-              <PlanPinControls
-                scope={pin.scope}
-                sql={pin.sql}
-                driver={driver}
-                result={result}
-                canPin={!streaming && parsed.root !== null}
-                analyze={!!analyze?.active && analyze.supported}
-              />
+            (pin || whatIf) && (
+              <>
+                {whatIf && (
+                  <IndexWhatIfButton
+                    sessionId={whatIf.sessionId}
+                    driver={driver}
+                    sql={whatIf.sql}
+                    database={whatIf.database}
+                    disabled={!!streaming || parsed.root === null}
+                  />
+                )}
+                {pin && (
+                  <PlanPinControls
+                    scope={pin.scope}
+                    sql={pin.sql}
+                    driver={driver}
+                    result={result}
+                    canPin={!streaming && parsed.root !== null}
+                    analyze={!!analyze?.active && analyze.supported}
+                  />
+                )}
+              </>
             )
           }
         />
