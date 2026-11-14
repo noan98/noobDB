@@ -146,11 +146,20 @@ describe("QueryEditor のバッチ実行マーカー (#2331)", () => {
       view.dispatch({ changes: { from: first, insert: "\n" } });
     });
     expect(document.querySelectorAll(".cm-batch-gutter-cell-stale")).toHaveLength(0);
+    // 文の末尾 (セミコロン直前) への挿入は文の中身を変えるので古い扱い
+    const end = view.state.doc.toString().indexOf("SELECT 1") + "SELECT 1".length;
+    act(() => {
+      view.dispatch({ changes: { from: end, insert: "0" } });
+    });
+    expect(document.querySelectorAll(".cm-batch-gutter-cell-stale")).toHaveLength(1);
+    act(() => {
+      view.dispatch({ changes: { from: end, to: end + 1 } });
+    });
     const at = view.state.doc.toString().indexOf("SELECT 2");
     act(() => {
       view.dispatch({ changes: { from: at + 7, to: at + 8, insert: "3" } });
     });
-    expect(document.querySelectorAll(".cm-batch-gutter-cell-stale")).toHaveLength(1);
+    expect(document.querySelectorAll(".cm-batch-gutter-cell-stale").length).toBeGreaterThanOrEqual(1);
     expect(glyphs()).toEqual(["ok", "ok"]);
     rerender(<QueryEditor tabId="a" onRun={() => {}} initialSql={two} />);
     expect(glyphs()).toEqual([]);

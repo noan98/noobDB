@@ -3,6 +3,7 @@ import {
   StateEffect,
   StateField,
   type ChangeDesc,
+  type ChangeSet,
   type EditorState,
   type Extension,
 } from "@codemirror/state";
@@ -51,12 +52,12 @@ export type EditMode = "drop" | "stale" | "keep";
 
 /**
  * 文書の変更 `changes` に合わせてマーカーの位置を追従させる。範囲と重なる編集 (範囲の端・内側への挿入を
- * 含む) を受けたマーカーは `"drop"` なら捨てる。`"stale"` は範囲の内側に食い込む編集 (端への純粋な挿入は除く)
- * を受けたものを `stale: true` にして残す。手前 / 後ろの編集ではどちらでも何もしない。`mode` の boolean は旧呼び出し (#2330) との互換で、true = `"drop"`、false = `"keep"`。
+ * 含む) を受けたマーカーは `"drop"` なら捨てる。`"stale"` は範囲の中身を変える編集 (内側への編集と、文の外側ではない端への挿入。
+ * 空白・`;` だけの端への挿入は除く) を受けたものを `stale: true` にして残す。手前 / 後ろの編集ではどちらでも何もしない。`mode` の boolean は旧呼び出し (#2330) との互換で、true = `"drop"`、false = `"keep"`。
  */
 export function mapMarkers<D>(
   markers: readonly EditorMarker<D>[],
-  changes: ChangeDesc,
+  changes: ChangeDesc | ChangeSet,
   mode: EditMode | boolean,
 ): EditorMarker<D>[] {
   const m0: EditMode = mode === true ? "drop" : mode === false ? "keep" : mode;
@@ -75,9 +76,32 @@ export function mapMarkers<D>(
   return out;
 }
 
-/** `[from, to)` の内側に食い込む編集があるか (端への純粋な挿入は含めない。`stale` 判定用)。 */
-function rangeInvaded(from: number, to: number, changes: ChangeDesc): boolean {
+/**
+ * `[from, to)` の中身を変える編集があるか (`stale` 判定用)。内側に食い込む編集は常に該当する。範囲の端への
+ * 純粋な挿入は、挿入文の内容で見分ける (`changes` が `ChangeSet` で挿入文が分かるときだけ):
+ * 文の外側の挿入 (先頭側が空白・`;` で終わる / 末尾側が空白・`;` で始まる) は無害、それ以外 (`SELECT 1;` の
+ * `;` 直前に `0` を足す、先頭に文字を足す) は文の中身が変わるので該当する。`ChangeDesc` だけのときは無害とみなす。
+ */
+function rangeInvaded(from: number, to: number, changes: ChangeDesc | ChangeSet): boolean {
   let hit = false;
+  const outside = (text: string, atStart: boolean): boolean => {
+    if (text.length === 0) return true;
+    const ch = atStart ? text[text.length - 1] : text[0];
+    return ch === ";" || /\s/.test(ch ?? "");
+  };
+  if ("iterChanges" in changes) {
+    changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+      if (fromA !== toA) {
+        if (fromA < to && toA > from) hit = true;
+      } else if (fromA > from && fromA < to) {
+        hit = true;
+      } else if (fromA === from || fromA === to) {
+        const text = inserted.toString();
+        if (!outside(text, fromA === from)) hit = true;
+      }
+    });
+    return hit;
+  }
   changes.iterChangedRanges((fromA, toA) => {
     if (fromA === toA ? fromA > from && fromA < to : fromA < to && toA > from) hit = true;
   });
