@@ -543,6 +543,22 @@ async fn mysql_audit_rejects_same_name_table_with_other_columns_when_env_set() {
         .await
         .expect_err("same-name table with other columns must be rejected");
     assert!(matches!(err, t::AppError::InvalidInput(_)), "{err}");
+
+    // 監査を設定済みの表は、監査表に列を足していてもウィザードの削除 (regenerate = false) を止めない。
+    exec(&state, &side, "DROP TABLE users_audit").await;
+    let ddl = generate(&state, &side, &options(), false).await;
+    run_ddl(&state, &side, ddl.create).await;
+    exec(
+        &state,
+        &side,
+        "ALTER TABLE users_audit ADD COLUMN note VARCHAR(30)",
+    )
+    .await;
+    let s = state.get(&side.id).await.expect("session");
+    let ddl = t::generate_audit_ddl_core(&s.conn, "nb2335_clash", "users", &options(), false)
+        .await
+        .expect("removal must not be blocked by the reuse check");
+    assert!(!ddl.drop_triggers.is_empty());
     let admin = t::connect(&opts).await.expect("connect");
     let _ = admin
         .execute("DROP DATABASE IF EXISTS nb2335_clash", None)

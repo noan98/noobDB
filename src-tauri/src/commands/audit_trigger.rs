@@ -48,7 +48,15 @@ pub async fn generate_audit_ddl_core(
     )?;
     // MySQL の新規作成は CREATE TABLE IF NOT EXISTS なので、同名の別構造の表を黙って流用しないよう
     // 先に列構成を確かめる。一致するときだけ再利用を許し、警告コードで知らせる (#2335)。
-    if conn.driver_kind() == DriverKind::Mysql && !regenerate {
+    // 監査トリガーがすでにある表は、ウィザードの「削除」も regenerate = false で生成を呼ぶ。
+    // 削除は CREATE TABLE を使わないので、監査表に列を足していても止めないよう照合を飛ばす。
+    let already_audited = conn.driver_kind() == DriverKind::Mysql
+        && !regenerate
+        && get_audit_status_core(conn, database, table)
+            .await
+            .map(|s| s.present)
+            .unwrap_or(false);
+    if conn.driver_kind() == DriverKind::Mysql && !regenerate && !already_audited {
         let existing: Vec<String> = conn
             .columns(&ddl.audit_schema, &ddl.audit_table)
             .await?
