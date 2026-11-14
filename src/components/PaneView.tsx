@@ -67,6 +67,7 @@ import { type Status } from "../statusMessage";
 import { estimatedTotalPages, exactCountKey, matchingExactCount, totalPagesFromCount } from "../pagination";
 import { Tooltip } from "./Tooltip";
 import type { Tab, PaneState } from "../App";
+import type { TabDropTarget } from "../tabPaneDrop";
 import type { Settings } from "../settings";
 import type { AiSqlEditorAction } from "../ai/sqlAssist";
 import { useStoreSelector, type TabPaneStore } from "../tabPaneStore";
@@ -252,6 +253,8 @@ export interface PaneActions {
   setStatus: (status: Status) => void;
   setTransferSource: (source: { kind: "query"; database: string | null; sql: string }) => void;
   splitPane: () => void;
+  /** タブのドラッグ&ドロップ (#2332) によるペイン間の移動 / 分割。 */
+  dropTabOnPane: (tabId: string, target: TabDropTarget) => void;
   stopTab: (tab: Tab) => unknown;
   toggleRowDeleteForTab: (tabId: string, rowKey: string) => void;
   undoCellEditForTab: (tabId: string) => void;
@@ -599,6 +602,7 @@ export const PaneView = memo(
     return (
       <Flex
         key={pane.id}
+        data-pane-zone={pane.id}
         direction="column"
         flex="1 1 auto"
         minW={0}
@@ -624,6 +628,8 @@ export const PaneView = memo(
           onRenameCancel={actions.cancelRenameTab}
           onSplit={onSplit}
           splitMode={split ? "close" : "split"}
+          paneId={paneId}
+          onTabDrop={actions.dropTabOnPane}
         />
         <Flex direction="column" flex="1" overflow="hidden">
           {tab ? (
