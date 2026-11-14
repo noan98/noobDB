@@ -1,3 +1,4 @@
+import { auditFailureNoteKey } from "./components/auditFailureNote";
 import type { RowMergeTarget } from "./components/rowMerge";
 import {
   forwardRef,
@@ -15802,10 +15803,8 @@ export default function App() {
                       setAuditEditor(null);
                     } catch (e) {
                       // MySQL は DDL が暗黙コミットされるので、再生成・削除の途中失敗でトリガーが外れたままになりうる。
-                      const note =
-                        selectedProfile?.driver === "mysql" && info.mode !== "create"
-                          ? ` ${translate("auditMysqlPartialNote")}`
-                          : "";
+                      const noteKey = auditFailureNoteKey(selectedProfile?.driver, info.mode);
+                      const note = noteKey ? ` ${translate(noteKey)}` : "";
                       toast.error(translate("statusQueryError", { error: String(e) }) + note);
                     }
                   }}

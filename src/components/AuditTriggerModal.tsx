@@ -44,7 +44,10 @@ const WARNING_KEYS: Record<string, string> = {
   no_primary_key: "auditWarnNoPk",
   mysql_trigger_privilege: "auditWarnMysqlPrivilege",
   mysql_binlog_trust: "auditWarnMysqlBinlog",
+  mysql_audit_table_reused: "auditWarnMysqlReused",
 };
+
+const INFO_WARNINGS = new Set(["mysql_audit_table_reused"]);
 
 const EMPTY_OPTIONS: AuditOptions = {
   insert: true,
@@ -250,7 +253,7 @@ export function AuditTriggerModal({
         {legacy && <Callout tone="warning">{t("auditLegacy")}</Callout>}
         {ddl?.warnings.map((w) =>
           WARNING_KEYS[w] ? (
-            <Callout key={w} tone="warning">
+            <Callout key={w} tone={INFO_WARNINGS.has(w) ? "info" : "warning"}>
               {t(WARNING_KEYS[w] as "auditWarnNoPk")}
             </Callout>
           ) : null,

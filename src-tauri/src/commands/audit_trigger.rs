@@ -5,10 +5,10 @@
 use tauri::State;
 
 use crate::db::audit_trigger::{
-    audit_status, build_audit_ddl, pg_function_name, AuditColumn, AuditDdl, AuditOptions,
-    AuditStatus,
+    audit_status, build_audit_ddl, check_mysql_audit_table_reuse, pg_function_name, AuditColumn,
+    AuditDdl, AuditOptions, AuditStatus,
 };
-use crate::db::Connection;
+use crate::db::{Connection, DriverKind};
 use crate::error::{AppError, Result};
 use crate::state::AppState;
 
@@ -46,6 +46,27 @@ pub async fn generate_audit_ddl_core(
         options,
         regenerate,
     )?;
+    // MySQL の新規作成は CREATE TABLE IF NOT EXISTS なので、同名の別構造の表を黙って流用しないよう
+    // 先に列構成を確かめる。一致するときだけ再利用を許し、警告コードで知らせる (#2335)。
+    // 監査トリガーがすでにある表は、ウィザードの「削除」も regenerate = false で生成を呼ぶ。
+    // 削除は CREATE TABLE を使わないので、監査表に列を足していても止めないよう照合を飛ばす。
+    let already_audited = conn.driver_kind() == DriverKind::Mysql
+        && !regenerate
+        && get_audit_status_core(conn, database, table)
+            .await
+            .map(|s| s.present)
+            .unwrap_or(false);
+    if conn.driver_kind() == DriverKind::Mysql && !regenerate && !already_audited {
+        let existing: Vec<String> = conn
+            .columns(&ddl.audit_schema, &ddl.audit_table)
+            .await?
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
+        if check_mysql_audit_table_reuse(&ddl.audit_table, &existing)? {
+            ddl.warnings.push("mysql_audit_table_reused".to_string());
+        }
+    }
     // 警告は補助情報。権限の読み取りに失敗しても生成自体は返す。
     if let Ok(w) = conn.audit_trigger_preflight().await {
         ddl.warnings.extend(w);

@@ -93,6 +93,15 @@ describe("AuditTriggerModal", () => {
     });
   });
 
+  it("既存の監査表を再利用する警告を出す", async () => {
+    generate.mockResolvedValue({
+      ...ddl(["CREATE TABLE a (x int)"]),
+      warnings: ["mysql_audit_table_reused"],
+    });
+    setup();
+    await waitFor(() => expect(screen.getByText(t("auditWarnMysqlReused"))).toBeInTheDocument());
+  });
+
   it("操作の選択に合わせて流れの図と見本が変わり、除外列は打ち消し線で示す (#2324)", async () => {
     const user = userEvent.setup();
     setup();

@@ -71,8 +71,39 @@ pub struct AuditDdl {
     pub recorded_columns: Vec<String>,
     /// 作る / 外すトリガーの名前。
     pub trigger_names: Vec<String>,
-    /// 事前警告のコード (`no_primary_key` / `mysql_*`。UI が文言に直す)。
+    /// 事前警告のコード (`no_primary_key` / `mysql_*` / `mysql_audit_table_reused`。UI が文言に直す)。
     pub warnings: Vec<String>,
+}
+
+/// MySQL の監査表が持つ列 (`audit_table_ddl` と揃える)。
+const MYSQL_AUDIT_COLUMNS: [&str; 7] = [
+    "audit_id",
+    "op",
+    "changed_at",
+    "changed_by",
+    "pk",
+    "old_row",
+    "new_row",
+];
+
+/// MySQL の監査表の再利用可否を判定する (#2335)。`existing` は同名の表の列名 (表が無ければ空)。
+/// 空なら `Ok(false)` (新規作成)、列構成が監査表と一致すれば `Ok(true)` (再利用)、
+/// 別構造の表なら `InvalidInput` (業務表を黙って流用・削除しない)。
+pub fn check_mysql_audit_table_reuse(audit_table: &str, existing: &[String]) -> Result<bool> {
+    if existing.is_empty() {
+        return Ok(false);
+    }
+    let same = existing.len() == MYSQL_AUDIT_COLUMNS.len()
+        && MYSQL_AUDIT_COLUMNS
+            .iter()
+            .all(|c| existing.iter().any(|e| e.eq_ignore_ascii_case(c)));
+    if same {
+        Ok(true)
+    } else {
+        Err(AppError::InvalidInput(format!(
+            "同名の表 {audit_table} が既にあり、監査表と列の構成が違います。別の監査表名を指定してください"
+        )))
+    }
 }
 
 /// 構造パネル用の状態。
@@ -177,7 +208,9 @@ fn object_ref(driver: DriverKind, database: &str, name: &str) -> String {
 fn audit_table_ddl(driver: DriverKind, target: &str) -> String {
     match driver {
         DriverKind::Mysql => format!(
-            "CREATE TABLE {target} (\n  audit_id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,\n  op VARCHAR(6) NOT NULL,\n  changed_at DATETIME(6) NOT NULL,\n  changed_by VARCHAR(288) NULL,\n  pk JSON NULL,\n  old_row JSON NULL,\n  new_row JSON NULL\n)"
+            // MySQL は DDL が暗黙コミットされ、後続の CREATE TRIGGER が失敗すると監査表だけが残る (#2335)。
+            // 再実行で 1050 (Table already exists) にならないよう IF NOT EXISTS にする。
+            "CREATE TABLE IF NOT EXISTS {target} (\n  audit_id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,\n  op VARCHAR(6) NOT NULL,\n  changed_at DATETIME(6) NOT NULL,\n  changed_by VARCHAR(288) NULL,\n  pk JSON NULL,\n  old_row JSON NULL,\n  new_row JSON NULL\n)"
         ),
         DriverKind::Postgres => format!(
             "CREATE TABLE {target} (\n  audit_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  op TEXT NOT NULL,\n  changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),\n  changed_by TEXT NULL,\n  pk JSONB NULL,\n  old_row JSONB NULL,\n  new_row JSONB NULL\n)"
@@ -847,12 +880,55 @@ mod tests {
     }
 
     #[test]
+    fn mysql_create_table_is_rerunnable_after_partial_failure() {
+        // 監査表だけが残った状態 (#2335) から再実行しても CREATE TABLE で止まらない。
+        let d =
+            build_audit_ddl(DriverKind::Mysql, "shop", "users", &cols(), &opts(), false).unwrap();
+        assert!(d.create[0].starts_with("CREATE TABLE IF NOT EXISTS "));
+        // 暗黙コミットのない PostgreSQL / SQLite は従来どおり (既存表との衝突は検出したい)。
+        for driver in [DriverKind::Postgres, DriverKind::Sqlite] {
+            let d = build_audit_ddl(driver, "main", "users", &cols(), &opts(), false).unwrap();
+            assert!(!d.create[0].contains("IF NOT EXISTS"), "{driver:?}");
+        }
+    }
+
+    #[test]
+    fn mysql_audit_table_reuse_requires_matching_columns() {
+        let own: Vec<String> = [
+            "audit_id",
+            "op",
+            "changed_at",
+            "changed_by",
+            "pk",
+            "old_row",
+            "new_row",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert!(!check_mysql_audit_table_reuse("a", &[]).unwrap());
+        assert!(check_mysql_audit_table_reuse("a", &own).unwrap());
+        let upper: Vec<String> = own.iter().map(|s| s.to_uppercase()).collect();
+        assert!(check_mysql_audit_table_reuse("a", &upper).unwrap());
+        // 業務表 (列構成が違う) と、列が余分 / 不足の表は拒否する。
+        let biz = vec!["id".to_string(), "name".to_string()];
+        assert!(matches!(
+            check_mysql_audit_table_reuse("a", &biz),
+            Err(AppError::InvalidInput(_))
+        ));
+        let mut extra = own.clone();
+        extra.push("note".into());
+        assert!(check_mysql_audit_table_reuse("a", &extra).is_err());
+        assert!(check_mysql_audit_table_reuse("a", &own[..6]).is_err());
+    }
+
+    #[test]
     fn mysql_generates_three_column_explicit_triggers() {
         let d =
             build_audit_ddl(DriverKind::Mysql, "shop", "users", &cols(), &opts(), false).unwrap();
         assert_eq!(d.audit_table, "users_audit");
         assert_eq!(d.create.len(), 4);
-        assert!(d.create[0].starts_with("CREATE TABLE `shop`.`users_audit`"));
+        assert!(d.create[0].starts_with("CREATE TABLE IF NOT EXISTS `shop`.`users_audit`"));
         assert!(d.create[0].contains("DATETIME(6)"));
         let ins = &d.create[1];
         assert!(
