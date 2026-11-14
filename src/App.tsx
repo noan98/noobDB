@@ -7613,6 +7613,12 @@ export default function App() {
     [toast, t],
   );
 
+  // バッチ結果カードの選択 (#2331)。エディタの `index` 番目の文へスクロールして一瞬ハイライトする。
+  // マーカーが無い (範囲が見つからなかった) ときは何もしない。
+  const revealBatchStatement = useCallback((paneId: string, index: number) => {
+    editorRefs.current.get(paneId)?.revealBatchStatement(index);
+  }, []);
+
   // 出力タブの「再実行」(#1541)。記録時と同じ DB のタブで流す (`database` が無ければ接続の既定)。
   // 接続が違う行はパネル側で無効にしている。実行は通常の `runInTabWithGate` に委ねる。
   // 出力ログは実行時に展開済みの SQL なので、パラメータ入力 (`resolveParamsThen`) は通さない (#2151)。
@@ -13233,6 +13239,7 @@ export default function App() {
     explainForTab,
     fetchAllForTab,
     revealQueryError,
+    revealBatchStatement,
     focusPane,
     goToPageInTab,
     handleCloseTab: requestCloseTab,

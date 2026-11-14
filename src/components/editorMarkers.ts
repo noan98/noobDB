@@ -22,13 +22,14 @@ import { Decoration, EditorView, GutterMarker, gutter, hoverTooltip, type Toolti
  *   (波線が指している箇所を直したら消える、という実行エラーの挙動)。
  * - 見た目は CSS クラスだけで決める (`markClass` / `gutterClass` と `-<kind>` 接尾辞)。
  *
- * #2331 (バッチ実行の各文の成否をガターに積む) で再利用するときの拡張点 (今は未実装):
- * - `renderGutter`: ガターのマーカー DOM を呼び出し側が描く (成功 / 失敗 / 所要時間のバッジ)。
- * - `eq` でのデータ比較: `data` が変わったときだけガター要素を作り直す。
- * - クリック: ガターのマーカーのクリックハンドラ (その文の結果へ移動など)。
- * - `onEdit` を `"drop" | "stale" | "keep"` にする: 編集で捨てる / 古い印にして残す / そのまま追従。
- * - 同じ行の合成: 同じ行に複数のマーカーがあるとき、先頭 1 件ではなく合成して描く。
- * - `gutter: false`: 波線とホバーだけを使い、ガターを出さない層。
+ * #2331 (バッチ実行の各文の成否をガターに積む) は次の拡張点を使う:
+ * - `renderGutter`: ガターのマーカー DOM を呼び出し側が描く (成功 / 失敗 / 所要時間 / スピナー)。
+ *   同じ行に複数のマーカーがあるときは、その行のマーカー全部を渡す (合成は呼び出し側が決める)。
+ * - `dataEq`: 描画データの比較。差があるときだけガター要素を作り直す (CSS アニメーションを再生し直さない)。
+ * - `onGutterClick` / `gutterLabel`: ガターを `<button>` にしてクリック・キーボード (Enter / Space) で操作できる。
+ * - `onEdit`: `"drop"` (捨てる) / `"stale"` (`stale: true` にして残す) / `"keep"` (そのまま追従)。
+ * - `update`: 位置を保ったまま、現在のマーカーを関数で書き換える効果 (状態の更新用。編集で動いた位置を巻き戻さない)。
+ * - `gutter: false`: 波線とホバーだけを使い、ガター列を増やさない層。
  */
 
 /** 層に載せるマーカー 1 件。`D` は呼び出し側がツールチップなどに使う付随データ。 */
@@ -40,24 +41,32 @@ export interface EditorMarker<D = unknown> {
   kind: string;
   /** false なら波線を引かずガターだけに出す (既定は引く)。 */
   squiggle?: boolean;
+  /** 範囲を編集されて位置が信用できなくなった (`onEdit: "stale"` の層が立てる)。見た目は呼び出し側が薄くする。 */
+  stale?: boolean;
   data?: D;
 }
 
+/** 範囲を編集されたときの扱い。 */
+export type EditMode = "drop" | "stale" | "keep";
+
 /**
- * 文書の変更 `changes` に合わせてマーカーの位置を追従させる。`dropOnEdit` のときは、
- * 範囲と重なる編集 (範囲の端・内側への挿入を含む) を受けたマーカーを捨てる。手前 / 後ろの編集では捨てない。
+ * 文書の変更 `changes` に合わせてマーカーの位置を追従させる。範囲と重なる編集 (範囲の端・内側への挿入を
+ * 含む) を受けたマーカーは、`"drop"` なら捨て、`"stale"` なら `stale: true` にして残す。手前 / 後ろの編集では
+ * どちらでも何もしない。`mode` の boolean は旧呼び出し (#2330) との互換で、true = `"drop"`、false = `"keep"`。
  */
 export function mapMarkers<D>(
   markers: readonly EditorMarker<D>[],
   changes: ChangeDesc,
-  dropOnEdit: boolean,
+  mode: EditMode | boolean,
 ): EditorMarker<D>[] {
+  const m0: EditMode = mode === true ? "drop" : mode === false ? "keep" : mode;
   const out: EditorMarker<D>[] = [];
   for (const m of markers) {
-    if (dropOnEdit && rangeTouched(m.from, m.to, changes)) continue;
+    const touched = m0 !== "keep" && rangeTouched(m.from, m.to, changes);
+    if (touched && m0 === "drop") continue;
     const from = changes.mapPos(m.from, 1);
     const to = Math.max(from, changes.mapPos(m.to, -1));
-    out.push({ ...m, from, to });
+    out.push(touched ? { ...m, from, to, stale: true } : { ...m, from, to });
   }
   return out;
 }
@@ -89,8 +98,23 @@ export interface MarkerLayerOptions<D> {
   markClass: string;
   /** ガターのクラス。マーカー要素には `${gutterClass}-glyph` と `${gutterClass}-glyph-${kind}` が付く。 */
   gutterClass: string;
-  /** 範囲を編集したらそのマーカーを捨てるか。 */
-  dropOnEdit: boolean;
+  /** 範囲を編集したときの扱い (捨てる / 古い印にして残す / そのまま追従)。 */
+  onEdit: EditMode;
+  /** false ならガター列を作らない (波線とホバーだけの層)。既定は true。 */
+  gutter?: boolean;
+  /**
+   * ガターのマーカー DOM を描く。同じ行のマーカーが全部渡る (空にはならない)。省略時は先頭 1 件の丸印
+   * (`${gutterClass}-glyph` / `-glyph-${kind}`、`stale` なら `-glyph-stale` も)。
+   */
+  renderGutter?: (markers: readonly EditorMarker<D>[], view: EditorView) => HTMLElement;
+  /** `data` の比較。省略時は浅い比較。差がなければガター要素を作り直さない。 */
+  dataEq?: (a: D | undefined, b: D | undefined) => boolean;
+  /**
+   * 指定すると、ガターのマーカーを `<button>` で包み、クリック / Enter / Space でこれを呼ぶ。
+   * `gutterLabel` を `aria-label` にする。
+   */
+  onGutterClick?: (markers: readonly EditorMarker<D>[], view: EditorView) => void;
+  gutterLabel?: (markers: readonly EditorMarker<D>[]) => string;
   /** ホバー時のツールチップ本文。null を返せば出さない。省略時はツールチップなし。 */
   renderTooltip?: (marker: EditorMarker<D>, view: EditorView) => HTMLElement | null;
 }
@@ -100,23 +124,79 @@ export interface MarkerLayer<D> {
   extension: Extension;
   /** 層の内容を丸ごと差し替える効果。空配列で全消去。 */
   set: (markers: readonly EditorMarker<D>[]) => StateEffect<readonly EditorMarker<D>[]>;
+  /** 現在のマーカーを関数で書き換える効果。編集で動いた位置を保ったまま、`data` などだけを更新できる。 */
+  update: (
+    fn: (markers: readonly EditorMarker<D>[]) => readonly EditorMarker<D>[],
+  ) => StateEffect<(markers: readonly EditorMarker<D>[]) => readonly EditorMarker<D>[]>;
   /** 現在のマーカー。 */
   get: (state: EditorState) => readonly EditorMarker<D>[];
 }
 
-class GlyphMarker extends GutterMarker {
+function shallowEq(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  return ka.every((k) => Object.is((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
+}
+
+/** 1 行ぶんのマーカー (同じ行に複数あれば全部)。 */
+class GroupMarker<D> extends GutterMarker {
   constructor(
-    private readonly cls: string,
-    private readonly kind: string,
+    private readonly opts: MarkerLayerOptions<D>,
+    readonly group: readonly EditorMarker<D>[],
   ) {
     super();
   }
   eq(other: GutterMarker): boolean {
-    return other instanceof GlyphMarker && other.cls === this.cls && other.kind === this.kind;
+    if (!(other instanceof GroupMarker) || other.opts !== this.opts) return false;
+    if (other.group.length !== this.group.length) return false;
+    const dataEq = this.opts.dataEq ?? shallowEq;
+    return this.group.every((m, i) => {
+      const o = other.group[i] as EditorMarker<D>;
+      return m.kind === o.kind && !!m.stale === !!o.stale && dataEq(m.data, o.data);
+    });
+  }
+  toDOM(view: EditorView): HTMLElement {
+    const { opts, group } = this;
+    const first = group[0] as EditorMarker<D>;
+    let el: HTMLElement;
+    if (opts.renderGutter) {
+      el = opts.renderGutter(group, view);
+    } else {
+      el = document.createElement("span");
+      el.className = `${opts.gutterClass}-glyph ${opts.gutterClass}-glyph-${first.kind}${first.stale ? ` ${opts.gutterClass}-glyph-stale` : ""}`;
+    }
+    const onClick = opts.onGutterClick;
+    if (!onClick) {
+      el.setAttribute("aria-hidden", "true");
+      return el;
+    }
+    // クリックとキーボード (Enter / Space は button が click に変換する) を 1 つのハンドラで受ける。
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `${opts.gutterClass}-btn`;
+    const label = opts.gutterLabel?.(group);
+    if (label) btn.setAttribute("aria-label", label);
+    btn.append(el);
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      onClick(group, view);
+    });
+    return btn;
+  }
+}
+
+class SpacerMarker extends GutterMarker {
+  constructor(private readonly cls: string) {
+    super();
+  }
+  eq(other: GutterMarker): boolean {
+    return other instanceof SpacerMarker && other.cls === this.cls;
   }
   toDOM(): HTMLElement {
     const el = document.createElement("span");
-    el.className = `${this.cls}-glyph ${this.cls}-glyph-${this.kind}`;
+    el.className = `${this.cls}-glyph ${this.cls}-glyph-spacer`;
     el.setAttribute("aria-hidden", "true");
     return el;
   }
@@ -125,18 +205,20 @@ class GlyphMarker extends GutterMarker {
 /** マーカー層を 1 つ作る。層ごとに独立した `StateField` を持つので、複数作っても干渉しない。 */
 export function createMarkerLayer<D = unknown>(opts: MarkerLayerOptions<D>): MarkerLayer<D> {
   const setEffect = StateEffect.define<readonly EditorMarker<D>[]>();
+  type Updater = (markers: readonly EditorMarker<D>[]) => readonly EditorMarker<D>[];
+  const updateEffect = StateEffect.define<Updater>();
+  const clampSort = (list: readonly EditorMarker<D>[], len: number) =>
+    list
+      .map((m) => ({ ...m, from: Math.min(m.from, len), to: Math.min(Math.max(m.to, m.from), len) }))
+      .sort((a, b) => a.from - b.from);
   const field = StateField.define<readonly EditorMarker<D>[]>({
     create: () => [],
     update(markers, tr) {
       let next = markers;
-      if (tr.docChanged && next.length > 0) next = mapMarkers(next, tr.changes, opts.dropOnEdit);
+      if (tr.docChanged && next.length > 0) next = mapMarkers(next, tr.changes, opts.onEdit);
       for (const e of tr.effects) {
-        if (e.is(setEffect)) {
-          const len = tr.newDoc.length;
-          next = e.value
-            .map((m) => ({ ...m, from: Math.min(m.from, len), to: Math.min(Math.max(m.to, m.from), len) }))
-            .sort((a, b) => a.from - b.from);
-        }
+        if (e.is(setEffect)) next = clampSort(e.value, tr.newDoc.length);
+        else if (e.is(updateEffect)) next = clampSort(e.value(next), tr.newDoc.length);
       }
       return next;
     },
@@ -148,7 +230,9 @@ export function createMarkerLayer<D = unknown>(opts: MarkerLayerOptions<D>): Mar
           builder.add(
             m.from,
             m.to,
-            Decoration.mark({ class: `${opts.markClass} ${opts.markClass}-${m.kind}` }),
+            Decoration.mark({
+              class: `${opts.markClass} ${opts.markClass}-${m.kind}${m.stale ? ` ${opts.markClass}-stale` : ""}`,
+            }),
           );
         }
         return builder.finish();
@@ -156,21 +240,32 @@ export function createMarkerLayer<D = unknown>(opts: MarkerLayerOptions<D>): Mar
     ],
   });
 
-  const gutterExt = gutter({
-    class: opts.gutterClass,
-    markers: (view) => {
-      const builder = new RangeSetBuilder<GutterMarker>();
-      let lastLine = -1;
-      for (const m of view.state.field(field)) {
-        const line = view.state.doc.lineAt(m.from);
-        if (line.from === lastLine) continue; // 同じ行には先頭の 1 件だけ
-        lastLine = line.from;
-        builder.add(line.from, line.from, new GlyphMarker(opts.gutterClass, m.kind));
-      }
-      return builder.finish();
-    },
-    initialSpacer: () => new GlyphMarker(opts.gutterClass, "spacer"),
-  });
+  const gutterExt =
+    opts.gutter === false
+      ? []
+      : gutter({
+          class: opts.gutterClass,
+          markers: (view) => {
+            const builder = new RangeSetBuilder<GutterMarker>();
+            // 同じ行のマーカーは 1 つの印へまとめる (呼び出し側の描画へ全部渡す)。
+            const groups: EditorMarker<D>[][] = [];
+            let lastLine = -1;
+            for (const m of view.state.field(field)) {
+              const line = view.state.doc.lineAt(m.from);
+              if (line.from === lastLine) groups[groups.length - 1]?.push(m);
+              else {
+                lastLine = line.from;
+                groups.push([m]);
+              }
+            }
+            for (const g of groups) {
+              const lineFrom = view.state.doc.lineAt((g[0] as EditorMarker<D>).from).from;
+              builder.add(lineFrom, lineFrom, new GroupMarker(opts, g));
+            }
+            return builder.finish();
+          },
+          initialSpacer: () => new SpacerMarker(opts.gutterClass),
+        });
 
   const hover = opts.renderTooltip
     ? hoverTooltip(
@@ -188,6 +283,7 @@ export function createMarkerLayer<D = unknown>(opts: MarkerLayerOptions<D>): Mar
   return {
     extension: [field, gutterExt, hover],
     set: (markers) => setEffect.of(markers),
+    update: (fn) => updateEffect.of(fn),
     get: (state) => state.field(field),
   };
 }

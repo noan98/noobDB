@@ -113,3 +113,44 @@ describe("BatchResultsView の Motion (#1873)", () => {
     expect(screen.getAllByTestId("batch-status-dot")).toHaveLength(2);
   });
 });
+
+describe("BatchResultsView のエディタ連携 (#2331)", () => {
+  const results: BatchStatementResult[] = [
+    { sql: "SELECT 1", status: "ok", rowsAffected: 0, elapsedMs: 1 },
+    { sql: "SELECT 2", status: "ok", rowsAffected: 0, elapsedMs: 2 },
+  ];
+
+  it("カードを押す / Enter で onSelectStatement が呼ばれ、選択枠が付く", async () => {
+    const onSelect = vi.fn();
+    renderWithProviders(
+      <BatchResultsView
+        results={results}
+        running={false}
+        onRerun={() => {}}
+        onClose={() => {}}
+        onSelectStatement={onSelect}
+      />,
+    );
+    const user = userEvent.setup();
+    const cards = screen.getAllByRole("button", { name: t("batchCardGoto", { n: 1 }) });
+    await user.click(cards[0] as HTMLElement);
+    expect(onSelect).toHaveBeenLastCalledWith(0);
+    expect(screen.getAllByTestId("batch-selection-frame")).toHaveLength(1);
+    (screen.getByRole("button", { name: t("batchCardGoto", { n: 2 }) }) as HTMLElement).focus();
+    await user.keyboard("{Enter}");
+    expect(onSelect).toHaveBeenLastCalledWith(1);
+    expect(screen.getAllByTestId("batch-card").filter((c) => c.dataset.selected === "true")).toHaveLength(1);
+  });
+
+  it("externalSelect (ガターから) の seq が変わると、そのカードを選択してスクロールする", () => {
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    const props = { results, running: false, onRerun: () => {}, onClose: () => {} };
+    const { rerender } = renderWithProviders(<BatchResultsView {...props} externalSelect={null} />);
+    rerender(<BatchResultsView {...props} externalSelect={{ index: 1, seq: 1 }} />);
+    const selected = screen.getAllByTestId("batch-card").filter((c) => c.dataset.selected === "true");
+    expect(selected).toHaveLength(1);
+    expect(selected[0]?.textContent).toContain("SELECT 2");
+    expect(scroll).toHaveBeenCalled();
+  });
+});
