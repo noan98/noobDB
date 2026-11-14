@@ -618,7 +618,7 @@ import { OutputPanel } from "./components/OutputPanel";
 import { statusLogClass, statusTone, type Status } from "./statusMessage";
 import { pushMessage } from "./messageLog";
 import { joinDroppedSql, physicalToCssPoint } from "./dropInsert";
-import { lineRangeOf, pushOutput, type OutputInput } from "./outputLog";
+import { lineRangeOf, locateErrorRange, pushOutput, type OutputInput } from "./outputLog";
 import {
   availableBottomPanelTabs,
   bottomPanelStripTabs,
@@ -663,6 +663,8 @@ import {
   type PersistedTab,
   type PersistedWorkspace,
 } from "./tabPersistence";
+import { applyTabDrop, type TabDropTarget } from "./tabPaneDrop";
+import { TabDragOverlay } from "./components/TabDragOverlay";
 import { orderAfterPinChange, pinnedFirst, reorderIfPermutation } from "./tabReorder";
 import { applyRename, autoTitleOnRun, deriveResultTabTitle as deriveTitleFromSql } from "./tabTitle";
 import { applySubsequenceOrder } from "./connectionOrder";
@@ -3085,6 +3087,19 @@ export default function App() {
     [setPanes, panesRef],
   );
 
+  // タブを `target` へ移す共通経路 (#2332)。メニュー操作 (`moveTabToOtherPane`) もタブのドラッグ&ドロップも
+  // 同じ純ロジック (`applyTabDrop`) を通す。元のペインが空になれば取り除かれ 1 ペインへ戻る。
+  // `tabs` は触らないので、ストリーミング中のタブの購読は移動しても途切れない。
+  const dropTabOnPane = useCallback(
+    (tabId: string, target: TabDropTarget) => {
+      const result = applyTabDrop(panesRef.current, tabId, target, newPaneId);
+      if (!result) return;
+      setPanes(result.panes);
+      setActivePaneId(result.activePaneId);
+    },
+    [setPanes, panesRef],
+  );
+
   // Move a single tab to the other pane (creating it if needed). A source pane
   // emptied by the move is dropped, collapsing back to a single pane.
   const moveTabToOtherPane = useCallback(
@@ -3092,33 +3107,10 @@ export default function App() {
       const prev = panesRef.current;
       const source = prev.find((p) => p.tabIds.includes(tabId));
       if (!source) return;
-      const idx = source.tabIds.indexOf(tabId);
-      const remaining = source.tabIds.filter((id) => id !== tabId);
-      const sourceActive =
-        source.activeTabId === tabId ? (remaining[idx] ?? remaining[idx - 1] ?? null) : source.activeTabId;
-      if (prev.length >= 2) {
-        const target = prev.find((p) => p.id !== source.id)!;
-        let next = prev.map((p) => {
-          if (p.id === source.id) return { ...p, tabIds: remaining, activeTabId: sourceActive };
-          if (p.id === target.id) return { ...p, tabIds: [...p.tabIds, tabId], activeTabId: tabId };
-          return p;
-        });
-        if (remaining.length === 0) next = next.filter((p) => p.id !== source.id);
-        setPanes(next);
-        setActivePaneId(target.id);
-      } else {
-        if (remaining.length === 0) return;
-        const newPid = newPaneId();
-        setPanes([
-          ...prev.map((p) =>
-            p.id === source.id ? { ...p, tabIds: remaining, activeTabId: sourceActive } : p,
-          ),
-          { id: newPid, tabIds: [tabId], activeTabId: tabId },
-        ]);
-        setActivePaneId(newPid);
-      }
+      const other = prev.find((p) => p.id !== source.id);
+      dropTabOnPane(tabId, other ? { kind: "append", paneId: other.id } : { kind: "split" });
     },
-    [setPanes, panesRef],
+    [dropTabOnPane, panesRef],
   );
 
   // Reorder tabs within a pane via drag/keyboard. `orderedIds` is the
@@ -6691,7 +6683,9 @@ export default function App() {
           outCtx,
         );
       } catch (e) {
-        patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
+        // 失敗した文を記録しておく。エラー位置の波線・「エラー位置へ」が直前に成功した別の文を
+        // 指さないように、通常の実行経路と同じく試みた SQL を lastExecutedSql に残す (#2330)。
+        patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e), lastExecutedSql: sql }));
         setStatus({
           kind: "key",
           key: "statusQueryError",
@@ -7591,7 +7585,7 @@ export default function App() {
   // エラー本文の行番号 (無ければ文の先頭) の行を選択する。エディタが書き換わって文が
   // 見つからないときは通知だけ出す。
   const handleOutputGotoError = useCallback(
-    (sql: string, line: number | null) => {
+    (sql: string, line: number | null, error: string | null) => {
       const editor =
         activeTab && (activeTab.kind === "query" || activeTab.kind === "explain") ? activeEditor() : null;
       const text = editor?.getText() ?? "";
@@ -7600,10 +7594,23 @@ export default function App() {
         toast.info(t("outputGotoNotFound"));
         return;
       }
-      const r = lineRangeOf(sql, line ?? 1);
+      // 位置 (PostgreSQL の position / MySQL の near 断片 / SQLite のトークン) まで絞れたらその範囲、
+      // 絞れなければ従来どおり行番号の行 (行も無ければ文の先頭行)。
+      const located = locateErrorRange(error, sql, selectedProfile?.driver);
+      const r = located?.precise ? located : lineRangeOf(sql, line ?? 1);
       editor.selectRange(at + r.from, at + r.to);
     },
-    [activeTab, activeEditor, toast, t],
+    [activeTab, activeEditor, toast, t, selectedProfile?.driver],
+  );
+
+  // 結果グリッドのエラー空状態の「エラー位置へ」(#2330)。エディタに残した波線の範囲へスクロールして
+  // 一瞬ハイライトする。波線が編集で消えていたら、実行した文とエラー本文から位置を求め直す。
+  const revealQueryError = useCallback(
+    (paneId: string, sql: string, error: string | null) => {
+      const ok = editorRefs.current.get(paneId)?.revealRuntimeError({ sql, error }) ?? false;
+      if (!ok) toast.info(t("outputGotoNotFound"));
+    },
+    [toast, t],
   );
 
   // 出力タブの「再実行」(#1541)。記録時と同じ DB のタブで流す (`database` が無ければ接続の既定)。
@@ -13225,6 +13232,7 @@ export default function App() {
     discardEditsAndPreviewForTab,
     explainForTab,
     fetchAllForTab,
+    revealQueryError,
     focusPane,
     goToPageInTab,
     handleCloseTab: requestCloseTab,
@@ -13280,6 +13288,7 @@ export default function App() {
     setStatus,
     setTransferSource,
     splitPane,
+    dropTabOnPane,
     stopTab,
     toggleRowDeleteForTab,
     undoCellEditForTab,
@@ -16329,6 +16338,7 @@ export default function App() {
         surface={workspaceView !== "workspace" || !sessionId}
         isBlocked={() => overlayOpenRef.current}
       />
+      <TabDragOverlay />
       {quickLauncherVisible && (
         <QuickLauncher
           open={quickLauncherOpen}

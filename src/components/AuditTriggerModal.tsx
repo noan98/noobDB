@@ -3,6 +3,8 @@ import { chakra } from "@chakra-ui/react";
 import { api } from "../api/tauri";
 import type { AuditDdl, AuditOptions, AuditStatus } from "../api/tauri";
 import { useT } from "../i18n";
+import { AuditFlowDiagram, AuditSample } from "./AuditSample";
+import type { SampleColumn } from "./auditSampleModel";
 import { Callout } from "./Callout";
 import { matchesMaskPattern } from "./columnMask";
 import { ListboxSelect } from "./ListboxSelect";
@@ -67,6 +69,7 @@ export function AuditTriggerModal({
 }: Props) {
   const t = useT();
   const [columns, setColumns] = useState<string[] | null>(null);
+  const [sampleColumns, setSampleColumns] = useState<SampleColumn[]>([]);
   const [status, setStatus] = useState<AuditStatus | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>(initialMode);
@@ -98,6 +101,9 @@ export function AuditTriggerModal({
         if (cancelled) return;
         const names = cols.map((c) => c.name);
         setColumns(names);
+        setSampleColumns(
+          cols.map((c) => ({ name: c.name, dataType: c.data_type, primaryKey: c.key === "PRI" })),
+        );
         setStatus(st);
         const masked = (list: readonly string[]) =>
           maskPatterns ? list.filter((n) => matchesMaskPattern(n, maskPatterns)) : [];
@@ -273,6 +279,14 @@ export function AuditTriggerModal({
         ) : (
           <>
             {!removing && (
+              <AuditFlowDiagram
+                table={table}
+                auditTable={options.audit_table.trim() || `${table}_audit`}
+                options={options}
+              />
+            )}
+
+            {!removing && (
               <FormSection>
                 <FieldLabel as="div">{t("auditOps")}</FieldLabel>
                 <chakra.div display="flex" gap="4" flexWrap="wrap">
@@ -353,6 +367,13 @@ export function AuditTriggerModal({
               </FormSection>
             )}
           </>
+        )}
+
+        {!loading && !loadError && sampleColumns.length > 0 && !removing && !noOps && (
+          <FormSection>
+            <FieldLabel as="div">{t("auditSampleTitle")}</FieldLabel>
+            <AuditSample columns={sampleColumns} options={options} />
+          </FormSection>
         )}
 
         {removing && (

@@ -56,10 +56,14 @@ describe("OutputPanel", () => {
     // 新しい順: ok / bad / FORM。成功行には出ない。
     fireEvent.click(rows[2]);
     fireEvent.click(screen.getByRole("button", { name: t("outputGotoErrorLine", { line: 2 }) }));
-    expect(onGotoError).toHaveBeenCalledWith("SELECT 1\nFORM t", 2);
+    expect(onGotoError).toHaveBeenCalledWith(
+      "SELECT 1\nFORM t",
+      2,
+      'syntax error at or near "t" (position 15)',
+    );
     fireEvent.click(rows[1]);
     fireEvent.click(screen.getByRole("button", { name: t("outputGotoStatement") }));
-    expect(onGotoError).toHaveBeenLastCalledWith("bad", null);
+    expect(onGotoError).toHaveBeenLastCalledWith("bad", null, "near x");
   });
 
   it("検索欄で SQL / エラー本文を絞り込める (#1627)", () => {

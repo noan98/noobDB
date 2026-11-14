@@ -421,7 +421,9 @@ const rowMergeUndoDecline = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("childKeyReferenced"), table: z.string(), referencing: z.string() }),
 ]);
 export const rowMergePreview = z.object({
-  columns: z.array(z.object({ name: z.string(), typeName: z.string(), locked: z.boolean() })),
+  columns: z.array(
+    z.object({ name: z.string(), typeName: z.string(), locked: z.boolean(), generated: z.boolean() }),
+  ),
   rows: z.array(z.array(z.unknown())),
   picks: z.array(z.number()),
   keyColumns: z.array(z.string()),

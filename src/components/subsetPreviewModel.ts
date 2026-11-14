@@ -41,6 +41,19 @@ export interface SubsetNode {
   references: string[];
 }
 
+/** ノードへ足す表示 (子行の複製 #2323 が主キーの状態チップと「方針が要る」強調を載せる)。 */
+export interface SubsetNodeExtra {
+  chips: {
+    key: string;
+    tone: "success" | "info" | "accent" | "warning" | "muted";
+    label: string;
+    /** ツールチップ・aria に出す補足 (`列: 状態`)。 */
+    detail?: string;
+  }[];
+  /** 輪郭を warning にして目立たせる。 */
+  emphasize: boolean;
+}
+
 export interface SubsetEdge {
   /** 外部キーを持つ側 (子)。 */
   from: string;
@@ -323,6 +336,8 @@ export interface CollapseOptions {
   laneVisible?: number;
   /** 展開済みのレーン (折りたたまない)。 */
   expanded?: ReadonlySet<SubsetLane>;
+  /** 折りたたまず必ず残す表 (強調中の表など)。 */
+  keep?: ReadonlySet<string>;
 }
 
 /** 表を折りたたみ対象にするか (総数が閾値以上)。 */
@@ -338,7 +353,7 @@ export function collapseLanes(
   nodes: readonly SubsetNode[],
   opts: CollapseOptions = {},
 ): Record<SubsetLane, SubsetLaneItem[]> {
-  const { threshold = COLLAPSE_THRESHOLD, laneVisible = LANE_VISIBLE, expanded } = opts;
+  const { threshold = COLLAPSE_THRESHOLD, laneVisible = LANE_VISIBLE, expanded, keep } = opts;
   const collapse = shouldCollapse(nodes.length, threshold);
   const out: Record<SubsetLane, SubsetLaneItem[]> = { parent: [], root: [], child: [] };
   for (const lane of SUBSET_LANES) {
@@ -349,7 +364,7 @@ export function collapseLanes(
       out[lane] = asItems(laneNodes);
       continue;
     }
-    const must = laneNodes.filter((n) => n.cycle || n.truncations.length > 0);
+    const must = laneNodes.filter((n) => n.cycle || n.truncations.length > 0 || keep?.has(n.table));
     const rest = laneNodes
       .filter((n) => !must.includes(n))
       .sort((a, b) => b.rows - a.rows || a.table.localeCompare(b.table));
@@ -375,6 +390,11 @@ export function collapseLanes(
   return out;
 }
 
+/** 表示するレーンの数からの viewBox の幅 (「レーン 溝 レーン …」)。 */
+export function geometryWidth(laneCount: number): number {
+  return laneCount * GEOMETRY.laneWidth + Math.max(0, laneCount - 1) * GEOMETRY.gutter;
+}
+
 export interface PlacedEdge {
   from: string;
   to: string;
@@ -394,8 +414,8 @@ export const GEOMETRY = {
   width: 11,
 } as const;
 
-function laneLeft(lane: SubsetLane): number {
-  return SUBSET_LANES.indexOf(lane) * (GEOMETRY.laneWidth + GEOMETRY.gutter);
+function laneLeft(lane: SubsetLane, order: readonly SubsetLane[]): number {
+  return order.indexOf(lane) * (GEOMETRY.laneWidth + GEOMETRY.gutter);
 }
 
 /**
@@ -406,9 +426,10 @@ function laneLeft(lane: SubsetLane): number {
 export function layoutEdges(
   lanes: Record<SubsetLane, SubsetLaneItem[]>,
   edges: readonly SubsetEdge[],
+  order: readonly SubsetLane[] = SUBSET_LANES,
 ): PlacedEdge[] {
   const pos = new Map<string, { lane: SubsetLane; row: number; id: string }>();
-  for (const lane of SUBSET_LANES) {
+  for (const lane of order) {
     lanes[lane].forEach((item, row) => {
       if (item.kind === "node") pos.set(item.node.table, { lane, row, id: item.id });
       else for (const t of item.tables) pos.set(t, { lane, row, id: item.id });
@@ -429,18 +450,19 @@ export function layoutEdges(
     }
     const y1 = a.row + 0.5;
     const y2 = b.row + 0.5;
-    const li = SUBSET_LANES.indexOf(a.lane);
-    const lj = SUBSET_LANES.indexOf(b.lane);
+    const li = order.indexOf(a.lane);
+    const lj = order.indexOf(b.lane);
     let d: string;
     if (li === lj) {
       // 同じレーン: 起点側 (parent/root は右、child は左) の縁から溝へ張り出す。
-      const edgeX = a.lane === "child" ? laneLeft(a.lane) : laneLeft(a.lane) + GEOMETRY.laneWidth;
+      const edgeX =
+        a.lane === "child" ? laneLeft(a.lane, order) : laneLeft(a.lane, order) + GEOMETRY.laneWidth;
       const bulge = a.lane === "child" ? -GEOMETRY.gutter * 0.8 : GEOMETRY.gutter * 0.8;
       d = `M ${edgeX} ${y1} C ${edgeX + bulge} ${y1}, ${edgeX + bulge} ${y2}, ${edgeX} ${y2}`;
     } else {
       // from が右 (li > lj) なら from の左縁 → to の右縁。逆なら from の右縁 → to の左縁。
-      const x1 = li > lj ? laneLeft(a.lane) : laneLeft(a.lane) + GEOMETRY.laneWidth;
-      const x2 = li > lj ? laneLeft(b.lane) + GEOMETRY.laneWidth : laneLeft(b.lane);
+      const x1 = li > lj ? laneLeft(a.lane, order) : laneLeft(a.lane, order) + GEOMETRY.laneWidth;
+      const x2 = li > lj ? laneLeft(b.lane, order) + GEOMETRY.laneWidth : laneLeft(b.lane, order);
       const mx = (x1 + x2) / 2;
       d = `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
     }

@@ -17,6 +17,8 @@ import { isImeComposing } from "./modalKeys";
 import { useFocusTrap } from "../keyboardNav";
 import { tabOpenFlightId, useTabOpenFlight } from "../sharedElement";
 import { scrollFollowIntoView } from "./scrollFollow";
+import { startTabDrag } from "./tabDragStore";
+import type { TabDropTarget } from "../tabPaneDrop";
 
 // キーボードフォーカスリング。単一ソースの `--focus-ring` (App.css) をそのまま使う。
 const focusRing = "var(--focus-ring)";
@@ -103,6 +105,14 @@ interface Props {
    */
   onSplit?: () => void;
   splitMode?: "split" | "close";
+  /**
+   * タブを縦に引き出して別ペインへ落とす操作 (#2332)。`paneId` はこのバーのペイン、`onTabDrop` は
+   * ドロップが成立したときに呼ばれる。どちらかを省くとこのドラッグは無効 (同じペイン内の
+   * 並べ替えは `onReorder` が担当)。キーボードの代替は右クリック / コンテキストメニューキーの
+   * 「別ペインへ移動」。
+   */
+  paneId?: string;
+  onTabDrop?: (tabId: string, target: TabDropTarget) => void;
 }
 
 /**
@@ -197,6 +207,8 @@ export const TabBar = memo(function TabBar({
   onRenameCancel,
   onSplit,
   splitMode = "split",
+  paneId,
+  onTabDrop,
 }: Props) {
   const t = useT();
   // サイドバー行から開いた新規テーブルタブのアイコンだけが、起点と layoutId を共有して morph する (#1415)。
@@ -441,6 +453,7 @@ export const TabBar = memo(function TabBar({
   return (
     <Box
       role="tablist"
+      data-tab-bar=""
       display="flex"
       alignItems="stretch"
       borderBottom="1px solid"
@@ -513,7 +526,20 @@ export const TabBar = memo(function TabBar({
                 // 浮き上がり (scale + 影 + 前面化) を表現し、reduced-motion 配下は
                 // MotionConfig により即時化される。
                 value={tab.id}
-                drag={onReorder && renamingTabId !== tab.id ? true : false}
+                data-tab-id={tab.id}
+                onPointerDown={
+                  onTabDrop && paneId && renamingTabId !== tab.id
+                    ? (e: React.PointerEvent<HTMLElement>) =>
+                        startTabDrag(e.nativeEvent, {
+                          tabId: tab.id,
+                          paneId,
+                          label: title,
+                          onDrop: onTabDrop,
+                        })
+                    : undefined
+                }
+                drag={onReorder && renamingTabId !== tab.id ? "x" : false}
+                dragMomentum={false}
                 whileDrag={{ scale: 1.04, boxShadow: "var(--shadow-lg)", zIndex: 3 }}
                 onDragStart={onReorder ? () => setDropIndicator(tab.id, false) : undefined}
                 onDragEnd={onReorder ? () => setDropIndicator(null) : undefined}
