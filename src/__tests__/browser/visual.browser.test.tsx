@@ -170,7 +170,14 @@ describe.runIf(RUN_VISUAL)("ビジュアル回帰 (実ブラウザ)", { retry: 0
       await new Promise<void>((resolve) =>
         requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
       );
-      await expect(dialog).toMatchScreenshot(`dangerous-dialog-${theme}`);
+      // それでも合成レイヤが外れる時機は一定せず、タイトルがグレースケールで撮れる回とサブピクセルで
+      // 撮れる回が混ざる (待ち時間を延ばしても両方向にずれた。#2331 の CI)。差はタイトル文字の
+      // アンチエイリアスだけ (378 ピクセル) なので、この 1 枚に限りその幅を許容する。レイアウトや
+      // 色が崩れれば、差は数千ピクセル以上になって引き続き検出できる。
+      await expect(dialog).toMatchScreenshot(`dangerous-dialog-${theme}`, {
+        comparatorName: "pixelmatch",
+        comparatorOptions: { allowedMismatchedPixels: 600 },
+      });
     });
 
     // チャート (#646): 凡例・軸・目盛り・系列色のトーン統一を固定する。

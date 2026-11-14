@@ -1136,6 +1136,8 @@ export interface Tab {
   batchScript?: string;
   /** バッチ実行中フラグ。 */
   batchRunning?: boolean;
+  /** バッチを全体 1 トランザクションで包んで実行した (制御文の結果が届かない、#2331)。 */
+  batchWrapped?: boolean;
   /**
    * Wall-clock timestamp (ms) set each time an Apply edit completes successfully.
    * Passed to `ResultGrid` to trigger a brief success-flash animation. In-memory only.
@@ -1583,6 +1585,7 @@ export default function App() {
       preview: shortcutBindings.preview,
       format: shortcutBindings.format,
       explain: shortcutBindings.explain,
+      showBatchResult: shortcutBindings.showBatchResult,
     }),
     [
       shortcutBindings.run,
@@ -1590,6 +1593,7 @@ export default function App() {
       shortcutBindings.preview,
       shortcutBindings.format,
       shortcutBindings.explain,
+      shortcutBindings.showBatchResult,
     ],
   );
   // グリッド系ショートカット (コピー/コピー+ヘッダ/行インスペクタ/Undo/Redo/
@@ -6493,10 +6497,14 @@ export default function App() {
       // 単文実行と同じく、実行 DB はタブの database のみ (PG ではプロファイルの DB 名は実 DB でありスキーマではない)。
       const db = tab.database ?? null;
       const outCtx = outputCtxFor(sessionId);
+      // 全体を 1 つのトランザクションで包む (#1626): 設定がオン、停止モード、明示トランザクションなし。
+      // 包む実行ではバックエンドが BEGIN / COMMIT などを読み飛ばす (結果が届かない) ので、エディタのマーカーへも伝える (#2331)。
+      const wrapInTransaction = settings.batchWrapInTransaction && stopOnError && !txActiveRef.current;
       patchTab(tabId, (tt) => ({
         ...tt,
         title: autoTitleOnRun(tt, sql, translate("tabUntitledQuery")) ?? tt.title,
         batchRunning: true,
+        batchWrapped: wrapInTransaction,
         batchScript: sql,
         batchResults: [],
         showChart: false,
@@ -6585,7 +6593,6 @@ export default function App() {
         });
         // 全体を 1 つのトランザクションで包む (#1626): 設定がオン、停止モード、明示トランザクションなし。
         // 包んだ実行ではフライトレコーダの記録はしない (記録は文ごとの専用トランザクションを使う)。
-        const wrapInTransaction = settings.batchWrapInTransaction && stopOnError && !txActiveRef.current;
         // 複数文の DML も 1 文ずつ記録する (#1626)。明示トランザクション中は記録しない。
         const capture =
           settings.flightRecorderEnabled &&
@@ -7615,6 +7622,12 @@ export default function App() {
     },
     [toast, t],
   );
+
+  // バッチ結果カードの選択 (#2331)。エディタの `index` 番目の文へスクロールして一瞬ハイライトする。
+  // マーカーが無い (範囲が見つからなかった) ときは何もしない。
+  const revealBatchStatement = useCallback((paneId: string, index: number) => {
+    editorRefs.current.get(paneId)?.revealBatchStatement(index);
+  }, []);
 
   // 出力タブの「再実行」(#1541)。記録時と同じ DB のタブで流す (`database` が無ければ接続の既定)。
   // 接続が違う行はパネル側で無効にしている。実行は通常の `runInTabWithGate` に委ねる。
@@ -13267,6 +13280,7 @@ export default function App() {
     explainForTab,
     fetchAllForTab,
     revealQueryError,
+    revealBatchStatement,
     focusPane,
     goToPageInTab,
     handleCloseTab: requestCloseTab,

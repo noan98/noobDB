@@ -185,6 +185,8 @@ export interface PaneActions {
   fetchAllForTab: (tab: Tab) => void;
   /** 結果グリッドのエラー空状態から、エディタのエラー位置へスクロールしてハイライトする (#2330)。 */
   revealQueryError: (paneId: string, sql: string, error: string | null) => void;
+  /** バッチ結果カードの選択に合わせて、エディタの該当文へスクロールしてハイライトする (#2331)。 */
+  revealBatchStatement: (paneId: string, index: number) => void;
   focusPane: (paneId: string) => void;
   goToPageInTab: (tabId: string, page: number, sizeOverride?: number) => unknown;
   handleCloseTab: (id: string) => void;
@@ -480,6 +482,8 @@ export const PaneView = memo(
     // ピボット / チャートから絞り込んで移ったグリッドの状態 (#2236)。タブごとに 1 件。
     // `result` は絞り込み元の結果で、再実行などで結果が入れ替わったら無効 (チップを出さない)。
     const [drills, setDrills] = useState<Record<string, DrillEntry>>({});
+    // ガターのバッチマーカーが押されたときの、結果カードへの選択要求 (#2331)。`seq` で同じ文の連打も通知する。
+    const [batchFocus, setBatchFocus] = useState<{ tabId: string; index: number; seq: number } | null>(null);
     const startDrill = (
       target: Tab,
       source: DrillSource,
@@ -722,6 +726,13 @@ export const PaneView = memo(
                         )}
                         runtimeError={tab.queryError ?? (tab.streaming ? undefined : null)}
                         runtimeErrorSql={tab.lastExecutedSql}
+                        batchScript={tab.batchScript}
+                        batchResults={tab.batchResults}
+                        batchRunning={!!tab.batchRunning}
+                        batchWrapped={!!tab.batchWrapped}
+                        onBatchMarkerClick={gridStable.fn(`${tab.id}:ed:batchMarker`, (index: number) =>
+                          setBatchFocus((f) => ({ tabId: tab.id, index, seq: (f?.seq ?? 0) + 1 })),
+                        )}
                         running={tab.streaming && !tab.previewStreaming}
                         previewRunning={tab.previewStreaming}
                         onRun={gridStable.fn(`${tab.id}:ed:run`, (sql: string) =>
@@ -973,6 +984,8 @@ export const PaneView = memo(
                                   key={tab.id}
                                   results={tab.batchResults}
                                   running={!!tab.batchRunning}
+                                  externalSelect={batchFocus?.tabId === tab.id ? batchFocus : null}
+                                  onSelectStatement={(index) => actions.revealBatchStatement(pane.id, index)}
                                   onRerun={(stopOnError) => {
                                     if (tab.batchScript)
                                       void actions.runBatchInTab(tab.id, tab.batchScript, stopOnError);

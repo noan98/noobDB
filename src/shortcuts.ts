@@ -44,6 +44,7 @@ export type ShortcutId =
   | "preview"
   | "format"
   | "explain"
+  | "showBatchResult"
   | "openSettings"
   | "openHelp"
   | "toggleTheme"
@@ -258,6 +259,15 @@ export const SHORTCUTS: ShortcutDef[] = [
     hintKey: "shortcutHintExplain",
     scope: "editor",
     defaultCombo: "Mod+E",
+  },
+  {
+    keysKey: "shortcutShowBatchResultTitle",
+    descKey: "shortcutShowBatchResultDesc",
+    category: "editor",
+    id: "showBatchResult",
+    hintKey: "shortcutHintShowBatchResult",
+    scope: "editor",
+    defaultCombo: "Mod+Shift+Y",
   },
   {
     keysKey: "shortcutFocusEditorTitle",

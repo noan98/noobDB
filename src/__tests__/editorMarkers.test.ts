@@ -37,4 +37,31 @@ describe("editorMarkers (#2330)", () => {
     expect(markerAt(list, 4, -1)).toBe(list[0]);
     expect(markerAt(list, 8)).toBe(list[1]);
   });
+
+  it("onEdit: stale は範囲を触った編集で stale を立てて残し、位置も追従する", () => {
+    expect(mapMarkers([mk(10, 13)], ins(11, "xy"), "stale")).toEqual([
+      { from: 10, to: 15, kind: "error", stale: true },
+    ]);
+    expect(mapMarkers([mk(10, 13)], ins(2, "ab"), "stale")).toEqual([{ from: 12, to: 15, kind: "error" }]);
+    // いったん stale になったものは、その後の無関係な編集でも stale のまま
+    const once = mapMarkers([mk(10, 13)], ins(11, "x"), "stale");
+    expect(mapMarkers(once, ins(0, "z"), "stale")[0]?.stale).toBe(true);
+  });
+  it("onEdit: stale は、文の外側の端への挿入 (改行・空白・セミコロン) では古い扱いにしない (drop は従来どおり触った扱い)", () => {
+    expect(mapMarkers([mk(10, 13)], ins(10, "\n"), "stale")).toEqual([{ from: 11, to: 14, kind: "error" }]);
+    expect(mapMarkers([mk(10, 13)], ins(10, "x;\n"), "stale")[0]?.stale).toBeUndefined();
+    expect(mapMarkers([mk(10, 13)], ins(13, " "), "stale")).toEqual([{ from: 10, to: 13, kind: "error" }]);
+    expect(mapMarkers([mk(10, 13)], ins(13, ";"), "stale")[0]?.stale).toBeUndefined();
+    expect(mapMarkers([mk(10, 13)], ins(10, "\n"), "drop")).toEqual([]);
+    expect(mapMarkers([mk(10, 13)], del(12, 14), "stale")[0]?.stale).toBe(true);
+  });
+  it("onEdit: stale は、文の中身を変える端への挿入 (`SELECT 1;` を `SELECT 10;` に等) を古い扱いにする", () => {
+    // 末尾 (セミコロン直前) への挿入
+    expect(mapMarkers([mk(10, 13)], ins(13, "0"), "stale")[0]?.stale).toBe(true);
+    // 先頭への挿入
+    expect(mapMarkers([mk(10, 13)], ins(10, "x"), "stale")[0]?.stale).toBe(true);
+  });
+  it("onEdit: keep は触っても stale を立てない", () => {
+    expect(mapMarkers([mk(10, 13)], ins(11, "xy"), "keep")).toEqual([{ from: 10, to: 15, kind: "error" }]);
+  });
 });

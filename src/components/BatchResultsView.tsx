@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { CellValue } from "../api/tauri";
@@ -13,6 +13,7 @@ import { prefersStaticMotion } from "./revealOrigin";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
+import { activeRowTransition } from "./ActiveRowHighlight";
 
 /**
  * SQL スクリプトのバッチ実行の結果ビュー。文ごとに「SQL / 成否 / 影響行数 or
@@ -28,6 +29,13 @@ import { Tooltip } from "./Tooltip";
  * - 成否ドットは `variants.fadeScale` + `springs.gentle` で pop する。
  * - reduced-motion (OS / アプリ設定) とハイコントラスト (`prefersStaticMotion`) では
  *   transition を 0 秒にして静止する。height / opacity は `MotionConfig` では止まらないため。
+ *
+ * ## エディタとの結び付き (#2331)
+ *
+ * - カードのヘッダを押す (Enter / Space も可) と `onSelectStatement` でエディタの該当文へ移動し、
+ *   選択枠 (`SelectionFrame`、`layoutId` で滑る) がそのカードへ移る。
+ * - エディタのガターのマーカーが押されたときは、親が `externalSelect` で番号を渡す。該当カードを
+ *   `scrollIntoView` して選択する (エディタへは戻さない)。
  */
 
 const MotionDiv = chakra(
@@ -35,6 +43,7 @@ const MotionDiv = chakra(
   {},
   { forwardProps: ["variants", "initial", "animate", "exit", "transition", "custom"] },
 );
+const MotionFrame = chakra(motion.div, {}, { forwardProps: ["transition"] });
 const MotionSpan = chakra(
   motion.span,
   {},
@@ -56,10 +65,52 @@ interface Props {
   onClose: () => void;
   /** 実行中のバッチを止める。 */
   onStop?: () => void;
+  /** カードが選ばれた (0 始まりの番号)。エディタの該当文へ移動する (#2331)。 */
+  onSelectStatement?: (index: number) => void;
+  /** エディタ側から選択された文。`seq` が変わるたびに該当カードを表示して選択する (#2331)。 */
+  externalSelect?: { index: number; seq: number } | null;
 }
 
-export function BatchResultsView({ results, running, onRerun, onClose, onStop }: Props) {
+/** 選択中のカードの枠。同じ `layoutId` が別カードへ移ると滑る (`ActiveRowHighlight` と同じ所作)。 */
+function SelectionFrame({ layoutId }: { layoutId: string }) {
+  return (
+    <MotionFrame
+      layoutId={layoutId}
+      transition={activeRowTransition()}
+      position="absolute"
+      inset="0"
+      borderRadius="inherit"
+      borderWidth="2px"
+      borderColor="app.accent"
+      zIndex={1}
+      pointerEvents="none"
+      aria-hidden
+      data-testid="batch-selection-frame"
+    />
+  );
+}
+
+export function BatchResultsView({
+  results,
+  running,
+  onRerun,
+  onClose,
+  onStop,
+  onSelectStatement,
+  externalSelect,
+}: Props) {
   const t = useT();
+  const frameId = `batch-selection-${useId()}`;
+  const [selected, setSelected] = useState<number | null>(null);
+  const cardRefs = useRef<Map<number, HTMLElement>>(new Map());
+  const lastSeq = useRef(externalSelect?.seq ?? 0);
+  // エディタのガターから選ばれたら、そのカードへスクロールして選択する。マウント時点で既にある要求は無視する。
+  useEffect(() => {
+    if (!externalSelect || externalSelect.seq === lastSeq.current) return;
+    lastSeq.current = externalSelect.seq;
+    setSelected(externalSelect.index);
+    cardRefs.current.get(externalSelect.index)?.scrollIntoView?.({ block: "nearest" });
+  }, [externalSelect]);
   const [stopOnError, setStopOnError] = useState(true);
   const okCount = results.filter((r) => r.status === "ok").length;
   const errCount = results.filter((r) => r.status === "error").length;
@@ -120,6 +171,10 @@ export function BatchResultsView({ results, running, onRerun, onClose, onStop }:
           {results.map((r, i) => (
             <MotionDiv
               key={i}
+              ref={(el: HTMLElement | null) => {
+                if (el) cardRefs.current.set(i, el);
+                else cardRefs.current.delete(i);
+              }}
               variants={variants.collapse}
               initial="initial"
               animate="animate"
@@ -133,6 +188,12 @@ export function BatchResultsView({ results, running, onRerun, onClose, onStop }:
                 t={t}
                 still={still}
                 delay={batchEnterDelay(i, seenCount)}
+                selected={selected === i}
+                frameId={frameId}
+                onSelect={() => {
+                  setSelected(i);
+                  onSelectStatement?.(i);
+                }}
               />
             </MotionDiv>
           ))}
@@ -148,7 +209,13 @@ function StatementCard({
   t,
   still,
   delay,
+  selected,
+  frameId,
+  onSelect,
 }: {
+  selected: boolean;
+  frameId: string;
+  onSelect: () => void;
   index: number;
   result: BatchStatementResult;
   t: ReturnType<typeof useT>;
@@ -163,8 +230,36 @@ function StatementCard({
         ? semanticColorVar("danger", "solid")
         : "var(--text-muted)";
   return (
-    <chakra.div borderWidth="1px" borderColor="app.border" borderRadius="lg" overflow="hidden">
+    <chakra.div
+      position="relative"
+      borderWidth="1px"
+      borderColor="app.border"
+      borderRadius="lg"
+      overflow="hidden"
+      data-testid="batch-card"
+      data-selected={selected ? "true" : undefined}
+    >
+      {selected && <SelectionFrame layoutId={frameId} />}
       <Flex
+        role="button"
+        tabIndex={0}
+        aria-label={`${t("batchCardGoto", { n: index })} (${t(
+          result.status === "ok"
+            ? "editorBatchStatusOk"
+            : result.status === "error"
+              ? "editorBatchStatusError"
+              : "editorBatchStatusSkipped",
+        )})`}
+        aria-current={selected ? "true" : undefined}
+        onClick={onSelect}
+        onKeyDown={(e: KeyboardEvent) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onSelect();
+          }
+        }}
+        cursor="pointer"
+        _focusVisible={{ outline: "none", boxShadow: "inset var(--focus-ring)" }}
         align="center"
         gap="2"
         px="2.5"
