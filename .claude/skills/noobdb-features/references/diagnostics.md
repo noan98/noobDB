@@ -132,6 +132,29 @@ PostgreSQL の pub/sub を観測するボトムパネル (`pgListen` タブ、�
   実行は通常の `run_query` で、`pg_drop_replication_slot` は拒否リストにあるので read_only はバックエンドが止める
   (UI も無効 + 理由)。使用中のスロットは削除不可 (ボタン無効 + 理由)。スロット名は文字列リテラルなので `'` を `''` に重ねて埋め込む (`buildDropSlotSql`)。
 
+## デッドロック解析 (#2328)
+
+ボトムパネルの `deadlock` タブ (診断グループ、プロセス監視の隣)。デッドロックはサーバがすぐ片方を巻き戻し、
+待機グラフ (#2237) に何も残らないので、エラー (MySQL 1213 / PostgreSQL 40P01 / SQLite `SQLITE_BUSY`) のあとに
+サーバが残した記録を読む。入口はエラー表示の「デッドロックを解析」(`DeadlockAnalyzeButton`、`classifyLockError` で判別)。
+`commands/deadlock.rs` の `analyze_deadlock` (エラー本文と経過秒を渡す。カタログの読み取りのみで `read_only` でも動く) が
+`db/deadlock.rs` の純関数で構造化する。
+
+- MySQL: `SHOW ENGINE INNODB STATUS` の `LATEST DETECTED DEADLOCK` 節 (`parse_innodb_deadlock`)。トランザクションごとの
+  スレッド ID・ユーザ・ホスト・SQL・保持中 / 待機中のロック・巻き戻された側、待機の相手 (`waits_on`) を返す。`PROCESS` 権限が
+  無いときは理由コード `needs_process_privilege`。検出時刻とサーバの `NOW()` から、最新の報告が今回のエラーのものかを
+  `relation` (`related` / `older` / `newer`、`classify_report_age`) で返し、別件なら注記する。`innodb_print_all_deadlocks` が OFF なら
+  最新 1 件しか残らないことを案内する。累計は `INNODB_METRICS.lock_deadlocks` (MariaDB は `Innodb_deadlocks`) を `ServerMetrics.deadlocks` へ。
+- PostgreSQL: 40P01 の DETAIL (`Process A waits for ShareLock on transaction X; blocked by process B.`) を解析して循環を描く
+  (`parse_pg_deadlock_detail`)。`error.rs::sqlx_message` が 40P01 のときだけ DETAIL / CONTEXT をエラー文に足す。循環の pid のうち
+  生きているものは `pg_stat_activity` から現在のクエリ・アプリ名・ユーザを補う (デッドロック時のクエリとは限らない)。相手の SQL は
+  サーバログにしか出ないので `log_lock_waits` / `deadlock_timeout` を添える。英語以外の `lc_messages` では DETAIL を読めず `no_detail`。
+  累計は `pg_stat_database.deadlocks` の合計。
+- SQLite: 行ロックが無くデッドロックは起きない (メトリクスも対象外)。`SQLITE_BUSY` の切り分けとして `journal_mode`・`busy_timeout`・
+  同じファイルを開き明示トランザクションを保持している他の接続 (`holders`、セッション横断はコマンド層) を返す。
+- 報告中の SQL とクエリは `sql_credentials::redact_credentials` を通す (資格情報リテラルの伏せ字)。
+- フロント: `components/DeadlockPanel.tsx`、純ロジックは `components/deadlock.ts` (循環のたどり方・理由コード → 文言)。
+
 ## サーバ情報 / メトリクス (#563)
 
 `commands/server.rs` の `server_info` (バージョン + 主要設定変数) と `server_metrics`。

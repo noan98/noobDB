@@ -52,6 +52,7 @@ describe("workspaceCommandItems", () => {
       "nav:processes",
       "nav:replication",
       "nav:pgListen",
+      "nav:deadlock",
       "nav:assertions",
       "nav:connectionHealth",
       "nav:perf",

@@ -110,6 +110,7 @@ const CHARTS: ChartDef[] = [
     unitKey: "metricsPerSecUnit",
     series: [
       { key: "lockWaitRate", labelKey: "metricsSeriesLockWaitRate", colorIndex: 3 },
+      { key: "deadlockRate", labelKey: "metricsSeriesDeadlockRate", colorIndex: 6 },
       { key: "slowQueryRate", labelKey: "metricsSeriesSlowQueryRate", colorIndex: 5 },
     ],
   },
@@ -119,6 +120,7 @@ const CHARTS: ChartDef[] = [
 const SUMMARY_TILES: readonly { key: MetricSeriesKey; labelKey: I18nKey; goodWhen: StatDeltaGood }[] = [
   { key: "connections", labelKey: "metricsSeriesConnections", goodWhen: "neutral" },
   { key: "lockWaiting", labelKey: "metricsSeriesLockWaiting", goodWhen: "down" },
+  { key: "deadlocks", labelKey: "metricsSeriesDeadlocks", goodWhen: "down" },
   { key: "queryRate", labelKey: "metricsSeriesThroughput", goodWhen: "neutral" },
   { key: "slowQueryRate", labelKey: "metricsSeriesSlowQueryRate", goodWhen: "down" },
 ];

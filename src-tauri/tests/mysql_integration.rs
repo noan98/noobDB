@@ -5793,3 +5793,100 @@ async fn mysql_script_and_batch_failures_do_not_leak_credentials() {
         assert!(!err.contains(SECRET), "{err}");
     }
 }
+
+/// デッドロックの事後解析 (#2328): 2 接続で行を交差 UPDATE して 1213 を起こし、`analyze_deadlock_inner` が
+/// 2 件のトランザクション・巻き戻された側・SQL を返すこと。`PROCESS` 権限が無いサーバでは理由コードを確認して終える。
+#[tokio::test]
+async fn mysql_deadlock_is_analyzed_after_1213() {
+    let Some(url) = common::require_env("NOOBDB_TEST_MYSQL_URL") else {
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts
+        .database
+        .clone()
+        .expect("test url must include a database");
+    let table = format!("noobdb_dl_{}", std::process::id());
+    let admin = t::connect(&opts).await.expect("connect");
+    admin
+        .execute(&format!("DROP TABLE IF EXISTS `{table}`"), Some(&db))
+        .await
+        .expect("drop");
+    admin
+        .execute(
+            &format!("CREATE TABLE `{table}` (id INT PRIMARY KEY, v INT) ENGINE=InnoDB"),
+            Some(&db),
+        )
+        .await
+        .expect("create");
+    admin
+        .execute(
+            &format!("INSERT INTO `{table}` VALUES (1, 0), (2, 0)"),
+            Some(&db),
+        )
+        .await
+        .expect("insert");
+
+    let a = std::sync::Arc::new(t::connect(&opts).await.expect("connect a"));
+    let b = std::sync::Arc::new(t::connect(&opts).await.expect("connect b"));
+    a.begin_transaction(Some(&db)).await.expect("begin a");
+    b.begin_transaction(Some(&db)).await.expect("begin b");
+    let upd = |id: i32| format!("UPDATE `{table}` SET v = v + 1 WHERE id = {id}");
+    a.execute_in_transaction(&upd(1)).await.expect("a locks 1");
+    b.execute_in_transaction(&upd(2)).await.expect("b locks 2");
+    // a は 2 番の行を待ち、b が 1 番の行を取りに行って循環させる。
+    let a2 = a.clone();
+    let sql_a = upd(2);
+    let a_task = tokio::spawn(async move { a2.execute_in_transaction(&sql_a).await });
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    let b_res = b.execute_in_transaction(&upd(1)).await;
+    let a_res = tokio::time::timeout(std::time::Duration::from_secs(20), a_task)
+        .await
+        .expect("a finishes")
+        .expect("join");
+    let failed: Vec<String> = [a_res.err(), b_res.err()]
+        .into_iter()
+        .flatten()
+        .map(|e| e.to_string())
+        .collect();
+    assert_eq!(
+        failed.len(),
+        1,
+        "exactly one side is rolled back: {failed:?}"
+    );
+    assert!(failed[0].contains("1213"), "expected 1213: {}", failed[0]);
+
+    let state = t::AppState::default();
+    let probe = t::connect(&opts).await.expect("connect probe");
+    let session = t::make_session("dl", probe, opts.clone(), false);
+    let sid = state.insert(session).await;
+    let analysis = t::analyze_deadlock_inner(&state, &sid, Some(failed[0].clone()), Some(1)).await;
+
+    let _ = a.finish_transaction(false).await;
+    let _ = b.finish_transaction(false).await;
+    let _ = admin
+        .execute(&format!("DROP TABLE IF EXISTS `{table}`"), Some(&db))
+        .await;
+
+    let analysis = analysis.expect("analyze");
+    if analysis.unavailable.as_deref() == Some("needs_process_privilege") {
+        common::skip_capability("test user lacks the PROCESS privilege");
+        return;
+    }
+    let view = analysis.mysql.expect("mysql view");
+    assert_eq!(view.transactions.len(), 2, "{view:?}");
+    assert_eq!(
+        view.transactions.iter().filter(|x| x.rolled_back).count(),
+        1,
+        "{view:?}"
+    );
+    for txn in &view.transactions {
+        let sql = txn.sql.as_deref().unwrap_or_default();
+        assert!(sql.contains(&table), "sql missing: {txn:?}");
+        assert!(txn.waits_for.is_some(), "{txn:?}");
+    }
+    // 報告はいま起きたばかりなので、今回のエラーの報告と判定される (時刻を比べられた場合のみ)。
+    if let Some(rel) = view.relation.as_deref() {
+        assert_eq!(rel, "related", "{view:?}");
+    }
+}

@@ -149,6 +149,17 @@ export function workspaceCommandItems(
       run: () => actions.toggleBottomPanel("pgListen"),
     });
   }
+  // デッドロック解析 (#2328)。接続だけを要求する (SQLite は SQLITE_BUSY の切り分けを出す)。
+  if (ctx.sessionId) {
+    items.push({
+      id: "nav:deadlock",
+      group: "navigation",
+      label: t("deadlockTitle"),
+      icon: "lock",
+      keywords: "deadlock lock wait busy innodb 40P01 1213 デッドロック ロック待ち 競合 解析",
+      run: () => actions.toggleBottomPanel("deadlock"),
+    });
+  }
   // SQLite のメンテナンス (#1625)。SQLite の接続でだけ開ける。
   if (ctx.sessionId && ctx.driver === "sqlite") {
     items.push({

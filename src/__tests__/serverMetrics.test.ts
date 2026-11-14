@@ -187,7 +187,7 @@ describe("期間切替・接続数の余裕・CSV (#1622)", () => {
       sample(3_000, { connections: 6, max_connections: 100, questions: 300 }),
     ]);
     expect(METRICS_CSV_HEADER).toHaveLength(rows[0].length);
-    expect(rows[0]).toEqual(["1970-01-01T00:00:01.000Z", 5, 100, null, null, null, null, null, null]);
-    expect(rows[1]).toEqual(["1970-01-01T00:00:03.000Z", 6, 100, null, null, null, 100, null, null]);
+    expect(rows[0]).toEqual(["1970-01-01T00:00:01.000Z", 5, 100, null, null, null, null, null, null, null]);
+    expect(rows[1]).toEqual(["1970-01-01T00:00:03.000Z", 6, 100, null, null, null, 100, null, null, null]);
   });
 });

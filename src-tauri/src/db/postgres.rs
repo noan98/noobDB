@@ -7,6 +7,10 @@ use sqlx::postgres::{
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::advisor::{SequenceKind, SequenceUsage, UnusedIndexEntry, UnusedIndexStats};
+use super::deadlock::{
+    parse_pg_deadlock_detail, pg_cycle_pids, DeadlockAnalysis, PgDeadlockProcess, PgDeadlockView,
+    UNAVAILABLE_NO_DETAIL,
+};
 use super::replication::{
     clamp_js_safe, ReplicationDirection, ReplicationLink, ReplicationRole, ReplicationSlot,
     ReplicationStatus,
@@ -4491,6 +4495,14 @@ impl PostgresConn {
             // 安価な常設カウンタが無い (待ち数は lock_waiting ゲージで見る)。
             slow_queries: None,
             lock_waits: None,
+            // デッドロックの累計 (#2328)。全データベースの合計。
+            deadlocks: sqlx::query_scalar::<_, Option<i64>>(
+                "SELECT sum(deadlocks)::bigint FROM pg_stat_database",
+            )
+            .fetch_one(&self.pool)
+            .await
+            .ok()
+            .flatten(),
             // 接続数の上限 (#1622)。`max_connections` は GUC なので誰でも読める。
             max_connections: sqlx::query_scalar::<_, i64>(
                 "SELECT current_setting('max_connections')::bigint",
@@ -6440,6 +6452,92 @@ async fn restore_statement_timeout(conn: &mut sqlx::PgConnection, orig: &str) ->
             tracing::debug!(error = %e, "statement_timeout restore failed (postgres)");
             false
         }
+    }
+}
+
+impl PostgresConn {
+    /// デッドロックの事後解析 (#2328)。40P01 のエラー文 (DETAIL / CONTEXT つき) から待機の循環を読み、
+    /// 循環に現れる pid のうち生きているものは `pg_stat_activity` で現在のクエリ・アプリ名・ユーザを補う。
+    /// 相手の SQL はサーバログにしか出ないので、`log_lock_waits` / `deadlock_timeout` も添える。
+    /// 読み取りのみ (read_only でも可)。
+    pub async fn analyze_deadlock(&self, error_message: Option<&str>) -> Result<DeadlockAnalysis> {
+        let parsed = error_message.and_then(parse_pg_deadlock_detail);
+        let Some((edges, context)) = parsed else {
+            return Ok(DeadlockAnalysis {
+                unavailable: Some(UNAVAILABLE_NO_DETAIL.into()),
+                mysql: None,
+                postgres: None,
+                sqlite: None,
+            });
+        };
+        let pids = pg_cycle_pids(&edges);
+        let pid_params: Vec<i32> = pids.iter().filter_map(|p| i32::try_from(*p).ok()).collect();
+        let rows = sqlx::query(
+            "SELECT pid::bigint, usename::text, application_name::text, state::text, query, \
+             (pid = pg_backend_pid()) \
+             FROM pg_stat_activity WHERE pid = ANY($1)",
+        )
+        .bind(&pid_params)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default();
+        let processes: Vec<PgDeadlockProcess> = pids
+            .iter()
+            .map(|pid| {
+                let row = rows
+                    .iter()
+                    .find(|r| r.try_get::<i64, _>(0).ok() == Some(*pid));
+                let text = |i: usize| {
+                    row.and_then(|r| r.try_get::<Option<String>, _>(i).ok().flatten())
+                        .filter(|s| !s.is_empty())
+                };
+                // 解析に使った自分の接続は、いま解析を走らせているだけでデッドロック時のクエリではない。
+                let is_self = row
+                    .and_then(|r| r.try_get::<bool, _>(5).ok())
+                    .unwrap_or(false);
+                let raw_query = if is_self { None } else { text(4) };
+                let query_hidden = raw_query.as_deref() == Some("<insufficient privilege>");
+                PgDeadlockProcess {
+                    pid: *pid,
+                    alive: row.is_some(),
+                    user: text(1),
+                    application_name: text(2),
+                    state: text(3),
+                    query: if query_hidden {
+                        None
+                    } else {
+                        raw_query.map(|q| {
+                            crate::sql_credentials::redact_credentials(&q, DriverKind::Postgres)
+                                .into_owned()
+                        })
+                    },
+                    query_hidden,
+                }
+            })
+            .collect();
+        let log_lock_waits =
+            sqlx::query_scalar::<_, String>("SELECT current_setting('log_lock_waits')")
+                .fetch_one(&self.pool)
+                .await
+                .ok();
+        let deadlock_timeout =
+            sqlx::query_scalar::<_, String>("SELECT current_setting('deadlock_timeout')")
+                .fetch_one(&self.pool)
+                .await
+                .ok();
+        Ok(DeadlockAnalysis {
+            unavailable: None,
+            mysql: None,
+            postgres: Some(PgDeadlockView {
+                victim_pid: edges.first().map(|e| e.waiter_pid),
+                edges,
+                context,
+                processes,
+                log_lock_waits,
+                deadlock_timeout,
+            }),
+            sqlite: None,
+        })
     }
 }
 

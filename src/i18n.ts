@@ -6154,6 +6154,68 @@ const en = {
   schemaCompareKindAddForeignKey: "ADD FOREIGN KEY",
   schemaCompareKindDropColumn: "DROP COLUMN",
   schemaCompareKindDropTable: "DROP TABLE",
+  deadlockTitle: "Deadlock analysis",
+  deadlockDesc:
+    "Reads what the server recorded about a deadlock after it was resolved: which transactions were involved, what they held and waited for, and which side was rolled back. Read-only; works on read-only connections.",
+  deadlockAnalyzeButton: "Analyze deadlock",
+  deadlockBusyButton: "Investigate lock",
+  deadlockRefresh: "Analyze again",
+  deadlockLoading: "Reading the server's deadlock report…",
+  deadlockFailed: "Could not analyze: {error}",
+  deadlockUnavailableNeedsProcess:
+    "Reading the InnoDB deadlock report needs the PROCESS privilege, which this user does not have. Ask an administrator to run GRANT PROCESS ON *.* TO this user, or run SHOW ENGINE INNODB STATUS as an administrator.",
+  deadlockUnavailableNoReport:
+    "The server has no deadlock report yet (LATEST DETECTED DEADLOCK is empty). The report is lost when the server restarts.",
+  deadlockUnavailableNoDetail:
+    "There is no readable error detail to analyze. Open this from the error banner right after the deadlock. The detail is only parsed when the server's lc_messages is English.",
+  deadlockUnavailableUnknown: "The deadlock could not be analyzed.",
+  deadlockRelationRelated: "This report matches the error you saw.",
+  deadlockRelationOlder:
+    "The latest report is older than this error, so it is probably a different incident. The report for this error may not have been kept.",
+  deadlockRelationNewer:
+    "The latest report is newer than this error: another deadlock happened since, and it replaced the report for this one.",
+  deadlockRelationUnknown:
+    "Could not tell whether this report is the one for the error you saw (the time could not be compared). Check the detected time.",
+  deadlockPrintAllOff:
+    "innodb_print_all_deadlocks is OFF, so only the latest deadlock is kept and each new one overwrites it. Turn it ON to write every deadlock to the error log.",
+  deadlockIncomplete: "The report is cut off, so some SQL or the rolled-back side may be missing.",
+  deadlockDetectedAt: "Detected at {time} (server time)",
+  deadlockCycle: "Wait cycle",
+  deadlockTxnTitle: "Transaction ({n})",
+  deadlockProcessTitle: "Process {pid}",
+  deadlockVictim: "Rolled back",
+  deadlockVictimNote: "The server rolled this one back and returned the deadlock error.",
+  deadlockThread: "Thread {id}",
+  deadlockActive: "active {secs}s",
+  deadlockHolds: "Holds",
+  deadlockWaitsFor: "Waiting for",
+  deadlockWaitsOn: "Waiting for transaction ({n})",
+  deadlockLockOn: "{mode} on {target}",
+  deadlockNoSql: "The report has no SQL for this transaction.",
+  deadlockSqlTruncated: "The SQL is cut off.",
+  deadlockPgEdge: "Process {waiter} waits for {mode} on {target}, held by process {blocker}",
+  deadlockPgContext: "Where it happened",
+  deadlockPgGone: "This session has ended, so its query is no longer available.",
+  deadlockPgState: "Now: {state}",
+  deadlockPgQueryNote: "The query is what this process is running now, not necessarily what deadlocked.",
+  deadlockPgQueryHidden: "The query is hidden (the user lacks pg_read_all_stats).",
+  deadlockPgLogNote:
+    "PostgreSQL writes each process's SQL in the cycle only to the server log. log_lock_waits = {logLockWaits}, deadlock_timeout = {timeout}.",
+  deadlockPgLogHint: "Set log_lock_waits = on to also log lock waits longer than deadlock_timeout.",
+  deadlockSqliteNote:
+    'SQLite has no row locks, so deadlocks do not occur, and the deadlock count in the server metrics does not apply. "database is locked" (SQLITE_BUSY) means another connection held the write lock past the timeout. Check the points below.',
+  deadlockSqliteJournal: "journal_mode: {mode}",
+  deadlockSqliteBusyTimeout: "busy_timeout: {ms} ms",
+  deadlockSqliteHintNotWal:
+    "This is not WAL mode, so a writer blocks readers and the other way round. WAL (PRAGMA journal_mode = WAL) lets readers and one writer run together.",
+  deadlockSqliteHintNoTimeout:
+    "busy_timeout is 0, so a locked write fails at once without waiting. Raise it (for example PRAGMA busy_timeout = 5000).",
+  deadlockSqliteHolders: "Connections in this app holding an open transaction on the same file:",
+  deadlockSqliteNoHolders:
+    "No other connection in this app holds a transaction on this file. Another process (another app, a backup) may hold the lock.",
+  deadlockSqliteHolderUnnamed: "Connection {id}",
+  metricsSeriesDeadlockRate: "Deadlocks/sec",
+  metricsSeriesDeadlocks: "Deadlocks (total)",
   pgListenTitle: "LISTEN / NOTIFY",
   pgListenDesc:
     "Open a dedicated connection and watch PostgreSQL notifications (NOTIFY) on the channels you choose, as they arrive. Read-only: it only issues LISTEN, and works on read-only connections. Listening stops when you switch tabs or close this panel.",
@@ -6791,7 +6853,7 @@ const en = {
   metricsNoSeriesData: "No data yet, or not reported by this server.",
   metricsChartConnections: "Connections",
   metricsChartThroughput: "Throughput",
-  metricsChartProblems: "Lock waits & slow queries",
+  metricsChartProblems: "Lock waits, deadlocks & slow queries",
   metricsCountUnit: "count",
   metricsQpsUnit: "queries/sec",
   metricsTpsUnit: "transactions/sec",
@@ -14711,6 +14773,69 @@ const ja: Dict = {
   schemaCompareKindAddForeignKey: "ADD FOREIGN KEY",
   schemaCompareKindDropColumn: "DROP COLUMN",
   schemaCompareKindDropTable: "DROP TABLE",
+  deadlockTitle: "デッドロック解析",
+  deadlockDesc:
+    "解消済みのデッドロックについて、サーバが残した記録をあとから読みます。加わったトランザクション、保持中・待機中のロック、巻き戻された側を表示します。読み取りのみで、読み取り専用の接続でも使えます。",
+  deadlockAnalyzeButton: "デッドロックを解析",
+  deadlockBusyButton: "ロックの原因を調べる",
+  deadlockRefresh: "もう一度解析",
+  deadlockLoading: "サーバのデッドロック報告を読み込み中…",
+  deadlockFailed: "解析できませんでした: {error}",
+  deadlockUnavailableNeedsProcess:
+    "InnoDB のデッドロック報告を読むには PROCESS 権限が必要ですが、このユーザには付与されていません。管理者に GRANT PROCESS ON *.* を依頼するか、管理者権限で SHOW ENGINE INNODB STATUS を実行してください。",
+  deadlockUnavailableNoReport:
+    "サーバにはまだデッドロックの報告がありません (LATEST DETECTED DEADLOCK が空です)。報告はサーバの再起動で失われます。",
+  deadlockUnavailableNoDetail:
+    "解析できるエラー詳細がありません。デッドロック直後のエラー表示から開いてください。詳細はサーバの lc_messages が英語のときだけ解析できます。",
+  deadlockUnavailableUnknown: "デッドロックを解析できませんでした。",
+  deadlockRelationRelated: "この報告は、いま表示しているエラーのものです。",
+  deadlockRelationOlder:
+    "最新の報告はこのエラーより古く、別件の可能性があります。このエラーの報告は残っていないかもしれません。",
+  deadlockRelationNewer:
+    "最新の報告はこのエラーより新しいものです。その後に別のデッドロックが起き、このエラーの報告は上書きされています。",
+  deadlockRelationUnknown:
+    "この報告が、いま表示しているエラーのものか判定できません (時刻を比べられませんでした)。検出時刻を確認してください。",
+  deadlockPrintAllOff:
+    "innodb_print_all_deadlocks が OFF のため、最新の 1 件しか残らず、新しいデッドロックが起きるたびに上書きされます。ON にするとすべてのデッドロックがエラーログに残ります。",
+  deadlockIncomplete: "報告が途中で切れているため、SQL や巻き戻された側が欠けている場合があります。",
+  deadlockDetectedAt: "検出時刻 {time} (サーバ時刻)",
+  deadlockCycle: "待機の循環",
+  deadlockTxnTitle: "トランザクション ({n})",
+  deadlockProcessTitle: "プロセス {pid}",
+  deadlockVictim: "巻き戻された側",
+  deadlockVictimNote: "サーバがこちらを巻き戻し、デッドロックのエラーを返しました。",
+  deadlockThread: "スレッド {id}",
+  deadlockActive: "{secs} 秒間アクティブ",
+  deadlockHolds: "保持中のロック",
+  deadlockWaitsFor: "待機中のロック",
+  deadlockWaitsOn: "トランザクション ({n}) を待っている",
+  deadlockLockOn: "{mode} / {target}",
+  deadlockNoSql: "報告にこのトランザクションの SQL がありません。",
+  deadlockSqlTruncated: "SQL が途中で切れています。",
+  deadlockPgEdge: "プロセス {waiter} が {target} の {mode} を待機 (保持: プロセス {blocker})",
+  deadlockPgContext: "発生箇所",
+  deadlockPgGone: "このセッションは終了しており、クエリは取得できません。",
+  deadlockPgState: "現在: {state}",
+  deadlockPgQueryNote:
+    "表示しているのは、このプロセスがいま実行しているクエリです。デッドロック時のクエリとは限りません。",
+  deadlockPgQueryHidden: "クエリは隠されています (ユーザに pg_read_all_stats がありません)。",
+  deadlockPgLogNote:
+    "循環に加わった各プロセスの SQL は、PostgreSQL ではサーバログにだけ出力されます。log_lock_waits = {logLockWaits}、deadlock_timeout = {timeout}。",
+  deadlockPgLogHint: "log_lock_waits = on にすると、deadlock_timeout を超えたロック待ちもログに残ります。",
+  deadlockSqliteNote:
+    "SQLite には行ロックが無くデッドロックは起きないため、サーバメトリクスのデッドロック累計は対象外です。「database is locked」(SQLITE_BUSY) は、別の接続が書き込みロックをタイムアウトを超えて持ち続けたときに出ます。次の点を確認してください。",
+  deadlockSqliteJournal: "journal_mode: {mode}",
+  deadlockSqliteBusyTimeout: "busy_timeout: {ms} ms",
+  deadlockSqliteHintNotWal:
+    "WAL モードではないため、書き込み中は読み取りが、読み取り中は書き込みが待たされます。WAL (PRAGMA journal_mode = WAL) なら、読み取りと 1 つの書き込みを同時に実行できます。",
+  deadlockSqliteHintNoTimeout:
+    "busy_timeout が 0 のため、ロック中の書き込みは待たずに即エラーになります。大きくしてください (例: PRAGMA busy_timeout = 5000)。",
+  deadlockSqliteHolders: "同じファイルを開き、トランザクションを保持しているこのアプリ内の接続:",
+  deadlockSqliteNoHolders:
+    "このファイルでトランザクションを保持しているアプリ内の他の接続はありません。別のプロセス (他のアプリやバックアップなど) がロックを持っている可能性があります。",
+  deadlockSqliteHolderUnnamed: "接続 {id}",
+  metricsSeriesDeadlockRate: "デッドロック/秒",
+  metricsSeriesDeadlocks: "デッドロック (累計)",
   pgListenTitle: "LISTEN / NOTIFY",
   pgListenDesc:
     "専用の接続を 1 本開き、選んだチャンネルの PostgreSQL 通知 (NOTIFY) を届いた順に監視します。読み取りのみ (LISTEN だけを発行) なので、読み取り専用接続でも使えます。タブを切り替えるかパネルを閉じると監視は止まります。",
@@ -15347,7 +15472,7 @@ const ja: Dict = {
   metricsNoSeriesData: "データがまだ無いか、このサーバでは報告されていません。",
   metricsChartConnections: "接続数",
   metricsChartThroughput: "スループット",
-  metricsChartProblems: "ロック待ち・スロークエリ",
+  metricsChartProblems: "ロック待ち・デッドロック・スロークエリ",
   metricsCountUnit: "件",
   metricsQpsUnit: "クエリ/秒",
   metricsTpsUnit: "トランザクション/秒",

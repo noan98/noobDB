@@ -19,6 +19,8 @@ pub mod data_diff;
 /// DB 全体からの値検索の走査 SQL 生成 (#748 / #1261)。
 pub mod data_search;
 pub mod ddl_extras;
+/// デッドロックの事後解析 (#2328) の共通型と純ロジック。
+pub mod deadlock;
 pub mod diff;
 pub mod format;
 /// ライブクエリ・インスペクタ (#746) のフィンガープリント正規化と digest 差分集計 (#1259)。
@@ -2091,6 +2093,26 @@ impl Connection {
             Connection::MySql(c) => c.list_processes().await,
             Connection::Postgres(c) => c.list_processes().await,
             Connection::Sqlite(c) => c.list_processes().await,
+        }
+    }
+
+    /// デッドロックの事後解析 (#2328)。MySQL は InnoDB STATUS の最新報告、PostgreSQL は 40P01 のエラー文
+    /// から循環を読む。読み取りのみで read_only でも動く。SQLite は行ロックが無くデッドロックが起きないため
+    /// `SQLITE_BUSY` の切り分け材料 (`journal_mode` / `busy_timeout`) を返す。
+    pub async fn analyze_deadlock(
+        &self,
+        error_message: Option<&str>,
+        error_age_secs: Option<i64>,
+    ) -> Result<deadlock::DeadlockAnalysis> {
+        match self {
+            Connection::MySql(c) => c.analyze_deadlock(error_age_secs).await,
+            Connection::Postgres(c) => c.analyze_deadlock(error_message).await,
+            Connection::Sqlite(c) => Ok(deadlock::DeadlockAnalysis {
+                unavailable: None,
+                mysql: None,
+                postgres: None,
+                sqlite: Some(c.busy_diagnosis().await?),
+            }),
         }
     }
 

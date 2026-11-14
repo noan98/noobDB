@@ -63,6 +63,10 @@ use t::{
     TableDiff, TableFixPlan, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
     TaskRunProgressEvent, TemplateColumn, Value,
 };
+use t::{
+    DeadlockAnalysis, InnodbDeadlockView, InnodbLock, InnodbTransaction, PgDeadlockEdge,
+    PgDeadlockProcess, PgDeadlockView, SqliteBusyView, SqliteTxHolder,
+};
 // #1773: 検索系 (Where-used / 値検索) の Channel メッセージ。
 use t::{
     ColumnHit, DataSearchEntry, DataSearchMessage, DefinitionAnalysis, ReferenceConfidence,
@@ -402,6 +406,67 @@ fn build_fixtures() -> serde_json::Value {
         slow_queries: Some(12),
         lock_waits: Some(5),
         max_connections: Some(151),
+        deadlocks: Some(3),
+    };
+    let deadlock_analysis = DeadlockAnalysis {
+        unavailable: None,
+        mysql: Some(InnodbDeadlockView {
+            detected_at: Some("2026-11-14 10:20:30".into()),
+            server_now: Some("2026-11-14 10:20:35".into()),
+            relation: Some("related".into()),
+            print_all_deadlocks: Some(false),
+            incomplete: false,
+            transactions: vec![InnodbTransaction {
+                label: 1,
+                trx_id: Some("421".into()),
+                thread_id: Some(8),
+                user: Some("root".into()),
+                host: Some("localhost".into()),
+                state: Some("updating".into()),
+                active_secs: Some(11),
+                sql: Some("UPDATE accounts SET balance = 0 WHERE id = 2".into()),
+                sql_truncated: false,
+                holds: vec![InnodbLock {
+                    kind: "record".into(),
+                    table: Some("bank.accounts".into()),
+                    index: Some("PRIMARY".into()),
+                    mode: Some("X locks rec but not gap".into()),
+                    record: Some("heap no 2".into()),
+                }],
+                waits_for: None,
+                waits_on: vec![2],
+                rolled_back: true,
+            }],
+        }),
+        postgres: Some(PgDeadlockView {
+            victim_pid: Some(12345),
+            edges: vec![PgDeadlockEdge {
+                waiter_pid: 12345,
+                lock_mode: "ShareLock".into(),
+                target: "transaction 7001".into(),
+                blocker_pid: 12346,
+            }],
+            context: Some("while updating tuple (0,1) in relation \"accounts\"".into()),
+            processes: vec![PgDeadlockProcess {
+                pid: 12346,
+                alive: true,
+                user: Some("app".into()),
+                application_name: Some("worker".into()),
+                state: Some("idle in transaction".into()),
+                query: Some("UPDATE accounts SET balance = 1".into()),
+                query_hidden: false,
+            }],
+            log_lock_waits: Some("off".into()),
+            deadlock_timeout: Some("1s".into()),
+        }),
+        sqlite: Some(SqliteBusyView {
+            journal_mode: Some("wal".into()),
+            busy_timeout_ms: Some(5000),
+            holders: vec![SqliteTxHolder {
+                session_id: "s2".into(),
+                profile_id: Some("p2".into()),
+            }],
+        }),
     };
     let replication_status = ReplicationStatus {
         role: ReplicationRole::Primary,
@@ -2995,6 +3060,7 @@ fn build_fixtures() -> serde_json::Value {
         "processInfo": process_info,
         "serverMetrics": server_metrics,
         "replicationStatus": replication_status,
+        "deadlockAnalysis": deadlock_analysis,
         "indexOverlap": index_overlap,
         "sqliteMaintenanceResult": sqlite_maintenance_result,
         "queryStatsSupport": query_stats_support,

@@ -374,6 +374,7 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 - `server_info`
 - `server_metrics`
 - `get_replication_status`
+- `analyze_deadlock` (#2328。デッドロックの事後解析。MySQL は InnoDB STATUS の最新報告、PostgreSQL は 40P01 の DETAIL、SQLite は SQLITE_BUSY の切り分け)
 - `sqlite_maintenance`
 
 ## 列データプロファイル (`commands/profile.rs`)
