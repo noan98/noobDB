@@ -1419,6 +1419,20 @@ impl Connection {
         }
     }
 
+    /// `table` の `GENERATED ALWAYS AS IDENTITY` 列の名前 (PostgreSQL のみ。他は空)。
+    /// 値を明示して INSERT するには `OVERRIDING SYSTEM VALUE` が要る列で、フライトレコーダーの
+    /// Undo / Redo の再 INSERT が使う (#2343)。
+    pub async fn always_identity_columns(
+        &self,
+        database: Option<&str>,
+        table: &str,
+    ) -> Result<Vec<String>> {
+        match self {
+            Connection::MySql(_) | Connection::Sqlite(_) => Ok(Vec::new()),
+            Connection::Postgres(c) => c.always_identity_columns(database, table).await,
+        }
+    }
+
     /// `db` の全テーブル (とビュー) の列メタデータを 1 回の問い合わせで取得する
     /// (#1255)。単一テーブル版 [`Connection::columns`] と同じ型・値・列順で、
     /// テーブルごとの N+1 往復を避けたい経路 (スキーマ比較・アドバイザ・

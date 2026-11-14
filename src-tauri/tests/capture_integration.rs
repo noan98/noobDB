@@ -129,6 +129,78 @@ async fn pg_capture_runs_triggers_once_and_attributes_serial_insert() {
     .unwrap();
 }
 
+/// #2343: `GENERATED ALWAYS AS IDENTITY` 列を持つ表で、DELETE の Undo と INSERT の Redo の
+/// 再 INSERT が 428C9 にならず、元の値で戻る。
+#[tokio::test]
+async fn pg_undo_and_redo_reinsert_into_always_identity_column() {
+    let Some(o) = pg_opts().await else { return };
+    let c = connect(&o).await;
+    let tb = "cap2343_pg_identity";
+    c.execute(&format!("DROP TABLE IF EXISTS {tb}"), None)
+        .await
+        .unwrap();
+    c.execute(
+        &format!("CREATE TABLE {tb} (id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, name TEXT)"),
+        None,
+    )
+    .await
+    .unwrap();
+    let identity = c.always_identity_columns(None, tb).await.unwrap();
+    assert_eq!(identity, vec!["id".to_string()]);
+
+    let record = |kind: t::WriteKind| t::WriteCaptureRecord {
+        id: 1,
+        profile_id: None,
+        driver: "postgres".to_string(),
+        database: None,
+        table: tb.to_string(),
+        kind,
+        sql: String::new(),
+        primary_key: vec!["id".to_string()],
+        columns: vec!["id".to_string(), "name".to_string()],
+        column_types: vec!["integer".to_string(), "text".to_string()],
+        before_rows: Vec::new(),
+        after_rows: Vec::new(),
+        rows_affected: 1,
+        captured_at: "2026-01-01T00:00:00Z".to_string(),
+        undone: false,
+        pinned: false,
+        batch_id: None,
+    };
+    let row = vec![t::Value::Int(7), t::Value::String("alice".to_string())];
+
+    // DELETE の Undo (= 再 INSERT)。
+    let mut del = record(t::WriteKind::Delete);
+    del.before_rows = vec![row.clone()];
+    let plan = t::build_undo_plan_with_columns(&del, &[], false, &[], &identity);
+    assert_eq!(plan.statements.len(), 1, "{:?}", plan.warnings);
+    assert!(plan.statements[0].contains("OVERRIDING SYSTEM VALUE"));
+    c.execute(&plan.statements[0], None)
+        .await
+        .expect("undo re-insert into an ALWAYS identity column");
+    assert_eq!(
+        count(&c, &format!("SELECT count(*) FROM {tb} WHERE id = 7")).await,
+        1
+    );
+
+    // INSERT の Redo (= 行を消してから再 INSERT)。
+    c.execute(&format!("DELETE FROM {tb}"), None).await.unwrap();
+    let mut ins = record(t::WriteKind::Insert);
+    ins.after_rows = vec![row];
+    let plan = t::build_redo_plan_with_columns(&ins, &[], false, &[], &identity);
+    assert_eq!(plan.statements.len(), 1, "{:?}", plan.warnings);
+    assert!(plan.statements[0].contains("OVERRIDING SYSTEM VALUE"));
+    c.execute(&plan.statements[0], None)
+        .await
+        .expect("redo re-insert into an ALWAYS identity column");
+    assert_eq!(
+        count(&c, &format!("SELECT count(*) FROM {tb} WHERE id = 7")).await,
+        1
+    );
+
+    c.execute(&format!("DROP TABLE {tb}"), None).await.unwrap();
+}
+
 /// 新規行が窓の外で、同じ文の中のトリガが窓の行を消す: 既存の別行を挿入行と取り違えない。
 #[tokio::test]
 async fn pg_insert_outside_window_is_not_misattributed() {

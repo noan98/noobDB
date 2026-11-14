@@ -23,7 +23,7 @@ use std::collections::HashMap;
 use serde::Serialize;
 
 use crate::db::data_diff::{
-    generate_data_sync_sql, restore_binary_rows, DataDiff, RowDiff, RowStatus,
+    generate_data_sync_sql_with_identity, restore_binary_rows, DataDiff, RowDiff, RowStatus,
 };
 use crate::db::types::Value;
 use crate::db::{DriverKind, WriteKind};
@@ -112,6 +112,19 @@ pub fn build_undo_plan_with_generated(
     current_rows: &[Vec<Value>],
     force: bool,
     generated_columns: &[String],
+) -> UndoPlan {
+    build_undo_plan_with_columns(record, current_rows, force, generated_columns, &[])
+}
+
+/// [`build_undo_plan_with_generated`] に PostgreSQL の `GENERATED ALWAYS AS IDENTITY` 列名も
+/// 渡す版 (#2343)。行を元の値で再 INSERT する逆 SQL は、その列に `OVERRIDING SYSTEM VALUE`
+/// を付けないと 428C9 で失敗する。
+pub fn build_undo_plan_with_columns(
+    record: &WriteCaptureRecord,
+    current_rows: &[Vec<Value>],
+    force: bool,
+    generated_columns: &[String],
+    always_identity_columns: &[String],
 ) -> UndoPlan {
     let pk_idx: Vec<usize> = record
         .primary_key
@@ -366,7 +379,7 @@ pub fn build_undo_plan_with_generated(
     // statement is only ever generated for an `Insert`-undo `TargetOnly` row,
     // which is exactly the recorded row this specific undo action is about —
     // not a general destructive-sync toggle.
-    let plan = generate_data_sync_sql(&diff, true);
+    let plan = generate_data_sync_sql_with_identity(&diff, true, always_identity_columns);
     warnings.extend(plan.warnings);
 
     let statements: Vec<String> = plan.statements.into_iter().map(|s| s.sql).collect();
@@ -431,11 +444,23 @@ pub fn build_redo_plan_with_generated(
     force: bool,
     generated_columns: &[String],
 ) -> UndoPlan {
-    build_undo_plan_with_generated(
+    build_redo_plan_with_columns(record, current_rows, force, generated_columns, &[])
+}
+
+/// [`build_redo_plan_with_generated`] に ALWAYS identity 列名も渡す版 (#2343)。
+pub fn build_redo_plan_with_columns(
+    record: &WriteCaptureRecord,
+    current_rows: &[Vec<Value>],
+    force: bool,
+    generated_columns: &[String],
+    always_identity_columns: &[String],
+) -> UndoPlan {
+    build_undo_plan_with_columns(
         &invert_for_redo(record),
         current_rows,
         force,
         generated_columns,
+        always_identity_columns,
     )
 }
 
@@ -735,6 +760,48 @@ mod tests {
         assert!(plan.conflicts.is_empty(), "{:?}", plan.conflicts);
         assert!(plan.statements.is_empty());
         assert!(plan.already_satisfied);
+    }
+
+    #[test]
+    fn always_identity_column_gets_overriding_system_value_in_reinsert() {
+        let mut r = record(WriteKind::Delete);
+        r.driver = "postgres".into();
+        r.columns = vec!["id".into(), "a".into()];
+        r.column_types = vec!["INTEGER".into(), "INTEGER".into()];
+        r.before_rows = vec![vec![Value::Int(1), Value::Int(2)]];
+        let identity = ["id".to_string()];
+        // Undo (DELETE の取り消し = 再 INSERT)。
+        let plan = build_undo_plan_with_columns(&r, &[], false, &[], &identity);
+        assert_eq!(
+            plan.statements,
+            vec![r#"INSERT INTO "users" ("id", "a") OVERRIDING SYSTEM VALUE VALUES (1, 2)"#]
+        );
+        // identity の指定がなければ従来どおり。
+        let plain = build_undo_plan_with_columns(&r, &[], false, &[], &[]);
+        assert_eq!(
+            plain.statements,
+            vec![r#"INSERT INTO "users" ("id", "a") VALUES (1, 2)"#]
+        );
+        // Redo (INSERT のやり直し = 再 INSERT) も同様。
+        let mut ins = record(WriteKind::Insert);
+        ins.driver = "postgres".into();
+        ins.columns = r.columns.clone();
+        ins.column_types = r.column_types.clone();
+        ins.after_rows = vec![vec![Value::Int(1), Value::Int(2)]];
+        let redo = build_redo_plan_with_columns(&ins, &[], false, &[], &identity);
+        assert_eq!(
+            redo.statements,
+            vec![r#"INSERT INTO "users" ("id", "a") OVERRIDING SYSTEM VALUE VALUES (1, 2)"#]
+        );
+        // INSERT の Undo (DELETE) には付かない。
+        let del = build_undo_plan_with_columns(
+            &ins,
+            &[vec![Value::Int(1), Value::Int(2)]],
+            false,
+            &[],
+            &identity,
+        );
+        assert!(del.statements.iter().all(|s| !s.contains("OVERRIDING")));
     }
 
     #[test]
