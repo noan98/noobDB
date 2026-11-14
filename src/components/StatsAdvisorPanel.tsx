@@ -24,9 +24,11 @@ import {
   parseFreshness,
   parseHistograms,
   parseServerVersion,
+  pgRelationNameFromSql,
   pickFilterColumns,
   planConditionIdentifiers,
   planStatsTables,
+  relationSchemaSql,
   serverVersionSql,
   setStatisticsTargetStatements,
   sqliteOptimizeStatements,
@@ -48,6 +50,8 @@ import {
 export interface StatsAdvisorConfig {
   sessionId: string;
   database: string | null;
+  /** EXPLAIN した元の SQL。PostgreSQL でテーブルのスキーマを解決するのに使う (修飾名を探す)。 */
+  sql: string | null;
   /** read_only 接続 (バックエンドが書き込みを拒否する。ボタンも無効にする)。 */
   readOnly: boolean;
   /** 確認 (confirm_writes / is_production) を通してから流す。キャンセル / 失敗は false。 */
@@ -65,6 +69,8 @@ const LOOKUP_ROW_CAP = 500;
 const LOOKUP_TIMEOUT_SECS = 5;
 
 interface Loaded {
+  /** 実際に操作するテーブル。PostgreSQL はスキーマ解決済み。解決できなければ null (打ち手を塞ぐ)。 */
+  table: StatsTable | null;
   version: ServerVersion | null;
   columns: string[];
   freshness: StatsFreshness | null;
@@ -92,7 +98,25 @@ async function settle(config: StatsAdvisorConfig, sql: string | null): Promise<Q
   }
 }
 
-async function loadStats(driver: string, config: StatsAdvisorConfig, table: StatsTable): Promise<Loaded> {
+async function loadStats(driver: string, config: StatsAdvisorConfig, planTable: StatsTable): Promise<Loaded> {
+  let table: StatsTable = planTable;
+  if (driver === "postgres" && !table.schema) {
+    // 計画 (VERBOSE なし) にスキーマが無い。タブのスキーマで代用せず、実際の relation のスキーマを確かめる。
+    const res = await settle(config, relationSchemaSql(pgRelationNameFromSql(config.sql, table.table)));
+    const ns = res?.rows[0]?.[0];
+    if (ns === null || ns === undefined || ns === "") {
+      return {
+        table: null,
+        version: null,
+        columns: [],
+        freshness: null,
+        freshnessError: null,
+        extended: [],
+        histograms: [],
+      };
+    }
+    table = { schema: String(ns), table: table.table };
+  }
   const verRes = await settle(config, serverVersionSql(driver));
   const version = parseServerVersion(driver, verRes ? String(verRes.rows[0]?.[0] ?? "") : null);
   const colRes = await settle(config, columnsSql(driver, table, config.database));
@@ -118,6 +142,7 @@ async function loadStats(driver: string, config: StatsAdvisorConfig, table: Stat
   const objSql = statsObjectsSql(driver, table, config.database);
   const objRes = await settle(config, objSql);
   return {
+    table,
     version,
     columns,
     freshness,
@@ -211,11 +236,14 @@ export function StatsAdvisorPanel({
   const version = loaded?.version ?? null;
   const columns = loaded?.columns ?? [];
   const orderedColumns = [...picked, ...columns.filter((c) => !picked.includes(c))];
-  const base = { driver, table, database: config.database };
+  // 操作対象は解決済みのテーブル。PostgreSQL は未解決 (読み取り前 / 解決失敗) のあいだ SQL を作れない。
+  const opTable = loaded?.table ?? table;
+  const base = { driver, table: opTable, database: config.database };
   const togglePick = (c: string) => setPicked((p) => (p.includes(c) ? p.filter((x) => x !== c) : [...p, c]));
   const writeDisabledReason = config.readOnly ? t("statsAdvReadOnly") : null;
   // 列一覧が取れない = 表を特定できない (計画に出ているのが別名など)。存在しない表に対する SQL は流さない。
-  const unresolvedReason = loaded && loaded.columns.length === 0 ? t("statsAdvUnresolvedTable") : null;
+  const unresolvedReason =
+    loaded && (loaded.table === null || loaded.columns.length === 0) ? t("statsAdvUnresolvedTable") : null;
   const histogramOk = supportsHistogram(driver, version);
 
   const run = async () => {
@@ -334,13 +362,13 @@ export function StatsAdvisorPanel({
 
       <Flex gap="1.5" wrap="wrap">
         {actionButton("analyze", t("statsAdvActAnalyze"), () =>
-          analyzeStatements(driver, table, config.database),
+          analyzeStatements(driver, opTable, config.database),
         )}
         {driver === "postgres" &&
           actionButton(
             "analyzeCols",
             t("statsAdvActAnalyzeCols"),
-            () => analyzeStatements(driver, table, config.database, picked),
+            () => analyzeStatements(driver, opTable, config.database, picked),
             picked.length === 0 ? t("statsAdvBlockedNoColumns") : null,
           )}
         {driver === "sqlite" &&

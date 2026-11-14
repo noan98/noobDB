@@ -925,6 +925,7 @@ export const PaneView = memo(
                                       ? {
                                           sessionId,
                                           database: tab.database ?? selectedProfile.database ?? null,
+                                          sql: tab.explainSourceSql ?? getTabSql(tab),
                                           readOnly,
                                           runStatements: (statements) =>
                                             actions.runStatsStatements(

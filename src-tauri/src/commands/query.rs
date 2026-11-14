@@ -203,6 +203,34 @@ pub async fn run_query(
     result
 }
 
+/// 統計の手当て (ANALYZE / ヒストグラム等, #2327) を流して**結果行を保持して**返す。MySQL の
+/// `ANALYZE TABLE` は失敗しても SQL エラーにならず `Msg_type=Error` の行で返るが、`run_query` の経路は
+/// 結果の形でない文の行を捨てるため、フロントが失敗を検知できない。`execute_maintenance` (#2025) は
+/// 行を受け取るので、同じ read_only ガード (字句 + サーバ側 READ ONLY) と成功後のキャッシュ無効化を
+/// `run_query_inner` と揃えて通す。承認 (confirm_writes / 本番) は UI 側 (`runGuardedDdl`) が先に済ませる。
+#[tauri::command]
+pub async fn run_maintenance_query(
+    session_id: String,
+    sql: String,
+    database: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<QueryResult> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    ensure_allowed_for_session(&session, &sql)?;
+    let result = crate::db::read_only_scope::scope_if(
+        server_read_only_enforced(&session),
+        session.conn.execute_maintenance(&sql, database.as_deref()),
+    )
+    .await;
+    if result.is_ok() {
+        invalidate_caches_after_success(&session, &sql, database.as_deref()).await;
+    }
+    result
+}
+
 /// Core of [`run_query`] decoupled from Tauri's `State` wrapper so integration
 /// tests can drive the exact command path (session lookup + read-only guard +
 /// execute) without standing up a Tauri runtime. The `#[tauri::command]`

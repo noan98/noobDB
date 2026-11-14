@@ -449,6 +449,7 @@ export function parseHistograms(res: QueryResult | null): ColumnHistogram[] {
 /** 打ち手を作れない理由 (UI は i18n キーで文言にする)。 */
 export type StatsBlockReason =
   | "unsupportedDriver"
+  | "unresolvedTable"
   | "tooFewColumns"
   | "noColumns"
   | "versionTooOld"
@@ -457,6 +458,7 @@ export type StatsBlockReason =
 
 export const STATS_BLOCK_REASON_KEYS: Record<StatsBlockReason, I18nKey> = {
   unsupportedDriver: "statsAdvBlockedDriver",
+  unresolvedTable: "statsAdvUnresolvedTable",
   tooFewColumns: "statsAdvBlockedTooFewColumns",
   noColumns: "statsAdvBlockedNoColumns",
   versionTooOld: "statsAdvBlockedVersion",
@@ -469,8 +471,17 @@ export type StatsBuild = { ok: true; statements: string[] } | { ok: false; reaso
 const blocked = (reason: StatsBlockReason): StatsBuild => ({ ok: false, reason });
 const built = (...statements: string[]): StatsBuild => ({ ok: true, statements });
 
-function dbOf(t: StatsTable, database: string | null): string | null {
-  return t.schema ?? database;
+/**
+ * 修飾に使うスキーマ / DB。PostgreSQL は計画 (VERBOSE なし) にスキーマが出ず、タブのスキーマで代用すると
+ * 別スキーマの同名テーブルを書き換えてしまうので、解決済みのスキーマ (`table.schema`) だけを使う。
+ */
+function dbOf(driver: string, t: StatsTable, database: string | null): string | null {
+  return driver === "postgres" ? t.schema : (t.schema ?? database);
+}
+
+/** PostgreSQL でスキーマが解決できていない (`resolveRelationSchema` 前) か。 */
+function pgUnresolved(driver: string, t: StatsTable): boolean {
+  return driver === "postgres" && !t.schema;
 }
 
 /**
@@ -483,7 +494,8 @@ export function analyzeStatements(
   database: string | null,
   columns: readonly string[] = [],
 ): StatsBuild {
-  const name = qualifiedTableName(driver, dbOf(t, database), t.table);
+  if (pgUnresolved(driver, t)) return blocked("unresolvedTable");
+  const name = qualifiedTableName(driver, dbOf(driver, t, database), t.table);
   if (driver === "mysql") return built(`ANALYZE TABLE ${name};`);
   if (driver === "sqlite") return built(`ANALYZE ${name};`);
   const cols = columns.length > 0 ? ` (${columns.map((c) => quoteIdentFor(driver, c)).join(", ")})` : "";
@@ -516,9 +528,10 @@ export function createStatisticsStatements(args: {
   const { driver, table, database, columns, kinds, version } = args;
   if (driver !== "postgres") return blocked("unsupportedDriver");
   if (!supportsExtendedStatistics(driver, version)) return blocked("versionTooOld");
+  if (pgUnresolved(driver, table)) return blocked("unresolvedTable");
   if (columns.length < 2) return blocked("tooFewColumns");
   if (kinds.includes("mcv") && !supportsMcvStatistics(driver, version)) return blocked("mcvUnsupported");
-  const schema = dbOf(table, database);
+  const schema = dbOf(driver, table, database);
   const stem = `${table.table}_${columns.join("_")}`;
   const statName = fitPgName(stem, "_stat", args.takenNames ?? new Set());
   const kindList = kinds.length > 0 ? ` (${kinds.join(", ")})` : "";
@@ -545,9 +558,10 @@ export function setStatisticsTargetStatements(args: {
 }): StatsBuild {
   const { driver, table, database, column, target } = args;
   if (driver !== "postgres") return blocked("unsupportedDriver");
+  if (pgUnresolved(driver, table)) return blocked("unresolvedTable");
   if (!column) return blocked("noColumns");
   if (!Number.isInteger(target) || target < -1 || target > STATISTICS_TARGET_MAX) return blocked("badNumber");
-  const name = qualifiedTableName(driver, dbOf(table, database), table.table);
+  const name = qualifiedTableName(driver, dbOf(driver, table, database), table.table);
   const col = quoteIdentFor(driver, column);
   return built(
     `ALTER TABLE ${name} ALTER COLUMN ${col} SET STATISTICS ${target};`,
@@ -575,7 +589,7 @@ export function histogramStatements(args: {
   if (!Number.isInteger(buckets) || buckets < HISTOGRAM_BUCKETS_MIN || buckets > HISTOGRAM_BUCKETS_MAX) {
     return blocked("badNumber");
   }
-  const name = qualifiedTableName(driver, dbOf(table, database), table.table);
+  const name = qualifiedTableName(driver, dbOf(driver, table, database), table.table);
   const cols = columns.map((c) => quoteIdentFor(driver, c)).join(", ");
   return built(`ANALYZE TABLE ${name} UPDATE HISTOGRAM ON ${cols} WITH ${buckets} BUCKETS;`);
 }
@@ -592,7 +606,7 @@ export function dropHistogramStatements(args: {
   if (driver !== "mysql") return blocked("unsupportedDriver");
   if (!supportsHistogram(driver, version)) return blocked("versionTooOld");
   if (columns.length === 0) return blocked("noColumns");
-  const name = qualifiedTableName(driver, dbOf(table, database), table.table);
+  const name = qualifiedTableName(driver, dbOf(driver, table, database), table.table);
   const cols = columns.map((c) => quoteIdentFor(driver, c)).join(", ");
   return built(`ANALYZE TABLE ${name} DROP HISTOGRAM ON ${cols};`);
 }
@@ -624,4 +638,31 @@ export function mysqlAnalyzeFailure(res: Pick<QueryResult, "columns" | "rows"> |
       msgs.push(String(row[textIdx >= 0 ? textIdx : typeIdx] ?? ""));
   }
   return msgs.length > 0 ? msgs.join("\n") : null;
+}
+
+/**
+ * PostgreSQL: SQL 本文に出てくる `schema.table` の修飾を探す。計画 (VERBOSE なし) には Schema が出ないため、
+ * テーブルを指す名前を `to_regclass` に渡す文字列として返す。修飾が無ければ素の `table` (search_path で解決)。
+ * クォート済み (`"Archive"."Orders"`) と未クォートの両方を拾う。
+ */
+export function pgRelationNameFromSql(sql: string | null, table: string): string {
+  const tq = quoteIdentFor("postgres", table);
+  if (sql) {
+    const esc = table.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(
+      `(?:"((?:[^"]|"")+)"|([A-Za-z_][\\w$]*))\\s*\\.\\s*(?:"${esc.replace(/"/g, '""')}"|${esc})(?![\\w$"])`,
+      "i",
+    );
+    const m = re.exec(sql);
+    if (m) {
+      const schema = m[1] !== undefined ? m[1].replace(/""/g, '"') : m[2].toLowerCase();
+      return `${quoteIdentFor("postgres", schema)}.${tq}`;
+    }
+  }
+  return tq;
+}
+
+/** PostgreSQL: `pgRelationNameFromSql` の名前が実際に指す relation のスキーマを読む SELECT。無ければ 0 行。 */
+export function relationSchemaSql(qualifiedName: string): string {
+  return `SELECT n.nspname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.oid = to_regclass(${lit("postgres", qualifiedName)})::oid`;
 }

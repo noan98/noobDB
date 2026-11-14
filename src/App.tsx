@@ -10327,7 +10327,7 @@ export default function App() {
       let outcome: StatsRunOutcome = "done";
       try {
         for (const sql of statements) {
-          const res = await api.runQuery(sessionId, sql, database);
+          const res = await api.runMaintenanceQuery(sessionId, sql, database);
           // MySQL の ANALYZE TABLE は失敗を例外ではなく結果行 (Msg_type) で返す。
           const failure = driver === "mysql" ? mysqlAnalyzeFailure(res) : null;
           if (failure) throw new Error(failure);

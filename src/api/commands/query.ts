@@ -59,6 +59,17 @@ export const queryCommands = {
       recordHistory: recordHistory ?? null,
     }).then((r) => parseResponse(schemas.queryResultLite, r, "run_query")),
   /**
+   * 統計の手当て (ANALYZE / ヒストグラム, #2327) を流し、結果行を保持して返す。MySQL の `ANALYZE TABLE` は
+   * 失敗を `Msg_type=Error` の行で返すため、行を捨てる `runQuery` では失敗を検知できない。
+   * read_only のガードは `runQuery` と同じ (バックエンドが拒否する)。
+   */
+  runMaintenanceQuery: (sessionId: string, sql: string, database?: string | null) =>
+    invoke<QueryResult>("run_maintenance_query", {
+      sessionId,
+      sql,
+      database: database ?? null,
+    }).then((r) => parseResponse(schemas.queryResultLite, r, "run_maintenance_query")),
+  /**
    * スマート値ピッカー (#1067) の候補取得。FK 参照先の DISTINCT 値や ENUM /
    * CHECK 許可値を引く裏方クエリで、バックエンドがセッションの read_only に
    * 関係なく読み取り専用の文だけを通し、`rowCap` 件 (上限 1000) で打ち切り、

@@ -13,7 +13,9 @@ import {
   parseFreshness,
   parseHistograms,
   parseServerVersion,
+  pgRelationNameFromSql,
   pickFilterColumns,
+  relationSchemaSql,
   planConditionIdentifiers,
   mysqlAnalyzeFailure,
   planStatsTables,
@@ -29,6 +31,7 @@ function node(partial: Partial<PlanNode>): PlanNode {
   return { id: "plan", kind: "x", label: "x", cost: null, attrs: [], children: [], ...partial };
 }
 const t = { schema: null, table: "orders" };
+const pt = { schema: "public", table: "orders" };
 const pg16 = parseServerVersion("postgres", "160002");
 const pg11 = parseServerVersion("postgres", "110005");
 
@@ -111,7 +114,7 @@ describe("版による分岐", () => {
     expect(
       createStatisticsStatements({
         driver: "postgres",
-        table: t,
+        table: pt,
         database: "public",
         columns: ["a", "b"],
         kinds: ["mcv"],
@@ -127,7 +130,7 @@ describe("打ち手の SQL", () => {
       ok: true,
       statements: ["ANALYZE TABLE `shop`.`orders`;"],
     });
-    expect(analyzeStatements("postgres", t, "public", ["a", 'we"ird'])).toEqual({
+    expect(analyzeStatements("postgres", pt, "public", ["a", 'we"ird'])).toEqual({
       ok: true,
       statements: ['ANALYZE "public"."orders" ("a", "we""ird");'],
     });
@@ -137,7 +140,7 @@ describe("打ち手の SQL", () => {
   });
 
   it("拡張統計は 2 列以上で、作成後に ANALYZE を続ける", () => {
-    const base = { driver: "postgres", table: t, database: "public", version: pg16 } as const;
+    const base = { driver: "postgres", table: pt, database: "public", version: pg16 } as const;
     expect(createStatisticsStatements({ ...base, columns: ["a"], kinds: [] })).toEqual({
       ok: false,
       reason: "tooFewColumns",
@@ -164,7 +167,7 @@ describe("打ち手の SQL", () => {
   });
 
   it("統計目標は範囲を検証し、ALTER の後に ANALYZE を続ける", () => {
-    const base = { driver: "postgres", table: t, database: "public", column: "a" } as const;
+    const base = { driver: "postgres", table: pt, database: "public", column: "a" } as const;
     expect(setStatisticsTargetStatements({ ...base, target: 500 })).toEqual({
       ok: true,
       statements: [
@@ -314,5 +317,57 @@ describe("PostgreSQL 9.x と MySQL の ANALYZE の失敗", () => {
     expect(mysqlAnalyzeFailure(warn)).toBe("Cannot create histogram");
     expect(mysqlAnalyzeFailure({ columns: [{ name: "x", type_name: "int" }], rows: [[1]] })).toBeNull();
     expect(mysqlAnalyzeFailure(null)).toBeNull();
+  });
+});
+
+describe("PostgreSQL のスキーマ解決", () => {
+  it("スキーマが未解決の間は、タブのスキーマで代用せず打ち手を塞ぐ", () => {
+    // public タブで archive.orders を EXPLAIN した場合に、public.orders へ流さない。
+    expect(analyzeStatements("postgres", t, "public")).toEqual({ ok: false, reason: "unresolvedTable" });
+    expect(
+      createStatisticsStatements({
+        driver: "postgres",
+        table: t,
+        database: "public",
+        columns: ["a", "b"],
+        kinds: [],
+        version: pg16,
+      }),
+    ).toEqual({ ok: false, reason: "unresolvedTable" });
+    expect(
+      setStatisticsTargetStatements({
+        driver: "postgres",
+        table: t,
+        database: "public",
+        column: "a",
+        target: 10,
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "unresolvedTable",
+    });
+    // 読み取りクエリも、解決前の PG ではタブのスキーマを使わない設計 (呼び出し側が解決してから渡す) 。
+    expect(analyzeStatements("postgres", { schema: "archive", table: "orders" }, "public")).toEqual({
+      ok: true,
+      statements: ['ANALYZE "archive"."orders";'],
+    });
+  });
+
+  it("SQL 本文の修飾名を to_regclass に渡す名前として拾う", () => {
+    expect(pgRelationNameFromSql("SELECT * FROM archive.orders o WHERE o.a = 1", "orders")).toBe(
+      '"archive"."orders"',
+    );
+    expect(pgRelationNameFromSql('SELECT * FROM "Arch"."orders"', "orders")).toBe('"Arch"."orders"');
+    expect(pgRelationNameFromSql("SELECT * FROM Archive . Orders", "orders")).toBe('"archive"."orders"');
+    expect(pgRelationNameFromSql("SELECT * FROM orders", "orders")).toBe('"orders"');
+    expect(pgRelationNameFromSql(null, "orders")).toBe('"orders"');
+    // 別テーブル名の一部には反応しない
+    expect(pgRelationNameFromSql("SELECT * FROM archive.orders_old", "orders")).toBe('"orders"');
+  });
+
+  it("relation のスキーマを読む SELECT はリテラルをエスケープする", () => {
+    expect(relationSchemaSql('"a"."o\'x"')).toBe(
+      "SELECT n.nspname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.oid = to_regclass('\"a\".\"o''x\"')::oid",
+    );
   });
 });
