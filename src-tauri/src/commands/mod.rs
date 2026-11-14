@@ -8,6 +8,7 @@ pub mod bulk_write;
 pub mod cell_blob;
 pub mod clone_rows;
 pub mod connection;
+pub mod deadlock;
 pub mod diff;
 pub mod dump;
 pub mod dump_native;

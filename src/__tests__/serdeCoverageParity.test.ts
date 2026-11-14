@@ -116,6 +116,7 @@ const COVERED: Record<string, string> = {
   SchemaTree: "schemaTree",
   ServerInfo: "serverInfo",
   ReplicationStatus: "replicationStatus",
+  DeadlockAnalysis: "deadlockAnalysis",
   ServerMetrics: "serverMetrics",
   SqliteMaintenanceResult: "sqliteMaintenanceResult",
   IndexOverlap: "indexOverlap",

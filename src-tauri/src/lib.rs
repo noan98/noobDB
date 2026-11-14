@@ -72,6 +72,11 @@ pub mod __test_api {
     pub use crate::db::data_diff::{
         compute_data_diff, generate_data_sync_sql, DataDiff, RowDiff, RowStatus,
     };
+    pub use crate::db::deadlock::{
+        classify_report_age, parse_innodb_deadlock, parse_pg_deadlock_detail, DeadlockAnalysis,
+        InnodbDeadlockView, InnodbLock, InnodbTransaction, PgDeadlockEdge, PgDeadlockProcess,
+        PgDeadlockView, SqliteBusyView, SqliteTxHolder,
+    };
     pub use crate::db::diff::{
         compute_schema_diff, CheckDiff, ColumnDiff, DiffForeignKey, DiffIndex, DiffStatus,
         ForeignKeyDiff, GeneratedDiff, IndexDiff, SchemaDiff, TableDiff, TargetTableSnapshot,
@@ -629,6 +634,7 @@ pub mod __test_api {
         BulkWriteOutcome, ChunkedDmlBatchResult, ChunkedDmlOperation, InsertRowsResult,
     };
     pub use crate::commands::connection::{health_probe_all_inner, HealthProbeStatus};
+    pub use crate::commands::deadlock::analyze_deadlock_inner;
     pub use crate::commands::inspector::{
         query_stats_support_inner, sample_live_queries_inner, sample_statement_delta_inner,
         start_statement_recording_inner,
@@ -2007,6 +2013,7 @@ pub fn run() {
             commands::schema::incoming_foreign_keys,
             commands::schema::column_dependencies,
             commands::schema::view_rebuild_plan,
+            commands::deadlock::analyze_deadlock,
             commands::server::server_info,
             commands::server::server_metrics,
             commands::server::get_replication_status,

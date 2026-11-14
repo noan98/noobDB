@@ -98,6 +98,7 @@ describe("availableBottomPanelTabs", () => {
         ...LOG_TABS,
         "inspector",
         "processes",
+        "deadlock",
         "replication",
         "assertions",
         "pgListen",
@@ -438,6 +439,7 @@ describe("bottomPanelStripTabs (折りたたみ時のパネルバー)", () => {
         (tab) =>
           BOTTOM_PANEL_TAB_GROUP[tab] !== "reference" &&
           tab !== "perf" &&
+          tab !== "deadlock" &&
           tab !== "sqliteMaintenance" &&
           tab !== "pgListen",
       ),

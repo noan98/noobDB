@@ -922,6 +922,11 @@ pub struct ServerMetrics {
     /// `current_setting('max_connections')`。取れなければ `None`。接続数との比で使用率を出す。
     #[serde(default)]
     pub max_connections: Option<i64>,
+    /// デッドロックの累計回数 (#2328)。MySQL は `INNODB_METRICS.lock_deadlocks` (MariaDB は
+    /// `Innodb_deadlocks`)、PostgreSQL は `pg_stat_database.deadlocks` の合計。取れなければ `None`
+    /// (MySQL は `PROCESS` 権限が要る)。SQLite は行ロックが無くデッドロックが起きないため対象外。
+    #[serde(default)]
+    pub deadlocks: Option<i64>,
 }
 
 /// One server-side process/connection shown in the process monitor panel.

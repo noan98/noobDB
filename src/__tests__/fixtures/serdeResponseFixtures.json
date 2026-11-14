@@ -1567,6 +1567,78 @@
     "member_of": [],
     "name": "app"
   },
+  "deadlockAnalysis": {
+    "mysql": {
+      "detected_at": "2026-11-14 10:20:30",
+      "incomplete": false,
+      "print_all_deadlocks": false,
+      "relation": "related",
+      "server_now": "2026-11-14 10:20:35",
+      "transactions": [
+        {
+          "active_secs": 11,
+          "holds": [
+            {
+              "index": "PRIMARY",
+              "kind": "record",
+              "mode": "X locks rec but not gap",
+              "record": "heap no 2",
+              "table": "bank.accounts"
+            }
+          ],
+          "host": "localhost",
+          "label": 1,
+          "rolled_back": true,
+          "sql": "UPDATE accounts SET balance = 0 WHERE id = 2",
+          "sql_truncated": false,
+          "state": "updating",
+          "thread_id": 8,
+          "trx_id": "421",
+          "user": "root",
+          "waits_for": null,
+          "waits_on": [
+            2
+          ]
+        }
+      ]
+    },
+    "postgres": {
+      "context": "while updating tuple (0,1) in relation \"accounts\"",
+      "deadlock_timeout": "1s",
+      "edges": [
+        {
+          "blocker_pid": 12346,
+          "lock_mode": "ShareLock",
+          "target": "transaction 7001",
+          "waiter_pid": 12345
+        }
+      ],
+      "log_lock_waits": "off",
+      "processes": [
+        {
+          "alive": true,
+          "application_name": "worker",
+          "pid": 12346,
+          "query": "UPDATE accounts SET balance = 1",
+          "query_hidden": false,
+          "state": "idle in transaction",
+          "user": "app"
+        }
+      ],
+      "victim_pid": 12345
+    },
+    "sqlite": {
+      "busy_timeout_ms": 5000,
+      "holders": [
+        {
+          "profile_id": "p2",
+          "session_id": "s2"
+        }
+      ],
+      "journal_mode": "wal"
+    },
+    "unavailable": null
+  },
   "dumpDoneEvent": {
     "bytes": 131072,
     "elapsedMs": 1200,
@@ -6431,6 +6503,7 @@
   "serverMetrics": {
     "active": 3,
     "connections": 42,
+    "deadlocks": 3,
     "idle_in_transaction": 1,
     "lock_waiting": 0,
     "lock_waits": 5,

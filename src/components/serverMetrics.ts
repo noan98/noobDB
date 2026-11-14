@@ -79,6 +79,10 @@ export interface MetricPoint {
   slowQueryRate: number | null;
   /** 行ロック待ち発生率 (件/秒)。 */
   lockWaitRate: number | null;
+  /** デッドロック発生率 (件/秒, #2328)。 */
+  deadlockRate: number | null;
+  /** デッドロックの累計 (取れなければ null)。 */
+  deadlocks: number | null;
 }
 
 /**
@@ -101,6 +105,8 @@ export function deriveSeries(samples: readonly MetricSample[]): MetricPoint[] {
       queryRate: counterRate(prev?.metrics.questions ?? null, cur.metrics.questions, dtMs),
       slowQueryRate: counterRate(prev?.metrics.slow_queries ?? null, cur.metrics.slow_queries, dtMs),
       lockWaitRate: counterRate(prev?.metrics.lock_waits ?? null, cur.metrics.lock_waits, dtMs),
+      deadlockRate: counterRate(prev?.metrics.deadlocks ?? null, cur.metrics.deadlocks ?? null, dtMs),
+      deadlocks: cur.metrics.deadlocks ?? null,
     });
   }
   return out;
@@ -114,7 +120,9 @@ export type MetricSeriesKey =
   | "lockWaiting"
   | "queryRate"
   | "slowQueryRate"
-  | "lockWaitRate";
+  | "lockWaitRate"
+  | "deadlockRate"
+  | "deadlocks";
 
 /** チャート描画用の 1 点 (時刻 + 値)。`null`/非有限値は除外済み。 */
 export interface MetricSeriesPoint {
@@ -225,6 +233,7 @@ export const METRICS_CSV_HEADER: readonly string[] = [
   "query_rate_per_sec",
   "slow_query_rate_per_sec",
   "lock_wait_rate_per_sec",
+  "deadlocks_total",
 ];
 
 /**
@@ -243,6 +252,7 @@ export function metricsToCsvRows(samples: readonly MetricSample[]): (string | nu
     roundRate(p.queryRate),
     roundRate(p.slowQueryRate),
     roundRate(p.lockWaitRate),
+    p.deadlocks,
   ]);
 }
 

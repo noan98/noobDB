@@ -6,6 +6,10 @@ use sqlx::pool::PoolConnection;
 use sqlx::{Column as _, Connection as _, Either, MySql, Row, TypeInfo, ValueRef};
 
 use super::advisor::{SequenceKind, SequenceUsage, UnusedIndexEntry, UnusedIndexStats};
+use super::deadlock::{
+    classify_report_age, parse_innodb_deadlock, DeadlockAnalysis, InnodbDeadlockView,
+    UNAVAILABLE_NEEDS_PROCESS, UNAVAILABLE_NO_REPORT,
+};
 use super::replication::{
     first_present_column, mysql_link_state, mysql_replica_status_sql, mysql_replicas_sql,
     mysql_required_privilege, non_blank, ReplicationDirection, ReplicationLink, ReplicationRole,
@@ -3529,6 +3533,7 @@ impl MySqlConn {
             questions: g("questions"),
             slow_queries: g("slow_queries"),
             lock_waits: g("innodb_row_lock_waits"),
+            deadlocks: self.deadlock_total(g("innodb_deadlocks")).await,
             // 接続数の上限 (#1622)。変数が読めなければ None (使用率は出さない)。
             max_connections: sqlx::query("SHOW GLOBAL VARIABLES LIKE 'max_connections'")
                 .fetch_optional(&self.pool)
@@ -4994,6 +4999,108 @@ async fn restore_max_execution_time(conn: &mut sqlx::MySqlConnection, orig: u64)
             tracing::debug!(error = %e, "max_execution_time restore failed (mysql)");
             false
         }
+    }
+}
+
+impl MySqlConn {
+    /// デッドロックの事後解析 (#2328)。`SHOW ENGINE INNODB STATUS` の `LATEST DETECTED DEADLOCK` 節を
+    /// 構造化して返す。`PROCESS` 権限が無ければ理由コード `needs_process_privilege`、報告が無ければ
+    /// `no_report`。`error_age_secs` は「エラーが返ってからの経過秒」で、最新の報告が今回のエラーの
+    /// ものかの判定に使う。読み取りのみ (read_only でも可)。SQL の資格情報リテラルは伏せ字にする。
+    pub async fn analyze_deadlock(&self, error_age_secs: Option<i64>) -> Result<DeadlockAnalysis> {
+        let print_all = sqlx::query("SHOW GLOBAL VARIABLES LIKE 'innodb_print_all_deadlocks'")
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|r| r.try_get::<String, _>(1).ok())
+            .map(|v| matches!(v.trim().to_ascii_uppercase().as_str(), "ON" | "1" | "TRUE"));
+        let rows = match sqlx::query("SHOW ENGINE INNODB STATUS")
+            .fetch_all(&self.pool)
+            .await
+        {
+            Ok(rows) => rows,
+            Err(e) if is_privilege_error(&e) => {
+                return Ok(DeadlockAnalysis {
+                    unavailable: Some(UNAVAILABLE_NEEDS_PROCESS.into()),
+                    mysql: None,
+                    postgres: None,
+                    sqlite: None,
+                });
+            }
+            Err(e) => return Err(e.into()),
+        };
+        // 3 列目 (Status) が本文。版によって文字列かバイト列で返る。
+        let text = rows
+            .first()
+            .and_then(|r| {
+                r.try_get::<String, _>(2).ok().or_else(|| {
+                    r.try_get::<Vec<u8>, _>(2)
+                        .ok()
+                        .map(|b| String::from_utf8_lossy(&b).into_owned())
+                })
+            })
+            .unwrap_or_default();
+        let Some(mut report) = parse_innodb_deadlock(&text) else {
+            return Ok(DeadlockAnalysis {
+                unavailable: Some(UNAVAILABLE_NO_REPORT.into()),
+                mysql: Some(InnodbDeadlockView {
+                    detected_at: None,
+                    server_now: None,
+                    relation: None,
+                    print_all_deadlocks: print_all,
+                    incomplete: false,
+                    transactions: Vec::new(),
+                }),
+                postgres: None,
+                sqlite: None,
+            });
+        };
+        for t in &mut report.transactions {
+            if let Some(sql) = t.sql.take() {
+                t.sql = Some(
+                    crate::sql_credentials::redact_credentials(&sql, DriverKind::Mysql)
+                        .into_owned(),
+                );
+            }
+        }
+        let server_now: Option<String> =
+            sqlx::query_scalar("SELECT DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s')")
+                .fetch_one(&self.pool)
+                .await
+                .ok();
+        let relation = match (&report.detected_at, &server_now, error_age_secs) {
+            (Some(d), Some(n), Some(age)) => classify_report_age(d, n, age).map(str::to_string),
+            _ => None,
+        };
+        Ok(DeadlockAnalysis {
+            unavailable: None,
+            mysql: Some(InnodbDeadlockView {
+                detected_at: report.detected_at,
+                server_now,
+                relation,
+                print_all_deadlocks: print_all,
+                incomplete: report.incomplete,
+                transactions: report.transactions,
+            }),
+            postgres: None,
+            sqlite: None,
+        })
+    }
+
+    /// デッドロックの累計 (`lock_deadlocks`)。MariaDB の `Innodb_deadlocks` が無ければ
+    /// `INNODB_METRICS` を読む (`PROCESS` 権限が要り、読めなければ `None`)。
+    async fn deadlock_total(&self, status_value: Option<i64>) -> Option<i64> {
+        if status_value.is_some() {
+            return status_value;
+        }
+        sqlx::query_scalar::<_, i64>(
+            "SELECT CAST(`COUNT` AS SIGNED) FROM information_schema.INNODB_METRICS WHERE `NAME` = 'lock_deadlocks'",
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten()
     }
 }
 

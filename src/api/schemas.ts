@@ -555,6 +555,79 @@ export const serverMetrics = z.object({
   lock_waits: z.number().nullable(),
   // サーバの接続数上限 (#1622)。
   max_connections: z.number().nullish(),
+  // デッドロックの累計 (#2328)。
+  deadlocks: z.number().nullish(),
+});
+
+/** デッドロックの事後解析 (`analyze_deadlock`, #2328)。 */
+export const innodbLock = z.object({
+  kind: z.string(),
+  table: z.string().nullable(),
+  index: z.string().nullable(),
+  mode: z.string().nullable(),
+  record: z.string().nullable(),
+});
+export const innodbTransaction = z.object({
+  label: z.number(),
+  trx_id: z.string().nullable(),
+  thread_id: z.number().nullable(),
+  user: z.string().nullable(),
+  host: z.string().nullable(),
+  state: z.string().nullable(),
+  active_secs: z.number().nullable(),
+  sql: z.string().nullable(),
+  sql_truncated: z.boolean(),
+  holds: z.array(innodbLock),
+  waits_for: innodbLock.nullable(),
+  waits_on: z.array(z.number()),
+  rolled_back: z.boolean(),
+});
+export const deadlockAnalysis = z.object({
+  unavailable: z.string().nullable(),
+  mysql: z
+    .object({
+      detected_at: z.string().nullable(),
+      server_now: z.string().nullable(),
+      relation: z.string().nullable(),
+      print_all_deadlocks: z.boolean().nullable(),
+      incomplete: z.boolean(),
+      transactions: z.array(innodbTransaction),
+    })
+    .nullable(),
+  postgres: z
+    .object({
+      victim_pid: z.number().nullable(),
+      edges: z.array(
+        z.object({
+          waiter_pid: z.number(),
+          lock_mode: z.string(),
+          target: z.string(),
+          blocker_pid: z.number(),
+        }),
+      ),
+      context: z.string().nullable(),
+      processes: z.array(
+        z.object({
+          pid: z.number(),
+          alive: z.boolean(),
+          user: z.string().nullable(),
+          application_name: z.string().nullable(),
+          state: z.string().nullable(),
+          query: z.string().nullable(),
+          query_hidden: z.boolean(),
+        }),
+      ),
+      log_lock_waits: z.string().nullable(),
+      deadlock_timeout: z.string().nullable(),
+    })
+    .nullable(),
+  sqlite: z
+    .object({
+      journal_mode: z.string().nullable(),
+      busy_timeout_ms: z.number().nullable(),
+      holders: z.array(z.object({ session_id: z.string(), profile_id: z.string().nullable() })),
+    })
+    .nullable(),
 });
 
 /** レプリケーション状態 (`get_replication_status`, #2180)。 */

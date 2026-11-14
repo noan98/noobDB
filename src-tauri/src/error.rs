@@ -314,6 +314,22 @@ pub fn sqlx_message(e: &sqlx::Error) -> String {
             .unwrap_or(base),
         None => base,
     };
+    // デッドロック (40P01) は、循環の相手と対象が DETAIL / CONTEXT にしか無い (#2328)。
+    // 事後解析 (`analyze_deadlock`) がエラー文から読めるよう、この 2 つだけ足す。
+    let base = if pg.code() == "40P01" {
+        let mut with = base;
+        if let Some(detail) = pg.detail() {
+            with.push_str("\nDETAIL: ");
+            with.push_str(detail);
+        }
+        if let Some(ctx) = pg.r#where() {
+            with.push_str("\nCONTEXT: ");
+            with.push_str(ctx);
+        }
+        with
+    } else {
+        base
+    };
     match pg.position() {
         Some(sqlx::postgres::PgErrorPosition::Original(n)) => format!("{base} (position {n})"),
         _ => base,

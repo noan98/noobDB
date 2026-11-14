@@ -25,7 +25,7 @@
  *      ステータスバーに出た文の履歴 (`messageLog.ts`) を時系列で 1 本にまとめたもの。
  *      以前は「メッセージ」タブが別にあったが、同じ出来事がトーストとステータスの
  *      両方に出るため 2 タブで似た行が並んでいた。
- * 2. **診断** (`advisor` / `inspector` / `processes` / `replication` / `assertions` / `sqliteMaintenance` / `pgListen` / `health` / `perf`) —
+ * 2. **診断** (`advisor` / `inspector` / `processes` / `deadlock` / `replication` / `assertions` / `sqliteMaintenance` / `pgListen` / `health` / `perf`) —
  *    DB とサーバの状態・改善提案・データ品質の検証。
  * 3. **参照** (`whereUsed` / `structure` / `profile`) — 選んだオブジェクトの詳細。
  *
@@ -46,6 +46,11 @@
  * 追う」ための診断情報なので、ここ (診断グループ) に置く。検証するデータベースはアクティブタブ →
  * プロファイル既定の順で決まり (未決定ならセッションの既定)、開ける条件は接続中で
  * あることだけ。追加・編集は `AssertionEditorModal` (一時的な操作 = Modal)。
+ *
+ * `deadlock` (デッドロック解析、#2328) は、デッドロックのエラーを見たあとに相手のトランザクション・ロック対象・
+ * 巻き戻された側を読む診断情報なので、プロセス監視の隣 (診断グループ) に置く。開ける条件は接続中であることだけ
+ * (SQLite でも `SQLITE_BUSY` の切り分けを出す)。入口はエラー表示の「デッドロックを解析」で、
+ * 折りたたみ時のパネルバーには並べない (エラーのあとに開くもので、常設しても使う場面が限られる)。
  *
  * `replication` (レプリケーション監視、#2180) は、SQL を書きながら遅延・スロットの WAL 滞留を
  * 眺める常駐の診断情報なので診断グループに置く。開ける条件は接続中であることだけ (SQLite は
@@ -70,6 +75,7 @@ export const BOTTOM_PANEL_TABS = [
   "advisor",
   "inspector",
   "processes",
+  "deadlock",
   "replication",
   "assertions",
   "sqliteMaintenance",
@@ -95,6 +101,7 @@ export const BOTTOM_PANEL_TAB_GROUP: Record<BottomPanelTab, BottomPanelTabGroup>
   advisor: "diagnostics",
   inspector: "diagnostics",
   processes: "diagnostics",
+  deadlock: "diagnostics",
   replication: "diagnostics",
   assertions: "diagnostics",
   sqliteMaintenance: "diagnostics",
@@ -272,6 +279,8 @@ export function bottomPanelStripTabs(ctx: BottomPanelContext): BottomPanelStripE
     if (tab === "pgListen" && ctx.driver !== "postgres") continue;
     // 計測 (#1622) は設定で ON にした人向けの開発寄りの診断なので、常設のパネルバーには並べない。
     if (tab === "perf") continue;
+    // デッドロック解析 (#2328) はエラー表示から開くもの。常設のパネルバーには並べない。
+    if (tab === "deadlock") continue;
     // SQLite 専用のタブは他ドライバでは並べない (無効にしても使える日は来ない)。
     if (tab === "sqliteMaintenance" && ctx.driver !== "sqlite") continue;
     // SQLite はサーバ統計を持たず、プロセス一覧 / クエリ統計を取れない (#732 / #746)。

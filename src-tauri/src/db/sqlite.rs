@@ -5,6 +5,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions, SqliteRo
 use sqlx::{Acquire, Row, TypeInfo, ValueRef};
 
 use super::advisor::{SequenceKind, SequenceUsage, UnusedIndexStats};
+use super::deadlock::SqliteBusyView;
 use super::tx_options::TxOptions;
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, KillProcessesResult, LiveQuery, LocalTableMeta,
@@ -35,6 +36,29 @@ pub struct SqliteConn {
     tx: tokio::sync::Mutex<Option<sqlx::pool::PoolConnection<sqlx::Sqlite>>>,
     /// 開いている明示トランザクションが READ ONLY か (#2243)。
     pub(super) tx_read_only: std::sync::atomic::AtomicBool,
+}
+
+impl SqliteConn {
+    /// `SQLITE_BUSY` (database is locked) の切り分け材料 (#2328)。SQLite は行ロックを持たずデッドロックは
+    /// 起きないので、待ちの原因を絞るための `journal_mode` (WAL か) と `busy_timeout` を返す。
+    /// アプリ内で同じファイルを開いている他の接続の明示トランザクションは、セッションを横断して
+    /// 見られるコマンド層が `holders` に足す。
+    pub async fn busy_diagnosis(&self) -> Result<SqliteBusyView> {
+        let journal_mode = sqlx::query_scalar::<_, String>("PRAGMA journal_mode")
+            .fetch_one(&self.pool)
+            .await
+            .ok()
+            .map(|m| m.to_ascii_lowercase());
+        let busy_timeout_ms = sqlx::query_scalar::<_, i64>("PRAGMA busy_timeout")
+            .fetch_one(&self.pool)
+            .await
+            .ok();
+        Ok(SqliteBusyView {
+            journal_mode,
+            busy_timeout_ms,
+            holders: Vec::new(),
+        })
+    }
 }
 
 impl SqliteConn {

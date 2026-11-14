@@ -22,6 +22,7 @@ import { broadcastCommands } from "./commands/broadcast";
 import { schemaCommands } from "./commands/schema";
 import { tableOpenCommands } from "./commands/tableOpen";
 import { schemaTreeCommands } from "./commands/schemaTree";
+import { deadlockCommands } from "./commands/deadlock";
 import { serverCommands } from "./commands/server";
 import { advisorCommands } from "./commands/advisor";
 import { processCommands } from "./commands/process";
@@ -1560,6 +1561,98 @@ export interface ServerMetrics {
   lock_waits: number | null;
   /** サーバの接続数上限 (#1622)。MySQL max_connections / PG max_connections。取れなければ null。 */
   max_connections?: number | null;
+  /** デッドロックの累計回数 (#2328)。MySQL INNODB_METRICS.lock_deadlocks / PG pg_stat_database.deadlocks の合計。取れなければ null。 */
+  deadlocks?: number | null;
+}
+
+/** InnoDB が報告したロック 1 件 (#2328)。kind は record / table。 */
+export interface InnodbLock {
+  kind: string;
+  table: string | null;
+  index: string | null;
+  mode: string | null;
+  record: string | null;
+}
+
+/** デッドロックに加わった InnoDB トランザクション 1 件 (#2328)。 */
+export interface InnodbTransaction {
+  label: number;
+  trx_id: string | null;
+  thread_id: number | null;
+  user: string | null;
+  host: string | null;
+  state: string | null;
+  active_secs: number | null;
+  sql: string | null;
+  sql_truncated: boolean;
+  holds: InnodbLock[];
+  waits_for: InnodbLock | null;
+  /** 待っている相手の label。 */
+  waits_on: number[];
+  rolled_back: boolean;
+}
+
+/** MySQL のデッドロック解析 (`SHOW ENGINE INNODB STATUS` の最新報告, #2328)。relation は related / older / newer。 */
+export interface InnodbDeadlockView {
+  detected_at: string | null;
+  server_now: string | null;
+  relation: string | null;
+  print_all_deadlocks: boolean | null;
+  incomplete: boolean;
+  transactions: InnodbTransaction[];
+}
+
+/** PostgreSQL の待機の 1 辺 (#2328)。 */
+export interface PgDeadlockEdge {
+  waiter_pid: number;
+  lock_mode: string;
+  target: string;
+  blocker_pid: number;
+}
+
+/** 循環に現れたバックエンドの現在の様子 (#2328)。 */
+export interface PgDeadlockProcess {
+  pid: number;
+  alive: boolean;
+  user: string | null;
+  application_name: string | null;
+  state: string | null;
+  query: string | null;
+  query_hidden: boolean;
+}
+
+/** PostgreSQL のデッドロック解析 (40P01 の DETAIL, #2328)。 */
+export interface PgDeadlockView {
+  victim_pid: number | null;
+  edges: PgDeadlockEdge[];
+  context: string | null;
+  processes: PgDeadlockProcess[];
+  log_lock_waits: string | null;
+  deadlock_timeout: string | null;
+}
+
+/** SQLite で同じファイルの明示トランザクションを保持している他の接続 (#2328)。 */
+export interface SqliteTxHolder {
+  session_id: string;
+  profile_id: string | null;
+}
+
+/** SQLite の SQLITE_BUSY の切り分け材料 (#2328)。 */
+export interface SqliteBusyView {
+  journal_mode: string | null;
+  busy_timeout_ms: number | null;
+  holders: SqliteTxHolder[];
+}
+
+/**
+ * `analyze_deadlock` の応答 (#2328)。`unavailable` は解析できなかった理由コード
+ * (`needs_process_privilege` / `no_report` / `no_detail`)。ドライバに該当する 1 つだけが入る。
+ */
+export interface DeadlockAnalysis {
+  unavailable: string | null;
+  mysql: InnodbDeadlockView | null;
+  postgres: PgDeadlockView | null;
+  sqlite: SqliteBusyView | null;
 }
 
 /** レプリケーション上の役割 (#2180)。 */
@@ -2840,6 +2933,7 @@ export const api = {
   ...schemaCommands,
   ...tableOpenCommands,
   ...schemaTreeCommands,
+  ...deadlockCommands,
   ...serverCommands,
   ...advisorCommands,
   ...processCommands,

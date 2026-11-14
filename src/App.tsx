@@ -237,6 +237,7 @@ import { OnboardingTour } from "./components/OnboardingTour";
 import * as onboarding from "./onboarding";
 import { Spinner } from "./components/Spinner";
 import { AiErrorExplain } from "./components/AiErrorExplain";
+import { DeadlockAnalyzeButton } from "./components/DeadlockAnalyzeButton";
 import { OPEN_AI_SETTINGS_EVENT } from "./ai/aiSettingsNav";
 import { findSqlRange, sqlForAppend, sqlForRangeReplace } from "./ai/errorExplain";
 import { locateApplyTarget, sqlForApply, type AiSqlEditorAction } from "./ai/sqlAssist";
@@ -431,6 +432,9 @@ const ProcessListPanel = lazy(() =>
 );
 const ReplicationPanel = lazy(() =>
   import("./components/ReplicationPanel").then((m) => ({ default: m.ReplicationPanel })),
+);
+const DeadlockPanel = lazy(() =>
+  import("./components/DeadlockPanel").then((m) => ({ default: m.DeadlockPanel })),
 );
 const PgListenPanel = lazy(() =>
   import("./components/PgListenPanel").then((m) => ({ default: m.PgListenPanel })),
@@ -1660,6 +1664,8 @@ export default function App() {
   // 影響分析 (#1027) の検索要求。ツリーの右クリックで埋まり、パネルが消費する。
   const [whereUsedRequest, setWhereUsedRequest] = useState<WhereUsedRequest | null>(null);
   // SQL の AI 解説 / 最適化案 (#695) の依頼。エディタの右クリック / パレットで埋まり、パネルが消費する。
+  // デッドロック解析タブ (#2328) に渡すエラー本文と、そのエラーが表示された時刻。
+  const [deadlockTarget, setDeadlockTarget] = useState<{ message: string; atMs: number } | null>(null);
   const [aiSqlRequest, setAiSqlRequest] = useState<AiSqlRequest | null>(null);
   const aiSqlSeqRef = useRef(0);
   // 結果グリッドの AI 要約 (#1476) の依頼。ツールバーの「AI で要約」で埋まり、パネルが消費する。
@@ -13450,23 +13456,25 @@ export default function App() {
                   ? t("healthTitle")
                   : tab === "perf"
                     ? t("perfTitle")
-                    : tab === "sqliteMaintenance"
-                      ? t("sqliteMaintTitle")
-                      : tab === "pgListen"
-                        ? t("pgListenTitle")
-                        : tab === "replication"
-                          ? t("replicationTitle")
-                          : tab === "profile"
-                            ? t("profileTitle")
-                            : tab === "structure"
-                              ? t("structureTitle")
-                              : tab === "timelapse"
-                                ? t("timelapseTitle")
-                                : tab === "aiSql"
-                                  ? t("aiSqlTitle")
-                                  : tab === "aiResultSummary"
-                                    ? t("aiResultSummaryTitle")
-                                    : t("processTitle");
+                    : tab === "deadlock"
+                      ? t("deadlockTitle")
+                      : tab === "sqliteMaintenance"
+                        ? t("sqliteMaintTitle")
+                        : tab === "pgListen"
+                          ? t("pgListenTitle")
+                          : tab === "replication"
+                            ? t("replicationTitle")
+                            : tab === "profile"
+                              ? t("profileTitle")
+                              : tab === "structure"
+                                ? t("structureTitle")
+                                : tab === "timelapse"
+                                  ? t("timelapseTitle")
+                                  : tab === "aiSql"
+                                    ? t("aiSqlTitle")
+                                    : tab === "aiResultSummary"
+                                      ? t("aiResultSummaryTitle")
+                                      : t("processTitle");
 
   // ConnectionList (memo) へ渡すハンドラの束。`tabs` / `activeTab` / `settings` に依存する
   // ハンドラが多く、そのまま渡すと打鍵・ストリーミング・タブ切替のたびに参照が変わって
@@ -14122,6 +14130,14 @@ export default function App() {
                       <SqliteMaintenancePanel
                         sessionId={sessionId}
                         readOnly={selectedProfile?.read_only ?? false}
+                      />
+                    ) : activeBottomPanelTab === "deadlock" ? (
+                      <DeadlockPanel
+                        sessionId={sessionId}
+                        driver={selectedProfile?.driver ?? "mysql"}
+                        errorMessage={deadlockTarget?.message ?? null}
+                        errorAtMs={deadlockTarget?.atMs ?? null}
+                        profileNameFor={(pid) => profiles.find((p) => p.id === pid)?.name ?? null}
                       />
                     ) : activeBottomPanelTab === "pgListen" ? (
                       <PgListenPanel
@@ -15022,6 +15038,21 @@ export default function App() {
                 </Flex>
               );
             })()}
+          {/* デッドロック / SQLite のロック競合のエラーには、事後解析タブへの入口を出す (#2328)。 */}
+          {!statusDismissed && status.kind !== "idle" && status.error && sessionId && selectedProfile && (
+            <DeadlockAnalyzeButton
+              key={status.kind === "literal" ? status.text : String(status.vars?.error ?? "")}
+              driver={selectedProfile.driver}
+              message={status.kind === "literal" ? status.text : String(status.vars?.error ?? "")}
+              onOpen={(atMs) => {
+                setDeadlockTarget({
+                  message: status.kind === "literal" ? status.text : String(status.vars?.error ?? ""),
+                  atMs,
+                });
+                setBottomPanelTab("deadlock");
+              }}
+            />
+          )}
           {/* AI によるエラー解説 (#692)。静的ヒントの有無に関わらず、AI 有効時は解説ボタン、無効時は設定への案内リンクが出る。 */}
           {!statusDismissed &&
             status.kind !== "idle" &&
@@ -16153,6 +16184,13 @@ export default function App() {
                   : selectedProfile?.driver === "sqlite"
                     ? t("appProcessesUnsupported")
                     : undefined,
+              },
+              {
+                label: t("deadlockTitle"),
+                icon: "lock",
+                onSelect: () => toggleBottomPanel("deadlock"),
+                disabled: !sessionId,
+                title: !sessionId ? t("appToolsNeedsSession") : undefined,
               },
               {
                 label: t("replicationTitle"),
