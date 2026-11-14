@@ -725,6 +725,7 @@ export const PaneView = memo(
                         batchScript={tab.batchScript}
                         batchResults={tab.batchResults}
                         batchRunning={!!tab.batchRunning}
+                        batchWrapped={!!tab.batchWrapped}
                         onBatchMarkerClick={gridStable.fn(`${tab.id}:ed:batchMarker`, (index: number) =>
                           setBatchFocus((f) => ({ tabId: tab.id, index, seq: (f?.seq ?? 0) + 1 })),
                         )}

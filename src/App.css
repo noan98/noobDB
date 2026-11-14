@@ -2736,7 +2736,6 @@ html, body, #root {
   cursor: pointer;
   border-radius: var(--radius-sm);
 }
-.cm-editor .cm-batch-gutter-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .cm-editor .cm-batch-gutter-cell {
   display: inline-flex;
   align-items: center;

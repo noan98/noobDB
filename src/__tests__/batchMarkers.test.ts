@@ -78,7 +78,12 @@ describe("batchMarkers (#2331)", () => {
 
   it("batchStatuses: 全体を 1 トランザクションで包む実行では、読み飛ばされた BEGIN / COMMIT を none にして番号を合わせる", () => {
     const t = ["BEGIN", "INSERT INTO t VALUES (1)", "COMMIT", "SELECT 1"];
-    const s = batchStatuses(t, [res("INSERT INTO t VALUES (1)", "ok", 5), res("SELECT 1", "ok", 2)], false);
+    const s = batchStatuses(
+      t,
+      [res("INSERT INTO t VALUES (1)", "ok", 5), res("SELECT 1", "ok", 2)],
+      false,
+      true,
+    );
     expect(s.map((x) => x.status)).toEqual(["none", "ok", "none", "ok"]);
     expect(s.map((x) => x.index)).toEqual([-1, 0, -1, 1]);
     // 末尾の COMMIT は、実行が終わっていても未実行・中断扱いにしない
@@ -87,10 +92,16 @@ describe("batchMarkers (#2331)", () => {
         ["INSERT INTO t VALUES (1)", "COMMIT"],
         [res("INSERT INTO t VALUES (1)", "ok")],
         false,
+        true,
       ).map((x) => x.status),
     ).toEqual(["ok", "none"]);
     // 途中経過: INSERT の結果が来る前は、BEGIN は none、INSERT が running
-    expect(batchStatuses(t, [], true).map((x) => x.status)).toEqual(["none", "running", "none", "pending"]);
+    expect(batchStatuses(t, [], true, true).map((x) => x.status)).toEqual([
+      "none",
+      "running",
+      "none",
+      "pending",
+    ]);
   });
 
   it("batchStatuses: 制御文の結果が届く実行 (ラップ無し) では制御文も ok で出る", () => {
@@ -99,11 +110,37 @@ describe("batchMarkers (#2331)", () => {
     expect(s.map((x) => x.status)).toEqual(["ok", "ok", "ok"]);
   });
 
+  it("batchStatuses: ラップ無しの途中経過では BEGIN から running が付き、制御文も通常の文として進む", () => {
+    const t = ["BEGIN", "INSERT INTO t VALUES (1)", "COMMIT", "SELECT 1"];
+    expect(batchStatuses(t, [], true).map((x) => x.status)).toEqual([
+      "running",
+      "pending",
+      "pending",
+      "pending",
+    ]);
+    const two = [res("BEGIN", "ok"), res("INSERT INTO t VALUES (1)", "ok")];
+    expect(batchStatuses(t, two, true).map((x) => x.status)).toEqual(["ok", "ok", "running", "pending"]);
+  });
+
+  it("batchStatuses: ラップ無しで取り消した後、届いていない COMMIT は interrupted / skipped になる", () => {
+    const t = ["BEGIN", "INSERT INTO t VALUES (1)", "COMMIT"];
+    const s = batchStatuses(t, [res("BEGIN", "ok"), res("INSERT INTO t VALUES (1)", "ok")], false);
+    expect(s.map((x) => x.status)).toEqual(["ok", "ok", "interrupted"]);
+    const s2 = batchStatuses(t, [res("BEGIN", "ok")], false);
+    expect(s2.map((x) => x.status)).toEqual(["ok", "interrupted", "skipped"]);
+  });
+
   it("isTxControlStatement はコメントを除いて判定し、ROLLBACK TO は制御文にしない", () => {
     expect(isTxControlStatement("-- c\nBEGIN")).toBe(true);
     expect(isTxControlStatement("start transaction read only")).toBe(true);
     expect(isTxControlStatement("ROLLBACK TO sp1")).toBe(false);
     expect(isTxControlStatement("SELECT 1")).toBe(false);
+  });
+
+  it("batchRanges は MySQL の # コメントも読み飛ばす", () => {
+    const script = "# note\nSELECT 1";
+    const r = batchRanges(script, 0, "mysql");
+    expect(script.slice(r[0]!.from, r[0]!.to)).toBe("SELECT 1");
   });
 
   it("batchRanges は文頭のコメントを飛ばした位置を from にし、text は全文のまま", () => {

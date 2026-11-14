@@ -1133,6 +1133,8 @@ export interface Tab {
   batchScript?: string;
   /** バッチ実行中フラグ。 */
   batchRunning?: boolean;
+  /** バッチを全体 1 トランザクションで包んで実行した (制御文の結果が届かない、#2331)。 */
+  batchWrapped?: boolean;
   /**
    * Wall-clock timestamp (ms) set each time an Apply edit completes successfully.
    * Passed to `ResultGrid` to trigger a brief success-flash animation. In-memory only.
@@ -6492,10 +6494,14 @@ export default function App() {
       // 単文実行と同じく、実行 DB はタブの database のみ (PG ではプロファイルの DB 名は実 DB でありスキーマではない)。
       const db = tab.database ?? null;
       const outCtx = outputCtxFor(sessionId);
+      // 全体を 1 つのトランザクションで包む (#1626): 設定がオン、停止モード、明示トランザクションなし。
+      // 包む実行ではバックエンドが BEGIN / COMMIT などを読み飛ばす (結果が届かない) ので、エディタのマーカーへも伝える (#2331)。
+      const wrapInTransaction = settings.batchWrapInTransaction && stopOnError && !txActiveRef.current;
       patchTab(tabId, (tt) => ({
         ...tt,
         title: autoTitleOnRun(tt, sql, translate("tabUntitledQuery")) ?? tt.title,
         batchRunning: true,
+        batchWrapped: wrapInTransaction,
         batchScript: sql,
         batchResults: [],
         showChart: false,
@@ -6584,7 +6590,6 @@ export default function App() {
         });
         // 全体を 1 つのトランザクションで包む (#1626): 設定がオン、停止モード、明示トランザクションなし。
         // 包んだ実行ではフライトレコーダの記録はしない (記録は文ごとの専用トランザクションを使う)。
-        const wrapInTransaction = settings.batchWrapInTransaction && stopOnError && !txActiveRef.current;
         // 複数文の DML も 1 文ずつ記録する (#1626)。明示トランザクション中は記録しない。
         const capture =
           settings.flightRecorderEnabled &&

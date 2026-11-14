@@ -20,7 +20,8 @@ const msTexts = () => real(".cm-batch-gutter-ms").map((e) => e.textContent);
 const script = "SELECT 1;\nSELECT 2;\nBROKEN;\nSELECT 4;\nSELECT 5;";
 type R = { sql: string; status: "ok" | "error" | "skipped"; elapsedMs?: number; error?: string };
 /** `QueryEditor` へ渡すバッチの 3 props。 */
-const batch = (scr: string, results: R[], running: boolean) => ({
+const batch = (scr: string, results: R[], running: boolean, wrapped = false) => ({
+  batchWrapped: wrapped,
   batchScript: scr,
   batchResults: results,
   batchRunning: running,
@@ -44,9 +45,15 @@ describe("QueryEditor のバッチ実行マーカー (#2331)", () => {
     results: R[],
     running: boolean,
     initialSql = scr,
+    wrapped = false,
   ) =>
     rerender(
-      <QueryEditor tabId="a" onRun={() => {}} initialSql={initialSql} {...batch(scr, results, running)} />,
+      <QueryEditor
+        tabId="a"
+        onRun={() => {}}
+        initialSql={initialSql}
+        {...batch(scr, results, running, wrapped)}
+      />,
     );
 
   it("実行中は 1 文目が running、残りは pending。結果が届くたびに成否と ms が出る", () => {
@@ -77,15 +84,25 @@ describe("QueryEditor のバッチ実行マーカー (#2331)", () => {
 
   it("全体を包んだ実行 (BEGIN / COMMIT が読み飛ばされる) でも、結果が正しい文の行に付く", () => {
     const wrap = "BEGIN;\nINSERT INTO t VALUES (1);\nCOMMIT;\nSELECT 1;";
-    const { rerender } = render(batch(wrap, [], true), wrap);
+    const { rerender } = render(batch(wrap, [], true, true), wrap);
     expect(glyphs()).toEqual(["running", "pending"]); // BEGIN / COMMIT はガターに出ない
     rerenderWith(
       rerender,
       wrap,
       [R_("INSERT INTO t VALUES (1)", "ok", 5), R_("SELECT 1", "error", 2, "boom")],
       false,
+      wrap,
+      true,
     );
     expect(glyphs()).toEqual(["ok", "error"]);
+  });
+
+  it("ラップ無しの実行では BEGIN / COMMIT もガターに出て、取消後の COMMIT は interrupted になる", () => {
+    const plain = "BEGIN;\nINSERT INTO t VALUES (1);\nCOMMIT;";
+    const { rerender } = render(batch(plain, [], true), plain);
+    expect(glyphs()).toEqual(["running", "pending", "pending"]);
+    rerenderWith(rerender, plain, [R_("BEGIN", "ok", 1), R_("INSERT INTO t VALUES (1)", "ok", 2)], false);
+    expect(glyphs()).toEqual(["ok", "ok", "interrupted"]);
   });
 
   it("選択範囲だけを実行しても、マーカーは選択した側の文の行に付く", () => {

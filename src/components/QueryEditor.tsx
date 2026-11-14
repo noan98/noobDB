@@ -510,6 +510,8 @@ interface Props {
   /** `batchScript` の各文の結果 (届いた分)。 */
   batchResults?: readonly BatchEditorResult[];
   batchRunning?: boolean;
+  /** 全体を 1 トランザクションで包んだ実行 (BEGIN / COMMIT などの結果が届かず、ガターに出さない)。 */
+  batchWrapped?: boolean;
   /** ガターのバッチマーカーが押された (クリック / Enter / Space)。`index` は結果カードの 0 始まりの番号。 */
   onBatchMarkerClick?: (index: number) => void;
 }
@@ -841,6 +843,7 @@ export const QueryEditor = memo(
       batchScript,
       batchResults,
       batchRunning,
+      batchWrapped,
       onBatchMarkerClick,
     }: Props,
     ref,
@@ -1368,7 +1371,7 @@ export const QueryEditor = memo(
           if (!click) return false;
           const head = v.state.selection.main.head;
           const hit = markerAt(batchLayer.get(v.state), head, -1);
-          if (!hit?.data) return false;
+          if (!hit?.data || hit.data.index < 0) return false;
           click(hit.data.index);
           return true;
         },
@@ -1759,6 +1762,7 @@ export const QueryEditor = memo(
           ranges.map((r) => r.text),
           batchResults,
           running,
+          !!batchWrapped,
         );
         view.dispatch({
           effects: [
@@ -1781,6 +1785,7 @@ export const QueryEditor = memo(
               list.map((m) => m.data?.text ?? ""),
               batchResults,
               running,
+              !!batchWrapped,
             );
             return list.map((m, i) => {
               const d = statuses[i];
@@ -1810,7 +1815,7 @@ export const QueryEditor = memo(
       if (added.length > 0) {
         view.dispatch({ effects: batchErrorLayer.update((list) => [...list, ...added]) });
       }
-    }, [batchScript, batchResults, batchRunning, tabId]);
+    }, [batchScript, batchResults, batchRunning, batchWrapped, tabId]);
 
     // compartment の設定が実際に変わったときだけ reconfigure する (#1308)。初回マウントや、
     // 設定が同じタブ同士の切替では何もしない。以前は補完・構文チェック・キーマップの

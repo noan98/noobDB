@@ -48,7 +48,7 @@ export function locateScript(doc: string, script: string, selection?: { from: nu
 
 /** 文頭のコメント・空白を読み飛ばした位置 (`text` 内のオフセット)。ガターは最初のコード行に出す。 */
 export function codeStart(text: string): number {
-  const m = /^(?:\s+|--[^\n]*|\/\*[\s\S]*?\*\/)*/.exec(text);
+  const m = /^(?:\s+|--[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\/)*/.exec(text);
   const n = m ? m[0].length : 0;
   return n < text.length ? n : 0;
 }
@@ -85,8 +85,9 @@ export function isTxControlStatement(text: string): boolean {
 
 /**
  * 各文の状態を決める。結果 (`results`) は前から順に文と突き合わせる (文の数と結果の数が同じなら番号で対応)。
- * 全体を 1 トランザクションで包む実行では、バックエンドが BEGIN / COMMIT などを読み飛ばして結果を送らないので、
- * 本文が一致しない制御文は `none` (ガターに出さない) にする。
+ * 全体を 1 トランザクションで包む実行 (`wrapped`) では、バックエンドが BEGIN / COMMIT などを読み飛ばして結果を
+ * 送らないので、本文が一致しない制御文は `none` (ガターに出さない) にする。包まない実行では制御文にも結果が届くので、
+ * 通常の文として扱う。
  *
  * 結果が無い文のうち先頭の 1 件は、実行中ならば `running`、実行が終わっていれば `interrupted` (取消・切断で
  * 結果不明)。2 件目以降は、実行中なら `pending`、終わっていれば `skipped`。エラー停止の残りは、バックエンドが
@@ -96,6 +97,7 @@ export function batchStatuses(
   texts: readonly string[],
   results: readonly BatchResultLike[],
   running: boolean,
+  wrapped = false,
 ): BatchMarkerData[] {
   const byIndex = texts.length === results.length;
   const out: BatchMarkerData[] = [];
@@ -108,7 +110,7 @@ export function batchStatuses(
       if (!byIndex) j++;
       return;
     }
-    if (isTxControlStatement(text)) {
+    if (wrapped && isTxControlStatement(text)) {
       out.push({ index: -1, status: "none", text });
       return;
     }
