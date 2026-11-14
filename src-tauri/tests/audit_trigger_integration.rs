@@ -316,7 +316,7 @@ async fn sqlite_audit_trigger_wide_table_200_columns() {
     wide_scenario("wide200", 200, true, true).await;
 }
 
-/// JSON サブタイプの付いた値 (json_set / json() の結果) が分割境界 (各組の最後) に来ても、
+/// 末尾が `}` の JSON 文字列 (json_set / json() で作った値) が分割境界 (各組の最後) に来ても、
 /// old_row / new_row が壊れない (#2334)。最後の列と 64 番目の列を TEXT にして確かめる。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlite_audit_trigger_wide_table_json_values() {
@@ -379,12 +379,14 @@ async fn sqlite_audit_trigger_wide_table_json_values() {
         assert_eq!(obj["c61"], c61);
         assert_eq!(obj["settings"], settings);
     };
-    let q = json!({"q": {}});
-    let q2 = json!({"q": {}, "r": {}});
-    check(&rows[0].3, q.clone(), json!({"lang": "en"}));
-    check(&rows[1].2, q, json!({"lang": "en"}));
-    check(&rows[1].3, q2.clone(), json!({"lang": "ja"}));
-    check(&rows[2].2, q2, json!({"lang": "ja"}));
+    // 列に保存された値は TEXT なので、トリガーの NEW / OLD からは JSON の文字列として入る
+    // (サブタイプは列に残らない)。末尾が `}` の文字列が組の最後に来ても壊れないことを見る。
+    let q = json!(r#"{"q":{}}"#);
+    let q2 = json!(r#"{"q":{},"r":{}}"#);
+    check(&rows[0].3, q.clone(), json!(r#"{"lang":"en"}"#));
+    check(&rows[1].2, q, json!(r#"{"lang":"en"}"#));
+    check(&rows[1].3, q2.clone(), json!(r#"{"lang":"ja"}"#));
+    check(&rows[2].2, q2, json!(r#"{"lang":"ja"}"#));
     assert_eq!(rows[0].1, Some(json!({"id": 1})));
     let _ = std::fs::remove_file(&path);
 }
