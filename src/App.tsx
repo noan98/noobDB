@@ -202,6 +202,8 @@ import {
   type MaintenanceCommand,
   type MaintenanceKind,
 } from "./components/maintenanceCommands";
+import { mysqlAnalyzeFailure } from "./components/statsAdvisor";
+import type { StatsRunOutcome } from "./components/StatsAdvisorPanel";
 import {
   buildIdentitySyncSql,
   sqliteHasAutoincrementSql,
@@ -10311,19 +10313,31 @@ export default function App() {
   // (本番 + confirm_writes の承認・危険文の確認) を 1 回だけ通し、文を順に流す。read_only 接続は
   // バックエンドが拒否する (エラーはトーストで報告)。キャンセル / 失敗は false。
   const runStatsStatements = useCallback(
-    async (statements: string[], database: string | null): Promise<boolean> => {
-      if (!sessionId) return false;
-      if (!(await runGuardedDdl(statements.join("\n")))) return false;
+    async (statements: string[], database: string | null): Promise<StatsRunOutcome> => {
+      if (!sessionId) return "cancelled";
+      if (!(await runGuardedDdl(statements.join("\n")))) return "cancelled";
+      const driver = selectedProfileRef.current?.driver ?? "mysql";
+      let outcome: StatsRunOutcome = "done";
       try {
-        for (const sql of statements) await api.runQuery(sessionId, sql, database);
+        for (const sql of statements) {
+          const res = await api.runQuery(sessionId, sql, database);
+          // MySQL の ANALYZE TABLE は失敗を例外ではなく結果行 (Msg_type) で返す。
+          const failure = driver === "mysql" ? mysqlAnalyzeFailure(res) : null;
+          if (failure) throw new Error(failure);
+        }
         toast.success(translate("statsAdvRanToast"));
-        return true;
       } catch (e) {
         toast.error(translate("statusQueryError", { error: String(e) }));
-        return false;
+        outcome = "failed";
       }
+      // 途中まで進んでいても、統計の変更は DDL と同じ扱いでキャッシュとツリーを更新する。
+      const db = database ?? "";
+      invalidateSchemaCache(db);
+      noteSchemaDdl(statements.join("\n"), db);
+      connectionListRef.current?.refreshSchema();
+      return outcome;
     },
-    [sessionId, runGuardedDdl, toast],
+    [sessionId, runGuardedDdl, invalidateSchemaCache, noteSchemaDdl, toast],
   );
 
   // パーティション単位の保守 (#1868)。確認ダイアログで生成 SQL を見せ、既存の保守経路で流す。

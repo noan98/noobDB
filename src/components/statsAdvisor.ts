@@ -226,7 +226,8 @@ export function parseServerVersion(driver: string, raw: string | null): ServerVe
   const s = raw.trim();
   if (driver === "postgres") {
     const n = Number(s);
-    if (!Number.isInteger(n) || n < 10_0000) return null;
+    // 9.x は 90600 のように 9 + 分版の形 (major=9, minor=6)。10 以降は 160002 (major=16)。
+    if (!Number.isInteger(n) || n < 9_0000) return null;
     return { major: Math.floor(n / 10000), minor: Math.floor((n % 10000) / 100), mariadb: false };
   }
   const m = /^(\d+)\.(\d+)/.exec(s);
@@ -603,4 +604,24 @@ export function dropStatisticsStatements(driver: string, schema: string, name: s
     ? `${quoteIdentFor(driver, schema)}.${quoteIdentFor(driver, name)}`
     : quoteIdentFor(driver, name);
   return built(`DROP STATISTICS ${q};`);
+}
+
+/**
+ * MySQL の `ANALYZE TABLE` は失敗してもエラーにせず、結果行 (`Msg_type` / `Msg_text`) で返す。
+ * `Error` / `Warning` の行があればその `Msg_text` を失敗の理由として返す (無ければ null)。
+ * 結果に `Msg_type` 列が無い文 (他ドライバ・他の文) は対象外で null。
+ */
+export function mysqlAnalyzeFailure(res: Pick<QueryResult, "columns" | "rows"> | null): string | null {
+  if (!res) return null;
+  const names = res.columns.map((c) => c.name.toLowerCase());
+  const typeIdx = names.indexOf("msg_type");
+  if (typeIdx < 0) return null;
+  const textIdx = names.indexOf("msg_text");
+  const msgs: string[] = [];
+  for (const row of res.rows) {
+    const type = String(row[typeIdx] ?? "").toLowerCase();
+    if (type === "error" || type === "warning")
+      msgs.push(String(row[textIdx >= 0 ? textIdx : typeIdx] ?? ""));
+  }
+  return msgs.length > 0 ? msgs.join("\n") : null;
 }

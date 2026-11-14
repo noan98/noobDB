@@ -8525,6 +8525,8 @@ const en = {
   schemaExportTokensDanger: "This may exceed the AI context limit. Reduce the selection before pasting.",
   schemaExportTokensFkExpanded: "FK expansion added {added} table(s) (about {tokens} tokens in total).",
   statsAdvTitle: "Statistics",
+  statsAdvUnresolvedTable:
+    "The table could not be identified (the plan may show an alias instead of the table name), so statistics cannot be changed here.",
   statsAdvTable: "Table",
   statsAdvLoading: "Reading statistics…",
   statsAdvReadFailed: "Could not read statistics: {error}",
@@ -17012,6 +17014,8 @@ const ja: Dict = {
   schemaExportTokensFkExpanded:
     "FK 展開で {added} 件のテーブルが加わっています (合計で概算 {tokens} トークン)。",
   statsAdvTitle: "統計",
+  statsAdvUnresolvedTable:
+    "テーブルを特定できません (計画に出ているのが別名の可能性があります)。ここからは統計を変更できません。",
   statsAdvTable: "対象テーブル",
   statsAdvLoading: "統計を読み取り中…",
   statsAdvReadFailed: "統計を読み取れませんでした: {error}",

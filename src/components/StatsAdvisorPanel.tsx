@@ -51,10 +51,13 @@ export interface StatsAdvisorConfig {
   /** read_only 接続 (バックエンドが書き込みを拒否する。ボタンも無効にする)。 */
   readOnly: boolean;
   /** 確認 (confirm_writes / is_production) を通してから流す。キャンセル / 失敗は false。 */
-  runStatements: (statements: string[]) => Promise<boolean>;
-  /** 同じ SQL でもう一度 EXPLAIN する (結果は親の result に流れてくる)。 */
-  onReexplain: () => void;
+  runStatements: (statements: string[]) => Promise<StatsRunOutcome>;
+  /** 同じ SQL でもう一度 EXPLAIN する (結果は親の result に流れてくる)。実際に始めたら true。 */
+  onReexplain: () => boolean;
 }
+
+/** 流した結果。cancelled は確認でやめた (何も流していない)、failed は途中で失敗した。 */
+export type StatsRunOutcome = "done" | "failed" | "cancelled";
 
 type Draft = { id: string; statements: string[] };
 
@@ -169,6 +172,12 @@ export function StatsAdvisorPanel({
   }, [node]);
 
   const tableKey = table ? `${table.schema ?? ""}.${table.table}` : "";
+  // 別のテーブルに替わったら、統計目標の列は前のテーブルのものを引きずらない。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: tableKey の変化だけを契機にする
+  useEffect(() => {
+    setTargetCol("");
+  }, [tableKey]);
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: tableKey は table の同一性、tick は再取得のトリガー
   useEffect(() => {
     if (!table) return;
@@ -205,6 +214,8 @@ export function StatsAdvisorPanel({
   const base = { driver, table, database: config.database };
   const togglePick = (c: string) => setPicked((p) => (p.includes(c) ? p.filter((x) => x !== c) : [...p, c]));
   const writeDisabledReason = config.readOnly ? t("statsAdvReadOnly") : null;
+  // 列一覧が取れない = 表を特定できない (計画に出ているのが別名など)。存在しない表に対する SQL は流さない。
+  const unresolvedReason = loaded && loaded.columns.length === 0 ? t("statsAdvUnresolvedTable") : null;
   const histogramOk = supportsHistogram(driver, version);
 
   const run = async () => {
@@ -212,11 +223,12 @@ export function StatsAdvisorPanel({
     setRunning(true);
     try {
       onBeforeRun();
-      const ok = await config.runStatements(draft.statements);
-      if (ok) {
-        setDone(true);
-        setDraft(null);
+      const outcome = await config.runStatements(draft.statements);
+      if (outcome !== "cancelled") {
+        // 失敗でも途中まで変わっていることがあるので、統計は読み直す。
         setTick((n) => n + 1);
+        setDraft(null);
+        setDone(outcome === "done");
       }
     } finally {
       setRunning(false);
@@ -229,7 +241,7 @@ export function StatsAdvisorPanel({
     build: () => StatsBuild,
     disabledReason?: string | null,
   ) => {
-    const reason = writeDisabledReason ?? disabledReason ?? null;
+    const reason = writeDisabledReason ?? unresolvedReason ?? disabledReason ?? null;
     return (
       <Tooltip label={reason ?? undefined} focusableWrapper={!!reason}>
         <Button
@@ -317,6 +329,8 @@ export function StatsAdvisorPanel({
         </chakra.dl>
       )}
       {f && !f.found && !f.sqlite && <chakra.div textStyle="caption">{t("statsAdvNotFound")}</chakra.div>}
+
+      {unresolvedReason && <FieldError tone="warning">{unresolvedReason}</FieldError>}
 
       <Flex gap="1.5" wrap="wrap">
         {actionButton("analyze", t("statsAdvActAnalyze"), () =>

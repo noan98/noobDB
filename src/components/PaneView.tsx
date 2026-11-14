@@ -75,6 +75,8 @@ import { useStoreSelector, type TabPaneStore } from "../tabPaneStore";
 const QueryEditor = lazy(() => import("./QueryEditor").then((m) => ({ default: m.QueryEditor })));
 const ResultGrid = lazy(() => import("./ResultGrid").then((m) => ({ default: m.ResultGrid })));
 const PreviewGrid = lazy(() => import("./PreviewGrid").then((m) => ({ default: m.PreviewGrid })));
+import type { StatsRunOutcome } from "./StatsAdvisorPanel";
+
 const ExplainViewer = lazy(() => import("./ExplainViewer").then((m) => ({ default: m.ExplainViewer })));
 const PaginationBar = lazy(() => import("./PaginationBar").then((m) => ({ default: m.PaginationBar })));
 const ChartView = lazy(() => import("./ChartView").then((m) => ({ default: m.ChartView })));
@@ -233,7 +235,7 @@ export interface PaneActions {
   runBatchInTab: (tabId: string, sql: string, stopOnError: boolean, tabOverride?: Tab) => unknown;
   runExplainInTab: (tabId: string, sql: string, analyze: boolean) => unknown;
   /** 統計の手当て (ANALYZE / 拡張統計 / ヒストグラム) の SQL を、確認ゲートを通して順に流す (#2327)。 */
-  runStatsStatements: (statements: string[], database: string | null) => Promise<boolean>;
+  runStatsStatements: (statements: string[], database: string | null) => Promise<StatsRunOutcome>;
   runInTabWithGate: (tab: Tab, sql: string, opts?: { newTab?: boolean; fresh?: boolean }) => void;
   runQueryInTab: (tabId: string, sql: string, paginatableBase?: string | null) => unknown;
   selectTab: (paneId: string, tabId: string) => void;
@@ -920,12 +922,13 @@ export const PaneView = memo(
                                               tab.database ?? selectedProfile.database ?? null,
                                             ),
                                           onReexplain: () => {
-                                            if (tab.streaming) return;
+                                            if (tab.streaming) return false;
                                             void actions.runExplainInTab(
                                               tab.id,
                                               getTabSql(tab),
                                               !!tab.explainAnalyze,
                                             );
+                                            return true;
                                           },
                                         }
                                       : undefined

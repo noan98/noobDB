@@ -15,6 +15,7 @@ import {
   parseServerVersion,
   pickFilterColumns,
   planConditionIdentifiers,
+  mysqlAnalyzeFailure,
   planStatsTables,
   setStatisticsTargetStatements,
   showsStatsSection,
@@ -278,5 +279,40 @@ describe("読み取りクエリとパース", () => {
     expect(
       parseHistograms({ columns: [], rows: [["a", "equi-height", "100", "2026-01-01"]] } as never),
     ).toEqual([{ column: "a", type: "equi-height", buckets: 100, lastUpdated: "2026-01-01" }]);
+  });
+});
+
+describe("PostgreSQL 9.x と MySQL の ANALYZE の失敗", () => {
+  it("PG 9.6 も版として読み、拡張統計は使えない", () => {
+    const v96 = parseServerVersion("postgres", "90600");
+    expect(v96).toEqual({ major: 9, minor: 6, mariadb: false });
+    expect(
+      createStatisticsStatements({
+        driver: "postgres",
+        table: t,
+        database: "public",
+        columns: ["a", "b"],
+        kinds: [],
+        version: v96,
+      }),
+    ).toEqual({ ok: false, reason: "versionTooOld" });
+  });
+
+  it("ANALYZE TABLE の Error / Warning 行を失敗として返す", () => {
+    const cols = ["Table", "Op", "Msg_type", "Msg_text"].map((name) => ({ name, type_name: "text" }));
+    const ok = { columns: cols, rows: [["db.t", "analyze", "status", "OK"]] };
+    const err = {
+      columns: cols,
+      rows: [
+        ["db.t", "analyze", "Error", "Table 'db.t' doesn't exist"],
+        ["db.t", "analyze", "status", "Operation failed"],
+      ],
+    };
+    const warn = { columns: cols, rows: [["db.t", "histogram", "Warning", "Cannot create histogram"]] };
+    expect(mysqlAnalyzeFailure(ok)).toBeNull();
+    expect(mysqlAnalyzeFailure(err)).toBe("Table 'db.t' doesn't exist");
+    expect(mysqlAnalyzeFailure(warn)).toBe("Cannot create histogram");
+    expect(mysqlAnalyzeFailure({ columns: [{ name: "x", type_name: "int" }], rows: [[1]] })).toBeNull();
+    expect(mysqlAnalyzeFailure(null)).toBeNull();
   });
 });

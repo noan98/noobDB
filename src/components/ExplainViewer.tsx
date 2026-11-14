@@ -783,8 +783,8 @@ export function ExplainViewer({ result, driver, streaming, analyze, ai, pin, sta
             }
           },
           onReexplainCompare: () => {
-            setCompareRequest((n) => n + 1);
-            stats.onReexplain();
+            // 実行しなかった (別の EXPLAIN が流れている) ときは、比較の待機を始めない。
+            if (stats.onReexplain()) setCompareRequest((n) => n + 1);
           },
         }
       : undefined;
