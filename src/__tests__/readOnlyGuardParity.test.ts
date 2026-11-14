@@ -767,6 +767,7 @@ const CONNECTION_READ_METHODS = new Set([
   "tables",
   "columns",
   "generated_columns",
+  "always_identity_columns",
   "columns_for_database",
   "indexes_for_database",
   "row_identity",
