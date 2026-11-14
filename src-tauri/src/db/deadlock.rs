@@ -302,7 +302,11 @@ fn looks_like_ip(tok: &str) -> bool {
 /// (ユーザ名・状態に空白が入りうるため、ホスト直後の IP らしいトークンだけを特別扱いする)。
 fn parse_thread_line(line: &str) -> (Option<i64>, Option<String>, Option<String>, Option<String>) {
     let t = line.trim();
-    let thread_id = t.strip_prefix("MySQL thread id ").and_then(leading_int);
+    // MariaDB は同じ行を `MariaDB thread id ...` と出す。
+    let thread_id = t
+        .strip_prefix("MySQL thread id ")
+        .or_else(|| t.strip_prefix("MariaDB thread id "))
+        .and_then(leading_int);
     let after = t
         .split_once("query id ")
         .map(|(_, r)| r.trim_start_matches(|c: char| c.is_ascii_digit()).trim());
@@ -439,7 +443,7 @@ pub fn parse_innodb_deadlock(status: &str) -> Option<InnodbDeadlockReport> {
                     // `TRANSACTION 421, ACTIVE 11 sec starting index read`
                     txn.trx_id = rest.split(',').next().map(|s| s.trim().to_string());
                     txn.active_secs = rest.split_once("ACTIVE ").and_then(|(_, r)| leading_int(r));
-                } else if t.starts_with("MySQL thread id") {
+                } else if t.starts_with("MySQL thread id") || t.starts_with("MariaDB thread id") {
                     let (tid, host, user, state) = parse_thread_line(t);
                     txn.thread_id = tid;
                     txn.host = host;
@@ -869,6 +873,20 @@ TABLE LOCK table `d`.`t` trx id 2 lock mode X waiting
         assert_eq!(
             classify_report_age("2026-11-14 09:25:00", "2026-11-14 10:30:00", 300),
             Some(RELATION_OLDER)
+        );
+    }
+
+    #[test]
+    fn mariadb_thread_header_is_recognized() {
+        // MariaDB はスレッド行を `MariaDB thread id ...` と出す。SQL・スレッド ID・ユーザーが取れる。
+        let status = STATUS_TWO.replace("MySQL thread id", "MariaDB thread id");
+        let r = parse_innodb_deadlock(&status).expect("report");
+        let a = &r.transactions[0];
+        assert_eq!(a.thread_id, Some(8));
+        assert_eq!(a.user.as_deref(), Some("root"));
+        assert_eq!(
+            a.sql.as_deref(),
+            Some("UPDATE accounts SET balance = balance - 10 WHERE id = 2")
         );
     }
 

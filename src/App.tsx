@@ -14146,6 +14146,8 @@ export default function App() {
                       />
                     ) : activeBottomPanelTab === "deadlock" ? (
                       <DeadlockPanel
+                        // 接続を切り替えたら前の接続の解析結果を残さない (作り直して状態を捨てる)。
+                        key={sessionId}
                         sessionId={sessionId}
                         driver={selectedProfile?.driver ?? "mysql"}
                         errorMessage={deadlockTarget?.sessionId === sessionId ? deadlockTarget.message : null}
