@@ -9,6 +9,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
 });
 
 import { RowMergeModal } from "../components/RowMergeModal";
+import { distinctValueCount } from "../components/RowMergeMatrix";
 import { api } from "../api/tauri";
 
 const preview: RowMergePreview = {
@@ -144,9 +145,13 @@ describe("RowMergeModal (#2303)", () => {
     await screen.findByTestId("row-merge-matrix");
     expect(screen.getByTestId("row-merge-row-phone")).toHaveAttribute("data-differs", "true");
     expect(screen.getByTestId("row-merge-badge-phone")).toBeInTheDocument();
+    // 鍵付きの列 (id) は食い違っていても警告せず、鍵アイコンだけの中立表示。
     expect(screen.getByTestId("row-merge-locked-id")).toBeInTheDocument();
-    // 全行で同じ値の列はない (id も phone も食い違う) ので隠すスイッチは出ない。
-    expect(screen.queryByTestId("row-merge-hide-same")).toBeNull();
+    expect(screen.getByTestId("row-merge-row-id")).toHaveAttribute("data-differs", "false");
+    expect(screen.queryByTestId("row-merge-badge-id")).toBeNull();
+    expect(screen.getByTestId("row-merge-diff-count")).toHaveTextContent(
+      t("rowMergeDiffSummary", { diff: 1, total: 2 }),
+    );
   });
 
   it("同じ値の列を折りたためる (#2322)", async () => {
@@ -164,6 +169,7 @@ describe("RowMergeModal (#2303)", () => {
     expect(screen.getByTestId("row-merge-row-country")).toHaveAttribute("data-differs", "false");
     fireEvent.click(screen.getByTestId("row-merge-hide-same"));
     expect(screen.queryByTestId("row-merge-row-country")).toBeNull();
+    expect(screen.queryByTestId("row-merge-row-id")).toBeNull();
     expect(screen.getByTestId("row-merge-row-phone")).toBeInTheDocument();
   });
 
@@ -182,5 +188,12 @@ describe("RowMergeModal (#2303)", () => {
     await screen.findByTestId("row-merge-matrix");
     expect(screen.getByTestId("row-merge-head-0")).toHaveAttribute("data-role", "keep");
     expect(screen.getByTestId("row-merge-head-1")).toHaveAttribute("data-role", "remove");
+  });
+
+  it("distinctValueCount は NULL と文字列 NULL を区別し、全件同値なら 1 (#2322)", () => {
+    expect(distinctValueCount([null, "NULL"])).toBe(2);
+    expect(distinctValueCount(["a", "a", "a"])).toBe(1);
+    expect(distinctValueCount([null, null])).toBe(1);
+    expect(distinctValueCount([1, "1"])).toBe(1);
   });
 });

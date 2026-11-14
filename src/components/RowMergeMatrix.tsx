@@ -5,7 +5,7 @@ import type { CellValue, RowMergePreview } from "../api/tauri";
 import { useT } from "../i18n";
 import { durations, springs } from "../motion";
 import { semanticColorVar } from "../semanticColors";
-import { Icon } from "./Icon";
+import { Icon, ICON_SIZES } from "./Icon";
 import { useStillMotion } from "./SchemaDiffDetail";
 import { Tooltip } from "./Tooltip";
 import { kindOfDataType, TypeGlyph } from "./TypeGlyph";
@@ -19,6 +19,8 @@ import { Checkbox, Radio } from "./ui";
  * - 残す行は success、消える行 (重複) は danger の薄い地で区別する。見出しにはアイコンと文字も添える。
  * - 選択枠は列ごとの `layoutId` で選び直した値へ滑らせる。結果の列のセルはクロスフェードする。
  */
+
+const MotionPicked = chakra(motion.span, {}, { forwardProps: ["transition"] });
 
 const MAX_CELL_CHARS = 60;
 
@@ -38,11 +40,13 @@ interface Props {
   /** 表示順 → 元の行の添字 (先頭が残す行)。 */
   order: readonly number[];
   applying: boolean;
+  /** プレビュー再取得中。表を薄くして操作を止める (古い採用元を見せない)。 */
+  loading?: boolean;
   onPick: (column: string, pos: number) => void;
   onSurvivor: (rowIdx: number) => void;
 }
 
-export function RowMergeMatrix({ preview, order, applying, onPick, onSurvivor }: Props) {
+export function RowMergeMatrix({ preview, order, applying, loading = false, onPick, onSurvivor }: Props) {
   const t = useT();
   const still = useStillMotion();
   const uid = useId();
@@ -52,7 +56,9 @@ export function RowMergeMatrix({ preview, order, applying, onPick, onSurvivor }:
     () => preview.columns.map((_, ci) => distinctValueCount(preview.rows.map((r) => r[ci]))),
     [preview],
   );
-  const differing = distinct.filter((n) => n > 1).length;
+  // 選ぶ必要がある列 = 値が食い違い、かつ選べる列。鍵付き (locked) の列は行の特定に使うだけなので数えない。
+  const needsChoice = preview.columns.map((c, ci) => (distinct[ci] ?? 1) > 1 && !c.locked);
+  const differing = needsChoice.filter(Boolean).length;
   const sameCount = preview.columns.length - differing;
 
   const warnLine = semanticColorVar("warning", "text");
@@ -85,7 +91,15 @@ export function RowMergeMatrix({ preview, order, applying, onPick, onSurvivor }:
           </chakra.label>
         )}
       </chakra.div>
-      <chakra.div overflowX="auto" maxH="320px" overflowY="auto" data-testid="row-merge-matrix">
+      <chakra.div
+        overflowX="auto"
+        maxH="320px"
+        overflowY="auto"
+        opacity={loading ? 0.5 : 1}
+        pointerEvents={loading ? "none" : undefined}
+        aria-busy={loading}
+        data-testid="row-merge-matrix"
+      >
         <chakra.table borderCollapse="collapse" fontSize="sm" width="100%">
           <thead>
             <tr>
@@ -118,7 +132,7 @@ export function RowMergeMatrix({ preview, order, applying, onPick, onSurvivor }:
                       color={pos === 0 ? "app.textSuccess" : "app.textError"}
                       fontWeight={600}
                     >
-                      <Icon name={pos === 0 ? "check" : "trash"} />
+                      <Icon name={pos === 0 ? "check" : "trash"} size={ICON_SIZES.sm} />
                       {pos === 0 ? t("rowMergeKeep") : t("rowMergeDuplicate", { n: pos })}
                     </chakra.span>
                   </chakra.label>
@@ -132,8 +146,7 @@ export function RowMergeMatrix({ preview, order, applying, onPick, onSurvivor }:
                 position="sticky"
                 right="0"
                 bg="app.surface"
-                borderLeft="1px solid"
-                borderColor="app.border"
+                boxShadow="inset 1px 0 0 var(--border)"
                 data-testid="row-merge-result-head"
               >
                 <chakra.span
@@ -143,7 +156,7 @@ export function RowMergeMatrix({ preview, order, applying, onPick, onSurvivor }:
                   color="app.textSuccess"
                   fontWeight={600}
                 >
-                  <Icon name="check" />
+                  <Icon name="check" size={ICON_SIZES.sm} />
                   {t("rowMergeResult")}
                 </chakra.span>
               </chakra.th>
@@ -151,7 +164,7 @@ export function RowMergeMatrix({ preview, order, applying, onPick, onSurvivor }:
           </thead>
           <tbody>
             {preview.columns.map((c, ci) => {
-              const differs = (distinct[ci] ?? 1) > 1;
+              const differs = needsChoice[ci] ?? false;
               if (hideSame && !differs) return null;
               const pickedPos = preview.picks[ci] ?? 0;
               const pickedRow = preview.rows[pickedPos];
@@ -183,7 +196,7 @@ export function RowMergeMatrix({ preview, order, applying, onPick, onSurvivor }:
                             aria-label={t("rowMergeLocked")}
                             data-testid={`row-merge-locked-${c.name}`}
                           >
-                            <Icon name="lock" />
+                            <Icon name="lock" size={ICON_SIZES.sm} />
                           </chakra.span>
                         </Tooltip>
                       )}
@@ -231,19 +244,18 @@ export function RowMergeMatrix({ preview, order, applying, onPick, onSurvivor }:
                         >
                           {picked && (
                             // 同じ列の中で layoutId が移ると、Motion が前の値から滑らせる。
-                            <motion.span
+                            <MotionPicked
                               layoutId={`${uid}-${c.name}`}
                               transition={slide}
                               data-testid={`row-merge-picked-${c.name}`}
                               aria-hidden
-                              style={{
-                                position: "absolute",
-                                inset: 0,
-                                borderRadius: "inherit",
-                                border: "1px solid var(--accent)",
-                                background: "var(--accent-highlight)",
-                                pointerEvents: "none",
-                              }}
+                              position="absolute"
+                              inset="0"
+                              borderRadius="inherit"
+                              border="1px solid"
+                              borderColor="app.accent"
+                              bg="app.accentHighlight"
+                              pointerEvents="none"
                             />
                           )}
                           <chakra.span position="relative">{cellText(row[ci])}</chakra.span>
@@ -257,8 +269,7 @@ export function RowMergeMatrix({ preview, order, applying, onPick, onSurvivor }:
                     position="sticky"
                     right="0"
                     bg="app.surface"
-                    borderLeft="1px solid"
-                    borderColor="app.border"
+                    boxShadow="inset 1px 0 0 var(--border)"
                     fontFamily="mono"
                     data-testid={`row-merge-result-${c.name}`}
                   >

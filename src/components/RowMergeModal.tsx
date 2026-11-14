@@ -239,6 +239,7 @@ export function RowMergeModal({
                 preview={preview}
                 order={order}
                 applying={applying}
+                loading={loading}
                 onPick={pickFrom}
                 onSurvivor={(ri) => {
                   setSurvivorIdx(ri);
