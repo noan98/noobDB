@@ -706,7 +706,7 @@ pub(crate) fn mysql_ignore_index_sql_in(
             // 修飾なしは SQL を流す DB で解決される。対象の DB と違うなら別の表。
             (None, Some(d)) => query_database
                 .filter(|q| !q.is_empty())
-                .is_none_or(|q| q.eq_ignore_ascii_case(d)),
+                .map_or(true, |q| q.eq_ignore_ascii_case(d)),
             _ => true,
         };
         if db_ok && name.eq_ignore_ascii_case(table) {
