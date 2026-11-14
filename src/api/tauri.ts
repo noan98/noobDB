@@ -3604,6 +3604,9 @@ export interface IndexWhatIfOutcome {
   after: QueryResult;
   method: IndexWhatIfMethod;
   statements: string[];
+  /** MySQL の IGNORE INDEX: 差し込めた表参照の数と、SQL 中で表名に当たる語の数 (他は null)。 */
+  refsApplied: number | null;
+  refsMentioned: number | null;
   elapsedMs: number;
 }
 export interface SubsetProgressEvent {

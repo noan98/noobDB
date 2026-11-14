@@ -2776,6 +2776,8 @@ export const indexWhatIfOutcome = z.object({
   after: queryResultLite,
   method: z.enum(["hypopg", "ignoreIndex", "rollbackDdl"]),
   statements: z.array(z.string()),
+  refsApplied: z.number().nullable(),
+  refsMentioned: z.number().nullable(),
   elapsedMs: z.number(),
 });
 

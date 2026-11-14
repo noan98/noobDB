@@ -34,11 +34,11 @@ pub async fn get_index_whatif_support_inner(
         .get(session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
-    let hypopg = session.conn.index_whatif_hypopg_version().await?;
+    let hypopg = session.conn.index_whatif_hypopg().await?;
     Ok(compute_support(
         session.conn.driver_kind(),
         session.read_only,
-        hypopg.as_deref(),
+        hypopg.as_ref(),
     ))
 }
 
@@ -67,8 +67,8 @@ pub async fn run_index_whatif_inner(
     let sql = validate_target_sql(driver, &request.sql)?;
     let database = request.database.as_deref().filter(|d| !d.is_empty());
 
-    let hypopg = conn.index_whatif_hypopg_version().await?;
-    let support = compute_support(driver, session.read_only, hypopg.as_deref());
+    let hypopg = conn.index_whatif_hypopg().await?;
+    let support = compute_support(driver, session.read_only, hypopg.as_ref());
     let mode: &IndexWhatIfModeSupport = match request.action {
         IndexWhatIfAction::Disable => &support.disable,
         IndexWhatIfAction::Add => &support.add,
@@ -124,9 +124,7 @@ pub async fn run_index_whatif_inner(
         index: request.index.as_deref(),
         columns: &request.columns,
         method,
-        hypopg_hide: hypopg
-            .as_deref()
-            .is_some_and(crate::db::index_whatif::hypopg_can_hide),
+        hypopg: hypopg.as_ref(),
         lock_timeout_ms: lock_secs * 1000,
     };
     let started = Instant::now();
@@ -136,6 +134,8 @@ pub async fn run_index_whatif_inner(
         after: raw.after,
         method,
         statements: raw.statements,
+        refs_applied: raw.refs.map(|r| r.0),
+        refs_mentioned: raw.refs.map(|r| r.1),
         elapsed_ms: started.elapsed().as_millis() as u64,
     })
 }

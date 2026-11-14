@@ -1657,6 +1657,8 @@ const en = {
     "Rebuilding a table in an attached database is not supported. Edit it in a connection opened directly on that file.",
   attachedUnsupportedTransfer:
     "Creating or replacing a table in an attached database is not supported. Choose append or upsert, or pick a table that already exists.",
+  attachedUnsupportedIndexWhatIf:
+    "Index what-if is not supported for a table in an attached database. Run it in a connection opened directly on that file.",
   contextMenuAlterAttachedHint: "Changes that need a table rebuild are not supported in an attached database",
   formSqliteAttachAliasDuplicate: "This alias is already used by another file",
   formSqliteAttachAliasRequired: "Enter an alias for this file",
@@ -8558,7 +8560,7 @@ const en = {
     "The DDL takes the database's write lock until the rollback, so other connections cannot write for that time.",
   indexWhatIfLockConfirm: "I understand the lock and want to run this",
   indexWhatIfBuildNote:
-    "The index is actually built before it is rolled back, so this can take a long time on a large table (it stops after 60 seconds).",
+    "The index is actually built before it is rolled back, so this can take a long time on a large table (it is interrupted after about 55 seconds).",
   indexWhatIfRun: "Run what-if",
   indexWhatIfRunning: "Running...",
   indexWhatIfClose: "Close",
@@ -8574,6 +8576,11 @@ const en = {
   indexWhatIfPaneAdd: "With an index on {table} ({name}) (estimated)",
   indexWhatIfSqlLabel: "Query to analyze",
   indexWhatIfSqlPlaceholder: "Paste a SELECT that reads this table (without EXPLAIN)",
+  indexWhatIfCancel: "Cancel",
+  indexWhatIfShowStatements: "Show the statements that were run",
+  indexWhatIfHideStatements: "Hide the statements",
+  indexWhatIfPartialRefs:
+    "IGNORE INDEX could not be applied to every mention of this table in the query (for example a differently written reference), so the plan may not reflect the index being disabled everywhere.",
 };
 
 export type I18nKey = keyof typeof en;
@@ -10224,6 +10231,8 @@ const ja: Dict = {
     "アタッチしたデータベースの表は再構築できません。そのファイルを直接開いた接続で編集してください。",
   attachedUnsupportedTransfer:
     "アタッチしたデータベースへの表の作成・置換は未対応です。追記か upsert を選ぶか、既存の表を指定してください。",
+  attachedUnsupportedIndexWhatIf:
+    "アタッチしたデータベースの表ではインデックスの試算は未対応です。そのファイルを直接開いた接続で実行してください。",
   contextMenuAlterAttachedHint: "表の再構築が必要な変更は、アタッチしたデータベースでは未対応です",
   formSqliteAttachAliasDuplicate: "この別名はほかのファイルですでに使われています",
   formSqliteAttachAliasRequired: "このファイルの別名を入力してください",
@@ -17051,7 +17060,7 @@ const ja: Dict = {
     "ロールバックまでの間、DDL がデータベースの書き込みロックを取るため、他の接続はその間書き込めません。",
   indexWhatIfLockConfirm: "ロックを取ることを理解したうえで実行する",
   indexWhatIfBuildNote:
-    "ロールバックする前にインデックスを実際に構築するため、大きな表では時間がかかります (60 秒で中断します)。",
+    "ロールバックする前にインデックスを実際に構築するため、大きな表では時間がかかります (約 55 秒で中断します)。",
   indexWhatIfRun: "試算する",
   indexWhatIfRunning: "試算中...",
   indexWhatIfClose: "閉じる",
@@ -17067,6 +17076,11 @@ const ja: Dict = {
   indexWhatIfPaneAdd: "{table} に ({name}) のインデックスを追加 (見積もり)",
   indexWhatIfSqlLabel: "試算するクエリ",
   indexWhatIfSqlPlaceholder: "このテーブルを読む SELECT を貼り付け (EXPLAIN は付けない)",
+  indexWhatIfCancel: "キャンセル",
+  indexWhatIfShowStatements: "実行した文を表示",
+  indexWhatIfHideStatements: "実行した文を隠す",
+  indexWhatIfPartialRefs:
+    "クエリ中のこのテーブルの参照すべてに IGNORE INDEX を付けられていません (書き方が特殊な参照など)。計画が「どこでもインデックスが無い」状態を反映していない可能性があります。",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

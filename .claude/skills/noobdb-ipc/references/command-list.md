@@ -753,7 +753,7 @@ DELETE をフライトレコーダに 1 文ずつ記録し (`run_captured_write`
   MySQL: 対象の表参照に `IGNORE INDEX` を差し込む (無効化のみ。「追加」は仮想インデックスが無く DDL も
   ロールバックできないので非対応)。SQLite: `BEGIN; DROP|CREATE INDEX; EXPLAIN QUERY PLAN; ROLLBACK`。
   **`read_only` 接続で DDL を使う経路 (PostgreSQL の DDL 代替・SQLite) はバックエンドが拒否**し、ロックを取る
-  経路は `confirmLocking` が無いと実行しない。全体 60 秒で中断 (future を落とすと接続ごと閉じる)。
+  経路は `confirmLocking` が無いと実行しない。全体 60 秒で中断 (SQLite は progress handler で割り込み。future を落とすと接続ごと閉じる)。
 
 ## 行を子レコードごと複製 (`commands/clone_rows.rs`, #2304)
 

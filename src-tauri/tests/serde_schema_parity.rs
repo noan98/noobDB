@@ -1530,6 +1530,8 @@ fn build_fixtures() -> serde_json::Value {
         after: query_result.clone(),
         method: t::IndexWhatIfMethod::RollbackDdl,
         statements: vec!["BEGIN; DROP INDEX x; ...; ROLLBACK".into()],
+        refs_applied: Some(1),
+        refs_mentioned: Some(2),
         elapsed_ms: 12,
     };
 

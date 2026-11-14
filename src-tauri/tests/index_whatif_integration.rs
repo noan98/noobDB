@@ -415,7 +415,6 @@ async fn postgres_whatif_when_env_set() {
     assert!(plan_text(&again.before).contains("idx_a"));
 
     if support.hypopg_version.is_some() {
-        let add = request(&side, SQL_B, t::IndexWhatIfAction::Add, None, &["b"], false);
         let out = t::run_index_whatif_inner(
             &state,
             &ro.id,
@@ -428,7 +427,6 @@ async fn postgres_whatif_when_env_set() {
             "{}",
             plan_text(&out.after)
         );
-        let _ = add;
         assert_eq!(index_names(&state, &side).await, names_before);
     }
     let _ = admin

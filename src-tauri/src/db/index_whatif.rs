@@ -7,7 +7,7 @@
 //!
 //! | ドライバ | 無効化 (`Disable`) | 追加 (`Add`) |
 //! |---|---|---|
-//! | PostgreSQL (hypopg あり) | `hypopg_hide_index` (1.3 以降、セッション内のみ) | `hypopg_create_index` (仮想インデックス) |
+//! | PostgreSQL (hypopg あり) | `hypopg_hide_index` (関数がある場合。セッション内のみ) | `hypopg_create_index` (仮想インデックス) |
 //! | PostgreSQL (hypopg なし) | `BEGIN; SET LOCAL lock_timeout; DROP INDEX; EXPLAIN; ROLLBACK` (**ACCESS EXCLUSIVE ロックを取る**。確認必須・read_only 不可) | 非対応 (実体を作ってしまうため) |
 //! | MySQL | 対象クエリの表参照に `IGNORE INDEX (idx)` を差し込んで EXPLAIN (`ALTER INDEX ... INVISIBLE` は他セッションにも効くので使わない) | 非対応 (仮想インデックスが無く、DDL はロールバックできない) |
 //! | SQLite | `BEGIN; DROP INDEX; EXPLAIN QUERY PLAN; ROLLBACK` (read_only 不可) | `BEGIN; CREATE INDEX; EXPLAIN QUERY PLAN; ROLLBACK` (read_only 不可・大きな表は構築に時間がかかる) |
@@ -37,8 +37,9 @@ pub const DEFAULT_LOCK_TIMEOUT_SECS: u64 = 3;
 pub const MAX_LOCK_TIMEOUT_SECS: u64 = 30;
 /// 追加する試算インデックスの列数の上限。
 pub const MAX_WHATIF_COLUMNS: usize = 16;
-/// SQLite の試算で一時的に作るインデックスの名前 (ROLLBACK で消える)。
-pub(crate) const SQLITE_TEMP_INDEX: &str = "noobdb_whatif_idx";
+/// SQLite の試算で一時的に作るインデックス名の接頭辞 (ROLLBACK で消える。名前の衝突を避けるため
+/// 実際の名前には現在時刻のナノ秒を付ける)。
+pub(crate) const SQLITE_TEMP_INDEX_PREFIX: &str = "noobdb_whatif_idx";
 
 /// 試算の種類。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,22 +121,24 @@ pub struct IndexWhatIfSupport {
     pub add: IndexWhatIfModeSupport,
 }
 
-/// hypopg が `hypopg_hide_index` を持つか (1.3.0 以降)。
-pub(crate) fn hypopg_can_hide(version: &str) -> bool {
-    let mut parts = version
-        .split(|c: char| !c.is_ascii_digit())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.parse::<u64>().unwrap_or(0));
-    let major = parts.next().unwrap_or(0);
-    let minor = parts.next().unwrap_or(0);
-    (major, minor) >= (1, 3)
+/// 接続先の hypopg 拡張の情報。関数は**拡張が入っているスキーマ**を付けて呼ぶ (`search_path` は
+/// 対象テーブルのスキーマだけにしてあり、hypopg を別スキーマ (public など) に入れていると
+/// 修飾なしでは見えない)。インデックスの非表示 (`hypopg_hide_index` / `hypopg_unhide_all_indexes`)
+/// は版によって有無が違うため、バージョンの比較ではなく関数の存在を直接調べた結果を持つ。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HypopgCaps {
+    pub version: String,
+    /// 拡張のスキーマ (`pg_extension.extnamespace`)。
+    pub schema: String,
+    /// `hypopg_hide_index(oid)` と `hypopg_unhide_all_indexes()` の両方がある。
+    pub can_hide: bool,
 }
 
-/// ドライバ・`read_only`・hypopg の有無から、試算の可否と方法を決める純関数。
+/// ドライバ・`read_only`・hypopg の有無と機能から、試算の可否と方法を決める純関数。
 pub fn compute_support(
     driver: DriverKind,
     read_only: bool,
-    hypopg_version: Option<&str>,
+    hypopg: Option<&HypopgCaps>,
 ) -> IndexWhatIfSupport {
     let ddl = |locks: bool, builds: bool| {
         if read_only {
@@ -149,12 +152,12 @@ pub fn compute_support(
             IndexWhatIfModeSupport::ok(IndexWhatIfMethod::IgnoreIndex, false, false),
             IndexWhatIfModeSupport::no(IndexWhatIfUnavailable::NoVirtualIndex),
         ),
-        DriverKind::Postgres => match hypopg_version {
-            Some(v) => (
-                if hypopg_can_hide(v) {
+        DriverKind::Postgres => match hypopg {
+            Some(h) => (
+                if h.can_hide {
                     IndexWhatIfModeSupport::ok(IndexWhatIfMethod::Hypopg, false, false)
                 } else {
-                    // 1.3 未満は非表示の関数が無いので DDL 経路へ縮退する。
+                    // 非表示の関数が無い版は DDL 経路へ縮退する。
                     ddl(true, false)
                 },
                 IndexWhatIfModeSupport::ok(IndexWhatIfMethod::Hypopg, false, false),
@@ -167,7 +170,7 @@ pub fn compute_support(
         DriverKind::Sqlite => (ddl(true, false), ddl(true, true)),
     };
     IndexWhatIfSupport {
-        hypopg_version: hypopg_version.map(str::to_string),
+        hypopg_version: hypopg.map(|h| h.version.clone()),
         disable,
         add,
     }
@@ -206,6 +209,11 @@ pub struct IndexWhatIfOutcome {
     pub method: IndexWhatIfMethod,
     /// 試算のために実行した文 (EXPLAIN は除く)。何をしたかを利用者が確認できるようにする。
     pub statements: Vec<String>,
+    /// MySQL の `IGNORE INDEX`: 差し込めた表参照の数。`refs_mentioned` より少ないと、一部の参照
+    /// (別名の付け方が特殊など) には効いていない可能性がある。MySQL 以外は `None`。
+    pub refs_applied: Option<u32>,
+    /// MySQL: SQL 中で表名に当たる語の数 (コメント・文字列を除く)。
+    pub refs_mentioned: Option<u32>,
     pub elapsed_ms: u64,
 }
 
@@ -220,7 +228,8 @@ pub(crate) struct WhatIfPlan<'a> {
     pub index: Option<&'a str>,
     pub columns: &'a [String],
     pub method: IndexWhatIfMethod,
-    pub hypopg_hide: bool,
+    /// hypopg の情報 (PostgreSQL・hypopg 経路のみ)。
+    pub hypopg: Option<&'a HypopgCaps>,
     pub lock_timeout_ms: u64,
 }
 
@@ -229,6 +238,8 @@ pub(crate) struct WhatIfRaw {
     pub before: QueryResult,
     pub after: QueryResult,
     pub statements: Vec<String>,
+    /// MySQL: `IGNORE INDEX` を差し込んだ表参照の数と、SQL 中で表名に当たる語の数。
+    pub refs: Option<(u32, u32)>,
 }
 
 /// 方言ごとの EXPLAIN 前置き。フロントの `bundleExplainPrefix` (EXPLAIN タブの既定) と同じ形式にして、
@@ -318,10 +329,10 @@ pub(crate) fn validate_action(
 }
 
 impl Connection {
-    /// PostgreSQL の hypopg 拡張のバージョン (入っていなければ `None`)。他ドライバは常に `None`。
-    pub async fn index_whatif_hypopg_version(&self) -> Result<Option<String>> {
+    /// PostgreSQL の hypopg 拡張の情報 (入っていなければ `None`)。他ドライバは常に `None`。
+    pub async fn index_whatif_hypopg(&self) -> Result<Option<HypopgCaps>> {
         match self {
-            Connection::Postgres(c) => c.hypopg_version().await,
+            Connection::Postgres(c) => c.hypopg_caps().await,
             Connection::MySql(_) | Connection::Sqlite(_) => Ok(None),
         }
     }
@@ -349,7 +360,7 @@ impl Connection {
         let Some(index) = plan.index else {
             return Err(AppError::InvalidInput("what-if: index is required".into()));
         };
-        let Some((rewritten, _)) =
+        let Some((rewritten, applied, mentioned)) =
             mysql_ignore_index_sql(plan.sql, plan.database, plan.table, index)
         else {
             return Err(AppError::InvalidInput(format!(
@@ -366,6 +377,7 @@ impl Connection {
                 before,
                 after,
                 statements: vec![rewritten.clone()],
+                refs: Some((applied as u32, mentioned as u32)),
             })
         })
         .await
@@ -631,7 +643,7 @@ fn read_table_ref(toks: &[Token], j: usize) -> Option<(usize, Option<String>, St
 }
 
 /// `sql` のうち、表 `table` を参照している**すべての**表参照 (サブクエリ・CTE の中を含む) の
-/// 直後 (エイリアスの後) に ` IGNORE INDEX (<index>)` を差し込んだ SQL と、差し込んだ件数を返す。
+/// 直後 (エイリアスの後) に ` IGNORE INDEX (<index>)` を差し込んだ SQL・差し込んだ件数・SQL 中で表名に当たる語の数を返す。
 /// 表が 1 度も参照されていなければ `None`。表名は大文字小文字を区別せず、`db.table` の修飾が
 /// `database` と違う参照は対象にしない。
 pub(crate) fn mysql_ignore_index_sql(
@@ -639,8 +651,16 @@ pub(crate) fn mysql_ignore_index_sql(
     database: Option<&str>,
     table: &str,
     index: &str,
-) -> Option<(String, usize)> {
+) -> Option<(String, usize, usize)> {
     let toks = tokenize_mysql(sql);
+    // 表名に当たる語の数 (コメント・文字列は字句に分ける時点で除かれている)。
+    let mentioned = toks
+        .iter()
+        .filter(|t| match &t.tok {
+            Tok::Word(w) | Tok::Quoted(w) => w.eq_ignore_ascii_case(table),
+            _ => false,
+        })
+        .count();
     let mut stack = vec![Frame {
         query: true,
         in_from: false,
@@ -720,7 +740,7 @@ pub(crate) fn mysql_ignore_index_sql(
     for at in inserts.iter().rev() {
         out.insert_str(*at, &hint);
     }
-    Some((out, inserts.len()))
+    Some((out, inserts.len(), mentioned))
 }
 
 #[cfg(test)]
@@ -827,6 +847,14 @@ mod tests {
         assert!(got.contains("PARTITION (p0) u IGNORE INDEX (`i`) WHERE"));
     }
 
+    fn caps(can_hide: bool) -> HypopgCaps {
+        HypopgCaps {
+            version: "1.4.1".into(),
+            schema: "public".into(),
+            can_hide,
+        }
+    }
+
     #[test]
     fn support_matrix() {
         use IndexWhatIfMethod::*;
@@ -839,17 +867,17 @@ mod tests {
         let s = compute_support(DriverKind::Mysql, true, None);
         assert_eq!(s.disable.method, Some(IgnoreIndex));
 
-        let s = compute_support(DriverKind::Postgres, false, Some("1.4.1"));
+        let s = compute_support(DriverKind::Postgres, false, Some(&caps(true)));
         assert_eq!(s.disable.method, Some(Hypopg));
         assert_eq!(s.add.method, Some(Hypopg));
-        let s = compute_support(DriverKind::Postgres, true, Some("1.4.1"));
+        let s = compute_support(DriverKind::Postgres, true, Some(&caps(true)));
         assert_eq!(s.disable.method, Some(Hypopg));
         assert_eq!(s.add.method, Some(Hypopg));
-        // hypopg 1.2 は hide が無い → DDL 経路 (ロックあり。read_only なら不可)。
-        let s = compute_support(DriverKind::Postgres, false, Some("1.2.0"));
+        // hide 系の関数が無い版は → DDL 経路 (ロックあり。read_only なら不可)。
+        let s = compute_support(DriverKind::Postgres, false, Some(&caps(false)));
         assert_eq!(s.disable.method, Some(RollbackDdl));
         assert!(s.disable.locks_table);
-        let s = compute_support(DriverKind::Postgres, true, Some("1.2.0"));
+        let s = compute_support(DriverKind::Postgres, true, Some(&caps(false)));
         assert_eq!(s.disable.unavailable, Some(ReadOnly));
         let s = compute_support(DriverKind::Postgres, false, None);
         assert_eq!(s.disable.method, Some(RollbackDdl));
@@ -868,13 +896,16 @@ mod tests {
     }
 
     #[test]
-    fn hypopg_version_gate() {
-        assert!(hypopg_can_hide("1.3.0"));
-        assert!(hypopg_can_hide("1.4.1"));
-        assert!(hypopg_can_hide("2.0"));
-        assert!(!hypopg_can_hide("1.2.9"));
-        assert!(!hypopg_can_hide("0.9"));
-        assert!(!hypopg_can_hide("garbage"));
+    fn mentions_count_flags_unmatched_references() {
+        // 表名が 3 回出るが、表参照は 1 つだけ (列名・別の修飾子)。差し込み件数 < 言及数になる。
+        let (_, applied, mentioned) = mysql_ignore_index_sql(
+            "SELECT users.id FROM users WHERE users.id = 1",
+            None,
+            "users",
+            "i",
+        )
+        .expect("rewritten");
+        assert_eq!((applied, mentioned), (1, 3));
     }
 
     #[test]

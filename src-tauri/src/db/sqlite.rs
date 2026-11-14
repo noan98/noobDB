@@ -3274,13 +3274,18 @@ async fn run_batch_checked(
 
 impl SqliteConn {
     /// 試算: `BEGIN; DROP INDEX / CREATE INDEX; EXPLAIN QUERY PLAN; ROLLBACK`。DDL は必ず
-    /// ロールバックし、できなかった・future が drop された接続はプールへ戻さず閉じる
-    /// (閉じれば未コミットの変更は残らない)。
+    /// ロールバックし、できなかった・future が drop された接続はプールへ戻さず閉じる。
+    ///
+    /// 時間切れは progress handler で `sqlite3_interrupt` 相当の中断をかけて止める (future を
+    /// drop するだけだと sqlx-sqlite のワーカースレッドで `CREATE INDEX` が走り続け、書き込み
+    /// ロックを握ったままになる)。handler はプールの `after_release` が接続の返却時に外す。
     pub(super) async fn index_whatif(
         &self,
         plan: &super::index_whatif::WhatIfPlan<'_>,
     ) -> Result<super::index_whatif::WhatIfRaw> {
-        use super::index_whatif::{IndexWhatIfAction, SQLITE_TEMP_INDEX};
+        use super::index_whatif::{
+            IndexWhatIfAction, SQLITE_TEMP_INDEX_PREFIX, WHATIF_TIMEOUT_SECS,
+        };
         use sqlx::Connection;
         if !super::sync::sqlite_is_main(self.resolve_db(plan.database.unwrap_or(""))) {
             return Err(AppError::InvalidInput(
@@ -3292,20 +3297,34 @@ impl SqliteConn {
                 let index = plan
                     .index
                     .ok_or_else(|| AppError::InvalidInput("what-if: index is required".into()))?;
-                format!("DROP INDEX {}", quote_ident(index))
+                format!("DROP INDEX main.{}", quote_ident(index))
             }
             IndexWhatIfAction::Add => {
                 let cols: Vec<String> = plan.columns.iter().map(|c| quote_ident(c)).collect();
+                // 既存のインデックス名と衝突しないよう、時刻由来の接尾辞を付ける。
+                let nanos = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_nanos());
                 format!(
-                    "CREATE INDEX {} ON {} ({})",
-                    quote_ident(SQLITE_TEMP_INDEX),
+                    "CREATE INDEX main.{} ON {} ({})",
+                    quote_ident(&format!("{SQLITE_TEMP_INDEX_PREFIX}_{nanos}")),
                     quote_ident(plan.table),
                     cols.join(", ")
                 )
             }
         };
+        let started = Instant::now();
+        // 外側の tokio のタイムアウトより少し手前で中断し、ROLLBACK まで確実に通す。
+        let deadline =
+            started + std::time::Duration::from_secs(WHATIF_TIMEOUT_SECS.saturating_sub(5));
         let mut guard = super::server_stop::ReleaseGuard::new(self.pool.acquire().await?);
         guard.arm();
+        match guard.conn.lock_handle().await {
+            Ok(mut handle) => handle.set_progress_handler(1000, move || Instant::now() < deadline),
+            Err(e) => {
+                tracing::debug!(error = %e, "progress handler not installed (sqlite what-if)")
+            }
+        }
         // 古いスキーマで準備された文を使わないよう、キャッシュを捨ててスキーマを再検証する。
         guard.conn.clear_cached_statements().await?;
         sqlx::query("SELECT 1 FROM sqlite_master LIMIT 1")
@@ -3332,11 +3351,19 @@ impl SqliteConn {
         if rolled_back && cleared {
             guard.keep();
         }
-        let after = body?;
+        let after = match body {
+            Ok(a) => a,
+            // 時間切れの中断は SQLITE_INTERRUPT のエラーで返るので、タイムアウトとして返す。
+            Err(_) if Instant::now() >= deadline => {
+                return Err(AppError::Timeout(WHATIF_TIMEOUT_SECS));
+            }
+            Err(e) => return Err(e),
+        };
         Ok(super::index_whatif::WhatIfRaw {
             before,
             after,
             statements: vec![format!("BEGIN; {ddl}; ...; ROLLBACK")],
+            refs: None,
         })
     }
 }

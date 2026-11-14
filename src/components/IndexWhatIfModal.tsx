@@ -297,7 +297,7 @@ export function IndexWhatIfModal({
       <ModalFooter>
         <div style={{ flex: 1 }} />
         <Button type="button" variant="secondary" onClick={onClose}>
-          {t("indexWhatIfClose")}
+          {t("indexWhatIfCancel")}
         </Button>
         <PressableButton type="button" variant="primary" disabled={!runnable} onClick={() => void run()}>
           {running ? t("indexWhatIfRunning") : t("indexWhatIfRun")}

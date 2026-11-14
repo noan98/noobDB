@@ -1,7 +1,10 @@
 import { lazy, Suspense, useState } from "react";
+import { Flex } from "@chakra-ui/react";
 import type { IndexWhatIfOutcome } from "../api/tauri";
 import { useT } from "../i18n";
 import type { WhatIfDescriptor } from "./IndexWhatIfModal";
+import { Callout } from "./Callout";
+import { SqlPreview } from "./SqlPreview";
 import { Tooltip } from "./Tooltip";
 import { Button } from "./ui";
 
@@ -12,6 +15,36 @@ const PlanCompareModal = lazy(() =>
 const IndexWhatIfModal = lazy(() =>
   import("./IndexWhatIfModal").then((m) => ({ default: m.IndexWhatIfModal })),
 );
+
+/**
+ * 比較の下の補足: 試算で実際に実行した文 (折りたたみ) と、MySQL の IGNORE INDEX が一部の表参照にしか
+ * 効いていない可能性の注意。
+ */
+function WhatIfFootnote({ outcome, driver }: { outcome: IndexWhatIfOutcome; driver: string }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const partial =
+    outcome.refsApplied !== null &&
+    outcome.refsMentioned !== null &&
+    outcome.refsApplied < outcome.refsMentioned;
+  return (
+    <Flex direction="column" gap="2">
+      {partial && <Callout tone="warning">{t("indexWhatIfPartialRefs")}</Callout>}
+      <Flex>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? t("indexWhatIfHideStatements") : t("indexWhatIfShowStatements")}
+        </Button>
+      </Flex>
+      {open && <SqlPreview sql={outcome.statements.join(";\n")} driver={driver} />}
+    </Flex>
+  );
+}
 
 /**
  * EXPLAIN タブのバーに置く「インデックス試算」(#2326)。押すと試算の条件を選ぶモーダルが開き、
@@ -87,6 +120,7 @@ export function IndexWhatIfButton({
                 table: desc.table,
               }),
             }}
+            footnote={<WhatIfFootnote outcome={step.outcome} driver={driver} />}
             onClose={() => setStep(null)}
           />
         )}

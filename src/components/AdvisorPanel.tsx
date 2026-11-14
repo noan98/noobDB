@@ -1,4 +1,3 @@
-import { IndexWhatIfButton } from "./IndexWhatIfButton";
 import { useCallback, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import { motion } from "motion/react";
@@ -46,6 +45,7 @@ import { AiAdvisorExplain } from "./AiAdvisorExplain";
 import { SeverityBadge } from "./severityBadge";
 import { AlterCostNotice } from "./AlterCostNotice";
 import { Callout } from "./Callout";
+import { IndexWhatIfButton } from "./IndexWhatIfButton";
 import { formatBytes } from "./tableSize";
 import { SqlPreview } from "./SqlPreview";
 import { EmptyState } from "./EmptyState";

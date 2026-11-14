@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { Box, chakra, Flex } from "@chakra-ui/react";
 import type { QueryResult } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
@@ -47,6 +47,8 @@ interface Props {
     beforePane: string;
     afterPane: string;
   };
+  /** 比較の下に出す補足 (インデックス試算が実行した文など、#2326)。未指定なら何も出さない。 */
+  footnote?: ReactNode;
   onClose: () => void;
 }
 
@@ -111,6 +113,7 @@ export function PlanCompareModal({
   beforeAnalyze,
   afterAnalyze,
   labels,
+  footnote,
   onClose,
 }: Props) {
   const t = useT();
@@ -374,6 +377,7 @@ export function PlanCompareModal({
                 </Flex>
               ))}
             </Flex>
+            {footnote}
           </>
         )}
       </ModalBody>

@@ -2076,6 +2076,8 @@
     },
     "elapsedMs": 12,
     "method": "rollbackDdl",
+    "refsApplied": 1,
+    "refsMentioned": 2,
     "statements": [
       "BEGIN; DROP INDEX x; ...; ROLLBACK"
     ]

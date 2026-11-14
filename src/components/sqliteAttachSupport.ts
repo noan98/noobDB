@@ -6,23 +6,29 @@ import { isSqliteMainDatabase } from "./sqlDialect";
  *
  * Rust の `Connection::reject_if_attached_sqlite` の `what` と 1 対 1 で対応する
  * (`rebuildTable` = "table rebuild" / `syncApply` = "sync apply" /
- * `transferCreateReplace` = "data transfer (create / replace)")。追記 / upsert の転送は
+ * `transferCreateReplace` = "data transfer (create / replace)" / `indexWhatIf` = "index what-if" (#2326))。追記 / upsert の転送は
  * 修飾した INSERT で動くので、ここには含めない。集合の一致は `sqliteAttachSupportParity.test.ts` が
  * Rust のソースを読んで固定する。
  */
-export type AttachedRejectedOperation = "rebuildTable" | "syncApply" | "transferCreateReplace";
+export type AttachedRejectedOperation =
+  | "rebuildTable"
+  | "syncApply"
+  | "transferCreateReplace"
+  | "indexWhatIf";
 
 /** 操作 → バックエンドの `what` 文言 (パリティテスト用)。 */
 export const ATTACHED_REJECTED_OPERATIONS: Record<AttachedRejectedOperation, string> = {
   rebuildTable: "table rebuild",
   syncApply: "sync apply",
   transferCreateReplace: "data transfer (create / replace)",
+  indexWhatIf: "index what-if",
 };
 
 const REASON_KEYS: Record<AttachedRejectedOperation, I18nKey> = {
   rebuildTable: "attachedUnsupportedRebuild",
   syncApply: "schemaCompareApplyAttachedUnsupported",
   transferCreateReplace: "attachedUnsupportedTransfer",
+  indexWhatIf: "attachedUnsupportedIndexWhatIf",
 };
 
 /** `database` が SQLite のアタッチ別名 (`main` / 空以外) か。MySQL / PostgreSQL は常に false。 */

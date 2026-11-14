@@ -6643,13 +6643,32 @@ fn copy_progress(
 // ── インデックスの試算 (#2326) ──
 
 impl PostgresConn {
-    /// hypopg 拡張のバージョン。入っていなければ `None`。
-    pub(super) async fn hypopg_version(&self) -> Result<Option<String>> {
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT extversion FROM pg_extension WHERE extname = 'hypopg'")
-                .fetch_optional(&self.pool)
-                .await?;
-        Ok(row.map(|r| r.0))
+    /// hypopg 拡張の情報 (入っていなければ `None`)。拡張のスキーマと、非表示の関数の有無を調べる。
+    pub(super) async fn hypopg_caps(&self) -> Result<Option<super::index_whatif::HypopgCaps>> {
+        let row: Option<(String, String)> = sqlx::query_as(
+            "SELECT e.extversion, n.nspname FROM pg_extension e \
+             JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'hypopg'",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some((version, schema)) = row else {
+            return Ok(None);
+        };
+        // 非表示の関数は版によって有無が違う (1.4 で入った可能性が高い) ので、版の比較ではなく
+        // 関数が実在するかを見る。
+        let q = super::sync::quote_ident(DriverKind::Postgres, &schema);
+        let has: bool = sqlx::query_scalar(
+            "SELECT to_regprocedure($1) IS NOT NULL AND to_regprocedure($2) IS NOT NULL",
+        )
+        .bind(format!("{q}.hypopg_hide_index(oid)"))
+        .bind(format!("{q}.hypopg_unhide_all_indexes()"))
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(Some(super::index_whatif::HypopgCaps {
+            version,
+            schema,
+            can_hide: has,
+        }))
     }
 
     /// 試算 (`index_whatif`) を 1 本の専用接続で実行する。hypopg の状態はセッション単位なので、
@@ -6694,6 +6713,7 @@ impl PostgresConn {
             before,
             after,
             statements,
+            refs: None,
         })
     }
 }
@@ -6707,6 +6727,7 @@ fn whatif_qualified(schema: &str, name: &str) -> String {
 }
 
 /// hypopg: 仮想インデックスの作成 / インデックスの非表示 → EXPLAIN → 後始末。実体は作らない。
+/// 関数は拡張のスキーマを付けて呼ぶ (`search_path` は対象のスキーマだけ)。
 /// 戻り値の `bool` は接続をプールへ戻してよいか (後始末まで成功したか)。
 async fn whatif_hypopg(
     conn: &mut sqlx::PgConnection,
@@ -6715,6 +6736,15 @@ async fn whatif_hypopg(
     statements: &mut Vec<String>,
 ) -> (Result<(QueryResult, QueryResult)>, bool) {
     use super::index_whatif::IndexWhatIfAction;
+    let Some(caps) = plan.hypopg else {
+        return (
+            Err(AppError::InvalidInput(
+                "what-if: hypopg is not available".into(),
+            )),
+            true,
+        );
+    };
+    let ext = super::sync::quote_ident(DriverKind::Postgres, &caps.schema);
     let body = async {
         let before = run_sql_on(conn, &plan.explain_before).await?;
         match plan.action {
@@ -6723,12 +6753,15 @@ async fn whatif_hypopg(
                     .index
                     .ok_or_else(|| AppError::InvalidInput("what-if: index is required".into()))?;
                 let qualified = whatif_qualified(schema, index);
-                statements.push(format!("SELECT hypopg_hide_index('{qualified}'::regclass)"));
-                let hidden: bool =
-                    sqlx::query_scalar("SELECT hypopg_hide_index($1::text::regclass)")
-                        .bind(&qualified)
-                        .fetch_one(&mut *conn)
-                        .await?;
+                statements.push(format!(
+                    "SELECT {ext}.hypopg_hide_index('{qualified}'::regclass)"
+                ));
+                let hidden: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                    "SELECT {ext}.hypopg_hide_index($1::text::regclass)"
+                )))
+                .bind(&qualified)
+                .fetch_one(&mut *conn)
+                .await?;
                 if !hidden {
                     return Err(AppError::InvalidInput(
                         "what-if: hypopg could not hide the index".into(),
@@ -6747,13 +6780,15 @@ async fn whatif_hypopg(
                     cols.join(", ")
                 );
                 statements.push(format!(
-                    "SELECT hypopg_create_index('{}')",
+                    "SELECT {ext}.hypopg_create_index('{}')",
                     ddl.replace('\'', "''")
                 ));
-                sqlx::query("SELECT * FROM hypopg_create_index($1)")
-                    .bind(&ddl)
-                    .fetch_all(&mut *conn)
-                    .await?;
+                sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "SELECT * FROM {ext}.hypopg_create_index($1)"
+                )))
+                .bind(&ddl)
+                .fetch_all(&mut *conn)
+                .await?;
             }
         }
         let after = run_sql_on(conn, &plan.explain_before).await?;
@@ -6761,21 +6796,24 @@ async fn whatif_hypopg(
     }
     .await;
     // 成否にかかわらず、このセッションに残る仮想インデックスと非表示を消す。
-    let mut clean = sqlx::query("SELECT hypopg_reset()")
+    let mut clean = sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {ext}.hypopg_reset()")))
         .execute(&mut *conn)
         .await
         .is_ok();
-    if plan.hypopg_hide {
-        clean &= sqlx::query("SELECT hypopg_unhide_all_indexes()")
-            .execute(&mut *conn)
-            .await
-            .is_ok();
+    if caps.can_hide {
+        clean &= sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT {ext}.hypopg_unhide_all_indexes()"
+        )))
+        .execute(&mut *conn)
+        .await
+        .is_ok();
     }
     (body, clean)
 }
 
 /// DDL 経路: `BEGIN; SET LOCAL lock_timeout; DROP INDEX; EXPLAIN; ROLLBACK`。DROP INDEX は
-/// ACCESS EXCLUSIVE ロックを取るので `lock_timeout` で待ちを制限する。
+/// ACCESS EXCLUSIVE ロックを取るので `lock_timeout` で待ちを制限する。制約 (UNIQUE / 外部キーの
+/// 参照先など) の裏にあるインデックスは DROP できないので、ロックを取る前に理由つきで断る。
 async fn whatif_rollback_ddl(
     conn: &mut sqlx::PgConnection,
     plan: &super::index_whatif::WhatIfPlan<'_>,
@@ -6788,6 +6826,26 @@ async fn whatif_rollback_ddl(
             true,
         );
     };
+    let qualified = whatif_qualified(schema, index);
+    let backs_constraint: Result<bool> = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conindid = $1::text::regclass)",
+    )
+    .bind(&qualified)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(Into::into);
+    match backs_constraint {
+        Ok(true) => {
+            return (
+                Err(AppError::InvalidInput(format!(
+                    "what-if: index {index} backs a constraint (UNIQUE / foreign key); it cannot be dropped, so it cannot be tried without hypopg"
+                ))),
+                true,
+            )
+        }
+        Ok(false) => {}
+        Err(e) => return (Err(e), true),
+    }
     let before = match run_sql_on(conn, &plan.explain_before).await {
         Ok(r) => r,
         Err(e) => return (Err(e), true),
@@ -6802,7 +6860,11 @@ async fn whatif_rollback_ddl(
         )))
         .execute(&mut *conn)
         .await?;
-        let drop = format!("DROP INDEX {}", whatif_qualified(schema, index));
+        // 万一クライアントが途切れても、開いたままのトランザクション (= ロックの保持) を残さない。
+        sqlx::raw_sql("SET LOCAL idle_in_transaction_session_timeout = '30s'")
+            .execute(&mut *conn)
+            .await?;
+        let drop = format!("DROP INDEX {qualified}");
         statements.push(format!("BEGIN; {drop}; ...; ROLLBACK"));
         sqlx::raw_sql(sqlx::AssertSqlSafe(drop))
             .execute(&mut *conn)

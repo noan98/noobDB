@@ -739,7 +739,7 @@ const SESSION_READ_EXECUTES_SELECT = new Set([
  * 解析は同一ファイル内で辿れる関数に限る (他モジュールの関数の中身は見ない)。
  */
 const CONNECTION_READ_METHODS = new Set([
-  "index_whatif_hypopg_version",
+  "index_whatif_hypopg",
   "driver_kind",
   "connect",
   "transaction_active",
