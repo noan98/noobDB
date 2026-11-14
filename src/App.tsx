@@ -663,6 +663,8 @@ import {
   type PersistedTab,
   type PersistedWorkspace,
 } from "./tabPersistence";
+import { applyTabDrop, type TabDropTarget } from "./tabPaneDrop";
+import { TabDragOverlay } from "./components/TabDragOverlay";
 import { orderAfterPinChange, pinnedFirst, reorderIfPermutation } from "./tabReorder";
 import { applyRename, autoTitleOnRun, deriveResultTabTitle as deriveTitleFromSql } from "./tabTitle";
 import { applySubsequenceOrder } from "./connectionOrder";
@@ -3085,6 +3087,19 @@ export default function App() {
     [setPanes, panesRef],
   );
 
+  // タブを `target` へ移す共通経路 (#2332)。メニュー操作 (`moveTabToOtherPane`) もタブのドラッグ&ドロップも
+  // 同じ純ロジック (`applyTabDrop`) を通す。元のペインが空になれば取り除かれ 1 ペインへ戻る。
+  // `tabs` は触らないので、ストリーミング中のタブの購読は移動しても途切れない。
+  const dropTabOnPane = useCallback(
+    (tabId: string, target: TabDropTarget) => {
+      const result = applyTabDrop(panesRef.current, tabId, target, newPaneId);
+      if (!result) return;
+      setPanes(result.panes);
+      setActivePaneId(result.activePaneId);
+    },
+    [setPanes, panesRef],
+  );
+
   // Move a single tab to the other pane (creating it if needed). A source pane
   // emptied by the move is dropped, collapsing back to a single pane.
   const moveTabToOtherPane = useCallback(
@@ -3092,33 +3107,10 @@ export default function App() {
       const prev = panesRef.current;
       const source = prev.find((p) => p.tabIds.includes(tabId));
       if (!source) return;
-      const idx = source.tabIds.indexOf(tabId);
-      const remaining = source.tabIds.filter((id) => id !== tabId);
-      const sourceActive =
-        source.activeTabId === tabId ? (remaining[idx] ?? remaining[idx - 1] ?? null) : source.activeTabId;
-      if (prev.length >= 2) {
-        const target = prev.find((p) => p.id !== source.id)!;
-        let next = prev.map((p) => {
-          if (p.id === source.id) return { ...p, tabIds: remaining, activeTabId: sourceActive };
-          if (p.id === target.id) return { ...p, tabIds: [...p.tabIds, tabId], activeTabId: tabId };
-          return p;
-        });
-        if (remaining.length === 0) next = next.filter((p) => p.id !== source.id);
-        setPanes(next);
-        setActivePaneId(target.id);
-      } else {
-        if (remaining.length === 0) return;
-        const newPid = newPaneId();
-        setPanes([
-          ...prev.map((p) =>
-            p.id === source.id ? { ...p, tabIds: remaining, activeTabId: sourceActive } : p,
-          ),
-          { id: newPid, tabIds: [tabId], activeTabId: tabId },
-        ]);
-        setActivePaneId(newPid);
-      }
+      const other = prev.find((p) => p.id !== source.id);
+      dropTabOnPane(tabId, other ? { kind: "append", paneId: other.id } : { kind: "split" });
     },
-    [setPanes, panesRef],
+    [dropTabOnPane, panesRef],
   );
 
   // Reorder tabs within a pane via drag/keyboard. `orderedIds` is the
@@ -13296,6 +13288,7 @@ export default function App() {
     setStatus,
     setTransferSource,
     splitPane,
+    dropTabOnPane,
     stopTab,
     toggleRowDeleteForTab,
     undoCellEditForTab,
@@ -16345,6 +16338,7 @@ export default function App() {
         surface={workspaceView !== "workspace" || !sessionId}
         isBlocked={() => overlayOpenRef.current}
       />
+      <TabDragOverlay />
       {quickLauncherVisible && (
         <QuickLauncher
           open={quickLauncherOpen}
