@@ -139,7 +139,8 @@ pub mod __test_api {
     pub use crate::db::{key_is_unique_in, ResolvedRowKey, RowKeyKind};
     pub use crate::error::AppError;
     pub use crate::flight_recorder::undo::{
-        build_redo_plan, build_undo_plan, UndoConflict, UndoPlan,
+        build_redo_plan, build_redo_plan_with_columns, build_undo_plan,
+        build_undo_plan_with_columns, UndoConflict, UndoPlan,
     };
     pub use crate::flight_recorder::{NewWriteCapture, WriteCaptureRecord, WriteCaptureSummary};
     pub use crate::plan_watch::{

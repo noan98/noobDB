@@ -26,7 +26,7 @@ use crate::db::types::{QueryResult, Value};
 use crate::db::{DriverKind, WriteKind, DEFAULT_CAPTURE_ROW_CAP};
 use crate::error::{AppError, Result};
 use crate::flight_recorder::undo::{
-    build_redo_plan_with_generated, build_undo_plan_with_generated, invert_for_redo, UndoConflict,
+    build_redo_plan_with_columns, build_undo_plan_with_columns, invert_for_redo, UndoConflict,
 };
 use crate::flight_recorder::{persist_capture, store as flight_store, WriteCaptureSummary};
 use crate::state::AppState;
@@ -956,10 +956,29 @@ async fn plan_flight(
         .generated_columns(record.database.as_deref(), &record.table)
         .await
         .unwrap_or_default();
+    // PostgreSQL の GENERATED ALWAYS AS IDENTITY 列は、値を明示した再 INSERT に
+    // OVERRIDING SYSTEM VALUE が要る (#2343)。
+    let always_identity = session
+        .conn
+        .always_identity_columns(record.database.as_deref(), &record.table)
+        .await
+        .unwrap_or_default();
     let plan = if redo {
-        build_redo_plan_with_generated(&record, &current_rows, force, &generated_columns)
+        build_redo_plan_with_columns(
+            &record,
+            &current_rows,
+            force,
+            &generated_columns,
+            &always_identity,
+        )
     } else {
-        build_undo_plan_with_generated(&record, &current_rows, force, &generated_columns)
+        build_undo_plan_with_columns(
+            &record,
+            &current_rows,
+            force,
+            &generated_columns,
+            &always_identity,
+        )
     };
     Ok((plan, record))
 }

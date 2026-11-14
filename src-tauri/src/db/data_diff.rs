@@ -317,6 +317,17 @@ pub(crate) fn key_signature(key: &[Value]) -> String {
 /// `INSERT`s come first, then `UPDATE`s, then `DELETE`s; `DELETE`s appear only
 /// when `allow_delete` is set.
 pub fn generate_data_sync_sql(diff: &DataDiff, allow_delete: bool) -> SyncPlan {
+    generate_data_sync_sql_with_identity(diff, allow_delete, &[])
+}
+
+/// [`generate_data_sync_sql`] に PostgreSQL の `GENERATED ALWAYS AS IDENTITY` 列名を渡す版 (#2343)。
+/// INSERT がその列の値を明示するとき (Undo / Redo が行を元の値で戻す場合など) は
+/// `OVERRIDING SYSTEM VALUE` を付けないと 428C9 で失敗する。付けるのは PostgreSQL の INSERT だけ。
+pub fn generate_data_sync_sql_with_identity(
+    diff: &DataDiff,
+    allow_delete: bool,
+    always_identity_columns: &[String],
+) -> SyncPlan {
     let driver = diff.target_driver;
     let table_ident = quote_ident(driver, &diff.table);
     let mut statements: Vec<SyncStatement> = Vec::new();
@@ -375,7 +386,15 @@ pub fn generate_data_sync_sql(diff: &DataDiff, allow_delete: bool) -> SyncPlan {
                     let (ins_columns, ins_values) =
                         without_generated(&diff.columns, &values, &diff.generated_columns);
                     statements.push(SyncStatement {
-                        sql: insert_sql(driver, &table_ident, &ins_columns, &ins_values),
+                        sql: insert_sql(
+                            driver,
+                            &table_ident,
+                            &ins_columns,
+                            &ins_values,
+                            ins_columns
+                                .iter()
+                                .any(|c| always_identity_columns.contains(c)),
+                        ),
                         table: diff.table.clone(),
                         kind: SyncKind::InsertRow,
                         destructive: false,
@@ -656,6 +675,7 @@ fn insert_sql(
     table_ident: &str,
     columns: &[String],
     values: &[Value],
+    overriding_system_value: bool,
 ) -> String {
     let cols = columns
         .iter()
@@ -667,7 +687,13 @@ fn insert_sql(
         .map(|v| sql_literal(driver, v))
         .collect::<Vec<_>>()
         .join(", ");
-    format!("INSERT INTO {table_ident} ({cols}) VALUES ({vals})")
+    // ALWAYS identity 列へ値を明示するときだけ付ける (PostgreSQL 専用の構文)。
+    let overriding = if overriding_system_value && driver == DriverKind::Postgres {
+        " OVERRIDING SYSTEM VALUE"
+    } else {
+        ""
+    };
+    format!("INSERT INTO {table_ident} ({cols}){overriding} VALUES ({vals})")
 }
 
 /// `UPDATE` setting only the changed columns, keyed on the primary key. Returns
@@ -1084,6 +1110,54 @@ mod tests {
                 format!("UPDATE {t} SET {} = 'a2' WHERE {} = 1", q("name"), q("id")),
                 "{driver:?}"
             );
+        }
+    }
+
+    #[test]
+    fn always_identity_insert_gets_overriding_system_value_on_postgres_only() {
+        let columns = cols();
+        let pk = vec![0usize];
+        let diffs = compute_data_diff(&columns, &pk, &[row(3, "c", 30)], &[]);
+        for driver in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
+            let diff = DataDiff {
+                key_kind: Default::default(),
+                target_driver: driver,
+                table: "scores".to_string(),
+                column_types: vec!["BIGINT".to_string(); columns.len()],
+                columns: columns.clone(),
+                primary_key: vec!["id".to_string()],
+                rows: diffs.clone(),
+                truncated: false,
+                source_count: 1,
+                target_count: 0,
+                generated_columns: vec!["score".to_string()],
+                verify_only: false,
+            };
+            let q = |c: &str| quote_ident(driver, c);
+            let t = quote_ident(driver, "scores");
+            let with = generate_data_sync_sql_with_identity(&diff, false, &["id".to_string()]);
+            let overriding = if driver == DriverKind::Postgres {
+                " OVERRIDING SYSTEM VALUE"
+            } else {
+                ""
+            };
+            assert_eq!(
+                with.statements[0].sql,
+                format!(
+                    "INSERT INTO {t} ({}, {}){overriding} VALUES (3, 'c')",
+                    q("id"),
+                    q("name")
+                ),
+                "{driver:?}"
+            );
+            // identity 列が INSERT に含まれない / 指定が空なら付かない。
+            for list in [vec![], vec!["score".to_string()]] {
+                let without = generate_data_sync_sql_with_identity(&diff, false, &list);
+                assert!(
+                    !without.statements[0].sql.contains("OVERRIDING"),
+                    "{driver:?}"
+                );
+            }
         }
     }
 

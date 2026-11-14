@@ -2007,6 +2007,27 @@ impl PostgresConn {
         Ok(rows.into_iter().map(|(n,)| n).collect())
     }
 
+    /// `GENERATED ALWAYS AS IDENTITY` 列の列名 (#2343)。`database` はスキーマ名で、
+    /// `None` なら接続の現在のスキーマ。
+    pub async fn always_identity_columns(
+        &self,
+        database: Option<&str>,
+        table: &str,
+    ) -> Result<Vec<String>> {
+        let schema = database.filter(|d| !d.is_empty());
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT column_name::text FROM information_schema.columns \
+             WHERE table_schema = COALESCE($1, current_schema()) AND table_name = $2 \
+               AND is_identity = 'YES' AND identity_generation = 'ALWAYS' \
+             ORDER BY ordinal_position",
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(n,)| n).collect())
+    }
+
     /// `schema` の全テーブルの列を 1 回の問い合わせで取得する (#1255)。
     /// [`PgConn::columns`] の `table_name = $2` 条件を外し、PK / FK の副問い合わせを
     /// (テーブル名, 列名) で結合し直しただけなので、列ごとの値・並び
