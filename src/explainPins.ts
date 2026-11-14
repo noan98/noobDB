@@ -31,6 +31,11 @@ export function pinExplainPlan(scope: string, plan: PinnedPlan): void {
   emit();
 }
 
+/** `scope` に固定された計画を今すぐ読む (フック外用。統計の手当ての前に未固定なら自動で固定するのに使う, #2327)。 */
+export function getExplainPin(scope: string): PinnedPlan | null {
+  return pins.get(scope) ?? null;
+}
+
 export function clearExplainPin(scope: string): void {
   if (pins.delete(scope)) emit();
 }

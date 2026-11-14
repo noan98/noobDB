@@ -1924,6 +1924,7 @@ impl PostgresConn {
                                 AND gcl.relname = c.table_name
                                 AND ga.attname = c.column_name) = 'v'
                        THEN 'VIRTUAL GENERATED' ELSE 'STORED GENERATED' END
+                WHEN c.is_identity = 'YES' AND c.identity_generation = 'ALWAYS' THEN 'IDENTITY ALWAYS'
                 WHEN c.is_identity = 'YES' THEN 'IDENTITY'
                 ELSE '' END AS extra,
                 fk.ref_table,
@@ -2033,6 +2034,7 @@ impl PostgresConn {
                                 AND gcl.relname = c.table_name
                                 AND ga.attname = c.column_name) = 'v'
                        THEN 'VIRTUAL GENERATED' ELSE 'STORED GENERATED' END
+                WHEN c.is_identity = 'YES' AND c.identity_generation = 'ALWAYS' THEN 'IDENTITY ALWAYS'
                 WHEN c.is_identity = 'YES' THEN 'IDENTITY'
                 ELSE '' END AS extra,
                 fk.ref_table,

@@ -67,6 +67,7 @@ import { type Status } from "../statusMessage";
 import { estimatedTotalPages, exactCountKey, matchingExactCount, totalPagesFromCount } from "../pagination";
 import { Tooltip } from "./Tooltip";
 import type { Tab, PaneState } from "../App";
+import type { TabDropTarget } from "../tabPaneDrop";
 import type { Settings } from "../settings";
 import type { AiSqlEditorAction } from "../ai/sqlAssist";
 import { useStoreSelector, type TabPaneStore } from "../tabPaneStore";
@@ -75,6 +76,8 @@ import { useStoreSelector, type TabPaneStore } from "../tabPaneStore";
 const QueryEditor = lazy(() => import("./QueryEditor").then((m) => ({ default: m.QueryEditor })));
 const ResultGrid = lazy(() => import("./ResultGrid").then((m) => ({ default: m.ResultGrid })));
 const PreviewGrid = lazy(() => import("./PreviewGrid").then((m) => ({ default: m.PreviewGrid })));
+import type { StatsRunOutcome } from "./StatsAdvisorPanel";
+
 const ExplainViewer = lazy(() => import("./ExplainViewer").then((m) => ({ default: m.ExplainViewer })));
 const PaginationBar = lazy(() => import("./PaginationBar").then((m) => ({ default: m.PaginationBar })));
 const ChartView = lazy(() => import("./ChartView").then((m) => ({ default: m.ChartView })));
@@ -180,6 +183,8 @@ export interface PaneActions {
   discardEditsAndPreviewForTab: (tabId: string) => void;
   explainForTab: (tab: Tab, sql: string) => void;
   fetchAllForTab: (tab: Tab) => void;
+  /** 結果グリッドのエラー空状態から、エディタのエラー位置へスクロールしてハイライトする (#2330)。 */
+  revealQueryError: (paneId: string, sql: string, error: string | null) => void;
   focusPane: (paneId: string) => void;
   goToPageInTab: (tabId: string, page: number, sizeOverride?: number) => unknown;
   handleCloseTab: (id: string) => void;
@@ -232,6 +237,8 @@ export interface PaneActions {
   resolveParamsThen: (tab: Tab, sql: string, mode: "run" | "runNewTab" | "preview" | "explain") => void;
   runBatchInTab: (tabId: string, sql: string, stopOnError: boolean, tabOverride?: Tab) => unknown;
   runExplainInTab: (tabId: string, sql: string, analyze: boolean) => unknown;
+  /** 統計の手当て (ANALYZE / 拡張統計 / ヒストグラム) の SQL を、確認ゲートを通して順に流す (#2327)。 */
+  runStatsStatements: (statements: string[], database: string | null) => Promise<StatsRunOutcome>;
   runInTabWithGate: (tab: Tab, sql: string, opts?: { newTab?: boolean; fresh?: boolean }) => void;
   runQueryInTab: (tabId: string, sql: string, paginatableBase?: string | null) => unknown;
   selectTab: (paneId: string, tabId: string) => void;
@@ -252,6 +259,8 @@ export interface PaneActions {
   setStatus: (status: Status) => void;
   setTransferSource: (source: { kind: "query"; database: string | null; sql: string }) => void;
   splitPane: () => void;
+  /** タブのドラッグ&ドロップ (#2332) によるペイン間の移動 / 分割。 */
+  dropTabOnPane: (tabId: string, target: TabDropTarget) => void;
   stopTab: (tab: Tab) => unknown;
   toggleRowDeleteForTab: (tabId: string, rowKey: string) => void;
   undoCellEditForTab: (tabId: string) => void;
@@ -599,6 +608,7 @@ export const PaneView = memo(
     return (
       <Flex
         key={pane.id}
+        data-pane-zone={pane.id}
         direction="column"
         flex="1 1 auto"
         minW={0}
@@ -624,6 +634,8 @@ export const PaneView = memo(
           onRenameCancel={actions.cancelRenameTab}
           onSplit={onSplit}
           splitMode={split ? "close" : "split"}
+          paneId={paneId}
+          onTabDrop={actions.dropTabOnPane}
         />
         <Flex direction="column" flex="1" overflow="hidden">
           {tab ? (
@@ -708,6 +720,8 @@ export const PaneView = memo(
                           (sel: { anchor: number; head: number }) =>
                             editorSelectionRef.current.set(tab.id, sel),
                         )}
+                        runtimeError={tab.queryError ?? (tab.streaming ? undefined : null)}
+                        runtimeErrorSql={tab.lastExecutedSql}
                         running={tab.streaming && !tab.previewStreaming}
                         previewRunning={tab.previewStreaming}
                         onRun={gridStable.fn(`${tab.id}:ed:run`, (sql: string) =>
@@ -912,6 +926,30 @@ export const PaneView = memo(
                                           sessionId,
                                           sql: tab.explainSourceSql ?? getTabSql(tab),
                                           database: tab.database ?? selectedProfile.database ?? null,
+                                        }
+                                      : undefined
+                                  }
+                                  stats={
+                                    sessionId && selectedProfile
+                                      ? {
+                                          sessionId,
+                                          database: tab.database ?? selectedProfile.database ?? null,
+                                          sql: tab.explainSourceSql ?? getTabSql(tab),
+                                          readOnly,
+                                          runStatements: (statements) =>
+                                            actions.runStatsStatements(
+                                              statements,
+                                              tab.database ?? selectedProfile.database ?? null,
+                                            ),
+                                          onReexplain: () => {
+                                            if (tab.streaming) return false;
+                                            void actions.runExplainInTab(
+                                              tab.id,
+                                              getTabSql(tab),
+                                              !!tab.explainAnalyze,
+                                            );
+                                            return true;
+                                          },
                                         }
                                       : undefined
                                   }
@@ -1304,6 +1342,17 @@ export const PaneView = memo(
                                     (secs: number | null) => actions.setAutoRefreshForTab(tab.id, secs),
                                   )}
                                   queryError={tab.queryError ?? null}
+                                  onGotoErrorPosition={
+                                    tab.kind === "query" && tab.lastExecutedSql
+                                      ? gridStable.fn(`${tab.id}:gotoError`, () =>
+                                          actions.revealQueryError(
+                                            pane.id,
+                                            tab.lastExecutedSql,
+                                            tab.queryError ?? null,
+                                          ),
+                                        )
+                                      : undefined
+                                  }
                                   onRetry={
                                     tab.lastExecutedSql
                                       ? gridStable.fn(`${tab.id}:retry`, () => {

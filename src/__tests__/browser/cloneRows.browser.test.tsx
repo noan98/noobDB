@@ -28,7 +28,15 @@ const table = (over: Record<string, unknown>) => ({
 const preview = (ready: boolean, conflicts: unknown[]) => ({
   tables: [
     table({ conflicts }),
-    table({ table: "order_items", rows: 2, rootRows: 0, childRows: 2, conflicts: [] }),
+    table({
+      table: "order_items",
+      rows: 2,
+      rootRows: 0,
+      childRows: 2,
+      conflicts: [],
+      keyColumns: [{ name: "id", status: "unchanged" }],
+      needsPolicy: !ready,
+    }),
   ],
   totalRows: 3,
   cycles: [],
@@ -44,6 +52,7 @@ beforeEach(() => {
       ? preview(false, [{ index: "uq_no", columns: ["order_no"], rows: 1 }])
       : preview(true, []);
   });
+  onCommand("foreign_keys", () => []);
   onCommand("clone_rows", () => ({
     tables: [
       { table: "orders", rows: 1, keyColumns: ["id"], mappings: [{ oldKey: [1], newKey: [3], root: true }] },
@@ -87,6 +96,13 @@ describe("CloneRowsModal", () => {
   it("blocks on a unique conflict, runs after an override, and shows the key mapping", async () => {
     const screen = await render();
     await expect.element(screen.getByTestId("clone-preview")).toBeVisible();
+    // 方針が要る表だけが強調され、チップは warning になる。
+    const emphasized = document.querySelectorAll(
+      '[data-testid="subset-preview-node"] [data-emphasis="true"]',
+    );
+    expect(emphasized.length).toBe(1);
+    expect(emphasized[0]?.closest("[data-table]")?.getAttribute("data-table")).toBe("order_items");
+    expect(emphasized[0]?.querySelector('[data-chip-tone="warning"]')).not.toBeNull();
     await expect
       .element(
         screen.getByText(
@@ -109,7 +125,10 @@ describe("CloneRowsModal", () => {
 
     await screen.getByRole("button", { name: t("cloneRowsExecute") }).click();
     await expect.element(screen.getByTestId("clone-outcome")).toBeVisible();
-    await expect.element(screen.getByText("1 → 3 *")).toBeVisible();
+    await expect.element(screen.getByTestId("clone-mapping")).toBeVisible();
+    expect(document.querySelectorAll('[data-testid="clone-mapping-table"]').length).toBe(2);
+    expect(document.querySelectorAll('[data-testid="clone-mapping-row"][data-root="true"]').length).toBe(1);
+    expect(document.querySelector('[data-root="true"]')?.textContent).toContain(t("cloneRowsMappingRoot"));
     expect(invocationsOf("clone_rows").length).toBe(1);
   });
 });

@@ -305,6 +305,7 @@ const RO_IF_SANDBOX = /\bif\s+sandbox\.read_only\s*\{/;
 const WRITE_CAPABLE: Record<string, WriteCapable> = {
   // --- SQL 文字列経路: ensure_allowed_for_session (= read_only && !is_read_only_sql) ---
   run_query: wc("run_query_inner が ensure_allowed_for_session", /\brun_query_inner\s*\(/),
+  run_maintenance_query: wc("実行前に ensure_allowed_for_session", ESA_SESSION),
   run_query_stream: wc("ストリーム実行前に ensure_allowed_for_session", ESA_SESSION),
   run_query_transaction: VIA_TX,
   run_in_transaction: wc(

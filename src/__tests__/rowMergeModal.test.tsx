@@ -9,12 +9,13 @@ vi.mock("../api/tauri", async (importOriginal) => {
 });
 
 import { RowMergeModal } from "../components/RowMergeModal";
+import { distinctValueCount } from "../components/RowMergeMatrix";
 import { api } from "../api/tauri";
 
 const preview: RowMergePreview = {
   columns: [
-    { name: "id", typeName: "int", locked: true },
-    { name: "phone", typeName: "text", locked: false },
+    { name: "id", typeName: "int", locked: true, generated: false },
+    { name: "phone", typeName: "text", locked: false, generated: false },
   ],
   rows: [
     [1, null],
@@ -137,5 +138,79 @@ describe("RowMergeModal (#2303)", () => {
     mount();
     expect(await screen.findByTestId("row-merge-blockers")).toHaveTextContent("coupon_uses");
     expect(screen.getByRole("button", { name: t("rowMergeRun") })).toBeDisabled();
+  });
+
+  it("食い違う列を強調し、同じ値の列は隠せる (#2322)", async () => {
+    mount();
+    await screen.findByTestId("row-merge-matrix");
+    expect(screen.getByTestId("row-merge-row-phone")).toHaveAttribute("data-differs", "true");
+    expect(screen.getByTestId("row-merge-badge-phone")).toBeInTheDocument();
+    // 鍵付きの列 (id) は食い違っていても警告せず、鍵アイコンだけの中立表示。
+    expect(screen.getByTestId("row-merge-locked-id")).toBeInTheDocument();
+    expect(screen.getByTestId("row-merge-row-id")).toHaveAttribute("data-differs", "false");
+    expect(screen.queryByTestId("row-merge-badge-id")).toBeNull();
+    expect(screen.getByTestId("row-merge-diff-count")).toHaveTextContent(
+      t("rowMergeDiffSummary", { diff: 1, total: 2 }),
+    );
+  });
+
+  it("生成列はマージ後の行で古い値ではなく「再計算」と出す (#2322)", async () => {
+    vi.mocked(api.previewRowMerge).mockResolvedValue({
+      ...preview,
+      columns: [...preview.columns, { name: "total", typeName: "int", locked: true, generated: true }],
+      rows: [
+        [1, null, 10],
+        [2, "555", 20],
+      ],
+      picks: [0, 1, 0],
+    });
+    mount();
+    await screen.findByTestId("row-merge-row-total");
+    expect(screen.getByTestId("row-merge-recomputed-total")).toHaveTextContent(t("rowMergeRecomputed"));
+    expect(screen.getByTestId("row-merge-result-total")).not.toHaveTextContent("10");
+    expect(screen.queryByTestId("row-merge-recomputed-phone")).toBeNull();
+  });
+
+  it("同じ値の列を折りたためる (#2322)", async () => {
+    vi.mocked(api.previewRowMerge).mockResolvedValue({
+      ...preview,
+      columns: [...preview.columns, { name: "country", typeName: "text", locked: false, generated: false }],
+      rows: [
+        [1, null, "JP"],
+        [2, "555", "JP"],
+      ],
+      picks: [0, 1, 0],
+    });
+    mount();
+    await screen.findByTestId("row-merge-row-country");
+    expect(screen.getByTestId("row-merge-row-country")).toHaveAttribute("data-differs", "false");
+    fireEvent.click(screen.getByTestId("row-merge-hide-same"));
+    expect(screen.queryByTestId("row-merge-row-country")).toBeNull();
+    expect(screen.queryByTestId("row-merge-row-id")).toBeNull();
+    expect(screen.getByTestId("row-merge-row-phone")).toBeInTheDocument();
+  });
+
+  it("マージ後の行に選んだ値と採用元が出て、選び直すと更新される (#2322)", async () => {
+    mount();
+    const result = await screen.findByTestId("row-merge-result-phone");
+    expect(result).toHaveTextContent("555");
+    expect(screen.getByTestId("row-merge-source-phone")).toHaveTextContent("2");
+    vi.mocked(api.previewRowMerge).mockResolvedValue({ ...preview, picks: [0, 0] });
+    fireEvent.click(screen.getByTestId("row-merge-cell-phone-0"));
+    await waitFor(() => expect(screen.getByTestId("row-merge-result-phone")).toHaveTextContent("NULL"));
+  });
+
+  it("残す行は keep、重複行は remove として見出しで区別される (#2322)", async () => {
+    mount();
+    await screen.findByTestId("row-merge-matrix");
+    expect(screen.getByTestId("row-merge-head-0")).toHaveAttribute("data-role", "keep");
+    expect(screen.getByTestId("row-merge-head-1")).toHaveAttribute("data-role", "remove");
+  });
+
+  it("distinctValueCount は NULL と文字列 NULL を区別し、全件同値なら 1 (#2322)", () => {
+    expect(distinctValueCount([null, "NULL"])).toBe(2);
+    expect(distinctValueCount(["a", "a", "a"])).toBe(1);
+    expect(distinctValueCount([null, null])).toBe(1);
+    expect(distinctValueCount([1, "1"])).toBe(1);
   });
 });

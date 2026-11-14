@@ -1958,6 +1958,7 @@ pub fn run() {
             commands::ssh::scan_openssh_known_hosts,
             commands::ssh::import_known_hosts,
             commands::query::run_query,
+            commands::query::run_maintenance_query,
             commands::query::run_query_transaction,
             commands::bulk_write::bulk_update_cells,
             commands::bulk_write::insert_generated_rows,
