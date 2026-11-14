@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import {
   api,
-  type CellValue,
   type RowMergeBlocker,
   type RowMergeConflictPolicy,
   type RowMergeRequest,
@@ -15,10 +14,11 @@ import { ImpactTree, type ImpactGroup } from "./ImpactTree";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { blockerMessage, picksToRequest, undoDeclineMessage, type RowMergeTarget } from "./rowMerge";
+import { RowMergeMatrix } from "./RowMergeMatrix";
 import { Segmented } from "./Segmented";
 import { Spinner } from "./Spinner";
 import { SqlPreview } from "./SqlPreview";
-import { Button, Radio } from "./ui";
+import { Button } from "./ui";
 
 /**
  * 重複レコードのマージ (#2303)。残す行と、列ごとにどの行の値を残すかを選び、子テーブルの参照の付け替え件数
@@ -41,14 +41,6 @@ interface Props {
   onConfirm: (sql: string) => Promise<boolean>;
   onApplied: (outcome: Extract<RowMergeOutcome, { status: "applied" }>) => void;
   onClose: () => void;
-}
-
-const MAX_CELL_CHARS = 60;
-
-function cellText(v: CellValue | undefined): string {
-  if (v === null || v === undefined) return "NULL";
-  const s = String(v);
-  return s.length > MAX_CELL_CHARS ? `${s.slice(0, MAX_CELL_CHARS)}…` : s;
 }
 
 export function RowMergeModal({
@@ -204,8 +196,6 @@ export function RowMergeModal({
     ];
   }, [preview, table, t]);
 
-  const rowLabel = (pos: number) => (pos === 0 ? t("rowMergeKeep") : t("rowMergeDuplicate", { n: pos }));
-
   return (
     <Modal
       // no-submit: 破壊的な書き込み。Enter / Cmd+Enter で誤って実行させず、キャンセルが既定
@@ -245,76 +235,16 @@ export function RowMergeModal({
           <>
             <FormSection>
               <FieldLabel as="div">{t("rowMergeColumns")}</FieldLabel>
-              <chakra.div overflowX="auto" maxH="280px" overflowY="auto" data-testid="row-merge-matrix">
-                <chakra.table borderCollapse="collapse" fontSize="sm" width="100%">
-                  <thead>
-                    <tr>
-                      <chakra.th textAlign="left" px="2" py="1" textStyle="caption">
-                        {t("rowMergeColumn")}
-                      </chakra.th>
-                      {order.map((ri, pos) => (
-                        <chakra.th key={ri} textAlign="left" px="2" py="1" textStyle="caption">
-                          <chakra.label display="inline-flex" alignItems="center" gap="1.5" cursor="pointer">
-                            <Radio
-                              name="row-merge-survivor"
-                              checked={pos === 0}
-                              onChange={() => {
-                                setSurvivorIdx(ri);
-                                setOverrides(null);
-                              }}
-                              aria-label={t("rowMergePickSurvivor", { n: ri + 1 })}
-                            />
-                            {t("rowMergeRowN", { n: ri + 1 })} ({rowLabel(pos)})
-                          </chakra.label>
-                        </chakra.th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {preview.columns.map((c, ci) => (
-                      <tr key={c.name}>
-                        <chakra.td px="2" py="0.5" fontFamily="mono" whiteSpace="nowrap">
-                          {c.name}
-                          {c.locked && (
-                            <chakra.span textStyle="caption" color="app.textMuted" ml="1">
-                              {t("rowMergeLocked")}
-                            </chakra.span>
-                          )}
-                        </chakra.td>
-                        {preview.rows.map((row, pos) => {
-                          const picked = preview.picks[ci] === pos;
-                          return (
-                            <chakra.td key={`${c.name}-${pos}`} px="1" py="0.5">
-                              <chakra.button
-                                type="button"
-                                role="radio"
-                                aria-checked={picked}
-                                disabled={c.locked || applying}
-                                onClick={() => pickFrom(c.name, pos)}
-                                width="100%"
-                                textAlign="left"
-                                px="1.5"
-                                py="0.5"
-                                borderRadius="sm"
-                                border="1px solid"
-                                borderColor={picked ? "app.accent" : "transparent"}
-                                bg={picked ? "app.accentHighlight" : "transparent"}
-                                color={row[ci] === null ? "app.textMuted" : "app.text"}
-                                fontFamily="mono"
-                                cursor={c.locked ? "default" : "pointer"}
-                                _hover={c.locked ? undefined : { bg: "app.hover" }}
-                                data-testid={`row-merge-cell-${c.name}-${pos}`}
-                              >
-                                {cellText(row[ci])}
-                              </chakra.button>
-                            </chakra.td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </chakra.table>
-              </chakra.div>
+              <RowMergeMatrix
+                preview={preview}
+                order={order}
+                applying={applying}
+                onPick={pickFrom}
+                onSurvivor={(ri) => {
+                  setSurvivorIdx(ri);
+                  setOverrides(null);
+                }}
+              />
             </FormSection>
 
             <FormSection>
