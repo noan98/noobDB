@@ -253,6 +253,11 @@ pub struct CloneTable {
     pub meta: SubsetTable,
     /// 主キーの列のうち、DB が採番する列 (AUTO_INCREMENT / IDENTITY / serial / rowid)。
     pub auto_columns: Vec<String>,
+    /// 主キー以外の identity 列 (PostgreSQL)。元の値を写すと ALWAYS は 428C9 で失敗し、BY DEFAULT は
+    /// シーケンスが進まず値が重複するので、INSERT から外して DB に採番させる (#2336)。
+    pub identity_columns: Vec<String>,
+    /// `GENERATED ALWAYS` の identity 列。値を明示して入れるときは `OVERRIDING SYSTEM VALUE` が要る。
+    pub always_columns: Vec<String>,
     /// 主キー以外の UNIQUE インデックス (名前, 列)。
     pub unique_indexes: Vec<(String, Vec<String>)>,
 }
@@ -358,7 +363,9 @@ pub fn analyze(
                     ColumnFate::Rule(r)
                 } else if remap.contains(col) {
                     ColumnFate::Remapped
-                } else if t.auto_columns.iter().any(|a| a == col) {
+                } else if t.auto_columns.iter().any(|a| a == col)
+                    || t.identity_columns.iter().any(|a| a == col)
+                {
                     ColumnFate::Auto
                 } else {
                     ColumnFate::Unchanged
@@ -697,6 +704,7 @@ pub fn insert_sql(
     columns: &[String],
     values: &[String],
     returning: &[String],
+    overriding_system_value: bool,
 ) -> String {
     let mut sql = if columns.is_empty() {
         match driver {
@@ -707,8 +715,14 @@ pub fn insert_sql(
         }
     } else {
         let cols: Vec<String> = columns.iter().map(|c| quote_ident(driver, c)).collect();
+        // ALWAYS identity 列へ値を明示するときだけ付ける (PostgreSQL。他ドライバには無い構文)。
+        let overriding = if overriding_system_value && driver == DriverKind::Postgres {
+            " OVERRIDING SYSTEM VALUE"
+        } else {
+            ""
+        };
         format!(
-            "INSERT INTO {table_ref} ({}) VALUES ({})",
+            "INSERT INTO {table_ref} ({}){overriding} VALUES ({})",
             cols.join(", "),
             values.join(", ")
         )
@@ -790,6 +804,30 @@ pub fn auto_columns(
         .collect()
 }
 
+/// 主キー以外の identity 列 (INSERT から外して DB に採番させる) と、`GENERATED ALWAYS` の identity 列
+/// (全列) を返す。identity は PostgreSQL だけ (他ドライバは常に空)。主キーの identity 列は
+/// `auto_columns` 側で扱う (#2336)。
+pub fn identity_columns(
+    driver: DriverKind,
+    columns: &[super::types::TableColumnInfo],
+    primary_key: &[String],
+) -> (Vec<String>, Vec<String>) {
+    if driver != DriverKind::Postgres {
+        return (Vec::new(), Vec::new());
+    }
+    let non_pk = columns
+        .iter()
+        .filter(|c| c.is_identity() && !primary_key.iter().any(|p| p == &c.name))
+        .map(|c| c.name.clone())
+        .collect();
+    let always = columns
+        .iter()
+        .filter(|c| c.is_always_identity())
+        .map(|c| c.name.clone())
+        .collect();
+    (non_pk, always)
+}
+
 /// 方針の指定を表ごとの列名の集合にまとめる (存在しない列の検査用)。
 pub fn rule_columns(rules: &[CloneColumnRule]) -> BTreeMap<&str, BTreeSet<&str>> {
     let mut m: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
@@ -818,6 +856,8 @@ mod tests {
         CloneTable {
             meta: meta(name, cols, pk),
             auto_columns: auto.iter().map(|c| c.to_string()).collect(),
+            identity_columns: Vec::new(),
+            always_columns: Vec::new(),
             unique_indexes: Vec::new(),
         }
     }
@@ -1184,19 +1224,19 @@ mod tests {
         let vals = vec!["1".to_string(), "'x'".to_string()];
         let ret = vec!["id".to_string()];
         assert_eq!(
-            insert_sql(DriverKind::Postgres, "\"t\"", &cols, &vals, &ret),
+            insert_sql(DriverKind::Postgres, "\"t\"", &cols, &vals, &ret, false),
             "INSERT INTO \"t\" (\"a\", \"b\") VALUES (1, 'x') RETURNING \"id\""
         );
         assert_eq!(
-            insert_sql(DriverKind::Mysql, "`t`", &cols, &vals, &ret),
+            insert_sql(DriverKind::Mysql, "`t`", &cols, &vals, &ret, false),
             "INSERT INTO `t` (`a`, `b`) VALUES (1, 'x')"
         );
         assert_eq!(
-            insert_sql(DriverKind::Sqlite, "\"t\"", &[], &[], &ret),
+            insert_sql(DriverKind::Sqlite, "\"t\"", &[], &[], &ret, false),
             "INSERT INTO \"t\" DEFAULT VALUES RETURNING \"id\""
         );
         assert_eq!(
-            insert_sql(DriverKind::Mysql, "`t`", &[], &[], &[]),
+            insert_sql(DriverKind::Mysql, "`t`", &[], &[], &[], false),
             "INSERT INTO `t` () VALUES ()"
         );
     }
@@ -1337,6 +1377,64 @@ mod tests {
         assert_eq!(
             bind_of("blob", &Value::Bytes("00ff".into())),
             Some(SqlBind::Bytes(vec![0, 255]))
+        );
+    }
+
+    #[test]
+    fn identity_columns_split_always_and_by_default() {
+        use super::super::types::TableColumnInfo;
+        let col = |name: &str, extra: &str| TableColumnInfo {
+            name: name.into(),
+            data_type: "bigint".into(),
+            nullable: false,
+            key: String::new(),
+            default: None,
+            extra: extra.into(),
+            referenced_table: None,
+            referenced_column: None,
+            comment: None,
+        };
+        let cols = [
+            col("id", "IDENTITY ALWAYS"),
+            col("seq_no", "IDENTITY ALWAYS"),
+            col("bd", "IDENTITY"),
+            col("note", ""),
+        ];
+        let pk = vec!["id".to_string()];
+        // 主キー以外の identity (ALWAYS / BY DEFAULT とも) が INSERT から外す対象。ALWAYS は主キーも含む。
+        let (omit, always) = identity_columns(DriverKind::Postgres, &cols, &pk);
+        assert_eq!(omit, vec!["seq_no".to_string(), "bd".to_string()]);
+        assert_eq!(always, vec!["id".to_string(), "seq_no".to_string()]);
+        // 他ドライバに identity は無い。
+        for d in [DriverKind::Mysql, DriverKind::Sqlite] {
+            assert_eq!(identity_columns(d, &cols, &pk), (vec![], vec![]));
+        }
+        // 主キーの identity は ALWAYS / BY DEFAULT どちらも auto_columns 側 (従来どおり)。
+        for extra in ["IDENTITY ALWAYS", "IDENTITY"] {
+            assert_eq!(
+                super::auto_columns(DriverKind::Postgres, &[col("id", extra)], &pk, true),
+                pk
+            );
+        }
+        // 主キー以外の identity は auto_columns に入らない (主キーの採番判定ではない)。
+        assert!(super::auto_columns(DriverKind::Postgres, &cols[1..], &pk, true).is_empty());
+    }
+
+    #[test]
+    fn insert_sql_overriding_system_value_is_postgres_only() {
+        let cols = vec!["id".to_string()];
+        let vals = vec!["1".to_string()];
+        assert_eq!(
+            insert_sql(DriverKind::Postgres, "\"t\"", &cols, &vals, &[], true),
+            "INSERT INTO \"t\" (\"id\") OVERRIDING SYSTEM VALUE VALUES (1)"
+        );
+        assert_eq!(
+            insert_sql(DriverKind::Postgres, "\"t\"", &cols, &vals, &[], false),
+            "INSERT INTO \"t\" (\"id\") VALUES (1)"
+        );
+        assert_eq!(
+            insert_sql(DriverKind::Mysql, "`t`", &cols, &vals, &[], true),
+            "INSERT INTO `t` (`id`) VALUES (1)"
         );
     }
 
