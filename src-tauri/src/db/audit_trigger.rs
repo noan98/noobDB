@@ -25,6 +25,8 @@ const MARKER_VERSION: u32 = 1;
 /// MySQL のトリガー名 / PostgreSQL の識別子の最大長 (バイト)。
 const MYSQL_NAME_MAX: usize = 64;
 const PG_NAME_MAX: usize = 63;
+/// SQLite の関数の引数上限 (`SQLITE_MAX_FUNCTION_ARG` 既定 127) に収まる、1 つの `json_object` の列数 (1 列 2 引数)。
+const SQLITE_JSON_PAIRS_MAX: usize = 63;
 
 /// 監査の対象列 (表の現在の列)。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -207,7 +209,20 @@ fn json_object_expr(driver: DriverKind, rec: &str, cols: &[&AuditColumn]) -> Str
         DriverKind::Postgres => "jsonb_build_object",
         DriverKind::Sqlite => "json_object",
     };
-    format!("{func}({})", parts.join(", "))
+    if driver != DriverKind::Sqlite || parts.len() <= SQLITE_JSON_PAIRS_MAX {
+        return format!("{func}({})", parts.join(", "));
+    }
+    // SQLite は関数の引数が 127 個まで (1 列で 2 引数)。63 組ずつの json_object に分け、
+    // 各 `{...}` の中身を文字列として連結して 1 つのオブジェクトにする。json_patch は NULL の
+    // メンバーを「削除」と解釈して NULL 値の列が落ちるので使わない。
+    let chunks: Vec<String> = parts
+        .chunks(SQLITE_JSON_PAIRS_MAX)
+        .map(|c| {
+            // 値はスカラーなので末尾の `}` は閉じ括弧だけ (rtrim で式を複製せずに外せる)。
+            format!("substr(rtrim({func}({}), '}}'), 2)", c.join(", "))
+        })
+        .collect();
+    format!("('{{' || {} || '}}')", chunks.join(" || ',' || "))
 }
 
 fn marker_comment(marker: &Marker) -> Result<String> {
@@ -871,6 +886,59 @@ mod tests {
         assert!(upd.contains("strftime('%Y-%m-%dT%H:%M:%f', 'now'), NULL"));
         assert!(upd.contains("json_object('id', CASE WHEN typeof(NEW.\"id\") = 'blob'"));
         assert!(upd.contains("'name', CASE WHEN typeof(NEW.\"name\") = 'blob'"));
+    }
+
+    /// SQL 中の各 `json_object(` 呼び出しの引数の個数 (括弧の深さ 1 のカンマ + 1) を返す。
+    fn json_object_arg_counts(sql: &str) -> Vec<usize> {
+        let mut counts = Vec::new();
+        let mut rest = sql;
+        while let Some(i) = rest.find("json_object(") {
+            let body = &rest[i + "json_object(".len()..];
+            let (mut depth, mut commas, mut in_str) = (1, 0, false);
+            for ch in body.chars() {
+                match ch {
+                    '\'' => in_str = !in_str,
+                    _ if in_str => {}
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    ',' if depth == 1 => commas += 1,
+                    _ => {}
+                }
+            }
+            counts.push(commas + 1);
+            rest = body;
+        }
+        counts
+    }
+
+    #[test]
+    fn sqlite_wide_table_splits_json_object_under_arg_limit() {
+        // 1 列 2 引数。SQLite の関数引数上限 127 を超えないよう、どの json_object も 126 引数以下 (#2334)。
+        for n in [70usize, 200] {
+            let mut cs = vec![col("id", "INTEGER", true)];
+            cs.extend((1..n).map(|i| col(&format!("c{i}"), "INTEGER", false)));
+            let mut o = opts();
+            o.exclude_columns.clear();
+            let d = build_audit_ddl(DriverKind::Sqlite, "main", "w", &cs, &o, false).unwrap();
+            for sql in &d.create[1..] {
+                let counts = json_object_arg_counts(sql);
+                assert!(counts.iter().all(|&c| c <= 126), "{n} 列: {counts:?}");
+                assert!(counts.contains(&126), "{n} 列は分割される");
+            }
+            // 全列が NEW に残る (1 列も欠けない)。
+            let ins = &d.create[1];
+            // 主キー用の json_object に id がもう 1 回出る。
+            assert_eq!(ins.matches("typeof(NEW.").count(), n + 1);
+        }
+        // 64 列未満は従来どおり 1 つの json_object。
+        let d =
+            build_audit_ddl(DriverKind::Sqlite, "main", "users", &cols(), &opts(), false).unwrap();
+        assert!(!d.create[1].contains("rtrim(json_object("));
     }
 
     #[test]

@@ -232,6 +232,90 @@ async fn sqlite_audit_trigger_scenario() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// 記録列が 64 列以上の表 (json_object の引数上限 127 を超える形、#2334) でも、
+/// トリガーが作れて全列が old_row / new_row に記録される (NULL 値の列も落ちない)。
+async fn wide_scenario(label: &str, ncols: usize, skip_unchanged: bool, exclude: bool) {
+    let state = t::AppState::default();
+    let path = temp_path(label);
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("touch");
+    let opts = t::sqlite_options(path.to_str().expect("utf8"));
+    let conn = t::connect(&opts).await.expect("connect");
+    state
+        .insert(t::make_session("audit_wide", conn, opts, false))
+        .await;
+    let side = Side {
+        id: "audit_wide".into(),
+        database: None,
+        driver: "sqlite",
+    };
+    let cols: Vec<String> = (0..ncols).map(|i| format!("c{i} INTEGER")).collect();
+    exec(
+        &state,
+        &side,
+        &format!(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, {}, secret TEXT)",
+            cols.join(", ")
+        ),
+    )
+    .await;
+    let mut o = options();
+    o.skip_unchanged_update = skip_unchanged;
+    if !exclude {
+        o.exclude_columns.clear();
+    }
+    let ddl = generate(&state, &side, &o, false).await;
+    run_ddl(&state, &side, ddl.create).await;
+
+    let names: Vec<String> = (0..ncols).map(|i| format!("c{i}")).collect();
+    let insert_vals: Vec<String> = (0..ncols)
+        .map(|i| if i == 5 { "NULL".into() } else { i.to_string() })
+        .collect();
+    exec(
+        &state,
+        &side,
+        &format!(
+            "INSERT INTO users (id, {}, secret) VALUES (1, {}, 's')",
+            names.join(", "),
+            insert_vals.join(", ")
+        ),
+    )
+    .await;
+    exec(&state, &side, "UPDATE users SET c0 = 100 WHERE id = 1").await;
+    exec(&state, &side, "DELETE FROM users WHERE id = 1").await;
+
+    let rows = audit_rows(&state, &side).await;
+    let ops: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+    assert_eq!(ops, vec!["INSERT", "UPDATE", "DELETE"], "{rows:?}");
+    let expected_keys = 1 + ncols + usize::from(!exclude);
+    let check = |v: &Option<Json>, c0: i64| {
+        let obj = v.as_ref().expect("row").as_object().expect("object");
+        assert_eq!(obj.len(), expected_keys, "全列が記録される");
+        assert_eq!(obj["id"], json!(1));
+        assert_eq!(obj["c0"], json!(c0));
+        assert_eq!(obj["c5"], Json::Null, "NULL 値の列も残る");
+        assert_eq!(obj[&format!("c{}", ncols - 1)], json!(ncols - 1));
+        assert_eq!(obj.contains_key("secret"), !exclude);
+    };
+    check(&rows[0].3, 0);
+    check(&rows[1].2, 0);
+    check(&rows[1].3, 100);
+    check(&rows[2].2, 100);
+    assert_eq!(rows[0].1, Some(json!({"id": 1})));
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sqlite_audit_trigger_wide_table_70_columns() {
+    wide_scenario("wide70", 69, true, true).await;
+    wide_scenario("wide70b", 69, false, false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sqlite_audit_trigger_wide_table_200_columns() {
+    wide_scenario("wide200", 200, true, true).await;
+}
+
 /// read_only 接続ではバックエンドが生成 DDL の実行を拒否する (DDL の生成自体は読み取りなので通る)。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlite_audit_ddl_is_rejected_on_read_only_session() {
