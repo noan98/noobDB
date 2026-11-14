@@ -1667,6 +1667,7 @@ fn build_fixtures() -> serde_json::Value {
             name: "id".into(),
             type_name: "int".into(),
             locked: true,
+            generated: false,
         }],
         rows: vec![vec![t::Value::Int(1)], vec![t::Value::Int(2)]],
         picks: vec![0],

@@ -3535,7 +3535,7 @@ export interface RowMergeConflict {
   sample: string[][];
 }
 export interface RowMergePreview {
-  columns: { name: string; typeName: string; locked: boolean }[];
+  columns: { name: string; typeName: string; locked: boolean; generated: boolean }[];
   rows: CellValue[][];
   picks: number[];
   keyColumns: string[];

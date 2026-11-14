@@ -7,9 +7,11 @@ import type {
   CloneRowsOutcome,
   CloneRowsPreview,
   CloneTablePreview,
+  SubsetPreview,
   SubsetRequest,
 } from "../api/tauri";
 import type { I18nKey } from "../i18n";
+import type { SubsetNodeExtra } from "./subsetPreviewModel";
 import { parseBoundedInt, subsetMenuDisabledReason } from "./subsetExtract";
 
 export const CLONE_DEFAULT_CHILD_DEPTH = 3;
@@ -138,7 +140,7 @@ export function keyStatusLabelKey(status: CloneTablePreview["keyColumns"][number
   }
 }
 
-function cellText(v: unknown): string {
+export function cellText(v: unknown): string {
   return v === null || v === undefined ? "NULL" : String(v);
 }
 
@@ -160,3 +162,72 @@ export function cloneMenuDisabledReason(
   const key = subsetMenuDisabledReason(input);
   return key === "gridExtractSubsetNoPk" ? "gridCloneRowsNoPk" : key;
 }
+
+/** 複製のプレビューを、サブセット抽出の辿り図 (`SubsetPreviewGraph`) の入力へ変える。複製は親の方向へ辿らない。 */
+export function cloneToSubsetPreview(p: CloneRowsPreview): SubsetPreview {
+  return {
+    tables: p.tables.map((t) => ({
+      table: t.table,
+      rows: t.rows,
+      rootRows: t.rootRows,
+      childRows: t.childRows,
+      parentRows: 0,
+      columns: t.columns,
+    })),
+    totalRows: p.totalRows,
+    cycles: p.cycles,
+    warnings: p.warnings,
+  };
+}
+
+/**
+ * 主キーの状態 → チップの色調。採番は success、式は info、張り替えは accent。
+ * 元の値のまま (unchanged) が warning なのは、バックエンドの `needs_policy` (主キーの列がすべて unchanged) の表だけ。
+ * 複合キーの一部だけが unchanged の表は方針が要らないので muted。
+ */
+export function keyStatusTone(
+  status: CloneTablePreview["keyColumns"][number]["status"],
+  needsPolicy: boolean,
+): NonNullable<SubsetNodeExtra["chips"][number]["tone"]> {
+  switch (status) {
+    case "auto":
+      return "success";
+    case "rule":
+      return "info";
+    case "remapped":
+      return "accent";
+    case "unchanged":
+      return needsPolicy ? "warning" : "muted";
+  }
+}
+
+/** 表ごとの主キー状態チップ (状態ごとに 1 つ。`列: 状態` は detail) と、方針が要る表の強調。 */
+export function cloneNodeExtras(
+  p: CloneRowsPreview,
+  label: (key: I18nKey) => string,
+): Map<string, SubsetNodeExtra> {
+  const out = new Map<string, SubsetNodeExtra>();
+  for (const t of p.tables) {
+    const statuses = [...new Set(t.keyColumns.map((k) => k.status))];
+    out.set(t.table, {
+      // 主キーなしは状態を持たないので info のチップで示す (Undo できない表。対応表も出ない)。
+      chips:
+        statuses.length === 0
+          ? [{ key: "none", tone: "info", label: label("cloneKeyNone") }]
+          : statuses.map((s) => ({
+              key: s,
+              tone: keyStatusTone(s, t.needsPolicy),
+              label: label(keyStatusLabelKey(s)),
+              detail: t.keyColumns
+                .filter((k) => k.status === s)
+                .map((k) => `${k.name}: ${label(keyStatusLabelKey(s))}`)
+                .join(" / "),
+            })),
+      emphasize: t.needsPolicy,
+    });
+  }
+  return out;
+}
+
+/** 対応表で、表ごとに最初から出す行数 (これを超えたら「ほか n 件」へ畳む)。 */
+export const CLONE_MAPPING_VISIBLE = 10;
