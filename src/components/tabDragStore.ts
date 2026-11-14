@@ -55,20 +55,18 @@ export function useTabDragSnapshot(): TabDragSnapshot {
 
 // --- ドロップ直後の「着地」(共有要素遷移、#2332) -----------------------------------------------
 
-/** 着地中のタブ。ドロップ地点のゴースト (起点) と移動先のタブ (終点) が同じ layoutId を持つ。 */
+/**
+ * ドロップ直後の着地 (#2332)。`TabDragOverlay` がドロップ地点のゴーストを残し、移動先に現れたタブの
+ * 位置へ滑らせてから消す。タブバーは `overflow` で切り抜かれるため、タブ自身を動かさず
+ * 切り抜かれない portal 側のゴーストで見せる。
+ */
 export interface TabLanding {
   tabId: string;
-  label: string;
-  x: number;
-  y: number;
+  /** 移動元のペイン。元のバーに残る (退場中の) タブを目的地にしない。 */
+  fromPaneId: string;
 }
 
-/** 起点 (ドロップ地点のゴースト) と終点 (移動先のタブ) が共有する layoutId。 */
-export function tabDropFlightId(tabId: string): string {
-  return `tab-drop-flight:${tabId}`;
-}
-
-/** 着地の morph が終わったとみなして起点を外すまでの待ち (ms)。既存の duration トークンから導く。 */
+/** 着地の情報を保持しておく時間 (ms)。タブが現れて滑り込み終わるのを覆う。既存の duration トークンから導く。 */
 export const TAB_DROP_FLIGHT_MS = Math.round((durations.med + durations.fast) * 1000);
 
 let landing: TabLanding | null = null;
@@ -102,6 +100,9 @@ export function useTabLanding(): TabLanding | null {
 }
 
 // --- ドラッグ本体 -----------------------------------------------------------------------------
+
+/** Esc で中断したあと、ボタンを離した時のクリックを握りつぶすために待つ上限 (ms)。 */
+const ESC_SWALLOW_MS = 10_000;
 
 /** 対話要素 (ボタン等) の上で押された場合はドラッグを始めない。 */
 const INTERACTIVE = "button, a, input, textarea, select, [role='button']";
@@ -182,7 +183,10 @@ export function startTabDrag(down: PointerEvent, session: TabDragSession): void 
       return;
     }
     if (!dragged) {
-      if (!isDraggedOut(e.clientX, e.clientY, sourceBar.getBoundingClientRect())) return;
+      const otherBars = collectGeometry()
+        .filter((g) => g.paneId !== session.paneId)
+        .map((g) => g.bar);
+      if (!isDraggedOut(e.clientX, e.clientY, sourceBar.getBoundingClientRect(), otherBars)) return;
       dragged = true;
       document.body.style.userSelect = "none";
       document.body.style.cursor = "grabbing";
@@ -211,7 +215,7 @@ export function startTabDrag(down: PointerEvent, session: TabDragSession): void 
     if (!wasDragged) return;
     swallowClick();
     if (!resolution) return;
-    beginLanding({ tabId: session.tabId, label: session.label, x: e.clientX, y: e.clientY });
+    beginLanding({ tabId: session.tabId, fromPaneId: session.paneId });
     session.onDrop(session.tabId, resolution.target);
   };
 
@@ -231,7 +235,19 @@ export function startTabDrag(down: PointerEvent, session: TabDragSession): void 
     // ボタンを離した後のクリックだけ握りつぶし、何も移さずに終える。
     cleanup();
     // ボタンを離すのはこれからなので、離した時点で発火するクリックを待って握りつぶす。
-    window.addEventListener("pointerup", swallowClick, { capture: true, once: true });
+    // 離さないまま放置しても残らないよう、次の pointerdown かタイムアウトで外す。
+    const disarm = () => {
+      window.removeEventListener("pointerup", armSwallow, true);
+      window.removeEventListener("pointerdown", disarm, true);
+      window.clearTimeout(timer);
+    };
+    const armSwallow = () => {
+      disarm();
+      swallowClick();
+    };
+    const timer = window.setTimeout(disarm, ESC_SWALLOW_MS);
+    window.addEventListener("pointerup", armSwallow, true);
+    window.addEventListener("pointerdown", disarm, true);
   };
 
   window.addEventListener("pointermove", onMove, true);

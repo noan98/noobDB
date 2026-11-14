@@ -17,7 +17,7 @@ import { isImeComposing } from "./modalKeys";
 import { useFocusTrap } from "../keyboardNav";
 import { tabOpenFlightId, useTabOpenFlight } from "../sharedElement";
 import { scrollFollowIntoView } from "./scrollFollow";
-import { startTabDrag, tabDropFlightId, useTabLanding } from "./tabDragStore";
+import { startTabDrag } from "./tabDragStore";
 import type { TabDropTarget } from "../tabPaneDrop";
 
 // キーボードフォーカスリング。単一ソースの `--focus-ring` (App.css) をそのまま使う。
@@ -211,8 +211,6 @@ export const TabBar = memo(function TabBar({
   onTabDrop,
 }: Props) {
   const t = useT();
-  // ドロップ直後の着地中だけ、移動先のタブがドロップ地点のゴーストと layoutId を共有する (#2332)。
-  const landing = useTabLanding();
   // サイドバー行から開いた新規テーブルタブのアイコンだけが、起点と layoutId を共有して morph する (#1415)。
   const openFlight = useTabOpenFlight();
   // opacity の補間は MotionConfig reducedMotion では止まらないので、個別に見て即時化する (#1322)。
@@ -529,7 +527,6 @@ export const TabBar = memo(function TabBar({
                 // MotionConfig により即時化される。
                 value={tab.id}
                 data-tab-id={tab.id}
-                layoutId={landing?.tabId === tab.id ? tabDropFlightId(tab.id) : undefined}
                 onPointerDown={
                   onTabDrop && paneId && renamingTabId !== tab.id
                     ? (e: React.PointerEvent<HTMLElement>) =>
@@ -541,7 +538,8 @@ export const TabBar = memo(function TabBar({
                         })
                     : undefined
                 }
-                drag={onReorder && renamingTabId !== tab.id ? true : false}
+                drag={onReorder && renamingTabId !== tab.id ? "x" : false}
+                dragMomentum={false}
                 whileDrag={{ scale: 1.04, boxShadow: "var(--shadow-lg)", zIndex: 3 }}
                 onDragStart={onReorder ? () => setDropIndicator(tab.id, false) : undefined}
                 onDragEnd={onReorder ? () => setDropIndicator(null) : undefined}

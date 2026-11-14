@@ -3108,7 +3108,7 @@ export default function App() {
       const source = prev.find((p) => p.tabIds.includes(tabId));
       if (!source) return;
       const other = prev.find((p) => p.id !== source.id);
-      dropTabOnPane(tabId, other ? { kind: "append", paneId: other.id } : { kind: "split", side: "right" });
+      dropTabOnPane(tabId, other ? { kind: "append", paneId: other.id } : { kind: "split" });
     },
     [dropTabOnPane, panesRef],
   );

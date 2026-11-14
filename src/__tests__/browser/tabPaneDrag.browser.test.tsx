@@ -33,6 +33,9 @@ function Harness({ initial }: { initial: DropPane[] }) {
             onSelect={() => {}}
             onClose={() => {}}
             onNew={() => {}}
+            onReorder={(ids) =>
+              setPanes((cur) => cur.map((q) => (q.id === p.id ? { ...q, tabIds: ids } : q)))
+            }
             paneId={p.id}
             onTabDrop={onDrop}
           />
@@ -187,5 +190,67 @@ describe("タブのペイン間ドラッグ (#2332)", () => {
     await release(p1.left + 50, p1.top + 200);
     await settle();
     expect(tabsIn("p1")).toEqual(["a", "b", "c"]);
+  });
+
+  it("引き出した瞬間に元のタブが縦に飛ばない (Reorder の取り消しで慣性が残らない)", async () => {
+    await renderInBrowser(<Harness initial={TWO} />);
+    await frame();
+    const top0 = tabEl("b").getBoundingClientRect().top;
+    await pressTab("b");
+    const p1 = document.querySelector('[data-testid="pane-p1"]')?.getBoundingClientRect() as DOMRect;
+    // 素早く大きく下へ引き出す (速度付き)
+    await move(p1.left + 150, 60);
+    await move(p1.left + 150, p1.top + 250);
+    let maxDy = 0;
+    const end = performance.now() + 600;
+    while (performance.now() < end) {
+      await frame();
+      maxDy = Math.max(maxDy, Math.abs(tabEl("b").getBoundingClientRect().top - top0));
+    }
+    expect(maxDy).toBeLessThan(2);
+    await release(p1.left + 150, p1.top + 250);
+  });
+
+  it("着地: ゴーストがドロップ地点から移動先のタブの位置へ滑り、その後消える", async () => {
+    await renderInBrowser(<Harness initial={TWO} />);
+    await frame();
+    await pressTab("a");
+    const p2 = document.querySelector('[data-testid="pane-p2"]')?.getBoundingClientRect() as DOMRect;
+    const dropX = p2.left + 150;
+    const dropY = p2.top + 250;
+    await move(dropX, dropY);
+    window.dispatchEvent(ptr("pointerup", dropX, dropY, 0));
+    const ghostCenter = () => {
+      const g = document.querySelector('[data-testid="tab-drag-ghost"]');
+      if (!g) return null;
+      const r = g.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    };
+    const tabCenter = () => {
+      const el = document.querySelector<HTMLElement>('[data-pane-zone="p2"] [data-tab-id="a"]');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    };
+    // 離した直後のゴーストはドロップ地点の近く (ポインタ余白ぶんだけずれる)
+    await frame();
+    const start = ghostCenter();
+    expect(start).not.toBeNull();
+    expect(Math.hypot((start?.x ?? 0) - dropX, (start?.y ?? 0) - dropY)).toBeLessThan(100);
+    // 着地の途中でゴーストはバー (上) へ向かって動き、最後にタブの位置へ収束する
+    let minDist = Number.POSITIVE_INFINITY;
+    let movedUp = false;
+    const end = performance.now() + 900;
+    while (performance.now() < end) {
+      await frame();
+      const g = ghostCenter();
+      const tb = tabCenter();
+      if (g && tb) minDist = Math.min(minDist, Math.hypot(g.x - tb.x, g.y - tb.y));
+      if (g && g.y < dropY - 100) movedUp = true;
+    }
+    expect(movedUp).toBe(true);
+    expect(minDist).toBeLessThan(40);
+    expect(ghostCenter()).toBeNull();
+    expect(tabsIn("p2")).toEqual(["d", "e", "a"]);
   });
 });

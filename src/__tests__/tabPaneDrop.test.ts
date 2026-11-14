@@ -4,7 +4,7 @@ import {
   insertionIndex,
   isDraggedOut,
   resolveTabDrop,
-  TAB_DRAG_OUT_DISTANCE,
+  dragOutDistance,
   type DropPane,
   type PaneGeometry,
 } from "../tabPaneDrop";
@@ -22,16 +22,25 @@ const pane = (paneId: string, x0: number, ids: string[]): PaneGeometry => ({
 });
 
 describe("isDraggedOut", () => {
+  const d = dragOutDistance(bar); // バー高さ 30 × 0.75
+  it("距離はバーの高さに比例する", () => {
+    expect(d).toBe(22.5);
+    expect(dragOutDistance({ ...bar, bottom: 60 })).toBe(45);
+  });
   it("帯から縦に距離以上離れたときだけ true", () => {
-    expect(isDraggedOut(10, 30 + TAB_DRAG_OUT_DISTANCE, bar)).toBe(false);
-    expect(isDraggedOut(10, 30 + TAB_DRAG_OUT_DISTANCE + 1, bar)).toBe(true);
-    expect(isDraggedOut(10, -TAB_DRAG_OUT_DISTANCE - 1, bar)).toBe(true);
+    expect(isDraggedOut(10, 30 + d, bar)).toBe(false);
+    expect(isDraggedOut(10, 30 + d + 1, bar)).toBe(true);
+    expect(isDraggedOut(10, -d - 1, bar)).toBe(true);
     expect(isDraggedOut(10, 15, bar)).toBe(false);
   });
-  it("バーの左右の外 (隣のペインのバーへ横に出た) も距離以上で true", () => {
-    expect(isDraggedOut(400 + TAB_DRAG_OUT_DISTANCE, 15, bar)).toBe(false);
-    expect(isDraggedOut(400 + TAB_DRAG_OUT_DISTANCE + 1, 15, bar)).toBe(true);
-    expect(isDraggedOut(-TAB_DRAG_OUT_DISTANCE - 1, 15, bar)).toBe(true);
+  it("バーの左右の外へ出ても、別ペインのバーの上でなければ切り替えない (並べ替えを切らない)", () => {
+    expect(isDraggedOut(900, 15, bar)).toBe(false);
+    expect(isDraggedOut(-500, 15, bar)).toBe(false);
+  });
+  it("別ペインのバーの上に入ったら切り替える", () => {
+    const other = { left: 400, top: 0, right: 800, bottom: 30 };
+    expect(isDraggedOut(399, 15, bar, [other])).toBe(false);
+    expect(isDraggedOut(401, 15, bar, [other])).toBe(true);
   });
 });
 
@@ -56,6 +65,15 @@ describe("resolveTabDrop", () => {
     expect(r?.target).toEqual({ kind: "bar", paneId: "p2", index: 1 });
     expect(r?.preview).toEqual({ kind: "marker", rect: { left: 500, right: 500, top: 0, bottom: 30 } });
   });
+  it("マーカーはタブバーの内側に収まる (スクロールで見切れたタブの外へ出さない)", () => {
+    const wide = {
+      ...pane("p2", 400, ["c", "d", "e", "f", "g", "h"]),
+      bar: { left: 400, top: 0, right: 700, bottom: 30 },
+    };
+    const r = resolveTabDrop(690, 10, [pane("p1", 0, ["a"]), wide], "p1", "a");
+    expect(r?.preview.rect.left).toBeLessThanOrEqual(700);
+    expect(r?.preview.rect.left).toBeGreaterThanOrEqual(400);
+  });
   it("別ペインのタブバーの右の空き → 末尾", () => {
     const r = resolveTabDrop(790, 10, two, "p1", "a");
     expect(r?.target).toEqual({ kind: "bar", paneId: "p2", index: 2 });
@@ -77,16 +95,16 @@ describe("resolveTabDrop", () => {
   const one = [pane("p1", 0, ["a", "b"])];
   it("1 ペイン: 右端 → 右半面へ分割", () => {
     const r = resolveTabDrop(390, 150, one, "p1", "a");
-    expect(r?.target).toEqual({ kind: "split", side: "right" });
+    expect(r?.target).toEqual({ kind: "split" });
     expect(r?.preview.rect).toEqual({ left: 200, right: 400, top: 30, bottom: 300 });
   });
-  it("1 ペイン: 左端 → 左半面へ分割、中央は落とせない", () => {
-    expect(resolveTabDrop(10, 150, one, "p1", "a")?.target).toEqual({ kind: "split", side: "left" });
+  it("1 ペイン: 左端と中央は落とせない (左分割は再マウントを招くので持たない)", () => {
+    expect(resolveTabDrop(10, 150, one, "p1", "a")).toBeNull();
     expect(resolveTabDrop(200, 150, one, "p1", "a")).toBeNull();
   });
   it("右端ゾーンの境界 (幅の 25%)", () => {
     expect(resolveTabDrop(299, 150, one, "p1", "a")).toBeNull();
-    expect(resolveTabDrop(300, 150, one, "p1", "a")?.target).toEqual({ kind: "split", side: "right" });
+    expect(resolveTabDrop(300, 150, one, "p1", "a")?.target).toEqual({ kind: "split" });
   });
   it("1 ペインでタブが 1 つだけなら分割できない", () => {
     expect(resolveTabDrop(390, 150, [pane("p1", 0, ["a"])], "p1", "a")).toBeNull();
@@ -124,28 +142,19 @@ describe("applyTabDrop", () => {
     expect(r?.activePaneId).toBe("p2");
   });
   it("1 ペインの右端へ: 新しいペインが右に入る", () => {
-    const r = applyTabDrop([two[0]], "c", { kind: "split", side: "right" }, () => "np");
+    const r = applyTabDrop([two[0]], "c", { kind: "split" }, () => "np");
     expect(r?.panes).toEqual([
       { id: "p1", tabIds: ["a", "b"], activeTabId: "b" },
       { id: "np", tabIds: ["c"], activeTabId: "c" },
     ]);
     expect(r?.activePaneId).toBe("np");
   });
-  it("左へ分割なら新しいペインが先頭", () => {
-    const r = applyTabDrop([two[0]], "c", { kind: "split", side: "left" }, () => "np");
-    expect(r?.panes[0].id).toBe("np");
-  });
   it("成立しない組み合わせは null", () => {
     expect(applyTabDrop(two, "zz", { kind: "append", paneId: "p2" }, mk)).toBeNull();
     expect(applyTabDrop(two, "a", { kind: "append", paneId: "p1" }, mk)).toBeNull();
-    expect(applyTabDrop(two, "a", { kind: "split", side: "right" }, mk)).toBeNull();
+    expect(applyTabDrop(two, "a", { kind: "split" }, mk)).toBeNull();
     expect(
-      applyTabDrop(
-        [{ id: "p1", tabIds: ["a"], activeTabId: "a" }],
-        "a",
-        { kind: "split", side: "right" },
-        mk,
-      ),
+      applyTabDrop([{ id: "p1", tabIds: ["a"], activeTabId: "a" }], "a", { kind: "split" }, mk),
     ).toBeNull();
   });
   it("入力を破壊しない", () => {

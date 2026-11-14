@@ -21,10 +21,13 @@ export interface Rect {
   bottom: number;
 }
 
-/** 通常のタブドラッグ (Reorder) から切り替える、タブバーの帯からの縦方向の距離 (CSS px)。 */
-export const TAB_DRAG_OUT_DISTANCE = 24;
+/**
+ * 通常のタブドラッグ (Reorder) から切り替える、タブバーの帯からの縦方向の距離の、バーの高さに対する比。
+ * 実寸はバーの高さ (フォント拡大・密度に追従する) から導くので px 直値を持たない。
+ */
+export const TAB_DRAG_OUT_RATIO = 0.75;
 
-/** 1 ペインのとき、ペイン本体の左右端のこの割合が「分割ゾーン」になる。 */
+/** 1 ペインのとき、ペイン本体の右端のこの割合が「分割ゾーン」になる。 */
 export const SPLIT_EDGE_RATIO = 0.25;
 
 /** ペインを分割できる上限 (App のペインは最大 2 つ)。 */
@@ -45,13 +48,11 @@ export interface PaneGeometry {
   tabs: TabGeometry[];
 }
 
-export type SplitSide = "left" | "right";
-
 /** ドロップの意味。`applyTabDrop` へそのまま渡せる。 */
 export type TabDropTarget =
   | { kind: "bar"; paneId: string; index: number }
   | { kind: "append"; paneId: string }
-  | { kind: "split"; side: SplitSide };
+  | { kind: "split" };
 
 export interface TabDropResolution {
   target: TabDropTarget;
@@ -59,20 +60,19 @@ export interface TabDropResolution {
   preview: { kind: "marker" | "face"; rect: Rect };
 }
 
+/** 引き出しと見なす縦方向の距離。バーの高さ × `TAB_DRAG_OUT_RATIO`。 */
+export function dragOutDistance(bar: Rect): number {
+  return (bar.bottom - bar.top) * TAB_DRAG_OUT_RATIO;
+}
+
 /**
- * ポインタがタブバーの矩形から `distance` 以上離れたか。縦に引き出す場合に加え、バーの左右の外
- * (隣のペインのタブバーへそのまま横にドラッグした場合) もドラッグへ切り替える。バー内の横移動は
- * 従来どおり Reorder が並べ替える。
+ * ポインタが元のタブバーから出て、Reorder の並べ替えからドロップ操作へ切り替える位置か。
+ * 縦にバーの高さに比例した距離 (`dragOutDistance`) 以上離れた場合と、別のペインのタブバー
+ * (`otherBars`) の上に入った場合が対象。元のバー内の横移動は従来どおり Reorder が並べ替える。
  */
-export function isDraggedOut(
-  x: number,
-  y: number,
-  bar: Rect,
-  distance: number = TAB_DRAG_OUT_DISTANCE,
-): boolean {
-  return (
-    y < bar.top - distance || y > bar.bottom + distance || x < bar.left - distance || x > bar.right + distance
-  );
+export function isDraggedOut(x: number, y: number, bar: Rect, otherBars: readonly Rect[] = []): boolean {
+  const d = dragOutDistance(bar);
+  return y < bar.top - d || y > bar.bottom + d || otherBars.some((b) => inside(b, x, y));
 }
 
 const inside = (r: Rect, x: number, y: number) => x >= r.left && x < r.right && y >= r.top && y < r.bottom;
@@ -87,13 +87,16 @@ export function insertionIndex(tabs: readonly TabGeometry[], x: number, exclude?
   return i < 0 ? rest.length : i;
 }
 
-/** 挿入位置のマーカーを出す x 座標 (タブの境界)。タブが無ければバーの左端。 */
+/** 挿入位置のマーカーを出す x 座標 (タブの境界)。常にタブバーの内側 (スクロールで見切れたタブの外へ出さない)。 */
 function markerX(pane: PaneGeometry, index: number): number {
   const { tabs, bar } = pane;
-  if (tabs.length === 0) return bar.left;
-  if (index <= 0) return tabs[0].left;
-  if (index >= tabs.length) return tabs[tabs.length - 1].right;
-  return tabs[index].left;
+  let x = bar.left;
+  if (tabs.length > 0) {
+    if (index <= 0) x = tabs[0].left;
+    else if (index >= tabs.length) x = tabs[tabs.length - 1].right;
+    else x = tabs[index].left;
+  }
+  return Math.max(bar.left, Math.min(bar.right, x));
 }
 
 /**
@@ -101,7 +104,7 @@ function markerX(pane: PaneGeometry, index: number): number {
  *
  * - 元のペイン以外のタブバー → その位置へ挿入 (`bar`)
  * - 2 ペイン: 元と別のペイン本体 → その末尾へ (`append`)
- * - 1 ペイン: 本体の左右端 → 半面へ分割 (`split`)。元のペインにタブが 1 つしか無いと
+ * - 1 ペイン: 本体の右端 → 右半面へ分割 (`split`)。元のペインにタブが 1 つしか無いと
  *   分割後に元が空になるので落とせない
  * - 元のペイン自身の上 (タブバー含む) は null。同ペイン内の並べ替えは通常のドラッグが担当する。
  */
@@ -133,7 +136,7 @@ export function resolveTabDrop(
     return { target: { kind: "append", paneId: pane.paneId }, preview: { kind: "face", rect: body } };
   }
 
-  // 1 ペイン: 左右端で分割。
+  // 1 ペイン: 右端で分割 (左分割は Splitter の first 枠から既存ペインが移って再マウントされるので持たない, #1310)。
   const source = panes.find((p) => p.paneId === sourcePaneId);
   if (!source || source.tabs.length < 2) return null;
   const width = body.right - body.left;
@@ -141,14 +144,8 @@ export function resolveTabDrop(
   const mid = (body.left + body.right) / 2;
   if (x >= body.right - edge) {
     return {
-      target: { kind: "split", side: "right" },
+      target: { kind: "split" },
       preview: { kind: "face", rect: { ...body, left: mid } },
-    };
-  }
-  if (x < body.left + edge) {
-    return {
-      target: { kind: "split", side: "left" },
-      preview: { kind: "face", rect: { ...body, right: mid } },
     };
   }
   return null;
@@ -190,10 +187,7 @@ export function applyTabDrop<P extends DropPane>(
     if (panes.length >= MAX_PANES || remaining.length === 0) return null;
     const created = { id: newPaneId(), tabIds: [tabId], activeTabId: tabId } as P;
     const next = panes.map((p) => (p.id === source.id ? shrunk : p));
-    return {
-      panes: target.side === "left" ? [created, ...next] : [...next, created],
-      activePaneId: created.id,
-    };
+    return { panes: [...next, created], activePaneId: created.id };
   }
 
   const dest = panes.find((p) => p.id === target.paneId);
