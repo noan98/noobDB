@@ -170,6 +170,10 @@ describe.runIf(RUN_VISUAL)("ビジュアル回帰 (実ブラウザ)", { retry: 0
       await new Promise<void>((resolve) =>
         requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
       );
+      // それでも合成レイヤが外れるまでに数フレーム以上かかることがあり、タイトルがグレースケールの
+      // まま撮れる回とサブピクセルで撮れる回が混ざっていた (#2331 の CI で 4 回続けて差分)。
+      // レイヤが確実に外れる時間を置き、常にサブピクセル描画の状態で撮る。
+      await new Promise<void>((resolve) => setTimeout(resolve, 500));
       await expect(dialog).toMatchScreenshot(`dangerous-dialog-${theme}`);
     });
 
