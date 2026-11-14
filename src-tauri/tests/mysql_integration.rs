@@ -5870,7 +5870,7 @@ async fn mysql_deadlock_is_analyzed_after_1213() {
 
     let analysis = analysis.expect("analyze");
     if analysis.unavailable.as_deref() == Some("needs_process_privilege") {
-        eprintln!("skip: test user lacks the PROCESS privilege");
+        common::skip_capability("test user lacks the PROCESS privilege");
         return;
     }
     let view = analysis.mysql.expect("mysql view");
