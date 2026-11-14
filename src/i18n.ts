@@ -2731,8 +2731,8 @@ const en = {
   auditSampleOpInsert: "A row is inserted",
   auditSampleOpUpdate: "A row is updated",
   auditSampleOpDelete: "A row is deleted",
-  auditSampleSkipUnchanged: "Not recorded if no value changes",
-  auditSampleExcludedCell: "{name} (not recorded)",
+  auditSampleSkipUnchanged: "Not recorded if no recorded column changes",
+  auditSampleExcludedCell: " (not recorded)",
   auditSampleNote:
     "Sample only: values are placeholders built from column types, not real data. Struck-through columns are not recorded.",
   auditDropTable: "Also drop the audit table {name} (its history is lost)",
@@ -11257,8 +11257,8 @@ const ja: Dict = {
   auditSampleOpInsert: "行が追加されたとき",
   auditSampleOpUpdate: "行が更新されたとき",
   auditSampleOpDelete: "行が削除されたとき",
-  auditSampleSkipUnchanged: "値が変わらなければ記録しない",
-  auditSampleExcludedCell: "{name} (記録しない)",
+  auditSampleSkipUnchanged: "記録する列の値が変わらなければ記録しない",
+  auditSampleExcludedCell: " (記録しない)",
   auditSampleNote:
     "見本です。値は列の型から作ったダミーで、実データではありません。打ち消し線の列は記録されません。",
   auditDropTable: "監査表 {name} も削除する (履歴は失われます)",

@@ -4,7 +4,7 @@ import { api } from "../api/tauri";
 import type { AuditDdl, AuditOptions, AuditStatus } from "../api/tauri";
 import { useT } from "../i18n";
 import { AuditFlowDiagram, AuditSample } from "./AuditSample";
-import type { SampleColumn } from "./auditSample";
+import type { SampleColumn } from "./auditSampleModel";
 import { Callout } from "./Callout";
 import { matchesMaskPattern } from "./columnMask";
 import { ListboxSelect } from "./ListboxSelect";
@@ -369,7 +369,7 @@ export function AuditTriggerModal({
           </>
         )}
 
-        {!loading && !removing && !noOps && (
+        {!loading && !loadError && sampleColumns.length > 0 && !removing && !noOps && (
           <FormSection>
             <FieldLabel as="div">{t("auditSampleTitle")}</FieldLabel>
             <AuditSample columns={sampleColumns} options={options} />

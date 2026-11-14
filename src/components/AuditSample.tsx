@@ -1,4 +1,4 @@
-import { Box, Flex, chakra } from "@chakra-ui/react";
+import { Box, Flex, VisuallyHidden, chakra } from "@chakra-ui/react";
 import { AnimatePresence, LayoutGroup, motion } from "motion/react";
 import { useT } from "../i18n";
 import { transitions, variants } from "../motion";
@@ -13,7 +13,7 @@ import {
   type SampleCell,
   type SampleColumn,
   type SampleOptions,
-} from "./auditSample";
+} from "./auditSampleModel";
 import { TypeGlyph } from "./TypeGlyph";
 
 /**
@@ -187,10 +187,10 @@ function CellList({ cells }: { cells: SampleCell[] }) {
           textDecoration={c.excluded ? "line-through" : undefined}
           data-testid={`audit-sample-cell-${c.name}`}
           data-excluded={c.excluded ? "true" : "false"}
-          aria-label={c.excluded ? t("auditSampleExcludedCell", { name: c.name }) : undefined}
         >
           <TypeGlyph kind={c.kind} />
           {c.name}={c.value}
+          {c.excluded && <VisuallyHidden>{t("auditSampleExcludedCell")}</VisuallyHidden>}
         </MotionCell>
       ))}
     </Flex>

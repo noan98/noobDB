@@ -5,7 +5,7 @@ import {
   selectedOps,
   type SampleColumn,
   type SampleOptions,
-} from "../components/auditSample";
+} from "../components/auditSampleModel";
 
 // 監査トリガーの見本の組み立て (#2324)。
 
@@ -70,7 +70,7 @@ describe("buildSampleCards", () => {
       dummyValue("string"),
       dummyValue("json"),
     ]);
-    expect(dummyValue("number")).toBe("<int>");
+    expect(dummyValue("number")).toBe("<number>");
   });
 });
 

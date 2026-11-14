@@ -39,7 +39,7 @@ export interface SampleOptions {
 export interface SampleCell {
   name: string;
   kind: CellKind;
-  /** 型ファミリーから作ったダミー値 (`<int>` など)。 */
+  /** 型ファミリーから作ったダミー値 (`<number>` など)。 */
   value: string;
   /** 記録しない列 (見本では打ち消し線で薄く残す)。 */
   excluded: boolean;
@@ -58,7 +58,7 @@ export interface SampleCard {
 }
 
 const PLACEHOLDERS: Record<CellKind, string> = {
-  number: "<int>",
+  number: "<number>",
   decimal: "<decimal>",
   bool: "<bool>",
   date: "<date>",
