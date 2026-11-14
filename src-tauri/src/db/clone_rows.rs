@@ -1381,6 +1381,34 @@ mod tests {
     }
 
     #[test]
+    fn identity_column_in_unique_index_is_not_a_conflict_unless_overridden() {
+        let mut t = table("t", &["id", "seq_no"], &["id"], &["id"]);
+        t.identity_columns = vec!["seq_no".into()];
+        t.unique_indexes = vec![("u_seq".into(), vec!["seq_no".into()])];
+        let rows = vec![
+            vec![Value::Int(1), Value::Int(10)],
+            vec![Value::Int(2), Value::Int(10)],
+        ];
+        let inputs = [CloneInput {
+            table: &t,
+            rows: &rows,
+        }];
+        // 採番される identity 列は、新しい値を実行前に知れないので衝突にしない。
+        let r = analyze(&inputs, &[], &[]);
+        assert!(r[0].conflicts.is_empty(), "{:?}", r[0].conflicts);
+        // 方針でリテラルを与えると、同じ値が複数行に入るので衝突する。
+        let rules = vec![CloneColumnRule {
+            table: "t".into(),
+            column: "seq_no".into(),
+            rule: KeyRule::Literal {
+                value: Some("5".into()),
+            },
+        }];
+        let r = analyze(&inputs, &[], &rules);
+        assert_eq!(r[0].conflicts.len(), 1, "{:?}", r[0].conflicts);
+    }
+
+    #[test]
     fn identity_columns_split_always_and_by_default() {
         use super::super::types::TableColumnInfo;
         let col = |name: &str, extra: &str| TableColumnInfo {
