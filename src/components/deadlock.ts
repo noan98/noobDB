@@ -19,7 +19,9 @@ export type LockErrorKind = "deadlock" | "busy";
 export function classifyLockError(driver: string, message: string): LockErrorKind | null {
   if (!message) return null;
   if (driver === "mysql") {
-    return /\b1213\b|Deadlock found when trying to get lock/i.test(message) ? "deadlock" : null;
+    return /\b1213 \(40001\)|ERROR 1213\b|Deadlock found when trying to get lock/i.test(message)
+      ? "deadlock"
+      : null;
   }
   if (driver === "postgres") {
     return /\b40P01\b|deadlock detected/i.test(message) ? "deadlock" : null;

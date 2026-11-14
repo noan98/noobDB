@@ -6957,3 +6957,72 @@ async fn postgres_copy_import_when_env_set() {
     }
     conn.close().await;
 }
+
+/// デッドロックの事後解析 (#2328): 2 接続で行を交差 UPDATE して 40P01 を起こし、エラー文の DETAIL から
+/// 待機の循環と、(生きている相手の) pg_stat_activity の情報が返ること。
+#[tokio::test]
+async fn postgres_deadlock_is_analyzed_after_40p01() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let table = format!("noobdb_dl_{}", std::process::id());
+    let admin = t::connect(&opts).await.expect("connect");
+    admin
+        .execute(&format!("DROP TABLE IF EXISTS {table}"), None)
+        .await
+        .expect("drop");
+    admin
+        .execute(
+            &format!("CREATE TABLE {table} (id int PRIMARY KEY, v int)"),
+            None,
+        )
+        .await
+        .expect("create");
+    admin
+        .execute(&format!("INSERT INTO {table} VALUES (1, 0), (2, 0)"), None)
+        .await
+        .expect("insert");
+
+    let a = std::sync::Arc::new(t::connect(&opts).await.expect("connect a"));
+    let b = std::sync::Arc::new(t::connect(&opts).await.expect("connect b"));
+    a.begin_transaction(None).await.expect("begin a");
+    b.begin_transaction(None).await.expect("begin b");
+    let upd = |id: i32| format!("UPDATE {table} SET v = v + 1 WHERE id = {id}");
+    a.execute_in_transaction(&upd(1)).await.expect("a locks 1");
+    b.execute_in_transaction(&upd(2)).await.expect("b locks 2");
+    let a2 = a.clone();
+    let sql_a = upd(2);
+    let a_task = tokio::spawn(async move { a2.execute_in_transaction(&sql_a).await });
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let b_res = b.execute_in_transaction(&upd(1)).await;
+    let a_res = tokio::time::timeout(std::time::Duration::from_secs(20), a_task)
+        .await
+        .expect("a finishes")
+        .expect("join");
+    let failed: Vec<String> = [a_res.err(), b_res.err()]
+        .into_iter()
+        .flatten()
+        .map(|e| e.to_string())
+        .collect();
+    assert_eq!(failed.len(), 1, "exactly one side is aborted: {failed:?}");
+    assert!(failed[0].contains("deadlock detected"), "{}", failed[0]);
+
+    let state = t::AppState::default();
+    let probe = t::connect(&opts).await.expect("connect probe");
+    let session = t::make_session("dl", probe, opts.clone(), false);
+    let sid = state.insert(session).await;
+    let analysis = t::analyze_deadlock_inner(&state, &sid, Some(failed[0].clone()), None).await;
+
+    let _ = a.finish_transaction(false).await;
+    let _ = b.finish_transaction(false).await;
+    let _ = admin
+        .execute(&format!("DROP TABLE IF EXISTS {table}"), None)
+        .await;
+
+    let view = analysis.expect("analyze").postgres.expect("postgres view");
+    assert!(view.edges.len() >= 2, "{view:?}");
+    assert!(view.victim_pid.is_some());
+    // 循環に現れる pid のうち少なくとも 1 つは接続が生きていて、pg_stat_activity で引ける。
+    assert!(view.processes.iter().any(|p| p.alive), "{view:?}");
+}

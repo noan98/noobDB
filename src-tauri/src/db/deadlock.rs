@@ -235,13 +235,17 @@ fn parse_lock_line(line: &str) -> Option<InnodbLock> {
             .split_once(" of table ")
             .map(|(_, r)| r.split(" trx id ").next().unwrap_or(r))
             .map(|s| strip_ticks(s).trim().to_string());
-        let mode = t.split_once("lock_mode ").map(|(_, m)| {
-            m.trim()
-                .trim_end_matches("waiting")
-                .trim()
-                .trim_end_matches(',')
-                .to_string()
-        });
+        // レコードロックは `lock_mode X ...`、S ロックなどは `lock mode S ...` と出ることがある。
+        let mode = t
+            .split_once("lock_mode ")
+            .or_else(|| t.split_once("lock mode "))
+            .map(|(_, m)| {
+                m.trim()
+                    .trim_end_matches("waiting")
+                    .trim()
+                    .trim_end_matches(',')
+                    .to_string()
+            });
         Some(InnodbLock {
             kind: "record".into(),
             table,
@@ -543,6 +547,14 @@ pub fn classify_report_age(
 ) -> Option<&'static str> {
     let report_age = parse_epoch_secs(server_now)? - parse_epoch_secs(detected_at)?;
     let diff = report_age - error_age_secs.max(0);
+    // InnoDB の報告時刻は OS のローカル時刻。差が 30 分以上で 15 分刻みに近いときは、タイムゾーンのずれ
+    // (最小でも 15 分刻み) による見かけの差の可能性が高く、判定を誤らせるので判定しない。
+    if diff.abs() >= 1800 {
+        let rem = diff.abs() % 900;
+        if rem <= 60 || 900 - rem <= 60 {
+            return None;
+        }
+    }
     Some(if diff.abs() <= REPORT_RELATION_TOLERANCE_SECS {
         RELATION_RELATED
     } else if diff > 0 {
@@ -857,6 +869,25 @@ TABLE LOCK table `d`.`t` trx id 2 lock mode X waiting
             Some(RELATION_NEWER)
         );
         assert_eq!(classify_report_age("broken", now, 300), None);
+    }
+
+    #[test]
+    fn report_age_hour_shift_is_not_judged() {
+        // 差がちょうど 1 時間 (タイムゾーンのずれの疑い) は判定しない。
+        assert_eq!(
+            classify_report_age("2026-11-14 09:25:00", "2026-11-14 10:30:00", 300),
+            None
+        );
+    }
+
+    #[test]
+    fn shared_lock_mode_with_space_is_parsed() {
+        let l = parse_lock_line(
+            "RECORD LOCKS space id 2 page no 4 n bits 72 index PRIMARY of table `d`.`t` trx id 9 lock mode S locks rec but not gap waiting",
+        )
+        .expect("lock");
+        assert_eq!(l.mode.as_deref(), Some("S locks rec but not gap"));
+        assert_eq!(l.index.as_deref(), Some("PRIMARY"));
     }
 
     #[test]

@@ -1663,9 +1663,13 @@ export default function App() {
   const [structureTarget, setStructureTarget] = useState<StructureTarget | null>(null);
   // 影響分析 (#1027) の検索要求。ツリーの右クリックで埋まり、パネルが消費する。
   const [whereUsedRequest, setWhereUsedRequest] = useState<WhereUsedRequest | null>(null);
+  // デッドロック解析タブ (#2328) に渡すエラー本文と、そのエラーが出た接続・表示された時刻。
+  const [deadlockTarget, setDeadlockTarget] = useState<{
+    sessionId: string;
+    message: string;
+    atMs: number;
+  } | null>(null);
   // SQL の AI 解説 / 最適化案 (#695) の依頼。エディタの右クリック / パレットで埋まり、パネルが消費する。
-  // デッドロック解析タブ (#2328) に渡すエラー本文と、そのエラーが表示された時刻。
-  const [deadlockTarget, setDeadlockTarget] = useState<{ message: string; atMs: number } | null>(null);
   const [aiSqlRequest, setAiSqlRequest] = useState<AiSqlRequest | null>(null);
   const aiSqlSeqRef = useRef(0);
   // 結果グリッドの AI 要約 (#1476) の依頼。ツールバーの「AI で要約」で埋まり、パネルが消費する。
@@ -14135,8 +14139,8 @@ export default function App() {
                       <DeadlockPanel
                         sessionId={sessionId}
                         driver={selectedProfile?.driver ?? "mysql"}
-                        errorMessage={deadlockTarget?.message ?? null}
-                        errorAtMs={deadlockTarget?.atMs ?? null}
+                        errorMessage={deadlockTarget?.sessionId === sessionId ? deadlockTarget.message : null}
+                        errorAtMs={deadlockTarget?.sessionId === sessionId ? deadlockTarget.atMs : null}
                         profileNameFor={(pid) => profiles.find((p) => p.id === pid)?.name ?? null}
                       />
                     ) : activeBottomPanelTab === "pgListen" ? (
@@ -15046,6 +15050,7 @@ export default function App() {
               message={status.kind === "literal" ? status.text : String(status.vars?.error ?? "")}
               onOpen={(atMs) => {
                 setDeadlockTarget({
+                  sessionId,
                   message: status.kind === "literal" ? status.text : String(status.vars?.error ?? ""),
                   atMs,
                 });

@@ -54,6 +54,11 @@ describe("デッドロック解析の純ロジック (#2328)", () => {
     expect(classifyLockError("mysql", "ERROR 1213 (40001): Deadlock found when trying to get lock")).toBe(
       "deadlock",
     );
+    // 1213 を含むだけの別のエラーは誤検出しない。
+    expect(classifyLockError("mysql", "Duplicate entry '1213' for key 'PRIMARY' (1062)")).toBeNull();
+    expect(classifyLockError("mysql", "error returned from database: 1213 (40001): Deadlock found")).toBe(
+      "deadlock",
+    );
     expect(classifyLockError("mysql", "Lock wait timeout exceeded (1205)")).toBeNull();
     expect(classifyLockError("postgres", "error returned from database: deadlock detected")).toBe("deadlock");
     expect(classifyLockError("postgres", "SQLSTATE 40P01")).toBe("deadlock");

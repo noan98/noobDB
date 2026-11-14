@@ -298,6 +298,9 @@ impl Serialize for AppError {
 ///   ` (position n)` として末尾に足す。出力タブの「エラー位置へ移動」が使う。内部生成クエリ側の
 ///   位置 (`p`) は元の文のオフセットではないので載せない。
 ///
+/// - デッドロック (40P01) だけは、循環の相手と対象が DETAIL / CONTEXT にしか無いので、
+///   `\nDETAIL: …` / `\nCONTEXT: …` を足す (#2328。`analyze_deadlock` が読む)。
+///
 /// MySQL / SQLite の文言は変えない。
 pub fn sqlx_message(e: &sqlx::Error) -> String {
     let base = e.to_string();

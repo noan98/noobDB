@@ -19,7 +19,7 @@ pub mod data_diff;
 /// DB 全体からの値検索の走査 SQL 生成 (#748 / #1261)。
 pub mod data_search;
 pub mod ddl_extras;
-/// レプリケーション監視 (#2180) の共通型と純ロジック。
+/// デッドロックの事後解析 (#2328) の共通型と純ロジック。
 pub mod deadlock;
 pub mod diff;
 pub mod format;
@@ -47,6 +47,7 @@ pub mod publication;
 pub mod read_only_scope;
 /// 自動リフレッシュの差分パッチ (#1257)。
 pub mod refresh_diff;
+/// レプリケーション監視 (#2180) の共通型と純ロジック。
 pub mod replication;
 pub mod result_ops;
 pub mod result_store;

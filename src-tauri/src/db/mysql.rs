@@ -5064,11 +5064,15 @@ impl MySqlConn {
                 );
             }
         }
-        let server_now: Option<String> =
-            sqlx::query_scalar("SELECT DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s')")
-                .fetch_one(&self.pool)
-                .await
-                .ok();
+        // InnoDB の報告時刻は OS のローカル時刻。`NOW()` はセッションの time_zone なので SYSTEM に揃える。
+        // タイムゾーン表が無いと `CONVERT_TZ` は NULL になり、その場合は時刻の関係を判定しない。
+        let server_now: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT DATE_FORMAT(CONVERT_TZ(NOW(), @@session.time_zone, 'SYSTEM'), '%Y-%m-%d %H:%i:%s')",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .ok()
+        .flatten();
         let relation = match (&report.detected_at, &server_now, error_age_secs) {
             (Some(d), Some(n), Some(age)) => classify_report_age(d, n, age).map(str::to_string),
             _ => None,

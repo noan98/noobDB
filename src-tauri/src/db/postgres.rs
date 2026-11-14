@@ -6450,7 +6450,8 @@ impl PostgresConn {
         let pids = pg_cycle_pids(&edges);
         let pid_params: Vec<i32> = pids.iter().filter_map(|p| i32::try_from(*p).ok()).collect();
         let rows = sqlx::query(
-            "SELECT pid::bigint, usename::text, application_name::text, state::text, query \
+            "SELECT pid::bigint, usename::text, application_name::text, state::text, query, \
+             (pid = pg_backend_pid()) \
              FROM pg_stat_activity WHERE pid = ANY($1)",
         )
         .bind(&pid_params)
@@ -6467,7 +6468,11 @@ impl PostgresConn {
                     row.and_then(|r| r.try_get::<Option<String>, _>(i).ok().flatten())
                         .filter(|s| !s.is_empty())
                 };
-                let raw_query = text(4);
+                // 解析に使った自分の接続は、いま解析を走らせているだけでデッドロック時のクエリではない。
+                let is_self = row
+                    .and_then(|r| r.try_get::<bool, _>(5).ok())
+                    .unwrap_or(false);
+                let raw_query = if is_self { None } else { text(4) };
                 let query_hidden = raw_query.as_deref() == Some("<insufficient privilege>");
                 PgDeadlockProcess {
                     pid: *pid,
