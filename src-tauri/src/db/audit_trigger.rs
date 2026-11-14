@@ -215,16 +215,25 @@ fn json_object_expr(driver: DriverKind, rec: &str, cols: &[&AuditColumn]) -> Str
         return format!("{func}({})", parts.join(", "));
     }
     // SQLite は関数の引数が 127 個まで (1 列で 2 引数)。63 組ずつの json_object に分け、
-    // 各 `{...}` の中身を文字列として連結して 1 つのオブジェクトにする。json_patch は NULL の
-    // メンバーを「削除」と解釈して NULL 値の列が落ちるので使わない。
-    let chunks: Vec<String> = parts
-        .chunks(SQLITE_JSON_PAIRS_MAX)
-        .map(|c| {
-            // 値はスカラーなので末尾の `}` は閉じ括弧だけ (rtrim で式を複製せずに外せる)。
-            format!("substr(rtrim({func}({}), '}}'), 2)", c.join(", "))
-        })
+    // 各 `{...}` の外側の括弧を長さで 1 文字ずつ外して連結し、1 つのオブジェクトにする。
+    // - json_patch は NULL のメンバーを「削除」と解釈して NULL 値の列が落ちるので使わない。
+    // - JSON サブタイプの付いた値 (json_set / json() の結果) は入れ子のオブジェクトとして埋まるため、
+    //   rtrim('}') だと値側の `}` まで削って壊れる。長さで外す。
+    // - 式を 2 度書かないよう、副問い合わせで各チャンクに名前 (j0, j1, ...) を付ける。
+    let chunks: Vec<&[String]> = parts.chunks(SQLITE_JSON_PAIRS_MAX).collect();
+    let inner: Vec<String> = chunks
+        .iter()
+        .enumerate()
+        .map(|(i, c)| format!("{func}({}) AS j{i}", c.join(", ")))
         .collect();
-    format!("('{{' || {} || '}}')", chunks.join(" || ',' || "))
+    let body: Vec<String> = (0..chunks.len())
+        .map(|i| format!("substr(j{i}, 2, length(j{i}) - 2)"))
+        .collect();
+    format!(
+        "(SELECT '{{' || {} || '}}' FROM (SELECT {}))",
+        body.join(" || ',' || "),
+        inner.join(", ")
+    )
 }
 
 fn marker_comment(marker: &Marker) -> Result<String> {
@@ -953,7 +962,23 @@ mod tests {
         // 64 列未満は従来どおり 1 つの json_object。
         let d =
             build_audit_ddl(DriverKind::Sqlite, "main", "users", &cols(), &opts(), false).unwrap();
-        assert!(!d.create[1].contains("rtrim(json_object("));
+        assert!(!d.create[1].contains("AS j1"));
+    }
+
+    #[test]
+    fn sqlite_json_object_split_boundaries() {
+        // 分割境界: 63 列までは 1 つ、64 列から分割。126 列は 2 つ、127 列は 3 つ (#2334)。
+        for (n, chunks) in [(63usize, 1usize), (64, 2), (126, 2), (127, 3)] {
+            let cs: Vec<AuditColumn> = (0..n)
+                .map(|i| col(&format!("c{i}"), "INTEGER", false))
+                .collect();
+            let refs: Vec<&AuditColumn> = cs.iter().collect();
+            let sql = json_object_expr(DriverKind::Sqlite, "NEW", &refs);
+            let counts = json_object_arg_counts(&sql);
+            assert_eq!(counts.len(), chunks, "{n} 列");
+            assert!(counts.iter().all(|&c| c <= 126), "{n} 列: {counts:?}");
+            assert_eq!(counts.iter().sum::<usize>(), n * 2, "{n} 列");
+        }
     }
 
     #[test]

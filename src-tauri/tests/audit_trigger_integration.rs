@@ -316,6 +316,79 @@ async fn sqlite_audit_trigger_wide_table_200_columns() {
     wide_scenario("wide200", 200, true, true).await;
 }
 
+/// JSON サブタイプの付いた値 (json_set / json() の結果) が分割境界 (各組の最後) に来ても、
+/// old_row / new_row が壊れない (#2334)。最後の列と 64 番目の列を TEXT にして確かめる。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sqlite_audit_trigger_wide_table_json_values() {
+    let state = t::AppState::default();
+    let path = temp_path("widejson");
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("touch");
+    let opts = t::sqlite_options(path.to_str().expect("utf8"));
+    let conn = t::connect(&opts).await.expect("connect");
+    state
+        .insert(t::make_session("audit_wide_json", conn, opts, false))
+        .await;
+    let side = Side {
+        id: "audit_wide_json".into(),
+        database: None,
+        driver: "sqlite",
+    };
+    // 記録列は id + c0..c67 + settings = 70 列。分割は 63 組ずつなので、
+    // 1 つ目のチャンクの最後 (63 番目 = c61) と、最後の列 settings が各チャンクの末尾になる。
+    let mut cols: Vec<String> = (0..68).map(|i| format!("c{i} INTEGER")).collect();
+    cols[61] = "c61 TEXT".into();
+    exec(
+        &state,
+        &side,
+        &format!(
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, {}, settings TEXT)",
+            cols.join(", ")
+        ),
+    )
+    .await;
+    let mut o = options();
+    o.exclude_columns.clear();
+    let ddl = generate(&state, &side, &o, false).await;
+    run_ddl(&state, &side, ddl.create).await;
+
+    exec(
+        &state,
+        &side,
+        "INSERT INTO users (id, c61, settings) VALUES (1, json('{\"q\":{}}'), json('{\"lang\":\"en\"}'))",
+    )
+    .await;
+    exec(
+        &state,
+        &side,
+        "UPDATE users SET c61 = json_set(c61, '$.r', json('{}')), settings = json_set(settings, '$.lang', 'ja') WHERE id = 1",
+    )
+    .await;
+    exec(&state, &side, "DELETE FROM users WHERE id = 1").await;
+
+    let rows = audit_rows(&state, &side).await;
+    let ops: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+    assert_eq!(ops, vec!["INSERT", "UPDATE", "DELETE"], "{rows:?}");
+    let check = |v: &Option<Json>, c61: Json, settings: Json| {
+        let obj = v
+            .as_ref()
+            .expect("JSON として読める")
+            .as_object()
+            .expect("object");
+        assert_eq!(obj.len(), 70, "列数が保たれる");
+        assert_eq!(obj["c61"], c61);
+        assert_eq!(obj["settings"], settings);
+    };
+    let q = json!({"q": {}});
+    let q2 = json!({"q": {}, "r": {}});
+    check(&rows[0].3, q.clone(), json!({"lang": "en"}));
+    check(&rows[1].2, q, json!({"lang": "en"}));
+    check(&rows[1].3, q2.clone(), json!({"lang": "ja"}));
+    check(&rows[2].2, q2, json!({"lang": "ja"}));
+    assert_eq!(rows[0].1, Some(json!({"id": 1})));
+    let _ = std::fs::remove_file(&path);
+}
+
 /// read_only 接続ではバックエンドが生成 DDL の実行を拒否する (DDL の生成自体は読み取りなので通る)。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlite_audit_ddl_is_rejected_on_read_only_session() {
