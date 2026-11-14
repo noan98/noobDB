@@ -76,7 +76,7 @@ export function lockSummary(lock: InnodbLock): { mode: string; target: string } 
 }
 
 /** 最新の報告と今回のエラーの関係 (Rust の `relation`) → 注記の文言キー。 */
-export function relationNoticeKey(relation: string | null): I18nKey | null {
+export function relationNoticeKey(relation: string | null): I18nKey {
   switch (relation) {
     case "related":
       return "deadlockRelationRelated";
@@ -85,7 +85,8 @@ export function relationNoticeKey(relation: string | null): I18nKey | null {
     case "newer":
       return "deadlockRelationNewer";
     default:
-      return null;
+      // 時刻が読めない / エラーの経過が不明なときは判定できない旨を出す。
+      return "deadlockRelationUnknown";
   }
 }
 

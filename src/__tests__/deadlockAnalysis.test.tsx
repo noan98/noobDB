@@ -109,7 +109,7 @@ describe("デッドロック解析の純ロジック (#2328)", () => {
       "d.t",
     );
     expect(relationNoticeKey("older")).toBe("deadlockRelationOlder");
-    expect(relationNoticeKey(null)).toBeNull();
+    expect(relationNoticeKey(null)).toBe("deadlockRelationUnknown");
     expect(relationIsMismatch("newer")).toBe(true);
     expect(relationIsMismatch("related")).toBe(false);
     expect(unavailableKey("needs_process_privilege")).toBe("deadlockUnavailableNeedsProcess");
@@ -183,6 +183,24 @@ describe("DeadlockPanel", () => {
       screen.getAllByTestId("deadlock-txn").filter((e) => e.getAttribute("data-victim") === "true"),
     ).toHaveLength(1);
     expect(api.analyzeDeadlock).toHaveBeenCalledWith("s1", "1213", expect.any(Number));
+  });
+
+  it("MySQL: 報告はあるが関係を判定できないときは、その旨を出す", async () => {
+    vi.mocked(api.analyzeDeadlock).mockResolvedValue({
+      ...empty,
+      mysql: {
+        detected_at: "2026-11-14 10:20:30",
+        server_now: null,
+        relation: null,
+        print_all_deadlocks: true,
+        incomplete: false,
+        transactions: [txn(1, [2]), txn(2, [1], { rolled_back: true })],
+      },
+    });
+    renderWithProviders(<DeadlockPanel {...props} />);
+    expect((await screen.findByTestId("deadlock-relation")).textContent).toContain(
+      t("deadlockRelationUnknown"),
+    );
   });
 
   it("MySQL: PROCESS 権限が無いときは理由を出す", async () => {

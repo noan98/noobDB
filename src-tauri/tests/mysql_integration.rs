@@ -5885,4 +5885,8 @@ async fn mysql_deadlock_is_analyzed_after_1213() {
         assert!(sql.contains(&table), "sql missing: {txn:?}");
         assert!(txn.waits_for.is_some(), "{txn:?}");
     }
+    // 報告はいま起きたばかりなので、今回のエラーの報告と判定される (時刻を比べられた場合のみ)。
+    if let Some(rel) = view.relation.as_deref() {
+        assert_eq!(rel, "related", "{view:?}");
+    }
 }

@@ -547,14 +547,6 @@ pub fn classify_report_age(
 ) -> Option<&'static str> {
     let report_age = parse_epoch_secs(server_now)? - parse_epoch_secs(detected_at)?;
     let diff = report_age - error_age_secs.max(0);
-    // InnoDB の報告時刻は OS のローカル時刻。差が 30 分以上で 15 分刻みに近いときは、タイムゾーンのずれ
-    // (最小でも 15 分刻み) による見かけの差の可能性が高く、判定を誤らせるので判定しない。
-    if diff.abs() >= 1800 {
-        let rem = diff.abs() % 900;
-        if rem <= 60 || 900 - rem <= 60 {
-            return None;
-        }
-    }
     Some(if diff.abs() <= REPORT_RELATION_TOLERANCE_SECS {
         RELATION_RELATED
     } else if diff > 0 {
@@ -872,11 +864,11 @@ TABLE LOCK table `d`.`t` trx id 2 lock mode X waiting
     }
 
     #[test]
-    fn report_age_hour_shift_is_not_judged() {
-        // 差がちょうど 1 時間 (タイムゾーンのずれの疑い) は判定しない。
+    fn report_age_one_hour_older_is_judged_older() {
+        // 時刻はサーバ側で SYSTEM に揃えてあるので、1 時間の差も本当に古い報告として扱う。
         assert_eq!(
             classify_report_age("2026-11-14 09:25:00", "2026-11-14 10:30:00", 300),
-            None
+            Some(RELATION_OLDER)
         );
     }
 

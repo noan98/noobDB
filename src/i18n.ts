@@ -6133,6 +6133,7 @@ const en = {
   deadlockRelationOlder:
     "The latest report is older than this error, so it is probably a different incident. The report for this error may not have been kept.",
   deadlockRelationNewer:
+  deadlockRelationUnknown: "Could not tell whether this report is the one for the error you saw (the time could not be compared). Check the detected time.",
     "The latest report is newer than this error: another deadlock happened since, and it replaced the report for this one.",
   deadlockPrintAllOff:
     "innodb_print_all_deadlocks is OFF, so only the latest deadlock is kept and each new one overwrites it. Turn it ON to write every deadlock to the error log.",
@@ -14659,6 +14660,7 @@ const ja: Dict = {
   deadlockRelationOlder:
     "最新の報告はこのエラーより古く、別件の可能性があります。このエラーの報告は残っていないかもしれません。",
   deadlockRelationNewer:
+  deadlockRelationUnknown: "この報告が、いま表示しているエラーのものか判定できません (時刻を比べられませんでした)。検出時刻を確認してください。",
     "最新の報告はこのエラーより新しいものです。その後に別のデッドロックが起き、このエラーの報告は上書きされています。",
   deadlockPrintAllOff:
     "innodb_print_all_deadlocks が OFF のため、最新の 1 件しか残らず、新しいデッドロックが起きるたびに上書きされます。ON にするとすべてのデッドロックがエラーログに残ります。",

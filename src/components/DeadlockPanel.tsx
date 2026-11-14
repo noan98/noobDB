@@ -169,7 +169,8 @@ function MysqlTxnCard({ txn, driver }: { txn: InnodbTransaction; driver: string 
 
 function MysqlView({ view, driver }: { view: InnodbDeadlockView; driver: string }) {
   const t = useT();
-  const relKey = relationNoticeKey(view.relation);
+  // 報告があるのに関係を判定できなかった (時刻が読めない / エラーの経過が不明) ときは、その旨を出す。
+  const relKey = view.detected_at != null ? relationNoticeKey(view.relation) : null;
   const cycle = innodbCycle(view.transactions);
   const victim = view.transactions.find((x) => x.rolled_back);
   return (
