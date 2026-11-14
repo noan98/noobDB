@@ -6691,7 +6691,9 @@ export default function App() {
           outCtx,
         );
       } catch (e) {
-        patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
+        // 失敗した文を記録しておく。エラー位置の波線・「エラー位置へ」が直前に成功した別の文を
+        // 指さないように、通常の実行経路と同じく試みた SQL を lastExecutedSql に残す (#2330)。
+        patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e), lastExecutedSql: sql }));
         setStatus({
           kind: "key",
           key: "statusQueryError",
