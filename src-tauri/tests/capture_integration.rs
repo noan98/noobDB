@@ -129,7 +129,6 @@ async fn pg_capture_runs_triggers_once_and_attributes_serial_insert() {
     .unwrap();
 }
 
-/// 新規行が窓の外で、同じ文の中のトリガが窓の行を消す: 既存の別行を挿入行と取り違えない。
 /// #2343: `GENERATED ALWAYS AS IDENTITY` 列を持つ表で、DELETE の Undo と INSERT の Redo の
 /// 再 INSERT が 428C9 にならず、元の値で戻る。
 #[tokio::test]
@@ -190,6 +189,7 @@ async fn pg_undo_and_redo_reinsert_into_always_identity_column() {
     ins.after_rows = vec![row];
     let plan = t::build_redo_plan_with_columns(&ins, &[], false, &[], &identity);
     assert_eq!(plan.statements.len(), 1, "{:?}", plan.warnings);
+    assert!(plan.statements[0].contains("OVERRIDING SYSTEM VALUE"));
     c.execute(&plan.statements[0], None)
         .await
         .expect("redo re-insert into an ALWAYS identity column");
@@ -201,6 +201,7 @@ async fn pg_undo_and_redo_reinsert_into_always_identity_column() {
     c.execute(&format!("DROP TABLE {tb}"), None).await.unwrap();
 }
 
+/// 新規行が窓の外で、同じ文の中のトリガが窓の行を消す: 既存の別行を挿入行と取り違えない。
 #[tokio::test]
 async fn pg_insert_outside_window_is_not_misattributed() {
     let Some(o) = pg_opts().await else { return };
