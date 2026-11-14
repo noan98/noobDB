@@ -6,10 +6,12 @@ import {
   type CloneColumnRule,
   type CloneRowsOutcome,
   type CloneRowsPreview,
+  type ForeignKey,
 } from "../api/tauri";
 import { useT } from "../i18n";
 import { Callout } from "./Callout";
 import { copyToClipboard } from "./clipboard";
+import { CloneOutcomeTables, CloneRuleRow } from "./CloneOutcomeTables";
 import { useConfirm } from "./ConfirmDialog";
 import {
   buildCloneRequest,
@@ -21,8 +23,8 @@ import {
   cloneBlockers,
   cloneExpressionError,
   cloneKey,
-  describeRule,
-  keyStatusLabelKey,
+  cloneNodeExtras,
+  cloneToSubsetPreview,
   mappingsToTsv,
   type RuleKind,
   upsertRule,
@@ -33,6 +35,7 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Spinner } from "./Spinner";
 import { StreamProgressBar } from "./StreamProgressBar";
+import { SubsetPreviewGraph } from "./SubsetPreviewGraph";
 import { needsWriteConfirm } from "./subsetExtract";
 import { useToast } from "./Toast";
 import { Button, Input } from "./ui";
@@ -87,6 +90,8 @@ export function CloneRowsModal({
   const [ruleText, setRuleText] = useState("");
 
   const [preview, setPreview] = useState<CloneRowsPreview | null>(null);
+  const [previewFks, setPreviewFks] = useState<ForeignKey[]>([]);
+  const [previewRun, setPreviewRun] = useState(0);
   const [previewKey, setPreviewKey] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>("idle");
@@ -119,9 +124,17 @@ export function CloneRowsModal({
     setStatus("previewing");
     setPreviewError(null);
     try {
-      const p = await api.previewCloneRows(request, rules);
+      const [p, fks] = await Promise.all([
+        api.previewCloneRows(request, rules),
+        // 外部キーは図のエッジにしか使わないので、取れなくてもプレビュー自体は出す。
+        database
+          ? api.foreignKeys(sessionId, database).catch(() => [] as ForeignKey[])
+          : Promise.resolve([] as ForeignKey[]),
+      ]);
       if (unmountedRef.current || seq !== seqRef.current) return;
       setPreview(p);
+      setPreviewFks(fks);
+      setPreviewRun((n) => n + 1);
       setPreviewKey(key);
       if (p.tables.length > 0 && !p.tables.some((x) => x.table === ruleTable)) {
         setRuleTable(p.tables[0]?.table ?? "");
@@ -133,7 +146,7 @@ export function CloneRowsModal({
     } finally {
       if (!unmountedRef.current && seq === seqRef.current) setStatus("idle");
     }
-  }, [request, rules, ruleTable]);
+  }, [request, rules, ruleTable, database, sessionId]);
 
   // 開いたときに 1 回、プレビューを取る (方針が要る表をすぐ見せる)。
   const firstPreviewRef = useRef(false);
@@ -183,6 +196,12 @@ export function CloneRowsModal({
     if (ok) toast.success(t("cloneRowsCopied"));
     else toast.error(t("cloneRowsCopyFailed"));
   };
+
+  const nodeExtras = useMemo(
+    () => (preview ? cloneNodeExtras(preview, (k) => t(k)) : undefined),
+    [preview, t],
+  );
+  const graphPreview = useMemo(() => (preview ? cloneToSubsetPreview(preview) : null), [preview]);
 
   const blockerText = (b: (typeof blockers)[number]): string => {
     switch (b.kind) {
@@ -274,55 +293,30 @@ export function CloneRowsModal({
               {t("cloneRowsPreviewStale")}
             </Callout>
           )}
-          {preview && (
-            <chakra.div
-              border="1px solid"
-              borderColor="app.border"
-              borderRadius="md"
-              overflow="hidden"
-              data-testid="clone-preview"
-            >
-              {preview.tables.map((tb, i) => (
-                <chakra.div
-                  key={tb.table}
-                  display="flex"
-                  alignItems="baseline"
-                  gap="3"
-                  px="3"
-                  py="1.5"
-                  borderBottom={i < preview.tables.length - 1 ? "1px solid" : undefined}
-                  borderColor="app.border"
-                  fontSize="sm"
-                >
-                  <chakra.span color="app.textMuted" minW="4">
-                    {i + 1}
-                  </chakra.span>
-                  <chakra.span flex="1" minW="0" fontFamily="mono" wordBreak="break-all">
-                    {tb.table}
-                  </chakra.span>
-                  <chakra.span textStyle="caption" color={tb.needsPolicy ? "app.textError" : "app.textMuted"}>
-                    {tb.keyColumns.length === 0
-                      ? t("cloneKeyNone")
-                      : tb.keyColumns.map((k) => `${k.name}: ${t(keyStatusLabelKey(k.status))}`).join(" / ")}
-                  </chakra.span>
-                  <chakra.span fontFamily="mono" minW="64px" textAlign="right">
-                    {tb.rows}
-                  </chakra.span>
-                </chakra.div>
-              ))}
+          {preview && graphPreview && preview.totalRows > 0 && (
+            <chakra.div data-testid="clone-preview">
+              <SubsetPreviewGraph
+                preview={graphPreview}
+                foreignKeys={previewFks}
+                stale={!previewFresh}
+                runKey={String(previewRun)}
+                nodeExtras={nodeExtras}
+                variant="clone"
+              />
             </chakra.div>
           )}
-          {preview?.warnings.map((w) => (
-            <Callout key={JSON.stringify(w)} tone="warning" role="status">
-              {w.kind === "childTruncated"
-                ? t("subsetWarnChildTruncated", { table: w.table, limit: w.limit })
-                : w.kind === "rootTruncated"
-                  ? t("subsetWarnRootTruncated", { table: w.table, limit: w.limit })
-                  : w.kind === "unresolvedForeignKey"
-                    ? t("subsetWarnUnresolved", { table: w.table, constraint: w.constraint })
-                    : t("subsetWarnCycle", { tables: w.tables.join(", ") })}
-            </Callout>
-          ))}
+          {preview?.totalRows === 0 &&
+            preview.warnings.map((w) => (
+              <Callout key={JSON.stringify(w)} tone="warning" role="status">
+                {w.kind === "childTruncated"
+                  ? t("subsetWarnChildTruncated", { table: w.table, limit: w.limit })
+                  : w.kind === "rootTruncated"
+                    ? t("subsetWarnRootTruncated", { table: w.table, limit: w.limit })
+                    : w.kind === "unresolvedForeignKey"
+                      ? t("subsetWarnUnresolved", { table: w.table, constraint: w.constraint })
+                      : t("subsetWarnCycle", { tables: w.tables.join(", ") })}
+              </Callout>
+            ))}
           {capture !== null && preview && preview.tables.some((x) => x.keyColumns.length === 0) && (
             <Callout tone="warning" role="status">
               {t("cloneRowsPreviewNoUndo", {
@@ -401,27 +395,22 @@ export function CloneRowsModal({
             </Flex>
             {ruleError && <FieldError>{t(ruleError)}</FieldError>}
             {rules.map((r) => (
-              <Flex
+              <CloneRuleRow
                 key={`${r.table}.${r.column}`}
-                align="center"
-                gap="2"
-                fontSize="sm"
-                data-testid="clone-rule"
-              >
-                <chakra.span fontFamily="mono" flex="1" minW="0" wordBreak="break-all">
-                  {r.table}.{r.column} = {describeRule(r)}
-                </chakra.span>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() =>
-                    setRules((rs) => rs.filter((x) => !(x.table === r.table && x.column === r.column)))
-                  }
-                  disabled={busy}
-                >
-                  {t("cloneRowsRuleRemove")}
-                </Button>
-              </Flex>
+                rule={r}
+                action={
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() =>
+                      setRules((rs) => rs.filter((x) => !(x.table === r.table && x.column === r.column)))
+                    }
+                    disabled={busy}
+                  >
+                    {t("cloneRowsRuleRemove")}
+                  </Button>
+                }
+              />
             ))}
           </FormSection>
         )}
@@ -450,35 +439,7 @@ export function CloneRowsModal({
               </Callout>
             )}
             <FieldLabel as="div">{t("cloneRowsMappingTitle")}</FieldLabel>
-            <chakra.div
-              maxH="240px"
-              overflowY="auto"
-              border="1px solid"
-              borderColor="app.border"
-              borderRadius="md"
-              fontFamily="mono"
-              fontSize="sm"
-              px="3"
-              py="2"
-            >
-              {outcome.tables.map((tb) => (
-                <chakra.div key={tb.table} mb="2">
-                  <chakra.div color="app.textMuted">
-                    {tb.table} ({tb.rows}){tb.keyColumns.length > 0 ? ` [${tb.keyColumns.join(", ")}]` : ""}
-                  </chakra.div>
-                  {tb.keyColumns.length === 0 ? (
-                    <chakra.div>{t("cloneRowsNoKeyMapping")}</chakra.div>
-                  ) : (
-                    tb.mappings.map((m) => (
-                      <chakra.div key={JSON.stringify(m.oldKey)}>
-                        {m.oldKey.join(", ")} → {m.newKey.join(", ")}
-                        {m.root ? " *" : ""}
-                      </chakra.div>
-                    ))
-                  )}
-                </chakra.div>
-              ))}
-            </chakra.div>
+            <CloneOutcomeTables outcome={outcome} />
             <Flex gap="2" justify="flex-end">
               <Button type="button" variant="secondary" onClick={() => void copyMappings()}>
                 {t("cloneRowsCopyMapping")}

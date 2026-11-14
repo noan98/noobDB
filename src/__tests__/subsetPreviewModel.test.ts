@@ -7,6 +7,7 @@ import {
   collapseLanes,
   COLLAPSE_THRESHOLD,
   LANE_VISIBLE,
+  geometryWidth,
   layoutEdges,
   tracePathToRoot,
   type SubsetNode,
@@ -339,5 +340,12 @@ describe("tracePathToRoot (#2293)", () => {
     const path = tracePathToRoot(pg, "items");
     expect([...path.tables]).toEqual(["items"]);
     expect(path.edges).toEqual([]);
+  });
+});
+
+describe("geometryWidth (#2323)", () => {
+  it("fits lanes and gutters", () => {
+    expect(geometryWidth(3)).toBe(11);
+    expect(geometryWidth(2)).toBe(7);
   });
 });
