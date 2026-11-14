@@ -140,7 +140,7 @@ export function keyStatusLabelKey(status: CloneTablePreview["keyColumns"][number
   }
 }
 
-function cellText(v: unknown): string {
+export function cellText(v: unknown): string {
   return v === null || v === undefined ? "NULL" : String(v);
 }
 
@@ -180,10 +180,15 @@ export function cloneToSubsetPreview(p: CloneRowsPreview): SubsetPreview {
   };
 }
 
-/** 主キーの状態 → チップの色調。採番は success、式は info、張り替えは accent、方針が要る (元の値のまま) は warning。 */
+/**
+ * 主キーの状態 → チップの色調。採番は success、式は info、張り替えは accent。
+ * 元の値のまま (unchanged) が warning なのは、バックエンドの `needs_policy` (主キーの列がすべて unchanged) の表だけ。
+ * 複合キーの一部だけが unchanged の表は方針が要らないので muted。
+ */
 export function keyStatusTone(
   status: CloneTablePreview["keyColumns"][number]["status"],
-): SubsetNodeExtra["chips"][number]["tone"] {
+  needsPolicy: boolean,
+): NonNullable<SubsetNodeExtra["chips"][number]["tone"]> {
   switch (status) {
     case "auto":
       return "success";
@@ -192,11 +197,11 @@ export function keyStatusTone(
     case "remapped":
       return "accent";
     case "unchanged":
-      return "warning";
+      return needsPolicy ? "warning" : "muted";
   }
 }
 
-/** 表ごとの主キー状態チップ (状態ごとに 1 つ。列名は付けない) と、方針が要る表の強調。 */
+/** 表ごとの主キー状態チップ (状態ごとに 1 つ。`列: 状態` は detail) と、方針が要る表の強調。 */
 export function cloneNodeExtras(
   p: CloneRowsPreview,
   label: (key: I18nKey) => string,
@@ -209,7 +214,15 @@ export function cloneNodeExtras(
       chips:
         statuses.length === 0
           ? [{ key: "none", tone: "info", label: label("cloneKeyNone") }]
-          : statuses.map((s) => ({ key: s, tone: keyStatusTone(s), label: label(keyStatusLabelKey(s)) })),
+          : statuses.map((s) => ({
+              key: s,
+              tone: keyStatusTone(s, t.needsPolicy),
+              label: label(keyStatusLabelKey(s)),
+              detail: t.keyColumns
+                .filter((k) => k.status === s)
+                .map((k) => `${k.name}: ${label(keyStatusLabelKey(s))}`)
+                .join(" / "),
+            })),
       emphasize: t.needsPolicy,
     });
   }

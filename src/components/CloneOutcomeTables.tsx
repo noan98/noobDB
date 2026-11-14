@@ -1,10 +1,11 @@
 import { type ReactNode, useState } from "react";
 import { chakra } from "@chakra-ui/react";
-import { motion, useReducedMotion } from "motion/react";
-import type { CellValue, CloneColumnRule, CloneRowsOutcome } from "../api/tauri";
+import { motion, useReducedMotionConfig } from "motion/react";
+import type { CloneColumnRule, CloneRowsOutcome } from "../api/tauri";
 import { useT } from "../i18n";
 import { staggerContainer, variants } from "../motion";
-import { CLONE_MAPPING_VISIBLE, describeRule } from "./cloneRows";
+import { CLONE_MAPPING_VISIBLE, cellText, describeRule } from "./cloneRows";
+import { prefersStaticMotion } from "./revealOrigin";
 import { ToneChip } from "./ToneChip";
 
 /**
@@ -21,13 +22,9 @@ const STAGGER_CAP = 12;
 
 const COLUMNS = "1fr auto 1fr auto";
 
-function keyText(k: CellValue[]): string {
-  return k.map((v) => (v === null || v === undefined ? "NULL" : String(v))).join(", ");
-}
-
 function TableMapping({ table }: { table: CloneRowsOutcome["tables"][number] }) {
   const t = useT();
-  const reduced = useReducedMotion() ?? false;
+  const reduced = (useReducedMotionConfig() ?? false) || prefersStaticMotion();
   const [expanded, setExpanded] = useState(false);
   const hidden = Math.max(0, table.mappings.length - CLONE_MAPPING_VISIBLE);
   const shown = expanded ? table.mappings : table.mappings.slice(0, CLONE_MAPPING_VISIBLE);
@@ -107,13 +104,17 @@ function TableMapping({ table }: { table: CloneRowsOutcome["tables"][number] }) 
                 data-testid="clone-mapping-row"
                 data-root={m.root ? "true" : "false"}
               >
-                <chakra.span wordBreak="break-all">{keyText(m.oldKey)}</chakra.span>
+                <chakra.span wordBreak="break-all">{m.oldKey.map(cellText).join(", ")}</chakra.span>
                 <chakra.span color="app.textMuted" aria-hidden="true">
                   →
                 </chakra.span>
-                <chakra.span wordBreak="break-all">{keyText(m.newKey)}</chakra.span>
+                <chakra.span wordBreak="break-all">{m.newKey.map(cellText).join(", ")}</chakra.span>
                 <chakra.span display="inline-flex">
-                  {m.root && <ToneChip tone="accent">{t("cloneRowsMappingRoot")}</ToneChip>}
+                  {m.root && (
+                    <ToneChip tone="accent" pill>
+                      {t("cloneRowsMappingRoot")}
+                    </ToneChip>
+                  )}
                 </chakra.span>
               </MotionRow>
             ))}
@@ -144,14 +145,7 @@ function TableMapping({ table }: { table: CloneRowsOutcome["tables"][number] }) 
 
 export function CloneOutcomeTables({ outcome }: { outcome: CloneRowsOutcome }) {
   return (
-    <chakra.div
-      display="flex"
-      flexDirection="column"
-      gap="2"
-      maxH="60vh"
-      overflowY="auto"
-      data-testid="clone-mapping"
-    >
+    <chakra.div display="flex" flexDirection="column" gap="2" data-testid="clone-mapping">
       {outcome.tables.map((tb) => (
         <TableMapping key={tb.table} table={tb} />
       ))}

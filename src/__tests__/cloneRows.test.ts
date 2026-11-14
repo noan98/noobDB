@@ -223,10 +223,38 @@ describe("cloneToSubsetPreview / cloneNodeExtras (#2323)", () => {
   it("maps key status to one chip per status and highlights tables needing a policy", () => {
     const m = cloneNodeExtras(p, (k) => k);
     expect(m.get("orders")).toEqual({
-      chips: [{ key: "auto", tone: "success", label: "cloneKeyAuto" }],
+      chips: [{ key: "auto", tone: "success", label: "cloneKeyAuto", detail: "id: cloneKeyAuto" }],
       emphasize: false,
     });
-    expect(m.get("tags")?.chips).toEqual([{ key: "unchanged", tone: "warning", label: "cloneKeyUnchanged" }]);
+    expect(m.get("tags")?.chips).toEqual([
+      {
+        key: "unchanged",
+        tone: "warning",
+        label: "cloneKeyUnchanged",
+        detail: "a: cloneKeyUnchanged / b: cloneKeyUnchanged",
+      },
+    ]);
     expect(m.get("tags")?.emphasize).toBe(true);
+  });
+  it("mixed composite key: unchanged is muted (no policy needed) and the detail lists columns", () => {
+    const mixed: CloneRowsPreview = {
+      ...p,
+      tables: [
+        {
+          ...(p.tables[1] as CloneRowsPreview["tables"][number]),
+          keyColumns: [
+            { name: "order_id", status: "remapped" },
+            { name: "line_no", status: "unchanged" },
+          ],
+          needsPolicy: false,
+        },
+      ],
+    };
+    const e = cloneNodeExtras(mixed, (k) => k).get("tags");
+    expect(e?.emphasize).toBe(false);
+    expect(e?.chips.map((c) => [c.key, c.tone, c.detail])).toEqual([
+      ["remapped", "accent", "order_id: cloneKeyRemapped"],
+      ["unchanged", "muted", "line_no: cloneKeyUnchanged"],
+    ]);
   });
 });

@@ -28,7 +28,15 @@ const table = (over: Record<string, unknown>) => ({
 const preview = (ready: boolean, conflicts: unknown[]) => ({
   tables: [
     table({ conflicts }),
-    table({ table: "order_items", rows: 2, rootRows: 0, childRows: 2, conflicts: [] }),
+    table({
+      table: "order_items",
+      rows: 2,
+      rootRows: 0,
+      childRows: 2,
+      conflicts: [],
+      keyColumns: [{ name: "id", status: "unchanged" }],
+      needsPolicy: !ready,
+    }),
   ],
   totalRows: 3,
   cycles: [],
@@ -88,6 +96,13 @@ describe("CloneRowsModal", () => {
   it("blocks on a unique conflict, runs after an override, and shows the key mapping", async () => {
     const screen = await render();
     await expect.element(screen.getByTestId("clone-preview")).toBeVisible();
+    // 方針が要る表だけが強調され、チップは warning になる。
+    const emphasized = document.querySelectorAll(
+      '[data-testid="subset-preview-node"] [data-emphasis="true"]',
+    );
+    expect(emphasized.length).toBe(1);
+    expect(emphasized[0]?.closest("[data-table]")?.getAttribute("data-table")).toBe("order_items");
+    expect(emphasized[0]?.querySelector('[data-chip-tone="warning"]')).not.toBeNull();
     await expect
       .element(
         screen.getByText(

@@ -301,6 +301,7 @@ export function CloneRowsModal({
                 stale={!previewFresh}
                 runKey={String(previewRun)}
                 nodeExtras={nodeExtras}
+                variant="clone"
               />
             </chakra.div>
           )}

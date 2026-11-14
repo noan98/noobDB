@@ -4979,10 +4979,16 @@ const en = {
   cloneRowsErrOldInQuote: "Write {old} without quotes; it must not be inside a string literal.",
   cloneRowsErrComment: "Comments (-- and /* */) are not allowed in an expression.",
   cloneRowsMappingTitle: "Old key → new key",
+  cloneGraphAria:
+    "Foreign key map of the rows to clone: the start table on the left, child tables on the right",
+  cloneGraphHint:
+    "Lines join a child table (right side) to the table it references (left side). Parents are inserted first. Hover or focus a table to highlight its path to the start. A table outlined in the warning color needs a column override before it can run.",
+  cloneSummaryCycles:
+    "{count} foreign key cycle(s). Rows cannot be inserted in a valid order, so the clone is blocked.",
   cloneRowsMappingOld: "Old key",
   cloneRowsMappingNew: "New key",
   cloneRowsMappingRoot: "Start row",
-  cloneRowsMappingCount: "{rows} rows",
+  cloneRowsMappingCount: "{rows} row(s)",
   cloneRowsKindExpressionShort: "Expr",
   cloneRowsKindValueShort: "Value",
   cloneRowsNoKeyMapping: "No primary key, so there is no key mapping.",
@@ -13465,6 +13471,10 @@ const ja: Dict = {
   cloneRowsErrOldInQuote: "{old} は引用符で囲まず、文字列リテラルの外に書いてください。",
   cloneRowsErrComment: "式の中にコメント (-- や /* */) は書けません。",
   cloneRowsMappingTitle: "旧キー → 新キー",
+  cloneGraphAria: "複製する行の外部キーの辿り図 (左が起点、右が子)",
+  cloneGraphHint:
+    "線は、子の表 (右側) と、その参照先の表 (左側) を結びます。挿入は親の表が先です。表にホバー / フォーカスすると、起点までの経路を強調します。警告色の輪郭の表は、列の上書きを足すまで実行できません。",
+  cloneSummaryCycles: "外部キーの循環が {count} 件あります。正しい順に挿入できないため、実行を止めます。",
   cloneRowsMappingOld: "旧キー",
   cloneRowsMappingNew: "新キー",
   cloneRowsMappingRoot: "起点",
