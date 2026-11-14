@@ -15,15 +15,18 @@ import {
   collapseLanes,
   edgeKey,
   GEOMETRY,
+  geometryWidth,
   layoutEdges,
   type PlacedEdge,
   type SubsetLane,
   type SubsetNode,
+  type SubsetNodeExtra,
   SUBSET_LANES,
   tracePathToRoot,
 } from "./subsetPreviewModel";
 import { subsetWarningMessage } from "./subsetExtract";
 import { Tooltip } from "./Tooltip";
+import { ToneChip } from "./ToneChip";
 
 /**
  * サブセット抽出のプレビューを「親 ← 起点 → 子」の FK 辿り図で見せる (#2266)。
@@ -62,7 +65,17 @@ const EDGE_OPACITY_LIT = 1;
 const DIM_OPACITY = 0.35;
 const EDGE_OPACITY_DIM = 0.15;
 
-const GRID_COLUMNS = `${GEOMETRY.laneWidth}fr ${GEOMETRY.gutter}fr ${GEOMETRY.laneWidth}fr ${GEOMETRY.gutter}fr ${GEOMETRY.laneWidth}fr`;
+/** レーン数に応じたグリッドの列 (`レーン 溝 レーン …`)。 */
+function gridColumns(laneCount: number): string {
+  return Array.from({ length: laneCount }, () => `${GEOMETRY.laneWidth}fr`).join(` ${GEOMETRY.gutter}fr `);
+}
+
+/** 図の使われ方。`clone` (子行の複製 #2323) は親へ辿らないので親レーンと親の段数を出さず、文言も複製向け。 */
+export type SubsetGraphVariant = "extract" | "clone";
+const VARIANT_LANES: Record<SubsetGraphVariant, readonly SubsetLane[]> = {
+  extract: SUBSET_LANES,
+  clone: ["root", "child"],
+};
 /** 行の高さ (名前 + バー + バッジの 3 段が収まる)。エッジの縦座標が「1 行 = 1」なので全行で揃える。 */
 const ROW_HEIGHT = "calc(var(--space-12) + var(--space-4))";
 
@@ -73,10 +86,14 @@ interface Props {
   stale: boolean;
   /** プレビューを取り直すたびに変わる値 (入場アニメーションをやり直す)。 */
   runKey: string | null;
+  /** 表名 → ノードに足すチップ・強調 (子行の複製で主キーの状態を載せる)。省略するとサブセット抽出そのまま。 */
+  nodeExtras?: ReadonlyMap<string, SubsetNodeExtra>;
+  /** 既定はサブセット抽出。 */
+  variant?: SubsetGraphVariant;
 }
 
-function laneColumn(lane: SubsetLane): number {
-  return SUBSET_LANES.indexOf(lane) * 2 + 1;
+function laneColumn(lane: SubsetLane, order: readonly SubsetLane[]): number {
+  return order.indexOf(lane) * 2 + 1;
 }
 
 /**
@@ -127,7 +144,11 @@ function GraphNode({
   dim,
   onHover,
   onFocusNode,
+  extra,
+  laneOrder,
 }: {
+  laneOrder: readonly SubsetLane[];
+  extra?: SubsetNodeExtra;
   node: SubsetNode;
   row: number;
   barColor: string;
@@ -147,7 +168,7 @@ function GraphNode({
   return (
     <MotionDiv
       variants={index < STAGGER_CAP ? variants.staggerItem : undefined}
-      gridColumn={laneColumn(node.lane)}
+      gridColumn={laneColumn(node.lane, laneOrder)}
       gridRow={row + 1}
       py="0.5"
       minW="0"
@@ -176,8 +197,15 @@ function GraphNode({
         px="2"
         py="1"
         borderRadius="md"
-        borderWidth="1px"
-        borderColor={node.lane === "root" ? "app.accent" : "app.border"}
+        borderColor={
+          extra?.emphasize
+            ? semanticColorToken("warning", "solid")
+            : node.lane === "root"
+              ? "app.accent"
+              : "app.border"
+        }
+        borderWidth={extra?.emphasize ? "2px" : "1px"}
+        data-emphasis={extra?.emphasize ? "true" : undefined}
         bg="app.surface"
         display="flex"
         flexDirection="column"
@@ -209,6 +237,15 @@ function GraphNode({
               {t("subsetNodeDepth", { depth: node.depth })}
             </chakra.span>
           )}
+          {extra?.chips.map((c) => (
+            <Tooltip key={c.key} label={c.detail ?? c.label}>
+              <chakra.span display="inline-flex" minW="0" flexShrink={1}>
+                <ToneChip tone={c.tone} shrink testId="subset-preview-chip" ariaLabel={c.detail}>
+                  {c.label}
+                </ToneChip>
+              </chakra.span>
+            </Tooltip>
+          ))}
           {node.truncations.map((tr) => (
             <Badge
               key={tr.kind}
@@ -259,7 +296,9 @@ function EdgeLayer({
   litKeys,
   active,
   rowCount,
+  width,
 }: {
+  width: number;
   edges: readonly PlacedEdge[];
   delays: ReadonlyMap<string, number>;
   litKeys: ReadonlySet<string> | null;
@@ -275,7 +314,7 @@ function EdgeLayer({
       h="100%"
       color="app.textMuted"
       pointerEvents="none"
-      viewBox={`0 0 ${GEOMETRY.width} ${rowCount}`}
+      viewBox={`0 0 ${width} ${rowCount}`}
       preserveAspectRatio="none"
       aria-hidden="true"
       data-testid="subset-preview-edges"
@@ -309,18 +348,32 @@ function EdgeLayer({
   );
 }
 
-export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Props) {
+export function SubsetPreviewGraph({
+  preview,
+  foreignKeys,
+  stale,
+  runKey,
+  nodeExtras,
+  variant = "extract",
+}: Props) {
   const t = useT();
   const reduced = useReducedMotion() ?? false;
   const isDark = useIsDarkTheme();
   const stops = rampStops(SEQUENTIAL_RAMPS.teal, isDark);
+  const laneOrder = VARIANT_LANES[variant];
+  const isClone = variant === "clone";
   const [expanded, setExpanded] = useState<ReadonlySet<SubsetLane>>(() => new Set());
 
   const graph = useMemo(() => buildSubsetGraph(preview, foreignKeys), [preview, foreignKeys]);
-  const lanes = useMemo(() => collapseLanes(graph.nodes, { expanded }), [graph.nodes, expanded]);
-  const collapsible = useMemo(() => collapseLanes(graph.nodes), [graph.nodes]);
-  const edges = useMemo(() => layoutEdges(lanes, graph.edges), [lanes, graph.edges]);
-  const rowCount = Math.max(1, ...SUBSET_LANES.map((l) => lanes[l].length));
+  const keep = useMemo(
+    () => new Set([...(nodeExtras ?? [])].filter(([, x]) => x.emphasize).map(([k]) => k)),
+    [nodeExtras],
+  );
+  const lanes = useMemo(() => collapseLanes(graph.nodes, { expanded, keep }), [graph.nodes, expanded, keep]);
+  const collapsible = useMemo(() => collapseLanes(graph.nodes, { keep }), [graph.nodes, keep]);
+  const edges = useMemo(() => layoutEdges(lanes, graph.edges, laneOrder), [lanes, graph.edges, laneOrder]);
+  const rowCount = Math.max(1, ...laneOrder.map((l) => lanes[l].length));
+  const gridCols = gridColumns(laneOrder.length);
 
   // ホバー / フォーカス中の表と、そこから起点までの経路。再プレビューで表が消えたら強調しない。
   // ホバーとフォーカスは別々に持ち (互いに消し合わない)、ホバーを優先する。
@@ -342,7 +395,7 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
   const delays = useMemo(() => {
     const order = new Map<string, number>();
     let i = 0;
-    for (const lane of SUBSET_LANES) {
+    for (const lane of laneOrder) {
       for (const item of lanes[lane]) {
         if (item.kind === "node") order.set(item.node.table, i);
         else for (const tb of item.tables) order.set(tb, i);
@@ -355,7 +408,7 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
       out.set(`${e.from}>${e.to}`, edgeDelay(idx, reduced));
     }
     return out;
-  }, [lanes, edges, reduced]);
+  }, [lanes, edges, reduced, laneOrder]);
   const litLabels = useMemo(
     () =>
       litKeys
@@ -378,7 +431,7 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
   const cycleCount = preview.cycles.length;
   const truncatedTables = graph.nodes.filter((n) => n.truncations.length > 0).length;
   const unresolved = preview.warnings.filter((w) => w.kind === "unresolvedForeignKey");
-  const maxDepth = Math.max(graph.parentDepth, graph.childDepth);
+  const maxDepth = isClone ? graph.childDepth : Math.max(graph.parentDepth, graph.childDepth);
   let nodeIndex = 0;
 
   return (
@@ -402,13 +455,17 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
           <StatTile
             label={t("subsetStatDepth")}
             value={maxDepth}
-            sub={t("subsetStatDepthSub", { parent: graph.parentDepth, child: graph.childDepth })}
+            sub={
+              isClone
+                ? undefined
+                : t("subsetStatDepthSub", { parent: graph.parentDepth, child: graph.childDepth })
+            }
           />
         </Flex>
 
         <chakra.div
           role="group"
-          aria-label={t("subsetGraphAria")}
+          aria-label={t(isClone ? "cloneGraphAria" : "subsetGraphAria")}
           borderWidth="1px"
           borderColor="app.border"
           borderRadius="md"
@@ -418,11 +475,11 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
           flexDirection="column"
           gap="1"
         >
-          <chakra.div display="grid" gridTemplateColumns={GRID_COLUMNS} alignItems="center">
-            {SUBSET_LANES.map((lane) => (
+          <chakra.div display="grid" gridTemplateColumns={gridCols} alignItems="center">
+            {laneOrder.map((lane) => (
               <Flex
                 key={lane}
-                gridColumn={laneColumn(lane)}
+                gridColumn={laneColumn(lane, laneOrder)}
                 align="center"
                 gap="1.5"
                 color="app.textMuted"
@@ -449,7 +506,8 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
 
           <chakra.div position="relative">
             <EdgeLayer
-              key={runKey ?? "none"}
+              key={`edges-${runKey ?? "none"}`}
+              width={geometryWidth(laneOrder.length)}
               edges={edges}
               delays={delays}
               litKeys={litKeys}
@@ -457,16 +515,16 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
               rowCount={rowCount}
             />
             <MotionDiv
-              key={runKey ?? "none"}
+              key={`nodes-${runKey ?? "none"}`}
               variants={staggerContainer(reduced)}
               initial="initial"
               animate="animate"
               position="relative"
               display="grid"
-              gridTemplateColumns={GRID_COLUMNS}
+              gridTemplateColumns={gridCols}
               gridAutoRows={ROW_HEIGHT}
             >
-              {SUBSET_LANES.flatMap((lane) =>
+              {laneOrder.flatMap((lane) =>
                 lanes[lane].map((item, row) => {
                   if (item.kind === "node") {
                     const barColor = sampleRamp(0.35 + 0.65 * item.node.share, stops);
@@ -477,6 +535,8 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
                         row={row}
                         barColor={barColor}
                         index={nodeIndex++}
+                        extra={nodeExtras?.get(item.node.table)}
+                        laneOrder={laneOrder}
                         dim={path !== null && !path.tables.has(item.node.table)}
                         onHover={setHoverTable}
                         onFocusNode={setFocusTable}
@@ -487,7 +547,7 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
                     <MotionDiv
                       key={item.id}
                       variants={variants.staggerItem}
-                      gridColumn={laneColumn(lane)}
+                      gridColumn={laneColumn(lane, laneOrder)}
                       gridRow={row + 1}
                       py="0.5"
                       minW="0"
@@ -559,12 +619,14 @@ export function SubsetPreviewGraph({ preview, foreignKeys, stale, runKey }: Prop
           </Flex>
         </chakra.div>
         <chakra.span textStyle="caption" color="app.textMuted">
-          {t("subsetGraphHint")}
+          {t(isClone ? "cloneGraphHint" : "subsetGraphHint")}
         </chakra.span>
         {(cycleCount > 0 || truncatedTables > 0) && (
           <Callout tone="warning" role="status" data-testid="subset-preview-summary">
             {[
-              cycleCount > 0 ? t("subsetSummaryCycles", { count: cycleCount }) : null,
+              cycleCount > 0
+                ? t(isClone ? "cloneSummaryCycles" : "subsetSummaryCycles", { count: cycleCount })
+                : null,
               truncatedTables > 0 ? t("subsetSummaryTruncated", { count: truncatedTables }) : null,
               t("subsetSummaryHint"),
             ]
