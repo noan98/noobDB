@@ -46,7 +46,7 @@ import type { Transition, Variants } from "motion/react";
  * - `ConnectionForm` をはじめとするフォーム入力の focus/hover の枠線・影。
  * - 共通ボタン (`ui.tsx` の `Button`)、タブ・ツリー行・コンテキストメニュー項目・
  *   ツールバーボタンの hover/focus 配色とフォーカスリング (box-shadow)。
- * - キャレット (▸) の回転 (`tree.tsx` の `TreeChevron` の `transform` transition)。
+ * - キャレット (chevron-right アイコン) の回転 (`tree.tsx` の `TreeChevron` の `transform` transition)。
  * - 接続ステータスドットの色/影遷移、`connecting` の脈動 (`@keyframes pulse`)、
  *   スピナー回転 (`@keyframes spinner-rotate`) などの CSS アニメーション。
  * - 接続確立のステータスドットのリング bloom (`@keyframes tunnel-open-bloom`、#1866)。

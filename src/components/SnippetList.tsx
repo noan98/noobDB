@@ -599,7 +599,7 @@ export const SnippetList = memo(function SnippetList({
                     tabIndex={0}
                     aria-expanded={folderOpen}
                   >
-                    <TreeChevron aria-hidden>{folderOpen ? "▾" : "▸"}</TreeChevron>
+                    <TreeChevron aria-hidden transform={folderOpen ? "rotate(90deg)" : undefined} />
                     <chakra.span flex="1" fontWeight={600} overflow="hidden" textOverflow="ellipsis">
                       {label}
                     </chakra.span>

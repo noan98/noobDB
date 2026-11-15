@@ -318,7 +318,12 @@ export function TableStatisticsPanel({
     });
     return render(header, body);
   };
-  const arrow = (key: TableStatSortKey) => (sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "");
+  const arrow = (key: TableStatSortKey) =>
+    sortKey === key ? (
+      <chakra.span aria-hidden marginLeft="1" display="inline-flex">
+        <Icon name={sortDir === "asc" ? "sort-asc" : "sort-desc"} size={ICON_SIZES.sm} />
+      </chakra.span>
+    ) : null;
   // 現在のソート状態を支援技術へ伝える aria-sort 値。
   const ariaSort = (key: TableStatSortKey): "ascending" | "descending" | "none" =>
     sortKey === key ? (sortDir === "asc" ? "ascending" : "descending") : "none";

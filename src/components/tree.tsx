@@ -1,7 +1,8 @@
 import { chakra } from "@chakra-ui/react";
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { transitions, variants } from "../motion";
+import { ICON_SIZES, Icon } from "./Icon";
 
 /**
  * サイドパネルのツリー表示で共有する Chakra プリミティブ群。
@@ -111,18 +112,28 @@ export const MotionTreeRow = chakra(
 );
 
 const TREE_CHEVRON_BASE = {
-  display: "inline-block",
-  width: "14px",
-  textAlign: "center",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: ICON_SIZES.sm,
   color: "app.textMuted",
-  fontSize: "2xs",
+  lineHeight: 1,
   flexShrink: 0,
   transitionProperty: "transform",
   transitionDuration: "var(--dur-fast)",
   transitionTimingFunction: "var(--ease)",
 } as const;
 
-export const TreeChevron = chakra("span", { base: TREE_CHEVRON_BASE });
+const TreeChevronBase = chakra("span", { base: TREE_CHEVRON_BASE });
+
+/** 開閉 chevron の中身。文字記号 (▸) ではなく Icon を使い、`ICON_SIZES` / `ICON_STROKE` と
+ *  `--font-scale` に追従させる (#2358)。開いた状態は呼び出し側が `transform="rotate(90deg)"` で渡す。 */
+const treeChevronIcon = <Icon name="chevron-right" size={ICON_SIZES.sm} />;
+
+/** 装飾の開閉 chevron。子要素は受け取らず常に `chevron-right` を描く (回転は `transform` で指定)。 */
+export function TreeChevron(props: Omit<ComponentProps<typeof TreeChevronBase>, "children">) {
+  return <TreeChevronBase {...props}>{treeChevronIcon}</TreeChevronBase>;
+}
 
 /**
  * 操作可能なチェブロン。見た目は `TreeChevron` と同じだが、ネイティブ `button` として
@@ -131,7 +142,7 @@ export const TreeChevron = chakra("span", { base: TREE_CHEVRON_BASE });
  * `aria-label` / `aria-expanded` を必ず渡すこと (装飾のみの `TreeChevron` と違い
  * `aria-hidden` にしない)。
  */
-export const TreeChevronButton = chakra("button", {
+const TreeChevronButtonBase = chakra("button", {
   base: {
     ...TREE_CHEVRON_BASE,
     bg: "transparent",
@@ -142,6 +153,10 @@ export const TreeChevronButton = chakra("button", {
     _focusVisible: { outline: "none", boxShadow: TREE_FOCUS_RING },
   },
 });
+
+export function TreeChevronButton(props: Omit<ComponentProps<typeof TreeChevronButtonBase>, "children">) {
+  return <TreeChevronButtonBase {...props}>{treeChevronIcon}</TreeChevronButtonBase>;
+}
 
 /**
  * ツリー行末の「…」ボタン (#1269)。右クリックでしか開けなかった行メニューに、
