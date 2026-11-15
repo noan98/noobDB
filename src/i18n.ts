@@ -4607,6 +4607,9 @@ const en = {
   cellViewerDiscardBody: "This cell has edits that have not been saved. Closing the viewer discards them.",
   cellViewerDiscardConfirm: "Discard",
   tabDirty: "Unsaved changes (not yet run, or edits not yet applied)",
+  tabOutcomeDone: "Finished (unseen)",
+  tabOutcomeError: "Finished with an error (unseen)",
+  tabOutcomeCancelled: "Cancelled (unseen)",
   tabCloseDiscardTitle: "Close tab with unapplied edits",
   tabCloseDiscardBody:
     '"{name}" has edits that have not been applied. Closing the tab discards them, and restoring the closed tab will not bring the edits back.',
@@ -13312,6 +13315,9 @@ const ja: Dict = {
   cellViewerDiscardBody: "このセルには保存していない編集があります。閉じると編集内容は破棄されます。",
   cellViewerDiscardConfirm: "破棄する",
   tabDirty: "未実行の変更、または Apply していない編集があります",
+  tabOutcomeDone: "実行完了 (未確認)",
+  tabOutcomeError: "エラーで終了 (未確認)",
+  tabOutcomeCancelled: "キャンセル済み (未確認)",
   tabCloseDiscardTitle: "未確定の編集があるタブを閉じる",
   tabCloseDiscardBody:
     "「{name}」には Apply していない編集があります。閉じると編集内容は破棄され、閉じたタブを復元しても編集内容は戻りません。",
