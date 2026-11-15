@@ -31,6 +31,7 @@ mod history;
 mod import_templates;
 mod json_store;
 mod json_tolerant;
+mod logical_relations;
 mod logs;
 mod perf;
 mod plan_watch;
@@ -148,6 +149,7 @@ pub mod __test_api {
         build_undo_plan_with_columns, UndoConflict, UndoPlan,
     };
     pub use crate::flight_recorder::{NewWriteCapture, WriteCaptureRecord, WriteCaptureSummary};
+    pub use crate::logical_relations::LogicalRelation;
     pub use crate::plan_watch::{
         compare_plans, explain_prefix, explain_snapshot, ops_from_payload, plan_fingerprint,
         snapshot_from_result, PayloadKind as PlanPayloadKind, PlanChange, PlanOp,
@@ -2193,6 +2195,9 @@ pub fn run() {
             commands::local::list_local_tables,
             commands::local::drop_local_table,
             commands::local::save_local_database,
+            commands::logical_relations::list_logical_relations,
+            commands::logical_relations::save_logical_relations,
+            commands::logical_relations::delete_logical_relation,
             commands::tasks::list_tasks,
             commands::tasks::save_task,
             commands::tasks::delete_task,

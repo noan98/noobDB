@@ -250,6 +250,9 @@ function RelatedSection({
           whiteSpace="nowrap"
         >
           {incomingFkTableName(entry.fk)}.{entry.fk.column}
+          {entry.fk.logical && (
+            <chakra.span color="app.textMuted"> ({t("logicalRelationBadge")})</chakra.span>
+          )}
         </chakra.span>
         {count && count !== "error" && (
           <chakra.span flexShrink={0} textStyle="caption" fontFamily="mono" data-testid="related-count">
