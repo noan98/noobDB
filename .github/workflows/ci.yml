@@ -624,7 +624,7 @@ jobs:
   # `export_format_golden.rs` は
   # `rust (test)` (と `rust (coverage)`) ジョブの中で実行されるため、`src/__tests__/fixtures/**` だけを変更する PR
   # (`rust==false`) では引き続きスキップされてしまう。これは上の `changes` ジョブに
-  # 追加した `crosslang` フィルタ (フィクスチャパス限定) を `rust (test)` / `rust (coverage)` の if: へ
+  # 追加した `crosslang` フィルタ (フィクスチャと、Rust が include_str! で読むフロントのソース。#2362) を `rust (test)` / `rust (coverage)` の if: へ
   # OR で足すことで塞ぐ (そちらのコメント参照。#1029 でも変更していない)。
   crosslang-parity:
     name: crosslang parity
