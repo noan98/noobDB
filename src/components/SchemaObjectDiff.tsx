@@ -157,9 +157,7 @@ function ObjectRow({ item, driver }: { item: ObjectDiff; driver: DriverKind }) {
         aria-hidden
         visibility={expandable ? "visible" : "hidden"}
         transform={expandable && open ? "rotate(90deg)" : undefined}
-      >
-        ▸
-      </TreeChevron>
+      />
       <chakra.span css={badgeCss(item.status)}>{t(STATUS_KEYS[item.status])}</chakra.span>
       <chakra.span css={kindCss}>{objectKindLabel(item.kind, t)}</chakra.span>
       <chakra.span css={nameCss}>{item.name}</chakra.span>
