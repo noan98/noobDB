@@ -6700,6 +6700,8 @@ export default function App() {
         title: autoTitleOnRun(tt, sql, translate("tabUntitledQuery")) ?? tt.title,
         streaming: true,
         queryError: null,
+        // 前回の実行の未確認印は、この実行の結果で置き換える (#2353)。
+        unseenOutcome: undefined,
         showChart: false,
         showPivot: false,
         showJson: false,
@@ -6727,6 +6729,8 @@ export default function App() {
           autoLimitSql: null,
         }));
         notifyDiscardedEdits(tabId, pendingResolution);
+        // 明示トランザクション中の実行も、裏のタブで終わったら未確認印を出す (#2353)。
+        markUnseenOutcome(tabId, "done");
         setStatus({
           kind: "key",
           key: "statusStreamingDone",
@@ -6749,6 +6753,7 @@ export default function App() {
         // 失敗した文を記録しておく。エラー位置の波線・「エラー位置へ」が直前に成功した別の文を
         // 指さないように、通常の実行経路と同じく試みた SQL を lastExecutedSql に残す (#2330)。
         patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e), lastExecutedSql: sql }));
+        markUnseenOutcome(tabId, "error");
         setStatus({
           kind: "key",
           key: "statusQueryError",
@@ -6776,6 +6781,7 @@ export default function App() {
       tabsRef,
       resolvePendingBeforeReplace,
       notifyDiscardedEdits,
+      markUnseenOutcome,
     ],
   );
 
