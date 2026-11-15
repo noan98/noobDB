@@ -101,6 +101,33 @@ describe("コメント・複数行の文字列の中", () => {
     expect(ranges(t)).toEqual([`${t.lastIndexOf("users")}:users`]);
     expect(hoverAt(t, t.lastIndexOf("users") + 1)?.target.table).toBe("users");
   });
+
+  it("引用符つき識別子の中の ' は識別子の一部として残す (別の表に化けない)", () => {
+    const withQuote: TableSchema[] = [
+      { name: "O'Reilly", columns: ["id"] },
+      { name: "O Reilly", columns: ["id"] },
+    ];
+    const pg = 'SELECT * FROM "O\'Reilly"';
+    expect(
+      resolveIdentifierHover({
+        text: pg,
+        pos: pg.indexOf("Reilly"),
+        tables: withQuote,
+        defaultDatabase: "shop",
+        driver: "postgres",
+      })?.target.table,
+    ).toBe("O'Reilly");
+    const my = "SELECT * FROM `O'Reilly` WHERE x = 'a'";
+    expect(
+      resolveIdentifierHover({
+        text: my,
+        pos: my.indexOf("Reilly"),
+        tables: withQuote,
+        defaultDatabase: "shop",
+        driver: "mysql",
+      })?.target.table,
+    ).toBe("O'Reilly");
+  });
 });
 
 describe("長い行", () => {

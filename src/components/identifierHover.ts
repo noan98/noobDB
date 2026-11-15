@@ -24,7 +24,26 @@ export const MAX_LINKED_LINE_LENGTH = 10_000;
 function maskForHover(text: string, driver: string | null | undefined): string {
   const masked = maskLiterals(text, driver ?? undefined, { keepQuotedIdentifiers: true, cache: false });
   // 中身を潰した文字列に残る区切りの `'` は、行単位の走査が次の行で「文字列の開始」と誤読するので消す。
-  return masked.includes("'") ? masked.replace(/'/g, " ") : masked;
+  // 引用符つき識別子 (`"O'Reilly"` / `` `O'Reilly` ``) の中の `'` は識別子の一部なので残す。
+  return masked.includes("'") ? blankStringDelimiters(masked) : masked;
+}
+
+/** 引用符つき識別子 (`"..."` / `` `...` ``) の外にある `'` だけを空白にする。 */
+function blankStringDelimiters(masked: string): string {
+  let out = "";
+  let quote: string | null = null;
+  for (const ch of masked) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      out += ch;
+    } else if (ch === '"' || ch === "`") {
+      quote = ch;
+      out += ch;
+    } else {
+      out += ch === "'" ? " " : ch;
+    }
+  }
+  return out;
 }
 
 interface SchemaArgs {
