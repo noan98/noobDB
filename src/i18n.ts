@@ -677,6 +677,17 @@ const en = {
   settingsSqlLintEnabled: "Enable syntax check",
   settingsSqlLintEnabledHelp:
     "Flags misspelled keywords (SELEC, FRM, WHER), empty clauses (FROM WHERE), extra commas, GROUP / ORDER without BY, statements that end mid-clause, misordered clauses (e.g. WHERE after ORDER BY), unmatched brackets, and unterminated strings or comments, following the connected driver's dialect. Conservative by design: it prefers missing an error over a false positive.",
+  settingsIdentifierHoverEnabled: "Hover info for identifiers",
+  settingsIdentifierHoverEnabledHelp:
+    "Hover a table or column name in the editor to see its type and constraints, and underline the names that Ctrl/Cmd+click can jump to while the key is held. Ctrl/Cmd+click itself keeps working when this is off.",
+  editorHoverLoading: "Loading…",
+  editorHoverUnavailable: "Details are not available.",
+  editorHoverRevealTree: "Show in tree",
+  editorHoverOpenStructure: "Open structure",
+  editorHoverTableRows: "~{n} rows",
+  editorHoverMoreColumns: "+{n} more columns",
+  editorHoverPk: "PK",
+  editorHoverFk: "FK",
   settingsSqlSemanticLintEnabled: "Warn on unknown tables and columns",
   settingsSqlSemanticLintEnabledHelp:
     "Underlines table and column names that don't exist in the connected schema, before you run. Aliases, CTEs, subqueries and functions are resolved, and anything it can't resolve is left alone. Works only while the syntax check is on, and needs the schema to be loaded. On SQLite only table names are checked.",
@@ -9412,6 +9423,17 @@ const ja: Dict = {
   settingsSqlLintEnabled: "構文チェックを有効化",
   settingsSqlLintEnabledHelp:
     "キーワードのタイポ (SELEC / FRM / WHER など)・中身が空の句 (FROM WHERE など)・余分なカンマ・BY の抜けた GROUP / ORDER・途中で終わった文・句の順序ミス (ORDER BY の後の WHERE など)・括弧の不整合・未終端の文字列やコメントを、接続中ドライバの方言に沿って検出します。誤検出より見逃しを優先する保守的な判定です。",
+  settingsIdentifierHoverEnabled: "識別子のホバー情報",
+  settingsIdentifierHoverEnabledHelp:
+    "エディタでテーブル名・列名にホバーすると型や制約を表示し、Ctrl/Cmd を押している間はクリックで移動できる識別子に下線を引きます。オフでも Ctrl/Cmd+クリックの移動は使えます。",
+  editorHoverLoading: "読み込み中…",
+  editorHoverUnavailable: "詳細を取得できませんでした。",
+  editorHoverRevealTree: "ツリーで表示",
+  editorHoverOpenStructure: "構造タブを開く",
+  editorHoverTableRows: "推定 {n} 行",
+  editorHoverMoreColumns: "ほか {n} 列",
+  editorHoverPk: "PK",
+  editorHoverFk: "FK",
   settingsSqlSemanticLintEnabled: "存在しないテーブル・列を警告",
   settingsSqlSemanticLintEnabledHelp:
     "接続中のスキーマに存在しないテーブル名・列名を、実行前に下線で警告します。エイリアス・CTE・サブクエリ・関数は解決し、解決できないものは警告しません。構文チェックがオンのときだけ働き、スキーマの取得後に有効になります。SQLite ではテーブル名だけを検査します。",

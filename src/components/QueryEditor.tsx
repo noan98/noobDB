@@ -77,6 +77,7 @@ import { t, useT } from "../i18n";
 import { markFeatureTried, useSettings } from "../settings";
 import { springs } from "../motion";
 import { statementAtOffset, statementsFromOffset } from "../sqlScript";
+import { identifierHover, type IdentifierHoverLabels } from "./identifierHoverExtension";
 import { diagnosticsFromTree, type SqlLintMessages } from "./sqlLint";
 import { createMarkerLayer, markerAt, type EditorMarker } from "./editorMarkers";
 import {
@@ -493,6 +494,8 @@ interface Props {
    * スキーマツリーで選択させる (#1629)。一致しないクリックでは呼ばれず、通常のクリックとして扱う。
    */
   onRevealSchemaObject?: (target: SchemaJumpTarget) => void;
+  /** 識別子ホバーカードの「構造タブを開く」(#2352)。 */
+  onOpenStructure?: (database: string, table: string) => void;
   /**
    * 直近の実行がエラーで終わったときの本文 (#2330)。エディタが `runtimeErrorSql` の位置を本文から探し、
    * エラー位置に波線とガターマーカーを出す。null = エラーなし (マーカーを消す)、undefined = 実行中など
@@ -677,6 +680,21 @@ function columnInfoLabels(): ColumnInfoLabels {
   };
 }
 
+/** 識別子ホバーカード (#2352) の文言。呼び出し時点のロケールで解決する。 */
+function identifierHoverLabels(): IdentifierHoverLabels {
+  return {
+    column: columnInfoLabels(),
+    loading: t("editorHoverLoading"),
+    unavailable: t("editorHoverUnavailable"),
+    revealTree: t("editorHoverRevealTree"),
+    openStructure: t("editorHoverOpenStructure"),
+    pk: t("editorHoverPk"),
+    fk: t("editorHoverFk"),
+    tableRows: (n) => t("editorHoverTableRows", { n: n.toLocaleString() }),
+    moreColumns: (n) => t("editorHoverMoreColumns", { n }),
+  };
+}
+
 function buildSqlExtension(
   driver: string,
   schemaTable: SchemaTable | null | undefined,
@@ -838,6 +856,7 @@ export const QueryEditor = memo(
       scanPreflightPaused,
       onAiSqlAction,
       onRevealSchemaObject,
+      onOpenStructure,
       runtimeError,
       runtimeErrorSql,
       batchScript,
@@ -1241,6 +1260,10 @@ export const QueryEditor = memo(
     onAiSqlActionRef.current = onAiSqlAction;
     const onRevealSchemaObjectRef = useRef(onRevealSchemaObject);
     onRevealSchemaObjectRef.current = onRevealSchemaObject;
+    const onOpenStructureRef = useRef(onOpenStructure);
+    onOpenStructureRef.current = onOpenStructure;
+    const identifierHoverEnabledRef = useRef(settings.identifierHoverEnabled);
+    identifierHoverEnabledRef.current = settings.identifierHoverEnabled;
     const tabIdRef = useRef(tabId);
     tabIdRef.current = tabId;
     const driverRef = useRef(driver);
@@ -1479,6 +1502,26 @@ export const QueryEditor = memo(
                 reveal(target);
                 return true;
               },
+            }),
+            // 識別子のホバーカードと Ctrl/Cmd 押下中のジャンプ下線 (#2352)。
+            identifierHover({
+              isEnabled: () => identifierHoverEnabledRef.current,
+              getSchema: () => {
+                const a = sqlArgsRef.current;
+                return {
+                  tables: a.databaseSchema,
+                  defaultDatabase: a.schemaTable?.database ?? a.defaultDatabase,
+                };
+              },
+              getColumns: (table) => loadColumnsRef.current(table),
+              getRowEstimate: async (table) => {
+                const sid = sessionIdRef.current;
+                const db = fkDatabaseRef.current;
+                return sid && db ? api.tableRowEstimate(sid, db, table) : null;
+              },
+              getLabels: identifierHoverLabels,
+              onReveal: (target) => onRevealSchemaObjectRef.current?.(target),
+              onOpenStructure: (database, table) => onOpenStructureRef.current?.(database, table),
             }),
             // 構文チェック (#704) は Compartment 越しにして、設定トグルや言語切替で
             // 再構成できるようにする。作成時点の設定値で初期化する。
