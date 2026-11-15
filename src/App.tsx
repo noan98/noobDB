@@ -575,6 +575,12 @@ import {
   shouldNotifyQueryCompletion,
   type QueryNotificationKind,
 } from "./queryNotify";
+import {
+  clearSeenOutcomes,
+  outcomeFromKind,
+  shouldMarkUnseenOutcome,
+  type UnseenOutcome,
+} from "./tabOutcome";
 import { type IncomingFk, incomingFkTableName } from "./fkNavigation";
 import { collectDropImpacts, type DropImpact } from "./dropImpact";
 import {
@@ -1187,6 +1193,8 @@ export interface Tab {
    * the backend at the moment the stream stopped.
    */
   partialResult?: { reason: "cancelled" | "timeout"; rows: number } | null;
+  /** 裏のタブで終わった実行の未確認の結果 (#2353)。表示すると消え、再実行でも消える。In-memory only。 */
+  unseenOutcome?: UnseenOutcome;
   /**
    * ビュー定義編集タブの目印 (#851)。ツリーで「定義を編集」を選んだときに、
    * 取得した DDL の本文 (`extractViewBody`) を `sql` へ流し込んだうえでここに
@@ -2676,6 +2684,12 @@ export default function App() {
   );
   const activeTabId = activePane?.activeTabId ?? null;
   const activeTab = useMemo(() => tabs.find((tt) => tt.id === activeTabId) ?? null, [tabs, activeTabId]);
+  // 表示中になったタブの「未確認の結果」印を消す (#2353)。切替・分割ペイン・復元など
+  // どの経路でタブが見えるようになっても、ここ 1 か所で拾う。
+  useEffect(() => {
+    const visibleTabIds = panes.map((p) => p.activeTabId).filter((id): id is string => id !== null);
+    setTabs((prev) => clearSeenOutcomes(prev, visibleTabIds));
+  }, [panes, setTabs]);
   // ドラッグ&ドロップのイベント購読を毎タブ切替で貼り直さずに済むよう、
   // アクティブタブを ref でも参照できるようにする (ドロップ時の最新値読み取り用)。
   const activeTabRef = useRef<Tab | null>(activeTab);
@@ -4907,6 +4921,23 @@ export default function App() {
   // 純関数)。通知本文には件数・経過時間・エラー先頭 1 行のみを含め、SQL 本文や
   // 結果データは一切渡さない。ベストエフォートで、失敗してもクエリ完了処理自体は
   // 継続する (finalize/setStatus は呼び出し元で完結済み)。
+  // 裏のタブで実行が終わったとき、タブ列に未確認の印を立てる (#2353)。表示中のタブ・自動
+  // リフレッシュ・接続断では立てない (判定は tabOutcome.ts)。消すのは下の effect。
+  const markUnseenOutcome = useCallback(
+    (
+      tabId: string,
+      kind: QueryNotificationKind,
+      opts: { autoRefresh?: boolean; connectionLost?: boolean } = {},
+    ) => {
+      const visibleTabIds = panesRef.current
+        .map((p) => p.activeTabId)
+        .filter((id): id is string => id !== null);
+      if (!shouldMarkUnseenOutcome({ tabId, visibleTabIds, ...opts })) return;
+      patchTab(tabId, (tt) => ({ ...tt, unseenOutcome: outcomeFromKind(kind) }));
+    },
+    [patchTab, panesRef],
+  );
+
   const notifyQueryOutcome = useCallback(
     async (
       kind: QueryNotificationKind,
@@ -5230,6 +5261,7 @@ export default function App() {
         exactRowCount: null,
         queryError: null,
         partialResult: null,
+        unseenOutcome: undefined,
         // Drop any in-flight cell edits: their row indices reference the
         // previous result set and would no longer line up with the new rows.
         // 削除予定・追加行も同じく空にする (見えない行の削除予定が Apply で走らないよう、
@@ -5469,6 +5501,7 @@ export default function App() {
           // Auto-refresh ticks fire this same onDone every cadence — notifying on
           // every tick while the window is unfocused would be spam, not a useful
           // nudge, so only long-running *manual* runs are eligible (#707).
+          markUnseenOutcome(tabId, "done", { autoRefresh });
           if (!autoRefresh) {
             void notifyQueryOutcome(
               "done",
@@ -5526,6 +5559,7 @@ export default function App() {
               outCtx,
             );
           }
+          markUnseenOutcome(tabId, timedOut ? "timeout" : "error", { autoRefresh, connectionLost });
           if (!autoRefresh && !connectionLost) {
             void notifyQueryOutcome(timedOut ? "timeout" : "error", Date.now() - startedAt, { error }, tabId);
           }
@@ -5623,6 +5657,7 @@ export default function App() {
       invalidateSchemaCache,
       noteSchemaDdl,
       notifyQueryOutcome,
+      markUnseenOutcome,
       pushQueryHistory,
       settings.flightRecorderEnabled,
       settings.flightRecorderRowCap,
@@ -7299,6 +7334,7 @@ export default function App() {
         const started = runStartRef.current.get(tab.id);
         const elapsedMs = started !== undefined ? Date.now() - started : (tab.result?.elapsed_ms ?? 0);
         void notifyQueryOutcome("cancelled", elapsedMs, {}, tab.id);
+        markUnseenOutcome(tab.id, "cancelled");
         if (tab.lastExecutedSql) {
           recordOutput(
             { sql: tab.lastExecutedSql, outcome: "cancelled", rows, elapsedMs, error: null },
@@ -7308,7 +7344,15 @@ export default function App() {
         }
       }
     },
-    [cancelStreamForTab, patchTab, notifyQueryOutcome, recordOutput, outputCtxFor, sessionId],
+    [
+      cancelStreamForTab,
+      patchTab,
+      notifyQueryOutcome,
+      markUnseenOutcome,
+      recordOutput,
+      outputCtxFor,
+      sessionId,
+    ],
   );
 
   // Insert a snippet into the focused pane's editor, or open a fresh query tab

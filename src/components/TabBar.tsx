@@ -4,7 +4,9 @@ import { AnimatePresence, motion, Reorder, useReducedMotion } from "motion/react
 import { useT } from "../i18n";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Spinner } from "./Spinner";
-import { transitions, variants } from "../motion";
+import { springs, transitions, variants } from "../motion";
+import { OUTCOME_MARK, type UnseenOutcome } from "../tabOutcome";
+import { semanticColorToken } from "../semanticColors";
 import { moveTabBy } from "../tabReorder";
 import { Tooltip } from "./Tooltip";
 import { Input } from "./ui";
@@ -44,6 +46,35 @@ const ReorderItemDiv = forwardRef<HTMLDivElement, React.ComponentProps<typeof Re
 const MotionTabIcon = chakra(motion.span, {}, { forwardProps: ["transition", "initial", "animate", "exit"] });
 const MotionTab = chakra(ReorderItemDiv, {}, { forwardProps: ["transition"] });
 
+const MotionOutcome = chakra(motion.span, {}, { forwardProps: ["transition", "initial", "animate"] });
+
+function outcomeColor(outcome: UnseenOutcome): string {
+  const role = OUTCOME_MARK[outcome].role;
+  return role ? semanticColorToken(role, "text") : "app.textMuted";
+}
+
+/** 種別アイコンの右上に出す未確認の結果の印 (#2353)。形 (● / ! / ○) と色の両方で区別する。 */
+function OutcomeMark({ outcome, staticMotion }: { outcome: UnseenOutcome; staticMotion: boolean }) {
+  return (
+    <MotionOutcome
+      position="absolute"
+      top="-1"
+      right="-1"
+      fontSize="2xs"
+      lineHeight="1"
+      fontWeight="bold"
+      color={outcomeColor(outcome)}
+      data-unseen-outcome={outcome}
+      // スピナーから戻った 1 回だけ弾ませる。reduced-motion / ハイコントラストでは印だけを出す。
+      initial={staticMotion ? false : { scale: 0 }}
+      animate={{ scale: 1 }}
+      transition={staticMotion ? { duration: 0 } : springs.snappy}
+    >
+      {OUTCOME_MARK[outcome].glyph}
+    </MotionOutcome>
+  );
+}
+
 export interface TabInfo {
   id: string;
   kind: "table" | "query" | "explain";
@@ -55,6 +86,8 @@ export interface TabInfo {
   running?: boolean;
   /** ピン留め済み (#1486)。ペイン左端に固定され、省スペース表示 (ピンアイコン、閉じるボタン無し) になる。 */
   pinned?: boolean;
+  /** 裏で終わった実行の未確認の結果 (#2353)。タブを表示すると消える。 */
+  unseenOutcome?: UnseenOutcome;
 }
 
 /** TabBar が描画に使う項目が全て一致するか (PaneView が配列参照を安定させるのに使う, #1500)。 */
@@ -68,7 +101,8 @@ export function sameTabInfo(a: TabInfo | undefined, b: TabInfo): boolean {
     a.table === b.table &&
     a.dirty === b.dirty &&
     a.running === b.running &&
-    a.pinned === b.pinned
+    a.pinned === b.pinned &&
+    a.unseenOutcome === b.unseenOutcome
   );
 }
 
@@ -506,8 +540,10 @@ export const TabBar = memo(function TabBar({
         <AnimatePresence initial={false} onExitComplete={glideAfterClose}>
           {tabs.map((tab) => {
             const isActive = tab.id === activeTabId;
-            const title =
+            const baseTitle =
               tab.kind === "table" && tab.database && tab.table ? `${tab.database}.${tab.table}` : tab.title;
+            const outcomeLabel = tab.unseenOutcome ? t(OUTCOME_MARK[tab.unseenOutcome].labelKey) : null;
+            const title = outcomeLabel ? `${baseTitle} (${outcomeLabel})` : baseTitle;
             return (
               <MotionTab
                 key={tab.id}
@@ -560,6 +596,7 @@ export const TabBar = memo(function TabBar({
                 // title を残す判断とする。
                 title={renamingTabId === tab.id ? undefined : title}
                 aria-busy={tab.running ? true : undefined}
+                aria-label={outcomeLabel ? title : undefined}
                 // 追加・削除は opacity + scaleX だけで表す (#1322)。width を 0 ↔ auto に
                 // 補間すると隣のタブが毎フレーム再配置されるため。隣は退場完了で詰まり、その 1 回だけ `useTabCloseGlide` が滑らせる (#1765)。
                 initial={variants.fadeScaleX.initial}
@@ -618,6 +655,7 @@ export const TabBar = memo(function TabBar({
                   fontSize="sm"
                   color={isActive ? "var(--ws-accent)" : "app.textMuted"}
                   flexShrink={0}
+                  position="relative"
                   aria-hidden
                   // 接続切替 (#978) で `--ws-accent` が変わったときになめらかに
                   // 追従させる。単純な色 transition なので CSS のままでよい
@@ -664,6 +702,12 @@ export const TabBar = memo(function TabBar({
                       </MotionTabIcon>
                     </AnimatePresence>
                   </FlightIcon>
+                  {tab.unseenOutcome && !tab.running && (
+                    <OutcomeMark
+                      outcome={tab.unseenOutcome}
+                      staticMotion={reducedMotion || prefersStaticMotion()}
+                    />
+                  )}
                 </chakra.span>
                 {renamingTabId === tab.id && tab.kind === "query" ? (
                   <RenameInput
@@ -918,6 +962,20 @@ export const TabBar = memo(function TabBar({
                                 size={ICON_SIZES.md}
                               />
                             </chakra.span>
+                            {tt.unseenOutcome && !tt.running && (
+                              <chakra.span
+                                flexShrink={0}
+                                fontSize="2xs"
+                                lineHeight="1"
+                                fontWeight="bold"
+                                color={outcomeColor(tt.unseenOutcome)}
+                                data-unseen-outcome={tt.unseenOutcome}
+                                role="img"
+                                aria-label={t(OUTCOME_MARK[tt.unseenOutcome].labelKey)}
+                              >
+                                {OUTCOME_MARK[tt.unseenOutcome].glyph}
+                              </chakra.span>
+                            )}
                             <chakra.span
                               overflow="hidden"
                               textOverflow="ellipsis"

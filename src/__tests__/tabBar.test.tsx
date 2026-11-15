@@ -290,3 +290,34 @@ describe("TabBar 「全タブ」メニューのフォーカストラップ (#195
     }
   });
 });
+
+describe("TabBar 未確認の結果印 (#2353)", () => {
+  it("印とアクセシブル名を出し、種別ごとに形が違う。sameTabInfo も変化を検知する", () => {
+    const tabs: TabInfo[] = [
+      { id: "t1", kind: "query", title: "A", unseenOutcome: "done" },
+      { id: "t2", kind: "query", title: "B", unseenOutcome: "error" },
+      { id: "t3", kind: "query", title: "C", unseenOutcome: "cancelled" },
+      { id: "t4", kind: "query", title: "D" },
+    ];
+    renderWithProviders(
+      <TabBar tabs={tabs} activeTabId="t4" onSelect={() => {}} onClose={() => {}} onNew={() => {}} />,
+    );
+    const rows = screen.getAllByRole("tab");
+    expect(rows[0].getAttribute("aria-label")).toContain(t("tabOutcomeDone"));
+    expect(rows[1].getAttribute("aria-label")).toContain(t("tabOutcomeError"));
+    expect(rows[2].getAttribute("aria-label")).toContain(t("tabOutcomeCancelled"));
+    expect(rows[3].getAttribute("aria-label")).toBeNull();
+    const glyphs = rows.slice(0, 3).map((r) => r.querySelector("[data-unseen-outcome]")?.textContent);
+    expect(new Set(glyphs).size).toBe(3);
+    expect(rows[3].querySelector("[data-unseen-outcome]")).toBeNull();
+    expect(sameTabInfo(tabs[3], { ...tabs[3], unseenOutcome: "done" })).toBe(false);
+  });
+
+  it("実行中は印を出さない", () => {
+    const tabs: TabInfo[] = [{ id: "t1", kind: "query", title: "A", unseenOutcome: "done", running: true }];
+    renderWithProviders(
+      <TabBar tabs={tabs} activeTabId="t1" onSelect={() => {}} onClose={() => {}} onNew={() => {}} />,
+    );
+    expect(screen.getByRole("tab").querySelector("[data-unseen-outcome]")).toBeNull();
+  });
+});
