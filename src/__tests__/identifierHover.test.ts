@@ -72,6 +72,54 @@ describe("resolveIdentifierHover", () => {
   });
 });
 
+describe("コメント・複数行の文字列の中", () => {
+  const ranges = (text: string, driver?: string) =>
+    jumpableRanges({ text, from: 0, to: text.length, tables, defaultDatabase: "shop", driver }).map(
+      (r) => `${r.from}:${text.slice(r.from, r.to)}`,
+    );
+  const hoverAt = (text: string, pos: number, driver?: string) =>
+    resolveIdentifierHover({ text, pos, tables, defaultDatabase: "shop", driver });
+
+  it("ブロックコメントの中は出ない", () => {
+    const t = "SELECT 1 /* users */ FROM users";
+    expect(hoverAt(t, 13)).toBeNull();
+    expect(ranges(t)).toEqual(["26:users"]);
+    const multi = "SELECT 1 /* a\n FROM users\n*/ FROM orders";
+    expect(hoverAt(multi, multi.indexOf("users") + 1)).toBeNull();
+    expect(ranges(multi)).toEqual([`${multi.lastIndexOf("orders")}:orders`]);
+  });
+
+  it("MySQL の # コメントの中は出ない", () => {
+    const t = "SELECT 1 # users\nFROM orders";
+    expect(hoverAt(t, 12, "mysql")).toBeNull();
+    expect(ranges(t, "mysql")).toEqual([`${t.indexOf("orders")}:orders`]);
+  });
+
+  it("複数行の文字列の中は出ず、その後ろの本物の識別子は解決する", () => {
+    const t = "SELECT 'a\nusers' FROM users";
+    expect(hoverAt(t, 11)).toBeNull();
+    expect(ranges(t)).toEqual([`${t.lastIndexOf("users")}:users`]);
+    expect(hoverAt(t, t.lastIndexOf("users") + 1)?.target.table).toBe("users");
+  });
+});
+
+describe("長い行", () => {
+  it("1 万字を超える行は下線の対象外で、短い行は従来どおり", () => {
+    const long = `INSERT INTO users VALUES (${"1,".repeat(20000)}1)`;
+    const text = `${long}\nSELECT * FROM orders`;
+    const r = jumpableRanges({ text, from: 0, to: text.length, tables, defaultDatabase: "shop" });
+    expect(r.map((x) => text.slice(x.from, x.to))).toEqual(["orders"]);
+  });
+
+  it("数値リテラルの多い 1 行でも短時間で返る", () => {
+    const text = `SELECT ${"1, 2, id, ".repeat(900)} 3 FROM users`;
+    const t0 = Date.now();
+    const r = jumpableRanges({ text, from: 0, to: text.length, tables, defaultDatabase: "shop" });
+    expect(r.length).toBe(901);
+    expect(Date.now() - t0).toBeLessThan(2000);
+  });
+});
+
 describe("jumpableRanges", () => {
   const ranges = (text: string, from = 0, to = text.length) =>
     jumpableRanges({ text, from, to, tables, defaultDatabase: "shop" }).map((r) => text.slice(r.from, r.to));
@@ -125,12 +173,11 @@ describe("describeTableCard", () => {
     expect(m.more).toBe(0);
   });
 
-  it("上限を超えた列は省略するが、PK / FK の列は残す", () => {
-    const cols = Array.from({ length: 14 }, (_, i) => col(`c${i}`));
-    cols[12] = col("c12", { referenced_table: "x" });
+  it("上限を超えた列は省略し、PK / FK が多くても上限は守る", () => {
+    const cols = Array.from({ length: 14 }, (_, i) => col(`c${i}`, { referenced_table: "x" }));
     const m = describeTableCard(cols, undefined, 10);
-    expect(m.columns.map((c) => c.name)).toEqual([...cols.slice(0, 10).map((c) => c.name), "c12"]);
-    expect(m.more).toBe(3);
+    expect(m.columns.map((c) => c.name)).toEqual(cols.slice(0, 10).map((c) => c.name));
+    expect(m.more).toBe(4);
     expect(m.rowEstimate).toBeNull();
   });
 });

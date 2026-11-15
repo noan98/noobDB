@@ -199,8 +199,21 @@ export function resolveSchemaJump(args: {
   if (!tables || tables.length === 0 || !defaultDatabase) return null;
   const chain = identifierChainAt(text, pos);
   if (!chain) return null;
+  return resolveChainJump({ chain, refs: tableRefsInStatement(text, pos), tables, defaultDatabase });
+}
+
+/**
+ * 走査済みの識別子の連なりと、その文のテーブル参照 (`tableRefsInStatement` の結果) から移動先を決める。
+ * `resolveSchemaJump` の本体で、ホバー下線 (#2352) が行・文の再走査なしに大量の識別子を解決するための入口。
+ */
+export function resolveChainJump(args: {
+  chain: IdentifierChain;
+  refs: ReadonlyMap<string, string>;
+  tables: readonly TableSchema[];
+  defaultDatabase: string;
+}): SchemaJumpTarget | null {
+  const { chain, refs, tables, defaultDatabase } = args;
   const findTable = (name: string) => tables.find((t) => eq(t.name, name));
-  const refs = tableRefsInStatement(text, pos);
   const resolveRef = (name: string) => findTable(refs.get(name.toLowerCase()) ?? name);
   const colOf = (tbl: TableSchema, name: string) => tbl.columns.find((c) => eq(c, name));
 

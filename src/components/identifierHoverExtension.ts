@@ -39,6 +39,7 @@ export interface IdentifierHoverOptions {
   getSchema: () => {
     tables: readonly TableSchema[] | null | undefined;
     defaultDatabase: string | null | undefined;
+    driver?: string | null;
   };
   /** 列メタデータ (キャッシュ付きの遅延取得)。失敗は reject でよい (カード側で縮退する)。 */
   getColumns: (table: string) => Promise<TableColumnInfo[]>;
@@ -164,6 +165,7 @@ function jumpLinks(opts: IdentifierHoverOptions): Extension {
         window.addEventListener("blur", this.release);
       }
       setHeld(next: boolean) {
+        if (next && !opts.isEnabled()) return;
         if (next === this.held) return;
         this.held = next;
         this.view.dom.classList.toggle("cm-jump-mod", next);
@@ -182,9 +184,10 @@ function jumpLinks(opts: IdentifierHoverOptions): Extension {
       build(view: EditorView): DecorationSet {
         const doc = view.state.doc;
         if (doc.length > MAX_LINKED_LENGTH) return Decoration.none;
-        const { tables, defaultDatabase } = opts.getSchema();
+        const { tables, defaultDatabase, driver } = opts.getSchema();
+        const text = doc.toString();
         const ranges = view.visibleRanges.flatMap((r) =>
-          jumpableRanges({ text: doc.toString(), from: r.from, to: r.to, tables, defaultDatabase }),
+          jumpableRanges({ text, from: r.from, to: r.to, tables, defaultDatabase, driver }),
         );
         return Decoration.set(
           ranges.map((r) => linkMark.range(r.from, r.to)),
@@ -209,8 +212,9 @@ export function identifierHover(opts: IdentifierHoverOptions): Extension {
   const tooltip = hoverTooltip(
     (view, pos, side) => {
       if (!opts.isEnabled()) return null;
-      const { tables, defaultDatabase } = opts.getSchema();
+      const { tables, defaultDatabase, driver } = opts.getSchema();
       const hit = resolveIdentifierHover({
+        driver,
         text: view.state.doc.toString(),
         pos,
         side,

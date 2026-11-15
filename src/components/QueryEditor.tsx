@@ -1111,6 +1111,7 @@ export const QueryEditor = memo(
     // biome-ignore lint/correctness/useExhaustiveDependencies: databaseSchema は DDL 後の再取得トリガー
     useEffect(() => {
       columnCacheRef.current = new Map();
+      rowEstimateCacheRef.current = new Map();
       // FK は同じ session / DB での取り直し (DDL 後など) では空にしない。空にすると同じコミットの
       // 補完再構成が FK 無しで走り、同じ FK が返っても内容キーが変わらず作り直されない。
       // session / DB が変わったときだけ FK を捨てる。
@@ -1262,6 +1263,7 @@ export const QueryEditor = memo(
     onRevealSchemaObjectRef.current = onRevealSchemaObject;
     const onOpenStructureRef = useRef(onOpenStructure);
     onOpenStructureRef.current = onOpenStructure;
+    const rowEstimateCacheRef = useRef(new Map<string, Promise<number | null>>());
     const identifierHoverEnabledRef = useRef(settings.identifierHoverEnabled);
     identifierHoverEnabledRef.current = settings.identifierHoverEnabled;
     const tabIdRef = useRef(tabId);
@@ -1511,13 +1513,23 @@ export const QueryEditor = memo(
                 return {
                   tables: a.databaseSchema,
                   defaultDatabase: a.schemaTable?.database ?? a.defaultDatabase,
+                  driver: a.driver,
                 };
               },
               getColumns: (table) => loadColumnsRef.current(table),
-              getRowEstimate: async (table) => {
+              getRowEstimate: (table) => {
                 const sid = sessionIdRef.current;
                 const db = fkDatabaseRef.current;
-                return sid && db ? api.tableRowEstimate(sid, db, table) : null;
+                if (!sid || !db) return Promise.resolve(null);
+                // ホバーごとに取りにいかない。列メタのキャッシュと同じく (セッション, DB, テーブル) で持ち、失敗は残さない。
+                const key = `${sid}\u0000${db}\u0000${table}`;
+                const cache = rowEstimateCacheRef.current;
+                const cached = cache.get(key);
+                if (cached !== undefined) return cached;
+                const p = api.tableRowEstimate(sid, db, table);
+                cache.set(key, p);
+                p.catch(() => cache.delete(key));
+                return p;
               },
               getLabels: identifierHoverLabels,
               onReveal: (target) => onRevealSchemaObjectRef.current?.(target),
