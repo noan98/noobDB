@@ -94,3 +94,91 @@ describe("crosslang parity ジョブの実走対象 (#1760)", () => {
     expect(testSources.has(f), `${f} が存在しません (リネーム・削除の取り残し)`).toBe(true);
   });
 });
+
+// ---- 逆方向: Rust のテストが src-tauri 外のファイルを読む場合 (#2362) ----
+//
+// `include_str!` / `include_bytes!` / `concat!(env!("CARGO_MANIFEST_DIR"), "/../...")` が指す
+// src-tauri 外のパスは、ci.yml の paths-filter `crosslang` に一致していなければならない。
+// 外れていると、そのファイルだけを変えるフロント単独の PR (rust==false) で Rust のテストが
+// 走らず、壊れた状態が main に入って無関係な次の Rust PR を赤くする。
+
+const rustSources = import.meta.glob(["../../src-tauri/src/**/*.rs", "../../src-tauri/tests/**/*.rs"], {
+  eager: true,
+  query: "?raw",
+  import: "default",
+}) as Record<string, string>;
+
+function normalizePath(p: string): string {
+  const out: string[] = [];
+  for (const seg of p.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") out.pop();
+    else out.push(seg);
+  }
+  return out.join("/");
+}
+
+function stripRustComments(src: string): string {
+  return src.replace(/(^|\s)\/\/.*$/gm, "$1");
+}
+
+/** Rust ソースが読む、リポジトリ直下起点の src-tauri 外のパスを列挙する。 */
+function externalRustReads(file: string, src: string): string[] {
+  const code = stripRustComments(src);
+  const dir = file.slice(0, file.lastIndexOf("/"));
+  const found: string[] = [];
+  for (const m of code.matchAll(/include_(?:str|bytes)!\(\s*"([^"]+)"/g)) {
+    found.push(normalizePath(`${dir}/${m[1]}`));
+  }
+  for (const m of code.matchAll(/CARGO_MANIFEST_DIR"\)\s*,\s*"([^"]+)"/g)) {
+    found.push(normalizePath(`src-tauri/${m[1]}`));
+  }
+  return found.filter((p) => !p.startsWith("src-tauri/"));
+}
+
+function crosslangPatterns(): string[] {
+  const lines = ciYml.split("\n");
+  const start = lines.findIndex((l) => /^\s{12}crosslang:\s*$/.test(l));
+  expect(start, "ci.yml の paths-filter に crosslang フィルタが見つかりません").toBeGreaterThanOrEqual(0);
+  const patterns: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    const t = line.trim();
+    if (t === "" || t.startsWith("#")) continue;
+    const m = /^- '([^']+)'$/.exec(t);
+    if (!m) break;
+    patterns.push(m[1]);
+  }
+  return patterns;
+}
+
+function globToRegExp(glob: string): RegExp {
+  const re = glob
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*/g, "\u0000")
+    .replace(/\*/g, "[^/]*")
+    .replace(/\u0000/g, ".*");
+  return new RegExp(`^${re}$`);
+}
+
+describe("Rust が読む src-tauri 外のファイルは crosslang フィルタに含まれる (#2362)", () => {
+  const reads = new Map<string, string>(); // 読まれるパス → 最初の読み手
+  for (const [p, src] of Object.entries(rustSources)) {
+    const file = normalizePath(p.replace(/^\.\.\/\.\.\//, ""));
+    for (const target of externalRustReads(file, src)) if (!reads.has(target)) reads.set(target, file);
+  }
+  const regexps = crosslangPatterns().map(globToRegExp);
+
+  it("読み込みを検出できている (検出ロジックの退行防止)", () => {
+    expect(regexps.length).toBeGreaterThan(0);
+    expect(reads.has("src/components/CrossDriverVerify.tsx")).toBe(true);
+    expect(reads.has("src/__tests__/fixtures/maskVectors.json")).toBe(true);
+  });
+
+  it.each([...reads.entries()].sort())("%s (読み手: %s) は crosslang に一致する", (target, reader) => {
+    expect(
+      regexps.some((r) => r.test(target)),
+      `${reader} が src-tauri 外の ${target} を読みますが、ci.yml の paths-filter \`crosslang\` に一致せず、` +
+        "そのファイルだけを変えるフロント単独の PR で Rust のテストが実行されません。crosslang にパスを足してください",
+    ).toBe(true);
+  });
+});

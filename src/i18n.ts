@@ -688,6 +688,9 @@ const en = {
   editorHoverMoreColumns: "+{n} more columns",
   editorHoverPk: "PK",
   editorHoverFk: "FK",
+  settingsActiveStatementHighlight: "Highlight the statement under the cursor",
+  settingsActiveStatementHighlightHelp:
+    "In an editor with two or more statements, marks the statement that Run statement would execute with a soft band and a bar on the left edge, so you can see the range before you run. Hidden when there is only one statement or a selection.",
   settingsSqlSemanticLintEnabled: "Warn on unknown tables and columns",
   settingsSqlSemanticLintEnabledHelp:
     "Underlines table and column names that don't exist in the connected schema, before you run. Aliases, CTEs, subqueries and functions are resolved, and anything it can't resolve is left alone. Works only while the syntax check is on, and needs the schema to be loaded. On SQLite only table names are checked.",
@@ -4615,6 +4618,9 @@ const en = {
   cellViewerDiscardBody: "This cell has edits that have not been saved. Closing the viewer discards them.",
   cellViewerDiscardConfirm: "Discard",
   tabDirty: "Unsaved changes (not yet run, or edits not yet applied)",
+  tabOutcomeDone: "Finished (unseen)",
+  tabOutcomeError: "Finished with an error (unseen)",
+  tabOutcomeCancelled: "Cancelled (unseen)",
   tabCloseDiscardTitle: "Close tab with unapplied edits",
   tabCloseDiscardBody:
     '"{name}" has edits that have not been applied. Closing the tab discards them, and restoring the closed tab will not bring the edits back.',
@@ -9434,6 +9440,9 @@ const ja: Dict = {
   editorHoverMoreColumns: "ほか {n} 列",
   editorHoverPk: "PK",
   editorHoverFk: "FK",
+  settingsActiveStatementHighlight: "カーソル位置の文を帯で示す",
+  settingsActiveStatementHighlightHelp:
+    "2 文以上あるエディタで、「カーソル位置の文を実行」の対象になる文を淡い帯と左端のバーで常に示し、実行前に範囲を確かめられます。文が 1 つだけのときと、選択範囲があるときは出しません。",
   settingsSqlSemanticLintEnabled: "存在しないテーブル・列を警告",
   settingsSqlSemanticLintEnabledHelp:
     "接続中のスキーマに存在しないテーブル名・列名を、実行前に下線で警告します。エイリアス・CTE・サブクエリ・関数は解決し、解決できないものは警告しません。構文チェックがオンのときだけ働き、スキーマの取得後に有効になります。SQLite ではテーブル名だけを検査します。",
@@ -13328,6 +13337,9 @@ const ja: Dict = {
   cellViewerDiscardBody: "このセルには保存していない編集があります。閉じると編集内容は破棄されます。",
   cellViewerDiscardConfirm: "破棄する",
   tabDirty: "未実行の変更、または Apply していない編集があります",
+  tabOutcomeDone: "実行完了 (未確認)",
+  tabOutcomeError: "エラーで終了 (未確認)",
+  tabOutcomeCancelled: "キャンセル済み (未確認)",
   tabCloseDiscardTitle: "未確定の編集があるタブを閉じる",
   tabCloseDiscardBody:
     "「{name}」には Apply していない編集があります。閉じると編集内容は破棄され、閉じたタブを復元しても編集内容は戻りません。",
