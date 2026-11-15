@@ -132,6 +132,8 @@ const config = defineConfig({
           // 背景
           bg: { value: "var(--bg)" },
           surface: { value: "var(--bg-elevated)" },
+          // 透け具合を持つ面 (ウィンドウ素材, #2359)。タイトルバー・サイドバーだけが使う。
+          surfaceMaterial: { value: "var(--surface-material)" },
           surfaceMuted: { value: "var(--bg-muted)" },
           hover: { value: "var(--bg-hover)" },
           active: { value: "var(--bg-active)" },

@@ -562,6 +562,7 @@ import { isAppWindowFocused, registerNotificationClickFocus, sendQueryNotificati
 import { checkForAppUpdate, dismissUpdate, getCurrentAppVersion } from "./updater";
 import { applyCustomThemeVars } from "./customTheme";
 import { usePrefersMoreContrast } from "./prefersContrast";
+import { effectiveWindowMaterial, useWindowMaterialSupported } from "./windowMaterial";
 import { loadSkippedUpdateVersion, shouldSkipStartupNotice } from "./updateSkip";
 import {
   confirmAndInstallUpdate,
@@ -1740,6 +1741,40 @@ export default function App() {
     document.documentElement.setAttribute("data-theme", dataTheme);
     localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [dataTheme, theme]);
+
+  // ウィンドウ素材 (#2359)。実効値 (非対応 OS・ハイコントラストでは none) を data-window-material へ
+  // 反映して App.css の半透明トークンを切り替え、同じ値で Rust 側の Mica を敷く / 外す。素材の明暗は
+  // OS 設定ではなくアプリの実効テーマに合わせる。Rust が適用できなかったとき (21H2 の Mica Alt など)
+  // は属性を none に戻し、不透明のまま崩さない。
+  const windowMaterialSupported = useWindowMaterialSupported();
+  const windowMaterial = effectiveWindowMaterial(
+    settings.windowMaterial,
+    windowMaterialSupported,
+    dataTheme.startsWith("hc-") || prefersMoreContrast,
+  );
+  const windowMaterialDark = effectiveTheme(activeThemePreset, theme) === "dark";
+  const [windowMaterialApplied, setWindowMaterialApplied] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    // 解除のときも必ず呼び、前の効果を確実に外す (非対応環境では Rust が何もしない)。
+    api
+      .setWindowMaterial(windowMaterial, windowMaterialDark)
+      .then((applied) => {
+        if (alive) setWindowMaterialApplied(applied);
+      })
+      .catch(() => {
+        if (alive) setWindowMaterialApplied(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [windowMaterial, windowMaterialDark]);
+  useEffect(() => {
+    document.documentElement.setAttribute(
+      "data-window-material",
+      windowMaterialApplied ? windowMaterial : "none",
+    );
+  }, [windowMaterial, windowMaterialApplied]);
 
   useEffect(() => {
     // ダーク専用プリセットでは light/dark トグルが light のままでも画面はダーク。
@@ -13664,7 +13699,7 @@ export default function App() {
           position="relative"
           borderRightWidth="1px"
           borderRightColor="app.border"
-          bg="app.surface"
+          bg="app.surfaceMaterial"
           // 開閉は transform (translateX) + opacity だけで描く (#873 / #1322)。
           // 幅は常にサイドバー幅へ固定し、折りたたみ中はトラックが 0 でもはみ出した
           // まま左へスライドアウトする (合成のみ、再レイアウトなし)。完全に隠れた後は

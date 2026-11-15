@@ -530,6 +530,8 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `reveal_in_file_manager`
 - `open_project_link`
 - `set_window_title`
+- `set_window_material`
+- `window_material_supported`
 - `fetch_cell_bytes`
 - `probe_cell_blob`
 - `save_cell_to_file`
@@ -596,6 +598,10 @@ NUL の比率パターン。自動判定で本文に NUL があればエラー)�
 `set_window_title` (`commands/window.rs`, #1631) はウィンドウタイトルを設定する (接続名と本番 / サンドボックスの
 区別を OS のタスクバー・Alt+Tab に出すため)。window の capability を増やさずに済むよう Rust 経由で行い、制御文字は
 空白にして 200 文字に切り詰める。
+`set_window_material` / `window_material_supported` (`commands/window.rs`, #2359) は Windows 11 の Mica / Mica Alt を
+ウィンドウ背景へ敷く (外観設定「ウィンドウ素材」、既定オフ)。`window.set_effects` を Rust から呼ぶので capability は増やさない。
+Windows 11 以外 (Windows 10 / macOS / Linux) では何もせず `false` を返す (エラーにしない)。`dark` は実効テーマの明暗で、
+素材の明暗を OS 設定ではなくアプリのテーマに合わせる。
 
 `get_import_skipped_text` / `save_import_skipped_rows` (`commands/import.rs`, #1258) は
 skip モードの取り込みでスキップされた行の「全件」を扱う。`csv-import:done` には先頭

@@ -545,6 +545,8 @@ safe(
   "mask_export_rows",
   // その他
   "set_window_title",
+  "set_window_material",
+  "window_material_supported",
   "cancel_stream",
   "release_data_diffs",
   "list_sandboxes",

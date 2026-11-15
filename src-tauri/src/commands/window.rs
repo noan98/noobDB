@@ -3,6 +3,7 @@
 //! フロントが `core:window:allow-set-title` のような capability を増やさずに済むよう、
 //! タイトルの更新は Rust コマンド経由にする (capabilities を最小に保つ方針)。
 
+use serde::Deserialize;
 use tauri::WebviewWindow;
 
 use crate::error::{AppError, Result};
@@ -66,9 +67,111 @@ pub fn set_window_title(window: WebviewWindow, title: String) -> Result<()> {
         .map_err(|e| AppError::Other(format!("failed to set the window title: {e}")))
 }
 
+/// ウィンドウ背景の素材 (#2359)。外観設定の「ウィンドウ素材」と 1 対 1 に対応する。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WindowMaterial {
+    /// 素材なし (既定)。効果を解除して不透明な表示に戻す。
+    None,
+    /// Windows 11 の Mica。
+    Mica,
+    /// Windows 11 の Mica Alt (Tabbed)。
+    MicaAlt,
+}
+
+/// 実行中の OS ビルド番号が Mica の対象 (Windows 11) かを判定する純関数。
+#[cfg(any(target_os = "windows", test))]
+fn build_supports_mica(build: u32) -> bool {
+    // 22000 は Windows 11 21H2 の最初のビルド。
+    build >= 22000
+}
+
+/// 実行中の OS が Windows 11 以降か。Windows 以外では常に false。
+#[cfg(target_os = "windows")]
+fn is_windows_11() -> bool {
+    use windows_sys::Wdk::System::SystemServices::RtlGetVersion;
+    use windows_sys::Win32::System::SystemInformation::OSVERSIONINFOW;
+
+    // SAFETY: ゼロ初期化した OSVERSIONINFOW に正しいサイズを書いて渡す。RtlGetVersion は
+    // マニフェストに左右されずに実バージョンを返し、構造体の外へは書き込まない。
+    let mut info: OSVERSIONINFOW = unsafe { std::mem::zeroed() };
+    info.dwOSVersionInfoSize = std::mem::size_of::<OSVERSIONINFOW>() as u32;
+    let status = unsafe { RtlGetVersion(&mut info) };
+    status >= 0 && build_supports_mica(info.dwBuildNumber)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_windows_11() -> bool {
+    false
+}
+
+/// ウィンドウ素材 (Mica) を使える環境か (#2359)。Windows 11 だけ true。設定画面が、使えない
+/// 環境で項目を無効にして理由を出すために問い合わせる。
+#[tauri::command]
+pub fn window_material_supported() -> bool {
+    is_windows_11()
+}
+
+/// ウィンドウ背景の素材を適用 / 解除する (#2359)。`dark` はアプリの実効テーマが暗いか
+/// (素材の明暗を OS 設定ではなくアプリのテーマに合わせるため)。効果が実際に敷かれたら true。
+/// Windows 11 以外や OS が拒否した場合はエラーにせず false を返し、フロントは「なし」と
+/// 同じ表示に戻す。`material = none` は解除で、常に false。
+#[tauri::command]
+pub fn set_window_material(
+    window: WebviewWindow,
+    material: WindowMaterial,
+    dark: bool,
+) -> Result<bool> {
+    apply_material(&window, material, dark)
+}
+
+#[cfg(target_os = "windows")]
+fn apply_material(window: &WebviewWindow, material: WindowMaterial, dark: bool) -> Result<bool> {
+    use tauri::window::{Effect, EffectsBuilder};
+
+    if material == WindowMaterial::None {
+        // 解除に失敗しても (非対応 OS など) 見た目は不透明のままなので無視してよい。
+        let _ = window.set_effects(None);
+        return Ok(false);
+    }
+    if !is_windows_11() {
+        return Ok(false);
+    }
+    let effect = match (material, dark) {
+        (WindowMaterial::MicaAlt, true) => Effect::TabbedDark,
+        (WindowMaterial::MicaAlt, false) => Effect::TabbedLight,
+        (_, true) => Effect::MicaDark,
+        (_, false) => Effect::MicaLight,
+    };
+    // 古い 21H2 は Mica Alt (Tabbed) を持たず OS 側がエラーを返す。その場合も「適用されなかった」
+    // として false を返す。
+    Ok(window
+        .set_effects(EffectsBuilder::new().effect(effect).build())
+        .is_ok())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn apply_material(_window: &WebviewWindow, _material: WindowMaterial, _dark: bool) -> Result<bool> {
+    Ok(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mica_needs_windows_11_build() {
+        assert!(!build_supports_mica(19045)); // Windows 10 22H2
+        assert!(build_supports_mica(22000)); // Windows 11 21H2
+        assert!(build_supports_mica(26100));
+    }
+
+    #[test]
+    fn window_material_deserializes_kebab_case() {
+        let m: WindowMaterial = serde_json::from_str("\"mica-alt\"").unwrap();
+        assert_eq!(m, WindowMaterial::MicaAlt);
+        assert!(serde_json::from_str::<WindowMaterial>("\"acrylic\"").is_err());
+    }
 
     #[test]
     fn keeps_a_normal_title() {
