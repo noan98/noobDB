@@ -5407,7 +5407,9 @@ export default function App() {
         // 確認を省く内部の取り直し (Apply 後・再読込・取り込み後) は、送っていない削除予定・追加行を
         // 残す (Apply の往復中に増えた分を消さない)。確認を経た置き換えだけが 3 種を空にする。
         // 実行先 DB が変わる再実行では、旧 DB 向けの保留を残さない (#2355)。
-        ...(override?.skipPendingGuard && (tab?.lastExecutedDatabase ?? null) === (tab?.database ?? null)
+        // まだ実行先を記録していないタブ (テーブルタブを開いた直後など) は従来どおり残す。
+        ...(override?.skipPendingGuard &&
+        (tab?.lastExecutedDatabase === undefined || tab.lastExecutedDatabase === (tab.database ?? null))
           ? {}
           : { pendingDeletes: [], pendingInserts: [] }),
         editUndoStack: pendingResolution.discarded ? [{ edits: pendingResolution.discarded }] : [],

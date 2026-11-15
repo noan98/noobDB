@@ -115,8 +115,15 @@ describe("結果を置き換える手動操作の入口 (#2234)", () => {
     expect(b).toContain("pendingReplaceUndoBlocked");
   });
 
-  it("確認を省く内部の取り直し (skipPendingGuard) は削除予定・追加行を消さない", () => {
+  it("確認を省く内部の取り直し (skipPendingGuard) は、実行先 DB が同じなら削除予定・追加行を消さない", () => {
     const b = body("runQueryInTab");
-    expect(b).toContain("override?.skipPendingGuard ? {} : { pendingDeletes: [], pendingInserts: [] }");
+    const at = b.indexOf("...(override?.skipPendingGuard &&");
+    expect(at).toBeGreaterThan(-1);
+    const expr = b.slice(at, b.indexOf("pendingInserts: [] }", at));
+    // 実行先を未記録のタブ・同じ DB の取り直しは残す。DB が変わる再実行だけが空にする (#2355)。
+    expect(expr).toContain("tab?.lastExecutedDatabase === undefined");
+    expect(expr).toContain("tab.lastExecutedDatabase === (tab.database ?? null)");
+    expect(expr).toContain("? {}");
+    expect(expr).toContain(": { pendingDeletes: [], ");
   });
 });
