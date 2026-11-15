@@ -8,6 +8,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
+import { Icon, ICON_SIZES } from "./Icon";
 import { motion, useReducedMotion } from "motion/react";
 import { QueryResult } from "../api/tauri";
 import { useLocale, useT, type I18nKey } from "../i18n";
@@ -223,7 +224,6 @@ const caretButtonCss: SystemStyleObject = {
   border: "none",
   background: "none",
   color: "var(--text-muted)",
-  fontSize: "var(--text-2xs)",
   lineHeight: 1,
   borderRadius: "var(--radius-sm)",
   _hover: { background: "var(--bg-hover)", color: "var(--text)" },
@@ -641,7 +641,15 @@ function NodeRow({
                 onToggle(node.id);
               }}
             >
-              {isCollapsed ? "▸" : "▾"}
+              <chakra.span
+                display="inline-flex"
+                transform={isCollapsed ? undefined : "rotate(90deg)"}
+                transitionProperty="transform"
+                transitionDuration="var(--dur-fast)"
+                transitionTimingFunction="var(--ease)"
+              >
+                <Icon name="chevron-right" size={ICON_SIZES.sm} />
+              </chakra.span>
             </chakra.button>
           </Tooltip>
         ) : (

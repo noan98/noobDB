@@ -1417,10 +1417,7 @@ fn rule_sequence_exhaustion(input: &AdvisorInput, out: &mut Vec<HealthFinding>) 
 
 /// FK 列に張るインデックスの (クオート済み名, クオート済み列リスト)。
 fn quoted_index_parts(driver: DriverKind, table: &str, columns: &[String]) -> (String, String) {
-    let idx_name = fit_index_name(
-        driver,
-        sanitize_index_name(&format!("idx_{}_{}", table, columns.join("_"))),
-    );
+    let idx_name = auto_index_name(driver, &format!("idx_{}_{}", table, columns.join("_")));
     let cols = columns
         .iter()
         .map(|c| quote_ident(driver, c))
@@ -1496,33 +1493,92 @@ fn drop_index_online_ddl(driver: DriverKind, table: &str, index: &str) -> Option
     }
 }
 
-/// 生成したインデックス名が方言の識別子長の上限 (MySQL 64 文字 / PostgreSQL 63 バイト) を
-/// 超えるとき、先頭を切り詰めて末尾に元の名前のハッシュ (8 桁 hex) を付けて収める。
-/// 名前は `sanitize_index_name` 済みの ASCII。SQLite に上限は無い。
-fn fit_index_name(driver: DriverKind, name: String) -> String {
-    const LIMIT: usize = 63;
-    if driver == DriverKind::Sqlite || name.len() <= LIMIT {
-        return name;
-    }
-    // FNV-1a (32bit)。同じ入力から常に同じ名前になる。
-    let hash = name.bytes().fold(0x811c_9dc5_u32, |h, b| {
+/// FNV-1a (32bit) を UTF-8 バイト列に対して取った 8 桁 hex。同じ入力から常に同じ値になる。
+/// フロント `tableMaintenance.ts::fnv1aHex` と同じ規則 (共有ゴールデン `indexNameVectors.json`)。
+fn fnv1a_hex(text: &str) -> String {
+    let hash = text.bytes().fold(0x811c_9dc5_u32, |h, b| {
         (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
     });
-    let keep = LIMIT - 9;
-    format!("{}_{hash:08x}", &name[..keep])
+    format!("{hash:08x}")
 }
 
-/// インデックス名候補から、識別子として扱いづらい文字を `_` に畳む。クオートは
-/// 呼び出し側が行うので、ここでは可読性のための正規化のみ。
-fn sanitize_index_name(name: &str) -> String {
-    name.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect()
+/// 自動生成するインデックス名を作る (フロント `tableMaintenance.ts::autoIndexName` と同じ規則)。
+///
+/// - 英数字と `_` 以外 (日本語・空白・記号) は `_` に畳む。畳んで情報が落ちたとき、または
+///   方言の上限 (MySQL 64 文字 / PostgreSQL 63 バイト) を超えるときは、元の名前のハッシュ
+///   (8 桁 hex) を末尾に付けて別の元名どうしの衝突を避ける。長いときは先頭を切り詰めて収める。
+/// - SQLite に上限は無いので切り詰めない (情報が落ちたときのハッシュだけ付ける)。
+fn auto_index_name(driver: DriverKind, raw: &str) -> String {
+    let sanitized: String = raw
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let limit = match driver {
+        DriverKind::Mysql => Some(64),
+        DriverKind::Postgres => Some(63),
+        DriverKind::Sqlite => None,
+    };
+    // `sanitized` は ASCII だけなので、char 数 = バイト数。
+    let lossy = sanitized != raw;
+    if !lossy && limit.map_or(true, |l| sanitized.len() <= l) {
+        return sanitized;
+    }
+    let stem = match limit {
+        Some(l) if sanitized.len() + 9 > l => &sanitized[..l - 9],
+        _ => &sanitized[..],
+    };
+    format!("{stem}_{}", fnv1a_hex(raw))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// インデックス名の共有ゴールデン (#2360)。フロント `indexNameGolden.test.ts` が同じ JSON を検証する。
+    #[test]
+    fn auto_index_name_matches_shared_vectors() {
+        const VECTORS: &str = include_str!("../../../src/__tests__/fixtures/indexNameVectors.json");
+        let v: serde_json::Value =
+            serde_json::from_str(VECTORS).expect("ゴールデン JSON が壊れている");
+        let cases = v["auto"].as_array().expect("auto 配列");
+        assert!(!cases.is_empty());
+        for c in cases {
+            let driver = match c["driver"].as_str().unwrap_or_default() {
+                "mysql" => DriverKind::Mysql,
+                "postgres" => DriverKind::Postgres,
+                _ => DriverKind::Sqlite,
+            };
+            let table = c["table"].as_str().unwrap_or_default();
+            let cols: Vec<String> = c["columns"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let got = auto_index_name(driver, &format!("idx_{}_{}", table, cols.join("_")));
+            assert_eq!(
+                got,
+                c["expected"].as_str().unwrap_or_default(),
+                "{}",
+                c["note"]
+            );
+        }
+    }
+
+    #[test]
+    fn auto_index_name_japanese_columns_do_not_collide() {
+        let a = auto_index_name(DriverKind::Postgres, "idx_注文_氏名");
+        let b = auto_index_name(DriverKind::Postgres, "idx_注文_住所");
+        assert_ne!(a, b);
+    }
 
     fn col(name: &str, data_type: &str, pk: bool) -> TableColumnInfo {
         TableColumnInfo {
@@ -2287,7 +2343,13 @@ mod tests {
             &["subscription_invoice_id".to_string()],
         );
         let name = ddl.split('`').nth(1).unwrap();
-        assert!(name.len() <= 63, "{name}");
+        assert!(name.len() <= 64, "{name}");
+        let pg = create_index_ddl(
+            DriverKind::Postgres,
+            "customer_subscription_invoice_line_items",
+            &["subscription_invoice_id".to_string()],
+        );
+        assert!(pg.split('"').nth(1).unwrap().len() <= 63, "{pg}");
         // 同じ入力なら同じ名前、短い名前はそのまま、SQLite は切り詰めない。
         assert_eq!(
             ddl,

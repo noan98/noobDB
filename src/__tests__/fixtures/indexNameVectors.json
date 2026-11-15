@@ -1,0 +1,460 @@
+{
+  "_comment": "インデックス名の共有ゴールデン (#2360)。Rust は db/advisor.rs の auto_index_name、フロントは tableMaintenance.ts の autoIndexName / createIndexName / indexNameTooLong と sqlDialect.ts の storedIndexName が検証する。",
+  "auto": [
+    {
+      "note": "ASCII はそのまま",
+      "driver": "mysql",
+      "table": "orders",
+      "columns": [
+        "user_id"
+      ],
+      "expected": "idx_orders_user_id"
+    },
+    {
+      "note": "ASCII はそのまま",
+      "driver": "postgres",
+      "table": "orders",
+      "columns": [
+        "user_id"
+      ],
+      "expected": "idx_orders_user_id"
+    },
+    {
+      "note": "ASCII はそのまま",
+      "driver": "sqlite",
+      "table": "orders",
+      "columns": [
+        "user_id"
+      ],
+      "expected": "idx_orders_user_id"
+    },
+    {
+      "note": "複数列",
+      "driver": "mysql",
+      "table": "orders",
+      "columns": [
+        "a",
+        "b"
+      ],
+      "expected": "idx_orders_a_b"
+    },
+    {
+      "note": "複数列",
+      "driver": "postgres",
+      "table": "orders",
+      "columns": [
+        "a",
+        "b"
+      ],
+      "expected": "idx_orders_a_b"
+    },
+    {
+      "note": "複数列",
+      "driver": "sqlite",
+      "table": "orders",
+      "columns": [
+        "a",
+        "b"
+      ],
+      "expected": "idx_orders_a_b"
+    },
+    {
+      "note": "日本語: 列 氏名",
+      "driver": "mysql",
+      "table": "注文",
+      "columns": [
+        "氏名"
+      ],
+      "expected": "idx_______d7a6e4f5"
+    },
+    {
+      "note": "日本語: 列 氏名",
+      "driver": "postgres",
+      "table": "注文",
+      "columns": [
+        "氏名"
+      ],
+      "expected": "idx_______d7a6e4f5"
+    },
+    {
+      "note": "日本語: 列 氏名",
+      "driver": "sqlite",
+      "table": "注文",
+      "columns": [
+        "氏名"
+      ],
+      "expected": "idx_______d7a6e4f5"
+    },
+    {
+      "note": "日本語: 列 住所 (氏名と衝突しない)",
+      "driver": "mysql",
+      "table": "注文",
+      "columns": [
+        "住所"
+      ],
+      "expected": "idx_______203f33e3"
+    },
+    {
+      "note": "日本語: 列 住所 (氏名と衝突しない)",
+      "driver": "postgres",
+      "table": "注文",
+      "columns": [
+        "住所"
+      ],
+      "expected": "idx_______203f33e3"
+    },
+    {
+      "note": "日本語: 列 住所 (氏名と衝突しない)",
+      "driver": "sqlite",
+      "table": "注文",
+      "columns": [
+        "住所"
+      ],
+      "expected": "idx_______203f33e3"
+    },
+    {
+      "note": "日本語: 別の表",
+      "driver": "mysql",
+      "table": "顧客",
+      "columns": [
+        "氏名"
+      ],
+      "expected": "idx_______41501ae5"
+    },
+    {
+      "note": "日本語: 別の表",
+      "driver": "postgres",
+      "table": "顧客",
+      "columns": [
+        "氏名"
+      ],
+      "expected": "idx_______41501ae5"
+    },
+    {
+      "note": "日本語: 別の表",
+      "driver": "sqlite",
+      "table": "顧客",
+      "columns": [
+        "氏名"
+      ],
+      "expected": "idx_______41501ae5"
+    },
+    {
+      "note": "空白・記号は _ に畳みハッシュで区別 (空白版)",
+      "driver": "mysql",
+      "table": "my table",
+      "columns": [
+        "id"
+      ],
+      "expected": "idx_my_table_id_322de949"
+    },
+    {
+      "note": "空白・記号は _ に畳みハッシュで区別 (空白版)",
+      "driver": "postgres",
+      "table": "my table",
+      "columns": [
+        "id"
+      ],
+      "expected": "idx_my_table_id_322de949"
+    },
+    {
+      "note": "空白・記号は _ に畳みハッシュで区別 (空白版)",
+      "driver": "sqlite",
+      "table": "my table",
+      "columns": [
+        "id"
+      ],
+      "expected": "idx_my_table_id_322de949"
+    },
+    {
+      "note": "空白・記号は _ に畳みハッシュで区別 (アンダースコア版)",
+      "driver": "mysql",
+      "table": "my_table",
+      "columns": [
+        "id"
+      ],
+      "expected": "idx_my_table_id"
+    },
+    {
+      "note": "空白・記号は _ に畳みハッシュで区別 (アンダースコア版)",
+      "driver": "postgres",
+      "table": "my_table",
+      "columns": [
+        "id"
+      ],
+      "expected": "idx_my_table_id"
+    },
+    {
+      "note": "空白・記号は _ に畳みハッシュで区別 (アンダースコア版)",
+      "driver": "sqlite",
+      "table": "my_table",
+      "columns": [
+        "id"
+      ],
+      "expected": "idx_my_table_id"
+    },
+    {
+      "note": "ちょうど 63 文字",
+      "driver": "mysql",
+      "table": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+      "columns": [
+        "c"
+      ],
+      "expected": "idx_ttttttttttttttttttttttttttttttttttttttttttttttttttttttttt_c"
+    },
+    {
+      "note": "ちょうど 63 文字",
+      "driver": "postgres",
+      "table": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+      "columns": [
+        "c"
+      ],
+      "expected": "idx_ttttttttttttttttttttttttttttttttttttttttttttttttttttttttt_c"
+    },
+    {
+      "note": "ちょうど 63 文字",
+      "driver": "sqlite",
+      "table": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+      "columns": [
+        "c"
+      ],
+      "expected": "idx_ttttttttttttttttttttttttttttttttttttttttttttttttttttttttt_c"
+    },
+    {
+      "note": "ちょうど 64 文字 (MySQL は収まり PostgreSQL は切り詰め)",
+      "driver": "mysql",
+      "table": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+      "columns": [
+        "c"
+      ],
+      "expected": "idx_tttttttttttttttttttttttttttttttttttttttttttttttttttttttttt_c"
+    },
+    {
+      "note": "ちょうど 64 文字 (MySQL は収まり PostgreSQL は切り詰め)",
+      "driver": "postgres",
+      "table": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+      "columns": [
+        "c"
+      ],
+      "expected": "idx_tttttttttttttttttttttttttttttttttttttttttttttttttt_3b976917"
+    },
+    {
+      "note": "ちょうど 64 文字 (MySQL は収まり PostgreSQL は切り詰め)",
+      "driver": "sqlite",
+      "table": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+      "columns": [
+        "c"
+      ],
+      "expected": "idx_tttttttttttttttttttttttttttttttttttttttttttttttttttttttttt_c"
+    },
+    {
+      "note": "65 文字 (どちらも切り詰め)",
+      "driver": "mysql",
+      "table": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+      "columns": [
+        "c"
+      ],
+      "expected": "idx_ttttttttttttttttttttttttttttttttttttttttttttttttttt_d258ac15"
+    },
+    {
+      "note": "65 文字 (どちらも切り詰め)",
+      "driver": "postgres",
+      "table": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+      "columns": [
+        "c"
+      ],
+      "expected": "idx_tttttttttttttttttttttttttttttttttttttttttttttttttt_d258ac15"
+    },
+    {
+      "note": "65 文字 (どちらも切り詰め)",
+      "driver": "sqlite",
+      "table": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+      "columns": [
+        "c"
+      ],
+      "expected": "idx_ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt_c"
+    },
+    {
+      "note": "長い日本語名 (切り詰め + ハッシュ)",
+      "driver": "mysql",
+      "table": "非常に長いテーブル名非常に長いテーブル名非常に長いテーブル名非常に長いテーブル名非常に長いテーブル名非常に長いテーブル名非常に長いテーブル名非常に長いテーブル名",
+      "columns": [
+        "列名"
+      ],
+      "expected": "idx_____________________________________________________1c9688cc"
+    },
+    {
+      "note": "長い日本語名 (切り詰め + ハッシュ)",
+      "driver": "postgres",
+      "table": "非常に長いテーブル名非常に長いテーブル名非常に長いテーブル名非常に長いテーブル名非常に長いテーブル名非常に長いテーブル名非常に長いテーブル名非常に長いテーブル名",
+      "columns": [
+        "列名"
+      ],
+      "expected": "idx____________________________________________________1c9688cc"
+    },
+    {
+      "note": "長い日本語名 (切り詰め + ハッシュ)",
+      "driver": "sqlite",
+      "table": "非常に長いテーブル名非常に長いテーブル名非常に長いテーブル名非常に長いテーブル名非常に長いテーブル名非常に長いテーブル名非常に長いテーブル名非常に長いテーブル名",
+      "columns": [
+        "列名"
+      ],
+      "expected": "idx_____________________________________________________________________________________1c9688cc"
+    },
+    {
+      "note": "マルチバイトが多い長い名前も ASCII 化後に切るので途中で切れない",
+      "driver": "mysql",
+      "table": "ああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああ",
+      "columns": [
+        "い"
+      ],
+      "expected": "idx_____________________________________________________da8f95d2"
+    },
+    {
+      "note": "マルチバイトが多い長い名前も ASCII 化後に切るので途中で切れない",
+      "driver": "postgres",
+      "table": "ああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああ",
+      "columns": [
+        "い"
+      ],
+      "expected": "idx____________________________________________________da8f95d2"
+    },
+    {
+      "note": "マルチバイトが多い長い名前も ASCII 化後に切るので途中で切れない",
+      "driver": "sqlite",
+      "table": "ああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああ",
+      "columns": [
+        "い"
+      ],
+      "expected": "idx__________________________________________________________________________da8f95d2"
+    }
+  ],
+  "user": [
+    {
+      "driver": "mysql",
+      "name": "顧客_idx",
+      "expected": "顧客_idx",
+      "tooLong": false,
+      "stored": "顧客_idx"
+    },
+    {
+      "driver": "mysql",
+      "name": "  idx_x  ",
+      "expected": "idx_x",
+      "tooLong": false,
+      "stored": "idx_x"
+    },
+    {
+      "driver": "mysql",
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tooLong": false,
+      "stored": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "driver": "mysql",
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tooLong": true,
+      "stored": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "driver": "mysql",
+      "name": "あああああああああああああああああああああ",
+      "expected": "あああああああああああああああああああああ",
+      "tooLong": false,
+      "stored": "あああああああああああああああああああああ"
+    },
+    {
+      "driver": "mysql",
+      "name": "ああああああああああああああああああああああ",
+      "expected": "ああああああああああああああああああああああ",
+      "tooLong": false,
+      "stored": "ああああああああああああああああああああああ"
+    },
+    {
+      "driver": "postgres",
+      "name": "顧客_idx",
+      "expected": "顧客_idx",
+      "tooLong": false,
+      "stored": "顧客_idx"
+    },
+    {
+      "driver": "postgres",
+      "name": "  idx_x  ",
+      "expected": "idx_x",
+      "tooLong": false,
+      "stored": "idx_x"
+    },
+    {
+      "driver": "postgres",
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tooLong": true,
+      "stored": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "driver": "postgres",
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tooLong": true,
+      "stored": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "driver": "postgres",
+      "name": "あああああああああああああああああああああ",
+      "expected": "あああああああああああああああああああああ",
+      "tooLong": false,
+      "stored": "あああああああああああああああああああああ"
+    },
+    {
+      "driver": "postgres",
+      "name": "ああああああああああああああああああああああ",
+      "expected": "ああああああああああああああああああああああ",
+      "tooLong": true,
+      "stored": "あああああああああああああああああああああ"
+    },
+    {
+      "driver": "sqlite",
+      "name": "顧客_idx",
+      "expected": "顧客_idx",
+      "tooLong": false,
+      "stored": "顧客_idx"
+    },
+    {
+      "driver": "sqlite",
+      "name": "  idx_x  ",
+      "expected": "idx_x",
+      "tooLong": false,
+      "stored": "idx_x"
+    },
+    {
+      "driver": "sqlite",
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tooLong": false,
+      "stored": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "driver": "sqlite",
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tooLong": false,
+      "stored": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "driver": "sqlite",
+      "name": "あああああああああああああああああああああ",
+      "expected": "あああああああああああああああああああああ",
+      "tooLong": false,
+      "stored": "あああああああああああああああああああああ"
+    },
+    {
+      "driver": "sqlite",
+      "name": "ああああああああああああああああああああああ",
+      "expected": "ああああああああああああああああああああああ",
+      "tooLong": false,
+      "stored": "ああああああああああああああああああああああ"
+    }
+  ]
+}

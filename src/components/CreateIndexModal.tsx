@@ -5,6 +5,7 @@ import { api, type DriverKind, type IndexOverlap, type TableColumnInfo } from ".
 import {
   buildCreateIndexSql,
   createIndexName,
+  indexNameTooLong,
   indexOptionSupport,
   normalizeIndexFragment,
   type IndexMethod,
@@ -251,6 +252,7 @@ export function CreateIndexModal({
         setProgress(null);
       });
   };
+  const nameTooLong = indexNameTooLong(driver, name.trim());
   const reasonText = (r: IndexOptionReason | undefined) => (r ? t(`createIndexReason_${r}`) : null);
 
   // UNIQUE のときだけ、既存データに重複キーが無いかを読み取り専用 COUNT で事前検査する (#1757)。
@@ -502,6 +504,11 @@ export function CreateIndexModal({
             <FormSection>
               <FieldLabel as="div">{t("createTablePreview")}</FieldLabel>
               <SqlPreview sql={sql} driver={driver} empty={t("createIndexPreviewEmpty")} minH="48px" wrap />
+              {nameTooLong && (
+                <FieldError data-testid="create-index-name-too-long">
+                  {t(driver === "mysql" ? "createIndexNameTooLongMysql" : "createIndexNameTooLongPg")}
+                </FieldError>
+              )}
               {overlaps.map((o) => (
                 <Callout key={o.name} tone="warning" data-testid="create-index-overlap">
                   {o.kind === "duplicate"

@@ -1,5 +1,5 @@
 import type { AlterStatement, OnlineHint } from "./alterTable";
-import { fitPgName, qualifiedTableName } from "./sqlDialect";
+import { fitPgName, qualifiedTableName, storedIndexName } from "./sqlDialect";
 import { quoteString } from "./cellEdit";
 
 /**
@@ -136,7 +136,8 @@ function concurrentCreateStep(sql: string, name: string, database: string | null
     lockTimeout: false,
     group,
     undoOnFail: [`DROP INDEX CONCURRENTLY IF EXISTS ${qualifiedTableName("postgres", database, name)};`],
-    invalidIndex: name,
+    // PostgreSQL は 63 バイトを超える名前を黙って切り詰める。pg_class には切り詰め後の名前で載る (#2360)。
+    invalidIndex: storedIndexName("postgres", name),
   };
 }
 

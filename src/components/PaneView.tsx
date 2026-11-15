@@ -54,6 +54,13 @@ import { buildTabsEmptyActions } from "./tabsEmptyActions";
 import { buildResultEmptyActions } from "./resultEmptyActions";
 import { readOnlyWithHint } from "../dangerousSql";
 import { useT } from "../i18n";
+import {
+  sqlEditActive,
+  sqlEditColumnMask,
+  sqlEditInsertable,
+  sqlEditToggleView,
+  withSqlEditTarget,
+} from "../sqlResultEdit";
 import type { IncomingFk } from "../fkNavigation";
 import type { ValueLookup } from "./useValuePicker";
 import { transitions, variants } from "../motion";
@@ -213,6 +220,8 @@ export interface PaneActions {
   handleAiSqlAction: (action: AiSqlEditorAction) => void;
   /** エディタの識別子 Ctrl/Cmd+クリックで、スキーマツリーの対象を選ぶ (#1629)。 */
   handleRevealSchemaObject: (target: SchemaJumpTarget) => void;
+  /** エディタの識別子ホバーカードから構造タブを開く (#2352)。 */
+  handleOpenStructure: (database: string, table: string) => void;
   handleAiResultSummary: (tab: Tab) => void;
   handleOpenSqlFile: () => unknown;
   handleRegisterLocalTable: (result: QueryResult, sourceSql: string, tabDatabase: string | null) => void;
@@ -235,6 +244,7 @@ export interface PaneActions {
   requestBroadcast: (sql: string, tab: Tab | null) => void;
   requestDuplicateRowForTab: (tabId: string, row: PendingInsertRow) => void;
   addInsertRowsForTab: (tabId: string, rows: PendingInsertRow[]) => void;
+  toggleSqlEditForTab: (tabId: string) => void;
   requestInsertRowForTab: (tabId: string) => void;
   resolveParamsThen: (tab: Tab, sql: string, mode: "run" | "runNewTab" | "preview" | "explain") => void;
   runBatchInTab: (tabId: string, sql: string, stopOnError: boolean, tabOverride?: Tab) => unknown;
@@ -372,8 +382,15 @@ export const PaneView = memo(
     // テーブルタブで編集系の操作 (セル編集・行の追加/削除・BLOB 書き戻し・列置換) を
     // 出してよいか。read_only 接続に加え、行を特定できないデフォルトクエリ (#1253) で
     // 開いたタブも読み取り専用にする (誤った行を書き換えないよう再判定はしない)。
-    const tableTabEditable = (tab: Pick<Tab, "kind" | "openTemplate">): boolean =>
-      tab.kind === "table" && !readOnly && tab.openTemplate?.editable !== false;
+    // SQL タブの単一テーブル SELECT 結果は、編集モードがオンで判定が編集可のときだけ編集できる (#2355)。
+    const tableTabEditable = (
+      tab: Pick<Tab, "kind" | "openTemplate" | "sqlEdit" | "sqlEditOn" | "lastExecutedSql">,
+    ): boolean =>
+      !readOnly && ((tab.kind === "table" && tab.openTemplate?.editable !== false) || sqlEditActive(tab));
+    // 行の追加・複製・貼り付け挿入。SQL タブは結果の全列が実テーブルの列のときだけ。
+    const rowInsertEditable = (
+      tab: Pick<Tab, "kind" | "openTemplate" | "sqlEdit" | "sqlEditOn" | "lastExecutedSql">,
+    ): boolean => tableTabEditable(tab) && (tab.kind === "table" || sqlEditInsertable(tab));
     const emptyCombo = formatCombo(shortcutBindings.commandPalette);
     const emptyActions = useMemo(
       () =>
@@ -469,6 +486,7 @@ export const PaneView = memo(
         // 実行中 (ストリーミング / バッチ) インジケータ (#1500)。
         running: tt.streaming || tt.batchRunning === true,
         pinned: tt.pinned === true,
+        unseenOutcome: tt.unseenOutcome,
       }));
       // ストリーミング中は行の到着ごとに paneTabs が更新されるが、TabBar が見る項目 (タイトル・
       // dirty・running など) は変わらない。前回と全項目が一致するなら前回の配列を返し、
@@ -806,6 +824,7 @@ export const PaneView = memo(
                         onOpenSqlInNewTab={actions.handleOpenAiSql}
                         onAiSqlAction={actions.handleAiSqlAction}
                         onRevealSchemaObject={actions.handleRevealSchemaObject}
+                        onOpenStructure={actions.handleOpenStructure}
                         emergencyMode={emergencyMode}
                         onToggleEmergencyMode={onToggleEmergencyMode}
                         queryHistory={queryHistory}
@@ -1050,16 +1069,18 @@ export const PaneView = memo(
                                   streaming={tab.streaming}
                                   onStop={() => actions.stopTab(tab)}
                                   pendingEditsSummary={
-                                    tab.kind === "table" && summary.cells > 0 ? summary : undefined
+                                    (tab.kind === "table" || sqlEditActive(tab)) && summary.cells > 0
+                                      ? summary
+                                      : undefined
                                   }
                                   applyStatements={changeSetStatementText(pendingChangeCounts(tab))}
                                   onApplyEdits={
-                                    tab.kind === "table" && summary.cells > 0
+                                    (tab.kind === "table" || sqlEditActive(tab)) && summary.cells > 0
                                       ? () => actions.applyEditsForTab(tab)
                                       : undefined
                                   }
                                   onDiscardEdits={
-                                    tab.kind === "table" && summary.cells > 0
+                                    (tab.kind === "table" || sqlEditActive(tab)) && summary.cells > 0
                                       ? () => actions.discardEditsAndPreviewForTab(tab.id)
                                       : undefined
                                   }
@@ -1153,14 +1174,14 @@ export const PaneView = memo(
                                       : undefined
                                   }
                                   onRequestInsertRow={
-                                    tableTabEditable(tab)
+                                    rowInsertEditable(tab)
                                       ? gridStable.fn(`${tab.id}:requestInsertRow`, () =>
                                           actions.requestInsertRowForTab(tab.id),
                                         )
                                       : undefined
                                   }
                                   onDuplicateRow={
-                                    tableTabEditable(tab)
+                                    rowInsertEditable(tab)
                                       ? gridStable.fn(
                                           `${tab.id}:duplicateRow`,
                                           (row: Parameters<typeof actions.requestDuplicateRowForTab>[1]) =>
@@ -1169,7 +1190,7 @@ export const PaneView = memo(
                                       : undefined
                                   }
                                   onPasteInsertRows={
-                                    tableTabEditable(tab)
+                                    rowInsertEditable(tab)
                                       ? gridStable.fn(
                                           `${tab.id}:pasteInsertRows`,
                                           (rows: Parameters<typeof actions.addInsertRowsForTab>[1]) =>
@@ -1184,9 +1205,24 @@ export const PaneView = memo(
                                     actions.fetchAllForTab(tab),
                                   )}
                                   driver={selectedProfile?.driver ?? "mysql"}
-                                  database={tab.database ?? selectedProfile?.database ?? null}
-                                  table={tab.table ?? null}
+                                  database={
+                                    withSqlEditTarget(tab).database ?? selectedProfile?.database ?? null
+                                  }
+                                  table={withSqlEditTarget(tab).table ?? null}
                                   editable={tableTabEditable(tab)}
+                                  editableColumnNames={gridStable.memo(
+                                    `${tab.id}:sqlEditMask`,
+                                    [tab.sqlEdit, tab.sqlEditOn, tab.lastExecutedSql],
+                                    () => sqlEditColumnMask(tab),
+                                  )}
+                                  sqlEditToggle={gridStable.memo(
+                                    `${tab.id}:sqlEditToggle`,
+                                    [readOnly, tab.sqlEdit, tab.sqlEditOn, tab.lastExecutedSql],
+                                    () => (readOnly ? undefined : (sqlEditToggleView(tab) ?? undefined)),
+                                  )}
+                                  onToggleSqlEdit={gridStable.fn(`${tab.id}:toggleSqlEdit`, () =>
+                                    actions.toggleSqlEditForTab(tab.id),
+                                  )}
                                   readOnlyNotice={
                                     tab.kind === "table" && tab.openTemplate && !tab.openTemplate.editable
                                       ? t(
@@ -1196,8 +1232,8 @@ export const PaneView = memo(
                                         )
                                       : null
                                   }
-                                  tableColumns={tab.tableColumns}
-                                  rowIdentity={tab.rowIdentity}
+                                  tableColumns={withSqlEditTarget(tab).tableColumns}
+                                  rowIdentity={withSqlEditTarget(tab).rowIdentity}
                                   blobIo={
                                     sessionId && tab.kind === "table"
                                       ? gridStable.memo(
