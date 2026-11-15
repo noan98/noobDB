@@ -25,3 +25,11 @@ export const logicalRelationsCommands = {
       parseResponse(schemas.logicalRelationArray, r, "delete_logical_relation"),
     ),
 };
+
+/**
+ * 論理リレーション (仮想 FK, #2356) を読む。宣言済み FK を使う機能へ一緒に渡すためのマージ用で、
+ * 読めなくても (未対応のバックエンド・ストア障害など) 宣言 FK だけで動き続けるよう空配列に倒す。
+ */
+export function listLogicalRelationsOrEmpty(sessionId: string, database: string): Promise<LogicalRelation[]> {
+  return logicalRelationsCommands.listLogicalRelations(sessionId, database).catch(() => []);
+}

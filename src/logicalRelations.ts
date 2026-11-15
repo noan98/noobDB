@@ -8,7 +8,7 @@
 // 「論理」バッジで宣言 FK と見分ける。DDL・同期・ダンプには出さない (バックエンドは別経路)。
 // 3 ドライバ共通 (テーブル名・列名はドライバが返す表記のまま比べる)。副作用なし。
 
-import type { ForeignKey, LogicalRelation, LogicalRelationInput, TableColumnInfo } from "./api/tauri";
+import type { ForeignKey, LogicalRelationInput, TableColumnInfo } from "./api/tauri";
 import type { IncomingFk } from "./fkNavigation";
 
 /** 論理リレーション 1 件の識別キー (登録・削除の同一性判定に使う)。 */
@@ -30,7 +30,7 @@ export function relationInput(r: LogicalRelationInput): LogicalRelationInput {
 export function logicalToForeignKeys(rels: readonly LogicalRelationInput[]): ForeignKey[] {
   const out: ForeignKey[] = [];
   for (const r of rels) {
-    const name = `logical:${r.table}->${r.referenced_table}(${r.columns.join(",")})`;
+    const name = `logical:${r.table}(${r.columns.join(",")})->${r.referenced_table}(${r.referenced_columns.join(",")})`;
     r.columns.forEach((column, i) => {
       out.push({
         table: r.table,
@@ -105,6 +105,16 @@ export function applyLogicalToColumns(
     const t = target.get(c.name);
     if (!t || c.referenced_table !== null) return c;
     return { ...c, referenced_table: t.table, referenced_column: t.column, logical: true };
+  });
+}
+
+/** `applyLogicalToColumns` で載せた論理 FK の参照先を外す (登録の削除を、取得済みの列へ反映し直すため)。 */
+export function stripLogicalFromColumns(columns: TableColumnInfo[]): TableColumnInfo[] {
+  if (!columns.some((c) => c.logical)) return columns;
+  return columns.map((c) => {
+    if (!c.logical) return c;
+    const { logical: _logical, ...rest } = c;
+    return { ...rest, referenced_table: null, referenced_column: null };
   });
 }
 

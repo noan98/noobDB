@@ -4,6 +4,8 @@ const invoke = vi.fn();
 vi.mock("../api/invoke", () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
 
 import { schemaCommands } from "../api/commands/schema";
+import { schemaTreeCommands } from "../api/commands/schemaTree";
+import { tableOpenCommands } from "../api/commands/tableOpen";
 import { buildErGraph } from "../components/erDiagram";
 
 const logical = {
@@ -95,5 +97,35 @@ describe("論理リレーション (仮想 FK, #2356) のマージ", () => {
     expect(graph.edges).toHaveLength(1);
     expect(graph.edges[0]).toMatchObject({ source: "orders", target: "users", logical: true });
     expect(graph.nodes.find((n) => n.id === "orders")?.data.columns[1].isFk).toBe(true);
+  });
+
+  it("open_table / open_tables / load_schema_tree の列にも論理の参照先を載せる (FK セルのリンクの源)", async () => {
+    const openResult = {
+      base: "",
+      sql: "",
+      columns: [column("user_id", null)],
+      row_identity: null,
+      row_estimate: null,
+    };
+    respond({
+      open_table: openResult,
+      open_tables: [
+        { database: "app", table: "orders", result: openResult, error: null },
+        { database: "app", table: "gone", result: null, error: "x" },
+      ],
+      load_schema_tree: {
+        databases: ["app"],
+        open: [],
+        tables: [{ key: "app::orders", columns: [column("user_id", null)], indexes: [] }],
+      },
+      list_logical_relations: [logical],
+    });
+    const one = await tableOpenCommands.openTable("s", "app", "orders", 10, false);
+    expect(one.columns[0]).toMatchObject({ referenced_table: "users", logical: true });
+    const many = await tableOpenCommands.openTables("s", [["app", "orders"]], 10);
+    expect(many[0].result?.columns[0]).toMatchObject({ referenced_table: "users", logical: true });
+    expect(many[1].result).toBeNull();
+    const tree = await schemaTreeCommands.loadSchemaTree("s", ["app"], ["app::orders"]);
+    expect(tree.tables[0].columns[0]).toMatchObject({ referenced_table: "users", logical: true });
   });
 });

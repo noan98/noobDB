@@ -7,6 +7,7 @@ import {
   mergeForeignKeys,
   mergeIncomingForeignKeys,
   relationKey,
+  stripLogicalFromColumns,
   suggestLogicalRelations,
   typeFamily,
 } from "../logicalRelations";
@@ -200,5 +201,17 @@ describe("relationKey", () => {
     expect(relationKey(rel("a", ["x", "y"], "b", ["x", "y"]))).not.toBe(
       relationKey(rel("a", ["y", "x"], "b", ["x", "y"])),
     );
+  });
+});
+
+describe("stripLogicalFromColumns", () => {
+  it("論理で載せた参照先だけを外し、宣言 FK の列は残す", () => {
+    const cols = [col("id"), col("user_id"), col("shop_id", "bigint", "MUL", "shops")];
+    const withLogical = applyLogicalToColumns("o", cols, [rel("o", ["user_id"], "users", ["id"])]);
+    const stripped = stripLogicalFromColumns(withLogical);
+    expect(stripped[1]).toMatchObject({ referenced_table: null, referenced_column: null });
+    expect(stripped[1].logical).toBeUndefined();
+    expect(stripped[2].referenced_table).toBe("shops");
+    expect(stripLogicalFromColumns(cols)).toBe(cols);
   });
 });

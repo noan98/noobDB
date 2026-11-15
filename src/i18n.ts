@@ -4595,6 +4595,12 @@ const en = {
   colTipKeyIndex: "Indexed (MUL)",
   colTipReferences: "References",
   logicalRelationBadge: "logical",
+  refImpactLogicalCount: "{count} orphan row(s) would remain",
+  refImpactLogicalTag: "logical relation: the DB does not stop it",
+  refImpactLogicalNote:
+    "Logical relations are not enforced by the database: the delete succeeds and the child rows listed as logical stay behind as orphans.",
+  dropReferencedByLogical:
+    "Rows listed as logical relations are not enforced by the database: dropping the table succeeds and those columns are left pointing at nothing.",
   logicalRelTitle: "Logical relations: {database}",
   logicalRelNote:
     "Register relations that are not declared as foreign keys (for example user_id → users.id). They are saved only in this app, never written to the database, and are not included in DDL, schema sync or dumps. FK cell jumps, related rows, the ER diagram, JOIN completion and the query builder use them like declared foreign keys. Open table tabs and the ER diagram pick up changes when reopened.",
@@ -13348,6 +13354,12 @@ const ja: Dict = {
   colTipKeyIndex: "インデックス (MUL)",
   colTipReferences: "参照先",
   logicalRelationBadge: "論理",
+  refImpactLogicalCount: "孤児行が {count} 件残ります",
+  refImpactLogicalTag: "論理リレーション: DB は止めません",
+  refImpactLogicalNote:
+    "論理リレーションは DB が強制しないので、削除は成功し、論理と表示された子行は孤児行として残ります。",
+  dropReferencedByLogical:
+    "論理リレーションと表示された参照は DB が強制しないので、DROP は成功し、それらの列は参照先を失ったまま残ります。",
   logicalRelTitle: "論理リレーション: {database}",
   logicalRelNote:
     "外部キーとして宣言されていない関係 (例: user_id → users.id) を登録します。保存先はこのアプリだけで、データベースには書き込まず、DDL・スキーマ同期・ダンプにも含まれません。FK セルのジャンプ・関連行・ER 図・JOIN 補完・クエリビルダが、宣言済みの外部キーと同じように使います。開いているテーブルタブと ER 図は、開き直すと反映されます。",

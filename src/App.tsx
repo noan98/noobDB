@@ -585,6 +585,7 @@ import {
   type UnseenOutcome,
 } from "./tabOutcome";
 import { type IncomingFk, incomingFkTableName } from "./fkNavigation";
+import { applyLogicalToColumns, stripLogicalFromColumns } from "./logicalRelations";
 import { collectDropImpacts, type DropImpact } from "./dropImpact";
 import {
   buildOpenChildrenSql,
@@ -4917,6 +4918,42 @@ export default function App() {
       });
     },
     [sessionId],
+  );
+
+  // 論理リレーション (仮想 FK, #2356) を登録・削除したとき、取得済みの FK 情報を捨てて取り直す:
+  // エディタのスキーマ (FK / 列)・逆参照 FK のキャッシュ・開いているテーブルタブの列・ツリーの列。
+  const handleLogicalRelationsChanged = useCallback(
+    (database: string) => {
+      invalidateSchemaCache(database);
+      fkEpochRef.current += 1;
+      fkInFlightRef.current.clear();
+      setIncomingFkCache({});
+      connectionListRef.current?.refreshSchema();
+      if (!sessionId) return;
+      const sid = sessionId;
+      void api
+        .listLogicalRelations(sid, database)
+        .then((rels) =>
+          setTabs((prev) =>
+            prev.map((tab) =>
+              tab.database === database && tab.table && tab.tableColumns
+                ? {
+                    ...tab,
+                    tableColumns: applyLogicalToColumns(
+                      tab.table,
+                      stripLogicalFromColumns(tab.tableColumns),
+                      rels,
+                    ),
+                  }
+                : tab,
+            ),
+          ),
+        )
+        .catch(() => {
+          /* 取り直せなくても、開き直せば反映される */
+        });
+    },
+    [invalidateSchemaCache, sessionId, setTabs],
   );
 
   useEffect(() => {
@@ -9434,7 +9471,8 @@ export default function App() {
       return;
     }
     const needsConfirm =
-      res.moreCascade || res.impacts.some((i) => i.onDelete === "CASCADE" || blocksDelete(i.onDelete));
+      res.moreCascade ||
+      res.impacts.some((i) => i.logical === true || i.onDelete === "CASCADE" || blocksDelete(i.onDelete));
     if (!needsConfirm) {
       proceed();
       return;
@@ -15502,6 +15540,7 @@ export default function App() {
                 <LogicalRelationsModal
                   key={logicalRelationsTarget}
                   sessionId={sessionId}
+                  onChanged={handleLogicalRelationsChanged}
                   database={logicalRelationsTarget}
                   onClose={() => {
                     setLogicalRelationsTarget(null);

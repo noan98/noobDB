@@ -30,6 +30,8 @@ import { Button, Checkbox } from "./ui";
 interface Props {
   sessionId: string;
   database: string;
+  /** 登録・削除に成功したとき (キャッシュの取り直しを親に任せる)。 */
+  onChanged?: (database: string) => void;
   onClose: () => void;
 }
 
@@ -49,7 +51,7 @@ interface PairRow {
 const describe = (r: LogicalRelationInput) =>
   `${r.table} (${r.columns.join(", ")}) → ${r.referenced_table} (${r.referenced_columns.join(", ")})`;
 
-export function LogicalRelationsModal({ sessionId, database, onClose }: Props) {
+export function LogicalRelationsModal({ sessionId, database, onChanged, onClose }: Props) {
   const t = useT();
   const toast = useToast();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -123,6 +125,7 @@ export function LogicalRelationsModal({ sessionId, database, onClose }: Props) {
     setBusy(true);
     try {
       const relations = await api.saveLogicalRelations(sessionId, database, inputs.map(relationInput));
+      onChanged?.(database);
       if (!mountedRef.current) return true;
       setLoaded((l) => (l ? { ...l, relations } : l));
       toast.success(t("logicalRelSaved", { count: inputs.length }));
@@ -141,6 +144,7 @@ export function LogicalRelationsModal({ sessionId, database, onClose }: Props) {
     try {
       const relations = await api.deleteLogicalRelation(sessionId, database, relationInput(r));
       if (mountedRef.current) setLoaded((l) => (l ? { ...l, relations } : l));
+      onChanged?.(database);
     } catch (e) {
       toast.error(t("logicalRelDeleteError", { error: String(e) }));
     } finally {

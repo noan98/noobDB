@@ -4,7 +4,7 @@ import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
 import type { IncomingFk } from "../../fkNavigation";
 import { applyLogicalToColumns, mergeForeignKeys, mergeIncomingForeignKeys } from "../../logicalRelations";
-import { logicalRelationsCommands } from "./logicalRelations";
+import { listLogicalRelationsOrEmpty } from "./logicalRelations";
 import type {
   TableColumnInfo,
   TableSchema,
@@ -32,12 +32,7 @@ import type {
   SqliteRebuildPlan,
 } from "../tauri";
 
-/**
- * 論理リレーション (仮想 FK, #2356) を読む。宣言済み FK を使う機能へ一緒に渡すためのマージ用で、
- * 読めなくても (未対応のバックエンド・ストア障害など) 宣言 FK だけで動き続けるよう空配列に倒す。
- */
-const logicalRelationsOf = (sessionId: string, database: string) =>
-  logicalRelationsCommands.listLogicalRelations(sessionId, database).catch(() => []);
+const logicalRelationsOf = listLogicalRelationsOrEmpty;
 
 export const schemaCommands = {
   listDatabases: (sessionId: string) =>

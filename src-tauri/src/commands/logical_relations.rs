@@ -38,6 +38,13 @@ pub async fn save_logical_relations(
     state: State<'_, AppState>,
 ) -> Result<Vec<LogicalRelation>> {
     let profile_id = profile_id_of(&state, &session_id).await?;
+    // プロファイルを持たない接続 (サンドボックス・ローカル横断) は保存先の単位が無く、
+    // 無関係な接続と共有されてしまうので登録させない。
+    if profile_id.is_none() {
+        return Err(AppError::InvalidInput(
+            "logical relations require a saved connection profile".to_string(),
+        ));
+    }
     blocking_store(move || logical_relations::add_all(profile_id.as_deref(), &database, &relations))
         .await
 }
