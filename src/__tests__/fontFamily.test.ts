@@ -54,6 +54,9 @@ describe("font stack parity with App.css (#2357)", () => {
     expect(MONO_FONT_FALLBACK).toContain('"BIZ UDGothic"');
     // macOS / Linux 向けの後続フォールバックは残す
     expect(UI_FONT_FALLBACK).toContain('"Hiragino Sans"');
-    expect(MONO_FONT_FALLBACK).toContain('"Noto Sans CJK JP"');
+    // 等幅チェーンに欧文プロポーショナルな和文フォントを入れない。前の候補が無い環境
+    // (Linux の Chromium は ui-monospace を解決しない) で欧文まで可変幅になり桁が崩れる。
+    expect(MONO_FONT_FALLBACK).not.toContain('"Hiragino Sans"');
+    expect(MONO_FONT_FALLBACK).not.toContain('"Noto Sans CJK JP"');
   });
 });

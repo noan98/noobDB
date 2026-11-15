@@ -492,8 +492,7 @@ export const DEFAULT_MONO_FONT_FAMILY: string | null = null;
 export const DEFAULT_UI_FONT_FAMILY: string | null = null;
 
 /** Shared fallback chains, kept in sync with App.css `--font-mono` / `--font-sans`. */
-export const MONO_FONT_FALLBACK =
-  'ui-monospace, "SF Mono", Consolas, "BIZ UDGothic", "Hiragino Sans", "Noto Sans CJK JP", monospace';
+export const MONO_FONT_FALLBACK = 'ui-monospace, "SF Mono", Consolas, "BIZ UDGothic", monospace';
 export const UI_FONT_FALLBACK =
   '-apple-system, BlinkMacSystemFont, "Segoe UI", "Yu Gothic UI", "Meiryo UI", Meiryo, "Hiragino Sans", "Noto Sans CJK JP", sans-serif';
 
