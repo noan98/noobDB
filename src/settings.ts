@@ -492,9 +492,10 @@ export const DEFAULT_MONO_FONT_FAMILY: string | null = null;
 export const DEFAULT_UI_FONT_FAMILY: string | null = null;
 
 /** Shared fallback chains, kept in sync with App.css `--font-mono` / `--font-sans`. */
-export const MONO_FONT_FALLBACK = 'ui-monospace, "SF Mono", Consolas, monospace';
+export const MONO_FONT_FALLBACK =
+  'ui-monospace, "SF Mono", Consolas, "BIZ UDGothic", "Hiragino Sans", "Noto Sans CJK JP", monospace';
 export const UI_FONT_FALLBACK =
-  '-apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans CJK JP", sans-serif';
+  '-apple-system, BlinkMacSystemFont, "Segoe UI", "Yu Gothic UI", "Meiryo UI", Meiryo, "Hiragino Sans", "Noto Sans CJK JP", sans-serif';
 
 /** Monospace presets offered in the appearance settings (primary family names). */
 export const MONO_FONT_PRESETS = [
@@ -505,10 +506,20 @@ export const MONO_FONT_PRESETS = [
   "IBM Plex Mono",
   "Menlo",
   "Consolas",
+  "BIZ UDGothic",
 ] as const;
 
 /** UI (sans) presets offered in the appearance settings. */
-export const UI_FONT_PRESETS = ["Inter", "Roboto", "Segoe UI", "Helvetica Neue", "Arial"] as const;
+export const UI_FONT_PRESETS = [
+  "Inter",
+  "Roboto",
+  "Segoe UI",
+  "Yu Gothic UI",
+  "Meiryo UI",
+  "BIZ UDPGothic",
+  "Helvetica Neue",
+  "Arial",
+] as const;
 
 /** Wrap a family name in quotes when it contains spaces (and isn't already quoted). */
 function quoteFamily(family: string): string {
