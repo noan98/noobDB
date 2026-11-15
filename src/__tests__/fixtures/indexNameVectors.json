@@ -1,5 +1,5 @@
 {
-  "_comment": "インデックス名の共有ゴールデン (#2360)。Rust は db/advisor.rs の auto_index_name、フロントは tableMaintenance.ts の createIndexName / indexNameTooLong / storedIndexName が検証する。",
+  "_comment": "インデックス名の共有ゴールデン (#2360)。Rust は db/advisor.rs の auto_index_name、フロントは tableMaintenance.ts の autoIndexName / createIndexName / indexNameTooLong と sqlDialect.ts の storedIndexName が検証する。",
   "auto": [
     {
       "note": "ASCII はそのまま",

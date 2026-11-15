@@ -64,9 +64,18 @@ describe("buildCreateIndexSql (#850)", () => {
     );
   });
 
-  it("uses an explicit index name when given, sanitizing non-alphanumeric characters", () => {
+  it("uses an explicit index name as typed, without rewriting it (#2360)", () => {
     expect(buildCreateIndexSql("postgres", "public", "orders", ["user_id"], { name: "my-idx!" })).toBe(
-      'CREATE INDEX "my_idx_" ON "public"."orders" ("user_id");',
+      'CREATE INDEX "my-idx!" ON "public"."orders" ("user_id");',
+    );
+  });
+
+  it("escapes quote characters in an explicit index name instead of breaking out of the identifier", () => {
+    expect(buildCreateIndexSql("postgres", "public", "orders", ["user_id"], { name: 'a"b' })).toBe(
+      'CREATE INDEX "a""b" ON "public"."orders" ("user_id");',
+    );
+    expect(buildCreateIndexSql("mysql", "shop", "orders", ["user_id"], { name: "a`b" })).toBe(
+      "CREATE INDEX `a``b` ON `shop`.`orders` (`user_id`);",
     );
   });
 
