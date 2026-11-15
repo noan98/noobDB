@@ -3,7 +3,7 @@
 // TRUNCATE / DROP / RENAME のドライバ別 DDL を組み立てる。識別子クオートは
 // sqlDialect.ts を流用。副作用が無いので Vitest でユニットテストする。
 
-import { quoteIdentFor, qualifiedTableName } from "./sqlDialect";
+import { PG_IDENT_MAX_BYTES, quoteIdentFor, qualifiedTableName } from "./sqlDialect";
 
 /**
  * TRUNCATE 文。SQLite には TRUNCATE が無いので、等価な `DELETE FROM`
@@ -160,13 +160,43 @@ export function buildRenameTableSql(
   return `ALTER TABLE ${from} RENAME TO ${to};`;
 }
 
+/** MySQL の識別子の上限 (文字数)。自動生成名は ASCII だけなのでバイト数と同じ。 */
+const MYSQL_IDENT_MAX = 64;
+
+/** FNV-1a (32bit) を UTF-8 バイト列に対して取った 8 桁 hex。`db/advisor.rs::fnv1a_hex` と同じ規則。 */
+function fnv1aHex(text: string): string {
+  let h = 0x811c9dc5;
+  for (const b of new TextEncoder().encode(text)) {
+    h = Math.imul(h ^ b, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
+
 /**
- * インデックス名候補から、識別子として扱いづらい文字を `_` に畳む。クオートは
- * 呼び出し側が行うので、ここでは可読性のための正規化のみ。バックエンドの
- * `db/advisor.rs::sanitize_index_name` (アドバイザの自動修正 DDL が使う) と同じ規則。
+ * 自動生成するインデックス名を作る。`db/advisor.rs::auto_index_name` と同じ規則で、
+ * 共有ゴールデン (`fixtures/indexNameVectors.json`) が固定する。
+ * - 英数字と `_` 以外 (日本語・空白・記号) は `_` に畳む。畳んで情報が落ちたとき、または
+ *   上限 (MySQL 64 / PostgreSQL 63) を超えるときは、元の名前の FNV-1a ハッシュ (8 桁 hex) を
+ *   末尾に付けて別の元名どうしの衝突を避ける。長いときは先頭を切り詰めて上限に収める。
+ * - SQLite には上限が無いので切り詰めない (情報が落ちたときのハッシュだけ付ける)。
  */
-function sanitizeIndexName(name: string): string {
-  return name.replace(/[^a-zA-Z0-9]/g, "_");
+export function autoIndexName(driver: string, raw: string): string {
+  const sanitized = raw.replace(/[^a-zA-Z0-9_]/g, "_");
+  const limit = driver === "mysql" ? MYSQL_IDENT_MAX : driver === "postgres" ? PG_IDENT_MAX_BYTES : null;
+  const lossy = sanitized !== raw;
+  if (!lossy && (limit === null || sanitized.length <= limit)) return sanitized;
+  const stem = limit === null || sanitized.length + 9 <= limit ? sanitized : sanitized.slice(0, limit - 9);
+  return `${stem}_${fnv1aHex(raw)}`;
+}
+
+/**
+ * ユーザが入力した名前が方言の上限を超えているか。MySQL は 64 文字超で ERROR 1059、PostgreSQL は
+ * 63 バイト超を黙って切り詰める。SQLite に上限は無い。
+ */
+export function indexNameTooLong(driver: string, name: string): boolean {
+  if (driver === "mysql") return [...name].length > MYSQL_IDENT_MAX;
+  if (driver === "postgres") return new TextEncoder().encode(name).length > PG_IDENT_MAX_BYTES;
+  return false;
 }
 
 export type IndexMethod = "btree" | "hash" | "gist" | "spgist" | "gin" | "brin" | "fulltext" | "spatial";
@@ -286,8 +316,10 @@ export function createIndexName(
         .map((e) => normalizeIndexFragment(e).sql)
         .filter((e): e is string => e !== null)
     : [];
-  const rawName = opts.name?.trim() || `idx_${table}_${[...cols, ...exprs.map(exprNamePart)].join("_")}`;
-  return sanitizeIndexName(rawName);
+  // ユーザが入力した名前は書き換えない (クオートはリテラル側で行う)。自動生成名だけ正規化する (#2360)。
+  const given = opts.name?.trim();
+  if (given) return given;
+  return autoIndexName(driver, `idx_${table}_${[...cols, ...exprs.map(exprNamePart)].join("_")}`);
 }
 
 /**

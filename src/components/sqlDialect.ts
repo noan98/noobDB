@@ -156,3 +156,8 @@ export function fitPgName(stem: string, suffix: string, taken: ReadonlySet<strin
     if (!taken.has(cand)) return cand;
   }
 }
+
+/** サーバに実際に保存されるインデックス名。PostgreSQL は 63 バイトで (文字境界で) 切り詰める。 */
+export function storedIndexName(driver: string, name: string): string {
+  return driver === "postgres" ? truncateUtf8(name, PG_IDENT_MAX_BYTES) : name;
+}
