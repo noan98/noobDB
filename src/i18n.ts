@@ -677,6 +677,17 @@ const en = {
   settingsSqlLintEnabled: "Enable syntax check",
   settingsSqlLintEnabledHelp:
     "Flags misspelled keywords (SELEC, FRM, WHER), empty clauses (FROM WHERE), extra commas, GROUP / ORDER without BY, statements that end mid-clause, misordered clauses (e.g. WHERE after ORDER BY), unmatched brackets, and unterminated strings or comments, following the connected driver's dialect. Conservative by design: it prefers missing an error over a false positive.",
+  settingsIdentifierHoverEnabled: "Hover info for identifiers",
+  settingsIdentifierHoverEnabledHelp:
+    "Hover a table or column name in the editor to see its type and constraints, and underline the names that Ctrl/Cmd+click can jump to while the key is held. Ctrl/Cmd+click itself keeps working when this is off.",
+  editorHoverLoading: "Loading…",
+  editorHoverUnavailable: "Details are not available.",
+  editorHoverRevealTree: "Show in tree",
+  editorHoverOpenStructure: "Open structure",
+  editorHoverTableRows: "~{n} rows",
+  editorHoverMoreColumns: "+{n} more columns",
+  editorHoverPk: "PK",
+  editorHoverFk: "FK",
   settingsActiveStatementHighlight: "Highlight the statement under the cursor",
   settingsActiveStatementHighlightHelp:
     "In an editor with two or more statements, marks the statement that Run statement would execute with a soft band and a bar on the left edge, so you can see the range before you run. Hidden when there is only one statement or a selection.",
@@ -9444,6 +9455,17 @@ const ja: Dict = {
   settingsSqlLintEnabled: "構文チェックを有効化",
   settingsSqlLintEnabledHelp:
     "キーワードのタイポ (SELEC / FRM / WHER など)・中身が空の句 (FROM WHERE など)・余分なカンマ・BY の抜けた GROUP / ORDER・途中で終わった文・句の順序ミス (ORDER BY の後の WHERE など)・括弧の不整合・未終端の文字列やコメントを、接続中ドライバの方言に沿って検出します。誤検出より見逃しを優先する保守的な判定です。",
+  settingsIdentifierHoverEnabled: "識別子のホバー情報",
+  settingsIdentifierHoverEnabledHelp:
+    "エディタでテーブル名・列名にホバーすると型や制約を表示し、Ctrl/Cmd を押している間はクリックで移動できる識別子に下線を引きます。オフでも Ctrl/Cmd+クリックの移動は使えます。",
+  editorHoverLoading: "読み込み中…",
+  editorHoverUnavailable: "詳細を取得できませんでした。",
+  editorHoverRevealTree: "ツリーで表示",
+  editorHoverOpenStructure: "構造タブを開く",
+  editorHoverTableRows: "推定 {n} 行",
+  editorHoverMoreColumns: "ほか {n} 列",
+  editorHoverPk: "PK",
+  editorHoverFk: "FK",
   settingsActiveStatementHighlight: "カーソル位置の文を帯で示す",
   settingsActiveStatementHighlightHelp:
     "2 文以上あるエディタで、「カーソル位置の文を実行」の対象になる文を淡い帯と左端のバーで常に示し、実行前に範囲を確かめられます。文が 1 つだけのときと、選択範囲があるときは出しません。",

@@ -13509,6 +13509,7 @@ export default function App() {
     handleEditorDocChange,
     handleAiSqlAction,
     handleRevealSchemaObject,
+    handleOpenStructure,
     handleAiResultSummary,
     handleExploreColumns,
     handleExtractSubsetFromRows,

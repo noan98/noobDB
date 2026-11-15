@@ -220,6 +220,8 @@ export interface PaneActions {
   handleAiSqlAction: (action: AiSqlEditorAction) => void;
   /** エディタの識別子 Ctrl/Cmd+クリックで、スキーマツリーの対象を選ぶ (#1629)。 */
   handleRevealSchemaObject: (target: SchemaJumpTarget) => void;
+  /** エディタの識別子ホバーカードから構造タブを開く (#2352)。 */
+  handleOpenStructure: (database: string, table: string) => void;
   handleAiResultSummary: (tab: Tab) => void;
   handleOpenSqlFile: () => unknown;
   handleRegisterLocalTable: (result: QueryResult, sourceSql: string, tabDatabase: string | null) => void;
@@ -822,6 +824,7 @@ export const PaneView = memo(
                         onOpenSqlInNewTab={actions.handleOpenAiSql}
                         onAiSqlAction={actions.handleAiSqlAction}
                         onRevealSchemaObject={actions.handleRevealSchemaObject}
+                        onOpenStructure={actions.handleOpenStructure}
                         emergencyMode={emergencyMode}
                         onToggleEmergencyMode={onToggleEmergencyMode}
                         queryHistory={queryHistory}

@@ -143,6 +143,7 @@ import {
   setTimelapseMaxGenerations,
   setSqlLintEnabled,
   setSqlSemanticLintEnabled,
+  setIdentifierHoverEnabled,
   setActiveStatementHighlight,
   setPreflightImpactEnabled,
   setScanPreflightEnabled,
@@ -1640,6 +1641,19 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     checked={settings.sqlSemanticLintEnabled}
                     onChange={setSqlSemanticLintEnabled}
                     disabled={!settings.sqlLintEnabled}
+                  />
+                </SettingsToggleRow>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-identifier-hover">
+                      {t("settingsIdentifierHoverEnabled")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsIdentifierHoverEnabledHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-identifier-hover"
+                    checked={settings.identifierHoverEnabled}
+                    onChange={setIdentifierHoverEnabled}
                   />
                 </SettingsToggleRow>
               </SettingsSection>
