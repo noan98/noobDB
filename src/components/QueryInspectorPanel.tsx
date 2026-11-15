@@ -144,7 +144,11 @@ function SortTh({
           _hover={{ color: "app.text" }}
         >
           {children}
-          <span aria-hidden>{active === "asc" ? "▲" : active === "desc" ? "▼" : ""}</span>
+          {active ? (
+            <span aria-hidden style={{ display: "inline-flex" }}>
+              <Icon name={active === "asc" ? "sort-asc" : "sort-desc"} size={ICON_SIZES.sm} />
+            </span>
+          ) : null}
         </chakra.button>
       </Tooltip>
     </chakra.th>
@@ -199,8 +203,14 @@ export const TailRow = memo(function TailRow({
         {new Date(e.observedAtMs).toLocaleTimeString()}
         {e.running && (
           <Tooltip label={t("inspectorRunningTitle")} focusableWrapper>
-            <chakra.span marginLeft="1.5" color="var(--accent)">
-              ▶
+            <chakra.span
+              marginLeft="1.5"
+              color="var(--accent)"
+              display="inline-flex"
+              role="img"
+              aria-label={t("inspectorRunningTitle")}
+            >
+              <Icon name="play" size={ICON_SIZES.sm} />
             </chakra.span>
           </Tooltip>
         )}

@@ -25,21 +25,40 @@ export function identifierChainAt(text: string, pos: number): IdentifierChain | 
   const lineStart = pos === 0 ? 0 : text.lastIndexOf("\n", pos - 1) + 1;
   const nl = text.indexOf("\n", pos);
   const lineEnd = nl === -1 ? text.length : nl;
+  for (const parts of scanLineChains(text, lineStart, lineEnd)) {
+    if (pos < parts[0].from || pos > parts[parts.length - 1].to) continue;
+    const index = parts.findIndex((p) => pos >= p.from && pos <= p.to);
+    if (index === -1) return null;
+    return { parts: parts.map((p) => p.text), index };
+  }
+  return null;
+}
+
+/** 識別子の 1 要素 (`text` は引用符を外した中身、`from..to` は引用符を含む範囲)。 */
+export interface IdentifierPart {
+  text: string;
+  from: number;
+  to: number;
+}
+
+/**
+ * 1 行 (`lineStart..lineEnd`) にある識別子の連なりを、先頭から順に列挙する。文字列リテラルと
+ * 行コメントの中は識別子として扱わない。ホバー / Ctrl 押下中の下線 (#2352) もこの走査を共有する。
+ */
+export function* scanLineChains(
+  text: string,
+  lineStart: number,
+  lineEnd: number,
+): Generator<IdentifierPart[]> {
   let i = lineStart;
   while (i < lineEnd) {
-    const start = i;
-    // 文字列リテラルと行コメントの中は識別子として扱わない。
     if (text[i] === "'") {
       const close = text.indexOf("'", i + 1);
-      if (pos > i && (close === -1 || pos <= close)) return null;
       i = close === -1 || close >= lineEnd ? lineEnd : close + 1;
       continue;
     }
-    if (text[i] === "-" && text[i + 1] === "-") {
-      if (pos >= i) return null;
-      break;
-    }
-    const parts: { text: string; from: number; to: number }[] = [];
+    if (text[i] === "-" && text[i + 1] === "-") break;
+    const parts: IdentifierPart[] = [];
     // 連なりを 1 つ読む: 要素 ('.' 要素)*
     for (;;) {
       const part = readPart(text, i, lineEnd);
@@ -53,16 +72,11 @@ export function identifierChainAt(text: string, pos: number): IdentifierChain | 
       break;
     }
     if (parts.length > 0) {
-      if (pos >= start && pos <= i) {
-        const index = parts.findIndex((p) => pos >= p.from && pos <= p.to);
-        if (index === -1) return null;
-        return { parts: parts.map((p) => p.text), index };
-      }
+      yield parts;
       continue;
     }
     i += 1;
   }
-  return null;
 }
 
 /** `from` から 1 要素 (単語または引用符つき) を読む。引用符は `from..to` に含め、`text` は外した中身。 */
@@ -185,8 +199,21 @@ export function resolveSchemaJump(args: {
   if (!tables || tables.length === 0 || !defaultDatabase) return null;
   const chain = identifierChainAt(text, pos);
   if (!chain) return null;
+  return resolveChainJump({ chain, refs: tableRefsInStatement(text, pos), tables, defaultDatabase });
+}
+
+/**
+ * 走査済みの識別子の連なりと、その文のテーブル参照 (`tableRefsInStatement` の結果) から移動先を決める。
+ * `resolveSchemaJump` の本体で、ホバー下線 (#2352) が行・文の再走査なしに大量の識別子を解決するための入口。
+ */
+export function resolveChainJump(args: {
+  chain: IdentifierChain;
+  refs: ReadonlyMap<string, string>;
+  tables: readonly TableSchema[];
+  defaultDatabase: string;
+}): SchemaJumpTarget | null {
+  const { chain, refs, tables, defaultDatabase } = args;
   const findTable = (name: string) => tables.find((t) => eq(t.name, name));
-  const refs = tableRefsInStatement(text, pos);
   const resolveRef = (name: string) => findTable(refs.get(name.toLowerCase()) ?? name);
   const colOf = (tbl: TableSchema, name: string) => tbl.columns.find((c) => eq(c, name));
 

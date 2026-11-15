@@ -29,9 +29,9 @@
   --driver-postgres: #3b82c4;
   --driver-sqlite: #0f9bdc;
   /* Typography */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans",
-    "Noto Sans CJK JP", sans-serif;
-  --font-mono: ui-monospace, "SF Mono", Consolas, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Yu Gothic UI",
+    "Meiryo UI", Meiryo, "Hiragino Sans", "Noto Sans CJK JP", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Consolas, "BIZ UDGothic", monospace;
   /* Global UI font scale (1 = default). App.tsx overrides this inline from the
      "font size" setting; every --text-* below multiplies through it so the
      whole interface scales uniformly. */
@@ -2525,6 +2525,27 @@ body, #root {
 }
 :root[data-motion="reduced"] .cm-editor .cm-stmt-flash { animation: none; }
 
+/* カーソル位置の文 (文単位実行の対象) の常時表示 (#2354)。複数文のときだけ、その文の各行に
+   淡い帯と左端のバーを付ける。色は動的アクセント経由のみ (ライト/ダーク/ハイコントラストで
+   テキストを妨げないよう帯は薄くする。選択範囲があるときは帯を消すので選択色と重ならない)。
+   別の文へ移ったときは背景とバーを短くクロスフェードする (行 DOM は使い回されるので transition が効く)。 */
+.cm-editor .cm-line {
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+.cm-editor .cm-line.cm-active-stmt {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  box-shadow: inset var(--space-0-5) 0 0 var(--accent);
+}
+.cm-editor .cm-line.cm-active-stmt.cm-activeLine {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .cm-editor .cm-line { transition: none; }
+}
+:root[data-motion="reduced"] .cm-editor .cm-line { transition: none; }
+
 .cm-tooltip.cm-tooltip-autocomplete {
   background: var(--bg-elevated);
   color: var(--text);
@@ -2626,6 +2647,67 @@ body, #root {
   border-top: 1px solid var(--border-subtle);
   padding-top: var(--space-1-5);
 }
+
+/* 識別子のホバーカード / Ctrl・Cmd 押下中のジャンプ下線 (#2352)。面は補完の情報パネルと揃え、
+   入場は軽いフェード。reduced-motion / ハイコントラストでは即時表示にする (他の keyframe と同じ抑制ルール)。 */
+.cm-tooltip.cm-tooltip-hover:has(.cm-identifier-hover) {
+  padding: var(--space-2) var(--space-3);
+  max-width: 28rem;
+  animation: cm-identifier-hover-in 0.12s var(--ease, ease) both;
+}
+@keyframes cm-identifier-hover-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .cm-tooltip.cm-tooltip-hover:has(.cm-identifier-hover) { animation: none; }
+}
+:root[data-motion="reduced"] .cm-tooltip.cm-tooltip-hover:has(.cm-identifier-hover) { animation: none; }
+@media (forced-colors: active) {
+  .cm-tooltip.cm-tooltip-hover:has(.cm-identifier-hover) { animation: none; }
+}
+.cm-identifier-hover { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.cm-hoverCard-cols {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+}
+.cm-hoverCard-cols li { display: flex; align-items: baseline; gap: var(--space-2); }
+.cm-hoverCard-colName { font-family: var(--font-mono); }
+.cm-hoverCard-colType { color: var(--text-muted); font-size: var(--text-xs); font-family: var(--font-mono); }
+.cm-hoverCard-badge {
+  color: var(--accent);
+  font-size: var(--text-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
+}
+.cm-hoverCard-actions {
+  display: flex;
+  gap: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-1-5);
+}
+.cm-hoverCard-btn {
+  background: transparent;
+  color: var(--accent);
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.cm-hoverCard-btn:hover { text-decoration: underline; }
+.cm-hoverCard-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cm-editor .cm-jump-link {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  cursor: pointer;
+}
+.cm-editor.cm-jump-mod .cm-jump-link { color: var(--accent); }
 
 /* エディタ内検索・置換パネル (#464、@codemirror/search)。ライト/ダーク・アクセント・
    シンタックステーマに追従させるためトークンで配色する。 */

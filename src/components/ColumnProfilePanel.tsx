@@ -686,7 +686,11 @@ function SortableTh({
         _hover={{ textDecoration: "underline" }}
       >
         {children}
-        <span aria-hidden>{active === "asc" ? "▲" : active === "desc" ? "▼" : ""}</span>
+        {active ? (
+          <span aria-hidden style={{ display: "inline-flex" }}>
+            <Icon name={active === "asc" ? "sort-asc" : "sort-desc"} size={ICON_SIZES.sm} />
+          </span>
+        ) : null}
       </chakra.button>
     </chakra.th>
   );

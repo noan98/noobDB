@@ -595,9 +595,11 @@ const JsonTreeRow = memo(function JsonTreeRow({ node, pkey: key, segment, level,
         }
         borderLeftColor={isSelected ? "app.accent" : "transparent"}
       >
-        <TreeChevron aria-hidden transform={open ? "rotate(90deg)" : undefined}>
-          {container ? "▸" : ""}
-        </TreeChevron>
+        <TreeChevron
+          aria-hidden
+          visibility={container ? "visible" : "hidden"}
+          transform={container && open ? "rotate(90deg)" : undefined}
+        />
         {segment !== null && (
           <>
             <chakra.span
@@ -649,7 +651,7 @@ const JsonTreeRow = memo(function JsonTreeRow({ node, pkey: key, segment, level,
                 color="app.accent"
                 fontWeight={500}
               >
-                <TreeChevron aria-hidden />
+                <TreeChevron aria-hidden visibility="hidden" />
                 {t("jsonTreeShowMore", { n: Math.min(hidden, CHILD_PAGE_SIZE) })}
               </TreeRow>
             )}

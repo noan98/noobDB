@@ -90,8 +90,14 @@ jobs:
             # 変わった PR は frontend==true だが rust==false になるため、
             # `rust (test)` / `rust (coverage)` ジョブの if: にこの crosslang を OR で足して確実に
             # 実走させる (詳細は下の `crosslang parity` ジョブのコメント参照)。
+            #
+            # #2362: 逆方向 (Rust のテストが src-tauri 外のフロントのソースを
+            # include_str! で読む) もここに足す。足し忘れは crosslangGatingParity.test.ts の
+            # 「Rust が読む src-tauri 外のファイルは crosslang フィルタに含まれる」で落ちる。
             crosslang:
               - 'src/__tests__/fixtures/**'
+              # diff.rs の frontend_error_marks_match_backend_messages が判定文言を検証する。
+              - 'src/components/CrossDriverVerify.tsx'
             # #1359: SSH / TLS / 平文DB統合テストが依存するCIセットアップスクリプト
             # だけを変えたPRは rust==false になり、変更したスクリプトがPR上で一度も
             # 実行されない。`rust (test)` / `rust (coverage)` の if: にORで足して実走させる
@@ -618,7 +624,7 @@ jobs:
   # `export_format_golden.rs` は
   # `rust (test)` (と `rust (coverage)`) ジョブの中で実行されるため、`src/__tests__/fixtures/**` だけを変更する PR
   # (`rust==false`) では引き続きスキップされてしまう。これは上の `changes` ジョブに
-  # 追加した `crosslang` フィルタ (フィクスチャパス限定) を `rust (test)` / `rust (coverage)` の if: へ
+  # 追加した `crosslang` フィルタ (フィクスチャと、Rust が include_str! で読むフロントのソース。#2362) を `rust (test)` / `rust (coverage)` の if: へ
   # OR で足すことで塞ぐ (そちらのコメント参照。#1029 でも変更していない)。
   crosslang-parity:
     name: crosslang parity

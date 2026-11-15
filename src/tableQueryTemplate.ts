@@ -235,7 +235,7 @@ interface TemplateShape {
 }
 
 /** 展開後の単一 SELECT から構造を取り出す。解析できなければ null。 */
-function analyzeShape(sql: string, driver?: string): TemplateShape | null {
+export function analyzeShape(sql: string, driver?: string): TemplateShape | null {
   const masked = maskLiterals(sql, driver);
   const words = topLevelWords(masked);
   if (words.length === 0 || words[0].word !== "select") return null;
@@ -269,7 +269,7 @@ function analyzeShape(sql: string, driver?: string): TemplateShape | null {
 }
 
 /** トップレベルのカンマで区切る (マスク済みテキストで位置を決め、元テキストを切る)。 */
-function splitTopLevelCommas(text: string, driver?: string): string[] {
+export function splitTopLevelCommas(text: string, driver?: string): string[] {
   const masked = maskLiterals(text, driver);
   const parts: string[] = [];
   let depth = 0;
