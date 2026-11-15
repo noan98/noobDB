@@ -9,6 +9,7 @@ import {
   withSqlEditTarget,
   type SqlEditShape,
   type SqlEditTabLike,
+  hasPendingSqlEditChanges,
 } from "../sqlResultEdit";
 import type { TableColumnInfo } from "../api/tauri";
 
@@ -190,6 +191,7 @@ describe("tab helpers", () => {
   const avail = {
     status: "available" as const,
     sql: "SELECT 1",
+    executedDatabase: null,
     database: "db",
     table: "t",
     tableColumns: TABLE,
@@ -203,10 +205,13 @@ describe("tab helpers", () => {
     rowIdentity: null,
     lastExecutedSql: "SELECT 1",
   };
-  it("is active only when on, available and for the same SQL", () => {
+  it("is active only when on, available and for the same SQL and executed DB", () => {
     expect(sqlEditActive({ ...base, sqlEdit: avail })).toBe(false);
     expect(sqlEditActive({ ...base, sqlEdit: avail, sqlEditOn: true })).toBe(true);
     expect(sqlEditActive({ ...base, sqlEdit: avail, sqlEditOn: true, lastExecutedSql: "SELECT 2" })).toBe(
+      false,
+    );
+    expect(sqlEditActive({ ...base, sqlEdit: avail, sqlEditOn: true, lastExecutedDatabase: "other" })).toBe(
       false,
     );
     expect(sqlEditActive({ ...base, kind: "table", sqlEdit: avail, sqlEditOn: true })).toBe(false);
@@ -218,31 +223,93 @@ describe("tab helpers", () => {
     expect(on).toMatchObject({ database: "db", table: "t", tableColumns: TABLE });
   });
   it("derives the toggle view", () => {
+    const sql = "SELECT 1";
     expect(sqlEditToggleView({ ...base })).toBeNull();
-    expect(sqlEditToggleView({ ...base, sqlEdit: { status: "checking", sql: "SELECT 1" } })).toBeNull();
-    expect(sqlEditToggleView({ ...base, sqlEdit: { status: "checking", sql: "stale" } })).toBeNull();
     expect(
-      sqlEditToggleView({ ...base, sqlEdit: { status: "unavailable", sql: "SELECT 1", reason: "join" } }),
-    ).toEqual({
-      state: "unavailable",
-      reason: "join",
-    });
+      sqlEditToggleView({
+        ...base,
+        sqlEdit: { status: "checking", sql, executedDatabase: null, token: "a" },
+      }),
+    ).toBeNull();
+    expect(
+      sqlEditToggleView({
+        ...base,
+        sqlEdit: { status: "unavailable", sql: "stale", executedDatabase: null, reason: "join" },
+      }),
+    ).toBeNull();
+    expect(
+      sqlEditToggleView({
+        ...base,
+        sqlEdit: { status: "unavailable", sql, executedDatabase: null, reason: "join" },
+      }),
+    ).toEqual({ state: "unavailable", reason: "join" });
     expect(sqlEditToggleView({ ...base, sqlEdit: avail })).toEqual({ state: "off" });
-    expect(sqlEditToggleView({ ...base, sqlEdit: avail, sqlEditOn: true })).toEqual({ state: "on" });
+    expect(sqlEditToggleView({ ...base, sqlEdit: avail, sqlEditOn: true })).toEqual({
+      state: "on",
+      locked: false,
+    });
+  });
+  it("locks the toggle while changes are pending", () => {
+    const on = { ...base, sqlEdit: avail, sqlEditOn: true };
+    expect(hasPendingSqlEditChanges(on)).toBe(false);
+    for (const p of [
+      { pendingEdits: { r: { 1: "x" } } },
+      { pendingDeletes: ["k"] },
+      { pendingInserts: [{}] },
+    ]) {
+      expect(hasPendingSqlEditChanges({ ...on, ...p })).toBe(true);
+      expect(sqlEditToggleView({ ...on, ...p })).toEqual({ state: "on", locked: true });
+    }
+    expect(hasPendingSqlEditChanges({ ...on, pendingEdits: {} })).toBe(false);
   });
 });
 
-describe("resolveEditDatabase", () => {
-  it("prefers the qualifier, then main for SQLite, then tab/profile", () => {
-    const a = { tabDatabase: "tabdb", profileDatabase: "pdb" };
-    expect(resolveEditDatabase({ driver: "mysql", schema: "x", ...a })).toBe("x");
-    expect(resolveEditDatabase({ driver: "mysql", schema: null, ...a })).toBe("tabdb");
-    expect(
-      resolveEditDatabase({ driver: "postgres", schema: null, tabDatabase: null, profileDatabase: "pdb" }),
-    ).toBe("pdb");
-    expect(resolveEditDatabase({ driver: "sqlite", schema: null, ...a })).toBe("main");
-    expect(
-      resolveEditDatabase({ driver: "mysql", schema: null, tabDatabase: null, profileDatabase: null }),
-    ).toBeNull();
+describe("resolveEditDatabase: 書き込み先は実行時の接続状態に揃える (#2355)", () => {
+  const r = (a: Parameters<typeof resolveEditDatabase>[0]) => resolveEditDatabase(a);
+  const ok = (database: string) => ({ ok: true, database });
+
+  it("MySQL: 修飾 db > 実行時の tab.database。プロファイル既定へは寄せず、無ければ不可", () => {
+    const sh = shapeOf("SELECT * FROM `db`.`T`");
+    expect(sh).toMatchObject({ schema: "db", table: "T" });
+    expect(r({ driver: "mysql", schema: "db", executedDatabase: "other" })).toEqual(ok("db"));
+    expect(r({ driver: "mysql", schema: null, executedDatabase: "tabdb" })).toEqual(ok("tabdb"));
+    expect(r({ driver: "mysql", schema: null, executedDatabase: null })).toEqual({
+      ok: false,
+      reason: "noDatabase",
+    });
+    expect(r({ driver: "mysql", schema: null, executedDatabase: "" })).toEqual({
+      ok: false,
+      reason: "noDatabase",
+    });
+  });
+  it('PostgreSQL: database 引数はスキーマ。"Sch"."T" の大文字小文字を保ち、未修飾は実行時 tab.database', () => {
+    expect(shapeOf('SELECT * FROM "Sch"."T"', "postgres")).toMatchObject({ schema: "Sch", table: "T" });
+    expect(shapeOf("SELECT * FROM Sch.T", "postgres")).toMatchObject({ schema: "sch", table: "t" });
+    expect(r({ driver: "postgres", schema: "Sch", executedDatabase: "public" })).toEqual(ok("Sch"));
+    expect(r({ driver: "postgres", schema: null, executedDatabase: "app" })).toEqual(ok("app"));
+    expect(r({ driver: "postgres", schema: null, executedDatabase: null })).toEqual({
+      ok: false,
+      reason: "noDatabase",
+    });
+  });
+  it("SQLite: 修飾なしは main、main / アタッチ別名は許可、temp など未アタッチは不可", () => {
+    const aliases = ["Arch", "other"];
+    expect(r({ driver: "sqlite", schema: null, executedDatabase: "pdb", sqliteAliases: aliases })).toEqual(
+      ok("main"),
+    );
+    expect(r({ driver: "sqlite", schema: "MAIN", executedDatabase: null, sqliteAliases: aliases })).toEqual(
+      ok("main"),
+    );
+    expect(r({ driver: "sqlite", schema: "arch", executedDatabase: null, sqliteAliases: aliases })).toEqual(
+      ok("Arch"),
+    );
+    expect(shapeOf('SELECT * FROM "Arch"."t"', "sqlite").schema).toBe("Arch");
+    for (const schema of ["temp", "TEMP", "nope"]) {
+      expect(r({ driver: "sqlite", schema, executedDatabase: null, sqliteAliases: aliases })).toEqual({
+        ok: false,
+        reason: "unknownSchema",
+      });
+    }
+    expect(shapeOf("SELECT * FROM temp.t", "sqlite").schema).toBe("temp");
   });
 });

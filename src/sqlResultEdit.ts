@@ -36,6 +36,8 @@ export type SqlEditBlockReason =
   | "unaliasedExpression"
   | "nameClash"
   | "duplicateColumn"
+  | "noDatabase"
+  | "unknownSchema"
   | "tableNotFound"
   | "noKey"
   | "noRowIdentity";
@@ -354,11 +356,13 @@ export function resolveSqlEdit(args: {
 
 /** 編集の対象と判定結果。`sql` はこの判定をした実行済み SQL。 */
 export type SqlEditState =
-  | { status: "checking"; sql: string }
-  | { status: "unavailable"; sql: string; reason: SqlEditBlockReason }
+  | { status: "checking"; sql: string; executedDatabase: string | null; token: string }
+  | { status: "unavailable"; sql: string; executedDatabase: string | null; reason: SqlEditBlockReason }
   | {
       status: "available";
       sql: string;
+      /** SELECT を実行したときの `tab.database`。 */
+      executedDatabase: string | null;
       database: string;
       table: string;
       tableColumns: TableColumnInfo[];
@@ -374,20 +378,50 @@ export interface SqlEditTabLike {
   tableColumns: TableColumnInfo[] | null;
   rowIdentity: TableRowIdentity | null;
   lastExecutedSql: string;
+  /** 直近の実行が使った `tab.database` (`runQueryInTab` が実行開始時に記録)。 */
+  lastExecutedDatabase?: string | null;
+  pendingEdits?: object;
+  pendingDeletes?: readonly unknown[];
+  pendingInserts?: readonly unknown[];
   /** 利用者が編集モードをオンにしたか。 */
   sqlEditOn?: boolean;
   sqlEdit?: SqlEditState;
 }
 
+export type SqlEditTabView = Pick<
+  SqlEditTabLike,
+  | "kind"
+  | "sqlEditOn"
+  | "sqlEdit"
+  | "lastExecutedSql"
+  | "lastExecutedDatabase"
+  | "pendingEdits"
+  | "pendingDeletes"
+  | "pendingInserts"
+>;
+
+/** 判定が、いま表示している結果 (同じ SQL・同じ実行 DB) に対するものか。 */
+function judgmentIsCurrent(tab: SqlEditTabView): boolean {
+  const e = tab.sqlEdit;
+  return !!e && e.sql === tab.lastExecutedSql && e.executedDatabase === (tab.lastExecutedDatabase ?? null);
+}
+
+/** 保留中の変更 (セル編集・削除予定・追加行) があるか。 */
+export function hasPendingSqlEditChanges(tab: SqlEditTabView): boolean {
+  return (
+    Object.keys(tab.pendingEdits ?? {}).length > 0 ||
+    (tab.pendingDeletes?.length ?? 0) > 0 ||
+    (tab.pendingInserts?.length ?? 0) > 0
+  );
+}
+
 /** 編集モードが有効 (トグルがオンで、現在の結果に対する判定が編集可)。 */
-export function sqlEditActive(
-  tab: Pick<SqlEditTabLike, "kind" | "sqlEditOn" | "sqlEdit" | "lastExecutedSql">,
-): boolean {
+export function sqlEditActive(tab: SqlEditTabView): boolean {
   return (
     tab.kind === "query" &&
     tab.sqlEditOn === true &&
     tab.sqlEdit?.status === "available" &&
-    tab.sqlEdit.sql === tab.lastExecutedSql
+    judgmentIsCurrent(tab)
   );
 }
 
@@ -410,47 +444,60 @@ export function withSqlEditTarget<T extends SqlEditTabLike>(tab: T): T {
 
 /** ツールバーのトグルの表示。`null` なら出さない (SELECT でない・未判定など)。 */
 export type SqlEditToggleView =
-  | { state: "off" | "on" }
+  | { state: "off" }
+  /** `locked`: 保留中の変更があるのでオフにできない (オフにすると Apply できなくなる)。 */
+  | { state: "on"; locked: boolean }
   | { state: "unavailable"; reason: SqlEditBlockReason };
 
-export function sqlEditToggleView(
-  tab: Pick<SqlEditTabLike, "kind" | "sqlEditOn" | "sqlEdit" | "lastExecutedSql">,
-): SqlEditToggleView | null {
+export function sqlEditToggleView(tab: SqlEditTabView): SqlEditToggleView | null {
   if (tab.kind !== "query") return null;
   const e = tab.sqlEdit;
-  if (!e || e.sql !== tab.lastExecutedSql) return null;
+  if (!e || !judgmentIsCurrent(tab)) return null;
   if (e.status === "checking") return null;
   if (e.status === "unavailable") return { state: "unavailable", reason: e.reason };
-  return { state: tab.sqlEditOn === true ? "on" : "off" };
+  return tab.sqlEditOn === true ? { state: "on", locked: hasPendingSqlEditChanges(tab) } : { state: "off" };
 }
 
 /** 結果の列のうち、編集モード中にセル編集を許す列か。編集モードでなければ全列 true (従来どおり)。 */
-export function sqlEditColumnMask(
-  tab: Pick<SqlEditTabLike, "kind" | "sqlEditOn" | "sqlEdit" | "lastExecutedSql">,
-): ReadonlySet<string> | null {
+export function sqlEditColumnMask(tab: SqlEditTabView): ReadonlySet<string> | null {
   if (!sqlEditActive(tab) || tab.sqlEdit?.status !== "available") return null;
   return new Set(tab.sqlEdit.editableColumns);
 }
 
 /** 編集モード中に行の追加・複製・貼り付け挿入を出してよいか。 */
-export function sqlEditInsertable(
-  tab: Pick<SqlEditTabLike, "kind" | "sqlEditOn" | "sqlEdit" | "lastExecutedSql">,
-): boolean {
+export function sqlEditInsertable(tab: SqlEditTabView): boolean {
   return sqlEditActive(tab) && tab.sqlEdit?.status === "available" && tab.sqlEdit.insertable;
 }
 
+export type EditDatabaseResolution =
+  | { ok: true; database: string }
+  | { ok: false; reason: "noDatabase" | "unknownSchema" };
+
 /**
- * 編集対象のデータベース名。FROM の修飾 > 実行したタブ・接続の既定。SQLite は修飾が無ければ
- * `main`。解決できなければ null。
+ * 書き込み先のデータベース (`open_table` / `bulk_update_cells` の `database` 引数) を、SELECT が
+ * **実行されたときの接続状態**と同じに解決する (#2355)。プロファイルの既定へはフォールバックしない
+ * (実行は `tab.database ?? null` で流れ、プールの別タブが `USE` 済みなら実行先と食い違うため)。
+ *
+ * - MySQL: FROM の `db.` 修飾 > 実行時の `tab.database`。どちらも無ければ不可 (`noDatabase`)。
+ * - PostgreSQL: `database` 引数はスキーマ。FROM の `schema.` 修飾 > 実行時の `tab.database`。無ければ不可。
+ * - SQLite: 修飾なしは `main`。修飾は `main` か設定でアタッチした別名 (バックエンドの `resolve_db` と同じく
+ *   大文字小文字を無視し、別名の綴りで返す) のときだけ。`temp` など未アタッチ名は不可 (`unknownSchema`):
+ *   バックエンドは未アタッチ名を `main` とみなすので、UPDATE と DELETE/INSERT の対象が食い違う。
  */
 export function resolveEditDatabase(args: {
   driver: string;
   schema: string | null;
-  tabDatabase: string | null | undefined;
-  profileDatabase: string | null | undefined;
-}): string | null {
-  const { driver, schema, tabDatabase, profileDatabase } = args;
-  if (schema) return schema;
-  if (driver === "sqlite") return "main";
-  return tabDatabase || profileDatabase || null;
+  /** SELECT を実行した時点の `tab.database` (`runQueryInTab` が記録した値)。 */
+  executedDatabase: string | null | undefined;
+  /** SQLite の設定済みアタッチ別名。 */
+  sqliteAliases?: readonly string[];
+}): EditDatabaseResolution {
+  const { driver, schema, executedDatabase, sqliteAliases = [] } = args;
+  if (driver === "sqlite") {
+    if (!schema || schema.toLowerCase() === "main") return { ok: true, database: "main" };
+    const alias = sqliteAliases.find((a) => a.toLowerCase() === schema.toLowerCase());
+    return alias ? { ok: true, database: alias } : { ok: false, reason: "unknownSchema" };
+  }
+  const database = schema || executedDatabase;
+  return database ? { ok: true, database } : { ok: false, reason: "noDatabase" };
 }

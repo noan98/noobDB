@@ -8093,6 +8093,11 @@ const en = {
   sqlEditBlock_noKey:
     "Not editable: select all primary key (or unique key) columns so rows can be identified (SQLite: rowid, PostgreSQL: ctid).",
   sqlEditBlock_noRowIdentity: "Not editable: the table has no primary key or unique key to identify rows.",
+  sqlEditBlock_noDatabase:
+    "Not editable: qualify the table with its schema/database, or pick a database for this tab, so the write target is unambiguous.",
+  sqlEditBlock_unknownSchema:
+    "Not editable: the schema isn't main or an attached database (temp tables aren't supported).",
+  sqlEditLockedTip: "Apply or discard the pending changes before turning edit mode off.",
   tableOpenQueryReadOnlyBadge: "Read-only",
   tableOpenQueryReadOnlyHintGlobal:
     "Opened with the default query from Settings. It doesn't select the primary key (or rowid / ctid), so editing is disabled to avoid changing the wrong rows.",
@@ -16776,6 +16781,11 @@ const ja: Dict = {
   sqlEditBlock_noKey:
     "編集不可: 行を特定するため、主キー (または一意キー) の全列を SELECT に含めてください (SQLite は rowid、PostgreSQL は ctid)。",
   sqlEditBlock_noRowIdentity: "編集不可: 行を特定できる主キー・一意キーがテーブルにありません。",
+  sqlEditBlock_noDatabase:
+    "編集不可: 書き込み先が決まりません。表をスキーマ修飾するか、タブの DB を選んでください。",
+  sqlEditBlock_unknownSchema:
+    "編集不可: スキーマが main でもアタッチ済みのデータベースでもありません (temp の表は対象外)。",
+  sqlEditLockedTip: "保留中の変更を Apply または破棄してから、編集モードをオフにしてください。",
   tableOpenQueryReadOnlyBadge: "読み取り専用",
   tableOpenQueryReadOnlyHintGlobal:
     "設定のデフォルトクエリで開きました。主キー (または rowid / ctid) を選択していないため、誤った行を書き換えないよう編集を無効にしています。",

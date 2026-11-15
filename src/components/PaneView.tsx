@@ -1065,16 +1065,18 @@ export const PaneView = memo(
                                   streaming={tab.streaming}
                                   onStop={() => actions.stopTab(tab)}
                                   pendingEditsSummary={
-                                    tab.kind === "table" && summary.cells > 0 ? summary : undefined
+                                    (tab.kind === "table" || sqlEditActive(tab)) && summary.cells > 0
+                                      ? summary
+                                      : undefined
                                   }
                                   applyStatements={changeSetStatementText(pendingChangeCounts(tab))}
                                   onApplyEdits={
-                                    tab.kind === "table" && summary.cells > 0
+                                    (tab.kind === "table" || sqlEditActive(tab)) && summary.cells > 0
                                       ? () => actions.applyEditsForTab(tab)
                                       : undefined
                                   }
                                   onDiscardEdits={
-                                    tab.kind === "table" && summary.cells > 0
+                                    (tab.kind === "table" || sqlEditActive(tab)) && summary.cells > 0
                                       ? () => actions.discardEditsAndPreviewForTab(tab.id)
                                       : undefined
                                   }

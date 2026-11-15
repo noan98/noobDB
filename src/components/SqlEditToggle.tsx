@@ -11,7 +11,12 @@ import type { SqlEditToggleView } from "../sqlResultEdit";
 export function SqlEditToggle({ view, onToggle }: { view: SqlEditToggleView; onToggle: () => void }) {
   const t = useT();
   const unavailable = view.state === "unavailable";
-  const label = unavailable ? t(`sqlEditBlock_${view.reason}`) : t("sqlEditToggleTip");
+  const locked = view.state === "on" && view.locked;
+  const label = unavailable
+    ? t(`sqlEditBlock_${view.reason}`)
+    : locked
+      ? t("sqlEditLockedTip")
+      : t("sqlEditToggleTip");
   return (
     <Tooltip label={label}>
       <chakra.label
@@ -20,15 +25,17 @@ export function SqlEditToggle({ view, onToggle }: { view: SqlEditToggleView; onT
         gap="1"
         fontSize="xs"
         whiteSpace="nowrap"
-        color={unavailable ? "app.textMuted" : "app.text"}
-        cursor={unavailable ? "not-allowed" : "pointer"}
+        color={unavailable || locked ? "app.textMuted" : "app.text"}
+        cursor={unavailable || locked ? "not-allowed" : "pointer"}
         data-testid="sql-edit-toggle"
       >
         <chakra.input
           type="checkbox"
           checked={view.state === "on"}
-          disabled={unavailable}
-          aria-label={unavailable ? `${t("sqlEditToggleLabel")}: ${label}` : t("sqlEditToggleLabel")}
+          disabled={unavailable || locked}
+          aria-label={
+            unavailable || locked ? `${t("sqlEditToggleLabel")}: ${label}` : t("sqlEditToggleLabel")
+          }
           onChange={onToggle}
         />
         <Icon name="pencil" size={ICON_SIZES.sm} />
