@@ -4152,6 +4152,10 @@ const en = {
   createIndexWhere: "WHERE (partial)",
   createIndexWherePlaceholder: "e.g. deleted_at IS NULL",
   createIndexInclude: "INCLUDE columns (covering)",
+  createIndexNameTooLongMysql:
+    "The index name is longer than 64 characters, so MySQL will reject it (ERROR 1059).",
+  createIndexNameTooLongPg:
+    "The index name is longer than 63 bytes, so PostgreSQL will silently truncate it.",
   createIndexFragmentSemicolon:
     "';' cannot be used in a condition or expression (not even inside string literals).",
   createIndexReason_noMethod: "SQLite has no index methods (USING).",
@@ -12862,6 +12866,10 @@ const ja: Dict = {
   createIndexWhere: "WHERE (部分)",
   createIndexWherePlaceholder: "例: deleted_at IS NULL",
   createIndexInclude: "INCLUDE 列 (カバリング)",
+  createIndexNameTooLongMysql:
+    "インデックス名が 64 文字を超えているため、MySQL がエラー (ERROR 1059) で拒否します。",
+  createIndexNameTooLongPg:
+    "インデックス名が 63 バイトを超えているため、PostgreSQL が末尾を黙って切り詰めます。",
   createIndexFragmentSemicolon: "条件・式の途中に ';' は使えません (文字列の中でも使えません)。",
   createIndexReason_noMethod: "SQLite にはインデックスメソッド (USING) がありません。",
   createIndexReason_noWhereMysql: "MySQL は部分インデックス (WHERE) に対応していません。",
