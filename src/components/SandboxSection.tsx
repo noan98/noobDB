@@ -63,9 +63,7 @@ export function SandboxSection({
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
       >
-        <TreeChevron transform={open ? "rotate(90deg)" : undefined} aria-hidden>
-          ▸
-        </TreeChevron>
+        <TreeChevron transform={open ? "rotate(90deg)" : undefined} aria-hidden />
         <Icon name="flask" size={ICON_SIZES.sm} />
         <chakra.span flex="1" textAlign="left">
           {t("sandboxSectionTitle")}

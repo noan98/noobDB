@@ -143,6 +143,8 @@ import {
   setTimelapseMaxGenerations,
   setSqlLintEnabled,
   setSqlSemanticLintEnabled,
+  setIdentifierHoverEnabled,
+  setActiveStatementHighlight,
   setPreflightImpactEnabled,
   setScanPreflightEnabled,
   setBatchWrapInTransaction,
@@ -1407,6 +1409,20 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
 
                 <SettingsToggleRow>
                   <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-active-statement-highlight">
+                      {t("settingsActiveStatementHighlight")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsActiveStatementHighlightHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-active-statement-highlight"
+                    checked={settings.activeStatementHighlight}
+                    onChange={setActiveStatementHighlight}
+                  />
+                </SettingsToggleRow>
+
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
                     <SettingsToggleLabel as="span">{t("settingsCustomTheme")}</SettingsToggleLabel>
                     <SettingsInfo>{t("settingsCustomThemeHelp")}</SettingsInfo>
                   </SettingsLabelWithInfo>
@@ -1625,6 +1641,19 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     checked={settings.sqlSemanticLintEnabled}
                     onChange={setSqlSemanticLintEnabled}
                     disabled={!settings.sqlLintEnabled}
+                  />
+                </SettingsToggleRow>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-identifier-hover">
+                      {t("settingsIdentifierHoverEnabled")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsIdentifierHoverEnabledHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-identifier-hover"
+                    checked={settings.identifierHoverEnabled}
+                    onChange={setIdentifierHoverEnabled}
                   />
                 </SettingsToggleRow>
               </SettingsSection>

@@ -100,12 +100,32 @@ export function splitSqlStatements(sql: string, driver?: string): string[] {
  * 一つも無ければ `null`。`driver` は `splitSqlStatementRanges` と同じ (#1004)。
  */
 export function statementAtOffset(sql: string, offset: number, driver?: string): StatementRange | null {
-  const ranges = splitSqlStatementRanges(sql, driver);
+  return pickStatementAtOffset(splitSqlStatementRanges(sql, driver), offset);
+}
+
+// `statementAtOffset` の帰属ルール (カーソル位置 → 文)。エディタの「カーソル位置の文」表示
+// (`highlightedStatementAtOffset`) と実行が同じ文を指すよう、ここ 1 箇所に置く。
+function pickStatementAtOffset(ranges: readonly StatementRange[], offset: number): StatementRange | null {
   if (ranges.length === 0) return null;
   for (const r of ranges) {
     if (offset <= r.to) return r;
   }
   return ranges[ranges.length - 1];
+}
+
+/**
+ * エディタに「カーソル位置の文」の帯を出すための範囲 (#2354)。`statementAtOffset` と同じ
+ * 文分割・帰属ルールを使うので、表示される範囲は文単位実行の対象と必ず一致する。
+ * 実行可能な文が 1 つ以下のときは区別する意味が無いので `null` (帯を出さない)。
+ */
+export function highlightedStatementAtOffset(
+  sql: string,
+  offset: number,
+  driver?: string,
+): StatementRange | null {
+  const ranges = splitSqlStatementRanges(sql, driver);
+  if (ranges.length < 2) return null;
+  return pickStatementAtOffset(ranges, offset);
 }
 
 /**
