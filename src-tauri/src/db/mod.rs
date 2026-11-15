@@ -637,7 +637,12 @@ fn is_row_level_import_error(e: &AppError) -> bool {
             let mysql_no = db
                 .try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>()
                 .map(|m| m.number());
-            !is_fatal_db_rejection(db.code().as_deref(), mysql_no, db.message())
+            // SQLite のコードは数値文字列 (拡張コード含む)。PG の SQLSTATE と数字だけの
+            // ものが衝突するので、SqliteError にダウンキャストできたときだけ数値として扱う。
+            let sqlite_code = db
+                .try_downcast_ref::<sqlx::sqlite::SqliteError>()
+                .and_then(|_| db.code().and_then(|c| c.parse::<i32>().ok()));
+            !is_fatal_db_rejection(db.code().as_deref(), mysql_no, sqlite_code, db.message())
         }
         AppError::InvalidInput(_) => true,
         _ => false,
@@ -645,20 +650,42 @@ fn is_row_level_import_error(e: &AppError) -> bool {
 }
 
 /// DB がステートメントを拒否した理由が行データではなく**全体障害** (テーブル消失・
-/// 権限不足・列消失・読み取り専用・スキーマ消失) か。残りの行も同じ理由で失敗するので、
-/// 行単位で再試行せず取り込みを中断する (#1598)。
-/// - PostgreSQL: SQLSTATE 42P01 / 42501 / 42703 / 3F000 / 25006
-/// - MySQL: エラー番号 1146 / 1142 / 1044 / 1054 / 1290 / 1036
-/// - SQLite: メッセージの "no such table" / "readonly"
-fn is_fatal_db_rejection(code: Option<&str>, mysql_number: Option<u16>, message: &str) -> bool {
-    if matches!(code, Some("42P01" | "42501" | "42703" | "3F000" | "25006")) {
+/// 権限不足・列消失・読み取り専用・スキーマ消失・ロック / 容量不足) か。残りの行も同じ理由で
+/// 失敗するので、行単位で再試行せず取り込みを中断する (#1598 / #2361)。
+/// - PostgreSQL: SQLSTATE 42P01 / 42501 / 42703 / 3F000 / 25006 / 53100 (disk_full)
+/// - MySQL: エラー番号 1146 / 1142 / 1143 / 1044 / 1049 / 1054 / 1290 / 1036 / 1792
+/// - SQLite: リザルトコードの下位 8 ビット (拡張コードも含む) 5 BUSY / 6 LOCKED / 8 READONLY /
+///   10 IOERR / 11 CORRUPT / 13 FULL / 14 CANTOPEN。列なしと表なしは汎用の SQLITE_ERROR (1) で
+///   区別できないのでメッセージも見る。
+fn is_fatal_db_rejection(
+    code: Option<&str>,
+    mysql_number: Option<u16>,
+    sqlite_code: Option<i32>,
+    message: &str,
+) -> bool {
+    if matches!(
+        code,
+        Some("42P01" | "42501" | "42703" | "3F000" | "25006" | "53100")
+    ) {
         return true;
     }
-    if matches!(mysql_number, Some(1146 | 1142 | 1044 | 1054 | 1290 | 1036)) {
+    if matches!(
+        mysql_number,
+        Some(1146 | 1142 | 1143 | 1044 | 1049 | 1054 | 1290 | 1036 | 1792)
+    ) {
+        return true;
+    }
+    if matches!(
+        sqlite_code.map(|c| c & 0xff),
+        Some(5 | 6 | 8 | 10 | 11 | 13 | 14)
+    ) {
         return true;
     }
     let m = message.to_ascii_lowercase();
-    m.contains("no such table") || m.contains("readonly database")
+    m.contains("no such table")
+        || m.contains("no such column")
+        || m.contains("has no column named")
+        || m.contains("readonly database")
 }
 
 impl Connection {
@@ -5235,41 +5262,97 @@ mod tests {
     #[test]
     fn only_database_rejections_are_row_level_import_errors_1598() {
         use super::{is_fatal_db_rejection, is_row_level_import_error, AppError};
-        assert!(is_fatal_db_rejection(
-            Some("42P01"),
-            None,
-            "relation does not exist"
-        ));
-        assert!(is_fatal_db_rejection(
-            Some("42501"),
-            None,
-            "permission denied"
-        ));
-        assert!(is_fatal_db_rejection(Some("3F000"), None, ""));
-        assert!(is_fatal_db_rejection(
-            Some("42S02"),
-            Some(1146),
-            "Table doesn't exist"
-        ));
-        assert!(is_fatal_db_rejection(None, Some(1142), ""));
-        assert!(is_fatal_db_rejection(None, None, "no such table: t"));
-        assert!(is_fatal_db_rejection(
-            None,
-            None,
-            "attempt to write a readonly database"
-        ));
-        // 行データ起因 (一意制約・NOT NULL・型・桁あふれ) は行単位で続行する。
-        assert!(!is_fatal_db_rejection(Some("23505"), None, "duplicate key"));
-        assert!(!is_fatal_db_rejection(
-            Some("22001"),
-            Some(1406),
-            "Data too long"
-        ));
-        assert!(!is_fatal_db_rejection(
-            None,
-            None,
-            "UNIQUE constraint failed: t.id"
-        ));
+        // (SQLSTATE, MySQL 番号, SQLite コード, メッセージ, 全体障害か)
+        type Case = (
+            Option<&'static str>,
+            Option<u16>,
+            Option<i32>,
+            &'static str,
+            bool,
+        );
+        let cases: &[Case] = &[
+            // PostgreSQL: 権限 / 表なし / 列なし / スキーマなし / 読み取り専用 / 容量
+            (Some("42501"), None, None, "permission denied", true),
+            (Some("42P01"), None, None, "relation does not exist", true),
+            (Some("42703"), None, None, "column does not exist", true),
+            (Some("3F000"), None, None, "", true),
+            (Some("25006"), None, None, "read-only transaction", true),
+            (Some("53100"), None, None, "disk full", true),
+            (Some("23505"), None, None, "duplicate key", false),
+            (Some("22001"), None, None, "value too long", false),
+            // MySQL
+            (Some("42000"), Some(1142), None, "command denied", true),
+            (
+                Some("42000"),
+                Some(1143),
+                None,
+                "column command denied",
+                true,
+            ),
+            (Some("42000"), Some(1044), None, "db access denied", true),
+            (Some("42000"), Some(1049), None, "unknown database", true),
+            (Some("42S02"), Some(1146), None, "Table doesn't exist", true),
+            (Some("42S22"), Some(1054), None, "Unknown column", true),
+            (Some("HY000"), Some(1290), None, "read-only option", true),
+            (Some("HY000"), Some(1036), None, "table is read only", true),
+            (
+                Some("25006"),
+                Some(1792),
+                None,
+                "read only transaction",
+                true,
+            ),
+            (Some("22001"), Some(1406), None, "Data too long", false),
+            (Some("23000"), Some(1062), None, "Duplicate entry", false),
+            // SQLite: ロック / 容量 / I/O / 読み取り専用 (拡張コード含む)
+            (None, None, Some(5), "database is locked", true),
+            (None, None, Some(261), "database is locked", true),
+            (None, None, Some(6), "database table is locked", true),
+            (None, None, Some(262), "database table is locked", true),
+            (None, None, Some(13), "database or disk is full", true),
+            (None, None, Some(10), "disk I/O error", true),
+            (None, None, Some(778), "disk I/O error", true),
+            (
+                None,
+                None,
+                Some(8),
+                "attempt to write a readonly database",
+                true,
+            ),
+            (None, None, Some(1), "no such table: t", true),
+            (None, None, Some(1), "table t has no column named x", true),
+            (None, None, Some(1), "no such column: x", true),
+            (None, None, None, "no such table: t", true),
+            (
+                None,
+                None,
+                Some(19),
+                "NOT NULL constraint failed: t.a",
+                false,
+            ),
+            (
+                None,
+                None,
+                Some(1555),
+                "UNIQUE constraint failed: t.id",
+                false,
+            ),
+            (
+                None,
+                None,
+                Some(2067),
+                "UNIQUE constraint failed: t.id",
+                false,
+            ),
+            (None, None, Some(20), "datatype mismatch", false),
+        ];
+        for (code, mysql, sqlite, msg, want) in cases {
+            assert_eq!(
+                is_fatal_db_rejection(*code, *mysql, *sqlite, msg),
+                *want,
+                "{code:?} {mysql:?} {sqlite:?} {msg}"
+            );
+        }
         assert!(is_row_level_import_error(&AppError::InvalidInput(
             "x".into()
         )));

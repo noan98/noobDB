@@ -2162,6 +2162,91 @@ async fn sqlite_query_inspector_is_unsupported() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// #2361: 存在しない列への取り込みは行データ起因ではないので、スキップせず最初のチャンクで中断する。
+#[tokio::test]
+async fn sqlite_skip_import_aborts_on_missing_column_2361() {
+    let mut p = std::env::temp_dir();
+    p.push(format!("noobdb_sqlite_nocol_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&p);
+    std::fs::File::create(&p).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(p.to_str().expect("utf8 path")))
+        .await
+        .expect("connect");
+    conn.execute("CREATE TABLE imp (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create");
+    let columns = vec!["id".to_string(), "nope".to_string()];
+    let rows: Vec<Vec<Option<String>>> = (0..5)
+        .map(|i| vec![Some(i.to_string()), Some("x".to_string())])
+        .collect();
+    let res = conn
+        .import_rows_skipping(
+            None,
+            "imp",
+            &columns,
+            &rows,
+            500,
+            &t::ImportConflict::insert_only(),
+            |_| Ok(()),
+        )
+        .await;
+    let err = res.expect_err("missing column must abort, not skip rows");
+    assert!(err.to_string().contains("nope"), "{err}");
+    conn.close().await;
+    let _ = std::fs::remove_file(&p);
+}
+
+/// #2361: 別の接続が書き込みロックを握っているときは、行単位の再試行をせず
+/// `database is locked` で中断する。
+#[tokio::test]
+async fn sqlite_skip_import_aborts_when_database_is_locked_2361() {
+    use sqlx::{Connection as _, Executor as _};
+    let mut p = std::env::temp_dir();
+    p.push(format!("noobdb_sqlite_lock_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&p);
+    std::fs::File::create(&p).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(p.to_str().expect("utf8 path")))
+        .await
+        .expect("connect");
+    conn.execute("CREATE TABLE imp (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create");
+
+    let mut locker = sqlx::SqliteConnection::connect(&format!("sqlite://{}", p.display()))
+        .await
+        .expect("locker connect");
+    locker
+        .execute("BEGIN IMMEDIATE")
+        .await
+        .expect("take write lock");
+
+    let columns = vec!["id".to_string()];
+    let rows: Vec<Vec<Option<String>>> = (0..50).map(|i| vec![Some(i.to_string())]).collect();
+    let started = std::time::Instant::now();
+    let res = conn
+        .import_rows_skipping(
+            None,
+            "imp",
+            &columns,
+            &rows,
+            500,
+            &t::ImportConflict::insert_only(),
+            |_| Ok(()),
+        )
+        .await;
+    let err = res.expect_err("locked database must abort the import");
+    assert!(err.to_string().contains("locked"), "{err}");
+    // busy_timeout (5 秒) を 1 回だけ待つ。行単位の再試行なら 50 回分待つ。
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(30),
+        "must not retry row by row"
+    );
+
+    locker.execute("ROLLBACK").await.expect("release");
+    conn.close().await;
+    let _ = std::fs::remove_file(&p);
+}
+
 /// Resilient import (#687): skip mode inserts good rows, skips bad ones, and
 /// reports which records were skipped; abort-mode probing pinpoints the first
 /// offending record. Uses SQLite constraints (PRIMARY KEY uniqueness + NOT NULL)
