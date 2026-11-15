@@ -237,9 +237,7 @@ function RelatedSection({
           aria-hidden
           visibility={expandable ? "visible" : "hidden"}
           transform={expandable && open ? "rotate(90deg)" : undefined}
-        >
-          ▸
-        </TreeChevron>
+        />
         <chakra.span
           flex="1"
           minW={0}

@@ -283,6 +283,11 @@ export interface Settings {
    */
   sqlSemanticLintEnabled: boolean;
   /**
+   * 複数文のエディタで、カーソル位置の文 (文単位実行の対象) を淡い帯と左端のバーで常時示す (#2354)。
+   * 既定オン。文が 1 つだけのとき・選択範囲があるときは出さない。
+   */
+  activeStatementHighlight: boolean;
+  /**
    * 実行前の影響行数プリフライト (#737)。既定オン。オンのとき、エディタの現在文が
    * 単純な UPDATE / DELETE のとき対象テーブルと WHERE から `SELECT COUNT(*)` を
    * 組み立ててデバウンス付きで裏実行し、「影響: 約 N 行」「影響: 全行」バッジを
@@ -492,9 +497,9 @@ export const DEFAULT_MONO_FONT_FAMILY: string | null = null;
 export const DEFAULT_UI_FONT_FAMILY: string | null = null;
 
 /** Shared fallback chains, kept in sync with App.css `--font-mono` / `--font-sans`. */
-export const MONO_FONT_FALLBACK = 'ui-monospace, "SF Mono", Consolas, monospace';
+export const MONO_FONT_FALLBACK = 'ui-monospace, "SF Mono", Consolas, "BIZ UDGothic", monospace';
 export const UI_FONT_FALLBACK =
-  '-apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans CJK JP", sans-serif';
+  '-apple-system, BlinkMacSystemFont, "Segoe UI", "Yu Gothic UI", "Meiryo UI", Meiryo, "Hiragino Sans", "Noto Sans CJK JP", sans-serif';
 
 /** Monospace presets offered in the appearance settings (primary family names). */
 export const MONO_FONT_PRESETS = [
@@ -505,10 +510,20 @@ export const MONO_FONT_PRESETS = [
   "IBM Plex Mono",
   "Menlo",
   "Consolas",
+  "BIZ UDGothic",
 ] as const;
 
 /** UI (sans) presets offered in the appearance settings. */
-export const UI_FONT_PRESETS = ["Inter", "Roboto", "Segoe UI", "Helvetica Neue", "Arial"] as const;
+export const UI_FONT_PRESETS = [
+  "Inter",
+  "Roboto",
+  "Segoe UI",
+  "Yu Gothic UI",
+  "Meiryo UI",
+  "BIZ UDPGothic",
+  "Helvetica Neue",
+  "Arial",
+] as const;
 
 /** Wrap a family name in quotes when it contains spaces (and isn't already quoted). */
 function quoteFamily(family: string): string {
@@ -781,6 +796,9 @@ export const DEFAULT_SQL_LINT_ENABLED = true;
 /** スキーマ認識のセマンティック lint (#1940) も既定オン (構文チェックがオンのときのみ有効)。 */
 export const DEFAULT_SQL_SEMANTIC_LINT_ENABLED = true;
 
+/** カーソル位置の文の帯表示 (#2354) は既定オン。 */
+export const DEFAULT_ACTIVE_STATEMENT_HIGHLIGHT = true;
+
 /** 実行前の影響行数プリフライト (#737) は既定オン。 */
 export const DEFAULT_PREFLIGHT_IMPACT_ENABLED = true;
 
@@ -871,6 +889,7 @@ export const DEFAULT_SETTINGS: Settings = {
   masteryTrackingEnabled: DEFAULT_MASTERY_TRACKING_ENABLED,
   masteryTried: [],
   sqlSemanticLintEnabled: DEFAULT_SQL_SEMANTIC_LINT_ENABLED,
+  activeStatementHighlight: DEFAULT_ACTIVE_STATEMENT_HIGHLIGHT,
   preflightImpactEnabled: DEFAULT_PREFLIGHT_IMPACT_ENABLED,
   scanPreflightEnabled: DEFAULT_SCAN_PREFLIGHT_ENABLED,
   planWatchOnConnect: DEFAULT_PLAN_WATCH_ON_CONNECT,
@@ -1122,6 +1141,7 @@ export function normalizeSettings(input: unknown): Settings {
     masteryTrackingEnabled?: unknown;
     masteryTried?: unknown;
     sqlSemanticLintEnabled?: unknown;
+    activeStatementHighlight?: unknown;
     preflightImpactEnabled?: unknown;
     scanPreflightEnabled?: unknown;
     planWatchOnConnect?: unknown;
@@ -1270,6 +1290,10 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.sqlSemanticLintEnabled === "boolean"
         ? parsed.sqlSemanticLintEnabled
         : DEFAULT_SQL_SEMANTIC_LINT_ENABLED,
+    activeStatementHighlight:
+      typeof parsed.activeStatementHighlight === "boolean"
+        ? parsed.activeStatementHighlight
+        : DEFAULT_ACTIVE_STATEMENT_HIGHLIGHT,
     preflightImpactEnabled:
       typeof parsed.preflightImpactEnabled === "boolean"
         ? parsed.preflightImpactEnabled
@@ -1901,6 +1925,13 @@ export function resetMasteryProgress(): void {
 export function setSqlSemanticLintEnabled(value: boolean): void {
   if (current.sqlSemanticLintEnabled === value) return;
   current = { ...current, sqlSemanticLintEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setActiveStatementHighlight(value: boolean): void {
+  if (current.activeStatementHighlight === value) return;
+  current = { ...current, activeStatementHighlight: value };
   persist();
   listeners.forEach((cb) => cb());
 }

@@ -953,9 +953,7 @@ const QuickAccessRow = memo(function QuickAccessRow({
       {...actions.treeTooltip(`${refItem.database}.${refItem.table}`)}
       _hover={{ bg: "app.rowHover" }}
     >
-      <TreeChevron aria-hidden style={{ visibility: "hidden" }}>
-        ▸
-      </TreeChevron>
+      <TreeChevron aria-hidden style={{ visibility: "hidden" }} />
       <TreeIcon
         color={star ? "app.favorite" : "app.textSecondary"}
         position="relative"
@@ -1437,9 +1435,7 @@ const TableNode = memo(function TableNode({
           actions.toggleTable(db, tbl);
         }}
         onDoubleClick={(e) => e.stopPropagation()}
-      >
-        ▸
-      </TreeChevronButton>
+      />
       <TreeIcon color="app.textSecondary" aria-hidden>
         <FlightIcon flightId={openFlight}>
           <Icon name={view ? "view" : "table"} />
@@ -1534,9 +1530,7 @@ const DbRow = memo(function DbRow({
             : `${db} — ${containerLabel}`,
       )}
     >
-      <TreeChevron transform={open ? "rotate(90deg)" : undefined} aria-hidden>
-        ▸
-      </TreeChevron>
+      <TreeChevron transform={open ? "rotate(90deg)" : undefined} aria-hidden />
       <TreeIcon color="app.dbAccent" aria-hidden>
         <Icon name="database" />
       </TreeIcon>
@@ -2716,8 +2710,7 @@ export const ConnectionList = memo(
           level: Number(el.getAttribute("aria-level") ?? "1"),
           expandable: el.hasAttribute("aria-expanded"),
           open: el.getAttribute("aria-expanded") === "true",
-          // 先頭の開閉マーク「▸」は表示名ではない。
-          label: (el.getAttribute("aria-label") ?? el.textContent ?? "").replace(/^\s*▸/, ""),
+          label: el.getAttribute("aria-label") ?? el.textContent ?? "",
         });
       }
       if (listEl && !listPushed) pushList();
@@ -4687,9 +4680,7 @@ export const ConnectionList = memo(
                       : `${p.user}@${p.host}:${p.port}${p.database ? "/" + p.database : ""}${p.ssh ? " " + t("listVia", { host: p.ssh.host }) : ""}`,
                 )}
               >
-                <TreeChevron transform={isOpen ? "rotate(90deg)" : undefined} aria-hidden>
-                  ▸
-                </TreeChevron>
+                <TreeChevron transform={isOpen ? "rotate(90deg)" : undefined} aria-hidden />
                 {/* ドライバ別ブランドアイコン (MySQL/PostgreSQL/SQLite) でひと目で種別が
               分かるようにする。ユーザ設定のカスタム色があればそれで着色して
               個別識別性も残し、無ければドライバのブランド色を使う。プロファイルカラーは
@@ -5028,9 +5019,7 @@ export const ConnectionList = memo(
                                       <TreeChevron
                                         transform={groupOpen ? "rotate(90deg)" : undefined}
                                         aria-hidden
-                                      >
-                                        ▸
-                                      </TreeChevron>
+                                      />
                                       {/* グループ名のイニシャルアバター (#663)。 */}
                                       <GroupAvatar name={g.name} size={16} />
                                       <chakra.span
@@ -5148,9 +5137,7 @@ export const ConnectionList = memo(
                                           <TreeChevron
                                             transform={groupOpen ? "rotate(90deg)" : undefined}
                                             aria-hidden
-                                          >
-                                            ▸
-                                          </TreeChevron>
+                                          />
                                           <chakra.span
                                             flex="1"
                                             fontWeight={600}

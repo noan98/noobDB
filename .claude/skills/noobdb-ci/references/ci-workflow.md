@@ -154,8 +154,9 @@
   `error_kind_golden.rs` / `error_hint_golden.rs` / `sql_quoting_golden.rs` /
   `export_format_golden.rs` が `include_str!` で読む共有
   フィクスチャだけを変更する PR で `rust (test)` / `rust (coverage)` がスキップされる問題) は
-  `changes` ジョブに追加した `crosslang` フィルタ (`src/__tests__/fixtures/**`
-  限定) を `rust (test)` / `rust (coverage)` の `if:` へ OR で足すことで塞いでいます (#1029 でも
+  `changes` ジョブに追加した `crosslang` フィルタ (`src/__tests__/fixtures/**` と、
+  Rust のテストが読む `src/components/CrossDriverVerify.tsx`。Rust が `src-tauri` 外を
+  `include_str!` で読むなら必ずここへ足す: `crosslangGatingParity.test.ts` が検査, #2362) を `rust (test)` / `rust (coverage)` の `if:` へ OR で足すことで塞いでいます (#1029 でも
   変更していません)。**必須チェックを設定する場合はこの `crosslang parity`
   ジョブも対象に含めてください。**
 
