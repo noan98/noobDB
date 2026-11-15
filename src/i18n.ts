@@ -677,6 +677,9 @@ const en = {
   settingsSqlLintEnabled: "Enable syntax check",
   settingsSqlLintEnabledHelp:
     "Flags misspelled keywords (SELEC, FRM, WHER), empty clauses (FROM WHERE), extra commas, GROUP / ORDER without BY, statements that end mid-clause, misordered clauses (e.g. WHERE after ORDER BY), unmatched brackets, and unterminated strings or comments, following the connected driver's dialect. Conservative by design: it prefers missing an error over a false positive.",
+  settingsActiveStatementHighlight: "Highlight the statement under the cursor",
+  settingsActiveStatementHighlightHelp:
+    "In an editor with two or more statements, marks the statement that Run statement would execute with a soft band and a bar on the left edge, so you can see the range before you run. Hidden when there is only one statement or a selection.",
   settingsSqlSemanticLintEnabled: "Warn on unknown tables and columns",
   settingsSqlSemanticLintEnabledHelp:
     "Underlines table and column names that don't exist in the connected schema, before you run. Aliases, CTEs, subqueries and functions are resolved, and anything it can't resolve is left alone. Works only while the syntax check is on, and needs the schema to be loaded. On SQLite only table names are checked.",
@@ -9412,6 +9415,9 @@ const ja: Dict = {
   settingsSqlLintEnabled: "構文チェックを有効化",
   settingsSqlLintEnabledHelp:
     "キーワードのタイポ (SELEC / FRM / WHER など)・中身が空の句 (FROM WHERE など)・余分なカンマ・BY の抜けた GROUP / ORDER・途中で終わった文・句の順序ミス (ORDER BY の後の WHERE など)・括弧の不整合・未終端の文字列やコメントを、接続中ドライバの方言に沿って検出します。誤検出より見逃しを優先する保守的な判定です。",
+  settingsActiveStatementHighlight: "カーソル位置の文を帯で示す",
+  settingsActiveStatementHighlightHelp:
+    "2 文以上あるエディタで、「カーソル位置の文を実行」の対象になる文を淡い帯と左端のバーで常に示し、実行前に範囲を確かめられます。文が 1 つだけのときと、選択範囲があるときは出しません。",
   settingsSqlSemanticLintEnabled: "存在しないテーブル・列を警告",
   settingsSqlSemanticLintEnabledHelp:
     "接続中のスキーマに存在しないテーブル名・列名を、実行前に下線で警告します。エイリアス・CTE・サブクエリ・関数は解決し、解決できないものは警告しません。構文チェックがオンのときだけ働き、スキーマの取得後に有効になります。SQLite ではテーブル名だけを検査します。",
