@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import { monoFontStack, uiFontStack, MONO_FONT_FALLBACK, UI_FONT_FALLBACK } from "../settings";
 
@@ -28,5 +29,34 @@ describe("font family stacks (#449)", () => {
 
   it("does not double-quote already quoted families", () => {
     expect(monoFontStack('"Fira Code"')).toBe(`"Fira Code", ${MONO_FONT_FALLBACK}`);
+  });
+});
+
+/** App.css の `--font-*` と settings.ts のフォールバックチェーンの同期 (#2357)。 */
+describe("font stack parity with App.css (#2357)", () => {
+  const css = readFileSync(new URL("../App.css", import.meta.url), "utf8");
+  const cssVar = (name: string): string => {
+    const m = css.match(new RegExp(`${name}:\\s*([^;]+);`));
+    return (m?.[1] ?? "").replace(/\s+/g, " ").trim();
+  };
+
+  it("--font-mono matches MONO_FONT_FALLBACK", () => {
+    expect(cssVar("--font-mono")).toBe(MONO_FONT_FALLBACK);
+  });
+
+  it("--font-sans matches UI_FONT_FALLBACK", () => {
+    expect(cssVar("--font-sans")).toBe(UI_FONT_FALLBACK);
+  });
+
+  it("puts Japanese-capable Windows fonts in the chains", () => {
+    expect(UI_FONT_FALLBACK).toContain('"Yu Gothic UI"');
+    expect(UI_FONT_FALLBACK).toContain("Meiryo");
+    expect(MONO_FONT_FALLBACK).toContain('"BIZ UDGothic"');
+    // macOS / Linux 向けの後続フォールバックは残す
+    expect(UI_FONT_FALLBACK).toContain('"Hiragino Sans"');
+    // 等幅チェーンに欧文プロポーショナルな和文フォントを入れない。前の候補が無い環境
+    // (Linux の Chromium は ui-monospace を解決しない) で欧文まで可変幅になり桁が崩れる。
+    expect(MONO_FONT_FALLBACK).not.toContain('"Hiragino Sans"');
+    expect(MONO_FONT_FALLBACK).not.toContain('"Noto Sans CJK JP"');
   });
 });

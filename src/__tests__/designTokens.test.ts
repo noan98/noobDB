@@ -947,3 +947,36 @@ describe("design tokens: 素の <Select> を使わない (#1950 / Epic #1946)", 
     ).toEqual([]);
   });
 });
+
+describe("design tokens: 開閉・ソートの文字記号を直書きしない (#2358)", () => {
+  // ▸ ▾ ▲ ▼ などの文字記号は、描かれるフォント (和文フォールバック時は全角幅寄り) で
+  // 大きさ・太さ・ベースラインが変わり、Tabler の chevron / sort と並ぶと「同じ開閉なのに
+  // 見た目が違う」状態になる。`ICON_SIZES` / `ICON_STROKE` / `--font-scale` にも追従しない。
+  // 開閉は `TreeChevron` / `TreeChevronButton` か `<Icon name="chevron-right" />`、
+  // ソートは `<Icon name="sort-asc" | "sort-desc" />` を使う。
+  const GLYPH = /[▸▾▶▲▼◂◀▴▵▿]/;
+  /** 開閉・ソートではない意図した用途 (増減・偏りの印) を、理由付きで許可する。 */
+  const GLYPH_ALLOWLIST = new Set([
+    "../components/StatTile.tsx", // 増減の印 (▲▼ + 意味色 + 読み上げ文言) が仕様
+    "../components/PartitionRibbon.tsx", // パーティション偏りの警告印 (開閉・ソートではない)
+    "../components/TableStructurePanel.tsx", // パーティション偏りの倍率の印 (同上)
+  ]);
+
+  it("ソース (コメント以外) に ▸ ▾ ▶ ▲ ▼ の文字記号を書かない", () => {
+    const offenders: string[] = [];
+    for (const [path, content] of sources) {
+      if (GLYPH_ALLOWLIST.has(path)) continue;
+      content.split("\n").forEach((line, i) => {
+        const trimmed = line.trimStart();
+        if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")) return;
+        if (GLYPH.test(line)) offenders.push(`${toDisplayPath(path)}:${i + 1}: ${trimmed}`);
+      });
+    }
+    expect(
+      offenders,
+      '開閉の三角・ソート矢印は文字記号ではなく TreeChevron / <Icon name="chevron-right"> / ' +
+        '<Icon name="sort-asc" | "sort-desc"> で描く。増減の印など意図した用途は ' +
+        "GLYPH_ALLOWLIST に理由付きで追加する。",
+    ).toEqual([]);
+  });
+});
