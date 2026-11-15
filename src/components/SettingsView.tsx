@@ -143,6 +143,7 @@ import {
   setTimelapseMaxGenerations,
   setSqlLintEnabled,
   setSqlSemanticLintEnabled,
+  setActiveStatementHighlight,
   setPreflightImpactEnabled,
   setScanPreflightEnabled,
   setBatchWrapInTransaction,
@@ -1402,6 +1403,20 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     id="settings-follow-os-contrast"
                     checked={settings.followOsContrast}
                     onChange={setFollowOsContrast}
+                  />
+                </SettingsToggleRow>
+
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-active-statement-highlight">
+                      {t("settingsActiveStatementHighlight")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsActiveStatementHighlightHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-active-statement-highlight"
+                    checked={settings.activeStatementHighlight}
+                    onChange={setActiveStatementHighlight}
                   />
                 </SettingsToggleRow>
 

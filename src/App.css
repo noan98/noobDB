@@ -2493,6 +2493,27 @@ html, body, #root {
 }
 :root[data-motion="reduced"] .cm-editor .cm-stmt-flash { animation: none; }
 
+/* カーソル位置の文 (文単位実行の対象) の常時表示 (#2354)。複数文のときだけ、その文の各行に
+   淡い帯と左端のバーを付ける。色は動的アクセント経由のみ (ライト/ダーク/ハイコントラストで
+   テキスト・選択色を妨げないよう帯は薄く、選択は --cm-selection が上に描かれる)。
+   別の文へ移ったときは背景とバーを短くクロスフェードする (行 DOM は使い回されるので transition が効く)。 */
+.cm-editor .cm-line {
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+.cm-editor .cm-line.cm-active-stmt {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  box-shadow: inset var(--space-0-5) 0 0 var(--accent);
+}
+.cm-editor .cm-line.cm-active-stmt.cm-activeLine {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .cm-editor .cm-line { transition: none; }
+}
+:root[data-motion="reduced"] .cm-editor .cm-line { transition: none; }
+
 .cm-tooltip.cm-tooltip-autocomplete {
   background: var(--bg-elevated);
   color: var(--text);

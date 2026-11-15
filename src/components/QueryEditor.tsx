@@ -20,6 +20,7 @@ import { Box, chakra } from "@chakra-ui/react";
 import { registerTreeDropTarget } from "./treeDragStore";
 import { tableSelectWithColumnsText, treeItemInsertText } from "./treeDragInsert";
 import { AnimatePresence, motion } from "motion/react";
+import { activeStatementHighlight, refreshActiveStatement } from "./activeStatement";
 import { placeholderDecorations } from "./placeholderDecorations";
 import { Compartment, EditorState, StateEffect, StateField, type Text } from "@codemirror/state";
 import {
@@ -949,6 +950,8 @@ export const QueryEditor = memo(
     );
     const semanticSchemaRef = useRef<SemanticSchema | null>(semanticSchema);
     semanticSchemaRef.current = semanticSchema;
+    const activeStatementHighlightRef = useRef(settings.activeStatementHighlight);
+    activeStatementHighlightRef.current = settings.activeStatementHighlight;
     const sqlLintEnabledRef = useRef(sqlLintEnabled);
     sqlLintEnabledRef.current = sqlLintEnabled;
 
@@ -1447,6 +1450,11 @@ export const QueryEditor = memo(
             search({ top: true }),
             highlightSelectionMatches(),
             stmtFlashField,
+            // カーソル位置の文 (文単位実行の対象) の常時表示 (#2354)。
+            activeStatementHighlight(
+              () => driverRef.current,
+              () => activeStatementHighlightRef.current,
+            ),
             runtimeErrorLayer.extension,
             batchLayer.extension,
             batchErrorLayer.extension,
@@ -1874,6 +1882,15 @@ export const QueryEditor = memo(
       desiredConfig.keymap,
       desiredConfig.placeholder,
     ]);
+
+    // 設定トグル・ドライバの切替で、カーソル位置の文の帯 (#2354) を計算し直す。
+    const activeStatementEnabled = settings.activeStatementHighlight;
+    // biome-ignore lint/correctness/useExhaustiveDependencies: 設定値とドライバは ref 越しに読まれるので、変化を契機に再計算させるためだけに依存へ載せる
+    useEffect(() => {
+      const view = viewRef.current;
+      if (!view) return;
+      view.dispatch({ effects: refreshActiveStatement.of(null) });
+    }, [activeStatementEnabled, driver]);
 
     // 影響行数プリフライト (#737)。現在文が単純な UPDATE / DELETE のとき、対象と
     // WHERE から COUNT を組み立ててデバウンス付きで裏実行する。設定オフ・未接続では
