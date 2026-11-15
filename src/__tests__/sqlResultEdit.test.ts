@@ -249,6 +249,22 @@ describe("tab helpers", () => {
       locked: false,
     });
   });
+  it("tx 内で得た結果は、tx 終了後も判定されずトグルも出さない", () => {
+    const sql = "SELECT 1";
+    const tx = {
+      ...base,
+      sqlEditOn: true,
+      sqlEdit: {
+        status: "unavailable" as const,
+        sql,
+        executedDatabase: null,
+        reason: "inTransaction" as const,
+      },
+    };
+    expect(sqlEditToggleView(tx)).toBeNull();
+    expect(sqlEditActive(tx)).toBe(false);
+    expect(withSqlEditTarget(tx)).toBe(tx);
+  });
   it("locks the toggle while changes are pending", () => {
     const on = { ...base, sqlEdit: avail, sqlEditOn: true };
     expect(hasPendingSqlEditChanges(on)).toBe(false);

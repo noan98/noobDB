@@ -4796,7 +4796,21 @@ export default function App() {
       if (!tt || tt.kind !== "query") continue;
       // 明示トランザクション中は編集させない: Apply は別接続で即コミットされ、ROLLBACK で戻らない。
       if (txActive) {
-        if (tt.sqlEdit || tt.sqlEditOn) updateTab(tt.id, { sqlEdit: undefined, sqlEditOn: false });
+        // 終了後に前回の実行 DB で判定し直さないよう、この結果は「tx 内」の印で止める。
+        // 編集モードを落とすので、その保留 (セル編集・削除予定・追加行) も破棄する。
+        if (tt.sqlEditOn || tt.sqlEdit?.status === "available" || tt.sqlEdit?.status === "checking") {
+          updateTab(tt.id, {
+            sqlEdit: {
+              status: "unavailable",
+              sql: tt.lastExecutedSql,
+              executedDatabase: tt.lastExecutedDatabase ?? null,
+              reason: "inTransaction",
+            },
+            ...(tt.sqlEditOn
+              ? { sqlEditOn: false, pendingEdits: {}, pendingDeletes: [], pendingInserts: [] }
+              : {}),
+          });
+        }
         continue;
       }
       if (tt.streaming || tt.queryError || !tt.result) continue;
@@ -5360,7 +5374,10 @@ export default function App() {
         pendingEdits: {},
         // 確認を省く内部の取り直し (Apply 後・再読込・取り込み後) は、送っていない削除予定・追加行を
         // 残す (Apply の往復中に増えた分を消さない)。確認を経た置き換えだけが 3 種を空にする。
-        ...(override?.skipPendingGuard ? {} : { pendingDeletes: [], pendingInserts: [] }),
+        // 実行先 DB が変わる再実行では、旧 DB 向けの保留を残さない (#2355)。
+        ...(override?.skipPendingGuard && (tab?.lastExecutedDatabase ?? null) === (tab?.database ?? null)
+          ? {}
+          : { pendingDeletes: [], pendingInserts: [] }),
         editUndoStack: pendingResolution.discarded ? [{ edits: pendingResolution.discarded }] : [],
         editRedoStack: [],
         // A manual run of a non-read-only statement turns auto-refresh off so the
@@ -6803,6 +6820,15 @@ export default function App() {
           streaming: false,
           result: res,
           lastExecutedSql: sql,
+          // tx 内で得た結果は、tx 終了後も編集の判定をしない (別の DB の同名表を書き換えないため、#2355)。
+          lastExecutedDatabase: txDatabaseRef.current ?? null,
+          sqlEdit: {
+            status: "unavailable",
+            sql,
+            executedDatabase: txDatabaseRef.current ?? null,
+            reason: "inTransaction",
+          },
+          sqlEditOn: false,
           paginatable: null,
           canLoadMore: false,
           autoLimitApplied: null,

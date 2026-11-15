@@ -36,6 +36,7 @@ export type SqlEditBlockReason =
   | "unaliasedExpression"
   | "nameClash"
   | "duplicateColumn"
+  | "inTransaction"
   | "noDatabase"
   | "unknownSchema"
   | "tableNotFound"
@@ -454,6 +455,8 @@ export function sqlEditToggleView(tab: SqlEditTabView): SqlEditToggleView | null
   const e = tab.sqlEdit;
   if (!e || !judgmentIsCurrent(tab)) return null;
   if (e.status === "checking") return null;
+  // トランザクション内で得た結果は終了後もトグルを出さない (書き込み先を確かめられない)。
+  if (e.status === "unavailable" && e.reason === "inTransaction") return null;
   if (e.status === "unavailable") return { state: "unavailable", reason: e.reason };
   return tab.sqlEditOn === true ? { state: "on", locked: hasPendingSqlEditChanges(tab) } : { state: "off" };
 }

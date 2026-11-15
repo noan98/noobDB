@@ -8098,6 +8098,7 @@ const en = {
   sqlEditBlock_unknownSchema:
     "Not editable: the schema isn't main or an attached database (temp tables aren't supported).",
   sqlEditLockedTip: "Apply or discard the pending changes before turning edit mode off.",
+  sqlEditBlock_inTransaction: "Not editable: the result came from inside a transaction.",
   tableOpenQueryReadOnlyBadge: "Read-only",
   tableOpenQueryReadOnlyHintGlobal:
     "Opened with the default query from Settings. It doesn't select the primary key (or rowid / ctid), so editing is disabled to avoid changing the wrong rows.",
@@ -16786,6 +16787,7 @@ const ja: Dict = {
   sqlEditBlock_unknownSchema:
     "編集不可: スキーマが main でもアタッチ済みのデータベースでもありません (temp の表は対象外)。",
   sqlEditLockedTip: "保留中の変更を Apply または破棄してから、編集モードをオフにしてください。",
+  sqlEditBlock_inTransaction: "編集不可: トランザクション内で得た結果です。",
   tableOpenQueryReadOnlyBadge: "読み取り専用",
   tableOpenQueryReadOnlyHintGlobal:
     "設定のデフォルトクエリで開きました。主キー (または rowid / ctid) を選択していないため、誤った行を書き換えないよう編集を無効にしています。",
