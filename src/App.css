@@ -2296,8 +2296,15 @@
 html, body, #root {
   margin: 0;
   height: 100%;
-  background: var(--bg-material);
   color: var(--text);
+}
+/* 背景は html の 1 枚だけに持たせる。3 要素が半透明を重ねると不透明度が積み上がって素材が見えなくなる (#2359)。
+   素材なしでは html が不透明な --bg なので見た目は変わらない。 */
+html {
+  background: var(--bg-material);
+}
+body, #root {
+  background: transparent;
 }
 
 /* ---------- ウィンドウ素材 (Mica / Mica Alt, #2359) ----------
@@ -2314,7 +2321,7 @@ html, body, #root {
 }
 :root[data-window-material="mica"]:not([data-theme^="hc-"]),
 :root[data-window-material="mica-alt"]:not([data-theme^="hc-"]) {
-  --surface-material: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
+  --surface-material: color-mix(in srgb, var(--bg-elevated) 86%, transparent);
   --bg-material: color-mix(in srgb, var(--bg) 92%, transparent);
 }
 /* ハイコントラストは素材を使わず不透明に戻す (OS の「コントラストを上げる」も同じ)。 */

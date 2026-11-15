@@ -1,8 +1,7 @@
 // `src-tauri/src/commands/window.rs` の IPC ラッパー。`../tauri.ts` の `api` に束ねられる。
 import { invoke } from "../invoke";
 
-/** ウィンドウ背景の素材 (#2359)。Rust の `WindowMaterial` (kebab-case) と同じ値。 */
-export type WindowMaterial = "none" | "mica" | "mica-alt";
+import type { WindowMaterial } from "../../settings";
 
 export const windowCommands = {
   /**

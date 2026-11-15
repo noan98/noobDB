@@ -79,6 +79,13 @@ pub enum WindowMaterial {
     MicaAlt,
 }
 
+/// Mica Alt (Tabbed、DWMWA_SYSTEMBACKDROP_TYPE) が使える Windows ビルドか。Windows 11 22H2 の
+/// プレビュー版 22523 以降。21H2 (22000) では OS が Mica Alt を拒否する。
+#[cfg(any(target_os = "windows", test))]
+fn build_supports_mica_alt(build: u32) -> bool {
+    build >= 22523
+}
+
 /// 実行中の OS ビルド番号が Mica の対象 (Windows 11) かを判定する純関数。
 #[cfg(any(target_os = "windows", test))]
 fn build_supports_mica(build: u32) -> bool {
@@ -86,9 +93,9 @@ fn build_supports_mica(build: u32) -> bool {
     build >= 22000
 }
 
-/// 実行中の OS が Windows 11 以降か。Windows 以外では常に false。
+/// 実行中の Windows の OS ビルド番号。取得に失敗したら None。
 #[cfg(target_os = "windows")]
-fn is_windows_11() -> bool {
+fn windows_build() -> Option<u32> {
     use windows_sys::Wdk::System::SystemServices::RtlGetVersion;
     use windows_sys::Win32::System::SystemInformation::OSVERSIONINFOW;
 
@@ -97,7 +104,13 @@ fn is_windows_11() -> bool {
     let mut info: OSVERSIONINFOW = unsafe { std::mem::zeroed() };
     info.dwOSVersionInfoSize = std::mem::size_of::<OSVERSIONINFOW>() as u32;
     let status = unsafe { RtlGetVersion(&mut info) };
-    status >= 0 && build_supports_mica(info.dwBuildNumber)
+    (status >= 0).then_some(info.dwBuildNumber)
+}
+
+/// 実行中の OS が Windows 11 以降か。Windows 以外では常に false。
+#[cfg(target_os = "windows")]
+fn is_windows_11() -> bool {
+    windows_build().is_some_and(build_supports_mica)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -134,7 +147,13 @@ fn apply_material(window: &WebviewWindow, material: WindowMaterial, dark: bool) 
         let _ = window.set_effects(None);
         return Ok(false);
     }
-    if !is_windows_11() {
+    // `set_effects` の戻り値は「メインスレッドへの送信の成否」でしかなく、OS が効果を拒否しても
+    // Ok になる (適用結果は捨てられる)。そのため成否は OS のビルド番号で先に判定する。
+    let Some(build) = windows_build().filter(|b| build_supports_mica(*b)) else {
+        return Ok(false);
+    };
+    if material == WindowMaterial::MicaAlt && !build_supports_mica_alt(build) {
+        // 21H2 など。Mica Alt は敷けないので何もせず false (フロントは不透明表示に戻る)。
         return Ok(false);
     }
     let effect = match (material, dark) {
@@ -143,8 +162,6 @@ fn apply_material(window: &WebviewWindow, material: WindowMaterial, dark: bool) 
         (_, true) => Effect::MicaDark,
         (_, false) => Effect::MicaLight,
     };
-    // 古い 21H2 は Mica Alt (Tabbed) を持たず OS 側がエラーを返す。その場合も「適用されなかった」
-    // として false を返す。
     Ok(window
         .set_effects(EffectsBuilder::new().effect(effect).build())
         .is_ok())
@@ -164,6 +181,15 @@ mod tests {
         assert!(!build_supports_mica(19045)); // Windows 10 22H2
         assert!(build_supports_mica(22000)); // Windows 11 21H2
         assert!(build_supports_mica(26100));
+    }
+
+    #[test]
+    fn mica_alt_needs_build_22523() {
+        assert!(!build_supports_mica_alt(19045));
+        assert!(!build_supports_mica_alt(22000)); // 21H2 は Mica のみ
+        assert!(!build_supports_mica_alt(22522));
+        assert!(build_supports_mica_alt(22523));
+        assert!(build_supports_mica_alt(22621)); // 22H2
     }
 
     #[test]
