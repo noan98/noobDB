@@ -300,6 +300,9 @@ export function analyzeSqlEditShape(sql: string, driver: string): SqlEditShapeRe
   return { ok: true, shape: { schema: from.schema, table: from.table, items } };
 }
 
+/** 列一覧に出ない行識別列の名前 (別名に使われたら衝突として扱う)。 */
+const HIDDEN_ROW_ID_NAMES = ["rowid", "oid", "_rowid_", "ctid"];
+
 export type SqlEditResolution =
   | {
       ok: true;
@@ -330,8 +333,14 @@ export function resolveSqlEdit(args: {
     seen.add(c.name);
   }
   // 式・別名の列名が実テーブルの列名と (大文字小文字を無視して) 衝突したら、別の列を主キー等と
-  // 取り違える恐れがあるので全体を編集不可にする。
-  const tableNames = new Set(tableColumns.map((c) => c.name.toLowerCase()));
+  // 取り違える恐れがあるので全体を編集不可にする。列一覧に出ない隠れた行識別列 (SQLite の rowid と
+  // その別名 oid / _rowid_、PostgreSQL の ctid など) も含める: `rowid + 1 AS rowid` を本物の rowid と
+  // 取り違えると、別の行を UPDATE / DELETE してしまう。
+  const tableNames = new Set([
+    ...tableColumns.map((c) => c.name.toLowerCase()),
+    ...HIDDEN_ROW_ID_NAMES,
+    ...(rowIdentity?.hidden_column ? [rowIdentity.hidden_column.toLowerCase()] : []),
+  ]);
   for (const it of shape.items) {
     if (it.kind === "derived" && tableNames.has(it.outputName.toLowerCase())) {
       return { ok: false, reason: "nameClash" };

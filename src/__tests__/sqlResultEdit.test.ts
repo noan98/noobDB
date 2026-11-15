@@ -152,6 +152,29 @@ describe("resolveSqlEdit", () => {
       reason: "nameClash",
     });
   });
+  it("blocks a derived alias that shadows a hidden row-identity column (rowid / ctid)", () => {
+    // 主キーの無い SQLite の表で `rowid + 1 AS rowid` を本物の rowid と取り違えると別の行を消す。
+    const noKey = [col("name"), col("price")];
+    const sqliteIdentity = { strategy: "hidden_column" as const, hidden_column: "rowid" };
+    for (const alias of ["rowid", "ROWID", "oid", "_rowid_"]) {
+      expect(
+        resolveSqlEdit({
+          shape: shapeOf(`SELECT rowid + 1 AS ${alias}, name FROM t WHERE rowid = 1`, "sqlite"),
+          resultColumns: [{ name: alias }, { name: "name" }],
+          tableColumns: noKey,
+          rowIdentity: sqliteIdentity,
+        }),
+      ).toEqual({ ok: false, reason: "nameClash" });
+    }
+    expect(
+      resolveSqlEdit({
+        shape: shapeOf("SELECT name AS ctid, price FROM t", "postgres"),
+        resultColumns: [{ name: "ctid" }, { name: "price" }],
+        tableColumns: noKey,
+        rowIdentity: { strategy: "hidden_column", hidden_column: "ctid" },
+      }),
+    ).toEqual({ ok: false, reason: "nameClash" });
+  });
   it("blocks when the key is missing or partial", () => {
     expect(run("SELECT name FROM t", ["name"])).toEqual({ ok: false, reason: "noKey" });
     const composite = [col("a", "PRI"), col("b", "PRI"), col("c")];
