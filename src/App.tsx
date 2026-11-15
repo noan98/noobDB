@@ -4916,13 +4916,8 @@ export default function App() {
     tabsForDirtyRef.current = tabs;
   }, [tabs]);
 
-  // 長時間クエリ完了時の OS 通知 (#707)。実行開始からの経過時間が設定の閾値以上
-  // かつウィンドウが非フォーカスのときだけ発火する (判定は queryNotify.ts の
-  // 純関数)。通知本文には件数・経過時間・エラー先頭 1 行のみを含め、SQL 本文や
-  // 結果データは一切渡さない。ベストエフォートで、失敗してもクエリ完了処理自体は
-  // 継続する (finalize/setStatus は呼び出し元で完結済み)。
   // 裏のタブで実行が終わったとき、タブ列に未確認の印を立てる (#2353)。表示中のタブ・自動
-  // リフレッシュ・接続断では立てない (判定は tabOutcome.ts)。消すのは下の effect。
+  // リフレッシュ・接続断では立てない (判定は tabOutcome.ts)。消すのは上の effect。
   const markUnseenOutcome = useCallback(
     (
       tabId: string,
@@ -4938,6 +4933,11 @@ export default function App() {
     [patchTab, panesRef],
   );
 
+  // 長時間クエリ完了時の OS 通知 (#707)。実行開始からの経過時間が設定の閾値以上
+  // かつウィンドウが非フォーカスのときだけ発火する (判定は queryNotify.ts の
+  // 純関数)。通知本文には件数・経過時間・エラー先頭 1 行のみを含め、SQL 本文や
+  // 結果データは一切渡さない。ベストエフォートで、失敗してもクエリ完了処理自体は
+  // 継続する (finalize/setStatus は呼び出し元で完結済み)。
   const notifyQueryOutcome = useCallback(
     async (
       kind: QueryNotificationKind,
@@ -5261,7 +5261,7 @@ export default function App() {
         exactRowCount: null,
         queryError: null,
         partialResult: null,
-        unseenOutcome: undefined,
+        ...(autoRefresh ? {} : { unseenOutcome: undefined }),
         // Drop any in-flight cell edits: their row indices reference the
         // previous result set and would no longer line up with the new rows.
         // 削除予定・追加行も同じく空にする (見えない行の削除予定が Apply で走らないよう、
@@ -6557,6 +6557,7 @@ export default function App() {
         showJson: false,
         preview: null,
         queryError: null,
+        unseenOutcome: undefined,
       }));
       const results: BatchStatementResult[] = [];
       const streamId = newStreamId(tabId);
@@ -6570,13 +6571,19 @@ export default function App() {
         unlisten = null;
         if (streamIdRef.current.get(tabId) === streamId) streamIdRef.current.delete(tabId);
       };
-      const finishRun = (extra: { error?: string } = {}) => {
+      const finishRun = (extra: { error?: string; connectionLost?: boolean; cancelled?: boolean } = {}) => {
         // 停止後や再実行後に届いた古い実行の終了通知は、今の実行の状態を触らない。
         if (!isCurrentBatch()) return;
         endBatchRun(batchStreamRef.current, tabId);
         patchTab(tabId, (tt) => ({ ...tt, batchRunning: false, batchResults: results }));
         const okCount = results.filter((r) => r.status === "ok").length;
         const errCount = results.filter((r) => r.status === "error").length;
+        // 裏のタブで終わったときの未確認の印 (#2353)。
+        markUnseenOutcome(
+          tabId,
+          extra.cancelled ? "cancelled" : extra.error !== undefined || errCount > 0 ? "error" : "done",
+          { connectionLost: extra.connectionLost },
+        );
         if (extra.error !== undefined) {
           setStatus({ kind: "key", key: "statusQueryError", vars: { error: extra.error }, error: true });
         } else {
@@ -6625,13 +6632,13 @@ export default function App() {
           },
           onError: ({ error, connectionLost }) => {
             finish();
-            finishRun({ error });
+            finishRun({ error, connectionLost });
             if (connectionLost) void handleConnectionLostRef.current();
           },
           onCancelled: () => {
             finish();
             const current = isCurrentBatch();
-            finishRun();
+            finishRun({ cancelled: true });
             // 終了表示 (statusBatchDone) で上書きされないよう、finishRun の後に設定する。
             if (current) setStatus({ kind: "key", key: "statusQueryCancelled" });
           },
@@ -6664,6 +6671,7 @@ export default function App() {
     [
       sessionId,
       patchTab,
+      markUnseenOutcome,
       recordOutput,
       tabsRef,
       outputCtxFor,

@@ -303,10 +303,10 @@ describe("TabBar 未確認の結果印 (#2353)", () => {
       <TabBar tabs={tabs} activeTabId="t4" onSelect={() => {}} onClose={() => {}} onNew={() => {}} />,
     );
     const rows = screen.getAllByRole("tab");
-    expect(rows[0].getAttribute("aria-label")).toContain(t("tabOutcomeDone"));
-    expect(rows[1].getAttribute("aria-label")).toContain(t("tabOutcomeError"));
-    expect(rows[2].getAttribute("aria-label")).toContain(t("tabOutcomeCancelled"));
-    expect(rows[3].getAttribute("aria-label")).toBeNull();
+    expect(rows[0].textContent).toContain(t("tabOutcomeDone"));
+    expect(rows[1].textContent).toContain(t("tabOutcomeError"));
+    expect(rows[2].textContent).toContain(t("tabOutcomeCancelled"));
+    expect(rows[3].textContent).not.toContain(t("tabOutcomeDone"));
     const glyphs = rows.slice(0, 3).map((r) => r.querySelector("[data-unseen-outcome]")?.textContent);
     expect(new Set(glyphs).size).toBe(3);
     expect(rows[3].querySelector("[data-unseen-outcome]")).toBeNull();

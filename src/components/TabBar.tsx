@@ -1,5 +1,5 @@
 import { forwardRef, memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Box, chakra } from "@chakra-ui/react";
+import { Box, chakra, VisuallyHidden } from "@chakra-ui/react";
 import { AnimatePresence, motion, Reorder, useReducedMotion } from "motion/react";
 import { useT } from "../i18n";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -596,7 +596,6 @@ export const TabBar = memo(function TabBar({
                 // title を残す判断とする。
                 title={renamingTabId === tab.id ? undefined : title}
                 aria-busy={tab.running ? true : undefined}
-                aria-label={outcomeLabel ? title : undefined}
                 // 追加・削除は opacity + scaleX だけで表す (#1322)。width を 0 ↔ auto に
                 // 補間すると隣のタブが毎フレーム再配置されるため。隣は退場完了で詰まり、その 1 回だけ `useTabCloseGlide` が滑らせる (#1765)。
                 initial={variants.fadeScaleX.initial}
@@ -709,6 +708,7 @@ export const TabBar = memo(function TabBar({
                     />
                   )}
                 </chakra.span>
+                {outcomeLabel && !tab.running && <VisuallyHidden>{outcomeLabel}</VisuallyHidden>}
                 {renamingTabId === tab.id && tab.kind === "query" ? (
                   <RenameInput
                     initial={tab.title}
