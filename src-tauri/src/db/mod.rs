@@ -652,11 +652,13 @@ fn is_row_level_import_error(e: &AppError) -> bool {
 /// DB がステートメントを拒否した理由が行データではなく**全体障害** (テーブル消失・
 /// 権限不足・列消失・読み取り専用・スキーマ消失・ロック / 容量不足) か。残りの行も同じ理由で
 /// 失敗するので、行単位で再試行せず取り込みを中断する (#1598 / #2361)。
-/// - PostgreSQL: SQLSTATE 42P01 / 42501 / 42703 / 3F000 / 25006 / 53100 (disk_full)
-/// - MySQL: エラー番号 1146 / 1142 / 1143 / 1044 / 1049 / 1054 / 1290 / 1036 / 1792
-/// - SQLite: リザルトコードの下位 8 ビット (拡張コードも含む) 5 BUSY / 6 LOCKED / 8 READONLY /
-///   10 IOERR / 11 CORRUPT / 13 FULL / 14 CANTOPEN。列なしと表なしは汎用の SQLITE_ERROR (1) で
-///   区別できないのでメッセージも見る。
+/// - PostgreSQL: SQLSTATE 42P01 / 42501 / 42703 / 3F000 / 25006 / 53100 (disk_full) / 55P03 (lock_not_available)。
+///   40P01 (デッドロック) は行単位のまま
+/// - MySQL: エラー番号 1146 / 1142 / 1143 / 1044 / 1049 / 1054 / 1290 / 1036 / 1792 / 1021 (disk full) / 1114 (file full) /
+///   1205 (lock wait timeout)。1213 (デッドロック) は行単位のまま
+/// - SQLite: リザルトコードの下位 8 ビット (拡張コードも含む) 3 PERM / 5 BUSY / 6 LOCKED / 7 NOMEM /
+///   8 READONLY / 10 IOERR / 11 CORRUPT / 13 FULL / 14 CANTOPEN / 26 NOTADB。表なし・列なし・DB なしは
+///   汎用の SQLITE_ERROR (1) なので、コード 1 のときだけメッセージも見る。
 fn is_fatal_db_rejection(
     code: Option<&str>,
     mysql_number: Option<u16>,
@@ -665,27 +667,33 @@ fn is_fatal_db_rejection(
 ) -> bool {
     if matches!(
         code,
-        Some("42P01" | "42501" | "42703" | "3F000" | "25006" | "53100")
+        Some("42P01" | "42501" | "42703" | "3F000" | "25006" | "53100" | "55P03")
     ) {
         return true;
     }
     if matches!(
         mysql_number,
-        Some(1146 | 1142 | 1143 | 1044 | 1049 | 1054 | 1290 | 1036 | 1792)
+        Some(1146 | 1142 | 1143 | 1044 | 1049 | 1054 | 1290 | 1036 | 1792 | 1021 | 1114 | 1205)
     ) {
         return true;
     }
     if matches!(
         sqlite_code.map(|c| c & 0xff),
-        Some(5 | 6 | 8 | 10 | 11 | 13 | 14)
+        Some(3 | 5 | 6 | 7 | 8 | 10 | 11 | 13 | 14 | 26)
     ) {
         return true;
     }
-    let m = message.to_ascii_lowercase();
-    m.contains("no such table")
-        || m.contains("no such column")
-        || m.contains("has no column named")
-        || m.contains("readonly database")
+    // メッセージ判定は SQLite の汎用エラー (SQLITE_ERROR=1) のときだけ。PG / MySQL の
+    // メッセージは行の値を含みうるので、文言の一致だけで全体障害にしない。
+    if sqlite_code.map(|c| c & 0xff) == Some(1) {
+        let m = message.to_ascii_lowercase();
+        return m.contains("no such table")
+            || m.contains("no such column")
+            || m.contains("has no column named")
+            || m.contains("unknown database")
+            || m.contains("readonly database");
+    }
+    false
 }
 
 impl Connection {
@@ -5322,7 +5330,33 @@ mod tests {
             (None, None, Some(1), "no such table: t", true),
             (None, None, Some(1), "table t has no column named x", true),
             (None, None, Some(1), "no such column: x", true),
-            (None, None, None, "no such table: t", true),
+            (None, None, Some(1), "unknown database x", true),
+            (None, None, Some(3), "access permission denied", true),
+            (None, None, Some(7), "out of memory", true),
+            (None, None, Some(26), "file is not a database", true),
+            // メッセージだけでは判定しない (PG / MySQL のメッセージは行の値を含みうる)
+            (
+                Some("22P02"),
+                None,
+                None,
+                "invalid input: no such table: t",
+                false,
+            ),
+            (
+                Some("23000"),
+                Some(1062),
+                None,
+                "Duplicate entry 'no such column'",
+                false,
+            ),
+            (None, None, None, "no such table: t", false),
+            // PG / MySQL のロック・容量
+            (Some("55P03"), None, None, "lock not available", true),
+            (Some("40P01"), None, None, "deadlock detected", false),
+            (Some("HY000"), Some(1021), None, "disk full", true),
+            (Some("HY000"), Some(1114), None, "table is full", true),
+            (Some("HY000"), Some(1205), None, "lock wait timeout", true),
+            (Some("40001"), Some(1213), None, "deadlock", false),
             (
                 None,
                 None,
