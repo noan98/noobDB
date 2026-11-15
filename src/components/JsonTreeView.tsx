@@ -651,7 +651,7 @@ const JsonTreeRow = memo(function JsonTreeRow({ node, pkey: key, segment, level,
                 color="app.accent"
                 fontWeight={500}
               >
-                <TreeChevron aria-hidden />
+                <TreeChevron aria-hidden visibility="hidden" />
                 {t("jsonTreeShowMore", { n: Math.min(hidden, CHILD_PAGE_SIZE) })}
               </TreeRow>
             )}

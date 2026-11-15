@@ -203,7 +203,13 @@ export const TailRow = memo(function TailRow({
         {new Date(e.observedAtMs).toLocaleTimeString()}
         {e.running && (
           <Tooltip label={t("inspectorRunningTitle")} focusableWrapper>
-            <chakra.span marginLeft="1.5" color="var(--accent)" display="inline-flex">
+            <chakra.span
+              marginLeft="1.5"
+              color="var(--accent)"
+              display="inline-flex"
+              role="img"
+              aria-label={t("inspectorRunningTitle")}
+            >
               <Icon name="play" size={ICON_SIZES.sm} />
             </chakra.span>
           </Tooltip>
