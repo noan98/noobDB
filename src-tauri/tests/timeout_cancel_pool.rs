@@ -17,10 +17,12 @@ use std::time::{Duration, Instant};
 
 use noobdb_lib::__test_api as t;
 
-/// タイムアウト/キャンセルの対象にする「十分に遅い」クエリ。再帰 CTE で 1,000 万
-/// 行を数える。どんなマシンでも 50ms より確実に長く走り、かつ数秒で完了する
-/// (worker スレッドが終われば接続はプールに戻る) 程度に有界。
-const SLOW_SQL: &str = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 10000000) SELECT count(*) FROM c";
+/// タイムアウト/キャンセルの対象にする「十分に遅い」クエリ。再帰 CTE で
+/// 3 百万行を数える。どんなマシンでも 50ms より確実に長く走り、かつ完了まで
+/// の時間が短い (worker スレッドが終われば接続はプールに戻る) 程度に有界。cargo-mutants
+/// のベースラインのように統合テストを多数並列で走らせる高負荷下でも回収が期限内に
+/// 終わるよう、以前の 1,000 万行から減らした (#2351)。
+const SLOW_SQL: &str = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 3000000) SELECT count(*) FROM c";
 
 /// 即座に返る軽いクエリ。回収後にプールから接続を取得して成功することを確認する。
 const QUICK_SQL: &str = "SELECT 1";
@@ -115,9 +117,11 @@ async fn repeated_timeouts_do_not_exhaust_pool() {
 
     // SQLite の worker スレッドが残りのカウントを終えて接続をプールへ返すのを待つ。
     // マシンスペックでカウント時間が振れるため固定 sleep ではフレークしうる。期限
+    // 期限は高負荷 (mutants ベースラインで 290 本が並列) でも誤検出しないよう 90 秒
+    // (リークなら acquire_timeout 後も永久に戻らないので、長くしても検出力は落ちない)。
     // 付きの短周期リトライで「回収完了 = 後続クエリ成功」を待ち、期限内に回復しなけ
     // れば (= 接続リーク) panic する形にして決定的にする。
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + Duration::from_secs(90);
     loop {
         match tokio::time::timeout(Duration::from_millis(250), conn.execute(QUICK_SQL, None)).await {
             Ok(Ok(quick)) => {
