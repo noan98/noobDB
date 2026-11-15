@@ -283,6 +283,12 @@ export interface Settings {
    */
   sqlSemanticLintEnabled: boolean;
   /**
+   * SQL エディタの識別子ホバーカード / Ctrl・Cmd 押下中のジャンプ下線 (#2352)。既定オン。
+   * テーブル名・列名にホバーすると型や制約のクイック情報を出し、修飾キーを押している間は
+   * スキーマツリーへ移動できる識別子に下線を引く。Ctrl/Cmd+クリックのジャンプ自体は影響を受けない。
+   */
+  identifierHoverEnabled: boolean;
+  /**
    * 複数文のエディタで、カーソル位置の文 (文単位実行の対象) を淡い帯と左端のバーで常時示す (#2354)。
    * 既定オン。文が 1 つだけのとき・選択範囲があるときは出さない。
    */
@@ -795,6 +801,8 @@ export const DEFAULT_SQL_LINT_ENABLED = true;
 
 /** スキーマ認識のセマンティック lint (#1940) も既定オン (構文チェックがオンのときのみ有効)。 */
 export const DEFAULT_SQL_SEMANTIC_LINT_ENABLED = true;
+/** 識別子ホバーカード / ジャンプ下線 (#2352) の既定。 */
+export const DEFAULT_IDENTIFIER_HOVER_ENABLED = true;
 
 /** カーソル位置の文の帯表示 (#2354) は既定オン。 */
 export const DEFAULT_ACTIVE_STATEMENT_HIGHLIGHT = true;
@@ -889,6 +897,7 @@ export const DEFAULT_SETTINGS: Settings = {
   masteryTrackingEnabled: DEFAULT_MASTERY_TRACKING_ENABLED,
   masteryTried: [],
   sqlSemanticLintEnabled: DEFAULT_SQL_SEMANTIC_LINT_ENABLED,
+  identifierHoverEnabled: DEFAULT_IDENTIFIER_HOVER_ENABLED,
   activeStatementHighlight: DEFAULT_ACTIVE_STATEMENT_HIGHLIGHT,
   preflightImpactEnabled: DEFAULT_PREFLIGHT_IMPACT_ENABLED,
   scanPreflightEnabled: DEFAULT_SCAN_PREFLIGHT_ENABLED,
@@ -1141,6 +1150,7 @@ export function normalizeSettings(input: unknown): Settings {
     masteryTrackingEnabled?: unknown;
     masteryTried?: unknown;
     sqlSemanticLintEnabled?: unknown;
+    identifierHoverEnabled?: unknown;
     activeStatementHighlight?: unknown;
     preflightImpactEnabled?: unknown;
     scanPreflightEnabled?: unknown;
@@ -1290,6 +1300,10 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.sqlSemanticLintEnabled === "boolean"
         ? parsed.sqlSemanticLintEnabled
         : DEFAULT_SQL_SEMANTIC_LINT_ENABLED,
+    identifierHoverEnabled:
+      typeof parsed.identifierHoverEnabled === "boolean"
+        ? parsed.identifierHoverEnabled
+        : DEFAULT_IDENTIFIER_HOVER_ENABLED,
     activeStatementHighlight:
       typeof parsed.activeStatementHighlight === "boolean"
         ? parsed.activeStatementHighlight
@@ -1918,6 +1932,13 @@ export function markFeatureTried(id: string): void {
 export function resetMasteryProgress(): void {
   if (current.masteryTried.length === 0) return;
   current = { ...current, masteryTried: [] };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setIdentifierHoverEnabled(value: boolean): void {
+  if (current.identifierHoverEnabled === value) return;
+  current = { ...current, identifierHoverEnabled: value };
   persist();
   listeners.forEach((cb) => cb());
 }
