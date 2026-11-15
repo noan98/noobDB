@@ -92,6 +92,8 @@ import { useValuePicker, ValueDatalist, type ValueLookup, type ValuePicker } fro
 /** 候補なしを表す共有の空配列 (レンダーごとに新しい配列を作らない)。 */
 const EMPTY_PICKER_VALUES: string[] = [];
 import { RowInspector } from "./RowInspector";
+import { SqlEditToggle } from "./SqlEditToggle";
+import type { SqlEditToggleView } from "../sqlResultEdit";
 import { inspectorEditableColumns, inspectorRowEditBlock } from "./rowInspectorEdit";
 import { resolveRelatedEntries } from "../relatedRows";
 import { useCopyFeedback } from "./useCopyFeedback";
@@ -1289,6 +1291,14 @@ interface Props {
    * ツールチップで理由を示す。
    */
   readOnlyNotice?: string | null;
+  /**
+   * SQL タブの編集モード (#2355): 編集してよい結果の列名。指定時はこれ以外の列 (式・別名の列) を
+   * 読み取り専用にする。未指定ならテーブルタブと同じ (全列が対象)。
+   */
+  editableColumnNames?: ReadonlySet<string> | null;
+  /** SQL タブの「編集モード」トグルの表示 (#2355)。未指定ならトグルを出さない。 */
+  sqlEditToggle?: SqlEditToggleView;
+  onToggleSqlEdit?: () => void;
   /** Column metadata from `describeTable` — used to detect PK + types. */
   tableColumns?: TableColumnInfo[] | null;
   /**
@@ -8931,6 +8941,9 @@ export const ResultGrid = memo(
       table,
       editable,
       readOnlyNotice,
+      editableColumnNames,
+      sqlEditToggle,
+      onToggleSqlEdit,
       tableColumns,
       rowIdentity,
       blobIo,
@@ -9566,12 +9579,14 @@ export const ResultGrid = memo(
       // a real PK or the rowid/ctid pseudo-column changing in-place would
       // invalidate the WHERE clause used to identify the row (rowid/ctid also
       // isn't a real declared column, so editing it wouldn't mean anything).
+      // SQL タブの編集モード (#2355): 式・別名の列 (実テーブルの列でないもの) は読み取り専用。
+      const named = (c: { name: string }) => !editableColumnNames || editableColumnNames.has(c.name);
       if (identityStrategy === "all_columns") {
-        return columns.map((c) => isEditableColumnType(c.type_name));
+        return columns.map((c) => named(c) && isEditableColumnType(c.type_name));
       }
       const pkSet = new Set(pkIndices);
-      return columns.map((c, i) => !pkSet.has(i) && isEditableColumnType(c.type_name));
-    }, [editable, columns, pkIndices, identityStrategy]);
+      return columns.map((c, i) => !pkSet.has(i) && named(c) && isEditableColumnType(c.type_name));
+    }, [editable, columns, pkIndices, identityStrategy, editableColumnNames]);
 
     const resultRows = result?.rows;
     // Whether the currently-loaded rows contain a genuine identity collision
@@ -10322,6 +10337,9 @@ export const ResultGrid = memo(
                 )}
               </Box>
             </Tooltip>
+          )}
+          {sqlEditToggle && onToggleSqlEdit && (
+            <SqlEditToggle view={sqlEditToggle} onToggle={onToggleSqlEdit} />
           )}
           {readOnlyNotice && (
             <Tooltip label={readOnlyNotice}>

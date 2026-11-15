@@ -727,6 +727,14 @@ import {
   toggleSnippetFavorite,
   type SnippetQuickAccessState,
 } from "./snippetQuickAccess";
+import {
+  analyzeSqlEditShape,
+  hasPendingSqlEditChanges,
+  resolveEditDatabase,
+  resolveSqlEdit,
+  withSqlEditTarget,
+  type SqlEditState,
+} from "./sqlResultEdit";
 import { TableOpenQueryModal } from "./components/TableOpenQueryModal";
 import { QuickLauncher } from "./components/QuickLauncher";
 import { ShortcutHintOverlay } from "./components/ShortcutHintOverlay";
@@ -1124,6 +1132,12 @@ export interface Tab {
    * already carries everything needed) or hasn't been checked yet.
    */
   rowIdentity: TableRowIdentity | null;
+  /** SQL タブの単一テーブル SELECT 結果を編集してよいかの判定 (#2355)。実行のたびに取り直す。 */
+  sqlEdit?: SqlEditState;
+  /** SQL タブの編集モードを利用者がオンにしたか (#2355)。同じ SQL の再実行では保つ。 */
+  sqlEditOn?: boolean;
+  /** 直近の実行が使った `tab.database` (実行開始時に記録、#2355)。編集の書き込み先の判定に使う。 */
+  lastExecutedDatabase?: string | null;
   /**
    * Inline cell edits awaiting Preview/Apply. Keyed by the row index in
    * `result.rows` (the canonical "original" position) then by the column
@@ -4792,6 +4806,117 @@ export default function App() {
   const handleConnectionLostRef = useRef(handleConnectionLost);
   handleConnectionLostRef.current = handleConnectionLost;
 
+  const sqlEditSeqRef = useRef(0);
+  // SQL タブの単一テーブル SELECT 結果を編集してよいか判定する (#2355)。実行が終わった結果ごとに
+  // 1 回だけ、SQL の形 (純ロジック) → 対象テーブルのスキーマ (`open_table`) の順で確かめる。
+  // read_only 接続では編集 UI 自体を出さないので判定しない。
+  useEffect(() => {
+    if (!sessionId || readOnly) return;
+    const driver = selectedProfile?.driver ?? "mysql";
+    const sqliteAliases = (selectedProfile?.sqlite_attachments ?? []).map((a) => a.alias);
+    for (const tt of paneActiveTabs) {
+      if (!tt || tt.kind !== "query") continue;
+      // 明示トランザクション中は編集させない: Apply は別接続で即コミットされ、ROLLBACK で戻らない。
+      if (txActive) {
+        // 終了後に前回の実行 DB で判定し直さないよう、この結果は「tx 内」の印で止める。
+        // 編集モードを落とすので、その保留 (セル編集・削除予定・追加行) も破棄する。
+        if (tt.sqlEditOn || tt.sqlEdit?.status === "available" || tt.sqlEdit?.status === "checking") {
+          updateTab(tt.id, {
+            sqlEdit: {
+              status: "unavailable",
+              sql: tt.lastExecutedSql,
+              executedDatabase: tt.lastExecutedDatabase ?? null,
+              reason: "inTransaction",
+            },
+            ...(tt.sqlEditOn
+              ? { sqlEditOn: false, pendingEdits: {}, pendingDeletes: [], pendingInserts: [] }
+              : {}),
+          });
+        }
+        continue;
+      }
+      if (tt.streaming || tt.queryError || !tt.result) continue;
+      const executedDatabase = tt.lastExecutedDatabase ?? null;
+      if (tt.result.columns.length === 0) continue;
+      if (tt.sqlEdit?.sql === tt.lastExecutedSql && tt.sqlEdit.executedDatabase === executedDatabase)
+        continue;
+      const { id, lastExecutedSql: sql } = tt;
+      const resultColumns = tt.result.columns;
+      const analysis = analyzeSqlEditShape(sql, driver);
+      if (!analysis.ok) {
+        // SELECT でない文 (reason なし) は何も出さない (判定は安く、状態も変えない)。
+        if (analysis.reason)
+          updateTab(id, {
+            sqlEdit: { status: "unavailable", sql, executedDatabase, reason: analysis.reason },
+          });
+        continue;
+      }
+      // 書き込み先は「実行したときの接続状態」と同じに解決する (プロファイルの既定へは寄せない)。
+      const target = resolveEditDatabase({
+        driver,
+        schema: analysis.shape.schema,
+        executedDatabase,
+        sqliteAliases,
+      });
+      if (!target.ok) {
+        updateTab(id, { sqlEdit: { status: "unavailable", sql, executedDatabase, reason: target.reason } });
+        continue;
+      }
+      const database = target.database;
+      // 古い `open_table` の応答が、その後の別の結果へ貼り付かないよう、判定ごとの一意トークンで照合する。
+      const token = `sqledit-${++sqlEditSeqRef.current}`;
+      const stillMine = (cur: Tab) => cur.sqlEdit?.status === "checking" && cur.sqlEdit.token === token;
+      const settle = (next: SqlEditState) =>
+        patchTab(id, (cur) => (stillMine(cur) ? { ...cur, sqlEdit: next } : cur));
+      updateTab(id, { sqlEdit: { status: "checking", sql, executedDatabase, token } });
+      void api
+        .openTable(sessionId, database, analysis.shape.table, 1, false)
+        .then((r) => {
+          const res = resolveSqlEdit({
+            shape: analysis.shape,
+            resultColumns,
+            tableColumns: r.columns,
+            rowIdentity: r.row_identity,
+          });
+          settle(
+            res.ok
+              ? {
+                  status: "available",
+                  sql,
+                  executedDatabase,
+                  database,
+                  table: analysis.shape.table,
+                  tableColumns: r.columns,
+                  rowIdentity: r.row_identity,
+                  editableColumns: res.editableColumns,
+                  insertable: res.insertable,
+                }
+              : { status: "unavailable", sql, executedDatabase, reason: res.reason },
+          );
+        })
+        .catch(() => settle({ status: "unavailable", sql, executedDatabase, reason: "tableNotFound" }));
+    }
+  }, [
+    sessionId,
+    readOnly,
+    txActive,
+    selectedProfile?.driver,
+    selectedProfile?.sqlite_attachments,
+    paneActiveTabs,
+    updateTab,
+    patchTab,
+  ]);
+  // SQL タブの編集モードのトグル (#2355)。
+  const toggleSqlEditForTab = useCallback(
+    (tabId: string) => {
+      // 保留中の変更があるうちはオフにしない (オフにすると Apply の対象が消えて何も言わず失敗する)。
+      patchTab(tabId, (tt) =>
+        tt.sqlEditOn && hasPendingSqlEditChanges(tt) ? tt : { ...tt, sqlEditOn: !tt.sqlEditOn },
+      );
+    },
+    [patchTab],
+  );
+
   // Fetch schema for each pane's active table tab so its editor can
   // autocomplete columns. Covers both panes, not just the focused one.
   useEffect(() => {
@@ -5290,6 +5415,18 @@ export default function App() {
       updateTab(tabId, {
         ...(autoTitle !== null ? { title: autoTitle } : {}),
         lastExecutedSql: sql,
+        // 編集可否は結果の列ごとに取り直す (#2355)。別の SQL へ変わったら編集モードも解く。
+        // 自動リフレッシュで同じ SQL・同じ実行 DB を取り直すだけなら前の判定を残す (編集 UI を消さない)。
+        lastExecutedDatabase: tab?.database ?? null,
+        ...(autoRefresh &&
+        prevSqlSnapshot === sql &&
+        tab?.sqlEdit?.status === "available" &&
+        (tab.lastExecutedDatabase ?? null) === (tab.database ?? null)
+          ? {}
+          : { sqlEdit: undefined }),
+        ...(prevSqlSnapshot !== sql || (tab?.lastExecutedDatabase ?? null) !== (tab?.database ?? null)
+          ? { sqlEditOn: false }
+          : {}),
         ...(keepPrevResult ? {} : { result: emptyResult([]) }),
         preview: null,
         prevResultRows: prevRowsSnapshot,
@@ -5313,7 +5450,12 @@ export default function App() {
         pendingEdits: {},
         // 確認を省く内部の取り直し (Apply 後・再読込・取り込み後) は、送っていない削除予定・追加行を
         // 残す (Apply の往復中に増えた分を消さない)。確認を経た置き換えだけが 3 種を空にする。
-        ...(override?.skipPendingGuard ? {} : { pendingDeletes: [], pendingInserts: [] }),
+        // 実行先 DB が変わる再実行では、旧 DB 向けの保留を残さない (#2355)。
+        // まだ実行先を記録していないタブ (テーブルタブを開いた直後など) は従来どおり残す。
+        ...(override?.skipPendingGuard &&
+        (tab?.lastExecutedDatabase === undefined || tab.lastExecutedDatabase === (tab.database ?? null))
+          ? {}
+          : { pendingDeletes: [], pendingInserts: [] }),
         editUndoStack: pendingResolution.discarded ? [{ edits: pendingResolution.discarded }] : [],
         editRedoStack: [],
         // A manual run of a non-read-only statement turns auto-refresh off so the
@@ -6751,6 +6893,9 @@ export default function App() {
         showJson: false,
         batchResults: undefined,
         preview: null,
+        // トランザクション内の結果は編集させない (Apply は別接続で即コミットされる、#2355)。
+        sqlEdit: undefined,
+        sqlEditOn: false,
         // 結果を置き換えるので、旧結果由来の保留編集は破棄して整合を保つ。削除予定・追加行も
         // 空にして 3 種を揃え (#2234)、破棄したセル編集は Undo 履歴へ積む。
         pendingEdits: {},
@@ -6766,6 +6911,15 @@ export default function App() {
           streaming: false,
           result: res,
           lastExecutedSql: sql,
+          // tx 内で得た結果は、tx 終了後も編集の判定をしない (別の DB の同名表を書き換えないため、#2355)。
+          lastExecutedDatabase: txDatabaseRef.current ?? null,
+          sqlEdit: {
+            status: "unavailable",
+            sql,
+            executedDatabase: txDatabaseRef.current ?? null,
+            reason: "inTransaction",
+          },
+          sqlEditOn: false,
           paginatable: null,
           canLoadMore: false,
           autoLimitApplied: null,
@@ -7996,7 +8150,7 @@ export default function App() {
   const previewEditsForTab = useCallback(
     (tab: Tab) => {
       if (!sessionId) return;
-      const { result, tableColumns, database, table, pendingEdits, rowIdentity } = tab;
+      const { result, tableColumns, database, table, pendingEdits, rowIdentity } = withSqlEditTarget(tab);
       if (!result || !tableColumns || !database || !table) return;
       const { indices: pkIndices } = resolveRowIdentity(result.columns, tableColumns, rowIdentity);
       const stmts = buildUpdateStatements({
@@ -8046,7 +8200,7 @@ export default function App() {
       if (!sessionId) return false;
       // 参照の確認 (#1506) 中の二重 Apply を防ぐ (bulkUpdateCells が 2 回走ると INSERT が重複しうる)。
       if (applyGuardRef.current.has(tab.id)) return false;
-      const { result, tableColumns, database, table, paginatable, rowIdentity } = tab;
+      const { result, tableColumns, database, table, paginatable, rowIdentity } = withSqlEditTarget(tab);
       if (!result || !tableColumns || !database || !table) return false;
       markFeatureTried("helpApplyTitle");
       const scoped = rowScope !== undefined;
@@ -13436,6 +13590,7 @@ export default function App() {
     replaceColumnForTab,
     requestBroadcast,
     addInsertRowsForTab,
+    toggleSqlEditForTab,
     requestDuplicateRowForTab,
     requestInsertRowForTab,
     resolveParamsThen,
@@ -16135,7 +16290,8 @@ export default function App() {
 
           <AnimatePresence>
             {(() => {
-              const insTab = rowInsertTabId ? tabs.find((tt) => tt.id === rowInsertTabId) : null;
+              const insRaw = rowInsertTabId ? tabs.find((tt) => tt.id === rowInsertTabId) : null;
+              const insTab = insRaw ? withSqlEditTarget(insRaw) : null;
               if (!insTab || !insTab.result || !insTab.table) return null;
               return (
                 <Suspense fallback={null}>

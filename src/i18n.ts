@@ -8131,6 +8131,32 @@ const en = {
   tableOpenQueryModalSave: "Save",
   tableOpenQuerySaved: "Saved the default query for {table}",
   tableOpenQueryRemoved: "Removed the default query override for {table}",
+  sqlEditToggleLabel: "Edit mode",
+  sqlEditToggleTip:
+    "Edit cells, delete rows and insert rows in this result, then Apply (same as a table tab)",
+  sqlEditBlock_multiStatement: "Not editable: the SQL has multiple statements.",
+  sqlEditBlock_cte: "Not editable: WITH (CTE) queries can't be mapped to a single table.",
+  sqlEditBlock_join: "Not editable: the query uses JOIN or several tables.",
+  sqlEditBlock_subquery: "Not editable: FROM is a subquery.",
+  sqlEditBlock_distinct: "Not editable: DISTINCT collapses rows.",
+  sqlEditBlock_grouping: "Not editable: GROUP BY / HAVING / WINDOW collapse rows.",
+  sqlEditBlock_setOperation: "Not editable: UNION / INTERSECT / EXCEPT combine several queries.",
+  sqlEditBlock_aggregate: "Not editable: aggregate or window functions are used.",
+  sqlEditBlock_unsupportedFrom: "Not editable: the FROM clause isn't a plain single table (alias is fine).",
+  sqlEditBlock_unaliasedExpression:
+    "Not editable: an expression column has no alias. Add AS <name> to the expression.",
+  sqlEditBlock_nameClash: "Not editable: an expression or alias is named like a real column of the table.",
+  sqlEditBlock_duplicateColumn: "Not editable: the result has duplicate column names.",
+  sqlEditBlock_tableNotFound: "Not editable: the table couldn't be resolved (it may be a view or missing).",
+  sqlEditBlock_noKey:
+    "Not editable: select all primary key (or unique key) columns so rows can be identified (SQLite: rowid, PostgreSQL: ctid).",
+  sqlEditBlock_noRowIdentity: "Not editable: the table has no primary key or unique key to identify rows.",
+  sqlEditBlock_noDatabase:
+    "Not editable: qualify the table with its schema/database, or pick a database for this tab, so the write target is unambiguous.",
+  sqlEditBlock_unknownSchema:
+    "Not editable: the schema isn't main or an attached database (temp tables aren't supported).",
+  sqlEditLockedTip: "Apply or discard the pending changes before turning edit mode off.",
+  sqlEditBlock_inTransaction: "Not editable: the result came from inside a transaction.",
   tableOpenQueryReadOnlyBadge: "Read-only",
   tableOpenQueryReadOnlyHintGlobal:
     "Opened with the default query from Settings. It doesn't select the primary key (or rowid / ctid), so editing is disabled to avoid changing the wrong rows.",
@@ -16853,6 +16879,30 @@ const ja: Dict = {
   tableOpenQueryModalSave: "保存",
   tableOpenQuerySaved: "{table} のデフォルトクエリを保存しました",
   tableOpenQueryRemoved: "{table} のデフォルトクエリの上書きを削除しました",
+  sqlEditToggleLabel: "編集モード",
+  sqlEditToggleTip: "この結果のセル編集・行削除・行追加を有効にします (反映はテーブルタブと同じ Apply)",
+  sqlEditBlock_multiStatement: "編集不可: SQL が複数の文です。",
+  sqlEditBlock_cte: "編集不可: WITH (CTE) のクエリは単一テーブルに対応づけられません。",
+  sqlEditBlock_join: "編集不可: JOIN または複数テーブルのクエリです。",
+  sqlEditBlock_subquery: "編集不可: FROM がサブクエリです。",
+  sqlEditBlock_distinct: "編集不可: DISTINCT で行がまとめられています。",
+  sqlEditBlock_grouping: "編集不可: GROUP BY / HAVING / WINDOW で行がまとめられています。",
+  sqlEditBlock_setOperation: "編集不可: UNION / INTERSECT / EXCEPT で複数のクエリを結合しています。",
+  sqlEditBlock_aggregate: "編集不可: 集計関数または窓関数を使っています。",
+  sqlEditBlock_unsupportedFrom: "編集不可: FROM が単純な単一テーブルではありません (別名は可)。",
+  sqlEditBlock_unaliasedExpression: "編集不可: 別名の無い式の列があります。式に AS <名前> を付けてください。",
+  sqlEditBlock_nameClash: "編集不可: 式または別名の名前がテーブルの実在の列名と同じです。",
+  sqlEditBlock_duplicateColumn: "編集不可: 結果に同名の列があります。",
+  sqlEditBlock_tableNotFound: "編集不可: テーブルを特定できません (ビューか、存在しない可能性があります)。",
+  sqlEditBlock_noKey:
+    "編集不可: 行を特定するため、主キー (または一意キー) の全列を SELECT に含めてください (SQLite は rowid、PostgreSQL は ctid)。",
+  sqlEditBlock_noRowIdentity: "編集不可: 行を特定できる主キー・一意キーがテーブルにありません。",
+  sqlEditBlock_noDatabase:
+    "編集不可: 書き込み先が決まりません。表をスキーマ修飾するか、タブの DB を選んでください。",
+  sqlEditBlock_unknownSchema:
+    "編集不可: スキーマが main でもアタッチ済みのデータベースでもありません (temp の表は対象外)。",
+  sqlEditLockedTip: "保留中の変更を Apply または破棄してから、編集モードをオフにしてください。",
+  sqlEditBlock_inTransaction: "編集不可: トランザクション内で得た結果です。",
   tableOpenQueryReadOnlyBadge: "読み取り専用",
   tableOpenQueryReadOnlyHintGlobal:
     "設定のデフォルトクエリで開きました。主キー (または rowid / ctid) を選択していないため、誤った行を書き換えないよう編集を無効にしています。",

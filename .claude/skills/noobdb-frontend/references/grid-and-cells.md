@@ -218,3 +218,12 @@
 - 列ヘッダの NULL 率ミニバーのツールチップには、ストリーム逐次統計の HyperLogLog
   (`StreamStatsSnapshot.distinctEstimates`、`db/stream_batch.rs`) から求めた近似ユニーク数と傾向
   (候補キー / 定数列 / 低カーディナリティ、`streamStats.ts::distinctHintFor`) を添える。
+- SQL タブ結果のインライン編集 (#2355) — `sqlResultEdit.ts` (純ロジック) が、単一テーブル SELECT
+  (JOIN・サブクエリ・CTE・DISTINCT・GROUP BY・集計・集合演算なし、別名なし式なし) かを判定し
+  (`analyzeSqlEditShape`)、`open_table` のスキーマと結果の列から編集可否・編集してよい列を決める
+  (`resolveSqlEdit`、行識別は `resolveRowIdentity` を共有。all_columns は不可、式/別名が実列名と衝突したら
+  全体不可)。App が実行完了ごとに `tab.sqlEdit` を取り直し、ツールバーの「編集モード」トグル
+  (`SqlEditToggle`) が `tab.sqlEditOn` を切り替える。オンの間は `withSqlEditTarget` が
+  database/table/tableColumns/rowIdentity を上書きして**テーブルタブと同じ Apply 経路**
+  (`applyEditsForTab` → `bulk_update_cells`) を通すので、read_only / confirm_writes / フライトレコーダーは
+  そのまま効く。read_only 接続では判定もトグルも出さない。
