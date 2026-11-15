@@ -2312,7 +2312,7 @@ body, #root {
    従来の不透明な値そのもの (`--bg-elevated` / `--bg`) で、見た目は変わらない。`data-window-material` は
    Windows 11 で OS が実際に素材を敷けたときだけ mica / mica-alt になる (App.tsx)。
    エディタ・結果グリッド・モーダルは読みやすさのためこのトークンを使わず不透明のまま。
-   不透明度は「素材 (OS が明暗をアプリのテーマに合わせて敷く) がどんな壁紙でも文字が AA 4.5:1 を保つ」
+   不透明度 (surface) は「素材 (OS が明暗をアプリのテーマに合わせて敷く) がどんな壁紙でも文字が AA 4.5:1 を保つ」
    値で、themeContrast.test.ts が全テーマで検証する。本番 / サンドボックスの wash は作業領域の上の
    overlay なのでこの面とは独立に効く。 */
 :root {
@@ -2322,7 +2322,9 @@ body, #root {
 :root[data-window-material="mica"]:not([data-theme^="hc-"]),
 :root[data-window-material="mica-alt"]:not([data-theme^="hc-"]) {
   --surface-material: color-mix(in srgb, var(--bg-elevated) 86%, transparent);
-  --bg-material: color-mix(in srgb, var(--bg) 92%, transparent);
+  /* ルートは素材ありでは透明にする。html の半透明の上にタイトルバー / サイドバーが重なると透けが 1% 程度に
+     なるため、透けは --surface-material だけで決める。<main> は不透明な app.bg が覆うので隙間は出ない。 */
+  --bg-material: transparent;
 }
 /* ハイコントラストは素材を使わず不透明に戻す (OS の「コントラストを上げる」も同じ)。 */
 @media (prefers-contrast: more) {
