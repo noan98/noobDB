@@ -2406,6 +2406,15 @@ fn build_fixtures() -> serde_json::Value {
                 tunnel_alive: Some(true),
             })
             .collect();
+    let logical_relation = t::LogicalRelation {
+        profile_id: Some("p1".into()),
+        database: "app".into(),
+        table: "orders".into(),
+        columns: vec!["user_id".into()],
+        referenced_table: "users".into(),
+        referenced_columns: vec!["id".into()],
+        created_at: "2026-01-01T00:00:00Z".into(),
+    };
     let incoming_foreign_key = t::IncomingForeignKey {
         schema: Some("sales".into()),
         table: "orders".into(),
@@ -3232,6 +3241,7 @@ fn build_fixtures() -> serde_json::Value {
         "writeCaptureSummaryVariants": write_capture_summary_variants,
         "healthProbeItemVariants": health_probe_item_variants,
         "incomingForeignKey": incoming_foreign_key,
+        "logicalRelation": logical_relation,
         "columnDependencyReport": column_dependency_report,
         "viewRebuildPlan": view_rebuild_plan,
         "tableStatistic": table_statistic,
