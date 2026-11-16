@@ -7535,7 +7535,14 @@ export const DataGrid = memo(function DataGrid({
                     filterOpen={filterMenu?.colIdx === colIdx}
                     nullPct={nullRates ? (nullRates[colIdx] ?? 0) : null}
                     distinctHint={distinctHints?.[colIdx] ?? null}
-                    distribution={columnDistribution ? (columnDistributions?.[colIdx] ?? null) : undefined}
+                    distribution={
+                      columnDistribution
+                        ? // マスク中の列は値 (上位値・範囲) を出さない。列統計と同じ判定で、空の帯だけ残して高さを揃える
+                          isColumnMaskedNow(colIdx)
+                          ? null
+                          : (columnDistributions?.[colIdx] ?? null)
+                        : undefined
+                    }
                     columnFilter={h.column.getFilterValue() as ColumnFilter | undefined}
                     canBinFilter={!onSetServerFilter}
                     rowCount={nullRates ? rows.length : 0}

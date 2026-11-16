@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { fireEvent, renderWithProviders, waitFor } from "./testUtils";
+import { fireEvent, renderHook, renderWithProviders, waitFor } from "./testUtils";
+import { useColumnDistributions } from "../components/useColumnDistributions";
+import { setColumnMaskEnabled } from "../settings";
 import { ResultGrid } from "../components/ResultGrid";
 import type { CellValue, Column, QueryResult } from "../api/tauri";
 import { setLocale, t } from "../i18n";
@@ -67,5 +69,57 @@ describe("列ヘッダのミニ分布 (#2383)", () => {
     expect(bin()).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(bin());
     await waitFor(() => expect(bodyRowCount(container)).toBe(40));
+  });
+});
+
+describe("機微カラムのマスクと分布 (#2383)", () => {
+  const MASKED_COLUMNS: Column[] = [
+    { name: "id", type_name: "INT" },
+    { name: "user_email", type_name: "VARCHAR" },
+  ];
+  const maskedResult = (): QueryResult => ({
+    columns: MASKED_COLUMNS,
+    rows: Array.from({ length: 30 }, (_, i) => [i + 1, i % 2 ? "alice@example.com" : "bob@example.com"]),
+    rows_affected: 0,
+    elapsed_ms: 1,
+  });
+
+  it("マスク中の列は上位値を出さず、マスクを切ると出る", async () => {
+    setColumnMaskEnabled(true);
+    const { container, unmount } = renderWithProviders(<ResultGrid result={maskedResult()} />);
+    await waitFor(() => expect(container.querySelectorAll("thead .th-dist-bin").length).toBeGreaterThan(0));
+    const strips = Array.from(container.querySelectorAll<HTMLElement>("thead .th-dist"));
+    expect(strips).toHaveLength(2);
+    expect(strips[1].querySelector(".th-dist-seg")).toBeNull();
+    expect(container.querySelector("thead")?.innerHTML).not.toContain("alice@example.com");
+    unmount();
+    setColumnMaskEnabled(false);
+    const r2 = renderWithProviders(<ResultGrid result={maskedResult()} />);
+    await waitFor(() =>
+      expect(r2.container.querySelectorAll("thead .th-dist-seg").length).toBeGreaterThan(0),
+    );
+    setColumnMaskEnabled(true);
+  });
+});
+
+describe("useColumnDistributions の耐障害性", () => {
+  it("1 列の計算が例外を投げても、その列だけ null で他の列は計算される", async () => {
+    const bad = {
+      toString() {
+        throw new Error("boom");
+      },
+    } as unknown as CellValue;
+    const rows: CellValue[][] = [
+      [bad, 1],
+      [bad, 2],
+      [bad, 3],
+    ];
+    const { result } = renderHook(() =>
+      useColumnDistributions(true, false, rows, ["a", "b"], ["number", "number"]),
+    );
+    await waitFor(() => expect(result.current).not.toBeNull());
+    expect(result.current?.[0]).toBeNull();
+    expect(result.current?.[1]).toBeTruthy();
+    expect(result.current?.[1]?.bins.length).toBeGreaterThan(0);
   });
 });

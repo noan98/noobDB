@@ -67,9 +67,19 @@ export function useColumnDistributions(
       if (cancelled) return;
       const start = performance.now();
       while (col < count) {
-        const done = advanceDistribution(acc, rows, DIST_ROWS_PER_STEP);
+        let done: boolean;
+        let result: ColumnDistribution | null = null;
+        try {
+          done = advanceDistribution(acc, rows, DIST_ROWS_PER_STEP);
+          if (done) result = finishDistribution(acc);
+        } catch {
+          // 1 列の計算が失敗しても他の列へ波及させない (その列だけ分布なし)。
+          // アイドルコールバックが例外で止まると全列の更新が止まるため。
+          done = true;
+          result = null;
+        }
         if (done) {
-          list.push(finishDistribution(acc));
+          list.push(result);
           col++;
           if (col < count) acc = makeAcc(col);
         }

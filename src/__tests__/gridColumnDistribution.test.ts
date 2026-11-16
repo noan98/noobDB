@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { columnFilterPasses } from "../components/gridSortFilter";
 import type { CellValue } from "../api/tauri";
 import {
   binFilterBounds,
@@ -224,5 +225,58 @@ describe("計算時間", () => {
     const start = performance.now();
     for (let c = 0; c < kinds.length; c++) computeColumnDistribution(rows, c, kinds[c]);
     expect(performance.now() - start).toBeLessThan(5000);
+  });
+});
+
+describe("小数ビンのクリックフィルタ (半開区間との一致)", () => {
+  /** ビンのクリックで作るフィルタ (ColumnDistributionStrip と同じ組み立て) を行に当てた件数。 */
+  const filteredCount = (d: ReturnType<typeof computeColumnDistribution>, i: number, vals: number[]) => {
+    const b = binFilterBounds(d, i);
+    if (!b) return -1;
+    const f = { op: "between" as const, value: b.lo, value2: b.hi, nullMode: "any" as const };
+    return vals.filter((v) => columnFilterPasses(v, f)).length;
+  };
+
+  it("[0, 0.5, 1] の 0.4375–0.5 のビンは 0 件で、クリックしても 0.5 の行は出ない", () => {
+    const vals = [0, 0.5, 1];
+    const d = computeColumnDistribution(col(vals), 0, "decimal");
+    expect(d.integerBins).toBe(false);
+    expect(d.bins[7].count).toBe(0);
+    expect(filteredCount(d, 7, vals)).toBe(0);
+    expect(filteredCount(d, 8, vals)).toBe(1);
+  });
+
+  it("どのビンでもフィルタで残る件数がビンの件数と一致する (最後のビンだけ上端を含む)", () => {
+    const vals = Array.from({ length: 200 }, (_, i) => (i % 17) / 8 + (i % 5) * 0.25);
+    const d = computeColumnDistribution(col(vals), 0, "decimal");
+    for (let i = 0; i < d.bins.length; i++) expect(filteredCount(d, i, vals)).toBe(d.bins[i].count);
+  });
+
+  it("整数ビンの境界は従来どおり両端を含む", () => {
+    const vals = Array.from({ length: 100 }, (_, i) => i);
+    const d = computeColumnDistribution(col(vals), 0, "number");
+    expect(d.integerBins).toBe(true);
+    const b = binFilterBounds(d, 0);
+    expect(b).toEqual({ lo: String(d.bins[0].lo), hi: String(d.bins[0].hi) });
+    for (let i = 0; i < d.bins.length; i++) expect(filteredCount(d, i, vals)).toBe(d.bins[i].count);
+  });
+});
+
+describe("退化した幅・オーバーフロー", () => {
+  it("[-1e308, 1e308] (span が Infinity) でも落ちずに全件がビンに入る", () => {
+    const d = computeColumnDistribution(col([-1e308, 0, 1e308]), 0, "number");
+    expect(binnedTotal(d)).toBe(3);
+    expect(d.bins[0].count).toBeGreaterThan(0);
+    expect(d.bins[d.bins.length - 1].count).toBeGreaterThan(0);
+  });
+
+  it("[0, Number.MIN_VALUE] (幅が 0 に潰れる) でも落ちずに全件がビンに入る", () => {
+    const d = computeColumnDistribution(col([0, Number.MIN_VALUE]), 0, "decimal");
+    expect(binnedTotal(d)).toBe(2);
+  });
+
+  it("非有限の添字になる値は端のビンへ寄せる", () => {
+    const d = computeColumnDistribution(col([-Number.MAX_VALUE, Number.MAX_VALUE]), 0, "decimal");
+    expect(binnedTotal(d)).toBe(2);
   });
 });

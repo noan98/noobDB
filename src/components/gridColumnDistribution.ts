@@ -222,7 +222,10 @@ function makeBins(acc: DistributionAccumulator): void {
   const intLike = acc.mode === "number" && acc.intLike;
   if (acc.used === 0) return;
   const span = max - min;
-  if (span === 0) {
+  // 幅が 0 に潰れる (例: [0, MIN_VALUE] を 16 等分すると 0) ときも 1 ビンにまとめる。
+  // span が Infinity (例: [-1e308, 1e308]) のときは、引き算の前に割って桁あふれを避ける。
+  const widthOf = (count: number) => (Number.isFinite(span) ? span / count : max / count - min / count);
+  if (span === 0 || !(widthOf(DIST_BIN_COUNT) > 0)) {
     acc.bins = [{ lo: min, hi: max, count: 0 }];
     acc.integerBins = intLike;
     acc.plan = { oneEach: false, count: 1, width: 0 };
@@ -230,7 +233,7 @@ function makeBins(acc: DistributionAccumulator): void {
   }
   const oneEach = intLike && span + 1 <= DIST_BIN_COUNT;
   const count = oneEach ? span + 1 : DIST_BIN_COUNT;
-  const width = span / count;
+  const width = widthOf(count);
   const bins: DistributionBin[] = [];
   for (let i = 0; i < count; i++) {
     let lo: number;
@@ -306,8 +309,9 @@ export function advanceDistribution(
   for (let k = acc.pos; k < end; k++) {
     const x = values[k];
     let idx = plan.count === 1 ? 0 : plan.oneEach ? x - min : Math.floor((x - min) / plan.width);
-    if (idx >= plan.count) idx = plan.count - 1;
-    if (idx < 0) idx = 0;
+    // 退化した幅・桁あふれで NaN / ±Infinity になっても、端のビンへ寄せて例外にしない。
+    if (Number.isNaN(idx) || idx < 0) idx = 0;
+    else if (idx >= plan.count) idx = plan.count - 1;
     bins[idx].count++;
   }
   acc.pos = end;
@@ -392,11 +396,26 @@ export function topWidthRatios(d: ColumnDistribution): { parts: number[]; other:
   return { parts: d.top.map((t) => t.count / nonNull), other: d.otherCount / nonNull };
 }
 
-/** ビンのクリックで作る `between` フィルタの境界 (文字列)。整数ビンは両端含む、それ以外は上端も含む。 */
+/** `x` より小さい最大の倍精度数 (有限の `x` のみ)。 */
+function nextDown(x: number): number {
+  if (x === 0) return -Number.MIN_VALUE;
+  const buf = new DataView(new ArrayBuffer(8));
+  buf.setFloat64(0, x);
+  const bits = buf.getBigUint64(0);
+  buf.setBigUint64(0, x > 0 ? bits - 1n : bits + 1n);
+  return buf.getFloat64(0);
+}
+
+/**
+ * ビンのクリックで作る `between` フィルタの境界 (文字列)。整数ビンと最後のビンは両端を含む。
+ * 小数列の最後以外のビンは集計が半開区間 `[lo, hi)` なので、包含的な `between` で同じ行集合になるよう
+ * 上端を 1 つ下の倍精度数にする (新しい演算子を足さず、ハンドル経由のバックエンド絞り込みにもそのまま通る)。
+ */
 export function binFilterBounds(d: ColumnDistribution, binIdx: number): { lo: string; hi: string } | null {
   const b = d.bins[binIdx];
   if (!d.filterable || !b) return null;
-  return { lo: String(b.lo), hi: String(b.hi) };
+  const halfOpen = !d.integerBins && binIdx < d.bins.length - 1 && b.hi > b.lo;
+  return { lo: String(b.lo), hi: String(halfOpen ? nextDown(b.hi) : b.hi) };
 }
 
 function isoDate(ms: number, withTime: boolean): string {
