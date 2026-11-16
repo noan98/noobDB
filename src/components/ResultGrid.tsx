@@ -5104,6 +5104,7 @@ export const DataGrid = memo(function DataGrid({
   // 列ヘッダのミニ分布 (#2383)。取得済み行だけから、アイドル時間に列ごとに計算する。
   const columnDistributions = useColumnDistributions(
     columnDistribution,
+    rowStreaming,
     rows,
     columns.map((c) => c.name),
     columnKinds,

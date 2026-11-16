@@ -5,7 +5,10 @@ import {
   binHeightRatios,
   binRangeLabel,
   binnedTotal,
+  advanceDistribution,
   computeColumnDistribution,
+  createDistributionAccumulator,
+  finishDistribution,
   DIST_BIN_COUNT,
   distributionModeFor,
   parseDateMs,
@@ -122,7 +125,7 @@ describe("上位 3 値", () => {
 
   it("真偽値", () => {
     const d = computeColumnDistribution(col([true, false, true, null]), 0, "bool");
-    expect(d.top[0]).toEqual({ label: "true", count: 2 });
+    expect(d.top[0]).toEqual({ label: "true", value: "true", count: 2 });
   });
 
   it("同数は値の昇順で安定、長い値は切り詰める", () => {
@@ -154,6 +157,51 @@ describe("一意度と NULL", () => {
     expect(d.nulls).toBe(2);
     expect(d.bins).toEqual([]);
     expect(topWidthRatios(computeColumnDistribution(col([null]), 0, "string")).parts).toEqual([]);
+  });
+});
+
+describe("再開型の計算", () => {
+  it("分割して進めた結果が一括計算と一致する", () => {
+    const rows = col(Array.from({ length: 1234 }, (_, i) => (i % 7 === 0 ? null : (i * 37) % 501)));
+    const acc = createDistributionAccumulator(rows.length, 0, "number");
+    let steps = 0;
+    while (!advanceDistribution(acc, rows, 100)) steps++;
+    expect(steps).toBeGreaterThan(5);
+    expect(finishDistribution(acc)).toEqual(computeColumnDistribution(rows, 0, "number"));
+  });
+
+  it("10 万行でも 1 スライス (5,000 行) は短時間で終わる", () => {
+    const n = 100_000;
+    const rows: CellValue[][] = Array.from({ length: n }, (_, i) => [
+      `2024-${String((i % 12) + 1).padStart(2, "0")}-15 10:20:30`,
+      String(i * 1.5),
+    ]);
+    for (const [c, kind] of [
+      [0, "date"],
+      [1, "decimal"],
+    ] as const) {
+      const acc = createDistributionAccumulator(n, c, kind);
+      let worst = 0;
+      for (;;) {
+        const t0 = performance.now();
+        const done = advanceDistribution(acc, rows, 5000);
+        worst = Math.max(worst, performance.now() - t0);
+        if (done) break;
+      }
+      expect(worst).toBeLessThan(250);
+    }
+  });
+
+  it("日時の速い経路が Date.parse と一致する", () => {
+    for (const s of ["2024-02-29 23:59:59", "2024-02-29T00:00:00.123", "1999-12-31"]) {
+      expect(parseDateMs(s)).toBe(
+        Date.parse(
+          s.includes("T") || s.length === 10
+            ? `${s}${s.length === 10 ? "" : "Z"}`
+            : `${s.replace(" ", "T")}Z`,
+        ),
+      );
+    }
   });
 });
 

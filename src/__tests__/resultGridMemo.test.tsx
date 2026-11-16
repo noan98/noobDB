@@ -66,10 +66,6 @@ describe("結果グリッドの再レンダー抑制 (#1313)", () => {
   it("ストリーミングの経過時間の更新で DataGrid は再レンダーされず、表示だけが進む", () => {
     vi.useFakeTimers();
     renderWithProviders(<Harness streaming />);
-    // 列ヘッダのミニ分布 (#2383) はアイドル時間に 1 度だけ計算結果を反映する。それを済ませてから数える。
-    act(() => {
-      vi.advanceTimersByTime(50);
-    });
     const base = tableRenders.count;
     expect(document.body.textContent).toContain("(00:00)");
     act(() => {

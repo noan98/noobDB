@@ -3881,9 +3881,7 @@ td.is-find-current::after {
   transition: transform var(--dur-med) var(--ease-out), background-color var(--dur-fast) var(--ease);
 }
 .th-dist-bin.is-dim .th-dist-bin-fill { background: var(--dist-fill-dim); }
-.th-dist-bin.is-clickable:hover .th-dist-bin-fill,
-.th-dist-bin:focus-visible .th-dist-bin-fill { background: var(--accent); }
-.th-dist-bin:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.th-dist-bin.is-clickable:hover .th-dist-bin-fill { background: var(--accent); }
 .th-dist-stack {
   display: flex;
   width: 100%;
@@ -3903,9 +3901,10 @@ td.is-find-current::after {
 .th-dist-seg[data-rank="2"] { opacity: 0.45; }
 .th-dist-seg[data-rank="other"] { background: var(--dist-fill-dim); opacity: 1; }
 .th-dist-unique {
-  position: absolute;
-  top: 0;
-  right: 0;
+  /* ビンと重ならないよう flex の末尾に置く (ビンのクリックを塞がない)。 */
+  flex: none;
+  align-self: flex-start;
+  margin-left: var(--space-0-75);
   padding: 0 var(--space-0-75);
   font-size: var(--text-3xs);
   line-height: 1.3;

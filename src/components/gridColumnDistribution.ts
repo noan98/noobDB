@@ -50,6 +50,8 @@ export interface DistributionBin {
 export interface TopValue {
   /** 表示用 (長ければ切り詰め済み)。 */
   label: string;
+  /** 元の値 (React の key などの同一性用)。 */
+  value: string;
   count: number;
 }
 
@@ -89,16 +91,60 @@ function emptyDistribution(mode: DistributionMode, total: number): ColumnDistrib
   };
 }
 
+const dig = (s: string, i: number) => s.charCodeAt(i) - 48;
+const isDig = (s: string, i: number) => {
+  const c = s.charCodeAt(i);
+  return c >= 48 && c <= 57;
+};
+
+/** `YYYY-MM-DD` / `YYYY-MM-DD[ T]HH:MM:SS[.fff]` (タイムゾーン無し) の速い経路。合わなければ NaN。 */
+function parseDateFast(s: string): number {
+  const n = s.length;
+  if (n < 10 || s.charCodeAt(4) !== 45 || s.charCodeAt(7) !== 45) return Number.NaN;
+  for (const i of [0, 1, 2, 3, 5, 6, 8, 9]) if (!isDig(s, i)) return Number.NaN;
+  const y = dig(s, 0) * 1000 + dig(s, 1) * 100 + dig(s, 2) * 10 + dig(s, 3);
+  const mo = dig(s, 5) * 10 + dig(s, 6);
+  const d = dig(s, 8) * 10 + dig(s, 9);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return Number.NaN;
+  if (n === 10) return Date.UTC(y, mo - 1, d);
+  const sep = s.charCodeAt(10);
+  if (n < 19 || (sep !== 32 && sep !== 84) || s.charCodeAt(13) !== 58 || s.charCodeAt(16) !== 58) {
+    return Number.NaN;
+  }
+  for (const i of [11, 12, 14, 15, 17, 18]) if (!isDig(s, i)) return Number.NaN;
+  let ms = 0;
+  if (n > 19) {
+    if (s.charCodeAt(19) !== 46 || n < 21) return Number.NaN;
+    let scale = 100;
+    for (let i = 20; i < n; i++) {
+      if (!isDig(s, i)) return Number.NaN;
+      ms += dig(s, i) * scale;
+      scale /= 10;
+    }
+    ms = Math.floor(ms);
+  }
+  return Date.UTC(
+    y,
+    mo - 1,
+    d,
+    dig(s, 11) * 10 + dig(s, 12),
+    dig(s, 14) * 10 + dig(s, 15),
+    dig(s, 17) * 10 + dig(s, 18),
+    ms,
+  );
+}
+
 /** 日付 / 日時のセル値を epoch ms へ (解釈できなければ NaN)。タイムゾーン無しは UTC として読む。 */
 export function parseDateMs(v: CellValue): number {
   if (v === null || v === undefined) return Number.NaN;
   if (typeof v === "number") return v;
   const s = String(v).trim();
   if (s === "") return Number.NaN;
+  const fast = parseDateFast(s);
+  if (!Number.isNaN(fast)) return fast;
   const iso = s.includes(" ") && !s.includes("T") ? s.replace(" ", "T") : s;
   const hasZone = /(?:Z|[+-]\d{2}(?::?\d{2})?)$/i.test(iso) && /T/.test(iso);
-  const ms = Date.parse(hasZone || !/T/.test(iso) ? iso : `${iso}Z`);
-  return ms;
+  return Date.parse(hasZone || !/T/.test(iso) ? iso : `${iso}Z`);
 }
 
 function numberOf(v: CellValue): number {
@@ -108,18 +154,77 @@ function numberOf(v: CellValue): number {
   return s === "" ? Number.NaN : Number(s);
 }
 
-/** 値の最小・最大から、ヒストグラムのビンを作る。 */
-function buildBins(
-  values: Float64Array,
-  n: number,
-  min: number,
-  max: number,
-  intLike: boolean,
-): { bins: DistributionBin[]; integerBins: boolean } {
-  if (n === 0) return { bins: [], integerBins: false };
+interface BinPlan {
+  oneEach: boolean;
+  count: number;
+  width: number;
+}
+
+/**
+ * 再開できる列ごとの集計状態。10 万行の 1 列は 30〜80ms かかるので、`advanceDistribution` で
+ * 行方向に少しずつ進め、呼び出し側がスライスの合間に制御を返せるようにする。
+ */
+export interface DistributionAccumulator {
+  mode: DistributionMode;
+  colIdx: number;
+  kind: CellKind;
+  total: number;
+  /** 0 = 走査、1 = ビン詰め、2 = 完了。 */
+  phase: 0 | 1 | 2;
+  pos: number;
+  nulls: number;
+  nonNull: number;
+  seen: Set<CellValue> | null;
+  values: Float64Array | null;
+  used: number;
+  min: number;
+  max: number;
+  intLike: boolean;
+  freq: Map<string, number> | null;
+  plan: BinPlan | null;
+  bins: DistributionBin[];
+  integerBins: boolean;
+}
+
+export function createDistributionAccumulator(
+  total: number,
+  colIdx: number,
+  kind: CellKind,
+): DistributionAccumulator {
+  const mode = distributionModeFor(kind);
+  const numeric = mode === "number" || mode === "date";
+  return {
+    mode,
+    colIdx,
+    kind,
+    total,
+    phase: 0,
+    pos: 0,
+    nulls: 0,
+    nonNull: 0,
+    seen: numeric ? new Set() : null,
+    values: numeric ? new Float64Array(total) : null,
+    used: 0,
+    min: Number.POSITIVE_INFINITY,
+    max: Number.NEGATIVE_INFINITY,
+    intLike: true,
+    freq: mode === "top" ? new Map() : null,
+    plan: null,
+    bins: [],
+    integerBins: false,
+  };
+}
+
+function makeBins(acc: DistributionAccumulator): void {
+  const { min, max } = acc;
+  const intLike = acc.mode === "number" && acc.intLike;
+  if (acc.used === 0) return;
   const span = max - min;
   if (span === 0) {
-    return { bins: [{ lo: min, hi: max, count: n }], integerBins: intLike };
+    acc.bins = [{ lo: min, hi: max, count: 0 }];
+    acc.integerBins = intLike;
+    acc.plan = { oneEach: false, count: 1, width: 0 };
+    return;
   }
   const oneEach = intLike && span + 1 <= DIST_BIN_COUNT;
   const count = oneEach ? span + 1 : DIST_BIN_COUNT;
@@ -132,106 +237,138 @@ function buildBins(
       lo = min + i;
       hi = lo;
     } else if (intLike) {
-      lo = Math.ceil(min + i * width);
-      hi = i === count - 1 ? max : Math.ceil(min + (i + 1) * width) - 1;
+      // min を足す前に切り上げる (2^52 以上でも件数と境界がずれない)。
+      lo = min + Math.ceil(i * width);
+      hi = i === count - 1 ? max : min + Math.ceil((i + 1) * width) - 1;
     } else {
       lo = min + i * width;
       hi = i === count - 1 ? max : min + (i + 1) * width;
     }
     bins.push({ lo, hi, count: 0 });
   }
-  for (let k = 0; k < n; k++) {
+  acc.bins = bins;
+  acc.integerBins = intLike;
+  acc.plan = { oneEach, count, width };
+}
+
+/** 最大 `maxRows` 行ぶん進める。完了したら true。 */
+export function advanceDistribution(
+  acc: DistributionAccumulator,
+  rows: readonly (readonly CellValue[])[],
+  maxRows: number,
+): boolean {
+  if (acc.phase === 2) return true;
+  const { colIdx, mode } = acc;
+  const end = Math.min(acc.pos + maxRows, acc.phase === 0 ? acc.total : acc.used);
+  if (acc.phase === 0) {
+    const { seen, values, freq } = acc;
+    for (let i = acc.pos; i < end; i++) {
+      const v = rows[i][colIdx];
+      if (v === null || v === undefined) {
+        acc.nulls++;
+        continue;
+      }
+      acc.nonNull++;
+      if (mode === "none") continue;
+      if (values && seen) {
+        seen.add(v);
+        const x = mode === "number" ? numberOf(v) : parseDateMs(v);
+        if (Number.isFinite(x)) {
+          values[acc.used++] = x;
+          if (x < acc.min) acc.min = x;
+          if (x > acc.max) acc.max = x;
+          if (acc.intLike && !Number.isInteger(x)) acc.intLike = false;
+        }
+      } else if (freq) {
+        const key = String(v);
+        freq.set(key, (freq.get(key) ?? 0) + 1);
+      }
+    }
+    acc.pos = end;
+    if (acc.pos < acc.total) return false;
+    if (acc.values) {
+      makeBins(acc);
+      acc.phase = acc.plan ? 1 : 2;
+      acc.pos = 0;
+    } else {
+      acc.phase = 2;
+    }
+    return acc.phase === 2;
+  }
+  // phase 1: ビン詰め
+  const { values, plan, bins, min } = acc;
+  if (!values || !plan) {
+    acc.phase = 2;
+    return true;
+  }
+  for (let k = acc.pos; k < end; k++) {
     const x = values[k];
-    let idx = oneEach ? x - min : Math.floor((x - min) / width);
-    if (idx >= count) idx = count - 1;
+    let idx = plan.count === 1 ? 0 : plan.oneEach ? x - min : Math.floor((x - min) / plan.width);
+    if (idx >= plan.count) idx = plan.count - 1;
     if (idx < 0) idx = 0;
     bins[idx].count++;
   }
-  // 整数ビンで幅が 1 未満になり空の区間 (lo > hi) ができる場合は取り除く。
-  return { bins: intLike ? bins.filter((b) => b.lo <= b.hi) : bins, integerBins: intLike };
+  acc.pos = end;
+  if (acc.pos >= acc.used) acc.phase = 2;
+  return acc.phase === 2;
+}
+
+/** 上位 `DIST_TOP_COUNT` 値を全件ソートせず 1 回の走査で選ぶ (件数の降順、同数は値の昇順)。 */
+function topEntries(freq: Map<string, number>): [string, number][] {
+  const top: [string, number][] = [];
+  const better = (a: [string, number], b: [string, number]) => a[1] > b[1] || (a[1] === b[1] && a[0] < b[0]);
+  for (const e of freq) {
+    if (top.length === DIST_TOP_COUNT && !better(e, top[top.length - 1])) continue;
+    let i = top.length;
+    while (i > 0 && better(e, top[i - 1])) i--;
+    top.splice(i, 0, e);
+    if (top.length > DIST_TOP_COUNT) top.pop();
+  }
+  return top;
+}
+
+/** 完了した集計状態から結果を作る。 */
+export function finishDistribution(acc: DistributionAccumulator): ColumnDistribution {
+  const dist = emptyDistribution(acc.mode, acc.total);
+  dist.nulls = acc.nulls;
+  if (acc.mode === "none") return dist;
+  if (acc.seen) dist.distinct = acc.seen.size;
+  else if (acc.freq) dist.distinct = acc.freq.size;
+  dist.unique = acc.total >= DIST_UNIQUE_MIN_ROWS && acc.nulls === 0 && dist.distinct === acc.total;
+  if (acc.values) {
+    dist.bins = acc.bins;
+    dist.integerBins = acc.integerBins;
+    dist.filterable =
+      acc.mode === "number" &&
+      acc.bins.length > 0 &&
+      Math.abs(acc.min) <= Number.MAX_SAFE_INTEGER &&
+      Math.abs(acc.max) <= Number.MAX_SAFE_INTEGER;
+  } else if (acc.freq) {
+    const top = topEntries(acc.freq);
+    dist.top = top.map(([value, count]) => ({
+      label: value.length > TOP_LABEL_MAX ? `${value.slice(0, TOP_LABEL_MAX)}…` : value,
+      value,
+      count,
+    }));
+    dist.otherCount = acc.nonNull - top.reduce((sum, [, c]) => sum + c, 0);
+  }
+  return dist;
 }
 
 /**
- * 列 `colIdx` の分布を `rows` から計算する。`rows` は取得済みの全行 (NULL を含む)。
- * 1 列ぶんで 1 回の走査 + (数値 / 日付は) ビン詰めの 2 周。
+ * 列 `colIdx` の分布を `rows` から一括で計算する (テスト・小さい結果用)。
+ * 大きい結果は `advanceDistribution` で分割して進める。
  */
 export function computeColumnDistribution(
   rows: readonly (readonly CellValue[])[],
   colIdx: number,
   kind: CellKind,
 ): ColumnDistribution {
-  const mode = distributionModeFor(kind);
-  const total = rows.length;
-  const dist = emptyDistribution(mode, total);
-  if (mode === "none") {
-    let nulls = 0;
-    for (let i = 0; i < total; i++) {
-      const v = rows[i][colIdx];
-      if (v === null || v === undefined) nulls++;
-    }
-    dist.nulls = nulls;
-    return dist;
+  const acc = createDistributionAccumulator(rows.length, colIdx, kind);
+  while (!advanceDistribution(acc, rows, Math.max(rows.length, 1))) {
+    // 1 回で終わらない (走査 → ビン詰め) ぶんを繰り返す。
   }
-
-  let nulls = 0;
-  const seen = new Set<CellValue>();
-  const numeric = mode === "number" || mode === "date";
-  const values = numeric ? new Float64Array(total) : null;
-  let used = 0;
-  let min = Number.POSITIVE_INFINITY;
-  let max = Number.NEGATIVE_INFINITY;
-  let intLike = true;
-  const freq = mode === "top" ? new Map<string, number>() : null;
-  let nonNull = 0;
-
-  for (let i = 0; i < total; i++) {
-    const v = rows[i][colIdx];
-    if (v === null || v === undefined) {
-      nulls++;
-      continue;
-    }
-    nonNull++;
-    seen.add(v);
-    if (values) {
-      const x = mode === "number" ? numberOf(v) : parseDateMs(v);
-      if (Number.isFinite(x)) {
-        values[used++] = x;
-        if (x < min) min = x;
-        if (x > max) max = x;
-        if (intLike && !Number.isInteger(x)) intLike = false;
-      }
-    } else if (freq) {
-      const key = String(v);
-      freq.set(key, (freq.get(key) ?? 0) + 1);
-    }
-  }
-
-  dist.nulls = nulls;
-  dist.distinct = seen.size;
-  dist.unique = total >= DIST_UNIQUE_MIN_ROWS && nulls === 0 && seen.size === total;
-
-  if (values) {
-    // 日付は常に連続量として扱う (整数ミリ秒でも 1 値 1 ビンにはしない)。
-    const { bins, integerBins } = buildBins(values, used, min, max, mode === "number" && intLike);
-    dist.bins = bins;
-    dist.integerBins = integerBins;
-    dist.filterable =
-      mode === "number" &&
-      bins.length > 0 &&
-      Math.abs(min) <= Number.MAX_SAFE_INTEGER &&
-      Math.abs(max) <= Number.MAX_SAFE_INTEGER;
-  } else if (freq) {
-    const sorted = [...freq.entries()].sort(
-      (a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0),
-    );
-    const top = sorted.slice(0, DIST_TOP_COUNT);
-    dist.top = top.map(([value, count]) => ({
-      label: value.length > TOP_LABEL_MAX ? `${value.slice(0, TOP_LABEL_MAX)}…` : value,
-      count,
-    }));
-    dist.otherCount = nonNull - top.reduce((s, [, c]) => s + c, 0);
-  }
-  return dist;
+  return finishDistribution(acc);
 }
 
 /** 非 NULL のうち、分布に載った (解釈できた) 件数。 */

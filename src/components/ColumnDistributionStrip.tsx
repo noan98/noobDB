@@ -56,7 +56,7 @@ export function ColumnDistributionStrip({
       <div className="th-dist-stack">
         {dist.top.map((tv, i) => (
           <div
-            key={tv.label}
+            key={tv.value}
             className="th-dist-seg"
             data-rank={i}
             style={{ flexGrow: parts[i] }}
