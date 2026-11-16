@@ -136,6 +136,7 @@ import {
   setResultGridMode,
   setResultGridPageSize,
   setRichCellRendering,
+  setColumnDistribution,
   setColumnNullBars,
   setColumnMaskEnabled,
   setColumnMaskPatterns,
@@ -2042,6 +2043,19 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     id="settings-column-null-bars"
                     checked={settings.columnNullBars}
                     onChange={setColumnNullBars}
+                  />
+                </SettingsToggleRow>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-column-distribution">
+                      {t("settingsColumnDistribution")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsColumnDistributionHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-column-distribution"
+                    checked={settings.columnDistribution}
+                    onChange={setColumnDistribution}
                   />
                 </SettingsToggleRow>
               </SettingsSection>

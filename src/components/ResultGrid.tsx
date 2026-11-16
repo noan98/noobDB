@@ -102,6 +102,9 @@ import { GridViewPresetsMenu } from "./GridViewPresetsMenu";
 import { ContextMenu, submenuOrFlat, SUBMENU_THRESHOLD, type ContextMenuEntry } from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
 import { ScrollEdgeShadows } from "./ScrollEdgeShadows";
+import { ColumnDistributionStrip } from "./ColumnDistributionStrip";
+import type { ColumnDistribution } from "./gridColumnDistribution";
+import { useColumnDistributions } from "./useColumnDistributions";
 import { GridOverviewRuler } from "./GridOverviewRulerCanvas";
 import { buildRowMasks, nextMarkedRow, RULER_CHANGE_MASK } from "./gridOverviewRuler";
 import { moveColumnId, reorderColumnIds } from "./columnReorderFlip";
@@ -3442,6 +3445,8 @@ type GridHeaderHandlers = {
   onResizeBy: (column: Header<GridFeatures, RowShape, unknown>["column"], delta: number) => void;
   /** 並び替えグリップのキーボード操作 (左右キーで列を 1 つ動かす, #1529)。 */
   onMoveColumn: (colId: string, dir: -1 | 1) => void;
+  /** ミニ分布のビンのクリック: 列の範囲フィルタを入れる / (null で) 解除する (#2383)。 */
+  onBinFilter: (colIdx: number, filter: ColumnFilter | null) => void;
 };
 
 /**
@@ -3477,6 +3482,12 @@ interface GridHeaderCellProps {
   nullPct: number | null;
   /** 近似ユニーク数の一言 (#1628)。ミニバーのツールチップに添える。 */
   distinctHint?: string | null;
+  /** 列ヘッダのミニ分布 (#2383)。設定オフなら undefined (ストリップ自体を出さない)。計算前は null。 */
+  distribution?: ColumnDistribution | null;
+  /** この列の列フィルタ (ミニ分布のビンの強調用)。 */
+  columnFilter?: ColumnFilter;
+  /** ビンのクリックで範囲フィルタを入れてよいか。 */
+  canBinFilter?: boolean;
   rowCount: number;
   /** 現在の列幅 (px)。リサイズハンドルの aria-valuenow に使う。 */
   colSize: number;
@@ -3514,6 +3525,9 @@ const GridHeaderCell = memo(function GridHeaderCell({
   filterOpen,
   nullPct,
   distinctHint,
+  distribution,
+  columnFilter,
+  canBinFilter,
   rowCount,
   colSize,
   t,
@@ -3603,6 +3617,17 @@ const GridHeaderCell = memo(function GridHeaderCell({
         </div>
       ) : (
         flexRender(h.column.columnDef.header, h.getContext())
+      )}
+      {distribution !== undefined && (
+        <ColumnDistributionStrip
+          dist={distribution}
+          colName={colName}
+          filter={columnFilter}
+          canFilter={canBinFilter === true}
+          onBinFilter={(f) => handlers.onBinFilter(colIdx, f)}
+          t={t}
+          bindTooltip={bindTooltip}
+        />
       )}
       {nullPct !== null &&
         (() => {
@@ -4480,6 +4505,7 @@ export const DataGrid = memo(function DataGrid({
     cellEditOnBlur,
     richCellRendering,
     columnNullBars,
+    columnDistribution,
     columnMaskEnabled,
     columnMaskPatterns,
     columnMaskCopyPlaceholder,
@@ -5074,6 +5100,14 @@ export const DataGrid = memo(function DataGrid({
       return t("gridDistinctApprox", { count });
     });
   }, [columnNullBars, rows, columns, t]);
+
+  // 列ヘッダのミニ分布 (#2383)。取得済み行だけから、アイドル時間に列ごとに計算する。
+  const columnDistributions = useColumnDistributions(
+    columnDistribution,
+    rows,
+    columns.map((c) => c.name),
+    columnKinds,
+  );
 
   // Drag-to-reorder columns: track the dragged/hovered column ids for
   // visual feedback, and commit a new order on drop.
@@ -6540,6 +6574,8 @@ export const DataGrid = memo(function DataGrid({
       setDragOverColId(null);
     },
     onOpenFilter: (colIdx: number, anchor: DOMRect) => setFilterMenu({ colIdx, anchor }),
+    onBinFilter: (colIdx: number, filter: ColumnFilter | null) =>
+      table.getColumn(String(colIdx))?.setFilterValue(filter ?? undefined),
     onStartResize: (
       e: React.MouseEvent | React.TouchEvent,
       column: Header<GridFeatures, RowShape, unknown>["column"],
@@ -7498,6 +7534,9 @@ export const DataGrid = memo(function DataGrid({
                     filterOpen={filterMenu?.colIdx === colIdx}
                     nullPct={nullRates ? (nullRates[colIdx] ?? 0) : null}
                     distinctHint={distinctHints?.[colIdx] ?? null}
+                    distribution={columnDistribution ? (columnDistributions?.[colIdx] ?? null) : undefined}
+                    columnFilter={h.column.getFilterValue() as ColumnFilter | undefined}
+                    canBinFilter={!onSetServerFilter}
                     rowCount={nullRates ? rows.length : 0}
                     colSize={h.column.getSize()}
                     t={t}
