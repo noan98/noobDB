@@ -2,6 +2,8 @@ import { useRef, useState } from "react";
 import { useT } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { FieldError, FieldLabel, FormSection } from "./modalForm";
+import { IdentLengthError } from "./IdentLengthError";
+import { identTooLong } from "./sqlDialect";
 import { SqlPreview } from "./SqlPreview";
 import { isPlainEnterKey } from "./modalKeys";
 import { tableNameCollides } from "./resultsToTable";
@@ -37,7 +39,9 @@ export function RenameTableDialog({ table, existingTables, driver, buildSql, onC
   const caseOnlyCollides = !exactCollides && trimmed !== table && tableNameCollides(others, trimmed);
   const blockedByCase = caseOnlyCollides && driver === "sqlite";
   const collides = exactCollides || blockedByCase;
-  const valid = trimmed.length > 0 && trimmed !== table && !collides;
+  // PostgreSQL は 63 バイト超を黙って切り詰め、MySQL は ERROR 1059 になる (#2384)。
+  const tooLong = identTooLong(driver, trimmed);
+  const valid = trimmed.length > 0 && trimmed !== table && !collides && !tooLong;
   const submit = () => {
     if (valid) onConfirm(trimmed);
   };
@@ -65,6 +69,7 @@ export function RenameTableDialog({ table, existingTables, driver, buildSql, onC
               if (isPlainEnterKey(e)) submit();
             }}
           />
+          <IdentLengthError driver={driver} names={tooLong ? [trimmed] : []} />
           {collides && <FieldError>{t("renameTableExists", { table: trimmed })}</FieldError>}
           {caseOnlyCollides && !blockedByCase && (
             <FieldError tone="warning">{t("renameTableCaseOnlyExists", { table: trimmed })}</FieldError>

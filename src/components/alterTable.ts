@@ -39,7 +39,7 @@
 // 呼び出し側 (i18n) に任せる — このモジュールは表示に依存しない。
 
 import type { SqliteRebuildEdit } from "../api/tauri";
-import { fitPgName, qualifiedTableName, quoteIdentFor } from "./sqlDialect";
+import { fitPgName, identTooLong, qualifiedTableName, quoteIdentFor } from "./sqlDialect";
 import {
   activeGenerated,
   CURRENT_TIME_FN_RE,
@@ -684,6 +684,26 @@ export function duplicateColumnNames(
     if (n) add(n);
   }
   return dups;
+}
+
+/**
+ * 上限を超える列名 (追加する列と、名前を変える既存列の新しい名前)。名前を変えない既存列は、元から長くても
+ * 対象外にする (触っていない列で実行を止めない)。PostgreSQL は黙って切り詰め、MySQL は ERROR 1059 になる (#2384)。
+ */
+export function tooLongColumnNames(
+  driver: string,
+  form: Pick<AlterTableForm, "existing" | "added">,
+): string[] {
+  const out: string[] = [];
+  for (const e of form.existing) {
+    const n = e.name.trim();
+    if (!e.drop && n && n !== e.original && identTooLong(driver, n)) out.push(n);
+  }
+  for (const c of form.added) {
+    const n = c.name.trim();
+    if (n && identTooLong(driver, n)) out.push(n);
+  }
+  return out;
 }
 
 /**

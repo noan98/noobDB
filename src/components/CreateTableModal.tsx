@@ -16,6 +16,8 @@ import { useConfirm } from "./ConfirmDialog";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { SqlPreview } from "./SqlPreview";
 import { FieldError, FieldLabel, FormSection } from "./modalForm";
+import { IdentLengthError } from "./IdentLengthError";
+import { identTooLong } from "./sqlDialect";
 import { Button, Input, PressableButton, Switch } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
 import { Icon } from "./Icon";
@@ -250,8 +252,13 @@ export function CreateTableModal({
     () => tableOptionProblems(driver, columns, options, foreignKeys.filter(isCompleteForeignKey)),
     [driver, columns, options, foreignKeys],
   );
+  // PostgreSQL は 63 バイト超を黙って切り詰め、MySQL は ERROR 1059 になる (#2384)。
+  const tooLongNames = [table, ...columns.map((c) => c.name)]
+    .map((n) => n.trim())
+    .filter((n) => identTooLong(driver, n));
   const valid =
     table.trim().length > 0 &&
+    tooLongNames.length === 0 &&
     columns.length > 0 &&
     columns.every((c) => c.name.trim().length > 0) &&
     !hasPartialForeignKey &&
@@ -547,6 +554,7 @@ export function CreateTableModal({
                   : t("createTableGeneratedEmpty", { column: g.name })}
             </FieldError>
           ))}
+        <IdentLengthError driver={driver} names={tooLongNames} />
         {hasPartialForeignKey && <FieldError>{t("createTableForeignKeyIncomplete")}</FieldError>}
         {readOnly && <FieldError>{t("createTableReadOnly")}</FieldError>}
       </ModalBody>
