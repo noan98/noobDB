@@ -106,4 +106,25 @@ describe("位置マーカーの帯 (#2381, 実ブラウザ)", () => {
     samples.sort((x, y) => x - y);
     expect(samples[3]).toBeLessThan(50);
   });
+
+  it("帯の幅だけが変わったとき (フォント拡大) ビットマップ幅も追従する", async () => {
+    const masks = new Uint8Array(1000);
+    masks[10] = 8;
+    const ui = (w: string) => (
+      <div style={{ width: 80, height: 300, display: "flex", ["--ruler-w" as string]: w }}>
+        <GridOverviewRuler masks={masks} selection={null} currentRow={null} onJump={() => {}} />
+      </div>
+    );
+    await renderInBrowser(ui("20px"));
+    await expect.poll(() => document.querySelector(".grid-ruler canvas")).not.toBeNull();
+    const canvas = document.querySelector(".grid-ruler canvas") as HTMLCanvasElement;
+    const dpr = window.devicePixelRatio || 1;
+    // 左罫線ぶんだけ帯の幅と canvas の clientWidth はずれるので、clientWidth を基準にする。
+    await expect.poll(() => canvas.clientWidth).toBeGreaterThan(15);
+    await expect.poll(() => canvas.width).toBe(Math.round(canvas.clientWidth * dpr));
+    const before = canvas.clientWidth;
+    (canvas.closest("[style*='--ruler-w']") as HTMLElement).style.setProperty("--ruler-w", "40px");
+    await expect.poll(() => canvas.clientWidth).toBeGreaterThan(before + 10);
+    await expect.poll(() => canvas.width).toBe(Math.round(canvas.clientWidth * dpr));
+  });
 });

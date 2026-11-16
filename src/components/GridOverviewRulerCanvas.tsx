@@ -41,6 +41,7 @@ interface Props {
 }
 
 interface Size {
+  width: number;
   height: number;
   tickMin: number;
 }
@@ -48,7 +49,7 @@ interface Size {
 export function GridOverviewRuler({ masks, selection, currentRow, onJump }: Props) {
   const t = useT();
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [size, setSize] = useState<Size>({ height: 0, tickMin: 1 });
+  const [size, setSize] = useState<Size>({ width: 0, height: 0, tickMin: 1 });
   const [themeSeq, setThemeSeq] = useState(0);
   const [dpr, setDpr] = useState(() => window.devicePixelRatio || 1);
   const [hover, setHover] = useState<{ label: string; anchor: TooltipRect } | null>(null);
@@ -61,9 +62,9 @@ export function GridOverviewRuler({ masks, selection, currentRow, onJump }: Prop
     const measure = () => {
       const tickMin = Number.parseFloat(getComputedStyle(el).scrollMarginTop) || 1;
       setSize((prev) =>
-        prev.height === el.clientHeight && prev.tickMin === tickMin
+        prev.width === el.clientWidth && prev.height === el.clientHeight && prev.tickMin === tickMin
           ? prev
-          : { height: el.clientHeight, tickMin },
+          : { width: el.clientWidth, height: el.clientHeight, tickMin },
       );
     };
     measure();
@@ -97,9 +98,9 @@ export function GridOverviewRuler({ masks, selection, currentRow, onJump }: Prop
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || size.height <= 0) return;
-    canvas.width = Math.max(1, Math.round(canvas.clientWidth * dpr));
+    canvas.width = Math.max(1, Math.round(size.width * dpr));
     canvas.height = Math.max(1, Math.round(size.height * dpr));
-  }, [size.height, dpr]);
+  }, [size.width, size.height, dpr]);
 
   const lanes = useMemo(
     () => computeRulerTicks(masks, size.height, size.tickMin),
@@ -110,7 +111,7 @@ export function GridOverviewRuler({ masks, selection, currentRow, onJump }: Prop
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || size.height <= 0) return;
-    const w = canvas.clientWidth;
+    const w = size.width;
     const h = size.height;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
