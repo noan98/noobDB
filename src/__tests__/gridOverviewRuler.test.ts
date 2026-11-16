@@ -72,6 +72,25 @@ describe("computeRulerTicks", () => {
     expect(lanes[1].map((t) => t.kind)).toEqual(["delete"]);
     expect(lanes[2].map((t) => t.kind)).toEqual(["added"]);
   });
+  it("同じバケットに優先度の低い種別が混ざっても、件数と範囲は選ばれた種別の行だけで数える", () => {
+    // 1000 行を 100px に圧縮 (10 行 / px)。編集 9 行 + 削除 1 行が同じバケットに入る。
+    const m = new Uint8Array(1000);
+    for (let i = 0; i < 9; i++) m[i] = rulerKindBit("edit");
+    m[9] = rulerKindBit("delete");
+    const lane = computeRulerTicks(m, 100, 1)[1];
+    expect(lane).toHaveLength(1);
+    expect(lane[0]).toMatchObject({ kind: "delete", count: 1, firstRow: 9, lastRow: 9 });
+    // 削除が先に来ても、後から来た編集を数えない。
+    const m2 = new Uint8Array(1000);
+    m2[0] = rulerKindBit("delete");
+    for (let i = 1; i < 10; i++) m2[i] = rulerKindBit("edit");
+    expect(computeRulerTicks(m2, 100, 1)[1][0]).toMatchObject({
+      kind: "delete",
+      count: 1,
+      firstRow: 0,
+      lastRow: 0,
+    });
+  });
   it("別レーンの状態は並んで残る", () => {
     const m = new Uint8Array(1);
     m[0] = rulerKindBit("find") | rulerKindBit("edit");
