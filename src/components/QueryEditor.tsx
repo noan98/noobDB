@@ -10,6 +10,7 @@ import {
   useEffect,
   useLayoutEffect,
   useImperativeHandle,
+  useCallback,
   useMemo,
   useRef,
   useState,
@@ -1998,7 +1999,7 @@ export const QueryEditor = memo(
       if (!view) return;
       view.dispatch({ effects: refreshScrollMarkers.of(null) });
     }, [scrollMarkersEnabled]);
-    const jumpToScrollMarker = (pos: number) => {
+    const jumpToScrollMarker = useCallback((pos: number) => {
       const view = viewRef.current;
       if (!view) return;
       const at = Math.min(Math.max(0, pos), view.state.doc.length);
@@ -2008,7 +2009,7 @@ export const QueryEditor = memo(
         userEvent: "select",
       });
       view.focus();
-    };
+    }, []);
 
     // 影響行数プリフライト (#737)。現在文が単純な UPDATE / DELETE のとき、対象と
     // WHERE から COUNT を組み立ててデバウンス付きで裏実行する。設定オフ・未接続では

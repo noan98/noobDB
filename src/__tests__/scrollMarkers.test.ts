@@ -162,7 +162,7 @@ describe("scrollMarkers 拡張", () => {
     v.dispatch({ changes: { from: pos, insert: "X" } });
     flush();
     expect(last()?.sources).toEqual([]);
-    expect(v.dom.classList.contains("cm-has-scroll-markers")).toBe(false);
+    expect(v.dom.classList.contains("cm-scroll-markers-empty")).toBe(true);
   });
 
   it("構文チェックの診断が載る (info / hint は載らない)", () => {
@@ -223,12 +223,75 @@ describe("scrollMarkers 拡張", () => {
     expect(snaps.length - before).toBe(1);
   });
 
+  it("一度帯が出たら、印が 0 件になっても幅は確保し続け (透明にする)、設定オフで解放する", () => {
+    const enabled = { on: true };
+    const { v, errors, flush } = mount(lines(10), enabled);
+    v.dispatch({ effects: errors.set([{ from: 0, to: 3, kind: "error", data: { error: "x" } }]) });
+    flush();
+    expect(v.dom.classList.contains("cm-scroll-markers-empty")).toBe(false);
+    v.dispatch({ effects: errors.set([]) });
+    flush();
+    expect(v.dom.classList.contains("cm-has-scroll-markers")).toBe(true);
+    expect(v.dom.classList.contains("cm-scroll-markers-empty")).toBe(true);
+    enabled.on = false;
+    v.dispatch({ effects: refreshScrollMarkers.of(null) });
+    flush();
+    expect(v.dom.classList.contains("cm-has-scroll-markers")).toBe(false);
+  });
+
+  it("印が無いままの変更では onSnapshot を呼ばない", () => {
+    const { v, snaps, flush } = mount(lines(10));
+    flush();
+    const before = snaps.length;
+    v.dispatch({ changes: { from: v.state.doc.length, insert: "\n" } });
+    flush();
+    expect(snaps.length).toBe(before);
+  });
+
+  it("帯の縦範囲を scrollDOM に合わせる (検索パネルを開いてもずれない)", () => {
+    const { v, hosts } = mount(lines(20));
+    const sd = v.scrollDOM;
+    let top = 0;
+    Object.defineProperty(sd, "offsetTop", { get: () => top, configurable: true });
+    Object.defineProperty(sd, "offsetHeight", { get: () => 300, configurable: true });
+    top = 40; // 検索パネルが上に出て、スクロール領域が下へ押し下げられた状態
+    openSearchPanel(v);
+    vi.advanceTimersByTime(50);
+    const host = hosts[0] as HTMLElement;
+    expect(host.style.getPropertyValue("--scroll-marker-top")).toBe("40px");
+    expect(host.style.getPropertyValue("--scroll-marker-height")).toBe("300px");
+  });
+
+  it("設定オフの間は層の build を呼ばない", () => {
+    vi.useFakeTimers();
+    const build = vi.fn(() => []);
+    const read = vi.fn(() => 1);
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    view = new EditorView({
+      doc: "a\nb",
+      parent,
+      extensions: [
+        scrollMarkers({
+          layers: [{ read, build }],
+          isEnabled: () => false,
+          onHost: () => {},
+          onSnapshot: () => {},
+        }),
+      ],
+    });
+    view.dispatch({ changes: { from: 0, insert: "x" } });
+    vi.advanceTimersByTime(SCROLL_MARKERS_DEBOUNCE_MS + 1);
+    expect(build).not.toHaveBeenCalled();
+  });
+
   it("破棄すると host を null で返し、DOM を取り除く", () => {
-    const { v, hosts } = mount(lines(3));
+    const { v, hosts, snaps } = mount(lines(3));
     expect(hosts[0]?.className).toBe("cm-scroll-markers");
     v.destroy();
     view = null;
     expect(hosts[hosts.length - 1]).toBeNull();
+    expect(snaps[snaps.length - 1]).toBeNull();
     expect(document.querySelector(".cm-scroll-markers")).toBeNull();
   });
 });

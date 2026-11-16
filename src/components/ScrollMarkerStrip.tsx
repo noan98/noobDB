@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useT } from "../i18n";
 import { TooltipBubble, useDelegatedTooltip } from "./Tooltip";
@@ -36,7 +36,7 @@ export function scrollTickLabel(
  * エディタ右端の俯瞰マーカー帯 (#2382)。`scrollMarkers` (ViewPlugin) が用意した要素へ portal で描く。
  * 重なりの判定は純関数 `buildScrollTicks`、ツールチップは共通の `useDelegatedTooltip`。
  */
-export function ScrollMarkerStrip({
+export const ScrollMarkerStrip = memo(function ScrollMarkerStrip({
   host,
   snapshot,
   onJump,
@@ -46,7 +46,7 @@ export function ScrollMarkerStrip({
   onJump: (pos: number) => void;
 }) {
   const t = useT();
-  const { hovered, bind } = useDelegatedTooltip();
+  const { hovered, bind, hide } = useDelegatedTooltip();
   const [height, setHeight] = useState(FALLBACK_HEIGHT_PX);
 
   useEffect(() => {
@@ -63,6 +63,9 @@ export function ScrollMarkerStrip({
     () => (snapshot ? buildScrollTicks(snapshot.sources, snapshot.totalLines, buckets) : []),
     [snapshot, buckets],
   );
+  // ティックが入れ替わったら、古い位置に浮いたツールチップを閉じる。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ticks の変化を契機に閉じるだけ
+  useEffect(() => hide(), [ticks, hide]);
   if (!host || !snapshot || snapshot.sources.length === 0) return null;
   const range = snapshot.activeLines;
   const lines = Math.max(1, snapshot.totalLines - 1);
@@ -85,7 +88,7 @@ export function ScrollMarkerStrip({
             key={`${tick.line}:${tick.kind}`}
             type="button"
             className={`cm-scroll-marker cm-scroll-marker-${tick.kind}`}
-            style={{ top: `${tick.frac * 100}%` }}
+            style={{ ["--tick-pos" as string]: tick.frac }}
             tabIndex={-1}
             aria-label={label.replace(/\n/g, " ")}
             // CodeMirror の選択を奪わない (ボタンの mousedown でエディタが blur しないように)。
@@ -99,4 +102,4 @@ export function ScrollMarkerStrip({
     </>,
     host,
   );
-}
+});

@@ -234,6 +234,10 @@ export function scrollMarkers(opts: ScrollMarkersOptions): Extension {
       private dirty = true;
       private timer: number | null = null;
       private hasMarkers = false;
+      /** 一度でも印が出たら、設定がオンの間は幅を確保し続ける (lint の出入りで本文幅を動かさない)。 */
+      private reserved = false;
+      private measured = "";
+      private ro: ResizeObserver | null = null;
 
       constructor(private readonly view: EditorView) {
         this.host = document.createElement("div");
@@ -241,16 +245,38 @@ export function scrollMarkers(opts: ScrollMarkersOptions): Extension {
         view.dom.append(this.host);
         opts.onHost(this.host);
         this.schedule(0);
+        if (typeof ResizeObserver !== "undefined") {
+          this.ro = new ResizeObserver(() => this.measure());
+          this.ro.observe(view.scrollDOM);
+        }
+      }
+
+      /** 帯の縦範囲を `scrollDOM` (スクロールバーの溝) に合わせる。検索パネルなど上に重なるものがあってもずれない。 */
+      private measure() {
+        const { view } = this;
+        view.requestMeasure({
+          key: this,
+          read: (v) => ({ top: v.scrollDOM.offsetTop, height: v.scrollDOM.offsetHeight }),
+          write: ({ top, height }) => {
+            const key = `${top}:${height}`;
+            if (key === this.measured) return;
+            this.measured = key;
+            this.host.style.setProperty("--scroll-marker-top", `${top}px`);
+            this.host.style.setProperty("--scroll-marker-height", `${height}px`);
+          },
+        });
       }
 
       update(u: ViewUpdate) {
         const refresh = u.transactions.some((tr) => tr.effects.some((e) => e.is(refreshScrollMarkers)));
         if (refresh) this.dirty = true;
+        this.measure();
         if (!opts.isEnabled()) {
           if (this.active || refresh) this.schedule(0);
           return;
         }
-        if (!this.active) {
+        if (!this.active || u.docChanged) {
+          // 文書が変わったときは (層の配列を作らずに) 再計算を予約するだけにする。
           this.dirty = true;
         } else {
           // 層ごとの軽い値だけ見て、変化があるときだけ計算を予約する。
@@ -259,16 +285,17 @@ export function scrollMarkers(opts: ScrollMarkersOptions): Extension {
             if (!sameValue(l, this.values[i], l.read(s))) this.dirty = true;
           });
           if (activeStatementRange(s) !== this.activeSpan) this.dirty = true;
-          if (u.docChanged) this.dirty = true;
         }
         if (this.dirty) this.schedule(u.docChanged && !refresh ? SCROLL_MARKERS_DEBOUNCE_MS : 0);
       }
 
       destroy() {
         if (this.timer !== null) window.clearTimeout(this.timer);
+        this.ro?.disconnect();
+        opts.onSnapshot(null);
         opts.onHost(null);
         this.host.remove();
-        this.view.dom.classList.remove("cm-has-scroll-markers");
+        this.view.dom.classList.remove("cm-has-scroll-markers", "cm-scroll-markers-empty");
       }
 
       private schedule(delay: number) {
@@ -286,9 +313,11 @@ export function scrollMarkers(opts: ScrollMarkersOptions): Extension {
           this.dirty = false;
           this.values = [];
           this.built = [];
+          this.reserved = false;
+          this.hasMarkers = false;
+          this.view.dom.classList.remove("cm-has-scroll-markers", "cm-scroll-markers-empty");
           if (this.published !== null) {
             this.published = null;
-            this.setHas(false);
             opts.onSnapshot(null);
           }
           return;
@@ -313,6 +342,12 @@ export function scrollMarkers(opts: ScrollMarkersOptions): Extension {
           : null;
         const prev = this.published;
         const next: ScrollMarkSnapshot = { sources, totalLines: s.doc.lines, activeLines };
+        // 前回も今回も印が無ければ、React を再描画させない。
+        if (sources.length === 0 && (!prev || prev.sources.length === 0)) {
+          this.published = next;
+          this.setHas(false);
+          return;
+        }
         if (
           prev &&
           prev.totalLines === next.totalLines &&
@@ -332,7 +367,9 @@ export function scrollMarkers(opts: ScrollMarkersOptions): Extension {
       private setHas(has: boolean) {
         if (this.hasMarkers === has) return;
         this.hasMarkers = has;
-        this.view.dom.classList.toggle("cm-has-scroll-markers", has);
+        if (has) this.reserved = true;
+        this.view.dom.classList.toggle("cm-has-scroll-markers", this.reserved);
+        this.view.dom.classList.toggle("cm-scroll-markers-empty", this.reserved && !has);
       }
     },
   );

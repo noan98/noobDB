@@ -2845,15 +2845,20 @@ body, #root {
 .cm-editor.cm-has-scroll-markers .cm-scroll-markers {
   display: block;
   position: absolute;
-  top: 0;
+  top: var(--scroll-marker-top, 0);
   right: 0;
-  bottom: 0;
+  height: var(--scroll-marker-height, 100%);
+  overflow: hidden;
   width: var(--scroll-marker-width);
   box-sizing: border-box;
   border-left: var(--space-0-25) solid var(--border);
   background: var(--bg-elevated);
   pointer-events: none;
   z-index: 5;
+}
+.cm-editor.cm-scroll-markers-empty .cm-scroll-markers {
+  background: transparent;
+  border-left-color: transparent;
 }
 .cm-editor.cm-has-scroll-markers .cm-scroller { margin-right: var(--scroll-marker-width); }
 .cm-editor .cm-scroll-marker-active {
@@ -2868,6 +2873,7 @@ body, #root {
   left: 0;
   right: 0;
   height: var(--space-0-75);
+  top: calc((100% - var(--space-0-75)) * var(--tick-pos, 0));
   margin: 0;
   padding: 0;
   border: 0;
@@ -2875,9 +2881,8 @@ body, #root {
   background: var(--text-muted);
   cursor: pointer;
   pointer-events: auto;
-  transform: translateY(-50%);
 }
-.cm-editor .cm-scroll-marker:hover { transform: translateY(-50%) scaleY(1.6); }
+.cm-editor .cm-scroll-marker:hover { transform: scaleY(1.6); }
 .cm-editor .cm-scroll-marker-error { background: var(--text-error); }
 .cm-editor .cm-scroll-marker-warning { background: var(--text-warning); }
 .cm-editor .cm-scroll-marker-search { background: var(--text-muted); }
