@@ -2,8 +2,9 @@
   "compilerOptions": {
     "target": "ES2020",
     "useDefineForClassFields": true,
-    // #2386: E2E 用の @types/node が vite の型経由で解決されるようになり、lib が ES2020 のままだと
-    // 既存コードの `Array.prototype.at` が型エラーになるため ES2022 にしている。
+    // #2386: ルートに @types/node@26 を置くと、型参照 `node` の解決先が 22 系 (Array.prototype.at の補完あり)
+    // から 26 系 (補完なし) に変わるため ES2022 にする。本体はすでに .at() を使っており、vite の既定
+    // ビルドターゲットも ES2022 以上なので実行時の要件は変わらない。
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "skipLibCheck": true,

@@ -33,21 +33,26 @@ function specTestids(): Map<string, string> {
   return found;
 }
 
-/** 本体コードの静的 testid (完全一致) とテンプレートリテラルのプレフィックスを集める。 */
+/**
+ * ソース文字列から静的 testid (完全一致) とテンプレートリテラルのプレフィックスを集める。
+ * `[data-testid="x"]` 形式 (onboardingAnchors.ts の CSS セレクタ文字列など) は定義ではないので除外する。
+ */
+export function extractTestids(src: string, exact: Set<string>, prefixes: Set<string>): void {
+  // EmptyState の `action: { testId: "x" }` (最終的に data-testid になる) も同様に拾う。
+  // `data-testid="x"` / `data-testid={"x"}` / `"data-testid": "x"` / `data-testid={`x-${y}`}` を拾う。
+  const re = /(?<!\[)(?:data-testid|\btestId)"?\s*(?:=|:)\s*\{?\s*(["'`])((?:(?!\1).)*)\1/g;
+  for (const m of src.matchAll(re)) {
+    const value = m[2];
+    const i = value.indexOf("${");
+    if (i < 0) exact.add(value);
+    else prefixes.add(value.slice(0, i));
+  }
+}
+
 function appTestids(): { exact: Set<string>; prefixes: Set<string> } {
   const exact = new Set<string>();
   const prefixes = new Set<string>();
-  // EmptyState の `action: { testId: "x" }` (最終的に data-testid になる) も同様に拾う。
-  // `data-testid="x"` / `data-testid={"x"}` / `"data-testid": "x"` / `data-testid={`x-${y}`}` を拾う。
-  const re = /(?:data-testid|\btestId)"?\s*(?:=|:)\s*\{?\s*(["'`])((?:(?!\1).)*)\1/g;
-  for (const src of Object.values(appSources)) {
-    for (const m of src.matchAll(re)) {
-      const value = m[2];
-      const i = value.indexOf("${");
-      if (i < 0) exact.add(value);
-      else prefixes.add(value.slice(0, i));
-    }
-  }
+  for (const src of Object.values(appSources)) extractTestids(src, exact, prefixes);
   return { exact, prefixes };
 }
 
@@ -60,6 +65,23 @@ describe("E2E spec の PR ゲート配線 (#2386)", () => {
     const frontend = /^ {12}frontend:\s*\n((?: {14}.*\n|\s*\n)+)/m.exec(ciYml)?.[1] ?? "";
     expect(frontend).toContain("- 'e2e/**'");
     expect(ciYml).toContain("pnpm exec tsc -p e2e/tsconfig.e2e.json --noEmit");
+  });
+});
+
+describe("testid 抽出 (#2386)", () => {
+  const run = (src: string) => {
+    const exact = new Set<string>();
+    const prefixes = new Set<string>();
+    extractTestids(src, exact, prefixes);
+    return { exact: [...exact], prefixes: [...prefixes] };
+  };
+  it('CSS セレクタ文字列の [data-testid="x"] は定義として拾わない', () => {
+    expect(run(`selector: '[data-testid="query-editor-run"]'`)).toEqual({ exact: [], prefixes: [] });
+  });
+  it("属性 / オブジェクトプロパティ / テンプレートリテラルは拾う", () => {
+    expect(run('<a data-testid="a" />').exact).toEqual(["a"]);
+    expect(run('{ testId: "b" }').exact).toEqual(["b"]);
+    expect(run("<a data-testid={`c-${x}`} />").prefixes).toEqual(["c-"]);
   });
 });
 
