@@ -147,6 +147,7 @@ import {
   setTimelapseOnConnect,
   setTimelapseMaxGenerations,
   setSqlLintEnabled,
+  setEditorScrollMarkers,
   setSqlSemanticLintEnabled,
   setIdentifierHoverEnabled,
   setActiveStatementHighlight,
@@ -1430,6 +1431,20 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     id="settings-active-statement-highlight"
                     checked={settings.activeStatementHighlight}
                     onChange={setActiveStatementHighlight}
+                  />
+                </SettingsToggleRow>
+
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-editor-scroll-markers">
+                      {t("settingsEditorScrollMarkers")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsEditorScrollMarkersHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-editor-scroll-markers"
+                    checked={settings.editorScrollMarkers}
+                    onChange={setEditorScrollMarkers}
                   />
                 </SettingsToggleRow>
 

@@ -114,7 +114,7 @@ pub fn primary_key_type_sql(driver: DriverKind, ty: NewColumnType) -> &'static s
 /// 識別子の長さ上限 (`None` = 実用上無制限)。PostgreSQL は超過分を**黙って
 /// 切り詰める**ため、作成した名前とインポート時の名前が食い違って「テーブルが
 /// 無い」エラーになる。作成前に弾いて分かりやすいエラーにする。
-fn max_ident_len(driver: DriverKind) -> Option<(usize, bool)> {
+pub(crate) fn max_ident_len(driver: DriverKind) -> Option<(usize, bool)> {
     // (上限, true = バイト数 / false = 文字数)
     match driver {
         DriverKind::Mysql => Some((64, false)),
@@ -252,6 +252,58 @@ pub fn render_drop_table_in(driver: DriverKind, schema: Option<&str>, table: &st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 識別子の長さ上限の共有ゴールデン (#2384)。フロント `identLimitGolden.test.ts` が同じ JSON を検証する。
+    #[test]
+    fn max_ident_len_matches_shared_vectors() {
+        const VECTORS: &str =
+            include_str!("../../../src/__tests__/fixtures/identLimitVectors.json");
+        let v: serde_json::Value =
+            serde_json::from_str(VECTORS).expect("ゴールデン JSON が壊れている");
+        let driver_of = |s: &str| match s {
+            "mysql" => DriverKind::Mysql,
+            "postgres" => DriverKind::Postgres,
+            "sqlite" => DriverKind::Sqlite,
+            other => panic!("未知のドライバ名: {other}"),
+        };
+        for (name, lim) in v["limits"].as_object().expect("limits") {
+            let got = max_ident_len(driver_of(name));
+            if lim.is_null() {
+                assert_eq!(got, None, "{name}");
+            } else {
+                let want = (
+                    lim["limit"].as_u64().expect("limit") as usize,
+                    lim["bytes"].as_bool().expect("bytes"),
+                );
+                assert_eq!(got, Some(want), "{name}");
+            }
+        }
+        let cases = v["cases"].as_array().expect("cases 配列");
+        assert!(!cases.is_empty());
+        for c in cases {
+            let driver = driver_of(c["driver"].as_str().unwrap_or_default());
+            let ident = c["name"].as_str().unwrap_or_default();
+            let too_long = c["tooLong"].as_bool().unwrap_or_default();
+            // 長さの判定 (max_ident_len) と validate_ident の拒否が一致する。
+            let over = max_ident_len(driver).is_some_and(|(limit, bytes)| {
+                let len = if bytes {
+                    ident.len()
+                } else {
+                    ident.chars().count()
+                };
+                len > limit
+            });
+            assert_eq!(over, too_long, "{}", c["note"]);
+            if !ident.is_empty() {
+                assert_eq!(
+                    validate_ident(driver, "table", ident).is_err(),
+                    too_long,
+                    "{}",
+                    c["note"]
+                );
+            }
+        }
+    }
 
     const ALL: [DriverKind; 3] = [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite];
 

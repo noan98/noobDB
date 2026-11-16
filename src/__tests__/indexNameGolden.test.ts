@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createIndexName, indexNameTooLong } from "../components/tableMaintenance";
-import { storedIndexName } from "../components/sqlDialect";
+import { createIndexName } from "../components/tableMaintenance";
+import { identTooLong, storedIndexName } from "../components/sqlDialect";
 import vectors from "./fixtures/indexNameVectors.json";
 
 // インデックス名生成のフロント側ゴールデン (#2360)。自動生成名の規則は
@@ -26,7 +26,7 @@ describe("インデックス名ゴールデン (#2360)", () => {
   for (const c of vectors.user) {
     it(`入力名: ${JSON.stringify(c.name)} (${c.driver})`, () => {
       expect(createIndexName(c.driver, "t", ["a"], { name: c.name })).toBe(c.expected);
-      expect(indexNameTooLong(c.driver, c.expected)).toBe(c.tooLong);
+      expect(identTooLong(c.driver, c.expected)).toBe(c.tooLong);
       expect(storedIndexName(c.driver, c.expected)).toBe(c.stored);
     });
   }

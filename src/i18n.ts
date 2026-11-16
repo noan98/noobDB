@@ -691,6 +691,15 @@ const en = {
   settingsActiveStatementHighlight: "Highlight the statement under the cursor",
   settingsActiveStatementHighlightHelp:
     "In an editor with two or more statements, marks the statement that Run statement would execute with a soft band and a bar on the left edge, so you can see the range before you run. Hidden when there is only one statement or a selection.",
+  settingsEditorScrollMarkers: "Show markers beside the editor scrollbar",
+  settingsEditorScrollMarkersHelp:
+    "Shows a thin strip beside the editor's scrollbar that marks where run errors, failed batch statements, syntax check findings and search hits are in the whole script. Click a tick to jump to that line. Nothing is shown while there are no markers.",
+  editorScrollMarkerError: "Error",
+  editorScrollMarkerWarning: "Warning",
+  editorScrollMarkerOk: "Succeeded",
+  editorScrollMarkerSearch: "Search hit",
+  editorScrollMarkerLine: "Line {line}",
+  editorScrollMarkerMore: "+{n} more nearby",
   settingsSqlSemanticLintEnabled: "Warn on unknown tables and columns",
   settingsSqlSemanticLintEnabledHelp:
     "Underlines table and column names that don't exist in the connected schema, before you run. Aliases, CTEs, subqueries and functions are resolved, and anything it can't resolve is left alone. Works only while the syntax check is on, and needs the schema to be loaded. On SQLite only table names are checked.",
@@ -3893,6 +3902,10 @@ const en = {
   renameTableTitle: "Rename table",
   renameTableLabel: "New name for {table}",
   renameTableConfirm: "Rename",
+  identTooLongBytes:
+    '"{names}" exceeds the identifier limit of this database ({limit} bytes, UTF-8). PostgreSQL would silently truncate it, so shorten the name.',
+  identTooLongChars:
+    '"{names}" exceeds the identifier limit of this database ({limit} characters). The server rejects it (ERROR 1059), so shorten the name.',
   renameTableExists: 'A table named "{table}" already exists in this schema.',
   renameTableSqlPreview: "SQL to be executed",
   renameTableCaseOnlyExists:
@@ -9543,6 +9556,15 @@ const ja: Dict = {
   settingsActiveStatementHighlight: "カーソル位置の文を帯で示す",
   settingsActiveStatementHighlightHelp:
     "2 文以上あるエディタで、「カーソル位置の文を実行」の対象になる文を淡い帯と左端のバーで常に示し、実行前に範囲を確かめられます。文が 1 つだけのときと、選択範囲があるときは出しません。",
+  settingsEditorScrollMarkers: "スクロールバーの横にマーカーを出す",
+  settingsEditorScrollMarkersHelp:
+    "エディタのスクロールバーの横に細い帯を置き、実行エラー・失敗したバッチの文・構文チェックの指摘・検索ヒットがスクリプト全体のどこにあるかを示します。目印をクリックするとその行へ移動します。マーカーが 1 つも無いときは何も出しません。",
+  editorScrollMarkerError: "エラー",
+  editorScrollMarkerWarning: "警告",
+  editorScrollMarkerOk: "成功",
+  editorScrollMarkerSearch: "検索ヒット",
+  editorScrollMarkerLine: "{line} 行目",
+  editorScrollMarkerMore: "ほか {n} 件が近くにあります",
   settingsSqlSemanticLintEnabled: "存在しないテーブル・列を警告",
   settingsSqlSemanticLintEnabledHelp:
     "接続中のスキーマに存在しないテーブル名・列名を、実行前に下線で警告します。エイリアス・CTE・サブクエリ・関数は解決し、解決できないものは警告しません。構文チェックがオンのときだけ働き、スキーマの取得後に有効になります。SQLite ではテーブル名だけを検査します。",
@@ -12727,6 +12749,10 @@ const ja: Dict = {
   renameTableTitle: "テーブル名を変更",
   renameTableLabel: "{table} の新しい名前",
   renameTableConfirm: "変更",
+  identTooLongBytes:
+    "「{names}」は、この DB の識別子の上限 {limit} バイト (UTF-8) を超えています。PostgreSQL は超えた分を黙って切り詰めるため、名前を短くしてください。",
+  identTooLongChars:
+    "「{names}」は、この DB の識別子の上限 {limit} 文字を超えています。サーバが拒否する (ERROR 1059) ため、名前を短くしてください。",
   renameTableExists: "テーブル「{table}」は同じスキーマに既に存在します。",
   renameTableSqlPreview: "実行される SQL",
   renameTableCaseOnlyExists:
