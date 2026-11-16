@@ -40,14 +40,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 実行前に `cargo build` または `pnpm tauri build --debug` でビルドしておくこと。
 const APP_BINARY =
   process.platform === "win32"
-    ? path.resolve(
-        __dirname,
-        "../src-tauri/target/debug/noobdb.exe",
-      )
-    : path.resolve(
-        __dirname,
-        "../src-tauri/target/debug/noobdb",
-      );
+    ? path.resolve(__dirname, "../src-tauri/target/debug/noobdb.exe")
+    : path.resolve(__dirname, "../src-tauri/target/debug/noobdb");
 
 export const config: WebdriverIO.Config = {
   // ──────────────────────────────────────────────────────────────────────────
@@ -73,7 +67,9 @@ export const config: WebdriverIO.Config = {
       "tauri:options": {
         application: APP_BINARY,
       },
-    },
+      // `tauri:options` は @wdio/types の既知キーに無く、そのままだと型チェックで落ちるため
+      // (#2386) ベンダー拡張として型を広げる。
+    } as WebdriverIO.Capabilities,
   ],
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -118,10 +114,14 @@ export const config: WebdriverIO.Config = {
     // 失敗の様子をジョブログへ直接出す (アーティファクトを取れない環境でも原因を追えるように)。
     // アプリが落ちていると取れないので、取れなければ「取れなかった」と出す。
     try {
-      const body = await browser.execute(() => (document.querySelector('[role="dialog"]') ?? document.body).innerText.slice(-1500));
+      const body = await browser.execute(() =>
+        ((document.querySelector('[role="dialog"]') ?? document.body) as HTMLElement).innerText.slice(-1500),
+      );
       console.log(`[E2E 失敗時の画面テキスト] ${test.title}\n${body}`);
     } catch (e) {
-      console.log(`[E2E 失敗時の画面テキスト] ${test.title}: 取得できませんでした (${String(e).slice(0, 200)})`);
+      console.log(
+        `[E2E 失敗時の画面テキスト] ${test.title}: 取得できませんでした (${String(e).slice(0, 200)})`,
+      );
     }
     const dir = path.resolve(__dirname, "screenshots");
     fs.mkdirSync(dir, { recursive: true });

@@ -128,6 +128,31 @@ export function insertFunctionSql(driver: string, fn: InsertFunctionId): string 
 /** PostgreSQL の識別子の上限 (バイト)。 */
 export const PG_IDENT_MAX_BYTES = 63;
 
+/** MySQL の識別子の上限 (文字数)。 */
+export const MYSQL_IDENT_MAX = 64;
+
+/**
+ * 識別子 (テーブル名・列名・インデックス名) の長さ上限。バックエンド `db/create_table.rs::max_ident_len` と
+ * 同じ規則で、共有ゴールデン `fixtures/identLimitVectors.json` が固定する (#2384)。`bytes` が true なら
+ * UTF-8 バイト数、false なら文字数で数える。SQLite は上限なしで `null`。
+ */
+export function identLimit(driver: string): { limit: number; bytes: boolean } | null {
+  if (driver === "mysql") return { limit: MYSQL_IDENT_MAX, bytes: false };
+  if (driver === "postgres") return { limit: PG_IDENT_MAX_BYTES, bytes: true };
+  return null;
+}
+
+/**
+ * 名前が方言の上限を超えているか。MySQL は 64 文字超で ERROR 1059、PostgreSQL は 63 バイト超を
+ * **黙って切り詰める** (作成した名前と後で参照する名前が食い違う)。SQLite に上限は無い。
+ */
+export function identTooLong(driver: string, name: string): boolean {
+  const lim = identLimit(driver);
+  if (!lim) return false;
+  const len = lim.bytes ? new TextEncoder().encode(name).length : [...name].length;
+  return len > lim.limit;
+}
+
 /** UTF-8 で `maxBytes` バイトを超えない先頭部分を返す (文字の途中では切らない)。 */
 export function truncateUtf8(text: string, maxBytes: number): string {
   const enc = new TextEncoder();

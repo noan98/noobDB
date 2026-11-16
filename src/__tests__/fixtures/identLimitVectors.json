@@ -1,0 +1,123 @@
+{
+  "limits": {
+    "mysql": {
+      "limit": 64,
+      "bytes": false
+    },
+    "postgres": {
+      "limit": 63,
+      "bytes": true
+    },
+    "sqlite": null
+  },
+  "cases": [
+    {
+      "note": "PostgreSQL 63 バイト ASCII (上限ちょうど)",
+      "driver": "postgres",
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tooLong": false
+    },
+    {
+      "note": "PostgreSQL 64 バイト ASCII",
+      "driver": "postgres",
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tooLong": true
+    },
+    {
+      "note": "PostgreSQL 日本語 21 文字 (63 バイト)",
+      "driver": "postgres",
+      "name": "あああああああああああああああああああああ",
+      "tooLong": false
+    },
+    {
+      "note": "PostgreSQL 日本語 22 文字 (66 バイト)",
+      "driver": "postgres",
+      "name": "ああああああああああああああああああああああ",
+      "tooLong": true
+    },
+    {
+      "note": "PostgreSQL 日本語 20 文字 + ASCII 3 (63 バイト)",
+      "driver": "postgres",
+      "name": "ああああああああああああああああああああabc",
+      "tooLong": false
+    },
+    {
+      "note": "PostgreSQL 日本語 20 文字 + ASCII 4 (64 バイト)",
+      "driver": "postgres",
+      "name": "ああああああああああああああああああああabcd",
+      "tooLong": true
+    },
+    {
+      "note": "PostgreSQL 絵文字 15 個 + ASCII 3 (63 バイト)",
+      "driver": "postgres",
+      "name": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀abc",
+      "tooLong": false
+    },
+    {
+      "note": "PostgreSQL 絵文字 16 個 (64 バイト)",
+      "driver": "postgres",
+      "name": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "tooLong": true
+    },
+    {
+      "note": "PostgreSQL 空文字",
+      "driver": "postgres",
+      "name": "",
+      "tooLong": false
+    },
+    {
+      "note": "MySQL 64 文字 ASCII (上限ちょうど)",
+      "driver": "mysql",
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tooLong": false
+    },
+    {
+      "note": "MySQL 65 文字 ASCII",
+      "driver": "mysql",
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tooLong": true
+    },
+    {
+      "note": "MySQL 日本語 64 文字 (文字数で数える)",
+      "driver": "mysql",
+      "name": "ああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああ",
+      "tooLong": false
+    },
+    {
+      "note": "MySQL 日本語 65 文字",
+      "driver": "mysql",
+      "name": "あああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああ",
+      "tooLong": true
+    },
+    {
+      "note": "MySQL 絵文字 64 個 (サロゲートペアでも 1 文字)",
+      "driver": "mysql",
+      "name": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "tooLong": false
+    },
+    {
+      "note": "MySQL 絵文字 65 個",
+      "driver": "mysql",
+      "name": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "tooLong": true
+    },
+    {
+      "note": "SQLite 65 文字 (上限なし)",
+      "driver": "sqlite",
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tooLong": false
+    },
+    {
+      "note": "SQLite 日本語 200 文字 (上限なし)",
+      "driver": "sqlite",
+      "name": "ああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああ",
+      "tooLong": false
+    },
+    {
+      "note": "SQLite 1000 文字 (上限なし)",
+      "driver": "sqlite",
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "tooLong": false
+    }
+  ]
+}

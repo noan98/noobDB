@@ -1982,6 +1982,39 @@ describe("セル値のクイックセット", () => {
     expect(onBulkEdit).toHaveBeenCalledTimes(1);
   });
 
+  it("F8 / Shift+F8 で未適用の編集・削除予定の行へアクティブセルが移る (#2381)", () => {
+    const rows = [
+      [1, "a", 1],
+      [2, "b", 2],
+      [3, "c", 3],
+      [4, "d", 4],
+    ];
+    const key = (i: number) => rowEditKey(rows[i], [0], i);
+    const { container } = renderWithProviders(
+      <ResultGrid
+        result={makeResult(columns, rows)}
+        editable
+        tableColumns={tableColumns}
+        onSetCellEdit={vi.fn()}
+        pendingEdits={{ [key(1)]: { 1: "x" } }}
+        pendingDeleteKeys={new Set([key(3)])}
+      />,
+    );
+    const active = () =>
+      dataCells(container).findIndex((r) => r.some((c) => c.classList.contains("is-active-cell")));
+    const start = dataCells(container)[0][1];
+    fireEvent.focus(start);
+    fireEvent.keyDown(start, { key: "F8" });
+    expect(active()).toBe(1);
+    fireEvent.keyDown(dataCells(container)[1][1], { key: "F8" });
+    expect(active()).toBe(3);
+    // 端で折り返す。
+    fireEvent.keyDown(dataCells(container)[3][1], { key: "F8" });
+    expect(active()).toBe(1);
+    fireEvent.keyDown(dataCells(container)[1][1], { key: "F8", shiftKey: true });
+    expect(active()).toBe(3);
+  });
+
   // BIT はドライバで意味が変わるので、グリッドが driver を渡していることを見る
   // (どう出し分けるかの判定自体は quickSetValues.test.ts が固定する)。
   it("BIT 列の候補はセッションのドライバで変わる", async () => {

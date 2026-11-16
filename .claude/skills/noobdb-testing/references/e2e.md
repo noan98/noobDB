@@ -21,8 +21,8 @@
 
 スペックは文言・ロケールに依存しないよう、次の testid だけでアプリを操作する。いずれも
 属性追加のみで、見た目・挙動は変えていない。消す・名前を変えるときは
-`e2e/specs/sqlite-happy-path.e2e.ts` も合わせて直す (Vitest 側のガードは無いため、
-壊れると nightly でしか気づけない)。
+`e2e/specs/sqlite-happy-path.e2e.ts` も合わせて直す (`src/__tests__/e2eTestidParity.test.ts` が
+PR 時点で spec の参照 testid の存在を検査する)。
 
 | testid | 場所 |
 |---|---|

@@ -294,6 +294,11 @@ export interface Settings {
    */
   activeStatementHighlight: boolean;
   /**
+   * エディタ右端 (スクロールバーの横) に、実行エラー・バッチ各文の成否・構文チェックの指摘・検索ヒットの
+   * 位置を俯瞰する細い帯を出す (#2382)。既定オン。マーカーが 1 つも無いときは、オンでも帯は出ない。
+   */
+  editorScrollMarkers: boolean;
+  /**
    * 実行前の影響行数プリフライト (#737)。既定オン。オンのとき、エディタの現在文が
    * 単純な UPDATE / DELETE のとき対象テーブルと WHERE から `SELECT COUNT(*)` を
    * 組み立ててデバウンス付きで裏実行し、「影響: 約 N 行」「影響: 全行」バッジを
@@ -823,6 +828,9 @@ export const DEFAULT_IDENTIFIER_HOVER_ENABLED = true;
 /** カーソル位置の文の帯表示 (#2354) は既定オン。 */
 export const DEFAULT_ACTIVE_STATEMENT_HIGHLIGHT = true;
 
+/** エディタのスクロールバー横のマーカー帯 (#2382) は既定オン。 */
+export const DEFAULT_EDITOR_SCROLL_MARKERS = true;
+
 /** 実行前の影響行数プリフライト (#737) は既定オン。 */
 export const DEFAULT_PREFLIGHT_IMPACT_ENABLED = true;
 
@@ -915,6 +923,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sqlSemanticLintEnabled: DEFAULT_SQL_SEMANTIC_LINT_ENABLED,
   identifierHoverEnabled: DEFAULT_IDENTIFIER_HOVER_ENABLED,
   activeStatementHighlight: DEFAULT_ACTIVE_STATEMENT_HIGHLIGHT,
+  editorScrollMarkers: DEFAULT_EDITOR_SCROLL_MARKERS,
   preflightImpactEnabled: DEFAULT_PREFLIGHT_IMPACT_ENABLED,
   scanPreflightEnabled: DEFAULT_SCAN_PREFLIGHT_ENABLED,
   planWatchOnConnect: DEFAULT_PLAN_WATCH_ON_CONNECT,
@@ -1173,6 +1182,7 @@ export function normalizeSettings(input: unknown): Settings {
     sqlSemanticLintEnabled?: unknown;
     identifierHoverEnabled?: unknown;
     activeStatementHighlight?: unknown;
+    editorScrollMarkers?: unknown;
     preflightImpactEnabled?: unknown;
     scanPreflightEnabled?: unknown;
     planWatchOnConnect?: unknown;
@@ -1330,6 +1340,10 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.activeStatementHighlight === "boolean"
         ? parsed.activeStatementHighlight
         : DEFAULT_ACTIVE_STATEMENT_HIGHLIGHT,
+    editorScrollMarkers:
+      typeof parsed.editorScrollMarkers === "boolean"
+        ? parsed.editorScrollMarkers
+        : DEFAULT_EDITOR_SCROLL_MARKERS,
     preflightImpactEnabled:
       typeof parsed.preflightImpactEnabled === "boolean"
         ? parsed.preflightImpactEnabled
@@ -1984,6 +1998,13 @@ export function setSqlSemanticLintEnabled(value: boolean): void {
 export function setActiveStatementHighlight(value: boolean): void {
   if (current.activeStatementHighlight === value) return;
   current = { ...current, activeStatementHighlight: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setEditorScrollMarkers(value: boolean): void {
+  if (current.editorScrollMarkers === value) return;
+  current = { ...current, editorScrollMarkers: value };
   persist();
   listeners.forEach((cb) => cb());
 }

@@ -18,7 +18,7 @@
 // 落とすので、PostgreSQL だけは `CREATE TABLE new (LIKE old INCLUDING ALL)` でネイティブに写し、
 // 再構成 DDL からは外部キー制約だけを抜き出して `ALTER TABLE ... ADD CONSTRAINT` で足す。
 
-import { qualifiedTableName, quoteIdentFor } from "./components/sqlDialect";
+import { identLimit, qualifiedTableName, quoteIdentFor, truncateUtf8 } from "./components/sqlDialect";
 
 // `versioned` は MySQL のバージョン付きコメント (`/*!80023 INVISIBLE */`、`/*!50100 PARTITION BY ... */`)。
 // サーバが SQL として実行するので、通常のコメントと違い捨てずに不透明トークンとして保持する。
@@ -787,9 +787,18 @@ export function formatCloneStatements(statements: string[]): string {
 }
 
 /** 既定の複製先名。`<元>_copy`、衝突すれば `<元>_copy2`, `_copy3` ... (大小無視)。 */
-export function suggestCloneName(existingTables: string[], table: string): string {
+export function suggestCloneName(existingTables: string[], table: string, driver = "sqlite"): string {
   const lower = new Set(existingTables.map((t) => t.toLowerCase()));
-  let candidate = `${table}_copy`;
-  for (let n = 2; lower.has(candidate.toLowerCase()); n++) candidate = `${table}_copy${n}`;
+  // 元の名前が上限ぎりぎりでも、接尾辞を含めて方言の上限内に収める (#2384)。元の名前の末尾側を文字境界で切る。
+  const lim = identLimit(driver);
+  const size = (s: string) => (lim?.bytes ? new TextEncoder().encode(s).length : [...s].length);
+  const build = (suffix: string) => {
+    if (!lim) return `${table}${suffix}`;
+    const room = lim.limit - size(suffix);
+    const stem = lim.bytes ? truncateUtf8(table, room) : [...table].slice(0, room).join("");
+    return `${stem}${suffix}`;
+  };
+  let candidate = build("_copy");
+  for (let n = 2; lower.has(candidate.toLowerCase()); n++) candidate = build(`_copy${n}`);
   return candidate;
 }

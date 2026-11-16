@@ -3,6 +3,8 @@ import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
 import type { IncomingFk } from "../../fkNavigation";
+import { applyLogicalToColumns, mergeForeignKeys, mergeIncomingForeignKeys } from "../../logicalRelations";
+import { listLogicalRelationsOrEmpty } from "./logicalRelations";
 import type {
   TableColumnInfo,
   TableSchema,
@@ -30,6 +32,8 @@ import type {
   SqliteRebuildPlan,
 } from "../tauri";
 
+const logicalRelationsOf = listLogicalRelationsOrEmpty;
+
 export const schemaCommands = {
   listDatabases: (sessionId: string) =>
     invoke<string[]>("list_databases", { sessionId }).then((r) =>
@@ -47,18 +51,26 @@ export const schemaCommands = {
     invoke<string[]>("list_tables", { sessionId, database }).then((r) =>
       parseResponse(schemas.stringArray, r, "list_tables"),
     ),
+  /** テーブルの列メタデータ。FK 列の参照先には論理リレーション (#2356) もマージする (`logical: true`)。 */
   describeTable: (sessionId: string, database: string, table: string) =>
-    invoke<TableColumnInfo[]>("describe_table", { sessionId, database, table }).then((r) =>
-      parseResponse(schemas.tableColumnInfoArray, r, "describe_table"),
-    ),
+    Promise.all([
+      invoke<TableColumnInfo[]>("describe_table", { sessionId, database, table }).then((r) =>
+        parseResponse(schemas.tableColumnInfoArray, r, "describe_table"),
+      ),
+      logicalRelationsOf(sessionId, database),
+    ]).then(([cols, rels]) => applyLogicalToColumns(table, cols, rels)),
   schemaOverview: (sessionId: string, database: string) =>
     invoke<TableSchema[]>("schema_overview", { sessionId, database }).then((r) =>
       parseResponse(schemas.tableSchemaArray, r, "schema_overview"),
     ),
+  /** データベースの外部キー一覧。宣言済み FK に論理リレーション (#2356) をマージして返す (論理は `logical: true`)。 */
   foreignKeys: (sessionId: string, database: string) =>
-    invoke<ForeignKey[]>("foreign_keys", { sessionId, database }).then((r) =>
-      parseResponse(schemas.foreignKeyArray, r, "foreign_keys"),
-    ),
+    Promise.all([
+      invoke<ForeignKey[]>("foreign_keys", { sessionId, database }).then((r) =>
+        parseResponse(schemas.foreignKeyArray, r, "foreign_keys"),
+      ),
+      logicalRelationsOf(sessionId, database),
+    ]).then(([fks, rels]) => mergeForeignKeys(fks, rels)),
   tableRowEstimates: (sessionId: string, database: string) =>
     invoke<TableRowEstimate[]>("table_row_estimates", { sessionId, database }).then((r) =>
       parseResponse(schemas.tableRowEstimateArray, r, "table_row_estimates"),
@@ -90,8 +102,13 @@ export const schemaCommands = {
    * 内容は `describeTable` と同一。スキーマエクスポートと ER 図が使う。
    */
   describeDatabase: (sessionId: string, database: string) =>
-    invoke<SchemaSnapshotTable[]>("describe_database", { sessionId, database }).then((r) =>
-      parseResponse(schemas.schemaSnapshotTableArray, r, "describe_database"),
+    Promise.all([
+      invoke<SchemaSnapshotTable[]>("describe_database", { sessionId, database }).then((r) =>
+        parseResponse(schemas.schemaSnapshotTableArray, r, "describe_database"),
+      ),
+      logicalRelationsOf(sessionId, database),
+    ]).then(([tables, rels]) =>
+      tables.map((tb) => ({ ...tb, columns: applyLogicalToColumns(tb.name, tb.columns, rels) })),
     ),
   /**
    * 列編集ダイアログの初期ロード一式 (現在の列・テーブルコメント・このテーブルの FK・
@@ -114,9 +131,12 @@ export const schemaCommands = {
    * 「参照している行へジャンプ」用。
    */
   incomingForeignKeys: (sessionId: string, database: string, table: string) =>
-    invoke<IncomingFk[]>("incoming_foreign_keys", { sessionId, database, table }).then((r) =>
-      parseResponse(schemas.incomingForeignKeyArray, r, "incoming_foreign_keys"),
-    ),
+    Promise.all([
+      invoke<IncomingFk[]>("incoming_foreign_keys", { sessionId, database, table }).then((r) =>
+        parseResponse(schemas.incomingForeignKeyArray, r, "incoming_foreign_keys"),
+      ),
+      logicalRelationsOf(sessionId, database),
+    ]).then(([fks, rels]) => mergeIncomingForeignKeys(fks, rels, table)),
   /**
    * DROP COLUMN の前に、`columns` を参照するビュー・生成列・インデックス・FK・トリガーを
    * 洗い出す (#1758)。読み取りのみ。

@@ -156,3 +156,39 @@ describe("RefImpactList (#1506)", () => {
     expect(screen.getByTestId("ref-impact-unverified")).toHaveTextContent("orders, logs");
   });
 });
+
+describe("RefImpactList の論理リレーション (#2356)", () => {
+  beforeEach(() => setLocale("en"));
+  const logical: RefImpact = {
+    parentTable: "users",
+    table: "notes",
+    column: "user_id",
+    referencedColumn: "id",
+    onDelete: "NO ACTION",
+    logical: true,
+    count: 4,
+  };
+
+  it("論理だけなら『失敗する』と言わず、孤児行が残る警告として件数を出す", () => {
+    renderWithProviders(<RefImpactList impacts={[logical]} mode="rows" driver="mysql" />);
+    const list = screen.getByTestId("ref-impact-list");
+    expect(list).toHaveTextContent("4 orphan row(s) would remain");
+    expect(list).toHaveTextContent("logical relation");
+    expect(list).not.toHaveTextContent("ON DELETE");
+    expect(list).not.toHaveTextContent(/fail|block/i);
+  });
+
+  it("TRUNCATE でも論理だけなら『参照されたままだと失敗する』文言を出さない", () => {
+    renderWithProviders(<RefImpactList impacts={[logical]} mode="truncate" driver="postgres" />);
+    expect(screen.getByTestId("ref-impact-list")).not.toHaveTextContent(/fails|refuses/i);
+  });
+
+  it("宣言 FK と混在しても、論理の行だけバッジ無し・ON DELETE 表記無し", () => {
+    renderWithProviders(<RefImpactList impacts={[...impacts, logical]} mode="rows" driver="mysql" />);
+    const rows = screen.getAllByTestId("ref-impact-row");
+    const notes = rows.find((r) => r.textContent?.includes("notes.user_id"));
+    expect(notes).toBeDefined();
+    expect(notes).not.toHaveTextContent("ON DELETE");
+    expect(rows.find((r) => r.textContent?.includes("logs.user_id"))).toHaveTextContent("ON DELETE RESTRICT");
+  });
+});

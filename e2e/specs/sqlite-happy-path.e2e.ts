@@ -157,20 +157,26 @@ describeMaybe("SQLite ハッピーパス E2E (#1245)", () => {
     await runSql("SELECT qty FROM e2e_items ORDER BY qty");
 
     // 3 行 (3 / 4 / 5) が結果グリッドに出る (実 IPC → 実 SQLite → ストリーミング結果)。
-    await browser.waitUntil(async () => {
-      const texts = await gridCellTexts();
-      return texts.includes("3") && texts.includes("4") && texts.includes("5");
-    }, { timeout: 30_000, timeoutMsg: "e2e_items の 3 行 (3 / 4 / 5) がグリッドに表示されなかった" });
+    await browser.waitUntil(
+      async () => {
+        const texts = await gridCellTexts();
+        return texts.includes("3") && texts.includes("4") && texts.includes("5");
+      },
+      { timeout: 30_000, timeoutMsg: "e2e_items の 3 行 (3 / 4 / 5) がグリッドに表示されなかった" },
+    );
   });
 
   // IPC 固有のアサーション: Chromium ブラウザモード (invoke スタブ) では
   // 実エンジンの応答もディスクへの永続化も検証できない。
   it("実エンジンの計算結果が返り、書き込みが一時ファイルへ永続化されている", async () => {
     await runSql("SELECT 3 + 4 + 5 AS total");
-    await browser.waitUntil(async () => {
-      const texts = await gridCellTexts();
-      return texts.includes("12");
-    }, { timeout: 30_000, timeoutMsg: "実エンジンの計算結果 (12) がグリッドに表示されなかった" });
+    await browser.waitUntil(
+      async () => {
+        const texts = await gridCellTexts();
+        return texts.includes("12");
+      },
+      { timeout: 30_000, timeoutMsg: "実エンジンの計算結果 (12) がグリッドに表示されなかった" },
+    );
 
     // Node 側でファイルを直接確認する: 空 (0 バイト) だった DB に SQLite ヘッダと
     // 書き込んだ行が実在する。

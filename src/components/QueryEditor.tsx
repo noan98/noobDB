@@ -10,6 +10,7 @@ import {
   useEffect,
   useLayoutEffect,
   useImperativeHandle,
+  useCallback,
   useMemo,
   useRef,
   useState,
@@ -21,6 +22,17 @@ import { registerTreeDropTarget } from "./treeDragStore";
 import { tableSelectWithColumnsText, treeItemInsertText } from "./treeDragInsert";
 import { AnimatePresence, motion } from "motion/react";
 import { activeStatementHighlight, refreshActiveStatement } from "./activeStatement";
+import { ScrollMarkerStrip } from "./ScrollMarkerStrip";
+import {
+  eraseLayer,
+  firstLine,
+  lintScrollLayer,
+  markerScrollLayer,
+  refreshScrollMarkers,
+  scrollMarkers,
+  searchScrollLayer,
+  type ScrollMarkSnapshot,
+} from "./scrollMarkers";
 import { placeholderDecorations } from "./placeholderDecorations";
 import { Compartment, EditorState, StateEffect, StateField, type Text } from "@codemirror/state";
 import {
@@ -922,6 +934,32 @@ export const QueryEditor = memo(
       [],
     );
 
+    // スクロールバー横の俯瞰マーカー帯 (#2382)。上の各層・構文チェック・検索ヒットを読むだけで、状態は持たない。
+    const [scrollMarkerHost, setScrollMarkerHost] = useState<HTMLElement | null>(null);
+    const [scrollMarkerSnapshot, setScrollMarkerSnapshot] = useState<ScrollMarkSnapshot | null>(null);
+    const scrollMarkersEnabledRef = useRef(settings.editorScrollMarkers);
+    scrollMarkersEnabledRef.current = settings.editorScrollMarkers;
+    const scrollMarkerLayers = useMemo(
+      () => [
+        markerScrollLayer(runtimeErrorLayer, (m) => ({
+          kind: "error",
+          label: firstLine((m.data as { error?: string } | undefined)?.error ?? ""),
+        })),
+        markerScrollLayer(batchErrorLayer, (m) => ({
+          kind: "error",
+          label: firstLine((m.data as { error?: string } | undefined)?.error ?? ""),
+        })),
+        markerScrollLayer(batchLayer, (m) => {
+          const d = m.data as BatchMarkerData | undefined;
+          if (!d || (d.status !== "error" && d.status !== "ok")) return null;
+          return { kind: d.status, label: firstLine(d.text) };
+        }),
+        eraseLayer(lintScrollLayer()),
+        eraseLayer(searchScrollLayer()),
+      ],
+      [runtimeErrorLayer, batchErrorLayer, batchLayer],
+    );
+
     // リアルタイム構文チェック (#704)。設定でオン/オフでき、診断メッセージは i18n
     // 経由で日英対応。linter は `syntaxTree(state)` の (lang-sql が既に構築した)
     // ツリーを再利用するため方言追従は自動 (別途 dialect を渡す必要がない)。
@@ -1483,6 +1521,12 @@ export const QueryEditor = memo(
             runtimeErrorLayer.extension,
             batchLayer.extension,
             batchErrorLayer.extension,
+            scrollMarkers({
+              layers: scrollMarkerLayers,
+              isEnabled: () => scrollMarkersEnabledRef.current,
+              onHost: setScrollMarkerHost,
+              onSnapshot: setScrollMarkerSnapshot,
+            }),
             // `{{name}}` / `?` / `$n` / `:name` のチップ装飾とホバーのヒント (#2155)。
             placeholderDecorations(
               () => driverRef.current,
@@ -1946,6 +1990,26 @@ export const QueryEditor = memo(
       if (!view) return;
       view.dispatch({ effects: refreshActiveStatement.of(null) });
     }, [activeStatementEnabled, driver]);
+
+    // 設定のオン・オフで、スクロールバー横の帯 (#2382) を計算し直す (オフなら計算も止まる)。
+    const scrollMarkersEnabled = settings.editorScrollMarkers;
+    // biome-ignore lint/correctness/useExhaustiveDependencies: 設定値は ref 越しに読まれるので、変化を契機に再計算させるためだけに依存へ載せる
+    useEffect(() => {
+      const view = viewRef.current;
+      if (!view) return;
+      view.dispatch({ effects: refreshScrollMarkers.of(null) });
+    }, [scrollMarkersEnabled]);
+    const jumpToScrollMarker = useCallback((pos: number) => {
+      const view = viewRef.current;
+      if (!view) return;
+      const at = Math.min(Math.max(0, pos), view.state.doc.length);
+      view.dispatch({
+        selection: { anchor: at },
+        effects: EditorView.scrollIntoView(at, { y: "center" }),
+        userEvent: "select",
+      });
+      view.focus();
+    }, []);
 
     // 影響行数プリフライト (#737)。現在文が単純な UPDATE / DELETE のとき、対象と
     // WHERE から COUNT を組み立ててデバウンス付きで裏実行する。設定オフ・未接続では
@@ -2613,6 +2677,11 @@ export const QueryEditor = memo(
           overflow="auto"
           bg="app.surface"
           onContextMenu={openEditorMenu}
+        />
+        <ScrollMarkerStrip
+          host={scrollMarkerHost}
+          snapshot={scrollMarkerSnapshot}
+          onJump={jumpToScrollMarker}
         />
         {editorMenu && (
           <ContextMenu

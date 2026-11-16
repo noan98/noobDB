@@ -249,7 +249,11 @@ export function SubsetExtractModal({
         api.previewSubset(request),
         // 外部キーは図のエッジにしか使わないので、取れなくてもプレビュー自体は出す。
         database
-          ? api.foreignKeys(sessionId, database).catch(() => [] as ForeignKey[])
+          ? api
+              .foreignKeys(sessionId, database)
+              // バックエンドは宣言 FK だけを辿るので、論理リレーション (#2356) は図に出さない。
+              .then((fks) => fks.filter((f) => !f.logical))
+              .catch(() => [] as ForeignKey[])
           : Promise.resolve([] as ForeignKey[]),
       ]);
       if (unmountedRef.current || seq !== previewSeqRef.current) return;

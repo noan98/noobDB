@@ -175,9 +175,13 @@
   (#1153。下記)。起動条件は通常の
   `rust==true` に加え、上述の `crosslang` フィルタ (`src/__tests__/fixtures/**`)
   も OR で見ています (#853。フィクスチャのみの変更でも言語横断ゴールデンテストを
-  確実に実走させるため)。同様に `ci-scripts` フィルタ (`scripts/ci-setup-*.sh`)
+  確実に実走させるため)。同様に `ci-scripts` フィルタ (`scripts/ci-*.sh`)
   もORで見ています (#1359。セットアップスクリプトだけの変更がPR上で無検証に
-  ならないため)。`scripts/bundle-size.mjs` は `frontend` フィルタに含めています。
+  ならないため。apt セットアップの `ci-apt-*.sh` は frontend と全 Rust ジョブで
+  走るので `frontend` / `rust (clippy)` の `if:` にも OR で足しています, #2385)。
+  `scripts/bundle-size.mjs` と、`brand.test.ts` が読む `public/**` は `frontend` フィルタに含めています。
+  フロントのテストが読む `src/` 外のファイルと `run:` が呼ぶ `scripts/*` が
+  どのフィルタにも無いと `crosslangGatingParity.test.ts` が落ちます (#2385)。
   `rust (test)` は加えて
   `scripts/ci-setup-sshd.sh` で apt の `openssh-server` を 127.0.0.1:2222 に立て、
   `NOOBDB_TEST_SSH_URL` / `NOOBDB_TEST_SSH_KEY` を `$GITHUB_ENV` に渡すことで SSH
@@ -344,6 +348,11 @@ tauri-driver は `taiki-e/install-action` の対応ツールではないため�
 `e2e/screenshots/` と `e2e/logs/` をアーティファクト保存する。
 「3 回連続グリーン」と「15 分以内」は確認済み (2026-10-03 JST、run 18〜20、約 11〜12 分)。
 詳細・testid 一覧は `noobdb-testing` スキルの `references/e2e.md`。
+
+E2E 自体は非必須だが、安価な PR 側ゲートは `ci.yml` の `frontend` ジョブにある (#2386): paths-filter
+`frontend` に `e2e/**` を含め、`pnpm exec tsc -p e2e/tsconfig.e2e.json --noEmit` (E2E spec の型チェック)、
+Biome (`pnpm run lint` が `src e2e` を対象)、Vitest の `e2eTestidParity.test.ts` (spec の
+`[data-testid="..."]` が `src/` に静的 / テンプレートリテラルのプレフィックスで存在するか) を実行する。
 
 ## `windows-db-smoke.yml` (Windows × MySQL/PostgreSQL nightly スモーク / #1945)
 

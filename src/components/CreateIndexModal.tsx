@@ -5,12 +5,12 @@ import { api, type DriverKind, type IndexOverlap, type TableColumnInfo } from ".
 import {
   buildCreateIndexSql,
   createIndexName,
-  indexNameTooLong,
   indexOptionSupport,
   normalizeIndexFragment,
   type IndexMethod,
   type IndexOptionReason,
 } from "./tableMaintenance";
+import { identTooLong } from "./sqlDialect";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { SqlPreview } from "./SqlPreview";
 import { ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
@@ -252,7 +252,7 @@ export function CreateIndexModal({
         setProgress(null);
       });
   };
-  const nameTooLong = indexNameTooLong(driver, name.trim());
+  const nameTooLong = identTooLong(driver, name.trim());
   const reasonText = (r: IndexOptionReason | undefined) => (r ? t(`createIndexReason_${r}`) : null);
 
   // UNIQUE のときだけ、既存データに重複キーが無いかを読み取り専用 COUNT で事前検査する (#1757)。
