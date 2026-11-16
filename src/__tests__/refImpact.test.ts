@@ -3,6 +3,7 @@ import type { CellValue } from "../api/tauri";
 import type { IncomingFk } from "../fkNavigation";
 import {
   blocksDelete,
+  impactBlocks,
   buildOpenChildrenSql,
   buildRefCountSqls,
   CASCADE_MAX_DEPTH,
@@ -524,5 +525,49 @@ describe("resolveParentDatabase / withTimeout (#1767)", () => {
     await vi.advanceTimersByTimeAsync(5000);
     await assertion;
     await expect(withTimeout(Promise.resolve(1), 5000)).resolves.toBe(1);
+  });
+});
+
+describe("論理リレーション (仮想 FK, #2356) の影響", () => {
+  const mixed: IncomingFk[] = [
+    { table: "orders", column: "user_id", referencedColumn: "id", onDelete: "RESTRICT" },
+    { table: "notes", column: "user_id", referencedColumn: "id", logical: true },
+  ];
+
+  it("loadRefImpacts: 論理由来は logical を運び、DB が止める扱い (impactBlocks) にならない", async () => {
+    const impacts = await loadRefImpacts({
+      driver: "mysql",
+      database: "app",
+      refs: mixed,
+      keys: new Map([["id", [1]]]),
+      parentTable: "users",
+      lookup: async () => ({
+        rows: [
+          [0, 2],
+          [1, 3],
+        ],
+      }),
+    });
+    expect(impacts.map((i) => [i.table, i.logical ?? false, impactBlocks(i)])).toEqual([
+      ["orders", false, true],
+      ["notes", true, false],
+    ]);
+  });
+
+  it("loadCascadeImpacts: 論理は連鎖せず、ブロックにも数えない", async () => {
+    const out = await loadCascadeImpacts({
+      driver: "mysql",
+      database: "app",
+      parentTable: "users",
+      refs: [{ table: "notes", column: "user_id", referencedColumn: "id", logical: true }],
+      rootPredicates: () => ["`id` = 1"],
+      fetchIncoming: async () => {
+        throw new Error("論理は辿らない");
+      },
+      lookup: async () => ({ rows: [[0, 4]] }),
+    });
+    expect(out.impacts).toHaveLength(1);
+    expect(out.impacts[0]).toMatchObject({ table: "notes", logical: true });
+    expect(impactBlocks(out.impacts[0])).toBe(false);
   });
 });

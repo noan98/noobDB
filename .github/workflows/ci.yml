@@ -82,6 +82,9 @@ jobs:
               # #1359: frontend ジョブが呼ぶバンドルサイズ計測スクリプトだけを変えたPRでも
               # 実走させる。
               - 'scripts/bundle-size.mjs'
+              # #2385: brand.test.ts が ?raw で読むファビコン。色だけを変えた PR でも
+              # ブランド色との整合テストを実走させる。
+              - 'public/**'
             rust:
               - 'src-tauri/**'
             # #853: 言語横断のゴールデン/パリティテスト (Rust 側の
@@ -102,9 +105,12 @@ jobs:
             # だけを変えたPRは rust==false になり、変更したスクリプトがPR上で一度も
             # 実行されない。`rust (test)` / `rust (coverage)` の if: にORで足して実走させる
             # (crosslang と同じパターン)。
+            #
+            # #2385: ci-apt-refresh.sh / ci-apt-ensure.sh は frontend と全 Rust ジョブの
+            # apt セットアップで実行されるため、`scripts/ci-*.sh` に広げ、`frontend` /
+            # `rust (clippy)` の if: にも OR で足す (足し忘れは crosslangGatingParity.test.ts が検出)。
             ci-scripts:
-              - 'scripts/ci-setup-*.sh'
-              - 'scripts/ci-skip-summary.sh'
+              - 'scripts/ci-*.sh'
             # docCommandParity.test.ts が ?raw で読む IPC コマンド一覧ドキュメント。
             # このファイルだけを編集した PR (一覧から誤ってコマンドを消した等) でも
             # パリティ検証が実走するよう、`crosslang parity` ジョブの if: へ OR で
@@ -165,7 +171,8 @@ jobs:
   frontend:
     name: frontend (build + browser tests)
     needs: changes
-    if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true'
+    # #2385: ci-scripts==true (apt セットアップスクリプトの変更) でも起動する。
+    if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.workflow == 'true' || needs.changes.outputs.ci-scripts == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -740,7 +747,8 @@ jobs:
   rust-clippy:
     name: rust (clippy)
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
+    # #2385: ci-scripts==true (apt セットアップスクリプトの変更) でも起動する。
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true' || needs.changes.outputs.ci-scripts == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
