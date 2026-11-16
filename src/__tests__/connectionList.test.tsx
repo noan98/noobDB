@@ -531,6 +531,8 @@ describe("Database Explorer の階層 (#1112)", () => {
       name: `user_id → users.id (${t("logicalRelationBadge")})`,
     });
     expect(logicalRow).toHaveAttribute("data-logical", "true");
+    // ホバーのツールチップが届かない支援技術にも説明を渡す。
+    expect(logicalRow).toHaveAttribute("aria-description", t("logicalRelationTip"));
     // 行の先頭 (ラベルより前) に、名前つきの目印アイコンがある。
     const badge = within(logicalRow).getByRole("img", { name: t("logicalRelationBadge") });
     const label = within(logicalRow).getByText("user_id", { exact: false });

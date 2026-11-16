@@ -1274,6 +1274,7 @@ const ForeignKeyRow = memo(function ForeignKeyRow({
       aria-posinset={posInSet}
       aria-setsize={setSize}
       aria-label={`${fk.column} → ${foreignKeyTargetLabel(fk)}${fk.logical ? ` (${t("logicalRelationBadge")})` : ""}`}
+      aria-description={fk.logical ? t("logicalRelationTip") : undefined}
       data-logical={fk.logical ? "true" : undefined}
       tabIndex={tabIndex}
       onFocus={onFocus}
