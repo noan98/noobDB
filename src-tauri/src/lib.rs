@@ -2181,6 +2181,8 @@ pub fn run() {
             commands::file::reveal_in_file_manager,
             commands::file::open_project_link,
             commands::window::set_window_title,
+            commands::window::set_window_material,
+            commands::window::window_material_supported,
             commands::import::get_import_skipped_text,
             commands::import::save_import_skipped_rows,
             commands::import::import_dry_run,

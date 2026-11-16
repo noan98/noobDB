@@ -129,7 +129,7 @@ export function TitleBar({
       align="stretch"
       flexShrink={0}
       h="38px"
-      bg="app.surface"
+      bg="app.surfaceMaterial"
       borderBottom="1px solid"
       borderColor="app.border"
       boxShadow={`inset 0 -2px 0 ${bandColor}`}

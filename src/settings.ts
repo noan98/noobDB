@@ -347,6 +347,11 @@ export interface Settings {
    */
   motionPreference: MotionPreference;
   /**
+   * ウィンドウ背景の素材 (#2359)。既定は `none`。Windows 11 以外では選べず、ハイコントラスト
+   * (`hc-*` / `prefers-contrast: more`) では実効値が `none` になる (`App.tsx`)。
+   */
+  windowMaterial: WindowMaterial;
+  /**
    * コマンドパレット (#845) の最近使った項目 (MRU)。`CommandItem.id` を最新順
    * (先頭が最新) で保持する軽量な id 配列で、空クエリ時にパレット先頭の「最近使った
    * 項目」セクションへ反映される。並び替え・上限クランプ・破損データ耐性は
@@ -573,6 +578,17 @@ export type MotionPreference = "system" | "full" | "reduced";
 /** モーション量プリファレンスの表示順 (設定 UI のセグメント順)。 */
 export const MOTION_PREFERENCE_ORDER: MotionPreference[] = ["system", "full", "reduced"];
 export const DEFAULT_MOTION_PREFERENCE: MotionPreference = "system";
+
+/**
+ * ウィンドウ背景の素材 (#2359)。`none` (既定) は従来どおり不透明、`mica` / `mica-alt` は
+ * Windows 11 のネイティブ素材をタイトルバー・サイドバー・ルート背景に透かす。値は Rust の
+ * `WindowMaterial` と同じ kebab-case で、`App.tsx` が実効値を `data-window-material` 属性へ反映する。
+ */
+export type WindowMaterial = "none" | "mica" | "mica-alt";
+
+/** ウィンドウ素材の表示順 (設定 UI のセグメント順)。 */
+export const WINDOW_MATERIAL_ORDER: WindowMaterial[] = ["none", "mica", "mica-alt"];
+export const DEFAULT_WINDOW_MATERIAL: WindowMaterial = "none";
 
 /** Default accent color: `null` means "use the per-theme CSS default". */
 export const DEFAULT_ACCENT_COLOR: string | null = null;
@@ -907,6 +923,7 @@ export const DEFAULT_SETTINGS: Settings = {
   timelapseOnConnect: DEFAULT_TIMELAPSE_ON_CONNECT,
   timelapseMaxGenerations: DEFAULT_TIMELAPSE_MAX_GENERATIONS,
   motionPreference: DEFAULT_MOTION_PREFERENCE,
+  windowMaterial: DEFAULT_WINDOW_MATERIAL,
   commandPaletteMru: DEFAULT_COMMAND_PALETTE_MRU,
   flightRecorderEnabled: DEFAULT_FLIGHT_RECORDER_ENABLED,
   flightRecorderRowCap: DEFAULT_FLIGHT_RECORDER_ROW_CAP,
@@ -1042,6 +1059,10 @@ function sanitizeThemePreset(input: unknown, fallback: ThemePreset): ThemePreset
   return THEME_PRESET_ORDER.includes(input as ThemePreset) ? (input as ThemePreset) : fallback;
 }
 
+function sanitizeWindowMaterial(input: unknown, fallback: WindowMaterial): WindowMaterial {
+  return WINDOW_MATERIAL_ORDER.includes(input as WindowMaterial) ? (input as WindowMaterial) : fallback;
+}
+
 function sanitizeMotionPreference(input: unknown, fallback: MotionPreference): MotionPreference {
   return MOTION_PREFERENCE_ORDER.includes(input as MotionPreference) ? (input as MotionPreference) : fallback;
 }
@@ -1160,6 +1181,7 @@ export function normalizeSettings(input: unknown): Settings {
     timelapseOnConnect?: unknown;
     timelapseMaxGenerations?: unknown;
     motionPreference?: unknown;
+    windowMaterial?: unknown;
     commandPaletteMru?: unknown;
     flightRecorderEnabled?: unknown;
     flightRecorderRowCap?: unknown;
@@ -1337,6 +1359,7 @@ export function normalizeSettings(input: unknown): Settings {
       MAX_TIMELAPSE_MAX_GENERATIONS,
     ),
     motionPreference: sanitizeMotionPreference(parsed.motionPreference, DEFAULT_MOTION_PREFERENCE),
+    windowMaterial: sanitizeWindowMaterial(parsed.windowMaterial, DEFAULT_WINDOW_MATERIAL),
     commandPaletteMru: sanitizeMruIds(parsed.commandPaletteMru),
     flightRecorderEnabled:
       typeof parsed.flightRecorderEnabled === "boolean"
@@ -1857,6 +1880,14 @@ export function setMotionPreference(value: MotionPreference): void {
   listeners.forEach((cb) => cb());
 }
 
+export function setWindowMaterial(value: WindowMaterial): void {
+  const next = sanitizeWindowMaterial(value, current.windowMaterial);
+  if (current.windowMaterial === next) return;
+  current = { ...current, windowMaterial: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
 export function setAutoReconnectEnabled(value: boolean): void {
   if (current.autoReconnectEnabled === value) return;
   current = { ...current, autoReconnectEnabled: value };
@@ -2304,6 +2335,7 @@ export function resetAppearanceDefaults(): void {
     themePreset: DEFAULT_THEME_PRESET,
     accentColor: DEFAULT_ACCENT_COLOR,
     motionPreference: DEFAULT_MOTION_PREFERENCE,
+    windowMaterial: DEFAULT_WINDOW_MATERIAL,
   };
   persist();
   listeners.forEach((cb) => cb());
