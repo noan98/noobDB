@@ -280,3 +280,38 @@ describe("その他", () => {
     expect(spatialGlyph({ type: "Point", coordinates: [0, 0] })).toBe("●");
   });
 });
+
+describe("buildShapeModel の頑健性", () => {
+  it("座標の幅が極小でも有限時間で返る (目盛りの増分が進まない場合)", () => {
+    const m = buildShapeModel({
+      type: "LineString",
+      coordinates: [
+        [139, 35],
+        [139.00000000000003, 35],
+      ],
+    });
+    expect(m.parts).toHaveLength(1);
+    expect(m.xTicks.length).toBeLessThanOrEqual(64);
+  });
+
+  it("niceTicks は表現可能な増分より小さい step でも止まる", () => {
+    expect(niceTicks(139, 139.00000000000003)).toEqual([]);
+    expect(niceTicks(1e15, 1e15 + 2).length).toBeLessThanOrEqual(64);
+  });
+
+  it("15 万点の LineString でも例外にならない", () => {
+    const coordinates: [number, number][] = [];
+    for (let i = 0; i < 150_000; i++) coordinates.push([i / 1000, (i % 100) / 10]);
+    const m = buildShapeModel({ type: "LineString", coordinates });
+    expect(m.parts).toHaveLength(1);
+    expect(m.empty).toBe(false);
+  });
+
+  it("15 万点の Polygon / MultiPolygon / MultiPoint でも例外にならない", () => {
+    const ring: [number, number][] = [];
+    for (let i = 0; i < 150_000; i++) ring.push([i, i % 7]);
+    expect(buildShapeModel({ type: "Polygon", coordinates: [ring] }).parts).toHaveLength(1);
+    expect(buildShapeModel({ type: "MultiPolygon", coordinates: [[ring]] }).parts).toHaveLength(1);
+    expect(buildShapeModel({ type: "MultiPoint", coordinates: ring }).parts).toHaveLength(150_000);
+  });
+});

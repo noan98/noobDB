@@ -305,6 +305,8 @@ const VIEW_W = 360;
 const VIEW_H = 240;
 const MARGIN = { l: 52, r: 14, t: 10, b: 24 };
 const INNER_PAD = 14;
+/** 1 軸あたりの目盛り数の上限 (暴走防止)。 */
+const MAX_TICKS = 64;
 
 /** 区間 `[min, max]` に収まる「キリの良い」目盛りを最大 `count` 個ほど返す。 */
 export function niceTicks(min: number, max: number, count = 4): number[] {
@@ -314,9 +316,17 @@ export function niceTicks(min: number, max: number, count = 4): number[] {
   const pow = 10 ** Math.floor(Math.log10(raw));
   const f = raw / pow;
   const step = (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * pow;
+  // 浮動小数の表現可能な増分より step が小さい (座標の大きさに比べて幅が極小) と、値が進まず目盛りが
+  // 意味を持たない。ループが終わらなくなるのを避けるため、目盛り無しで返す。
+  if (!(step > 0) || !Number.isFinite(step) || min + step === min || max - step === max) return [];
+  // 整数の添字から計算する (v += step の誤差蓄積を避ける)。個数にも上限を置いて必ず有限回で終わらせる。
+  const first = Math.ceil(min / step);
+  const last = Math.floor((max + step * 1e-9) / step);
   const out: number[] = [];
-  for (let v = Math.ceil(min / step) * step; v <= max + step * 1e-9; v += step) {
-    out.push(Number(v.toPrecision(12)));
+  for (let i = first; i <= last && out.length < MAX_TICKS; i++) {
+    const v = Number((i * step).toPrecision(12));
+    if (out.length > 0 && v <= out[out.length - 1]) break; // 進まない増分は打ち切る
+    out.push(v);
   }
   return out;
 }
@@ -334,14 +344,14 @@ function collect(g: Geometry, pts: Position[]): void {
       break;
     case "LineString":
     case "MultiPoint":
-      pts.push(...g.coordinates);
+      for (const c of g.coordinates) pts.push(c);
       break;
     case "Polygon":
     case "MultiLineString":
-      for (const r of g.coordinates) pts.push(...r);
+      for (const r of g.coordinates) for (const c of r) pts.push(c);
       break;
     case "MultiPolygon":
-      for (const p of g.coordinates) for (const r of p) pts.push(...r);
+      for (const p of g.coordinates) for (const r of p) for (const c of r) pts.push(c);
       break;
     default:
       for (const c of g.geometries) collect(c, pts);
