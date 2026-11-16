@@ -149,7 +149,11 @@ export function GridOverviewRuler({ masks, selection, currentRow, onJump }: Prop
     if (e.button !== 0) return;
     draggingRef.current = true;
     setHover(null);
-    e.currentTarget.setPointerCapture(e.pointerId);
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // 合成イベントなどでポインタが登録されていなくても、クリックでのジャンプは行う。
+    }
     const { y } = localPoint(e);
     onJump(yToRow(y, masks.length, size.height));
   };
@@ -189,7 +193,11 @@ export function GridOverviewRuler({ masks, selection, currentRow, onJump }: Prop
   };
   const endDrag = (e: React.PointerEvent<HTMLCanvasElement>) => {
     draggingRef.current = false;
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // 捕捉していなければ何もしない。
+    }
   };
 
   return (

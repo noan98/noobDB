@@ -202,14 +202,16 @@ export function computeRulerTicks(masks: Uint8Array, heightPx: number, minTickPx
         curCount = 0;
       }
       if (!def) continue;
-      if (curDef === null) {
+      // 件数と範囲は「そのバケットで選ばれた種別」の行だけで数える (優先度の低い種別は混ぜない)。
+      if (curDef === null || def.priority > curDef.priority) {
+        curDef = def;
+        curCount = 1;
         curFirst = i;
-        curDef = def;
-      } else if (def.priority > curDef.priority) {
-        curDef = def;
+        curLast = i;
+      } else if (def.kind === curDef.kind) {
+        curCount += 1;
+        curLast = i;
       }
-      curCount += 1;
-      curLast = i;
     }
     flushBucket();
     if (run) pushRun(out, run, minTickPx);

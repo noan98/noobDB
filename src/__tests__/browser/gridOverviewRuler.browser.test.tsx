@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { userEvent } from "vitest/browser";
 import { cleanup } from "vitest-browser-react";
 import { renderInBrowser } from "./render";
 import { ResultGrid } from "../../components/ResultGrid";
@@ -68,15 +69,7 @@ describe("位置マーカーの帯 (#2381, 実ブラウザ)", () => {
     const rect = canvas.getBoundingClientRect();
     expect(rect.height).toBeGreaterThan(100);
     // 帯の下端付近をクリック → 末尾付近へ飛ぶ。
-    canvas.dispatchEvent(
-      new PointerEvent("pointerdown", {
-        clientX: rect.left + 2,
-        clientY: rect.top + rect.height * 0.9,
-        button: 0,
-        pointerId: 1,
-        bubbles: true,
-      }),
-    );
+    await userEvent.click(canvas, { position: { x: 2, y: Math.round(rect.height * 0.9) } });
     await nextFrames();
     await expect.poll(() => scroller.scrollTop).toBeGreaterThan(scroller.scrollHeight * 0.5);
   });
