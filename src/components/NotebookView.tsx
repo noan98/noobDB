@@ -580,6 +580,8 @@ export function NotebookView(props: NotebookViewProps) {
   maskRef.current = mask;
   const docRef = useRef(doc);
   docRef.current = doc;
+  const profileRef = useRef(props.profile);
+  profileRef.current = props.profile;
   const driver = props.profile?.driver;
   // 補完用の DB。ノートブックの実行先 (空なら接続の既定 DB)。
   const completionDb = doc.database ?? props.profile?.database ?? null;
@@ -630,7 +632,7 @@ export function NotebookView(props: NotebookViewProps) {
    * 現在の接続へ付け替える (黙って書き換えない)。接続がまだ無い文書は黙って現在の接続を記録する。
    */
   const confirmConnection = async (): Promise<boolean> => {
-    const profile = props.profile;
+    const profile = profileRef.current;
     const saved = docRef.current.connection;
     if (!profile) return true;
     if (!saved) {
@@ -651,7 +653,7 @@ export function NotebookView(props: NotebookViewProps) {
     return ok;
   };
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: confirmConnection は呼び出しごとに最新の props を読む
+  // biome-ignore lint/correctness/useExhaustiveDependencies: confirmConnection は profileRef / docRef から最新を読む
   const runCells = useCallback(
     async (cells: NotebookSqlCell[], all: boolean) => {
       // 未接続でも文書の編集はできるが、実行はしない (ボタンも無効)。
@@ -885,12 +887,16 @@ export function NotebookView(props: NotebookViewProps) {
           aria-label={t("notebookTitlePlaceholder")}
           maxW="260px"
         />
-        <Tooltip label={t("notebookDatabaseTip")}>
+        <Tooltip
+          label={
+            props.transactionActive
+              ? `${t("notebookDatabaseTip")} ${t("notebookDatabaseTxTip")}`
+              : t("notebookDatabaseTip")
+          }
+        >
           <Input
             value={doc.database ?? ""}
-            onChange={(e) =>
-              updateNotebook((d) => ({ ...d, database: e.target.value.trim() ? e.target.value : null }))
-            }
+            onChange={(e) => updateNotebook((d) => ({ ...d, database: e.target.value.trim() || null }))}
             placeholder={t("notebookDatabasePlaceholder")}
             aria-label={t("notebookDatabasePlaceholder")}
             maxW="180px"
@@ -904,7 +910,7 @@ export function NotebookView(props: NotebookViewProps) {
         <chakra.span flex="1" />
         {busy ? (
           <Tooltip label={props.transactionActive ? t("notebookStopInTransaction") : t("notebookStop")}>
-            <Button size="sm" variant="secondary" disabled={props.transactionActive} onClick={stop}>
+            <Button size="sm" variant="secondary" onClick={stop}>
               <Icon name="stop" size={ICON_SIZES.sm} />
               {t("notebookStop")}
             </Button>

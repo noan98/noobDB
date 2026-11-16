@@ -8,6 +8,7 @@ vi.mock("../api/tauri", () => ({
 
 import {
   NotebookRunError,
+  resolveNotebookDatabase,
   runNotebookStatements,
   runStatementCollect,
   type NotebookRunIo,
@@ -36,6 +37,8 @@ function makeIo(over: Partial<NotebookRunIo> = {}): NotebookRunIo {
     isTransaction: () => false,
     runInTransaction: vi.fn().mockResolvedValue(out()),
     runStream: vi.fn().mockResolvedValue(out()),
+    onBegin: vi.fn(),
+    onEnd: vi.fn(),
     onStatementDone: vi.fn(),
     onStatementError: vi.fn(),
     ...over,
@@ -53,6 +56,8 @@ describe("runNotebookStatements (#2380)", () => {
     );
     expect(r).toBeNull();
     expect(io.runStream).not.toHaveBeenCalled();
+    expect(io.onBegin).not.toHaveBeenCalled();
+    expect(io.onEnd).not.toHaveBeenCalled();
   });
 
   it("複数文の間で中止を見て、続きを実行しない", async () => {
@@ -68,6 +73,8 @@ describe("runNotebookStatements (#2380)", () => {
     ).rejects.toMatchObject({ cancelled: true });
     expect(io.runStream).toHaveBeenCalledTimes(1);
     expect(io.onStatementError).not.toHaveBeenCalled();
+    expect(io.onBegin).toHaveBeenCalledTimes(1);
+    expect(io.onEnd).toHaveBeenCalledWith("cancelled");
   });
 
   it("トランザクション中は runInTransaction を使う", async () => {
@@ -102,6 +109,35 @@ describe("runNotebookStatements (#2380)", () => {
       runNotebookStatements("a", ["a"], { onStart: vi.fn(), isCancelled: () => false }, io),
     ).rejects.toThrow("boom");
     expect(io.onStatementError).toHaveBeenCalledTimes(1);
+    expect(io.onEnd).toHaveBeenCalledWith("error");
+  });
+
+  it("ストリームが中止で返ったときも終了通知を出す (onStatementError は呼ばない)", async () => {
+    const io = makeIo({
+      runStream: vi.fn().mockRejectedValue(new NotebookRunError("cancelled", false, false, true)),
+    });
+    await expect(
+      runNotebookStatements("a", ["a"], { onStart: vi.fn(), isCancelled: () => false }, io),
+    ).rejects.toMatchObject({ cancelled: true });
+    expect(io.onBegin).toHaveBeenCalledTimes(1);
+    expect(io.onEnd).toHaveBeenCalledWith("cancelled");
+    expect(io.onStatementError).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveNotebookDatabase (#2380)", () => {
+  it("MySQL は空ならプロファイルの DB へ寄せる (別タブの USE を引きずらない)", () => {
+    expect(resolveNotebookDatabase(null, "mysql", "prod")).toBe("prod");
+    expect(resolveNotebookDatabase("stg", "mysql", "prod")).toBe("stg");
+  });
+  it("PostgreSQL は空なら null (database 引数はスキーマなので DB 名を渡さない)", () => {
+    expect(resolveNotebookDatabase(null, "postgres", "appdb")).toBeNull();
+    expect(resolveNotebookDatabase("audit", "postgres", "appdb")).toBe("audit");
+  });
+  it("SQLite は空ならプロファイルの値、無ければ null", () => {
+    expect(resolveNotebookDatabase(null, "sqlite", "main.db")).toBe("main.db");
+    expect(resolveNotebookDatabase(null, "sqlite", null)).toBeNull();
+    expect(resolveNotebookDatabase(null, undefined, undefined)).toBeNull();
   });
 });
 

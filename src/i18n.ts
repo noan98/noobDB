@@ -8861,7 +8861,8 @@ const en = {
   notebookTooLarge:
     "The notebook is {size} MiB, over the {limit} MiB limit for opening files. Lower the snapshot rows and run the cells again.",
   notebookStopInTransaction:
-    "Cannot stop while an explicit transaction is active; the statement runs on the transaction connection.",
+    "An explicit transaction is active: the running statement finishes first, then the run stops.",
+  notebookDatabaseTxTip: "During a transaction, cells run on the transaction's database.",
   notebookDatabasePlaceholder: "Database / schema",
   notebookDatabaseTip:
     "Where cells run (PostgreSQL: schema). Empty uses the connection default. It does not follow the active tab.",
@@ -17641,7 +17642,9 @@ const ja: Dict = {
   notebookRebindConfirm: "この接続で実行",
   notebookTooLarge:
     "ノートブックが {size} MiB で、開ける上限 ({limit} MiB) を超えています。保存行数を下げてセルを再実行してください。",
-  notebookStopInTransaction: "明示トランザクション中は、トランザクションの接続で実行するため中止できません。",
+  notebookStopInTransaction:
+    "実行中の文の完了後に止まります (明示トランザクション中は文の途中で中断できません)。",
+  notebookDatabaseTxTip: "トランザクション中は、トランザクションの DB で実行します。",
   notebookDatabasePlaceholder: "実行先 DB / スキーマ",
   notebookDatabaseTip:
     "セルの実行先 (PostgreSQL ではスキーマ)。空なら接続の既定。アクティブなタブには従いません。",

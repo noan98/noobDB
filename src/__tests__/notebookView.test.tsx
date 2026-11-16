@@ -196,7 +196,7 @@ describe("NotebookView (#2380)", () => {
     expect(getNotebookState().doc.connection).toEqual({ profileId: "cur", name: "検証" });
   });
 
-  it("トランザクション中は停止ボタンを押せない", async () => {
+  it("トランザクション中も停止ボタンは有効 (文と文の間で止まる)", async () => {
     seed(newSqlCell("SELECT 1"));
     const onRunSql = vi.fn().mockReturnValue(new Promise(() => {}));
     setup({ onRunSql, transactionActive: true });
@@ -204,7 +204,7 @@ describe("NotebookView (#2380)", () => {
       fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
     });
     const stop = await screen.findByRole("button", { name: new RegExp(t("notebookStop")) });
-    expect((stop as HTMLButtonElement).disabled).toBe(true);
+    expect((stop as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("上限 (8 MiB) を超える文書は保存せず案内する", async () => {
@@ -218,5 +218,26 @@ describe("NotebookView (#2380)", () => {
     });
     await new Promise((r) => setTimeout(r, 50));
     expect(mocks.writeTextFile).not.toHaveBeenCalled();
+  });
+
+  it("個別セルの実行と「ここから下」でも接続の確認が出る", async () => {
+    const d = createEmptyNotebook({ profileId: "other", name: "本番DB" });
+    d.cells = [newSqlCell("SELECT 1"), newSqlCell("SELECT 2")];
+    replaceNotebook(d, null);
+    const { onRunSql } = setup({ profile: makeProfile({ id: "cur", name: "検証" }) });
+    for (const name of [t("notebookRunCell"), t("notebookRunFrom")]) {
+      await act(async () => {
+        fireEvent.click(screen.getAllByRole("button", { name: new RegExp(name) })[0]);
+      });
+      await screen.findByRole("button", { name: t("notebookRebindConfirm") });
+      const cancels = screen.getAllByRole("button", { name: t("confirmDefaultCancel") });
+      await act(async () => {
+        fireEvent.click(cancels[cancels.length - 1]);
+      });
+      await waitFor(() =>
+        expect(screen.queryByRole("button", { name: t("notebookRebindConfirm") })).toBeNull(),
+      );
+    }
+    expect(onRunSql).not.toHaveBeenCalled();
   });
 });

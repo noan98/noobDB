@@ -716,6 +716,7 @@ import {
 } from "./sqlScript";
 import {
   NotebookRunError,
+  resolveNotebookDatabase,
   runNotebookStatements,
   runStatementCollect,
   type NotebookRunOutput,
@@ -9265,12 +9266,11 @@ export default function App() {
         throw new NotebookRunError(translate("statusReconnectBusy"), false, false, false);
       }
       const driver = selectedProfile?.driver;
-      // 実行先はノートブック自身が持つ (現在のタブには従わない)。PostgreSQL の `database` 引数はスキーマなので、
-      // プロファイルの database (= DB 名) へは寄せず、未指定 (null) のまま接続の既定に任せる。
-      const database = req.database;
+      // 実行先はノートブック自身が持つ (現在のタブには従わない)。決め方は `resolveNotebookDatabase`
+      // (PostgreSQL ではスキーマなのでプロファイル DB へ寄せず、MySQL は接続の既定 DB へ寄せる)。
+      const database = resolveNotebookDatabase(req.database, driver, selectedProfile?.database);
       const outCtx = outputCtxFor(sid);
       const statements = splitSqlStatements(sql, driver).filter((st) => st.trim().length > 0);
-      setStatus({ kind: "key", key: "statusRunningQuery" });
       const showDone = (out: NotebookRunOutput) =>
         setStatus(
           out.hasColumns
@@ -9285,6 +9285,10 @@ export default function App() {
           {
             gate: runGuardedDdl,
             isTransaction: () => txActiveRef.current,
+            onBegin: () => setStatus({ kind: "key", key: "statusRunningQuery" }),
+            onEnd: (reason) => {
+              if (reason === "cancelled") setStatus({ kind: "key", key: "statusQueryCancelled" });
+            },
             runInTransaction: async (stmt) => {
               const res = await api.runInTransaction(sid, stmt);
               return {
@@ -9331,7 +9335,7 @@ export default function App() {
               setHistoryReloadKey((k) => k + 1);
               pushQueryHistory(stmt);
               if (out.schemaMayChange) {
-                invalidateSchemaCache(database ?? selectedProfile?.database ?? null);
+                invalidateSchemaCache(database);
                 noteSchemaDdl(stmt, database);
               }
             },
@@ -9355,6 +9359,7 @@ export default function App() {
           },
         );
         if (result) showDone(result);
+        else setStatus({ kind: "key", key: "statusQueryCancelled" });
         return result;
       }
     },

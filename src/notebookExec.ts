@@ -143,6 +143,19 @@ export function cancelNotebookStream(streamId: string): void {
   void api.cancelStream(streamId).catch(() => {});
 }
 
+/**
+ * セルの実行先 DB を決める純関数。ノートブック自身の指定を優先し、空のときだけ接続の既定へ寄せる。
+ * PostgreSQL の `database` 引数はスキーマなので、プロファイルの DB 名へは寄せない (null のまま)。
+ * MySQL は空だと USE が走らず、別タブの USE を引きずった接続で実行されうるのでプロファイルの DB を使う。
+ */
+export function resolveNotebookDatabase(
+  docDatabase: string | null,
+  driver: string | null | undefined,
+  profileDatabase: string | null | undefined,
+): string | null {
+  return docDatabase ?? (driver === "postgres" ? null : (profileDatabase ?? null));
+}
+
 /** `runNotebookStatements` が外へ頼る操作。App が実行ゲート・実行・記録を結びつける。 */
 export interface NotebookRunIo {
   /** 危険クエリ確認などの実行ゲート。取りやめなら false。 */
@@ -151,6 +164,10 @@ export interface NotebookRunIo {
   isTransaction: () => boolean;
   runInTransaction: (stmt: string) => Promise<NotebookRunOutput>;
   runStream: (stmt: string, onStart: (streamId: string) => void) => Promise<NotebookRunOutput>;
+  /** ゲート通過後、最初の文を流す直前に 1 回呼ぶ (実行中表示用)。 */
+  onBegin: () => void;
+  /** `onBegin` の後、完了以外 (失敗・中止) で抜けるとき。失敗は `onStatementError` も呼ばれる。 */
+  onEnd: (reason: "error" | "cancelled") => void;
   onStatementDone: (stmt: string, out: NotebookRunOutput) => void;
   onStatementError: (stmt: string, err: NotebookRunError, startedAt: number) => void;
 }
@@ -168,8 +185,12 @@ export async function runNotebookStatements(
   if (!(await io.gate(sql))) return null;
   let last: NotebookRunOutput | null = null;
   let elapsedTotal = 0;
+  io.onBegin();
   for (const stmt of statements) {
-    if (opts.isCancelled()) throw new NotebookRunError("cancelled", false, false, true);
+    if (opts.isCancelled()) {
+      io.onEnd("cancelled");
+      throw new NotebookRunError("cancelled", false, false, true);
+    }
     const startedAt = Date.now();
     try {
       const out = io.isTransaction()
@@ -181,6 +202,7 @@ export async function runNotebookStatements(
     } catch (e) {
       const err = e instanceof NotebookRunError ? e : new NotebookRunError(String(e), false, false, false);
       if (!err.cancelled) io.onStatementError(stmt, err, startedAt);
+      io.onEnd(err.cancelled ? "cancelled" : "error");
       throw err;
     }
   }
