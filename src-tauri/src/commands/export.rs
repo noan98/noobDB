@@ -856,7 +856,7 @@ fn sql_values_tuple(driver: DriverKind, columns: &[Column], row: &[Value]) -> St
         let v = row.get(i).unwrap_or(&Value::Null);
         // 空間型の列は EWKT 文字列を `ST_GeomFromText(...)` にして書く (#2379)。
         let spatial = match v {
-            Value::String(s) if crate::db::spatial::is_spatial_type_name(&col.type_name) => {
+            Value::String(s) if crate::db::spatial::is_spatial_column(driver, &col.type_name) => {
                 crate::db::spatial::spatial_sql_literal(driver, s)
             }
             _ => None,

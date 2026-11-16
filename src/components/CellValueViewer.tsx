@@ -258,7 +258,7 @@ export function CellValueViewer({
 
       <ModalBody display="flex" flexDirection="column" gap="2">
         {isSpatial && !isNull && !nullDraft && (
-          <SpatialPreview text={editing ? draft : raw} columnName={columnName} driver={driver} />
+          <SpatialPreview text={editing ? draft : raw} columnName={columnName} />
         )}
         {!editing && preview && (
           <chakra.div display="flex" flexDirection="column" gap="2">

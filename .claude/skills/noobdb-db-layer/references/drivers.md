@@ -94,4 +94,9 @@ host/port/user/password と SSH トンネルを持ちません (`commands::conne
 型を見て `spatial_sql_literal` (`ST_GeomFromText('…', srid)`) にする (data_diff の INSERT/UPDATE・Undo、
 `BulkSetValue::Spatial`、SQL INSERT エクスポート、ネイティブダンプ)。`sql_literal` 単体は型を知らないので、
 空間型の列の値をそのまま渡すと文字列リテラルになる点に注意 (MySQL は文字列から GEOMETRY へ暗黙変換できない)。
-MySQL の地理座標系 (SRID 4326 など) は座標が「緯度, 経度」の順 (`ST_AsText` / `ST_GeomFromText` と同じ)。
+座標は PostGIS / MySQL とも経度, 緯度の順で表示する (MySQL 8 の内部形式も経度, 緯度)。MySQL へ書き戻すときは
+SRID が 0 以外なら `ST_GeomFromText('…', srid, 'axis-order=long-lat')` にする (無いと地理座標系を緯度, 経度として
+読み、値が入れ替わる / ERROR 3617。Rust `spatial_sql_literal` とフロント `cellEdit.ts::spatialLiteral` が同じ形を出す)。
+空間型の判定はドライバ別 (`spatial::is_spatial_column` / フロント `isSpatialColumnType(type, driver)`): MySQL は
+`information_schema` の COLUMN_TYPE が返す `point` / `polygon` などの具体名も空間型、PostgreSQL の標準 `point` /
+`polygon` は対象外、SQLite は `GEOMETRY` と宣言されていても対象外 (SpatiaLite を前提にしない)。

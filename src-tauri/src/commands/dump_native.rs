@@ -1850,7 +1850,7 @@ async fn stream_table_rows(
                 StreamBatch::Columns(cols) => {
                     spatial = cols
                         .iter()
-                        .map(|c| crate::db::spatial::is_spatial_type_name(&c.type_name))
+                        .map(|c| crate::db::spatial::is_spatial_column(driver, &c.type_name))
                         .collect();
                     plan = mask_spec.as_ref().map(|s| s.plan(&cols));
                 }

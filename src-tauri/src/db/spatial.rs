@@ -14,8 +14,8 @@
 //! 読めないバイト列 (曲線型・壊れたデータ・未知のタイプ) は `None` を返し、呼び出し側が従来の
 //! 16 進文字列表示へ戻す (壊さない)。
 //!
-//! 座標の並びはバイナリに入っているままの順序。MySQL の地理座標系 (SRID 4326 など) は
-//! 「緯度, 経度」の軸順で保存・出力・入力されるので、`ST_AsText` / `ST_GeomFromText` と同じ並びになる。
+//! 座標の並びはバイナリに入っているままの順序 (経度, 緯度。MySQL 8 の内部形式も同じ)。MySQL へ書き戻す
+//! ときは `ST_GeomFromText` に `'axis-order=long-lat'` を付けて、この順序で読ませる。
 
 use crate::db::DriverKind;
 
@@ -33,6 +33,36 @@ pub fn is_spatial_type_name(type_name: &str) -> bool {
     let base = type_name.split('(').next().unwrap_or(type_name).trim();
     let last = base.rsplit('.').next().unwrap_or(base).trim_matches('"');
     last.eq_ignore_ascii_case("geometry") || last.eq_ignore_ascii_case("geography")
+}
+
+/// MySQL が宣言する具体的な空間型名 (`information_schema.COLUMNS.COLUMN_TYPE` は `point` のように
+/// 返す。sqlx のクエリ結果の列型は常に `GEOMETRY`)。`geomcollection` は 8.0 の別名。
+const MYSQL_SPATIAL_TYPES: &[&str] = &[
+    "geometry",
+    "point",
+    "linestring",
+    "polygon",
+    "multipoint",
+    "multilinestring",
+    "multipolygon",
+    "geometrycollection",
+    "geomcollection",
+];
+
+/// ドライバを考慮した空間型の判定。MySQL は具体的な型名 (`point` / `polygon` …) も空間型だが、
+/// PostgreSQL の `point` / `polygon` は標準の幾何型 (PostGIS ではない) なので含めない。
+/// SQLite は SpatiaLite を前提にしないので、`GEOMETRY` と宣言された列でも空間扱いしない。
+pub fn is_spatial_column(driver: DriverKind, type_name: &str) -> bool {
+    match driver {
+        DriverKind::Sqlite => false,
+        DriverKind::Postgres => is_spatial_type_name(type_name),
+        DriverKind::Mysql => {
+            let base = type_name.split('(').next().unwrap_or(type_name).trim();
+            MYSQL_SPATIAL_TYPES
+                .iter()
+                .any(|t| base.eq_ignore_ascii_case(t))
+        }
+    }
 }
 
 /// PostGIS の EWKB (バイナリ形式のワイヤ値) を EWKT へ。
@@ -102,7 +132,10 @@ fn is_wkt_charset(s: &str) -> bool {
 }
 
 /// EWKT を書き戻し用の式 `ST_GeomFromText('<WKT>', <SRID>)` にする (PostgreSQL / MySQL 共通)。
-/// SRID が無ければ第 2 引数を省く。SQLite と、WKT として不正な文字を含む入力は `None`
+/// SRID が無ければ第 2 引数を省く。MySQL で SRID が 0 以外のときは `'axis-order=long-lat'` を付ける:
+/// MySQL 8 の内部形式は (地理座標系でも) 経度, 緯度の順で、表示もその順 (PostGIS と同じ)。オプション無しだと
+/// 地理座標系 (4326 など) は緯度, 経度の順として読まれ、値が入れ替わる / ERROR 3617 になる。
+/// 投影座標系や SRID 0 ではオプションは無視される。SQLite と、WKT として不正な文字を含む入力は `None`
 /// (呼び出し側が通常の文字列リテラルへ戻す)。
 pub fn spatial_sql_literal(driver: DriverKind, ewkt: &str) -> Option<String> {
     if driver == DriverKind::Sqlite {
@@ -113,6 +146,9 @@ pub fn spatial_sql_literal(driver: DriverKind, ewkt: &str) -> Option<String> {
         return None;
     }
     Some(match srid {
+        Some(n) if n != 0 && driver == DriverKind::Mysql => {
+            format!("ST_GeomFromText('{wkt}', {n}, 'axis-order=long-lat')")
+        }
         Some(n) => format!("ST_GeomFromText('{wkt}', {n})"),
         None => format!("ST_GeomFromText('{wkt}')"),
     })
@@ -649,7 +685,7 @@ mod tests {
 
     #[test]
     fn mysql_internal_format_srid_prefix() {
-        // SRID 4326 + WKB POINT(35.68 139.76) (地理座標系は緯度, 経度の順)。
+        // SRID 4326 + WKB POINT(35.68 139.76) (内部形式に入っている順のまま出す)。
         let mut v = 4326u32.to_le_bytes().to_vec();
         v.extend(pt(true, 0, None, &[35.68, 139.76]));
         assert_eq!(
@@ -719,6 +755,11 @@ mod tests {
             spatial_sql_literal(DriverKind::Postgres, "SRID=4326;POINT(1 2)").as_deref(),
             Some("ST_GeomFromText('POINT(1 2)', 4326)")
         );
+        // MySQL は経度, 緯度の順で読ませる (SRID 0 以外)。
+        assert_eq!(
+            spatial_sql_literal(DriverKind::Mysql, "SRID=4326;POINT(139.76 35.68)").as_deref(),
+            Some("ST_GeomFromText('POINT(139.76 35.68)', 4326, 'axis-order=long-lat')")
+        );
         assert_eq!(
             spatial_sql_literal(DriverKind::Mysql, "POINT(1 2)").as_deref(),
             Some("ST_GeomFromText('POINT(1 2)')")
@@ -734,6 +775,30 @@ mod tests {
             None
         );
         assert_eq!(spatial_sql_literal(DriverKind::Postgres, ""), None);
+    }
+
+    #[test]
+    fn column_detection_is_driver_aware() {
+        for t in [
+            "geometry",
+            "GEOMETRY",
+            "point",
+            "POLYGON",
+            "linestring",
+            "multipolygon",
+            "geometrycollection",
+            "geomcollection",
+            "MultiPoint",
+        ] {
+            assert!(is_spatial_column(DriverKind::Mysql, t), "{t}");
+        }
+        assert!(!is_spatial_column(DriverKind::Mysql, "text"));
+        assert!(is_spatial_column(DriverKind::Postgres, "geography"));
+        // PostgreSQL 標準の幾何型は PostGIS ではない。
+        assert!(!is_spatial_column(DriverKind::Postgres, "point"));
+        assert!(!is_spatial_column(DriverKind::Postgres, "polygon"));
+        // SQLite は SpatiaLite を前提にしない。
+        assert!(!is_spatial_column(DriverKind::Sqlite, "GEOMETRY"));
     }
 
     #[test]

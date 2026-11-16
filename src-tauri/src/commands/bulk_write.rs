@@ -1367,10 +1367,11 @@ mod tests {
             "d",
             "t",
             &pk,
-            &spatial("SRID=4326;POINT(35.68 139.76)"),
+            &spatial("SRID=4326;POINT(139.76 35.68)"),
         )
         .unwrap_or_default();
-        assert!(my[0].contains("`g` = ST_GeomFromText('POINT(35.68 139.76)', 4326)"));
+        assert!(my[0]
+            .contains("`g` = ST_GeomFromText('POINT(139.76 35.68)', 4326, 'axis-order=long-lat')"));
         let pg = build_bulk_update_statements(
             DriverKind::Postgres,
             "d",

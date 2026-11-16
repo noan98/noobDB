@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   type Geometry,
   buildShapeModel,
-  isLatLonAxisOrder,
   isSpatialColumnType,
   niceTicks,
   parseEwkt,
@@ -122,8 +121,9 @@ describe("書き戻し (編集)", () => {
     expect(literalFromInput("postgres", "POINT(1 2)", geom, "SRID=4326;POINT(0 0)")).toBe(
       "ST_GeomFromText('POINT(1 2)', 4326)",
     );
-    expect(literalFromInput("mysql", "POINT(1 2)", mygeom, "SRID=4326;POINT(0 0)")).toBe(
-      "ST_GeomFromText('POINT(1 2)', 4326)",
+    // MySQL は経度, 緯度の順で読ませる (SRID 0 以外)。
+    expect(literalFromInput("mysql", "POINT(139.76 35.68)", mygeom, "SRID=4326;POINT(0 0)")).toBe(
+      "ST_GeomFromText('POINT(139.76 35.68)', 4326, 'axis-order=long-lat')",
     );
     expect(literalFromInput("mysql", "SRID=0;POINT(1 2)", mygeom, "SRID=4326;POINT(0 0)")).toBe(
       "ST_GeomFromText('POINT(1 2)', 0)",
@@ -172,16 +172,47 @@ describe("書き戻し (編集)", () => {
 
   it("行 → SQL と WHERE も空間型を式にする (Undo / コピー用)", () => {
     expect(rowValueLiteral("mysql", "SRID=4326;POINT(1 2)", mygeom)).toBe(
-      "ST_GeomFromText('POINT(1 2)', 4326)",
+      "ST_GeomFromText('POINT(1 2)', 4326, 'axis-order=long-lat')",
     );
     expect(whereEqualsClause("mysql", mygeom, "SRID=4326;POINT(1 2)")).toBe(
-      "ST_Equals(`g`, ST_GeomFromText('POINT(1 2)', 4326))",
+      "ST_Equals(`g`, ST_GeomFromText('POINT(1 2)', 4326, 'axis-order=long-lat'))",
     );
     expect(whereEqualsClause("postgres", geom, "SRID=4326;POINT(1 2)")).toBe(
       `"g" = ST_GeomFromText('POINT(1 2)', 4326)`,
     );
     // SQLite は空間型を持たないので従来どおりの文字列。
     expect(rowValueLiteral("sqlite", "POINT(1 2)", geom)).toBe("'POINT(1 2)'");
+  });
+});
+
+describe("ドライバ別の空間型判定", () => {
+  it("MySQL は point などの具体名も空間型、PostgreSQL 標準の point は対象外", () => {
+    for (const t of [
+      "point",
+      "POLYGON",
+      "linestring",
+      "multipolygon",
+      "geometrycollection",
+      "geomcollection",
+    ]) {
+      expect(isSpatialColumnType(t, "mysql"), t).toBe(true);
+      expect(isSpatialColumnType(t, "postgres"), t).toBe(false);
+    }
+    expect(
+      literalFromInput("mysql", "POINT(1 2)", { name: "p", type_name: "point" }, "SRID=4326;POINT(0 0)"),
+    ).toBe("ST_GeomFromText('POINT(1 2)', 4326, 'axis-order=long-lat')");
+  });
+
+  it("SQLite は GEOMETRY と宣言された列でも空間扱いせず、従来どおり編集できる", () => {
+    expect(isSpatialColumnType("GEOMETRY", "sqlite")).toBe(false);
+    expect(validateCellInput("anything", "GEOMETRY", true, "sqlite")).toBeNull();
+    expect(literalFromInput("sqlite", "POINT(1 2)", mygeom, "SRID=4326;POINT(0 0)")).toBe("'POINT(1 2)'");
+    expect(setValueFromInput("POINT(1 2)", mygeom, null, "sqlite")).toEqual({
+      kind: "text",
+      text: "POINT(1 2)",
+    });
+    expect(cellValueFromInput("SRID=1;x", mygeom, null, "sqlite")).toBe("SRID=1;x");
+    expect(whereEqualsClause("sqlite", mygeom, "POINT(1 2)")).toBe(`"g" = 'POINT(1 2)'`);
   });
 });
 
@@ -245,10 +276,7 @@ describe("その他", () => {
     expect(niceTicks(1, 1)).toEqual([]);
   });
 
-  it("グリフと軸順", () => {
+  it("グリフ", () => {
     expect(spatialGlyph({ type: "Point", coordinates: [0, 0] })).toBe("●");
-    expect(isLatLonAxisOrder("mysql", 4326)).toBe(true);
-    expect(isLatLonAxisOrder("postgres", 4326)).toBe(false);
-    expect(isLatLonAxisOrder("mysql", 0)).toBe(false);
   });
 });

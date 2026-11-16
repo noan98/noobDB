@@ -376,7 +376,7 @@ pub fn generate_data_sync_sql_with_identity(
     let mut skipped_unreliable = false;
     // 列名 → 位置とバイナリ列の判定を最初に 1 度だけ作り、行ごと・列ごとの線形探索を
     // しない (1 万行 × 60 列で約 3600 万回の文字列比較になっていた #1530)。
-    let index = ColumnIndex::new(&diff.columns, &diff.column_types);
+    let index = ColumnIndex::new(driver, &diff.columns, &diff.column_types);
 
     for row in &diff.rows {
         match row.status {
@@ -624,7 +624,7 @@ struct ColumnIndex<'a> {
 }
 
 impl<'a> ColumnIndex<'a> {
-    fn new(columns: &'a [String], types: &[String]) -> Self {
+    fn new(driver: DriverKind, columns: &'a [String], types: &[String]) -> Self {
         let mut positions = std::collections::HashMap::with_capacity(columns.len());
         for (i, c) in columns.iter().enumerate() {
             positions.entry(c.as_str()).or_insert(i);
@@ -636,7 +636,7 @@ impl<'a> ColumnIndex<'a> {
             .map(|i| {
                 types
                     .get(i)
-                    .is_some_and(|t| super::spatial::is_spatial_type_name(t))
+                    .is_some_and(|t| super::spatial::is_spatial_column(driver, t))
             })
             .collect();
         Self {
@@ -1423,7 +1423,7 @@ mod tests {
         );
         let cols = vec!["b".to_string()];
         let types = vec!["VARBINARY(16)".to_string()];
-        let idx = ColumnIndex::new(&cols, &types);
+        let idx = ColumnIndex::new(DriverKind::Mysql, &cols, &types);
         assert_eq!(
             idx.coerce_values(&[Value::String("O'Brien".into())]),
             vec![Value::String("O'Brien".into())]
@@ -1489,7 +1489,7 @@ mod tests {
         ];
         let row = vec![
             Value::Int(1),
-            Value::String("SRID=4326;POINT(35.68 139.76)".to_string()),
+            Value::String("SRID=4326;POINT(139.76 35.68)".to_string()),
             // 空間型でない列の同じ見た目の文字列は引用符付きのまま。
             Value::String("POINT(1 2)".to_string()),
         ];
@@ -1516,7 +1516,7 @@ mod tests {
         };
         let sql = &generate_data_sync_sql(&diff, false).statements[0].sql;
         assert!(
-            sql.contains("ST_GeomFromText('POINT(35.68 139.76)', 4326)"),
+            sql.contains("ST_GeomFromText('POINT(139.76 35.68)', 4326, 'axis-order=long-lat')"),
             "{sql}"
         );
         assert!(sql.contains("'POINT(1 2)'"), "{sql}");
@@ -1526,9 +1526,29 @@ mod tests {
         };
         let sql = &generate_data_sync_sql(&pg, false).statements[0].sql;
         assert!(
-            sql.contains("ST_GeomFromText('POINT(35.68 139.76)', 4326)"),
+            sql.contains("ST_GeomFromText('POINT(139.76 35.68)', 4326)"),
             "{sql}"
         );
+        // PostgreSQL の標準幾何型 `point` は PostGIS ではないので、文字列のまま。
+        let pg_point = DataDiff {
+            target_driver: DriverKind::Postgres,
+            column_types: vec!["INT".to_string(), "point".to_string(), "TEXT".to_string()],
+            ..pg.clone()
+        };
+        let sql = &generate_data_sync_sql(&pg_point, false).statements[0].sql;
+        assert!(!sql.contains("ST_GeomFromText"), "{sql}");
+        // SQLite は GEOMETRY と宣言された列でも空間扱いしない。
+        let sqlite = DataDiff {
+            target_driver: DriverKind::Sqlite,
+            column_types: vec![
+                "INT".to_string(),
+                "GEOMETRY".to_string(),
+                "TEXT".to_string(),
+            ],
+            ..pg
+        };
+        let sql = &generate_data_sync_sql(&sqlite, false).statements[0].sql;
+        assert!(!sql.contains("ST_GeomFromText"), "{sql}");
     }
 
     #[test]

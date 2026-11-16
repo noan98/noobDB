@@ -1,25 +1,22 @@
 import { useMemo } from "react";
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
-import { buildShapeModel, isLatLonAxisOrder, parseEwkt } from "./spatial";
+import { buildShapeModel, parseEwkt } from "./spatial";
 
 interface Props {
   /** セル値 (EWKT)。読めなければ何も描かない。 */
   text: string;
   columnName: string;
-  /** 接続ドライバ。MySQL の SRID 4326 は「緯度, 経度」の軸順なので横軸を入れ替える。 */
-  driver?: string;
 }
 
 /**
  * 空間データの形状をオフラインの SVG で描く (#2379)。地図タイルは使わず、座標の目盛りだけを添える。
  * X は右、Y は上が正 (緯度が上)。色は `App.css` の変数 (テーマ追従) だけを使う。
  */
-export function SpatialPreview({ text, columnName, driver }: Props) {
+export function SpatialPreview({ text, columnName }: Props) {
   const t = useT();
   const parsed = useMemo(() => parseEwkt(text), [text]);
-  const swap = isLatLonAxisOrder(driver, parsed?.srid ?? null);
-  const model = useMemo(() => (parsed ? buildShapeModel(parsed.geometry, swap) : null), [parsed, swap]);
+  const model = useMemo(() => (parsed ? buildShapeModel(parsed.geometry) : null), [parsed]);
   if (!parsed || !model) return null;
   const { plot } = model;
   const fmt = (n: number) => String(Number(n.toPrecision(8)));

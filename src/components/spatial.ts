@@ -30,14 +30,31 @@ export interface ParsedSpatial {
   geometry: Geometry;
 }
 
+/** MySQL が宣言する具体的な空間型名 (`information_schema` の COLUMN_TYPE は `point` のように返す)。 */
+const MYSQL_SPATIAL_TYPES = new Set([
+  "point",
+  "linestring",
+  "polygon",
+  "multipoint",
+  "multilinestring",
+  "multipolygon",
+  "geometrycollection",
+  "geomcollection",
+]);
+
 /**
  * 列の型名が空間型か。PostGIS は `geometry` / `geography`、MySQL は sqlx が全空間型を `GEOMETRY`
- * と報告する。PostgreSQL 標準の `point` / `polygon` などは別物 (テキスト表現が違う) なので含めない。
+ * と報告する (`driver` が mysql のときは `point` などの具体名も空間型)。PostgreSQL 標準の `point` /
+ * `polygon` は別物 (テキスト表現が違う) なので含めない。SQLite は SpatiaLite を前提にしないので、
+ * `GEOMETRY` と宣言された列でも空間型扱いしない (`driver` が sqlite のとき常に false)。`driver` 省略時は
+ * ドライバを問わず `geometry` / `geography` だけを見る。
  */
-export function isSpatialColumnType(typeName: string): boolean {
+export function isSpatialColumnType(typeName: string, driver?: string): boolean {
+  if (driver === "sqlite") return false;
   const base = typeName.split("(")[0].trim();
   const last = (base.split(".").pop() ?? base).replace(/"/g, "").trim().toLowerCase();
-  return last === "geometry" || last === "geography";
+  if (last === "geometry" || last === "geography") return true;
+  return driver === "mysql" && MYSQL_SPATIAL_TYPES.has(last);
 }
 
 const SRID_PREFIX_RE = /^\s*SRID\s*=\s*(\d+)\s*;/i;
@@ -333,8 +350,8 @@ function collect(g: Geometry, pts: Position[]): void {
 
 /**
  * ジオメトリを SVG の座標へ写す。X は右、**Y は上が正** (SVG の Y を反転する)。縦横は同じ縮尺
- * (座標の 1 単位が縦横で同じ長さ) で、データを描画領域の中央へ収める。`swapXY` は
- * 「緯度, 経度」の軸順で保存される座標系 (MySQL の SRID 4326 など) を、横軸 = 経度で描くための入れ替え。
+ * (座標の 1 単位が縦横で同じ長さ) で、データを描画領域の中央へ収める。座標は経度, 緯度の順 (PostGIS /
+ * MySQL 共通。MySQL への書き戻しは `axis-order=long-lat`)。`swapXY` は軸を入れ替えて描きたいとき用。
  */
 export function buildShapeModel(geometry: Geometry, swapXY = false): ShapeModel {
   const at = (p: Position): [number, number] => (swapXY ? [p[1], p[0]] : [p[0], p[1]]);
@@ -457,12 +474,4 @@ export function buildShapeModel(geometry: Geometry, swapXY = false): ShapeModel 
     bounds,
     empty: false,
   };
-}
-
-/**
- * 座標が「緯度, 経度」の軸順で保存されているか。MySQL の地理座標系 (SRID 4326) は
- * ST_AsText / ST_GeomFromText / 内部形式のいずれも先頭が緯度。PostGIS は常に経度, 緯度の順。
- */
-export function isLatLonAxisOrder(driver: string | undefined, srid: number | null): boolean {
-  return driver === "mysql" && srid === 4326;
 }

@@ -171,14 +171,19 @@ function errorKeyForKind(kind: EditTypeKind): I18nKey | null {
  * String-like columns are never rejected here — including an empty box, which
  * means the empty string `''` rather than NULL.
  */
-export function validateCellInput(raw: string, typeName: string, nullable: boolean): I18nKey | null {
+export function validateCellInput(
+  raw: string,
+  typeName: string,
+  nullable: boolean,
+  driver?: string,
+): I18nKey | null {
   const trimmed = raw.trim();
   const kind = classifyEditType(typeName);
   if (/^null$/i.test(trimmed)) {
     return nullable ? null : "editInvalidNotNull";
   }
   // 空間型 (#2379): WKT として読めない入力は書き戻す前に弾く (空欄も不可)。
-  if (isSpatialColumnType(typeName)) {
+  if (isSpatialColumnType(typeName, driver)) {
     return resolveSpatialInput(trimmed) === null ? "editInvalidSpatial" : null;
   }
   if (trimmed === "") {
@@ -459,13 +464,17 @@ export function isSinglePrecisionFloat(driver: string, col: Column): boolean {
  * WKT は文字列エスケープ (`quoteString`) を通すので引用符は出てこない。
  */
 function spatialLiteral(driver: string, col: Column, v: CellValue): string | null {
-  if (driver === "sqlite" || typeof v !== "string" || !isSpatialColumnType(col.type_name)) return null;
+  if (driver === "sqlite" || typeof v !== "string" || !isSpatialColumnType(col.type_name, driver))
+    return null;
   const resolved = resolveSpatialInput(v);
   if (resolved === null) return null;
   const m = /^SRID=(\d+);([\s\S]*)$/.exec(resolved);
-  return m
-    ? `ST_GeomFromText(${quoteString(driver, m[2])}, ${m[1]})`
-    : `ST_GeomFromText(${quoteString(driver, resolved)})`;
+  if (!m) return `ST_GeomFromText(${quoteString(driver, resolved)})`;
+  // MySQL は内部形式・表示とも経度, 緯度の順。オプション無しだと地理座標系 (4326 など) を緯度, 経度として
+  // 読んで値が入れ替わる / ERROR 3617 になる (SRID 0 と投影座標系ではオプションは無視される)。Rust の
+  // `spatial_sql_literal` と同じ。
+  const axis = driver === "mysql" && Number(m[1]) !== 0 ? ", 'axis-order=long-lat'" : "";
+  return `ST_GeomFromText(${quoteString(driver, m[2])}, ${m[1]}${axis})`;
 }
 
 /**
@@ -483,7 +492,7 @@ export function literalFromInput(driver: string, raw: string, col: Column, curre
   const trimmed = raw.trim();
   if (/^null$/i.test(trimmed)) return "NULL";
   // 空間型 (#2379): SRID は入力の `SRID=n;` を優先し、無ければ編集前の値から引き継ぐ。
-  if (isSpatialColumnType(col.type_name)) {
+  if (isSpatialColumnType(col.type_name, driver)) {
     const resolved = resolveSpatialInput(trimmed, current);
     const lit = resolved === null ? null : spatialLiteral(driver, col, resolved);
     if (lit) return lit;
@@ -520,10 +529,15 @@ export function literalFromInput(driver: string, raw: string, col: Column, curre
  * refetch, so the edited cell shows its new value and the user keeps their
  * scroll/page position.
  */
-export function cellValueFromInput(raw: string, col: Column, current?: CellValue): CellValue {
+export function cellValueFromInput(
+  raw: string,
+  col: Column,
+  current?: CellValue,
+  driver?: string,
+): CellValue {
   const trimmed = raw.trim();
   if (/^null$/i.test(trimmed)) return null;
-  if (isSpatialColumnType(col.type_name)) {
+  if (isSpatialColumnType(col.type_name, driver)) {
     // バックエンドが返す形 (EWKT、SRID を引き継いだ値) に揃える。
     const resolved = resolveSpatialInput(trimmed, current);
     if (resolved !== null) return resolved;
@@ -557,8 +571,13 @@ export type SavedValuePreview =
   | { kind: "normalized"; value: string; raw: string }
   | { kind: "edgeSpace" };
 
-export function previewSavedValue(raw: string, col: Column, current?: CellValue): SavedValuePreview | null {
-  const v = cellValueFromInput(raw, col, current);
+export function previewSavedValue(
+  raw: string,
+  col: Column,
+  current?: CellValue,
+  driver?: string,
+): SavedValuePreview | null {
+  const v = cellValueFromInput(raw, col, current, driver);
   if (v === null || v === undefined) return { kind: "null" };
   const trimmed = raw.trim();
   if (typeof v === "boolean") {
@@ -592,8 +611,8 @@ export function previewSavedValue(raw: string, col: Column, current?: CellValue)
  * count honest, avoids emitting `SET col = <same value>` at Apply, and lets the
  * action undo an earlier edit on that cell.
  */
-export function editIsNoop(raw: string, col: Column, current: CellValue): boolean {
-  const next = cellValueFromInput(raw, col, current);
+export function editIsNoop(raw: string, col: Column, current: CellValue, driver?: string): boolean {
+  const next = cellValueFromInput(raw, col, current, driver);
   const nextNull = next === null || next === undefined;
   const currentNull = current === null || current === undefined;
   if (nextNull || currentNull) return nextNull && currentNull;
@@ -721,10 +740,15 @@ export type BulkSetValue =
  *   - BIT 列 + true/false/0/1 → number "1" / "0"
  *   - それ以外 → 生の文字列 (trim しない)
  */
-export function setValueFromInput(raw: string, col: Column, current?: CellValue): BulkSetValue {
+export function setValueFromInput(
+  raw: string,
+  col: Column,
+  current?: CellValue,
+  driver?: string,
+): BulkSetValue {
   const trimmed = raw.trim();
   if (/^null$/i.test(trimmed)) return { kind: "null" };
-  if (isSpatialColumnType(col.type_name)) {
+  if (isSpatialColumnType(col.type_name, driver)) {
     const resolved = resolveSpatialInput(trimmed, current);
     if (resolved !== null) return { kind: "spatial", text: resolved };
   }
@@ -885,7 +909,10 @@ export function buildUpdateGroups(input: BuildUpdateInput): {
       const colIdx = Number(colKey);
       const col = input.columns[colIdx];
       if (!col) continue;
-      set.push({ column: col.name, value: setValueFromInput(rowEdits[colIdx], col, row[colIdx]) });
+      set.push({
+        column: col.name,
+        value: setValueFromInput(rowEdits[colIdx], col, row[colIdx], input.driver),
+      });
       // 主キー列は WHERE に元の値が入っているので旧値の述語は足さない。
       olds.push(
         input.optimisticLock && !input.pkIndices.includes(colIdx)
