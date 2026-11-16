@@ -40,6 +40,11 @@ type Props = {
   value: ResultViewKind;
   /** セグメント選択時のコールバック。同じビューを選んだときは呼ばれない。 */
   onChange: (view: ResultViewKind) => void;
+  /**
+   * 選べるビューを絞る (#2380)。ノートブックのセルは結果を「表 / チャート」の 2 つでしか持たないので、
+   * ピボット / JSON を出さない。省略時は 4 つすべて。
+   */
+  views?: readonly ResultViewKind[];
 };
 
 /**
@@ -59,10 +64,12 @@ type Props = {
  * 見た目・a11y (`role="radiogroup"` + `layoutId` スプリング付きサム・ローミング
  * フォーカス) は共有プリミティブ `Segmented` (#975) に委譲している。
  */
-export function ResultViewSwitch({ value, onChange }: Props) {
+export function ResultViewSwitch({ value, onChange, views }: Props) {
   const t = useT();
   const onExplain = useContext(ResultExplainContext);
-  const options: SegmentedOption<ResultViewKind>[] = VIEWS.map((v) => ({
+  const options: SegmentedOption<ResultViewKind>[] = VIEWS.filter(
+    (v) => !views || views.includes(v.kind),
+  ).map((v) => ({
     value: v.kind,
     label: t(v.labelKey),
     icon: v.icon,

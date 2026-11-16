@@ -66,6 +66,10 @@ import type { Transition, Variants } from "motion/react";
  *   詳細一覧の該当行へ `scrollIntoView({ block: "nearest" })` し、`.table-diff-flash` (App.css) で 1 回光らせる。
  *   height の補間と scroll の `behavior` は `useReducedMotionConfig()` / `prefersStaticMotion()` で即時 / `"auto"`、
  *   フラッシュは reduced-motion の CSS で静止する。
+ * - SQL ノートブックのセル (`NotebookView`、#2380)。追加・削除は `AnimatePresence initial={false}` + `variants.collapse`、
+ *   並べ替えは `Reorder.Group` / `Reorder.Item` (つまみの `useDragControls` でだけドラッグ開始。エディタ内の選択操作と衝突させない。
+ *   上下ボタンでも動かせる) + `layout="position"`、折りたたみはシェブロンの CSS 回転。`height` / `opacity` の補間は
+ *   `useReducedMotionConfig()` / `prefersStaticMotion()` で即時化し、静止時は `layout` も外す。
  * - モーダル/ダイアログの開閉 (`Modal` — `variants.dialog` / `fade`)。
  * - タブの追加/削除とアクティブインジケータ (`TabBar` — `layout` / `layoutId`)。
  * - トースト通知の出入り (`Toast` — `transitions.emphasized`)。
