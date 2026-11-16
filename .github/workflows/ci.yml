@@ -85,6 +85,10 @@ jobs:
               # #2385: brand.test.ts が ?raw で読むファビコン。色だけを変えた PR でも
               # ブランド色との整合テストを実走させる。
               - 'public/**'
+              # #2386: E2E spec (nightly の e2e.yml だけが実行する) の型チェック / Biome と、
+              # spec が参照する data-testid の存在を検査するメタテスト (e2eTestidParity.test.ts) を
+              # PR 時点で実走させる。
+              - 'e2e/**'
             rust:
               - 'src-tauri/**'
             # #853: 言語横断のゴールデン/パリティテスト (Rust 側の
@@ -249,6 +253,12 @@ jobs:
       # 新しい必須チェックは増やさず、frontend ジョブ内のステップとして実行する。
       - name: Lint (Biome)
         run: pnpm run lint
+
+      # E2E spec (`e2e/**`) の型チェック (#2386)。E2E 自体は nightly (e2e.yml) でしか動かないため、
+      # wdio API の誤用などの型エラーが翌朝まで見つからない。Tauri のビルドは不要で数秒で終わる。
+      # (spec が参照する data-testid の存在は Vitest の e2eTestidParity.test.ts が検査する。)
+      - name: Type-check E2E specs
+        run: pnpm exec tsc -p e2e/tsconfig.e2e.json --noEmit
 
       # ビルド成果物 (dist/) の JS/CSS サイズを計測して Job Summary に出力する
       # (#443)。カバレッジ可視化と同じく当面は閾値による fail を設けず可視化のみ。

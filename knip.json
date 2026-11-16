@@ -3,7 +3,6 @@
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": [
     "codemirror",
-    "@wdio/globals",
     "@wdio/local-runner",
     "@wdio/mocha-framework",
     "@wdio/spec-reporter",

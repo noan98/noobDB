@@ -349,6 +349,11 @@ tauri-driver は `taiki-e/install-action` の対応ツールではないため�
 「3 回連続グリーン」と「15 分以内」は確認済み (2026-10-03 JST、run 18〜20、約 11〜12 分)。
 詳細・testid 一覧は `noobdb-testing` スキルの `references/e2e.md`。
 
+E2E 自体は非必須だが、安価な PR 側ゲートは `ci.yml` の `frontend` ジョブにある (#2386): paths-filter
+`frontend` に `e2e/**` を含め、`pnpm exec tsc -p e2e/tsconfig.e2e.json --noEmit` (E2E spec の型チェック)、
+Biome (`pnpm run lint` が `src e2e` を対象)、Vitest の `e2eTestidParity.test.ts` (spec の
+`[data-testid="..."]` が `src/` に静的 / テンプレートリテラルのプレフィックスで存在するか) を実行する。
+
 ## `windows-db-smoke.yml` (Windows × MySQL/PostgreSQL nightly スモーク / #1945)
 
 `rust (windows)` は SQLite 統合しか実走しない (MySQL/PostgreSQL は `NOOBDB_TEST_*` ゲートでスキップ) ため、
