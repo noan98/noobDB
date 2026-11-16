@@ -45,6 +45,12 @@ Tauri の `#[tauri::command] async fn` は同一プロセス内で**並行実行
 - ユーザが選んだパスへ書き出すファイル (SQL 保存・バイナリ保存・プロファイル書き出し) は `atomic_write::write_atomic` (一時ファイル → `rename`。既存のパーミッションと symlink を維持)。アプリのデータディレクトリ内の JSON ストアは各ストアの `write_atomic`。
 - `{ "<key>": [...] }` 形式のストア (snippets / sandboxes) は `json_tolerant::parse_items` / `unparsable_raw` / `build_with_raw` で 1 件の不正を読み飛ばして書き戻す。トップレベルの形が違うときは `quarantine_if_unexpected_shape`、JSON 破損は `corrupt_backup_path` で `.corrupt-*` へ退避して空から再開する (assertions / tasks も同じ)。
 
+## 論理リレーション (`logical_relations.json`, #2356)
+
+- `logical_relations.rs` が持つ `json_store::JsonStore` (data_dir)。FK 制約を張らない DB の「子.列 → 親.列」を
+  (プロファイル ID, データベース) ごとに保存する。**DB には書かない** (DDL・同期・ダンプに出さない)。
+  テーブル名・列名だけを持ち、秘密情報・行データは入れない。必須対策は `JsonStore` が満たす。
+
 ## AI 使用量台帳 (`ai_usage.json`, #1540)
 
 - `ai/usage.rs` が持つ JSON ストア (data_dir)。日 (JST) × タスク種別 × モデルの**トークン数と回数だけ**を

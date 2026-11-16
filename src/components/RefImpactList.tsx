@@ -4,7 +4,7 @@ import { ImpactTree, type ImpactGroup, type ImpactOutcome } from "./ImpactTree";
 import { Button } from "./ui";
 import { useT } from "../i18n";
 import { incomingFkTableName } from "../fkNavigation";
-import { blocksDelete, type RefImpact } from "../refImpact";
+import { impactBlocks, type RefImpact } from "../refImpact";
 
 /** 一覧に出す子テーブルの最大行数。超えた分は「ほか N 件」に畳み、押すと展開する。 */
 const MAX_LINES = 8;
@@ -63,9 +63,12 @@ export function RefImpactList({
   const partial = partialProp || impacts.some((i) => i.capped);
   const total = impacts.reduce((sum, i) => sum + i.count, 0);
   // MySQL / PostgreSQL の TRUNCATE は ON DELETE に関係なく、参照されていれば失敗する。
-  const truncateRefuses = mode === "truncate" && !sqlite;
-  const blocked = !truncateRefuses && impacts.some((i) => blocksDelete(i.onDelete));
-  const cascading = !truncateRefuses && impacts.some((i) => i.onDelete === "CASCADE");
+  // 論理リレーション (#2356) は DB が止めない・連鎖しないので、これらの判定から外す。
+  const real = impacts.filter((i) => !i.logical);
+  const hasLogical = real.length < impacts.length;
+  const truncateRefuses = mode === "truncate" && !sqlite && real.length > 0;
+  const blocked = !truncateRefuses && impacts.some(impactBlocks);
+  const cascading = !truncateRefuses && real.some((i) => i.onDelete === "CASCADE");
   const groups = groupByParent(impacts, { mode, truncateRefuses, onOpen, t });
   return (
     <>
@@ -84,7 +87,8 @@ export function RefImpactList({
             ` ${t(driver === "postgres" ? "refImpactTruncateRefusesPg" : "refImpactTruncateRefusesMysql")}`}
           {blocked && ` ${t(mode === "truncate" ? "refImpactBlockedTruncate" : "refImpactBlockedRows")}`}
           {cascading && ` ${t("refImpactCascading")}`}
-          {sqlite && ` ${t("refImpactSqlite")}`}
+          {sqlite && real.length > 0 && ` ${t("refImpactSqlite")}`}
+          {hasLogical && ` ${t("refImpactLogicalNote")}`}
         </chakra.p>
         <ImpactTree groups={groups} maxVisible={MAX_LINES} />
       </Callout>
@@ -127,8 +131,9 @@ function groupByParent(
       g = { key: origin, origin: { kind: "column", name: origin }, nodes: [] };
       groups.set(origin, g);
     }
-    const count =
-      mode === "rows"
+    const count = imp.logical
+      ? t("refImpactLogicalCount", { count: imp.count })
+      : mode === "rows"
         ? t(actionKey(imp.onDelete), { count: imp.count })
         : t(imp.capped ? "refImpactRowCountCapped" : "refImpactRowCount", { count: imp.count });
     const depth = imp.depth ?? 1;
@@ -136,8 +141,8 @@ function groupByParent(
       key: `${imp.parentTable ?? ""}\0${incomingFkTableName(imp)}\0${imp.column}`,
       kind: "table",
       name: `${incomingFkTableName(imp)}.${imp.column}`,
-      outcome: truncateRefuses ? "block" : outcomeOf(imp.onDelete),
-      meta: `${count}${depth > 1 ? ` · ${t("refImpactDepth", { depth })}` : ""} · ON DELETE ${imp.onDelete}`,
+      outcome: imp.logical ? undefined : truncateRefuses ? "block" : outcomeOf(imp.onDelete),
+      meta: `${count}${depth > 1 ? ` · ${t("refImpactDepth", { depth })}` : ""}${imp.logical ? ` · ${t("refImpactLogicalTag")}` : ` · ON DELETE ${imp.onDelete}`}`,
       action:
         onOpen && depth === 1 ? (
           <Button type="button" variant="secondary" size="sm" onClick={() => onOpen(imp)}>

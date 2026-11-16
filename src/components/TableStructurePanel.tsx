@@ -159,6 +159,7 @@ function ForeignKeyLink({
   onSelect: (table: string) => void;
   hint: string;
 }) {
+  const t = useT();
   return (
     <Tooltip label={hint}>
       <chakra.button
@@ -178,6 +179,7 @@ function ForeignKeyLink({
       >
         <Icon name="link" size={ICON_SIZES.sm} />
         {foreignKeyTargetLabel(fk)}
+        {fk.logical && <chakra.span color="app.textMuted"> ({t("logicalRelationBadge")})</chakra.span>}
       </chakra.button>
     </Tooltip>
   );

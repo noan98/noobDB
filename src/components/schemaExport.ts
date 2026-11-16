@@ -117,13 +117,13 @@ function fkLines(fks: ForeignKey[]): string[] {
       const target = fk.referenced_column
         ? `${fk.referenced_table}.${fk.referenced_column}`
         : fk.referenced_table;
-      return `${fk.column} → ${target}`;
+      return `${fk.column} → ${target}${fk.logical ? " (logical)" : ""}`;
     }
     const cols = group.map((fk) => fk.column).join(", ");
     const refCols = group.every((fk) => fk.referenced_column)
       ? ` (${group.map((fk) => fk.referenced_column).join(", ")})`
       : "";
-    return `(${cols}) → ${group[0].referenced_table}${refCols}`;
+    return `(${cols}) → ${group[0].referenced_table}${refCols}${group[0].logical ? " (logical)" : ""}`;
   });
 }
 

@@ -357,6 +357,9 @@ const TablesExportModal = lazy(() =>
 const AiSchemaDocModal = lazy(() =>
   import("./components/AiSchemaDocModal").then((m) => ({ default: m.AiSchemaDocModal })),
 );
+const LogicalRelationsModal = lazy(() =>
+  import("./components/LogicalRelationsModal").then((m) => ({ default: m.LogicalRelationsModal })),
+);
 const SchemaExportModal = lazy(() =>
   import("./components/SchemaExportModal").then((m) => ({ default: m.SchemaExportModal })),
 );
@@ -583,6 +586,7 @@ import {
   type UnseenOutcome,
 } from "./tabOutcome";
 import { type IncomingFk, incomingFkTableName } from "./fkNavigation";
+import { applyLogicalToColumns, stripLogicalFromColumns } from "./logicalRelations";
 import { collectDropImpacts, type DropImpact } from "./dropImpact";
 import {
   buildOpenChildrenSql,
@@ -2415,6 +2419,10 @@ export default function App() {
   const [sqlEncodingDialog, setSqlEncodingDialog] = useState<{ mode: "open" | "save" } | null>(null);
   // AI 向けスキーマ Markdown エクスポートの対象 DB (null で閉じる)。
   const [schemaExportTarget, setSchemaExportTarget] = useState<string | null>(null);
+  // 論理リレーション (仮想 FK, #2356) の管理モーダルの対象 DB (null で閉じる)。
+  const [logicalRelationsTarget, setLogicalRelationsTarget] = useState<string | null>(null);
+  // 論理リレーションのダイアログを閉じるたびに進め、開いている ER 図を取得し直す。
+  const [logicalRelationsTick, setLogicalRelationsTick] = useState(0);
   // AI スキーマドキュメント (#696)。ER 図で選択中のテーブルを初期スコープとして渡す。
   const [schemaDocTarget, setSchemaDocTarget] = useState<{ database: string; tables: string[] } | null>(null);
   // プロファイルインポート: ファイル選択後、衝突解決ダイアログに渡すパス。
@@ -5070,6 +5078,42 @@ export default function App() {
       });
     },
     [sessionId],
+  );
+
+  // 論理リレーション (仮想 FK, #2356) を登録・削除したとき、取得済みの FK 情報を捨てて取り直す:
+  // エディタのスキーマ (FK / 列)・逆参照 FK のキャッシュ・開いているテーブルタブの列・ツリーの列。
+  const handleLogicalRelationsChanged = useCallback(
+    (database: string) => {
+      invalidateSchemaCache(database);
+      fkEpochRef.current += 1;
+      fkInFlightRef.current.clear();
+      setIncomingFkCache({});
+      connectionListRef.current?.refreshSchema();
+      if (!sessionId) return;
+      const sid = sessionId;
+      void api
+        .listLogicalRelations(sid, database)
+        .then((rels) =>
+          setTabs((prev) =>
+            prev.map((tab) =>
+              tab.database === database && tab.table && tab.tableColumns
+                ? {
+                    ...tab,
+                    tableColumns: applyLogicalToColumns(
+                      tab.table,
+                      stripLogicalFromColumns(tab.tableColumns),
+                      rels,
+                    ),
+                  }
+                : tab,
+            ),
+          ),
+        )
+        .catch(() => {
+          /* 取り直せなくても、開き直せば反映される */
+        });
+    },
+    [invalidateSchemaCache, sessionId, setTabs],
   );
 
   useEffect(() => {
@@ -9616,7 +9660,8 @@ export default function App() {
       return;
     }
     const needsConfirm =
-      res.moreCascade || res.impacts.some((i) => i.onDelete === "CASCADE" || blocksDelete(i.onDelete));
+      res.moreCascade ||
+      res.impacts.some((i) => i.logical === true || i.onDelete === "CASCADE" || blocksDelete(i.onDelete));
     if (!needsConfirm) {
       proceed();
       return;
@@ -13108,6 +13153,14 @@ export default function App() {
       });
       if (paletteDatabase) {
         items.push({
+          id: "nav:logical-relations",
+          group: "navigation",
+          label: t("cmdkActionLogicalRelations"),
+          icon: "link",
+          keywords: "logical relation virtual foreign key fk 論理 リレーション 仮想 外部キー 関連 user_id",
+          run: () => setLogicalRelationsTarget(paletteDatabase),
+        });
+        items.push({
           id: "nav:schema-export",
           group: "navigation",
           label: t("cmdkActionSchemaExport"),
@@ -14991,6 +15044,8 @@ export default function App() {
                         onOpenTable={handleOpenTable}
                         connectionKey={selectedProfile?.id ?? null}
                         onInsertSql={handleInsertAdvisorSql}
+                        onManageLogicalRelations={setLogicalRelationsTarget}
+                        reloadKey={logicalRelationsTick}
                         onGenerateDoc={
                           aiAvailable
                             ? (database, tables) => setSchemaDocTarget({ database, tables })
@@ -15666,6 +15721,23 @@ export default function App() {
                 initialTables={schemaDocTarget.tables}
                 onClose={() => setSchemaDocTarget(null)}
               />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {logicalRelationsTarget && sessionId && (
+              <Suspense fallback={null}>
+                <LogicalRelationsModal
+                  key={logicalRelationsTarget}
+                  sessionId={sessionId}
+                  onChanged={handleLogicalRelationsChanged}
+                  database={logicalRelationsTarget}
+                  onClose={() => {
+                    setLogicalRelationsTarget(null);
+                    setLogicalRelationsTick((n) => n + 1);
+                  }}
+                />
+              </Suspense>
             )}
           </AnimatePresence>
 
