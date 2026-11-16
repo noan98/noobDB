@@ -8923,6 +8923,10 @@ const en = {
   notebookRebindConfirm: "Run here",
   notebookTooLarge:
     "The notebook is {size} MiB, over the {limit} MiB limit for opening files. Lower the snapshot rows and run the cells again.",
+  notebookTooManyCells:
+    "The notebook has more than {limit} cells, which can't be opened again. Delete some cells before saving.",
+  notebookCellTooLong:
+    "A cell has more than {limit} characters of text, which can't be opened again. Shorten or split it before saving.",
   notebookStopInTransaction:
     "An explicit transaction is active: the running statement finishes first, then the run stops.",
   notebookDatabaseTxTip: "During a transaction, cells run on the transaction's database.",
@@ -17766,6 +17770,9 @@ const ja: Dict = {
   notebookRebindConfirm: "この接続で実行",
   notebookTooLarge:
     "ノートブックが {size} MiB で、開ける上限 ({limit} MiB) を超えています。保存行数を下げてセルを再実行してください。",
+  notebookTooManyCells: "セルが {limit} 個を超えており、開き直せません。セルを減らしてから保存してください。",
+  notebookCellTooLong:
+    "テキストが {limit} 文字を超えるセルがあり、開き直せません。短くするか分割してから保存してください。",
   notebookStopInTransaction:
     "実行中の文の完了後に止まります (明示トランザクション中は文の途中で中断できません)。",
   notebookDatabaseTxTip: "トランザクション中は、トランザクションの DB で実行します。",

@@ -29,8 +29,8 @@ vi.mock("../components/QueryEditor", () => ({
 }));
 
 import { NotebookView } from "../components/NotebookView";
-import { newMarkdownCell, newSqlCell, createEmptyNotebook } from "../notebook";
-import { replaceNotebook, getNotebookState } from "../notebookStore";
+import { MAX_NOTEBOOK_CELLS, newMarkdownCell, newSqlCell, createEmptyNotebook } from "../notebook";
+import { replaceNotebook, getNotebookState, markNotebookSaved, updateNotebook } from "../notebookStore";
 import { NotebookRunError } from "../notebookExec";
 
 const OUT = {
@@ -239,5 +239,83 @@ describe("NotebookView (#2380)", () => {
       );
     }
     expect(onRunSql).not.toHaveBeenCalled();
+  });
+
+  it("「エディタで開く」はノートブックの実行先 DB を渡す (未指定なら null)", async () => {
+    const d = createEmptyNotebook(null);
+    d.database = "audit";
+    d.cells = [newSqlCell("SELECT 1")];
+    replaceNotebook(d, null);
+    const { props } = setup();
+    fireEvent.click(screen.getByRole("button", { name: t("notebookOpenInEditor") }));
+    expect(props.onOpenInEditor).toHaveBeenLastCalledWith("SELECT 1", expect.any(String), "audit");
+    act(() => updateNotebook((x) => ({ ...x, database: null })));
+    fireEvent.click(screen.getByRole("button", { name: t("notebookOpenInEditor") }));
+    expect(props.onOpenInEditor).toHaveBeenLastCalledWith("SELECT 1", expect.any(String), null);
+  });
+
+  it("保存の書き込み中に文書が編集されたら、保存済みにせず dirty のまま残す", async () => {
+    seed(newSqlCell("SELECT 1"));
+    updateNotebook((x) => x); // dirty にする
+    mocks.save.mockResolvedValue("/tmp/race.noobnb");
+    let finish: (n: number) => void = () => {};
+    mocks.writeTextFile.mockReturnValue(new Promise<number>((r) => (finish = r)));
+    setup();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: t("notebookSave") }));
+    });
+    await waitFor(() => expect(mocks.writeTextFile).toHaveBeenCalled());
+    // 書き込み中は新規 / 開くを押せない
+    expect((screen.getByRole("button", { name: t("notebookNew") }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: t("notebookOpen") }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    act(() => updateNotebook((x) => ({ ...x, title: "保存中に変えた" })));
+    await act(async () => {
+      finish(10);
+    });
+    expect(getNotebookState().dirty).toBe(true);
+    expect(getNotebookState().doc.title).toBe("保存中に変えた");
+  });
+
+  it("保存の完了時に文書が入れ替わっていたら、古いパスを新しい文書へ付けない", () => {
+    seed(newSqlCell("SELECT 1"));
+    const started = getNotebookState();
+    const fresh = createEmptyNotebook(null);
+    replaceNotebook(fresh, null);
+    markNotebookSaved("/tmp/old.noobnb", { epoch: started.epoch, revision: started.revision });
+    expect(getNotebookState().filePath).toBeNull();
+    expect(getNotebookState().doc).toBe(fresh);
+  });
+
+  it("何も変わらなければ保存済みになりパスが付く", () => {
+    seed(newSqlCell("SELECT 1"));
+    updateNotebook((x) => x);
+    const s = getNotebookState();
+    markNotebookSaved("/tmp/ok.noobnb", { epoch: s.epoch, revision: s.revision });
+    expect(getNotebookState()).toMatchObject({ dirty: false, filePath: "/tmp/ok.noobnb" });
+  });
+
+  it("セルが読み込み上限を超える文書は保存せずエラーにする", async () => {
+    const d = createEmptyNotebook(null);
+    d.cells = Array.from({ length: MAX_NOTEBOOK_CELLS + 1 }, () => newSqlCell("SELECT 1"));
+    replaceNotebook(d, null);
+    mocks.save.mockResolvedValue("/tmp/many.noobnb");
+    setup();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: t("notebookSave") }));
+    });
+    await screen.findByText(t("notebookTooManyCells", { limit: MAX_NOTEBOOK_CELLS.toLocaleString() }));
+    expect(mocks.writeTextFile).not.toHaveBeenCalled();
+  });
+
+  it("セルの追加も上限で止まる", async () => {
+    const d = createEmptyNotebook(null);
+    d.cells = Array.from({ length: MAX_NOTEBOOK_CELLS }, () => newSqlCell("SELECT 1"));
+    replaceNotebook(d, null);
+    setup();
+    fireEvent.click(screen.getAllByRole("button", { name: t("notebookAddSql") })[0]);
+    await screen.findByText(t("notebookTooManyCells", { limit: MAX_NOTEBOOK_CELLS.toLocaleString() }));
+    expect(getNotebookState().doc.cells).toHaveLength(MAX_NOTEBOOK_CELLS);
   });
 });

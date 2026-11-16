@@ -90,4 +90,19 @@ describe("書き出し (#2380)", () => {
     expect(errLine).toHaveLength(1);
     expect(errLine[0]).toContain("line1 line2");
   });
+
+  it("HTML にも自動 LIMIT と値の切り詰めの警告が出る (Markdown と同じ)", () => {
+    const d = build();
+    const cell = d.cells[1] as { snapshot: NonNullable<ReturnType<typeof newSqlCell>["snapshot"]> };
+    cell.snapshot = { ...cell.snapshot, appliedAutoLimit: 1000, valuesTruncated: true };
+    const html = notebookToHtml(d, text, "ja", new Date("2026-01-02T03:04:05Z"));
+    expect(html).toContain("自動 LIMIT 1000");
+    expect(html).toContain("2000 文字で切り詰め");
+    const md = notebookToMarkdown(d, text, new Date("2026-01-02T03:04:05Z"));
+    expect(md).toContain("自動 LIMIT 1000");
+    // 警告が無いスナップショットでは出さない
+    const plain = notebookToHtml(build(), text, "ja", new Date("2026-01-02T03:04:05Z"));
+    expect(plain).not.toContain("自動 LIMIT");
+    expect(plain).not.toContain("文字で切り詰め");
+  });
 });

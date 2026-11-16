@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSnapshot,
+  checkNotebookLimits,
   cellHasWrites,
   createEmptyNotebook,
   DEFAULT_SNAPSHOT_ROW_LIMIT,
   insertCellAfter,
+  MAX_CELL_TEXT_CHARS,
+  MAX_NOTEBOOK_CELLS,
   MAX_NOTEBOOK_FILE_BYTES,
   MAX_SNAPSHOT_CELL_CHARS,
   MAX_SNAPSHOT_ROW_LIMIT,
@@ -240,5 +243,32 @@ describe("サイズ上限と値の切り詰め (#2380)", () => {
   it("シリアライズはコンパクト JSON (整形しない)", () => {
     const text = serializeNotebook(createEmptyNotebook(null), MASK_OFF);
     expect(text.trim().split("\n")).toHaveLength(1);
+  });
+});
+
+describe("保存前の上限検査 (読み込み側と同じ定数)", () => {
+  it("上限ちょうどは通り、超えると違反を返す", () => {
+    const d = createEmptyNotebook(null);
+    d.cells = Array.from({ length: MAX_NOTEBOOK_CELLS }, () => newSqlCell("SELECT 1"));
+    expect(checkNotebookLimits(d)).toBeNull();
+    d.cells = [...d.cells, newMarkdownCell("x")];
+    expect(checkNotebookLimits(d)).toEqual({ kind: "cells", limit: MAX_NOTEBOOK_CELLS });
+  });
+
+  it("セルのテキスト長 (SQL / Markdown) が上限を超えると違反", () => {
+    const d = createEmptyNotebook(null);
+    d.cells = [newSqlCell("a".repeat(MAX_CELL_TEXT_CHARS))];
+    expect(checkNotebookLimits(d)).toBeNull();
+    d.cells = [newSqlCell("a".repeat(MAX_CELL_TEXT_CHARS + 1))];
+    expect(checkNotebookLimits(d)).toEqual({ kind: "cellText", limit: MAX_CELL_TEXT_CHARS });
+    d.cells = [newMarkdownCell("a".repeat(MAX_CELL_TEXT_CHARS + 1))];
+    expect(checkNotebookLimits(d)?.kind).toBe("cellText");
+  });
+
+  it("検査を通る文書は読み込みで欠けない", () => {
+    const d = createEmptyNotebook(null);
+    d.cells = Array.from({ length: MAX_NOTEBOOK_CELLS }, (_, i) => newSqlCell(`SELECT ${i}`));
+    const parsed = parseNotebook(serializeNotebook(d, MASK_OFF));
+    expect(parsed.ok && parsed.doc.cells.length).toBe(MAX_NOTEBOOK_CELLS);
   });
 });

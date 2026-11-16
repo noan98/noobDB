@@ -15278,9 +15278,21 @@ export default function App() {
                         transactionActive={txActive}
                         emergencyMode={emergencyMode}
                         onRunSql={runNotebookSql}
-                        onOpenInEditor={(sql, title) =>
-                          addTab({ ...makeQueryTab(), sql, title, titleManual: true })
-                        }
+                        onOpenInEditor={(sql, title, docDatabase) => {
+                          // 実行先はノートブックと同じ決め方 (`runNotebookSql` と共通)。別 DB で走らせない。
+                          const database = resolveNotebookDatabase(
+                            docDatabase,
+                            selectedProfile?.driver,
+                            selectedProfile?.database,
+                          );
+                          addTab({
+                            ...makeQueryTab(),
+                            sql,
+                            title,
+                            titleManual: true,
+                            ...(database ? { database } : {}),
+                          });
+                        }}
                         onClose={() => setShowNotebook(false)}
                       />
                     </WorkspaceSurface>

@@ -149,6 +149,12 @@ function snapshotToHtml(cell: Extract<NotebookCell, { kind: "sql" }>, text: Note
     );
     if (s.truncated)
       out.push(`<p class="note">${escapeHtml(text.truncated(s.rows.length, s.totalRows))}</p>`);
+    if (s.appliedAutoLimit !== null) {
+      out.push(`<p class="note">${escapeHtml(text.autoLimit(s.appliedAutoLimit))}</p>`);
+    }
+    if (s.valuesTruncated) {
+      out.push(`<p class="note">${escapeHtml(text.valuesTruncated(MAX_SNAPSHOT_CELL_CHARS))}</p>`);
+    }
     if (s.maskedColumns.length > 0) {
       out.push(`<p class="note">${escapeHtml(text.masked(s.maskedColumns.join(", ")))}</p>`);
     }

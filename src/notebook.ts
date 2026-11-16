@@ -33,7 +33,8 @@ export const MAX_NOTEBOOK_FILE_BYTES = 8 * 1024 * 1024;
 export const MAX_SNAPSHOT_CELL_CHARS = 2000;
 /** 読み込み時の安全弁。 */
 export const MAX_NOTEBOOK_CELLS = 500;
-const MAX_CELL_TEXT_CHARS = 500_000;
+/** セル 1 つのテキスト (SQL / Markdown) の最大文字数。読み込み側がこれを超えた分を切り捨てる。 */
+export const MAX_CELL_TEXT_CHARS = 500_000;
 const MAX_COLUMNS = 500;
 
 export interface NotebookSnapshot {
@@ -313,6 +314,22 @@ function snapshotForFile(s: NotebookSnapshot, mask: MaskConfig) {
 }
 
 /** 文字列の UTF-8 バイト数。 */
+/** 保存前の検査で見つかった、読み込み側の上限 (黙って捨てられる量) の超過。 */
+export type NotebookLimitViolation = { kind: "cells"; limit: number } | { kind: "cellText"; limit: number };
+
+/**
+ * 読み込み (`parseNotebook`) は `MAX_NOTEBOOK_CELLS` 個を超えるセルと `MAX_CELL_TEXT_CHARS` を超えるテキストを
+ * 黙って捨てる。保存したファイルが開き直すと欠けるのを防ぐため、保存前に同じ上限を検査する。
+ */
+export function checkNotebookLimits(doc: NotebookDoc): NotebookLimitViolation | null {
+  if (doc.cells.length > MAX_NOTEBOOK_CELLS) return { kind: "cells", limit: MAX_NOTEBOOK_CELLS };
+  for (const c of doc.cells) {
+    const len = c.kind === "markdown" ? c.text.length : c.sql.length;
+    if (len > MAX_CELL_TEXT_CHARS) return { kind: "cellText", limit: MAX_CELL_TEXT_CHARS };
+  }
+  return null;
+}
+
 export function utf8ByteLength(text: string): number {
   return new TextEncoder().encode(text).length;
 }

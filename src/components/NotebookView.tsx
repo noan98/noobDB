@@ -27,7 +27,9 @@ import {
   sqlCellsToRun,
   updateCell,
   utf8ByteLength,
+  MAX_NOTEBOOK_CELLS,
   MAX_NOTEBOOK_FILE_BYTES,
+  checkNotebookLimits,
   MAX_SNAPSHOT_CELL_CHARS,
   type NotebookCell,
   type NotebookDoc,
@@ -46,7 +48,13 @@ import {
   type NotebookRunOutput,
   type NotebookRunRequest,
 } from "../notebookExec";
-import { markNotebookSaved, replaceNotebook, updateNotebook, useNotebookState } from "../notebookStore";
+import {
+  getNotebookState,
+  markNotebookSaved,
+  replaceNotebook,
+  updateNotebook,
+  useNotebookState,
+} from "../notebookStore";
 import type { ChartConfig } from "./chartData";
 import type { MaskConfig } from "./columnMask";
 import { semanticColorToken } from "../semanticColors";
@@ -90,7 +98,8 @@ export interface NotebookViewProps {
    */
   onRunSql: (sql: string, req: NotebookRunRequest) => Promise<NotebookRunOutput | null>;
   /** SQL を通常のクエリタブで開く (実行はしない)。 */
-  onOpenInEditor: (sql: string, title: string) => void;
+  /** `database` はノートブックの実行先 (未指定なら null。呼び出し側が接続の既定へ寄せる)。 */
+  onOpenInEditor: (sql: string, title: string, database: string | null) => void;
   onClose: () => void;
 }
 
@@ -578,6 +587,8 @@ export function NotebookView(props: NotebookViewProps) {
   );
   const maskRef = useRef(mask);
   maskRef.current = mask;
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const docRef = useRef(doc);
   docRef.current = doc;
   const profileRef = useRef(props.profile);
@@ -726,15 +737,28 @@ export function NotebookView(props: NotebookViewProps) {
   const onOpenInEditor = useCallback(
     (id: string) => {
       const c = docRef.current.cells.find((x) => x.id === id);
-      if (c?.kind === "sql") props.onOpenInEditor(c.sql, docRef.current.title || translate("notebookTitle"));
+      if (c?.kind === "sql") {
+        props.onOpenInEditor(
+          c.sql,
+          docRef.current.title || translate("notebookTitle"),
+          docRef.current.database,
+        );
+      }
     },
     [props.onOpenInEditor],
   );
-  const onAddAfter = useCallback((afterId: string | null, kind: "markdown" | "sql") => {
-    const cell = kind === "sql" ? newSqlCell() : newMarkdownCell();
-    updateNotebook((d) => ({ ...d, cells: insertCellAfter(d.cells, afterId, cell) }));
-    if (kind === "markdown") setEditingIds((prev) => new Set(prev).add(cell.id));
-  }, []);
+  const onAddAfter = useCallback(
+    (afterId: string | null, kind: "markdown" | "sql") => {
+      if (docRef.current.cells.length >= MAX_NOTEBOOK_CELLS) {
+        toast.error(t("notebookTooManyCells", { limit: MAX_NOTEBOOK_CELLS.toLocaleString() }));
+        return;
+      }
+      const cell = kind === "sql" ? newSqlCell() : newMarkdownCell();
+      updateNotebook((d) => ({ ...d, cells: insertCellAfter(d.cells, afterId, cell) }));
+      if (kind === "markdown") setEditingIds((prev) => new Set(prev).add(cell.id));
+    },
+    [t, toast],
+  );
   const onReorder = useCallback(
     (ids: string[]) => updateNotebook((d) => ({ ...d, cells: reorderCellsByIds(d.cells, ids) })),
     [],
@@ -756,7 +780,7 @@ export function NotebookView(props: NotebookViewProps) {
   };
 
   const onNew = async () => {
-    if (!(await guardDiscard())) return;
+    if (savingRef.current || !(await guardDiscard())) return;
     replaceNotebook(
       createEmptyNotebook(props.profile ? { profileId: props.profile.id, name: props.profile.name } : null),
       null,
@@ -765,7 +789,7 @@ export function NotebookView(props: NotebookViewProps) {
   };
 
   const onOpen = async () => {
-    if (!(await guardDiscard())) return;
+    if (savingRef.current || !(await guardDiscard())) return;
     try {
       const picked = await openFileDialog({
         multiple: false,
@@ -795,7 +819,18 @@ export function NotebookView(props: NotebookViewProps) {
   };
 
   const writeDoc = async (path: string) => {
-    const withConn = { ...docRef.current, connection: connectionRef() };
+    // 保存開始時点の文書・世代を固定する (書き込み中に実行完了などで文書が変わりうる)。
+    const started = getNotebookState();
+    const withConn = { ...started.doc, connection: started.doc.connection ?? connectionRef() };
+    const violation = checkNotebookLimits(withConn);
+    if (violation) {
+      toast.error(
+        t(violation.kind === "cells" ? "notebookTooManyCells" : "notebookCellTooLong", {
+          limit: violation.limit.toLocaleString(),
+        }),
+      );
+      return;
+    }
     const body = serializeNotebook(withConn, maskRef.current);
     // 読み込み (`read_text_file`) の上限を超えると開き直せないので、保存前に止める。
     const bytes = utf8ByteLength(body);
@@ -809,11 +844,14 @@ export function NotebookView(props: NotebookViewProps) {
       return;
     }
     await api.writeTextFile(path, body);
-    markNotebookSaved(path);
+    markNotebookSaved(path, { epoch: started.epoch, revision: started.revision });
     toast.success(t("notebookSaved", { path }));
   };
 
   const onSave = async (forceDialog: boolean) => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
     try {
       let path = forceDialog ? null : filePath;
       if (!path) {
@@ -828,6 +866,9 @@ export function NotebookView(props: NotebookViewProps) {
       await writeDoc(path);
     } catch (e) {
       toast.error(t("notebookSaveError", { error: String(e) }));
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   };
 
@@ -940,10 +981,10 @@ export function NotebookView(props: NotebookViewProps) {
             }
           />
         </chakra.label>
-        <Button size="sm" variant="secondary" onClick={() => void onNew()}>
+        <Button size="sm" variant="secondary" disabled={saving} onClick={() => void onNew()}>
           {t("notebookNew")}
         </Button>
-        <Button size="sm" variant="secondary" onClick={() => void onOpen()}>
+        <Button size="sm" variant="secondary" disabled={saving} onClick={() => void onOpen()}>
           {t("notebookOpen")}
         </Button>
         <Button size="sm" variant="secondary" onClick={() => void onSave(false)}>
