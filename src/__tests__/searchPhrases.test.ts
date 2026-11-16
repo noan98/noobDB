@@ -5,12 +5,12 @@ import { EditorState } from "@codemirror/state";
 import { buildSearchPhrases, SEARCH_PHRASE_KEYS } from "../components/searchPhrases";
 import { setLocale, t } from "../i18n";
 
-/** ライブラリ本体から `phrase(view, "...")` / `state.phrase("...")` の原文を抜き出す。 */
+/** ライブラリ本体から `phrase(view, "...")` / `state.phrase("...")` の原文を抜き出す (変数名や引用符の違いに耐える)。 */
 function libraryPhrases(): string[] {
   const req = createRequire(import.meta.url);
   const src = readFileSync(req.resolve("@codemirror/search"), "utf8");
   const found = new Set<string>();
-  for (const m of src.matchAll(/(?:phrase\(view,|state(?:\$1)?\.phrase\()\s*"([^"]+)"/g)) found.add(m[1]);
+  for (const m of src.matchAll(/\bphrase\((?:[\w$]+,\s*)?["']([^"']+)["']/g)) found.add(m[1]);
   return [...found];
 }
 
