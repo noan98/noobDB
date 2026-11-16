@@ -7,6 +7,12 @@ import vectors from "./fixtures/identLimitVectors.json";
 // テストが同じ JSON を `include_str!` で検証する。
 
 describe("識別子長さ上限ゴールデン (#2384)", () => {
+  const KNOWN = ["mysql", "postgres", "sqlite"];
+  it("ゴールデンのドライバ名は既知のものだけ", () => {
+    expect(Object.keys(vectors.limits).sort()).toEqual([...KNOWN].sort());
+    for (const c of vectors.cases) expect(KNOWN).toContain(c.driver);
+  });
+
   for (const [driver, lim] of Object.entries(vectors.limits)) {
     it(`上限: ${driver}`, () => {
       expect(identLimit(driver)).toEqual(lim);

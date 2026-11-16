@@ -3894,9 +3894,9 @@ const en = {
   renameTableLabel: "New name for {table}",
   renameTableConfirm: "Rename",
   identTooLongBytes:
-    "{names} exceeds this database's identifier limit of {limit} bytes (UTF-8). PostgreSQL would silently truncate it, so shorten the name.",
+    '"{names}" exceeds the identifier limit of this database ({limit} bytes, UTF-8). PostgreSQL would silently truncate it, so shorten the name.',
   identTooLongChars:
-    "{names} exceeds this database's identifier limit of {limit} characters. The server rejects it (ERROR 1059), so shorten the name.",
+    '"{names}" exceeds the identifier limit of this database ({limit} characters). The server rejects it (ERROR 1059), so shorten the name.',
   renameTableExists: 'A table named "{table}" already exists in this schema.',
   renameTableSqlPreview: "SQL to be executed",
   renameTableCaseOnlyExists:
@@ -12669,9 +12669,9 @@ const ja: Dict = {
   renameTableLabel: "{table} の新しい名前",
   renameTableConfirm: "変更",
   identTooLongBytes:
-    "{names} は、この DB の識別子の上限 {limit} バイト (UTF-8) を超えています。PostgreSQL は超えた分を黙って切り詰めるため、名前を短くしてください。",
+    "「{names}」は、この DB の識別子の上限 {limit} バイト (UTF-8) を超えています。PostgreSQL は超えた分を黙って切り詰めるため、名前を短くしてください。",
   identTooLongChars:
-    "{names} は、この DB の識別子の上限 {limit} 文字を超えています。サーバが拒否する (ERROR 1059) ため、名前を短くしてください。",
+    "「{names}」は、この DB の識別子の上限 {limit} 文字を超えています。サーバが拒否する (ERROR 1059) ため、名前を短くしてください。",
   renameTableExists: "テーブル「{table}」は同じスキーマに既に存在します。",
   renameTableSqlPreview: "実行される SQL",
   renameTableCaseOnlyExists:

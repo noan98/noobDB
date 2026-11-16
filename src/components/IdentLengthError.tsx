@@ -13,7 +13,7 @@ export function IdentLengthError({ driver, names }: { driver: string; names: str
   return (
     <FieldError data-testid="ident-too-long">
       {t(lim.bytes ? "identTooLongBytes" : "identTooLongChars", {
-        names: names.map((n) => `"${n}"`).join(", "),
+        names: names.join(", "),
         limit: lim.limit,
       })}
     </FieldError>

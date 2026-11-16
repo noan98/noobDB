@@ -263,7 +263,8 @@ mod tests {
         let driver_of = |s: &str| match s {
             "mysql" => DriverKind::Mysql,
             "postgres" => DriverKind::Postgres,
-            _ => DriverKind::Sqlite,
+            "sqlite" => DriverKind::Sqlite,
+            other => panic!("未知のドライバ名: {other}"),
         };
         for (name, lim) in v["limits"].as_object().expect("limits") {
             let got = max_ident_len(driver_of(name));

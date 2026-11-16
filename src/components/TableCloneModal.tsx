@@ -118,8 +118,8 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
 
   // 既存テーブル名が分かった時点で、ユーザがまだ触っていなければ既定名 (<元>_copy) を入れる。
   useEffect(() => {
-    if (existingTables && !nameTouched) setName(suggestCloneName(existingTables, sourceTable));
-  }, [existingTables, nameTouched, sourceTable]);
+    if (existingTables && !nameTouched) setName(suggestCloneName(existingTables, sourceTable, driver));
+  }, [existingTables, nameTouched, sourceTable, driver]);
 
   const trimmed = name.trim();
   const loading = existingTables === null || (ddl === null && ddlError === null);
