@@ -106,8 +106,20 @@ pub(crate) fn insert_prefix(
 }
 
 /// 1 行を `(v1, v2, ...)` にする。
-pub(crate) fn row_tuple(driver: DriverKind, row: &[Value]) -> String {
-    let vals: Vec<String> = row.iter().map(|v| sql_literal(driver, v)).collect();
+/// `spatial[i]` が真の列 (PostGIS / MySQL の空間型, #2379) の EWKT 文字列は `ST_GeomFromText(...)` にする
+/// (MySQL は文字列から GEOMETRY への暗黙変換が無く、そのまま引用すると復元できない)。
+pub(crate) fn row_tuple(driver: DriverKind, row: &[Value], spatial: &[bool]) -> String {
+    let vals: Vec<String> = row
+        .iter()
+        .enumerate()
+        .map(|(i, v)| match v {
+            Value::String(s) if spatial.get(i).copied().unwrap_or(false) => {
+                crate::db::spatial::spatial_sql_literal(driver, s)
+                    .unwrap_or_else(|| sql_literal(driver, v))
+            }
+            _ => sql_literal(driver, v),
+        })
+        .collect();
     format!("({})", vals.join(", "))
 }
 
@@ -118,12 +130,13 @@ pub(crate) fn render_row_batch(
     prefix: &str,
     rows: &[Vec<Value>],
     extended: bool,
+    spatial: &[bool],
 ) -> String {
     let mut out = String::new();
     // 現在開いている複数行文の長さ (0 = 文が開いていない)。
     let mut open_len = 0usize;
     for row in rows {
-        let tuple = row_tuple(driver, row);
+        let tuple = row_tuple(driver, row, spatial);
         if !extended {
             out.push_str(prefix);
             out.push_str(" VALUES ");
@@ -1824,6 +1837,7 @@ async fn stream_table_rows(
     let tz_cols = tz_cols.to_vec();
     let table_name = table.to_string();
     let mut plan: Option<MaskPlan> = None;
+    let mut spatial: Vec<bool> = Vec::new();
     let mut last_bytes = counter.load(Ordering::SeqCst);
     let mut last_at = std::time::Instant::now();
     conn.execute_stream(
@@ -1834,6 +1848,10 @@ async fn stream_table_rows(
         move |batch| {
             match batch {
                 StreamBatch::Columns(cols) => {
+                    spatial = cols
+                        .iter()
+                        .map(|c| crate::db::spatial::is_spatial_type_name(&c.type_name))
+                        .collect();
                     plan = mask_spec.as_ref().map(|s| s.plan(&cols));
                 }
                 StreamBatch::Rows(rows) => {
@@ -1851,7 +1869,7 @@ async fn stream_table_rows(
                         }
                         None => &rows,
                     };
-                    let buf = render_row_batch(driver, &prefix, rows_ref, extended);
+                    let buf = render_row_batch(driver, &prefix, rows_ref, extended, &spatial);
                     write_chunk_off_worker(&writer_cb, &counter_cb, &buf)?;
                     let bytes = counter_cb.load(Ordering::SeqCst);
                     if bytes.saturating_sub(last_bytes) >= DUMP_PROGRESS_BYTES
@@ -1926,7 +1944,7 @@ mod tests {
             Value::Bytes("00ff".into()),
         ];
         assert_eq!(
-            row_tuple(DriverKind::Mysql, &row),
+            row_tuple(DriverKind::Mysql, &row, &[]),
             "(NULL, -9223372036854775808, 18446744073709551615, 1.5, 1, \
              'it''s a \\\\ back\nslash\\0\\Z', X'00ff')"
         );
@@ -1941,7 +1959,7 @@ mod tests {
             Value::Float(f64::NAN),
         ];
         assert_eq!(
-            row_tuple(DriverKind::Postgres, &row),
+            row_tuple(DriverKind::Postgres, &row, &[]),
             "(FALSE, 'a\\b''c', '\\xdead', 'NaN')"
         );
     }
@@ -1949,7 +1967,13 @@ mod tests {
     #[test]
     fn render_non_extended_emits_one_statement_per_row() {
         let rows = vec![vec![Value::Int(1)], vec![Value::Int(2)]];
-        let out = render_row_batch(DriverKind::Mysql, "INSERT INTO `t` (`a`)", &rows, false);
+        let out = render_row_batch(
+            DriverKind::Mysql,
+            "INSERT INTO `t` (`a`)",
+            &rows,
+            false,
+            &[],
+        );
         assert_eq!(
             out,
             "INSERT INTO `t` (`a`) VALUES (1);\nINSERT INTO `t` (`a`) VALUES (2);\n"
@@ -1959,10 +1983,10 @@ mod tests {
     #[test]
     fn render_extended_groups_rows_into_one_statement() {
         let rows = vec![vec![Value::Int(1)], vec![Value::Int(2)]];
-        let out = render_row_batch(DriverKind::Mysql, "INSERT INTO `t` (`a`)", &rows, true);
+        let out = render_row_batch(DriverKind::Mysql, "INSERT INTO `t` (`a`)", &rows, true, &[]);
         assert_eq!(out, "INSERT INTO `t` (`a`) VALUES (1),(2);\n");
         assert_eq!(
-            render_row_batch(DriverKind::Mysql, "INSERT INTO `t` (`a`)", &[], true),
+            render_row_batch(DriverKind::Mysql, "INSERT INTO `t` (`a`)", &[], true, &[]),
             ""
         );
     }
@@ -1971,7 +1995,7 @@ mod tests {
     fn render_extended_splits_statements_at_size_limit() {
         let big = "x".repeat(MAX_EXTENDED_STMT_BYTES / 2 + 10);
         let rows = vec![vec![s(&big)], vec![s(&big)], vec![s(&big)]];
-        let out = render_row_batch(DriverKind::Postgres, "INSERT INTO t (a)", &rows, true);
+        let out = render_row_batch(DriverKind::Postgres, "INSERT INTO t (a)", &rows, true, &[]);
         assert_eq!(out.matches("INSERT INTO t (a) VALUES ").count(), 3);
         assert_eq!(out.matches(";\n").count(), 3);
         assert!(out.ends_with(";\n"));

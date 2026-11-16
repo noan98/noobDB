@@ -65,6 +65,12 @@ pub enum BulkSetValue {
     Text {
         text: String,
     },
+    /// 空間型の列 (PostGIS の geometry / geography、MySQL の GEOMETRY 系, #2379)。EWKT
+    /// (`SRID=4326;POINT(1 2)`、SRID は省略可) を `ST_GeomFromText('…', srid)` にして書く。
+    /// SQLite は空間型を持たないので拒否する。
+    Spatial {
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -228,6 +234,8 @@ fn set_literal(driver: DriverKind, v: &BulkSetValue) -> Result<String> {
         }
         BulkSetValue::Bool { value } => sql_literal(driver, &Value::Bool(*value)),
         BulkSetValue::Text { text } => sql_literal(driver, &Value::String(text.clone())),
+        BulkSetValue::Spatial { text } => crate::db::spatial::spatial_sql_literal(driver, text)
+            .ok_or_else(|| AppError::InvalidInput(format!("not a valid WKT geometry: {text}")))?,
     })
 }
 
@@ -1340,6 +1348,55 @@ mod tests {
         let my = build_bulk_update_statements(DriverKind::Mysql, "d", "t", &pk, &groups)
             .unwrap_or_default();
         assert!(my[0].contains("`f` = 1"));
+    }
+
+    #[test]
+    fn spatial_set_value_becomes_st_geomfromtext() {
+        let pk = ["id".to_string()];
+        let spatial = |text: &str| {
+            vec![group(
+                vec![BulkSetColumn {
+                    column: "g".into(),
+                    value: BulkSetValue::Spatial { text: text.into() },
+                }],
+                keys1(&[1]),
+            )]
+        };
+        let my = build_bulk_update_statements(
+            DriverKind::Mysql,
+            "d",
+            "t",
+            &pk,
+            &spatial("SRID=4326;POINT(35.68 139.76)"),
+        )
+        .unwrap_or_default();
+        assert!(my[0].contains("`g` = ST_GeomFromText('POINT(35.68 139.76)', 4326)"));
+        let pg = build_bulk_update_statements(
+            DriverKind::Postgres,
+            "d",
+            "t",
+            &pk,
+            &spatial("POINT(1 2)"),
+        )
+        .unwrap_or_default();
+        assert!(pg[0].contains("\"g\" = ST_GeomFromText('POINT(1 2)')"));
+        // WKT に現れない文字 (引用符など) と SQLite は拒否する。
+        assert!(build_bulk_update_statements(
+            DriverKind::Mysql,
+            "d",
+            "t",
+            &pk,
+            &spatial("POINT(1 2)'); DROP TABLE t; --")
+        )
+        .is_err());
+        assert!(build_bulk_update_statements(
+            DriverKind::Sqlite,
+            "d",
+            "t",
+            &pk,
+            &spatial("POINT(1 2)")
+        )
+        .is_err());
     }
 
     #[test]

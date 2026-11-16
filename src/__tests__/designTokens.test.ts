@@ -897,6 +897,8 @@ describe("共通コンポーネントの迂回", () => {
     // 描画する図であり、固定グリフの選択ではないため対象外。
     "../components/ChartView.tsx",
     "../components/ServerMetricsPanel.tsx",
+    // 空間データの形状プレビュー (#2379): 座標から算出したパス・目盛りを描くデータの図。
+    "../components/SpatialPreview.tsx",
     // 接続ヘルスのレイテンシ推移 (#1630): 算出した座標で折れ線を描くデータの図。
     "../components/LatencySparkline.tsx",
     // タイムラプスのスクラバー (#2095): 取得時刻・行数から算出した座標で描く行数スパークライン。

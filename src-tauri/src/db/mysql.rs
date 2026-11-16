@@ -4280,6 +4280,16 @@ fn decode_cell_unchecked(row: &MySqlRow, i: usize) -> Value {
         }
     }
 
+    // 空間型 (GEOMETRY / POINT / POLYGON …、sqlx は全て "GEOMETRY" と報告する、#2379)。内部形式
+    // (SRID 4 バイト + WKB) を EWKT へ変換する。読めない値は下の従来経路 (16 進) へ任せる。
+    if ti(type_name, &["GEOMETRY"]) {
+        if let Ok(Some(b)) = row.try_get_unchecked::<Option<Vec<u8>>, _>(i) {
+            if let Some(s) = super::spatial::mysql_geometry_to_ewkt(&b) {
+                return Value::String(s);
+            }
+        }
+    }
+
     // Default: string (covers VARCHAR/TEXT/ENUM/SET/CHAR and unknown types)
     decode_string_or_bytes(row, i)
 }

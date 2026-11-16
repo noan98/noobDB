@@ -1,5 +1,6 @@
 import { CellValue, Column, TableColumnInfo, TableRowIdentity } from "../api/tauri";
 import type { I18nKey } from "../i18n";
+import { isSpatialColumnType, resolveSpatialInput } from "./spatial";
 import { insertFunctionSql, qualifiedTableName, quoteIdentFor, type InsertFunctionId } from "./sqlDialect";
 
 /**
@@ -175,6 +176,10 @@ export function validateCellInput(raw: string, typeName: string, nullable: boole
   const kind = classifyEditType(typeName);
   if (/^null$/i.test(trimmed)) {
     return nullable ? null : "editInvalidNotNull";
+  }
+  // 空間型 (#2379): WKT として読めない入力は書き戻す前に弾く (空欄も不可)。
+  if (isSpatialColumnType(typeName)) {
+    return resolveSpatialInput(trimmed) === null ? "editInvalidSpatial" : null;
   }
   if (trimmed === "") {
     // An empty edit box on a string-like column is the empty string literal
@@ -409,6 +414,10 @@ export function whereEqualsClause(driver: string, col: Column, v: CellValue): st
   // ため、f32 の丸め誤差より十分大きい相対許容差で比較する。
   const approx = singleFloatWhere(driver, col, v);
   if (approx) return approx;
+  // 空間型 (#2379): EWKT 文字列は `ST_GeomFromText` で式にして比べる。MySQL は文字列と GEOMETRY を
+  // `=` で比べられないので ST_Equals。
+  const spatial = spatialLiteral(driver, col, v);
+  if (spatial) return driver === "mysql" ? `ST_Equals(${quoted}, ${spatial})` : `${quoted} = ${spatial}`;
   return `${quoted} = ${literalFromCellValue(driver, v)}`;
 }
 
@@ -445,6 +454,21 @@ export function isSinglePrecisionFloat(driver: string, col: Column): boolean {
 }
 
 /**
+ * 空間型の列の EWKT 文字列 (`SRID=4326;POINT(1 2)`) を `ST_GeomFromText('POINT(1 2)', 4326)` にする
+ * (PostgreSQL / MySQL 共通、#2379)。空間型でない列・SQLite・WKT として読めない値は null。
+ * WKT は文字列エスケープ (`quoteString`) を通すので引用符は出てこない。
+ */
+function spatialLiteral(driver: string, col: Column, v: CellValue): string | null {
+  if (driver === "sqlite" || typeof v !== "string" || !isSpatialColumnType(col.type_name)) return null;
+  const resolved = resolveSpatialInput(v);
+  if (resolved === null) return null;
+  const m = /^SRID=(\d+);([\s\S]*)$/.exec(resolved);
+  return m
+    ? `ST_GeomFromText(${quoteString(driver, m[2])}, ${m[1]})`
+    : `ST_GeomFromText(${quoteString(driver, resolved)})`;
+}
+
+/**
  * Converts raw input text from the edit box into a SQL literal,
  * loosely typed by the destination column. Rules:
  *   - "NULL" (case-insensitive, exact match after trim) → SQL NULL
@@ -455,9 +479,15 @@ export function isSinglePrecisionFloat(driver: string, col: Column): boolean {
  * Empty input is left as an empty string (use the explicit "NULL"
  * keyword to clear a column).
  */
-export function literalFromInput(driver: string, raw: string, col: Column): string {
+export function literalFromInput(driver: string, raw: string, col: Column, current?: CellValue): string {
   const trimmed = raw.trim();
   if (/^null$/i.test(trimmed)) return "NULL";
+  // 空間型 (#2379): SRID は入力の `SRID=n;` を優先し、無ければ編集前の値から引き継ぐ。
+  if (isSpatialColumnType(col.type_name)) {
+    const resolved = resolveSpatialInput(trimmed, current);
+    const lit = resolved === null ? null : spatialLiteral(driver, col, resolved);
+    if (lit) return lit;
+  }
   const t = col.type_name.toUpperCase();
   if (NUMERIC_TYPES.has(t) && /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i.test(trimmed)) {
     return trimmed;
@@ -490,9 +520,14 @@ export function literalFromInput(driver: string, raw: string, col: Column): stri
  * refetch, so the edited cell shows its new value and the user keeps their
  * scroll/page position.
  */
-export function cellValueFromInput(raw: string, col: Column): CellValue {
+export function cellValueFromInput(raw: string, col: Column, current?: CellValue): CellValue {
   const trimmed = raw.trim();
   if (/^null$/i.test(trimmed)) return null;
+  if (isSpatialColumnType(col.type_name)) {
+    // バックエンドが返す形 (EWKT、SRID を引き継いだ値) に揃える。
+    const resolved = resolveSpatialInput(trimmed, current);
+    if (resolved !== null) return resolved;
+  }
   const t = col.type_name.toUpperCase();
   if (NUMERIC_TYPES.has(t) && /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i.test(trimmed)) {
     const n = Number(trimmed);
@@ -522,8 +557,8 @@ export type SavedValuePreview =
   | { kind: "normalized"; value: string; raw: string }
   | { kind: "edgeSpace" };
 
-export function previewSavedValue(raw: string, col: Column): SavedValuePreview | null {
-  const v = cellValueFromInput(raw, col);
+export function previewSavedValue(raw: string, col: Column, current?: CellValue): SavedValuePreview | null {
+  const v = cellValueFromInput(raw, col, current);
   if (v === null || v === undefined) return { kind: "null" };
   const trimmed = raw.trim();
   if (typeof v === "boolean") {
@@ -558,7 +593,7 @@ export function previewSavedValue(raw: string, col: Column): SavedValuePreview |
  * action undo an earlier edit on that cell.
  */
 export function editIsNoop(raw: string, col: Column, current: CellValue): boolean {
-  const next = cellValueFromInput(raw, col);
+  const next = cellValueFromInput(raw, col, current);
   const nextNull = next === null || next === undefined;
   const currentNull = current === null || current === undefined;
   if (nextNull || currentNull) return nextNull && currentNull;
@@ -600,7 +635,7 @@ export function applyEditsToRows(input: {
       const colIdx = Number(colKey);
       const c = columns[colIdx];
       if (!c) continue;
-      next[colIdx] = cellValueFromInput(rowEdits[colIdx], c);
+      next[colIdx] = cellValueFromInput(rowEdits[colIdx], c, row[colIdx]);
     }
     out.push(next);
   }
@@ -655,7 +690,7 @@ export function buildUpdateStatements(input: BuildUpdateInput): string[] {
       const col = input.columns[colIdx];
       if (!col) continue;
       setParts.push(
-        `${quoteIdentFor(input.driver, col.name)} = ${literalFromInput(input.driver, rowEdits[colIdx], col)}`,
+        `${quoteIdentFor(input.driver, col.name)} = ${literalFromInput(input.driver, rowEdits[colIdx], col, row[colIdx])}`,
       );
     }
     if (setParts.length === 0) continue;
@@ -674,7 +709,9 @@ export type BulkSetValue =
   | { kind: "null" }
   | { kind: "number"; text: string }
   | { kind: "bool"; value: boolean }
-  | { kind: "text"; text: string };
+  | { kind: "text"; text: string }
+  /** 空間型の列 (#2379)。EWKT (`SRID=4326;POINT(1 2)`)。Rust が `ST_GeomFromText` にする。 */
+  | { kind: "spatial"; text: string };
 
 /**
  * `literalFromInput` と同じ規則で、入力テキストを構造化した値へ分類する:
@@ -684,9 +721,13 @@ export type BulkSetValue =
  *   - BIT 列 + true/false/0/1 → number "1" / "0"
  *   - それ以外 → 生の文字列 (trim しない)
  */
-export function setValueFromInput(raw: string, col: Column): BulkSetValue {
+export function setValueFromInput(raw: string, col: Column, current?: CellValue): BulkSetValue {
   const trimmed = raw.trim();
   if (/^null$/i.test(trimmed)) return { kind: "null" };
+  if (isSpatialColumnType(col.type_name)) {
+    const resolved = resolveSpatialInput(trimmed, current);
+    if (resolved !== null) return { kind: "spatial", text: resolved };
+  }
   const t = col.type_name.toUpperCase();
   if (NUMERIC_TYPES.has(t) && /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i.test(trimmed)) {
     return { kind: "number", text: trimmed };
@@ -844,7 +885,7 @@ export function buildUpdateGroups(input: BuildUpdateInput): {
       const colIdx = Number(colKey);
       const col = input.columns[colIdx];
       if (!col) continue;
-      set.push({ column: col.name, value: setValueFromInput(rowEdits[colIdx], col) });
+      set.push({ column: col.name, value: setValueFromInput(rowEdits[colIdx], col, row[colIdx]) });
       // 主キー列は WHERE に元の値が入っているので旧値の述語は足さない。
       olds.push(
         input.optimisticLock && !input.pkIndices.includes(colIdx)
@@ -1054,6 +1095,8 @@ export function rowValueLiteral(driver: string, v: CellValue, col: Column): stri
   if (v === null || v === undefined) return "NULL";
   const t = col.type_name.toUpperCase();
   if (BINARY_TYPES.has(t) && isHexBytes(v)) return blobLiteral(driver, v);
+  const spatial = spatialLiteral(driver, col, v);
+  if (spatial) return spatial;
   if (typeof v === "boolean") return v ? "TRUE" : "FALSE";
   if (typeof v === "number") return Number.isFinite(v) ? String(v) : "NULL";
   if (NUMERIC_TYPES.has(t) && /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i.test(String(v).trim())) {

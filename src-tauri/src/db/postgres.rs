@@ -5037,6 +5037,21 @@ fn decode_cell_unchecked(row: &PgRow, i: usize) -> Value {
             }
         }
     }
+    // PostGIS の geometry / geography (#2379)。バイナリ形式は EWKB、テキスト形式は EWKB の
+    // 16 進文字列で届く。EWKT (`SRID=4326;POINT(1 2)`) の文字列へ変換し、読めない値 (曲線型・
+    // 壊れたデータ) は従来どおり下の最終フォールバック (16 進) へ任せる。
+    if ti(type_name, &["GEOMETRY", "GEOGRAPHY"]) {
+        if let Ok(b) = raw.as_bytes() {
+            let ewkt = if binary_format {
+                super::spatial::ewkb_to_ewkt(b)
+            } else {
+                super::spatial::ewkb_hex_to_ewkt(b)
+            };
+            if let Some(s) = ewkt {
+                return Value::String(s);
+            }
+        }
+    }
     // 配列型 (`text[]` / `int4[]` …) は sqlx の `Vec<Option<T>>` デコードに
     // 任せられる (テキスト/バイナリ両形式に対応済み) ので形式を問わず試す。
     if is_array_type_name(type_name) {

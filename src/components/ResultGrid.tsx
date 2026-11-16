@@ -86,6 +86,7 @@ import {
 } from "./contextMenuKeyboard";
 import { AUTO_REFRESH_INTERVAL_OPTIONS, RESULT_GRID_PAGE_SIZE_OPTIONS, useSettings } from "../settings";
 import { CellValueViewer } from "./CellValueViewer";
+import { isSpatialColumnType, parseEwkt, spatialGlyph } from "./spatial";
 import { useCellBlobIo, type BlobIoConfig } from "./useCellBlobIo";
 import { useValuePicker, ValueDatalist, type ValueLookup, type ValuePicker } from "./useValuePicker";
 
@@ -5122,6 +5123,7 @@ export const DataGrid = memo(function DataGrid({
       const kind = columnKinds[i];
       const fkInfo = metaByName?.get(c.name);
       const fkTable = fkInfo?.referenced_table ?? null;
+      const spatialCol = isSpatialColumnType(c.type_name);
       return {
         id: String(i),
         // ヘッダーは列数ぶんしか描画されない (行数に比例しない) ため、他の列
@@ -5333,6 +5335,20 @@ export const DataGrid = memo(function DataGrid({
                 <span className="cell-binary-tag">{label}</span>0x{preview}
               </span>
             );
+          }
+          // 空間型 (#2379): 種別グリフ + WKT (SRID 接頭辞は外してツールチップへ)。読めない値は通常表示。
+          if (spatialCol && typeof v === "string") {
+            const sp = parseEwkt(v);
+            if (sp) {
+              const tip =
+                sp.srid === null ? sp.wkt : `${t("gridSpatialSrid", { srid: sp.srid })} — ${sp.wkt}`;
+              return (
+                <span className="cell-string" {...bindCellTooltip(tip)}>
+                  <span aria-hidden="true">{spatialGlyph(sp.geometry)} </span>
+                  {sp.wkt}
+                </span>
+              );
+            }
           }
           // 既定 (string) カテゴリ。JSON/日時/バイナリ/列挙と同じく、グリッドの
           // ellipsis で省略された長文をホバーで確認できるようにする。行×列に
@@ -8664,6 +8680,7 @@ export const DataGrid = memo(function DataGrid({
                 blob={blobHandlersFor(viewer.rowIdx, viewer.colIdx)}
                 editable={cellEditable}
                 isJson={columnKinds[viewer.colIdx] === "json"}
+                isSpatial={isSpatialColumnType(columns[viewer.colIdx]?.type_name ?? "")}
                 validate={validateEdit ? (v) => validateEdit(viewer.colIdx, v) : undefined}
                 pendingValue={pendingEdits?.[rowKey]?.[viewer.colIdx] ?? null}
                 onSave={

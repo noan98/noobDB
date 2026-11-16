@@ -84,3 +84,14 @@ MACADDR・MONEY・INTERVAL・BIT/VARBIT・TID(`ctid`)・OID 系に明示分岐�
 
 SQLite はファイルバックドライバで、`DbConnectOptions.file_path` を使い、
 host/port/user/password と SSH トンネルを持ちません (`commands::connection::
+
+## 空間型 (PostGIS geometry / geography、MySQL GEOMETRY 系, #2379)
+
+`db/spatial.rs` が EWKB (PostgreSQL。バイナリ形式は生バイト、テキスト形式は 16 進文字列) と MySQL 内部形式
+(SRID 4 バイト + WKB) を **EWKT 文字列** (`SRID=4326;POINT(1 2)`、SRID 0 は接頭辞なし) に変換する純関数を持つ。
+新しい `Value` 種別は作らず `Value::String` で運ぶ。読めないバイト列 (曲線型・壊れたデータ) は従来どおり 16 進
+(`Bytes`) のまま。SQLite は対象外。列が空間型かは `Column.type_name` (`is_spatial_type_name`) で判定し、書き戻しは
+型を見て `spatial_sql_literal` (`ST_GeomFromText('…', srid)`) にする (data_diff の INSERT/UPDATE・Undo、
+`BulkSetValue::Spatial`、SQL INSERT エクスポート、ネイティブダンプ)。`sql_literal` 単体は型を知らないので、
+空間型の列の値をそのまま渡すと文字列リテラルになる点に注意 (MySQL は文字列から GEOMETRY へ暗黙変換できない)。
+MySQL の地理座標系 (SRID 4326 など) は座標が「緯度, 経度」の順 (`ST_AsText` / `ST_GeomFromText` と同じ)。

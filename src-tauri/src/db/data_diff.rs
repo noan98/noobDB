@@ -388,6 +388,7 @@ pub fn generate_data_sync_sql_with_identity(
                     statements.push(SyncStatement {
                         sql: insert_sql(
                             driver,
+                            &index,
                             &table_ident,
                             &ins_columns,
                             &ins_values,
@@ -617,6 +618,9 @@ struct ColumnIndex<'a> {
     positions: std::collections::HashMap<&'a str, usize>,
     /// `positions` の位置ごとの「バイナリ型か」。型が無い位置は `false`。
     binary: Vec<bool>,
+    /// `positions` の位置ごとの「空間型か」(#2379)。値は EWKT 文字列で運ばれるので、書き戻しは
+    /// `ST_GeomFromText(...)` にする。
+    spatial: Vec<bool>,
 }
 
 impl<'a> ColumnIndex<'a> {
@@ -628,7 +632,37 @@ impl<'a> ColumnIndex<'a> {
         let binary = (0..columns.len())
             .map(|i| types.get(i).is_some_and(|t| is_binary_type(t)))
             .collect();
-        Self { positions, binary }
+        let spatial = (0..columns.len())
+            .map(|i| {
+                types
+                    .get(i)
+                    .is_some_and(|t| super::spatial::is_spatial_type_name(t))
+            })
+            .collect();
+        Self {
+            positions,
+            binary,
+            spatial,
+        }
+    }
+
+    /// 列 `name` の値を SQL リテラルにする。空間型の列の EWKT 文字列は `ST_GeomFromText`、
+    /// それ以外は [`sql_literal`]。
+    fn literal(&self, driver: DriverKind, name: &str, value: &Value) -> String {
+        if let Value::String(s) = value {
+            let is_spatial = self
+                .positions
+                .get(name)
+                .and_then(|&i| self.spatial.get(i))
+                .copied()
+                .unwrap_or(false);
+            if is_spatial {
+                if let Some(lit) = super::spatial::spatial_sql_literal(driver, s) {
+                    return lit;
+                }
+            }
+        }
+        sql_literal(driver, value)
     }
 
     fn coerce_one(&self, name: &str, value: &Value) -> Value {
@@ -672,6 +706,7 @@ impl<'a> ColumnIndex<'a> {
 
 fn insert_sql(
     driver: DriverKind,
+    index: &ColumnIndex<'_>,
     table_ident: &str,
     columns: &[String],
     values: &[Value],
@@ -682,9 +717,10 @@ fn insert_sql(
         .map(|c| quote_ident(driver, c))
         .collect::<Vec<_>>()
         .join(", ");
-    let vals = values
+    let vals = columns
         .iter()
-        .map(|v| sql_literal(driver, v))
+        .zip(values.iter())
+        .map(|(c, v)| index.literal(driver, c, v))
         .collect::<Vec<_>>()
         .join(", ");
     // ALWAYS identity 列へ値を明示するときだけ付ける (PostgreSQL 専用の構文)。
@@ -717,7 +753,7 @@ fn update_sql(
             Some(format!(
                 "{} = {}",
                 quote_ident(driver, name),
-                sql_literal(driver, &source_values[idx])
+                index.literal(driver, name, &source_values[idx])
             ))
         })
         .collect::<Vec<_>>()
@@ -1439,6 +1475,60 @@ mod tests {
         };
         let postgres_plan = generate_data_sync_sql(&postgres_diff, false);
         assert!(postgres_plan.statements[0].sql.contains("'\\xa1b2'"));
+    }
+
+    #[test]
+    fn spatial_columns_are_written_back_with_st_geomfromtext() {
+        // 空間型の列の EWKT 文字列は引用符付き文字列ではなく ST_GeomFromText にする (#2379)。
+        // MySQL は文字列から GEOMETRY への暗黙変換が無いので、Undo / 同期が失敗する。
+        let columns = vec!["id".to_string(), "g".to_string(), "note".to_string()];
+        let column_types = vec![
+            "INT".to_string(),
+            "GEOMETRY".to_string(),
+            "TEXT".to_string(),
+        ];
+        let row = vec![
+            Value::Int(1),
+            Value::String("SRID=4326;POINT(35.68 139.76)".to_string()),
+            // 空間型でない列の同じ見た目の文字列は引用符付きのまま。
+            Value::String("POINT(1 2)".to_string()),
+        ];
+        let diff = DataDiff {
+            key_kind: Default::default(),
+            target_driver: DriverKind::Mysql,
+            table: "shops".to_string(),
+            columns,
+            column_types,
+            primary_key: vec!["id".to_string()],
+            rows: vec![RowDiff {
+                status: RowStatus::SourceOnly,
+                key: vec![Value::Int(1)],
+                source: Some(row),
+                target: None,
+                changed_columns: Vec::new(),
+                key_unreliable: false,
+            }],
+            truncated: false,
+            source_count: 1,
+            target_count: 0,
+            generated_columns: Vec::new(),
+            verify_only: false,
+        };
+        let sql = &generate_data_sync_sql(&diff, false).statements[0].sql;
+        assert!(
+            sql.contains("ST_GeomFromText('POINT(35.68 139.76)', 4326)"),
+            "{sql}"
+        );
+        assert!(sql.contains("'POINT(1 2)'"), "{sql}");
+        let pg = DataDiff {
+            target_driver: DriverKind::Postgres,
+            ..diff
+        };
+        let sql = &generate_data_sync_sql(&pg, false).statements[0].sql;
+        assert!(
+            sql.contains("ST_GeomFromText('POINT(35.68 139.76)', 4326)"),
+            "{sql}"
+        );
     }
 
     #[test]
