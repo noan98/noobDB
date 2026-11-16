@@ -3,7 +3,7 @@
 // TRUNCATE / DROP / RENAME のドライバ別 DDL を組み立てる。識別子クオートは
 // sqlDialect.ts を流用。副作用が無いので Vitest でユニットテストする。
 
-import { PG_IDENT_MAX_BYTES, quoteIdentFor, qualifiedTableName } from "./sqlDialect";
+import { MYSQL_IDENT_MAX, PG_IDENT_MAX_BYTES, quoteIdentFor, qualifiedTableName } from "./sqlDialect";
 
 /**
  * TRUNCATE 文。SQLite には TRUNCATE が無いので、等価な `DELETE FROM`
@@ -160,9 +160,6 @@ export function buildRenameTableSql(
   return `ALTER TABLE ${from} RENAME TO ${to};`;
 }
 
-/** MySQL の識別子の上限 (文字数)。自動生成名は ASCII だけなのでバイト数と同じ。 */
-const MYSQL_IDENT_MAX = 64;
-
 /** FNV-1a (32bit) を UTF-8 バイト列に対して取った 8 桁 hex。`db/advisor.rs::fnv1a_hex` と同じ規則。 */
 function fnv1aHex(text: string): string {
   let h = 0x811c9dc5;
@@ -187,16 +184,6 @@ export function autoIndexName(driver: string, raw: string): string {
   if (!lossy && (limit === null || sanitized.length <= limit)) return sanitized;
   const stem = limit === null || sanitized.length + 9 <= limit ? sanitized : sanitized.slice(0, limit - 9);
   return `${stem}_${fnv1aHex(raw)}`;
-}
-
-/**
- * ユーザが入力した名前が方言の上限を超えているか。MySQL は 64 文字超で ERROR 1059、PostgreSQL は
- * 63 バイト超を黙って切り詰める。SQLite に上限は無い。
- */
-export function indexNameTooLong(driver: string, name: string): boolean {
-  if (driver === "mysql") return [...name].length > MYSQL_IDENT_MAX;
-  if (driver === "postgres") return new TextEncoder().encode(name).length > PG_IDENT_MAX_BYTES;
-  return false;
 }
 
 export type IndexMethod = "btree" | "hash" | "gist" | "spgist" | "gin" | "brin" | "fulltext" | "spatial";

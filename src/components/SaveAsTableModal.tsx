@@ -14,6 +14,8 @@ import {
 import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { FieldError, FieldLabel, FormSection } from "./modalForm";
+import { IdentLengthError } from "./IdentLengthError";
+import { identTooLong } from "./sqlDialect";
 import { SqlPreview } from "./SqlPreview";
 import { isPlainEnterKey } from "./modalKeys";
 import { Button, Input, PressableButton } from "./ui";
@@ -137,7 +139,9 @@ export function SaveAsTableModal({
         : "",
     [appendMode, targetColumns, resultColumns, driver, database, appendTable, mapping, sourceSql],
   );
-  const valid = trimmed.length > 0 && !loading && (appendMode ? appendReady : !collides);
+  // 新規作成のときだけ長さを検査する。追記先は既存テーブルなので対象外 (#2384)。
+  const tooLong = !appendMode && identTooLong(driver, trimmed);
+  const valid = trimmed.length > 0 && !loading && !tooLong && (appendMode ? appendReady : !collides);
 
   const createSql = useMemo(
     () => (trimmed ? buildCreateTableAsSql(driver, database, trimmed, sourceSql) : ""),
@@ -179,6 +183,7 @@ export function SaveAsTableModal({
             />
             {loading && <Spinner size={14} />}
           </Flex>
+          <IdentLengthError driver={driver} names={tooLong ? [trimmed] : []} />
           {trimmed.length > 0 && collides && appendMode && (
             <Callout tone="info">{t("saveAsTableAppendNotice", { table: appendTable as string })}</Callout>
           )}

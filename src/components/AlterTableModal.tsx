@@ -22,6 +22,7 @@ import {
   type IndexDef,
   duplicateColumnNames,
   renameCollisions,
+  tooLongColumnNames,
   indexRowProblems,
   type NewColumn,
 } from "./alterTable";
@@ -29,6 +30,7 @@ import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { SqlPreview } from "./SqlPreview";
 import { ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { IdentLengthError } from "./IdentLengthError";
 import { Button, Checkbox, Input, PressableButton, Switch } from "./ui";
 import { ListboxSelect } from "./ListboxSelect";
 import { Callout } from "./Callout";
@@ -539,6 +541,8 @@ export function AlterTableModal({
     () => renameCollisions(driver, { baseline, existing }),
     [driver, baseline, existing],
   );
+  // 上限を超える列名は PostgreSQL が黙って切り詰める / MySQL が ERROR 1059 にするので止める (#2384)。
+  const longNames = useMemo(() => tooLongColumnNames(driver, { existing, added }), [driver, existing, added]);
   // 生成列の式の不備 (空・括弧の不一致)、PostgreSQL の VIRTUAL は実行を止める (#1893)。
   const generatedErrors = useMemo(() => {
     const out: { column: string; kind: "empty" | "invalid" | "virtual" }[] = [];
@@ -562,6 +566,7 @@ export function AlterTableModal({
     statements.length > 0 &&
     duplicateNames.length === 0 &&
     collisionNames.length === 0 &&
+    longNames.length === 0 &&
     !rebuildPending &&
     generatedErrors.length === 0 &&
     !viewRebuildBlocked &&
@@ -1435,6 +1440,7 @@ export function AlterTableModal({
                   {t("alterTableRenameCollision", { names: collisionNames.join(", ") })}
                 </FieldError>
               )}
+              <IdentLengthError driver={driver} names={longNames} />
               {readOnly && <FieldError>{t("alterTableReadOnly")}</FieldError>}
             </motion.div>
           )}

@@ -408,6 +408,13 @@ describe("cloneObjectName / suggestCloneName", () => {
 
   it("既定名は _copy、衝突で連番", () => {
     expect(suggestCloneName(["a"], "a")).toBe("a_copy");
+    // 上限ぎりぎりの元名でも、接尾辞を含めて方言の上限に収める (#2384)。
+    const pg = suggestCloneName([], "あ".repeat(21), "postgres");
+    expect(new TextEncoder().encode(pg).length).toBeLessThanOrEqual(63);
+    expect(pg.endsWith("_copy")).toBe(true);
+    const my = suggestCloneName([], "a".repeat(64), "mysql");
+    expect(my).toBe("a".repeat(59) + "_copy");
+    expect(suggestCloneName([], "a".repeat(64), "sqlite")).toBe("a".repeat(64) + "_copy");
     expect(suggestCloneName(["a", "A_COPY"], "a")).toBe("a_copy2");
   });
 
