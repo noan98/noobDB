@@ -21,7 +21,7 @@ const RESULT: QueryResult = {
   elapsed_ms: 3,
 };
 
-function Grid(props: { width: number }) {
+function Grid(props: { width: number; sqlEdit?: boolean }) {
   return (
     <div style={{ width: props.width, height: 400, display: "flex", flexDirection: "column" }}>
       <ResultGrid
@@ -36,6 +36,8 @@ function Grid(props: { width: number }) {
         onPinResult={() => {}}
         canPinResult
         onToggleMaximize={() => {}}
+        sqlEditToggle={props.sqlEdit ? { state: "off" } : undefined}
+        onToggleSqlEdit={props.sqlEdit ? () => {} : undefined}
       />
     </div>
   );
@@ -72,4 +74,25 @@ describe("結果グリッドのツールバー (#1270, 実ブラウザ)", () => 
     await userEvent.keyboard("{Escape}");
     await expect.poll(() => document.querySelector("[role=menu]")).toBeNull();
   });
+
+  // #2399: SQL タブの「編集モード」トグルが加わっても、右端の絞り込み欄・ピン留め・全画面が
+  // 切れない。サイドバー既定幅ぶんを引いた結果ペイン幅と、さらに狭い幅の両方で確かめる。
+  for (const width of [1000, 800]) {
+    it(`編集モードのトグルがあっても ${width}px 幅で右端のボタンがビューポート内に見える`, async () => {
+      await renderInBrowser(<Grid width={width} sqlEdit />);
+      await expect.element(page.getByLabelText(t("sqlEditToggleLabel"))).toBeVisible();
+      const el = toolbar();
+      await expect.poll(() => el.scrollWidth <= el.clientWidth + 1).toBe(true);
+      for (const name of [t("pinResultTitle"), t("resultMaximizeTitle"), t("exportButton")]) {
+        const btn = page.getByRole("button", { name });
+        await expect.element(btn).toBeVisible();
+        const r = btn.element().getBoundingClientRect();
+        expect(r.right).toBeLessThanOrEqual(window.innerWidth);
+        expect(r.right).toBeLessThanOrEqual(el.getBoundingClientRect().right + 1);
+      }
+      const search = el.querySelector("input[type=search]") as HTMLElement;
+      expect(search.getBoundingClientRect().right).toBeLessThanOrEqual(el.getBoundingClientRect().right + 1);
+      expect(search.getBoundingClientRect().width).toBeGreaterThan(0);
+    });
+  }
 });

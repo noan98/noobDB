@@ -10621,6 +10621,10 @@ export const ResultGrid = memo(
             type="search"
             marginLeft={selSummary || statusBarParts ? "2" : "auto"}
             width="220px"
+            // 幅が足りないときはボタン (ピン留め・全画面など) より先に縮める (#2399)。
+            // 最小幅まで縮んでもなお溢れるなら、副次操作を「…」へ畳む既存の仕組みが働く。
+            flexShrink={1}
+            minWidth="28"
             py="0.75"
             px="2"
             fontSize="sm"
