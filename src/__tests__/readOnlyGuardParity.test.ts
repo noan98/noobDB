@@ -600,6 +600,10 @@ safe(
   "search_schema_objects",
   "ignore_advisor_finding",
   "unignore_advisor_finding",
+  // 論理リレーション (#2356): アプリ側の JSON ストアだけを読み書きし、DB には何も書かない。
+  "list_logical_relations",
+  "save_logical_relations",
+  "delete_logical_relation",
   "export_flight_plan_sql",
   "list_local_tables",
   // 診断 / 統計 / 監視

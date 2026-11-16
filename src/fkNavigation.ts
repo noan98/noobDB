@@ -57,6 +57,8 @@ export interface IncomingFk {
   referencedColumn: string;
   /** `ON DELETE` の参照動作 (CASCADE / SET NULL / SET DEFAULT / RESTRICT)。既定の NO ACTION・不明は省略 / null (#1506)。 */
   onDelete?: string | null;
+  /** 論理リレーション (仮想 FK, #2356) 由来のとき true。DB に宣言された制約ではない。 */
+  logical?: boolean;
 }
 
 /** 子テーブルの表示名。スキーマをまたぐ FK (#1786) だけ `schema.table` にする。 */

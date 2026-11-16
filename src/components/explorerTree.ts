@@ -124,6 +124,8 @@ export interface ExplorerForeignKey {
   column: string;
   referencedTable: string;
   referencedColumn: string | null;
+  /** 論理リレーション (仮想 FK, #2356) 由来。DB に宣言された制約ではない。 */
+  logical?: boolean;
 }
 
 /** 列情報から外部キーを取り出す (列の順を保つ)。 */
@@ -135,6 +137,7 @@ export function foreignKeysOf(columns: readonly TableColumnInfo[]): ExplorerFore
         column: c.name,
         referencedTable: c.referenced_table,
         referencedColumn: c.referenced_column,
+        ...(c.logical ? { logical: true } : {}),
       });
     }
   }

@@ -24,10 +24,14 @@ export function DropReferencedBy({ impacts, sqlite }: { impacts: DropImpact[]; s
       key: `${incomingFkTableName(fk)}\0${fk.column}`,
       kind: "table",
       name: `${incomingFkTableName(fk)}.${fk.column}`,
-      meta: t("dropReferencedByRefers", { column: fk.referencedColumn }),
-      outcome: sqlite ? undefined : "block",
+      meta: fk.logical
+        ? `${t("dropReferencedByRefers", { column: fk.referencedColumn })} · ${t("refImpactLogicalTag")}`
+        : t("dropReferencedByRefers", { column: fk.referencedColumn }),
+      outcome: sqlite || fk.logical ? undefined : "block",
     })),
   }));
+  const hasReal = impacts.some((imp) => imp.refs.some((fk) => !fk.logical));
+  const hasLogical = impacts.some((imp) => imp.refs.some((fk) => fk.logical));
   const count = groups.reduce((n, g) => n + g.nodes.length, 0);
   return (
     <Callout
@@ -37,7 +41,10 @@ export function DropReferencedBy({ impacts, sqlite }: { impacts: DropImpact[]; s
       title={t("dropReferencedByTitle", { count })}
       data-testid="drop-referenced-by"
     >
-      <chakra.p m={0}>{t(sqlite ? "dropReferencedBySqlite" : "dropReferencedByServer")}</chakra.p>
+      {hasReal && (
+        <chakra.p m={0}>{t(sqlite ? "dropReferencedBySqlite" : "dropReferencedByServer")}</chakra.p>
+      )}
+      {hasLogical && <chakra.p m={0}>{t("dropReferencedByLogical")}</chakra.p>}
       <ImpactTree groups={groups} maxVisible={MAX_LINES} />
     </Callout>
   );

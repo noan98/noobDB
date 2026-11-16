@@ -1288,6 +1288,12 @@ const ForeignKeyRow = memo(function ForeignKeyRow({
       <TreeLabel fontFamily="mono" color="app.text">
         {fk.column}
         <chakra.span color="app.textMuted"> → {foreignKeyTargetLabel(fk)}</chakra.span>
+        {fk.logical && (
+          <chakra.span color="app.textMuted" textStyle="caption">
+            {" "}
+            ({t("logicalRelationBadge")})
+          </chakra.span>
+        )}
       </TreeLabel>
     </TreeRow>
   );
@@ -5312,7 +5318,10 @@ function ColumnTooltip({ col, anchor }: { col: TableColumnInfo; anchor: TooltipR
         {reference && (
           <>
             <TooltipDt>{t("colTipReferences")}</TooltipDt>
-            <TooltipDd>{reference}</TooltipDd>
+            <TooltipDd>
+              {reference}
+              {col.logical ? ` (${t("logicalRelationBadge")})` : ""}
+            </TooltipDd>
           </>
         )}
         {col.extra && (
