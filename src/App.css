@@ -2738,6 +2738,18 @@ body, #root {
   padding: var(--space-2) var(--space-2-5);
   font-size: var(--text-sm);
 }
+/* 置換行の <br> を無効化して、検索と置換を 1 行に流し込む (狭いときだけ折り返して最大 2 行)。
+   閉じるボタンは CodeMirror 既定の絶対配置 (右上) を使うので右余白を空ける。 */
+.cm-editor .cm-panel.cm-search br { display: none; }
+.cm-editor .cm-panel.cm-search { padding-right: var(--space-8); }
+.cm-editor .cm-panel.cm-search .cm-textfield[name="search"],
+.cm-editor .cm-panel.cm-search .cm-textfield[name="replace"] {
+  flex: 1 1 12em;
+  min-width: 8em;
+  max-width: 20em;
+  margin: 0;
+}
+.cm-editor .cm-panel.cm-search .cm-button { margin: 0; }
 .cm-editor .cm-panel.cm-search label {
   display: inline-flex;
   align-items: center;
