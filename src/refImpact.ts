@@ -37,6 +37,16 @@ export interface RefImpact {
    * 1 のときは省略してよい。
    */
   depth?: number;
+  /**
+   * 論理リレーション (仮想 FK, #2356) 由来。DB は削除を止めず連鎖もしないので、`onDelete` は
+   * 形だけ `NO ACTION` にしてあり、**ブロック / 連鎖の判定には使わない** (孤児行が残る警告として扱う)。
+   */
+  logical?: boolean;
+}
+
+/** この影響が削除を DB で止める (エラーにする) か。論理リレーションは止めない。 */
+export function impactBlocks(i: Pick<RefImpact, "onDelete" | "logical">): boolean {
+  return !i.logical && blocksDelete(i.onDelete);
 }
 
 /** TRUNCATE の子行数の集計上限。これを超える分は数えず「N 件以上」と表示する。 */
@@ -209,6 +219,7 @@ export async function loadRefImpacts(input: {
       column: fk.column,
       referencedColumn: fk.referencedColumn,
       onDelete: normalizeOnDelete(fk.onDelete),
+      ...(fk.logical ? { logical: true } : {}),
       count: input.keys === null ? Math.min(count, TRUNCATE_COUNT_CAP) : count,
       ...(input.keys === null && count > TRUNCATE_COUNT_CAP ? { capped: true } : {}),
     });
@@ -374,7 +385,7 @@ export async function loadCascadeImpacts(input: {
       const count = totals.get(i) ?? 0;
       if (count <= 0) continue;
       const { fk } = edge;
-      const onDelete = normalizeOnDelete(fk.onDelete);
+      const onDelete = fk.logical ? "NO ACTION" : normalizeOnDelete(fk.onDelete);
       impacts.push({
         parentTable: edge.parentName,
         ...(fk.schema ? { schema: fk.schema } : {}),
@@ -382,6 +393,7 @@ export async function loadCascadeImpacts(input: {
         column: fk.column,
         referencedColumn: fk.referencedColumn,
         onDelete,
+        ...(fk.logical ? { logical: true } : {}),
         count,
         ...(edge.depth > 1 ? { depth: edge.depth } : {}),
       });

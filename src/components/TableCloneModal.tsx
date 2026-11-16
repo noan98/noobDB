@@ -19,6 +19,8 @@ import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { SqlPreview } from "./SqlPreview";
+import { IdentLengthError } from "./IdentLengthError";
+import { identTooLong } from "./sqlDialect";
 import { Button, Input, PressableButton, Switch } from "./ui";
 import { Spinner } from "./Spinner";
 import { isPlainEnterKey } from "./modalKeys";
@@ -116,8 +118,8 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
 
   // 既存テーブル名が分かった時点で、ユーザがまだ触っていなければ既定名 (<元>_copy) を入れる。
   useEffect(() => {
-    if (existingTables && !nameTouched) setName(suggestCloneName(existingTables, sourceTable));
-  }, [existingTables, nameTouched, sourceTable]);
+    if (existingTables && !nameTouched) setName(suggestCloneName(existingTables, sourceTable, driver));
+  }, [existingTables, nameTouched, sourceTable, driver]);
 
   const trimmed = name.trim();
   const loading = existingTables === null || (ddl === null && ddlError === null);
@@ -145,8 +147,16 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
   const metaPending = driver === "postgres" && !pgMeta && !metaError;
   const statements = trimmed && !metaPending ? (result?.statements ?? []) : [];
   const notTable = !metaPending && !!result && result.statements.length === 0 && result.errors.length === 0;
+  // PostgreSQL は 63 バイト超を黙って切り詰め、MySQL は ERROR 1059 になる (#2384)。
+  const tooLong = identTooLong(driver, trimmed);
   const valid =
-    !loading && !metaPending && !metaError && !collides && trimmed.length > 0 && statements.length > 0;
+    !loading &&
+    !metaPending &&
+    !metaError &&
+    !collides &&
+    !tooLong &&
+    trimmed.length > 0 &&
+    statements.length > 0;
 
   const submit = () => {
     if (valid) onConfirm(trimmed, statements);
@@ -184,6 +194,7 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
             />
             {loading && <Spinner size={14} />}
           </Flex>
+          <IdentLengthError driver={driver} names={tooLong ? [trimmed] : []} />
           {trimmed.length > 0 && collides && (
             <FieldError>{t("cloneTableNameExists", { table: trimmed })}</FieldError>
           )}

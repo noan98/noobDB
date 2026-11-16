@@ -58,13 +58,17 @@ export function SandboxCreateModal({ sessionId, database, defaultName, onClose, 
         // テーブル一覧は出して作成を続けられるようにする。
         const [tbls, foreignKeys] = await Promise.all([
           api.listTables(sessionId, database),
-          api.foreignKeys(sessionId, database).catch((e: unknown) => {
-            if (!cancelled) {
-              setFkError(String(e));
-              setIncludeRelated(false);
-            }
-            return [] as ForeignKey[];
-          }),
+          // 子テーブルの追従はバックエンドが宣言 FK だけを辿るので、論理リレーション (#2356) は除く。
+          api
+            .foreignKeys(sessionId, database)
+            .then((fks) => fks.filter((f) => !f.logical))
+            .catch((e: unknown) => {
+              if (!cancelled) {
+                setFkError(String(e));
+                setIncludeRelated(false);
+              }
+              return [] as ForeignKey[];
+            }),
         ]);
         if (cancelled) return;
         setTables(tbls.filter((tbl) => !isSandboxShadowTableName(tbl)));

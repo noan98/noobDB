@@ -1,5 +1,6 @@
 import type { ColumnMapping, DriverKind, NewColumnType, NewTableColumn } from "../api/tauri";
 import type { CellKind } from "./cellTypeMeta";
+import { identLimit, identTooLong } from "./sqlDialect";
 
 /**
  * ファイルから新規テーブルを作成してインポートする (#985) ための純ロジック。
@@ -372,25 +373,10 @@ export type NewTableError =
   | { kind: "duplicateColumn"; name: string }
   | null;
 
-/** バックエンドの `max_ident_len` と同じ上限。`bytes` は UTF-8 バイト数で数える。 */
-function identLimit(driver: DriverKind): { limit: number; bytes: boolean } | null {
-  switch (driver) {
-    case "mysql":
-      return { limit: 64, bytes: false };
-    case "postgres":
-      return { limit: 63, bytes: true };
-    case "sqlite":
-      return null;
-  }
-}
-
 function identError(driver: DriverKind, name: string): NewTableError {
   if (name !== name.trim()) return { kind: "nameWhitespace", name };
   const lim = identLimit(driver);
-  if (lim) {
-    const len = lim.bytes ? new TextEncoder().encode(name).length : [...name].length;
-    if (len > lim.limit) return { kind: "nameTooLong", name, limit: lim.limit };
-  }
+  if (lim && identTooLong(driver, name)) return { kind: "nameTooLong", name, limit: lim.limit };
   return null;
 }
 

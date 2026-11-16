@@ -70,6 +70,8 @@ export interface ErEdge {
   cardinality: ErCardinality;
   /** FK 列が NULL 可 = 親側 (target) が任意 (0..1)。不明なら false (必須扱い)。 */
   optional: boolean;
+  /** 論理リレーション (仮想 FK, #2356) 由来の線。宣言 FK と区別して点線で描く。 */
+  logical: boolean;
 }
 
 export interface ErGraph {
@@ -335,6 +337,7 @@ export function buildErGraph(input: BuildErGraphInput): ErGraph {
         unique: meta?.unique ?? false,
       }),
       optional: meta?.nullable ?? false,
+      logical: fk.logical === true,
     });
   }
 

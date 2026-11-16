@@ -182,3 +182,120 @@ describe("Rust が読む src-tauri 外のファイルは crosslang フィルタ�
     ).toBe(true);
   });
 });
+
+// ---- フロントのテストが src/ 外のファイルを読む場合 / CI が実行するスクリプト (#2385) ----
+//
+// #2362 と同じ種類の配線漏れ。ci.yml の paths-filter は「どのファイルが変わったら
+// どのジョブを動かすか」を列挙しているので、(1) フロントのテストが `?raw` / import で読む
+// src/ 外のファイルは frontend (または workflow / docs) フィルタに、(2) `run:` が
+// `bash scripts/...` で呼ぶスクリプトはいずれかのフィルタに含まれていなければならない。
+// 外れていると、そのファイルだけを変える PR ですべてのフィルタが false になり、
+// 関係するジョブが skip されたまま (必須チェックは skip でも満たされる) マージされる。
+
+/** ci.yml の paths-filter (`filters: |` 配下の 12 スペースインデントのキー) を全部読む。 */
+function allFilterPatterns(): Map<string, string[]> {
+  const lines = ciYml.split("\n");
+  const start = lines.findIndex((l) => /^\s+filters:\s*\|\s*$/.test(l));
+  expect(start, "ci.yml に paths-filter の `filters: |` が見つかりません").toBeGreaterThanOrEqual(0);
+  const result = new Map<string, string[]>();
+  let current: string[] | null = null;
+  for (const line of lines.slice(start + 1)) {
+    const t = line.trim();
+    if (t === "" || t.startsWith("#")) continue;
+    const key = /^\s{12}([\w-]+):\s*$/.exec(line);
+    if (key) {
+      current = [];
+      result.set(key[1], current);
+      continue;
+    }
+    const m = /^- '([^']+)'$/.exec(t);
+    if (!m || current === null) break;
+    current.push(m[1]);
+  }
+  return result;
+}
+
+const filterGroups = allFilterPatterns();
+
+function filterNamesMatching(path: string, names?: string[]): string[] {
+  return [...filterGroups.entries()]
+    .filter(([name]) => !names || names.includes(name))
+    .filter(([, patterns]) => patterns.some((pat) => globToRegExp(pat).test(path)))
+    .map(([name]) => name);
+}
+
+/** フロントのテスト / ソースが `?raw` や import で読む、src/ 外 (リポジトリ直下起点) のパス。 */
+function externalFrontendReads(file: string, src: string): string[] {
+  const dir = file.slice(0, file.lastIndexOf("/"));
+  const found: string[] = [];
+  for (const m of stripComments(src).matchAll(/["'`](\.{1,2}\/[^"'`\n]+)["'`]/g)) {
+    const spec = m[1].replace(/\?.*$/, "");
+    // glob (`*`) は対象を列挙できないので対象外。リテラルのパスだけ検査する。
+    if (spec.includes("*")) continue;
+    const resolved = normalizePath(`${dir}/${spec}`);
+    if (!resolved.startsWith("src/") && !resolved.startsWith("src-tauri/")) found.push(resolved);
+  }
+  return found;
+}
+
+describe("フロントのテストが読む src/ 外のファイルは frontend フィルタに含まれる (#2385)", () => {
+  const reads = new Map<string, string>(); // 読まれるパス → 最初の読み手
+  for (const [file, src] of testSources) {
+    for (const target of externalFrontendReads(file, src)) {
+      // 実在しない相対パス (ただの文字列リテラル) は除外する。拡張子付きのファイルだけを見る。
+      if (/\.[A-Za-z0-9]+$/.test(target) && !reads.has(target)) reads.set(target, file);
+    }
+  }
+
+  it("読み込みを検出できている (検出ロジックの退行防止)", () => {
+    expect(reads.has("public/brand-icon.svg")).toBe(true);
+    expect(reads.has(".claude/skills/noobdb-ipc/references/command-list.md")).toBe(true);
+  });
+
+  // frontend ジョブを起こすのは frontend / workflow。docs は crosslang parity ジョブ (パリティ系の
+  // テストだけを回す) を起こすので、パリティテストが読むドキュメントはそれでよい。
+  it.each([...reads.entries()].sort())(
+    "%s (読み手: %s) はフロントのテストを動かすフィルタに一致する",
+    (target, reader) => {
+      expect(
+        filterNamesMatching(target, ["frontend", "workflow", "docs"]).length > 0,
+        `${reader} が src/ 外の ${target} を読みますが、ci.yml の paths-filter \`frontend\` (または workflow / docs) に` +
+          "一致せず、そのファイルだけを変える PR でフロントのテストが実行されません。frontend にパスを足してください",
+      ).toBe(true);
+    },
+  );
+});
+
+describe("ci.yml の run: が呼ぶスクリプトはいずれかの paths-filter に含まれる (#2385)", () => {
+  const scripts = [...new Set([...ciYml.matchAll(/\bbash\s+(scripts\/[\w./-]+)/g)].map((m) => m[1]))].sort();
+
+  it("スクリプト呼び出しを検出できている (検出ロジックの退行防止)", () => {
+    expect(scripts).toContain("scripts/ci-apt-refresh.sh");
+    expect(scripts).toContain("scripts/ci-apt-ensure.sh");
+  });
+
+  it.each(scripts)("%s はいずれかのフィルタに一致する", (script) => {
+    expect(
+      filterNamesMatching(script).length > 0,
+      `ci.yml が ${script} を実行しますが、どの paths-filter にも一致せず、そのスクリプトだけを変える PR ` +
+        "ではすべてのフィルタが false になって一度も実行されません。ci-scripts などにパスを足してください",
+    ).toBe(true);
+  });
+
+  // apt セットアップは frontend と全 Rust ジョブで走る。ci-scripts フィルタで起こすジョブ側にも
+  // `ci-scripts` の OR が入っていること (フィルタだけ足して if: を忘れると実走しない)。
+  it.each(["scripts/ci-apt-refresh.sh", "scripts/ci-apt-ensure.sh"])(
+    "%s を実行するジョブの if: に ci-scripts が含まれる",
+    (script) => {
+      const jobs = ciYml.split(/^ {2}(?=[\w-]+:\s*$)/m).filter((b) => b.includes(`bash ${script}`));
+      expect(jobs.length).toBeGreaterThan(0);
+      for (const job of jobs) {
+        const name = job.split("\n", 1)[0];
+        const cond = /^ {4}if:.*$/m.exec(job)?.[0] ?? "";
+        expect(cond, `${name} ジョブの if: に ci-scripts の OR がありません`).toContain(
+          "needs.changes.outputs.ci-scripts",
+        );
+      }
+    },
+  );
+});

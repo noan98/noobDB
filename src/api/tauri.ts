@@ -25,6 +25,7 @@ import { schemaTreeCommands } from "./commands/schemaTree";
 import { deadlockCommands } from "./commands/deadlock";
 import { serverCommands } from "./commands/server";
 import { advisorCommands } from "./commands/advisor";
+import { logicalRelationsCommands } from "./commands/logicalRelations";
 import { processCommands } from "./commands/process";
 import { inspectorCommands } from "./commands/inspector";
 import { profileCommands } from "./commands/profile";
@@ -628,6 +629,11 @@ export interface TableColumnInfo {
    * 無い・SQLite は `null`。古いバックエンドは送らないので省略可能 (後方互換)。
    */
   comment?: string | null;
+  /**
+   * `referenced_table` / `referenced_column` が論理リレーション (仮想 FK, #2356) 由来のとき true。
+   * `api.describeTable` / `api.describeDatabase` がマージして付ける (バックエンドは送らない)。
+   */
+  logical?: boolean;
 }
 
 /** One table (or view) and its column names, for whole-schema autocomplete. */
@@ -1046,6 +1052,29 @@ export interface ForeignKey {
   referenced_table: string;
   referenced_column: string | null;
   constraint_name: string | null;
+  /**
+   * 論理リレーション (仮想 FK, #2356) 由来のとき true。DB に宣言された制約ではなく、アプリ側にだけ
+   * 登録した関係。`api.foreignKeys` がマージして返す (バックエンドの `foreign_keys` は付けない)。
+   */
+  logical?: boolean;
+}
+
+/** 論理リレーションの登録 / 削除の入力 (`save_logical_relations` / `delete_logical_relation`, #2356)。複合キーは列を同じ順で並べる。 */
+export interface LogicalRelationInput {
+  /** 子テーブル (参照する側)。 */
+  table: string;
+  columns: string[];
+  /** 親テーブル (参照される側)。 */
+  referenced_table: string;
+  referenced_columns: string[];
+}
+
+/** 保存済みの論理リレーション 1 件 (`list_logical_relations`, #2356)。DB には書かないアプリ側だけの関係。 */
+export interface LogicalRelation extends LogicalRelationInput {
+  profile_id: string | null;
+  database: string;
+  /** 登録した時刻 (UTC, RFC 3339)。 */
+  created_at: string;
 }
 
 /**
@@ -2937,6 +2966,7 @@ export const api = {
   ...deadlockCommands,
   ...serverCommands,
   ...advisorCommands,
+  ...logicalRelationsCommands,
   ...processCommands,
   ...inspectorCommands,
   ...profileCommands,

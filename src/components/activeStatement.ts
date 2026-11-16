@@ -5,7 +5,7 @@
 // 可視範囲の行だけに付ける (1 万行の SQL でも描画コストが文の長さに比例しない)。
 // 見た目 (帯・バー・クロスフェード・reduced-motion) は App.css の `.cm-active-stmt`。
 
-import { type Extension, StateEffect, StateField } from "@codemirror/state";
+import { type EditorState, type Extension, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import { highlightedStatementAtOffset } from "../sqlScript";
 
@@ -37,6 +37,11 @@ const activeStatementField = StateField.define<Span | null>({
     return value;
   },
 });
+
+/** いま帯を出している文の範囲 (出していなければ null)。スクロールバー横のマーカー帯 (#2382) が読む。 */
+export function activeStatementRange(state: EditorState): { from: number; to: number } | null {
+  return state.field(activeStatementField, false) ?? null;
+}
 
 const lineDeco = Decoration.line({ class: "cm-active-stmt" });
 

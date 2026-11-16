@@ -249,6 +249,8 @@ const ErTableNode = memo(function ErTableNode({ data }: NodeProps<ErFlowNode>) {
 interface ErRelationData {
   cardinality: ErCardinality;
   optional: boolean;
+  /** 論理リレーション (仮想 FK, #2356) の線。点線で描く。 */
+  logical?: boolean;
   /** 入場スタッガーの段数 (参照先ノードの深さ, #1861)。 */
   stagger?: number;
   [key: string]: unknown;
@@ -287,7 +289,14 @@ const ErRelationEdge = memo(function ErRelationEdge({
   const dst = endGlyph(targetEndKind(data?.optional ?? false), targetPosition as ErEndSide, targetX, targetY);
   return (
     <>
-      <BaseEdge id={id} path={path} pathLength={1} style={stagger} />
+      {/* 論理リレーションは点線。点線の長さは実寸で指定するので pathLength=1 の描画アニメ対象から外す (App.css) */}
+      <BaseEdge
+        id={id}
+        path={path}
+        pathLength={data?.logical ? undefined : 1}
+        className={data?.logical ? "er-edge-logical" : undefined}
+        style={stagger}
+      />
       {[src, dst].map((g, i) => (
         <g key={i === 0 ? "source" : "target"} className="er-rel-glyph" style={stagger}>
           {g.paths.map((d) => (
@@ -324,6 +333,12 @@ interface ERDiagramViewProps {
    */
   onGenerateDoc?: (database: string, selectedTables: string[]) => void;
   /**
+   * 論理リレーション (仮想 FK, #2356) の管理ダイアログを開く。渡されたときだけツールバーにボタンを出す。
+   * ダイアログを閉じるたびに親が `reloadKey` を進めると、図を取得し直して登録内容を反映する。
+   */
+  onManageLogicalRelations?: (database: string) => void;
+  reloadKey?: number;
+  /**
    * ノード位置の保存先を分ける接続の識別子 (プロファイル ID, #1628)。無いときは位置を保存しない。
    */
   connectionKey?: string | null;
@@ -341,6 +356,8 @@ function ERDiagramInner({
   initialDatabase,
   onOpenTable,
   onGenerateDoc,
+  onManageLogicalRelations,
+  reloadKey,
   connectionKey,
   onInsertSql,
   onClose,
@@ -371,7 +388,15 @@ function ERDiagramInner({
     [source, focus],
   );
   const summary = useMemo(
-    () => (graph ? { shown: graph.nodes.length, total: graph.totalTables, rels: graph.edges.length } : null),
+    () =>
+      graph
+        ? {
+            shown: graph.nodes.length,
+            total: graph.totalTables,
+            rels: graph.edges.length,
+            logical: graph.edges.filter((e) => e.logical).length,
+          }
+        : null,
     [graph],
   );
   // フォーカスの対象に選べるテーブル (上限で図から落ちているものも含む)。
@@ -521,7 +546,7 @@ function ERDiagramInner({
     };
     // retryAttempt は再取得ボタン専用の依存 (#848): database を変えずに同じ
     // グラフ取得をやり直したいだけ。
-  }, [sessionId, database, setNodes, setEdges, retryAttempt]);
+  }, [sessionId, database, setNodes, setEdges, retryAttempt, reloadKey]);
 
   // Position the graph and feed React Flow. Re-runs when the layout direction or
   // density changes (cheap, no DB round-trip) and animates the viewport to the
@@ -573,7 +598,12 @@ function ERDiagramInner({
         source: e.source,
         target: e.target,
         className: FLOW_EDGE_ENTER_CLASS,
-        data: { cardinality: e.cardinality, optional: e.optional, stagger: rankOf.get(e.target) ?? 0 },
+        data: {
+          cardinality: e.cardinality,
+          optional: e.optional,
+          logical: e.logical,
+          stagger: rankOf.get(e.target) ?? 0,
+        },
       })),
     );
     // Animate the fit only on relayout, not the initial render (the `fitView`
@@ -835,10 +865,24 @@ function ERDiagramInner({
         {summary && !loading && !error && (
           <chakra.span fontSize="sm" color="app.textMuted">
             {t("erDiagramSummary", { tables: summary.shown, relationships: summary.rels })}
+            {summary.logical > 0 && ` ${t("erDiagramLogicalNote", { count: summary.logical })}`}
           </chakra.span>
         )}
         {!loading && !error && nodes.length > 0 && (
           <chakra.span marginLeft="auto" display="inline-flex" alignItems="center" gap="2">
+            {onManageLogicalRelations && database && (
+              <Tooltip label={t("erDiagramLogicalTooltip")}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => onManageLogicalRelations(database)}
+                >
+                  <Icon name="link" size={ICON_SIZES.md} />
+                  <span style={{ marginInlineStart: "var(--space-1-5)" }}>{t("erDiagramLogical")}</span>
+                </Button>
+              </Tooltip>
+            )}
             {onGenerateDoc && database && (
               <Tooltip label={t("erDiagramAiDocTooltip")}>
                 <Button
