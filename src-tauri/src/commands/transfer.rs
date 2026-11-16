@@ -37,8 +37,8 @@ use crate::commands::query::{ensure_allowed_for_session, record_write_history};
 use crate::db::transfer::{
     create_table_sql, drop_table_sql, hex_binary_columns, lossy_conversions, plan_columns_mapped,
     plan_warnings, select_cells, source_count_sql, source_select_sql, source_select_sql_ext,
-    validate_target_table, value_to_cell, ColumnSpec, LossyConversion, TransferColumn,
-    TransferMode,
+    spatial_target_columns, validate_target_table, value_to_cell, ColumnSpec, LossyConversion,
+    TransferColumn, TransferMode,
 };
 use crate::db::types::{Column, StreamBatch};
 use crate::db::upsert::{ConflictMode, ImportConflict};
@@ -563,6 +563,31 @@ async fn prepare_target(
     Ok((plan, keep))
 }
 
+/// 追記 / upsert のとき、転送先の既存テーブルの列型から「空間列として書く列」を決める (#2379)。
+/// Create / Replace は転送先を TEXT で作る (EWKT のまま) ので対象外。転送先の列が読めないとき
+/// (取得失敗・列なし) は全列 `false` (従来どおりのテキスト bind)。
+async fn target_spatial_columns(
+    target: &Session,
+    request: &TransferRequest,
+    driver: DriverKind,
+    plan: &[TransferColumn],
+) -> Vec<bool> {
+    if !matches!(request.mode, TransferMode::Append | TransferMode::Upsert) {
+        return vec![false; plan.len()];
+    }
+    let db = request
+        .target_database
+        .as_deref()
+        .filter(|d| !d.is_empty())
+        .unwrap_or("");
+    let cols = target
+        .conn
+        .columns(db, request.target_table.trim())
+        .await
+        .unwrap_or_default();
+    spatial_target_columns(driver, plan, &cols)
+}
+
 /// 転送の衝突設定を決める (#1539)。`upsert` 以外は従来どおり素の INSERT。
 /// `upsert` ではキー列を、リクエストの指定 → 転送先テーブルの主キーの順に解決し、
 /// 転送する列に含まれることを確かめる。名前は転送先の綴り (大文字小文字) に揃える。
@@ -644,11 +669,13 @@ async fn resolve_conflict(
 }
 
 /// バッチ 1 つ分をテキストセルへ変換して既存のインポート経路で書き込む。
+#[allow(clippy::too_many_arguments)]
 async fn write_batch(
     target: &Session,
     request: &TransferRequest,
     driver: DriverKind,
     plan: &[TransferColumn],
+    spatial: &[bool],
     rows: &[Vec<crate::db::types::Value>],
     batch_size: usize,
     conflict: &ImportConflict,
@@ -684,6 +711,7 @@ async fn write_batch(
             // (upsert 以外は素の INSERT)。
             conflict,
             &hex_binary,
+            spatial,
             |_| Ok(()),
         )
         .await
@@ -892,6 +920,7 @@ pub(crate) async fn run_transfer(
         let mut columns: Option<Vec<Column>> = None;
         let mut plan: Option<Vec<TransferColumn>> = None;
         let mut conflict: Option<ImportConflict> = None;
+        let mut spatial: Option<Vec<bool>> = None;
         let mut written: u64 = 0;
         // 列の除外 (#1623) があるときの、残すソース列の位置。
         let mut keep: Option<Vec<usize>> = None;
@@ -935,8 +964,13 @@ pub(crate) async fn run_transfer(
                         conflict = Some(resolve_conflict(&target, request, p).await?);
                     }
                     let c = conflict.as_ref().cloned().unwrap_or_default();
+                    // 追記 / upsert で転送先が空間列なら、値を空間用の式で包んで書く (#2379)。
+                    if spatial.is_none() {
+                        spatial = Some(target_spatial_columns(&target, request, driver, p).await);
+                    }
+                    let sp = spatial.as_deref().unwrap_or(&[]);
                     written +=
-                        write_batch(&target, request, driver, p, &rows, batch_size, &c).await?;
+                        write_batch(&target, request, driver, p, sp, &rows, batch_size, &c).await?;
                     counter.store(written, Ordering::SeqCst);
                     on_progress(written);
                     if limit.is_some_and(|l| read >= l) {

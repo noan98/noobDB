@@ -41,7 +41,8 @@ use crate::db::subset::{
 };
 use crate::db::sync::{quote_ident, table_ref_for};
 use crate::db::transfer::{
-    check_sqlite_unsigned_range, hex_binary_columns, plan_columns_mapped, value_to_cell,
+    check_sqlite_unsigned_range, hex_binary_columns, plan_columns_mapped, spatial_target_columns,
+    value_to_cell,
 };
 use crate::db::types::{Column, Value};
 use crate::db::upsert::{ConflictMode, ImportConflict};
@@ -686,9 +687,12 @@ async fn write_to_target(
             r
         }
     };
+    let mut target_columns: BTreeMap<String, Vec<crate::db::types::TableColumnInfo>> =
+        BTreeMap::new();
     // 書き込み前に全表の列を検査する (途中で足りない表が見つかって中途半端に書かない)。
     for t in &collected.result.tables {
         let cols = target.conn.columns(&cdb, &t.table).await?;
+        target_columns.insert(t.table.clone(), cols.clone());
         if cols.is_empty() {
             return Err(AppError::InvalidInput(format!(
                 "target table '{}' does not exist; create the tables on the target first",
@@ -715,6 +719,15 @@ async fn write_to_target(
         check_sqlite_unsigned_range(driver, &plan, &rows)?;
         let names: Vec<String> = plan.iter().map(|c| c.name.clone()).collect();
         let hex = hex_binary_columns(driver, &plan);
+        // 転送先が空間列なら EWKT を空間用の式で包んで書く (#2379)。
+        let spatial = spatial_target_columns(
+            driver,
+            &plan,
+            target_columns
+                .get(&t.table)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+        );
         let conflict = if existing == ExistingRows::Skip && !t.primary_key.is_empty() {
             ImportConflict {
                 mode: ConflictMode::Skip,
@@ -748,6 +761,7 @@ async fn write_to_target(
                     WRITE_BATCH,
                     &conflict,
                     &hex,
+                    &spatial,
                     |_| Ok(()),
                 )
                 .await?;

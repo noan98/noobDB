@@ -154,6 +154,33 @@ pub fn spatial_sql_literal(driver: DriverKind, ewkt: &str) -> Option<String> {
     })
 }
 
+/// MySQL の一括取り込み (プレースホルダ bind) で、空間列の値を包む式。WKT と SRID の 2 つを bind する
+/// (SRID は行ごとに違いうるので式へ埋め込まず bind にする)。SRID 0 では `'axis-order=long-lat'` は
+/// 無視される。MySQL 8.0.12 未満と MariaDB は第 3 引数を受けない (対象外)。
+pub const MYSQL_SPATIAL_PLACEHOLDER: &str = "ST_GeomFromText(?, ?, 'axis-order=long-lat')";
+
+/// 取り込み (bind) で空間列のプレースホルダを `?` から別の式へ置き換えるか。MySQL は文字列 bind を
+/// 空間型へ暗黙変換できず ERROR 1416 になるので式で包む。PostgreSQL は EWKT のテキストリテラルを
+/// `geometry` / `geography` の入力関数がそのまま受けるので置き換えない (`None`)。SQLite は対象外。
+pub fn spatial_import_placeholder(driver: DriverKind) -> Option<&'static str> {
+    match driver {
+        DriverKind::Mysql => Some(MYSQL_SPATIAL_PLACEHOLDER),
+        DriverKind::Postgres | DriverKind::Sqlite => None,
+    }
+}
+
+/// [`MYSQL_SPATIAL_PLACEHOLDER`] へ bind する (WKT, SRID)。EWKT 接頭辞が無ければ SRID は 0。
+/// セルが NULL なら (None, 0) で、式全体が NULL になる。
+pub fn mysql_spatial_binds(cell: Option<&str>) -> (Option<&str>, u32) {
+    match cell {
+        None => (None, 0),
+        Some(s) => {
+            let (srid, wkt) = split_ewkt(s);
+            (Some(wkt), srid.unwrap_or(0))
+        }
+    }
+}
+
 struct Reader<'a> {
     b: &'a [u8],
     pos: usize,
@@ -823,5 +850,29 @@ mod tests {
         ] {
             assert!(!is_spatial_type_name(t), "{t}");
         }
+    }
+
+    #[test]
+    fn spatial_import_placeholder_per_driver() {
+        assert_eq!(
+            spatial_import_placeholder(DriverKind::Mysql),
+            Some("ST_GeomFromText(?, ?, 'axis-order=long-lat')")
+        );
+        // PostgreSQL は EWKT のテキストをそのまま受ける。SQLite は対象外。
+        assert_eq!(spatial_import_placeholder(DriverKind::Postgres), None);
+        assert_eq!(spatial_import_placeholder(DriverKind::Sqlite), None);
+    }
+
+    #[test]
+    fn mysql_spatial_binds_split_srid() {
+        assert_eq!(
+            mysql_spatial_binds(Some("SRID=4326;POINT(1 2)")),
+            (Some("POINT(1 2)"), 4326)
+        );
+        assert_eq!(
+            mysql_spatial_binds(Some("POINT(1 2)")),
+            (Some("POINT(1 2)"), 0)
+        );
+        assert_eq!(mysql_spatial_binds(None), (None, 0));
     }
 }

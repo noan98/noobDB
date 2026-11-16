@@ -100,3 +100,19 @@ SRID が 0 以外なら `ST_GeomFromText('…', srid, 'axis-order=long-lat')` �
 空間型の判定はドライバ別 (`spatial::is_spatial_column` / フロント `isSpatialColumnType(type, driver)`): MySQL は
 `information_schema` の COLUMN_TYPE が返す `point` / `polygon` などの具体名も空間型、PostgreSQL の標準 `point` /
 `polygon` は対象外、SQLite は `GEOMETRY` と宣言されていても対象外 (SpatiaLite を前提にしない)。
+
+### 空間型の制約と転送 (#2379)
+
+- **MySQL 8.0.12 以上が前提。** `ST_GeomFromText` の第 3 引数 `'axis-order=long-lat'` は MariaDB と
+  MySQL 8.0.12 未満では引数エラーになる。そのため **MariaDB / 8.0.12 未満での SRID≠0 の書き戻しは未対応**
+  (サーバ版による出し分けはしていない)。SRID 0 / 接頭辞なしの WKT は第 3 引数が要らないが、取り込み
+  (`MYSQL_SPATIAL_PLACEHOLDER`) は常に付ける。
+- **接続間転送 (`db/transfer.rs` / `commands/transfer.rs`)**:
+  - Create / Replace: 転送先の空間列は **TEXT (EWKT 文字列)** になる。以前は GEOMETRY が `Bytes` → BLOB 系で
+    運ばれていたが、空間値を `Value::String` (EWKT) で持つようにしたため挙動が変わった。空間型のまま
+    運びたいときは、転送先に先に空間列のテーブルを作って Append / Upsert を使う。
+  - Append / Upsert: 転送先の既存列が空間列なら (`spatial_target_columns`、`TableColumnInfo.data_type` で判定)、
+    MySQL は値を `ST_GeomFromText(?, ?, 'axis-order=long-lat')` で包み、WKT と SRID の 2 つを bind する
+    (文字列のままでは ERROR 1416)。PostgreSQL は EWKT のテキストを `geometry` / `geography` の入力関数が
+    受けるので式で包まない。転送先の列型が読めないときは従来どおりのテキスト bind。
+  - サブセット抽出の別接続書き込み (`commands/subset.rs`) も同じ。

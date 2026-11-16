@@ -579,6 +579,29 @@ pub fn hex_binary_columns(driver: DriverKind, columns: &[TransferColumn]) -> Vec
         .collect()
 }
 
+/// 列ごとに「転送先が空間列で、値 (EWKT 文字列) を空間用の式で包んで書くか」(#2379)。
+/// 追記 / upsert で転送先の既存テーブルの列型が分かるときだけ使う。`target_columns` に無い列
+/// (型が読めない) と、バイナリで運ぶ列は `false` (従来どおりのテキスト bind)。名前は大文字小文字を
+/// 無視して突き合わせる。空間用の式が要るのは MySQL だけ ([`crate::db::spatial::spatial_import_placeholder`])。
+pub fn spatial_target_columns(
+    driver: DriverKind,
+    columns: &[TransferColumn],
+    target_columns: &[crate::db::types::TableColumnInfo],
+) -> Vec<bool> {
+    let needed = crate::db::spatial::spatial_import_placeholder(driver).is_some();
+    columns
+        .iter()
+        .map(|c| {
+            needed
+                && c.ty != TransferType::Binary
+                && target_columns.iter().any(|t| {
+                    t.name.eq_ignore_ascii_case(&c.name)
+                        && crate::db::spatial::is_spatial_column(driver, &t.data_type)
+                })
+        })
+        .collect()
+}
+
 /// SQLite ターゲットの `UnsignedBigInt` 列に i64 の範囲を超える値があれば、列名付きの
 /// エラーにする。INTEGER 列へ入れると REAL に変換されて値が黙って失われるため。
 pub fn check_sqlite_unsigned_range(
@@ -821,6 +844,64 @@ pub fn plan_warnings(driver: DriverKind, columns: &[TransferColumn]) -> Vec<Stri
 
 #[cfg(test)]
 mod tests {
+
+    fn target_col(name: &str, data_type: &str) -> crate::db::types::TableColumnInfo {
+        crate::db::types::TableColumnInfo {
+            name: name.into(),
+            data_type: data_type.into(),
+            nullable: true,
+            key: String::new(),
+            default: None,
+            extra: String::new(),
+            referenced_table: None,
+            referenced_column: None,
+            comment: None,
+        }
+    }
+
+    fn plan_col(name: &str, ty: TransferType) -> TransferColumn {
+        TransferColumn {
+            name: name.into(),
+            source_type: "GEOMETRY".into(),
+            ty,
+        }
+    }
+
+    #[test]
+    fn spatial_target_columns_only_mysql_spatial_targets_2379() {
+        let plan = [
+            plan_col("id", TransferType::Integer),
+            plan_col("g", TransferType::Text),
+            plan_col("P", TransferType::Text),
+            plan_col("blob_g", TransferType::Binary),
+            plan_col("unknown", TransferType::Text),
+        ];
+        let target = [
+            target_col("id", "int"),
+            target_col("g", "geometry"),
+            target_col("p", "point"),
+            target_col("blob_g", "geometry"),
+        ];
+        // MySQL: 転送先が空間列の Text 列だけ (大文字小文字無視)。Binary 列と型が読めない列は対象外。
+        assert_eq!(
+            spatial_target_columns(DriverKind::Mysql, &plan, &target),
+            vec![false, true, true, false, false]
+        );
+        // 転送先の型が全く読めなければ従来どおり (全部 false)。
+        assert_eq!(
+            spatial_target_columns(DriverKind::Mysql, &plan, &[]),
+            vec![false; 5]
+        );
+        // PostgreSQL は EWKT のテキストをそのまま受けるので式で包まない。SQLite は対象外。
+        assert_eq!(
+            spatial_target_columns(DriverKind::Postgres, &plan, &target),
+            vec![false; 5]
+        );
+        assert_eq!(
+            spatial_target_columns(DriverKind::Sqlite, &plan, &target),
+            vec![false; 5]
+        );
+    }
 
     fn spec(source: &str) -> ColumnSpec {
         ColumnSpec {

@@ -968,6 +968,7 @@ impl MySqlConn {
             batch_size,
             conflict,
             &[],
+            &[],
             on_progress,
         )
         .await
@@ -985,6 +986,7 @@ impl MySqlConn {
         batch_size: usize,
         conflict: &ImportConflict,
         hex_columns: &[bool],
+        spatial_columns: &[bool],
         mut on_progress: F,
     ) -> Result<u64>
     where
@@ -1004,8 +1006,11 @@ impl MySqlConn {
             .join(", ");
         let table_ident = quote_ident(table);
         let on_conflict = conflict_clause(DriverKind::Mysql, columns, conflict);
+        // 空間列は WKT と SRID の 2 つを bind するので、1 行あたりのプレースホルダが増える。
+        let is_spatial = |ci: usize| spatial_columns.get(ci).copied().unwrap_or(false);
+        let params_per_row = ncols + (0..ncols).filter(|ci| is_spatial(*ci)).count();
         // MySQL caps a statement at 65,535 placeholders; stay well under.
-        let max_rows = (65000 / ncols).max(1);
+        let max_rows = (65000 / params_per_row).max(1);
         let batch = batch_size.clamp(1, max_rows);
 
         let mut conn = self.pool.acquire().await?;
@@ -1020,6 +1025,8 @@ impl MySqlConn {
                 chunk.len(),
                 hex_columns,
                 "UNHEX",
+                spatial_columns,
+                super::spatial::spatial_import_placeholder(DriverKind::Mysql),
             );
             sql.push_str(&on_conflict);
             let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
@@ -1029,7 +1036,13 @@ impl MySqlConn {
                     // otherwise clone every value just to hand it to the driver.
                     // `Option<&str>` binds identically to `Option<String>` (text,
                     // `NULL` for `None`), so the wire output is unchanged.
-                    q = q.bind(row.get(ci).and_then(|c| c.as_deref()));
+                    let cell = row.get(ci).and_then(|c| c.as_deref());
+                    if is_spatial(ci) && !hex_columns.get(ci).copied().unwrap_or(false) {
+                        let (wkt, srid) = super::spatial::mysql_spatial_binds(cell);
+                        q = q.bind(wkt).bind(srid);
+                    } else {
+                        q = q.bind(cell);
+                    }
                 }
             }
             q.execute(&mut *tx).await?;
