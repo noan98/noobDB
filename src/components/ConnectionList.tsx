@@ -1273,27 +1273,32 @@ const ForeignKeyRow = memo(function ForeignKeyRow({
       aria-level={level + 4}
       aria-posinset={posInSet}
       aria-setsize={setSize}
-      aria-label={`${fk.column} → ${foreignKeyTargetLabel(fk)}`}
+      aria-label={`${fk.column} → ${foreignKeyTargetLabel(fk)}${fk.logical ? ` (${t("logicalRelationBadge")})` : ""}`}
+      data-logical={fk.logical ? "true" : undefined}
       tabIndex={tabIndex}
       onFocus={onFocus}
       onKeyDown={actions.makeKeyDown(activate)}
       onClick={activate}
-      {...actions.treeTooltip(t("treeFkOpenHint", { table: fk.referencedTable }))}
+      {...actions.treeTooltip(
+        fk.logical
+          ? `${t("logicalRelationTip")}\n${t("treeFkOpenHint", { table: fk.referencedTable })}`
+          : t("treeFkOpenHint", { table: fk.referencedTable }),
+      )}
       _hover={{ bg: "app.rowHover" }}
     >
       <TreeChevron visibility="hidden" aria-hidden />
-      <TreeIcon fontSize="xs" color="app.accent" aria-hidden>
-        <Icon name="link" />
-      </TreeIcon>
+      {fk.logical ? (
+        <TreeIcon textStyle="caption" color="app.textMuted" role="img" aria-label={t("logicalRelationBadge")}>
+          <Icon name="link-logical" />
+        </TreeIcon>
+      ) : (
+        <TreeIcon fontSize="xs" color="app.accent" aria-hidden>
+          <Icon name="link" />
+        </TreeIcon>
+      )}
       <TreeLabel fontFamily="mono" color="app.text">
         {fk.column}
         <chakra.span color="app.textMuted"> → {foreignKeyTargetLabel(fk)}</chakra.span>
-        {fk.logical && (
-          <chakra.span color="app.textMuted" textStyle="caption">
-            {" "}
-            ({t("logicalRelationBadge")})
-          </chakra.span>
-        )}
       </TreeLabel>
     </TreeRow>
   );

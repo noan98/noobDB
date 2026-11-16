@@ -4619,6 +4619,7 @@ const en = {
   colTipKeyIndex: "Indexed (MUL)",
   colTipReferences: "References",
   logicalRelationBadge: "logical",
+  logicalRelationTip: "Logical relation (no constraint in the database)",
   refImpactLogicalCount: "{count} orphan row(s) would remain",
   refImpactLogicalTag: "logical relation: the DB does not stop it",
   refImpactLogicalNote:
@@ -13437,6 +13438,7 @@ const ja: Dict = {
   colTipKeyIndex: "インデックス (MUL)",
   colTipReferences: "参照先",
   logicalRelationBadge: "論理",
+  logicalRelationTip: "論理リレーション (DB には制約がありません)",
   refImpactLogicalCount: "孤児行が {count} 件残ります",
   refImpactLogicalTag: "論理リレーション: DB は止めません",
   refImpactLogicalNote:
