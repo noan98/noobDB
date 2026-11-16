@@ -64,6 +64,53 @@ describe("logicalToForeignKeys / mergeForeignKeys", () => {
     ]);
   });
 
+  it("複合の論理リレーションは、宣言 FK と列を共有していても一部だけ落とさず丸ごと残す", () => {
+    const declared = [
+      {
+        table: "o",
+        column: "user_id",
+        referenced_table: "users",
+        referenced_column: "id",
+        constraint_name: "fk_user",
+      },
+    ];
+    const merged = mergeForeignKeys(declared, [
+      rel("o", ["tenant_id", "user_id"], "users", ["tenant_id", "id"]),
+    ]);
+    const logical = merged.filter((f) => f.logical);
+    expect(logical.map((f) => [f.column, f.referenced_column])).toEqual([
+      ["tenant_id", "tenant_id"],
+      ["user_id", "id"],
+    ]);
+    expect(logical[0].constraint_name).toBe(logical[1].constraint_name);
+    expect(merged.filter((f) => !f.logical)).toEqual(declared);
+  });
+
+  it("宣言済みの複合 FK と同じ関係 (列の順序違いを含む) なら論理リレーションを丸ごと落とす", () => {
+    const declared = [
+      {
+        table: "o",
+        column: "tenant_id",
+        referenced_table: "users",
+        referenced_column: "tenant_id",
+        constraint_name: "fk",
+      },
+      {
+        table: "o",
+        column: "user_id",
+        referenced_table: "users",
+        referenced_column: "id",
+        constraint_name: "fk",
+      },
+    ];
+    expect(
+      mergeForeignKeys(declared, [rel("o", ["user_id", "tenant_id"], "users", ["id", "tenant_id"])]),
+    ).toEqual(declared);
+    // 参照先の列が違えば別の関係として残す。
+    const other = mergeForeignKeys(declared, [rel("o", ["user_id"], "users", ["legacy_id"])]);
+    expect(other.filter((f) => f.logical)).toHaveLength(1);
+  });
+
   it("論理リレーションが無ければ宣言をそのまま返す", () => {
     expect(mergeForeignKeys([], [])).toEqual([]);
   });

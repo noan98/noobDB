@@ -45,20 +45,48 @@ export function logicalToForeignKeys(rels: readonly LogicalRelationInput[]): For
   return out;
 }
 
-const fkIdentity = (table: string, column: string, referencedTable: string) =>
-  JSON.stringify([table, column, referencedTable]);
+/** 関係 1 件の同一性キー。子・親と、列の対応 (子列→親列) の集合で比べる (列の並び順は問わない)。 */
+const relationIdentity = (
+  table: string,
+  referencedTable: string,
+  pairs: readonly (readonly [string, string | null])[],
+) => JSON.stringify([table, referencedTable, pairs.map(([c, r]) => JSON.stringify([c, r])).sort()]);
 
-/** 宣言済み FK に論理 FK を足す。宣言済みと (子, 列, 親) が同じ論理 FK は重複なので落とす (宣言が優先)。 */
+/** 宣言 FK を制約単位 (複合キーは同じ `constraint_name` の行をまとめる) の同一性キーにする。 */
+function declaredRelationKeys(declared: readonly ForeignKey[]): Set<string> {
+  const groups = new Map<string, { table: string; referenced: string; pairs: [string, string | null][] }>();
+  declared.forEach((f, i) => {
+    // 制約名が取れない行は 1 行 = 1 関係として扱う。
+    const g = JSON.stringify([f.table, f.referenced_table, f.constraint_name ?? `#${i}`]);
+    const cur = groups.get(g) ?? { table: f.table, referenced: f.referenced_table, pairs: [] };
+    cur.pairs.push([f.column, f.referenced_column]);
+    groups.set(g, cur);
+  });
+  return new Set([...groups.values()].map((g) => relationIdentity(g.table, g.referenced, g.pairs)));
+}
+
+/**
+ * 宣言済み FK に論理 FK を足す。宣言済みとまったく同じ関係 (子・親・列の対応がすべて一致) の論理
+ * リレーションは重複なので落とす (宣言が優先)。比較と取捨は関係単位で行い、複合キーの一部の列だけを
+ * 落とすことはしない (一部だけ残すと `user_id = id` だけの JOIN になり、テナントなどの絞り込みが外れる)。
+ */
 export function mergeForeignKeys(
   declared: readonly ForeignKey[],
   rels: readonly LogicalRelationInput[],
 ): ForeignKey[] {
   if (rels.length === 0) return [...declared];
-  const seen = new Set(declared.map((f) => fkIdentity(f.table, f.column, f.referenced_table)));
-  const extra = logicalToForeignKeys(rels).filter(
-    (f) => !seen.has(fkIdentity(f.table, f.column, f.referenced_table)),
+  const seen = declaredRelationKeys(declared);
+  const kept = rels.filter(
+    (r) =>
+      !seen.has(
+        relationIdentity(
+          r.table,
+          r.referenced_table,
+          r.columns.map((c, i) => [c, r.referenced_columns[i] ?? null] as const),
+        ),
+      ),
   );
-  return [...declared, ...extra];
+  return [...declared, ...logicalToForeignKeys(kept)];
 }
 
 /** `table` を参照している論理リレーションを、逆参照 FK (`incoming_foreign_keys` と同形) として足す。 */
