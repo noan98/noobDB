@@ -170,11 +170,24 @@ function readQualifiedName(
   return { start, end, last, qualifier };
 }
 
-/** 識別子の最大長 (MySQL 64 / PostgreSQL 63)。SQLite は実質無制限。 */
-function maxIdentLength(driver: string): number {
-  if (driver === "postgres") return 63;
-  if (driver === "mysql") return 64;
-  return Number.POSITIVE_INFINITY;
+/** UTF-8 のバイト数。 */
+const utf8Len = (s: string) => new TextEncoder().encode(s).length;
+
+/**
+ * `s` を識別子の上限に収め、`suffix` を付ける。MySQL は 64 文字、PostgreSQL は 63 バイト
+ * (`identLimit` と同じ規則, #2392)。どちらも文字 (コードポイント) の境界で切り、サロゲートペアを分断しない。
+ * SQLite は上限なし。
+ */
+function fitIdent(driver: string, s: string, suffix = ""): string {
+  const lim = identLimit(driver);
+  if (!lim) return s + suffix;
+  if (lim.bytes) {
+    const room = Math.max(lim.limit - utf8Len(suffix), 1);
+    return (utf8Len(s) > room ? truncateUtf8(s, room) : s) + suffix;
+  }
+  const chars = [...s];
+  const room = Math.max(lim.limit - [...suffix].length, 1);
+  return (chars.length > room ? chars.slice(0, room).join("") : s) + suffix;
 }
 
 /**
@@ -191,11 +204,7 @@ export function cloneObjectName(
   newTable: string,
   used: Set<string>,
 ): string {
-  const max = maxIdentLength(driver);
-  const fit = (s: string, suffix = "") => {
-    const room = max - suffix.length;
-    return (s.length > room ? s.slice(0, Math.max(room, 1)) : s) + suffix;
-  };
+  const fit = (s: string, suffix = "") => fitIdent(driver, s, suffix);
   const base =
     sourceTable && name.includes(sourceTable)
       ? name.replace(sourceTable, () => newTable)
@@ -760,10 +769,9 @@ export function parsePgForeignKeys(rows: unknown[][]): PgForeignKey[] {
   return rows.map((r) => ({ name: String(r[0]), def: String(r[1]) }));
 }
 
-/** serial 列用に新規作成するシーケンス名 (`<新>_<列>_seq`、PostgreSQL の 63 文字に収める)。 */
+/** serial 列用に新規作成するシーケンス名 (`<新>_<列>_seq`、PostgreSQL の 63 バイトに文字境界で収める)。 */
 function seqName(o: CloneOptions, col: string): string {
-  const base = `${o.newTable}_${col}`;
-  return `${base.slice(0, 63 - 4)}_seq`;
+  return fitIdent("postgres", `${o.newTable}_${col}`, "_seq");
 }
 
 /**

@@ -406,6 +406,44 @@ describe("cloneObjectName / suggestCloneName", () => {
     expect(long.length).toBe(63);
   });
 
+  it("PostgreSQL は 63 バイト、MySQL は 64 文字で、文字の境界で切る (#2392)", () => {
+    const bytes = (x: string) => new TextEncoder().encode(x).length;
+    const jp = "あ".repeat(21); // 63 バイト
+    const fk = cloneObjectName("postgres", "fk_x", "orders", jp, new Set());
+    expect(bytes(fk)).toBeLessThanOrEqual(63);
+    expect(fk.startsWith("fk_x_")).toBe(true);
+    // 衝突時の連番も 63 バイトに収め、末尾に残す
+    const fk2 = cloneObjectName("postgres", "fk_x", "orders", jp, new Set([fk.toLowerCase()]));
+    expect(bytes(fk2)).toBeLessThanOrEqual(63);
+    expect(fk2.endsWith("_2")).toBe(true);
+    // サロゲートペア (絵文字) の途中で切らない
+    const emoji = cloneObjectName("postgres", "x", "zzz", "😀".repeat(20), new Set());
+    expect(bytes(emoji)).toBeLessThanOrEqual(63);
+    expect(emoji).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+    const my = cloneObjectName("mysql", "x", "zzz", "😀".repeat(70), new Set());
+    expect([...my].length).toBe(64);
+    expect(my).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
+
+  it("PostgreSQL の serial 用シーケンス名も 63 バイトに収める (#2392)", () => {
+    const newTable = "い".repeat(20);
+    const r = buildCloneStatements({
+      driver: "postgres",
+      database: "public",
+      sourceTable: "orders",
+      newTable,
+      ddl: PG_DDL,
+      includeData: false,
+      columns: ["id", "n", "user_id"],
+      pgColumns: { generated: [], identity: [], serial: ["n"] },
+      pgForeignKeys: [],
+    });
+    const seq = r.statements.find((x) => x.startsWith("CREATE SEQUENCE"));
+    const name = seq?.match(/"public"\."([^"]+)"/)?.[1] ?? "";
+    expect(name.endsWith("_seq")).toBe(true);
+    expect(new TextEncoder().encode(name).length).toBeLessThanOrEqual(63);
+  });
+
   it("既定名は _copy、衝突で連番", () => {
     expect(suggestCloneName(["a"], "a")).toBe("a_copy");
     // 上限ぎりぎりの元名でも、接尾辞を含めて方言の上限に収める (#2384)。
