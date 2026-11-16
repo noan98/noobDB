@@ -256,6 +256,18 @@ describe("scrollMarkers 拡張", () => {
     expect(v.dom.querySelector(".cm-scroll-markers")?.classList.contains("cm-scroll-markers-on")).toBe(true);
   });
 
+  it("診断の位置が同じでも、改行の挿入で行が変わったら帯の行も更新する", () => {
+    const { v, flush, last } = mount("aa bb\ncc");
+    v.dispatch(setDiagnostics(v.state, [{ from: 3, to: 5, severity: "error", message: "bad" }]));
+    flush();
+    expect(last()?.sources[0]?.line).toBe(1);
+    // `bb` の前の空白を改行に置き換える (文字数は同じで、診断は offset 3 のまま行 2 へ移る)。
+    v.dispatch({ changes: { from: 2, to: 3, insert: "\n" } });
+    v.dispatch(setDiagnostics(v.state, [{ from: 3, to: 5, severity: "error", message: "bad" }]));
+    flush();
+    expect(last()?.sources[0]?.line).toBe(2);
+  });
+
   it("印が無いままの変更では onSnapshot を呼ばない", () => {
     const { v, snaps, flush } = mount(lines(10));
     flush();

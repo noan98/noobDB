@@ -237,6 +237,8 @@ export function scrollMarkers(opts: ScrollMarkersOptions): Extension {
       /** 一度でも印が出たら、設定がオンの間は幅を確保し続ける (lint の出入りで本文幅を動かさない)。 */
       private reserved = false;
       private measured = "";
+      /** 各層の `built` を作ったときの文書。 */
+      private builtDoc: Text | null = null;
       private ro: ResizeObserver | null = null;
 
       constructor(private readonly view: EditorView) {
@@ -326,13 +328,15 @@ export function scrollMarkers(opts: ScrollMarkersOptions): Extension {
         let changed = !this.active || this.dirty;
         layers.forEach((l, i) => {
           const v = l.read(s);
-          if (this.active && sameValue(l, this.values[i], v)) return;
+          // 文書が変わったら、値が同じでも行番号は変わりうる (offset 同じで改行だけ動く) ので作り直す。
+          if (this.active && s.doc === this.builtDoc && sameValue(l, this.values[i], v)) return;
           this.values[i] = v;
           this.built[i] = l.build(v, s);
           changed = true;
         });
         this.active = true;
         this.dirty = false;
+        this.builtDoc = s.doc;
         const span = activeStatementRange(s);
         this.activeSpan = span;
         if (!changed) return;
