@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { cleanup } from "vitest-browser-react";
 import { renderInBrowser } from "./render";
 import { ResultGrid } from "../../components/ResultGrid";
-import { GridOverviewRuler } from "../../components/GridOverviewRuler";
+import { GridOverviewRuler } from "../../components/GridOverviewRulerCanvas";
 import { computeRulerTicks } from "../../components/gridOverviewRuler";
 import type { QueryResult, TableColumnInfo } from "../../api/tauri";
 

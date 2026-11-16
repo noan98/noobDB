@@ -102,7 +102,7 @@ import { GridViewPresetsMenu } from "./GridViewPresetsMenu";
 import { ContextMenu, submenuOrFlat, SUBMENU_THRESHOLD, type ContextMenuEntry } from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
 import { ScrollEdgeShadows } from "./ScrollEdgeShadows";
-import { GridOverviewRuler } from "./GridOverviewRuler";
+import { GridOverviewRuler } from "./GridOverviewRulerCanvas";
 import { buildRowMasks, nextMarkedRow, RULER_CHANGE_MASK } from "./gridOverviewRuler";
 import { moveColumnId, reorderColumnIds } from "./columnReorderFlip";
 import { rowSelectRange, selectAllRange } from "./gridSelection";
