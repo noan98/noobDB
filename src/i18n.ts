@@ -7705,6 +7705,19 @@ const en = {
   settingsColumnNullBars: "Column NULL rate mini bars",
   settingsColumnNullBarsHelp:
     "Show a thin always-on bar under each result grid column header indicating what share of the loaded rows is NULL. Display-only, computed from the rows already fetched (no extra query). Turn off for the most compact header row.",
+  settingsColumnDistribution: "Column header mini distributions",
+  settingsColumnDistributionHelp:
+    "Show a small distribution under each result grid column header: a histogram for numbers and dates, the top 3 values for text and booleans, and a unique badge when every row differs. Display-only, computed from the rows already fetched (no extra query) in idle time. Clicking a numeric bin filters the grid to that range. Turn off for the most compact header row.",
+  gridDistAria: "Distribution of {column}",
+  gridDistBasis: "computed from {n} fetched rows",
+  gridDistBin: "{range}: {count} rows · {basis} · click to filter to this range",
+  gridDistBinActive: "{range}: {count} rows · {basis} · click to clear the filter",
+  gridDistBinInfo: "{range}: {count} rows · {basis}",
+  gridDistTop: "{value}: {count} rows ({percent}%) · {basis}",
+  gridDistOther: "Other values: {count} rows ({percent}%) · {basis}",
+  gridDistUnique: "unique",
+  gridDistUniqueTip: "All {n} rows are unique (no NULL) · {basis}",
+  gridDistNone: "No distribution for JSON / BLOB columns (NULL rate only) · {basis}",
   settingsColumnMask: "Mask sensitive columns in the result grid",
   settingsColumnMaskHelp:
     "Show columns whose names match the patterns below (and columns you mask from the header menu) as •••• — handy for screen sharing and demos. Display-only: real values, pending edits and exports are unchanged. Reveal a cell or column temporarily from the right-click menu; it is masked again after 30 seconds or when the window loses focus.",
@@ -16490,6 +16503,19 @@ const ja: Dict = {
   settingsColumnNullBars: "列ヘッダの NULL 率ミニバー",
   settingsColumnNullBarsHelp:
     "結果グリッドの各列ヘッダ下端に、取得済み行のうち NULL が占める割合を示す細いバーを常時表示します。表示専用で、取得済みの行だけから計算します (追加のクエリは発行しません)。オフにするとヘッダ行を最もコンパクトにできます。",
+  settingsColumnDistribution: "列ヘッダのミニ分布",
+  settingsColumnDistributionHelp:
+    "結果グリッドの各列ヘッダの下に小さな分布を表示します: 数値・日付はヒストグラム、文字列・真偽値は上位 3 値、全行が一意の列には「unique」バッジ。表示専用で、取得済みの行だけからアイドル時間に計算します (追加のクエリは発行しません)。数値のビンをクリックするとその範囲に絞り込みます。オフにするとヘッダ行を最もコンパクトにできます。",
+  gridDistAria: "{column} の分布",
+  gridDistBasis: "取得済み {n} 行から算出",
+  gridDistBin: "{range}: {count} 件 · {basis} · クリックでこの範囲に絞り込み",
+  gridDistBinActive: "{range}: {count} 件 · {basis} · クリックで絞り込みを解除",
+  gridDistBinInfo: "{range}: {count} 件 · {basis}",
+  gridDistTop: "{value}: {count} 件 ({percent}%) · {basis}",
+  gridDistOther: "その他の値: {count} 件 ({percent}%) · {basis}",
+  gridDistUnique: "unique",
+  gridDistUniqueTip: "全 {n} 行が一意 (NULL なし) · {basis}",
+  gridDistNone: "JSON / BLOB 列は分布を出しません (NULL 率のみ) · {basis}",
   settingsColumnMask: "結果グリッドで機微カラムをマスクする",
   settingsColumnMaskHelp:
     "列名が下のパターンに一致する列 (と列ヘッダメニューで個別にマスクした列) を •••• で表示します。画面共有やデモでの露出事故を防ぎます。表示専用で、実値・未適用の編集・エクスポート内容は変わりません。右クリックからセル/列を一時表示でき、30 秒後またはウィンドウのフォーカスが外れると再びマスクされます。",
