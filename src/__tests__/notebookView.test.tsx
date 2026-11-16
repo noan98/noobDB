@@ -28,6 +28,21 @@ vi.mock("../components/QueryEditor", () => ({
   ),
 }));
 
+// セル数の上限の検査は、上限まで描画すると jsdom で遅い (CI で 5 秒を超えた) ので、上限を小さくして試す。
+// 本当の上限値と読み込み側との一致は notebook.test.ts の checkNotebookLimits のテストが押さえる。
+const { TEST_MAX_CELLS } = vi.hoisted(() => ({ TEST_MAX_CELLS: 4 }));
+vi.mock("../notebook", async (orig) => {
+  const actual = await orig<typeof import("../notebook")>();
+  return {
+    ...actual,
+    MAX_NOTEBOOK_CELLS: TEST_MAX_CELLS,
+    checkNotebookLimits: (doc: Parameters<typeof actual.checkNotebookLimits>[0]) =>
+      doc.cells.length > TEST_MAX_CELLS
+        ? { kind: "cells" as const, limit: TEST_MAX_CELLS }
+        : actual.checkNotebookLimits(doc),
+  };
+});
+
 import { NotebookView } from "../components/NotebookView";
 import { MAX_NOTEBOOK_CELLS, newMarkdownCell, newSqlCell, createEmptyNotebook } from "../notebook";
 import { replaceNotebook, getNotebookState, markNotebookSaved, updateNotebook } from "../notebookStore";
