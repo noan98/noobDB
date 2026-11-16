@@ -791,3 +791,85 @@ describe("シグネチャ面のブランドグラデーション --brand-fill (#
     expect(body).toMatch(/--brand-on-fill:\s*var\(--accent-text\);/);
   });
 });
+
+describe("ウィンドウ素材 (Mica) の半透明面の上でも全テーマで文字が AA を保つ (#2359)", () => {
+  /**
+   * 素材なし (既定) は `--surface-material` / `--bg-material` が不透明トークンへの参照で、見た目は変わらない。
+   * 素材ありでは `color-mix(in srgb, var(--bg-elevated) N%, transparent)` で、背後に OS の素材が透ける。
+   * OS は素材の明暗をアプリの実効テーマに合わせて敷く (MicaDark / MicaLight) ので、背後の色は
+   * 「ダークテーマなら暗い側・ライトなら明るい側」に収まる。最悪ケースとして、ダークでは `#303030`、
+   * ライトでは `#a8a8a8` (どちらも実際の Mica より文字に不利な色) が背後に敷かれたとみなして測る。
+   */
+  const BACKDROP = { dark: "#303030", light: "#a8a8a8" } as const;
+  function mixOver(solid: string, backdrop: string, pct: number): string {
+    const a = pct / 100;
+    const s = solid.replace("#", "");
+    const b = backdrop.replace("#", "");
+    const ch = (i: number) =>
+      Math.round(parseInt(s.slice(i, i + 2), 16) * a + parseInt(b.slice(i, i + 2), 16) * (1 - a))
+        .toString(16)
+        .padStart(2, "0");
+    return `#${ch(0)}${ch(2)}${ch(4)}`;
+  }
+  function materialPct(token: string, base: string): number {
+    const m = css.match(
+      new RegExp(`--${token}:\\s*color-mix\\(in srgb, var\\(--${base}\\) ([\\d.]+)%, transparent\\)`),
+    );
+    expect(m, `--${token} が color-mix(var(--${base}) N%, transparent) で定義されている`).toBeTruthy();
+    return Number(m![1]);
+  }
+  const surfacePct = materialPct("surface-material", "bg-elevated");
+  // ルート背景は素材ありでは透明 (透けは surface だけで決める)。半透明を重ねると不透明度が積み上がる。
+  const bgMaterialMica = css.match(
+    /:root\[data-window-material="mica"\]:not\(\[data-theme\^="hc-"\]\),[\s\S]*?--bg-material:\s*([^;]+);/,
+  );
+
+  it("素材なしの既定は不透明トークンそのもの", () => {
+    expect(css).toMatch(/--surface-material:\s*var\(--bg-elevated\);/);
+    expect(css).toMatch(/--bg-material:\s*var\(--bg\);/);
+  });
+
+  it("素材ありではルート背景 --bg-material が transparent", () => {
+    expect(bgMaterialMica?.[1].trim()).toBe("transparent");
+  });
+
+  it("素材は hc-* と prefers-contrast: more で無効 (不透明に戻す)", () => {
+    expect(css).toMatch(/:root\[data-window-material="mica"\]:not\(\[data-theme\^="hc-"\]\)/);
+    expect(css).toMatch(
+      /@media \(prefers-contrast: more\)\s*\{\s*:root\[data-window-material\]\s*\{[^}]*--surface-material:\s*var\(--bg-elevated\)/,
+    );
+  });
+
+  const themes: [string, Record<string, string>, boolean][] = [
+    ["light", light, false],
+    ["dark", { ...light, ...dark }, true],
+    ...presets
+      .filter((p) => !p.isHighContrast)
+      .map(
+        (p) =>
+          [p.name, { ...light, ...p.vars }, isDarkDataTheme(p.name)] as [
+            string,
+            Record<string, string>,
+            boolean,
+          ],
+      ),
+  ];
+
+  describe.each(themes)("%s", (_name, vars, isDark) => {
+    it("タイトルバー / サイドバーの上の本文・補足・弱い文字が AA (4.5:1)", () => {
+      const backdrop = BACKDROP[isDark ? "dark" : "light"];
+      const surface = mixOver(vars["bg-elevated"], backdrop, surfacePct);
+      for (const fg of ["text", "text-secondary", "text-muted"]) {
+        const r = contrastRatio(vars[fg], surface);
+        // 素材なしの時点で AA を割っている組 (solarized-dark / one-dark の text-muted など) は
+        // 既存の課題で、素材によってそこから 0.1 以上悪化させないことだけを保証する。
+        const base = contrastRatio(vars[fg], vars["bg-elevated"]);
+        const min = Math.min(AA_TEXT, base - 0.1);
+        expect(
+          r,
+          `--${fg} on surface-material (${surface}) = ${r.toFixed(2)}:1 (素材なし ${base.toFixed(2)}:1)`,
+        ).toBeGreaterThanOrEqual(min);
+      }
+    });
+  });
+});

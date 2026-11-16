@@ -10,6 +10,7 @@ import {
 } from "../themePresetPreview";
 import { AppearancePreview } from "./AppearancePreview";
 import { useT, type I18nKey } from "../i18n";
+import { useWindowMaterialSupported } from "../windowMaterial";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
@@ -81,6 +82,9 @@ import {
   type ThemePreset,
   MOTION_PREFERENCE_ORDER,
   setMotionPreference,
+  setWindowMaterial,
+  WINDOW_MATERIAL_ORDER,
+  type WindowMaterial,
   type MotionPreference,
   RESULT_GRID_PAGE_SIZE_OPTIONS,
   SYNTAX_PRESET_ORDER,
@@ -609,6 +613,12 @@ const MOTION_PREFERENCE_LABEL_KEYS: Record<MotionPreference, Parameters<ReturnTy
   reduced: "settingsMotionPreferenceReduced",
 };
 
+const WINDOW_MATERIAL_LABEL_KEYS: Record<WindowMaterial, Parameters<ReturnType<typeof useT>>[0]> = {
+  none: "settingsWindowMaterialNone",
+  mica: "settingsWindowMaterialMica",
+  "mica-alt": "settingsWindowMaterialMicaAlt",
+};
+
 /** テーマプリセットのミニパレットプレビュー (#789) の各チップの i18n ラベル
  *  (ホバー時の title のみに使う。チップ列自体は aria-hidden でカードの
  *  アクセシブルネームには含めない)。 */
@@ -699,6 +709,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
   const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const settings = useSettings();
+  const windowMaterialSupported = useWindowMaterialSupported();
   const masteryOverall = overallProgress(settings.masteryTried);
   // 編集対象は画面に実際に適用されている配色 (ダーク専用プリセットではトグル値ではなく
   // 実効テーマ) に揃える。
@@ -1498,6 +1509,32 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     onChange={setMotionPreference}
                     ariaLabel={t("settingsMotionPreference")}
                   />
+                </SettingsToggleRow>
+
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel as="span">{t("settingsWindowMaterial")}</SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsWindowMaterialHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  {windowMaterialSupported ? (
+                    <Segmented
+                      value={settings.windowMaterial}
+                      options={WINDOW_MATERIAL_ORDER.map((m) => ({
+                        value: m,
+                        label: t(WINDOW_MATERIAL_LABEL_KEYS[m]),
+                      }))}
+                      onChange={setWindowMaterial}
+                      ariaLabel={t("settingsWindowMaterial")}
+                    />
+                  ) : (
+                    <chakra.span
+                      fontSize="sm"
+                      color="app.textSecondary"
+                      data-testid="window-material-unsupported"
+                    >
+                      {t("settingsWindowMaterialUnsupported")}
+                    </chakra.span>
+                  )}
                 </SettingsToggleRow>
               </SettingsSection>
 

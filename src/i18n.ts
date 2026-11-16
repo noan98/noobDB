@@ -935,6 +935,13 @@ const en = {
   settingsMotionPreferenceSystem: "Follow system",
   settingsMotionPreferenceFull: "Full",
   settingsMotionPreferenceReduced: "Reduced",
+  settingsWindowMaterial: "Window material",
+  settingsWindowMaterialHelp:
+    "Lets the desktop color show faintly through the title bar and sidebar using Windows 11's Mica. The editor, result grid and dialogs stay opaque. Turned off automatically in high-contrast themes.",
+  settingsWindowMaterialNone: "None",
+  settingsWindowMaterialMica: "Mica",
+  settingsWindowMaterialMicaAlt: "Mica Alt",
+  settingsWindowMaterialUnsupported: "Not available on this OS (requires Windows 11)",
   themePreviewChipBg: "Background",
   themePreviewChipSurface: "Surface",
   themePreviewChipAccent: "Accent",
@@ -4166,6 +4173,10 @@ const en = {
   createIndexWhere: "WHERE (partial)",
   createIndexWherePlaceholder: "e.g. deleted_at IS NULL",
   createIndexInclude: "INCLUDE columns (covering)",
+  createIndexNameTooLongMysql:
+    "The index name is longer than 64 characters, so MySQL will reject it (ERROR 1059).",
+  createIndexNameTooLongPg:
+    "The index name is longer than 63 bytes, so PostgreSQL will silently truncate it.",
   createIndexFragmentSemicolon:
     "';' cannot be used in a condition or expression (not even inside string literals).",
   createIndexReason_noMethod: "SQLite has no index methods (USING).",
@@ -9750,6 +9761,13 @@ const ja: Dict = {
   settingsMotionPreferenceSystem: "システムに従う",
   settingsMotionPreferenceFull: "フル",
   settingsMotionPreferenceReduced: "控えめ",
+  settingsWindowMaterial: "ウィンドウ素材",
+  settingsWindowMaterialHelp:
+    "Windows 11 の Mica で、タイトルバーとサイドバーにデスクトップの色調を淡く透かします。エディタ・結果グリッド・ダイアログは不透明のままです。高コントラストのテーマでは自動で無効になります。",
+  settingsWindowMaterialNone: "なし",
+  settingsWindowMaterialMica: "Mica",
+  settingsWindowMaterialMicaAlt: "Mica Alt",
+  settingsWindowMaterialUnsupported: "この OS では使えません (Windows 11 が必要)",
   themePreviewChipBg: "背景",
   themePreviewChipSurface: "サーフェス",
   themePreviewChipAccent: "アクセント",
@@ -12960,6 +12978,10 @@ const ja: Dict = {
   createIndexWhere: "WHERE (部分)",
   createIndexWherePlaceholder: "例: deleted_at IS NULL",
   createIndexInclude: "INCLUDE 列 (カバリング)",
+  createIndexNameTooLongMysql:
+    "インデックス名が 64 文字を超えているため、MySQL がエラー (ERROR 1059) で拒否します。",
+  createIndexNameTooLongPg:
+    "インデックス名が 63 バイトを超えているため、PostgreSQL が末尾を黙って切り詰めます。",
   createIndexFragmentSemicolon: "条件・式の途中に ';' は使えません (文字列の中でも使えません)。",
   createIndexReason_noMethod: "SQLite にはインデックスメソッド (USING) がありません。",
   createIndexReason_noWhereMysql: "MySQL は部分インデックス (WHERE) に対応していません。",
