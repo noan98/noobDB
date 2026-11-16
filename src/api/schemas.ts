@@ -105,6 +105,18 @@ export const foreignKey = z.object({
   constraint_name: z.string().nullable(),
 });
 
+/** 論理リレーション (仮想 FK) 1 件 (`list_logical_relations`、#2356)。 */
+export const logicalRelation = z.object({
+  profile_id: z.string().nullable().default(null),
+  database: z.string(),
+  table: z.string(),
+  columns: z.array(z.string()),
+  referenced_table: z.string(),
+  referenced_columns: z.array(z.string()),
+  created_at: z.string(),
+});
+export const logicalRelationArray = z.array(logicalRelation);
+
 /**
  * i64 精度方針 (#625): `estimate` は Rust の `Option<i64>` を JSON 数値で受ける。
  * JS の `number` は安全整数が ±(2^53-1) までなので、それを超える巨大テーブルの推定

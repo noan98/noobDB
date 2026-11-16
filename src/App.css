@@ -3419,6 +3419,13 @@ td.is-find-current::after {
 :root[data-theme="hc-dark"] .er-card {
   --er-accent: var(--border-strong);
 }
+/* 論理リレーション (仮想 FK, #2356) の線は点線。入場は線を引く代わりにフェードさせる */
+.react-flow__edge-path.er-edge-logical {
+  stroke-dasharray: var(--space-2) var(--space-1);
+}
+.react-flow__edge.flow-edge-enter .react-flow__edge-path.er-edge-logical {
+  animation-name: flow-fade-in;
+}
 .react-flow__edge .er-rel-glyph {
   fill: none;
   stroke: var(--xy-edge-stroke, var(--border-strong));

@@ -26,6 +26,7 @@ pub mod index_whatif;
 pub mod inspector;
 pub mod listen;
 pub mod local;
+pub mod logical_relations;
 pub mod logs;
 pub mod plan_watch;
 pub mod privileges;

@@ -198,6 +198,18 @@ PostgreSQL は別スキーマの子テーブルからの単一列 FK も専用�
 `table_statistics` / `describe_database` は取得結果でテーブル単位の `columns` / `list_indexes`
 キャッシュも埋める。
 
+## 論理リレーション / 仮想 FK (`commands/logical_relations.rs`, #2356)
+
+FK 制約を張らない運用の DB 向けに、子.列 → 親.列 の関係をアプリ側だけに登録する。保存先は非秘密の JSON ストア
+`logical_relations.json` (`json_store::JsonStore`、(プロファイル, データベース) ごと。DB には書かないので
+`read_only` でも可。DDL・スキーマ同期・ダンプには出ない)。フロントは `api.foreignKeys` / `incomingForeignKeys` /
+`describeTable` / `describeDatabase` の中で `list_logical_relations` を読んで宣言済み FK とマージし
+(`src/logicalRelations.ts`)、論理由来の要素に `logical: true` を付ける。命名規約からの候補推定はフロントの純関数。
+
+- `list_logical_relations`
+- `save_logical_relations` (複合キー可。既存と同じものは無視。1 件でも不正なら全件保存しない)
+- `delete_logical_relation`
+
 ## スキーマ・テーブルオープンの集約 (`commands/schema.rs` / `schema_tree.rs` / `table_open.rs`、#1263)
 
 - `table_row_estimate`
