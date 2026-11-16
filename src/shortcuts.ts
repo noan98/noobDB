@@ -296,6 +296,7 @@ export const SHORTCUTS: ShortcutDef[] = [
     defaultCombo: "Mod+F",
   },
   { keysKey: "shortcutFindNavTitle", descKey: "shortcutFindNavDesc", category: "grid" },
+  { keysKey: "shortcutRulerNavTitle", descKey: "shortcutRulerNavDesc", category: "grid" },
   { keysKey: "shortcutGridNavTitle", descKey: "shortcutGridNavDesc", category: "grid" },
   { keysKey: "shortcutGridSelectTitle", descKey: "shortcutGridSelectDesc", category: "grid" },
   {

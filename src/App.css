@@ -225,6 +225,17 @@
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --dur-fast: 120ms;
   --dur-med: 200ms;
+  /* 結果グリッドの位置マーカーの帯 (#2381)。幅は 3 レーン (検索 / 未適用の変更 / 再実行差分) 分。
+     色はグリッド本体の同じ状態の色に揃える (検索 = 警告文字色、編集・変化 = プレビュー色、
+     削除 = 危険、追加 = 成功)。Canvas が getComputedStyle で読む。 */
+  --ruler-w: calc(12px * var(--font-scale));
+  --ruler-tick-min: calc(2px * var(--font-scale));
+  --ruler-find: var(--text-warning);
+  --ruler-edit: var(--preview-highlight);
+  --ruler-delete: var(--error-solid);
+  --ruler-changed: var(--preview-highlight);
+  --ruler-added: var(--success-solid);
+  --ruler-frame: var(--text);
   /* stagger (深さ順の順次出現)。src/motion.ts の staggerTiming と同じ値 (#1861)。 */
   --stagger-each: 35ms;
   --stagger-delay: 40ms;
@@ -3810,4 +3821,15 @@ td.is-find-current::after {
 }
 .pr-bar[data-hot="true"] .pr-bar-fill {
   background: var(--warning-text);
+}
+
+/* 結果グリッドの位置マーカーの帯 (#2381): 出現はフェードインのみ。 */
+@keyframes grid-ruler-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.grid-ruler { animation: grid-ruler-in var(--dur-med) var(--ease-out); }
+:root[data-motion="reduced"] .grid-ruler { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .grid-ruler { animation: none; }
 }
