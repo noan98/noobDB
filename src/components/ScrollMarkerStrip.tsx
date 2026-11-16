@@ -4,6 +4,7 @@ import { useT } from "../i18n";
 import { TooltipBubble, useDelegatedTooltip } from "./Tooltip";
 import {
   buildScrollTicks,
+  lineFraction,
   type ScrollMarkKind,
   type ScrollMarkSnapshot,
   type ScrollTick,
@@ -68,7 +69,6 @@ export const ScrollMarkerStrip = memo(function ScrollMarkerStrip({
   useEffect(() => hide(), [ticks, hide]);
   if (!host || !snapshot || snapshot.sources.length === 0) return null;
   const range = snapshot.activeLines;
-  const lines = Math.max(1, snapshot.totalLines - 1);
   return createPortal(
     <>
       {range && (
@@ -76,8 +76,8 @@ export const ScrollMarkerStrip = memo(function ScrollMarkerStrip({
           className="cm-scroll-marker-active"
           aria-hidden="true"
           style={{
-            top: `${(Math.max(0, range.from - 1) / lines) * 100}%`,
-            height: `${(Math.max(0, range.to - range.from) / lines) * 100}%`,
+            ["--tick-pos" as string]: lineFraction(range.from, snapshot.totalLines),
+            ["--tick-end" as string]: lineFraction(range.to, snapshot.totalLines),
           }}
         />
       )}

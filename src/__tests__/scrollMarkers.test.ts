@@ -147,7 +147,7 @@ describe("scrollMarkers 拡張", () => {
   it("マーカーが無ければ帯は出ない (クラスが付かない)", () => {
     const { v, flush, last } = mount(lines(20));
     flush();
-    expect(v.dom.classList.contains("cm-has-scroll-markers")).toBe(false);
+    expect(v.scrollDOM.classList.contains("cm-scroller-reserve-markers")).toBe(false);
     expect(last()?.sources ?? []).toEqual([]);
   });
 
@@ -156,13 +156,15 @@ describe("scrollMarkers 拡張", () => {
     const pos = v.state.doc.line(7).from;
     v.dispatch({ effects: errors.set([{ from: pos, to: pos + 5, kind: "error", data: { error: "boom" } }]) });
     flush();
-    expect(v.dom.classList.contains("cm-has-scroll-markers")).toBe(true);
+    expect(v.scrollDOM.classList.contains("cm-scroller-reserve-markers")).toBe(true);
     expect(last()?.sources).toEqual([{ pos, line: 7, kind: "error", label: "boom" }]);
     // 波線の箇所を編集するとエラー層が捨てられ、帯からも消える。
     v.dispatch({ changes: { from: pos, insert: "X" } });
     flush();
     expect(last()?.sources).toEqual([]);
-    expect(v.dom.classList.contains("cm-scroll-markers-empty")).toBe(true);
+    expect(v.dom.querySelector(".cm-scroll-markers")?.classList.contains("cm-scroll-markers-empty")).toBe(
+      true,
+    );
   });
 
   it("構文チェックの診断が載る (info / hint は載らない)", () => {
@@ -200,7 +202,7 @@ describe("scrollMarkers 拡張", () => {
     const { v, errors, flush, last } = mount(lines(10), enabled);
     v.dispatch({ effects: errors.set([{ from: 0, to: 3, kind: "error", data: { error: "x" } }]) });
     flush();
-    expect(v.dom.classList.contains("cm-has-scroll-markers")).toBe(false);
+    expect(v.scrollDOM.classList.contains("cm-scroller-reserve-markers")).toBe(false);
     enabled.on = true;
     v.dispatch({ effects: refreshScrollMarkers.of(null) });
     flush();
@@ -209,7 +211,7 @@ describe("scrollMarkers 拡張", () => {
     v.dispatch({ effects: refreshScrollMarkers.of(null) });
     flush();
     expect(last()).toBeNull();
-    expect(v.dom.classList.contains("cm-has-scroll-markers")).toBe(false);
+    expect(v.scrollDOM.classList.contains("cm-scroller-reserve-markers")).toBe(false);
   });
 
   it("入力中の再計算は 1 回にまとまる", () => {
@@ -228,15 +230,30 @@ describe("scrollMarkers 拡張", () => {
     const { v, errors, flush } = mount(lines(10), enabled);
     v.dispatch({ effects: errors.set([{ from: 0, to: 3, kind: "error", data: { error: "x" } }]) });
     flush();
-    expect(v.dom.classList.contains("cm-scroll-markers-empty")).toBe(false);
+    expect(v.dom.querySelector(".cm-scroll-markers")?.classList.contains("cm-scroll-markers-empty")).toBe(
+      false,
+    );
     v.dispatch({ effects: errors.set([]) });
     flush();
-    expect(v.dom.classList.contains("cm-has-scroll-markers")).toBe(true);
-    expect(v.dom.classList.contains("cm-scroll-markers-empty")).toBe(true);
+    expect(v.scrollDOM.classList.contains("cm-scroller-reserve-markers")).toBe(true);
+    expect(v.dom.querySelector(".cm-scroll-markers")?.classList.contains("cm-scroll-markers-empty")).toBe(
+      true,
+    );
     enabled.on = false;
     v.dispatch({ effects: refreshScrollMarkers.of(null) });
     flush();
-    expect(v.dom.classList.contains("cm-has-scroll-markers")).toBe(false);
+    expect(v.scrollDOM.classList.contains("cm-scroller-reserve-markers")).toBe(false);
+  });
+
+  it("フォーカス変化で .cm-editor の class が書き換わっても、帯の表示と幅の確保は残る", () => {
+    const { v, errors, flush } = mount(lines(10));
+    v.dispatch({ effects: errors.set([{ from: 0, to: 3, kind: "error", data: { error: "x" } }]) });
+    flush();
+    v.contentDOM.focus();
+    v.dispatch({});
+    flush();
+    expect(v.scrollDOM.classList.contains("cm-scroller-reserve-markers")).toBe(true);
+    expect(v.dom.querySelector(".cm-scroll-markers")?.classList.contains("cm-scroll-markers-on")).toBe(true);
   });
 
   it("印が無いままの変更では onSnapshot を呼ばない", () => {

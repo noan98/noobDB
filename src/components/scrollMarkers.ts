@@ -295,7 +295,7 @@ export function scrollMarkers(opts: ScrollMarkersOptions): Extension {
         opts.onSnapshot(null);
         opts.onHost(null);
         this.host.remove();
-        this.view.dom.classList.remove("cm-has-scroll-markers", "cm-scroll-markers-empty");
+        this.clearClasses();
       }
 
       private schedule(delay: number) {
@@ -315,7 +315,7 @@ export function scrollMarkers(opts: ScrollMarkersOptions): Extension {
           this.built = [];
           this.reserved = false;
           this.hasMarkers = false;
-          this.view.dom.classList.remove("cm-has-scroll-markers", "cm-scroll-markers-empty");
+          this.clearClasses();
           if (this.published !== null) {
             this.published = null;
             opts.onSnapshot(null);
@@ -364,12 +364,20 @@ export function scrollMarkers(opts: ScrollMarkersOptions): Extension {
         opts.onSnapshot(next);
       }
 
+      private clearClasses() {
+        this.host.classList.remove("cm-scroll-markers-on", "cm-scroll-markers-empty");
+        this.view.scrollDOM.classList.remove("cm-scroller-reserve-markers");
+      }
+
       private setHas(has: boolean) {
         if (this.hasMarkers === has) return;
         this.hasMarkers = has;
         if (has) this.reserved = true;
-        this.view.dom.classList.toggle("cm-has-scroll-markers", this.reserved);
-        this.view.dom.classList.toggle("cm-scroll-markers-empty", this.reserved && !has);
+        // `.cm-editor` の class は CodeMirror がフォーカス・テーマ変更のたびに丸ごと書き換えるので、
+        // 触られない要素 (帯の host と scrollDOM) に付ける。
+        this.host.classList.toggle("cm-scroll-markers-on", this.reserved);
+        this.host.classList.toggle("cm-scroll-markers-empty", this.reserved && !has);
+        this.view.scrollDOM.classList.toggle("cm-scroller-reserve-markers", this.reserved);
       }
     },
   );

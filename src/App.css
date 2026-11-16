@@ -2836,13 +2836,13 @@ body, #root {
 .cm-runtime-error-tip-hint { color: var(--text); }
 .cm-runtime-error-tip-ai { color: var(--text-muted); font-size: var(--text-xs); }
 
-/* スクロールバーの横の俯瞰マーカー帯 (#2382)。マーカーがあるときだけ `.cm-has-scroll-markers` が付き、
+/* スクロールバーの横の俯瞰マーカー帯 (#2382)。マーカーがあるときだけ `.cm-scroll-markers-on` / `.cm-scroller-reserve-markers` が付き (`.cm-editor` の class は CodeMirror が上書きするので使わない)、
    帯の幅だけ `.cm-scroller` を左へ寄せて、スクロールバーと重ならないようにする。
    色は意味色トークン (--text-error / --text-warning / --text-success)。検索ヒットは中立 (--text-muted)、
    成功は控えめに薄くする。帯の本体は pointer-events を切り、ティックだけがクリックを受ける。 */
 .cm-editor { --scroll-marker-width: var(--space-2-5); }
 .cm-editor .cm-scroll-markers { display: none; }
-.cm-editor.cm-has-scroll-markers .cm-scroll-markers {
+.cm-editor .cm-scroll-markers.cm-scroll-markers-on {
   display: block;
   position: absolute;
   top: var(--scroll-marker-top, 0);
@@ -2856,16 +2856,17 @@ body, #root {
   pointer-events: none;
   z-index: 5;
 }
-.cm-editor.cm-scroll-markers-empty .cm-scroll-markers {
+.cm-editor .cm-scroll-markers.cm-scroll-markers-empty {
   background: transparent;
   border-left-color: transparent;
 }
-.cm-editor.cm-has-scroll-markers .cm-scroller { margin-right: var(--scroll-marker-width); }
+.cm-editor .cm-scroller.cm-scroller-reserve-markers { margin-right: var(--scroll-marker-width); }
 .cm-editor .cm-scroll-marker-active {
   position: absolute;
   left: 0;
   right: 0;
-  min-height: var(--space-0-75);
+  top: calc((100% - var(--space-0-75)) * var(--tick-pos, 0));
+  height: calc((100% - var(--space-0-75)) * (var(--tick-end, 0) - var(--tick-pos, 0)) + var(--space-0-75));
   background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 .cm-editor .cm-scroll-marker {
