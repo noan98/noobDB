@@ -8,7 +8,12 @@
  */
 import { buildMarkdownTable } from "./components/exportPreview";
 import { escapeHtml, markdownToHtml, parseMarkdown } from "./markdownLite";
-import type { NotebookCell, NotebookDoc, NotebookSnapshot } from "./notebook";
+import {
+  MAX_SNAPSHOT_CELL_CHARS,
+  type NotebookCell,
+  type NotebookDoc,
+  type NotebookSnapshot,
+} from "./notebook";
 import type { CellValue } from "./api/tauri";
 
 export interface NotebookExportText {
@@ -24,6 +29,10 @@ export interface NotebookExportText {
   affected: (rows: number) => string;
   /** 未実行のセル。 */
   notRun: string;
+  /** 自動 LIMIT が掛かったとき。 */
+  autoLimit: (limit: number) => string;
+  /** 長い値を切り詰めたとき。 */
+  valuesTruncated: (chars: number) => string;
   /** 伏せ字にした列。 */
   masked: (columns: string) => string;
   /** 書き出し時刻の行。 */
@@ -37,6 +46,12 @@ export function formatSnapshotTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return `${d.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+/** 画面用のローカル時刻。 */
+export function formatLocalSnapshotTime(iso: string, locale: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(locale);
 }
 
 /** SQL / コードを囲むフェンス。本文に含まれるバッククォートの連続より長くする。 */
@@ -76,10 +91,15 @@ export function notebookToMarkdown(
     }
     const lines = [`_${text.snapshotMeta(s, formatSnapshotTime(s.executedAt))}_`];
     if (s.error) {
-      lines.push(`**${text.error(s.error)}**`);
+      // 改行や記号で構造が崩れないよう、1 行に畳んだ引用にする。
+      lines.push(`> ${text.error(s.error).replace(/\s*\r?\n\s*/g, " ")}`);
     } else if (s.hasColumns) {
-      lines.push(buildMarkdownTable(s.columns, s.rows).trimEnd());
+      // 画面・HTML と同じく NULL は "NULL" と書く。
+      const rows = s.rows.map((r) => r.map((v) => (v === null ? "NULL" : v)));
+      lines.push(buildMarkdownTable(s.columns, rows).trimEnd());
       if (s.truncated) lines.push(`_${text.truncated(s.rows.length, s.totalRows)}_`);
+      if (s.appliedAutoLimit !== null) lines.push(`_${text.autoLimit(s.appliedAutoLimit)}_`);
+      if (s.valuesTruncated) lines.push(`_${text.valuesTruncated(MAX_SNAPSHOT_CELL_CHARS)}_`);
       if (s.maskedColumns.length > 0) lines.push(`_${text.masked(s.maskedColumns.join(", "))}_`);
     } else {
       lines.push(text.affected(s.rowsAffected));

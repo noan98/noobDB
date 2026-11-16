@@ -714,7 +714,13 @@ import {
   toBatchOutputInput,
   toBatchResult,
 } from "./sqlScript";
-import { NotebookRunError, runStatementCollect, type NotebookRunOutput } from "./notebookExec";
+import {
+  NotebookRunError,
+  runNotebookStatements,
+  runStatementCollect,
+  type NotebookRunOutput,
+  type NotebookRunRequest,
+} from "./notebookExec";
 import { redactCredentials } from "./sqlCredentials";
 import {
   EMPTY_QUICK_ACCESS,
@@ -9252,106 +9258,110 @@ export default function App() {
   // 自動 LIMIT・タイムアウトはそちらが担う) を通す。明示トランザクション中は runInTransaction。
   // 確認を取りやめたら null。複数文のセルは 1 文ずつ順に流し、最後の結果をセルの結果にする。
   const runNotebookSql = useCallback(
-    async (
-      sql: string,
-      rowCap: number,
-      onStart: (streamId: string) => void,
-    ): Promise<NotebookRunOutput | null> => {
+    async (sql: string, req: NotebookRunRequest): Promise<NotebookRunOutput | null> => {
       const sid = sessionId;
       if (!sid) throw new NotebookRunError(translate("statusNotConnected"), false, false, false);
       if (connectionStatusRef.current === "reconnecting") {
         throw new NotebookRunError(translate("statusReconnectBusy"), false, false, false);
       }
-      if (!(await runGuardedDdl(sql))) return null;
       const driver = selectedProfile?.driver;
-      const database = activeTab?.database ?? selectedProfile?.database ?? null;
+      // 実行先はノートブック自身が持つ (現在のタブには従わない)。PostgreSQL の `database` 引数はスキーマなので、
+      // プロファイルの database (= DB 名) へは寄せず、未指定 (null) のまま接続の既定に任せる。
+      const database = req.database;
       const outCtx = outputCtxFor(sid);
       const statements = splitSqlStatements(sql, driver).filter((st) => st.trim().length > 0);
-      let last: NotebookRunOutput | null = null;
-      let elapsedTotal = 0;
-      for (const stmt of statements) {
-        const startedAt = Date.now();
-        try {
-          let out: NotebookRunOutput;
-          if (txActiveRef.current) {
-            const res = await api.runInTransaction(sid, stmt);
-            out = {
-              columns: res.columns,
-              rows: res.rows.slice(0, rowCap),
-              totalRows: res.rows.length,
-              rowsAffected: Number(res.rows_affected ?? 0),
-              hasColumns: res.columns.length > 0,
-              elapsedMs: res.elapsed_ms,
-              serverMessages: res.server_messages,
-              readOnly: false,
-              schemaMayChange: false,
-            };
-          } else {
-            out = await runStatementCollect({
-              sessionId: sid,
-              database,
-              sql: stmt,
-              rowCap,
-              initialBatch: settings.defaultDisplayCount,
-              chunkSize: settings.streamPrefetchSize,
-              autoLimit: settings.autoLimitEnabled ? settings.autoLimitCount : null,
-              queryTimeoutSecs: settings.queryTimeoutSecs,
-              capture: settings.flightRecorderEnabled && isSingleCapturableStatement(stmt, driver),
-              captureRowCap: settings.flightRecorderRowCap,
-              captureRetentionDays: settings.flightRecorderRetentionDays,
-              onStart,
-            });
-          }
-          elapsedTotal += out.elapsedMs;
-          recordOutput(
-            {
-              sql: stmt,
-              outcome: out.hasColumns ? "rows" : "affected",
-              rows: out.hasColumns ? out.totalRows : out.rowsAffected,
-              elapsedMs: out.elapsedMs,
-              error: null,
-              serverMessages: out.serverMessages,
+      setStatus({ kind: "key", key: "statusRunningQuery" });
+      const showDone = (out: NotebookRunOutput) =>
+        setStatus(
+          out.hasColumns
+            ? { kind: "key", key: "statusStreamingDone", vars: { rows: out.totalRows, ms: out.elapsedMs } }
+            : { kind: "key", key: "statusRowsAffected", vars: { rows: out.rowsAffected, ms: out.elapsedMs } },
+        );
+      {
+        const result = await runNotebookStatements(
+          sql,
+          statements,
+          { onStart: req.onStart, isCancelled: req.isCancelled },
+          {
+            gate: runGuardedDdl,
+            isTransaction: () => txActiveRef.current,
+            runInTransaction: async (stmt) => {
+              const res = await api.runInTransaction(sid, stmt);
+              return {
+                columns: res.columns,
+                rows: res.rows.slice(0, req.rowCap),
+                totalRows: res.rows.length,
+                rowsAffected: Number(res.rows_affected ?? 0),
+                hasColumns: res.columns.length > 0,
+                elapsedMs: res.elapsed_ms,
+                serverMessages: res.server_messages,
+                readOnly: false,
+                schemaMayChange: false,
+                appliedAutoLimit: null,
+              };
             },
-            database,
-            outCtx,
-          );
-          setHistoryReloadKey((k) => k + 1);
-          pushQueryHistory(stmt);
-          if (out.schemaMayChange) {
-            invalidateSchemaCache(database);
-            noteSchemaDdl(stmt, database);
-          }
-          // 結果セットを返した最後の文を優先し、無ければ最後の文の結果を残す。
-          if (out.hasColumns || !last?.hasColumns) last = out;
-        } catch (e) {
-          const err =
-            e instanceof NotebookRunError ? e : new NotebookRunError(String(e), false, false, false);
-          if (!err.cancelled) {
-            recordOutput(
-              {
+            runStream: (stmt, onStart) =>
+              runStatementCollect({
+                sessionId: sid,
+                database,
                 sql: stmt,
-                outcome: err.timedOut ? "timeout" : "error",
-                rows: null,
-                elapsedMs: Date.now() - startedAt,
-                error: err.message,
-              },
-              database,
-              outCtx,
-            );
-            setHistoryReloadKey((k) => k + 1);
-            pushQueryHistory(stmt);
-            if (err.connectionLost) void handleConnectionLostRef.current();
-          }
-          throw err;
-        }
+                rowCap: req.rowCap,
+                initialBatch: settings.defaultDisplayCount,
+                chunkSize: settings.streamPrefetchSize,
+                autoLimit: settings.autoLimitEnabled ? settings.autoLimitCount : null,
+                queryTimeoutSecs: settings.queryTimeoutSecs,
+                capture: settings.flightRecorderEnabled && isSingleCapturableStatement(stmt, driver),
+                captureRowCap: settings.flightRecorderRowCap,
+                captureRetentionDays: settings.flightRecorderRetentionDays,
+                onStart,
+              }),
+            onStatementDone: (stmt, out) => {
+              recordOutput(
+                {
+                  sql: stmt,
+                  outcome: out.hasColumns ? "rows" : "affected",
+                  rows: out.hasColumns ? out.totalRows : out.rowsAffected,
+                  elapsedMs: out.elapsedMs,
+                  error: null,
+                  serverMessages: out.serverMessages,
+                },
+                database,
+                outCtx,
+              );
+              setHistoryReloadKey((k) => k + 1);
+              pushQueryHistory(stmt);
+              if (out.schemaMayChange) {
+                invalidateSchemaCache(database ?? selectedProfile?.database ?? null);
+                noteSchemaDdl(stmt, database);
+              }
+            },
+            onStatementError: (stmt, err, startedAt) => {
+              recordOutput(
+                {
+                  sql: stmt,
+                  outcome: err.timedOut ? "timeout" : "error",
+                  rows: null,
+                  elapsedMs: Date.now() - startedAt,
+                  error: err.message,
+                },
+                database,
+                outCtx,
+              );
+              setHistoryReloadKey((k) => k + 1);
+              pushQueryHistory(stmt);
+              setStatus({ kind: "key", key: "statusQueryError", vars: { error: err.message }, error: true });
+              if (err.connectionLost) void handleConnectionLostRef.current();
+            },
+          },
+        );
+        if (result) showDone(result);
+        return result;
       }
-      return last ? { ...last, elapsedMs: elapsedTotal } : null;
     },
     [
       sessionId,
       selectedProfile?.driver,
       selectedProfile?.database,
-      activeTab?.database,
       runGuardedDdl,
       outputCtxFor,
       recordOutput,
@@ -15204,10 +15214,8 @@ export default function App() {
                       <NotebookView
                         sessionId={sessionId}
                         profile={selectedProfile ?? null}
-                        databaseSchema={schemaForDatabase(
-                          activeTab?.database ?? selectedProfile?.database ?? null,
-                        )}
-                        defaultDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
+                        schemaForDatabase={schemaForDatabase}
+                        transactionActive={txActive}
                         emergencyMode={emergencyMode}
                         onRunSql={runNotebookSql}
                         onOpenInEditor={(sql, title) =>

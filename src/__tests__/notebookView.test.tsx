@@ -53,8 +53,8 @@ function setup(over: Partial<React.ComponentProps<typeof NotebookView>> = {}) {
   const props = {
     sessionId: "s1",
     profile: makeProfile(),
-    databaseSchema: null,
-    defaultDatabase: "appdb",
+    schemaForDatabase: () => null,
+    transactionActive: false,
     emergencyMode: false,
     onRunSql,
     onOpenInEditor: vi.fn(),
@@ -85,7 +85,7 @@ describe("NotebookView (#2380)", () => {
     await waitFor(() => expect(onRunSql).toHaveBeenCalledTimes(2));
     expect(onRunSql.mock.calls.map((c) => c[0])).toEqual(["SELECT 1", "SELECT 2"]);
     // 上限 (既定 200) を渡している
-    expect(onRunSql.mock.calls[0][1]).toBe(200);
+    expect(onRunSql.mock.calls[0][1]).toMatchObject({ rowCap: 200 });
     const meta = await screen.findAllByTestId("notebook-snapshot-meta");
     expect(meta).toHaveLength(2);
     // 総行数 500 に対して保存は 1 行だけ → 切り詰めの案内が出る
@@ -162,5 +162,61 @@ describe("NotebookView (#2380)", () => {
     expect(body).not.toContain("a@b.c");
     expect(body).not.toMatch(/password|passphrase/i);
     expect(getNotebookState().dirty).toBe(false);
+  });
+
+  it("保存済みの接続が現在と違うときは、確認するまで実行しない (取りやめで未実行)", async () => {
+    const d = createEmptyNotebook({ profileId: "other", name: "本番DB" });
+    d.cells = [newSqlCell("SELECT 1")];
+    replaceNotebook(d, null);
+    const { onRunSql } = setup({ profile: makeProfile({ id: "cur", name: "検証" }) });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+    });
+    await screen.findByRole("button", { name: t("notebookRebindConfirm") });
+    const cancels = screen.getAllByRole("button", { name: t("confirmDefaultCancel") });
+    await act(async () => {
+      fireEvent.click(cancels[cancels.length - 1]);
+    });
+    expect(onRunSql).not.toHaveBeenCalled();
+    expect(getNotebookState().doc.connection).toEqual({ profileId: "other", name: "本番DB" });
+  });
+
+  it("接続の付け替えを確認したら実行し、その時点で現在の接続を記録する", async () => {
+    const d = createEmptyNotebook({ profileId: "other", name: "本番DB" });
+    d.cells = [newSqlCell("SELECT 1")];
+    replaceNotebook(d, null);
+    const { onRunSql } = setup({ profile: makeProfile({ id: "cur", name: "検証" }) });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+    });
+    await act(async () => {
+      fireEvent.click(await screen.findByRole("button", { name: t("notebookRebindConfirm") }));
+    });
+    await waitFor(() => expect(onRunSql).toHaveBeenCalledTimes(1));
+    expect(getNotebookState().doc.connection).toEqual({ profileId: "cur", name: "検証" });
+  });
+
+  it("トランザクション中は停止ボタンを押せない", async () => {
+    seed(newSqlCell("SELECT 1"));
+    const onRunSql = vi.fn().mockReturnValue(new Promise(() => {}));
+    setup({ onRunSql, transactionActive: true });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+    });
+    const stop = await screen.findByRole("button", { name: new RegExp(t("notebookStop")) });
+    expect((stop as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("上限 (8 MiB) を超える文書は保存せず案内する", async () => {
+    const d = createEmptyNotebook(null);
+    d.cells = [newMarkdownCell("あ".repeat(3 * 1024 * 1024))];
+    replaceNotebook(d, null);
+    mocks.save.mockResolvedValue("/tmp/big.noobnb");
+    setup();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: t("notebookSave") }));
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(mocks.writeTextFile).not.toHaveBeenCalled();
   });
 });

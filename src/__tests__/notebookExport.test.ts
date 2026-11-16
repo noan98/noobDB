@@ -12,6 +12,8 @@ const text: NotebookExportText = {
   masked: (c) => `伏せ字: ${c}`,
   exportedAt: (t) => `書き出し ${t}`,
   connection: (n) => `接続: ${n}`,
+  autoLimit: (n) => `自動 LIMIT ${n}`,
+  valuesTruncated: (n) => `${n} 文字で切り詰め`,
 };
 
 function build() {
@@ -70,5 +72,22 @@ describe("書き出し (#2380)", () => {
     const d = createEmptyNotebook(null);
     d.cells = [newSqlCell("SELECT '```' ")];
     expect(notebookToMarkdown(d, text)).toContain("````sql");
+  });
+
+  it("Markdown の NULL 表記は画面と同じ NULL で、エラーは 1 行の引用に収まる", () => {
+    const d = build();
+    const err = newSqlCell("SELECT bad");
+    err.snapshot = {
+      ...(d.cells[1] as { snapshot: NonNullable<ReturnType<typeof newSqlCell>["snapshot"]> }).snapshot,
+      error: "line1\nline2\n```\n| x |",
+      rows: [],
+      columns: [],
+    };
+    d.cells = [err, d.cells[1]];
+    const md = notebookToMarkdown(d, text, new Date("2026-01-02T03:04:05Z"));
+    expect(md).toContain("NULL");
+    const errLine = md.split("\n").filter((l) => l.startsWith("> ") && l.includes("エラー"));
+    expect(errLine).toHaveLength(1);
+    expect(errLine[0]).toContain("line1 line2");
   });
 });

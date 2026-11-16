@@ -8852,6 +8852,21 @@ const en = {
   notebookEmpty: "No cells yet",
   notebookEmptyHint: "Add SQL cells and notes. Results are saved with the notebook.",
   notebookOpenCmd: "Open SQL notebook",
+  notebookRebindTitle: "Run on a different connection?",
+  notebookRebindMessage:
+    "This notebook was saved with “{saved}”, but the current connection is “{current}”. Cells will run on “{current}”, and the notebook will be tied to it.",
+  notebookRebindMessageProd:
+    "The current connection “{current}” is a PRODUCTION connection, but this notebook was saved with “{saved}”. Cells will run on “{current}”, and the notebook will be tied to it.",
+  notebookRebindConfirm: "Run here",
+  notebookTooLarge:
+    "The notebook is {size} MiB, over the {limit} MiB limit for opening files. Lower the snapshot rows and run the cells again.",
+  notebookStopInTransaction:
+    "Cannot stop while an explicit transaction is active; the statement runs on the transaction connection.",
+  notebookDatabasePlaceholder: "Database / schema",
+  notebookDatabaseTip:
+    "Where cells run (PostgreSQL: schema). Empty uses the connection default. It does not follow the active tab.",
+  notebookAutoLimit: "Auto LIMIT {limit} applied; the total may be larger.",
+  notebookValuesTruncated: "Values longer than {chars} characters are cut off.",
 };
 
 export type I18nKey = keyof typeof en;
@@ -17618,6 +17633,20 @@ const ja: Dict = {
   notebookEmpty: "セルがまだありません",
   notebookEmptyHint: "SQL セルと説明を並べます。結果はノートブックと一緒に保存されます。",
   notebookOpenCmd: "SQL ノートブックを開く",
+  notebookRebindTitle: "別の接続で実行しますか?",
+  notebookRebindMessage:
+    "このノートブックは「{saved}」で保存されましたが、現在の接続は「{current}」です。セルは「{current}」で実行され、ノートブックの接続も付け替わります。",
+  notebookRebindMessageProd:
+    "現在の接続「{current}」は本番接続ですが、このノートブックは「{saved}」で保存されました。セルは「{current}」で実行され、ノートブックの接続も付け替わります。",
+  notebookRebindConfirm: "この接続で実行",
+  notebookTooLarge:
+    "ノートブックが {size} MiB で、開ける上限 ({limit} MiB) を超えています。保存行数を下げてセルを再実行してください。",
+  notebookStopInTransaction: "明示トランザクション中は、トランザクションの接続で実行するため中止できません。",
+  notebookDatabasePlaceholder: "実行先 DB / スキーマ",
+  notebookDatabaseTip:
+    "セルの実行先 (PostgreSQL ではスキーマ)。空なら接続の既定。アクティブなタブには従いません。",
+  notebookAutoLimit: "自動 LIMIT {limit} 件を適用しています (実際の件数はこれより多い場合があります)。",
+  notebookValuesTruncated: "{chars} 文字を超える値は切り詰めています。",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

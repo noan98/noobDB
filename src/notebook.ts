@@ -24,6 +24,13 @@ export const DEFAULT_SNAPSHOT_ROW_LIMIT = 200;
 /** 保存行数の上限。ファイルの肥大 (`read_text_file` の 8 MiB 上限) を避ける。 */
 export const MAX_SNAPSHOT_ROW_LIMIT = 1000;
 export const SNAPSHOT_ROW_LIMIT_CHOICES: readonly number[] = [50, 200, 500, 1000];
+/**
+ * `.noobnb` 全体の上限 (UTF-8 バイト)。読み込みに使う `read_text_file` の上限 (8 MiB) を超えるファイルは
+ * 保存できても開き直せないので、保存前に測って止める。
+ */
+export const MAX_NOTEBOOK_FILE_BYTES = 8 * 1024 * 1024;
+/** スナップショットの 1 セルの値の最大文字数。超えた分は切り詰める (`valuesTruncated` で表示に出す)。 */
+export const MAX_SNAPSHOT_CELL_CHARS = 2000;
 /** 読み込み時の安全弁。 */
 export const MAX_NOTEBOOK_CELLS = 500;
 const MAX_CELL_TEXT_CHARS = 500_000;
@@ -47,6 +54,10 @@ export interface NotebookSnapshot {
   error: string | null;
   /** 伏せ字にした列名。 */
   maskedColumns: string[];
+  /** 長い値を `MAX_SNAPSHOT_CELL_CHARS` で切り詰めたセルがある。 */
+  valuesTruncated: boolean;
+  /** 自動 LIMIT が掛かった行数 (掛からなければ null)。「全 N 行」が実件数でないことを示す。 */
+  appliedAutoLimit: number | null;
 }
 
 export type NotebookCellView = "table" | "chart";
@@ -78,6 +89,11 @@ export interface NotebookConnectionRef {
 export interface NotebookDoc {
   title: string;
   connection: NotebookConnectionRef | null;
+  /**
+   * 実行先のデータベース (PostgreSQL ではスキーマ)。空 = 接続の既定。現在のタブの状態には従わず、
+   * 文書が自分で持つ。
+   */
+  database: string | null;
   snapshotRowLimit: number;
   cells: NotebookCell[];
 }
@@ -101,6 +117,7 @@ export function createEmptyNotebook(connection: NotebookConnectionRef | null = n
   return {
     title: "",
     connection,
+    database: null,
     snapshotRowLimit: DEFAULT_SNAPSHOT_ROW_LIMIT,
     cells: [newMarkdownCell(""), newSqlCell("")],
   };
@@ -193,6 +210,21 @@ export function maskSnapshotRows(
   };
 }
 
+/** 長すぎる文字列の値を切り詰める (ファイルの肥大を避ける)。切り詰めたら末尾に `…` を付ける。 */
+export function clipCellValues(rows: CellValue[][]): { rows: CellValue[][]; truncated: boolean } {
+  let truncated = false;
+  const out = rows.map((r) =>
+    r.map((v) => {
+      if (typeof v === "string" && v.length > MAX_SNAPSHOT_CELL_CHARS) {
+        truncated = true;
+        return `${v.slice(0, MAX_SNAPSHOT_CELL_CHARS)}…`;
+      }
+      return v;
+    }),
+  );
+  return { rows: truncated ? out : rows, truncated };
+}
+
 export interface SnapshotInput {
   columns: Column[];
   /** 受け取った行 (呼び出し側が上限まで集めたもの。超過分は渡さなくてよい)。 */
@@ -203,6 +235,7 @@ export interface SnapshotInput {
   hasColumns: boolean;
   elapsedMs: number;
   error?: string | null;
+  appliedAutoLimit?: number | null;
 }
 
 /** 実行結果からスナップショットを作る。行数の上限で切り詰め、マスクを掛ける。 */
@@ -215,9 +248,10 @@ export function buildSnapshot(
   const cap = clampSnapshotRowLimit(limit);
   const kept = input.rows.slice(0, cap);
   const masked = maskSnapshotRows(input.columns, kept, mask);
+  const clipped = clipCellValues(masked.rows);
   return {
     columns: input.columns.map((c) => ({ name: c.name, type_name: c.type_name })),
-    rows: masked.rows,
+    rows: clipped.rows,
     totalRows: Math.max(input.totalRows, kept.length),
     truncated: input.totalRows > kept.length,
     rowsAffected: input.rowsAffected,
@@ -226,6 +260,8 @@ export function buildSnapshot(
     executedAt: now.toISOString(),
     error: input.error ?? null,
     maskedColumns: masked.maskedColumns,
+    valuesTruncated: clipped.truncated,
+    appliedAutoLimit: input.appliedAutoLimit ?? null,
   };
 }
 
@@ -246,6 +282,8 @@ export function buildErrorSnapshot(
     executedAt: now.toISOString(),
     error,
     maskedColumns: [],
+    valuesTruncated: false,
+    appliedAutoLimit: null,
   };
 }
 
@@ -256,7 +294,8 @@ function snapshotForFile(s: NotebookSnapshot, mask: MaskConfig) {
   // 書き出し時にも掛け直した結果、新たに伏せた列を含める。
   const maskedColumns = Array.from(new Set([...s.maskedColumns, ...masked.maskedColumns]));
   // 取得時に伏せ済みの列はそのまま (すでに伏せ字)。
-  const rows = masked.rows;
+  const clipped = clipCellValues(masked.rows);
+  const rows = clipped.rows;
   return {
     columns: s.columns.map((c) => ({ name: c.name, type_name: c.type_name })),
     rows,
@@ -268,16 +307,24 @@ function snapshotForFile(s: NotebookSnapshot, mask: MaskConfig) {
     executedAt: s.executedAt,
     error: s.error,
     maskedColumns,
+    valuesTruncated: s.valuesTruncated || clipped.truncated,
+    appliedAutoLimit: s.appliedAutoLimit,
   };
 }
 
-/** `.noobnb` の本文 (整形済み JSON) を作る。ホワイトリスト以外のプロパティは書かない。 */
+/** 文字列の UTF-8 バイト数。 */
+export function utf8ByteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+/** `.noobnb` の本文 (行が数倍に膨らまないよう整形しない JSON) を作る。ホワイトリスト以外のプロパティは書かない。 */
 export function serializeNotebook(doc: NotebookDoc, mask: MaskConfig, now: Date = new Date()): string {
   const file = {
     format: NOTEBOOK_FILE_FORMAT,
     version: NOTEBOOK_FILE_VERSION,
     savedAt: now.toISOString(),
     title: doc.title,
+    database: doc.database,
     connection: doc.connection ? { profileId: doc.connection.profileId, name: doc.connection.name } : null,
     snapshotRowLimit: clampSnapshotRowLimit(doc.snapshotRowLimit),
     cells: doc.cells.map((c) =>
@@ -294,7 +341,7 @@ export function serializeNotebook(doc: NotebookDoc, mask: MaskConfig, now: Date 
           },
     ),
   };
-  return `${JSON.stringify(file, null, 2)}\n`;
+  return `${JSON.stringify(file)}\n`;
 }
 
 export type ParseNotebookResult =
@@ -335,6 +382,11 @@ function parseSnapshot(raw: unknown, limit: number): NotebookSnapshot | null {
     elapsedMs: num(raw.elapsedMs),
     executedAt: str(raw.executedAt, 64),
     error: typeof raw.error === "string" ? raw.error.slice(0, 20_000) : null,
+    valuesTruncated: raw.valuesTruncated === true,
+    appliedAutoLimit:
+      typeof raw.appliedAutoLimit === "number" && Number.isFinite(raw.appliedAutoLimit)
+        ? raw.appliedAutoLimit
+        : null,
     maskedColumns: Array.isArray(raw.maskedColumns)
       ? raw.maskedColumns.filter((x): x is string => typeof x === "string").slice(0, MAX_COLUMNS)
       : [],
@@ -382,6 +434,7 @@ export function parseNotebook(text: string): ParseNotebookResult {
     ok: true,
     doc: {
       title: str(raw.title, 200),
+      database: typeof raw.database === "string" && raw.database ? raw.database.slice(0, 200) : null,
       connection: conn ? { profileId: str(conn.profileId, 200), name: str(conn.name, 200) } : null,
       snapshotRowLimit: limit,
       cells,

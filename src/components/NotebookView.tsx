@@ -26,18 +26,26 @@ import {
   SNAPSHOT_ROW_LIMIT_CHOICES,
   sqlCellsToRun,
   updateCell,
+  utf8ByteLength,
+  MAX_NOTEBOOK_FILE_BYTES,
+  MAX_SNAPSHOT_CELL_CHARS,
   type NotebookCell,
   type NotebookDoc,
   type NotebookSnapshot,
   type NotebookSqlCell,
 } from "../notebook";
 import {
-  formatSnapshotTime,
+  formatLocalSnapshotTime,
   notebookToHtml,
   notebookToMarkdown,
   type NotebookExportText,
 } from "../notebookExport";
-import { cancelNotebookStream, NotebookRunError, type NotebookRunOutput } from "../notebookExec";
+import {
+  cancelNotebookStream,
+  NotebookRunError,
+  type NotebookRunOutput,
+  type NotebookRunRequest,
+} from "../notebookExec";
 import { markNotebookSaved, replaceNotebook, updateNotebook, useNotebookState } from "../notebookStore";
 import type { ChartConfig } from "./chartData";
 import type { MaskConfig } from "./columnMask";
@@ -72,18 +80,15 @@ const ChartView = lazy(() => import("./ChartView").then((m) => ({ default: m.Cha
 export interface NotebookViewProps {
   sessionId: string | null;
   profile: ConnectionProfile | null;
-  databaseSchema: TableSchema[] | null;
-  defaultDatabase: string | null;
+  /** 補完用スキーマの取得 (ノートブックの実行先 DB で引く)。 */
+  schemaForDatabase: (database: string | null | undefined) => TableSchema[] | null;
   emergencyMode: boolean;
+  /** 明示トランザクション中。中は同じ接続で 1 文ずつ流すため、実行中の中止ができない。 */
+  transactionActive: boolean;
   /**
    * 1 セルぶんの SQL を既存の実行経路で流す。確認ダイアログで取りやめたら null。失敗は `NotebookRunError`。
-   * `onStart` で実行中のストリーム ID を受け取れる (中止用)。
    */
-  onRunSql: (
-    sql: string,
-    rowCap: number,
-    onStart: (streamId: string) => void,
-  ) => Promise<NotebookRunOutput | null>;
+  onRunSql: (sql: string, req: NotebookRunRequest) => Promise<NotebookRunOutput | null>;
   /** SQL を通常のクエリタブで開く (実行はしない)。 */
   onOpenInEditor: (sql: string, title: string) => void;
   onClose: () => void;
@@ -103,6 +108,8 @@ function exportText(): NotebookExportText {
     affected: (rows) => translate("notebookAffected", { rows }),
     notRun: translate("notebookNotRun"),
     masked: (columns) => translate("notebookMasked", { columns }),
+    autoLimit: (limit) => translate("notebookAutoLimit", { limit }),
+    valuesTruncated: (chars) => translate("notebookValuesTruncated", { chars }),
     exportedAt: (time) => translate("notebookExportedAt", { time }),
     connection: (name) => translate("notebookConnectionLine", { name }),
   };
@@ -196,7 +203,7 @@ function CellResult({ cell, onViewChange, onChartChange }: CellResultProps) {
   const meta = (
     <chakra.div color="app.textMuted" textStyle="caption" data-testid="notebook-snapshot-meta">
       {t("notebookSnapshotMeta", {
-        time: formatSnapshotTime(s.executedAt),
+        time: formatLocalSnapshotTime(s.executedAt, getLocale()),
         rows: s.hasColumns ? s.totalRows : s.rowsAffected,
         ms: s.elapsedMs,
       })}
@@ -234,6 +241,16 @@ function CellResult({ cell, onViewChange, onChartChange }: CellResultProps) {
         <Callout tone="info" role="status">
           {t("notebookTruncated", { shown: s.rows.length, total: s.totalRows })}
         </Callout>
+      )}
+      {s.appliedAutoLimit !== null && (
+        <chakra.div color="app.textMuted" textStyle="caption">
+          {t("notebookAutoLimit", { limit: s.appliedAutoLimit })}
+        </chakra.div>
+      )}
+      {s.valuesTruncated && (
+        <chakra.div color="app.textMuted" textStyle="caption">
+          {t("notebookValuesTruncated", { chars: MAX_SNAPSHOT_CELL_CHARS })}
+        </chakra.div>
       )}
       {s.maskedColumns.length > 0 && (
         <chakra.div color="app.textMuted" textStyle="caption">
@@ -564,6 +581,9 @@ export function NotebookView(props: NotebookViewProps) {
   const docRef = useRef(doc);
   docRef.current = doc;
   const driver = props.profile?.driver;
+  // 補完用の DB。ノートブックの実行先 (空なら接続の既定 DB)。
+  const completionDb = doc.database ?? props.profile?.database ?? null;
+  const databaseSchema = props.schemaForDatabase(completionDb);
   const busy = runningId !== null;
   const runDisabled = !props.sessionId ? t("notebookNeedsConnection") : null;
 
@@ -580,8 +600,13 @@ export function NotebookView(props: NotebookViewProps) {
       const started = Date.now();
       try {
         const limit = clampSnapshotRowLimit(docRef.current.snapshotRowLimit);
-        const out = await props.onRunSql(cell.sql, limit, (id) => {
-          streamRef.current = id;
+        const out = await props.onRunSql(cell.sql, {
+          rowCap: limit,
+          database: docRef.current.database,
+          onStart: (id) => {
+            streamRef.current = id;
+          },
+          isCancelled: () => cancelRef.current,
         });
         if (out === null) return false;
         const snapshot = buildSnapshot({ ...out, error: null }, limit, maskRef.current);
@@ -600,10 +625,38 @@ export function NotebookView(props: NotebookViewProps) {
     [props.onRunSql, patchCell],
   );
 
+  /**
+   * 保存時の接続と現在の接続が違うときは、実行前に確認する (特に現在が本番のとき)。承認したらファイルの接続を
+   * 現在の接続へ付け替える (黙って書き換えない)。接続がまだ無い文書は黙って現在の接続を記録する。
+   */
+  const confirmConnection = async (): Promise<boolean> => {
+    const profile = props.profile;
+    const saved = docRef.current.connection;
+    if (!profile) return true;
+    if (!saved) {
+      updateNotebook((d) => ({ ...d, connection: { profileId: profile.id, name: profile.name } }));
+      return true;
+    }
+    if (saved.profileId === profile.id) return true;
+    const ok = await confirm({
+      title: t("notebookRebindTitle"),
+      message: t(profile.is_production ? "notebookRebindMessageProd" : "notebookRebindMessage", {
+        saved: saved.name,
+        current: profile.name,
+      }),
+      confirmLabel: t("notebookRebindConfirm"),
+      tone: profile.is_production ? "danger" : undefined,
+    });
+    if (ok) updateNotebook((d) => ({ ...d, connection: { profileId: profile.id, name: profile.name } }));
+    return ok;
+  };
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: confirmConnection は呼び出しごとに最新の props を読む
   const runCells = useCallback(
     async (cells: NotebookSqlCell[], all: boolean) => {
       // 未接続でも文書の編集はできるが、実行はしない (ボタンも無効)。
       if (busy || cells.length === 0 || !props.sessionId) return;
+      if (!(await confirmConnection())) return;
       cancelRef.current = false;
       setRunAll(all);
       for (const c of cells) {
@@ -685,8 +738,10 @@ export function NotebookView(props: NotebookViewProps) {
     [],
   );
 
+  /** 保存・書き出しに使う接続。付け替えは実行前の確認 (`confirmConnection`) だけで行い、ここでは書き換えない。 */
   const connectionRef = () =>
-    props.profile ? { profileId: props.profile.id, name: props.profile.name } : docRef.current.connection;
+    docRef.current.connection ??
+    (props.profile ? { profileId: props.profile.id, name: props.profile.name } : null);
 
   const guardDiscard = async (): Promise<boolean> => {
     if (!dirty) return true;
@@ -700,7 +755,10 @@ export function NotebookView(props: NotebookViewProps) {
 
   const onNew = async () => {
     if (!(await guardDiscard())) return;
-    replaceNotebook(createEmptyNotebook(connectionRef()), null);
+    replaceNotebook(
+      createEmptyNotebook(props.profile ? { profileId: props.profile.id, name: props.profile.name } : null),
+      null,
+    );
     setEditingIds(new Set());
   };
 
@@ -736,7 +794,19 @@ export function NotebookView(props: NotebookViewProps) {
 
   const writeDoc = async (path: string) => {
     const withConn = { ...docRef.current, connection: connectionRef() };
-    await api.writeTextFile(path, serializeNotebook(withConn, maskRef.current));
+    const body = serializeNotebook(withConn, maskRef.current);
+    // 読み込み (`read_text_file`) の上限を超えると開き直せないので、保存前に止める。
+    const bytes = utf8ByteLength(body);
+    if (bytes > MAX_NOTEBOOK_FILE_BYTES) {
+      toast.error(
+        t("notebookTooLarge", {
+          size: (bytes / (1024 * 1024)).toFixed(1),
+          limit: MAX_NOTEBOOK_FILE_BYTES / (1024 * 1024),
+        }),
+      );
+      return;
+    }
+    await api.writeTextFile(path, body);
     markNotebookSaved(path);
     toast.success(t("notebookSaved", { path }));
   };
@@ -815,6 +885,17 @@ export function NotebookView(props: NotebookViewProps) {
           aria-label={t("notebookTitlePlaceholder")}
           maxW="260px"
         />
+        <Tooltip label={t("notebookDatabaseTip")}>
+          <Input
+            value={doc.database ?? ""}
+            onChange={(e) =>
+              updateNotebook((d) => ({ ...d, database: e.target.value.trim() ? e.target.value : null }))
+            }
+            placeholder={t("notebookDatabasePlaceholder")}
+            aria-label={t("notebookDatabasePlaceholder")}
+            maxW="180px"
+          />
+        </Tooltip>
         {dirty && (
           <chakra.span color="app.textMuted" textStyle="caption" data-testid="notebook-dirty">
             {t("notebookUnsaved")}
@@ -822,10 +903,12 @@ export function NotebookView(props: NotebookViewProps) {
         )}
         <chakra.span flex="1" />
         {busy ? (
-          <Button size="sm" variant="secondary" onClick={stop}>
-            <Icon name="stop" size={ICON_SIZES.sm} />
-            {t("notebookStop")}
-          </Button>
+          <Tooltip label={props.transactionActive ? t("notebookStopInTransaction") : t("notebookStop")}>
+            <Button size="sm" variant="secondary" disabled={props.transactionActive} onClick={stop}>
+              <Icon name="stop" size={ICON_SIZES.sm} />
+              {t("notebookStop")}
+            </Button>
+          </Tooltip>
         ) : (
           <Tooltip label={runDisabled ?? t("notebookRunAll")}>
             <Button
@@ -925,8 +1008,8 @@ export function NotebookView(props: NotebookViewProps) {
                     editing={editingIds.has(cell.id)}
                     sessionId={props.sessionId}
                     profile={props.profile}
-                    databaseSchema={props.databaseSchema}
-                    defaultDatabase={props.defaultDatabase}
+                    databaseSchema={databaseSchema}
+                    defaultDatabase={completionDb}
                     emergencyMode={props.emergencyMode}
                     onRun={onRunCell}
                     onRunFrom={onRunFrom}

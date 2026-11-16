@@ -39,6 +39,20 @@ export interface NotebookRunOutput {
   serverMessages: ServerMessage[] | undefined;
   readOnly: boolean;
   schemaMayChange: boolean;
+  /** 自動 LIMIT が掛かった行数 (掛からなければ null)。 */
+  appliedAutoLimit: number | null;
+}
+
+/** セル実行の要求。 */
+export interface NotebookRunRequest {
+  /** 保持する先頭行数 (スナップショットの保存行数)。 */
+  rowCap: number;
+  /** 実行先 DB (PostgreSQL ではスキーマ)。null = 接続の既定。 */
+  database: string | null;
+  /** 実行中のストリーム ID を受け取る (中止用)。 */
+  onStart: (streamId: string) => void;
+  /** 中止が押されたか。文と文の間で見る。 */
+  isCancelled: () => boolean;
 }
 
 /** 実行の失敗。`connectionLost` は接続が使えなくなったことを呼び出し側へ伝える。 */
@@ -88,6 +102,7 @@ export async function runStatementCollect(p: NotebookRunParams): Promise<Noteboo
         serverMessages: m.serverMessages,
         readOnly: m.readOnly,
         schemaMayChange: m.schemaMayChange,
+        appliedAutoLimit: m.appliedAutoLimit ?? null,
       }),
     onError: (m) =>
       settle(new NotebookRunError(m.error ?? "Unknown error", m.timedOut, m.connectionLost, false)),
@@ -126,4 +141,48 @@ export async function runStatementCollect(p: NotebookRunParams): Promise<Noteboo
 /** 実行中のストリームを止める。 */
 export function cancelNotebookStream(streamId: string): void {
   void api.cancelStream(streamId).catch(() => {});
+}
+
+/** `runNotebookStatements` が外へ頼る操作。App が実行ゲート・実行・記録を結びつける。 */
+export interface NotebookRunIo {
+  /** 危険クエリ確認などの実行ゲート。取りやめなら false。 */
+  gate: (sql: string) => Promise<boolean>;
+  /** 明示トランザクション中か (中なら同じ接続で `runInTransaction`)。 */
+  isTransaction: () => boolean;
+  runInTransaction: (stmt: string) => Promise<NotebookRunOutput>;
+  runStream: (stmt: string, onStart: (streamId: string) => void) => Promise<NotebookRunOutput>;
+  onStatementDone: (stmt: string, out: NotebookRunOutput) => void;
+  onStatementError: (stmt: string, err: NotebookRunError, startedAt: number) => void;
+}
+
+/**
+ * セルの文を 1 文ずつ順に流し、結果セットを返した最後の文 (無ければ最後の文) の結果を返す。
+ * ゲートを取りやめたら null。`isCancelled` は文と文の間でも見る (中止ボタン)。
+ */
+export async function runNotebookStatements(
+  sql: string,
+  statements: readonly string[],
+  opts: { onStart: (streamId: string) => void; isCancelled: () => boolean },
+  io: NotebookRunIo,
+): Promise<NotebookRunOutput | null> {
+  if (!(await io.gate(sql))) return null;
+  let last: NotebookRunOutput | null = null;
+  let elapsedTotal = 0;
+  for (const stmt of statements) {
+    if (opts.isCancelled()) throw new NotebookRunError("cancelled", false, false, true);
+    const startedAt = Date.now();
+    try {
+      const out = io.isTransaction()
+        ? await io.runInTransaction(stmt)
+        : await io.runStream(stmt, opts.onStart);
+      elapsedTotal += out.elapsedMs;
+      io.onStatementDone(stmt, out);
+      if (out.hasColumns || !last?.hasColumns) last = out;
+    } catch (e) {
+      const err = e instanceof NotebookRunError ? e : new NotebookRunError(String(e), false, false, false);
+      if (!err.cancelled) io.onStatementError(stmt, err, startedAt);
+      throw err;
+    }
+  }
+  return last ? { ...last, elapsedMs: elapsedTotal } : null;
 }

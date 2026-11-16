@@ -5,6 +5,8 @@ import {
   createEmptyNotebook,
   DEFAULT_SNAPSHOT_ROW_LIMIT,
   insertCellAfter,
+  MAX_NOTEBOOK_FILE_BYTES,
+  MAX_SNAPSHOT_CELL_CHARS,
   MAX_SNAPSHOT_ROW_LIMIT,
   moveCell,
   newMarkdownCell,
@@ -14,6 +16,7 @@ import {
   reorderCellsByIds,
   serializeNotebook,
   sqlCellsToRun,
+  utf8ByteLength,
   type NotebookDoc,
 } from "../notebook";
 import { MASK_PLACEHOLDER, DEFAULT_MASK_PATTERNS } from "../components/columnMask";
@@ -128,7 +131,7 @@ describe("保存 / 読み込み", () => {
     const text = serializeNotebook(doc(), MASK_ON);
     expect(text).not.toContain("a@b.c");
     expect(text).toContain(MASK_PLACEHOLDER);
-    expect(text).toContain('"maskedColumns": [\n          "email"');
+    expect(text).toContain(`"maskedColumns":["email"]`);
   });
 
   it("version を持ち、新しすぎる版・別形式・壊れた JSON は拒否する", () => {
@@ -187,5 +190,55 @@ describe("セル操作", () => {
     expect(cellHasWrites("SELECT 1", "mysql")).toBe(false);
     expect(cellHasWrites("DELETE FROM t", "mysql")).toBe(true);
     expect(cellHasWrites("", "mysql")).toBe(false);
+  });
+});
+
+describe("サイズ上限と値の切り詰め (#2380)", () => {
+  it("長い文字列の値は切り詰めて valuesTruncated を立てる", () => {
+    const long = "x".repeat(MAX_SNAPSHOT_CELL_CHARS + 50);
+    const s = buildSnapshot(
+      {
+        columns: [{ name: "t", type_name: "text" }],
+        rows: [[long], ["short"]],
+        totalRows: 2,
+        rowsAffected: 0,
+        hasColumns: true,
+        elapsedMs: 1,
+      },
+      200,
+      MASK_OFF,
+    );
+    expect(s.valuesTruncated).toBe(true);
+    expect(s.rows[0][0]).toBe(`${"x".repeat(MAX_SNAPSHOT_CELL_CHARS)}…`);
+    expect(s.rows[1][0]).toBe("short");
+  });
+
+  it("ちょうど上限の値は切り詰めない", () => {
+    const edge = "y".repeat(MAX_SNAPSHOT_CELL_CHARS);
+    const s = buildSnapshot(
+      {
+        columns: [{ name: "t", type_name: "text" }],
+        rows: [[edge]],
+        totalRows: 1,
+        rowsAffected: 0,
+        hasColumns: true,
+        elapsedMs: 1,
+      },
+      200,
+      MASK_OFF,
+    );
+    expect(s.valuesTruncated).toBe(false);
+    expect(s.rows[0][0]).toBe(edge);
+  });
+
+  it("UTF-8 バイト数を数える (日本語は 3 バイト)", () => {
+    expect(utf8ByteLength("abc")).toBe(3);
+    expect(utf8ByteLength("あ")).toBe(3);
+    expect(MAX_NOTEBOOK_FILE_BYTES).toBe(8 * 1024 * 1024);
+  });
+
+  it("シリアライズはコンパクト JSON (整形しない)", () => {
+    const text = serializeNotebook(createEmptyNotebook(null), MASK_OFF);
+    expect(text.trim().split("\n")).toHaveLength(1);
   });
 });
