@@ -7222,14 +7222,19 @@ export const DataGrid = memo(function DataGrid({
     }
     const hasEdits = !!pendingEdits && Object.keys(pendingEdits).length > 0;
     const hasDeletes = !!pendingDeleteKeys && pendingDeleteKeys.size > 0;
-    const keyAt = (i: number) => {
-      const ri = visibleRows[i].index;
-      return rowEditKey(rows[ri] ?? [], pkIndices ?? [], ri);
-    };
+    // 行ごとの編集キーは編集 / 削除の判定で共有し、1 行につき 1 回だけ作る。
+    let keys: string[] | null = null;
+    if (hasEdits || hasDeletes) {
+      keys = new Array<string>(visibleRows.length);
+      for (let i = 0; i < visibleRows.length; i++) {
+        const ri = visibleRows[i].index;
+        keys[i] = rowEditKey(rows[ri] ?? [], pkIndices ?? [], ri);
+      }
+    }
     return buildRowMasks(visibleRows.length, {
       find: hitRows ? (i) => hitRows.has(visibleRows[i].index) : undefined,
-      edit: hasEdits ? (i) => !!pendingEdits?.[keyAt(i)] : undefined,
-      delete: hasDeletes ? (i) => !!pendingDeleteKeys?.has(keyAt(i)) : undefined,
+      edit: hasEdits ? (i) => !!pendingEdits?.[keys?.[i] ?? ""] : undefined,
+      delete: hasDeletes ? (i) => !!pendingDeleteKeys?.has(keys?.[i] ?? "") : undefined,
       added:
         addedRowIndices && addedRowIndices.size > 0
           ? (i) => addedRowIndices.has(visibleRows[i].index)
@@ -7247,6 +7252,14 @@ export const DataGrid = memo(function DataGrid({
     rows,
     pkIndices,
   ]);
+  // 毎レンダー新しいオブジェクトを渡すと帯が描き直されるので、両端の値で安定させる。
+  const rulerSelR0 = selectionRect?.r0;
+  const rulerSelR1 = selectionRect?.r1;
+  const rulerSelection = useMemo(
+    () =>
+      rulerSelR0 !== undefined && rulerSelR1 !== undefined ? { first: rulerSelR0, last: rulerSelR1 } : null,
+    [rulerSelR0, rulerSelR1],
+  );
   const rulerCurrentRow = useMemo(() => {
     if (!rulerMasks || !activeCell) return null;
     const i = visibleRows.findIndex((r) => r.index === activeCell.rowIdx);
@@ -7355,7 +7368,7 @@ export const DataGrid = memo(function DataGrid({
         createPortal(
           <GridOverviewRuler
             masks={rulerMasks}
-            selection={selectionRect ? { first: selectionRect.r0, last: selectionRect.r1 } : null}
+            selection={rulerSelection}
             currentRow={rulerCurrentRow}
             onJump={jumpToVisiblePos}
           />,

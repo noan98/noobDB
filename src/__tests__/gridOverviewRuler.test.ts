@@ -3,7 +3,6 @@ import {
   bucketOf,
   buildRowMasks,
   computeRulerTicks,
-  countKindsInRange,
   hitTestRuler,
   laneAtX,
   nextMarkedRow,
@@ -139,15 +138,5 @@ describe("nextMarkedRow", () => {
     const one = new Uint8Array(4);
     one[1] = rulerKindBit("edit");
     expect(nextMarkedRow(one, 1, 1, RULER_CHANGE_MASK)).toBe(1);
-  });
-});
-
-describe("countKindsInRange", () => {
-  it("範囲内の種別ごとの件数", () => {
-    const m = new Uint8Array(5);
-    m[1] = rulerKindBit("find") | rulerKindBit("edit");
-    m[2] = rulerKindBit("find");
-    expect(countKindsInRange(m, 0, 10)).toEqual({ find: 2, edit: 1, delete: 0, added: 0, changed: 0 });
-    expect(countKindsInRange(m, 2, 2).find).toBe(1);
   });
 });

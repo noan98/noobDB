@@ -275,16 +275,3 @@ export function nextMarkedRow(masks: Uint8Array, from: number, dir: 1 | -1, kind
   }
   return null;
 }
-
-/** 範囲 [first, last] 内の種別ごとの件数 (ツールチップの要約用)。 */
-export function countKindsInRange(masks: Uint8Array, first: number, last: number): Record<RulerKind, number> {
-  const out: Record<RulerKind, number> = { find: 0, edit: 0, delete: 0, added: 0, changed: 0 };
-  const lo = Math.max(0, first);
-  const hi = Math.min(masks.length - 1, last);
-  for (let i = lo; i <= hi; i++) {
-    const m = masks[i];
-    if (m === 0) continue;
-    for (const d of RULER_KINDS) if (m & d.bit) out[d.kind] += 1;
-  }
-  return out;
-}

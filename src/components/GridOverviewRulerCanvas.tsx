@@ -50,6 +50,7 @@ export function GridOverviewRuler({ masks, selection, currentRow, onJump }: Prop
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState<Size>({ height: 0, tickMin: 1 });
   const [themeSeq, setThemeSeq] = useState(0);
+  const [dpr, setDpr] = useState(() => window.devicePixelRatio || 1);
   const [hover, setHover] = useState<{ label: string; anchor: TooltipRect } | null>(null);
   const draggingRef = useRef(false);
 
@@ -83,6 +84,23 @@ export function GridOverviewRuler({ masks, selection, currentRow, onJump }: Prop
     return () => mo.disconnect();
   }, []);
 
+  // ズーム / モニタ移動で devicePixelRatio が変わったら、ビットマップを作り直して描き直す。
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia(`(resolution: ${dpr}dppx)`);
+    const onChange = () => setDpr(window.devicePixelRatio || 1);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [dpr]);
+
+  // ビットマップの大きさはサイズか dpr が変わったときだけ設定する (設定すると内容が消えるため)。
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || size.height <= 0) return;
+    canvas.width = Math.max(1, Math.round(canvas.clientWidth * dpr));
+    canvas.height = Math.max(1, Math.round(size.height * dpr));
+  }, [size.height, dpr]);
+
   const lanes = useMemo(
     () => computeRulerTicks(masks, size.height, size.tickMin),
     [masks, size.height, size.tickMin],
@@ -92,15 +110,12 @@ export function GridOverviewRuler({ masks, selection, currentRow, onJump }: Prop
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || size.height <= 0) return;
-    const dpr = window.devicePixelRatio || 1;
     const w = canvas.clientWidth;
     const h = size.height;
-    canvas.width = Math.max(1, Math.round(w * dpr));
-    canvas.height = Math.max(1, Math.round(h * dpr));
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, h);
+    ctx.clearRect(0, 0, w + 1, h + 1);
     const cs = getComputedStyle(canvas);
     const color = (name: string) => cs.getPropertyValue(name).trim();
     const laneW = w / RULER_LANE_COUNT;
@@ -122,7 +137,7 @@ export function GridOverviewRuler({ masks, selection, currentRow, onJump }: Prop
     };
     if (selection) strokeSpan(selection.first, selection.last);
     else if (currentRow !== null) strokeSpan(currentRow, currentRow);
-  }, [lanes, masks.length, selection, currentRow, size, themeSeq]);
+  }, [lanes, masks.length, selection, currentRow, size, themeSeq, dpr]);
 
   const localPoint = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
