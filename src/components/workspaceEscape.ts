@@ -32,6 +32,7 @@ const ESCAPE_CLOSABLE_VIEWS: ReadonlySet<WorkspaceViewKey> = new Set<WorkspaceVi
   "serverInfo",
   "sizes",
   "compareResults",
+  "notebook",
 ]);
 
 /** そのサーフェスが Escape で閉じる対象か。 */
@@ -116,6 +117,7 @@ export const WORKSPACE_SURFACE_LABEL_KEYS = {
   serverInfo: "serverInfoTitle",
   sizes: "sizeTitle",
   compareResults: "pinCompareTitle",
+  notebook: "notebookTitle",
 } as const;
 
 /** `WorkspaceSurface` で包む (= Escape で閉じる) サーフェスの識別子。 */

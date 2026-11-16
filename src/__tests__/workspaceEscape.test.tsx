@@ -37,7 +37,15 @@ const base: WorkspaceEscapeInput = {
   layoutMaximized: false,
 };
 
-const CLOSABLE: WorkspaceViewKey[] = ["compare", "erd", "users", "serverInfo", "sizes", "compareResults"];
+const CLOSABLE: WorkspaceViewKey[] = [
+  "compare",
+  "erd",
+  "users",
+  "serverInfo",
+  "sizes",
+  "compareResults",
+  "notebook",
+];
 
 describe("resolveWorkspaceEscape", () => {
   it("Escape 以外のキーでは何もしない", () => {

@@ -424,6 +424,9 @@ const TaskManager = lazy(() => import("./components/TaskManager").then((m) => ({
 const SchemaCompareView = lazy(() =>
   import("./components/SchemaCompareView").then((m) => ({ default: m.SchemaCompareView })),
 );
+const NotebookView = lazy(() =>
+  import("./components/NotebookView").then((m) => ({ default: m.NotebookView })),
+);
 const ERDiagramView = lazy(() =>
   import("./components/ERDiagramView").then((m) => ({ default: m.ERDiagramView })),
 );
@@ -704,7 +707,14 @@ import {
   resolveKeysetPlan,
   reverseRowsForPrev,
 } from "./keysetPagination";
-import { isMultiStatement, type BatchStatementResult, toBatchOutputInput, toBatchResult } from "./sqlScript";
+import {
+  isMultiStatement,
+  splitSqlStatements,
+  type BatchStatementResult,
+  toBatchOutputInput,
+  toBatchResult,
+} from "./sqlScript";
+import { NotebookRunError, runStatementCollect, type NotebookRunOutput } from "./notebookExec";
 import { redactCredentials } from "./sqlCredentials";
 import {
   EMPTY_QUICK_ACCESS,
@@ -1665,6 +1675,7 @@ export default function App() {
   const [showErd, setShowErd] = useState(false);
   // ピン留め結果の比較ビュー (#622)。保持はメモリのみ・上限あり (addPinned)。
   const [showCompareResults, setShowCompareResults] = useState(false);
+  const [showNotebook, setShowNotebook] = useState(false);
   const [pinnedResults, setPinnedResults] = useState<PinnedResult[]>([]);
   // 環境横断ブロードキャスト実行 (#738)。非 null の間だけ `BroadcastModal` を
   // マウントする — 対象接続の選択 → 実行 → 結果比較まで一貫してその内部で行う。
@@ -2339,6 +2350,7 @@ export default function App() {
       showHelp ||
       showCompare ||
       showCompareResults ||
+      showNotebook ||
       showErd ||
       showUsers ||
       showServerInfo ||
@@ -7943,6 +7955,7 @@ export default function App() {
     setShowErd(false);
     setShowUsers(false);
     setShowCompareResults(false);
+    setShowNotebook(false);
     setShowServerInfo(false);
     setSizesTarget(null);
     setShowSnippetForm(true);
@@ -7959,6 +7972,7 @@ export default function App() {
     setShowErd(false);
     setShowUsers(false);
     setShowCompareResults(false);
+    setShowNotebook(false);
     setShowServerInfo(false);
     setSizesTarget(null);
     setShowSnippetForm(true);
@@ -9229,6 +9243,129 @@ export default function App() {
       selectedProfile?.read_only,
       emergencyMode,
       settings.confirmDangerousQueries,
+    ],
+  );
+
+  // SQL ノートブック (#2380) のセル実行。新しい実行 IPC は作らず、エディタと同じ
+  // 実行ゲート (`runGuardedDdl` = 危険クエリ確認 / 本番 confirm_writes / 緊急モード) と
+  // ストリーミング実行 (`run_query_stream`。履歴・DML フライトレコーダ・read_only のバックエンド強制・
+  // 自動 LIMIT・タイムアウトはそちらが担う) を通す。明示トランザクション中は runInTransaction。
+  // 確認を取りやめたら null。複数文のセルは 1 文ずつ順に流し、最後の結果をセルの結果にする。
+  const runNotebookSql = useCallback(
+    async (
+      sql: string,
+      rowCap: number,
+      onStart: (streamId: string) => void,
+    ): Promise<NotebookRunOutput | null> => {
+      const sid = sessionId;
+      if (!sid) throw new NotebookRunError(translate("statusNotConnected"), false, false, false);
+      if (connectionStatusRef.current === "reconnecting") {
+        throw new NotebookRunError(translate("statusReconnectBusy"), false, false, false);
+      }
+      if (!(await runGuardedDdl(sql))) return null;
+      const driver = selectedProfile?.driver;
+      const database = activeTab?.database ?? selectedProfile?.database ?? null;
+      const outCtx = outputCtxFor(sid);
+      const statements = splitSqlStatements(sql, driver).filter((st) => st.trim().length > 0);
+      let last: NotebookRunOutput | null = null;
+      let elapsedTotal = 0;
+      for (const stmt of statements) {
+        const startedAt = Date.now();
+        try {
+          let out: NotebookRunOutput;
+          if (txActiveRef.current) {
+            const res = await api.runInTransaction(sid, stmt);
+            out = {
+              columns: res.columns,
+              rows: res.rows.slice(0, rowCap),
+              totalRows: res.rows.length,
+              rowsAffected: Number(res.rows_affected ?? 0),
+              hasColumns: res.columns.length > 0,
+              elapsedMs: res.elapsed_ms,
+              serverMessages: res.server_messages,
+              readOnly: false,
+              schemaMayChange: false,
+            };
+          } else {
+            out = await runStatementCollect({
+              sessionId: sid,
+              database,
+              sql: stmt,
+              rowCap,
+              initialBatch: settings.defaultDisplayCount,
+              chunkSize: settings.streamPrefetchSize,
+              autoLimit: settings.autoLimitEnabled ? settings.autoLimitCount : null,
+              queryTimeoutSecs: settings.queryTimeoutSecs,
+              capture: settings.flightRecorderEnabled && isSingleCapturableStatement(stmt, driver),
+              captureRowCap: settings.flightRecorderRowCap,
+              captureRetentionDays: settings.flightRecorderRetentionDays,
+              onStart,
+            });
+          }
+          elapsedTotal += out.elapsedMs;
+          recordOutput(
+            {
+              sql: stmt,
+              outcome: out.hasColumns ? "rows" : "affected",
+              rows: out.hasColumns ? out.totalRows : out.rowsAffected,
+              elapsedMs: out.elapsedMs,
+              error: null,
+              serverMessages: out.serverMessages,
+            },
+            database,
+            outCtx,
+          );
+          setHistoryReloadKey((k) => k + 1);
+          pushQueryHistory(stmt);
+          if (out.schemaMayChange) {
+            invalidateSchemaCache(database);
+            noteSchemaDdl(stmt, database);
+          }
+          // 結果セットを返した最後の文を優先し、無ければ最後の文の結果を残す。
+          if (out.hasColumns || !last?.hasColumns) last = out;
+        } catch (e) {
+          const err =
+            e instanceof NotebookRunError ? e : new NotebookRunError(String(e), false, false, false);
+          if (!err.cancelled) {
+            recordOutput(
+              {
+                sql: stmt,
+                outcome: err.timedOut ? "timeout" : "error",
+                rows: null,
+                elapsedMs: Date.now() - startedAt,
+                error: err.message,
+              },
+              database,
+              outCtx,
+            );
+            setHistoryReloadKey((k) => k + 1);
+            pushQueryHistory(stmt);
+            if (err.connectionLost) void handleConnectionLostRef.current();
+          }
+          throw err;
+        }
+      }
+      return last ? { ...last, elapsedMs: elapsedTotal } : null;
+    },
+    [
+      sessionId,
+      selectedProfile?.driver,
+      selectedProfile?.database,
+      activeTab?.database,
+      runGuardedDdl,
+      outputCtxFor,
+      recordOutput,
+      pushQueryHistory,
+      invalidateSchemaCache,
+      noteSchemaDdl,
+      settings.defaultDisplayCount,
+      settings.streamPrefetchSize,
+      settings.autoLimitEnabled,
+      settings.autoLimitCount,
+      settings.queryTimeoutSecs,
+      settings.flightRecorderEnabled,
+      settings.flightRecorderRowCap,
+      settings.flightRecorderRetentionDays,
     ],
   );
 
@@ -10931,6 +11068,7 @@ export default function App() {
     setShowErd(false);
     setShowUsers(false);
     setShowCompareResults(false);
+    setShowNotebook(false);
     setShowServerInfo(false);
     setShowSnippetForm(false);
     setSizesTarget(database);
@@ -11401,6 +11539,7 @@ export default function App() {
     setShowErd(false);
     setShowUsers(false);
     setShowCompareResults(false);
+    setShowNotebook(false);
     setShowServerInfo(false);
     setSizesTarget(null);
     setShowSnippetForm(false);
@@ -11416,6 +11555,7 @@ export default function App() {
     setShowErd(false);
     setShowUsers(false);
     setShowCompareResults(false);
+    setShowNotebook(false);
     setShowServerInfo(false);
     setSizesTarget(null);
     setShowForm(true);
@@ -11434,6 +11574,7 @@ export default function App() {
       setShowErd(false);
       setShowUsers(false);
       setShowCompareResults(false);
+      setShowNotebook(false);
       setShowServerInfo(false);
       setSizesTarget(null);
       setShowForm(true);
@@ -11647,6 +11788,7 @@ export default function App() {
     setShowErd(false);
     setShowUsers(false);
     setShowCompareResults(false);
+    setShowNotebook(false);
     setShowServerInfo(false);
     setSizesTarget(null);
     setShowForm(true);
@@ -11664,6 +11806,7 @@ export default function App() {
     setShowErd(false);
     setShowUsers(false);
     setShowCompareResults(false);
+    setShowNotebook(false);
     setShowServerInfo(false);
     setSizesTarget(null);
     setShowForm(false);
@@ -12200,6 +12343,7 @@ export default function App() {
       showHelp ||
       showCompare ||
       showCompareResults ||
+      showNotebook ||
       showErd ||
       showUsers ||
       showServerInfo ||
@@ -12395,6 +12539,7 @@ export default function App() {
     showHelp,
     showCompare,
     showCompareResults,
+    showNotebook,
     showErd,
     showUsers,
     showServerInfo,
@@ -12488,6 +12633,7 @@ export default function App() {
         showHelp ||
         showCompare ||
         showCompareResults ||
+        showNotebook ||
         showErd ||
         showUsers ||
         showServerInfo ||
@@ -12536,6 +12682,7 @@ export default function App() {
     showHelp,
     showCompare,
     showCompareResults,
+    showNotebook,
     showErd,
     showUsers,
     showServerInfo,
@@ -12726,6 +12873,7 @@ export default function App() {
         showHelp ||
         showCompare ||
         showCompareResults ||
+        showNotebook ||
         showErd ||
         showUsers ||
         showServerInfo ||
@@ -12764,6 +12912,7 @@ export default function App() {
           showServerInfo,
           showSizes,
           showCompareResults,
+          showNotebook,
           showForm,
           showSnippetForm,
           sessionId: sessionIdRef.current,
@@ -12786,6 +12935,7 @@ export default function App() {
     showHelp,
     showCompare,
     showCompareResults,
+    showNotebook,
     showErd,
     showUsers,
     showServerInfo,
@@ -12818,6 +12968,7 @@ export default function App() {
         | "users"
         | "serverInfo"
         | "compareResults"
+        | "notebook"
         | "newConnection",
     ) => {
       setEditing(null);
@@ -12829,6 +12980,7 @@ export default function App() {
       setShowErd(false);
       setShowUsers(false);
       setShowCompareResults(false);
+      setShowNotebook(false);
       setShowServerInfo(false);
       setSizesTarget(null);
       setShowSnippetForm(false);
@@ -12843,6 +12995,7 @@ export default function App() {
       else if (view === "users") setShowUsers(true);
       else if (view === "serverInfo") setShowServerInfo(true);
       else if (view === "compareResults") setShowCompareResults(true);
+      else if (view === "notebook") setShowNotebook(true);
       else if (view === "newConnection") {
         setShowForm(true);
         setFormInstanceId((n) => n + 1);
@@ -13177,6 +13330,14 @@ export default function App() {
         icon: "pin",
         keywords: "pin pinned result compare diff ピン 結果 比較 差分",
         run: () => openFullView("compareResults"),
+      },
+      {
+        id: "nav:notebook",
+        group: "navigation",
+        label: t("notebookOpenCmd"),
+        icon: "notebook",
+        keywords: "notebook sql markdown report ノートブック レポート 手順 メモ",
+        run: () => openFullView("notebook"),
       },
       {
         id: "nav:toggle-theme",
@@ -13702,6 +13863,7 @@ export default function App() {
     showServerInfo,
     showSizes,
     showCompareResults,
+    showNotebook,
     showForm,
     showSnippetForm,
     sessionId,
@@ -14066,6 +14228,7 @@ export default function App() {
                       setShowErd(false);
                       setShowUsers(false);
                       setShowCompareResults(false);
+                      setShowNotebook(false);
                       setShowServerInfo(false);
                       setSizesTarget(null);
                       setShowSnippetForm(false);
@@ -15034,6 +15197,23 @@ export default function App() {
                         onUnpin={(id) => setPinnedResults((prev) => prev.filter((p) => p.id !== id))}
                         onClear={() => setPinnedResults([])}
                         onClose={() => setShowCompareResults(false)}
+                      />
+                    </WorkspaceSurface>
+                  ) : showNotebook ? (
+                    <WorkspaceSurface view="notebook" onClose={() => setShowNotebook(false)}>
+                      <NotebookView
+                        sessionId={sessionId}
+                        profile={selectedProfile ?? null}
+                        databaseSchema={schemaForDatabase(
+                          activeTab?.database ?? selectedProfile?.database ?? null,
+                        )}
+                        defaultDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
+                        emergencyMode={emergencyMode}
+                        onRunSql={runNotebookSql}
+                        onOpenInEditor={(sql, title) =>
+                          addTab({ ...makeQueryTab(), sql, title, titleManual: true })
+                        }
+                        onClose={() => setShowNotebook(false)}
                       />
                     </WorkspaceSurface>
                   ) : null}
@@ -16669,6 +16849,7 @@ export default function App() {
                 disabled: pinnedResults.length === 0,
                 title: pinnedResults.length === 0 ? t("pinCompareEmptyHint") : undefined,
               },
+              { label: t("notebookTitle"), icon: "notebook", onSelect: () => openFullView("notebook") },
               { separator: true },
               { label: t("appAbout"), icon: "info", onSelect: () => setShowAbout(true) },
             ]}

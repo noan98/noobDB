@@ -1,0 +1,166 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
+import { makeProfile } from "./fixtures/componentFixtures";
+import { t } from "../i18n";
+
+const mocks = vi.hoisted(() => ({
+  open: vi.fn(),
+  save: vi.fn(),
+  writeTextFile: vi.fn(),
+  readTextFile: vi.fn(),
+}));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: mocks.open, save: mocks.save }));
+vi.mock("../api/tauri", async (orig) => {
+  const actual = await orig<typeof import("../api/tauri")>();
+  return {
+    ...actual,
+    api: { ...actual.api, writeTextFile: mocks.writeTextFile, readTextFile: mocks.readTextFile },
+  };
+});
+// CodeMirror は jsdom で重いので、本文の入出力だけを持つ代替にする。
+vi.mock("../components/QueryEditor", () => ({
+  QueryEditor: ({ initialSql, onChange }: { initialSql?: string; onChange?: (s: string) => void }) => (
+    <textarea
+      aria-label="sql-editor"
+      defaultValue={initialSql}
+      onChange={(e) => onChange?.(e.target.value)}
+    />
+  ),
+}));
+
+import { NotebookView } from "../components/NotebookView";
+import { newMarkdownCell, newSqlCell, createEmptyNotebook } from "../notebook";
+import { replaceNotebook, getNotebookState } from "../notebookStore";
+import { NotebookRunError } from "../notebookExec";
+
+const OUT = {
+  columns: [
+    { name: "id", type_name: "int" },
+    { name: "email", type_name: "text" },
+  ],
+  rows: [[1, "a@b.c"]],
+  totalRows: 500,
+  rowsAffected: 0,
+  hasColumns: true,
+  elapsedMs: 7,
+  serverMessages: undefined,
+  readOnly: true,
+  schemaMayChange: false,
+};
+
+function setup(over: Partial<React.ComponentProps<typeof NotebookView>> = {}) {
+  const onRunSql = vi.fn().mockResolvedValue(OUT);
+  const props = {
+    sessionId: "s1",
+    profile: makeProfile(),
+    databaseSchema: null,
+    defaultDatabase: "appdb",
+    emergencyMode: false,
+    onRunSql,
+    onOpenInEditor: vi.fn(),
+    onClose: vi.fn(),
+    ...over,
+  };
+  renderWithProviders(<NotebookView {...props} />);
+  return { props, onRunSql };
+}
+
+function seed(...cells: ReturnType<typeof newSqlCell | typeof newMarkdownCell>[]) {
+  const d = createEmptyNotebook(null);
+  d.cells = cells;
+  replaceNotebook(d, null);
+}
+
+describe("NotebookView (#2380)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("すべて実行で SQL セルが順に実行され、スナップショットが切り詰め表示つきで残る", async () => {
+    seed(newMarkdownCell("# 説明"), newSqlCell("SELECT 1"), newSqlCell("SELECT 2"));
+    const { onRunSql } = setup();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+    });
+    await waitFor(() => expect(onRunSql).toHaveBeenCalledTimes(2));
+    expect(onRunSql.mock.calls.map((c) => c[0])).toEqual(["SELECT 1", "SELECT 2"]);
+    // 上限 (既定 200) を渡している
+    expect(onRunSql.mock.calls[0][1]).toBe(200);
+    const meta = await screen.findAllByTestId("notebook-snapshot-meta");
+    expect(meta).toHaveLength(2);
+    // 総行数 500 に対して保存は 1 行だけ → 切り詰めの案内が出る
+    expect(screen.getAllByText(t("notebookTruncated", { shown: 1, total: 500 }))).toHaveLength(2);
+    // マスキング既定 (email 列) は伏せ字で保持される
+    expect(getNotebookState().doc.cells[1]).toMatchObject({ snapshot: { maskedColumns: ["email"] } });
+  });
+
+  it("確認を取りやめたら (null) 結果は残さず、後続も実行しない", async () => {
+    seed(newSqlCell("DELETE FROM t"), newSqlCell("SELECT 2"));
+    const onRunSql = vi.fn().mockResolvedValue(null);
+    setup({ onRunSql });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+    });
+    await waitFor(() => expect(onRunSql).toHaveBeenCalledTimes(1));
+    expect(getNotebookState().doc.cells.every((c) => c.kind !== "sql" || c.snapshot === null)).toBe(true);
+  });
+
+  it("失敗したセルはエラーを結果として残し、そこで止まる", async () => {
+    seed(newSqlCell("SELECT bad"), newSqlCell("SELECT 2"));
+    const onRunSql = vi.fn().mockRejectedValue(new NotebookRunError("syntax error", false, false, false));
+    setup({ onRunSql });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+    });
+    expect(await screen.findByText(t("notebookError", { error: "syntax error" }))).toBeTruthy();
+    expect(onRunSql).toHaveBeenCalledTimes(1);
+  });
+
+  it("未接続では実行できない", () => {
+    seed(newSqlCell("SELECT 1"));
+    setup({ sessionId: null });
+    const btn = screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+  });
+
+  it("書き込み文を含むセルには印が付く", () => {
+    seed(newSqlCell("DELETE FROM t"), newSqlCell("SELECT 1"));
+    setup();
+    expect(screen.getAllByTestId("notebook-writes-badge")).toHaveLength(1);
+  });
+
+  it("セルを下へ動かすと並びが変わり、削除でセルが消える", async () => {
+    const a = newSqlCell("SELECT 1");
+    const b = newMarkdownCell("note");
+    seed(a, b);
+    setup();
+    fireEvent.click(screen.getAllByRole("button", { name: t("notebookMoveDown") })[0]);
+    expect(getNotebookState().doc.cells.map((c) => c.id)).toEqual([b.id, a.id]);
+    fireEvent.click(screen.getAllByRole("button", { name: t("notebookDelete") })[0]);
+    expect(getNotebookState().doc.cells.map((c) => c.id)).toEqual([a.id]);
+  });
+
+  it("保存は .noobnb をファイルへ書き、秘密情報を含まない (マスクも掛かる)", async () => {
+    const sql = newSqlCell("SELECT 1");
+    seed(sql);
+    mocks.save.mockResolvedValue("/tmp/x.noobnb");
+    mocks.writeTextFile.mockResolvedValue(10);
+    setup({ profile: makeProfile({ id: "p9", name: "検証" }) });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+    });
+    await screen.findByTestId("notebook-snapshot-meta");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: t("notebookSave") }));
+    });
+    await waitFor(() => expect(mocks.writeTextFile).toHaveBeenCalled());
+    const [path, body] = mocks.writeTextFile.mock.calls[0];
+    expect(path).toBe("/tmp/x.noobnb");
+    const file = JSON.parse(body as string);
+    expect(file.version).toBe(1);
+    expect(file.connection).toEqual({ profileId: "p9", name: "検証" });
+    expect(body).not.toContain("a@b.c");
+    expect(body).not.toMatch(/password|passphrase/i);
+    expect(getNotebookState().dirty).toBe(false);
+  });
+});
