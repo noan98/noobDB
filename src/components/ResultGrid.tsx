@@ -102,6 +102,8 @@ import { GridViewPresetsMenu } from "./GridViewPresetsMenu";
 import { ContextMenu, submenuOrFlat, SUBMENU_THRESHOLD, type ContextMenuEntry } from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
 import { ScrollEdgeShadows } from "./ScrollEdgeShadows";
+import { GridOverviewRuler } from "./GridOverviewRulerCanvas";
+import { buildRowMasks, nextMarkedRow, RULER_CHANGE_MASK } from "./gridOverviewRuler";
 import { moveColumnId, reorderColumnIds } from "./columnReorderFlip";
 import { rowSelectRange, selectAllRange } from "./gridSelection";
 import { useColumnReorderFlip } from "./useColumnReorderFlip";
@@ -4195,6 +4197,7 @@ export const DataGrid = memo(function DataGrid({
   onCloneRows,
   onMergeRows,
   findHits,
+  rulerHost,
   findCurrentKey,
   findNav,
   columnFilterRequest,
@@ -4435,6 +4438,11 @@ export const DataGrid = memo(function DataGrid({
    * ハイライトクラスを付ける。省略時 (検索バーが閉じている/プレビュー) は無印。
    */
   findHits?: Set<string>;
+  /**
+   * 位置マーカーの帯 (#2381) の描画先 (スクロールコンテナの右隣に外側が置く要素)。
+   * 未指定ならマーカーの帯は出さない (プレビュー等)。
+   */
+  rulerHost?: HTMLElement | null;
   /** 現在ヒットのセルキー ("row:col")。ヒット中で強調するセル。 */
   findCurrentKey?: string | null;
   /** 現在ヒットへのスクロール/選択/フォーカス移動の要求 (seq で再発火)。 */
@@ -6977,6 +6985,14 @@ export const DataGrid = memo(function DataGrid({
       return;
     }
 
+    // F8 / Shift+F8: 次 / 前の変更行 (未適用の編集・削除予定・再実行差分) へ移動する (#2381)。
+    if (e.key === "F8" && !e.ctrlKey && !e.metaKey && !e.altKey && rulerMasks) {
+      const target = nextMarkedRow(rulerMasks, visIdx, e.shiftKey ? -1 : 1, RULER_CHANGE_MASK);
+      e.preventDefault();
+      if (target !== null) moveActive(visibleRows[target].index, colIdx);
+      return;
+    }
+
     // Ctrl/Cmd+A: 表示中の全セルを矩形選択する (#1529)。ページ全体のテキスト選択にさせない。
     if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "a" || e.key === "A")) {
       const all = selectAllRange(
@@ -7196,6 +7212,70 @@ export const DataGrid = memo(function DataGrid({
   const bodyPaddingTop = hiddenWindow ? hiddenWindow.top : virtualPaddingTop;
   const bodyPaddingBottom = hiddenWindow ? hiddenWindow.bottom : virtualPaddingBottom;
 
+  // 位置マーカーの帯 (#2381)。表示中の各行の状態 (検索ヒット / 未適用の編集・削除 / 再実行差分) を
+  // 1 バイトのマスクに集約する (集約・圧縮は gridOverviewRuler.ts の純関数)。状態が 1 つも無ければ null で帯は出ない。
+  const rulerMasks = useMemo(() => {
+    if (!rulerHost) return null;
+    const hitRows = findHits && findHits.size > 0 ? new Set<number>() : null;
+    if (hitRows && findHits) {
+      for (const k of findHits) hitRows.add(Number.parseInt(k, 10));
+    }
+    const hasEdits = !!pendingEdits && Object.keys(pendingEdits).length > 0;
+    const hasDeletes = !!pendingDeleteKeys && pendingDeleteKeys.size > 0;
+    // 行ごとの編集キーは編集 / 削除の判定で共有し、1 行につき 1 回だけ作る。
+    let keys: string[] | null = null;
+    if (hasEdits || hasDeletes) {
+      keys = new Array<string>(visibleRows.length);
+      for (let i = 0; i < visibleRows.length; i++) {
+        const ri = visibleRows[i].index;
+        keys[i] = rowEditKey(rows[ri] ?? [], pkIndices ?? [], ri);
+      }
+    }
+    return buildRowMasks(visibleRows.length, {
+      find: hitRows ? (i) => hitRows.has(visibleRows[i].index) : undefined,
+      edit: hasEdits ? (i) => !!pendingEdits?.[keys?.[i] ?? ""] : undefined,
+      delete: hasDeletes ? (i) => !!pendingDeleteKeys?.has(keys?.[i] ?? "") : undefined,
+      added:
+        addedRowIndices && addedRowIndices.size > 0
+          ? (i) => addedRowIndices.has(visibleRows[i].index)
+          : undefined,
+      changed: changedCells ? (i) => !!changedCells[visibleRows[i].index]?.some(Boolean) : undefined,
+    });
+  }, [
+    rulerHost,
+    findHits,
+    pendingEdits,
+    pendingDeleteKeys,
+    addedRowIndices,
+    changedCells,
+    visibleRows,
+    rows,
+    pkIndices,
+  ]);
+  // 毎レンダー新しいオブジェクトを渡すと帯が描き直されるので、両端の値で安定させる。
+  const rulerSelR0 = selectionRect?.r0;
+  const rulerSelR1 = selectionRect?.r1;
+  const rulerSelection = useMemo(
+    () =>
+      rulerSelR0 !== undefined && rulerSelR1 !== undefined ? { first: rulerSelR0, last: rulerSelR1 } : null,
+    [rulerSelR0, rulerSelR1],
+  );
+  const rulerCurrentRow = useMemo(() => {
+    if (!rulerMasks || !activeCell) return null;
+    const i = visibleRows.findIndex((r) => r.index === activeCell.rowIdx);
+    return i < 0 ? null : i;
+  }, [rulerMasks, activeCell, visibleRows]);
+  // 帯のクリック / ドラッグ / F8 で、表示位置の行を中央へスクロールする。
+  const jumpToVisiblePos = (visPos: number) => {
+    const row = visibleRows[visPos];
+    if (!row) return;
+    if (virtualize) {
+      rowVirtualizer.scrollToIndex(visPos, { align: "center" });
+      return;
+    }
+    cellRefs.current.get(`${row.index}:${visibleColIds[0] ?? 0}`)?.scrollIntoView({ block: "center" });
+  };
+
   // 滑って追従する枠 (#1578)。アクティブセル / 範囲選択 / 現在の検索ヒットに 1 枚ずつ。
   // 対象が変わった確定コミットでだけセルを計測して滑らせる (`useGlideFrame`)。
   const glideLayoutKey = `${columnLayoutKey}#${visibleRows.length}:${visibleRows[0]?.index ?? ""}:${
@@ -7283,6 +7363,17 @@ export const DataGrid = memo(function DataGrid({
 
   return (
     <>
+      {rulerHost &&
+        rulerMasks &&
+        createPortal(
+          <GridOverviewRuler
+            masks={rulerMasks}
+            selection={rulerSelection}
+            currentRow={rulerCurrentRow}
+            onJump={jumpToVisiblePos}
+          />,
+          rulerHost,
+        )}
       {/* スクロール端影 (#1073)。スクロールコンテナ直下の先頭に置く高さ 0 の
           sticky 帯で、表の流れ・列整列には影響しない。左の影は行番号列 + 左ピン
           留め列の右端、右の影は右ピン留め列の左端に出す (ピン境界を尊重)。 */}
@@ -9105,6 +9196,8 @@ export const ResultGrid = memo(
       if (autoRefreshSecs != null) setIntervalChoice(autoRefreshSecs);
     }, [autoRefreshSecs]);
     const containerRef = useRef<HTMLDivElement>(null);
+    // 位置マーカーの帯 (#2381) をスクロールコンテナの右隣へ出すための描画先。
+    const [rulerHost, setRulerHost] = useState<HTMLDivElement | null>(null);
     // 適用 / 破棄ショートカットが読む最新の変更セット状態 (ハンドルは安定参照のため ref 越し)。
     const changeSetActionsRef = useRef<{
       visible: boolean;
@@ -10864,233 +10957,241 @@ export const ResultGrid = memo(
             />
           )}
         </AnimatePresence>
-        <Box
-          ref={containerRef}
-          tabIndex={-1}
-          flex="1"
-          overflow="auto"
-          minHeight={0}
-          _focus={{ outline: "none" }}
-          css={GRID_CSS}
-        >
-          <DataGrid
-            columns={result.columns}
-            rows={result.rows}
-            onMaskConfigChange={setMaskConfig}
-            scrollContainerRef={containerRef}
-            applyFlash={applyFlash}
-            pageTurnPage={pageTurnPage}
-            pageTurnScope={pageTurnScope}
-            globalFilter={deferredSearch}
-            editable={editableActive}
-            editableColumns={editableCols}
-            pkIndices={pkIndices}
-            rowIdentityStrategy={identityStrategy}
-            pendingEdits={pendingEdits}
-            onSetCellEdit={onSetCellEdit}
-            onBulkEdit={editableActive ? onBulkEdit : undefined}
-            onReplaceColumn={editableActive ? onReplaceColumn : undefined}
-            onLookupQuery={editableActive ? onLookupQuery : undefined}
-            changedCells={diff?.changedCells}
-            addedRowIndices={diff?.addedRows}
-            rowAllowSet={rowAllowSet}
-            onFindDuplicates={streaming ? undefined : setDupColIdx}
-            pendingDeleteKeys={pendingDeleteKeys}
-            onToggleRowDelete={editableActive ? onToggleRowDelete : undefined}
-            onRequestInsertRow={editableActive ? onRequestInsertRow : undefined}
-            onDuplicateRow={editableActive ? onDuplicateRow : undefined}
-            onPasteInsertRows={editableActive ? onPasteInsertRows : undefined}
-            onUndoEdit={onUndoEdit}
-            onRedoEdit={onRedoEdit}
-            canUndo={canUndo}
-            canRedo={canRedo}
-            validateEdit={validateEdit}
-            onApplyRowEdits={editableActive ? onApplyRowEdits : undefined}
-            streaming={streaming}
-            applyingEdits={applyingEdits}
-            rowSqlDriver={driver}
-            rowSqlDatabase={database}
-            rowSqlTable={table}
-            blobIo={
-              identityStrategy === "primary_key" || identityStrategy === "unique_key" ? blobIo : undefined
-            }
-            columnMeta={tableColumns ?? undefined}
-            incomingFks={incomingFks}
-            onRunRelatedQuery={onRunRelatedQuery}
-            onFkJump={onFkJump}
-            columnSizingStorageKey={columnSizingStorageKey}
-            skeleton={!!streaming}
-            onSelectionSummary={setSelSummary}
-            onExportSelection={handleExportSelection}
-            exportViewRef={exportViewRef}
-            viewPresetsRef={viewPresetsRef}
-            onRunStatsQuery={onRunStatsQuery}
-            valuePicker={editableActive ? valuePicker : undefined}
-            onExploreColumn={onExploreColumn}
-            onExtractSubset={onExtractSubset}
-            onCloneRows={onCloneRows}
-            onMergeRows={onMergeRows}
-            paginationState={paginateMode ? pagination : undefined}
-            onPaginationChange={paginateMode ? setPagination : undefined}
-            findHits={findHits}
-            findCurrentKey={findCurrentMatch ? findMatchKey(findCurrentMatch) : null}
-            findNav={findNav}
-            columnFilterRequest={filterRequest}
-            onColumnFilterRequestApplied={onColumnFilterRequestApplied}
-            onColumnFiltersChange={onColumnFiltersChange}
-            gridBindings={gridBindings}
-            serverSort={serverSort}
-            serverFilter={serverFilter}
-            onSetServerSort={onSetServerSort}
-            onSetServerFilter={onSetServerFilter}
-            emptyMessage={gridEmptyMessage}
-          />
-          {ghostRows.length > 0 && result && (
-            <RemovedRowsGhost
-              columns={result.columns.map((c) => c.name)}
-              rows={ghostRows}
-              maskedCols={resolveMaskedColumns(
-                result.columns.map((c) => c.name),
-                maskConfig ?? { enabled: settings.columnMaskEnabled, patterns: settings.columnMaskPatterns },
-              )}
+        <Flex flex="1" minHeight={0} minWidth={0}>
+          <Box
+            ref={containerRef}
+            tabIndex={-1}
+            flex="1"
+            overflow="auto"
+            minHeight={0}
+            minWidth={0}
+            _focus={{ outline: "none" }}
+            css={GRID_CSS}
+          >
+            <DataGrid
+              columns={result.columns}
+              rows={result.rows}
+              rulerHost={rulerHost}
+              onMaskConfigChange={setMaskConfig}
+              scrollContainerRef={containerRef}
+              applyFlash={applyFlash}
+              pageTurnPage={pageTurnPage}
+              pageTurnScope={pageTurnScope}
+              globalFilter={deferredSearch}
+              editable={editableActive}
+              editableColumns={editableCols}
+              pkIndices={pkIndices}
+              rowIdentityStrategy={identityStrategy}
+              pendingEdits={pendingEdits}
+              onSetCellEdit={onSetCellEdit}
+              onBulkEdit={editableActive ? onBulkEdit : undefined}
+              onReplaceColumn={editableActive ? onReplaceColumn : undefined}
+              onLookupQuery={editableActive ? onLookupQuery : undefined}
+              changedCells={diff?.changedCells}
+              addedRowIndices={diff?.addedRows}
+              rowAllowSet={rowAllowSet}
+              onFindDuplicates={streaming ? undefined : setDupColIdx}
+              pendingDeleteKeys={pendingDeleteKeys}
+              onToggleRowDelete={editableActive ? onToggleRowDelete : undefined}
+              onRequestInsertRow={editableActive ? onRequestInsertRow : undefined}
+              onDuplicateRow={editableActive ? onDuplicateRow : undefined}
+              onPasteInsertRows={editableActive ? onPasteInsertRows : undefined}
+              onUndoEdit={onUndoEdit}
+              onRedoEdit={onRedoEdit}
+              canUndo={canUndo}
+              canRedo={canRedo}
+              validateEdit={validateEdit}
+              onApplyRowEdits={editableActive ? onApplyRowEdits : undefined}
+              streaming={streaming}
+              applyingEdits={applyingEdits}
+              rowSqlDriver={driver}
+              rowSqlDatabase={database}
+              rowSqlTable={table}
+              blobIo={
+                identityStrategy === "primary_key" || identityStrategy === "unique_key" ? blobIo : undefined
+              }
+              columnMeta={tableColumns ?? undefined}
+              incomingFks={incomingFks}
+              onRunRelatedQuery={onRunRelatedQuery}
+              onFkJump={onFkJump}
+              columnSizingStorageKey={columnSizingStorageKey}
+              skeleton={!!streaming}
+              onSelectionSummary={setSelSummary}
+              onExportSelection={handleExportSelection}
+              exportViewRef={exportViewRef}
+              viewPresetsRef={viewPresetsRef}
+              onRunStatsQuery={onRunStatsQuery}
+              valuePicker={editableActive ? valuePicker : undefined}
+              onExploreColumn={onExploreColumn}
+              onExtractSubset={onExtractSubset}
+              onCloneRows={onCloneRows}
+              onMergeRows={onMergeRows}
+              paginationState={paginateMode ? pagination : undefined}
+              onPaginationChange={paginateMode ? setPagination : undefined}
+              findHits={findHits}
+              findCurrentKey={findCurrentMatch ? findMatchKey(findCurrentMatch) : null}
+              findNav={findNav}
+              columnFilterRequest={filterRequest}
+              onColumnFilterRequestApplied={onColumnFilterRequestApplied}
+              onColumnFiltersChange={onColumnFiltersChange}
+              gridBindings={gridBindings}
+              serverSort={serverSort}
+              serverFilter={serverFilter}
+              onSetServerSort={onSetServerSort}
+              onSetServerFilter={onSetServerFilter}
+              emptyMessage={gridEmptyMessage}
             />
-          )}
-          {!paginateMode && loadingMore && (
-            <Box
-              role="status"
-              aria-live="polite"
-              position="sticky"
-              bottom={0}
-              display="flex"
-              alignItems="center"
-              justifyContent="center"
-              gap="1.5"
-              py="1.5"
-              px="2.5"
-              fontSize="sm"
-              color="app.textMuted"
-              borderTop="1px solid"
-              borderColor="app.borderSubtle"
-              bg="app.surfaceMuted"
-            >
-              <Spinner size={14} />
-              {t("gridLoadingMore")}
-            </Box>
-          )}
-          {paginateMode &&
-            (() => {
-              const totalLoaded = result.rows.length;
-              const { pageIndex, pageSize } = pagination;
-              const pageCount = Math.max(1, Math.ceil(totalLoaded / pageSize));
-              const from = pageIndex * pageSize + 1;
-              const to = Math.min((pageIndex + 1) * pageSize, totalLoaded);
-              const isFirst = pageIndex === 0;
-              const isLast = pageIndex >= pageCount - 1;
-              const navButton = (label: string, title: string, disabled: boolean, onClick: () => void) => (
-                <Tooltip label={title} focusableWrapper={disabled}>
-                  <chakra.button
-                    aria-label={title}
-                    disabled={disabled}
-                    onClick={onClick}
-                    fontSize="xs"
-                    px="1.5"
-                    py="0.5"
-                    border="1px solid var(--border)"
-                    borderRadius="var(--radius-sm)"
-                    background={disabled ? "transparent" : "var(--bg-input)"}
-                    color={disabled ? "var(--text-muted)" : "var(--text)"}
-                    cursor={disabled ? "not-allowed" : "pointer"}
-                    _hover={disabled ? {} : { background: "var(--bg-muted)" }}
-                    whiteSpace="nowrap"
-                    lineHeight={1.4}
-                  >
-                    {label}
-                  </chakra.button>
-                </Tooltip>
-              );
-              const handleNext = () => {
-                if (isLast && canLoadMore && !loadingMore) onLoadMore?.();
-                if (!isLast) setPagination((p) => ({ ...p, pageIndex: p.pageIndex + 1 }));
-              };
-              return (
-                <Box
-                  role="navigation"
-                  aria-label="pagination"
-                  display="flex"
-                  alignItems="center"
-                  flexWrap="wrap"
-                  gap="1.5"
-                  px="2.5"
-                  py="1.25"
-                  fontSize="xs"
-                  color="app.textMuted"
-                  borderTop="1px solid"
-                  borderColor="app.borderSubtle"
-                  bg="app.toolbar"
-                  flexShrink={0}
-                >
-                  {navButton("«", t("paginationFirst"), isFirst, () =>
-                    setPagination((p) => ({ ...p, pageIndex: 0 })),
-                  )}
-                  {navButton("‹", t("paginationPrev"), isFirst, () =>
-                    setPagination((p) => ({ ...p, pageIndex: p.pageIndex - 1 })),
-                  )}
-                  <chakra.span color="app.text" whiteSpace="nowrap">
-                    {t("paginationPage", { page: pageIndex + 1, pages: pageCount })}
-                  </chakra.span>
-                  {navButton("›", t("paginationNext"), isLast && !canLoadMore, handleNext)}
-                  {navButton("»", t("paginationLast"), isLast && !canLoadMore, () =>
-                    setPagination((p) => ({ ...p, pageIndex: pageCount - 1 })),
-                  )}
-                  <chakra.span whiteSpace="nowrap">
-                    {totalLoaded > 0 ? t("paginationRows", { from, to, total: totalLoaded }) : ""}
-                  </chakra.span>
-                  {loadingMore && (
-                    <Box display="flex" alignItems="center" gap="1">
-                      <Spinner size={12} />
-                      <chakra.span>{t("paginationLoadingMore")}</chakra.span>
-                    </Box>
-                  )}
-                  {!loadingMore && isLast && canLoadMore && (
-                    <chakra.span color="app.textMuted" fontStyle="italic">
-                      {t("paginationCanLoadMore")}
-                    </chakra.span>
-                  )}
-                  <chakra.span
-                    marginLeft="auto"
+            {ghostRows.length > 0 && result && (
+              <RemovedRowsGhost
+                columns={result.columns.map((c) => c.name)}
+                rows={ghostRows}
+                maskedCols={resolveMaskedColumns(
+                  result.columns.map((c) => c.name),
+                  maskConfig ?? {
+                    enabled: settings.columnMaskEnabled,
+                    patterns: settings.columnMaskPatterns,
+                  },
+                )}
+              />
+            )}
+            {!paginateMode && loadingMore && (
+              <Box
+                role="status"
+                aria-live="polite"
+                position="sticky"
+                bottom={0}
+                display="flex"
+                alignItems="center"
+                justifyContent="center"
+                gap="1.5"
+                py="1.5"
+                px="2.5"
+                fontSize="sm"
+                color="app.textMuted"
+                borderTop="1px solid"
+                borderColor="app.borderSubtle"
+                bg="app.surfaceMuted"
+              >
+                <Spinner size={14} />
+                {t("gridLoadingMore")}
+              </Box>
+            )}
+            {paginateMode &&
+              (() => {
+                const totalLoaded = result.rows.length;
+                const { pageIndex, pageSize } = pagination;
+                const pageCount = Math.max(1, Math.ceil(totalLoaded / pageSize));
+                const from = pageIndex * pageSize + 1;
+                const to = Math.min((pageIndex + 1) * pageSize, totalLoaded);
+                const isFirst = pageIndex === 0;
+                const isLast = pageIndex >= pageCount - 1;
+                const navButton = (label: string, title: string, disabled: boolean, onClick: () => void) => (
+                  <Tooltip label={title} focusableWrapper={disabled}>
+                    <chakra.button
+                      aria-label={title}
+                      disabled={disabled}
+                      onClick={onClick}
+                      fontSize="xs"
+                      px="1.5"
+                      py="0.5"
+                      border="1px solid var(--border)"
+                      borderRadius="var(--radius-sm)"
+                      background={disabled ? "transparent" : "var(--bg-input)"}
+                      color={disabled ? "var(--text-muted)" : "var(--text)"}
+                      cursor={disabled ? "not-allowed" : "pointer"}
+                      _hover={disabled ? {} : { background: "var(--bg-muted)" }}
+                      whiteSpace="nowrap"
+                      lineHeight={1.4}
+                    >
+                      {label}
+                    </chakra.button>
+                  </Tooltip>
+                );
+                const handleNext = () => {
+                  if (isLast && canLoadMore && !loadingMore) onLoadMore?.();
+                  if (!isLast) setPagination((p) => ({ ...p, pageIndex: p.pageIndex + 1 }));
+                };
+                return (
+                  <Box
+                    role="navigation"
+                    aria-label="pagination"
                     display="flex"
                     alignItems="center"
-                    gap="1"
-                    whiteSpace="nowrap"
+                    flexWrap="wrap"
+                    gap="1.5"
+                    px="2.5"
+                    py="1.25"
+                    fontSize="xs"
+                    color="app.textMuted"
+                    borderTop="1px solid"
+                    borderColor="app.borderSubtle"
+                    bg="app.toolbar"
+                    flexShrink={0}
                   >
-                    {t("paginationRowsPerPage")}
-                    <chakra.select
-                      aria-label={t("paginationRowsPerPage")}
-                      value={String(pageSize)}
-                      onChange={(e) => {
-                        const newSize = Number(e.target.value);
-                        setPagination({ pageIndex: 0, pageSize: newSize });
-                      }}
-                      fontSize="xs"
-                      fontFamily="inherit"
-                      py="0.25"
-                      px="1"
-                      border="1px solid var(--border)"
-                      background="var(--bg-input)"
-                      color="var(--text)"
-                      borderRadius="var(--radius-sm)"
+                    {navButton("«", t("paginationFirst"), isFirst, () =>
+                      setPagination((p) => ({ ...p, pageIndex: 0 })),
+                    )}
+                    {navButton("‹", t("paginationPrev"), isFirst, () =>
+                      setPagination((p) => ({ ...p, pageIndex: p.pageIndex - 1 })),
+                    )}
+                    <chakra.span color="app.text" whiteSpace="nowrap">
+                      {t("paginationPage", { page: pageIndex + 1, pages: pageCount })}
+                    </chakra.span>
+                    {navButton("›", t("paginationNext"), isLast && !canLoadMore, handleNext)}
+                    {navButton("»", t("paginationLast"), isLast && !canLoadMore, () =>
+                      setPagination((p) => ({ ...p, pageIndex: pageCount - 1 })),
+                    )}
+                    <chakra.span whiteSpace="nowrap">
+                      {totalLoaded > 0 ? t("paginationRows", { from, to, total: totalLoaded }) : ""}
+                    </chakra.span>
+                    {loadingMore && (
+                      <Box display="flex" alignItems="center" gap="1">
+                        <Spinner size={12} />
+                        <chakra.span>{t("paginationLoadingMore")}</chakra.span>
+                      </Box>
+                    )}
+                    {!loadingMore && isLast && canLoadMore && (
+                      <chakra.span color="app.textMuted" fontStyle="italic">
+                        {t("paginationCanLoadMore")}
+                      </chakra.span>
+                    )}
+                    <chakra.span
+                      marginLeft="auto"
+                      display="flex"
+                      alignItems="center"
+                      gap="1"
+                      whiteSpace="nowrap"
                     >
-                      {RESULT_GRID_PAGE_SIZE_OPTIONS.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </chakra.select>
-                  </chakra.span>
-                </Box>
-              );
-            })()}
-        </Box>
+                      {t("paginationRowsPerPage")}
+                      <chakra.select
+                        aria-label={t("paginationRowsPerPage")}
+                        value={String(pageSize)}
+                        onChange={(e) => {
+                          const newSize = Number(e.target.value);
+                          setPagination({ pageIndex: 0, pageSize: newSize });
+                        }}
+                        fontSize="xs"
+                        fontFamily="inherit"
+                        py="0.25"
+                        px="1"
+                        border="1px solid var(--border)"
+                        background="var(--bg-input)"
+                        color="var(--text)"
+                        borderRadius="var(--radius-sm)"
+                      >
+                        {RESULT_GRID_PAGE_SIZE_OPTIONS.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </chakra.select>
+                    </chakra.span>
+                  </Box>
+                );
+              })()}
+          </Box>
+          <Box ref={setRulerHost} display="flex" flex="none" />
+        </Flex>
         <AnimatePresence>
           {showExport && (
             <ExportModal
