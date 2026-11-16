@@ -106,6 +106,8 @@ function parseDateFast(s: string): number {
   const mo = dig(s, 5) * 10 + dig(s, 6);
   const d = dig(s, 8) * 10 + dig(s, 9);
   if (mo < 1 || mo > 12 || d < 1 || d > 31) return Number.NaN;
+  // Date.UTC は 0〜99 年を 1900 年代として読むので、遅い経路 (Date.parse) に任せる
+  if (y < 100) return Number.NaN;
   if (n === 10) return Date.UTC(y, mo - 1, d);
   const sep = s.charCodeAt(10);
   if (n < 19 || (sep !== 32 && sep !== 84) || s.charCodeAt(13) !== 58 || s.charCodeAt(16) !== 58) {

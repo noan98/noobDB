@@ -22,7 +22,7 @@ function scheduleIdle(cb: () => void): Cancel {
     cancelIdleCallback?: (id: number) => void;
   };
   if (typeof w.requestIdleCallback === "function") {
-    const id = w.requestIdleCallback(cb);
+    const id = w.requestIdleCallback(cb, { timeout: 2000 });
     return () => w.cancelIdleCallback?.(id);
   }
   const id = setTimeout(cb, 0);
@@ -57,23 +57,28 @@ export function useColumnDistributions(
     let cancelled = false;
     let cancel: Cancel = () => {};
     const count = columnNames.length;
-    const accs = Array.from({ length: count }, (_, i) =>
-      createDistributionAccumulator(rows.length, i, kindsRef.current[i] ?? "string"),
-    );
+    // 集計状態は今の列の分だけ持ち、済んだら結果だけ残して捨てる (全列ぶんを同時に抱えない)
+    const list: (ColumnDistribution | null)[] = [];
+    const makeAcc = (i: number) =>
+      createDistributionAccumulator(rows.length, i, kindsRef.current[i] ?? "string");
     let col = 0;
+    let acc = makeAcc(0);
     const step = () => {
       if (cancelled) return;
       const start = performance.now();
       while (col < count) {
-        const done = advanceDistribution(accs[col], rows, DIST_ROWS_PER_STEP);
-        if (done) col++;
+        const done = advanceDistribution(acc, rows, DIST_ROWS_PER_STEP);
+        if (done) {
+          list.push(finishDistribution(acc));
+          col++;
+          if (col < count) acc = makeAcc(col);
+        }
         if (performance.now() - start >= SLICE_BUDGET_MS) break;
       }
       if (col < count) {
         cancel = scheduleIdle(step);
         return;
       }
-      const list = accs.map(finishDistribution);
       setState({ key: columnKey, list });
     };
     cancel = scheduleIdle(step);
