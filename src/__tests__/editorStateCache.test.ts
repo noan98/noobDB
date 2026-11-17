@@ -15,6 +15,7 @@ const applied: AppliedEditorConfig = {
   lint: "1",
   keymap: "k",
   placeholder: "p",
+  searchPhrases: "s",
 };
 
 function entry(doc: string): CachedEditorState {

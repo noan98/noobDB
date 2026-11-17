@@ -31,6 +31,7 @@ const base: WorkspaceViewInput = {
   showServerInfo: false,
   showSizes: false,
   showCompareResults: false,
+  showNotebook: false,
   showForm: false,
   showSnippetForm: false,
   sessionId: null,
@@ -71,6 +72,7 @@ describe("workspaceViewKey", () => {
   it("接続不要のサーフェス (比較・結果比較・各フォーム) はセッション無しでも開く", () => {
     expect(workspaceViewKey({ ...base, showCompare: true })).toBe("compare");
     expect(workspaceViewKey({ ...base, showCompareResults: true })).toBe("compareResults");
+    expect(workspaceViewKey({ ...base, showNotebook: true })).toBe("notebook");
     expect(workspaceViewKey({ ...base, showForm: true })).toBe("form");
     expect(workspaceViewKey({ ...base, showSnippetForm: true })).toBe("snippetForm");
   });
@@ -118,6 +120,7 @@ describe("workspaceSurfaceKey (#1311)", () => {
   it("接続を持たないサーフェスは view 名のまま", () => {
     expect(workspaceSurfaceKey("compare", { ...input, sessionId: null })).toBe("compare");
     expect(workspaceSurfaceKey("compareResults", input)).toBe("compareResults");
+    expect(workspaceSurfaceKey("notebook", input)).toBe("notebook");
   });
 
   it("接続スコープのサーフェスは接続と対象 DB が変われば別インスタンスになる", () => {

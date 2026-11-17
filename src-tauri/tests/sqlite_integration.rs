@@ -5496,6 +5496,7 @@ async fn import_rows_with_binary_unhexes_blob_columns_in_the_insert() {
             100,
             &t::ImportConflict::insert_only(),
             &[false, true, false],
+            &[],
             |_| Ok(()),
         )
         .await

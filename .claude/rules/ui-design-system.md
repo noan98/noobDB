@@ -252,7 +252,7 @@ App Shell は `Sidebar / Main Workspace / Bottom Panel` の 3 領域 (#1112) に
 | 一時的な操作 (作成・変更・確認・エクスポート設定) | **Modal** | `Modal.tsx` |
 | SQL を書きながら参照する情報 (実行ログ・メッセージ・アドバイザ・インスペクタ・プロセス監視・テーブル構造) | **Bottom Panel** | `BottomPanel.tsx` + `bottomPanelTabs.ts` |
 | 選んだ 1 行 / 1 セルの詳細 (ワークスペースの右端) | **Right Inspector** | `RowInspector.tsx` (結果グリッドの Alt+Enter / 右クリック) |
-| それ自体が作業対象で広い面積が要るもの (ER 図・スキーマ比較・ユーザ管理・結果比較) | **全画面サーフェス** | `App.tsx` の三項チェーン + `workspaceView.ts` |
+| それ自体が作業対象で広い面積が要るもの (ER 図・スキーマ比較・ユーザ管理・結果比較・SQL ノートブック) | **全画面サーフェス** | `App.tsx` の三項チェーン + `workspaceView.ts` |
 | 参照/呼び出しのショートカット (お気に入りスニペット・最近のクエリ・お気に入り/最近のテーブル) | **Floating Launcher** | `QuickLauncher.tsx` + `quickLauncher.ts` (#1254) |
 
 **Floating Launcher は第 5 の置き場で、参照/呼び出しのショートカット専用** (#1254)。

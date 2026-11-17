@@ -22,6 +22,7 @@ import {
   IconChevronDown,
   IconChevronLeft,
   IconChevronRight,
+  IconChevronUp,
   IconClock,
   IconCode,
   IconCodePlus,
@@ -35,6 +36,7 @@ import {
   IconEyeOff,
   IconFilter,
   IconFlask,
+  IconGripVertical,
   IconGitBranch,
   IconGitCompare,
   IconHash,
@@ -52,8 +54,10 @@ import {
   IconMessageCode,
   IconMinimize,
   IconMoon,
+  IconNotebook,
   IconPin,
   IconPlayerPlayFilled,
+  IconPlayerStop,
   IconPlugConnectedX,
   IconPlus,
   IconRefresh,
@@ -137,6 +141,8 @@ import {
  * | 整形 (フォーマット)        | `format`        |
  * | もっと見る (オーバーフローメニュー) | `more`  |
  * | 削除 (行・項目を消す破壊的操作) | `trash`    |
+ * | ノートブック (説明 + SQL セルの文書) | `notebook` |
+ * | ドラッグで並べ替えるつまみ / 上へ移動 / 実行の中止 | `grip` / `chevron-up` / `stop` |
  *
  * ## サイズ / ストローク規約
  *
@@ -248,7 +254,11 @@ export type IconName =
   | "join-left"
   | "fk-parent"
   | "fk-child"
-  | "link-logical";
+  | "link-logical"
+  | "notebook"
+  | "grip"
+  | "chevron-up"
+  | "stop";
 
 /**
  * アイコンのサイズトークン。値は `App.css` の `--text-*` / `--space-*` と同じ
@@ -444,6 +454,14 @@ const GLYPHS: Record<Exclude<IconName, BrandIconName | VennIconName>, TablerIcon
   // 外部キーの向き (#2267): 参照先 (親) へ向かう右上向き / 参照元 (子) から戻る左下向き。
   "fk-parent": IconArrowUpRight,
   "fk-child": IconArrowDownLeft,
+  // SQL ノートブック (#2380): 説明と SQL セルを並べた文書。
+  notebook: IconNotebook,
+  // ドラッグで並べ替えるつまみ (ノートブックのセル)。
+  grip: IconGripVertical,
+  // 上へ移動 (`chevron-down` と対)。
+  "chevron-up": IconChevronUp,
+  // 実行の中止 (`play` と対)。
+  stop: IconPlayerStop,
 };
 
 interface IconProps {

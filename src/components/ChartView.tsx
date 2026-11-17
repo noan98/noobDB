@@ -50,6 +50,7 @@ import {
   parsePx,
   roundedBarPath,
   readStoredChartConfig,
+  sanitizeChartConfig,
   valueExtent,
   writeStoredChartConfig,
   type Aggregation,
@@ -121,6 +122,15 @@ interface Props {
   onDrill?: (drill: { conditions: DrillCondition[]; scrollTop: number }) => void;
   /** チャート領域のスクロール位置の復元 (グリッドから戻ってきたとき、#2236)。 */
   initialScrollTop?: number;
+  /**
+   * 外部が持つ設定 (#2380。ノートブックのセルが保存する)。渡すと localStorage (`sourceSql` キー) より優先して
+   * 復元し、列構成に合わなければ既定へ縮退する。
+   */
+  initialConfig?: ChartConfig | null;
+  /** 設定が変わるたびに呼ぶ (#2380)。 */
+  onConfigChange?: (config: ChartConfig) => void;
+  /** 切替セグメントに出すビューの絞り込み (#2380)。 */
+  availableViews?: readonly ResultViewKind[];
 }
 
 // 系列の出現アニメーションを行う要素数の上限。これを超えると数百〜数千の要素を
@@ -138,6 +148,9 @@ export function ChartView({
   onRunQuery,
   onDrill,
   initialScrollTop,
+  initialConfig,
+  onConfigChange,
+  availableViews,
 }: Props) {
   const t = useT();
   // ダークテーマでは系列色 (`categorical`) をコントラスト確保版へ、連続/発散
@@ -153,11 +166,14 @@ export function ChartView({
   const persistKey = useMemo(() => chartConfigKeyFrom(sourceSql), [sourceSql]);
   const [config, setConfigState] = useState<ChartConfig | null>(
     () =>
-      readStoredChartConfig(persistKey, result.columns) ?? defaultChartConfig(result.columns, result.rows),
+      (initialConfig ? sanitizeChartConfig(initialConfig, result.columns) : null) ??
+      readStoredChartConfig(persistKey, result.columns) ??
+      defaultChartConfig(result.columns, result.rows),
   );
   const setConfig = (next: ChartConfig) => {
     setConfigState(next);
     writeStoredChartConfig(persistKey, next);
+    onConfigChange?.(next);
   };
 
   const clientModel = useMemo<ChartModel | null>(
@@ -302,7 +318,7 @@ export function ChartView({
     return (
       <Flex direction="column" h="100%" minH={0} minW={0}>
         <Flex align="center" px="3" py="2" flex="none" borderBottomWidth="1px" borderBottomColor="app.border">
-          <ResultViewSwitch value="chart" onChange={onChangeView} />
+          <ResultViewSwitch value="chart" onChange={onChangeView} views={availableViews} />
         </Flex>
         <Flex flex="1" minH={0} align="center" justify="center">
           <EmptyState
@@ -385,7 +401,7 @@ export function ChartView({
         flexWrap="wrap"
         fontSize="sm"
       >
-        <ResultViewSwitch value="chart" onChange={onChangeView} />
+        <ResultViewSwitch value="chart" onChange={onChangeView} views={availableViews} />
         <ImageExportButton
           filenameBase="chart"
           disabled={

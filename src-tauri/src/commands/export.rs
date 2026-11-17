@@ -849,11 +849,19 @@ fn sql_columns_clause(driver: DriverKind, columns: &[Column]) -> String {
 /// 行ごとに呼ばれるため、中間 `Vec<String>` + `join` を作らず 1 バッファへ直接書く。
 fn sql_values_tuple(driver: DriverKind, columns: &[Column], row: &[Value]) -> String {
     let mut out = String::from("(");
-    for i in 0..columns.len() {
+    for (i, col) in columns.iter().enumerate() {
         if i > 0 {
             out.push_str(", ");
         }
-        out.push_str(&sql_literal(driver, row.get(i).unwrap_or(&Value::Null)));
+        let v = row.get(i).unwrap_or(&Value::Null);
+        // 空間型の列は EWKT 文字列を `ST_GeomFromText(...)` にして書く (#2379)。
+        let spatial = match v {
+            Value::String(s) if crate::db::spatial::is_spatial_column(driver, &col.type_name) => {
+                crate::db::spatial::spatial_sql_literal(driver, s)
+            }
+            _ => None,
+        };
+        out.push_str(&spatial.unwrap_or_else(|| sql_literal(driver, v)));
     }
     out.push(')');
     out

@@ -26,6 +26,8 @@ export interface AppliedEditorConfig {
   keymap: string;
   /** 空エディタのゴースト・プレースホルダ文面 (#1785)。 */
   placeholder: string;
+  /** 検索パネルの文言 (ロケール) を連結したキー。 */
+  searchPhrases: string;
 }
 
 export interface CachedEditorState {

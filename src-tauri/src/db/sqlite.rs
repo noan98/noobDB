@@ -796,6 +796,8 @@ impl SqliteConn {
                 chunk.len(),
                 hex_columns,
                 "unhex",
+                &[],
+                None,
             );
             sql.push_str(&on_conflict);
             let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));

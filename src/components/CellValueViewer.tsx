@@ -17,6 +17,7 @@ import { Segmented } from "./Segmented";
 import { FieldError } from "./modalForm";
 import type { CellBlobHandlers } from "./useCellBlobIo";
 import { MAX_PREVIEW_BYTES, formatBlobSize } from "./blobIo";
+import { SpatialPreview } from "./SpatialPreview";
 
 interface Props {
   /** Column name, shown in the modal header. */
@@ -33,6 +34,8 @@ interface Props {
   editable?: boolean;
   /** 列が JSON 種別か。整形/最小化と JSON バリデーションを有効化する。 */
   isJson?: boolean;
+  /** 列が空間型か (#2379)。値 (EWKT) を形状プレビューとして描く。 */
+  isSpatial?: boolean;
   /**
    * 編集値のバリデーション (結果列インデックスは呼び出し側で束ねる)。問題があれば
    * i18n キーを返す。NOT NULL 制約・型チェックは既存のセル編集と同じ規約に従う。
@@ -96,6 +99,7 @@ export function CellValueViewer({
   isBinary,
   editable,
   isJson,
+  isSpatial,
   validate,
   pendingValue,
   onSave,
@@ -253,6 +257,9 @@ export function CellValueViewer({
       </ModalHeader>
 
       <ModalBody display="flex" flexDirection="column" gap="2">
+        {isSpatial && !isNull && !nullDraft && (
+          <SpatialPreview text={editing ? draft : raw} columnName={columnName} />
+        )}
         {!editing && preview && (
           <chakra.div display="flex" flexDirection="column" gap="2">
             {preview.state === "loading" && (
