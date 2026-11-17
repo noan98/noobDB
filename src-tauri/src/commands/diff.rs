@@ -744,6 +744,11 @@ fn key_literal(driver: DriverKind, column_type: &str, value: &Value) -> String {
         Value::String(s) if is_binary_type(column_type) && is_hex_wire(s) => {
             sql_literal(driver, &Value::Bytes(s.clone()))
         }
+        // 空間型 (#2379): EWKT 文字列は `ST_GeomFromText` にする (MySQL は文字列から GEOMETRY へ暗黙変換できない)。
+        Value::String(s) if crate::db::spatial::is_spatial_column(driver, column_type) => {
+            crate::db::spatial::spatial_sql_literal(driver, s)
+                .unwrap_or_else(|| sql_literal(driver, value))
+        }
         Value::String(s) if is_integer_type(column_type) && is_numeric_literal(s.trim()) => {
             s.trim().to_string()
         }

@@ -84,3 +84,35 @@ MACADDR・MONEY・INTERVAL・BIT/VARBIT・TID(`ctid`)・OID 系に明示分岐�
 
 SQLite はファイルバックドライバで、`DbConnectOptions.file_path` を使い、
 host/port/user/password と SSH トンネルを持ちません (`commands::connection::
+
+## 空間型 (PostGIS geometry / geography、MySQL GEOMETRY 系, #2379)
+
+`db/spatial.rs` が EWKB (PostgreSQL。バイナリ形式は生バイト、テキスト形式は 16 進文字列) と MySQL 内部形式
+(SRID 4 バイト + WKB) を **EWKT 文字列** (`SRID=4326;POINT(1 2)`、SRID 0 は接頭辞なし) に変換する純関数を持つ。
+新しい `Value` 種別は作らず `Value::String` で運ぶ。読めないバイト列 (曲線型・壊れたデータ) は従来どおり 16 進
+(`Bytes`) のまま。SQLite は対象外。列が空間型かは `Column.type_name` (`is_spatial_type_name`) で判定し、書き戻しは
+型を見て `spatial_sql_literal` (`ST_GeomFromText('…', srid)`) にする (data_diff の INSERT/UPDATE・Undo、
+`BulkSetValue::Spatial`、SQL INSERT エクスポート、ネイティブダンプ)。`sql_literal` 単体は型を知らないので、
+空間型の列の値をそのまま渡すと文字列リテラルになる点に注意 (MySQL は文字列から GEOMETRY へ暗黙変換できない)。
+座標は PostGIS / MySQL とも経度, 緯度の順で表示する (MySQL 8 の内部形式も経度, 緯度)。MySQL へ書き戻すときは
+SRID が 0 以外なら `ST_GeomFromText('…', srid, 'axis-order=long-lat')` にする (無いと地理座標系を緯度, 経度として
+読み、値が入れ替わる / ERROR 3617。Rust `spatial_sql_literal` とフロント `cellEdit.ts::spatialLiteral` が同じ形を出す)。
+空間型の判定はドライバ別 (`spatial::is_spatial_column` / フロント `isSpatialColumnType(type, driver)`): MySQL は
+`information_schema` の COLUMN_TYPE が返す `point` / `polygon` などの具体名も空間型、PostgreSQL の標準 `point` /
+`polygon` は対象外、SQLite は `GEOMETRY` と宣言されていても対象外 (SpatiaLite を前提にしない)。
+
+### 空間型の制約と転送 (#2379)
+
+- **MySQL 8.0.12 以上が前提。** `ST_GeomFromText` の第 3 引数 `'axis-order=long-lat'` は MariaDB と
+  MySQL 8.0.12 未満では引数エラーになる。そのため **MariaDB / 8.0.12 未満での SRID≠0 の書き戻しは未対応**
+  (サーバ版による出し分けはしていない)。SRID 0 / 接頭辞なしの WKT は第 3 引数が要らないが、取り込み
+  (`MYSQL_SPATIAL_PLACEHOLDER`) は常に付ける。
+- **接続間転送 (`db/transfer.rs` / `commands/transfer.rs`)**:
+  - Create / Replace: 転送先の空間列は **TEXT (EWKT 文字列)** になる。以前は GEOMETRY が `Bytes` → BLOB 系で
+    運ばれていたが、空間値を `Value::String` (EWKT) で持つようにしたため挙動が変わった。空間型のまま
+    運びたいときは、転送先に先に空間列のテーブルを作って Append / Upsert を使う。
+  - Append / Upsert: 転送先の既存列が空間列なら (`spatial_target_columns`、`TableColumnInfo.data_type` で判定)、
+    MySQL は値を `ST_GeomFromText(?, ?, 'axis-order=long-lat')` で包み、WKT と SRID の 2 つを bind する
+    (文字列のままでは ERROR 1416)。PostgreSQL は EWKT のテキストを `geometry` / `geography` の入力関数が
+    受けるので式で包まない。転送先の列型が読めないときは従来どおりのテキスト bind。
+  - サブセット抽出の別接続書き込み (`commands/subset.rs`) も同じ。

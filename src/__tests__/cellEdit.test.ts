@@ -766,7 +766,9 @@ describe("validateCellInput", () => {
     expect(validateCellInput("yes", "BOOLEAN", true)).toBeNull(); // PostgreSQL が受理する表記
     expect(validateCellInput("maybe", "BOOLEAN", true)).toBe("editInvalidBoolean");
     // 未知の型は決して弾かない (サーバに最終判断を委ねる)。
-    expect(validateCellInput("anything", "GEOMETRY", true)).toBeNull();
+    // 空間型は WKT として読めない入力を弾く (#2379)。
+    expect(validateCellInput("anything", "GEOMETRY", true)).toBe("editInvalidSpatial");
+    expect(validateCellInput("POINT(1 2)", "GEOMETRY", true)).toBeNull();
   });
 });
 
