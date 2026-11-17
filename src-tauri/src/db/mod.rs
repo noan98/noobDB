@@ -65,6 +65,7 @@ pub mod script;
 pub mod script_analysis;
 pub mod server_messages;
 pub mod server_stop;
+pub mod spatial;
 pub mod sqlite;
 pub mod sqlite_rebuild;
 /// ストリーミング結果のバッチ合流と逐次統計 (#1257)。
@@ -974,6 +975,9 @@ impl Connection {
     /// `hex_columns[i]` が真の列のセルは hex テキストで、SQLite / MySQL では
     /// INSERT の値式 (`unhex(?)` / `UNHEX(?)`) でバイト列にする。PostgreSQL は
     /// `\x<hex>` のテキストを bytea が受けるので通常の `import_rows` と同じ (#1530)。
+    /// `spatial_columns[i]` が真の列 (転送先が空間列) は、MySQL だけ WKT と SRID を bind して
+    /// `ST_GeomFromText(?, ?, ...)` で包む (文字列のままでは ERROR 1416 #2379)。PostgreSQL は
+    /// EWKT のテキストを受けるので、SQLite は空間型を持たないので対象外。
     #[allow(clippy::too_many_arguments)]
     pub async fn import_rows_with_binary<F>(
         &self,
@@ -984,6 +988,7 @@ impl Connection {
         batch_size: usize,
         conflict: &ImportConflict,
         hex_columns: &[bool],
+        spatial_columns: &[bool],
         on_progress: F,
     ) -> Result<u64>
     where
@@ -1000,6 +1005,7 @@ impl Connection {
                     batch_size,
                     conflict,
                     hex_columns,
+                    spatial_columns,
                     on_progress,
                 )
                 .await
@@ -3511,12 +3517,14 @@ pub(crate) fn build_insert_sql(
     ncols: usize,
     nrows: usize,
 ) -> String {
-    build_insert_sql_with(table_ident, cols_sql, ncols, nrows, &[], "")
+    build_insert_sql_with(table_ident, cols_sql, ncols, nrows, &[], "", &[], None)
 }
 
 /// [`build_insert_sql`] の拡張。`hex_columns[i]` が真の列は、プレースホルダを
 /// `{unhex_fn}(?)` で包む (hex 文字列で bind した値をバイト列にする)。`hex_columns`
-/// が短い・空のときは残りを素の `?` にする。
+/// が短い・空のときは残りを素の `?` にする。`spatial_columns[i]` が真の列は `spatial_expr`
+/// (空間列用の式。MySQL は WKT と SRID を bind する `ST_GeomFromText(?, ?, ...)`) に置き換える。
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_insert_sql_with(
     table_ident: &str,
     cols_sql: &str,
@@ -3524,6 +3532,8 @@ pub(crate) fn build_insert_sql_with(
     nrows: usize,
     hex_columns: &[bool],
     unhex_fn: &str,
+    spatial_columns: &[bool],
+    spatial_expr: Option<&str>,
 ) -> String {
     let mut tuple = String::with_capacity(ncols * 2 + 2);
     tuple.push('(');
@@ -3534,6 +3544,11 @@ pub(crate) fn build_insert_sql_with(
         if hex_columns.get(c).copied().unwrap_or(false) {
             tuple.push_str(unhex_fn);
             tuple.push_str("(?)");
+        } else if let (true, Some(expr)) = (
+            spatial_columns.get(c).copied().unwrap_or(false),
+            spatial_expr,
+        ) {
+            tuple.push_str(expr);
         } else {
             tuple.push('?');
         }
@@ -5267,6 +5282,45 @@ fn is_aggregate_expr(item: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn insert_sql_wraps_spatial_columns_per_dialect_2379() {
+        use super::build_insert_sql_with;
+        use crate::db::spatial::spatial_import_placeholder;
+        use crate::db::DriverKind;
+        let hex = [false, true, false];
+        let spatial = [false, false, true];
+        // MySQL: 空間列は WKT と SRID を bind する式。バイナリ列は従来どおり UNHEX。
+        assert_eq!(
+            build_insert_sql_with(
+                "`t`",
+                "`a`, `b`, `g`",
+                3,
+                2,
+                &hex,
+                "UNHEX",
+                &spatial,
+                spatial_import_placeholder(DriverKind::Mysql),
+            ),
+            "INSERT INTO `t` (`a`, `b`, `g`) VALUES \
+             (?,UNHEX(?),ST_GeomFromText(?, ?, 'axis-order=long-lat')),\
+             (?,UNHEX(?),ST_GeomFromText(?, ?, 'axis-order=long-lat'))"
+        );
+        // PostgreSQL (式なし): 空間列も素の `?` のまま (EWKT のテキストを geometry 入力関数が受ける)。
+        assert_eq!(
+            build_insert_sql_with(
+                "\"t\"",
+                "\"a\", \"b\", \"g\"",
+                3,
+                1,
+                &[],
+                "",
+                &spatial,
+                spatial_import_placeholder(DriverKind::Postgres),
+            ),
+            "INSERT INTO \"t\" (\"a\", \"b\", \"g\") VALUES (?,?,?)"
+        );
+    }
+
     #[test]
     fn only_database_rejections_are_row_level_import_errors_1598() {
         use super::{is_fatal_db_rejection, is_row_level_import_error, AppError};

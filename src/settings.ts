@@ -178,6 +178,11 @@ export interface Settings {
    */
   columnNullBars: boolean;
   /**
+   * 結果グリッドの列ヘッダに、取得済み行から作るミニ分布 (数値 / 日付のヒストグラム・
+   * 文字列 / 真偽値の上位 3 値・一意度, #2383) を出す。表示専用で追加のクエリは発行しない。
+   */
+  columnDistribution: boolean;
+  /**
    * 結果グリッドの機微カラム表示マスキング (#1069) の ON/OFF。列名が
    * `columnMaskPatterns` に一致する列 (と列ヘッダメニューで個別に指定した列) を
    * 伏せ字で表示する。表示専用で、実値・編集バッファ・エクスポートは不変。
@@ -502,6 +507,7 @@ export const DEFAULT_RICH_CELL_RENDERING = true;
 
 /** Column NULL-rate mini bars are on by default; display-only like rich cells (#911). */
 export const DEFAULT_COLUMN_NULL_BARS = true;
+export const DEFAULT_COLUMN_DISTRIBUTION = true;
 
 /** 機微カラムの表示マスキング (#1069) は既定オン (受け入れ条件: 既定パターンで自動マスク)。 */
 export const DEFAULT_COLUMN_MASK_ENABLED = true;
@@ -901,6 +907,7 @@ export const DEFAULT_SETTINGS: Settings = {
   cellEditOnBlur: DEFAULT_CELL_EDIT_ON_BLUR,
   richCellRendering: DEFAULT_RICH_CELL_RENDERING,
   columnNullBars: DEFAULT_COLUMN_NULL_BARS,
+  columnDistribution: DEFAULT_COLUMN_DISTRIBUTION,
   columnMaskEnabled: DEFAULT_COLUMN_MASK_ENABLED,
   columnMaskPatterns: [...DEFAULT_MASK_PATTERNS],
   columnMaskCopyPlaceholder: DEFAULT_COLUMN_MASK_COPY_PLACEHOLDER,
@@ -1160,6 +1167,7 @@ export function normalizeSettings(input: unknown): Settings {
     cellEditOnBlur?: unknown;
     richCellRendering?: unknown;
     columnNullBars?: unknown;
+    columnDistribution?: unknown;
     columnMaskEnabled?: unknown;
     columnMaskPatterns?: unknown;
     columnMaskCopyPlaceholder?: unknown;
@@ -1280,6 +1288,10 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.richCellRendering === "boolean" ? parsed.richCellRendering : DEFAULT_RICH_CELL_RENDERING,
     columnNullBars:
       typeof parsed.columnNullBars === "boolean" ? parsed.columnNullBars : DEFAULT_COLUMN_NULL_BARS,
+    columnDistribution:
+      typeof parsed.columnDistribution === "boolean"
+        ? parsed.columnDistribution
+        : DEFAULT_COLUMN_DISTRIBUTION,
     columnMaskEnabled:
       typeof parsed.columnMaskEnabled === "boolean" ? parsed.columnMaskEnabled : DEFAULT_COLUMN_MASK_ENABLED,
     columnMaskPatterns: sanitizeMaskPatterns(parsed.columnMaskPatterns, DEFAULT_MASK_PATTERNS),
@@ -1821,6 +1833,13 @@ export function setRichCellRendering(value: boolean): void {
 export function setColumnNullBars(value: boolean): void {
   if (current.columnNullBars === value) return;
   current = { ...current, columnNullBars: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setColumnDistribution(value: boolean): void {
+  if (current.columnDistribution === value) return;
+  current = { ...current, columnDistribution: value };
   persist();
   listeners.forEach((cb) => cb());
 }

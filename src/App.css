@@ -236,6 +236,13 @@
   --ruler-changed: var(--preview-highlight);
   --ruler-added: var(--success-solid);
   --ruler-frame: var(--text);
+  /* 列ヘッダのミニ分布 (#2383)。塗りはブランド teal 基調: ライト系は紺を混ぜて白地で沈まない濃さに、
+     ダーク系 (下の [data-theme$="dark"]) は teal そのままで地から浮かせる。 */
+  --dist-h: calc(14px * var(--font-scale));
+  --dist-gap: calc(1px * var(--font-scale));
+  --dist-fill: color-mix(in srgb, var(--brand-teal) 55%, var(--brand-navy-raised));
+  --dist-fill-dim: color-mix(in srgb, var(--dist-fill) 45%, transparent);
+  --dist-track: color-mix(in srgb, var(--text-muted) 14%, transparent);
   /* stagger (深さ順の順次出現)。src/motion.ts の staggerTiming と同じ値 (#1861)。 */
   --stagger-each: 35ms;
   --stagger-delay: 40ms;
@@ -585,6 +592,7 @@
      ワードマークを本文色にする。 */
   --brand-mark-tile: var(--brand-navy-raised);
   --brand-wordmark: var(--text);
+  --dist-fill: var(--brand-teal);
 }
 
 :root[data-theme="dark"] {
@@ -2738,6 +2746,18 @@ body, #root {
   padding: var(--space-2) var(--space-2-5);
   font-size: var(--text-sm);
 }
+/* 置換行の <br> を無効化して、検索と置換を 1 行に流し込む (狭いときだけ折り返して最大 2 行)。
+   閉じるボタンは CodeMirror 既定の絶対配置 (右上) を使うので右余白を空ける。 */
+.cm-editor .cm-panel.cm-search br { display: none; }
+.cm-editor .cm-panel.cm-search { padding-right: var(--space-8); }
+.cm-editor .cm-panel.cm-search .cm-textfield[name="search"],
+.cm-editor .cm-panel.cm-search .cm-textfield[name="replace"] {
+  flex: 1 1 12em;
+  min-width: 8em;
+  max-width: 20em;
+  margin: 0;
+}
+.cm-editor .cm-panel.cm-search .cm-button { margin: 0; }
 .cm-editor .cm-panel.cm-search label {
   display: inline-flex;
   align-items: center;
@@ -3892,4 +3912,75 @@ td.is-find-current::after {
 :root[data-motion="reduced"] .grid-ruler { animation: none; }
 @media (prefers-reduced-motion: reduce) {
   :root:not([data-motion="full"]) .grid-ruler { animation: none; }
+}
+
+/* 結果グリッドの列ヘッダのミニ分布 (#2383)。高さは全列で一定 (有無で列間の整列が崩れない)。
+   ビンの高さは scaleY で表し、再計算時に補間する (reduced-motion では即時)。 */
+.th-dist {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: var(--dist-gap);
+  height: var(--dist-h);
+  margin: var(--space-0-5) 0 var(--space-0-75);
+  padding-bottom: var(--space-0-75);
+}
+.th-dist-bin {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: flex-end;
+  cursor: default;
+}
+.th-dist-bin.is-clickable { cursor: pointer; }
+.th-dist-bin-fill {
+  width: 100%;
+  height: 100%;
+  background: var(--dist-fill);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  transform-origin: bottom center;
+  transition: transform var(--dur-med) var(--ease-out), background-color var(--dur-fast) var(--ease);
+}
+.th-dist-bin.is-dim .th-dist-bin-fill { background: var(--dist-fill-dim); }
+.th-dist-bin.is-clickable:hover .th-dist-bin-fill { background: var(--accent); }
+.th-dist-stack {
+  display: flex;
+  width: 100%;
+  height: 40%;
+  gap: var(--dist-gap);
+  background: var(--dist-track);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.th-dist-seg {
+  height: 100%;
+  min-width: var(--dist-gap);
+  background: var(--dist-fill);
+  transition: flex-grow var(--dur-med) var(--ease-out);
+}
+.th-dist-seg[data-rank="1"] { opacity: 0.7; }
+.th-dist-seg[data-rank="2"] { opacity: 0.45; }
+.th-dist-seg[data-rank="other"] { background: var(--dist-fill-dim); opacity: 1; }
+.th-dist-unique {
+  /* ビンと重ならないよう flex の末尾に置く (ビンのクリックを塞がない)。 */
+  flex: none;
+  align-self: flex-start;
+  margin-left: var(--space-0-75);
+  padding: 0 var(--space-0-75);
+  font-size: var(--text-3xs);
+  line-height: 1.3;
+  color: var(--text-secondary);
+  background: var(--bg-header);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+:root[data-motion="reduced"] .th-dist-bin-fill,
+:root[data-motion="reduced"] .th-dist-seg { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .th-dist-bin-fill,
+  :root:not([data-motion="full"]) .th-dist-seg { transition: none; }
 }

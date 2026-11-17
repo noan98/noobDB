@@ -2,7 +2,7 @@
  * メイン領域が「今どの全画面サーフェスを表示しているか」の判別子 (#1020)。
  *
  * `App.tsx` の `<main>` 直下は、スキーマ比較 / ER 図 / ユーザ管理 / Server Info /
- * テーブル統計 / 結果比較 / 接続フォーム / スニペットフォーム / 通常ワークスペース
+ * テーブル統計 / 結果比較 / SQL ノートブック / 接続フォーム / スニペットフォーム / 通常ワークスペース
  * という**互いに排他な全画面サーフェス**の三項チェーンになっている。
  *
  * プロセス監視 / クエリインスペクタ / アドバイザは #1112 (Epic #1110 Phase 2) で
@@ -29,6 +29,7 @@ export type WorkspaceViewKey =
   | "serverInfo"
   | "sizes"
   | "compareResults"
+  | "notebook"
   | "form"
   | "snippetForm"
   | "workspace";
@@ -41,6 +42,7 @@ export type WorkspaceViewInput = {
   showServerInfo: boolean;
   showSizes: boolean;
   showCompareResults: boolean;
+  showNotebook: boolean;
   showForm: boolean;
   showSnippetForm: boolean;
   /**
@@ -64,6 +66,7 @@ export function workspaceViewKey(input: WorkspaceViewInput): WorkspaceViewKey {
   if (input.showServerInfo && connected) return "serverInfo";
   if (input.showSizes && !!input.sizesTarget && connected) return "sizes";
   if (input.showCompareResults) return "compareResults";
+  if (input.showNotebook) return "notebook";
   if (input.showForm) return "form";
   if (input.showSnippetForm) return "snippetForm";
   return "workspace";
@@ -97,6 +100,7 @@ export function workspaceSurfaceKey(view: WorkspaceViewKey, input: WorkspaceSurf
   switch (view) {
     case "compare":
     case "compareResults":
+    case "notebook":
       return view;
     case "erd":
     case "users":

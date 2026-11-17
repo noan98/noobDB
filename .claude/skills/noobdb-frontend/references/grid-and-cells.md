@@ -227,3 +227,9 @@
   database/table/tableColumns/rowIdentity を上書きして**テーブルタブと同じ Apply 経路**
   (`applyEditsForTab` → `bulk_update_cells`) を通すので、read_only / confirm_writes / フライトレコーダーは
   そのまま効く。read_only 接続では判定もトグルも出さない。
+
+## 列ヘッダのミニ分布 (#2383)
+
+- 集計は純関数 `components/gridColumnDistribution.ts` (数値・日付 = 最大 16 ビンのヒストグラム、文字列・真偽値・列挙・時刻 = 上位 3 値、JSON / BLOB = 分布なし、全行一意 = unique バッジ)。取得済みの行だけで計算し DB へ問い合わせない。
+- 計算は `useColumnDistributions.ts` が `requestIdleCallback` (無ければ `setTimeout`) で 1 列ずつ 8ms の枠に分けて進める (10 万行でも初回描画を塞がない)。描画は `ColumnDistributionStrip.tsx`、トークンは App.css の `--dist-*`。設定 `columnDistribution` (既定オン)。
+- ビンのクリックは数値列だけ既存の列フィルタ `between` に載せる (整数ビンは両端含む境界)。日付列は範囲フィルタが無いのでホバーのみ。サーバ側フィルタの画面 (`onSetServerFilter`) では無効。

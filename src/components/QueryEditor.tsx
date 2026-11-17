@@ -119,6 +119,7 @@ import { useScanPreflight } from "./useScanPreflight";
 import { PreflightSampleModal } from "./PreflightSampleModal";
 import { buildPreflightSampleSql, PREFLIGHT_MAX_CHARS } from "./preflight";
 import { buildEditorPlaceholder, pickExampleTable } from "./editorPlaceholder";
+import { buildSearchPhrases } from "./searchPhrases";
 import { EditorStateCache, sqlConfigChanged, type AppliedEditorConfig } from "./editorStateCache";
 import { comboToCodeMirror } from "../shortcutKeys";
 import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
@@ -888,6 +889,7 @@ export const QueryEditor = memo(
     const actionKeymapCompartment = useMemo(() => new Compartment(), []);
     const lintCompartment = useMemo(() => new Compartment(), []);
     const placeholderCompartment = useMemo(() => new Compartment(), []);
+    const phrasesCompartment = useMemo(() => new Compartment(), []);
     // 実行時エラーの波線 + ガターマーカー + ホバー (#2330)。手元の構文チェック (linter) とは別系統。
     const aiTipRef = useRef(false);
     const runtimeErrorLayer = useMemo(
@@ -1080,8 +1082,10 @@ export const QueryEditor = memo(
       genericTable: t("editorPlaceholderGenericTable"),
       hint: t("editorPlaceholderHint", { shortcut: formatComboLabel(runCombo) }),
     });
+    const searchPhrases = buildSearchPhrases(t);
     const desiredConfig: AppliedEditorConfig = {
       placeholder: placeholderText,
+      searchPhrases: Object.values(searchPhrases).join("\u0000"),
       driver,
       schemaKey,
       databaseSchema: databaseSchema ?? null,
@@ -1592,6 +1596,8 @@ export const QueryEditor = memo(
             lintCompartment.of(buildLintExtension(sqlLintEnabledRef.current)),
             // 空時のみ出る淡色ゴースト (#1785)。文面は Compartment 越しに差し替える。
             placeholderCompartment.of(placeholder(desiredConfigRef.current.placeholder)),
+            // 検索パネルの文言はロケールに追従させる (#2401)。
+            phrasesCompartment.of(EditorState.phrases.of(buildSearchPhrases(t))),
             sqlCompartment.of(
               buildSqlExtension(
                 sqlArgsRef.current.driver,
@@ -1941,7 +1947,8 @@ export const QueryEditor = memo(
       const lintChanged = applied.lint !== want.lint;
       const keymapChanged = applied.keymap !== want.keymap;
       const placeholderChanged = applied.placeholder !== want.placeholder;
-      if (!sqlChanged && !lintChanged && !keymapChanged && !placeholderChanged) return;
+      const phrasesChanged = applied.searchPhrases !== want.searchPhrases;
+      if (!sqlChanged && !lintChanged && !keymapChanged && !placeholderChanged && !phrasesChanged) return;
       const effects: StateEffect<unknown>[] = [];
       if (sqlChanged) {
         effects.push(
@@ -1962,6 +1969,8 @@ export const QueryEditor = memo(
         effects.push(actionKeymapCompartment.reconfigure(keymap.of(buildActionKeymap(bindingsRef.current))));
       }
       if (placeholderChanged) effects.push(placeholderCompartment.reconfigure(placeholder(want.placeholder)));
+      if (phrasesChanged)
+        effects.push(phrasesCompartment.reconfigure(EditorState.phrases.of(buildSearchPhrases(t))));
       appliedConfigRef.current = want;
       view.dispatch({ effects });
       // 方言 (driver) が変わっても `@codemirror/lint` は doc 変更が無い限り再実行
@@ -1980,6 +1989,7 @@ export const QueryEditor = memo(
       desiredConfig.lint,
       desiredConfig.keymap,
       desiredConfig.placeholder,
+      desiredConfig.searchPhrases,
     ]);
 
     // 設定トグル・ドライバの切替で、カーソル位置の文の帯 (#2354) を計算し直す。
