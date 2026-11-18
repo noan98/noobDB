@@ -225,7 +225,12 @@ export function resolveCellTarget(
 ): NotebookCellTarget {
   if (!connection || connection.profileId === currentProfileId) return { kind: "current" };
   const open = openConnections.find((c) => c.profile.id === connection.profileId);
-  if (open) return { kind: "open", profile: open.profile, sessionId: open.sessionId };
+  // 開いている接続のプロファイルは接続時点のまま (編集保存しても更新されない) なので、安全網の設定
+  // (本番表示など) は保存済みプロファイルの最新を優先する。派生接続など保存一覧に無いときだけ開いている側。
+  if (open) {
+    const fresh = profiles.find((p) => p.id === connection.profileId) ?? open.profile;
+    return { kind: "open", profile: fresh, sessionId: open.sessionId };
+  }
   const saved = profiles.find((p) => p.id === connection.profileId);
   return saved ? { kind: "closed", ref: connection, profile: saved } : { kind: "missing", ref: connection };
 }

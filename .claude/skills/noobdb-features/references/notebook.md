@@ -23,9 +23,16 @@ SQL セルの結果をスナップショットとして `.noobnb` (JSON) に保�
   セルのヘッダの `ListboxSelect` で選ぶ。実行先の解決は純関数 `resolveCellTarget` (`current` / `open` / `closed` / `missing`)。
   - **実行できるのは「開いている接続」(アクティブ + 背景 = `openConnections`) だけ。** ノートブックから接続は張らない
     (閉じている / プロファイルが無いセルは理由をセルに出して実行を止め、「すべて実行」は 1 つも流さない)。
-  - **安全網はセルの接続の設定で効く**: `runNotebookSql` が `req.connection` から背景セッションを引き、`runGuardedDdl` に
-    そのプロファイルと緊急モードを渡して確認ゲート (`is_production` / `confirm_writes` / `read_only` / 危険クエリ) を判定する。
-    `read_only` のサーバ側強制は、そのセッション自身の接続設定による。明示トランザクションは接続ごと (`txBySessionRef`)。
+  - **実行先は「接続 + セッション」の組で固定する**: `NotebookRunRequest.connection` は常に明示 (`{ profileId, sessionId, name }`。
+    既定のセルも省略しない)。`runCells` が実行開始時に組を決め (確認も実行もその組)、`runNotebookSql` は
+    `resolveNotebookRunTarget` で組が `openConnections` に実在するか検証する (無ければ拒否。プロファイルは開いているが
+    セッションが違う = 再接続は別メッセージ)。実行中にアクティブ接続が切り替わっても別の接続では流れない。
+    アクティブかどうかは各コールバックでその都度 `sessionIdRef` と比べる。
+  - **実行中はセルの接続を選べない** (`ListboxSelect` を disabled)。さらにループ内で、開始時と接続が変わったセルがあれば停止する。
+  - **安全網はセルの接続の設定で効く**: 判定に使うプロファイルは最新の設定 (アクティブ接続は `selectedProfile`、背景は保存済み
+    `profiles`。`openConnections` のプロファイルは接続時点のままなので、派生接続など保存一覧に無いときだけ使う) で、
+    `runGuardedDdl` に緊急モードと一緒に渡して確認ゲート (`is_production` / `confirm_writes` / `read_only` / 危険クエリ) を判定する。
+    `read_only` のサーバ側強制は、そのセッション自身の接続設定による。明示トランザクションは接続ごと (`notebookInTransaction`)。
   - 現在と違う接続を指すセルは、この文書で初めて実行するときに接続名 (本番は danger) の確認を出す (承認は文書の世代ごと)。
   - 別の接続のセルは、文書の実行先 DB (`doc.database`) を持ち込まず接続の既定 DB へ寄せる。履歴ナビ・スキーマドリフト記録は
     アクティブな接続のものなので、背景接続のセルでは触らない (スキーマキャッシュは丸ごと破棄)。

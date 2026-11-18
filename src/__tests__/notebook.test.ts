@@ -364,4 +364,17 @@ describe("セル単位の接続 (#2396)", () => {
       resolveCellTarget({ profileId: "tmp", name: "t" }, "my", [my], [{ sessionId: "s-t", profile: tmp }]),
     ).toMatchObject({ kind: "open", sessionId: "s-t" });
   });
+
+  it("実行先の解決: 開いている接続は保存済みプロファイルの最新の設定を使う", () => {
+    const stale = { ...my, is_production: false } as typeof my;
+    const fresh = { ...my, is_production: true } as typeof my;
+    const t = resolveCellTarget(
+      { profileId: "my", name: "x" },
+      "pg",
+      [fresh],
+      [{ sessionId: "s", profile: stale }],
+    );
+    expect(t).toMatchObject({ kind: "open", sessionId: "s" });
+    expect(t.kind === "open" && t.profile.is_production).toBe(true);
+  });
 });

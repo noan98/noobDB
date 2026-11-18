@@ -2041,6 +2041,8 @@ export default function App() {
   }, []);
 
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
+  const profilesRef = useRef(profiles);
+  profilesRef.current = profiles;
   // 直近のプロファイル読込が失敗したか。失敗時に空配列をウェルカム (初回起動) と取り違えない。
   const [profilesLoadError, setProfilesLoadError] = useState<string | null>(null);
   // サンドボックス (壊せる砂場、#747) の一覧。`ConnectionList` の通常プロファイル
@@ -9315,6 +9317,7 @@ export default function App() {
       const target = resolveNotebookRunTarget(req.connection, {
         activeSessionId: sessionIdRef.current,
         activeProfile: selectedProfileRef.current,
+        profiles: profilesRef.current,
         openConnections: openConnectionsRef.current,
         emergencySessions: emergencySessionsRef.current,
         txOwner: txOwnerRef.current,
@@ -9322,15 +9325,21 @@ export default function App() {
         txBySessionHas: (id) => txBySessionRef.current.has(id),
       });
       if (!target) {
+        // プロファイルは開いているのにセッション ID が違う = 再接続された。固定した組では流さない。
+        const reconnected = openConnectionsRef.current.some((c) => c.profile.id === req.connection.profileId);
         throw new NotebookRunError(
-          translate("notebookCellConnNotOpen", { name: req.connection.name }),
+          translate(reconnected ? "notebookCellConnReconnected" : "notebookCellConnNotOpen", {
+            name: req.connection.name,
+          }),
           false,
           false,
           false,
         );
       }
-      const { sid, profile, isActive } = target;
-      if (isActive && connectionStatusRef.current === "reconnecting") {
+      const { sid, profile } = target;
+      // 実行中にアクティブ接続が切り替わりうるので、アクティブかどうかは使う時点で判定する。
+      const isActiveNow = () => sessionIdRef.current === sid;
+      if (isActiveNow() && connectionStatusRef.current === "reconnecting") {
         throw new NotebookRunError(translate("statusReconnectBusy"), false, false, false);
       }
       const driver = profile.driver;
@@ -9412,10 +9421,10 @@ export default function App() {
               setHistoryReloadKey((k) => k + 1);
               // 履歴ナビ・スキーマドリフトはアクティブな接続のもの。背景の接続のセルでは触らない
               // (スキーマキャッシュは接続ごとに持つので、背景のキャッシュは丸ごと捨てる)。
-              if (isActive) pushQueryHistory(stmt);
+              if (isActiveNow()) pushQueryHistory(stmt);
               if (out.schemaMayChange) {
-                invalidateSchemaCache(isActive ? database : null);
-                if (isActive) noteSchemaDdl(stmt, database);
+                invalidateSchemaCache(isActiveNow() ? database : null);
+                if (isActiveNow()) noteSchemaDdl(stmt, database);
               }
             },
             onStatementError: (stmt, err, startedAt) => {
@@ -9431,9 +9440,9 @@ export default function App() {
                 outCtx,
               );
               setHistoryReloadKey((k) => k + 1);
-              if (isActive) pushQueryHistory(stmt);
+              if (isActiveNow()) pushQueryHistory(stmt);
               setStatus({ kind: "key", key: "statusQueryError", vars: { error: err.message }, error: true });
-              if (err.connectionLost && isActive) void handleConnectionLostRef.current();
+              if (err.connectionLost && isActiveNow()) void handleConnectionLostRef.current();
             },
           },
         );

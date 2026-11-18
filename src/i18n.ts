@@ -8973,6 +8973,8 @@ const en = {
   notebookCellConnMessageProd:
     "Cells will run on {names}, which includes a PRODUCTION connection, not the current connection “{current}”. Dangerous-query confirmations and read-only settings follow each cell's own connection.",
   notebookCellConnConfirm: "Run",
+  notebookCellConnReconnected:
+    "The connection “{name}” was reconnected, so the run was stopped. Run it again.",
   notebookCellConnName: "“{name}”",
   notebookCellConnNameSep: ", ",
   notebookCellConnChanged: "A cell's connection was changed while running. Stopped; run it again to confirm.",
@@ -17875,6 +17877,7 @@ const ja: Dict = {
   notebookCellConnMessageProd:
     "セルは現在の接続「{current}」ではなく、本番接続を含む {names} で実行されます。危険クエリの確認と読み取り専用の設定は、セルごとの接続に従います。",
   notebookCellConnConfirm: "実行",
+  notebookCellConnReconnected: "接続「{name}」が再接続されたため中止しました。もう一度実行してください。",
   notebookCellConnName: "「{name}」",
   notebookCellConnNameSep: "、",
   notebookCellConnChanged:

@@ -168,6 +168,8 @@ export interface NotebookRunTargetState {
   /** アクティブな接続のセッション / プロファイル。 */
   activeSessionId: string | null;
   activeProfile: ConnectionProfile | null;
+  /** 保存済みのプロファイル (編集保存で最新になる。背景接続の判定用の設定はここから取る)。 */
+  profiles: readonly ConnectionProfile[];
   /** 開いている接続 (アクティブ + 背景)。 */
   openConnections: readonly { sessionId: string; profile: ConnectionProfile }[];
   emergencySessions: ReadonlySet<string>;
@@ -197,9 +199,11 @@ export function notebookInTransaction(
 }
 
 /**
- * セルの実行先を決める (#2396)。要求の `{profileId, sessionId}` の組が、開いている接続 (またはアクティブな接続) に
- * 実在するときだけ解決する。プロファイルは要求ではなく実在したエントリから取る (設定 = `read_only` /
- * `confirm_writes` / `is_production` は、そのセッションの接続のものを使う)。無ければ null (拒否)。
+ * セルの実行先を決める (#2396)。要求の `{profileId, sessionId}` の組が、開いている接続に実在するときだけ解決する
+ * (無ければ null = 拒否)。確認ゲートに使うプロファイルは**最新の設定**を使う: `openConnections` のプロファイルは
+ * 接続時点のままで、編集保存 (`is_production` / `confirm_writes` / `read_only` の変更) が反映されないため、
+ * アクティブ接続なら `activeProfile`、背景接続なら保存済み `profiles` の同じ ID を優先し、
+ * 無いとき (「別 DB で開く」の派生接続など) だけ開いている側を使う。
  */
 export function resolveNotebookRunTarget(
   conn: { profileId: string; sessionId: string },
@@ -208,14 +212,16 @@ export function resolveNotebookRunTarget(
   const entry = s.openConnections.find(
     (c) => c.sessionId === conn.sessionId && c.profile.id === conn.profileId,
   );
+  if (!entry) return null;
+  const isActive = s.activeSessionId === conn.sessionId;
   const profile =
-    entry?.profile ??
-    (s.activeSessionId === conn.sessionId && s.activeProfile?.id === conn.profileId ? s.activeProfile : null);
-  if (!profile) return null;
+    (isActive && s.activeProfile?.id === conn.profileId ? s.activeProfile : null) ??
+    s.profiles.find((p) => p.id === conn.profileId) ??
+    entry.profile;
   return {
     sid: conn.sessionId,
     profile,
-    isActive: s.activeSessionId === conn.sessionId,
+    isActive,
     emergency: s.emergencySessions.has(conn.sessionId),
     inTx: notebookInTransaction(conn.sessionId, s),
   };

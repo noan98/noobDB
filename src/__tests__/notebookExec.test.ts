@@ -200,6 +200,7 @@ describe("resolveNotebookRunTarget / notebookInTransaction (#2396)", () => {
     return {
       activeSessionId: activeId,
       activeProfile: entry?.profile ?? null,
+      profiles: [] as ConnectionProfile[],
       openConnections: open,
       emergencySessions: new Set<string>(),
       txOwner: activeId,
@@ -234,10 +235,34 @@ describe("resolveNotebookRunTarget / notebookInTransaction (#2396)", () => {
     expect(resolveNotebookRunTarget({ profileId: "nope", sessionId: "s-nope" }, s)).toBeNull();
   });
 
-  it("開いている接続の一覧に無くても、アクティブな接続の組なら解決する", () => {
+  it("両方にあるとき、判定に使うプロファイルは最新側 (アクティブは activeProfile、背景は profiles)", () => {
+    // openConnections 側は接続時点の古い設定 (confirm_writes: false)、新しい側は編集保存後 (true)
+    const stale = mk("x", "mysql", { confirm_writes: false, is_production: false });
+    const fresh = mk("x", "mysql", { confirm_writes: true, is_production: true });
+    const base = {
+      ...state("s-lite"),
+      openConnections: [{ sessionId: "s-x", profile: stale }],
+      profiles: [fresh],
+    };
+    // 背景接続: 保存済み profiles の最新
+    const bg = resolveNotebookRunTarget({ profileId: "x", sessionId: "s-x" }, base);
+    expect(bg).toMatchObject({ isActive: false });
+    expect(bg?.profile).toMatchObject({ confirm_writes: true, is_production: true });
+    // アクティブ接続: activeProfile の最新 (profiles に無くても)
+    const act = resolveNotebookRunTarget(
+      { profileId: "x", sessionId: "s-x" },
+      { ...base, activeSessionId: "s-x", activeProfile: fresh, profiles: [] },
+    );
+    expect(act).toMatchObject({ isActive: true });
+    expect(act?.profile).toMatchObject({ confirm_writes: true, is_production: true });
+    // 保存一覧に無い派生接続は開いている側
+    const derived = resolveNotebookRunTarget({ profileId: "x", sessionId: "s-x" }, { ...base, profiles: [] });
+    expect(derived?.profile).toMatchObject({ confirm_writes: false });
+  });
+
+  it("開いている接続に無い組は、アクティブでも拒否する", () => {
     const s = state("s-my", { openConnections: [] });
-    expect(resolveNotebookRunTarget({ profileId: "my", sessionId: "s-my" }, s)?.isActive).toBe(true);
-    expect(resolveNotebookRunTarget({ profileId: "pg", sessionId: "s-pg" }, s)).toBeNull();
+    expect(resolveNotebookRunTarget({ profileId: "my", sessionId: "s-my" }, s)).toBeNull();
   });
 
   it("緊急モードは接続ごと", () => {
