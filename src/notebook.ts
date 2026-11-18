@@ -59,6 +59,22 @@ export interface NotebookSnapshot {
   valuesTruncated: boolean;
   /** 自動 LIMIT が掛かった行数 (掛からなければ null)。「全 N 行」が実件数でないことを示す。 */
   appliedAutoLimit: number | null;
+  /**
+   * この結果を得たときに実行した SQL の本文 (#2420)。SQL を編集した後の「古い結果」の判定と差分表示に使う。
+   * 古いファイル (#2420 より前) には無いので null (= 不明。古いとは判定しない)。
+   */
+  sql: string | null;
+  /** 実行した接続のプロファイル ID と表示名 (#2396 のセルの接続と突き合わせる)。不明なら null。 */
+  connection: NotebookConnectionRef | null;
+  /** 実行先のデータベース (PostgreSQL ではスキーマ)。接続の既定なら null。 */
+  database: string | null;
+}
+
+/** スナップショットを得た実行の出どころ (`buildSnapshot` / `buildErrorSnapshot` に渡す)。 */
+export interface SnapshotSource {
+  sql: string;
+  connection: NotebookConnectionRef | null;
+  database: string | null;
 }
 
 export type NotebookCellView = "table" | "chart";
@@ -287,12 +303,25 @@ export interface SnapshotInput {
   appliedAutoLimit?: number | null;
 }
 
+function sourceFields(
+  source: SnapshotSource | null,
+): Pick<NotebookSnapshot, "sql" | "connection" | "database"> {
+  return {
+    sql: source ? source.sql : null,
+    connection: source?.connection
+      ? { profileId: source.connection.profileId, name: source.connection.name }
+      : null,
+    database: source?.database ?? null,
+  };
+}
+
 /** 実行結果からスナップショットを作る。行数の上限で切り詰め、マスクを掛ける。 */
 export function buildSnapshot(
   input: SnapshotInput,
   limit: number,
   mask: MaskConfig,
   now: Date = new Date(),
+  source: SnapshotSource | null = null,
 ): NotebookSnapshot {
   const cap = clampSnapshotRowLimit(limit);
   const kept = input.rows.slice(0, cap);
@@ -311,6 +340,7 @@ export function buildSnapshot(
     maskedColumns: masked.maskedColumns,
     valuesTruncated: clipped.truncated,
     appliedAutoLimit: input.appliedAutoLimit ?? null,
+    ...sourceFields(source),
   };
 }
 
@@ -319,6 +349,7 @@ export function buildErrorSnapshot(
   error: string,
   elapsedMs: number,
   now: Date = new Date(),
+  source: SnapshotSource | null = null,
 ): NotebookSnapshot {
   return {
     columns: [],
@@ -333,7 +364,154 @@ export function buildErrorSnapshot(
     maskedColumns: [],
     valuesTruncated: false,
     appliedAutoLimit: null,
+    ...sourceFields(source),
   };
+}
+
+// ── 古い結果の判定 (#2420) ───────────────────────────────────────
+
+/**
+ * SQL を比較用に正規化する。文字列リテラル / 引用符つき識別子 / コメントの外の連続する空白を 1 つにし、
+ * 前後の空白と末尾のセミコロン (と直後の空白) を落とす。リテラルの中の空白は意味があるのでそのまま残す。
+ * 大文字小文字は区別する (リテラルや照合順序で意味が変わりうるため、キーワードの大小だけでは同一扱いにしない)。
+ */
+export function normalizeSqlForCompare(sql: string): string {
+  let out = "";
+  let i = 0;
+  const n = sql.length;
+  let pendingSpace = false;
+  const flushSpace = () => {
+    if (pendingSpace && out.length > 0) out += " ";
+    pendingSpace = false;
+  };
+  while (i < n) {
+    const ch = sql[i];
+    const next = sql[i + 1];
+    if (/\s/.test(ch)) {
+      pendingSpace = true;
+      i += 1;
+      continue;
+    }
+    flushSpace();
+    if (ch === "'" || ch === '"' || ch === "`") {
+      // 同じ引用符の連続 ('' など) はエスケープとして続ける。バックスラッシュも次の 1 文字を飛ばす。
+      let j = i + 1;
+      while (j < n) {
+        if (sql[j] === "\\" && ch !== "`") {
+          j += 2;
+          continue;
+        }
+        if (sql[j] === ch) {
+          if (sql[j + 1] === ch) {
+            j += 2;
+            continue;
+          }
+          break;
+        }
+        j += 1;
+      }
+      out += sql.slice(i, Math.min(j + 1, n));
+      i = j + 1;
+    } else if (ch === "-" && next === "-") {
+      const end = sql.indexOf("\n", i);
+      const stop = end < 0 ? n : end;
+      out += sql.slice(i, stop);
+      i = stop;
+      // 行コメントは改行で終わるので、次のトークンとの間には必ず区切りを入れる。
+      pendingSpace = true;
+    } else if (ch === "/" && next === "*") {
+      const end = sql.indexOf("*/", i + 2);
+      const stop = end < 0 ? n : end + 2;
+      out += sql.slice(i, stop);
+      i = stop;
+    } else {
+      out += ch;
+      i += 1;
+    }
+  }
+  // 末尾のセミコロン (空白をはさんだ連続も) を落とす。
+  return out.replace(/(?:\s*;)+\s*$/, "").trimEnd();
+}
+
+/** 2 つの SQL が (空白・末尾セミコロンの違いを除いて) 同じか。 */
+export function sameSql(a: string, b: string): boolean {
+  return normalizeSqlForCompare(a) === normalizeSqlForCompare(b);
+}
+
+/** 結果が古いと判断した理由。 */
+export type StaleReason = "sql" | "connection";
+
+/**
+ * セルの結果の鮮度。
+ * - `none`: 結果が無い (未実行)。
+ * - `unknown`: 実行時の SQL を記録していない古いファイルのスナップショット。古いとは判定しない。
+ * - `fresh`: 現在の SQL と実行時の SQL が同じ (空白・末尾セミコロンの違いは無視)。
+ * - `stale`: SQL か、セルに指定した接続が実行後に変わった。
+ *
+ * 接続は、セルが接続を明示 (`cell.connection`) しているときだけ比べる。既定 (null) のセルは「現在の接続」で動くので、
+ * 接続を切り替えるたびに全セルが古い扱いになるのを避ける (実行した接続はスナップショットに表示として残す)。
+ */
+export type SnapshotFreshness =
+  | { kind: "none" }
+  | { kind: "unknown" }
+  | { kind: "fresh" }
+  | { kind: "stale"; reasons: StaleReason[] };
+
+export function snapshotFreshness(cell: NotebookSqlCell): SnapshotFreshness {
+  const s = cell.snapshot;
+  if (!s) return { kind: "none" };
+  if (s.sql === null) return { kind: "unknown" };
+  const reasons: StaleReason[] = [];
+  if (!sameSql(cell.sql, s.sql)) reasons.push("sql");
+  if (cell.connection && s.connection && cell.connection.profileId !== s.connection.profileId) {
+    reasons.push("connection");
+  }
+  return reasons.length > 0 ? { kind: "stale", reasons } : { kind: "fresh" };
+}
+
+/** 行単位の差分 (`-` 削除 / `+` 追加 / 空白 2 つは共通)。長すぎる入力は null (差分を出さない)。 */
+export function diffSqlLines(before: string, after: string, maxLines = 1000): string | null {
+  const norm = (t: string) =>
+    t
+      .replace(/\r\n?/g, "\n")
+      .replace(/(?:\s*;)+\s*$/, "")
+      .trimEnd()
+      .split("\n");
+  const a = norm(before);
+  const b = norm(after);
+  if (a.length > maxLines || b.length > maxLines) return null;
+  const lcs: number[][] = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i -= 1) {
+    for (let j = b.length - 1; j >= 0; j -= 1) {
+      lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+  const out: string[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      out.push(`  ${a[i]}`);
+      i += 1;
+      j += 1;
+    } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
+      out.push(`- ${a[i]}`);
+      i += 1;
+    } else {
+      out.push(`+ ${b[j]}`);
+      j += 1;
+    }
+  }
+  for (; i < a.length; i += 1) out.push(`- ${a[i]}`);
+  for (; j < b.length; j += 1) out.push(`+ ${b[j]}`);
+  return out.join("\n");
+}
+
+/** 古い結果を持つ SQL セルの数。 */
+export function countStaleCells(cells: readonly NotebookCell[]): number {
+  let n = 0;
+  for (const c of cells) if (c.kind === "sql" && snapshotFreshness(c).kind === "stale") n += 1;
+  return n;
 }
 
 // ── 保存 / 読み込み ────────────────────────────────────────────────
@@ -358,6 +536,9 @@ function snapshotForFile(s: NotebookSnapshot, mask: MaskConfig) {
     maskedColumns,
     valuesTruncated: s.valuesTruncated || clipped.truncated,
     appliedAutoLimit: s.appliedAutoLimit,
+    sql: s.sql,
+    connection: s.connection ? { profileId: s.connection.profileId, name: s.connection.name } : null,
+    database: s.database,
   };
 }
 
@@ -462,6 +643,10 @@ function parseSnapshot(raw: unknown, limit: number): NotebookSnapshot | null {
     maskedColumns: Array.isArray(raw.maskedColumns)
       ? raw.maskedColumns.filter((x): x is string => typeof x === "string").slice(0, MAX_COLUMNS)
       : [],
+    // #2420 以前のファイルには無い。無ければ「不明」(null) として読む。
+    sql: typeof raw.sql === "string" ? raw.sql.slice(0, MAX_CELL_TEXT_CHARS) : null,
+    connection: parseConnectionRef(raw.connection),
+    database: typeof raw.database === "string" && raw.database ? raw.database.slice(0, 200) : null,
   };
 }
 

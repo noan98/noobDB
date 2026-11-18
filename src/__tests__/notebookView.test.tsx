@@ -115,6 +115,53 @@ describe("NotebookView (#2380)", () => {
     expect(getNotebookState().doc.cells[1]).toMatchObject({ snapshot: { maskedColumns: ["email"] } });
   });
 
+  it("実行後に SQL を編集すると「古い結果」の目印が出て、再実行で消える (#2420)", async () => {
+    seed(newSqlCell("SELECT 1"));
+    const { onRunSql, props } = setup();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+    });
+    await screen.findByTestId("notebook-snapshot-meta");
+    expect(screen.queryByTestId("notebook-stale")).toBeNull();
+    // 実行時の SQL と接続が結果に残る
+    expect(getNotebookState().doc.cells[0]).toMatchObject({
+      snapshot: { sql: "SELECT 1", connection: { profileId: props.profile?.id } },
+    });
+    // 空白だけの変更は古い扱いにならない
+    fireEvent.change(screen.getByLabelText("sql-editor"), { target: { value: "SELECT 1;  " } });
+    expect(screen.queryByTestId("notebook-stale")).toBeNull();
+    fireEvent.change(screen.getByLabelText("sql-editor"), { target: { value: "SELECT 2" } });
+    expect((await screen.findByTestId("notebook-stale-badge")).textContent).toBe(t("notebookStaleBadge"));
+    expect(screen.getByTestId("notebook-stale-count").textContent).toBe(
+      t("notebookStaleCount", { count: 1 }),
+    );
+    fireEvent.click(screen.getByTestId("notebook-stale-diff-toggle"));
+    expect(screen.getByTestId("notebook-stale-diff").textContent).toBe("- SELECT 1\n+ SELECT 2");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("notebook-stale-rerun"));
+    });
+    await waitFor(() => expect(onRunSql).toHaveBeenCalledTimes(2));
+    expect(onRunSql.mock.calls[1][0]).toBe("SELECT 2");
+    await waitFor(() => expect(screen.queryByTestId("notebook-stale")).toBeNull());
+  });
+
+  it("古い結果があるノートブックの書き出しは確認を出し、取りやめれば書き出さない (#2420)", async () => {
+    const c = newSqlCell("SELECT 2");
+    seed(c);
+    setup();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+    });
+    await screen.findByTestId("notebook-snapshot-meta");
+    fireEvent.change(screen.getByLabelText("sql-editor"), { target: { value: "SELECT 3" } });
+    mocks.save.mockResolvedValue("/tmp/out.md");
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookExportMd")) }));
+    await screen.findByText(t("notebookExportStaleTitle"));
+    fireEvent.click(screen.getAllByRole("button", { name: t("confirmDefaultCancel") }).at(-1) as HTMLElement);
+    await waitFor(() => expect(screen.queryByText(t("notebookExportStaleTitle"))).toBeNull());
+    expect(mocks.writeTextFile).not.toHaveBeenCalled();
+  });
+
   it("確認を取りやめたら (null) 結果は残さず、後続も実行しない", async () => {
     seed(newSqlCell("DELETE FROM t"), newSqlCell("SELECT 2"));
     const onRunSql = vi.fn().mockResolvedValue(null);
