@@ -8977,6 +8977,11 @@ const en = {
   notebookWritesTip:
     "This cell contains a statement that changes data or schema. Running it goes through the same confirmations as the editor.",
   notebookNotRun: "Not run yet",
+  notebookCellLabel: "Cell {n}",
+  notebookExportToc: "Contents",
+  notebookExportChartTable: "Show as table",
+  notebookExportChartAria: "Chart of the query result",
+  notebookExportChartNotExported: "Chart (not exported) — shown as a table",
   notebookSnapshotMeta: "Run {time} · {rows} rows · {ms} ms",
   notebookTruncated: "Saved only the first {shown} of {total} rows (snapshot row limit).",
   notebookAffected: "{rows} rows affected",
@@ -17948,6 +17953,11 @@ const ja: Dict = {
   notebookWritesTip:
     "このセルにはデータやスキーマを変更する文が含まれます。実行はエディタと同じ確認を通ります。",
   notebookNotRun: "未実行",
+  notebookCellLabel: "セル {n}",
+  notebookExportToc: "目次",
+  notebookExportChartTable: "表で表示",
+  notebookExportChartAria: "クエリ結果のチャート",
+  notebookExportChartNotExported: "チャート (書き出し非対応) — 表で表示",
   notebookSnapshotMeta: "実行 {time} · {rows} 行 · {ms} ms",
   notebookTruncated: "先頭 {shown} 行のみ保存しています (全 {total} 行、保存行数の上限)。",
   notebookAffected: "{rows} 行に影響",

@@ -133,6 +133,11 @@ function exportText(): NotebookExportText {
     valuesTruncated: (chars) => translate("notebookValuesTruncated", { chars }),
     exportedAt: (time) => translate("notebookExportedAt", { time }),
     connection: (name) => translate("notebookConnectionLine", { name }),
+    cellLabel: (n) => translate("notebookCellLabel", { n }),
+    toc: translate("notebookExportToc"),
+    chartTable: translate("notebookExportChartTable"),
+    chartAria: translate("notebookExportChartAria"),
+    chartNotExported: translate("notebookExportChartNotExported"),
     stale: (reasons) =>
       reasons.length > 1
         ? translate("notebookExportStaleNoteBoth")

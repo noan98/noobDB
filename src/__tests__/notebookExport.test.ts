@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildSnapshot, createEmptyNotebook, newMarkdownCell, newSqlCell } from "../notebook";
+import { buildChartFigure } from "../notebookChartSvg";
 import { notebookToHtml, notebookToMarkdown, type NotebookExportText } from "../notebookExport";
 
 const text: NotebookExportText = {
@@ -15,6 +16,11 @@ const text: NotebookExportText = {
   autoLimit: (n) => `自動 LIMIT ${n}`,
   valuesTruncated: (n) => `${n} 文字で切り詰め`,
   stale: (r) => `古い結果: ${r.join("+")}`,
+  cellLabel: (n) => `セル ${n}`,
+  toc: "目次",
+  chartTable: "表で表示",
+  chartAria: "チャート",
+  chartNotExported: "チャート (書き出し非対応) — 表で表示",
 };
 
 function build() {
@@ -139,5 +145,116 @@ describe("古い結果の注記 (#2420)", () => {
   it("同じ SQL (空白・末尾セミコロンの違いだけ) や実行時の SQL が不明な結果には注記しない", () => {
     expect(notebookToMarkdown(withStale("SELECT 1", "SELECT 1;"), text)).not.toContain("古い結果");
     expect(notebookToHtml(build(), text, "ja")).not.toContain("古い結果");
+  });
+});
+
+describe("レポート仕上げ (#2421)", () => {
+  const NOW = new Date("2026-01-02T03:04:05Z");
+  function chartDoc(
+    type: "bar" | "pie" | "line" | "area" | "stackedBar" | "scatter" | "histogram" | "combo",
+  ) {
+    const d = createEmptyNotebook(null);
+    const c = newSqlCell("SELECT name, total, cnt FROM t");
+    c.snapshot = buildSnapshot(
+      {
+        columns: [
+          { name: "<name>", type_name: "text" },
+          { name: "total", type_name: "int" },
+          { name: "cnt", type_name: "int" },
+        ],
+        rows: [
+          ["<script>x</script>", 10, 1],
+          ["b", 20, 2],
+          ["c", null, 3],
+        ],
+        totalRows: 3,
+        rowsAffected: 0,
+        hasColumns: true,
+        elapsedMs: 7,
+      },
+      10,
+      { enabled: false, patterns: [] },
+      NOW,
+    );
+    c.view = "chart";
+    c.chart = {
+      type,
+      xCol: type === "scatter" || type === "histogram" ? 1 : 0,
+      yCols: type === "combo" ? [1, 2] : [type === "scatter" ? 2 : 1],
+      aggregation: "none",
+    };
+    d.cells = [newMarkdownCell("# 概要\n\n## 集計 <b>"), c];
+    return d;
+  }
+
+  it.each(["bar", "pie", "line", "area", "stackedBar", "scatter", "histogram", "combo"] as const)(
+    "チャートセル (%s) はインライン SVG になり、表が <details> で併記される",
+    (type) => {
+      const html = notebookToHtml(chartDoc(type), text, "ja", NOW);
+      expect(html).toContain("<svg");
+      expect(html).toContain("<details><summary>表で表示</summary>");
+      expect(html).not.toMatch(
+        /<(link|script|img|iframe|object|embed|image|use|foreignObject)\b|@import|url\(|https?:\/\//i,
+      );
+      expect(html).not.toContain("<script>");
+    },
+  );
+
+  it("SVG 内のラベル・系列名はエスケープされ、ライト/ダーク両方の色を持つ", () => {
+    const html = notebookToHtml(chartDoc("bar"), text, "ja", NOW);
+    const svg = html.slice(html.indexOf("<figure"), html.indexOf("</figure>"));
+    expect(svg).toContain("&lt;script&gt;x");
+    expect(svg).not.toContain("<script");
+    expect(svg).toContain("@media (prefers-color-scheme: dark)");
+    const fig = buildChartFigure(
+      [
+        { name: '"><svg onload=1>', type_name: "text" },
+        { name: "v", type_name: "int" },
+      ],
+      [['"><svg onload=1>', 1]],
+      { type: "pie", xCol: 0, yCols: [1], aggregation: "none" },
+      "chX",
+      '"><b>',
+    );
+    expect(fig?.html).not.toContain("<svg onload");
+    expect(fig?.html).not.toContain('"><b>');
+  });
+
+  it("描けないチャート (系列なし) は null で、表だけになる", () => {
+    expect(
+      buildChartFigure(
+        [{ name: "a", type_name: "text" }],
+        [],
+        { type: "bar", xCol: 0, yCols: [], aggregation: "none" },
+        "ch1",
+        "x",
+      ),
+    ).toBeNull();
+  });
+
+  it("SQL はトークンごとに色分けされ、ライト/ダーク両方の配色変数を持つ", () => {
+    const html = notebookToHtml(chartDoc("bar"), text, "ja", NOW, () => "postgres");
+    expect(html).toContain('<span class="t-keyword">SELECT</span>');
+    expect(html).toContain("--syn-keyword:");
+    expect(html).toMatch(/prefers-color-scheme: dark\)\{:root\{--syn-keyword/);
+  });
+
+  it("数値列は右寄せ、NULL はバッジ、目次は Markdown の見出しから作る", () => {
+    const html = notebookToHtml(chartDoc("bar"), text, "ja", NOW);
+    expect(html).toContain('<th class="num">total</th>');
+    expect(html).toContain('<span class="nullbadge">NULL</span>');
+    expect(html).toContain('<nav class="toc">');
+    expect(html).toContain('<h1 id="nb-h-1">');
+    expect(html).toContain('<a href="#nb-h-2">集計 &lt;b&gt;</a>');
+    expect(html).toContain("セル 1");
+    expect(html).toContain("@media print");
+    expect(html).toContain("position: sticky");
+  });
+
+  it("Markdown 書き出しのチャートセルは表で出し、非対応と明記する", () => {
+    const md = notebookToMarkdown(chartDoc("bar"), text, NOW);
+    expect(md).toContain("チャート (書き出し非対応) — 表で表示");
+    expect(md).toContain("| <name>");
+    expect(notebookToMarkdown(build(), text, NOW)).not.toContain("書き出し非対応");
   });
 });
