@@ -4,7 +4,7 @@ import { buildCteRun, supportsCte } from "../cteRun";
 /** `|` をカーソル位置として、その印を除いた本文でビルドする。 */
 function run(src: string, driver = "postgres", limit: number | null = null) {
   const offset = src.indexOf("|");
-  const text = src.replace(/\|/, "");
+  const text = offset < 0 ? src : src.slice(0, offset) + src.slice(offset + 1);
   return buildCteRun({ text, offset, driver, limit });
 }
 
@@ -89,7 +89,7 @@ describe("buildCteRun", () => {
       "SEARCH DEPTH FIRST BY id SET ord CYCLE id SET is_cycle USING path\nSELECT",
     );
     const later = run(
-      src.replace("|", "").replace("SELECT * FROM u", "SELECT * FROM |u").replace("|", ""),
+      src.split("|").join("").replace("SELECT * FROM u", "SELECT * FROM |u"),
       "postgres",
     );
     expect(later).toBeDefined();
