@@ -83,7 +83,7 @@ function setup(over: Partial<React.ComponentProps<typeof NotebookView>> = {}) {
   // アクティブ接続の切り替えなど、props を差し替えて描画し直す。
   const rerender = (next: Partial<React.ComponentProps<typeof NotebookView>>) =>
     view.rerender(<NotebookView {...props} {...next} />);
-  return { props, onRunSql, rerender };
+  return { props, onRunSql, rerender, unmount: view.unmount };
 }
 
 function seed(...cells: ReturnType<typeof newSqlCell | typeof newMarkdownCell>[]) {
@@ -160,6 +160,33 @@ describe("NotebookView (#2380)", () => {
     fireEvent.click(screen.getAllByRole("button", { name: t("confirmDefaultCancel") }).at(-1) as HTMLElement);
     await waitFor(() => expect(screen.queryByText(t("notebookExportStaleTitle"))).toBeNull());
     expect(mocks.writeTextFile).not.toHaveBeenCalled();
+  });
+
+  it("既定接続の実行中に DB 欄が編集されても、記録される DB は実行開始時の値 (成功・エラーとも)", async () => {
+    for (const fail of [false, true]) {
+      seed(newSqlCell("SELECT 1"));
+      updateNotebook((d) => ({ ...d, database: "before" }));
+      let release: (v: unknown) => void = () => {};
+      const onRunSql = vi.fn().mockImplementation(
+        () =>
+          new Promise((resolve, reject) => {
+            release = () => (fail ? reject(new NotebookRunError("boom", false, false, false)) : resolve(OUT));
+          }),
+      );
+      const { unmount } = setup({ onRunSql });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+      });
+      await waitFor(() => expect(onRunSql).toHaveBeenCalled());
+      expect(onRunSql.mock.calls[0][1]).toMatchObject({ database: "before" });
+      act(() => updateNotebook((d) => ({ ...d, database: "after" })));
+      await act(async () => release(null));
+      await waitFor(() => {
+        const c = getNotebookState().doc.cells[0];
+        expect(c.kind === "sql" && c.snapshot?.database).toBe("before");
+      });
+      unmount();
+    }
   });
 
   it("書き出し確認で「このまま書き出す」を押すと、古い結果の注記つきで書き出す (#2420)", async () => {

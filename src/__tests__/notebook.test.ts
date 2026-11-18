@@ -439,6 +439,17 @@ describe("スナップショットと実行した SQL の結び付け (#2420)", 
     expect(sameSql("SELECT 1 #\n2", "SELECT 1 # 2", "postgres")).toBe(true);
   });
 
+  it("複数行リテラルの中の改行は区別する (開き引用符の直後も)", () => {
+    for (const d of ["postgres", "sqlite", "mysql", undefined]) {
+      expect(sameSql("SELECT 'a\n\nb'", "SELECT 'a\nb'", d)).toBe(false);
+      expect(sameSql("SELECT '\na'", "SELECT 'a'", d)).toBe(false);
+      expect(sameSql("SELECT 'a\nb'", "SELECT 'a\nb'", d)).toBe(true);
+      expect(sameSql("SELECT 1\nFROM t", "SELECT 1 FROM t", d)).toBe(true);
+      expect(sameSql("SELECT /* a\nb */ 1", "SELECT /* a b */ 1", d)).toBe(false);
+    }
+    expect(sameSql("SELECT $$a\n\nb$$", "SELECT $$a\nb$$", "postgres")).toBe(false);
+  });
+
   it("PostgreSQL のドル引用の中の空白は区別する", () => {
     expect(sameSql("SELECT $$a  b$$", "SELECT $$a b$$", "postgres")).toBe(false);
     expect(sameSql("SELECT $t$a  b$t$", "SELECT $t$a b$t$", "postgres")).toBe(false);

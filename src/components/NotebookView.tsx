@@ -854,11 +854,13 @@ export function NotebookView(props: NotebookViewProps) {
       const started = Date.now();
       // 別の接続で流すセルには、文書の実行先 DB (既定の接続の DB 名) を持ち込まない。接続の既定 DB へ寄せる。
       const driverOfCell = pin.profile.driver;
+      // 実行先 DB は実行開始時に 1 度だけ取り出す (実行中に DB 欄が編集されても、実行と記録は同じ値)。
+      const runDatabase = pin.isDefault ? docRef.current.database : null;
       try {
         const limit = clampSnapshotRowLimit(docRef.current.snapshotRowLimit);
         const out = await props.onRunSql(cell.sql, {
           rowCap: limit,
-          database: pin.isDefault ? docRef.current.database : null,
+          database: runDatabase,
           connection: { profileId: pin.profile.id, sessionId: pin.sessionId, name: pin.profile.name },
           onStart: (id) => {
             streamRef.current = id;
@@ -869,7 +871,7 @@ export function NotebookView(props: NotebookViewProps) {
         const source = {
           sql: cell.sql,
           connection: { profileId: pin.profile.id, name: pin.profile.name },
-          database: pin.isDefault ? docRef.current.database : null,
+          database: runDatabase,
         };
         const snapshot = buildSnapshot({ ...out, error: null }, limit, maskRef.current, new Date(), source);
         patchCell(cell.id, { snapshot });
@@ -883,7 +885,7 @@ export function NotebookView(props: NotebookViewProps) {
           snapshot: buildErrorSnapshot(message, Date.now() - started, new Date(), {
             sql: cell.sql,
             connection: { profileId: pin.profile.id, name: pin.profile.name },
-            database: pin.isDefault ? docRef.current.database : null,
+            database: runDatabase,
           }),
         });
         return false;

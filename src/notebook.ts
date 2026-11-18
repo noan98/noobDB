@@ -379,10 +379,20 @@ export function buildErrorSnapshot(
  * (`-- c\nFROM t` と `-- c FROM t` は別の SQL)。大文字小文字は区別する。
  * `driver` が分からなければ undefined (MySQL 方言を含めて保守的に読む)。
  */
+const MAX_NEWLINE_PROBES = 300;
+
+function newlineIsSignificant(probe: string, i: number, driver: string | undefined, many: boolean): boolean {
+  if (many) return true;
+  const replaced = `${probe.slice(0, i)}\u0001${probe.slice(i + 1)}`;
+  return maskLiterals(replaced, driver, { cache: false })[i] === " ";
+}
+
 export function normalizeSqlForCompare(sql: string, driver?: string): string {
   // 空白・タブを全部タブにしてからマスクする: 外側の空白はタブのまま残り、リテラル / コメントの中は空白に潰れるので区別できる。
-  const probe = sql.replace(/[ \t]/g, "\t");
+  const probe = sql.replace(/[ \t\r]/g, "\t");
   const masked = maskLiterals(probe, driver);
+  // 改行ごとにマスクし直すので、極端に多いときは (潰さず全部残す) 保守的な扱いにして計算量を抑える。
+  const many = (sql.match(/\n/g)?.length ?? 0) > MAX_NEWLINE_PROBES;
   let out = "";
   // out の各文字が「リテラル / コメントの外」か (末尾の落とし判定に使う)。
   const outside: boolean[] = [];
@@ -393,14 +403,15 @@ export function normalizeSqlForCompare(sql: string, driver?: string): string {
   };
   for (let i = 0; i < sql.length; i++) {
     const ch = sql[i];
-    const isSpace = ch === " " || ch === "\t";
-    const isNewline = ch === "\n" || ch === "\r";
+    const isSpace = ch === " " || ch === "\t" || ch === "\r";
+    const isNewline = ch === "\n";
     if (isSpace) {
       if (masked[i] === " ") push(ch, false);
       else pending = true;
     } else if (isNewline) {
-      // 直前がマスクされた文字 (コメント / リテラルの中身) なら、行コメントの終端か複数行リテラルの一部。残す。
-      if (i > 0 && masked[i - 1] === " ") {
+      // 改行はマスクでも残るので、マスク結果の比較では内外が分からない。この 1 文字だけ別の文字に差し替えて
+      // マスクし直し、それでも潰れる (= リテラル / ブロックコメントの中、または行コメントの終端) なら残す。
+      if (newlineIsSignificant(probe, i, driver, many)) {
         pending = false;
         push(ch, false);
       } else pending = true;
