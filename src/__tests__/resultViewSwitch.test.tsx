@@ -11,7 +11,7 @@ import { t } from "../i18n";
  * `onChange` が呼ばれることを固定する。
  */
 describe("ResultViewSwitch", () => {
-  it("renders the four views as an exclusive radio group", () => {
+  it("renders the five views as an exclusive radio group", () => {
     renderWithProviders(<ResultViewSwitch value="grid" onChange={() => {}} />);
 
     expect(screen.getByRole("radiogroup", { name: t("resultViewSwitchAria") })).toBeTruthy();
@@ -21,6 +21,7 @@ describe("ResultViewSwitch", () => {
       t("pivotShow"),
       t("chartShow"),
       t("resultViewJson"),
+      t("resultViewHierarchy"),
     ]);
   });
 
@@ -49,14 +50,14 @@ describe("ResultViewSwitch", () => {
     renderWithProviders(<ResultViewSwitch value="pivot" onChange={() => {}} />);
 
     const tabIndexes = screen.getAllByRole("radio").map((r) => r.getAttribute("tabindex"));
-    expect(tabIndexes).toEqual(["-1", "0", "-1", "-1"]);
+    expect(tabIndexes).toEqual(["-1", "0", "-1", "-1", "-1"]);
   });
 
   // tabIndex の静的値だけでは `useRovingFocus` がコンテナに配線されているかまでは
   // 見えないため、実際のキー操作でフォーカスが動くことを固定する。
   it("moves focus with the arrow keys, Home and End", () => {
     renderWithProviders(<ResultViewSwitch value="grid" onChange={() => {}} />);
-    const [grid, pivot, , json] = screen.getAllByRole("radio");
+    const [grid, pivot, , , json] = screen.getAllByRole("radio");
 
     grid.focus();
     fireEvent.keyDown(grid, { key: "ArrowRight" });

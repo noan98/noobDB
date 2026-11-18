@@ -1176,6 +1176,8 @@ export interface Tab {
   showPivot?: boolean;
   /** JSON ビューを表示中か (#1113)。結果グリッドの代わりに行オブジェクトの配列を描く。 */
   showJson?: boolean;
+  /** 階層ビューを表示中か (#2410)。ID 列 / 親 ID 列から木を描く。 */
+  showHierarchy?: boolean;
   /** SQL スクリプトのバッチ実行の文ごとの結果。設定時は結果ビューに代えて表示。 */
   batchResults?: BatchStatementResult[];
   /** バッチ実行のスクリプト本文 (stop/continue 切替で再実行するため保持)。 */
@@ -3011,6 +3013,7 @@ export default function App() {
         showPivot: view === "pivot",
         showChart: view === "chart",
         showJson: view === "json",
+        showHierarchy: view === "hierarchy",
       }));
     },
     [patchTab],
@@ -6795,6 +6798,7 @@ export default function App() {
         showChart: false,
         showPivot: false,
         showJson: false,
+        showHierarchy: false,
         preview: null,
         queryError: null,
         unseenOutcome: undefined,
@@ -6945,6 +6949,7 @@ export default function App() {
         showChart: false,
         showPivot: false,
         showJson: false,
+        showHierarchy: false,
         batchResults: undefined,
         preview: null,
         // トランザクション内の結果は編集させない (Apply は別接続で即コミットされる、#2355)。

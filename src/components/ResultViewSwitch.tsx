@@ -8,20 +8,21 @@ import { Button } from "./ui";
 
 /**
  * 結果パネルが表示している内容の種類。グリッド (素の結果表) / ピボット
- * (クロス集計) / チャート (可視化) / JSON (行オブジェクトの配列、#1113) の 4 択で、
- * `App` のタブ状態 (`showPivot` / `showChart` / `showJson`) と 1 対 1 に対応する。
+ * (クロス集計) / チャート (可視化) / JSON (行オブジェクトの配列、#1113) / 階層 (自己参照の木、#2410) の 5 択 (階層は #2410) で、
+ * `App` のタブ状態 (`showPivot` / `showChart` / `showJson` / `showHierarchy`) と 1 対 1 に対応する。
  */
-export type ResultViewKind = "grid" | "pivot" | "chart" | "json";
+export type ResultViewKind = "grid" | "pivot" | "chart" | "json" | "hierarchy";
 
 const VIEWS: {
   kind: ResultViewKind;
   icon: IconName;
-  labelKey: "gridViewLabel" | "pivotShow" | "chartShow" | "resultViewJson";
+  labelKey: "gridViewLabel" | "pivotShow" | "chartShow" | "resultViewJson" | "resultViewHierarchy";
 }[] = [
   { kind: "grid", icon: "table", labelKey: "gridViewLabel" },
   { kind: "pivot", icon: "pivot", labelKey: "pivotShow" },
   { kind: "chart", icon: "chart", labelKey: "chartShow" },
   { kind: "json", icon: "braces", labelKey: "resultViewJson" },
+  { kind: "hierarchy", icon: "hierarchy", labelKey: "resultViewHierarchy" },
 ];
 
 /**
