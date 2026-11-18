@@ -2415,6 +2415,19 @@ fn build_fixtures() -> serde_json::Value {
         referenced_columns: vec!["id".into()],
         created_at: "2026-01-01T00:00:00Z".into(),
     };
+    let logical_relations_import_parse = t::LogicalRelationsImportParse {
+        relations: vec![t::LogicalRelationInput {
+            table: "orders".into(),
+            columns: vec!["user_id".into()],
+            referenced_table: "users".into(),
+            referenced_columns: vec!["id".into()],
+        }],
+        rejected: vec![t::LogicalRelationRejection {
+            index: 3,
+            error: "logical relation: table name is empty".into(),
+        }],
+        duplicate_in_file_count: 1,
+    };
     let incoming_foreign_key = t::IncomingForeignKey {
         schema: Some("sales".into()),
         table: "orders".into(),
@@ -3242,6 +3255,7 @@ fn build_fixtures() -> serde_json::Value {
         "healthProbeItemVariants": health_probe_item_variants,
         "incomingForeignKey": incoming_foreign_key,
         "logicalRelation": logical_relation,
+        "logicalRelationsImportParse": logical_relations_import_parse,
         "columnDependencyReport": column_dependency_report,
         "viewRebuildPlan": view_rebuild_plan,
         "tableStatistic": table_statistic,

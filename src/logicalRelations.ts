@@ -244,3 +244,50 @@ export function suggestLogicalRelations(
   }
   return out;
 }
+
+/** 取り込み候補が接続先に適用できない理由。表・列の名前は接続先のスキーマの表記と完全一致で比べる。 */
+export type ImportBlockReason =
+  | { kind: "missingTable"; table: string }
+  | { kind: "missingColumn"; table: string; column: string };
+
+/** 取り込みファイルの関係を、接続先のスキーマ・登録済みの一覧と照合した結果 (#2423)。 */
+export interface ImportClassification {
+  /** 接続先に新しく登録できるもの。 */
+  addable: LogicalRelationInput[];
+  /** すでに登録済みの同じ関係 (追加ではスキップされる)。 */
+  existing: LogicalRelationInput[];
+  /** 接続先に存在しない表・列を参照していて適用できないもの。 */
+  blocked: { relation: LogicalRelationInput; reason: ImportBlockReason }[];
+}
+
+function firstBlockReason(
+  r: LogicalRelationInput,
+  tables: ReadonlyMap<string, ReadonlySet<string>>,
+): ImportBlockReason | null {
+  const child = tables.get(r.table);
+  if (!child) return { kind: "missingTable", table: r.table };
+  const parent = tables.get(r.referenced_table);
+  if (!parent) return { kind: "missingTable", table: r.referenced_table };
+  for (const c of r.columns) if (!child.has(c)) return { kind: "missingColumn", table: r.table, column: c };
+  for (const c of r.referenced_columns)
+    if (!parent.has(c)) return { kind: "missingColumn", table: r.referenced_table, column: c };
+  return null;
+}
+
+/** 取り込む関係を「追加できる / 登録済み / 適用できない (存在しない表・列)」に分ける。純関数。 */
+export function classifyImport(
+  incoming: readonly LogicalRelationInput[],
+  tables: readonly SuggestTable[],
+  registered: readonly LogicalRelationInput[],
+): ImportClassification {
+  const schema = new Map(tables.map((tb) => [tb.name, new Set(tb.columns.map((c) => c.name))]));
+  const have = new Set(registered.map(relationKey));
+  const out: ImportClassification = { addable: [], existing: [], blocked: [] };
+  for (const r of incoming) {
+    const reason = firstBlockReason(r, schema);
+    if (reason) out.blocked.push({ relation: r, reason });
+    else if (have.has(relationKey(r))) out.existing.push(r);
+    else out.addable.push(r);
+  }
+  return out;
+}

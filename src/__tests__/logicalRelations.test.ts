@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { LogicalRelationInput, TableColumnInfo } from "../api/tauri";
 import {
   applyLogicalToColumns,
+  classifyImport,
   idStem,
   logicalToForeignKeys,
   mergeForeignKeys,
@@ -260,5 +261,49 @@ describe("stripLogicalFromColumns", () => {
     expect(stripped[1].logical).toBeUndefined();
     expect(stripped[2].referenced_table).toBe("shops");
     expect(stripLogicalFromColumns(cols)).toBe(cols);
+  });
+});
+
+describe("classifyImport (#2423)", () => {
+  const colInfo = (name: string) => ({
+    name,
+    data_type: "bigint",
+    nullable: false,
+    key: "",
+    default: null,
+    extra: "",
+    referenced_table: null,
+    referenced_column: null,
+  });
+  const tables = [
+    { name: "users", columns: [colInfo("id")] },
+    { name: "orders", columns: [colInfo("id"), colInfo("user_id")] },
+  ];
+  const rel = (table: string, columns: string[], rt: string, rcols: string[]) => ({
+    table,
+    columns,
+    referenced_table: rt,
+    referenced_columns: rcols,
+  });
+
+  it("splits into addable / existing / blocked with the first reason", () => {
+    const ok = rel("orders", ["user_id"], "users", ["id"]);
+    const dup = rel("orders", ["id"], "users", ["id"]);
+    const noTable = rel("orders", ["user_id"], "ghosts", ["id"]);
+    const noChildCol = rel("orders", ["nope"], "users", ["id"]);
+    const noParentCol = rel("orders", ["user_id"], "users", ["nope"]);
+    const res = classifyImport([ok, dup, noTable, noChildCol, noParentCol], tables, [dup]);
+    expect(res.addable).toEqual([ok]);
+    expect(res.existing).toEqual([dup]);
+    expect(res.blocked.map((b) => b.reason)).toEqual([
+      { kind: "missingTable", table: "ghosts" },
+      { kind: "missingColumn", table: "orders", column: "nope" },
+      { kind: "missingColumn", table: "users", column: "nope" },
+    ]);
+  });
+
+  it("compares names exactly (case-sensitive)", () => {
+    const res = classifyImport([rel("Orders", ["user_id"], "users", ["id"])], tables, []);
+    expect(res.blocked).toHaveLength(1);
   });
 });

@@ -1077,6 +1077,15 @@ export interface LogicalRelation extends LogicalRelationInput {
   created_at: string;
 }
 
+/** `parse_logical_relations_import` の結果 (#2423)。 */
+export interface LogicalRelationsImportParse {
+  /** 読めた論理リレーション (ファイル内の重複は除いてある)。 */
+  relations: LogicalRelationInput[];
+  /** 形が不正で読み飛ばした要素 (`index` はファイル内の位置、0 始まり)。 */
+  rejected: { index: number; error: string }[];
+  duplicate_in_file_count: number;
+}
+
 /**
  * Approximate row count for one base table, sourced from the engine's own
  * statistics (no `COUNT(*)` scan). `estimate` is `null` when no cheap estimate

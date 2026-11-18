@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
-import type { LogicalRelation, LogicalRelationInput } from "../api/tauri";
+import { downloadDir, join } from "@tauri-apps/api/path";
+import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
+import type { LogicalRelation, LogicalRelationInput, LogicalRelationsImportParse } from "../api/tauri";
 import { api } from "../api/tauri";
 import { useT } from "../i18n";
 import {
+  type ImportBlockReason,
   type LogicalRelationCandidate,
   type SuggestTable,
+  classifyImport,
   relationInput,
   relationKey,
   suggestLogicalRelations,
@@ -18,7 +22,7 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { Skeleton } from "./Skeleton";
 import { useToast } from "./Toast";
-import { Button, Checkbox } from "./ui";
+import { Button, Checkbox, Radio } from "./ui";
 
 /**
  * 論理リレーション (仮想 FK, #2356) の管理ダイアログ。FK 制約を張っていない DB で、`user_id` のような
@@ -51,6 +55,11 @@ interface PairRow {
 const describe = (r: LogicalRelationInput) =>
   `${r.table} (${r.columns.join(", ")}) → ${r.referenced_table} (${r.referenced_columns.join(", ")})`;
 
+/** 取り込めない関係を一覧に出す最大件数 (超えた分は件数だけ示す)。 */
+const BLOCKED_PREVIEW_LIMIT = 50;
+
+type ImportMode = "add" | "replace";
+
 export function LogicalRelationsModal({ sessionId, database, onChanged, onClose }: Props) {
   const t = useT();
   const toast = useToast();
@@ -67,6 +76,9 @@ export function LogicalRelationsModal({ sessionId, database, onChanged, onClose 
 
   const [candidates, setCandidates] = useState<LogicalRelationCandidate[] | null>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set());
+
+  const [importing, setImporting] = useState<LogicalRelationsImportParse | null>(null);
+  const [importMode, setImportMode] = useState<ImportMode>("add");
 
   useEffect(() => {
     mountedRef.current = true;
@@ -180,6 +192,86 @@ export function LogicalRelationsModal({ sessionId, database, onChanged, onClose 
     }
   };
 
+  const classified = useMemo(
+    () => (importing && loaded ? classifyImport(importing.relations, loaded.tables, loaded.relations) : null),
+    [importing, loaded],
+  );
+
+  const describeReason = (reason: ImportBlockReason) =>
+    reason.kind === "missingTable"
+      ? t("logicalRelImportMissingTable", { table: reason.table })
+      : t("logicalRelImportMissingColumn", { table: reason.table, column: reason.column });
+
+  // 登録済みの定義だけを JSON へ書き出す (profile_id・接続情報は Rust 側で落とす)。保存先は保存ダイアログ、
+  // 書き込みは既存の `write_text_file` (Rust 経由。fs capability は増やさない)。
+  const handleExport = async () => {
+    if (!loaded || loaded.relations.length === 0) return;
+    try {
+      let defaultPath = `noobdb-logical-relations-${database}.json`;
+      try {
+        defaultPath = await join(await downloadDir(), defaultPath);
+      } catch {
+        // ダウンロードフォルダが解決できない環境ではファイル名のみで開く。
+      }
+      const picked = await saveFileDialog({
+        defaultPath,
+        title: t("logicalRelExport"),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (typeof picked !== "string" || !picked) return;
+      const json = await api.exportLogicalRelations(sessionId, database);
+      await api.writeTextFile(picked, json);
+      toast.success(t("logicalRelExportSaved", { count: loaded.relations.length, path: picked }));
+    } catch (e) {
+      toast.error(t("logicalRelExportError", { error: String(e) }));
+    }
+  };
+
+  // ファイルを選んで読み、接続先のスキーマと照合したプレビューを出す (まだ何も保存しない)。
+  const handleImportPick = async () => {
+    try {
+      const picked = await openFileDialog({
+        multiple: false,
+        title: t("logicalRelImport"),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (typeof picked !== "string" || !picked) return;
+      const json = await api.readTextFile(picked);
+      const parsed = await api.parseLogicalRelationsImport(json);
+      if (!mountedRef.current) return;
+      setImportMode("add");
+      setImporting(parsed);
+    } catch (e) {
+      toast.error(t("logicalRelImportError", { error: String(e) }));
+    }
+  };
+
+  const confirmImport = async () => {
+    if (!classified || busy) return;
+    const applicable = [...classified.addable, ...classified.existing];
+    if (importMode === "add" ? classified.addable.length === 0 : applicable.length === 0) return;
+    setBusy(true);
+    try {
+      const relations =
+        importMode === "add"
+          ? await api.saveLogicalRelations(sessionId, database, classified.addable.map(relationInput))
+          : await api.replaceLogicalRelations(sessionId, database, applicable.map(relationInput));
+      onChanged?.(database);
+      if (!mountedRef.current) return;
+      setLoaded((l) => (l ? { ...l, relations } : l));
+      setImporting(null);
+      toast.success(
+        t("logicalRelImportDone", {
+          count: importMode === "add" ? classified.addable.length : applicable.length,
+        }),
+      );
+    } catch (e) {
+      toast.error(t("logicalRelImportError", { error: String(e) }));
+    } finally {
+      if (mountedRef.current) setBusy(false);
+    }
+  };
+
   const updatePair = (id: number, patch: Partial<PairRow>) =>
     setPairs((ps) => ps.map((p) => (p.id === id ? { ...p, ...patch } : p)));
   const pickedCount = (candidates ?? []).filter((c) => checked.has(relationKey(c))).length;
@@ -218,7 +310,135 @@ export function LogicalRelationsModal({ sessionId, database, onChanged, onClose 
         {loaded && (
           <>
             <FormSection>
-              <FieldLabel as="div">{t("logicalRelRegistered")}</FieldLabel>
+              <Flex align="center" gap="2">
+                <FieldLabel as="div">{t("logicalRelRegistered")}</FieldLabel>
+                <div style={{ flex: 1 }} />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={busy || loaded.relations.length === 0}
+                  onClick={() => void handleExport()}
+                >
+                  <Icon name="download" size={ICON_SIZES.sm} />
+                  <chakra.span marginLeft="1.5">{t("logicalRelExport")}</chakra.span>
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => void handleImportPick()}
+                >
+                  <Icon name="upload" size={ICON_SIZES.sm} />
+                  <chakra.span marginLeft="1.5">{t("logicalRelImport")}</chakra.span>
+                </Button>
+              </Flex>
+              {importing && classified && (
+                <chakra.div
+                  display="flex"
+                  flexDirection="column"
+                  gap="2"
+                  p="3"
+                  border="1px solid"
+                  borderColor="app.border"
+                  borderRadius="md"
+                  data-testid="logical-relations-import"
+                >
+                  <FieldLabel as="div">{t("logicalRelImportPreview")}</FieldLabel>
+                  <chakra.p fontSize="sm" color="app.textSecondary">
+                    {t("logicalRelImportSummary", {
+                      addable: classified.addable.length,
+                      existing: classified.existing.length,
+                      blocked: classified.blocked.length,
+                    })}
+                    {importing.duplicate_in_file_count > 0 &&
+                      ` ${t("logicalRelImportFileDuplicates", { count: importing.duplicate_in_file_count })}`}
+                  </chakra.p>
+                  {importing.rejected.length > 0 && (
+                    <Callout tone="warning" role="status">
+                      {t("logicalRelImportRejected", {
+                        count: importing.rejected.length,
+                        detail: importing.rejected
+                          .slice(0, 3)
+                          .map((r) => `#${r.index + 1}: ${r.error}`)
+                          .join(" / "),
+                      })}
+                    </Callout>
+                  )}
+                  {classified.blocked.length > 0 && (
+                    <>
+                      <FieldLabel as="div">{t("logicalRelImportBlocked")}</FieldLabel>
+                      <Flex direction="column" gap="1" role="list" aria-label={t("logicalRelImportBlocked")}>
+                        {classified.blocked.slice(0, BLOCKED_PREVIEW_LIMIT).map((b) => (
+                          <Flex key={relationKey(b.relation)} role="listitem" direction="column" px="2">
+                            <chakra.span fontFamily="mono" fontSize="sm" wordBreak="break-all">
+                              {describe(b.relation)}
+                            </chakra.span>
+                            <chakra.span textStyle="caption">{describeReason(b.reason)}</chakra.span>
+                          </Flex>
+                        ))}
+                        {classified.blocked.length > BLOCKED_PREVIEW_LIMIT && (
+                          <chakra.span textStyle="caption" px="2">
+                            {t("logicalRelImportBlockedMore", {
+                              count: classified.blocked.length - BLOCKED_PREVIEW_LIMIT,
+                            })}
+                          </chakra.span>
+                        )}
+                      </Flex>
+                    </>
+                  )}
+                  <Flex direction="column" gap="1" role="radiogroup" aria-label={t("logicalRelImportMode")}>
+                    {(["add", "replace"] as const).map((m) => (
+                      <chakra.label key={m} display="flex" alignItems="flex-start" gap="2" cursor="pointer">
+                        <Radio
+                          name="logical-relations-import-mode"
+                          checked={importMode === m}
+                          onChange={() => setImportMode(m)}
+                          mt="0.75"
+                        />
+                        <chakra.span display="flex" flexDirection="column">
+                          <chakra.span textStyle="subheading">
+                            {t(m === "add" ? "logicalRelImportAdd" : "logicalRelImportReplace")}
+                          </chakra.span>
+                          <chakra.span textStyle="caption">
+                            {t(m === "add" ? "logicalRelImportAddDesc" : "logicalRelImportReplaceDesc")}
+                          </chakra.span>
+                        </chakra.span>
+                      </chakra.label>
+                    ))}
+                  </Flex>
+                  {importMode === "replace" && (
+                    <Callout tone="warning" role="status">
+                      {t("logicalRelImportReplaceWarn", {
+                        count: loaded.relations.filter(
+                          (r) => !classified.existing.some((e) => relationKey(e) === relationKey(r)),
+                        ).length,
+                      })}
+                    </Callout>
+                  )}
+                  <Flex align="center" gap="2">
+                    <div style={{ flex: 1 }} />
+                    <Button type="button" variant="secondary" size="sm" onClick={() => setImporting(null)}>
+                      {t("logicalRelImportCancel")}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={importMode === "replace" ? "dangerOutline" : "primary"}
+                      size="sm"
+                      disabled={
+                        busy ||
+                        (importMode === "add"
+                          ? classified.addable.length === 0
+                          : classified.addable.length + classified.existing.length === 0)
+                      }
+                      onClick={() => void confirmImport()}
+                    >
+                      {t("logicalRelImportApply")}
+                    </Button>
+                  </Flex>
+                </chakra.div>
+              )}
               {loaded.relations.length === 0 ? (
                 <EmptyState compact icon="link" title={t("logicalRelEmpty")} />
               ) : (
