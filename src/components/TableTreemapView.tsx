@@ -113,10 +113,14 @@ export function TableTreemapView({
     if (x.row && onOpenTable) onOpenTable(x.row.name);
   };
 
+  // DOM / XML に出す識別子は添字 (data-treemap-idx) にする。「その他」の内部 id は制御文字を含み、
+  // 属性に入れると画像書き出し (XML 化) が壊れ、CSS セレクタでも引けないため。
   const focusTile = (id: string | null) => {
     if (!id) return;
+    const idx = tiles.findIndex((x) => x.id === id);
+    if (idx < 0) return;
     setActiveId(id);
-    svgRef.current?.querySelector<SVGGElement>(`[data-treemap-id="${CSS.escape(id)}"]`)?.focus();
+    svgRef.current?.querySelector<SVGGElement>(`[data-treemap-idx="${idx}"]`)?.focus();
   };
 
   const KEY_DIR: Record<string, TreemapDirection> = {
@@ -126,8 +130,8 @@ export function TableTreemapView({
     ArrowDown: "down",
   };
   const onKeyDown = (e: ReactKeyboardEvent<SVGSVGElement>) => {
-    const id = (e.target as Element).getAttribute?.("data-treemap-id");
-    const cur = id ? byId.get(id) : undefined;
+    const idx = (e.target as Element).getAttribute?.("data-treemap-idx");
+    const cur = idx == null ? undefined : tiles[Number(idx)];
     if (!cur) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
@@ -208,7 +212,7 @@ export function TableTreemapView({
             onKeyDown={onKeyDown}
             style={{ display: "block" }}
           >
-            {tiles.map((x) => {
+            {tiles.map((x, i) => {
               const rx = x.x + TILE_GAP;
               const ry = x.y + TILE_GAP;
               const rw = Math.max(0, x.w - TILE_GAP * 2);
@@ -231,7 +235,9 @@ export function TableTreemapView({
               return (
                 <g
                   key={x.id}
-                  data-treemap-id={x.id}
+                  data-treemap-idx={i}
+                  data-treemap-id={other ? undefined : x.id}
+                  data-treemap-other={other ? "true" : undefined}
                   role="option"
                   tabIndex={x.id === tabStop ? 0 : -1}
                   aria-label={describe(x)}

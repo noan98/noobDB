@@ -220,13 +220,33 @@ describe("TableStatisticsPanel treemap (#2408)", () => {
   it("「その他」タイルはクリックしても開かない", async () => {
     const tiny = Array.from({ length: 5 }, (_, i) => stat(`tiny${i}`, 10));
     const onOpen = await openTreemap([stat("huge", 10_000_000), ...tiny]);
-    const other = Array.from(document.querySelectorAll("[data-treemap-id]")).find((e) =>
-      e.getAttribute("data-treemap-id")?.startsWith("\u0000"),
-    );
+    const other = document.querySelector("[data-treemap-other]");
     expect(other).not.toBeNull();
     fireEvent.click(other as Element);
     fireEvent.keyDown(other as Element, { key: "Enter" });
     expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("「その他」タイルへ矢印キーでフォーカスでき、DOM 属性に制御文字を含まない", async () => {
+    const tiny = Array.from({ length: 5 }, (_, i) => stat(`tiny${i}`, 10));
+    await openTreemap([stat("huge", 10_000_000), ...tiny]);
+    // 属性に XML で不正な制御文字が無い (画像書き出しが壊れない)。
+    for (const el of Array.from(document.querySelectorAll("[data-treemap-idx]"))) {
+      for (const a of Array.from(el.attributes)) {
+        expect(a.value).not.toMatch(/[\u0000-\u001f]/);
+      }
+    }
+    const other = document.querySelector("[data-treemap-other]") as SVGGElement;
+    tileEl("huge").focus();
+    let reached = false;
+    for (const key of ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"]) {
+      fireEvent.keyDown(tileEl("huge"), { key });
+      if (document.activeElement === other) {
+        reached = true;
+        break;
+      }
+    }
+    expect(reached).toBe(true);
   });
 
   it("「肥大のみ」はツリーマップにも効き、dead_rows が無い DB ではチェックボックスを出さない", async () => {
