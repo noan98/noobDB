@@ -293,6 +293,8 @@ export interface Settings {
    * スキーマツリーへ移動できる識別子に下線を引く。Ctrl/Cmd+クリックのジャンプ自体は影響を受けない。
    */
   identifierHoverEnabled: boolean;
+  /** INSERT ... VALUES の列名インレイヒント (#2424)。 */
+  insertColumnHints: InsertColumnHintsMode;
   /**
    * 複数文のエディタで、カーソル位置の文 (文単位実行の対象) を淡い帯と左端のバーで常時示す (#2354)。
    * 既定オン。文が 1 つだけのとき・選択範囲があるときは出さない。
@@ -495,6 +497,9 @@ export function effectiveTheme(preset: ThemePreset, theme: Theme): Theme {
 }
 
 export type TabRestoreMode = "always" | "ask" | "never";
+
+/** VALUES の列名ヒントの表示モード (#2424)。cursor = カーソルのある行のみ。 */
+export type InsertColumnHintsMode = "cursor" | "always" | "off";
 
 export type ResultGridMode = "scroll" | "paginate";
 
@@ -830,6 +835,8 @@ export const DEFAULT_SQL_LINT_ENABLED = true;
 export const DEFAULT_SQL_SEMANTIC_LINT_ENABLED = true;
 /** 識別子ホバーカード / ジャンプ下線 (#2352) の既定。 */
 export const DEFAULT_IDENTIFIER_HOVER_ENABLED = true;
+/** INSERT の VALUES 列名ヒント (#2424) の既定はカーソル行のみ。 */
+export const DEFAULT_INSERT_COLUMN_HINTS: InsertColumnHintsMode = "cursor";
 
 /** カーソル位置の文の帯表示 (#2354) は既定オン。 */
 export const DEFAULT_ACTIVE_STATEMENT_HIGHLIGHT = true;
@@ -929,6 +936,7 @@ export const DEFAULT_SETTINGS: Settings = {
   masteryTried: [],
   sqlSemanticLintEnabled: DEFAULT_SQL_SEMANTIC_LINT_ENABLED,
   identifierHoverEnabled: DEFAULT_IDENTIFIER_HOVER_ENABLED,
+  insertColumnHints: DEFAULT_INSERT_COLUMN_HINTS,
   activeStatementHighlight: DEFAULT_ACTIVE_STATEMENT_HIGHLIGHT,
   editorScrollMarkers: DEFAULT_EDITOR_SCROLL_MARKERS,
   preflightImpactEnabled: DEFAULT_PREFLIGHT_IMPACT_ENABLED,
@@ -1028,6 +1036,10 @@ function sanitizeTabRestoreMode(input: unknown, fallback: TabRestoreMode): TabRe
 
 function sanitizeDensity(input: unknown, fallback: Density): Density {
   return input === "compact" || input === "normal" || input === "spacious" ? input : fallback;
+}
+
+function sanitizeInsertColumnHints(input: unknown, fallback: InsertColumnHintsMode): InsertColumnHintsMode {
+  return input === "cursor" || input === "always" || input === "off" ? input : fallback;
 }
 
 function sanitizeResultGridMode(input: unknown, fallback: ResultGridMode): ResultGridMode {
@@ -1189,6 +1201,7 @@ export function normalizeSettings(input: unknown): Settings {
     masteryTried?: unknown;
     sqlSemanticLintEnabled?: unknown;
     identifierHoverEnabled?: unknown;
+    insertColumnHints?: unknown;
     activeStatementHighlight?: unknown;
     editorScrollMarkers?: unknown;
     preflightImpactEnabled?: unknown;
@@ -1348,6 +1361,7 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.identifierHoverEnabled === "boolean"
         ? parsed.identifierHoverEnabled
         : DEFAULT_IDENTIFIER_HOVER_ENABLED,
+    insertColumnHints: sanitizeInsertColumnHints(parsed.insertColumnHints, DEFAULT_INSERT_COLUMN_HINTS),
     activeStatementHighlight:
       typeof parsed.activeStatementHighlight === "boolean"
         ? parsed.activeStatementHighlight
@@ -2003,6 +2017,14 @@ export function resetMasteryProgress(): void {
 export function setIdentifierHoverEnabled(value: boolean): void {
   if (current.identifierHoverEnabled === value) return;
   current = { ...current, identifierHoverEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setInsertColumnHints(value: InsertColumnHintsMode): void {
+  const next = sanitizeInsertColumnHints(value, current.insertColumnHints);
+  if (current.insertColumnHints === next) return;
+  current = { ...current, insertColumnHints: next };
   persist();
   listeners.forEach((cb) => cb());
 }
