@@ -91,14 +91,38 @@ describe("clipPreviewSql", () => {
 describe("indexHistoryMeta / relativeExecutedAt", () => {
   it("同じ SQL は最新 (先頭) の実行メタを採る", () => {
     const m = indexHistoryMeta(
-      [entry({ id: 2, elapsed_ms: 5 }), entry({ id: 1, elapsed_ms: 9, status: "error", error: "boom" })],
+      [
+        entry({ id: 2, elapsed_ms: 5, sql_preview: "SELECT 1", sql_len: 8 }),
+        entry({ id: 1, elapsed_ms: 9, status: "error", error: "boom", sql_preview: "SELECT 1", sql_len: 8 }),
+      ],
       ["SELECT 1", "SELECT 1"],
     );
     expect(m.get("SELECT 1")).toMatchObject({ elapsedMs: 5, ok: true });
   });
 
   it("件数が食い違っても短い方で打ち切る", () => {
-    expect(indexHistoryMeta([entry({})], ["a", "b"]).size).toBe(1);
+    expect(indexHistoryMeta([entry({ sql_preview: "a", sql_len: 1 })], ["a", "b"]).size).toBe(1);
+  });
+
+  it("添字がずれた行 (文字数・要約の先頭が合わない) にはメタを付けない", () => {
+    // 取得の間に履歴が 1 行増え、全文の並びだけ 1 つ後ろへずれた状態。
+    const m = indexHistoryMeta(
+      [
+        entry({ id: 2, sql_preview: "SELECT 1", sql_len: 8 }),
+        entry({ id: 1, sql_preview: "SELECT 22", sql_len: 9 }),
+      ],
+      ["INSERT INTO t VALUES (1)", "SELECT 1"],
+    );
+    expect(m.size).toBe(0);
+  });
+
+  it("要約が省略 (…) されていても先頭一致・空白の畳みで組にできる (文字数はコードポイント)", () => {
+    const sql = "SELECT  '😀'\nFROM t WHERE id = 1";
+    const m = indexHistoryMeta(
+      [entry({ sql_preview: "SELECT '😀' FROM t…", sql_len: [...sql].length, elapsed_ms: 3 })],
+      [sql],
+    );
+    expect(m.get(sql)).toMatchObject({ elapsedMs: 3 });
   });
 
   it("相対時刻は解釈できない日時で null", () => {

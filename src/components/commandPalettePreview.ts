@@ -90,15 +90,31 @@ export function historyMetaOf(e: HistoryEntry): HistoryMeta {
   };
 }
 
+/** 空白の連なりを 1 つの空白に畳む (履歴の `sql_preview` と同じ畳み方)。 */
+function collapseWhitespace(s: string): string {
+  return s.replace(/\s+/g, " ").trim();
+}
+
+/** 一覧の要約 (`sql_preview`) と全文 SQL が同じ行を指すか。文字数と先頭の一致で確かめる。 */
+function historyRowMatches(entry: HistoryEntry, sql: string): boolean {
+  if ([...sql].length !== entry.sql_len) return false;
+  const preview = collapseWhitespace(
+    entry.sql_preview.endsWith("…") ? entry.sql_preview.slice(0, -1) : entry.sql_preview,
+  );
+  return collapseWhitespace(sql).startsWith(preview);
+}
+
 /**
  * 履歴の一覧 (`listHistory`) と SQL 全文の一覧 (`listHistorySql`) は同じ並び (新しい順) で返るので、
  * 添字で組にして「SQL 全文 → 最新の実行メタ」の表を作る。同じ SQL が複数回あれば最新を採る。
+ * 2 回の取得の間に履歴が増えると添字がずれるため、文字数と要約の先頭が合わない行にはメタを付けない。
  */
 export function indexHistoryMeta(entries: HistoryEntry[], sqls: string[]): Map<string, HistoryMeta> {
   const map = new Map<string, HistoryMeta>();
   const n = Math.min(entries.length, sqls.length);
   for (let i = 0; i < n; i++) {
     const sql = sqls[i];
+    if (!historyRowMatches(entries[i], sql)) continue;
     if (!map.has(sql)) map.set(sql, historyMetaOf(entries[i]));
   }
   return map;

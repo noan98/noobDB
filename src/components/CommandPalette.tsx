@@ -151,6 +151,7 @@ export function CommandPalette({
     if (!action || action.disabledReason) return;
     // runAt と同様、先に閉じてから実行する (確認ダイアログ等を開いてもパレットが残らない)。
     latest.current.onClose();
+    latest.current.onSelectItem?.(item);
     action.run();
   }, []);
 
@@ -412,7 +413,7 @@ export function CommandPalette({
       >
         <Hint keys="↑ ↓" label={t("cmdkHintMove")} />
         <Hint keys="↵" label={t("cmdkHintSelect")} />
-        {hasPreviews && activeItem?.previewActions && activeItem.previewActions.length > 0 && (
+        {hasPreviews && activeItem?.previewActions?.some((a) => !a.disabledReason) && (
           <Hint keys="Tab" label={t("cmdkHintPreview")} />
         )}
         <Hint keys="Esc" label={t("cmdkHintClose")} />

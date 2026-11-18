@@ -733,7 +733,7 @@ import {
   type NotebookRunOutput,
   type NotebookRunRequest,
 } from "./notebookExec";
-import { redactCredentials } from "./sqlCredentials";
+import { CREDENTIAL_PLACEHOLDER, redactCredentials } from "./sqlCredentials";
 import {
   EMPTY_QUICK_ACCESS,
   loadQuickAccess,
@@ -11256,15 +11256,28 @@ export default function App() {
     [openAndRunQuery, settings.defaultDisplayCount, selectedProfile?.driver],
   );
 
+  // 「新しいタブで開く」: SELECT 文を新しいクエリタブへ入れるだけで、実行はしない (#2425)。
+  const handleOpenTableSelectInNewTab = useCallback(
+    (database: string, table: string) => {
+      const limit = Math.max(1, settings.defaultDisplayCount);
+      const base = qualifiedTableSql(selectedProfile?.driver ?? "mysql", database, table);
+      handleOpenSqlInNewTab(`${base} LIMIT ${limit}`, table);
+    },
+    [handleOpenSqlInNewTab, settings.defaultDisplayCount, selectedProfile?.driver],
+  );
+
   // Insert SELECT * into the focused pane's editor, or open a fresh query tab
   // when the active tab has no editor (e.g. a table tab) — mirrors
   // handleRestoreHistory.
   const handleInsertTableSelect = useCallback(
-    async (database: string, table: string, withColumns = false) => {
+    async (database: string, table: string, withColumns = false, knownColumns?: string[]) => {
       const driver = selectedProfile?.driver ?? "mysql";
       let sql = treeItemInsertText(driver, { kind: "table", database, table });
-      // 列名つきの雛形 (#1627)。列が取れなければ SELECT * のまま挿入する。
-      if (withColumns && sessionId) {
+      // 列名つきの雛形 (#1627)。スキーマキャッシュの列名があればそれを使い (サーバへ問い合わせない)、
+      // 無いときだけ describeTable。列が取れなければ SELECT * のまま挿入する。
+      if (withColumns && knownColumns && knownColumns.length > 0) {
+        sql = tableSelectWithColumnsText(driver, database, table, knownColumns);
+      } else if (withColumns && sessionId) {
         try {
           const cols = await api.describeTable(sessionId, database, table);
           sql = tableSelectWithColumnsText(
@@ -13698,11 +13711,15 @@ export default function App() {
             sublabel: database,
             keywords: `${database} ${table.columns.join(" ")}`,
             icon: "table",
-            // プレビュー (#2425)。列名はスキーマキャッシュのもの。型・PK/FK・行数推定はパレット側で遅延取得する。
+            // プレビュー (#2425)。列名のみ (スキーマキャッシュのもの)。サーバへは問い合わせない。
             preview: { kind: "table", database, table: table.name, columns: table.columns },
             previewActions: [
-              { kind: "insert", run: () => void handleInsertTableSelect(database, table.name, true) },
-              { kind: "open", run: () => handleRunTableSelect(database, table.name) },
+              {
+                kind: "insert",
+                run: () => void handleInsertTableSelect(database, table.name, true, table.columns),
+              },
+              { kind: "open", run: () => handleOpenTableSelectInNewTab(database, table.name) },
+              { kind: "run", run: () => handleRunTableSelect(database, table.name) },
             ],
             run: () => handleRunTableSelect(database, table.name),
           });
@@ -13716,6 +13733,7 @@ export default function App() {
     for (const snippet of snippets) {
       // プレビュー (#2425)。挿入用・実行用の 2 候補で同じ中身とアクションを共有する。
       const needsConnection = sessionId ? undefined : t("cmdkNeedsConnection");
+      const needsEditorTab = activeTab ? undefined : t("cmdkNeedsEditorTab");
       const scopeProfileId = snippet.scope.kind === "profile" ? snippet.scope.profile_id : null;
       const snippetPreview = {
         kind: "snippet" as const,
@@ -13730,7 +13748,7 @@ export default function App() {
         driver: snippet.driver ?? selectedProfile?.driver ?? null,
       };
       const snippetActions: PreviewAction[] = [
-        { kind: "insert", run: () => handleInsertSnippet(snippet), disabledReason: needsConnection },
+        { kind: "insert", run: () => handleInsertSnippet(snippet), disabledReason: needsEditorTab },
         {
           kind: "open",
           run: () => handleOpenSqlInNewTab(snippetPlainText(snippet.sql), snippet.name),
@@ -13767,6 +13785,7 @@ export default function App() {
     // 直近のクエリ履歴 (最新優先、件数を抑える)。
     const historyNeedsConnection = sessionId ? undefined : t("cmdkNeedsConnection");
     for (const [i, sql] of queryHistory.slice(0, 40).entries()) {
+      const historyRedacted = sql.includes(CREDENTIAL_PLACEHOLDER);
       items.push({
         id: `history:${i}`,
         group: "history",
@@ -13786,7 +13805,13 @@ export default function App() {
         previewActions: [
           { kind: "insert", run: () => handleRestoreHistory(sql), disabledReason: historyNeedsConnection },
           { kind: "open", run: () => handleOpenSqlInNewTab(sql), disabledReason: historyNeedsConnection },
-          { kind: "run", run: () => handleRunSqlInNewTab(sql), disabledReason: historyNeedsConnection },
+          {
+            kind: "run",
+            run: () => handleRunSqlInNewTab(sql),
+            // 履歴 SQL は資格情報が伏せ字化済み (#2174)。そのまま実行するとパスワードが '********' になる。
+            disabledReason:
+              historyNeedsConnection ?? (historyRedacted ? t("outputRerunRedacted") : undefined),
+          },
         ],
         run: () => handleRestoreHistory(sql),
       });
@@ -13818,6 +13843,7 @@ export default function App() {
     handleDisconnect,
     handleConnect,
     handleRunTableSelect,
+    handleOpenTableSelectInNewTab,
     handleInsertSnippet,
     handleRunSnippet,
     handleRestoreHistory,

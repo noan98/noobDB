@@ -235,6 +235,81 @@ describe("CommandPalette プレビューペイン (#2425)", () => {
     expect(screen.getAllByRole("option")[1]).toHaveAttribute("aria-selected", "true");
   });
 
+  const disabledItems = (run: () => void): CommandItem[] => [
+    {
+      id: "history:0",
+      group: "history",
+      label: "CREATE USER a",
+      preview: { kind: "history", sql: "SELECT 1", meta: null, connectionName: null, driver: "mysql" },
+      previewActions: [
+        { kind: "insert", run: () => {}, disabledReason: "理由A" },
+        { kind: "run", run, disabledReason: "理由B" },
+      ],
+      run: () => {},
+    },
+    { id: "next", group: "history", label: "next", run: () => {} },
+  ];
+
+  it("disabledReason のアクションは押せず、全部無効なら Tab は候補を進め、Tab ヒントも出さない", async () => {
+    const run = vi.fn();
+    const onClose = vi.fn();
+    renderWithProviders(<CommandPalette items={disabledItems(run)} onClose={onClose} />);
+    await settle();
+    const btn = screen.getByRole("button", { name: /実行|Run/ });
+    expect(btn).toBeDisabled();
+    fireEvent.click(btn);
+    expect(run).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Tab/)).toBeNull();
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "Tab" });
+    expect(screen.getAllByRole("option")[1]).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("有効なアクションが 1 つでもあれば Tab ヒントを出す", async () => {
+    const it0 = disabledItems(() => {});
+    it0[0].previewActions = [{ kind: "insert", run: () => {} }];
+    renderWithProviders(<CommandPalette items={it0} onClose={() => {}} />);
+    await settle();
+    expect(screen.getByText("Tab")).toBeInTheDocument();
+  });
+
+  it("プレビューのアクション実行は onSelectItem を呼ぶ (MRU に載る)", async () => {
+    const insert = vi.fn();
+    const onSelectItem = vi.fn();
+    const list = items({ insert, open: vi.fn() });
+    renderWithProviders(<CommandPalette items={list} onClose={() => {}} onSelectItem={onSelectItem} />);
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "Tab" });
+    await settle();
+    fireEvent.click(screen.getAllByRole("button", { name: /エディタへ挿入|Insert into editor/ })[0]);
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(onSelectItem).toHaveBeenCalledWith(list[0]);
+  });
+
+  it("SQL プレビューは資格情報を伏せる", async () => {
+    const list: CommandItem[] = [
+      {
+        id: "history:0",
+        group: "history",
+        label: "CREATE USER",
+        preview: {
+          kind: "history",
+          sql: "CREATE USER 'a'@'%' IDENTIFIED BY 'topsecret'",
+          meta: null,
+          connectionName: null,
+          driver: "mysql",
+        },
+        previewActions: [{ kind: "insert", run: () => {} }],
+        run: () => {},
+      },
+    ];
+    renderWithProviders(<CommandPalette items={list} onClose={() => {}} />);
+    await settle();
+    const pane = screen.getByTestId("cmdk-preview");
+    expect(pane).not.toHaveTextContent("topsecret");
+    expect(pane).toHaveTextContent("••••••••");
+  });
+
   it("プレビューを持つ候補が無いときはペインを出さない", () => {
     renderWithProviders(
       <CommandPalette
