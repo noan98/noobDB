@@ -4,7 +4,7 @@ import { fireEvent, renderWithProviders, screen } from "./testUtils";
 import { CommandPalette } from "../components/CommandPalette";
 import type { CommandItem } from "../components/commandPaletteSearch";
 import { PREVIEW_DEBOUNCE_MS } from "../components/useCommandPreviewDetail";
-import type { TableColumnInfo } from "../api/tauri";
+import { api, type TableColumnInfo } from "../api/tauri";
 
 const col = (name: string, over: Partial<TableColumnInfo> = {}): TableColumnInfo => ({
   name,
@@ -243,5 +243,20 @@ describe("CommandPalette プレビューペイン (#2425)", () => {
       />,
     );
     expect(screen.queryByTestId("cmdk-preview")).toBeNull();
+  });
+
+  it("loader を渡さなければ、テーブル候補に置いても describeTable / tableRowEstimate を呼ばず列名だけを出す", async () => {
+    const describe = vi.spyOn(api, "describeTable");
+    const estimate = vi.spyOn(api, "tableRowEstimate");
+    renderWithProviders(
+      <CommandPalette items={items({ insert: vi.fn(), open: vi.fn() })} onClose={() => {}} />,
+    );
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
+    await settle();
+    expect(screen.getByTestId("cmdk-preview")).toHaveTextContent("order_id");
+    expect(describe).not.toHaveBeenCalled();
+    expect(estimate).not.toHaveBeenCalled();
+    describe.mockRestore();
+    estimate.mockRestore();
   });
 });

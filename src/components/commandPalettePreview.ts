@@ -11,9 +11,9 @@ import type { HistoryEntry, SnippetScope, TableColumnInfo } from "../api/tauri";
  * - 秘密情報は扱わない。接続のプレビューはホスト・ドライバ・DB 名・バッジだけで、ユーザ名や
  *   パスワードは入力にも含めない (呼び出し側 `App.tsx` が渡さない)。
  * - SQL 本文は資格情報リテラルの伏せ字化 (`SqlPreview` の `maskCredentials`) を描画側で掛ける。
- * - プレビューのためにサーバへ本文クエリは打たない。テーブルの型・PK/FK・行数推定だけ、
- *   カーソルが止まったときに 1 テーブル分のメタデータ読み取り (件数 1 のカタログ参照) を
- *   遅延・キャッシュ付きで行う (`useCommandPreviewDetail.ts`)。
+ * - プレビューのためにサーバへは問い合わせない (App は `loadTableDetail` を渡さず、列名だけを出す)。
+ *   型・PK/FK・行数推定を出したい場合のみ、任意 prop `loadTableDetail` で遅延・キャッシュ付きの
+ *   取得を有効にできる (`useCommandPreviewDetail.ts`)。
  */
 
 /** 候補の中身を作るための元データ。`CommandItem.preview` に載せる。 */

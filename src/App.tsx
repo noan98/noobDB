@@ -7751,20 +7751,6 @@ export default function App() {
     [sessionId, addTab, resolveParamsThen],
   );
 
-  // プレビューの「テーブル詳細」(型・PK/FK・行数推定)。1 テーブル分のカタログ参照 (読み取りのみ) で、
-  // 本文クエリは打たない。デバウンス・取り消し・キャッシュは `useCommandPreviewDetail` 側。
-  const loadPaletteTableDetail = useCallback(
-    async (database: string, table: string) => {
-      if (!sessionId) throw new Error("no session");
-      const [columns, rowEstimate] = await Promise.all([
-        api.describeTable(sessionId, database, table),
-        api.tableRowEstimate(sessionId, database, table).catch(() => null),
-      ]);
-      return { columns, rowEstimate };
-    },
-    [sessionId],
-  );
-
   // プレビュー (#2425) の履歴の実行メタ (時刻・所要時間・件数・成否)。ローカルの履歴ストアを読むだけ
   // (サーバへは問い合わせない)。パレットを開いたときに 1 回だけ読み、SQL 全文で候補と結び付ける。
   const [paletteHistoryMeta, setPaletteHistoryMeta] = useState<Map<string, HistoryMeta>>(
@@ -17214,7 +17200,6 @@ export default function App() {
               items={commandItems}
               mruIds={settings.commandPaletteMru}
               onSelectItem={handleCommandPaletteSelect}
-              loadTableDetail={sessionId ? loadPaletteTableDetail : undefined}
               onClose={() => setShowCommandPalette(false)}
             />
           )}
