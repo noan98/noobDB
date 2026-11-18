@@ -1443,12 +1443,14 @@ export const PaneView = memo(
                                   }
                                   onDescribePeekTable={
                                     sessionId
-                                      ? gridStable.fn(`${tab.id}:describePeek`, (table: string) =>
-                                          api.describeTable(
-                                            sessionId,
-                                            tab.database ?? selectedProfile?.database ?? "",
-                                            table,
-                                          ),
+                                      ? gridStable.fn(
+                                          `${tab.id}:describePeek`,
+                                          (database: string | null, table: string) =>
+                                            api.describeTable(
+                                              sessionId,
+                                              database ?? tab.database ?? selectedProfile?.database ?? "",
+                                              table,
+                                            ),
                                         )
                                       : undefined
                                   }

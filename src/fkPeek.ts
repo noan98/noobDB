@@ -5,12 +5,18 @@
 // 進む)、(4) スライドの向きを決める。DOM・IPC には触れないので Vitest で境界を固定できる。
 // 論理リレーション (#2356) は `TableColumnInfo.referenced_table` にマージ済みなので、宣言 FK と同じに扱える。
 
-import type { CellValue, TableColumnInfo } from "./api/tauri";
+import type { CellValue, QueryResult, TableColumnInfo } from "./api/tauri";
 import { buildFkJumpSql } from "./fkNavigation";
 import { classifyTypeName } from "./components/cellTypeMeta";
+import { TOOLTIP_OPEN_DELAY_MS } from "./components/Tooltip";
 
-/** ホバーしてからカードを出すまでの待ち (ms)。エディタの識別子ホバー (`IDENTIFIER_HOVER_DELAY_MS`) と揃える。 */
-export const FK_PEEK_HOVER_DELAY_MS = 400;
+/** ホバーしてからカードを出すまでの待ち (ms)。共有ツールチップ (`TOOLTIP_OPEN_DELAY_MS`) = エディタの識別子ホバーと揃える。 */
+export const FK_PEEK_HOVER_DELAY_MS = TOOLTIP_OPEN_DELAY_MS;
+/**
+ * 取得する行数。複合 FK の 1 列や一意でない論理リレーションでは複数行が一致しうるので、1 行ではなく 2 行取り、
+ * 2 行以上なら「複数一致」と注記する (`splitPeekRows`)。
+ */
+export const FK_PEEK_FETCH_LIMIT = 2;
 /** ホバーで開いたカードを、ポインタが離れてから閉じるまでの猶予 (ms)。カードへ移る間に閉じないための余裕。 */
 export const FK_PEEK_CLOSE_GRACE_MS = 200;
 /** 「主要な列」として出す列数の上限 (PK・NOT NULL の文字列列を優先)。 */
@@ -38,7 +44,7 @@ export interface PeekTrail {
   index: number;
 }
 
-/** 参照先の 1 行を取る SQL。`SELECT * FROM <table> WHERE <col> = <value> LIMIT 1`。 */
+/** 参照先の行を取る SQL。`SELECT * FROM <table> WHERE <col> = <value> LIMIT 2` (複数一致の検出用、`FK_PEEK_FETCH_LIMIT`)。 */
 export function buildFkPeekSql(p: { driver: string; database?: string | null; step: PeekStep }): string {
   return `${buildFkJumpSql({
     driver: p.driver,
@@ -47,7 +53,7 @@ export function buildFkPeekSql(p: { driver: string; database?: string | null; st
     refColumn: p.step.column,
     value: p.step.value,
     valueType: p.step.valueType,
-  })} LIMIT 1`;
+  })} LIMIT ${FK_PEEK_FETCH_LIMIT}`;
 }
 
 /** 「グリッドで開く」用の SQL (LIMIT なしの既存 FK ジャンプ SQL)。 */
@@ -189,4 +195,25 @@ export function peekFollowTarget(
   const m = meta?.find((c) => c.name === columnName);
   if (!m?.referenced_table || !m.referenced_column) return null;
   return { table: m.referenced_table, column: m.referenced_column };
+}
+
+/** 取得した行から、表示する先頭行と「複数の行が一致した」かを返す。0 行なら row は null。 */
+export function splitPeekRows<T>(rows: readonly T[]): { row: T | null; multiple: boolean } {
+  return { row: rows[0] ?? null, multiple: rows.length > 1 };
+}
+
+/** カードの取得結果のキャッシュ。グリッドが結果 (rows) の世代ごとに作り直し、ホバーし直しの再取得を避ける。 */
+export interface FkPeekCache {
+  /** SQL → 取得結果。 */
+  results: Map<string, QueryResult>;
+  /** `データベース\0テーブル` → 列メタ (取得失敗は null)。 */
+  meta: Map<string, TableColumnInfo[] | null>;
+}
+
+export function newFkPeekCache(): FkPeekCache {
+  return { results: new Map(), meta: new Map() };
+}
+
+export function peekMetaKey(database: string | null, table: string): string {
+  return `${database ?? ""}\0${table}`;
 }

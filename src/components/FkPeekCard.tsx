@@ -18,7 +18,10 @@ import {
   peekGoTo,
   peekSlideDirection,
   peekStart,
+  peekMetaKey,
   planPeekColumns,
+  splitPeekRows,
+  type FkPeekCache,
   type PeekStep,
   type PeekTrail,
 } from "../fkPeek";
@@ -29,6 +32,7 @@ import { useSettings } from "../settings";
 import { classifyTypeName } from "./cellTypeMeta";
 import { MASK_PLACEHOLDER, resolveMaskedColumns } from "./columnMask";
 import { Icon, ICON_SIZES } from "./Icon";
+import { Callout } from "./Callout";
 import { ErrorNote } from "./modalForm";
 import { Button } from "./ui";
 import { computeTooltipPosition, type TooltipRect } from "./tooltipPosition";
@@ -51,8 +55,17 @@ interface Props {
   driver: string;
   database: string | null;
   runQuery: (sql: string) => Promise<QueryResult>;
-  /** 参照先テーブルの列メタ (PK・FK の判定用)。無ければ列の選定は先頭から、さらにたどることはできない。 */
-  describeTable?: (table: string) => Promise<TableColumnInfo[]>;
+  /**
+   * 参照先テーブルの列メタ (PK・FK の判定用)。カードの SELECT と同じデータベースで引く。
+   * 無ければ列の選定は先頭から、さらにたどることはできない。
+   */
+  describeTable?: (database: string | null, table: string) => Promise<TableColumnInfo[]>;
+  /** 取得結果のキャッシュ (グリッドが結果の世代ごとに持つ)。 */
+  cache: FkPeekCache;
+  /** ピン留め中 (Alt+クリックで開いた / カードを操作した)。ピン留め中だけ Esc と外側のクリックで閉じる。 */
+  pinned: boolean;
+  /** pointerdown の対象が元のセルか (元のセルのクリックでは閉じない)。 */
+  isOriginTarget: (target: EventTarget | null) => boolean;
   onOpenInGrid?: (sql: string) => void;
   onOpenInInspector?: (row: {
     columns: QueryResult["columns"];
@@ -63,7 +76,8 @@ interface Props {
   onHoverChange: (inside: boolean) => void;
   /** カード内を操作した (クリック・フォーカス)。以後は自動で閉じない。 */
   onPin: () => void;
-  onClose: () => void;
+  /** 閉じる。`restoreFocus` が true なら元のセルへフォーカスを戻す (Esc・閉じるボタン)。 */
+  onClose: (restoreFocus: boolean) => void;
 }
 
 const MotionBody = chakra(
@@ -87,6 +101,9 @@ export function FkPeekCard({
   database,
   runQuery,
   describeTable,
+  cache,
+  pinned,
+  isOriginTarget,
   onOpenInGrid,
   onOpenInInspector,
   onHoverChange,
@@ -108,32 +125,34 @@ export function FkPeekCard({
     runRef.current = runQuery;
     describeRef.current = describeTable;
   }, [runQuery, describeTable]);
-  // 戻る / 進むで取り直さないための SQL → 結果のキャッシュ (カードの寿命の間だけ)。
-  const cache = useRef(new Map<string, Fetched>());
   const [fetched, setFetched] = useState<{ sql: string; state: Fetched }>({
     sql: "",
     state: { kind: "loading" },
   });
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: step の中身は sql に畳み込んである
+  // biome-ignore lint/correctness/useExhaustiveDependencies: step の中身は sql に畳み込んである。cache はグリッドの世代ごとに固定
   useEffect(() => {
-    const hit = cache.current.get(sql);
-    if (hit) {
-      setFetched({ sql, state: hit });
+    const table = step.table;
+    const metaKey = peekMetaKey(database, table);
+    const hit = cache.results.get(sql);
+    if (hit && cache.meta.has(metaKey)) {
+      setFetched({ sql, state: { kind: "done", result: hit, meta: cache.meta.get(metaKey) ?? null } });
       return;
     }
     setFetched({ sql, state: { kind: "loading" } });
     let cancelled = false;
-    const table = step.table;
     void (async () => {
       let state: Fetched;
       try {
         const [result, meta] = await Promise.all([
-          runRef.current(sql),
-          (describeRef.current?.(table) ?? Promise.resolve(null)).catch(() => null),
+          hit ?? runRef.current(sql),
+          cache.meta.has(metaKey)
+            ? Promise.resolve(cache.meta.get(metaKey) ?? null)
+            : (describeRef.current?.(database, table) ?? Promise.resolve(null)).catch(() => null),
         ]);
+        cache.results.set(sql, result);
+        cache.meta.set(metaKey, meta);
         state = { kind: "done", result, meta };
-        cache.current.set(sql, state);
       } catch (e) {
         state = { kind: "error", message: String(e) };
       }
@@ -160,32 +179,52 @@ export function FkPeekCard({
     const el = ref.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    setPos(
-      computeTooltipPosition(
-        anchor,
-        { width: r.width, height: r.height },
-        "bottom",
-        MARGIN,
-        { width: window.innerWidth, height: window.innerHeight },
-        "start",
-      ),
+    const next = computeTooltipPosition(
+      anchor,
+      { width: r.width, height: r.height },
+      "bottom",
+      MARGIN,
+      { width: window.innerWidth, height: window.innerHeight },
+      "start",
     );
+    setPos((prev) => (prev && prev.left === next.left && prev.top === next.top ? prev : next));
   }, [anchor, state, trail.index]);
 
-  // Esc で閉じる (グリッド側の Esc 処理に渡さない)。フォーカスのセルへの復帰は閉じる側 (グリッド) が行う。
+  // ピン留め中だけ、Esc で閉じる (グリッドの Esc 処理に渡さず、元のセルへフォーカスを戻す) と、
+  // カードと元のセル以外での pointerdown で閉じる (フォーカスは奪わない)。
+  // ホバーで開いただけのカードは Esc を横取りしない (SQL エディタの補完・モーダル・メニューの Esc を壊さない)。
   useEffect(() => {
+    if (!pinned) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       e.preventDefault();
       e.stopPropagation();
-      onClose();
+      onClose(true);
+    };
+    const onDown = (e: PointerEvent) => {
+      const target = e.target;
+      if (target instanceof Node && ref.current?.contains(target)) return;
+      if (isOriginTarget(target)) return;
+      onClose(false);
     };
     document.addEventListener("keydown", onKey, true);
-    return () => document.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
+    document.addEventListener("pointerdown", onDown, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("pointerdown", onDown, true);
+    };
+  }, [pinned, onClose, isOriginTarget]);
+
+  // ピン留めで開いたら、カード先頭の操作できるボタンへフォーカスを移す (キーボードで辿れるように)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 開いた時点の 1 回だけ
+  useEffect(() => {
+    if (pinned) ref.current?.querySelector<HTMLElement>("button:not([disabled])")?.focus();
+  }, []);
 
   const columns = state.kind === "done" ? state.result.columns : null;
-  const row = state.kind === "done" ? (state.result.rows[0] ?? null) : null;
+  const { row, multiple } = splitPeekRows(state.kind === "done" ? state.result.rows : []);
+  // 既知の制限: 判定は設定のマスクパターンだけで、グリッドの列単位の上書き (maskOverrides) や
+  // 「一時的に表示 (reveal)」は参照先の行には及ばない (参照先は別テーブルの列名で判定するため)。
   const masked = useMemo(
     () =>
       columns
@@ -303,6 +342,7 @@ export function FkPeekCard({
             </chakra.span>
           ))}
         </chakra.nav>
+        <NavButton label={t("fkPeekClose")} icon="close" disabled={false} onClick={() => onClose(true)} />
       </Box>
 
       <Box overflow="auto" css={{ scrollbarWidth: "thin" }} px="2" py="1.5">
@@ -331,6 +371,11 @@ export function FkPeekCard({
             )}
             {state.kind === "done" && row && columns && plan && (
               <>
+                {multiple && (
+                  <Callout tone="warning" mb="1.5" data-testid="fk-peek-multiple">
+                    {t("fkPeekMultiple")}
+                  </Callout>
+                )}
                 <chakra.div
                   fontFamily="mono"
                   fontWeight="semibold"
@@ -458,7 +503,7 @@ function NavButton({
   onClick,
 }: {
   label: string;
-  icon: "chevron-left" | "chevron-right";
+  icon: "chevron-left" | "chevron-right" | "close";
   disabled: boolean;
   onClick: () => void;
 }) {

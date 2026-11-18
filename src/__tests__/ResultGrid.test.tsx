@@ -44,7 +44,7 @@ import {
 } from "../settings";
 import { formatJsonCompact } from "../components/cellFormat";
 import { TOOLTIP_OPEN_DELAY_MS } from "../components/Tooltip";
-import { FK_PEEK_HOVER_DELAY_MS } from "../fkPeek";
+import { FK_PEEK_CLOSE_GRACE_MS, FK_PEEK_HOVER_DELAY_MS } from "../fkPeek";
 
 // 選択範囲エクスポート (#917) のテストが `ExportModal` を実際にマウントするため、
 // そのマウント effect が呼ぶ `@tauri-apps/api/path` をモックする
@@ -2559,7 +2559,7 @@ describe("FK セルのリンク・アフォーダンス (#1393)", () => {
       elapsed_ms: 1,
     });
 
-    it("Alt+クリックで LIMIT 1 の内部クエリを実行してカードを出し、onFkJump は呼ばない", async () => {
+    it("Alt+クリックで LIMIT 2 の内部クエリを実行してカードを出し、onFkJump は呼ばない", async () => {
       const runQuery = vi.fn().mockResolvedValue(peekResult());
       const onFkJump = vi.fn();
       const { container } = renderFk({ onRunRelatedQuery: runQuery }, onFkJump);
@@ -2567,7 +2567,7 @@ describe("FK セルのリンク・アフォーダンス (#1393)", () => {
       expect(await screen.findByTestId("fk-peek-card")).toBeInTheDocument();
       expect(await screen.findByText("Alice")).toBeInTheDocument();
       expect(runQuery).toHaveBeenCalledTimes(1);
-      expect(runQuery.mock.calls[0][0]).toMatch(/FROM `users` WHERE `id` = 7 LIMIT 1$/);
+      expect(runQuery.mock.calls[0][0]).toMatch(/FROM `users` WHERE `id` = 7 LIMIT 2$/);
       expect(onFkJump).not.toHaveBeenCalled();
     });
 
@@ -2627,6 +2627,279 @@ describe("FK セルのリンク・アフォーダンス (#1393)", () => {
       }
     });
 
+    const twoRows = makeResult(columns, [
+      [1, 7],
+      [2, 8],
+    ]);
+    const tdOf = (container: HTMLElement, text: string) =>
+      Array.from(container.querySelectorAll("td")).find(
+        (td) => td.textContent?.trim() === text,
+      ) as HTMLElement;
+
+    describe("共有ツールチップを潰さない", () => {
+      it("NULL セルのホバーでツールチップが出る", () => {
+        const { container } = renderFk({ onRunRelatedQuery: vi.fn() });
+        const nullTd = container.querySelectorAll("tbody tr")[1].querySelectorAll("td")[2] as HTMLElement;
+        hoverForTooltip(nullTd);
+        expect(screen.getByRole("tooltip")).toHaveTextContent(t("resultNull"));
+      });
+      it("マスク中のセルのホバーでツールチップが出る", () => {
+        setColumnMaskEnabled(true);
+        setColumnMaskPatterns(["user_id"]);
+        try {
+          const { container } = renderFk({ onRunRelatedQuery: vi.fn() });
+          const td = container.querySelectorAll("tbody tr")[0].querySelectorAll("td")[2] as HTMLElement;
+          hoverForTooltip(td);
+          expect(screen.getByRole("tooltip")).toHaveTextContent(t("gridMaskedCellTitle"));
+        } finally {
+          setColumnMaskEnabled(false);
+          setColumnMaskPatterns([]);
+        }
+      });
+      it("カードを出せない FK セル (onRunRelatedQuery なし) では従来どおり全文ツールチップが出る", () => {
+        const { container } = renderFk();
+        hoverForTooltip(container.querySelector("td.is-fk") as HTMLElement);
+        expect(screen.getByRole("tooltip")).toHaveTextContent("7");
+      });
+    });
+
+    it("ホバーで開いたカードは離れて 200ms で閉じ、カードへ移れば閉じない", async () => {
+      const runQuery = vi.fn().mockResolvedValue(peekResult());
+      const { container } = renderFk({ onRunRelatedQuery: runQuery });
+      const td = container.querySelector("td.is-fk") as HTMLElement;
+      vi.useFakeTimers();
+      try {
+        fireEvent.mouseEnter(td);
+        act(() => void vi.advanceTimersByTime(FK_PEEK_HOVER_DELAY_MS));
+        const card = screen.getByTestId("fk-peek-card");
+        fireEvent.mouseLeave(td);
+        act(() => void vi.advanceTimersByTime(FK_PEEK_CLOSE_GRACE_MS - 1));
+        expect(screen.queryByTestId("fk-peek-card")).not.toBeNull();
+        fireEvent.mouseEnter(card);
+        act(() => void vi.advanceTimersByTime(FK_PEEK_CLOSE_GRACE_MS * 2));
+        expect(screen.queryByTestId("fk-peek-card")).not.toBeNull();
+        fireEvent.mouseLeave(card);
+        act(() => void vi.advanceTimersByTime(FK_PEEK_CLOSE_GRACE_MS));
+        expect(screen.queryByTestId("fk-peek-card")).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("ホバーで開いたカードは Esc を横取りしない。セルの mousedown / 右クリックでは閉じる", async () => {
+      const runQuery = vi.fn().mockResolvedValue(peekResult());
+      const { container } = renderFk({ onRunRelatedQuery: runQuery });
+      const td = container.querySelector("td.is-fk") as HTMLElement;
+      const hoverOpen = () => {
+        vi.useFakeTimers();
+        try {
+          fireEvent.mouseEnter(td);
+          act(() => void vi.advanceTimersByTime(FK_PEEK_HOVER_DELAY_MS));
+        } finally {
+          vi.useRealTimers();
+        }
+      };
+      hoverOpen();
+      const seen = vi.fn((e: KeyboardEvent) => e.defaultPrevented);
+      document.addEventListener("keydown", seen);
+      fireEvent.keyDown(document.body, { key: "Escape" });
+      document.removeEventListener("keydown", seen);
+      expect(seen).toHaveReturnedWith(false);
+      expect(screen.queryByTestId("fk-peek-card")).not.toBeNull();
+      fireEvent.mouseDown(container.querySelector("td.col-number") as HTMLElement);
+      expect(screen.queryByTestId("fk-peek-card")).toBeNull();
+      hoverOpen();
+      expect(screen.queryByTestId("fk-peek-card")).not.toBeNull();
+      fireEvent.contextMenu(container.querySelector("td.col-number") as HTMLElement);
+      expect(screen.queryByTestId("fk-peek-card")).toBeNull();
+    });
+
+    it("ピン留めしたカードは閉じるボタン・外側の pointerdown で閉じ、元のセルの pointerdown では閉じない", async () => {
+      const runQuery = vi.fn().mockResolvedValue(peekResult());
+      const { container } = renderFk({ onRunRelatedQuery: runQuery });
+      const td = container.querySelector("td.is-fk") as HTMLElement;
+      fireEvent.click(td, { altKey: true });
+      await screen.findByText("Alice");
+      fireEvent.pointerDown(td);
+      expect(screen.queryByTestId("fk-peek-card")).not.toBeNull();
+      fireEvent.pointerDown(document.body);
+      expect(screen.queryByTestId("fk-peek-card")).toBeNull();
+
+      fireEvent.click(td, { altKey: true });
+      await screen.findByText("Alice");
+      fireEvent.click(screen.getByRole("button", { name: t("fkPeekClose") }));
+      expect(screen.queryByTestId("fk-peek-card")).toBeNull();
+      expect(document.activeElement).toBe(td);
+    });
+
+    it("ピン留めで開くとカード内のボタンへフォーカスが移る", async () => {
+      const runQuery = vi.fn().mockResolvedValue(peekResult());
+      const { container } = renderFk({ onRunRelatedQuery: runQuery });
+      fireEvent.click(container.querySelector("td.is-fk") as HTMLElement, { altKey: true });
+      const card = await screen.findByTestId("fk-peek-card");
+      expect(card.contains(document.activeElement)).toBe(true);
+    });
+
+    it("ピン留め中のカードは別セルのホバーで置き換わらない", async () => {
+      const runQuery = vi.fn().mockResolvedValue(peekResult());
+      const { container } = renderWithProviders(
+        <ResultGrid
+          result={twoRows}
+          tableColumns={meta("users", "id")}
+          onFkJump={vi.fn()}
+          onRunRelatedQuery={runQuery}
+          driver="mysql"
+        />,
+      );
+      fireEvent.click(tdOf(container, "7"), { altKey: true });
+      await screen.findByText("Alice");
+      vi.useFakeTimers();
+      try {
+        fireEvent.mouseEnter(tdOf(container, "8"));
+        act(() => void vi.advanceTimersByTime(FK_PEEK_HOVER_DELAY_MS * 2));
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(runQuery).toHaveBeenCalledTimes(1);
+      expect(screen.getAllByTestId("fk-peek-card")).toHaveLength(1);
+    });
+
+    it("スクロールで (ピン留め中も) 閉じ、開く予約もスクロールで取り消す", async () => {
+      const runQuery = vi.fn().mockResolvedValue(peekResult());
+      const { container } = renderFk({ onRunRelatedQuery: runQuery });
+      const td = container.querySelector("td.is-fk") as HTMLElement;
+      const scroller = container.querySelector("table")?.closest("div[tabindex='-1']") as HTMLElement;
+      fireEvent.click(td, { altKey: true });
+      await screen.findByText("Alice");
+      fireEvent.scroll(scroller);
+      expect(screen.queryByTestId("fk-peek-card")).toBeNull();
+      vi.useFakeTimers();
+      try {
+        fireEvent.mouseEnter(td);
+        act(() => void vi.advanceTimersByTime(FK_PEEK_HOVER_DELAY_MS - 10));
+        fireEvent.scroll(scroller);
+        act(() => void vi.advanceTimersByTime(50));
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(screen.queryByTestId("fk-peek-card")).toBeNull();
+    });
+
+    it("結果が入れ替わったら閉じる", async () => {
+      const runQuery = vi.fn().mockResolvedValue(peekResult());
+      const props = {
+        tableColumns: meta("users", "id"),
+        onFkJump: vi.fn(),
+        onRunRelatedQuery: runQuery,
+        driver: "mysql",
+      };
+      const { container, rerender } = renderWithProviders(<ResultGrid result={result} {...props} />);
+      fireEvent.click(container.querySelector("td.is-fk") as HTMLElement, { altKey: true });
+      await screen.findByText("Alice");
+      rerender(<ResultGrid result={makeResult(columns, [[3, 9]])} {...props} />);
+      await waitFor(() => expect(screen.queryByTestId("fk-peek-card")).toBeNull());
+    });
+
+    it("セルの編集を始めたらカードを閉じる", async () => {
+      const runQuery = vi.fn().mockResolvedValue(peekResult());
+      const user = userEvent.setup();
+      const { container } = renderFk({
+        onRunRelatedQuery: runQuery,
+        editable: true,
+        onSetCellEdit: () => {},
+      });
+      fireEvent.click(container.querySelector("td.is-fk") as HTMLElement, { altKey: true });
+      await screen.findByText("Alice");
+      await user.dblClick(container.querySelector("td.is-fk") as HTMLElement);
+      await waitFor(() => expect(screen.queryByTestId("fk-peek-card")).toBeNull());
+    });
+
+    it("複数の行が一致したら注記を出して先頭行を表示する。1 行なら出さない", async () => {
+      const two = {
+        ...peekResult(),
+        rows: [
+          [7, "Alice"],
+          [7, "Bob"],
+        ],
+      };
+      const runQuery = vi.fn().mockResolvedValue(two);
+      const { container, unmount } = renderFk({ onRunRelatedQuery: runQuery });
+      fireEvent.click(container.querySelector("td.is-fk") as HTMLElement, { altKey: true });
+      expect(await screen.findByTestId("fk-peek-multiple")).toHaveTextContent(t("fkPeekMultiple"));
+      expect(screen.getByText("Alice")).toBeInTheDocument();
+      expect(screen.queryByText("Bob")).toBeNull();
+      unmount();
+      const one = vi.fn().mockResolvedValue(peekResult());
+      const r2 = renderFk({ onRunRelatedQuery: one });
+      fireEvent.click(r2.container.querySelector("td.is-fk") as HTMLElement, { altKey: true });
+      await screen.findByText("Alice");
+      expect(screen.queryByTestId("fk-peek-multiple")).toBeNull();
+    });
+
+    it("論理リレーション (logical: true) の列でも出る", async () => {
+      const runQuery = vi.fn().mockResolvedValue(peekResult());
+      const logicalMeta = meta("users", "id").map((m) =>
+        m.name === "user_id" ? { ...m, logical: true } : m,
+      );
+      const { container } = renderFk({ onRunRelatedQuery: runQuery, tableColumns: logicalMeta });
+      fireEvent.click(container.querySelector("td.is-fk") as HTMLElement, { altKey: true });
+      expect(await screen.findByText("Alice")).toBeInTheDocument();
+      expect(runQuery.mock.calls[0][0]).toMatch(/FROM `users` WHERE `id` = 7 LIMIT 2$/);
+    });
+
+    it("カード内のマスク: 伏せ字・たどれない・行インスペクタへ masked が渡る", async () => {
+      setColumnMaskEnabled(true);
+      setColumnMaskPatterns(["name"]);
+      try {
+        const runQuery = vi.fn().mockResolvedValue(peekResult());
+        const describeTable = vi.fn().mockResolvedValue([
+          { ...meta(null, null)[0] },
+          {
+            name: "name",
+            data_type: "varchar(50)",
+            nullable: false,
+            key: "",
+            default: null,
+            extra: "",
+            referenced_table: "other",
+            referenced_column: "id",
+          },
+        ]);
+        const { container } = renderFk({ onRunRelatedQuery: runQuery, onDescribePeekTable: describeTable });
+        fireEvent.click(container.querySelector("td.is-fk") as HTMLElement, { altKey: true });
+        const card = await screen.findByTestId("fk-peek-card");
+        await waitFor(() => expect(within(card).getByText("••••")).toBeInTheDocument());
+        expect(within(card).queryByText("Alice")).toBeNull();
+        // マスク列は FK でもたどれない。
+        expect(within(card).queryByRole("button", { name: /other/ })).toBeNull();
+        fireEvent.click(within(card).getByText(t("fkPeekOpenInInspector")));
+        const dialog = await screen.findByRole("dialog", { name: "users" });
+        expect(within(dialog).queryByText("Alice")).toBeNull();
+      } finally {
+        setColumnMaskEnabled(false);
+        setColumnMaskPatterns([]);
+      }
+    });
+
+    it("describeTable はカードの SELECT と同じデータベースで呼ばれ、取得結果は再取得しない", async () => {
+      const runQuery = vi.fn().mockResolvedValue(peekResult());
+      const describeTable = vi.fn().mockResolvedValue([]);
+      const { container } = renderFk({
+        onRunRelatedQuery: runQuery,
+        onDescribePeekTable: describeTable,
+        database: "shop",
+      });
+      const td = container.querySelector("td.is-fk") as HTMLElement;
+      fireEvent.click(td, { altKey: true });
+      await screen.findByText("Alice");
+      expect(describeTable.mock.calls[0][1]).toBe("users");
+      fireEvent.click(screen.getByRole("button", { name: t("fkPeekClose") }));
+      fireEvent.click(td, { altKey: true });
+      await screen.findByText("Alice");
+      expect(runQuery).toHaveBeenCalledTimes(1);
+      expect(describeTable).toHaveBeenCalledTimes(1);
+    });
+
     it("カード内の FK 値からたどれ、パンくずが伸びる", async () => {
       const runQuery = vi
         .fn()
@@ -2648,7 +2921,7 @@ describe("FK セルのリンク・アフォーダンス (#1393)", () => {
           rows_affected: 0,
           elapsed_ms: 1,
         });
-      const describeTable = vi.fn(async (table: string) =>
+      const describeTable = vi.fn(async (_db: string | null, table: string) =>
         table === "users"
           ? [
               { ...meta(null, null)[0] },
@@ -2672,7 +2945,7 @@ describe("FK セルのリンク・アフォーダンス (#1393)", () => {
       });
       fireEvent.click(link);
       expect(await screen.findByText("Kanto")).toBeInTheDocument();
-      expect(runQuery.mock.calls[1][0]).toMatch(/FROM `regions` WHERE `id` = 3 LIMIT 1$/);
+      expect(runQuery.mock.calls[1][0]).toMatch(/FROM `regions` WHERE `id` = 3 LIMIT 2$/);
       const nav = screen.getByRole("navigation", { name: t("fkPeekBreadcrumbAria") });
       expect(nav.textContent).toContain("users");
       expect(nav.textContent).toContain("regions");

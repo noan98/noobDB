@@ -5,6 +5,10 @@ import {
   buildFkPeekSql,
   FK_PEEK_MAX_COLUMNS,
   FK_PEEK_MAX_TRAIL,
+  FK_PEEK_FETCH_LIMIT,
+  newFkPeekCache,
+  peekMetaKey,
+  splitPeekRows,
   peekBack,
   peekCanBack,
   peekCanForward,
@@ -23,12 +27,12 @@ import {
 const step = (table: string, value: PeekStep["value"] = 1): PeekStep => ({ table, column: "id", value });
 
 describe("buildFkPeekSql", () => {
-  it("FK ジャンプの SELECT に LIMIT 1 を付ける", () => {
+  it("FK ジャンプの SELECT に LIMIT 2 (複数一致の検出用) を付ける", () => {
     expect(buildFkPeekSql({ driver: "mysql", database: "shop", step: step("customers", 42) })).toBe(
-      "SELECT * FROM `shop`.`customers` WHERE `id` = 42 LIMIT 1",
+      "SELECT * FROM `shop`.`customers` WHERE `id` = 42 LIMIT 2",
     );
     expect(buildFkPeekSql({ driver: "postgres", database: null, step: step("customers", "a'b") })).toBe(
-      `SELECT * FROM "customers" WHERE "id" = 'a''b' LIMIT 1`,
+      `SELECT * FROM "customers" WHERE "id" = 'a''b' LIMIT 2`,
     );
   });
   it("グリッドで開く SQL は LIMIT 無し", () => {
@@ -154,5 +158,25 @@ describe("peekFollowTarget", () => {
     expect(peekFollowTarget(m, "half")).toBeNull();
     expect(peekFollowTarget(m, "nope")).toBeNull();
     expect(peekFollowTarget(null, "region_id")).toBeNull();
+  });
+});
+
+describe("splitPeekRows", () => {
+  it("0 行は row なし、1 行は単一、2 行以上は先頭行 + multiple", () => {
+    expect(splitPeekRows([])).toEqual({ row: null, multiple: false });
+    expect(splitPeekRows([[1]])).toEqual({ row: [1], multiple: false });
+    expect(splitPeekRows([[1], [2]])).toEqual({ row: [1], multiple: true });
+  });
+  it("取得行数は 2 (複数一致を検出できる最小)", () => {
+    expect(FK_PEEK_FETCH_LIMIT).toBe(2);
+  });
+});
+
+describe("キャッシュ", () => {
+  it("メタのキーは DB とテーブルで分かれる", () => {
+    expect(peekMetaKey("a", "t")).not.toBe(peekMetaKey("b", "t"));
+    expect(peekMetaKey(null, "t")).toBe(peekMetaKey("", "t"));
+    const c = newFkPeekCache();
+    expect(c.results.size + c.meta.size).toBe(0);
   });
 });

@@ -5046,6 +5046,8 @@ const en = {
   fkPeekMore: "+{count} more columns",
   fkPeekOpenInGrid: "Open in grid",
   fkPeekOpenInInspector: "Open in row inspector",
+  fkPeekClose: "Close",
+  fkPeekMultiple: "Multiple rows match. Showing the first one; open in the grid to check.",
   relatedRowsError: "Failed to load: {error}",
   relatedRowsTableAria: "Rows of {table} referencing this row",
   // コンテキストメニューの Undo/Redo (#815). ツールバーボタンの
@@ -13995,6 +13997,9 @@ const ja: Dict = {
   fkPeekMore: "ほか {count} 列",
   fkPeekOpenInGrid: "グリッドで開く",
   fkPeekOpenInInspector: "行インスペクタで開く",
+  fkPeekClose: "閉じる",
+  fkPeekMultiple:
+    "複数の行が一致しています (グリッドで開いて確認してください)。先頭の 1 行を表示しています。",
   relatedRowsError: "読み込みに失敗しました: {error}",
   relatedRowsTableAria: "この行を参照している {table} の行",
   // コンテキストメニューの Undo/Redo (#815)。
