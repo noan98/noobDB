@@ -8953,6 +8953,8 @@ const en = {
   notebookCollapse: "Collapse cell",
   notebookExpand: "Expand cell",
   notebookOpenInEditor: "Open in a query tab",
+  notebookOpenInEditorOtherConn:
+    "This cell uses a different connection than the active one. Query tabs open on the active connection only, so switch to it first.",
   notebookWritesBadge: "Writes",
   notebookWritesTip:
     "This cell contains a statement that changes data or schema. Running it goes through the same confirmations as the editor.",
@@ -8989,6 +8991,23 @@ const en = {
   notebookRebindMessageProd:
     "The current connection “{current}” is a PRODUCTION connection, but this notebook was saved with “{saved}”. Cells will run on “{current}”, and the notebook will be tied to it.",
   notebookRebindConfirm: "Run here",
+  notebookCellConn: "Connection for this cell",
+  notebookCellConnDefault: "Current connection",
+  notebookCellConnMissing:
+    "The connection “{name}” saved with this cell no longer exists. Choose another connection to run it.",
+  notebookCellConnNotOpen:
+    "The connection “{name}” is not open. Connect to it from the connection list, then run the cell.",
+  notebookCellConnTitle: "Run on other connections?",
+  notebookCellConnMessage:
+    "Cells will run on {names}, not the current connection “{current}”. Dangerous-query confirmations and read-only settings follow each cell's own connection.",
+  notebookCellConnMessageProd:
+    "Cells will run on {names}, which includes a PRODUCTION connection, not the current connection “{current}”. Dangerous-query confirmations and read-only settings follow each cell's own connection.",
+  notebookCellConnConfirm: "Run",
+  notebookCellConnReconnected:
+    "The connection “{name}” was reconnected, so the run was stopped. Run it again.",
+  notebookCellConnName: "“{name}”",
+  notebookCellConnNameSep: ", ",
+  notebookCellConnChanged: "A cell's connection was changed while running. Stopped; run it again to confirm.",
   notebookTooLarge:
     "The notebook is {size} MiB, over the {limit} MiB limit for opening files. Lower the snapshot rows and run the cells again.",
   notebookTooManyCells:
@@ -17867,6 +17886,8 @@ const ja: Dict = {
   notebookCollapse: "セルを折りたたむ",
   notebookExpand: "セルを展開",
   notebookOpenInEditor: "クエリタブで開く",
+  notebookOpenInEditorOtherConn:
+    "このセルはアクティブな接続と別の接続を指しています。クエリタブはアクティブな接続でしか開けないため、先にその接続へ切り替えてください。",
   notebookWritesBadge: "書き込みあり",
   notebookWritesTip:
     "このセルにはデータやスキーマを変更する文が含まれます。実行はエディタと同じ確認を通ります。",
@@ -17904,6 +17925,23 @@ const ja: Dict = {
   notebookRebindMessageProd:
     "現在の接続「{current}」は本番接続ですが、このノートブックは「{saved}」で保存されました。セルは「{current}」で実行され、ノートブックの接続も付け替わります。",
   notebookRebindConfirm: "この接続で実行",
+  notebookCellConn: "このセルの接続",
+  notebookCellConnDefault: "現在の接続",
+  notebookCellConnMissing:
+    "このセルに保存された接続「{name}」が見つかりません。別の接続を選んでから実行してください。",
+  notebookCellConnNotOpen:
+    "接続「{name}」は開いていません。接続一覧から接続してから、セルを実行してください。",
+  notebookCellConnTitle: "別の接続で実行しますか?",
+  notebookCellConnMessage:
+    "セルは現在の接続「{current}」ではなく {names} で実行されます。危険クエリの確認と読み取り専用の設定は、セルごとの接続に従います。",
+  notebookCellConnMessageProd:
+    "セルは現在の接続「{current}」ではなく、本番接続を含む {names} で実行されます。危険クエリの確認と読み取り専用の設定は、セルごとの接続に従います。",
+  notebookCellConnConfirm: "実行",
+  notebookCellConnReconnected: "接続「{name}」が再接続されたため中止しました。もう一度実行してください。",
+  notebookCellConnName: "「{name}」",
+  notebookCellConnNameSep: "、",
+  notebookCellConnChanged:
+    "実行中にセルの接続が変更されたため停止しました。もう一度実行して確認してください。",
   notebookTooLarge:
     "ノートブックが {size} MiB で、開ける上限 ({limit} MiB) を超えています。保存行数を下げてセルを再実行してください。",
   notebookTooManyCells: "セルが {limit} 個を超えており、開き直せません。セルを減らしてから保存してください。",

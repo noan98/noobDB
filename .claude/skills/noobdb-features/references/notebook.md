@@ -19,4 +19,23 @@ SQL セルの結果をスナップショットとして `.noobnb` (JSON) に保�
 - **保存**: `readTextFile` / `writeTextFile` + `plugin-dialog` の open / save (既存の経路)。接続は `profileId` と表示名だけ。
   シリアライズはホワイトリスト (`notebook.test.ts` が秘密らしきプロパティの混入を固定)。
 - **マスキング**: 設定の機微カラムマスク (`columnMask.ts`) が有効なら、スナップショット作成時と書き出し時の両方で伏せ字にする。
-- **セル単位の接続切替は未実装** (ノートブックの既定接続 = 現在の接続のみ。`runNotebookSql` が現在のセッションを使う)。
+- **セル単位の接続 (#2396)**: SQL セルは `connection` (`{ profileId, name }` だけ。null = 文書の既定 = 現在の接続) を持ち、
+  セルのヘッダの `ListboxSelect` で選ぶ。実行先の解決は純関数 `resolveCellTarget` (`current` / `open` / `closed` / `missing`)。
+  - **実行できるのは「開いている接続」(アクティブ + 背景 = `openConnections`) だけ。** ノートブックから接続は張らない
+    (閉じている / プロファイルが無いセルは理由をセルに出して実行を止め、「すべて実行」は 1 つも流さない)。
+  - **実行先は「接続 + セッション」の組で固定する**: `NotebookRunRequest.connection` は常に明示 (`{ profileId, sessionId, name }`。
+    既定のセルも省略しない)。`runCells` が実行開始時に組を決め (確認も実行もその組)、`runNotebookSql` は
+    `resolveNotebookRunTarget` で組が `openConnections` に実在するか検証する (無ければ拒否。プロファイルは開いているが
+    セッションが違う = 再接続は別メッセージ)。実行中にアクティブ接続が切り替わっても別の接続では流れない。
+    アクティブかどうかは各コールバックでその都度 `sessionIdRef` と比べる。
+  - **実行中はセルの接続を選べない** (`ListboxSelect` を disabled)。さらにループ内で、開始時と接続が変わったセルがあれば停止する。
+  - **安全網はセルの接続の設定で効く**: 判定に使うプロファイルは最新の設定 (アクティブ接続は `selectedProfile`、背景は保存済み
+    `profiles`。`openConnections` のプロファイルは接続時点のままなので、派生接続など保存一覧に無いときだけ使う) で、
+    `runGuardedDdl` に緊急モードと一緒に渡して確認ゲート (`is_production` / `confirm_writes` / `read_only` / 危険クエリ) を判定する。
+    `read_only` のサーバ側強制は、そのセッション自身の接続設定による。明示トランザクションは接続ごと (`notebookInTransaction`)。
+  - 現在と違う接続を指すセルは、この文書で初めて実行するときに接続名 (本番は danger) の確認を出す (承認は文書の世代ごと)。
+  - 別の接続のセルは、文書の実行先 DB (`doc.database`) を持ち込まず接続の既定 DB へ寄せる。履歴ナビ・スキーマドリフト記録は
+    アクティブな接続のものなので、背景接続のセルでは触らない (スキーマキャッシュは丸ごと破棄)。
+  - エラー文のスナップショットは `redactErrorText` で資格情報リテラルを伏せてから残す。
+  - 設定 `batchWrapInTransaction` には揃えていない (ノートブックはセルの結果を 1 文ずつ集めるため、`run_sql_batch` へ
+    寄せると結果の取り扱いが変わる。複数文のセルは 1 文ずつ・失敗で停止、で従来どおり)。

@@ -65,9 +65,12 @@ const OUT = {
 
 function setup(over: Partial<React.ComponentProps<typeof NotebookView>> = {}) {
   const onRunSql = vi.fn().mockResolvedValue(OUT);
+  const profile = over.profile ?? makeProfile();
   const props = {
     sessionId: "s1",
-    profile: makeProfile(),
+    profile,
+    profiles: [profile],
+    openConnections: over.sessionId === null ? [] : [{ sessionId: "s1", profile }],
     schemaForDatabase: () => null,
     transactionActive: false,
     emergencyMode: false,
@@ -76,8 +79,11 @@ function setup(over: Partial<React.ComponentProps<typeof NotebookView>> = {}) {
     onClose: vi.fn(),
     ...over,
   };
-  renderWithProviders(<NotebookView {...props} />);
-  return { props, onRunSql };
+  const view = renderWithProviders(<NotebookView {...props} />);
+  // アクティブ接続の切り替えなど、props を差し替えて描画し直す。
+  const rerender = (next: Partial<React.ComponentProps<typeof NotebookView>>) =>
+    view.rerender(<NotebookView {...props} {...next} />);
+  return { props, onRunSql, rerender };
 }
 
 function seed(...cells: ReturnType<typeof newSqlCell | typeof newMarkdownCell>[]) {
@@ -332,5 +338,245 @@ describe("NotebookView (#2380)", () => {
     fireEvent.click(screen.getAllByRole("button", { name: t("notebookAddSql") })[0]);
     await screen.findByText(t("notebookTooManyCells", { limit: MAX_NOTEBOOK_CELLS.toLocaleString() }));
     expect(getNotebookState().doc.cells).toHaveLength(MAX_NOTEBOOK_CELLS);
+  });
+  describe("セル単位の接続 (#2396)", () => {
+    const cur = makeProfile({ id: "cur", name: "検証", driver: "postgres" });
+    const prod = makeProfile({ id: "prod", name: "本番DB", driver: "mysql", is_production: true });
+    const lite = makeProfile({ id: "lite", name: "ローカル", driver: "sqlite" });
+    const open = (p: typeof prod, sessionId: string) => ({ sessionId, profile: p });
+
+    it("接続を選ぶとセルに保存され、プロファイル ID と表示名だけが入る", async () => {
+      seed(newSqlCell("SELECT 1"));
+      setup({ profile: cur, profiles: [cur, prod, lite], openConnections: [open(cur, "s1")] });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("combobox", { name: t("notebookCellConn") }));
+      });
+      await act(async () => {
+        fireEvent.click(await screen.findByRole("option", { name: "本番DB" }));
+      });
+      const cell = getNotebookState().doc.cells[0];
+      expect(cell).toMatchObject({ connection: { profileId: "prod", name: "本番DB" } });
+      expect(Object.keys((cell as { connection: object }).connection).sort()).toEqual(["name", "profileId"]);
+    });
+
+    it("別の接続のセルは確認 (本番は警告つき) を通してから、その接続を指定して実行する", async () => {
+      const c = newSqlCell("SELECT 1");
+      c.connection = { profileId: "prod", name: "本番DB" };
+      seed(c);
+      const { onRunSql } = setup({
+        profile: cur,
+        profiles: [cur, prod],
+        openConnections: [open(cur, "s1"), open(prod, "s2")],
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+      });
+      await act(async () => {
+        fireEvent.click(await screen.findByRole("button", { name: t("notebookCellConnConfirm") }));
+      });
+      await waitFor(() => expect(onRunSql).toHaveBeenCalledTimes(1));
+      expect(onRunSql.mock.calls[0][1]).toMatchObject({
+        connection: { profileId: "prod", sessionId: "s2", name: "本番DB" },
+        database: null,
+      });
+      // 既定の接続の付け替え確認は出さない (既定で動くセルが無い)
+      expect(screen.queryByRole("button", { name: t("notebookRebindConfirm") })).toBeNull();
+    });
+
+    it("別接続の確認を取りやめたら実行しない", async () => {
+      const c = newSqlCell("DELETE FROM t");
+      c.connection = { profileId: "prod", name: "本番DB" };
+      seed(c);
+      const { onRunSql } = setup({
+        profile: cur,
+        profiles: [cur, prod],
+        openConnections: [open(cur, "s1"), open(prod, "s2")],
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+      });
+      await screen.findByRole("button", { name: t("notebookCellConnConfirm") });
+      const cancels = screen.getAllByRole("button", { name: t("confirmDefaultCancel") });
+      await act(async () => {
+        fireEvent.click(cancels[cancels.length - 1]);
+      });
+      expect(onRunSql).not.toHaveBeenCalled();
+    });
+
+    it("未指定のセルは現在の接続を明示して実行する (省略しない)", async () => {
+      seed(newSqlCell("SELECT 1"));
+      const { onRunSql } = setup({ profile: cur, profiles: [cur, prod], openConnections: [open(cur, "s1")] });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+      });
+      await waitFor(() => expect(onRunSql).toHaveBeenCalledTimes(1));
+      expect(onRunSql.mock.calls[0][1]).toMatchObject({
+        connection: { profileId: "cur", sessionId: "s1" },
+      });
+    });
+
+    it("開いていない接続のセルは実行できない (理由を示し、すべて実行は 1 つも流さない)", async () => {
+      const a = newSqlCell("SELECT 1");
+      const b = newSqlCell("SELECT 2");
+      b.connection = { profileId: "lite", name: "ローカル" };
+      seed(a, b);
+      const { onRunSql } = setup({ profile: cur, profiles: [cur, lite], openConnections: [open(cur, "s1")] });
+      expect(screen.getByTestId("notebook-cell-conn-note").textContent).toContain(
+        t("notebookCellConnNotOpen", { name: "ローカル" }),
+      );
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+      });
+      expect(onRunSql).not.toHaveBeenCalled();
+    });
+
+    it("保存されたプロファイルが無いセルは、見つからない旨を表示して実行しない", () => {
+      const c = newSqlCell("SELECT 1");
+      c.connection = { profileId: "gone", name: "消えた接続" };
+      seed(c);
+      const { onRunSql } = setup({ profile: cur, profiles: [cur], openConnections: [open(cur, "s1")] });
+      expect(screen.getByTestId("notebook-cell-conn-note").textContent).toContain(
+        t("notebookCellConnMissing", { name: "消えた接続" }),
+      );
+      const run = screen.getAllByRole("button", { name: t("notebookRunCell") })[0] as HTMLButtonElement;
+      expect(run.disabled).toBe(true);
+      expect(onRunSql).not.toHaveBeenCalled();
+    });
+
+    it("現在の接続が無くても、開いている別接続のセルは実行できる", async () => {
+      const c = newSqlCell("SELECT 1");
+      c.connection = { profileId: "lite", name: "ローカル" };
+      seed(c);
+      const { onRunSql } = setup({
+        sessionId: null,
+        profile: null,
+        profiles: [lite],
+        openConnections: [open(lite, "s3")],
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+      });
+      await act(async () => {
+        fireEvent.click(await screen.findByRole("button", { name: t("notebookCellConnConfirm") }));
+      });
+      await waitFor(() => expect(onRunSql).toHaveBeenCalledTimes(1));
+    });
+
+    it("実行中にアクティブ接続が切り替わっても、確認済みの接続 + セッションで流す (すべて実行)", async () => {
+      const a = newSqlCell("SELECT 1");
+      a.connection = { profileId: "prod", name: "本番DB" };
+      const b = newSqlCell("SELECT 2");
+      seed(a, b);
+      let release: (v: unknown) => void = () => {};
+      const first = new Promise((r) => {
+        release = r;
+      });
+      const onRunSql = vi
+        .fn()
+        .mockImplementationOnce(() => first)
+        .mockResolvedValue(OUT);
+      const view = setup({
+        onRunSql,
+        profile: cur,
+        profiles: [cur, prod],
+        openConnections: [open(cur, "s1"), open(prod, "s2")],
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+      });
+      await act(async () => {
+        fireEvent.click(await screen.findByRole("button", { name: t("notebookCellConnConfirm") }));
+      });
+      await waitFor(() => expect(onRunSql).toHaveBeenCalledTimes(1));
+      // 実行中は接続を変えられない
+      for (const sel of screen.getAllByRole("combobox", { name: t("notebookCellConn"), hidden: true })) {
+        expect((sel as HTMLButtonElement).disabled).toBe(true);
+      }
+      // アクティブ接続を B (本番) へ切り替える
+      view.rerender({ profile: prod, sessionId: "s2" });
+      await act(async () => {
+        release(OUT);
+      });
+      await waitFor(() => expect(onRunSql).toHaveBeenCalledTimes(2));
+      expect(onRunSql.mock.calls[0][1].connection).toMatchObject({ profileId: "prod", sessionId: "s2" });
+      // 既定のセルは開始時点の現在の接続 (A) に固定される
+      expect(onRunSql.mock.calls[1][1].connection).toMatchObject({ profileId: "cur", sessionId: "s1" });
+    });
+
+    it("確認のあとにセルの接続が変えられたら、確認なしでは流さず止める", async () => {
+      const a = newSqlCell("SELECT 1");
+      const b = newSqlCell("SELECT 2");
+      seed(a, b);
+      let release: (v: unknown) => void = () => {};
+      const first = new Promise((r) => {
+        release = r;
+      });
+      const onRunSql = vi
+        .fn()
+        .mockImplementationOnce(() => first)
+        .mockResolvedValue(OUT);
+      setup({
+        onRunSql,
+        profile: cur,
+        profiles: [cur, prod],
+        openConnections: [open(cur, "s1"), open(prod, "s2")],
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+      });
+      await waitFor(() => expect(onRunSql).toHaveBeenCalledTimes(1));
+      // UI を迂回してストアを直接書き換えても、ループが検知して止める
+      await act(async () => {
+        updateNotebook((d) => ({
+          ...d,
+          cells: d.cells.map((c) =>
+            c.id === b.id && c.kind === "sql"
+              ? { ...c, connection: { profileId: "prod", name: "本番DB" } }
+              : c,
+          ),
+        }));
+        release(OUT);
+      });
+      await screen.findByText(t("notebookCellConnChanged"));
+      expect(onRunSql).toHaveBeenCalledTimes(1);
+    });
+
+    it("「エディタで開く」: 別の接続を指すセルは無効 (黙って現在の接続へ移さない)、現在の接続のセルは開ける", () => {
+      const a = newSqlCell("SELECT 1");
+      a.connection = { profileId: "prod", name: "本番DB" };
+      const b = newSqlCell("SELECT 2");
+      seed(a, b);
+      const { props } = setup({
+        profile: cur,
+        profiles: [cur, prod],
+        openConnections: [open(cur, "s1"), open(prod, "s2")],
+      });
+      const [btnOther, btnCurrent] = screen.getAllByRole("button", {
+        name: t("notebookOpenInEditor"),
+      }) as HTMLButtonElement[];
+      expect(btnOther.disabled).toBe(true);
+      expect(btnCurrent.disabled).toBe(false);
+      fireEvent.click(btnOther);
+      expect(props.onOpenInEditor).not.toHaveBeenCalled();
+      fireEvent.click(btnCurrent);
+      expect(props.onOpenInEditor).toHaveBeenCalledWith("SELECT 2", expect.any(String), null);
+    });
+
+    it("エラーメッセージに引用された資格情報リテラルは、スナップショットに残す前に伏せる", async () => {
+      seed(newSqlCell("CREATE USER bob IDENTIFIED BY 'hunter2secret'"));
+      const onRunSql = vi
+        .fn()
+        .mockRejectedValue(
+          new NotebookRunError("syntax error near 'hunter2secret' at line 1", false, false, false),
+        );
+      setup({ onRunSql, profile: makeProfile({ driver: "mysql" }) });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+      });
+      await waitFor(() => {
+        const cell = getNotebookState().doc.cells[0];
+        expect(cell.kind === "sql" && cell.snapshot?.error).toBe("syntax error near '********' at line 1");
+      });
+    });
   });
 });
