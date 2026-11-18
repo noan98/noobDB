@@ -70,6 +70,7 @@ import {
   IconSortDescending,
   IconScissors,
   IconSelectAll,
+  IconSitemap,
   IconSend,
   IconSparkles,
   IconStar,
@@ -223,6 +224,7 @@ export type IconName =
   | "toggle"
   | "calendar"
   | "braces"
+  | "hierarchy"
   | "list"
   | "binary"
   | "text"
@@ -416,6 +418,7 @@ const GLYPHS: Record<Exclude<IconName, BrandIconName | VennIconName>, TablerIcon
   toggle: IconToggleLeft,
   calendar: IconCalendar,
   braces: IconBraces,
+  hierarchy: IconSitemap,
   list: IconList,
   binary: IconBinary,
   // 文字列型の列: Aa。

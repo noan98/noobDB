@@ -90,6 +90,7 @@ const ExplainViewer = lazy(() => import("./ExplainViewer").then((m) => ({ defaul
 const PaginationBar = lazy(() => import("./PaginationBar").then((m) => ({ default: m.PaginationBar })));
 const ChartView = lazy(() => import("./ChartView").then((m) => ({ default: m.ChartView })));
 const PivotView = lazy(() => import("./PivotView").then((m) => ({ default: m.PivotView })));
+const HierarchyView = lazy(() => import("./HierarchyView").then((m) => ({ default: m.HierarchyView })));
 const ResultJsonView = lazy(() => import("./ResultJsonView").then((m) => ({ default: m.ResultJsonView })));
 const BatchResultsView = lazy(() =>
   import("./BatchResultsView").then((m) => ({ default: m.BatchResultsView })),
@@ -627,9 +628,11 @@ export const PaneView = memo(
               ? "pivot"
               : tab.showJson && tab.result && !tab.streaming
                 ? "json"
-                : tab.preview
-                  ? "preview"
-                  : "grid";
+                : tab.showHierarchy && tab.result && !tab.streaming
+                  ? "hierarchy"
+                  : tab.preview
+                    ? "preview"
+                    : "grid";
     // 結果ツールバーの「EXPLAIN」(#1113)。直前に実行した SQL の実行計画を専用の
     // EXPLAIN タブで開く。keep-alive で保持するグリッドの中にも同じ Provider を置く (#1309)。
     const explainCtxValue =
@@ -1077,6 +1080,21 @@ export const PaneView = memo(
                                   database={tab.database ?? selectedProfile?.database ?? null}
                                   table={tab.table ?? null}
                                   onChangeView={(v) => actions.setResultView(tab.id, v)}
+                                />
+                              ) : tab.showHierarchy && tab.result && !tab.streaming ? (
+                                <HierarchyView
+                                  key={tab.id}
+                                  result={tab.result}
+                                  sourceSql={tab.lastExecutedSql}
+                                  driver={selectedProfile?.driver ?? "mysql"}
+                                  database={tab.database ?? selectedProfile?.database ?? null}
+                                  table={tab.table ?? null}
+                                  columnMeta={tab.tableColumns}
+                                  onChangeView={(v) => actions.setResultView(tab.id, v)}
+                                  onOpenQuery={sessionId ? (sql) => actions.openAndRunQuery(sql) : undefined}
+                                  onRunLookup={
+                                    sessionId ? (sql) => api.runQuery(sessionId, sql, null) : undefined
+                                  }
                                 />
                               ) : tab.showPivot && tab.result && !tab.streaming ? (
                                 <PivotView
