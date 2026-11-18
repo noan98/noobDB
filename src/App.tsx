@@ -203,7 +203,8 @@ import {
   type MaintenanceCommand,
   type MaintenanceKind,
 } from "./components/maintenanceCommands";
-import { mysqlAnalyzeFailure } from "./components/statsAdvisor";
+import { mysqlAnalyzeFailure, serverVersionSql } from "./components/statsAdvisor";
+import { CTE_BLOCK_KEYS, supportsCte } from "./cteRun";
 import type { StatsRunOutcome } from "./components/StatsAdvisorPanel";
 import {
   buildIdentitySyncSql,
@@ -304,6 +305,7 @@ import {
   savepointName,
 } from "./savepoints";
 import { isMruRecordable, singleLine, type CommandItem } from "./components/commandPaletteSearch";
+import { indexHistoryMeta, type HistoryMeta, type PreviewAction } from "./components/commandPalettePreview";
 
 // Heavy or rarely-immediately-needed views are code-split so the initial
 // bundle the WebView parses and mounts on launch stays small. CodeMirror
@@ -732,7 +734,7 @@ import {
   type NotebookRunOutput,
   type NotebookRunRequest,
 } from "./notebookExec";
-import { redactCredentials } from "./sqlCredentials";
+import { CREDENTIAL_PLACEHOLDER, redactCredentials } from "./sqlCredentials";
 import {
   EMPTY_QUICK_ACCESS,
   loadQuickAccess,
@@ -1638,6 +1640,7 @@ export default function App() {
     () => ({
       run: shortcutBindings.run,
       runStatement: shortcutBindings.runStatement,
+      runCte: shortcutBindings.runCte,
       preview: shortcutBindings.preview,
       format: shortcutBindings.format,
       explain: shortcutBindings.explain,
@@ -1646,6 +1649,7 @@ export default function App() {
     [
       shortcutBindings.run,
       shortcutBindings.runStatement,
+      shortcutBindings.runCte,
       shortcutBindings.preview,
       shortcutBindings.format,
       shortcutBindings.explain,
@@ -2760,7 +2764,7 @@ export default function App() {
     sql: string;
     mode: "run" | "runNewTab" | "preview" | "explain";
     /** "run" 再開時に `runInTabWithGate` へ渡す指定 (スニペット実行の `newTab: false` など)。 */
-    runOpts?: { newTab?: boolean };
+    runOpts?: { newTab?: boolean; title?: string };
   } | null>(null);
 
   // The focused pane drives all the "active tab" handlers (sidebar inserts,
@@ -7212,7 +7216,7 @@ export default function App() {
   );
 
   const runInTabWithGate = useCallback(
-    (tab: Tab, sql: string, opts?: { newTab?: boolean; fresh?: boolean }) => {
+    (tab: Tab, sql: string, opts?: { newTab?: boolean; fresh?: boolean; title?: string }) => {
       // 子行影響の事前確認中 (ステータスに「確認中」) の再実行は無視する (#1767)。
       if (precheckingTabsRef.current.has(tab.id)) return;
       gateRunSeqRef.current.set(tab.id, (gateRunSeqRef.current.get(tab.id) ?? 0) + 1);
@@ -7235,7 +7239,10 @@ export default function App() {
           ...makeQueryTab(),
           sql,
           lastExecutedSql: sql,
-          title: deriveResultTabTitle(sql),
+          title: opts?.title ?? deriveResultTabTitle(sql),
+          // 「この CTE までを実行」(#2409) のように呼び出し側が名前を決めたタイトルは、再実行しても
+          // SQL 由来のタイトルに戻さない。
+          ...(opts?.title ? { titleManual: true } : {}),
         };
         addTab(newTab);
         target = newTab;
@@ -7512,7 +7519,7 @@ export default function App() {
       tab: Tab,
       sql: string,
       mode: "run" | "runNewTab" | "preview" | "explain",
-      runOpts?: { newTab?: boolean },
+      runOpts?: { newTab?: boolean; title?: string },
     ) => {
       // 習熟マップ (#2216): ユーザー起点の実行の入口。バッチ・トランザクション中の実行もここを通る。
       // EXPLAIN タブの再実行は EXPLAIN なので数えない。
@@ -7520,7 +7527,7 @@ export default function App() {
         markFeatureTried("helpRunTitle");
       if (mode === "preview") void previewQueryInTab(tab.id, sql);
       else if (mode === "explain") explainForTab(tab, sql);
-      else if (mode === "runNewTab") runInTabWithGate(tab, sql, { newTab: true });
+      else if (mode === "runNewTab") runInTabWithGate(tab, sql, { ...runOpts, newTab: true });
       else runInTabWithGate(tab, sql, runOpts);
     },
     [previewQueryInTab, explainForTab, runInTabWithGate],
@@ -7537,7 +7544,7 @@ export default function App() {
       tab: Tab,
       sql: string,
       mode: "run" | "runNewTab" | "preview" | "explain",
-      runOpts?: { newTab?: boolean },
+      runOpts?: { newTab?: boolean; title?: string },
     ) => {
       const driver = selectedProfile?.driver ?? "mysql";
       if (extractQueryParams(sql).length === 0 && extractNativeParams(sql, driver).length === 0) {
@@ -7723,6 +7730,66 @@ export default function App() {
     },
     [activeTab, sessionId, activeEditor, addTab],
   );
+
+  // コマンドパレットのプレビュー (#2425) のアクション用。SQL を新しいクエリタブで開く / そのまま実行する。
+  // 実行はスニペット実行 (`handleRunSnippet`) と同じく `resolveParamsThen` → `runInTabWithGate` を通し、
+  // 危険クエリ確認・読み取り専用ガード・本番書き込み承認・自動 LIMIT をそのまま効かせる。
+  const handleOpenSqlInNewTab = useCallback(
+    (sql: string, title?: string) => {
+      if (!sessionId) return;
+      addTab({
+        ...makeQueryTab(),
+        sql,
+        lastExecutedSql: sql,
+        ...(title ? { title, titleManual: true } : {}),
+      });
+    },
+    [sessionId, addTab],
+  );
+  const handleRunSqlInNewTab = useCallback(
+    (sql: string, title?: string) => {
+      if (!sessionId) return;
+      const tab: Tab = {
+        ...makeQueryTab(),
+        sql,
+        lastExecutedSql: sql,
+        title: title ?? deriveResultTabTitle(sql),
+        titleManual: !!title,
+      };
+      addTab(tab);
+      // 履歴の SQL は展開済みなので、パラメータ検出・置換は通さない (リテラルの `{{x}}` や
+      // ネイティブのパラメータ構文を壊さない)。安全網 (確認ゲート) は runInTabWithGate が掛ける。
+      runInTabWithGate(tab, sql, { newTab: false });
+    },
+    [sessionId, addTab, runInTabWithGate],
+  );
+
+  // プレビュー (#2425) の履歴の実行メタ (時刻・所要時間・件数・成否)。ローカルの履歴ストアを読むだけ
+  // (サーバへは問い合わせない)。パレットを開いたときに 1 回だけ読み、SQL 全文で候補と結び付ける。
+  const [paletteHistoryMeta, setPaletteHistoryMeta] = useState<Map<string, HistoryMeta>>(
+    () => new Map<string, HistoryMeta>(),
+  );
+  const paletteProfileId = selectedProfile?.id ?? null;
+  useEffect(() => {
+    if (!showCommandPalette || !sessionId || !paletteProfileId) {
+      setPaletteHistoryMeta(new Map<string, HistoryMeta>());
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const params = { profileId: paletteProfileId, limit: QUERY_HISTORY_LIMIT };
+        const [entries, sqls] = await Promise.all([api.listHistory(params), api.listHistorySql(params)]);
+        if (!cancelled) setPaletteHistoryMeta(indexHistoryMeta(entries, sqls));
+      } catch {
+        // 実行メタが取れなくても SQL 本文のプレビューは出せる。
+        if (!cancelled) setPaletteHistoryMeta(new Map<string, HistoryMeta>());
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showCommandPalette, sessionId, paletteProfileId]);
 
   // AI の修正 SQL 案 (#692) を、失敗したタブのエディタへ反映する。実行はしない。
   // 表示中ならエディタ (CodeMirror) へ dispatch して undo 履歴に載せ、裏のタブなら
@@ -11202,15 +11269,28 @@ export default function App() {
     [openAndRunQuery, settings.defaultDisplayCount, selectedProfile?.driver],
   );
 
+  // 「新しいタブで開く」: SELECT 文を新しいクエリタブへ入れるだけで、実行はしない (#2425)。
+  const handleOpenTableSelectInNewTab = useCallback(
+    (database: string, table: string) => {
+      const limit = Math.max(1, settings.defaultDisplayCount);
+      const base = qualifiedTableSql(selectedProfile?.driver ?? "mysql", database, table);
+      handleOpenSqlInNewTab(`${base} LIMIT ${limit}`, table);
+    },
+    [handleOpenSqlInNewTab, settings.defaultDisplayCount, selectedProfile?.driver],
+  );
+
   // Insert SELECT * into the focused pane's editor, or open a fresh query tab
   // when the active tab has no editor (e.g. a table tab) — mirrors
   // handleRestoreHistory.
   const handleInsertTableSelect = useCallback(
-    async (database: string, table: string, withColumns = false) => {
+    async (database: string, table: string, withColumns = false, knownColumns?: string[]) => {
       const driver = selectedProfile?.driver ?? "mysql";
       let sql = treeItemInsertText(driver, { kind: "table", database, table });
-      // 列名つきの雛形 (#1627)。列が取れなければ SELECT * のまま挿入する。
-      if (withColumns && sessionId) {
+      // 列名つきの雛形 (#1627)。スキーマキャッシュの列名があればそれを使い (サーバへ問い合わせない)、
+      // 無いときだけ describeTable。列が取れなければ SELECT * のまま挿入する。
+      if (withColumns && knownColumns && knownColumns.length > 0) {
+        sql = tableSelectWithColumnsText(driver, database, table, knownColumns);
+      } else if (withColumns && sessionId) {
         try {
           const cols = await api.describeTable(sessionId, database, table);
           sql = tableSelectWithColumnsText(
@@ -13613,6 +13693,19 @@ export default function App() {
         keywords: `${profile.driver} ${profile.host} ${profile.database ?? ""} ${profile.group ?? ""}`,
         icon: "link",
         badges,
+        // プレビュー (#2425)。ホスト・ドライバ・バッジだけ。ユーザ名・パスワードなどの秘密は渡さない。
+        preview: {
+          kind: "connection",
+          name: profile.name,
+          driver: profile.driver,
+          host: isSqlite ? null : profile.host,
+          port: isSqlite ? null : profile.port,
+          database: isSqlite ? (profile.file_path ?? null) : (profile.database ?? null),
+          group: profile.group ?? null,
+          isProduction: profile.is_production,
+          readOnly: profile.read_only,
+          connected: !!sessionId && selectedProfile?.id === profile.id,
+        },
         run: () => void handleConnect(profile),
       });
     }
@@ -13631,6 +13724,16 @@ export default function App() {
             sublabel: database,
             keywords: `${database} ${table.columns.join(" ")}`,
             icon: "table",
+            // プレビュー (#2425)。列名のみ (スキーマキャッシュのもの)。サーバへは問い合わせない。
+            preview: { kind: "table", database, table: table.name, columns: table.columns },
+            previewActions: [
+              {
+                kind: "insert",
+                run: () => void handleInsertTableSelect(database, table.name, true, table.columns),
+              },
+              { kind: "open", run: () => handleOpenTableSelectInNewTab(database, table.name) },
+              { kind: "run", run: () => handleRunTableSelect(database, table.name) },
+            ],
             run: () => handleRunTableSelect(database, table.name),
           });
         }
@@ -13641,6 +13744,31 @@ export default function App() {
     // (#877) の候補も並べる。id を分けて 2 候補を独立に検索・実行できるようにする
     // (挿入だけ試したいケースを妨げない)。
     for (const snippet of snippets) {
+      // プレビュー (#2425)。挿入用・実行用の 2 候補で同じ中身とアクションを共有する。
+      const needsConnection = sessionId ? undefined : t("cmdkNeedsConnection");
+      const needsEditorTab = activeTab ? undefined : t("cmdkNeedsEditorTab");
+      const scopeProfileId = snippet.scope.kind === "profile" ? snippet.scope.profile_id : null;
+      const snippetPreview = {
+        kind: "snippet" as const,
+        name: snippet.name,
+        sql: snippet.sql,
+        folder: snippet.folder,
+        tags: snippet.tags,
+        scope: snippet.scope,
+        scopeProfileName: scopeProfileId
+          ? (visibleProfiles.find((p) => p.id === scopeProfileId)?.name ?? null)
+          : null,
+        driver: snippet.driver ?? selectedProfile?.driver ?? null,
+      };
+      const snippetActions: PreviewAction[] = [
+        { kind: "insert", run: () => handleInsertSnippet(snippet), disabledReason: needsEditorTab },
+        {
+          kind: "open",
+          run: () => handleOpenSqlInNewTab(snippetPlainText(snippet.sql), snippet.name),
+          disabledReason: needsConnection,
+        },
+        { kind: "run", run: () => handleRunSnippet(snippet), disabledReason: needsConnection },
+      ];
       items.push({
         id: `snippet:${snippet.id}`,
         group: "snippets",
@@ -13648,6 +13776,8 @@ export default function App() {
         sublabel: snippet.folder ?? undefined,
         keywords: `${snippet.tags.join(" ")} ${snippet.sql}`,
         icon: "snippet",
+        preview: snippetPreview,
+        previewActions: snippetActions,
         run: () => handleInsertSnippet(snippet),
       });
       if (sessionId) {
@@ -13658,13 +13788,17 @@ export default function App() {
           sublabel: snippet.folder ?? undefined,
           keywords: `${snippet.tags.join(" ")} ${snippet.sql} run execute 実行`,
           icon: "query",
+          preview: snippetPreview,
+          previewActions: snippetActions,
           run: () => handleRunSnippet(snippet),
         });
       }
     }
 
     // 直近のクエリ履歴 (最新優先、件数を抑える)。
+    const historyNeedsConnection = sessionId ? undefined : t("cmdkNeedsConnection");
     for (const [i, sql] of queryHistory.slice(0, 40).entries()) {
+      const historyRedacted = sql.includes(CREDENTIAL_PLACEHOLDER);
       items.push({
         id: `history:${i}`,
         group: "history",
@@ -13673,6 +13807,25 @@ export default function App() {
         keywords: sql.slice(0, 300),
         keywordsContainsOnly: true,
         icon: "clock",
+        // プレビュー (#2425)。全文は伏せ字化済みの履歴 SQL。実行メタはローカルの履歴ストアから。
+        preview: {
+          kind: "history",
+          sql,
+          meta: paletteHistoryMeta.get(sql) ?? null,
+          connectionName: selectedProfile?.name ?? null,
+          driver: selectedProfile?.driver ?? null,
+        },
+        previewActions: [
+          { kind: "insert", run: () => handleRestoreHistory(sql), disabledReason: historyNeedsConnection },
+          { kind: "open", run: () => handleOpenSqlInNewTab(sql), disabledReason: historyNeedsConnection },
+          {
+            kind: "run",
+            run: () => handleRunSqlInNewTab(sql),
+            // 履歴 SQL は資格情報が伏せ字化済み (#2174)。そのまま実行するとパスワードが '********' になる。
+            disabledReason:
+              historyNeedsConnection ?? (historyRedacted ? t("outputRerunRedacted") : undefined),
+          },
+        ],
         run: () => handleRestoreHistory(sql),
       });
     }
@@ -13703,9 +13856,14 @@ export default function App() {
     handleDisconnect,
     handleConnect,
     handleRunTableSelect,
+    handleOpenTableSelectInNewTab,
     handleInsertSnippet,
     handleRunSnippet,
     handleRestoreHistory,
+    handleInsertTableSelect,
+    handleOpenSqlInNewTab,
+    handleRunSqlInNewTab,
+    paletteHistoryMeta,
     openFullView,
     toggleTheme,
     pinnedResults.length,
@@ -13922,7 +14080,33 @@ export default function App() {
         c.profile.driver === selectedProfile.driver &&
         !isSandboxProfileId(c.profile.id),
     );
+  // 「この CTE までを実行」(#2409): MySQL だけ接続ごとに `SELECT VERSION()` を 1 回引き、WITH 非対応
+  // (MySQL 5.x / MariaDB 10.2 未満) なら無効にする。取れない間・失敗時は塞がない (非対応ならサーバがエラーを返す)。
+  const [cteRunUnsupported, setCteRunUnsupported] = useState(false);
+  const cteDriver = selectedProfile?.driver;
+  useEffect(() => {
+    setCteRunUnsupported(false);
+    const sql = cteDriver ? serverVersionSql(cteDriver) : null;
+    if (!sessionId || cteDriver !== "mysql" || !sql) return;
+    let cancelled = false;
+    api
+      .runLookupQuery({ sessionId, sql, rowCap: 1, queryTimeoutSecs: 5 })
+      .then((res) => {
+        if (!cancelled) setCteRunUnsupported(!supportsCte("mysql", String(res.rows[0]?.[0] ?? "")));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, cteDriver]);
+  const reportCteBlocked = useCallback(
+    (reason: keyof typeof CTE_BLOCK_KEYS) => toast.info(translate(CTE_BLOCK_KEYS[reason])),
+    [toast],
+  );
   const paneEnv: PaneEnv = {
+    cteRunUnsupported,
+    cteRunLimit: settings.autoLimitCount,
+    reportCteBlocked,
     completionSnippets,
     renamingTabId,
     store: tabPaneStore,
@@ -16023,6 +16207,7 @@ export default function App() {
                 <LogicalRelationsModal
                   key={logicalRelationsTarget}
                   sessionId={sessionId}
+                  driver={selectedProfile?.driver}
                   onChanged={handleLogicalRelationsChanged}
                   database={logicalRelationsTarget}
                   onClose={() => {

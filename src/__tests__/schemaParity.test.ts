@@ -237,6 +237,7 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["healthProbeItemVariants", schemas.healthProbeItem],
   ["incomingForeignKey", schemas.incomingForeignKey],
   ["logicalRelation", schemas.logicalRelation],
+  ["logicalRelationsImportParse", schemas.logicalRelationsImportParse],
   ["columnDependencyReport", schemas.columnDependencyReport],
   ["viewRebuildPlan", schemas.viewRebuildPlan],
   ["tableStatistic", schemas.tableStatistic],

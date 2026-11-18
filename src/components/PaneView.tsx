@@ -31,6 +31,7 @@ import { ResultPaneSkeleton } from "./ResultPaneSkeleton";
 import { showsResultSkeletonFallback } from "./resultSkeleton";
 import { Spinner } from "./Spinner";
 import type { QueryEditorHandle } from "./QueryEditor";
+import type { CteRunBlock } from "../cteRun";
 import type { PreflightResult } from "./usePreflight";
 import type { ResultGridHandle } from "./ResultGrid";
 import { ResultExplainContext, type ResultViewKind } from "./ResultViewSwitch";
@@ -247,7 +248,12 @@ export interface PaneActions {
   addInsertRowsForTab: (tabId: string, rows: PendingInsertRow[]) => void;
   toggleSqlEditForTab: (tabId: string) => void;
   requestInsertRowForTab: (tabId: string) => void;
-  resolveParamsThen: (tab: Tab, sql: string, mode: "run" | "runNewTab" | "preview" | "explain") => void;
+  resolveParamsThen: (
+    tab: Tab,
+    sql: string,
+    mode: "run" | "runNewTab" | "preview" | "explain",
+    runOpts?: { newTab?: boolean; title?: string },
+  ) => void;
   runBatchInTab: (tabId: string, sql: string, stopOnError: boolean, tabOverride?: Tab) => unknown;
   runExplainInTab: (tabId: string, sql: string, analyze: boolean) => unknown;
   /** 統計の手当て (ANALYZE / 拡張統計 / ヒストグラム) の SQL を、確認ゲートを通して順に流す (#2327)。 */
@@ -300,6 +306,12 @@ export interface PaneEnv {
   readOnly: boolean;
   emergencyMode: boolean;
   broadcastAvailable: boolean;
+  /** 接続先が WITH (CTE) を解釈できない (MySQL 5.x など)。「この CTE までを実行」を無効にする (#2409)。 */
+  cteRunUnsupported: boolean;
+  /** 再帰 CTE の単体実行で末尾に付ける LIMIT の行数 (#2409)。 */
+  cteRunLimit: number;
+  /** 「この CTE までを実行」を組み立てられない理由をトーストで伝える (#2409)。 */
+  reportCteBlocked: (reason: CteRunBlock | "unsupported") => void;
   queryHistory: string[];
   /** エディタの補完候補に出すスニペット (現在の接続のスコープで絞り込み済み、#1489)。 */
   completionSnippets: Snippet[];
@@ -358,6 +370,9 @@ export const PaneView = memo(
       readOnly,
       emergencyMode,
       broadcastAvailable,
+      cteRunUnsupported,
+      cteRunLimit,
+      reportCteBlocked,
       queryHistory,
       completionSnippets,
       editorBindings,
@@ -766,6 +781,19 @@ export const PaneView = memo(
                                 actions.resolveParamsThen(tab, sql, "runNewTab"),
                               )
                         }
+                        onRunCte={
+                          tab.kind === "explain"
+                            ? undefined
+                            : gridStable.fn(`${tab.id}:ed:runCte`, (req: { sql: string; title: string }) =>
+                                actions.resolveParamsThen(tab, req.sql, "runNewTab", {
+                                  newTab: true,
+                                  title: req.title,
+                                }),
+                              )
+                        }
+                        onCteRunBlocked={reportCteBlocked}
+                        cteRunUnsupported={cteRunUnsupported}
+                        cteRunLimit={cteRunLimit}
                         runNewTabCombo={shortcutBindings.runNewTab}
                         onPreview={
                           tab.kind === "explain"

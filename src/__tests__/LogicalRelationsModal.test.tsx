@@ -26,6 +26,32 @@ const deleteLogicalRelation = vi.fn(async () => {
   return [];
 });
 
+const { openMock, saveMock } = vi.hoisted(() => ({ openMock: vi.fn(), saveMock: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: openMock, save: saveMock }));
+vi.mock("@tauri-apps/api/path", () => ({
+  downloadDir: () => Promise.reject(new Error("no dir")),
+  join: (...p: string[]) => Promise.resolve(p.join("/")),
+}));
+
+const parsedImport = {
+  relations: [
+    { table: "orders", columns: ["user_id"], referenced_table: "users", referenced_columns: ["id"] },
+    { table: "ghosts", columns: ["x"], referenced_table: "users", referenced_columns: ["id"] },
+    { table: "orders", columns: ["nope"], referenced_table: "users", referenced_columns: ["id"] },
+  ],
+  rejected: [{ index: 5, error: "bad" }],
+  duplicate_in_file_count: 0,
+};
+const parseFails = { value: false };
+const replaceLogicalRelations = vi.fn(
+  async (_s: string, _d: string, rels: Array<Record<string, unknown>>) => {
+    stored.length = 0;
+    for (const r of rels) stored.push({ ...r, profile_id: null, database: "app", created_at: "t" });
+    return [...stored];
+  },
+);
+const writeTextFile = vi.fn(async () => {});
+
 vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();
   return {
@@ -41,6 +67,13 @@ vi.mock("../api/tauri", async (importOriginal) => {
       foreignKeys: () => Promise.resolve([]),
       saveLogicalRelations: (...a: Parameters<typeof saveLogicalRelations>) => saveLogicalRelations(...a),
       deleteLogicalRelation: () => deleteLogicalRelation(),
+      exportLogicalRelations: () => Promise.resolve('{"version":1,"relations":[]}'),
+      readTextFile: () => Promise.resolve("{}"),
+      parseLogicalRelationsImport: () =>
+        parseFails.value ? Promise.reject(new Error("bad json")) : Promise.resolve(parsedImport),
+      replaceLogicalRelations: (...a: Parameters<typeof replaceLogicalRelations>) =>
+        replaceLogicalRelations(...a),
+      writeTextFile: () => writeTextFile(),
     },
   };
 });
@@ -93,5 +126,153 @@ describe("LogicalRelationsModal", () => {
     await user.click(await screen.findByRole("button", { name: /^Delete orders/ }));
     await waitFor(() => expect(deleteLogicalRelation).toHaveBeenCalled());
     await screen.findByText(t("logicalRelEmpty"));
+  });
+
+  it("取り込みのプレビューで存在しない表・列を適用不可として示し、適用できるものだけを追加する", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("/tmp/rel.json");
+    setup();
+    await screen.findByText(t("logicalRelEmpty"));
+    await user.click(screen.getByRole("button", { name: t("logicalRelImport") }));
+    const panel = await screen.findByTestId("logical-relations-import");
+    expect(panel).toHaveTextContent(t("logicalRelImportMissingTable", { table: "ghosts" }));
+    expect(panel).toHaveTextContent(t("logicalRelImportMissingColumn", { table: "orders", column: "nope" }));
+    expect(panel).toHaveTextContent(t("logicalRelImportRejected", { count: 1, detail: "#6: bad" }));
+    await user.click(screen.getByRole("button", { name: t("logicalRelImportApply") }));
+    await waitFor(() =>
+      expect(saveLogicalRelations).toHaveBeenCalledWith("s1", "app", [
+        { table: "orders", columns: ["user_id"], referenced_table: "users", referenced_columns: ["id"] },
+      ]),
+    );
+    await waitFor(() => expect(screen.queryByTestId("logical-relations-import")).toBeNull());
+    expect(replaceLogicalRelations).not.toHaveBeenCalled();
+  });
+
+  it("上書きを選ぶと適用できるものだけで置き換える", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("/tmp/rel.json");
+    stored.push({
+      table: "items",
+      columns: ["order_id"],
+      referenced_table: "orders",
+      referenced_columns: ["id"],
+      profile_id: null,
+      database: "app",
+      created_at: "t",
+    });
+    setup();
+    await screen.findByText(/items \(order_id\)/);
+    await user.click(screen.getByRole("button", { name: t("logicalRelImport") }));
+    await screen.findByTestId("logical-relations-import");
+    await user.click(screen.getByRole("radio", { name: new RegExp(t("logicalRelImportReplace")) }));
+    expect(screen.getByTestId("logical-relations-import")).toHaveTextContent(
+      t("logicalRelImportReplaceWarn", { count: 1 }),
+    );
+    await user.click(screen.getByRole("button", { name: t("logicalRelImportApply") }));
+    await waitFor(() =>
+      expect(replaceLogicalRelations).toHaveBeenCalledWith("s1", "app", [
+        { table: "orders", columns: ["user_id"], referenced_table: "users", referenced_columns: ["id"] },
+      ]),
+    );
+  });
+
+  it("書き出しは保存ダイアログで選んだパスへ書く", async () => {
+    const user = userEvent.setup();
+    saveMock.mockResolvedValue("/tmp/out.json");
+    stored.push({
+      table: "orders",
+      columns: ["user_id"],
+      referenced_table: "users",
+      referenced_columns: ["id"],
+      profile_id: null,
+      database: "app",
+      created_at: "t",
+    });
+    setup();
+    await screen.findByText(/orders \(user_id\)/);
+    await user.click(screen.getByRole("button", { name: t("logicalRelExport") }));
+    await waitFor(() => expect(writeTextFile).toHaveBeenCalled());
+  });
+
+  const storedRel = (table: string, columns: string[], rt: string, rcols: string[]) => ({
+    table,
+    columns,
+    referenced_table: rt,
+    referenced_columns: rcols,
+    profile_id: null,
+    database: "app",
+    created_at: "t",
+  });
+
+  it("上書きでも、ファイルにもある登録済みの関係は表・列が無くても残り、警告の削除件数に数えない", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("/tmp/rel.json");
+    stored.push(storedRel("ghosts", ["x"], "users", ["id"]));
+    setup();
+    await screen.findByText(/ghosts \(x\)/);
+    await user.click(screen.getByRole("button", { name: t("logicalRelImport") }));
+    await screen.findByTestId("logical-relations-import");
+    await user.click(screen.getByRole("radio", { name: new RegExp(t("logicalRelImportReplace")) }));
+    expect(screen.getByTestId("logical-relations-import")).toHaveTextContent(
+      t("logicalRelImportReplaceWarn", { count: 0 }),
+    );
+    await user.click(screen.getByRole("button", { name: t("logicalRelImportApply") }));
+    await waitFor(() =>
+      expect(replaceLogicalRelations).toHaveBeenCalledWith("s1", "app", [
+        parsedImport.relations[0],
+        parsedImport.relations[1],
+      ]),
+    );
+    expect(
+      await screen.findByText(t("logicalRelImportReplaced", { added: 1, removed: 0 })),
+    ).toBeInTheDocument();
+  });
+
+  it("適用できるものが 0 件なら確定ボタンは無効", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("/tmp/rel.json");
+    const before = parsedImport.relations;
+    parsedImport.relations = [before[1], before[2]];
+    try {
+      setup();
+      await screen.findByText(t("logicalRelEmpty"));
+      await user.click(screen.getByRole("button", { name: t("logicalRelImport") }));
+      await screen.findByTestId("logical-relations-import");
+      expect(screen.getByRole("button", { name: t("logicalRelImportApply") })).toBeDisabled();
+      await user.click(screen.getByRole("radio", { name: new RegExp(t("logicalRelImportReplace")) }));
+      expect(screen.getByRole("button", { name: t("logicalRelImportApply") })).toBeDisabled();
+    } finally {
+      parsedImport.relations = before;
+    }
+  });
+
+  it("パース失敗はエラー表示し、プレビューを出さない", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("/tmp/rel.json");
+    parseFails.value = true;
+    try {
+      setup();
+      await screen.findByText(t("logicalRelEmpty"));
+      await user.click(screen.getByRole("button", { name: t("logicalRelImport") }));
+      expect(
+        await screen.findByText(t("logicalRelImportError", { error: "Error: bad json" })),
+      ).toBeInTheDocument();
+      expect(screen.queryByTestId("logical-relations-import")).toBeNull();
+    } finally {
+      parseFails.value = false;
+    }
+  });
+
+  it("ダイアログをキャンセルしたら何も起きない", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue(null);
+    saveMock.mockResolvedValue(null);
+    stored.push(storedRel("orders", ["user_id"], "users", ["id"]));
+    setup();
+    await screen.findByText(/orders \(user_id\)/);
+    await user.click(screen.getByRole("button", { name: t("logicalRelImport") }));
+    await user.click(screen.getByRole("button", { name: t("logicalRelExport") }));
+    expect(screen.queryByTestId("logical-relations-import")).toBeNull();
+    expect(writeTextFile).not.toHaveBeenCalled();
   });
 });

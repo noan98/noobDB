@@ -41,6 +41,7 @@ export type ShortcutId =
   | "reopenClosedTab"
   | "run"
   | "runStatement"
+  | "runCte"
   | "preview"
   | "format"
   | "explain"
@@ -223,6 +224,15 @@ export const SHORTCUTS: ShortcutDef[] = [
     hintKey: "shortcutHintRunStatement",
     scope: "editor",
     defaultCombo: "Mod+Alt+Enter",
+  },
+  {
+    keysKey: "shortcutRunCteTitle",
+    descKey: "shortcutRunCteDesc",
+    category: "editor",
+    id: "runCte",
+    hintKey: "shortcutHintRunCte",
+    scope: "editor",
+    defaultCombo: "Mod+Alt+Shift+Enter",
   },
   {
     keysKey: "shortcutRunNewTabTitle",

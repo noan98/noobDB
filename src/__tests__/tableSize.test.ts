@@ -214,6 +214,18 @@ describe("formatDelta (#1621)", () => {
   });
 });
 
+describe("filterTableStats onlyBloated (#2408)", () => {
+  it("肥大と判定できる表だけを残し、統計が取れない表は除外する", () => {
+    const rows = [
+      statRow("bloated", { row_estimate: 1000, dead_rows: 1000 }),
+      statRow("clean", { row_estimate: 1000, dead_rows: 0 }),
+      statRow("unknown"),
+    ];
+    expect(filterTableStats(rows, { onlyBloated: true, nowMs: 0 }).map((r) => r.name)).toEqual(["bloated"]);
+    expect(filterTableStats(rows, {}).length).toBe(3);
+  });
+});
+
 describe("filterTableStats", () => {
   const rows = [
     statRow("users", { indexCount: 2, hasPrimaryKey: true }),

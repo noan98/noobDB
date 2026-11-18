@@ -1,5 +1,6 @@
 import type { IconName } from "./Icon";
 import { isClosedTabItemId } from "../closedTabs";
+import type { PreviewAction, PreviewSource } from "./commandPalettePreview";
 
 /**
  * コマンドパレット (Cmd/Ctrl+K) の純粋ロジック。検索・スコアリング・グループ化を
@@ -72,6 +73,13 @@ export interface CommandItem {
    * 理由を添え、選択しても何も実行せずパレットも閉じない (候補ごと消えて理由が分からなくなるのを防ぐ)。
    */
   disabledReason?: string;
+  /**
+   * 選択中にパレット右 (狭いときは下) へ出すプレビューの元データ (#2425)。
+   * テーブル・スニペット・履歴・接続の候補だけが持ち、組み立ては `commandPalettePreview.ts`。
+   */
+  preview?: PreviewSource;
+  /** プレビュー内のアクション (挿入 / 新しいタブで開く / 実行)。Tab でフォーカスを移せる。 */
+  previewActions?: PreviewAction[];
   /** 選択時の動作。パレットは実行後に自分を閉じる。 */
   run: () => void;
 }

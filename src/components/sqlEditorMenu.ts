@@ -26,6 +26,7 @@ export type SqlEditorMenuAction =
   | "run"
   | "runStatement"
   | "runFromCursor"
+  | "runCte"
   | "preview"
   | "explain"
   | "aiExplain"
@@ -49,6 +50,10 @@ export interface SqlEditorMenuContext {
   canPreview: boolean;
   canExplain: boolean;
   canSaveSnippet: boolean;
+  /** 「この CTE までを実行」(#2409) を出すか。呼び出し側が実行先を渡したときだけ true。 */
+  canRunCte?: boolean;
+  /** 「この CTE までを実行」が今は実行できない理由 (カーソルが CTE の外・書き込み CTE など)。あれば無効にして出す。 */
+  cteReasonKey?: I18nKey;
   /** AI 利用可 (有効 + API キーあり) で、解説 / 最適化案の起動先がある (#695)。 */
   canAi?: boolean;
 }
@@ -119,6 +124,16 @@ export function sqlEditorMenuSpec(ctx: SqlEditorMenuContext): SqlEditorMenuEntry
       icon: "play",
       disabled: execBlocked,
       disabledReasonKey: execReason,
+    });
+  }
+  if (ctx.canRunCte && !ctx.explainMode) {
+    entries.push({
+      action: "runCte",
+      labelKey: "editorMenuRunCte",
+      icon: "play",
+      shortcutId: "runCte",
+      disabled: execBlocked || !!ctx.cteReasonKey,
+      disabledReasonKey: execReason ?? ctx.cteReasonKey,
     });
   }
   if (ctx.canPreview && !ctx.explainMode) {

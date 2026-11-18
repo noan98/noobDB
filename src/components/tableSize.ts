@@ -204,6 +204,10 @@ export interface TableStatFilter {
   onlyNoIndex?: boolean;
   /** PRIMARY KEY を持たないテーブルだけに絞る (hasPrimaryKey === false)。 */
   onlyNoPrimaryKey?: boolean;
+  /** 不要行が多い (肥大) テーブルだけに絞る (#2408)。統計が取れない行は対象外。 */
+  onlyBloated?: boolean;
+  /** `onlyBloated` の判定時刻 (テスト用に注入。既定は現在時刻)。 */
+  nowMs?: number;
 }
 
 /**
@@ -219,6 +223,7 @@ export function filterTableStats(rows: readonly TableStatRow[], filter: TableSta
     if (q && !r.name.toLowerCase().includes(q)) return false;
     if (filter.onlyNoIndex && r.indexCount !== 0) return false;
     if (filter.onlyNoPrimaryKey && r.hasPrimaryKey !== false) return false;
+    if (filter.onlyBloated && !tableMaintenanceHints(r, filter.nowMs ?? Date.now()).bloated) return false;
     return true;
   });
 }

@@ -126,3 +126,141 @@ describe("TableStatisticsPanel 前回取得からの増減 (#1621)", () => {
     expect(screen.getByText("fresh").closest("tr")?.querySelector("[data-testid=stat-delta]")).toBeNull();
   });
 });
+
+describe("TableStatisticsPanel treemap (#2408)", () => {
+  const stat = (name: string, total: number | null): TableStatistic => ({
+    name,
+    row_estimate: 10,
+    data_bytes: total == null ? null : Math.floor(total * 0.7),
+    index_bytes: total == null ? null : Math.floor(total * 0.3),
+    total_bytes: total,
+    column_count: 1,
+    index_count: 1,
+    has_primary_key: true,
+    foreign_key_count: 0,
+    previous: null,
+  });
+
+  it("切り替えると同じフィルタでツリーマップを描き、クリックでテーブルを開く。サイズ不明は別枠", async () => {
+    vi.mocked(api.tableStatistics).mockResolvedValueOnce([
+      stat("users", 100000),
+      stat("orders", 50000),
+      stat("legacy", null),
+    ]);
+    const onOpen = vi.fn();
+    renderWithProviders(
+      <TableStatisticsPanel sessionId="s1" database="testdb" onOpenTable={onOpen} onClose={() => {}} />,
+    );
+    await waitFor(() => expect(screen.getByText("users")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("radio", { name: t("sizeViewTreemap") }));
+    const tile = await waitFor(() => {
+      const el = document.querySelector('[data-treemap-id="users"]');
+      expect(el).not.toBeNull();
+      return el as Element;
+    });
+    expect(tile.getAttribute("aria-label")).toContain("users");
+    // サイズ不明の表はタイルにならず別枠のボタンになる。
+    expect(document.querySelector('[data-treemap-id="legacy"]')).toBeNull();
+    expect(screen.getByRole("button", { name: "legacy" })).toBeInTheDocument();
+
+    fireEvent.click(tile);
+    expect(onOpen).toHaveBeenCalledWith("users");
+
+    // 名前フィルタはツリーマップにも効く。
+    fireEvent.change(screen.getByPlaceholderText(t("sizeFilterName")), { target: { value: "orders" } });
+    await waitFor(() => expect(document.querySelector('[data-treemap-id="users"]')).toBeNull());
+    expect(document.querySelector('[data-treemap-id="orders"]')).not.toBeNull();
+  });
+
+  const openTreemap = async (rows: TableStatistic[], onOpen = vi.fn()) => {
+    vi.mocked(api.tableStatistics).mockResolvedValueOnce(rows);
+    renderWithProviders(
+      <TableStatisticsPanel sessionId="s1" database="testdb" onOpenTable={onOpen} onClose={() => {}} />,
+    );
+    await waitFor(() => expect(screen.getAllByText(rows[0].name).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByRole("radio", { name: t("sizeViewTreemap") }));
+    await waitFor(() => expect(document.querySelector("[data-treemap-id]")).not.toBeNull());
+    return onOpen;
+  };
+  const tileEl = (id: string) => document.querySelector(`[data-treemap-id="${id}"]`) as SVGGElement;
+  const activeId = () => document.activeElement?.getAttribute("data-treemap-id");
+
+  it("矢印キーでタイル間のフォーカスが動く", async () => {
+    await openTreemap([stat("big", 100000), stat("small", 20000)]);
+    const big = tileEl("big");
+    big.focus();
+    expect(activeId()).toBe("big");
+    // 2 枚の配置は横並びか縦並び。いずれかの矢印で他方へ移り、逆向きで戻る。
+    const pairs: Array<[string, string]> = [
+      ["ArrowRight", "ArrowLeft"],
+      ["ArrowDown", "ArrowUp"],
+    ];
+    let moved = false;
+    for (const [fwd, back] of pairs) {
+      fireEvent.keyDown(tileEl("big"), { key: fwd });
+      if (activeId() === "small") {
+        moved = true;
+        fireEvent.keyDown(tileEl("small"), { key: back });
+        expect(activeId()).toBe("big");
+        break;
+      }
+    }
+    expect(moved).toBe(true);
+  });
+
+  it("Enter / Space でテーブルを開く", async () => {
+    const onOpen = await openTreemap([stat("big", 100000), stat("small", 20000)]);
+    fireEvent.keyDown(tileEl("big"), { key: "Enter" });
+    expect(onOpen).toHaveBeenLastCalledWith("big");
+    fireEvent.keyDown(tileEl("small"), { key: " " });
+    expect(onOpen).toHaveBeenLastCalledWith("small");
+  });
+
+  it("「その他」タイルはクリックしても開かない", async () => {
+    const tiny = Array.from({ length: 5 }, (_, i) => stat(`tiny${i}`, 10));
+    const onOpen = await openTreemap([stat("huge", 10_000_000), ...tiny]);
+    const other = document.querySelector("[data-treemap-other]");
+    expect(other).not.toBeNull();
+    fireEvent.click(other as Element);
+    fireEvent.keyDown(other as Element, { key: "Enter" });
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("「その他」タイルへ矢印キーでフォーカスでき、DOM 属性に制御文字を含まない", async () => {
+    const tiny = Array.from({ length: 5 }, (_, i) => stat(`tiny${i}`, 10));
+    await openTreemap([stat("huge", 10_000_000), ...tiny]);
+    // 属性に XML で不正な制御文字が無い (画像書き出しが壊れない)。
+    for (const el of Array.from(document.querySelectorAll("[data-treemap-idx]"))) {
+      for (const a of Array.from(el.attributes)) {
+        expect(a.value).not.toMatch(/[\u0000-\u001f]/);
+      }
+    }
+    const other = document.querySelector("[data-treemap-other]") as SVGGElement;
+    tileEl("huge").focus();
+    let reached = false;
+    for (const key of ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"]) {
+      fireEvent.keyDown(tileEl("huge"), { key });
+      if (document.activeElement === other) {
+        reached = true;
+        break;
+      }
+    }
+    expect(reached).toBe(true);
+  });
+
+  it("「肥大のみ」はツリーマップにも効き、dead_rows が無い DB ではチェックボックスを出さない", async () => {
+    const bloated = { ...stat("bloat", 100000), dead_rows: 5000, row_estimate: 1000 };
+    const clean = { ...stat("clean", 100000), dead_rows: 0, row_estimate: 1000 };
+    await openTreemap([bloated, clean]);
+    expect(tileEl("clean")).not.toBeNull();
+    fireEvent.click(screen.getByLabelText(t("sizeFilterBloated")));
+    await waitFor(() => expect(document.querySelector('[data-treemap-id="clean"]')).toBeNull());
+    expect(tileEl("bloat")).not.toBeNull();
+  });
+
+  it("dead_rows が全行 null (MySQL / SQLite) なら「肥大のみ」を出さない", async () => {
+    await openTreemap([stat("a", 100000), stat("b", 50000)]);
+    expect(screen.queryByLabelText(t("sizeFilterBloated"))).toBeNull();
+  });
+});

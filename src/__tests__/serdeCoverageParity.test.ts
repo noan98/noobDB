@@ -69,6 +69,7 @@ const COVERED: Record<string, string> = {
   ViewRebuildPlan: "viewRebuildPlan",
   IncomingForeignKey: "incomingForeignKey",
   LogicalRelation: "logicalRelation",
+  LogicalRelationsImportParse: "logicalRelationsImportParse",
   IndexInfo: "indexInfo",
   TableExtrasInfo: "tableExtrasInfo",
   TableTrigger: "tableTrigger",
