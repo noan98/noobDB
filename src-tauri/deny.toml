@@ -64,6 +64,14 @@ ignore = [
     # 送り込まれる経路は無い。sqlx が libsqlite3-sys 0.39 以降を許可したら
     # cargo update して、この 1 件を外す。
     "RUSTSEC-2026-0459",
+    # chrono / chrono-tz が「メンテナンス終了」になった (RUSTSEC-2026-0543 /
+    # RUSTSEC-2026-0555、いずれも脆弱性ではなく unmaintained の告知)。修正版は無く、
+    # 代替は jiff / time。chrono は本体の直接依存に加えて sqlx・calamine・russh-util が
+    # 使っており、本体だけを置き換えても依存ツリーから消えない。既知の脆弱性は無いため
+    # 当面は許可し、移行は #2429 で進める。上流 (sqlx など) が chrono から離れたら
+    # 本体も移行して、この 2 件を外す。
+    "RUSTSEC-2026-0543",
+    "RUSTSEC-2026-0555",
 ]
 
 [licenses]
