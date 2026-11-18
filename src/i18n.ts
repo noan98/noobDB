@@ -8925,6 +8925,8 @@ const en = {
   notebookCollapse: "Collapse cell",
   notebookExpand: "Expand cell",
   notebookOpenInEditor: "Open in a query tab",
+  notebookOpenInEditorOtherConn:
+    "This cell uses a different connection than the active one. Query tabs open on the active connection only, so switch to it first.",
   notebookWritesBadge: "Writes",
   notebookWritesTip:
     "This cell contains a statement that changes data or schema. Running it goes through the same confirmations as the editor.",
@@ -17828,6 +17830,8 @@ const ja: Dict = {
   notebookCollapse: "セルを折りたたむ",
   notebookExpand: "セルを展開",
   notebookOpenInEditor: "クエリタブで開く",
+  notebookOpenInEditorOtherConn:
+    "このセルはアクティブな接続と別の接続を指しています。クエリタブはアクティブな接続でしか開けないため、先にその接続へ切り替えてください。",
   notebookWritesBadge: "書き込みあり",
   notebookWritesTip:
     "このセルにはデータやスキーマを変更する文が含まれます。実行はエディタと同じ確認を通ります。",

@@ -13,6 +13,7 @@ import {
   NotebookRunError,
   resolveNotebookDatabase,
   resolveNotebookRunTarget,
+  schemaInvalidationFor,
   runNotebookStatements,
   runStatementCollect,
   type NotebookRunIo,
@@ -301,5 +302,27 @@ describe("resolveNotebookRunTarget / notebookInTransaction (#2396)", () => {
     expect(gateFor("pg", "s-pg")).toBeNull();
     expect(gateFor("lite", "s-lite")).toBeNull();
     expect(gateFor("lite", "s-lite", new Set(["s-lite"]))?.writeApproval).toBe(true);
+  });
+});
+
+describe("schemaInvalidationFor (#2396)", () => {
+  it("実行セッションが今のアクティブと同じなら、そのセッションの DB のキーだけを消す", () => {
+    expect(schemaInvalidationFor("s-b", "s-b", "app")).toEqual({
+      kind: "one",
+      sessionId: "s-b",
+      database: "app",
+    });
+  });
+
+  it("実行中にアクティブが切り替わっても、開始時のセッション (A) のキーは作らない (回帰)", () => {
+    // 背景の B で DDL を開始 → B がアクティブになった後に完了: 固定した sid (B) で判定する
+    expect(schemaInvalidationFor("s-b", "s-b", "app")).toMatchObject({ sessionId: "s-b" });
+    // 逆向き: A のセルの完了時には B がアクティブ → 別セッションなので全消し (A のキーを B のものとして扱わない)
+    expect(schemaInvalidationFor("s-a", "s-b", "app")).toEqual({ kind: "all" });
+  });
+
+  it("DB が無い / アクティブが無いときは全消し", () => {
+    expect(schemaInvalidationFor("s-a", "s-a", null)).toEqual({ kind: "all" });
+    expect(schemaInvalidationFor("s-a", null, "app")).toEqual({ kind: "all" });
   });
 });

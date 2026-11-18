@@ -190,6 +190,20 @@ export interface NotebookRunTarget {
   inTx: boolean;
 }
 
+/**
+ * セルを流したセッションのスキーマキャッシュの無効化の範囲 (#2396)。キャッシュはアクティブなセッションぶんだけを
+ * 持つ (切り替えで捨てる) ので、実行セッション `sid` が今のアクティブと同じなら `database` のキー、違えば全消し。
+ * 実行中に接続が切り替わっても、固定した実行セッションの組で判定する (開始時のセッションのキーを消さない)。
+ */
+export function schemaInvalidationFor(
+  sid: string,
+  activeSessionId: string | null,
+  database: string | null,
+): { kind: "all" } | { kind: "one"; sessionId: string; database: string } {
+  if (!database || sid !== activeSessionId) return { kind: "all" };
+  return { kind: "one", sessionId: sid, database };
+}
+
 /** セッションが明示トランザクション中か。アクティブな接続の state か、背景接続の退避した状態を見る。 */
 export function notebookInTransaction(
   sid: string,

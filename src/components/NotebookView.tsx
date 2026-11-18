@@ -477,10 +477,17 @@ const CellShell = memo(function CellShell(p: CellShellProps) {
                     {t("notebookRunFromShort")}
                   </Button>
                 </Tooltip>
-                <Tooltip label={t("notebookOpenInEditor")}>
+                <Tooltip
+                  label={
+                    p.targetKind !== "current"
+                      ? t("notebookOpenInEditorOtherConn")
+                      : t("notebookOpenInEditor")
+                  }
+                >
                   <Button
                     size="sm"
                     variant="ghost"
+                    disabled={p.targetKind !== "current"}
                     onClick={() => p.onOpenInEditor(cell.id)}
                     aria-label={t("notebookOpenInEditor")}
                   >
@@ -907,7 +914,8 @@ export function NotebookView(props: NotebookViewProps) {
   const onOpenInEditor = useCallback(
     (id: string) => {
       const c = docRef.current.cells.find((x) => x.id === id);
-      if (c?.kind === "sql") {
+      // クエリタブはアクティブな接続でしか作れない。別の接続を指すセルは黙って別の接続へ移さず、開かない (ボタンも無効)。
+      if (c?.kind === "sql" && targetOf(c).kind === "current") {
         props.onOpenInEditor(
           c.sql,
           docRef.current.title || translate("notebookTitle"),
@@ -915,7 +923,7 @@ export function NotebookView(props: NotebookViewProps) {
         );
       }
     },
-    [props.onOpenInEditor],
+    [props.onOpenInEditor, targetOf],
   );
   const onAddAfter = useCallback(
     (afterId: string | null, kind: "markdown" | "sql") => {

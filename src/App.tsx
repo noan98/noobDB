@@ -724,6 +724,7 @@ import {
   resolveNotebookDatabase,
   resolveNotebookRunTarget,
   runNotebookStatements,
+  schemaInvalidationFor,
   runStatementCollect,
   type NotebookRunOutput,
   type NotebookRunRequest,
@@ -5083,15 +5084,22 @@ export default function App() {
   // snapshot, so a split pane editing another database keeps its cache (and
   // doesn't trigger a needless re-fetch). With no database (or no session) we
   // fall back to clearing the whole map; entries are cheap to rebuild.
+  // `targetSessionId` は、実行したセッションを明示したいとき (SQL ノートブックのセル実行など、実行中に
+  // アクティブ接続が切り替わりうる呼び出し) に渡す。アクティブと違えば、キャッシュは全消しにする。
   const invalidateSchemaCache = useCallback(
-    (database?: string | null) => {
-      if (!sessionId || !database) {
+    (database?: string | null, targetSessionId?: string) => {
+      const plan = targetSessionId
+        ? schemaInvalidationFor(targetSessionId, sessionIdRef.current, database ?? null)
+        : !sessionId || !database
+          ? ({ kind: "all" } as const)
+          : ({ kind: "one", sessionId, database } as const);
+      if (plan.kind === "all") {
         prefetchEpochRef.current += 1;
         schemaInFlightRef.current.clear();
         setSchemaCache({});
         return;
       }
-      const key = schemaCacheKey(sessionId, database);
+      const key = schemaCacheKey(plan.sessionId, plan.database);
       schemaGenRef.current.set(key, (schemaGenRef.current.get(key) ?? 0) + 1);
       const wasInFlight = schemaInFlightRef.current.delete(key);
       setSchemaCache((prev) => {
@@ -9423,7 +9431,7 @@ export default function App() {
               // (スキーマキャッシュは接続ごとに持つので、背景のキャッシュは丸ごと捨てる)。
               if (isActiveNow()) pushQueryHistory(stmt);
               if (out.schemaMayChange) {
-                invalidateSchemaCache(isActiveNow() ? database : null);
+                invalidateSchemaCache(database, sid);
                 if (isActiveNow()) noteSchemaDdl(stmt, database);
               }
             },

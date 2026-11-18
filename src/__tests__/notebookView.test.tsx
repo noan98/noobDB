@@ -541,6 +541,27 @@ describe("NotebookView (#2380)", () => {
       expect(onRunSql).toHaveBeenCalledTimes(1);
     });
 
+    it("「エディタで開く」: 別の接続を指すセルは無効 (黙って現在の接続へ移さない)、現在の接続のセルは開ける", () => {
+      const a = newSqlCell("SELECT 1");
+      a.connection = { profileId: "prod", name: "本番DB" };
+      const b = newSqlCell("SELECT 2");
+      seed(a, b);
+      const { props } = setup({
+        profile: cur,
+        profiles: [cur, prod],
+        openConnections: [open(cur, "s1"), open(prod, "s2")],
+      });
+      const [btnOther, btnCurrent] = screen.getAllByRole("button", {
+        name: t("notebookOpenInEditor"),
+      }) as HTMLButtonElement[];
+      expect(btnOther.disabled).toBe(true);
+      expect(btnCurrent.disabled).toBe(false);
+      fireEvent.click(btnOther);
+      expect(props.onOpenInEditor).not.toHaveBeenCalled();
+      fireEvent.click(btnCurrent);
+      expect(props.onOpenInEditor).toHaveBeenCalledWith("SELECT 2", expect.any(String), null);
+    });
+
     it("エラーメッセージに引用された資格情報リテラルは、スナップショットに残す前に伏せる", async () => {
       seed(newSqlCell("CREATE USER bob IDENTIFIED BY 'hunter2secret'"));
       const onRunSql = vi
