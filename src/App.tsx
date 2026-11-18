@@ -7746,9 +7746,11 @@ export default function App() {
         titleManual: !!title,
       };
       addTab(tab);
-      resolveParamsThen(tab, sql, "run", { newTab: false });
+      // 履歴の SQL は展開済みなので、パラメータ検出・置換は通さない (リテラルの `{{x}}` や
+      // ネイティブのパラメータ構文を壊さない)。安全網 (確認ゲート) は runInTabWithGate が掛ける。
+      runInTabWithGate(tab, sql, { newTab: false });
     },
-    [sessionId, addTab, resolveParamsThen],
+    [sessionId, addTab, runInTabWithGate],
   );
 
   // プレビュー (#2425) の履歴の実行メタ (時刻・所要時間・件数・成否)。ローカルの履歴ストアを読むだけ
