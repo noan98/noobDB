@@ -9,9 +9,11 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
+import { motion, useReducedMotion } from "motion/react";
 
 import { api } from "../api/tauri";
 import { useT } from "../i18n";
+import { transitions } from "../motion";
 import {
   computeTableSizeTotals,
   filterTableStats,
@@ -40,6 +42,8 @@ import { Button, Checkbox, Heading } from "./ui";
 import { TextExportButton } from "./TextExportButton";
 import { tableToCsv, tableToMarkdown } from "./tabularText";
 import { Tooltip } from "./Tooltip";
+import { Segmented } from "./Segmented";
+import { TableTreemapView } from "./TableTreemapView";
 
 /**
  * テーブル/DB サイズ・構造統計ダッシュボード (#562 / #660)。指定データベースの
@@ -250,6 +254,10 @@ export function TableStatisticsPanel({
   const [nameQuery, setNameQuery] = useState("");
   const [onlyNoIndex, setOnlyNoIndex] = useState(false);
   const [onlyNoPrimaryKey, setOnlyNoPrimaryKey] = useState(false);
+  const [onlyBloated, setOnlyBloated] = useState(false);
+  // 表 / ツリーマップの切替 (#2408)。フィルタ・並べ替えの状態は両ビューで共有する。
+  const [view, setView] = useState<"table" | "treemap">("table");
+  const reduceMotion = useReducedMotion() ?? false;
   // リクエスト世代カウンタ: セッション/DB 切替や連打で複数の取得が走っても、最新の
   // 要求の応答だけを反映する (in-flight ブロックだと旧対象の結果が残りうる)。
   const requestSeqRef = useRef(0);
@@ -297,10 +305,15 @@ export function TableStatisticsPanel({
   // 入力欄は即時反映し、全件の絞り込み・ソート・集計は遅延値で回す (数千テーブルでも入力が詰まらない)。
   const deferredNameQuery = useDeferredValue(nameQuery);
   const { sorted, totals } = useMemo(() => {
-    const filtered = filterTableStats(rows, { nameQuery: deferredNameQuery, onlyNoIndex, onlyNoPrimaryKey });
+    const filtered = filterTableStats(rows, {
+      nameQuery: deferredNameQuery,
+      onlyNoIndex,
+      onlyNoPrimaryKey,
+      onlyBloated,
+    });
     const sortedRows = sortTableStats(filtered, sortKey, sortDir);
     return { sorted: sortedRows, totals: computeTableSizeTotals(sortedRows) };
-  }, [rows, deferredNameQuery, onlyNoIndex, onlyNoPrimaryKey, sortKey, sortDir]);
+  }, [rows, deferredNameQuery, onlyNoIndex, onlyNoPrimaryKey, onlyBloated, sortKey, sortDir]);
   // データバーは合計サイズ列に対して、絞り込み前の一覧中の最大値を基準にスケールする
   // (フィルタで最大が消えてもバーの物差しが揺れないように)。
   const maxTotal = useMemo(() => rows.reduce((m, r) => Math.max(m, r.total_bytes ?? 0), 0), [rows]);
@@ -380,6 +393,15 @@ export function TableStatisticsPanel({
       </chakra.p>
 
       <Flex align="center" gap="3" flexWrap="wrap">
+        <Segmented
+          value={view}
+          onChange={setView}
+          ariaLabel={t("sizeViewAria")}
+          options={[
+            { value: "table", label: t("sizeViewTable") },
+            { value: "treemap", label: t("sizeViewTreemap") },
+          ]}
+        />
         <Tooltip label={t("sizeRefresh")} focusableWrapper={loading}>
           <Button
             type="button"
@@ -431,6 +453,20 @@ export function TableStatisticsPanel({
           <Checkbox checked={onlyNoPrimaryKey} onChange={(e) => setOnlyNoPrimaryKey(e.target.checked)} />
           {t("sizeFilterNoPk")}
         </chakra.label>
+        {/* 肥大判定は dead_rows (PostgreSQL の統計) が頼り。MySQL / SQLite では常に 0 件になるので出さない。 */}
+        {rows.some((r) => r.dead_rows != null) && (
+          <chakra.label
+            display="flex"
+            alignItems="center"
+            gap="1.5"
+            fontSize="sm"
+            color="app.text"
+            cursor="pointer"
+          >
+            <Checkbox checked={onlyBloated} onChange={(e) => setOnlyBloated(e.target.checked)} />
+            {t("sizeFilterBloated")}
+          </chakra.label>
+        )}
         {rows.length > 0 && (
           <chakra.span fontSize="sm" color="app.textMuted">
             {t("sizeFilterCount", { shown: sorted.length, total: rows.length })}
@@ -464,6 +500,19 @@ export function TableStatisticsPanel({
         // 名前フィルタ/チェックボックス絞り込みで 0 件になったケース:
         // 「検索一致なし」の軽量アイコンを compact で使う (#847)。
         <EmptyState compact icon="search" title={t("sizeNoMatch")} />
+      ) : view === "treemap" ? (
+        <motion.div
+          key="treemap"
+          initial={reduceMotion ? false : { opacity: 0, scale: 0.985 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={reduceMotion ? { duration: 0 } : transitions.emphasized}
+        >
+          <TableTreemapView
+            rows={sorted}
+            onOpenTable={onOpenTable ? openTable : undefined}
+            database={database}
+          />
+        </motion.div>
       ) : (
         <Box overflowX="auto">
           <chakra.table width="100%" borderCollapse="collapse">
