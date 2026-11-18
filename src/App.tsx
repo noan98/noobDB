@@ -354,6 +354,9 @@ const DumpModal = lazy(() => import("./components/DumpModal").then((m) => ({ def
 const TablesExportModal = lazy(() =>
   import("./components/TablesExportModal").then((m) => ({ default: m.TablesExportModal })),
 );
+const TypeDefModal = lazy(() =>
+  import("./components/TypeDefModal").then((m) => ({ default: m.TypeDefModal })),
+);
 const AiSchemaDocModal = lazy(() =>
   import("./components/AiSchemaDocModal").then((m) => ({ default: m.AiSchemaDocModal })),
 );
@@ -2443,6 +2446,8 @@ export default function App() {
   // 論理リレーションのダイアログを閉じるたびに進め、開いている ER 図を取得し直す。
   const [logicalRelationsTick, setLogicalRelationsTick] = useState(0);
   // AI スキーマドキュメント (#696)。ER 図で選択中のテーブルを初期スコープとして渡す。
+  // 型定義の生成モーダル (#2411)。tables が空ならモーダル内で選ぶ。
+  const [typeDefTarget, setTypeDefTarget] = useState<{ database: string; tables: string[] } | null>(null);
   const [schemaDocTarget, setSchemaDocTarget] = useState<{ database: string; tables: string[] } | null>(null);
   // プロファイルインポート: ファイル選択後、衝突解決ダイアログに渡すパス。
   const [importProfilesPath, setImportProfilesPath] = useState<string | null>(null);
@@ -13329,6 +13334,15 @@ export default function App() {
           run: () => setLogicalRelationsTarget(paletteDatabase),
         });
         items.push({
+          id: "nav:type-defs",
+          group: "navigation",
+          label: t("cmdkActionTypeDefs"),
+          icon: "braces",
+          keywords:
+            "type definition typescript go rust python struct interface zod pydantic dataclass 型定義 モデル 生成",
+          run: () => setTypeDefTarget({ database: paletteDatabase, tables: [] }),
+        });
+        items.push({
           id: "nav:schema-export",
           group: "navigation",
           label: t("cmdkActionSchemaExport"),
@@ -14059,6 +14073,7 @@ export default function App() {
     onChunkedDml: (database: string, table: string) => setChunkedDmlTarget({ database, table }),
     onShowCreateTables: handleShowCreateTables,
     onCopyTablesDdl: handleCopyTablesDdl,
+    onCopyTypeDefs: (database: string, tables: string[]) => setTypeDefTarget({ database, tables }),
     onCopyTableNames: handleCopyTableNames,
     onExportTables: (database: string, tables: string[]) => setExportTablesTarget({ database, tables }),
     onDumpTables: (database: string, tables: string[]) => setDumpTablesTarget({ database, tables }),
@@ -14730,6 +14745,7 @@ export default function App() {
                           onPartitionOp={handlePartitionOp}
                           onAttachPartition={handleAttachPartition}
                           onAddPartitions={handleAddPartitions}
+                          onCopyTypeDefs={(database, tables) => setTypeDefTarget({ database, tables })}
                           onManageAudit={handleAuditTrigger}
                           auditTick={auditTick}
                         />
@@ -15827,6 +15843,22 @@ export default function App() {
                 driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                 onClose={() => setDumpTablesTarget(null)}
               />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {typeDefTarget && sessionId && (
+              <Suspense fallback={null}>
+                <TypeDefModal
+                  key={typeDefTarget.database}
+                  sessionId={sessionId}
+                  driver={selectedProfile?.driver ?? "mysql"}
+                  database={typeDefTarget.database}
+                  tables={typeDefTarget.tables}
+                  profileId={selectedProfile?.id}
+                  onClose={() => setTypeDefTarget(null)}
+                />
+              </Suspense>
             )}
           </AnimatePresence>
 
