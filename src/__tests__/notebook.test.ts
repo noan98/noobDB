@@ -17,6 +17,7 @@ import {
   notebookFileName,
   parseNotebook,
   reorderCellsByIds,
+  resolveCellTarget,
   serializeNotebook,
   sqlCellsToRun,
   utf8ByteLength,
@@ -270,5 +271,97 @@ describe("保存前の上限検査 (読み込み側と同じ定数)", () => {
     d.cells = Array.from({ length: MAX_NOTEBOOK_CELLS }, (_, i) => newSqlCell(`SELECT ${i}`));
     const parsed = parseNotebook(serializeNotebook(d, MASK_OFF));
     expect(parsed.ok && parsed.doc.cells.length).toBe(MAX_NOTEBOOK_CELLS);
+  });
+});
+
+describe("セル単位の接続 (#2396)", () => {
+  const prof = (id: string, driver: string) =>
+    ({ id, name: `${id}-name`, driver, is_production: false }) as unknown as Parameters<
+      typeof resolveCellTarget
+    >[2][number];
+  const my = prof("my", "mysql");
+  const pg = prof("pg", "postgres");
+  const lite = prof("lite", "sqlite");
+
+  it("新しい SQL セルは接続未指定 (= 現在の接続)", () => {
+    expect(newSqlCell("SELECT 1").connection).toBeNull();
+  });
+
+  it("保存・再読み込み後も接続が維持され、ID と表示名だけが入る", () => {
+    const d = createEmptyNotebook(null);
+    const a = newSqlCell("SELECT 1");
+    a.connection = { profileId: "pg", name: "分析用" };
+    (a.connection as unknown as Record<string, unknown>).password = "hunter2";
+    d.cells = [a, newSqlCell("SELECT 2")];
+    const text = serializeNotebook(d, MASK_OFF);
+    expect(text).not.toContain("hunter2");
+    const parsed = parseNotebook(text);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const [c1, c2] = parsed.doc.cells;
+    expect(c1.kind === "sql" && c1.connection).toEqual({ profileId: "pg", name: "分析用" });
+    expect(c2.kind === "sql" && c2.connection).toBeNull();
+  });
+
+  it("接続が壊れた / 版の古いファイル (connection なし) は未指定として読む", () => {
+    const text = JSON.stringify({
+      format: "noobdb-notebook",
+      version: 1,
+      cells: [
+        { kind: "sql", sql: "SELECT 1" },
+        { kind: "sql", sql: "SELECT 2", connection: { profileId: 5 } },
+        { kind: "sql", sql: "SELECT 3", connection: { profileId: "", name: "x" } },
+      ],
+    });
+    const parsed = parseNotebook(text);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    for (const c of parsed.doc.cells) expect(c.kind === "sql" && c.connection).toBeNull();
+  });
+
+  it("実行先の解決: 未指定 / 現在と同じ = current", () => {
+    expect(resolveCellTarget(null, "my", [my, pg], [])).toEqual({ kind: "current" });
+    expect(resolveCellTarget({ profileId: "my", name: "x" }, "my", [my], [])).toEqual({ kind: "current" });
+  });
+
+  it("実行先の解決: 3 ドライバの組み合わせで、開いている接続はそのセッションを指す", () => {
+    const open = [
+      { sessionId: "s-my", profile: my },
+      { sessionId: "s-pg", profile: pg },
+      { sessionId: "s-lite", profile: lite },
+    ];
+    for (const [current, other, sid] of [
+      ["my", pg, "s-pg"],
+      ["pg", lite, "s-lite"],
+      ["lite", my, "s-my"],
+    ] as const) {
+      expect(
+        resolveCellTarget({ profileId: other.id, name: other.name }, current, [my, pg, lite], open),
+      ).toEqual({
+        kind: "open",
+        profile: other,
+        sessionId: sid,
+      });
+    }
+  });
+
+  it("実行先の解決: 保存済みだが閉じている = closed、プロファイルが無い = missing", () => {
+    const ref = { profileId: "pg", name: "分析用" };
+    expect(resolveCellTarget(ref, "my", [my, pg], [{ sessionId: "s-my", profile: my }])).toEqual({
+      kind: "closed",
+      ref,
+      profile: pg,
+    });
+    expect(resolveCellTarget(ref, "my", [my], [{ sessionId: "s-my", profile: my }])).toEqual({
+      kind: "missing",
+      ref,
+    });
+  });
+
+  it("実行先の解決: 保存一覧に無くても開いている一時接続 (別 DB で開く) は open", () => {
+    const tmp = prof("tmp", "postgres");
+    expect(
+      resolveCellTarget({ profileId: "tmp", name: "t" }, "my", [my], [{ sessionId: "s-t", profile: tmp }]),
+    ).toMatchObject({ kind: "open", sessionId: "s-t" });
   });
 });

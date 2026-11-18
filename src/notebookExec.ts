@@ -49,6 +49,12 @@ export interface NotebookRunRequest {
   rowCap: number;
   /** 実行先 DB (PostgreSQL ではスキーマ)。null = 接続の既定。 */
   database: string | null;
+  /**
+   * セルの実行先の接続 (#2396)。null = 現在の接続。現在と違う接続を指すときは、呼び出し側がその接続の
+   * セッション・プロファイルの設定 (`read_only` / `confirm_writes` / `is_production`) で実行ゲートを通す。
+   * 開いていなければ `NotebookRunError` で reject する。
+   */
+  connection: { profileId: string; name: string } | null;
   /** 実行中のストリーム ID を受け取る (中止用)。 */
   onStart: (streamId: string) => void;
   /** 中止が押されたか。文と文の間で見る。 */
