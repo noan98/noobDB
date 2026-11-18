@@ -325,7 +325,7 @@ const EXEMPT: Record<string, string> = {
   "dangerousSql.ts:LOCKING_CLAUSES":
     "ロック句の語彙は共有ゴールデンベクタ autoLimitVectors.json (Rust は db/mod.rs の LOCKING_CLAUSES / has_locking_clause) で固定する",
   "dangerousSql.ts:LOCKING_TABLE_HINTS":
-    "ロックヒント (NOLOCK 等) の語彙は共有ゴールデンベクタ (Rust は db/mod.rs) で固定する。fixtures に無い語は Rust 側テストで確認",
+    "ロックを強めるテーブルヒント (UPDLOCK / HOLDLOCK 等の全 7 語) は共有ゴールデンベクタ readOnlySqlVectors.json (Rust は db/mod.rs の LOCKING_TABLE_HINTS) で固定する",
   "dangerousSql.ts:READ_ONLY_PREFIXES_ALL_DRIVERS":
     "読み取り専用判定の語彙は共有ゴールデンベクタ readOnlySqlVectors.json (Rust は db/mod.rs の is_read_only_sql_masked) で固定する",
   "taskFormat.ts:WORKDAYS_MASK": "Rust に対応する定数は無い (表示用の平日判定)。全曜日マスクは対応表で固定",
