@@ -311,11 +311,31 @@ function columnsOf(info: SelectInfo | null, explicit: string[] | null): string[]
   return info.items.map((i) => i.name);
 }
 
-/** `WITH [RECURSIVE] name [(cols)] AS [NOT] [MATERIALIZED] (body), ...` を読む。 */
-function parseCtes(s: string, cursor: number): Source[] {
-  const head = /^\s*WITH(?:\s+RECURSIVE)?\b/i.exec(s);
-  if (!head) return [];
-  const out: Source[] = [];
+/** `WITH` 句の CTE 定義 1 つ分。位置はすべて渡したマスク済み文字列 (= 元の文と同長) のオフセット。 */
+export interface CteDef {
+  /** 引用符を外した名前。 */
+  name: string;
+  /** 引用符つきの元の綴り (`"My CTE"` など)。 */
+  rawName: string;
+  /** 名前の先頭位置 (直前の空白・カンマは含まない)。 */
+  start: number;
+  /** 本体を囲む `(` の位置。 */
+  open: number;
+  /** 本体を囲む `)` の位置。 */
+  close: number;
+  /** 列リスト `(a, b)` が識別子だけで読めたときの列名。無い / 読めないときは null。 */
+  explicitColumns: string[] | null;
+}
+
+/**
+ * `WITH [RECURSIVE] name [(cols)] AS [NOT] [MATERIALIZED] (body), ...` の定義を先頭から読む
+ * (補完 #1419 と「この CTE までを実行」#2409 の共通の読み取り口)。`s` は文字列・コメントを
+ * マスクした 1 文。WITH で始まらない場合は null。閉じていない定義に当たったらそこで止める。
+ */
+export function parseCteDefs(s: string): { recursive: boolean; defs: CteDef[] } | null {
+  const head = /^\s*WITH(\s+RECURSIVE)?\b/i.exec(s);
+  if (!head) return null;
+  const defs: CteDef[] = [];
   const defRe = new RegExp(
     `\\s*(${IDENT})(?:\\s*\\(([^()]*)\\))?\\s*AS\\s*(?:NOT\\s+)?(?:MATERIALIZED\\s+)?\\(`,
     "iy",
@@ -328,21 +348,36 @@ function parseCtes(s: string, cursor: number): Source[] {
     if (!m) break;
     const open = p + m[0].length - 1;
     const close = matchClose(s, open);
-    // 閉じていない / カーソルを含む定義は、まだ確定していないので候補にしない。
-    if (close < 0 || (open < cursor && cursor <= close)) break;
-    const explicit = m[2] !== undefined ? explicitColumns(m[2]) : null;
+    if (close < 0) break;
     const nm = named(m[1], false);
     if (nm) {
-      out.push({
+      defs.push({
         name: nm.name,
-        kind: "cte",
-        columns: columnsOf(selectInfo(s.slice(open + 1, close)), explicit),
+        rawName: m[1],
+        start: p + (m[0].length - m[0].trimStart().length),
+        open,
+        close,
+        explicitColumns: m[2] !== undefined ? explicitColumns(m[2]) : null,
       });
     }
     commaRe.lastIndex = close + 1;
     const c = commaRe.exec(s);
     if (!c) break;
     p = close + 1 + c[0].length;
+  }
+  return { recursive: !!head[1], defs };
+}
+
+function parseCtes(s: string, cursor: number): Source[] {
+  const out: Source[] = [];
+  for (const d of parseCteDefs(s)?.defs ?? []) {
+    // カーソルを含む定義は、まだ確定していないので候補にしない (それ以降も読まない)。
+    if (d.open < cursor && cursor <= d.close) break;
+    out.push({
+      name: d.name,
+      kind: "cte",
+      columns: columnsOf(selectInfo(s.slice(d.open + 1, d.close)), d.explicitColumns),
+    });
   }
   return out;
 }

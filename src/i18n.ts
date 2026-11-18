@@ -625,6 +625,7 @@ const en = {
   shortcutHintRunNewTab: "Run in new tab",
   shortcutHintRun: "Run",
   shortcutHintRunStatement: "Run statement",
+  shortcutHintRunCte: "Run up to this CTE",
   shortcutHintPreview: "Dry run",
   shortcutHintFormat: "Format SQL",
   shortcutHintExplain: "Explain",
@@ -855,6 +856,15 @@ const en = {
   shortcutRunStatementTitle: "Cmd/Ctrl+Alt+Enter",
   shortcutRunStatementDesc:
     "Run only the single statement under the cursor (selection takes priority when present).",
+  shortcutRunCteTitle: "Cmd/Ctrl+Alt+Shift+Enter",
+  shortcutRunCteDesc:
+    "Run the WITH-clause CTE under the cursor, plus only the earlier CTEs it depends on, in a new result tab (the editor text is left unchanged).",
+  cteRunBlockedNoCte: "The statement under the cursor has no WITH clause (CTE).",
+  cteRunBlockedNotInCte:
+    "Place the cursor inside a CTE definition (from its name to its closing parenthesis).",
+  cteRunBlockedWrites: "A CTE that modifies data (INSERT / UPDATE / DELETE) cannot be run on its own.",
+  cteRunBlockedNotReadOnly: "This CTE cannot be run on its own because it fails the read-only check.",
+  cteRunBlockedUnsupported: "This server does not support WITH (CTE); MySQL 8.0 or later is required.",
   settingsQueryTimeout: "Query timeout (seconds)",
   settingsQueryTimeoutHelp:
     "Automatically cancel an editor query that runs longer than this. 0 disables the timeout. The connection stays open when a query is cancelled.",
@@ -8135,6 +8145,7 @@ const en = {
   editorMenuExplainRun: "Explain",
   editorMenuRunStatement: "Run statement at cursor",
   editorMenuRunFromCursor: "Run from cursor to end",
+  editorMenuRunCte: "Run up to this CTE",
   editorMenuPreview: "Dry run",
   editorMenuExplain: "Explain (execution plan)",
   editorMenuFormatAll: "Format SQL",
@@ -9599,6 +9610,7 @@ const ja: Dict = {
   shortcutHintRunNewTab: "新しいタブで実行",
   shortcutHintRun: "実行",
   shortcutHintRunStatement: "カーソル位置の文を実行",
+  shortcutHintRunCte: "この CTE までを実行",
   shortcutHintPreview: "Dry Run",
   shortcutHintFormat: "SQL を整形",
   shortcutHintExplain: "実行計画",
@@ -9825,6 +9837,14 @@ const ja: Dict = {
   shortcutRunNewTabDesc: "現在の結果を残したまま、新しい結果タブでクエリを実行します。",
   shortcutRunStatementTitle: "Cmd/Ctrl+Alt+Enter",
   shortcutRunStatementDesc: "カーソル位置にある単一文だけを実行します (選択範囲があればそちらを優先)。",
+  shortcutRunCteTitle: "Cmd/Ctrl+Alt+Shift+Enter",
+  shortcutRunCteDesc:
+    "カーソルのある WITH 句の CTE と、それが依存する前段の CTE だけを新しい結果タブで実行します (エディタの本文は変わりません)。",
+  cteRunBlockedNoCte: "カーソルのある文に WITH 句 (CTE) がありません。",
+  cteRunBlockedNotInCte: "カーソルを CTE の定義 (名前から閉じ括弧まで) の中に置いてください。",
+  cteRunBlockedWrites: "データ変更を含む CTE (INSERT / UPDATE / DELETE) は単体実行の対象外です。",
+  cteRunBlockedNotReadOnly: "読み取り専用の検査を通らないため、この CTE は単体実行できません。",
+  cteRunBlockedUnsupported: "この接続先のサーバは WITH (CTE) に対応していません (MySQL 8.0 以降が必要です)。",
   settingsQueryTimeout: "クエリ実行タイムアウト (秒)",
   settingsQueryTimeoutHelp:
     "エディタのクエリがこの秒数を超えたら自動的に中断します。0 で無効。中断しても接続は維持されます。",
@@ -17037,6 +17057,7 @@ const ja: Dict = {
   editorMenuExplainRun: "EXPLAIN を実行",
   editorMenuRunStatement: "カーソル位置の文を実行",
   editorMenuRunFromCursor: "カーソル位置から末尾までを実行",
+  editorMenuRunCte: "この CTE までを実行",
   editorMenuPreview: "Dry Run (プレビュー)",
   editorMenuExplain: "EXPLAIN (実行計画)",
   editorMenuFormatAll: "SQL を整形",

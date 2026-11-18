@@ -50,6 +50,20 @@ describe("sqlEditorMenuSpec", () => {
     expect(find(base, "cut")?.disabled).toBe(true);
   });
 
+  it("「この CTE までを実行」(#2409) は実行先があるときだけ出し、理由があれば無効にして理由を見せる", () => {
+    expect(actions(base)).not.toContain("runCte");
+    const ok = { ...base, canRunCte: true };
+    expect(find(ok, "runCte")).toMatchObject({ disabled: false, shortcutId: "runCte" });
+    const blocked = { ...ok, cteReasonKey: "cteRunBlockedWrites" as const };
+    expect(find(blocked, "runCte")).toMatchObject({
+      disabled: true,
+      disabledReasonKey: "cteRunBlockedWrites",
+    });
+    // 選択中・EXPLAIN タブでは出さない。
+    expect(actions({ ...ok, hasSelection: true })).not.toContain("runCte");
+    expect(actions({ ...ok, explainMode: true })).not.toContain("runCte");
+  });
+
   it("選択中は「選択範囲を実行」になり、重複するカーソル位置実行は出さない", () => {
     const ctx = { ...base, hasSelection: true };
     expect(find(ctx, "run")?.labelKey).toBe("editorMenuRunSelection");

@@ -133,6 +133,8 @@ import type { AiSqlEditorAction, SqlAssistKind } from "../ai/sqlAssist";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { copyToClipboard } from "./clipboard";
 import { sqlEditorMenuSpec, type SqlEditorMenuAction } from "./sqlEditorMenu";
+import { buildCteRun, CTE_BLOCK_KEYS, type CteRunBlock } from "../cteRun";
+import type { I18nKey } from "../i18n";
 import { formatCombo as formatComboLabel } from "../shortcutKeys";
 import { labelWithShortcut } from "../shortcutLabel";
 import type { ShortcutId } from "../shortcuts";
@@ -347,6 +349,8 @@ export interface EditorKeyBindings {
   explain: string;
   /** カーソル位置の文のバッチ結果カードを表示 (#2331)。未指定なら既定へフォールバック。 */
   showBatchResult: string;
+  /** 「この CTE までを実行」(#2409)。未指定なら既定へフォールバック。 */
+  runCte: string;
 }
 
 export interface SchemaTable {
@@ -368,6 +372,18 @@ interface Props {
    * マウスでも辿れるよう「…」メニューに入口を置く。未指定ならメニュー項目を出さない。
    */
   onRunInNewTab?: (sql: string) => void;
+  /**
+   * 「この CTE までを実行」(#2409)。カーソルのある CTE を単体で実行する SQL を、エディタ本文を
+   * 書き換えずに新しい結果タブで実行する。未指定ならショートカット・メニュー項目を出さない。
+   * `limit` を渡すと再帰 CTE に明示の LIMIT を付ける。
+   */
+  onRunCte?: (req: { sql: string; title: string }) => void;
+  /** 組み立てられない理由をユーザへ伝える (ショートカット経由のとき。メニューは無効 + ツールチップ)。 */
+  onCteRunBlocked?: (reason: CteRunBlock | "unsupported") => void;
+  /** 接続先が WITH を解釈できない (MySQL 5.7 など、#2409)。true のとき実行を無効にする。 */
+  cteRunUnsupported?: boolean;
+  /** 再帰 CTE の末尾に付ける LIMIT の行数 (自動 LIMIT の設定値)。 */
+  cteRunLimit?: number | null;
   /** `runNewTab` の解決済みコンボ (メニュー項目のキー表記用)。 */
   runNewTabCombo?: string;
   /** True while this tab's Run is streaming — flips the Run badge to its `running` state. */
@@ -829,6 +845,10 @@ export const QueryEditor = memo(
     {
       onRun,
       onRunInNewTab,
+      onRunCte,
+      onCteRunBlocked,
+      cteRunUnsupported,
+      cteRunLimit,
       runNewTabCombo,
       running,
       previewRunning,
@@ -1046,6 +1066,7 @@ export const QueryEditor = memo(
     const formatCombo = editorBindings?.format ?? DEFAULT_SHORTCUT_COMBOS.format;
     const explainCombo = editorBindings?.explain ?? DEFAULT_SHORTCUT_COMBOS.explain;
     const showBatchResultCombo = editorBindings?.showBatchResult ?? DEFAULT_SHORTCUT_COMBOS.showBatchResult;
+    const runCteCombo = editorBindings?.runCte ?? DEFAULT_SHORTCUT_COMBOS.runCte;
     const bindingsRef = useRef<EditorKeyBindings>({
       run: runCombo,
       runStatement: runStatementCombo,
@@ -1053,6 +1074,7 @@ export const QueryEditor = memo(
       format: formatCombo,
       explain: explainCombo,
       showBatchResult: showBatchResultCombo,
+      runCte: runCteCombo,
     });
     bindingsRef.current = {
       run: runCombo,
@@ -1061,6 +1083,7 @@ export const QueryEditor = memo(
       format: formatCombo,
       explain: explainCombo,
       showBatchResult: showBatchResultCombo,
+      runCte: runCteCombo,
     };
     // いま props が求めている compartment 設定 (補完・構文チェック・アクションキーマップ)。
     // view / state 側に入っている設定 (`appliedConfigRef`) と食い違ったときだけ
@@ -1114,6 +1137,7 @@ export const QueryEditor = memo(
         formatCombo,
         explainCombo,
         showBatchResultCombo,
+        runCteCombo,
       ].join("\u0000"),
     };
     const desiredConfigRef = useRef(desiredConfig);
@@ -1300,6 +1324,14 @@ export const QueryEditor = memo(
     onPreviewRef.current = onPreview;
     const onExplainRef = useRef(onExplain);
     onExplainRef.current = onExplain;
+    const onRunCteRef = useRef(onRunCte);
+    onRunCteRef.current = onRunCte;
+    const onCteRunBlockedRef = useRef(onCteRunBlocked);
+    onCteRunBlockedRef.current = onCteRunBlocked;
+    const cteRunUnsupportedRef = useRef(cteRunUnsupported);
+    cteRunUnsupportedRef.current = cteRunUnsupported;
+    const cteRunLimitRef = useRef(cteRunLimit);
+    cteRunLimitRef.current = cteRunLimit;
     const onPreflightImpactRef = useRef(onPreflightImpact);
     onPreflightImpactRef.current = onPreflightImpact;
     const onAiSqlActionRef = useRef(onAiSqlAction);
@@ -1386,6 +1418,31 @@ export const QueryEditor = memo(
       return true;
     };
 
+    // 「この CTE までを実行」(#2409)。カーソルの CTE と依存する前段だけの `WITH ... SELECT * FROM <cte>` を
+    // 組み立て、通常の実行ゲート (読み取り専用ガード・自動 LIMIT・危険クエリ確認) を通る新しい結果タブで
+    // 実行する。エディタ本文は書き換えない。組み立てられないときは理由を通知して何もしない。
+    const runCteUnderCursor = (view: EditorView): boolean => {
+      const run = onRunCteRef.current;
+      if (!run) return false;
+      if (cteRunUnsupportedRef.current) {
+        onCteRunBlockedRef.current?.("unsupported");
+        return true;
+      }
+      const plan = buildCteRun({
+        text: view.state.doc.toString(),
+        offset: view.state.selection.main.head,
+        driver: driverRef.current,
+        limit: cteRunLimitRef.current,
+      });
+      if (!plan.ok) {
+        onCteRunBlockedRef.current?.(plan.reason);
+        return true;
+      }
+      resetHistoryNav();
+      run({ sql: plan.sql, title: plan.title });
+      return true;
+    };
+
     // 再割り当て可能なエディタアクション (#557) のキーマップを、解決済みコンボから
     // 組み立てる。Compartment 経由で初回構築と変更時の再構成の両方に使う。
     const buildActionKeymap = (bindings: EditorKeyBindings) => [
@@ -1403,6 +1460,11 @@ export const QueryEditor = memo(
       {
         key: comboToCodeMirror(bindings.runStatement),
         run: runStatementUnderCursor,
+      },
+      {
+        key: comboToCodeMirror(bindings.runCte),
+        preventDefault: true,
+        run: runCteUnderCursor,
       },
       {
         key: comboToCodeMirror(bindings.preview),
@@ -2286,6 +2348,9 @@ export const QueryEditor = memo(
         case "runFromCursor":
           runFromCursor(view);
           break;
+        case "runCte":
+          runCteUnderCursor(view);
+          break;
         case "preview":
           previewSelectionOrAll();
           break;
@@ -2358,11 +2423,33 @@ export const QueryEditor = memo(
       const combos: Partial<Record<ShortcutId, string>> = {
         run: runCombo,
         runStatement: runStatementCombo,
+        runCte: runCteCombo,
         preview: previewCombo,
         format: formatCombo,
         explain: explainCombo,
       };
+      // 「この CTE までを実行」の可否はメニューを開いたときの文脈で決める (カーソルの位置が変わるのは
+      // 再描画のたびに読み直す)。無効のときの理由はツールチップに出す。
+      const cteView = viewRef.current;
+      const ctePlan =
+        onRunCte && cteView && !cteRunUnsupported
+          ? buildCteRun({
+              text: cteView.state.doc.toString(),
+              offset: cteView.state.selection.main.head,
+              driver,
+              limit: cteRunLimit,
+            })
+          : null;
+      const cteReasonKey: I18nKey | undefined = !onRunCte
+        ? undefined
+        : cteRunUnsupported
+          ? CTE_BLOCK_KEYS.unsupported
+          : ctePlan && !ctePlan.ok
+            ? CTE_BLOCK_KEYS[ctePlan.reason]
+            : undefined;
       return sqlEditorMenuSpec({
+        canRunCte: !!onRunCte,
+        cteReasonKey,
         hasSelection: editorMenu.hasSelection,
         hasContent: editorMenu.hasContent,
         disabled: !!disabled,
