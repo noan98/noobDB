@@ -48,3 +48,44 @@
   されます。加えて `rust (clippy)` / `rust (test)` / `rust (coverage)` / `rust (windows)` では
   **sccache** を `RUSTC_WRAPPER` で有効化し、コンパイル単位のキャッシュをブランチ
   跨ぎで再利用します (詳細は上の CI セクションを参照)。
+
+## Windows ビルドの I/O 対策と Dev Drive の計測 (#2413)
+
+- `ci.yml` の `rust (windows)`・`windows-db-smoke.yml`・`release.yml` の `build` は、
+  checkout より前に Defender のリアルタイム保護を止める
+  (`Set-MpPreference -DisableRealtimeMonitoring $true`)。`release.yml` も #2413 で揃えた。
+  `src/__tests__/windowsJobParity.test.ts` が 3 ワークフローの抜けを検出する。
+- `release.yml` にも `ci.yml` と同じ registry index の自前キャッシュと
+  `cargo fetch --locked --offline` の probe を入れた (#1680 と同方式。キーは
+  `cargo-index-<OS>-release-<Cargo.lock のハッシュ>`、保存は main push のみ)。
+  そろっていれば `CARGO_NET_OFFLINE=true`、足りなければオンラインのまま。
+- `build` ジョブの最後の `Job timing & cache summary (#565)` が、所要時間・rust-cache の
+  ヒット・offline 化の有無・計測モードを Job Summary に出す。前後比較はここを見る。
+
+### Dev Drive (ReFS) の計測手順と判断基準
+
+**状態: 未計測 (採用 / 見送りは未決)。** この結果欄は、下の手順で計測して数値を埋める。
+クラウド実行環境では Windows ランナーを動かせないため、計測用の条件付きステップだけを
+`release.yml` に入れてある (通常実行では走らない)。
+
+1. Actions の `release` を `workflow_dispatch` で **同じ main の ref** に対し 2 回実行する。
+   入力 `measure` を (a) `cold` と (b) `cold-devdrive` にする。どちらも rust-cache と
+   registry index のキャッシュを使わない (復元も保存もしない) コールドビルドで、
+   (b) だけが ReFS の VHD (V:) に `CARGO_HOME` / `CARGO_TARGET_DIR` を置く。
+   Defender 停止は両方に入っている (「停止後も効果があるか」の条件)。
+2. 各 run の Job Summary の「所要時間」を比べる。ノイズを見るため各 2 回ずつ (計 4 回) 推奨。
+3. `rust (windows)` 側は、同じ要領で一時的に Dev Drive ステップを足したブランチで
+   1 回ずつ測る (恒常的なステップは入れていない)。
+
+判断基準:
+- 採用: (b) が (a) より **おおむね 1 分以上かつ 5% 以上**短く、2 回とも同じ向きのとき。
+  採用時は `rust-cache` の保存先 (`target`) を Dev Drive へ向ける設計が別途必要
+  (現状の `workspaces: "./src-tauri -> target"` は `src-tauri/target` 固定)。
+  キャッシュ復元・保存の I/O も含めた **キャッシュ有りの cache-warm** で再計測してから入れる。
+- 見送り: 差が誤差 (上記未満・向きが揺れる) なら見送り、数値と根拠をここに残す
+  (#1943 / LTO の前例)。
+
+| 日付 (JST) | 計測モード | run | 所要時間 | 備考 |
+| --- | --- | --- | --- | --- |
+| (未計測) | cold | - | - | - |
+| (未計測) | cold-devdrive | - | - | - |

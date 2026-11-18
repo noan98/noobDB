@@ -2,6 +2,17 @@ name: release
 
 on:
   workflow_dispatch:
+    inputs:
+      # Dev Drive (ReFS) の計測用 (#2413)。通常運用では default のまま使う。
+      # 手順と判断基準は .claude/skills/noobdb-ci/references/build-performance.md。
+      measure:
+        description: "計測モード (default=通常 / cold=キャッシュ無し / cold-devdrive=キャッシュ無し + Dev Drive)"
+        type: choice
+        default: default
+        options:
+          - default
+          - cold
+          - cold-devdrive
   push:
     branches:
       - main
@@ -111,6 +122,21 @@ jobs:
     # ハング時にデフォルト 6 時間ランナーを占有し続けるのを防ぐ (正常時は影響なし)。
     timeout-minutes: 90
     steps:
+      # ジョブ全体の所要時間可視化 (#565) の起点。checkout より前に置き、セットアップ込みの
+      # 壁時計時間を測る。閾値 fail は設けない (可視化のみ)。windows-latest の既定シェルは
+      # pwsh なので、GITHUB_ENV への書き込みは明示的に bash を指定する。
+      - name: Record job start time (#565)
+        shell: bash
+        run: echo "NOOBDB_JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      # Defender のリアルタイム保護は、cargo / rustc が書く大量のファイルを 1 つずつ
+      # スキャンして遅くする。ランナーは使い捨てなので止めてよい。checkout より前に置くのは、
+      # checkout 自体の書き込みも速くするため (ci.yml の rust (windows) と同じ, #2413)。
+      - name: Disable Defender real-time protection
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
+
       # このジョブは push を行わないため、認証情報をローカル git 設定に残さない
       # (tauri-action は env の GITHUB_TOKEN を明示的に受け取る)。
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -137,10 +163,35 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
+      # 計測専用 (#2413): workflow_dispatch の measure=cold-devdrive のときだけ、ReFS の VHD を
+      # マウントして CARGO_HOME / CARGO_TARGET_DIR を載せる。通常実行では走らない。
+      # rustup 本体 (RUSTUP_HOME) は動かさない。
+      - name: Mount Dev Drive (measurement only, #2413)
+        if: inputs.measure == 'cold-devdrive'
+        shell: pwsh
+        run: |
+          $vhd = Join-Path $env:RUNNER_TEMP 'devdrive.vhdx'
+          @"
+          create vdisk file="$vhd" maximum=30720 type=expandable
+          select vdisk file="$vhd"
+          attach vdisk
+          create partition primary
+          format fs=refs quick label=DevDrive
+          assign letter=V
+          "@ | Set-Content -Path "$env:RUNNER_TEMP\devdrive.txt" -Encoding ascii
+          diskpart /s "$env:RUNNER_TEMP\devdrive.txt"
+          if (-not (Test-Path 'V:\')) { throw 'Dev Drive (V:) をマウントできませんでした' }
+          "CARGO_HOME=V:/cargo" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CARGO_TARGET_DIR=V:/target" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
+      # measure=cold / cold-devdrive ではキャッシュを使わず (復元も保存もしない)、
+      # コールドビルド同士で Dev Drive の有無だけを比べる (#2413)。
       - name: Cache cargo
+        id: rust-cache
+        if: inputs.measure != 'cold' && inputs.measure != 'cold-devdrive'
         uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           workspaces: "./src-tauri -> target"
@@ -150,6 +201,39 @@ jobs:
           # 末尾の Post Cache (~1 分) が純粋な無駄になる。main (温めビルド) と
           # schedule / workflow_dispatch では従来どおり保存する。
           save-if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+      # crates.io インデックス更新 (`Updating crates.io index`) を省く (#1680, ci.yml の
+      # rust (windows) と同じ方式)。rust-cache は sparse index (registry/index) を復元しない
+      # ため、index だけを自前の actions/cache で持つ。ダウンロード済みクレート
+      # (registry/cache) は rust-cache が復元する。保存は main への push だけ。
+      # キー用の hashFiles は `Sync version to tag` より前に評価される (main の Cargo.lock と一致)。
+      - name: Cache cargo registry index
+        id: cargo-index-cache
+        if: inputs.measure != 'cold' && inputs.measure != 'cold-devdrive'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/registry/index
+          key: cargo-index-${{ runner.os }}-release-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-index-${{ runner.os }}-release-
+
+      # index とクレートが全部そろっていれば `--offline` で足りる。足りなければ probe が
+      # 失敗するので、オンラインのまま走る (握りつぶしてよい)。タグビルドの
+      # `Sync version to tag` は noobdb 自身のバージョンしか変えず、レジストリ依存には影響しない。
+      - name: Use offline registry when fully cached (#2413)
+        id: offline-probe
+        if: inputs.measure != 'cold' && inputs.measure != 'cold-devdrive'
+        shell: bash
+        working-directory: src-tauri
+        run: |
+          if cargo fetch --locked --offline --target x86_64-pc-windows-msvc; then
+            echo "CARGO_NET_OFFLINE=true" >> "$GITHUB_ENV"
+            echo "offline=true" >> "$GITHUB_OUTPUT"
+            echo "registry fully cached: running cargo offline"
+          else
+            echo "offline=false" >> "$GITHUB_OUTPUT"
+            echo "registry not fully cached: running cargo online"
+          fi
 
       - name: Cache Tauri bundler tools (NSIS / WiX)
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -247,14 +331,16 @@ jobs:
           set -uo pipefail
           shopt -s nullglob
           summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
+          # Dev Drive 計測時 (#2413) だけ CARGO_TARGET_DIR が V:/target に向く。通常は src-tauri/target。
+          target="${CARGO_TARGET_DIR:-src-tauri/target}"
           files=(
-            src-tauri/target/release/*.exe
-            src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/msi/*.msi
-            src-tauri/target/release/bundle/dmg/*.dmg
-            src-tauri/target/release/bundle/macos/*.app
-            src-tauri/target/release/bundle/appimage/*.AppImage
-            src-tauri/target/release/bundle/deb/*.deb
+            "$target"/release/*.exe
+            "$target"/release/bundle/nsis/*.exe
+            "$target"/release/bundle/msi/*.msi
+            "$target"/release/bundle/dmg/*.dmg
+            "$target"/release/bundle/macos/*.app
+            "$target"/release/bundle/appimage/*.AppImage
+            "$target"/release/bundle/deb/*.deb
           )
           {
             echo "### 出荷バイナリサイズ (${{ matrix.platform }})"
@@ -271,3 +357,31 @@ jobs:
               printf '| `%s` | %s |\n' "$(basename "$f")" "$human" >> "$summary"
             done
           fi
+
+      # index は main への push で、完全一致のキーが無かったときだけ保存する (#2413)。
+      - name: Save cargo registry index (main only)
+        if: success() && github.ref == 'refs/heads/main' && steps.cargo-index-cache.outputs.cache-hit != 'true' && inputs.measure != 'cold' && inputs.measure != 'cold-devdrive'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/registry/index
+          key: cargo-index-${{ runner.os }}-release-${{ hashFiles('src-tauri/Cargo.lock') }}
+
+      # ジョブ所要時間・キャッシュヒット・offline 化の有無を Job Summary へ出す (#565 / #2413)。
+      # Defender 停止・index offline 化の前後比較と Dev Drive 計測の材料。可視化のみで fail はさせない。
+      - name: Job timing & cache summary (#565)
+        if: always()
+        shell: bash
+        run: |
+          ELAPSED=$(( $(date +%s) - NOOBDB_JOB_START ))
+          {
+            echo "### build (${{ matrix.platform }}) 所要時間・キャッシュ"
+            echo ""
+            echo "| 項目 | 値 |"
+            echo "| --- | --- |"
+            echo "| 計測モード | ${{ inputs.measure || 'default' }} |"
+            echo "| 所要時間 | ${ELAPSED} 秒 |"
+            echo "| rust-cache (target) ヒット | ${{ steps.rust-cache.outputs.cache-hit || 'n/a' }} |"
+            echo "| registry を offline で実行 | ${{ steps.offline-probe.outputs.offline || 'n/a' }} |"
+            echo "| ビルド種別 | ${{ startsWith(github.ref, 'refs/tags/v') && 'release (tag)' || 'cache warm' }} |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
