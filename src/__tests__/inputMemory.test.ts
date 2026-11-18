@@ -42,6 +42,9 @@ import {
   testDataScope,
   importScope,
   tablesExportScope,
+  loadTypeDefsPrefs,
+  saveTypeDefsPrefs,
+  typeDefsScope,
   dataSearchScope,
 } from "../inputMemory";
 
@@ -136,6 +139,18 @@ describe("一括書き出しの記憶", () => {
       maskEnabled: true,
       includeDdl: true,
     });
+  });
+});
+
+describe("型定義生成の記憶 (#2411)", () => {
+  it("保存した言語と命名を読み戻し、不正値は既定へ落とす", () => {
+    const scope = typeDefsScope("p1");
+    expect(loadTypeDefsPrefs(scope)).toBeNull();
+    saveTypeDefsPrefs(scope, { lang: "go", naming: "camel" });
+    expect(loadTypeDefsPrefs(scope)).toEqual({ lang: "go", naming: "camel" });
+    localStorage.clear();
+    saveTypeDefsPrefs(scope, { lang: "cobol", naming: "x" } as never);
+    expect(loadTypeDefsPrefs(scope)).toEqual({ lang: "typescript", naming: "snake" });
   });
 });
 

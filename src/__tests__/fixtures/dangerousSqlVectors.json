@@ -355,6 +355,16 @@
       "note": "ALTER TABLE (#1839): 非列 DROP の後ろの省略形も拾う"
     },
     {
+      "sql": "ALTER TABLE t DROP SYSTEM VERSIONING",
+      "kind": null,
+      "note": "ALTER TABLE (#2412): MariaDB のシステムバージョニング解除は列削除ではない"
+    },
+    {
+      "sql": "ALTER TABLE t DROP PERIOD FOR SYSTEM_TIME",
+      "kind": null,
+      "note": "ALTER TABLE (#2412): MariaDB の PERIOD 削除は列削除ではない"
+    },
+    {
       "sql": "ALTER TABLE t DROP KEY k",
       "kind": null,
       "note": "ALTER TABLE (#1839): DROP KEY はインデックス削除で対象外"
