@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   attachTreeDragSource,
+  beginPointerDrag,
   getTreeDragSnapshot,
+  insertAtEditorCaret,
   registerTreeDropTarget,
   type TreeDropTarget,
 } from "../components/treeDragStore";
@@ -208,5 +210,43 @@ describe("treeDragStore (ポインタ・ドラッグ)", () => {
     btn.dispatchEvent(ptr("pointerdown", 0, 0));
     window.dispatchEvent(ptr("pointermove", 30, 0));
     expect(getTreeDragSnapshot().active).toBe(false);
+  });
+
+  it("beginPointerDrag: text アイテムをグリッドから落とせる。しきい値未満で離すと onTap", () => {
+    const textItem: TreeDragItem = { kind: "text", text: "`id` IN (1, 2)", label: "`id` IN (1, 2)" };
+    const onTap = vi.fn();
+    expect(beginPointerDrag(source, ptr("pointerdown", 0, 0), textItem, onTap)).toBe(true);
+    window.dispatchEvent(ptr("pointerup", 1, 0));
+    expect(onTap).toHaveBeenCalledTimes(1);
+    expect(target.insert).not.toHaveBeenCalled();
+
+    expect(beginPointerDrag(source, ptr("pointerdown", 0, 0), textItem, onTap)).toBe(true);
+    window.dispatchEvent(ptr("pointermove", 30, 0));
+    expect(getTreeDragSnapshot()).toMatchObject({ active: true, label: "`id` IN (1, 2)", overEditor: true });
+    window.dispatchEvent(ptr("pointerup", 30, 0));
+    expect(target.insert).toHaveBeenCalledWith(textItem, 3, true, false);
+    expect(onTap).toHaveBeenCalledTimes(1);
+  });
+
+  it("beginPointerDrag: Esc で取り消すと挿入も onTap もない", () => {
+    const textItem: TreeDragItem = { kind: "text", text: "1", label: "1" };
+    const onTap = vi.fn();
+    beginPointerDrag(source, ptr("pointerdown", 0, 0), textItem, onTap);
+    window.dispatchEvent(ptr("pointermove", 30, 0));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(target.setMarker).toHaveBeenLastCalledWith(null);
+    window.dispatchEvent(ptr("pointerup", 30, 0, { buttons: 0 }));
+    expect(target.insert).not.toHaveBeenCalled();
+    expect(onTap).not.toHaveBeenCalled();
+  });
+
+  it("insertAtEditorCaret: キャレット位置へ挿入し、ドロップ先が無ければ false", () => {
+    const textItem: TreeDragItem = { kind: "text", text: "x", label: "x" };
+    target.caretPos = () => 7;
+    expect(insertAtEditorCaret(textItem)).toBe(true);
+    expect(target.insert).toHaveBeenCalledWith(textItem, 7, true, false);
+    unregister();
+    expect(insertAtEditorCaret(textItem)).toBe(false);
+    unregister = registerTreeDropTarget(target);
   });
 });

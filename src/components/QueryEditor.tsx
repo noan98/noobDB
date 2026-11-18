@@ -1701,6 +1701,7 @@ export const QueryEditor = memo(
       const unregisterTreeDrop = registerTreeDropTarget({
         element: view.dom,
         posAtCoords: (x, y) => view.posAtCoords({ x, y }, false),
+        caretPos: () => view.state.selection.main.head,
         setMarker: (pos) => view.dispatch({ effects: treeDropMarkerEffect.of(pos) }),
         insert: (item, pos, qualified, joinFk) => {
           // Shift ドロップ: FK 列なら JOIN 雛形 (#1540)。FK 一覧はエディタの対象 DB のものだけなので、

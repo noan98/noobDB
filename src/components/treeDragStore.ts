@@ -28,6 +28,8 @@ export interface TreeDropTarget {
   posAtCoords: (x: number, y: number) => number | null;
   /** 挿入予定位置のマーカーを出す / 消す (null)。 */
   setMarker: (pos: number | null) => void;
+  /** 現在のキャレット位置 (メニューからの「エディタへ挿入」用, #2406)。未実装なら文書末尾。 */
+  caretPos?: () => number;
   /**
    * `pos` へ挿入する。`qualified=false` は列名のみ (Alt)。`joinFk=true` (Shift を押して
    * ドロップ) は、外部キー列なら通常の列名ではなく `JOIN 参照先 ON ...` の雛形を入れる
@@ -73,6 +75,24 @@ export function registerTreeDropTarget(target: TreeDropTarget): () => void {
   };
 }
 
+/**
+ * ドラッグを使わず、いま見えているエディタのキャレット位置へ挿入する (結果グリッドの右クリック
+ * 「エディタへ挿入」, #2406)。挿入できるエディタが無ければ false。
+ */
+export function insertAtEditorCaret(item: TreeDragItem): boolean {
+  let target: TreeDropTarget | null = null;
+  for (const t of targets) {
+    if (t.element.getClientRects().length > 0) {
+      target = t;
+      break;
+    }
+    target ??= t;
+  }
+  if (!target) return false;
+  target.insert(item, target.caretPos?.() ?? null, true, false);
+  return true;
+}
+
 /** 対話要素 (ボタン等) の上で押された場合はドラッグを始めない。 */
 const INTERACTIVE = "button, a, input, textarea, select, [role='button']";
 
@@ -95,7 +115,22 @@ export function attachTreeDragSource(el: HTMLElement, getItem: () => TreeDragIte
   return () => el.removeEventListener("pointerdown", onPointerDown);
 }
 
-function startSession(source: HTMLElement, down: PointerEvent, item: TreeDragItem) {
+/**
+ * ツリー行以外 (結果グリッドの選択セルなど) からも、押下済みのポインタでドラッグを始める (#2406)。
+ * しきい値未満でボタンを離した場合は `onTap` を呼ぶ (クリック扱い。選択解除などに使う)。
+ */
+export function beginPointerDrag(
+  source: HTMLElement,
+  down: PointerEvent,
+  item: TreeDragItem,
+  onTap?: () => void,
+): boolean {
+  if (down.button !== 0 || !down.isPrimary || snapshot.active) return false;
+  startSession(source, down, item, onTap);
+  return true;
+}
+
+function startSession(source: HTMLElement, down: PointerEvent, item: TreeDragItem, onTap?: () => void) {
   let phase: TreeDragPhase = pressPhase(item, down.clientX, down.clientY);
   let dragged = false;
   let current: TreeDropTarget | null = null;
@@ -195,6 +230,7 @@ function startSession(source: HTMLElement, down: PointerEvent, item: TreeDragIte
     const pos = target ? target.posAtCoords(e.clientX, e.clientY) : null;
     cleanup();
     if (wasDragged) swallowClick();
+    else if (onTap) onTap();
     if (drop && target) target.insert(drop, pos, !(e.altKey || altKey), e.shiftKey);
   };
 
