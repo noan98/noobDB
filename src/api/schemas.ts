@@ -117,6 +117,20 @@ export const logicalRelation = z.object({
 });
 export const logicalRelationArray = z.array(logicalRelation);
 
+/** `parse_logical_relations_import` の結果 (#2423)。 */
+export const logicalRelationsImportParse = z.object({
+  relations: z.array(
+    z.object({
+      table: z.string(),
+      columns: z.array(z.string()),
+      referenced_table: z.string(),
+      referenced_columns: z.array(z.string()),
+    }),
+  ),
+  rejected: z.array(z.object({ index: z.number(), error: z.string() })),
+  duplicate_in_file_count: z.number(),
+});
+
 /**
  * i64 精度方針 (#625): `estimate` は Rust の `Option<i64>` を JSON 数値で受ける。
  * JS の `number` は安全整数が ±(2^53-1) までなので、それを超える巨大テーブルの推定

@@ -16050,6 +16050,7 @@ export default function App() {
                 <LogicalRelationsModal
                   key={logicalRelationsTarget}
                   sessionId={sessionId}
+                  driver={selectedProfile?.driver}
                   onChanged={handleLogicalRelationsChanged}
                   database={logicalRelationsTarget}
                   onClose={() => {

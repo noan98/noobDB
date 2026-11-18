@@ -192,6 +192,151 @@ pub fn profile_ids() -> Result<Vec<String>> {
     ))
 }
 
+/// 書き出しファイルの形式バージョン。
+pub const EXPORT_VERSION: u32 = 1;
+/// 取り込みファイルの最大件数 (これを超えるファイルは壊れているか別物とみなして拒否する)。
+pub const MAX_IMPORT_RELATIONS: usize = 5_000;
+/// 取り込みファイルの最大バイト数 (ファイル読み込み側の上限とは別に、パース前に再確認する)。
+pub const MAX_IMPORT_BYTES: usize = 4 * 1024 * 1024;
+
+/// 取り込みファイルのうち、形が不正で読み飛ばした要素 1 件。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogicalRelationRejection {
+    /// ファイル内の要素の位置 (0 始まり)。
+    pub index: usize,
+    pub error: String,
+}
+
+/// `parse_import` の結果。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogicalRelationsImportParse {
+    /// 読めた論理リレーション (ファイル内の重複は除いてある)。
+    pub relations: Vec<LogicalRelationInput>,
+    /// 形が不正で読み飛ばした要素。
+    pub rejected: Vec<LogicalRelationRejection>,
+    /// ファイル内で同じ関係が複数回出てきたために除いた件数。
+    pub duplicate_in_file_count: usize,
+}
+
+/// この接続先の論理リレーションを書き出し用の JSON にする。`profile_id`・データベース名・
+/// 登録時刻・接続情報は含めない (別の接続へ持ち出せる、関係の定義だけ)。
+pub fn export_json(relations: &[LogicalRelation]) -> Result<String> {
+    let items: Vec<LogicalRelationInput> = relations
+        .iter()
+        .map(|r| LogicalRelationInput {
+            table: r.table.clone(),
+            columns: r.columns.clone(),
+            referenced_table: r.referenced_table.clone(),
+            referenced_columns: r.referenced_columns.clone(),
+        })
+        .collect();
+    let value = serde_json::json!({ "version": EXPORT_VERSION, "relations": items });
+    Ok(serde_json::to_string_pretty(&value)?)
+}
+
+/// 書き出しファイルを寛容に読む (#2423)。壊れた JSON・サイズ / 件数の超過は `InvalidInput`。
+/// トップレベルが `{ relations: [...] }` でも配列そのものでもよく、`version` は参照しない
+/// (将来の版が項目を足しても読めるようにする)。解釈できない要素は読み飛ばして `rejected` に出す。
+/// DB のスキーマとの照合はしない (フロントが接続先のスキーマと突き合わせる)。
+pub fn parse_import(json: &str) -> Result<LogicalRelationsImportParse> {
+    if json.len() > MAX_IMPORT_BYTES {
+        return Err(AppError::InvalidInput(format!(
+            "logical relations file is too large ({} bytes, limit {} bytes)",
+            json.len(),
+            MAX_IMPORT_BYTES
+        )));
+    }
+    let value: serde_json::Value = serde_json::from_str(json.trim_start_matches('\u{feff}'))
+        .map_err(|e| AppError::InvalidInput(format!("not a valid JSON file: {e}")))?;
+    let items = match &value {
+        serde_json::Value::Array(a) => a,
+        serde_json::Value::Object(o) => match o.get("relations") {
+            Some(serde_json::Value::Array(a)) => a,
+            _ => {
+                return Err(AppError::InvalidInput(
+                    "logical relations file has no \"relations\" array".to_string(),
+                ))
+            }
+        },
+        _ => {
+            return Err(AppError::InvalidInput(
+                "logical relations file has no \"relations\" array".to_string(),
+            ))
+        }
+    };
+    if items.len() > MAX_IMPORT_RELATIONS {
+        return Err(AppError::InvalidInput(format!(
+            "logical relations file has too many relations ({}, limit {})",
+            items.len(),
+            MAX_IMPORT_RELATIONS
+        )));
+    }
+    let mut relations: Vec<LogicalRelationInput> = Vec::new();
+    let mut rejected = Vec::new();
+    let mut duplicate_in_file_count = 0;
+    for (index, item) in items.iter().enumerate() {
+        let parsed = serde_json::from_value::<LogicalRelationInput>(item.clone())
+            .map_err(|e| e.to_string())
+            .and_then(|i| match validate(&i) {
+                Ok(()) => Ok(i),
+                Err(e) => Err(e.to_string()),
+            });
+        match parsed {
+            Ok(i) => {
+                if relations.contains(&i) {
+                    duplicate_in_file_count += 1;
+                } else {
+                    relations.push(i);
+                }
+            }
+            Err(error) => rejected.push(LogicalRelationRejection { index, error }),
+        }
+    }
+    Ok(LogicalRelationsImportParse {
+        relations,
+        rejected,
+        duplicate_in_file_count,
+    })
+}
+
+/// この接続先の論理リレーションを `inputs` で置き換える (取り込みの「上書き」)。全件を検査してから
+/// 書くので、1 件でも不正なら何も変えない。置き換え後の一覧を返す。
+pub fn replace_all(
+    profile_id: Option<&str>,
+    database: &str,
+    inputs: &[LogicalRelationInput],
+) -> Result<Vec<LogicalRelation>> {
+    for i in inputs {
+        validate(i)?;
+    }
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    STORE.update::<RelationFile, _>(|f| {
+        replace_in(f, profile_id, database, inputs, &now);
+        list_from(f, profile_id, database)
+    })
+}
+
+fn replace_in(
+    file: &mut RelationFile,
+    profile_id: Option<&str>,
+    database: &str,
+    inputs: &[LogicalRelationInput],
+    now: &str,
+) {
+    // 既に同じ関係があるものは登録時刻を保つ (消して作り直さない)。
+    let keep: Vec<LogicalRelation> = file
+        .relations
+        .iter()
+        .filter(|e| matches(e, profile_id, database) && inputs.iter().any(|i| same_relation(e, i)))
+        .cloned()
+        .collect();
+    file.relations.retain(|e| !matches(e, profile_id, database));
+    file.relations.extend(keep);
+    for i in inputs {
+        add_to(file, profile_id, database, i, now);
+    }
+}
+
 fn purge_profile(file: &mut RelationFile, profile_id: &str) -> u64 {
     let before = file.relations.len();
     file.relations
@@ -290,5 +435,93 @@ mod tests {
     #[test]
     fn distinct_ids_dedupes_and_sorts() {
         assert_eq!(distinct_ids(["b", "a", "b"].into_iter()), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn export_has_no_profile_or_timestamp() {
+        let rel = LogicalRelation {
+            profile_id: Some("secret-profile".into()),
+            database: "app".into(),
+            table: "orders".into(),
+            columns: vec!["user_id".into()],
+            referenced_table: "users".into(),
+            referenced_columns: vec!["id".into()],
+            created_at: "2026-01-01T00:00:00Z".into(),
+        };
+        let json = export_json(&[rel]).unwrap();
+        assert!(!json.contains("secret-profile"));
+        assert!(!json.contains("profile_id"));
+        assert!(!json.contains("created_at"));
+        assert!(!json.contains("\"database\""));
+        let back = parse_import(&json).unwrap();
+        assert_eq!(back.relations.len(), 1);
+        assert!(back.rejected.is_empty());
+    }
+
+    #[test]
+    fn parse_import_is_tolerant_per_element() {
+        let json = r#"{"version": 99, "future": 1, "relations": [
+            {"table":"a","columns":["x"],"referenced_table":"b","referenced_columns":["id"],"extra":true},
+            {"table":"a","columns":["x"],"referenced_table":"b","referenced_columns":["id"]},
+            {"table":"a","columns":["x","y"],"referenced_table":"b","referenced_columns":["id"]},
+            {"table":"a"},
+            42
+        ]}"#;
+        let p = parse_import(json).unwrap();
+        assert_eq!(p.relations.len(), 1);
+        assert_eq!(p.duplicate_in_file_count, 1);
+        assert_eq!(
+            p.rejected.iter().map(|r| r.index).collect::<Vec<_>>(),
+            vec![2, 3, 4]
+        );
+    }
+
+    #[test]
+    fn parse_import_accepts_bare_array_and_bom() {
+        let json = "\u{feff}[{\"table\":\"a\",\"columns\":[\"x\"],\"referenced_table\":\"b\",\"referenced_columns\":[\"id\"]}]";
+        assert_eq!(parse_import(json).unwrap().relations.len(), 1);
+    }
+
+    #[test]
+    fn parse_import_rejects_broken_or_oversized_input() {
+        assert!(parse_import("{ not json").is_err());
+        assert!(parse_import("{\"relations\": 3}").is_err());
+        assert!(parse_import("\"str\"").is_err());
+        let many = format!(
+            "[{}]",
+            vec![r#"{"table":"a","columns":["x"],"referenced_table":"b","referenced_columns":["id"]}"#; MAX_IMPORT_RELATIONS + 1]
+                .join(",")
+        );
+        assert!(parse_import(&many).is_err());
+        let big = " ".repeat(MAX_IMPORT_BYTES + 1);
+        assert!(parse_import(&big).is_err());
+    }
+
+    #[test]
+    fn replace_swaps_only_this_connection_and_keeps_timestamps() {
+        let mut file = RelationFile::default();
+        let keep = input("orders", &["user_id"], "users", &["id"]);
+        let drop = input("items", &["order_id"], "orders", &["id"]);
+        add_to(&mut file, Some("p1"), "app", &keep, "old");
+        add_to(&mut file, Some("p1"), "app", &drop, "old");
+        add_to(&mut file, Some("p2"), "app", &drop, "other");
+        let fresh = input("a", &["x"], "b", &["id"]);
+        replace_in(
+            &mut file,
+            Some("p1"),
+            "app",
+            &[keep.clone(), fresh.clone()],
+            "new",
+        );
+        let mine = list_from(&file, Some("p1"), "app");
+        assert_eq!(mine.len(), 2);
+        assert!(mine
+            .iter()
+            .any(|e| same_relation(e, &keep) && e.created_at == "old"));
+        assert!(mine
+            .iter()
+            .any(|e| same_relation(e, &fresh) && e.created_at == "new"));
+        assert!(!mine.iter().any(|e| same_relation(e, &drop)));
+        assert_eq!(list_from(&file, Some("p2"), "app").len(), 1);
     }
 }

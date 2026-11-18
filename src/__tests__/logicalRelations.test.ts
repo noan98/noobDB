@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { LogicalRelationInput, TableColumnInfo } from "../api/tauri";
 import {
   applyLogicalToColumns,
+  classifyImport,
   idStem,
   logicalToForeignKeys,
   mergeForeignKeys,
@@ -260,5 +261,97 @@ describe("stripLogicalFromColumns", () => {
     expect(stripped[1].logical).toBeUndefined();
     expect(stripped[2].referenced_table).toBe("shops");
     expect(stripLogicalFromColumns(cols)).toBe(cols);
+  });
+});
+
+describe("classifyImport (#2423)", () => {
+  const colInfo = (name: string) => ({
+    name,
+    data_type: "bigint",
+    nullable: false,
+    key: "",
+    default: null,
+    extra: "",
+    referenced_table: null,
+    referenced_column: null,
+  });
+  const tables = [
+    { name: "users", columns: [colInfo("id")] },
+    { name: "orders", columns: [colInfo("id"), colInfo("user_id")] },
+  ];
+  const rel = (table: string, columns: string[], rt: string, rcols: string[]) => ({
+    table,
+    columns,
+    referenced_table: rt,
+    referenced_columns: rcols,
+  });
+
+  it("splits into addable / existing / blocked with the first reason", () => {
+    const ok = rel("orders", ["user_id"], "users", ["id"]);
+    const dup = rel("orders", ["id"], "users", ["id"]);
+    const noTable = rel("orders", ["user_id"], "ghosts", ["id"]);
+    const noChildCol = rel("orders", ["nope"], "users", ["id"]);
+    const noParentCol = rel("orders", ["user_id"], "users", ["nope"]);
+    const res = classifyImport([ok, dup, noTable, noChildCol, noParentCol], tables, [dup]);
+    expect(res.addable).toEqual([ok]);
+    expect(res.existing).toEqual([dup]);
+    expect(res.blocked.map((b) => b.reason)).toEqual([
+      { kind: "missingTable", table: "ghosts" },
+      { kind: "missingColumn", table: "orders", column: "nope" },
+      { kind: "missingColumn", table: "users", column: "nope" },
+    ]);
+  });
+
+  it("blocks only a relation whose columns collapse to the same column when folding case", () => {
+    const dupChild = rel("orders", ["user_id", "USER_ID"], "users", ["id", "ID"]);
+    const dupParent = rel("orders", ["id", "user_id"], "users", ["ID", "id"]);
+    const ok = rel("orders", ["user_id"], "users", ["id"]);
+    const res = classifyImport([dupChild, dupParent, ok], tables, [], true);
+    expect(res.addable).toEqual([ok]);
+    expect(res.blocked).toEqual([
+      { relation: dupChild, reason: { kind: "duplicateColumn", table: "orders", column: "user_id" } },
+      { relation: dupParent, reason: { kind: "duplicateColumn", table: "users", column: "id" } },
+    ]);
+    // 完全一致のみ (PostgreSQL) では別の列なので、存在しない列として扱う。
+    expect(classifyImport([dupChild], tables, [], false).blocked[0]?.reason.kind).toBe("missingColumn");
+  });
+
+  it("compares names exactly (case-sensitive)", () => {
+    const res = classifyImport([rel("Orders", ["user_id"], "users", ["id"])], tables, []);
+    expect(res.blocked).toHaveLength(1);
+  });
+
+  it("keeps a registered relation as existing even when its table or column is gone", () => {
+    const stale = rel("legacy", ["x"], "users", ["id"]);
+    const gone = rel("old", ["y"], "users", ["id"]);
+    const res = classifyImport([stale], tables, [stale, gone]);
+    expect(res.existing).toEqual([stale]);
+    expect(res.blocked).toEqual([]);
+    expect(res.removedCount).toBe(1);
+  });
+
+  it("falls back to a unique case-insensitive match only when asked, rewriting to the target spelling", () => {
+    const upper = rel("ORDERS", ["USER_ID"], "Users", ["ID"]);
+    const exact = classifyImport([upper], tables, [], false);
+    expect(exact.blocked).toHaveLength(1);
+    const folded = classifyImport([upper], tables, [], true);
+    expect(folded.addable).toEqual([rel("orders", ["user_id"], "users", ["id"])]);
+    // 書き換えた結果が登録済みと同じなら existing になる。
+    const reg = rel("orders", ["user_id"], "users", ["id"]);
+    expect(classifyImport([upper], tables, [reg], true).existing).toEqual([reg]);
+  });
+
+  it("keeps ambiguous case-insensitive matches blocked and prefers an exact match", () => {
+    const ambiguous = [
+      { name: "Users", columns: [colInfo("id")] },
+      { name: "users", columns: [colInfo("id")] },
+      { name: "orders", columns: [colInfo("user_id")] },
+    ];
+    expect(
+      classifyImport([rel("orders", ["user_id"], "USERS", ["id"])], ambiguous, [], true).blocked,
+    ).toHaveLength(1);
+    expect(
+      classifyImport([rel("orders", ["user_id"], "users", ["id"])], ambiguous, [], true).addable,
+    ).toHaveLength(1);
   });
 });
